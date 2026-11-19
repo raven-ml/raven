@@ -11,11 +11,10 @@ type t = { levels : int list; basis : int list; size : int }
 let eps = 1e-3
 
 let v levels =
-  let fail fmt = Printf.ksprintf invalid_arg ("Aion.Fsq.v: " ^^ fmt) in
-  if levels = [] then fail "no level";
+  if levels = [] then Refuse.invalid "Fsq.v" "no level";
   let step (basis, b) l =
-    if l < 2 then fail "level %d, at least 2 expected" l;
-    if b > max_int / l then fail "more codes than max_int";
+    if l < 2 then Refuse.invalid "Fsq.v" "level %d, at least 2 expected" l;
+    if b > max_int / l then Refuse.invalid "Fsq.v" "more codes than max_int";
     (b :: basis, b * l)
   in
   let basis, size = List.fold_left step ([], 1) levels in
@@ -53,12 +52,9 @@ let check_last fn q x =
   let s = Nx.shape x and d = List.length q.levels in
   let r = Array.length s in
   if r = 0 || s.(r - 1) <> d then
-    invalid_arg
-      (Printf.sprintf "Aion.Fsq.%s: last axis of %d entries, %d expected" fn
-         (if r = 0 then 0 else s.(r - 1))
-         d)
-
-let index i = String.concat "; " (Array.to_list (Array.map string_of_int i))
+    Refuse.invalid fn "last axis of %d entries, %d expected"
+      (if r = 0 then 0 else s.(r - 1))
+      d
 
 let bound_in fn q z =
   check_last fn q z;
@@ -68,15 +64,14 @@ let bound_in fn q z =
   let s = per_level dt z q (fun l -> snd (constants dt l)) in
   Nx.sub (Nx.mul (Nx.tanh (Nx.add z s)) h) o
 
-let bound q z = bound_in "bound" q z
+let bound q z = bound_in "Fsq.bound" q z
 
 let encode q z =
-  let y = bound_in "encode" q z in
+  let y = bound_in "Fsq.encode" q z in
   Nx.check Nx.Ptree.unit
     (Nx.logical_not (Nx.isnan y))
     ()
-    (fun i () ->
-      Invalid_argument (Printf.sprintf "Aion.Fsq.encode: NaN at [%s]" (index i)));
+    (fun i () -> Refuse.exn "Fsq.encode" "NaN at %a" Nx.pp_shape i);
   (* Rounded to integers, the bounded numbers convert to int64 exactly. *)
   let digit =
     Nx.add
@@ -96,9 +91,8 @@ let check_decode q k =
     Nx.logical_and (Nx.greater_equal_s k 0L) (Nx.less_s k (Int64.of_int q.size))
   in
   Nx.check Nx.Ptree.tensor inside k (fun i k ->
-      Invalid_argument
-        (Printf.sprintf "Aion.Fsq.decode: code %Ld at [%s] outside [0, %d)"
-           (Nx.item [] k) (index i) q.size))
+      Refuse.exn "Fsq.decode" "code %Ld at %a outside [0, %d)" (Nx.item [] k)
+        Nx.pp_shape i q.size)
 
 let decode_raw dt q k =
   let k = Nx.unsqueeze ~axes:[ Nx.ndim k ] k in

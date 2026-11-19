@@ -286,15 +286,13 @@ let read t rows m =
     match List.find_opt (fun (s, m', _) -> s = t.survey && m' = m) map with
     | Some (_, _, c) when holds t c -> c
     | _ ->
-        invalid_arg
-          (Printf.sprintf "Aion.Survey.read: %s's %s holds no %s" t.path t.group
-             (Modality.key m))
+        Refuse.invalid "Survey.read" "%s's %s holds no %s" t.path t.group
+          (Modality.key m)
   in
   Array.iter
     (fun r ->
       if r < 0 || r >= t.length then
-        invalid_arg
-          (Printf.sprintf "Aion.Survey.read: row %d outside [0, %d)" r t.length))
+        Refuse.invalid "Survey.read" "row %d outside [0, %d)" r t.length)
     rows;
   match (column, m) with
   | Pixels, _ -> image t rows m

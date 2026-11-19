@@ -26,7 +26,7 @@ let modality = function
       Modality.Image_hsc
   | Image { bands; _ } when bands <> [] && not (List.exists hsc bands) ->
       Modality.Image
-  | Image _ -> invalid_arg "Aion.Codecs.modality: bands of no one survey"
+  | Image _ -> Refuse.invalid "Codecs.modality" "bands of no one survey"
   | Spectrum { modality; _ } -> Modality.Spectrum modality
   | Scalar { modality; _ } -> Modality.Scalar modality
 
@@ -42,9 +42,7 @@ let load ?cache_dir ?offline ms =
   List.iter
     (function
       | Modality.Segmap | Catalog as m ->
-          invalid_arg
-            (Printf.sprintf "Aion.Codecs.load: %s has no codec here"
-               (Modality.key m))
+          Refuse.invalid "Codecs.load" "%s has no codec here" (Modality.key m)
       | _ -> ())
     ms;
   let wants f = List.exists f ms in
@@ -75,8 +73,7 @@ let jit t =
   }
 
 let missing m =
-  invalid_arg
-    (Printf.sprintf "Aion.Codecs: no codec loaded for %s" (Modality.key m))
+  Refuse.invalid "Codecs" "no codec loaded for %s" (Modality.key m)
 
 let scalar t m =
   match List.assoc_opt m t.scalars with

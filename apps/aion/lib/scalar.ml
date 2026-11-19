@@ -24,9 +24,8 @@ let v transform edges =
   match Nx.shape edges with
   | [| c; n |] when c > 0 && n > 0 -> { transform; edges; programs = None }
   | s ->
-      invalid_arg
-        (Printf.sprintf "Aion.Scalar.v: edges of shape [%s], [c; n] expected"
-           (String.concat "; " (Array.to_list (Array.map string_of_int s))))
+      Refuse.invalid "Scalar.v" "edges of shape %a, [c; n] expected" Nx.pp_shape
+        s
 
 let transform t = t.transform
 let edges t = t.edges
@@ -86,11 +85,7 @@ let directory : Modality.scalar -> string = function
    stored grid spans [0, 6] where AION-1's constructor builds [0, 1]: the stored
    buffer is what AION-1's code reads, so it is read here too. *)
 let codebooks name c archive =
-  let fail fmt =
-    Printf.ksprintf
-      (fun m -> failwith ("Aion.Scalar.load: " ^ name ^ ": " ^ m))
-      fmt
-  in
+  let fail fmt = Refuse.failure "Scalar.load" ("%s: " ^^ fmt) name in
   let row key =
     Option.map
       (fun p ->
@@ -143,10 +138,9 @@ let channels (type v s d) fn t (x : (v, s, d) Nx.t) =
   let c = Nx.dim 0 t.edges and s = Nx.shape x in
   let r = Array.length s in
   if c > 1 && (r = 0 || s.(r - 1) <> c) then
-    invalid_arg
-      (Printf.sprintf "Aion.Scalar.%s: last axis of %d entries, %d expected" fn
-         (if r = 0 then 0 else s.(r - 1))
-         c)
+    Refuse.invalid fn "last axis of %d entries, %d expected"
+      (if r = 0 then 0 else s.(r - 1))
+      c
 
 (* The position of each value's codebook in the flattened edges: [i * n] for
    channel [i], along the values' last axis. *)
@@ -189,7 +183,7 @@ let search ~n ~base flat y =
    any narrower one. *)
 let encode_raw (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
   let n = Nx.dim 1 t.edges in
-  let base = offsets "encode" t x in
+  let base = offsets "Scalar.encode" t x in
   let flat = Nx.flatten t.edges in
   let y = forward t.transform x in
   match Nx.dtype x with
@@ -199,39 +193,34 @@ let encode_raw (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
 (* A compiled codec keeps a program for float32 and one for float64, and
    refuses other floats, which a set without eager kernels could not encode. *)
 let encode (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
-  channels "encode" t x;
+  channels "Scalar.encode" t x;
   match (t.programs, Nx.dtype x) with
   | None, _ -> encode_raw t x
   | Some p, Nx.Dtype.Float32 -> p.p_encode32 x
   | Some p, Nx.Dtype.Float64 -> p.p_encode64 x
   | Some _, dt ->
-      invalid_arg
-        (Printf.sprintf
-           "Aion.Scalar.encode: %s values, a compiled codec takes float32 or \
-            float64"
-           (Nx.Dtype.name dt))
+      Refuse.invalid "Scalar.encode"
+        "%s values, a compiled codec takes float32 or float64"
+        (Nx.Dtype.name dt)
 
 (* The token [n] is the class past the last edge, which a transformer may
    predict (redshift's vocabulary holds it), so the refusal names it. *)
 let check_decode t k =
   let n = Nx.dim 1 t.edges in
-  channels "decode" t k;
+  channels "Scalar.decode" t k;
   let inside =
     Nx.logical_and (Nx.greater_equal_s k 0L) (Nx.less_s k (Int64.of_int n))
   in
   Nx.check Nx.Ptree.tensor inside k (fun i k ->
       let k = Nx.item [] k in
-      Invalid_argument
-        (Printf.sprintf
-           "Aion.Scalar.decode: token %Ld at [%s] outside [0, %d)%s" k
-           (String.concat "; " (Array.to_list (Array.map string_of_int i)))
-           n
-           (if k = Int64.of_int n then
-              ", the class past the last edge, whose value is unknown"
-            else "")))
+      Refuse.exn "Scalar.decode" "token %Ld at %a outside [0, %d)%s" k
+        Nx.pp_shape i n
+        (if k = Int64.of_int n then
+           ", the class past the last edge, whose value is unknown"
+         else ""))
 
 let decode_raw (type d) t (k : d Nx.int64_t) : d Nx.float32_t =
-  let base = offsets "decode" t k in
+  let base = offsets "Scalar.decode" t k in
   inverse t.transform (Nx.take (Nx.add k base) (Nx.flatten t.edges))
 
 (* A compiled codec checks a copy on the host, so that a refusal comes before

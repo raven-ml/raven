@@ -140,20 +140,19 @@ type ('b, 'd) t = {
 
 (* Loading *)
 
-let dims s = String.concat "; " (Array.to_list (Array.map string_of_int s))
-
-let fail fmt =
-  Printf.ksprintf (fun m -> failwith ("Aion.Image.of_archive: " ^ m)) fmt
+let of_archive_fn = "Image.of_archive"
 
 let shape a name =
   match Nx_io.Archive.find name a with
   | Some (Nx.P x) -> Nx.shape x
-  | None -> fail "no entry %s" name
+  | None -> Refuse.failure of_archive_fn "no entry %s" name
 
 let tensor a name = Nx_io.Archive.float ~shape:(shape a name) Nx.float32 name a
 
 let outputs name o want =
-  if o <> want then fail "%s.weight: %d outputs, %d expected" name o want
+  if o <> want then
+    Refuse.failure of_archive_fn "%s.weight: %d outputs, %d expected" name o
+      want
 
 (* The convolution [name] reading [i] channels with a [k] × [k] kernel, its
    PyTorch weight [[o; i; k; k]] moved channels last, and its [o]. *)
@@ -162,10 +161,13 @@ let conv a name ~i ~k =
   match shape a w with
   | [| o; i'; kh; kw |] when i' = i && kh = k && kw = k ->
       if shape a b <> [| o |] then
-        fail "%s: shape [%s], [%d] expected" b (dims (shape a b)) o;
+        Refuse.failure of_archive_fn "%s: shape %a, [%d] expected" b
+          Nx.pp_shape (shape a b) o;
       let w = Nx.copy (Nx.moveaxis 1 (-1) (tensor a w)) in
       ({ Kaun.Conv.w; b = Some (tensor a b) }, o)
-  | s -> fail "%s: shape [%s], [o; %d; %d; %d] expected" w (dims s) i k k
+  | s ->
+      Refuse.failure of_archive_fn "%s: shape %a, [o; %d; %d; %d] expected" w
+        Nx.pp_shape s i k k
 
 (* A convolution of [o] outputs. *)
 let conv_to a name ~i ~k ~o =
@@ -200,16 +202,19 @@ let linear a name ~i =
   match shape a w with
   | [| o; i' |] when i' = i ->
       if shape a b <> [| o |] then
-        fail "%s: shape [%s], [%d] expected" b (dims (shape a b)) o;
+        Refuse.failure of_archive_fn "%s: shape %a, [%d] expected" b
+          Nx.pp_shape (shape a b) o;
       let w = Nx.reshape [| o; 1; 1; i |] (tensor a w) in
       ({ Kaun.Conv.w; b = Some (tensor a b) }, o)
-  | s -> fail "%s: shape [%s], [o; %d] expected" w (dims s) i
+  | s ->
+      Refuse.failure of_archive_fn "%s: shape %a, [o; %d] expected" w
+        Nx.pp_shape s i
 
 let levels_of a =
   match Nx_io.Archive.find "_quantizer.levels" a with
   | Some (Nx.P l) when Nx.ndim l = 1 ->
       List.map Int64.to_int (Array.to_list (Nx.to_array (Nx.cast Nx.int64 l)))
-  | _ -> fail "no 1-d entry _quantizer.levels"
+  | _ -> Refuse.failure of_archive_fn "no 1-d entry _quantizer.levels"
 
 let of_archive a =
   let enc = "model.encoder_layers." and dec = "model.decoder_layers." in
@@ -222,7 +227,8 @@ let of_archive a =
     List.iter
       (fun n ->
         if shape a n <> [| d2 |] then
-          fail "%s: shape [%s], [%d] expected" n (dims (shape a n)) d2)
+          Refuse.failure of_archive_fn "%s: shape %a, [%d] expected" n
+            Nx.pp_shape (shape a n) d2)
       [ w; b ];
     { Kaun.Layer_norm.gamma = tensor a w; beta = Some (tensor a b) }
   in
@@ -324,15 +330,12 @@ let dtype t = Nx.dtype t.proj_in.w
 
 (* Checks *)
 
-let refuse fn fmt =
-  Printf.ksprintf (fun m -> invalid_arg ("Aion.Image." ^ fn ^ ": " ^ m)) fmt
-
 let check_bands fn bs =
-  if bs = [] then refuse fn "no band";
+  if bs = [] then Refuse.invalid fn "no band";
   let rec twice = function
     | [] -> ()
     | b :: rest ->
-        if List.mem b rest then refuse fn "band %s twice" (name b);
+        if List.mem b rest then Refuse.invalid fn "band %s twice" (name b);
         twice rest
   in
   twice bs
@@ -342,10 +345,11 @@ let check_images fn bs x =
   match Nx.shape x with
   | [| _; c; h; w |] ->
       if c <> List.length bs then
-        refuse fn "%d bands in the array, %d listed" c (List.length bs);
+        Refuse.invalid fn "%d bands in the array, %d listed" c (List.length bs);
       if h < side || w < side then
-        refuse fn "images of %d × %d, at least %d × %d expected" h w side side
-  | s -> refuse fn "shape [%s], [n; c; h; w] expected" (dims s)
+        Refuse.invalid fn "images of %d × %d, at least %d × %d expected" h w
+          side side
+  | s -> Refuse.invalid fn "shape %a, [n; c; h; w] expected" Nx.pp_shape s
 
 (* Preparing *)
 
@@ -377,7 +381,7 @@ let expand y = Nx.mul_s (Nx.sinh (div_const (div_const y gain) range)) range
 let band_at i x = Nx.slice [ A; R (i, i + 1) ] x
 
 let prepare bs x =
-  check_images "prepare" bs x;
+  check_images "Image.prepare" bs x;
   let h = Nx.dim 2 x and w = Nx.dim 3 x in
   let r0 = (h - side) / 2 and c0 = (w - side) / 2 in
   let x = Nx.slice [ A; A; R (r0, r0 + side); R (c0, c0 + side) ] x in
@@ -427,7 +431,7 @@ let nine bs p =
   Nx.concatenate ~axis:3 (List.map at bands)
 
 let embed t bs p =
-  check_bands "embed" bs;
+  check_bands "Image.embed" bs;
   (* PyTorch's [(9 / c) ** 0.5]: a quotient rounded, then its square root, as
      its pow takes at the exponent 0.5. *)
   let q = Float.of_int channels /. Float.of_int (List.length bs) in
@@ -459,16 +463,18 @@ let upsample c x =
     (Kaun.Fn.silu (apply c x))
 
 let restore bs y =
-  check_bands "restore" bs;
+  check_bands "Image.restore" bs;
   let y = expand y in
   Nx.concatenate ~axis:1
     (List.map (fun b -> of_nanomaggies b (band_at (channel b) y)) bs)
 
 let check_decode bs k =
-  check_bands "decode" bs;
+  check_bands "Image.decode" bs;
   match Nx.shape k with
   | [| _; c |] when c = grid * grid -> ()
-  | s -> refuse "decode" "shape [%s], [n; %d] expected" (dims s) (grid * grid)
+  | s ->
+      Refuse.invalid "Image.decode" "shape %a, [n; %d] expected" Nx.pp_shape s
+        (grid * grid)
 
 let decode_raw t bs k =
   let n = Nx.dim 0 k in
@@ -491,7 +497,7 @@ let encode t bs x =
   match t.programs with
   | None -> encode_raw t bs x
   | Some p ->
-      check_images "prepare" bs x;
+      check_images "Image.prepare" bs x;
       p.p_encode bs x
 
 let decode t bs k =

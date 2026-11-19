@@ -3,9 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let invalid fn fmt =
-  Printf.ksprintf (fun m -> invalid_arg ("Aion.Roar." ^ fn ^ ": " ^ m)) fmt
-
 (* A step's tokens from its logits [l], [b; k; v], at the temperature [t], a
    0-d float64 array, or the largest logit's without one. Each row is shifted so
    its largest logit is 0 before the division, so a small temperature sends the
@@ -47,19 +44,19 @@ let step ~target t key s temp inputs tokens revealed p =
    placement. *)
 let checked fn ~temperature ~reveal inputs target =
   if temperature < 0. || not (Float.is_finite temperature) then
-    invalid fn "temperature %g, not in [0, inf)" temperature;
+    Refuse.invalid fn "temperature %g, not in [0, inf)" temperature;
   let name = Modality.key target and n = Modality.tokens target in
   List.iter
-    (fun k -> if k < 1 then invalid fn "a count of %d in reveal" k)
+    (fun k -> if k < 1 then Refuse.invalid fn "a count of %d in reveal" k)
     reveal;
   let total = List.fold_left ( + ) 0 reveal in
   if total <> n then
-    invalid fn "reveal sums to %d, %s has %d tokens" total name n;
+    Refuse.invalid fn "reveal sums to %d, %s has %d tokens" total name n;
   if List.exists (fun (i : _ Transformer.input) -> i.modality = target) inputs
-  then invalid fn "%s is an input" name;
+  then Refuse.invalid fn "%s is an input" name;
   match inputs with
   | (i : _ Transformer.input) :: _ -> (Nx.dim 0 i.tokens, Nx.beside i.tokens)
-  | [] -> invalid fn "no input"
+  | [] -> Refuse.invalid fn "no input"
 
 (* The draw's loop: the orders, then each count's step, from no token
    revealed. *)
@@ -83,7 +80,7 @@ let run ~orders ~step ~key ~temperature ~reveal ~b ~at inputs target =
   tokens
 
 let sample ~key ?(temperature = 1.) ~reveal t inputs target =
-  let b, at = checked "sample" ~temperature ~reveal inputs target in
+  let b, at = checked "Roar.sample" ~temperature ~reveal inputs target in
   run
     ~orders:(orders (Modality.tokens target))
     ~step:(step ~target t) ~key ~temperature ~reveal ~b ~at inputs target
@@ -154,7 +151,7 @@ let sampler t target =
   }
 
 let draw s ~key ?(temperature = 1.) ~reveal inputs =
-  let b, at = checked "draw" ~temperature ~reveal inputs s.target in
+  let b, at = checked "Roar.draw" ~temperature ~reveal inputs s.target in
   let n = Modality.tokens s.target in
   (* Every step's checks, made once on the host: the drawn tokens are in the
      vocabulary, and the positions distinct and in range, by construction. *)
