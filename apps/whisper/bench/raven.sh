@@ -10,16 +10,18 @@
 #                               by bench_whisper.exe --recording, the median
 #                               of 5 calls after 1
 #   recording/MODEL             the whole recording, by the same, once, after
-#                               a call on the clip; its text written beside
-#                               it for wer.py
+#                               a call on the clip
 #   first-transcript/MODEL      main.exe from its start to its exit on
 #                               fetch.py's clip, the recording's first
 #                               minute, over tolk's kernel cache that a first
 #                               process filled, the median of 3
 #   first-transcript-cold/MODEL the same over empty caches of its own, so
 #                               that it compiles every kernel, the median of 3
-# On the host main.exe runs eagerly, which compiles nothing, so the cold row
-# is the GPU's alone.
+#   kernels-encoder/MODEL       on the GPU, the time of the kernels that one
+#   kernels-minute/MODEL        encoder call and one transcription of the
+#                               clip run, the sums of DEBUG=2's times
+# On the host main.exe runs eagerly, which compiles nothing, so the cold and
+# kernel rows are the GPU's alone.
 set -euo pipefail
 
 device=${1:?usage: $0 cuda|cpu [MODEL...]}
@@ -72,5 +74,16 @@ for m in $models; do
       first CACHEDB="$cold/cache.db" XDG_CACHE_HOME="$cold" \
         CUDA_CACHE_PATH="$cold/cuda"
     done | row "first-transcript-cold/$m" 60
+  fi
+  if [ "$device" != cpu ]; then
+    DEBUG=2 "$build/bench/bench_whisper.exe" --profile "$m" | awk -v m="$m" '
+      /^profile: / { part = $2; next }
+      /^\*\*\* / && part != "" && part != "end" {
+        for (i = 1; i < NF; i++) if ($i == "tm") t = $(i + 1)
+        v = t + 0
+        if (t ~ /us$/) v /= 1000; else if (t ~ /s$/ && t !~ /ms$/) v *= 1000
+        ms[part] += v }
+      END {
+        for (p in ms) printf "%-28s %10.1f ms\n", "kernels-" p "/" m, ms[p] }'
   fi
 done

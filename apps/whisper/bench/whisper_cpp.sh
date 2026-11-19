@@ -17,8 +17,7 @@
 #   minute/MODEL            fetch.py's clip, the recording's first minute:
 #                           whisper-cli's total time less its load time, the
 #                           median of 5 processes after 1
-#   recording/MODEL         the whole recording, likewise, once, its text
-#                           written beside it for wer.py
+#   recording/MODEL         the whole recording, likewise, once
 #   first-transcript/MODEL  a new process from its start to its exit on the
 #                           clip, the median of 3 after 1
 # and memory/MODEL, the buffers whisper.cpp states it allocates: weights,
@@ -104,7 +103,7 @@ for m in $models; do
   awk -v name="memory/$m" '/total size =|kv [a-z]+ *size =|compute buffer/ {
       for (i = 1; i <= NF; i++) if ($i == "MB") mb += $(i-1) }
     END { printf "%-28s %10.2f GB stated\n", name, mb / 1000 }' "$log"
-  cli "$m" "$data/recording.wav" -otxt -of "$data/whisper-cpp-$m-$device"
+  cli "$m" "$data/recording.wav"
   # The recording's seconds: 16-bit samples after a 44-byte header.
   seconds=$(( ($(stat -c %s "$data/recording.wav") - 44) / 32 ))e-3
   transcribing | row "recording/$m" "$seconds"

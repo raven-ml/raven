@@ -20,8 +20,7 @@ temperatures 0 to 1 by 0.2, the thresholds of compression ratio 2.4 (zlib),
 log probability -1 and no speech 0.6, conditioned on the text before,
 timestamps on, greedy. The rows, each in milliseconds and times real time:
 - minute/MODEL: the recording's first minute, the median of 5 calls after 1;
-- recording/MODEL: the whole recording, once, its text written beside it
-  for wer.py;
+- recording/MODEL: the whole recording, once;
 - first-transcript/MODEL: a new process from its start to the first
   minute's text, loading the model included, the median of 3 after 1;
 and memory/MODEL, the device memory in use after the minute rows (CUDA), or
@@ -111,11 +110,7 @@ def main():
         transcribe(m, clip)
         row(f"minute/{name}", [timed(lambda: transcribe(m, clip)) for _ in range(5)], 60, 5)
         memory(name, device)
-        text = []
-        row(f"recording/{name}", [timed(lambda: text.append(transcribe(m, x)))], seconds, 1)
-        precision = "-fp16" if fp16 else ""
-        with open(os.path.join(DIR, f"hf-transformers-{name}-{device}{precision}.txt"), "w") as f:
-            f.write(text[0])
+        row(f"recording/{name}", [timed(lambda: transcribe(m, x))], seconds, 1)
         del m
         if device == "cuda":
             torch.cuda.empty_cache()

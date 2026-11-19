@@ -14,8 +14,9 @@
 
    [--warm] compiles every kernel into tolk's disk cache first, in a process
    of its own. [--recording cuda|cpu MODEL...] times, outside thumper, the
-   encoder alone and the whole recording (raven.sh). Without fetch.py's files
-   there is nothing to measure. *)
+   encoder alone and the whole recording, and [--profile MODEL] runs the
+   encoder and the clip once each on the GPU for DEBUG=2's kernel times
+   (raven.sh). Without fetch.py's files there is nothing to measure. *)
 
 open Whisper
 
@@ -140,8 +141,8 @@ let timed f =
   (Unix.gettimeofday () -. t0, y)
 
 (* The encoder alone on a window, the median of 5 calls after 1; then the
-   whole recording, once, after a call on the clip, its text written beside
-   it for wer.py; in the reference scripts' format. *)
+   whole recording, once, after a call on the clip; in the reference scripts'
+   format. *)
 let recording device name =
   let (transcribe, encode), memory = on device name in
   ignore (transcribe (clip ()));
@@ -149,12 +150,23 @@ let recording device name =
   let t = List.sort compare (List.init 5 (fun _ -> fst (timed encode))) in
   row ("encoder/" ^ name) (List.nth t 2) 30. 5;
   let x = Audio.load (path "recording.wav") in
-  let s, r = timed (fun () -> transcribe x) in
+  let s, _ = timed (fun () -> transcribe x) in
   row ("recording/" ^ name) s (float (Nx.dim 0 x) /. float Audio.rate) 1;
-  Printf.printf "%-28s %s\n%!" ("memory/" ^ name) (memory ());
-  Out_channel.with_open_bin
-    (path (Printf.sprintf "raven-%s-%s.txt" name device))
-    (fun oc -> output_string oc r.text)
+  Printf.printf "%-28s %s\n%!" ("memory/" ^ name) (memory ())
+
+(* After a call on the clip and one of the encoder, one more of each, each
+   after a line naming it, for raven.sh to sum the kernel times that DEBUG=2
+   prints after it. *)
+let profile name =
+  let (transcribe, encode), _ = on "cuda" name in
+  let x = clip () in
+  ignore (transcribe x);
+  encode ();
+  print_endline "profile: encoder";
+  encode ();
+  print_endline "profile: minute";
+  ignore (transcribe x);
+  print_endline "profile: end"
 
 let () =
   match Array.to_list Sys.argv with
@@ -167,6 +179,7 @@ let () =
             encode ();
             Gc.full_major ())
           gpu_models
+  | [ _; "--profile"; name ] -> profile name
   | _ :: "--recording" :: device :: models ->
       List.iter
         (fun name ->

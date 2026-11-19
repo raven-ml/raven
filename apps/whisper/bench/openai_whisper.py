@@ -18,13 +18,14 @@ recording. transcribe runs at upstream's defaults in English, as raven's
 rows do: greedy with the fallback ladder, conditioned on the text before,
 timestamps on. The rows, each in milliseconds and times real time:
 - minute/MODEL: the recording's first minute, the median of 5 calls after 1;
-- recording/MODEL: the whole recording, once, its text written beside it
-  for wer.py;
+- recording/MODEL: the whole recording, once;
 - first-transcript/MODEL: a new process from its start to the first
   minute's text, loading the model included, the median of 3 after 1;
 and memory/MODEL, the device memory in use after the minute rows (CUDA), or
 the process's peak resident memory (CPU); and encoder/MODEL, the encoder
-alone on the clip's first window, the median of 5 calls after 1. Models
+alone on the clip's first window, the median of 5 calls after 1; on CUDA,
+kernels-encoder/MODEL and kernels-minute/MODEL, the time of the kernels one
+encoder call and one transcription of the first minute run. Models
 default to tiny, small and large-v3-turbo. --fp16 runs float16, upstream's
 default on a GPU; the rows compare at float32.
 """
@@ -76,6 +77,17 @@ def memory(name, device):
         print(f"{'memory/' + name:<28} {rss / 1e9:10.2f} GB peak resident", flush=True)
 
 
+# The milliseconds of the CUDA kernels [f] runs, by torch.profiler: copies
+# and fills left out, as raven's DEBUG=2 leaves them out.
+def kernels(f):
+    from torch.profiler import ProfilerActivity, profile
+    with profile(activities=[ProfilerActivity.CUDA]) as p:
+        f()
+        torch.cuda.synchronize()
+    return sum(e.self_device_time_total for e in p.key_averages()
+               if not e.key.startswith(("Memcpy", "Memset"))) / 1e3
+
+
 def timed(f):
     t0 = time.perf_counter(); f(); return time.perf_counter() - t0
 
@@ -104,11 +116,11 @@ def main():
         encode = torch.no_grad()(lambda: m.embed_audio(mel).sum().item())
         encode()
         row(f"encoder/{name}", [timed(encode) for _ in range(5)], 30, 5)
-        text = []
-        row(f"recording/{name}", [timed(lambda: text.append(transcribe(m, x, fp16)))], seconds, 1)
-        precision = "-fp16" if fp16 else ""
-        with open(os.path.join(DIR, f"openai-whisper-{name}-{device}{precision}.txt"), "w") as f:
-            f.write(text[0])
+        if device == "cuda":
+            print(f"{'kernels-encoder/' + name:<28} {kernels(encode):10.1f} ms", flush=True)
+            print(f"{'kernels-minute/' + name:<28} "
+                  f"{kernels(lambda: transcribe(m, clip, fp16)):10.1f} ms", flush=True)
+        row(f"recording/{name}", [timed(lambda: transcribe(m, x, fp16))], seconds, 1)
         del m
         if device == "cuda":
             torch.cuda.empty_cache()
