@@ -1872,6 +1872,168 @@ let test_check_grads () =
         and the gradient predicts 1")
     (Rune.check_grads ~eps:0.5 T.tensor cliff (v [| 0. |]))
 
+(* Convolutions *)
+
+(* A convolution, or its transpose, over the spatial axes of [d], the extents of
+   the convolution's input: [taps] the kernel's extents, [groups] groups of [cg]
+   input and [og] output channels. *)
+type conv_case = {
+  transpose : bool;
+  n : int;
+  d : int array;
+  taps : int array;
+  stride : int array;
+  padding : (int * int) array;
+  dilation : int array;
+  groups : int;
+  cg : int;
+  og : int;
+  seed : float;
+}
+
+let pp_ints ppf a =
+  Format.fprintf ppf "[%s]"
+    (String.concat ";" (Array.to_list (Array.map string_of_int a)))
+
+let pp_conv ppf c =
+  let pad (lo, hi) = Printf.sprintf "(%d,%d)" lo hi in
+  Format.fprintf ppf
+    "%s n %d, d %a, taps %a, stride %a, padding [%s], dilation %a, %d groups \
+     of %d in and %d out, seed %g"
+    (if c.transpose then "conv_transpose" else "conv")
+    c.n pp_ints c.d pp_ints c.taps pp_ints c.stride
+    (String.concat ";" (Array.to_list (Array.map pad c.padding)))
+    pp_ints c.dilation c.groups c.cg c.og c.seed
+
+let conv_gen =
+  let open Gen in
+  let axes k g = array ~size:(constant k) g in
+  (let* k = int_range 1 2 in
+   let+ transpose = bool
+   and+ n = of_list [ 0; 1; 1; 2 ]
+   and+ d = axes k (int_range 0 4)
+   and+ taps = axes k (of_list [ 0; 1; 2; 2; 3 ])
+   and+ stride = axes k (int_range 1 3)
+   and+ padding = axes k (pair (int_range (-1) 2) (int_range (-1) 2))
+   and+ dilation = axes k (int_range 1 2)
+   and+ groups = int_range 1 2
+   and+ cg = int_range 1 2
+   and+ og = int_range 1 2
+   and+ seed = float_range 0. 6. in
+   { transpose; n; d; taps; stride; padding; dilation; groups; cg; og; seed })
+  |> with_pp pp_conv
+
+(* Inputs padded to none of their elements: one window of [x] at stride 2,
+   which the padding cuts out, and a batch of no image. *)
+let conv_examples =
+  [
+    {
+      transpose = false;
+      n = 0;
+      d = [| 0 |];
+      taps = [| 1 |];
+      stride = [| 1 |];
+      padding = [| (1, 0) |];
+      dilation = [| 1 |];
+      groups = 1;
+      cg = 2;
+      og = 1;
+      seed = 0.;
+    };
+    {
+      transpose = true;
+      n = 1;
+      d = [| 0 |];
+      taps = [| 1 |];
+      stride = [| 2 |];
+      padding = [| (1, 1) |];
+      dilation = [| 1 |];
+      groups = 1;
+      cg = 2;
+      og = 2;
+      seed = 0.;
+    };
+  ]
+
+let conv_of c x w =
+  let op = if c.transpose then Nx.conv_transpose else Nx.conv in
+  op ~stride:c.stride ~padding:c.padding ~dilation:c.dilation ~groups:c.groups x
+    w
+
+let filled seed s = Nx.create f64 s (spread seed (Array.fold_left ( * ) 1 s))
+
+(* The operands of [c]: a transpose's [x] has the shape of the convolution of an
+   input of extents [d]. *)
+let conv_operands c =
+  let w =
+    filled (c.seed +. 1.)
+      (Array.concat [ [| c.groups * c.og |]; c.taps; [| c.cg |] ])
+  in
+  let z =
+    Nx.zeros f64 (Array.concat [ [| c.n |]; c.d; [| c.groups * c.cg |] ])
+  in
+  let x = if c.transpose then conv_of { c with transpose = false } z w else z in
+  (filled c.seed (Nx.shape x), w)
+
+(* The pullbacks of [<c̄, f (x, w)>] in [x] and in [w] together, each paired with
+   a direction, against the central difference along it, which is exact but for
+   rounding: a convolution is linear in each operand. *)
+let conv_law pullback c =
+  let x, w = conv_operands c in
+  cover "a transpose" c.transpose;
+  cover "groups" (c.groups > 1);
+  cover "one channel in and out a group" (c.cg = 1 && c.og = 1);
+  cover "a stride past 1" (Array.exists (fun s -> s > 1) c.stride);
+  cover "a cutting padding"
+    (Array.exists (fun (lo, hi) -> lo < 0 || hi < 0) c.padding);
+  cover "two spatial axes" (Array.length c.d = 2);
+  cover "a kernel of no tap" (Array.mem 0 c.taps);
+  cover "a dilation past 1" (Array.exists (fun d -> d > 1) c.dilation);
+  (* A contraction of windows over a padding of [x] that keeps none of its
+     elements. *)
+  let pads = Array.exists (fun p -> p <> (0, 0)) c.padding in
+  let none =
+    c.n = 0
+    || Array.exists2
+         (fun d (lo, hi) -> d + Int.min lo 0 + Int.min hi 0 <= 0)
+         c.d c.padding
+  in
+  cover "a conv's padding that keeps no element"
+    ((not c.transpose) && pads && none
+    && (not (Array.mem 0 c.taps))
+    && not (c.cg = 1 && c.og = 1));
+  let y = conv_of c x w in
+  cover "a zero-size result" (Nx.numel y = 0);
+  let ct = filled (c.seed +. 2.) (Nx.shape y) in
+  let gx, gw = pullback c x w ct in
+  equal ~msg:"x's cotangent shape" (array int) (Nx.shape x) (Nx.shape gx);
+  equal ~msg:"w's cotangent shape" (array int) (Nx.shape w) (Nx.shape gw);
+  let loss x w = Nx.item [] (Nx.sum (Nx.mul ct (conv_of c x w))) in
+  let mass a = sum_abs (Nx.to_array a) in
+  let size a b = mass ct *. a *. b in
+  let u = filled (c.seed +. 3.) (Nx.shape x) in
+  let fd = (loss (Nx.add x u) w -. loss (Nx.sub x u) w) /. 2. in
+  adjoint ~msg:"x's pullback"
+    ~size:(size (mass x +. mass u) (mass w))
+    [| fd |]
+    (Nx.to_array (Nx.mul gx u));
+  let u = filled (c.seed +. 4.) (Nx.shape w) in
+  let fd = (loss x (Nx.add w u) -. loss x (Nx.sub w u)) /. 2. in
+  adjoint ~msg:"w's pullback"
+    ~size:(size (mass x) (mass w +. mass u))
+    [| fd |]
+    (Nx.to_array (Nx.mul gw u))
+
+let eager_pullback c x w ct =
+  let _, pb = Rune.vjp (two ()) T.tensor (fun (x, w) -> conv_of c x w) (x, w) in
+  pb ct
+
+let compiled_pullback c x w ct =
+  Rune.jit
+    T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
+    (fun x w ct -> eager_pullback c x w ct)
+    x w ct
+
 (* Errors *)
 
 type message = Is of string | Starts of string
@@ -2352,6 +2514,14 @@ let () =
              test "a take of split positions" test_cut_take;
              test "jacrev'" test_jacrev;
              test "check_grads" test_check_grads;
+           ];
+         group "convolutions"
+           [
+             prop "pullbacks in both operands" ~examples:conv_examples conv_gen
+               (conv_law eager_pullback);
+             prop "compiled pullbacks in both operands" ~examples:conv_examples
+               conv_gen
+               (conv_law compiled_pullback);
            ];
          group "placement"
            [

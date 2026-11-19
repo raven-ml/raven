@@ -529,24 +529,31 @@ let rec sums_only : type d r. Scalar.t -> (d, r) Prim.reductions -> bool =
   | Moments (k, _) :: rest -> plain k rest
   | Arg (_, k, _) :: rest -> plain k rest
 
-(* A reduction's derivative where each of its reductions with a tangent is a
-   sum: its program's primal outputs then those sums' tangents, and which of
-   its outputs have a tangent. [fused] is [None] where another reduction has
-   one. *)
-type reduce_plan = { fused : P.t option; has_tangent : bool array }
+(* A reduction's derivative: [Primal] where no reduction has a tangent its dtype
+   holds, the reduction over its primal loads alone; [Fused] where each with one
+   is a sum, its program's primal outputs then those sums' tangents, and which
+   of its outputs have a tangent; [Parts] otherwise. A [Primal] reduction read
+   over tangents too would reach a tape, which records whole one that reads no
+   primal load, as nx's fills beside an array do: its results would be tape
+   variables, and a product of one with a tangent not linear. *)
+type reduce_plan =
+  | Primal
+  | Fused of { prog : P.t; has_tangent : bool array }
+  | Parts
 
 let reduce_plan prog tangents reductions =
   let b = Scalar.start prog ~tangents ~extra:[||] in
-  let k = Scalar.outputs b in
-  let has_tangent = Array.init k (fun o -> Scalar.tangent b o <> None) in
-  if not (sums_only b reductions) then { fused = None; has_tangent }
+  if not (sums_only b reductions) then Parts
   else
-    let outs =
-      Array.append
-        (Array.init k (Scalar.value b))
-        (Array.of_list (sum_tangents b reductions))
-    in
-    { fused = Some (Scalar.finish b ~outs); has_tangent }
+    match sum_tangents b reductions with
+    | [] -> Primal
+    | sums ->
+        let k = Scalar.outputs b in
+        let has_tangent = Array.init k (fun o -> Scalar.tangent b o <> None) in
+        let outs =
+          Array.append (Array.init k (Scalar.value b)) (Array.of_list sums)
+        in
+        Fused { prog = Scalar.finish b ~outs; has_tangent }
 
 (* What a reduction's plan reads of it: its output, whether it is a sum and
    whether its dtype has a derivative. *)
@@ -594,28 +601,30 @@ let reduce_plan_of i (prog : P.t) reductions loads =
 
 let reduce_rule (type d r) i ~by layout axes (prog : P.t)
     (reductions : (d, r) Prim.reductions) (loads : d Prim.load iarray) : r =
-  let plan = reduce_plan_of i prog reductions loads in
-  let jl = jvp_loads i loads in
-  match plan.fused with
-  | Some fused ->
-      let k = Array.length plan.has_tangent in
-      let (JR (rs, f)) = jreds i plan.has_tangent reductions (ref k) in
+  let primal () =
+    Prim.eval ~by
+      (Reduce
+         {
+           layout;
+           axes;
+           prog;
+           reductions;
+           loads = Iarray.map (primal_load i) loads;
+         })
+  in
+  match reduce_plan_of i prog reductions loads with
+  | Primal -> primal ()
+  | Fused { prog = fused; has_tangent } ->
+      let jl = jvp_loads i loads in
+      let k = Array.length has_tangent in
+      let (JR (rs, f)) = jreds i has_tangent reductions (ref k) in
       f
         (Prim.eval ~by
            (Reduce { layout; axes; prog = fused; reductions = rs; loads = jl }))
-  | None ->
+  | Parts -> (
+      let jl = jvp_loads i loads in
       let tangents = has i loads in
-      let primal_op =
-        Prim.Reduce
-          {
-            layout;
-            axes;
-            prog;
-            reductions;
-            loads = Iarray.map (primal_load i) loads;
-          }
-      in
-      let y = Prim.eval ~by primal_op in
+      let y = primal () in
       let part = reduce_parts i ~by ~layout ~axes reductions y in
       let extra = Array.of_list part.extra in
       let b = Scalar.start prog ~tangents ~extra:(Array.map load_dtype extra) in
@@ -634,7 +643,7 @@ let reduce_rule (type d r) i ~by layout axes (prog : P.t)
           finish
             (read
                (Prim.eval ~by
-                  (Reduce { layout; axes; prog; reductions = rs; loads })))
+                  (Reduce { layout; axes; prog; reductions = rs; loads }))))
 
 (* Scans *)
 

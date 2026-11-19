@@ -500,6 +500,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.vjp` and `Rune.grad` in several arguments at once return the
+  pullback where a padding keeps none of an array's elements, as `Nx.conv`
+  and `Nx.conv_transpose` do in both operands where a padding cuts every
+  element or the input has none. They raised that an operation read another
+  tangent.
 - The budgets of the special functions' derivatives are measured from the
   exact derivative rounded to the dtype, as an ulp is.
 - `Rune.jit`'s Numerics table states `Nx.log_softmax`'s bound,
