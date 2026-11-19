@@ -470,44 +470,216 @@ let cotangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
   in
   (Nx.cast vt bq, bk, bv, bloads)
 
-let linear (type d) spec ~transposed (data : d Prim.any array)
+let like (type v s d) set (dt : (v, s) D.t) (Prim.Any x : d Prim.any) :
+    (v, s, d) Nx.t =
+  match Nx.Prim.coerce dt set x with
+  | Some y -> y
+  | None -> invalid_arg "Rune: an operand of attention's derivative"
+
+(* The derivative over the whole pair loop of [q] and [kv]. *)
+let whole (type d) e spec ~transposed q (kv : (_, _, d) Nx.kv) lengths loads
+    (Prim.Any o : d Prim.any) (Prim.Any lse : d Prim.any)
+    (args : d Prim.any array) : d Prim.any array =
+  let set = Nx.Placement.devices (Nx.placement q) in
+  let vt = Nx.dtype q in
+  match D.kind (Nx.dtype lse) with
+  | Float when not transposed ->
+      let acc = Nx.dtype lse in
+      let dq = like set vt args.(0) and dk = like set vt args.(1) in
+      let dv = like set vt args.(2) in
+      let dloads = Array.to_list (Array.sub args 3 (Array.length args - 3)) in
+      let o', l' = tangent e spec ~acc q kv lengths loads o lse dq dk dv dloads in
+      [| Prim.Any o'; Prim.Any l' |]
+  | Float ->
+      let acc = Nx.dtype lse in
+      let bo = like set (Nx.dtype o) args.(0) and bl = like set acc args.(1) in
+      let bq, bk, bv, bloads = cotangent e spec ~acc q kv lengths loads o lse bo bl in
+      Array.of_list (Prim.Any bq :: Prim.Any bk :: Prim.Any bv :: bloads)
+  | _ -> invalid_arg "Rune: attention's lse is not a float"
+
+(* Lengths read on the host
+
+   A lead index's pairs past its length are hidden, so the derivative needs
+   none of them. With the lengths read, it computes over groups of lead
+   indices, each over the keys before its longest length: a length rounded
+   up to a power of two, then to whole pages, at most [tk]. A group's
+   operands are the lead indices' rows and their first keys, its lead
+   [[n; 1; …]] so that the pair loop keeps its rank, which the pair
+   program's coordinates count from. Its results are widened back to [tk]
+   keys with zeros, a hidden key's cotangent, and put back in the lead
+   indices' order. So a row of [n] keys computes over at most
+   [max (2n) page] of them, in at most [⌈log₂ tk⌉ + 2] groups. *)
+
+(* The keys of [kv] and the keys of a page, [1] for dense keys. *)
+let extent (type d) (kv : (_, _, d) Nx.kv) =
+  match kv with
+  | Dense { k; _ } -> (Nx.dim (-2) k, 1)
+  | Paged { k; table; _ } -> (Nx.dim (-1) table * Nx.dim 2 k, Nx.dim 2 k)
+
+(* Each group's keys and its lead indices, in order, the keys ascending,
+   from lengths within [[0, tk]]. *)
+let groups ~tk ~page lens =
+  let cut l =
+    let rec up c = if c >= l then c else up (2 * c) in
+    if l = 0 then 0 else min tk ((up 1 + page - 1) / page * page)
+  in
+  let cuts = Array.map cut lens in
+  let all = List.init (Array.length lens) Fun.id in
+  List.map
+    (fun c -> (c, List.filter (fun b -> cuts.(b) = c) all))
+    (List.sort_uniq compare (Array.to_list cuts))
+
+(* A function of every array of brand ['d]. *)
+type 'd each = { f : 'v 's. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t }
+[@@unboxed]
+
+let any (type d) (g : d each) (Prim.Any x : d Prim.any) = Prim.Any (g.f x)
+
+(* What a result is, for joining a group's: by lead index, by lead index
+   with keys along an axis, or a pool every group adds into. *)
+type part = Rows | Keys of int | Pool
+
+let cut (type d) e spec ~transposed ~lens q (kv : (_, _, d) Nx.kv) lengths
+    loads o lse (args : d Prim.any array) =
+  let l = Nx.ndim q - 3 in
+  let lead = Array.sub (Nx.shape q) 0 l in
+  let b = Array.length lens in
+  let tk, page = extent kv in
+  let gs = groups ~tk ~page lens in
+  let order = Array.of_list (List.concat_map snd gs) in
+  let ordered = Array.for_all2 ( = ) order (Array.init b Fun.id) in
+  let inv = Array.make b 0 in
+  Array.iteri (fun i x -> inv.(x) <- i) order;
+  let set = Nx.Placement.devices (Nx.placement q) in
+  let tail x = Array.sub (Nx.shape x) l (Nx.ndim x - l) in
+  let indices x = Array.fold_left ( * ) 1 (Array.sub (Nx.shape x) 0 l) in
+  let one (c, idx) =
+    let n = List.length idx in
+    (* [x]'s rows of the group's lead indices, of lead [[n; 1; …]]. *)
+    let rows x =
+      if n = b then x
+      else
+        let rest = tail x in
+        let y = Nx.slice [ L idx ] (Nx.reshape (Array.append [| b |] rest) x) in
+        Nx.reshape (Array.concat [ [| n |]; Array.make (l - 1) 1; rest ]) y
+    in
+    (* [x]'s first [c] entries along its axis [ax]: a view. *)
+    let first c ax x =
+      Nx.slice (List.init ax (fun _ -> Nx.A) @ [ Nx.R (0, c) ]) x
+    in
+    let keys ax x = first c ax x in
+    let pairs = { f = (fun x -> rows (keys (l + 2) x)) } in
+    let by_rows = { f = rows } in
+    let kv : _ Nx.kv =
+      match kv with
+      | Dense { k; v } ->
+          Dense { k = rows (keys (l + 1) k); v = rows (keys (l + 1) v) }
+      | Paged { k; v; table } ->
+          Paged { k; v; table = rows (first (c / page) l table) }
+    in
+    let kv_tangent x =
+      match kv with
+      | Dense _ -> any { f = (fun x -> rows (keys (l + 1) x)) } x
+      | Paged _ -> x
+    in
+    let args =
+      if transposed then Array.map (any by_rows) args
+      else
+        Array.concat
+          [
+            [| any by_rows args.(0); kv_tangent args.(1); kv_tangent args.(2) |];
+            Array.map (any pairs) (Array.sub args 3 (Array.length args - 3));
+          ]
+    in
+    whole e spec ~transposed (rows q) kv (Option.map rows lengths)
+      (List.map (any pairs) loads) (any by_rows o) (any by_rows lse) args
+  in
+  let parts = List.map (fun g -> (fst g, one g)) gs in
+  let join part i =
+    let xs = List.map (fun (c, ys) -> (c, ys.(i))) parts in
+    let (Prim.Any x0) = snd (List.hd xs) in
+    let dt = Nx.dtype x0 in
+    let xs = List.map (fun (c, x) -> (c, like set dt x)) xs in
+    match part with
+    | Pool ->
+        let sum = List.fold_left (fun a (_, x) -> Nx.add a x) in
+        Prim.Any (sum (snd (List.hd xs)) (List.tl xs))
+    | Rows | Keys _ ->
+        let flat (c, x) =
+          let x =
+            match part with
+            | Keys ax when c < tk ->
+                let w = Array.make (Nx.ndim x) (0, 0) in
+                w.(ax) <- (0, tk - c);
+                Nx.pad w (D.zero dt) x
+            | _ -> x
+          in
+          Nx.reshape (Array.append [| indices x |] (tail x)) x
+        in
+        let y =
+          match xs with
+          | [ x ] -> flat x
+          | xs -> Nx.concatenate ~axis:0 (List.map flat xs)
+        in
+        let y = if ordered then y else Nx.slice [ L (Array.to_list inv) ] y in
+        let rest = Array.sub (Nx.shape y) 1 (Nx.ndim y - 1) in
+        Prim.Any (Nx.reshape (Array.append lead rest) y)
+  in
+  let n = Array.length (snd (List.hd parts)) in
+  Array.init n (fun i ->
+      if not transposed then join Rows i
+      else
+        match (i, kv) with
+        | 0, _ -> join Rows i
+        | (1 | 2), Dense _ -> join (Keys (l + 1)) i
+        | (1 | 2), Paged _ -> join Pool i
+        | _ -> join (Keys (l + 2)) i)
+
+let linear (type d) spec ~transposed ~read (data : d Prim.any array)
     (args : d Prim.any array) : d Prim.any array =
   let e = { eval = (fun op -> Prim.eval ~by:"Nx.attention" op) } in
   let (Prim.Any q) = data.(0) in
   let set = Nx.Placement.devices (Nx.placement q) in
-  let like (type v s) (dt : (v, s) D.t) (Prim.Any x) : (v, s, d) Nx.t =
-    match Nx.Prim.coerce dt set x with
-    | Some y -> y
-    | None -> invalid_arg "Rune: an operand of attention's derivative"
-  in
   let n = Array.length data in
   let vt = Nx.dtype q in
-  let k = like vt data.(1) and v = like vt data.(2) in
+  let k = like set vt data.(1) and v = like set vt data.(2) in
   let at = ref 3 in
   let next () =
     let x = data.(!at) in
     incr at;
     x
   in
-  let table = if spec.paged then Some (like D.Int64 (next ())) else None in
-  let lengths = if spec.lengths then Some (like D.Int64 (next ())) else None in
+  let table = if spec.paged then Some (like set D.Int64 (next ())) else None in
+  let lengths =
+    if spec.lengths then Some (like set D.Int64 (next ())) else None
+  in
   let loads = Array.to_list (Array.sub data !at (n - 2 - !at)) in
-  let (Prim.Any o) = data.(n - 2) in
-  let (Prim.Any lse) = data.(n - 1) in
+  let o = data.(n - 2) and lse = data.(n - 1) in
   let kv : (_, _, d) Nx.kv =
     match table with None -> Dense { k; v } | Some table -> Paged { k; v; table }
   in
-  match D.kind (Nx.dtype lse) with
-  | Float when not transposed ->
-      let acc = Nx.dtype lse in
-      let dq = like vt args.(0) and dk = like vt args.(1) in
-      let dv = like vt args.(2) in
-      let dloads = Array.to_list (Array.sub args 3 (Array.length args - 3)) in
-      let o', l' = tangent e spec ~acc q kv lengths loads o lse dq dk dv dloads in
-      [| Prim.Any o'; Prim.Any l' |]
-  | Float ->
-      let acc = Nx.dtype lse in
-      let bo = like (Nx.dtype o) args.(0) and bl = like acc args.(1) in
-      let bq, bk, bv, bloads = cotangent e spec ~acc q kv lengths loads o lse bo bl in
-      Array.of_list (Prim.Any bq :: Prim.Any bk :: Prim.Any bv :: bloads)
-  | _ -> invalid_arg "Rune: attention's lse is not a float"
+  (* The lengths within [[0, tk]], where they can be read and a group
+     computes as the whole does: not traced, read where no tracer stages
+     the reading, on one device, whose pads and concatenations read the
+     key axis whole, and a pair program that reads no lead coordinate,
+     which a group's lead renumbers. *)
+  let tk, _ = extent kv in
+  let rank = Nx.ndim q in
+  let leads =
+    Iarray.exists
+      (function P.Coord i -> i < rank - 2 | _ -> false)
+      spec.prog.nodes
+  in
+  let one = List.length (Nx.Devices.to_list set) = 1 in
+  let within x = Int64.(to_int (max 0L (min (of_int tk) x))) in
+  let lens =
+    match lengths with
+    | Some len when read && one && (not leads) && Option.is_none (Prim.owner len)
+      ->
+        Some (Array.map within (Nx.to_array len))
+    | _ -> None
+  in
+  match lens with
+  | Some lens when not (Array.for_all (fun x -> x >= tk) lens) ->
+      cut e spec ~transposed ~lens q kv lengths loads o lse args
+  | _ -> whole e spec ~transposed q kv lengths loads o lse args

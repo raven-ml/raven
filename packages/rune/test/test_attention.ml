@@ -400,14 +400,16 @@ let law_jvp dt acc ~h ~tol c =
      [0.76 < π / 4], a value is at most [1.2], so [|o| <= 1.2 / cos 0.76
      <= 1.67] and [|o'''| <= 3! · 1.67 / ρ³ <= 11700]: [F <= 80 · 11700].
    At [h = 2e-6] that is [1.05e-6 + 6.3e-7]: [tol = 2e-6], where float32's
-   rounding of [o] alone, [2{^-24}] each, would give about [2.4]. *)
-let grads (type s) (dt : (float, s) Nx.dtype) ~eps ~tol () =
+   rounding of [o] alone, [2{^-24}] each, would give about [2.4]. Lengths
+   [0] and [3], a row of no key and rows of fewer keys, only lower these
+   bounds. *)
+let grads (type s) (dt : (float, s) Nx.dtype) ~eps ~tol lens () =
   let w =
     Nx.create Nx.float64 [| 2; 4; 5; 2 |]
       (Array.init 80 (fun k -> Float.sin (Float.of_int k)))
   in
   let slopes = Nx.create dt [| 4; 1; 1 |] [| 0.1; 0.2; 0.3; 0.4 |] in
-  let lengths = Nx.create Nx.int64 [| 2 |] [| 6L; 7L |] in
+  let lengths = Nx.create Nx.int64 [| 2 |] lens in
   let loss = function
     | [ q; k; v ] ->
         let c x = Nx.cast dt x in
@@ -564,6 +566,177 @@ let law_grad (type a) (acc : (float, a) Nx.dtype) ~tol c =
     ~than:(tol *. (1. +. Float.abs dot))
     (Float.abs (d -. dot))
 
+(* Lengths hide the keys past each lead index's length as a mask of the
+   same pairs does: the gradient in the query, keys, values and slopes and
+   the tangent along a direction, with lengths, whose eager derivative
+   computes over each lead index's keys, against the mask's, whose
+   derivative computes the whole pair loop, over two lead axes. The same
+   sums of products, without some zero terms and in another order: in
+   float64 within 1e-9 relative, in float32 within 1e-3, set by hand as in
+   [law_grad]. *)
+let law_lengths (type a) (acc : (float, a) Nx.dtype) ~tol c =
+  let c = { c with page = None; alibi = true } in
+  let lens = Option.value c.lengths ~default:[| 0; c.tk |] in
+  let clamped = Array.map (fun l -> max 0 (min c.tk l)) lens in
+  Array.iter
+    (fun l ->
+      cover "a row of no key" (l = 0);
+      cover "a row of every key" (l = c.tk);
+      cover "a row of some keys" (l > 0 && l < c.tk))
+    clamped;
+  let lead = [| 1; 2 |] in
+  let with_lead s = Array.append lead s in
+  let k, v = keys acc c lead in
+  let q = draw acc c 1. (with_lead [| hq c; c.tq; c.dk |]) in
+  let slopes = Nx.abs (draw acc c 8. [| hq c; 1; 1 |]) in
+  let w = draw acc c 10. (with_lead [| hq c; c.tq; c.dv |]) in
+  let w2 = draw acc c 11. (with_lead [| hq c; c.tq |]) in
+  let lengths = Nx.create Nx.int64 lead (Array.map Int64.of_int lens) in
+  let len =
+    Nx.create Nx.int64 (with_lead [| 1; 1; 1 |]) (Array.map Int64.of_int clamped)
+  in
+  let captured =
+    Nx.greater_equal_s (draw acc c 7. [| hq c; c.tq; c.tk |]) (-0.5)
+  in
+  let mask =
+    match c.mask with
+    | Unmasked -> None
+    | Causal -> Some Nx.causal
+    | Captured -> Some (fun _ -> captured)
+  in
+  (* [mask] with the lengths' pairs hidden by a captured [len]. *)
+  let hiding (p : Nx.host Nx.pair) =
+    let within = Nx.less p.k len in
+    match c.mask with
+    | Unmasked -> within
+    | Causal ->
+        Nx.logical_and within
+          (Nx.less_equal p.k (Nx.add p.q (Nx.sub_s len (Int64.of_int c.tq))))
+    | Captured -> Nx.logical_and within captured
+  in
+  let loss ?lengths mask = function
+    | [ q; k; v; slopes ] ->
+        let score (p : Nx.host Nx.pair) s =
+          Nx.(Infix.(s - (cast acc (p.q - p.k) * slopes)))
+        in
+        let o, lse =
+          Nx.attention ?lengths ?mask ~score ~acc ~kv:(Nx.Dense { k; v }) q
+        in
+        let finite x = Nx.where (Nx.isfinite x) x (Nx.zeros_like x) in
+        Nx.add (Nx.sum (Nx.mul w o)) (Nx.sum (Nx.mul w2 (finite lse)))
+    | _ -> invalid_arg "loss"
+  in
+  let cut = loss ~lengths mask and whole = loss (Some hiding) in
+  let close msg a b =
+    let a = Nx.to_array a and b = Nx.to_array b in
+    Array.iteri
+      (fun i x ->
+        at_most ~msg float_exact
+          ~than:(tol *. (1. +. Float.abs x))
+          (Float.abs (x -. b.(i))))
+      a
+  in
+  let xs = [ q; k; v; slopes ] in
+  List.iter2 (close "gradient")
+    (Rune.grad T.(list tensor) whole xs)
+    (Rune.grad T.(list tensor) cut xs);
+  let ts = List.mapi (fun i x -> draw acc c (20. +. Float.of_int i) (Nx.shape x)) xs in
+  close "tangent"
+    (snd (Rune.jvp T.(list tensor) T.tensor whole xs ts))
+    (snd (Rune.jvp T.(list tensor) T.tensor cut xs ts))
+
+(* Rows of no key, of some and of every key, under each mask. *)
+let length_examples =
+  List.map
+    (fun (mask, lengths) ->
+      {
+        hk = 1;
+        groups = 2;
+        tq = 3;
+        tk = 9;
+        dk = 2;
+        dv = 2;
+        page = None;
+        table = [| 0; 0 |];
+        lengths = Some lengths;
+        mask;
+        alibi = true;
+        seed = 0.5;
+      })
+    [ (Causal, [| 0; 9 |]); (Captured, [| 4; 10 |]); (Unmasked, [| 1; 0 |]) ]
+
+(* The most elements a result of an operation of [f ()] holds, a view's
+   excepted: the largest array [f] stores. *)
+let stored f =
+  let most = ref 0 in
+  let rule : type r. Nx.Prim.interpretation -> by:string -> r Nx.Prim.t -> r =
+   fun _ ~by op ->
+    let r = Nx.Prim.eval ~by op in
+    (match op with
+    | Move _ -> ()
+    | _ ->
+        Nx.Prim.iter_results
+          (fun y -> most := max !most (numel (Nx.shape y)))
+          op r);
+    r
+  in
+  Nx.Prim.interpret ~name:"stored" Extent rule (fun _ -> ignore (f ()));
+  !most
+
+(* The eager derivative computes over each lead index's keys before its
+   length: of 64 keys, lengths 3 and 0 leave it no array of the whole pair
+   loop, in reverse mode and in forward mode. *)
+let test_padded_work () =
+  let lead = [| 2 |] and hq = 2 and tq = 4 and tk = 64 in
+  let f s seed =
+    Nx.create Nx.float64 s
+      (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 1.3) +. seed)))
+  in
+  let lengths = Nx.create Nx.int64 lead [| 3L; 0L |] in
+  let loss = function
+    | [ q; k; v ] ->
+        let o, _ =
+          Nx.attention ~lengths ~mask:Nx.causal ~acc:Nx.float64
+            ~kv:(Nx.Dense { k; v }) q
+        in
+        Nx.sum o
+    | _ -> invalid_arg "loss"
+  in
+  let xs = [ f [| 2; hq; tq; 3 |] 1.; f [| 2; 1; tk; 3 |] 2.; f [| 2; 1; tk; 2 |] 3. ] in
+  let pairs = 2 * hq * tq * tk in
+  less ~msg:"reverse mode" Testable.int ~than:pairs
+    (stored (fun () -> Rune.grad T.(list tensor) loss xs));
+  let ts = List.map Nx.ones_like xs in
+  less ~msg:"forward mode" Testable.int ~than:pairs
+    (stored (fun () -> Rune.jvp T.(list tensor) T.tensor loss xs ts))
+
+(* A length acts as its clamp into [[0, tk]], int64's extremes included:
+   the eager gradient under lengths [max_int] and [min_int] has the bits of
+   the gradient under [tk] and [0]. *)
+let test_length_extremes () =
+  let tk = 4 in
+  let f s seed =
+    Nx.create Nx.float64 s
+      (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 1.3) +. seed)))
+  in
+  let loss lengths = function
+    | [ q; k; v ] ->
+        let o, _ =
+          Nx.attention ~lengths ~mask:Nx.causal ~acc:Nx.float64
+            ~kv:(Nx.Dense { k; v }) q
+        in
+        Nx.sum o
+    | _ -> invalid_arg "loss"
+  in
+  let xs = [ f [| 2; 2; 3; 3 |] 1.; f [| 2; 1; tk; 3 |] 2.; f [| 2; 1; tk; 2 |] 3. ] in
+  let grad lens =
+    Rune.grad T.(list tensor) (loss (Nx.create Nx.int64 [| 2 |] lens)) xs
+  in
+  List.iter2
+    (fun a b -> equal ~msg:"gradient" (Testable.array Testable.int64) (bits a) (bits b))
+    (grad [| Int64.of_int tk; 0L |])
+    (grad [| Int64.max_int; Int64.min_int |])
+
 (* Values and keys past a row's length are never read, by the derivative
    either: NaN there leaves every cotangent and tangent finite, eagerly and
    compiled, and the keys' and values' past each length zero. *)
@@ -712,7 +885,17 @@ let () =
              prop ~examples ~count:12 "float64" case (law_grad f64 ~tol:1e-9);
            ];
          group "past a row's length"
-           [ test "the derivative reads no key or value there" test_past_length ];
+           [
+             test "the derivative reads no key or value there" test_past_length;
+             test "the eager derivative stores no pair there" test_padded_work;
+             test "a length acts as its clamp" test_length_extremes;
+             prop ~examples:length_examples ~count:12
+               "lengths hide what a mask of their pairs hides, float32"
+               case (law_lengths f32 ~tol:1e-3);
+             prop ~examples:length_examples ~count:12
+               "lengths hide what a mask of their pairs hides, float64"
+               case (law_lengths f64 ~tol:1e-9);
+           ];
          group "results"
            [
              (* The host takes no tensor core: its tiles hold 32 keys at any
@@ -746,8 +929,12 @@ let () =
            [ test "hold whole steps of each tensor core" tile_steps ];
          group "gradients by central differences"
            [
-             test "float32" (grads Nx.float32 ~eps:1e-2 ~tol:2e-3);
-             test "float64" (grads Nx.float64 ~eps:2e-6 ~tol:2e-6);
+             test "float32" (grads Nx.float32 ~eps:1e-2 ~tol:2e-3 [| 6L; 7L |]);
+             test "float64" (grads Nx.float64 ~eps:2e-6 ~tol:2e-6 [| 6L; 7L |]);
+             test "float32, a row of no key"
+               (grads Nx.float32 ~eps:1e-2 ~tol:2e-3 [| 0L; 3L |]);
+             test "float64, a row of no key"
+               (grads Nx.float64 ~eps:2e-6 ~tol:2e-6 [| 0L; 3L |]);
              test "against a float capture" capture_grads;
              test "through a page table" paged_grads;
            ];

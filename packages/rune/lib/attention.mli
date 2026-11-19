@@ -32,16 +32,27 @@ val score_transpose : spec -> Nx_kernel.Prog.t option
     score. *)
 
 val linear :
-  spec -> transposed:bool -> 'd Nx.Prim.any array -> 'd Nx.Prim.any array ->
-  'd Nx.Prim.any array
-(** [linear spec ~transposed data args] is the derivative at [data] — the
-    query, keys and values, the table and the lengths where [spec] has
+  spec -> transposed:bool -> read:bool -> 'd Nx.Prim.any array ->
+  'd Nx.Prim.any array -> 'd Nx.Prim.any array
+(** [linear spec ~transposed ~read data args] is the derivative at [data] —
+    the query, keys and values, the table and the lengths where [spec] has
     them, the loads, then [o] and [lse] — applied to [args]: the tangents
     of the query, keys, values and each load [spec.tangents] marks, giving
     [ȯ] and [l̇se]; where [transposed], cotangents of [o] and [lse], giving
     the query's, keys', values' and each marked load's. Keys' and values'
     are the pools' where paged. It computes as contractions and maps of the
-    whole pair loop, by {!Nx.Prim.eval}.
+    pair loop, by {!Nx.Prim.eval}.
+
+    Where [read], the lengths are not traced, the operands lie on one
+    device and the pair program reads no lead coordinate, it reads the
+    lengths on the host, a wait on their set, and computes each lead index
+    over its keys before its length rounded up to a power of two and to
+    whole pages, in groups of lead indices of one such count: a row of [n]
+    keys over at most [max (2n) page] keys, [page] [1] for dense keys, in
+    at most [⌈log₂ tk⌉ + 2] groups. Otherwise it computes the whole pair
+    loop. A caller under a tracer that stages its operations passes
+    [read = false], since the program it records must not depend on the
+    lengths' values.
 
     Raises [Invalid_argument] if [data] or [args] are not of these dtypes
     and devices. *)

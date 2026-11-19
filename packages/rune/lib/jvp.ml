@@ -2456,9 +2456,9 @@ and attention : type r. name:string -> Prim.interpretation -> by:string -> r Pri
             [
               [| t a.q; t k; t v |];
               Array.of_list
-                (List.filteri
-                   (fun j _ -> marked.(j))
-                   (List.map (fun (Prim.Any x) -> t x) (Iarray.to_list a.loads)));
+                (List.map
+                   (fun (Prim.Any x) -> t x)
+                   (List.filteri (fun j _ -> marked.(j)) (Iarray.to_list a.loads)));
             ]
         in
         let spec : Attention.spec =

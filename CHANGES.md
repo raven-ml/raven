@@ -500,6 +500,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Eagerly, `Nx.attention`'s derivative under `~lengths` computes each lead
+  index over its keys before its length, rounded up to a power of two,
+  where it computed every padded pair. It reads the lengths on the host.
 - `Rune.jit`'s Numerics table states `Nx.softmax`'s bound,
   `(β + |d| + ln n + 4E + 3) u` relatively, on every device it names.
 - A kernel searched under `beam` on one GPU is searched again on a GPU of

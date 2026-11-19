@@ -1528,7 +1528,8 @@ and attention_linear spec ~transposed data args =
     | Some y -> Nx.Prim.Any y
     | None -> invalid_arg "Nx.attention's derivative: operands of two sets"
   in
-  Attention.linear spec ~transposed (Array.map any data) (Array.map any args)
+  Attention.linear spec ~transposed ~read:(not (staging ()))
+    (Array.map any data) (Array.map any args)
   |> Array.map (fun (Nx.Prim.Any y) -> V y)
 
 (* [p] with the operator [id]'s applications calls of [body]'s programs. *)

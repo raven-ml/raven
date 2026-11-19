@@ -161,6 +161,16 @@
     ({!section-custom}). Where a construct that stages ({!section-tracing}) lies
     between the read and the differentiation, it stages the read, which raises.
 
+    {b Attention.} {!Nx.val-attention}'s derivative recomputes each pair's
+    weight from [lse]. Given lengths no transformation traces, on one
+    device, and outside every construct that stages, it reads them on the
+    host, a wait on their set, and computes each lead index over its keys
+    before its length rounded up to a power of two and to whole pages: a
+    row of [n] keys over at most [max (2n) page] keys, in at most
+    [⌈log₂ tk⌉ + 2] groups of lead indices. Otherwise it computes the
+    whole pair loop, except in the compiled kernels {!section-numerics}
+    names, which skip a tile past every row's length.
+
     {b Nesting.} Each differentiation tracks the values of its own function
     alone: in
     [jvp' (fun x -> Nx.mul x (snd (jvp' (fun y -> Nx.add x y) one one))) one
