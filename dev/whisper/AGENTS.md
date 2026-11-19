@@ -177,3 +177,64 @@ and is never published (no opam package, no CHANGES entry).
 
 - Sampling draws from raven's key, folded with the step; its parity with
   upstream is in distribution only.
+
+- `Decoding.compression_ratio` divides a text's length by that of lz's
+  zlib stream of it at level 6. Upstream divides by `zlib.compress`'s,
+  whose length depends on the zlib its Python links: zlib 1.3 on most
+  Linux and macOS builds, zlib-ng in CPython 3.14's Windows binaries and
+  on Fedora from 40. Deflate leaves the encoder free (RFC 1951, §4), and
+  the paper's threshold of 2.4 is a heuristic (§4.5). The lengths differ
+  by a few bytes, so the fallback decides otherwise where a text's
+  length lies within those bytes of 2.4 times its stream's: an English
+  loop the window cut short (one noisy long-form window in 1,400), and
+  ordinary Hebrew, Hindi, Arabic and Thai, whose ratios lie near 2.4
+  (about one window in 50, as often as zlib-ng departs from zlib 1.3
+  there). lz also writes a text of at most 31 bytes without matches, so
+  a run of 27 to 31 `!`, `.` or `ha`, which upstream sends to the next
+  temperature, stays. The parity check excuses a differing decision only
+  on equal tokens, where upstream's length gives upstream's decision.
+
+- `Transcript` takes no prefix. Upstream forces `decode_options["prefix"]`
+  into every window; a prefix describes one window, and
+  `Decoding.start ~prefix` keeps it for one.
+
+- An English-only model takes no language other than `"en"` and no
+  `Translate`, which raise. Upstream ignores both.
+
+- A carried prompt of 223 ids or more (`n_text_ctx / 2 - 1` for every
+  release) is kept as its last 223 ids. Upstream's slice `[-0:]` and its
+  negative lengths there let the transcript fill the prompt, and the
+  decoder's cut drops the carried prompt. That breaks upstream's own
+  docstring ("prepended to the prompt of each internal decode() call").
+
+- Clips are frames, increasing and disjoint, each entered at its start,
+  with a stop past the content cut to it. Upstream decodes empty windows
+  forever once a clip's stop lies past the content, and it goes back to a
+  clip that starts before the seek, transcribing frames twice.
+
+- Times are integer frames. Upstream's float seconds lie within 6e-14 s of
+  `f / 100`, so its writers' millisecond rounding gives the same text; its
+  JSON's seconds, `f / 100` in the port's, may differ in their last digits.
+
+- The encoder runs once per window, where upstream encodes again at each
+  attempt; the features are the same.
+
+- A sampled attempt draws from `fold_in (fold_in key seek) rung`, so a
+  transcription is reproducible from its key. Upstream draws from torch's
+  global generator, and two runs on one input differ (19 against 17
+  decodes on the same noisy chapter).
+
+- Detection takes the first of the likeliest languages in their tokens'
+  order. Upstream's `max` over a dict takes the first in its tokenizer's
+  set order, which differs only where two probabilities are equal.
+
+- Without timestamps, `Transcript` makes each window one segment and moves
+  the seek past it, whatever timestamps the decoding sampled. Decoding
+  without timestamps does not suppress the timestamps, as upstream, and
+  upstream's transcribe cuts at those it samples: a pair closing at
+  `<|0.00|>` keeps its seek, and upstream decodes the same window forever.
+
+- `Writer` writes a cue per segment when the first segment is cleared and a
+  later one is not. Upstream gives a cleared segment empty `words`, so its
+  subtitle writers then read word timings, which the later segment lacks,
+  and raise. When every segment is cleared, both write no cue.
