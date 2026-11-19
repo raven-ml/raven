@@ -1497,7 +1497,8 @@ let law_tests =
             let solve b =
               Solution.get (minimum m (objective a b) (Nx.zeros_like b))
             in
-            let x = solve b in
+            (* One solve gives the minimum and its pullback. *)
+            let x, back = Rune.vjp' solve b in
             let expected =
               if Nx.dim 0 b = 0 then b
               else Nx.solve (hessian a x) (Nx.ones_like b)
@@ -1505,7 +1506,7 @@ let law_tests =
             equal
               (Oracle.tensor ~rel:1e-8 ~abs:1e-12 ())
               expected
-              (Rune.grad' (fun b -> Nx.sum (solve b)) b))
+              (back (Nx.ones_like x)))
           methods);
     test "grad agrees with central differences (law 1)" (fun () ->
         let solve c =
