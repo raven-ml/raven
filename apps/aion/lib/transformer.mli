@@ -82,13 +82,33 @@ val modalities : ('b, 'd) t -> Modality.t list
 (** [modalities t] is the modalities [t] reads and predicts. *)
 
 val place : 'e Nx.Placement.t -> ('b, 'd) t -> ('b, 'e) t
-(** [place p t] is [t] with its weights at [p], as {!Nx.place}.
+(** [place p t] is [t] with its weights at [p], as {!Nx.place}, compiled if [t]
+    is ({!jit}).
 
     Raises as {!Nx.place} does. *)
 
 val cast : (float, 'c) Nx.dtype -> ('b, 'd) t -> ('c, 'd) t
 (** [cast dt t] is [t] with its weights cast to [dt], as {!Nx.cast}: exactly,
-    for a dtype as wide as float32. *)
+    for a dtype as wide as float32. It is compiled if [t] is ({!jit}). *)
+
+val jit : ('b, 'd) t -> ('b, 'd) t
+(** [jit t] is [t] computing by compiled programs. Its {!encode}, {!decode} and
+    {!forward} check their arguments as [t]'s do, values on the host, then run
+    a program [Rune.jit] compiles from [t]'s computation, with [t]'s weights
+    captured. Each of the three keeps a program per list of modalities, shapes
+    and placements of its arguments, and whether each [present] and
+    [positions] is given, for as long as the compiled transformer lives: the
+    first call of each traces and compiles, later ones run the program, so a
+    caller whose batches vary in size gets a program per size. A transformer
+    on a set without eager kernels, as a GPU's, computes only so.
+
+    A compiled call computes to the accuracy [Rune.jit] states: its sums may
+    combine their terms in another order than [t]'s, so its results differ from
+    [t]'s in their last bits. *)
+
+val eager : ('b, 'd) t -> ('b, 'd) t
+(** [eager t] is [t] computing eagerly, without the programs of {!jit}: its
+    calls run inside [Rune.jit], whose program then holds their checks. *)
 
 (** {1:computing Computing}
 
@@ -97,9 +117,12 @@ val cast : (float, 'c) Nx.dtype -> ('b, 'd) t -> ('c, 'd) t
     before it. {!encode} computes the context, {!decode} the logits from a
     context, and {!forward} both, once each.
 
-    Each call checks its arguments' values where it is made: it reads the
-    tokens, their presence and the lengths on the host, waiting for them to be
-    computed. A call therefore cannot run inside [Rune.jit].
+    Each call checks its arguments, then computes. It checks shapes at the
+    call, and the values of the tokens, their presence, the lengths and the
+    positions as {!Nx.check} does: at the call on the host, at a later wait on
+    another set. A transformer of {!jit} checks copies of those values on the
+    host, waiting for them to be computed, so that its refusals come before
+    its programs run.
 
     A call raises [Invalid_argument] if it has no input or no target, if two
     inputs or two targets are one modality, if [t] lacks an input's or a
@@ -151,7 +174,10 @@ val embedding : ('b, 'd) encoding -> (float, 'b, 'd) Nx.t
     context over its present tokens, the rows before its length (AION-1,
     arXiv:2510.17960, §7.2, Eq. 7). The rows past the length, which the other
     objects' tokens put in the batch, do not enter it, so an object's embedding
-    does not depend on the objects encoded with it. *)
+    does not depend on the objects encoded with it.
+
+    On a set without eager kernels [embedding] computes only inside
+    [Rune.jit]. *)
 
 val decode :
   ('b, 'd) t -> ('b, 'd) encoding -> 'd target list -> (float, 'b, 'd) Nx.t list
@@ -172,3 +198,10 @@ val forward :
 (** [forward t inputs targets] is [decode t (encode t inputs) targets].
 
     Raises as {!encode} and {!decode}. *)
+
+val check : ('b, 'd) t -> 'd input list -> unit
+(** [check t inputs] makes {!encode}'s checks of [inputs] on copies on the
+    host, computing nothing else, as a compiled transformer does before its
+    program runs.
+
+    Raises [Invalid_argument] as {!encode}. *)

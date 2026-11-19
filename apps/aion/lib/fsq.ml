@@ -91,14 +91,16 @@ let encode q z =
   in
   Nx.sum ~axes:[ -1 ] (Nx.mul digit b)
 
-let decode dt q k =
+let check_decode q k =
   let inside =
     Nx.logical_and (Nx.greater_equal_s k 0L) (Nx.less_s k (Int64.of_int q.size))
   in
   Nx.check Nx.Ptree.tensor inside k (fun i k ->
       Invalid_argument
         (Printf.sprintf "Aion.Fsq.decode: code %Ld at [%s] outside [0, %d)"
-           (Nx.item [] k) (index i) q.size));
+           (Nx.item [] k) (index i) q.size))
+
+let decode_raw dt q k =
   let k = Nx.unsqueeze ~axes:[ Nx.ndim k ] k in
   let b =
     Nx.place (Nx.beside k)
@@ -113,3 +115,7 @@ let decode dt q k =
   in
   let w = per_level dt k q (fun l -> Float.of_int (l / 2)) in
   Nx.div (Nx.sub (Nx.cast dt digit) w) w
+
+let decode dt q k =
+  check_decode q k;
+  decode_raw dt q k

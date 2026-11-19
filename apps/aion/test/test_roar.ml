@@ -263,6 +263,82 @@ let orders_law =
           equal int 64 (List.length (List.sort_uniq compare (orders 25 64 55))));
     ]
 
+(* Compiled samplers *)
+
+(* A sampler's draws are the eager ones': the same keys, and logits that differ
+   in their last bits, which move a draw only where its uniform lands that
+   close to a boundary between two tokens' probabilities, about 10⁻⁶ of a draw
+   at float32's precision. The keys here are fixed, so each run decides the
+   same. The temperatures share one program, the temperature 0 another. *)
+
+module Soft = (val Nx.devices [ Result.get_ok (Rig.software "aion-roar") ])
+
+let compiled =
+  let target, inputs = xp in
+  let s = lazy (Roar.sampler (Lazy.force model) target) in
+  let rows =
+    List.concat_map
+      (fun (name, reveal) ->
+        List.map
+          (fun temperature -> (name, reveal, temperature))
+          [ 1.; 0.5; 2.; 0. ])
+      [
+        ("one step", [ 55 ]);
+        ("linear 8", linear8);
+        ("uneven", [ 1; 30; 2; 22 ]);
+      ]
+  in
+  let id (name, _, temperature) = Printf.sprintf "%s at %g" name temperature in
+  group "samplers"
+    [
+      cases "a sampler draws the eager tokens" ~id rows
+        (fun (_, reveal, temperature) ->
+          let key = Nx.Rng.key 19 in
+          let eager = sample ~key ~temperature ~reveal xp in
+          let c = Roar.draw (Lazy.force s) ~key ~temperature ~reveal inputs in
+          equal (array int) (ints eager) (ints c));
+      test "a sampler of a compiled transformer draws as one of the eager"
+        (fun () ->
+          let key = Nx.Rng.key 21 in
+          let c = Roar.sampler (Transformer.jit (Lazy.force model)) target in
+          equal (array int)
+            (ints (Roar.draw (Lazy.force s) ~key ~reveal:linear8 inputs))
+            (ints (Roar.draw c ~key ~reveal:linear8 inputs)));
+      test "a sampler draws on a set without eager kernels" (fun () ->
+          let key = Nx.Rng.key 20 in
+          let on x = Nx.place Soft.on x in
+          let soft =
+            Roar.sampler (Transformer.place Soft.on (Lazy.force model)) target
+          in
+          let on_soft (i : _ Transformer.input) : _ Transformer.input =
+            { i with tokens = on i.tokens; present = Option.map on i.present }
+          in
+          let k =
+            Roar.draw soft ~key:(Nx.Rng.place Soft.on key) ~reveal:linear8
+              (List.map on_soft inputs)
+          in
+          let c = Roar.draw (Lazy.force s) ~key ~reveal:linear8 inputs in
+          equal (array int) (ints c) (ints (Nx.place Nx.Host.on k)));
+      test "a sampler refuses a token outside the vocabulary at the call"
+        (fun () ->
+          (* On a set without eager kernels, a check in its program would
+             raise only at a later wait. *)
+          let soft =
+            Roar.sampler (Transformer.place Soft.on (Lazy.force model)) target
+          in
+          let bad (i : _ Transformer.input) : _ Transformer.input =
+            {
+              i with
+              tokens = Nx.place Soft.on (Nx.full_like i.tokens 5000L);
+              present = None;
+            }
+          in
+          raises_match (Exn.invalid_arg ~sub:"outside [0, 1024)") (fun () ->
+              Roar.draw soft
+                ~key:(Nx.Rng.place Soft.on (Nx.Rng.key 0))
+                ~reveal:linear8 (List.map bad inputs)));
+    ]
+
 (* Refusals *)
 
 let refusals =
@@ -294,4 +370,6 @@ let refusals =
               sample ~key ~reveal:[ 1 ] (Modality.Scalar Z, [])));
     ]
 
-let () = exit (run "aion.roar" [ replays; temperatures; orders_law; refusals ])
+let () =
+  exit
+    (run "aion.roar" [ replays; temperatures; orders_law; compiled; refusals ])

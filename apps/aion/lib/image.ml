@@ -118,6 +118,13 @@ type ('b, 'd) decoder = {
   conv_out : ('b, 'd) conv;
 }
 
+(* A compiled codec's programs ({!jit}): encode and decode without their
+   checks, for a list of bands. *)
+type ('b, 'd) programs = {
+  p_encode : band list -> (float, 'b, 'd) Nx.t -> 'd Nx.int64_t;
+  p_decode : band list -> 'd Nx.int64_t -> (float, 'b, 'd) Nx.t;
+}
+
 (* [proj_in] and [proj_out] are the subsampled linear maps between the nine
    channels and the network's, as 1 × 1 convolutions. *)
 type ('b, 'd) t = {
@@ -128,6 +135,7 @@ type ('b, 'd) t = {
   post : ('b, 'd) conv;
   decoder : ('b, 'd) decoder;
   proj_out : ('b, 'd) conv;
+  programs : ('b, 'd) programs option;
 }
 
 (* Loading *)
@@ -255,6 +263,7 @@ let of_archive a =
     post = conv_to a "post_quant_proj" ~i:e ~k:1 ~o:d2;
     decoder;
     proj_out;
+    programs = None;
   }
 
 let load ?cache_dir ?offline () =
@@ -308,10 +317,9 @@ let map f t =
     post = c t.post;
     decoder;
     proj_out = c t.proj_out;
+    programs = None;
   }
 
-let place p t = map (Nx.place p) t
-let cast dt t = map (Nx.cast dt) t
 let dtype t = Nx.dtype t.proj_in.w
 
 (* Checks *)
@@ -436,7 +444,7 @@ let latent t bs x =
   let z = apply t.pre (Kaun.Layer_norm.apply ~eps e.norm h) in
   Nx.reshape [| Nx.dim 0 z; grid * grid; Nx.dim 3 z |] z
 
-let encode t bs x = Fsq.encode t.quantizer (latent t bs x)
+let encode_raw t bs x = Fsq.encode t.quantizer (latent t bs x)
 
 (* Decoding *)
 
@@ -454,15 +462,16 @@ let restore bs y =
   Nx.concatenate ~axis:1
     (List.map (fun b -> of_nanomaggies b (band_at (channel b) y)) bs)
 
-let decode t bs k =
+let check_decode bs k =
   check_bands "decode" bs;
-  let n =
-    match Nx.shape k with
-    | [| n; c |] when c = grid * grid -> n
-    | s -> refuse "decode" "shape [%s], [n; %d] expected" (dims s) (grid * grid)
-  in
+  match Nx.shape k with
+  | [| _; c |] when c = grid * grid -> ()
+  | s -> refuse "decode" "shape [%s], [n; %d] expected" (dims s) (grid * grid)
+
+let decode_raw t bs k =
+  let n = Nx.dim 0 k in
   let d = t.decoder in
-  let z = Fsq.decode (dtype t) t.quantizer k in
+  let z = Fsq.decode_raw (dtype t) t.quantizer k in
   let h = apply t.post (Nx.reshape [| n; grid; grid; Nx.dim 2 z |] z) in
   let h = residuals d.units3' h in
   let h = residuals d.units2' (apply ~pad:1 d.conv3 h) in
@@ -470,3 +479,55 @@ let decode t bs k =
   let h = residual d.unit0' (upsample d.up1 h) in
   let y = apply t.proj_out (apply ~pad:1 d.conv_out h) in
   restore bs (Nx.moveaxis 3 1 y)
+
+(* Entry points: the checks, then the computation. A compiled codec checks the
+   codes it decodes on the host, so that a refusal comes before its program
+   runs, and its programs check nothing but the latents' NaN, which only the
+   computation finds. *)
+
+let encode t bs x =
+  match t.programs with
+  | None -> encode_raw t bs x
+  | Some p ->
+      check_images "prepare" bs x;
+      p.p_encode bs x
+
+let decode t bs k =
+  check_decode bs k;
+  match t.programs with
+  | None ->
+      Fsq.check_decode t.quantizer k;
+      decode_raw t bs k
+  | Some p ->
+      Fsq.check_decode t.quantizer (Nx.place Nx.Host.on k);
+      p.p_decode bs k
+
+(* Compiling *)
+
+let bands_s () =
+  Nx.Ptree.v (fun c bs ->
+      let open Nx.Ptree.Walk in
+      list (fun c b -> case c (name b); b) c bs)
+
+let jit t =
+  let t = { t with programs = None } in
+  let open Nx.Ptree in
+  let programs =
+    {
+      p_encode =
+        Rune.jit (bands_s () @-> tensor @-> returns tensor) (encode_raw t);
+      p_decode =
+        Rune.jit (bands_s () @-> tensor @-> returns tensor) (decode_raw t);
+    }
+  in
+  { t with programs = Some programs }
+
+let compiled t = Option.is_some t.programs
+
+let place p t =
+  let t' = map (Nx.place p) t in
+  if compiled t then jit t' else t'
+
+let cast dt t =
+  let t' = map (Nx.cast dt) t in
+  if compiled t then jit t' else t'

@@ -43,6 +43,17 @@ type ('b, 'd) decoder_block = {
   d_mlp : ('b, 'd) mlp;
 }
 
+(* The arguments of the computations. *)
+
+type 'd input = {
+  modality : Modality.t;
+  tokens : 'd Nx.int64_t;
+  present : 'd Nx.bool_t option;
+}
+
+type ('b, 'd) encoding = { context : ('b, 'd) w; lengths : 'd Nx.int64_t }
+type 'd target = { modality : Modality.t; positions : 'd Nx.int64_t option }
+
 (* One modality's embeddings. [pos] is its positional table [tokens; dim] and
    [mod_emb] its modality embedding [dim], both shared by the encoder and the
    decoder; [table] is the encoder's token embedding [vocab; dim] and [logits]
@@ -55,6 +66,14 @@ type ('b, 'd) embedding = {
   logits : ('b, 'd) linear;
 }
 
+(* A compiled transformer's programs ({!jit}): the computations of encode,
+   decode and forward, without their checks. *)
+type ('b, 'd) programs = {
+  p_encode : 'd input list -> ('b, 'd) encoding;
+  p_decode : ('b, 'd) encoding -> 'd target list -> ('b, 'd) w list;
+  p_forward : 'd input list -> 'd target list -> ('b, 'd) w list;
+}
+
 type ('b, 'd) t = {
   embeddings : ('b, 'd) embedding list;
   encoder : ('b, 'd) encoder_block list;
@@ -63,9 +82,10 @@ type ('b, 'd) t = {
   decoder : ('b, 'd) decoder_block list;
   decoder_norm : ('b, 'd) norm;
   mask_token : ('b, 'd) w;
+  programs : ('b, 'd) programs option;
 }
 
-let modalities t = List.map (fun e -> e.modality) t.embeddings
+let modalities t = List.map (fun (e : _ embedding) -> e.modality) t.embeddings
 let dim t = (Nx.shape t.mask_token).(0)
 let head_dim (a : _ attention) = (Nx.shape a.q_norm.gamma).(0)
 
@@ -131,10 +151,9 @@ let map (type b c d e) (f : (b, d) w -> (c, e) w) (t : (b, d) t) : (c, e) t =
         t.decoder;
     decoder_norm = norm t.decoder_norm;
     mask_token = f t.mask_token;
+    programs = None;
   }
 
-let place p t = map (Nx.place p) t
-let cast dt t = map (Nx.cast dt) t
 
 (* Reading the weights. Upstream's names (aion/fourm/fm.py, fm_utils.py): a
    linear layer is [out; in], as kaun's is; self-attention fuses its query, key
@@ -308,6 +327,7 @@ let of_archive archive =
       decoder;
       decoder_norm = norm r "decoder_norm" dim;
       mask_token = Nx.reshape [| dim |] (weight r "mask_token" [| 1; 1; dim |]);
+      programs = None;
     }
   in
   List.iter
@@ -324,14 +344,6 @@ let load ?cache_dir ?offline () =
           ~file:"model.safetensors" Hub.repo))
 
 (* Computing *)
-
-type 'd input = {
-  modality : Modality.t;
-  tokens : 'd Nx.int64_t;
-  present : 'd Nx.bool_t option;
-}
-
-type ('b, 'd) encoding = { context : ('b, 'd) w; lengths : 'd Nx.int64_t }
 
 let invalid fmt =
   Printf.ksprintf (fun m -> invalid_arg ("Aion.Transformer." ^ m)) fmt
@@ -367,8 +379,15 @@ let swiglu m x =
 
 let ln n x = Kaun.Layer_norm.apply ~eps n x
 
-(* An input's tokens as [b; n], and where they are present. *)
-let checked t i =
+(* Checks
+
+   They read shapes where the arrays are, and values by {!Nx.check}, which
+   raises at the call on the host. A compiled transformer checks copies on the
+   host, so that its refusals come before its programs run, and its programs
+   check nothing. *)
+
+(* An input's tokens as [b; n], and where they are present, checked by shape. *)
+let shaped t (i : _ input) =
   let e = find "encode" t i.modality in
   let key = Modality.key i.modality and n = Modality.tokens i.modality in
   let tokens =
@@ -390,23 +409,13 @@ let checked t i =
           (pp_shape (Nx.shape p))
           (pp_shape (Nx.shape tokens))
   in
-  let vocab = Modality.vocab i.modality in
-  let outside =
-    Nx.logical_or (Nx.less_s tokens 0L)
-      (Nx.greater_equal_s tokens (Int64.of_int vocab))
-  in
-  if Nx.item [] (Nx.any (Nx.logical_and present outside)) then
-    invalid "encode: a present %s token is outside [0, %d)" key vocab;
   (e, tokens, present)
 
-(* The encoder's input: every input's token embeddings and their positional plus
-   modality embeddings, concatenated in the inputs' order, then the present
-   tokens moved first in that order by a stable sort and the others zeroed;
-   [lengths] counts each object's present tokens. *)
-let embed t inputs =
+(* The inputs' parts by {!shaped}, of one batch. *)
+let parts t inputs =
   if inputs = [] then invalid "encode: no input";
   distinct "encode" "input" (List.map (fun (i : _ input) -> i.modality) inputs);
-  let parts = List.map (checked t) inputs in
+  let parts = List.map (shaped t) inputs in
   let batch = match parts with (_, k, _) :: _ -> Nx.dim 0 k | [] -> 0 in
   List.iter
     (fun ((e : _ embedding), k, _) ->
@@ -414,6 +423,110 @@ let embed t inputs =
         invalid "encode: %s has %d objects, %d expected"
           (Modality.key e.modality) (Nx.dim 0 k) batch)
     parts;
+  (batch, parts)
+
+let refusal fmt =
+  Printf.ksprintf
+    (fun m _ () -> Invalid_argument ("Aion.Transformer." ^ m))
+    fmt
+
+(* Every present token in its vocabulary, and every object with one. *)
+let inputs_ok t inputs =
+  let _, parts = parts t inputs in
+  List.iter
+    (fun ((e : _ embedding), tokens, present) ->
+      let vocab = Modality.vocab e.modality in
+      let inside =
+        Nx.logical_and (Nx.greater_equal_s tokens 0L)
+          (Nx.less_s tokens (Int64.of_int vocab))
+      in
+      Nx.check Nx.Ptree.unit
+        (Nx.logical_or (Nx.logical_not present) inside)
+        ()
+        (refusal "encode: a present %s token is outside [0, %d)"
+           (Modality.key e.modality) vocab))
+    parts;
+  let present = Nx.concatenate ~axis:1 (List.map (fun (_, _, p) -> p) parts) in
+  Nx.check Nx.Ptree.unit
+    (Nx.any ~axes:[ 1 ] present)
+    ()
+    (refusal "encode: an object has no present token")
+
+(* [e]'s context is [b; n; width] and each of its [b] lengths in [1, n]. *)
+let check_encoding t context lengths =
+  match (context, Nx.shape lengths) with
+  | [| b; n; w |], [| b' |] when b = b' && w = dim t ->
+      let inside =
+        Nx.logical_and (Nx.greater_equal_s lengths 1L)
+          (Nx.less_equal_s lengths (Int64.of_int n))
+      in
+      Nx.check Nx.Ptree.unit inside ()
+        (refusal "decode: a length outside [1, %d]" n)
+  | c, l ->
+      invalid
+        "decode: context [%s] and lengths [%s], [b; n; %d] and [b] expected"
+        (pp_shape c) (pp_shape l) (dim t)
+
+(* A target's positions: [b; k], in [0, n), and distinct within a row, where an
+   element repeats when more than one of its row's elements equals it ([k^2]
+   comparisons a row). A refusal names the first offending element's
+   [row; index] and value. *)
+let check_positions ~batch (tg : _ target) =
+  let key = Modality.key tg.modality and n = Modality.tokens tg.modality in
+  let refuse what i p =
+    Invalid_argument
+      (Printf.sprintf "Aion.Transformer.decode: %s position %Ld at [%s] %s" key
+         (Nx.item [] p) (pp_shape i) what)
+  in
+  match tg.positions with
+  | None -> ()
+  | Some p ->
+      (match Nx.shape p with
+      | [| b; k |] when b = batch && k >= 1 -> ()
+      | s ->
+          invalid "decode: %s positions of shape [%s], [%d; k >= 1] expected"
+            key (pp_shape s) batch);
+      let inside =
+        Nx.logical_and (Nx.greater_equal_s p 0L) (Nx.less_s p (Int64.of_int n))
+      in
+      Nx.check Nx.Ptree.tensor inside p
+        (refuse (Printf.sprintf "outside [0, %d)" n));
+      let k = Nx.dim 1 p in
+      let equal =
+        Nx.equal
+          (Nx.reshape [| batch; k; 1 |] p)
+          (Nx.reshape [| batch; 1; k |] p)
+      in
+      let once = Nx.equal_s (Nx.sum ~axes:[ 2 ] (Nx.cast Nx.int64 equal)) 1L in
+      Nx.check Nx.Ptree.tensor once p (refuse "repeats within its row")
+
+let check_targets t ~batch targets =
+  if targets = [] then invalid "decode: no target";
+  distinct "decode" "target"
+    (List.map (fun (tg : _ target) -> tg.modality) targets);
+  List.iter
+    (fun (tg : _ target) ->
+      ignore (find "decode" t tg.modality);
+      check_positions ~batch tg)
+    targets
+
+(* The arguments on the host, for a compiled transformer's checks. *)
+let host x = Nx.place Nx.Host.on x
+
+let host_input (i : _ input) : _ input =
+  { i with tokens = host i.tokens; present = Option.map host i.present }
+
+let host_target (tg : _ target) : _ target =
+  { tg with positions = Option.map host tg.positions }
+
+(* Computations, on checked arguments *)
+
+(* The encoder's input: every input's token embeddings and their positional plus
+   modality embeddings, concatenated in the inputs' order, then the present
+   tokens moved first in that order by a stable sort and the others zeroed;
+   [lengths] counts each object's present tokens. *)
+let embed t inputs =
+  let batch, parts = parts t inputs in
   let x =
     Nx.concatenate ~axis:1
       (List.map
@@ -433,8 +546,6 @@ let embed t inputs =
   let present = Nx.concatenate ~axis:1 (List.map (fun (_, _, p) -> p) parts) in
   let order = Nx.argsort ~axis:1 (Nx.cast Nx.int32 (Nx.logical_not present)) in
   let lengths = Nx.sum ~axes:[ 1 ] (Nx.cast Nx.int64 present) in
-  if Nx.item [] (Nx.any (Nx.equal_s lengths 0L)) then
-    invalid "encode: an object has no present token";
   let n = Nx.dim 1 present in
   let kept =
     Nx.less
@@ -448,7 +559,7 @@ let embed t inputs =
   in
   (gather x, gather emb, lengths)
 
-let encode t inputs =
+let encode_raw t inputs =
   let x, emb, lengths = embed t inputs in
   let h =
     List.fold_left
@@ -472,74 +583,19 @@ let embedding { context; lengths } =
   let sum = Nx.sum ~axes:[ 1 ] (Nx.where before context (Nx.zeros_like context)) in
   Nx.div sum (Nx.reshape [| -1; 1 |] (Nx.cast (Nx.dtype context) lengths))
 
-type 'd target = { modality : Modality.t; positions : 'd Nx.int64_t option }
-
-(* [e]'s context is [b; n; width] and each of its [b] lengths in [1, n]. *)
-let check_encoding t { context; lengths } =
-  match (Nx.shape context, Nx.shape lengths) with
-  | [| b; n; w |], [| b' |] when b = b' && w = dim t ->
-      let outside =
-        Nx.logical_or (Nx.less_s lengths 1L)
-          (Nx.greater_s lengths (Int64.of_int n))
-      in
-      if Nx.item [] (Nx.any outside) then
-        invalid "decode: a length outside [1, %d]" n
-  | c, l ->
-      invalid
-        "decode: context [%s] and lengths [%s], [b; n; %d] and [b] expected"
-        (pp_shape c) (pp_shape l) (dim t)
-
-(* A target's positions as [b; k], checked: in [0, n), and distinct within a
-   row, where an element repeats when more than one of its row's elements equals
-   it ([k^2] comparisons a row). A refusal names the first offending element's
-   [row; index] and value. *)
-let positions ~batch (tg : _ target) =
-  let key = Modality.key tg.modality and n = Modality.tokens tg.modality in
-  let refuse what i p =
-    Invalid_argument
-      (Printf.sprintf "Aion.Transformer.decode: %s position %Ld at [%s] %s" key
-         (Nx.item [] p) (pp_shape i) what)
-  in
-  match tg.positions with
-  | None -> None
-  | Some p ->
-      (match Nx.shape p with
-      | [| b; k |] when b = batch && k >= 1 -> ()
-      | s ->
-          invalid "decode: %s positions of shape [%s], [%d; k >= 1] expected"
-            key (pp_shape s) batch);
-      let inside =
-        Nx.logical_and (Nx.greater_equal_s p 0L) (Nx.less_s p (Int64.of_int n))
-      in
-      Nx.check Nx.Ptree.tensor inside p
-        (refuse (Printf.sprintf "outside [0, %d)" n));
-      let k = Nx.dim 1 p in
-      let equal =
-        Nx.equal
-          (Nx.reshape [| batch; k; 1 |] p)
-          (Nx.reshape [| batch; 1; k |] p)
-      in
-      let once = Nx.equal_s (Nx.sum ~axes:[ 2 ] (Nx.cast Nx.int64 equal)) 1L in
-      Nx.check Nx.Ptree.tensor once p (refuse "repeats within its row");
-      Some p
-
 (* The decoder's input: for each target, the mask token plus the positional and
    modality embeddings of its positions, [b; k; width], concatenated in the
    targets' order. A token's self-attention sees the tokens of its own target,
    the mask of training for whole targets and the step of random-order
    generation for chosen positions. *)
-let decode t ({ context; lengths } as e) targets =
-  if targets = [] then invalid "decode: no target";
-  check_encoding t e;
-  distinct "decode" "target"
-    (List.map (fun (tg : _ target) -> tg.modality) targets);
+let decode_raw t { context; lengths } targets =
   let batch = Nx.dim 0 context and d = dim t in
   let parts =
     List.map
       (fun (tg : _ target) ->
         let e = find "decode" t tg.modality in
         let emb = Nx.add e.pos (Nx.reshape [| 1; d |] e.mod_emb) in
-        match positions ~batch tg with
+        match tg.positions with
         | None ->
             let n = Nx.dim 0 emb in
             (e, n, Nx.broadcast_to [| batch; n; d |] emb)
@@ -583,4 +639,102 @@ let decode t ({ context; lengths } as e) targets =
   in
   List.rev logits
 
-let forward t inputs targets = decode t (encode t inputs) targets
+let forward_raw t inputs targets = decode_raw t (encode_raw t inputs) targets
+
+(* Entry points: the checks, then the computation, compiled where [t] is. *)
+
+let compiled t = Option.is_some t.programs
+let check t inputs = inputs_ok t (List.map host_input inputs)
+
+let check_inputs t inputs =
+  if compiled t then check t inputs else inputs_ok t inputs
+
+let checks_decode t (e : _ encoding) targets =
+  if targets = [] then invalid "decode: no target";
+  let shape = Nx.shape e.context in
+  if compiled t then check_encoding t shape (host e.lengths)
+  else check_encoding t shape e.lengths;
+  let batch = shape.(0) in
+  if compiled t then check_targets t ~batch (List.map host_target targets)
+  else check_targets t ~batch targets
+
+let encode t inputs =
+  check_inputs t inputs;
+  match t.programs with
+  | None -> encode_raw t inputs
+  | Some p -> p.p_encode inputs
+
+let decode t e targets =
+  checks_decode t e targets;
+  match t.programs with
+  | None -> decode_raw t e targets
+  | Some p -> p.p_decode e targets
+
+let forward t inputs targets =
+  check_inputs t inputs;
+  let batch, _ = parts t inputs in
+  if compiled t then check_targets t ~batch (List.map host_target targets)
+  else check_targets t ~batch targets;
+  match t.programs with
+  | None -> forward_raw t inputs targets
+  | Some p -> p.p_forward inputs targets
+
+(* Compiling *)
+
+(* The structures of the arguments and results, each modality reported as a
+   case, so that a program is traced per list of modalities. *)
+let modality c m =
+  Nx.Ptree.Walk.case c (Modality.key m);
+  m
+
+let inputs_s () =
+  Nx.Ptree.list
+    (Nx.Ptree.v (fun c (i : _ input) ->
+         let open Nx.Ptree.Walk in
+         let modality = field c "modality" modality i.modality in
+         let tokens = field c "tokens" tensor i.tokens in
+         let present = field c "present" (option tensor) i.present in
+         { modality; tokens; present }))
+
+let targets_s () =
+  Nx.Ptree.list
+    (Nx.Ptree.v (fun c (tg : _ target) ->
+         let open Nx.Ptree.Walk in
+         let modality = field c "modality" modality tg.modality in
+         let positions = field c "positions" (option tensor) tg.positions in
+         { modality; positions }))
+
+let encoding_s () =
+  Nx.Ptree.v (fun c (e : _ encoding) ->
+      let open Nx.Ptree.Walk in
+      let context = field c "context" tensor e.context in
+      let lengths = field c "lengths" tensor e.lengths in
+      { context; lengths })
+
+let jit t =
+  let t = { t with programs = None } in
+  let open Nx.Ptree in
+  let inputs = inputs_s () and targets = targets_s () in
+  let encoding = encoding_s () and logits = list tensor in
+  let programs =
+    {
+      p_encode = Rune.jit (inputs @-> returns encoding) (encode_raw t);
+      p_decode =
+        Rune.jit (encoding @-> targets @-> returns logits) (decode_raw t);
+      p_forward =
+        Rune.jit (inputs @-> targets @-> returns logits) (forward_raw t);
+    }
+  in
+  { t with programs = Some programs }
+
+(* A compiled transformer's programs capture its weights, so moving them
+   compiles again. *)
+let place p t =
+  let t' = map (Nx.place p) t in
+  if compiled t then jit t' else t'
+
+let cast dt t =
+  let t' = map (Nx.cast dt) t in
+  if compiled t then jit t' else t'
+
+let eager t = { t with programs = None }

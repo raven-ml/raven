@@ -101,6 +101,22 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Metal's renderer emits no launch bound; its `local_threads_max` of 1024
   is a maximum a pipeline may refuse, and Mac2's AMD GPUs may run 64-wide
   SIMD groups, which `simd_threads` does not state
+- AION-1's compiled encode does not compile on CUDA: a kernel of the
+  whole program (2 objects, an image and four fluxes, 581 tokens, width
+  768) needs 65536 bytes of shared memory where 49152 are allowed without
+  the opt-in attribute, and `Codegen.rendered_program` raises
+  `Invalid_argument "exceeds maximum shared memory size"`. `Nx.attention`
+  at [2; 12; 581; 64] with lengths, the [2; 581; 768] by [768; 2048]
+  product and a layer norm over 768 each compile alone, so it is a fused
+  kernel. Repro: `apps/aion/test/gpu_parity.exe cuda HUB REF64` on fudge's
+  RTX 5000 Ada (_plans/aion-port/logs/p5c-gpu2.log); the narrow fixtures
+  of `test_gpu` run
+- Compiled AION-1 on the host runs 4-6x slower than nx.cpu's eager kernels
+  on two of fudge's CPUs: an encode of 2 objects 27.7 s against 7.1 s, a
+  273-token decode 20.5 s against 3.3 s (medians of three, load 9-24,
+  _plans/aion-port/logs/p5c-cpu.log), unsearched; the narrow fixtures'
+  compiled calls are faster than eager. A `BEAM` run and one kernel's
+  profile would tell whether search or the kernels' shape is short
 
 ## nx, rune
 

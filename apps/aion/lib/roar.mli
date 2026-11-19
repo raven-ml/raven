@@ -70,7 +70,45 @@ val sample :
     {!Modality.tokens}: step [s] reveals [List.nth reveal s] tokens of each
     object. [temperature] defaults to [1.].
 
+    Each step encodes and decodes with [t] as {!Transformer.encode} and
+    {!Transformer.decode} do, checks included, and draws eagerly, so [t]'s set
+    must have eager kernels: on another set, such as a GPU's, draw with a
+    {!sampler}.
+
     Raises [Invalid_argument] if [temperature] is negative or not finite, if a
     count of [reveal] is below [1] or they do not sum to [n], if [inputs] is
     empty or holds [target], and as {!Transformer.encode} and
     {!Transformer.decode} do. *)
+
+(** {1:samplers Compiled samplers} *)
+
+type ('b, 'd) sampler
+(** The type for compiled samplers of one target modality with a transformer
+    computing at float dtype ['b] on the device set ['d]. *)
+
+val sampler : ('b, 'd) Transformer.t -> Modality.t -> ('b, 'd) sampler
+(** [sampler t target] draws [target]'s tokens as {!sample} with [t] does, each
+    step one program [Rune.jit] compiles from [t]'s computation
+    ({!Transformer.eager}), with [t]'s weights captured.
+
+    The sampler keeps, for as long as it lives, a program of the orders per
+    batch size and placement, and step programs per count of [reveal], list
+    of inputs' modalities and shapes, and placement: one for a positive
+    temperature, which is the program's argument, and one for the temperature
+    [0.]. So a sweep over temperatures adds no program, and the programs go
+    with the sampler. *)
+
+val draw :
+  ('b, 'd) sampler ->
+  key:'d Nx.Rng.key ->
+  ?temperature:float ->
+  reveal:int list ->
+  'd Transformer.input list ->
+  'd Nx.int64_t
+(** [draw s ~key ~reveal inputs] is {!sample}[ ~key ~reveal t inputs target]
+    for [s]'s transformer and target, computed by [s]'s programs: the same
+    draws where the logits agree, to the accuracy [Rune.jit] states. It checks
+    [inputs] on the host first, as {!Transformer.check} does, so a refusal
+    comes before any program runs.
+
+    Raises [Invalid_argument] as {!sample}. *)

@@ -324,6 +324,71 @@ let compiled =
         (Nx.to_array (Scalar.decode t k))
         (Nx.to_array (host dj)))
 
+(* A compiled codec's tokens and values are the eager one's, bit for bit:
+   comparisons, gathers, and transforms that Rune.jit computes exactly on the
+   host. Codebooks of 12 edges and 16 values, so that every case runs one
+   program per entry point, whose captured edges are its data. *)
+let jitted =
+  let transforms = Scalar.[ Identity; Log (exp (-3.)); Asinh_asinh ] in
+  let fixed =
+    Gen.(
+      let* xs = array ~size:(constant 12) (int_range (-8) 8) in
+      let e = Array.map (fun i -> float_of_int i /. 2.) xs in
+      Array.sort compare e;
+      let+ ys =
+        array ~size:(constant 16)
+          (frequency
+             [
+               (3, of_list (Array.to_list e));
+               (3, map f32 (float_range (-5.) 5.));
+               ( 1,
+                 of_list
+                   [ Float.nan; Float.infinity; Float.neg_infinity; -0. ] );
+             ])
+      in
+      (e, ys))
+  in
+  prop "a compiled codec encodes and decodes as the eager one"
+    Gen.(pair fixed (pair (of_list transforms) bool))
+    (fun ((e, ys), (tr, wide)) ->
+      let t = Scalar.v tr (row e) in
+      let c = Scalar.jit t in
+      let v = values ys in
+      let k = Scalar.encode t v in
+      equal (array int) (ints k) (ints (Scalar.encode c v));
+      if wide then begin
+        let v = Nx.cast Nx.float64 v in
+        equal (array int) (ints (Scalar.encode t v)) (ints (Scalar.encode c v))
+      end;
+      equal (array float_exact)
+        (Nx.to_array (Scalar.decode t k))
+        (Nx.to_array (Scalar.decode c k)))
+
+(* A compiled codec keeps programs for float32 and float64 values alone, so it
+   refuses a narrower float, which no set without eager kernels could encode. *)
+let narrow_floats =
+  let refuses x =
+    let t = Scalar.jit (Scalar.v Identity (row [| 0.; 1.; 2. |])) in
+    raises_match (Exn.invalid_arg ~sub:"float32 or float64") (fun () ->
+        Scalar.encode t x)
+  in
+  let v = values [| 0.5; 1.5 |] in
+  cases "a compiled codec refuses a float narrower than float32" ~id:fst
+    [
+      ("float16", fun () -> refuses (Nx.cast Nx.float16 v));
+      ("bfloat16", fun () -> refuses (Nx.cast Nx.bfloat16 v));
+    ]
+    (fun (_, f) -> f ())
+
+let refuses_at_call =
+  test "a compiled codec refuses a token at the call" (fun () ->
+      (* On a set without eager kernels a check in its program would raise only
+         at a later wait. *)
+      let t = Scalar.v Identity (row [| 0.; 1.; 2. |]) in
+      let t = Scalar.jit (Scalar.place Soft.on t) in
+      raises_match (Exn.invalid_arg ~sub:"token 3 at [1] outside [0, 3)")
+        (fun () -> Scalar.decode t (Nx.place Soft.on (tokens [| 0; 3 |]))))
+
 let () =
   exit
     (run "aion.scalar"
@@ -342,5 +407,5 @@ let () =
            ];
          group "decode" [ upper_edge; out_of_range; past_last; decodes ];
          shapes;
-         group "devices" [ compiled ];
+         group "devices" [ compiled; jitted; narrow_floats; refuses_at_call ];
        ])

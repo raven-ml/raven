@@ -5,12 +5,24 @@
 
 type transform = Identity | Log of float | Asinh_asinh
 
+(* A compiled codec's programs ({!jit}): encode, at float32 and at float64,
+   and decode without its check. *)
+type 'd programs = {
+  p_encode32 : 'd Nx.float32_t -> 'd Nx.int64_t;
+  p_encode64 : 'd Nx.float64_t -> 'd Nx.int64_t;
+  p_decode : 'd Nx.int64_t -> 'd Nx.float32_t;
+}
+
 (* [edges] is [c] codebooks of [n] edges, [c; n]. *)
-type 'd t = { transform : transform; edges : 'd Nx.float32_t }
+type 'd t = {
+  transform : transform;
+  edges : 'd Nx.float32_t;
+  programs : 'd programs option;
+}
 
 let v transform edges =
   match Nx.shape edges with
-  | [| c; n |] when c > 0 && n > 0 -> { transform; edges }
+  | [| c; n |] when c > 0 && n > 0 -> { transform; edges; programs = None }
   | s ->
       invalid_arg
         (Printf.sprintf "Aion.Scalar.v: edges of shape [%s], [c; n] expected"
@@ -18,7 +30,6 @@ let v transform edges =
 
 let transform t = t.transform
 let edges t = t.edges
-let place p t = { t with edges = Nx.place p t.edges }
 
 (* The codecs of upstream's aion/codecs/config.py (MODALITY_CODEC_MAPPING) with
    the parameters of their config.json on the Hub: every log codec has
@@ -121,23 +132,24 @@ let inverse tr y =
   | Log _ -> Nx.exp y
   | Asinh_asinh -> Nx.sinh (Nx.sinh y)
 
+(* A codec of [c] channels takes values whose last axis has [c] entries. *)
+let channels (type v s d) fn t (x : (v, s, d) Nx.t) =
+  let c = Nx.dim 0 t.edges and s = Nx.shape x in
+  let r = Array.length s in
+  if c > 1 && (r = 0 || s.(r - 1) <> c) then
+    invalid_arg
+      (Printf.sprintf "Aion.Scalar.%s: last axis of %d entries, %d expected" fn
+         (if r = 0 then 0 else s.(r - 1))
+         c)
+
 (* The position of each value's codebook in the flattened edges: [i * n] for
    channel [i], along the values' last axis. *)
 let offsets (type v s d) fn t (x : (v, s, d) Nx.t) : d Nx.int64_t =
+  channels fn t x;
   let c = Nx.dim 0 t.edges and n = Nx.dim 1 t.edges in
-  let s = Nx.shape x in
-  let at = Nx.beside x in
+  let s = Nx.shape x and at = Nx.beside x in
   if c = 1 then Nx.zeros_at at Nx.int64 s
-  else begin
-    let r = Array.length s in
-    if r = 0 || s.(r - 1) <> c then
-      invalid_arg
-        (Printf.sprintf "Aion.Scalar.%s: last axis of %d entries, %d expected"
-           fn
-           (if r = 0 then 0 else s.(r - 1))
-           c);
-    Nx.broadcast_to s (Nx.arange_at at Nx.int64 0 (c * n) n)
-  end
+  else Nx.broadcast_to s (Nx.arange_at at Nx.int64 0 (c * n) n)
 
 (* The bisection's rounds: each one at least halves the [hi - lo] of every
    search, which starts at [n - 1]. *)
@@ -169,7 +181,7 @@ let search ~n ~base flat y =
    edges: float64 for a float64 input, which a float32 comparison would round (1
    + 1e-12 lies above the edge 1, its float32 rounding on it), and float32 for
    any narrower one. *)
-let encode (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
+let encode_raw (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
   let n = Nx.dim 1 t.edges in
   let base = offsets "encode" t x in
   let flat = Nx.flatten t.edges in
@@ -178,14 +190,29 @@ let encode (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
   | Nx.Dtype.Float64 -> search ~n ~base (Nx.cast Nx.float64 flat) y
   | _ -> search ~n ~base flat (Nx.cast Nx.float32 y)
 
-let decode (type d) t (k : d Nx.int64_t) : d Nx.float32_t =
+(* A compiled codec keeps a program for float32 and one for float64, and
+   refuses other floats, which a set without eager kernels could not encode. *)
+let encode (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
+  channels "encode" t x;
+  match (t.programs, Nx.dtype x) with
+  | None, _ -> encode_raw t x
+  | Some p, Nx.Dtype.Float32 -> p.p_encode32 x
+  | Some p, Nx.Dtype.Float64 -> p.p_encode64 x
+  | Some _, dt ->
+      invalid_arg
+        (Printf.sprintf
+           "Aion.Scalar.encode: %s values, a compiled codec takes float32 or \
+            float64"
+           (Nx.Dtype.name dt))
+
+(* The token [n] is the class past the last edge, which a transformer may
+   predict (redshift's vocabulary holds it), so the refusal names it. *)
+let check_decode t k =
   let n = Nx.dim 1 t.edges in
-  let base = offsets "decode" t k in
+  channels "decode" t k;
   let inside =
     Nx.logical_and (Nx.greater_equal_s k 0L) (Nx.less_s k (Int64.of_int n))
   in
-  (* The token [n] is the class past the last edge, which a transformer may
-     predict (redshift's vocabulary holds it), so the message names it. *)
   Nx.check Nx.Ptree.tensor inside k (fun i k ->
       let k = Nx.item [] k in
       Invalid_argument
@@ -195,5 +222,37 @@ let decode (type d) t (k : d Nx.int64_t) : d Nx.float32_t =
            n
            (if k = Int64.of_int n then
               ", the class past the last edge, whose value is unknown"
-            else "")));
+            else "")))
+
+let decode_raw (type d) t (k : d Nx.int64_t) : d Nx.float32_t =
+  let base = offsets "decode" t k in
   inverse t.transform (Nx.take (Nx.add k base) (Nx.flatten t.edges))
+
+(* A compiled codec checks a copy on the host, so that a refusal comes before
+   its program runs. *)
+let decode t k =
+  match t.programs with
+  | None ->
+      check_decode t k;
+      decode_raw t k
+  | Some p ->
+      check_decode t (Nx.place Nx.Host.on k);
+      p.p_decode k
+
+(* Compiling *)
+
+let jit t =
+  let t = { t with programs = None } in
+  let open Nx.Ptree in
+  let programs =
+    {
+      p_encode32 = Rune.jit (tensor @-> returns tensor) (encode_raw t);
+      p_encode64 = Rune.jit (tensor @-> returns tensor) (encode_raw t);
+      p_decode = Rune.jit (tensor @-> returns tensor) (decode_raw t);
+    }
+  in
+  { t with programs = Some programs }
+
+let place p t =
+  let t' = { t with edges = Nx.place p t.edges; programs = None } in
+  if Option.is_some t.programs then jit t' else t'

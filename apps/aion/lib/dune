@@ -4,4 +4,4 @@
 
 (library
  (name aion)
- (libraries nx nx.io kaun kaun.hf ymir))
+ (libraries nx nx.io kaun kaun.hf rune ymir))

@@ -65,6 +65,13 @@ let load ?cache_dir ?offline ms =
   in
   { image; spectrum; scalars }
 
+let jit t =
+  {
+    image = Option.map Image.jit t.image;
+    spectrum = Option.map Spectrum.jit t.spectrum;
+    scalars = List.map (fun (m, c) -> (m, Scalar.jit c)) t.scalars;
+  }
+
 let missing m =
   invalid_arg
     (Printf.sprintf "Aion.Codecs: no codec loaded for %s" (Modality.key m))

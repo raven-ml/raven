@@ -101,13 +101,30 @@ val load :
     Raises as {!Hub.codec} and {!of_archive} do. *)
 
 val place : 'e Nx.Placement.t -> ('b, 'd) t -> ('b, 'e) t
-(** [place p t] is [t] with its weights at [p], as {!Nx.place}.
+(** [place p t] is [t] with its weights at [p], as {!Nx.place}, compiled if [t]
+    is ({!jit}).
 
     Raises as {!Nx.place} does. *)
 
 val cast : (float, 'c) Nx.dtype -> ('b, 'd) t -> ('c, 'd) t
 (** [cast dt t] is [t] with its weights cast to [dt], as {!Nx.cast}: exactly,
-    for a dtype as wide as float32. *)
+    for a dtype as wide as float32. It is compiled if [t] is ({!jit}). *)
+
+val jit : ('b, 'd) t -> ('b, 'd) t
+(** [jit t] is [t] computing by compiled programs. Its {!encode} and {!decode}
+    check their arguments as [t]'s do, values on the host, then run a program
+    [Rune.jit] compiles from [t]'s computation, with [t]'s weights captured,
+    one per list of bands, shape and placement of the arguments, kept for as
+    long as the compiled codec lives: the first call of each traces and
+    compiles, later ones run the program. A codec on a set without eager
+    kernels, as a GPU's, computes only so.
+
+    A compiled call computes to the accuracy [Rune.jit] states: its sums may
+    combine their terms in another order than [t]'s, so its results differ from
+    [t]'s in their last bits, and a token whose value lies that close to a
+    boundary may differ. A latent's NaN, which only the computation finds,
+    raises as {!Fsq.encode} raises under [Rune.jit]: at the call on the host,
+    at a later wait on another set. *)
 
 (** {1:images Images and tokens}
 

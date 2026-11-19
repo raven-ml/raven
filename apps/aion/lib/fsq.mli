@@ -65,3 +65,14 @@ val decode : (float, 's) Nx.dtype -> t -> 'd Nx.int64_t -> (float, 's, 'd) Nx.t
 
     Raises [Invalid_argument] if a code is outside [\[0, size q)], as {!encode}
     raises for NaN. *)
+
+(**/**)
+
+(* For Image: [check_decode q k] is {!decode}'s check of the codes [k], and
+   [decode_raw dt q k] is {!decode} without it, for a codec that checks its
+   codes on the host before a compiled program decodes them. *)
+
+val check_decode : t -> 'd Nx.int64_t -> unit
+
+val decode_raw :
+  (float, 's) Nx.dtype -> t -> 'd Nx.int64_t -> (float, 's, 'd) Nx.t

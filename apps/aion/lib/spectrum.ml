@@ -82,6 +82,17 @@ type ('b, 'd) layer =
   | Norm of ((float, 'b, 'd) Nx.t, 'd) Kaun.Layer_norm.t
   | Block of ('b, 'd) block
 
+(* A compiled codec's programs ({!jit}): encode and decode without their
+   checks. *)
+type ('b, 'd) programs = {
+  p_encode :
+    'd Nx.int64_t option ->
+    Modality.spectrum ->
+    ('b, 'd) spectrum ->
+    'd Nx.int64_t;
+  p_decode : (float, 'b, 'd) Nx.t option -> 'd Nx.int64_t -> ('b, 'd) spectrum;
+}
+
 (* [norm] is the normalisation token's codebook, as a one-channel scalar codec:
    upstream's ScalarLinearQuantizer clamps torch.bucketize over all 1024 values
    to 1023, which is Scalar's count over the first 1023 wherever the values are
@@ -94,6 +105,7 @@ type ('b, 'd) t = {
   decoder : ('b, 'd) layer list;
   grid : (float, 'b, 'd) Nx.t;
   norm : 'd Scalar.t;
+  programs : ('b, 'd) programs option;
 }
 
 let grid t = t.grid
@@ -131,10 +143,9 @@ let map f norm t =
     decoder = List.map (map_layer f) t.decoder;
     grid = f t.grid;
     norm = norm t.norm;
+    programs = None;
   }
 
-let place p t = map (Nx.place p) (Scalar.place p) t
-let cast dt t = map (Nx.cast dt) Fun.id t
 
 (* Reading the weights. Upstream's modules (aion/codecs/modules/convnext.py)
    store a convolution [out; in / groups; k], a transposed one [in; out; k] and
@@ -285,6 +296,7 @@ let of_archive archive =
       decoder;
       grid;
       norm = Scalar.v Identity levels;
+      programs = None;
     }
   in
   buffers a grid;
@@ -376,9 +388,8 @@ let resample ~x ~y xnew =
   let outside = Nx.logical_or (Nx.less xnew first) (Nx.greater xnew last) in
   Nx.where outside (Nx.zeros_like ynew) ynew
 
-let sorted x =
-  let m = Nx.dim 1 x.wavelength in
-  let w = x.wavelength in
+let sorted w =
+  let m = Nx.dim 1 w in
   let lo = Nx.slice [ Nx.A; Nx.R (0, m - 1) ] w in
   let ok = Nx.less_equal lo (Nx.slice [ Nx.A; Nx.R (1, m) ] w) in
   Nx.check Nx.Ptree.tensor ok lo (fun i _ ->
@@ -389,13 +400,17 @@ let sorted x =
            i.(0) i.(1)
            (i.(1) + 1)))
 
-let prepare t x =
+(* The checks of a spectrum's preparation: rows of two pixels or more, their
+   wavelengths sorted. *)
+let check_prepare x =
   let _, m = shape_of "encode" x in
   if m < 2 then
     invalid_arg (Printf.sprintf "Aion.Spectrum.encode: rows of %d pixel" m);
-  sorted x;
+  sorted x.wavelength
+
+let prepare_raw t x =
   let code = Scalar.encode t.norm (normalisation x) in
-  let v = Nx.cast (Nx.dtype x.flux) (Scalar.decode t.norm code) in
+  let v = Nx.cast (Nx.dtype x.flux) (Scalar.decode_raw t.norm code) in
   let s = Nx.reshape [| -1; 1 |] (scale v) in
   let signal =
     Nx.mul_s (Nx.sub_s (Nx.div (nan_to_num x.flux) s) 1.) input_scaling
@@ -404,6 +419,10 @@ let prepare t x =
   let noise = Nx.mul_s (Nx.div (Nx.sqrt ivar) s) input_scaling in
   let on_grid y = resample ~x:x.wavelength ~y t.grid in
   (Nx.asinh (Nx.stack ~axis:(-1) [ on_grid signal; on_grid noise ]), code)
+
+let prepare t x =
+  check_prepare x;
+  prepare_raw t x
 
 (* Networks *)
 
@@ -435,11 +454,15 @@ let layer l x =
   | Norm n -> Kaun.Layer_norm.apply ~eps:ln_eps n x
   | Block p -> block p x
 
-let latent t x =
-  let input, code = prepare t x in
+let latent_raw t x =
+  let input, code = prepare_raw t x in
   let h = List.fold_left (fun h l -> layer l h) input t.encoder in
   let h = Kaun.Layer_norm.apply ~eps:pre_norm_eps t.pre_norm h in
   (Kaun.Linear.apply t.quant h, code)
+
+let latent t x =
+  check_prepare x;
+  latent_raw t x
 
 (* Tokens *)
 
@@ -461,27 +484,18 @@ let values dt k =
   let one = Nx.ones_at (Nx.beside k) dt [||] in
   Nx.where set one (Nx.neg one)
 
-let encode_unpadded t x =
-  let h, code = latent t x in
+let encode_unpadded_raw t x =
+  let h, code = latent_raw t x in
   Nx.concatenate ~axis:1 [ Nx.reshape [| -1; 1 |] code; codes h ]
+
+let encode_unpadded t x =
+  check_prepare x;
+  encode_unpadded_raw t x
 
 (* Row [i]'s pixels at and past [lengths.(i)] become pads, so the row reads as
    its first [lengths.(i)] pixels padded, and the pixels cut are never read. *)
 let trim lengths x =
   let b, m = shape_of "encode" x in
-  if Nx.shape lengths <> [| b |] then
-    invalid_arg
-      (Printf.sprintf "Aion.Spectrum.encode: lengths not of shape [%d]" b);
-  let inside =
-    Nx.logical_and
-      (Nx.greater_equal_s lengths 1L)
-      (Nx.less_equal_s lengths (Int64.of_int m))
-  in
-  Nx.check Nx.Ptree.tensor inside lengths (fun i l ->
-      Invalid_argument
-        (Printf.sprintf
-           "Aion.Spectrum.encode: length %Ld of row %d outside [1, %d]"
-           (Nx.item [] l) i.(0) m));
   let past =
     Nx.greater_equal
       (Nx.reshape [| 1; m |] (Nx.arange_at (Nx.beside lengths) Nx.int64 0 m 1))
@@ -495,13 +509,46 @@ let trim lengths x =
     wavelength = fill pad_wavelength x.wavelength;
   }
 
-let encode ?lengths t modality x =
-  let x = match lengths with None -> x | Some l -> trim l x in
-  encode_unpadded t (pad modality x)
+let check_lengths x lengths =
+  let b, m = shape_of "encode" x in
+  if Nx.shape lengths <> [| b |] then
+    invalid_arg
+      (Printf.sprintf "Aion.Spectrum.encode: lengths not of shape [%d]" b);
+  let inside =
+    Nx.logical_and
+      (Nx.greater_equal_s lengths 1L)
+      (Nx.less_equal_s lengths (Int64.of_int m))
+  in
+  Nx.check Nx.Ptree.tensor inside lengths (fun i l ->
+      Invalid_argument
+        (Printf.sprintf
+           "Aion.Spectrum.encode: length %Ld of row %d outside [1, %d]"
+           (Nx.item [] l) i.(0) m))
 
-let decode ?wavelength t k =
-  let l = Nx.dim 0 t.grid in
-  let n = l / reduction t.encoder in
+(* The checks of [encode], by shape and by {!Nx.check} of the lengths and of
+   the padded rows' wavelengths, as [prepare] reads them. *)
+let check_encode ?lengths modality x =
+  ignore (shape_of "encode" x);
+  let w = x.wavelength in
+  let mask = Nx.zeros_at (Nx.beside w) Nx.bool (Nx.shape w) in
+  let x = { flux = w; ivar = w; mask; wavelength = w } in
+  let x =
+    match lengths with
+    | None -> x
+    | Some l ->
+        check_lengths x l;
+        trim l x
+  in
+  check_prepare (pad modality x)
+
+let encode_raw ?lengths t modality x =
+  let x = match lengths with None -> x | Some l -> trim l x in
+  encode_unpadded_raw t (pad modality x)
+
+(* Decoding *)
+
+let check_decode ?wavelength t k =
+  let n = Nx.dim 0 t.grid / reduction t.encoder in
   let s = Nx.shape k in
   if Array.length s <> 2 || s.(1) <> n + 1 then
     invalid_arg
@@ -523,10 +570,15 @@ let decode ?wavelength t k =
       Invalid_argument
         (Printf.sprintf
            "Aion.Spectrum.decode: token %Ld at [%d; %d] outside [0, %d)"
-           (Nx.item [] k) i.(0) i.(1) token_count));
+           (Nx.item [] k) i.(0) i.(1) token_count))
+
+let decode_raw ?wavelength t k =
+  let l = Nx.dim 0 t.grid in
+  let n = l / reduction t.encoder in
+  let b = Nx.dim 0 k in
   let dt = Nx.dtype t.grid in
   let v =
-    Nx.cast dt (Scalar.decode t.norm (Nx.slice [ Nx.A; Nx.R (0, 1) ] k))
+    Nx.cast dt (Scalar.decode_raw t.norm (Nx.slice [ Nx.A; Nx.R (0, 1) ] k))
   in
   let z = values dt (Nx.slice [ Nx.A; Nx.R (1, n + 1) ] k) in
   let h = Kaun.Linear.apply t.post_quant z in
@@ -555,3 +607,76 @@ let decode ?wavelength t k =
     mask = Nx.logical_or outside bad;
     wavelength;
   }
+
+(* Entry points: the checks, then the computation. A compiled codec checks
+   copies on the host, so that its refusals come before its programs run, and
+   its programs check nothing. *)
+
+let host x = Nx.place Nx.Host.on x
+
+let encode ?lengths t modality x =
+  match t.programs with
+  | None ->
+      check_encode ?lengths modality x;
+      encode_raw ?lengths t modality x
+  | Some p ->
+      ignore (shape_of "encode" x);
+      let w = host x.wavelength in
+      let mask = Nx.zeros Nx.bool (Nx.shape w) in
+      check_encode
+        ?lengths:(Option.map host lengths)
+        modality
+        { flux = w; ivar = w; mask; wavelength = w };
+      p.p_encode lengths modality x
+
+let decode ?wavelength t k =
+  match t.programs with
+  | None ->
+      check_decode ?wavelength t k;
+      decode_raw ?wavelength t k
+  | Some p ->
+      check_decode ?wavelength:(Option.map host wavelength) t (host k);
+      p.p_decode wavelength k
+
+(* Compiling *)
+
+let spectrum_s () =
+  Nx.Ptree.v (fun c x ->
+      let open Nx.Ptree.Walk in
+      let flux = field c "flux" tensor x.flux in
+      let ivar = field c "ivar" tensor x.ivar in
+      let mask = field c "mask" tensor x.mask in
+      let wavelength = field c "wavelength" tensor x.wavelength in
+      { flux; ivar; mask; wavelength })
+
+let modality_s () =
+  Nx.Ptree.v (fun c (m : Modality.spectrum) ->
+      Nx.Ptree.Walk.case c (Modality.key (Spectrum m));
+      m)
+
+let jit t =
+  let t = { t with programs = None } in
+  let open Nx.Ptree in
+  let encode lengths m x = encode_raw ?lengths t m x in
+  let decode wavelength k = decode_raw ?wavelength t k in
+  let programs =
+    {
+      p_encode =
+        Rune.jit
+          (option tensor @-> modality_s () @-> spectrum_s () @-> returns tensor)
+          encode;
+      p_decode =
+        Rune.jit (option tensor @-> tensor @-> returns (spectrum_s ())) decode;
+    }
+  in
+  { t with programs = Some programs }
+
+let compiled t = Option.is_some t.programs
+
+let place p t =
+  let t' = map (Nx.place p) (Scalar.place p) t in
+  if compiled t then jit t' else t'
+
+let cast dt t =
+  let t' = map (Nx.cast dt) Fun.id t in
+  if compiled t then jit t' else t'

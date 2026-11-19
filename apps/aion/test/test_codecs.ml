@@ -132,6 +132,23 @@ let others =
           raises_match (Exn.invalid_arg ~sub:"tok_flux_r") (fun () ->
               Codecs.encode codecs
                 (Scalar { modality = Flux_r; values = Nx.zeros Nx.float32 [| 1 |] })));
+      test "compiled codecs encode and decode as the eager ones" (fun () ->
+          let c = Codecs.jit codecs in
+          let values =
+            Nx.create Nx.float32 [| 4 |] [| -2.; 0.25; Float.nan; 9. |]
+          in
+          let d = Codecs.Scalar { modality = Flux_g; values } in
+          let e = Codecs.encode codecs d and ec = Codecs.encode c d in
+          equal (array int) (ints e.tokens) (ints ec.tokens);
+          equal (array bool) (presence e) (presence ec);
+          let k = Nx.create Nx.int64 [| 3 |] [| 0L; 4L; 7L |] in
+          match
+            ( Codecs.decode codecs (Scalar Flux_g) k,
+              Codecs.decode c (Scalar Flux_g) k )
+          with
+          | Scalar { values = v; _ }, Scalar { values = vc; _ } ->
+              equal (array float_exact) (Nx.to_array v) (Nx.to_array vc)
+          | _ -> fail "not Flux_g's values");
       test "load refuses the segmentation map" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"tok_segmap") (fun () ->
               Codecs.load ~cache_dir ~offline:true [ Modality.Segmap ]));

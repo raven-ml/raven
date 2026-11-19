@@ -52,6 +52,10 @@ val load : ?cache_dir:string -> ?offline:bool -> Modality.t list -> t
     Raises [Invalid_argument] for {!Modality.Segmap} and {!Modality.Catalog},
     which have no codec here, and [Failure] as each codec's [load]. *)
 
+val jit : t -> t
+(** [jit t] is [t] with each codec compiled: {!Image.jit}, {!Spectrum.jit} and
+    {!Scalar.jit}, whose programs live as long as the result. *)
+
 val scalar : t -> Modality.scalar -> Nx.host Scalar.t
 (** [scalar t m] is [m]'s codec.
 

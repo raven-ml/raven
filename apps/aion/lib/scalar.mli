@@ -61,9 +61,21 @@ val edges : 'd t -> 'd Nx.float32_t
 (** [edges t] is [t]'s codebooks, of shape [[|c; n|]]. *)
 
 val place : 'e Nx.Placement.t -> 'd t -> 'e t
-(** [place p t] is [t] with its codebooks at [p], as {!Nx.place}.
+(** [place p t] is [t] with its codebooks at [p], as {!Nx.place}, compiled if
+    [t] is ({!jit}).
 
     Raises as {!Nx.place} does. *)
+
+val jit : 'd t -> 'd t
+(** [jit t] is [t] computing by compiled programs: its {!encode} of float32 and
+    float64 values and its {!decode} check their arguments as [t]'s do, on the
+    host, then run a program [Rune.jit] compiles, with [t]'s codebooks
+    captured, one per shape and placement of the argument, for as long as the
+    compiled codec lives. Its {!encode} raises [Invalid_argument] for values
+    of another dtype. A codec on a set without eager kernels, as a GPU's,
+    computes only so. Tokens and values agree with [t]'s bit for bit: the
+    computation is comparisons, gathers and the transform's functions, which
+    [Rune.jit] computes exactly on a faithful device. *)
 
 (** {1:aion AION-1's codecs} *)
 
@@ -100,3 +112,10 @@ val decode : 'd t -> 'd Nx.int64_t -> 'd Nx.float32_t
     channel. The token [n] is the class past the last edge, which the
     transformer predicts for redshift ({!Modality.vocab} is [1025] there) and
     whose value is unknown: its refusal names it. *)
+
+(**/**)
+
+(* For Spectrum: [decode_raw t k] is {!decode} without its check, for a codec
+   that checks its tokens itself. *)
+
+val decode_raw : 'd t -> 'd Nx.int64_t -> 'd Nx.float32_t

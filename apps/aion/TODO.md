@@ -38,9 +38,3 @@ leaves when its library fixes it, or when a design decides it stays.
   fetched ranges, and raven has no library that fetches them: kaun.hf,
   kaun.datasets and tessera's `Fetch` each wrap curl. The maintainer chose
   local files for now (2026-11-19).
-
-- **A compiled inference path.** `Transformer.encode` and `decode` check
-  tokens, presence and lengths on the host (`Nx.item`), so neither runs
-  inside `Rune.jit`, and each call waits for its inputs. GPU throughput work
-  needs a compiled path first, with the checks where rune can make them
-  (see main's TODO on checking data inside compiled code).

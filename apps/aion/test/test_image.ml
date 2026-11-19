@@ -567,6 +567,78 @@ let bands =
             (Ymir.Unit.to_string (Image.unit b)))
         Image.bands)
 
+(* Compiled codecs. A compiled codec meets upstream as the eager one does, at
+   both rungs, and refuses at the call on a set without eager kernels, where a
+   check in its program would raise only at a later wait. *)
+
+module Soft = (val Nx.devices [ Result.get_ok (Rig.software "aion-image") ])
+
+let compiled =
+  let c32 = lazy (Image.jit (Lazy.force upstream_codec)) in
+  let c64 = lazy (Image.jit (Lazy.force codec64)) in
+  let input name = golden_get Nx.float32 ("input." ^ name) in
+  let ref name part =
+    floats (golden_get Nx.float64 ("f64." ^ name ^ "." ^ part))
+  in
+  let spread scale name part =
+    floats (golden_get Nx.float32 ("s." ^ scale ^ "." ^ name ^ "." ^ part))
+  in
+  let encode rung bs x =
+    match rung with
+    | `F32 -> Image.encode (Lazy.force c32) bs x
+    | `F64 -> Image.encode (Lazy.force c64) bs (Nx.cast Nx.float64 x)
+  in
+  let decode rung bs k =
+    match rung with
+    | `F32 -> floats (Image.decode (Lazy.force c32) bs k)
+    | `F64 -> floats (Image.decode (Lazy.force c64) bs k)
+  in
+  let soft =
+    lazy (Image.jit (Image.place Soft.on (Lazy.force upstream_codec)))
+  in
+  group "compiled"
+    [
+      cases "a compiled codec encodes upstream's tokens" ~id:row_id rows
+        (fun (rung, scale, name, bs) ->
+          holds "token digits"
+            (Spread.levels ~n:(ensemble_n ()) ~edges:digit_edges
+               ~reference:(ref name "bounded")
+               ~spread:(spread scale name "bounded")
+               (digits (encode rung bs (input name)))));
+      cases "a compiled codec decodes upstream's images" ~id:row_id rows
+        (fun (rung, scale, name, bs) ->
+          let k = golden_get Nx.int64 ("f64." ^ name ^ ".tokens") in
+          holds "decoded"
+            (Spread.values ~n:(ensemble_n ()) ~reference:(ref name "decoded")
+               ~spread:(spread scale name "decoded")
+               (decode rung [ List.hd bs ] k)));
+      test "a compiled codec computes on a set without eager kernels"
+        (fun () ->
+          (* Its programs compile for the host's CPU there too, so they give the
+             host's bits. *)
+          let bs = Image.[ Hsc_i; Hsc_y ] in
+          let x = input "hsc" in
+          let k = Image.encode (Lazy.force c32) bs x in
+          let ks = Image.encode (Lazy.force soft) bs (Nx.place Soft.on x) in
+          equal (array int64) (Nx.to_array k)
+            (Nx.to_array (Nx.place Nx.Host.on ks));
+          equal (array float_exact)
+            (floats (Image.decode (Lazy.force c32) bs k))
+            (floats
+               (Nx.place Nx.Host.on
+                  (Image.decode (Lazy.force soft) bs (Nx.place Soft.on k)))));
+      test "a compiled codec refuses a code outside [0, 4375) at the call"
+        (fun () ->
+          let k =
+            Nx.create Nx.int64 [| 1; 576 |]
+              (Array.init 576 (fun i -> if i = 7 then 4375L else 0L))
+          in
+          raises_match (Exn.invalid_arg ~sub:"code 4375 at [0; 7]") (fun () ->
+              Image.decode (Lazy.force soft)
+                Image.[ Des_g ]
+                (Nx.place Soft.on k)));
+    ]
+
 let () =
   exit
     (run "aion.image"
@@ -575,6 +647,7 @@ let () =
            [ prepare_formula; per_band; restores; reciprocals; bands ];
          group "embed" [ embeds ];
          upstream_network;
+         compiled;
          shapes;
          group "decode" [ decodes_per_band ];
          refusals;

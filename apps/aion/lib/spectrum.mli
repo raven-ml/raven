@@ -101,14 +101,30 @@ val levels : ('b, 'd) t -> 'd Nx.float32_t
 (** [levels t] is the codebook of [t]'s normalisation token, [[|1024|]]. *)
 
 val place : 'e Nx.Placement.t -> ('b, 'd) t -> ('b, 'e) t
-(** [place p t] is [t] with its weights at [p], as {!Nx.place}.
+(** [place p t] is [t] with its weights at [p], as {!Nx.place}, compiled if [t]
+    is ({!jit}).
 
     Raises as {!Nx.place} does. *)
 
 val cast : (float, 'c) Nx.dtype -> ('b, 'd) t -> ('c, 'd) t
 (** [cast dt t] is [t] with its weights and grid cast to [dt], as {!Nx.cast}:
     exactly, for a dtype as wide as float32. Its normalisation codebook stays
-    float32, its values compared exactly with the normalisation at [dt]. *)
+    float32, its values compared exactly with the normalisation at [dt]. It is
+    compiled if [t] is ({!jit}). *)
+
+val jit : ('b, 'd) t -> ('b, 'd) t
+(** [jit t] is [t] computing by compiled programs. Its {!encode} and {!decode}
+    check their arguments as [t]'s do, values on the host, then run a program
+    [Rune.jit] compiles from [t]'s computation, with [t]'s weights captured,
+    one per modality, presence of [lengths] or [wavelength], shape and
+    placement of the arguments, kept for as long as the compiled codec lives:
+    the first call of each traces and compiles, later ones run the program. A
+    codec on a set without eager kernels, as a GPU's, computes only so.
+
+    A compiled call computes to the accuracy [Rune.jit] states: its sums may
+    combine their terms in another order than [t]'s, so its results differ from
+    [t]'s in their last bits, and a token whose value lies that close to a
+    boundary may differ. *)
 
 (** {1:tokens Tokens} *)
 

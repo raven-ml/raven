@@ -155,10 +155,11 @@ let spectrum ?mask ?ivar flux wavelength =
 (* Rows of [m] pixels over part of the grid's range, wavelengths increasing,
    some repeated, with fluxes, inverse variances and masks that break the
    preparation: NaN, infinities, negative inverse variances, masked pixels. *)
-let rows_of ~infinities =
+let rows_of ?(b = Gen.int_range 1 3) ?(m = Gen.int_range 2 12) ~infinities
+    () =
   Gen.(
-    let* b = int_range 1 3 in
-    let* m = int_range 2 12 in
+    let* b = b in
+    let* m = m in
     let row g = array ~size:(constant m) g in
     let flux =
       frequency
@@ -232,7 +233,7 @@ let within ~what bound expected got =
   if not (Float.abs (got -. expected) <= bound) then
     failf "%s: %.9g, expected %.9g within %.3g" what got expected bound
 
-let rows = rows_of ~infinities:false
+let rows = rows_of ~infinities:false ()
 
 (* A row's infinities after its first become NaN: two of one sign overflow
    float32's sum, where nx's bounds do not hold. *)
@@ -250,7 +251,7 @@ let one_infinity row =
 
 let normalisation =
   prop "the normalisation is log10 (1 + max mean 0.1)"
-    (rows_of ~infinities:true) (fun (fs, vs, ms, ws) ->
+    (rows_of ~infinities:true ()) (fun (fs, vs, ms, ws) ->
       let fs = Array.map one_infinity fs in
       let x = spectrum ~mask:ms ~ivar:vs fs ws in
       Array.iteri
@@ -795,6 +796,151 @@ let refusals =
               Spectrum.of_archive a));
     ]
 
+(* Compiled codecs *)
+
+module Soft = (val Nx.devices [ Result.get_ok (Rig.software "aion-spectrum") ])
+
+let host x = Nx.place Nx.Host.on x
+
+(* Resampling is searches, gathers, comparisons and elementwise arithmetic,
+   each of which Rune.jit computes exactly on the host, so its compiled form
+   gives eager's bits. *)
+let resample_compiled =
+  let keys = tensor [| grid_length |] (Array.init grid_length grid_at) in
+  let f =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun x y -> Spectrum.resample ~x ~y keys)
+  in
+  (* Three rows of twelve pixels: one program, whatever the seed. *)
+  let rows =
+    rows_of ~b:(Gen.constant 3) ~m:(Gen.constant 12) ~infinities:false ()
+  in
+  prop "resampling compiles to eager's bits" rows (fun (fs, _, _, ws) ->
+      let shape = [| Array.length ws; Array.length ws.(0) |] in
+      let x = tensor shape (Array.concat (Array.to_list ws)) in
+      let fs =
+        Array.map (Array.map (fun v -> if Float.is_finite v then v else 1.)) fs
+      in
+      let y = tensor shape (Array.concat (Array.to_list fs)) in
+      equal (array float_exact)
+        (floats (Spectrum.resample ~x ~y keys))
+        (floats (f x y)))
+
+(* A compiled codec meets upstream as the eager one does: each token's bit or
+   level is the reference's but where the reference lies within τ ŝ of its
+   boundary, each decoded value within τ ŝ. *)
+let compiled_upstream =
+  let c = lazy (Spectrum.jit (Lazy.force upstream_codec)) in
+  let modality = function "desi" -> Modality.Desi | _ -> Modality.Sdss in
+  let v name part = "f64." ^ name ^ "." ^ part
+  and s name part = "s." ^ name ^ "." ^ part in
+  let padded = [ "desi"; "sdss" ] in
+  group "compiled"
+    [
+      resample_compiled;
+      cases "a compiled codec encodes upstream's tokens" ~id:Fun.id padded
+        (fun name ->
+          let t = Lazy.force c in
+          let k = Spectrum.encode t (modality name) (input ()) in
+          let edges = Array.sub (floats (Spectrum.levels t)) 0 1023 in
+          holds "normalisation token"
+            (Spread.levels ~n:(n ()) ~edges
+               ~reference:(f64s (v name "norm_pre"))
+               ~spread:(f64s (s name "norm_pre"))
+               (ints (Nx.slice [ A; I 0 ] k)));
+          holds "LFQ bits"
+            (Spread.signs ~n:(n ())
+               ~reference:(lfq (v name "pre"))
+               ~spread:(lfq (s name "pre"))
+               (floats
+                  (Spectrum.values Nx.float64
+                     (Nx.slice [ A; R (1, Nx.dim 1 k) ] k)))));
+      cases "a compiled codec decodes upstream's spectrum" ~id:Fun.id padded
+        (fun name ->
+          let k = get Nx.int64 (v name "tokens") in
+          let d = Spectrum.decode (Lazy.force c) k in
+          holds "flux"
+            (Spread.values ~n:(n ())
+               ~reference:(f64s (v name "flux"))
+               ~spread:(f64s (s name "flux"))
+               (floats d.flux));
+          holds "mask"
+            (Spread.signs ~n:(n ())
+               ~reference:(f64s (v name "logit"))
+               ~spread:(f64s (s name "logit"))
+               (Array.map (fun b -> if b then 1. else -1.) (bools d.mask))));
+      test "a compiled codec computes on a set without eager kernels"
+        (fun () ->
+          (* Its programs compile for the host's CPU there too, so they give the
+             host's bits. *)
+          let t = Lazy.force c in
+          let soft =
+            Spectrum.jit (Spectrum.place Soft.on (Lazy.force upstream_codec))
+          in
+          let x = input () in
+          let on_soft (x : _ Spectrum.spectrum) : _ Spectrum.spectrum =
+            {
+              flux = Nx.place Soft.on x.flux;
+              ivar = Nx.place Soft.on x.ivar;
+              mask = Nx.place Soft.on x.mask;
+              wavelength = Nx.place Soft.on x.wavelength;
+            }
+          in
+          let b = Nx.dim 0 x.flux and m = Nx.dim 1 x.flux in
+          let lengths =
+            Nx.create Nx.int64 [| b |]
+              (Array.init b (fun i -> Int64.of_int (max 2 (m - (3 * i)))))
+          in
+          let k = Spectrum.encode ~lengths t Modality.Desi x in
+          let ks =
+            Spectrum.encode ~lengths:(Nx.place Soft.on lengths) soft
+              Modality.Desi (on_soft x)
+          in
+          equal (array int) (ints k) (ints (host ks));
+          let w = Nx.slice [ A; R (0, m / 2) ] x.wavelength in
+          let d = Spectrum.decode ~wavelength:w t k in
+          let ds =
+            Spectrum.decode ~wavelength:(Nx.place Soft.on w) soft
+              (Nx.place Soft.on k)
+          in
+          equal (array float_exact) (floats d.flux) (floats (host ds.flux));
+          equal (array bool) (bools d.mask) (bools (host ds.mask)));
+    ]
+
+(* A compiled codec on a set without eager kernels refuses at the call: a
+   check in its program would raise only at a later wait on that set. *)
+let compiled_refusals =
+  let soft = lazy (Spectrum.jit (Spectrum.place Soft.on (random 5))) in
+  let on_soft (x : _ Spectrum.spectrum) : _ Spectrum.spectrum =
+    {
+      flux = Nx.place Soft.on x.flux;
+      ivar = Nx.place Soft.on x.ivar;
+      mask = Nx.place Soft.on x.mask;
+      wavelength = Nx.place Soft.on x.wavelength;
+    }
+  in
+  let refuses sub f = raises_match (Exn.invalid_arg ~sub) f in
+  group "compiled refusals"
+    [
+      test "wavelengths that decrease" (fun () ->
+          let x = spectrum (flat 1 4 1.) [| [| 3600.; 3601.; -1.; -1. |] |] in
+          refuses "decrease" (fun () ->
+              Spectrum.encode (Lazy.force soft) Modality.Sdss (on_soft x)));
+      test "a length outside [1, m]" (fun () ->
+          let x = spectrum [| [| 1.; 2. |] |] [| [| 3600.; 3601. |] |] in
+          refuses "outside [1, 2]" (fun () ->
+              Spectrum.encode
+                ~lengths:
+                  (Nx.place Soft.on (Nx.create Nx.int64 [| 1 |] [| 3L |]))
+                (Lazy.force soft) Modality.Sdss (on_soft x)));
+      test "a token outside [0, 1024)" (fun () ->
+          refuses "outside [0, 1024)" (fun () ->
+              Spectrum.decode (Lazy.force soft)
+                (Nx.place Soft.on
+                   (Nx.create Nx.int64 [| 1; 3 |] [| 0L; 1024L; 0L |]))));
+    ]
+
 let () =
   exit
     (run "aion.spectrum"
@@ -811,6 +957,8 @@ let () =
          shapes;
          decoded;
          upstream;
+         compiled_upstream;
          divergences;
          refusals;
+         compiled_refusals;
        ])

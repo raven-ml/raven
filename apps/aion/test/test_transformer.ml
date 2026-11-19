@@ -278,6 +278,7 @@ let refusals =
         [
           ("context of another width", [| 1; 3; 17 |], [| 2L |]);
           ("context of two axes", [| 3; 16 |], [| 2L |]);
+          ("context of no axis", [||], [| 2L |]);
           ("lengths of another batch", [| 1; 3; 16 |], [| 2L; 2L |]);
           ("a length of 0", [| 2; 3; 16 |], [| 2L; 0L |]);
           ("a length past the row", [| 2; 3; 16 |], [| 4L; 2L |]);
@@ -403,5 +404,238 @@ let positions =
               decode_at "roar.1" (Some p)));
     ]
 
+(* Compiled: a transformer of [Transformer.jit] against the eager one, on
+   objects drawn from the fixture's. An object's context and logits do not
+   depend on the objects beside it, so each row has its fixture row's spread
+   [s]. Eager and compiled are float32 computations of one exact value, each
+   within τ s of it, so they differ by at most 2 τ s at each value. *)
+
+module Soft =
+  (val Nx.devices [ Result.get_ok (Rig.software "aion-transformer") ])
+
+let compiled = lazy (Transformer.jit (Lazy.force model))
+let host x = Nx.place Nx.Host.on x
+
+let close name ~spread x y =
+  holds name
+    (Spread.values ~n:(ensemble ()) ~reference:(floats y)
+       ~spread:(Array.map (fun s -> 2. *. s) (floats spread))
+       (floats x))
+
+let int_rows rows =
+  Nx.create Nx.int64
+    [| List.length rows |]
+    (Array.of_list (List.map Int64.of_int rows))
+
+let take_rows rows x = Nx.take ~axis:0 (int_rows rows) x
+
+(* The step [name]'s inputs and target of the objects [rows], the positions of
+   each row listed in the order [perm]. *)
+let step_case name rows perm =
+  let pick x = take_rows rows x in
+  let inputs =
+    List.map
+      (fun (i : _ Transformer.input) ->
+        { i with tokens = pick i.tokens; present = Option.map pick i.present })
+      (step_inputs name)
+  in
+  let perm = Nx.broadcast_to [| List.length rows; 7 |] (int_rows perm) in
+  let p = Nx.take_along_axis ~axis:1 perm (pick (at name)) in
+  let spread =
+    Nx.take_along_axis ~axis:1
+      (Nx.reshape [| List.length rows; 7; 1 |] perm)
+      (pick (rget Nx.float32 ("s." ^ name)))
+  in
+  (inputs, { Transformer.modality = Scalar Xp_rp; positions = Some p }, spread)
+
+(* Batches of one object and of four, drawn with repeats: each entry point
+   then traces two programs, whatever the seed. *)
+let objects = Gen.(list ~size:(of_list [ 1; 4 ]) (int_range 0 3))
+
+let compiled_gen =
+  Gen.(
+    let+ rows = objects
+    and+ name = of_list steps
+    and+ perm = permutation (List.init 7 Fun.id)
+    and+ zs = list ~size:(of_list [ 1; 2 ]) (int_range 1 2) in
+    (rows, name, perm, zs))
+
+(* [embedding]'s sums under Rune.jit and eagerly: two sums of [l] terms each
+   within γ(l) Σ|x| of the exact one (nx's and rune's bounds, [l] below 256),
+   each divided by [l] once more rounded. *)
+let embedding_bound e =
+  let c = floats e.Transformer.context and l = ints e.lengths in
+  let n = Nx.dim 1 e.context and w = Nx.dim 2 e.context in
+  let u = ldexp 1. (-24) in
+  Array.init (Array.length l * w) (fun x ->
+      let i = x / w and k = x mod w in
+      let a = ref 0. in
+      for r = 0 to l.(i) - 1 do
+        a := !a +. Float.abs c.((((i * n) + r) * w) + k)
+      done;
+      let l = float_of_int l.(i) in
+      let g = l *. u /. (1. -. (l *. u)) in
+      (2. *. g *. !a /. l) +. (2. *. u *. !a /. l))
+
+let encoding_s =
+  Nx.Ptree.v (fun c (e : _ Transformer.encoding) ->
+      let open Nx.Ptree.Walk in
+      let context = field c "context" tensor e.context in
+      let lengths = field c "lengths" tensor e.lengths in
+      Transformer.{ context; lengths })
+
+let jit_embedding =
+  Rune.jit Nx.Ptree.(encoding_s @-> returns tensor) Transformer.embedding
+
+let compiled_laws =
+  group "compiled"
+    [
+      prop "a compiled transformer computes as the eager one" compiled_gen
+        (fun (rows, name, perm, zs) ->
+          cover "one object" (List.length rows = 1);
+          cover "a repeated object"
+            (List.length (List.sort_uniq compare rows) < List.length rows);
+          let t = Lazy.force model and c = Lazy.force compiled in
+          let x = inputs ~rows () in
+          let e = Transformer.encode t x and ej = Transformer.encode c x in
+          equal (array int) (ints e.lengths) (ints ej.lengths);
+          close "context" ~spread:(take_rows rows (get Nx.float32 "s.embed"))
+            ej.context e.context;
+          let emb = floats (Transformer.embedding e) in
+          let d = floats (jit_embedding e) in
+          Array.iteri
+            (fun i b ->
+              if Float.abs (d.(i) -. emb.(i)) > b then
+                failf "embedding %d: %g, eager %g, bound %g" i d.(i) emb.(i) b)
+            (embedding_bound e);
+          let x, target, spread = step_case name rows perm in
+          let l = List.hd (Transformer.forward t x [ target ]) in
+          let one = List.hd in
+          close "forward" ~spread (one (Transformer.forward c x [ target ])) l;
+          let e = Transformer.encode t x in
+          close "decode" ~spread (one (Transformer.decode c e [ target ])) l;
+          (* A whole target, redshift, whose spread the fixture holds for
+             objects 1 and 2. *)
+          let x = inputs ~rows:zs () in
+          let z = [ whole (Scalar Z) ] in
+          let spread =
+            take_rows
+              (List.map (fun r -> r - 1) zs)
+              (get Nx.float32 "s.logits.tok_z")
+          in
+          close "whole target" ~spread
+            (List.hd (Transformer.forward c x z))
+            (List.hd (Transformer.forward t x z)));
+      test "a compiled transformer computes on a set without eager kernels"
+        (fun () ->
+          (* Its programs compile for the host's CPU there too, so they give the
+             host's bits. *)
+          let soft =
+            Transformer.jit (Transformer.place Soft.on (Lazy.force model))
+          in
+          let on_soft (i : _ Transformer.input) : _ Transformer.input =
+            {
+              i with
+              tokens = Nx.place Soft.on i.tokens;
+              present = Option.map (Nx.place Soft.on) i.present;
+            }
+          in
+          let x = step_inputs "roar.1" in
+          let target p : _ Transformer.target =
+            { modality = Scalar Xp_rp; positions = Some p }
+          in
+          let p = at "roar.1" in
+          let l = Transformer.forward (Lazy.force compiled) x [ target p ] in
+          let ls =
+            Transformer.forward soft (List.map on_soft x)
+              [ target (Nx.place Soft.on p) ]
+          in
+          equal (array float_exact)
+            (floats (List.hd l))
+            (floats (host (List.hd ls))));
+    ]
+
+(* A compiled transformer on a set without eager kernels refuses at the call:
+   a check in its program would raise only at a later wait on that set, and
+   the set computes nothing outside a program. *)
+let compiled_refusals =
+  let soft =
+    lazy (Transformer.jit (Transformer.place Soft.on (Lazy.force model)))
+  in
+  let s x = Nx.place Soft.on x in
+  let one m k : _ Transformer.input =
+    {
+      modality = m;
+      tokens = s (Nx.create Nx.int64 [| 1 |] [| Int64.of_int k |]);
+      present = None;
+    }
+  in
+  let refuses sub f = raises_match (Exn.invalid_arg ~sub) f in
+  let positions name rows =
+    let k = Array.length rows.(0) in
+    {
+      Transformer.modality = Scalar Xp_rp;
+      positions =
+        Some
+          (s
+             (Nx.create Nx.int64
+                [| Array.length rows; k |]
+                (Array.concat (Array.to_list rows))));
+    }
+    |> fun tg ->
+    Transformer.forward (Lazy.force soft)
+      (List.map
+         (fun (i : _ Transformer.input) ->
+           { i with tokens = s i.tokens; present = Option.map s i.present })
+         (step_inputs name))
+      [ tg ]
+  in
+  group "compiled refusals"
+    [
+      test "a present token outside the vocabulary" (fun () ->
+          refuses "outside [0, 1025)" (fun () ->
+              Transformer.encode (Lazy.force soft) [ one (Scalar Z) 1025 ]));
+      test "an object with no present token" (fun () ->
+          refuses "no present token" (fun () ->
+              Transformer.encode (Lazy.force soft)
+                [
+                  {
+                    (one (Scalar Z) 3) with
+                    present = Some (s (Nx.create Nx.bool [| 1 |] [| false |]));
+                  };
+                ]));
+      test "a length past the row" (fun () ->
+          let e : _ Transformer.encoding =
+            {
+              context = s (Nx.zeros Nx.float32 [| 2; 3; 16 |]);
+              lengths = s (Nx.create Nx.int64 [| 2 |] [| 4L; 2L |]);
+            }
+          in
+          refuses "a length outside [1, 3]" (fun () ->
+              Transformer.decode (Lazy.force soft) e [ whole (Scalar Z) ]));
+      test "a repeated position" (fun () ->
+          refuses "tok_xp_rp position 9 at [2; 1] repeats within its row"
+            (fun () ->
+              positions "roar.1"
+                [|
+                  [| 3L; 4L; 5L |];
+                  [| 3L; 4L; 5L |];
+                  [| 3L; 9L; 9L |];
+                  [| 3L; 4L; 5L |];
+                |]));
+      test "a position past the target" (fun () ->
+          let rows = [| [| 0L |]; [| 1L |]; [| 55L |]; [| 2L |] |] in
+          refuses "tok_xp_rp position 55 at [2; 0] outside [0, 55)" (fun () ->
+              positions "roar.1" rows));
+    ]
+
 let () =
-  exit (run "aion.transformer" [ upstream; laws; positions; loading; refusals ])
+  exit (run "aion.transformer" [
+         upstream;
+         laws;
+         positions;
+         compiled_laws;
+         loading;
+         refusals;
+         compiled_refusals;
+       ])
