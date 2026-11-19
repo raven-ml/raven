@@ -259,11 +259,30 @@ let stacking =
       raises (Invalid_argument "Tessera.Batch.stack: no batch") (fun () ->
           Batch.stack []))
 
+let refusals =
+  let px = Synth.pixels { Synth.s2 = [ 2; 1 ]; s1 = [ 1; 0 ]; seed = 1 } in
+  let counts = Batch.v2_counts px in
+  let pack px counts () = ignore (Batch.pack (shape ()) px counts ~from:0) in
+  let fails sub f = raises_match (Exn.invalid_arg ~sub) f in
+  [
+    test "pack refuses a negative count" (fun () ->
+        let c = Nx.to_array counts.s2 in
+        c.(1) <- -1l;
+        let s2 = Nx.create Nx.int32 [| Array.length c |] c in
+        fails "counts.s2: -1 at 1, negative" (pack px { counts with s2 }));
+    test "pack refuses observations of other cells" (fun () ->
+        let v = Nx_ragged.values px.s1 in
+        let wide = Nx.concatenate ~axis:1 [ v; v ] in
+        let s1 = Nx_ragged.v ~offsets:(Nx_ragged.offsets px.s1) wide in
+        fails "s1: observations of 8 cells, 4 expected"
+          (pack { px with s1 } counts));
+  ]
+
 let () =
   exit
     (run "tessera.batch"
        [
          group "counts" [ fill_rule; fill_total ];
-         group "pack" [ packing ];
+         group "pack" (packing :: refusals);
          group "train" [ expanding; fill_order; stacking ];
        ])

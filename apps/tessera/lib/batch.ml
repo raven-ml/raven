@@ -218,8 +218,8 @@ let row shape b t =
   in
   find b.first_open
 
-(* Writes the tokens of observations [lo, hi) of nonzero count, [t] of them, or
-   a stand-in if [t = 0], in row [r] as pixel place [place]'s slot. *)
+(* Writes the tokens of observations [lo, hi) of positive count, [t] of them,
+   or a stand-in if [t = 0], in row [r] as pixel place [place]'s slot. *)
 let put (type s) shape b r ~place ~(values : (int, s, c_layout) Array1.t)
     ~(counts : (int32, int32_elt, c_layout) Array1.t) lo hi t =
   let w = shape.width and c = channels b in
@@ -269,17 +269,22 @@ let rows_of shape b =
     at = Nx.Host.wrap [| shape.pixels |] b.places;
   }
 
-(* The tokens of row [p] of a sensor: its observations of nonzero count. *)
-let tokens o c p =
+(* The tokens of row [p] of sensor [name]: its observations of positive
+   count. *)
+let tokens name o c p =
   let t = ref 0 in
   for j = Int64.to_int o.{p} to Int64.to_int o.{p + 1} - 1 do
+    if c.{j} < 0l then invalid "counts.%s: %ld at %d, negative" name c.{j} j;
     if c.{j} > 0l then incr t
   done;
   !t
 
-let check_counts name (type v s) (r : (v, s, Nx.host) Nx_ragged.t)
+let check name ~cells (type v s) (r : (v, s, Nx.host) Nx_ragged.t)
     (c : Nx.host Nx.int32_t) =
-  if Nx.shape c <> [| Nx.dim 0 (Nx_ragged.values r) |] then
+  let v = Nx_ragged.values r in
+  if Nx.dim 1 v <> cells then
+    invalid "%s: observations of %d cells, %d expected" name (Nx.dim 1 v) cells;
+  if Nx.shape c <> [| Nx.dim 0 v |] then
     invalid "counts.%s: one count per observation expected" name
 
 let pack shape (px : Nx.host Pixels.t) (counts : counts) ~from =
@@ -290,8 +295,8 @@ let pack shape (px : Nx.host Pixels.t) (counts : counts) ~from =
   if Nx_ragged.length px.s1 <> Nx_ragged.length px.s2 then
     invalid "%d Sentinel-2 rows and %d Sentinel-1 rows" (Nx_ragged.length px.s2)
       (Nx_ragged.length px.s1);
-  check_counts "s2" px.s2 counts.s2;
-  check_counts "s1" px.s1 counts.s1;
+  check "s2" ~cells:(Pixels.s2_bands + 1) px.s2 counts.s2;
+  check "s1" ~cells:(Pixels.s1_bands + 2) px.s1 counts.s1;
   let b2 = builder shape ~rows:shape.s2_rows ~bands:Pixels.s2_bands in
   let b1 = builder shape ~rows:shape.s1_rows ~bands:Pixels.s1_bands in
   let pixel = filled int64 shape.pixels (-1L) in
@@ -306,7 +311,7 @@ let pack shape (px : Nx.host Pixels.t) (counts : counts) ~from =
     let rec go place p =
       if place >= shape.pixels || p >= n then p
       else
-        let t2 = tokens o2 c2 p and t1 = tokens o1 c1 p in
+        let t2 = tokens "s2" o2 c2 p and t1 = tokens "s1" o1 c1 p in
         if t2 = 0 && t1 = 0 then go place (p + 1)
         else begin
           if t2 > shape.width || t1 > shape.width then

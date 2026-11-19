@@ -26,7 +26,8 @@
 type counts = { s2 : Nx.host Nx.int32_t; s1 : Nx.host Nx.int32_t }
 (** The type for a count per observation: [s2.{j}] is the count of the
     observation at index [j] of [Nx_ragged.values] of a {!Pixels.t}'s [s2], and
-    [s1] likewise. An observation of count [0] is left out. *)
+    [s1] likewise. An observation of count [0] is left out, and no count is
+    negative. *)
 
 val v2_counts : Nx.host Pixels.t -> counts
 (** [v2_counts px] is the counts with which TESSERA v2 computes on [px]. A
@@ -107,16 +108,17 @@ val pack : shape -> Nx.host Pixels.t -> counts -> from:int -> Nx.host t * int
 (** [pack shape px counts ~from] packs [px]'s pixels from index [from] in order,
     until the batch's pixels are full or a pixel's tokens fit in no row, and is
     the batch with the index of the first pixel it did not consider. Each
-    sensor's tokens of a pixel are its observations of nonzero count, in [px]'s
-    order; a sensor with none, beside one with some, has one stand-in of count
-    [1], day [0]. A pixel with no token in either sensor is skipped, and no
-    place holds it. A pixel takes the first row of each sensor with room for its
-    tokens and a free slot.
+    sensor's tokens of a pixel are its observations of positive count, in
+    [px]'s order; a sensor with none, beside one with some, has one stand-in
+    of count [1], day [0]. A pixel with no token in either sensor is skipped,
+    and no place holds it. A pixel takes the first row of each sensor with
+    room for its tokens and a free slot.
 
     Raises [Invalid_argument] if a field of [shape] is not positive, if [px]'s
-    sensors have different numbers of rows, if [counts] does not have a count
-    for each of [px]'s observations, or if a pixel has more than [width] tokens
-    of a sensor. *)
+    sensors have different numbers of rows, if their observations do not have
+    {!Pixels.t}'s cells, if [counts] does not have a count for each of [px]'s
+    observations, if a pixel it considers has an observation of negative count,
+    or if a pixel has more than [width] tokens of a sensor. *)
 
 val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd t -> 'e t
 (** [walk c b] walks [b]'s arrays, so [Nx.Ptree.v walk] describes a batch. *)
