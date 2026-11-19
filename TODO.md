@@ -9,6 +9,8 @@ Measurements and parked work behind these items:
 _plans/perf-campaign/todo-archive-2026-11-18.md. A path in parentheses is
 under _plans/perf-campaign/ unless it names another directory of _plans/.
 
+- Since D485 every CUDA kernel is `tolk_kernel` in nsys and ncu, so a
+  profile names no kernel; attribution falls back to launch signatures
 - thumper decides quiet from the host's load alone (`Env.load`), so GPU
   rows run and bless under another user's compute context. Needs a public
   quiet hook in thumper and a source of the device's compute processes in
@@ -38,9 +40,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   either): its 1571 by 64 sum runs 4 workgroups of 256 threads
   (`r_4_16_16_99`), tinygrad's 64 of 32 (`r_64_32_50`). Raw:
   ~/wt/tmp/fix-argmax
-- gpt-oss's decode runs 26 CUDA chains a step, and the GPU idles 2-3 us
-  between any two, in one submit or across submits: rig's 32-launch cap
-  (`CHAIN 32`, rig_cuda_stubs.c) sets the count; llama.cpp replays 3 graphs
 - rig builds a program's whole submit before its first launch: 120 us of
   host time ahead of a one-program decode step. Submitting in pieces would
   start the GPU sooner (perf-campaign/chains/parked.md)
@@ -111,9 +110,9 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   group) is slow under rune's gradient: about 8 ms for the weights and
   21 ms for the input at 8x56x56x64, the loop-sized map and fold
   (depthwise/parked.md)
-- nx.cpu's Reduce still runs a program once per reduction across rows,
-  for Moments and Logsumexp, and over outputs of 16 terms or fewer;
-  attention.c:305-306 runs `ranges`' two outputs in two runs
+- nx.cpu's Reduce still runs a program once per reduction for Args across
+  rows, Moments and Logsumexp across rows or in groups, and a call of two
+  Logsumexps alone
 - Under `Rune.jit`, `Nx.matmul_segments`' weight gradient stores one
   `[k; n]` partial per block (+0.9 GB at 1,024 rows over 40 heads): it
   needs a tolk reduce with a per-workgroup trip count read from memory
@@ -221,6 +220,9 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## rig
 
+- gpt-oss decode runs 26 CUDA chains, one a submit; the 32 cap binds only
+  at prefill. 24 boundaries of 0.8 us and a 23 us host gap before the
+  first layer cost 42-76 us of 6.12 ms (perf-campaign/chaincap/cause.md)
 - Windows has no read depth: rig's disk opens a file without
   `FILE_FLAG_OVERLAPPED` (rig_disk_stubs.c:98-104), which serialises its
   I/O even where each `ReadFile` passes an `OVERLAPPED` offset, so a
