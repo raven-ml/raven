@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- **Breaking:** `sowilo` is removed. `mynd`, in `contrib/mynd`, replaces it;
+  its `CHANGES.md` maps each `sowilo` value to its replacement.
 - **Breaking:** gpt-oss's `main.exe` compiles its decode step on the host
   when `--devices` names none, where it ran eagerly; `--eager` runs it
   eagerly. `--devices` takes `cpu`, as `Rig_gpus.open_all` reads names.
@@ -44,11 +46,11 @@ All notable changes to this project will be documented in this file.
     ignored extra keys; `to_value` raises `Failure` on both.
   - Vega's optimiser states are structures: `Vega.sgd_ptree p`,
     `adam_ptree p` and `lbfgs_ptree p`, and `Vega.Loss_scale.walk`.
-- `fehu` and `sowilo` move to `contrib/`. Each is its own
+- `fehu` moves to `contrib/`. It is its own
   dune project with its own version, builds against `main`, and sits outside
-  the 1.0 API commitment. Changes to `fehu` and `sowilo` are now
-  recorded in `contrib/<package>/CHANGES.md`. The `raven` package no longer
-  installs `fehu` and `sowilo`; install them by name.
+  the 1.0 API commitment. Changes to `fehu` are now
+  recorded in `contrib/fehu/CHANGES.md`. The `raven` package no longer
+  installs `fehu`; install it by name.
 
 ### Rig (new)
 

@@ -4,6 +4,78 @@ All notable changes to Mynd are documented in this file.
 
 ## Unreleased
 
+- mynd replaces sowilo, which raven no longer ships. Each sowilo value
+  becomes a mynd value, a composition on a page of the guide (`doc/`) or
+  an nx call, in the table below. Every replacement takes any float dtype
+  and any number of batch axes, and a parameter held in an array, such as
+  a blur's deviation, has a derivative. The rows' images are `[h; w; c]`;
+  `sigma` and `mean`, `std` are arrays, `[]` and `[c]`. Results change:
+  - `convert` scales each dtype by its own largest code, where `to_float`
+    divided every dtype by 255, floats too. `convert Nx.uint8` rounds to
+    the nearest code, where `to_uint8` truncated, so a code whose scaled
+    value's fraction is above a half moves up by one.
+  - `resize` reads cell centres, where sowilo's `Bilinear` aligned the
+    corner pixels, and band-limits a shrink. It takes floats, where sowilo
+    took every dtype and truncated back into it. `nearest` at scaled
+    centres can take the other pixel where a centre falls on the edge
+    between two pixels, which sowilo settled by Pillow's running sum.
+  - Filters, gradients and blurs take an `~edge` rule; sowilo's read zero
+    outside the image, which is `` `Zero ``. A Gaussian's radius is
+    explicit: sowilo's default of `2⌈3σ⌉ + 1` taps is `~radius:⌈3σ⌉`, and
+    its fixed tables for a `sigma` of `0` or less are gone.
+  - The guide's contrast blends each image with its own mean luma, where
+    `adjust_contrast` blended each channel with its mean over the whole
+    batch; its saturation blends with each pixel's luma, where
+    `adjust_saturation` scaled HSV saturation. `rgb_to_hsv` adds no `1e-7`
+    to the chroma and the value, which biased hue and saturation.
+  - `gradient` is in values per pixel: sowilo's `sobel` was 8 times
+    `` `Sobel ``'s (2 times `` `Central ``'s at `~ksize:1`, 128 and 2048
+    times the guide's wider stencils at 5 and 7) and `scharr` 32 times
+    `` `Scharr ``'s. Canny's thresholds are strengths in those units:
+    with `` `Sobel `` in the guide's composition, sowilo's divided by 8
+    compare the same strengths. It thins by interpolation along the
+    gradient, where `canny` swapped its two diagonals, and keeps weak
+    pixels joined to a strong one through any path of 8-connected weak
+    pixels, where `canny` kept those within two pixels of one.
+  - `dilate` reads the footprint reflected about its origin tap, so
+    that `dilate fp (erode fp x)` is an opening; sowilo's read it
+    unreflected. They agree on a footprint symmetric about its centre.
+    The guide's `disk 2` keeps one pixel in its first and last rows, where
+    sowilo's 5×5 `Ellipse` kept three.
+
+  | sowilo | mynd |
+  |---|---|
+  | `to_float x` | `convert Nx.float32 x` |
+  | `to_uint8 x` | `convert Nx.uint8 x` |
+  | `normalize ~mean ~std x` | `Nx.div (Nx.sub x mean) std` |
+  | `threshold t x` | `Nx.greater_s x t` |
+  | `to_grayscale x` | `luma x`, of exactly three channels: split alpha off first with `Nx.split_at` |
+  | `rgb_to_hsv`, `hsv_to_rgb` | `rgb_to_hsv`, `hsv_to_rgb`, hue in turns as before |
+  | `adjust_brightness`, `adjust_contrast`, `adjust_saturation` | `doc/colour.md`, Brightness, contrast and saturation |
+  | `adjust_hue d x` | `doc/colour.md`, Hue |
+  | `adjust_gamma g x` | `Nx.pow_s x g` |
+  | `invert x` | `Nx.rsub_s 1. x` |
+  | `resize ~interpolation:Bilinear` | `` resize ~edge:`Replicate `Triangle ``; aligned corners are `` sample ~edge:`Replicate `Triangle `` at `(j (w - 1) / (w' - 1) + ½, i (h - 1) / (h' - 1) + ½)` |
+  | `resize ~interpolation:Nearest` | `` nearest ~edge:`Replicate `` at `centres` times `(w / w', h / h')` |
+  | `crop ~y ~x ~height ~width` | `Nx.slice [ R (y, y + height); R (x, x + width) ]` |
+  | `center_crop` | that slice from `y = (h - height) / 2`, `x = (w - width) / 2` |
+  | `hflip`, `vflip` | `Nx.flip ~axes:[ -2 ]`, `Nx.flip ~axes:[ -3 ]` |
+  | `rotate90 x` | `Nx.flip ~axes:[ -3 ] (Nx.swapaxes (-3) (-2) x)` |
+  | `pad ~value (t, b, l, r) x` | `Nx.pad [\| (t, b); (l, r); (0, 0) \|] value x`, or `Nx.extend` by a rule |
+  | `gaussian_blur ~sigma ~ksize` | `` gaussian_blur ~edge:`Zero ~radius:(ksize / 2) sigma `` |
+  | `box_blur` | `doc/filters.md`, Box blur |
+  | `median_blur ~ksize` | `` median_blur ~edge:`Zero (ksize, ksize) `` |
+  | `filter2d k` | `` correlate ~edge:`Zero k `` |
+  | `unsharp_mask` | `doc/filters.md`, Unsharp mask |
+  | `laplacian` | `doc/filters.md`, Laplacian, at sowilo's default `~ksize:1` |
+  | `structuring_element` | `doc/morphology.md`, Footprints |
+  | `erode ~kernel` | `erode kernel` |
+  | `dilate ~kernel` | `dilate (Nx.flip kernel)`, a row or column of `false` put before each even axis |
+  | `opening ~kernel`, `closing ~kernel` | `doc/morphology.md`, Openings and closings: the opening by `kernel`, the closing by `Nx.flip kernel` for odd extents |
+  | `morphological_gradient` | `doc/morphology.md`, Top-hats and the morphological gradient |
+  | `sobel`, `scharr` | `` gradient ~edge:`Zero `Sobel ``, `` `Scharr ``; `doc/edges.md`, Gradients, for apertures 5 and 7 |
+  | `canny` | `doc/edges.md`, Canny's edges |
+
 - Add morphology: `erode` and `dilate` by host boolean footprints of any
   extents, reading no extension rule, with dilation by Minkowski addition
   so that `dilate fp (erode fp x)` is an opening for every footprint; ties
