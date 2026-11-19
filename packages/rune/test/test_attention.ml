@@ -566,6 +566,40 @@ let law_grad (type a) (acc : (float, a) Nx.dtype) ~tol c =
     ~than:(tol *. (1. +. Float.abs dot))
     (Float.abs (d -. dot))
 
+(* The eager derivative under lengths computes over groups of lead indices,
+   those whose lengths round up to one power of two of keys, at most [tk],
+   and puts their results back in the lead's order. Covered: groups that
+   interleave, a group of one row among others, and a run of several rows
+   of a group after its first row, whose results lie inside the group's
+   rather than at their start. [lens] are clamped into [[0, tk]]. *)
+let arrangements tk lens =
+  let group l =
+    let rec up c = if c >= l then c else up (2 * c) in
+    if l = 0 then 0 else min tk (up 1)
+  in
+  let g = Array.map group lens in
+  let n = Array.length g in
+  let rows x = Array.fold_left (fun k y -> if y = x then k + 1 else k) 0 g in
+  let first x =
+    let rec go i = if g.(i) = x then i else go (i + 1) in
+    go 0
+  in
+  (* Each maximal run of one group: its start and its rows. *)
+  let rec runs i =
+    if i = n then []
+    else
+      let rec stop j = if j < n && g.(j) = g.(i) then stop (j + 1) else j in
+      let j = stop i in
+      (i, j - i) :: runs j
+  in
+  let runs = runs 0 in
+  let groups = List.sort_uniq compare (Array.to_list g) in
+  cover "groups that interleave" (List.length runs > List.length groups);
+  cover "a group of one row among others"
+    (List.length groups > 1 && List.exists (fun x -> rows x = 1) groups);
+  cover "a run of several rows after its group's first"
+    (List.exists (fun (i, k) -> k > 1 && first g.(i) < i) runs)
+
 (* Lengths hide the keys past each lead index's length as a mask of the
    same pairs does: the gradient in the query, keys, values and slopes and
    the tangent along a direction, with lengths, whose eager derivative
@@ -584,6 +618,7 @@ let law_lengths (type a) (acc : (float, a) Nx.dtype) ~tol c =
       cover "a row of every key" (l = c.tk);
       cover "a row of some keys" (l > 0 && l < c.tk))
     clamped;
+  arrangements c.tk clamped;
   let lead = [| 1; Array.length lens |] in
   let with_lead s = Array.append lead s in
   let k, v = keys acc c lead in
@@ -645,9 +680,9 @@ let law_lengths (type a) (acc : (float, a) Nx.dtype) ~tol c =
     (snd (Rune.jvp T.(list tensor) T.tensor whole xs ts))
     (snd (Rune.jvp T.(list tensor) T.tensor cut xs ts))
 
-(* Rows of no key, of some and of every key, under each mask, and rows
+(* Rows of no key, of some and of every key, under each mask, rows
    whose groups interleave, in runs of one row and of several within a
-   larger group. *)
+   larger group, and rows of one group below every key. *)
 let length_examples =
   List.map
     (fun (mask, lengths) ->
@@ -671,7 +706,20 @@ let length_examples =
       (Unmasked, [| 1; 0 |]);
       (Causal, [| 1; 9; 2; 9; 1; 9; 5; 9 |]);
       (Causal, [| 1; 1; 9; 1; 1; 9; 9; 2 |]);
+      (Causal, [| 3; 4 |]);
     ]
+
+(* Ten lead indices' lengths in [[0, tk + 1]], over dense keys of [tk]
+   from 3 to 12. In one case each of [arrangements]' covers holds with a
+   chance above 0.55 at each [tk] (measured over 10^5 draws), so the cases
+   of a run all miss one with a chance below 10^-10. *)
+let length_case =
+  let open Gen in
+  with_pp pp_case
+    (let* c = case in
+     let* tk = int_range 3 12 in
+     let+ lengths = array ~size:(constant 10) (int_range 0 (tk + 1)) in
+     { c with page = None; tk; lengths = Some lengths })
 
 (* The most elements a result of an operation of [f ()] holds, a view's
    excepted: the largest array [f] stores. *)
@@ -929,12 +977,12 @@ let () =
              test "lengths of no key keep the gradient where it lies"
                test_no_key_placement;
              test "a length acts as its clamp" test_length_extremes;
-             prop ~examples:length_examples ~count:12
+             prop ~examples:length_examples ~count:30
                "lengths hide what a mask of their pairs hides, float32"
-               case (law_lengths f32 ~tol:1e-3);
-             prop ~examples:length_examples ~count:12
+               length_case (law_lengths f32 ~tol:1e-3);
+             prop ~examples:length_examples ~count:30
                "lengths hide what a mask of their pairs hides, float64"
-               case (law_lengths f64 ~tol:1e-9);
+               length_case (law_lengths f64 ~tol:1e-9);
            ];
          group "results"
            [
