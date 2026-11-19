@@ -270,6 +270,24 @@ let dtyped =
       Format.fprintf ppf "%a, %s" pp_case c (Nx.Dtype.name dt))
     (Gen.pair case_gen (Gen.of_list Nx.Dtype.all))
 
+(* Every dtype at a case whose second run reads positions 0 to 3 of an axis
+   of 6 only modulo 2^64, from a start of int64's greatest less one after
+   an end of its least: each run reaches every dtype, and the covered
+   dtypes at a wrapping case, without drawing them. *)
+let every_dtype =
+  let wrapping =
+    {
+      lead = [||];
+      n = 6;
+      cells = [||];
+      size = 6;
+      k = 2;
+      starts = [| 0L; Int64.pred Int64.max_int |];
+      ends = [| Int64.min_int; 6L |];
+    }
+  in
+  List.map (fun dt -> (wrapping, dt)) Nx.Dtype.all
+
 (* A compiled call has eager's bits, computed by the compiler: a program
    holds the range gather as a gather at its positions, which it lowers. *)
 let law_jit (c, Nx.Dtype.Any dt) =
@@ -327,8 +345,8 @@ let () =
                 Format.fprintf ppf "%a, lanes %b %b %b" pp_case c a b d)
               (Gen.pair case_gen flags))
            law_vmap;
-         prop ~count:300 "a compiled call has eager's bits, every dtype"
-           dtyped law_jit;
+         prop ~examples:every_dtype
+           "a compiled call has eager's bits, every dtype" dtyped law_jit;
          prop "a compiled gradient has eager's bits, every float dtype"
            float_typed law_jit_grad;
        ])
