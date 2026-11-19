@@ -813,13 +813,14 @@ let pp_transfers ppf a =
 
 let pp_request : type a. Format.formatter -> a Wire.request -> unit =
  fun ppf -> function
-  | Wire.Join { agents } ->
-      Format.fprintf ppf "Join [%s]"
+  | Wire.Join { agents; silence_ns } ->
+      Format.fprintf ppf "Join [%s] %d ns"
         (String.concat "; "
            (List.map
               (fun (a : Wire.agent) ->
                 Printf.sprintf "%S %S:%d" a.name a.host a.port)
               agents))
+        silence_ns
   | Wire.Open k -> Format.fprintf ppf "Open %a" pp_bytes k
   | Wire.Alloc { id; device; memory; bytes } ->
       Format.fprintf ppf "Alloc {id %d; device %d; %s; bytes %d}" id device
@@ -910,8 +911,9 @@ let case_g =
          small_list
            (let+ name = text and+ host = text and+ port = int_range 0 65535 in
             { Wire.name; host; port })
+       and+ silence_ns = int_range 1_000_000 max_int
        and+ a = answer account_g in
-       Case (Wire.Join { agents }, a, account));
+       Case (Wire.Join { agents; silence_ns }, a, account));
       (let+ k = text and+ a = answer (small_list account_g) in
        Case (Wire.Open k, a, Windtrap.list account));
       (let+ id = id

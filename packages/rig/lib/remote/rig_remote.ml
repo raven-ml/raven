@@ -311,7 +311,8 @@ let join_answer_s = Agent.join_s +. 1.
    [join_answer_s]. Each request counts a change as it ends, answered or
    failed, and the wait reads the count before the answers, so a request
    that ends after the read ends the wait. *)
-let join job agents ms =
+let join job ~silence agents ms =
+  let silence_ns = Int64.to_int (Int64.of_float (silence *. 1e9)) in
   let agents =
     List.map2
       (fun m (_, host, port) -> { Wire.name = m.name; host; port })
@@ -320,7 +321,7 @@ let join job agents ms =
   let answers = Array.init (List.length ms) (fun _ -> Atomic.make None) in
   let ended = Agent.changes () in
   let ask i m =
-    (match request m (Wire.Join { agents }) with
+    (match request m (Wire.Join { agents; silence_ns }) with
     | Ok a -> Atomic.set answers.(i) (Some a)
     | Error why -> Link.fail job why);
     Agent.change ended
@@ -432,7 +433,7 @@ let check_agents agents =
    after its base, reporting on [report]. [fn] names the caller. A process that
    has failed gets its failure from the first host's open. A loss that fails
    the open job fails it here, before its watcher sees it. *)
-let start ~fn ~key ~report agents =
+let start ~fn ~key ~silence ~report agents =
   (match Atomic.get current with
   | Some j when Link.wait j.job ~ms:0 = Link.Open -> (
       Option.iter (Link.fail j.job) (loss j);
@@ -441,7 +442,7 @@ let start ~fn ~key ~report agents =
           invalid_argf "Rig_remote.%s: a job of the process is open" fn
       | Link.Failed _ | Link.Closed -> ())
   | _ -> ());
-  let job = Link.job () in
+  let job = Link.job ~silence () in
   let dialled = ref [] in
   let started () =
     match dial ~key job [] 1 agents with
@@ -450,7 +451,7 @@ let start ~fn ~key ~report agents =
         dialled := ms;
         Result.map
           (fun () -> ms)
-          (Result.bind (join job agents ms) (open_hosts job ms))
+          (Result.bind (join job ~silence agents ms) (open_hosts job ms))
   in
   (* From the job's making on, an exception fails and closes the job, which
      would otherwise refuse every later start: a refusal of rig's, such as
@@ -480,16 +481,26 @@ let start ~fn ~key ~report agents =
       List.iter close_host !dialled;
       reraise e
 
-let connect ~key agents =
+let default_silence = Link.default_silence
+let valid_silence = Link.valid_silence
+
+let check_silence fn = function
+  | None -> Link.default_silence
+  | Some s when Link.valid_silence s -> s
+  | Some s -> invalid_argf "Rig_remote.%s: a silence bound of %g s" fn s
+
+let connect ?silence ~key agents =
   Agent.masked @@ fun () ->
   check_agents agents;
+  let silence = check_silence "connect" silence in
   let named = List.map (fun (h, p) -> (strf "%s:%d" h p, h, p)) agents in
-  start ~fn:"connect" ~key ~report:None named
+  start ~fn:"connect" ~key ~silence ~report:None named
 
 (* Launched jobs *)
 
 let agents_var = "RIG_REMOTE_AGENTS"
 let key_var = "RIG_REMOTE_KEY"
+let silence_var = "RIG_REMOTE_SILENCE"
 let digits s = s <> "" && String.for_all (fun c -> '0' <= c && c <= '9') s
 
 let is_hex = function
@@ -547,6 +558,13 @@ let launched_key = function
   | Some k when String.length k = 64 && String.for_all is_hex k -> Ok k
   | Some _ -> Error (strf "%s is not 64 hexadecimal characters" key_var)
 
+let launched_silence = function
+  | None -> Ok Link.default_silence
+  | Some v -> (
+      match float_of_string_opt v with
+      | Some s when Link.valid_silence s -> Ok s
+      | _ -> Error (strf "%s: %S is not a silence bound" silence_var v))
+
 let called = Atomic.make false
 
 let launched () =
@@ -558,14 +576,21 @@ let launched () =
   | Some fd -> (
       let agents = Agent.take agents_var in
       let key = Agent.take key_var in
+      let silence = Agent.take silence_var in
       match Agent.report fd with
       | Error _ as e -> Some e
       | Ok r ->
           let report = Some r in
           let job =
-            match (launched_key key, launched_agents agents) with
-            | (Error _ as e), _ | _, (Error _ as e) -> e
-            | Ok key, Ok agents -> start ~fn:"launched" ~key ~report agents
+            match
+              (launched_key key, launched_agents agents,
+               launched_silence silence)
+            with
+            | (Error _ as e), _, _ | _, (Error _ as e), _ | _, _, (Error _ as e)
+              ->
+                e
+            | Ok key, Ok agents, Ok silence ->
+                start ~fn:"launched" ~key ~silence ~report agents
           in
           (match job with
           | Ok _ -> Agent.started report

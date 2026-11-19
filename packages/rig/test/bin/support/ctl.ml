@@ -11,7 +11,7 @@
 
    exit N: exits N once the job started. raise: raises once it started.
 
-   env: prints the agents' names and the key's length, then whether the three
+   env: prints the agents' names and the key's length, then whether the four
    variables are gone once the job started.
 
    empty: asks each machine's agent for the devices of a kind no GPU of this
@@ -126,7 +126,12 @@ let () =
         (String.length (Sys.getenv "RIG_REMOTE_KEY"));
       let j = job () in
       let vars =
-        [ "RIG_REMOTE_AGENTS"; "RIG_REMOTE_KEY"; "RIG_REMOTE_REPORT" ]
+        [
+          "RIG_REMOTE_AGENTS";
+          "RIG_REMOTE_KEY";
+          "RIG_REMOTE_REPORT";
+          "RIG_REMOTE_SILENCE";
+        ]
       in
       Printf.printf "variables gone: %b\n%!" (List.for_all gone vars);
       Rig_remote.close j

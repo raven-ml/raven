@@ -8,7 +8,7 @@ let rig =
        rig - run a job on several machines
 
 SYNOPSIS
-       rig run [--rig RIG] [--firmware DIR]...
+       rig run [--rig RIG] [--firmware DIR]... [--silence S]
                --on MACHINE,MACHINE[,MACHINE...] -- PROGRAM [ARG...]
        rig agent [--firmware DIR]... HOST:PORT
        rig firmware amd|nv [DIR]
@@ -62,7 +62,7 @@ let run =
        fails
 
 SYNOPSIS
-       rig run [--rig RIG] [--firmware DIR]...
+       rig run [--rig RIG] [--firmware DIR]... [--silence S]
                --on MACHINE,MACHINE[,MACHINE...] -- PROGRAM [ARG...]
 
 DESCRIPTION
@@ -80,11 +80,13 @@ DESCRIPTION
        for the agents to end and exits with the program's status.
 
        The job fails when one of its processes sees a failure: a device
-       lost, a machine silent, a connection broken. Once the program joined
-       the job, a process that ends without closing it, killed by a signal
-       or exiting from C code, fails it too, and so does a machine whose
-       ssh session ends. rig run then gives every process of the job 15
-       seconds to end, ends the rest, and names the cause. It waits for
+       lost, a connection broken, or silent for the job's silence bound
+       (--silence). Once the program joined the job, a process that ends
+       without closing it, killed by a signal or exiting from C code, fails
+       it too, and so does a machine whose ssh session ends. rig run then
+       gives every process of the job one and a half times the silence
+       bound, 15 seconds by default, to end, ends the rest, and names the
+       cause. It waits for
        every machine to answer, and starts the job again: fresh agents, a
        fresh key, and the program from its beginning. rig run gives up
        when the job fails four times in a row before the program joined
@@ -144,6 +146,12 @@ OPTIONS
            relative to the user's home. See 'rig agent --help'. Repeat it
            to pass several, in order.
 
+       --silence S
+           The job's silence bound, S seconds, at least 0.001: the job
+           fails when a connection between two of its processes carries no
+           byte for that long, though each process sends at least every
+           tenth of it. 10 by default.
+
 EXIT STATUS
        rig run exits with the program's status once the program closed the
        job, or once it exited before joining it; with 128 + N if signal N
@@ -156,9 +164,10 @@ EXIT STATUS
        125    on a bug in rig.
 
        On SIGINT, SIGTERM or SIGHUP, rig run sends the same signal to the
-       program and gives it 15 seconds to end, its agents still serving it,
-       so that it can save its work. Then rig run kills it, ends the
-       agents, and is killed by the signal: a shell reports 128 + N.
+       program and gives it one and a half times the silence bound to end,
+       its agents still serving it, so that it can save its work. Then rig
+       run kills it, ends the agents, and is killed by the signal: a shell
+       reports 128 + N.
 
 ENVIRONMENT
        The program runs in rig run's environment, with these variables,
@@ -174,6 +183,9 @@ ENVIRONMENT
 
        RIG_REMOTE_REPORT
            The file descriptor on which the program reports to rig run.
+
+       RIG_REMOTE_SILENCE
+           The job's silence bound in seconds, as --silence gives it.
 
        rig run reads:
 

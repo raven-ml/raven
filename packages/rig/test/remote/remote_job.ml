@@ -409,9 +409,14 @@ let ask fd r =
   | Some (k, _) -> failf "a frame of kind %d in place of an answer" k
   | None -> fail "the agent ended the connection in place of an answer"
 
+(* A join's silence bound: link.mli's 10 s, in nanoseconds. *)
+let silence_ns = u64 10_000_000_000
+
 (* A join of the agent [a] alone. *)
 let join_alone fd a =
-  ask fd (u8 1 ^ u32 1 ^ str (machine a) ^ str "127.0.0.1" ^ u32 a.port)
+  ask fd
+    (u8 1 ^ u32 1 ^ str (machine a) ^ str "127.0.0.1" ^ u32 a.port
+   ^ silence_ns)
 
 (* An allocation of [bytes] of the agent's host memory as [id]. *)
 let alloc_host id bytes = u8 3 ^ u64 id ^ u64 0 ^ u8 0 ^ u64 bytes

@@ -13,8 +13,9 @@
     the only back-pressure. A link owns the socket and two threads of C,
     which never hold the OCaml runtime:
     - the {e sending thread} sends what the [ready] functions of the link's
-      rails ({!rail}) leave, and a beat after a second in which nothing was
-      sent, between writers' messages. It waits on nothing but the writers
+      rails ({!rail}) leave, and a beat after a tenth of its job's silence
+      bound ({!val-job}) in which nothing was sent, between writers'
+      messages. It waits on nothing but the writers
       and its socket.
     - the {e receiving thread} reads each message. It places the transfers of
       the link's rails, and on the controller, writes the bytes of copies into
@@ -31,9 +32,10 @@
     this process learns of as its {e root cause}:
     - a link's stream breaks or ends without a close:
       ["NAME: closed its connection"], or the system's error after ["NAME: "];
-    - no byte comes on a link for 10 seconds: ["NAME: silent for 10 s"];
-    - a link's peer takes no byte of a send for 10 seconds:
-      ["NAME: read nothing for 10 s"];
+    - no byte comes on a link for the job's silence bound of [S] seconds:
+      ["NAME: silent for S s"], [S] as [%g] prints it;
+    - a link's peer takes no byte of a send for the bound:
+      ["NAME: read nothing for S s"];
     - a message is malformed, as is one with a u64 above [2]{^ 62}[ - 1]
       ({!Wire}): ["NAME: a malformed frame"];
     - a message is larger than this process can hold:
@@ -56,9 +58,9 @@
     stream, which the peer does once it has read the abort. A link whose
     send failed sends no abort, its stream cut. A failed link sends no
     message it is given and handles no message it receives. It gives up the
-    abort's send when it makes no progress for 10 seconds, and the reading
-    10 seconds after the later of the failure and the abort's send, or once
-    the peer has sent nothing for 10 seconds, as a stopped process does. A
+    abort's send when it makes no progress for the bound, and the reading
+    the bound after the later of the failure and the abort's send, or once
+    the peer has sent nothing for the bound, as a stopped process does. A
     peer misses the abort in the cases that section lists, and this
     process's end before {!close} has returned is one of them. Nothing
     raises from a C thread, and nothing calls OCaml. The process learns of
@@ -94,10 +96,29 @@ type job
 (** The type for the jobs of this process. A job is {e open} from {!val-job}
     until it has failed or closed. *)
 
-val job : unit -> job
-(** [job ()] is a new open job, with no link.
+val job : ?silence:float -> unit -> job
+(** [job ~silence ()] is a new open job, with no link, whose {e silence
+    bound} is [silence] seconds, {!default_silence} by default: the time its
+    links bear a peer that sends nothing or takes no byte of a send, and
+    wait for a failed peer ({!section-failure}).
 
-    Raises [Invalid_argument] if a job of the process is open. *)
+    Raises [Invalid_argument] if a job of the process is open, or if
+    [silence] is not {!valid_silence}. *)
+
+val valid_silence : float -> bool
+(** [valid_silence s] is [true] iff [s] is at least a millisecond and at most
+    9e9 seconds, which an int64 of nanoseconds holds. *)
+
+val default_silence : float
+(** [default_silence] is the silence bound of a job made without one: 10
+    seconds. *)
+
+val set_silence : job -> float -> unit
+(** [set_silence j s] makes [s] seconds [j]'s silence bound, from each of
+    its links' next wait on: an agent's job takes its controller's at its
+    join, the job having been made at the controller's handshake.
+
+    Raises [Invalid_argument] as {!val-job} does for [s]. *)
 
 (** The type for the states of a job. *)
 type state =
@@ -116,8 +137,8 @@ val fail : job -> string -> unit
 (** [fail j why] fails [j] with the root cause [why], unless it has failed or
     closed. It then sends the abort of each link that is sending no message,
     unless the link's own thread saw the failure first and sends it. The
-    send of an abort waits up to 10 seconds for a peer that reads nothing,
-    and [fail] releases the runtime while it sends. *)
+    send of an abort waits up to the silence bound for a peer that reads
+    nothing, and [fail] releases the runtime while it sends. *)
 
 val close : job -> unit
 (** [close j] ends [j]. On an open job, each of its links sends a close after

@@ -5,7 +5,7 @@
 
 /* For rig's tests: Rig_remote_proxy.Probe, which holds a link's transfers
    and counts its release entrants through the hook the link calls at each
-   point of its protocol, and shortens a link's bounds. */
+   point of its protocol. */
 
 #include <caml/alloc.h>
 #include <caml/memory.h>
@@ -110,8 +110,3 @@ value caml_rig_remote_probe_resume(value unit) {
   CAMLreturn(Val_unit);
 }
 
-value caml_rig_remote_probe_bound(value s) {
-  CAMLparam1(s);
-  atomic_store(&rig_remote_link_bound_s, Int_val(s));
-  CAMLreturn(Val_unit);
-}

@@ -14,13 +14,17 @@ val run :
   misuse:(string -> unit) ->
   rig:string ->
   firmware:string list ->
+  silence:float ->
   string list ->
   string ->
   string list ->
   'a
-(** [run ~misuse ~rig ~firmware machines prog args] runs [prog] with [args] as
-    the controller of a job on [machines], as written in [--on]: two or more,
-    each a valid machine, named once. Each agent is [rig], as [--rig] wrote it,
-    and gets the directories [firmware], as [--firmware] wrote them. It exits with the status the page of [rig run]
+(** [run ~misuse ~rig ~firmware ~silence machines prog args] runs [prog] with
+    [args] as the controller of a job on [machines], as written in [--on]: two
+    or more, each a valid machine, named once. Each agent is [rig], as [--rig]
+    wrote it, and gets the directories [firmware], as [--firmware] wrote them.
+    The job's silence bound is [silence] seconds, as [--silence] wrote it, and
+    its processes have half as long again to end by themselves once it
+    fails. It exits with the status the page of [rig run]
     gives. [misuse why] ends the process when the first machine is not this one.
 *)

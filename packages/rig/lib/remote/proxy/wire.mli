@@ -22,8 +22,8 @@
     job's key over both ends' nonces, the dialing end first:
 
     {v
-     accepting: "rig-job\n", version 14 (u32), 0, its nonce (32 bytes)
-                or "rig-job\n", version 14 (u32), 1 and why
+     accepting: "rig-job\n", version 15 (u32), 0, its nonce (32 bytes)
+                or "rig-job\n", version 15 (u32), 1 and why
      dialing:   its nonce (32 bytes), its process, the accepting end's
                 process, its proof (32 bytes)
      accepting: 0 and its proof (32 bytes)
@@ -100,7 +100,7 @@
 (** {1:handshakes Handshakes} *)
 
 val version : int
-(** [version] is the protocol's version, the handshake's: 14. Ends at other
+(** [version] is the protocol's version, the handshake's: 15. Ends at other
     versions refuse each other, so a request kind an end does not know never
     reaches it. Adding or removing a level of an x86-64
     host's [Rig.arch], which an account carries and [Rig_program.load]
@@ -199,10 +199,11 @@ type agent = {
     one object of the job on the agent from its request until the controller
     drops it ([Drop]). *)
 type _ request =
-  | Join : { agents : agent list } -> account request
+  | Join : { agents : agent list; silence_ns : int } -> account request
       (** Makes the agent one of [agents], the job's agents in the order of
-          their processes from [1]. Its answer is its host's account, once it
-          is connected to every other agent. *)
+          their processes from [1], its job's silence bound [silence_ns]
+          nanoseconds ([Link.set_silence]). Its answer is its host's account,
+          once it is connected to every other agent. *)
   | Open : string -> account list request
       (** Opens the agent's devices of a kind, such as ["CUDA"]. Its answer
           is their accounts, in the agent's index order. *)

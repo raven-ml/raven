@@ -8,7 +8,7 @@
  (enabled_if
   (<> %{os_type} Win32))
  (modules main)
- (libraries rig_bin unix))
+ (libraries rig_bin rig.remote unix))
 
 (library
  (name rig_bin)

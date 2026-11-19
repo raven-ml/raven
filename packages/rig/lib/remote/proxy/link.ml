@@ -150,14 +150,15 @@ let encode_request : type a. a Wire.request -> string =
  fun r ->
   encoded @@ fun b ->
   match r with
-  | Wire.Join { agents } ->
+  | Wire.Join { agents; silence_ns } ->
       add_u8 b 1;
       add_list b
         (fun b (a : Wire.agent) ->
           add_string b a.name;
           add_string b a.host;
           add_u32 b a.port)
-        agents
+        agents;
+      add_u64 b silence_ns
   | Wire.Open kind ->
       add_u8 b 2;
       add_string b kind
@@ -201,7 +202,9 @@ let decode_request r =
               let host = string r in
               { Wire.name; host; port = u32 r })
         in
-        Any (Wire.Join { agents })
+        let silence_ns = u64 r in
+        if silence_ns < 1_000_000 then raise Malformed;
+        Any (Wire.Join { agents; silence_ns })
     | 2 -> Any (Wire.Open (string r))
     | 3 ->
         let id = u64 r in
@@ -341,7 +344,9 @@ let decode_handover r =
 type job = nativeint
 type state = Open | Closed | Failed of string
 
-external job_make : unit -> nativeint = "caml_rig_remote_link_job"
+external job_make : int64 -> nativeint = "caml_rig_remote_link_job"
+external job_silence : nativeint -> int64 -> unit
+  = "caml_rig_remote_link_job_silence"
 
 external job_wait : nativeint -> int -> int * string
   = "caml_rig_remote_link_job_wait"
@@ -349,10 +354,23 @@ external job_wait : nativeint -> int -> int * string
 external fail : nativeint -> string -> unit = "caml_rig_remote_link_job_fail"
 external close_c : nativeint -> bool = "caml_rig_remote_link_job_close"
 
-let job () =
-  let j = job_make () in
+let default_silence = 10.
+
+(* At least a millisecond, and nanoseconds an int64 holds. *)
+let valid_silence s = s >= 1e-3 && s <= 9e9
+
+let ns_of_silence by silence =
+  if not (valid_silence silence) then
+    invalid_arg (strf "%s: a silence bound of %g s" by silence);
+  Int64.of_float (silence *. 1e9)
+
+let job ?(silence = default_silence) () =
+  let j = job_make (ns_of_silence "Rig_remote_proxy.Link.job" silence) in
   if j = 0n then invalid_arg "Rig_remote_proxy.Link.job: a job is open";
   j
+
+let set_silence j silence =
+  job_silence j (ns_of_silence "Rig_remote_proxy.Link.set_silence" silence)
 
 external reraise : exn -> 'a = "%reraise"
 

@@ -986,7 +986,9 @@ let peer_link s = function
 
 let answer : type a. state -> a Wire.request -> a =
  fun s -> function
-  | Wire.Join { agents } -> join s agents
+  | Wire.Join { agents; silence_ns } ->
+      Link.set_silence s.job (float_of_int silence_ns /. 1e9);
+      join s agents
   | Wire.Open kind -> open_kind s kind
   | Wire.Alloc { id; device = d; memory = m; bytes } -> (
       fresh s id;

@@ -11,11 +11,11 @@
    rail's ready function sends a transfer the same way when the claim is
    free, as much of it as the socket takes at once, and hands the rest to
    the sending thread with the claim. The sending thread sends the rest,
-   the transfers due while the claim was held, and a beat after a second
-   without a send; it wakes only to send, and waits on nothing but a
-   writer's send and its socket. The receiving thread reads frames, places
-   rail transfers, answers requests, and queues an agent's commands; it
-   measures silence on its own.
+   the transfers due while the claim was held, and a beat after a tenth of
+   its job's silence bound without a send; it wakes only to send, and waits
+   on nothing but a writer's send and its socket. The receiving thread reads
+   frames, places rail transfers, answers requests, and queues an agent's
+   commands; it measures silence on its own.
 
    A job fails once. Whoever finds the failure, a thread or a caller, makes
    each link owe its peer an abort, sets the root cause and marks the job
@@ -32,7 +32,7 @@
    a socket closed over unread bytes makes the system reset the connection,
    which may drop the abort before the peer reads it. The peer ends its
    stream once it has read the abort, failed and sent its own. A peer that
-   does not end it within [bound_s] seconds of the failure and of the
+   does not end it within its job's silence bound of the failure and of the
    abort's send, or sends nothing for that long, is left. A link's socket
    closes once both its threads ended and no abort is being sent.
 
@@ -94,8 +94,6 @@ typedef struct pollfd rig_remote_pollfd;
 #define SHUT_SEND SHUT_WR
 #endif
 
-/* A beat after a second without a send. */
-#define BEAT_NS 1000000000LL
 
 /* The fewest bytes the receiving thread asks its socket for: a frame up to
    this size comes in one call with its header. */
@@ -183,12 +181,15 @@ static struct rail *live_rails;
 
 rig_remote_link_hook_fn *_Atomic rig_remote_link_hook;
 
-_Atomic int rig_remote_link_bound_s = 10;
+/* The nanoseconds a link waits for a byte, and for its peer to acknowledge
+   one of a send, before it fails: its job's silence bound. */
+static inline int64_t bound_ns(struct rig_remote_link *l) {
+  return atomic_load_explicit(&l->job->bound_ns, memory_order_relaxed);
+}
 
-/* The seconds a link waits for a byte, and for its peer to acknowledge one
-   of a send, before it fails. */
-static inline int bound_s(void) {
-  return atomic_load_explicit(&rig_remote_link_bound_s, memory_order_relaxed);
+/* A beat after a tenth of the bound without a send. */
+static inline int64_t beat_ns(struct rig_remote_link *l) {
+  return bound_ns(l) / 10;
 }
 
 static inline void hook(enum rig_remote_link_point at, int waiting) {
@@ -309,7 +310,7 @@ static int64_t unacked(struct rig_remote_link *l) {
 }
 
 /* Sends the [n] bytes at [p] on [l]'s socket: 0, a socket error, or
-   [STALLED] once its peer acknowledged no byte for [bound_s] seconds. A
+   [STALLED] once its peer acknowledged no byte for the bound. A
    send that waits checks for acknowledgements at least once a second: a
    system may take bytes from a peer that reads nothing, so the bytes it
    takes are the measure only where it does not say what it holds
@@ -337,7 +338,7 @@ static int send_all(struct rig_remote_link *l, const void *p, size_t n) {
       stuck = now_ns();
       seen = got;
     }
-    int64_t left = bound_s() * 1000LL - (now_ns() - stuck) / 1000000;
+    int64_t left = (bound_ns(l) - (now_ns() - stuck)) / 1000000;
     if (left <= 0) return STALLED;
     rig_remote_pollfd pf = {0};
     pf.fd = l->fd;
@@ -424,10 +425,10 @@ static struct rig_remote_why *link_reason(struct rig_remote_link *l,
   case ENDED:
     return reason("%s: closed its connection%s", l->name, "");
   case SILENT:
-    snprintf(buf, sizeof buf, "%d", bound_s());
+    snprintf(buf, sizeof buf, "%g", (double)bound_ns(l) / 1e9);
     return reason("%s: silent for %s s", l->name, buf);
   case STALLED:
-    snprintf(buf, sizeof buf, "%d", bound_s());
+    snprintf(buf, sizeof buf, "%g", (double)bound_ns(l) / 1e9);
     return reason("%s: read nothing for %s s", l->name, buf);
   case MALFORMED:
     return reason("%s: a malformed frame%s", l->name, "");
@@ -463,7 +464,7 @@ static void close_if_idle(struct rig_remote_link *l) {
 }
 
 /* Sends an abort with [why], a string as wire.mli lays it out, after the
-   frames sent before. A send that makes no progress for [bound_s] seconds
+   frames sent before. A send that makes no progress for the bound
    gives up: the peer reads nothing. 0 once sent, else [send_all]'s
    answer. */
 static int send_abort(struct rig_remote_link *l,
@@ -776,7 +777,7 @@ static void *sender(void *arg) {
       continue;
     }
     int64_t now = now_ns();
-    if (!ended && !claimed && now - l->sent_ns >= BEAT_NS) {
+    if (!ended && !claimed && now - l->sent_ns >= beat_ns(l)) {
       unsigned char h[HEADER];
       put_header(h, 0, K_BEAT);
       l->sending = 1;
@@ -792,12 +793,12 @@ static void *sender(void *arg) {
     }
     /* A claim handed over, the claim's release while a rail is due or once
        the link ended, and the link's end wake it. A claim's release counts
-       as a send, so while one is held the beat is a second away. */
+       as a send, so while one is held the beat is a tenth of the bound away. */
     if (ended || l->due)
       pthread_cond_wait(&l->wake, &l->mu);
     else
       rig_remote_wait_ns(&l->wake, &l->mu,
-                         claimed ? BEAT_NS : l->sent_ns + BEAT_NS - now);
+                         claimed ? beat_ns(l) : l->sent_ns + beat_ns(l) - now);
   }
   if (failing(l->job)) abort_link(l);
   pthread_mutex_unlock(&l->mu);
@@ -850,7 +851,7 @@ static int recv_all(struct rig_remote_link *l, unsigned char *p, uint64_t n,
     }
     int e = rig_remote_sock_error();
     if (!again(e)) return e;
-    int64_t left = bound_s() * 1000LL - (now_ns() - rd->last) / 1000000;
+    int64_t left = (bound_ns(l) - (now_ns() - rd->last)) / 1000000;
     if (left <= 0) return SILENT;
     rig_remote_pollfd pf = {0};
     pf.fd = l->fd;
@@ -1140,8 +1141,8 @@ static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, struct re
 }
 
 /* Reads and discards the peer's bytes until its stream ends, a receive
-   fails, [bound_s] seconds pass since the read began and since the abort
-   was sent, or no byte has come for [bound_s] seconds, so that no byte left
+   fails, the bound passes since the read began and since the abort was
+   sent, or no byte has come for the bound, so that no byte left
    unread makes the system reset the connection before the peer has read
    this end's abort. An abort not yet sent, as one behind a long frame,
    counts as sent now: the socket closes once it is sent, and would reset
@@ -1150,7 +1151,7 @@ static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, struct re
    process, is gone by the bound that fails a job, and reads nothing. */
 static void drain(struct rig_remote_link *l, struct reader *rd) {
   unsigned char b[READ_AHEAD];
-  int64_t bound = bound_s() * 1000000000LL;
+  int64_t bound = bound_ns(l);
   int64_t start = now_ns();
   for (;;) {
     long m = (long)recv(l->fd, (char *)b, sizeof b, 0);
@@ -1280,9 +1281,10 @@ static value job_reason(struct rig_remote_job *j) {
                    : caml_copy_string("");
 }
 
-/* A new open job, or 0 if one is open. Does not release the runtime. */
-value caml_rig_remote_link_job(value unit) {
-  (void)unit;
+/* A new open job of silence bound [ns], or 0 if one is open. Does not
+   release the runtime. */
+value caml_rig_remote_link_job(value vns) {
+  int64_t ns = Int64_val(vns);
   pthread_mutex_lock(&jobs_mu);
   if (last_job != NULL && !rig_remote_forked(last_job) &&
       atomic_load(&last_job->state) == OPEN) {
@@ -1297,10 +1299,18 @@ value caml_rig_remote_link_job(value unit) {
   pthread_mutex_init(&j->mu, NULL);
   rig_remote_cond_init(&j->cv);
   atomic_store(&j->state, OPEN);
+  atomic_store(&j->bound_ns, ns);
   j->pid = (long)getpid();
   last_job = j;
   pthread_mutex_unlock(&jobs_mu);
   return caml_copy_nativeint((intnat)j);
+}
+
+/* Sets the job's silence bound to [ns], for its links' next waits. Does
+   not release the runtime. */
+value caml_rig_remote_link_job_silence(value vj, value vns) {
+  atomic_store(&Job_val(vj)->bound_ns, Int64_val(vns));
+  return Val_unit;
 }
 
 /* The job's state, and its root cause if it failed, after waiting at most

@@ -13,15 +13,12 @@ let sayf fmt =
 (* The failures in a row with one cause after which rig run gives up. *)
 let restarts = 3
 
-(* rig.remote's silence bound: a job fails when a connection carries no byte for
-   this long (Rig_remote, Failure). *)
-let silence_s = 10.
-
-(* How long the processes of a failed job have to end by themselves. It must
-   exceed [silence_s]: then each process learns of the failure through the job
-   and reports it before rig run ends it, and the cause does not depend on which
+(* How long the processes of a failed job of silence bound [silence] (--silence,
+   Rig_remote's failure section) have to end by themselves: half the bound
+   past it, so that each process learns of the failure through the job and
+   reports it before rig run ends it, and the cause does not depend on which
    came first. *)
-let exit_s = silence_s +. 5.
+let exit_s silence = 1.5 *. silence
 
 (* Between tries to reach a machine that does not answer, and ssh's connect
    timeout. *)
@@ -216,7 +213,7 @@ type program = {
   mutable killed : bool;
 }
 
-let environment ss key report =
+let environment ss key ~silence report =
   let agent s =
     strf "%s=%s" s.m.name (Address.with_port s.m.address (Option.get s.port))
   in
@@ -226,12 +223,13 @@ let environment ss key report =
     [|
       "RIG_REMOTE_AGENTS=" ^ String.concat "," (List.map agent ss);
       "RIG_REMOTE_KEY=" ^ key;
+      strf "RIG_REMOTE_SILENCE=%.17g" silence;
       strf "RIG_REMOTE_REPORT=%d" (Proc.fd_number report);
     |]
 
-let program ss key prog args =
+let program ss key ~silence prog args =
   let r, w = Proc.pipe () in
-  let env = environment ss key w in
+  let env = environment ss key ~silence w in
   let spawn () =
     Proc.spawn ~env prog
       (Array.of_list (prog :: args))
@@ -268,7 +266,11 @@ let poll_program p =
 
 (* An attempt: its sessions and, once they listen, its program. *)
 
-type attempt = { sessions : session list; mutable program : program option }
+type attempt = {
+  sessions : session list;
+  silence : float;  (** The job's silence bound. *)
+  mutable program : program option;
+}
 
 let exited a =
   Option.fold ~none:true ~some:(fun p -> p.status <> None) a.program
@@ -315,7 +317,7 @@ and finish a =
       Option.iter Unix.close s.input;
       s.input <- None)
     a.sessions;
-  wait ~until:(after exit_s) a ended;
+  wait ~until:(after (exit_s a.silence)) a ended;
   List.iter
     (fun (s : session) ->
       if s.status = None then begin
@@ -334,7 +336,7 @@ and interrupted a s =
     (fun p ->
       if p.status = None then begin
         Proc.signal p.pid s;
-        wait ~until:(after exit_s) a (fun _ -> p.status <> None)
+        wait ~until:(after (exit_s a.silence)) a (fun _ -> p.status <> None)
       end)
     a.program;
   finish a;
@@ -422,7 +424,8 @@ let rank a =
    ranks how they ended. Before the program started the job, no job tells the
    agents of the failure: only the program is waited for. *)
 let collect a =
-  wait ~until:(after exit_s) a (if started a then ended else exited);
+  let ends = if started a then ended else exited in
+  wait ~until:(after (exit_s a.silence)) a ends;
   finish a;
   rank a
 
@@ -447,10 +450,10 @@ let refused s =
    waited for. The first start ends at its first failure. A restart waits for
    every machine: when one does not answer, it ends the start and tries again
    after [retry_s], the errors of that machine's tries dropped. *)
-let rec start ~first ~waited key machines =
+let rec start ~first ~waited ~silence key machines =
   let quiet m = List.memq m waited in
   let ss = List.map (fun m -> session ~quiet:(quiet m) key m) machines in
-  let a = { sessions = ss; program = None } in
+  let a = { sessions = ss; silence; program = None } in
   let listening s = s.port <> None in
   let settled s = listening s || refused s <> None in
   wait a (fun _ ->
@@ -477,7 +480,7 @@ let rec start ~first ~waited key machines =
       let waited =
         lost @ List.filter (fun m -> not (List.memq m lost)) waited
       in
-      start ~first ~waited key machines
+      start ~first ~waited ~silence key machines
 
 (* Attempts *)
 
@@ -506,7 +509,7 @@ let early a p st =
 (* The program closed the job: it ends when it ends, and its agents after it. *)
 let orderly a p =
   wait a (fun _ -> p.status <> None);
-  wait ~until:(after exit_s) a ended;
+  wait ~until:(after (exit_s a.silence)) a ended;
   finish a;
   exit (Proc.status (Option.get p.status))
 
@@ -519,9 +522,9 @@ let restarting ~count = function
 
 (* Runs one attempt to its end, and is its failure. A restart says so once its
    start ended, failed or not, so that every attempt is counted aloud. *)
-let attempt ~first ~count ~waited machines prog args =
+let attempt ~first ~count ~waited ~silence machines prog args =
   let key = key () in
-  let started = start ~first ~waited key machines in
+  let started = start ~first ~waited ~silence key machines in
   (match started with
   | (Ok (_, waited) | Error (_, waited)) when not first ->
       restarting ~count waited
@@ -529,7 +532,7 @@ let attempt ~first ~count ~waited machines prog args =
   match started with
   | Error (f, _) -> f
   | Ok (a, _) -> (
-      match program a.sessions key prog args with
+      match program a.sessions key ~silence prog args with
       | Error why when first ->
           sayf "%s" why;
           quit a 123
@@ -560,13 +563,15 @@ let attempt ~first ~count ~waited machines prog args =
 
 (* Failures in a row count toward [restarts]: those before the program started
    the job whatever their causes, those after it with one cause. *)
-let run ~misuse ~rig ~firmware names prog args =
+let run ~misuse ~rig ~firmware ~silence names prog args =
   (* Before ssh -G runs: an ignored SIGCHLD would have it reaped by the
      kernel. *)
   Proc.signals [ Sys.sigint; Sys.sigterm; Sys.sighup ];
   let machines = machines ~misuse ~rig ~firmware names in
   let rec loop ~count ~last ~waited =
-    let f = attempt ~first:(count = 0) ~count ~waited machines prog args in
+    let f =
+      attempt ~first:(count = 0) ~count ~waited ~silence machines prog args
+    in
     sayf "job failed: %s" f.cause;
     List.iter (fun m -> if silent m <> f.cause then sayf "%s" (silent m)) f.down;
     let cause = if f.started then Some f.cause else None in

@@ -23,9 +23,9 @@ let k_beat = 8
 let k_abort = 9
 
 (* The seconds this suite's links bear a silent peer or one that reads nothing,
-   shortened from link.mli's 10 ([Probe.bound]). It is below an observation's
-   5, so one observation sees a stalled send's end. *)
-let bound = 2
+   their job's silence bound, shortened from link.mli's 10. It is below an
+   observation's 5, so one observation sees a stalled send's end. *)
+let bound = 0.5
 
 (* The seconds this suite's clock may run apart from the link's. *)
 let skew = 0.01
@@ -43,8 +43,8 @@ let quiet = 1.
 let large = 32 lsl 20
 
 let reset_cause = "peer: closed its connection"
-let silent_cause = Printf.sprintf "peer: silent for %d s" bound
-let stalled_cause = Printf.sprintf "peer: read nothing for %d s" bound
+let silent_cause = Printf.sprintf "peer: silent for %g s" bound
+let stalled_cause = Printf.sprintf "peer: read nothing for %g s" bound
 let why = "the test fails the job"
 
 (* Sockets *)
@@ -174,12 +174,12 @@ let frames ?(wait = 0.) fd =
   in
   go wait []
 
-(* The seconds between a peer's beats, and between its thread's looks at
-   whether to stop. *)
-let beat_every = 0.5
+(* The seconds between a peer's beats, a quarter of the bound, as a link's
+   own come at a tenth, and between its thread's looks at whether to stop. *)
+let beat_every = bound /. 4.
 let look_every = 0.02
 
-(* Writes a beat to [fd] each half second until the result is called: a peer
+(* Writes a beat to [fd] every [beat_every] until the result is called: a peer
    alive whatever it reads. The call returns once the thread has looked. *)
 let beating fd =
   let on = Atomic.make true in
@@ -219,7 +219,7 @@ let spawn f =
 let refused_after t0 fd =
   let rec go () =
     let t = Unix.gettimeofday () -. t0 in
-    if t > Float.of_int bound +. patience then fail "the link took every write"
+    if t > bound +. patience then fail "the link took every write"
     else
       match write fd beat with
       | () ->
@@ -232,7 +232,7 @@ let refused_after t0 fd =
 (* Checks that the bound passed since [t0]. *)
 let after_bound t0 =
   at_least ~msg:"the seconds it took" float_exact
-    ~than:(Float.of_int bound -. skew)
+    ~than:(bound -. skew)
     (Unix.gettimeofday () -. t0)
 
 (* Witnesses *)
@@ -292,7 +292,7 @@ let sever s =
 let with_scene ?(role = Wire.Agent 1) f =
   let d, p = connected () and e, q = connected () in
   let stop = beating q in
-  let job = Link.job () in
+  let job = Link.job ~silence:bound () in
   let h = Link.make job e ~name:"other" ~peer:(Wire.Agent 2) in
   let l = Link.make job d ~name:"peer" ~peer:role in
   let s = { job; l; d; p; h; q; severed = false } in
@@ -359,7 +359,7 @@ let handled_in_next () =
   if not Rig_support.sees_waits then
     skip ~reason:"needs the system's view of a thread's wait" ();
   let d, p = connected () in
-  let job = Link.job () in
+  let job = Link.job ~silence:bound () in
   let l = Link.make job d ~name:"peer" ~peer:Wire.Controller in
   let call = ref "no handler ran" in
   let handle _ =
@@ -385,8 +385,8 @@ let handled_in_next () =
 (* A link's thread may see the failure before the thread that began it
    reaches the link. That thread is held once it set the root cause, before
    it sends any abort: the well link's sending thread, which wakes for its
-   beat within a second, sees the failure first and sends the abort itself,
-   which its peer reads while the failing thread is held. *)
+   beat within a tenth of the bound, sees the failure first and sends the
+   abort itself, which its peer reads while the failing thread is held. *)
 let seen_first () =
   with_scene @@ fun s ->
   Probe.arm Failing;
@@ -588,7 +588,7 @@ let drained_until_bound () =
     [ (k_abort, str why) ]
     (frames s.p);
   at_least ~msg:"the seconds until a write was refused" float_exact
-    ~than:(Float.of_int bound -. skew)
+    ~than:(bound -. skew)
     (refused_after t0 s.p)
 
 (* After the abort the link reads a peer that sends nothing, as a stopped
@@ -596,10 +596,10 @@ let drained_until_bound () =
    another cause half the bound in, and its close returns at the bound. *)
 let drained_until_silent () =
   let d, p = connected () in
-  let job = Link.job () in
+  let job = Link.job ~silence:bound () in
   let t0 = Unix.gettimeofday () in
   ignore (Link.make job d ~name:"peer" ~peer:(Wire.Agent 1));
-  Thread.delay (Float.of_int bound /. 2.);
+  Thread.delay (bound /. 2.);
   let t_fail = Unix.gettimeofday () in
   Link.fail job why;
   Link.close job;
@@ -610,10 +610,10 @@ let drained_until_silent () =
     (frames p);
   Unix.close p;
   at_least ~msg:"the seconds until the close returned" float_exact
-    ~than:(Float.of_int bound -. skew)
+    ~than:(bound -. skew)
     t;
   less ~msg:"the seconds until the close returned" float_exact
-    ~than:(t_fail -. t0 +. Float.of_int bound -. skew)
+    ~than:(t_fail -. t0 +. bound -. skew)
     t
 
 (* A peer quiet until the job fails, then beating a while, as a peer that has
@@ -622,9 +622,9 @@ let drained_until_silent () =
    abort lasts. *)
 let drained_while_beating () =
   let d, p = connected () in
-  let job = Link.job () in
+  let job = Link.job ~silence:bound () in
   ignore (Link.make job d ~name:"peer" ~peer:(Wire.Agent 1));
-  Thread.delay (Float.of_int bound /. 2.);
+  Thread.delay (bound /. 2.);
   let t_fail = Unix.gettimeofday () in
   Link.fail job why;
   let stop = beating p in
@@ -633,14 +633,14 @@ let drained_while_beating () =
         Link.close job;
         Unix.gettimeofday ())
   in
-  Thread.delay (Float.of_int bound /. 2.);
+  Thread.delay (bound /. 2.);
   stop ();
   let t = closed () -. t_fail in
   Unix.close p;
   equal ~msg:"the job" state (Link.Failed why) (Link.wait job ~ms:0);
   at_least ~msg:"the seconds from the failure until the close returned"
     float_exact
-    ~than:(Float.of_int bound -. skew)
+    ~than:(bound -. skew)
     t
 
 (* An abort that leaves after the bound since the failure, as one behind a
@@ -650,7 +650,7 @@ let drained_while_beating () =
    the bound while the peer beats. *)
 let drained_after_late_abort () =
   let d, p = connected () in
-  let job = Link.job () in
+  let job = Link.job ~silence:bound () in
   ignore (Link.make job d ~name:"peer" ~peer:(Wire.Agent 1));
   Probe.arm Aborting;
   let failed = spawn (fun () -> Link.fail job why) in
@@ -662,9 +662,9 @@ let drained_after_late_abort () =
   @@ fun () ->
   equal ~msg:"the abort is held" bool true (Probe.held ());
   let t_held = Unix.gettimeofday () in
-  while Unix.gettimeofday () -. t_held < Float.of_int bound +. 1. do
+  while Unix.gettimeofday () -. t_held < 2. *. bound do
     write p beat;
-    Thread.delay 0.5
+    Thread.delay beat_every
   done;
   Probe.resume ();
   let t_sent = Unix.gettimeofday () in
@@ -674,7 +674,7 @@ let drained_after_late_abort () =
     (frames p);
   at_least ~msg:"the seconds from the abort until a write was refused"
     float_exact
-    ~than:(Float.of_int bound -. skew)
+    ~than:(bound -. skew)
     (refused_after t_sent p)
 
 let () =
@@ -683,7 +683,6 @@ let () =
      the bound has passed, and a peer's write after that fails with EPIPE.
      Windows has no SIGPIPE. *)
   if not Sys.win32 then Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
-  Probe.bound bound;
   exit
     (run "rig_remote_proxy.link_fail"
        [

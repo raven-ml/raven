@@ -270,5 +270,4 @@ module Probe = struct
   external held : unit -> bool = "caml_rig_remote_probe_held"
   external releases : unit -> int * int = "caml_rig_remote_probe_releases"
   external resume : unit -> unit = "caml_rig_remote_probe_resume"
-  external bound : int -> unit = "caml_rig_remote_probe_bound"
 end

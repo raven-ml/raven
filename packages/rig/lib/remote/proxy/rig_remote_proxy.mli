@@ -231,9 +231,4 @@ module Probe : sig
 
   (* [resume ()] releases the hold and disarms the probe. *)
   val resume : unit -> unit
-
-  (* [bound s] makes every link from then on bear a silent peer, a send its
-     peer takes no byte of, and a failing link's drain for [s] seconds, in
-     place of the 10 {!Link} states. *)
-  val bound : int -> unit
 end

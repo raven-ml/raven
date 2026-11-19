@@ -56,7 +56,7 @@ waits for the stop to take effect before it kills the half, whose end
 would otherwise end an agent still running.
 
   $ rm attempts out err
-  $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
+  $ rig run --silence 0.5 --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
   $ ./support/await out joined
   $ old=$(agent_of b)
@@ -73,7 +73,7 @@ would otherwise end an agent still running.
   copied 2
   $ cat err
   Fatal error: exception Failure("the job failed")
-  rig: job failed: b: silent for 10 s
+  rig: job failed: b: silent for 0.5 s
   rig: b does not answer; waiting for it
   rig: b runs another agent of this user; waiting for it to end
   rig: b answers; restarting the job (1 of 3)
@@ -118,7 +118,7 @@ job's processes had their time to end, and its report is still the cause.
 Here b's agent is stopped, so the program alone reports b's silence.
 
   $ rm -f attempts out err
-  $ rig run --on a,b -- ./support/ctl.exe linger-first >out 2>err &
+  $ rig run --silence 0.5 --on a,b -- ./support/ctl.exe linger-first >out 2>err &
   $ run=$!
   $ ./support/await out joined
   $ kill -STOP $(agent_of b)
@@ -129,5 +129,5 @@ Here b's agent is stopped, so the program alone reports b's silence.
   attempt 2
   copied 1
   $ cat err
-  rig: job failed: b: silent for 10 s
+  rig: job failed: b: silent for 0.5 s
   rig: restarting the job (1 of 3)

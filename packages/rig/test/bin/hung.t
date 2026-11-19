@@ -12,7 +12,7 @@ until the runner resumes and reaps it.
   $ host c ::1
   $ agent_of() { cat machines/$1/rig-agent-$(id -u).lock; }
 
-  $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
+  $ rig run --silence 0.5 --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
   $ ./support/await out joined
   $ b=$(cat machines/b/pid); c=$(cat machines/c/pid)

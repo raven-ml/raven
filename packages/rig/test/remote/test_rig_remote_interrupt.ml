@@ -497,7 +497,9 @@ let dial port = Option.bind (connected port) proved
    [fd], so that it serves the job. *)
 let joins fd port =
   let at = strf "127.0.0.1:%d" port in
-  send fd (frame k_request (u8 1 ^ u32 1 ^ str at ^ str "127.0.0.1" ^ u32 port));
+  send fd
+    (frame k_request
+       (u8 1 ^ u32 1 ^ str at ^ str "127.0.0.1" ^ u32 port ^ silence_ns));
   match next_frame fd with
   | Some (k, p) -> k = k_answer && p.[0] = '\000'
   | None -> false
@@ -857,7 +859,7 @@ let break_in_join () =
           let agents =
             agent (strf "127.0.0.1:%d" port) port ^ agent "deaf" deaf_port
           in
-          send fd (frame k_request (u8 1 ^ u32 2 ^ agents));
+          send fd (frame k_request (u8 1 ^ u32 2 ^ agents ^ silence_ns));
           ignore (Unix.select [ l ] [] [] patience);
           let fs, _ =
             Rig_support.interrupt_in_wait ~thread:serving ~timed:true

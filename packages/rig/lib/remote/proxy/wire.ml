@@ -17,7 +17,7 @@ let err_malformed = "a malformed handshake"
 (* Constants *)
 
 let magic = "rig-job\n"
-let version = 14
+let version = 15
 let min_key = 16
 let max_key = 4096
 let nonce_bytes = 32
@@ -299,7 +299,7 @@ type account = {
 type agent = { name : string; host : string; port : int }
 
 type _ request =
-  | Join : { agents : agent list } -> account request
+  | Join : { agents : agent list; silence_ns : int } -> account request
   | Open : string -> account list request
   | Alloc : {
       id : int;

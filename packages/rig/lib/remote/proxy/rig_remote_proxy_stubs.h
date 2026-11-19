@@ -161,6 +161,7 @@ struct rig_remote_job {
   pthread_cond_t cv; /* the state changed, or a link ended */
   _Atomic int state;
   _Atomic(struct rig_remote_why *) why; /* set as the job fails */
+  _Atomic int64_t bound_ns; /* the silence bound */
   long pid;
   struct rig_remote_link *links;
 };
@@ -322,11 +323,5 @@ enum rig_remote_link_point {
 typedef void rig_remote_link_hook_fn(enum rig_remote_link_point at,
                                      int waiting);
 RIG_REMOTE_PROXY_EXTERN rig_remote_link_hook_fn *_Atomic rig_remote_link_hook;
-
-/* The seconds a link bears a silent peer, a send its peer takes no byte
-   of, and a failed link's reading of its peer: link.mli's 10. A suite
-   shortens it, for every link from then on, so that its faults come sooner.
-   Production leaves it. */
-RIG_REMOTE_PROXY_EXTERN _Atomic int rig_remote_link_bound_s;
 
 #endif

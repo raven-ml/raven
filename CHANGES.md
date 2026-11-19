@@ -43,6 +43,14 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- A job's silence bound, 10 seconds by default, is a value it is opened
+  with: `Rig_remote.connect ?silence`, `RIG_REMOTE_SILENCE` for
+  `Rig_remote.launched`, and `rig run --silence S`. Every process of the job
+  takes it, an agent from its join (rig.remote's protocol goes to version
+  15); a connection silent that long, or a send that makes no progress for
+  it, fails the job, each process beats every tenth of it, and rig run gives
+  a failed job's processes one and a half times it to end, where it gave
+  them 15 seconds.
 - Add `Rig_gpus.open_ name`, which opens the device a name names: `KIND` or
   `KIND:N`, in any case, where `KIND` is `CPU` or a path's kind (`METAL`,
   `CUDA`, `NV`, `AMD`, `NV-PCI`, `AMD-PCI`) and `N` is a number with no

@@ -128,12 +128,16 @@ val read_key : string -> (key, string) result
 type t
 (** The type for jobs, seen from their controller. *)
 
-val connect : key:key -> (string * int) list -> (t, string) result
-(** [connect ~key agents] starts a job with an agent at each host and port of
-    [agents], and opens each machine's host ({!hosts}). Every pair of the
-    job's processes connects and proves [key] ({!section-keys}). Each
+val connect :
+  ?silence:float -> key:key -> (string * int) list -> (t, string) result
+(** [connect ~silence ~key agents] starts a job with an agent at each host and
+    port of [agents], and opens each machine's host ({!hosts}). Every pair of
+    the job's processes connects and proves [key] ({!section-keys}). Each
     connection, handshake reply and connection between agents comes within
-    10 seconds, or the job fails. The process closes the job at exit
+    10 seconds, or the job fails. The job's {e silence bound} is [silence]
+    seconds, 10 by default: every process of the job takes it, an agent at
+    its join, and the job fails on a connection silent that long
+    ({!section-failure}). The process closes the job at exit
     ({!close}), and fails it with the reason where that close raises
     [Invalid_argument].
 
@@ -144,10 +148,19 @@ val connect : key:key -> (string * int) list -> (t, string) result
     reached are told the job has failed. [Error why], [why] starting with the
     first machine's name and [": "], if the process has failed ({!Rig.fail}).
 
-    Raises [Invalid_argument] if [agents] is empty or lists an address twice, or
-    if a job of the process is open. It first fails an open job that a loss on
+    Raises [Invalid_argument] if [agents] is empty or lists an address twice,
+    if [silence] is not {!valid_silence}, or if a job of the process is
+    open. It first fails an open job that a loss on
     this process fails ({!section-failure}), without the second the process
     may take to notice the loss. *)
+
+val default_silence : float
+(** [default_silence] is a job's silence bound when {!connect} or the
+    launcher gives none: 10 seconds. *)
+
+val valid_silence : float -> bool
+(** [valid_silence s] is [true] iff [s] seconds may be a job's silence bound:
+    at least a millisecond and at most 9e9 seconds. *)
 
 val hosts : t -> Rig.t list
 (** [hosts j] is the host of each of [j]'s machines, in the order of their
@@ -204,17 +217,20 @@ val devices : Rig.t -> string -> (Rig.t list, string) result
       without brackets is malformed, since in ["fd00::2:4123"] the ["4123"]
       may be its last group or the [PORT];
     - [RIG_REMOTE_KEY]: the job's key, 64 hexadecimal characters whose bytes
-      are the key without decoding. *)
+      are the key without decoding;
+    - [RIG_REMOTE_SILENCE], which it may leave out: the job's silence bound
+      ({!connect}), in seconds as [float_of_string] reads them. *)
 
 val launched : unit -> (t, string) result option
 (** [launched ()] starts the job that a launcher set up for this process, or
     is [None] if [RIG_REMOTE_REPORT] is not in the environment. It takes the
-    launcher's three variables out of the environment, starts the job as
-    {!connect} does, with an agent at each [ADDRESS] and [PORT] named [NAME],
-    and reports on the descriptor.
+    launcher's variables out of the environment, starts the job as
+    {!connect} does, with an agent at each [ADDRESS] and [PORT] named [NAME]
+    and its silence bound, and reports on the descriptor.
 
     [Some (Error why)], after it has written ["failed WHY"], if
-    [RIG_REMOTE_AGENTS] or [RIG_REMOTE_KEY] is missing or malformed, or the
+    [RIG_REMOTE_AGENTS] or [RIG_REMOTE_KEY] is missing or malformed,
+    [RIG_REMOTE_SILENCE] malformed or out of {!connect}'s range, or the
     job does not start, as {!connect} says; the process should then exit.
     [Some (Error why)], with nothing written, if [RIG_REMOTE_REPORT] names no
     open descriptor.
@@ -229,10 +245,10 @@ val launched : unit -> (t, string) result option
     first failure it learns of as its {e root cause} ({!failed}), which is
     one of:
     - a connection between two of its processes that ends without a close;
-    - no byte on a connection for 10 seconds, though each end sends at least
-      once a second whatever its process runs, so host code that never
-      returns keeps its job going;
-    - a send on a connection that makes no progress for 10 seconds;
+    - no byte on a connection for the job's silence bound ({!connect}),
+      though each end sends at least every tenth of it whatever its process
+      runs, so host code that never returns keeps its job going;
+    - a send on a connection that makes no progress for the silence bound;
     - a malformed message;
     - work or a release that names memory, a program or an object the job
       does not hold on its machine;
@@ -261,17 +277,17 @@ val launched : unit -> (t, string) result option
     other processes an abort with its root cause, after the message each
     connection is sending, and ends its side of each connection. It then
     reads and discards what arrives on each connection until the other end
-    has ended its side too, until 10 seconds after the failure or after the
-    abort, if it left later behind a message, and no longer than 10
-    seconds after the other end's last byte, and closes the connection only
+    has ended its side too, until the silence bound after the failure or
+    after the abort, if it left later behind a message, and no longer than
+    the bound after the other end's last byte, and closes the connection only
     then, since a connection closed over unread bytes is reset, which may
     lose the abort. {!serve} returns, and {!connect} and {!launched} return
     their [Error], once every connection of the job is closed, and the
     controller's process waits for its last job's connections at exit. A
     process misses an abort only when the network fails, when it reads
-    nothing of the connection for 10 seconds, or when the aborting process
-    ends otherwise, such as by a signal. It then records its own cause, such
-    as the end of the connection.
+    nothing of the connection for the silence bound, or when the aborting
+    process ends otherwise, such as by a signal. It then records its own
+    cause, such as the end of the connection.
 
     An agent fails its process with the root cause ({!Rig.fail}) before it
     returns from {!serve}. On the controller, each host and proxy of the job
@@ -301,12 +317,13 @@ val close : t -> unit
     and returns without waiting for their work. After a close, {!failed} of
     [j] is [None], and the process may start another job. A job that fails
     during [close] ends as a failed job does ({!section-failure}): [close]
-    returns once every connection has closed, up to about 11 seconds after
-    the failure, or after an abort that left later behind a message. The
-    process's exit waits the same way for its last job. [close]'s wait for
-    the agents returns to OCaml at least every 200 ms, where a pending
-    [Sys.Break] from Ctrl-C raises: [j] then stays open, its closes sent, and
-    a later [close] of [j], or the process's exit, waits for it again.
+    returns once every connection has closed, up to about the silence bound
+    and a second after the failure, or after an abort that left later behind
+    a message. The process's exit waits the same way for its last job.
+    [close]'s wait for the agents returns to OCaml at least every 200 ms,
+    where a pending [Sys.Break] from Ctrl-C raises: [j] then stays open, its
+    closes sent, and a later [close] of [j], or the process's exit, waits for
+    it again.
 
     Raises [Invalid_argument] as {!Rig.close} does, such as from a callback
     inside a call of rig's on the same thread. *)

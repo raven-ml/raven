@@ -201,6 +201,29 @@ The = form takes its directory, so the address is the next thing read.
   Try 'rig run --help'.
   [124]
 
+--silence takes seconds a job's silence bound may be, at least a
+millisecond, once.
+
+  $ rig run --on a,b --silence
+  rig: --silence needs its seconds
+  Try 'rig run --help'.
+  [124]
+
+  $ rig run --silence 0.0001 --on a,b -- true
+  rig: --silence: '0.0001' is not a silence bound
+  Try 'rig run --help'.
+  [124]
+
+  $ rig run --silence=ten --on a,b -- true
+  rig: --silence: 'ten' is not a silence bound
+  Try 'rig run --help'.
+  [124]
+
+  $ rig run --silence 1 --silence=2 --on a,b -- true
+  rig: --silence is given twice
+  Try 'rig run --help'.
+  [124]
+
 rig firmware needs a driver, amd or nv, and at most one directory.
 
   $ rig firmware
