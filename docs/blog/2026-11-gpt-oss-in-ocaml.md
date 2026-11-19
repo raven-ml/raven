@@ -2,10 +2,12 @@
 
 raven runs OpenAI's open-weight mixture of experts on one workstation GPU at 123 tokens a second, as fast as vLLM, in under 15 GB, and prints its first token two seconds after the process starts.
 
-<!-- TODO: paste the transcript from fudge (hero.txt) verbatim, HTML-escaped. -->
 <figure class="code">
 <figcaption><span>main.exe, gpt-oss-20b on an RTX 5000 Ada</span></figcaption>
-<pre tabindex="0" role="region" aria-label="A chat with gpt-oss-20b in a terminal"><mark class="todo">transcript</mark></pre>
+<pre tabindex="0" role="region" aria-label="A chat with gpt-oss-20b in a terminal">$ main.exe --repo openai/gpt-oss-20b --devices CUDA --prompt "What is the capital of France?" --show-analysis
+The user asks: "What is the capital of France?" The answer: Paris. Provide concise answer.
+The capital of France is **Paris**.
+prefill of 63 tokens: 0.07 s; 40 tokens, 115.2 a second</pre>
 <figcaption>The analysis channel, then the answer, as the terminal printed them.</figcaption>
 </figure>
 
@@ -59,8 +61,7 @@ It also stays small. Decoding takes **14.4 GB** of the card's memory, the CUDA c
 
 None of this is a separate engine. The model is **463 lines of OCaml** over arrays, written the way the paper draws it, and Rune.jit compiles each block into kernels for the card it runs on. The kernels come from tolk, raven's compiler, a port of tinygrad to OCaml. Nobody wrote a kernel for gpt-oss.
 
-<!-- TODO: confirm on fudge which kernels vLLM 0.34 picks on Ada. -->
-The implementations that run gpt-oss fast get there with kernels written for its formats: llama.cpp's CUDA, and in vLLM, Marlin's kernels for the MXFP4 experts and Triton kernels for attention. raven matches them with the model's code alone.
+The implementations that run gpt-oss fast get there with kernels written for its formats: llama.cpp's CUDA, and in vLLM, Marlin's kernels for the MXFP4 experts and Triton's for attention, in a forward pass torch.compile compiles and CUDA graphs replay. raven matches them with the model's code alone.
 
 <figure class="code">
 <figcaption><span>apps/gpt-oss/lib/gpt_oss.ml</span><a href="../../apps/gpt-oss/lib/gpt_oss.ml" class="note u">source ↗</a></figcaption>
@@ -69,18 +70,22 @@ The implementations that run gpt-oss fast get there with kernels written for its
 
 A whole transformer block. The only line about devices is `close`, which sums partial results when the experts are split across GPUs: the same code runs eagerly on a laptop's CPU, compiled on one GPU, or split by expert across several.
 
-<!-- TODO: run test_stream's gpt-oss-20b case on fudge and see it pass before publishing this sentence. -->
 It gives the same answers as the reference. On three prompts at float32, raven picks the same experts as transformers for every token in every block, and the same next token at every position.
 
 ## The tokenizer is OCaml too
 
 Text reaches the model through [brot](../../packages/brot/README.md), raven's tokenizer. It reads the tokenizer.json that Hugging Face publishes, gives the same ids as Hugging Face's tokenizers on gpt-oss's o200k vocabulary and eleven others, and decodes one token at a time, so the chat prints each word as the model writes it, in the harmony format's channels.
 
-Instead of running the pre-tokenizer's regular expression, brot recognises the o200k, cl100k and GPT-2 patterns and walks the bytes with a scanner written for each, fused with the merges that follow. On OpenWebText, on one core, it tokenizes faster than gigatoken, a Rust tokenizer built for throughput, on two of three vocabularies, and **23 times faster** than Hugging Face's on BERT's.
+Instead of running the pre-tokenizer's regular expression, brot recognises the o200k, cl100k and GPT-2 patterns and walks the bytes with a scanner written for each, fused with the merges that follow. On OpenWebText, on one core, it tokenizes faster than gigatoken, a Rust tokenizer built for throughput, on two of four vocabularies, **8.4 times faster** than OpenAI's tiktoken on gpt-oss's o200k, and **23 times faster** than Hugging Face's on BERT's.
 
 <figure class="chart">
 <div class="legend" aria-hidden="true"><span><i style="background: var(--raven)"></i>raven</span><span><i style="background: var(--ref)"></i>other tokenizers</span><span>megabytes of text a second, one thread · longer is better</span></div>
 <ul class="bars">
+<li><div class="bars-head"><span>o200k, gpt-oss</span><span class="caption">8.4× tiktoken, gigatoken 1.8× faster</span></div>
+<div class="bar"><span class="who">brot</span><span class="track"><span class="fill" style="width: 56.4%; background: var(--raven)"></span></span><span class="v">228</span></div>
+<div class="bar"><span class="who">gigatoken</span><span class="track"><span class="fill" style="width: 100.0%; background: var(--ref)"></span></span><span class="v">404</span></div>
+<div class="bar"><span class="who">tiktoken</span><span class="track"><span class="fill" style="width: 6.7%; background: var(--ref)"></span></span><span class="v">27.2</span></div>
+</li>
 <li><div class="bars-head"><span>LLaMA</span><span class="caption">2.7× gigatoken</span></div>
 <div class="bar"><span class="who">brot</span><span class="track"><span class="fill" style="width: 100.0%; background: var(--raven)"></span></span><span class="v">190</span></div>
 <div class="bar"><span class="who">gigatoken</span><span class="track"><span class="fill" style="width: 37.6%; background: var(--ref)"></span></span><span class="v">71.4</span></div>
@@ -98,20 +103,17 @@ Instead of running the pre-tokenizer's regular expression, brot recognises the o
 <div class="bar"><span class="who">HF tokenizers</span><span class="track"><span class="fill" style="width: 4.3%; background: var(--ref)"></span></span><span class="v">2.7</span></div>
 </li>
 </ul>
-<figcaption>OpenWebText, 100 MB, the same ids from both. gigatoken refuses WordPiece, so BERT-base runs against Hugging Face’s tokenizers.</figcaption>
+<figcaption>OpenWebText, 100 MB, the same ids from each. gigatoken refuses WordPiece, so BERT-base runs against Hugging Face’s tokenizers; tiktoken runs o200k_base’s <code>encode_ordinary_batch</code> on one thread.</figcaption>
 </figure>
-
-<!-- TODO: brot against tiktoken on o200k, gpt-oss's own vocabulary. -->
 
 ## One executable, down to the driver
 
 vLLM is a Python program on PyTorch. To run gpt-oss-20b it installs 9.32 GB, most of it PyTorch and NVIDIA's libraries, at versions that must agree with each other and with the driver. All of it has to be installed wherever the model runs. Hugging Face's transformers installs 5.74 GB, and llama.cpp, a C++ program, 1.15 GB with NVIDIA's cuBLAS.
 
-raven's gpt-oss is one OCaml executable: 32 MB, stripped, linking only the C library. It loads NVRTC, 134 MB, only to compile a kernel that isn't in tolk's cache. Under it is [rig](../../packages/rig/README.md), raven's GPU runtime, which does the work of NVIDIA's closed libcuda and of AMD's runtime itself, in OCaml and C, and talks to the kernel driver directly. Through NVIDIA's kernel driver, without CUDA, gpt-oss needs no libcuda and decodes at **128 tokens a second**, 4% faster than through CUDA. On Linux, rig opens an AMD GPU with no kernel driver at all.
+raven's gpt-oss is one OCaml executable: 32 MB, stripped, linking only the C library. It loads NVRTC, 134 MB, only to compile a kernel that isn't in tolk's cache. Under it is [rig](../../packages/rig/README.md), raven's GPU runtime, which does the work of NVIDIA's closed libcuda and of AMD's runtime itself, in OCaml and C, and talks to the kernel driver directly. Through NVIDIA's kernel driver, without CUDA, gpt-oss loads no libcuda, except inside NVRTC when it compiles a kernel, and decodes at **128 tokens a second**, 4% faster than through CUDA. On Linux, rig opens an AMD GPU with no kernel driver at all.
 
-<!-- TODO: the number of Python packages in vLLM's environment (uv pip list), and each layer's size if measured. -->
 <figure class="versus">
-<div><p class="label">vLLM</p><ol><li><span>Python 3.12</span><span></span></li><li><span>PyTorch 2.14</span><span></span></li><li><span>CUDA 13’s libraries</span><span></span></li><li><span>vLLM 0.34</span><span></span></li><li><span><mark class="todo">N</mark> other Python packages</span><span></span></li><li><span>NVIDIA’s libcuda</span><span>driver</span></li></ol><p class="total"><span>to install</span><b>9.32 GB</b></p></div>
+<div><p class="label">vLLM</p><ol><li><span>Python 3.12</span><span>0.1 GB</span></li><li><span>PyTorch 2.14</span><span>1.1 GB</span></li><li><span>CUDA 13’s libraries</span><span>4.4 GB</span></li><li><span>vLLM 0.34</span><span>0.5 GB</span></li><li><span>165 other Python packages</span><span>3.2 GB</span></li><li><span>NVIDIA’s libcuda</span><span>driver</span></li></ol><p class="total"><span>to install</span><b>9.32 GB</b></p></div>
 <div><p class="label">raven</p><ol><li><span>main.exe</span><span>32 MB</span></li><li><span>NVRTC, only for kernels not yet cached</span><span>134 MB</span></li><li><span>NVIDIA’s libcuda</span><span>optional</span></li></ol><p class="total"><span>to install</span><b>166 MB</b></p></div>
 <figcaption>What runs gpt-oss-20b on the GPU, the driver and the 13.8 GB of weights aside. raven needs no libcuda: without it, rig drives the card through NVIDIA’s kernel driver itself, and it uses libcuda only where it is installed. raven’s main.exe, stripped, and CUDA’s NVRTC; vLLM 0.34.0 in a fresh uv environment with its bench pins, torch’s CUDA libraries and Python 3.12. RTX 5000 Ada, 19 November 2026.</figcaption>
 </figure>

@@ -567,9 +567,6 @@ html:not(.js) .hero-split{align-items:flex-start}
 .versus .total b{font-size:24px;font-weight:500;letter-spacing:-.02em;color:var(--text-0)}
 .versus figcaption{grid-column:1 / -1;padding:12px 24px;border-top:1px solid var(--line-2)}
 
-/* A draft's gaps; a published post has none. */
-mark.todo{background:var(--amber-ring);color:var(--amber);font-family:var(--mono);font-size:.85em;padding:1px 6px;border-radius:var(--r-sm)}
-
 @media (max-width:899px){
   .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
   .kpis > div:nth-child(3){padding-left:0;border-left:0}

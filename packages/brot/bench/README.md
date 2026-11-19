@@ -139,6 +139,15 @@ Ratios are brot's cost over the reference's: above 1, brot is slower.
 | LLaMA (Prepend/Replace normalizer) | 1       | 190.1     | 71.4     | 0.38  | 18-20 |
 | Mistral (Metaspace)                | 1       | 203.5     | 145.4    | 0.71  | 13    |
 | BERT-base, HF tokenizers           | 1       | 62.7      | 2.7      | 0.04  | 28-29 |
+| o200k (gpt-oss), gigatoken         | 1       | 228.1     | 404.4    | 1.77  | 7-9   |
+| o200k (gpt-oss), tiktoken          | 1       | 228.1     | 27.2     | 0.12  | 7-9   |
+
+- o200k, 2026-11-19: `gpt_oss.json`, brot at 72377cdbe1, gigatoken 0.11.0
+  from PyPI and tiktoken 0.14.0's o200k_base `encode_ordinary_batch` with one
+  thread, its time without decoding the documents to strings. Two
+  alternating rounds; ids, their sum and `bench_owt`'s hash equal in all
+  three. Each engine's best pass of the two rounds: brot 223.8 and 228.1,
+  gigatoken 404.4 and 369.8, tiktoken 26.9 and 27.2.
 
 - At 47055829c, before brot read SentencePiece spaces in place of ▁ and
   before its BPE cache grew, LLaMA and Mistral counted 61.1 and 61.2
