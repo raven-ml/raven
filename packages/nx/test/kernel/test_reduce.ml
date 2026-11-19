@@ -1614,6 +1614,148 @@ let law_programmed (b : Support.backend) c =
         (Kernels_cases.bits_of (Support.host g)))
     want
 
+(* Several reductions of one program *)
+
+(* Loops as [programmed]'s, of zero to five elements an axis among the
+   small ones, reduced, and rows of planes reduced across a kept axis. *)
+let several =
+  let open Gen in
+  let small = array ~size:(int_range 1 4) (int_range 0 5) in
+  let rows =
+    let* r = int_range 1 40 in
+    let+ k = of_list ~pp:Format.pp_print_int [ 3; 64; 1025; 5000 ] in
+    [| r; k |]
+  in
+  let long =
+    let* n = int_range 66_000 140_000 in
+    let+ r = int_range 1 2 in
+    if r = 1 then [| n |] else [| r; n |]
+  in
+  (* Rows of planes reduced across the planes' kept axis. *)
+  let parted =
+    let* p = int_range 2 6 in
+    let* k = int_range 2 5 in
+    let+ n = of_list ~pp:Format.pp_print_int [ 3; 64; 1025 ] in
+    ([| p; k; n |], [| 0; 2 |])
+  in
+  let drawn =
+    let* shape = frequency [ (3, small); (3, rows); (2, long) ] in
+    let r = Array.length shape in
+    let+ axes =
+      if shape.(r - 1) > 1000 then constant [| r - 1 |]
+      else
+        let+ keep = array ~size:(constant r) bool in
+        Array.of_list (List.filter (fun i -> keep.(i)) (List.init r Fun.id))
+    in
+    (shape, axes)
+  in
+  let* shape, axes = frequency [ (7, drawn); (1, parted) ] in
+  let* dts = array ~size:(int_range 1 3) (of_list ~pp:pp_dtype narrows) in
+  let* padded = bool in
+  let* long = frequency [ (2, constant false); (1, constant true) ] in
+  let+ seed = int in
+  { scanned = false; summed = false; shape; axes; dts; padded; long; seed }
+
+(* nx_cpu.mli: a Reduce of several reductions computes each one's bits
+   alone, so its destinations hold the bits of each reduction reduced by a
+   call of its own, any NaN for a NaN. *)
+let law_several (b : Support.backend) c =
+  let module K = (val b.kernels) in
+  let st = Random.State.make [| c.seed |] in
+  let rank = Array.length c.shape in
+  let length = if c.long then 400 else 6 in
+  let p, _ = Kernels_cases.program ~length st c.dts ~room:16 ~rank in
+  let loads =
+    Array.mapi
+      (fun i dt ->
+        load_on b (programmed_load st dt c.shape ~padded:(c.padded && i = 0)))
+      c.dts
+  in
+  let terms = Array.fold_left (fun n a -> n * c.shape.(a)) 1 c.axes in
+  (* Two to five reductions, but no extreme of no term: none where every
+     output is of a dtype only extremes take. *)
+  let pairs =
+    List.concat
+      (List.init (Iarray.length p.outs) (fun k ->
+           let (D.Any dt) = P.dtype p (Iarray.get p.outs k) in
+           List.filter_map
+             (fun (r : Nx_kernel.reduction) ->
+               let extreme =
+                 match r with Monoid (Max | Min) | Arg _ -> true | _ -> false
+               in
+               if Nx_kernel.accepts r dt && (terms > 0 || not extreme) then
+                 Some (r, k)
+               else None)
+             reductions_all))
+  in
+  let n = if pairs = [] then 0 else 2 + Random.State.int st 4 in
+  let rs =
+    Array.init n (fun _ ->
+        List.nth pairs (Random.State.int st (List.length pairs)))
+  in
+  let ys =
+    Result.get_ok
+      (Nx_kernel.Shape.reduce ~axes:(Iarray.of_array c.axes) (Array.map fst rs)
+         c.shape)
+  in
+  let reduce rs =
+    let dsts = programmed_dsts b p rs ys in
+    programmed_done "the call"
+      (K.reduce p ~shape:(Iarray.of_array c.shape)
+         ~axes:(Iarray.of_array c.axes) (Iarray.of_array rs)
+         ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads));
+    dsts
+  in
+  let got = if n = 0 then [||] else reduce rs in
+  let want =
+    Array.concat (List.map (fun r -> reduce [| r |]) (Array.to_list rs))
+  in
+  let outs = Array.map snd rs in
+  let one_pass (r, _) =
+    match (r : Nx_kernel.reduction) with Monoid _ | Arg _ -> true | _ -> false
+  in
+  let narrow (r, k) =
+    let (D.Any dt) = P.dtype p (Iarray.get p.outs k) in
+    one_pass (r, k) && D.is D.Float dt && D.bits dt < 32
+  in
+  let twice k = List.length (List.filter (( = ) k) (Array.to_list outs)) > 1 in
+  cover "a loop of no element" (Array.exists (( = ) 0) c.shape);
+  cover "outputs of one term" (terms = 1 && Array.for_all (( < ) 0) c.shape);
+  cover "outputs of more than a lane of terms" (terms > 16);
+  cover "an output of more than 16 blocks of terms" (terms > 16 * 1024);
+  cover "an output of more than 64 blocks of terms" (terms > 64 * 1024);
+  (* nx_cpu.mli: these run the program once a term for them all. *)
+  let shared =
+    List.length (List.filter one_pass (Array.to_list rs)) > 1
+    && Array.mem (rank - 1) c.axes && terms > 16
+  in
+  let arg = function Nx_kernel.Arg _, _ -> true | _ -> false in
+  let gap =
+    List.exists
+      (fun a ->
+        (not (Array.mem a c.axes))
+        && c.shape.(a) > 1
+        && Array.exists (fun b -> b < a) c.axes)
+      (List.init rank Fun.id)
+  in
+  cover "two monoids or Args along the innermost axis, past a lane of terms"
+    shared;
+  cover "those of a narrow float output" (shared && Array.exists narrow rs);
+  cover "those with an Arg" (shared && Array.exists arg rs);
+  cover "those along axes a kept one parts" (shared && gap);
+  cover "an output reduced twice" (Array.exists twice outs);
+  cover "padded loads" c.padded;
+  Array.iteri
+    (fun k (A.Any w) ->
+      let (A.Any g) = got.(k) in
+      equal
+        ~msg:
+          (Printf.sprintf "destination %d of %s" k (Kernels_cases.describe p))
+        (Kernels_cases.same_values (D.Any (A.dtype w)))
+        (Kernels_cases.bits_of (Support.host w))
+        (Kernels_cases.bits_of (Support.host g)))
+    want
+
 (* Calls too wide for a launch *)
 
 let wide_reductions : Nx_kernel.reduction list =
@@ -1824,6 +1966,15 @@ let laws (b : Support.backend) =
               mapped, then reduced or scanned"
              (Gen.with_pp pp_programmed programmed)
              (run (law_programmed b));
+         ])
+    @ (if b != Support.cpu then []
+       else
+         [
+           prop ~count:200
+             "a reduction of several reductions of a program has the bits \
+              of each reduced alone"
+             (Gen.with_pp pp_programmed several)
+             (run (law_several b));
          ])
     @
     if b == Support.cpu || not b.lane_order then []

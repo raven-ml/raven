@@ -3414,6 +3414,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.standardize` and the mean of integers compute faster on nx.cpu along
+  the innermost axes: a `Reduce` runs its program once a term for all its
+  monoid and `Arg` reductions there, where each ran it again for its own
+  output. The bits are unchanged.
 - `Nx.Rng.truncated_normal`'s bound is measured from the exact solution
   rounded to the dtype: a draw is within 2 ulps at float32, or 3 at float64,
   of a value within `6ε` of it.

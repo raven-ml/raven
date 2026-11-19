@@ -199,7 +199,10 @@
     for all of them whose outputs' units are laid out alike (along a
     contiguous axis, any; across rows, those of one value width), but a
     [Logsumexp], whose two passes run alone, as a [Moments]' do where an
-    output's terms are many against the outputs. A destination identical to
+    output's terms are many against the outputs. Where several [Monoid]s
+    and [Arg]s reduce a program's outputs along the loop's innermost axes,
+    each output of more than a lane of terms, it runs the program once a
+    term for all of them. A destination identical to
     the operand, or to a program's load, is accepted: that operand or load
     is then read from a copy the call holds, and the results are those of
     fresh destinations. *)

@@ -94,8 +94,10 @@
    own output, kind and dtype, that lay out the same units run in one job,
    each unit by each reduction in turn: the first reads the unit's terms
    from memory, the others from the caches, so the call reads its operand
-   once, as a Moments unit's two passes do. A unit's results come from its
-   own terms alone, so each reduction's bits are its own alone. Logsumexp,
+   once, as a Moments unit's two passes do. Monoids and Args of a
+   program's outputs, one output a unit of more than a lane of terms,
+   compute the unit's terms once for all of them (Sharing). A unit's results come from its own terms
+   alone, so each reduction's bits are its own alone. Logsumexp,
    and a Moments whose outputs' blocks fall into groups, run their passes
    alone, as do reductions whose units differ, as a wider dtype's do
    across rows.
@@ -256,7 +258,10 @@ typedef struct {
   int64_t group;  /* blocks per group, a power of two */
   int64_t groups;
   uint8_t *scratch; /* each unit's group's values, where groups > 1 */
-  const uint8_t *staged_unit; /* a unit's terms in the carrier, or NULL */
+  /* A unit's terms in the carrier from its term [staged_from], one
+     output's, or NULL. */
+  const uint8_t *staged_unit;
+  int64_t staged_from;
   int64_t off[LANES]; /* a lane or fewer terms: their positions from the
                          output's first */
   /* A program's terms that are the products of two of its loads, a lane or
@@ -503,10 +508,16 @@ static void fused_terms(const plan *q, int64_t p, int64_t s, int64_t W,
    each of the [m] terms from [t] of the outputs from [p]: term t + i's row
    at buf + i·W·w. One output's terms stage run by run along the innermost
    reduced axis; several outputs' along one reduced axis, at once. A
-   program's held values go through [wk]. */
+   program's held values go through [wk]. A unit's staged terms, one
+   output's, are copied from [q->staged_unit]. */
 static void stage_terms(const plan *q, work *wk, int64_t p, int64_t s,
                         int64_t W, int64_t t, int64_t m, uint8_t *buf) {
   int r = q->nr - 1;
+  if (q->staged_unit != NULL) {
+    memcpy(buf, q->staged_unit + (t - q->staged_from) * q->w,
+           (size_t)(m * q->w));
+    return;
+  }
   if (q->fused != NULL) {
     fused_terms(q, p, s, W, t, m, buf, wk->held);
     return;
@@ -593,7 +604,8 @@ static void states(const plan *q, work *wk, int64_t p, int64_t s, int64_t W,
   for (int64_t j = 0; j < W; j++) {
     int64_t o = p + j * s;
     const uint8_t *x = buf;
-    if (q->staged_unit != NULL) x = q->staged_unit + t0 * q->w;
+    if (q->staged_unit != NULL)
+      x = q->staged_unit + (t0 - q->staged_from) * q->w;
     else if (sourced(q) || !contiguous) stage_terms(q, wk, o, 0, 1, t0, n, buf);
     else x = at(q, o + t0);
     q->r->block(x, n, t0, c != NULL ? c[j] : 0, &v[j]);
@@ -706,18 +718,22 @@ static void blocks(const plan *q, work *wk, int64_t p, int64_t s, int64_t W,
   int top = 0;
   int64_t row = W * q->size;
   /* A monoid's output's full blocks take the table's blocks, whose lanes
-     start from the identity: RUN at a time of contiguous terms, or as many
-     as the work holds of staged or computed ones, staged in one call. On
+     start from the identity: RUN at a time of contiguous terms or of a
+     unit's staged ones, or as many as the work holds of staged or computed
+     ones, staged in one call. On
      one fudge core, Σ exp (x - m) over [64, 128256] float32 took 7.1 ms a
      block at a time through the lanes, 5.7 so. */
   int contiguous = W == 1 && q->nr == 1 && q->rs[0] == 1;
   int fits = sourced(q) ? W == 1 : contiguous;
   int64_t full = q->f != NULL && !q->first && fits ? q->terms / BLOCK : 0;
-  int64_t most = sourced(q) ? staged_run(q, wk) : RUN;
+  const uint8_t *unit = q->staged_unit;
+  int64_t most = sourced(q) && unit == NULL ? staged_run(q, wk) : RUN;
   for (int64_t b = b0; b < b1;) {
     int64_t n = (b1 < full ? b1 : full) - b;
     if (n > most) n = most;
-    if (n > 0 && sourced(q)) {
+    if (n > 0 && unit != NULL)
+      q->f->blocks(unit + (b * BLOCK - q->staged_from) * q->w, n, q->id, run);
+    else if (n > 0 && sourced(q)) {
       stage_terms(q, wk, p, 0, 1, b * BLOCK, n * BLOCK, wk->terms);
       q->f->blocks(wk->terms, n, q->id, run);
     } else if (n > 0)
@@ -1685,6 +1701,10 @@ typedef struct {
   double cost, term;
   units_body body;
   int ready, joined;
+  /* It shares its unit's terms (Sharing), its output's in the carrier at
+     byte [at] of a thread's memo. */
+  int shared;
+  int64_t at;
 } reduction;
 
 /* Plans [d]'s [op] by [r] of [d->x], of [dt] or staged into it, into [y]
@@ -1803,17 +1823,209 @@ static int same_units(const plan *a, const plan *b) {
   return same;
 }
 
+/* Sharing
+
+   Where two or more of the reductions that run together reduce a program's
+   outputs one output a unit, each of more than a lane of terms, by
+   reduce_units, each unit's terms are computed once for them all: piece by
+   piece, the program runs once over a piece's terms for every output they
+   read (nx_cpu_prog_each), each output's then converted into its carrier,
+   and each reduction's blocks of the piece read them in place. A piece is
+   a power of two of blocks from a multiple of it within the unit's group,
+   so that its value is a subtree of the blocks' tree, and the pieces'
+   values combine by the counter, as blocks combines blocks': each
+   reduction keeps its bits. A piece's terms take at most SHARED_BYTES, but
+   for one block's, so that the reductions read them from the L1 data
+   cache, as the stage's (Stage). */
+#define SHARED_BYTES (32 * 1024)
+
+/* The bytes of an output's value, a state the widest. */
+#define VALUE 32
+_Static_assert(sizeof(nx_cpu_state) <= VALUE && WIDEST <= VALUE,
+               "a value fits VALUE");
+
+/* An output the sharing reductions read: its index, its held dtype and
+   carrier and the held dtype's width, and the bytes of a thread's memo
+   where its terms are held and where they are in the carrier, the same
+   where the two dtypes are. */
+typedef struct {
+  int o, h, c;
+  int64_t hw, held, carrier;
+} read_out;
+
 /* The reductions [rd] that run together, [n] of them with the others,
-   and where the call fails. */
+   and where the call fails. Where [shared], that many share their units'
+   terms (Sharing): the outputs they read [reads], [nread] of them, of the
+   program and places [z], of [nouts] outputs, [piece] blocks at a time,
+   and a thread's memo of [memo] bytes, which holds their plans, the
+   pieces' values' stacks from [stacks], each one's top from [tops], the
+   outputs' buffers for nx_cpu_prog_each from [each], then the terms. */
 typedef struct {
   const reduction *rd;
   int n;
   _Atomic int *failed;
+  int shared, nread, nouts;
+  read_out *reads;
+  const fused *z;
+  int64_t piece, memo, stacks, tops, each;
 } together;
+
+static int64_t lined(int64_t bytes) { return (bytes + 63) & ~(int64_t)63; }
+
+/* Marks the reductions of [rd], [n] of them, that share their units'
+   terms, and lays out [j]'s sharing; where fewer than two would, or host
+   memory runs out for its table, none does, which changes no bit. */
+static void share(reduction *rd, int n, together *j) {
+  const plan *q = NULL;
+  j->shared = 0;
+  for (int i = 0; i < n; i++) {
+    const plan *p = &rd[i].q;
+    rd[i].shared = rd[i].joined && rd[i].body == reduce_units &&
+                   p->fused != NULL && p->row == 1 && p->terms > LANES;
+    j->shared += rd[i].shared;
+    if (rd[i].shared && q == NULL) q = p;
+  }
+  int nouts = j->shared > 1 ? nx_cpu_prog_outs(q->fused->prog) : 0;
+  int *slot = nouts > 0 ? malloc((size_t)nouts * sizeof *slot) : NULL;
+  j->reads = slot != NULL ? malloc((size_t)j->shared * sizeof *j->reads) : NULL;
+  if (j->reads == NULL) {
+    free(slot);
+    for (int i = 0; i < n; i++) rd[i].shared = 0;
+    j->shared = 0;
+    return;
+  }
+  for (int o = 0; o < nouts; o++) slot[o] = -1;
+  /* The outputs read, each once, and the bytes a term of them all takes. */
+  int64_t per = 0;
+  j->nread = 0;
+  for (int i = 0; i < n; i++) {
+    if (!rd[i].shared) continue;
+    int o = rd[i].z.k;
+    if (slot[o] < 0) {
+      read_out *r = &j->reads[j->nread];
+      r->o = o;
+      r->h = nx_cpu_prog_held(q->fused->prog, o);
+      r->c = rd[i].q.carrier;
+      r->hw = nx_cpu_width(r->h);
+      per += nx_cpu_width(r->c) + (r->h != r->c ? r->hw : 0);
+      slot[o] = j->nread++;
+    }
+    rd[i].at = slot[o];
+  }
+  /* A piece of a unit's group, of whole blocks: as many as SHARED_BYTES
+     holds, a power of two of them, one at least. */
+  j->piece = 1;
+  while (2 * j->piece <= q->group &&
+         2 * j->piece * BLOCK * per <= SHARED_BYTES)
+    j->piece *= 2;
+  int64_t span = j->piece * BLOCK < q->terms ? j->piece * BLOCK : q->terms;
+  j->nouts = nouts;
+  j->z = q->fused;
+  j->stacks = lined((int64_t)j->shared * (int64_t)sizeof(plan));
+  j->tops = j->stacks + (int64_t)j->shared * NX_CPU_TREE_DEPTH * VALUE;
+  j->each = lined(j->tops + (int64_t)j->shared * (int64_t)sizeof(int));
+  int64_t at = lined(j->each + nouts * (int64_t)sizeof(uint8_t *));
+  for (int k = 0; k < j->nread; k++) {
+    read_out *r = &j->reads[k];
+    r->carrier = at;
+    at += lined(span * nx_cpu_width(r->c));
+    r->held = r->carrier;
+    if (r->h != r->c) {
+      r->held = at;
+      at += lined(span * r->hw);
+    }
+  }
+  j->memo = at;
+  for (int i = 0; i < n; i++)
+    if (rd[i].shared) rd[i].at = j->reads[rd[i].at].carrier;
+  free(slot);
+}
+
+/* A thread's [memo] for [j]'s sharing: the sharing reductions' plans,
+   each reading its output's terms there, and no output's buffer. */
+static void memo_tables(const together *j, uint8_t *memo) {
+  plan *qs = (plan *)memo;
+  for (int i = 0, k = 0; i < j->n; i++) {
+    if (!j->rd[i].shared) continue;
+    qs[k] = j->rd[i].q;
+    qs[k++].staged_unit = memo + j->rd[i].at;
+  }
+  uint8_t **each = (uint8_t **)(memo + j->each);
+  for (int o = 0; o < j->nouts; o++) each[o] = NULL;
+}
+
+/* Terms [t0, t0 + m) of the output at [p] of [q]'s units, of each output
+   [j] reads, into its buffer in [memo] in its carrier: the program run
+   once over them for all, run by run along the innermost reduced axis as
+   fused_terms runs it for one, each output's held values then converted
+   into its carrier where they differ, as eval_in converts them. */
+static void shared_terms(const together *j, const plan *q, uint8_t *memo,
+                         int64_t p, int64_t t0, int64_t m) {
+  int r = q->nr - 1;
+  uint8_t **each = (uint8_t **)(memo + j->each);
+  for (int64_t i = 0; i < m;) {
+    int64_t len = q->re[r] - (t0 + i) % q->re[r];
+    if (len > m - i) len = m - i;
+    for (int k = 0; k < j->nread; k++) {
+      const read_out *o = &j->reads[k];
+      each[o->o] = memo + o->held + i * o->hw;
+    }
+    nx_cpu_prog_each(j->z->prog, &j->z->pl, each, term(q, p, t0 + i),
+                     q->rs[r], len, 0, 1);
+    i += len;
+  }
+  for (int k = 0; k < j->nread; k++) {
+    const read_out *o = &j->reads[k];
+    if (o->h != o->c)
+      nx_cpu_convert(o->h, o->c)(memo + o->held, memo + o->carrier, m);
+  }
+}
+
+/* Unit [u] of every sharing reduction, piece by piece: each piece's terms
+   computed once, then each reduction's value of its blocks, which the
+   counter combines with the pieces' before it, a full piece's as blocks
+   combines a block's, the last, partial one's at the end alone. Each value
+   is then stored, or put among its groups'. */
+static void shared_unit(const together *j, work *wk, uint8_t *memo,
+                        int64_t u) {
+  plan *qs = (plan *)memo;
+  uint8_t(*stack)[VALUE] = (uint8_t(*)[VALUE])(memo + j->stacks);
+  int *top = (int *)(memo + j->tops);
+  const plan *q = &qs[0];
+  unit x = unit_of(q, u);
+  int64_t b0 = x.g * q->group, b1 = b0 + q->group;
+  if (b1 > q->blocks) b1 = q->blocks;
+  for (int i = 0; i < j->shared; i++) top[i] = 0;
+  for (int64_t b = b0, k = 1; b < b1; b += j->piece, k++) {
+    int64_t e = b + j->piece < b1 ? b + j->piece : b1;
+    int64_t t0 = b * BLOCK, t1 = e * BLOCK < q->terms ? e * BLOCK : q->terms;
+    shared_terms(j, q, memo, x.p, t0, t1 - t0);
+    for (int i = 0; i < j->shared; i++) {
+      plan *p = &qs[i];
+      uint8_t(*st)[VALUE] = stack + i * NX_CPU_TREE_DEPTH;
+      p->staged_from = t0;
+      blocks(p, wk, x.p, x.s, 1, NULL, b, e, st[top[i]++]);
+      if (e - b == j->piece)
+        NX_CPU_TREE_STEP(k, top[i], join(p, st[top[i] - 2], st[top[i] - 1], 1));
+    }
+  }
+  for (int i = 0; i < j->shared; i++) {
+    const plan *p = &qs[i];
+    uint8_t(*st)[VALUE] = stack + i * NX_CPU_TREE_DEPTH;
+    NX_CPU_TREE_END(top[i], join(p, st[top[i] - 2], st[top[i] - 1], 1));
+    if (p->groups > 1) {
+      memcpy(p->scratch + u * p->size, st[0], (size_t)p->size);
+      continue;
+    }
+    unit y = unit_of(p, u);
+    store(p, &y, NULL, st[0]);
+  }
+}
 
 /* A range of units, each by every joined reduction's body in turn, the
    first reading the unit's terms from memory and the others from the
-   caches. */
+   caches; those that share their terms, by shared_unit first where the
+   thread has its memo. */
 static void together_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const together *j = ctx;
@@ -1822,9 +2034,17 @@ static void together_units(int64_t lo, int64_t hi, int worker, void *ctx) {
     *j->failed = 1;
     return;
   }
-  for (int64_t u = lo; u < hi; u++)
+  /* Without its memo, a thread runs each reduction's body, which gives
+     the same bits. */
+  uint8_t *memo = j->shared ? nx_cpu_take(j->memo) : NULL;
+  if (memo != NULL) memo_tables(j, memo);
+  for (int64_t u = lo; u < hi; u++) {
+    if (memo != NULL) shared_unit(j, wk, memo, u);
     for (int i = 0; i < j->n; i++)
-      if (j->rd[i].joined) j->rd[i].body(&j->rd[i].q, wk, u, u + 1);
+      if (j->rd[i].joined && (memo == NULL || !j->rd[i].shared))
+        j->rd[i].body(&j->rd[i].q, wk, u, u + 1);
+  }
+  nx_cpu_give(memo);
   nx_cpu_give(wk);
 }
 
@@ -1837,7 +2057,7 @@ static void together_units(int64_t lo, int64_t hi, int worker, void *ctx) {
 static void run_all(reduction *rd, int n, task op) {
   int lead = -1, joined = 0;
   for (int i = 0; i < n; i++) {
-    rd[i].joined = 0;
+    rd[i].joined = rd[i].shared = 0;
     if (!rd[i].ready || rd[i].body == NULL) continue;
     if (lead < 0) lead = i;
     rd[i].joined = same_units(&rd[lead].q, &rd[i].q);
@@ -1851,8 +2071,10 @@ static void run_all(reduction *rd, int n, task op) {
         bytes = rd[i].bytes > bytes ? rd[i].bytes : bytes;
         cost += rd[i].cost;
       }
-    together j = {rd, n, rd[lead].q.failed};
+    together j = {.rd = rd, .n = n, .failed = rd[lead].q.failed};
+    share(rd, n, &j);
     nx_cpu_job(units, bytes, cost, together_units, &j);
+    free(j.reads);
     for (int i = 0; i < n; i++)
       if (rd[i].joined) combine_groups(&rd[i].q, rd[i].units, rd[i].term);
   } else if (joined == 1) rd[lead].joined = 0;
@@ -2621,7 +2843,8 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
      in the thread's kept scratch; a program's are on the heap, as many as
      its loads, so that the thread's kept buffers hold no more than the
      program's loop, each reduction's two carrier copies, all held while
-     they run, and their work: four for one reduction, and past KEPT the
+     they run, and their work, with the terms several reductions share
+     (Sharing): four for one reduction, and past KEPT the
      thread takes fresh ones (job.c). The program's loop is in the kept
      scratch, taken after the door and given back before its end, since
      nothing raises in between. */

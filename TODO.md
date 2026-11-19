@@ -133,15 +133,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   FFMA derivative law (26.5 s alone, `Codegen.linearize` of the dq and dkdv
   kernels, 0.04-0.2 s each) and "each take a kernel of a product unit"
   (15-33 s); `test_total`'s lane law, 300 Clang compiles on a cold cache
-- nx.cpu computes a Reduce of k reductions in k passes: `reduce_into` runs
-  once per reduction (reduce.c:2468-2484), and each pass evaluates the
-  fused program (:2457-2466) over every term again. var and std written as
-  Sum and Max reductions of one Reduce, as R6 writes them, so run 5-7 times
-  slower eagerly than main's (fudge under load: var-f32-1M 23-30 against
-  159-170 us, var-f32-8192x4096-rows 2.0 against 11.1 ms). It blocks R6
-  (branch `reductions-r6`: var, std, standardize and rms_norm on one
-  lane-scale rescue). Found by R6
-  (_plans/tessera-port/design/reductions/r6-logs/bench-abba.txt)
 - nx.array's `to_array` of unboxed elements and `of_array`
   (nx_array_stubs.c:1022, :1101) copy a whole array with the domain lock
   held, cold mapped pages included, since their walks touch OCaml arrays;

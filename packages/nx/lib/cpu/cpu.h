@@ -992,6 +992,13 @@ void nx_cpu_prog_terms(const nx_cpu_prog *j, const nx_cpu_places *pl,
                        int o, int64_t p, int64_t s0, int64_t n0, int64_t s1,
                        int64_t n1, uint8_t *out);
 
+/* nx_cpu_prog_terms of every output [o] of [j] whose out[o] is not NULL,
+   into out[o], in one run of the program: [out] has an entry for each
+   output, and each output's elements are those nx_cpu_prog_terms stores. */
+void nx_cpu_prog_each(const nx_cpu_prog *j, const nx_cpu_places *pl,
+                      uint8_t *const *out, int64_t p, int64_t s0, int64_t n0,
+                      int64_t s1, int64_t n1);
+
 /* nx_cpu_prog_terms of [n1] rows of [n0] terms, the first at the virtual
    position [p], stepping 1 along a row and [s1] across rows, its load [k],
    a float32 or float64 load, read from [x] in place of its array: row r's

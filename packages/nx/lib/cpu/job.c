@@ -94,8 +94,9 @@ void nx_cpu_job_at(int64_t total, int64_t bytes, double cost,
    and the init's parts and b's blocks, and on worker 0 the packed b and
    its tile; five for a Moments scan of an
    aliased operand (reduce.c), four for a transform (fft.c). A Reduce of
-   several reductions holds two carrier copies for each at once (reduce.c,
-   run_all), so those past KEPT are fresh, freed when given back. A
+   several reductions holds two carrier copies for each at once, and the
+   terms they share (reduce.c, run_all), so those past KEPT are fresh,
+   freed when given back. A
    thread's buffers are freed when it ends. */
 #define KEPT 8
 #define KEPT_BYTES (4 * 1024 * 1024)
