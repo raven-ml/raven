@@ -103,10 +103,10 @@ let model name =
 (* [dims], or all of [m]'s values if [0], refused unless a prefix of [m]. *)
 let prefix m dims =
   if dims = 0 then Model.dims m
-  else if List.mem dims m.Model.prefixes then dims
+  else if List.mem dims (Model.prefixes m) then dims
   else
     fail "--dims %d: the model's prefixes are [%s]" dims
-      (String.concat "; " (List.map string_of_int m.prefixes))
+      (String.concat "; " (List.map string_of_int (Model.prefixes m)))
 
 (* The grid of TESSERA's tile of the landmask [file] (Tile.of_landmask), refused
    unless it has the tile's [h × w] cells and, if [place] states the tile's
@@ -535,7 +535,9 @@ let distil () =
   let key = Nx.Rng.key !seed in
   let m = Model.init ~key:(Nx.Rng.fold_in key init_site) arch in
   let heads =
-    Distil.heads ~key:(Nx.Rng.fold_in key head_site) ~prefixes:m.prefixes d
+    Distil.heads
+      ~key:(Nx.Rng.fold_in key head_site)
+      ~prefixes:(Model.prefixes m) d
   in
   let shape =
     Distil.shape ~pixels:((!pixels + groups - 1) / groups) ~slots:32 px

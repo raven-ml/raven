@@ -158,8 +158,6 @@ let fold_law =
 (* The parameters' values against TESSERA's are test_parity's; these are what
    its embeddings do not show. *)
 
-module Pt = Nx_io.Pytorch
-
 let student_pt = "upstream/tiny/student.pt"
 
 let arrays m =
@@ -201,27 +199,11 @@ let loading =
               Fun.protect ~finally:(fun () -> Sys.remove file) @@ fun () ->
               Model.save file m;
               let back = Model.load file in
-              equal (list int) m.prefixes back.prefixes;
               equal int m.heads back.heads;
               equal
                 (list (pair string (array float_exact)))
                 (arrays m) (arrays back))
             [ post_ln; pre_ln ]);
-      test "refuses an unused tensor" (fun () ->
-          let x = Pt.Tensor (Nx.P (Nx.zeros Nx.float32 [| 2 |])) in
-          let v =
-            match Nx_io.load_pytorch student_pt with
-            | Pt.Dict [ (k, Pt.Dict state); args ] ->
-                let state = state @ [ (Pt.String "extra.weight", x) ] in
-                Pt.Dict [ (k, Pt.Dict state); args ]
-            | _ -> assert false
-          in
-          raises_match
-            (Exn.failure
-               ~sub:
-                 "student: Nx_io.Archive.import: extra.weight: an entry in \
-                  the archive, never read (1 of 1)")
-            (fun () -> Model.of_pytorch ~name:"student" v));
     ]
 
 let () =

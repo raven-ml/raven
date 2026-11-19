@@ -56,7 +56,6 @@ type ('a, 'd) t = {
   net : ('a, 'd) net;
   heads : int; [@ptree.int]
   norm : 'd norm;
-  prefixes : int list; [@ptree.skip]
 }
 [@@deriving ptree]
 
@@ -71,6 +70,13 @@ let reducer_of = function
 
 let dims m = Nx.dim 0 (reducer_of m.net).down.w
 
+(* The students' prefixes, which upstream's command states (tessera_infer_v2
+   infer_v2.py:130). *)
+let prefixes m =
+  match m.net with
+  | Pre_ln _ -> []
+  | Post_ln _ -> List.filter (fun k -> k <= dims m) [ 16; 32; 64; 128 ]
+
 (* Statistics *)
 
 (* Standardisation constants of the released checkpoints, bound to them by
@@ -79,32 +85,14 @@ let dims m = Nx.dim 0 (reducer_of m.net).down.w
    pools them. Bands in the order B04 B02 B03 B08 B8A B05 B06 B07 B11 B12, then
    VV and VH. *)
 let s2_mean =
-  [|
-    1633.0042;
-    1341.1090;
-    1539.5536;
-    3054.8269;
-    3117.4658;
-    2004.1648;
-    2694.7275;
-    2945.1504;
-    2266.6079;
-    1657.3094;
-  |]
+  [| 1633.0042; 1341.1090; 1539.5536; 3054.8269; 3117.4658; 2004.1648;
+     2694.7275; 2945.1504; 2266.6079; 1657.3094 |]
+[@@ocamlformat "disable"]
 
 let s2_std =
-  [|
-    1999.4603;
-    2014.7549;
-    1929.2201;
-    1754.2493;
-    1649.9807;
-    1936.8988;
-    1748.6041;
-    1708.6991;
-    1207.5250;
-    1108.6046;
-  |]
+  [| 1999.4603; 2014.7549; 1929.2201; 1754.2493; 1649.9807; 1936.8988;
+     1748.6041; 1708.6991; 1207.5250; 1108.6046 |]
+[@@ocamlformat "disable"]
 
 let s1a_mean = [| 5909.3921; 3405.0322 |]
 let s1a_std = [| 1507.1750; 1531.2615 |]
@@ -706,42 +694,20 @@ let bool_arg file v dict name default =
   | Some (Pt.Int n) -> n <> 0
   | Some _ -> fail file "%s: a bool expected" name
 
-(* [matryoshka_dims], which the students store as the string
-   ["16,32,64,128"]. *)
-let prefixes_arg file v =
-  let ints l =
-    List.map (function Pt.Int n -> n | _ -> fail file "matryoshka_dims") l
-  in
-  match find file [ "args"; "matryoshka_dims" ] v with
-  | None -> [ 16; 32; 64; 128 ]
-  | Some (Pt.String s) ->
-      List.map
-        (fun x ->
-          match int_of_string_opt (String.trim x) with
-          | Some n -> n
-          | None -> fail file "matryoshka_dims: %S" s)
-        (String.split_on_char ',' s)
-  | Some (Pt.List l | Pt.Tuple l) -> ints l
-  | Some _ -> fail file "matryoshka_dims: a string expected"
-
 (* tessera_infer_v2 student/model.py, [load_model]: [nn.TransformerEncoder]'s
-   layers, or [QKNormEncoderLayer]s in a [ModuleList] with [enable_qk_norm]. *)
+   layers. No released student sets [enable_qk_norm]. *)
 let student file state v =
   let arg name default = int_arg file v "args" name default in
   let d = 4 * arg "latent_dim" 64 and heads = arg "nhead" 4 in
   let layers = arg "num_layers" 4 and ffn = arg "dim_feedforward" 1024 in
   let dims = arg "repr_dim" 128 in
-  let qk = bool_arg file v "args" "enable_qk_norm" false in
+  if bool_arg file v "args" "enable_qk_norm" false then
+    fail file "args.enable_qk_norm: true is not supported";
   let backbone a name ~bands =
     let layer a i =
-      if qk then
-        qk_layer a
-          (Printf.sprintf "%s.transformer_encoder.%d" name i)
-          ~d ~heads ~ffn
-      else
-        packed_layer a
-          (Printf.sprintf "%s.transformer_encoder.layers.%d" name i)
-          ~d ~ffn
+      packed_layer a
+        (Printf.sprintf "%s.transformer_encoder.layers.%d" name i)
+        ~d ~ffn
     in
     backbone_of a name ~bands ~d ~layers layer
   in
@@ -751,12 +717,7 @@ let student file state v =
     Post_ln { s2; s1; reducer = reducer_of_file a ~d ~dims }
   in
   let net = tensors file state net in
-  {
-    net;
-    heads;
-    norm = student_stats Nx.Host.on;
-    prefixes = prefixes_arg file v;
-  }
+  { net; heads; norm = student_stats Nx.Host.on }
 
 (* tessera_infer_v2 teacher/model.py, [load_model]: two fusion layers of 4 heads
    and feed-forward width [2d]. *)
@@ -792,19 +753,13 @@ let teacher_of file state v =
     Pre_ln { s2; s1; modality; fusion; reducer = reducer_of_file a ~d ~dims }
   in
   let net = tensors file state net in
-  {
-    net;
-    heads;
-    norm = teacher_stats Nx.Host.on;
-    prefixes = [];
-  }
+  { net; heads; norm = teacher_stats Nx.Host.on }
 
 let of_pytorch ~name v =
   match (find name [ "model" ] v, find name [ "encoder_state_dict" ] v) with
   | Some state, _ -> student name state v
   | None, Some state -> teacher_of name state v
   | None, None -> fail name "neither a student's nor the teacher's checkpoint"
-
 
 (* Making *)
 
@@ -883,18 +838,16 @@ let init ~key a =
       down = linear (4 * d) a.dims;
     }
   in
-  let net, prefixes =
+  let net =
     if a.pre_ln then
       let modality = Nx.Rng.normal_at at ~key:(key ()) f32 [| 2; d |] in
       let fusion =
         List.init fusion_layers (layer ~heads:a.heads ~ffn:(2 * d))
       in
-      (Pre_ln { s2; s1; modality; fusion; reducer }, [])
-    else
-      ( Post_ln { s2; s1; reducer },
-        List.filter (fun k -> k <= a.dims) [ 16; 32; 64; 128 ] )
+      Pre_ln { s2; s1; modality; fusion; reducer }
+    else Post_ln { s2; s1; reducer }
   in
-  { net; heads = a.heads; norm = student_stats at; prefixes }
+  { net; heads = a.heads; norm = student_stats at }
 
 (* Files *)
 

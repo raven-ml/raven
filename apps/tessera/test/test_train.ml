@@ -299,7 +299,8 @@ let far_key =
 
 (* Distillation *)
 
-let heads = Distil.heads ~key:(Nx.Rng.key 4) ~prefixes:post_ln.prefixes 8
+let heads =
+  Distil.heads ~key:(Nx.Rng.key 4) ~prefixes:(Model.prefixes post_ln) 8
 
 let cosines =
   test "cosines are each head's cosine to its target" (fun () ->

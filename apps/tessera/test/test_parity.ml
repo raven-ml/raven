@@ -97,7 +97,7 @@ let close_gradients ~tol p ~loss ~ref_loss g r =
 let distillation =
   test "a distillation step's loss and gradients are TESSERA's" (fun () ->
       let m = Lazy.force student in
-      let heads = Distil.load_heads (file "heads.npz") m.prefixes in
+      let heads = Distil.load_heads (file "heads.npz") (Model.prefixes m) in
       let pixels, b, keys = Tiny.step dir in
       let targets = Nx.take ~axis:0 pixels (npy Nx.float32 "targets.npy") in
       let p = Nx.Ptree.instantiate (module Distil.Params) in
@@ -107,7 +107,9 @@ let distillation =
           { Distil.net = m.net; heads }
       in
       let r = Model.load (file "grads.pt") in
-      let r_heads = Distil.load_heads (file "heads_grads.npz") m.prefixes in
+      let r_heads =
+        Distil.load_heads (file "heads_grads.npz") (Model.prefixes m)
+      in
       close_gradients ~tol:1e-6 p ~loss
         ~ref_loss:(Nx.item [] (npy Nx.float64 "loss.npy"))
         g

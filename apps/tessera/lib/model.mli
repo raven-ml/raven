@@ -108,8 +108,6 @@ type ('a, 'd) t = {
   net : ('a, 'd) net;
   heads : int;  (** Attention heads of every layer. *)
   norm : 'd norm;
-  prefixes : int list;
-      (** The Matryoshka prefixes, [[]] where the embedding is not nested. *)
 }
 (** The type for models. *)
 
@@ -123,36 +121,19 @@ module Net : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) net
 val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
 (** [walk c m] walks [m]'s net, as {!Net} does, at ["net"], reports its [heads],
     and walks its statistics as fixed arrays. It is the model's {!Nx.Ptree.S}
-    instance, and keeps [prefixes]. Training differentiates and steps a function
+    instance. Training differentiates and steps a function
     of the net alone ({!Net}), so the statistics stay as they are. *)
 
 val dims : ((float, 's, 'd) Nx.t, 'd) t -> int
 (** [dims m] is the length of [m]'s embeddings, 128 for the students and 1024
     for the teacher. *)
 
+val prefixes : ((float, 's, 'd) Nx.t, 'd) t -> int list
+(** [prefixes m] is the Matryoshka prefixes of [m]'s embeddings: [16; 32; 64;
+    128] up to {!dims} for the students' form, and [[]] for the teacher's,
+    whose embedding is not nested. *)
+
 (** {1:make Making models} *)
-
-val of_pytorch :
-  name:string -> Nx_io.Pytorch.value -> (Nx.host Nx.float32_t, Nx.host) t
-(** [of_pytorch ~name v] is the model of the released checkpoint [v], named
-    [name] in errors. [v] is a student's [{"model"; "args"}], with the students'
-    statistics, or the teacher's [{"encoder_state_dict"; "arch"}], with its
-    pooled Sentinel-1 statistics. The state dict holds the tensors of the
-    upstream modules under their PyTorch names, as
-    [s2_backbone.transformer_encoder.layers.0.self_attn.in_proj_weight]. [args]
-    and [arch] give [latent_dim] ([d / 4]), [nhead], [num_layers],
-    [dim_feedforward] and [repr_dim], the upstream defaults where absent, and a
-    student's [matryoshka_dims] (["16,32,64,128"]) and [enable_qk_norm].
-    PyTorch's [[outputs; inputs]] weights are read as stored, in C order,
-    the layout {!init}'s weights have, and a packed [in_proj] as [q], [k]
-    and [v], each weight and bias an array of its own. A compiled forward thus runs the kernels it runs
-    over {!init}'s weights.
-
-    Raises [Failure] naming [name] and the tensor or field if [v] is neither, if
-    a tensor is missing, has another shape than [args] or [arch] gives it, or is
-    left unused, if [v], [args] or [arch] is not a dict or a field has another
-    type, or if the teacher's [nhead] is not [4] or its [final_layernorm] is
-    false. *)
 
 type arch = {
   pre_ln : bool;  (** The teacher's form, else the students'. *)
@@ -173,8 +154,7 @@ val teacher : arch
 
 val init : key:'d Nx.Rng.key -> arch -> ('d Nx.float32_t, 'd) t
 (** [init ~key a] is a model of architecture [a] with kaun's initialisers, drawn
-    from [key] and lying where it lies, with the students' statistics, and
-    Matryoshka prefixes [16; 32; 64; 128] up to [dims] for the students' form.
+    from [key] and lying where it lies, with the students' statistics.
 
     Raises [Invalid_argument] if a field of [a] is not positive or [width] is
     not a multiple of [2 · heads]. *)
@@ -189,12 +169,29 @@ val save : string -> ((float, 's, 'd) Nx.t, 'd) t -> unit
 
 val load : string -> (Nx.host Nx.float32_t, Nx.host) t
 (** [load file] is the model in [file]: a SafeTensors file {!save} wrote of a
-    float32 model, named [*.safetensors]; or else a released checkpoint,
-    [of_pytorch ~name:file (Nx_io.load_pytorch file)], whose arrays other than
-    the linear layers' map the file ([Nx_io]'s loading).
+    float32 model, named [*.safetensors]; or else a released checkpoint, a
+    PyTorch file ([Nx_io.load_pytorch]) whose arrays other than the linear
+    layers' map the file.
 
-    Raises [Failure] as {!of_pytorch}, [Nx_io.load_pytorch],
-    [Nx_io.load_safetensors] and [Nx_io.Archive.to_value] do. *)
+    A released checkpoint is a student's [{"model"; "args"}], with the
+    students' statistics, or the teacher's [{"encoder_state_dict"; "arch"}],
+    with its pooled Sentinel-1 statistics. The state dict holds the tensors of
+    the upstream modules under their PyTorch names, as
+    [s2_backbone.transformer_encoder.layers.0.self_attn.in_proj_weight].
+    [args] and [arch] give [latent_dim] ([d / 4]), [nhead], [num_layers],
+    [dim_feedforward] and [repr_dim], the upstream defaults where absent.
+    PyTorch's [[outputs; inputs]] weights are read as stored, in C order, the
+    layout {!init}'s weights have, and a packed [in_proj] as [q], [k] and [v],
+    each weight and bias an array of its own. A compiled forward thus runs the
+    kernels it runs over {!init}'s weights.
+
+    Raises [Failure] as [Nx_io.load_pytorch], [Nx_io.load_safetensors] and
+    [Nx_io.Archive.to_value] do, and naming [file] and the tensor or field if
+    a checkpoint is neither form, if a tensor is missing, has another shape
+    than [args] or [arch] gives it, or is left unused, if the checkpoint,
+    [args] or [arch] is not a dict or a field has another type, if a student's
+    [enable_qk_norm] is true, or if the teacher's [nhead] is not [4] or its
+    [final_layernorm] is false. *)
 
 (** {1:apply Applying} *)
 
