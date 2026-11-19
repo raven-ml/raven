@@ -481,6 +481,89 @@ let law_lse (b : Support.backend) (a : Support.attention) c =
     ~bound
     (Float.abs (lse.(0) -. l))
 
+(* A visible pair's value counts at any score, [-∞] included, wherever
+   its block lies, and a hidden one never (nx_cpu.mli, nx_cuda.mli). Of
+   512 keys in 8 blocks, those of block [r] hold NaN and infinite values
+   under scores of [-∞], output 1 adding a load of [-∞] to them; the
+   others hold [3] and [-0.5] at scores of [0]. Where block [r] is
+   visible, its weights are 0 and [o] is NaN, [lse] [log 448]. Where a
+   mask load hides block [r] but its last key, which holds [3] and [-0.5]
+   at a score of [0] so that the block is read, [a] adds 449 exact
+   products and [l] is [449]: [o] is [3] and [-0.5] exactly and [lse]
+   [log 449]. Block 0, block 4, which begins the second of the two parts
+   nx.cuda cuts these keys into, and block 7. One row, and 17, which
+   nx.cuda takes on its matrix units at float16 and bfloat16 and nx.cpu
+   on its chain kernel. *)
+let test_infinite_scores (b : Support.backend) (a : Support.attention) () =
+  let tk = 512 and special = [| nan; infinity; neg_infinity |] in
+  let go (type r c) (dt : (float, r) D.t) (acc : (float, c) D.t) ~rows ~hide r =
+    let (module K : Nx_kernel.S) = b.kernels in
+    let make dt shape xs =
+      Kernels_cases.on b (A.of_array dt (Iarray.of_array shape) xs)
+    in
+    let bad j = j / 64 = r && not (hide && j mod 64 = 63) in
+    let value i =
+      let j = i / 2 and e = i mod 2 in
+      if bad j then special.((j + e) mod 3) else if e = 0 then 3. else -0.5
+    in
+    let per_pair f = Array.init (rows * tk) (fun i -> f (i mod tk)) in
+    let q = make dt [| 1; rows; 1 |] (Array.make rows 1.) in
+    let k = make dt [| 1; tk; 1 |] (Array.make tk 0.) in
+    let v = make dt [| 1; tk; 2 |] (Array.init (2 * tk) value) in
+    let bias =
+      make acc [| 1; rows; tk |]
+        (per_pair (fun j -> if bad j then neg_infinity else 0.))
+    in
+    let seen =
+      make D.Bool [| 1; rows; tk |] (per_pair (fun j -> not (hide && bad j)))
+    in
+    let s = D.Any acc in
+    let p =
+      P.v ~ins:[| s; s; D.Any D.Bool |]
+        [| In 0; In 1; Op2 (Binary Add, 0, 1); In 2 |]
+        ~outs:[| 3; 2 |]
+    in
+    let o = A.create b.device acc [| 1; rows; 2 |] in
+    let lse = A.create b.device acc [| 1; rows |] in
+    let answer =
+      K.attention p ~scale:1. ~o ~lse q (Nx_kernel.Dense { k; v })
+        [| A.Any bias; A.Any seen |]
+    in
+    let msg =
+      Printf.sprintf "%s in %s, %d rows, block %d %s" (D.name dt) (D.name acc)
+        rows r
+        (if hide then "hidden" else "visible")
+    in
+    equal ~msg:(msg ^ ": answer") Elements.answer A.Done answer;
+    let floats x = A.to_array (Kernels_cases.host x) in
+    let o' = if hide then [| 3.; -0.5 |] else [| nan; nan |] in
+    equal ~msg:(msg ^ ": o") (array float_exact)
+      (Array.concat (List.init rows (fun _ -> o')))
+      (floats o);
+    let lse' = Float.log (if hide then 449. else 448.) in
+    equal ~msg:(msg ^ ": lse")
+      (array (float (a.epsilon (D.Any acc) tk lse')))
+      (Array.make rows lse') (floats lse)
+  in
+  let each (type r a) (dt : (float, r) D.t) (acc : (float, a) D.t) =
+    List.iter
+      (fun rows ->
+        List.iter
+          (fun r ->
+            go dt acc ~rows ~hide:false r;
+            go dt acc ~rows ~hide:true r)
+          [ 0; 4; 7 ])
+      [ 1; 17 ]
+  in
+  b.around (fun () ->
+      each D.Float16 D.Float32;
+      each D.Bfloat16 D.Float32;
+      each D.Float32 D.Float32;
+      each D.Float16 D.Float64;
+      each D.Bfloat16 D.Float64;
+      each D.Float32 D.Float64;
+      each D.Float64 D.Float64)
+
 (* The error laws hold where the backend states its attention's errors:
    one that declines every attention states none. *)
 let laws (b : Support.backend) =
@@ -501,7 +584,14 @@ let suite (b : Support.backend) =
        "a call of dtypes or a program it does not take is not Done and \
         writes nothing outside o and lse; its rule names its refusal"
        (table b) (check b)
-    :: laws b)
+    :: (match b.attention with
+       | None -> []
+       | Some a ->
+           [
+             test "a visible value counts at a score of -inf, a hidden one never"
+               (test_infinite_scores b a);
+           ])
+    @ laws b)
 
 (* Calls
 

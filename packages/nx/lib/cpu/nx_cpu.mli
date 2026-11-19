@@ -395,16 +395,19 @@
       dimension from [+0], each fused into its sum, times the scale
       rounded to the accumulator, rewritten by the program's output 1;
     - [m'] is the greatest of [m] and the block's visible scores, a NaN
-      where one is. Where it is [-∞], the block's weights are [0] and the
-      state is left as it was; otherwise each weight is
+      where one is. Where it is [-∞], the block's weights are [0] and [m]
+      and [l] are left as they were; otherwise each weight is
       [exp (x - m')], [0] at a hidden pair, [l] becomes [α l + s] with
       [α = exp (m - m')] and [s] the block's weights summed term [j] into
       lane [j mod 8], lanes [i] and [i + 4], then [i + 2], then [i + 1]
       added, and [a] becomes [α a], unchanged where [α] is [1];
     - [a] then adds each weight times its key's value, in increasing key,
       each product fused into its sum, over the block's keys, a hidden
-      pair's weight [0] included; where a value of the block hidden from
-      the row is a NaN or an infinity, over its visible pairs alone.
+      pair's weight [0] included, whatever [m']; where a value of the
+      block hidden from the row is a NaN or an infinity, over its visible
+      pairs alone. So a value at a visible pair counts wherever its block
+      lies, its score [-∞] included: a NaN there, or an infinity of weight
+      [0], makes [a] a NaN.
     A block in which the row has no visible pair leaves its state as it
     was. At the end, [o = a / l + 0] in the accumulator, rounded once to
     [o]'s dtype: the [+0] makes [+0] a [-0] that [α a] leaves of zero

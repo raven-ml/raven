@@ -497,14 +497,18 @@
     ({!Nx_kernel.section-attention}). Let [m'] be the greatest of [m] and
     the [x] of a row's visible pairs in a block, a NaN where one is. A
     block leaves the row's [m], [l] and [a] as they were where the row has
-    no visible pair in it or [m'] is [-∞]. Otherwise each weight is
+    no visible pair in it. Where [m'] is [-∞], each weight is [0] and [m]
+    and [l] are left as they were. Otherwise each weight is
     [exp (x - m')], [0] at a hidden pair. [l] becomes [α l + s],
     [α = exp (m - m')] and [s] the block's weights summed term [j] into
     lane [j mod 8], then lane [i] taking lane [i + h] for [i] below [h],
-    for [h] = 4, 2 and 1. [a] becomes [α a], unchanged where [α] is [1],
-    then adds each weight times its key's value over the block's keys, a
-    hidden pair's weight [0] included, or over the visible pairs alone
-    where a hidden value of the block is a NaN or an infinity. *)
+    for [h] = 4, 2 and 1, and [a] becomes [α a], unchanged where [α] is
+    [1]. In either case [a] then adds each weight times its key's value
+    over the block's keys, a hidden pair's weight [0] included, or over
+    the visible pairs alone where a hidden value of the block is a NaN or
+    an infinity. So a value at a visible pair counts wherever its block
+    lies, its [x] [-∞] included: a NaN there, or an infinity of weight
+    [0], makes [a] a NaN. *)
 
 (** {2:attention_results Results}
 
