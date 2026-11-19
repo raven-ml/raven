@@ -81,6 +81,9 @@ val scalars : scalar list
 val key : t -> string
 (** [key m] is [m]'s name in the transformer's weights and configuration. *)
 
+val of_key : string -> t option
+(** [of_key k] is the modality whose {!key} is [k], if any. *)
+
 val tokens : t -> int
 (** [tokens m] is the number of tokens of one object's [m]: [576] for an image,
     [144] for a segmentation map, [273] for a spectrum, [55] for an XP spectrum,

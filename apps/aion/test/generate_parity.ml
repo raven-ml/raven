@@ -153,7 +153,7 @@ let replay t codecs c =
     let ins =
       List.map (fun m -> Codecs.encode codecs (Survey.read src rows m)) c.inputs
     in
-    let present (i : _ Transformer.input) =
+    let present (i : _ Tokens.t) =
       match i.present with
       | None -> Array.make (Array.length rows) true
       | Some p ->
@@ -174,7 +174,7 @@ let replay t codecs c =
       let take x = Nx.take ~axis:0 idx x in
       let ins =
         List.map
-          (fun (i : _ Transformer.input) ->
+          (fun (i : _ Tokens.t) ->
             {
               i with
               tokens = take i.tokens;
@@ -234,7 +234,7 @@ let replay t codecs c =
 let largest x = Nx.item [] (Nx.max (Nx.abs (Nx.cast Nx.float64 x)))
 
 let () =
-  let t = Transformer.load () in
+  let t = Transformer.of_archive (Hub.weights Base) in
   let bad = ref 0 in
   List.iter
     (fun c ->

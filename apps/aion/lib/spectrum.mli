@@ -76,21 +76,13 @@ val of_archive : 'd Nx_io.Archive.t -> (Nx.float32_elt, 'd) t
 (** [of_archive a] is the codec whose weights are [a]'s, named as in AION-1's
     file [codecs/spectrum/model.safetensors]. The number of stages of each
     network, of blocks in each stage and of channels in each layer are those the
-    weights have.
+    weights have. AION-1's codec is [of_archive (Hub.codec (Spectrum Desi))].
 
     Raises [Failure] if a weight is missing or is not float32, if [a] holds a
     tensor the codec does not read, as when a stage lacks one of its blocks, if
     the LFQ's stored bit weights or the grid's stored length or first wavelength
     disagree with the codec's, or if the grid's length is not a positive
     multiple of the encoder's reduction, 32 for AION-1. *)
-
-val load :
-  ?cache_dir:string -> ?offline:bool -> unit -> (Nx.float32_elt, Nx.host) t
-(** [load ()] is {!of_archive} of the spectrum codec's file in {!Hub.codec}, to
-    which [cache_dir] and [offline] are passed.
-
-    Raises [Failure] if the file cannot be fetched or read, or as {!of_archive}.
-*)
 
 val grid : ('b, 'd) t -> (float, 'b, 'd) Nx.t
 (** [grid t] is [t]'s latent grid, [[|L|]] wavelengths in ångströms:

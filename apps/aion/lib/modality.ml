@@ -138,6 +138,8 @@ let key = function
   | Catalog -> "catalog"
   | Scalar s -> scalar_key s
 
+let of_key k = List.find_opt (fun m -> key m = k) all
+
 (* aion/fourm/modality_info.py, and the shapes of model.safetensors' token_emb
    and pos_emb at Hub.revision. The catalog's 50 is its max_tokens; its position
    table has 512 rows. *)

@@ -47,12 +47,12 @@
 
     {[
     let desi xp_bp xp_rp =
-      let input m tokens : _ Transformer.input =
+      let input m tokens : _ Tokens.t =
         { modality = Modality.Scalar m; tokens; present = None }
       in
       Roar.sample ~key:(Nx.Rng.key 0)
         ~reveal:[ 35; 34; 34; 34; 34; 34; 34; 34 ]
-        (Transformer.load ())
+        (Transformer.of_archive (Hub.weights Base))
         [ input Xp_bp xp_bp; input Xp_rp xp_rp ]
         (Modality.Spectrum Desi)
     ]} *)
@@ -62,7 +62,7 @@ val sample :
   ?temperature:float ->
   reveal:int list ->
   ('b, 'd) Transformer.t ->
-  'd Transformer.input list ->
+  'd Tokens.t list ->
   Modality.t ->
   'd Nx.int64_t
 (** [sample ~key ~reveal t inputs target] is a draw of [target]'s tokens,
@@ -103,7 +103,7 @@ val draw :
   key:'d Nx.Rng.key ->
   ?temperature:float ->
   reveal:int list ->
-  'd Transformer.input list ->
+  'd Tokens.t list ->
   'd Nx.int64_t
 (** [draw s ~key ~reveal inputs] is {!sample}[ ~key ~reveal t inputs target]
     for [s]'s transformer and target, computed by [s]'s programs: the same

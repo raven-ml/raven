@@ -31,7 +31,7 @@ let () =
        (fun n -> (n, Option.get (Nx_io.Archive.find n (Nx_io.load_safetensors model))))
        (Nx_io.Archive.names (Nx_io.load_safetensors model)));
   let codec m entries =
-    save dir ("codecs/" ^ Scalar.directory m ^ "/model.safetensors")
+    save dir (Hub.file (Scalar m))
       (List.map (fun (k, v) -> (k, Nx.P v)) entries)
   in
   codec Flux_g [ ("_quantizer._index_to_val", even (-3.) 8.) ];

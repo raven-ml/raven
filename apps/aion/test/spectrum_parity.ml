@@ -205,7 +205,7 @@ let check ~n ~levels ~scale (set : set) o =
 let () =
   let hub = path "huggingface" and goldens = path "goldens" in
   let subset = path "subset" and ensemble = path "ensemble/spectrum" in
-  let t32 = Spectrum.load ~cache_dir:hub () in
+  let t32 = Spectrum.of_archive (Hub.codec ~cache_dir:hub (Spectrum Desi)) in
   let t64 = Spectrum.cast Nx.float64 t32 in
   let levels = floats (Spectrum.levels t32) in
   List.iter

@@ -30,7 +30,7 @@ let inputs ms =
       let absent =
         Nx.not_equal_s (get Nx.uint8 ("input." ^ key ^ ".absent")) 0
       in
-      Transformer.
+      Tokens.
         {
           modality = m;
           tokens = get Nx.int64 ("input." ^ key ^ ".tokens");
@@ -67,7 +67,7 @@ let replay ~key ~temperature ~reveal (target, inputs) tokens =
   let order = order ~key b n in
   let step (s, o, revealed, acc) k =
     let p = Nx.slice [ A; R (o, o + k) ] order in
-    let target_input : _ Transformer.input =
+    let target_input : _ Tokens.t =
       { modality = target; tokens; present = Some revealed }
     in
     let l =
@@ -147,7 +147,7 @@ let replays =
              logits: each draws 1024 with probability near 1/1025. *)
           let copies = 8192 in
           let target, inputs = z in
-          let copy (i : _ Transformer.input) : _ Transformer.input =
+          let copy (i : _ Tokens.t) : _ Tokens.t =
             let row x =
               let s = Array.copy (Nx.shape x) in
               s.(0) <- copies;
@@ -310,7 +310,7 @@ let compiled =
           let soft =
             Roar.sampler (Transformer.place Soft.on (Lazy.force model)) target
           in
-          let on_soft (i : _ Transformer.input) : _ Transformer.input =
+          let on_soft (i : _ Tokens.t) : _ Tokens.t =
             { i with tokens = on i.tokens; present = Option.map on i.present }
           in
           let k =
@@ -326,7 +326,7 @@ let compiled =
           let soft =
             Roar.sampler (Transformer.place Soft.on (Lazy.force model)) target
           in
-          let bad (i : _ Transformer.input) : _ Transformer.input =
+          let bad (i : _ Tokens.t) : _ Tokens.t =
             {
               i with
               tokens = Nx.place Soft.on (Nx.full_like i.tokens 5000L);

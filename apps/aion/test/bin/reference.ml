@@ -63,7 +63,7 @@ let generate file input target ~seed ~reveal ~draws ~batch out =
              (Array.map Int64.of_int kept))
           x
       in
-      let i : _ Transformer.input =
+      let i : _ Tokens.t =
         { i with tokens = take i.tokens; present = Option.map take i.present }
       in
       let key = Nx.Rng.fold_in (Nx.Rng.key seed) b in

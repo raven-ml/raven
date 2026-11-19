@@ -62,7 +62,7 @@ let inputs ?(rows = [ 0; 1; 2; 3 ]) () =
       let absent =
         Nx.not_equal_s (get Nx.uint8 ("input." ^ key ^ ".absent")) 0
       in
-      Transformer.
+      Tokens.
         {
           modality = m;
           tokens = take (get Nx.int64 ("input." ^ key ^ ".tokens"));
@@ -102,7 +102,7 @@ let laws =
     [
       test "an absent token's value is not read" (fun () ->
           let t = Lazy.force model in
-          let scramble (i : _ Transformer.input) =
+          let scramble (i : _ Tokens.t) =
             match i.present with
             | None -> i
             | Some p ->
@@ -184,7 +184,9 @@ let loading =
                Modality.[ Scalar Flux_g; Scalar Z; Scalar Xp_bp; Scalar Xp_rp ])
             (List.map Modality.key (Transformer.modalities (Lazy.force model))));
       test "refuses a tensor it does not read" (fun () ->
-          refuses "encoder_embeddings.tok_z.mod_emb is not read"
+          refuses
+            "encoder_embeddings.tok_z.mod_emb: an entry in the archive, never \
+             read"
             (with_entry "encoder_embeddings.tok_z.mod_emb"
                (Nx.P (Nx.zeros Nx.float32 [| 1; 1; 16 |]))));
       test "refuses a layer norm's nonzero shift" (fun () ->
@@ -192,7 +194,7 @@ let loading =
             (with_entry "encoder.1.norm2.bias"
                (Nx.P (Nx.full Nx.float32 [| 16 |] 1e-3))));
       test "refuses a missing weight" (fun () ->
-          refuses "no tensor decoder.1.cross_attn.kv.weight"
+          refuses "decoder.1.cross_attn.kv.weight"
             (without "decoder.1.cross_attn.kv.weight"));
       test "refuses position embeddings that differ" (fun () ->
           refuses "pos_emb differ"
@@ -208,17 +210,17 @@ let loading =
           let w =
             Nx.unpack Nx.float32 (Option.get (Nx_io.Archive.find name weights))
           in
-          refuses (name ^ " is not float32")
+          refuses name
             (with_entry name (Nx.P (Nx.cast Nx.float64 w))));
       test "refuses a weight of another shape" (fun () ->
-          refuses "decoder_proj_context.bias has shape"
+          refuses "decoder_proj_context.bias: shape [17] in the archive"
             (with_entry "decoder_proj_context.bias"
                (Nx.P (Nx.zeros Nx.float32 [| 17 |]))));
     ]
 
 let refusals =
   let t () = Lazy.force model in
-  let one m k : _ Transformer.input =
+  let one m k : _ Tokens.t =
     {
       modality = m;
       tokens = Nx.create Nx.int64 [| 1 |] [| Int64.of_int k |];
@@ -317,7 +319,7 @@ let step_inputs name =
   let revealed = Nx.not_equal_s (rget Nx.uint8 (name ^ ".revealed")) 0 in
   inputs ()
   @ [
-      Transformer.
+      Tokens.
         {
           modality = Scalar Xp_rp;
           tokens = rget Nx.int64 (name ^ ".tokens");
@@ -428,7 +430,7 @@ let step_case name rows perm =
   let pick x = take_rows rows x in
   let inputs =
     List.map
-      (fun (i : _ Transformer.input) ->
+      (fun (i : _ Tokens.t) ->
         { i with tokens = pick i.tokens; present = Option.map pick i.present })
       (step_inputs name)
   in
@@ -526,7 +528,7 @@ let compiled_laws =
           let soft =
             Transformer.jit (Transformer.place Soft.on (Lazy.force model))
           in
-          let on_soft (i : _ Transformer.input) : _ Transformer.input =
+          let on_soft (i : _ Tokens.t) : _ Tokens.t =
             {
               i with
               tokens = Nx.place Soft.on i.tokens;
@@ -556,7 +558,7 @@ let compiled_refusals =
     lazy (Transformer.jit (Transformer.place Soft.on (Lazy.force model)))
   in
   let s x = Nx.place Soft.on x in
-  let one m k : _ Transformer.input =
+  let one m k : _ Tokens.t =
     {
       modality = m;
       tokens = s (Nx.create Nx.int64 [| 1 |] [| Int64.of_int k |]);
@@ -578,7 +580,7 @@ let compiled_refusals =
     |> fun tg ->
     Transformer.forward (Lazy.force soft)
       (List.map
-         (fun (i : _ Transformer.input) ->
+         (fun (i : _ Tokens.t) ->
            { i with tokens = s i.tokens; present = Option.map s i.present })
          (step_inputs name))
       [ tg ]

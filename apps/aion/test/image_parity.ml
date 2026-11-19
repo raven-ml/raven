@@ -162,7 +162,7 @@ let check ~n ~scale (set : set) o =
 let () =
   let hub = path "huggingface" and goldens = path "goldens" in
   let subset = path "subset" and ensemble = path "ensemble/image" in
-  let t32 = Image.load ~cache_dir:hub ~offline:true () in
+  let t32 = Image.of_archive (Hub.codec ~cache_dir:hub ~offline:true Image) in
   let t64 = Image.cast Nx.float64 t32 in
   List.iter
     (fun (set : set) ->

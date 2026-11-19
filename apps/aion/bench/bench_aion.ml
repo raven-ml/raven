@@ -248,7 +248,7 @@ let phot =
   Modality.[ Image; Scalar Flux_g; Scalar Flux_r; Scalar Flux_i; Scalar Flux_z ]
 
 (* Tokens of [m] for one object, drawn over its vocabulary. *)
-let tokens seed m : _ Transformer.input =
+let tokens seed m : _ Tokens.t =
   let n = Modality.tokens m and v = Modality.vocab m in
   {
     modality = m;

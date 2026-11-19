@@ -49,8 +49,8 @@ val load : ?cache_dir:string -> ?offline:bool -> Modality.t list -> t
     with [cache_dir] and [offline]: aion-base's files, which aion-large's
     repository holds too, byte for byte.
 
-    Raises [Invalid_argument] for {!Modality.Segmap} and {!Modality.Catalog},
-    which have no codec here, and [Failure] as each codec's [load]. *)
+    Raises [Invalid_argument] as {!Hub.file}, before any file is fetched, and
+    [Failure] as {!Hub.codec} and each codec's [of_archive]. *)
 
 val jit : t -> t
 (** [jit t] is [t] with each codec compiled: {!Image.jit}, {!Spectrum.jit} and
@@ -63,7 +63,7 @@ val scalar : t -> Modality.scalar -> Nx.host Scalar.t
 
 (** {1:tokens Tokens} *)
 
-val encode : t -> data -> Nx.host Transformer.input
+val encode : t -> data -> Nx.host Tokens.t
 (** [encode t d] is the tokens of [d]. A scalar modality is absent for an object
     one of whose values is NaN or infinite, all its tokens with it, unless that
     value's codebook holds NaN edges: such a value carries no measurement, and a

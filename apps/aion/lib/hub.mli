@@ -6,11 +6,15 @@
 (** AION-1's files on the Hugging Face Hub.
 
     The transformer's weights and each codec's live in one Hub repository,
-    {!repo}, a codec's under [codecs/NAME/]. Every file is read at one commit
-    of it, {!revision}, through {!Kaun_hf}'s cache: the first read of a file
-    downloads it, and later reads find it in the cache. aion-large's weights
-    live in a repository of their own ({!weights}), beside the same codec
-    files. *)
+    {!repo}, a codec's under [codecs/] ({!file}). Every file is read at one
+    commit of it, {!revision}, through {!Kaun_hf}'s cache: the first read of a
+    file downloads it, and later reads find it in the cache. aion-large's
+    weights live in a repository of their own ({!weights}), beside the same
+    codec files.
+
+    Each model reads an archive with its [of_archive], as
+    [Transformer.of_archive (Hub.weights Base)] or
+    [Image.of_archive (Hub.codec Image)]. *)
 
 val repo : string
 (** [repo] is ["polymathic-ai/aion-base"], AION-1's base model. *)
@@ -18,13 +22,21 @@ val repo : string
 val revision : string
 (** [revision] is the commit of {!repo} whose files are read. *)
 
-val codec :
-  ?cache_dir:string -> ?offline:bool -> string -> Nx.host Nx_io.Archive.t
-(** [codec name] is the tensors of [codecs/name/model.safetensors] in {!repo}
-    at {!revision}, fetched as {!Kaun_hf.download_file} fetches with
-    [cache_dir] and [offline].
+val file : Modality.t -> string
+(** [file m] is the path in {!repo} of [m]'s codec: one image codec serves
+    both image modalities, as [codecs/image/model.safetensors], one spectrum
+    codec both spectrum modalities, and each scalar modality has its own, as
+    [codecs/FLUX_G/model.safetensors] for {!Modality.Flux_g}.
 
-    Raises [Failure] if the file cannot be fetched or read. *)
+    Raises [Invalid_argument] for {!Modality.Segmap} and {!Modality.Catalog},
+    whose codecs are not here. *)
+
+val codec :
+  ?cache_dir:string -> ?offline:bool -> Modality.t -> Nx.host Nx_io.Archive.t
+(** [codec m] is the tensors of {!file}[ m] at {!revision}, fetched as
+    {!Kaun_hf.download_file} fetches with [cache_dir] and [offline].
+
+    Raises as {!file}, and [Failure] if the file cannot be fetched or read. *)
 
 (** The type for AION-1's released models. *)
 type model =

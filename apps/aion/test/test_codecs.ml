@@ -24,7 +24,7 @@ let nan_book =
 let cache_dir =
   let dir = Filename.temp_dir "aion" "codecs" in
   let plant m entries =
-    let file = "codecs/" ^ Scalar.directory m ^ "/model.safetensors" in
+    let file = Hub.file (Scalar m) in
     let path = Kaun_hf.cache_path ~cache_dir:dir ~revision:Hub.revision ~file Hub.repo in
     mkdir_p (Filename.dirname path);
     Nx_io.save_safetensors path
@@ -45,7 +45,7 @@ let codecs =
 let ints x = Array.map Int64.to_int (Nx.to_array x)
 
 (* The presence [encode] gives each token, [None] read as all present. *)
-let presence (i : _ Transformer.input) =
+let presence (i : _ Tokens.t) =
   match i.present with
   | Some p -> Nx.to_array p
   | None -> Array.make (Array.fold_left ( * ) 1 (Nx.shape i.tokens)) true

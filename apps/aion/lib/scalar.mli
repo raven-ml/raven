@@ -84,17 +84,17 @@ val transform_of : Modality.scalar -> transform
     Legacy Survey fluxes and radius, the Gaia fluxes and the parallax,
     [Asinh_asinh] for the XP coefficients, and [Identity] for the others. *)
 
-val directory : Modality.scalar -> string
-(** [directory m] is the name of [m]'s codec's directory under [codecs/] in
-    {!Hub.repo}, as ["FLUX_G"] for {!Modality.Flux_g}. *)
+val of_archive : Modality.scalar -> 'd Nx_io.Archive.t -> 'd t
+(** [of_archive m a] is [m]'s codec, of transform {!transform_of}[ m], with the
+    codebooks of [a], named as in its file in {!Hub.codec}: one for each of
+    {!Modality.tokens}[ (Scalar m)], stored as [_quantizer._index_to_val] for a
+    codec of one channel, [_quantizer.buckets] for redshift's, and
+    [_quantizer.quantizers.i._index_to_val] for channel [i] of the others.
+    Each codebook's [_reservoir], the training sample it was computed from,
+    is not read.
 
-val load : ?cache_dir:string -> ?offline:bool -> Modality.scalar -> Nx.host t
-(** [load m] is [m]'s codec, of transform {!transform_of}[ m], with the
-    codebooks of its file in {!Hub.codec}, to which [cache_dir] and [offline]
-    are passed: one for each of {!Modality.tokens}[ (Scalar m)].
-
-    Raises [Failure] if the file cannot be fetched or read, or does not hold
-    that many codebooks of one length. *)
+    Raises [Failure] if [a] does not hold that many float32 codebooks of one
+    length, or holds an entry it does not read. *)
 
 (** {1:tokens Tokens} *)
 

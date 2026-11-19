@@ -90,15 +90,10 @@ val of_archive : 'd Nx_io.Archive.t -> (Nx.float32_elt, 'd) t
     narrower network of the same layers loads too; the quantizer's levels are
     [_quantizer.levels].
 
-    Raises [Failure] naming the entry if [a] lacks one or its shape disagrees
-    with the others'. *)
+    AION-1's codec is [of_archive (Hub.codec Image)].
 
-val load :
-  ?cache_dir:string -> ?offline:bool -> unit -> (Nx.float32_elt, Nx.host) t
-(** [load ()] is the codec of [codecs/image/model.safetensors] in {!Hub.repo},
-    read by {!Hub.codec} with [cache_dir] and [offline].
-
-    Raises as {!Hub.codec} and {!of_archive} do. *)
+    Raises [Failure] naming the entry if [a] lacks one, if its shape disagrees
+    with the others', or if [a] holds an entry the codec does not read. *)
 
 val place : 'e Nx.Placement.t -> ('b, 'd) t -> ('b, 'e) t
 (** [place p t] is [t] with its weights at [p], as {!Nx.place}, compiled if [t]

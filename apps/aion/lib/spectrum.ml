@@ -154,26 +154,11 @@ let map f norm t =
    it. The decoder's stages are [upsample_layers.i] then [stages.i], and nothing
    closes it. *)
 
-(* An archive and the names read from it, so that a weight no layer reads, as in
-   a file missing a block, is refused. *)
-type 'd reader = {
-  archive : 'd Nx_io.Archive.t;
-  read : (string, unit) Hashtbl.t;
-}
+let weight a name = Nx_io.Archive.tensor Nx.float32 name a
 
-let find a name =
-  Hashtbl.replace a.read name ();
-  Nx_io.Archive.find name a.archive
-
-let weight a name =
-  match find a name with
-  | None -> Refuse.failure "Spectrum" "no weight %s" name
-  | Some p -> (
-      try Nx.unpack Nx.float32 p
-      with Invalid_argument _ ->
-        Refuse.failure "Spectrum" "%s is not float32" name)
-
-let has a name = Option.is_some (Nx_io.Archive.find name a.archive)
+(* Whether [a] holds [name]: a probe through [names], which [import] does not
+   note as a read. *)
+let has a name = List.mem name (Nx_io.Archive.names a)
 
 let conv a name : _ Kaun.Conv.t =
   {
@@ -242,34 +227,32 @@ let reduction encoder =
 
 (* Upstream's buffers that restate what the weights fix, checked where present:
    the LFQ's bit weights (aion/codecs/quantizers/ lookup_free_quantization.py,
-   [mask]), and the grid's length and first wavelength. The grid's resolution is
-   read and left: the grid holds its wavelengths. *)
+   [mask]), and the grid's length and first wavelength. *)
 let buffers a grid =
-  let ints name =
-    Option.map
-      (fun p -> Array.map Int64.to_int (Nx.to_array (Nx.unpack Nx.int64 p)))
-      (find a name)
-  in
-  let floats name =
-    Option.map (fun p -> Nx.to_array (Nx.unpack Nx.float32 p)) (find a name)
-  in
   let expected = Array.init bits (fun c -> 1 lsl (bits - 1 - c)) in
-  (match ints "_quantizer._quantizer.mask" with
-  | Some m when m <> expected ->
-      Refuse.failure "Spectrum" "LFQ bit weights other than 2^(9-c)"
-  | _ -> ());
-  (match ints "latent_grid.length" with
-  | Some [| n |] when n <> Nx.dim 0 grid ->
-      Refuse.failure "Spectrum" "a grid length of %d" n
-  | _ -> ());
-  (match floats "latent_grid.lambda_min" with
-  | Some [| w |] when w <> Nx.item [ 0 ] grid ->
-      Refuse.failure "Spectrum" "a grid starting at %g" (Nx.item [ 0 ] grid)
-  | _ -> ());
-  ignore (find a "latent_grid.resolution")
+  let mask = "_quantizer._quantizer.mask" in
+  if has a mask then begin
+    let m = Nx_io.Archive.tensor ~shape:[| bits |] Nx.int64 mask a in
+    if Array.map Int64.to_int (Nx.to_array m) <> expected then
+      Refuse.failure "Spectrum.of_archive" "LFQ bit weights other than 2^(9-c)"
+  end;
+  let length = "latent_grid.length" in
+  if has a length then begin
+    let n = Nx.item [] (Nx_io.Archive.tensor ~shape:[||] Nx.int64 length a) in
+    if Int64.to_int n <> Nx.dim 0 grid then
+      Refuse.failure "Spectrum.of_archive" "a grid length of %Ld" n
+  end;
+  let first = "latent_grid.lambda_min" in
+  if has a first then begin
+    let w = Nx.item [] (Nx_io.Archive.tensor ~shape:[||] Nx.float32 first a) in
+    if w <> Nx.item [ 0 ] grid then
+      Refuse.failure "Spectrum.of_archive" "a grid starting at %g"
+        (Nx.item [ 0 ] grid)
+  end
 
-let of_archive archive =
-  let a = { archive; read = Hashtbl.create 512 } in
+(* A file missing a block leaves the next block's weights unread, so [import]
+   refuses it. *)
+let read a =
   let encoder =
     network a "encoder" (fun n -> Patch (conv a n)) "downsample"
     @ [ Norm (layer_norm a "encoder.norm") ]
@@ -284,7 +267,7 @@ let of_archive archive =
   let r = reduction encoder in
   let l = Nx.dim 0 grid in
   if l = 0 || l mod r <> 0 then
-    Refuse.failure "Spectrum"
+    Refuse.failure "Spectrum.of_archive"
       "a latent grid of %d wavelengths, a positive multiple of %d expected" l r;
   let t =
     {
@@ -299,20 +282,12 @@ let of_archive archive =
     }
   in
   buffers a grid;
-  (match
-     List.filter
-       (fun n -> not (Hashtbl.mem a.read n))
-       (Nx_io.Archive.names archive)
-   with
-  | [] -> ()
-  | n :: _ as unread ->
-      Refuse.failure "Spectrum"
-        "%d weights never read, as %s: a layer is missing or extra"
-        (List.length unread) n);
   t
 
-let load ?cache_dir ?offline () =
-  of_archive (Hub.codec ?cache_dir ?offline "spectrum")
+(* The grid's stored resolution restates its wavelengths' spacing, and is not
+   read: the grid holds its wavelengths. *)
+let of_archive a =
+  Nx_io.Archive.import ~unread:(String.equal "latent_grid.resolution") read a
 
 (* Preparation *)
 

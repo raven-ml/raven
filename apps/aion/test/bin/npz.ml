@@ -48,7 +48,7 @@ let codebooks cache key =
     | "tok_xp_rp" -> (Modality.Xp_rp, fun e -> sinh (sinh e))
     | k -> failwith ("no transform for " ^ k)
   in
-  let file = "codecs/" ^ Scalar.directory m ^ "/model.safetensors" in
+  let file = Hub.file (Scalar m) in
   let a =
     Nx_io.load_safetensors
       (Kaun_hf.cache_path ~cache_dir:cache ~revision:Hub.revision ~file Hub.repo)

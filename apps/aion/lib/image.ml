@@ -142,12 +142,7 @@ type ('b, 'd) t = {
 
 let of_archive_fn = "Image.of_archive"
 
-let shape a name =
-  match Nx_io.Archive.find name a with
-  | Some (Nx.P x) -> Nx.shape x
-  | None -> Refuse.failure of_archive_fn "no entry %s" name
-
-let tensor a name = Nx_io.Archive.float ~shape:(shape a name) Nx.float32 name a
+let float ?shape a name = Nx_io.Archive.float ?shape Nx.float32 name a
 
 let outputs name o want =
   if o <> want then
@@ -157,17 +152,14 @@ let outputs name o want =
 (* The convolution [name] reading [i] channels with a [k] × [k] kernel, its
    PyTorch weight [[o; i; k; k]] moved channels last, and its [o]. *)
 let conv a name ~i ~k =
-  let w = name ^ ".weight" and b = name ^ ".bias" in
-  match shape a w with
+  let w = float a (name ^ ".weight") in
+  match Nx.shape w with
   | [| o; i'; kh; kw |] when i' = i && kh = k && kw = k ->
-      if shape a b <> [| o |] then
-        Refuse.failure of_archive_fn "%s: shape %a, [%d] expected" b
-          Nx.pp_shape (shape a b) o;
-      let w = Nx.copy (Nx.moveaxis 1 (-1) (tensor a w)) in
-      ({ Kaun.Conv.w; b = Some (tensor a b) }, o)
+      let b = float ~shape:[| o |] a (name ^ ".bias") in
+      ({ Kaun.Conv.w = Nx.copy (Nx.moveaxis 1 (-1) w); b = Some b }, o)
   | s ->
-      Refuse.failure of_archive_fn "%s: shape %a, [o; %d; %d; %d] expected" w
-        Nx.pp_shape s i k k
+      Refuse.failure of_archive_fn
+        "%s.weight: shape %a, [o; %d; %d; %d] expected" name Nx.pp_shape s i k k
 
 (* A convolution of [o] outputs. *)
 let conv_to a name ~i ~k ~o =
@@ -198,39 +190,31 @@ let residuals_of a name d =
 (* A subsampled linear map's weight [[o; i]] and bias [[o]], as a 1 × 1
    convolution. *)
 let linear a name ~i =
-  let w = name ^ ".weight" and b = name ^ ".bias" in
-  match shape a w with
+  let w = float a (name ^ ".weight") in
+  match Nx.shape w with
   | [| o; i' |] when i' = i ->
-      if shape a b <> [| o |] then
-        Refuse.failure of_archive_fn "%s: shape %a, [%d] expected" b
-          Nx.pp_shape (shape a b) o;
-      let w = Nx.reshape [| o; 1; 1; i |] (tensor a w) in
-      ({ Kaun.Conv.w; b = Some (tensor a b) }, o)
+      let b = float ~shape:[| o |] a (name ^ ".bias") in
+      ({ Kaun.Conv.w = Nx.reshape [| o; 1; 1; i |] w; b = Some b }, o)
   | s ->
-      Refuse.failure of_archive_fn "%s: shape %a, [o; %d] expected" w
+      Refuse.failure of_archive_fn "%s.weight: shape %a, [o; %d] expected" name
         Nx.pp_shape s i
 
 let levels_of a =
-  match Nx_io.Archive.find "_quantizer.levels" a with
-  | Some (Nx.P l) when Nx.ndim l = 1 ->
-      List.map Int64.to_int (Array.to_list (Nx.to_array (Nx.cast Nx.int64 l)))
-  | _ -> Refuse.failure of_archive_fn "no 1-d entry _quantizer.levels"
+  let l = Nx_io.Archive.tensor Nx.int32 "_quantizer.levels" a in
+  if Nx.ndim l <> 1 then
+    Refuse.failure of_archive_fn "_quantizer.levels: shape %a, [l] expected"
+      Nx.pp_shape (Nx.shape l);
+  List.map Int32.to_int (Array.to_list (Nx.to_array l))
 
-let of_archive a =
+let read a =
   let enc = "model.encoder_layers." and dec = "model.decoder_layers." in
   let proj_in, p = linear a "subsample_in" ~i:channels in
   let conv_in, d = conv a "model.conv_in.conv" ~i:p ~k:7 in
   let down1, d1 = conv a (enc ^ "1.conv") ~i:d ~k:3 in
   let down2, d2 = conv a (enc ^ "3.conv") ~i:d1 ~k:3 in
   let norm =
-    let w = enc ^ "7.1.weight" and b = enc ^ "7.1.bias" in
-    List.iter
-      (fun n ->
-        if shape a n <> [| d2 |] then
-          Refuse.failure of_archive_fn "%s: shape %a, [%d] expected" n
-            Nx.pp_shape (shape a n) d2)
-      [ w; b ];
-    { Kaun.Layer_norm.gamma = tensor a w; beta = Some (tensor a b) }
+    let v suffix = float ~shape:[| d2 |] a (enc ^ "7.1." ^ suffix) in
+    { Kaun.Layer_norm.gamma = v "weight"; beta = Some (v "bias") }
   in
   let encoder =
     {
@@ -272,8 +256,7 @@ let of_archive a =
     programs = None;
   }
 
-let load ?cache_dir ?offline () =
-  of_archive (Hub.codec ?cache_dir ?offline "image")
+let of_archive a = Nx_io.Archive.import read a
 
 (* Placing *)
 

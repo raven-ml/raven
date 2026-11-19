@@ -45,12 +45,6 @@ type ('b, 'd) decoder_block = {
 
 (* The arguments of the computations. *)
 
-type 'd input = {
-  modality : Modality.t;
-  tokens : 'd Nx.int64_t;
-  present : 'd Nx.bool_t option;
-}
-
 type ('b, 'd) encoding = { context : ('b, 'd) w; lengths : 'd Nx.int64_t }
 type 'd target = { modality : Modality.t; positions : 'd Nx.int64_t option }
 
@@ -69,9 +63,9 @@ type ('b, 'd) embedding = {
 (* A compiled transformer's programs ({!jit}): the computations of encode,
    decode and forward, without their checks. *)
 type ('b, 'd) programs = {
-  p_encode : 'd input list -> ('b, 'd) encoding;
+  p_encode : 'd Tokens.t list -> ('b, 'd) encoding;
   p_decode : ('b, 'd) encoding -> 'd target list -> ('b, 'd) w list;
-  p_forward : 'd input list -> 'd target list -> ('b, 'd) w list;
+  p_forward : 'd Tokens.t list -> 'd target list -> ('b, 'd) w list;
 }
 
 type ('b, 'd) t = {
@@ -164,58 +158,34 @@ let map (type b c d e) (f : (b, d) w -> (c, e) w) (t : (b, d) t) : (c, e) t =
    and one modality embedding stored under the decoder's name, which the file's
    metadata aliases to the encoder's. *)
 
-(* An archive and the names read from it, so that a tensor nothing reads is
-   refused. *)
-type 'd reader = {
-  archive : 'd Nx_io.Archive.t;
-  read : (string, unit) Hashtbl.t;
-}
-
-let has r name = Option.is_some (Nx_io.Archive.find name r.archive)
-
-let float32 r name =
-  match Nx_io.Archive.find name r.archive with
-  | None -> Refuse.failure "Transformer" "no tensor %s" name
-  | Some p -> (
-      try Nx.unpack Nx.float32 p
-      with Invalid_argument _ ->
-        Refuse.failure "Transformer" "%s is not float32" name)
-
-(* [extent r name i] is the extent of axis [i] of [name], read before the weight
-   itself to size the others. *)
-let extent r name i = (Nx.shape (float32 r name)).(i)
-
-let weight r name shape =
-  Hashtbl.replace r.read name ();
-  let w = float32 r name in
-  if Nx.shape w <> shape then
-    Refuse.failure "Transformer" "%s has shape %a, %a expected" name
-      Nx.pp_shape (Nx.shape w) Nx.pp_shape shape;
-  w
+(* Whether [a] holds [name]: a probe through [names], which [import] does not
+   note as a read. *)
+let has a name = List.mem name (Nx_io.Archive.names a)
+let weight a name shape = Nx_io.Archive.tensor ~shape Nx.float32 name a
 
 (* A torch [out; in] weight, kaun's layout. *)
-let linear ?b r name ~inputs ~outputs : _ Kaun.Linear.t =
-  { w = weight r (name ^ ".weight") [| outputs; inputs |]; b }
+let linear ?b a name ~inputs ~outputs : _ Kaun.Linear.t =
+  { w = weight a (name ^ ".weight") [| outputs; inputs |]; b }
 
 (* A layer norm's shift must be zero: AION-1's weights have none, and a file
    with one would compute something [apply] does not. *)
-let norm r name n : _ Kaun.Layer_norm.t =
+let norm a name n : _ Kaun.Layer_norm.t =
   let shift = name ^ ".bias" in
-  if Nx.item [] (Nx.any (Nx.not_equal_s (weight r shift [| n |]) 0.)) then
-    Refuse.failure "Transformer" "%s is not zero" shift;
-  { gamma = weight r (name ^ ".weight") [| n |]; beta = None }
+  if Nx.item [] (Nx.any (Nx.not_equal_s (weight a shift [| n |]) 0.)) then
+    Refuse.failure "Transformer.of_archive" "%s is not zero" shift;
+  { gamma = weight a (name ^ ".weight") [| n |]; beta = None }
 
 let rows w lo n = Nx.slice [ R (lo, lo + n); A ] w
 
-let attention r name ~dim ~heads ~fused =
+let attention a name ~dim ~heads ~fused =
   let head_dim = dim / heads in
   let q, k, v =
     if fused then
-      let qkv = weight r (name ^ ".qkv.weight") [| 3 * dim; dim |] in
+      let qkv = weight a (name ^ ".qkv.weight") [| 3 * dim; dim |] in
       (rows qkv 0 dim, rows qkv dim dim, rows qkv (2 * dim) dim)
     else
-      let kv = weight r (name ^ ".kv.weight") [| 2 * dim; dim |] in
-      ( weight r (name ^ ".q.weight") [| dim; dim |],
+      let kv = weight a (name ^ ".kv.weight") [| 2 * dim; dim |] in
+      ( weight a (name ^ ".q.weight") [| dim; dim |],
         rows kv 0 dim,
         rows kv dim dim )
   in
@@ -226,40 +196,40 @@ let attention r name ~dim ~heads ~fused =
         q = lin q;
         k = lin k;
         v = lin v;
-        out = linear r (name ^ ".proj") ~inputs:dim ~outputs:dim;
+        out = linear a (name ^ ".proj") ~inputs:dim ~outputs:dim;
       };
-    q_norm = norm r (name ^ ".q_norm") head_dim;
-    k_norm = norm r (name ^ ".k_norm") head_dim;
+    q_norm = norm a (name ^ ".q_norm") head_dim;
+    k_norm = norm a (name ^ ".k_norm") head_dim;
   }
 
-let mlp r name ~dim ~hidden =
+let mlp a name ~dim ~hidden =
   {
-    fc1 = linear r (name ^ ".fc1") ~inputs:dim ~outputs:hidden;
-    fc2 = linear r (name ^ ".fc2") ~inputs:hidden ~outputs:dim;
-    fc3 = linear r (name ^ ".fc3") ~inputs:dim ~outputs:hidden;
+    fc1 = linear a (name ^ ".fc1") ~inputs:dim ~outputs:hidden;
+    fc2 = linear a (name ^ ".fc2") ~inputs:hidden ~outputs:dim;
+    fc3 = linear a (name ^ ".fc3") ~inputs:dim ~outputs:hidden;
   }
 
 (* The catalog's model tokens have no published map from its codec's tokens, so
    the transformer leaves the catalog out, and its tensors unread. *)
 let modelled m = m <> Modality.Catalog
 
-let embedding r ~dim m =
+let embedding a ~dim m =
   let key = Modality.key m in
   let n = Modality.tokens m and vocab = Modality.vocab m in
   let enc = "encoder_embeddings." ^ key and dec = "decoder_embeddings." ^ key in
-  let pos = weight r (enc ^ ".pos_emb") [| 1; n; dim |] in
-  let dec_pos = weight r (dec ^ ".pos_emb") [| 1; n; dim |] in
+  let pos = weight a (enc ^ ".pos_emb") [| 1; n; dim |] in
+  let dec_pos = weight a (dec ^ ".pos_emb") [| 1; n; dim |] in
   (* Both tables are float32 values torch computed, which a formula need not
      reproduce bit for bit, so they are read and must agree. *)
   if not (Nx.item [] (Nx.array_equal pos dec_pos)) then
-    Refuse.failure "Transformer" "%s.pos_emb and %s.pos_emb differ" enc
-      dec;
+    Refuse.failure "Transformer.of_archive" "%s.pos_emb and %s.pos_emb differ"
+      enc dec;
   {
     modality = m;
-    table = weight r (enc ^ ".token_emb.weight") [| vocab; dim |];
+    table = weight a (enc ^ ".token_emb.weight") [| vocab; dim |];
     pos = Nx.reshape [| n; dim |] pos;
-    mod_emb = Nx.reshape [| dim |] (weight r (dec ^ ".mod_emb") [| 1; 1; dim |]);
-    logits = linear r (dec ^ ".to_logits") ~inputs:dim ~outputs:vocab;
+    mod_emb = Nx.reshape [| dim |] (weight a (dec ^ ".mod_emb") [| 1; 1; dim |]);
+    logits = linear a (dec ^ ".to_logits") ~inputs:dim ~outputs:vocab;
   }
 
 (* Tensors no path reads: the decoder's token tables, since the decoder's input
@@ -271,76 +241,66 @@ let unread name =
   || prefix "decoder_embeddings."
      && String.ends_with ~suffix:".token_emb.weight" name
 
-let blocks r prefix make =
+let blocks a prefix make =
   let rec go i =
-    if has r (Printf.sprintf "%s.%d.norm1.weight" prefix i) then
+    if has a (Printf.sprintf "%s.%d.norm1.weight" prefix i) then
       make (Printf.sprintf "%s.%d" prefix i) :: go (i + 1)
     else []
   in
   go 0
 
-let of_archive archive =
-  let r = { archive; read = Hashtbl.create 1024 } in
-  let dim = extent r "encoder_norm.weight" 0 in
-  let heads = dim / extent r "encoder.0.attn.q_norm.weight" 0 in
-  let hidden = extent r "encoder.0.mlp.fc1.weight" 0 in
+let read a =
+  (* The width, the heads and the feed-forward's width, read from the stored
+     shapes of three weights before the others are asked for at theirs. *)
+  let stored name = Nx.dim 0 (Nx_io.Archive.tensor Nx.float32 name a) in
+  let dim = stored "encoder_norm.weight" in
+  let heads = dim / stored "encoder.0.attn.q_norm.weight" in
+  let hidden = stored "encoder.0.mlp.fc1.weight" in
   let embeddings =
     List.filter_map
       (fun m ->
         let name =
           "encoder_embeddings." ^ Modality.key m ^ ".token_emb.weight"
         in
-        if modelled m && has r name then Some (embedding r ~dim m) else None)
+        if modelled m && has a name then Some (embedding a ~dim m) else None)
       Modality.all
   in
-  if embeddings = [] then Refuse.failure "Transformer" "no modality";
+  if embeddings = [] then Refuse.failure "Transformer.of_archive" "no modality";
   let encoder =
-    blocks r "encoder" (fun p ->
+    blocks a "encoder" (fun p ->
         {
-          norm1 = norm r (p ^ ".norm1") dim;
-          attn = attention r (p ^ ".attn") ~dim ~heads ~fused:true;
-          norm2 = norm r (p ^ ".norm2") dim;
-          mlp = mlp r (p ^ ".mlp") ~dim ~hidden;
+          norm1 = norm a (p ^ ".norm1") dim;
+          attn = attention a (p ^ ".attn") ~dim ~heads ~fused:true;
+          norm2 = norm a (p ^ ".norm2") dim;
+          mlp = mlp a (p ^ ".mlp") ~dim ~hidden;
         })
   in
   let decoder =
-    blocks r "decoder" (fun p ->
+    blocks a "decoder" (fun p ->
         {
-          d_norm1 = norm r (p ^ ".norm1") dim;
-          self_attn = attention r (p ^ ".self_attn") ~dim ~heads ~fused:true;
-          query_norm = norm r (p ^ ".query_norm") dim;
-          context_norm = norm r (p ^ ".context_norm") dim;
-          cross_attn = attention r (p ^ ".cross_attn") ~dim ~heads ~fused:false;
-          d_norm2 = norm r (p ^ ".norm2") dim;
-          d_mlp = mlp r (p ^ ".mlp") ~dim ~hidden;
+          d_norm1 = norm a (p ^ ".norm1") dim;
+          self_attn = attention a (p ^ ".self_attn") ~dim ~heads ~fused:true;
+          query_norm = norm a (p ^ ".query_norm") dim;
+          context_norm = norm a (p ^ ".context_norm") dim;
+          cross_attn = attention a (p ^ ".cross_attn") ~dim ~heads ~fused:false;
+          d_norm2 = norm a (p ^ ".norm2") dim;
+          d_mlp = mlp a (p ^ ".mlp") ~dim ~hidden;
         })
   in
-  let t =
-    {
-      embeddings;
-      encoder;
-      encoder_norm = norm r "encoder_norm" dim;
-      context =
-        linear r "decoder_proj_context" ~inputs:dim ~outputs:dim
-          ~b:(weight r "decoder_proj_context.bias" [| dim |]);
-      decoder;
-      decoder_norm = norm r "decoder_norm" dim;
-      mask_token = Nx.reshape [| dim |] (weight r "mask_token" [| 1; 1; dim |]);
-      programs = None;
-    }
-  in
-  List.iter
-    (fun name ->
-      if not (Hashtbl.mem r.read name || unread name) then
-        Refuse.failure "Transformer" "%s is not read" name)
-    (Nx_io.Archive.names archive);
-  t
+  {
+    embeddings;
+    encoder;
+    encoder_norm = norm a "encoder_norm" dim;
+    context =
+      linear a "decoder_proj_context" ~inputs:dim ~outputs:dim
+        ~b:(weight a "decoder_proj_context.bias" [| dim |]);
+    decoder;
+    decoder_norm = norm a "decoder_norm" dim;
+    mask_token = Nx.reshape [| dim |] (weight a "mask_token" [| 1; 1; dim |]);
+    programs = None;
+  }
 
-let load ?cache_dir ?offline () =
-  of_archive
-    (Nx_io.load_safetensors
-       (Kaun_hf.download_file ?cache_dir ?offline ~revision:Hub.revision
-          ~file:"model.safetensors" Hub.repo))
+let of_archive a = Nx_io.Archive.import ~unread read a
 
 (* Computing *)
 
@@ -391,7 +351,7 @@ let ln n x = Kaun.Layer_norm.apply ~eps n x
    check nothing. *)
 
 (* An input's tokens as [b; n], and where they are present, checked by shape. *)
-let shaped t (i : _ input) =
+let shaped t (i : _ Tokens.t) =
   let e = find encode_fn t i.modality in
   let key = Modality.key i.modality and n = Modality.tokens i.modality in
   let tokens =
@@ -418,7 +378,7 @@ let shaped t (i : _ input) =
 let parts t inputs =
   if inputs = [] then Refuse.invalid encode_fn "no input";
   distinct encode_fn "input"
-    (List.map (fun (i : _ input) -> i.modality) inputs);
+    (List.map (fun (i : _ Tokens.t) -> i.modality) inputs);
   let parts = List.map (shaped t) inputs in
   let batch = match parts with (_, k, _) :: _ -> Nx.dim 0 k | [] -> 0 in
   List.iter
@@ -513,7 +473,7 @@ let check_targets t ~batch targets =
 (* The arguments on the host, for a compiled transformer's checks. *)
 let host x = Nx.place Nx.Host.on x
 
-let host_input (i : _ input) : _ input =
+let host_input (i : _ Tokens.t) : _ Tokens.t =
   { i with tokens = host i.tokens; present = Option.map host i.present }
 
 let host_target (tg : _ target) : _ target =
@@ -689,12 +649,12 @@ let modality c m =
 
 let inputs_s () =
   Nx.Ptree.list
-    (Nx.Ptree.v (fun c (i : _ input) ->
+    (Nx.Ptree.v (fun c (i : _ Tokens.t) ->
          let open Nx.Ptree.Walk in
          let modality = field c "modality" modality i.modality in
          let tokens = field c "tokens" tensor i.tokens in
          let present = field c "present" (option tensor) i.present in
-         { modality; tokens; present }))
+         ({ modality; tokens; present } : _ Tokens.t)))
 
 let targets_s () =
   Nx.Ptree.list

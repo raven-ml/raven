@@ -30,7 +30,7 @@ let orders n first key = order (Nx.beside first) ~key (Nx.dim 0 first) n
 (* Step [s], a 0-d index ([s + 1] for its key), draws [target]'s tokens at the
    positions [p] at the temperature [temp] and makes them present. *)
 let step ~target t key s temp inputs tokens revealed p =
-  let known : _ Transformer.input =
+  let known : _ Tokens.t =
     { modality = target; tokens; present = Some revealed }
   in
   let e = Transformer.encode t (inputs @ [ known ]) in
@@ -52,10 +52,10 @@ let checked fn ~temperature ~reveal inputs target =
   let total = List.fold_left ( + ) 0 reveal in
   if total <> n then
     Refuse.invalid fn "reveal sums to %d, %s has %d tokens" total name n;
-  if List.exists (fun (i : _ Transformer.input) -> i.modality = target) inputs
+  if List.exists (fun (i : _ Tokens.t) -> i.modality = target) inputs
   then Refuse.invalid fn "%s is an input" name;
   match inputs with
-  | (i : _ Transformer.input) :: _ -> (Nx.dim 0 i.tokens, Nx.beside i.tokens)
+  | (i : _ Tokens.t) :: _ -> (Nx.dim 0 i.tokens, Nx.beside i.tokens)
   | [] -> Refuse.invalid fn "no input"
 
 (* The draw's loop: the orders, then each count's step, from no token
@@ -64,7 +64,7 @@ let run ~orders ~step ~key ~temperature ~reveal ~b ~at inputs target =
   let n = Modality.tokens target in
   let tokens = Nx.zeros_at at Nx.int64 [| b; n |] in
   let revealed = Nx.zeros_at at Nx.bool [| b; n |] in
-  let first = (List.hd inputs : _ Transformer.input).tokens in
+  let first = (List.hd inputs : _ Tokens.t).tokens in
   let order = orders first key in
   let temp =
     if temperature = 0. then None
@@ -95,7 +95,7 @@ type ('b, 'd) sampler = {
     'd Nx.Rng.key ->
     'd Nx.int64_t ->
     'd Nx.float64_t ->
-    'd Transformer.input list ->
+    'd Tokens.t list ->
     'd Nx.int64_t ->
     'd Nx.bool_t ->
     'd Nx.int64_t ->
@@ -103,7 +103,7 @@ type ('b, 'd) sampler = {
   argmaxes :
     'd Nx.Rng.key ->
     'd Nx.int64_t ->
-    'd Transformer.input list ->
+    'd Tokens.t list ->
     'd Nx.int64_t ->
     'd Nx.bool_t ->
     'd Nx.int64_t ->
@@ -113,7 +113,7 @@ type ('b, 'd) sampler = {
 (* A list of inputs, each modality reported as a case. *)
 let inputs_s () =
   Nx.Ptree.list
-    (Nx.Ptree.v (fun c (i : _ Transformer.input) ->
+    (Nx.Ptree.v (fun c (i : _ Tokens.t) ->
          let open Nx.Ptree.Walk in
          let modality =
            field c "modality"
@@ -124,7 +124,7 @@ let inputs_s () =
          in
          let tokens = field c "tokens" tensor i.tokens in
          let present = field c "present" (option tensor) i.present in
-         Transformer.{ modality; tokens; present }))
+         Tokens.{ modality; tokens; present }))
 
 let sampler t target =
   let t = Transformer.eager t in

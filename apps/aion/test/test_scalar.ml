@@ -389,6 +389,90 @@ let refuses_at_call =
       raises_match (Exn.invalid_arg ~sub:"token 3 at [1] outside [0, 3)")
         (fun () -> Scalar.decode t (Nx.place Soft.on (tokens [| 0; 3 |]))))
 
+(* of_archive's three layouts of codebooks. Row [i] holds [i + j / 10], so a
+   transposed or reordered channel shows. *)
+let book i n =
+  Nx.create Nx.float32 [| n |]
+    (Array.init n (fun j -> float_of_int i +. (float_of_int j /. 10.)))
+
+let entries l = Nx_io.Archive.of_list (List.map (fun (k, v) -> (k, Nx.P v)) l)
+let rows c n = Array.concat (List.init c (fun i -> Nx.to_array (book i n)))
+let channel i = Printf.sprintf "_quantizer.quantizers.%d._index_to_val" i
+
+let layouts =
+  cases "of_archive reads each layout of codebooks"
+    ~id:(fun (n, _, _, _) -> n)
+    [
+      ( "one codebook beside its reservoir",
+        Modality.Flux_g,
+        [
+          ("_quantizer._index_to_val", book 0 4);
+          ("_quantizer._reservoir", book 7 9);
+        ],
+        1 );
+      ("the redshift grid", Modality.Z, [ ("_quantizer.buckets", book 0 4) ], 1);
+      ( "one codebook per channel, each beside its reservoir",
+        Modality.Xp_bp,
+        List.concat
+          (List.init 55 (fun i ->
+               [
+                 (channel i, book i 4);
+                 ( Printf.sprintf "_quantizer.quantizers.%d._reservoir" i,
+                   book 0 9 );
+               ])),
+        55 );
+    ]
+    (fun (_, m, l, c) ->
+      let t = Scalar.of_archive m (entries l) in
+      equal (array int) [| c; 4 |] (Nx.shape (Scalar.edges t));
+      equal (array float_exact) (rows c 4) (Nx.to_array (Scalar.edges t)))
+
+let unreadable =
+  cases "of_archive refuses a file it would read wrongly"
+    ~id:(fun (n, _, _, _) -> n)
+    [
+      ( "no codebook",
+        Modality.Flux_g,
+        [ ("_quantizer._reservoir", book 0 4) ],
+        channel 0 );
+      ( "54 of 55 channels",
+        Modality.Xp_rp,
+        List.init 54 (fun i -> (channel i, book i 4)),
+        channel 54 );
+      ( "56 of 55 channels",
+        Modality.Xp_rp,
+        List.init 56 (fun i -> (channel i, book i 4)),
+        "more than 55 codebooks" );
+      ( "channels of two lengths",
+        Modality.Xp_rp,
+        List.init 55 (fun i -> (channel i, book i (if i = 9 then 3 else 4))),
+        "codebooks of several lengths" );
+      ( "an entry it does not read",
+        Modality.Flux_g,
+        [
+          ("_quantizer._index_to_val", book 0 4);
+          ("_quantizer.buckets", book 0 4);
+        ],
+        "_quantizer.buckets: an entry in the archive, never read" );
+      ( "a channel's reservoir in a codec of one channel",
+        Modality.Flux_g,
+        [
+          ("_quantizer._index_to_val", book 0 4);
+          ("_quantizer.quantizers.0._reservoir", book 0 9);
+        ],
+        "_quantizer.quantizers.0._reservoir: an entry in the archive, never \
+         read" );
+      ( "the reservoir of a channel past the last",
+        Modality.Xp_bp,
+        List.init 55 (fun i -> (channel i, book i 4))
+        @ [ ("_quantizer.quantizers.55._reservoir", book 0 9) ],
+        "_quantizer.quantizers.55._reservoir: an entry in the archive, never \
+         read" );
+    ]
+    (fun (_, m, l, sub) ->
+      raises_match (Exn.failure ~sub) (fun () ->
+          Scalar.of_archive m (entries l)))
+
 let () =
   exit
     (run "aion.scalar"
@@ -407,5 +491,6 @@ let () =
            ];
          group "decode" [ upper_edge; out_of_range; past_last; decodes ];
          shapes;
+         group "of_archive" [ layouts; unreadable ];
          group "devices" [ compiled; jitted; narrow_floats; refuses_at_call ];
        ])

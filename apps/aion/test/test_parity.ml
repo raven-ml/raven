@@ -43,11 +43,23 @@ let entry name a =
   | Some p -> p
   | None -> failwith ("no entry " ^ name)
 
-let codec m =
-  Scalar.v (Scalar.transform_of m)
-    (Nx.unpack Nx.float32 (entry (Scalar.directory m) edges))
+(* A codec's name in the fixtures: the generator read
+   codecs/NAME/model.safetensors, so NAME is the entry whose file is the
+   codec's Hub.file. *)
+let id m =
+  let file name = "codecs/" ^ name ^ "/model.safetensors" in
+  match
+    List.find_opt
+      (fun name -> file name = Hub.file (Scalar m))
+      (Nx_io.Archive.names edges)
+  with
+  | Some name -> name
+  | None -> failwith ("no codebook of " ^ Modality.key (Scalar m))
 
-let golden m part = entry (Scalar.directory m ^ "." ^ part) goldens
+let codec m =
+  Scalar.v (Scalar.transform_of m) (Nx.unpack Nx.float32 (entry (id m) edges))
+
+let golden m part = entry (id m ^ "." ^ part) goldens
 let ints (Nx.P x) = Nx.to_array (Nx.cast Nx.int64 x) |> Array.map Int64.to_int
 
 (* The edge of token [k] for the [i]th value of a golden, of channel [i mod
@@ -77,7 +89,6 @@ let inverse ~exp ~sinh tr e =
 (* nx.mli's bounds. *)
 let nx_forward = forward ~log:1 ~asinh:3
 let nx_inverse = inverse ~exp:2 ~sinh:3
-let id m = Scalar.directory m
 
 (* Tokens: a token is upstream's. Under a transform that rounds, it may instead
    move across one distinct edge value [v] that lies where nx's transform may

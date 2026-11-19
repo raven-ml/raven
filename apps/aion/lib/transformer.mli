@@ -39,9 +39,9 @@
     but the context projection.
 
     The weights fix the width, the number of blocks and of heads, and the
-    modalities. AION-1's base weights ({!load}) have width 768, 12 encoder and
-    12 decoder blocks of 12 heads and a feed-forward of 2048, and every modality
-    but {!Modality.Catalog}, whose model tokens no codec makes.
+    modalities. AION-1's base weights ({!Hub.weights}) have width 768, 12
+    encoder and 12 decoder blocks of 12 heads and a feed-forward of 2048, and
+    every modality but {!Modality.Catalog}, whose model tokens no codec makes.
 
     A transformer lies on a device set, as its weights do, and computes with
     tokens of that set: {!place} moves it. It computes at its weights' float
@@ -62,21 +62,13 @@ val of_archive : 'd Nx_io.Archive.t -> (Nx.float32_elt, 'd) t
     {!Modality.tokens} and {!Modality.vocab} of that modality.
 
     The decoder's token embeddings and the catalog's tensors are not read. Each
-    modality's embedding is stored once, under the decoder's name.
+    modality's embedding is stored once, under the decoder's name. AION-1's
+    transformer is [of_archive (Hub.weights Base)].
 
     Raises [Failure] if a weight is missing, is not float32 or has another
     shape, if a layer norm's stored shift is not zero, if a modality's encoder
     and decoder position embeddings differ, if [a] holds no modality, or if [a]
     holds a tensor the transformer does not read. *)
-
-val load :
-  ?cache_dir:string -> ?offline:bool -> unit -> (Nx.float32_elt, Nx.host) t
-(** [load ()] is {!of_archive} of [model.safetensors] in {!Hub.repo} at
-    {!Hub.revision}, fetched as {!Kaun_hf.download_file} fetches with
-    [cache_dir] and [offline].
-
-    Raises [Failure] if the file cannot be fetched or read, or as {!of_archive}.
-*)
 
 val modalities : ('b, 'd) t -> Modality.t list
 (** [modalities t] is the modalities [t] reads and predicts. *)
@@ -113,9 +105,9 @@ val eager : ('b, 'd) t -> ('b, 'd) t
 (** {1:computing Computing}
 
     The encoding and the logits of a batch of [b] objects are functions of the
-    inputs, given in an order: an input's tokens follow the tokens of the inputs
-    before it. {!encode} computes the context, {!decode} the logits from a
-    context, and {!forward} both, once each.
+    inputs, each a modality's {!Tokens.t}, given in an order: an input's tokens
+    follow the tokens of the inputs before it. {!encode} computes the context,
+    {!decode} the logits from a context, and {!forward} both, once each.
 
     Each call checks its arguments, then computes. It checks shapes at the
     call, and the values of the tokens, their presence, the lengths and the
@@ -129,17 +121,6 @@ val eager : ('b, 'd) t -> ('b, 'd) t
     target's modality, if inputs have different numbers of objects, if a present
     token is outside its modality's vocabulary ([\[0, ]{!Modality.vocab}[)]), or
     if an object has no present token. *)
-
-type 'd input = {
-  modality : Modality.t;
-  tokens : 'd Nx.int64_t;
-      (** [[|b; n|]], [n] the modality's {!Modality.tokens}, or [[|b|]] for a
-          modality of one token. *)
-  present : 'd Nx.bool_t option;
-      (** [true] where a token is present, of [tokens]' shape; [None] where all
-          are. An absent token's value is not read. *)
-}
-(** The type for the tokens of one modality of each object. *)
 
 type ('b, 'd) encoding = {
   context : (float, 'b, 'd) Nx.t;
@@ -163,7 +144,7 @@ type 'd target = {
     target holds: the logits of a target of a few positions differ from the same
     rows of a target of all of them. *)
 
-val encode : ('b, 'd) t -> 'd input list -> ('b, 'd) encoding
+val encode : ('b, 'd) t -> 'd Tokens.t list -> ('b, 'd) encoding
 (** [encode t inputs] is the encoder's context of [inputs].
 
     Raises [Invalid_argument] as the section states, or if [tokens] or [present]
@@ -194,12 +175,12 @@ val decode :
     within a row. *)
 
 val forward :
-  ('b, 'd) t -> 'd input list -> 'd target list -> (float, 'b, 'd) Nx.t list
+  ('b, 'd) t -> 'd Tokens.t list -> 'd target list -> (float, 'b, 'd) Nx.t list
 (** [forward t inputs targets] is [decode t (encode t inputs) targets].
 
     Raises as {!encode} and {!decode}. *)
 
-val check : ('b, 'd) t -> 'd input list -> unit
+val check : ('b, 'd) t -> 'd Tokens.t list -> unit
 (** [check t inputs] makes {!encode}'s checks of [inputs] on copies on the
     host, computing nothing else, as a compiled transformer does before its
     program runs.

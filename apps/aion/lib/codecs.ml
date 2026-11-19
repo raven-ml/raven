@@ -39,27 +39,23 @@ type t = {
 }
 
 let load ?cache_dir ?offline ms =
-  List.iter
-    (function
-      | Modality.Segmap | Catalog as m ->
-          Refuse.invalid "Codecs.load" "%s has no codec here" (Modality.key m)
-      | _ -> ())
-    ms;
-  let wants f = List.exists f ms in
+  (* Refuses a modality without a codec before any file is fetched. *)
+  List.iter (fun m -> ignore (Hub.file m)) ms;
+  let codec m = Hub.codec ?cache_dir ?offline m in
+  (* One codec serves each kind, read from the first modality of that kind. *)
+  let first f = Option.map codec (List.find_opt f ms) in
   let image =
-    if wants (function Modality.Image | Image_hsc -> true | _ -> false) then
-      Some (Image.load ?cache_dir ?offline ())
-    else None
+    first (function Modality.Image | Image_hsc -> true | _ -> false)
+    |> Option.map Image.of_archive
   in
   let spectrum =
-    if wants (function Modality.Spectrum _ -> true | _ -> false) then
-      Some (Spectrum.load ?cache_dir ?offline ())
-    else None
+    first (function Modality.Spectrum _ -> true | _ -> false)
+    |> Option.map Spectrum.of_archive
   in
   let scalars =
     List.filter_map
       (function
-        | Modality.Scalar s -> Some (s, Scalar.load ?cache_dir ?offline s)
+        | Modality.Scalar s -> Some (s, Scalar.of_archive s (codec (Scalar s)))
         | _ -> None)
       ms
   in
@@ -101,7 +97,7 @@ let present codec values =
     Some
       (Nx.broadcast_to (Nx.shape values) (Nx.all ~axes:[ 1 ] ~keepdims:true ok))
 
-let encode t d : _ Transformer.input =
+let encode t d : _ Tokens.t =
   let m = modality d in
   match d with
   | Image { bands; flux } ->

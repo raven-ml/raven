@@ -61,21 +61,23 @@ let run at ~hub ~ref64 =
   let file name = Nx_io.load_safetensors (Filename.concat ref64 name) in
   let r64 = file "model.safetensors" and codecs = file "codecs.safetensors" in
   let rows x = Nx.slice [ Nx.R (0, objects) ] x in
-  let input m : _ Transformer.input =
+  let input m : _ Tokens.t =
     let key = Modality.key m in
     match Nx_io.Archive.find ("ls_desi." ^ key ^ ".tokens") codecs with
     | Some (Nx.P t) ->
         { modality = m; tokens = rows (Nx.cast Nx.int64 t); present = None }
     | None -> failwith ("no tokens ls_desi." ^ key)
   in
-  let on (i : _ Transformer.input) : _ Transformer.input =
+  let on (i : _ Tokens.t) : _ Tokens.t =
     {
       i with
       tokens = Nx.place at i.tokens;
       present = Option.map (Nx.place at) i.present;
     }
   in
-  let t = Transformer.load ~cache_dir:hub ~offline:true () in
+  let t =
+    Transformer.of_archive (Hub.weights ~cache_dir:hub ~offline:true Base)
+  in
   let g = Transformer.jit (Transformer.place at t) in
   let whole m : _ Transformer.target = { modality = m; positions = None } in
   let logits name ms target reference =

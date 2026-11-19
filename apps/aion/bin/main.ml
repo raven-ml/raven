@@ -161,7 +161,7 @@ let codecs_at d c = if d.jit then Codecs.jit c else c
    are. *)
 let pad d size = if d.jit then Some size else None
 
-let input_at d (i : _ Transformer.input) : _ Transformer.input =
+let input_at d (i : _ Tokens.t) : _ Tokens.t =
   {
     i with
     tokens = Nx.place d.at i.tokens;
@@ -201,7 +201,7 @@ let model name =
 
 (* The modality of [key], which the option [flag] gave. *)
 let modality_of flag key =
-  match List.find_opt (fun m -> Modality.key m = key) Modality.all with
+  match Modality.of_key key with
   | Some m -> m
   | None -> fail "%s %s: names no modality" flag key
 
@@ -242,7 +242,7 @@ let int64s a =
   Nx.create Nx.int64 [| Array.length a |] (Array.map Int64.of_int a)
 
 (* Whether each of [b] objects has a present token in [input]. *)
-let present b (i : _ Transformer.input) =
+let present b (i : _ Tokens.t) =
   match i.present with
   | None -> Array.make b true
   | Some p ->
@@ -280,7 +280,7 @@ let encode ?pad codecs srcs ins objs =
   else
     let take x = Nx.take ~axis:0 (int64s taken) x in
     ( List.map
-        (fun (i : _ Transformer.input) ->
+        (fun (i : _ Tokens.t) ->
           { i with tokens = take i.tokens; present = Option.map take i.present })
         tokens,
       Array.map (fun o -> objs.(o)) kept )

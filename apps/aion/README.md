@@ -103,6 +103,7 @@ from A to B.
 | File | What it holds |
 |---|---|
 | `lib/modality.mli` | the 40 modalities and what each layer needs of them |
+| `lib/tokens.mli` | one modality's tokens for a batch, between the codecs and the transformer |
 | `lib/hub.mli` | the Hub repositories and the revision every file is read at |
 | `lib/scalar.mli` | the codecs of one number per object |
 | `lib/spectrum.mli` | the spectrum codec |

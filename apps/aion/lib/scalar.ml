@@ -42,68 +42,32 @@ let transform_of : Modality.scalar -> transform = function
   | Mag_i | Mag_z | Mag_y | Shape11 | Shape22 | Shape12 | Ra | Dec ->
       Identity
 
-let directory : Modality.scalar -> string = function
-  | Flux_g -> "FLUX_G"
-  | Flux_r -> "FLUX_R"
-  | Flux_i -> "FLUX_I"
-  | Flux_z -> "FLUX_Z"
-  | Flux_w1 -> "FLUX_W1"
-  | Flux_w2 -> "FLUX_W2"
-  | Flux_w3 -> "FLUX_W3"
-  | Flux_w4 -> "FLUX_W4"
-  | Shape_r -> "SHAPE_R"
-  | Shape_e1 -> "SHAPE_E1"
-  | Shape_e2 -> "SHAPE_E2"
-  | Ebv -> "EBV"
-  | Z -> "Z"
-  | A_g -> "a_g"
-  | A_r -> "a_r"
-  | A_i -> "a_i"
-  | A_z -> "a_z"
-  | A_y -> "a_y"
-  | Mag_g -> "g_cmodel_mag"
-  | Mag_r -> "r_cmodel_mag"
-  | Mag_i -> "i_cmodel_mag"
-  | Mag_z -> "z_cmodel_mag"
-  | Mag_y -> "y_cmodel_mag"
-  | Shape11 -> "i_sdssshape_shape11"
-  | Shape22 -> "i_sdssshape_shape22"
-  | Shape12 -> "i_sdssshape_shape12"
-  | Flux_g_gaia -> "phot_g_mean_flux"
-  | Flux_bp_gaia -> "phot_bp_mean_flux"
-  | Flux_rp_gaia -> "phot_rp_mean_flux"
-  | Parallax -> "parallax"
-  | Ra -> "ra"
-  | Dec -> "dec"
-  | Xp_bp -> "bp_coefficients"
-  | Xp_rp -> "rp_coefficients"
-
 (* The [c] codebooks of a codec's file. A reservoir codec stores its one
    codebook as [_quantizer._index_to_val], the redshift codec as
    [_quantizer.buckets], and the Gaia XP codecs one per channel as
    [_quantizer.quantizers.<i>._index_to_val], [i] from 0. The redshift codec's
    stored grid spans [0, 6] where AION-1's constructor builds [0, 1]: the stored
    buffer is what AION-1's code reads, so it is read here too. *)
-let codebooks name c archive =
-  let fail fmt = Refuse.failure "Scalar.load" ("%s: " ^^ fmt) name in
-  let row key =
-    Option.map
-      (fun p ->
-        let e = Nx.unpack Nx.float32 p in
-        if Nx.ndim e <> 1 then fail "%s is not 1-d" key;
-        e)
-      (Nx_io.Archive.find key archive)
+let codebooks m archive =
+  let key = Modality.key (Scalar m) in
+  let fail fmt = Refuse.failure "Scalar.of_archive" ("%s: " ^^ fmt) key in
+  let c = Modality.tokens (Scalar m) in
+  (* Probes through [names], which [import] does not note as reads. *)
+  let has name = List.mem name (Nx_io.Archive.names archive) in
+  let book name =
+    let e = Nx_io.Archive.tensor Nx.float32 name archive in
+    if Nx.ndim e <> 1 then fail "%s is not 1-d" name;
+    e
   in
   let channel i = Printf.sprintf "_quantizer.quantizers.%d._index_to_val" i in
+  (* Only the layout read is asked for, so an entry of another is unread. *)
   let rows =
-    match (row "_quantizer._index_to_val", row "_quantizer.buckets") with
-    | Some e, _ | None, Some e -> [ e ]
-    | None, None ->
-        if Option.is_some (row (channel c)) then fail "more than %d codebooks" c;
-        List.init c (fun i ->
-            match row (channel i) with
-            | Some e -> e
-            | None -> fail "no codebook %s" (channel i))
+    if has "_quantizer._index_to_val" then [ book "_quantizer._index_to_val" ]
+    else if has "_quantizer.buckets" then [ book "_quantizer.buckets" ]
+    else begin
+      if has (channel c) then fail "more than %d codebooks" c;
+      List.init c (fun i -> book (channel i))
+    end
   in
   if List.length rows <> c then
     fail "%d codebook, %d expected" (List.length rows) c;
@@ -112,10 +76,20 @@ let codebooks name c archive =
     fail "codebooks of several lengths";
   Nx.stack rows
 
-let load ?cache_dir ?offline m =
-  let name = directory m in
-  let c = Modality.tokens (Scalar m) in
-  v (transform_of m) (codebooks name c (Hub.codec ?cache_dir ?offline name))
+(* Each codebook's [_reservoir] is the training sample its quantiles were
+   computed from, which encoding never reads: [_quantizer._reservoir] for a
+   codec of one channel, [_quantizer.quantizers.<i>._reservoir] for channel [i]
+   of the others. *)
+let reservoir c name =
+  if c = 1 then name = "_quantizer._reservoir"
+  else
+    List.exists
+      (fun i -> name = Printf.sprintf "_quantizer.quantizers.%d._reservoir" i)
+      (List.init c Fun.id)
+
+let of_archive m a =
+  let unread = reservoir (Modality.tokens (Scalar m)) in
+  v (transform_of m) (Nx_io.Archive.import ~unread (codebooks m) a)
 
 (* The clamp's logarithm is an edge most of a codebook's mass can sit on: 36 %
    of FLUX_W3's and 48 % of FLUX_W4's training sample lie on log(float32 e⁻³) =

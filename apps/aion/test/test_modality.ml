@@ -80,6 +80,18 @@ let scalars =
            Modality.all)
         (List.map (fun s -> Modality.key (Scalar s)) Modality.scalars))
 
+let of_key =
+  cases "of_key inverts key" ~id:Modality.key Modality.all (fun m ->
+      equal (option string) (Some (Modality.key m))
+        (Option.map Modality.key (Modality.of_key (Modality.key m))))
+
+let no_key =
+  cases "of_key names no modality for another string" ~id:Fun.id
+    [ ""; "image"; "tok_FLUX_G"; "tok_flux_g "; "encoder_embeddings.tok_z" ]
+    (fun k ->
+      equal (option string) None (Option.map Modality.key (Modality.of_key k)))
+
 let () =
   exit
-    (run "aion.modality" [ group "modality" [ keys; facts; scalars ] ])
+    (run "aion.modality"
+       [ group "modality" [ keys; facts; scalars; of_key; no_key ] ])

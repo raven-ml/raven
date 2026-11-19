@@ -792,7 +792,7 @@ let refusals =
             Nx_io.Archive.of_list
               [ ("pre_quant_norm.weight", Nx.P (Nx.ones Nx.float32 [| 8 |])) ]
           in
-          raises_match (Exn.failure ~sub:"no weight") (fun () ->
+          raises_match (Exn.failure ~sub:"encoder.norm.") (fun () ->
               Spectrum.of_archive a));
     ]
 

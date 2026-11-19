@@ -70,7 +70,7 @@ let inputs ?(rows = [ 0; 1; 2; 3 ]) () =
       let absent =
         Nx.not_equal_s (get g Nx.uint8 ("input." ^ key ^ ".absent")) 0
       in
-      Transformer.
+      Tokens.
         {
           modality = m;
           tokens = pick (get g Nx.int64 ("input." ^ key ^ ".tokens"));
@@ -83,7 +83,7 @@ let step_inputs () =
   let r = Lazy.force roar in
   inputs ()
   @ [
-      Transformer.
+      Tokens.
         {
           modality = Scalar Xp_rp;
           tokens = get r Nx.int64 "roar.1.tokens";
@@ -103,7 +103,7 @@ let transformer =
       let module D = (val on_gpu ()) in
       let t = Lazy.force model in
       let g = Transformer.jit (Transformer.place D.on t) in
-      let on (i : _ Transformer.input) : _ Transformer.input =
+      let on (i : _ Tokens.t) : _ Tokens.t =
         {
           i with
           tokens = Nx.place D.on i.tokens;
@@ -143,7 +143,7 @@ let sampler =
       let module D = (val on_gpu ()) in
       let t = Lazy.force model and target = Modality.Scalar Xp_rp in
       let s = Roar.sampler (Transformer.place D.on t) target in
-      let on (i : _ Transformer.input) : _ Transformer.input =
+      let on (i : _ Tokens.t) : _ Tokens.t =
         {
           i with
           tokens = Nx.place D.on i.tokens;

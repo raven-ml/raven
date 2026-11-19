@@ -534,6 +534,19 @@ let refusals =
           Image.decode (codec ())
             Image.[ Des_g; Des_g ]
             (Nx.zeros Nx.int64 [| 1; 576 |]));
+      test "of_archive: an entry it does not read" (fun () ->
+          let extra = "model.encoder_layers.8.weight" in
+          let a =
+            Nx_io.Archive.union
+              [
+                archive;
+                Nx_io.Archive.of_list
+                  [ (extra, Nx.P (Nx.zeros Nx.float32 [| 4 |])) ];
+              ]
+          in
+          raises_match
+            (Exn.failure ~sub:(extra ^ ": an entry in the archive, never read"))
+            (fun () -> Image.of_archive a));
     ]
 
 let bands =
