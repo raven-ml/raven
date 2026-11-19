@@ -98,10 +98,11 @@ let operand_of s l =
     x = Nx.Repr.of_array Nx.Host.v (lay l D.Int32 s data);
   }
 
+let pp_operand ppf o = Format.fprintf ppf "%a %a" pp_layout o.l pp_ints o.s
+
 let operand ?(min_rank = 0) () =
   let open Gen in
-  with_pp
-    (fun ppf o -> Format.fprintf ppf "%a %a" pp_layout o.l pp_ints o.s)
+  with_pp pp_operand
     (let* rank = int_range min_rank 4 in
      (* One draw in four has one element, which a uniform draw of extents
         gives in only 8% of draws of rank 1 to 4. *)
@@ -1199,7 +1200,16 @@ let extensions =
         goldens law_golden;
       prop "extend reads each position by its rule's equations"
         Gen.(
-          let* o = operand ~min_rank:1 () in
+          (* [operand] draws a broadcast of several elements in about one
+             case in twelve, which 100 cases can miss: a quarter of the
+             cases draw one apart. *)
+          let several =
+            with_pp pp_operand
+              (map
+                 (fun s -> operand_of s Broadcast)
+                 (array ~size:(int_range 1 4) (int_range 2 3)))
+          in
+          let* o = frequency [ (3, operand ~min_rank:1 ()); (1, several) ] in
           let* a = axis_of o in
           let* neg = bool in
           let* e = of_list rules in
