@@ -19,8 +19,24 @@ let copy = 16
 let sector = 32
 
 let extent u = Dtype.Value.to_int (vmax u) + 1
-let is_inner r = List.mem (axis_type r) Axis_type.[ Warp; Local; Upcast ]
+
+(* A staged product in registers takes several steps of its loop a trip
+   ({!deepen}): a loop of those steps, inside the trips, is part of the trip's
+   tile as the lanes are. Its identity is its loop's followed by [step], which
+   orders it inside the blocks a sum's running sums split that loop into
+   ({!Chains}, whose blocks follow with [Chains.chain]). *)
+let step = Chains.chain + 1
+
+let is_step r =
+  match List.rev (axis_id r) with s :: _ :: _ -> s = step | _ -> false
+
+let is_inner r =
+  List.mem (axis_type r) Axis_type.[ Warp; Local; Upcast ] || is_step r
+
 let is_thread r = List.mem (axis_type r) Axis_type.[ Warp; Local ]
+
+(* The elements of K a staged trip takes at most: 32. *)
+let chunk = 32
 
 let constant u =
   if Op.equal (op u) Op.Const then
@@ -972,6 +988,72 @@ let held_tiles all tiles operands =
       if others <> [] && List.for_all copied others then held else [])
     operands
 
+(* Products in registers
+
+   A sum of products a thread computes in its registers, a [Mul] that a
+   [Reduce] of [Add] sums, reads its two operands as a core does: a tile over
+   the workgroup's threads and the thread's lanes at each trip of the sum's
+   loop. It is staged where every read of shared memory is a run along the
+   sum, which the copies fill [copy] bytes at a time, and the 8 threads of a
+   quarter of a SIMD group, which shared memory serves in one pass of 128
+   bytes, read different slots of a line or the same address: each staged
+   tile's innermost dimension is the sum's lanes, and each of its other
+   dimensions moves first with a thread, so adjacent threads read adjacent
+   rows, which {!layout} places on different slots. A tile whose rows a
+   thread's lanes take in runs reads rows 8 apart across those threads, all
+   on one slot. *)
+
+let products all =
+  let strip u = if Op.equal (op u) Op.Cast then nth u 0 else u in
+  List.filter_map
+    (fun r ->
+      match arg r with
+      | Reduce { op = Op.Add; _ } when Op.equal (op (strip (nth r 0))) Op.Mul
+        ->
+          Some (strip (nth r 0), List.tl (src r))
+      | _ -> None)
+    (List.filter (fun u -> Op.equal (op u) Op.Reduce) all)
+
+(* Whether the tile [t] is read along the sum of the ranges [summed], its
+   rows moving first with the threads. *)
+let interleaved summed t =
+  let lane (_, a) =
+    Op.equal (op a) Op.Range
+    && (axis_type a = Axis_type.Upcast || is_step a)
+    && List.memq a summed
+  in
+  let threaded d =
+    d.rows = None
+    &&
+    match List.assoc_opt 1 d.parts with
+    | Some a -> Op.equal (op a) Op.Range && is_thread a
+    | None -> false
+  in
+  match t.dims with
+  | d0 :: rest ->
+      d0.stride = 1 && d0.rows = None && List.for_all lane d0.parts
+      && List.for_all threaded rest
+  | [] -> false
+
+(* The products in registers of [all] whose operands staging copies, where
+   [ren] copies asynchronously. *)
+let staged_products (ren : Renderer.t) all =
+  let staged (m, summed) =
+    let tiles = operand_tiles ~async:true all (src m) in
+    (not (List.exists decoded (src m)))
+    && tiles <> []
+    && List.for_all
+         (function _, Some t -> interleaved summed t | _, None -> false)
+         tiles
+  in
+  if not ren.async_copy then []
+  else List.map fst (List.filter staged (products all))
+
+(* The cores of [all] whose operands staging copies: its tensor cores and its
+   staged products in registers. *)
+let cores ren all =
+  List.filter (fun u -> Op.equal (op u) Op.Wmma) all @ staged_products ren all
+
 let staged_bytes (_, staged, _, d) =
   d * List.fold_left (fun n t -> n + bytes t) 0 staged
 
@@ -986,7 +1068,7 @@ let used_before ren all w =
         | Some st -> go (used + staged_bytes st) rest
         | None -> go used rest)
   in
-  go 0 (List.filter (fun u -> Op.equal (op u) Op.Wmma) all)
+  go 0 (cores ren all)
 
 (* Trips of a row's sector
 
@@ -1055,7 +1137,77 @@ let steps (ren : Renderer.t) sink ~k =
   then 1
   else List.fold_left (fun u w -> max u (least w)) 1 cores
 
+(* Steps of a staged product's trip
+
+   A staged product's sum is unrolled by a copy's run, 4 values of float32,
+   and each of its loop's trips copies and waits at a barrier. Its trip takes
+   [s] steps of that loop, the deepest that keeps a run of at most 32 values,
+   leaves two trips, keeps the blocks of the sum's running sums whole
+   ({!Chains.block}) and whose two stages fit shared memory: the loop of [n]
+   trips becomes [n / s] trips of an inner loop of [s] steps, both read in
+   the order of memory, so each output adds the same terms in the same order.
+   Unrolled whole instead, a trip's reads of shared memory, 80 runs of 16
+   bytes a thread at 20 values, all issued before its sums, spilled 0.9 to
+   1.7 KB of registers a thread on sm_89. On an RTX 5000 Ada, hand-written
+   kernels of the staged tile ran a product of 16384 rows over 440 values by
+   1792 in 1.45 ms at 4 values a trip and 0.96 ms at 20 (design/smem-gemm). *)
+
+let trip_steps (ren : Renderer.t) ~bytes ~lanes n =
+  let fits s = 2 * s * bytes <= ren.shared_max in
+  let keeps s =
+    n mod s = 0
+    && n / s >= 2
+    && s * lanes <= chunk
+    && fits s
+    && n / s mod Chains.block ~lanes:(s * lanes) (n / s) = 0
+  in
+  List.find_opt keeps (List.init (max 0 (chunk / max 1 lanes)) (fun i -> (chunk / lanes) - i))
+
+(* [sink] with the loop of each staged product in registers read in trips of
+   several steps ({!trip_steps}), the steps a loop inside the trips that the
+   tiles take whole. *)
+let deepen (ren : Renderer.t) sink =
+  let all = toposort ~calls:Skip sink in
+  let plan m =
+    let tiles = List.filter_map snd (operand_tiles ~async:true all (src m)) in
+    match List.map (fun t -> t.loops) tiles with
+    | [ x ] :: rest when List.for_all (List.equal ( == ) [ x ]) rest -> (
+        let lanes = List.map (fun t -> (List.hd t.dims).extent) tiles in
+        let bytes = List.fold_left (fun n t -> n + bytes t) 0 tiles in
+        match (constant (nth x 0), lanes) with
+        | Some n, l :: ls when List.for_all (( = ) l) ls -> (
+            match trip_steps ren ~bytes ~lanes:l n with
+            | Some s when s > 1 -> Some (x, n, s)
+            | _ -> None)
+        | _ -> None)
+    | _ -> None
+  in
+  let splits =
+    List.sort_uniq
+      (fun (a, _, _) (b, _, _) -> Ops.compare a b)
+      (List.filter_map plan (staged_products ren all))
+  in
+  List.fold_left
+    (fun sink (x, n, s) ->
+      let o = replace x ~src:[ Shape.const_like (nth x 0) (`Int (Bigint.of_int (n / s))) ] in
+      let b =
+        range ~axis_type:(axis_type x) ~dtype:(dtype x) (Int s)
+          (axis_id x @ [ step ])
+      in
+      substitute
+        ~extra_pm:(Pattern_matcher.with_ctx Simplify.pm_flatten_range)
+        ~calls:Skip ~pass:Fixed_point sink
+        [ (x, O.((o * int s) + b)) ])
+    sink splits
+
 let operands (ren : Renderer.t) sink =
+  let sink =
+    let all = toposort ~calls:Skip sink in
+    match workgroup all with
+    | Some _ when depth ren [ copy ] = 2 && not (has_locals all) ->
+        deepen ren sink
+    | _ -> sink
+  in
   let all = toposort ~calls:Skip sink in
   match workgroup all with
   | None -> sink
@@ -1085,7 +1237,7 @@ let operands (ren : Renderer.t) sink =
       in
       (* Every core's stages first, then the held tiles in the room they
          leave, so that a held tile never takes a stage's room. *)
-      let cores = List.filter (fun u -> Op.equal (op u) Op.Wmma) all in
+      let cores = cores ren all in
       let used = ref 0 in
       let stagings =
         List.filter_map
@@ -1225,7 +1377,6 @@ let admits (ren : Renderer.t) sink =
    halving of [tile]; at two stages the knee lies between 5760 and 11520
    threads. *)
 let warp_tile = 64
-let chunk = 32
 
 (* A staged trip lasts about one copy's latency while its busiest compute
    unit copies few bytes, and those bytes over the unit's rate of fill when
@@ -1441,6 +1592,57 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
   match (core, plans) with
   | Some c, (_, top) :: _ when admits ren ast -> choose c top
   | _ -> None
+
+let stages_product (ren : Renderer.t) sink =
+  let all = toposort ~calls:Skip sink in
+  let staged p =
+    Option.is_some (staging ren all ~used:(used_before ren all p) p)
+  in
+  Option.is_some (workgroup all)
+  && (not (has_locals all))
+  && depth ren [ copy ] = 2
+  &&
+  match staged_products ren all with
+  | [] -> false
+  | ps -> List.for_all staged ps
+
+(* A staged product's tile. A workgroup of 128 threads, 16 along M by 8 along
+   N, each holding 8 by 8 outputs, is the blocked contraction's in registers,
+   two workgroups an SM. Its threads take the rows first, so that the reads
+   of shared memory meet no conflict ({!products}), where CUTLASS's SIMT
+   products of operands laid along K store their tiles transposed, from
+   loads of one element. On an RTX 5000 Ada TESSERA's float32 products of
+   16384 rows by weights stored [outputs; inputs] ran so at 23.9-30.1 TFLOP/s,
+   against 15.4-18.5 split across threads ({!Heuristic}), and cuBLAS's SIMT
+   kernels' 23-31. *)
+let product_threads = (16, 8)
+let product_lanes = 8
+
+let product_tile (ren : Renderer.t) ~itemsize ~sizes:(n, m, k) ~short =
+  let tm, tn = product_threads in
+  let u = if short then product_lanes / 2 else product_lanes in
+  let v = copy / itemsize in
+  if
+    itemsize <= copy && n > 0 && m > 0 && k mod v = 0 && k / v >= 2
+    && depth ren [ copy ] = 2
+  then
+    let pad axis e t =
+      if e mod t = 0 then [] else [ Opt.Padto { axis; amount = t } ]
+    in
+    let split axis amount target =
+      Opt.Split { axis; amount; target; top = false }
+    in
+    Some
+      (pad 0 n (tn * u)
+      @ pad 1 m (tm * u)
+      @ [
+          split 0 tn Opt.Local;
+          split 1 tm Opt.Local;
+          split 0 u Opt.Upcast;
+          split 1 u Opt.Upcast;
+          split 2 v Opt.Upcast;
+        ])
+  else None
 
 (* Decoded panels on the host *)
 

@@ -5964,8 +5964,10 @@ against 2.77).
     stride, as a product by the transpose of a matrix stored `[outputs;
     inputs]` does, and so every float32 input gradient `dY Wᵀ` whatever
     `W`'s layout, attention's scores `q kᵀ` as a product, and on sm_75 a
-    bfloat16 product no core takes, what the unroll leaves of it splits,
-    blocked or not, into the first local threads (`lidx0`), as many as read
+    bfloat16 product no core takes, on a renderer that copies nothing
+    asynchronously (on one that does, D497's staged tile takes it), what the
+    unroll leaves of it splits, blocked or not, into the first local threads
+    (`lidx0`), as many as read
     in their runs of 4 a 32-byte sector of the widest operand's row, 2 for
     float32 and 4 for bfloat16, halved while they do not divide it or leave
     each fewer than 16 trips; their partials meet through shared memory, as
@@ -6001,7 +6003,7 @@ against 2.77).
   `two_batches_768_biased` and `batched_768_biased`, whose bias the
   batches do not read, optimised as without it; `matmul_1000`, `matmul_48`
   and `scores_masked` not blocked), and `a contraction laid out along its reduce` (`matmul_256_kt_128`
-  with its reduce split, short of sm_89's units or not; `matmul_256_kt` and
+  with its reduce split on CUDA, AMD and sm_75; `matmul_256_kt` and
   `scores`, under 16 trips, and `matmul_256` and `matmul_440` without),
   with the layouts in the suite's `.tolk` files, and `a kernel's sums keep
   their order whatever units its renderer states`; rune's `test_jit_gpu`
@@ -9448,3 +9450,66 @@ D466.
   Invalid branch keeps its committed type` (both passes, both orders) and
   the engine suite's `link and run › a bitcast of a float64's outer padding
   reads its bits` (padding of zero and of one).
+
+## D497. A product in registers whose operands lie along its sum is staged through shared memory
+
+- **tinygrad:** none: no pass stages an operand (D262), and
+  `codegen/opt/heuristic.py` `hand_coded_optimizations` upcasts a
+  contraction's output axes by 3 or 4 and unrolls its reduce, each thread
+  reading its operands from global memory. Its hand-written kernels stage
+  through local memory by a scheduler `STAGE` (`extra/gemm/amd_uop_matmul.py`
+  `hand_spec_kernel3`: 128 by 128 by 8, 4 by 4 outputs twice a thread, `A`
+  transposed on its store into local memory).
+- **tolk:** `Heuristic.staged_product`, `Heuristic.general`;
+  `Stage.product_tile`, `Stage.stages_product`, `Stage.products`,
+  `Stage.staged_products`, `Stage.deepen` and `Stage.trip_steps`, beside
+  D262's `Stage.operands`; `Coalesce.memory_coalescing` (an index ordered
+  after effects).
+- **Differs:**
+  - **The tile.** On a renderer that copies asynchronously, two stages
+    fitting, a contraction that D212 blocks, blocked or short of the units,
+    whose operands both read its unrolled reduce at unit stride, as `x · wᵀ`
+    with `w` stored `[outputs; inputs]` and every input gradient `dY · Wᵀ`,
+    takes 16 threads along M and 8 along N, the threads splitting each axis
+    first so that adjacent threads hold adjacent rows, 8 by 8 outputs a
+    thread (4 by 4 short of the units), each axis padded to the tile, and its
+    reduce unrolled by a copy of 16 bytes, 4 float32 values, where D212
+    unrolls by 4 and splits the reduce into threads.
+  - **Staging.** A sum of products in registers (a `Mul` a `Reduce` of `Add`
+    sums) is staged as D262 stages a core's operands, where each staged
+    tile's innermost dimension is the sum's lanes and every other dimension
+    moves first with a thread: a quarter of a SIMD group reads 8 adjacent
+    rows, 16 bytes along the sum, which `Stage.layout` places on 8 slots of
+    a line. The loop of the sum takes trips of several steps
+    (`Stage.trip_steps`): the deepest of at most 32 values, leaving two
+    trips, keeping the running sums' blocks whole (D480) and two stages
+    within `shared_max`; the steps are a loop inside the trips, part of the
+    tile, so each output adds the same terms in the same order as the
+    unstaged loop. D212's layout, the C-order `[K; N]` operand and every
+    kernel with other shared memory stay unstaged.
+  - **Reads merge.** A staged tile's reads, ordered after the next trip's
+    copies, merge into vector loads as unordered reads do: 16 bytes of
+    float32 a step, and pairs of 16-bit values of a core's fragments (D262).
+  - tinygrad's tile is the heuristic's; its hand-written kernel's store
+    through registers transposes `A`, as CUTLASS's SIMT products of operands
+    laid along K do (`TransposePitchLinearThreadMapSimt`, one element a
+    load).
+- **Reason:** (d): TESSERA's students, whose linear layers store their
+  weights `[outputs; inputs]`, run their products at 15-17.5 TFLOP/s from
+  the L1 where cuBLAS's SIMT kernels run 26-30 (perf_500, RTX 5000 Ada).
+  Staged, TESSERA's products of 16384 rows run at 23.9-30.1 TFLOP/s against
+  15.4-18.5 split, and perf_500's model time falls from 43.0 to 32.5 s for
+  the medium student and from 75.6 to 54.1 s for the large, below
+  PyTorch's 35.4 and 56.6. The tolk bench's `contract/qk-f32-2048` takes
+  283 us against 336-341 and `stream/q8_0-64` 2.56 ms against 3.00.
+- **Pinned by:** `Tolk.Heuristic`'s `a product laid out along its reduce`
+  (`is staged where the renderer copies asynchronously`, `is not staged
+  laid out along its columns, or on sm_75`) and `a contraction laid out
+  along its reduce` on sm_75; the Stage suite's `kernels the race checker
+  runs › products in registers in trips of several steps …` and its race
+  check, and the Stage suite's `sources` (`bf16_2048.cu`, `f16_padded.cu`,
+  merged reads); the tolk bench's `contract/qk-f32-2048` and
+  `stream/q8_0-64` rows and rune's
+  `Cuda/matmul-float32-transposed-16384x440x1320` and
+  `Cuda/matmul-float32-input-gradient-16384x1320x440` on fudge, their
+  baselines pending the scheduled re-record.

@@ -1635,6 +1635,63 @@ let stream k (s, l) =
   | `Rows r -> rows_layout k s r
   | `Columns c -> columns_layout c
 
+(* A contraction that {!block} takes, blocked or short of the units, whose
+   operands both lie along its reduce takes a staged product's tile
+   ({!Stage.product_tile}) on a renderer that copies asynchronously, where
+   staging then stages it ({!Stage.stages_product}). Its operands, copied
+   into shared memory, are read there 16 bytes along the reduce, where from
+   the L1 a SIMD group's load reads 16 lines ({!split_reduce}). The axes
+   [block] doubles take the tile's N, the later, and M; the result is an
+   optimised copy of [k]. *)
+let staged_product ~core_threads k =
+  let probe = K.copy k in
+  let taken =
+    match
+      block probe (upcast_more ~four_first:(four_first ~core_threads k) probe)
+    with
+    | Blocked (ra, rb) -> Some (false, ra, rb)
+    | Short (ra, rb) -> Some (true, ra, rb)
+    | Free -> None
+  in
+  let by_id s id = List.find_opt (fun u -> axis_id u = id) (K.rngs s) in
+  let itemsize =
+    List.fold_left (fun n b -> max n (Dtype.itemsize (dtype b))) 1 (operands k)
+  in
+  match (taken, K.upcastable_dims ~reduce:true k) with
+  | Some (short, ra, rb), (_ :: _ as dims) when K.axes_of k [ Upcast ] = [] -> (
+      let rngs = K.rngs k in
+      let r = List.nth rngs (last dims) in
+      match (by_id k (axis_id ra), by_id k (axis_id rb)) with
+      | Some a, Some b when along_reduce k r -> (
+          let n, m =
+            if index_of a rngs > index_of b rngs then (a, b) else (b, a)
+          in
+          let ids = [| axis_id n; axis_id m; axis_id r |] in
+          let size u = Bigint.to_int (size_at k (index_of u rngs)) in
+          let s = K.copy k in
+          let apply o =
+            match by_id s ids.(Opt.axis o) with
+            | None -> false
+            | Some u -> (
+                let axis = index_of u (K.rngs s) in
+                let o =
+                  match o with
+                  | Opt.Split x -> Opt.Split { x with axis }
+                  | Opt.Padto x -> Opt.Padto { x with axis }
+                  | o -> o
+                in
+                Result.is_ok (K.apply_opt s o))
+          in
+          let sizes = (size n, size m, size r) in
+          match Stage.product_tile (K.ren k) ~itemsize ~sizes ~short with
+          | Some opts
+            when List.for_all apply opts
+                 && Stage.stages_product (K.ren s) (K.ast s) ->
+              Some s
+          | _ -> None)
+      | _ -> None)
+  | _ -> None
+
 (* The rules for a kernel that is not streamed and takes no tensor core. *)
 let general ~core_threads k =
   (* make a copy so it does not mutate the input *)
@@ -1643,29 +1700,36 @@ let general ~core_threads k =
     Option.iter (fun (m, _) -> share_decodes k m) (contraction k);
   group k;
   (* no more opt if we are grouping *)
-  if K.group_for_reduces k = 0 then begin
+  if K.group_for_reduces k <> 0 then k
+  else begin
     upcast_masked k;
-    let blocked =
-      if host_elementwise k then begin
-        upcast_vectors k;
-        None
-      end
-      else begin
-        let four_first = four_first ~core_threads k in
-        let blocking = block k (upcast_more ~four_first k) in
-        (match blocking with Free -> unroll k | Short _ | Blocked _ -> ());
-        upcast_one k;
-        (* A reduce split into threads lays the axes' threads as a blocked
-           contraction's, short of the units or not. *)
-        match blocking with
-        | Blocked (ra, rb) -> Some (ra, rb)
-        | Short (ra, rb) when K.axes_of k [ Local ] <> [] -> Some (ra, rb)
-        | Free | Short _ -> None
-      end
+    let staged =
+      if (K.ren k).async_copy then staged_product ~core_threads k else None
     in
-    if (K.ren k).has_local then locals ?blocked k
-  end;
-  k
+    match staged with
+    | Some s -> s
+    | None ->
+        let blocked =
+          if host_elementwise k then begin
+            upcast_vectors k;
+            None
+          end
+          else begin
+            let four_first = four_first ~core_threads k in
+            let blocking = block k (upcast_more ~four_first k) in
+            (match blocking with Free -> unroll k | Short _ | Blocked _ -> ());
+            upcast_one k;
+            (* A reduce split into threads lays the axes' threads as a
+               blocked contraction's, short of the units or not. *)
+            match blocking with
+            | Blocked (ra, rb) -> Some (ra, rb)
+            | Short (ra, rb) when K.axes_of k [ Local ] <> [] -> Some (ra, rb)
+            | Free | Short _ -> None
+          end
+        in
+        if (K.ren k).has_local then locals ?blocked k;
+        k
+  end
 
 let hand_coded_with ~core_threads k =
   (* A range of no trip leaves no work to share among lanes or threads, and

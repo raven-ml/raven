@@ -1662,6 +1662,39 @@ let heads_law =
           (int_range 0 1_000_000)))
     heads_bits
 
+(* Products in registers
+
+   Float32 products whose operands both lie along the sum, [b] stored [N; K],
+   take the staged product's tile: 512 by 256 over 440, blocked, its trips of
+   20 values a loop of 5 steps of 4, and 256 by 256 over 160 and an affine
+   operand over 64, short of the units, at 32 values and 8 steps. Each copies
+   both operands' loads into shared memory and computes the bits of the same
+   optimisations unstaged, whose loop runs one step a trip. *)
+let products_in_registers =
+  List.map
+    (fun (m, k, n, form) ->
+      { dt = Float32; batch = 1; m; k; n; layout = Nk; form })
+    [ (512, 440, 256, Plain); (256, 160, 256, Plain); (128, 64, 128, Affine) ]
+
+let run_products () =
+  let d, r = on_cuda () in
+  List.iter
+    (fun p ->
+      let k = kernel ~opts_to_apply:(chosen ~staged:true p r) p in
+      let prg = compiled r k in
+      let msg = Format.asprintf "%a staged" pp_product p in
+      equal ~msg bool true (List.length (locals (Ops.nth prg 1)) >= 2);
+      equal ~msg:"cp.async" bool true (says "cp.async" (source prg));
+      let inputs =
+        [ (1, values 1 (a_size p)); (2, values 2 (p.k * p.n)) ]
+        @
+        if p.form = Affine then [ (3, values 3 p.k); (4, values 4 p.k) ]
+        else []
+      in
+      let run prg = List.assoc 0 (Run.on d prg inputs) in
+      equal (array Dtypes.value) (run (compiled (unstaged r) k)) (run prg))
+    products_in_registers
+
 let checked = "kernels the race checker runs"
 let in_two = "a product of 128 cubed in two stages of cp.async is exact"
 let in_one = "a product of 128 cubed in one stage is exact"
@@ -1674,9 +1707,14 @@ let nested_loops =
   "a product over a nest of loops in two stages computes its unstaged \
    twin's bits"
 
+let in_registers =
+  "products in registers in trips of several steps compute their unstaged \
+   twins' bits"
+
 let checked_kernels =
   group checked
     [
+      test in_registers run_products;
       test in_two (run_staged 2);
       test in_one (run_staged 1);
       test gathered run_routed;
@@ -1713,6 +1751,10 @@ let races =
     [
       test "the race checker finds no hazard in a kernel staged in two stages"
         (racecheck in_two);
+      test
+        "the race checker finds no hazard in products in registers staged in \
+         trips of several steps"
+        (racecheck in_registers);
       test "the race checker finds no hazard in a kernel staged in one stage"
         (racecheck in_one);
       test "the race checker finds no hazard in a kernel of gathered rows"

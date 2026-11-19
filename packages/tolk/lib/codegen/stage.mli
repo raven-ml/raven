@@ -109,6 +109,42 @@ val admits : Renderer.t -> Ops.t -> bool
     the heuristic asks before it gives a core the staged tile
     ({!Heuristic.hand_coded_optimizations}). *)
 
+val stages_product : Renderer.t -> Ops.t -> bool
+(** [stages_product ren sink] is [true] iff {!operands} stages a sum of
+    products of [sink] that a thread computes in its registers, a
+    multiplication a sum of [Add] reduces, and every such product it stages
+    takes two stages ({!depth}). It stages one where [ren] copies
+    asynchronously ({!Renderer.t.async_copy}), neither operand is
+    {!decoded}, and each tile it copies reads the sum's lanes in its
+    innermost dimension, contiguous, while every other dimension of the
+    tile moves first with a thread: adjacent threads read adjacent rows,
+    16 bytes along the sum, which {!layout} places on different banks. Such
+    a product is staged as a core is: its operands' tiles copied as
+    {!operands} copies a core's, the product reading them back. Its loop
+    takes trips of several steps: the most, at most 32 values of the sum a
+    trip, that leave two trips, keep the blocks of the sum's running sums
+    whole ({!Chains.block}) and whose two stages fit
+    {!Renderer.t.shared_max}. The steps are a loop inside the trips that
+    the tiles take whole, so each output adds the same terms in the same
+    order as the loop unstaged. *)
+
+val product_tile :
+  Renderer.t ->
+  itemsize:int ->
+  sizes:int * int * int ->
+  short:bool ->
+  Opt.t list option
+(** [product_tile ren ~itemsize ~sizes:(n, m, k) ~short] is the optimisations
+    of a staged product's tile ({!stages_product}), splits and pads whose
+    [axis] is [0], [1] or [2] for its N, M and K, in the order to apply
+    them, for a product of operands of [itemsize] bytes laid out along K;
+    [None] where [ren] copies no tile in two stages, or [k] holds fewer than
+    two runs of a copy of [16] bytes or does not divide into them.
+    A workgroup takes 16 threads along M and 8 along N, the threads splitting
+    each axis first so that they take its adjacent rows, and a thread holds 8
+    by 8 outputs, 4 by 4 where [short], each axis padded to the tile where it
+    does not divide it, and K is unrolled by a copy's run. *)
+
 val steps : Renderer.t -> Ops.t -> k:Ops.t -> int
 (** [steps ren sink ~k] is the least count of steps of the range [k] a trip
     at which each row of the tiles {!operands} copies from global memory

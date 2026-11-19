@@ -1890,6 +1890,18 @@ let sm_89 =
          indices = "";
        })
 
+(* sm_75's renderer, which copies nothing asynchronously. *)
+let sm_75 =
+  lazy
+    (Cstyle.without_compiler
+       {
+         Helpers.Target.device = "CUDA";
+         renderer = "CUDA";
+         arch = "sm_75";
+         interface = "";
+         indices = "";
+       })
+
 let blocks =
   group "a contraction in registers"
     [
@@ -3106,7 +3118,7 @@ let along_reduce_threads =
         [
           ("matmul_256_kt_128 on cuda", golden "matmul_256_kt_128" "cuda");
           ("matmul_256_kt_128 on amd", golden "matmul_256_kt_128" "amd");
-          ("matmul_256_kt_128 on sm_89", sm "matmul_256_kt_128");
+          ("matmul_256_kt_128 on sm_75", lazy (optimised_on (Lazy.force sm_75) "matmul_256_kt_128"));
         ]
         (fun (_, o) ->
           let o = Lazy.force o in
@@ -3136,6 +3148,80 @@ let along_reduce_threads =
         (fun (_, o) ->
           is_false ~msg:"the fastest thread splits the reduce"
             (reduce_thread (Lazy.force o)));
+    ]
+
+(* A float32 product [x · wᵀ], [x] of [rows] by [depth] and [w] of [cols] by
+   [depth], or [x · w] with [w] of [depth] by [cols] where [by_columns]. *)
+let f32_product ?(by_columns = false) rows cols depth =
+  let open Ops.O in
+  let param slot size = Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32 in
+  let out = param 0 Stdlib.(rows * cols)
+  and x = param 1 Stdlib.(rows * depth)
+  and w = param 2 Stdlib.(cols * depth) in
+  let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Ops.Int cols) [ 2 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
+  let at = if by_columns then (k * int cols) + j else (j * int depth) + k in
+  let sum =
+    Ops.reduce (Ops.index x [ (i * int depth) + k ] * Ops.index w [ at ]) Add [ k ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ (i * int cols) + j ]) sum) [ i; j ] ]
+
+(* A product whose operands both lie along its reduce, on a renderer that
+   copies asynchronously, takes a staged product's tile, blocked or short of
+   the units: no thread splits its reduce, and its program copies both
+   operands into shared memory. TESSERA's feed-forward and projection
+   shapes, 16384 rows over 440 and 1792 terms, and matmul_256_kt_128, short
+   of sm_89's units. Its twin laid out along the columns, and the same
+   product on sm_75, which copies nothing asynchronously, are not staged. *)
+let staged_products =
+  let sm_89 =
+    lazy
+      (Renderer.with_compiler
+         (Renderer.Compiler.v Fun.id)
+         (Lazy.force sm_89))
+  in
+  let optimised ren sink =
+    let s = K.v sink ren in
+    K.convert_loop_to_global s;
+    Heuristic.hand_coded_optimizations s
+  in
+  let local_f32 prg =
+    List.length
+      (List.filter
+         (fun u ->
+           (Op.equal (Ops.op u) Op.Alloc || Op.equal (Ops.op u) Op.Buffer)
+           && Ops.addrspace u = Some Dtype.Local
+           && Dtype.equal (Ops.dtype u) Dtype.Float32)
+         (Ops.toposort ~calls:Skip (Ops.nth prg 1)))
+  in
+  let reduce_thread o = ranges_at o ~reduce:true [ Local ] <> [] in
+  group "a product laid out along its reduce"
+    [
+      cases "is staged where the renderer copies asynchronously" ~id:fst
+        [
+          ("16384 by 1792 over 440", lazy (f32_product 16384 1792 440));
+          ("16384 by 440 over 1792", lazy (f32_product 16384 440 1792));
+          ("matmul_256_kt_128", lazy (kernel "matmul_256_kt_128"));
+        ]
+        (fun (_, sink) ->
+          let sink = Lazy.force sink and ren = Lazy.force sm_89 in
+          let o = optimised ren sink in
+          is_false ~msg:"a thread splits the reduce" (reduce_thread o);
+          is_true ~msg:"staged" (Stage.stages_product ren (K.ast o));
+          equal ~msg:"copies" int 2
+            (local_f32 (Codegen.to_program sink ren)));
+      cases "is not staged laid out along its columns, or on sm_75" ~id:fst
+        [
+          ("along the columns on sm_89",
+            (lazy (Lazy.force sm_89), lazy (f32_product ~by_columns:true 16384 1792 440)));
+          ("on sm_75", (sm_75, lazy (f32_product 16384 1792 440)));
+        ]
+        (fun (_, (ren, sink)) ->
+          let ren = Lazy.force ren in
+          let o = optimised ren (Lazy.force sink) in
+          is_false ~msg:"staged" (Stage.stages_product ren (K.ast o)));
     ]
 
 (* [core_fits]
@@ -3550,6 +3636,7 @@ let () =
          keeps_kernel_writes;
          fastest_threads_coalesce;
          along_reduce_threads;
+         staged_products;
          widths;
          group "streaming"
            [
