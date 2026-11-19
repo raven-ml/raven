@@ -339,9 +339,12 @@ let adversarial =
         String.concat " " (List.init 3000 (fun i -> Printf.sprintf "w%d" i)) );
       ( "ids_full_midchunk",
         String.concat "" (List.init 5000 (fun _ -> " abcdefghijklmn")) );
-      ("random_ascii_512k", random_ascii 524_288);
-      ("random_bytes_512k", random_bytes 524_288);
-      ("random_utf8_512k", random_utf8 524_288);
+      (* Each past one call's 65536 ids under the byte-level models and
+         over many span chunks; in ASCII, thousands of distinct pretokens
+         for the cache. *)
+      ("random_ascii_128k", random_ascii 131_072);
+      ("random_bytes_128k", random_bytes 131_072);
+      ("random_utf8_128k", random_utf8 131_072);
       ("random_bytes_short", random_bytes 300);
     ]
   @ List.init 24 (fun i ->
