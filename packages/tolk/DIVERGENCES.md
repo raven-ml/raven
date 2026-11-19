@@ -9516,8 +9516,7 @@ D466.
   along its reduce` on sm_75; the Stage suite's `kernels the race checker
   runs › products in registers in trips of several steps …` and its race
   check, and the Stage suite's `sources` (`bf16_2048.cu`, `f16_padded.cu`,
-  merged reads); the tolk bench's `contract/qk-f32-2048` and
-  `stream/q8_0-64` rows and rune's
-  `Cuda/matmul-float32-transposed-16384x440x1320` and
-  `Cuda/matmul-float32-input-gradient-16384x1320x440` on fudge, their
+  merged reads); rune's `Cuda/matmul-float32-transposed-16384x440x1320`
+  and `Cuda/matmul-float32-input-gradient-16384x1320x440` on fudge; the
+  tolk bench's `contract/qk-f32-2048` and `stream/q8_0-64` rows, their
   baselines pending the scheduled re-record.
