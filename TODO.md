@@ -120,6 +120,9 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## nx, rune
 
+- Under `DEBUG=4`, rune's `memory › a split program holds at its return
+  at most its result and its plan` fails: find what the debug
+  output keeps alive.
 - gpt-oss's decode copies v (`E_16_8_4`, a stride-640 slice of the fused
   q, k, v product) before rune's scatter writes the cache, since a custom
   kernel's argument that views a computed node is stored apart. Removing it
