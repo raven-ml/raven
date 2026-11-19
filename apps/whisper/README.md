@@ -35,6 +35,27 @@ departs from upstream, and why.
 | `lib/english.mli`, `lib/wer.mli` | the English text normaliser of Whisper's evaluation; word error rates |
 | `bin/main.ml` | the command |
 
+## Without Python
+
+The command is one executable that links only the C library.
+
+| | Install |
+|---|---|
+| raven | 33 MB, plus NVRTC (134 MB) to compile kernels not yet cached |
+| openai-whisper 86098128 | 5.84 GB, and ffmpeg |
+| faster-whisper 1.2.1 | 2.40 GB |
+| whisper.cpp v1.9.5 | 0.67 GB |
+| transformers 5.23.0 | 5.74 GB |
+
+Install is what transcription on the GPU needs, without the NVIDIA driver
+and the weights: raven's `main.exe`, stripped, and CUDA's NVRTC, which raven
+loads only to compile a kernel that is not in tolk's cache; whisper.cpp's
+`whisper-cli` built for sm_89, with its libraries and CUDA's runtime and
+cuBLAS; for the Python packages, a fresh uv environment with `bench/`'s pins,
+CUDA's libraries included, and Python 3.12. Through NV, raven needs no
+libcuda either. Measured on 2026-11-19 on an RTX 5000 Ada (driver 615.71.09,
+CUDA 13.4, Debian 13), with raven at 72377cdbe1.
+
 ## Checkpoints
 
 `--model` reads a checkpoint as OpenAI publishes it: a PyTorch file of the
