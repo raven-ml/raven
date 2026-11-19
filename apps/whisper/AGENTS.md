@@ -2,8 +2,8 @@
 
 Whisper, OpenAI's speech recognition models (github.com/openai/whisper,
 the paper arXiv 2212.04356), implemented on raven: its tokenizers, its
-checkpoints, its encoder and decoder. It lives in `dev/`, raven's sandbox,
-and is never published (no opam package, no CHANGES entry).
+checkpoints, its encoder and decoder. `apps/AGENTS.md`'s rules hold; these
+are the app's own.
 
 ## Boundaries
 
