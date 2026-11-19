@@ -817,6 +817,40 @@ let padded_max name (module K : Nx_kernel.S) =
     (fun (p, shape, axes, rs, loads, dsts) ->
       ok (K.reduce p ~shape ~axes rs ~dsts loads))
 
+(* A depthwise convolution's kernel gradient: [8; 56; 56; 64] float32
+   channels last, padded by one each side of the spatial axes and windowed
+   3 x 3, times a cotangent broadcast along the taps, summed over the batch
+   and the windows, which lead the loop. *)
+let padded_wgrad name (module K : Nx_kernel.S) =
+  row name
+    (fun () ->
+      let s = [| 8; 56; 56; 64 |] in
+      let x = filled f32 s in
+      let spatial v = Iarray.init 4 (fun a -> if a = 1 || a = 2 then v else 0) in
+      let w axis : M.window = { axis; size = 3; step = 1; dilation = 1 } in
+      let pad : Nx_kernel.pad =
+        { lo = spatial 1; hi = spatial 1; interior = spatial 0;
+          windows = Iarray.of_list [ w 1; w 2 ] }
+      in
+      let loop = [| 8; 56; 56; 64; 3; 3 |] in
+      let ct = filled f32 [| 8; 56; 56; 64; 1; 1 |] in
+      let ct = Option.get (A.move (M.Broadcast (Iarray.of_array loop)) ct) in
+      let d = D.Any f32 in
+      let p =
+        Nx_kernel.Prog.v ~ins:[| d; d |] [| In 0; In 1; Op2 (Binary Mul, 0, 1) |]
+          ~outs:[| 2 |]
+      in
+      let dst = A.Any (A.create Rig.host f32 [| 64; 3; 3 |]) in
+      ( p,
+        Iarray.of_array loop,
+        Iarray.of_list [ 0; 1; 2 ],
+        Iarray.of_list [ (Nx_kernel.Monoid Sum, 0) ],
+        Iarray.of_list
+          [ Nx_kernel.Padded { x; fill = 0.; pad }; Nx_kernel.Plain ct ],
+        Iarray.of_list [ dst ] ))
+    (fun (p, shape, axes, rs, loads, dsts) ->
+      ok (K.reduce p ~shape ~axes rs ~dsts loads))
+
 let scan name r ~axis a (module K : Nx_kernel.S) =
   row name
     (fun () ->
@@ -939,6 +973,10 @@ let reduce_rows =
     {
       bench = padded_max "reduce-max-f32-3x3s2-padded-8x56x56x64";
       work = [ F.Read (bytes f32 [| 8; 56; 56; 64 |]) ];
+    };
+    {
+      bench = padded_wgrad "reduce-sum-f32-3x3-wgrad-padded-8x56x56x64";
+      work = [ F.Read (2 * bytes f32 [| 8; 56; 56; 64 |]) ];
     };
     (* The product and the maximum of each complex64 2x2 window, lanes of
        complex numbers held as arrays: the product's lanes start from their

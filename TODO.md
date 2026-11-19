@@ -111,8 +111,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   group) is slow under rune's gradient: about 8 ms for the weights and
   21 ms for the input at 8x56x56x64, the loop-sized map and fold
   (depthwise/parked.md)
-- nx.cpu: a Reduce over leading axes of a loop through a padded load runs
-  about 9x slower than a map then a sum (depthwise/parked.md)
 - nx.cpu's Reduce still runs a program once per reduction across rows,
   for Moments and Logsumexp, and over outputs of 16 terms or fewer;
   attention.c:305-306 runs `ranges`' two outputs in two runs

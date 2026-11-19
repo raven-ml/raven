@@ -3424,6 +3424,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A `Reduce` of a program over leading axes, as a depthwise convolution's
+  kernel gradient, runs about 10x faster on nx.cpu through a padded or
+  strided load: its rows follow the loads' steps. The bits are unchanged.
 - `Nx.standardize` and the mean of integers compute faster on nx.cpu along
   the innermost axes: a `Reduce` runs its program once a term for all its
   monoid and `Arg` reductions there, where each ran it again for its own

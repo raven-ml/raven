@@ -85,10 +85,13 @@
    operand read a program's output too. Each term is the output there as
    a map computes it, and the order is a function of the shapes alone, so
    the reduction has the bits of the output mapped into an array, then
-   reduced. A Sum of a lane or fewer terms an output, each the product of
-   two loads at float32 or float64, as a depthwise convolution's, reads
-   the loads itself: the table's products multiply and sum them in
-   registers, in the lanes' order.
+   reduced. The paths weigh a program's axes by its loads' steps summed,
+   which its virtual operand stands for but does not read: a depthwise
+   convolution's kernel gradient, its reduced axes leading, takes rows of
+   channels, where its loads step least. A Sum of a lane or fewer terms an
+   output, each the product of two loads at float32 or float64, as a
+   depthwise convolution's, reads the loads itself: the table's products
+   multiply and sum them in registers, in the lanes' order.
 
    Several reductions. A call's reductions of one program, each of its
    own output, kind and dtype, that lay out the same units run in one job,
@@ -237,13 +240,15 @@ typedef struct {
   /* A scan's carries, of the carrier, or NULL: the destination's shape but
      one along its axis. */
   const nx_array *cy;
-  /* The reduced axes in C order: extents and the operand's steps. */
+  /* The reduced axes in C order: extents, the operand's steps and their
+     reach (choose). */
   int nr;
-  int64_t re[NX_MAX_RANK], rs[NX_MAX_RANK];
+  int64_t re[NX_MAX_RANK], rs[NX_MAX_RANK], rr[NX_MAX_RANK];
   /* The kept axes, the row axis last: extents, the operand's and the
-     destinations' steps. */
+     destinations' steps, and the operand's reach. */
   int nk;
   int64_t ke[NX_MAX_RANK], ks[NX_MAX_RANK], kd[NX_MAX_RANK], kd1[NX_MAX_RANK];
+  int64_t kr[NX_MAX_RANK];
   int64_t kc[NX_MAX_RANK]; /* the carries' steps */
   int64_t x0, d0, d1, c0;
   int64_t rd, rd1; /* a scan's destinations' steps along its axis */
@@ -495,13 +500,16 @@ static void fused_terms(const plan *q, int64_t p, int64_t s, int64_t W,
               buf + i * q->w, held);
       i += len;
     }
-  else if (q->nr == 1)
-    eval_in(q->fused, c, p + t * q->rs[0], s, W, q->rs[0], m, buf, held);
-  else {
-    int64_t idx[NX_MAX_RANK], pos = odometer(q, p, t, idx);
-    for (int64_t i = 0; i < m; i++, pos = next(q, idx, pos))
-      eval_in(q->fused, c, pos, s, W, 0, 1, buf + i * W * q->w, held);
-  }
+  else
+    /* Each run of terms along the innermost reduced axis in one call, a
+       term a row of the W outputs. */
+    for (int64_t i = 0; i < m;) {
+      int64_t len = q->re[r] - (t + i) % q->re[r];
+      if (len > m - i) len = m - i;
+      eval_in(q->fused, c, term(q, p, t + i), s, W, q->rs[r], len,
+              buf + i * W * q->w, held);
+      i += len;
+    }
 }
 
 /* Converts into the carrier at [buf] the [W] elements, stepping [s], of
@@ -1012,6 +1020,24 @@ static void center_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
 
 static int64_t magnitude(int64_t x) { return x < 0 ? -x : x; }
 
+/* An axis's reach: how far a term's reads move along it, the operand's
+   step, or a program's loads' steps summed, since its virtual operand
+   reads no memory. The axes [i] of the steps [step], whose rows are the
+   destinations', the operand's, then the loads' (lay_out, plan_scan). */
+static int64_t reach(const plan *q, int64_t (*step)[NX_MAX_RANK], int i) {
+  int nl = q->fused != NULL ? q->fused->nloads : 0;
+  if (nl == 0) return magnitude(step[2][i]);
+  int64_t r = 0;
+  for (int o = 0; o < nl; o++) r += magnitude(step[3 + o][i]);
+  return r;
+}
+
+/* Whether an axis of reach [r] and step [s] steps less than one of reach
+   [r1] and step [s1]: by its reach, then by its step. */
+static int steps_less(int64_t r, int64_t s, int64_t r1, int64_t s1) {
+  return r < r1 || (r == r1 && magnitude(s) < magnitude(s1));
+}
+
 /* A plan's units [lo, hi) on one thread, with the thread's work. */
 typedef void (*units_body)(const plan *q, work *wk, int64_t lo, int64_t hi);
 
@@ -1052,60 +1078,67 @@ static void units_serial(int64_t total, units_body body, const plan *q) {
   with_work(0, total, 0, &j);
 }
 
-/* Adds the axis of extent [e] and steps [s] (operand), [d] and [d1]
-   (destinations) and [c] (carries) to the kept axes, if it has more than
-   one element. */
+/* Adds the axis of extent [e], steps [s] (operand), [d] and [d1]
+   (destinations) and [c] (carries) and reach [r] to the kept axes, if it
+   has more than one element. */
 static void keep(plan *q, int64_t e, int64_t s, int64_t d, int64_t d1,
-                 int64_t c) {
+                 int64_t c, int64_t r) {
   if (e <= 1) return;
   q->ke[q->nk] = e;
   q->ks[q->nk] = s;
+  q->kr[q->nk] = r;
   q->kd[q->nk] = d;
   q->kc[q->nk] = c;
   q->kd1[q->nk++] = d1;
 }
 
 /* Picks the path for [q]'s axes and lays out its units. The kept axis that
-   steps least through the operand becomes the row axis, last, where it
-   steps less than every reduced axis or the outputs have few terms. A
-   scan's slices otherwise run SLICES side by side along that axis, so that
-   as many running sums are in flight. Outputs of a lane of terms or fewer
-   whose rows are short take bands of rows of the kept axis before the row
-   axis, so that a unit holds about a row's worth of outputs. */
+   steps least, by its reach then its step, becomes the row axis, last,
+   where it steps less than every reduced axis or the outputs have few
+   terms. A scan's slices otherwise run SLICES side by side along that
+   axis, so that as many running sums are in flight. Outputs of a lane of
+   terms or fewer whose rows are short take bands of rows of the kept axis
+   before the row axis, so that a unit holds about a row's worth of
+   outputs. */
 static void choose(plan *q, task op) {
   int64_t outputs = 1;
   for (int i = 0; i < q->nk; i++) outputs *= q->ke[i];
-  int least = -1;
-  int64_t kept = INT64_MAX, red = INT64_MAX;
+  int least = -1, red = -1;
   for (int i = 0; i < q->nk; i++)
-    if (magnitude(q->ks[i]) < kept) {
+    if (least < 0 ||
+        steps_less(q->kr[i], q->ks[i], q->kr[least], q->ks[least]))
       least = i;
-      kept = magnitude(q->ks[i]);
-    }
   for (int i = 0; i < q->nr; i++)
-    if (q->re[i] > 1 && magnitude(q->rs[i]) < red) red = magnitude(q->rs[i]);
+    if (q->re[i] > 1 &&
+        (red < 0 || steps_less(q->rr[i], q->rs[i], q->rr[red], q->rs[red])))
+      red = i;
   q->row = 1;
   q->chunks = 1;
   q->band = 1;
   q->bands = 1;
   q->outer = outputs;
   q->blocks = (q->terms + BLOCK - 1) / BLOCK;
-  int rows = least >= 0 && (kept < red || q->terms < FEW);
+  int rows = least >= 0 &&
+             (red < 0 ||
+              steps_less(q->kr[least], q->ks[least], q->rr[red], q->rs[red]) ||
+              q->terms < FEW);
   if (least < 0 || (!rows && op != SCAN)) return;
   int64_t e = q->ke[least], s = q->ks[least], d = q->kd[least],
-          d1 = q->kd1[least], c = q->kc[least];
+          d1 = q->kd1[least], c = q->kc[least], r = q->kr[least];
   for (int i = least; i < q->nk - 1; i++) {
     q->ke[i] = q->ke[i + 1];
     q->ks[i] = q->ks[i + 1];
     q->kd[i] = q->kd[i + 1];
     q->kd1[i] = q->kd1[i + 1];
     q->kc[i] = q->kc[i + 1];
+    q->kr[i] = q->kr[i + 1];
   }
   q->ke[q->nk - 1] = e;
   q->ks[q->nk - 1] = s;
   q->kd[q->nk - 1] = d;
   q->kd1[q->nk - 1] = d1;
   q->kc[q->nk - 1] = c;
+  q->kr[q->nk - 1] = r;
   q->slices = !rows;
   int64_t most = q->slices ? SLICES : ROW / q->size;
   /* A monoid scan on one thread sweeps long rows; on several, its units
@@ -1171,14 +1204,17 @@ static void plan_reduce(plan *q, int rank, const int64_t *extent,
   q->nr = q->nk = 0;
   for (int i = 0; i < rank; i++)
     if (step[0][i] != 0)
-      keep(q, extent[i], step[2][i], step[0][i], step[1][i], 0);
+      keep(q, extent[i], step[2][i], step[0][i], step[1][i], 0,
+           reach(q, step, i));
     else if (extent[i] > 1) {
       q->re[q->nr] = extent[i];
+      q->rr[q->nr] = reach(q, step, i);
       q->rs[q->nr++] = step[2][i];
     }
   if (q->nr == 0) {
     q->re[0] = 1;
     q->rs[0] = 0;
+    q->rr[0] = 0;
     q->nr = 1;
   }
   for (int64_t t = 0; t < q->terms && t < LANES; t++) q->off[t] = term(q, 0, t);
@@ -1510,6 +1546,10 @@ static void plan_scan(plan *q, const nx_array *d, const nx_array *d1,
   q->nr = 1;
   q->re[0] = x->dim[axis];
   q->rs[0] = x->dim[r + axis];
+  /* The axis's reach, as reach gives it. */
+  q->rr[0] = nl == 0 ? magnitude(q->rs[0]) : 0;
+  for (int o = 0; o < nl; o++)
+    q->rr[0] += magnitude(q->fused->loads[o].dim[r + axis]);
   q->rd = d->dim[r + axis];
   q->rd1 = d1->dim[r + axis];
   q->x0 = x->offset;
@@ -1538,7 +1578,7 @@ static void plan_scan(plan *q, const nx_array *d, const nx_array *d1,
     n = nx_coalesce_dims(3 + nl + nc, n, extent, step);
     for (int i = 0; i < n; i++)
       keep(q, extent[i], step[2][i], step[0][i], step[1][i],
-           nc ? step[3 + nl][i] : 0);
+           nc ? step[3 + nl][i] : 0, reach(q, step, i));
   }
   choose(q, SCAN);
   int64_t chunks = (q->terms + SCAN_CHUNK - 1) / SCAN_CHUNK;

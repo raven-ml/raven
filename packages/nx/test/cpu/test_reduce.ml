@@ -2939,6 +2939,30 @@ let depthwise ?(fdt = f32) ?(c = 64) ?(lo = 1) ?(hi = 1) ?fill k1 k2 =
   fused_of ~fdt ~second:Kernel ~pads:[| Some (fill, pad); None |]
     "a product of two factors" (Monoid Sum) loop axes [| x; y |]
 
+(* A depthwise convolution's kernel gradient: an operand of shape [s],
+   [[n; h; w; c]] of [fdt], padded and windowed as [depthwise]'s, times a
+   cotangent over the windows through [view], broadcast along the taps,
+   summed over the batch and the windows, which lead the loop. A padded
+   load is read as a copy, so the cotangent's view is the one the loop
+   reads. *)
+let kernel_gradient ?(fdt = f32) ?(s = [| 2; 5; 6; 64 |]) ?view ?(lo = 1)
+    ?(hi = 1) ?fill k1 k2 =
+  let (D.Any ft) = fdt in
+  let fill = Option.value fill ~default:(String.make (max 1 (D.bits ft / 8)) '\000') in
+  let view = Option.value view ~default:(plain_view 6) in
+  let x = product_operand fdt s (plain_view 4) ~specials:3 15 in
+  let sp v = [| 0; v; v; 0 |] in
+  let pad = pad_v (sp lo) (sp hi) ~windows:[| window 1 k1; window 2 k2 |] in
+  let loop = Result.get_ok (Nx_kernel.Shape.padded pad s) in
+  let windows = Array.mapi (fun i e -> if i >= 4 then 1 else e) loop in
+  let (A.Any ct) = product_operand fdt windows view ~specials:3 16 in
+  let ct = A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array loop)) ct)) in
+  let c =
+    fused_of ~fdt ~pads:[| Some (fill, pad); None |] "a product of two factors"
+      (Monoid Sum) loop [| 0; 1; 2 |] [| x; ct |]
+  in
+  { c with fviews = view_names view }
+
 (* Sums along axis 1 of [160; 2; 64], more outputs than a thread's unit
    of a sum of products, of a kernel by a factor with a NaN at [0; 0; 5]:
    the NaN's output is a NaN while the units after it on the thread read
@@ -3006,6 +3030,35 @@ let fused_examples =
     fused_example ~view:stepped "a scaled operand" Moments [| 64; 1100 |] [| 1 |];
   ]
 
+(* Depthwise kernel gradients, their reduced axes leading: of float32,
+   float64, bfloat16, float16 and float4_e2m1fn, of one and five channels,
+   past a block of terms, through each view of the cotangent, with a NaN
+   fill, a -0 fill padded on one side alone, cropped, and of no term or no
+   output: an empty batch, no channel, windows wider than the padded
+   image. *)
+let gradient_examples =
+  let view f = f (plain_view 6) in
+  [
+    kernel_gradient 3 3;
+    kernel_gradient ~fdt:f64 3 3;
+    kernel_gradient ~fdt:(D.Any D.Bfloat16) 3 3;
+    kernel_gradient ~fdt:(D.Any D.Float16) 2 3;
+    kernel_gradient ~fdt:(D.Any D.Float4_e2m1fn) ~s:[| 2; 5; 6; 5 |] 2 2;
+    kernel_gradient ~s:[| 2; 5; 6; 1 |] 3 3;
+    kernel_gradient ~s:[| 2; 24; 24; 64 |] 3 3;
+    kernel_gradient ~s:[| 3; 9; 7; 5 |] 3 2;
+    kernel_gradient ~view:(view (fun v -> { v with stepped = true })) 3 3;
+    kernel_gradient ~view:(view (fun v -> { v with reversed = Some 3 })) 3 3;
+    kernel_gradient ~view:(view (fun v -> { v with perm = [| 3; 0; 1; 2; 4; 5 |] })) 3 3;
+    kernel_gradient ~view:(view (fun v -> { v with broadcast = true })) 3 3;
+    kernel_gradient ~fill:"\052\018\192\127" 4 4;
+    kernel_gradient ~fill:"\000\000\000\128" ~lo:2 ~hi:0 3 3;
+    kernel_gradient ~lo:(-1) ~hi:0 2 2;
+    kernel_gradient ~s:[| 0; 5; 6; 64 |] 3 3;
+    kernel_gradient ~s:[| 2; 5; 6; 0 |] 3 3;
+    kernel_gradient ~lo:0 ~hi:0 7 3;
+  ]
+
 (* Sums of products: each count of terms from 1 to 17, rows of 64 outputs
    with the second factor a kernel and of 3, factors of each narrow float,
    of float64 at float32 and float32 at float64, a squared factor, two
@@ -3040,6 +3093,7 @@ let product_examples =
       depthwise ~fdt:(D.Any D.Float4_e2m1fn) ~c:5 ~lo:0 ~hi:2 2 2;
       depthwise 4 5;
     ]
+  @ gradient_examples
   (* Products of -0 by a positive kernel, whose sums from +0 are +0. *)
   @ List.map
       (fun (D.Any dt as d) ->
