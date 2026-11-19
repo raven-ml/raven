@@ -173,9 +173,11 @@ let memory_coalescing sink (r : Renderer.t) =
                 && match arg b with Param p -> p.volatile | _ -> false
               in
               let idx = get_idx idx_u and valid = get_valid idx_u in
-              (* Volatile accesses never merge. *)
+              (* Volatile accesses never merge. Register memory merges where
+                 the renderer computes on vectors, so that an accumulator's
+                 lanes move as vectors, as its sums are computed. *)
               if
-                addrspace buf <> Some Dtype.Reg
+                (addrspace buf <> Some Dtype.Reg || r.vector_lanes > 1)
                 && (not volatile)
                 && not (is_invalid idx)
               then begin

@@ -264,14 +264,13 @@ let splat x =
 
 (* The lanes [x] holds in the flat order of its shape, if it is a view of values
    that move into a vector as a literal, memory or registers do: constants,
-   loads of memory, lanes of vectors and elementwise operations, whose lanes are
-   their own, through reshapes, expansions, which repeat their source's lanes,
-   permutations and stacks. *)
+   loads, an accumulator's in register memory among them, lanes of vectors and
+   elementwise operations, whose lanes are their own, through reshapes,
+   expansions, which repeat their source's lanes, permutations and stacks. *)
 let rec lanes_of x =
   let known = function Int _ -> true | Sym _ -> false in
-  let memory l = is Op.Load l && addrspace (nth l 0) <> Some Dtype.Reg in
   if shape x = [] then
-    if is_literal x || memory x || is Op.Index x then Some [ x ] else None
+    if is_literal x || is Op.Load x || is Op.Index x then Some [ x ] else None
   else if is Op.Reshape x then lanes_of (nth x 0)
   else if is Op.Stack x then
     let lanes = List.map lanes_of (src x) in
@@ -1012,6 +1011,33 @@ let fuses (ren : Renderer.t) r x =
 let fusable = String "fusable"
 let mark_fusable u = replace u ~arg:fusable
 
+(* The slice of [x] at the leading indices [idx], computed in its own lanes:
+   the slice of an elementwise operation, or of a permutation of one, is the
+   operation on its sources' slices, a scalar source as it is. Any other
+   node's slice is indexed out of it. *)
+let rec slice x idx =
+  let whole s = is_invalid s || shape s = [] in
+  let full s sh =
+    if whole s || equal_shape (shape s) sh then s else expand s sh
+  in
+  let elementwise u =
+    Op.Set.mem (op u) Op.Set.elementwise
+    && (not (is Op.Bitcast u))
+    && shape u <> []
+    && List.for_all
+         (fun s -> whole s || List.compare_lengths (shape s) (shape u) = 0)
+         (src u)
+  in
+  if idx = [] then x
+  else if is Op.Permute x && elementwise (nth x 0) then
+    let e = nth x 0 in
+    let moved s = if whole s then s else mop (full s (shape e)) (marg x) in
+    slice (replace e ~src:(List.map moved (src e))) idx
+  else if elementwise x then
+    let part s = if whole s then s else slice (full s (shape x)) idx in
+    replace x ~src:(List.map part (src x))
+  else index_ints x idx
+
 (* A reduce of [r]'s source over its first [num_axes] axes, in place, and
    over the ranges after its source, into an accumulator. *)
 let lower_reduce (slots, ren) r =
@@ -1033,20 +1059,41 @@ let lower_reduce (slots, ren) r =
     | v0 :: vals -> List.fold_left add v0 vals
     | [] -> assert false
   in
-  let ret =
-    if num_axes = 0 then inp
+  (* The sum of the unrolled lanes [vals], each of the sum's lanes. *)
+  let sum vals =
+    if not (Op.equal op Op.Add && Dtype.is_float (dtype r)) then fold vals
     else
-      let sizes = List.filteri (fun a _ -> a < num_axes) (max_shape inp) in
-      let vals = List.map (index_ints inp) (product sizes) in
-      if not (Op.equal op Op.Add && Dtype.is_float (dtype r)) then fold vals
-      else
-        match List.map fold (blocks vals) with
-        | s0 :: sums -> List.fold_left (fun a b -> alu a op [ b ]) s0 sums
-        | [] -> assert false
+      match List.map fold (blocks vals) with
+      | s0 :: sums -> List.fold_left (fun a b -> alu a op [ b ]) s0 sums
+      | [] -> assert false
+  in
+  let sizes = List.filteri (fun a _ -> a < num_axes) (max_shape inp) in
+  let rest = List.filteri (fun a _ -> a >= num_axes) (shape inp) in
+  (* A sum of products on a renderer that computes on vectors sums each run of
+     its last lane axis as one vector: each unrolled lane's products of a run
+     are one vector of the run's lanes, in their order, which the multiply-adds
+     add into the run's running sums. So a matrix product holds its block of
+     the output as rows of vectors, each step a rank-1 update of a broadcast by
+     a vector (Van Zee and van de Geijn, "BLIS: A Framework for Rapidly
+     Instantiating BLAS Functionality", ACM TOMS 41(3), 2015, Figure 11).
+     [runs] are the indices of the leading lane axes, one a run. *)
+  let runs =
+    if not (fused && ren.vector_lanes > 1) then None
+    else
+      let out = List.filteri (fun a _ -> a >= num_axes) (max_shape inp) in
+      Some (product (List.filteri (fun a _ -> a < List.length out - 1) out))
+  in
+  let run j = sum (List.map (fun k -> slice inp (k @ j)) (product sizes)) in
+  let per_run f = reshape (stack (List.map f (Option.get runs))) rest in
+  let ret =
+    match runs with
+    | Some [ [] ] -> run []
+    | Some _ -> per_run run
+    | None when num_axes = 0 -> inp
+    | None -> sum (List.map (index_ints inp) (product sizes))
   in
   (* A sum of cores' values adds each core's term in order, the running sum
      entering each core as its accumulator. *)
-  let rest = List.filteri (fun a _ -> a >= num_axes) (shape inp) in
   let term idx =
     List.fold_left
       (fun t (a, k) -> Option.bind t (fun t -> core_at t a k))
@@ -1084,12 +1131,17 @@ let lower_reduce (slots, ren) r =
       store (after acc input_ranges) (const (identity_element op (dtype r)))
     in
     let acc_initted = after acc (acc_init :: rngs) in
+    (* The running sums add the sum of the unrolled lanes, or, with none,
+       their one term as a multiply-add. *)
+    let into_sums acc ret =
+      if num_axes = 0 then add acc ret else alu acc op [ ret ]
+    in
     let update =
-      match folded (Some acc_initted) with
-      | Some u -> u
-      | None ->
-          if num_axes = 0 then add acc_initted ret
-          else alu acc_initted op [ ret ]
+      match (folded (Some acc_initted), runs) with
+      | Some u, _ -> u
+      | None, Some (_ :: _ :: _) ->
+          per_run (fun j -> into_sums (slice acc_initted j) (run j))
+      | None, _ -> into_sums acc_initted ret
     in
     Some (load (after acc [ end_ (store acc_initted update) rngs ]) [])
 

@@ -4954,6 +4954,26 @@ let matvec ~rows n =
       (Ops.kernel_info ~opts_to_apply:[ split 0 Upcast; split 2 Upcast ] ())
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
 
+(* [out[i, j] = sum_k a[i, k] * b[k, j]] for [i] below 2, [j] below 4 and [k]
+   below [n], both output axes upcast whole and [k] a loop: each trip adds one
+   product into each running sum, the sums two runs of 4 lanes. *)
+let tile n =
+  let out = Shape.param ~shape:[ Int 8 ] 0 Float32 in
+  let a = Shape.param ~shape:[ Int (2 * n) ] 1 Float32 in
+  let b = Shape.param ~shape:[ Int (n * 4) ] 2 Float32 in
+  let i = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
+  let k = Ops.range ~axis_type:Weak (Int n) [ 2 ] in
+  let open Ops.O in
+  let product =
+    Ops.index a [ (i * int n) + k ] * Ops.index b [ (k * int 4) + j ]
+  in
+  let sum = Ops.reduce product Op.Add [ k ] in
+  let whole axis = Opt.Split { axis; amount = 0; target = Upcast; top = false } in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole 0; whole 0 ] ())
+    [ Ops.end_ (Ops.store (Ops.index out [ (i * int 4) + j ]) sum) [ i; j ] ]
+
 (* [out[i] = sum_k f a[i, k] * b[k]] for [i] below [rows] and [k] below [n],
    [f] the reciprocal, or nothing where [plain]: a sum of products whose
    left factor a producer computes, as a fused prologue does. [f 0] is
@@ -5054,9 +5074,10 @@ let multiply_adds =
          running sum rounded once" (fun () ->
           let rows = 8 and n = 16 in
           let prg = Codegen.to_program (matvec ~rows n) (Lazy.force host) in
-          (* each of the 4 running sums adds a product and 3 multiply-adds *)
-          equal int ~msg:"multiply-adds in the source" 12
-            (occurrences "__builtin_fmaf(" (source prg));
+          (* the 4 running sums are one vector, which adds a product and 3
+             multiply-adds *)
+          equal int ~msg:"multiply-adds in the source" 3
+            (occurrences "__builtin_elementwise_fma(" (source prg));
           let x = 1. +. 0x1p-12 in
           let row first second =
             List.init n (fun k ->
@@ -5069,6 +5090,22 @@ let multiply_adds =
           let out = Run.on_host prg [ (1, a); (2, Array.of_list (row 1. x)) ] in
           equal (array Dtypes.value)
             (Array.make rows (`Float 0x1p-24))
+            (List.assoc 0 out));
+      test
+        "a sum of products over a loop beside two upcast axes adds each into \
+         its running sum rounded once" (fun () ->
+          let n = 2 in
+          let prg = Codegen.to_program (tile n) (Lazy.force host) in
+          (* each run of 4 lanes adds its product as one multiply-add *)
+          equal int ~msg:"multiply-adds in the source" 2
+            (occurrences "__builtin_elementwise_fma(" (source prg));
+          let x = 1. +. 0x1p-12 in
+          let a = [| -.(1. +. 0x1p-11); x; -.(1. +. 0x1p-11); x |] in
+          let b = Array.concat [ Array.make 4 1.; Array.make 4 x ] in
+          let floats = Array.map (fun f -> `Float f) in
+          let out = Run.on_host prg [ (1, floats a); (2, floats b) ] in
+          equal (array Dtypes.value)
+            (Array.make 8 (`Float 0x1p-24))
             (List.assoc 0 out));
       cases
         "a sum of products padded computes the bits of its factors with \
@@ -6382,18 +6419,19 @@ let dot_kernel n =
       (Ops.kernel_info ~opts_to_apply:[ whole 0 Upcast; whole 1 Upcast ] ())
     [ Ops.end_ (Ops.store (Ops.index out [ l ]) sum) [ l ] ]
 
-(* Each lane's product past the first fuses into a multiply-add and the first
-   is a product of scalars: no product of vectors is left, and each row adds
-   its products in order, each rounded once with its sum. The inputs are drawn
-   so that rounding each product apart gives another sum in every row. *)
+(* Each unrolled lane's products of the two rows are one vector of the rows:
+   the first lane's a product, each other's a multiply-add into the running
+   sums, so each row adds its products in order, each rounded once with its
+   sum. The inputs are drawn so that rounding each product apart gives another
+   sum in every row. *)
 let sums_products n () =
   let prg = Codegen.to_program (dot_kernel n) (Lazy.force host) in
   let uops = Ops.src (Ops.nth prg 1) in
   equal
     (list (triple op_w int int))
-    []
+    [ (Op.Mul, 2, 1); (Op.Mulacc, 2, n - 1) ]
     (List.filter
-       (fun (o, _, _) -> Op.equal o Op.Mul)
+       (fun (o, _, _) -> Op.equal o Op.Mul || Op.equal o Op.Mulacc)
        (vector_operations uops));
   let f = Float.of_int in
   let x = Array.init (2 * n) (fun k -> Float.sin (f (k + 1)) *. f (k + 1))
@@ -6680,7 +6718,9 @@ let vectors =
         "a host operation of any lanes computes vectors of at most 64 and \
          writes what its kernel writes"
         wide_gen computes_wide;
-      cases "a host sum of a product's unrolled lanes multiplies no vectors"
+      cases
+        "a host sum of a product's unrolled lanes multiplies vectors of its \
+         output lanes"
         ~id:(Printf.sprintf "%d lanes") [ 3; 4; 9 ] (fun n ->
           sums_products n ());
       cases

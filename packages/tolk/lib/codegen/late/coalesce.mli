@@ -58,7 +58,8 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
     registers. A merged load is a {!Op.Shrink} of the buffer from its first
     access's index, gate included, whose elements each former load reads by
     index; a merged store stores the stack of the former values. An access
-    merged with no other is left as it is, and so are register memory, volatile
+    merged with no other is left as it is, and so are register memory where
+    [r] computes no vectors ({!Renderer.t.vector_lanes} is [1]), volatile
     parameters, the bodies of calls, and everything under {!Setting.dmc}.
 
     The depth of an access is the greatest pair, in lexicographic order, of

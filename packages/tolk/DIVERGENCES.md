@@ -3379,15 +3379,17 @@ driver signals its own (D146).
 
 - **tinygrad:** `codegen/__init__.py` `do_devectorize` (splits every
   elementwise operation, load and store of several lanes into one per lane, on
-  every target); `renderer/cstyle.py` `base_rewrite` (every conversion a C
-  cast, for a vector a reinterpretation of its bits).
+  every target) and `lower_reduce` (a reduce's unrolled lanes indexed out of
+  its source); `codegen/late/coalesce.py` (register memory never merges);
+  `renderer/cstyle.py` `base_rewrite` (every conversion a C cast, for a vector
+  a reinterpretation of its bits).
 - **tolk:** `Renderer.t`'s `vector_lanes`; `Codegen.lanes_of`,
   `Codegen.in_order`, `Codegen.vector_operation`, `Codegen.lanes_at`,
   `Codegen.split_widths`, `Codegen.split_lanes`, `Codegen.distinct_lanes`,
   `Codegen.vector_dtypes`, `Codegen.do_devectorize`,
   `Codegen.address_lanes`, `Codegen.pm_vector_constants`,
-  `Codegen.product_operands` and `Codegen.first_lane`;
-  `Cstyle.mask_widths`, `Cstyle.clang_lanes`, `Cstyle.clang_vectors` and
+  `Codegen.product_operands`, `Codegen.first_lane`, `Codegen.slice` and
+  `Codegen.lower_reduce`; `Coalesce.memory_coalescing`; `Cstyle.mask_widths`, `Cstyle.clang_lanes`, `Cstyle.clang_vectors` and
   `Cstyle.clang_kernel`; `Decomp_dtype.emulates`; `Uop_weak.pm_commit_weak`'s
   cast over a stack.
 - **Differs:** a renderer may compute on vectors (`Renderer.vector_lanes` past
@@ -3397,21 +3399,27 @@ driver signals its own (D146).
   the rest, the last `vector_lanes + 1` as two vectors where one lane would be
   left (D241), when:
   - each source holds them in order: a vector operation, or a view (reshapes,
-    broadcasts, permutations, stacks) of constants (a literal), of loads of
-    memory, of lanes of vectors and of vector operations, a load or a lane in
-    as many lanes as read it (a shuffle), or a scalar that every lane reads;
+    broadcasts, permutations, stacks) of constants (a literal), of loads (an
+    accumulator's in register memory among them), of lanes of vectors and of
+    vector operations, a load or a lane in as many lanes as read it (a
+    shuffle), or a scalar that every lane reads;
   - no two of its lanes read the same sources: a lane of a vector operation is
     its own, a lane of a stack its element.
 
-  Otherwise, as when a source holds lanes computed apart, or apart in
-  registers as an accumulator's lanes, or lanes repeat, the operation computes
-  each lane apart. Loads, stores, tensor-core products, calls, and operations
-  on a weak type (an address) or an emulated one still compute each lane
-  apart; an address is computed lane by lane through the vector operations it
-  reads, so accesses still merge. A sum fuses each lane of a vector product
-  into its running sum, and computes its first lane, which it adds to nothing,
-  as a product of scalars, so no vector product is left; a selection by
-  constant conditions picks each lane. Any number of lanes up to 64 is one
+  Otherwise, as when a source holds lanes computed apart, or lanes repeat,
+  the operation computes each lane apart. Loads, stores, tensor-core products,
+  calls, and operations on a weak type (an address) or an emulated one still
+  compute each lane apart; an address is computed lane by lane through the
+  vector operations it reads, so accesses still merge, register memory's too
+  (where tinygrad merges memory's alone). A sum of products sums each run of
+  its last lane axis as one vector: each unrolled lane's products of a run are
+  one vector of the run's lanes, in their order, the operation on its
+  operands' slices, and each multiply-add adds one into the run's running
+  sums, which an accumulator holds as vectors; each lane keeps its terms,
+  their order and their roundings. A sum that reads lanes of a vector product
+  apart fuses each lane into its running sum, and computes its first lane,
+  which it adds to nothing, as a product of scalars, so no vector product is
+  left; a selection by constant conditions picks each lane. Any number of lanes up to 64 is one
   vector, which LLVM computes in the next power of two.
 
   Clang writes the vectors as `ext_vector_type` values: a conversion is
@@ -3470,7 +3478,7 @@ driver signals its own (D146).
   a host operation of any lanes computes vectors of at most 64 and writes what
   its kernel writes` (every case), `› a host selection by a broadcast of
   computed lanes computes no lane apart` and `› a host sum of a product's
-  unrolled lanes multiplies no vectors` (every case), `› a host selection of
+  unrolled lanes multiplies vectors of its output lanes` (every case), `› a host selection of
   8, 16 or 32 lanes by a comparison of integers takes each lane's arm` and `›
   a host selection of 3, 6, 12, 24 or 48 lanes by a comparison of integers
   takes each lane's arm` (every case), `› a weak constant stored into four
