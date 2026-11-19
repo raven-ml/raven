@@ -9,6 +9,12 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- **Breaking:** tessera's commands compile by `Rune.jit` on the devices
+  `--device` names as `Rig_gpus.open_all` reads them, `cpu` by default, and
+  `--eager` computes eagerly. `--device cpu-jit` is gone: `--device cpu`, and
+  no `--device`, now compile, where they ran eagerly. The bench reads
+  `TESSERA_DEVICE` so, `cpu` by default, compiled unless `TESSERA_EAGER` is
+  set.
 - The gpt-oss example moves to `apps/gpt-oss`, the first of raven's apps. Its
   validators become tests in `@apps/runtest`; `main.exe` is the chat and
   takes `--repo`, `--devices`, `--prompt`, `--count` and `--show-analysis`.

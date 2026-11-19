@@ -6,7 +6,7 @@ that turns a pixel's year of Sentinel-2 and Sentinel-1 observations into a
 model as TESSERA does, by Barlow Twins with mixup on pairs of views of each
 pixel, and distils students from it by v2's Matryoshka recipe. The released
 v2 students and the 2B teacher load from their PyTorch checkpoints; every
-model runs eagerly on the CPU or compiled for GPUs. Tiles are made from
+model runs compiled on the CPU or a GPU, or eagerly on the CPU. Tiles are made from
 Microsoft's Planetary Computer by TESSERA's recipe.
 
 ```bash
@@ -19,9 +19,12 @@ dune exec apps/tessera/bin/main.exe -- probe --embedding emb --landmask grid.tif
 from `geotessera/TESSERA-V-2.0-2B-*` on Hugging Face (CC0); the teacher is
 8.3 GB. Training runs `corpus` over tiles, `pretrain` on the corpus, which
 writes a model, `targets` with that model or a released teacher, then
-`distil`, which writes a student; `--model` reads either. `--device` picks
-`cpu`, `cpu-jit` or a GPU (`cuda`, `nv`, `amd`, `metal`);
-`main.exe COMMAND --help` lists each command's options.
+`distil`, which writes a student; `--model` reads either. `--device` names
+the devices as `Rig_gpus.open_all` reads them: `cpu`, the default, a GPU
+(`cuda`, `nv`, `amd`, `metal`; `cuda:1` for the second), or a comma list.
+Each command compiles by `Rune.jit` there; `--eager` computes eagerly
+instead, on the host, whose set has kernels. `main.exe COMMAND --help`
+lists each command's options.
 
 | File | What it holds |
 |---|---|
@@ -62,5 +65,6 @@ TESSERA's commit e368539f.
 
 `TESSERA_TILE=DIR dune build @apps/tessera/bench/bench` times encoding by each
 architecture and a distillation step of the medium student on the tile `DIR`,
-on the device `TESSERA_DEVICE` names (`cpu-jit` by default). `bench/pytorch.py`
-times the same rows with TESSERA's own code.
+on the devices `TESSERA_DEVICE` names (`cpu` by default), compiled, or
+eagerly where `TESSERA_EAGER` is set. `bench/pytorch.py` times the same rows
+with TESSERA's own code.

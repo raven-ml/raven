@@ -14,85 +14,86 @@
    the time is the architecture's, not the values'.
 
    TESSERA_TILE names the tile, a directory of TESSERA's files; without one
-   there is nothing to measure. TESSERA_DEVICE names the device, [cpu-jit]
-   (compiled on the host) by default, or a GPU by its name ([Rig_gpus]). A GPU
-   opens in each case's worker, which thumper forks, so this process never
-   starts a driver. On a GPU, [--warm] calls each case once, in a process of its
-   own, to fill tolk's disk cache: a worker forked on a Mac cannot reach Metal's
-   compiler. *)
+   there is nothing to measure. TESSERA_DEVICE names the devices as
+   [Rig_gpus.open_all] reads them, [cpu] by default, and each case computes
+   there compiled by [Rune.jit], or eagerly where TESSERA_EAGER is set. The
+   devices open in each case's worker, which thumper forks, so this process
+   never starts a driver. On a GPU, [--warm] calls each case once, in a
+   process of its own, to fill tolk's disk cache: a worker forked on a Mac
+   cannot reach Metal's compiler. *)
 
 open Tessera
 
 type 'd target = { at : 'd Nx.Placement.t; jit : bool }
-type make = { make : 'd. 'd target -> unit -> unit }
 
-let device = Option.value ~default:"cpu-jit" (Sys.getenv_opt "TESSERA_DEVICE")
-let gpu = device <> "cpu" && device <> "cpu-jit"
+let device = Option.value ~default:"cpu" (Sys.getenv_opt "TESSERA_DEVICE")
+let jit = Sys.getenv_opt "TESSERA_EAGER" = None
 
-let call c =
-  match device with
-  | "cpu" -> c.make { at = Nx.Host.on; jit = false }
-  | "cpu-jit" -> c.make { at = Nx.Host.on; jit = true }
-  | name ->
-      let g = Result.error_to_failure (Rig_gpus.open_ name) in
-      let module D = (val Nx.devices [ g ]) in
-      c.make { at = D.on; jit = true }
+(* Whether a device [device] names is not the host's: a name of [Rig_gpus]
+   whose kind is not CPU. Read from the names, so that this process opens
+   none. *)
+let gpu =
+  String.split_on_char ',' device
+  |> List.exists (fun n ->
+      not (String.starts_with ~prefix:"CPU" (String.uppercase_ascii n)))
+
+(* The set TESSERA_DEVICE names, opened by the worker that calls it. *)
+let devices () =
+  Nx.devices (Result.error_to_failure (Rig_gpus.open_all device))
 
 let pixels tile n =
   let px, _ = Pixels.of_tile (Tile.load tile) in
   Pixels.sub px ~pos:0 ~len:(min n (Pixels.length px))
 
-let encode tile arch ~batch ~bf16 =
-  let make (type d) (t : d target) =
-    let px = pixels tile 16384 in
-    let m = Model.init ~key:(Nx.Rng.key 7) arch in
-    let run (type s) (m : ((float, s, Nx.host) Nx.t, Nx.host) Model.t) =
-      let m = Nx.Ptree.place (module Model) t.at m in
-      let model = Nx.Ptree.instantiate (module Model) in
-      let f =
-        if t.jit then
-          Rune.jit
-            Nx.Ptree.(model @-> v Batch.walk @-> returns tensor)
-            Model.apply m
-        else Model.apply m
-      in
-      let shape = Batch.typical ~pixels:batch ~slots:32 in
-      fun () -> ignore (Embedding.encode ~shape t.at f px)
-    in
-    if bf16 then run (Nx.Ptree.cast (module Model) Nx.bfloat16 m) else run m
-  in
-  { make }
-
-let distil_step tile =
-  let make (type d) (t : d target) =
-    let px = pixels tile 4096 in
-    let key = Nx.Rng.key 7 in
-    let m = Model.init ~key Model.medium in
-    let heads = Distil.heads ~key ~prefixes:m.prefixes 128 in
-    let targets = Nx.Rng.normal ~key Nx.float32 [| Pixels.length px; 128 |] in
-    let shape = Distil.shape ~pixels:4096 ~slots:32 px in
-    let g, _ = Distil.groups ~key ~shape ~groups:1 ~first:0 px targets in
-    let g = Nx.Ptree.place (module Distil.Group) t.at g in
-    let st = Nx.Ptree.place (module Distil.State) t.at (Distil.init m heads) in
-    let r = Distil.v2_recipe in
-    let step (g, st) =
-      Distil.step ~compute:Nx.bfloat16 ~dropout:Model.v2_dropout
-        ~lr:(Vega.rate r.lr) ~weight_decay:(Vega.rate r.weight_decay)
-        ~clip:r.clip (g, st)
-    in
-    let s = Nx.Ptree.instantiate (module Distil.State) in
-    let step =
+let encode tile arch ~batch ~bf16 () =
+  let (module D) = devices () in
+  let t = { at = D.on; jit } in
+  let px = pixels tile 16384 in
+  let m = Model.init ~key:(Nx.Rng.key 7) arch in
+  let run (type s) (m : ((float, s, Nx.host) Nx.t, Nx.host) Model.t) =
+    let m = Nx.Ptree.place (module Model) t.at m in
+    let model = Nx.Ptree.instantiate (module Model) in
+    let f =
       if t.jit then
         Rune.jit
-          Nx.Ptree.(
-            pair (instantiate (module Distil.Group)) s
-            @-> returns (pair tensor s))
-          step
-      else step
+          Nx.Ptree.(model @-> v Batch.walk @-> returns tensor)
+          Model.apply m
+      else Model.apply m
     in
-    fun () -> ignore (Nx.item [] (Nx.place Nx.Host.on (fst (step (g, st)))))
+    let shape = Batch.typical ~pixels:batch ~slots:32 in
+    fun () -> ignore (Embedding.encode ~shape t.at f px)
   in
-  { make }
+  if bf16 then run (Nx.Ptree.cast (module Model) Nx.bfloat16 m) else run m
+
+let distil_step tile () =
+  let (module D) = devices () in
+  let t = { at = D.on; jit } in
+  let px = pixels tile 4096 in
+  let key = Nx.Rng.key 7 in
+  let m = Model.init ~key Model.medium in
+  let heads = Distil.heads ~key ~prefixes:m.prefixes 128 in
+  let targets = Nx.Rng.normal ~key Nx.float32 [| Pixels.length px; 128 |] in
+  let shape = Distil.shape ~pixels:4096 ~slots:32 px in
+  let g, _ = Distil.groups ~key ~shape ~groups:1 ~first:0 px targets in
+  let g = Nx.Ptree.place (module Distil.Group) t.at g in
+  let st = Nx.Ptree.place (module Distil.State) t.at (Distil.init m heads) in
+  let r = Distil.v2_recipe in
+  let step (g, st) =
+    Distil.step ~compute:Nx.bfloat16 ~dropout:Model.v2_dropout
+      ~lr:(Vega.rate r.lr) ~weight_decay:(Vega.rate r.weight_decay)
+      ~clip:r.clip (g, st)
+  in
+  let s = Nx.Ptree.instantiate (module Distil.State) in
+  let step =
+    if t.jit then
+      Rune.jit
+        Nx.Ptree.(
+          pair (instantiate (module Distil.Group)) s
+          @-> returns (pair tensor s))
+        step
+    else step
+  in
+  fun () -> ignore (Nx.item [] (Nx.place Nx.Host.on (fst (step (g, st)))))
 
 (* A case's inputs are made and its call compiled in the worker, with one
    uncounted call: compiling may start domains, after which thumper cannot
@@ -100,7 +101,7 @@ let distil_step tile =
 let case name c =
   Thumper.bench_with_setup name
     ~setup:(fun () ->
-      let f = call c in
+      let f = c () in
       f ();
       f)
     (fun f -> f ())
@@ -114,7 +115,7 @@ let () =
       let warm = Array.mem "--warm" Sys.argv in
       let case name c =
         if warm then begin
-          if gpu then (call c) ();
+          if gpu then c () ();
           Gc.full_major ()
         end;
         case name c

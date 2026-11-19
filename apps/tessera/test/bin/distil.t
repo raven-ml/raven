@@ -34,6 +34,15 @@ distil trains a student toward them, two steps of 16 pixels here.
 
   $ ../../bin/main.exe targets --teacher pre/model.safetensors --corpus corpus --out targets.npy
   targets: 70 / 70 pixels
+
+Each command compiles on the devices --device names, the host by default,
+and --eager computes eagerly instead. A name that opens no device is refused.
+
+  $ ../../bin/main.exe targets --teacher pre/model.safetensors --corpus corpus --out eager.npy --eager
+  targets: 70 / 70 pixels
+  $ ../../bin/main.exe targets --teacher pre/model.safetensors --corpus corpus --out none.npy --device cpu,vulkan 2>&1
+  tessera: "vulkan" names no device: a name is KIND or KIND:N, where KIND is one of CPU, METAL, CUDA, NV, AMD, NV-PCI, AMD-PCI, in any case, and N a number with no leading zero
+  [2]
   $ distil () { ../../bin/main.exe distil --corpus corpus --targets targets.npy --arch nano --pixels 16 --out run "$@" > /dev/null; }
   $ distil --steps 2
   $ cut -f 1-4 run/log.tsv

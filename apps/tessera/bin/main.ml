@@ -40,20 +40,18 @@ let rec mkdir_p d =
 (* Devices *)
 
 type 'd target = { at : 'd Nx.Placement.t; jit : bool }
-type run = { run : 'd. 'd target -> unit }
 
 let device_doc =
-  "D cpu (eager, the default), cpu-jit (compiled on the host) or a GPU by \
-   name, compiled: cuda, nv, amd or metal"
+  "D the devices, as Rig_gpus.open_all names them: cpu (the default), a GPU \
+   (cuda, nv, amd or metal; cuda:1 the second), or a comma list"
 
-let on device k =
-  match device with
-  | "cpu" -> k.run { at = Nx.Host.on; jit = false }
-  | "cpu-jit" -> k.run { at = Nx.Host.on; jit = true }
-  | name ->
-      let gpu = Result.error_to_failure (Rig_gpus.open_ name) in
-      let module D = (val Nx.devices [ gpu ]) in
-      k.run { at = D.on; jit = true }
+let eager_doc =
+  " compute eagerly, not compiled by Rune.jit: on the host, whose set has \
+   kernels"
+
+(* The set of the devices [names] names. *)
+let devices names =
+  Nx.devices (Result.error_to_failure (Rig_gpus.open_all names))
 
 (* [m]'s forward pass at [t], compiled where [t] says, in bfloat16 with
    [bf16]. *)
@@ -139,6 +137,7 @@ let read_json file =
 
 let encode () =
   let file = ref "" and tile = ref "" and out = ref "" and device = ref "cpu" in
+  let eager = ref false in
   let dims = ref 0 and int8 = ref false and geotiff = ref "" in
   let bf16 = ref false and pixels = ref 4096 in
   parse "encode --model M --tile DIR --out NAME [OPTION...]"
@@ -147,6 +146,7 @@ let encode () =
       ("--tile", Arg.Set_string tile, "DIR the tile");
       ("--out", Arg.Set_string out, "NAME write NAME.npy, or NAME.tiff");
       ("--device", Arg.Set_string device, device_doc);
+      ("--eager", Arg.Set eager, eager_doc);
       ("--dims", Arg.Set_int dims, "K write the Matryoshka prefix of K values");
       ("--int8", Arg.Set int8, " write GeoTessera's int8 codes and scales");
       ( "--landmask",
@@ -168,19 +168,14 @@ let encode () =
     else Some (landmask (h, w) ?place:t.place !geotiff)
   in
   let shape = Batch.typical ~pixels:!pixels ~slots:32 in
-  on !device
-    {
-      run =
-        (fun t ->
-          let e = Embedding.encode ~shape t.at (forward t ~bf16:!bf16 m) px in
-          let e =
-            Nx.slice [ A; A; R (0, dims) ] (Nx.reshape [| h; w; -1 |] e)
-          in
-          match grid with
-          | Some grid -> Embedding.save_geotiff out ~grid e
-          | None when !int8 -> Embedding.save_int8 out e
-          | None -> Embedding.save out e);
-    }
+  let (module D) = devices !device in
+  let t = { at = D.on; jit = not !eager } in
+  let e = Embedding.encode ~shape t.at (forward t ~bf16:!bf16 m) px in
+  let e = Nx.slice [ A; A; R (0, dims) ] (Nx.reshape [| h; w; -1 |] e) in
+  match grid with
+  | Some grid -> Embedding.save_geotiff out ~grid e
+  | None when !int8 -> Embedding.save_int8 out e
+  | None -> Embedding.save out e
 
 (* corpus *)
 
@@ -238,13 +233,15 @@ let corpus () =
 
 let targets () =
   let teacher = ref "" and corpus = ref "" and out = ref "" in
-  let device = ref "cpu" and bf16 = ref false and pixels = ref 512 in
+  let device = ref "cpu" and eager = ref false in
+  let bf16 = ref false and pixels = ref 512 in
   parse "targets --teacher M --corpus DIR --out FILE [OPTION...]"
     [
       ("--teacher", Arg.Set_string teacher, model_doc);
       ("--corpus", Arg.Set_string corpus, "DIR the corpus");
       ("--out", Arg.Set_string out, "FILE the targets, float32 [pixels; dims]");
       ("--device", Arg.Set_string device, device_doc);
+      ("--eager", Arg.Set eager, eager_doc);
       ("--bf16", Arg.Set bf16, " compute the products in bfloat16");
       ("--pixels", Arg.Set_int pixels, "N pixels a batch (default 512)");
     ];
@@ -253,21 +250,18 @@ let targets () =
   let m = model (required "--teacher" !teacher) in
   let shape = Batch.typical ~pixels:!pixels ~slots:32 in
   let n = Pixels.length px and chunk = 8192 in
-  on !device
-    {
-      run =
-        (fun t ->
-          let f = forward t ~bf16:!bf16 m in
-          let block pos =
-            let len = min chunk (n - pos) in
-            let e = Embedding.encode ~shape t.at f (Pixels.sub px ~pos ~len) in
-            Printf.printf "targets: %d / %d pixels\n%!" (pos + len) n;
-            e
-          in
-          Seq.init ((n + chunk - 1) / chunk) (fun i -> i * chunk)
-          |> Seq.map block
-          |> Nx_io.save_npy_concat out Nx.float32 [| Model.dims m |]);
-    }
+  let (module D) = devices !device in
+  let t = { at = D.on; jit = not !eager } in
+  let f = forward t ~bf16:!bf16 m in
+  let block pos =
+    let len = min chunk (n - pos) in
+    let e = Embedding.encode ~shape t.at f (Pixels.sub px ~pos ~len) in
+    Printf.printf "targets: %d / %d pixels\n%!" (pos + len) n;
+    e
+  in
+  Seq.init ((n + chunk - 1) / chunk) (fun i -> i * chunk)
+  |> Seq.map block
+  |> Nx_io.save_npy_concat out Nx.float32 [| Model.dims m |]
 
 (* Training runs *)
 
@@ -379,9 +373,10 @@ let train (type d) (t : d target) ~out ~resume ~steps ~key ~model_file
   go st position first;
   close_out log
 
-let run_options ~steps ~seed ~device ~bf16 ~resume =
+let run_options ~steps ~seed ~device ~eager ~bf16 ~resume =
   [
     ("--device", Arg.Set_string device, device_doc);
+    ("--eager", Arg.Set eager, eager_doc);
     ("--steps", Arg.Set_int steps, "N steps (default 1000)");
     ("--seed", Arg.Set_int seed, "N the run's key (default 0)");
     ("--bf16", Arg.Set bf16, " compute the products in bfloat16");
@@ -393,7 +388,8 @@ let run_options ~steps ~seed ~device ~bf16 ~resume =
 let pretrain () =
   let r = Barlow.v1_recipe in
   let corpus = ref "" and out = ref "" and arch_ = ref "" and widths = ref "" in
-  let device = ref "cpu" and steps = ref 1000 and groups = ref 1 in
+  let device = ref "cpu" and eager = ref false in
+  let steps = ref 1000 and groups = ref 1 in
   let pixels = ref r.pixels and seed = ref 0 and bf16 = ref false in
   let resume = ref false in
   parse "pretrain --corpus DIR --arch A --out DIR [OPTION...]"
@@ -410,7 +406,7 @@ let pretrain () =
        ("--groups", Arg.Set_int groups, "G groups a step (default 1)");
        ("--pixels", Arg.Set_int pixels, "N pixels a group (default 2048)");
      ]
-    @ run_options ~steps ~seed ~device ~bf16 ~resume);
+    @ run_options ~steps ~seed ~device ~eager ~bf16 ~resume);
   let dir = required "--corpus" !corpus and out = required "--out" !out in
   let arch = arch ~teacher:true (required "--arch" !arch_) in
   let widths =
@@ -432,61 +428,58 @@ let pretrain () =
   let projector =
     Barlow.projector ~key:(Nx.Rng.fold_in key head_site) (Model.dims m :: widths)
   in
-  on !device
-    {
-      run =
-        (fun (type d) (t : d target) ->
-          let lr = Barlow.schedule ~lr:r.lr ~warmup:r.warmup ~steps in
-          let weight_decay = Vega.rate r.weight_decay in
-          let w = Barlow.v1_weights and dropout = r.dropout and clip = r.clip in
-          let step g =
-            let terms, st =
-              if !bf16 then
-                Barlow.step ~compute:Nx.bfloat16 w ~dropout ~lr ~weight_decay
-                  ~clip g
-              else
-                Barlow.step ~compute:Nx.float32 w ~dropout ~lr ~weight_decay
-                  ~clip g
-            in
-            ( Nx.stack
-                [
-                  Barlow.objective w terms;
-                  terms.on_diagonal;
-                  terms.off_diagonal;
-                  terms.mixup;
-                ],
-              st )
-          in
-          (* A step's groups from stream position [p], read as one window, each
-             group's views drawn by its positions. *)
-          let groups_at p =
-            let window = groups * pixels in
-            let views =
-              Pixels.window dir px ~first:p (stream ~key ~n p window)
-            in
-            let group g =
-              Barlow.group
-                ~key:(Nx.Rng.fold_in key draws_site)
-                ~length:r.length
-                ~first:(p + (g * pixels))
-                (Pixels.sub views ~pos:(g * pixels) ~len:pixels)
-            in
-            let gs = Barlow.stack (List.init groups group) in
-            (Nx.Ptree.place (module Barlow.Group) t.at gs, window, window)
-          in
-          train t ~out ~resume ~steps ~key
-            ~model_file:(Filename.concat out "model.safetensors")
-            (module Barlow.State)
-            (module Barlow.Group)
-            ~start:
-              (Nx.Ptree.place
-                 (module Barlow.State)
-                 t.at (Barlow.init m projector))
-            ~counter:(fun (st : (d Nx.float32_t, d) Barlow.state) ->
-              st.opt.step)
-            ~model:(fun st -> st.model)
-            ~groups:groups_at step);
-    }
+  let (module D) = devices !device in
+  let t = { at = D.on; jit = not !eager } in
+  let lr = Barlow.schedule ~lr:r.lr ~warmup:r.warmup ~steps in
+  let weight_decay = Vega.rate r.weight_decay in
+  let w = Barlow.v1_weights and dropout = r.dropout and clip = r.clip in
+  let step g =
+    let terms, st =
+      if !bf16 then
+        Barlow.step ~compute:Nx.bfloat16 w ~dropout ~lr ~weight_decay
+          ~clip g
+      else
+        Barlow.step ~compute:Nx.float32 w ~dropout ~lr ~weight_decay
+          ~clip g
+    in
+    ( Nx.stack
+        [
+          Barlow.objective w terms;
+          terms.on_diagonal;
+          terms.off_diagonal;
+          terms.mixup;
+        ],
+      st )
+  in
+  (* A step's groups from stream position [p], read as one window, each
+     group's views drawn by its positions. *)
+  let groups_at p =
+    let window = groups * pixels in
+    let views =
+      Pixels.window dir px ~first:p (stream ~key ~n p window)
+    in
+    let group g =
+      Barlow.group
+        ~key:(Nx.Rng.fold_in key draws_site)
+        ~length:r.length
+        ~first:(p + (g * pixels))
+        (Pixels.sub views ~pos:(g * pixels) ~len:pixels)
+    in
+    let gs = Barlow.stack (List.init groups group) in
+    (Nx.Ptree.place (module Barlow.Group) t.at gs, window, window)
+  in
+  train t ~out ~resume ~steps ~key
+    ~model_file:(Filename.concat out "model.safetensors")
+    (module Barlow.State)
+    (module Barlow.Group)
+    ~start:
+      (Nx.Ptree.place
+         (module Barlow.State)
+         t.at (Barlow.init m projector))
+    ~counter:(fun (st : (D.d Nx.float32_t, D.d) Barlow.state) ->
+      st.opt.step)
+    ~model:(fun st -> st.model)
+    ~groups:groups_at step
 
 (* distil *)
 
@@ -503,7 +496,7 @@ let distil () =
   and targets = ref ""
   and out = ref ""
   and arch_ = ref "" in
-  let device = ref "cpu" and steps = ref 1000 in
+  let device = ref "cpu" and eager = ref false and steps = ref 1000 in
   let pixels = ref 2048 and seed = ref 0 and bf16 = ref false in
   let resume = ref false in
   parse "distil --corpus DIR --targets FILE --arch A --out DIR [OPTION...]"
@@ -519,7 +512,7 @@ let distil () =
          Printf.sprintf "N pixels a step, %d a group at most (default 2048)"
            group_pixels );
      ]
-    @ run_options ~steps ~seed ~device ~bf16 ~resume);
+    @ run_options ~steps ~seed ~device ~eager ~bf16 ~resume);
   let dir = required "--corpus" !corpus in
   let targets_file = required "--targets" !targets in
   let out = required "--out" !out in
@@ -548,53 +541,50 @@ let distil () =
     Distil.shape ~pixels:((!pixels + groups - 1) / groups) ~slots:32 px
   in
   let r = Distil.v2_recipe in
-  on !device
-    {
-      run =
-        (fun (type d) (t : d target) ->
-          let lr = Barlow.schedule ~lr:r.lr ~warmup:r.warmup ~steps in
-          let weight_decay = Vega.rate r.weight_decay in
-          let dropout = Model.v2_dropout and clip = r.clip in
-          let step g =
-            let loss, st =
-              if !bf16 then
-                Distil.step ~compute:Nx.bfloat16 ~dropout ~lr ~weight_decay
-                  ~clip g
-              else
-                Distil.step ~compute:Nx.float32 ~dropout ~lr ~weight_decay ~clip
-                  g
-            in
-            (Nx.reshape [| 1 |] loss, st)
-          in
-          (* A step's groups from stream position [p], read as one window. *)
-          let groups_at p =
-            let idx = stream ~key ~n p (groups * shape.pixels) in
-            let g, taken =
-              Distil.groups
-                ~key:(Nx.Rng.fold_in key draws_site)
-                ~shape ~groups ~first:p
-                (Pixels.window dir px ~first:p idx)
-                (Distil.targets targets_file targets ~first:p idx)
-            in
-            let filled =
-              Array.fold_left
-                (fun a p -> if p >= 0L then a + 1 else a)
-                0
-                (Nx.to_array g.batch.pixel)
-            in
-            (Nx.Ptree.place (module Distil.Group) t.at g, taken, filled)
-          in
-          train t ~out ~resume ~steps ~key
-            ~model_file:(Filename.concat out "student.safetensors")
-            (module Distil.State)
-            (module Distil.Group)
-            ~start:
-              (Nx.Ptree.place (module Distil.State) t.at (Distil.init m heads))
-            ~counter:(fun (st : (d Nx.float32_t, d) Distil.state) ->
-              st.opt.step)
-            ~model:(fun st -> st.model)
-            ~groups:groups_at step);
-    }
+  let (module D) = devices !device in
+  let t = { at = D.on; jit = not !eager } in
+  let lr = Barlow.schedule ~lr:r.lr ~warmup:r.warmup ~steps in
+  let weight_decay = Vega.rate r.weight_decay in
+  let dropout = Model.v2_dropout and clip = r.clip in
+  let step g =
+    let loss, st =
+      if !bf16 then
+        Distil.step ~compute:Nx.bfloat16 ~dropout ~lr ~weight_decay
+          ~clip g
+      else
+        Distil.step ~compute:Nx.float32 ~dropout ~lr ~weight_decay ~clip
+          g
+    in
+    (Nx.reshape [| 1 |] loss, st)
+  in
+  (* A step's groups from stream position [p], read as one window. *)
+  let groups_at p =
+    let idx = stream ~key ~n p (groups * shape.pixels) in
+    let g, taken =
+      Distil.groups
+        ~key:(Nx.Rng.fold_in key draws_site)
+        ~shape ~groups ~first:p
+        (Pixels.window dir px ~first:p idx)
+        (Distil.targets targets_file targets ~first:p idx)
+    in
+    let filled =
+      Array.fold_left
+        (fun a p -> if p >= 0L then a + 1 else a)
+        0
+        (Nx.to_array g.batch.pixel)
+    in
+    (Nx.Ptree.place (module Distil.Group) t.at g, taken, filled)
+  in
+  train t ~out ~resume ~steps ~key
+    ~model_file:(Filename.concat out "student.safetensors")
+    (module Distil.State)
+    (module Distil.Group)
+    ~start:
+      (Nx.Ptree.place (module Distil.State) t.at (Distil.init m heads))
+    ~counter:(fun (st : (D.d Nx.float32_t, D.d) Distil.state) ->
+      st.opt.step)
+    ~model:(fun st -> st.model)
+    ~groups:groups_at step
 
 (* probe *)
 
@@ -627,7 +617,8 @@ let labels_of ~property file props =
 let probe () =
   let file = ref "" and tile = ref "" and embedding = ref "" in
   let landmask_file = ref "" and labels = ref "" and property = ref "class" in
-  let dims = ref 0 and device = ref "cpu" and pixels = ref 4096 in
+  let dims = ref 0 and device = ref "cpu" and eager = ref false in
+  let pixels = ref 4096 in
   parse
     "probe (--model M --tile DIR | --embedding NAME) --landmask F --labels F \
      [OPTION...]"
@@ -645,6 +636,7 @@ let probe () =
         "P the fields' class (default class)" );
       ("--dims", Arg.Set_int dims, "K probe the Matryoshka prefix of K values");
       ("--device", Arg.Set_string device, device_doc);
+      ("--eager", Arg.Set eager, eager_doc);
       ("--pixels", Arg.Set_int pixels, "N pixels a batch (default 4096)");
     ];
   let landmask_file = required "--landmask" !landmask_file in
@@ -665,15 +657,10 @@ let probe () =
       let px, hw = Pixels.of_tile t in
       let grid = landmask hw ?place:t.place landmask_file in
       let shape = Batch.typical ~pixels:!pixels ~slots:32 in
-      let e = ref None in
-      on !device
-        {
-          run =
-            (fun t ->
-              e :=
-                Some (Embedding.encode ~shape t.at (forward t ~bf16:false m) px));
-        };
-      (Nx.slice [ A; R (0, dims) ] (Option.get !e), grid)
+      let (module D) = devices !device in
+      let t = { at = D.on; jit = not !eager } in
+      let e = Embedding.encode ~shape t.at (forward t ~bf16:false m) px in
+      (Nx.slice [ A; R (0, dims) ] e, grid)
   in
   let polys, props =
     Result.error_to_failure (Jord_geojson.polygons (read_json labels))
