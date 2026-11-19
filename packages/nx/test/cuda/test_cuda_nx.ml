@@ -10,26 +10,16 @@
    its terms, nx.cpu's bits; and a float32 scan along rows the same bits
    each run, within its bound. Shapes of zero, one and many elements along
    each axis, rows on either side of a block of 1024 terms and of a chunk
-   of 4096. Every test skips where CUDA sees no GPU. *)
+   of 4096. Every test skips where CUDA opens no GPU. *)
 
 open Windtrap
 module A = Nx_array
 module D = Nx_array.Dtype
 
 let gpu =
-  let t =
-    lazy
-      (match Rig_cuda.count () with
-      | Ok 0 | Error _ -> None
-      | Ok _ -> (
-          match Rig.open_ { (Rig_cuda.gpu 0) with name = "CUDA:nx" } with
-          | Ok d -> Some d
-          | Error e -> failwith e))
-  in
+  let t = lazy (Rig.open_ { (Rig_cuda.gpu 0) with name = "CUDA:nx" }) in
   fun () ->
-    match Lazy.force t with
-    | Some d -> d
-    | None -> skip ~reason:"CUDA sees no GPU" ()
+    match Lazy.force t with Ok d -> d | Error why -> skip ~reason:why ()
 
 let set =
   lazy

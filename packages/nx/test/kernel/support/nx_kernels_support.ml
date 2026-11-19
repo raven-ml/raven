@@ -173,7 +173,7 @@ let cpu = under (List.nth Nx_cpu.targets (List.length Nx_cpu.targets - 1))
    nx_cuda.mli states it computes every kind at every dtype. *)
 let nvidia ~name open_ =
   match open_ () with
-  | Error why -> failwith (name ^ ": " ^ why)
+  | Error _ -> []
   | Ok d when not (Nx_cuda.computes_on d) -> []
   | Ok d ->
       [
@@ -223,17 +223,15 @@ let host a =
   if Rig.equal (Nx_array.device a) Rig.host then a
   else Nx_array.to_device Rig.host a
 
-let sees count = match count () with Ok n -> n > 0 | Error _ -> false
-
 (* Opened at the first call, so that an executable that links this module
    but runs no nx.cuda group, such as nx.cpu's suites, which need not hold
-   the GPU's lock, opens no GPU. *)
+   the GPU's lock, opens no GPU. A GPU that does not open is absent, as on
+   a machine without one or with its device nodes hidden. *)
 let gpus =
   lazy
     (let cuda () = Rig.open_ { (Rig_cuda.gpu 0) with name = "CUDA:0" } in
      if Sys.getenv_opt "NX_KERNELS" = Some "cpu" then []
-     else if sees Rig_cuda.count then nvidia ~name:"cuda" cuda
-     else [])
+     else nvidia ~name:"cuda" cuda)
 
 let gpus () = Lazy.force gpus
 let backends () = cpu :: gpus ()
@@ -243,7 +241,6 @@ let nv =
     (let nv () = Rig.open_ { (Rig_nv_nvidia.gpu 0) with name = "NV:0" } in
      match gpus () with
      | [] -> None
-     | _ :: _ when not (sees Rig_nv_nvidia.count) -> None
      | _ :: _ -> List.nth_opt (nvidia ~name:"cuda/nv" nv) 0)
 
 let nv () = Lazy.force nv
@@ -258,10 +255,9 @@ let amd_transform = cuda_transform
 let amd =
   lazy
     (     if Sys.getenv_opt "NX_KERNELS" = Some "cpu" then None
-     else if not (sees Rig_amd_amdgpu.count) then None
      else
        match Rig.open_ (Rig_amd_amdgpu.gpu 0) with
-       | Error why -> failwith ("amd: " ^ why)
+       | Error _ -> None
        | Ok d when not (Nx_amd.computes_on d) -> None
        | Ok d ->
            Some

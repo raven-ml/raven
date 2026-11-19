@@ -40,16 +40,15 @@ let image device bin names =
 
 let opened = ref None
 
+(* The device [o] opens, skipping the test where it opens none: a machine
+   without the GPU, or with its device nodes hidden. *)
+let open_or_skip o =
+  match Rig.open_ o with Ok d -> d | Error why -> Windtrap.skip ~reason:why ()
+
 (* GPU 0 through CUDA's library, and its count of multiprocessors:
    cuda.h's CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT. *)
 let cuda () =
-  (match Rig_cuda.count () with
-  | Ok n when n > 0 -> ()
-  | Ok _ -> Windtrap.skip ~reason:"CUDA sees no GPU" ()
-  | Error why -> Windtrap.skip ~reason:("CUDA: " ^ why) ());
-  let device =
-    Result.get_ok (Rig.open_ { (Rig_cuda.gpu 0) with name = "CUDA:nx" })
-  in
+  let device = open_or_skip { (Rig_cuda.gpu 0) with name = "CUDA:nx" } in
   let capability = Option.get (Rig.capability device Rig_cuda_abi.key) in
   bind_symbol (Option.get (capability.symbol "cuDeviceGetAttribute"));
   (device, attribute 16)
@@ -57,13 +56,7 @@ let cuda () =
 (* GPU 0 through NVIDIA's kernel driver and rig.nv, and its count of
    multiprocessors as the GPU's description states them. *)
 let nv () =
-  (match Rig_nv_nvidia.count () with
-  | Ok n when n > 0 -> ()
-  | Ok _ | Error _ ->
-      Windtrap.skip ~reason:"NVIDIA's kernel driver sees no GPU" ());
-  let device =
-    Result.get_ok (Rig.open_ { (Rig_nv_nvidia.gpu 0) with name = "NV:nx" })
-  in
+  let device = open_or_skip { (Rig_nv_nvidia.gpu 0) with name = "NV:nx" } in
   let g = Option.get (Rig.capability device Rig_nv_abi.key) in
   (device, g.gpcs * g.tpcs_per_gpc * g.sms_per_tpc)
 

@@ -10,7 +10,7 @@
    complex dtypes, over every pair of numbers whose parts are each one of
    a few specials: there [w log z] meets infinities, zeros and NaNs in both
    parts, as [(0.5 + 0.5i) ** (inf + inf i)] does. Every test skips where
-   CUDA sees no GPU. *)
+   CUDA opens no GPU. *)
 
 open Windtrap
 module A = Nx_array
@@ -21,7 +21,7 @@ module Support = Nx_kernels_support
 let cuda () =
   match Support.gpus () with
   | b :: _ -> b
-  | [] -> skip ~reason:"CUDA sees no GPU" ()
+  | [] -> skip ~reason:"CUDA opens no GPU" ()
 
 let terms = 4096
 

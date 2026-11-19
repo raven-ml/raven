@@ -105,18 +105,18 @@ val backends : unit -> backend list
 
 val gpus : unit -> backend list
 (** [gpus ()] is nx.cuda on the machine's NVIDIA GPU 0 through CUDA, as
-    ["cuda"], where CUDA reaches one and the environment variable
+    ["cuda"], where CUDA opens one and the environment variable
     [NX_KERNELS] is not ["cpu"], opened at the first call. *)
 
 val nv : unit -> backend option
 (** [nv ()] is nx.cuda on GPU 0 through NVIDIA's kernel driver and rig.nv,
-    as ["cuda/nv"], where {!gpus}[ ()] has GPU 0 and rig.nv reaches it too,
+    as ["cuda/nv"], where {!gpus}[ ()] has GPU 0 and rig.nv opens it too,
     opened at the first call. Its kernels are the cubin CUDA loads, so its
     suites check that its results are CUDA's bits. *)
 
 val amd : unit -> backend option
 (** [amd ()] is nx.amd on the machine's AMD GPU 0 through Linux's amdgpu
-    driver, as ["amd"], where rig sees one, nx.amd computes on it and the
+    driver, as ["amd"], where rig opens one, nx.amd computes on it and the
     environment variable [NX_KERNELS] is not ["cpu"], opened at the first
     call. Each suite but attention's, whose calls nx.amd declines, runs
     its laws on it. Its reductions and scans associate as nx.cpu's. *)

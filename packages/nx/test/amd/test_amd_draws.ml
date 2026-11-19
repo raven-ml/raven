@@ -7,7 +7,7 @@
    draw of Nx.Rng has the host's bits (Nx_rng_support). A draw is a program
    of kinds, which nx.amd computes by nx_kinds.h's functions, and of integer
    arithmetic, a dirichlet row's sum among it. Every test skips where rig
-   sees no AMD GPU that nx.amd computes on. *)
+   opens no AMD GPU that nx.amd computes on. *)
 
 open Windtrap
 

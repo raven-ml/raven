@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Placing values between the host and CUDA's GPU 0 from host memory the GPU
-   cannot map. Every test skips where CUDA sees no GPU. *)
+   cannot map. Every test skips where CUDA opens no GPU. *)
 
 open Windtrap
 module S = Nx_cuda_support
@@ -12,19 +12,9 @@ module A = Nx_array
 module Dt = Nx_array.Dtype
 
 let gpu =
-  let t =
-    lazy
-      (match Rig_cuda.count () with
-      | Ok 0 | Error _ -> None
-      | Ok _ -> (
-          match Rig.open_ { (Rig_cuda.gpu 0) with name = "CUDA:0" } with
-          | Ok d -> Some d
-          | Error e -> failwith e))
-  in
+  let t = lazy (Rig.open_ { (Rig_cuda.gpu 0) with name = "CUDA:0" }) in
   fun () ->
-    match Lazy.force t with
-    | Some d -> d
-    | None -> skip ~reason:"CUDA sees no GPU" ()
+    match Lazy.force t with Ok d -> d | Error why -> skip ~reason:why ()
 
 let rows = 64
 let cols = 64

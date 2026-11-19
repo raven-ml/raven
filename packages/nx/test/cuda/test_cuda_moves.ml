@@ -383,12 +383,12 @@ let test_loop_set (b : Support.backend) () =
 let cuda () =
   match Support.gpus () with
   | b :: _ -> b
-  | [] -> skip ~reason:"CUDA sees no GPU" ()
+  | [] -> skip ~reason:"CUDA opens no GPU" ()
 
 let nv () =
   match Support.nv () with
   | Some b -> b
-  | None -> skip ~reason:"rig.nv sees no GPU" ()
+  | None -> skip ~reason:"rig.nv opens no GPU" ()
 
 let () =
   exit

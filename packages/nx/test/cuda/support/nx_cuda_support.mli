@@ -17,7 +17,7 @@ val gpu : unit -> gpu
 (** [gpu ()] is GPU 0, opened at the first call and kept for the process:
     through CUDA's library, or through NVIDIA's kernel driver and rig.nv if the
     environment variable [NX_CUDA_RIG] is ["nv"]. It skips the test if that
-    driver sees no GPU.
+    driver opens no GPU 0.
 
     Raises [Failure] if nx.cuda does not compute on it, and [Invalid_argument]
     if [NX_CUDA_RIG] names neither ["cuda"] nor ["nv"]. *)
