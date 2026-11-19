@@ -6,7 +6,7 @@
 <title>Performance — raven</title>
 <meta name="description" content="Every measurement with its date, machine, baseline and commit. The losses stay in.">
 <meta name="color-scheme" content="dark">
-<meta name="source" content="docs/performance.md 0f60ef4d1a2e">
+<meta name="source" content="docs/performance.md 3f55e553e7eb">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin>
@@ -57,70 +57,49 @@
 <thead>
 <tr><th scope="col">as fast as</th><th scope="col" style="text-align: left">NVIDIA · CUDA</th><th scope="col" style="text-align: left">NVIDIA · NV (no CUDA runtime)</th><th scope="col" style="text-align: left">AMD</th></tr></thead>
 <tbody>
-<tr><th scope="row" class="mono" style="color: var(--text-0); font-size: 14px">llama.cpp</th><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--text-1)"></span>behind</span><span style="font-size: 14px">decode 10.2 against 6.83 ms (b12032)</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--text-1)"></span>behind</span><span style="font-size: 14px">decode 12.0 against 6.83 ms (bench median; 10.7 ms of GPU time)</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--text-1)"></span>behind</span><span style="font-size: 14px">decode 12.7 against 10.38 ms (b12048, Vulkan)</span></span></td></tr>
-<tr><th scope="row" class="mono" style="color: var(--text-0); font-size: 14px">tinygrad</th><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--dim)"></span>not measured</span><span style="font-size: 14px">—</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--dim)"></span>not measured</span><span style="font-size: 14px">—</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px dashed var(--dim)"></span>blocked</span><span style="font-size: 14px">tinygrad needs Resizable BAR on this machine</span></span></td></tr>
-<tr><th scope="row" class="mono" style="color: var(--text-0); font-size: 14px">JAX</th><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--dim)"></span>not measured</span><span style="font-size: 14px">—</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--dim)"></span>not measured</span><span style="font-size: 14px">—</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--dim)"></span>not measured</span><span style="font-size: 14px">—</span></span></td></tr>
-<tr><th scope="row" class="mono" style="color: var(--text-0); font-size: 14px">vLLM</th><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--dim)"></span>not measured</span><span style="font-size: 14px">—</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--dim)"></span>not measured</span><span style="font-size: 14px">—</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--dim)"></span>not measured</span><span style="font-size: 14px">—</span></span></td></tr></tbody></table></div>
-<p class="caption note-line" style="margin: 0">gpt-oss-20b, decode at position 512. Every cell is behind or not yet measured; the goal is met when the whole table reads “as fast or faster”.</p></section>
+<tr><th scope="row" class="mono" style="color: var(--text-0); font-size: 14px">llama.cpp</th><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--text-1)"></span>behind</span><span style="font-size: 14px">decode 163.4 against 168.6, behind; prefill 11,360 against 9,620, ahead</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--text-1)"></span>behind</span><span style="font-size: 14px">decode 169.2 against 168.6, level; prefill 8,230 against 9,620, behind</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--text-1)"></span>behind</span><span style="font-size: 14px">decode 12.7 against 10.38 ms a token (b12048, Vulkan)</span></span></td></tr>
+<tr><th scope="row" class="mono" style="color: var(--text-0); font-size: 14px">tinygrad</th><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px dashed var(--dim)"></span>blocked</span><span style="font-size: 14px">tinygrad has no gpt-oss implementation to run</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px dashed var(--dim)"></span>blocked</span><span style="font-size: 14px">tinygrad has no gpt-oss implementation to run</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px dashed var(--dim)"></span>blocked</span><span style="font-size: 14px">tinygrad needs Resizable BAR on this machine</span></span></td></tr>
+<tr><th scope="row" class="mono" style="color: var(--text-0); font-size: 14px">JAX</th><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px dashed var(--dim)"></span>blocked</span><span style="font-size: 14px">no MXFP4 path, and bfloat16 does not fit in 32 GB</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px dashed var(--dim)"></span>blocked</span><span style="font-size: 14px">no MXFP4 path, and bfloat16 does not fit in 32 GB</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--dim)"></span>not measured</span><span style="font-size: 14px">—</span></span></td></tr>
+<tr><th scope="row" class="mono" style="color: var(--text-0); font-size: 14px">vLLM</th><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--text-1)"></span>behind</span><span style="font-size: 14px">decode 123.0 against 122.1, level; prefill 12,140 against 12,820, behind</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--text-1)"></span>behind</span><span style="font-size: 14px">decode 127.7 against 122.1, ahead; prefill 8,340 against 12,820, behind</span></span></td><td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--dim)"></span>not measured</span><span style="font-size: 14px">—</span></span></td></tr></tbody></table></div>
+<p class="caption note-line" style="margin: 0">gpt-oss-20b, decoding one token at position 512 and prefilling 512 tokens, in tokens a second, with raven storing the attention projections and the head as the baseline does: Q8_0 against llama.cpp, bfloat16 against vLLM. On NVIDIA the baselines run through CUDA. NVIDIA: 2026-11-19, below. AMD: 2026-11-08, a Radeon AI PRO R9700 (“nonnormal”, gfx1201) at 502431b668, not measured since. The goal is met when the whole table reads “as fast or faster”.</p></section>
 <section id="nvidia" class="section stack" style="gap: 32px">
 <div class="eyebrow-gap">
-<p class="label">02 — measured · 2026-11</p>
+<p class="label">02 — measured · 2026-11-19</p>
 <h2 class="h2">gpt-oss-20b on an NVIDIA RTX 5000 Ada.</h2></div>
-<div class="caption" aria-hidden="true" style="display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--text-3)"><span style="display: flex; align-items: center; gap: 8px"><span style="width: 12px; height: 12px; border-radius: 3px; background: var(--raven)"></span>raven</span><span style="display: flex; align-items: center; gap: 8px"><span style="width: 12px; height: 12px; border-radius: 3px; background: var(--ref)"></span>llama.cpp b12032, CUDA</span><span style="color: var(--dim)">time · shorter is better</span></div>
-<ul class="bars" aria-label="Measurements against llama.cpp">
-<li aria-label="Decode, position 512 of a 1,024 cache: raven 10.2 ms, llama.cpp 6.83 ms, raven 1.5× slower">
-<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">Decode, position 512 of a 1,024 cache</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven 1.5× slower</span></div>
-<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--raven)"></span></span><span class="v">10.2 ms</span></div>
-<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="display: block; width: 67.0%; background: var(--ref)"></span></span><span class="v">6.83 ms</span></div></li>
-<li aria-label="Decode, with Q8_0 attention and head: raven 8.1–8.3 ms, llama.cpp 6.83 ms, raven 1.2× slower">
-<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">Decode, with Q8_0 attention and head</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven 1.2× slower</span></div>
-<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--raven)"></span></span><span class="v">8.1–8.3 ms</span></div>
-<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="display: block; width: 83.3%; background: var(--ref)"></span></span><span class="v">6.83 ms</span></div></li>
-<li aria-label="Prefill, 512 tokens: raven 122 ms, llama.cpp 56.0 ms, raven 2.2× slower">
-<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">Prefill, 512 tokens</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven 2.2× slower</span></div>
-<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--raven)"></span></span><span class="v">122 ms</span></div>
-<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="display: block; width: 45.9%; background: var(--ref)"></span></span><span class="v">56.0 ms</span></div></li>
-<li aria-label="First call (kernels cached): raven 0.37–0.39 s, llama.cpp 75 ms, raven 5.1× slower">
-<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">First call (kernels cached)</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven 5.1× slower</span></div>
-<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--raven)"></span></span><span class="v">0.37–0.39 s</span></div>
-<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="display: block; width: 19.7%; background: var(--ref)"></span></span><span class="v">75 ms</span></div></li></ul>
+<div class="caption" aria-hidden="true" style="display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--text-3)"><span style="display: flex; align-items: center; gap: 8px"><span style="width: 12px; height: 12px; border-radius: 3px; background: var(--raven)"></span>raven</span><span style="display: flex; align-items: center; gap: 8px"><span style="width: 12px; height: 12px; border-radius: 3px; background: var(--ref)"></span>llama.cpp b12541, vLLM 0.34.0, CUDA</span><span style="color: var(--dim)">tokens a second · longer is better</span></div>
+<ul class="bars" aria-label="Measurements against llama.cpp and vLLM">
+<li aria-label="Decode, Q8_0 attention and head: raven 163.4 tok/s, raven · NV 169.2 tok/s, llama.cpp 168.6 tok/s; raven 3% slower, NV level">
+<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">Decode, Q8_0 attention and head</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven 3% slower, NV level</span></div>
+<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 96.6%; background: var(--raven)"></span></span><span class="v">163.4 tok/s</span></div>
+<div class="bar"><span class="who">raven · NV</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--raven)"></span></span><span class="v">169.2 tok/s</span></div>
+<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="display: block; width: 99.6%; background: var(--ref)"></span></span><span class="v">168.6 tok/s</span></div></li>
+<li aria-label="Decode, bfloat16: raven 123.0 tok/s, vLLM 122.1 tok/s; raven as fast">
+<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">Decode, bfloat16</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven as fast</span></div>
+<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--raven)"></span></span><span class="v">123.0 tok/s</span></div>
+<div class="bar"><span class="who">vLLM</span><span class="track"><span class="fill" style="display: block; width: 99.3%; background: var(--ref)"></span></span><span class="v">122.1 tok/s</span></div></li>
+<li aria-label="Prefill, 512 tokens, Q8_0: raven 11,360 tok/s, llama.cpp 9,620 tok/s; raven 18% faster">
+<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">Prefill, 512 tokens, Q8_0</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven 18% faster</span></div>
+<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--raven)"></span></span><span class="v">11,360 tok/s</span></div>
+<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="display: block; width: 84.7%; background: var(--ref)"></span></span><span class="v">9,620 tok/s</span></div></li>
+<li aria-label="Prefill, 512 tokens, bfloat16: raven 12,140 tok/s, vLLM 12,820 tok/s; raven 5% slower">
+<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">Prefill, 512 tokens, bfloat16</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven 5% slower</span></div>
+<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 94.7%; background: var(--raven)"></span></span><span class="v">12,140 tok/s</span></div>
+<div class="bar"><span class="who">vLLM</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--ref)"></span></span><span class="v">12,820 tok/s</span></div></li></ul>
 <div class="scroll" tabindex="0" role="region" aria-label="gpt-oss-20b on an RTX 5000 Ada">
-<table class="tbl" style="min-width: 560px"><caption class="sr">gpt-oss-20b on an RTX 5000 Ada</caption>
+<table class="tbl" style="min-width: 560px"><caption class="sr">gpt-oss-20b on an RTX 5000 Ada, tokens a second</caption>
 <thead>
-<tr><th scope="col">measurement</th><th scope="col">raven · CUDA</th><th scope="col">raven · NV</th><th scope="col">llama.cpp · CUDA</th></tr></thead>
+<tr><th scope="col">system</th><th scope="col">attention, head</th><th scope="col">decode</th><th scope="col">prefill, 512 tokens</th><th scope="col">first token</th></tr></thead>
 <tbody>
-<tr><th scope="row">Decode, position 512 of a 1,024 cache</th><td class="hi">10.2 ms</td><td>12.0 ms (bench median; 10.7 ms GPU time)</td><td>6.83 ms</td></tr>
-<tr><th scope="row">Decode, Q8_0 attention and head</th><td class="hi">8.1–8.3 ms</td><td>not measured</td><td>—</td></tr>
-<tr><th scope="row">Prefill, 512 tokens</th><td class="hi">122 ms</td><td>not measured again</td><td>56.0 ms</td></tr>
-<tr><th scope="row">First call, kernels cached</th><td class="hi">0.37–0.39 s</td><td>0.37–0.54 s</td><td>75 ms</td></tr></tbody></table></div>
-<p class="caption note-line" style="margin: 0">Machine “fudge”, under load. raven at 8ef1902f3 (decode), f2af3251b (Q8_0), 4e23903949 (prefill, least of 4 rounds), c29acaee3 (first call); NV at 31aa4521b. llama.cpp's first call has no warmup (59–151 ms).</p></section>
-<section id="amd" class="section stack" style="gap: 32px">
-<div class="eyebrow-gap">
-<p class="label">03 — measured · 2026-11</p>
-<h2 class="h2">gpt-oss-20b on an AMD Radeon AI PRO R9700.</h2></div>
-<div class="caption" aria-hidden="true" style="display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--text-3)"><span style="display: flex; align-items: center; gap: 8px"><span style="width: 12px; height: 12px; border-radius: 3px; background: var(--raven)"></span>raven</span><span style="display: flex; align-items: center; gap: 8px"><span style="width: 12px; height: 12px; border-radius: 3px; background: var(--ref)"></span>llama.cpp b12048, Vulkan</span><span style="color: var(--dim)">time · shorter is better</span></div>
-<ul class="bars" aria-label="Measurements against llama.cpp">
-<li aria-label="Decode, position 512: raven 12.7 ms, llama.cpp 10.38 ms, raven 1.2× slower">
-<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">Decode, position 512</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven 1.2× slower</span></div>
-<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--raven)"></span></span><span class="v">12.7 ms</span></div>
-<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="display: block; width: 81.7%; background: var(--ref)"></span></span><span class="v">10.38 ms</span></div></li>
-<li aria-label="Prefill, 512 tokens: raven 0.418 s, llama.cpp 0.308 s, raven 1.4× slower">
-<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">Prefill, 512 tokens</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven 1.4× slower</span></div>
-<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--raven)"></span></span><span class="v">0.418 s</span></div>
-<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="display: block; width: 73.7%; background: var(--ref)"></span></span><span class="v">0.308 s</span></div></li>
-<li aria-label="First call (kernels cached): raven 0.30–0.34 s, llama.cpp 0.136 s, raven 2.4× slower">
-<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">First call (kernels cached)</span><span class="caption" style="color: var(--text-3); white-space: nowrap">raven 2.4× slower</span></div>
-<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="display: block; width: 100.0%; background: var(--raven)"></span></span><span class="v">0.30–0.34 s</span></div>
-<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="display: block; width: 42.5%; background: var(--ref)"></span></span><span class="v">0.136 s</span></div></li></ul>
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px">
-<div class="card" style="gap: 8px">
-<h3 class="caption" style="margin: 0; font-weight: 400">where decode's time goes</h3><span class="small" style="color: var(--text-2)">Expert products take 5.4 ms at 212–254 GB/s, against llama.cpp's 3.0. Top-k's 20-kernel sort and about 37 small kernels a layer take about 1.5 ms; the argmax over the logits 0.63 ms.</span></div>
-<div class="card" style="gap: 8px">
-<h3 class="caption" style="margin: 0; font-weight: 400">where prefill's time goes</h3><span class="small" style="color: var(--text-2)">Expert products take 326 ms on WMMA at 7–8 TFLOPS, against 177. The out projection takes no WMMA: 52 ms, against q's 10.</span></div></div>
-<p class="caption note-line" style="margin: 0">Machine “nonnormal” (gfx1201) at 502431b668; attention on WMMA. First call: 1.03 s when compiling kernels, of which lowering and linking the first block take 69–131 ms on the host; llama.cpp 2.19 s without Mesa's shader cache. llama.cpp's ROCm build needs HIP libraries this machine lacks.</p></section>
+<tr><th scope="row">raven · CUDA</th><td>bfloat16</td><td class="hi">123.0</td><td>12,140</td><td>2.00 s</td></tr>
+<tr><th scope="row">raven · CUDA</th><td>Q8_0</td><td class="hi">163.4</td><td>11,360</td><td>not measured</td></tr>
+<tr><th scope="row">raven · NV</th><td>bfloat16</td><td class="hi">127.7</td><td>8,340</td><td>1.83 s</td></tr>
+<tr><th scope="row">raven · NV</th><td>Q8_0</td><td class="hi">169.2</td><td>8,230</td><td>not measured</td></tr>
+<tr><th scope="row">llama.cpp b12541 · CUDA</th><td>Q8_0</td><td>168.6</td><td>9,620</td><td>2.12 s</td></tr>
+<tr><th scope="row">vLLM 0.34.0</th><td>bfloat16</td><td>122.1</td><td>12,820</td><td>19.7 s</td></tr></tbody></table></div>
+<p class="caption note-line" style="margin: 0">Machine “fudge”, raven at 3c1daa79d5. Tokens a second for one sequence, the median of three rounds; first token is a new process's, from its start, loading the weights. Every system keeps the experts as MXFP4. Installed, raven's chat is 32 MB, plus NVRTC (134 MB) to compile kernels it has not cached; llama.cpp is 1.15 GB and vLLM 9.32 GB (at 72377cdbe1). <a class="u" href="https://github.com/raven-ml/raven/blob/main/apps/gpt-oss/PERFORMANCE.md">gpt-oss's performance ↗</a> gives each number's range, how each system was run, memory and the other systems, and how to reproduce them.</p></section>
 <section id="rig" class="section stack" style="gap: 32px">
 <div class="eyebrow-gap">
-<p class="label">04 — measured · 2026-10-11</p>
+<p class="label">03 — measured · 2026-10-11</p>
 <h2 class="h2">The GPU runtime: rig against PyTorch, JAX and tinygrad.</h2></div>
 <div class="scroll" tabindex="0" role="region" aria-label="rig against PyTorch, JAX and tinygrad">
 <table class="tbl" style="min-width: 720px"><caption class="sr">rig against PyTorch, JAX and tinygrad</caption>
@@ -138,7 +117,7 @@
 <p class="caption note-line" style="margin: 0">Medians of release builds, 2026-10-11. NVIDIA: an RTX 5000 Ada, where rig and tinygrad run through their own driver and through CUDA. AMD: a Radeon AI PRO R9700, where PyTorch is the only framework run. Kernels precompiled: compiling them at run time loads NVRTC or comgr. “—”: not run on that machine.</p></section>
 <section id="brot" class="section stack" style="gap: 32px">
 <div class="eyebrow-gap">
-<p class="label">05 — measured · 2026-11-03</p>
+<p class="label">04 — measured · 2026-11-03</p>
 <h2 class="h2">Tokenization: brot against gigatoken and HF tokenizers.</h2></div>
 <div class="scroll" tabindex="0" role="region" aria-label="brot tokenization throughput">
 <table class="tbl" style="min-width: 560px"><caption class="sr">brot tokenization throughput</caption>
@@ -152,7 +131,7 @@
 <p class="caption note-line" style="margin: 0">Machine “fudge” (Intel Core Ultra 5 235), shared. brot at f988690df; gigatoken at cd5ee648c6 (0.11.0); tokenizers 0.23.3. gigatoken refuses WordPiece, so BERT-base runs against HF tokenizers.</p></section>
 <section id="talon" class="section stack" style="gap: 32px">
 <div class="eyebrow-gap">
-<p class="label">06 — measured · 2026-11</p>
+<p class="label">05 — measured · 2026-11</p>
 <h2 class="h2">Dataframes: talon against DuckDB and Polars.</h2></div>
 <div class="scroll" tabindex="0" role="region" aria-label="talon against the faster of DuckDB and Polars">
 <table class="tbl" style="min-width: 560px"><caption class="sr">talon against the faster of DuckDB and Polars</caption>
@@ -167,7 +146,7 @@
 <p class="caption editline"><span>from docs/performance.md</span><a class="u" href="https://github.com/raven-ml/raven/edit/main/docs/performance.md">edit ↗</a></p></div></div>
 <aside class="rail" aria-label="On this page" style="padding-top: var(--hero-top)">
 <nav class="toc" aria-label="On this page">
-<p class="label" style="padding-left: 16px; margin-bottom: 8px">on this page</p><a href="#goal">The goal post</a><a href="#nvidia">gpt-oss on NVIDIA</a><a href="#amd">gpt-oss on AMD</a><a href="#rig">The GPU runtime</a><a href="#brot">Tokenization</a><a href="#talon">Dataframes</a></nav></aside>
+<p class="label" style="padding-left: 16px; margin-bottom: 8px">on this page</p><a href="#goal">The goal post</a><a href="#nvidia">gpt-oss on NVIDIA</a><a href="#rig">The GPU runtime</a><a href="#brot">Tokenization</a><a href="#talon">Dataframes</a></nav></aside>
 </div>
 </main>
 <footer class="ftr">
