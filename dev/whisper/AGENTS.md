@@ -28,10 +28,14 @@ and is never published (no opam package, no CHANGES entry).
   probabilities and the compression ratio), `Transcript` (a recording of any
   length, window by window: the seek loop on the host over eager or compiled
   steps, the fallback ladder, silence, prompts, clips, and segments in
-  frames), `English` (the text
+  frames), `Writer` (a transcript as upstream's writers write it: text,
+  VTT, SRT, TSV, and JSON as Python's `json.dump`), `English` (the text
   normaliser of Whisper's evaluation, with upstream's `english.json`
   spelling map embedded at build time) and `Wer` (jiwer's word counts and
   corpus word error rate).
+- `bin/main.exe` is upstream's `whisper` command: its options parsed, audio
+  files transcribed and written by `Writer`, eager on the CPU or compiled on
+  the host or a GPU.
 - `test/` holds the suites, on trimmed rank tables and small models with
   goldens from upstream's own code. Each output is compared as
   `test/support/tolerance.mli` states: at float64, as one function with

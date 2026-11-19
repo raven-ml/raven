@@ -1,0 +1,6 @@
+; main.exe: upstream's whisper command on raven, transcribing audio files into
+; text, subtitles, tab-separated values or JSON.
+
+(executable
+ (name main)
+ (libraries whisper nx nx.io rune rig.gpus))

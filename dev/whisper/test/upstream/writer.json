@@ -1,0 +1,282 @@
+{
+"cases": [
+{
+"name": "english",
+"language": "en",
+"windows": [
+{
+"seek": 0,
+"size": 3000,
+"temperature": 0.0,
+"avg_logprob": -0.35100454213667887,
+"compression_ratio": 1.4871794871794872,
+"no_speech_prob": 0.17127984762191772,
+"segments": [
+{
+"start": 0,
+"stop": 280,
+"tokens": [
+50364,
+634,
+4283,
+50504
+],
+"text": " Hello world."
+},
+{
+"start": 280,
+"stop": 560,
+"tokens": [
+50504,
+467,
+50644
+],
+"text": " It's --> here\tnow, \"quoted\" \\ back"
+},
+{
+"start": 560,
+"stop": 560,
+"tokens": [],
+"text": ""
+}
+]
+},
+{
+"seek": 2796,
+"size": 3000,
+"temperature": 0.6000000000000001,
+"avg_logprob": -1.2e-05,
+"compression_ratio": 2.0,
+"no_speech_prob": 1.25e-06,
+"segments": [
+{
+"start": 2796,
+"stop": 2801,
+"tokens": [
+50364,
+291,
+50367
+],
+"text": " Then."
+},
+{
+"start": 2801,
+"stop": 5796,
+"tokens": [
+50367,
+300,
+50364
+],
+"text": "And so-->on  "
+}
+]
+},
+{
+"seek": 5796,
+"size": 613,
+"temperature": 0.2,
+"avg_logprob": -0.1,
+"compression_ratio": 0.5,
+"no_speech_prob": 0.9,
+"segments": []
+}
+],
+"text": " Hello world. It's --> here\tnow, \"quoted\" \\ back Then.And so-->on  ",
+"outputs": {
+"txt": "Hello world.\nIt's --> here\tnow, \"quoted\" \\ back\n\nThen.\nAnd so-->on\n",
+"vtt": "WEBVTT\n\n00:00.000 --> 00:02.800\nHello world.\n\n00:02.800 --> 00:05.600\nIt's -> here\tnow, \"quoted\" \\ back\n\n00:05.600 --> 00:05.600\n\n\n00:27.960 --> 00:28.010\nThen.\n\n00:28.010 --> 00:57.960\nAnd so->on\n\n",
+"srt": "1\n00:00:00,000 --> 00:00:02,800\nHello world.\n\n2\n00:00:02,800 --> 00:00:05,600\nIt's -> here\tnow, \"quoted\" \\ back\n\n3\n00:00:05,600 --> 00:00:05,600\n\n\n4\n00:00:27,960 --> 00:00:28,010\nThen.\n\n5\n00:00:28,010 --> 00:00:57,960\nAnd so->on\n\n",
+"tsv": "start\tend\ttext\n0\t2800\tHello world.\n2800\t5600\tIt's --> here now, \"quoted\" \\ back\n5600\t5600\t\n27960\t28010\tThen.\n28010\t57960\tAnd so-->on\n",
+"json": "{\"text\": \" Hello world. It's --> here\\tnow, \\\"quoted\\\" \\\\ back Then.And so-->on  \", \"segments\": [{\"id\": 0, \"seek\": 0, \"start\": 0.0, \"end\": 2.8, \"text\": \" Hello world.\", \"tokens\": [50364, 634, 4283, 50504], \"temperature\": 0.0, \"avg_logprob\": -0.35100454213667887, \"compression_ratio\": 1.4871794871794872, \"no_speech_prob\": 0.17127984762191772}, {\"id\": 1, \"seek\": 0, \"start\": 2.8, \"end\": 5.6, \"text\": \" It's --> here\\tnow, \\\"quoted\\\" \\\\ back\", \"tokens\": [50504, 467, 50644], \"temperature\": 0.0, \"avg_logprob\": -0.35100454213667887, \"compression_ratio\": 1.4871794871794872, \"no_speech_prob\": 0.17127984762191772}, {\"id\": 2, \"seek\": 0, \"start\": 5.6, \"end\": 5.6, \"text\": \"\", \"tokens\": [], \"temperature\": 0.0, \"avg_logprob\": -0.35100454213667887, \"compression_ratio\": 1.4871794871794872, \"no_speech_prob\": 0.17127984762191772, \"words\": []}, {\"id\": 3, \"seek\": 2796, \"start\": 27.96, \"end\": 28.01, \"text\": \" Then.\", \"tokens\": [50364, 291, 50367], \"temperature\": 0.6000000000000001, \"avg_logprob\": -1.2e-05, \"compression_ratio\": 2.0, \"no_speech_prob\": 1.25e-06}, {\"id\": 4, \"seek\": 2796, \"start\": 28.01, \"end\": 57.96, \"text\": \"And so-->on  \", \"tokens\": [50367, 300, 50364], \"temperature\": 0.6000000000000001, \"avg_logprob\": -1.2e-05, \"compression_ratio\": 2.0, \"no_speech_prob\": 1.25e-06}], \"language\": \"en\"}"
+}
+},
+{
+"name": "hours and white space",
+"language": "en",
+"windows": [
+{
+"seek": 359900,
+"size": 3000,
+"temperature": 0.0,
+"avg_logprob": -0.25,
+"compression_ratio": 1.1,
+"no_speech_prob": 0.01,
+"segments": [
+{
+"start": 359900,
+"stop": 360010,
+"tokens": [
+50364,
+11,
+50419
+],
+"text": "　spoken "
+},
+{
+"start": 360010,
+"stop": 3600000,
+"tokens": [
+50419,
+12,
+50500
+],
+"text": " ten hours on "
+}
+]
+}
+],
+"text": "　spoken  ten hours on ",
+"outputs": {
+"txt": "spoken\nten hours on\n",
+"vtt": "WEBVTT\n\n59:59.000 --> 01:00:00.100\nspoken\n\n01:00:00.100 --> 10:00:00.000\nten hours on\n\n",
+"srt": "1\n00:59:59,000 --> 01:00:00,100\nspoken\n\n2\n01:00:00,100 --> 10:00:00,000\nten hours on\n\n",
+"tsv": "start\tend\ttext\n3599000\t3600100\tspoken\n3600100\t36000000\tten hours on\n",
+"json": "{\"text\": \"\\u3000spoken\\u00a0 ten hours on\\u2028\", \"segments\": [{\"id\": 0, \"seek\": 359900, \"start\": 3599.0, \"end\": 3600.1, \"text\": \"\\u3000spoken\\u00a0\", \"tokens\": [50364, 11, 50419], \"temperature\": 0.0, \"avg_logprob\": -0.25, \"compression_ratio\": 1.1, \"no_speech_prob\": 0.01}, {\"id\": 1, \"seek\": 359900, \"start\": 3600.1, \"end\": 36000.0, \"text\": \" ten hours on\\u2028\", \"tokens\": [50419, 12, 50500], \"temperature\": 0.0, \"avg_logprob\": -0.25, \"compression_ratio\": 1.1, \"no_speech_prob\": 0.01}], \"language\": \"en\"}"
+}
+},
+{
+"name": "non-ASCII",
+"language": "ja",
+"windows": [
+{
+"seek": 0,
+"size": 1234,
+"temperature": 0.0,
+"avg_logprob": -0.5,
+"compression_ratio": 0.75,
+"no_speech_prob": 0.002,
+"segments": [
+{
+"start": 0,
+"stop": 312,
+"tokens": [
+50364,
+1,
+2,
+50520
+],
+"text": "東京は晴れ。"
+},
+{
+"start": 312,
+"stop": 1234,
+"tokens": [
+50520,
+3,
+50981
+],
+"text": " 🎉 café \u0001 é�"
+}
+]
+}
+],
+"text": "東京は晴れ。 🎉 café \u0001 é�",
+"outputs": {
+"txt": "東京は晴れ。\n🎉 café \u0001 é�\n",
+"vtt": "WEBVTT\n\n00:00.000 --> 00:03.120\n東京は晴れ。\n\n00:03.120 --> 00:12.340\n🎉 café \u0001 é�\n\n",
+"srt": "1\n00:00:00,000 --> 00:00:03,120\n東京は晴れ。\n\n2\n00:00:03,120 --> 00:00:12,340\n🎉 café \u0001 é�\n\n",
+"tsv": "start\tend\ttext\n0\t3120\t東京は晴れ。\n3120\t12340\t🎉 café \u0001 é�\n",
+"json": "{\"text\": \"\\u6771\\u4eac\\u306f\\u6674\\u308c\\u3002 \\ud83c\\udf89 caf\\u00e9 \\u0001 \\u00e9\\ufffd\", \"segments\": [{\"id\": 0, \"seek\": 0, \"start\": 0.0, \"end\": 3.12, \"text\": \"\\u6771\\u4eac\\u306f\\u6674\\u308c\\u3002\", \"tokens\": [50364, 1, 2, 50520], \"temperature\": 0.0, \"avg_logprob\": -0.5, \"compression_ratio\": 0.75, \"no_speech_prob\": 0.002}, {\"id\": 1, \"seek\": 0, \"start\": 3.12, \"end\": 12.34, \"text\": \" \\ud83c\\udf89 caf\\u00e9 \\u0001 \\u00e9\\ufffd\", \"tokens\": [50520, 3, 50981], \"temperature\": 0.0, \"avg_logprob\": -0.5, \"compression_ratio\": 0.75, \"no_speech_prob\": 0.002}], \"language\": \"ja\"}"
+}
+},
+{
+"name": "no segment",
+"language": "en",
+"windows": [],
+"text": "",
+"outputs": {
+"txt": "",
+"vtt": "WEBVTT\n\n",
+"srt": "",
+"tsv": "start\tend\ttext\n",
+"json": "{\"text\": \"\", \"segments\": [], \"language\": \"en\"}"
+}
+},
+{
+"name": "every segment cleared",
+"language": "en",
+"windows": [
+{
+"seek": 0,
+"size": 3000,
+"temperature": 0.0,
+"avg_logprob": -0.4,
+"compression_ratio": 1.0,
+"no_speech_prob": 0.3,
+"segments": [
+{
+"start": 0,
+"stop": 0,
+"tokens": [],
+"text": ""
+},
+{
+"start": 100,
+"stop": 100,
+"tokens": [],
+"text": ""
+}
+]
+},
+{
+"seek": 3000,
+"size": 500,
+"temperature": 1.0,
+"avg_logprob": -1.5,
+"compression_ratio": 0.9,
+"no_speech_prob": 5.960464477539063e-08,
+"segments": [
+{
+"start": 3000,
+"stop": 3500,
+"tokens": [],
+"text": ""
+}
+]
+}
+],
+"text": "",
+"outputs": {
+"txt": "\n\n\n",
+"vtt": "WEBVTT\n\n",
+"srt": "",
+"tsv": "start\tend\ttext\n0\t0\t\n1000\t1000\t\n30000\t35000\t\n",
+"json": "{\"text\": \"\", \"segments\": [{\"id\": 0, \"seek\": 0, \"start\": 0.0, \"end\": 0.0, \"text\": \"\", \"tokens\": [], \"temperature\": 0.0, \"avg_logprob\": -0.4, \"compression_ratio\": 1.0, \"no_speech_prob\": 0.3, \"words\": []}, {\"id\": 1, \"seek\": 0, \"start\": 1.0, \"end\": 1.0, \"text\": \"\", \"tokens\": [], \"temperature\": 0.0, \"avg_logprob\": -0.4, \"compression_ratio\": 1.0, \"no_speech_prob\": 0.3, \"words\": []}, {\"id\": 2, \"seek\": 3000, \"start\": 30.0, \"end\": 35.0, \"text\": \"\", \"tokens\": [], \"temperature\": 1.0, \"avg_logprob\": -1.5, \"compression_ratio\": 0.9, \"no_speech_prob\": 5.960464477539063e-08, \"words\": []}], \"language\": \"en\"}"
+}
+},
+{
+"name": "a power of two",
+"language": "en",
+"windows": [
+{
+"seek": 0,
+"size": 3000,
+"temperature": 0.0,
+"avg_logprob": -0.0009765625,
+"compression_ratio": 8.0,
+"no_speech_prob": 5.960464477539063e-08,
+"segments": [
+{
+"start": 0,
+"stop": 100,
+"tokens": [
+50364,
+1,
+50414
+],
+"text": " Power."
+}
+]
+}
+],
+"text": " Power.",
+"outputs": {
+"txt": "Power.\n",
+"vtt": "WEBVTT\n\n00:00.000 --> 00:01.000\nPower.\n\n",
+"srt": "1\n00:00:00,000 --> 00:00:01,000\nPower.\n\n",
+"tsv": "start\tend\ttext\n0\t1000\tPower.\n",
+"json": "{\"text\": \" Power.\", \"segments\": [{\"id\": 0, \"seek\": 0, \"start\": 0.0, \"end\": 1.0, \"text\": \" Power.\", \"tokens\": [50364, 1, 50414], \"temperature\": 0.0, \"avg_logprob\": -0.0009765625, \"compression_ratio\": 8.0, \"no_speech_prob\": 5.960464477539063e-08}], \"language\": \"en\"}"
+}
+}
+]
+}

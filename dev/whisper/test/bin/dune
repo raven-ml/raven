@@ -1,0 +1,10 @@
+; main.t runs the command line on the LibriSpeech fixture with the small model
+; of ../upstream/transcript.pt and the trimmed tokenizer, and writes every
+; format.
+
+(cram
+ (deps
+  ../../bin/main.exe
+  ../upstream/transcript.pt
+  ../upstream/gpt2-1000.tiktoken
+  ../librispeech/7902-96594-0025.flac))

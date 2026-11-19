@@ -120,3 +120,14 @@
   upstream/transcript.json
   upstream/transcript.pt
   upstream/gpt2-1000.tiktoken))
+
+; test_writer.exe compares the writers with upstream's (openai/whisper
+; 86098128, whisper/utils.py). upstream/writer.json was cut on 2026-11-19 by
+;   gen/run.sh P4-impl/writer.py OUT
+; in _plans/whisper-port/gen's pinned environment, outside the repository.
+
+(test
+ (name test_writer)
+ (modules test_writer)
+ (libraries whisper whisper_support windtrap)
+ (deps upstream/writer.json))
