@@ -3,8 +3,9 @@
 OpenAI's gpt-oss on raven. Each block pairs grouped-query attention, with
 sinks and YaRN positions, with a mixture of experts. The weights load from
 the HuggingFace checkpoint as stored, experts packed as MXFP4. The chat goes
-through the harmony format. The decode step runs eagerly on the host, or
-compiled over the devices `--devices` names, expert-parallel over several.
+through the harmony format. The decode step runs compiled over the devices
+`--devices` names, the host by default, expert-parallel over several, or
+eagerly on the host with `--eager`.
 
 ```bash
 dune exec apps/gpt-oss/bin/main.exe -- --prompt "What is the capital of France?"

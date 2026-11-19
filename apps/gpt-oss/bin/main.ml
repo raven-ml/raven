@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Chat with gpt-oss: a harmony conversation decoded greedily through
-   key-value caches, eagerly on the host or compiled over [--devices]. *)
+   key-value caches, compiled over [--devices], or eagerly with [--eager]. *)
 
 open Kaun
 
@@ -70,7 +70,8 @@ let printer harmony ~show_analysis =
     Harmony.stopped p
 
 let () =
-  let repo = ref "tiny-random/gpt-oss-mxfp4" and devices = ref "" in
+  let repo = ref "tiny-random/gpt-oss-mxfp4" and devices = ref "cpu" in
+  let eager = ref false in
   let prompt = ref "What is the capital of France?" and count = ref 256 in
   let show_analysis = ref false in
   Arg.parse
@@ -80,8 +81,12 @@ let () =
         "A gpt-oss repository (default tiny-random/gpt-oss-mxfp4)" );
       ( "--devices",
         Arg.Set_string devices,
-        "Compile over these devices, expert-parallel over several: a device \
-         (CUDA) or a comma-separated list (CPU:1,CPU:2)" );
+        "Compile over these devices, expert-parallel over several, as \
+         Rig_gpus.open_all names them: a device (cpu, the default, or cuda) \
+         or a comma-separated list (CPU:1,CPU:2)" );
+      ( "--eager",
+        Arg.Set eager,
+        "Compute eagerly, not compiled: on the host, whose set has kernels" );
       ("--prompt", Arg.Set_string prompt, "What the user says");
       ("--count", Arg.Set_int count, "Most tokens to generate (default 256)");
       ( "--show-analysis",
@@ -89,8 +94,8 @@ let () =
         "Print the model's reasoning on standard error" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "main.exe [--repo REPO] [--devices LIST] [--prompt TEXT] [--count N] \
-     [--show-analysis]";
+    "main.exe [--repo REPO] [--devices LIST] [--eager] [--prompt TEXT] \
+     [--count N] [--show-analysis]";
   let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config !repo) in
   let weights = Kaun_hf.load_safetensors !repo in
   let harmony =
@@ -100,19 +105,16 @@ let () =
   let on_token = printer harmony ~show_analysis:!show_analysis in
   (* At the weights' own dtype the import casts nothing. *)
   let (Gpt_oss.Dtype dt) = Gpt_oss.stored_dtype weights in
-  let run ~jit s =
-    let placement = Gpt_oss.expert_parallel s in
-    let p = Gpt_oss.of_hf ~placement cfg dt weights in
-    let cfg = Gpt_oss.place_config (Nx.Placement.on s) cfg in
-    let caches =
-      Gpt_oss.cache ~placement cfg ~slots:(Array.length ids + !count) dt
-    in
-    decode (greedy ~jit s cfg p) caches ~count:!count ~on_token
-      (Array.map Int64.of_int ids)
+  let (module D) =
+    Nx.devices (Result.error_to_failure (Rig_gpus.open_all !devices))
   in
-  if !devices = "" then run ~jit:false Nx.Host.v
-  else
-    let open_ name = Result.error_to_failure (Rig_gpus.open_ name) in
-    let names = List.map String.trim (String.split_on_char ',' !devices) in
-    let module D = (val Nx.devices (List.map open_ names)) in
-    run ~jit:true D.v
+  let placement = Gpt_oss.expert_parallel D.v in
+  let p = Gpt_oss.of_hf ~placement cfg dt weights in
+  let cfg = Gpt_oss.place_config D.on cfg in
+  let caches =
+    Gpt_oss.cache ~placement cfg ~slots:(Array.length ids + !count) dt
+  in
+  decode
+    (greedy ~jit:(not !eager) D.v cfg p)
+    caches ~count:!count ~on_token
+    (Array.map Int64.of_int ids)
