@@ -2040,12 +2040,13 @@ let compiled_pullback c x w ct =
    continued from the carry [c]: the program reads none of its load, so [y]
    varies with [c] alone. [dc] is [∂y_i / ∂c]: for [x] of 3 elements, 1 for a
    sum, [2^(i + 1)] for a product, and for an extreme 1 where [c] beats 2 and 0
-   where 2 beats [c]. Where [half], it scans float16 from a float32 carry, its
-   carrier. *)
+   where 2 beats [c]. Where not [loaded], the scan has no load, and where
+   [half], it scans float16 from a float32 carry, its carrier. *)
 
 type constant_scan = {
   name : string;
   monoid : Nx_kernel.monoid;
+  loaded : bool;
   half : bool;
   c : float;
   dc : float array;
@@ -2053,7 +2054,8 @@ type constant_scan = {
 
 let constant_scans =
   let ones = [| 1.; 1.; 1. |] and zeros = [| 0.; 0.; 0. |] in
-  let case ?(half = false) name monoid c dc = { name; monoid; half; c; dc }
+  let case ?(loaded = true) ?(half = false) name monoid c dc =
+    { name; monoid; loaded; half; c; dc }
   in
   [
     case "a sum" Sum 3. ones;
@@ -2063,11 +2065,15 @@ let constant_scans =
     case "a minimum at the carry" Min 1. ones;
     case "a minimum at the elements" Min 3. zeros;
     case "a float16 product" ~half:true Prod 3. [| 2.; 4.; 8. |];
+    case "a sum of no load" ~loaded:false Sum 3. ones;
+    case "a product of no load" ~loaded:false Prod 3. [| 2.; 4.; 8. |];
+    case "a maximum of no load" ~loaded:false Max 3. ones;
   ]
 
 let scan_in (type s r) (dt : (float, s) D.t) (wide : (float, r) D.t) s (x, c) =
   let x = Nx.cast dt x and c = Nx.cast wide c in
-  let prog = P.of_exprs ~ins:[| D.Any dt |] [| P.E.any (P.E.const dt 2.) |] in
+  let ins = Iarray.of_list (if s.loaded then [ D.Any dt ] else []) in
+  let prog = P.of_exprs ~ins [| P.E.any (P.E.const dt 2.) |] in
   Nx.cast f64
     (Nx.Prim.eval ~by:"test"
        (Scan
@@ -2076,7 +2082,7 @@ let scan_in (type s r) (dt : (float, s) D.t) (wide : (float, r) D.t) s (x, c) =
             axis = 0;
             prog;
             reduction = Monoid (s.monoid, 0, dt);
-            loads = [| Plain x |];
+            loads = (if s.loaded then [| Plain x |] else [||]);
             carry = Some (Any c);
           }))
 

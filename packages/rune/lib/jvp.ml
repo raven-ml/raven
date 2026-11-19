@@ -134,15 +134,15 @@ let mask i loads =
   done;
   !m
 
-(* [p]'s outputs at every index of [layout] over [loads], one map. *)
-let run_map (type d) ~by layout (p : P.t) (loads : d Prim.load iarray) :
+(* [p]'s outputs at every index of [layout] over [loads], one map, at [at]
+   where there are no loads. *)
+let run_map (type d) ?at ~by layout (p : P.t) (loads : d Prim.load iarray) :
     d Prim.any array =
   let dts k = P.dtype p (Iarray.get p.outs k) in
   let (Prim.Outputs (outs, read)) =
     Prim.outputs (List.init (Iarray.length p.outs) dts)
   in
-  Array.of_list
-    (read (Prim.eval ~by (Map { layout; prog = p; outs; loads; at = None })))
+  Array.of_list (read (Prim.eval ~by (Map { layout; prog = p; outs; loads; at })))
 
 (* Maps *)
 
@@ -673,6 +673,12 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
   in
   let b = Scalar.start prog ~tangents:(has i loads) ~extra:[||] in
   let jl = jvp_loads i loads in
+  (* A scan of no loads lies where its carry does. *)
+  let at =
+    match pcarry with
+    | Some (Any c) when Iarray.length loads = 0 -> Some (Nx.placement c)
+    | _ -> None
+  in
   (* Output [k] and its tangent in [w], computed into arrays; none where neither
      it nor the carry has a tangent, or [dt] has no derivative. *)
   let parts (type v s c q) (dt : (v, s) D.t) (w : (c, q) D.t) k =
@@ -687,7 +693,7 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
           | Some t -> in_dtype b w' t
           | None -> Scalar.const b w' 0.
         in
-        let vs = run_map ~by layout (Scalar.finish b ~outs:[| v; t |]) jl in
+        let vs = run_map ?at ~by layout (Scalar.finish b ~outs:[| v; t |]) jl in
         Some (expect w vs.(0), expect w vs.(1))
   in
   (* The tangents [g] computes in output [k]'s carrier or [dt]'s, the wider,

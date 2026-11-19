@@ -500,6 +500,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jvp`, `Rune.vjp` and `Rune.grad` differentiate an `Nx.Prim.Scan` of no
+  load continued from a carry with a tangent. They raised that a map of no
+  loads names no placement.
 - `Rune.vjp` and `Rune.grad` keep constant a value that one operation
   computes beside a tangent without reading it, as a `Rune.custom_jvp`
   tangent map may, or the derivative of an `Nx.Prim.Scan` whose program
