@@ -7,11 +7,11 @@
 
    Downloads the weights and tokenizer from an ungated HuggingFace mirror (about
    2.5 GB, cached afterwards) and samples a continuation of a prompt through
-   key-value caches. Without [--devices] it decodes eagerly on the host.
-   [--devices LIST] places the model on a device, tensor-parallel over several,
-   and compiles the decode step for them with [Rune.jit], which is how a GPU
-   computes; [--temperature 0] decodes greedily. Over several devices, software
-   devices ([cpu:k]) among them, the step compiles as over one.
+   key-value caches. [--devices LIST] places the model on a device, the host by
+   default, tensor-parallel over several, and compiles the decode step for them
+   with [Rune.jit], which is how a GPU computes; [--eager] decodes eagerly on
+   the host instead. [--temperature 0] decodes greedily. Over several devices,
+   software devices ([cpu:k]) among them, the step compiles as over one.
 
    [--gguf FILE] reads the configuration and the weights from a GGUF checkpoint
    instead, quantised or not, decoded at float32 unless [--dtype] says
@@ -186,7 +186,7 @@ let load_tokenizer repo =
 
 let () =
   let prompt = ref "The capital of France is" in
-  let count = ref 24 and devices = ref "" in
+  let count = ref 24 and devices = ref "cpu" and eager = ref false in
   let dtype = ref "" and temperature = ref 0.7 and seed = ref 0 in
   let top_k = ref 50 and top_p = ref 0.9 in
   let repo = ref Llama.default_repo and gguf = ref "" in
@@ -197,8 +197,9 @@ let () =
       ( "--devices",
         Arg.Set_string devices,
         "Compile the decode step over these devices, tensor-parallel over \
-         several: a device (METAL) or a comma-separated list \
-         (CPU:1,CPU:2,CPU:3,CPU:4)" );
+         several: a device (cpu, the default, or METAL) or a comma-separated \
+         list (CPU:1,CPU:2,CPU:3,CPU:4)" );
+      ("--eager", Arg.Set eager, "Compute eagerly, on the host");
       ( "--dtype",
         Arg.Set_string dtype,
         "float32, float16 or bfloat16 (default: the weights' own)" );
@@ -213,8 +214,8 @@ let () =
       ("--gguf", Arg.Set_string gguf, "Read the model from this GGUF file");
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "llama [--prompt P] [--count N] [--devices LIST] [--dtype DT] [--repo R] \
-     [--gguf FILE]";
+    "llama [--prompt P] [--count N] [--devices LIST] [--eager] [--dtype DT] \
+     [--repo R] [--gguf FILE]";
   if !count < 0 then begin
     prerr_endline "llama: --count must not be negative";
     exit 2
@@ -251,14 +252,10 @@ let () =
       ~top_k:!top_k ~top_p:!top_p ~seed:!seed ~max_tokens:!count ids
   in
   let toks =
-    if !devices = "" then run ~jit:false (fun _ ~axis:_ -> Nx.Host.on)
-    else
-      let names = List.map String.trim (String.split_on_char ',' !devices) in
-      let devices =
-        List.map (fun n -> Result.error_to_failure (Rig_gpus.open_ n)) names
-      in
-      let module D = (val Nx.devices devices) in
-      run ~jit:true (parallel D.v)
+    let (module D) =
+      Nx.devices (Result.error_to_failure (Rig_gpus.open_all !devices))
+    in
+    run ~jit:(not !eager) (parallel D.v)
   in
   (* The prompt's tokens decode with the continuation: a SentencePiece tokenizer
      drops the space that opens the text it decodes, so the continuation decoded

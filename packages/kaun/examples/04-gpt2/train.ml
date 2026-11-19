@@ -532,17 +532,14 @@ let () =
     (Nx.Ptree.place (module Gpt2.Params) Nx.Host.on !params, List.rev !records)
   in
   let params, records =
+    let open_all names = Result.error_to_failure (Rig_gpus.open_all names) in
     if !devices = "" then
-      let d = Result.error_to_failure (Rig_gpus.open_ !device) in
-      let module D = (val Nx.devices [ d ]) in
+      let module D = (val Nx.devices (open_all !device)) in
       train ~params_at:D.on ~batch_at:D.on
     else begin
       if !compute_dtype = "float16" then
         failwith "--compute-dtype float16 does not support --devices";
-      let names = List.map String.trim (String.split_on_char ',' !devices) in
-      let devs =
-        List.map (fun n -> Result.error_to_failure (Rig_gpus.open_ n)) names
-      in
+      let devs = open_all !devices in
       device := String.concat "," (List.map Rig.name devs);
       (* The batch is split on axis 0; the parameters lie whole on each
          device. *)

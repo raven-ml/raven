@@ -4462,6 +4462,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- **Breaking:** the gpt2 and llama examples compile by default, on the
+  devices their flags name as `Rig_gpus.open_all` reads them, `cpu` by
+  default, and take `--eager` to compute eagerly. gpt2's `main.exe` and
+  llama's `validate.exe` take `--device D` in place of `--jit DEVICE`, and
+  llama's `main.exe` compiles on the host when `--devices` names none.
 - Add `Kaun_hf.download_url ~sha256 url`, which downloads the file at a
   pinned URL into raven's cache, under `$RAVEN_CACHE_ROOT/sha256/<digest>/`
   (else `$XDG_CACHE_HOME/raven/sha256/`), and keeps it only if its SHA-256

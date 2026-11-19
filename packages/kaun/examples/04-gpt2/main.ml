@@ -7,9 +7,10 @@
 
    Loads the 124M-parameter GPT-2 weights — from a local safetensors file when
    one is cached, downloading from the HuggingFace Hub otherwise (~548MB, cached
-   afterwards) — and greedily generates continuations of a prompt. [--jit
-   DEVICE] places the model on DEVICE and compiles the decode step for it with
-   [Rune.jit], which is how a GPU computes. *)
+   afterwards) — and greedily generates continuations of a prompt. The model
+   lies on the devices [--device] names, the host by default, and the decode
+   step compiles there with [Rune.jit], which is how a GPU computes; [--eager]
+   computes eagerly instead, on the host. *)
 
 let default_prompt = "What is the answer to life, the universe, and everything?"
 
@@ -227,7 +228,7 @@ let () =
   let prompt = ref default_prompt in
   let count = ref 10 in
   let check_only = ref false in
-  let jit = ref "" in
+  let device = ref "cpu" and eager = ref false in
   let dtype = ref "" in
   Arg.parse
     [
@@ -237,10 +238,11 @@ let () =
         Arg.Set check_only,
         "Check that the cached path reproduces the whole-sequence logits on \
          the prompt, and exit" );
-      ( "--jit",
-        Arg.Set_string jit,
-        "Compile the forward pass for this device (CPU, METAL or CUDA:i); \
-         eager when omitted" );
+      ( "--device",
+        Arg.Set_string device,
+        "Compile the forward pass on these devices, as Rig_gpus.open_all names \
+         them (default cpu; METAL, CUDA:i)" );
+      ("--eager", Arg.Set eager, "Compute eagerly, on the host");
       ( "--dtype",
         Arg.Set_string dtype,
         "Model dtype: float32, float16 or bfloat16 (default: the weights' own, \
@@ -248,7 +250,7 @@ let () =
          dtype" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "gpt2 [--prompt P] [--count N] [--jit DEVICE] [--dtype DT]";
+    "gpt2 [--prompt P] [--count N] [--device D] [--eager] [--dtype DT]";
   if !count < 1 then begin
     prerr_endline "gpt2: --count must be positive";
     exit 2
@@ -285,8 +287,7 @@ let () =
     let text = Brot.decode tokenizer (Array.map Int64.to_int toks) in
     print_endline text
   in
-  if !jit = "" then run ~jit:false Nx.Host.on
-  else
-    let d = Result.error_to_failure (Rig_gpus.open_ !jit) in
-    let module D = (val Nx.devices [ d ]) in
-    run ~jit:true D.on
+  let (module D) =
+    Nx.devices (Result.error_to_failure (Rig_gpus.open_all !device))
+  in
+  run ~jit:(not !eager) D.on

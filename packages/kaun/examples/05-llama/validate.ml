@@ -26,15 +26,16 @@
    reference's and these meet the float32 tolerance too.
 
    [--dtype bfloat16] or [float16] runs the model at half precision against the
-   same float32 reference, to the tolerance half precision allows. [--jit
-   DEVICE] places the model on DEVICE and compiles the forward passes for it;
-   the per-block streams are then checked at the last block only, each block
-   being its own compilation.
+   same float32 reference, to the tolerance half precision allows. [--device
+   D] places the model on D, the host by default, and compiles the forward
+   passes for it, the per-block streams then checked at the last block only,
+   each block being its own compilation; [--eager] computes eagerly on the
+   host, checking every block.
 
    Usage: validate.exe [--fixture FILE] [--weights FILE --config FILE | --gguf
-   FILE] [--dtype DT] [--jit DEVICE] Without [--weights] or [--gguf] the files
-   come from the fixture's repository (0.7 to 3 GB, cached). Not part of the
-   test suite: it needs the download. *)
+   FILE] [--dtype DT] [--device D] [--eager] Without [--weights] or [--gguf] the
+   files come from the fixture's repository (0.7 to 3 GB, cached). Not part of
+   the test suite: it needs the download. *)
 
 open Kaun
 
@@ -240,7 +241,7 @@ let validate (type b d) ~jit ~tol ~exact fx cfg
 let () =
   let weights = ref "" and config = ref "" and gguf = ref "" in
   let fixture = ref "fixtures/llama-3.2-1b.json" in
-  let dtype = ref "float32" and jit = ref "" in
+  let dtype = ref "float32" and device = ref "cpu" and eager = ref false in
   Arg.parse
     [
       ( "--fixture",
@@ -252,11 +253,14 @@ let () =
         Arg.Set_string gguf,
         "A GGUF checkpoint (default: the fixture's file, if it names one)" );
       ("--dtype", Arg.Set_string dtype, "float32 (default), bfloat16 or float16");
-      ("--jit", Arg.Set_string jit, "Compile the forward passes for this device");
+      ( "--device",
+        Arg.Set_string device,
+        "Compile the forward passes on these devices (default cpu)" );
+      ("--eager", Arg.Set eager, "Compute eagerly, on the host");
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "validate.exe [--fixture FILE] [--weights FILE --config FILE | --gguf \
-     FILE] [--dtype DT] [--jit DEVICE]";
+     FILE] [--dtype DT] [--device D] [--eager]";
   let fx = json_of_file !fixture in
   let repo = string (mem "repo" fx) in
   Printf.printf "%s, reference recorded from sha256 %s\n%!" repo
@@ -287,10 +291,8 @@ let () =
       (Llama.place_config at cfg)
       p dt
   in
-  if !jit = "" then run ~jit:false Nx.Host.on
-  else begin
-    let d = Result.error_to_failure (Rig_gpus.open_ !jit) in
-    let module D = (val Nx.devices [ d ]) in
-    run ~jit:true D.on
-  end;
+  (let (module D) =
+     Nx.devices (Result.error_to_failure (Rig_gpus.open_all !device))
+   in
+   run ~jit:(not !eager) D.on);
   if !failures > 0 then exit 1
