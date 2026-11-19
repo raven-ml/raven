@@ -1017,17 +1017,28 @@ let test_shared_rows_gradients () =
   in
   grads_ok (Rune.check_grads qkvs64 loss p)
 
-(* A mask or lengths would tell lanes apart, which shared rows do not. *)
+(* A mask, lengths, a bias or dropout would tell lanes apart, which shared
+   rows do not. *)
 let test_shared_rows_take_no_mask () =
   let q = Nx.zeros Nx.float32 [| 4; 2; 1; 3 |] in
   let kv = Nx.zeros Nx.float32 [| 2; 2; 5; 3 |] in
   let refused f =
     raises
       (Invalid_argument
-         "Attention.attend: keys shared by several lanes take no mask and no \
-          lengths")
+         "Attention.attend: keys shared by several lanes take no mask, \
+          lengths, bias or dropout")
       f
   in
+  refused (fun () ->
+      Attention.attend
+        ~bias:(Nx.zeros Nx.float32 [| 5 |])
+        q
+        (Nx.Dense { k = kv; v = kv }));
+  refused (fun () ->
+      Attention.attend ~dropout:0.5 q (Nx.Dense { k = kv; v = kv }));
+  values_are ~tol:0. ~msg:"a rate of 0 drops nothing there"
+    (Nx.to_array (Attention.attend q (Nx.Dense { k = kv; v = kv })))
+    (Attention.attend ~dropout:0. q (Nx.Dense { k = kv; v = kv }));
   refused (fun () ->
       Attention.attend ~mask:Nx.causal q (Nx.Dense { k = kv; v = kv }));
   refused (fun () ->
@@ -3998,6 +4009,205 @@ let test_rejects_bad_geometry () =
       Attention.apply ~head_dim:2 { p with Attention.v }
         (Nx.zeros Nx.float32 [| 2; 4 |]))
 
+(* Dropout of the weights *)
+
+(* Queries of two heads over one key-value head of five keys. Under the mask,
+   rows 0 and 2 see one key each, row 1 every key, row 3 none. *)
+let drop_visible =
+  lazy
+    (Nx.create Nx.bool [| 1; 1; 4; 5 |]
+       [|
+         true; false; false; false; false;
+         true; true; true; true; true;
+         false; false; true; false; false;
+         false; false; false; false; false;
+       |])
+
+let drop_bias () =
+  Nx.create Nx.float32 [| 1; 1; 1; 5 |] [| 0.; 0.5; -1.; 0.25; 2. |]
+
+let drop_sinks () = Nx.create Nx.float64 [| 2 |] [| -0.5; 1.5 |]
+
+(* One key per pair, shared by the heads. *)
+let drop_keys =
+  lazy
+    (Nx.Rng.reshape [| 1; 1; 4; 5 |]
+       (Nx.Rng.split_batch ~n:20 (Nx.Rng.key 6)))
+
+let drop_inputs () =
+  let drawn seed shape =
+    Nx.Rng.normal ~key:(Nx.Rng.key seed) Nx.float64 shape
+  in
+  (drawn 1 [| 1; 2; 4; 4 |], drawn 2 [| 1; 1; 5; 4 |], drawn 3 [| 1; 1; 5; 3 |])
+
+let drop_mask () =
+  Dropout.mask ~rate:0.5 ~key:(Lazy.force drop_keys)
+    (Nx.zeros Nx.float64 [| 1; 2; 4; 5 |])
+
+(* What [attend] is given, of which [mask] and [sinks] may be left out. *)
+type drop_case = { masked : bool; sinked : bool }
+
+let dropped c ~bias ~sinks q k v =
+  let mask =
+    if c.masked then Some (captured (Lazy.force drop_visible)) else None
+  in
+  let sinks = if c.sinked then Some sinks else None in
+  Attention.attend ?mask ~bias ?sinks ~dropout:0.5 ~key:(Lazy.force drop_keys)
+    q (Nx.Dense { k; v })
+
+(* The weights in full: the softmax over the visible scores, biased, and a
+   last column of the sinks, or of a score so low that its weight is exactly
+   0 beside any visible key and 1 where none is visible; then that column
+   dropped, the weights dropped, and the values weighed. *)
+let dropped_reference c ~bias ~sinks q k v =
+  let s = Nx.mul_s (Nx.matmul q (Nx.swapaxes 2 3 k)) 0.5 in
+  let s = Nx.add s (f64 bias) in
+  let s =
+    if not c.masked then s
+    else
+      Nx.where (Lazy.force drop_visible) s
+        (Nx.scalar_like s Float.neg_infinity)
+  in
+  let column =
+    if c.sinked then Nx.reshape [| 1; 2; 1; 1 |] sinks
+    else Nx.full Nx.float64 [| 1; 1; 1; 1 |] (-1e30)
+  in
+  let column = Nx.broadcast_to [| 1; 2; 4; 1 |] column in
+  let w = Nx.softmax (Nx.concatenate ~axis:3 [ s; column ]) in
+  let w = Nx.slice [ A; A; A; R (0, 5) ] w in
+  let w = Nx.where (drop_mask ()) (Nx.mul_s w 2.) (Nx.scalar_like w 0.) in
+  Nx.matmul w v
+
+(* Each case of a row's keys occurs under the mask and these keys. *)
+let test_dropout_cases () =
+  let vis =
+    Nx.to_array
+      (Nx.broadcast_to [| 1; 2; 4; 5 |] (Lazy.force drop_visible))
+  in
+  let z = Nx.to_array (drop_mask ()) in
+  let case r =
+    let seen = ref 0 and kept = ref 0 in
+    for j = 0 to 4 do
+      if vis.((5 * r) + j) then begin
+        incr seen;
+        if z.((5 * r) + j) then incr kept
+      end
+    done;
+    if !seen = 0 then "sees none"
+    else if !kept = 0 then "keeps none"
+    else if !kept = !seen then "keeps all"
+    else "keeps some"
+  in
+  equal ~msg:"the rows' cases" (list string)
+    [ "keeps all"; "keeps none"; "keeps some"; "sees none" ]
+    (List.sort_uniq compare (List.init 8 case))
+
+let drop_cases =
+  List.concat_map
+    (fun masked -> List.map (fun sinked -> { masked; sinked }) [ true; false ])
+    [ true; false ]
+
+let drop_case_id c =
+  Printf.sprintf "%s, %s"
+    (if c.masked then "masked" else "unmasked")
+    (if c.sinked then "sinks" else "no sinks")
+
+let test_dropout_weights c =
+  let q, k, v = drop_inputs () in
+  let bias = drop_bias () and sinks = drop_sinks () in
+  values_are ~tol:1e-12 ~msg:"the dropped weights times the values"
+    (Nx.to_array (dropped_reference c ~bias ~sinks q k v))
+    (dropped c ~bias ~sinks q k v);
+  let d f x = Rune.grad Nx.Ptree.tensor (fun x -> Nx.sum (f x)) x in
+  let grad ?(tol = 1e-12) name g =
+    values_are ~tol ~msg:("its gradient in " ^ name)
+      (Nx.to_array (g (dropped_reference c)))
+      (g (dropped c))
+  in
+  grad "q" (fun f -> d (fun q -> f ~bias ~sinks q k v) q);
+  grad "k" (fun f -> d (fun k -> f ~bias ~sinks q k v) k);
+  grad "v" (fun f -> d (fun v -> f ~bias ~sinks q k v) v);
+  grad ~tol:1e-6 "bias" (fun f -> d (fun bias -> f ~bias ~sinks q k v) bias);
+  if c.sinked then
+    grad "sinks" (fun f -> d (fun sinks -> f ~bias ~sinks q k v) sinks)
+
+let test_dropout_compiled () =
+  let q, k, v = drop_inputs () in
+  let bias = drop_bias () and sinks = drop_sinks () in
+  let c = { masked = true; sinked = true } in
+  let f q = dropped c ~bias ~sinks q k v in
+  values_are ~tol:1e-12 ~msg:"compiled = eager" (Nx.to_array (f q))
+    (Rune.jit' f q);
+  let g q = Rune.grad Nx.Ptree.tensor (fun q -> Nx.sum (f q)) q in
+  values_are ~tol:1e-12 ~msg:"its gradient, compiled = eager"
+    (Nx.to_array (g q)) (Rune.jit' g q)
+
+(* Two keys of score 0, a bias of -8.03125 on the second, and values 0 and 1:
+   the result is sigmoid (-8.03125). A bias rounded to bfloat16, 8 or 8.0625,
+   would be off by 3%, against bfloat16's rounding of the result, under
+   0.4%. *)
+let test_bias_keeps_its_bits () =
+  let bf16 = Nx.bfloat16 in
+  let q = Nx.zeros bf16 [| 1; 1; 1; 2 |] in
+  let k = Nx.zeros bf16 [| 1; 1; 2; 2 |] in
+  let v = Nx.create bf16 [| 1; 1; 2; 1 |] [| 0.; 1. |] in
+  let bias = Nx.create Nx.float32 [| 1; 1; 1; 2 |] [| 0.; -8.03125 |] in
+  let y = Attention.attend ~bias q (Nx.Dense { k; v }) in
+  let y = Nx.item [ 0; 0; 0; 0 ] y in
+  let want = 1. /. (1. +. exp 8.03125) in
+  equal (float (want *. 0x1p-8)) want y
+
+let test_dropout_zero () =
+  let q, k, v = drop_inputs () in
+  let kv = Nx.Dense { k; v } and mask = captured (Lazy.force drop_visible) in
+  values_are ~tol:0. ~msg:"a rate of 0 drops nothing"
+    (Nx.to_array (Attention.attend ~mask q kv))
+    (Attention.attend ~mask ~dropout:0. ~key:(Lazy.force drop_keys) q kv)
+
+(* Keys of [m] slots in pages of three, read through a table in reverse. *)
+let test_dropout_paged () =
+  let q, k, v = drop_inputs () in
+  let pad x = Nx.pad [| (0, 0); (0, 0); (0, 1); (0, 0) |] 0. x in
+  let paged x =
+    let c = Nx.dim 3 x in
+    let pages = Nx.reshape [| 2; 1; 3; c |] (pad x) in
+    Nx.concatenate ~axis:0
+      [ Nx.slice [ R (1, 2) ] pages; Nx.slice [ R (0, 1) ] pages ]
+  in
+  let table = Nx.create Nx.int64 [| 1; 2 |] [| 1L; 0L |] in
+  let mask =
+    captured
+      (Nx.pad [| (0, 0); (0, 0); (0, 0); (0, 1) |] false
+         (Lazy.force drop_visible))
+  in
+  let keys =
+    Nx.Rng.reshape [| 1; 1; 4; 6 |] (Nx.Rng.split_batch ~n:24 (Nx.Rng.key 6))
+  in
+  let attend kv = Attention.attend ~mask ~dropout:0.5 ~key:keys q kv in
+  values_are ~tol:1e-12 ~msg:"paged keys drop as dense ones"
+    (Nx.to_array (attend (Nx.Dense { k = pad k; v = pad v })))
+    (attend (Nx.Paged { k = paged k; v = paged v; table }))
+
+let test_dropout_refusals () =
+  let q, k, v = drop_inputs () in
+  let kv = Nx.Dense { k; v } in
+  let refuses msg f =
+    raises (Invalid_argument ("Attention.attend: " ^ msg)) f
+  in
+  refuses "dropout must be in [0, 1), got 1" (fun () ->
+      Attention.attend ~dropout:1. q kv);
+  refuses "dropout must be in [0, 1), got nan" (fun () ->
+      Attention.attend ~dropout:Float.nan q kv);
+  refuses
+    "dropout keys of batch shape [3] do not broadcast to the weights' [1; 2; \
+     4; 5]"
+    (fun () ->
+      Attention.attend ~dropout:0.5
+        ~key:(Nx.Rng.split_batch ~n:3 (Nx.Rng.key 1)) q kv);
+  refuses
+    "a bias of shape [4] does not broadcast to the weights' [1; 2; 4; 5]"
+    (fun () -> Attention.attend ~bias:(Nx.zeros Nx.float32 [| 4 |]) q kv)
+
 let () =
   exit
     (run "kaun attention"
@@ -4067,7 +4277,7 @@ let () =
                test_shared_rows_equal_copies;
              test "a shared row's gradient sums its lanes'"
                test_shared_rows_gradients;
-             test "shared rows take no mask and no lengths"
+             test "shared rows take no mask, lengths, bias or dropout"
                test_shared_rows_take_no_mask;
              test "rows that do not divide the lanes are rejected"
                test_shared_rows_reject_non_divisors;
@@ -4173,6 +4383,18 @@ let () =
              test "a packed lane masks within each sequence" test_packed_mask;
              test_packed_alone;
              test "a compiled packing equals eager" test_packed_compiled;
+           ];
+         group "dropout of the weights"
+           [
+             test "each case of a row's keys occurs" test_dropout_cases;
+             cases "the weights are dropped by the mask of their shape"
+               ~id:drop_case_id drop_cases test_dropout_weights;
+             test "compiled dropout is eager dropout" test_dropout_compiled;
+             test "a float32 bias keeps its bits under bfloat16 queries"
+               test_bias_keeps_its_bits;
+             test "a rate of 0 is attention" test_dropout_zero;
+             test "paged keys drop as dense ones" test_dropout_paged;
+             test "dropout's arguments are checked" test_dropout_refusals;
            ];
          group "paged reads"
            [

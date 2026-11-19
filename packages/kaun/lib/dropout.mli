@@ -5,9 +5,9 @@
 
 (** Dropout regularization (Srivastava et al., 2014).
 
-    Dropout has no parameters and no state, only a train/eval mode: it is a
-    single function taking the same [~training] flag as the other mode-sensitive
-    layers (see {!Batch_norm}), so one model forward serves both training and
+    Dropout has no parameters and no state, only a train/eval mode: {!apply}
+    takes the same [~training] flag as the other mode-sensitive layers (see
+    {!Batch_norm}), so one model forward serves both training and
     evaluation:
 
     {[
@@ -22,7 +22,24 @@
     ambient {!Nx.Rng} scope otherwise; open one with {!Nx.Rng.with_key} for
     reproducibility. A traced function, as [Rune.jit]'s, refuses a draw without
     a key from a scope around it, so a compiled step passes its dropout key as
-    an input, as [~key] or as a scope it opens at that key. *)
+    an input, as [~key] or as a scope it opens at that key.
+
+    [~key] may be a batch of keys whose batch shape broadcasts to [x]'s shape,
+    aligned on the right as {!Nx.Rng} aligns keys with a sampler's parameters.
+    Each key draws the elements of [x] it reaches, as it alone would draw
+    them, so keys of batch shape [[| r; t; 1 |]] ({!Nx.Rng.reshape}) give each
+    row of an [x] of shape [[| r; t; c |]] a mask that does not depend on the
+    other rows or their number. *)
+
+val mask :
+  rate:float -> ?key:'d Nx.Rng.key -> (float, 'b, 'd) Nx.t -> 'd Nx.bool_t
+(** [mask ~rate ?key x] is [Nx.Rng.bernoulli ?key p], [p] of [x]'s shape
+    holding [1 - rate] at float32 whatever [x]'s dtype: [true] where
+    {!apply} keeps an element of [x] in training mode. It reads no element of
+    [x].
+
+    Raises [Invalid_argument] if [rate] is outside \[[0];[1]), or if [key]'s
+    batch shape does not broadcast to [x]'s shape. *)
 
 val apply :
   rate:float ->
@@ -34,11 +51,11 @@ val apply :
 
     With [training = true], each element of [x] is zeroed independently with
     probability [rate] and the survivors are scaled by [1 / (1 - rate)]
-    (inverted dropout), so the result's expectation is [x]. With [?key], the
-    mask is [Nx.Rng.bernoulli key] at probability [1. -. rate] and [x]'s shape:
-    the same key, rate and shape give the same mask, so derive a fresh key per
-    call ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for a fresh mask. Without [?key],
-    each call draws a fresh mask from the implicit RNG scope. Either way the
+    (inverted dropout), so the result's expectation is [x]. The result is
+    [x * m / (1 - rate)], where [m] is {!mask}[ ~rate ?key x] as [0] and [1].
+    The same key, rate and shape give the same mask, so derive a fresh key
+    per call ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for a fresh mask. Without
+    [?key], each call draws a fresh mask from the implicit RNG scope. Either way the
     mask selects at [x]'s dtype and is a constant of differentiation, so
     gradients flow to [x] through the surviving elements only.
 
@@ -64,4 +81,5 @@ val apply :
     inside [Rune.vmap ~axis], or map over a batch of keys from
     {!Nx.Rng.split_batch}.
 
-    Raises [Invalid_argument] if [rate] is outside \[[0];[1]). *)
+    Raises [Invalid_argument] if [rate] is outside \[[0];[1]), or if [key]'s
+    batch shape does not broadcast to [x]'s shape, in either mode. *)

@@ -445,6 +445,8 @@ let test_dropout_validates_rate () =
       Dropout.apply ~rate:1.5 ~training:true x);
   raises_match ~msg:"rate < 0" is_invalid (fun () ->
       Dropout.apply ~rate:(-0.1) ~training:true x);
+  raises_match ~msg:"rate NaN" is_invalid (fun () ->
+      Dropout.apply ~rate:Float.nan ~training:true x);
   raises_match ~msg:"rate validated in eval mode too" is_invalid (fun () ->
       Dropout.apply ~rate:2.0 ~training:false x)
 
@@ -675,6 +677,74 @@ let test_dropout_bf16_sandwich () =
   is_true ~msg:"float32 gradients are finite"
     (Array.for_all Float.is_finite (Nx.to_array grads))
 
+(* Batches of keys, aligned with x on the right as Nx.Rng aligns them: each
+   key draws the elements of x it reaches as it alone would. *)
+
+let test_dropout_row_keys () =
+  let x = Nx.reshape [| 2; 3; 5 |] (Nx.arange_f Nx.float32 1. 31. 1.) in
+  let keys = Nx.Rng.split ~n:6 (Nx.Rng.key 3) in
+  let batch =
+    Nx.Rng.reshape [| 2; 3; 1 |] (Nx.Rng.split_batch ~n:6 (Nx.Rng.key 3))
+  in
+  let y = Dropout.apply ~rate:0.5 ~training:true ~key:batch x in
+  for i = 0 to 1 do
+    for j = 0 to 2 do
+      let key = keys.((3 * i) + j) in
+      check_arr ~eps:0.
+        ~msg:(Printf.sprintf "row %d, %d" i j)
+        (Nx.to_array
+           (Dropout.apply ~rate:0.5 ~training:true ~key (Nx.get [ i; j ] x)))
+        (Nx.get [ i; j ] y)
+    done
+  done
+
+let test_dropout_column_keys () =
+  let x = Nx.ones Nx.float32 [| 3; 4 |] in
+  let keys = Nx.Rng.split ~n:4 (Nx.Rng.key 4) in
+  let batch = Nx.Rng.split_batch ~n:4 (Nx.Rng.key 4) in
+  let y = Dropout.apply ~rate:0.5 ~training:true ~key:batch x in
+  for j = 0 to 3 do
+    let column = Nx.slice [ Nx.A; Nx.I j ] in
+    check_arr ~eps:0.
+      ~msg:(Printf.sprintf "column %d" j)
+      (Nx.to_array
+         (Dropout.apply ~rate:0.5 ~training:true ~key:keys.(j) (column x)))
+      (column y)
+  done
+
+let test_dropout_mask_matches_apply () =
+  let x = Nx.ones Nx.float64 [| 4; 6 |] in
+  let key =
+    Nx.Rng.reshape [| 4; 1 |] (Nx.Rng.split_batch ~n:4 (Nx.Rng.key 9))
+  in
+  let m = Dropout.mask ~rate:0.25 ~key x in
+  equal (array int) [| 4; 6 |] (Nx.shape m);
+  check_arr ~eps:0. ~msg:"apply keeps where the mask holds, scaled"
+    (Nx.to_array (Nx.div_s (Nx.cast Nx.float64 m) 0.75))
+    (Dropout.apply ~rate:0.25 ~training:true ~key x)
+
+let test_dropout_refuses_keys () =
+  let x = Nx.ones Nx.float32 [| 2; 4 |] in
+  let keys n = Nx.Rng.split_batch ~n (Nx.Rng.key 1) in
+  raises
+    (Invalid_argument
+       "Dropout.apply: keys of batch shape [2] do not broadcast to x's shape \
+        [2; 4]")
+    (fun () -> Dropout.apply ~rate:0.5 ~training:true ~key:(keys 2) x);
+  raises
+    (Invalid_argument
+       "Dropout.apply: keys of batch shape [3; 2; 1] do not broadcast to x's \
+        shape [2; 4]")
+    (fun () ->
+      Dropout.apply ~rate:0.5 ~training:false
+        ~key:(Nx.Rng.reshape [| 3; 2; 1 |] (keys 6))
+        x);
+  raises
+    (Invalid_argument
+       "Dropout.mask: keys of batch shape [3] do not broadcast to x's shape \
+        [2; 4]")
+    (fun () -> Dropout.mask ~rate:0.5 ~key:(keys 3) x)
+
 let tests =
   [
     group "batch norm"
@@ -728,6 +798,12 @@ let tests =
           test_dropout_jitted_training_steps;
         test "keyed dropout composes with the bfloat16 astype sandwich"
           test_dropout_bf16_sandwich;
+        test "keys of batch shape [r; t; 1] draw each row's mask alone"
+          test_dropout_row_keys;
+        test "keys align with x on the right" test_dropout_column_keys;
+        test "apply keeps where mask holds" test_dropout_mask_matches_apply;
+        test "keys that would widen x are refused, in either mode"
+          test_dropout_refuses_keys;
       ];
   ]
 

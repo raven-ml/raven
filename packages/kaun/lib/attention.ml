@@ -59,23 +59,79 @@ let check_dtype : type b. fn:string -> (float, b) Nx.dtype -> unit =
         "Attention.%s: %s is not float16, bfloat16, float32 or float64" fn
         (Format.asprintf "%a" Nx.pp_dtype dt)
 
+(* [kv] with values of no column, for a call read for its [lse] alone. *)
+let valueless (kv : _ Nx.kv) : _ Nx.kv =
+  let none v =
+    Nx.slice (List.init (Nx.ndim v - 1) (fun _ -> Nx.A) @ [ Nx.R (0, 0) ]) v
+  in
+  match kv with
+  | Dense { k; v } -> Dense { k; v = none v }
+  | Paged { k; v; table } -> Paged { k; v = none v; table }
+
 (* {!Nx.attention} of [q] [[lead; hq; tq; dk]] over [k] and [v] bounded by
    [lengths] [[lead]], in float64 for a float64 [q] and float32 otherwise,
-   with the sinks [sinks], which broadcast to the rows [[lead; hq; tq]]. A
-   sink is one more key of score [σ] and value zero: it scales a row's
-   softmax over its keys by [Σ e^s / (Σ e^s + e^σ)], which is
-   [sigmoid (lse - σ)], [0] for a row that sees no key. The product computes
-   in the accumulator and rounds once. *)
-let attention (type b) ?mask ?lengths ?scale ?sinks (q : (float, b, _) Nx.t)
-    kv =
+   with [bias] added to the scores in that accumulator and the sinks [sinks],
+   which broadcast to the rows [[lead; hq; tq]]. A sink is one more key of
+   score [σ] and value zero: it scales a row's softmax over its keys by
+   [Σ e^s / (Σ e^s + e^σ)], which is [sigmoid (lse - σ)], [0] for a row that
+   sees no key. The product computes in the accumulator and rounds once.
+
+   With [drop], a rate and the keep mask [z] of the weights' shape, the
+   weights are dropped by two calls sharing the scores: for the kept pairs,
+   [Σ_j z_j p_j v_j] is [o_kept] times the kept keys' share of the row's
+   weight, [sigmoid (lse_kept − lse_rest)], [lse_rest] the log-sum-exp of the
+   lost keys' scores and the sink, from a call over the lost pairs given
+   values of no column. The share carries the [lse]s' errors scaled by the
+   lost share, about the rate, where [exp (lse_kept − lse)] would carry them
+   whole, and [sigmoid] never overflows. A row that keeps no key gives 0:
+   its share is taken at 0, since where it sees no key [lse_rest] is [−∞]
+   too, and [−∞ − (−∞)] would make the share and its cotangent NaN. *)
+let attention (type b) ?mask ?lengths ?scale ?bias ?sinks ?drop
+    (q : (float, b, _) Nx.t) kv =
   let within (type a) (acc : (float, a) Nx.dtype) =
-    let o, lse = Nx.attention ?scale ?lengths ?mask ~acc ~kv q in
-    match sinks with
-    | None -> o
-    | Some sinks ->
-        let kept = Nx.sigmoid (Nx.sub lse (Nx.cast acc sinks)) in
-        Nx.cast (Nx.dtype o)
-          (Nx.mul (Nx.cast acc o) (Nx.unsqueeze ~axes:[ -1 ] kept))
+    let score =
+      Option.map
+        (fun b ->
+          let b = Nx.cast acc b in
+          fun _ s -> Nx.add s b)
+        bias
+    in
+    let attend ?mask kv =
+      Nx.attention ?scale ?lengths ?mask ?score ~acc ~kv q
+    in
+    let weigh o c =
+      let c = Nx.unsqueeze ~axes:[ -1 ] c in
+      Nx.cast (Nx.dtype o) (Nx.mul (Nx.cast acc o) c)
+    in
+    match drop with
+    | None -> (
+        let o, lse = attend ?mask kv in
+        match sinks with
+        | None -> o
+        | Some sinks -> weigh o (Nx.sigmoid (Nx.sub lse (Nx.cast acc sinks))))
+    | Some (rate, z) ->
+        let kept p =
+          match mask with None -> z | Some m -> Nx.logical_and (m p) z
+        in
+        (* At each pair: [logical_not z] would be an array of its own. *)
+        let lost p =
+          match mask with
+          | None -> Nx.logical_not z
+          | Some m -> Nx.logical_xor (m p) (kept p)
+        in
+        let o, lse_kept = attend ~mask:kept kv in
+        let _, lse_lost = attend ~mask:lost (valueless kv) in
+        let rest =
+          match sinks with
+          | None -> lse_lost
+          | Some sinks ->
+              let s = Nx.broadcast_to (Nx.shape lse_lost) (Nx.cast acc sinks) in
+              Nx.logsumexp ~axes:[ 0 ] (Nx.stack [ lse_lost; s ])
+        in
+        let live = Nx.not_equal_s lse_kept Float.neg_infinity in
+        let zero = Nx.scalar_like lse_kept 0. in
+        let share = Nx.sigmoid (Nx.where live (Nx.sub lse_kept rest) zero) in
+        weigh o (Nx.where live (Nx.mul_s share (1. /. (1. -. rate))) zero)
   in
   match Nx.dtype q with
   | Float64 -> within Nx.float64
@@ -240,11 +296,11 @@ let shared ?scale ?sinks q k v =
 (* Key-value head [h] serves query heads [h * groups] to
    [h * groups + groups - 1], as {!Nx.attention} reads them: no key is
    repeated. *)
-let attend ?mask ?lengths ?scale ?sinks q kv =
+let attend ?mask ?lengths ?scale ?bias ?sinks ?dropout ?key q kv =
   check_dtype ~fn:"attend" (Nx.dtype q);
-  let batch, heads, d =
+  let batch, heads, n, d =
     match Nx.shape q with
-    | [| batch; heads; _; d |] -> (batch, heads, d)
+    | [| batch; heads; n; d |] -> (batch, heads, n, d)
     | _ ->
         invalid_arg "Attention.attend: q must have shape [batch; heads; n; d]"
   in
@@ -271,14 +327,63 @@ let attend ?mask ?lengths ?scale ?sinks q kv =
         Nx.reshape [| heads; 1 |] sinks)
       sinks
   in
+  (* The weights' shape, which [bias] and the dropout keys align with. *)
+  let weights =
+    let m =
+      match kv with
+      | Dense { k; _ } -> Nx.dim 2 k
+      | Paged { k; table; _ } -> Nx.dim 1 table * Nx.dim 2 k
+    in
+    [| batch; heads; n; m |]
+  in
+  Option.iter
+    (fun bias ->
+      if not (broadcasts ~onto:weights (Nx.shape bias)) then
+        Printf.ksprintf invalid_arg
+          "Attention.attend: a bias of shape %s does not broadcast to the \
+           weights' %s"
+          (shape_to_string (Nx.shape bias))
+          (shape_to_string weights))
+    bias;
+  Option.iter
+    (fun key ->
+      let words = Nx.shape (Nx.Rng.to_tensor key) in
+      let b = Array.sub words 0 (Array.length words - 1) in
+      if not (broadcasts ~onto:weights b) then
+        Printf.ksprintf invalid_arg
+          "Attention.attend: dropout keys of batch shape %s do not broadcast \
+           to the weights' %s"
+          (shape_to_string b) (shape_to_string weights))
+    key;
+  let dropping =
+    match dropout with
+    | None -> false
+    | Some rate when not (rate >= 0. && rate < 1.) ->
+        Printf.ksprintf invalid_arg
+          "Attention.attend: dropout must be in [0, 1), got %s"
+          (Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) rate)
+    | Some rate -> rate > 0.
+  in
+  let lanes_share =
+    match kv with Dense { k; _ } -> Nx.dim 0 k <> batch | Paged _ -> false
+  in
+  if
+    lanes_share
+    && (mask <> None || lengths <> None || bias <> None || dropping)
+  then
+    invalid_arg
+      "Attention.attend: keys shared by several lanes take no mask, lengths, \
+       bias or dropout";
+  let drop =
+    match dropout with
+    | Some rate when dropping ->
+        let w = Nx.broadcast_to weights (Nx.scalar_like q 0.) in
+        Some (rate, Dropout.mask ~rate ?key w)
+    | _ -> None
+  in
   match kv with
-  | Dense { k; v } when Nx.dim 0 k <> batch ->
-      if mask <> None || lengths <> None then
-        invalid_arg
-          "Attention.attend: keys shared by several lanes take no mask and no \
-           lengths";
-      shared ?scale ?sinks q k v
-  | kv -> attention ?mask ?lengths ?scale ?sinks q kv
+  | Dense { k; v } when lanes_share -> shared ?scale ?sinks q k v
+  | kv -> attention ?mask ?lengths ?scale ?bias ?sinks ?drop q kv
 
 let merge ?sum l y =
   match Nx.shape y with

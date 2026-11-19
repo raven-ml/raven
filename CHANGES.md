@@ -4486,6 +4486,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun.Attention.attend` takes `?dropout` and `?key`, dropping the
+  attention weights without an array of them, and `?bias`, added to the
+  scores in the accumulator. `Kaun.Dropout.apply` refuses keys whose batch
+  would widen `x`, and `Kaun.Dropout.mask` is the mask it keeps by.
 - **Breaking:** the gpt2 and llama examples compile by default, on the
   devices their flags name as `Rig_gpus.open_all` reads them, `cpu` by
   default, and take `--eager` to compute eagerly. gpt2's `main.exe` and

@@ -291,7 +291,10 @@ val attend :
   ?mask:('d Nx.pair -> 'd Nx.bool_t) ->
   ?lengths:'d Nx.int64_t ->
   ?scale:float ->
+  ?bias:(float, 'c, 'd) Nx.t ->
   ?sinks:(float, 'b, 'd) Nx.t ->
+  ?dropout:float ->
+  ?key:'d Nx.Rng.key ->
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.kv ->
   (float, 'b, 'd) Nx.t
@@ -310,7 +313,8 @@ val attend :
     lane's result is the one it has over a copy of its row. No key is
     repeated: where [rows] is not [batch], a row's lanes attend as one lane
     holding all their queries, so each key is read once for all of them, and
-    neither [mask] nor [lengths] may be given.
+    neither [mask], [lengths], [bias] nor a positive [dropout] may be
+    given.
 
     With:
 
@@ -324,8 +328,20 @@ val attend :
       {!apply} takes it. A query sees no key at or past its lane's length,
       and no value there is read.
     - [scale], as for {!scaled_dot_product_attention}.
+    - [bias], added to the scaled scores in the accumulator, whatever its
+      dtype, broadcast to the weights' shape [[| batch; heads; n; m |]], such
+      as a per-key bias of shape [[| batch; 1; 1; m |]].
     - [sinks], of shape [[| heads |]]: one attention-sink logit per query head,
       as for {!scaled_dot_product_attention}.
+    - [dropout], a rate in \[[0];[1]): each row's result is
+      [Σ_j z_j w_j v_j / (1 - dropout)], [w] the row's weights, sinks counted
+      in their normalisation, and [z] {!Dropout.mask}[ ~rate:dropout ?key]
+      of the weights' shape. [key]'s batch aligns with the weights on the
+      right, so keys of batch shape [[| batch; 1; n; m |]] give each
+      query-key pair a key, whose draws its heads take in order. It computes
+      {!Nx.val-attention} twice, over the kept and the lost pairs, and makes
+      the mask but no array of weights; the result rounds to [q]'s dtype
+      twice.
 
     It is {!Nx.val-attention} of [q] over [kv], with sinks as
     {!scaled_dot_product_attention} adds them, and shares that function's
@@ -333,9 +349,11 @@ val attend :
 
     Raises [Invalid_argument] if [q]'s dtype is a float8 or float4 format, a
     shape is not as above, [rows] is neither [batch] nor a positive divisor
-    of it, [rows] is not [batch] and [mask] or [lengths] is given, [kv_heads]
-    does not divide [heads], [d] is [0] without [scale], [lengths] does not
-    have shape [[| batch |]], or [mask]'s results or captures do not
+    of it, [rows] is not [batch] and [mask], [lengths], [bias] or a positive
+    [dropout] is given, [kv_heads] does not divide [heads], [d] is [0] without
+    [scale], [lengths] does not have shape [[| batch |]], [mask]'s results
+    or captures or [bias] do not broadcast to [[| batch; heads; n; m |]],
+    [dropout] is outside \[[0];[1]), or [key]'s batch shape does not
     broadcast to [[| batch; heads; n; m |]]. *)
 
 val merge :
