@@ -22,7 +22,14 @@ let dataset file path = find (load file) path
 
 (* The fixtures with an npz of their datasets. *)
 let readable =
-  [ "hdf5_layouts"; "hdf5_filters"; "hdf5_types"; "hdf5_links"; "hdf5_small_k" ]
+  [
+    "hdf5_layouts";
+    "hdf5_filters";
+    "hdf5_types";
+    "hdf5_links";
+    "hdf5_small_k";
+    "hdf5_strings";
+  ]
 
 (* Paths in the order nx_io.mli states, name by name. *)
 let ordered paths =
@@ -633,7 +640,8 @@ let chunks_of file =
 let only_covered =
   prop ~count:200 "a window reads only the chunks its box covers"
     (Gen.triple
-       (Gen.of_list [ "hdf5_layouts"; "hdf5_filters"; "hdf5_small_k" ])
+       (Gen.of_list
+          [ "hdf5_layouts"; "hdf5_filters"; "hdf5_small_k"; "hdf5_strings" ])
        (Gen.int_range 0 1000) draws)
     (fun (file, k, b) ->
       let whole = read (fixture (file ^ ".h5")) in
@@ -694,11 +702,304 @@ let partial_cases =
             (window p d));
     ]
 
+(* Rows *)
+
+(* [joined d ws] is the windows [ws], each a first row and a count, of [d]'s
+   rows by [H.window], joined along axis 0. *)
+let joined d ws =
+  let dims = H.shape d in
+  let window (row, rows) =
+    let start = Array.mapi (fun a _ -> if a = 0 then row else 0) dims in
+    let shape = Array.mapi (fun a n -> if a = 0 then rows else n) dims in
+    match H.window d ~start ~shape with
+    | Ok x -> x
+    | Error _ -> failf "a whole file lacked bytes"
+  in
+  match List.map window ((0, 0) :: ws) with
+  | Nx.P first :: rest ->
+      let dt = Nx.dtype first in
+      Nx.P (Nx.concatenate ~axis:0 (first :: List.map (Nx.unpack dt) rest))
+  | [] -> assert false
+
+let rows_of d ws =
+  H.rows d
+    ~row:(Array.of_list (List.map fst ws))
+    ~rows:(Array.of_list (List.map snd ws))
+
+(* The datasets of the fixtures that have rows, each with its fixture. *)
+let with_rows =
+  lazy
+    (List.concat_map
+       (fun file ->
+         List.filter_map
+           (fun d -> if H.shape d = [||] then None else Some (file, d))
+           (load (file ^ ".h5")))
+       readable)
+
+let is_compact (_, d) = H.path d = "/compact"
+let is_chunked (_, d) = H.chunk d <> None
+let is_array (_, d) = H.path d = "/array" || H.path d = "/array_be"
+let axes_past (_, d) = (match H.values d with Nx.P x -> Nx.ndim x) - 1
+
+(* A dataset with rows, drawn so that each layout, an array datatype and
+   rows of three axes past the first come often. *)
+let rows_dataset =
+  let pp ppf (file, d) = Format.fprintf ppf "%s.h5 %s" file (H.path d) in
+  let among f =
+    let ds = List.filter f (Lazy.force with_rows) in
+    Gen.of_list ~pp ds
+  in
+  let contiguous x = not (is_compact x || is_chunked x) in
+  Gen.frequency
+    [
+      (1, among is_compact);
+      (2, among contiguous);
+      (3, among is_chunked);
+      (1, among is_array);
+      (1, among (fun x -> axes_past x = 3));
+    ]
+
+(* A window of [n] rows: at the first row, at the last, of no row, or any. *)
+let rows_window n (kind, a, b) =
+  match kind with
+  | (`First | `Last) when n = 0 -> (0, 0)
+  | `First -> (0, 1 + (a mod n))
+  | `Last ->
+      let rows = 1 + (a mod n) in
+      (n - rows, rows)
+  | `Empty -> (a mod (n + 1), 0)
+  | `Any ->
+      let row = a mod (n + 1) in
+      (row, b mod (n - row + 1))
+
+let window_draws =
+  let kind =
+    Gen.frequency
+      [
+        (1, Gen.constant `First);
+        (1, Gen.constant `Last);
+        (1, Gen.constant `Empty);
+        (3, Gen.constant `Any);
+      ]
+  in
+  let pp ppf (kind, a, b) =
+    let name =
+      match kind with
+      | `First -> "first"
+      | `Last -> "last"
+      | `Empty -> "empty"
+      | `Any -> "any"
+    in
+    Format.fprintf ppf "%s %d %d" name a b
+  in
+  Gen.list ~size:(Gen.int_range 0 4)
+    (Gen.with_pp pp
+       (Gen.triple kind (Gen.int_range 0 1000) (Gen.int_range 0 1000)))
+
+let rows_cover n ws =
+  let full = List.filter (fun (_, m) -> m > 0) ws in
+  let pairs =
+    List.concat_map
+      (fun (i, a) ->
+        List.filter_map
+          (fun (j, b) -> if i < j then Some (a, b) else None)
+          (List.mapi (fun j w -> (j, w)) full))
+      (List.mapi (fun i w -> (i, w)) full)
+  in
+  cover "no window" (ws = []);
+  cover "an empty window" (List.exists (fun (_, m) -> m = 0) ws);
+  cover "a window at the first row" (List.exists (fun (r, _) -> r = 0) full);
+  cover "a window at the last row"
+    (List.exists (fun (r, m) -> r + m = n) full);
+  cover "windows overlapping"
+    (List.exists (fun ((r, m), (s, k)) -> r < s + k && s < r + m) pairs);
+  cover "windows out of order"
+    (List.exists (fun ((r, _), (s, _)) -> r > s) pairs)
+
+let rows_agree =
+  prop ~count:300 "rows are the windows of each row range, joined"
+    (Gen.pair rows_dataset window_draws) (fun ((file, d), draws) ->
+      let n = (H.shape d).(0) in
+      let ws = List.map (rows_window n) draws in
+      cover "compact" (is_compact (file, d));
+      cover "contiguous" (not (is_compact (file, d) || is_chunked (file, d)));
+      cover "chunked" (is_chunked (file, d));
+      cover "an array datatype" (is_array (file, d));
+      cover "rows of three axes past the first" (axes_past (file, d) = 3);
+      rows_cover n ws;
+      match rows_of d ws with
+      | Ok x -> equal packed (joined d ws) x
+      | Error _ -> failf "a whole file lacked bytes")
+
+(* The chunked datasets of the fixtures that list their chunks. *)
+let chunked_rows =
+  let pp ppf (file, d) = Format.fprintf ppf "%s.h5 %s" file (H.path d) in
+  let listed =
+    [ "hdf5_layouts"; "hdf5_filters"; "hdf5_small_k"; "hdf5_strings" ]
+  in
+  Gen.of_list ~pp
+    (List.filter
+       (fun (file, d) -> List.mem file listed && is_chunked (file, d))
+       (Lazy.force with_rows))
+
+let rows_economy =
+  prop ~count:200
+    "rows read only the chunks that hold a window's row, and name each \
+     chunk missing"
+    (Gen.pair chunked_rows window_draws) (fun ((file, d), draws) ->
+      let whole = read (fixture (file ^ ".h5")) in
+      let dims = H.shape d and c = Option.get (H.chunk d) in
+      let ws = List.map (rows_window dims.(0)) draws in
+      let holds o =
+        List.exists
+          (fun (r, m) -> m > 0 && o.(0) < r + m && o.(0) + c.(0) > r)
+          ws
+      in
+      let mine =
+        List.filter (fun (p, _, _, _) -> p = H.path d) (chunks_of file)
+      in
+      let needed, others = List.partition (fun (_, o, _, _) -> holds o) mine in
+      (* Every byte but those of the chunks no window holds a row of. *)
+      let held = Array.make (String.length whole) true in
+      List.iter (fun (_, _, at, n) -> Array.fill held at n false) others;
+      cover "chunks left out" (others <> []);
+      cover "a chunk needed" (needed <> []);
+      let rows_in held =
+        match Nx_io.decode_hdf5 (partial whole held) with
+        | Error _ -> failf "the partial file lacked structure"
+        | Ok (_, ds) -> rows_of (find ds (H.path d)) ws
+      in
+      (match rows_in held with
+      | Ok x -> equal packed (joined d ws) x
+      | Error rs -> failf "%d ranges lacking" (List.length rs));
+      match needed with
+      | [] -> ()
+      | (_, _, at, n) :: _ ->
+          Array.fill held at n false;
+          let lacks = function Ok _ -> [] | Error rs -> rs in
+          equal (list (pair int int)) [ (at, n) ] (lacks (rows_in held)))
+
+let rows_cases =
+  let d path = dataset "hdf5_layouts.h5" path in
+  let by = "Nx_io.Hdf5.rows" in
+  let refused ~naming f =
+    raises_match (Exn.invalid_arg ~sub:(by ^ ": " ^ naming)) (fun () ->
+        ignore (f ()))
+  in
+  group "rows"
+    [
+      test "no window is of no row" (fun () ->
+          match H.rows (d "/chunked/rank3") ~row:[||] ~rows:[||] with
+          | Ok x ->
+              equal packed (Nx.P (Nx.zeros Nx.uint16 [| 0; 6; 7 |])) x
+          | Error _ -> failf "a whole file lacked bytes");
+      test "a dataset of no row takes windows of no row alone" (fun () ->
+          (match H.rows (d "/empty") ~row:[| 0 |] ~rows:[| 0 |] with
+          | Ok x -> equal packed (Nx.P (Nx.zeros Nx.float32 [| 0; 3 |])) x
+          | Error _ -> failf "a whole file lacked bytes");
+          refused ~naming:"window 0" (fun () ->
+              H.rows (d "/empty") ~row:[| 0 |] ~rows:[| 1 |]));
+      test "a scalar dataset has no rows" (fun () ->
+          invalid ~by (fun () ->
+              H.rows (d "/scalar") ~row:[| 0 |] ~rows:[| 1 |]));
+      test "rows and counts of other lengths" (fun () ->
+          invalid ~by (fun () ->
+              H.rows (d "/chunked/edges") ~row:[| 0; 1 |] ~rows:[| 1 |]));
+      test "windows of more than 2^53 elements are refused" (fun () ->
+          let d = dataset "hdf5_huge.h5" "/huge" in
+          let half = 1 lsl 27 in
+          refused ~naming:"the windows hold more than 2^53 elements"
+            (fun () -> H.rows d ~row:[| 0; 0 |] ~rows:[| half; half |]));
+      cases "a window outside the rows, naming it" ~id:fst
+        [
+          ("a negative row", ([| 0; -1 |], [| 1; 1 |]));
+          ("a negative count", ([| 0; 1 |], [| 1; -1 |]));
+          ("past the last row", ([| 0; 5 |], [| 1; 3 |]));
+        ]
+        (fun (_, (row, rows)) ->
+          refused ~naming:"window 1" (fun () ->
+              H.rows (d "/chunked/edges") ~row ~rows));
+    ]
+
+(* Strings *)
+
+let strings_cases =
+  let file = "hdf5_strings.h5" in
+  group "strings"
+    [
+      cases "each cut as its datatype's padding states" ~id:fst
+        [
+          ("/nullpad", [| "ab"; "abcdefgh"; ""; "a\000b"; " x" |]);
+          ("/nullterm", [| "ab"; "abcdefgh"; ""; "a"; " x" |]);
+          ("/spacepad", [| "ab"; "abcdefgh"; ""; "a\000b"; " x" |]);
+          ("/utf8", [| "λ"; "aνb"; "" |]);
+          ("/array", [| "a"; "bc"; "def"; "ghij"; ""; "k" |]);
+        ]
+        (fun (path, expected) ->
+          let d = dataset file path in
+          equal (array string) expected (H.strings d (H.values d)));
+      test "the strings of rows" (fun () ->
+          let d = dataset file "/chunked" in
+          let row i =
+            List.concat_map
+              (fun j -> List.init 3 (fun k -> Printf.sprintf "r%dc%d%d" i j k))
+              [ 0; 1 ]
+          in
+          match H.rows d ~row:[| 3; 0 |] ~rows:[| 1; 1 |] with
+          | Ok x ->
+              equal (array string) (Array.of_list (row 3 @ row 0))
+                (H.strings d x)
+          | Error _ -> failf "a whole file lacked bytes");
+      cases "a dataset of other elements is refused" ~id:snd
+        [
+          ("hdf5_layouts.h5", "/f32");
+          ("hdf5_types.h5", "/opaque");
+          ("hdf5_types.h5", "/compound");
+        ]
+        (fun (file, path) ->
+          let d = dataset file path in
+          invalid ~by:"Nx_io.Hdf5.strings" (fun () ->
+              H.strings d (H.values d)));
+      cases "a padding the format reserves is refused by strings alone"
+        ~id:string_of_int [ 3; 9; 15 ] (fun pad ->
+          let whole = read (fixture file) in
+          (* /nullpad's datatype message (FMT3, IV.A.2.d): version 1 and
+             class 3, null padding in ASCII, then a size of 8. *)
+          let message = "\x13\x01\x00\x00\x08\x00\x00\x00" in
+          let at =
+            List.filter
+              (fun i -> String.sub whole i 8 = message)
+              (List.init (String.length whole - 7) Fun.id)
+          in
+          let at =
+            match at with
+            | [ at ] -> at
+            | ats -> failf "%d such messages" (List.length ats)
+          in
+          let b = Bytes.of_string whole in
+          Bytes.set b (at + 1) (Char.chr pad);
+          let path = Io_support.file (Bytes.to_string b) in
+          let d = find (snd (Nx_io.load_hdf5 path)) "/nullpad" in
+          let x = H.values d in
+          equal packed (H.values (dataset file "/nullpad")) x;
+          fails ~path
+            ~naming:(Printf.sprintf "/nullpad: string padding %d" pad)
+            (fun () -> H.strings d x));
+      test "bytes of another dtype or last extent are refused" (fun () ->
+          let d = dataset file "/nullpad" in
+          invalid ~by:"Nx_io.Hdf5.strings" (fun () ->
+              H.strings d (Nx.P (Nx.zeros Nx.uint8 [| 5; 4 |])));
+          invalid ~by:"Nx_io.Hdf5.strings" (fun () ->
+              H.strings d (Nx.P (Nx.zeros Nx.int8 [| 5; 8 |])));
+          invalid ~by:"Nx_io.Hdf5.strings" (fun () ->
+              H.strings d (Nx.P (Nx.scalar Nx.uint8 0))));
+    ]
+
 let () =
   exit
     (run "nx.io HDF5"
        [
          readings; layouts; attributes; at_load; at_read; checksums; corrupt;
          links; windows; window_refusals; agreement; monotone; only_covered;
-         partial_cases;
+         partial_cases; rows_agree; rows_economy; rows_cases; strings_cases;
        ])

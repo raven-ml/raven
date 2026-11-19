@@ -3470,6 +3470,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.Hdf5.rows d ~row ~rows` reads windows of a dataset's rows, joined,
+  decoding each chunk that holds one of their rows once, where a `window`
+  per run decoded a chunk once per run. `Nx_io.Hdf5.strings` cuts the bytes
+  of fixed-length strings by the padding their datatype states.
 - `Nx_io.Archive.import ?unread f a` runs an importer `f` and raises if it
   left an entry of `a` unread, naming it, so a file with an extra or misnamed
   layer is refused. `unread` names the entries skipped on purpose.

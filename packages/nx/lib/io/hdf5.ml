@@ -10,11 +10,12 @@
   header it reaches once, and keeps each dataset's header messages, from a
   file or a partial file; it decodes no dataset's messages. [plan] decodes
   them when a dataset is read: its dataspace, datatype, layout, filters
-  and fill value. [window] finds the chunks a box covers in the dataset's
-  version-1 B-tree, names the ranges a partial file lacks of the B-tree's
-  nodes and then of the chunks, then runs each chunk's filters backwards
-  and copies its rows in the box into place. [values] is the window of the
-  whole dataset, or a value over the file's pages.
+  and fill value. [window] reads one box and [rows] a box for each window.
+  Both find the chunks the boxes cover in the dataset's version-1 B-tree in
+  one walk, name the ranges a partial file lacks of the B-tree's nodes and
+  then of the chunks, then run each chunk's filters backwards once and copy
+  its rows in each box into place. [values] is the window of the whole
+  dataset, or a value over the file's pages.
 
   A walk over a partial file raises only while it has found no range
   lacking: past one, the whole file's walk could meet structures the
@@ -636,13 +637,20 @@ let decode p =
 (* How an element lies in the file: as [trailing] elements of [dt], in
    C order, each of the file's byte order, swapped when [swap]. An element
    of a datatype nx lacks is its bytes: [dt] is uint8 and [trailing] its
-   size. *)
-type element = { dt : D.any; trailing : int list; swap : bool; bytes : int }
+   size. A fixed-length string, or an array of them, has the padding type
+   its datatype states in [pad]. *)
+type element = {
+  dt : D.any;
+  trailing : int list;
+  swap : bool;
+  bytes : int;
+  pad : int option;
+}
 
 let refuse fmt = Printf.ksprintf (fun m -> failwith ("datatype: " ^ m)) fmt
 
 let as_bytes n =
-  { dt = D.Any D.Uint8; trailing = [ n ]; swap = false; bytes = n }
+  { dt = D.Any D.Uint8; trailing = [ n ]; swap = false; bytes = n; pad = None }
 
 (* The integers of [n] bytes, signed or not. *)
 let integer ~signed n =
@@ -676,7 +684,7 @@ let rec element s i =
   let p = i + 8 in
   (* Bit 0 is the byte order, set for big-endian. *)
   let swap = bits land 1 = 1 <> Sys.big_endian && n > 1 in
-  let whole dt = { dt; trailing = []; swap; bytes = n } in
+  let whole dt = { dt; trailing = []; swap; bytes = n; pad = None } in
   match cls with
   | 0 | 4 ->
       need s p 4 "a datatype message";
@@ -703,7 +711,10 @@ let rec element s i =
       | _ ->
           refuse "floating point of %d bytes other than IEEE binary16, \
                   bfloat16, binary32 and binary64" n)
-  | 3 | 5 | 6 -> as_bytes n
+  | 3 ->
+      (* Bits 0 to 3 are the padding type, 4 to 7 the character set. *)
+      { (as_bytes n) with pad = Some (bits land 0xf) }
+  | 5 | 6 -> as_bytes n
   | 8 ->
       let e = element s p in
       if e.bytes <> n then
@@ -1227,58 +1238,115 @@ let box_error (t : t) ~start ~shape dims =
         shape.(a) start.(a) a t.path dims.(a)
   done
 
-(* The window's elements, from bytes the source holds. [plan] has checked
-   every byte it reads lies in the file. *)
-let assemble (t : t) p ~start ~shape ~records =
-  let e = p.e.bytes and r = Array.length shape in
-  let box_bytes = Array.fold_left ( * ) e shape in
-  let buf = B.create Rig.host box_bytes in
-  let hi = Array.map2 ( + ) start shape in
-  let row = if r = 0 then e else shape.(r - 1) * e in
+(* A box of the dataset, [shape] elements from [start], and the byte [out]
+   of the result from which its elements lie, in C order. A window is one
+   box; rows are a box for each window, one after the other. *)
+type box = { start : int array; shape : int array; out : int }
+
+let box_bytes e b = Array.fold_left ( * ) e b.shape
+let box_end b = Array.map2 ( + ) b.start b.shape
+
+(* The result of [dims] elements, the boxes' elements, from bytes the
+   source holds. [plan] has checked every byte it reads lies in the file.
+   [records] are the chunks the boxes cover, each read once. *)
+let assemble (t : t) p ~dims ~boxes ~records =
+  let e = p.e.bytes and r = Array.length p.shape in
+  let total = Array.fold_left ( * ) e dims in
+  let buf = B.create Rig.host total in
+  let boxes = List.filter (fun b -> box_bytes e b > 0) boxes in
+  let span b = if r = 0 then e else b.shape.(r - 1) * e in
+  let row = List.fold_left (fun n b -> Int.max n (span b)) 0 boxes in
   let filled = lazy (fill_row p.fill row) in
-  let fill dst ~origin ~dims ~lo ~hi =
-    let f = Lazy.force filled in
-    copy ~src:(fun _ n -> Array1.sub f 0 n) ~origin ~dims ~e ~lo ~hi dst ~start
-      ~shape
+  (* [into dst b ~src ~origin ~dims ~lo ~hi] copies the elements [lo] to
+     [hi] of [b], from [src] of [dims] elements from [origin]. *)
+  let into dst b ~src ~origin ~dims ~lo ~hi =
+    let dst = Array1.sub dst b.out (box_bytes e b) in
+    copy ~src ~origin ~dims ~e ~lo ~hi dst ~start:b.start ~shape:b.shape
   in
-  if box_bytes > 0 then
+  let fill dst b ~origin ~dims ~lo ~hi =
+    let f = Lazy.force filled in
+    into dst b ~src:(fun _ n -> Array1.sub f 0 n) ~origin ~dims ~lo ~hi
+  in
+  let zero = Array.make r 0 in
+  let whole dst b ~src =
+    into dst b ~src ~origin:zero ~dims:p.shape ~lo:b.start ~hi:(box_end b)
+  in
+  if total > 0 then
     B.write buf int8_unsigned (fun dst ->
         match p.storage with
         | Compact s ->
             let src = create (String.length s) in
             String.iteri (fun i c -> Array1.unsafe_set src i (Char.code c)) s;
-            copy ~src:(Array1.sub src) ~origin:(Array.make r 0) ~dims:p.shape
-              ~e ~lo:start ~hi dst ~start ~shape
+            List.iter (whole dst ~src:(Array1.sub src)) boxes
         | Contiguous None ->
-            fill dst ~origin:(Array.make r 0) ~dims:p.shape ~lo:start ~hi
+            List.iter
+              (fun b ->
+                fill dst b ~origin:zero ~dims:p.shape ~lo:b.start
+                  ~hi:(box_end b))
+              boxes
         | Contiguous (Some at) -> (
-            let from src =
-              copy ~src ~origin:(Array.make r 0) ~dims:p.shape ~e ~lo:start ~hi
-                dst ~start ~shape
-            in
             match t.source with
-            | Part q -> from (fun i n -> Partial.bytes q ~pos:(at + i) n)
+            | Part q ->
+                let src i n = Partial.bytes q ~pos:(at + i) n in
+                List.iter (whole dst ~src) boxes
             | File _ ->
-                (* The box's bytes in the file, from its first element's to
-                   past its last's. *)
+                (* Each box's bytes in the file, from its first element's
+                   to past its last's. *)
                 let cs = strides p.shape e in
                 let offset idx =
                   Array.fold_left ( + ) 0
                     (Array.mapi (fun a v -> v * cs.(a)) idx)
                 in
-                let lo = offset start in
-                let length = offset (Array.map (fun h -> h - 1) hi) + e - lo in
-                with_bytes t.source ~first:(at + lo) ~length (fun bytes ->
-                    from (fun i n -> Array1.sub bytes (i - lo) n)))
+                List.iter
+                  (fun b ->
+                    let lo = offset b.start in
+                    let last = Array.map (fun h -> h - 1) (box_end b) in
+                    let length = offset last + e - lo in
+                    with_bytes t.source ~first:(at + lo) ~length (fun bytes ->
+                        let src i n = Array1.sub bytes (i - lo) n in
+                        whole dst b ~src))
+                  boxes)
         | Chunked (_, dims) ->
             let bytes_of = Array.fold_left ( * ) e dims in
+            (* The chunks come in C order, so their first rows never
+               decrease. A box opens once a chunk reaches its first row and
+               closes once a chunk starts past its last, so a chunk meets
+               the open boxes alone: those whose rows it shares, and those
+               about to close. *)
+            (* A box's or a chunk's first row, and the row past its last;
+               a scalar's one element is row 0. *)
+            let row a = if r = 0 then 0 else a.(0) in
+            let past a = if r = 0 then 1 else a.(0) in
+            let by_row a b = Int.compare (row a.start) (row b.start) in
+            let sorted = Array.of_list (List.stable_sort by_row boxes) in
+            let next = ref 0 and opened = ref [] in
             List.iter
               (fun (origin, record) ->
-                let lo = Array.map2 Int.max origin start in
-                let top = Array.map2 (fun o d -> o + d) origin dims in
-                let hi = Array.map2 Int.min top hi in
+                let top = Array.map2 ( + ) origin dims in
+                while
+                  !next < Array.length sorted
+                  && row sorted.(!next).start < past top
+                do
+                  opened := sorted.(!next) :: !opened;
+                  incr next
+                done;
+                opened :=
+                  List.filter (fun b -> past (box_end b) > row origin) !opened;
+                (* The part of each open box the chunk holds. *)
+                let parts =
+                  List.filter_map
+                    (fun b ->
+                      let lo = Array.map2 Int.max origin b.start in
+                      let hi = Array.map2 Int.min top (box_end b) in
+                      if Array.for_all2 ( < ) lo hi then Some (b, lo, hi)
+                      else None)
+                    !opened
+                in
                 match record with
-                | None -> fill dst ~origin ~dims ~lo ~hi
+                | None ->
+                    List.iter
+                      (fun (b, lo, hi) -> fill dst b ~origin ~dims ~lo ~hi)
+                      parts
                 | Some c ->
                     with_bytes t.source ~first:c.at ~length:c.stored
                     @@ fun stored ->
@@ -1290,19 +1358,22 @@ let assemble (t : t) p ~start ~shape ~records =
                         Fail.failf "chunk at %s, byte %d: %s"
                           (Fail.pp_shape origin) c.at m
                     in
-                    copy ~src:(Array1.sub chunk) ~origin ~dims ~e ~lo ~hi
-                      dst ~start ~shape)
+                    List.iter
+                      (fun (b, lo, hi) ->
+                        into dst b ~src:(Array1.sub chunk) ~origin ~dims ~lo
+                          ~hi)
+                      parts)
               records);
-  output p.e shape buf
+  output p.e dims buf
 
 (* The offsets of the chunks of [dims] a box covers, in C order. *)
-let covered dims ~start ~shape =
+let covered dims b =
   let r = Array.length dims in
-  if Array.exists (( = ) 0) shape then []
+  if Array.exists (( = ) 0) b.shape then []
   else begin
-    let lo = Array.init r (fun a -> start.(a) / dims.(a)) in
+    let lo = Array.init r (fun a -> b.start.(a) / dims.(a)) in
     let hi =
-      Array.init r (fun a -> ((start.(a) + shape.(a) - 1) / dims.(a)) + 1)
+      Array.init r (fun a -> ((b.start.(a) + b.shape.(a) - 1) / dims.(a)) + 1)
     in
     let acc = ref [] in
     let i = Array.copy lo in
@@ -1318,10 +1389,10 @@ let covered dims ~start ~shape =
     List.rev !acc
   end
 
-(* The ranges a partial file lacks of what a window reads, and the chunks it
-   reads, each with its record, after checking every byte read lies in the
-   file. *)
-let window_reads (t : t) p r ~start ~shape =
+(* The ranges a partial file lacks of what the boxes read, and the chunks
+   they read, each once with its record, in C order, after checking every
+   byte read lies in the file. *)
+let reads (t : t) p r boxes =
   let e = p.e.bytes in
   let length = length t.source in
   match p.storage with
@@ -1332,24 +1403,28 @@ let window_reads (t : t) p r ~start ~shape =
       (match t.source with
       | File _ -> ()
       | Part q ->
-          if not (Array.exists (( = ) 0) shape) then begin
-            let rank = Array.length shape in
-            let hi = Array.map2 ( + ) start shape in
-            let cs = strides p.shape e in
-            let span = if rank = 0 then e else shape.(rank - 1) * e in
-            let row i =
-              let off = ref at in
-              for a = 0 to rank - 1 do
-                let v = if a = rank - 1 then start.(a) else i.(a) in
-                off := !off + (v * cs.(a))
-              done;
-              r.lacks := Partial.lacking q ~pos:!off span @ !(r.lacks)
-            in
-            if rank = 0 then row [||] else each start hi row
-          end);
+          let rank = Array.length p.shape in
+          let cs = strides p.shape e in
+          let lacks b =
+            if box_bytes e b > 0 then begin
+              let span = if rank = 0 then e else b.shape.(rank - 1) * e in
+              let row i =
+                let off = ref at in
+                for a = 0 to rank - 1 do
+                  let v = if a = rank - 1 then b.start.(a) else i.(a) in
+                  off := !off + (v * cs.(a))
+                done;
+                r.lacks := Partial.lacking q ~pos:!off span @ !(r.lacks)
+              in
+              if rank = 0 then row [||] else each b.start (box_end b) row
+            end
+          in
+          List.iter lacks boxes);
       []
   | Chunked (root, dims) ->
-      let targets = covered dims ~start ~shape in
+      let targets =
+        List.sort_uniq compare (List.concat_map (covered dims) boxes)
+      in
       let found =
         match root with
         | None -> Hashtbl.create 0
@@ -1381,18 +1456,56 @@ let window_reads (t : t) p r ~start ~shape =
 
 let reader_of (t : t) = { (reader t.source) with form = t.form }
 
+(* The result of [dims] elements that holds the boxes, or the ranges a
+   partial file lacks of them. *)
+let read_boxes (t : t) p ~dims boxes =
+  let r = reader_of t in
+  let reads () = Fail.file t.path (fun () -> reads t p r boxes) in
+  match walk r reads with
+  | Error rs -> Error rs
+  | Ok records ->
+      Ok (Fail.file t.path (fun () -> assemble t p ~dims ~boxes ~records))
+
 let window (t : t) ~start ~shape =
   Fail.file t.name @@ fun () ->
   let p = Fail.file t.path (fun () -> plan t) in
   box_error t ~start ~shape p.shape;
-  let r = reader_of t in
-  let reads () =
-    Fail.file t.path (fun () -> window_reads t p r ~start ~shape)
+  read_boxes t p ~dims:shape [ { start; shape; out = 0 } ]
+
+let rows (t : t) ~row ~rows =
+  let by = "Nx_io.Hdf5.rows" in
+  if Array.length row <> Array.length rows then
+    Fail.invalid_argf "%s: %d windows' rows and %d counts" by (Array.length row)
+      (Array.length rows);
+  Fail.file t.name @@ fun () ->
+  let p = Fail.file t.path (fun () -> plan t) in
+  let rank = Array.length p.shape in
+  if rank = 0 then Fail.invalid_argf "%s: %s is scalar, of no row" by t.path;
+  let n = p.shape.(0) and cell = Array.sub p.shape 1 (rank - 1) in
+  let numel =
+    List.fold_left ( * ) (Array.fold_left ( * ) 1 cell) p.e.trailing
   in
-  match walk r reads with
-  | Error rs -> Error rs
-  | Ok records ->
-      Ok (Fail.file t.path (fun () -> assemble t p ~start ~shape ~records))
+  let limit = L.max_numel / Int.max 1 numel in
+  let row_bytes = Array.fold_left ( * ) p.e.bytes cell in
+  let k = ref 0 and boxes = ref [] in
+  Array.iteri
+    (fun j r ->
+      let m = rows.(j) in
+      if r < 0 || m < 0 then
+        Fail.invalid_argf "%s: window %d, row %d, rows %d" by j r m;
+      if r > n - m then
+        Fail.invalid_argf
+          "%s: window %d, %d rows from row %d, ends past %d rows" by j m r n;
+      if m > limit - !k then
+        Fail.invalid_argf "%s: the windows hold more than 2^53 %s" by
+          (if numel = 0 then "rows" else "elements");
+      let start = Array.make rank 0 and shape = Array.copy p.shape in
+      start.(0) <- r;
+      shape.(0) <- m;
+      boxes := { start; shape; out = !k * row_bytes } :: !boxes;
+      k := !k + m)
+    row;
+  read_boxes t p ~dims:(Array.append [| !k |] cell) (List.rev !boxes)
 
 let values (t : t) =
   let p = Fail.file t.name (fun () -> Fail.file t.path (fun () -> plan t)) in
@@ -1415,6 +1528,60 @@ let values (t : t) =
           let at, n = List.hd rs in
           Fail.failf "%s: the partial file lacks bytes %d to %d" t.name at
             (at + n - 1))
+
+(* Strings (FMT3, IV.A.2.d, class 3): the padding types. *)
+
+let null_terminated = 0
+let null_padded = 1
+let space_padded = 2
+
+(* [trim c s] is [s] without the [c]s that end it. *)
+let trim c s =
+  let n = ref (String.length s) in
+  while !n > 0 && s.[!n - 1] = c do
+    decr n
+  done;
+  String.sub s 0 !n
+
+let strings (t : t) (Nx.P x) =
+  let by = "Nx_io.Hdf5.strings" in
+  let e, pad =
+    Fail.file t.name @@ fun () ->
+    Fail.file t.path @@ fun () ->
+    let e = element (required t datatype_kind "datatype") 0 in
+    match e.pad with
+    | Some p when p > space_padded ->
+        Fail.failf "string padding %d, which the format reserves" p
+    | pad -> (e, pad)
+  in
+  let pad, size =
+    match (pad, List.rev e.trailing) with
+    | Some pad, size :: _ -> (pad, size)
+    | _ -> Fail.invalid_argf "%s: %s holds no fixed-length strings" by t.path
+  in
+  let dims = Nx.shape x in
+  let r = Array.length dims in
+  let x : (int, int8_unsigned_elt, Nx.host) Nx.t =
+    match D.equal_witness (Nx.dtype x) D.Uint8 with
+    | Some Type.Equal when r > 0 && dims.(r - 1) = size -> x
+    | _ ->
+        Fail.invalid_argf
+          "%s: %s: %s of shape %s, uint8 with a last extent of %d expected" by
+          t.path
+          (D.name (Nx.dtype x))
+          (Fail.pp_shape dims) size
+  in
+  let all = Nx.to_array x in
+  let cut s =
+    if pad = null_terminated then
+      match String.index_opt s '\000' with
+      | Some i -> String.sub s 0 i
+      | None -> s
+    else if pad = null_padded then trim '\000' s
+    else trim ' ' s
+  in
+  Array.init (Array.length all / size) (fun i ->
+      cut (String.init size (fun k -> Char.chr all.((i * size) + k))))
 
 (* Attributes (FMT3, IV.A.2.m), versions 1 to 3. libhdf5 writes version 3
    for a name whose encoding is UTF-8, which differs from version 2 by

@@ -43,3 +43,15 @@ val window :
   (Nx.host Nx.packed, (int * int) list) result
 (** Raises [Invalid_argument] naming [Nx_io.Hdf5.window], and [Failure]
     starting with the dataset's file, as {!Nx_io.Hdf5.window} states. *)
+
+val rows :
+  t ->
+  row:int array ->
+  rows:int array ->
+  (Nx.host Nx.packed, (int * int) list) result
+(** Raises [Invalid_argument] naming [Nx_io.Hdf5.rows], and [Failure]
+    starting with the dataset's file, as {!Nx_io.Hdf5.rows} states. *)
+
+val strings : t -> Nx.host Nx.packed -> string array
+(** Raises [Invalid_argument] naming [Nx_io.Hdf5.strings], and [Failure]
+    starting with the dataset's file, as {!Nx_io.Hdf5.strings} states. *)

@@ -75,14 +75,14 @@
     elements of each value it returns that is not mapped. {!Tiff.samples}
     and {!Tiff.window} block until they have read their IFD's chunks, from
     the file {!load_tiff} opened or the partial file {!decode_tiff} read,
-    {!Hdf5.values} and {!Hdf5.window} until they have read their dataset's
-    B-tree nodes and chunks, from the file {!load_hdf5} opened or the
-    partial file {!decode_hdf5} read, and {!Audio.samples}, {!Audio.window}
-    and each block of {!Audio.blocks} until they have read their samples. A
-    save blocks until
-    the value's set has computed it and the new file is at its path. Domains may
-    load one path concurrently. Concurrent saves to one path each write a whole
-    file, and the last rename wins.
+    {!Hdf5.values}, {!Hdf5.window} and {!Hdf5.rows} until they have read
+    their dataset's B-tree nodes and chunks, from the file {!load_hdf5}
+    opened or the partial file {!decode_hdf5} read, and {!Audio.samples},
+    {!Audio.window} and each block of {!Audio.blocks} until they have read
+    their samples. A save blocks until the value's set has computed it and
+    the new file is at its path. Domains may load one path concurrently.
+    Concurrent saves to one path each write a whole file, and the last
+    rename wins.
 
     This writes a vector to an npy file and reads it back, and {!Nx.unpack}
     checks the dtype the file states:
@@ -1036,10 +1036,10 @@ val save_tiff :
     links reaches it again. A soft link whose path leads to no object, or
     to another soft link of a cycle, is not listed.
 
-    {!Hdf5.values} and {!Hdf5.window} read a dataset of the message
-    versions libhdf5 writes in this format (a layout of version 3, a fill
-    value of version 2, a filter pipeline of version 1), contiguous, compact
-    or chunked over a version-1 B-tree, whose datatype is:
+    {!Hdf5.values}, {!Hdf5.window} and {!Hdf5.rows} read a dataset of the
+    message versions libhdf5 writes in this format (a layout of version 3,
+    a fill value of version 2, a filter pipeline of version 1), contiguous,
+    compact or chunked over a version-1 B-tree, whose datatype is:
     {ul
     {- fixed-point or a bitfield of 1, 2, 4 or 8 bytes whose bits all hold
        its value, as [int8] to [uint64], a bitfield unsigned;}
@@ -1052,7 +1052,8 @@ val save_tiff :
     {- an array, as its base type with the array's axes after the
        dataset's;}
     {- a fixed-length string, an opaque type or a compound type, as its
-       bytes at [uint8] with a last axis of its size, padding included.}}
+       bytes at [uint8] with a last axis of its size, padding included.
+       {!Hdf5.strings} cuts a fixed-length string's bytes to the string.}}
     in either byte order. Its filters may be deflate (1, a zlib stream a
     chunk), shuffle (2), Fletcher-32 (3), whose checksum is checked, and
     LZF (32000, {!Lz.Lzf}), at most one of deflate and LZF. A chunk whose
@@ -1142,6 +1143,41 @@ module Hdf5 : sig
       Raises [Invalid_argument] if [start] or [shape] is not of [d]'s rank
       or the box does not lie in [d], and [Failure] as {!values} does, for
       each chunk the box covers. *)
+
+  val rows :
+    t ->
+    row:int array ->
+    rows:int array ->
+    (Nx.host Nx.packed, (int * int) list) result
+  (** [rows d ~row ~rows] is [Ok x], [x] for each [j] in order the rows
+      [row.(j)] to [row.(j) + rows.(j) - 1] along axis 0 of [d], its window
+      [j], joined along axis 0: of shape [k] followed by [d]'s other extents
+      and its datatype's axes, [k] the sum of [rows], in memory of its own.
+      Windows may overlap and come in any order, and a window of no row adds
+      none. Or it is [Error rs], as {!window}'s, for a partial file. It
+      decodes each chunk that holds a row of a window once, whole, and no
+      other, and of a contiguous dataset reads each window's run of bytes.
+      [x] is {!window}'s rows over each window, joined.
+
+      Raises [Invalid_argument] if [row] and [rows] differ in length, if [d]
+      is scalar, or, naming [j], if [row.(j)] or [rows.(j)] is negative or
+      window [j] ends past [d]'s first extent, and if the windows hold more
+      than 2{^53} elements, having read nothing. Raises [Failure] as
+      {!values} does, for each chunk a window covers. *)
+
+  val strings : t -> Nx.host Nx.packed -> string array
+  (** [strings d x] is the fixed-length strings of [x], bytes read from [d]
+      by {!values}, {!window} or {!rows}: one string per element of [x]
+      without its last axis, in C order. Each is cut as [d]'s datatype
+      states its padding: at its first NUL for null-terminated strings,
+      without trailing NULs for null-padded ones, and without trailing
+      spaces for space-padded ones. The bytes are returned as stored,
+      whether the datatype names ASCII or UTF-8.
+
+      Raises [Invalid_argument] if [d]'s elements, or an array datatype's
+      base, are not fixed-length strings, or if [x] is not [uint8] with a
+      last extent of their size. Raises [Failure] as {!values} does for a
+      datatype it does not read, and for a padding the format reserves. *)
 
   (** Groups. *)
   module Group : sig
@@ -1400,14 +1436,14 @@ val save_wav :
     A {e partial file} is what a program holds of a file it reads in
     pieces, such as a remote file read by byte ranges: the file's length,
     and its bytes at some of its offsets. The {e partial readers},
-    {!decode_tiff}, {!Tiff.window}, {!decode_hdf5} and {!Hdf5.window}, read
-    only the bytes a partial file holds, and return the bytes it lacks as
-    {e ranges}: [(offset, length)] pairs sorted by offset, disjoint,
-    merged where they touch, and never empty, the same list for the same
-    bytes. The caller fetches the ranges, adds them, and calls again. No
-    byte a partial file lacks is read as any value. How many bytes to
-    fetch first, whether to merge ranges across gaps, and how to fetch
-    them are the caller's.
+    {!decode_tiff}, {!Tiff.window}, {!decode_hdf5}, {!Hdf5.window} and
+    {!Hdf5.rows}, read only the bytes a partial file holds, and return the
+    bytes it lacks as {e ranges}: [(offset, length)] pairs sorted by
+    offset, disjoint, merged where they touch, and never empty, the same
+    list for the same bytes. The caller fetches the ranges, adds them, and
+    calls again. No byte a partial file lacks is read as any value. How
+    many bytes to fetch first, whether to merge ranges across gaps, and how
+    to fetch them are the caller's.
 
     Two laws tie a partial file to the whole file it holds part of:
     {ul
@@ -1482,8 +1518,8 @@ val decode_hdf5 :
     ranges ({!section-partial}) [p] lacks of the structures it reads next:
     the superblock, the groups' B-tree nodes, symbol table nodes and local
     heaps, and the object headers. It reads no element. Each group and
-    dataset keeps [p], from which {!Hdf5.window} and {!Hdf5.values}
-    read.
+    dataset keeps [p], from which {!Hdf5.window}, {!Hdf5.rows} and
+    {!Hdf5.values} read.
 
     Raises [Failure] starting with [p]'s name as {!load_hdf5} does. *)
 

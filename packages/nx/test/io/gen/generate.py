@@ -758,6 +758,11 @@ def hdf5_fixtures():
             if not isinstance(obj, h5py.Dataset) or path in out:
                 return
             a = obj[()]
+            if a.dtype.kind == "S":
+                # The bytes as stored: h5py converts other paddings to
+                # null padding.
+                a = np.empty(a.shape, dtype=a.dtype)
+                obj.id.read(h5py.h5s.ALL, h5py.h5s.ALL, a, mtype=obj.id.get_type())
             native = obj.id.get_type().get_class() == h5py.h5t.COMPLEX
             if a.dtype.kind in "SV" or (a.dtype.kind == "c" and not native):
                 a = np.ascontiguousarray(a).view(np.uint8).reshape(a.shape + (a.dtype.itemsize,))
@@ -1071,6 +1076,48 @@ def hdf5_fixtures():
     with h5py.File("hdf5_small_k.h5") as f:
         expected("hdf5_small_k", f)
         chunk_ranges("hdf5_small_k", f)
+
+    # Fixed-length strings under each padding, ASCII and UTF-8, in an array
+    # datatype, and in chunks of rows of three axes past the first. h5py
+    # writes numpy's bytes as null-padded ASCII; the others are made
+    # through libhdf5's calls and written as stored.
+    def string_type(size, pad, cset=h5py.h5t.CSET_ASCII):
+        tid = h5py.h5t.C_S1.copy()
+        tid.set_size(size)
+        tid.set_strpad(pad)
+        tid.set_cset(cset)
+        return tid
+
+    def stored(f, name, tid, data):
+        d = created(f, name, tid, data.shape)
+        d.write(h5py.h5s.ALL, h5py.h5s.ALL, data, mtype=tid)
+
+    with h5py.File("hdf5_strings.h5", "w") as f:
+        f["nullpad"] = np.array([b"ab", b"abcdefgh", b"", b"a\x00b", b" x"], dtype="S8")
+        assert f["nullpad"].id.get_type().get_strpad() == h5py.h5t.STR_NULLPAD
+        stored(f, "nullterm", string_type(8, h5py.h5t.STR_NULLTERM),
+               np.array([b"ab", b"abcdefgh", b"", b"a\x00b", b" x"], dtype="S8"))
+        stored(f, "spacepad", string_type(8, h5py.h5t.STR_SPACEPAD),
+               np.array([b"ab      ", b"abcdefgh", b"        ", b"a\x00b     ", b" x      "],
+                        dtype="S8"))
+        stored(f, "utf8", string_type(6, h5py.h5t.STR_NULLPAD, h5py.h5t.CSET_UTF8),
+               np.array(["λ".encode(), "aνb".encode(), b""], dtype="S6"))
+        base = string_type(4, h5py.h5t.STR_NULLPAD)
+        d = created(f, "array", h5py.h5t.array_create(base, (2,)), (3,))
+        d.write(h5py.h5s.ALL, h5py.h5s.ALL,
+                np.array([[b"a", b"bc"], [b"def", b"ghij"], [b"", b"k"]], dtype="S4"),
+                mtype=h5py.h5t.array_create(base, (2,)))
+        f.create_dataset("chunked", data=np.array(
+            [[[b"r%dc%d%d" % (i, j, k) for k in range(3)] for j in range(2)] for i in range(5)],
+            dtype="S6"), chunks=(2, 1, 3), compression="gzip")
+    with h5py.File("hdf5_strings.h5") as f:
+        expected("hdf5_strings", f)
+        chunk_ranges("hdf5_strings", f)
+
+    # A dataset of 2^53 elements, as many as an array may hold, never
+    # written, so windows of its rows pass that bound with no byte read.
+    with h5py.File("hdf5_huge.h5", "w") as f:
+        f.create_dataset("huge", shape=(2**27, 2**26), dtype="u1", chunks=(1024, 1024))
 
     # Damaged files: a shuffle filter of elements of no byte, and chunks
     # whose bytes pass any integer.
