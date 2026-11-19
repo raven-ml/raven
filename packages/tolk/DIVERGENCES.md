@@ -2205,9 +2205,8 @@ Withdrawn: multi-device is out of scope, see README.
     workgroups share the outputs; 8 threads of 2 bfloat16 columns read a
     32-byte sector. `stream_threads` is 32768 on sm_89's parts, as D175's
     floor is: at 16384 the decode step's key and value projection
-    (`stream/decode-kv`) is 1.16x slower. Metal takes 16384, fitted on an M1
-    Max (Apple7); other Apple parts are unmeasured, and rune's scatter plan,
-    which `stream_threads` also sizes, is untimed;
+    (`stream/decode-kv`) is 1.16x slower. Metal takes 16384. rune's scatter
+    plan, which `stream_threads` also sizes, is untimed;
   - a group inside a reduce: a reduce axis whose reduction runs inside a
     serial reduce, a weak range that a reduction closes, splits into local
     threads, each iteration of the outer reduce storing and reading the shared
@@ -2242,13 +2241,16 @@ Withdrawn: multi-device is out of scope, see README.
   sharing their matrices at 40-58 a byte stay streamed, and that band,
   1.1-1.55x slower on fudge, is the cost of one program per target. The
   constant is not measured on AMD's and Metal's cores: nonnormal's R9700
-  rows (`GptOss/experts-at-prefill-512`, `GptOss/prefill-512`) and Metal's
-  are pending. Past `R = 16` the stream reads its operand in two passes or
+  rows (`GptOss/experts-at-prefill-512`, `GptOss/prefill-512`) are pending,
+  and no machine a bench may run on holds a Metal device. Past `R = 16` the stream reads its operand in two passes or
   more, and on sm_89 a core of two stages, its plan spread over the units,
   beat it on every shape measured, short of threads too; the rule reads no
   unit count, which would move a sum's order with one. Past `R = 32` float32
   streamed loses to the tiles from `R = 64`; narrower operands take the
-  other rules past 32 until a tolk row confirms them streamed.
+  other rules past 32 until a tolk row confirms them streamed. Metal's
+  `stream_threads` of 16384: Reason: none. It was fitted on an M1 Max
+  (Apple7), other Apple parts unmeasured, but no machine a bench may run on
+  holds a Metal device, so no row can pin it.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are tinygrad's ›
   <environment> › the optimised kernel`, cases `matvec_*`, `vecmat_*`,
   `gpt_oss_*`, `experts_down_*`, `routed_blocks_*`, `routed_own_*`,
@@ -2431,12 +2433,10 @@ host's accumulators in its vector registers.
   `Nx.betainc`, copying the links: 4 links compiled cold in 172 s, and
   compile in 2.9 s with the gate (rune's compile bench row
   `special/betainc-chain-f32`). With the gate kept, tinygrad's boolean sets
-  and whole slices make that row 8.05 and 7.75 s against 2.99 and 2.70 s;
-  they grow with the square of a chain of `Nx.sin`: 80 links compiled cold
-  in 63.0 s and 618M words with the boolean sets, and 16.6 s and 76M words
-  with the search (an M1 Max). A condition built before a long chain of
-  selections still makes each search walk the chain below it, which the
-  gate spares when the branches read memory.
+  and whole slices make that row 8.05 and 7.75 s against 2.99 and 2.70 s,
+  and they grow with the square of a chain of `Nx.sin`. A condition built
+  before a long chain of selections still makes each search walk the chain
+  below it, which the gate spares when the branches read memory.
 - **Pinned by:** rune's compile bench row `special/betainc-chain-f32`; the
   Symbolic suite (`test/uop/symbolic`): `symbolic › selections › a condition
   over a load of several elements is not folded in the branches`, `› a
@@ -4570,7 +4570,7 @@ the walk of `Rangeify.fix_store_hazard`.
   takes the largest of 4 and 2 that divides N and leaves at least
   `local_workgroups` = 256 workgroups, or an unknown count, where tinygrad takes
   the first that divides. 16384 is a bound fitted to sm_89's parts, which every
-  target takes until it fits its own; Metal's 32768 is fitted to an M1 Max.
+  target takes until it fits its own; Metal takes 32768.
   Under `TC_MIN_GLOBALS` the splits are tinygrad's. A core whose operands are
   staged through shared memory takes neither these splits nor their floors but a
   tile of its own (D262), with the floor `core_threads / stages`. The floors are
@@ -4597,10 +4597,11 @@ the walk of `Rangeify.fix_store_hazard`.
   parts the size of an RTX 4060 (24 SMs, 272 GB/s) the model puts the window at
   about (1000, 3900] threads, where 16384 may cost 1.4-2x: unmeasured, and a row
   on a small part is owed. AMD takes the same value; its own is to measure on
-  nonnormal's R9700. Metal's 32768, fitted on an M1 Max (Apple7, 32 GPU cores),
-  runs a float32 product of 1024 squared in 268 us against 316 at 16384; other
-  Apple parts are unmeasured, and the heuristic's `matmul_1000` and `scores`,
-  whose splits 32768 changes, are untimed.
+  nonnormal's R9700. Metal's 32768: Reason: none. On an M1 Max (Apple7, 32 GPU
+  cores), in GPU time, a float32 product of 1024 squared ran in 268 us against
+  316 at 16384; other Apple parts are unmeasured, and the heuristic's
+  `matmul_1000` and `scores`, whose splits 32768 changes, are untimed. No
+  machine a bench may run on holds a Metal device, so no row can pin it.
 - **Pinned by:** `Tolk.Heuristic`'s cases, on CUDA: `matmul_half_1024`,
   `matmul_half_512`, `matmul_half_256`, `attention_values` and
   `matmul_half_variable` (a variable counts the workgroups), with the layouts in
@@ -4610,8 +4611,7 @@ the walk of `Rangeify.fix_store_hazard`.
   the `routed_run` cases of D200 on CUDA, whose local split by 2 the floor of
   256 admits; its `Metal's renderer floors its cores at 32768 threads`, where
   `matmul_1000` and `scores` split otherwise at 16384; the tolk bench's
-  `stream/decode-keys` row on fudge, and rune's `rune_metal` row
-  `matmul-f32-1024` on a Mac.
+  `stream/decode-keys` row on fudge.
 
 ## D176. Withdrawn
 
@@ -5183,7 +5183,8 @@ into D183, which holds its rule, its reason and its pins.
   with none (fudge, one P-core); 128 bytes replay a further 1.05 times at 1.6
   times Clang's time. A kernel whose operations already run 5 at a
   time gains nothing from lanes and pays for them in compile time (`lgamma`,
-  `log_betainc` and its gradients; 5 was measured on an M1 Max). A reduce
+  `log_betainc` and its gradients; 5 was measured on an M1 Max's cores, to
+  re-measure on fudge). A reduce
   kernel's stored axis at 64 bytes runs a float64 matmul in 70.8-73.7 µs
   against 96.9-97.3 µs at one register. From D143, nx.quant's MXFP4 product
   reduces over a byte axis and the pair of codes each byte holds; unrolled to
@@ -7443,8 +7444,9 @@ reason and its pins.
   order changes with the threads' parts.
 - **Reason:** (d): rune's compiled sums of few outputs on fudge's RTX 5000 Ada,
   as `Cuda/sum-rows-float32-2048x8192` (71.7-72.7 us against 23.7-23.8 us); no
-  other `Cuda/` row moved past its range. Apple timing is pending: fudge has no
-  Metal device, and the Metal source is checked instead.
+  other `Cuda/` row moved past its range. Apple is untimed, since no machine a
+  bench may run on holds a Metal device, and the Metal source is checked
+  instead.
 - **Pinned by:** the Codegen suite's `consecutive lid.x threads of the
   readout read one address or consecutive ones` (Metal, CUDA and HIP);
   `Tolk.Heuristic`'s `a group's fastest threads read at unit stride where a
