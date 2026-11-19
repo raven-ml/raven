@@ -1042,6 +1042,658 @@ let excuse weights assets greedy dir =
         name protocol id step gap margin tx dist rho
         (if excused then "excused" else "NOT excused"))
 
+(* Transcription
+
+   P4-impl/transcribe_oracle.py's records: for each recording of the long-form
+   corpus, upstream's transcribe's model.decode calls in order (each window's
+   seek, size, prompt, initial tokens, temperature, tokens, text, average log
+   probability, no-speech probability, compression ratio and zlib's length, and
+   for a greedy call its steps and float64 references), its segments in frames,
+   its text and its language. Three parts: - [L], the loop replayed:
+   Transcript.loop with each request answered by upstream's call at its place,
+   which must be the same request; then the windows, segments and text must be
+   upstream's. A fallback decided otherwise by our compressor alone is listed,
+   and that recording's replay ends there. - [M], the model at upstream's
+   states: each greedy call decoded from our whole-file log-mel sliced at
+   upstream's seek and size, after upstream's prompt. Tokens are exact or
+   excused at their first differing step ({!excuse}); average log probabilities
+   and no-speech probabilities are as accurate as upstream's; each fallback and
+   silence decision is upstream's unless a term lies within that accuracy of its
+   threshold, or our compressor alone decides otherwise (listed). - [E], free
+   running: Transcript.transcribe from the FLAC file, eager, each attempt
+   against upstream's call in order, until the first sampled one. At the first
+   differing attempt the tokens must be excused as in [M], or the decision as in
+   [M]; the recording ends there. A recording compared to its end must have
+   upstream's segments and text. Corpus WERs are reported. *)
+
+module Tr = Whisper.Transcript
+
+let ladders =
+  [
+    ("default", Tr.default.ladder);
+    ("greedy", [ Tr.Greedy ]);
+    ( "cli",
+      Tr.Beam { size = 5; patience = 1. }
+      :: List.map
+           (fun temperature -> Tr.Sample { best_of = 5; temperature })
+           [ 0.2; 0.4; 0.6000000000000001; 0.8; 1. ] );
+    ("beam", [ Tr.Beam { size = 5; patience = 1. } ]);
+    ("notimestamps", Tr.default.ladder);
+  ]
+
+let rung_temperature : Tr.rung -> float = function
+  | Greedy | Beam _ -> 0.
+  | Sample { temperature; _ } -> temperature
+
+let call_result c : Whisper.Decoding.result =
+  {
+    tokens = Json.ints (Json.mem "tokens" c);
+    text = Json.string (Json.mem "text" c);
+    avg_logprob = Json.float (Json.mem "avg_logprob" c);
+    no_speech_prob = Json.float (Json.mem "no_speech_prob" c);
+  }
+
+let is_greedy c =
+  Json.float (Json.mem "temperature" c) = 0.
+  && Json.is_null (Json.mem "beam_size" c)
+
+(* Upstream's decisions on an attempt, from its compression ratio, average log
+   probability and no-speech probability: whether it falls back, and whether it
+   is silent (transcribe.py). *)
+let fails (o : Tr.options) ~ratio ~lp ~ns =
+  let failed =
+    (match o.compression_ratio_threshold with
+      | Some th -> ratio > th
+      | None -> false)
+    || match o.logprob_threshold with Some th -> lp < th | None -> false
+  in
+  let silence =
+    match (o.no_speech_threshold, o.logprob_threshold) with
+    | Some n, Some l -> ns > n && lp < l
+    | _ -> false
+  in
+  failed && not silence
+
+let silent (o : Tr.options) ~lp ~ns =
+  match o.no_speech_threshold with
+  | None -> false
+  | Some n -> (
+      ns > n
+      && match o.logprob_threshold with Some l -> not (lp > l) | None -> true)
+
+let decision o ~ratio ~lp ~ns = (fails o ~ratio ~lp ~ns, silent o ~lp ~ns)
+
+let decision_string (f, s) =
+  (if f then "falls back" else "passes") ^ if s then ", silent" else ""
+
+(* A recording's records, in order. *)
+let recordings path =
+  In_channel.with_open_bin path In_channel.input_lines
+  |> List.filter (( <> ) "")
+  |> List.map Json.of_string
+
+let transcribe_setup weights assets oracle name ladder =
+  let m, t, _ = release weights assets name in
+  let o =
+    match List.assoc_opt ladder ladders with
+    | Some l -> { Tr.default with ladder = l }
+    | None -> failwith ("no ladder " ^ ladder)
+  in
+  let records =
+    recordings
+      (Filename.concat oracle (Printf.sprintf "%s-%s.jsonl" name ladder))
+  in
+  let d =
+    { (Whisper.Decoding.options t) with timestamps = ladder <> "notimestamps" }
+  in
+  (m, t, d, o, records)
+
+let sot_of (m : _ Whisper.Model.t) language =
+  if Whisper.Model.multilingual m.dims then Some (language, T.Transcribe)
+  else None
+
+(* Our segments against upstream's. *)
+let check_segments ~at t r (windows : Tr.window list) =
+  let want = Json.list (Json.mem "segments" r) in
+  let got =
+    List.concat_map
+      (fun (w : Tr.window) -> List.map (fun s -> (w.seek, s)) w.segments)
+      windows
+  in
+  if List.length want <> List.length got then
+    diff "%s: %d segments, upstream %d" (at "segments") (List.length got)
+      (List.length want)
+  else
+    List.iteri
+      (fun i (j, (seek, (s : Tr.segment))) ->
+        let at what = at (Printf.sprintf "segment %d %s" i what) in
+        check_int (at "seek") (Json.int (Json.mem "seek" j)) seek;
+        check_int (at "start") (Json.int (Json.mem "start" j)) s.start;
+        check_int (at "stop") (Json.int (Json.mem "end" j)) s.stop;
+        check_ids (at "tokens") (Json.ints (Json.mem "tokens" j)) s.tokens;
+        check_string (at "text") (Json.string (Json.mem "text" j)) s.text)
+      (List.combine want got);
+  let tokens =
+    List.concat_map
+      (fun (w : Tr.window) ->
+        List.map (fun (s : Tr.segment) -> s.tokens) w.segments)
+      windows
+  in
+  check_string (at "text")
+    (Json.string (Json.mem "text" r))
+    (T.decode t (Array.concat tokens))
+
+exception Stop of string
+
+(* L *)
+
+let transcribe_l (m : _ Whisper.Model.t) t d o records =
+  let flips = ref 0 and replayed = ref 0 and calls_n = ref 0 in
+  List.iter
+    (fun r ->
+      let name = Json.string (Json.mem "name" r) in
+      let at what = Printf.sprintf "%s %s" name what in
+      let calls = Array.of_list (Json.list (Json.mem "calls" r)) in
+      let k = ref 0 in
+      let last_rung = List.length o.Tr.ladder - 1 in
+      let decode (q : Tr.request) =
+        if !k >= Array.length calls then
+          raise (Stop (Printf.sprintf "request %d past upstream's calls" !k));
+        let c = calls.(!k) in
+        let at what = at (Printf.sprintf "call %d %s" !k what) in
+        incr k;
+        check_int (at "seek") (Json.int (Json.mem "seek" c)) q.seek;
+        check_int (at "size") (Json.int (Json.mem "size" c)) q.size;
+        let temperature = Json.float (Json.mem "temperature" c) in
+        (* The decoder reads the temperature at float32. *)
+        let f32 x = Int32.bits_of_float x in
+        if f32 temperature <> f32 (rung_temperature (List.nth o.ladder q.rung))
+        then
+          diff "%s: rung %d, upstream's temperature %g" (at "rung") q.rung
+            temperature;
+        check_ids (at "initial tokens")
+          (Json.ints (Json.mem "initial_tokens" c))
+          q.start.tokens;
+        let res = call_result c in
+        let lp = res.avg_logprob and ns = res.no_speech_prob in
+        let up =
+          fails o ~ratio:(Json.float (Json.mem "compression_ratio" c)) ~lp ~ns
+        in
+        let ours =
+          fails o ~ratio:(Whisper.Decoding.compression_ratio res.text) ~lp ~ns
+        in
+        if q.rung < last_rung && up <> ours then begin
+          incr flips;
+          let n = String.length res.text in
+          Printf.printf
+            "FLIP %s: our compressor %s where upstream %s (n %d, zlib %d, lz \
+             %d: %.4f against %.4f)\n\
+             %!"
+            (at "fallback")
+            (if ours then "falls back" else "passes")
+            (if up then "falls back" else "passes")
+            n
+            (Json.int (Json.mem "zlib" c))
+            (String.length (Lz.Zlib.encode_string ~level:6 res.text))
+            (Whisper.Decoding.compression_ratio res.text)
+            (Json.float (Json.mem "compression_ratio" c));
+          raise (Stop "a compressor's flip")
+        end;
+        res
+      in
+      match
+        Tr.loop t d m.dims o
+          ~language:(Json.string (Json.mem "language" r))
+          ~frames:(Json.int (Json.mem "frames" r))
+          decode
+      with
+      | windows ->
+          incr replayed;
+          calls_n := !calls_n + Array.length calls;
+          check_int (at "requests") (Array.length calls) !k;
+          check_segments ~at t r windows
+      | exception Stop why -> Printf.printf "%s: replay ends: %s\n%!" name why)
+    records;
+  Printf.printf "L: %d of %d recordings replayed whole (%d calls), %d flips\n%!"
+    !replayed (List.length records) !calls_n !flips
+
+(* M and E share the comparison of one greedy attempt. *)
+
+type attempt = {
+  where : string;
+  same : bool;
+  ours : float * float; (* avg_logprob, no_speech_prob *)
+  up32 : float * float;
+  up64 : float * float;
+  call : Jsont.json;
+  text : string;
+}
+
+(* The whole-file log-mel of a recording, its content frames checked. *)
+let whole_mel oracle (m : _ Whisper.Model.t) r =
+  let x =
+    Whisper.Audio.load
+      (Filename.concat oracle (Json.string (Json.mem "file" r)))
+  in
+  let mel =
+    Whisper.Audio.log_mel ~padding:Whisper.Audio.length ~n_mels:m.dims.n_mels x
+  in
+  check_int
+    (Printf.sprintf "%s frames" (Json.string (Json.mem "name" r)))
+    (Json.int (Json.mem "mel_frames" r))
+    (Nx.dim 0 mel);
+  (x, mel)
+
+let window_of mel seek size =
+  Nx.unsqueeze ~axes:[ 0 ]
+    (Nx.pad
+       [| (0, 3000 - size); (0, 0) |]
+       0.
+       (Nx.slice [ R (seek, seek + size) ] mel))
+
+(* Our log-mel against upstream's float32 one and the float64 reference, where
+   the oracle kept them. *)
+let check_mel oracle (m : _ Whisper.Model.t) r mel worst =
+  let name = Json.string (Json.mem "name" r) in
+  let path what =
+    Filename.concat oracle
+      (Printf.sprintf "mel/%s.mel%d%s.npy" name m.dims.n_mels what)
+  in
+  if Sys.file_exists (path "") then begin
+    let up32 = Nx.unpack Nx.float32 (Nx_io.load_npy (path "")) in
+    let r64 = Nx.unpack Nx.float64 (Nx_io.load_npy (path ".ref64")) in
+    let e64 = max_diff mel r64 and e32 = max_diff mel up32 in
+    let eup = max_diff up32 r64 in
+    if e64 > gate64 then
+      diff "%s mel: %.3g from float64, allowed %g" name e64 gate64;
+    if e32 > gate32 then
+      diff "%s mel: %.3g from upstream's float32, allowed %g" name e32 gate32;
+    let a, b, c = !worst in
+    worst := (Float.max a e64, Float.max b e32, Float.max c eup)
+  end
+
+let width = 256
+
+(* Decode a greedy call from upstream's prompt with our features [f]; a
+   differing token is reported at its first step, our logits there saved to
+   [steps]/MODEL-PROTOCOL-NAME@K-STEP.npy and the call to
+   [steps]/MODEL-PROTOCOL.jsonl under the id NAME@K, which {!excuse} reads;
+   PROTOCOL is timestamps or notimestamps. *)
+let greedy_attempt ~steps ~model_name m t d sot f name k c =
+  let module D = Whisper.Decoding in
+  let where = Printf.sprintf "%s %s call %d" model_name name k in
+  let start =
+    D.start
+      ~prompt:(Json.ints (Json.mem "prompt" c))
+      t m.Whisper.Model.dims d sot
+  in
+  check_ids
+    (where ^ " initial tokens")
+    (Json.ints (Json.mem "initial_tokens" c))
+    start.tokens;
+  let out = D.decode m t d Greedy (D.starts ~width [| start |]) f in
+  let got = (D.results t d out).(0) in
+  let want = Json.ints (Json.mem "tokens" c) in
+  let same = got.tokens = want in
+  if same then
+    check_string (where ^ " text") (Json.string (Json.mem "text" c)) got.text
+  else begin
+    let id = Printf.sprintf "%s@%d" name k in
+    let protocol = if d.timestamps then "timestamps" else "notimestamps" in
+    let file = Printf.sprintf "%s-%s-%s" model_name protocol id in
+    mismatch
+      ~at:(fun what -> where ^ " " ^ what)
+      ~out:steps ~file m t start f c got.tokens;
+    let rec_ =
+      Jsont.Json.object'
+        (List.map
+           (fun (n, v) -> Jsont.Json.mem (Jsont.Json.name n) v)
+           (("id", Jsont.Json.string id) :: Json.mems c))
+    in
+    Out_channel.with_open_gen
+      [ Open_append; Open_creat ]
+      0o644
+      (Filename.concat steps (Printf.sprintf "%s-%s.jsonl" model_name protocol))
+      (fun oc ->
+        match Jsont_bytesrw.encode_string Jsont.json rec_ with
+        | Ok s -> output_string oc (s ^ "\n")
+        | Error e -> failwith e)
+  end;
+  let num k = Json.float (Json.mem k c) in
+  ( got,
+    {
+      where;
+      same;
+      ours = (got.avg_logprob, got.no_speech_prob);
+      up32 = (num "avg_logprob", num "no_speech_prob");
+      up64 = (num "avg_logprob64", num "no_speech_prob64");
+      call = c;
+      text = got.text;
+    } )
+
+(* The accuracy of the attempts with upstream's tokens, and each one's
+   decisions: upstream's, ours with upstream's compressed length (which must be
+   upstream's unless the term that differs lies within the accuracy allowed of
+   its threshold), and ours with lz's (listed where it differs). *)
+let judge (o : Tr.options) attempts =
+  let same = List.filter (fun a -> a.same) attempts in
+  let allowed field =
+    let ours, up =
+      List.fold_left
+        (fun (ours, up) a ->
+          let v = field a.ours and v32 = field a.up32 and v64 = field a.up64 in
+          ( Float.max ours (Float.abs (v -. v64)),
+            Float.max up (Float.abs (v32 -. v64)) ))
+        (0., 0.) same
+    in
+    (ours, Tolerance.c *. up)
+  in
+  let lp_e, lp_a = allowed fst and ns_e, ns_a = allowed snd in
+  if lp_e > lp_a then
+    diff "avg_logprob: %.3g from float64, allowed %.3g" lp_e lp_a;
+  if ns_e > ns_a then
+    diff "no_speech_prob: %.3g from float64, allowed %.3g" ns_e ns_a;
+  let excused = ref 0 and flips = ref 0 in
+  List.iter
+    (fun a ->
+      let c = a.call in
+      let n = String.length a.text in
+      let z_up = Json.int (Json.mem "zlib" c) in
+      let up_ratio = Json.float (Json.mem "compression_ratio" c) in
+      let lp32, ns32 = a.up32 and lp, ns = a.ours in
+      let d_up = decision o ~ratio:up_ratio ~lp:lp32 ~ns:ns32 in
+      let d_mix = decision o ~ratio:(float n /. float z_up) ~lp ~ns in
+      let d_port =
+        decision o ~ratio:(Whisper.Decoding.compression_ratio a.text) ~lp ~ns
+      in
+      if d_mix <> d_up then begin
+        let near th v allowed =
+          match th with
+          | Some th -> Float.abs (v -. th) <= allowed
+          | None -> false
+        in
+        if
+          near o.logprob_threshold lp32 lp_a
+          || near o.no_speech_threshold ns32 ns_a
+        then begin
+          incr excused;
+          Printf.printf
+            "EXCUSED %s: %s where upstream %s, a term within its accuracy of \
+             its threshold (avg_logprob %.6g, upstream %.6g; no_speech_prob \
+             %.6g, upstream %.6g)\n\
+             %!"
+            a.where (decision_string d_mix) (decision_string d_up) lp lp32 ns
+            ns32
+        end
+        else
+          diff
+            "%s: %s where upstream %s (avg_logprob %.6g, upstream %.6g; \
+             no_speech_prob %.6g, upstream %.6g)"
+            a.where (decision_string d_mix) (decision_string d_up) lp lp32 ns
+            ns32
+      end;
+      if d_port <> d_mix then begin
+        incr flips;
+        Printf.printf
+          "FLIP %s: our compressor %s where zlib's length %s (n %d, zlib %d, \
+           lz %d)\n\
+           %!"
+          a.where (decision_string d_port) (decision_string d_mix) n z_up
+          (String.length (Lz.Zlib.encode_string ~level:6 a.text))
+      end)
+    same;
+  Printf.printf
+    "%d greedy attempts, %d with upstream's tokens; avg_logprob %.3g from \
+     float64 (allowed %.3g), no_speech_prob %.3g (allowed %.3g); %d decisions \
+     excused by accuracy, %d flipped by the compressor\n\
+     %!"
+    (List.length attempts) (List.length same) lp_e lp_a ns_e ns_a !excused
+    !flips
+
+(* The language: ours from the first 3000 frames of our whole-file mel against
+   upstream's; equal unless upstream's two likeliest lie within its distance to
+   ours. *)
+let check_language m t mel r worst =
+  if Whisper.Model.multilingual m.Whisper.Model.dims then begin
+    let name = Json.string (Json.mem "name" r) in
+    let f =
+      Whisper.Model.encode m
+        (Nx.unsqueeze ~axes:[ 0 ] (Nx.slice [ R (0, 3000) ] mel))
+    in
+    let p = Nx.reshape [| -1 |] (Whisper.Decoding.languages m t f) in
+    let up =
+      Array.of_list
+        (List.map Json.float (Json.list (Json.mem "language_probs" r)))
+    in
+    let ours = Nx.to_array (Nx.cast Nx.float64 p) in
+    let e =
+      Array.fold_left Float.max 0.
+        (Array.mapi (fun i u -> Float.abs (u -. ours.(i))) up)
+    in
+    worst := Float.max !worst e;
+    let codes = T.languages t in
+    let best a =
+      let b = ref 0 in
+      Array.iteri (fun i x -> if x > a.(!b) then b := i) a;
+      !b
+    in
+    let got = codes.(best ours) in
+    let want = Json.string (Json.mem "language" r) in
+    if got <> want then begin
+      let sorted = Array.copy up in
+      Array.sort (fun a b -> Float.compare b a) sorted;
+      let gap = Float.log sorted.(0) -. Float.log sorted.(1) in
+      if gap < 2. *. e then
+        Printf.printf "EXCUSED %s language %s, upstream %s (log gap %.3g)\n%!"
+          name got want gap
+      else diff "%s language: %s, upstream %s (log gap %.3g)" name got want gap
+    end
+  end
+
+(* M *)
+
+let transcribe_m ~steps ~name:model_name oracle m t d o records =
+  let attempts = ref [] and mel_worst = ref (0., 0., 0.) and lang = ref 0. in
+  let beams = ref 0 and beams_same = ref 0 in
+  List.iter
+    (fun r ->
+      let name = Json.string (Json.mem "name" r) in
+      let _, mel = whole_mel oracle m r in
+      check_mel oracle m r mel mel_worst;
+      check_language m t mel r lang;
+      let sot = sot_of m (Json.string (Json.mem "language" r)) in
+      let features = ref None in
+      List.iteri
+        (fun k c ->
+          if is_greedy c then begin
+            let seek = Json.int (Json.mem "seek" c)
+            and size = Json.int (Json.mem "size" c) in
+            let f =
+              match !features with
+              | Some (s, f) when s = seek -> f
+              | _ ->
+                  let f = Whisper.Model.encode m (window_of mel seek size) in
+                  features := Some (seek, f);
+                  f
+            in
+            let _, a = greedy_attempt ~steps ~model_name m t d sot f name k c in
+            attempts := a :: !attempts
+          end
+          else if not (Json.is_null (Json.mem "beam_size" c)) then begin
+            (* A beam search from upstream's prompt: its chosen tokens. *)
+            let module D = Whisper.Decoding in
+            let seek = Json.int (Json.mem "seek" c)
+            and size = Json.int (Json.mem "size" c) in
+            let f = Whisper.Model.encode m (window_of mel seek size) in
+            let start =
+              D.start ~prompt:(Json.ints (Json.mem "prompt" c)) t m.dims d sot
+            in
+            let size = Json.int (Json.mem "beam_size" c) in
+            let out =
+              D.decode m t d
+                (Beam { size; patience = 1. })
+                (D.starts ~width [| start |])
+                f
+            in
+            let got = (D.results t d out).(0) in
+            incr beams;
+            if got.tokens = Json.ints (Json.mem "tokens" c) then incr beams_same
+            else
+              diff "%s %s call %d: the beam's tokens [%s], upstream [%s]"
+                model_name name k (ids got.tokens)
+                (ids (Json.ints (Json.mem "tokens" c)))
+          end)
+        (Json.list (Json.mem "calls" r));
+      Printf.printf "%s: done\n%!" name)
+    records;
+  let e64, e32, eup = !mel_worst in
+  Printf.printf
+    "M: log-mel %.3g from float64 (allowed %g), %.3g from upstream's float32 \
+     (allowed %g), upstream's %.3g from float64; languages %.3g from upstream's\n\
+     %!"
+    e64 gate64 e32 gate32 eup !lang;
+  if !beams > 0 then
+    Printf.printf "%d beam searches, %d with upstream's tokens\n%!" !beams
+      !beams_same;
+  judge o (List.rev !attempts)
+
+(* E *)
+
+let transcribe_e ~steps ~name:model_name oracle m t d o records =
+  let eager = Tr.steps t d in
+  let attempts = ref [] and texts = ref [] in
+  let whole = ref 0 and sampled = ref 0 and ended = ref 0 and windows = ref 0 in
+  let lang = ref 0. in
+  List.iter
+    (fun r ->
+      let name = Json.string (Json.mem "name" r) in
+      let at what = Printf.sprintf "%s %s" name what in
+      let x, mel = whole_mel oracle m r in
+      check_language m t mel r lang;
+      let ours = Tr.transcribe ~key:(Nx.Rng.key 0) eager m o x in
+      let language = Json.string (Json.mem "language" r) in
+      check_string (at "language") language ours.language;
+      texts :=
+        ( Json.string (Json.mem "reference" r),
+          Json.string (Json.mem "text" r),
+          ours.text )
+        :: !texts;
+      let sot = sot_of m language in
+      let mine =
+        List.concat_map
+          (fun (w : Tr.window) ->
+            List.map (fun a -> (w, a)) (w.rejected @ [ w.choice ]))
+          ours.windows
+      in
+      let features = ref None in
+      let encode seek size =
+        match !features with
+        | Some (s, f) when s = seek -> f
+        | _ ->
+            let f = Whisper.Model.encode m (window_of mel seek size) in
+            features := Some (seek, f);
+            f
+      in
+      let seen = Hashtbl.create 64 in
+      let rec walk k mine calls =
+        match (mine, calls) with
+        | [], [] -> `Whole
+        | ((w : Tr.window), (a : Tr.attempt)) :: mine', c :: calls' ->
+            Hashtbl.replace seen w.seek ();
+            let seek = Json.int (Json.mem "seek" c) in
+            let size = Json.int (Json.mem "size" c) in
+            if
+              Json.float (Json.mem "temperature" c) > 0.
+              || rung_temperature a.rung > 0.
+            then `Sampled
+            else if w.seek <> seek || w.size <> size then begin
+              diff "%s: our attempt at (%d, %d), upstream's at (%d, %d)"
+                (at (Printf.sprintf "call %d" k))
+                w.seek w.size seek size;
+              `Ended
+            end
+            else if not (is_greedy c) then
+              begin if a.result.tokens <> Json.ints (Json.mem "tokens" c) then begin
+                diff "%s: a beam's tokens differ"
+                  (at (Printf.sprintf "call %d" k));
+                `Ended
+              end
+              else walk (k + 1) mine' calls'
+              end
+            else if a.result.tokens <> Json.ints (Json.mem "tokens" c) then begin
+              ignore
+                (greedy_attempt ~steps ~model_name m t d sot (encode seek size)
+                   name k c);
+              `Ended
+            end
+            else begin
+              let num f = Json.float (Json.mem f c) in
+              let att =
+                {
+                  where = Printf.sprintf "%s %s call %d" model_name name k;
+                  same = true;
+                  ours = (a.result.avg_logprob, a.result.no_speech_prob);
+                  up32 = (num "avg_logprob", num "no_speech_prob");
+                  up64 = (num "avg_logprob64", num "no_speech_prob64");
+                  call = c;
+                  text = a.result.text;
+                }
+              in
+              attempts := att :: !attempts;
+              let lp, ns = att.ours and lp32, ns32 = att.up32 in
+              let d_ours = decision o ~ratio:a.compression_ratio ~lp ~ns in
+              let d_up =
+                decision o ~ratio:(num "compression_ratio") ~lp:lp32 ~ns:ns32
+              in
+              (* A decision taken otherwise is judged with the attempts. *)
+              if d_ours <> d_up then `Ended else walk (k + 1) mine' calls'
+            end
+        | _ ->
+            diff "%s: %d attempts, upstream %d" (at "attempts")
+              (List.length mine + k)
+              (List.length calls + k);
+            `Ended
+      in
+      (match walk 0 mine (Json.list (Json.mem "calls" r)) with
+      | `Whole ->
+          incr whole;
+          check_segments ~at t r ours.windows
+      | `Sampled -> incr sampled
+      | `Ended -> incr ended);
+      windows := !windows + Hashtbl.length seen;
+      Printf.printf "%s: done\n%!" name)
+    records;
+  let corpus pick =
+    Whisper.Wer.corpus
+      (List.map
+         (fun x ->
+           let r, _, _ = x in
+           (Whisper.English.normalize r, Whisper.English.normalize (pick x)))
+         !texts)
+  in
+  let up = corpus (fun (_, u, _) -> u) and ours = corpus (fun (_, _, o) -> o) in
+  Printf.printf
+    "E: %d recordings, %d compared whole, %d to their first sampled attempt, \
+     %d ended at a difference; %d windows compared; languages %.3g from \
+     upstream's; %s (upstream %s)\n\
+     %!"
+    (List.length records) !whole !sampled !ended !windows !lang (wer_line ours)
+    (wer_line up);
+  judge o (List.rev !attempts)
+
+let check_transcribe part weights assets oracle name ladder =
+  let m, t, d, o, records =
+    transcribe_setup weights assets oracle name ladder
+  in
+  let steps = Filename.concat oracle "steps" in
+  if not (Sys.file_exists steps) then Sys.mkdir steps 0o755;
+  (match part with
+  | "L" -> transcribe_l m t d o records
+  | "M" -> transcribe_m ~steps ~name oracle m t d o records
+  | "E" -> transcribe_e ~steps ~name oracle m t d o records
+  | p -> failwith ("no part " ^ p));
+  Printf.printf "%s %s %s: %d differences\n" name ladder part !diffs
+
 let usage () =
   prerr_endline
     "usage: check.exe tokenizer ASSETS ORACLE_TOKENIZER ORDINARY_JSON\n\
@@ -1064,9 +1716,15 @@ let usage () =
     \  logits at a step whose token differs from upstream's.\n\
      usage: check.exe beam WEIGHTS ASSETS FEATURES BEAM SUBSET MODEL\n\
     \  BEAM P2b-impl/beam_oracle.py's MODEL's records.\n\
+     usage: check.exe transcribe PART WEIGHTS ASSETS ORACLE MODEL LADDER\n\
+    \  PART L (the loop replayed), M (the model at upstream's states) or E\n\
+    \  (free running); ORACLE holds P4-impl/transcribe_oracle.py's\n\
+    \  MODEL-LADDER.jsonl, audio/ and mel/; steps/ there receives our logits\n\
+    \  at a step whose token differs, and the calls as GREEDY records for\n\
+    \  excuse; LADDER default, greedy, cli, beam or notimestamps.\n\
      usage: check.exe excuse WEIGHTS ASSETS GREEDY DIR\n\
     \  DIR holds greedy's logits at differing steps and upstream's, from\n\
-    \  P2-impl/step_logits.py.";
+    \  P2-impl/step_logits.py or P4-impl/transcribe_steps.py.";
   exit 2
 
 let () =
@@ -1084,6 +1742,8 @@ let () =
       check_e2e weights assets data subset oracle name
   | [ "beam"; weights; assets; features; beam; subset; name ] ->
       check_beam weights assets features beam subset name
+  | [ "transcribe"; part; weights; assets; oracle; name; ladder ] ->
+      check_transcribe part weights assets oracle name ladder
   | [ "excuse"; weights; assets; greedy; dir ] ->
       excuse weights assets greedy dir
   | _ -> usage ());

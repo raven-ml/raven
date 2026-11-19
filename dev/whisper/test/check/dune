@@ -4,4 +4,4 @@
 
 (executable
  (name check)
- (libraries whisper whisper_support nx nx.io kaun))
+ (libraries whisper whisper_support nx nx.io kaun lz jsont jsont.bytesrw))
