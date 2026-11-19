@@ -3016,9 +3016,6 @@ module Taps = struct
 
   let error p q = q.v *. (p q.x -. q.d)
 
-  (* [refine bs rb p a c b] is the extremum of the error between the points
-     [a] and [b] of one band around [c], by golden sections until the
-     bracket holds no float between its ends. *)
   (* [golden f a b] is where [f] is largest between [a] and [b], by golden
      sections until the bracket holds no float between its ends. *)
   let golden f a b =
@@ -3031,6 +3028,9 @@ module Taps = struct
     in
     go a b
 
+  (* [refine bs rb p a c b] is the extremum of the error between the points [a]
+     and [b] of one band around [c], by golden sections until the bracket holds
+     no float between its ends. *)
   let refine bs rb p a c b =
     let r = List.find (fun (r : rband) -> r.index = c.band) rb in
     let s = if error p c > 0. then 1. else -1. in

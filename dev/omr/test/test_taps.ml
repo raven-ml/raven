@@ -319,7 +319,8 @@ let meet_multiband =
    the largest error against the (L + 1)-th largest alternating one, or the
    design raises [Failure]: a point band weighted a thousandfold, wide
    transitions, a band pass, at lengths where the levelled error nears 10⁻¹⁰
-   (the E1 review's cases). *)
+   (the E1 review's cases). The shorter lengths, 53 and 54 taps and 104 and 105,
+   must design, so the 1% check is reached. *)
 let equiripple_ill =
   let point =
     [
@@ -338,18 +339,25 @@ let equiripple_ill =
   cases "equiripple is within 1% of the least error or raises"
     ~id:(fun (n, _, m) -> Printf.sprintf "%s, %d taps" n m)
     [
+      ("point band", point, 53);
+      ("point band", point, 54);
       ("point band", point, 55);
       ("point band", point, 59);
       ("point band", point, 63);
       ("point band", point, 64);
+      ("wide transition", wide, 53);
       ("wide transition", wide, 59);
       ("wide transition", wide, 63);
+      ("band pass", pass, 104);
+      ("band pass", pass, 105);
       ("band pass", pass, 112);
       ("band pass", pass, 117);
     ]
     (fun (_, bands, m) ->
+      let designs = List.mem m [ 53; 54; 104; 105 ] in
       match T.equiripple Nx.float64 ~rate:1. T.Symmetric bands m with
-      | exception Failure _ -> ()
+      | exception Failure why ->
+          if designs then failf "raised at %d taps: %s" m why
       | h -> alternates ~floor:0. ~rel:0.01 T.Symmetric (Nx.to_array h) bands)
 
 (* An even symmetric high pass reaching half the rate, where its gain is forced
