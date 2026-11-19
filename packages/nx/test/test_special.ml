@@ -734,11 +734,17 @@ let incomplete_beta =
 
 let eps = epsilon_float
 
+(* Each case is a batch of [size] points, each drawn alone. Most of a call's
+   time on a batch this small is its fixed cost, so 25 cases of 128 draw the
+   3,200 points that 100 cases of 32 did in about a quarter of the time. *)
+let size = 128
+let prop name gen law = prop ~count:25 name gen law
+
 let batch lo hi =
   Gen.with_pp Nx.pp
     (Gen.map
        (fun xs -> Nx.create Nx.float64 [| Array.length xs |] xs)
-       (Gen.array ~size:(Gen.constant 32) (Gen.float_range lo hi)))
+       (Gen.array ~size:(Gen.constant size) (Gen.float_range lo hi)))
 
 (* Floats of [dt] of either sign, their magnitudes [2^e] for [e] drawn in
    [emin, emax], with zeros, the least subnormal and the largest float among
@@ -764,14 +770,14 @@ let signed_floats (type s) (dt : (float, s) Nx.dtype) ~emin ~emax =
   Gen.with_pp Nx.pp
     (Gen.map
        (fun xs -> Nx.create dt [| Array.length xs |] xs)
-       (Gen.array ~size:(Gen.constant 32) one))
+       (Gen.array ~size:(Gen.constant size) one))
 
 (* Values log-uniform in [lo, hi]. *)
 let log_batch lo hi =
   Gen.with_pp Nx.pp
     (Gen.map
        (fun xs -> Nx.exp (Nx.create Nx.float64 [| Array.length xs |] xs))
-       (Gen.array ~size:(Gen.constant 32)
+       (Gen.array ~size:(Gen.constant size)
           (Gen.float_range (Stdlib.log lo) (Stdlib.log hi))))
 
 (* [within tol expected actual]: elementwise, within [tol] absolutely. *)

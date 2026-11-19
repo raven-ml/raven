@@ -2139,36 +2139,31 @@ let test_closing_words () =
     ~than:(three +. Float.of_int ((60 - 6) * 4))
     (sum (Set3.split ~axis:0) [| 60; 4 |])
 
-(* The fewest bytes over what each of [ds] holds at the call that [f ()]
-   fits in, at most [most], or [None]. An allocation past a budget first
-   collects what nothing reaches, so [f] fits exactly where what it reaches
-   at once does. *)
-let peak ds ~most f =
-  let settled () =
-    for _ = 1 to 4 do
-      Gc.full_major ();
-      List.iter Rig.free_cache ds
-    done;
-    List.map Rig.allocated ds
-  in
-  let fits over =
-    let held = settled () in
-    List.iter2 (fun d h -> Rig.set_budget d (h + over)) ds held;
-    Fun.protect
-      ~finally:(fun () -> List.iter (fun d -> Rig.set_budget d max_int) ds)
-      (fun () ->
-        match ignore (Sys.opaque_identity (f ())) with
-        | () -> true
-        | exception Rig.Out_of_memory _ -> false)
-  in
-  ignore (f ());
-  let rec search lo hi =
-    if hi - lo <= 1 then hi
-    else
-      let mid = (lo + hi) / 2 in
-      if fits mid then search lo mid else search mid hi
-  in
-  if fits most then Some (search 0 most) else None
+(* Whether [f ()] fits in [over] bytes over what each of [ds] holds at the
+   call. An allocation past a budget first collects what nothing reaches, so
+   [f] fits exactly where what it reaches at once does, and it fits in every
+   budget above the least it fits in. *)
+let fits ds f over =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    List.iter Rig.free_cache ds
+  done;
+  let held = List.map Rig.allocated ds in
+  List.iter2 (fun d h -> Rig.set_budget d (h + over)) ds held;
+  Fun.protect
+    ~finally:(fun () -> List.iter (fun d -> Rig.set_budget d max_int) ds)
+    (fun () ->
+      match ignore (Sys.opaque_identity (f ())) with
+      | () -> true
+      | exception Rig.Out_of_memory _ -> false)
+
+(* The least of [lo + 1] to [hi] that [f] fits in, [f] fitting in [hi] and
+   not in [lo]. *)
+let rec least ds f lo hi =
+  if hi - lo <= 1 then hi
+  else
+    let mid = (lo + hi) / 2 in
+    if fits ds f mid then least ds f lo mid else least ds f mid hi
 
 (* Closings over four devices, each holding a slot, of results of
    512 × 512 elements whole on each device, or four times that, so that a
@@ -2201,13 +2196,17 @@ let test_closing_peaks () =
   and updates = split 0 (Nx.ones Nx.bfloat16 [| 8; cols |]) in
   let case ?(tiles = 4) name ~p ~results ~share ~m f =
     let bound = Int.max p results + share + c + (m * c / tiles) in
-    let got = peak ds ~most:(2 * bound) f in
-    match got with
-    | None -> fail (Printf.sprintf "%s: no fit within twice its bound" name)
-    | Some got ->
-        at_most int ~msg:name ~than:bound got;
-        at_least int ~msg:(name ^ ": the share beside the results")
-          ~than:(results + share) got
+    let below = results + share - 1 in
+    (* Its peak is at most [bound] and above [below]: two runs, and the
+       peak itself, by bisection, only to report a failure. *)
+    ignore (f ());
+    if not (fits ds f bound) then
+      if fits ds f (2 * bound) then
+        at_most int ~msg:name ~than:bound (least ds f bound (2 * bound))
+      else fail (Printf.sprintf "%s: no fit within twice its bound" name);
+    if fits ds f below then
+      at_least int ~msg:(name ^ ": the share beside the results")
+        ~than:(results + share) (least ds f 0 below)
   in
   case "sum" ~p:(4 * el) ~results:(4 * el) ~share:el ~m:1 (fun () ->
       Nx.sum ~axes:[ 0 ] x);
