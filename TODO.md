@@ -95,9 +95,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Metal's renderer emits no launch bound; its `local_threads_max` of 1024
   is a maximum a pipeline may refuse, and Mac2's AMD GPUs may run 64-wide
   SIMD groups, which `simd_threads` does not state
-- tolk's `Diskcache` "the system's directory is safe" fails under
-  `~/wt/bin/nogpu` (its user namespace), so a CPU-only tolk runtest
-  cannot pass
 
 ## nx, rune
 

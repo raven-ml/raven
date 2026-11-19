@@ -1079,6 +1079,23 @@ let refuses_another_owner () =
       Option.iter Unix.close opened;
       equal bool ~msg:"opened" false (Option.is_some opened)
 
+(* [/] is root's, and no other user can write it, unless this process runs in
+   a user namespace that does not map the system's root: there [/] shows as
+   the overflow user's, another user's. *)
+let root_owner () =
+  if Sys.win32 then skip ~reason:"no owners or modes" ();
+  (Unix.stat "/").st_uid
+
+let safe_system_dir () =
+  if root_owner () <> 0 then skip ~reason:"/ is not root's here" ();
+  equal bool true (safe_dir "/")
+
+let unsafe_other_dir () =
+  let owner = root_owner () in
+  if owner = 0 || owner = Unix.geteuid () then
+    skip ~reason:"/ is root's or this user's here" ();
+  equal bool false (safe_dir "/")
+
 (* A put where a link was planted for its entry replaces the link, writing
    nothing where it points, and its entry no other user can read. *)
 let puts_past_a_link =
@@ -1233,9 +1250,8 @@ let diskcache =
           test "an entry from before a clear reads as none"
             refuses_an_earlier_generation;
           test "a file of another owner is not opened" refuses_another_owner;
-          test "the system's directory is safe" (fun () ->
-              if Sys.win32 then skip ~reason:"no owners or modes" ()
-              else equal bool true (safe_dir "/"));
+          test "the system's directory is safe" safe_system_dir;
+          test "another user's directory is not safe" unsafe_other_dir;
           test "a put past a planted link writes its own entry"
             puts_past_a_link;
           test "puts and clears keep out of a link for a table's directory"

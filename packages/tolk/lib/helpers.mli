@@ -176,16 +176,19 @@ val cache_dir : string
     A file this process reads as its own data, a program to run or a cache
     entry, is trusted only where no other user could have written it. Windows
     has no owners or modes here, and takes every file and directory as this
-    user's. *)
+    user's. Owners are as this process sees them: in a user namespace that
+    does not map the system's root, root's files show as the overflow user's,
+    the owner it shows for every user it does not map. *)
 
 val safe_dir : string -> bool
 (** [safe_dir dir] is [true] iff [dir], as it stands when checked, is a
     directory of this user's or the system's (root's) that no other user can
     write, or whose sticky bit keeps each of its files to its owner, as
-    [/tmp]'s. The check follows links and reads none of [dir]'s parents: a
-    user who can write a parent can put another directory at [dir] after the
-    check, so what is then opened there is checked as it is opened
-    ({!open_owned}). *)
+    [/tmp]'s. In a user namespace that does not map the system's root, root's
+    directories are another user's and are not safe. The check follows links
+    and reads none of [dir]'s parents: a user who can write a parent can put
+    another directory at [dir] after the check, so what is then opened there
+    is checked as it is opened ({!open_owned}). *)
 
 val open_owned : string -> Unix.file_descr option
 (** [open_owned path] is the file [path] opened for reading if it is a
