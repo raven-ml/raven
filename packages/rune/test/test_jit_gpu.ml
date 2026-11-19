@@ -8,7 +8,8 @@
    element no update lands on, a Set scatter of rows gives eager's bits and a
    numbering of repeated keys eager's counts, a cast between float32 and a
    16-bit float gives eager's bits at every code and tie, as does a cast of
-   an integer to a float at the ties of every exponent, a product of narrow
+   an integer to a float at the ties of every exponent and to bfloat16 at
+   every integer of 16 bits and every int32's low 24 bits, a product of narrow
    floats or of MXFP4 weights holds its bound, a Q8_0 product takes a tensor
    core where Tolk.Heuristic.core_fits holds, an MXFP4 product of bfloat16
    rows decodes each code at each scale byte exactly, a routed product of
@@ -3371,6 +3372,12 @@ let () =
                "an integer cast to a float gives eager's bits"
                (Gen.with_pp Int_casts.pp Int_casts.gen)
                int_casts;
+             Windtrap.cases
+               ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
+               "every integer of 16 bits and the ties of wider ones cast to \
+                bfloat16 give eager's bits"
+               Int_casts.to_bf16_sources
+               (fun src -> Int_casts.to_bf16 (snd (on_gpu ())) src);
            ];
          test "a long sum and a weight gradient hold the blocked bound"
            blocked_sums;

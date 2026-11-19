@@ -190,3 +190,81 @@ let law (module S : Nx.Devices) (Case { src; dst = Nx.Dtype.Any dt as d; xs }) =
   in
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal ~msg:"cast" codes_t (codes (cast x)) (codes (Nx.place Nx.Host.on y))
+
+(* Every integer to bfloat16 *)
+
+let to_bf16_sources = srcs
+
+(* bfloat16's significand bits, its implicit bit included. *)
+let bf16_precision = 8
+let window = 4096
+
+(* The values [to_bf16] casts from [s], before they are taken modulo its
+   width. *)
+let to_bf16_values s =
+  let w = width s in
+  if boolean s then [| 0L; 1L |]
+  else if w <= 16 then Array.init (1 lsl w) Int64.of_int
+  else
+    let p = bf16_precision in
+    let top = w - if signed s then 2 else 1 in
+    let at e =
+      let half = pow2 (e - p) in
+      [
+        pow2 e;
+        Int64.add (pow2 e) half;
+        Int64.add (pow2 e) (Int64.mul 3L half);
+        (* [2^(e+1) - half], which for [e] 63 is past [pow2]'s reach. *)
+        Int64.add (pow2 e) (Int64.sub (pow2 e) half);
+      ]
+    in
+    let es = List.init (top - p + 1) (( + ) p) in
+    let centres = 0L :: pow2 (w - 1) :: List.concat_map at es in
+    let centres = centres @ List.map Int64.neg centres in
+    let n = List.length centres * window in
+    let a = Array.make n 0L in
+    List.iteri
+      (fun j c ->
+        for i = 0 to window - 1 do
+          a.((j * window) + i) <- Int64.add c (Int64.of_int (i - (window / 2)))
+        done)
+      centres;
+    a
+
+(* A map of arrays on any placement. *)
+type ('v, 's) map = { map : 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t }
+
+(* [x]'s low 24 bits, for an [int32] [x]: an integer within [2^24] that a
+   kernel computes. *)
+let low24 (type v s) (src : (v, s) Nx.dtype) : (v, s) map option =
+  match src with
+  | Nx.Dtype.Int32 ->
+      Some { map = (fun x -> Nx.bitwise_and x (Nx.scalar_like x 0xffffffl)) }
+  | _ -> None
+
+let to_bf16 (module S : Nx.Devices) (Nx.Dtype.Any src as s) =
+  let xs = to_bf16_values s in
+  let n = Array.length xs in
+  let x = Nx.cast src (Nx.create Nx.int64 [| n |] xs) in
+  let bits y = Nx.to_array (Nx.bitcast Nx.uint16 (Nx.place Nx.Host.on y)) in
+  let check label { map } =
+    let cast x = Nx.cast Nx.bfloat16 (map x) in
+    let before = Rune.evaluations () in
+    let y =
+      Rune.jit Nx.Ptree.(tensor @-> returns tensor) cast (Nx.place S.on x)
+    in
+    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+    let want = bits (cast x) and got = bits y in
+    let misses = ref [] in
+    Array.iteri
+      (fun i v ->
+        if want.(i) <> got.(i) && List.length !misses < 8 then
+          misses :=
+            Printf.sprintf "%Ld: eager %#x, compiled %#x" (wrap s v) want.(i)
+              got.(i)
+            :: !misses)
+      xs;
+    equal ~msg:label (list string) [] (List.rev !misses)
+  in
+  check "misses" { map = Fun.id };
+  Option.iter (check "misses of the low 24 bits") (low24 src)
