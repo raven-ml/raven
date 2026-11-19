@@ -143,9 +143,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - `Nx.attention ~lengths`'s compiled derivative builds the whole pair loop
   on the host, in forward mode, with pages or float captures, and past 160
   dimensions; eager `grad` under vmap with per-lane lengths does too
-- rune cannot check data inside compiled code (a token range, a length
-  past its row), so a model that validates its inputs, such as AION's
-  codecs, checks on the host and its encode cannot run under `Rune.jit`
 - No tree can check formatting: the only ocamlformat on fudge (0.29.0)
   rejects main's own files and no dev-tools lock pins the repository's
   formatter
