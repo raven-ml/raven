@@ -1,5 +1,5 @@
-; golden/*.npz hold the results of torch, torchvision, pycocotools and
-; scipy that the tests compare with.
+; Each golden/*.npz is written by the generator its test names, in gen/,
+; run through `uv run --locked` in gen/'s pinned environment.
 
 (tests
  (names

@@ -274,7 +274,8 @@ let small_pairs =
       in
       equal (array int) want (ints (V.convert dst x)))
 
-(* Wider pairs against Python's integers, from golden/convert.npz *)
+(* Wider pairs against Python's integers, from golden/convert.npz
+   (contrib/mynd/test/gen/convert.py) *)
 let golden = lazy (Nx_io.load_npz "golden/convert.npz")
 
 let entry key =

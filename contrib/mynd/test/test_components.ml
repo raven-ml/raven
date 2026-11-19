@@ -6,7 +6,8 @@
 open Windtrap
 module V = Mynd
 
-(* scipy's connected-component labels, from golden/select.npz *)
+(* scipy's connected-component labels, from golden/select.npz
+   (contrib/mynd/test/gen/select.py) *)
 let golden = lazy (Nx_io.load_npz "golden/select.npz")
 
 let entry dt key =

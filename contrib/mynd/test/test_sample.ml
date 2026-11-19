@@ -6,7 +6,8 @@
 open Windtrap
 module V = Mynd
 
-(* torch's grid_sample, from golden/sample.npz *)
+(* torch's grid_sample, from golden/sample.npz
+   (contrib/mynd/test/gen/sample.py) *)
 let golden = lazy (Nx_io.load_npz "golden/sample.npz")
 
 let entry key =

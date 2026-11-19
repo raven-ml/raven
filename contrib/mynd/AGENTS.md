@@ -12,6 +12,9 @@ stays until mynd covers its surface.
 - Changes go in `contrib/mynd/CHANGES.md`.
 - The same rules as raven's libraries: `docs/dev/design.md`, AGENTS.md's code
   style, and the docs follow `docs/dev/documentation.md`.
+- Each golden in `test/` names its generator in `test/gen/`, which runs
+  through `uv run --locked` in that directory's pinned environment and
+  writes the golden byte for byte.
 
 ## Boundaries
 
@@ -68,3 +71,5 @@ stays until mynd covers its surface.
 - torch's `grid_sample` unnormalises its grid, which moves a position by
   an ulp unless it is dyadic in the image's size: compare derivatives at
   centres only on such positions.
+- torch 2.9's antialiased `interpolate` reads an image one column wide as
+  constant: compare one axis along the width.

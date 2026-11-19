@@ -9,8 +9,11 @@ module V = Mynd
 let archive file = lazy (Nx_io.load_npz file)
 
 (* torch's antialiased interpolate in float64 on a [9; 11; 2] image, from
-   golden/sample.npz *)
+   golden/sample.npz (contrib/mynd/test/gen/sample.py); torch's in float32 and
+   float64 along one axis and Pillow's 8-bit resize, from golden/resize.npz
+   (contrib/mynd/test/gen/resize.py) *)
 let sample_npz = archive "golden/sample.npz"
+let resize_npz = archive "golden/resize.npz"
 
 let entry npz dt key =
   match Nx_io.Archive.find key (Lazy.force npz) with
@@ -86,6 +89,209 @@ let torch64 =
       close 1e-13
         (entry sample_npz Nx.float64 (Printf.sprintf "rz.%s.%dx%d" m h w))
         (V.resize ~edge:`Renormalise k (h, w) x))
+
+(* Against torch in float32. The values lie in [[0, 1)], and [u = 2⁻²⁴].
+
+   mynd's float32 pass rounds each weight, each product and the sum of a new
+   pixel's [t] taps of absolute weights [s]: within [(t + 1) u s] of the exact
+   resize, which torch's float64 result is to far below that.
+
+   torch computes in float32 what mynd takes exactly: the scale [n / n'],
+   rounded, each centre [scale (j + ½)], rounded, and each tap's argument [(i -
+   c + ½) / s'] for [s' = max 1 scale], whose rounding of [i - c + ½] and of [1
+   / s'] and the product move it by at most [3u (h + 1)]. A centre off by [δc]
+   moves the arguments by [δc / s'], so each by at most [δ = δc / s' + 3u (h +
+   1)], and each kernel value by [L δ], [L] the kernel's largest slope: [1] for
+   Triangle and [25/18] for Keys' [-½], whose slope is [4.5τ² - 5τ] on [[0, 1]]
+   and [-(3τ² - 10τ + 8) / 2] on [[1, 2]]. For [t + 1] taps (torch's support may
+   hold one more, of weight below [L δ]) and the values' sum [K], the weights
+   move by at most [(t + 1) L δ (1 + s) / K] in all, summing to [0], so a pixel
+   moves by half that. torch's own roundings add [(t + 5) u s]: the kernel's
+   value, the division and the sum. Where [n / n'] is dyadic, as in 480 to 640,
+   [δc] is [0]. *)
+let kernel_value (k : V.kernel) t =
+  let a = Float.abs t in
+  match k with
+  | `Triangle -> 1. -. a
+  | `Cubic c ->
+      if a <= 1. then ((c +. 2.) *. a *. a *. a) -. ((c +. 3.) *. a *. a) +. 1.
+      else
+        (c *. a *. a *. a) -. (5. *. c *. a *. a) +. (8. *. c *. a) -. (4. *. c)
+  | `Box | `Lanczos _ -> invalid_arg "kernel_value"
+
+let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
+
+let torch32 =
+  cases "torch's antialiased interpolate in float32, per size pair"
+    ~id:(fun (n, n', m) -> Printf.sprintf "%s %d to %d" m n n')
+    (List.concat_map
+       (fun (n, n') -> [ (n, n', "bilinear"); (n, n', "bicubic") ])
+       [
+         (427, 640);
+         (480, 640);
+         (480, 1024);
+         (640, 1024);
+         (1500, 1024);
+         (2000, 640);
+         (333, 640);
+       ])
+    (fun (n, n', m) ->
+      let k, h, slope =
+        if m = "bilinear" then (`Triangle, 1., 1.)
+        else (`Cubic (-0.5), 2., 25. /. 18.)
+      in
+      let key s = Printf.sprintf "torch.%d.%d.%s" n n' s in
+      let x =
+        Nx.reshape [| 1; n; 1 |] (entry resize_npz Nx.float32 (key "x"))
+      in
+      let got =
+        floats (Nx.reshape [| n' |] (V.resize ~edge:`Renormalise k (1, n') x))
+      in
+      let t32 = floats (entry resize_npz Nx.float32 (key (m ^ ".f32"))) in
+      let t64 = floats (entry resize_npz Nx.float64 (key (m ^ ".f64"))) in
+      let u = 0x1p-24 in
+      let scale = Float.of_int n /. Float.of_int n' in
+      let s' = Float.max 1. scale and scale32 = round32 scale in
+      let e = if n > n' then 2 * n else 2 * n' in
+      Array.iteri
+        (fun j r ->
+          let t = List.length r in
+          let s = List.fold_left (fun a (_, w) -> a +. Float.abs w) 0. r in
+          let centre = (Float.of_int j +. 0.5) *. scale in
+          let dc =
+            Float.abs (round32 (scale32 *. (Float.of_int j +. 0.5)) -. centre)
+          in
+          let d = (dc /. s') +. (3. *. u *. (h +. 1.)) in
+          let big_k =
+            List.fold_left
+              (fun a (i, _) ->
+                let num = (((2 * j) + 1) * n) - (((2 * i) + 1) * n') in
+                a +. kernel_value k (Float.of_int num /. Float.of_int e))
+              0. r
+          in
+          let ours = Float.of_int (t + 1) *. u *. s in
+          let theirs =
+            (Float.of_int (t + 1) *. slope *. d *. (1. +. s) /. (2. *. big_k))
+            +. (Float.of_int (t + 5) *. u *. s)
+          in
+          let msg = Printf.sprintf "new pixel %d" j in
+          at_most ~msg ~than:(ours *. 1.01) float_exact
+            (Float.abs (got.(j) -. t64.(j)));
+          at_most ~msg
+            ~than:((ours +. theirs) *. 1.01)
+            float_exact
+            (Float.abs (got.(j) -. t32.(j))))
+        (rows ~edge:`Renormalise k n n'))
+
+(* Pillow's 8-bit resize as a composition over the weights
+
+   Pillow rounds each weight to 22 fraction bits, half away from zero, and adds
+   each pass's products in integers from [2²¹], shifting the sum back and
+   clamping it to [[0, 255]]. It resizes the columns first unless the height
+   shrinks by more than twice what the width does, and an RGBA image through its
+   premultiplied form, each colour [c α / 255] rounded, then divided back by the
+   resized alpha, truncated, where alpha is neither 0 nor 255 (Pillow 13's
+   Resample.c and Convert.c). *)
+
+let precision = 22
+
+let fixed w =
+  let v = w *. Float.of_int (1 lsl precision) in
+  Float.to_int (if w < 0. then v -. 0.5 else v +. 0.5)
+
+let clip8 v = Int.max 0 (Int.min 255 v)
+
+(* [pass ~axis k n' img] resizes axis [axis], [0] the rows and [1] the columns,
+   of an image [[h][w][c]] of bytes to [n'] pixels. *)
+let pass ~axis k n' img =
+  let h = Array.length img and w = Array.length img.(0) in
+  let c = Array.length img.(0).(0) in
+  let n = if axis = 0 then h else w in
+  let table =
+    Array.map
+      (List.map (fun (i, wt) -> (i, fixed wt)))
+      (rows ~edge:`Renormalise k n n')
+  in
+  let px i j ch t = if axis = 0 then img.(t).(j).(ch) else img.(i).(t).(ch) in
+  let h', w' = if axis = 0 then (n', w) else (h, n') in
+  Array.init h' (fun i ->
+      Array.init w' (fun j ->
+          Array.init c (fun ch ->
+              let taps = table.(if axis = 0 then i else j) in
+              let sum =
+                List.fold_left
+                  (fun s (t, wt) -> s + (wt * px i j ch t))
+                  (1 lsl (precision - 1))
+                  taps
+              in
+              clip8 (sum asr precision))))
+
+let pillow k (h', w') img =
+  let h = Array.length img and w = Array.length img.(0) in
+  let rows img = if h' = h then img else pass ~axis:0 k h' img in
+  let cols img = if w' = w then img else pass ~axis:1 k w' img in
+  let columns_first = not (h - h' > 0 && h - h' > (w - w') * 2) in
+  if columns_first then rows (cols img) else cols (rows img)
+
+let muldiv255 a b =
+  let t = (a * b) + 128 in
+  ((t lsr 8) + t) lsr 8
+
+let premultiply =
+  Array.map
+    (Array.map (fun p ->
+         Array.mapi (fun c v -> if c = 3 then v else muldiv255 v p.(3)) p))
+
+let unpremultiply =
+  Array.map
+    (Array.map (fun p ->
+         let a = p.(3) in
+         Array.mapi
+           (fun c v ->
+             if c = 3 || a = 0 || a = 255 then v else clip8 (255 * v / a))
+           p))
+
+let bytes x =
+  let s = Nx.shape x in
+  let a = Array.map Int64.to_int (Nx.to_array (Nx.cast Nx.int64 x)) in
+  Array.init s.(0) (fun i ->
+      Array.init s.(1) (fun j ->
+          Array.init s.(2) (fun c -> a.((((i * s.(1)) + j) * s.(2)) + c))))
+
+let pillow_cases =
+  List.concat_map
+    (fun i ->
+      List.concat_map
+        (fun mode ->
+          List.map (fun f -> (i, mode, f)) [ "bilinear"; "bicubic"; "lanczos" ])
+        [ "L"; "RGB"; "RGBA" ])
+    [ 0; 1; 2; 3; 4 ]
+
+let pillow8 =
+  cases "Pillow's 8-bit resize is a composition over resize_weights"
+    ~id:(fun (i, mode, f) -> Printf.sprintf "%d %s %s" i mode f)
+    pillow_cases
+    (fun (i, mode, f) ->
+      let k =
+        match f with
+        | "bilinear" -> `Triangle
+        | "bicubic" -> `Cubic (-0.5)
+        | _ -> `Lanczos 3
+      in
+      let size =
+        Nx.to_array (entry resize_npz Nx.int64 (Printf.sprintf "pil.%d.size" i))
+      in
+      let h' = Int64.to_int size.(2) and w' = Int64.to_int size.(3) in
+      let key s = Printf.sprintf "pil.%d.%s.%s" i mode s in
+      let x = bytes (entry resize_npz Nx.uint8 (key "x")) in
+      let got =
+        if mode = "RGBA" then unpremultiply (pillow k (h', w') (premultiply x))
+        else pillow k (h', w') x
+      in
+      equal
+        (array (array (array int)))
+        (bytes (entry resize_npz Nx.uint8 (key f)))
+        got)
 
 (* The table's values, from the formulas *)
 
@@ -352,6 +558,8 @@ let () =
     (run "mynd.resize"
        [
          torch64;
+         torch32;
+         pillow8;
          table_values;
          flat;
          flat32;

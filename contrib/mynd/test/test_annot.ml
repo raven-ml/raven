@@ -7,7 +7,7 @@ open Windtrap
 module V = Mynd
 
 (* torchvision's box IoU and pycocotools' RLE, areas, boxes and mask IoU, from
-   golden/annot.npz *)
+   golden/annot.npz (contrib/mynd/test/gen/annot.py) *)
 let golden = lazy (Nx_io.load_npz "golden/annot.npz")
 
 let entry dt key =
