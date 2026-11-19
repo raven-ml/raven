@@ -2119,8 +2119,8 @@ let rows_of k xs =
    either side, their bounds in either order, the far one unbounded, up to 3
    wide, or 128 to 512 units in the last place of the near one, where the law
    spans more than an ulp: each draw lies in its interval and inverts its own
-   uniform, within the bound the float32 law above holds, against the exact
-   solution found in float64. Past the square root of the largest float [x^2]
+   uniform, within the bound nx.mli states, against the exact solution found
+   in float64 and rounded to the dtype. Past the square root of the largest float [x^2]
    overflows while the tail's log mass is still finite, up to the square root
    of twice it: that band and the last decade are drawn on their own. A bound
    is a scalar in half the cases, since a bound's masses are computed at its
@@ -2182,6 +2182,50 @@ let log_uniform lo hi =
 (* The unit in the last place of [x] at a precision of [eps], [x]'s spacing at
    1. *)
 let ulp_at eps x = Float.ldexp eps (snd (Float.frexp x) - 1)
+
+(* The position of [x] among the values of [f], float32's or float64's, in
+   order, [+0.] at 0 and [-0.] at -1. *)
+let rank (f : A.Dtype.float_format) x =
+  let f32 = f.fraction_bits = 23 in
+  let b =
+    if f32 then
+      Int64.logand (Int64.of_int32 (Int32.bits_of_float x)) 0xffff_ffffL
+    else Int64.bits_of_float x
+  in
+  let sign = Int64.shift_left 1L (if f32 then 31 else 63) in
+  if Int64.logand b sign = 0L then b
+  else Int64.(sub (neg (logand b (sub sign 1L))) 1L)
+
+(* The value of [f] at position [k], [rank]'s inverse. *)
+let of_rank (f : A.Dtype.float_format) k =
+  let f32 = f.fraction_bits = 23 in
+  let sign = Int64.shift_left 1L (if f32 then 31 else 63) in
+  let b =
+    if Int64.compare k 0L >= 0 then k else Int64.(logor (neg (succ k)) sign)
+  in
+  if f32 then Int32.float_of_bits (Int64.to_int32 b) else Int64.float_of_bits b
+
+(* The ulps by which [x] lies past [w] of [r], both values of [f]: the floats
+   [x] steps through toward [r] until within [w] of it, so that a bound of [w]
+   plus [k] ulps holds where this is at most [k]. Past 64 it is the whole
+   distance in floats. *)
+let ulps_past f ~w r x =
+  let rx = rank f x in
+  let d = Int64.sub (rank f r) rx in
+  let dir = if Int64.compare d 0L > 0 then 1L else -1L in
+  let rec go n =
+    let y = of_rank f Int64.(add rx (mul dir (of_int n))) in
+    if Float.abs (y -. r) <= w then n
+    else if n = 64 then Int64.to_int (Int64.abs d)
+    else go (n + 1)
+  in
+  go 0
+
+(* The ulps within which nx.mli holds a [truncated_normal] draw of a value
+   within [6ε] of the exact solution rounded to the dtype: 2 at float32, 3 at
+   float64. *)
+let draw_ulps (f : A.Dtype.float_format) =
+  if f.fraction_bits = 23 then 2 else 3
 
 let tails_gen =
   let open Gen in
@@ -2246,7 +2290,7 @@ let tails =
       let xs = read (Rng.truncated_normal ~key:k lower upper) in
       let us = read (Rng.uniform ~key:k dt [| draws |]) in
       let rl = tail_ratio near l and rh = tail_ratio near h in
-      let worst = ref 0. in
+      let worst = ref 0 in
       Array.iteri
         (fun i x ->
           let x = sign *. x in
@@ -2254,10 +2298,10 @@ let tails =
             failf "draw %d, %h, outside %a" i (sign *. x) pp_tail t;
           let u = Float.max (0.5 *. f.epsilon) us.(i) in
           let want = tail_quantile near far (((1. -. u) *. rl) +. (u *. rh)) in
-          let bound = (6. *. f.epsilon) +. (3. *. ulp_at f.epsilon want) in
-          worst := Float.max !worst (Float.abs (x -. want) /. bound))
+          let r = A.Dtype.of_float dt want in
+          worst := Int.max !worst (ulps_past f ~w:(6. *. f.epsilon) r x))
         xs;
-      at_most float_exact ~than:1. !worst)
+      at_most int ~than:(draw_ulps f) !worst)
 
 let others =
   group "inversions and normalisations"
@@ -2302,8 +2346,8 @@ let others =
           ks cdf xs);
       (* A draw against the quantile of its own uniform [u], floored at 2^-p,
          found by bisection on the smaller of the masses below and above it,
-         which keep their relative precision in float64: within 6 ε + 3 ulps
-         of its dtype. *)
+         which keep their relative precision in float64, and rounded to the
+         dtype: within [draw_ulps] ulps of a value within 6 ε of it. *)
       prop "a truncated_normal draw inverts its uniform"
         (Gen.triple keys wide
            (Gen.of_list ~pp:pp_bounds
@@ -2321,7 +2365,8 @@ let others =
           let draws = 4096 in
           let full v = host_of dt [| draws |] (Array.make draws v) in
           let xs = read (Rng.truncated_normal ~key:k (full a) (full b)) in
-          let eps = (A.Dtype.float_format dt).epsilon in
+          let f = A.Dtype.float_format dt in
+          let eps = f.epsilon in
           let us = read (Rng.uniform ~key:k dt [| draws |]) in
           let us = Array.map (Float.max (0.5 *. eps)) us in
           let right u = ((1. -. u) *. above a) +. (u *. above b) in
@@ -2343,14 +2388,13 @@ let others =
             done;
             !lo
           in
-          let worst = ref 0. in
+          let worst = ref 0 in
           Array.iteri
             (fun i x ->
-              let want = quantile us.(i) in
-              let bound = (6. *. eps) +. (3. *. ulp_at eps want) in
-              worst := Float.max !worst (Float.abs (x -. want) /. bound))
+              let r = A.Dtype.of_float dt (quantile us.(i)) in
+              worst := Int.max !worst (ulps_past f ~w:(6. *. eps) r x))
             xs;
-          at_most float_exact ~than:1. !worst);
+          at_most int ~than:(draw_ulps f) !worst);
       (* nx.mli's bound, before the rounding to the dtype: a row sums to 1
          within 4u, [u] the unit roundoff of the dtype the draw computes at,
          and its greatest element is at least (1 - 8u) / n. A narrower float

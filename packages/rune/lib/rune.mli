@@ -308,31 +308,35 @@ val jvp :
     ({!Nx.betainc}, {!Nx.betaincc}, their logarithms and their inverses)
     through the operations
     nx computes them with, in every argument and at every order, but the
-    inverses' past the second (see below). Each derivative
-    is within the budget below of the exact derivative, at [float32] and
-    [float64], eagerly and compiled, where the function and its derivative are
-    finite, which leaves out such points as {!Nx.erfinv} at [±1] and {!Nx.ndtri}
-    at [0] and [1]. At [±0], {!Nx.i0e}'s derivative is its right-hand one, [-1];
-    {!Nx.i1e}'s is [1/2]. [ε] is the distance from 1 to the next float of the
-    dtype. The budgets of the first derivatives are:
+    inverses' past the second (see below). Each derivative's error, measured
+    from the exact derivative rounded to the dtype ({!section-numerics}), is
+    within the budget below, at [float32] and [float64], eagerly and compiled,
+    where the function and its derivative are finite, which leaves out such
+    points as {!Nx.erfinv} at [±1] and {!Nx.ndtri} at [0] and [1]. At [±0],
+    {!Nx.i0e}'s derivative is its right-hand one, [-1]; {!Nx.i1e}'s is [1/2].
+    An absolute budget bounds the magnitude of the difference from that
+    rounded derivative, and a relative one that magnitude over the rounded
+    derivative's. [ε] is the distance from 1 to the next float of the dtype.
+    The budgets of the first derivatives are:
 
     - {!Nx.erfinv}: 64 ulps.
     - {!Nx.erfc}: 128 ulps.
     - {!Nx.ndtr}: 256 ulps.
     - {!Nx.log_ndtr}: 512 ulps.
     - {!Nx.ndtri}: 64 ulps.
-    - {!Nx.lgamma}: for [x > 0], 256 ulps, or [256ε] absolutely where below 1;
-      below 0, 256 ulps or [256ε (1 + |ψ(1 - x)| + |π cot (πx)|)] absolutely.
+    - {!Nx.lgamma}: for [x > 0], 256 ulps, or [256ε] absolutely where it
+      rounds below 1 in magnitude; below 0, 256 ulps or
+      [256ε (1 + |ψ(1 - x)| + |π cot (πx)|)] absolutely.
     - {!Nx.digamma}: for [x > 0], 256 ulps; below 0, 256 ulps or
       [256ε (1 + ψ'(1 - x) + π² / sin² (πx))] absolutely.
     - {!Nx.lbeta}, in either argument: 4096 ulps, or [8192ε] absolutely where
-      below 1.
+      it rounds below 1 in magnitude.
     - {!Nx.i0e}: 128 ulps.
     - {!Nx.i1e}: 128 ulps, or [128ε] absolutely for [1 ≤ |x| ≤ 2], about its
       zero at [±1.545].
     - {!Nx.gammainc}, {!Nx.gammaincc}, in [x]: [512 (1 + |log f|) + 64] ulps.
     - {!Nx.log_gammainc}, {!Nx.log_gammaincc}, in [x]: 256 ulps, or [256ε]
-      absolutely where below 1.
+      absolutely where it rounds below 1 in magnitude.
     - The four, in [a]: [2^-40 (1 + |log f|)] relative at [float64],
       [2^-16 (1 + |log f|)] at [float32].
     - {!Nx.gammaincinv}, {!Nx.gammainccinv}, in [p] or [q]:
@@ -341,7 +345,7 @@ val jvp :
     - The two, in [a]: [2^-40] relative at [float64], [2^-16] at [float32].
     - {!Nx.betainc}, {!Nx.betaincc}, in [x]: [1024 (1 + |log f|) + 64] ulps.
     - {!Nx.log_betainc}, {!Nx.log_betaincc}, in [x]: 512 ulps, or [512ε]
-      absolutely where below 1.
+      absolutely where it rounds below 1 in magnitude.
     - The four, in [a] or [b]: [2^-40 (1 + |log f|)] relative at [float64],
       [2^-16 (1 + |log f|)] at [float32].
     - {!Nx.betaincinv}, {!Nx.betainccinv}, in [p] or [q]:

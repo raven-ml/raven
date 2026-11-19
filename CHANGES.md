@@ -500,6 +500,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- The budgets of the special functions' derivatives are measured from the
+  exact derivative rounded to the dtype, as an ulp is.
 - `Rune.jit`'s Numerics table states `Nx.log_softmax`'s bound,
   `(β + |d| + (2L + 2) ln n + 2E + 1) u + u|r|`, as it does `Nx.softmax`'s.
 - Eagerly, `Nx.attention`'s derivative under `~lengths` computes each lead
@@ -3412,6 +3414,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.Rng.truncated_normal`'s bound is measured from the exact solution
+  rounded to the dtype: a draw is within 2 ulps at float32, or 3 at float64,
+  of a value within `6ε` of it.
 - `Nx.log_softmax` states its error bound, `(b + |d| + 6 ln n + 5) u + u |r|`
   for an element `r`, in `Nx.softmax`'s terms.
 - `Nx.softmax` and `Nx.log_softmax` take each exponent as `scale (x - e)`,

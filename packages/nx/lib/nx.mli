@@ -5454,9 +5454,10 @@ module Rng : sig
       positive value. It inverts the smaller of the masses below and above
       [x], held as logarithms in the tails, so that bounds far out on one side
       keep their digits, and its cost does not depend on the interval's mass.
-      A draw lies in the interval, and within [6ε] plus 3 units in the last
-      place of the exact solution, [ε] being [2{^-23}] at float32 and
-      [2{^-52}] at float64, however far out the bounds lie. The masses at each
+      A draw lies in the interval, and within 2 ulps at float32, or 3 at
+      float64, of a value within [6ε] of the exact solution rounded to the
+      dtype ({!Nx.section-transcendental}), [ε] being [2{^-23}] at float32
+      and [2{^-52}] at float64, however far out the bounds lie. The masses at each
       bound are computed once per element of the bound as given, so a scalar
       bound costs one.
 
