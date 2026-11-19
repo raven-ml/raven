@@ -600,8 +600,8 @@ let greedy_run ~what ~encode weights assets greedy greedy64 subset wer out name
           let oracle, oracle64 = List.assoc protocol records in
           let r = Hashtbl.find oracle id and r64 = Hashtbl.find oracle64 id in
           let at what = Printf.sprintf "%s %s %s %s" name protocol id what in
-          let o = { (Whisper.Decoding.options t language) with timestamps } in
-          let start = Whisper.Decoding.start t d o in
+          let o = { (Whisper.Decoding.options t) with timestamps } in
+          let start = Whisper.Decoding.start t d o language in
           check_ids (at "initial tokens")
             (Json.ints (Json.mem "initial_tokens" r))
             start.tokens;
@@ -819,8 +819,8 @@ let check_beam weights assets features beam subset name =
       (tsv subset)
   in
   let oracle = by_id beam in
-  let o = { (Whisper.Decoding.options t language) with timestamps = false } in
-  let start = Whisper.Decoding.start t d o in
+  let o = { (Whisper.Decoding.options t) with timestamps = false } in
+  let start = Whisper.Decoding.start t d o language in
   let scores = ref 0. in
   let outcomes =
     List.mapi
@@ -978,7 +978,7 @@ let excuse weights assets greedy dir =
       let rho, tx =
         if not timestamps then (0., Float.infinity)
         else begin
-          let _, t, language =
+          let _, t, _ =
             match Hashtbl.find_opt releases name with
             | Some x -> x
             | None ->
@@ -987,7 +987,7 @@ let excuse weights assets greedy dir =
                 x
           in
           let module D = Whisper.Decoding in
-          let o = { (D.options t language) with timestamps } in
+          let o = { (D.options t) with timestamps } in
           let ts0 = T.special t (Timestamp 0) and v = T.vocab_size t in
           let sampled =
             Nx.create Nx.int64 [| 1; step |]

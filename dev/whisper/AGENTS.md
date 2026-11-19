@@ -24,7 +24,8 @@ and is never published (no opam package, no CHANGES entry).
   over kaun's key-value cache with the audio's keys and values computed
   once), `Decoding` (options, initial tokens, suppressed ids, the logit
   filter over lanes, and greedy, sampled and beam decoding as one
-  `Rune.iterate` on any device, ranked on the host), `English` (the text
+  `Rune.iterate` on any device, ranked on the host, the languages'
+  probabilities and the compression ratio), `English` (the text
   normaliser of Whisper's evaluation, with upstream's `english.json`
   spelling map embedded at build time) and `Wer` (jiwer's word counts and
   corpus word error rate).

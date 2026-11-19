@@ -37,6 +37,9 @@
 ; and upstream/ratio.json, upstream's compression_ratio (whisper/utils.py) of
 ; texts under zlib 1.3.2, by
 ;   gen/run.sh P4-impl/ratio.py OUT
+; and upstream/languages.pt, upstream/languages.npz and upstream/languages.json,
+; upstream's detect_language on a small multilingual model, by
+;   gen/run.sh P4-impl/languages.py upstream OUT
 ; in _plans/whisper-port/gen's pinned environment, outside the repository.
 
 (test
@@ -45,6 +48,9 @@
  (libraries whisper whisper_support nx nx.io kaun rune lz windtrap)
  (deps
   upstream/ratio.json
+  upstream/languages.pt
+  upstream/languages.npz
+  upstream/languages.json
   upstream/options.json
   upstream/filters.json
   upstream/filters.npz

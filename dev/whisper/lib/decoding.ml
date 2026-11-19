@@ -8,10 +8,7 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 (* Options *)
 
 type options = {
-  language : (string * Tokenizer.task) option;
   timestamps : bool;
-  prompt : int array;
-  prefix : int array;
   suppress : int array;
   suppress_blank : bool;
   max_initial_timestamp : int option;
@@ -20,12 +17,9 @@ type options = {
 
 (* whisper/decoding.py, DecodingOptions: a max_initial_timestamp of 1.0 s, the
    50th timestamp of 0.02 s. *)
-let options t language =
+let options t =
   {
-    language;
     timestamps = true;
-    prompt = [||];
-    prefix = [||];
     suppress = Tokenizer.non_speech t;
     suppress_blank = true;
     max_initial_timestamp = Some 50;
@@ -49,8 +43,8 @@ let check_ids t what ids =
 
 type start = { tokens : int array; sot : int }
 
-let start t (dims : Model.dims) o =
-  (match (o.language, Model.multilingual dims) with
+let start ?(prompt = [||]) ?(prefix = [||]) t (dims : Model.dims) o language =
+  (match (language, Model.multilingual dims) with
   | None, true ->
       invalid_arg
         "Whisper.Decoding.start: a multilingual model needs a language"
@@ -58,28 +52,31 @@ let start t (dims : Model.dims) o =
       invalid_arg
         "Whisper.Decoding.start: an English-only model has no language"
   | _ -> ());
-  check_ids t "prompt" o.prompt;
-  check_ids t "prefix" o.prefix;
-  let sot_sequence = Tokenizer.sot_sequence t o.language in
+  check_ids t "prompt" prompt;
+  check_ids t "prefix" prefix;
+  let sot_sequence = Tokenizer.sot_sequence t language in
   let sot_sequence =
     if o.timestamps then sot_sequence
     else Array.append sot_sequence [| Tokenizer.special t No_timestamps |]
   in
   let prompt =
-    let n = Array.length o.prompt in
+    let n = Array.length prompt in
     if n = 0 then [||]
     else
       let keep = max 0 (min n ((dims.n_text_ctx / 2) - 1)) in
       Array.append
         [| Tokenizer.special t Start_of_prev |]
-        (Array.sub o.prompt (n - keep) keep)
+        (Array.sub prompt (n - keep) keep)
   in
-  let tokens = Array.concat [ prompt; sot_sequence; o.prefix ] in
+  let tokens = Array.concat [ prompt; sot_sequence; prefix ] in
   if Array.length tokens > dims.n_text_ctx then
     invalid_argf
       "Whisper.Decoding.start: %d initial tokens exceed n_text_ctx %d"
       (Array.length tokens) dims.n_text_ctx;
   { tokens; sot = Array.length prompt }
+
+(* whisper/transcribe.py: tokenizer.encode(" " + initial_prompt.strip()). *)
+let prompt t s = Tokenizer.encode t (" " ^ Space.strip s)
 
 (* whisper/decoding.py, DecodingTask._get_suppress_tokens. Upstream suppresses
    none of the specials when it is given no ids to suppress; here they are
@@ -767,6 +764,35 @@ let results t o (out : Nx.host outcome) =
         avg_logprob = sum /. float (Array.length toks + 1);
         no_speech_prob = no_speech.(i);
       })
+
+(* Languages
+
+   whisper/decoding.py, detect_language: the logits after
+   [<|startoftranscript|>] alone, every token but the languages' at [-∞], under
+   a softmax. The languages' tokens are numbered in order, so they are one slice
+   of the logits. *)
+
+let languages m t features =
+  if not (Model.multilingual m.Model.dims) then
+    invalid_arg "Whisper.Decoding.languages: the model is English-only";
+  let audio = Model.audio m features in
+  let n = Nx.dim 0 features in
+  let at = Nx.beside features in
+  let caches = Model.cache m ~slots:n at in
+  let index =
+    Kaun.Cache_index.place at
+      (Kaun.Cache_index.rows ~context:1 (Array.make n 1))
+  in
+  let sot = Tokenizer.special t Start_of_transcript in
+  let h, _ =
+    Model.decode m audio caches index
+      (Nx.full_at at Nx.int64 [| n; 1 |] (Int64.of_int sot))
+  in
+  let logits = Model.logits m (Nx.reshape [| n; Nx.dim 2 h |] h) in
+  let codes = Tokenizer.languages t in
+  let first = Tokenizer.special t (Language codes.(0)) in
+  let k = Array.length codes in
+  Nx.softmax ~axes:[ 1 ] (Nx.slice [ A; R (first, first + k) ] logits)
 
 (* Compression ratio
 

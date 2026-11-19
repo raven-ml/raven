@@ -34,16 +34,9 @@
 (** {1:options Options} *)
 
 type options = {
-  language : (string * Tokenizer.task) option;
-      (** The language's code and the task of a multilingual model, [None] for
-          an English-only one: what {!Tokenizer.sot_sequence} takes. *)
   timestamps : bool;
       (** Whether the transcript marks where its segments start and end with
           timestamps. *)
-  prompt : int array;
-      (** Ids of the text before the window, [[||]] for none. A text prompt [s]
-          is encoded as [Tokenizer.encode t (" " ^ String.trim s)]. *)
-  prefix : int array;  (** Ids the transcript starts with, [[||]] for none. *)
   suppress : int array;
       (** Ids suppressed at every step, besides the specials no transcript
           holds. *)
@@ -58,11 +51,11 @@ type options = {
           sum of log probabilities over their length, [Some a], [0 <= a <= 1],
           over [((5 + length) / 6) ** a] (Wu et al. 2016, §7). *)
 }
-(** The type for the options of a decoding. *)
+(** The type for the options of a decoding: what its filter and its ranking
+    read. They hold for every window of a recording. *)
 
-val options : Tokenizer.t -> (string * Tokenizer.task) option -> options
-(** [options t language] is the default options of [language]: with timestamps,
-    no prompt and no prefix, {!Tokenizer.non_speech} suppressed, a blank
+val options : Tokenizer.t -> options
+(** [options t] is: with timestamps, {!Tokenizer.non_speech} suppressed, a blank
     transcript suppressed, the first timestamp at most [Timestamp 50], 1 s into
     the window, and candidates ranked by their sum over their length. *)
 
@@ -76,15 +69,31 @@ type start = {
 }
 (** The type for the initial tokens of a decoding. *)
 
-val start : Tokenizer.t -> Model.dims -> options -> start
-(** [start t dims o] is the initial tokens of a decoding with [o] by a model of
-    [dims] over [t]: the prompt cut to its last [dims.n_text_ctx / 2 - 1] ids,
-    the prefix whole.
+val start :
+  ?prompt:int array ->
+  ?prefix:int array ->
+  Tokenizer.t ->
+  Model.dims ->
+  options ->
+  (string * Tokenizer.task) option ->
+  start
+(** [start ~prompt ~prefix t dims o language] is the initial tokens of a
+    decoding of [language] with [o] by a model of [dims] over [t]: the [prompt]
+    cut to its last [dims.n_text_ctx / 2 - 1] ids, the [prefix] whole, each
+    [[||]] by default. [language] is the language's code and the task of a
+    multilingual model, [None] for an English-only one: what
+    {!Tokenizer.sot_sequence} takes. A text [s] gives the prompt
+    {!prompt}[ t s].
 
-    Raises [Invalid_argument] if [o.language] is [None] and the model is
+    Raises [Invalid_argument] if [language] is [None] and the model is
     multilingual ({!Model.multilingual}), or [Some] and it is not, if an id of
     the prompt or the prefix is not one of [t]'s, if {!Tokenizer.sot_sequence}
     does, or if the initial tokens are more than [dims.n_text_ctx]. *)
+
+val prompt : Tokenizer.t -> string -> int array
+(** [prompt t s] is the ids of the text [s] as a prompt: [s] without the white
+    space at its ends, as Python's [str.strip ()] removes it (Unicode's, U+3000
+    included), after a space. *)
 
 val suppressed : Tokenizer.t -> options -> int array
 (** [suppressed t o] is the ids, in increasing order, that every step
@@ -256,6 +265,26 @@ val results : Tokenizer.t -> options -> Nx.host outcome -> result array
     penalty. The first of the greatest scores is chosen.
 
     Raises [Invalid_argument] if [o.length_penalty] is outside [[0, 1]]. *)
+
+(** {1:languages Languages} *)
+
+val languages :
+  ((float, 'b, 'd) Nx.t, 'd) Model.t ->
+  Tokenizer.t ->
+  (float, 'b, 'd) Nx.t ->
+  'd Nx.float32_t
+(** [languages m t features] is, for each audio of the audio features [features]
+    ({!Model.encode}), of shape [[| n; n_audio_ctx; n_audio_state |]], the
+    probability of each of {!Tokenizer.languages}[ t], in that order, as the
+    token after [<|startoftranscript|>] read alone: the softmax, at float32, of
+    the decoder's logits there over the language tokens. Shape
+    [[| n; Array.length (Tokenizer.languages t) |]]. It is Nx operations on
+    [m]'s set, so it runs under [Rune.jit].
+
+    Raises [Invalid_argument] if [m] is English-only ({!Model.multilingual}), or
+    as {!Model.audio} does. *)
+
+(** {1:ratio Compression ratio} *)
 
 val compression_ratio : string -> float
 (** [compression_ratio s] measures how much [s] repeats itself: the length of

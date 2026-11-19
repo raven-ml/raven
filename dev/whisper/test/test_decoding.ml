@@ -78,20 +78,24 @@ let options_of c =
   ( t,
     dims ~multilingual:multi n_text_ctx,
     {
-      (D.options t language) with
+      (D.options t) with
       timestamps = Json.bool (Json.mem "timestamps" c);
-      prompt = Json.ints (Json.mem "prompt" c);
-      prefix = Json.ints (Json.mem "prefix" c);
       suppress;
-    } )
+    },
+    language )
 
 let upstream =
   cases "start and suppressed are upstream's"
     ~id:(fun c -> Json.string (Json.mem "name" c))
     (Json.list (Json.mem "cases" golden))
     (fun c ->
-      let t, dims, o = options_of c in
-      let s = D.start t dims o in
+      let t, dims, o, language = options_of c in
+      let s =
+        D.start
+          ~prompt:(Json.ints (Json.mem "prompt" c))
+          ~prefix:(Json.ints (Json.mem "prefix" c))
+          t dims o language
+      in
       equal (array int) (Json.ints (Json.mem "initial_tokens" c)) s.tokens;
       equal ~msg:"sample_begin" int
         (Json.int (Json.mem "sample_begin" c))
@@ -131,7 +135,7 @@ let layout =
       let+ timestamps = bool in
       (ctx, prompt, prefix, timestamps))
     (fun (ctx, prompt, prefix, timestamps) ->
-      let o = { (D.options gpt2 None) with prompt; prefix; timestamps } in
+      let o = { (D.options gpt2) with timestamps } in
       let half = (ctx / 2) - 1 and n = Array.length prompt in
       cover "no prompt" (n = 0);
       cover "a prompt cut" (n > half);
@@ -141,17 +145,22 @@ let layout =
       let start = if timestamps then [| sot |] else [| sot; no_timestamps |] in
       let want = Array.concat [ head; start; prefix ] in
       assume (Array.length want <= ctx);
-      let s = D.start gpt2 (dims ~multilingual:false ctx) o in
+      let s =
+        D.start ~prompt ~prefix gpt2 (dims ~multilingual:false ctx) o None
+      in
       equal (array int) want s.tokens;
       equal int sot s.tokens.(s.sot))
 
 let context =
   test "start refuses initial tokens past n_text_ctx, and takes them at it"
     (fun () ->
-      let o n = { (D.options gpt2 None) with prefix = Array.make n 7 } in
-      let d = dims ~multilingual:false 16 in
-      equal int 16 (Array.length (D.start gpt2 d (o 15)).tokens);
-      raises_match Exn.invalid_arg (fun () -> D.start gpt2 d (o 16)))
+      let start n =
+        D.start ~prefix:(Array.make n 7) gpt2
+          (dims ~multilingual:false 16)
+          (D.options gpt2) None
+      in
+      equal int 16 (Array.length (start 15).tokens);
+      raises_match Exn.invalid_arg (fun () -> start 16))
 
 let languages =
   test "start needs a language exactly for a multilingual model" (fun () ->
@@ -159,21 +168,36 @@ let languages =
       raises_match Exn.invalid_arg (fun () ->
           D.start multilingual
             (dims ~multilingual:true 448)
-            (D.options multilingual None));
+            (D.options multilingual) None);
       raises_match Exn.invalid_arg (fun () ->
-          D.start gpt2 (dims ~multilingual:false 448) (D.options gpt2 en)))
+          D.start gpt2 (dims ~multilingual:false 448) (D.options gpt2) en))
+
+(* A text prompt is [" "] and the text without the white space Python's
+   [str.strip] removes at its ends: Unicode's, U+3000 and U+00A0 included. *)
+let prompt =
+  cases "prompt encodes the text stripped as Python strips it"
+    ~id:(fun (s, _) -> Printf.sprintf "%S" s)
+    [
+      ("hello", " hello");
+      ("  hello\n", " hello");
+      ("\x0bhello\x1c", " hello");
+      ("\u{3000}\u{00A0}hello world\u{2028}", " hello world");
+      ("", " ");
+      ("\u{3000}", " ");
+    ]
+    (fun (s, want) -> equal (array int) (T.encode gpt2 want) (D.prompt gpt2 s))
 
 let ids =
   cases "start and suppressed refuse an id outside the vocabulary"
     ~id:string_of_int
     [ -1; T.vocab_size gpt2 ]
     (fun id ->
-      let o = D.options gpt2 None in
+      let o = D.options gpt2 in
       let d = dims ~multilingual:false 448 in
       raises_match Exn.invalid_arg (fun () ->
-          D.start gpt2 d { o with prompt = [| id |] });
+          D.start ~prompt:[| id |] gpt2 d o None);
       raises_match Exn.invalid_arg (fun () ->
-          D.start gpt2 d { o with prefix = [| id |] });
+          D.start ~prefix:[| id |] gpt2 d o None);
       raises_match Exn.invalid_arg (fun () ->
           D.suppressed gpt2 { o with suppress = [| id |] }))
 
@@ -194,7 +218,7 @@ let suppressed =
   prop "suppressed is the given ids and the specials, in order, each once"
     Gen.(list ~size:(int_range 0 8) (int_range 0 (T.vocab_size gpt2 - 1)))
     (fun given ->
-      let o = { (D.options gpt2 None) with suppress = Array.of_list given } in
+      let o = { (D.options gpt2) with suppress = Array.of_list given } in
       let want = List.sort_uniq Int.compare (given @ specials) in
       equal (list int) want (Array.to_list (D.suppressed gpt2 o)))
 
@@ -269,7 +293,7 @@ let filter_upstream =
           (Array.of_list
              (List.map (fun (_, c) -> Json.ints (Json.mem "sampled" c)) rows))
       in
-      let o = { (D.options gpt2 None) with timestamps; suppress } in
+      let o = { (D.options gpt2) with timestamps; suppress } in
       let got = D.filter gpt2 o ~sampled x in
       List.iteri
         (fun k (i, c) ->
@@ -324,7 +348,7 @@ let finite x = Float.is_finite x
 
 let input_or_banned =
   prop "a filtered logit is its input or -inf" lanes_gen (fun lanes ->
-      let input, got = filtered (D.options gpt2 None) lanes in
+      let input, got = filtered (D.options gpt2) lanes in
       Array.iteri
         (fun i y ->
           if y <> input.(i) && y <> Float.neg_infinity then
@@ -348,9 +372,7 @@ let range a b = List.init (b - a) (fun i -> a + i)
 (* The timestamp rules alone: no blank suppression, and no ids suppressed but
    the specials, which are no text token's. *)
 let rules =
-  let o =
-    { (D.options gpt2 None) with suppress = [||]; suppress_blank = false }
-  in
+  let o = { (D.options gpt2) with suppress = [||]; suppress_blank = false } in
   let specials = Array.to_list (D.suppressed gpt2 o) in
   prop "the timestamp rules ban what their contract states" lanes_gen
     (fun lanes ->
@@ -441,7 +463,7 @@ let rules =
 
 let filter_shape =
   test "filter refuses logits of another shape" (fun () ->
-      let o = D.options gpt2 None in
+      let o = D.options gpt2 in
       let sampled = Nx.full Nx.int64 [| 2; 1 |] (-1L) in
       raises_match Exn.invalid_arg (fun () ->
           D.filter gpt2 o ~sampled (Nx.zeros Nx.float32 [| 2; vocab + 1 |]));
@@ -465,10 +487,8 @@ let features =
 let case_options c =
   let given = Json.ints (Json.mem "suppress" c) in
   {
-    (D.options gpt2 None) with
+    (D.options gpt2) with
     timestamps = Json.bool (Json.mem "timestamps" c);
-    prompt = Json.ints (Json.mem "prompt" c);
-    prefix = Json.ints (Json.mem "prefix" c);
     suppress_blank = Json.bool (Json.mem "suppress_blank" c);
     suppress =
       (if Json.bool (Json.mem "suppress_non_speech" c) then
@@ -478,10 +498,17 @@ let case_options c =
       Some (Json.int (Json.mem "max_initial_timestamp" decodes));
   }
 
+(* A case's initial tokens under [o], after its prompt and prefix. *)
+let case_start c o =
+  D.start
+    ~prompt:(Json.ints (Json.mem "prompt" c))
+    ~prefix:(Json.ints (Json.mem "prefix" c))
+    gpt2 model.dims o None
+
 (* Each case's audios, decoded together, each from the case's start. *)
 let decode_case ?(decode = D.decode) search o c =
   let f = Nx.slice [ I (Json.int (Json.mem "features" c)); A; A; A ] features in
-  let s = D.start gpt2 model.dims o in
+  let s = case_start c o in
   let out =
     decode model gpt2 o search (D.starts (Array.make (Nx.dim 0 f) s)) f
   in
@@ -495,7 +522,7 @@ let greedy_upstream =
     decode_cases
     (fun c ->
       let o = case_options c in
-      let s = D.start gpt2 model.dims o in
+      let s = case_start c o in
       equal ~msg:"initial tokens" (array int)
         (Json.ints (Json.mem "initial_tokens" c))
         s.tokens;
@@ -537,8 +564,8 @@ let greedy_accurate =
 
 let decode_refuses =
   test "decode refuses features and starts of other shapes" (fun () ->
-      let o = D.options gpt2 None in
-      let s = D.starts [| D.start gpt2 model.dims o |] in
+      let o = D.options gpt2 in
+      let s = D.starts [| D.start gpt2 model.dims o None |] in
       raises_match Exn.invalid_arg (fun () ->
           D.decode model gpt2 o Greedy s (Nx.zeros Nx.float32 [| 1; 23; 32 |]));
       raises_match Exn.invalid_arg (fun () ->
@@ -640,8 +667,8 @@ let candidates =
       (2, -1., None);
     ]
     (fun (size, patience, want) ->
-      let o = D.options gpt2 None in
-      let s = D.starts [| D.start gpt2 model.dims o |] in
+      let o = D.options gpt2 in
+      let s = D.starts [| D.start gpt2 model.dims o None |] in
       let f = Nx.slice [ I 0; R (0, 1); A; A ] features in
       let decode () = D.decode model gpt2 o (Beam { size; patience }) s f in
       match want with
@@ -651,8 +678,8 @@ let candidates =
 let search_refuses =
   test "decode refuses an empty group and a length penalty outside [0, 1]"
     (fun () ->
-      let o = D.options gpt2 None in
-      let s = D.starts [| D.start gpt2 model.dims o |] in
+      let o = D.options gpt2 in
+      let s = D.starts [| D.start gpt2 model.dims o None |] in
       let f = Nx.slice [ I 0; R (0, 1); A; A ] features in
       let decode o search = ignore (D.decode model gpt2 o search s f) in
       raises_match Exn.invalid_arg (fun () ->
@@ -678,8 +705,8 @@ let search_refuses =
 let sample_law =
   test "sampling draws the first token with its filtered probability" (fun () ->
       let n = 2000 and temperature = 0.7 in
-      let o = { (D.options gpt2 None) with timestamps = false } in
-      let s = D.start gpt2 model.dims o in
+      let o = { (D.options gpt2) with timestamps = false } in
+      let s = D.start gpt2 model.dims o None in
       let f = Nx.slice [ I 0; R (0, 1); A; A ] features in
       let search =
         D.Sample
@@ -755,7 +782,7 @@ let outcome ?(finished = []) ~count lanes =
 
 let results_rank =
   test "results scores each candidate by its sum over its length" (fun () ->
-      let o = D.options gpt2 None in
+      let o = D.options gpt2 in
       let chosen ?(o = o) out = (D.results gpt2 o out).(0) in
       (* An empty candidate scores -∞ without a penalty, its sum with one. *)
       let lanes = [ ([| eot |], -0.125); ([| 5; eot |], -3.) ] in
@@ -863,9 +890,9 @@ let batch_law =
          ])
        [ false; true ])
     (fun (timestamps, _, search) ->
-      let o = { (D.options gpt2 None) with timestamps } in
+      let o = { (D.options gpt2) with timestamps } in
       let start (prompt, prefix) =
-        D.start gpt2 model.dims { o with prompt; prefix }
+        D.start ~prompt ~prefix gpt2 model.dims o None
       in
       let all =
         D.decode model gpt2 o search (D.starts (Array.map start prompts)) f
@@ -900,6 +927,57 @@ let batch_law =
             [| Nx.item [ 0 ] one.no_speech |]
             [| Nx.item [ i ] all.no_speech |])
         prompts)
+
+(* Languages
+
+   upstream/languages.pt is a small randomly initialised multilingual Whisper
+   (51865 tokens), upstream/languages.npz audio features of four audios and the
+   probabilities upstream's detect_language gives them over the trimmed
+   multilingual tokenizer at float32, with the float64 model's as the reference,
+   and upstream/languages.json the languages' codes in their tokens' order and
+   each audio's detected language. *)
+
+let lang_model = Whisper.Model.load Nx.float32 "upstream/languages.pt"
+let lang_golden = Json.read "upstream/languages.json"
+
+let lang_entry name =
+  match Nx_io.Archive.find name (Nx_io.load_npz "upstream/languages.npz") with
+  | Some p -> p
+  | None -> failwith ("upstream/languages.npz: no " ^ name)
+
+let strings j = Array.of_list (List.map Json.string (Json.list j))
+
+let languages_upstream =
+  test "languages are upstream's probabilities, as accurately" (fun () ->
+      let features = Nx.unpack Nx.float32 (lang_entry "features") in
+      let got = D.languages lang_model multilingual features in
+      let up32 = Nx.unpack Nx.float32 (lang_entry "probs32") in
+      let up64 = Nx.unpack Nx.float64 (lang_entry "probs64") in
+      let codes = T.languages multilingual in
+      equal ~msg:"codes" (array string)
+        (strings (Json.mem "codes" lang_golden))
+        codes;
+      equal ~msg:"shape" (array int) (Nx.shape up32) (Nx.shape got);
+      let distance a =
+        Nx.item [] (Nx.max (Nx.abs (Nx.sub (Nx.cast Nx.float64 a) up64)))
+      in
+      at_most float_exact ~than:(Tolerance.c *. distance up32) (distance got);
+      (* The likeliest, the first of equal ones, as upstream's argmax. *)
+      let detected =
+        Array.map
+          (fun i -> codes.(Int32.to_int i))
+          (Nx.to_array (Nx.cast Nx.int32 (Nx.argmax ~axis:1 got)))
+      in
+      equal ~msg:"detected" (array string)
+        (strings (Json.mem "detected" lang_golden))
+        detected)
+
+let languages_refuses =
+  test "languages refuses an English-only model" (fun () ->
+      raises_match Exn.invalid_arg (fun () ->
+          D.languages model gpt2
+            (Nx.zeros Nx.float32
+               [| 1; model.dims.n_audio_ctx; model.dims.n_audio_state |])))
 
 (* Compression ratio
 
@@ -1097,7 +1175,7 @@ let () =
   exit
     (run "whisper.decoding"
        [
-         group "start" [ upstream; layout; context; languages; ids ];
+         group "start" [ upstream; layout; context; languages; prompt; ids ];
          group "suppressed" [ suppressed ];
          group "filter"
            [ filter_upstream; input_or_banned; rules; filter_shape ];
@@ -1111,6 +1189,7 @@ let () =
          group "results" [ results_rank ];
          group "starts" [ starts_layout; starts_refuses ];
          group "batch" [ batch_law ];
+         group "languages" [ languages_upstream; languages_refuses ];
          group "compression ratio"
            [ ratio_upstream; ratio_decisions; ratio_law; ratio_empty ];
          group "compiled"
