@@ -4,6 +4,11 @@ All notable changes to Mynd are documented in this file.
 
 ## Unreleased
 
+- Add filtering: `windows`, a view of each pixel's window under an
+  extension rule; `correlate` by weights paired with the images' batch
+  axes; `gaussian_blur`, the sampled Gaussian with a radius and a
+  deviation held in data; `median_blur`, the lower median in nx's sort
+  order for every dtype.
 - Add colour models: `luma` (BT.601, on encoded values) and `luminance`
   (CIE Y of linear sRGB), exact on greys; `rgb_to_hsv` and `hsv_to_rgb`,
   Smith's hexcone with hue in turns, whose round trip has the identity as

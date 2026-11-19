@@ -12,6 +12,7 @@ dependencies = [
   "pillow==13.0.0",
   "pycocotools==2.0.10",
   "scikit-image==0.26.0",
+  "opencv-python-headless==4.12.0.88",
 ]
 
 [tool.uv]

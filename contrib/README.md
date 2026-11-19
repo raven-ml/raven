@@ -12,7 +12,7 @@ Each one is its own dune project with its own version and opam metadata.
 | [**ymir**](ymir/)         | Astronomy: units, frames, FITS, photometry, cosmology |
 | [**jord**](jord/)         | Earth observation: systems, grids, warps, products    |
 | [**alda**](alda/)         | Signals: windows, spectra, filters, resampling        |
-| [**mynd**](mynd/)         | Images: values, sampling, resizing, boxes, masks      |
+| [**mynd**](mynd/)         | Images: colour, sampling, resizing, filters, masks    |
 
 ## Policy
 

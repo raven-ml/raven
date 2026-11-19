@@ -345,6 +345,108 @@ val resize :
     Raises [Invalid_argument] if [x] has fewer than three axes, no row or no
     column, if [h'] or [w'] is below [1], or [k] is invalid. *)
 
+(** {1:filtering Filtering}
+
+    A pixel's {e window} of extents [(kh, kw)] is the [kh] rows from
+    [i - kh / 2] to [i + (kh - 1) / 2] and the [kw] columns from [j - kw / 2] to
+    [j + (kw - 1) / 2] about pixel [(i, j)], in its channel. Its {e tap}
+    [(p, q)] is the pixel at row [i - kh / 2 + p] and column [j - kw / 2 + q],
+    read where it lies outside the image under an extension rule, as
+    {!Nx.extend} reads a signal, folding as often as a small image needs. Tap
+    [(kh / 2, kw / 2)] is the pixel itself, so a window of odd extents is
+    centred on the pixel's centre [(j + ½, i + ½)] and one of even extents on
+    its top-left corner [(j, i)]. Weights with a row and a column of zeros put
+    before them centre an even window on the opposite corner [(j + 1, i + 1)],
+    and read one more row and column.
+
+    A filter's result has its images' shape. Weights and deviations held in data
+    pair with the images' batch axes as positions do, their leading axes
+    broadcasting with them, so one call filters each image with its own, or one
+    image with each of several. *)
+
+val windows :
+  edge:[< extension ] -> int * int -> ('v, 'r, 'd) Nx.t -> ('v, 'r, 'd) Nx.t
+(** [windows ~edge (kh, kw) x] is the windows of extents [(kh, kw)] of the
+    images [x], [[b…; h; w; c]], of any dtype, as [[b…; h; w; c; kh; kw]]:
+    element [(…, i, j, l, p, q)] is tap [(p, q)] of pixel [(i, j)]'s window in
+    channel [l], [`Zero] reading the dtype's zero, [false] in a mask. It is a
+    view of one copy of [x] extended by [kh - 1] rows and [kw - 1] columns; an
+    operation that stores the windows, such as {!Nx.sort} or a reshape of the
+    last two axes into one, holds [kh kw] elements a pixel. Its derivative adds
+    each element's back to the pixel it reads.
+
+    Raises [Invalid_argument] if [x] has fewer than three axes, [kh] or [kw] is
+    below [1], or [x] has no row or no column and [edge] is not [`Zero]. *)
+
+val correlate :
+  edge:[< Nx.extension ] ->
+  (float, 's, 'd) Nx.t ->
+  (float, 's, 'd) Nx.t ->
+  (float, 's, 'd) Nx.t
+(** [correlate ~edge k x] is, at each pixel and channel of the images [x],
+    [[b…; h; w; c]], the sum over its window's taps [(p, q)] under [edge] of the
+    tap times the weight [k(p, q)], [k] being [[b'…; kh; kw]]: the weights are
+    not flipped and serve every channel. Each sum adds its [kh kw] products as
+    {!Nx.conv} adds a depthwise convolution's and rounds once; under
+    [`Antisymmetric_whole] a tap outside is itself rounded, as {!Nx.extend}
+    computes it. A weight of [0] still reads its tap, so a NaN or infinite pixel
+    makes NaN or infinite every result whose window reads it under [edge]. Under
+    [`Antisymmetric_whole] a linear ramp stays linear to the border, so a
+    difference reads its slope there. The result is linear in [k] and in [x],
+    with their derivatives.
+
+    Weights that are a column [u] times a row [v] are two calls, by [u] as
+    [[kh; 1]] then by [v] as [[1; kw]], at [kh + kw] products a pixel; they
+    differ from the single call by rounding.
+
+    Raises [Invalid_argument] if [x] has fewer than three axes, [k] has fewer
+    than two or an extent below [1], [k]'s leading axes do not broadcast with
+    [x]'s batch axes, or [x] has no row or no column and [edge] is not [`Zero].
+*)
+
+val gaussian_blur :
+  edge:[< Nx.extension ] ->
+  radius:int ->
+  (float, 's, 'd) Nx.t ->
+  (float, 's, 'd) Nx.t ->
+  (float, 's, 'd) Nx.t
+(** [gaussian_blur ~edge ~radius sigma x] is [x] correlated ({!correlate}) with
+    the [2 radius + 1] weights [g(n) = e{^-n²/2σ²} / Σ{_m} e{^-m²/2σ²}], [n] and
+    [m] from [-radius] to [radius], as a row [[b'…; 1; 2 radius + 1]], then as a
+    column [[b'…; 2 radius + 1; 1]]: the Gaussian of deviation [σ] sampled at
+    the pixels and scaled to sum to [1], so a constant image stays constant up
+    to rounding. [sigma], [[b'…]], is read in [x]'s dtype. Where [σ] is so small
+    that every weight but the centre's is [0], the weights are the impulse, with
+    derivative [0] in [σ]. Formats narrower than 32 bits compute at float32 and
+    round into [x]'s dtype once.
+
+    Each pass is within [2 erfc (radius / (σ √2))] times the largest magnitude
+    it reads of the same samples over every integer (Getreuer, "A Survey of
+    Gaussian Convolution Algorithms", 2013, Theorem 1). Those scale a frequency
+    of [ω] radians a pixel by the continuous Gaussian's [e{^-σ²ω²/2}] to within
+    about [e{^-π²σ²/2}], kept at the finest detail: from [σ] near [1] the
+    difference is small; below it the blur is weaker than [σ] states and its
+    derivative in [σ] vanishes (Lindeberg, "Discrete approximations of Gaussian
+    smoothing and Gaussian derivatives", 2024).
+
+    Raises [Invalid_argument] as {!correlate} does, or if [radius] is negative.
+*)
+
+val median_blur :
+  edge:[< extension ] -> int * int -> ('v, 'r, 'd) Nx.t -> ('v, 'r, 'd) Nx.t
+(** [median_blur ~edge (kh, kw) x] is, at each pixel and channel of the images
+    [x], the lower median of its window's [n = kh kw] taps under [edge] in
+    {!Nx.sort}'s order: the tap with [(n - 1) / 2] taps before it, equal taps
+    ordered row-major. Every dtype: the result is that tap's value, a majority
+    in a mask, and its derivative goes to the pixel the tap reads. NaN sorts
+    above every number, so the result is NaN only where more than half the
+    window's taps read NaN. It sorts the windows of about [h w / (kh kw)] pixels
+    of each image at a time, at least one, so beside one extended copy of [x]
+    and the result it holds about twice as many elements as [x] has, and as many
+    [int64] positions, for an image of at least [kh kw] pixels.
+
+    Raises [Invalid_argument] as {!windows} does. *)
+
 (** {1:boxes Boxes}
 
     A {e box} is the rectangle [\[x₀, x₁) × \[y₀, y₁)], held as the floats

@@ -5,12 +5,13 @@
  (names
   test_values
   test_colour
+  test_filter
   test_sample
   test_resize
   test_annot
   test_components
   test_nms)
  (package mynd)
- (libraries mynd nx nx.io rune windtrap)
+ (libraries mynd nx nx.io rig rune windtrap)
  (deps
   (glob_files golden/*.npz)))
