@@ -95,6 +95,8 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Metal's renderer emits no launch bound; its `local_threads_max` of 1024
   is a maximum a pipeline may refuse, and Mac2's AMD GPUs may run 64-wide
   SIMD groups, which `simd_threads` does not state
+- Other Metal constants in DIVERGENCES.md rest on an M1 Max (16384, 32768,
+  and near lines 2435 and 5166): mark each "Reason: none" as D404's
 
 ## nx, rune
 
@@ -113,8 +115,14 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Under `Rune.jit`, the weight gradient of `Nx.matmul_segments` keeps one
   `[k; n]` partial per block (lower_reduce.ml): +0.9 GB at 1,024 rows
   over AION's 40 heads, where eager keeps none
-- `Nx.attention ~lengths` skips padded work in the forward only; its
-  default derivative builds the whole pair loop
+- `Nx.attention ~lengths`'s compiled derivative builds the whole pair loop
+  on the host, in forward mode, with pages or float captures, and past 160
+  dimensions; eager `grad` under vmap with per-lane lengths does too
+- Attention's eager derivative under lengths writes k̄ and v̄ three times
+  (pad, concatenate, reorder); a scatter into one zeroed array writes once
+- Two error bounds still measure from the exact value: nx.mli's
+  `truncated_normal` ("ulps of the exact solution") and rune.mli's
+  derivative budgets; restate them from the correctly rounded value
 - `Nx.softmax`'s bound pays `2u (|y| + A)` under a scale not a power of
   two, vacuous at float32 far from 0: compute `d` as `scale (x - e)`, `e`
   the lane's max of `x` (min for a negative scale)
@@ -126,12 +134,10 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - No tree can check formatting: the only ocamlformat on fudge (0.29.0)
   rejects main's own files and no dev-tools lock pins the repository's
   formatter
-- rune props that take 4-14 s alone pass the 60 s limit at a load of 13-30:
-  `test_grad`'s dirichlet tangents and gradient (14 s), `test_ranges`' "a
-  compiled call has eager's bits, every dtype" (8.6 s) and `test_total`'s
-  "a map's lanes add in turn" (4.4 s), and `test_lower_attention`'s
-  FFMA-derivative cases (45-60 s). Smaller draws that keep their covers
-  would hold them
+- Slow rune tests near the 60 s limit under load: `test_lower_attention`'s
+  FFMA derivative law (26.5 s alone, `Codegen.linearize` of the dq and dkdv
+  kernels, 0.04-0.2 s each) and "each take a kernel of a product unit"
+  (15-33 s); `test_total`'s lane law, 300 Clang compiles on a cold cache
 - nx.cpu computes a Reduce of k reductions in k passes: `reduce_into` runs
   once per reduction (reduce.c:2468-2484), and each pass evaluates the
   fused program (:2457-2466) over every term again. var and std written as
