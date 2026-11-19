@@ -63,8 +63,23 @@ TESSERA's commit e368539f.
 
 ## Benchmarks
 
-`TESSERA_TILE=DIR dune build @apps/tessera/bench/bench` times encoding by each
-architecture and a distillation step of the medium student on the tile `DIR`,
-on the devices `TESSERA_DEVICE` names (`cpu` by default), compiled, or
-eagerly where `TESSERA_EAGER` is set. `bench/pytorch.py` times the same rows
-with TESSERA's own code.
+```bash
+dune exec apps/tessera/bin/main.exe -- preprocess \
+  --polygons apps/tessera/bench/tile.geojson --year 2024 --out tile
+TESSERA_TILE=tile TESSERA_DEVICE=cuda dune build @apps/tessera/bench/bench
+```
+
+times TESSERA on a real tile, 5 × 5 km south of Vienna in 2024, at random
+weights of the released architectures, on the devices `TESSERA_DEVICE` names
+(`cpu` by default), compiled, or eagerly where `TESSERA_EAGER` is set. Each
+row runs on a sample of the tile, every k-th pixel, so that its observation
+counts are the tile's. Rows are seconds per call.
+
+| Row | What it times |
+|---|---|
+| `encode/M` | the student M over 8,192 pixels (32 on a CPU), in float32, each batch placed on the device and read back |
+| `encode/teacher` | the teacher over 2,048 pixels, in bfloat16 (GPU only) |
+| `distil-step/medium` | one distillation step of the medium student on 2,048 pixels, in groups of 256 as `main.exe distil` cuts them (GPU only) |
+
+`bench/pytorch.py` times the same rows with TESSERA's own code, and prints
+them alike.

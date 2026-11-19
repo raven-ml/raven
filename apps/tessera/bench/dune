@@ -1,6 +1,6 @@
-; TESSERA's encoding and distillation step on a real tile, against
-; pytorch.py's timings of TESSERA's own code. Not attached to runtest:
-;   TESSERA_TILE=DIR dune build @apps/tessera/bench/bench
+; TESSERA's rows on a tile, against pytorch.py's timings of TESSERA's own
+; code (../PERFORMANCE.md). Not attached to runtest:
+;   TESSERA_TILE=DIR TESSERA_DEVICE=cuda dune build @apps/tessera/bench/bench
 
 (executable
  (name bench_tessera)
