@@ -3,12 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* {!Nx.standardize} and {!Nx.rms_norm} over rune: a compiled call is within
-   the bound rune.mli's Numerics table states of a reference of twice
-   float64's digits, at every float dtype, over strided views, with special
-   values eager's; a lane of equal elements, [-0.] among them, is [+0.]
-   compiled too; gradients are the definition's, against finite differences
-   and in closed form, and compiled gradients the eager ones. *)
+(* {!Nx.standardize}, {!Nx.rms_norm} and {!Nx.softmax} over rune: a compiled
+   call is within the bound rune.mli's Numerics table states of a reference,
+   of twice float64's digits for the first two, at every float dtype, the
+   first two over strided views too, with special values eager's; a lane of
+   equal elements, [-0.] among them, is [+0.] compiled too; gradients are the
+   definition's, against finite differences and in closed form, and compiled
+   gradients the eager ones. *)
 
 open Windtrap
 
@@ -372,6 +373,10 @@ let () =
        [
          prop "compiled, within rune.mli's bound of the definition" case
            law_jit;
+         prop "softmax compiled, within rune.mli's bound of the definition"
+           Rune_support.Softmaxes.gen
+           (Rune_support.Softmaxes.law (module Nx.Host) ~f64:true ~chain:false
+              ~exp_ulps:2);
          test "a lane of equal elements is zero compiled" test_constant;
          test "a lane whose squares overflow, compiled" test_overflow;
          test "gradients against finite differences" test_check_grads;

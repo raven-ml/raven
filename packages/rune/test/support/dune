@@ -18,6 +18,7 @@
   scatters
   casts16
   exps
+  softmaxes
   kinds
   draws
   mxfp4_products
@@ -37,6 +38,7 @@
   nx_kernel
   nx_quant
   nx_rng_support
+  nx_softmax_support
   nx_support
   rig
   rune

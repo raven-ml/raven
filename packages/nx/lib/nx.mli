@@ -2542,12 +2542,26 @@ val softmax :
     along [axes], [[-1]] by default; [scale] defaults to [1.]. The exponents
     are shifted by the greatest [scale x] of each lane, so none overflows. A
     lane holding a NaN, or whose greatest [scale x] is infinite, is NaN.
+    Elsewhere an element whose [scale x] is [-∞] is [+0.].
 
     [where], broadcast to [x]'s shape, selects the elements each lane holds,
     all of them by default: an element outside it takes no part in the lane's
     greatest element or its sum, whatever its value, NaN included, and is
     [0.], in a lane holding a NaN too. A lane that holds none is [0.]
     throughout.
+
+    It takes [d], each element's [scale x] less the lane's greatest, then
+    [exp d], their sum as {!sum} sums, and [exp d] over the sum, each step
+    rounded once. Barring overflow and underflow, to first order in the
+    unit roundoff [u] of the format it computes in, and before a narrow
+    float's rounding, an element is within a relative
+    [(b + |d| + ln n + 11) u] of its exact value, where [n] counts the
+    elements of its lane, held or not, and [b] is [β(n)]
+    ({!Nx_kernel.section-bounds}) on one device and [β(m) + t - 1] over cut
+    axes, [m] and [t] as for a {!sum} ({!section-reductions}). A [scale]
+    whose magnitude is not a power of two adds [2u (|y| + A)], [y] being
+    the element's [scale x] and [A] the greatest finite [|scale x|] the
+    lane holds.
 
     Raises [Invalid_argument] naming itself for an axis outside [x]'s rank
     or repeated, or a [where] that does not broadcast to [x]'s shape. *)
@@ -2561,8 +2575,9 @@ val log_softmax :
 (** [log_softmax ~axes ~scale ~where x] is the logarithm of {!softmax},
     computed as [(scale x - m) - log Σ exp (scale x - m)] for the lane's
     greatest [m]: an entry far below [m] keeps its digits where
-    [log (softmax x)] would be [-∞]. An element outside [where] is [-∞]. As
-    {!softmax} otherwise. *)
+    [log (softmax x)] would be [-∞]. An element outside [where], or whose
+    [scale x] is [-∞] in a lane {!softmax} does not make NaN, is [-∞]. Its
+    NaN lanes, [where] and raises are {!softmax}'s. *)
 
 val rms_norm :
   ?axes:int list ->

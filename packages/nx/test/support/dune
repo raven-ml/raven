@@ -5,6 +5,13 @@
  (modules nx_support)
  (libraries nx nx_array nx_kernel nx_cpu nx_kernels_support rig windtrap))
 
+; Nx.softmax's definition and its bound, for nx's and rune's suites.
+
+(library
+ (name nx_softmax_support)
+ (modules nx_softmax_support)
+ (libraries windtrap))
+
 ; Nx.Rng's draws on a set against the host's, for the suites of nx's kernel
 ; libraries.
 

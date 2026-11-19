@@ -3214,7 +3214,17 @@ let mask_of ~by s where =
    then written over by [e]: [exp -∞] is [0], with a zero tangent, never an
    infinite one. A narrower float reads the mask in each pass instead. The
    quotient is [0] outside the mask, also in a lane that holds a NaN or
-   none. *)
+   none.
+
+   The bound nx.mli states adds up so: [d] rounds once, an error [exp]
+   carries as [u |d|]; [exp] adds [5u], 2 ulps from the exact value rounded
+   and that rounding; the terms' errors weigh at most [(ln n + 5) u] in the
+   sum, since [Σ p |d| = H(p) - ln Σ exp d <= ln n] for the lane's
+   probabilities [p], the greatest term being [exp 0 = 1]; the sum adds
+   [b u] and the quotient [u]. A scale rounds [scale x] by at most [2u]
+   relatively, the scale's rounding into the format and the product's, an
+   error the element's exponent carries as [2u |y|] and the sum as at most
+   [2u A]; a power of two rounds nothing. *)
 let softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
     (x : (float, s, d) t) : (float, s, d) t =
   let by = "Nx.softmax" in

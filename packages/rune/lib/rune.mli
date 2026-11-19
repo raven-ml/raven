@@ -1647,7 +1647,7 @@ val jit :
     {!Nx.rsqrt}, {!Nx.hypot} and the special functions
     ({!Nx.section-special}), which nx composes from these and exact
     functions, are exact on a faithful device. Another function nx composes
-    from these, such as {!Nx.softmax}, computes as nx composes it.
+    from these, such as {!Nx.log_softmax}, computes as nx composes it.
 
     {b Complex functions.} {!Nx.mul}, {!Nx.div}, {!Nx.recip}, {!Nx.sqrt},
     {!Nx.sign}, {!Nx.log}, {!Nx.log2}, {!Nx.exp}, {!Nx.exp2}, {!Nx.pow}, the
@@ -1712,6 +1712,7 @@ val jit :
       Nx.var V             (β + 5) u V + 2 (β + 1) u B √V + 3 (β + 3) u B²
       Nx.standardize y     (F / 2s + 11u/2) |y| + (β + 1) u A / √s
       Nx.rms_norm          relative k u / (1 - 4 k u)
+      Nx.softmax           relative (β + |d| + ln n + 4E + 3) u
     v}
 
     A cumulative output's [n] counts the terms up to it, a contraction's its
@@ -1725,7 +1726,8 @@ val jit :
     [init]. {!Nx.logcumsumexp}'s bound needs [n] exact in the
     accumulator, and {!Nx.var}'s [V] precedes its [ddof] scale, which rounds
     once more. {!Nx.standardize}'s [F] is {!Nx.var}'s bound, and its [s], [A]
-    and affine terms and {!Nx.rms_norm}'s [k] are as their docs state. The
+    and affine terms, {!Nx.rms_norm}'s [k], and {!Nx.softmax}'s [d], [n] and
+    [scale] term are as their docs state. The
     compiler adds at most 256 terms of a float sum, a tensor core's products
     counted, into one running sum before adding that sum into another, in
     order. Two kinds of sum keep one running sum: a sum over a range whose
@@ -1738,7 +1740,8 @@ val jit :
     sums of the [t] windows holding any are added in turn, as eager
     computation adds them ({!Nx.section-reductions}): the bounds of
     {!Nx.sum}, a contraction, {!Nx.var} and {!Nx.standardize} hold with [m]
-    in place of [n] and [K] and with [t - 1] added to [β]. {!Nx.logsumexp}
+    in place of [n] and [K] and with [t - 1] added to [β], and
+    {!Nx.softmax}'s with [β(m) + t - 1] in place of [β]. {!Nx.logsumexp}
     over cut axes is within [ε + ε{_t}], as {!Nx.section-reductions}
     states, [ε] the largest of its row's bounds for the windows' terms and
     [ε{_t}] its row's bound for [t] terms. A product asked for its sum

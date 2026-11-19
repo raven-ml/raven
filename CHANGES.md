@@ -492,6 +492,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit`'s Numerics table states `Nx.softmax`'s bound,
+  `(β + |d| + ln n + 4E + 3) u` relatively, on every device it names.
 - A kernel searched under `beam` on one GPU is searched again on a GPU of
   the same arch with another last-level cache size or, for AMD, another
   number of compute units, where the first GPU's choice was reused.
@@ -3384,6 +3386,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.softmax` states its error bound, relative to each element:
+  `(b + |d| + ln n + 11) u`, `d` the element's shifted exponent and `b` its
+  sum's rounding count, and that an element whose `scale x` is `-∞` is `+0.`.
 - `Nx.extension_index e n p` is the sample `Nx.extend` reads at each
   position of `p` under a copying rule, or `-1` for a zero, folded at any
   `int64`, so `Nx.take` at it reads as `Nx.extend` does at positions held
