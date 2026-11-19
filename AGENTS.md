@@ -49,6 +49,7 @@ Breaking one causes real damage.
 | `packages/talon`, `hugin`, `brot`, `quill`, `munin` | dataframes, plotting, tokenizers, notebooks, run monitoring |
 | `packages/ppx_ptree` | derives a structure's `walk` from its type, for users; no raven library depends on it |
 | `apps/` | programs that use raven for real work, through public interfaces only: gpt-oss. Their rules are `apps/README.md`'s |
+| `dev/` | libraries whose design is still converging: omr, whisper. Their rules are `dev/README.md`'s |
 | `contrib/` | fehu, sowilo, ymir, jord: own `dune-project`, own `CHANGES.md`, public core libraries, and OCaml libraries only as `contrib/README.md` allows |
 
 A package's main library lives at `lib/`, each sub-library at
