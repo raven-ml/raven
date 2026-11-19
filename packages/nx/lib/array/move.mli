@@ -66,3 +66,19 @@ val shape : t -> int iarray -> int iarray
       in [\[0, d)] for an axis of extent [d].
     - [Window ws]: each window's axis is an axis of [s], after the previous
       window's; [size], [step] and [dilation] are at least [1]. *)
+
+(**/**)
+
+val covers : int iarray -> range iarray array -> bool
+(** [covers s regions] is [true] if one region of [regions], each a {!Slice}
+    of [s], holds every index of [s], or if the regions with an index are
+    disjoint and hold as many indices as [s]. Where it is [true], every
+    index of [s] lies in a region. Disjointness is decided exactly where
+    each range is an interval, of step [±1] or of one element; two ranges of
+    different step sizes past [1] whose spans overlap count as meeting.
+    Kernel libraries skip an assembly's fill where it is [true]. It takes
+    O(n·2{^ p}·log n) for [n] regions of intervals that cut [p] axes, up to
+    nx_array.h's [NX_TILE_AXES], else O(n²·r) for rank [r].
+
+    Raises [Invalid_argument] unless each region fits [s] as {!shape}
+    requires of [Slice], and [Out_of_memory] if host memory runs out. *)

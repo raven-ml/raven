@@ -566,3 +566,209 @@ let packed =
 
 (* An array and a movement, as often kept by [to_device] as packed. *)
 let to_device_case = Gen.one_of [ kept; packed ]
+
+(* Regions near a tiling *)
+
+(* Boxes [lo, hi) per axis. *)
+type box = { lo : int array; hi : int array }
+
+let whole_box shape =
+  { lo = Array.map (fun _ -> 0) shape; hi = Array.copy shape }
+
+let axes shape = List.init (Array.length shape) Fun.id
+let pick rs l = List.nth l (Random.State.int rs (List.length l))
+
+(* [b] cut in two along axis [i] at [c]. *)
+let halves b i c =
+  let left = { lo = Array.copy b.lo; hi = Array.copy b.hi }
+  and right = { lo = Array.copy b.lo; hi = Array.copy b.hi } in
+  left.hi.(i) <- c;
+  right.lo.(i) <- c;
+  [ left; right ]
+
+(* The whole of [shape] cut [k] times, each a box cut in two along an axis
+   of two elements or more. *)
+let cuts rs shape k =
+  let boxes = ref [ whole_box shape ] in
+  for _ = 1 to k do
+    let b = pick rs !boxes in
+    match List.filter (fun i -> b.hi.(i) - b.lo.(i) >= 2) (axes shape) with
+    | [] -> ()
+    | wide ->
+        let i = pick rs wide in
+        let c = b.lo.(i) + 1 + Random.State.int rs (b.hi.(i) - b.lo.(i) - 1) in
+        boxes := halves b i c @ List.filter (fun x -> x != b) !boxes
+  done;
+  !boxes
+
+(* The grid that cuts each axis of [shape] of two elements or more once. *)
+let grid rs shape =
+  List.fold_left
+    (fun boxes i ->
+      if shape.(i) < 2 then boxes
+      else
+        let c = 1 + Random.State.int rs (shape.(i) - 1) in
+        List.concat_map (fun b -> halves b i c) boxes)
+    [ whole_box shape ] (axes shape)
+
+(* A pinwheel of [3; 3] after an axis of [e] elements held whole, which no
+   cut separates: four bars of two around the centre. *)
+let pinwheel e =
+  List.map
+    (fun (r0, r1, c0, c1) -> { lo = [| 0; r0; c0 |]; hi = [| e; r1; c1 |] })
+    [ (0, 2, 0, 1); (2, 3, 0, 2); (1, 3, 2, 3); (0, 1, 1, 3); (1, 2, 1, 2) ]
+
+(* [b] moved by one along an axis where it stays inside [shape]: its upper
+   or lower bound alone where [grow], else both. *)
+let moved rs shape ~grow b =
+  let fits (i, by) = if by > 0 then b.hi.(i) < shape.(i) else b.lo.(i) > 0 in
+  let ways = List.concat_map (fun i -> [ (i, 1); (i, -1) ]) (axes shape) in
+  match List.filter fits ways with
+  | [] -> b
+  | ways ->
+      let i, by = pick rs ways in
+      let lo = Array.copy b.lo and hi = Array.copy b.hi in
+      if by > 0 || not grow then hi.(i) <- hi.(i) + by;
+      if by < 0 || not grow then lo.(i) <- lo.(i) + by;
+      { lo; hi }
+
+let region_of b =
+  Array.mapi (fun i l -> { M.start = l; count = b.hi.(i) - l; step = 1 }) b.lo
+
+(* The residues modulo [k] of axis [i] of [shape], each a region whole along
+   the other axes: regions of step [k] that tile it. *)
+let residues shape i k =
+  List.init k (fun j ->
+      Array.mapi
+        (fun a d ->
+          if a <> i then { M.start = 0; count = d; step = 1 }
+          else { M.start = j; count = (d - j + k - 1) / k; step = k })
+        shape)
+
+(* How many of [regions] hold each index of [shape], in C order. *)
+let coverage shape regions =
+  let flat i = Array.fold_left (fun k (d, x) -> (k * d) + x) 0 i in
+  let out = Array.make (Array.fold_left ( * ) 1 shape) 0 in
+  Array.iter
+    (fun (r : M.range array) ->
+      List.iter
+        (fun j ->
+          let t = Array.mapi (fun a x -> r.(a).start + (x * r.(a).step)) j in
+          let at = flat (Array.map2 (fun d x -> (d, x)) shape t) in
+          out.(at) <- out.(at) + 1)
+        (indices (Array.map (fun (x : M.range) -> x.count) r)))
+    regions;
+  out
+
+(* A shape and regions of it near a tiling: boxes cut from the whole, a grid,
+   a pinwheel or the residues of an axis, then one region dropped, or a box
+   grown or moved by one, regions of no element put among them, and an
+   interval written backwards or a one-element range given a step past 1, in
+   a shuffled order. *)
+let near_tiling =
+  let open Gen in
+  let* layout =
+    frequency
+      [
+        (2, constant `Cuts);
+        (3, constant `Grid);
+        (1, constant `Pinwheel);
+        (1, constant `Residues);
+      ]
+  in
+  let* change =
+    frequency
+      [
+        (3, constant `Same);
+        (1, constant `Drop);
+        (1, constant `Grow);
+        (2, constant `Move);
+      ]
+  in
+  let* empties = frequency [ (3, constant false); (1, constant true) ] in
+  let* written =
+    frequency
+      [ (3, constant `Plain); (1, constant `Backwards); (1, constant `Stepped) ]
+  in
+  let+ seed = int in
+  let rs = Random.State.make [| seed |] in
+  let int n = Random.State.int rs n in
+  let shape, boxes, stepped =
+    match layout with
+    | `Cuts ->
+        let shape = Array.init (int 5) (fun _ -> int 6) in
+        (shape, cuts rs shape (int 12), [])
+    | `Grid ->
+        let rank = pick rs [ 1; 2; 3; 4; 5; 6 ] in
+        let shape = Array.init rank (fun _ -> 2 + int 2) in
+        (shape, grid rs shape, [])
+    | `Pinwheel ->
+        let e = 1 + int 2 in
+        ([| e; 3; 3 |], pinwheel e, [])
+    | `Residues ->
+        let shape = Array.init (1 + int 3) (fun _ -> 1 + int 6) in
+        let i = int (Array.length shape) in
+        (shape, [], residues shape i (2 + int 2))
+  in
+  let boxes =
+    match (boxes, change) with
+    | [], _ | _, `Same | _, `Drop -> boxes
+    | _, ((`Grow | `Move) as how) ->
+        let j = int (List.length boxes) in
+        List.mapi
+          (fun k b ->
+            if k = j then moved rs shape ~grow:(how = `Grow) b else b)
+          boxes
+  in
+  let empty () =
+    let i = int (Array.length shape) in
+    let lo = Array.map (fun d -> int (d + 1)) shape in
+    let up a l = if a = i then l else l + int (shape.(a) - l + 1) in
+    { lo; hi = Array.mapi up lo }
+  in
+  let boxes =
+    if empties && shape <> [||] then
+      boxes @ List.init (1 + int 2) (fun _ -> empty ())
+    else boxes
+  in
+  let regions = List.map region_of boxes @ stepped in
+  let regions =
+    match (regions, change) with
+    | _ :: _, `Drop ->
+        let j = int (List.length regions) in
+        List.filteri (fun k _ -> k <> j) regions
+    | _ -> regions
+  in
+  let regions = Array.of_list regions in
+  (* Fisher-Yates. *)
+  for k = Array.length regions - 1 downto 1 do
+    let j = int (k + 1) in
+    let x = regions.(k) in
+    regions.(k) <- regions.(j);
+    regions.(j) <- x
+  done;
+  (* One range written otherwise, holding the same elements. *)
+  let rewrite ok f =
+    let at =
+      List.concat_map
+        (fun j ->
+          List.filter_map
+            (fun i -> if ok regions.(j).(i) then Some (j, i) else None)
+            (axes shape))
+        (List.init (Array.length regions) Fun.id)
+    in
+    if at <> [] then
+      let j, i = pick rs at in
+      regions.(j).(i) <- f regions.(j).(i)
+  in
+  (match written with
+  | `Plain -> ()
+  | `Backwards ->
+      rewrite
+        (fun (x : M.range) -> x.count >= 2 && x.step = 1)
+        (fun x -> { x with start = x.start + x.count - 1; step = -1 })
+  | `Stepped ->
+      rewrite
+        (fun (x : M.range) -> x.count = 1)
+        (fun x -> { x with step = 2 + int 2 }));
+  (shape, regions)

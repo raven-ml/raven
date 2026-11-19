@@ -300,6 +300,135 @@ let messages =
 let test_message (_, f, text) =
   raises_match (Exn.invalid_arg ~sub:text) (fun () -> ignore (f ()))
 
+(* Coverings *)
+
+let law_covers (shape, regions) =
+  let held = coverage shape regions in
+  let tiles = Array.for_all (( = ) 1) held in
+  let whole =
+    Array.exists
+      (Array.for_all2 (fun d (x : M.range) -> x.count = d) shape)
+      regions
+  in
+  let has f = Array.exists (Array.exists f) regions in
+  let cut i =
+    Array.exists
+      (fun (r : M.range array) ->
+        Array.for_all (fun (x : M.range) -> x.count > 0) r
+        && r.(i).count < shape.(i))
+      regions
+  in
+  let cuts = List.length (List.filter cut (axes shape)) in
+  cover "tile" tiles;
+  cover "tile along four axes" (tiles && cuts = 4);
+  cover "tile along five axes or more" (tiles && cuts >= 5);
+  cover "tile by residues"
+    (tiles && has (fun (x : M.range) -> x.count > 1 && x.step > 1));
+  cover "overlap, as many indices as the shape"
+    (Array.exists (fun n -> n > 1) held
+    && Array.fold_left ( + ) 0 held = Array.length held);
+  cover "leave a gap" (Array.exists (( = ) 0) held);
+  cover "a region of no index" (has (fun (x : M.range) -> x.count = 0));
+  cover "a range backwards" (has (fun (x : M.range) -> x.step < 0));
+  cover "a range of one element stepping past 1"
+    (has (fun (x : M.range) -> x.count = 1 && x.step > 1));
+  equal Testable.bool (whole || tiles)
+    (M.covers (Iarray.of_array shape) (Array.map Iarray.of_array regions))
+
+let near_tilings =
+  Gen.with_pp
+    (fun ppf (s, rs) ->
+      Format.fprintf ppf "%a of %d regions %s" pp_ints s (Array.length rs)
+        (String.concat " "
+           (Array.to_list
+              (Array.map
+                 (fun r ->
+                   String.concat ","
+                     (Array.to_list
+                        (Array.map
+                           (fun (x : M.range) ->
+                             Printf.sprintf "%d+%d*%d" x.start x.count x.step)
+                           r)))
+                 rs))))
+    near_tiling
+
+(* Regions near a tiling with up to three regions of any steps among them. *)
+let mixed =
+  let open Gen in
+  let* shape, regions = near_tiling in
+  let region =
+    let rec go i acc =
+      if i < 0 then constant (Array.of_list acc)
+      else
+        let* x = range shape.(i) in
+        go (i - 1) (x :: acc)
+    in
+    go (Array.length shape - 1) []
+  in
+  (* Two elements of a step of 2 or 3 along each axis that holds them. *)
+  let stepped =
+    let rec go i acc =
+      if i < 0 then constant (Array.of_list acc)
+      else
+        let d = shape.(i) in
+        let* step = int_range 2 3 in
+        let* x =
+          if d <= step then constant { M.start = 0; count = d; step = 1 }
+          else
+            let+ start = int_range 0 (d - 1 - step) in
+            { M.start; count = 2; step }
+        in
+        go (i - 1) (x :: acc)
+    in
+    go (Array.length shape - 1) []
+  in
+  let+ more = array ~size:(int_range 0 3) (one_of [ region; stepped ]) in
+  (shape, Array.append regions more)
+
+(* Two ranges of one axis of different step sizes past 1 whose spans
+   overlap: the pair nx_covers takes to meet without looking further. *)
+let steps_differ (regions : M.range array array) =
+  let stepped (x : M.range) = x.count > 1 && abs x.step > 1 in
+  let span (x : M.range) =
+    let last = x.start + ((x.count - 1) * x.step) in
+    (min x.start last, max x.start last)
+  in
+  Array.exists
+    (fun a ->
+      Array.exists
+        (fun b ->
+          let found = ref false in
+          Array.iteri
+            (fun i (x : M.range) ->
+              let y = b.(i) in
+              let lx, hx = span x and ly, hy = span y in
+              if stepped x && stepped y && abs x.step <> abs y.step
+                 && lx <= hy && ly <= hx
+              then found := true)
+            a;
+          !found)
+        regions)
+    regions
+
+let law_covers_sound (shape, regions) =
+  let got =
+    M.covers (Iarray.of_array shape) (Array.map Iarray.of_array regions)
+  in
+  cover "true" got;
+  cover "false" (not got);
+  cover "steps of two sizes past 1 meet along an axis"
+    (steps_differ regions);
+  if got then
+    equal Testable.bool true
+      (Array.for_all (fun n -> n >= 1) (coverage shape regions))
+
+let test_covers_misfit () =
+  raises_match
+    (Exn.invalid_arg ~sub:"does not fit")
+    (fun () ->
+      ignore
+        (M.covers [| 2 |] [| [| { M.start = 1; count = 2; step = 1 } |] |]))
+
 let tests =
   [
     cases "refusals name the axis at fault"
@@ -311,6 +440,21 @@ let tests =
           "is the result's shape, and raises iff a precondition fails"
           shape_and_move law_shape;
         cases "states the bounds" ~id:(fun c -> c.name) bounds test_bound;
+      ];
+    group "covers"
+      [
+        prop ~count:600
+          "is whether a region holds every index or each index lies in one \
+           region, where stepped ranges of an axis share their step"
+          near_tilings law_covers;
+        prop ~count:600 "is true only where every index lies in a region"
+          (Gen.with_pp
+             (fun ppf (s, rs) ->
+               Format.fprintf ppf "%a of %d regions" pp_ints s
+                 (Array.length rs))
+             mixed)
+          law_covers_sound;
+        test "a region past the shape raises" test_covers_misfit;
       ];
   ]
 

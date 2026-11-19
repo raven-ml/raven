@@ -268,6 +268,46 @@ nx_coalesce_into(int n, const nx_array *a, int *rank, int64_t *extent,
 NX_ARRAY_EXTERN int nx_coalesce_dims(int n, int rank, int64_t *extent,
                                      int64_t (*step)[NX_MAX_RANK]);
 
+/* Coverings
+
+   Whether regions of a shape leave none of its indices out, as an
+   assembly asks to skip filling what its pieces do not hold. A region is
+   [r] Move.ranges, each its start, count and step as int64_t, that fit
+   the shape as Move.Slice takes them. The regions cover it where one of
+   them holds every index, or where those with an index are disjoint and
+   hold as many indices as the shape. Two ranges are disjoint where their
+   spans are; of equal step sizes, also where their residues differ: two
+   stepped ranges of different step sizes whose spans overlap count as
+   meeting. So regions whose ranges are intervals (a step of ±1, or one
+   element) are answered exactly, and stepped regions may be found not to
+   cover a shape they cover.
+
+   Interval regions are compared through their corners, in
+   O(n·2^p·log n) for n regions with an index that cut p axes, up to
+   NX_TILE_AXES cut axes: boxes inside a shape tile it exactly where the
+   sum of their indicator functions is the shape's. Along an axis,
+   [lo, hi)'s indicator is H(x - lo) - H(x - hi), H the step at 0, so a
+   box's is a sum over its corners c of ±Π H(x - c), negative where an odd
+   number of c's coordinates are upper bounds; those orthant functions are
+   independent, one per point, so the boxes tile the shape exactly where
+   each point's signs, over the boxes' corners and the shape's negated,
+   sum to 0. An axis no box cuts drops out of both sides. Past NX_TILE_AXES
+   cut axes, or with a stepped region, each pair is compared, in
+   O(n²·rank). */
+
+#define NX_TILE_AXES 4
+
+/* The scratch bytes nx_covers takes for [n] regions. */
+NX_ARRAY_EXTERN size_t nx_covers_bytes(int n);
+
+/* Whether the [n] regions [ranges], region j's range along axis i at
+   ranges[3·(j·rank + i)], cover the shape [shape] of [rank] axes: 1 if
+   they do, 0 if not, -1 if a region does not fit [shape]. [scratch] holds
+   nx_covers_bytes(n) bytes, 8-aligned. Reads C data alone, so it may run
+   with the domain lock released. */
+NX_ARRAY_EXTERN int nx_covers(int n, int rank, const int64_t *shape,
+                              const int64_t *ranges, void *scratch);
+
 /* Sub-byte elements
 
    Element p of a dtype of [bits] bits (1 or 4) is bits p·bits to p·bits +

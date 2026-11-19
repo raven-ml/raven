@@ -148,3 +148,14 @@ let shape m s =
   | Permute p -> permute s p
   | Slice rs -> slice s rs
   | Window ws -> window s ws
+
+(* Coverings *)
+
+external covers_code : int iarray -> range iarray array -> int
+  = "nx_array_covers"
+
+let covers s regions =
+  match covers_code s regions with
+  | -1 -> invalid_arg "Move.covers: a region does not fit the shape"
+  | -2 -> raise Out_of_memory
+  | e -> e = 1

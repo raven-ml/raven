@@ -727,6 +727,194 @@ value nx_array_coalesce(value ls, value out) {
   return Val_int(NX_OK);
 }
 
+/* Coverings (nx_array.h) */
+
+#define TILE_CORNERS (1 << NX_TILE_AXES)
+
+/* Points past which corners are no int64_t of their own. An axis cut by a
+   box with an element has d >= 2 elements, so d + 1 <= 1.5·d, and the
+   points of NX_TILE_AXES cut axes of a shape of up to NX_MAX_NUMEL
+   elements number below 1.5^4 · 2^53 < 2^61. */
+#define TILE_POINTS ((int64_t)1 << 61)
+
+size_t nx_covers_bytes(int n) {
+  return ((size_t)n + 1) * TILE_CORNERS * sizeof(int64_t) +
+         (size_t)n * sizeof(int);
+}
+
+/* Whether the range [x], a start, count and step, fits an axis of extent
+   [d], as Move.Slice takes it. */
+static int range_fits(const int64_t *x, int64_t d) {
+  int64_t start = x[0], count = x[1], step = x[2], last;
+  if (step == 0 || count < 0) return 0;
+  if (count == 0) return 1;
+  if (__builtin_mul_overflow(count - 1, step, &last) ||
+      __builtin_add_overflow(start, last, &last))
+    return 0;
+  return start >= 0 && start < d && last >= 0 && last < d;
+}
+
+/* The least element of the range [x], of an element or more, and one
+   past its greatest. */
+static int64_t range_lo(const int64_t *x) {
+  int64_t last = x[0] + (x[1] - 1) * x[2];
+  return x[0] < last ? x[0] : last;
+}
+
+static int64_t range_hi(const int64_t *x) {
+  int64_t last = x[0] + (x[1] - 1) * x[2];
+  return (x[0] > last ? x[0] : last) + 1;
+}
+
+/* Whether the ranges [x] and [y], of an element or more, may share one:
+   their spans overlap and, where one is a single element or their step
+   sizes are equal, it lies on the other's residue. */
+static int ranges_meet(const int64_t *x, const int64_t *y) {
+  int64_t sx = x[1] > 1 ? llabs(x[2]) : 0, sy = y[1] > 1 ? llabs(y[2]) : 0;
+  if (range_hi(x) <= range_lo(y) || range_hi(y) <= range_lo(x)) return 0;
+  if (sx == 0 || sy == 0 || sx == sy) {
+    int64_t s = sx > sy ? sx : sy;
+    return s == 0 || (x[0] - y[0]) % s == 0;
+  }
+  return 1;
+}
+
+static int by_key(const void *x, const void *y) {
+  int64_t a = *(const int64_t *)x, b = *(const int64_t *)y;
+  return (a > b) - (a < b);
+}
+
+/* Writes the 2^p corners of the box of a region along the [p] axes [cut],
+   of mixed radices [radix], into [keys]: each its point shifted left by
+   one and its sign, negative where set, in the low bit, negated where
+   [neg]. The box is region [x]'s, or the whole of [shape] where [x] is
+   NULL. */
+static void corners_of(int p, const int *cut, const int64_t *radix,
+                       const int64_t *x, const int64_t *shape, int neg,
+                       int64_t *keys) {
+  for (int s = 0; s < 1 << p; s++) {
+    int64_t point = 0;
+    for (int k = 0; k < p; k++) {
+      int i = cut[k], up = s >> k & 1;
+      int64_t at = x == NULL ? (up ? shape[i] : 0)
+                             : (up ? range_hi(x + 3 * i) : range_lo(x + 3 * i));
+      point += at * radix[k];
+    }
+    keys[s] = point << 1 | ((__builtin_popcount((unsigned)s) & 1) ^ neg);
+  }
+}
+
+int nx_covers(int n, int rank, const int64_t *shape, const int64_t *ranges,
+              void *scratch) {
+  int64_t *keys = scratch;
+  int *some = (int *)(keys + ((size_t)n + 1) * TILE_CORNERS);
+  int64_t total = 1, sum = 0;
+  int m = 0, stepped = 0, over = 0, whole_one = 0;
+  for (int i = 0; i < rank; i++)
+    if (shape[i] < 0 || __builtin_mul_overflow(total, shape[i], &total))
+      return -1;
+  for (int j = 0; j < n; j++) {
+    const int64_t *x = ranges + (size_t)3 * j * rank;
+    int64_t count = 1;
+    int whole = 1, steps = 0;
+    for (int i = 0; i < rank; i++) {
+      if (!range_fits(x + 3 * i, shape[i])) return -1;
+      count *= x[3 * i + 1];
+      whole &= x[3 * i + 1] == shape[i];
+      steps |= x[3 * i + 1] > 1 && llabs(x[3 * i + 2]) != 1;
+    }
+    whole_one |= whole;
+    if (count == 0) continue;
+    some[m++] = j;
+    stepped |= steps;
+    /* Past the shape's indices, two regions meet. */
+    over |= __builtin_add_overflow(sum, count, &sum) || sum > total;
+  }
+  if (whole_one) return 1;
+  if (over || sum != total) return 0;
+  /* The axes the regions with an index cut, with their radices. */
+  int cut[NX_TILE_AXES], p = 0, corners = !stepped;
+  int64_t radix[NX_TILE_AXES], points = 1;
+  for (int i = 0; i < rank && corners; i++) {
+    int cuts = 0;
+    for (int k = 0; k < m && !cuts; k++) {
+      const int64_t *x = ranges + (size_t)3 * (some[k] * rank + i);
+      cuts = range_lo(x) != 0 || range_hi(x) != shape[i];
+    }
+    if (!cuts) continue;
+    int64_t next;
+    if (p == NX_TILE_AXES ||
+        __builtin_mul_overflow(points, shape[i] + 1, &next) ||
+        next > TILE_POINTS) {
+      corners = 0;
+      break;
+    }
+    radix[p] = points;
+    cut[p++] = i;
+    points = next;
+  }
+  /* No axis cut: one region, or none of a shape of no index. */
+  if (corners && p == 0) return 1;
+  if (!corners) {
+    for (int a = 0; a < m; a++)
+      for (int b = 0; b < a; b++) {
+        const int64_t *x = ranges + (size_t)3 * some[a] * rank;
+        const int64_t *y = ranges + (size_t)3 * some[b] * rank;
+        int apart = 0;
+        for (int i = 0; i < rank && !apart; i++)
+          apart = !ranges_meet(x + 3 * i, y + 3 * i);
+        if (!apart) return 0;
+      }
+    return 1;
+  }
+  int c = 1 << p;
+  for (int k = 0; k < m; k++)
+    corners_of(p, cut, radix, ranges + (size_t)3 * some[k] * rank, shape, 0,
+               keys + (size_t)k * c);
+  corners_of(p, cut, radix, NULL, shape, 1, keys + (size_t)m * c);
+  size_t nk = ((size_t)m + 1) * c;
+  qsort(keys, nk, sizeof *keys, by_key);
+  /* A point's keys: its positive corners, then its negative ones. */
+  for (size_t a = 0; a < nk;) {
+    size_t b = a, neg = a;
+    for (; b < nk && keys[b] >> 1 == keys[a] >> 1; b++)
+      if (!(keys[b] & 1)) neg = b + 1;
+    if (2 * neg != a + b) return 0;
+    a = b;
+  }
+  return 1;
+}
+
+/* Move.covers: whether the regions [vregions], each an iarray of
+   Move.ranges, cover the shape [vshape]: 1, 0, or -1 if a region does not
+   fit it or has another rank. The check runs with the domain lock
+   released past NX_MAX_OPERANDS regions; -2 if host memory runs out. */
+value nx_array_covers(value vshape, value vregions) {
+  int r = (int)Wosize_val(vshape), n = (int)Wosize_val(vregions);
+  int64_t shape[NX_MAX_RANK];
+  if (r > NX_MAX_RANK) return Val_int(-1);
+  for (int i = 0; i < r; i++) shape[i] = Long_val(Field(vshape, i));
+  size_t sr = ((size_t)3 * r * n + 1) * sizeof(int64_t);
+  int64_t *ranges = malloc(sr + nx_covers_bytes(n));
+  if (ranges == NULL) return Val_int(-2);
+  for (int j = 0; j < n; j++) {
+    value region = Field(vregions, j);
+    if ((int)Wosize_val(region) != r) {
+      free(ranges);
+      return Val_int(-1);
+    }
+    for (int i = 0; i < r; i++)
+      for (int f = 0; f < 3; f++)
+        ranges[3 * (j * r + i) + f] = Long_val(Field(Field(region, i), f));
+  }
+  int many = n > NX_MAX_OPERANDS;
+  if (many) caml_enter_blocking_section_no_pending();
+  int e = nx_covers(n, r, shape, ranges, (uint8_t *)ranges + sr);
+  if (many) caml_leave_blocking_section();
+  free(ranges);
+  return Val_int(e);
+}
+
 /* Elements
 
    Loads and stores of one element at position [p] from [base]. A float

@@ -437,14 +437,6 @@ let regions_meet a b =
     a;
   !ok
 
-let whole ys (rs : A.Move.range iarray) =
-  let ok = ref true in
-  Iarray.iteri
-    (fun i (r : A.Move.range) ->
-      if r.count <> ys.(i) || abs r.step <> 1 then ok := false)
-    rs;
-  !ok
-
 let assemble ~fill ~dst pieces =
   let pl = plan ~apart:true () in
   let ys = shape_of dst in
@@ -461,16 +453,10 @@ let assemble ~fill ~dst pieces =
   let per = Int.min K.assemble_pieces (K.assemble_words / rec_words) in
   let cs = c_strides ys in
   let unit, count = unit_count dst in
-  let disjoint = ref true and total = ref 0 in
-  for i = 0 to np - 1 do
-    total := !total + numel (shape_of (snd pieces.(i)));
-    for j = i + 1 to np - 1 do
-      if regions_meet (fst pieces.(i)) (fst pieces.(j)) then disjoint := false
-    done
-  done;
-  let covered =
-    Array.exists (fun (rs, _) -> whole ys rs) pieces || (!disjoint && !total = n)
+  let total =
+    Array.fold_left (fun t (_, x) -> t + numel (shape_of x)) 0 pieces
   in
+  let covered = A.Move.covers (Iarray.of_array ys) (Array.map fst pieces) in
   (* The parameters of [npieces] pieces from [first]. *)
   let table mode first npieces =
     let p = params "assemble" in
@@ -488,7 +474,7 @@ let assemble ~fill ~dst pieces =
     u64 p (P.fill + 8) f1;
     i32 p P.rank r;
     i32 p P.pieces npieces;
-    i32 p P.small (small (Int.max n !total));
+    i32 p P.small (small (Int.max n total));
     i32 p P.unit unit;
     i32 p P.count count;
     i32 p P.mode mode;

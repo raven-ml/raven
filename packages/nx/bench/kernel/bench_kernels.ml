@@ -1231,6 +1231,24 @@ let assembly_rows =
           (fun () -> [| filled f32 [| 1022; 1022 |] |]);
       work = [ F.Copy (bytes [| 1024; 1024 |]) ];
     };
+    (* A grid of many blocks, as a join of groups' results places them:
+       what an assembly takes past its copies grows with its pieces. *)
+    {
+      bench =
+        (let k = 64 in
+         let block i j : M.range iarray =
+           [|
+             { M.start = 4 * i; count = 4; step = 1 };
+             { M.start = 16 * j; count = 16; step = 1 };
+           |]
+         in
+         assemble_row "assemble-grid-64x64-of-4x16-f32"
+           ~shape:[| 4 * k; 16 * k |]
+           ~fill:0.
+           (Array.init (k * k) (fun x -> block (x / k) (x mod k)))
+           (fun () -> Array.init (k * k) (fun _ -> filled f32 [| 4; 16 |])));
+      work = [ F.Copy (bytes [| 256; 1024 |]) ];
+    };
     {
       bench =
         fold_row "fold-3x3-pad1-f32-32x64x56x56" ~shape:image conv (fun () ->

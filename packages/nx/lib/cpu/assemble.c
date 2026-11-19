@@ -6,9 +6,9 @@
 /* Assemblies, and folds: the adjoint of a padded, windowed load.
 
    An assembly fills what no piece covers, then copies each piece into its
-   region in order, so the last piece holding an element wins. Pieces of
-   unit steps whose regions are disjoint and fill the result, as a
-   concatenation's do, leave nothing to fill. One such piece inside the
+   region in order, so the last piece holding an element wins. Pieces
+   that cover the result (nx_array.h, Coverings), as a concatenation's do,
+   leave nothing to fill. One piece of unit steps inside the
    result, as a pad's, is one job over the result's rows, axes the piece
    covers whole joined into the rows where they can be, each row filled
    before the piece, copied, and filled after it, so that every element is
@@ -97,11 +97,15 @@ static void fill_box(const nx_array *dst, const uint8_t *fill, int r,
 /* What a call takes past its elements' moves (cpu.h, Calls and jobs,
    scalar; M1 Max and fudge, 2026-10-14): a piece's copy loop, 6.1 KiB for
    a piece of one element (M1); a pair of pieces' test along an axis
-   (tiles), 79 a pair of 2048 one-element pieces (fudge); a span's step
-   over a position of a tap (span_of), 313 for a fold of one axis, its sums
+   (nx_covers), 79 for two intervals' bounds of 2048 one-element pieces,
+   before ranges_meet's residue (fudge); a corner's
+   share of nx_covers's sort, per key and doubling of the keys, 96 for the
+   8194 keys of 4096 pieces of one cut axis (fudge); a span's step over a
+   position of a tap (span_of), 313 for a fold of one axis, its sums
    included (fudge). */
 #define PIECE_COST 16384
 #define PAIR_COST 128
+#define CORNER_COST 96
 #define SPAN_COST 512
 
 /* What moving, filling or adding [n] elements of [dt] takes, at a strided
@@ -235,33 +239,27 @@ static int intervals(int np, int r, const int64_t *ranges, int64_t (*lo)[NX_MAX_
   return 1;
 }
 
-/* Whether the boxes [lo, hi) of the [np] pieces are disjoint and fill the
-   result of [total] elements. */
-static int tiles(int np, int r, int64_t (*lo)[NX_MAX_RANK],
-                 int64_t (*hi)[NX_MAX_RANK], int64_t total) {
-  int64_t sum = 0;
-  for (int j = 0; j < np; j++) {
-    int64_t n = 1;
-    for (int i = 0; i < r; i++) n *= hi[j][i] - lo[j][i];
-    sum += n;
-    for (int k = 0; k < j; k++) {
-      int apart = 0;
-      for (int i = 0; i < r && !apart; i++)
-        apart = hi[j][i] <= lo[k][i] || hi[k][i] <= lo[j][i] ||
-                hi[j][i] == lo[j][i];
-      if (!apart) return 0;
-    }
-  }
-  return sum == total;
+/* What nx_covers takes (Calls and jobs) at most for [np] pieces of rank
+   [r], priced from their count alone so that nothing reads their regions
+   before the release: the corners of every piece along up to NX_TILE_AXES
+   axes, and each pair's comparison, which stepped regions take at any
+   rank. */
+static double covers_bound(int np, int r) {
+  double m = np;
+  int p = r < NX_TILE_AXES ? r : NX_TILE_AXES;
+  uint64_t keys = (uint64_t)(np + 1) << p;
+  return CORNER_COST * (double)keys * (64 - __builtin_clzll(keys)) +
+         PAIR_COST * m * (m - 1) / 2 * r;
 }
 
-/* The pieces' descriptors, boxes and ranges: one C-heap block of their
-   count. A custom block owns it, so that an exception the door raises
-   leaves it to the finalizer. */
+/* The pieces' descriptors, boxes and ranges, and nx_covers's scratch:
+   one C-heap block of their count. A custom block owns it, so that an
+   exception the door raises leaves it to the finalizer. */
 typedef struct {
   nx_array *a;
   int64_t (*lo)[NX_MAX_RANK], (*hi)[NX_MAX_RANK];
   int64_t *ranges;
+  void *covering;
 } pieces;
 
 static void free_scratch(value v) {
@@ -286,13 +284,13 @@ static struct custom_operations scratch_ops = {
 
 /* Carves [p] for [np] pieces of rank [r] out of a block that [owner] then
    owns, allocated with the domain lock released for [many] pieces
-   (nx_alloc_released); 0 if host memory runs out. Each part is a multiple
-   of 8 bytes, so each starts aligned. */
+   (nx_alloc_released); 0 if host memory runs out. Each part but the last
+   is a multiple of 8 bytes, so each starts aligned. */
 static int pieces_of(value owner, int np, int r, int many, pieces *p) {
   size_t n = (size_t)np + 1;
   size_t sa = n * sizeof *p->a, sb = n * sizeof *p->lo,
          sr = (3 * (size_t)r * (size_t)np + 1) * sizeof *p->ranges;
-  size_t bytes = sa + 2 * sb + sr;
+  size_t bytes = sa + 2 * sb + sr + nx_covers_bytes(np);
   uint8_t *b = many ? nx_alloc_released(bytes) : malloc(bytes);
   if (b == NULL) return 0;
   *(void **)Data_custom_val(owner) = b;
@@ -300,6 +298,7 @@ static int pieces_of(value owner, int np, int r, int many, pieces *p) {
   p->lo = (int64_t(*)[NX_MAX_RANK])(b + sa);
   p->hi = (int64_t(*)[NX_MAX_RANK])(b + sa + sb);
   p->ranges = (int64_t *)(b + sa + 2 * sb);
+  p->covering = b + sa + 2 * sb + sr;
   return 1;
 }
 
@@ -374,10 +373,10 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
     drop_scratch(owner, many);
     CAMLreturn(Val_int(e));
   }
-  double pairs = (double)np * (np - 1) / 2 * r;
+  int in_place = np > 0 && a[1].alias;
   double moved = nx_cpu_elements(&a[0]) + (double)c.elements;
-  double cost = moves_cost(dt, moved) + PAIR_COST * pairs +
-                PIECE_COST * (double)np;
+  double cost = moves_cost(dt, moved) + PIECE_COST * (double)np +
+                (in_place ? 0 : covers_bound(np, r));
   int released = nx_cpu_release(cost, n, a);
   int64_t total = 1;
   for (int i = 0; i < r; i++) total *= shape[i];
@@ -396,8 +395,9 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
     }
     if (!whole) e = NX_OVERLAP;
   }
-  int in_place = np > 0 && a[1].alias;
-  int covered = in_place || (unit && tiles(np, r, lo, hi, total));
+  /* Pieces that leave no index out need no fill. */
+  int covered =
+      in_place || nx_covers(np, r, shape, ranges, p.covering) == 1;
   /* A sub-byte dtype's rows may share bytes: its pad keeps the boxes. */
   int padded = !e && total > 0 && !covered && unit && np == 1 && r > 0 &&
                bits >= 8;

@@ -229,6 +229,51 @@ let test_threads (b : Support.backend) () =
   check (case f32 "pad" [| 200_001 |] [| range 70_000 100_000 |]);
   check (case i4 "pad" [| 1_600_001 |] [| range 0 1 |])
 
+(* Tilings *)
+
+(* Pieces of regions near a tiling (Nx_array_gen.near_tiling) at a dtype of
+   each width. The fill is never the element of zero bits, so that a result
+   left unfilled shows. *)
+let tilings =
+  let open Gen in
+  let* d =
+    of_list ~pp:pp_dtype
+      D.[ Any Float32; Any Int8; Any Int4; Any Bool; Any Complex64 ]
+  in
+  let* shape, regions = Nx_array_gen.near_tiling in
+  let* views =
+    array
+      ~size:(constant (Array.length regions))
+      (view_of (Array.length shape))
+  in
+  let+ seed = int in
+  let rs = Random.State.make [| seed |] in
+  let pieces =
+    Array.mapi
+      (fun j r -> operand d (sliced r shape) views.(j) (fun _ -> element d rs))
+      regions
+  in
+  let rec fill () =
+    let e = canonical d (element d rs) in
+    if e = zero d then fill () else e
+  in
+  { dtype = d; shape; fill = fill (); regions; pieces; form = "tiling" }
+
+let law_tilings (b : Support.backend) c =
+  let held = Nx_array_gen.coverage c.shape c.regions in
+  let has f = Array.exists (Array.exists f) c.regions in
+  cover "tile" (Array.for_all (( = ) 1) held);
+  cover "tile by residues"
+    (Array.for_all (( = ) 1) held
+    && has (fun (x : M.range) -> x.count > 1 && x.step > 1));
+  cover "overlap, as many elements as the result"
+    (Array.exists (fun n -> n > 1) held
+    && Array.fold_left ( + ) 0 held = total c.shape);
+  cover "leave a gap" (Array.exists (( = ) 0) held);
+  match assemble_on b c with
+  | None -> ()
+  | Some y -> equal (array string) (expected c) (elements y)
+
 (* Refusals *)
 
 (* An assembly's destination shape [into] and its pieces, each a region and
@@ -440,6 +485,11 @@ let laws (b : Support.backend) =
       prop ~examples
         "the last piece holding an element wins, the fill elsewhere" cases
         (run (law_reference b));
+      prop ~count:300
+        "pieces that tile, overlap or leave a gap give the last piece's \
+         element, the fill elsewhere"
+        (Gen.with_pp pp_case tilings)
+        (run (law_tilings b));
       prop
         "computes what Nx_kernel.Shape fits; another shape is not Done and \
          writes nothing outside its destination"

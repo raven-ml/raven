@@ -3433,6 +3433,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- An assembly of many pieces, such as `Nx.concatenate` of many arrays,
+  decides whether they cover the result in O(n log n), where it compared
+  each pair: 4096 pieces took 1.2-2.5 ms in place of 12 ms on nx.cpu.
 - `Nx.standardize`, `Nx.rms_norm` and other `Reduce`s of several reductions of
   one program compute faster on nx.cpu across rows, over outputs of 16 terms or
   fewer, and with `Moments` or `Logsumexp`: the program runs once a term for
