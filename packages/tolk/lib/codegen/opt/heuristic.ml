@@ -1083,8 +1083,10 @@ let reused k axis =
   List.exists (fun b -> not (indexes r b)) (operands k)
 
 (* The threads that [n] outputs left of an axis upcast by 4 hold once doubled,
-   in a power of two (as {!block} counts them). *)
+   in a power of two (as {!block} counts them), [n] padded to even where it
+   is odd. *)
 let doubled_threads ~lanes n =
+  let n = n + (n land 1) in
   let rec pow2 cap =
     if cap <= 1 || n mod cap = 0 then cap else pow2 (cap / 2)
   in
@@ -1101,18 +1103,31 @@ let upcast_by_loop k n = holds Sint.(K.upcast_size k <= Int n)
    renderer with local indices, upcast by nothing yet, whose two output axes,
    each unread by some operand, would pass {!block}'s guard once upcast by 4,
    and whose blocked threads, a 64th of its outputs, number at least
-   [core_threads]. tinygrad takes 3 first, which leaves such a product at 4 by
-   3 outputs a thread: on an RTX 5000 Ada float32 products of 163840 rows into
-   432 to 1920 columns, which 3 divides, ran at 5.3-5.6 TFLOP/s so, and at
-   15-19 blocked. A product of 48 rows by 1024 columns blocked kept 768
-   threads, and took 105 us against 76 at 4 by 3. *)
+   [core_threads]. Of an output axis split in parts, each read by the same
+   operands, as a projection's heads and their width, the innermost part
+   counts, which the upcast loop takes and {!block} doubles. tinygrad
+   takes 3 first, which leaves such a product at 4 by 3 outputs a thread: on
+   an RTX 5000 Ada float32 products of 163840 rows into 432 to 1920 columns,
+   which 3 divides, ran at 5.3-5.6 TFLOP/s so, and at 15-19 blocked; whisper's
+   projections of 1500 frames into its heads and its feed-forward, at 4.1-4.5
+   so and at 21.7-27.3 staged. A product of 48 rows by 1024 columns blocked
+   kept 768 threads, and took 105 us against 76 at 4 by 3. *)
 let four_first ~core_threads k =
   (K.ren k).has_local && narrow k && upcast_by_loop k 1
   &&
-  match List.filter (reused k) (K.upcastable_dims k) with
+  let operands = operands k in
+  let reads axis b = indexes (List.nth (K.rngs k) axis) b in
+  let same a b = List.for_all (fun o -> reads a o = reads b o) operands in
+  let rec axes = function
+    | [] -> []
+    | a :: rest ->
+        let parts, others = List.partition (same a) rest in
+        (a :: parts) :: axes others
+  in
+  match axes (List.filter (reused k) (K.upcastable_dims k)) with
   | [ a; b ] -> (
-      let size axis =
-        match known_size (shape_at k axis) with
+      let size parts =
+        match known_size (shape_at k (last parts)) with
         | Some n when Bigint.fits_int n -> Some (Bigint.to_int n)
         | _ -> None
       in
@@ -1123,7 +1138,7 @@ let four_first ~core_threads k =
       in
       match (size a, size b) with
       | Some x, Some y ->
-          x mod 8 = 0 && y mod 8 = 0
+          x mod 4 = 0 && y mod 4 = 0
           && doubled_threads ~lanes:(lanes k) (x / 4)
              * doubled_threads ~lanes:(lanes k) (y / 4)
              >= lanes k
@@ -1381,7 +1396,9 @@ let split_reduce k r =
    that leaves an odd part of its axis: TESSERA's second embedding, its 440
    columns split by its day encoding into 220 pairs, leaves 55 runs of 4
    pairs and doubles the pairs, 2.9 ms staged (D497) against 17.1 at 4 by 4
-   on an RTX 5000 Ada. Attention's scores, whose queries the operands that
+   on an RTX 5000 Ada. An odd part with no other part that doubles pads to
+   even and doubles itself: whisper's 1500 frames leave 375 runs of 4,
+   padded to 376. Attention's scores, whose queries the operands that
    read the heads do not all read, keep 4 by 4, and so does a kernel upcast
    past its two axes by 4 ({!upcast_by_loop}). Unbiased scores, 8 products
    of 2048 by 64 by 2048, took 970 us blocked in workgroups of 32 threads
@@ -1414,20 +1431,29 @@ let block k upcasted =
   let lent (_, up, _) other =
     Option.bind (rest_of k up) (fun up -> partner up other)
   in
-  (* The range that takes [r]'s second upcast: [r], or where what its upcast
-     left is odd, its {!partner} if that one doubles, as the pairs of a stack
-     of sines and cosines beside 55 runs of 4 of their 220 angles. *)
+  (* The range that takes [r]'s second upcast, and whether it is padded to
+     an even size first: [r]; where what its upcast left is odd, its
+     {!partner} if that one doubles, as the pairs of a stack of sines and
+     cosines beside 55 runs of 4 of their 220 angles; else [r] padded, as
+     375 runs of 4 of whisper's 1500 frames. *)
   let doubled r other =
-    if doubles (axis_of k r) then Some r
+    if doubles (axis_of k r) then Some (r, false)
     else
-      Option.bind (partner r other) (fun x ->
-          if doubles (axis_of k x) then Some x else None)
+      match partner r other with
+      | Some x when doubles (axis_of k x) -> Some (x, false)
+      | _ when Option.is_some (known_size (shape_at k (axis_of k r))) ->
+          Some (r, true)
+      | _ -> None
   in
   (* The threads the axes [r] leave a workgroup once [d] is doubled. *)
   let threads pairs =
     List.fold_left
-      (fun n (r, d) ->
-        if axis_id d = axis_id r then n * (pow2_dividing r (2 * lanes k) / 2)
+      (fun n (r, (d, padded)) ->
+        if padded then
+          let size = Bigint.to_int (size_at k (axis_of k r)) in
+          n * doubled_threads ~lanes:(lanes k) size
+        else if axis_id d = axis_id r then
+          n * (pow2_dividing r (2 * lanes k) / 2)
         else n * pow2_dividing r (lanes k))
       1 pairs
   in
@@ -1466,7 +1492,11 @@ let block k upcasted =
       let blocked = filled () in
       if blocked then
         List.iter
-          (fun r -> ignore (split k (axis_of k r) 2 Opt.Upcast))
+          (fun (r, padded) ->
+            if padded then
+              ignore
+                (K.apply_opt k (Opt.Padto { axis = axis_of k r; amount = 2 }));
+            ignore (split k (axis_of k r) 2 Opt.Upcast))
           [ da; db ];
       (match K.upcastable_dims ~reduce:true k with
       | [] -> ()

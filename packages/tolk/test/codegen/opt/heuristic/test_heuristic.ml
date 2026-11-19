@@ -3200,6 +3200,30 @@ let paired_product rows cols depth =
         [ i; c; s ];
     ]
 
+(* The same product [x · wᵀ] as {!f32_product}'s, its [heads · width]
+   columns stored head by head, [[heads; rows; width]], as an attention
+   layer's projection splits them. *)
+let heads_product rows heads width depth =
+  let open Ops.O in
+  let param slot size = Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32 in
+  let cols = Stdlib.(heads * width) in
+  let out = param 0 Stdlib.(rows * cols)
+  and x = param 1 Stdlib.(rows * depth)
+  and w = param 2 Stdlib.(cols * depth) in
+  let h = Ops.range ~axis_type:Weak (Ops.Int heads) [ 1 ]
+  and i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 2 ]
+  and c = Ops.range ~axis_type:Weak (Ops.Int width) [ 3 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
+  let sum =
+    Ops.reduce
+      (Ops.index x [ (i * int depth) + k ]
+      * Ops.index w [ (h * int Stdlib.(width * depth)) + (c * int depth) + k ])
+      Add [ k ]
+  in
+  let at = (h * int Stdlib.(rows * width)) + (i * int width) + c in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ at ]) sum) [ h; i; c ] ]
+
 (* A product whose operands both lie along its reduce, on a renderer that
    copies asynchronously, takes a staged product's tile, blocked or short of
    the units: no thread splits its reduce, and its program copies both
@@ -3208,7 +3232,9 @@ let paired_product rows cols depth =
    of sm_89's units, and a product whose columns an addend splits in 220
    pairs, as TESSERA's day encoding beside its second embedding: the 55 runs
    of 4 pairs the columns' upcast leaves do not double, and lend their
-   second upcast to the pairs. Its twin laid out along the columns, and the
+   second upcast to the pairs; and whisper's of 1500 frames, whose 375 runs
+   of 4 do not double either and, with no other part, pad to 376, into 1280
+   columns or into 20 heads of 64. Its twin laid out along the columns, and the
    same product on sm_75, which copies nothing asynchronously, are not
    staged. *)
 let staged_products =
@@ -3241,6 +3267,9 @@ let staged_products =
           ("16384 by 440 over 1792", lazy (f32_product 16384 440 1792));
           ("matmul_256_kt_128", lazy (kernel "matmul_256_kt_128"));
           ("16384 by 220 pairs over 440", lazy (paired_product 16384 220 440));
+          ("1500 by 1280 over 1280", lazy (f32_product 1500 1280 1280));
+          ( "1500 by 20 heads of 64 over 1280",
+            lazy (heads_product 1500 20 64 1280) );
         ]
         (fun (_, sink) ->
           let sink = Lazy.force sink and ren = Lazy.force sm_89 in

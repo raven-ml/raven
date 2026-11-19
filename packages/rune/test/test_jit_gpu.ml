@@ -2209,6 +2209,46 @@ let test_heads_projection () =
         (Float.abs (y.(i) -. z)))
     exact
 
+(* A projection of whisper's 1500 frames into 20 heads of 64, its weights
+   stored [outputs; inputs] and its output laid out by head, plus a bias: the
+   upcast by 4 leaves 375 runs of the frames, which pad to 376 to take their
+   second upcast, and staged, to the staged tile's 128 rows. Within the bound
+   of a sum of [k + 1] terms. *)
+let test_padded_frames () =
+  let _, (module S) = on_gpu () in
+  let t = 1500 and k = 64 and h = 20 and d = 64 in
+  let draw seed s =
+    let x = Nx.Rng.uniform ~key:(Nx.Rng.key seed) Nx.float32 s in
+    Nx.sub_s (Nx.mul_s x 4.) 2.
+  in
+  let x = draw 1 [| t; k |] and w = draw 2 [| h; d; k |] in
+  let c = draw 3 [| h; 1; d |] in
+  let heads = Nx.Pattern.v "t k, h d k -> h t d | k" in
+  let y =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun x w c -> Nx.contract Nx.float32 ~init:c heads x w)
+      (Nx.place S.on x) (Nx.place S.on w) (Nx.place S.on c)
+  in
+  let y = Nx.to_array (Nx.cast Nx.float64 (host y)) in
+  let f x = Nx.cast Nx.float64 x in
+  let exact =
+    Nx.to_array (Nx.contract Nx.float64 ~init:(f c) heads (f x) (f w))
+  in
+  let mass =
+    Nx.to_array
+      (Nx.contract Nx.float64 ~init:(Nx.abs (f c)) heads (Nx.abs (f x))
+         (Nx.abs (f w)))
+  in
+  let u = 0x1p-24 in
+  Array.iteri
+    (fun i z ->
+      let e = product (k + 2) *. mass.(i) in
+      less ~msg:(string_of_int i) float_exact
+        ~than:(e +. (u *. (Float.abs z +. e)))
+        (Float.abs (y.(i) -. z)))
+    exact
+
 (* A routed expert at a prompt of 12 tokens: each token goes through the
    experts its logits rank first, 4 of 32, as gpt-oss-20b's do, each expert
    an MXFP4 projection up, a nonlinearity and an MXFP4 projection down. 48
@@ -3486,6 +3526,10 @@ let () =
                "a projection into heads, blocked over their width, is within \
                 its bound"
                test_heads_projection;
+             test
+               "a projection of 1500 frames into heads, its frames padded, \
+                plus a bias, is within its bound"
+               test_padded_frames;
              test
                "a dense attention step's gradient is the host's within \
                 float32's rounding"

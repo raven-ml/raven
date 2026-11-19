@@ -2296,6 +2296,24 @@ let gpu_rows g =
               in
               fun () -> ignore (synced (f x w halves)));
         };
+      (* A transposed product of whisper's 1500 frames, large-v3-turbo's
+         feed-forward into 5120: the upcast by 4 leaves 375 runs of the
+         frames, which pad to 376 to take their second upcast. *)
+      on_gpu g "matmul-float32-transposed-1500x1280x5120"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s)
+              in
+              let x = draw 62 [| 1500; 1280 |]
+              and w = draw 63 [| 5120; 1280 |] in
+              let f =
+                Rune.jit (pair_fn ()) (fun x w ->
+                    Nx.matmul x (Nx.matrix_transpose w))
+              in
+              fun () -> ignore (synced (f x w)));
+        };
       (* A transposed product summing 64 values, 16 runs of 4: too short a
          reduce to split between threads (16 trips each), as attention's
          scores at a head width of 64. *)

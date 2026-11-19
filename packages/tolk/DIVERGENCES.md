@@ -5968,7 +5968,9 @@ against 2.77).
     unless a pad is refused;
   - where one of the two upcasts took its axis whole, or left an odd part
     of it, the other output axis that the same operands of the product read
-    takes its second upcast, where 2 divides it;
+    takes its second upcast, where 2 divides it; an odd part with no such
+    axis is padded (PADTO) to even and takes it, as whisper's 1500 frames
+    leave 375 runs of 4;
   - where both operands of the product read the unrolled axis at unit
     stride, as a product by the transpose of a matrix stored `[outputs;
     inputs]` does, and so every float32 input gradient `dY Wᵀ` whatever
@@ -5989,7 +5991,10 @@ against 2.77).
     bytes;
   - only for such a contraction, upcast by nothing before the loop, whose
     blocked threads, a 64th of its outputs, number at least the renderer's
-    `core_threads`, does the upcast loop take an axis by 4 before 3.
+    `core_threads`, does the upcast loop take an axis by 4 before 3; of an
+    output axis split into parts that the same operands read, as a
+    projection's heads and their width, the innermost part counts there,
+    which the loop upcasts and `block` doubles.
 - **Reason:** (d): at equal registers, 8 by 8 outputs a thread in workgroups
   of 128 beat tinygrad's 4 by 4 on fudge's RTX 5000 Ada wherever each SM
   holds two of them, which at the 255 registers a thread may take fill its
@@ -6005,7 +6010,15 @@ against 2.77).
   splits its 440 columns into 220 pairs: blocked and staged (D497) it takes
   2.9 ms a call of 163840 rows on fudge's RTX 5000 Ada, against 17.1 at 4
   by 4 in 64 threads (rune's
-  `Cuda/matmul-float32-transposed-pairs-16384x440x440`).
+  `Cuda/matmul-float32-transposed-pairs-16384x440x440`). The pad of an odd
+  part, and the 4 before 3 of a projection into heads, serve whisper's
+  encoder, whose products over 1500 frames ran at 4 by 3 from the L1, at
+  4.1-4.5 TFLOP/s: staged, they run at 21.7-27.3, and large-v3-turbo's
+  products take 85 ms a call against 446 (DEBUG=2). An encoder call takes
+  114-116 ms against 478-487 for large-v3-turbo, 19.8-21.3 against
+  64.1-65.6 for small and 4.7 against 5.7-5.8 for tiny, three alternated
+  runs on fudge's RTX 5000 Ada (whisper's `bench_whisper.exe --recording`),
+  where openai-whisper's PyTorch takes 111 ms for large-v3-turbo.
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
   (`matmul`, `matmul_256`, `scores`, `matmul_768`, `batched_768`,
   `two_batches_768`, `matmul_440`, padded, `heads_projection` and
@@ -6016,8 +6029,10 @@ against 2.77).
   `two_batches_768_biased` and `batched_768_biased`, whose bias the
   batches do not read, optimised as without it; `matmul_1000`, `matmul_48`
   and `scores_masked` not blocked), `a product laid out along its reduce`'s
-  `16384 by 220 pairs over 440` and rune's
-  `Cuda/matmul-float32-transposed-pairs-16384x440x440` on fudge, and
+  `16384 by 220 pairs over 440`, `1500 by 1280 over 1280` and `1500 by 20
+  heads of 64 over 1280`, rune's
+  `Cuda/matmul-float32-transposed-pairs-16384x440x440` and
+  `Cuda/matmul-float32-transposed-1500x1280x5120` on fudge, and
   `a contraction laid out along its reduce` (`matmul_256_kt_128`
   with its reduce split on CUDA, AMD and sm_75; `matmul_256_kt` and
   `scores`, under 16 trips, and `matmul_256` and `matmul_440` without),
@@ -6025,7 +6040,9 @@ against 2.77).
   their order whatever units its renderer states`; rune's `test_jit_gpu`
   `a blocked product padded to its threads, plus a bias, is within its
   bound` and `a projection into heads, blocked over their width, is within
-  its bound`, blocked on sm_89; the tolk bench's `contract/f32-2048` and
+  its bound` and `a projection of 1500 frames into heads, its frames padded,
+  plus a bias, is within its bound`, blocked on sm_89; the tolk bench's
+  `contract/f32-2048` and
   `contract/qk-f32-2048` rows and rune's
   `Cuda/matmul-float32-16384x440x1320`,
   `Cuda/matmul-float32-transposed-16384x440x1320`,
