@@ -7,6 +7,7 @@
   test_colour
   test_filter
   test_edges
+  test_morphology
   test_sample
   test_resize
   test_annot

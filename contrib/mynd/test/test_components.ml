@@ -137,23 +137,163 @@ let compiled =
         (longs (V.components `Four m))
         (longs (Rune.jit' (V.components `Four) m)))
 
+(* Areas per mask of a batch: ones scattered at each mask's own flattened
+   labels, read back at them. *)
 let areas =
-  test "areas compose from the labels" (fun () ->
-      let m =
-        Nx.unsqueeze ~axes:[ -1 ] (Nx.slice [ Nx.I 1 ] (entry Nx.bool "cc.m"))
+  test "areas compose from the labels, per mask" (fun () ->
+      let m = Nx.unsqueeze ~axes:[ -1 ] (entry Nx.bool "cc.m") in
+      let b = Nx.dim 0 m and n = Nx.dim 1 m * Nx.dim 2 m in
+      let labels = Nx.reshape [| b; n |] (V.components `Four m) in
+      let ones = Nx.ones Nx.int64 [| b; n |] in
+      let counts =
+        Nx.scatter ~combine:Add ~axis:(-1) labels ones
+          (Nx.zeros Nx.int64 [| b; n |])
       in
-      let labels = Nx.reshape [| 24 * 31 |] (V.components `Four m) in
-      let ones = Nx.ones Nx.int64 [| 24 * 31 |] in
-      let areas =
-        Nx.take labels (Nx.reduce_segments Add ~segments:(24 * 31) labels ones)
-      in
+      let areas = Nx.take_along_axis ~axis:(-1) labels counts in
       let l = longs labels in
-      let count x =
-        Array.fold_left (fun a y -> if y = x then a + 1 else a) 0 l
+      let count k x =
+        let a = ref 0 in
+        for i = k * n to ((k + 1) * n) - 1 do
+          if l.(i) = x then incr a
+        done;
+        !a
       in
       equal (array int64)
-        (Array.map (fun x -> if x < 0L then 0L else Int64.of_int (count x)) l)
+        (Array.mapi
+           (fun i x -> if x < 0L then 0L else Int64.of_int (count (i / n) x))
+           l)
         (longs areas))
+
+(* Reconstruction *)
+
+(* [grown conn h w m marker] is [marker] within [m] grown through next pixels of
+   [m] until nothing changes, one mask. *)
+let grown conn h w m marker =
+  let next =
+    match conn with
+    | `Four -> [ (-1, 0); (0, -1); (0, 1); (1, 0) ]
+    | `Eight ->
+        [ (-1, -1); (-1, 0); (-1, 1); (0, -1); (0, 1); (1, -1); (1, 0); (1, 1) ]
+  in
+  let r = Array.map2 ( && ) marker m in
+  let changed = ref true in
+  while !changed do
+    changed := false;
+    for i = 0 to h - 1 do
+      for j = 0 to w - 1 do
+        let k = (i * w) + j in
+        if m.(k) && not r.(k) then
+          if
+            List.exists
+              (fun (di, dj) ->
+                let i' = i + di and j' = j + dj in
+                i' >= 0 && i' < h && j' >= 0 && j' < w && r.((i' * w) + j'))
+              next
+          then begin
+            r.(k) <- true;
+            changed := true
+          end
+      done
+    done
+  done;
+  r
+
+let gen_batch =
+  Gen.(
+    let* b, (h, w) =
+      pair (int_range 1 3) (pair (int_range 0 9) (int_range 0 9))
+    in
+    let* d, e = pair (float_range 0.3 0.8) (int_range 0 4) in
+    let n = b * h * w in
+    let+ px = array ~size:(constant n) (float_range 0. 1.)
+    and+ mk = array ~size:(constant n) (float_range 0. 1.) in
+    (* e = 0: no marker; 1: every pixel; else a sparse one. *)
+    let marker =
+      Array.map
+        (fun v -> match e with 0 -> false | 1 -> true | _ -> v < 0.08)
+        mk
+    in
+    (b, h, w, Array.map (fun v -> v < d) px, marker))
+
+let reconstruct_fixed_point =
+  prop "reconstruct is the marker grown within the mask, per mask" ~count:300
+    Gen.(pair bool gen_batch)
+    (fun (eight, (b, h, w, m, marker)) ->
+      let conn = if eight then `Eight else `Four in
+      let n = h * w in
+      cover "no marker" (not (Array.exists Fun.id marker));
+      cover "every pixel a marker" (n > 0 && Array.for_all Fun.id marker);
+      cover "a marker outside the mask"
+        (Array.exists2 (fun a k -> k && not a) m marker);
+      cover "several masks" (b > 1 && n > 0);
+      let want =
+        Array.concat
+          (List.init b (fun k ->
+               grown conn h w
+                 (Array.sub m (k * n) n)
+                 (Array.sub marker (k * n) n)))
+      in
+      let t a = Nx.create Nx.bool [| b; h; w; 1 |] a in
+      let got = V.reconstruct conn ~marker:(t marker) (t m) in
+      equal (array bool) want (Nx.to_array got))
+
+let reconstruct_padded =
+  prop "padding with false keeps the reconstruction" ~count:100
+    Gen.(triple bool gen_mask (pair (int_range 0 3) (int_range 0 3)))
+    (fun (eight, (h, w, px), (ph, pw)) ->
+      let conn = if eight then `Eight else `Four in
+      let m = Nx.create Nx.bool [| h; w; 1 |] px in
+      let marker =
+        Nx.init Nx.bool [| h; w; 1 |] (fun i -> (i.(0) + i.(1)) mod 5 = 0)
+      in
+      let pad x = Nx.pad [| (0, ph); (0, pw); (0, 0) |] false x in
+      equal (array bool)
+        (Nx.to_array (pad (V.reconstruct conn ~marker m)))
+        (Nx.to_array (V.reconstruct conn ~marker:(pad marker) (pad m))))
+
+let reconstruct_compiled =
+  test "a compiled and a mapped reconstruct are eager's" (fun () ->
+      let m = Nx.unsqueeze ~axes:[ -1 ] (entry Nx.bool "cc.m") in
+      let marker =
+        Nx.init Nx.bool (Nx.shape m) (fun i -> ((i.(1) * 7) + i.(2)) mod 11 = 3)
+      in
+      let f marker m = V.reconstruct `Eight ~marker m in
+      let want = Nx.to_array (f marker m) in
+      let s = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
+      equal (array bool) want (Nx.to_array (Rune.jit s f marker m));
+      (* Each lane is a mask and its marker, stacked. *)
+      let both = Nx.stack ~axis:1 [ marker; m ] in
+      let lane x = f (Nx.slice [ Nx.I 0 ] x) (Nx.slice [ Nx.I 1 ] x) in
+      equal (array bool) want (Nx.to_array (Rune.vmap' lane both)))
+
+(* Holes are the background components that reach no border pixel: those
+   [reconstruct] does not grow from the frame. scipy's binary_fill_holes, from
+   golden/morphology.npz (contrib/mynd/test/gen/morphology.py), takes the
+   background's connectivity as its structure. The frame comes from a predicate
+   on the index, which holds for masks of one row or column too. *)
+let morphology = lazy (Nx_io.load_npz "golden/morphology.npz")
+
+let holes =
+  cases "filling holes by reconstruction is scipy's" ~id:fst
+    [ ("four", `Four); ("eight", `Eight) ]
+    (fun (name, conn) ->
+      let get key =
+        match Nx_io.Archive.find key (Lazy.force morphology) with
+        | Some p -> Nx.unsqueeze ~axes:[ -1 ] (Nx.unpack Nx.bool p)
+        | None -> failf "golden/morphology.npz has no %s" key
+      in
+      let m = get "masks" in
+      let h = Nx.dim 1 m and w = Nx.dim 2 m in
+      let frame =
+        Nx.init Nx.bool (Nx.shape m) (fun i ->
+            i.(1) = 0 || i.(1) = h - 1 || i.(2) = 0 || i.(2) = w - 1)
+      in
+      let filled =
+        Nx.logical_not (V.reconstruct conn ~marker:frame (Nx.logical_not m))
+      in
+      equal (array bool)
+        (Nx.to_array (get ("holes." ^ name)))
+        (Nx.to_array filled))
 
 let refusals =
   group "misuse"
@@ -161,6 +301,15 @@ let refusals =
       test "a mask without its channel axis" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Mynd.components") (fun () ->
               V.components `Four (Nx.zeros Nx.bool [| 4; 4 |])));
+      test "a marker of another shape" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Mynd.reconstruct") (fun () ->
+              V.reconstruct `Four
+                ~marker:(Nx.zeros Nx.bool [| 4; 5; 1 |])
+                (Nx.zeros Nx.bool [| 4; 4; 1 |])));
+      test "masks of two channels" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Mynd.reconstruct") (fun () ->
+              let m = Nx.zeros Nx.bool [| 4; 4; 2 |] in
+              V.reconstruct `Four ~marker:m m));
     ]
 
 let () =
@@ -174,5 +323,9 @@ let () =
          batch_and_vmap;
          compiled;
          areas;
+         reconstruct_fixed_point;
+         reconstruct_padded;
+         reconstruct_compiled;
+         holes;
          refusals;
        ])

@@ -11,6 +11,10 @@
 # - gradient_maxima: scikit-image's bilinear non-maximum suppression, the
 #   step of its canny, over smooth random gradients. Its mask leaves out
 #   the border ring, whose neighbours it would read outside the image.
+# - Canny's edges: scikit-image's canny at its defaults (thresholds 0.1
+#   and 0.2 of raw Sobel strengths, a blur under constant 0 divided by the
+#   blur of ones, Sobel under reflect, the border ring dropped) on a disc,
+#   a turned square and a ramp under noise.
 # Run from this directory: uv run --locked edges.py ../golden/edges.npz
 import sys
 
@@ -18,6 +22,7 @@ import cv2
 import numpy as np
 import scipy
 import skimage
+from skimage.feature import canny
 from scipy import ndimage
 from skimage.feature._canny_cy import _nonmaximum_suppression_bilinear
 
@@ -69,6 +74,16 @@ kept = _nonmaximum_suppression_bilinear(
 out["maxima.gx"] = gx
 out["maxima.gy"] = gy
 out["maxima.skimage"] = np.asarray(kept) > 0
+
+i, j = np.mgrid[0:48, 0:64] + 0.5
+disc = (i - 20) ** 2 + (j - 18) ** 2 < 11**2
+u, v = j - 44, i - 26
+a, b = np.cos(0.5) * u + np.sin(0.5) * v, np.cos(0.5) * v - np.sin(0.5) * u
+square = (np.abs(a) < 9) & (np.abs(b) < 9)
+scene = 0.2 + 0.5 * disc + 0.3 * square + 0.004 * j + 0.05 * rng.standard_normal((48, 64))
+out["canny.x"] = scene
+for sigma in (1, 2):
+    out[f"canny.{sigma}"] = canny(scene, sigma=sigma)
 
 np.savez(sys.argv[1], **out)
 print(scipy.__version__, cv2.__version__, skimage.__version__, len(out), "arrays")

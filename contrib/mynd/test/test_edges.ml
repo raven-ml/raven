@@ -521,6 +521,44 @@ let square =
           equal ~msg:(Printf.sprintf "σ %g" sigma) int 1 (List.length pieces))
         [ 1.; 1.4; 2. ])
 
+(* scikit-image's canny at its defaults, composed: a blur under [`Zero] divided
+   by the blur of ones plus float64's epsilon, of radius [⌊4σ + ½⌋]; [`Sobel]
+   under [`Symmetric_half], scipy's reflect; the border ring dropped; its
+   thresholds [0.1] and [0.2] of raw Sobel strengths, eight times mynd's, met
+   with [>=]; hysteresis over 8-connected candidates. *)
+let canny_skimage =
+  cases "Canny's edges compose to scikit-image's at its defaults"
+    ~id:(fun s -> Printf.sprintf "σ %d" s)
+    [ 1; 2 ]
+    (fun s ->
+      let x = entry Nx.float64 "canny.x" in
+      let h = Nx.dim 0 x and w = Nx.dim 1 x in
+      let x = Nx.reshape [| h; w; 1 |] x in
+      let sigma = Float.of_int s in
+      let radius = Float.to_int ((4. *. sigma) +. 0.5) in
+      let blur =
+        V.gaussian_blur ~edge:`Zero ~radius (Nx.scalar Nx.float64 sigma)
+      in
+      let b =
+        Nx.div (blur x) (Nx.add_s (blur (Nx.ones_like x)) epsilon_float)
+      in
+      let ((gx, gy) as g) = V.gradient ~edge:`Symmetric_half `Sobel b in
+      let m = Nx.hypot gx gy in
+      let ring =
+        Nx.init Nx.bool [| h; w; 1 |] (fun i ->
+            i.(0) = 0 || i.(0) = h - 1 || i.(1) = 0 || i.(1) = w - 1)
+      in
+      let thin = Nx.logical_and (V.gradient_maxima g) (Nx.logical_not ring) in
+      let candidates = Nx.logical_and thin (Nx.greater_equal_s m (0.1 /. 8.)) in
+      let edges =
+        V.reconstruct `Eight
+          ~marker:(Nx.greater_equal_s m (0.2 /. 8.))
+          candidates
+      in
+      equal (array bool)
+        (Nx.to_array (entry Nx.bool (Printf.sprintf "canny.%d" s)))
+        (Nx.to_array edges))
+
 let refusals =
   cases "misuse raises"
     ~id:(fun (n, _) -> n)
@@ -565,5 +603,6 @@ let () =
          maxima_skimage;
          step;
          square;
+         canny_skimage;
          refusals;
        ])

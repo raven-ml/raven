@@ -3,7 +3,7 @@ opam-version: "2.0"
 version: "1.0.0~alpha3"
 synopsis: "Images for OCaml"
 description:
-  "Images as Nx tensors: their values and conversions between dtypes, colour transfer and alpha, luma, HSV and CIE Lab, sampling at positions under reconstruction kernels, transforms, band-limited resizing, filtering by correlation and Gaussian and median blurs, gradients and their maxima, boxes, masks, COCO's run-length encoding, connected components and non-maximum suppression. Every operation is a composition of nx operations, so rune differentiates, batches and compiles it."
+  "Images as Nx tensors: their values and conversions between dtypes, colour transfer and alpha, luma, HSV and CIE Lab, sampling at positions under reconstruction kernels, transforms, band-limited resizing, filtering by correlation and Gaussian and median blurs, gradients and their maxima, erosion and dilation, boxes, masks, COCO's run-length encoding, connected components, reconstruction and non-maximum suppression. Every operation is a composition of nx operations, so rune differentiates, batches and compiles it."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"

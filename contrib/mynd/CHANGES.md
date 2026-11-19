@@ -4,6 +4,13 @@ All notable changes to Mynd are documented in this file.
 
 ## Unreleased
 
+- Add morphology: `erode` and `dilate` by host boolean footprints of any
+  extents, reading no extension rule, with dilation by Minkowski addition
+  so that `dilate fp (erode fp x)` is an opening for every footprint; ties
+  share the derivative equally. Add `reconstruct`, the components of a mask
+  that hold a marker pixel, in `components`' rounds.
+- `components`' doc gives areas per mask of a batch, by a scatter along each
+  mask's flattened labels.
 - Add gradients: `gradient`, the pair `(gx, gy)` in values per pixel under
   the `Central`, `Sobel` and `Scharr` stencils, exact on ramps and under
   flips and transposes; `gradient_maxima`, Canny's thinning by

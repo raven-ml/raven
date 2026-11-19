@@ -460,7 +460,7 @@ val median_blur :
     smoothing and Gaussian derivatives", 2024, §6.1). Canny's edges ("A
     Computational Approach to Edge Detection", 1986) are the {!gradient_maxima}
     of such a gradient whose strength is above a low threshold, kept where they
-    join one above a high threshold. *)
+    join one above a high threshold ({!reconstruct}). *)
 
 type stencil = [ `Central | `Sobel | `Scharr ]
 (** The type for gradient stencils. Each takes the difference [-½ 0 ½] along one
@@ -517,6 +517,51 @@ val gradient_maxima :
 
     Raises [Invalid_argument] if [gx] and [gy] differ in shape or have fewer
     than three axes. *)
+
+(** {1:morphology Morphology}
+
+    A {e footprint} [fp] is a host boolean array [[kh; kw]] that selects the
+    taps [(p, q)] of a pixel's window ({!section-filtering}) where it is [true].
+    Its extents may be even, and it may leave out the pixel itself.
+
+    Morphology reads no extension rule. A selected tap outside the image is left
+    out, and where none lies inside, {!erode} gives the dtype's greatest value
+    ({!Nx.Dtype.max_value}) and {!dilate} its least.
+
+    For images without NaN, [erode fp] and [dilate fp] are {e adjoint}:
+    [dilate fp y <= x] at every pixel exactly when [y <= erode fp x] at every
+    pixel. So the {e opening} [dilate fp (erode fp x)] is at most [x], the
+    {e closing} [erode fp (dilate fp x)] is at least [x], both are increasing,
+    and a second opening or closing changes nothing. Reading outside the image
+    by a rule breaks these laws at the border. *)
+
+val erode : Nx.host Nx.bool_t -> ('v, 'r, 'd) Nx.t -> ('v, 'r, 'd) Nx.t
+(** [erode fp x] is, at each pixel and channel of the images [x],
+    [[b…; h; w; c]], the least of the taps [fp] selects that lie inside the
+    image, in {!Nx.minimum}'s order: [-0.] below [+0.], [false] below [true],
+    and NaN where a tap read is NaN. A mask erodes to [true] where every such
+    tap is [true]. The result is a value of [x] or the dtype's greatest, so its
+    bits, but for a NaN's sign and payload, do not depend on how taps are
+    compared. Its derivative comes from the taps read that equal the result, in
+    equal shares as {!Nx.min}'s does, and is zero where the result is NaN.
+
+    Raises [Invalid_argument] if [fp] does not have two axes, [x] has fewer than
+    three, or [x] is complex, since an image holds codes or fractions. *)
+
+val dilate : Nx.host Nx.bool_t -> ('v, 'r, 'd) Nx.t -> ('v, 'r, 'd) Nx.t
+(** [dilate fp x] is, at each pixel [(i, j)] and channel of the images [x], the
+    greatest of the pixels inside the image at row [i + kh / 2 - p] and column
+    [j + kw / 2 - q], for the taps [(p, q)] [fp] selects, which is the window
+    reflected about the pixel. Dilating a mask with one [true] pixel draws [fp]
+    there, its tap [(kh / 2, kw / 2)] on that pixel. For a footprint symmetric
+    about that tap it reads the pixels {!erode} reads. A footprint with a [true]
+    tap in the first row or column of an even axis, a full rectangle of an even
+    extent included, is asymmetric about that tap. For every footprint, the
+    greatest of the pixels {!erode} reads is [dilate] by [fp] flipped
+    ({!Nx.flip}) with a row or column of [false] put before each even axis.
+    Order, bits and derivative are {!erode}'s, with greatest for least.
+
+    Raises [Invalid_argument] as {!erode} does. *)
 
 (** {1:boxes Boxes}
 
@@ -643,8 +688,10 @@ val components : [ `Four | `Eight ] -> 'd Nx.bool_t -> 'd Nx.int64_t
     of true pixels joined through next ones. A true pixel's label is the least
     row-major index [i w + j] in its component, a false pixel's [-1]; a batch
     padded with [false] keeps its components, labelled in the padded width.
-    Areas are {!Nx.reduce_segments}[ Add ~segments:(h * w)] of ones over the
-    flat labels, read back by {!Nx.take}.
+    Areas are {!Nx.scatter}[ ~combine:Add ~axis:(-1)] of ones into zeros, at the
+    labels of each mask flattened to [[…; h w]], read back by
+    {!Nx.take_along_axis}[ ~axis:(-1)]: a label [-1] writes nothing and reads
+    [0], and each mask counts in its own labels.
 
     It runs Liu and Tarjan's algorithm R with two shortcuts a round (Simple
     Concurrent Connected Components Algorithms), at most
@@ -652,6 +699,20 @@ val components : [ `Four | `Eight ] -> 'd Nx.bool_t -> 'd Nx.int64_t
     mask stops on its own.
 
     Raises [Invalid_argument] unless [m]'s axes are [[…; h; w; 1]]. *)
+
+val reconstruct :
+  [ `Four | `Eight ] -> marker:'d Nx.bool_t -> 'd Nx.bool_t -> 'd Nx.bool_t
+(** [reconstruct c ~marker m] is the masks [m], [[…; h; w; 1]], keeping only the
+    components ({!components} [c]) that hold a [true] pixel of [marker] in the
+    same mask: the reconstruction of [marker] within [m] (Heijmans,
+    "Introduction to Connected Operators", 1999, §6.2). A marker pixel outside
+    [m] is ignored. The result is [marker] grown within [m] through next pixels
+    until nothing changes, in {!components}' rounds however long that growth
+    would be. Canny's hysteresis keeps the candidates joined to a strong pixel,
+    [reconstruct `Eight ~marker:strong candidates].
+
+    Raises [Invalid_argument] unless [m]'s axes are [[…; h; w; 1]] and [marker]
+    has [m]'s shape. *)
 
 (**/**)
 

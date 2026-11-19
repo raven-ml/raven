@@ -19,7 +19,8 @@ stays until mynd covers its surface.
 ## Boundaries
 
 - mynd depends on the public libraries of core packages alone: on nx, and on
-  rune for `Rune.iterate`. It never calls `Rune.jit`: the caller compiles.
+  rune for `Rune.iterate` and `Rune.custom_jvp`. It never calls `Rune.jit`:
+  the caller compiles.
 - mynd never depends on alda, raven's signal library. Its kernels and its
   resizing weights are its own; what both need, such as `Nx.sinc`, is built
   in nx.
@@ -58,6 +59,30 @@ stays until mynd covers its surface.
 - `components` is Liu and Tarjan's R with two shortcuts a round; its
   `~max` is their proven bound. `nms` is the Jacobi fixed point of the
   greedy rule; its threshold compares exactly with the OCaml float.
+- `gradient` is in values per pixel: a difference of `-½ 0 ½` after
+  weights across that sum to one, so `Sobel` and `Scharr` are the
+  libraries' kernels over 8 and 32. Outer weights multiply the sum of
+  their two pixels, so flips and transposes are exact on images.
+  `gradient_maxima` is Canny's ring interpolation, ties kept on the side
+  the gradient points away from, and reads nothing outside the image.
+  Canny's detector is a guide composition: with `gaussian_blur ~edge:`Zero`
+  over the blur of ones, `Sobel` under `Symmetric_half`, the border ring
+  dropped and thresholds `>=` over 8, it equals scikit-image's `canny` at
+  its defaults (test_edges).
+- Morphology reads no extension rule (outside taps left out, the dtype's
+  extreme where none is inside), and `dilate` is Minkowski addition, the
+  convention under which `dilate fp (erode fp x)` is an opening for every
+  footprint. OpenCV's and scikit-image 1.x's `dilate` read erosion's taps,
+  and scikit-image anchors an even axis one tap earlier: their parity is a
+  footprint conversion (test_morphology), and their opening of a
+  footprint asymmetric about its origin tap is no opening. The tie
+  derivative counts and sums at float32 for the formats narrower than 32
+  bits, as rune's `Nx.min` counts in the carrier. Complex images raise.
+- `reconstruct` is the components holding a marker pixel, in `components`'
+  rounds, never dilation iterated to stability, which takes up to `h w / 2`
+  rounds on a serpentine. Labels index each mask's own pixels, so per-label
+  sums scatter along the last axis of `[…; h w]`; a flat
+  `reduce_segments` over a batch merges labels across masks.
 - `components_rounds` and `nms_rounds`, behind the `.mli`'s stop, give the
   tests their step counts.
 
