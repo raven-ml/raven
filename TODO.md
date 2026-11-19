@@ -101,6 +101,13 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## nx, rune
 
+- test_grad's "a dirichlet draw's tangents and gradient in its
+  concentrations" takes 15.7 s alone and passes 60 s under load
+- Host result buffers fault fresh pages unevenly between calls: attention's
+  eager lengths derivative in order takes 16.9k minor faults a call against
+  7.0k before its join, and runs 12% slower though it writes 15% less
+- `test_attention`'s `law_lengths` draws exactly 2 lengths, so random
+  draws never interleave groups; only fixed examples reach them
 - rune's tape still records whole a reduction it owns every load of when
   its known part reads none, so a constant becomes a tape variable
   (custom_jvp tangent maps, linear_transpose); it needs a fill to reduce
