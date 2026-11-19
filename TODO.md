@@ -108,9 +108,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   7.0k before its join, and runs 12% slower though it writes 15% less
 - `test_attention`'s `law_lengths` draws exactly 2 lengths, so random
   draws never interleave groups; only fixed examples reach them
-- rune's tape still records whole a reduction it owns every load of when
-  its known part reads none, so a constant becomes a tape variable
-  (custom_jvp tangent maps, linear_transpose); it needs a fill to reduce
 - gpt-oss's decode copies v (`E_16_8_4`, a stride-640 slice of the fused
   q, k, v product) before rune's scatter writes the cache, since a custom
   kernel's argument that views a computed node is stored apart. Removing it

@@ -245,6 +245,7 @@ let jvp_tests =
                  reduction = Monoid (Sum, 0, f64);
                  loads;
                  carry = Some (Any (Nx.zeros f64 [| 1 |]));
+                 at = None;
                })
         in
         let twos = Nx.full f64 [| 3 |] 2. and ramp = vec [| 1.; 2.; 3. |] in
@@ -268,6 +269,97 @@ let jvp_tests =
               fun x dx -> [| Plain dx; Plain x |] );
             ("a map over dx alone", twos, map, fun _ dx -> [| Plain dx |]);
             ("a scan over dx alone", ramp, scan, fun _ dx -> [| Plain dx |]);
+          ]);
+    test "a constant a tangent map reduces from tangents alone stays constant"
+      (fun () ->
+        (* A reduction over [dx] alone whose program reads none of it gives a
+           constant [k]: the product of 2 over three elements, 8, their
+           maximum, 2, or their running product, [2; 4; 8]. The tangent map
+           [k dx] is linear, so [jvp] gives [k t], a pullback [k w] and the
+           gradient [k]. Beside the product, a sum of [dx] in the same
+           reduction adds [sum t] to the tangent and 3 to the gradient. *)
+        let layout = Nx_array.Layout.contiguous (Iarray.of_list [ 3 ]) in
+        let prog outs =
+          Nx_kernel.Prog.of_exprs
+            ~ins:(Iarray.of_list [ Nx.Dtype.Any f64 ])
+            outs
+        in
+        let two = Nx_kernel.Prog.E.(any (const f64 2.))
+        and dx_0 = Nx_kernel.Prog.E.(any (input 0 f64)) in
+        let reduce m dx =
+          fst
+            (Nx.Prim.eval ~by:"test"
+               (Reduce
+                  {
+                    layout;
+                    axes = Iarray.of_list [ 0 ];
+                    prog = prog [| two |];
+                    reductions = [ Monoid (m, 0, f64) ];
+                    loads = Iarray.of_list [ Nx.Prim.Plain dx ];
+                    at = None;
+                  }))
+        and beside_sum dx =
+          let p, (s, ()) =
+            Nx.Prim.eval ~by:"test"
+              (Reduce
+                 {
+                   layout;
+                   axes = Iarray.of_list [ 0 ];
+                   prog = prog [| two; dx_0 |];
+                   reductions = [ Monoid (Prod, 0, f64); Monoid (Sum, 1, f64) ];
+                   loads = Iarray.of_list [ Nx.Prim.Plain dx ];
+                   at = None;
+                 })
+          in
+          Nx.add (Nx.mul p dx) s
+        and scan dx =
+          Nx.Prim.eval ~by:"test"
+            (Scan
+               {
+                 layout;
+                 axis = 0;
+                 prog = prog [| two |];
+                 reduction = Monoid (Prod, 0, f64);
+                 loads = Iarray.of_list [ Nx.Prim.Plain dx ];
+                 carry = None;
+                 at = None;
+               })
+        in
+        let t = along () in
+        List.iter
+          (fun (what, map, tangent, gradient) ->
+            let f = Rune.custom_jvp tensor tensor (fun x -> (x, map)) in
+            let jvp x = snd (Rune.jvp' f x t)
+            and pullback x = snd (Rune.vjp' f x) t
+            and grad = Rune.grad' (fun x -> Nx.sum (f x)) in
+            let expect how f expected =
+              exact ~msg:(what ^ ", " ^ how) expected (f (v3 ()));
+              exact
+                ~msg:(what ^ ", " ^ how ^ " compiled")
+                expected
+                (Rune.jit' f (v3 ()))
+            in
+            let tangent = vec tangent in
+            expect "jvp" jvp tangent;
+            expect "vjp" pullback tangent;
+            expect "grad" grad (vec gradient))
+          [
+            ( "a product",
+              (fun dx -> Nx.mul (reduce Prod dx) dx),
+              [| 4.; 8.; -16. |],
+              [| 8.; 8.; 8. |] );
+            ( "a maximum",
+              (fun dx -> Nx.mul (reduce Max dx) dx),
+              [| 1.; 2.; -4. |],
+              [| 2.; 2.; 2. |] );
+            ( "a product beside a sum",
+              beside_sum,
+              [| 3.5; 7.5; -16.5 |],
+              [| 11.; 11.; 11. |] );
+            ( "a running product",
+              (fun dx -> Nx.mul (scan dx) dx),
+              [| 1.; 4.; -16. |],
+              [| 2.; 4.; 8. |] );
           ]);
     test "the rule runs once per call, its derivative once where applied"
       (fun () ->

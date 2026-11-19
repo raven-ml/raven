@@ -385,6 +385,7 @@ let reduce_rule (type r) i n ~by (op : r Prim.t) : r =
                    prog = shift_coords part.prog;
                    reductions = rs;
                    loads;
+                   at = None;
                  })
           else
             values ~by
@@ -395,6 +396,7 @@ let reduce_rule (type r) i n ~by (op : r Prim.t) : r =
                    prog = part.prog;
                    reductions = rs;
                    loads;
+                   at = None;
                  })
       in
       results i ~by op (fun () ->
@@ -787,9 +789,12 @@ let rule (type r) n held i ~by (op : r Prim.t) : r =
            (Option.fold ~none:false
               ~some:(fun (Prim.Any c) -> owned i c)
               s.carry
-           || (plan s.prog (laned_loads i s.loads)).laned.(output s.reduction))
+           || (plan s.prog (laned_loads i s.loads)).laned.(output s.reduction)
+           || Array.length (restrict s.prog [ output s.reduction ]).loads = 0)
     ->
-      (* An output and carry every lane shares. *)
+      (* An output and carry every lane shares, over the loads it reads. One
+         that reads none computes with the lanes, every lane's alike, as a
+         map's does. *)
       let k = output s.reduction in
       let part = restrict s.prog [ k ] in
       let loads = part_loads i n ~laned:false part s.loads in
@@ -805,6 +810,13 @@ let rule (type r) n held i ~by (op : r Prim.t) : r =
       results i ~by op (fun () ->
           Array.map (fun v -> Shared v) (values ~by scan))
   | Scan s ->
+      let carry = Option.map (fun (Prim.Any c) -> Prim.Any (b c)) s.carry in
+      (* A scan of no loads lies where its batched carry does. *)
+      let at =
+        match (s.at, carry) with
+        | Some _, Some (Prim.Any c) -> Some (Nx.placement c)
+        | _ -> s.at
+      in
       batched
         (Scan
            {
@@ -813,7 +825,8 @@ let rule (type r) n held i ~by (op : r Prim.t) : r =
              axis = s.axis + 1;
              prog = shift_coords s.prog;
              loads = loads s.loads;
-             carry = Option.map (fun (Prim.Any c) -> Prim.Any (b c)) s.carry;
+             carry;
+             at;
            })
   | Gather g -> batched (Gather { axis = g.axis + 1; idx = b g.idx; x = b g.x })
   (* The lanes become a lead axis of the runs and the source. *)

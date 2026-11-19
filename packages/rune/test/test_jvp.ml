@@ -130,6 +130,7 @@ let into reduction x =
             prog = identity;
             reductions = [ reduction ];
             loads = [| Plain x |];
+            at = None;
           }))
 
 let kinks =

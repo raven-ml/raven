@@ -167,8 +167,8 @@ val exists : ('v 's 'd. ('v, 's, 'd) t -> bool) -> 'r prim -> bool
     check. *)
 
 val lies_at : 'd Devices.placement -> 'r prim -> bool
-(** [lies_at p op] is whether every operand of [op] lies at [p], physically.
-    It allocates nothing. *)
+(** [lies_at p op] is whether every operand of [op] lies at [p], and a loop
+    of no loads names [p], physically. It allocates nothing. *)
 
 val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 (** [map m op] is [op] with each operand [x] replaced by [m x]. *)
@@ -183,7 +183,8 @@ val rule : 'r prim -> Route.rule
 (** [rule op] is how [op]'s results depend on its operands: its route and each
     device's windows of its operands ({!Route.window}) come from it alone. A
     loop of no load has the rule of one load of its shape: each device of its
-    placement computes its window of the loop. A contraction's scale is read
+    placement computes its window of the loop. A scan of no load from a carry
+    has its carry's row alone. A contraction's scale is read
     at its operand's windows where a cut keeps its blocks whole, and whole
     elsewhere. [Rows]' ids follow [a]'s segmented axis, and [b]'s axis of
     its groups is reduced, a factor after the pairs that no axis of [a]
@@ -267,9 +268,11 @@ val layouts : by:string -> 'r prim -> Nx_array.Layout.t array
     so, or the contiguous layout of the result's shape.
 
     Raises [Invalid_argument] naming [by] where [op]'s operands break its
-    rule, a map of no loads with no placement or one with loads that names
-    one included, and where a map of no loads names a placement that cuts an
-    axis its shape lacks ({!Devices.window}). *)
+    rule, a loop of no loads with no placement or one with loads that names
+    one included, and where a loop of no loads names a placement that cuts
+    an axis its shape lacks ({!Devices.window}), a reduction or a scan of
+    no loads one that is a sum, or a scan of no loads one its carry does not
+    lie at. *)
 
 val terms : 'r prim -> (int -> bool) -> Route.terms
 (** [terms op summed] is what [op] makes of its operands that [summed] names
@@ -304,7 +307,8 @@ type routed = {
   route : unit Route.t option;
       (** Where it reads each operand, in {!val-operands}' order, where its
           results lie and how its devices compute them: [None] for [Place]
-          and [Check], which are not routed. *)
+          and [Check], which are not routed. A reduction's or a scan's of no
+          operands reads one load of its loop's shape at its placement. *)
   layouts : Nx_array.Layout.t array;  (** Its results' ({!val-layouts}). *)
 }
 
@@ -312,10 +316,13 @@ val route : by:string -> 'r prim -> routed
 (** [route ~by op] is what [op]'s rule decides, checked once. Operands that
     lie at one placement that cuts no axis are read there and their results
     lie there; otherwise {!Route.route} of {!rule} decides, given a
-    gather's or a scatter's positions, operand 0, as its [positions]. An
-    operation of
-    no operands lies where its map names, else on the host, each device of
-    that placement computing its window of the results.
+    gather's or a scatter's positions, operand 0, as its [positions]. A
+    map of no loads lies where it names, each device of that placement
+    computing its window of the results. A reduction or a scan of no
+    operands is routed as over a load of its loop's shape at the placement
+    it names, its rule's one operand; a scan of no loads from a carry by its
+    carry, which lies there. Any other operation of no operands lies on the
+    host.
 
     Raises as {!val-layouts} does, then as {!Route.route} does, and where
     a result at a sum, a map's, a creation's or a contraction's, is of a

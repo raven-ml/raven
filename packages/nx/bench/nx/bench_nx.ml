@@ -1426,6 +1426,7 @@ let scan ?(axis = 1) reduction x =
          reduction;
          loads = [| Plain x |];
          carry = None;
+         at = None;
        })
 
 let scan_rows =

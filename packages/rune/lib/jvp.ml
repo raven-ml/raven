@@ -136,7 +136,7 @@ let mask i loads =
 
 (* [p]'s outputs at every index of [layout] over [loads], one map, at [at]
    where there are no loads. *)
-let run_map (type d) ?at ~by layout (p : P.t) (loads : d Prim.load iarray) :
+let run_map (type d) ~at ~by layout (p : P.t) (loads : d Prim.load iarray) :
     d Prim.any array =
   let dts k = P.dtype p (Iarray.get p.outs k) in
   let (Prim.Outputs (outs, read)) =
@@ -406,7 +406,8 @@ let reduce_part (type d a) i ~by ~layout ~axes (r : (d, a) Prim.reduction)
               Scalar.finish b
                 ~outs:[| in_dtype b w (Scalar.value b k); in_dtype b w t |]
             in
-            let vs = run_map ~by layout prog loads in
+            (* A tangent's load is among [loads]. *)
+            let vs = run_map ~at:None ~by layout prog loads in
             let v = expect c vs.(0) and t = expect c vs.(1) in
             let axes = Iarray.to_list axes in
             let tan = Nx.cast dt (Nx.sum ~axes (Nx.mul (others ~axes v) t)) in
@@ -598,7 +599,7 @@ let reduce_plan_of i (prog : P.t) reductions loads =
       ~codes:reduction_codes ~make:make_reduce_plan reductions
 
 let reduce_rule (type d r) i ~by layout axes (prog : P.t)
-    (reductions : (d, r) Prim.reductions) (loads : d Prim.load iarray) : r =
+    (reductions : (d, r) Prim.reductions) (loads : d Prim.load iarray) at : r =
   let primal () =
     Prim.eval ~by
       (Reduce
@@ -608,6 +609,7 @@ let reduce_rule (type d r) i ~by layout axes (prog : P.t)
            prog;
            reductions;
            loads = Iarray.map (primal_load i) loads;
+           at;
          })
   in
   match reduce_plan_of i prog reductions loads with
@@ -618,7 +620,8 @@ let reduce_rule (type d r) i ~by layout axes (prog : P.t)
       let (JR (rs, f)) = jreds i has_tangent reductions (ref k) in
       f
         (Prim.eval ~by
-           (Reduce { layout; axes; prog = fused; reductions = rs; loads = jl }))
+           (Reduce
+              { layout; axes; prog = fused; reductions = rs; loads = jl; at }))
   | Parts -> (
       let jl = jvp_loads i loads in
       let tangents = has i loads in
@@ -638,10 +641,11 @@ let reduce_rule (type d r) i ~by layout axes (prog : P.t)
           let makers = List.map snd reds in
           let (Reds (rs, read)) = reds_of (List.mapi (fun o f -> f o) makers) in
           let prog = Scalar.finish b ~outs:nodes in
+          let at = if Iarray.length loads = 0 then at else None in
           finish
             (read
                (Prim.eval ~by
-                  (Reduce { layout; axes; prog; reductions = rs; loads }))))
+                  (Reduce { layout; axes; prog; reductions = rs; loads; at }))))
 
 (* Scans *)
 
@@ -659,12 +663,13 @@ type ('v, 's, 'd) carried = {
 
 let scan_rule (type d r) i ~by layout axis (prog : P.t)
     (reduction : (d, r) Prim.reduction) (loads : d Prim.load iarray)
-    (carry : d Prim.any option) : r =
+    (carry : d Prim.any option) at : r =
   let pcarry = Option.map (fun (Prim.Any c) -> Prim.Any (primal i c)) carry in
   let ploads = Iarray.map (primal_load i) loads in
   let y =
     Prim.eval ~by
-      (Scan { layout; axis; prog; reduction; loads = ploads; carry = pcarry })
+      (Scan
+         { layout; axis; prog; reduction; loads = ploads; carry = pcarry; at })
   in
   let ct =
     match carry with
@@ -673,12 +678,6 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
   in
   let b = Scalar.start prog ~tangents:(has i loads) ~extra:[||] in
   let jl = jvp_loads i loads in
-  (* A scan of no loads lies where its carry does. *)
-  let at =
-    match pcarry with
-    | Some (Any c) when Iarray.length loads = 0 -> Some (Nx.placement c)
-    | _ -> None
-  in
   (* Output [k] and its tangent in [w], computed into arrays; none where neither
      it nor the carry has a tangent, or [dt] has no derivative. *)
   let parts (type v s c q) (dt : (v, s) D.t) (w : (c, q) D.t) k =
@@ -693,7 +692,7 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
           | Some t -> in_dtype b w' t
           | None -> Scalar.const b w' 0.
         in
-        let vs = run_map ?at ~by layout (Scalar.finish b ~outs:[| v; t |]) jl in
+        let vs = run_map ~at ~by layout (Scalar.finish b ~outs:[| v; t |]) jl in
         Some (expect w vs.(0), expect w vs.(1))
   in
   (* The tangents [g] computes in output [k]'s carrier or [dt]'s, the wider,
@@ -713,7 +712,16 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
       (reduction : (d, q) Prim.reduction) carry : q =
     let prog = Scalar.identity (D.Any (Nx.dtype x)) in
     Prim.eval ~by
-      (Scan { layout; axis; prog; reduction; loads = [| Plain x |]; carry })
+      (Scan
+         {
+           layout;
+           axis;
+           prog;
+           reduction;
+           loads = [| Plain x |];
+           carry;
+           at = None;
+         })
   in
   let cast_any (type v s) (dt : (v, s) D.t) (Prim.Any c : d Prim.any) :
       (v, s, d) Nx.t =
@@ -961,10 +969,10 @@ let rule (type r) name i ~by (op : r Prim.t) : r =
   match op with
   | Map { layout; prog; outs; loads; _ } ->
       map_rule i ~by layout prog outs loads
-  | Reduce { layout; axes; prog; reductions; loads } ->
-      reduce_rule i ~by layout axes prog reductions loads
-  | Scan { layout; axis; prog; reduction; loads; carry } ->
-      scan_rule i ~by layout axis prog reduction loads carry
+  | Reduce { layout; axes; prog; reductions; loads; at } ->
+      reduce_rule i ~by layout axes prog reductions loads at
+  | Scan { layout; axis; prog; reduction; loads; carry; at } ->
+      scan_rule i ~by layout axis prog reduction loads carry at
   | Gather g ->
       both ~fresh:true (fun x -> Prim.eval ~by (Gather { g with x })) g.x
   | Gather_ranges g ->

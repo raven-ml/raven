@@ -1563,12 +1563,12 @@ let allocation =
         (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.sum a))
-          @@ __POS_OF__ {| 135 words |});
+          @@ __POS_OF__ {| 136 words |});
       test "a cumsum of 16 float32 host elements allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.cumsum a))
-          @@ __POS_OF__ {| 115 words |});
+          @@ __POS_OF__ {| 116 words |});
       test "a take of 3 rows of a 4x4 host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in

@@ -593,6 +593,7 @@ let summed (type v s w q d) ~by (w : (w, q) D.t) na lone
             prog;
             reductions = Value.[ Monoid (Sum, 0, w) ];
             loads = [| Plain x |];
+            at = None;
           }))
 
 (* [x] rounded once to [dt]: itself at [dt]. *)

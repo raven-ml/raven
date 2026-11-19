@@ -155,7 +155,7 @@ let call : type r.
     match op with
     | Value.Map { prog; loads; _ } ->
         K.map prog ~dsts:(dsts op r) (kernel_loads loads)
-    | Value.Reduce { layout; axes; prog; reductions; loads } ->
+    | Value.Reduce { layout; axes; prog; reductions; loads; _ } ->
         let rs = Iarray.of_array (Prim.kernel_reductions reductions) in
         K.reduce prog ~shape:(L.shape layout) ~axes rs ~dsts:(dsts op r)
           (kernel_loads loads)

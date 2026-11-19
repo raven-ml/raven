@@ -160,6 +160,7 @@ let reduce1 reduction x =
          prog = identity;
          reductions = reduction;
          loads = [| Plain x |];
+         at = None;
        })
 
 let scan1 ?carry reduction x =
@@ -172,6 +173,7 @@ let scan1 ?carry reduction x =
          reduction;
          loads = [| Plain x |];
          carry = Option.map (fun c -> Nx.Prim.Any c) carry;
+         at = None;
        })
 
 (* [x] of shape [m; n + 1]: a carry, column 0, and rows, the others. *)
@@ -278,6 +280,7 @@ let wide_reduce reduction x =
             prog = wide_prog;
             reductions = [ reduction ];
             loads = wide_loads x;
+            at = None;
           }))
 
 (* Whether the program's values along [x]'s columns lie [1e-2] apart or more.
@@ -309,6 +312,7 @@ let sums x =
            prog;
            reductions = [ Monoid (Sum, 1, f64); Monoid (Sum, 0, f64) ];
            loads = [| Plain x |];
+           at = None;
          })
   in
   Nx.stack [ a; b ]

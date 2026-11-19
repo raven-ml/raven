@@ -797,6 +797,7 @@ and load_beside : type w r d.
                  prog;
                  reductions = Value.[ Monoid (Nx_kernel.Sum, 0, D.Int32) ];
                  loads = [| Plain x |];
+                 at = None;
                })
         in
         Value.Any y
@@ -2250,6 +2251,7 @@ let reduce_outs ~by s axes xs rs outs =
          prog;
          reductions = rs;
          loads = Iarray.of_list (List.map load xs);
+         at = None;
        })
 
 (* The reductions [rs] along [axes] of [out] over [xs], as [reduce_outs]. *)
@@ -2264,7 +2266,14 @@ let reduce_by_one ~by r axes x =
   fst
     (Eval.eval ~by
        (Value.Reduce
-          { layout; axes; prog; reductions = [ r ]; loads = [| Plain x |] }))
+          {
+            layout;
+            axes;
+            prog;
+            reductions = [ r ];
+            loads = [| Plain x |];
+            at = None;
+          }))
 
 (* The one-operand reduction [m] of [x] along [axes], in [x]'s dtype. *)
 let reduce ~by m axes x = reduce_by_one ~by (Monoid (m, 0, dtype x)) axes x
@@ -2306,6 +2315,7 @@ let scan_by ~by r axis x =
          reduction = r;
          loads = [| Plain x |];
          carry = None;
+         at = None;
        })
 
 (* The inclusive prefix of [m] along [axis] of [x]. *)
@@ -2869,6 +2879,7 @@ let int_mean (type v s r d) ~by (acc : (int64, r) D.t) s axes n
              prog = P.of_exprs ~ins:[| D.Any dt |] [| E.any q; E.any r |];
              reductions = Value.[ Monoid (Sum, 0, acc); Monoid (Sum, 1, acc) ];
              loads = [| Plain x |];
+             at = None;
            })
     in
     let down = E.(operand 0 q + (operand 1 r / count)) in
@@ -5512,6 +5523,7 @@ let depthwise ~by ~loop ~axes ~prog ~pad ~out x' w into =
                Padded { x = x'; fill = D.zero (dtype x'); pad };
                Plain (Eval.broadcast ~by loop w);
              |];
+             at = None;
          })
   in
   Eval.reshape ~by out y
@@ -8183,6 +8195,7 @@ module Prim = struct
         prog : Nx_kernel.Prog.t;
         reductions : ('d, 'r) reductions;
         loads : 'd load iarray;
+        at : 'd Placement.t option;
       }
         -> 'r t
     | Scan : {
@@ -8192,6 +8205,7 @@ module Prim = struct
         reduction : ('d, 'r) reduction;
         loads : 'd load iarray;
         carry : 'd any option;
+        at : 'd Placement.t option;
       }
         -> 'r t
     | Gather : {

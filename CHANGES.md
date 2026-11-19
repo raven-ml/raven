@@ -503,6 +503,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.vjp`, `Rune.grad` and `Rune.linear_transpose` keep constant an
+  `Nx.Prim.Reduce` or `Nx.Prim.Scan` that loads only the differentiated
+  argument or tangents and reads none of them. They raised that the
+  function was not linear.
 - `Rune.grad` and `Rune.jvp` of `Nx.attention ~lengths`, computed eagerly,
   write each element of their results once: 15% to 35% fewer elements
   written.
@@ -513,8 +517,7 @@ All notable changes to this project will be documented in this file.
   computes beside a tangent without reading it, as a `Rune.custom_jvp`
   tangent map may, or the derivative of an `Nx.Prim.Scan` whose program
   reads none of its loads, continued from a carry with a tangent. They raised
-  that the tangent map was not linear. A reduction whose every load is a
-  tangent still raises.
+  that the tangent map was not linear.
 - `Rune.vjp` and `Rune.grad` in several arguments at once return the
   pullback where a padding keeps none of an array's elements, as `Nx.conv`
   and `Nx.conv_transpose` do in both operands where a padding cuts every
@@ -3439,6 +3442,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.Prim.Reduce` and `Nx.Prim.Scan` take `at`, as `Map`
+  does: `Some p` exactly for a loop of no loads, which lies and computes as
+  one over a load at `p` would. A reduction of no loads, or a scan of no
+  loads or carry, lay on the host whatever set it came from.
 - `Nx_array.to_array` of elements that do not box releases the domain lock
   while it reads an array in borrowed memory, such as a file's mapped pages,
   where it held it for the whole read. It holds it to copy from a buffer as

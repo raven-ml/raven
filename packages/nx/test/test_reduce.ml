@@ -590,6 +590,7 @@ let reduce1 r axes x =
            prog = identity (Nx.dtype x);
            reductions = [ r ];
            loads = [| Plain x |];
+           at = None;
          })
   in
   y
@@ -619,6 +620,7 @@ let scan1 r axis x =
          reduction = r;
          loads = [| Plain x |];
          carry = None;
+         at = None;
        })
 
 (* Each slice of [s] along [axis], in C order of the other axes, as the
@@ -1153,6 +1155,7 @@ let along_rows (type v s d a) (x : (v, s, d) Nx.t) (r : (d, a) Nx.Prim.reduction
            prog = identity (Nx.dtype x);
            reductions = [ r ];
            loads = [| Plain x |];
+           at = None;
          })
   in
   y
@@ -1169,6 +1172,7 @@ let running_rows (type v s d a) (x : (v, s, d) Nx.t)
          reduction = r;
          loads = [| Plain x |];
          carry = None;
+         at = None;
        })
 
 let row_axes = [ 1 ]
@@ -1545,6 +1549,7 @@ let test_carried_cut () =
            reduction = Monoid (Sum, 0, D.Int32);
            loads = [| Plain x |];
            carry = Some (Nx.Prim.Any c);
+           at = None;
          })
   in
   let x = value (A.of_array D.Int32 s xs) in

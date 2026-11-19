@@ -61,6 +61,7 @@ let needed (p : Program.t) forms =
   Array.iter
     (fun (V y) -> if is_var y then note (Nx.placement y) else operand y)
     p.outputs;
+  let lies q = if Option.is_none (device_of q) then several := true in
   (* A loop's step computes where its operations and placements say. *)
   let rec eqns (p : Program.t) =
     Array.iter
@@ -70,8 +71,9 @@ let needed (p : Program.t) forms =
             List.iter any xs;
             match op with
             | Place (q, _) -> note q
-            | Map { at = Some q; _ } ->
-                if Option.is_none (device_of q) then several := true
+            | Map { at = Some q; _ } -> lies q
+            | Reduce { at = Some q; _ } -> lies q
+            | Scan { at = Some q; _ } -> lies q
             | _ -> ())
         | Do { c; _ } ->
             List.iter (fun (V x) -> operand x) (Program.operands c);
@@ -222,17 +224,19 @@ let windowed (type r) here (op : r Nx.Prim.t) (origin : Nx.Prim.origin) :
           let at = if Iarray.length loads = 0 then m.at else None in
           Map { m with prog; loads; at })
   | Reduce m -> (
-      match set_of m.loads None with
+      match set_of m.loads m.at with
       | None -> no_set ()
       | Some set ->
           let prog, loads = read m.prog m.loads set in
-          Reduce { m with prog; loads })
+          let at = if Iarray.length loads = 0 then m.at else None in
+          Reduce { m with prog; loads; at })
   | Scan m -> (
-      match set_of m.loads None with
+      match set_of m.loads m.at with
       | None -> no_set ()
       | Some set ->
           let prog, loads = read m.prog m.loads set in
-          Scan { m with prog; loads })
+          let at = if Iarray.length loads = 0 then m.at else None in
+          Scan { m with prog; loads; at })
   | _ -> op
 
 (* Gathered values

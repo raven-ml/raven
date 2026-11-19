@@ -435,6 +435,7 @@ let from_each (type v s e) ~by ~axis (w : (v, s, e) Nx.t) : (v, s, e) Nx.t =
            reduction = Monoid (Sum, 0, dt);
            loads = [| Plain reversed |];
            carry = Some (Any carry);
+           at = None;
          })
   in
   Nx.flip ~axes:[ axis ] r
@@ -734,6 +735,7 @@ let summed (type v s d) ~by axes (w : (v, s, d) Nx.t) : (v, s, d) Nx.t =
            prog = Scalar.identity (D.Any dt);
            reductions = [ Monoid (Sum, 0, dt) ];
            loads = [| Plain w |];
+           at = None;
          })
   in
   y
@@ -1133,10 +1135,10 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
       in
       let given = given (Array.length dts - 1) [] in
       if given <> [] then sweep env layout prog loads (Array.of_list given)
-  | Reduce { layout; axes; prog; reductions; loads } ->
+  | Reduce { layout; axes; prog; reductions; loads; _ } ->
       let given = reduce_cts env layout axes reductions cts in
       if given <> [] then sweep env layout prog loads (Array.of_list given)
-  | Scan { layout; axis; prog; reduction; loads; carry } ->
+  | Scan { layout; axis; prog; reduction; loads; carry; _ } ->
       scan_rule env layout axis prog reduction loads carry cts
   | Gather { axis; idx; x } ->
       first (fun w -> if env.lin x then gather_rule env ~axis idx x w)

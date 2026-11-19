@@ -201,14 +201,6 @@ let plan_of i (p : P.t) (loads : 'd Prim.load iarray) =
 let kept part loads =
   Iarray.init (Array.length part.kept) (fun j -> Iarray.get loads part.kept.(j))
 
-(* Whether a loop over [loads], which it has, keeps a known part that reads none
-   of them, as where the tape owns every load. A map computes that part as a
-   creation beside its first load; a reduction of no load, or a scan of no load
-   or carry, would lie nowhere, so the loop is recorded whole. *)
-let unread plan loads =
-  Iarray.length loads > 0
-  && match plan.known with Some p -> Array.length p.kept = 0 | None -> false
-
 (* A map's outputs split in two maps' and how their results give its own. *)
 type ('d, 'r) outs_split =
   | O :
@@ -336,62 +328,77 @@ let map_parts (type d r) st i ~by layout prog (outs : (d, r) Prim.outs)
       let kr = known ko in
       f kr (recorded uo)
 
-let reduce_parts (type d r) st i ~by layout axes prog
-    (reductions : (d, r) Prim.reductions) (loads : d Prim.load iarray) : r =
-  let plan = plan_of i prog loads in
-  if unread plan loads then
-    record_op st i ~by (Reduce { layout; axes; prog; reductions; loads })
+(* Where a reduction's or a scan's known part lies: one that reads no load
+   at the loop's own placement where it has no loads, else where it would over
+   its first load, which the tape may own: at that load's placement, no sum, or
+   whole beside a padded one, whose placement cuts the load's own shape. So a
+   constant the tape's loads do not feed stays a constant. *)
+let loop_at part (loads : 'd Prim.load iarray) at : 'd Nx.Placement.t option =
+  if Array.length part.kept > 0 then None
+  else if Iarray.length loads = 0 then at
   else
-    let n = Array.length plan.unknown in
-    let k_at = positions n plan.known and u_at = positions n plan.recorded in
-    let index k = if plan.unknown.(k) then u_at.(k) else k_at.(k) in
-    let (R (kr, ur, f)) = split_reds reductions plan.unknown index in
-    let known : type k. (d, k) Prim.reductions -> k = function
-      | [] -> ()
-      | _ :: _ as kr ->
-          let part = Option.get plan.known in
-          Prim.eval ~by
-            (Reduce
-               {
-                 layout;
-                 axes;
-                 prog = part.prog;
-                 reductions = kr;
-                 loads = kept part loads;
-               })
-    in
-    let recorded : type u. (d, u) Prim.reductions -> u = function
-      | [] -> ()
-      | _ :: _ as ur ->
-          let part = Option.get plan.recorded in
-          record_op st i ~by
-            (Reduce
-               {
-                 layout;
-                 axes;
-                 prog = part.prog;
-                 reductions = ur;
-                 loads = kept part loads;
-               })
-    in
-    let kv = known kr in
-    f kv (recorded ur)
+    match Iarray.get loads 0 with
+    | Plain x -> Some (Nx.Placement.closed (Nx.placement x))
+    | Padded { x; _ } -> Some (Nx.beside x)
+
+let reduce_parts (type d r) st i ~by layout axes prog
+    (reductions : (d, r) Prim.reductions) (loads : d Prim.load iarray) at : r =
+  let plan = plan_of i prog loads in
+  let n = Array.length plan.unknown in
+  let k_at = positions n plan.known and u_at = positions n plan.recorded in
+  let index k = if plan.unknown.(k) then u_at.(k) else k_at.(k) in
+  let (R (kr, ur, f)) = split_reds reductions plan.unknown index in
+  let known : type k. (d, k) Prim.reductions -> k = function
+    | [] -> ()
+    | _ :: _ as kr ->
+        let part = Option.get plan.known in
+        Prim.eval ~by
+          (Reduce
+             {
+               layout;
+               axes;
+               prog = part.prog;
+               reductions = kr;
+               loads = kept part loads;
+               at = loop_at part loads at;
+             })
+  in
+  let recorded : type u. (d, u) Prim.reductions -> u = function
+    | [] -> ()
+    | _ :: _ as ur ->
+        let part = Option.get plan.recorded in
+        record_op st i ~by
+          (Reduce
+             {
+               layout;
+               axes;
+               prog = part.prog;
+               reductions = ur;
+               loads = kept part loads;
+               at = None;
+             })
+  in
+  let kv = known kr in
+  f kv (recorded ur)
 
 let scan_part (type d r) st i ~by layout axis prog
     (reduction : (d, r) Prim.reduction) (loads : d Prim.load iarray)
-    (carry : d Prim.any option) : r =
+    (carry : d Prim.any option) at : r =
   let plan = plan_of i prog loads in
   let carried = match carry with Some (Any c) -> owns i c | None -> false in
-  if
-    carried
-    || plan.unknown.(output reduction)
-    || (unread plan loads && Option.is_none carry)
-  then
-    record_op st i ~by (Scan { layout; axis; prog; reduction; loads; carry })
+  if carried || plan.unknown.(output reduction) then
+    record_op st i ~by
+      (Scan { layout; axis; prog; reduction; loads; carry; at })
   else
     let part = Option.get plan.known in
-    let at = positions (Array.length plan.unknown) plan.known in
-    let reduction = renumber at.(output reduction) reduction in
+    let index = positions (Array.length plan.unknown) plan.known in
+    let reduction = renumber index.(output reduction) reduction in
+    (* A known part of no load from a carry lies where the carry does. *)
+    let at =
+      match (carry, loop_at part loads at) with
+      | Some (Any c), Some _ -> Some (Nx.placement c)
+      | _, at -> at
+    in
     Prim.eval ~by
       (Scan
          {
@@ -401,16 +408,17 @@ let scan_part (type d r) st i ~by layout axis prog
            reduction;
            loads = kept part loads;
            carry;
+           at;
          })
 
 let rule (type r) st i ~by (op : r Nx.Prim.t) : r =
   match (st.kind, op) with
   | Tape, Map { layout; prog; outs; loads; at } ->
       map_parts st i ~by layout prog outs loads at
-  | Tape, Reduce { layout; axes; prog; reductions; loads } ->
-      reduce_parts st i ~by layout axes prog reductions loads
-  | Tape, Scan { layout; axis; prog; reduction; loads; carry } ->
-      scan_part st i ~by layout axis prog reduction loads carry
+  | Tape, Reduce { layout; axes; prog; reductions; loads; at } ->
+      reduce_parts st i ~by layout axes prog reductions loads at
+  | Tape, Scan { layout; axis; prog; reduction; loads; carry; at } ->
+      scan_part st i ~by layout axis prog reduction loads carry at
   (* A program holds a range gather as the gather at its positions, which
      the compiler lowers; a tape keeps the operation, so that a derivative
      builds no position on it ({!Ranges}). *)

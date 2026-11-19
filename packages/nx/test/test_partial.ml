@@ -2248,6 +2248,7 @@ let test_closing_peaks () =
                  Monoid (Max, 0, D.Bfloat16);
                ];
            loads = [| Plain x |];
+           at = None;
          })
   in
   case "three reductions into bfloat16" ~p:(12 * el) ~results:(6 * el)
@@ -2339,6 +2340,7 @@ let test_arg_ties () =
              prog = Nx_kernel.Prog.of_node ~ins:[| D.Any D.Float32 |] (In 0);
              reductions = [ Arg (e, 0, D.Float32) ];
              loads = [| Plain x |];
+             at = None;
            })
     in
     (elements i).(0)
@@ -3772,6 +3774,7 @@ let moved =
                      Monoid (Max, 2, D.Int32);
                    ];
                loads = [| Plain x |];
+               at = None;
              })
       in
       Nx.add (Nx.add s h) (Nx.cast D.Float32 b)
@@ -3975,6 +3978,209 @@ let traffic =
         test_summed_moves_sums;
     ]
 
+(* Loops of no loads *)
+
+(* A loop of no loads over a ramp [(7 c0 + 3 c1 + 5 c2) * 37 mod 11] of its
+   coordinates, of int64, whose folds are exact and whose extremes tie
+   across tiles: reduced along [axes], by a sum and, where no reduced axis is
+   empty, a maximum's position, or scanned along an axis by a sum, a maximum
+   or a maximum's position. *)
+type running = Running_sum | Running_max | Running_arg
+type unloaded = Reduced of int list | Scanned of running * int
+
+let pp_unloaded ppf = function
+  | Reduced axes ->
+      Format.fprintf ppf "reduced along %a" pp_ints (Array.of_list axes)
+  | Scanned (r, a) ->
+      let name =
+        match r with
+        | Running_sum -> "sum"
+        | Running_max -> "maximum"
+        | Running_arg -> "arg"
+      in
+      Format.fprintf ppf "running %s along %d" name a
+
+let unloaded_case =
+  let open Gen in
+  with_pp
+    (fun ppf (s, w, op) ->
+      Format.fprintf ppf "%a at %a, %a" pp_ints s pp_where w pp_unloaded op)
+    (let* rank = int_range 1 3 in
+     let* s = array ~size:(constant rank) (of_list [ 0; 1; 2; 3; 5; 7 ]) in
+     let* w = where_of rank in
+     let axes mask =
+       Reduced
+         (List.filter
+            (fun a -> mask land (1 lsl a) <> 0)
+            (List.init rank Fun.id))
+     in
+     let+ op =
+       one_of
+         [
+           map axes (int_range 1 ((1 lsl rank) - 1));
+           map
+             (fun (r, a) -> Scanned (r, a))
+             (pair
+                (of_list [ Running_sum; Running_max; Running_arg ])
+                (int_range 0 (rank - 1)));
+         ]
+     in
+     (s, w, op))
+
+(* The results of [op] over the ramp of [shape] at [p], each read on the
+   host, with its placement. With [~load], the loop loads a zero of its shape
+   at [p] that its program never reads, and names no placement. *)
+let unloaded (type d) ?(load = false) (p : d Nx.Placement.t) shape op =
+  let module E = Nx_kernel.Prog.E in
+  let i64 n = E.const D.Int64 (Int64.of_int n) in
+  let term a m =
+    if a < Array.length shape then E.(mul (coord a) (i64 m)) else i64 0
+  in
+  let sum = E.(add (add (term 0 7) (term 1 3)) (term 2 5)) in
+  let ramp = E.(rem (mul sum (i64 37)) (i64 11)) in
+  let ins : D.any iarray = if load then [| D.Any D.Int64 |] else [||] in
+  let prog = Nx_kernel.Prog.of_exprs ~ins [| E.any ramp |] in
+  let layout = A.Layout.contiguous (Iarray.of_array shape) in
+  let loads : d Nx.Prim.load iarray =
+    if load then [| Plain (Nx.zeros_at p D.Int64 shape) |] else [||]
+  in
+  let at = if load then None else Some p in
+  let read (type v s) (x : (v, s, d) Nx.t) =
+    let a = Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)) in
+    let show v = Format.asprintf "%a" (A.Dtype.pp_value (A.dtype a)) v in
+    (Array.map show (A.to_array a), Nx.placement x)
+  in
+  match op with
+  | Reduced axes ->
+      let empty = List.exists (fun a -> shape.(a) = 0) axes in
+      let axes = Iarray.of_list axes in
+      if empty then
+        let y, () =
+          Nx.Prim.eval ~by:"test"
+            (Reduce
+               {
+                 layout;
+                 axes;
+                 prog;
+                 reductions = [ Monoid (Sum, 0, D.Int64) ];
+                 loads;
+                 at;
+               })
+        in
+        [ read y ]
+      else
+        let y, ((m, q), ()) =
+          Nx.Prim.eval ~by:"test"
+            (Reduce
+               {
+                 layout;
+                 axes;
+                 prog;
+                 reductions =
+                   [ Monoid (Sum, 0, D.Int64); Arg (Max, 0, D.Int64) ];
+                 loads;
+                 at;
+               })
+        in
+        [ read y; read m; read q ]
+  | Scanned (Running_arg, axis) ->
+      let m, q =
+        Nx.Prim.eval ~by:"test"
+          (Scan
+             {
+               layout;
+               axis;
+               prog;
+               reduction = Arg (Max, 0, D.Int64);
+               loads;
+               carry = None;
+               at;
+             })
+      in
+      [ read m; read q ]
+  | Scanned (((Running_sum | Running_max) as r), axis) ->
+      let m : Nx_kernel.monoid =
+        match r with Running_sum -> Sum | Running_max | Running_arg -> Max
+      in
+      let y =
+        Nx.Prim.eval ~by:"test"
+          (Scan
+             {
+               layout;
+               axis;
+               prog;
+               reduction = Monoid (m, 0, D.Int64);
+               loads;
+               carry = None;
+               at;
+             })
+      in
+      [ read y ]
+
+(* The values agree with the host's, and each result lies where the loop over
+   a load at the placement puts it. *)
+let law_unloaded (s, w, op) =
+  let cut = List.map fst (tiles w) in
+  let folded =
+    match op with Reduced axes -> axes | Scanned (_, a) -> [ a ]
+  in
+  cover "a cut folded axis" (List.exists (fun a -> List.mem a cut) folded);
+  cover "a cut kept axis" (List.exists (fun a -> not (List.mem a folded)) cut);
+  cover "a scan along a cut axis"
+    (match op with Scanned (_, a) -> List.mem a cut | Reduced _ -> false);
+  let values l = List.map fst l in
+  let expected = values (unloaded Nx.Host.on s op) in
+  let check (type d) (p : d Nx.Placement.t) =
+    let ys = unloaded p s op and loaded = unloaded ~load:true p s op in
+    equal (list (array string)) expected (values ys);
+    let placements l =
+      List.map (fun (_, q) -> Format.asprintf "%a" Nx.Placement.pp q) l
+    in
+    equal ~msg:"placements" (list string) (placements loaded) (placements ys)
+  in
+  match w with
+  | Split3 a -> check (Set3.split ~axis:a)
+  | Split4 a -> check (Set4.split ~axis:a)
+  | Cuts (a, b) ->
+      let cuts =
+        if a = b then [ (a, [ "a"; "b" ]) ] else [ (a, [ "a" ]); (b, [ "b" ]) ]
+      in
+      check (Nx.Placement.mesh mesh4 cuts)
+  | Minor a -> check (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ])
+
+(* A running sum of the ramp [j] down axis 0 of [[4; 5]] from a carry of
+   [[1; 5]], at [p]: row [i] is [carry + (i + 1) j]. *)
+let carried (type d) (p : d Nx.Placement.t) =
+  let module E = Nx_kernel.Prog.E in
+  let tens = [| 10L; 20L; 30L; 40L; 50L |] in
+  let c = Nx.place p (Nx.create D.Int64 [| 1; 5 |] tens) in
+  let prog = Nx_kernel.Prog.of_exprs ~ins:[||] [| E.any (E.coord 1) |] in
+  let y =
+    Nx.Prim.eval ~by:"test"
+      (Scan
+         {
+           layout = A.Layout.contiguous [| 4; 5 |];
+           axis = 0;
+           prog;
+           reduction = Monoid (Sum, 0, D.Int64);
+           loads = [||];
+           carry = Some (Any c);
+           at = Some p;
+         })
+  in
+  (elements y, Format.asprintf "%a" Nx.Placement.pp (Nx.placement y))
+
+let test_carried_cut () =
+  let p = Set3.split ~axis:1 in
+  let expected =
+    Array.init 20 (fun k ->
+        let i = k / 5 and j = k mod 5 in
+        Int64.of_int ((10 * (j + 1)) + ((i + 1) * j)))
+  in
+  let values, at = carried p in
+  equal (array int64) expected values;
+  equal string (Format.asprintf "%a" Nx.Placement.pp p) at
+
 let placed =
   group "placements"
     [
@@ -3988,6 +4194,12 @@ let placed =
         "an assembly of values cut along axes it leaves whole gives their \
          bits, cut along those axes over the same devices"
         assembled_case law_assembled;
+      prop ~count:300
+        "a reduction or a scan of no loads at any placement gives its bits \
+         on one device"
+        unloaded_case law_unloaded;
+      test "a scan of no loads from a carry cut along a kept axis"
+        test_carried_cut;
       test "a concatenation along a cut axis reads it whole" test_concat_cut;
       test "an extension along a cut axis reads it whole" test_extend_cut;
       prop ~count:1000

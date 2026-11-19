@@ -5876,7 +5876,8 @@ end
     operands' set's kernels, and raises if the set has none, but a check of
     one flag that has bytes ([Check]) and a [Map] of no loads, a creation,
     which is made on the devices where it lies with the host form's bits
-    ({!val-devices}).
+    ({!val-devices}). A [Reduce] or [Scan] of no loads computes on the set
+    of the placement it names.
 
     An interpretation's rule receives each operation whole, a [Map] of
     several nodes or outputs included, and gives it its whole meaning,
@@ -5896,7 +5897,8 @@ end
     Every value has a placement, a traced one its form's. A creation is a
     [Map] of no loads that names where it lies, so an [Extent]
     interpretation's rule receives it at that placement, which {!Prim.results}
-    gives its result. *)
+    gives its result. A [Reduce] or [Scan] of no loads names its placement
+    too, and {!Prim.results} places its results as over a load there. *)
 module Prim : sig
   type ('v, 's, 'd) nx := ('v, 's, 'd) t
 
@@ -6109,6 +6111,11 @@ module Prim : sig
         prog : Nx_kernel.Prog.t;
         reductions : ('d, 'r) reductions;
         loads : 'd load iarray;
+        at : 'd Placement.t option;
+            (** [Some p] exactly for a reduction of no loads, which lies and
+                computes as one over a load of [layout]'s shape at [p] would;
+                [None] for one with loads, which lies where its operands put
+                it. *)
       }
         -> 'r t
         (** [prog] at every index of [layout]'s shape, as a map's, each
@@ -6116,7 +6123,8 @@ module Prim : sig
             {!Nx_kernel.S.reduce} says. Results drop [axes] and are
             C-contiguous. A [Max], [Min] or [Arg] is refused where a result
             has an element and [axes] hold no term, as
-            {!Nx_kernel.Shape.reduce} says. *)
+            {!Nx_kernel.Shape.reduce} says. [at] is refused as a map's is,
+            and where it is a sum ({!Placement.partial}). *)
     | Scan : {
         layout : Nx_array.Layout.t;
         axis : int;
@@ -6124,6 +6132,10 @@ module Prim : sig
         reduction : ('d, 'r) reduction;
         loads : 'd load iarray;
         carry : 'd any option;
+        at : 'd Placement.t option;
+            (** As a reduction's: [Some p] exactly for a scan of no loads. A
+                carry is no load: a scan of no loads from a carry lies at
+                [p], and its carry there. *)
       }
         -> 'r t
         (** The reduction of [prog]'s output over the indices along [axis] up to
@@ -6137,7 +6149,9 @@ module Prim : sig
             coordinates as a map's. With [Some c], of a [Sum], [Prod], [Max]
             or [Min], each slice continues from its element of [c], [S.scan]'s
             carry, of the results' shape but extent [1] along [axis] and of
-            the output's carrier ({!Nx_kernel.carrier}). *)
+            the output's carrier ({!Nx_kernel.carrier}). [at] is refused as
+            a reduction's is, and so is a carry that does not lie at
+            [Some p]. *)
     | Gather : {
         axis : int;
         idx : (int64, Dtype.int64_elt, 'd) nx;

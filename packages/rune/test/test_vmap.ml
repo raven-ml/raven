@@ -165,6 +165,34 @@ let scan1 ?carry reduction x =
          reduction;
          loads = [| Plain x |];
          carry = Option.map (fun c -> Nx.Prim.Any c) carry;
+         at = None;
+       })
+
+(* A loop along axis 1 of [x]'s shape whose program reads none of its loads:
+   [2 + j], [j] the coordinate along that axis. From [carry] it has no loads
+   and lies where the carry does; else it loads [x], which it never reads. *)
+let unread ?carry reduction x =
+  let ins, loads, at =
+    match carry with
+    | Some c -> (Iarray.of_list [], Iarray.of_list [], Some (Nx.placement c))
+    | None ->
+        ( Iarray.of_list [ D.Any f64 ],
+          Iarray.of_list [ Nx.Prim.Plain x ],
+          None )
+  in
+  let prog =
+    P.of_exprs ~ins [| P.E.(any (add (const f64 2.) (cast f64 (coord 1)))) |]
+  in
+  Nx.Prim.eval ~by:"test"
+    (Scan
+       {
+         layout = contiguous (Nx.shape x);
+         axis = 1;
+         prog;
+         reduction;
+         loads;
+         carry = Option.map (fun c -> Nx.Prim.Any c) carry;
+         at;
        })
 
 let reduce1 reductions x =
@@ -176,6 +204,7 @@ let reduce1 reductions x =
          prog = identity;
          reductions;
          loads = [| Plain x |];
+         at = None;
        })
 
 let column x = Nx.slice [ A; R (0, 1) ] x
@@ -254,6 +283,10 @@ let cases =
         scan1 ~carry:(column x) (Monoid (Max, 0, f64)) x);
     case ~shape:full "a running sum of a constant from a lane's carry" (fun x ->
         scan1 ~carry:(column x) (Monoid (Sum, 0, f64)) (konst (Nx.shape x)));
+    case ~shape:full "a running sum of no loads from a lane's carry"
+      (fun x -> unread ~carry:(column x) (Monoid (Sum, 0, f64)) x);
+    case ~shape:matrix "a running sum of a lane it reads none of" (fun x ->
+        unread (Monoid (Sum, 0, f64)) x);
     case ~shape:matrix "take at constant positions"
       (Nx.take ~axis:1 (idx [| 2; 0; 7; 1 |]));
     case "take of a constant at a lane's positions" (fun x ->
@@ -977,6 +1010,7 @@ let test_shared_scan () =
            reduction = Monoid (Sum, 0, f64);
            loads = [| Plain x; Plain k |];
            carry = None;
+           at = None;
          })
   in
   let xs = Nx.place Count.on (Nx.ones f64 [| 4; 3 |]) in

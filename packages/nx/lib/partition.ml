@@ -173,13 +173,16 @@ let is_local (route : unit Route.t) op =
   let p = route.result in
   Grid.count (Devices.grid p) = 1 && Prim.lies_at p op
 
-(* [op] where its device [here] computes it: a map of no loads names its
+(* [op] where its device [here] computes it: a loop of no loads names its
    placement. *)
 let at_device : type r. unit Devices.placement -> r Value.prim -> r Value.prim
     =
  fun here op ->
   match op with
   | Value.Map ({ at = Some _; _ } as m) -> Value.Map { m with at = Some here }
+  | Value.Reduce ({ at = Some _; _ } as m) ->
+      Value.Reduce { m with at = Some here }
+  | Value.Scan ({ at = Some _; _ } as m) -> Value.Scan { m with at = Some here }
   | _ -> op
 
 (* The shape of [op]'s result at position [i], laid out as [layouts]: one

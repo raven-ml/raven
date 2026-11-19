@@ -920,6 +920,8 @@ let op_rig st (type r) (op : r Nx.Prim.t) =
   | _ when not st.split -> st.rig
   | Place (q, _) -> Pieces.rig_of q
   | Map { at = Some q; _ } -> Pieces.rig_of q
+  | Reduce { at = Some q; _ } -> Pieces.rig_of q
+  | Scan { at = Some q; _ } -> Pieces.rig_of q
   | _ -> (
       match Nx.Prim.operands op with
       | Nx.Prim.Operands (Nx.Prim.Any x :: _) -> Pieces.rig_of (Nx.placement x)
@@ -3436,6 +3438,8 @@ let rigs (p : Program.t) forms =
             match op with
             | Place (q, _) -> note q
             | Map { at = Some q; _ } -> note q
+            | Reduce { at = Some q; _ } -> note q
+            | Scan { at = Some q; _ } -> note q
             | _ -> ())
         | Do { c; _ } ->
             List.iter (fun (V x) -> value x) (Program.operands c);

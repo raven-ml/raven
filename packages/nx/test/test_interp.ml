@@ -18,6 +18,10 @@ module P = Nx_kernel.Prog
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
 
+module Count2 =
+  (val Nx.devices ~kernels:(module C)
+         [ Nx_support.memory 0; Nx_support.memory 1 ])
+
 let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let f32 = Nx.float32
 let f64 = Nx.float64
@@ -675,6 +679,72 @@ let placed dt s xs = Nx.place Count.on (Nx.create dt s xs)
 let row i : M.range iarray =
   [| { start = i; count = 1; step = 1 }; { start = 0; count = 3; step = 1 } |]
 
+(* Loops of no loads that name no placement or a misplaced one, and loops of
+   loads that name one, each with the part of its refusal that says why. *)
+let misplaced () =
+  let x = operand Concrete [| 3 |] and line = L.contiguous [| 3 |] in
+  let one = P.of_exprs ~ins:[||] [| P.E.(any (const f32 1.)) |]
+  and load = P.v ~ins:[| D.Any D.Float32 |] [| In 0 |] ~outs:[| 0 |] in
+  let sum =
+    Nx.Placement.partial (Nx.Mesh.v Count2.v [ ("a", 2) ]) [ "a" ] []
+  in
+  let reduce name ?(loads : _ Nx.Prim.load iarray = [||]) ?(prog = one) at =
+    Case
+      ( name,
+        Reduce
+          {
+            layout = line;
+            axes = [| 0 |];
+            prog;
+            reductions = Nx.Prim.[ Monoid (Sum, 0, f32) ];
+            loads;
+            at;
+          } )
+  in
+  let scan name ?(layout = line) ?(loads : _ Nx.Prim.load iarray = [||])
+      ?(prog = one) ?carry at =
+    Case
+      ( name,
+        Scan
+          {
+            layout;
+            axis = 0;
+            prog;
+            reduction = Monoid (Sum, 0, f32);
+            loads;
+            carry;
+            at;
+          } )
+  in
+  (* A carry whole on both devices, beside a scan cut along the axis it
+     keeps, which a carry's route would read where it lies. *)
+  let carry = Nx.Prim.Any (Nx.place Count2.on (Nx.zeros f32 [| 1; 2 |])) in
+  [
+    ( "names no placement",
+      reduce "a reduction of no loads that names no placement" None );
+    ( "names a placement",
+      reduce "a reduction of loads that names a placement" ~prog:load
+        ~loads:[| Plain x |] (Some Count.on) );
+    ( "axis 1 is cut and the shape has rank 1",
+      reduce "a reduction of no loads at a cut of an axis it lacks"
+        (Some (Count2.split ~axis:1)) );
+    ("a sum", reduce "a reduction of no loads at a sum" (Some sum));
+    ( "names no placement",
+      scan "a scan of no loads that names no placement" None );
+    ( "names a placement",
+      scan "a scan of loads that names a placement" ~prog:load
+        ~loads:[| Plain x |] (Some Count.on) );
+    ( "axis 1 is cut and the shape has rank 1",
+      scan "a scan of no loads at a cut of an axis it lacks"
+        (Some (Count2.split ~axis:1)) );
+    ("a sum", scan "a scan of no loads at a sum" (Some sum));
+    ( "a carry at",
+      scan "a scan of no loads from a carry elsewhere"
+        ~layout:(L.contiguous [| 3; 2 |])
+        ~carry
+        (Some (Count2.split ~axis:1)) );
+  ]
+
 (* Ill-formed operations raise naming [by], eagerly and under either reach,
    before any kernel (Laws 7 and 13). *)
 let ill_formed () =
@@ -728,6 +798,7 @@ let ill_formed () =
             prog = past_rank;
             reductions = Nx.Prim.[ Monoid (Sum, 0, f32) ];
             loads = [| Plain x |];
+            at = None;
           } );
     Case
       ( "a scan's coordinate past its rank",
@@ -739,6 +810,7 @@ let ill_formed () =
             reduction = Monoid (Sum, 0, f32);
             loads = [| Plain x |];
             carry = None;
+            at = None;
           } );
     Case
       ( "a gather's positions of another rank",
@@ -786,6 +858,17 @@ let ill_formed () =
             fail = (fun _ _ -> Failure "fails");
           } );
   ]
+  @ List.map snd (misplaced ())
+
+(* Each misplaced loop's refusal says why, eagerly and before any kernel. *)
+let test_misplaced () =
+  List.iter
+    (fun (why, Case (name, op)) ->
+      C.reset ();
+      raises_match ~msg:name (Exn.invalid_arg ~sub:why) (fun () ->
+          Nx.Prim.eval ~by:"test.by" op);
+      equal ~msg:(name ^ ": kernel calls") int 0 (C.calls ()))
+    (misplaced ())
 
 let test_ill_formed () =
   List.iter
@@ -936,6 +1019,7 @@ let counted_cases () =
                     Arg (Max, 0, f32);
                   ];
               loads = [| Plain x |];
+              at = None;
             } ),
       6 );
     ( Case
@@ -948,6 +1032,7 @@ let counted_cases () =
               reduction = Moments (0, f32);
               loads = [| Plain x |];
               carry = None;
+              at = None;
             } ),
       2 );
     (Case ("sort", Sort { axis = 1; descending = false; k = None; x }), 2);
@@ -1003,6 +1088,8 @@ let laws =
       test
         "an ill-formed operation raises naming its function, before any kernel"
         test_ill_formed;
+      test "a loop of no loads names where it lies, there alone"
+        test_misplaced;
     ]
 
 (* (a) A forward derivative: a Values interpretation whose values hold a primal

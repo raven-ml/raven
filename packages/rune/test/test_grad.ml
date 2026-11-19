@@ -704,6 +704,7 @@ let test_kinks () =
                   reduction = Moments (0, dt);
                   loads = [| Plain x |];
                   carry = None;
+                  at = None;
                 }))
       else
         let (m, _), () =
@@ -715,6 +716,7 @@ let test_kinks () =
                  prog;
                  reductions = [ Moments (0, dt) ];
                  loads = [| Plain x |];
+                 at = None;
                })
         in
         m
@@ -2084,6 +2086,7 @@ let scan_in (type s r) (dt : (float, s) D.t) (wide : (float, r) D.t) s (x, c) =
             reduction = Monoid (s.monoid, 0, dt);
             loads = (if s.loaded then [| Plain x |] else [||]);
             carry = Some (Any c);
+            at = (if s.loaded then None else Some (Nx.placement c));
           }))
 
 let constant_scan s =

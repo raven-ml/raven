@@ -206,6 +206,11 @@ let map (type d) eng ~by ?into ?origin p (vs : d Value.any list) exprs :
     (at eng ~by ?into ?origin p
        (Value.Map { layout; prog; outs; loads; at = None }))
 
+(* Where a loop over [loads] computed on the device [here] names that it
+   lies: there where it has no loads. *)
+let unloaded here (loads : 'd Value.load iarray) =
+  if Iarray.length loads = 0 then Some here else None
+
 (* Output [o] of [prog], of [term], over [loads] in the window [w] of a
    loop of [layout], on [here]: the load itself where [prog] is its
    identity. *)
@@ -218,7 +223,13 @@ let terms (type d) eng ~by here layout (prog : P.t) o (D.Any term)
       let one = P.subst ~outs:[| o |] ~ins:prog.ins (fun _ -> None) prog in
       let map =
         Value.Map
-          { layout; prog = one; outs = Value.[ term ]; loads; at = None }
+          {
+            layout;
+            prog = one;
+            outs = Value.[ term ];
+            loads;
+            at = unloaded here loads;
+          }
       in
       let map, origin = Prim.within map w in
       Value.Any (fst (at eng ~by ~origin here map))
@@ -698,6 +709,7 @@ let fold_slots (type v s w q d) eng ~by ~lead here
         prog = Prim.identity (Prim.dtype s);
         reductions = Value.[ r ];
         loads = [| Plain s |];
+        at = None;
       }
   in
   fst (at eng ~by here op)
@@ -743,9 +755,16 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
   let whole = Array.map (fun a -> shape.(a)) ax in
   let outw j = Devices.window ~by p out j in
   let here j = Devices.one set ks.(j) in
+  (* Operand 0 is the first load, or a reduction of no loads' one at its
+     placement, of the loop's shape. *)
   let tiles =
-    let (Value.Any x) = Prim.load_any (Iarray.get loads 0) in
-    tiles ~by route ~operand:0 (Prim.shape x) ax
+    let first =
+      if Iarray.length loads = 0 then shape
+      else
+        let (Value.Any x) = Prim.load_any (Iarray.get loads 0) in
+        Prim.shape x
+    in
+    tiles ~by route ~operand:0 first ax
   in
   let cl =
     closing ~by route ~operand:0 ~axes:(Array.to_list ax)
@@ -772,7 +791,15 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
   in
   let local j prog rs =
     let op =
-      Value.Reduce { layout; axes; prog; reductions = rs; loads = viewed j }
+      Value.Reduce
+        {
+          layout;
+          axes;
+          prog;
+          reductions = rs;
+          loads = viewed j;
+          at = unloaded (here j) loads;
+        }
     in
     let op, origin = Prim.within op (loop j) in
     at eng ~by ~origin (here j) op
@@ -874,7 +901,8 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
         let over j prog rs loads =
           let layout = L.contiguous (Iarray.of_array (Prim.shape (x j))) in
           at eng ~by (here j)
-            (Value.Reduce { layout; axes; prog; reductions = rs; loads })
+            (Value.Reduce
+               { layout; axes; prog; reductions = rs; loads; at = None })
         in
         let total j =
           let s, () =
@@ -1120,7 +1148,15 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
   let scanned j reduction =
     let op =
       Value.Scan
-        { layout; axis; prog; reduction; loads = viewed j; carry = None }
+        {
+          layout;
+          axis;
+          prog;
+          reduction;
+          loads = viewed j;
+          carry = None;
+          at = unloaded (here j) loads;
+        }
     in
     let op, origin = Prim.within op (win j) in
     at eng ~by ~origin (here j) op
@@ -1177,6 +1213,7 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
               reduction = Monoid (m, 0, c);
               loads = [| Plain x |];
               carry = None;
+              at = None;
             }
         in
         at eng ~by placed op
@@ -1235,6 +1272,7 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
                reduction = Arg (e, 0, dt);
                loads = [| Plain xs |];
                carry = None;
+               at = None;
              })
       in
       let positions =
@@ -1813,9 +1851,9 @@ let run (type r) eng ~by route (op : r Value.prim) : r =
       if Array.exists (fun (a, _) -> a = axis) cuts then
         summed eng ~by route rule combine unique axis idx updates into
       else scatter eng ~by route rule combine unique axis idx updates into
-  | Value.Reduce { layout; axes; prog; reductions; loads } ->
+  | Value.Reduce { layout; axes; prog; reductions; loads; _ } ->
       reduce eng ~by route rule layout axes prog reductions loads
-  | Value.Scan { layout; axis; prog; reduction; loads; carry = None } ->
+  | Value.Scan { layout; axis; prog; reduction; loads; carry = None; _ } ->
       scan eng ~by route rule layout axis prog reduction loads
   | Value.Contract
       {

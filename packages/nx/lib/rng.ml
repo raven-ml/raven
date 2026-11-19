@@ -1516,6 +1516,7 @@ let reduce_last ~by shape prog rs loads =
          prog;
          reductions = rs;
          loads;
+         at = None;
        })
 
 (* [shape] with its last axis kept as an axis of 1. *)
@@ -1791,6 +1792,7 @@ let categorical ?key ?(axis = -1) logits =
            prog = Prim.identity c;
            reductions = Value.[ Arg (Nx_kernel.Max, 0, c) ];
            loads = [| Value.Plain noisy |];
+           at = None;
          })
   in
   (* The noise is finite, so a row's largest sum is finite exactly where its

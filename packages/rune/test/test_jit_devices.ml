@@ -1455,6 +1455,49 @@ let same_compiled f x y =
     (outcome_t (placement ()))
     (omap Nx.placement eager) (omap Nx.placement got)
 
+(* A reduction along each axis and a running sum along each of a ramp of the
+   coordinates of [x]'s shape, of no loads at [x]'s placement, beside [x]:
+   compiled, each window reads its coordinates from its start. *)
+let unloaded (type d) (set : d set) cut =
+  let module E = Nx_kernel.Prog.E in
+  let x = Nx.place (at set cut) (value [| 5; 3 |]) in
+  let c a = E.cast f32 (E.coord a) in
+  let ramp = E.(add (mul (c 0) (const f32 3.)) (c 1)) in
+  let prog = Nx_kernel.Prog.of_exprs ~ins:[||] [| E.any ramp |] in
+  let layout = Nx_array.Layout.contiguous [| 5; 3 |] in
+  let f x _ =
+    let p = Nx.placement x in
+    let reduced a =
+      fst
+        (Nx.Prim.eval ~by:"test"
+           (Reduce
+              {
+                layout;
+                axes = [| a |];
+                prog;
+                reductions = [ Monoid (Sum, 0, f32) ];
+                loads = [||];
+                at = Some p;
+              }))
+    and running a =
+      Nx.Prim.eval ~by:"test"
+        (Scan
+           {
+             layout;
+             axis = a;
+             prog;
+             reduction = Monoid (Sum, 0, f32);
+             loads = [||];
+             carry = None;
+             at = Some p;
+           })
+    in
+    let y = Nx.add (running 0) (running 1) in
+    Nx.add (Nx.add y (Nx.reshape [| 1; 3 |] (reduced 0)))
+      (Nx.add x (Nx.reshape [| 5; 1 |] (reduced 1)))
+  in
+  same_compiled f x x
+
 let elsewhere set c =
   cover "cut across the other set"
     (match c.y with Split _ -> true | _ -> false);
@@ -3147,6 +3190,19 @@ let () =
                      flat ~ns:[ 2; 4; 8 ] name
                        (List.map (List.assoc name) counts))
                    (List.hd counts));
+           ];
+         group "loops of no loads"
+           [
+             test "split along either axis, over three devices" (fun () ->
+                 over 3
+                   {
+                     law =
+                       (fun set ->
+                         unloaded set (Split 0);
+                         unloaded set (Split 1));
+                   });
+             test "over a mesh" (fun () ->
+                 over 4 { law = (fun set -> unloaded set (Mesh (0, 1))) });
            ];
          group "each device runs its own kernels"
            [

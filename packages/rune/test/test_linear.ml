@@ -372,6 +372,82 @@ let test_integer () =
   let _, gk = lt (vec [| 1.; 10. |]) in
   equal (Testable.array Testable.int32) [| 0l; 0l |] (Nx.to_array gk)
 
+(* A reduction over the argument alone whose program reads none of it is a
+   constant [k]: the product of 2 over three elements, 8, in float64 or in
+   float32, over the argument once or twice; over the argument padded by one
+   element, 16; or their running product, [2; 4; 8]. [v -> k v] is its own
+   transpose. *)
+let reduced =
+  let layout n = Nx_array.Layout.contiguous (Iarray.of_list [ n ]) in
+  let prog dt n =
+    Nx_kernel.Prog.(
+      of_exprs
+        ~ins:(Iarray.init n (fun _ -> D.Any f64))
+        [| E.(any (const dt 2.)) |])
+  in
+  let product dt ?(n = 3) loads =
+    fst
+      (Nx.Prim.eval ~by:"test"
+         (Reduce
+            {
+              layout = layout n;
+              axes = Iarray.of_list [ 0 ];
+              prog = prog dt (Iarray.length loads);
+              reductions = [ Monoid (Prod, 0, dt) ];
+              loads;
+              at = None;
+            }))
+  and running v =
+    Nx.Prim.eval ~by:"test"
+      (Scan
+         {
+           layout = layout 3;
+           axis = 0;
+           prog = prog f64 1;
+           reduction = Monoid (Prod, 0, f64);
+           loads = Iarray.of_list [ Nx.Prim.Plain v ];
+           carry = None;
+           at = None;
+         })
+  in
+  let plain v = Iarray.of_list [ Nx.Prim.Plain v ] in
+  let padded v =
+    let zeros = Iarray.of_list [ 0 ] in
+    let pad : Nx_kernel.pad =
+      {
+        lo = Iarray.of_list [ 1 ];
+        hi = zeros;
+        interior = zeros;
+        windows = Iarray.of_list [];
+      }
+    in
+    Iarray.of_list [ Nx.Prim.Padded { x = v; fill = 0.; pad } ]
+  in
+  let scaled k v = Nx.mul (Nx.cast f64 k) v in
+  [
+    ( "a product",
+      (fun v -> scaled (product f64 (plain v)) v),
+      [| 8.; 8.; -16. |] );
+    ( "a product in float32",
+      (fun v -> scaled (product Nx.float32 (plain v)) v),
+      [| 8.; 8.; -16. |] );
+    ( "a product over two loads",
+      (fun v ->
+        scaled (product f64 (Iarray.of_list Nx.Prim.[ Plain v; Plain v ])) v),
+      [| 8.; 8.; -16. |] );
+    ( "a product over a padded load",
+      (fun v -> scaled (product f64 ~n:4 (padded v)) v),
+      [| 16.; 16.; -32. |] );
+    ("a running product", (fun v -> Nx.mul (running v) v), [| 2.; 4.; -16. |]);
+  ]
+
+let test_reduced (_, f, expected) =
+  let lt w = Rune.linear_transpose T.tensor T.tensor f at w in
+  equal ~msg:"eager" bits_t (bits (vec expected)) (bits (lt (direction 1.)));
+  equal ~msg:"compiled" bits_t
+    (bits (vec expected))
+    (bits (Rune.jit' lt (direction 1.)))
+
 (* The identity's transpose is fresh: donating it leaves the cotangent. *)
 let test_transpose_fresh () =
   let lt = Rune.linear_transpose T.tensor T.tensor Fun.id at in
@@ -456,6 +532,8 @@ let () =
              test "an affine term is dropped" test_affine;
              test "an integer's cotangent is zero" test_integer;
              test "a transpose is fresh" test_transpose_fresh;
+             cases "a constant reduced from the argument alone"
+               ~id:(fun (n, _, _) -> n) reduced test_reduced;
              cases "signs of zero" ~id:(fun (n, _, _, _) -> n) signs test_sign;
            ];
          cases "errors" ~id:(fun (n, _, _) -> n) errors test_error;

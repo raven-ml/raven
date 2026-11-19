@@ -378,6 +378,7 @@ let reduce_op m axes x =
       prog = identity dt;
       reductions = [ Monoid (m, 0, dt) ];
       loads = Iarray.of_list [ P.Plain x ];
+      at = None;
     }
 
 let scan_op m axis x carry =
@@ -390,6 +391,7 @@ let scan_op m axis x carry =
       reduction = Monoid (m, 0, dt);
       loads = Iarray.of_list [ P.Plain x ];
       carry;
+      at = None;
     }
 
 (* [results c] is the eager and the lowered elements of [c]'s reduction or
@@ -1025,6 +1027,7 @@ let by (type a) ~scan (r : (Nx.host, a) P.reduction) c x () : a =
            reduction = r;
            loads;
            carry = None;
+           at = None;
          })
   else
     fst
@@ -1036,6 +1039,7 @@ let by (type a) ~scan (r : (Nx.host, a) P.reduction) c x () : a =
               prog;
               reductions = [ r ];
               loads;
+              at = None;
             }))
 
 let extreme c : K.extreme = if c.m = Max then Max else Min
@@ -2324,6 +2328,7 @@ let pooled m fill =
               prog = identity D.Float32;
               reductions = [ Monoid (m, 0, D.Float32) ];
               loads = Iarray.of_list [ P.Padded { x; fill; pad } ];
+              at = None;
             }))
   in
   same_values D.Float32 (Nx.to_array (op ())) (Lowered.run op)
@@ -2346,6 +2351,7 @@ let several () =
                  Monoid (Min, 0, D.Int16);
                ];
              loads = Iarray.of_list [ P.Plain x ];
+             at = None;
            })
     in
     List.nth [ s; mx; mn ] k

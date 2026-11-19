@@ -284,6 +284,7 @@ and reduce : type d a.
          prog = Prim.identity D.Bool;
          reductions = [ r ];
          loads = [| Plain ok |];
+         at = None;
        })
 
 (* The coordinate along each axis of [shape] of more than one element of the

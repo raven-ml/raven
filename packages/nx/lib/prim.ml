@@ -614,7 +614,19 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
 let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
  fun f op -> fold (fun e found x -> found || e.test x) { test = f } false op
 
-let lies_at p op = fold (fun p at x -> at && placement x == p) p true op
+(* Where a loop of no loads names that it lies. *)
+let named_at : type r. r prim -> unit Devices.placement option = function
+  | Map { at; _ } -> at
+  | Reduce { at; _ } -> at
+  | Scan { at; _ } -> at
+  | Gather _ | Gather_ranges _ | Scatter _ | Sort _ | Unique _ | Fold _
+  | Fft _ | Linalg _ | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _
+  | Place _ | Check _ | Attention _ ->
+      None
+
+let lies_at p op =
+  (match named_at op with Some q -> q == p | None -> true)
+  && fold (fun p at x -> at && placement x == p) p true op
 
 (* A contraction's optional operands, mapped by [m i] where present: the
    option itself where [m] returns its operand. *)
@@ -1032,17 +1044,19 @@ let pp : type r. Format.formatter -> r prim -> unit =
         (Format.pp_print_list ~pp_sep:sep pr.expr)
         outs;
       Option.iter (Format.fprintf ppf " at %a" Devices.pp_placement) at
-  | Reduce { prog; axes; reductions; _ } ->
+  | Reduce { prog; axes; reductions; at; _ } ->
       let rs = reductions_list reductions in
       let pr = printer prog (reduced_roots prog rs) in
       Format.fprintf ppf "%a [%a] over %a" pr.bindings ()
         (Format.pp_print_list ~pp_sep:sep (pp_reduced prog pr))
-        rs pp_ints axes
-  | Scan { prog; axis; reduction = s; _ } ->
+        rs pp_ints axes;
+      Option.iter (Format.fprintf ppf " at %a" Devices.pp_placement) at
+  | Scan { prog; axis; reduction = s; at; _ } ->
       let r = reduction s in
       let pr = printer prog (reduced_roots prog [ r ]) in
       Format.fprintf ppf "%a [%a] along %d" pr.bindings () (pp_reduced prog pr)
-        r axis
+        r axis;
+      Option.iter (Format.fprintf ppf " at %a" Devices.pp_placement) at
   | Gather { axis; _ } -> Format.fprintf ppf " along %d" axis
   | Gather_ranges { size; starts; _ } ->
       Format.fprintf ppf " of %d along %d" size (rank starts - 1)
@@ -1205,24 +1219,32 @@ let check_loads (type d) ~by ~what layout (loads : d load iarray) =
         (load_shape ~by l) what pp_ints (L.shape layout)
   done
 
-(* A map's rule; its result's layout, C-contiguous of [shape]. A map of no
-   loads names where it lies, a placement that cuts no axis its shape lacks,
-   and a map with loads lies where they do. *)
+(* A loop of no loads names where it lies, a placement that cuts no axis its
+   shape lacks and, but for a map's ([~sums]), is no sum; a loop with loads
+   lies where they do. *)
+let check_at (type d) ~by ~what ?(sums = false) layout (loads : d load iarray)
+    (at : d Devices.placement option) =
+  match at with
+  | None when Iarray.length loads = 0 ->
+      invalid_argf "%s: a %s of no loads names no placement" by what
+  | Some _ when Iarray.length loads > 0 ->
+      invalid_argf "%s: a %s of %d loads names a placement" by what
+        (Iarray.length loads)
+  | Some p when (not sums) && Devices.partial p ->
+      invalid_argf "%s: a %s of no loads at %a, a sum" by what
+        Devices.pp_placement p
+  | Some p ->
+      ignore (Devices.window ~by p (Iarray.to_array (L.shape layout)) 0)
+  | None -> ()
+
+(* A map's rule; its result's layout, C-contiguous of [shape]. *)
 let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
     (loads : d load iarray) (at : d Devices.placement option) =
   refused_by ~by
     (Nx_kernel.map_refusal prog ~rank:(L.rank layout) ~dsts:dtype_array
        (outs_dtypes outs) ~loads:loads_view loads);
   check_loads ~by ~what:"map" layout loads;
-  match at with
-  | None when Iarray.length loads = 0 ->
-      invalid_argf "%s: a map of no loads names no placement" by
-  | Some _ when Iarray.length loads > 0 ->
-      invalid_argf "%s: a map of %d loads names a placement" by
-        (Iarray.length loads)
-  | Some p ->
-      ignore (Devices.window ~by p (Iarray.to_array (L.shape layout)) 0)
-  | None -> ()
+  check_at ~by ~what:"map" ~sums:true layout loads at
 
 (* The shape of the results of [rs] along [axes] of a loop of [layout]: its
    rule. *)
@@ -1231,31 +1253,39 @@ let reduced_shape ~by layout axes rs =
 
 (* A reduction's rule; its results' shape. *)
 let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
-    (loads : d load iarray) =
+    (loads : d load iarray) at =
   refused_by ~by
     (Nx_kernel.reduce_refusal prog ~rank:(L.rank layout)
        ~reductions:reductions_view (kernel_reductions rs) ~dsts:dtype_array
        (results_dtypes rs) ~loads:loads_view loads);
   check_loads ~by ~what:"reduction" layout loads;
+  check_at ~by ~what:"reduction" layout loads at;
   reduced_shape ~by layout axes rs
 
-(* A scan's rule, {!Nx_kernel.scan_refusal}'s, then its loads' shapes and
-   its carry's, which {!Nx_kernel.Shape.carry} gives. *)
+(* A scan's rule, {!Nx_kernel.scan_refusal}'s, then its loads' shapes, its
+   placement, and its carry's shape, which {!Nx_kernel.Shape.carry} gives,
+   and placement: one of no loads lies where the scan does. *)
 let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
-    (loads : d load iarray) (carry : d any option) =
+    (loads : d load iarray) (carry : d any option) at =
   refused_by ~by
     (Nx_kernel.scan_refusal prog ~rank:(L.rank layout) (reduction_kind r)
        ~output:(output r) ~dsts:reduction_view r
        ?carry:(Option.map (fun (Any c) -> D.Any (dtype c)) carry)
        ~loads:loads_view loads);
   check_loads ~by ~what:"scan" layout loads;
+  check_at ~by ~what:"scan" layout loads at;
   let y = shaped ~by (Shape.scan ~axis (Iarray.to_array (L.shape layout))) in
   match carry with
   | None -> ()
-  | Some (Any c) ->
+  | Some (Any c) -> (
       if shape c <> shaped ~by (Shape.carry ~axis y) then
         invalid_argf "%s: a carry of shape %a for a scan of shape %a" by
-          pp_shape (shape c) pp_shape y
+          pp_shape (shape c) pp_shape y;
+      match at with
+      | Some p when not (Devices.equal (placement c) p) ->
+          invalid_argf "%s: a carry at %a for a scan of no loads at %a" by
+            Devices.pp_placement (placement c) Devices.pp_placement p
+      | Some _ | None -> ())
 
 (* [shape] without [axes]. *)
 let reduced shape axes =
@@ -1346,9 +1376,7 @@ let loop_rule : type r. r prim -> int array -> Route.rule =
   | Reduce { layout; axes; loads; _ } -> rows axes (padded layout loads [||])
   | Scan { layout; axis; loads; reduction; carry; _ } ->
       let plain = not (Iarray.exists is_padded loads) in
-      (* A loop of no load has no operand to cut: it scans whole. *)
-      let loaded = Iarray.length loads > 0 in
-      if carries reduction && Option.is_none carry && plain && loaded then
+      if carries reduction && Option.is_none carry && plain then
         rows ~scanned:axis [||] [||]
       else rows [||] (padded layout loads [| axis |])
   | Gather _ | Gather_ranges _ | Scatter _ | Sort _ | Unique _ | Fold _
@@ -1535,12 +1563,16 @@ let rule : type r. r prim -> Route.rule =
       loop_rule op (load_ranks layout loads)
   | Scan { layout; axis; loads; carry = Some _; _ } -> (
       (* The carry, of the loop's rank, reads the scan's axis whole and the
-         others as a plain load does. *)
+         others as a plain load does. It follows the loads; a scan of no
+         loads has its row alone, the carry lying at its placement. *)
       let rank = L.rank layout in
-      let ranks = Array.append (load_ranks layout loads) [| rank |] in
+      let ranks =
+        if Iarray.length loads = 0 then [| rank |]
+        else Array.append (load_ranks layout loads) [| rank |]
+      in
       match loop_rule op ranks with
       | Axes t ->
-          t.(Iarray.length loads).(axis) <- Route.Whole;
+          t.(Array.length ranks - 1).(axis) <- Route.Whole;
           Axes t
       | Elementwise -> invalid_arg "Prim.rule: a loop's rule")
   | Gather { axis; idx; x } ->
@@ -1811,22 +1843,37 @@ let off_first (type r) (op : r prim) summed : r prim =
   | Reduce r -> Reduce { r with prog = joined r.prog summed }
   | _ -> op
 
+(* The route of a reduction or a scan of no operands at [p], over a load of
+   its loop's shape there, its rule's one operand ({!load_ranks}): where [p]
+   cuts no axis, the results lie there; else as {!Route.route} routes that
+   load, which it reads at [p], no sum ({!check_at}). *)
+let unloaded_route (type r) ~by (op : r prim) p (layout : L.t) =
+  if uncut p then { Route.operands = [| p |]; result = p; compute = Windows }
+  else
+    Route.route ~by (rule op) [| p |] [| Iarray.to_array (L.shape layout) |]
+
 (* [op]'s route over its operands ({!Route.route}). Where every operand lies
    at one placement that cuts no axis, all are read there and the results lie
    there whatever the rule, so neither [op]'s rule nor its operands' shapes
-   are computed. An operation of no operands lies where its map names, else on
-   the host, and each device of that placement computes its window. *)
+   are computed. A map of no loads lies where it names, each device of that
+   placement computing its window, and a reduction or a scan of no operands
+   as over a load at the placement it names ({!unloaded_route}); a scan of no
+   loads from a carry is routed by its carry, which lies there. Any other
+   operation of no operands lies on the host. *)
 let route_of (type r) ~by (op : r prim) : unit Route.t =
-  match together op with
-  | Unseen ->
+  match (op, together op) with
+  | Reduce { at = Some p; layout; _ }, _ -> unloaded_route ~by op p layout
+  | Scan { at = Some p; layout; carry = None; _ }, _ ->
+      unloaded_route ~by op p layout
+  | _, Unseen ->
       let result = match op with Map { at = Some p; _ } -> p | _ -> host in
       let r = { Route.operands = [||]; result; compute = Windows } in
       summed_results ~by op r;
       r
-  | One p when uncut p ->
+  | _, One p when uncut p ->
       let n = fold (fun () n _ -> n + 1) () 0 op in
       { Route.operands = Array.make n p; result = p; compute = Windows }
-  | One _ | Apart ->
+  | _, (One _ | Apart) ->
       let n = fold (fun () n _ -> n + 1) () 0 op in
       let ps = Array.make n host and shapes = Array.make n [||] in
       iteri
@@ -2290,10 +2337,10 @@ let layouts : type r. by:string -> r prim -> L.t array =
   | Map { layout; prog; outs; loads; at } ->
       check_map ~by layout prog outs loads at;
       [| layout |]
-  | Reduce { layout; axes; prog; reductions; loads } ->
-      [| contiguous (check_reduce ~by layout axes prog reductions loads) |]
-  | Scan { layout; axis; prog; reduction; loads; carry } ->
-      check_scan ~by layout axis prog reduction loads carry;
+  | Reduce { layout; axes; prog; reductions; loads; at } ->
+      [| contiguous (check_reduce ~by layout axes prog reductions loads at) |]
+  | Scan { layout; axis; prog; reduction; loads; carry; at } ->
+      check_scan ~by layout axis prog reduction loads carry at;
       [| layout |]
   | Gather { axis; idx; x } -> [| contiguous (gather_shape ~by axis idx x) |]
   | Gather_ranges { size; starts; ends; x } ->

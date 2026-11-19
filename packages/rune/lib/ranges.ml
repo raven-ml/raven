@@ -43,6 +43,7 @@ let scan e m axis shape (x : 'd Nx.int64_t) (out : E.any) : 'd Nx.int64_t =
          reduction = Monoid (m, 0, D.Int64);
          loads = plain [ x ];
          carry = None;
+         at = None;
        })
 
 (* Position [p] belongs to run [j(p)], the first whose end exceeds it, so

@@ -303,6 +303,7 @@ let padded_reduce_case =
                  Nx.Prim.
                    [ Monoid (Sum, 0, Nx.float32); Arg (Max, 0, Nx.float32) ];
                loads;
+               at = None;
              })
       in
       [ Nx.P sum; Nx.P max; Nx.P at ]
@@ -316,6 +317,7 @@ let padded_reduce_case =
                prog = one;
                reductions = Nx.Prim.[ Monoid (Sum, 0, Nx.float32) ];
                loads;
+               at = None;
              })
       in
       [ Nx.P sum ]
@@ -353,6 +355,7 @@ let padded_scan_case =
                reduction = Nx.Prim.Arg (Max, 0, Nx.float32);
                loads;
                carry = None;
+               at = None;
              })
       in
       [ Nx.P max; Nx.P at ]
@@ -368,6 +371,7 @@ let padded_scan_case =
                   reduction = Nx.Prim.Monoid (Sum, 0, Nx.float32);
                   loads;
                   carry = None;
+                  at = None;
                 }));
       ]
   in

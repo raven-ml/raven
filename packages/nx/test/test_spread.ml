@@ -357,6 +357,7 @@ let moments (type s) (x : (float, s, Nx.host) Nx.t) =
            prog = identity (Nx.dtype x);
            reductions = [ Moments (0, Nx.dtype x) ];
            loads = [| Plain x |];
+           at = None;
          })
   in
   number v

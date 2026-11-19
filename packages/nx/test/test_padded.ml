@@ -49,6 +49,7 @@ let sum_of x ~fill pad =
            prog = identity (Nx.dtype x);
            reductions = [ Monoid (Sum, 0, Nx.dtype x) ];
            loads = [| Padded { x; fill; pad } |];
+           at = None;
          })
   in
   y

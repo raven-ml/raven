@@ -266,9 +266,9 @@ let op ?dst ~renderer ~device ~host ~local
     (o : r P.t) =
   match o with
   | Map { layout; prog; loads; outs = _; at = _ } -> body node layout prog loads
-  | Reduce { layout; axes; prog; reductions = rs; loads } ->
+  | Reduce { layout; axes; prog; reductions = rs; loads; at = _ } ->
       reduce node layout axes prog rs loads
-  | Scan { layout; axis; prog; reduction = r; loads; carry } ->
+  | Scan { layout; axis; prog; reduction = r; loads; carry; at = _ } ->
       scan node layout axis prog r loads carry
   | Contract
       {

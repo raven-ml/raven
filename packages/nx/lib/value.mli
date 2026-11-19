@@ -158,6 +158,8 @@ and _ prim =
       prog : Nx_kernel.Prog.t;
       reductions : ('d, 'r) reductions;
       loads : 'd load iarray;
+      at : 'd Devices.placement option;
+          (** Where a reduction of no loads lies; [None] for one with loads. *)
     }
       -> 'r prim
   | Scan : {
@@ -167,6 +169,8 @@ and _ prim =
       reduction : ('d, 'r) reduction;
       loads : 'd load iarray;
       carry : 'd any option;
+      at : 'd Devices.placement option;
+          (** Where a scan of no loads lies; [None] for one with loads. *)
     }
       -> 'r prim
   | Gather : {
