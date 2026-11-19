@@ -3470,6 +3470,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `Nx.Rng.reshape b k`, `k`'s keys as a batch of shape `b`, so keys
+  align with a sampler's parameters without a round trip through
+  `to_tensor` and `of_tensor`.
 - Add `Nx.searchsorted_along_axis ~axis ~side s v`, `Nx.searchsorted` in
   each lane along `axis`, the shapes off `axis` broadcast as
   `Nx.take_along_axis` takes them: one search for a batch of key sets.

@@ -342,6 +342,31 @@ let keys_group =
           let k = Rng.split_batch ~n:3 k in
           equal (array int32) (words k)
             (words (Rng.of_tensor (Rng.to_tensor k))));
+      prop "reshape keeps the keys in C order"
+        (Gen.pair keys (Gen.int_range 1 6))
+        (fun (k, n) ->
+          let k = Rng.split_batch ~n:(2 * n) k in
+          List.iter
+            (fun b ->
+              let r = Rng.reshape b k in
+              let msg = Format.asprintf "%a" pp_shape b in
+              equal ~msg (array int) (Array.append b [| 2 |])
+                (Nx.shape (Rng.to_tensor r));
+              equal ~msg (array int32) (words k) (words r))
+            [ [| 2; n |]; [| n; 1; 2 |]; [| 1; 2 * n |]; [| 2 * n |] ]);
+      test "reshape makes a batch of one key and back" (fun () ->
+          let k = Rng.key 3 in
+          let one = Rng.reshape [| 1; 1 |] k in
+          equal (array int) [| 1; 1; 2 |] (Nx.shape (Rng.to_tensor one));
+          equal (array int32) (words k) (words (Rng.reshape [||] one)));
+      test "reshape refuses another number of keys" (fun () ->
+          let k = Rng.split_batch ~n:6 (Rng.key 1) in
+          equal string
+            "Nx.Rng.reshape: a batch of shape [6] holds 6 keys, not [4; 2]"
+            (message (fun () -> Rng.reshape [| 4; 2 |] k));
+          equal string
+            "Nx.Rng.reshape: a batch of shape [6] holds 6 keys, not [-6]"
+            (message (fun () -> Rng.reshape [| -6 |] k)));
       test "of_tensor refuses a last axis other than 2" (fun () ->
           let t = host_of A.Dtype.Int32 [| 3 |] [| 0l; 1l; 2l |] in
           equal string "Nx.Rng.of_tensor: a key has shape [...; 2], not [3]"

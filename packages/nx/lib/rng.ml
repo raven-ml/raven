@@ -368,6 +368,16 @@ let of_tensor (t : (int32, D.int32_elt, 'd) Value.t) : 'd key =
 
 let to_tensor (k : 'd key) : (int32, D.int32_elt, 'd) Value.t = k
 
+let reshape b (k : 'd key) : 'd key =
+  let by = "Nx.Rng.reshape" in
+  let s = Prim.shape k in
+  let have = Array.sub s 0 (Array.length s - 1) in
+  let count = Array.fold_left ( * ) 1 in
+  if Array.exists (fun e -> e < 0) b || count b <> count have then
+    invalid_argf "%s: a batch of shape %a holds %d keys, not %a" by pp_shape
+      have (count have) pp_shape b;
+  Eval.reshape ~by (Array.append b [| 2 |]) k
+
 let walk c k = of_tensor (Ptree.Walk.tensor c k)
 
 (* A function, so OCaml generalises its set: [Ptree.v walk] is an

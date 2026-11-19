@@ -5224,6 +5224,17 @@ module Rng : sig
   (** [to_tensor k] is [k]'s words: the inverse of {!of_tensor}, and what the
       coercion of [k] to an array is. *)
 
+  val reshape : int array -> 'd key -> 'd key
+  (** [reshape b k] is [k]'s keys, in C order, as a batch of shape [b]: the
+      key at each index of [b] is the key at the same C-order place in [k].
+      One key is a batch of shape [[||]], so [reshape [| 1 |] (key 0)] is a
+      batch of one. Keys align with a sampler's parameters by their batch
+      shape ({!section-samplers}): for [k] of [n] keys,
+      [reshape [| n; 1 |] k] gives each row of an [[n; c]] draw its own key.
+
+      Raises [Invalid_argument] if an extent of [b] is negative or [b] holds
+      another number of keys than [k]. *)
+
   val place : 'e Placement.t -> 'd key -> 'e key
   (** [place p k] is [k] at [p], as {!Nx.place}.
 

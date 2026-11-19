@@ -20,6 +20,7 @@ type +'d key = private (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
 val key : int -> Devices.host key
 val of_tensor : (int32, Nx_array.Dtype.int32_elt, 'd) Value.t -> 'd key
 val to_tensor : 'd key -> (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
+val reshape : int array -> 'd key -> 'd key
 val place : 'e Devices.placement -> 'd key -> 'e key
 val placement : 'd key -> 'd Devices.placement
 val walk : ('a, 'b, 'd, 'e) Ptree.Walk.cursor -> 'd key -> 'e key
