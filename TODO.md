@@ -38,10 +38,12 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   either): its 1571 by 64 sum runs 4 workgroups of 256 threads
   (`r_4_16_16_99`), tinygrad's 64 of 32 (`r_64_32_50`). Raw:
   ~/wt/tmp/fix-argmax
-- gpt-oss's decode submits each of its 24 blocks apart, so rig replays one
-  chain a block and the GPU idles about 2 us between chains: +0.05 ms a step
-  against llama.cpp's 3 graphs a step. kaun's per-block jit decides the
-  submits (decodegap2/cause.md)
+- gpt-oss's decode runs 26 CUDA chains a step, and the GPU idles 2-3 us
+  between any two, in one submit or across submits: rig's 32-launch cap
+  (`CHAIN 32`, rig_cuda_stubs.c) sets the count; llama.cpp replays 3 graphs
+- rig builds a program's whole submit before its first launch: 120 us of
+  host time ahead of a one-program decode step. Submitting in pieces would
+  start the GPU sooner (perf-campaign/chains/parked.md)
 - A bf16 product of 6-32 rows by weights laid `[K; N]` streams by its
   columns on 4 workgroups: `contract/bf16-16x64x2880` takes 47-50 us where
   BEAM's split of the reduce over 8 threads and upcast by 4 take 8-9
