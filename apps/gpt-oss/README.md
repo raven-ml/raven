@@ -29,6 +29,25 @@ weights: it runs every path and says nothing. gpt-oss-20b is 13.8 GB.
 | `lib/harmony.mli` | the chat format: rendering a conversation, parsing the reply |
 | `bin/main.ml` | the chat |
 
+## Without Python
+
+The chat is one executable that links only the C library.
+
+| | Install |
+|---|---|
+| raven | 32 MB, plus NVRTC (134 MB) to compile kernels not yet cached |
+| llama.cpp b12541 | 1.15 GB |
+| vLLM 0.34.0 | 9.32 GB |
+| transformers 5.23.0 | 5.74 GB |
+
+Install is what runs gpt-oss-20b on the GPU, without the NVIDIA driver and
+the weights: raven's `main.exe`, stripped, and CUDA's NVRTC, which raven
+loads only to compile a kernel that is not in tolk's cache; llama.cpp's CUDA
+release archive, with its cuBLAS; a fresh uv environment with `bench/`'s pins
+for vLLM and transformers, with torch's CUDA libraries and Python 3.12.
+Through NV, raven needs no libcuda either. Measured on 2026-11-19 on an RTX
+5000 Ada (driver 615.71.09, CUDA 13.4, Debian 13), with raven at 72377cdbe1.
+
 ## Tests
 
 `dune build @apps/gpt-oss/runtest` runs the tests, offline. `test_parity`,
