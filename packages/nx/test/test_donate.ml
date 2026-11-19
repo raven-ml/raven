@@ -2302,6 +2302,16 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c ~consumes:true "searchsorted" 2 (fun d ->
           let s = d 0 (Nx.cumsum (Nx.abs (x [| 4 |]))) in
           show (Nx.searchsorted ~side:`Right s (d 1 (x [| 3 |]))));
+      c ~consumes:true "searchsorted_along_axis" 2 (fun d ->
+          let s = d 0 (Nx.cumsum ~axis:1 (Nx.abs (x [| 2; 4 |]))) in
+          show
+            (Nx.searchsorted_along_axis ~axis:1 ~side:`Left s
+               (d 1 (x [| 2; 3 |]))));
+      c ~consumes:true "searchsorted_along_axis" 2 (fun d ->
+          let s = d 0 (Nx.cumsum ~axis:1 (Nx.abs (x [| 2; 4 |]))) in
+          show
+            (Nx.searchsorted_along_axis ~axis:(-1) ~side:`Right s
+               (d 1 (x [| 1; 3 |]))));
       c "unique" 1 (fun d ->
           let g = Nx.unique (d 0 (x [| 6 |])) in
           showl [ g.ids; g.first; g.counts; g.count ]);

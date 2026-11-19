@@ -4785,37 +4785,23 @@ let code k x =
   let c v = E.const D.Uint8 v in
   E.(where (k < x) (c 0) (where (k = x) (c 1) (c 2)))
 
-(* The number of keys of [s] before each key of [v] ([`Left]), or before or
-   equal to it ([`Right]), by binary lifting: the count [p] takes each step
-   [2^(r-1)], …, [1] whose last key [s.(p + step - 1)] still comes before. The
-   state is that probe's position [q]; a probe at or past [m] does not advance.
-   Rows compare as their first column that differs. *)
-let search ~by side s v =
-  let ks = keys64 ~by ~merge:true s and kv = keys64 ~by ~merge:true v in
-  let m = Prim.dim s 0 in
-  let rows = ndim s = 2 in
-  let lead = if rows then [| Prim.dim v 0 |] else shape v in
+(* [code] of each key of [probe] against [kv]'s, the two broadcast together. *)
+let codes ~by probe kv =
+  elementwise ~by D.Uint8 [ Any probe; Any kv ]
+    (code (operand 0 probe) (operand 1 kv))
+
+(* The number of [m] keys before each sought key ([`Left]), or before or equal
+   to it ([`Right]), by binary lifting: the count [p] takes each step
+   [2^(r-1)], …, [1] whose last key, at [p + step - 1], still comes before. The
+   state is that probe's position [q], of shape [lead]; [compared q] is the
+   [code] of each probe's key against its sought key. A probe at or past [m]
+   does not advance. The counts lie at [at]. *)
+let lifted ~by ~at ~m ~lead side compared =
   let before = match side with `Left -> 0 | `Right -> 1 in
-  (* The counts lie where [v] lies, whole on each of its devices. *)
-  let at = beside v in
   let r = rounds m in
   let step i = 1 lsl (r - 1 - i) in
-  let compared probe =
-    let c =
-      elementwise ~by D.Uint8 [ Any probe; Any kv ]
-        (code (operand 0 probe) (operand 1 kv))
-    in
-    if not rows then c
-    else if Prim.dim s 1 = 0 then fill ~by at D.Uint8 lead 1
-    else
-      let differs =
-        elementwise ~by D.Bool [ Any c ] E.(operand 0 c <> const D.Uint8 1)
-      in
-      let j = arg ~by Max ~axis:1 ~keepdims:true differs in
-      Eval.reshape ~by lead (take_along ~by 1 j c)
-  in
   let rec round i q =
-    let c = compared (take_axis ~by 0 q ks) in
+    let c = compared q in
     let last = i = r - 1 in
     let q =
       let e = operand 0 q in
@@ -4830,12 +4816,49 @@ let search ~by side s v =
   if r = 0 then fill ~by at D.Int64 lead 0L
   else round 0 (fill ~by at D.Int64 lead (Int64.of_int (step 0 - 1)))
 
+(* [lifted] among the keys of [s], elements of a 1-d [s] or rows of a 2-d
+   one, for each key of [v]. Rows compare as their first column that
+   differs. *)
+let search ~by side s v =
+  let ks = keys64 ~by ~merge:true s and kv = keys64 ~by ~merge:true v in
+  let rows = ndim s = 2 in
+  let lead = if rows then [| Prim.dim v 0 |] else shape v in
+  (* The counts lie where [v] lies, whole on each of its devices. *)
+  let at = beside v in
+  let compared q =
+    let c = codes ~by (take_axis ~by 0 q ks) kv in
+    if not rows then c
+    else if Prim.dim s 1 = 0 then fill ~by at D.Uint8 lead 1
+    else
+      let differs =
+        elementwise ~by D.Bool [ Any c ] E.(operand 0 c <> const D.Uint8 1)
+      in
+      let j = arg ~by Max ~axis:1 ~keepdims:true differs in
+      Eval.reshape ~by lead (take_along ~by 1 j c)
+  in
+  lifted ~by ~at ~m:(Prim.dim s 0) ~lead side compared
+
 let searchsorted ~side s v =
   let by = "Nx.searchsorted" in
   keyed ~by s;
   if ndim s = 2 && (ndim v <> 2 || Prim.dim v 1 <> Prim.dim s 1) then
     invalid_argf "%s: rows %a sought among rows %a" by pp_value v pp_value s;
   search ~by side s v
+
+(* [lifted] with each probe gathered from its own lane. *)
+let searchsorted_along_axis ~axis:a ~side s v =
+  let by = "Nx.searchsorted_along_axis" in
+  let a = axis ~by s a in
+  if ndim v <> ndim s then
+    invalid_argf "%s: keys %a sought along lanes of %a of another rank" by
+      pp_value v pp_value s;
+  no_complex ~by s;
+  let off x = Array.mapi (fun i d -> if i = a then 1 else d) (shape x) in
+  let b = Prim.broadcast_shape ~by (off s) (off v) in
+  let lead = Array.mapi (fun i d -> if i = a then Prim.dim v a else d) b in
+  let ks = keys64 ~by ~merge:true s and kv = keys64 ~by ~merge:true v in
+  let compared q = codes ~by (take_along ~by a q ks) kv in
+  lifted ~by ~at:(beside v) ~m:(Prim.dim s a) ~lead side compared
 
 (* Counted lengths *)
 

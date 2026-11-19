@@ -3470,6 +3470,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `Nx.searchsorted_along_axis ~axis ~side s v`, `Nx.searchsorted` in
+  each lane along `axis`, the shapes off `axis` broadcast as
+  `Nx.take_along_axis` takes them: one search for a batch of key sets.
 - `Nx_io.Hdf5.rows d ~row ~rows` reads windows of a dataset's rows, joined,
   decoding each chunk that holds one of their rows once, where a `window`
   per run decoded a chunk once per run. `Nx_io.Hdf5.strings` cuts the bytes

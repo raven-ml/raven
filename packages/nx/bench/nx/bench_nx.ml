@@ -1452,7 +1452,8 @@ let scan_rows =
    keys as wide as the bits of 1M float64 draws, which unique sorts. Runs of
    4 rows of a key, ascending 64 apart, have no NumPy counterpart: they are
    a join's keys from a table sorted by them, too sparse for a direct
-   table, each thread's keys its own. *)
+   table, each thread's keys its own. Nor has a search of each row in a key
+   set of its own. *)
 let u1m () = on_host (Nx.Rng.uniform ~key:(Nx.Rng.key 7) D.Float32 [| n1m |])
 let u1m64 () = on_host (Nx.cast D.Float64 (u1m ()))
 
@@ -1460,6 +1461,18 @@ let sorted_64k () =
   on_host
     (fst
        (Nx.sort (Nx.Rng.uniform ~key:(Nx.Rng.key 8) D.Float32 [| 1 lsl 16 |])))
+
+(* 64 rows of 4096 sorted keys, one key set per row, and 64 rows of 1024
+   draws to seek in them: a resample of a batch of spectra, each on its own
+   grid. *)
+let lanes_64x4k () =
+  on_host
+    (fst
+       (Nx.sort ~axis:1
+          (Nx.Rng.uniform ~key:(Nx.Rng.key 10) D.Float32 [| 64; 4096 |])))
+
+let lanes_64x1k () =
+  on_host (Nx.Rng.uniform ~key:(Nx.Rng.key 11) D.Float32 [| 64; 1024 |])
 
 let groups1m () =
   on_host (ints 9 1000 [| n1m |])
@@ -1489,6 +1502,10 @@ let order_rows =
       Thumper.bench_with_setup "searchsorted-f32-1M-in-64K"
         ~setup:(fun () -> (sorted_64k (), u1m ()))
         (fun (table, x) -> Nx.searchsorted ~side:`Left table x);
+      Thumper.bench_with_setup "searchsorted-along-f32-64x4K-in-64x1K"
+        ~setup:(fun () -> (lanes_64x4k (), lanes_64x1k ()))
+        (fun (lanes, x) ->
+          Nx.searchsorted_along_axis ~axis:1 ~side:`Left lanes x);
       Thumper.bench_with_setup "unique-i32-1M-1000" ~setup:groups1m Nx.unique;
       Thumper.bench_with_setup "unique-i64-1M-wide"
         ~setup:(fun () -> on_host (Nx.bitcast D.Int64 (u1m64 ())))

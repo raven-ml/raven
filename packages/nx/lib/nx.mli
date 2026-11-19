@@ -2266,9 +2266,11 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
     A reduction folds [x]'s elements along [axes], every axis by default, a
     negative one counted from the end, and drops them, or keeps each with extent
-    [1] where [keepdims]. On one device it gives the same bits on every run
-    of the same computation, for the same values, shapes, dtypes, placement
-    and devices ({!Nx_kernel}); on nx.cpu ({!Nx_cpu.section-sums}) its
+    [1] where [keepdims]. The elements at one index of the other axes form a
+    {e lane} along [axes], and a reduction folds each lane into one element.
+    On one device it gives the same bits on every run of the same
+    computation, for the same values, shapes, dtypes, placement and devices
+    ({!Nx_kernel}); on nx.cpu ({!Nx_cpu.section-sums}) its
     order of association depends on the shape alone. Over axes cut across
     devices, each device reduces the part its window holds, and only
     partial results move instead of [x]'s elements: one per output and
@@ -3974,6 +3976,28 @@ val searchsorted :
 
     Raises [Invalid_argument] if [s] is neither 1-d nor 2-d, is complex, or is
     2-d and [v] is not 2-d with as many columns. *)
+
+val searchsorted_along_axis :
+  axis:int ->
+  side:[ `Left | `Right ] ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t ->
+  'd int64_t
+(** [searchsorted_along_axis ~axis ~side s v] is {!searchsorted} in each lane
+    along [axis] ({!section-reductions}). [s] and [v] have one rank, and their
+    shapes broadcast off [axis]. The result has that broadcast shape, with
+    [v]'s extent along [axis]. Its element at [j] is the number of keys in
+    [s]'s lane through [j] before [v]'s key at [j] ([`Left]), or before or
+    equal to it ([`Right]). Keys compare as in {!searchsorted}. A lane not in
+    order still gives counts in [[0, m]], [m] [s]'s extent along [axis].
+
+    It is a binary search of [⌈log₂ (m + 1)⌉] rounds, each a gather of one key
+    of [s] per key of [v], as {!take_along_axis} gathers, and computes over a
+    cut [axis] as it does.
+
+    Raises [Invalid_argument] if [axis] is not an axis of [s], if [s] and [v]
+    differ in rank or their shapes off [axis] do not broadcast, or if [s] is
+    complex. *)
 
 (** {2:counted Lengths that are data}
 

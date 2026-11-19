@@ -203,10 +203,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   `load` and `tensors` alone), so tessera's cram tests cannot make the .pt
   model file that `encode`, `targets` and `distil --init` read
   (tessera-bin/adjudication.md M9). Found by DM's skeptic
-- `Nx.searchsorted` searches one 1-d key set, or rows of a 2-d one
-  lexicographically, so aion's `Spectrum.resample`, which searches each
-  spectrum in its own wavelengths, calls it once per row and stacks the
-  results. A batched search would take a key set per row
 - nx has no `nan_to_num`: aion's `Spectrum.nan_to_num` composes `isnan`,
   `clamp` and `where` to replace NaN and the infinities as torch's does
 - `Nx_io.Hdf5.window` reads one box, every chunk it covers whole, so

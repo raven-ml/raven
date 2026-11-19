@@ -984,6 +984,14 @@ let shortcuts =
           (fun p ->
             Nx.searchsorted ~side:`Left (zeros p [| 0 |]) (zeros p [| 3 |]));
       };
+    shortcut "searchsorted_along_axis among no key" Nx.int64
+      {
+        f =
+          (fun p ->
+            Nx.searchsorted_along_axis ~axis:1 ~side:`Left
+              (zeros p [| 2; 0 |])
+              (zeros p [| 2; 3 |]));
+      };
   ]
 
 (* Each raises on [Bare], naming itself and the missing kernels, and on a set

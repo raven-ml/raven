@@ -31,6 +31,7 @@
 # pending: wall_time of rng/dirichlet-f32-4Kx8, to record on a quiet machine
 # pending: wall_time of conv/conv-f32-32x28x28x1-3x3-to-8, to record on a quiet machine
 # pending: wall_time of conv/depthwise-f32-8x56x56x64-3x3, to record on a quiet machine
+# pending: wall_time of order/searchsorted-along-f32-64x4K-in-64x1K, to record on a quiet machine
 # pending: wall_time of io/hdf5-rows-2048-of-8192-chunked, to record on a quiet machine
 # pending: wall_time of io/hdf5-window-a-row-2048-of-8192-chunked, to record on a quiet machine
 
@@ -246,12 +247,13 @@ move/reshape-swapaxes-heads-1M	alloc_words	exact	82
 move/transpose-1	alloc_words	exact	37
 move/transpose-1M	alloc_words	exact	37
 order/argsort-f32-1M	alloc_words	exact	139
-order/histogram-f64-1M-100	alloc_words	exact	8277
+order/histogram-f64-1M-100	alloc_words	exact	8347
 order/positions-bool-1M	alloc_words	exact	1322
 order/positions-i64-1M-counts	alloc_words	exact	1312
 order/quantile-f64-1M-3	alloc_words	exact	1160
 order/quantile-f64-1M-3	wall_time	batch=1	n=20	7.077e-03	6.963e-03 6.972e-03 6.992e-03 6.996e-03 7.005e-03 7.025e-03 7.036e-03 7.043e-03 7.044e-03 7.058e-03 7.096e-03 7.113e-03 7.126e-03 7.167e-03 7.234e-03 7.265e-03 7.323e-03 7.613e-03 8.776e-03 8.809e-03
-order/searchsorted-f32-1M-in-64K	alloc_words	exact	16382
+order/searchsorted-along-f32-64x4K-in-64x1K	alloc_words	exact	13797
+order/searchsorted-f32-1M-in-64K	alloc_words	exact	16526
 order/sort-f32-1024x1024-rows	alloc_words	exact	142
 order/sort-f32-1M	alloc_words	exact	139
 order/top_k-8-f32-64x16384	alloc_words	exact	147

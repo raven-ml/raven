@@ -398,6 +398,236 @@ let test_search_cases () =
   equal (array int64) [| 0L; 1L; 2L |]
     (Nx.to_array (Nx.lexsort (Nx.zeros Nx.int8 [| 3; 0 |])))
 
+(* searchsorted_along_axis *)
+
+(* How a value lies: contiguous; every axis flipped; every axis read at a step
+   of 2; from an offset of one slice along axis 0; or one slice along axis 0
+   repeated, a stride of 0. *)
+type lanes_view = Plain | Flipped | Strided | Offset | Repeated
+
+let lanes_views = [ Plain; Flipped; Strided; Offset; Repeated ]
+
+let lanes_view_name = function
+  | Plain -> "plain"
+  | Flipped -> "flipped"
+  | Strided -> "strided"
+  | Offset -> "offset"
+  | Repeated -> "repeated"
+
+type along_case =
+  | Along_case : {
+      dt : ('v, 's) D.t;
+      axis : int;
+      s : int array;
+      vs : 'v array;
+      t : int array;
+      ws : 'v array;
+      sorted : bool;
+      view : lanes_view;
+    }
+      -> along_case
+
+(* Lanes of [m] keys along [axis] of a value of rank 1 to 3, sought by lanes of
+   [k] keys. Each other axis has one extent in both values, or extent 1 in one
+   of them. Half the cases are floats, so that one in six or more holds a NaN
+   key. *)
+let along_case =
+  let open Gen in
+  let floats = List.filter (fun (D.Any dt) -> D.is D.Float dt) keyed in
+  with_pp
+    (fun ppf (Along_case { dt; axis; s; t; sorted; view; _ }) ->
+      Format.fprintf ppf "%s %a in %a axis %d%s %s" (D.name dt) pp_ints t
+        pp_ints s axis
+        (if sorted then "" else " unsorted")
+        (lanes_view_name view))
+    (let* (D.Any dt) = one_of [ of_list floats; of_list keyed ] in
+     let* r = int_range 1 3 in
+     let* axis = int_range (-r) (r - 1) in
+     let a = if axis < 0 then axis + r else axis in
+     let* m = int_range 0 6 in
+     let* k = int_range 0 4 in
+     let* off =
+       array ~size:(constant r) (pair (int_range 0 3) (int_range 0 2))
+     in
+     let extent lane one i =
+       let e, b = off.(i) in
+       if i = a then lane else if b = one then 1 else e
+     in
+     let s = Array.init r (extent m 1) and t = Array.init r (extent k 2) in
+     let* vs = values dt (Array.fold_left ( * ) 1 s) in
+     let* ws = values dt (Array.fold_left ( * ) 1 t) in
+     let* sorted = frequency [ (4, constant true); (1, constant false) ] in
+     let+ view = of_list lanes_views in
+     Along_case { dt; axis; s; vs; t; ws; sorted; view })
+
+let numel s = Array.fold_left ( * ) 1 s
+
+(* The elements [xs] of shape [s] broadcast to shape [b], in C order. *)
+let spread s xs b =
+  Array.init (numel b) (fun k ->
+      let i = index b k in
+      let p = ref 0 in
+      Array.iteri (fun a e -> p := (!p * e) + if e = 1 then 0 else i.(a)) s;
+      xs.(!p))
+
+(* [xs] of shape [s] with each slice along axis 0 its first, as a [Repeated]
+   view reads them. *)
+let repeated s xs =
+  if Array.length xs = 0 then xs
+  else
+    let one = Array.copy s in
+    one.(0) <- 1;
+    spread one xs s
+
+(* [xs] of shape [s] as [view] lays them out. A [Repeated] view reads the first
+   slice along axis 0 alone. *)
+let laid dt s xs view =
+  let n = Array.length xs and zero = D.zero dt in
+  match view with
+  | Plain -> Nx.create dt s xs
+  | Flipped ->
+      Nx.flip (Nx.create dt s (Array.init n (fun i -> xs.(n - 1 - i))))
+  | Strided ->
+      (* [xs] at the even indices of a value twice as long on every axis. *)
+      let w = Array.map (fun d -> 2 * d) s in
+      let at i =
+        if Array.exists (fun c -> c mod 2 = 1) i then zero
+        else
+          let p = ref 0 in
+          Array.iteri (fun a c -> p := (!p * s.(a)) + (c / 2)) i;
+          xs.(!p)
+      in
+      let x =
+        Nx.create dt w (Array.init (numel w) (fun k -> at (index w k)))
+      in
+      Nx.slice (Array.to_list (Array.map (fun d -> Nx.Rs (0, 2 * d, 2)) s)) x
+  | Offset ->
+      let w = Array.copy s in
+      w.(0) <- s.(0) + 1;
+      let x = Array.append (Array.make (numel w - n) zero) xs in
+      Nx.slice [ Nx.R (1, s.(0) + 1) ] (Nx.create dt w x)
+  | Repeated ->
+      let one = Array.copy s in
+      one.(0) <- 1;
+      let first =
+        Array.init (numel one) (fun i -> if i < n then xs.(i) else zero)
+      in
+      Nx.broadcast_to s (Nx.create dt one first)
+
+let has_nan (type v s) (dt : (v, s) D.t) (xs : v array) =
+  match D.kind dt with D.Float -> Array.exists Float.is_nan xs | _ -> false
+
+let law_along (Along_case { dt; axis; s; vs; t; ws; sorted; view }) =
+  let r = Array.length s in
+  let a = if axis < 0 then axis + r else axis in
+  let c = numeric dt in
+  let read s xs =
+    let xs = Nx.to_array (Nx.create dt s xs) in
+    if view = Repeated then repeated s xs else xs
+  in
+  let xs = read s vs and wv = read t ws in
+  if sorted then
+    List.iter
+      (fun lane ->
+        let keys = Array.of_list (List.map (fun p -> xs.(p)) lane) in
+        List.iter2 (fun p i -> xs.(p) <- keys.(i)) lane (stable (cmp dt) keys))
+      (slices s a);
+  (* The result's shape [b], and [b] with [s]'s lanes, [bs]. *)
+  let b =
+    Array.mapi
+      (fun i e -> if i = a then t.(a) else if e = 1 then t.(i) else e)
+      s
+  in
+  let bs = Array.copy b in
+  bs.(a) <- s.(a);
+  let lanes shape ys =
+    Array.of_list
+      (List.map
+         (fun l -> Array.of_list (List.map (fun p -> ys.(p)) l))
+         (slices shape a))
+  in
+  let ls = lanes bs (spread s xs bs) and lv = lanes b (spread t wv b) in
+  (* Whether some key is sought in a lane, and in one that holds keys. *)
+  let sought = numel b > 0 in
+  let m = s.(a) in
+  cover "a lane of no key" (sought && m = 0);
+  cover "a NaN key"
+    (has_nan dt (spread s xs bs) || has_nan dt (spread t wv b));
+  cover "an unsorted lane" (sought && (not sorted) && m > 1);
+  cover "a broadcast lane"
+    (sought && m > 0
+    && List.exists (fun i -> i <> a && s.(i) <> t.(i)) (List.init r Fun.id));
+  List.iter
+    (fun w -> cover (lanes_view_name w) (sought && view = w))
+    lanes_views;
+  let x = laid dt s xs view and v = laid dt t wv view in
+  let search side = Nx.searchsorted_along_axis ~axis ~side x v in
+  let left = search `Left and right = search `Right in
+  equal ~msg:"`Left's shape" (array int) b (Nx.shape left);
+  equal ~msg:"`Right's shape" (array int) b (Nx.shape right);
+  let lo = lanes b (Nx.to_array left) and hi = lanes b (Nx.to_array right) in
+  let alone side l w =
+    let n = Array.length in
+    Nx.to_array
+      (Nx.searchsorted ~side
+         (Nx.create dt [| n l |] l)
+         (Nx.create dt [| n w |] w))
+  in
+  let m64 = Int64.of_int m in
+  Array.iteri
+    (fun j l ->
+      let w = lv.(j) in
+      equal ~msg:"`Left, the lane alone" (array int64) (alone `Left l w) lo.(j);
+      equal ~msg:"`Right, the lane alone" (array int64) (alone `Right l w)
+        hi.(j);
+      Array.iteri
+        (fun i key ->
+          let lo = lo.(j).(i) and hi = hi.(j).(i) in
+          if not sorted then
+            List.iter
+              (fun p ->
+                at_most ~msg:"a count" int64 ~than:m64 p;
+                at_most ~msg:"a count" int64 ~than:p 0L)
+              [ lo; hi ]
+          else begin
+            at_most ~msg:"`Left" int64 ~than:hi lo;
+            let equals =
+              Array.fold_left (fun n k -> if c k key = 0 then n + 1 else n) 0 l
+            in
+            equal ~msg:"`Right - `Left, the keys equal" int equals
+              (Int64.to_int (Int64.sub hi lo))
+          end)
+        w)
+    ls
+
+let test_along_cases () =
+  let along ~axis ~side s v =
+    Nx.to_array (Nx.searchsorted_along_axis ~axis ~side s v)
+  in
+  let f64 s xs = Nx.create Nx.float64 s xs in
+  let s = f64 [| 2; 4 |] [| 0.; 1.; 1.; 2.; neg_infinity; -0.; 3.; nan |]
+  and v = f64 [| 2; 2 |] [| 1.; 1.5; 0.; nan |] in
+  equal (array int64) [| 1L; 3L; 1L; 3L |] (along ~axis:1 ~side:`Left s v);
+  equal (array int64) [| 3L; 3L; 2L; 4L |] (along ~axis:(-1) ~side:`Right s v);
+  (* Lanes along axis 0: [s]'s one lane is each of [v]'s two. *)
+  let s = Nx.create Nx.int32 [| 3; 1 |] [| 1l; 2l; 3l |]
+  and v = Nx.create Nx.int32 [| 1; 2 |] [| 2l; 0l |] in
+  equal (array int64) [| 1L; 0L |] (along ~axis:0 ~side:`Left s v);
+  equal (array int64) [| 0L; 0L; 0L; 0L; 0L; 0L |]
+    (along ~axis:0 ~side:`Right
+       (Nx.zeros Nx.int8 [| 0; 2 |])
+       (Nx.zeros Nx.int8 [| 3; 2 |]));
+  let m = Nx.zeros Nx.int32 [| 2; 3 |] in
+  let by = "Nx.searchsorted_along_axis" in
+  invalid ~by (fun () -> along ~axis:2 ~side:`Left m m);
+  invalid ~by (fun () -> along ~axis:(-3) ~side:`Left m m);
+  invalid ~by (fun () ->
+      along ~axis:0 ~side:`Left m (Nx.zeros Nx.int32 [| 3 |]));
+  invalid ~by (fun () ->
+      along ~axis:1 ~side:`Left m (Nx.zeros Nx.int32 [| 3; 1 |]));
+  let z = Nx.create Nx.complex64 [| 1 |] [| Complex.one |] in
+  invalid ~by (fun () -> along ~axis:0 ~side:`Left z z)
+
 type unique_case = Unique_case : rows_case * int option -> unique_case
 
 (* Integer rows whose values span about twice as many as there are rows and
@@ -1279,6 +1509,13 @@ let () =
              prop "lexsort is a stable sort of the rows" rows_case law_lexsort;
              prop "searchsorted counts the keys before" search_case law_search;
              test "cases" test_search_cases;
+           ];
+         group "searchsorted_along_axis"
+           [
+             (* Each view, and a lane of no key, is about one case in ten. *)
+             prop ~count:400 "each lane is searchsorted of that lane alone"
+               along_case law_along;
+             test "cases" test_along_cases;
            ];
          group "unique"
            [

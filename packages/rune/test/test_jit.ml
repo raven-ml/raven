@@ -5270,6 +5270,73 @@ let law_unique (Unique_case (dt, s, vs, m)) =
     (outcome (fun () -> codes (f x)))
     (compiled (fun () -> codes (Rune.jit' f x)))
 
+(* Lane searches
+
+   Nx.searchsorted_along_axis: lanes along either axis of a 2-d value, of
+   float64 NaNs and zeros of either sign, infinities and ones, or of int32 from
+   three values, in order or not. The other axis has one extent in both
+   values, or extent 1 in one of them. *)
+
+type lanes_case =
+  | Lanes_case :
+      ('v, 's) Nx.dtype * int * int array * 'v array * int array * 'v array
+      * bool
+      -> lanes_case
+
+let lanes_cases =
+  let open Gen in
+  (let* axis = int_range (-2) 1 in
+   let a = (axis + 2) mod 2 in
+   let* m = int_range 0 5 in
+   let* k = int_range 0 3 in
+   let* e = int_range 0 3 in
+   let* one = int_range 0 2 in
+   let shape lane o =
+     Array.init 2 (fun i -> if i = a then lane else if one = o then 1 else e)
+   in
+   let s = shape m 1 and t = shape k 2 in
+   let n s = Array.fold_left ( * ) 1 s in
+   let* sorted = bool in
+   let* floats = bool in
+   if floats then
+     let fs = of_list [ nan; -.nan; 0.; -0.; 1.; infinity; neg_infinity ] in
+     let* vs = array ~size:(constant (n s)) fs in
+     let+ ws = array ~size:(constant (n t)) fs in
+     Lanes_case (f64, axis, s, vs, t, ws, sorted)
+   else
+     let is = map Int32.of_int (int_range 0 2) in
+     let* vs = array ~size:(constant (n s)) is in
+     let+ ws = array ~size:(constant (n t)) is in
+     Lanes_case (Nx.int32, axis, s, vs, t, ws, sorted))
+  |> with_pp (fun ppf (Lanes_case (dt, axis, s, _, t, _, sorted)) ->
+      Format.fprintf ppf "%a %a in %a axis %d%s" Nx.pp_dtype dt pp_shape t
+        pp_shape s axis
+        (if sorted then "" else " unsorted"))
+
+let law_lanes (Lanes_case (dt, axis, s, vs, t, ws, sorted)) =
+  let a = (axis + 2) mod 2 in
+  let lanes = if s.(1 - a) = 1 then t.(1 - a) else s.(1 - a) in
+  let sought = lanes * t.(a) > 0 in
+  let nan (type v s) (dt : (v, s) Nx.dtype) (xs : v array) =
+    match Nx.Dtype.kind dt with
+    | Float -> Array.exists Float.is_nan xs
+    | _ -> false
+  in
+  cover "a search" sought;
+  cover "a NaN key" (sought && (nan dt vs || nan dt ws));
+  cover "a broadcast lane" (sought && s.(1 - a) <> t.(1 - a));
+  cover "unsorted lanes" (sought && (not sorted) && s.(a) > 1);
+  let x = Nx.create dt s vs in
+  let x = if sorted then fst (Nx.sort ~axis x) else x in
+  let v = Nx.create dt t ws in
+  let f x v =
+    let search side = Nx.searchsorted_along_axis ~axis ~side x v in
+    Nx.stack [ search `Left; search `Right ]
+  in
+  equal (outcome_t codes_t)
+    (Value (codes (f x v)))
+    (compiled (fun () -> codes (Rune.jit (pair_fn ()) f x v)))
+
 (* Packed views
 
    A uint4 sort along the last axis of a [2; 3] view of a [3; 5] uint4 of
@@ -6308,6 +6375,8 @@ let () =
              prop ~count:30
                "a numbering gives eager's ids, first rows and counts"
                unique_cases law_unique;
+             prop ~count:100 "a search along lanes gives eager's counts"
+               lanes_cases law_lanes;
              prop ~count:12
                "a uint4 sort along the last axis of every other row and \
                 column, flipped, gives eager's codes"
