@@ -365,8 +365,8 @@ let keys_group =
             "Nx.Rng.reshape: a batch of shape [6] holds 6 keys, not [4; 2]"
             (message (fun () -> Rng.reshape [| 4; 2 |] k));
           equal string
-            "Nx.Rng.reshape: a batch of shape [6] holds 6 keys, not [-6]"
-            (message (fun () -> Rng.reshape [| -6 |] k)));
+            "Nx.Rng.reshape: a batch of shape [6] holds 6 keys, not [-2; -3]"
+            (message (fun () -> Rng.reshape [| -2; -3 |] k)));
       test "of_tensor refuses a last axis other than 2" (fun () ->
           let t = host_of A.Dtype.Int32 [| 3 |] [| 0l; 1l; 2l |] in
           equal string "Nx.Rng.of_tensor: a key has shape [...; 2], not [3]"
