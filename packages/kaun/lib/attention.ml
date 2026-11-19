@@ -190,19 +190,21 @@ let split ~head_dim l x =
   Nx.swapaxes 1 2 (Nx.reshape [| batch; seq; width / head_dim; head_dim |] y)
 
 (* The key-value heads of [kv] for [q] of [batch] lanes and [d] features: the
-   keys' heads, read from the pools when they are paged. *)
+   keys' heads, read from the pools when they are paged. Dense keys have
+   [batch] rows or a divisor of it. *)
 let kv_heads ~batch ~d (kv : _ Nx.kv) =
   match kv with
   | Dense { k; v } -> (
       match (Nx.shape k, Nx.shape v) with
       | [| b; h; m; d' |], [| b'; h'; m'; _ |]
-        when b = batch && b' = batch && h = h' && m = m' && d' = d ->
+        when b = b' && h = h' && m = m' && d' = d
+             && (b = batch || (b > 0 && batch mod b = 0)) ->
           h
       | _ ->
           Printf.ksprintf invalid_arg
-            "Attention.attend: k must have shape [%d; kv_heads; m; %d] and v \
-             [%d; kv_heads; m; dv]"
-            batch d batch)
+            "Attention.attend: k must have shape [rows; kv_heads; m; %d] and \
+             v [rows; kv_heads; m; dv], rows dividing %d"
+            d batch)
   | Paged { k; v; table } -> (
       match (Nx.shape k, Nx.shape v, Nx.shape table) with
       | [| n; h; p; d' |], [| n'; h'; p'; _ |], [| b; _ |]
@@ -213,6 +215,27 @@ let kv_heads ~batch ~d (kv : _ Nx.kv) =
             "Attention.attend: paged k must have shape [pages; kv_heads; page; \
              %d], v [pages; kv_heads; page; dv] and the table [%d; max_pages]"
             d batch)
+
+(* Dense keys of [rows] rows for the [batch] lanes of [q], each row serving
+   [g = batch / rows] consecutive lanes. Without a mask or lengths nothing
+   tells a query row's lane, so a row's lanes attend as one lane holding all
+   their queries, and each key is read once for them. *)
+let shared ?scale ?sinks q k v =
+  let batch = Nx.dim 0 q and rows = Nx.dim 0 k in
+  let g = batch / rows and h = Nx.dim 1 q and n = Nx.dim 2 q in
+  let fold x =
+    let c = Nx.dim 3 x in
+    Nx.reshape [| rows; h; g * n; c |]
+      (Nx.transpose ~axes:[ 0; 2; 1; 3; 4 ]
+         (Nx.reshape [| rows; g; h; n; c |] x))
+  in
+  let unfold y =
+    let c = Nx.dim 3 y in
+    Nx.reshape [| batch; h; n; c |]
+      (Nx.transpose ~axes:[ 0; 2; 1; 3; 4 ]
+         (Nx.reshape [| rows; h; g; n; c |] y))
+  in
+  unfold (attention ?scale ?sinks (fold q) (Nx.Dense { k; v }))
 
 (* Key-value head [h] serves query heads [h * groups] to
    [h * groups + groups - 1], as {!Nx.attention} reads them: no key is
@@ -248,7 +271,14 @@ let attend ?mask ?lengths ?scale ?sinks q kv =
         Nx.reshape [| heads; 1 |] sinks)
       sinks
   in
-  attention ?mask ?lengths ?scale ?sinks q kv
+  match kv with
+  | Dense { k; v } when Nx.dim 0 k <> batch ->
+      if mask <> None || lengths <> None then
+        invalid_arg
+          "Attention.attend: keys shared by several lanes take no mask and no \
+           lengths";
+      shared ?scale ?sinks q k v
+  | kv -> attention ?mask ?lengths ?scale ?sinks q kv
 
 let merge ?sum l y =
   match Nx.shape y with

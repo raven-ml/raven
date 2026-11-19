@@ -297,14 +297,22 @@ val attend :
   (float, 'b, 'd) Nx.t
 (** [attend q kv] is grouped-query attention of [q], of shape
     [[| batch; heads; n; d |]], over the keys and values [kv]: [Dense] ones of
-    shape [[| batch; kv_heads; m; d |]] and [[| batch; kv_heads; m; dv |]], or
+    shape [[| rows; kv_heads; m; d |]] and [[| rows; kv_heads; m; dv |]], or
     [Paged] pools of shape [[| pages; kv_heads; page; d |]] and
     [[| pages; kv_heads; page; dv |]] read through a table of shape
     [[| batch; max_pages |]], where [m] is [max_pages * page]. The result has
     shape [[| batch; heads; n; dv |]]. [kv_heads] divides [heads], and
     key-value head [h] serves query heads [h * groups] to
-    [h * groups + groups - 1], where [groups] is [heads / kv_heads]. No key is
-    repeated. With:
+    [h * groups + groups - 1], where [groups] is [heads / kv_heads]. Likewise
+    [rows] is [batch] or a positive divisor of it, and dense row [r] serves
+    lanes [r * lanes] to [r * lanes + lanes - 1], where [lanes] is
+    [batch / rows]: the beams or samples of one input share its keys, and each
+    lane's result is the one it has over a copy of its row. No key is
+    repeated: where [rows] is not [batch], a row's lanes attend as one lane
+    holding all their queries, so each key is read once for all of them, and
+    neither [mask] nor [lengths] may be given.
+
+    With:
 
     - [mask], the mask of {!Nx.val-attention} over [[| batch; heads; n; m |]],
       such as {!Nx.causal} or {!Cache_index.visible}. A boolean array [b] of
@@ -324,9 +332,11 @@ val attend :
     dtypes, precision and totality.
 
     Raises [Invalid_argument] if [q]'s dtype is a float8 or float4 format, a
-    shape is not as above, [kv_heads] does not divide [heads], [d] is [0]
-    without [scale], [lengths] does not have shape [[| batch |]], or [mask]'s
-    results or captures do not broadcast to [[| batch; heads; n; m |]]. *)
+    shape is not as above, [rows] is neither [batch] nor a positive divisor
+    of it, [rows] is not [batch] and [mask] or [lengths] is given, [kv_heads]
+    does not divide [heads], [d] is [0] without [scale], [lengths] does not
+    have shape [[| batch |]], or [mask]'s results or captures do not
+    broadcast to [[| batch; heads; n; m |]]. *)
 
 val merge :
   ?sum:bool ->

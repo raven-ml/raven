@@ -4455,6 +4455,13 @@ its lock and from samples the dashboard saw arrive.
   digest is `sha256`. The digest is computed as the file is written, and a
   cached file is returned without being read. A checkpoint its publisher
   names by digest, such as Whisper's on openaipublic, is fetched by name.
+- `Attention.attend` takes dense keys and values whose rows divide the
+  queries' batch: row `r` serves `batch / rows` consecutive lanes, as a
+  key-value head serves a group of query heads, and each lane's result is
+  the one it has over a copy of its row. The beams or samples of one input
+  share its keys with no copy: a row's lanes attend as one lane holding all
+  their queries, so each key is read once for them all. Such a call takes
+  no mask and no lengths, which would tell its lanes apart.
 - **Breaking:** `Linear`'s weight is `[outputs; inputs]`, the layout of
   PyTorch's and MLX's `Linear` and of the checkpoint files, where it was
   `[inputs; outputs]`: `Linear.apply p x` is `x @ p.wᵀ + p.b`, one

@@ -964,6 +964,91 @@ let test_grouped_equals_repeated () =
     (array (float 1e-5))
     (at repeated) (at grouped)
 
+(* Lanes that share dense rows: lane [i] of [batch] reads row
+   [i / (batch / rows)], and its result is the one it has over a copy of that
+   row, with sinks, eagerly and compiled. *)
+let test_shared_rows_equal_copies () =
+  Nx.Rng.with_key (Nx.Rng.key 31) @@ fun () ->
+  let case ~batch ~rows ~m =
+    let n = 2 and heads = 4 and kv_heads = 2 and d = 3 in
+    let q = Nx.Rng.normal Nx.float32 [| batch; heads; n; d |] in
+    let k = Nx.Rng.normal Nx.float32 [| rows; kv_heads; m; d |] in
+    let v = Nx.Rng.normal Nx.float32 [| rows; kv_heads; m; 2 |] in
+    let lanes = batch / rows in
+    let copy t =
+      Nx.take ~axis:0
+        (Nx.create Nx.int64 [| batch |]
+           (Array.init batch (fun i -> Int64.of_int (i / lanes))))
+        t
+    in
+    let sinks = Nx.Rng.normal Nx.float32 [| heads |] in
+    let f k v q = Attention.attend ~sinks q (Nx.Dense { k; v }) in
+    let msg = Printf.sprintf "%d lanes over %d rows of %d keys" batch rows m in
+    let expected = flat_of (f (copy k) (copy v) q) in
+    equal ~msg:(msg ^ ", eager") (array float_exact) expected
+      (flat_of (f k v q));
+    equal ~msg:(msg ^ ", compiled") (array (float 1e-6)) expected
+      (flat_of (Rune.jit' (f k v) q))
+  in
+  case ~batch:4 ~rows:1 ~m:5;
+  case ~batch:6 ~rows:2 ~m:5;
+  case ~batch:6 ~rows:3 ~m:1;
+  case ~batch:4 ~rows:2 ~m:0;
+  case ~batch:0 ~rows:2 ~m:5
+
+(* The cotangent of a shared row is the sum over the lanes that read it. *)
+let test_shared_rows_gradients () =
+  let f s seed =
+    Nx.create Nx.float64 s
+      (Array.init (numel s) (fun i ->
+           Float.sin ((Float.of_int i *. 1.7) +. seed)))
+  in
+  let p =
+    {
+      Qkvs64.q = f [| 4; 2; 3; 2 |] 1.;
+      k = f [| 2; 1; 4; 2 |] 2.;
+      v = f [| 2; 1; 4; 3 |] 3.;
+      sinks = f [| 2 |] 4.;
+    }
+  in
+  let loss { Qkvs64.q; k; v; sinks } =
+    let y = Attention.attend ~sinks q (Nx.Dense { k; v }) in
+    Nx.sum (Nx.mul y y)
+  in
+  grads_ok (Rune.check_grads qkvs64 loss p)
+
+(* A mask or lengths would tell lanes apart, which shared rows do not. *)
+let test_shared_rows_take_no_mask () =
+  let q = Nx.zeros Nx.float32 [| 4; 2; 1; 3 |] in
+  let kv = Nx.zeros Nx.float32 [| 2; 2; 5; 3 |] in
+  let refused f =
+    raises
+      (Invalid_argument
+         "Attention.attend: keys shared by several lanes take no mask and no \
+          lengths")
+      f
+  in
+  refused (fun () ->
+      Attention.attend ~mask:Nx.causal q (Nx.Dense { k = kv; v = kv }));
+  refused (fun () ->
+      Attention.attend
+        ~lengths:(Nx.full Nx.int64 [| 4 |] 5L)
+        q
+        (Nx.Dense { k = kv; v = kv }))
+
+let test_shared_rows_reject_non_divisors () =
+  let q = Nx.zeros Nx.float32 [| 4; 2; 1; 3 |] in
+  let kv rows = Nx.zeros Nx.float32 [| rows; 2; 5; 3 |] in
+  List.iter
+    (fun rows ->
+      raises
+        (Invalid_argument
+           "Attention.attend: k must have shape [rows; kv_heads; m; 3] and v \
+            [rows; kv_heads; m; dv], rows dividing 4")
+        (fun () ->
+          Attention.attend q (Nx.Dense { k = kv rows; v = kv rows })))
+    [ 0; 3; 8 ]
+
 let test_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
   let x = Nx.Rng.normal Nx.float64 [| 3; 4 |] in
@@ -3978,6 +4063,14 @@ let () =
              test "0-d lengths bound every row" test_lengths_0d;
              test "grouped keys equal repeated keys"
                test_grouped_equals_repeated;
+             test "lanes sharing dense rows equal lanes over copies"
+               test_shared_rows_equal_copies;
+             test "a shared row's gradient sums its lanes'"
+               test_shared_rows_gradients;
+             test "shared rows take no mask and no lengths"
+               test_shared_rows_take_no_mask;
+             test "rows that do not divide the lanes are rejected"
+               test_shared_rows_reject_non_divisors;
              test "gradients agree with finite differences" test_gradients;
              test "invalid geometry is rejected" test_rejects_bad_geometry;
            ];
