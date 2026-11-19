@@ -1861,9 +1861,30 @@ let load_tiff path =
   | [ d ] -> Nx_io.Tiff.samples d
   | _ -> failwith "bench_nx: one IFD"
 
+(* rows.h5's 8192 rows of 8 float32 values in chunks of 64 rows, each a
+   deflate stream (gen/rows.py), and every fourth row: 2048 windows of one
+   row, 16 to a chunk. [Hdf5.rows] decodes each of the 128 chunks once; a
+   window a row decodes a chunk 2048 times. *)
+let every_fourth = Array.init 2048 (fun i -> 4 * i)
+let one_row = Array.make 2048 1
+
+let rows_h5 () =
+  match Nx_io.load_hdf5 "rows.h5" with
+  | _, [ d ] -> d
+  | _ -> failwith "bench_nx: one dataset"
+
 let io_rows =
   Thumper.group "io"
     [
+      Thumper.bench_with_setup "hdf5-rows-2048-of-8192-chunked"
+        ~setup:rows_h5 (fun d ->
+          Nx_io.Hdf5.rows d ~row:every_fourth ~rows:one_row);
+      Thumper.bench_with_setup "hdf5-window-a-row-2048-of-8192-chunked"
+        ~setup:rows_h5 (fun d ->
+          Array.iter
+            (fun r ->
+              ignore (Nx_io.Hdf5.window d ~start:[| r; 0 |] ~shape:[| 1; 8 |]))
+            every_fourth);
       Thumper.bench_with_setup "save-npz-1024-one-element-entries" ~setup:npz
         ~teardown:(fun (path, _) -> Sys.remove path)
         (fun (path, a) -> Nx_io.save_npz path a);
