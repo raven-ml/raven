@@ -1,5 +1,5 @@
 (mdx
- (files index.md filters.md)
+ (files index.md filters.md design.md)
  (enabled_if
   (and
    (<> %{profile} sanitize)

@@ -13,6 +13,7 @@ omr lives in `dev/`, raven's sandbox: it is a library without a package and
 is never published.
 
 - `lib/omr.mli` is the API and states every rule.
+- `doc/design.md` explains the design to a reader new to raven.
 - `doc/` shows compositions: Whisper's log-mel frontend, MFCC, a streamed
   log-mel, Whisper's resampling, a learned equaliser streamed in a scan.
 - `test/` holds the laws and the cases against reference implementations.

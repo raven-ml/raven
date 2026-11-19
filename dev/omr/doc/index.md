@@ -280,3 +280,41 @@ let () =
   let rel = norm (Nx.sub (Nx.cast Nx.float64 y32) y64) /. norm y64 in
   assert (rel > 1e-4)
 ```
+
+## Defaults as arguments
+
+omr requires the conventions that programs choose differently: a window's
+sampling, a frame grid, a mel scale and a bank's normalisation. The table
+writes librosa's `stft` and `melspectrogram` defaults as omr's arguments.
+
+| librosa | omr |
+|---|---|
+| `window="hann"`, a periodic window | `Window.hann dt Periodic n_fft` |
+| `center=True`, `pad_mode="constant"` | ``~edge:`Zero ~ends:(n_fft / 2, n_fft / 2)`` |
+| `stft`'s `hop_length=win_length // 4` | `~hop:(n_fft / 4)` |
+| `melspectrogram`'s `hop_length=512` | `~hop:512` |
+| `power=2.0` | `re² + im²` of `stft` |
+| `htk=False`, `norm="slaney"` | `Mel.Slaney`, `Unit_area` |
+| `fmin=0.0`, `fmax=sr / 2`, `n_mels=128` | `Mel.bank`'s `?low`, `?high` and `128` |
+| `[…; bins; frames]` | `[…; frames; bins]` |
+
+At 22 050 Hz and `n_fft = 2048`, the default `melspectrogram` is:
+
+```ocaml
+let n_fft = 2048
+
+let librosa_grid =
+  Omr.Frames.v ~edge:`Zero ~ends:(n_fft / 2, n_fft / 2) ~window:n_fft ~hop:512
+
+let librosa_mel x =
+  let win = Omr.Window.hann Nx.float32 Omr.Window.Periodic n_fft in
+  let bank =
+    Omr.Mel.bank Nx.float32 Omr.Mel.Slaney Omr.Unit_area ~rate:22_050. ~n:n_fft
+      128
+  in
+  Nx.matmul (power (Omr.stft Nx.complex64 librosa_grid ~win x)) bank
+
+let () =
+  let x = Nx.zeros Nx.float32 [| 22_050 |] in
+  assert (Nx.shape (librosa_mel x) = [| (22_050 / 512) + 1; 128 |])
+```
