@@ -85,9 +85,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   value starts to pay at about 1100 extra operations an element on the
   host and past 2286 on CUDA (r3/audit.md). A price needs a launch cost and
   a byte rate as renderer fields and the target in the schedule's key
-- Routing ids lose their value bounds through `Lower_index.sort`'s `chosen`
-  (a reduce) and `Partial.local_ids` (a uint64 bitcast add), so no later
-  rule can read their range
 - AMD thread traces are not collected: through KFD they are parked (after a
   fault no queue of the process runs, so a trace can't be stopped); PCI and
   an amdgpu DRM submission remain
