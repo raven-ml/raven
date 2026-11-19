@@ -683,9 +683,9 @@ let check_greedy weights assets features =
 
 (* End to end *)
 
-(* [x]'s frames, its last repeated up to 3000: P3-impl/e2e_oracle.py keeps a
-   reference's frames up to the first of the floor frames past the audio, which
-   all equal it. *)
+(* [x]'s frames, its last repeated up to 3000: the oracle keeps a reference's
+   frames up to the first of the floor frames past the audio, which all equal
+   it. *)
 let frames x =
   let k = Nx.dim 0 x in
   Nx.concatenate ~axis:0
@@ -763,8 +763,8 @@ let check_features dir paths n =
    (pad_or_trim, then log_mel), the encoder and greedy decoding, against
    upstream's records, which decode upstream's log-mel of the samples load_audio
    gets from ffmpeg. [oracle] holds greedy/ (MODEL-PROTOCOL.jsonl and wer.tsv),
-   greedy64/, features/, and samples/ and ref64/ from P3-impl/e2e_oracle.py; our
-   logits at a differing step go to steps/. *)
+   greedy64/, features/, samples/ (ffmpeg's samples) and ref64/ (the float64
+   features); our logits at a differing step go to steps/. *)
 let check_e2e weights assets data subset oracle name =
   let dir = Filename.concat oracle in
   let paths =
@@ -942,7 +942,7 @@ let check_beam weights assets features beam subset name =
    excused iff upstream's gap is below [2 δ] or its [|t - x|] below [2 δ + ρ].
    [t] and [x] are computed at float64 from upstream's logits under our filter's
    bans before the rule. [dir] holds ours (NAME-PROTOCOL-ID-STEP.npy) and
-   upstream's (NAME-PROTOCOL-ID-STEP.upstream.npy, P2-impl/step_logits.py). *)
+   upstream's (NAME-PROTOCOL-ID-STEP.upstream.npy). *)
 let excuse weights assets greedy dir =
   let suffix = ".upstream.npy" in
   let releases = Hashtbl.create 4 in
@@ -1044,27 +1044,27 @@ let excuse weights assets greedy dir =
 
 (* Transcription
 
-   P4-impl/transcribe_oracle.py's records: for each recording of the long-form
-   corpus, upstream's transcribe's model.decode calls in order (each window's
-   seek, size, prompt, initial tokens, temperature, tokens, text, average log
-   probability, no-speech probability, compression ratio and zlib's length, and
-   for a greedy call its steps and float64 references), its segments in frames,
-   its text and its language. Three parts: - [L], the loop replayed:
-   Transcript.loop with each request answered by upstream's call at its place,
-   which must be the same request; then the windows, segments and text must be
-   upstream's. A fallback decided otherwise by our compressor alone is listed,
-   and that recording's replay ends there. - [M], the model at upstream's
-   states: each greedy call decoded from our whole-file log-mel sliced at
-   upstream's seek and size, after upstream's prompt. Tokens are exact or
-   excused at their first differing step ({!excuse}); average log probabilities
-   and no-speech probabilities are as accurate as upstream's; each fallback and
-   silence decision is upstream's unless a term lies within that accuracy of its
-   threshold, or our compressor alone decides otherwise (listed). - [E], free
-   running: Transcript.transcribe from the FLAC file, eager, each attempt
-   against upstream's call in order, until the first sampled one. At the first
-   differing attempt the tokens must be excused as in [M], or the decision as in
-   [M]; the recording ends there. A recording compared to its end must have
-   upstream's segments and text. Corpus WERs are reported. *)
+   The oracle's records: for each recording of the long-form corpus, upstream's
+   transcribe's model.decode calls in order (each window's seek, size, prompt,
+   initial tokens, temperature, tokens, text, average log probability, no-speech
+   probability, compression ratio and zlib's length, and for a greedy call its
+   steps and float64 references), its segments in frames, its text and its
+   language. Three parts: - [L], the loop replayed: Transcript.loop with each
+   request answered by upstream's call at its place, which must be the same
+   request; then the windows, segments and text must be upstream's. A fallback
+   decided otherwise by our compressor alone is listed, and that recording's
+   replay ends there. - [M], the model at upstream's states: each greedy call
+   decoded from our whole-file log-mel sliced at upstream's seek and size, after
+   upstream's prompt. Tokens are exact or excused at their first differing step
+   ({!excuse}); average log probabilities and no-speech probabilities are as
+   accurate as upstream's; each fallback and silence decision is upstream's
+   unless a term lies within that accuracy of its threshold, or our compressor
+   alone decides otherwise (listed). - [E], free running: Transcript.transcribe
+   from the FLAC file, eager, each attempt against upstream's call in order,
+   until the first sampled one. At the first differing attempt the tokens must
+   be excused as in [M], or the decision as in [M]; the recording ends there. A
+   recording compared to its end must have upstream's segments and text. Corpus
+   WERs are reported. *)
 
 module Tr = Whisper.Transcript
 
@@ -1698,33 +1698,33 @@ let usage () =
   prerr_endline
     "usage: check.exe tokenizer ASSETS ORACLE_TOKENIZER ORDINARY_JSON\n\
     \  ASSETS holds gpt2.tiktoken and multilingual.tiktoken; ORACLE_TOKENIZER\n\
-    \  the oracle's tokenizer directory; ORDINARY_JSON P1-impl/tok_tables.py's\n\
-    \  ordinary.json.\n\
+    \  the oracle's tokenizer directory; ORDINARY_JSON its ordinary.json.\n\
      usage: check.exe model WEIGHTS ASSETS ORACLE_P1 FEATURES GREEDY MODEL ID...\n\
-    \  WEIGHTS holds MODEL.pt; ASSETS the rank files; ORACLE_P1\n\
-    \  P1-impl/real_model.py's MODEL.ID.npz; FEATURES the oracle's\n\
-    \  ID.melN.short.npy; GREEDY the oracle's greedy MODEL-PROTOCOL.jsonl.\n\
+    \  WEIGHTS holds MODEL.pt; ASSETS the rank files; ORACLE_P1 the oracle's\n\
+    \  MODEL.ID.npz; FEATURES its ID.melN.short.npy; GREEDY\n\
+    \  test/gen/greedy.py's MODEL-PROTOCOL.jsonl.\n\
      usage: check.exe greedy WEIGHTS ASSETS FEATURES GREEDY GREEDY64 SUBSET \
      WER_TSV OUT MODEL\n\
-    \  GREEDY64 P2-impl/greedy64.py's MODEL-PROTOCOL.jsonl; SUBSET the\n\
-    \  oracle's subset.tsv; WER_TSV its greedy/wer.tsv; OUT where our logits\n\
-    \  at a step whose token differs from upstream's are written.\n\
+    \  GREEDY64 the oracle's float64 MODEL-PROTOCOL.jsonl; SUBSET\n\
+    \  test/gen/subset.py's subset.tsv; WER_TSV the oracle's greedy/wer.tsv;\n\
+    \  OUT where our logits at a step whose token differs from upstream's are\n\
+    \  written.\n\
      usage: check.exe e2e WEIGHTS ASSETS DATA SUBSET ORACLE MODEL\n\
     \  DATA the LibriSpeech directory SUBSET's paths start from; ORACLE holds\n\
     \  greedy/ (the greedy records and wer.tsv), greedy64/, features/, and\n\
-    \  P3-impl/e2e_oracle.py's samples/ and ref64/; steps/ there receives our\n\
-    \  logits at a step whose token differs from upstream's.\n\
+    \  samples/ and ref64/; steps/ there receives our logits at a step whose\n\
+    \  token differs from upstream's.\n\
      usage: check.exe beam WEIGHTS ASSETS FEATURES BEAM SUBSET MODEL\n\
-    \  BEAM P2b-impl/beam_oracle.py's MODEL's records.\n\
+    \  BEAM the oracle's beam records of MODEL.\n\
      usage: check.exe transcribe PART WEIGHTS ASSETS ORACLE MODEL LADDER\n\
     \  PART L (the loop replayed), M (the model at upstream's states) or E\n\
-    \  (free running); ORACLE holds P4-impl/transcribe_oracle.py's\n\
-    \  MODEL-LADDER.jsonl, audio/ and mel/; steps/ there receives our logits\n\
-    \  at a step whose token differs, and the calls as GREEDY records for\n\
-    \  excuse; LADDER default, greedy, cli, beam or notimestamps.\n\
+    \  (free running); ORACLE holds the oracle's MODEL-LADDER.jsonl, audio/\n\
+    \  and mel/; steps/ there receives our logits at a step whose token\n\
+    \  differs, and the calls as GREEDY records for excuse; LADDER default,\n\
+    \  greedy, cli, beam or notimestamps.\n\
      usage: check.exe excuse WEIGHTS ASSETS GREEDY DIR\n\
-    \  DIR holds greedy's logits at differing steps and upstream's, from\n\
-    \  P2-impl/step_logits.py or P4-impl/transcribe_steps.py.";
+    \  DIR holds greedy's logits at differing steps and upstream's.\n\
+     The README says what each input of the oracle holds.";
   exit 2
 
 let () =
