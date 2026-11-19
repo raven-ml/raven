@@ -2639,6 +2639,51 @@ let log10 x =
       let y = E.log2 ins.(0) in
       E.(where (finite w y) (fma y hi (y * lo)) (y * hi)))
 
+(* Taylor's coefficients of [sin (πx) / (πx)] in [x²], [(-1)ᵏ π²ᵏ / (2k + 1)!]
+   for [k] from 1 to 8, each the float64 nearest the exact value. The first term
+   left out is under 2⁻⁶³ where [|x|] is below ¼, a thousandth of float64's ulp
+   there. *)
+let sinc_coefficients =
+  [|
+    -0x1.a51a6625307d3p+0;
+    0x1.9f9cb402bc46cp-1;
+    -0x1.86a8e4720db67p-3;
+    0x1.ac6805cf350a6p-6;
+    -0x1.33816aa4607abp-9;
+    0x1.374719fab3915p-13;
+    -0x1.d42498d1ce099p-18;
+    0x1.0fc992ff39e13p-22;
+  |]
+
+let sinc_small = 0.25
+
+(* Below [|x| = ¼] the polynomial, whose derivatives of every order are its own:
+   the quotient's would cancel near [0], where [sin (πx)] rounds to [πx].
+   Elsewhere [sin (πx)] is [±sin (πr)] for the exact [r = x - k], [k] the
+   nearest integer, so the sine is [0] at every integer; the sign is [k]'s
+   parity. Each arm reads [x] where it is selected and a point of its domain
+   elsewhere, [0] and [1], so that the quotient's [0 / 0] at [0] does not reach
+   the gradient. *)
+let sinc x =
+  float_map ~by:"Nx.sinc" [ x ] (fun w ins ->
+      let lit = E.const w and x = ins.(0) in
+      let small = E.(abs x < lit sinc_small) in
+      let xs = E.(where small x (lit 0.)) in
+      let t = E.(xs * xs) in
+      let n = Array.length sinc_coefficients in
+      let p = ref (lit sinc_coefficients.(n - 1)) in
+      for k = n - 2 downto 0 do
+        p := E.fma t !p (lit sinc_coefficients.(k))
+      done;
+      let near = E.fma t !p (lit 1.) in
+      let xq = E.(where small (lit 1.) x) in
+      let k = E.round xq in
+      let half = E.(k * lit 0.5) in
+      let odd = E.(floor half <> half) in
+      let pi = lit Float.pi in
+      let q = E.(sin (pi * (xq - k)) / (pi * xq)) in
+      E.(where small near (where odd (-q) q)))
+
 (* Past [big] a square would overflow float32: [log (2 x)] is the function to
    the format's precision there. Below [tiny], [x] is. *)
 let big = 0x1p28

@@ -55,6 +55,7 @@ val clamped_log : kind
     operands also draws tuples from its domain. *)
 
 val asinh : kind
+val sinc : kind
 val acosh : kind
 val atanh : kind
 val rsqrt : kind

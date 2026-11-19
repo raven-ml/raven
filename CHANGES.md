@@ -3467,6 +3467,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- New `Nx.sinc`, `sin (πx) / (πx)`: a polynomial below `|x| = ¼`, so its
+  derivatives at and near `0` are accurate, and exactly `0` at every nonzero
+  integer.
 - `Nx_io.Pytorch.find` reads a checkpoint's value by a path of dict keys, as
   `find [ "args"; "dim" ] ckpt`, through the `Shared` and `Ref` a file that
   holds a dict twice loads as, which a hand walk of `Dict` lists missed.

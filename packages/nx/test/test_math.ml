@@ -200,6 +200,106 @@ let law_hypot (type s) (dt : (float, s) D.t) (x, y) =
   let xs = Nx.to_array x and ys = Nx.to_array y in
   within dt 3. xs (Array.map2 Float.hypot xs ys) (Nx.to_array (Nx.hypot x y))
 
+(* sinc *)
+
+(* [π] less its float64 head. *)
+let pi_tail = 0x1.1a62633145c07p-53
+
+(* [sin (πx) / (πx)] within about an ulp of float64: [sin (πx)] is [±sin (πr)]
+   for [r = x - k], [k] the nearest integer, exact; [πr] and [πx] are each a
+   head and a tail by fma, and the quotient is corrected by its residual. *)
+let sinc_ref x =
+  if x = 0. then 1.
+  else if not (Float.is_finite x) then Float.nan
+  else if Float.is_integer x then 0.
+  else
+    let k = Float.round x in
+    let times a =
+      let h = Float.pi *. a in
+      (h, Float.fma Float.pi a (-.h) +. (pi_tail *. a))
+    in
+    let sh, sl = times (x -. k) and dh, dl = times x in
+    let s = Float.sin sh +. (sl *. Float.cos sh) in
+    let q = s /. dh in
+    let q = q +. ((Float.fma (-.q) dh s -. (q *. dl)) /. dh) in
+    if Float.rem k 2. = 0. then q else -.q
+
+(* Each [sinc x] is within [k] ulps of [dt] of the exact value, and [0], of
+   either sign, where that is [0]. nx states no bound for sinc. Its parts give
+   one of 8 ulps: [sin]'s stated 2, which is 4 relative at most, and one
+   rounding each of [π], [πr], [πx] and the quotient, [π]'s entering once since
+   [πr cot πr] lies in [[0, 1]]. The tolerances, 4 ulps at float32 and 6 at
+   float64, are tighter: the largest errors measured over ten million draws, 2.9
+   and 5 ulps against this reference, which is itself within an ulp, rounded up.
+   They are a baseline that a less accurate form would break. *)
+let law_sinc (type s) (dt : (float, s) D.t) k (x : (float, s, Nx.host) Nx.t) =
+  let xs = Nx.to_array x and vs = Nx.to_array (Nx.sinc x) in
+  Array.iteri
+    (fun i x ->
+      let r = sinc_ref x and v = vs.(i) in
+      let ok =
+        if Float.is_nan r then Float.is_nan v
+        else if r = 0. then v = 0.
+        else Float.abs (v -. r) <= k *. ulp dt r
+      in
+      if not ok then
+        failf "at %a: %a, the exact value %a, beyond %g ulps" float_pp x
+          float_pp v float_pp r k)
+    xs
+
+(* Values in [-8, 8], near [0], near the integers, where the zeros lie, and from
+   bytes. *)
+let sinc_values (type s) (dt : (float, s) D.t) =
+  let open Gen in
+  let near_int =
+    let+ n = int_range (-6) 6 and+ e = int_range 1 40 and+ s = bool in
+    Float.of_int n +. Float.ldexp (if s then 1. else -1.) (-e)
+  in
+  let one =
+    frequency
+      [
+        (3, float_range (-8.) 8.);
+        (1, map (fun e -> Float.ldexp 1. (-e)) (int_range 1 1000));
+        (2, near_int);
+      ]
+  in
+  let+ v = array ~size:(constant samples) one and+ b = drawn dt samples in
+  Nx.concatenate ~axis:0 [ Nx.create dt [| samples |] v; b ]
+
+let law_sinc_drawn dt k x =
+  let has p = Array.exists p (Nx.to_array x) in
+  cover "below 1/4, not 0" (has (fun x -> x <> 0. && Float.abs x < 0.25));
+  cover "from 1/4 to 8"
+    (has (fun x -> Float.abs x >= 0.25 && Float.abs x <= 8.));
+  cover "near an integer"
+    (has (fun x -> x <> Float.round x && Float.abs (x -. Float.round x) < 1e-3));
+  law_sinc dt k x
+
+(* In every float format: [1] at both zeros, NaN at NaN and the infinities, and
+   [0] at the integers but [0], up to the largest finite value. *)
+let sinc_specials () =
+  let check (type s) (dt : (float, s) D.t) =
+    let f = D.float_format dt in
+    let small = Array.init 32 (fun i -> Float.of_int (i + 1)) in
+    let large = [| 1000.; 12345.; 0x1p23 -. 1.; 0x1p52 +. 2.; f.max_finite |] in
+    let ints = Array.append small large in
+    let ints = Array.append ints (Array.map Float.neg ints) in
+    Array.iteri
+      (fun i v ->
+        let x = D.of_float dt ints.(i) in
+        if Float.is_integer x && x <> 0. && v <> 0. then
+          failf "%s: sinc %h is %h, not 0" (D.name dt) x v)
+      (values Nx.sinc dt ints);
+    equal (array float_exact) [| 1.; 1. |] (values Nx.sinc dt [| 0.; -0. |]);
+    if f.infinities then
+      equal (array bool) [| true; true; true |]
+        (Array.map Float.is_nan
+           (values Nx.sinc dt [| nan; infinity; neg_infinity |]))
+  in
+  List.iter
+    (fun (D.Any dt) -> match D.kind dt with D.Float -> check dt | _ -> ())
+    D.all
+
 (* float32 log and asinh *)
 
 (* [e^-3] rounded to float32: its exact log lies 0.13 ulp below [-3.]. *)
@@ -428,6 +528,14 @@ let math =
           (law_hypot D.Float32);
         test "special values" hypot_specials;
       ];
+    group "sinc"
+      [
+        prop "float64 within 6 ulps" (sinc_values D.Float64)
+          (law_sinc_drawn D.Float64 6.);
+        prop "float32 within 4 ulps" (sinc_values D.Float32)
+          (law_sinc_drawn D.Float32 4.);
+        test "zeros, integers, infinities and NaN" sinc_specials;
+      ];
     group "roundeven"
       [
         test "float32 against float64 ties to even" roundeven_float32;
@@ -441,6 +549,7 @@ let math =
         narrow "acosh" (fun x -> Nx.acosh x);
         narrow "atanh" (fun x -> Nx.atanh x);
         narrow "rsqrt" (fun x -> Nx.rsqrt x);
+        narrow "sinc" (fun x -> Nx.sinc x);
         narrow "hypot" (fun x -> Nx.hypot x (Nx.flip x));
       ];
     group "special values"

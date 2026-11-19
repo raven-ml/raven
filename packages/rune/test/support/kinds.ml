@@ -1819,6 +1819,13 @@ let asinh =
       ("|x| from 2^28, finite", fun _ e -> mag e >= big && finite_pos (mag e));
     ]
 
+let sinc =
+  composed1 "sinc" { f1 = Nx.sinc } [ 0.25; 0.; 1.; 0.5 ] [ 1.; 1e4 ]
+    [
+      ("|x| below 1/4", fun _ e -> mag e < 0.25);
+      ("|x| from 1/4, finite", fun _ e -> mag e >= 0.25 && finite_pos (mag e));
+    ]
+
 let acosh =
   composed1 "acosh" { f1 = Nx.acosh } [ 1.; 2.; big; 1.5 ] [ 2.; 1e4 ]
     [

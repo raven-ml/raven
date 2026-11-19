@@ -26,6 +26,7 @@ let unary =
   Kinds.
     [
       asinh;
+      sinc;
       acosh;
       atanh;
       rsqrt;
