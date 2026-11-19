@@ -40,3 +40,11 @@ let () =
 let () =
   let inner = Rune.jit' ~beam:1 (fun a -> Nx.add_s (Nx.mul a a) 0.25) in
   ignore (Rune.jit' (fun a -> Nx.neg (inner a)) (x ()))
+
+(* A concatenation along a later axis runs its four pieces as one launch:
+   each piece is a kernel, searched. *)
+let () =
+  let f a =
+    Nx.concatenate ~axis:1 [ Nx.sin a; Nx.cos a; Nx.exp a; Nx.sqrt a ]
+  in
+  ignore (Rune.jit' ~beam:2 f (Nx.ones Nx.float32 [| 4; 4 |]))

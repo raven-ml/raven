@@ -7694,6 +7694,11 @@ reason and its pins.
     reading shared storage reads it as a parameter passed once; no arithmetic
     is shared across members, as fused kernels did, since `Schedule.schedule`
     keeps each kernel's own compute shared by D137 before kernels exist.
+  - Under a beam width (`Realize.compile_linear`), each member asks for the
+    search, as `pm_beam` asks of each called kernel, and is searched as a
+    kernel of its own, timed outside its launch (`Codegen.launcher`). The
+    launch's own sink asks for none; its program is not kept on disk while a
+    member asks for one (`Codegen.to_program`).
   - A schedule, ordered by its storage (D183), and a program made per run are
     launches of what they make: storage is live only from a member's first
     use, so a piece's store waits for the value it reads and no launch of them
@@ -7763,7 +7768,11 @@ reason and its pins.
   carry in place as its calls apart do` and the custom-kernel cases of two
   values of one name, on each GPU present; `Jit › variables › merged custom
   kernels of one value read each run's` and `› of two values keep each its
-  own`; rune's `Jit › fully sharded › *`. Metal's cap: `test_launch`'s case
+  own`; rune's `Jit › fully sharded › *`. The members' search: `Jit JITBEAM
+  › JITBEAM unset › every kernel is searched, in launches and loops too`, its
+  `JITBEAM=3` case, `Realize › lower_and_compile with a beam search ›
+  searches each launch's members with the widths they ask for, in order, one
+  at a time` and rune's `search.t`. Metal's cap: `test_launch`'s case
   of 512 one-element pieces on Metal and rune's Set of rows at 878 written
   positions (`Row_sets.examples`). The rows `launch/host/*`, `launch/cuda/*`,
   `launch/lower-256`, rune's `Cuda/cat-16-columns-of-exp-64x64`, and norn's

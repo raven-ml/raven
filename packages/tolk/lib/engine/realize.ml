@@ -255,7 +255,19 @@ let lower_and_compile ?search ~targets linear =
          (c, replace c ~src:(prg :: List.tl (src c))))
        calls)
 
-(* A kernel that asks for no beam search asks for one of the setting's width. *)
+(* [c], a call of a kernel's sink, with the kernel asking for a beam search of
+   [width] if it asks for none. *)
+let with_beam width c =
+  let sink = nth c 0 in
+  match arg sink with
+  | Kernel k when k.beam = 0 ->
+      let sink = replace sink ~arg:(Kernel { k with beam = width }) in
+      replace c ~src:(sink :: List.tl (src c))
+  | _ -> c
+
+(* A kernel that asks for no beam search asks for one of the setting's width.
+   A launch's members are kernels, each optimised on its own, so each is
+   searched; the launch, whose own sink no search optimises, is left alone. *)
 let pm_beam width =
   Pattern_matcher.v (fun () ->
       [
@@ -264,14 +276,17 @@ let pm_beam width =
              ~src:[ Upat.op ~name:"sink" Op.Sink ]
              Op.Call)
           (fun m ->
-            match arg (m "sink") with
-            | Kernel k when k.beam = 0 ->
-                let sink =
-                  replace (m "sink") ~arg:(Kernel { k with beam = width })
-                in
-                Some
-                  (replace (m "call") ~src:(sink :: List.tl (src (m "call"))))
-            | _ -> None);
+            let call = m "call" and sink = m "sink" in
+            let call' =
+              if not (Shape.is_launch sink) then with_beam width call
+              else
+                let members = List.map (with_beam width) (src sink) in
+                let sink = replace sink ~src:members in
+                replace call ~src:(sink :: List.tl (src call))
+            in
+            (* Nodes are hash-consed: a call none of whose kernels changed is
+               [call] itself. *)
+            if call' == call then None else Some call');
       ])
 
 let compile_linear ?search ~targets linear =

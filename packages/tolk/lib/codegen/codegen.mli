@@ -152,7 +152,9 @@ val to_program :
     program's.
 
     A launch ({!Shape.is_launch}) runs its members at once. Each member is
-    lowered as a kernel of its own, with its optimisations, its check
+    lowered as a kernel of its own, with its optimisations (a member that asks
+    for a beam search is searched with [beam] as a kernel is, its candidates
+    timed alone, outside the launch), its check
     ({!Uniform.check}) and its launch dimensions, and its instructions become
     a body the launch calls, members of one kernel one body, each passed its
     hardware indices, its named variables and, on the host, its split loop's
@@ -197,7 +199,8 @@ val to_program :
     read back is not checked against {!Spec.program} again. An entry that does
     not read as a program up to its source is made anew and replaced. A program
     is kept on disk only while its compiler keeps its binaries there, and the
-    program of a kernel that asks for a beam search is not.
+    program of a kernel that asks for a beam search, or of a launch one of
+    whose members does, is not.
 
     When the setting {!Setting.debug} is [3] or more, the optimisations applied
     are printed on standard output, from [4] the source too, and from [7] the
@@ -227,8 +230,9 @@ val to_programs :
     two that differ in their names alone: the text is compiled once, by the
     first worker to reach its compile, and another worker that renders it
     waits for that compile, and compiles it itself if that compile raised.
-    When a kernel asks for a beam search, whose timings concurrent compiles
-    would disturb, each kernel is made in turn, in order, by {!to_program}.
+    When a kernel, or a member of a launch, asks for a beam search, whose
+    timings concurrent compiles would disturb, each kernel is made in turn,
+    in order, by {!to_program}.
     A kernel another domain is making at once may be made twice, and the
     first made is kept.
 

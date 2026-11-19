@@ -2570,12 +2570,12 @@ type member = {
 }
 
 (* The member of the kernel [b], lowered once for every call of it. *)
-let lower_member ctx b ~nargs =
+let lower_member ?beam ctx b ~nargs =
   let b =
     graph_rewrite ~calls:Skip ~pass:Once ~ctx b (After_sources pm_lower_calls)
   in
   let optimize = not (kernel_of b).optimized in
-  let low = full_rewrite_to_sink ~optimize b ctx.ren in
+  let low = full_rewrite_to_sink ~optimize ?beam b ctx.ren in
   let nodes = toposort ~calls:Skip low in
   let params =
     List.filter_map
@@ -2685,7 +2685,7 @@ let add_count a b =
   | Int x, Sym _ | Sym _, Int x -> Int x
   | Sym _, Sym _ -> Int 0
 
-let launcher ren ast =
+let launcher ?beam ren ast =
   let ctx = { ren; names = Hashtbl.create 8 } in
   (* Members of one kernel are lowered once. *)
   let lowered = Tbl.create 8 in
@@ -2697,7 +2697,7 @@ let launcher ren ast =
           match Tbl.find_opt lowered b with
           | Some (n, m) when n = nargs -> m
           | _ ->
-              let m = lower_member ctx b ~nargs in
+              let m = lower_member ?beam ctx b ~nargs in
               Tbl.replace lowered b (nargs, m);
               m
         in
@@ -2846,7 +2846,7 @@ let launcher ren ast =
   end
 
 let linearized ?beam ?optimize ast (ren : Renderer.t) =
-  let ast = if Shape.is_launch ast then launcher ren ast else ast in
+  let ast = if Shape.is_launch ast then launcher ?beam ren ast else ast in
   let optimize =
     match optimize with
     | Some o -> o
@@ -2969,10 +2969,20 @@ let program_key ast ren = keyed (params ast) ren
    compiler's entry for that source, so each binary is stored once. A kernel
    that asks for a beam search is not kept, since its program is what the
    search found. *)
-let kept (k : kernel_info) (ren : Renderer.t) =
+let kept width (ren : Renderer.t) =
   Setting.value Setting.ccache
   && Option.is_some (Renderer.Compiler.cachekey ren.compiler)
-  && k.beam = 0
+  && width = 0
+
+(* The widest beam search the kernel [ast] asks for: its own, or for a launch
+   its members', each searched as a kernel of its own. *)
+let searched_width ast =
+  let k = kernel_of ast in
+  if not (Shape.is_launch ast) then k.beam
+  else
+    List.fold_left
+      (fun w m -> max w (kernel_of (body m)).beam)
+      k.beam (src ast)
 
 let rendered prg = op prg = Op.Program && List.length (src prg) = 3
 
@@ -2985,21 +2995,21 @@ exception Unkept
 
 (* A program up to its source, made or read back from disk. [only_read]
    raises [Unkept] where it would render. *)
-let rendered_program ?beam ~only_read ~key ~kernel ast (ren : Renderer.t) =
+let rendered_program ?beam ~only_read ~key ~width ast (ren : Renderer.t) =
   let render () =
     if only_read then raise_notrace Unkept;
     let prg = linearized ?beam ast ren in
     Option.get (do_render ren prg (nth prg 1))
   in
-  if not (kept kernel ren) then render ()
+  if not (kept width ren) then render ()
   else fst (Graph.cached ~table:"to_program" ~key ~valid:rendered render)
 
 (* A program read back is compiled as a made one is, so it shows its source
    from DEBUG 4 and its instructions from 7. [only_read] makes the program
    from what the disk keeps alone, and raises [Unkept] for want of it, before
    it shows anything. *)
-let made_program ?beam ~only_read ~key ~kernel ast (ren : Renderer.t) =
-  let prg = rendered_program ?beam ~only_read ~key ~kernel ast ren in
+let made_program ?beam ~only_read ~key ~width ast (ren : Renderer.t) =
+  let prg = rendered_program ?beam ~only_read ~key ~width ast ren in
   let compile =
     if not only_read then Renderer.Compiler.compile_cached
     else
@@ -3017,19 +3027,19 @@ let made_program ?beam ~only_read ~key ~kernel ast (ren : Renderer.t) =
 let to_program_cache = (Helpers.Memo.create () : Ops.t Helpers.Memo.t)
 
 let to_program ?beam ast ren =
-  let kernel = kernel_of ast in
+  let width = searched_width ast in
   let p = params ast in
   let key = keyed p ren in
   Helpers.Memo.get to_program_cache key (fun () ->
-      made_program ?beam ~only_read:false ~key ~kernel p.kernel ren)
+      made_program ?beam ~only_read:false ~key ~width p.kernel ren)
 
 let read ast ren =
-  let kernel = kernel_of ast in
+  let width = searched_width ast in
   let p = params ast in
   let key = keyed p ren in
   match
     Helpers.Memo.try_get to_program_cache key (fun () ->
-        made_program ~only_read:true ~key ~kernel p.kernel ren)
+        made_program ~only_read:true ~key ~width p.kernel ren)
   with
   | m -> m
   | exception Unkept -> None
@@ -3050,16 +3060,16 @@ let to_programs ?beam kernels =
     fresh
   in
   let render (ast, (ren : Renderer.t)) =
-    let kernel = kernel_of ast in
+    let width = searched_width ast in
     let key = keyed (params ast) ren in
-    let prg = rendered_program ?beam ~only_read:false ~key ~kernel ast ren in
+    let prg = rendered_program ?beam ~only_read:false ~key ~width ast ren in
     let source = compiled_source ren prg (nth prg 2) in
     { ren; key; prg; source }
   in
   let kernels = List.filter fresh kernels in
   (* A beam search times its candidates, which concurrent compiles would
      disturb: kernels then make their programs one at a time, in order. *)
-  if List.exists (fun (ast, _) -> (kernel_of ast).beam > 0) kernels then
+  if List.exists (fun (ast, _) -> searched_width ast > 0) kernels then
     List.iter (fun (ast, ren) -> ignore (to_program ?beam ast ren)) kernels
   else
   (* Each of up to [PARALLEL] workers takes kernels to render until none is

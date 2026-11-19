@@ -502,6 +502,23 @@ let beam =
           equal (list int) [ 2; 3; 4; 5 ] (widths ());
           equal int ~msg:"searches at once" 1 (peak ()));
       test
+        "searches each launch's members with the widths they ask for, in \
+         order, one at a time" (fun () ->
+          let search, widths, peak = recording_search () in
+          let calls =
+            List.map
+              (fun k -> Ops.call k [ storage 4; storage 4 ])
+              (beam_kernels ())
+          in
+          let launch i =
+            Shape.launch [ List.nth calls i; List.nth calls (i + 1) ]
+          in
+          ignore
+            (Realize.lower_and_compile ~search ~targets
+               (linear [ launch 0; launch 2 ]));
+          equal (list int) [ 2; 3; 4; 5 ] (widths ());
+          equal int ~msg:"searches at once" 1 (peak ()));
+      test
         "raises Invalid_argument for a kernel that asks for one when none is \
          given" (fun () ->
           rejects (fun () ->

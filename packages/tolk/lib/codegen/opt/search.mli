@@ -101,7 +101,9 @@ val beam_search :
     not be on another.
 
     A kernel is compiled for [k]'s renderer named ["test"], as the compile
-    of the kernel it chooses lowers it: staged and, on the host, in blocks.
+    of the kernel it chooses lowers it: staged and, on the host, in blocks. A
+    launch's member is compiled and timed as a kernel of its own, outside its
+    launch, whose threads are the most any of its members has.
     It is first linearized ({!Codegen.linearize} [~optimize:true]), so its
     binary is the one that runs with its optimisations, and dropped if it has
     {!Setting.beam_uops_max}

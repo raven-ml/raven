@@ -93,10 +93,10 @@ val lower_and_compile :
     compiled once: a key whose program this process has made or the disk
     keeps ({!Codegen.read}) takes it, read on the calling domain, and the
     others, one kernel of each, are made together in parallel
-    ({!Codegen.to_programs}), except when one of them asks for a beam search:
-    the search times candidates ([search]), which a concurrent compilation
-    would disturb, so they are then compiled in order. [search] is
-    {!Codegen.to_program}'s [beam].
+    ({!Codegen.to_programs}), except when one of them, or a member of a
+    launch, asks for a beam search: the search times candidates ([search]),
+    which a concurrent compilation would disturb, so they are then compiled
+    in order. [search] is {!Codegen.to_program}'s [beam].
 
     Raises as {!Codegen.to_program} does, [Invalid_argument] if a kernel's
     first storage argument names no device or {!Device.renderer} finds no
@@ -129,7 +129,8 @@ val compile_linear :
 (** [compile_linear ~search ~targets linear] is the schedule [linear], whose
     devices compile for the targets [targets] gives, ready to link and run:
     + when the setting {!Setting.beam} is [1] or more, each kernel that asks for
-      no beam search asks for one of that width;
+      no beam search asks for one of that width, wherever its call lies: in a
+      loop, or as a launch's member ({!Shape.is_launch});
     + its kernels are compiled ({!lower_and_compile}, with [search]).
 
     Each call of the result is a call of a compiled {!Op.Program} (a kernel), or

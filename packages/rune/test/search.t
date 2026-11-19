@@ -4,7 +4,8 @@ search.ml's order: the function given width 1; none for the function
 given none; none for width 0 under BEAM=1; the function given width 2,
 once, though called again under BEAM=3 and JITBEAM=3; the three
 kernels of a gradient's programs derived from a function given width 1;
-and none for a function given width 1 inlined in one given none.
+none for a function given width 1 inlined in one given none; and the
+four pieces of a concatenation given width 2, which run as one launch.
 
   $ RUNE_JIT_DEBUG=1 CACHEDB=$PWD/cache ./search.exe 2>&1 | grep searched
   rune.jit: searched a kernel at width 1
@@ -12,3 +13,7 @@ and none for a function given width 1 inlined in one given none.
   rune.jit: searched a kernel at width 1
   rune.jit: searched a kernel at width 1
   rune.jit: searched a kernel at width 1
+  rune.jit: searched a kernel at width 2
+  rune.jit: searched a kernel at width 2
+  rune.jit: searched a kernel at width 2
+  rune.jit: searched a kernel at width 2

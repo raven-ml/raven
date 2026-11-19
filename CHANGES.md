@@ -1564,6 +1564,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A beam width (`BEAM`, `JITBEAM`, `Rune.jit ~beam`) searches the members
+  of a launch too (`Realize.compile_linear`). They kept the hand-coded
+  optimisations, so a concatenation's pieces and a step's one-element
+  kernels ran unsearched (D404).
 - A bitcast of elements that lie in the outer padding of a value padded
   twice (`Shape.pad`) compiles: the padding's value lost its type once the
   inner value folded away, and compiling raised `no unsigned integer of 100
