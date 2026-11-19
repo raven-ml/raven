@@ -48,3 +48,10 @@ val occupy : unit -> bool
 val occupied : unit -> bool
 (** [occupied ()] is [true] once an {!occupy}'s job runs its units, until
     it returns. *)
+
+val compacting : (unit -> 'a) -> 'a * bool
+(** [compacting f] is [f ()], where at the calling thread's first release of
+    the domain lock within [f] another domain compacts the heap before the
+    thread goes on, or until 10 s pass: it empties every minor heap, which
+    moves every live young block, and moves blocks out of the major heap's
+    sparse pools. The second component is whether [f] released the lock. *)

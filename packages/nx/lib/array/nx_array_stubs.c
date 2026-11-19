@@ -1117,6 +1117,13 @@ value nx_array_set(value v, value vp, value x) {
 
 /* Bulk access */
 
+/* The elements of the loop [l]. */
+static int64_t loop_numel(const nx_loop *l) {
+  int64_t n = 1;
+  for (int i = 0; i < l->rank; i++) n *= l->extent[i];
+  return n;
+}
+
 enum { TO_FLAT, TO_IMMEDIATE, TO_BOXED };
 
 /* How a dtype's values lie in an OCaml array: flat doubles, immediates, or
@@ -1159,8 +1166,8 @@ static void double_to_f16(const double *src, uint16_t *dst, size_t n) {
 typedef struct {
   const nx_array *a;
   const nx_loop *l;
-  value out;
-  int64_t k; /* the next element of [out] */
+  value *words; /* the OCaml array's body, or a release's buffer */
+  int64_t k;    /* the next element of [words] */
 } to_ctx;
 
 /* Writes a run of flat or immediate elements: no allocation. */
@@ -1173,10 +1180,10 @@ static void to_run(void *ctx, const int64_t *at, int64_t len) {
   if (representation(dt) == TO_IMMEDIATE) {
     /* Immediates need no write barrier. */
     for (int64_t j = 0; j < len; j++, p += step)
-      Field(c->out, c->k++) = Val_long(load_int(a->base, dt, p));
+      c->words[c->k++] = Val_long(load_int(a->base, dt, p));
     return;
   }
-  double *dst = (double *)Op_val(c->out) + c->k;
+  double *dst = (double *)c->words + c->k;
   c->k += len;
   /* A loop per format, the format's decoder inlined in it. */
 #define DECODE(T, decode)                                                 \
@@ -1203,10 +1210,28 @@ static void to_run(void *ctx, const int64_t *at, int64_t len) {
 #undef DECODE
 }
 
+/* With the domain lock released, C code touches no OCaml data: a
+   collection that another domain or thread starts may move it. So a
+   released to_array goes through a buffer of the OCaml array's bytes,
+   allocated for the call: it releases the lock, converts the array's
+   memory into the buffer, and copies the buffer into the OCaml array once
+   it holds the lock again. That costs memory as large as the OCaml array,
+   which an overcommitting system may grant and then kill the process for,
+   and a pass over it holding the lock, as long as the held copy it would
+   save. What a release buys is not waiting on the system with the lock
+   held, which only a read of borrowed memory does, its cold pages faulted
+   in from storage: to_array releases there alone, once, since each
+   reacquisition may wait for a busy thread of the domain to block or
+   yield. of_array writes fresh host memory, which the host holds, and
+   holds the lock. Where the buffer cannot be had, to_array holds it
+   throughout. */
+static int to_array_releases(const nx_array *a) { return a->borrowed; }
+
 /* to_array: reads [v]'s elements, in C order of indices, into [out], an
-   OCaml array of their number, flat floats or immediates. It allocates
-   nothing past the door's wait; elements that box go through
-   nx_array_to_bigarray. */
+   OCaml array of their number, flat floats or immediates. Over borrowed
+   memory it reads them with the domain lock released, into a buffer. It
+   allocates no OCaml value past the door's wait. Elements that box go
+   through nx_array_to_bigarray. */
 value nx_array_to_array(value v, value out) {
   CAMLparam1(out);
   nx_operand in = {v, nx_array_dtype(v), 0};
@@ -1216,8 +1241,19 @@ value nx_array_to_array(value v, value out) {
   int e = nx_read(1, &in, &a);
   if (e) CAMLreturn(Val_int(e));
   if (!(e = nx_coalesce(1, &a, &l))) {
-    to_ctx c = {&a, &l, out, 0};
+    size_t w = representation(a.dtype) == TO_FLAT ? sizeof(double)
+                                                    : sizeof(value);
+    size_t bytes = (size_t)loop_numel(&l) * w;
+    void *buf = to_array_releases(&a) ? malloc(bytes > 0 ? bytes : 1) : NULL;
+    to_ctx c = {&a, &l, buf != NULL ? buf : Op_val(out), 0};
+    if (buf != NULL) caml_enter_blocking_section_no_pending();
     walk(1, &l, &c, to_run);
+    if (buf != NULL) {
+      caml_leave_blocking_section();
+      /* Flat floats and immediates need no write barrier. */
+      memcpy(Op_val(out), buf, bytes);
+      free(buf);
+    }
   }
   nx_done(1, &a);
   CAMLreturn(Val_int(e));

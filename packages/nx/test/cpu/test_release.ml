@@ -418,27 +418,126 @@ let borrowed =
           in
           let small = A.of_array D.Float32 [| 64 |] (Array.make 64 1.) in
           let ints = A.of_array D.Int64 [| 64 |] (Array.make 64 1L) in
-          let large = f32 [| 1 lsl 16 |] in
+          let int8s = A.of_array D.Int8 [| 64 |] (Array.make 64 1) in
+          let n = 1 lsl 16 in
+          let large = f32 [| n |] and few = Array.make 64 1. in
+          (* Borrows made outside the calls, whose mapping may release. *)
+          let mapped_small = mapped small and bigarray_small = bigarray small in
+          let mapped_ints = mapped ints and mapped_int8s = mapped int8s in
           equal
             (list (pair string bool))
             [
               ("a copy of a borrow", true);
               ("a copy of a bigarray", true);
               ("int64s out of a borrow", true);
+              ("floats out of a borrow", true);
+              ("int8s out of a borrow", true);
               ("a copy of 256 KiB", true);
               ("a copy of 256 B", false);
+              ("floats out of 256 B", false);
+              ("floats into 256 B", false);
             ]
             (List.map
                (fun (what, f) -> (what, releases f > 0))
                [
-                 ("a copy of a borrow", fun () -> ignore (A.copy (mapped small)));
+                 ("a copy of a borrow", fun () -> ignore (A.copy mapped_small));
                  ( "a copy of a bigarray",
-                   fun () -> ignore (A.copy (bigarray small)) );
+                   fun () -> ignore (A.copy bigarray_small) );
                  ( "int64s out of a borrow",
-                   fun () -> ignore (A.to_array (mapped ints)) );
+                   fun () -> ignore (A.to_array mapped_ints) );
+                 ( "floats out of a borrow",
+                   fun () -> ignore (A.to_array mapped_small) );
+                 ( "int8s out of a borrow",
+                   fun () -> ignore (A.to_array mapped_int8s) );
                  ("a copy of 256 KiB", fun () -> ignore (A.copy large));
                  ("a copy of 256 B", fun () -> ignore (A.copy small));
+                 ("floats out of 256 B", fun () -> ignore (A.to_array small));
+                 ( "floats into 256 B",
+                   fun () -> ignore (A.of_array D.Float32 [| 64 |] few) );
                ]));
+      test
+        "to_array of a borrow gives its elements while a compaction runs in \
+         its release"
+        (fun () ->
+          (* A compaction moves young blocks: the OCaml arrays of a small
+             borrow's elements are young, and a borrow's call releases once,
+             so the compaction lands in its walk. *)
+          let floats k = Array.init k (fun i -> float_of_int (i - 7)) in
+          let ints k = Array.init k (fun i -> (i mod 255) - 127) in
+          let once f =
+            let y = ref [||] in
+            let ~releases, ~held:_, ~cpu:_ =
+              Nx_release_support.watch (fun () -> y := f ())
+            in
+            (!y, releases)
+          in
+          let x = mapped (A.of_array D.Float32 [| 64 |] (floats 64)) in
+          equal ~msg:"floats out of a borrow"
+            (pair (pair (array float_exact) int) bool)
+            ((floats 64, 1), true)
+            (Nx_release_support.compacting (fun () ->
+                 once (fun () -> A.to_array x)));
+          let x = mapped (A.of_array D.Int8 [| 64 |] (ints 64)) in
+          equal ~msg:"int8s out of a borrow"
+            (pair (pair (array int) int) bool)
+            ((ints 64, 1), true)
+            (Nx_release_support.compacting (fun () ->
+                 once (fun () -> A.to_array x))));
+      test
+        "to_array of strided, reversed and sub-byte borrows gives their \
+         elements in order, released"
+        (fun () ->
+          let released f =
+            let y = ref [||] in
+            let ~releases, ~held:_, ~cpu:_ =
+              Nx_release_support.watch (fun () -> y := f ())
+            in
+            equal ~msg:"releases" int 1 releases;
+            !y
+          in
+          let reversed (type v s) (x : (v, s) A.t) n =
+            Option.get
+              (A.move (Slice [| { start = n - 1; count = n; step = -1 } |]) x)
+          in
+          (* A transpose of 9 x 13 float32s, of shape [13; 9]. *)
+          let r = 13 and c = 9 in
+          let base =
+            A.of_array D.Float32 [| c; r |]
+              (Array.init (r * c) (fun k -> float_of_int k))
+          in
+          let t = mapped (Option.get (A.move (Permute [| 1; 0 |]) base)) in
+          equal ~msg:"a transpose" (array float_exact)
+            (Array.init (r * c) (fun k ->
+                 float_of_int ((k mod c * r) + (k / c))))
+            (released (fun () -> A.to_array t));
+          (* A permutation of 4 x 5 x 6 float32s, of rank 3. *)
+          let base =
+            A.of_array D.Float32 [| 4; 5; 6 |] (Array.init 120 float_of_int)
+          in
+          let p = mapped (Option.get (A.move (Permute [| 2; 0; 1 |]) base)) in
+          equal ~msg:"a permutation of rank 3" (array float_exact)
+            (Array.init 120 (fun m ->
+                 let i = m / 20 and j = m / 5 mod 4 and k = m mod 5 in
+                 float_of_int ((((j * 5) + k) * 6) + i)))
+            (released (fun () -> A.to_array p));
+          (* 301 int16s reversed: immediates, a negative step. *)
+          let n = 301 in
+          let ints = Array.init n (fun k -> (k * 211 mod 65536) - 32768) in
+          let rev = mapped (reversed (A.of_array D.Int16 [| n |] ints) n) in
+          equal ~msg:"int16s reversed" (array int)
+            (Array.init n (fun k -> ints.(n - 1 - k)))
+            (released (fun () -> A.to_array rev));
+          (* 301 float16s, contiguous: the run of whole float16s. *)
+          let halves = Array.init n (fun k -> float_of_int (k - 150)) in
+          let x = mapped (A.of_array D.Float16 [| n |] halves) in
+          equal ~msg:"float16s" (array float_exact) halves
+            (released (fun () -> A.to_array x));
+          (* 301 int4s reversed: elements share bytes. *)
+          let nibbles = Array.init n (fun k -> (k mod 16) - 8) in
+          let rev = mapped (reversed (A.of_array D.Int4 [| n |] nibbles) n) in
+          equal ~msg:"int4s reversed" (array int)
+            (Array.init n (fun k -> nibbles.(n - 1 - k)))
+            (released (fun () -> A.to_array rev)));
       test "the same calls over the host's own memory hold" (fun () ->
           equal
             (list (pair string int))

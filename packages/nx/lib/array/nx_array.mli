@@ -330,7 +330,10 @@ val of_bigarray :
     past 256 KiB, a quarter of a core's copy of 1 MiB, and wherever an array
     lies over memory something other than its device holds
     ({!Rig.Buffer.is_borrowed}), whose read may wait for storage. {!to_array}
-    of other elements and {!of_array} hold it, as they move OCaml values. *)
+    of other elements releases it over such memory alone, while it reads
+    the array into a buffer as large as the OCaml array, which it then
+    copies holding the lock. {!of_array} holds it, as it reads OCaml values
+    and writes fresh memory. *)
 
 val max_operands : int
 (** [max_operands] is [18], [nx_array.h]'s [NX_MAX_OPERANDS]: the length of

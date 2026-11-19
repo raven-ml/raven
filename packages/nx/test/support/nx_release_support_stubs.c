@@ -78,7 +78,10 @@ static void held_until_now(void) {
   else overflowed = 1;
 }
 
-/* Called holding the lock, before the runtime releases it. */
+static void await_compaction(void);
+
+/* Called holding the lock, before the runtime releases it, which
+   [enter_before] does. */
 static void enter(void) {
   if (watching && holding) {
     held_until_now();
@@ -87,6 +90,7 @@ static void enter(void) {
     atomic_fetch_add(&watched_releases, 1);
   }
   enter_before();
+  await_compaction();
 }
 
 /* Called released, before the runtime reacquires the lock. */
@@ -240,4 +244,66 @@ value nx_release_support_copy(value unit) {
     if (t < least) least = t;
   }
   return Val_long(least);
+}
+
+/* A compaction within a release
+
+   An armed thread's next release waits, released, until another domain
+   has compacted the heap or [disarm] ends the wait: a compaction empties
+   every minor heap first, which moves every young block.
+   The other domain's [await_release] answers whether the release came. */
+
+static _Thread_local int armed;
+static atomic_int released_armed, compacted, disarmed;
+
+static void await_compaction(void) {
+  if (!armed) return;
+  armed = 0;
+  int64_t deadline = clock_ns(CLOCK_MONOTONIC) + PATIENCE_NS;
+  atomic_store(&released_armed, 1);
+  struct timespec pause = {0, 10000};
+  while (!atomic_load(&compacted) && clock_ns(CLOCK_MONOTONIC) < deadline)
+    nanosleep(&pause, NULL);
+}
+
+/* Called before the other domain starts, whose start may release the
+   lock. */
+value nx_release_support_reset(value unit) {
+  (void)unit;
+  install();
+  atomic_store(&released_armed, 0);
+  atomic_store(&compacted, 0);
+  atomic_store(&disarmed, 0);
+  return Val_unit;
+}
+
+value nx_release_support_arm(value unit) {
+  (void)unit;
+  armed = 1;
+  return Val_unit;
+}
+
+value nx_release_support_disarm(value unit) {
+  (void)unit;
+  armed = 0;
+  atomic_store(&disarmed, 1);
+  return Val_unit;
+}
+
+value nx_release_support_await_release(value unit) {
+  (void)unit;
+  int64_t deadline = clock_ns(CLOCK_MONOTONIC) + PATIENCE_NS;
+  struct timespec pause = {0, 10000};
+  caml_enter_blocking_section();
+  while (!atomic_load(&released_armed) && !atomic_load(&disarmed) &&
+         clock_ns(CLOCK_MONOTONIC) < deadline)
+    nanosleep(&pause, NULL);
+  caml_leave_blocking_section();
+  return Val_bool(atomic_load(&released_armed));
+}
+
+value nx_release_support_compacted(value unit) {
+  (void)unit;
+  atomic_store(&compacted, 1);
+  return Val_unit;
 }

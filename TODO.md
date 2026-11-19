@@ -140,12 +140,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - No tree can check formatting: the only ocamlformat on fudge (0.29.0)
   rejects main's own files and no dev-tools lock pins the repository's
   formatter
-- nx.array's `to_array` of unboxed elements and `of_array`
-  (nx_array_stubs.c:1022, :1101) copy a whole array with the domain lock
-  held, cold mapped pages included, since their walks touch OCaml arrays;
-  the gathers (`copy`, `to_bigarray`, `to_array` of boxed elements)
-  release past 256 KiB or over borrowed memory, by nx_cpu's rule. Found by
-  the SI-1 review
 - nx's bench rows `placed/*` and `placed/matmul-f32-256x4096x256-k-split4`
   (bench_nx.ml:337-367; nx.thumper:261-268) record exact allocated words
   that vary from run to run, so `check --quick` can fail them on an

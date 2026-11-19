@@ -44,3 +44,28 @@ let held ~runs f =
     Array.iteri (fun i d -> least.(i) <- min d least.(i)) s
   done;
   Array.fold_left max 0 least
+
+external reset : unit -> unit = "nx_release_support_reset" [@@noalloc]
+external arm : unit -> unit = "nx_release_support_arm" [@@noalloc]
+external disarm : unit -> unit = "nx_release_support_disarm" [@@noalloc]
+external await_release : unit -> bool = "nx_release_support_await_release"
+external compacted : unit -> unit = "nx_release_support_compacted" [@@noalloc]
+
+let compacting f =
+  reset ();
+  let other =
+    Domain.spawn (fun () ->
+        let released = await_release () in
+        if released then Gc.compact ();
+        compacted ();
+        released)
+  in
+  arm ();
+  match f () with
+  | r ->
+      disarm ();
+      (r, Domain.join other)
+  | exception e ->
+      disarm ();
+      ignore (Domain.join other);
+      raise e

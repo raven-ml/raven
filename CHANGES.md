@@ -3439,6 +3439,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_array.to_array` of elements that do not box releases the domain lock
+  while it reads an array in borrowed memory, such as a file's mapped pages,
+  where it held it for the whole read. It holds it to copy from a buffer as
+  large as the OCaml array.
 - An nx.amd call's submissions count `32 (8 + r)` bytes for each launch of
   `r` buffers toward the 64 MiB a device keeps. Its launches' grids and
   words, `32 (2 + ⌈w / 2⌉)` bytes a launch of `w` words, stay in memory that
