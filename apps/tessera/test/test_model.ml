@@ -180,125 +180,12 @@ let fold_law =
 
 (* Loading *)
 
+(* The parameters' values against TESSERA's are test_parity's; these are what
+   its embeddings do not show. *)
+
 module Pt = Nx_io.Pytorch
 
-let f32 x = Nx.unpack Nx.float32 (Nx.P x) |> Nx.copy
-let tensor x = Pt.Tensor (Nx.P (f32 x))
-
-(* [m]'s parameters under the names the upstream modules give them: PyTorch's
-   linear weights are [[outputs; inputs]], and [nn.TransformerEncoderLayer]
-   packs q, k and v in [in_proj]. *)
-let state_dict (m : (Nx.host Nx.float32_t, Nx.host) Model.t) =
-  let lin name (l : (Nx.host Nx.float32_t, Nx.host) Kaun.Linear.t) =
-    [
-      (name ^ ".weight", l.w);
-      (name ^ ".bias", Option.get l.b);
-    ]
-  in
-  let ln name (n : (Nx.host Nx.float32_t, Nx.host) Kaun.Layer_norm.t) =
-    [ (name ^ ".weight", n.gamma); (name ^ ".bias", Option.get n.beta) ]
-  in
-  let layer name (l : (Nx.host Nx.float32_t, Nx.host) Model.layer) =
-    let a = l.attn in
-    let attn =
-      match l.qk with
-      | None ->
-          let t (x : (Nx.host Nx.float32_t, Nx.host) Kaun.Linear.t) = x.w in
-          let b (x : (Nx.host Nx.float32_t, Nx.host) Kaun.Linear.t) =
-            Option.get x.b
-          in
-          [
-            ( name ^ ".self_attn.in_proj_weight",
-              Nx.concatenate ~axis:0 [ t a.q; t a.k; t a.v ] );
-            ( name ^ ".self_attn.in_proj_bias",
-              Nx.concatenate ~axis:0 [ b a.q; b a.k; b a.v ] );
-          ]
-          @ lin (name ^ ".self_attn.out_proj") a.out
-      | Some (gq, gk) ->
-          lin (name ^ ".q_proj") a.q
-          @ lin (name ^ ".k_proj") a.k
-          @ lin (name ^ ".v_proj") a.v
-          @ lin (name ^ ".out_proj") a.out
-          @ [ (name ^ ".q_norm.weight", gq); (name ^ ".k_norm.weight", gk) ]
-    in
-    attn
-    @ lin (name ^ ".linear1") l.ffn1
-    @ lin (name ^ ".linear2") l.ffn2
-    @ ln (name ^ ".norm1") l.norm1
-    @ ln (name ^ ".norm2") l.norm2
-  in
-  let backbone name (b : (Nx.host Nx.float32_t, Nx.host) Model.backbone) =
-    let e1, e2 = b.embed in
-    lin (name ^ ".embedding.0") e1
-    @ lin (name ^ ".embedding.2") e2
-    @ lin (name ^ ".attn_pool.query") b.pool
-    @ List.concat
-        (List.mapi
-           (fun i l ->
-             layer (Printf.sprintf "%s.transformer_encoder.layers.%d" name i) l)
-           b.layers)
-  in
-  let reducer (r : (Nx.host Nx.float32_t, Nx.host) Model.reducer) =
-    lin "dim_reducer.0" r.up @ ln "dim_reducer.1" r.norm
-    @ lin "dim_reducer.4" r.down
-  in
-  match m.net with
-  | Post_ln { s2; s1; reducer = r } ->
-      backbone "s2_backbone" s2 @ backbone "s1_backbone" s1 @ reducer r
-  | Pre_ln { s2; s1; modality; fusion; reducer = r } ->
-      backbone "s2_backbone" s2 @ backbone "s1_backbone" s1
-      @ [ ("fusion_modality_embed", modality) ]
-      @ List.concat
-          (List.mapi
-             (fun i l ->
-               layer (Printf.sprintf "fusion_transformer.layers.%d" i) l)
-             fusion)
-      @ reducer r
-
-let dict l = Pt.Dict (List.map (fun (k, v) -> (Pt.String k, v)) l)
-let tensors l = dict (List.map (fun (k, x) -> (k, tensor x)) l)
-let ints l = List.map (fun (k, n) -> (k, Pt.Int n)) l
-
-let size (a : Model.arch) =
-  ints
-    [
-      ("latent_dim", a.width / 4);
-      ("nhead", a.heads);
-      ("num_layers", a.layers);
-      ("dim_feedforward", a.ffn);
-      ("repr_dim", a.dims);
-    ]
-
-(* [fields] with the entries of [args] in place of theirs. *)
-let replace args fields =
-  List.filter (fun (k, _) -> not (List.mem_assoc k args)) fields @ args
-
-(* A student's checkpoint, [{"model"; "args"}], with [state] edited by [f]. *)
-let student ?(f = Fun.id) ?(args = []) () =
-  let a = arch false in
-  dict
-    [
-      ("model", tensors (f (state_dict post_ln)));
-      ( "args",
-        dict
-          (replace args
-             (size a
-             @ [
-                 ("matryoshka_dims", Pt.String "16,32");
-                 ("enable_qk_norm", Pt.Bool false);
-               ])) );
-    ]
-
-(* The teacher's form has 4 heads. *)
-let teacher_arch = { (arch true) with heads = 4; layers = 1 }
-let small_teacher = Model.init ~key:(Nx.Rng.key 4) teacher_arch
-
-let teacher ?(arch = []) () =
-  dict
-    [
-      ("encoder_state_dict", tensors (state_dict small_teacher));
-      ("arch", dict (replace arch (size teacher_arch)));
-    ]
+let student_pt = "upstream/tiny/student.pt"
 
 let arrays m =
   Nx.Ptree.fold
@@ -307,20 +194,11 @@ let arrays m =
       (Nx.Ptree.Path.to_string p, Nx.to_array (Nx.cast Nx.float64 x)) :: acc)
     m []
 
-let without_norm =
-  List.filter (fun (p, _) -> not (String.starts_with ~prefix:"norm." p))
-
 let loading =
-  group "of_pytorch"
+  group "load"
     [
-      test "reads a student's parameters back" (fun () ->
-          let m = Model.of_pytorch ~name:"student" (student ()) in
-          equal (list int) [ 16; 32 ] m.prefixes;
-          equal
-            (list (pair string (array float_exact)))
-            (arrays post_ln) (arrays m));
       test "lays a student's weights out in C order, as init does" (fun () ->
-          let m = Model.of_pytorch ~name:"student" (student ()) in
+          let m = Model.load student_pt in
           let net = Nx.Ptree.instantiate (module Model.Net) in
           let weights =
             Nx.Ptree.fold net
@@ -353,49 +231,22 @@ let loading =
               equal
                 (list (pair string (array float_exact)))
                 (arrays m) (arrays back))
-            [ post_ln; small_teacher ]);
-      test "reads the teacher's parameters back, with its statistics" (fun () ->
-          let m = Model.of_pytorch ~name:"teacher" (teacher ()) in
-          equal
-            (list (pair string (array float_exact)))
-            (without_norm (arrays small_teacher))
-            (without_norm (arrays m));
-          (* The pooled Sentinel-1 statistics (teacher/model.py:30-31). *)
-          equal
-            (array (float 1e-3))
-            [| 5862.7652; 3341.3949; 5862.7652; 3341.3949 |]
-            (Nx.to_array m.norm.s1_mean));
-      test "reads args the file holds twice, at its second place" (fun () ->
-          (* {"config": args, "model": state, "args": the dict at "config"} *)
-          let v =
-            match student () with
-            | Pt.Dict [ m; (k, args) ] ->
-                Pt.Dict [ (String "config", Shared (0, args)); m; (k, Ref 0) ]
-            | _ -> assert false
-          in
-          let m = Model.of_pytorch ~name:"student" v in
-          equal (list int) [ 16; 32 ] m.prefixes;
-          equal
-            (list (pair string (array float_exact)))
-            (arrays post_ln) (arrays m));
-      test "refuses args that are not a dict" (fun () ->
-          let v =
-            match student () with
-            | Pt.Dict [ m; (k, _) ] ->
-                Pt.Dict [ m; (k, Object "argparse.Namespace") ]
-            | _ -> assert false
-          in
-          raises_match
-            (Exn.failure ~sub:"args: an object argparse.Namespace, not a dict")
-            (fun () -> Model.of_pytorch ~name:"student" v));
+            [ post_ln; pre_ln ]);
       test "refuses an unused tensor" (fun () ->
-          let f l = ("extra.weight", Nx.zeros Nx.float32 [| 2 |]) :: l in
+          let x = Pt.Tensor (Nx.P (Nx.zeros Nx.float32 [| 2 |])) in
+          let v =
+            match Nx_io.load_pytorch student_pt with
+            | Pt.Dict [ (k, Pt.Dict state); args ] ->
+                let state = state @ [ (Pt.String "extra.weight", x) ] in
+                Pt.Dict [ (k, Pt.Dict state); args ]
+            | _ -> assert false
+          in
           raises_match
             (Exn.failure
                ~sub:
                  "student: Nx_io.Archive.import: extra.weight: an entry in \
                   the archive, never read (1 of 1)")
-            (fun () -> Model.of_pytorch ~name:"student" (student ~f ())));
+            (fun () -> Model.of_pytorch ~name:"student" v));
     ]
 
 let () =
