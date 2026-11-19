@@ -105,21 +105,15 @@ Instead of running the pre-tokenizer's regular expression, brot recognises the o
 
 ## One executable, down to the driver
 
-vLLM is a Python program on PyTorch. To run gpt-oss-20b it installs 9.32 GB, most of it PyTorch and NVIDIA's libraries, at versions that must agree with each other and with the driver. All of it has to be installed wherever the model runs.
+vLLM is a Python program on PyTorch. To run gpt-oss-20b it installs 9.32 GB, most of it PyTorch and NVIDIA's libraries, at versions that must agree with each other and with the driver. All of it has to be installed wherever the model runs. Hugging Face's transformers installs 5.74 GB, and llama.cpp, a C++ program, 1.15 GB with NVIDIA's cuBLAS.
 
 raven's gpt-oss is one OCaml executable: 32 MB, stripped, linking only the C library. It loads NVRTC, 134 MB, only to compile a kernel that isn't in tolk's cache. Under it is [rig](../../packages/rig/README.md), raven's GPU runtime, which does the work of NVIDIA's closed libcuda and of AMD's runtime itself, in OCaml and C, and talks to the kernel driver directly. Through NVIDIA's kernel driver, without CUDA, gpt-oss needs no libcuda and decodes at **128 tokens a second**, 4% faster than through CUDA. On Linux, rig opens an AMD GPU with no kernel driver at all.
 
-<figure class="chart">
-<div class="legend" aria-hidden="true"><span><i style="background: var(--raven)"></i>raven</span><span><i style="background: var(--ref)"></i>other stacks</span><span>installed to run gpt-oss-20b on the GPU · shorter is better</span></div>
-<ul class="bars">
-<li><div class="bars-head"><span>Install, the driver and the weights aside</span><span class="caption">raven: main.exe 32 MB, NVRTC 134 MB</span></div>
-<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="width: 1.8%; background: var(--raven)"></span></span><span class="v">166 MB</span></div>
-<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="width: 12.3%; background: var(--ref)"></span></span><span class="v">1.15 GB</span></div>
-<div class="bar"><span class="who">transformers</span><span class="track"><span class="fill" style="width: 61.6%; background: var(--ref)"></span></span><span class="v">5.74 GB</span></div>
-<div class="bar"><span class="who">vLLM</span><span class="track"><span class="fill" style="width: 100.0%; background: var(--ref)"></span></span><span class="v">9.32 GB</span></div>
-</li>
-</ul>
-<figcaption>raven’s main.exe, stripped, and CUDA’s NVRTC; llama.cpp b12541’s CUDA release archive with its cuBLAS; vLLM 0.34.0 and transformers 5.23.0 in fresh uv environments with torch’s CUDA libraries and Python 3.12. RTX 5000 Ada, 19 November 2026.</figcaption>
+<!-- TODO: the number of Python packages in vLLM's environment (uv pip list), and each layer's size if measured. -->
+<figure class="versus">
+<div><p class="label">vLLM</p><ol><li><span>Python 3.12</span><span></span></li><li><span>PyTorch 2.14</span><span></span></li><li><span>CUDA 13’s libraries</span><span></span></li><li><span>vLLM 0.34</span><span></span></li><li><span><mark class="todo">N</mark> other Python packages</span><span></span></li><li><span>NVIDIA’s libcuda</span><span>driver</span></li></ol><p class="total"><span>to install</span><b>9.32 GB</b></p></div>
+<div><p class="label">raven</p><ol><li><span>main.exe</span><span>32 MB</span></li><li><span>NVRTC, only for kernels not yet cached</span><span>134 MB</span></li><li><span>NVIDIA’s libcuda</span><span>optional</span></li></ol><p class="total"><span>to install</span><b>166 MB</b></p></div>
+<figcaption>What runs gpt-oss-20b on the GPU, the driver and the 13.8 GB of weights aside. raven needs no libcuda: without it, rig drives the card through NVIDIA’s kernel driver itself, and it uses libcuda only where it is installed. raven’s main.exe, stripped, and CUDA’s NVRTC; vLLM 0.34.0 in a fresh uv environment with its bench pins, torch’s CUDA libraries and Python 3.12. RTX 5000 Ada, 19 November 2026.</figcaption>
 </figure>
 
 ## What's next
