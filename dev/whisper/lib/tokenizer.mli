@@ -80,7 +80,7 @@ val sot_sequence : t -> (string * task) option -> int array
     and [Task task]. An English-only model takes [None]. A transcript without
     timestamps appends {!No_timestamps}.
 
-    Raises [Invalid_argument] as {!special} does. *)
+    Raises [Invalid_argument] as {!val-special} does. *)
 
 val non_speech : t -> int array
 (** [non_speech t] is the ids, in increasing order, that a decoder suppresses so

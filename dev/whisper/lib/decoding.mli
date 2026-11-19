@@ -25,9 +25,9 @@
     rules make the timestamps come in pairs around each segment's text, in
     increasing order.
 
-    {!decode} decodes several audios at once, each in a group of {e lanes}, and
-    its {e search} says how a step chooses: the likeliest token, a draw, or a
-    beam search over the group's lanes. It is Nx and Rune operations on the
+    {!val-decode} decodes several audios at once, each in a group of {e lanes},
+    and its {e search} says how a step chooses: the likeliest token, a draw, or
+    a beam search over the group's lanes. It is Nx and Rune operations on the
     model's set, so it runs on any device and compiles under [Rune.jit]; its
     {e outcome} holds every candidate, and {!results} ranks them on the host. *)
 
@@ -166,15 +166,15 @@ type 'd search =
 
 module Search : Nx.Ptree.S with type ('a, 'd) t = 'd search
 (** The structure of {!type-search}: its case, its integers, and under [Sample]
-    its [temperature] and [key]. A compiled {!decode} keeps a program per case.
-*)
+    its [temperature] and [key]. A compiled {!val-decode} keeps a program per
+    case. *)
 
 (** {1:decode Decoding} *)
 
 type 'd starts = {
   tokens : 'd Nx.int64_t;
-      (** [[| n; w |]]: audio [i]'s initial tokens ({!start}) at the end of row
-          [i], [-1] before them. *)
+      (** [[| n; w |]]: audio [i]'s initial tokens ({!val-start}) at the end of
+          row [i], [-1] before them. *)
   sot : 'd Nx.int64_t;
       (** [[| n |]]: the column of [<|startoftranscript|>] in each row. *)
 }
@@ -183,7 +183,7 @@ type 'd starts = {
 val starts : ?width:int -> start array -> Nx.host starts
 (** [starts s] places each start of [s] right-aligned in rows of [width], by
     default the least power of two at or above the longest, so that a compiled
-    {!decode} serves every start up to [width].
+    {!val-decode} serves every start up to [width].
 
     Raises [Invalid_argument] if [s] is empty or a start is longer than [width].
 *)
@@ -238,9 +238,10 @@ val decode :
     under [Rune.jit] it is one program per dimensions, search case, [n] and [w],
     which reads nothing until it returns.
 
-    Raises [Invalid_argument] as {!filter} and {!Model.audio} do, if [starts]
-    and [features] disagree on [n], if a [best_of] or [size] is not positive, if
-    a beam's [m] is below [1], or if [o.length_penalty] is outside [[0, 1]]. *)
+    Raises [Invalid_argument] as {!filter} and {!Model.val-audio} do, if
+    [starts] and [features] disagree on [n], if a [best_of] or [size] is not
+    positive, if a beam's [m] is below [1], or if [o.length_penalty] is outside
+    [[0, 1]]. *)
 
 type result = {
   tokens : int array;
@@ -282,7 +283,7 @@ val languages :
     [m]'s set, so it runs under [Rune.jit].
 
     Raises [Invalid_argument] if [m] is English-only ({!Model.multilingual}), or
-    as {!Model.audio} does. *)
+    as {!Model.val-audio} does. *)
 
 (** {1:ratio Compression ratio} *)
 

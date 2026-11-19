@@ -104,7 +104,7 @@ type ('a, 'd) t = {
 
 module Params : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) t
 (** The models' structure: [Nx.Ptree.instantiate (module Params)] is what
-    {!Rune.jit}'s signatures, {!Nx.Ptree.cast}, {!Nx.Ptree.place} and
+    {!Rune.val-jit}'s signatures, {!Nx.Ptree.cast}, {!Nx.Ptree.place} and
     {!Nx_io.Archive.of_value} take. Leaves are at [encoder.conv1.w], ...,
     [encoder.positions], [encoder.blocks.0.attn_ln.gamma], ...,
     [decoder.tokens.table], ..., [decoder.ln.beta]. The dimensions are reported
@@ -130,7 +130,7 @@ val encode :
     position, a residual stream, whose {!logits} are those of the token that
     follows. Each block attends to the tokens before its own through a key-value
     cache ({!Kaun.Attention.cached}), and to the audio features through their
-    keys and values, computed once per audio by {!audio}. A
+    keys and values, computed once per audio by {!val-audio}. A
     {!Kaun.Cache_index.t} says where the call's tokens sit: decoding feeds the
     start sequence at once over [Kaun.Cache_index.rows ~context:n_text_ctx],
     then one token a call over {!Kaun.Cache_index.advance} of the index before.
@@ -148,7 +148,7 @@ module Audio : Nx.Ptree.S with type ('a, 'd) t = 'a audio
     and its decoding state
     [Nx.Ptree.list (Nx.Ptree.instantiate (module Kaun.Attention.Cache))]: with
     {!Params} and {!Kaun.Cache_index.walk}, what a signature of {!decode} for
-    {!Rune.jit} takes. *)
+    {!Rune.val-jit} takes. *)
 
 val audio :
   ((float, 'b, 'd) Nx.t, 'd) t ->
