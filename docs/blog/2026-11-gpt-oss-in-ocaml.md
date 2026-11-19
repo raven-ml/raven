@@ -47,6 +47,8 @@ On an NVIDIA RTX 5000 Ada, raven decodes **123 tokens a second**, against vLLM's
 <figcaption>gpt-oss-20b on an NVIDIA RTX 5000 Ada, batch 1, greedy; the median of three rounds.</figcaption>
 </figure>
 
+Packing is one argument at load time. `Gpt_oss.of_hf ~pack:Q8_0` quantizes the attention projections and the head with `Nx_quant.quantize_q8_0` as the checkpoint loads, and the experts stay in MXFP4, as the checkpoint stores them. There is no conversion step and no second file.
+
 ## Ready in two seconds
 
 A new raven process loads the 13.8 GB checkpoint and prints its first token in **2.0 seconds**; llama.cpp takes 2.1. vLLM needs 19.7 seconds once its compilation cache is warm, and 110 the first time on a machine. raven compiles its own kernels too, and caches them: an empty cache adds 1.9 seconds, once.
@@ -55,7 +57,7 @@ It also stays small. Decoding takes **14.4 GB** of the card's memory, the CUDA c
 
 ## An ordinary program
 
-None of this is a separate engine. The model is **463 lines of OCaml** over arrays, written the way the paper draws it, and Rune.jit compiles each block into kernels for the card it runs on. Nobody wrote a kernel for gpt-oss.
+None of this is a separate engine. The model is **463 lines of OCaml** over arrays, written the way the paper draws it, and Rune.jit compiles each block into kernels for the card it runs on. The kernels come from tolk, raven's compiler, a port of tinygrad to OCaml. Nobody wrote a kernel for gpt-oss.
 
 <!-- TODO: confirm on fudge which kernels vLLM 0.34 picks on Ada. -->
 The implementations that run gpt-oss fast get there with kernels written for its formats: llama.cpp's CUDA, and in vLLM, Marlin's kernels for the MXFP4 experts and Triton kernels for attention. raven matches them with the model's code alone.
@@ -66,6 +68,9 @@ The implementations that run gpt-oss fast get there with kernels written for its
 </figure>
 
 A whole transformer block. The only line about devices is `close`, which sums partial results when the experts are split across GPUs: the same code runs eagerly on a laptop's CPU, compiled on one GPU, or split by expert across several.
+
+<!-- TODO: run test_stream's gpt-oss-20b case on fudge and see it pass before publishing this sentence. -->
+It gives the same answers as the reference. On three prompts at float32, raven picks the same experts as transformers for every token in every block, and the same next token at every position.
 
 ## The tokenizer is OCaml too
 
@@ -100,37 +105,21 @@ Instead of running the pre-tokenizer's regular expression, brot recognises the o
 
 ## One executable, down to the driver
 
-vLLM is a Python program on PyTorch, and PyTorch for CUDA alone installs over 5 GB, most of it NVIDIA's libraries, at versions that must agree with each other and with the driver. All of it has to be installed wherever the model runs.
+vLLM is a Python program on PyTorch. To run gpt-oss-20b it installs 9.32 GB, most of it PyTorch and NVIDIA's libraries, at versions that must agree with each other and with the driver. All of it has to be installed wherever the model runs.
 
-raven's gpt-oss is one OCaml executable. Under it is [rig](../../packages/rig/README.md), raven's GPU runtime, which does the work of NVIDIA's closed libcuda and of AMD's runtime itself, in OCaml and C, and talks to the kernel driver directly. Through NVIDIA's kernel driver, without CUDA, gpt-oss decodes at **128 tokens a second**, 4% faster than through CUDA. On Linux, rig opens an AMD GPU with no kernel driver at all.
-
-<figure class="versus">
-<div><p class="label">vLLM</p><ol><li><span>Python 3.12</span><span></span></li><li><span>PyTorch 2.14 and CUDA 13’s libraries</span><span>5,458 MiB with Python</span></li><li><span>vLLM 0.34 and its packages</span><span><mark class="todo">measure</mark></span></li><li><span>NVIDIA’s libcuda</span><span>driver</span></li></ol><p class="total"><span>to install</span><b><mark class="todo">GB</mark></b></p></div>
-<div><p class="label">raven</p><ol><li><span>main.exe</span><span><mark class="todo">MB</mark></span></li><li><span>NVRTC, to compile the kernels once</span><span><mark class="todo">MB</mark></span></li></ol><p class="total"><span>to install</span><b><mark class="todo">MB</mark></b></p></div>
-<figcaption>What a machine with NVIDIA’s kernel driver needs to run gpt-oss-20b, the 13.8 GB of weights aside.</figcaption>
-</figure>
-
-The difference holds below the model too. To run one addition on the GPU, rig installs 7.6 MiB, PyTorch 5,458 MiB and JAX 5,774 MiB. Its first result comes in 70 ms, against PyTorch's 720.
+raven's gpt-oss is one OCaml executable: 32 MB, stripped, linking only the C library. It loads NVRTC, 134 MB, only to compile a kernel that isn't in tolk's cache. Under it is [rig](../../packages/rig/README.md), raven's GPU runtime, which does the work of NVIDIA's closed libcuda and of AMD's runtime itself, in OCaml and C, and talks to the kernel driver directly. Through NVIDIA's kernel driver, without CUDA, gpt-oss needs no libcuda and decodes at **128 tokens a second**, 4% faster than through CUDA. On Linux, rig opens an AMD GPU with no kernel driver at all.
 
 <figure class="chart">
-<div class="legend" aria-hidden="true"><span><i style="background: var(--raven)"></i>raven</span><span><i style="background: var(--ref)"></i>other runtimes</span><span>one checked addition on the RTX 5000 Ada · shorter is better</span></div>
+<div class="legend" aria-hidden="true"><span><i style="background: var(--raven)"></i>raven</span><span><i style="background: var(--ref)"></i>other stacks</span><span>installed to run gpt-oss-20b on the GPU · shorter is better</span></div>
 <ul class="bars">
-<li><div class="bars-head"><span>Installed to run it</span><span class="caption">the vendor’s libraries it loads included</span></div>
-<div class="bar"><span class="who">rig, NV</span><span class="track"><span class="fill" style="width: 0.6%; background: var(--raven)"></span></span><span class="v">7.6 MiB</span></div>
-<div class="bar"><span class="who">rig, CUDA</span><span class="track"><span class="fill" style="width: 2.0%; background: var(--raven)"></span></span><span class="v">115 MiB</span></div>
-<div class="bar"><span class="who">tinygrad</span><span class="track"><span class="fill" style="width: 8.0%; background: var(--ref)"></span></span><span class="v">461 MiB</span></div>
-<div class="bar"><span class="who">PyTorch</span><span class="track"><span class="fill" style="width: 94.5%; background: var(--ref)"></span></span><span class="v">5,458 MiB</span></div>
-<div class="bar"><span class="who">JAX</span><span class="track"><span class="fill" style="width: 100.0%; background: var(--ref)"></span></span><span class="v">5,774 MiB</span></div>
-</li>
-<li><div class="bars-head"><span>First result, from a new process</span><span class="caption"></span></div>
-<div class="bar"><span class="who">rig, NV</span><span class="track"><span class="fill" style="width: 9.7%; background: var(--raven)"></span></span><span class="v">70 ms</span></div>
-<div class="bar"><span class="who">rig, CUDA</span><span class="track"><span class="fill" style="width: 18.6%; background: var(--raven)"></span></span><span class="v">134 ms</span></div>
-<div class="bar"><span class="who">tinygrad</span><span class="track"><span class="fill" style="width: 38.8%; background: var(--ref)"></span></span><span class="v">279 ms</span></div>
-<div class="bar"><span class="who">JAX</span><span class="track"><span class="fill" style="width: 74.7%; background: var(--ref)"></span></span><span class="v">538 ms</span></div>
-<div class="bar"><span class="who">PyTorch</span><span class="track"><span class="fill" style="width: 100.0%; background: var(--ref)"></span></span><span class="v">720 ms</span></div>
+<li><div class="bars-head"><span>Install, the driver and the weights aside</span><span class="caption">raven: main.exe 32 MB, NVRTC 134 MB</span></div>
+<div class="bar"><span class="who">raven</span><span class="track"><span class="fill" style="width: 1.8%; background: var(--raven)"></span></span><span class="v">166 MB</span></div>
+<div class="bar"><span class="who">llama.cpp</span><span class="track"><span class="fill" style="width: 12.3%; background: var(--ref)"></span></span><span class="v">1.15 GB</span></div>
+<div class="bar"><span class="who">transformers</span><span class="track"><span class="fill" style="width: 61.6%; background: var(--ref)"></span></span><span class="v">5.74 GB</span></div>
+<div class="bar"><span class="who">vLLM</span><span class="track"><span class="fill" style="width: 100.0%; background: var(--ref)"></span></span><span class="v">9.32 GB</span></div>
 </li>
 </ul>
-<figcaption>Release builds, October 2026, kernels precompiled. PyTorch 2.14.1, JAX 0.11.2, tinygrad 0.14.0; tinygrad’s time is through CUDA.</figcaption>
+<figcaption>raven’s main.exe, stripped, and CUDA’s NVRTC; llama.cpp b12541’s CUDA release archive with its cuBLAS; vLLM 0.34.0 and transformers 5.23.0 in fresh uv environments with torch’s CUDA libraries and Python 3.12. RTX 5000 Ada, 19 November 2026.</figcaption>
 </figure>
 
 ## What's next
