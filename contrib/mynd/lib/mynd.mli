@@ -447,6 +447,77 @@ val median_blur :
 
     Raises [Invalid_argument] as {!windows} does. *)
 
+(** {1:gradients Gradients and edges}
+
+    The {e gradient} of an image at a pixel and channel is the pair of its
+    derivatives along [x] and along [y], in values per pixel: [gx] is positive
+    where values grow to the right, [gy] where they grow downward. Its
+    {e strength} is [Nx.hypot gx gy], and its direction [Nx.atan2 gy gx] turns
+    from [+x] toward [+y], clockwise on the image.
+
+    A Gaussian derivative of deviation [σ] is the [`Central] gradient of
+    {!gaussian_blur}'s result (Lindeberg, "Discrete approximations of Gaussian
+    smoothing and Gaussian derivatives", 2024, §6.1). Canny's edges ("A
+    Computational Approach to Edge Detection", 1986) are the {!gradient_maxima}
+    of such a gradient whose strength is above a low threshold, kept where they
+    join one above a high threshold. *)
+
+type stencil = [ `Central | `Sobel | `Scharr ]
+(** The type for gradient stencils. Each takes the difference [-½ 0 ½] along one
+    axis, which reads a linear ramp's slope, after weights across it that sum to
+    [1]:
+    - [`Central] does not smooth across.
+    - [`Sobel] smooths across by [¼ ½ ¼].
+    - [`Scharr] smooths across by [3/16 10/16 3/16].
+
+    Smoothing across makes the gradient's direction more accurate on fine
+    detail, [`Scharr]'s weights the most. *)
+
+val gradient :
+  edge:[< Nx.extension ] ->
+  [< stencil ] ->
+  (float, 's, 'd) Nx.t ->
+  (float, 's, 'd) Nx.t * (float, 's, 'd) Nx.t
+(** [gradient ~edge s x] is the gradient [(gx, gy)] of each channel of the
+    images [x], [[b…; h; w; c]], under stencil [s], each of [x]'s shape. [gx] is
+    [x] smoothed down each column by [s]'s weights, then half the difference of
+    the pixels right and left of each pixel; [gy] is [x] smoothed along each
+    row, then half the difference of the pixels below and above. Each step reads
+    outside the image under [edge] as {!correlate} does, and each outer weight
+    multiplies the sum of its two pixels. A linear ramp's gradient is its slope
+    wherever the stencil reads inside [x], and to the border under
+    [`Antisymmetric_whole], where the difference becomes one-sided,
+    [x(1) - x(0)] at column [0]. Flipping [x] along an axis flips [(gx, gy)] and
+    negates the component along that axis, and transposing [x] transposes and
+    swaps them, both exactly but for the sign of a zero or a NaN. Formats
+    narrower than 32 bits compute at float32 and round once. The result is
+    linear in [x], with its derivative.
+
+    Raises [Invalid_argument] if [x] has fewer than three axes, or no row or no
+    column and [edge] is not [`Zero]. *)
+
+val gradient_maxima :
+  (float, 's, 'd) Nx.t * (float, 's, 'd) Nx.t -> 'd Nx.bool_t
+(** [gradient_maxima (gx, gy)] is [true] where the strength [m] of the gradients
+    [(gx, gy)], [[b…; h; w; c]], is a maximum along the gradient, by Canny's
+    interpolation (as restated by Grompone von Gioi and Randall, "A Sub-Pixel
+    Edge Detector: an Implementation of the Canny/Devernay Algorithm", 2017,
+    §2). At pixel [p] of gradient [g], let [u] be [g] divided by its larger
+    absolute component, a step to the ring of [p]'s eight neighbours. The
+    strengths at [p - u] and [p + u] are interpolated linearly between the two
+    ring pixels each lies between, and a point outside the image is not
+    compared. [p] is kept where [m(p)] is above the strength at [p - u] and at
+    least the one at [p + u]. Of two neighbours [a] and [b = a + u] along an
+    axis or a diagonal with equal strengths, [b]'s gradient along that line
+    pointing away from [a], [b] is not kept, so at most one of them is. A pixel
+    is not kept where its [m] is [0] or a strength it reads is NaN. Where [m] is
+    constant, as on a linear ramp, rounding decides which pixels are kept; they
+    have the ramp's strength, so a threshold above its slope removes them.
+    Formats narrower than 32 bits form [m] at float32.
+
+    Raises [Invalid_argument] if [gx] and [gy] differ in shape or have fewer
+    than three axes. *)
+
 (** {1:boxes Boxes}
 
     A {e box} is the rectangle [\[x₀, x₁) × \[y₀, y₁)], held as the floats

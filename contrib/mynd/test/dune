@@ -6,6 +6,7 @@
   test_values
   test_colour
   test_filter
+  test_edges
   test_sample
   test_resize
   test_annot
