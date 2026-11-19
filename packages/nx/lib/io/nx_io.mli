@@ -361,11 +361,12 @@ val load_safetensors_metadata : string -> (string * string) list
 val save_safetensors :
   ?metadata:(string * string) list -> string -> 'd Archive.t -> unit
 (** [save_safetensors ~metadata path a] writes [a]'s entries to the
-    SafeTensors file [path] with the metadata [metadata] (default [[]]), in
-    the order of the format's reference implementation: the metadata first,
-    sorted by key and left out if empty, then the entries by dtype, in the
-    order U64, I64, F64, C64, F32, U32, I32, BF16, F16, U16, I16, F8_E4M3,
-    F8_E5M2, I8, U8, BOOL, then by name.
+    SafeTensors file [path] with the metadata [metadata] (default [[]]),
+    first, as the format's reference implementation writes it, sorted by key
+    so that a save is deterministic, and left out if empty. The entries
+    follow in the reference implementation's order: by dtype, in the order
+    U64, I64, F64, C64, F32, U32, I32, BF16, F16, U16, I16, F8_E4M3, F8_E5M2,
+    I8, U8, BOOL, then by name.
 
     Raises [Invalid_argument] naming the entry if SafeTensors does not store its
     dtype, or if its name is not UTF-8 or is ["__metadata__"], the key of the

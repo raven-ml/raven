@@ -347,14 +347,10 @@ let entry (name, j) =
 (* The metadata's pairs, in the header's order. *)
 let pairs = function
   | `Assoc kv ->
-      let keys = Hashtbl.create (List.length kv) in
       List.map
-        (fun (k, v) ->
-          if Hashtbl.mem keys k then Fail.failf "the metadata names %s twice" k;
-          Hashtbl.add keys k ();
-          match v with
-          | `String v -> (k, v)
-          | _ -> Fail.failf "the metadata %s is not a string" k)
+        (function
+          | k, `String v -> (k, v)
+          | k, _ -> Fail.failf "the metadata %s is not a string" k)
         kv
   | _ -> failwith "the metadata is not an object"
 
@@ -415,8 +411,16 @@ let read_header file =
       length;
   (n, entries, meta)
 
+(* A key given twice is refused here alone: a load of the arrays takes such a
+   file, as the reference implementation does. *)
 let metadata file =
   let _, _, meta = read_header file in
+  let keys = Hashtbl.create (List.length meta) in
+  List.iter
+    (fun (k, _) ->
+      if Hashtbl.mem keys k then Fail.failf "the metadata names %s twice" k;
+      Hashtbl.add keys k ())
+    meta;
   meta
 
 let load file =
@@ -443,9 +447,10 @@ let load file =
 
 (* [header ~metadata entries] is the header of a file of [metadata] and
    [entries], each a name, a dtype code, a shape and a length in bytes, whose
-   data follows in that order. The metadata comes first, sorted by key, as the
-   reference implementation writes it, and not at all when empty. The JSON is
-   padded with spaces to a multiple of 8 bytes. *)
+   data follows in that order. The metadata comes first, as the reference
+   implementation writes it, sorted by key so that a save is deterministic,
+   and not at all when empty. The JSON is padded with spaces to a multiple of
+   8 bytes. *)
 let header ?(metadata = []) entries =
   let field (pos, fields) (name, code, shape, length) =
     let shape = List.map (fun d -> `Int d) (Array.to_list shape) in

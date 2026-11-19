@@ -256,6 +256,16 @@ let safetensors =
             (list (pair string string))
             [ ("format", "pt"); ("a", "é") ]
             (Nx_io.load_safetensors_metadata path));
+      test "metadata that names a key twice loads its arrays alone" (fun () ->
+          let path =
+            file
+              (with_json
+                 {|{"__metadata__":{"k":"a","k":"b"},"w":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|}
+                 "a")
+          in
+          equal (list string) [ "w" ]
+            (Archive.names (Nx_io.load_safetensors path));
+          fails ~path (fun () -> Nx_io.load_safetensors_metadata path));
       test "a file without metadata has none" (fun () ->
           equal
             (list (pair string string))
@@ -406,12 +416,6 @@ let safetensors =
              fun () -> file (raw_safetensors [ ("w", "U16", [ 1 ], "a") ]) );
            ( "a negative extent",
              fun () -> file (raw_safetensors [ ("w", "U8", [ -1 ], "") ]) );
-           ( "a metadata key twice",
-             fun () ->
-               file
-                 (with_json
-                    {|{"__metadata__":{"k":"a","k":"b"},"w":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|}
-                    "a") );
            ( "metadata that is not a string",
              fun () ->
                file
