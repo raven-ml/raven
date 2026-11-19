@@ -816,6 +816,13 @@ let brute c s r =
              && s.((i * nb) + j) <= r.(i))
            (List.init nb (fun j -> (i, j)))))
 
+(* [triples (i, j, s)] is a cross-match's result as a list of [(i, j, s)], [s]
+   in radians. *)
+let triples (i, j, s) =
+  let ints t = Array.map Int64.to_int (Nx.to_array t) in
+  let i = ints i and j = ints j and s = Nx.to_array (in_radians s) in
+  List.init (Array.length i) (fun k -> (i.(k), j.(k), s.(k)))
+
 (* [pairs_of c r] is [Direction.pairs]' triples [(i, j, s)]. Radii per row are a
    call at the largest, then the documented filter. *)
 let pairs_of c r =
@@ -827,17 +834,15 @@ let pairs_of c r =
       ~within:(radians (scalar within))
       (rows_of f c.a) (rows_of f c.b)
   in
-  let s = in_radians s in
   let i, j, s =
     if c.per_row = None then (i, j, s)
     else
+      let s = in_radians s in
       let rr = Nx.create Nx.float64 [| Array.length r |] r in
       let keep = Nx.positions (Nx.less_equal s (Nx.take i rr)) in
-      (Nx.take keep i, Nx.take keep j, Nx.take keep s)
+      (Nx.take keep i, Nx.take keep j, radians (Nx.take keep s))
   in
-  let ints t = Array.map Int64.to_int (Nx.to_array t) in
-  let i = ints i and j = ints j and s = Nx.to_array s in
-  List.init (Array.length i) (fun k -> (i.(k), j.(k), s.(k)))
+  triples (i, j, s)
 
 let near_pole (x, y, z) =
   Float.abs z > (1. -. 1e-9) *. Float.sqrt ((x *. x) +. (y *. y) +. (z *. z))
@@ -845,46 +850,49 @@ let near_pole (x, y, z) =
 (* Two rows on either side of longitude 0, near it. *)
 let across_zero (x, y, _) (x', y', _) = x > 0. && x' > 0. && y *. y' < 0.
 
-(* The reciprocal rule as [Direction.pairs]'s documentation composes it. *)
-let nearest n i j s =
-  let best = Nx.reduce_segments Min ~segments:n i s in
-  let tied = Nx.equal s (Nx.take i best) in
-  let j = Nx.where tied j (Nx.full_like j Int64.max_int) in
-  Nx.reduce_segments Min ~segments:n i j
-
-let reciprocal ~within a b =
-  let i, j, s = Direction.pairs ~within a b in
-  let s = Quantity.value Unit.radian s in
-  let rows d = Nx.dim 0 (Direction.xyz d) in
-  let ab = nearest (rows a) i j s and ba = nearest (rows b) j i s in
-  let has = Nx.not_equal_s ab Int64.max_int in
-  let self = Nx.arange Nx.int64 0 (rows a) 1 in
-  let mutual = Nx.logical_and has (Nx.equal (Nx.take ab ba) self) in
-  Nx.where mutual ab (Nx.full_like ab (-1L))
-
-(* [nearest_brute n key pairs sep] is, for each of [n] rows, the partner at the
-   least separation among [pairs], the lowest on ties, or -1. *)
-let nearest_brute n pairs =
+(* [nearest_brute n rows] is, for each of [n] rows, the partner at the least
+   separation among [rows], a list of [(row, partner, s)], the lowest on ties,
+   or -1. *)
+let nearest_brute n rows =
   let best = Array.make n (-1, infinity) in
   List.iter
     (fun (k, partner, s) ->
       let p, bs = best.(k) in
       if s < bs || (s = bs && (p < 0 || partner < p)) then
         best.(k) <- (partner, s))
-    pairs;
+    rows;
   Array.map fst best
 
+let swap (i, j, s) = (j, i, s)
+
+(* [reciprocal_brute c s r] is [(expected, all, ab, ba)]: the triples of
+   [brute c s r] whose rows are each other's nearest, all its triples, and each
+   row's nearest in the other catalogue, or -1. *)
 let reciprocal_brute c s r =
-  let pairs = brute c s r and nb = List.length c.b in
-  let sep (i, j) = s.((i * nb) + j) in
-  let ab =
-    nearest_brute (List.length c.a)
-      (List.map (fun (i, j) -> (i, j, sep (i, j))) pairs)
-  in
-  let ba =
-    nearest_brute nb (List.map (fun (i, j) -> (j, i, sep (i, j))) pairs)
-  in
-  Array.mapi (fun i j -> if j >= 0 && ba.(j) = i then j else -1) ab
+  let nb = List.length c.b in
+  let all = List.map (fun (i, j) -> (i, j, s.((i * nb) + j))) (brute c s r) in
+  let ab = nearest_brute (List.length c.a) all in
+  let ba = nearest_brute nb (List.map swap all) in
+  (List.filter (fun (i, j, _) -> ab.(i) = j && ba.(j) = i) all, all, ab, ba)
+
+(* [tied rows] holds when a row of [rows], a list of [(row, partner, s)], has
+   two partners at its least separation. *)
+let tied rows =
+  List.exists
+    (fun (k, _, _) ->
+      let mine = List.filter (fun (k', _, _) -> k' = k) rows in
+      let least =
+        List.fold_left (fun m (_, _, s) -> Float.min m s) infinity mine
+      in
+      List.length (List.filter (fun (_, _, s) -> s = least) mine) > 1)
+    rows
+
+(* [within_of c r] is the 0-d radius of a call without radii per row. *)
+let within_of c r = radians (scalar (if r = [||] then c.r else r.(0)))
+
+let reciprocal_of c within =
+  let (F f) = c.frame in
+  triples (Direction.reciprocal ~within (rows_of f c.a) (rows_of f c.b))
 
 let crossmatch =
   group "pairs"
@@ -920,22 +928,6 @@ let crossmatch =
           cover "radius per row" (Option.is_some c.per_row && expected <> []);
           let expected = List.map (fun p -> (fst p, snd p, sep p)) expected in
           equal (list (triple int int float_exact)) expected (pairs_of c r));
-      prop "the documented reciprocal rule pairs mutual nearest rows" xmatches
-        (fun c ->
-          let c = { c with per_row = None } in
-          let s = separations c in
-          let r = radii c s in
-          let (F f) = c.frame in
-          let within = radians (scalar (if r = [||] then c.r else r.(0))) in
-          let got = reciprocal ~within (rows_of f c.a) (rows_of f c.b) in
-          let expected = reciprocal_brute c s r in
-          cover "a mutual pair" (Array.exists (fun j -> j >= 0) expected);
-          cover "a one-way nearest"
-            (List.length (brute c s r)
-            > Array.length
-                (Array.of_list
-                   (List.filter (fun j -> j >= 0) (Array.to_list expected))));
-          equal (array int) expected (Array.map Int64.to_int (Nx.to_array got)));
       test "raises on a radius that is negative, NaN, not 0-d or not an angle"
         (fun () ->
           let d = lonlat 1. 0.2 in
@@ -969,6 +961,104 @@ let crossmatch =
           raises
             (icrs (vectors [| 1.; 0.; 0. |]))
             (icrs (vectors [| 0.; nan; neg_infinity |])));
+    ]
+
+let matches = list (triple int int float_exact)
+let icrs_rows l = rows_of Frame.icrs l
+
+let north = (0., 0., 1.)
+let south = (0., 0., -1.)
+
+let reciprocity =
+  group "reciprocal"
+    [
+      prop "reciprocal is the pairs whose rows are each other's nearest"
+        xmatches (fun c ->
+          let c = { c with per_row = None } in
+          let s = separations c in
+          let r = radii c s in
+          let expected, all, ab, ba = reciprocal_brute c s r in
+          let a = Array.of_list c.a in
+          let some f v = Array.exists Fun.id (Array.mapi f v) in
+          cover "a mutual pair" (expected <> []);
+          cover "a tie for a row of a" (tied all);
+          cover "a tie for a row of b" (tied (List.map swap all));
+          cover "a one-way nearest"
+            (some (fun i j -> j >= 0 && ba.(j) <> i) ab);
+          cover "a row with no candidate"
+            (some (fun i j -> j < 0 && names_direction a.(i)) ab);
+          cover "a NaN row"
+            (List.exists (fun (x, _, _) -> Float.is_nan x) (c.a @ c.b));
+          cover "a zero row" (List.exists is_zero_row (c.a @ c.b));
+          cover "an empty catalogue" (c.a = [] || c.b = []);
+          equal matches expected (reciprocal_of c (within_of c r)));
+      prop "reciprocal b a is reciprocal a b with its sides swapped" ~count:200
+        xmatches
+        (fun c ->
+          let c = { c with per_row = None } in
+          let s = separations c in
+          let r = radii c s in
+          let within = within_of c r in
+          let _, all, _, _ = reciprocal_brute c s r in
+          let got = reciprocal_of c within in
+          cover "a tie for a row of a" (tied all);
+          cover "a tie for a row of b" (tied (List.map swap all));
+          cover "a large radius, a mutual pair"
+            (c.radius = Large && got <> []);
+          cover "radius pi or more, a mutual pair"
+            (c.radius = Past_pi && got <> []);
+          let swapped = List.sort compare (List.map swap got) in
+          let flipped = { c with a = c.b; b = c.a } in
+          equal matches swapped (reciprocal_of flipped within));
+      prop "reciprocal selects among pairs' triples, each row at most once"
+        xmatches (fun c ->
+          let c = { c with per_row = None } in
+          let r = radii c (separations c) in
+          let got = reciprocal_of c (within_of c r) in
+          let pairs = pairs_of c r in
+          cover "a pair left out" (List.length pairs > List.length got);
+          equal matches got (List.filter (fun t -> List.mem t got) pairs);
+          let i = List.map (fun (i, _, _) -> i) got
+          and j = List.map (fun (_, j, _) -> j) got in
+          equal (list int) (List.sort_uniq compare i) (List.sort compare i);
+          equal (list int) (List.sort_uniq compare j) (List.sort compare j));
+      test "at radius 0, coincident rows pair, the lowest row on ties"
+        (fun () ->
+          let p = unit_vector 1. 0.2 and q = unit_vector 1.5 (-0.3) in
+          let got =
+            Direction.reciprocal ~within:(radians (scalar 0.))
+              (icrs_rows [ p; p; q ]) (icrs_rows [ p; q; q ])
+          in
+          equal matches [ (0, 0, 0.); (2, 1, 0.) ] (triples got));
+      test "at radius pi, antipodal rows pair" (fun () ->
+          let poles within =
+            triples
+              (Direction.reciprocal ~within:(radians (scalar within))
+                 (icrs_rows [ north ]) (icrs_rows [ south ]))
+          in
+          equal matches [ (0, 0, pi) ] (poles pi);
+          equal matches [] (poles (Float.pred pi));
+          (* Every pair of rows is within pi, and the rows 0.1 apart are
+             each other's nearest. *)
+          let i, j, s =
+            Direction.reciprocal ~within:(radians (scalar pi))
+              (icrs_rows [ north; unit_vector 0. 0. ])
+              (icrs_rows [ south; unit_vector 0.1 0. ])
+          in
+          equal (pair (array int64) (array int64)) ([| 1L |], [| 1L |])
+            (Nx.to_array i, Nx.to_array j);
+          equal (array (float 1e-15)) [| 0.1 |] (Nx.to_array (in_radians s)));
+      test "raises as pairs does, naming reciprocal" (fun () ->
+          let d = icrs_rows [ north ] in
+          let raises within a b =
+            raises_match (Exn.invalid_arg ~sub:"Direction.reciprocal")
+              (fun () ->
+                Direction.reciprocal ~within:(radians (scalar within)) a b)
+          in
+          raises (-1.) d d;
+          raises nan d d;
+          raises 1. (lonlat 1. 0.2) d;
+          raises 1. d (icrs (vectors [| infinity; 0.; 0. |])));
     ]
 
 (* Structure *)
@@ -1016,4 +1106,5 @@ let () =
          gradients;
          structure;
          crossmatch;
+         reciprocity;
        ])

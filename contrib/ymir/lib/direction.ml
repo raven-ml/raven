@@ -269,17 +269,16 @@ let excluded = Int64.max_int
 let shape_text v =
   String.concat "; " (Array.to_list (Array.map string_of_int (Nx.shape v)))
 
-(* [catalogue which d] is [d]'s vectors, [[n; 3]], and whether each row names a
-   direction: no NaN component and not zero. *)
-let catalogue which d =
+(* [catalogue fn which d] is [d]'s vectors, [[n; 3]], and whether each row
+   names a direction: no NaN component and not zero. Errors name [fn]. *)
+let catalogue fn which d =
   let v = d.xyz in
   let s = Nx.shape v in
   if Array.length s <> 2 || s.(1) <> 3 then
     invalid_arg
-      (strf
-         "Direction.pairs: the %s directions have shape [%s], expected [n; 3]"
-         which (shape_text v));
-  check_finite (strf "Direction.pairs: the %s direction's vector" which) v;
+      (strf "%s: the %s directions have shape [%s], expected [n; 3]" fn which
+         (shape_text v));
+  check_finite (strf "%s: the %s direction's vector" fn which) v;
   let nan = Nx.any ~axes:[ 1 ] (Nx.isnan v) in
   (v, Nx.logical_not (Nx.logical_or nan (is_zero (components v))))
 
@@ -333,15 +332,16 @@ let candidates side (va, valid_a) (vb, valid_b) =
   let at = Nx.add (Nx.take range first) (Nx.sub rank (Nx.take range start)) in
   (Nx.div_s range (Int64.of_int neighbours), Nx.take at order)
 
-let pairs ~within a b =
-  let ((va, _) as ca) = catalogue "first" a
-  and ((vb, _) as cb) = catalogue "second" b in
+(* [matching fn ~within a b] is [pairs ~within a b], its errors naming [fn]. *)
+let matching fn ~within a b =
+  let ((va, _) as ca) = catalogue fn "first" a
+  and ((vb, _) as cb) = catalogue fn "second" b in
   let r = Quantity.value Unit.radian within in
   if Nx.ndim r <> 0 then
     invalid_arg
-      (strf "Direction.pairs: within has shape [%s], expected []" (shape_text r));
+      (strf "%s: within has shape [%s], expected []" fn (shape_text r));
   Nx.check Nx.Ptree.unit (Nx.greater_equal_s r 0.) () (fun _ () ->
-      Invalid_argument "Direction.pairs: the radius is negative or NaN");
+      Invalid_argument (fn ^ ": the radius is negative or NaN"));
   if Nx.dim 0 va = 0 || Nx.dim 0 vb = 0 then
     ( Nx.zeros Nx.int64 [| 0 |],
       Nx.zeros Nx.int64 [| 0 |],
@@ -355,6 +355,30 @@ let pairs ~within a b =
     let i = Nx.take kept i and j = Nx.take kept j and s = Nx.take kept s in
     let o = Nx.lexsort (Nx.stack ~axis:1 [ i; j ]) in
     (Nx.take o i, Nx.take o j, radians (Nx.take o s))
+
+let pairs ~within a b = matching "Direction.pairs" ~within a b
+
+(* [nearest n k partner s] is, for each of [n] rows, its partner at the least
+   separation [s] among the pairs whose row is [k], the lowest on ties, and
+   Int64.max_int for a row in no pair. *)
+let nearest n k partner s =
+  let best = Nx.reduce_segments Min ~segments:n k s in
+  let tied = Nx.equal s (Nx.take k best) in
+  let partner = Nx.where tied partner (Nx.full_like partner Int64.max_int) in
+  Nx.reduce_segments Min ~segments:n k partner
+
+(* A pair is kept where each row is the other's nearest. Every row of a pair
+   has a nearest, so the takes stay in range. *)
+let reciprocal ~within a b =
+  let i, j, s = matching "Direction.reciprocal" ~within a b in
+  let s = Quantity.value Unit.radian s in
+  let ab = nearest (Nx.dim 0 a.xyz) i j s
+  and ba = nearest (Nx.dim 0 b.xyz) j i s in
+  let mutual =
+    Nx.logical_and (Nx.equal (Nx.take i ab) j) (Nx.equal (Nx.take j ba) i)
+  in
+  let k = Nx.positions mutual in
+  (Nx.take k i, Nx.take k j, radians (Nx.take k s))
 
 (* Rotations *)
 
