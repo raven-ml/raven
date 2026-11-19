@@ -68,4 +68,4 @@ NV or AMD GPU that opens, after compiling every kernel into tolk's cache
 `bench/gpt_oss.thumper` holds the baselines: nonnormal (AMD Radeon AI PRO
 R9700) for wall time, fudge (NVIDIA RTX 5000 Ada) for allocations. The
 comparison with llama.cpp at the same shapes is in
-[doc/performance.md](../../doc/performance.md).
+[docs/performance.md](../../docs/performance.md).

@@ -46,7 +46,7 @@ let groups =
       ] );
   ]
 
-(* The manual, doc/manual/<name>.md, in the order the docs list it. *)
+(* The manual, docs/manual/<name>.md, in the order the docs list it. *)
 let manual = [ "introduction"; "installation"; "quickstart"; "coming-from-python"; "ecosystem-overview" ]
 
 (* Packages in dune-project the site doesn't list. *)

@@ -12,7 +12,7 @@ for one of five reasons only:
   fudge whose baseline would catch the regression;
 - **(e) correctness:** a divergence that keeps correctness where tinygrad
   computes a wrong value or does not terminate, pinned by a test, stays
-  without a consumer (`doc/dev/design.md`: correctness is never traded).
+  without a consumer (`docs/dev/design.md`: correctness is never traded).
 
 Taste, speed without such a measurement, "the old tolk did it" and the
 maintainer's call alone are not reasons. A speed measured only on another

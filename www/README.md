@@ -16,14 +16,14 @@ python3 -m http.server -d _build/default/www/site
    `pages/roadmap.html` is `/roadmap/`. A change to the header or the footer
    is made in each page; nothing keeps the copies in step.
 2. **Markdown leads; pages follow at release.**
-   - The repository's Markdown is the source: `doc/roadmap.md`,
-     `doc/performance.md` and `doc/support-raven.md`. They are read on GitHub
+   - The repository's Markdown is the source: `docs/roadmap.md`,
+     `docs/performance.md` and `docs/support-raven.md`. They are read on GitHub
      and by contributors.
    - A page written from one names it in its head, with the digest of the
      version it matches:
 
      ```html
-     <meta name="source" content="doc/roadmap.md 308199d49c34">
+     <meta name="source" content="docs/roadmap.md 308199d49c34">
      ```
 
    - When the file changes, the build warns that the page is stale, and the
@@ -51,14 +51,14 @@ python3 -m http.server -d _build/default/www/site
    - OCaml is highlighted. A block of toplevel phrases shows each phrase and
      its output, in the figure of the code before it. Blocks mdx runs and
      shell commands can be copied.
-5. **Posts.** Each `doc/blog/<date>-<slug>.md` becomes `/blog/<slug>/`, inside
+5. **Posts.** Each `docs/blog/<date>-<slug>.md` becomes `/blog/<slug>/`, inside
    `pages/blog.html`'s head, header and footer, in the post layout: its
    title, date and reading time, a note that it records its date, and
    contents from its second-level headings. Its blurb is its entry in
-   `doc/blog/index.md`. `/blog/feed.xml` lists the posts.
+   `docs/blog/index.md`. `/blog/feed.xml` lists the posts.
 6. **Docs** (`gen/docs.ml`), inside `pages/docs.html`'s head, header and
    footer, in the docs layout: a sidebar, the page, and its contents.
-   - `doc/manual/<name>.md` is `/docs/manual/<name>/`, in the order of
+   - `docs/manual/<name>.md` is `/docs/manual/<name>/`, in the order of
      `Registry.manual`.
    - A library's `doc/index.md` is `/docs/<lib>/`, with its Python
      counterpart, how to install it, the libraries it is built on (its
@@ -116,7 +116,7 @@ python3 -m http.server -d _build/default/www/site
   - `roadmap.html`, `performance.html`, `sponsor.html`.
 - `gen/`: the generator:
   - `www.ml`: builds every page, post, page of the docs and the feed,
-    copies `static/` and `doc/assets/`, and checks;
+    copies `static/` and `docs/assets/`, and checks;
   - `page.ml`: a page's sources, its staleness, filling its slots, and
     lending its head, header and footer to posts;
   - `slots.ml`: what slots are filled with;

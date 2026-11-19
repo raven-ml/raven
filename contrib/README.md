@@ -19,7 +19,7 @@ Each one is its own dune project with its own version and opam metadata.
   `opam install raven` does not install them.
 - They depend on the public libraries of core packages, with a lower bound
   on the oldest core release they build against, and on other OCaml
-  libraries only as `doc/dev/design.md` allows: where a library's type is
+  libraries only as `docs/dev/design.md` allows: where a library's type is
   in the package's interface (jord's `jsont`, whose `Jsont.json` its
   readers take), or by the maintainer's decision (jord's `xmlm`, which
   `jord.safe` reads Sentinel-2's XML with).

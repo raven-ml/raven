@@ -1,7 +1,7 @@
 # todo
 
 goalpost: jit-compiled gpt-oss at least as fast as {tinygrad,JAX,llama.cpp/vLLM} on {NVIDIA,NV,AMD}.
-Where it stands, with every measurement: doc/performance.md.
+Where it stands, with every measurement: docs/performance.md.
 
 ## tolk
 

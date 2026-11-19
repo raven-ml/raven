@@ -2,7 +2,7 @@
    from the repository's Markdown into the site's docs layout, inside
    the head, header and footer of pages/docs.html.
 
-   - doc/manual/<name>.md is /docs/manual/<name>/.
+   - docs/manual/<name>.md is /docs/manual/<name>/.
    - A library's doc/index.md is /docs/<lib>/; a contrib package without
      one has its README.md there. Its guides, doc/NN-<slug>.md, are
      /docs/<lib>/<slug>/, and its other Markdown, doc/<name>.md, is
@@ -85,7 +85,7 @@ let slug file =
   Filename.remove_extension n
 
 let pages root =
-  let manual = List.map (fun n -> { file = "doc/manual/" ^ n ^ ".md"; url = "/docs/manual/" ^ n ^ "/"; kind = Manual }) Registry.manual in
+  let manual = List.map (fun n -> { file = "docs/manual/" ^ n ^ ".md"; url = "/docs/manual/" ^ n ^ "/"; kind = Manual }) Registry.manual in
   let lib l =
     let at file = sprintf "/docs/%s/%s/" l.name (slug file) in
     ({ file = l.landing; url = sprintf "/docs/%s/" l.name; kind = Landing l } :: List.mapi (fun i g -> { file = g; url = at g; kind = Guide (l, i + 1) }) l.guides)

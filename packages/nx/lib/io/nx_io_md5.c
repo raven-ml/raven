@@ -10,7 +10,7 @@
 
   This file calls caml_MD5Init, caml_MD5Update and caml_MD5Final, which
   caml/md5.h declares CAMLextern under CAML_INTERNALS. It is an exception
-  to the Layers rule of doc/dev/design.md, as munin_blake2_stubs.c is for
+  to the Layers rule of docs/dev/design.md, as munin_blake2_stubs.c is for
   BLAKE2: Digest is the layer that abstracts MD5 and it is too weak here.
   The internals stay in this file, so the decoder is not compiled with
   them. A change to the runtime's context or functions fails this file's

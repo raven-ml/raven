@@ -1,6 +1,6 @@
 (* www ROOT SITE OUT builds the site from the repository at ROOT and the
    site's own folder SITE into OUT: each page of SITE/pages, each post,
-   the feed, the docs, and SITE/static and doc/assets copied as they are.
+   the feed, the docs, and SITE/static and docs/assets copied as they are.
    It warns about pages whose sources changed since they were written,
    and fails on a broken link.
 
@@ -40,10 +40,10 @@ let check_registry root =
   List.iter (fun name -> if not (List.mem_assoc name Registry.contrib) then Repo.fail "%s: no contrib entry for %s" file name) contrib;
   List.iter (fun (name, _) -> if not (List.mem name contrib) then Repo.fail "%s: %s is not a package under contrib/" file name) Registry.contrib;
   let manual =
-    Sys.readdir (root / "doc" / "manual") |> Array.to_list |> List.filter (fun n -> Filename.check_suffix n ".md") |> List.map Filename.remove_extension
+    Sys.readdir (root / "docs" / "manual") |> Array.to_list |> List.filter (fun n -> Filename.check_suffix n ".md") |> List.map Filename.remove_extension
   in
-  List.iter (fun n -> if not (List.mem n Registry.manual) then Repo.fail "%s: doc/manual/%s.md is not in the manual" file n) manual;
-  List.iter (fun n -> if not (List.mem n manual) then Repo.fail "%s: the manual lists %s, but doc/manual/%s.md doesn't exist" file n n) Registry.manual
+  List.iter (fun n -> if not (List.mem n Registry.manual) then Repo.fail "%s: docs/manual/%s.md is not in the manual" file n) manual;
+  List.iter (fun n -> if not (List.mem n manual) then Repo.fail "%s: the manual lists %s, but docs/manual/%s.md doesn't exist" file n n) Registry.manual
 
 (* The pages, sorted by file name. *)
 let pages site =
@@ -71,20 +71,20 @@ let site_url ~root ~docs ~posts path =
   | Some p -> Some p.url
   | None -> (
       match path with
-      | "doc/index.md" -> Some "/docs/"
-      | "doc/roadmap.md" -> Some "/roadmap/"
-      | "doc/performance.md" -> Some "/performance/"
-      | "doc/support-raven.md" -> Some "/sponsor/"
-      | "doc/blog/index.md" -> Some "/blog/"
-      | _ when String.starts_with ~prefix:"doc/assets/" path -> Some ("/assets/" ^ after "doc/assets/")
+      | "docs/index.md" -> Some "/docs/"
+      | "docs/roadmap.md" -> Some "/roadmap/"
+      | "docs/performance.md" -> Some "/performance/"
+      | "docs/support-raven.md" -> Some "/sponsor/"
+      | "docs/blog/index.md" -> Some "/blog/"
+      | _ when String.starts_with ~prefix:"docs/assets/" path -> Some ("/assets/" ^ after "docs/assets/")
       | _ when Filename.check_suffix path ".mli" -> (
           (* An interface: its module's page in the API reference. *)
           match String.split_on_char '/' path with
           | ("packages" | "contrib") :: pkg :: _ when List.exists (fun (p : Docs.page) -> p.url = "/docs/" ^ pkg ^ "/") docs ->
               Api.find_module root pkg (String.capitalize_ascii (Filename.remove_extension (Filename.basename path)))
           | _ -> None)
-      | _ when String.starts_with ~prefix:"doc/blog/" path ->
-          let slug = Filename.remove_extension (after "doc/blog/") in
+      | _ when String.starts_with ~prefix:"docs/blog/" path ->
+          let slug = Filename.remove_extension (after "docs/blog/") in
           if List.exists (fun (p : Repo.post) -> p.slug = slug) posts then Some ("/blog/" ^ slug ^ "/") else None
       | _ -> None)
 
@@ -124,7 +124,7 @@ let build ~root ~site ~out =
         let older = List.nth_opt posts (i + 1) and newer = if i = 0 then None else List.nth_opt posts (i - 1) in
         let html, md = Post.page env ~layout:blog ~prev:older ~next:newer p in
         write (out / "blog" / p.slug / "index.html") html;
-        ("doc/blog/" ^ p.slug ^ ".md", md))
+        ("docs/blog/" ^ p.slug ^ ".md", md))
       posts
   in
   write (out / "blog" / "feed.xml") (Post.feed posts);
@@ -137,7 +137,7 @@ let build ~root ~site ~out =
   in
   check_links (posts_md @ docs_md);
   List.iter (fun (url, html) -> write (out / url / "index.html") html) (Docs.build_api ~root ~layout:(Page.parse (site / "pages" / "docs.html")) ~pages:docs);
-  copy_dir (root / "doc" / "assets") (out / "assets");
+  copy_dir (root / "docs" / "assets") (out / "assets");
   copy_dir (site / "static") out
 
 let () =

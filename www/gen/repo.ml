@@ -227,9 +227,9 @@ let tested_code ?section path =
   in
   go ~skip:false blocks
 
-(* Posts: doc/blog/<date>-<slug>.md, where <date> is YYYY-MM or
+(* Posts: docs/blog/<date>-<slug>.md, where <date> is YYYY-MM or
    YYYY-MM-DD. An empty file is a draft. Each post's blurb is its entry in
-   doc/blog/index.md. *)
+   docs/blog/index.md. *)
 
 type post = { slug : string; date : string; title : string; blurb : string option }
 
@@ -241,7 +241,7 @@ let date_of name =
   else if n >= 7 && digits 0 4 && name.[4] = '-' && digits 5 7 then Some (String.sub name 0 7)
   else None
 
-(* Entries of doc/blog/index.md: a link to the post, then its blurb. *)
+(* Entries of docs/blog/index.md: a link to the post, then its blurb. *)
 let blurbs dir =
   List.concat_map items (blocks (dir / "index.md"))
   |> List.filter_map (fun inline ->
@@ -252,7 +252,7 @@ let blurbs dir =
          | _ -> None)
 
 let posts root =
-  let dir = root / "doc" / "blog" in
+  let dir = root / "docs" / "blog" in
   let blurbs = blurbs dir in
   Sys.readdir dir |> Array.to_list
   |> List.filter_map (fun name ->

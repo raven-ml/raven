@@ -29,7 +29,7 @@ Start a fresh agent session at the root of the main checkout and give it the
 program, a scope and a tag:
 
 ```
-Run doc/dev/autoresearch/design.md on packages/talon, tag design-talon-oct06.
+Run docs/dev/autoresearch/design.md on packages/talon, tag design-talon-oct06.
 ```
 
 The scope is a package (`packages/talon`), a sub-library

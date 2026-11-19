@@ -10,7 +10,7 @@
  (deps
   ../dune-project
   ../CHANGES.md
-  (source_tree ../doc)
+  (source_tree ../docs)
   (glob_files_rec ../packages/*.md)
   (glob_files_rec ../packages/*.mli)
   (glob_files_rec ../packages/*.csv)
@@ -29,7 +29,7 @@
 (rule
  (alias check)
  (deps
-  (source_tree ../doc)
+  (source_tree ../docs)
   (source_tree pages))
  (action
   (run gen/www.exe --check .. .)))

@@ -1,4 +1,4 @@
-(* Blog posts: each doc/blog/<date>-<slug>.md rendered into the post
+(* Blog posts: each docs/blog/<date>-<slug>.md rendered into the post
    layout at /blog/<slug>/, inside the head, header and footer of
    the blog's page, and the feed of them all. A post is a record of its
    date: a note above it says so. *)
@@ -22,7 +22,7 @@ let minutes text =
 (* A post's page, and what [Markdown.render] found in it. Its code has no
    copy buttons: a post's code is a record of its date. *)
 let page env ~layout ~prev ~next (p : Repo.post) =
-  let md = Markdown.render ~copy:false env ("doc/blog/" ^ p.slug ^ ".md") in
+  let md = Markdown.render ~copy:false env ("docs/blog/" ^ p.slug ^ ".md") in
   let body = md.body and contents = md.contents in
   let toc = concat_map (fun (id, title) -> sprintf {|<a href="#%s">%s</a>|} (esc id) (esc title)) contents in
   let link label (q : Repo.post option) cls =

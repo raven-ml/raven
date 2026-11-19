@@ -5,7 +5,7 @@
    A page written from a file of the repository says so in its head, with
    the digest of the version it matches:
 
-     <meta name="source" content="doc/roadmap.md 308199d49c34">
+     <meta name="source" content="docs/roadmap.md 308199d49c34">
 
    When the file changes, the page is stale until someone updates it and
    its digest.

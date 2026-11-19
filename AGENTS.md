@@ -26,7 +26,7 @@ Breaking one causes real damage.
 - NEVER add an nx backend operation without being asked.
 - NEVER add a dependency without being asked. raven depends only on OCaml
   libraries whose types its public interfaces expose for composition
-  (`doc/dev/design.md`).
+  (`docs/dev/design.md`).
 - NEVER cite an RFC or a ledger from code or an `.mli`. The `.mli` and the code
   are the source of truth.
 - NEVER copy sources between directories (`copy_files`, copy rules, an
@@ -57,7 +57,7 @@ A package's main library lives at `lib/`, each sub-library at
 `include_subdirs` module groups. A package's own `AGENTS.md` holds its
 boundaries, decisions and traps.
 
-Accepted designs live in `doc/rfc/`. RFCs from 0010 on are not committed.
+Accepted designs live in `docs/rfc/`. RFCs from 0010 on are not committed.
 
 ## Parallel agents
 
@@ -112,7 +112,7 @@ instead of a long-running one.
 
 ## How we design
 
-Before any design or semantic decision, work through `doc/dev/design.md`:
+Before any design or semantic decision, work through `docs/dev/design.md`:
 the constraint we design for, how to trade correctness, understanding and
 speed, the hard constraints, how to shape a design, how to become certain
 of it from references, and how to review it.
@@ -124,7 +124,8 @@ of it from references, and how to review it.
   match on dtypes take explicit type annotations, as in
   `let f (type a b) (t : (a, b) t) =`.
 - API docs (`.mli` doc comments, private modules' included, and guide
-  pages under `doc/`) follow `doc/dev/documentation.md`.
+  pages under `docs/` and each package's `doc/`) follow
+  `docs/dev/documentation.md`.
 - A block that isn't obvious gets a short comment: what it does and why, with
   an example when it helps. ASCII diagrams for whole systems. Don't narrate
   the code's arrangement. Section headers are plain `(* Name *)`.

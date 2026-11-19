@@ -50,7 +50,7 @@ to serve AI development and research.
 
 We spend a lot of time on planning and design. Most changes to a public
 API go through an AI-assisted design phase, following the principles in
-[doc/dev/design.md](doc/dev/design.md). Its outcome is a design document
+[docs/dev/design.md](docs/dev/design.md). Its outcome is a design document
 or RFC, which one or more maintainers review carefully.
 
 Once the design is settled, its implementation is broken down and

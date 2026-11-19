@@ -8,7 +8,7 @@ the design is wrong, the lines that implement it don't need reviewing yet.
 
 ## 1. Design
 
-Read `doc/dev/design.md`. Step back from the diff, read what the code does,
+Read `docs/dev/design.md`. Step back from the diff, read what the code does,
 case by case, then ask what the change should have been.
 
 - **What the change is for.** State, in one sentence a user would care
@@ -44,7 +44,7 @@ case by case, then ask what the change should have been.
   composition would cover? Is its size in proportion to its job?
 - **Public `.mli`.** Is this the shape a careful library author would defend
   in ten years? Does it remove a case that used to work?
-- **Hard constraints** of `doc/dev/design.md`.
+- **Hard constraints** of `docs/dev/design.md`.
 
 A design finding gives the cause or the better shape, what it removes, and
 what it costs. Its verdict is "redesign before landing" or "lands as is";
@@ -120,7 +120,7 @@ not introduce is Pre-existing, whatever its severity.
 ## Nits
 
 At most three, and only for a rule written in an `AGENTS.md` or
-`doc/dev/documentation.md`.
+`docs/dev/documentation.md`.
 
 ## Summary
 

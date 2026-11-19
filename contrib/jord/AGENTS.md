@@ -11,7 +11,7 @@ run under mdx.
 
 - Changes go in `contrib/jord/CHANGES.md`.
 
-- The same rules as raven's libraries: `doc/dev/design.md`, AGENTS.md's code
+- The same rules as raven's libraries: `docs/dev/design.md`, AGENTS.md's code
   style, raven's public interfaces only (`Jord_geotiff`'s tags are nx.io's
   `Tiff.value`). Two dependencies come from outside raven: `jsont`,
   because `Jsont.json` is `Jord_geojson`'s and `Jord_stac`'s input, as it
@@ -24,7 +24,7 @@ run under mdx.
   unless its doc says otherwise: no I/O, `Error` for input a reader cannot
   read, `Invalid_argument` for misuse, results where the inputs lie. A new
   value keeps to them or states its exception in its doc.
-- The docs follow raven's `doc/dev/documentation.md`. A value sits under
+- The docs follow raven's `docs/dev/documentation.md`. A value sits under
   its section's heading: the section's preamble states each rule in a
   sentence, and a subsection with a rule's detail comes after the values
   it governs, whose docs link it (`Crs.of_wkt` and its WKT rules,

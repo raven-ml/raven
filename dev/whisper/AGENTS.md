@@ -7,7 +7,7 @@ and is never published (no opam package, no CHANGES entry).
 
 ## Boundaries
 
-- A clean OCaml implementation designed by `doc/dev/design.md`, not a
+- A clean OCaml implementation designed by `docs/dev/design.md`, not a
   translation of the upstream Python. Upstream at `86098128` run on the CPU
   in float32 is the oracle for what the model computes; the paper is
   context.

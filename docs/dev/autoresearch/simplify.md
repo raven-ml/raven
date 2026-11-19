@@ -103,7 +103,7 @@ removes a relied-on capability is discarded, however much simpler it is.
    `main`, as README.md describes. Every kept change lands on this one
    branch, on top of the last. Create the results directory `R`.
 2. Fix the pristine point: the commit where the scope's design was last
-   thought through, usually where its RFC (in `doc/rfc/`) landed. The
+   thought through, usually where its RFC (in `docs/rfc/`) landed. The
    launcher may name it; otherwise find it from the RFC and the history,
    and write it in `R/plan.md` with the reason.
 3. Build everything and run the scope's tests. Build each bench executable
