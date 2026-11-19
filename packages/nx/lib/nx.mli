@@ -356,8 +356,9 @@ module Host : sig
       for {!Repr.of_array}, and no donation of the value writes [b].
 
       Raises [Invalid_argument] if [s] is not a shape of [Bigarray.Array1.dim
-      b] elements, or if [b]'s kind is [char], [int] or [nativeint], which
-      no dtype stores. *)
+      b] elements, if [b]'s kind is [char], [int] or [nativeint], which no
+      dtype stores, or if [b]'s data is not aligned for its elements, as that
+      of [Unix.map_file] at an odd [pos] may be. *)
 end
 
 val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)

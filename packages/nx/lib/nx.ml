@@ -919,7 +919,12 @@ module Host = struct
           | Bigarray.Int -> "int"
           | _ -> "nativeint")
     | Some dt ->
-        let a = Nx_array.of_bigarray dt (Bigarray.genarray_of_array1 b) in
+        let a =
+          try Nx_array.of_bigarray dt (Bigarray.genarray_of_array1 b)
+          with Invalid_argument _ ->
+            invalid_argf "%s: the bigarray's data is not aligned for %a" by
+              D.pp dt
+        in
         let l = Nx_array.Layout.contiguous s in
         Repr.of_array v (Nx_array.v dt l (Nx_array.buffer a))
 end

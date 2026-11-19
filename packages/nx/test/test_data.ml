@@ -111,6 +111,20 @@ let test_unpack () =
 (* A fresh flat bigarray of [n] elements of [k]. *)
 let vector k n = Bigarray.Array1.create k Bigarray.c_layout n
 
+(* Two float32 elements mapped from a file at byte 1, so their data is not
+   aligned for them. *)
+let misaligned () =
+  let path = Filename.temp_file "nx-test" ".bin" in
+  Out_channel.with_open_bin path (fun oc ->
+      output_string oc (String.make 9 'a'));
+  let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close fd; Sys.remove path)
+    (fun () ->
+      Bigarray.array1_of_genarray
+        (Unix.map_file fd ~pos:1L Bigarray.float32 Bigarray.c_layout false
+           [| 2 |]))
+
 let refusals =
   [
     ( "create: too few values",
@@ -147,6 +161,8 @@ let refusals =
       fun () ->
         ignore (Nx.Host.wrap [| 2 |] (vector Bigarray.char 2))
     );
+    ( "Host.wrap: data not aligned for its elements",
+      fun () -> ignore (Nx.Host.wrap [| 2 |] (misaligned ())) );
     ( "Host.read: a dtype with no Bigarray kind",
       fun () -> Nx.Host.read (Nx.zeros Nx.bfloat16 [| 2 |]) ignore );
     ( "Host.read: a dead value",
@@ -212,6 +228,10 @@ let viewed (type v s) (dt : (v, s) D.t) s vs view =
   | `Broadcast ->
       let y = Nx.broadcast_to (Array.append [| 2 |] s) x in
       (y, Nx.to_array y)
+  | `Row ->
+      (* The second of two copies: C-contiguous, at an offset. *)
+      let y = Nx.get [ 1 ] (Nx.stack [ x; x ]) in
+      (y, Array.map (stored dt) vs)
 
 let views =
   Gen.of_list
@@ -220,8 +240,9 @@ let views =
         (match v with
         | `Whole -> "whole"
         | `Flipped -> "flipped"
-        | `Broadcast -> "broadcast"))
-    [ `Whole; `Flipped; `Broadcast ]
+        | `Broadcast -> "broadcast"
+        | `Row -> "a row at an offset"))
+    [ `Whole; `Flipped; `Broadcast; `Row ]
 
 (* [Host.read] gives a host value's elements in C order, at every dtype a
    bigarray holds, through views of any strides. *)
@@ -249,6 +270,13 @@ let test_host_wrap () =
   let none = vector Bigarray.int8_unsigned 0 in
   equal (array int) [| 0; 3 |] (Nx.shape (Nx.Host.wrap [| 0; 3 |] none))
 
+let test_host_wrap_not_donated () =
+  let c = Bigarray.c_layout in
+  let b = Bigarray.Array1.init Bigarray.float32 c 3 Float.of_int in
+  ignore (Nx.to_array (Nx.neg (Nx.donate (Nx.Host.wrap [| 3 |] b))));
+  equal (array float_exact) [| 0.; 1.; 2. |]
+    (Array.init 3 (Bigarray.Array1.get b))
+
 let test_host_round_trip () =
   let b =
     Bigarray.Array1.init Bigarray.int32 Bigarray.c_layout 4 Int32.of_int
@@ -269,6 +297,8 @@ let bigarrays =
         test_host_wrap;
       test "Host.read of Host.wrap gives the bigarray's elements"
         test_host_round_trip;
+      test "a donation of Host.wrap's value leaves the bigarray"
+        test_host_wrap_not_donated;
     ]
 
 (* Reads at every brand *)
