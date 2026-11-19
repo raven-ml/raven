@@ -45,8 +45,9 @@ the weights: raven's `main.exe`, stripped, and CUDA's NVRTC, which raven
 loads only to compile a kernel that is not in tolk's cache; llama.cpp's CUDA
 release archive, with its cuBLAS; a fresh uv environment with `bench/`'s pins
 for vLLM and transformers, with torch's CUDA libraries and Python 3.12.
-Through NV, raven needs no libcuda either. Measured on 2026-11-19 on an RTX
-5000 Ada (driver 615.71.09, CUDA 13.4, Debian 13), with raven at 72377cdbe1.
+Through NV, raven loads no libcuda, except inside NVRTC when it compiles a
+kernel. Measured on 2026-11-19 on an RTX 5000 Ada (driver 615.71.09, CUDA
+13.4, Debian 13), with raven at 72377cdbe1.
 
 ## Tests
 
