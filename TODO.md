@@ -244,6 +244,10 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 
 ## talon, hugin, brot, munin, quill
 
+- A right y axis sets its title on the line of a right legend's title, so
+  the two read as one header, as row facet titles did before eaf19326e1
+- hugin's 16-styles image differs on fudge in 13 pixels of one symbol by
+  up to 3 levels: the rasterizer's arcs read libm, so bytes vary by system
 - talon's stored allocation baselines for its Parquet read rows have
   drifted from main (read-nullable: 34,263 words stored, 36,671 measured
   on main); re-record them, and find which change moved them
