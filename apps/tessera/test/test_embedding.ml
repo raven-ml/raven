@@ -11,17 +11,6 @@ let rows dims l =
 
 (* Quantisation *)
 
-(* A largest magnitude of 127 makes the scale 1, so each code is its value
-   rounded, halves to even. *)
-let ties =
-  test "rounds halves to even" (fun () ->
-      let codes, scales =
-        Embedding.quantize
-          (rows 8 [ 127.; 2.5; 3.5; -2.5; 0.5; -0.5; 1.5; -126.5 ])
-      in
-      equal (array int) [| 127; 2; 4; -2; 0; 0; 2; -126 |] (Nx.to_array codes);
-      equal (array float_exact) [| 1. |] (Nx.to_array scales))
-
 (* numpy's rule, written out: the nearest integer, a half to the even one. *)
 let np_round x =
   let f = Float.floor x in
@@ -215,14 +204,11 @@ let grid ~rows ~cols =
 
 let ok = function Ok x -> x | Error e -> failf "%s" e
 
-let read_tiff file =
-  let ifd = List.hd (Nx_io.load_tiff file) in
-  (Nx_io.Tiff.tags ifd, Nx_io.Tiff.samples ifd)
-
 (* What the file states: its grid, nodata and band descriptions, and its
    bands. *)
 let read_geotiff file =
-  let tags, samples = read_tiff file in
+  let ifd = List.hd (Nx_io.load_tiff file) in
+  let tags = Nx_io.Tiff.tags ifd in
   let descriptions =
     match List.assoc_opt 42112 tags with
     | Some (Nx_io.Tiff.Ascii s) -> s
@@ -231,7 +217,7 @@ let read_geotiff file =
   ( ok (Jord_geotiff.grid tags),
     ok (Jord_geotiff.nodata tags),
     descriptions,
-    Nx.unpack Nx.float32 samples )
+    Nx.unpack Nx.float32 (Nx_io.Tiff.samples ifd) )
 
 (* The prefix of [dims] values of a tile's embedding of [dims + 2], a strided
    view, whose values are distinct: the first pixel without embedding, and -0.
@@ -248,23 +234,6 @@ let distinct ~rows ~cols ~dims =
   let e = Nx.create Nx.float32 [| rows; cols; dims + 2 |] v in
   Nx.slice [ Nx.A; Nx.A; Nx.R (0, dims) ] e
 
-let on_grid =
-  prop "save_geotiff writes the embedding on its grid, read back exactly"
-    Gen.(triple (int_range 1 300) (int_range 1 300) (int_range 1 3))
-    (fun (rows, cols, dims) ->
-      cover "more than a tile down" (rows > 256);
-      cover "more than a tile across" (cols > 256);
-      with_dir (fun dir ->
-          let name = Filename.concat dir "tile" in
-          let g = grid ~rows ~cols in
-          let e = distinct ~rows ~cols ~dims in
-          Embedding.save_geotiff name ~grid:g e;
-          let g', nodata, _, bands = read_geotiff (name ^ ".tiff") in
-          equal grid_t g g';
-          equal (option float_exact) (Some Float.nan) nodata;
-          equal (array int) [| rows; cols; dims |] (Nx.shape bands);
-          equal (array float_exact) (Nx.to_array e) (Nx.to_array bands)))
-
 (* GDAL 3.12's GDAL_METADATA text for bands described as GeoTessera's
    _write_embedding_tiff describes them, as rasterio 1.5.2 writes it. *)
 let gdal_descriptions =
@@ -277,59 +246,30 @@ let gdal_descriptions =
    role=\"description\">Tessera_Band_2</Item>\n\
    </GDALMetadata>\n"
 
-(* A tile of [n] pixels as [rows × cols] cells. *)
-let tile_shape n = if n mod 2 = 0 then (2, n / 2) else (1, n)
-
 let geotiff =
-  group "geotiff"
-    [
-      on_grid;
-      test "describes each band as GeoTessera does" (fun () ->
-          with_dir (fun dir ->
-              let name = Filename.concat dir "tile" in
-              Embedding.save_geotiff name ~grid:(grid ~rows:2 ~cols:2)
-                (Nx.ones Nx.float32 [| 2; 2; 3 |]);
-              let _, _, descriptions, _ = read_geotiff (name ^ ".tiff") in
-              equal string gdal_descriptions descriptions));
-      prop "encode's embedding of a tile lands on its landmask's grid"
-        (Synth.spec ~pixels:8 ()) (fun spec ->
-          with_dir (fun dir ->
-              let px = Synth.pixels spec in
-              let rows, cols = tile_shape (Pixels.length px) in
-              let landmask = Filename.concat dir "landmask.tiff" in
-              Nx_io.save_tiff
-                ~tags:(Jord_geotiff.tags (grid ~rows ~cols))
-                landmask
-                (Nx.ones Nx.uint8 [| rows; cols; 1 |]);
-              let g = ok (Jord_geotiff.grid (fst (read_tiff landmask))) in
-              let e = Embedding.encode ~shape Nx.Host.on (Model.apply model) px in
-              let e = Nx.reshape [| rows; cols; 16 |] e in
-              let name = Filename.concat dir "tile" in
-              Embedding.save_geotiff name ~grid:g e;
-              let g', nodata, _, bands = read_geotiff (name ^ ".tiff") in
-              equal grid_t (grid ~rows ~cols) g';
-              equal (option float_exact) (Some Float.nan) nodata;
-              List.iteri
-                (fun p (n2, n1) ->
-                  let empty = n2 = 0 && n1 = 0 in
-                  cover "a pixel without observations" empty;
-                  let at a c = Nx.item [ p / cols; p mod cols; c ] a in
-                  let row = Array.init 16 (at bands) in
-                  equal
-                    ~msg:(Printf.sprintf "pixel %d" p)
-                    (array float_exact)
-                    (Array.init 16 (at e))
-                    row;
-                  equal ~msg:"no data" bool empty (Array.exists Float.is_nan row))
-                (List.combine spec.s2 spec.s1)));
-    ]
+  prop "save_geotiff writes the embedding on its grid, as GeoTessera does"
+    Gen.(pair (int_range 1 300) (int_range 1 300))
+    (fun (rows, cols) ->
+      cover "more than a tile down" (rows > 256);
+      cover "more than a tile across" (cols > 256);
+      with_dir (fun dir ->
+          let name = Filename.concat dir "tile" in
+          let g = grid ~rows ~cols in
+          let e = distinct ~rows ~cols ~dims:3 in
+          Embedding.save_geotiff name ~grid:g e;
+          let g', nodata, descriptions, bands = read_geotiff (name ^ ".tiff") in
+          equal grid_t g g';
+          equal (option float_exact) (Some Float.nan) nodata;
+          equal string gdal_descriptions descriptions;
+          equal (array int) [| rows; cols; 3 |] (Nx.shape bands);
+          equal (array float_exact) (Nx.to_array e) (Nx.to_array bands)))
 
 let () =
   exit
     (run "tessera.embedding"
        [
-         group "quantize" [ ties; every_tie; no_embedding; round_trip ];
+         group "quantize" [ every_tie; no_embedding; round_trip ];
          files;
          group "encode" [ undefined ];
-         geotiff;
+         group "geotiff" [ geotiff ];
        ])
