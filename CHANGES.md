@@ -4449,6 +4449,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- Add `Kaun_hf.download_url ~sha256 url`, which downloads the file at a
+  pinned URL into raven's cache, under `$RAVEN_CACHE_ROOT/sha256/<digest>/`
+  (else `$XDG_CACHE_HOME/raven/sha256/`), and keeps it only if its SHA-256
+  digest is `sha256`. The digest is computed as the file is written, and a
+  cached file is returned without being read. A checkpoint its publisher
+  names by digest, such as Whisper's on openaipublic, is fetched by name.
 - **Breaking:** `Linear`'s weight is `[outputs; inputs]`, the layout of
   PyTorch's and MLX's `Linear` and of the checkpoint files, where it was
   `[inputs; outputs]`: `Linear.apply p x` is `x @ p.wᵀ + p.b`, one

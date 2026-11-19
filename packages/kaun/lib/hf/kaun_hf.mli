@@ -53,6 +53,32 @@ val download_file :
     Raises [Failure] if the download fails or if [offline] is [true] and the
     file is not cached. *)
 
+val download_url :
+  ?cache_dir:string -> ?offline:bool -> sha256:string -> string -> string
+(** [download_url ~sha256 url] is the local path of the file at [url] whose
+    SHA-256 digest ({{:https://csrc.nist.gov/pubs/fips/180-4/upd1/final}FIPS
+    180-4}) is [sha256], 64 hexadecimal digits in either case:
+    [cache_dir/sha256/name], with [sha256] in lowercase and [name] the last
+    segment of [url]'s path, before any query or fragment. The digest names
+    the file, so a file whose publisher gives its digest, such as a release
+    checkpoint, is pinned to its bytes.
+
+    The file is downloaded on first access as {!download_file} downloads, its
+    digest computed as it is written, and renamed into place only if its
+    digest is [sha256]: the cache path only ever holds a file of that digest.
+    A file found there is returned without being read again. Optional
+    arguments:
+
+    - [cache_dir], the cache root. Defaults to [$RAVEN_CACHE_ROOT/sha256]
+      when [RAVEN_CACHE_ROOT] is set, and [$XDG_CACHE_HOME/raven/sha256]
+      otherwise ([XDG_CACHE_HOME] itself defaulting to [$HOME/.cache]).
+    - [offline], as for {!download_file}.
+
+    Raises [Invalid_argument] if [sha256] is not 64 hexadecimal digits, or
+    [url]'s path ends in no name or in one holding a backslash; [Failure] if
+    the download fails, its digest is another, naming both, or [offline] is
+    [true] and the file is not cached. *)
+
 (** {1:loading Loading models} *)
 
 val load_config :

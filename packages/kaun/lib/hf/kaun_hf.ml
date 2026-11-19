@@ -29,16 +29,19 @@ let home () =
   | _, Some d when d <> "" -> d
   | _ -> failwith "no home directory: set HOME, or RAVEN_CACHE_ROOT"
 
-let default_cache_dir () =
+(* [dir] under raven's cache root. *)
+let raven_cache dir =
   match Sys.getenv_opt "RAVEN_CACHE_ROOT" with
-  | Some d when d <> "" -> Filename.concat d "huggingface"
+  | Some d when d <> "" -> Filename.concat d dir
   | _ ->
       let xdg =
         match Sys.getenv_opt "XDG_CACHE_HOME" with
         | Some d when d <> "" -> d
         | _ -> Filename.concat (home ()) ".cache"
       in
-      Filename.concat (Filename.concat xdg "raven") "huggingface"
+      Filename.concat (Filename.concat xdg "raven") dir
+
+let default_cache_dir () = raven_cache "huggingface"
 
 let sanitize_repo_id repo_id =
   String.map (fun c -> if c = '/' then '-' else c) repo_id
@@ -87,29 +90,65 @@ let clear_cache ?cache_dir ?repo_id () =
 (* [curl] runs without a shell, so no argument needs quoting and the lookup on
    [PATH] is the same on every system. A missing program is exit code 127 from
    the forked child on Unix and [ENOENT] from process creation on Windows. *)
-let curl args ~out =
-  let rec wait pid =
-    try snd (Unix.waitpid [] pid)
-    with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
-  in
-  match
-    wait
-      (Unix.create_process "curl"
-         (Array.of_list ("curl" :: args))
-         Unix.stdin out Unix.stderr)
-  with
+let spawn args out =
+  try
+    Unix.create_process "curl"
+      (Array.of_list ("curl" :: args))
+      Unix.stdin out Unix.stderr
+  with Unix.Unix_error (Unix.ENOENT, _, _) -> failwith err_no_curl
+
+let rec wait pid =
+  try snd (Unix.waitpid [] pid)
+  with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
+
+let succeeded = function
   | Unix.WEXITED 0 -> true
   | Unix.WEXITED 127 -> failwith err_no_curl
   | Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> false
-  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> failwith err_no_curl
 
-let curl_download ~headers ~url ~dest () =
+let curl args ~out = succeeded (wait (spawn args out))
+
+(* [curl args] with its output read through a pipe, each chunk given to [f]
+   as it arrives. *)
+let curl_read args ~f =
+  let r, w = Unix.pipe ~cloexec:true () in
+  let pid =
+    Fun.protect
+      ~finally:(fun () -> Unix.close w)
+      (fun () ->
+        try spawn args w
+        with e ->
+          Unix.close r;
+          raise e)
+  in
+  let buf = Bytes.create 65536 in
+  let rec copy () =
+    match Unix.read r buf 0 (Bytes.length buf) with
+    | 0 -> ()
+    | n ->
+        f buf n;
+        copy ()
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> copy ()
+  in
+  match copy () with
+  | () ->
+      Unix.close r;
+      succeeded (wait pid)
+  | exception e ->
+      (* curl, writing to a closed pipe, ends. *)
+      Unix.close r;
+      ignore (wait pid);
+      raise e
+
+(* With [sha256], the download is hashed as it is written and refused unless
+   its digest is [sha256]. *)
+let curl_download ?sha256 ~headers ~url ~dest () =
   mkdir_p (Filename.dirname dest);
   let headers =
     List.concat_map (fun (k, v) -> [ "-H"; k ^ ": " ^ v ]) headers
   in
-  (* curl writes to the descriptor that created the file: a name reopened would
-     follow a link put there meanwhile. *)
+  (* The download is written to the descriptor that created the file: a name
+     reopened would follow a link put there meanwhile. *)
   let temp, oc =
     Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o644
       ~temp_dir:(Filename.dirname dest)
@@ -117,12 +156,24 @@ let curl_download ~headers ~url ~dest () =
       ".part"
   in
   let remove_temp () = try Sys.remove temp with Sys_error _ -> () in
-  let out = Unix.descr_of_out_channel oc in
-  match
-    Fun.protect
-      ~finally:(fun () -> close_out_noerr oc)
-      (fun () -> curl ~out ([ "-L"; "--fail"; "-s" ] @ headers @ [ url ]))
-  with
+  let args = [ "-L"; "--fail"; "-s" ] @ headers @ [ url ] in
+  let fetch () =
+    match sha256 with
+    | None -> curl ~out:(Unix.descr_of_out_channel oc) args
+    | Some want ->
+        let h = Sha256.init () in
+        let f b n =
+          Sha256.feed h b 0 n;
+          output oc b 0 n
+        in
+        let ok = curl_read args ~f in
+        flush oc;
+        let got = Sha256.hex h in
+        if ok && got <> want then
+          failwith (Printf.sprintf "%s: SHA-256 %s, expected %s" url got want);
+        ok
+  in
+  match Fun.protect ~finally:(fun () -> close_out_noerr oc) fetch with
   | true -> (
       try Unix.rename temp dest
       with Unix.Unix_error _ when Sys.file_exists dest -> remove_temp ())
@@ -154,6 +205,62 @@ let download_file ?token ?cache_dir ?(offline = false) ?(revision = "main")
         file
     in
     curl_download ~headers ~url ~dest:local ();
+    local
+  end
+
+(* Downloading by digest *)
+
+let is_sha256 s =
+  String.length s = 64
+  && String.for_all
+       (function '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true | _ -> false)
+       s
+
+(* The last segment of [url]'s path, before any query or fragment. *)
+let url_name url =
+  let rest =
+    match String.index_from_opt url 0 ':' with
+    | Some i
+      when i + 2 < String.length url && url.[i + 1] = '/' && url.[i + 2] = '/'
+      ->
+        String.sub url (i + 3) (String.length url - i - 3)
+    | _ -> url
+  in
+  let rest =
+    match String.index_opt rest '?', String.index_opt rest '#' with
+    | Some i, Some j -> String.sub rest 0 (min i j)
+    | Some i, None | None, Some i -> String.sub rest 0 i
+    | None, None -> rest
+  in
+  match String.rindex_opt rest '/' with
+  | Some i ->
+      let name = String.sub rest (i + 1) (String.length rest - i - 1) in
+      if name = "" || name = "." || name = ".." || String.contains name '\\'
+      then None
+      else Some name
+  | None -> None
+
+let download_url ?cache_dir ?(offline = false) ~sha256 url =
+  if not (is_sha256 sha256) then
+    Printf.ksprintf invalid_arg
+      "Kaun_hf.download_url: %S is not 64 hexadecimal digits" sha256;
+  let name =
+    match url_name url with
+    | Some name -> name
+    | None ->
+        Printf.ksprintf invalid_arg "Kaun_hf.download_url: %s names no file"
+          url
+  in
+  let sha256 = String.lowercase_ascii sha256 in
+  let cache_dir =
+    match cache_dir with Some d -> d | None -> raven_cache "sha256"
+  in
+  let local = Filename.concat (Filename.concat cache_dir sha256) name in
+  if Sys.file_exists local then local
+  else if offline then
+    failwith (Printf.sprintf "Not cached (offline): %s" url)
+  else begin
+    curl_download ~sha256 ~headers:[] ~url ~dest:local ();
     local
   end
 

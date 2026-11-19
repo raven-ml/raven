@@ -198,6 +198,140 @@ let test_clear_cache () =
   Hf.clear_cache ~cache_dir ();
   is_true ~msg:"all removed" (not (Sys.file_exists b))
 
+(* Downloading by digest *)
+
+(* Puts a [curl] on PATH that writes the file a [file://] URL names, before
+   any query, to its standard output, and creates [log]. *)
+let with_file_curl ~log f =
+  let bin = Filename.temp_dir "kaun_hf_bin" "" in
+  let curl = Filename.concat bin "curl" in
+  write_string curl
+    (String.concat "\n"
+       [
+         "#!/bin/sh";
+         Printf.sprintf ": > %s" (Filename.quote log);
+         "for url; do :; done";
+         "path=${url#file://}";
+         "path=${path%%\\?*}";
+         "exec cat \"$path\"";
+         "";
+       ]);
+  Unix.chmod curl 0o755;
+  let path = Sys.getenv "PATH" in
+  Unix.putenv "PATH" (bin ^ ":" ^ path);
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "PATH" path;
+      rm_rf bin)
+    f
+
+(* FIPS 180-2, appendix B, and the digest of no bytes. The 56-byte message
+   pads into a second block. *)
+let digests =
+  [
+    ("abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    ( "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+      "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1" );
+    ( String.make 1_000_000 'a',
+      "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0" );
+    ("", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  ]
+
+let test_download_url_digests () =
+  if Sys.win32 then skip ~reason:"the curl stand-in is a shell script" ();
+  with_cache_dir @@ fun dir ->
+  let log = Filename.concat dir "curl-ran" in
+  with_file_curl ~log @@ fun () ->
+  let cache_dir = Filename.concat dir "cache" in
+  List.iteri
+    (fun i (bytes, sha256) ->
+      let src = Filename.concat dir (Printf.sprintf "m%d.bin" i) in
+      write_string src bytes;
+      let url = "file://" ^ src ^ "?sig=x" in
+      let local = Hf.download_url ~cache_dir ~sha256 url in
+      let msg = Printf.sprintf "message %d" i in
+      equal ~msg string
+        (Filename.concat (Filename.concat cache_dir sha256)
+           (Printf.sprintf "m%d.bin" i))
+        local;
+      equal ~msg:(msg ^ ", its bytes") string bytes (read_string local))
+    digests
+
+let test_download_url_refuses_another_digest () =
+  if Sys.win32 then skip ~reason:"the curl stand-in is a shell script" ();
+  with_cache_dir @@ fun dir ->
+  let log = Filename.concat dir "curl-ran" in
+  with_file_curl ~log @@ fun () ->
+  let cache_dir = Filename.concat dir "cache" in
+  let src = Filename.concat dir "f.pt" in
+  write_string src "abc";
+  let url = "file://" ^ src in
+  let want = String.make 64 '0' in
+  raises
+    (Failure
+       (url
+      ^ ": SHA-256 \
+         ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad, \
+         expected " ^ want))
+    (fun () -> Hf.download_url ~cache_dir ~sha256:want url);
+  equal ~msg:"nothing is left in the cache" (array string) [||]
+    (Sys.readdir (Filename.concat cache_dir want))
+
+let test_download_url_cache () =
+  if Sys.win32 then skip ~reason:"the curl stand-in is a shell script" ();
+  with_cache_dir @@ fun dir ->
+  let cache_dir = Filename.concat dir "cache" in
+  let src = Filename.concat dir "f.pt" in
+  let url = "file://" ^ src in
+  let sha256 =
+    "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD"
+  in
+  raises (Failure ("Not cached (offline): " ^ url)) (fun () ->
+      Hf.download_url ~cache_dir ~offline:true ~sha256 url);
+  write_string src "abc";
+  let first =
+    with_file_curl ~log:(Filename.concat dir "first") @@ fun () ->
+    Hf.download_url ~cache_dir ~sha256 url
+  in
+  equal ~msg:"the digest names the file in lowercase" string
+    (Filename.concat
+       (Filename.concat cache_dir (String.lowercase_ascii sha256))
+       "f.pt")
+    first;
+  let log = Filename.concat dir "second" in
+  with_file_curl ~log @@ fun () ->
+  equal ~msg:"served from the cache" string first
+    (Hf.download_url ~cache_dir ~sha256 url);
+  equal ~msg:"served offline" string first
+    (Hf.download_url ~cache_dir ~offline:true ~sha256 url);
+  is_true ~msg:"curl never ran" (not (Sys.file_exists log))
+
+let test_download_url_rejects () =
+  let sha256 = String.make 64 'a' in
+  raises
+    (Invalid_argument
+       "Kaun_hf.download_url: \"abc\" is not 64 hexadecimal digits")
+    (fun () -> Hf.download_url ~sha256:"abc" "https://example.com/f");
+  let bad = String.make 63 'a' ^ "g" in
+  raises
+    (Invalid_argument
+       (Printf.sprintf "Kaun_hf.download_url: %S is not 64 hexadecimal digits"
+          bad))
+    (fun () -> Hf.download_url ~sha256:bad "https://example.com/f");
+  List.iter
+    (fun url ->
+      raises
+        (Invalid_argument
+           (Printf.sprintf "Kaun_hf.download_url: %s names no file" url))
+        (fun () -> Hf.download_url ~sha256 url))
+    [
+      "https://example.com";
+      "https://example.com/";
+      "https://example.com/a/?q=1";
+      "https://example.com/..";
+      "https://example.com/a%5C..\\..\\x";
+    ]
+
 (* Loading (from a seeded cache, offline) *)
 
 let test_load_config () =
@@ -360,6 +494,14 @@ let () =
              test "a download writes under a umask that denies the owner write"
                test_download_under_umask;
              test "clear_cache removes one repository or all" test_clear_cache;
+             test "download_url keeps a file under its digest"
+               test_download_url_digests;
+             test "download_url refuses a file of another digest"
+               test_download_url_refuses_another_digest;
+             test "download_url serves its cache without the network"
+               test_download_url_cache;
+             test "download_url rejects a bad digest or a URL with no name"
+               test_download_url_rejects;
            ];
          group "loading"
            [
