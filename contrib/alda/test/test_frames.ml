@@ -6,7 +6,8 @@
 open Windtrap
 module F = Alda.Frames
 
-(* torch.stft's framing and Kaldi's, from golden/frames.npz *)
+(* torch.stft's framing and Kaldi's, from golden/frames.npz
+   (contrib/alda/test/gen/frames.py) *)
 let golden = lazy (Nx_io.load_npz "golden/frames.npz")
 
 let entry dt key =

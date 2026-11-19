@@ -5,7 +5,8 @@
 
 open Windtrap
 
-(* scipy.signal.periodogram's scalings, from golden/spectra.npz *)
+(* scipy.signal.periodogram's scalings, from golden/spectra.npz
+   (contrib/alda/test/gen/spectra.py) *)
 let golden = lazy (Nx_io.load_npz "golden/spectra.npz")
 
 let entry key =

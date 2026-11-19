@@ -194,7 +194,8 @@ let gradient =
       equal (array (float 1e-8)) (Array.init 7 (fd h)) (Nx.to_array gh);
       equal (array (float 1e-8)) (Array.init 50 (fd x)) (Nx.to_array gx))
 
-(* scipy.signal.sosfiltfilt, from golden/zero_phase.npz *)
+(* scipy.signal.sosfiltfilt, from golden/zero_phase.npz
+   (contrib/alda/test/gen/zero_phase.py) *)
 let golden = lazy (Nx_io.load_npz "golden/zero_phase.npz")
 
 let entry key =

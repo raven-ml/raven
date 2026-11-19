@@ -7,7 +7,7 @@ open Windtrap
 module I = Alda.Iir
 
 (* scipy.signal's butter, cheby1, cheby2 and ellip as sections, and bilinear_zpk
-   with zpk2sos, from golden/designs.npz *)
+   with zpk2sos, from golden/designs.npz (contrib/alda/test/gen/designs.py) *)
 let golden = lazy (Nx_io.load_npz "golden/designs.npz")
 
 let entry dt key =
@@ -189,9 +189,9 @@ let points a b =
       [ a +. ((b -. a) *. t); a +. ((b -. a) *. c); b -. ((b -. a) *. c) ])
     (List.init (n + 1) Fun.id)
 
-(* Specifications at rate 1 and the orders SciPy 1.18.1's buttord, cheb1ord,
+(* Specifications at rate 1 and the orders SciPy 1.16.3's buttord, cheb1ord,
    cheb2ord and ellipord give for them
-   (_plans/whisper-port/gen/E1-impl/e1_meet_orders.py). *)
+   (contrib/alda/test/gen/meet_orders.py). *)
 let meet_specs =
   let t pass stop = { I.pass; stop } in
   [
@@ -279,10 +279,9 @@ let meet =
       less float_exact ~than:(top -. reject +. 1e-6) high)
 
 (* Bessel's prototype: the reference poles of golden/bessel.npz, -3 dB at 1
-   rad/s, from y_n's zeros at 3n + 60 digits
-   (_plans/whisper-port/gen/E1-impl/e2_bessel.py). A low pass at a fifth of the
-   rate maps its digital poles [z] back to the prototype's [(z - 1) / ((z + 1)
-   tan (π / 5))], well conditioned there. *)
+   rad/s, from y_n's zeros at 3n + 60 digits (contrib/alda/test/gen/bessel.py).
+   A low pass at a fifth of the rate maps its digital poles [z] back to the
+   prototype's [(z - 1) / ((z + 1) tan (π / 5))], well conditioned there. *)
 let bessel_golden = lazy (Nx_io.load_npz "golden/bessel.npz")
 
 let bessel_entry dt key =
@@ -362,8 +361,8 @@ let bessel_scipy =
 
 (* Iir.digital pairs as SciPy's zpk2sos does with [pairing='nearest'], poles
    outside the unit circle included (golden/digital.npz,
-   _plans/whisper-port/gen/E1-impl/e3_digital.py), and its cascade is the factor
-   form [gain Π (1 - zᵢ z⁻¹) / Π (1 - pⱼ z⁻¹)]. *)
+   contrib/alda/test/gen/digital.py), and its cascade is the factor form [gain Π
+   (1 - zᵢ z⁻¹) / Π (1 - pⱼ z⁻¹)]. *)
 let digital_golden = lazy (Nx_io.load_npz "golden/digital.npz")
 
 let digital_entry dt key =

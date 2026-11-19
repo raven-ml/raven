@@ -7,7 +7,8 @@ open Windtrap
 module S = Alda.Sos
 
 (* Single sections against long-double recursions with the rounding bound's
-   weights, and cascades against scipy.signal.sosfilt, from golden/sos.npz *)
+   weights, and cascades against scipy.signal.sosfilt, from golden/sos.npz
+   (contrib/alda/test/gen/sos.py) *)
 let golden = lazy (Nx_io.load_npz "golden/sos.npz")
 
 let entry dt key =

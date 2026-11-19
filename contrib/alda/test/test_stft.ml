@@ -6,8 +6,8 @@
 open Windtrap
 module F = Alda.Frames
 
-(* torch.istft's inverses and numpy's least-squares ones, from
-   golden/istft.npz *)
+(* torch.istft's inverses and numpy's least-squares ones, from golden/istft.npz
+   (contrib/alda/test/gen/istft.py) *)
 let golden = lazy (Nx_io.load_npz "golden/istft.npz")
 
 let entry dt key =

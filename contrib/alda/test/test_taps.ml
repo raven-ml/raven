@@ -21,7 +21,7 @@ let band lo hi gain tol = { T.lo; hi; gain; tol }
 
 (* The taps that minimise the integral of the squared error, from the
    closed-form problem solved in Arb (golden/least_squares.npz,
-   _plans/whisper-port/gen/E1-impl/e4_ls.py), rate 1. With constant targets and
+   contrib/alda/test/gen/least_squares.py), rate 1. With constant targets and
    tolerances the rule's angles integrate the problem exactly, so the taps agree
    to rounding, amplified by the problem's conditioning; a sloped target or
    tolerance is integrated to the rule's convergence. *)
@@ -162,9 +162,9 @@ let largest s h bands =
     0. bands
 
 (* SciPy's remez on designs it converges on (golden/equiripple.npz,
-   _plans/whisper-port/gen/E1-impl/e4_remez.py) holds its extrema to a grid of
-   16 points a value, so its largest error is the minimax one or more: the
-   result's is at most it. *)
+   contrib/alda/test/gen/equiripple.py) holds its extrema to a grid of 16 points
+   a value, so its largest error is the minimax one or more: the result's is at
+   most it. *)
 let equiripple =
   let rz = npz "golden/equiripple.npz" in
   cases "equiripple alternates and is no worse than remez"
@@ -520,7 +520,7 @@ let savitzky_golay_tables =
     ]
 
 (* Long windows and high orders against exact rational arithmetic
-   (golden/savitzky_golay.npz, _plans/whisper-port/gen/E1-impl/e6_sg.py), to
+   (golden/savitzky_golay.npz, contrib/alda/test/gen/savitzky_golay.py), to
    10⁻¹³ of the largest tap, at the centre, the ends and between samples. *)
 let savitzky_golay =
   let sg = npz "golden/savitzky_golay.npz" in

@@ -6,7 +6,8 @@
 open Windtrap
 module W = Alda.Window
 
-(* scipy.signal.windows at float64, keyed "<kind>.<sampling>.<n>" *)
+(* scipy.signal.windows at float64, keyed "<kind>.<sampling>.<n>", from
+   golden/windows.npz (contrib/alda/test/gen/windows.py) *)
 let golden = lazy (Nx_io.load_npz "golden/windows.npz")
 
 let reference key n =

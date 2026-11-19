@@ -7,7 +7,7 @@ open Windtrap
 module M = Alda.Mel
 
 (* librosa's banks at float64 and Whisper's mel_filters.npz, from
-   golden/banks.npz *)
+   golden/banks.npz (contrib/alda/test/gen/banks.py) *)
 let golden = lazy (Nx_io.load_npz "golden/banks.npz")
 
 let entry dt key =

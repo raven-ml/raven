@@ -6,8 +6,9 @@
 (* Whisper's log-mel frontend composed from alda, against the oracle's float64
    reference on three LibriSpeech utterances padded to 30 s. Upstream's
    whisper.log_mel_spectrogram on CPU float32 lies within 1e-4 of that reference
-   on them (golden/whisper.npz's generator checks it), so within 1e-4 of the
-   reference alda is within 2e-4 of upstream. *)
+   on them (contrib/alda/test/gen/logmel.py, which writes golden/whisper.npz,
+   checks it), so within 1e-4 of the reference alda is within 2e-4 of
+   upstream. *)
 
 open Windtrap
 

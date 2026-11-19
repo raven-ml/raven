@@ -8,7 +8,7 @@ module R = Alda.Resample
 module K = Alda.Kernel
 
 (* torchaudio's resample and torch's antialiased interpolate, from
-   golden/resample.npz *)
+   golden/resample.npz (contrib/alda/test/gen/resample.py) *)
 let golden = lazy (Nx_io.load_npz "golden/resample.npz")
 
 let entry dt key =
@@ -577,10 +577,12 @@ let swr_entry dt key =
   | Some p -> Nx.unpack dt p
   | None -> failf "golden/swr.npz has no %s" key
 
-(* swr computes in float32: it rounds each weight, divided by phase 0's sum, to
-   float32 and adds an output's [T] products in float32, then the result is a
-   float32. So its output is within [(T + 1) u Σ |wᵢ xᵢ| + u |y|] of the exact
-   composition, which alda computes at float64 on the same samples. *)
+(* PyAV's swr on three signals, from golden/swr.npz
+   (contrib/alda/test/gen/swr.py). swr computes in float32: it rounds each
+   weight, divided by phase 0's sum, to float32 and adds an output's [T]
+   products in float32, then the result is a float32. So its output is within
+   [(T + 1) u Σ |wᵢ xᵢ| + u |y|] of the exact composition, which alda computes
+   at float64 on the same samples. *)
 let swr =
   cases "Whisper's swr call site is PyAV's" ~id:string_of_int [ 0; 1; 2 ]
     (fun i ->

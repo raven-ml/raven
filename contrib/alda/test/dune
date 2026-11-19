@@ -1,12 +1,7 @@
-; golden/*.npz were cut by the generators under
-; _plans/whisper-port/gen/O2-impl/ (run.sh SCRIPT OUT, numpy 2.5.5, scipy
-; 1.16.3, torch 2.15.0, librosa 0.11.0, openai-whisper 86098128), outside the
-; repository; each commit that adds one names its script. librispeech/*.npy
+; Each golden/*.npz is written by the generator its test names, in gen/,
+; run through `uv run --locked` in gen/'s pinned environment. librispeech/*.npy
 ; are three LibriSpeech utterances (CC BY 4.0, see librispeech/NOTICE),
-; written with golden/whisper.npz by logmel.py. Batch 2's goldens come from
-; _plans/whisper-port/gen/O3-impl/ (run.sh SCRIPT OUT; versions in its
-; pyproject.toml), named by the commit that adds each, and the filter
-; designs' from _plans/whisper-port/gen/E1-impl/ likewise.
+; written with golden/whisper.npz by gen/logmel.py.
 
 (tests
  (names

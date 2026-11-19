@@ -1,0 +1,34 @@
+# The environment of alda's test generators, on the CPU. Run one from this
+# directory with `uv run --locked NAME.py ARGS`, its header giving ARGS.
+[project]
+name = "alda-test-gen"
+version = "0"
+requires-python = "==3.13.*"
+dependencies = [
+  "numpy==2.5.5",
+  "scipy==1.16.3",
+  "mpmath==1.3.0",
+  "python-flint==0.7.1",
+  "torch==2.15.0",
+  "torchaudio==2.11.1",
+  "av==19.0.2",
+  "soundfile==0.14.0",
+  "librosa==0.11.0",
+  # main at 86098128 (2026-08-31).
+  "openai-whisper @ git+https://github.com/openai/whisper.git@86098128c0b4f24f0e2aa2994de830614b474227",
+]
+
+[tool.uv]
+package = false
+# whisper declares triton on Linux x86-64 for its CUDA kernels; the
+# generators run on the CPU.
+override-dependencies = ["triton; sys_platform == 'never'"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchaudio = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

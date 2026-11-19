@@ -9,6 +9,9 @@ its own schedule and carries no API stability guarantee.
 - Changes go in `contrib/alda/CHANGES.md`.
 - The same rules as raven's libraries: `docs/dev/design.md`, AGENTS.md's code
   style, and the docs follow `docs/dev/documentation.md`.
+- Each golden in `test/` names its generator in `test/gen/`, which runs
+  through `uv run --locked` in that directory's pinned environment and
+  writes the golden byte for byte.
 
 ## Boundaries
 
