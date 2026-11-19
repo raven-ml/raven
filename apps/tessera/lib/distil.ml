@@ -144,23 +144,31 @@ let keys ~key ~first (b : Nx.host Batch.t) =
   in
   Nx.Rng.fold_in_tensor key p
 
-(* The rows of 256 tokens of [pixels] pixels of the mean tokens of the
-   corpus's first pixels, 5 % to spare, and a row more. *)
+(* The rows of 256 tokens of [pixels] pixels at the rows the corpus's first
+   pixels take, packed: rows hold fewer tokens than they could where their
+   pixels fit them unevenly or fill their slots. 5 % to spare, and a row
+   more. *)
 let shape ~pixels ~slots px =
   let n = Pixels.length px in
   if n = 0 then invalid_arg "Tessera.Distil.shape: a corpus of no pixel";
   let sample = Pixels.sub px ~pos:0 ~len:(min 4096 n) in
-  let _, c = Batch.expand sample (Batch.v2_counts sample) in
-  let width = 256 in
-  let rows x =
-    let mean =
-      Float.of_int (Nx.numel x) /. Float.of_int (Pixels.length sample)
-    in
-    Float.to_int
-      (Float.ceil (1.05 *. mean *. Float.of_int pixels /. Float.of_int width))
-    + 1
+  let sample, c = Batch.expand sample (Batch.v2_counts sample) in
+  let k = Pixels.length sample and width = 256 in
+  (* A row a pixel at most. *)
+  let all = { Batch.pixels = k; s2_rows = k; s1_rows = k; slots; width } in
+  let b, _ = Batch.pack all sample c ~from:0 in
+  (* Pixels without an observation take no place. *)
+  let placed =
+    Array.fold_left
+      (fun a p -> if p >= 0L then a + 1 else a)
+      0 (Nx.to_array b.pixel)
   in
-  { Batch.pixels; s2_rows = rows c.s2; s1_rows = rows c.s1; slots; width }
+  let rows (r : _ Batch.rows) =
+    let used = 1 + (Int64.to_int (Nx.item [] (Nx.max r.at)) / slots) in
+    let per_pixel = Float.of_int used /. Float.of_int (max placed 1) in
+    Float.to_int (Float.ceil (1.05 *. per_pixel *. Float.of_int pixels)) + 1
+  in
+  { Batch.pixels; s2_rows = rows b.s2; s1_rows = rows b.s1; slots; width }
 
 let groups ~key ~shape ~groups ~first px targets =
   if Nx.dim 0 targets <> Pixels.length px then

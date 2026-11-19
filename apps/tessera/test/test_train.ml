@@ -543,38 +543,28 @@ let only_s2 ~pixels n =
       seed = 2;
     }
 
+let cat parts =
+  let cat f = Nx_ragged.concat (List.map f parts) in
+  { Pixels.s2 = cat (fun p -> p.Pixels.s2); s1 = cat (fun p -> p.Pixels.s1) }
+
 let fields (s : Batch.shape) =
   [ s.pixels; s.s2_rows; s.s1_rows; s.slots; s.width ]
 
 let shapes =
   [
-    test "a distillation's shape holds its mean tokens, 5 % more and a row"
+    test "a distillation's shape holds its sample's packed rows, 5 % more"
       (fun () ->
-        (* 8 tokens a pixel: ⌈1.05 · 8 · 64 / 256⌉ + 1 = 4 rows; none, 1. *)
-        let want = [ 64; 4; 1; 4; 256 ] in
-        let shape px = fields (Distil.shape ~pixels:64 ~slots:4 px) in
-        equal (list int) want (shape (only_s2 ~pixels:2 8));
-        (* Only the first 4096 pixels are measured: of 4095 pixels of 8 tokens,
-           one of 200 and one of 256, at 4096 pixels a group, the first 4096
-           give ⌈1.05 · (4095 · 8 + 200) / 256⌉ + 1 = 137 rows, where 4095 would
-           give 136 and 4097 138. *)
-        let px =
-          let parts =
-            [
-              only_s2 ~pixels:4095 8;
-              only_s2 ~pixels:1 200;
-              only_s2 ~pixels:1 256;
-            ]
-          in
-          let cat f = Nx_ragged.concat (List.map f parts) in
-          {
-            Pixels.s2 = cat (fun p -> p.Pixels.s2);
-            s1 = cat (fun p -> p.Pixels.s1);
-          }
-        in
-        equal (list int) want (shape px);
-        equal (list int) [ 4096; 137; 1; 4; 256 ]
-          (fields (Distil.shape ~pixels:4096 ~slots:4 px)));
+        (* 4096 pixels of 100 Sentinel-2 observations, filled to 104 tokens, two
+           a row: 2048 rows, ⌈1.05 · 2048 · 64 / 4096⌉ + 1 = 35 at 64 pixels a
+           group; their Sentinel-1 stand-ins, 4 a row: 1024 rows, 18. Only the
+           first 4096 pixels are measured: 4096 more of 8 tokens, 4 a row,
+           would make it ⌈1.05 · 3072 · 64 / 8192⌉ + 1 = 27. *)
+        let px = cat [ only_s2 ~pixels:4096 100; only_s2 ~pixels:4096 1 ] in
+        let shape = Distil.shape ~pixels:64 ~slots:4 px in
+        equal (list int) [ 64; 35; 18; 4; 256 ] (fields shape);
+        (* Its tokens alone, ⌈1.05 · 104 · 64 / 256⌉ + 1 = 29 rows and one
+           of stand-ins, would hold 4 pixels. *)
+        equal int 64 (snd (step_groups ~shape ~groups:1 ~first:0 px)));
     test "a distillation's shape needs a pixel" (fun () ->
         raises (Invalid_argument "Tessera.Distil.shape: a corpus of no pixel")
           (fun () -> Distil.shape ~pixels:64 ~slots:4 (only_s2 ~pixels:0 8)));

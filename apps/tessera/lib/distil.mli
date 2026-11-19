@@ -123,11 +123,15 @@ val keys :
 val shape : pixels:int -> slots:int -> Nx.host Pixels.t -> Batch.shape
 (** [shape ~pixels ~slots px] is the shape a distillation of the corpus [px]
     packs its groups at: [pixels] pixels, at most [slots] a row, in rows of
-    [256] tokens, of each sensor [⌈1.05 · m · pixels / 256⌉ + 1] rows, [m]
-    the mean tokens a pixel of the duplicate-filled ({!Batch.expand} of
-    {!Batch.v2_counts}) first [4096] pixels of [px]: their tokens with 5 % to
-    spare, and a row more. As for {!Batch.typical}, a group whose pixels hold
-    more stops before its pixels are full.
+    [256] tokens, of each sensor [⌈1.05 · r · pixels / k⌉ + 1] rows, [r] the
+    rows {!Batch.pack} lays out that sensor's tokens of the [k] pixels with an
+    observation of the duplicate-filled ({!Batch.expand} of
+    {!Batch.v2_counts}) first [4096] pixels of [px] in: their rows with 5 % to
+    spare, and a row more. Rows are sized by how the pixels pack, not by their
+    tokens alone: a row of pixels of [104] tokens holds two, [208] tokens, and
+    a row holds [slots] pixels at most, a sensor's stand-ins included. As for
+    {!Batch.typical}, a group whose pixels hold more stops before its pixels
+    are full.
 
     Raises [Invalid_argument] if [px] has no pixel. *)
 
