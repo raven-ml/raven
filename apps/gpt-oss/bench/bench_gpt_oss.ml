@@ -3,165 +3,45 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* gpt-oss-20b at its own shapes on a CUDA, NV or AMD GPU, compiled one layer
-   at a time ([Layer_loop]), over random weights at bfloat16 with the experts
-   packed as MXFP4: a decode step, prefills of 512 and 12 tokens, the decode
-   step and a prefill with the attention projections and the head packed as
-   Q8_0, one layer's experts at prefills of 32, 96, 512 and 536 tokens, and a
-   later process's first 12-token call over a warm and a cold disk cache.
+(* gpt-oss-20b's rows in PERFORMANCE.md, on the first CUDA, NV or AMD GPU that
+   opens, compiled one layer at a time ([Layer_loop]):
 
-   The weights are entries named, shaped and laid out as gpt-oss-20b's
-   safetensors files hold them, read by [Gpt_oss.of_hf]. Each step case
-   builds them in the worker thumper forks for it, so the parent never holds
-   13.8 GB a fork would copy, and no GPU driver starts before the fork.
-   [--warm] compiles every kernel into tolk's disk cache first, in a process
-   of its own. Without such a GPU there is nothing to measure. *)
+   - [decode/512], one decode step at position 512, its token read back;
+   - [prefill/512], a prompt of 512 tokens;
+   - [first-token/12], a new process from its start to its first token after a
+     12-token prompt, loading the weights included, over a disk cache of kernels
+     that one run filled, and [first-token-cold/12] over an empty one.
+
+   These keep the checkpoint as it is stored, MXFP4 experts and the rest at
+   bfloat16, as main.exe, vLLM and transformers run it. [decode-q8_0/512] and
+   [prefill-q8_0/512] pack the attention projections and the head as Q8_0, as
+   llama.cpp's GGUF file of gpt-oss-20b stores them. The scripts beside this
+   file run the same rows with each of those.
+
+   The weights are openai/gpt-oss-20b's own, read from raven's cache: a
+   prefill's time depends on how its router spreads the tokens over the
+   experts, and random weights spread them evenly. Each step case loads them in
+   the worker thumper forks for it, so no GPU driver starts before the fork.
+   [--warm] compiles every kernel into tolk's disk cache first, in a process of
+   its own. Without such a GPU, or without the weights, there is nothing to
+   measure. *)
 
 open Kaun
 
-let config =
-  {
-    Gpt_oss.vocab_size = 201088;
-    dim = 2880;
-    layers =
-      List.init 24 (fun i -> if i mod 2 = 0 then Gpt_oss.Sliding else Full);
-    window = 128;
-    n_heads = 64;
-    n_kv_heads = 8;
-    head_dim = 64;
-    hidden_dim = 2880;
-    experts = 32;
-    experts_per_token = 4;
-    swiglu_limit = 7.0;
-    norm_eps = 1e-5;
-    rope =
-      Rope.yarn ~theta:150000.0 ~head_dim:64 ~factor:32.0 ~beta_fast:32.0
-        ~beta_slow:1.0 ~original_context:4096 ~context:131072;
-    attention_scale = (((0.1 *. log 32.0) +. 1.0) ** 2.0) /. 8.0;
-    tied = false;
-  }
-
+let repo = "openai/gpt-oss-20b"
+let revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
+let depth = 512
 let context = 1024
 let prompt = 512
 let short_prompt = 12
-let routed_prompts = [ 32; 96 ]
-let blocked_prompt = 536
-
-(* Bytes drawn per array before they repeat, so building the weights takes
-   seconds. *)
-let period = 1 lsl 20
 
 (* Seconds of uncounted calls before a trial's samples, so a GPU leaves its
    idle clock first. *)
 let warmup_seconds = 3.
 
-(* Bytes in [lo, lo + span) from a linear congruential generator, the first
-   [period] repeated through the array: the expert blocks and their scales, in
-   the range a trained checkpoint's scales take. *)
-let random_bytes seed shape lo span =
-  let n = Array.fold_left ( * ) 1 shape in
-  let a = Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout n in
-  let drawn = min n period in
-  let s = ref !seed in
-  for i = 0 to drawn - 1 do
-    s := ((!s * 1103515245) + 12345) land 0x7fffffff;
-    Bigarray.Array1.unsafe_set a i (lo + ((!s lsr 16) mod span))
-  done;
-  seed := !s;
-  let base = Bigarray.Array1.sub a 0 drawn in
-  let i = ref drawn in
-  while !i < n do
-    let len = min drawn (n - !i) in
-    Bigarray.Array1.blit
-      (Bigarray.Array1.sub base 0 len)
-      (Bigarray.Array1.sub a !i len);
-    i := !i + len
-  done;
-  Nx.of_bigarray (Bigarray.reshape (Bigarray.genarray_of_array1 a) shape)
-
-(* Uniform values in [-scale, scale), 256 rows repeated to the shape's first
-   axis. *)
-let floats ~scale shape =
-  let rows = shape.(0) in
-  let rest = Array.sub shape 1 (Array.length shape - 1) in
-  let base_rows = min rows 256 in
-  let base =
-    Nx.cast Nx.bfloat16
-      (Nx.mul_s
-         (Nx.sub_s
-            (Nx.Rng.uniform Nx.float32 (Array.append [| base_rows |] rest))
-            0.5)
-         (2.0 *. scale))
-  in
-  if base_rows = rows then base
-  else
-    let reps = (rows + base_rows - 1) / base_rows in
-    let tiled = Nx.concatenate ~axis:0 (List.init reps (fun _ -> base)) in
-    Nx.copy (Nx.slice [ R (0, rows) ] tiled)
-
-(* gpt-oss's checkpoint entries under [c] on the host, floats from
-   [bf16 ~scale shape] and bytes from [u8 lo span shape], with the names,
-   dtypes and shapes of gpt-oss-20b's safetensors files: each projection
-   [outputs; inputs], each expert weight's MXFP4 blocks
-   [experts; outputs; groups; 16] and its scales. *)
-let entries_of c ~bf16 ~u8 =
-  let float ?(scale = 0.02) name shape = (name, Nx.P (bf16 ~scale shape)) in
-  let bytes lo span name shape = (name, Nx.P (u8 lo span shape)) in
-  let linear ?(bias = true) name ~inputs ~outputs =
-    float (name ^ ".weight") [| outputs; inputs |]
-    :: (if bias then [ float (name ^ ".bias") [| outputs |] ] else [])
-  in
-  let experts name ~inputs ~outputs =
-    let groups = inputs / 32 in
-    [
-      bytes 0 256 (name ^ "_blocks")
-        [| c.Gpt_oss.experts; outputs; groups; 16 |];
-      bytes 118 6 (name ^ "_scales") [| c.experts; outputs; groups |];
-      float (name ^ "_bias") [| c.experts; outputs |];
-    ]
-  in
-  let norm name = float ~scale:1.0 name [| c.Gpt_oss.dim |] in
-  let q_dim = c.n_heads * c.head_dim and kv = c.n_kv_heads * c.head_dim in
-  let block i _ =
-    let at = Printf.sprintf "model.layers.%d.%s" i in
-    List.concat
-      [
-        [ norm (at "input_layernorm.weight") ];
-        linear (at "self_attn.q_proj") ~inputs:c.dim ~outputs:q_dim;
-        linear (at "self_attn.k_proj") ~inputs:c.dim ~outputs:kv;
-        linear (at "self_attn.v_proj") ~inputs:c.dim ~outputs:kv;
-        linear (at "self_attn.o_proj") ~inputs:q_dim ~outputs:c.dim;
-        [
-          float ~scale:1.0 (at "self_attn.sinks") [| c.n_heads |];
-          norm (at "post_attention_layernorm.weight");
-        ];
-        linear (at "mlp.router") ~inputs:c.dim ~outputs:c.experts;
-        experts
-          (at "mlp.experts.gate_up_proj")
-          ~inputs:c.dim ~outputs:(2 * c.hidden_dim);
-        experts (at "mlp.experts.down_proj") ~inputs:c.hidden_dim
-          ~outputs:c.dim;
-      ]
-  in
-  Nx_io.Archive.of_list
-    (List.concat
-       [
-         [ float "model.embed_tokens.weight" [| c.vocab_size; c.dim |] ];
-         List.concat (List.mapi block c.layers);
-         [ norm "model.norm.weight" ];
-         linear ~bias:false "lm_head" ~inputs:c.dim ~outputs:c.vocab_size;
-       ])
-
-let entries c =
-  let seed = ref 12345 in
-  entries_of c ~bf16:floats ~u8:(fun lo span shape ->
-      random_bytes seed shape lo span)
-
-(* The model of [entries] on [placement], loaded as {!Gpt_oss.of_hf} loads a
-   checkpoint, its projections and head packed as [pack] says. *)
-let load ?pack placement c entries =
-  Gpt_oss.of_hf ?pack ~placement:(fun _ ~axis:_ -> placement) c Nx.bfloat16
-    entries
+let weights_cached () =
+  Sys.file_exists
+    (Kaun_hf.cache_path ~revision ~file:"model.safetensors.index.json" repo)
 
 (* The GPUs tried, in order: CUDA, NV, AMD. [Rig_gpus.first] would also try
    Metal and the PCI paths. Hiding the CUDA devices ([CUDA_VISIBLE_DEVICES=])
@@ -178,239 +58,127 @@ let first () =
   in
   go [] names
 
-(* The GPU [0] of the first path that opens one. *)
 let gpu () = match first () with Ok d -> d | Error e -> failwith e
 
-(* A step on the GPU warmed past its compilations: [`Decode] feeds back the
-   token it predicts at a fixed position in the middle of the cache,
-   [`Decode_q8_0] likewise with the attention projections and the head
-   packed as Q8_0 ([Gpt_oss.Q8_0]), [`Prefill n] runs [n] tokens at
-   positions 0 onwards, [`Prefill_q8_0 n] packed as Q8_0. Each call takes
-   the caches of the one before and reads its token back on the host. *)
-let step entries kind =
-  let pack =
-    match kind with
-    | `Decode_q8_0 | `Prefill_q8_0 _ -> Gpt_oss.Q8_0
-    | `Decode | `Prefill _ -> Unpacked
-  in
-  let module G = (val Nx.devices [ gpu () ]) in
+(* The step of gpt-oss-20b on the GPU, its attention projections and head
+   packed as [pack], loaded and not yet called: [`Decode] feeds back the token
+   it predicts at position [depth], [`Prefill n] runs [n] tokens at positions 0
+   onwards. Each call takes the caches of the one before and reads its token
+   back on the host. [on_loaded d] runs once the first call returns. *)
+let load ?(on_loaded = ignore) pack kind =
+  let d = gpu () in
+  let module G = (val Nx.devices [ d ]) in
   let placement = G.on in
-  let p = load ~pack placement config entries in
+  let cfg =
+    Gpt_oss.config_of_json (Kaun_hf.load_config ~offline:true ~revision repo)
+  in
+  let p =
+    Gpt_oss.of_hf ~pack
+      ~placement:(fun _ ~axis:_ -> placement)
+      cfg Nx.bfloat16
+      (Kaun_hf.load_safetensors ~offline:true ~revision repo)
+  in
   let step =
-    Layer_loop.greedy ~placement (Gpt_oss.place_config placement config) p
+    Layer_loop.greedy ~placement (Gpt_oss.place_config placement cfg) p
   in
   let caches =
     ref
       (Gpt_oss.cache
          ~placement:(fun _ ~axis:_ -> placement)
-         config ~slots:context Nx.bfloat16)
+         cfg ~slots:context Nx.bfloat16)
   in
   let index, ids =
     match kind with
-    | `Decode | `Decode_q8_0 ->
-        ( Cache_index.advance (Cache_index.rows ~context [| context / 2 |]),
+    | `Decode ->
+        ( Cache_index.advance (Cache_index.rows ~context [| depth |]),
           ref (Nx.zeros Nx.int64 [| 1; 1 |]) )
-    | `Prefill n | `Prefill_q8_0 n ->
+    | `Prefill n ->
         ( Cache_index.rows ~context [| n |],
           ref
             (Nx.init Nx.int64 [| 1; n |] (fun i ->
                  Int64.of_int (17 + i.(1)))) )
   in
-  let call () =
+  let loaded = ref false in
+  fun () ->
     let token, c = step !caches index !ids in
     caches := c;
     let token = Nx.item [ 0 ] token in
-    match kind with
-    | `Decode | `Decode_q8_0 -> ids := Nx.create Nx.int64 [| 1; 1 |] [| token |]
-    | `Prefill _ | `Prefill_q8_0 _ -> ()
-  in
-  (* The host entries are garbage once loaded. *)
-  Gc.full_major ();
-  call ();
-  call
+    (match kind with
+    | `Decode -> ids := Nx.create Nx.int64 [| 1; 1 |] [| token |]
+    | `Prefill _ -> ());
+    if not !loaded then begin
+      loaded := true;
+      on_loaded d
+    end
 
-(* gpt-oss of one layer and a small vocabulary: a block's experts have the
-   full model's shapes, and loading the 13.8 GB of the rest to take them
-   would leave GPU memory to be freed during a trial. *)
-let one_layer = { config with vocab_size = 1024; layers = [ Gpt_oss.Sliding ] }
+(* The device memory in use as the driver reports it, every process's: this
+   one's alone on an otherwise empty GPU. *)
+let report_memory name d =
+  match Rig.capacity d with
+  | Some { total; free } ->
+      Printf.eprintf "gpt_oss: %s: %.2f GB of device memory in use\n%!" name
+        (float_of_int (total - free) /. 1e9)
+  | None -> ()
 
-(* One layer's experts, [Moe.apply] of {!one_layer}'s, compiled at a prefill
-   of [prompt] tokens: random bfloat16 activations, routed by random logits
-   from a fixed key. The experts read the block's norm of the activations, as
-   in the model, so the kernels are the model's. *)
-let experts prompt =
-  let module G = (val Nx.devices [ gpu () ]) in
-  let block = List.hd (load G.on one_layer (entries one_layer)).blocks in
-  let logits =
-    Nx.Rng.normal ~key:(Nx.Rng.key 7) Nx.float32 [| prompt; config.experts |]
-  in
-  let ids, w = Moe.route ~k:config.experts_per_token logits in
-  let x =
-    Nx.cast Nx.bfloat16
-      (Nx.Rng.normal ~key:(Nx.Rng.key 8) Nx.float32 [| prompt; config.dim |])
-  in
-  let ids = Nx.place G.on ids and w = Nx.place G.on (Nx.cast Nx.bfloat16 w) in
-  let x = Nx.place G.on x in
-  let f =
-    Rune.jit
-      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
-      (fun ids w x ->
-        let h = Rms_norm.apply ~eps:config.norm_eps block.ffn_norm x in
-        Moe.apply ~limit:config.swiglu_limit block.moe (ids, w) h)
-  in
-  let call () = ignore (Nx.item [ 0; 0 ] (f ids w x)) in
-  Gc.full_major ();
-  call ();
-  call
+let steps =
+  List.concat_map
+    (fun (suffix, pack) ->
+      [
+        (Printf.sprintf "decode%s/%d" suffix depth, pack, `Decode);
+        (Printf.sprintf "prefill%s/%d" suffix prompt, pack, `Prefill prompt);
+      ])
+    [ ("", Gpt_oss.Unpacked); ("-q8_0", Gpt_oss.Q8_0) ]
 
-(* A later process's first call: a process holding a two-layer gpt-oss of
-   zero weights makes the 12-token call over a disk cache one call filled.
-   Both layer kinds run the 24-layer model's one block program, at its [dim],
-   on a smaller vocabulary. *)
-let first_config =
-  {
-    config with
-    vocab_size = 1024;
-    layers = [ Gpt_oss.Sliding; Gpt_oss.Full ];
-  }
+let step_case (name, pack, kind) =
+  Thumper.bench_with_setup name
+    ~setup:(fun () ->
+      let call = load ~on_loaded:(report_memory name) pack kind in
+      call ();
+      call)
+    (fun call -> call ())
 
-let prepare_first () =
-  let zeros shape = Nx.zeros Nx.bfloat16 shape in
-  let entries =
-    entries_of first_config
-      ~bf16:(fun ~scale:_ s -> zeros s)
-      ~u8:(fun _ _ s -> Nx.zeros Nx.uint8 s)
-  in
-  let module G = (val Nx.devices [ gpu () ]) in
-  let placement = G.on in
-  let p = load placement first_config entries in
-  let step =
-    Layer_loop.greedy ~placement (Gpt_oss.place_config placement first_config) p
-  in
-  let caches =
-    Gpt_oss.cache
-      ~placement:(fun _ ~axis:_ -> placement)
-      first_config ~slots:context Nx.bfloat16
-  in
-  let index = Cache_index.rows ~context [| short_prompt |] in
-  let ids =
-    Nx.init Nx.int64 [| 1; short_prompt |] (fun i -> Int64.of_int (17 + i.(1)))
-  in
-  fun () -> ignore (Nx.item [ 0 ] (fst (step caches index ids)))
-
-type ready = { pid : int; go : out_channel; said : in_channel }
-
-(* A process that has prepared its first call, with [env] before its own
+(* A new process from its start to its first token, with [env] before its own
    environment. *)
-let start_ready env =
+let first_token env =
   let exe = Sys.executable_name in
   let env = Array.append (Array.of_list env) (Unix.environment ()) in
-  let child_in, go = Unix.pipe ~cloexec:true () in
-  let said, child_out = Unix.pipe ~cloexec:true () in
   let pid =
-    Unix.create_process_env exe [| exe; "--first" |] env child_in child_out
-      Unix.stderr
+    Unix.create_process_env exe [| exe; "--first" |] env Unix.stdin
+      Unix.stdout Unix.stderr
   in
-  Unix.close child_in;
-  Unix.close child_out;
-  {
-    pid;
-    go = Unix.out_channel_of_descr go;
-    said = Unix.in_channel_of_descr said;
-  }
+  match Unix.waitpid [] pid with
+  | _, WEXITED 0 -> ()
+  | _ -> failwith "bench_gpt_oss: a first token's process failed"
 
-let expect r line =
-  match In_channel.input_line r.said with
-  | Some l when l = line -> ()
-  | _ -> failwith ("bench_gpt_oss: a first call's process did not say " ^ line)
-
-let stop r =
-  (try Unix.kill r.pid Sys.sigkill with Unix.Unix_error (ESRCH, _, _) -> ());
-  ignore (Unix.waitpid [] r.pid);
-  close_out_noerr r.go;
-  close_in_noerr r.said
-
-let finish r =
-  output_string r.go "go\n";
-  flush r.go;
-  expect r "done"
-
-(* A process for each call of a trial: one to size its batches, up to 3 to
-   warm up, 3 samples and one to try a baseline's batch size. *)
-let ready_processes = 10
-
-let no_process_left =
-  Printf.sprintf
-    "bench_gpt_oss: a first call row holds a process for each call, %d a \
-     trial, enough for its 3 samples: run it without --quick or --precise"
-    ready_processes
-
-(* [first_call name ~cold env] times a first call made with [env]. Its
-   processes share a disk cache that one call filled, or under [cold] each
-   has an empty tolk cache and CUDA driver cache of its own, so a sample
-   compiles every kernel. *)
-let first_call name ~cold env =
+(* [first_token_case name ~cold] times {!first_token} over a disk cache of
+   kernels that one process filled, or under [cold] over an empty tolk cache
+   and CUDA driver cache of each process's own, so that it compiles every
+   kernel. *)
+let first_token_case name ~cold =
   Thumper.bench_with_setup name
     ~setup:(fun () ->
       let dir = Filename.temp_dir "bench-gpt-oss" "" in
-      let start i =
-        if not cold then
-          start_ready (("CACHEDB=" ^ Filename.concat dir "cache.db") :: env)
-        else
-          let own = Filename.concat dir (string_of_int i) in
-          Unix.mkdir own 0o700;
-          start_ready
-            (("CACHEDB=" ^ Filename.concat own "cache.db")
-            :: ("CUDA_CACHE_PATH=" ^ Filename.concat own "cuda")
-            :: env)
+      let caches = ref 0 in
+      let env () =
+        let own =
+          if not cold then dir
+          else begin
+            incr caches;
+            let own = Filename.concat dir (string_of_int !caches) in
+            Unix.mkdir own 0o700;
+            own
+          end
+        in
+        [
+          "CACHEDB=" ^ Filename.concat own "cache.db";
+          "CUDA_CACHE_PATH=" ^ Filename.concat own "cuda";
+        ]
       in
-      if not cold then begin
-        let fill = start 0 in
-        expect fill "ready";
-        finish fill;
-        stop fill
-      end;
-      let all = List.init ready_processes start in
-      List.iter (fun r -> expect r "ready") all;
-      (dir, all, Queue.of_seq (List.to_seq all)))
-    ~teardown:(fun (dir, all, _) ->
-      List.iter stop all;
+      if not cold then first_token (env ());
+      (dir, env))
+    ~teardown:(fun (dir, _) ->
       ignore (Sys.command ("rm -rf " ^ Filename.quote dir)))
-    (fun (_, _, waiting) ->
-      match Queue.take_opt waiting with
-      | None -> failwith no_process_left
-      | Some r -> finish r)
-
-let kinds =
-  [
-    `Decode;
-    `Decode_q8_0;
-    `Prefill prompt;
-    `Prefill_q8_0 prompt;
-    `Prefill short_prompt;
-  ]
-  @ List.map (fun n -> `Experts n) routed_prompts
-  @ [ `Experts prompt; `Experts blocked_prompt ]
-
-(* [full] is the full model's entries, forced by the steps alone. *)
-let setup full = function
-  | (`Decode | `Decode_q8_0 | `Prefill _ | `Prefill_q8_0 _) as kind ->
-      step (Lazy.force full) kind
-  | `Experts n -> experts n
-
-let case kind =
-  let name =
-    match kind with
-    | `Decode -> Printf.sprintf "decode step, cache %d" context
-    | `Decode_q8_0 -> Printf.sprintf "decode step, Q8_0, cache %d" context
-    | `Prefill n -> Printf.sprintf "prefill %d" n
-    | `Prefill_q8_0 n -> Printf.sprintf "prefill %d, Q8_0" n
-    | `Experts n -> Printf.sprintf "experts at prefill %d" n
-  in
-  Thumper.bench_with_setup
-    ~setup:(fun () -> setup (lazy (entries config)) kind)
-    name
-    (fun call -> call ())
+    (fun (_, env) -> first_token (env ()))
 
 let opens () = Result.is_ok (first ())
 
@@ -421,51 +189,50 @@ let opens_in_child () =
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--first" ] ->
-      let call = prepare_first () in
-      print_endline "ready";
-      ignore (In_channel.input_line stdin);
-      call ();
-      print_endline "done";
-      ignore (In_channel.input_line stdin)
+  | [ _; "--first" ] -> load Gpt_oss.Unpacked (`Prefill short_prompt) ()
   | [ _; "--warm" ] ->
-      if opens () then
-        let full = lazy (entries config) in
+      if weights_cached () && opens () then
         List.iter
-          (fun kind ->
-            (setup full kind) ();
+          (fun (_, pack, kind) ->
+            load pack kind ();
             Gc.full_major ())
-          kinds
+          steps
   | _ ->
+      if not (weights_cached ()) then begin
+        prerr_endline
+          "gpt_oss: gpt-oss-20b's weights are not in raven's cache, nothing to \
+           measure (README.md says how to fetch them)";
+        exit 0
+      end;
       if not (opens_in_child ()) then begin
         prerr_endline "gpt_oss: no CUDA, NV or AMD GPU, nothing to measure";
         exit 0
       end;
-      (* A trial's deadline covers its setup, which for a step builds the
-         13.8 GB of entries and loads them onto the GPU. *)
+      (* A trial's deadline covers its setup, which loads the 13.8 GB of
+         weights onto the GPU. *)
       let code =
         Thumper.run "gpt_oss"
           ~config:
             Thumper.Config.(default |> deadline 120. |> warmup warmup_seconds)
           ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-          [ Thumper.group "GptOss" (List.map case kinds) ]
+          (List.map step_case steps)
       in
-      (* The serial row compiles in one process (PARALLEL=1). *)
+      (* Each call is a process of its own, so the rows take the fewest
+         samples. *)
       let first =
         Thumper.run "gpt_oss_first"
           ~config:
             Thumper.Config.(
-              default |> samples 3 |> warmup 0. |> deadline 120.
+              default |> samples 3 |> warmup 0. |> deadline 300.
               |> metrics [ Thumper.Metric.wall_time ])
           ~budgets:[ Thumper.Budget.no_slower_than 0.1 ]
           [
-            Thumper.group "GptOss"
-              [
-                first_call "first call 12" ~cold:false [];
-                first_call "first call 12, cold" ~cold:true [];
-                first_call "first call 12, cold, serial" ~cold:true
-                  [ "PARALLEL=1" ];
-              ];
+            first_token_case
+              (Printf.sprintf "first-token/%d" short_prompt)
+              ~cold:false;
+            first_token_case
+              (Printf.sprintf "first-token-cold/%d" short_prompt)
+              ~cold:true;
           ]
       in
       exit (max code first)

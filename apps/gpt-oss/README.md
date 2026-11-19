@@ -52,21 +52,16 @@ cd apps/gpt-oss/test && ../../../_build/default/apps/gpt-oss/test/test_stream.ex
 dune build @apps/gpt-oss/bench/bench
 ```
 
-times gpt-oss-20b at its own shapes on random weights, on the first CUDA,
-NV or AMD GPU that opens, after compiling every kernel into tolk's cache
-(`--warm`). Rows are seconds per call: decode tokens per second is one over
-`decode-step-cache-1024`, prefill tokens per second 512 over
-`prefill-512`.
+times gpt-oss-20b over its weights in raven's cache, fetched as above, on the
+first CUDA, NV or AMD GPU that opens, after compiling every kernel into tolk's
+cache (`--warm`). Rows are seconds per call.
 
 | Row | What it times |
 |---|---|
-| `decode-step-cache-1024` | one decode step at position 512 of a 1,024-token cache, token read back |
-| `prefill-512`, `prefill-12` | a prompt of 512 or 12 tokens |
-| `…-Q8_0` | the same with the attention projections and head as Q8_0 |
-| `first-call-12` (warm, cold, cold serial) | a new process's first 12-token call: time to the first token |
-| `experts-at-prefill-N` | one block's experts alone, at N tokens: a component of the step, for tolk's kernels |
+| `decode/512` | one decode step at position 512, its token read back |
+| `prefill/512` | a prompt of 512 tokens |
+| `…-q8_0` | the same with the attention projections and head packed as Q8_0, as llama.cpp's GGUF file stores them |
+| `first-token/12` | a new process from its start to its first token after 12, over a warm kernel cache, and `first-token-cold/12` over an empty one |
 
-`bench/gpt_oss.thumper` holds the baselines: nonnormal (AMD Radeon AI PRO
-R9700) for wall time, fudge (NVIDIA RTX 5000 Ada) for allocations. The
-comparison with llama.cpp at the same shapes is in
-[docs/performance.md](../../docs/performance.md).
+`bench/gpt_oss.thumper` and `bench/gpt_oss_first.thumper` hold the
+baselines.

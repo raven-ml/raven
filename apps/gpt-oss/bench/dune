@@ -1,5 +1,5 @@
-; gpt-oss-20b's decode step and prefills on a GPU. The regular suites guard
-; its kernels (kaun's bench/decode).
+; gpt-oss-20b's rows in PERFORMANCE.md, on a GPU, over its own weights. The
+; regular suites guard its kernels (kaun's bench/decode).
 
 (executable
  (name bench_gpt_oss)
@@ -9,11 +9,8 @@
   nx
   rig
   rig.gpus
-  nx.io
-  rune
   kaun
   kaun.hf
-  jsont
   thumper
   unix))
 
