@@ -9529,3 +9529,24 @@ D466.
   `stream/q8_0-64` rows and rune's
   `Cuda/matmul-float32-transposed-16384x440x1320` and
   `Cuda/matmul-float32-input-gradient-16384x1320x440` on fudge.
+
+## D498. A GPU's contraction pads an axis 4 does not divide, to upcast it
+
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (the
+  upcast loop takes an axis only where 3 or 4 divides it, and stops when
+  none is left; the same at `6b7b018da`).
+- **tolk:** `Heuristic.padded_to_four`, `Heuristic.upcast_more`.
+- **Differs:** on a renderer with local indices, a contraction summed in 4
+  bytes or fewer whose upcast loop finds no axis that 3 or 4 divides takes
+  one that 4 does not divide, where a load the loop counts does not read
+  it, padded (PADTO) to a multiple of 4 within `core_waste` (6/5) of its
+  size, where tinygrad's loop stops. D212 then blocks it.
+- **Reason:** (d): the sums of attention's derivative over a head's keys
+  or rows at 110 dimensions, 2048 of them over 8 heads, stopped at one
+  upcast by 4 and ran 6.7 ms (the sum over the keys, its rows read 16
+  bytes a row) and 1.07 ms; padded to 112 and blocked, 1.00 and 0.60 ms on
+  fudge's RTX 5000 Ada. A float32 product of 16384 rows by 2048 into 110
+  columns took 5.30 ms so, 4 outputs a thread, and takes 0.66 padded.
+- **Pinned by:** `Tolk.Heuristic`'s `a contraction pads an axis 4 does not
+  divide to upcast it`; rune's `Cuda/matmul-float32-16384x2048x110` on
+  fudge.

@@ -1131,6 +1131,23 @@ let four_first ~core_threads k =
       | _ -> false)
   | _ -> false
 
+(* Whether the axis [axis] of [k], which 4 does not divide, pads to a
+   multiple of 4 within [core_waste] of its size: a head of 110 dimensions
+   pads to 112, which a GPU's contraction then upcasts by 4 and {!block}
+   blocks, where unpadded its upcast loop stops at one axis and a thread holds
+   4 outputs. *)
+let padded_to_four k axis =
+  match known_size (shape_at k axis) with
+  | Some n when Bigint.fits_int n ->
+      let n = Bigint.to_int n in
+      let up = (n + 3) / 4 * 4 in
+      let num, den = core_waste in
+      n mod 4 <> 0
+      && up * den <= n * num
+      && Result.is_ok
+           (K.apply_opt (K.copy k) (Opt.Padto { axis; amount = 4 }))
+  | _ -> false
+
 (* potentially do more upcasts of non reduce axes based on a heuristic; on the
    host, after the contiguous axis, while the accumulators fit. The upcasts
    of its loop, latest first, each as the range it split, the upcast range it
@@ -1159,7 +1176,7 @@ let upcast_more ~four_first k =
                 List.memq b stored || List.exists (fun r -> reads r b) reduces)
               (K.bufs k)
       in
-      let choice ~fill axis upcast_amount =
+      let choice ?(pad = false) ~fill axis upcast_amount =
         (* if we haven't upcasted it, it mods, and buffer has stride 0 on axis
            while having no stride 0 in the upcasted axis already; a fill asks
            for a buffer of stride 0 on the axis that a reduce reads, a load each
@@ -1179,7 +1196,7 @@ let upcast_more ~four_first k =
         in
         if
           List.mem axis upcasted_axis
-          || (not (divisible (shape_at k axis) upcast_amount))
+          || (not (pad || divisible (shape_at k axis) upcast_amount))
           || (not (fits ~upcast:(axis, upcast_amount) k))
           || not (List.exists reuses sharers)
         then None
@@ -1209,16 +1226,25 @@ let upcast_more ~four_first k =
           in
           Some (num_strides, sum_strides, axis, upcast_amount)
       in
-      let choices ~fill amounts =
+      let choices ?pad ~fill amounts axes =
         List.concat_map
-          (fun axis -> List.filter_map (choice ~fill axis) amounts)
-          (K.upcastable_dims k)
+          (fun axis -> List.filter_map (choice ?pad ~fill axis) amounts)
+          axes
+      in
+      (* On a GPU, a contraction summed in 4 bytes or fewer whose loop has no
+         axis left that 3 or 4 divides pads one to 4 ({!padded_to_four}). *)
+      let padded () =
+        if (K.ren k).has_local && narrow k then
+          choices ~pad:true ~fill:false [ 4 ]
+            (List.filter (padded_to_four k) (K.upcastable_dims k))
+        else []
       in
       (* consider all upcastable axes with 3 or 4 upcast; on the host, when none
          is left, fill its lanes with 2 *)
       let xb_choices =
-        match choices ~fill:false [ 3; 4 ] with
-        | [] when budgeted k -> choices ~fill:true [ 2 ]
+        match choices ~fill:false [ 3; 4 ] (K.upcastable_dims k) with
+        | [] when budgeted k -> choices ~fill:true [ 2 ] (K.upcastable_dims k)
+        | [] -> padded ()
         | xb_choices -> xb_choices
       in
       let key (n, s, axis, amount) =
@@ -1230,6 +1256,8 @@ let upcast_more ~four_first k =
           if debug () >= 4 then
             Format.eprintf "more upcast axis : %d by %d@." axis amount;
           let r = List.nth (K.rngs k) axis in
+          if not (divisible (shape_at k axis) amount) then
+            ignore (K.apply_opt k (Opt.Padto { axis; amount }));
           let up = List.nth (split k axis amount Opt.Upcast) 1 in
           loop ((axis, (r, up), amount) :: upcasted)
       | [] -> upcasted

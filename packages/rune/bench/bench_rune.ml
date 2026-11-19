@@ -2230,6 +2230,21 @@ let gpu_rows g =
               let f = Rune.jit (pair_fn ()) Nx.matmul in
               fun () -> ignore (synced (f x w)));
         };
+      (* A float32 product into 110 columns, as attention's derivative sums
+         a head's 2048 keys of 110 dimensions: 3 and 4 divide no output axis
+         past the rows, so the columns pad to 112 to take 8 outputs a
+         thread. *)
+      on_gpu g "matmul-float32-16384x2048x110"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s)
+              in
+              let x = draw 67 [| 16384; 2048 |] and w = draw 68 [| 2048; 110 |] in
+              let f = Rune.jit (pair_fn ()) Nx.matmul in
+              fun () -> ignore (synced (f x w)));
+        };
       (* The same product by a matrix stored [1320; 440], [outputs; inputs]
          as a checkpoint stores a linear layer's, read through its
          transpose: both operands lie along the reduce. *)

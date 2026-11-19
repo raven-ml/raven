@@ -3261,6 +3261,29 @@ let staged_products =
           is_false ~msg:"staged" (Stage.stages_product ren (K.ast o)));
     ]
 
+(* A contraction on a GPU whose upcast loop finds no axis that 3 or 4
+   divides pads one to 4 within a core's bound on the work, so that it holds
+   8 by 8 outputs a thread: the sum over the keys of attention's derivative,
+   its 8 heads of 2048 rows by 110 dimensions padded to 112. *)
+let padded_upcast =
+  let optimised ren sink =
+    let s = K.v sink ren in
+    K.convert_loop_to_global s;
+    Heuristic.hand_coded_optimizations s
+  in
+  test "a contraction pads an axis 4 does not divide to upcast it" (fun () ->
+      let o =
+        optimised (Lazy.force sm_89)
+          (f32_product ~by_columns:true 16384 110 2048)
+      in
+      equal ~msg:"outputs a thread" int 64
+        (List.fold_left
+           (fun n r ->
+             match Shape.known_size (Ops.Sym (Ops.nth r 0)) with
+             | Some s -> n * Bigint.to_int s
+             | None -> n)
+           1 (ranges_at o ~reduce:false [ Upcast ])))
+
 (* [core_fits]
 
    The form of a contraction the lowering writes depends on the core it will
@@ -3674,6 +3697,7 @@ let () =
          fastest_threads_coalesce;
          along_reduce_threads;
          staged_products;
+         padded_upcast;
          widths;
          group "streaming"
            [
