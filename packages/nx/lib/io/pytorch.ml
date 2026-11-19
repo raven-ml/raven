@@ -1275,3 +1275,80 @@ let tensors v =
             ())
   done;
   !archive
+
+(* Reading by path *)
+
+(* [shared v id] is the value of [v]'s [Shared (id, _)], found by a depth-first
+   walk that leaves [Ref]s unexpanded, so linear in [v]'s size. *)
+let shared v id =
+  let stack = Stack.create () in
+  Stack.push v stack;
+  let rec next () =
+    match Stack.pop_opt stack with
+    | None -> None
+    | Some (Shared (i, x)) when i = id -> Some x
+    | Some (Shared (_, x)) ->
+        Stack.push x stack;
+        next ()
+    | Some (Tuple xs | List xs | Set xs) ->
+        List.iter (fun x -> Stack.push x stack) xs;
+        next ()
+    | Some (Dict kvs) ->
+        List.iter
+          (fun (k, x) ->
+            Stack.push k stack;
+            Stack.push x stack)
+          kvs;
+        next ()
+    | Some
+        ( Null | Bool _ | Int _ | Long _ | Float _ | Complex _ | String _
+        | Bytes _ | Tensor _ | Global _ | Object _ | Ref _ ) ->
+        next ()
+  in
+  next ()
+
+let kind = function
+  | Null -> "None"
+  | Bool _ -> "a bool"
+  | Int _ | Long _ -> "an int"
+  | Float _ -> "a float"
+  | Complex _ -> "a complex"
+  | String _ -> "a str"
+  | Bytes _ -> "bytes"
+  | Tuple _ -> "a tuple"
+  | List _ -> "a list"
+  | Set _ -> "a set"
+  | Dict _ -> "a dict"
+  | Tensor _ -> "a tensor"
+  | Global g -> "the global " ^ g
+  | Object o -> "an object " ^ o
+  | Shared _ | Ref _ -> "a shared value"
+
+let find path root =
+  let fail seen fmt =
+    Fail.failf
+      ("Nx_io.Pytorch.find: %s: " ^^ fmt)
+      (match seen with [] -> "the value" | p -> String.concat "." (List.rev p))
+  in
+  (* [plain seen v] is [v] read through [Shared] and [Ref]. *)
+  let rec plain seen = function
+    | Shared (_, x) -> plain seen x
+    | Ref id -> (
+        match shared root id with
+        | Some x -> plain seen x
+        | None ->
+            fail seen "a reference to shared value %d, outside the value" id)
+    | v -> v
+  in
+  let rec go seen v = function
+    | [] -> Some v
+    | k :: rest -> (
+        match v with
+        | Dict kvs -> (
+            let value = function String s, x when s = k -> Some x | _ -> None in
+            match List.find_map value kvs with
+            | None -> None
+            | Some x -> go (k :: seen) (plain (k :: seen) x) rest)
+        | v -> fail seen "%s, not a dict" (kind v))
+  in
+  go [] (plain [] root) path

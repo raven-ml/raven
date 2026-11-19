@@ -365,6 +365,29 @@ let loading =
             (array (float 1e-3))
             [| 5862.7652; 3341.3949; 5862.7652; 3341.3949 |]
             (Nx.to_array m.norm.s1_mean));
+      test "reads args the file holds twice, at its second place" (fun () ->
+          (* {"config": args, "model": state, "args": the dict at "config"} *)
+          let v =
+            match student () with
+            | Pt.Dict [ m; (k, args) ] ->
+                Pt.Dict [ (String "config", Shared (0, args)); m; (k, Ref 0) ]
+            | _ -> assert false
+          in
+          let m = Model.of_pytorch ~name:"student" v in
+          equal (list int) [ 16; 32 ] m.prefixes;
+          equal
+            (list (pair string (array float_exact)))
+            (arrays post_ln) (arrays m));
+      test "refuses args that are not a dict" (fun () ->
+          let v =
+            match student () with
+            | Pt.Dict [ m; (k, _) ] ->
+                Pt.Dict [ m; (k, Object "argparse.Namespace") ]
+            | _ -> assert false
+          in
+          raises_match
+            (Exn.failure ~sub:"args: an object argparse.Namespace, not a dict")
+            (fun () -> Model.of_pytorch ~name:"student" v));
       test "refuses an unused tensor" (fun () ->
           let f l = ("extra.weight", Nx.zeros Nx.float32 [| 2 |]) :: l in
           raises_match (Exn.failure ~sub:"extra.weight: unused") (fun () ->

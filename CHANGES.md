@@ -3454,6 +3454,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.Pytorch.find` reads a checkpoint's value by a path of dict keys, as
+  `find [ "args"; "dim" ] ckpt`, through the `Shared` and `Ref` a file that
+  holds a dict twice loads as, which a hand walk of `Dict` lists missed.
 - **Breaking:** `Nx.Prim.Reduce` and `Nx.Prim.Scan` take `at`, as `Map`
   does: `Some p` exactly for a loop of no loads, which lies and computes as
   one over a load at `p` would. A reduction of no loads, or a scan of no

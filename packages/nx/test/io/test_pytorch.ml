@@ -1009,6 +1009,90 @@ let best f =
          ignore (f ());
          Unix.gettimeofday () -. t))
 
+let finding =
+  let d kvs = Pt.Dict (List.map (fun (k, v) -> (Pt.String k, v)) kvs) in
+  let found = option value in
+  let refuses ~sub v path =
+    raises_match (Exn.failure ~sub:("Nx_io.Pytorch.find: " ^ sub)) (fun () ->
+        ignore (Pt.find path v))
+  in
+  group "Pytorch.find"
+    [
+      test "reads nested dicts by their string keys" (fun () ->
+          let v = d [ ("dims", d [ ("n_mels", Int 80) ]); ("epoch", Int 3) ] in
+          equal found (Some (Int 80)) (Pt.find [ "dims"; "n_mels" ] v);
+          equal found (Some (Int 3)) (Pt.find [ "epoch" ] v);
+          equal found (Some v) (Pt.find [] v));
+      test "an absent key at any depth is None" (fun () ->
+          let v = d [ ("dims", d [ ("n_mels", Int 80) ]) ] in
+          equal found None (Pt.find [ "args" ] v);
+          equal found None (Pt.find [ "args"; "dim" ] v);
+          equal found None (Pt.find [ "dims"; "n_vocab" ] v));
+      test "only a str key is a step" (fun () ->
+          let v = Pt.Dict [ (Int 1, Int 2); (Bytes "a", Int 3) ] in
+          equal found None (Pt.find [ "1" ] v);
+          equal found None (Pt.find [ "a" ] v));
+      test "reads a dict the file holds twice, at both places" (fun () ->
+          (* {"dims": {"n": 3}, "config": the same dict} *)
+          let inner = "}q\x01(" ^ str "n" ^ int1 3 ^ "u" in
+          let v =
+            load_pickle
+              (pickle (dict [ (str "dims", inner); (str "config", "h\x01") ]))
+          in
+          (match v with
+          | Dict [ (_, Shared _); (_, Ref _) ] -> ()
+          | v -> failf "not one Shared and one Ref: %a" pp_value v);
+          let n = d [ ("n", Int 3) ] in
+          equal found (Some (Int 3)) (Pt.find [ "dims"; "n" ] v);
+          equal found (Some (Int 3)) (Pt.find [ "config"; "n" ] v);
+          equal found (Some n) (Pt.find [ "dims" ] v);
+          equal found (Some n) (Pt.find [ "config" ] v);
+          equal found (Some n) (Pt.find [] (Shared (0, Shared (1, n)))));
+      test "reads a Ref past a value that doubles 40 times, in linear time"
+        (fun () ->
+          (* {"a": {"k": 1}, "t": 2^40 paths to (), "c": the dict at "a"}: a
+             search that expanded a Ref would take 2^40 steps over "t". *)
+          let d = "}q\x01(" ^ str "k" ^ int1 1 ^ "u" in
+          let v =
+            load_pickle
+              (pickle
+                 (dict
+                    [
+                      (str "a", d);
+                      (str "t", doubled ~leaf:")" 40);
+                      (str "c", "h\x01");
+                    ]))
+          in
+          equal found (Some (Int 1)) (Pt.find [ "c"; "k" ] v));
+      test "reads a Ref to a value shared as a key" (fun () ->
+          (* {(1,): None, "r": the key (1,)} *)
+          let key = "(" ^ int1 1 ^ "tq\x01" in
+          let v =
+            load_pickle (pickle (dict [ (key, "N"); (str "r", "h\x01") ]))
+          in
+          (match v with
+          | Dict [ (Shared _, Null); (_, Ref _) ] -> ()
+          | v -> failf "not a Shared key and a Ref: %a" pp_value v);
+          equal found (Some (Tuple [ Int 1 ])) (Pt.find [ "r" ] v));
+      test "a step into a value that is not a dict raises naming the path"
+        (fun () ->
+          let v =
+            d
+              [
+                ("args", Object "argparse.Namespace");
+                ("layers", d [ ("w", List []) ]);
+              ]
+          in
+          refuses ~sub:"args: an object argparse.Namespace, not a dict" v
+            [ "args"; "dim" ];
+          refuses ~sub:"layers.w: a list, not a dict" v [ "layers"; "w"; "0" ];
+          refuses ~sub:"the value: a list, not a dict" (List []) [ "a" ]);
+      test "a Ref outside the value raises" (fun () ->
+          refuses ~sub:"b: a reference to shared value 0, outside the value"
+            (d [ ("b", Ref 0) ])
+            [ "b"; "k" ]);
+    ]
+
 let review =
   group "sizes a hostile file chooses"
     [
@@ -1240,6 +1324,7 @@ let () =
          tensor_cases;
          opaque_cases;
          naming;
+         finding;
          laws;
          review;
          legacy_views;

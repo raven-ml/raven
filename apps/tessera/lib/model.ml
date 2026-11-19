@@ -670,9 +670,8 @@ let masks ~dropout ~keys m b =
 
 module Pt = Nx_io.Pytorch
 
-(* A checkpoint's tensors, and the names read so far: nx.io's PyTorch values
-   have no field accessors and its archives report no unread name (a gap of
-   nx.io's), so the reader walks the dictionary and counts by hand. *)
+(* A checkpoint's tensors, and the names read so far: nx.io's archives report
+   no unread name (a gap of nx.io's), so the reader counts by hand. *)
 type reader = {
   file : string;
   archive : Nx.host Nx_io.Archive.t;
@@ -758,21 +757,18 @@ let reducer_of_file r ~d ~dims =
     down = linear_of r "dim_reducer.4" ~inputs:(4 * d) ~outputs:dims;
   }
 
-let rec plain = function Pt.Shared (_, v) -> plain v | v -> v
+let find file path v = try Pt.find path v with Failure m -> fail file "%s" m
 
-let entry key = function
-  | Pt.Dict kvs -> Option.map plain (List.assoc_opt (Pt.String key) kvs)
-  | _ -> None
-
-(* A field of [args] or [arch], the reference's default where absent. *)
-let int_arg file dict name default =
-  match Option.bind dict (entry name) with
+(* A field of the checkpoint's [args] or [arch], the reference's default where
+   absent. *)
+let int_arg file v dict name default =
+  match find file [ dict; name ] v with
   | None -> default
   | Some (Pt.Int n) -> n
   | Some _ -> fail file "%s: an int expected" name
 
-let bool_arg file dict name default =
-  match Option.bind dict (entry name) with
+let bool_arg file v dict name default =
+  match find file [ dict; name ] v with
   | None -> default
   | Some (Pt.Bool b) -> b
   | Some (Pt.Int n) -> n <> 0
@@ -780,11 +776,11 @@ let bool_arg file dict name default =
 
 (* [matryoshka_dims], which the students store as the string
    ["16,32,64,128"]. *)
-let prefixes_arg file dict =
+let prefixes_arg file v =
   let ints l =
     List.map (function Pt.Int n -> n | _ -> fail file "matryoshka_dims") l
   in
-  match Option.bind dict (entry "matryoshka_dims") with
+  match find file [ "args"; "matryoshka_dims" ] v with
   | None -> [ 16; 32; 64; 128 ]
   | Some (Pt.String s) ->
       List.map
@@ -793,7 +789,7 @@ let prefixes_arg file dict =
           | Some n -> n
           | None -> fail file "matryoshka_dims: %S" s)
         (String.split_on_char ',' s)
-  | Some (Pt.List l | Pt.Tuple l) -> ints (List.map plain l)
+  | Some (Pt.List l | Pt.Tuple l) -> ints l
   | Some _ -> fail file "matryoshka_dims: a string expected"
 
 let reader file state =
@@ -806,13 +802,13 @@ let check_used r =
 
 (* tessera_infer_v2 student/model.py, [load_model]: [nn.TransformerEncoder]'s
    layers, or [QKNormEncoderLayer]s in a [ModuleList] with [enable_qk_norm]. *)
-let student file state args =
+let student file state v =
   let r = reader file state in
-  let arg name default = int_arg file args name default in
+  let arg name default = int_arg file v "args" name default in
   let d = 4 * arg "latent_dim" 64 and heads = arg "nhead" 4 in
   let layers = arg "num_layers" 4 and ffn = arg "dim_feedforward" 1024 in
   let dims = arg "repr_dim" 128 in
-  let qk = bool_arg file args "enable_qk_norm" false in
+  let qk = bool_arg file v "args" "enable_qk_norm" false in
   let backbone name ~bands =
     let layer r i =
       if qk then
@@ -834,7 +830,7 @@ let student file state args =
     net = Post_ln { s2; s1; reducer };
     heads;
     norm = student_stats Nx.Host.on;
-    prefixes = prefixes_arg file args;
+    prefixes = prefixes_arg file v;
   }
 
 (* tessera_infer_v2 teacher/model.py, [load_model]: two fusion layers of 4 heads
@@ -842,14 +838,14 @@ let student file state args =
 let fusion_layers = 2
 let fusion_heads = 4
 
-let teacher_of file state arch =
+let teacher_of file state v =
   let r = reader file state in
-  let arg name default = int_arg file arch name default in
+  let arg name default = int_arg file v "arch" name default in
   let d = 4 * arg "latent_dim" 1024 and heads = arg "nhead" 4 in
   let layers = arg "num_layers" 4 and ffn = arg "dim_feedforward" 16384 in
   let dims = arg "repr_dim" 1024 in
   if heads <> fusion_heads then fail file "arch.nhead: %d, 4 expected" heads;
-  if not (bool_arg file arch "final_layernorm" true) then
+  if not (bool_arg file v "arch" "final_layernorm" true) then
     fail file "arch.final_layernorm: false is not supported";
   let backbone name ~bands =
     let layer r i =
@@ -878,10 +874,9 @@ let teacher_of file state arch =
   }
 
 let of_pytorch ~name v =
-  let v = plain v in
-  match (entry "model" v, entry "encoder_state_dict" v) with
-  | Some state, _ -> student name state (entry "args" v)
-  | None, Some state -> teacher_of name state (entry "arch" v)
+  match (find name [ "model" ] v, find name [ "encoder_state_dict" ] v) with
+  | Some state, _ -> student name state v
+  | None, Some state -> teacher_of name state v
   | None, None -> fail name "neither a student's nor the teacher's checkpoint"
 
 

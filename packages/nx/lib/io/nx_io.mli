@@ -522,15 +522,15 @@ val load_gguf : string -> Gguf.t
     This reads a checkpoint [{"model": state_dict, "args": {"dim": 512}}]:
     {[
     let ckpt = Nx_io.load_pytorch "student.pt" in
-    let field k = function
-      | Nx_io.Pytorch.Dict kvs -> List.assoc (Nx_io.Pytorch.String k) kvs
-      | _ -> failwith "student.pt: no dict" in
     let dim =
-      match field "dim" (field "args" ckpt) with
-      | Nx_io.Pytorch.Int d -> d
-      | _ -> failwith "student.pt: args.dim" in
-    Nx_io.Archive.float ~shape:[| dim; dim |] Nx.float32 "layers.0.weight"
-      (Nx_io.Pytorch.tensors (field "model" ckpt))
+      match Nx_io.Pytorch.find [ "args"; "dim" ] ckpt with
+      | Some (Nx_io.Pytorch.Int d) -> d
+      | _ -> failwith "student.pt: no int args.dim" in
+    match Nx_io.Pytorch.find [ "model" ] ckpt with
+    | Some state ->
+        Nx_io.Archive.float ~shape:[| dim; dim |] Nx.float32 "layers.0.weight"
+          (Nx_io.Pytorch.tensors state)
+    | None -> failwith "student.pt: no model"
     ]} *)
 module Pytorch : sig
   (** The type for Python values. A value holds once each tuple, list, set or
@@ -597,6 +597,24 @@ module Pytorch : sig
       - if two tensors have one name, as ["a.b"] for
         [{"a.b": x, "a": {"b": y}}], or a tensor has the empty name, as [v]
         itself does. *)
+
+  val find : string list -> value -> value option
+  (** [find path v] is the value at [path] from [v], each step the value of
+      a dict's [String] key, as Python's [v[k1][k2]] reads it, or [None] if
+      a dict on the way has no such key. A {!Shared} value reads as the
+      value it holds, and a {!Ref} as the [Shared] value of its number in
+      [v], so the result is neither. [find [] v] is [v] so read. A value
+      found may hold [Ref]s to [Shared] values outside it, so a path is
+      read from the value the load returned, whole: [find (a @ b) v], not
+      [find b] of [find a v]. Only a
+      [String] key is a step: the keys [Int 1] and [Bytes "a"] are not the
+      steps ["1"] and ["a"]. It takes time linear in the dicts on the way,
+      and in [v]'s size, its [Ref]s unexpanded, for each [Ref] it meets.
+
+      Raises [Failure] naming the path so far, as
+      ["Nx_io.Pytorch.find: args: an object argparse.Namespace, not a dict"]:
+      - if a step reaches a value that is not a dict;
+      - if a [Ref] refers to a [Shared] value [v] does not hold. *)
 end
 
 val load_pytorch : string -> Pytorch.value

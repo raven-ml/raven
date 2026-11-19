@@ -26,6 +26,7 @@ type value =
   | Ref of int
 
 val tensors : value -> Nx.host Archive.t
+val find : string list -> value -> value option
 
 val load : Rig.Buffer.t -> value
 (** [load file] is the value of the checkpoint in the disk buffer [file].

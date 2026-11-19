@@ -150,8 +150,9 @@ val of_pytorch :
 
     Raises [Failure] naming [name] and the tensor or field if [v] is neither, if
     a tensor is missing, has another shape than [args] or [arch] gives it, or is
-    left unused, if a field has another type, or if the teacher's [nhead] is not
-    [4] or its [final_layernorm] is false. *)
+    left unused, if [v], [args] or [arch] is not a dict or a field has another
+    type, or if the teacher's [nhead] is not [4] or its [final_layernorm] is
+    false. *)
 
 type arch = {
   pre_ln : bool;  (** The teacher's form, else the students'. *)
