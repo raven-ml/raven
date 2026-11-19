@@ -22,7 +22,16 @@ val load : Rig.Buffer.t -> Nx.host Archive.t
     Raises [Failure] if its header is malformed or the file's length is not the
     one the header describes. *)
 
-val header : (string * string * int array * int) list -> string
-(** [header entries] is the header of a file of [entries], each a name, a
-    dtype's code, a shape and a length in bytes, whose data follows in that
-    order. *)
+val metadata : Rig.Buffer.t -> (string * string) list
+(** [metadata file] is the metadata of the disk buffer [file], in the header's
+    order, [[]] if it has none.
+
+    Raises [Failure] as {!load} does, and if a key is given twice. *)
+
+val header :
+  ?metadata:(string * string) list ->
+  (string * string * int array * int) list ->
+  string
+(** [header ~metadata entries] is the header of a file of [metadata] (default
+    [[]]) and [entries], each a name, a dtype's code, a shape and a length in
+    bytes, whose data follows in that order. *)

@@ -288,12 +288,12 @@ type entry = {
 }
 
 (* The header's key for the file's metadata, which names no array. *)
-let metadata = "__metadata__"
+let metadata_key = "__metadata__"
 
 let check_name ~by name =
   if not (String.is_valid_utf_8 name) then
     Fail.invalid_argf "%s: %S is not UTF-8" by name;
-  if name = metadata then
+  if name = metadata_key then
     Fail.invalid_argf "%s: %S names the file's metadata" by name
 
 let int = function `Int n -> n | _ -> failwith "not an integer"
@@ -344,9 +344,23 @@ let entry (name, j) =
       (numel * bits / 8);
   { name; kind; shape; first; length = stop - first }
 
+(* The metadata's pairs, in the header's order. *)
+let pairs = function
+  | `Assoc kv ->
+      let keys = Hashtbl.create (List.length kv) in
+      List.map
+        (fun (k, v) ->
+          if Hashtbl.mem keys k then Fail.failf "the metadata names %s twice" k;
+          Hashtbl.add keys k ();
+          match v with
+          | `String v -> (k, v)
+          | _ -> Fail.failf "the metadata %s is not a string" k)
+        kv
+  | _ -> failwith "the metadata is not an object"
+
 (* The header's entries, ordered by offset then length as the reference
-   implementation sorts them, and the length of the data they cover, which they
-   cover without a gap. *)
+   implementation sorts them, the length of the data they cover, which they
+   cover without a gap, and the metadata. *)
 let parse text =
   if not (String.is_valid_utf_8 text) then failwith "the header is not UTF-8";
   let fields =
@@ -355,22 +369,16 @@ let parse text =
     | _ -> failwith "the header is not an object"
   in
   let names = Hashtbl.create (List.length fields) in
+  let meta = ref [] in
   let entries =
     List.filter_map
       (fun (name, v) ->
         if Hashtbl.mem names name then Fail.failf "%s is named twice" name;
         Hashtbl.add names name ();
-        if name <> metadata then Some (entry (name, v))
-        else
-          match v with
-          | `Assoc kv ->
-              List.iter
-                (function
-                  | _, `String _ -> ()
-                  | k, _ -> Fail.failf "the metadata %s is not a string" k)
-                kv;
-              None
-          | _ -> failwith "the metadata is not an object")
+        if name <> metadata_key then Some (entry (name, v))
+        else (
+          meta := pairs v;
+          None))
       fields
   in
   let by_range a b =
@@ -387,9 +395,11 @@ let parse text =
         e.first + e.length)
       0 entries
   in
-  (entries, stop)
+  (entries, stop, !meta)
 
-let load file =
+(* The file's header length, its entries and metadata, checked against the
+   file's length. *)
+let read_header file =
   let length = B.length file in
   if length < 8 then Fail.failf "%d bytes, too short for SafeTensors" length;
   let n = String.get_int64_le (Storage.string file ~pos:0 8) 0 in
@@ -398,11 +408,19 @@ let load file =
   let n = Int64.to_int n in
   if 8 + n > length then
     Fail.failf "a header of %d bytes in a file of %d" n length;
-  let entries, data = parse (Storage.string file ~pos:8 n) in
+  let entries, data, meta = parse (Storage.string file ~pos:8 n) in
   if 8 + n + data <> length then
     Fail.failf "the header describes a file of %d bytes, the file has %d"
       (8 + n + data)
       length;
+  (n, entries, meta)
+
+let metadata file =
+  let _, _, meta = read_header file in
+  meta
+
+let load file =
+  let n, entries, _ = read_header file in
   List.fold_left
     (fun archive e ->
       let b = B.view file ~first:(8 + n + e.first) ~length:e.length in
@@ -423,10 +441,12 @@ let load file =
 
 (* Writing *)
 
-(* [header entries] is the header of a file of [entries], each a name, a dtype
-   code, a shape and a length in bytes, whose data follows in that order. The
-   JSON is padded with spaces to a multiple of 8 bytes. *)
-let header entries =
+(* [header ~metadata entries] is the header of a file of [metadata] and
+   [entries], each a name, a dtype code, a shape and a length in bytes, whose
+   data follows in that order. The metadata comes first, sorted by key, as the
+   reference implementation writes it, and not at all when empty. The JSON is
+   padded with spaces to a multiple of 8 bytes. *)
+let header ?(metadata = []) entries =
   let field (pos, fields) (name, code, shape, length) =
     let shape = List.map (fun d -> `Int d) (Array.to_list shape) in
     let info =
@@ -440,7 +460,17 @@ let header entries =
     (pos + length, (name, info) :: fields)
   in
   let _, fields = List.fold_left field (0, []) entries in
-  let json = Json.to_string (`Assoc (List.rev fields)) in
+  let fields = List.rev fields in
+  let fields =
+    if metadata = [] then fields
+    else
+      let by_key (k, _) (k', _) = String.compare k k' in
+      let meta =
+        List.map (fun (k, v) -> (k, `String v)) (List.sort by_key metadata)
+      in
+      (metadata_key, `Assoc meta) :: fields
+  in
+  let json = Json.to_string (`Assoc fields) in
   let n = (String.length json + 7) / 8 * 8 in
   let b = Bytes.make (8 + n) ' ' in
   Bytes.set_int64_le b 0 (Int64.of_int n);

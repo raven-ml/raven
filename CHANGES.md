@@ -3470,6 +3470,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.save_safetensors ~metadata` writes a SafeTensors file's string
+  metadata, such as a model's configuration, and
+  `Nx_io.load_safetensors_metadata` reads it back from the header alone.
+  Loads checked the metadata and dropped it.
 - Add `Nx.Host.read x f`, a host value's elements as a flat bigarray in C
   order, over its memory where it is C-contiguous, and `Nx.Host.wrap s b`,
   the host value of shape `s` over a flat bigarray's memory: loops in OCaml

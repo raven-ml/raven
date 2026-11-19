@@ -85,6 +85,15 @@ let escaped_names =
 
 let names = entry_names @ escaped_names
 
+(* Metadata of up to three distinct keys, names JSON escapes among them, each
+   with a value drawn from the same names. *)
+let metadatas =
+  let open Gen in
+  let* keys = permutation names and+ k = int_range 0 3 in
+  let keys = List.filteri (fun i _ -> i < k) keys in
+  let+ values = list ~size:(constant k) (of_list names) in
+  List.combine keys values
+
 let safetensors =
   group "safetensors"
     [
@@ -235,15 +244,46 @@ let safetensors =
                  ("w", Nx.P (Nx.create Nx.uint8 [| 2 |] [| 1; 2 |]));
                ])
             (Nx_io.load_safetensors (file (with_json json "\001\002"))));
-      test "metadata of strings is accepted and ignored" (fun () ->
+      test "a file's metadata loads apart from its entries" (fun () ->
           let json =
-            {|{"__metadata__":{"format":"pt"},"w":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|}
+            {|{"__metadata__":{"format":"pt","a":"\u00e9"},"w":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|}
           in
           let pad = String.make ((8 - (String.length json mod 8)) mod 8) ' ' in
+          let path = file (with_header (json ^ pad) ^ "\042") in
           equal (list string) [ "w" ]
-            (Archive.names
-               (Nx_io.load_safetensors
-                  (file (with_header (json ^ pad) ^ "\042")))));
+            (Archive.names (Nx_io.load_safetensors path));
+          equal
+            (list (pair string string))
+            [ ("format", "pt"); ("a", "é") ]
+            (Nx_io.load_safetensors_metadata path));
+      test "a file without metadata has none" (fun () ->
+          equal
+            (list (pair string string))
+            []
+            (Nx_io.load_safetensors_metadata (file (u8_entry "w"))));
+      prop "metadata saved loads sorted by key, beside its archive"
+        (Gen.pair
+           (Gen.with_pp pp_entries (archives safetensors_dtypes))
+           metadatas)
+        (fun (entries, metadata) ->
+          cover "no metadata" (metadata = []);
+          cover "a key JSON escapes"
+            (List.exists (fun (k, _) -> List.mem k escaped_names) metadata);
+          let path = temp_file ~suffix:".safetensors" () in
+          Nx_io.save_safetensors ~metadata path (archive_of entries);
+          equal
+            (list (pair string string))
+            (List.sort compare metadata)
+            (Nx_io.load_safetensors_metadata path);
+          equal archive (archive_of entries) (Nx_io.load_safetensors path));
+      test "the metadata comes first in the header, sorted by key" (fun () ->
+          let path = temp_file ~suffix:".safetensors" () in
+          Nx_io.save_safetensors
+            ~metadata:[ ("b", "2"); ("a", "1") ]
+            path
+            (Archive.of_list [ ("w", Nx.P (Nx.zeros Nx.uint8 [| 1 |])) ]);
+          let want = {|{"__metadata__": {"a": "1", "b": "2"}, "w": |} in
+          equal string want (String.sub (read path) 8 (String.length want)));
       test
         "a save orders entries by dtype, as the reference implementation does, \
          then by name" (fun () ->
@@ -284,6 +324,29 @@ let safetensors =
                ~sub:(Printf.sprintf "Nx_io.save_safetensors: %S" name))
             (fun () ->
               save_safetensors path [ (name, Nx.P (Nx.zeros Nx.uint8 [| 1 |])) ]);
+          equal (array string) [||] (Sys.readdir dir));
+      cases
+        "metadata the format cannot hold is refused, and nothing is written"
+        ~id:(fun (label, _, _) -> label)
+        [
+          ( "a key twice",
+            [ ("k", "a"); ("k", "b") ],
+            {|key "k" is given twice|} );
+          ( "a key that is not UTF-8",
+            [ ("a\xffb", "v") ],
+            {|"a\255b" is not UTF-8|} );
+          ( "a value that is not UTF-8",
+            [ ("k", "a\xffb") ],
+            {|"k" is not UTF-8|} );
+        ]
+        (fun (_, metadata, what) ->
+          let dir = temp_dir () in
+          let path = Filename.concat dir "x.safetensors" in
+          raises
+            (Invalid_argument ("Nx_io.save_safetensors: the metadata " ^ what))
+            (fun () ->
+              Nx_io.save_safetensors ~metadata path
+                (Archive.of_list [ ("w", Nx.P (Nx.zeros Nx.uint8 [| 1 |])) ]));
           equal (array string) [||] (Sys.readdir dir));
       test
         "every proper prefix fails, and any header byte flipped loads or fails"
@@ -343,12 +406,25 @@ let safetensors =
              fun () -> file (raw_safetensors [ ("w", "U16", [ 1 ], "a") ]) );
            ( "a negative extent",
              fun () -> file (raw_safetensors [ ("w", "U8", [ -1 ], "") ]) );
+           ( "a metadata key twice",
+             fun () ->
+               file
+                 (with_json
+                    {|{"__metadata__":{"k":"a","k":"b"},"w":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|}
+                    "a") );
+           ( "metadata that is not a string",
+             fun () ->
+               file
+                 (with_json
+                    {|{"__metadata__":{"k":1},"w":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|}
+                    "a") );
            ("a text file", fun () -> file "hello, nx\n");
            ("an npy file", fun () -> file (read (fixture "version2.npy")));
          ]
          (fun (_, path) ->
            let path = path () in
-           fails ~path (fun () -> Nx_io.load_safetensors path)));
+           fails ~path (fun () -> Nx_io.load_safetensors path);
+           fails ~path (fun () -> Nx_io.load_safetensors_metadata path)));
     ]
 
 let () = exit (run "nx.io SafeTensors" [ safetensors ])

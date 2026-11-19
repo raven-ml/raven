@@ -337,7 +337,8 @@ val save_npz : string -> 'd Archive.t -> unit
     and complex64 ([C64]). The format's other dtypes load as bytes: [F8_E8M0],
     [F8_E4M3FNUZ] and [F8_E5M2FNUZ] at the entry's shape, and [F4], [F6_E2M3]
     and [F6_E3M2], whose elements are narrower than a byte, at shape [[|n|]] for
-    an entry of [n] bytes. *)
+    an entry of [n] bytes. The header may hold the file's {e metadata}, string
+    key-values such as a model's configuration. *)
 
 val load_safetensors : string -> Nx.host Archive.t
 (** [load_safetensors path] is the entries of the SafeTensors file [path].
@@ -348,15 +349,28 @@ val load_safetensors : string -> Nx.host Archive.t
     - if the file's length differs from the one its header states, as a partial
       download's does. *)
 
-val save_safetensors : string -> 'd Archive.t -> unit
-(** [save_safetensors path a] writes [a]'s entries to the SafeTensors file
-    [path], in the order of the format's reference implementation. The entries
-    come by dtype, in the order U64, I64, F64, C64, F32, U32, I32, BF16, F16,
-    U16, I16, F8_E4M3, F8_E5M2, I8, U8, BOOL, then by name.
+val load_safetensors_metadata : string -> (string * string) list
+(** [load_safetensors_metadata path] is the metadata of the SafeTensors file
+    [path], its header's ["__metadata__"] key-values in the header's order:
+    [[]] if the header has none. It reads the header and none of the arrays'
+    bytes.
+
+    Raises [Failure] as {!load_safetensors} does, and if a key is given
+    twice. *)
+
+val save_safetensors :
+  ?metadata:(string * string) list -> string -> 'd Archive.t -> unit
+(** [save_safetensors ~metadata path a] writes [a]'s entries to the
+    SafeTensors file [path] with the metadata [metadata] (default [[]]), in
+    the order of the format's reference implementation: the metadata first,
+    sorted by key and left out if empty, then the entries by dtype, in the
+    order U64, I64, F64, C64, F32, U32, I32, BF16, F16, U16, I16, F8_E4M3,
+    F8_E5M2, I8, U8, BOOL, then by name.
 
     Raises [Invalid_argument] naming the entry if SafeTensors does not store its
     dtype, or if its name is not UTF-8 or is ["__metadata__"], the key of the
-    file's metadata. *)
+    file's metadata, and naming the key if [metadata] gives it twice or a key
+    or value is not UTF-8. *)
 
 (** {1:gguf GGUF} *)
 

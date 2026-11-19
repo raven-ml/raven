@@ -128,8 +128,20 @@ let save_npz path archive =
 let load_safetensors path =
   Fail.file path @@ fun () -> Safetensors.load (Storage.open_file path)
 
-let save_safetensors path archive =
+let load_safetensors_metadata path =
+  Fail.file path @@ fun () -> Safetensors.metadata (Storage.open_file path)
+
+let save_safetensors ?(metadata = []) path archive =
   let by = "Nx_io.save_safetensors" in
+  let keys = Hashtbl.create (List.length metadata) in
+  List.iter
+    (fun (k, v) ->
+      if Hashtbl.mem keys k then
+        Fail.invalid_argf "%s: the metadata key %S is given twice" by k;
+      Hashtbl.add keys k ();
+      if not (String.is_valid_utf_8 k && String.is_valid_utf_8 v) then
+        Fail.invalid_argf "%s: the metadata %S is not UTF-8" by k)
+    metadata;
   let entry (name, (Nx.P x as p)) =
     Safetensors.check_name ~by name;
     match Safetensors.code (Nx.dtype x) with
@@ -143,7 +155,7 @@ let save_safetensors path archive =
     |> List.stable_sort (fun (r, _, _, _) (r', _, _, _) -> Int.compare r' r)
   in
   let header =
-    Safetensors.header
+    Safetensors.header ~metadata
       (List.map
          (fun (_, name, code, Nx.P x) -> (name, code, Nx.shape x, Nx.nbytes x))
          entries)
