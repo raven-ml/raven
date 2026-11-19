@@ -5665,9 +5665,9 @@ let run_of padding n k =
   | `Same -> ((if k <= n then (m - 1) / 2 else m / 2), longest)
 
 (* [x]'s batch axes merged into one, with one channel, convolved by the
-   kernel as one output and one input channel: value [i] of a kept run from
-   [start] reads [x] from [start + i - (k - 1)], which a padding of
-   [k - 1 - start] zeros before [x] puts at window [i]. *)
+   kernel's conjugate as one output and one input channel: value [i] of a
+   kept run from [start] reads [x] from [start + i - (k - 1)], which a
+   padding of [k - 1 - start] zeros before [x] puts at window [i]. *)
 let correlate ?(padding = `Valid) x kernel =
   let by = "Nx.correlate" in
   let dt = dtype x and kr = ndim kernel and r = ndim x in
@@ -5687,7 +5687,9 @@ let correlate ?(padding = `Valid) x kernel =
     Array.init kr (fun i -> snd runs.(i) + ks.(i) - 1 - spatial.(i) - lo.(i))
   in
   let batch = Array.concat [ [| product lead |]; spatial; [| 1 |] ] in
-  let w = Eval.reshape ~by (Array.append [| 1; 1; 1 |] ks) kernel in
+  let w =
+    Eval.reshape ~by (Array.append [| 1; 1; 1 |] ks) (conjugate_by ~by kernel)
+  in
   let y =
     windows_of ~by ~stride:(Array.make kr 1) ~lo ~hi
       ~interior:(Array.make kr 0) ~dilation:(Array.make kr 1)

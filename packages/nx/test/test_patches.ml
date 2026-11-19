@@ -320,22 +320,19 @@ let kept_run mode n k =
   | `Valid -> (m - 1, longest - m + 1)
   | `Same -> ((if k <= n then (m - 1) / 2 else m / 2), longest)
 
-let law_correlate (c, x, kernel) =
+(* The value at each index of the kept run: the products [mul x k] of each
+   element of the kernel with the element of [x] it meets, those outside
+   [x] left out, added from [zero]. *)
+let correlated ~zero ~add ~mul c xv kv =
   let runs = Array.mapi (fun i n -> kept_run c.mode n c.ks.(i)) c.xs in
-  let out = Array.map snd runs in
-  cover "a kernel longer than x" (Array.exists2 (fun n k -> k > n) c.xs c.ks);
-  cover "an empty axis of x" (Array.exists (( = ) 0) c.xs);
-  cover "batch axes" (c.x_lead <> [||]);
-  cover "an even kernel, Same" (c.mode = `Same && Array.exists (fun k -> k mod 2 = 0) c.ks);
-  let s = Array.append c.x_lead c.xs and xv = Nx.to_array x in
-  let kv = Nx.to_array kernel in
-  let shape = Array.append c.x_lead out in
+  let shape = Array.append c.x_lead (Array.map snd runs) in
+  let s = Array.append c.x_lead c.xs in
   let expected =
     Array.init (numel shape) (fun e ->
         let i = index shape e in
         let nl = Array.length c.x_lead in
         let lead = Array.sub i 0 nl in
-        let total = ref 0. in
+        let total = ref zero in
         for t = 0 to numel c.ks - 1 do
           let j = index c.ks t in
           let pos =
@@ -347,15 +344,146 @@ let law_correlate (c, x, kernel) =
           in
           if Array.for_all Option.is_some pos then
             total :=
-              !total
-              +. xv.(offset s (Array.append lead (Array.map Option.get pos)))
-                 *. kv.(t)
+              add !total
+                (mul xv.(offset s (Array.append lead (Array.map Option.get pos)))
+                   kv.(t))
         done;
-        !total +. 0.)
+        add !total zero)
+  in
+  (shape, expected)
+
+let cover_correlation c =
+  cover "a kernel longer than x" (Array.exists2 (fun n k -> k > n) c.xs c.ks);
+  cover "an empty axis of x" (Array.exists (( = ) 0) c.xs);
+  cover "batch axes" (c.x_lead <> [||]);
+  cover "an even kernel, Same"
+    (c.mode = `Same && Array.exists (fun k -> k mod 2 = 0) c.ks)
+
+let law_correlate (c, x, kernel) =
+  cover_correlation c;
+  let shape, expected =
+    correlated ~zero:0. ~add:( +. ) ~mul:( *. ) c (Nx.to_array x)
+      (Nx.to_array kernel)
   in
   let y = Nx.correlate ~padding:c.mode x kernel in
   equal (array int) shape (Nx.shape y);
   equal (array float_exact) expected (Nx.to_array y)
+
+type complex_dtype = Complex_dtype : (Complex.t, 's) D.t -> complex_dtype
+
+(* A correlation's geometry and parts of complex64 or complex128 operands:
+   [x]'s and the kernel's real parts, then their imaginary parts. *)
+let complex_correlation =
+  Gen.with_pp
+    (fun ppf (Complex_dtype dt, (c, _, _), _, _) ->
+      Format.fprintf ppf "%a x %a %a, kernel %a, %a" D.pp dt pp_ints c.x_lead
+        pp_ints c.xs pp_ints c.ks pp_mode c.mode)
+    (let open Gen in
+     let* dt =
+       of_list
+         ~pp:(fun ppf (Complex_dtype dt) -> D.pp ppf dt)
+         [ Complex_dtype D.Complex64; Complex_dtype D.Complex128 ]
+     in
+     let* ((c, _, _) as reals) = correlation in
+     let* im = small (Array.append c.x_lead c.xs) in
+     let+ kim = small c.ks in
+     (dt, reals, im, kim))
+
+(* On complex numbers each product takes the kernel's conjugate. The parts
+   are small integers, so the products and sums are exact. *)
+let law_complex (Complex_dtype dt, (c, re, kre), im, kim) =
+  cover_correlation c;
+  let x = Nx.complex dt ~re ~im and kernel = Nx.complex dt ~re:kre ~im:kim in
+  let shape, expected =
+    correlated ~zero:Complex.zero ~add:Complex.add
+      ~mul:(fun a b -> Complex.mul a (Complex.conj b))
+      c (Nx.to_array x) (Nx.to_array kernel)
+  in
+  let y = Nx.correlate ~padding:c.mode x kernel in
+  equal (array int) shape (Nx.shape y);
+  equal_elements dt expected (Nx.to_array y)
+
+(* A signal correlated with itself has its energy [E = Σ |x|²] at lag zero,
+   real but for rounding. Each product [x conj x] takes its imaginary part
+   as one fused multiply-add over the other product, [ar ai]'s rounding
+   error, at most [u |ar ai| <= u |x|² / 2]; so their sum is within
+   [u E] to first order. Its real part, [ar² + ai²] within [2u] relatively
+   and a sum of [n] positive terms, is within [(n + 2) u E]. [E] is
+   computed at float64, within [n u64 E]. Magnitudes from [2^-20] keep
+   the squares away from underflow. *)
+let energy =
+  let open Gen in
+  let part =
+    map
+      (fun (neg, m) -> if neg then -.m else m)
+      (pair bool (float_range 0x1p-20 1.))
+  in
+  let* dt =
+    of_list
+      ~pp:(fun ppf (Complex_dtype dt) -> D.pp ppf dt)
+      [ Complex_dtype D.Complex64; Complex_dtype D.Complex128 ]
+  in
+  let* n = one_of [ constant 1; int_range 1 40 ] in
+  let+ x =
+    array ~size:(constant n)
+      (map (fun (re, im) -> { Complex.re; im }) (pair part part))
+  in
+  (dt, x)
+
+let law_energy (Complex_dtype dt, parts) =
+  let n = Array.length parts in
+  cover "one point" (n = 1);
+  let x = Nx.create dt [| n |] parts in
+  let xs = Nx.to_array (Nx.cast Nx.complex128 x) in
+  let e = Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. xs in
+  let u = if D.bits dt = 128 then 0x1p-53 else 0x1p-24 in
+  let y = (Nx.to_array (Nx.cast Nx.complex128 (Nx.correlate x x))).(0) in
+  let reference = Float.of_int n *. 0x1p-53 *. e in
+  at_most ~msg:"imaginary part" float_exact ~than:((u *. e) +. reference)
+    (Float.abs y.im);
+  at_most ~msg:"real part" float_exact
+    ~than:((Float.of_int (n + 2) *. u *. e) +. reference)
+    (Float.abs (y.re -. e))
+
+(* numpy.correlate's results (numpy 2.3.4, golden/correlate.golden) on
+   one-axis complex operands of small integer parts, exact in either complex
+   dtype. *)
+let golden = "golden/correlate.golden"
+
+let numpy_cases () =
+  let path = Filename.concat (Filename.dirname Sys.executable_name) golden in
+  let lines = In_channel.with_open_text path In_channel.input_lines in
+  let parts tag line =
+    match String.split_on_char ' ' line with
+    | t :: vs when t = tag ->
+        let vs = Array.of_list (List.map float_of_string vs) in
+        Array.init (Array.length vs / 2) (fun i ->
+            { Complex.re = vs.(2 * i); im = vs.((2 * i) + 1) })
+    | _ -> failf "%s: a %s line %S" golden tag line
+  in
+  let mode = function
+    | "full" -> `Full
+    | "same" -> `Same
+    | "valid" -> `Valid
+    | m -> failf "%s: a mode %S" golden m
+  in
+  let check (type s) (dt : (Complex.t, s) D.t) m x k y =
+    let v a = Nx.create dt [| Array.length a |] a in
+    equal_elements dt y (Nx.to_array (Nx.correlate ~padding:m (v x) (v k)))
+  in
+  let rec go n = function
+    | [] -> n
+    | header :: x :: k :: y :: rest ->
+        let x = parts "x" x and k = parts "kernel" k and y = parts "y" y in
+        (match String.split_on_char ' ' header with
+        | [ "case"; "complex64"; m ] -> check D.Complex64 (mode m) x k y
+        | [ "case"; "complex128"; m ] -> check D.Complex128 (mode m) x k y
+        | _ -> failf "%s: a case header %S" golden header);
+        go (n + 1) rest
+    | _ -> failf "%s: a truncated case" golden
+  in
+  (* Two dtypes, nine pairs of lengths, three modes. *)
+  equal ~msg:"cases read" int 54 (go 0 lines)
 
 let f64 = Nx.create Nx.float64
 
@@ -364,6 +492,15 @@ let correlations =
     [
       prop "each kept value sums the kernel's products with x, zeros outside"
         correlation law_correlate;
+      prop "complex products take the kernel's conjugate" complex_correlation
+        law_complex;
+      test "complex values are numpy.correlate's" numpy_cases;
+      prop "a complex signal with itself is real at lag zero but for rounding"
+        (Gen.with_pp
+           (fun ppf (Complex_dtype dt, x) ->
+             Format.fprintf ppf "%a, %d points" D.pp dt (Array.length x))
+           energy)
+        law_energy;
       test "the doc's Same" (fun () ->
           let x = f64 [| 7 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
           let k = f64 [| 4 |] [| 1.; 10.; 100.; 1000. |] in

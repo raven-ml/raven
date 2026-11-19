@@ -883,6 +883,12 @@ let complex_cases =
       ~z:(complex, fun z -> Nx.fft z)
       "fft"
       (fun x -> parts (Nx.fft (complex x)));
+    (let g z = Nx.correlate ~padding:`Full (row 0 z) (row 1 z) in
+     case ~empty:false
+       ~values:(Uniform [ (0.3, 2.); (0.2, 1.); (0.3, 1.5); (-1., 1.) ])
+       ~shape:Gen.(map (fun n -> [| 4; n + 1 |]) (int_range 0 3))
+       ~z:(pair, g) "complex correlate"
+       (fun x -> parts (g (pair x))));
     case "rfft" (fun x -> parts (Nx.rfft c128 x));
     case ~shape:matrix "rfft along a leading axis" (fun x ->
         parts (Nx.rfft c128 ~axes:[ 0 ] x));

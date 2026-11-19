@@ -108,6 +108,7 @@
   windtrap)
  (deps
   (glob_files golden/special/*.golden)
+  golden/correlate.golden
   golden/extend.golden
   golden/moments_ranges.golden
   golden/spread.golden

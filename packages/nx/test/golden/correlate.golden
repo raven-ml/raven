@@ -1,0 +1,216 @@
+case complex64 full
+x 7 8
+kernel -2 -8
+y -78 40
+case complex64 same
+x 0 6
+kernel 3 -7
+y -42 18
+case complex64 valid
+x 0 -7
+kernel -3 1
+y -7 21
+case complex64 full
+x -8 -2 7 -7 8 -8 2 -1 1 -1
+kernel 7 -7
+y -42 -70 98 0 112 0 21 7 14 0
+case complex64 same
+x -3 -4 2 2 4 -2 -8 -2 -7 0
+kernel -6 5
+y -2 39 -2 -22 -34 -8 38 52 42 35
+case complex64 valid
+x 6 -1 -1 3 8 -8 1 -6 -7 -5
+kernel 6 -3
+y 39 12 -15 15 72 -24 24 -33 -27 -51
+case complex64 full
+x 5 -6 4 -1 -7 -3 7 7 0 6
+kernel 5 5 -1 7
+y -47 -29 -16 -82 1 27 -8 -36 112 -6 30 30
+case complex64 same
+x -3 7 7 -4 -8 6 2 -4 -6 1
+kernel -7 5 8 8
+y 32 80 80 -122 -85 105 70 -50 -74 74
+case complex64 valid
+x 7 7 5 1 0 2 6 2 7 5
+kernel 8 -1 -1 4
+y 48 42 47 11 0 -10 59 -11
+case complex64 full
+x 2 1 2 1 -7 -7 -7 -7 7 -3 1 6
+kernel -3 8 -6 -8 4 -4
+y 4 12 -16 22 -18 -65 100 -89 103 79 -73 179 -99 -75 45 -26
+case complex64 same
+x 8 -5 7 -6 2 6 4 -6 -8 7 -1 -3
+kernel 4 2 4 -5 8 -2
+y 125 -14 84 27 38 -44 -12 56 -65 -70 -7 27
+case complex64 valid
+x 6 7 -7 4 -5 8 -3 -8 -5 -8 2 7
+kernel -1 -1 -8 -7 5 7
+y 46 -7 -84 -129 -4 25 166 55
+case complex64 full
+x -7 -7 1 3 -7 2 -7 4 7 5 3 7 1 -4
+kernel -1 4 -1 -2 8 6 6 -7
+y 7 -91 -113 11 -9 -26 -142 67 -11 130 69 69 106 54 -20 -72 32 -13 -17 0
+case complex64 same
+x -1 -2 0 7 -3 -1 1 2 -2 1 -1 4 7 -4
+kernel -5 6 7 6 -7 -4 -1 -3
+y -6 3 -41 -65 53 61 -1 -41 27 9 -5 -4 0 97
+case complex64 valid
+x 2 6 -2 8 -1 6 -6 7 1 -3 0 -7 -8 1
+kernel 4 8 -1 -7 4 6 7 1
+y -1 71 37 77 -20 -84 -45 73
+case complex64 full
+x 3 -4 -6 6 -3 2 -8 6
+kernel 4 8 3 -3 7 2 -8 -4
+y -8 44 37 -106 7 23 -33 -100 -35 127 -38 26 16 88
+case complex64 same
+x 8 6 7 6 0 -2 -4 -3
+kernel -3 4 -4 -2 -3 -5 5 2
+y -7 38 -99 -1 -56 -61 34 -49
+case complex64 valid
+x 3 0 8 -1 6 3 3 2
+kernel 7 -2 4 -6 -3 4 -8 -6
+y 17 19
+case complex64 full
+x -6 3 3 -3
+kernel 8 6 5 4 -1 -3 -4 6 3 2
+y -12 21 45 9 -33 -27 -12 51 -27 33 6 -42
+case complex64 same
+x -8 1 4 -7
+kernel 8 -1 6 3 8 7 -2 -4 -3 -8
+y 56 19 -37 94 -62 -54 -62 -54 39 -52
+case complex64 valid
+x 3 -7 -3 0
+kernel -4 -2 1 2 -4 0 2 -6 1 6
+y 45 22 -18 10 1 -13 -1 40
+case complex64 full
+x -2 -5 7 4 -7 -6
+kernel 1 -1 7 7 -4 3 0 6 5 0 1 1
+y -7 -3 1 -28 -8 33 -18 -46 -101 -16 90 17 -88 18 -1 -13
+case complex64 same
+x 3 -5 6 -6 6 -5
+kernel -4 -2 -5 -5 4 8 -5 0 5 5 8 0
+y 38 -88 33 -75 -53 -69 -44 -7 -18 18 -17 91
+case complex64 valid
+x -8 3 -7 4 4 -3
+kernel -2 -6 -6 2 -3 -7 -8 1 -3 6 -2 -7
+y 125 48 33 -105 12 -43 57 -27
+case complex64 full
+x -1 -2
+kernel 4 6 4 1 0 6 8 4
+y -16 -12 -12 6 -6 -7 -16 -2
+case complex64 same
+x 4 0
+kernel 5 7 -1 -1 -3 1 2 3
+y 8 -12 -12 -4 -4 4 20 -28
+case complex64 valid
+x -4 5
+kernel -3 5 -3 2 -1 5 4 0
+y -16 20 29 15 22 -7 37 5
+case complex128 full
+x -2 -1
+kernel 2 -1
+y -3 -4
+case complex128 same
+x 7 -8
+kernel 2 -3
+y 38 5
+case complex128 valid
+x 7 4
+kernel 7 -7
+y 21 77
+case complex128 full
+x -4 -2 -4 -2 -2 -3 3 -3 4 0
+kernel 0 2
+y -4 8 -4 8 -6 4 -6 -6 0 -8
+case complex128 same
+x 4 -2 3 3 -3 6 -1 8 2 3
+kernel 6 -1
+y 26 -8 15 21 -24 33 -14 47 9 20
+case complex128 valid
+x -6 2 -3 3 -1 -1 8 -3 6 -1
+kernel 0 6
+y 12 36 18 18 -6 6 -18 -48 -6 -36
+case complex128 full
+x -6 -4 5 -5 8 2 5 -5 6 4
+kernel -7 1 -8 3
+y 36 50 -17 59 -98 -10 -109 3 -76 -20 -38 -34
+case complex128 same
+x -8 -8 -4 -3 4 -7 -8 -8 7 -7
+kernel 7 1 -6 4
+y 16 80 -52 -14 -83 9 37 27 -134 -34
+case complex128 valid
+x 8 1 -8 -4 2 5 5 -3 5 2
+kernel -8 -7 -8 0
+y -7 80 76 -64 -91 -2 -59 43
+case complex128 full
+x -8 6 -3 -5 -7 -6 3 -8 -2 -7 -6 -7
+kernel -2 7 8 -6 0 -5
+y -30 -40 -75 -15 94 -49 -9 -44 79 5 -1 -103 -51 -64 -37 56
+case complex128 same
+x 0 -4 4 2 -8 7 -5 0 5 7 -7 3
+kernel -2 1 -3 -7 -6 7
+y 18 -28 67 44 -1 -50 57 -118 9 50 -3 -77
+case complex128 valid
+x -6 -8 6 -7 5 4 2 -3 -6 8 3 2
+kernel -1 6 5 4 8 0
+y 0 17 9 -53 -31 7 6 71
+case complex128 full
+x -3 7 5 7 -4 6 4 -6 -8 4 -5 0 -5 7
+kernel -5 5 -6 6 -8 -5 4 3
+y 9 37 30 -58 -13 -19 62 -196 48 36 14 -55 63 52 95 -31 97 13 60 -10
+case complex128 same
+x 5 4 -6 7 -4 -1 -5 5 2 1 -5 3 7 -3
+kernel 2 8 3 -2 5 -1 -1 0
+y 27 18 -26 52 -4 -37 2 70 -27 39 -1 70 29 -23
+case complex128 valid
+x -7 7 0 -1 -4 -3 1 8 -6 7 3 5 5 0
+kernel 3 1 -2 -1 2 0 0 2
+y -5 22 26 27 -27 -12 22 3
+case complex128 full
+x -8 2 6 3 3 7 8 6
+kernel -2 1 -5 -7 8 2 7 -6
+y -68 -34 -36 89 59 13 25 171 3 6 -81 9 -10 -20
+case complex128 same
+x 4 -5 0 -3 -3 0 -1 -8
+kernel -5 0 2 -8 -6 -4 4 7
+y -25 34 48 61 -38 -18 32 35
+case complex128 valid
+x -5 4 7 -6 0 0 -7 3
+kernel -4 -3 3 -2 3 7 -5 7
+y 97 -1
+case complex128 full
+x 1 2 -2 -1
+kernel -4 6 -5 -2 -3 6 6 -5 5 3
+y 11 7 -17 18 2 -28 -9 7 20 -13 2 16
+case complex128 same
+x -1 -3 5 1
+kernel -3 -1 3 4 0 -5 1 -4 -8 0
+y -29 -15 16 16 -20 20 25 -9 -16 2
+case complex128 valid
+x 1 -7 -6 -4
+kernel -6 -3 -7 -1 6 7 7 0 2 -8
+y 27 -105 -85 -77 -64 68 61 67
+case complex128 full
+x -6 -2 -8 -7 6 -2
+kernel 4 -6 -4 -5 -6 0 6 7 -1 -8 5 6
+y -42 26 -60 -33 32 -73 -51 76 104 -34 19 -44 -4 -38 36 28
+case complex128 same
+x -8 -1 -1 2 -1 4
+kernel -8 2 7 -2 5 5 -7 -5 7 2 2 -6
+y -72 7 32 -15 -47 46 -62 -41 66 61 -3 12
+case complex128 valid
+x -6 -7 0 -8 -3 -8
+kernel -5 2 7 2 7 -6 3 1 3 -6 4 -3
+y 35 -80 31 -151 -25 -114 27 -83
+case complex128 full
+x -4 0
+kernel -8 -4 -8 -4 8 1 6 -8
+y -24 -32 -32 4 32 -16 32 -16
+case complex128 same
+x 8 -8
+kernel 7 -6 1 1 -6 -2 2 6
+y -32 -64 -32 64 0 -16 104 -8
+case complex128 valid
+x 2 8
+kernel -3 -7 5 -1 4 4 -4 5
+y 32 -42 40 24 2 42 -62 -10

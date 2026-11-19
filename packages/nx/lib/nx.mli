@@ -4129,8 +4129,13 @@ val correlate :
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t
 (** [correlate ~padding x kernel] is the cross-correlation of [x] with
-    [kernel] over the last [K = ndim kernel] axes of [x], each sum of products
-    taken without flipping [kernel]. [padding] defaults to [`Valid].
+    [kernel] over the last [K = ndim kernel] axes of [x]: each value sums
+    the products of [x] with the conjugate of [kernel], taken without
+    flipping [kernel], so a complex [x] correlated with itself has
+    [Σ |x|{^2}], real but for rounding, at lag zero, value [n - 1] of
+    [`Full] along each axis. On a dtype that is not complex the
+    conjugate is [kernel] itself ({!conjugate}). [padding] defaults to
+    [`Valid].
 
     Along each spatial axis, of [n] elements in [x] and [k] in [kernel],
     value [i] correlates [kernel] with the elements of [x] from [i - k + 1],

@@ -3433,6 +3433,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.correlate` conjugates its kernel on complex dtypes, as
+  `numpy.correlate` and `Nx.vdot` do. It summed `x k` there, so a port of
+  complex cross-correlation got wrong values without an error. Real dtypes
+  keep their bits.
 - An assembly of many pieces, such as `Nx.concatenate` of many arrays,
   decides whether they cover the result in O(n log n), where it compared
   each pair: 4096 pieces took 1.2-2.5 ms in place of 12 ms on nx.cpu.
@@ -4345,7 +4349,8 @@ its lock and from samples the dashboard saw arrive.
     `maximum_s`, `minimum_s`. `rmod_s s x`: `mod_ (scalar_like x s) x`.
     `lerp_scalar_weight`: `lerp` of a `scalar_like`.
   - `relu`: `Kaun.Fn.relu`, or `maximum_s x 0.`. `standardize`: `mean`,
-    `var` and `rsqrt`. `convolve`: `correlate` with a `flip`ped kernel.
+    `var` and `rsqrt`. `convolve`: `correlate` with a `flip`ped kernel,
+    `conjugate`d for complex values.
     `maximum_filter`, `minimum_filter`, `uniform_filter`: `sliding_window`
     with `max`, `min` or `mean`. `tensorsolve`, `tensorinv`: `reshape` with
     `solve` or `inv`.
