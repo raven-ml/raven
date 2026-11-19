@@ -824,8 +824,10 @@ val contour :
     centred below the panels it titles. A y title is horizontal, set above its
     axis and left-aligned with its tick labels. Facet headers are upright on
     every side: an [fx] header is centred above its column, and an [fy] header
-    reads beside its row. The [fx] scale's title is centred above its headers,
-    and the [fy] scale's is set like a y title, above the column of headers. A
+    reads beside its row. The title of headers on the top or bottom is centred
+    beyond them, as an x title is; a header on the left or right reads its
+    scale's title before its category, as [layer 0] for the title [layer], so
+    that no title stands above a column of headers, beside a legend's. A
     legend stands beside the smallest panel or grid holding every panel that a
     channel reading its scale lies in, and a colour bar is as long as that panel
     or grid. No text is turned.

@@ -40,10 +40,10 @@ ticks
 
 attention
 layout 360 × 240
-panel panel.0.0 [(16.5107, 35.4893) (139.224, 116.355)] cartesian
-panel panel.0.1 [(155.48, 35.4893) (278.193, 116.355)] cartesian
-panel panel.1.0 [(16.5107, 137.245) (139.224, 218.11)] cartesian
-panel panel.1.1 [(155.48, 137.245) (278.193, 218.11)] cartesian
+panel panel.0.0 [(16.5107, 35.4893) (136.186, 116.355)] cartesian
+panel panel.0.1 [(152.442, 35.4893) (272.117, 116.355)] cartesian
+panel panel.1.0 [(16.5107, 137.245) (136.186, 218.11)] cartesian
+panel panel.1.1 [(152.442, 137.245) (272.117, 218.11)] cartesian
 axis panel.0.0.axis.x bottom
   rules 5
 axis panel.0.0.axis.y left
@@ -58,10 +58,10 @@ axis panel.0.1.axis.y left
   rules 5
 axis panel.1.0.axis.x bottom
   rules 5
-  label (text "a") [(29.3231, 224.11) (34.3768, 235)]
-  label (text "b") [(59.773, 224.11) (65.2837, 235)]
-  label (text "c") [(90.636, 224.11) (95.7776, 235)]
-  label (text "d") [(121.13, 224.11) (126.641, 235)]
+  label (text "a") [(28.9433, 224.11) (33.997, 235)]
+  label (text "b") [(58.6337, 224.11) (64.1444, 235)]
+  label (text "c") [(88.7372, 224.11) (93.8788, 235)]
+  label (text "d") [(118.471, 224.11) (123.982, 235)]
 axis panel.1.0.axis.y left
   rules 5
   label (text "d") [(5, 202.557) (10.5107, 213.447)]
@@ -70,24 +70,22 @@ axis panel.1.0.axis.y left
   label (text "a") [(5.45703, 141.908) (10.5107, 152.798)]
 axis panel.1.1.axis.x bottom
   rules 5
-  label (text "a") [(168.292, 224.11) (173.346, 235)]
-  label (text "b") [(198.742, 224.11) (204.253, 235)]
-  label (text "c") [(229.605, 224.11) (234.747, 235)]
-  label (text "d") [(260.099, 224.11) (265.61, 235)]
+  label (text "a") [(164.874, 224.11) (169.928, 235)]
+  label (text "b") [(194.565, 224.11) (200.075, 235)]
+  label (text "c") [(224.668, 224.11) (229.81, 235)]
+  label (text "d") [(254.402, 224.11) (259.913, 235)]
 axis panel.1.1.axis.y left
   rules 5
 header panel.0.0.axis.fx top
-  text (text "0") [(74.9496, 22.0996) (80.7855, 32.9893)]
+  text (text "0") [(73.4305, 22.0996) (79.2665, 32.9893)]
 header panel.0.1.axis.fx top
-  text (text "1") [(213.919, 22.0996) (219.755, 32.9893)]
+  text (text "1") [(209.361, 22.0996) (215.197, 32.9893)]
 header panel.0.1.axis.fy right
-  text (text "0") [(280.693, 70.4773) (286.529, 81.3669)]
+  text (text "layer 0") [(274.617, 70.4773) (303.604, 81.3669)]
 header panel.1.1.axis.fy right
-  text (text "1") [(280.693, 172.233) (286.529, 183.122)]
+  text (text "layer 1") [(274.617, 172.233) (303.604, 183.122)]
 scale title axis.fx top
-  text (text "head") [(135.562, 5) (159.142, 17.0996)]
-scale title axis.fy top
-  text (text "layer") [(280.693, 5) (303.604, 17.0996)]
+  text (text "head") [(132.524, 5) (156.104, 17.0996)]
 legend legend.color.num right
   text (text "attention") [(313.604, 15.4448) (355, 27.5444)]
   bar [(313.604, 35.4893) (323.604, 218.11)]

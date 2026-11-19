@@ -245,6 +245,8 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- A facet header on the left or right reads its scale's title before its
+  category, `layer 0`, in place of a title above the column of headers.
 - **Breaking:** an axis of named categories (`strings`, `dim ~labels`) labels
   each one, where it labelled every k-th: its panel grows under `Size.panels`,
   and a `Size.figure` too small for the labels raises, naming a size that fits.

@@ -71,7 +71,10 @@ type axis_part =
   | Ticks of { labelled : bool }
       (** The axis proper; unlabelled where the next panel on its side labels
           it. *)
-  | Header of int  (** A facet header, its category's index. *)
+  | Header of { cat : int; title : Text.t list option }
+      (** A facet header, its category's index. With [title], the header reads
+          its scale's title before its category, with the titles its explicit
+          axes set. *)
   | Scale_title of { side : Figure.side; titles : Text.t list }
       (** The title of the axes or headers on that side of the panels it serves,
           with the titles their explicit axes set. *)
@@ -82,6 +85,10 @@ type kind =
           in the resolved figure's scales. *)
   | Legend of { guide : Figure.guide; scale : int }
   | Title of { align : Text.Layout.halign; text : Text.t }
+
+val unmapped : Text.Layout.t -> string option
+(** [unmapped l] is the characters of [l] that no face has, written for a
+    message, if there are any. *)
 
 type tier = Proper | Headers | Scale_titles | Legends | Figure_titles
 

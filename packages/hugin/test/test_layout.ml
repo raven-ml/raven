@@ -1136,7 +1136,7 @@ let titles =
           let _, _, _, y1 = text_box l {|(text "model")|} in
           let _, y0, _, _ = text_box l {|(text "a")|} in
           equal (float 1e-3) title_gap (y0 -. y1));
-      test "a facet grid's y, fx and fy titles share a line above it" (fun () ->
+      test "a facet grid's y and fx titles share a line above it" (fun () ->
           let f =
             dot ~x:(num ramp) ~y:(num ~title:"y" ramp)
               ~fx:(strings ~title:"head" [| "a"; "b"; "a"; "b" |])
@@ -1149,8 +1149,6 @@ let titles =
             y1
           in
           equal (float 1e-3) (bottom {|(text "head")|}) (bottom {|(text "y")|});
-          equal (float 1e-3) (bottom {|(text "head")|})
-            (bottom {|(text "layer")|});
           apart l);
       cases "titles sharing a line stand a gap apart, with" ~id:Fun.id
         (List.init 12 (fun k -> "a head" ^ String.make k 'W'))
@@ -1579,6 +1577,11 @@ let clear_along ~x boxes =
   in
   go sorted
 
+(* [quoted line] is the first string between quotes on [line]. *)
+let quoted line =
+  let i = String.index line '"' in
+  String.sub line (i + 1) (String.index_from line (i + 1) '"' - i - 1)
+
 (* A heatmap of [n] by [n] categories named from a pool that holds an empty
    name, a long one and repeats, on a band scale with [reverse] and [padding],
    with or without an aspect, laid out at panels of a size or at a figure too
@@ -1692,6 +1695,54 @@ let names =
           let n = List.length (axis_labels l "axis.x") in
           less int ~than:30 n;
           greater int ~than:1 n);
+      test "a row header reads its scale's title before its category" (fun () ->
+          let f =
+            dot ~x:(num ramp) ~y:(num ramp)
+              ~fy:(strings ~title:"layer" [| "p"; "p"; "q"; "q" |])
+              ~fx:(strings ~title:"head" [| "a"; "b"; "a"; "b" |])
+              ()
+          in
+          let l = lay (Size.panels 40. 30.) f in
+          let texts kind =
+            List.sort String.compare
+              (List.map (fun g -> quoted (List.nth g 1)) (guide_lines l kind))
+          in
+          equal (list string)
+            [ "a"; "b"; "layer p"; "layer q" ]
+            (texts "header");
+          equal (list string) [ "head" ] (texts "scale title"));
+      test "a row header with an empty title reads its category" (fun () ->
+          let f =
+            layer
+              [
+                dot ~x:(num ramp) ~y:(num ramp)
+                  ~fy:(strings ~title:"layer" [| "p"; "p"; "q"; "q" |])
+                  ();
+                axis ~title:"" "fy";
+              ]
+          in
+          let l = lay (Size.panels 40. 30.) f in
+          equal (list string) [ "p"; "q" ]
+            (List.sort String.compare
+               (List.map
+                  (fun g -> quoted (List.nth g 1))
+                  (guide_lines l "header"))));
+      test "a header on the left or right reads its title, by side" (fun () ->
+          let fx = strings ~title:"head" [| "a"; "b"; "a"; "b" |] in
+          let f =
+            layer
+              [
+                dot ~x:(num ramp) ~y:(num ramp) ~fx ();
+                axis ~side:`Left ~title:"h" "fx";
+              ]
+          in
+          let l = lay (Size.panels 40. 30.) f in
+          equal (list string) [ "h a"; "h b" ]
+            (List.sort String.compare
+               (List.map
+                  (fun g -> quoted (List.nth g 1))
+                  (guide_lines l "header")));
+          equal int 0 (List.length (guide_lines l "scale title")));
     ]
 
 let ticks =
@@ -2055,6 +2106,19 @@ let glyphs =
           let f = dot ~x:(num ramp) ~y:(num ramp) ~fx () in
           fails_naming [ "axis.fx: "; "U+10FFFD" ] (fun () ->
               lay (Size.panels 50. 50.) f));
+      test "a row facet title no face draws raises naming its header" (fun () ->
+          let fy = strings ~title:unmapped [| "a"; "b"; "a"; "b" |] in
+          let f = dot ~x:(num ramp) ~y:(num ramp) ~fy () in
+          fails_naming [ "axis.fy: "; "U+10FFFD" ] (fun () ->
+              lay (Size.panels 50. 50.) f));
+      test "a row header's category no face draws is a warning" (fun () ->
+          let fy = strings ~title:"layer" [| "a"; "b" ^ unmapped; "a"; "a" |] in
+          let l =
+            lay (Size.panels 50. 50.) (dot ~x:(num ramp) ~y:(num ramp) ~fy ())
+          in
+          match Layout.warnings l with
+          | [ (_, msg) ] -> in_order ~subs:[ "U+10FFFD" ] msg
+          | ws -> failf "%d warnings" (List.length ws));
       test "a category label no face draws is a warning" (fun () ->
           let f =
             plain ~fill:(strings [| "ok"; "b" ^ unmapped; "ok"; "ok" |]) ramp

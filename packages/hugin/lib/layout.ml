@@ -216,11 +216,12 @@ let panel scales (c : content) p =
                 title = None;
               }
         in
+        let header cat = Guide.Header { cat; title = None } in
         let part =
           match on with
           | `Axis _ -> Some (Guide.Ticks { labelled = true })
-          | `Header Role.X -> Option.map (fun k -> Guide.Header k) p.pfx
-          | `Header Role.Y -> Option.map (fun k -> Guide.Header k) p.pfy
+          | `Header Role.X -> Option.map header p.pfx
+          | `Header Role.Y -> Option.map header p.pfy
           | `Legend -> None
         in
         Option.map
@@ -323,8 +324,8 @@ let shows (g : Guide.spec) =
   match g.kind with
   | Axis { guide = { show = true; _ }; scale; part = Ticks _ } ->
       Some (scale, g.side, None)
-  | Axis { guide = { show = true; _ }; scale; part = Header c } ->
-      Some (scale, g.side, Some c)
+  | Axis { guide = { show = true; _ }; scale; part = Header { cat; _ } } ->
+      Some (scale, g.side, Some cat)
   | Axis _ | Legend _ | Title _ -> None
 
 (* [labelled node] is [node] with each axis of a panel unlabelled, and each
@@ -385,7 +386,8 @@ let showing node =
         let add acc (g : Guide.spec) =
           match (shows g, g.kind) with
           | Some (scale, side, cat), Axis { guide; _ } ->
-              (Option.is_none cat, (scale, side), guide, p.id) :: acc
+              let header = Option.is_some cat in
+              (not header, (scale, side, header), guide, p.id) :: acc
           | _ -> acc
         in
         List.fold_left add acc p.guides
@@ -400,32 +402,53 @@ let showing node =
   let headers (a, _, _, _) (b, _, _, _) = Bool.compare a b in
   List.fold_left group [] (List.stable_sort headers (List.rev (go [] node)))
 
+(* [retitle f node] is [node] with each guide specification [g] of its nodes
+   replaced by [f g]. *)
+let rec retitle f = function
+  | Panel p -> Panel { p with guides = List.map f p.guides }
+  | Grid g ->
+      let cell c = { c with node = retitle f c.node } in
+      Grid
+        { g with cells = List.map cell g.cells; guides = List.map f g.guides }
+
 (* [build r scales] is the node of [r]: the title of an axis or of headers is on
    the smallest node holding the panels showing them, and a legend on the
    smallest node holding the panels its readers lie in, or an inside one on
-   that node's panel at its place. A categorical legend
+   that node's panel at its place. Headers on the left or right read their
+   title themselves: above a column of headers, it would sit beside the
+   titles of a legend there. A categorical legend
    whose readers each have the data of a position channel of their mark, whose
    axis is shown in their panels, is left out: the axis names its categories.
    An explicit legend, or a mark's, keeps it. *)
 let build (r : Resolved.t) scales =
   let tree = of_shaped r scales Nx.Ptree.Path.root r.shaped in
-  let titled tree ((scale, side), (guides, pids)) =
+  let titled tree ((scale, side, header), (guides, pids)) =
     let (F f) = scales.(scale) in
     let titles = List.filter_map (fun (g : guide) -> g.title) guides in
-    attach pids
-      (fun id ->
-        {
-          Guide.id = path id [ Field "axis"; Field f.name ];
-          side = (if horizontal side then side else `Top);
-          kind =
-            Axis
-              {
-                guide = List.hd guides;
-                scale;
-                part = Scale_title { side; titles };
-              };
-        })
-      tree
+    let titled_header (g : Guide.spec) =
+      match g.kind with
+      | Axis ({ scale = i; part = Header h; _ } as a)
+        when i = scale && equal_side g.side side ->
+          let part = Guide.Header { h with title = Some titles } in
+          { g with kind = Axis { a with part } }
+      | Axis _ | Legend _ | Title _ -> g
+    in
+    if header && not (horizontal side) then retitle titled_header tree
+    else
+      attach pids
+        (fun id ->
+          {
+            Guide.id = path id [ Field "axis"; Field f.name ];
+            side = (if horizontal side then side else `Top);
+            kind =
+              Axis
+                {
+                  guide = List.hd guides;
+                  scale;
+                  part = Scale_title { side; titles };
+                };
+          })
+        tree
   in
   let shown = showing tree in
   let tree = List.fold_left titled (labelled tree) shown in
@@ -437,7 +460,7 @@ let build (r : Resolved.t) scales =
   in
   let on_axis pid i =
     List.exists
-      (fun ((s, _), (_, pids)) ->
+      (fun ((s, _, _), (_, pids)) ->
         s = i && List.exists (Nx.Ptree.Path.equal pid) pids)
       shown
   in
@@ -1185,15 +1208,9 @@ let solve em unit size ~final root =
 let check guides =
   let note (g : Guide.t) acc = function
     | Guide.Text p | Label p -> (
-        match Text.Layout.missing p.set with
-        | [] -> acc
-        | us ->
-            let chars =
-              String.concat ", "
-                (List.map
-                   (fun u -> Printf.sprintf "U+%04X" (Uchar.to_int u))
-                   us)
-            in
+        match Guide.unmapped p.set with
+        | None -> acc
+        | Some chars ->
             if not p.data then
               err "layout" "%a: %a holds %s, which no face of the theme has"
                 pp_id g.spec.id Text.pp p.text chars;

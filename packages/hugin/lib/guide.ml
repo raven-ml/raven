@@ -94,7 +94,7 @@ let hull = function
 
 type axis_part =
   | Ticks of { labelled : bool }
-  | Header of int
+  | Header of { cat : int; title : Text.t list option }
   | Scale_title of { side : side; titles : Text.t list }
 
 type kind =
@@ -199,6 +199,13 @@ let place cx ?halign ?valign ~data k text at =
 let width l = Box2.w (Text.Layout.box l)
 let height l = Box2.h (Text.Layout.box l)
 let longest f l = List.fold_left (fun m x -> Float.max m (f x)) 0. l
+
+let unmapped l =
+  match Text.Layout.missing l with
+  | [] -> None
+  | us ->
+      let char u = Printf.sprintf "U+%04X" (Uchar.to_int u) in
+      Some (String.concat ", " (List.map char us))
 
 (* Texts *)
 
@@ -407,10 +414,23 @@ let axis cx g ~length ~wrap ~across ~labelled ~grid s (t : Ticks.t) =
     ~counted:(List.map label (labels @ ends side length labels))
     ((Rules rules :: lines) @ List.map label kept)
 
-let header cx g ~length ~wrap s cat =
+let header cx g ~length ~wrap s cat title =
   let halign, valign = label_align g.side in
+  let text =
+    match Option.bind title (fun ts -> guide_title s ts None) with
+    | None -> category_text s cat
+    | Some t ->
+        (* The category is data, drawn whatever glyphs it lacks; the title is
+           figure text, which must have them all. *)
+        Option.iter
+          (fun chars ->
+            err "layout" "%a: %a holds %s, which no face of the theme has" pp_id
+              g.id Text.pp t chars)
+          (unmapped (set cx label_em t));
+        Text.concat [ t; Text.v " "; category_text s cat ]
+  in
   let p =
-    place cx ~halign ~valign ~data:true label_em (category_text s cat)
+    place cx ~halign ~valign ~data:true label_em text
       (pt g.side (length /. 2.) (em cx pad_em))
   in
   let b = text_box p in
@@ -596,8 +616,8 @@ let lay cx g ~length ~across ~wrap ~span =
       let grid = match guide.kind with Axis a -> a.grid | Legend -> false in
       axis cx g ~length ~wrap ~across ~labelled ~grid cx.scales.(scale)
         cx.ticks.(scale)
-  | Axis { scale; part = Header cat; _ } ->
-      header cx g ~length ~wrap cx.scales.(scale) cat
+  | Axis { scale; part = Header { cat; title }; _ } ->
+      header cx g ~length ~wrap cx.scales.(scale) cat title
   | Axis { scale; part = Scale_title { side = axis; titles }; _ } -> (
       let s = cx.scales.(scale) in
       match guide_title s titles cx.ticks.(scale).note with
