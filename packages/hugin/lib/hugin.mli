@@ -835,10 +835,16 @@ val contour :
     a legend. Its ticks are one set, which its axes, legend entries and colour
     bars show: the scale's explicit ticks if it sets some ({!Scale.linear}),
     which limit a band axis and a categorical legend to the categories they
-    name; otherwise, those of a facet scale and of a categorical scale with a
-    legend are its categories, and the others are chosen so that their labels
-    overlap on none of its guides ({!layout}). Facet headers name every panel,
-    whatever the ticks. Labels are in the scale's notation if it sets one
+    name; otherwise, those of a facet scale, of a categorical scale with a
+    legend and of a categorical scale shown by an axis of names are its
+    categories, and the others are chosen so that their labels overlap on none
+    of its guides ({!layout}). An {e axis of names} shows a categorical scale
+    with a labelled category, whatever its text, as {!strings} and [cat ~labels]
+    give, or an indexed category shown by a text other than its integer in
+    decimal, as [dim ~labels] gives. A name is data that no other label tells,
+    so an axis of names labels every tick, its side as long as they need, while
+    indices in decimal can be read between labels. Facet headers name every
+    panel, whatever the ticks. Labels are in the scale's notation if it sets one
     ({!Scale.linear}).
 
     {1:facets Facets}
@@ -1207,7 +1213,8 @@ module Size : sig
       [k *. w] points wide and each row of weight [k] one [k *. h] points high,
       unless a panel with an aspect sets its height, the figure being as large
       as its tracks, gaps, protrusions and margin need. A track grows past that
-      to hold a title, header or legend longer than it ({!layout}).
+      to hold a title, header or legend longer than it, or the labels of an axis
+      of names ({!layout}).
 
       Raises [Invalid_argument] if [w] or [h] is not finite and positive. *)
 
@@ -1918,9 +1925,12 @@ val layout :
 
     Ticks are chosen by their measured labels ({!Hugin_kit.Ticks.choose}) at the
     lengths a solve with the guides of a first choice gives, that choice being
-    made at the lengths a solve without guides gives. An axis or colour bar too
-    short for its frozen labels keeps, in order, each label that clears the last
-    one it kept, and drops the others.
+    made at the lengths a solve without guides gives. An axis of names
+    ({!section-guides}) needs its side long enough for each label to clear the
+    next: under {!Size.panels} its tracks grow, and a {!Size.figure} too small
+    for it raises. Another axis or colour bar too short for its frozen labels
+    keeps, in order, each label that clears the last one it kept, and drops the
+    others.
 
     Panels and grids are nodes, and only their data areas take tracks. Axes,
     headers, legends and titles are guides on a side of a node

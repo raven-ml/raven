@@ -245,6 +245,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- **Breaking:** an axis of named categories (`strings`, `dim ~labels`) labels
+  each one, where it labelled every k-th: its panel grows under `Size.panels`,
+  and a `Size.figure` too small for the labels raises, naming a size that fits.
 - **Breaking:** `Hugin.render` is removed: write
   `draw ~density (layout ?theme size (resolve ?view f))`.
 - `Picture.stamp` draws the group of its instances in the raster, SVG and PDF

@@ -19,4 +19,4 @@ let () =
     ~y:(dim ~labels:tokens 2) ~x:(dim ~labels:tokens 3)
     ~fill:(num ~title:"attention" a) ()
   |> coord (Coord.cartesian ~aspect:1. ())
-  |> save ~size:(Size.figure 520. 380.) "attention.png"
+  |> save ~size:(Size.panels 120. 120.) "attention.png"

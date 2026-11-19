@@ -1545,6 +1545,155 @@ let gen_tick_values =
          (2, Gen.map (fun i -> Float.of_int i /. 10.) (Gen.int_range 0 100));
        ])
 
+(* Named categories *)
+
+(* [indices n] is a heatmap of [n] by [n] categories shown by their index. *)
+let indices n =
+  let m =
+    Nx.init Nx.float64 [| n; n |] (fun i -> Float.of_int (i.(0) + i.(1)))
+  in
+  rect ~y:(dim 0) ~x:(dim 1) ~fill:(num m) ()
+
+(* [label_boxes l id] is the box of each label of the axis [id] of [l]. *)
+let label_boxes l id =
+  match guide_lines l ("axis " ^ id) with
+  | [ _ :: lines ] ->
+      List.filter_map
+        (fun line ->
+          if contains line "label (text" then Some (box_of line) else None)
+        lines
+  | gs -> failf "%d axes %s" (List.length gs) id
+
+(* [clear_along ~x boxes] states that each two adjacent [boxes] are half an em
+   apart along x, or along y if not [x], to the six digits boxes print in: a
+   hundredth of a point below 1000 pt, which the figures here stay within. *)
+let clear_along ~x boxes =
+  let lo (x0, y0, _, _) = if x then x0 else y0 in
+  let hi (_, _, x1, y1) = if x then x1 else y1 in
+  let sorted = List.sort (fun a b -> Float.compare (lo a) (lo b)) boxes in
+  let rec go = function
+    | a :: (b :: _ as rest) ->
+        at_least float_exact ~than:((0.5 *. em) -. 1e-2) (lo b -. hi a);
+        go rest
+    | _ -> ()
+  in
+  go sorted
+
+(* A heatmap of [n] by [n] categories named from a pool that holds an empty
+   name, a long one and repeats, on a band scale with [reverse] and [padding],
+   with or without an aspect, laid out at panels of a size or at a figure too
+   small for it and then at the size it names. *)
+type named_case = {
+  n : int;
+  offset : int;
+  reverse : bool;
+  padding : float;
+  aspect : bool;
+  size : [ `Panels of float * float | `Figure of float * float ];
+}
+
+let pool = [| "the"; "cat"; ""; "a much longer name"; "on"; "the"; "x" |]
+
+let gen_named =
+  let size =
+    Gen.one_of
+      [
+        Gen.map
+          (fun (w, h) -> `Panels (w, h))
+          (Gen.pair (Gen.float_range 5. 200.) (Gen.float_range 5. 200.));
+        Gen.map
+          (fun (w, h) -> `Figure (w, h))
+          (Gen.pair (Gen.float_range 30. 80.) (Gen.float_range 30. 80.));
+      ]
+  in
+  Gen.map
+    (fun ((n, offset, reverse), (padding, aspect, size)) ->
+      { n; offset; reverse; padding; aspect; size })
+    (Gen.pair
+       (Gen.triple (Gen.int_range 1 8) (Gen.int_range 0 6) Gen.bool)
+       (Gen.triple (Gen.of_list [ 0.; 0.2; 1. ]) Gen.bool size))
+  |> Gen.with_pp (fun ppf c ->
+      Format.fprintf ppf
+        "%d names from %d, reverse %b, padding %g, aspect %b, %s" c.n c.offset
+        c.reverse c.padding c.aspect
+        (match c.size with
+        | `Panels (w, h) -> Printf.sprintf "panels %g x %g" w h
+        | `Figure (w, h) -> Printf.sprintf "figure %g x %g" w h))
+
+let named_law c =
+  let labels =
+    Array.init c.n (fun i -> pool.((i + c.offset) mod Array.length pool))
+  in
+  let scale () = Scale.band ~reverse:c.reverse ~padding:c.padding () in
+  let m =
+    Nx.init Nx.float64 [| c.n; c.n |] (fun i -> Float.of_int (i.(0) + i.(1)))
+  in
+  let f =
+    rect
+      ~y:(dim ~scale:(scale ()) ~labels 0)
+      ~x:(dim ~scale:(scale ()) ~labels 1)
+      ~fill:(num m) ()
+  in
+  let f = if c.aspect then coord (Coord.cartesian ~aspect:1. ()) f else f in
+  cover "one category" (c.n = 1);
+  cover "an aspect" c.aspect;
+  let l =
+    match c.size with
+    | `Panels (w, h) ->
+        let l = lay (Size.panels w h) f in
+        if not c.aspect then begin
+          let b = List.hd (boxes l) in
+          (* Grown, never shrunk, to the rounding of the page. *)
+          at_least float_exact ~than:(w -. 1e-9) (Box2.w b);
+          at_least float_exact ~than:(h -. 1e-9) (Box2.h b)
+        end;
+        l
+    | `Figure (w, h) ->
+        let named = needs (Size.figure w h) f in
+        cover "a figure too small" (Option.is_some named);
+        let w, h = Option.value named ~default:(w, h) in
+        lay (Size.figure w h) f
+  in
+  let xs = label_boxes l "axis.x" and ys = label_boxes l "axis.y" in
+  equal int c.n (List.length xs);
+  equal int c.n (List.length ys);
+  clear_along ~x:true xs;
+  clear_along ~x:false ys
+
+let names =
+  group "named categories"
+    [
+      prop "every name is labelled, clear of the next, at any size" gen_named
+        named_law;
+      test "explicit ticks of a named scale are each labelled" (fun () ->
+          let names = Array.init 12 (fun i -> Printf.sprintf "name %d" i) in
+          let ticks = Array.sub names 0 6 in
+          let l =
+            lay (Size.panels 20. 20.)
+              (dot
+                 ~x:(strings ~scale:(Scale.band ~ticks ()) names)
+                 ~y:(num (f64 (Array.init 12 Float.of_int)))
+                 ())
+          in
+          equal (list string) (Array.to_list ticks) (axis_labels l "axis.x");
+          clear_along ~x:true (label_boxes l "axis.x"));
+      test "names given to a band scale are each labelled" (fun () ->
+          let names = Array.init 12 (fun i -> Printf.sprintf "name %d" i) in
+          let l =
+            lay (Size.panels 30. 30.)
+              (dot ~x:(strings names)
+                 ~y:(num (f64 (Array.init 12 Float.of_int)))
+                 ())
+          in
+          equal int 12 (List.length (axis_labels l "axis.x"));
+          clear_along ~x:true (label_boxes l "axis.x"));
+      test "categories shown by their index keep a stride" (fun () ->
+          let l = lay (Size.panels 40. 40.) (indices 30) in
+          let n = List.length (axis_labels l "axis.x") in
+          less int ~than:30 n;
+          greater int ~than:1 n);
+    ]
+
 let ticks =
   group "ticks"
     [
@@ -2027,6 +2176,7 @@ let () =
          titles;
          legends;
          ticks;
+         names;
          inside_legends;
          themes;
          glyphs;

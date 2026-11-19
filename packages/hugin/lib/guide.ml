@@ -214,6 +214,16 @@ let categorical (F f) =
   | Channel.Categories -> true
   | Channel.Quantities | Channel.Instants -> false
 
+(* [named s] is [true] iff [s] is a band scale whose categories are names: a
+   labelled category, whatever its text, or an indexed one shown by a text other
+   than its integer in decimal. *)
+let named (F f) =
+  match (f.kind, Scale.domain f.scale) with
+  | Channel.Categories, Scale.Categories (Scale.Labels l) -> Array.length l > 0
+  | Channel.Categories, Scale.Categories (Scale.Indices ix) ->
+      Array.exists (fun (i, t) -> not (String.equal t (string_of_int i))) ix
+  | (Channel.Quantities | Channel.Instants), _ -> false
+
 (* [guide_title s explicit note] is the distinct titles of [explicit], or if it
    is empty, those of the channels reading [s] in the order of the figure,
    separated by commas, then [note]. An empty title is no title. *)
@@ -298,21 +308,40 @@ let label_align : side -> Text.Layout.halign * Text.Layout.valign = function
   | `Left -> (`Right, `Middle)
   | `Right -> (`Left, `Middle)
 
+(* [centre side p] is where the label [p] is centred along [side], and [extent
+   cx side p] its extent there with its clearance. *)
+let centre side p = if horizontal side then P2.x p.at else P2.y p.at
+
+let extent cx side p =
+  (if horizontal side then width p.set else height p.set) +. em cx clear_em
+
 (* [thin cx side labels] keeps, in order, each label that clears the last one
    kept with their clearance: a label is dropped only where it would meet a kept
    one, so an uneven set of explicit ticks keeps its lone labels. *)
 let thin cx side labels =
-  let centre p = if horizontal side then P2.x p.at else P2.y p.at in
-  let extent p =
-    (if horizontal side then width p.set else height p.set) +. em cx clear_em
-  in
   let clears a b =
-    Float.abs (centre b -. centre a) >= (extent a +. extent b) /. 2.
+    Float.abs (centre side b -. centre side a)
+    >= (extent cx side a +. extent cx side b) /. 2.
   in
   let keep acc p =
     match acc with last :: _ when not (clears last p) -> acc | _ -> p :: acc
   in
   List.rev (List.fold_left keep [] labels)
+
+(* [room cx side ticks labels] is the least length of a side at which [labels],
+   those of [ticks], each clear the next: the distance between two ticks is
+   their distance in normalised units times the side's length, and must reach
+   half their extents. *)
+let room cx side (ticks : Ticks.tick list) labels =
+  let rec go need ticks labels =
+    match (ticks, labels) with
+    | (a : Ticks.tick) :: (b :: _ as ts), la :: (lb :: _ as ls) ->
+        let half = (extent cx side la +. extent cx side lb) /. 2. in
+        let apart = Float.abs (b.position -. a.position) in
+        go (Float.max need (half /. apart)) ts ls
+    | _ -> need
+  in
+  go 0. ticks labels
 
 (* [ends side length labels] is the longest of [labels] along [side] moved to
    each end of the side: a label centred on a tick may lie there at another
@@ -368,10 +397,15 @@ let axis cx g ~length ~wrap ~across ~labelled ~grid s (t : Ticks.t) =
             (pt side (at tk) d))
         t.major
   in
+  (* An axis of names keeps every label, and its side needs the room they take
+     rather than dropping any. *)
+  let named = named s in
+  let kept = if named then labels else thin cx side labels in
+  let least = if named then room cx side t.major labels else 0. in
   let label p = Label p in
-  laid g length ~wrap ~least:0.
+  laid g length ~wrap ~least
     ~counted:(List.map label (labels @ ends side length labels))
-    ((Rules rules :: lines) @ List.map label (thin cx side labels))
+    ((Rules rules :: lines) @ List.map label kept)
 
 let header cx g ~length ~wrap s cat =
   let halign, valign = label_align g.side in
@@ -648,6 +682,7 @@ let choose cx gs =
           (fun (g, _) ->
             match g.kind with
             | Axis { part = Header _; _ } -> true
+            | Axis { part = Ticks _; _ } -> named s
             | Legend _ -> categorical s
             | Axis _ | Title _ -> false)
           mine
