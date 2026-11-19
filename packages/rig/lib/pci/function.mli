@@ -355,14 +355,17 @@ val reset : t -> (unit, string) result
     the bus mastering reads off, each {!free_dma} gives back the memory it
     names. Memory no free names, as one an exception cut left, goes back at
     the free of the last region out, or at the exit while one stays out. A
-    function whose memory was given to another function
-    ({!Memory.bus}) stays taken until the process exits: once its bus
-    mastering reads off, {!free_dma} and {!unpin} give back the memory and
-    pins they name, and none that was given. After a release that could not
-    turn its bus mastering off because the system refused the write, as a
-    kernel locked down since the take does, none goes back, since the
-    function may still reach it: that memory stays the process's until it
-    exits, and taken physically, past its exit.
+    function released while another GPU maps its GPU memory stays taken
+    until none does ({!Memory.release}): once its bus mastering reads off,
+    each {!free_dma} gives back the memory it names. A function whose
+    memory was given to another function ({!Memory.bus}) stays taken until
+    the process exits: once its bus mastering reads off, {!free_dma} and
+    {!unpin} give back the memory and pins they name, and none that was
+    given. After a release that could not turn its bus mastering off
+    because the system refused the write, as a kernel locked down since the
+    take does, none goes back, since the function may still reach it: that
+    memory stays the process's until it exits, and taken physically, past
+    its exit.
 
     Either way, a function reaches only the addresses its engines hold,
     which its driver states with {!set_dma_bits}, as Linux's drivers do with
@@ -572,9 +575,11 @@ val inherited : t -> bool
    released or may still master the bus, [f] {e lends} its memory: its
    give-back ({!release}) turns its bus mastering off and keeps its take,
    its windows and memory included, so that {!take} of its bus is [Error]
-   and no open resets the GPU and gives the memory out. The take goes back
-   once [f] lends nothing, at the last {!unlend} that ends it, or else at a
-   take of [f]'s bus or a {!finish_releases}, whichever comes first. *)
+   and no open resets the GPU and gives the memory out. Once its bus
+   mastering reads off, {!free_dma} gives back the memory it names. The
+   take goes back once [f] lends nothing, at the last {!unlend} that ends
+   it, or else at a take of [f]'s bus or a {!finish_releases}, whichever
+   comes first. *)
 val lend : t -> bool
 
 (* [lend_refused f] settles [f] after {!lend} returned [false]: it may give

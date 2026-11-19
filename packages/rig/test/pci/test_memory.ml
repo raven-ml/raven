@@ -2484,6 +2484,21 @@ let test_lent_reopen () =
   Function.release (require_ok (Function.take m bus));
   Memory.free o.t_memory r
 
+(* An owner GPU released while a peer maps its GPU memory stays taken, and a
+   free of its system memory meanwhile gives that memory back. *)
+let test_lent_free () =
+  with_gpus 2 @@ fun root _ gpus ->
+  let o = List.nth gpus 0 and x = List.nth gpus 1 in
+  let before = held_bytes root in
+  let h = given (Memory.alloc o.t_memory Host (64 * kib)) in
+  let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+  let p = mapped (Memory.map_peer x.t_memory r) in
+  Function.release o.t_fn;
+  Memory.free o.t_memory h;
+  equal ~msg:"system memory held after the free" int before (held_bytes root);
+  Memory.free x.t_memory p;
+  Memory.free o.t_memory r
+
 (* A peer whose unmap its GPU did not confirm may still write the memory: the
    released owner stays taken until the peer is released too. *)
 let test_lent_writer () =
@@ -3128,6 +3143,8 @@ let on_files =
         test_peer_cut;
       test "a released owner a peer maps stays taken until the peer's free"
         test_lent_reopen;
+      test "a released owner a peer maps gives back the system memory it frees"
+        test_lent_free;
       test
         "a released owner stays taken until a peer that may still write is \
          released"

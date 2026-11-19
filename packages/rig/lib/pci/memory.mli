@@ -79,9 +79,11 @@
     The owner's {!release} while another GPU maps its GPU memory, or may still
     write it after its free, as above, turns the owner's bus mastering off and
     keeps its function taken, so that no open resets the GPU and gives that
-    memory out: {!Function.take} of its bus is [Error], saying so. The take
-    goes back once no other GPU maps the memory or may still write it, at
-    that GPU's last {!free} of it, or else at the next take of the bus or
+    memory out: {!Function.take} of its bus is [Error], saying so. Once the
+    function masters the bus no more, each {!free} meanwhile gives back the
+    region's system memory and addresses. The take goes back once no other
+    GPU maps the memory or may still write it, at that GPU's last {!free}
+    of it, or else at the next take of the bus or
     {!Function.finish_releases}.
 
     The GPU's owner makes one call at a time on one GPU's memory. Calls on two

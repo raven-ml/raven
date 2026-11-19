@@ -52,6 +52,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- A GPU driven over PCI and released while another GPU maps its memory gives
+  back the system memory of each region freed meanwhile, at the free. It
+  kept that memory until the other GPU's last free of the mapping.
 - Add `Rig_gpus.open_all names`, the devices a comma list of names names,
   each opened as `open_` opens it, in order, blanks around a name ignored:
   the list a program's user writes, to mint one set over with `Nx.devices`.

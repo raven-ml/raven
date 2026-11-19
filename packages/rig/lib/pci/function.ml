@@ -223,11 +223,13 @@ let retain f = Atomic.set f.retained true
 let unretain f = Atomic.set f.retained false
 
 (* Gives back the take that [f]'s parked give-back kept, once: of two calls,
-   the one that clears [parked] gives it back. An exception that ends the
-   machine's release parks [f] again, for the next call. *)
+   the one that clears [parked] gives it back, under [passing], so that no
+   [free_dma] that found [f] parked reaches the machine at once with its
+   release. An exception that ends the machine's release parks [f] again,
+   for the next call. *)
 let unpark f =
   if Atomic.compare_and_set f.parked true false then
-    match give_take f with
+    match Lock.protect f.passing (fun () -> give_take f) with
     | (_ : bool) ->
         unlist f;
         give_memory f
@@ -237,6 +239,14 @@ let unpark f =
         Printexc.raise_with_backtrace e bt
 
 let settle_parked f = if Atomic.get f.parked && not (lends f) then unpark f
+
+(* Whether a [free_dma] after [f]'s release gives back the memory it names:
+   the take stays with the bus mastering off, kept for another function
+   until the exit or parked while it lends until [unpark], or the give-back
+   kept the DMA memory for [give_memory]. *)
+let passes f =
+  (Atomic.get f.quiet && (Atomic.get f.kept || Atomic.get f.parked))
+  || Atomic.get f.memory = Kept
 
 let refused machine bus =
   let me = Unix.getpid () in
@@ -823,8 +833,9 @@ let alloc_dma ?(contiguous = false) ?va f n =
    the give-back, which gives back all the take holds, but for a kept
    function, whose take stays until the exit: once its bus mastering reads
    off, the free gives back its own memory, which the machine counts apart
-   from what another function was given. After a give-back that kept the DMA
-   memory, a free gives back its own until [give_memory] gives back the
+   from what another function was given. So does a parked function's, whose
+   take stays while it lends, until [unpark]. After a give-back that kept the
+   DMA memory, a free gives back its own until [give_memory] gives back the
    rest. A window an exception kept from the machine's free stays counted
    there, for [give_memory]. *)
 let free_dma f w =
@@ -835,10 +846,8 @@ let free_dma f w =
     | exception e ->
         leave f;
         reraise e
-  else if Atomic.get f.kept && Atomic.get f.quiet then f.fn.free_dma w
-  else if Atomic.get f.memory = Kept then
-    Lock.protect f.passing (fun () ->
-        if Atomic.get f.memory = Kept then f.fn.free_dma w)
+  else if passes f then
+    Lock.protect f.passing (fun () -> if passes f then f.fn.free_dma w)
 
 let pin_entered f a n =
   on_page f "pin" a;
