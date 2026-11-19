@@ -238,9 +238,8 @@ type 'd inputs
     batch's layout. *)
 
 val inputs : ('a, 'd) t -> 'd Batch.t -> 'd inputs
-(** [inputs m b] is [b]'s inputs to [m]: its tokens standardised by [m]'s
-    statistics, a negative Sentinel-2 band raised by [1000] first, a Sentinel-1
-    token by the statistics of its orbit, and their days. *)
+(** [inputs m b] is [b]'s inputs to [m]: its tokens standardised as a
+    backbone's first step states, and their days. *)
 
 val mixup : alpha:'d Nx.float32_t -> 'd inputs -> 'd inputs -> 'd inputs
 (** [mixup ~alpha i i'] is the {e mixup} (Zhang et al. 2018) of [i] and [i']:

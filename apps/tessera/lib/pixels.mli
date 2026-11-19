@@ -15,12 +15,8 @@
       before any scaling. A row holds the ascending passes, then the descending
       ones.
 
-    Values are as the tile holds them ({!Tile}): Sentinel-2 bands as surface
-    reflectance times 10⁴, negatives kept, Sentinel-1 bands as TESSERA's code
-    of γ⁰ in decibels; a tile read from TESSERA's own files holds TESSERA's
-    values. No statistic or encoding of a model is applied here, so one value
-    serves every model: TESSERA's model raises a negative band by 1000
-    ({!Model}). *)
+    Values are as the tile holds them ({!Tile}). No statistic or encoding of a
+    model is applied here, so one value serves every model ({!Model}). *)
 
 type 'd t = {
   s2 : (int, Nx.int16_signed_elt, 'd) Nx_ragged.t;
