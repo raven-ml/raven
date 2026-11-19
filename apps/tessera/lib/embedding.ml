@@ -7,10 +7,9 @@
 
 (* Writes row [i] of [e] to row [pixel.{i}] of [out], for each [i] holding a
    pixel. *)
-let scatter (out : (float, Bigarray.float32_elt) Flat.t) ~dims e
-    (b : Nx.host Batch.t) =
-  Flat.read b.pixel @@ fun pixel ->
-  Flat.read e @@ fun (e : (float, Bigarray.float32_elt) Flat.t) ->
+let scatter out ~dims e (b : Nx.host Batch.t) =
+  Nx.Host.read b.pixel @@ fun pixel ->
+  Nx.Host.read e @@ fun e ->
   for i = 0 to Bigarray.Array1.dim pixel - 1 do
     let p = Int64.to_int pixel.{i} in
     if p >= 0 then
@@ -35,7 +34,10 @@ let encode ~shape at f px =
       match !out with
       | Some (o, _) -> o
       | None ->
-          let o = Flat.create Bigarray.float32 (n * dims) Float.nan in
+          let o =
+            Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout (n * dims)
+          in
+          Bigarray.Array1.fill o Float.nan;
           out := Some (o, dims);
           o
     in
@@ -44,7 +46,7 @@ let encode ~shape at f px =
   in
   go (pack 0);
   let o, dims = Option.get !out in
-  Flat.wrap Nx.float32 [| n; dims |] o
+  Nx.Host.wrap [| n; dims |] o
 
 (* Quantisation *)
 

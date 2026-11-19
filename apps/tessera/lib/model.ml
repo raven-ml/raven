@@ -190,17 +190,17 @@ let draw ~rate keys x =
 let token_mask ~rate k x =
   let r = Nx.dim 0 x and t = Nx.dim 1 x in
   draw ~rate
-    (Nx.Rng.of_tensor (Nx.reshape [| r; t; 1; 2 |] (Nx.Rng.to_tensor k)))
+    (Nx.Rng.reshape [| r; t; 1 |] k)
     x
 
 (* The attention probabilities' mask over [x], [[r; h; t; t]], one key per pair
    of tokens drawing each head: the query's key indexed by the key's [index]. *)
 let pair_mask ~rate k ~index x =
   let r = Nx.dim 0 x and t = Nx.dim 2 x in
-  let q = Nx.Rng.of_tensor (Nx.reshape [| r; t; 1; 2 |] (Nx.Rng.to_tensor k)) in
+  let q = Nx.Rng.reshape [| r; t; 1 |] k in
   let pairs = Nx.Rng.fold_in_tensor q (Nx.reshape [| r; 1; t |] index) in
   draw ~rate
-    (Nx.Rng.of_tensor (Nx.reshape [| r; 1; t; t; 2 |] (Nx.Rng.to_tensor pairs)))
+    (Nx.Rng.reshape [| r; 1; t; t |] pairs)
     x
 
 (* The tokens a layer reads: the bounds of each query's keys, [[r; t]], each
@@ -511,7 +511,7 @@ let reduce ~drop (r : _ reducer) x =
         let p = Nx.dim 0 x in
         let k = site d.keys [ reducer_site ] in
         let k =
-          Nx.Rng.of_tensor (Nx.reshape [| p; 1; 2 |] (Nx.Rng.to_tensor k))
+          Nx.Rng.reshape [| p; 1 |] k
         in
         let m = draw ~rate:d.rates.reducer k x in
         d.mask "reducer" (fun () -> m);

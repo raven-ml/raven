@@ -11,8 +11,9 @@
    multiply-add. *)
 let code g =
   let n = Nx.numel g in
-  let out = Flat.create Bigarray.int16_signed n 0 in
-  Flat.read g (fun v ->
+  let out = Bigarray.Array1.create Bigarray.int16_signed Bigarray.c_layout n in
+  Bigarray.Array1.fill out 0;
+  Nx.Host.read g (fun v ->
       for i = 0 to n - 1 do
         let x = v.{i} in
         if Float.is_finite x && x > 0. then
@@ -20,7 +21,7 @@ let code g =
           let scaled = (db +. 50.) *. 200. in
           out.{i} <- Float.to_int (Float.min (Float.max scaled 0.) 32767.)
       done);
-  Flat.wrap Nx.int16 (Nx.shape g) out
+  Nx.Host.wrap (Nx.shape g) out
 
 let min_coverage = 0.01
 let count m = Int64.to_int (Nx.item [] (Nx.count m))

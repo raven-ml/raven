@@ -5,6 +5,12 @@
 
 open Bigarray
 
+(* An array of [n] elements of kind [k], each [v]. *)
+let filled k n v =
+  let b = Array1.create k c_layout n in
+  Array1.fill b v;
+  b
+
 type counts = { s2 : Nx.host Nx.int32_t; s1 : Nx.host Nx.int32_t }
 
 (* Counts *)
@@ -17,7 +23,7 @@ let max_bin = 256
 let bin n = min max_bin ((n + bin_step - 1) / bin_step * bin_step)
 
 (* Adds to [c.{base + i}] the counts of [_pad_pattern n (bin n)]. *)
-let fill (c : (int32, int32_elt) Flat.t) base n =
+let fill (c : (int32, int32_elt, c_layout) Array1.t) base n =
   let add i = c.{base + i} <- Int32.succ c.{base + i} in
   let b = bin n in
   if n >= b then begin
@@ -52,14 +58,14 @@ let fill (c : (int32, int32_elt) Flat.t) base n =
 
 let sensor_counts (type v s) (r : (v, s, Nx.host) Nx_ragged.t) =
   let len = Nx.dim 0 (Nx_ragged.values r) in
-  let c = Flat.create int32 len 0l in
-  Flat.read (Nx_ragged.offsets r) (fun o ->
+  let c = filled int32 len 0l in
+  Nx.Host.read (Nx_ragged.offsets r) (fun o ->
       for p = 0 to Nx_ragged.length r - 1 do
         let base = Int64.to_int o.{p} in
         let n = Int64.to_int o.{p + 1} - base in
         if n > 0 then fill c base n
       done);
-  Flat.wrap Nx.int32 [| len |] c
+  Nx.Host.wrap [| len |] c
 
 let v2_counts (px : Nx.host Pixels.t) =
   { s2 = sensor_counts px.s2; s1 = sensor_counts px.s1 }
@@ -70,14 +76,14 @@ let v2_counts (px : Nx.host Pixels.t) =
    count at least [k]. Under v2's counts this is the reference's fill order,
    every observation once and then the fill ([_pad_pattern]'s [concatenate
    ([arange n], fill)]). *)
-let expand_sensor (type s) kind dt (r : (int, s, Nx.host) Nx_ragged.t)
+let expand_sensor (type s) kind (r : (int, s, Nx.host) Nx_ragged.t)
     (c : Nx.host Nx.int32_t) =
   let n = Nx_ragged.length r in
   let cells = Nx.dim 1 (Nx_ragged.values r) in
-  let o' = Flat.create int64 (n + 1) 0L in
+  let o' = filled int64 (n + 1) 0L in
   let v' =
-    Flat.read (Nx_ragged.offsets r) @@ fun o ->
-    Flat.read c @@ fun c ->
+    Nx.Host.read (Nx_ragged.offsets r) @@ fun o ->
+    Nx.Host.read c @@ fun c ->
     for p = 0 to n - 1 do
       let t = ref o'.{p} in
       for j = Int64.to_int o.{p} to Int64.to_int o.{p + 1} - 1 do
@@ -85,8 +91,8 @@ let expand_sensor (type s) kind dt (r : (int, s, Nx.host) Nx_ragged.t)
       done;
       o'.{p + 1} <- !t
     done;
-    let v' = Flat.create kind (Int64.to_int o'.{n} * cells) 0 in
-    Flat.read (Nx_ragged.values r) @@ fun v ->
+    let v' = filled kind (Int64.to_int o'.{n} * cells) 0 in
+    Nx.Host.read (Nx_ragged.values r) @@ fun v ->
     let at = ref 0 in
     for p = 0 to n - 1 do
       let lo = Int64.to_int o.{p} and hi = Int64.to_int o.{p + 1} in
@@ -109,8 +115,8 @@ let expand_sensor (type s) kind dt (r : (int, s, Nx.host) Nx_ragged.t)
   in
   let total = Int64.to_int o'.{n} in
   ( Nx_ragged.v
-      ~offsets:(Flat.wrap Nx.int64 [| n + 1 |] o')
-      (Flat.wrap dt [| total; cells |] v'),
+      ~offsets:(Nx.Host.wrap [| n + 1 |] o')
+      (Nx.Host.wrap [| total; cells |] v'),
     Nx.ones Nx.int32 [| total |] )
 
 let expand (px : Nx.host Pixels.t) (c : counts) =
@@ -118,8 +124,8 @@ let expand (px : Nx.host Pixels.t) (c : counts) =
     Nx.shape c.s2 <> [| Nx.dim 0 (Nx_ragged.values px.s2) |]
     || Nx.shape c.s1 <> [| Nx.dim 0 (Nx_ragged.values px.s1) |]
   then invalid_arg "Tessera.Batch.expand: one count per observation expected";
-  let s2, c2 = expand_sensor int16_signed Nx.int16 px.s2 c.s2 in
-  let s1, c1 = expand_sensor int16_signed Nx.int16 px.s1 c.s1 in
+  let s2, c2 = expand_sensor int16_signed px.s2 c.s2 in
+  let s1, c1 = expand_sensor int16_signed px.s1 c.s1 in
   (({ s2; s1 } : Nx.host Pixels.t), ({ s2 = c2; s1 = c1 } : counts))
 
 (* Batches *)
@@ -156,14 +162,14 @@ type builder = {
   rows : int;
   cells : int;
   bands : int;
-  toks : (float, float32_elt) Flat.t;
-  logc : (float, float32_elt) Flat.t;
-  starts : (int32, int32_elt) Flat.t;
-  stops : (int32, int32_elt) Flat.t;
-  slot_starts : (int32, int32_elt) Flat.t;
-  slot_stops : (int32, int32_elt) Flat.t;
-  token_places : (int64, int64_elt) Flat.t;
-  places : (int64, int64_elt) Flat.t;
+  toks : (float, float32_elt, c_layout) Array1.t;
+  logc : (float, float32_elt, c_layout) Array1.t;
+  starts : (int32, int32_elt, c_layout) Array1.t;
+  stops : (int32, int32_elt, c_layout) Array1.t;
+  slot_starts : (int32, int32_elt, c_layout) Array1.t;
+  slot_stops : (int32, int32_elt, c_layout) Array1.t;
+  token_places : (int64, int64_elt, c_layout) Array1.t;
+  places : (int64, int64_elt, c_layout) Array1.t;
   fill : int array;
   used : int array;
   mutable first_open : int; (* rows below are full *)
@@ -183,14 +189,14 @@ let builder shape ~rows ~bands =
     rows;
     cells;
     bands;
-    toks = Flat.create float32 (rows * w * c) 0.;
-    logc = Flat.create float32 (rows * w) 0.;
-    starts = Flat.create int32 (rows * w) 0l;
-    stops = Flat.create int32 (rows * w) 0l;
-    slot_starts = Flat.create int32 (rows * shape.slots) 0l;
-    slot_stops = Flat.create int32 (rows * shape.slots) 0l;
-    token_places = Flat.create int64 (rows * w) 0L;
-    places = Flat.create int64 shape.pixels 0L;
+    toks = filled float32 (rows * w * c) 0.;
+    logc = filled float32 (rows * w) 0.;
+    starts = filled int32 (rows * w) 0l;
+    stops = filled int32 (rows * w) 0l;
+    slot_starts = filled int32 (rows * shape.slots) 0l;
+    slot_stops = filled int32 (rows * shape.slots) 0l;
+    token_places = filled int64 (rows * w) 0L;
+    places = filled int64 shape.pixels 0L;
     fill = Array.make rows 0;
     used = Array.make rows 0;
     first_open = 0;
@@ -214,8 +220,8 @@ let row shape b t =
 
 (* Writes the tokens of observations [lo, hi) of nonzero count, [t] of them, or
    a stand-in if [t = 0], in row [r] as pixel place [place]'s slot. *)
-let put (type s) shape b r ~place ~(values : (int, s) Flat.t)
-    ~(counts : (int32, int32_elt) Flat.t) lo hi t =
+let put (type s) shape b r ~place ~(values : (int, s, c_layout) Array1.t)
+    ~(counts : (int32, int32_elt, c_layout) Array1.t) lo hi t =
   let w = shape.width and c = channels b in
   let first = b.fill.(r) in
   let n = max t 1 in
@@ -251,20 +257,20 @@ let put (type s) shape b r ~place ~(values : (int, s) Flat.t)
 
 let rows_of shape b =
   let w = shape.width in
-  let int32 n x = Flat.wrap Nx.int32 [| b.rows; n |] x in
+  let int32 n x = Nx.Host.wrap [| b.rows; n |] x in
   {
-    tokens = Flat.wrap Nx.float32 [| b.rows; w; channels b |] b.toks;
-    log_count = Flat.wrap Nx.float32 [| b.rows; w |] b.logc;
+    tokens = Nx.Host.wrap [| b.rows; w; channels b |] b.toks;
+    log_count = Nx.Host.wrap [| b.rows; w |] b.logc;
     start = int32 w b.starts;
     stop = int32 w b.stops;
     slot_start = int32 shape.slots b.slot_starts;
     slot_stop = int32 shape.slots b.slot_stops;
-    place = Flat.wrap Nx.int64 [| b.rows; w |] b.token_places;
-    at = Flat.wrap Nx.int64 [| shape.pixels |] b.places;
+    place = Nx.Host.wrap [| b.rows; w |] b.token_places;
+    at = Nx.Host.wrap [| shape.pixels |] b.places;
   }
 
 (* The tokens of row [p] of a sensor: its observations of nonzero count. *)
-let tokens (o : (int64, int64_elt) Flat.t) (c : (int32, int32_elt) Flat.t) p =
+let tokens o c p =
   let t = ref 0 in
   for j = Int64.to_int o.{p} to Int64.to_int o.{p + 1} - 1 do
     if c.{j} > 0l then incr t
@@ -288,15 +294,15 @@ let pack shape (px : Nx.host Pixels.t) (counts : counts) ~from =
   check_counts "s1" px.s1 counts.s1;
   let b2 = builder shape ~rows:shape.s2_rows ~bands:Pixels.s2_bands in
   let b1 = builder shape ~rows:shape.s1_rows ~bands:Pixels.s1_bands in
-  let pixel = Flat.create int64 shape.pixels (-1L) in
+  let pixel = filled int64 shape.pixels (-1L) in
   let n = Pixels.length px in
   let next =
-    Flat.read (Nx_ragged.offsets px.s2) @@ fun o2 ->
-    Flat.read (Nx_ragged.offsets px.s1) @@ fun o1 ->
-    Flat.read (Nx_ragged.values px.s2) @@ fun v2 ->
-    Flat.read (Nx_ragged.values px.s1) @@ fun v1 ->
-    Flat.read counts.s2 @@ fun c2 ->
-    Flat.read counts.s1 @@ fun c1 ->
+    Nx.Host.read (Nx_ragged.offsets px.s2) @@ fun o2 ->
+    Nx.Host.read (Nx_ragged.offsets px.s1) @@ fun o1 ->
+    Nx.Host.read (Nx_ragged.values px.s2) @@ fun v2 ->
+    Nx.Host.read (Nx_ragged.values px.s1) @@ fun v1 ->
+    Nx.Host.read counts.s2 @@ fun c2 ->
+    Nx.Host.read counts.s1 @@ fun c1 ->
     let rec go place p =
       if place >= shape.pixels || p >= n then p
       else
@@ -309,7 +315,7 @@ let pack shape (px : Nx.host Pixels.t) (counts : counts) ~from =
           let r2 = row shape b2 (max t2 1) and r1 = row shape b1 (max t1 1) in
           if r2 < 0 || r1 < 0 then p
           else begin
-            let span (o : (int64, int64_elt) Flat.t) =
+            let span (o : (int64, int64_elt, c_layout) Array1.t) =
               (Int64.to_int o.{p}, Int64.to_int o.{p + 1})
             in
             let lo, hi = span o2 in
@@ -324,7 +330,7 @@ let pack shape (px : Nx.host Pixels.t) (counts : counts) ~from =
     go 0 from
   in
   let s2 = rows_of shape b2 and s1 = rows_of shape b1 in
-  ({ s2; s1; pixel = Flat.wrap Nx.int64 [| shape.pixels |] pixel }, next)
+  ({ s2; s1; pixel = Nx.Host.wrap [| shape.pixels |] pixel }, next)
 
 (* Structure *)
 
