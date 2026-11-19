@@ -928,7 +928,11 @@ let test_release_once () =
    nothing, so the first memory is taken only once the keep is released, and
    the second never is. A drop beside a release releases the keep twice on
    two domains, and a collection after it runs the drain of the keep's record
-   beside the other domain's release. *)
+   beside the other domain's release. A collection stops every domain, which
+   takes about 2 ms where the test's three domains share two processors, and
+   each program runs 50 times: [~steps:3] keeps a program to its branches
+   and a few calls around them, and [~count:30] reaches each cover in about
+   half the cases. *)
 type releases = { mutable released : bool; mutable took : bool }
 
 type kept_pair = {
@@ -968,12 +972,18 @@ let collect_pair (_ : kept_pair) =
   Gc.minor ();
   ignore (Sys.opaque_identity (B.create Rig.host 8))
 
-let release_model r = r.released <- true
+let release_model r =
+  cover "a release of a released keep" r.released;
+  r.released <- true
+
+let collect_model r = cover "a collection after a release" r.released
 
 (* A take of the first memory succeeds once the keep is released, and only
    then: of two releases of one keep, each returns once the keep's holds
    have ended. *)
-let judge_take_first r = function
+let judge_take_first r taken =
+  cover "a take after a release" r.released;
+  match taken with
   | Ok true ->
       equal ~msg:"released, taken" (pair bool bool) (true, false)
         (r.released, r.took);
@@ -992,7 +1002,7 @@ let release_commands =
       make_pair;
     command "release" (kept_pair ^-> returns unit) release_model release_pair;
     command "drop" (kept_pair ^-> returns unit) release_model drop_pair;
-    command "collect" (kept_pair ^-> returns unit) ignore collect_pair;
+    command "collect" (kept_pair ^-> returns unit) collect_model collect_pair;
     command "take"
       (kept_pair ^-> judges bool)
       judge_take_first
@@ -1778,7 +1788,7 @@ let tests =
         test "a later release and the collection of a released keep end \
               nothing"
           test_release_once;
-        stateful ~domains:2
+        stateful ~count:30 ~steps:3 ~domains:2
           "releases of one keep on two domains beside its collection end it \
            once"
           release_commands;
