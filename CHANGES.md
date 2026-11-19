@@ -503,6 +503,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.grad` and `Rune.jvp` of `Nx.attention ~lengths`, computed eagerly,
+  write each element of their results once: 15% to 35% fewer elements
+  written.
 - `Rune.jvp`, `Rune.vjp` and `Rune.grad` differentiate an `Nx.Prim.Scan` of no
   load continued from a carry with a tangent. They raised that a map of no
   loads names no placement.

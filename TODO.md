@@ -129,8 +129,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - `Nx.attention ~lengths`'s compiled derivative builds the whole pair loop
   on the host, in forward mode, with pages or float captures, and past 160
   dimensions; eager `grad` under vmap with per-lane lengths does too
-- Attention's eager derivative under lengths writes k̄ and v̄ three times
-  (pad, concatenate, reorder); a scatter into one zeroed array writes once
 - rune cannot check data inside compiled code (a token range, a length
   past its row), so a model that validates its inputs, such as AION's
   codecs, checks on the host and its encode cannot run under `Rune.jit`

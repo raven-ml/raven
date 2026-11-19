@@ -267,6 +267,44 @@ let attention_rows () =
         synced (Rune.grad' prefixes k));
   ]
 
+(* Attention's eager gradient under lengths, which computes over groups of
+   rows and joins their results: 8 rows of 32 to 256 of 512 keys in order
+   and shuffled, 4 heads of 64 query rows of 32, and 512 rows of 8 and 100
+   of 128 keys alternating, 2 heads of one query row of 16. *)
+let lengths_rows () =
+  let case name lens ~h ~tq ~tk ~d =
+    let b = Array.length lens in
+    let lengths =
+      host (Nx.create Nx.int64 [| b |] (Array.map Int64.of_int lens))
+    in
+    let loss = function
+      | [ q; k; v ] ->
+          let o, _ = Nx.attention ~lengths ~acc:f32 ~kv:(Nx.Dense { k; v }) q in
+          Nx.sum o
+      | _ -> invalid_arg "lengths_rows"
+    in
+    let xs =
+      [
+        normal 16 [| b; h; tq; d |];
+        normal 17 [| b; h; tk; d |];
+        normal 18 [| b; h; tk; d |];
+      ]
+    in
+    let s = Nx.Ptree.(list tensor) in
+    Thumper.bench name (fun () -> synced_all s (Rune.grad s loss xs))
+  in
+  [
+    case "lengths-grad-sorted-8x512"
+      [| 32; 32; 64; 64; 128; 128; 256; 256 |]
+      ~h:4 ~tq:64 ~tk:512 ~d:32;
+    case "lengths-grad-shuffled-8x512"
+      [| 256; 32; 128; 64; 32; 256; 64; 128 |]
+      ~h:4 ~tq:64 ~tk:512 ~d:32;
+    case "lengths-grad-alternating-512x128"
+      (Array.init 512 (fun i -> if i mod 2 = 0 then 8 else 100))
+      ~h:2 ~tq:1 ~tk:128 ~d:16;
+  ]
+
 (* Hmc: one leapfrog trajectory of 20 steps on a Gaussian over 16 floats, as a
    sampler runs it eagerly, each step taking the log density's gradient. *)
 let hmc_rows () =
@@ -2551,7 +2589,8 @@ let () =
          Thumper.group "ConvGrad" (conv_rows ());
          Thumper.group "PerSampleGrads" (per_sample_rows ());
          Thumper.group "Jacobians" (jacobian_rows ());
-         Thumper.group "Attention" (attention_rows () @ host_attention_rows ());
+         Thumper.group "Attention"
+           (attention_rows () @ lengths_rows () @ host_attention_rows ());
          Thumper.group "Hmc" (hmc_rows ());
          Thumper.group "Custom" (custom_rows ());
          Thumper.group "JitLoops" (jit_loop_rows ());

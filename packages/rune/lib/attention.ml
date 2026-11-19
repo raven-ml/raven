@@ -505,10 +505,12 @@ let whole (type d) e spec ~transposed q (kv : (_, _, d) Nx.kv) lengths loads
    up to a power of two, then to whole pages, at most [tk]. A group's
    operands are the lead indices' rows and their first keys, its lead
    [[n; 1; …]] so that the pair loop keeps its rank, which the pair
-   program's coordinates count from. Its results are widened back to [tk]
-   keys with zeros, a hidden key's cotangent, and put back in the lead
-   indices' order. So a row of [n] keys computes over at most
-   [max (2n) page] of them, in at most [⌈log₂ tk⌉ + 2] groups. *)
+   program's coordinates count from. One assembly per result joins the
+   groups' results, writing each element once: each run of consecutive
+   lead indices of one group at its place, and zeros, a hidden key's
+   cotangent, past the group's keys. A pool is the sum of the groups'. So
+   a row of [n] keys computes over at most [max (2n) page] of them, in at
+   most [⌈log₂ tk⌉ + 2] groups. *)
 
 (* The keys of [kv] and the keys of a page, [1] for dense keys. *)
 let extent (type d) (kv : (_, _, d) Nx.kv) =
@@ -546,10 +548,6 @@ let cut (type d) e spec ~transposed ~lens q (kv : (_, _, d) Nx.kv) lengths
   let b = Array.length lens in
   let tk, page = extent kv in
   let gs = groups ~tk ~page lens in
-  let order = Array.of_list (List.concat_map snd gs) in
-  let ordered = Array.for_all2 ( = ) order (Array.init b Fun.id) in
-  let inv = Array.make b 0 in
-  Array.iteri (fun i x -> inv.(x) <- i) order;
   let set = Nx.Placement.devices (Nx.placement q) in
   let tail x = Array.sub (Nx.shape x) l (Nx.ndim x - l) in
   let indices x = Array.fold_left ( * ) 1 (Array.sub (Nx.shape x) 0 l) in
@@ -594,38 +592,80 @@ let cut (type d) e spec ~transposed ~lens q (kv : (_, _, d) Nx.kv) lengths
     whole e spec ~transposed (rows q) kv (Option.map rows lengths)
       (List.map (any pairs) loads) (any by_rows o) (any by_rows lse) args
   in
-  let parts = List.map (fun g -> (fst g, one g)) gs in
+  let parts = Array.of_list (List.map (fun g -> (fst g, one g)) gs) in
+  (* Each lead index's group, by its position in [parts], and its row among
+     that group's. *)
+  let group = Array.make b 0 and row = Array.make b 0 in
+  List.iteri
+    (fun j (_, idx) ->
+      List.iteri
+        (fun r i ->
+          group.(i) <- j;
+          row.(i) <- r)
+        idx)
+    gs;
+  (* The runs of consecutive lead indices of one group, each its first
+     place, count, group and first row among the group's. *)
+  let runs =
+    let rec go s i acc =
+      let run = (s, i - s, group.(s), row.(s)) in
+      if i = b then List.rev (run :: acc)
+      else if group.(i) = group.(s) then go s (i + 1) acc
+      else go i (i + 1) (run :: acc)
+    in
+    go 0 0 []
+  in
+  let span start count = { Nx_array.Move.start; count; step = 1 } in
   let join part i =
-    let xs = List.map (fun (c, ys) -> (c, ys.(i))) parts in
-    let (Prim.Any x0) = snd (List.hd xs) in
+    let xs = Array.map (fun (c, ys) -> (c, ys.(i))) parts in
+    let (Prim.Any x0) = snd xs.(0) in
     let dt = Nx.dtype x0 in
-    let xs = List.map (fun (c, x) -> (c, like set dt x)) xs in
+    let xs = Array.map (fun (c, x) -> (c, like set dt x)) xs in
     match part with
     | Pool ->
-        let sum = List.fold_left (fun a (_, x) -> Nx.add a x) in
-        Prim.Any (sum (snd (List.hd xs)) (List.tl xs))
+        let sum = Array.fold_left (fun a (_, x) -> Nx.add a x) in
+        Prim.Any (sum (snd xs.(0)) (Array.sub xs 1 (Array.length xs - 1)))
     | Rows | Keys _ ->
-        let flat (c, x) =
-          let x =
-            match part with
-            | Keys ax when c < tk ->
-                let w = Array.make (Nx.ndim x) (0, 0) in
-                w.(ax) <- (0, tk - c);
-                Nx.pad w (D.zero dt) x
-            | _ -> x
-          in
-          Nx.reshape (Array.append [| indices x |] (tail x)) x
+        (* A run's piece lies at its place and, along the key axis
+           [key], before its group's keys; zeros, a hidden key's cotangent,
+           past them. The pieces tile the result, so the assembly fills
+           nothing and writes each element once. *)
+        let flat x = Nx.reshape (Array.append [| indices x |] (tail x)) x in
+        let xs = Array.map (fun (c, x) -> (c, flat x)) xs in
+        let key = match part with Keys ax -> Some (ax - l + 1) | _ -> None in
+        let shape = Array.copy (Nx.shape (snd xs.(0))) in
+        shape.(0) <- b;
+        Option.iter (fun a -> shape.(a) <- tk) key;
+        let zero = lazy (Nx.scalar_like (snd xs.(0)) (D.zero dt)) in
+        let pieces (s, n, j, r) =
+          let c, x = xs.(j) in
+          let x = if n = Nx.dim 0 x then x else Nx.slice [ R (r, r + n) ] x in
+          let region = Array.map (span 0) shape in
+          region.(0) <- span s n;
+          match key with
+          | Some a when c < tk ->
+              let past = Array.copy region and s' = Array.copy shape in
+              region.(a) <- span 0 c;
+              past.(a) <- span c (tk - c);
+              s'.(0) <- n;
+              s'.(a) <- tk - c;
+              let zeros = Nx.broadcast_to s' (Lazy.force zero) in
+              [ (ia region, x); (ia past, zeros) ]
+          | _ -> [ (ia region, x) ]
         in
+        let pieces = List.concat_map pieces runs in
         let y =
-          match xs with
-          | [ x ] -> flat x
-          | xs -> Nx.concatenate ~axis:0 (List.map flat xs)
+          match pieces with
+          | [ (_, x) ] when Nx.shape x = shape -> x
+          | pieces ->
+              e.eval
+                (Assemble
+                   { dtype = dt; shape = ia shape; fill = D.zero dt; pieces })
         in
-        let y = if ordered then y else Nx.slice [ L (Array.to_list inv) ] y in
-        let rest = Array.sub (Nx.shape y) 1 (Nx.ndim y - 1) in
+        let rest = Array.sub shape 1 (Array.length shape - 1) in
         Prim.Any (Nx.reshape (Array.append lead rest) y)
   in
-  let n = Array.length (snd (List.hd parts)) in
+  let n = Array.length (snd parts.(0)) in
   Array.init n (fun i ->
       if not transposed then join Rows i
       else
@@ -660,8 +700,8 @@ let linear (type d) spec ~transposed ~read (data : d Prim.any array)
   in
   (* The lengths within [[0, tk]], where they can be read and a group
      computes as the whole does: not traced, read where no tracer stages
-     the reading, on one device, whose pads and concatenations read the
-     key axis whole, and a pair program that reads no lead coordinate,
+     the reading, on one device, whose assemblies read the key axis
+     whole, and a pair program that reads no lead coordinate,
      which a group's lead renumbers. *)
   let tk, _ = extent kv in
   let rank = Nx.ndim q in
