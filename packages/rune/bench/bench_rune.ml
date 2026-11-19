@@ -2535,6 +2535,14 @@ let gpu_rows g =
         (attention_grad_call ~d:110 Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
       on_gpu g "attention/jit-grad-bf16-8x2048x256-full"
         (attention_grad_call ~d:256 Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
+      (* float32's gradient past 64 dimensions on the FFMA unit, which the
+         derivative's default computes from the weights it stores: 2048 rows
+         of 160, where the default beats the kernels, and 4096, whose 512 MiB
+         of weights stay within its bound. *)
+      on_gpu g "attention/jit-grad-f32-8x2048x160-full"
+        (attention_grad_call ~d:160 f32 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
+      on_gpu g "attention/jit-grad-f32-8x4096x160-full"
+        (attention_grad_call ~d:160 f32 ~hq:8 ~hk:8 ~tq:4096 ~tk:4096 Full);
       on_gpu g "attention/jit-bf16-2048x40x1024-full"
         (attention_call ~d:1024 Nx.bfloat16 ~hq:2048 ~hk:2048 ~tq:40 ~tk:40 Full);
       on_gpu g "attention/jit-grad-bf16-2048x40x1024-full"
