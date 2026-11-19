@@ -51,6 +51,14 @@ val f2f : ?sat:bool -> Ops.t -> Dtype.t -> Dtype.t -> Ops.t
     Raises [Invalid_argument] unless one of [fr] and [to_] is {!Dtype.Float32}
     and the other a narrower float. *)
 
+val exact : Ops.t -> Dtype.t -> bool
+(** [exact x dt] is [true] iff [x] is a bool, or an integer whose bounds
+    ({!Ops.vmin}, {!Ops.vmax}) lie within [2{^p}], [p] being the float [dt]'s
+    precision, its implicit bit included: then every value of [x] is exact in
+    [dt], and casting it rounds nothing.
+
+    Raises [Invalid_argument] unless [dt] is a float. *)
+
 val narrow : Ops.t -> Dtype.t -> Ops.t
 (** [narrow x dt] is [x] cast to [dt], but where [x] is more precise than
     [dt]: a {!Dtype.Float32} from a {!Dtype.Float64} or an integer of 32 or

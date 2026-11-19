@@ -9558,3 +9558,36 @@ D466.
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction pads an axis 4 does not
   divide to upcast it`; rune's `Cuda/matmul-float32-16384x2048x110` on
   fudge.
+
+## D499. An integer within 2^24 converts to bfloat16 through float32 on CUDA below sm_90
+
+- **tinygrad:** `renderer/cstyle.py` `CUDARenderer.extra_matcher` (no rule
+  for the cast) and `CStyleLanguage.render_cast`: `(nv_bfloat16)(x)`.
+- **tolk:** `Cstyle.pm_int_to_bf16`, in `Cstyle.cuda_extra_matcher` below
+  sm_90.
+- **Differs:** below sm_90, a cast to `Bfloat16` of an integer or a bool
+  that is not a constant, whose bounds (`Ops.vmin`, `Ops.vmax`) lie within
+  `2^24`, is a cast to `Float32` then to `Bfloat16`:
+  `(nv_bfloat16)((float)(x))`. A wider integer, and every integer from
+  sm_90, stays CUDA's cast. Below sm_80 `Bfloat16` is emulated and no such
+  cast reaches the renderer.
+- **Reason:** (d). Below sm_90, `cuda_bf16.hpp`'s `__int2bfloat16_rn`, which
+  `nv_bfloat16`'s constructor calls for an `int`, a `char` and a `bool`,
+  converts three times, rounded up, down and towards zero, then compares
+  and selects; sm_90 has `cvt.rn.bf16.s32`. An integer within `2^24` is
+  exact in float32, so one conversion there rounds once, as CUDA's does. A
+  Q8_0 product decodes its codes to bfloat16 for a tensor core: on sm_89 a
+  kernel of int8 casts runs 4 conversions a thread where it ran 12, and no
+  compare or select. On fudge's RTX 5000 Ada, gpt-oss-20b's Q8_0 query,
+  key and value projection at 512 tokens took 160.8 us against 192.6, its
+  output projection 136-141 against 183.3 (probe, cold); the bench row's
+  baseline is pending. A wider integer would need its float32 rounded to
+  odd (`Decomp_dtype.narrow`), twice the instructions of CUDA's own
+  rounding to odd, so it is left.
+- **Pinned by:** `Tolk.Cstyle › bfloat16 on CUDA` (through a float32 on
+  sm_80 and sm_89, CUDA's cast for a wider integer and on sm_90, and each
+  such integer rounded once on sm_89); rune's `Rune.jit on a GPU ›
+  integers › every integer of 16 bits and the ties of wider ones cast to
+  bfloat16 give eager's bits`; tolk's bench rows `stream/q8_0-core-64` and
+  `stream/q8_0-512`, the latter's baseline pending the scheduled
+  re-record, and kaun's gpt-oss row `prefill 512, Q8_0`.

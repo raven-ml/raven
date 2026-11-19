@@ -971,6 +971,93 @@ let bfloat16_on_amd =
       test "a bfloat16 widens to its value" widens_bf16_codes;
     ]
 
+(* bfloat16 on CUDA
+
+   Below sm_90, CUDA converts an integer to bfloat16 by three conversions to
+   float, a compare and a select. An integer within 2^24 is exact in float32,
+   so one conversion to float32 rounds the same; a wider one stays CUDA's. *)
+
+let through_cuda arch sink =
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
+    (After_sources (renderer_for (target "CUDA" "CUDA" arch)).extra_matcher)
+
+(* An int32 of 24 bits: within 2^24. *)
+let low24 x = directly Ops.O.(x land Ops.int ~dtype:Int32 0xffffff)
+
+(* Sources within 2^24: a name, the type loaded, the cast of a load, and the
+   integer it casts, of the integer loaded. *)
+let exact_sources =
+  List.map
+    (fun dt -> (Format.asprintf "%a" Dtype.pp dt, dt, directly, Fun.id))
+    Dtype.[ Bool; Int8; Uint8; Int16; Uint16 ]
+  @ [
+      ( "an int32 of 24 bits",
+        Dtype.Int32,
+        low24,
+        fun v -> Bigint.of_int (Bigint.to_int v land 0xffffff) );
+    ]
+
+(* Sources past 2^24, and the cast of each: an int32 of 25 bits, whose
+   float32 would round [2^24 + 2^16 + 1] to bfloat16's tie [2^24 + 2^16],
+   then down, where one rounding takes it up. *)
+let wide_sources =
+  List.map
+    (fun dt -> (Format.asprintf "%a" Dtype.pp dt, dt, directly))
+    Dtype.[ Int32; Uint32; Int64; Uint64 ]
+  @ [
+      ( "an int32 of 25 bits",
+        Dtype.Int32,
+        fun x -> directly Ops.O.(x land Ops.int ~dtype:Int32 0x1ffffff) );
+    ]
+
+(* The types the casts to bfloat16 of [src] by [f] read, after [arch]'s
+   rewrites. *)
+let bf16_operands arch src f =
+  let k = through_cuda arch (converting src Bfloat16 2 f) in
+  List.filter_map
+    (fun u ->
+      if Dtype.equal (Ops.dtype u) Bfloat16 then Some (Ops.dtype (Ops.nth u 0))
+      else None)
+    (bf16_conversions k)
+
+let cuda_integers_round_once (_, src, f, cast) =
+  let bool = Dtype.equal src Bool in
+  let inputs = if bool then [ Bigint.zero; Bigint.one ] else bf16_inputs src in
+  let elements =
+    List.map
+      (fun v -> if bool then `Bool (Bigint.sign v <> 0) else `Int v)
+      inputs
+  in
+  let want = List.map (fun v -> `Float (exact_bf16 (cast v))) inputs in
+  let k = converting src Bfloat16 (List.length inputs) f in
+  equal (list Dtypes.value) want (written_by (through_cuda "sm_89" k) elements)
+
+let bfloat16_on_cuda =
+  group "bfloat16 on CUDA"
+    [
+      cases "below sm_90 an integer within 2^24 converts through a float32"
+        ~id:(fun (arch, (name, _, _, _)) -> arch ^ " " ^ name)
+        (List.concat_map
+           (fun arch -> List.map (fun s -> (arch, s)) exact_sources)
+           [ "sm_80"; "sm_89" ])
+        (fun (arch, (_, src, f, _)) ->
+          equal (list Dtypes.dtype) [ Dtype.Float32 ]
+            (bf16_operands arch src f));
+      cases "below sm_90 a wider integer converts directly"
+        ~id:(fun (name, _, _) -> name)
+        wide_sources
+        (fun (_, src, f) ->
+          equal (list Dtypes.dtype) [ src ] (bf16_operands "sm_89" src f));
+      cases "on sm_90 an integer converts directly"
+        ~id:(fun (name, _, _, _) -> name)
+        exact_sources
+        (fun (_, src, f, _) ->
+          equal (list Dtypes.dtype) [ src ] (bf16_operands "sm_90" src f));
+      cases "an integer within 2^24 rounds once on sm_89"
+        ~id:(fun (name, _, _, _) -> name)
+        exact_sources cuda_integers_round_once;
+    ]
+
 (* Execution *)
 
 (* The host's renderer, which [in_pieces] replaces for its test. *)
@@ -2376,6 +2463,7 @@ let () =
          parameter_types;
          bf16_truncation;
          bfloat16_on_amd;
+         bfloat16_on_cuda;
          execution;
          division_group;
          metal_cores;

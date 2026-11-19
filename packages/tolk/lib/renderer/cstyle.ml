@@ -2071,10 +2071,6 @@ let bit_loads dts =
    2^53, as a 32-bit integer always is, the double is exact, so even that
    lowering rounds once. *)
 let clang_extra_matcher =
-  let exact_in_double x =
-    let limit = Bigint.shift_left Bigint.one 53 in
-    Dtype.Value.(`Int (Bigint.neg limit) <= vmin x && vmax x <= `Int limit)
-  in
   Pattern_matcher.concat
     [
       pm_narrow_uint;
@@ -2093,7 +2089,7 @@ let clang_extra_matcher =
                Dtype.Float32)
             (fun m ->
               let x = m "x" in
-              if exact_in_double x then None
+              if Decomp_dtype.exact x Dtype.Float64 then None
               else
                 Some
                   (cast (Decomp_dtype.narrow x Dtype.Float64) Dtype.Float32));
@@ -2588,24 +2584,46 @@ let cuda_async_lang =
       Pattern_matcher.append async_rewrite cuda_lang.string_rewrite;
   }
 
-let cuda_extra_matcher =
+(* Below sm_90, cuda_bf16.hpp's __int2bfloat16_rn, which nv_bfloat16's
+   constructor from an int calls, as it does for a bool or a char, converts
+   three times to float, rounded up, down and towards zero, then compares and
+   selects, to round once; from sm_90 it is one cvt.rn.bf16.s32. An integer
+   within 2^24 is exact in float32, so one conversion to float32, which
+   bfloat16 then rounds, rounds the same. A wider integer stays CUDA's: its
+   conversions round to odd, in fewer operations than a rounding to odd after
+   one conversion takes ({!Decomp_dtype.narrow}). *)
+let pm_int_to_bf16 =
+  Pattern_matcher.v (fun () -> [
+      rule
+        (Upat.op ~dtype:[ Dtype.Bfloat16 ]
+           ~src:[ Upat.var ~dtype:(Dtype.Bool :: Dtype.ints) "x" ]
+           ~name:"y" Op.Cast)
+        (fun m ->
+          let x = m "x" in
+          if is Op.Const x || not (Decomp_dtype.exact x Dtype.Float32) then
+            None
+          else Some (cast (cast x Dtype.Float32) (dtype (m "y"))));
+    ])
+
+let cuda_extra_matcher ver =
   Pattern_matcher.concat
-    [
-      pm_narrow_uint;
-      pm_wrap_signed;
-      pm_defined_div_shift;
-      create_non_native_float_pats ~casting:false Dtype.fp8s;
-      Pattern_matcher.v (fun () -> [
-          rule
-            (Upat.op ~dtype:Dtype.fp8s
-               ~src:[ Upat.var ~dtype:Dtype.fp8s "x" ]
-               ~name:"y" Op.Cast)
-            (fun m ->
-              let x = m "x" and y = m "y" in
-              if Dtype.equal (dtype x) (dtype y) then None
-              else Some (cast (cast x Dtype.Float32) (dtype y)));
-        ]);
-    ]
+    ([
+       pm_narrow_uint;
+       pm_wrap_signed;
+       pm_defined_div_shift;
+       create_non_native_float_pats ~casting:false Dtype.fp8s;
+       Pattern_matcher.v (fun () -> [
+           rule
+             (Upat.op ~dtype:Dtype.fp8s
+                ~src:[ Upat.var ~dtype:Dtype.fp8s "x" ]
+                ~name:"y" Op.Cast)
+             (fun m ->
+               let x = m "x" and y = m "y" in
+               if Dtype.equal (dtype x) (dtype y) then None
+               else Some (cast (cast x Dtype.Float32) (dtype y)));
+         ]);
+     ]
+    @ if ver < 90 then [ pm_int_to_bf16 ] else [])
 
 let cuda_vector_prefix l (dt, count) =
   let vec = render_dtype l dt ~sz:count ~addrspace:(Some Dtype.Reg)
@@ -2782,7 +2800,7 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~local_threads_max:1024 ~shared_max:49152
     ~async_copy ~tensor_cores
-    ~units ~in_flight ~extra_matcher:cuda_extra_matcher
+    ~units ~in_flight ~extra_matcher:(cuda_extra_matcher ver)
     ~code_for_op:cuda_lang.code_for_op ~native ~fma ~render ~compiler target
 
 (* A cubin on every device: the disk cache keeps the GPU's code, which the

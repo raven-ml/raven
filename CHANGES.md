@@ -1580,6 +1580,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Compiled Q8_0 products of `bfloat16` rows (`Nx_quant.apply`) run faster on
+  CUDA from sm_80 to sm_89: a cast of an integer within `2^24` to `bfloat16`
+  converts once, through `float32`, where CUDA's took three and a select (D499).
 - A beam width (`BEAM`, `JITBEAM`, `Rune.jit ~beam`) searches the members
   of a launch too (`Realize.compile_linear`). They kept the hand-coded
   optimisations, so a concatenation's pieces and a step's one-element

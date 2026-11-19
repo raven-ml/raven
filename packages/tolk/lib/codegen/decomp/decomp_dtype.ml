@@ -431,6 +431,15 @@ let rne v s =
    6.3.1.5p1 promise: its exact conversion back says which. An integer that
    lands on the power of two past its type's range cannot be cast back, and
    rounded up. *)
+(* [x]'s bounds lie within 2^p, [p] being [to_]'s precision: every value is
+   exact in [to_]. A bool's bounds are 0 and 1. *)
+let exact x to_ =
+  let src = dtype x in
+  let limit = Bigint.shift_left Bigint.one (1 + snd (Dtype.finfo to_)) in
+  Dtype.equal src Dtype.Bool
+  || Dtype.is_int src
+     && Dtype.Value.(`Int (Bigint.neg limit) <= vmin x && vmax x <= `Int limit)
+
 let narrow x to_ =
   let src = dtype x in
   let more_precise =
@@ -441,12 +450,7 @@ let narrow x to_ =
     | _ -> false
   in
   let precision () = 1 + snd (Dtype.finfo to_) in
-  let exact () =
-    let limit = Bigint.shift_left Bigint.one (precision ()) in
-    Dtype.is_int src
-    && Dtype.Value.(`Int (Bigint.neg limit) <= vmin x && vmax x <= `Int limit)
-  in
-  if (not more_precise) || exact () then cast x to_
+  if (not more_precise) || exact x to_ then cast x to_
   else
     let word = f2f_dt to_ in
     let y = cast x to_ in
