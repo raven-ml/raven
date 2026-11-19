@@ -48,7 +48,7 @@ Breaking one causes real damage.
 | `packages/lz` | compression between bigarrays: deflate, zlib, gzip, Zstandard, LZ4, Snappy and CRC-32, in raven's own C kernels; `lz.bytesrw` filters |
 | `packages/talon`, `hugin`, `brot`, `quill`, `munin` | dataframes, plotting, tokenizers, notebooks, run monitoring |
 | `packages/ppx_ptree` | derives a structure's `walk` from its type, for users; no raven library depends on it |
-| `apps/` | programs that use raven for real work, through public interfaces only: gpt-oss. Their rules are `apps/README.md`'s |
+| `apps/` | programs that use raven for real work: gpt-oss, tessera |
 | `dev/` | libraries whose design is still converging: omr, whisper. Their rules are `dev/README.md`'s |
 | `contrib/` | fehu, sowilo, ymir, jord: own `dune-project`, own `CHANGES.md`, public core libraries, and OCaml libraries only as `contrib/README.md` allows |
 
