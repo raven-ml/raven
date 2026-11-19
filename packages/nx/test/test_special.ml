@@ -252,9 +252,9 @@ let ranks (type s) (x : s v) =
 
 (* [hold dt ~bound ?scale f args n] holds [f] at [args], [n] floats of the
    narrow dtype [dt] each: within one ulp of the reference where the bound is
-   in ulps, within the float32 bound plus half an ulp of [dt] where it is
-   absolute, a zero with the reference's sign, and a non-finite value
-   exactly. *)
+   in ulps, within the float32 bound plus half an ulp of [dt] at the result
+   of the reference rounded to float32 where it is absolute, a zero with the
+   reference's sign, and a non-finite value exactly. *)
 let hold (type s) (dt : (float, s) Nx.dtype) p emin ~bound ?scale { f }
     (args : s v array) n =
   let got = f args in
@@ -300,15 +300,17 @@ let hold (type s) (dt : (float, s) Nx.dtype) p emin ~bound ?scale { f }
           (fun d c -> Int.min d (abs (got_ranks.(i) - c.(i))))
           max_int candidates
     in
-    let h = 0.5 *. ulp ~p ~emin v in
+    (* An absolute bound holds at float32, from the value rounded there. *)
+    let r = Int32.float_of_bits (Int32.bits_of_float v) in
+    let h = 0.5 *. ulp ~p ~emin g in
     let absolute =
       match bound (at i) with
       | Ulps _ | Log_ulps _ | Inverse _ -> false
       | Near_zeros (_, a) ->
-          Float.abs v < 1.
-          && Float.abs (g -. v) <= (Float.of_int a *. 0x1p-23) +. h
+          Float.abs r < 1.
+          && Float.abs (g -. r) <= (Float.of_int a *. 0x1p-23) +. h
       | Scaled k ->
-          Float.abs (g -. v) <= (Float.of_int k *. 0x1p-23 *. scales.(i)) +. h
+          Float.abs (g -. r) <= (Float.of_int k *. 0x1p-23 *. scales.(i)) +. h
     in
     let ok =
       if not (Float.is_finite v) then
