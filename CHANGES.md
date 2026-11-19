@@ -3470,6 +3470,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.Archive.import ?unread f a` runs an importer `f` and raises if it
+  left an entry of `a` unread, naming it, so a file with an extra or misnamed
+  layer is refused. `unread` names the entries skipped on purpose.
 - `Nx_io.Pytorch.find` reads a checkpoint's value by a path of dict keys, as
   `find [ "args"; "dim" ] ckpt`, through the `Shared` and `Ref` a file that
   holds a dict twice loads as, which a hand walk of `Dict` lists missed.

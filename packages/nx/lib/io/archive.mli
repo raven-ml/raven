@@ -32,5 +32,6 @@ val float :
   'd t ->
   (float, 's, 'd) Nx.t
 
+val import : ?unread:(string -> bool) -> ('d t -> 'a) -> 'd t -> 'a
 val of_value : ?prefix:string -> ('s, 'd) Nx.Ptree.t -> 's -> 'd t
 val to_value : ?prefix:string -> ('s, 'd) Nx.Ptree.t -> like:'s -> 'e t -> 's

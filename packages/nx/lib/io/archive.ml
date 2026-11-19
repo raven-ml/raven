@@ -4,43 +4,69 @@
   ---------------------------------------------------------------------------*)
 
 module Names = Map.Make (String)
+module Read = Set.Make (String)
 module D = Nx_array.Dtype
 
-type 'd t = 'd Nx.packed Names.t
+(* An archive's entries, and a tracker for each [import] whose [f] was given
+   the archive, the innermost first. A tracker holds the names read so far.
+   It is updated by compare-and-set, so reads from several domains are all
+   noted without a lock. *)
+type 'd t = { entries : 'd Nx.packed Names.t; trackers : Read.t Atomic.t list }
+
+let untracked entries = { entries; trackers = [] }
 
 (* Formats build an archive from names they keep distinct and non-empty, and
    write one's bindings. *)
 
-let empty = Names.empty
-let add = Names.add
-let bindings = Names.bindings
+let empty = { entries = Names.empty; trackers = [] }
+let add name x t = { t with entries = Names.add name x t.entries }
+let bindings t = Names.bindings t.entries
+
+(* [note name t] notes [name] as read in each of [t]'s trackers. *)
+let note name t =
+  let rec into tracker =
+    let read = Atomic.get tracker in
+    if
+      not
+        (Read.mem name read
+        || Atomic.compare_and_set tracker read (Read.add name read))
+    then into tracker
+  in
+  List.iter into t.trackers
 
 (* Constructors *)
 
 let of_list entries =
-  List.fold_left
-    (fun t (name, x) ->
-      if name = "" then invalid_arg "Nx_io.Archive.of_list: an empty name";
-      if Names.mem name t then
-        Fail.invalid_argf "Nx_io.Archive.of_list: %S is named twice" name;
-      Names.add name x t)
-    Names.empty entries
+  untracked
+    (List.fold_left
+       (fun t (name, x) ->
+         if name = "" then invalid_arg "Nx_io.Archive.of_list: an empty name";
+         if Names.mem name t then
+           Fail.invalid_argf "Nx_io.Archive.of_list: %S is named twice" name;
+         Names.add name x t)
+       Names.empty entries)
 
 let union ts =
   let shared name _ _ =
     Fail.invalid_argf "Nx_io.Archive.union: %S is in two archives" name
   in
-  List.fold_left (Names.union shared) Names.empty ts
+  untracked
+    (List.fold_left
+       (fun acc t -> Names.union shared acc t.entries)
+       Names.empty ts)
 
 (* Queries *)
 
-let names t = List.map fst (Names.bindings t)
-let find = Names.find_opt
+let names t = List.map fst (Names.bindings t.entries)
+
+let find name t =
+  note name t;
+  Names.find_opt name t.entries
 
 (* Typed entries *)
 
 let entry ~fn name t =
-  match Names.find_opt name t with
+  match find name t with
   | Some x -> x
   | None -> Fail.failf "Nx_io.Archive.%s: %s: no entry in the archive" fn name
 
@@ -88,6 +114,22 @@ let float (type s d) ~shape (dt : (float, s) D.t) name (t : d t) :
         fn name
         (D.name (Nx.dtype x))
 
+(* Imports *)
+
+let import ?(unread = fun _ -> false) f t =
+  let tracker = Atomic.make Read.empty in
+  let x = f { t with trackers = tracker :: t.trackers } in
+  let read = Atomic.get tracker in
+  let missed name _ = not (Read.mem name read || unread name) in
+  let left = Names.filter missed t.entries in
+  match Names.min_binding_opt left with
+  | None -> x
+  | Some (first, _) ->
+      Fail.failf
+        "Nx_io.Archive.import: %s: an entry in the archive, never read (1 of \
+         %d)"
+        first (Names.cardinal left)
+
 (* Values *)
 
 (* [full prefix path] is the name of the array at [path] under [prefix]. *)
@@ -113,9 +155,10 @@ let namer ~fn prefix =
 
 let of_value ?(prefix = "") s x =
   let name = namer ~fn:"of_value" prefix in
-  Nx.Ptree.fold s
-    (fun path a t -> Names.add (name path) (Nx.P a) t)
-    x Names.empty
+  untracked
+    (Nx.Ptree.fold s
+       (fun path a t -> Names.add (name path) (Nx.P a) t)
+       x Names.empty)
 
 (* [owns prefix name] is [true] iff [name] is [prefix] or lies below it. The
    empty prefix holds every name. *)
@@ -130,7 +173,7 @@ let to_value ?(prefix = "") s ~like t =
   let check path a () =
     let name = name path in
     Hashtbl.replace named name ();
-    (match Names.find_opt name t with
+    (match find name t with
     | None ->
         Fail.failf
           "Nx_io.Archive.%s: %s: no entry in the archive, an array in the value"
@@ -155,10 +198,10 @@ let to_value ?(prefix = "") s ~like t =
         Fail.failf
           "Nx_io.Archive.%s: %s: an entry in the archive, no array in the value"
           fn entry)
-    t;
+    t.entries;
   (* The checks above make the dtype there. *)
   let read path a =
-    let x = Nx.unpack (Nx.dtype a) (Names.find (full prefix path) t) in
+    let x = Nx.unpack (Nx.dtype a) (Names.find (full prefix path) t.entries) in
     Nx.place (Nx.placement a) x
   in
   Nx.Ptree.map s read like

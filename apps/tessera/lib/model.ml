@@ -670,58 +670,53 @@ let masks ~dropout ~keys m b =
 
 module Pt = Nx_io.Pytorch
 
-(* A checkpoint's tensors, and the names read so far: nx.io's archives report
-   no unread name (a gap of nx.io's), so the reader counts by hand. *)
-type reader = {
-  file : string;
-  archive : Nx.host Nx_io.Archive.t;
-  used : (string, unit) Hashtbl.t;
-}
-
 let fail file fmt =
   Printf.ksprintf (fun m -> failwith ("Tessera.Model: " ^ file ^ ": " ^ m)) fmt
 
-let get r shape name =
-  Hashtbl.replace r.used name ();
-  try Nx_io.Archive.float ~shape f32 name r.archive
-  with Failure m -> fail r.file "%s" m
+(* [tensors file state f] is [f] of [state]'s tensors. It refuses a checkpoint
+   holding a tensor [f] does not read, and its failures name [file]. *)
+let tensors file state f =
+  let a = Pt.tensors state in
+  try Nx_io.Archive.import f a with Failure m -> fail file "%s" m
+
+let get a shape name = Nx_io.Archive.float ~shape f32 name a
 
 (* PyTorch stores a linear layer's weight as [[outputs; inputs]],
    [Kaun.Linear]'s layout, in C order, as [init]'s weights lie. *)
-let linear_of r ?(bias = true) name ~inputs ~outputs =
-  let w = get r [| outputs; inputs |] (name ^ ".weight") in
-  let b = if bias then Some (get r [| outputs |] (name ^ ".bias")) else None in
+let linear_of a ?(bias = true) name ~inputs ~outputs =
+  let w = get a [| outputs; inputs |] (name ^ ".weight") in
+  let b = if bias then Some (get a [| outputs |] (name ^ ".bias")) else None in
   { Kaun.Linear.w; b }
 
-let layer_norm_of r name d =
+let layer_norm_of a name d =
   {
-    Kaun.Layer_norm.gamma = get r [| d |] (name ^ ".weight");
-    beta = Some (get r [| d |] (name ^ ".bias"));
+    Kaun.Layer_norm.gamma = get a [| d |] (name ^ ".weight");
+    beta = Some (get a [| d |] (name ^ ".bias"));
   }
 
 (* [nn.TransformerEncoderLayer]: q, k and v packed in [in_proj]. *)
-let packed_layer r name ~d ~ffn =
-  let w = get r [| 3 * d; d |] (name ^ ".self_attn.in_proj_weight") in
-  let b = get r [| 3 * d |] (name ^ ".self_attn.in_proj_bias") in
+let packed_layer a name ~d ~ffn =
+  let w = get a [| 3 * d; d |] (name ^ ".self_attn.in_proj_weight") in
+  let b = get a [| 3 * d |] (name ^ ".self_attn.in_proj_bias") in
   let part i =
     {
       Kaun.Linear.w = Nx.copy (Nx.slice [ Nx.R (i * d, (i + 1) * d); Nx.A ] w);
       b = Some (Nx.copy (Nx.slice [ Nx.R (i * d, (i + 1) * d) ] b));
     }
   in
-  let out = linear_of r (name ^ ".self_attn.out_proj") ~inputs:d ~outputs:d in
+  let out = linear_of a (name ^ ".self_attn.out_proj") ~inputs:d ~outputs:d in
   {
     attn = { Kaun.Attention.q = part 0; k = part 1; v = part 2; out };
     qk = None;
-    norm1 = layer_norm_of r (name ^ ".norm1") d;
-    ffn1 = linear_of r (name ^ ".linear1") ~inputs:d ~outputs:ffn;
-    ffn2 = linear_of r (name ^ ".linear2") ~inputs:ffn ~outputs:d;
-    norm2 = layer_norm_of r (name ^ ".norm2") d;
+    norm1 = layer_norm_of a (name ^ ".norm1") d;
+    ffn1 = linear_of a (name ^ ".linear1") ~inputs:d ~outputs:ffn;
+    ffn2 = linear_of a (name ^ ".linear2") ~inputs:ffn ~outputs:d;
+    norm2 = layer_norm_of a (name ^ ".norm2") d;
   }
 
 (* [QKNormEncoderLayer]: q, k and v apart, RMS scales per head. *)
-let qk_layer r name ~d ~heads ~ffn =
-  let lin n = linear_of r (name ^ "." ^ n) ~inputs:d ~outputs:d in
+let qk_layer a name ~d ~heads ~ffn =
+  let lin n = linear_of a (name ^ "." ^ n) ~inputs:d ~outputs:d in
   let attn =
     {
       Kaun.Attention.q = lin "q_proj";
@@ -730,31 +725,31 @@ let qk_layer r name ~d ~heads ~ffn =
       out = lin "out_proj";
     }
   in
-  let scale n = get r [| d / heads |] (name ^ "." ^ n ^ ".weight") in
+  let scale n = get a [| d / heads |] (name ^ "." ^ n ^ ".weight") in
   {
     attn;
     qk = Some (scale "q_norm", scale "k_norm");
-    norm1 = layer_norm_of r (name ^ ".norm1") d;
-    ffn1 = linear_of r (name ^ ".linear1") ~inputs:d ~outputs:ffn;
-    ffn2 = linear_of r (name ^ ".linear2") ~inputs:ffn ~outputs:d;
-    norm2 = layer_norm_of r (name ^ ".norm2") d;
+    norm1 = layer_norm_of a (name ^ ".norm1") d;
+    ffn1 = linear_of a (name ^ ".linear1") ~inputs:d ~outputs:ffn;
+    ffn2 = linear_of a (name ^ ".linear2") ~inputs:ffn ~outputs:d;
+    norm2 = layer_norm_of a (name ^ ".norm2") d;
   }
 
-let backbone_of r name ~bands ~d ~layers layer =
+let backbone_of a name ~bands ~d ~layers layer =
   let embed i inputs =
-    linear_of r (Printf.sprintf "%s.embedding.%d" name i) ~inputs ~outputs:d
+    linear_of a (Printf.sprintf "%s.embedding.%d" name i) ~inputs ~outputs:d
   in
   {
     embed = (embed 0 bands, embed 2 d);
-    layers = List.init layers (layer r);
-    pool = linear_of r (name ^ ".attn_pool.query") ~inputs:d ~outputs:1;
+    layers = List.init layers (layer a);
+    pool = linear_of a (name ^ ".attn_pool.query") ~inputs:d ~outputs:1;
   }
 
-let reducer_of_file r ~d ~dims =
+let reducer_of_file a ~d ~dims =
   {
-    up = linear_of r "dim_reducer.0" ~inputs:(2 * d) ~outputs:(4 * d);
-    norm = layer_norm_of r "dim_reducer.1" (4 * d);
-    down = linear_of r "dim_reducer.4" ~inputs:(4 * d) ~outputs:dims;
+    up = linear_of a "dim_reducer.0" ~inputs:(2 * d) ~outputs:(4 * d);
+    norm = layer_norm_of a "dim_reducer.1" (4 * d);
+    down = linear_of a "dim_reducer.4" ~inputs:(4 * d) ~outputs:dims;
   }
 
 let find file path v = try Pt.find path v with Failure m -> fail file "%s" m
@@ -792,42 +787,35 @@ let prefixes_arg file v =
   | Some (Pt.List l | Pt.Tuple l) -> ints l
   | Some _ -> fail file "matryoshka_dims: a string expected"
 
-let reader file state =
-  { file; archive = Pt.tensors state; used = Hashtbl.create 256 }
-
-let check_used r =
-  List.iter
-    (fun n -> if not (Hashtbl.mem r.used n) then fail r.file "%s: unused" n)
-    (Nx_io.Archive.names r.archive)
-
 (* tessera_infer_v2 student/model.py, [load_model]: [nn.TransformerEncoder]'s
    layers, or [QKNormEncoderLayer]s in a [ModuleList] with [enable_qk_norm]. *)
 let student file state v =
-  let r = reader file state in
   let arg name default = int_arg file v "args" name default in
   let d = 4 * arg "latent_dim" 64 and heads = arg "nhead" 4 in
   let layers = arg "num_layers" 4 and ffn = arg "dim_feedforward" 1024 in
   let dims = arg "repr_dim" 128 in
   let qk = bool_arg file v "args" "enable_qk_norm" false in
-  let backbone name ~bands =
-    let layer r i =
+  let backbone a name ~bands =
+    let layer a i =
       if qk then
-        qk_layer r
+        qk_layer a
           (Printf.sprintf "%s.transformer_encoder.%d" name i)
           ~d ~heads ~ffn
       else
-        packed_layer r
+        packed_layer a
           (Printf.sprintf "%s.transformer_encoder.layers.%d" name i)
           ~d ~ffn
     in
-    backbone_of r name ~bands ~d ~layers layer
+    backbone_of a name ~bands ~d ~layers layer
   in
-  let s2 = backbone "s2_backbone" ~bands:Pixels.s2_bands in
-  let s1 = backbone "s1_backbone" ~bands:Pixels.s1_bands in
-  let reducer = reducer_of_file r ~d ~dims in
-  check_used r;
+  let net a =
+    let s2 = backbone a "s2_backbone" ~bands:Pixels.s2_bands in
+    let s1 = backbone a "s1_backbone" ~bands:Pixels.s1_bands in
+    Post_ln { s2; s1; reducer = reducer_of_file a ~d ~dims }
+  in
+  let net = tensors file state net in
   {
-    net = Post_ln { s2; s1; reducer };
+    net;
     heads;
     norm = student_stats Nx.Host.on;
     prefixes = prefixes_arg file v;
@@ -839,7 +827,6 @@ let fusion_layers = 2
 let fusion_heads = 4
 
 let teacher_of file state v =
-  let r = reader file state in
   let arg name default = int_arg file v "arch" name default in
   let d = 4 * arg "latent_dim" 1024 and heads = arg "nhead" 4 in
   let layers = arg "num_layers" 4 and ffn = arg "dim_feedforward" 16384 in
@@ -847,27 +834,29 @@ let teacher_of file state v =
   if heads <> fusion_heads then fail file "arch.nhead: %d, 4 expected" heads;
   if not (bool_arg file v "arch" "final_layernorm" true) then
     fail file "arch.final_layernorm: false is not supported";
-  let backbone name ~bands =
-    let layer r i =
-      qk_layer r
+  let backbone a name ~bands =
+    let layer a i =
+      qk_layer a
         (Printf.sprintf "%s.transformer_encoder.layers.%d" name i)
         ~d ~heads ~ffn
     in
-    backbone_of r name ~bands ~d ~layers layer
+    backbone_of a name ~bands ~d ~layers layer
   in
-  let s2 = backbone "s2_backbone" ~bands:Pixels.s2_bands in
-  let s1 = backbone "s1_backbone" ~bands:Pixels.s1_bands in
-  let modality = get r [| 2; d |] "fusion_modality_embed" in
-  let fusion =
-    List.init fusion_layers (fun i ->
-        qk_layer r
-          (Printf.sprintf "fusion_transformer.layers.%d" i)
-          ~d ~heads:fusion_heads ~ffn:(2 * d))
+  let net a =
+    let s2 = backbone a "s2_backbone" ~bands:Pixels.s2_bands in
+    let s1 = backbone a "s1_backbone" ~bands:Pixels.s1_bands in
+    let modality = get a [| 2; d |] "fusion_modality_embed" in
+    let fusion =
+      List.init fusion_layers (fun i ->
+          qk_layer a
+            (Printf.sprintf "fusion_transformer.layers.%d" i)
+            ~d ~heads:fusion_heads ~ffn:(2 * d))
+    in
+    Pre_ln { s2; s1; modality; fusion; reducer = reducer_of_file a ~d ~dims }
   in
-  let reducer = reducer_of_file r ~d ~dims in
-  check_used r;
+  let net = tensors file state net in
   {
-    net = Pre_ln { s2; s1; modality; fusion; reducer };
+    net;
     heads;
     norm = teacher_stats Nx.Host.on;
     prefixes = [];

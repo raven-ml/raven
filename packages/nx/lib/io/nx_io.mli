@@ -130,6 +130,9 @@
         (Nx_io.Archive.float ~shape:[| outputs; inputs |] Nx.float32 name a)
     ]}
 
+    An importer run by {!Archive.import} refuses a file that holds an entry it
+    did not read.
+
     Asking for an entry reads none of its bytes, except {!Archive.float} when it
     converts. Only {!Archive.float} converts an entry's dtype. A block-quantised
     or sub-byte entry is read as [uint8] with {!Archive.tensor}. An 8-bit float
@@ -182,6 +185,27 @@ module Archive : sig
       Raises [Invalid_argument] if [dt] is not one of the four. Raises [Failure]
       naming the entry if [a] has no entry [name], if its shape is not [shape],
       or if its dtype is not one of the four. *)
+
+  val import : ?unread:(string -> bool) -> ('d t -> 'a) -> 'd t -> 'a
+  (** [import ~unread f a] is [f a'], where [a'] holds [a]'s entries and
+      notes each name read from it by {!find}, {!tensor}, {!float}, and
+      {!to_value} for the entries it reads. {!names} reads none. After [f]
+      returns, [import] raises if an entry of [a] was not read and [unread]
+      (default: none) does not accept its name. So a file with an extra or
+      misnamed layer is refused. An entry left out on purpose is named by
+      [unread], or read and dropped.
+
+      This call notes no read of [a] itself, and each call notes afresh.
+      Reads of [a'] made from several domains are all noted. Within [f], an
+      [import] of [a'] notes its reads in both calls. An archive made from
+      [a'] by {!union} is a new archive, whose reads are not noted. Reads
+      after [f] returns are not checked.
+
+      Raises [Failure] naming the first entry in name order that was neither
+      read nor accepted, and how many there are, as in
+      ["Nx_io.Archive.import: dec.9.fc4.w: an entry in the archive, never
+       read (1 of 3)"]. What [f] raises passes on as raised, and nothing is
+      checked. *)
 
   val of_value : ?prefix:string -> ('s, 'd) Nx.Ptree.t -> 's -> 'd t
   (** [of_value ~prefix s x] is the archive with one entry for each array [s]

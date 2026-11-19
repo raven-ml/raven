@@ -548,4 +548,197 @@ let entries =
           equal (array float_exact) [| 3. |] (Nx.to_array b'));
     ]
 
-let () = exit (run "nx.io archives" [ values; ownership; entries ])
+(* Imports *)
+
+module Read = Set.Make (String)
+
+(* An archive of four entries, each a float32 array of one element. *)
+let four_names = [ "a"; "b"; "c"; "d" ]
+
+let four =
+  Archive.of_list
+    (List.map (fun n -> (n, Nx.P (vec Nx.float32 [| 1. |]))) four_names)
+
+let read n a = ignore (Archive.tensor ~shape:[| 1 |] Nx.float32 n a)
+let reads ns a = List.iter (fun n -> read n a) ns
+
+let never_read first count =
+  Printf.sprintf
+    "Nx_io.Archive.import: %s: an entry in the archive, never read (1 of %d)"
+    first count
+
+(* [verdict read] is what an import of [four] whose [f] read [read] gives. *)
+let verdict read =
+  match List.filter (fun n -> not (Read.mem n read)) four_names with
+  | [] -> Ok ()
+  | first :: _ as left -> Error (never_read first (List.length left))
+
+let outcome f a =
+  match Archive.import f a with
+  | () -> Ok ()
+  | exception Failure m -> Error m
+
+let names_gen = Gen.subsequence ~pp:Format.pp_print_string four_names
+
+(* An import held inside its [f], so that calls on its archive can come from
+   several domains before [f] returns. [finish] lets [f] return and gives the
+   import's outcome, once, under the session's lock. *)
+type _ Effect.t += Hold : Nx.host Archive.t -> unit Effect.t
+
+type state =
+  | Held of Nx.host Archive.t * (unit, state) Effect.Deep.continuation
+  | Ended of (unit, string) result
+
+type session = {
+  tracked : Nx.host Archive.t;
+  lock : Mutex.t;
+  mutable state : state;
+}
+
+let start a =
+  let handler =
+    {
+      Effect.Deep.retc = (fun () -> Ended (Ok ()));
+      exnc = (function Failure m -> Ended (Error m) | e -> raise e);
+      effc =
+        (fun (type b) (e : b Effect.t) ->
+          match e with
+          | Hold a' ->
+              Some
+                (fun (k : (b, state) Effect.Deep.continuation) -> Held (a', k))
+          | _ -> None);
+    }
+  in
+  let f a' = Effect.perform (Hold a') in
+  match Effect.Deep.match_with (Archive.import f) a handler with
+  | Held (tracked, _) as state -> { tracked; lock = Mutex.create (); state }
+  | Ended _ -> assert false
+
+let finish s =
+  Mutex.protect s.lock (fun () ->
+      (match s.state with
+      | Held (_, k) -> s.state <- Effect.Deep.continue k ()
+      | Ended _ -> ());
+      match s.state with Ended o -> o | Held _ -> assert false)
+
+(* The reference: the names read, and the outcome its first [finish] gave. *)
+type model = {
+  mutable read : Read.t;
+  mutable ended : (unit, string) result option;
+}
+
+let session = abstract "s"
+let name = Gen.of_list ~pp:Format.pp_print_string four_names
+
+let noted n m = m.read <- Read.add n m.read
+
+let ended m =
+  (match m.ended with None -> m.ended <- Some (verdict m.read) | Some _ -> ());
+  Option.get m.ended
+
+let session_commands =
+  [
+    command "import"
+      (Gen.unit @-> makes session)
+      (fun () -> { read = Read.empty; ended = None })
+      (fun () -> start four);
+    command "find"
+      (name @-> session ^-> returns bool)
+      (fun n m ->
+        noted n m;
+        true)
+      (fun n s -> Option.is_some (Archive.find n s.tracked));
+    command "tensor"
+      (name @-> session ^-> returns unit)
+      noted
+      (fun n s -> read n s.tracked);
+    command "finish" (session ^-> returns (result unit string)) ended finish;
+  ]
+
+let imports =
+  group "imports"
+    [
+      test "an import that reads every entry is f's result" (fun () ->
+          equal int 7
+            (Archive.import
+               (fun a ->
+                 reads four_names a;
+                 7)
+               four));
+      test
+        "an unread entry is refused, naming the first in name order and the \
+         count" (fun () ->
+          fails_with (never_read "a" 2) (fun () ->
+              Archive.import (reads [ "b"; "d" ]) four));
+      test "unread accepts exactly the names it holds" (fun () ->
+          let ac n = n = "a" || n = "c" in
+          Archive.import ~unread:ac (reads [ "b"; "d" ]) four;
+          fails_with (never_read "c" 1) (fun () ->
+              Archive.import ~unread:(String.equal "a") (reads [ "b"; "d" ])
+                four));
+      cases "find, tensor, float and to_value read an entry" ~id:fst
+        [
+          ("find", fun a -> ignore (Archive.find "a" a));
+          ("tensor", read "a");
+          ( "float",
+            fun a -> ignore (Archive.float ~shape:[| 1 |] Nx.float64 "a" a) );
+          ( "to_value",
+            fun a ->
+              ignore
+                (Archive.to_value ~prefix:"a" P.tensor
+                   ~like:(vec Nx.float32 [| 0. |])
+                   a) );
+        ]
+        (fun (_, r) -> Archive.import ~unread:(fun n -> n <> "a") r four);
+      test "names reads no entry" (fun () ->
+          fails_with (never_read "a" 4) (fun () ->
+              Archive.import (fun a -> ignore (Archive.names a)) four));
+      test "what f raises passes on, and nothing is checked" (fun () ->
+          raises (Failure "f") (fun () ->
+              Archive.import (fun _ -> failwith "f") four);
+          raises Exit (fun () -> Archive.import (fun _ -> raise Exit) four));
+      test "an empty archive gives f's result" (fun () ->
+          equal int 7 (Archive.import (fun _ -> 7) (Archive.of_list [])));
+      test
+        "a union of the archive f gets is a new archive, whose reads are not \
+         noted" (fun () ->
+          fails_with (never_read "a" 4) (fun () ->
+              Archive.import
+                (fun a -> reads four_names (Archive.union [ a ]))
+                four));
+      test "reads after f returns are not checked" (fun () ->
+          let kept = ref None in
+          fails_with (never_read "a" 4) (fun () ->
+              Archive.import (fun a -> kept := Some a) four);
+          reads four_names (Option.get !kept));
+      group "nesting"
+        [
+          test "an inner import's reads are noted by the outer" (fun () ->
+              Archive.import
+                (fun a -> Archive.import (reads four_names) a)
+                four);
+          test "an inner import refuses by its own reads" (fun () ->
+              let inner ?unread a =
+                read "a" a;
+                Archive.import ?unread (reads [ "b"; "c"; "d" ]) a
+              in
+              fails_with (never_read "a" 1) (fun () ->
+                  Archive.import inner four);
+              Archive.import (inner ~unread:(String.equal "a")) four);
+        ];
+      prop "two imports of one archive are independent"
+        (Gen.pair names_gen names_gen) (fun (first, second) ->
+          cover "the first reads an entry the second does not"
+            (List.exists (fun n -> not (List.mem n second)) first);
+          cover "the second reads every entry"
+            (List.length second = List.length four_names);
+          ignore (outcome (reads first) four);
+          equal (result unit string)
+            (verdict (Read.of_list second))
+            (outcome (reads second) four));
+      stateful ~domains:2 ~count:20 ~steps:6
+        "reads from two domains are all noted" session_commands;
+    ]
+
+let () =
+  exit (run "nx.io archives" [ values; ownership; entries; imports ])

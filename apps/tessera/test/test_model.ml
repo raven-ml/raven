@@ -390,8 +390,12 @@ let loading =
             (fun () -> Model.of_pytorch ~name:"student" v));
       test "refuses an unused tensor" (fun () ->
           let f l = ("extra.weight", Nx.zeros Nx.float32 [| 2 |]) :: l in
-          raises_match (Exn.failure ~sub:"extra.weight: unused") (fun () ->
-              Model.of_pytorch ~name:"student" (student ~f ())));
+          raises_match
+            (Exn.failure
+               ~sub:
+                 "student: Nx_io.Archive.import: extra.weight: an entry in \
+                  the archive, never read (1 of 1)")
+            (fun () -> Model.of_pytorch ~name:"student" (student ~f ())));
     ]
 
 let () =
