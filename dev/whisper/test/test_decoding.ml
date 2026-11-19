@@ -901,6 +901,152 @@ let batch_law =
             [| Nx.item [ i ] all.no_speech |])
         prompts)
 
+(* Compression ratio
+
+   upstream/ratio.json holds texts with their length in bytes, the length of
+   zlib.compress's stream of them under the zlib upstream's Python links, and
+   upstream's compression_ratio: decodes of the oracle's utterances, long-form
+   decodes near 2.4, loops near 2.4, the runs of at most 31 bytes that zlib
+   scores above 2.4, Hebrew and Hindi sentences repeated, and texts ending in
+   U+FFFD. *)
+
+let ratios = Json.read "upstream/ratio.json"
+let ratio_texts = Json.list (Json.mem "texts" ratios)
+let lz_length s = String.length (Lz.Zlib.encode_string ~level:6 s)
+
+(* Upstream's threshold, transcribe.py's compression_ratio_threshold. *)
+let threshold = 2.4
+
+let ratio_upstream =
+  cases "compression_ratio is the text's bytes over lz's zlib stream's"
+    ~id:(fun c -> Printf.sprintf "%S" (Json.string (Json.mem "text" c)))
+    ratio_texts
+    (fun c ->
+      let s = Json.string (Json.mem "text" c) in
+      let n = Json.int (Json.mem "n" c) and z = Json.int (Json.mem "zlib" c) in
+      let got = D.compression_ratio s in
+      equal float_exact (Float.of_int n /. Float.of_int (lz_length s)) got;
+      if lz_length s = z then
+        equal ~msg:"upstream's, where the streams' lengths agree" float_exact
+          (Json.float (Json.mem "ratio" c))
+          got)
+
+(* Baseline: each golden's index, kind, length, zlib's and lz's stream lengths,
+   and whether upstream's ratio and ours exceed 2.4. *)
+let ratio_decisions =
+  test "compression_ratio's decisions at 2.4 against upstream's" (fun () ->
+      let mark r = if r > threshold then "F" else "-" in
+      List.iteri
+        (fun i c ->
+          let s = Json.string (Json.mem "text" c) in
+          Printf.printf "%2d %-11s %3d %3d %3d %s %s\n" i
+            (Json.string (Json.mem "kind" c))
+            (String.length s)
+            (Json.int (Json.mem "zlib" c))
+            (lz_length s)
+            (mark (Json.float (Json.mem "ratio" c)))
+            (mark (D.compression_ratio s)))
+        ratio_texts;
+      expect (output ())
+      @@ __POS_OF__
+           {|
+         0 oracle       98  86  86 - -
+         1 oracle       50  54  54 - -
+         2 oracle       34  42  42 - -
+         3 oracle       52  58  58 - -
+         4 near        266 113 113 - -
+         5 near        333 138 139 F -
+         6 loop         65  28  27 - F
+         7 loop         69  28  27 F F
+         8 loop         80  34  33 - F
+         9 loop         82  34  33 F F
+        10 loop         67  29  28 - -
+        11 loop         70  29  28 F F
+        12 loop         49  21  20 - F
+        13 loop         51  21  20 F F
+        14 loop         81  35  34 - -
+        15 loop         85  35  34 F F
+        16 loop         46  20  19 - F
+        17 loop         49  20  19 F F
+        18 short        27  11  22 F -
+        19 short        28  11  22 F -
+        20 short        29  11  23 F -
+        21 short        30  11  23 F -
+        22 short        31  11  23 F -
+        23 short        27  11  22 F -
+        24 short        28  11  22 F -
+        25 short        29  11  23 F -
+        26 short        30  11  23 F -
+        27 short        31  11  23 F -
+        28 short        27  11  22 F -
+        29 short        28  11  22 F -
+        30 short        29  11  23 F -
+        31 short        30  11  23 F -
+        32 short        31  11  23 F -
+        33 short        30  12  26 F -
+        34 short        29  12  26 F -
+        35 short        31  12  27 F -
+        36 short        27  11  22 F -
+        37 short        28  11  22 F -
+        38 short        29  11  23 F -
+        39 short        30  11  23 F -
+        40 short        31  11  23 F -
+        41 short        30  12  26 F -
+        42 empty         0   8   8 - -
+        43 written      69  65  65 - -
+        44 written     139  73  71 - -
+        45 written     209  73  71 F F
+        46 written      51  54  54 - -
+        47 written     103  58  57 - -
+        48 written     155  58  57 F F
+        49 written     113  90  90 - -
+        50 written     227  96  95 - -
+        51 written     341  96  95 F F
+        52 written      91  79  79 - -
+        53 written     183  85  83 - -
+        54 written     275  85  83 F F
+        55 replacement  18  26  26 - -
+        56 replacement   9  14  18 - -
+        |})
+
+let ratio_text_gen =
+  let open Gen in
+  let utf8 =
+    map
+      (fun us ->
+        let b = Buffer.create 16 in
+        List.iter (Buffer.add_utf_8_uchar b) us;
+        Buffer.contents b)
+      (list ~size:(int_range 0 300) uchar)
+  in
+  let run =
+    let* unit = string_of ~size:(int_range 1 2) char in
+    let+ n = int_range 19 33 in
+    String.sub (String.concat "" (List.init n (fun _ -> unit))) 0 n
+  in
+  frequency
+    [
+      (1, constant "");
+      (2, map (String.make 1) char);
+      (4, run);
+      (3, string_of ~size:(int_range 0 4096) char);
+      (3, utf8);
+    ]
+
+let ratio_law =
+  prop "compression_ratio is the length over lz's zlib stream's at level 6"
+    ratio_text_gen (fun s ->
+      cover "empty" (s = "");
+      cover "at most 31 bytes" (String.length s <= 31);
+      cover "past 1 KiB" (String.length s > 1024);
+      equal float_exact
+        (Float.of_int (String.length s) /. Float.of_int (lz_length s))
+        (D.compression_ratio s))
+
+let ratio_empty =
+  test "compression_ratio of the empty text is 0" (fun () ->
+      equal float_exact 0. (D.compression_ratio ""))
+
 (* Compiled *)
 
 let jit_decode =
@@ -965,6 +1111,8 @@ let () =
          group "results" [ results_rank ];
          group "starts" [ starts_layout; starts_refuses ];
          group "batch" [ batch_law ];
+         group "compression ratio"
+           [ ratio_upstream; ratio_decisions; ratio_law; ratio_empty ];
          group "compiled"
            [
              greedy_jit;

@@ -1,0 +1,404 @@
+{
+"zlib": "1.3.2",
+"texts": [
+{
+"kind": "oracle",
+"text": "He began a confused complaint against the wizard, who had vanished behind the curtain on the left.",
+"n": 98,
+"zlib": 86,
+"ratio": 1.1395348837209303
+},
+{
+"kind": "oracle",
+"text": "Kiv not so earnest in mind to these memories child",
+"n": 50,
+"zlib": 54,
+"ratio": 0.9259259259259259
+},
+{
+"kind": "oracle",
+"text": "a golden fortune and a happy life.",
+"n": 34,
+"zlib": 42,
+"ratio": 0.8095238095238095
+},
+{
+"kind": "oracle",
+"text": "Give not so earnest a mind to these memories, child.",
+"n": 52,
+"zlib": 58,
+"ratio": 0.896551724137931
+},
+{
+"kind": "near",
+"text": "If you want to marry me, absolutely, I will not be able to fly the future of the city. If you are a little bit like a little bit, you will not find the future of the city. If you are a little bit like a little bit, you will not be able to fly the future of the city.",
+"n": 266,
+"zlib": 113,
+"ratio": 2.353982300884956
+},
+{
+"kind": "near",
+"text": "I'm so tired of it. I'm tired of it. I'm tired of it. I'm tired of it. I'm tired of it. Finally, I got out of the world. It's much easier. It's a one-year-old, it's a nightmare. It's a... Let's say it's just a nightmare. I'm tired of it. It's just a nightmare. It's just a nightmare. It's just a block of pain. It's just a nightmare.",
+"n": 333,
+"zlib": 138,
+"ratio": 2.4130434782608696
+},
+{
+"kind": "loop",
+"text": "I'm tired of it. I'm tired of it. I'm tired of it. I'm tired of i",
+"n": 65,
+"zlib": 28,
+"ratio": 2.3214285714285716
+},
+{
+"kind": "loop",
+"text": "I'm tired of it. I'm tired of it. I'm tired of it. I'm tired of it. I",
+"n": 69,
+"zlib": 28,
+"ratio": 2.4642857142857144
+},
+{
+"kind": "loop",
+"text": "It's just a nightmare. It's just a nightmare. It's just a nightmare. It's just a",
+"n": 80,
+"zlib": 34,
+"ratio": 2.3529411764705883
+},
+{
+"kind": "loop",
+"text": "It's just a nightmare. It's just a nightmare. It's just a nightmare. It's just a n",
+"n": 82,
+"zlib": 34,
+"ratio": 2.411764705882353
+},
+{
+"kind": "loop",
+"text": "And then he said, And then he said, And then he said, And then he s",
+"n": 67,
+"zlib": 29,
+"ratio": 2.310344827586207
+},
+{
+"kind": "loop",
+"text": "And then he said, And then he said, And then he said, And then he said",
+"n": 70,
+"zlib": 29,
+"ratio": 2.413793103448276
+},
+{
+"kind": "loop",
+"text": "you know, you know, you know, you know, you know,",
+"n": 49,
+"zlib": 21,
+"ratio": 2.3333333333333335
+},
+{
+"kind": "loop",
+"text": "you know, you know, you know, you know, you know, y",
+"n": 51,
+"zlib": 21,
+"ratio": 2.4285714285714284
+},
+{
+"kind": "loop",
+"text": "Thank you for watching. Thank you for watching. Thank you for watching. Thank you",
+"n": 81,
+"zlib": 35,
+"ratio": 2.3142857142857145
+},
+{
+"kind": "loop",
+"text": "Thank you for watching. Thank you for watching. Thank you for watching. Thank you for",
+"n": 85,
+"zlib": 35,
+"ratio": 2.4285714285714284
+},
+{
+"kind": "loop",
+"text": "The, the The, the The, the The, the The, the T",
+"n": 46,
+"zlib": 20,
+"ratio": 2.3
+},
+{
+"kind": "loop",
+"text": "The, the The, the The, the The, the The, the The,",
+"n": 49,
+"zlib": 20,
+"ratio": 2.45
+},
+{
+"kind": "short",
+"text": "!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+"n": 27,
+"zlib": 11,
+"ratio": 2.4545454545454546
+},
+{
+"kind": "short",
+"text": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+"n": 28,
+"zlib": 11,
+"ratio": 2.5454545454545454
+},
+{
+"kind": "short",
+"text": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+"n": 29,
+"zlib": 11,
+"ratio": 2.6363636363636362
+},
+{
+"kind": "short",
+"text": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+"n": 30,
+"zlib": 11,
+"ratio": 2.727272727272727
+},
+{
+"kind": "short",
+"text": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+"n": 31,
+"zlib": 11,
+"ratio": 2.8181818181818183
+},
+{
+"kind": "short",
+"text": "---------------------------",
+"n": 27,
+"zlib": 11,
+"ratio": 2.4545454545454546
+},
+{
+"kind": "short",
+"text": "----------------------------",
+"n": 28,
+"zlib": 11,
+"ratio": 2.5454545454545454
+},
+{
+"kind": "short",
+"text": "-----------------------------",
+"n": 29,
+"zlib": 11,
+"ratio": 2.6363636363636362
+},
+{
+"kind": "short",
+"text": "------------------------------",
+"n": 30,
+"zlib": 11,
+"ratio": 2.727272727272727
+},
+{
+"kind": "short",
+"text": "-------------------------------",
+"n": 31,
+"zlib": 11,
+"ratio": 2.8181818181818183
+},
+{
+"kind": "short",
+"text": "...........................",
+"n": 27,
+"zlib": 11,
+"ratio": 2.4545454545454546
+},
+{
+"kind": "short",
+"text": "............................",
+"n": 28,
+"zlib": 11,
+"ratio": 2.5454545454545454
+},
+{
+"kind": "short",
+"text": ".............................",
+"n": 29,
+"zlib": 11,
+"ratio": 2.6363636363636362
+},
+{
+"kind": "short",
+"text": "..............................",
+"n": 30,
+"zlib": 11,
+"ratio": 2.727272727272727
+},
+{
+"kind": "short",
+"text": "...............................",
+"n": 31,
+"zlib": 11,
+"ratio": 2.8181818181818183
+},
+{
+"kind": "short",
+"text": "HaHaHaHaHaHaHaHaHaHaHaHaHaHaHa",
+"n": 30,
+"zlib": 12,
+"ratio": 2.5
+},
+{
+"kind": "short",
+"text": "I I I I I I I I I I I I I I I",
+"n": 29,
+"zlib": 12,
+"ratio": 2.4166666666666665
+},
+{
+"kind": "short",
+"text": "I I I I I I I I I I I I I I I I",
+"n": 31,
+"zlib": 12,
+"ratio": 2.5833333333333335
+},
+{
+"kind": "short",
+"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"n": 27,
+"zlib": 11,
+"ratio": 2.4545454545454546
+},
+{
+"kind": "short",
+"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"n": 28,
+"zlib": 11,
+"ratio": 2.5454545454545454
+},
+{
+"kind": "short",
+"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"n": 29,
+"zlib": 11,
+"ratio": 2.6363636363636362
+},
+{
+"kind": "short",
+"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"n": 30,
+"zlib": 11,
+"ratio": 2.727272727272727
+},
+{
+"kind": "short",
+"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"n": 31,
+"zlib": 11,
+"ratio": 2.8181818181818183
+},
+{
+"kind": "short",
+"text": "hahahahahahahahahahahahahahaha",
+"n": 30,
+"zlib": 12,
+"ratio": 2.5
+},
+{
+"kind": "empty",
+"text": "",
+"n": 0,
+"zlib": 8,
+"ratio": 0.0
+},
+{
+"kind": "written",
+"text": "שלום, מה שלומך היום? אני בסדר, תודה רבה.",
+"n": 69,
+"zlib": 65,
+"ratio": 1.0615384615384615
+},
+{
+"kind": "written",
+"text": "שלום, מה שלומך היום? אני בסדר, תודה רבה. שלום, מה שלומך היום? אני בסדר, תודה רבה.",
+"n": 139,
+"zlib": 73,
+"ratio": 1.904109589041096
+},
+{
+"kind": "written",
+"text": "שלום, מה שלומך היום? אני בסדר, תודה רבה. שלום, מה שלומך היום? אני בסדר, תודה רבה. שלום, מה שלומך היום? אני בסדר, תודה רבה.",
+"n": 209,
+"zlib": 73,
+"ratio": 2.863013698630137
+},
+{
+"kind": "written",
+"text": "הילדים הלכו לבית הספר בבוקר.",
+"n": 51,
+"zlib": 54,
+"ratio": 0.9444444444444444
+},
+{
+"kind": "written",
+"text": "הילדים הלכו לבית הספר בבוקר. הילדים הלכו לבית הספר בבוקר.",
+"n": 103,
+"zlib": 58,
+"ratio": 1.7758620689655173
+},
+{
+"kind": "written",
+"text": "הילדים הלכו לבית הספר בבוקר. הילדים הלכו לבית הספר בבוקר. הילדים הלכו לבית הספר בבוקר.",
+"n": 155,
+"zlib": 58,
+"ratio": 2.6724137931034484
+},
+{
+"kind": "written",
+"text": "नमस्ते, आज आप कैसे हैं? मैं ठीक हूँ, धन्यवाद।",
+"n": 113,
+"zlib": 90,
+"ratio": 1.2555555555555555
+},
+{
+"kind": "written",
+"text": "नमस्ते, आज आप कैसे हैं? मैं ठीक हूँ, धन्यवाद। नमस्ते, आज आप कैसे हैं? मैं ठीक हूँ, धन्यवाद।",
+"n": 227,
+"zlib": 96,
+"ratio": 2.3645833333333335
+},
+{
+"kind": "written",
+"text": "नमस्ते, आज आप कैसे हैं? मैं ठीक हूँ, धन्यवाद। नमस्ते, आज आप कैसे हैं? मैं ठीक हूँ, धन्यवाद। नमस्ते, आज आप कैसे हैं? मैं ठीक हूँ, धन्यवाद।",
+"n": 341,
+"zlib": 96,
+"ratio": 3.5520833333333335
+},
+{
+"kind": "written",
+"text": "बच्चे सुबह स्कूल गए और शाम को लौटे।",
+"n": 91,
+"zlib": 79,
+"ratio": 1.1518987341772151
+},
+{
+"kind": "written",
+"text": "बच्चे सुबह स्कूल गए और शाम को लौटे। बच्चे सुबह स्कूल गए और शाम को लौटे।",
+"n": 183,
+"zlib": 85,
+"ratio": 2.152941176470588
+},
+{
+"kind": "written",
+"text": "बच्चे सुबह स्कूल गए और शाम को लौटे। बच्चे सुबह स्कूल गए और शाम को लौटे। बच्चे सुबह स्कूल गए और शाम को लौटे।",
+"n": 275,
+"zlib": 85,
+"ratio": 3.235294117647059
+},
+{
+"kind": "replacement",
+"text": "And so it goes �",
+"n": 18,
+"zlib": 26,
+"ratio": 0.6923076923076923
+},
+{
+"kind": "replacement",
+"text": "���",
+"n": 9,
+"zlib": 14,
+"ratio": 0.6428571428571429
+}
+]
+}

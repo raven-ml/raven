@@ -34,13 +34,17 @@
 ; upstream/decode.pt, upstream/decode.npz, upstream/decode.json and
 ; upstream/beam.json were cut on 2026-11-19 by
 ;   gen/run.sh P2b-impl/decoding.py upstream OUT
+; and upstream/ratio.json, upstream's compression_ratio (whisper/utils.py) of
+; texts under zlib 1.3.2, by
+;   gen/run.sh P4-impl/ratio.py OUT
 ; in _plans/whisper-port/gen's pinned environment, outside the repository.
 
 (test
  (name test_decoding)
  (modules test_decoding)
- (libraries whisper whisper_support nx nx.io kaun rune windtrap)
+ (libraries whisper whisper_support nx nx.io kaun rune lz windtrap)
  (deps
+  upstream/ratio.json
   upstream/options.json
   upstream/filters.json
   upstream/filters.npz

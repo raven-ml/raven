@@ -256,3 +256,11 @@ val results : Tokenizer.t -> options -> Nx.host outcome -> result array
     penalty. The first of the greatest scores is chosen.
 
     Raises [Invalid_argument] if [o.length_penalty] is outside [[0, 1]]. *)
+
+val compression_ratio : string -> float
+(** [compression_ratio s] measures how much [s] repeats itself: the length of
+    [s] in bytes over the length of its zlib stream at level 6,
+    {!Lz.Zlib.encode_string}[ ~level:6 s]. A text that loops on a phrase
+    compresses well and scores high, and [compression_ratio ""] is [0.]. The
+    stream is lz's: another zlib encoder at level 6 may write one of another
+    length, so a ratio near a threshold may fall on the other side of it. *)

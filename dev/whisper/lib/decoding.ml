@@ -767,3 +767,14 @@ let results t o (out : Nx.host outcome) =
         avg_logprob = sum /. float (Array.length toks + 1);
         no_speech_prob = no_speech.(i);
       })
+
+(* Compression ratio
+
+   whisper/utils.py, compression_ratio: the UTF-8 bytes over the length of
+   zlib.compress's stream, at zlib's default level. *)
+
+let zlib_level = 6
+
+let compression_ratio s =
+  float (String.length s)
+  /. float (String.length (Lz.Zlib.encode_string ~level:zlib_level s))
