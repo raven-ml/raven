@@ -95,8 +95,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Metal's renderer emits no launch bound; its `local_threads_max` of 1024
   is a maximum a pipeline may refuse, and Mac2's AMD GPUs may run 64-wide
   SIMD groups, which `simd_threads` does not state
-- Other Metal constants in DIVERGENCES.md rest on an M1 Max (16384, 32768,
-  and near lines 2435 and 5166): mark each "Reason: none" as D404's
 
 ## nx, rune
 
@@ -112,17 +110,23 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - The depthwise branch of `Nx.conv` (one input and one output channel a
   group) is slow under rune's gradient: about 8 ms for the weights and
   21 ms for the input at 8x56x56x64, the loop-sized map and fold
-- Under `Rune.jit`, the weight gradient of `Nx.matmul_segments` keeps one
-  `[k; n]` partial per block (lower_reduce.ml): +0.9 GB at 1,024 rows
-  over AION's 40 heads, where eager keeps none
+  (depthwise/parked.md)
+- nx.cpu: a Reduce over leading axes of a loop through a padded load runs
+  about 9x slower than a map then a sum (depthwise/parked.md)
+- nx.cpu's Reduce still runs a program once per reduction across rows,
+  for Moments and Logsumexp, and over outputs of 16 terms or fewer;
+  attention.c:305-306 runs `ranges`' two outputs in two runs
+- nx's `test_cuda` fails, not skips, when the device nodes are hidden
+  (`~/wt/bin/nogpu`), so a CPU-only `@packages/nx/runtest` cannot pass
+- Under `Rune.jit`, `Nx.matmul_segments`' weight gradient stores one
+  `[k; n]` partial per block (+0.9 GB at 1,024 rows over 40 heads): it
+  needs a tolk reduce with a per-workgroup trip count read from memory
+  (segpartials/parked.md)
 - `Nx.attention ~lengths`'s compiled derivative builds the whole pair loop
   on the host, in forward mode, with pages or float captures, and past 160
   dimensions; eager `grad` under vmap with per-lane lengths does too
 - Attention's eager derivative under lengths writes k̄ and v̄ three times
   (pad, concatenate, reorder); a scatter into one zeroed array writes once
-- Two error bounds still measure from the exact value: nx.mli's
-  `truncated_normal` ("ulps of the exact solution") and rune.mli's
-  derivative budgets; restate them from the correctly rounded value
 - rune cannot check data inside compiled code (a token range, a length
   past its row), so a model that validates its inputs, such as AION's
   codecs, checks on the host and its encode cannot run under `Rune.jit`
