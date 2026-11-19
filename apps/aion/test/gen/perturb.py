@@ -3,16 +3,11 @@ recorders import.
 
 The unit roundoff is a parameter so that one mode serves float32's local scale (2^-24)
 and float64's (2^-53). Every rounding aten operation's float64 result is moved by
-b * N(0, 1), b the local scale of the operation:
-
-  order     the gate's scale: u sqrt((K + 1)(Q/6 + S^2/3)) for a running sum of K
-            terms in an order unrelated to their values (Q the sum of squared terms,
-            S the sum), 2k u |y| for a function within k ulps, u |y| otherwise;
-  contract  sqrt(beta(K)) u sum|a||b| (+ u|y|) for a contraction of K products,
-            sqrt(beta(n)) u sum|x| for a sum, (2k + 1) u |y| for a function within
-            k ulps, u |y| for correctly rounded arithmetic (reported, not gating);
-  measured  |op(float32 operands) - op(float64 operands)|, PyTorch's own float32
-            error at the operation (reported, not gating; u unused).
+b * N(0, 1), b the local scale of the operation (the order model): u sqrt((K + 1)(Q/6 +
+S^2/3)) for a running sum of K terms in an order unrelated to their values (Q the sum
+of squared terms, S the sum), 2k u |y| for a function within k ulps, u |y| otherwise.
+The model of rounding errors is Higham and Mary's, "A New Approach to Probabilistic
+Rounding Error Analysis", SIAM J. Sci. Comput. 41(5), 2019.
 
 Layer norms are split into sums and elementwise steps. Each element draws its own
 noise, so a batch of M copies of one input gives M independent samples.
@@ -57,34 +52,13 @@ CONTRACT = {"convolution", "mm", "addmm", "bmm"}
 SUMS = {"sum", "mean", "linalg_vector_norm"}
 
 
-def beta(n):
-    return (5 * min(n, 256) + 3) // 4 + (n + 127) // 128
-
-
 def is_f64(x):
     return isinstance(x, torch.Tensor) and x.dtype == torch.float64
 
 
-def to32(a):
-    if is_f64(a):
-        return a.float()
-    if isinstance(a, (list, tuple)):
-        return type(a)(to32(b) for b in a)
-    return a
-
-
-def to64(a):
-    if isinstance(a, torch.Tensor) and a.dtype == torch.float32:
-        return a.double()
-    if isinstance(a, (list, tuple)):
-        return type(a)(to64(b) for b in a)
-    return a
-
-
 class Ensemble(TorchDispatchMode):
-    def __init__(self, scale, seed, u=U32):
+    def __init__(self, seed, u=U32):
         super().__init__()
-        self.scale = scale
         self.u = u
         self.gen = torch.Generator().manual_seed(seed)
         self.active = True
@@ -98,8 +72,6 @@ class Ensemble(TorchDispatchMode):
         K = 1
         for d in (dims if dims is not None else range(t.ndim)):
             K *= t.shape[d]
-        if self.scale.startswith("contract"):
-            return math.sqrt(beta(K)) * self.u * torch.sum(t.abs(), dims, keepdim=keep)
         Q = torch.sum(t * t, dims, keepdim=keep)
         return self.u * torch.sqrt((K + 1) * (Q / 6 + S * S / 3))
 
@@ -114,10 +86,6 @@ class Ensemble(TorchDispatchMode):
         self.census[name] += 1
         if name in NOROUND:
             return out
-        if self.scale == "measured" and name != "native_layer_norm":
-            o32 = func(*to32(args), **to32(kwargs))
-            b = (o32.double() - out).abs()
-            return self.inplace(name, out, b)
         if name in CONTRACT:
             return self.contraction(func, name, args, kwargs, out)
         if name in SUMS:
@@ -128,17 +96,13 @@ class Ensemble(TorchDispatchMode):
             return self.softmax(*args)
         if name in ("elu", "leaky_relu"):
             x = args[0]
-            if name == "elu":  # expm1 within 1 ulp
-                c = 3 if self.scale.startswith("contract") else 2
-            else:  # one product
-                c = 1
+            c = 2 if name == "elu" else 1  # expm1 within 1 ulp; one product
             b = torch.where(x > 0, torch.zeros_like(out), c * self.u * out.abs())
             return self.noise(out, b)
         if name == "silu":
             x = args[0]
             s = torch.sigmoid(x)
-            c = 7 if self.scale.startswith("contract") else 6
-            s = self.noise(s, c * self.u * s.abs())
+            s = self.noise(s, 6 * self.u * s.abs())
             y = x * s
             return self.noise(y, self.u * y.abs())
         if name == "gelu":
@@ -148,8 +112,7 @@ class Ensemble(TorchDispatchMode):
             t = x * (1 / math.sqrt(2))
             t = self.noise(t, self.u * t.abs())
             e = torch.erf(t)
-            k = 5 if self.scale.startswith("contract") else 4
-            e = self.noise(e, k * self.u * e.abs())
+            e = self.noise(e, 4 * self.u * e.abs())
             s1 = 1 + e
             s1 = self.noise(s1, self.u * s1.abs())
             y = x * s1
@@ -160,8 +123,7 @@ class Ensemble(TorchDispatchMode):
             if name not in CR:
                 self.census["UNKNOWN:" + name] += 1
             return self.inplace(name, out, self.u * out.abs())
-        c = (2 * k + 1) if self.scale.startswith("contract") else 2 * k
-        return self.inplace(name, out, c * self.u * out.abs())
+        return self.inplace(name, out, 2 * k * self.u * out.abs())
 
     def inplace(self, name, out, b):
         if name.endswith("_"):
@@ -191,12 +153,8 @@ class Ensemble(TorchDispatchMode):
                 S = out
             K = x.shape[-1]
             sq = lambda f: (torch.mm if x.ndim == 2 else torch.bmm)(f(x), f(w))
-        if self.scale.startswith("contract"):
-            b = math.sqrt(beta(K)) * self.u * sq(torch.abs)
-        else:
-            Q = sq(lambda t: t * t)
-            b = self.u * torch.sqrt((K + 1) * (Q / 6 + S * S / 3))
-        b = b + self.u * out.abs()
+        Q = sq(lambda t: t * t)
+        b = self.u * torch.sqrt((K + 1) * (Q / 6 + S * S / 3)) + self.u * out.abs()
         return self.noise(out, b)
 
     def reduction(self, name, args, kwargs, out):
@@ -226,8 +184,7 @@ class Ensemble(TorchDispatchMode):
         d = x - m
         d = self.noise(d, self.u * d.abs())
         e = torch.exp(d)
-        c = 5 if self.scale.startswith("contract") else 4
-        e = self.noise(e, c * self.u * e.abs())
+        e = self.noise(e, 4 * self.u * e.abs())
         S = torch.sum(e, (dim,), keepdim=True)
         S = self.noise(S, self.sum_scale(e, (dim,), True, S))
         y = e / S
@@ -236,11 +193,6 @@ class Ensemble(TorchDispatchMode):
     def layer_norm(self, x, shape, w, b, eps):
         dims = tuple(range(x.ndim - len(shape), x.ndim))
         n = math.prod(shape)
-        if self.scale == "measured":
-            o64 = torch.native_layer_norm(x, shape, w, b, eps)
-            o32 = torch.native_layer_norm(x.float(), shape, to32(w), to32(b), eps)
-            y = self.noise(o64[0], (o32[0].double() - o64[0]).abs())
-            return y, o64[1], o64[2]
         S = torch.sum(x, dims, keepdim=True)
         S = self.noise(S, self.sum_scale(x, dims, True, S))
         m = self.noise(S / n, self.u * (S / n).abs())
@@ -251,7 +203,7 @@ class Ensemble(TorchDispatchMode):
         V = self.noise(V, self.sum_scale(d2, dims, True, V))
         v = self.noise(V / n + eps, 2 * self.u * (V / n + eps))
         r = torch.rsqrt(v)
-        r = self.noise(r, (5 if self.scale.startswith("contract") else 4) * self.u * r)
+        r = self.noise(r, 4 * self.u * r)
         y = self.noise(d * r, self.u * (d * r).abs())
         if w is not None:
             y = self.noise(y * w, self.u * (y * w).abs())

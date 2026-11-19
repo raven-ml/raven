@@ -9,10 +9,8 @@
    a run takes minutes. It runs under the alias parity, on AION_PARITY's
    huggingface, goldens and subset, and ensemble/image: gen/image_ensemble.py's
    files, one per set: golden, ls_desi, ls_catalog and hsc. A set without its
-   file fails. Each holds the set's objects, the float64 reference's values,
-   PyTorch's float32 values and the ensemble's spreads at the order model's
-   scales; a file <set>-report beside it, where present, holds the contract and
-   measured scales' spreads for some of the objects.
+   file fails. Each holds the set's objects, the float64 reference's values and
+   the ensemble's spreads at float32's and float64's scales.
 
    Two checks per set. Float32: the codec as AION-1 ships it, its spread the
    ensemble's at the order model's float32 scale. Float64: the codec cast to
@@ -20,10 +18,7 @@
    or structure shows by orders of magnitude. Each checks the FSQ's input (the
    latent), each number of each token, rounded, against the reference's bounded
    latent, and the decoding of the reference's tokens. It exits 1 when a check
-   fails. For the report files' objects it also prints, without gating, the
-   float32 codec's worst ratio at the contract scale, and the root mean square
-   of (x - reference) / ŝ at PyTorch's measured scale for the codec and for
-   PyTorch's float32. *)
+   fails. *)
 
 open Aion
 
@@ -47,7 +42,6 @@ let get dt name a =
   | Some p -> Nx.unpack dt p
   | None -> failwith ("no tensor " ^ name)
 
-let has a name = Option.is_some (Nx_io.Archive.find name a)
 let floats t = Nx.to_array (Nx.cast Nx.float64 t)
 let ints t = Array.map Int64.to_int (Nx.to_array (Nx.cast Nx.int64 t))
 
@@ -70,7 +64,7 @@ type set = {
 let ls = Image.[ Des_g; Des_r; Des_i; Des_z ]
 let hsc = Image.[ Hsc_g; Hsc_r; Hsc_i; Hsc_z; Hsc_y ]
 
-let sets ?(suffix = "") ~goldens ~subset ~ensemble () =
+let sets ~goldens ~subset ~ensemble =
   let rows a = ints (get Nx.int64 "rows" a) in
   let sub name key e =
     take (rows e)
@@ -84,9 +78,9 @@ let sets ?(suffix = "") ~goldens ~subset ~ensemble () =
       (Nx.slice [ A; R (5, 9) ] (get Nx.float32 "image.array" (load input)))
   in
   let set name bands images =
-    let path = Filename.concat ensemble (name ^ suffix ^ ".safetensors") in
+    let path = Filename.concat ensemble (name ^ ".safetensors") in
     if not (Sys.file_exists path) then begin
-      if suffix = "" then incr failures;
+      incr failures;
       printf "missing ensemble %s\n%!" path;
       []
     end
@@ -137,7 +131,7 @@ let digits tokens =
                        (k, []) levels))))
           tokens))
 
-let check ~gate ~n ~scale (set : set) o =
+let check ~n ~scale (set : set) o =
   let e = set.e in
   let r name = floats (get Nx.float64 ("ref." ^ name) e)
   and s name = floats (get Nx.float64 ("s." ^ scale ^ "." ^ name) e) in
@@ -158,48 +152,12 @@ let check ~gate ~n ~scale (set : set) o =
   in
   List.iter
     (fun (name, (c : Spread.check)) ->
-      if gate then begin
-        if c.failures <> [] then incr failures;
-        printf "  %s%s\n"
-          (if c.failures = [] then "" else "FAIL ")
-          (Format.asprintf "%a" (Spread.pp name) c)
-      end
-      else
-        printf "  %s: worst %.3g at the %s scale (not gating)\n" name c.worst
-          scale)
+      if c.failures <> [] then incr failures;
+      printf "  %s%s\n"
+        (if c.failures = [] then "" else "FAIL ")
+        (Format.asprintf "%a" (Spread.pp name) c))
     checks;
   printf "%!"
-
-(* The root mean square of (x - reference) / ŝ over an output. *)
-let rms_z ~reference ~spread x =
-  let acc = ref 0. and k = ref 0 in
-  Array.iteri
-    (fun i v ->
-      if spread.(i) > 0. then begin
-        let z = (v -. reference.(i)) /. spread.(i) in
-        acc := !acc +. (z *. z);
-        incr k
-      end)
-    x;
-  sqrt (!acc /. float_of_int (max 1 !k))
-
-let measured (set : set) o =
-  let e = set.e in
-  let f name = floats (get Nx.float64 name e) in
-  let latent =
-    rms_z
-      ~reference:(cells (get Nx.float64 "ref.pre" e))
-      ~spread:(cells (get Nx.float64 "s.measured.pre" e))
-  and decoded =
-    rms_z ~reference:(f "ref.decoded") ~spread:(f "s.measured.decoded")
-  in
-  printf
-    "  measured scale, rms z, codec and PyTorch float32 (not gating): latent \
-     %.3g and %.3g, decoded %.3g and %.3g\n"
-    (latent o.latent)
-    (latent (cells (get Nx.float64 "f32.pre" e)))
-    (decoded o.decoded)
-    (decoded (f "f32.decoded"))
 
 let () =
   let hub = path "huggingface" and goldens = path "goldens" in
@@ -214,35 +172,17 @@ let () =
       let t0 = Unix.gettimeofday () in
       let o32 = compute t32 set set.images in
       printf "float32, order scale:\n";
-      check ~gate:true ~n ~scale:"order" set o32;
+      check ~n ~scale:"order" set o32;
       let reference = ints (get Nx.int64 "ref.tokens" set.e) in
-      let upstream32 = ints (get Nx.int64 "f32.tokens" set.e) in
       let count a = Array.fold_left ( + ) 0 a in
-      printf
-        "  tokens differing from the float64 reference: %d of %d; from \
-         PyTorch's float32: %d\n"
+      printf "  tokens differing from the float64 reference: %d of %d\n"
         (count
            (Array.mapi (fun i k -> Bool.to_int (k <> reference.(i))) o32.tokens))
-        (Array.length reference)
-        (count
-           (Array.mapi
-              (fun i k -> Bool.to_int (k <> upstream32.(i)))
-              o32.tokens));
+        (Array.length reference);
       printf "float64, order scale at float64:\n";
-      check ~gate:true ~n ~scale:"order64" set
+      check ~n ~scale:"order64" set
         (compute t64 set (Nx.cast Nx.float64 set.images));
       printf "(%.0f s)\n%!" (Unix.gettimeofday () -. t0))
-    (sets ~goldens ~subset ~ensemble ());
-  List.iter
-    (fun (set : set) ->
-      let n = (ints (get Nx.int64 "n" set.e)).(0) in
-      printf "\n== %s, %d objects: other scales (not gating)\n" set.name
-        (Nx.dim 0 set.images);
-      let o32 = compute t32 set set.images in
-      if has set.e "s.contract.pre" then
-        check ~gate:false ~n ~scale:"contract" set o32;
-      if has set.e "s.measured.pre" then measured set o32;
-      printf "%!")
-    (sets ~suffix:"-report" ~goldens ~subset ~ensemble ());
+    (sets ~goldens ~subset ~ensemble);
   printf "\nfailing checks: %d\n" !failures;
   exit (if !failures = 0 then 0 else 1)

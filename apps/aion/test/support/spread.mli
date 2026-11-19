@@ -7,7 +7,10 @@
 
     The {e reference} is upstream's code run in float64. Its {e ensemble} is [n]
     more float64 runs, each moving every rounding operation's result by a normal
-    draw at the operation's local rounding scale, and a value's {e spread} [ŝ]
+    draw at the operation's local rounding scale, which models nx's
+    per-operation rounding with summation orders unrelated to the values
+    (Higham and Mary, "A New Approach to Probabilistic Rounding Error
+    Analysis", SIAM J. Sci. Comput. 41(5), 2019). A value's {e spread} [ŝ]
     is the root mean square of the [n] runs' distances from the reference. To
     first order a computation of that rounding scale differs from the reference
     by a normal draw of the spread's variance, independent of the ensemble. Over

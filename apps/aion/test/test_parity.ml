@@ -6,21 +6,21 @@
 (* The scalar codecs against upstream's goldens (tests/test_data at
    db7fba6df53b) and against the exact transforms of their codebooks.
 
-   upstream/edges.safetensors holds every scalar codec's codebooks, under its
-   directory's name; upstream/goldens.safetensors upstream's inputs, tokens and
-   decoded values, whole but for the Gaia XP ones. Of those it keeps the rows
-   where a token may flip or is the first or the last (the rule is in the
+   upstream/edges.safetensors holds the scalar codecs' codebooks, under their
+   directories' names; upstream/goldens.safetensors upstream's inputs, tokens
+   and decoded values. Of the Gaia XP codecs both keep the coefficients and
+   rows where a token may flip or is the first or the last (the rule is in the
    generator the dune file names). What covers what:
 
-   - tokens: every case of the token checks that the whole goldens reach is in
-   the kept rows;
+   - tokens: every case of the token checks that the whole goldens reach on
+   the kept coefficients is in the kept rows;
 
    - decoded values: every edge of every codebook is decoded and checked against
    the exact inverse transform, which covers every token any golden holds; the
    goldens add agreement with upstream's own values.
 
-   The whole XP goldens add 1.8 MB and nothing the above misses, so the check of
-   every row runs outside the repository.
+   The whole XP codebooks and goldens add 2.2 MB, so the check of every row and
+   coefficient runs outside the repository.
 
    Tolerances are nx.mli's float32 bounds, in floats from the exact value
    rounded ({!Bounds}): [log] 1, [exp] 2, [asinh] and [sinh] 3, each applied to

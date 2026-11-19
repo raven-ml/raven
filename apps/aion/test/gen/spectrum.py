@@ -164,7 +164,7 @@ for si, (name, cls) in enumerate(variants.items()):
     data[f"f32.{name}.tokens"] = codec.encode(spectra(cls, torch.float32)).numpy()
     for k in ("pre", "flux", "mask"):
         data[f"f32.{name}.{k}"] = f32[k]
-    mode = Ensemble("order", 2000 + si, U32)
+    mode = Ensemble(2000 + si, U32)
     s = run(codec64, torch.float64, cls, tokens=ref["tokens"].repeat(a.n, 1), copies=a.n, mode=mode,
             norm=ref["norm"].repeat(a.n))
     for k in ("pre", "norm_pre", "flux", "logit"):
@@ -198,7 +198,7 @@ def grn(dt, copies=1, mode=None):
 
 
 gref = grn(torch.float64)
-gs = grn(torch.float64, a.n, Ensemble("order", 3000, U32))
+gs = grn(torch.float64, a.n, Ensemble(3000, U32))
 data.update({"grn.x": x.numpy(), "grn.gamma": gamma.numpy(), "grn.beta": beta.numpy(),
              "grn.ref": gref, "grn.f32": grn(torch.float32),
              "grn.s": np.sqrt(((gs - gref) ** 2).mean(0, keepdims=True))})

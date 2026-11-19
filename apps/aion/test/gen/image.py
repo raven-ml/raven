@@ -141,7 +141,7 @@ for si, s in enumerate(sets):
     f32 = run(codec, torch.float32, s, tokens=ref["tokens"])
     k32 = codec.encode(M.Image(flux=torch.tensor(inputs[s]), bands=sets[s]))
     for name, u in [("order", U32), ("order64", U64)]:
-        mode = Ensemble("order", 2000 + 10 * si + (u == U64), u)
+        mode = Ensemble(2000 + 10 * si + (u == U64), u)
         e = run(codec64, torch.float64, s, tokens=ref["tokens"].repeat(a.n, 1), copies=a.n, mode=mode)
         unknown = {k: v for k, v in mode.census.items() if k.startswith("UNKNOWN")}
         if unknown:

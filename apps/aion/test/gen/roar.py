@@ -207,7 +207,7 @@ for i, (tgt, rev, pos) in enumerate(states):
     ref = run(model64, torch.float64, tgt, rev, pos)
     f32 = run(model, torch.float32, tgt, rev, pos)
     s = run(model64, torch.float64, tgt, rev, pos, copies=a.n,
-            mode=Ensemble("order", 4100 + i, U32))
+            mode=Ensemble(4100 + i, U32))
     spread = np.sqrt(((s.reshape((a.n,) + ref.shape) - ref) ** 2).mean(0))
     data[f"{name}.tokens"] = tgt
     data[f"{name}.revealed"] = rev.astype(np.uint8)

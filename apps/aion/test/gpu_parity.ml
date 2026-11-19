@@ -11,8 +11,10 @@
 
    gpu_parity.exe DEVICE HUB REF64
 
-   with DEVICE a GPU as Rig_gpus.open_ names it (cuda, nv, amd, metal), and HUB
-   and REF64 as transformer_parity.exe takes them. On the first 2 of the
+   with DEVICE a GPU as Rig_gpus.open_ names it (cuda, nv, amd, metal), HUB a
+   Hub cache holding aion-base's model.safetensors at Hub.revision, and REF64
+   the float64 reference gen/reference.py writes (--precision f64): its
+   model.safetensors and codecs.safetensors. On the first 2 of the
    reference's 8 objects it runs the decodes of redshift from photometry and
    of a DESI spectrum from an image, one encode of Legacy Survey and DESI
    inputs, and a one-step draw of that spectrum at temperature 0. For eager on

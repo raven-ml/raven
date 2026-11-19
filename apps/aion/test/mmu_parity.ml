@@ -15,8 +15,8 @@
 
    For every modality of every file, the tokens Codecs.encode makes of
    Survey.read's data must equal upstream's, token for token, where a token is
-   present; a value that is not finite is absent here (DIVERGENCES) and counted
-   apart. It runs outside runtest: the codecs' weights are 400 MB and the rows
+   present; a value that is not finite is absent here (Codecs.encode) and
+   counted apart. It runs outside runtest: the codecs' weights are 400 MB and the rows
    are MMU's, neither of them committed. *)
 
 open Aion

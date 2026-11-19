@@ -6,7 +6,9 @@ Survey and of the Hyper Suprime-Cam, DESI and SDSS spectra, Gaia's XP
 coefficients and dozens of catalogue values. A 4M encoder-decoder
 transformer reads the tokens of some modalities and predicts the others'.
 The app reads objects from the Multimodal Universe's HDF5 files, pairs them
-across surveys within 1″, and runs the released weights on the CPU.
+across surveys within 1″, and runs the released weights on the CPU. What the
+model computes is AION-1's code at db7fba6d and the Hub files at
+`Hub.revision`; the paper is context.
 
 ```bash
 dune exec apps/aion/bin/main.exe -- embed \
@@ -112,7 +114,26 @@ from A to B.
 | `bin/main.ml` | the commands |
 | `test/` | the tests, their fixtures and the parity programs |
 | `bench/` | the codecs, the transformer and a generation step on random weights |
-| `DIVERGENCES.md` | where the app computes something other than AION-1's code, and why |
+
+## Differences from AION-1
+
+The app keeps what the weights were trained with. It departs from AION-1's
+code on paths training never took:
+
+- Generation draws each object's own order of positions; AION-1's draws one
+  order for the batch.
+- The decoder attends with the mask of training, each token to its own
+  target's; AION-1's inference passes a mask that hides every pair.
+- The catalog is left out: no published map takes its codec's tokens to the
+  model's.
+- Redshift's class 1024 is drawn, as the model defines it, and decodes to no
+  value.
+- A NaN or infinite value makes its modality absent for its object, unless
+  its codebook was trained with NaN.
+- Survey files' values are read as float32, as training read them.
+
+Refusals of inputs AION-1's code would misread are listed with each
+function's `Raises`.
 
 ## Tests
 
@@ -130,22 +151,19 @@ AION_PARITY=DIR dune build @apps/aion/test/parity
 ```
 
 The codecs, Survey's tokens of real rows and `generate`'s draws must match,
-and fail the alias otherwise. The transformer's and random-order generation's
-programs report their differences from upstream and gate nothing. Each
-program's header in `test/` says what it compares. Without `AION_PARITY`, or
-with a set's ensemble file missing, the alias fails and names what is missing.
-A dune server running in watch mode reads `AION_PARITY` from its own
-environment, never from the client's: start the server with it set, or stop
-the server before running the alias. `DIR` holds:
+and fail the alias otherwise. Each program's header in `test/` says what it
+compares. Without `AION_PARITY`, or with a set's ensemble file missing, the
+alias fails and names what is missing. A dune server running in watch mode
+reads `AION_PARITY` from its own environment, never from the client's: start
+the server with it set, or stop the server before running the alias. `DIR`
+holds:
 
 | Path | What it holds | Written by |
 |---|---|---|
 | `huggingface/` | a Hub cache holding aion-base at `Hub.revision`, as `RAVEN_CACHE_ROOT=DIR` reads it | `main.exe`'s first run |
 | `goldens/` | AION-1's `tests/test_data` as safetensors | `test/gen/goldens.py` |
 | `subset/` | the parity subset: rows of the tutorial's file and of each survey | `test/gen/subset.py` |
-| `reference/f64/`, `reference/f32/` | AION-1's codecs and transformer on the subset, in float64 and float32 | `test/gen/reference.py` |
 | `ensemble/spectrum/`, `ensemble/image/` | the codecs' rounding ensembles, a file per set | `test/gen/spectrum_ensemble.py`, `image_ensemble.py` |
-| `roar/` | AION-1's recorded random-order runs and redshift posteriors | `test/gen/roar_reference.py` |
 | `mmu/` | a few rows of each survey's file and of the tutorial's, with AION-1's tokens of them | `test/gen/mmu_cut.py`, `mmu_tokens.py` |
 
 The scripts in `test/gen` run with `uv run` from `apps/aion`, with AION-1's

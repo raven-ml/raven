@@ -16,8 +16,7 @@
    upstream/transformer_golden.safetensors holds the inputs, upstream's float64
    encoding and logits (the decoder with the mask of training; tok_xp_rp's for
    the second object alone), and the spread [s] of their rounding ensemble at
-   float32's scale. Agreement with upstream is reported as the largest [|x -
-   reference| / s], and not yet checked within [Spread]'s τ. *)
+   float32's scale. Each value must lie within [Spread]'s τ s of upstream's. *)
 
 open Windtrap
 open Aion
@@ -32,18 +31,17 @@ let get dt name =
   | None -> failwith ("no entry " ^ name)
 
 let floats x = Nx.to_array (Nx.cast Nx.float64 x)
-let reference name = floats (get Nx.float64 ("f64." ^ name))
+let n = Int64.to_int (Nx.item [ 0 ] (get Nx.int64 "n"))
 let spread name = floats (get Nx.float32 ("s." ^ name))
 
-(* The largest distance of [x] from [r] in units of [s]. *)
-let worst ~r ~s x =
-  let w = ref 0. in
-  Array.iteri (fun i v -> w := Float.max !w (Float.abs (v -. r.(i)) /. s.(i))) x;
-  !w
+let holds name (c : Spread.check) =
+  if c.failures <> [] then failf "%a" (Spread.pp name) c
 
-let report name x =
-  Printf.printf "%s: largest |x - reference| / s %.3g\n%!" name
-    (worst ~r:(reference name) ~s:(spread name) (floats x))
+let upstream_holds name x =
+  holds name
+    (Spread.values ~n
+       ~reference:(floats (get Nx.float64 ("f64." ^ name)))
+       ~spread:(spread name) (floats x))
 
 (* Object 2's rows of logits of objects 1 and 2. *)
 let second x = Nx.slice [ R (1, 2) ] x
@@ -81,7 +79,7 @@ let upstream =
     [
       test "encode gives upstream's context" (fun () ->
           let e = Transformer.encode (Lazy.force model) (inputs ()) in
-          report "embed" e.context);
+          upstream_holds "embed" e.context);
       test "lengths count the present tokens" (fun () ->
           let e = Transformer.encode (Lazy.force model) (inputs ()) in
           equal (array int) [| 57; 2; 46; 56 |] (ints e.lengths));
@@ -92,8 +90,8 @@ let upstream =
               targets
           with
           | [ z; xp ] ->
-              report "logits.tok_z" z;
-              report "logits.tok_xp_rp" (second xp)
+              upstream_holds "logits.tok_z" z;
+              upstream_holds "logits.tok_xp_rp" (second xp)
           | _ -> failf "two targets, two logits");
     ]
 
@@ -144,13 +142,11 @@ let laws =
           with
           | [ _; both ], [ alone ] ->
               (* Both are float32 computations of one exact value, each within τ
-                 s of it, so they differ by at most 2 τ s; reported until τ is
-                 in the test support, as above. *)
-              let s = spread "logits.tok_xp_rp" in
-              Printf.printf
-                "tok_xp_rp with and without tok_z: largest difference / s %.3g\n\
-                 %!"
-                (worst ~r:(floats (second alone)) ~s (floats (second both)))
+                 s of it, so they differ by at most 2 τ s. *)
+              let s = Array.map (fun s -> 2. *. s) (spread "logits.tok_xp_rp") in
+              holds "tok_xp_rp beside tok_z"
+                (Spread.values ~n ~reference:(floats (second alone)) ~spread:s
+                   (floats (second both)))
           | _ -> failf "one logits per target");
     ]
 
@@ -340,9 +336,6 @@ let against name x =
     ~reference:(floats (rget Nx.float64 ("f64." ^ name)))
     ~spread:(floats (rget Nx.float32 ("s." ^ name)))
     (floats x)
-
-let holds name (c : Spread.check) =
-  if c.failures <> [] then failf "%a" (Spread.pp name) c
 
 (* [x]'s rows of each object at its positions [p], [b; k; v]. *)
 let rows_at p x =

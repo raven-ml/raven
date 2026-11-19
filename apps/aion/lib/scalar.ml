@@ -82,7 +82,9 @@ let directory : Modality.scalar -> string = function
 (* The [c] codebooks of a codec's file. A reservoir codec stores its one
    codebook as [_quantizer._index_to_val], the redshift codec as
    [_quantizer.buckets], and the Gaia XP codecs one per channel as
-   [_quantizer.quantizers.<i>._index_to_val], [i] from 0. *)
+   [_quantizer.quantizers.<i>._index_to_val], [i] from 0. The redshift codec's
+   stored grid spans [0, 6] where AION-1's constructor builds [0, 1]: the stored
+   buffer is what AION-1's code reads, so it is read here too. *)
 let codebooks name c archive =
   let fail fmt =
     Printf.ksprintf
@@ -120,6 +122,10 @@ let load ?cache_dir ?offline m =
   let c = Modality.tokens (Scalar m) in
   v (transform_of m) (codebooks name c (Hub.codec ?cache_dir ?offline name))
 
+(* The clamp's logarithm is an edge most of a codebook's mass can sit on: 36 %
+   of FLUX_W3's and 48 % of FLUX_W4's training sample lie on log(float32 e⁻³) =
+   -3, so a [log] one ulp off at that one input would move half their tokens.
+   test_scalar pins it. *)
 let forward tr x =
   match tr with
   | Identity -> x

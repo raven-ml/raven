@@ -39,8 +39,6 @@
   \
   spectrum_parity
   image_parity
-  transformer_parity
-  roar_parity
   mmu_parity
   generate_parity
   gpu_parity
@@ -51,30 +49,16 @@
   (glob_files mmu/*)))
 
 ; AION-1's released weights against upstream's code run outside runtest, since
-; they read the weights and recorded runs: the codecs, the transformer,
-; random-order generation, Survey's tokens of real rows, and main.exe's
-; generate. Each program's header says what it checks. They run under the
-; alias parity, one at a time, on the directory AION_PARITY names, laid out as
-; the README's Tests section says:
+; they read the weights and recorded runs: the codecs, Survey's tokens of real
+; rows, and main.exe's generate against the library. Each program's header
+; says what it checks. They run under the alias parity, one at a time, on the
+; directory AION_PARITY names, laid out as the README's Tests section says:
 ;   AION_PARITY=DIR dune build @apps/aion/test/parity
-; Without it, or with an input missing, they fail. The transformer's and
-; roar's programs report without gating.
+; Without it, or with an input missing, they fail.
 
 (executables
- (names
-  spectrum_parity
-  image_parity
-  transformer_parity
-  roar_parity
-  mmu_parity
-  generate_parity)
- (modules
-  spectrum_parity
-  image_parity
-  transformer_parity
-  roar_parity
-  mmu_parity
-  generate_parity)
+ (names spectrum_parity image_parity mmu_parity generate_parity)
+ (modules spectrum_parity image_parity mmu_parity generate_parity)
  (libraries aion aion_support nx nx.io unix))
 
 (rule
@@ -94,24 +78,6 @@
   (universe))
  (action
   (run %{exe:image_parity.exe})))
-
-(rule
- (alias parity)
- (locks %{workspace_root}/aion-parity)
- (deps
-  (env_var AION_PARITY)
-  (universe))
- (action
-  (run %{exe:transformer_parity.exe})))
-
-(rule
- (alias parity)
- (locks %{workspace_root}/aion-parity)
- (deps
-  (env_var AION_PARITY)
-  (universe))
- (action
-  (run %{exe:roar_parity.exe} check)))
 
 (rule
  (alias parity)

@@ -196,7 +196,7 @@ torch.set_default_dtype(torch.float32)
 
 ref = run(model64, torch.float64)
 f32 = run(model, torch.float32)
-s = run(model64, torch.float64, copies=a.n, mode=Ensemble("order", 4000, U32))
+s = run(model64, torch.float64, copies=a.n, mode=Ensemble(4000, U32))
 data = {"n": np.array([a.n], np.int64)}
 for k in INPUTS:
     data[f"input.{k}.tokens"] = tokens[k]

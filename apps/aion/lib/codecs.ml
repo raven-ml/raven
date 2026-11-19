@@ -39,21 +39,23 @@ type t = {
 }
 
 let load ?cache_dir ?offline ms =
-  let wants k = List.exists (fun m -> Modality.codec m = k) ms in
   List.iter
-    (fun m ->
-      match Modality.codec m with
-      | Segmap_codec | Catalog_codec ->
+    (function
+      | Modality.Segmap | Catalog as m ->
           invalid_arg
             (Printf.sprintf "Aion.Codecs.load: %s has no codec here"
                (Modality.key m))
-      | Image_codec | Spectrum_codec | Scalar_codec -> ())
+      | _ -> ())
     ms;
+  let wants f = List.exists f ms in
   let image =
-    if wants Image_codec then Some (Image.load ?cache_dir ?offline ()) else None
+    if wants (function Modality.Image | Image_hsc -> true | _ -> false) then
+      Some (Image.load ?cache_dir ?offline ())
+    else None
   in
   let spectrum =
-    if wants Spectrum_codec then Some (Spectrum.load ?cache_dir ?offline ())
+    if wants (function Modality.Spectrum _ -> true | _ -> false) then
+      Some (Spectrum.load ?cache_dir ?offline ())
     else None
   in
   let scalars =

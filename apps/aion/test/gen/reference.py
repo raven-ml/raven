@@ -16,10 +16,10 @@
 # url = "https://download.pytorch.org/whl/cpu"
 # explicit = true
 # ///
-"""PyTorch reference run for the AION-1 parity ladder.
+"""PyTorch reference run of AION-1, for gpu_parity.exe.
 
 Runs upstream's codecs and aion-base (polymathic-aion at db7fba6d, torch CPU) at one
-precision and one thread count, and writes every quantity the ladder compares:
+precision and one thread count, and writes:
 
   goldens.safetensors  every codec on upstream's own test inputs (tests/test_data)
   codecs.safetensors   every codec on the parity subset: input as fed, the value the

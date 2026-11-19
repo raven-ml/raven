@@ -70,14 +70,6 @@ type t =
   | Catalog  (** Legacy Survey catalog of neighbours, ["catalog"]. *)
   | Scalar of scalar  (** A scalar modality. *)
 
-(** The type for the kinds of codec. *)
-type codec =
-  | Image_codec  (** Images of both surveys. *)
-  | Spectrum_codec  (** Spectra of both surveys. *)
-  | Segmap_codec  (** Segmentation maps. *)
-  | Catalog_codec  (** Catalogs. *)
-  | Scalar_codec  (** Scalar modalities, one codec each. *)
-
 val all : t list
 (** [all] is AION-1's 40 modalities. *)
 
@@ -98,6 +90,3 @@ val vocab : t -> int
 (** [vocab m] is the number of rows of [m]'s token embedding in the transformer:
     [4375] for an image, [1000] for a segmentation map, [3468] for a catalog,
     [1025] for redshift and [1024] for the others. *)
-
-val codec : t -> codec
-(** [codec m] is the kind of codec that tokenizes [m]. *)

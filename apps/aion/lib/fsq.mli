@@ -40,23 +40,17 @@ val levels : t -> int list
 val size : t -> int
 (** [size q] is [q]'s number of codes, the product of its levels. *)
 
-val bound : t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
-(** [bound q z] is each number of [z] bounded, in [z]'s dtype. Its constants are
-    float32's, the trained model's, for any dtype but float64: [h] is
-    [(L(i) - 1)] times [1 + ε] rounded to float32, that product rounded, then
-    halved, and [s] is [atanh] of [o / h] rounded, rounded. At float64 each is
-    the exact value rounded.
-
-    Raises [Invalid_argument] if [z]'s last axis does not have one entry per
-    level. *)
-
 val encode : t -> (float, 's, 'd) Nx.t -> 'd Nx.int64_t
 (** [encode q z] is the code of each vector along [z]'s last axis, of [z]'s
-    shape without that axis, from the digits of {!bound}[ q z].
+    shape without that axis, from the digits of its bounded numbers, computed
+    in [z]'s dtype. The bounding's constants are float32's, the trained
+    model's, for any dtype but float64: [h] is [(L(i) - 1)] times [1 + ε]
+    rounded to float32, that product rounded, then halved, and [s] is [atanh]
+    of [o / h] rounded, rounded. At float64 each is the exact value rounded.
 
-    Raises [Invalid_argument] as {!bound} does, or if [z] holds NaN, which has
-    no digit; on a set other than the host it raises at the next wait
-    ({!Nx.check}). *)
+    Raises [Invalid_argument] if [z]'s last axis does not have one entry per
+    level, or if [z] holds NaN, which has no digit; on a set other than the
+    host it raises at the next wait ({!Nx.check}). *)
 
 val decode : (float, 's) Nx.dtype -> t -> 'd Nx.int64_t -> (float, 's, 'd) Nx.t
 (** [decode dt q k] is the vector of each code of [k], along a last axis added
@@ -67,6 +61,11 @@ val decode : (float, 's) Nx.dtype -> t -> 'd Nx.int64_t -> (float, 's, 'd) Nx.t
     raises for NaN. *)
 
 (**/**)
+
+(* For tests: [bound q z] is each number of [z] bounded, as {!encode} bounds
+   it, before rounding. *)
+
+val bound : t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
 
 (* For Image: [check_decode q k] is {!decode}'s check of the codes [k], and
    [decode_raw dt q k] is {!decode} without it, for a codec that checks its

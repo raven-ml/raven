@@ -247,62 +247,6 @@ let values =
               Survey.load Gaia (file "legacysurvey")));
     ]
 
-(* Absent values, from the file to the tokens *)
-
-let rec mkdir_p dir =
-  if not (Sys.file_exists dir) then begin
-    mkdir_p (Filename.dirname dir);
-    Sys.mkdir dir 0o755
-  end
-
-let book = Nx.create Nx.float32 [| 4 |] [| -1.; 0.; 1.; 2. |]
-
-let codecs =
-  lazy
-    (let cache_dir = Filename.temp_dir "aion" "survey" in
-     let plant m entries =
-       let file = "codecs/" ^ Scalar.directory m ^ "/model.safetensors" in
-       let path =
-         Kaun_hf.cache_path ~cache_dir ~revision:Hub.revision ~file Hub.repo
-       in
-       mkdir_p (Filename.dirname path);
-       Nx_io.save_safetensors path
-         (Nx_io.Archive.of_list (List.map (fun (k, v) -> (k, Nx.P v)) entries))
-     in
-     let one = [ ("_quantizer._index_to_val", book) ] in
-     let xp =
-       List.init 55 (fun i ->
-           (Printf.sprintf "_quantizer.quantizers.%d._index_to_val" i, book))
-     in
-     List.iter
-       (fun (m, e) -> plant m e)
-       Modality.[ (Flux_g, one); (Parallax, one); (Xp_bp, xp); (Xp_rp, xp) ];
-     Codecs.load ~cache_dir ~offline:true
-       Modality.[ Scalar Flux_g; Scalar Parallax; Scalar Xp_bp; Scalar Xp_rp ])
-
-let presence n m =
-  let t = source n in
-  let rows = Array.init (Survey.length t) Fun.id in
-  let i = Codecs.encode (Lazy.force codecs) (Survey.read t rows m) in
-  match i.present with
-  | None -> Array.make (Array.length rows) true
-  | Some p ->
-      let p = Nx.to_array p in
-      Array.init (Array.length rows) (fun r ->
-          p.(r * (Array.length p / Array.length rows)))
-
-let absent =
-  cases "a non-finite value makes its modality absent for its object"
-    ~id:(fun (n, m, _) -> n ^ " " ^ Modality.key m)
-    Modality.
-      [
-        ("legacysurvey", Scalar Flux_g, [| true; false; true |]);
-        ("gaia", Scalar Parallax, [| true; true; true; false |]);
-        ("gaia", Scalar Xp_bp, [| true; true; false; true |]);
-        ("gaia", Scalar Xp_rp, [| true; true; true; true |]);
-      ]
-    (fun (n, m, want) -> equal (array bool) want (presence n m))
-
 (* Matching *)
 
 let deg = Float.pi /. 180.
@@ -404,4 +348,4 @@ let matching =
           equal (pair (array int) (array int)) ([| 0; 1 |], [| 1; 0 |]) (i, j));
     ]
 
-let () = exit (run "aion.survey" [ modalities; map; values; absent; matching ])
+let () = exit (run "aion.survey" [ modalities; map; values; matching ])

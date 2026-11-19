@@ -206,6 +206,22 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   `load` and `tensors` alone), so tessera's cram tests cannot make the .pt
   model file that `encode`, `targets` and `distil --init` read
   (tessera-bin/adjudication.md M9). Found by DM's skeptic
+- `Nx.searchsorted` searches one 1-d key set, or rows of a 2-d one
+  lexicographically, so aion's `Spectrum.resample`, which searches each
+  spectrum in its own wavelengths, calls it once per row and stacks the
+  results. A batched search would take a key set per row
+- nx has no `nan_to_num`: aion's `Spectrum.nan_to_num` composes `isnan`,
+  `clamp` and `where` to replace NaN and the infinities as torch's does
+- `Nx_io.Hdf5.window` reads one box, every chunk it covers whole, so
+  aion's `Survey.read` reads a source's rows run by run: a scattered row of
+  a Legacy Survey file, chunked (27, 1, 20, 40), decodes 128 chunks of
+  86,400 bytes, 11.1 MB for a 0.41 MB image. A row-subset read needs its
+  own design once a reader measures the cost
+- `Nx_io.Hdf5.values` decodes a whole chunked dataset into memory: 22.5 GB
+  for one Legacy Survey file's `image_array`. Only `window` fits such files
+- `Nx_io.Hdf5` reads no strings or booleans: fixed-length strings read as
+  their bytes at `uint8` (aion's `Survey` trims and decodes band names), and
+  h5py's booleans as `int8`
 
 ## vega
 
@@ -287,3 +303,8 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - ymir's `Grid` holds two celestial axes only, a limit no standard
   imposes; spectral axes and `-TAB` lookups need grids that are a
   celestial pair times 1-D axes (AION campaign question B4.1)
+- raven has no library that fetches byte ranges over HTTPS: kaun.hf,
+  kaun.datasets and tessera's `Fetch` each wrap curl. `Nx_io.Partial`
+  decodes from fetched ranges, so with one aion could read a Legacy Survey
+  object's 0.41 MB rows where it now needs the whole HEALPix file, 62.7 GB
+  on average

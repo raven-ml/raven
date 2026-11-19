@@ -439,7 +439,7 @@ let pad =
       test "lengths" (fun () ->
           equal int 7808 (Spectrum.length Modality.Desi);
           equal int 4800 (Spectrum.length Modality.Sdss));
-      (* DIVERGENCES: upstream's F.pad with a negative width cuts the row. *)
+      (* AION-1's F.pad with a negative width cuts the row. *)
       test "encode refuses a row longer than the modality's" (fun () ->
           let x =
             spectrum [| Array.make 4801 1. |] [| Array.init 4801 float_of_int |]
@@ -716,7 +716,7 @@ let upstream =
                ~spread:(f64s "grn.s") (floats y)));
     ]
 
-(* Departures from upstream, each in DIVERGENCES.md *)
+(* Departures from AION-1's code *)
 
 let divergences =
   group "divergences"

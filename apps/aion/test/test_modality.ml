@@ -80,29 +80,6 @@ let scalars =
            Modality.all)
         (List.map (fun s -> Modality.key (Scalar s)) Modality.scalars))
 
-let codec_name = function
-  | Modality.Image_codec -> "image"
-  | Spectrum_codec -> "spectrum"
-  | Segmap_codec -> "segmap"
-  | Catalog_codec -> "catalog"
-  | Scalar_codec -> "scalar"
-
-let codecs =
-  cases "each modality's codec"
-    ~id:(fun (m, _) -> Modality.key m)
-    Modality.
-      [
-        (Image, Image_codec);
-        (Image_hsc, Image_codec);
-        (Spectrum Desi, Spectrum_codec);
-        (Spectrum Sdss, Spectrum_codec);
-        (Segmap, Segmap_codec);
-        (Catalog, Catalog_codec);
-        (Scalar Xp_bp, Scalar_codec);
-        (Scalar Flux_g, Scalar_codec);
-      ]
-    (fun (m, c) -> equal string (codec_name c) (codec_name (Modality.codec m)))
-
 let () =
   exit
-    (run "aion.modality" [ group "modality" [ keys; facts; scalars; codecs ] ])
+    (run "aion.modality" [ group "modality" [ keys; facts; scalars ] ])

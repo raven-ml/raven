@@ -49,13 +49,6 @@ type t =
   | Catalog
   | Scalar of scalar
 
-type codec =
-  | Image_codec
-  | Spectrum_codec
-  | Segmap_codec
-  | Catalog_codec
-  | Scalar_codec
-
 let scalars =
   [
     Flux_g;
@@ -163,9 +156,3 @@ let vocab = function
   | Scalar Z -> 1025
   | Spectrum _ | Scalar _ -> 1024
 
-let codec = function
-  | Image | Image_hsc -> Image_codec
-  | Spectrum _ -> Spectrum_codec
-  | Segmap -> Segmap_codec
-  | Catalog -> Catalog_codec
-  | Scalar _ -> Scalar_codec

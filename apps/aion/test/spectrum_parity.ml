@@ -10,10 +10,8 @@
    huggingface, goldens and subset, and ensemble/spectrum:
    gen/spectrum_ensemble.py's files, one per set: golden, ls_desi, desi and sdss
    (rows trimmed of their -1 pads). A set without its file fails. Each holds the
-   set's objects, the float64 reference's values, PyTorch's float32 values and
-   the ensemble's spreads at the order model's scales; a file <set>-report
-   beside it, where present, holds the contract and measured scales' spreads for
-   some of the objects.
+   set's objects, the float64 reference's values and the ensemble's spreads at
+   float32's and float64's scales.
 
    Two checks per set:
 
@@ -25,10 +23,7 @@
 
    Each checks the LFQ's input, the normalisation, the tokens (the
    normalisation's and each LFQ bit), and the decoding of the reference's tokens
-   (flux and mask). It exits 1 when a check fails. For the report files' objects
-   it also prints, without gating, the float32 codec's worst ratio at the
-   contract scale, and the root mean square of (x - reference) / ŝ at PyTorch's
-   measured scale for the codec and for PyTorch's float32. *)
+   (flux and mask). It exits 1 when a check fails. *)
 
 open Aion
 
@@ -52,7 +47,6 @@ let get dt name a =
   | Some p -> Nx.unpack dt p
   | None -> failwith ("no tensor " ^ name)
 
-let has a name = Option.is_some (Nx_io.Archive.find name a)
 let floats t = Nx.to_array (Nx.cast Nx.float64 t)
 let ints t = Array.map Int64.to_int (Nx.to_array (Nx.cast Nx.int64 t))
 
@@ -110,15 +104,15 @@ let trimmed (x : _ Spectrum.spectrum) =
       wavelength = cat (fun x -> x.wavelength);
     }
 
-(* The sets whose ensemble file exists. A missing one is named and skipped; it
-   counts as a failure, and a missing report file does not. *)
-let sets ?(suffix = "") ~goldens ~subset ~ensemble () =
+(* The sets whose ensemble file exists. A missing one is named, skipped and
+   counted as a failure. *)
+let sets ~goldens ~subset ~ensemble =
   let sub name = load (Filename.concat subset (name ^ ".safetensors")) in
   let input = Filename.concat goldens "SPECTRUM_input_batch.safetensors" in
   let set file name modality spectra =
-    let path = Filename.concat ensemble (file ^ suffix ^ ".safetensors") in
+    let path = Filename.concat ensemble (file ^ ".safetensors") in
     if not (Sys.file_exists path) then begin
-      if suffix = "" then incr failures;
+      incr failures;
       printf "missing ensemble %s\n%!" path;
       []
     end
@@ -167,7 +161,7 @@ let compute (type b) (t : (b, Nx.host) Spectrum.t) (set : set)
     mask = Array.map (fun b -> if b then 1. else -1.) (Nx.to_array d.mask);
   }
 
-let check ~gate ~n ~levels ~scale (set : set) o =
+let check ~n ~levels ~scale (set : set) o =
   let e = set.e in
   let r name = floats (get Nx.float64 ("ref." ^ name) e)
   and s name = floats (get Nx.float64 ("s." ^ scale ^ "." ^ name) e) in
@@ -201,46 +195,12 @@ let check ~gate ~n ~levels ~scale (set : set) o =
   in
   List.iter
     (fun (name, (c : Spread.check)) ->
-      if gate then begin
-        if c.failures <> [] then incr failures;
-        printf "  %s%s\n"
-          (if c.failures = [] then "" else "FAIL ")
-          (Format.asprintf "%a" (Spread.pp name) c)
-      end
-      else
-        printf "  %s: worst %.3g at the %s scale (not gating)\n" name c.worst
-          scale)
+      if c.failures <> [] then incr failures;
+      printf "  %s%s\n"
+        (if c.failures = [] then "" else "FAIL ")
+        (Format.asprintf "%a" (Spread.pp name) c))
     checks;
   printf "%!"
-
-(* The root mean square of (x - reference) / ŝ over an output. *)
-let rms_z ~reference ~spread x =
-  let acc = ref 0. and k = ref 0 in
-  Array.iteri
-    (fun i v ->
-      if spread.(i) > 0. then begin
-        let z = (v -. reference.(i)) /. spread.(i) in
-        acc := !acc +. (z *. z);
-        incr k
-      end)
-    x;
-  sqrt (!acc /. float_of_int (max 1 !k))
-
-let measured (set : set) o =
-  let e = set.e in
-  let f name = floats (get Nx.float64 name e) in
-  let pre =
-    rms_z
-      ~reference:(lfq (get Nx.float64 "ref.pre" e))
-      ~spread:(lfq (get Nx.float64 "s.measured.pre" e))
-  and flux = rms_z ~reference:(f "ref.flux") ~spread:(f "s.measured.flux") in
-  printf
-    "  measured scale, rms z, codec and PyTorch float32 (not gating): LFQ \
-     input %.3g and %.3g, flux %.3g and %.3g\n"
-    (pre o.pre)
-    (pre (lfq (get Nx.float64 "f32.pre" e)))
-    (flux o.flux)
-    (flux (f "f32.flux"))
 
 let () =
   let hub = path "huggingface" and goldens = path "goldens" in
@@ -257,7 +217,7 @@ let () =
       let t0 = Unix.gettimeofday () in
       let o32 = compute t32 set set.spectra in
       printf "float32, order scale:\n";
-      check ~gate:true ~n ~levels ~scale:"order" set o32;
+      check ~n ~levels ~scale:"order" set o32;
       let reference = ints (get Nx.int64 "ref.tokens" set.e) in
       let differ = ref [] in
       Array.iteri
@@ -276,19 +236,8 @@ let () =
           }
       in
       printf "float64, order scale at float64:\n";
-      check ~gate:true ~n ~levels ~scale:"order64" set (compute t64 set x64);
+      check ~n ~levels ~scale:"order64" set (compute t64 set x64);
       printf "(%.0f s)\n%!" (Unix.gettimeofday () -. t0))
-    (sets ~goldens ~subset ~ensemble ());
-  List.iter
-    (fun (set : set) ->
-      let n = (ints (get Nx.int64 "n" set.e)).(0) in
-      printf "\n== %s, %d objects: other scales (not gating)\n" set.name
-        (Nx.dim 0 set.spectra.flux);
-      let o32 = compute t32 set set.spectra in
-      if has set.e "s.contract.pre" then
-        check ~gate:false ~n ~levels ~scale:"contract" set o32;
-      if has set.e "s.measured.pre" then measured set o32;
-      printf "%!")
-    (sets ~suffix:"-report" ~goldens ~subset ~ensemble ());
+    (sets ~goldens ~subset ~ensemble);
   printf "\nfailing checks: %d\n" !failures;
   exit (if !failures = 0 then 0 else 1)

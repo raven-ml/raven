@@ -20,8 +20,7 @@
 image_parity.exe.
 
     uv run test/gen/image_ensemble.py --goldens GOLDENS --subset SUBSET \
-        SET OUT [--objects 16] [--n 32] [--scales order,order64,contract,measured]
-        [--chunk 8] [--time R]
+        SET OUT [--objects 16] [--n 32] [--chunk 8]
 
 SET is golden (upstream's tests/test_data image input, channels 5-8, the Legacy
 Survey's), ls_desi or ls_catalog (the parity subset's Legacy Survey images), or hsc
@@ -31,19 +30,13 @@ For each object it runs upstream's ImageCodec (aion-base, polymathic-aion db7fba
   - in float64, unmoved: the reference, ref.*: the FSQ input pre (5, 576), its bound
     bounded (576, 5), the tokens (576) and the decoding of those tokens in the set's
     bands, decoded (c, 96, 96);
-  - in float32 (PyTorch's own float32), f32.*: pre, bounded, tokens, and decoded
-    from the reference's tokens;
   - in float64 under perturb's dispatch mode, n times per scale, each sample
     decoding the reference's tokens; s.<scale>.* is the root mean square of the
     samples' distance from the reference, per value (pre, bounded, decoded).
-Scales: order (u = 2^-24, the float32 check's gate), order64 (the order model at
-u = 2^-53, the float64 check's gate), contract and measured (reported only). The
-n samples of an object run in batches of --chunk copies of it, each element
-drawing its own noise. Each object is saved as it finishes, in OUT.parts/, and a
-rerun skips the objects saved there (a part holds one object's arrays at the
-scales given; delete a set's parts to change them). --time R prints the elapsed
-and CPU time of R ensembles of one object at each scale and exits (run it on a
-quiet machine).
+Scales: order (u = 2^-24, the float32 check's) and order64 (u = 2^-53, the float64
+check's). The n samples of an object run in batches of --chunk copies of it, each
+element drawing its own noise. Each object is saved as it finishes, in OUT.parts/,
+and a rerun skips the objects saved there.
 
 Upstream encodes in place, so each run gets a fresh copy of its input.
 """
@@ -71,14 +64,11 @@ p.add_argument("set", choices=["golden", "ls_desi", "ls_catalog", "hsc"])
 p.add_argument("out")
 p.add_argument("--objects", type=int, default=16)
 p.add_argument("--n", type=int, default=32)
-p.add_argument("--scales", default="order,order64,contract,measured")
-p.add_argument("--time", type=int, default=0)
 p.add_argument("--chunk", type=int, default=8, help="samples per batch")
 p.add_argument("--goldens", required=True, help="goldens.py's directory")
 p.add_argument("--subset", required=True, help="subset.py's directory")
 a = p.parse_args()
-SCALES = {"order": ("order", U32), "order64": ("order", U64), "contract": ("contract", U32),
-          "measured": ("measured", U32)}
+SCALES = {"order": U32, "order64": U64}
 LS = ["DES-G", "DES-R", "DES-I", "DES-Z"]
 HSC = ["HSC-G", "HSC-R", "HSC-I", "HSC-Z", "HSC-Y"]
 
@@ -131,11 +121,11 @@ KEYS = ("pre", "bounded", "decoded")
 
 def ensemble(i, ref, name, seed):
     """The n perturbed runs of object i at scale name, in batches of --chunk."""
-    scale, u = SCALES[name]
+    u = SCALES[name]
     parts, census = [], {}
     for lo in range(0, a.n, a.chunk):
         k = min(a.chunk, a.n - lo)
-        mode = Ensemble(scale, seed + lo, u)
+        mode = Ensemble(seed + lo, u)
         parts.append(run(c64, torch.float64, i, tokens=ref["tokens"].repeat(k, 1), copies=k,
                          mode=mode))
         for key, v in mode.census.items():
@@ -147,21 +137,6 @@ def ensemble(i, ref, name, seed):
 
 
 c64 = make(torch.float64)
-c32 = make(torch.float32)
-
-if a.time:
-    ref = run(c64, torch.float64, rows[0])
-    for name in a.scales.split(","):
-        w, c = [], []
-        for r in range(a.time):
-            t0, p0 = time.perf_counter(), time.process_time()
-            ensemble(rows[0], ref, name, 7 + 1000 * r)
-            w.append(time.perf_counter() - t0)
-            c.append(time.process_time() - p0)
-        print(f"{a.set} row {rows[0]}, {name}, n = {a.n} samples in batches of {a.chunk}: elapsed "
-              f"median {np.median(w):.1f} s (min {min(w):.1f}, max {max(w):.1f}), cpu median "
-              f"{np.median(c):.1f} s; {np.median(w) / a.n:.2f} s a sample", flush=True)
-    sys.exit(0)
 
 out = {"rows": np.array(rows, np.int64), "n": np.array([a.n], np.int64)}
 acc = {}
@@ -178,20 +153,17 @@ for j, i in enumerate(rows):
     else:
         one = {}
         ref = run(c64, torch.float64, i)
-        f32 = run(c32, torch.float32, i, tokens=ref["tokens"])
         for k in KEYS:
             one["ref." + k] = ref[k]
-            one["f32." + k] = f32[k]
         one["ref.tokens"] = ref["tokens"].to(torch.int64).numpy()
-        one["f32.tokens"] = c32.encode(image(i, torch.float32)).to(torch.int64).numpy()
-        for si, name in enumerate(a.scales.split(",")):
+        for si, name in enumerate(SCALES):
             s = ensemble(i, ref, name, 1000 + 100003 * si + 1009 * i)
             for k in KEYS:
                 d = s[k] - ref[k]
                 one[f"s.{name}.{k}"] = np.sqrt((d ** 2).mean(0, keepdims=True))
         one = {k: np.ascontiguousarray(v) for k, v in one.items()}
         save_file(one, part + ".tmp", metadata={"set": a.set, "row": str(i), "n": str(a.n),
-                                                "scales": a.scales})
+                                                "scales": ",".join(SCALES)})
         os.replace(part + ".tmp", part)
         print(f"{a.set}: object {j + 1}/{len(rows)} (row {i}) done at {time.time() - t0:.0f} s",
               flush=True)
@@ -201,7 +173,7 @@ for j, i in enumerate(rows):
 for k, v in acc.items():
     out[k] = np.ascontiguousarray(np.concatenate(v, 0))
 meta = {"script": "apps/aion/test/gen/image_ensemble.py", "torch": torch.__version__,
-        "upstream": "PolymathicAI/AION db7fba6df53b", "n": str(a.n), "scales": a.scales,
+        "upstream": "PolymathicAI/AION db7fba6df53b", "n": str(a.n), "scales": ",".join(SCALES),
         "set": a.set, "bands": ",".join(bands)}
 os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
 save_file(out, a.out, metadata=meta)

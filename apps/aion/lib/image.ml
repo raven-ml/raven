@@ -364,8 +364,10 @@ let wide (type b) (dt : (float, b) Nx.dtype) =
 
 (* A division by a constant as AION-1 trained it: on CUDA, PyTorch divides a
    tensor by a Python number as a product with the float32 quotient of 1 by the
-   number rounded to float32 (AGENTS.md). For 0.01 that is 100 exactly, for 10
-   the float32 0.1. In float64, upstream's reference divides. *)
+   number rounded to float32 (aten/src/ATen/native/cuda/BinaryDivTrueKernel.cu,
+   the same from torch 2.4, AION-1's floor, to 2.9; a double reciprocal only
+   after the weights were published). For 0.01 that is 100 exactly, for 10 the
+   float32 0.1. In float64, upstream's reference divides. *)
 let div_const x c =
   if wide (Nx.dtype x) then Nx.div_s x c else Nx.mul_s x (f32 (1. /. f32 c))
 

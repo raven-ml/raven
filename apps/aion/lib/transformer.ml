@@ -253,6 +253,8 @@ let embedding r ~dim m =
   let enc = "encoder_embeddings." ^ key and dec = "decoder_embeddings." ^ key in
   let pos = weight r (enc ^ ".pos_emb") [| 1; n; dim |] in
   let dec_pos = weight r (dec ^ ".pos_emb") [| 1; n; dim |] in
+  (* Both tables are float32 values torch computed, which a formula need not
+     reproduce bit for bit, so they are read and must agree. *)
   if not (Nx.item [] (Nx.array_equal pos dec_pos)) then
     fail "%s.pos_emb and %s.pos_emb differ" enc dec;
   {

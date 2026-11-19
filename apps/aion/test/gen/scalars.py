@@ -14,28 +14,30 @@ snapshot), GOLDENS_ST upstream's tests/test_data goldens converted to
 safetensors by goldens.py. Writes:
 
 - OUT/edges.safetensors: each scalar codec's codebooks as one float32
-  [c; 1024] entry under its codec name. Only the codebooks: the reservoirs,
-  100,000 floats per channel, serve training alone.
+  [c; 1024] entry under its codec name, for the XP codecs those of the kept
+  coefficients alone. Only the codebooks: the reservoirs, 100,000 floats per
+  channel, serve training alone.
 - OUT/goldens.safetensors: for each scalar codec, <name>.input,
   <name>.encoded and <name>.decoded as upstream stored them. For
   bp_coefficients and rp_coefficients, only the rows <name>.rows (their
-  indices in upstream's 1024).
+  indices in upstream's 1024) and the coefficients <name>.coefficients.
 
-Row selection for the two XP codecs. Each (coefficient, label) pair that some
-row of the full golden reaches must be reached by a kept row, with labels
+An XP codec computes each coefficient alike, so its fixture keeps the
+coefficients where the goldens can tell a wrong edge from rounding:
   - near: a codebook edge lies where nx's float32 asinh(asinh x) may land
     (each asinh within 3 floats of the exact value of its input, rounded, as
     nx.mli states and apps/aion's parity test assumes), where a token may
     flip;
-  - first, last: the token is 0, or 1023;
-and row 20 is kept whatever it covers: upstream's float32 asinh put
-coefficient 5 of bp's row 20 one bin above the correctly rounded value. Rows
-are added greedily, the one reaching most uncovered pairs first, lowest index
-on ties.
+and the lowest coefficient whose token is 0 (first) and 1023 (last) in some
+row, and coefficient 5: upstream's float32 asinh put coefficient 5 of bp's
+row 20 one bin above the correctly rounded value. Of those, each
+(coefficient, label) pair that some row reaches must be reached by a kept
+row; row 20 is kept whatever it covers. Rows are added greedily, the one
+reaching most uncovered pairs first, lowest index on ties.
 
-With --whole the XP goldens are kept whole: test_parity.exe run from a
-directory whose upstream/ holds those files checks every row (1.8 MB more,
-outside the repository).
+With --whole the XP goldens and codebooks are kept whole: test_parity.exe
+run from a directory whose upstream/ holds those files checks every row and
+coefficient (2.2 MB more, outside the repository).
 
 Each output's metadata names this script and the SHA-256 of every input.
 """
@@ -58,7 +60,8 @@ CODECS = [
     "bp_coefficients", "rp_coefficients",
 ]
 XP = ("bp_coefficients", "rp_coefficients")
-KEEP = {"bp_coefficients": [20], "rp_coefficients": [20]}
+KEEP_ROWS = [20]
+KEEP_COEFFICIENT = 5
 SCRIPT = "apps/aion/test/gen/scalars.py"
 
 
@@ -113,8 +116,20 @@ def labels(x, edges, tokens):
     return rows
 
 
-def select(name, rows):
-    keep = list(KEEP[name])
+def coefficients(rows):
+    """The kept coefficients: those near an edge, the first reaching each end, and
+    KEEP_COEFFICIENT."""
+    pairs = set().union(*rows)
+    keep = {j for j, label in pairs if label == "near"} | {KEEP_COEFFICIENT}
+    for end in ("first", "last"):
+        ends = sorted(j for j, label in pairs if label == end)
+        if ends and not keep.intersection(ends):
+            keep.add(ends[0])
+    return sorted(keep)
+
+
+def select(rows):
+    keep = list(KEEP_ROWS)
     covered = set().union(*(rows[r] for r in keep))
     universe = set().union(*rows)
     while covered != universe:
@@ -131,8 +146,6 @@ def main(codecs_dir, goldens_dir, out, whole=False):
         path = os.path.join(codecs_dir, name, "model.safetensors")
         edges[name] = np.ascontiguousarray(codebooks(path), dtype=np.float32)
         edge_inputs.append(f"{sha(path)}  codecs/{name}/model.safetensors")
-    meta = {"generator": SCRIPT, "inputs": "\n".join(edge_inputs)}
-    save_file(edges, os.path.join(out, "edges.safetensors"), metadata=meta)
 
     goldens, golden_inputs = {}, []
     for name in CODECS:
@@ -143,15 +156,22 @@ def main(codecs_dir, goldens_dir, out, whole=False):
             parts[part] = load_file(path)["value"]
             golden_inputs.append(f"{sha(path)}  {file}")
         if name in XP and not whole:
+            cols = coefficients(labels(parts["input"], edges[name], parts["encoded"]))
+            edges[name] = np.ascontiguousarray(edges[name][cols])
+            for part in parts:
+                parts[part] = parts[part][:, cols]
             rows = labels(parts["input"], edges[name], parts["encoded"])
-            keep, universe = select(name, rows)
-            print(f"{name}: {len(keep)} rows of {len(rows)} reach "
-                  f"{len(universe)} pairs: {keep}")
+            keep, universe = select(rows)
+            print(f"{name}: coefficients {cols}; {len(keep)} rows of {len(rows)}"
+                  f" reach {len(universe)} pairs: {keep}")
             for part in parts:
                 parts[part] = parts[part][keep]
             goldens[f"{name}.rows"] = np.array(keep, dtype=np.int64)
+            goldens[f"{name}.coefficients"] = np.array(cols, dtype=np.int64)
         for part, v in parts.items():
             goldens[f"{name}.{part}"] = np.ascontiguousarray(v)
+    meta = {"generator": SCRIPT, "inputs": "\n".join(edge_inputs)}
+    save_file(edges, os.path.join(out, "edges.safetensors"), metadata=meta)
     meta = {"generator": SCRIPT, "inputs": "\n".join(golden_inputs)}
     save_file(goldens, os.path.join(out, "goldens.safetensors"), metadata=meta)
     for f in ("edges.safetensors", "goldens.safetensors"):
