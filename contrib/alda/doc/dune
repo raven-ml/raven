@@ -1,5 +1,6 @@
 (mdx
  (files index.md filters.md design.md)
+ (package alda)
  (enabled_if
   (and
    (<> %{profile} sanitize)

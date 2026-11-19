@@ -2,7 +2,7 @@
 
 Packages built on Raven's core libraries that sit outside the 1.0 commitment.
 Each one is its own dune project with its own version and opam metadata.
-`fehu`, `sowilo`, `ymir` and `jord` keep their own `CHANGES.md`.
+`fehu`, `sowilo`, `ymir`, `jord` and `alda` keep their own `CHANGES.md`.
 
 | Package                   | What it does                                          |
 | ------------------------- | ----------------------------------------------------- |
@@ -10,6 +10,7 @@ Each one is its own dune project with its own version and opam metadata.
 | [**sowilo**](sowilo/)     | Differentiable computer vision                        |
 | [**ymir**](ymir/)         | Astronomy: units, frames, FITS, photometry, cosmology |
 | [**jord**](jord/)         | Earth observation: systems, grids, warps, products    |
+| [**alda**](alda/)         | Signals: windows, spectra, filters, resampling        |
 
 ## Policy
 

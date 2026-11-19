@@ -22,6 +22,7 @@
   test_fft_convolve
   test_resample
   test_taps)
+ (package alda)
  (libraries alda nx nx.io rune windtrap)
  (deps
   (glob_files golden/*.npz)

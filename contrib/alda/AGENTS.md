@@ -1,14 +1,22 @@
 # alda
 
 Discrete-time signals over nx: windows, framing, short-time transforms,
-spectra and filterbanks. It lives in `dev/` and is never published (no opam
-package, no CHANGES entry).
+spectra, filterbanks, filters and resampling. It is a project of its own in
+`contrib/`: its `dune-project` declares the opam package `alda`, and it keeps
+its own `CHANGES.md`. It builds and tests against raven's main, releases on
+its own schedule and carries no API stability guarantee.
+
+- Changes go in `contrib/alda/CHANGES.md`.
+- The same rules as raven's libraries: `docs/dev/design.md`, AGENTS.md's code
+  style, and the docs follow `docs/dev/documentation.md`.
 
 ## Boundaries
 
-- alda depends on nx, and on rune for a traced loop (`Rune.scan`) and the
-  derivatives it states itself (`Rune.custom_jvp`, `Rune.custom_transpose`);
-  on nothing else. It never calls `Rune.jit`: the caller compiles.
+- alda depends on the public libraries of core packages alone, with a lower
+  bound on the oldest core release it builds against, as `contrib/README.md`
+  states: on nx, and on rune for a traced loop (`Rune.scan`) and the
+  derivatives it states itself (`Rune.custom_jvp`, `Rune.custom_transpose`).
+  It never calls `Rune.jit`: the caller compiles.
 - A signal is a plain `Nx.t` with its time axis `?axis`; the rate is
   `~rate:float`. No signal record, units or phantom rate.
 - A capability alda lacks in nx (an extension rule, a transform, a kernel) is

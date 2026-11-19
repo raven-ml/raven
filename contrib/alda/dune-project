@@ -1,0 +1,45 @@
+(lang dune 3.21)
+
+(name alda)
+
+(source
+ (github raven-ml/raven))
+
+(authors "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(maintainers "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(license ISC)
+
+(documentation "https://github.com/raven-ml/raven/tree/main/contrib/alda")
+
+(bug_reports "https://github.com/raven-ml/raven/issues")
+
+(using mdx 0.4)
+
+(version 1.0.0~alpha3)
+
+(implicit_transitive_deps false)
+
+(generate_opam_files true)
+
+(package
+ (name alda)
+ (synopsis "Signal processing for OCaml")
+ (description
+  "Discrete-time signals over Nx tensors: windows, frame grids and their streams, short-time Fourier transforms and their least-squares inverse, power spectra, filterbanks such as the mel bank, FIR and IIR filters with their classical designs, FFT convolution and band-limited resampling. Every operation is a composition of nx operations, so rune differentiates, batches and compiles it, and an operation with memory across samples also runs over a signal given in chunks.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (nx
+   (>= 1.0.0~alpha3))
+  (rune
+   (>= 1.0.0~alpha3))
+  (windtrap
+   (and
+    :with-test
+    (>= 0.3.1)))
+  (mdx :with-test))
+ (tags
+  (signal-processing audio spectrogram filters resampling science)))

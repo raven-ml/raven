@@ -74,6 +74,7 @@ Packages in [`contrib/`](contrib/) build against every change to the core and re
 | ᛋ   | [**sowilo**](contrib/sowilo/)         | OpenCV    | Differentiable computer vision                        |
 |     | [**ymir**](contrib/ymir/)             | Astropy   | Astronomy: units, frames, FITS, photometry, cosmology |
 |     | [**jord**](contrib/jord/)             | rasterio  | Earth observation: systems, grids, warps, products    |
+|     | [**alda**](contrib/alda/)             | SciPy     | Signals: windows, spectra, filters, resampling        |
 
 ## Getting started
 
