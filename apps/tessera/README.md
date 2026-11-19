@@ -82,4 +82,6 @@ counts are the tile's. Rows are seconds per call.
 | `distil-step/medium` | one distillation step of the medium student on 2,048 pixels, in groups of 256 as `main.exe distil` cuts them (GPU only) |
 
 `bench/pytorch.py` times the same rows with TESSERA's own code, and prints
-them alike.
+them alike. `bench/whole.sh` times what a suite cannot hold: `main.exe
+encode` and TESSERA's `infer_v2.py` on the whole tile, each a new process,
+with the released students, and a first tile over an empty kernel cache.
