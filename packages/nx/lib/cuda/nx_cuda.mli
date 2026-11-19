@@ -477,7 +477,7 @@
     memory for a plan. Its words grow with its axes and its lines' points.
     *)
 
-(** {1:attention Attention}
+(** {1:attention_cuda Attention}
 
     [attention] computes every case {!Nx_kernel.S} offers. A
     {e lead index} is an index of [q]'s [lead…] axes. A query head holds
@@ -555,7 +555,7 @@
 
     The pair program's outputs have the bits [map] gives them. A call reads
     no key or value of a block whose pairs output 0 hides from each row of
-    a query tile, where {!Nx_kernel.Prog.ranges} shows it from the loads'
+    a query tile, where {!Nx_kernel.Prog.val-ranges} shows it from the loads'
     least and greatest elements over the block. *)
 
 (** {3:attention_nodes Nodes}

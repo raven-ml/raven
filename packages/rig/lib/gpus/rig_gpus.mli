@@ -108,7 +108,7 @@ val open_ : string -> (Rig.t, string) result
 
 val open_all : string -> (Rig.t list, string) result
 (** [open_all names] is the devices [names] names, separated by commas, in
-    order, each opened by {!val-open_} as {!String.trim} leaves it: a
+    order, each opened by {!val-open_} as [String.trim] leaves it: a
     program's list of devices, as a user writes it, such as ["cuda"] or
     ["CPU:1,CPU:2"]. A program mints a set over them ([Nx.devices]).
 

@@ -6530,15 +6530,9 @@ module Prim : sig
         Raises as {!arrays} does. *)
   end
 
-  (**/**)
-
-  (** {1:partitions Partitions}
-
-      For compilers that lower an operation over several devices as nx
-      computes it: as operations on one device each and moves between
-      them, its {e partition}. A value over a placement of several devices
-      has a {e piece} on each: its window there ({!pieces}), as a value on
-      that device alone. *)
+  (* [origin] lies above the stop comment because odoc refuses a record
+     whose fields name a type hidden below it, though the record is hidden
+     too. *)
 
   type origin = {
     start : int array;  (** The window's start along each axis. *)
@@ -6548,6 +6542,16 @@ module Prim : sig
       lies, in a loop of [extents]: its start along an axis lies in
       [\[0, e - n\]], [e] the axis's extent and [n] the window's. Both are
       [[||]] where a loop needs no offset. *)
+
+  (**/**)
+
+  (** {1:partitions Partitions}
+
+      For compilers that lower an operation over several devices as nx
+      computes it: as operations on one device each and moves between
+      them, its {e partition}. A value over a placement of several devices
+      has a {e piece} on each: its window there ({!pieces}), as a value on
+      that device alone. *)
 
   type engine = {
     run :

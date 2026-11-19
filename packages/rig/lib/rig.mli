@@ -2395,7 +2395,7 @@ module Submission : sig
       A fill reads only [params].
 
       [params] are the first bytes of the part's parameters as its function
-      reads them, little-endian, as {!Bytes.set_int64_le} writes them. The
+      reads them, little-endian, as [Bytes.set_int64_le] writes them. The
       parameters past them read [0]. At a buffer ref's [at], the 8 bytes hold
       the offset into its buffer ({!type-ref}), read the same way; at an entry
       ref's, the submit writes the function's value over them ({!entry}).
