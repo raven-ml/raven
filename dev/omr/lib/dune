@@ -1,0 +1,5 @@
+; omr: discrete-time signals over nx. Never published.
+
+(library
+ (name omr)
+ (libraries nx rune))

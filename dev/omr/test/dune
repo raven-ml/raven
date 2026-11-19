@@ -1,0 +1,28 @@
+; golden/*.npz were cut by the generators under
+; _plans/whisper-port/gen/O2-impl/ (run.sh SCRIPT OUT, numpy 2.5.5, scipy
+; 1.16.3, torch 2.15.0, librosa 0.11.0, openai-whisper 86098128), outside the
+; repository; each commit that adds one names its script. librispeech/*.npy
+; are three LibriSpeech utterances (CC BY 4.0, see librispeech/NOTICE),
+; written with golden/whisper.npz by logmel.py. Batch 2's goldens come from
+; _plans/whisper-port/gen/O3-impl/ (run.sh SCRIPT OUT; versions in its
+; pyproject.toml), named by the commit that adds each, and the filter
+; designs' from _plans/whisper-port/gen/E1-impl/ likewise.
+
+(tests
+ (names
+  test_window
+  test_frames
+  test_stft
+  test_spectra
+  test_banks
+  test_whisper
+  test_sos
+  test_designs
+  test_fir
+  test_fft_convolve
+  test_resample
+  test_taps)
+ (libraries omr nx nx.io rune windtrap)
+ (deps
+  (glob_files golden/*.npz)
+  (glob_files librispeech/*.npy)))

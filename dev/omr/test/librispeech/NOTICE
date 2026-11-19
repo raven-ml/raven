@@ -1,0 +1,12 @@
+The .npy files in this directory hold the 16-bit samples of three utterances
+of LibriSpeech (test-clean 121-121726-0002 and 61-70968-0000, test-other
+367-130732-0001), decoded from their FLAC files without change.
+
+LibriSpeech ASR corpus, by Vassil Panayotov, Guoguo Chen, Daniel Povey and
+Sanjeev Khudanpur, https://www.openslr.org/12, derived from LibriVox
+audiobooks. It is licensed under the Creative Commons Attribution 4.0
+International License (CC BY 4.0),
+https://creativecommons.org/licenses/by/4.0/.
+
+V. Panayotov, G. Chen, D. Povey and S. Khudanpur, "LibriSpeech: an ASR
+corpus based on public domain audio books", ICASSP 2015.
