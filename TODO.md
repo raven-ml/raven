@@ -95,6 +95,9 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Metal's renderer emits no launch bound; its `local_threads_max` of 1024
   is a maximum a pipeline may refuse, and Mac2's AMD GPUs may run 64-wide
   SIMD groups, which `simd_threads` does not state
+- tolk's `Diskcache` "the system's directory is safe" fails under
+  `~/wt/bin/nogpu` (its user namespace), so a CPU-only tolk runtest
+  cannot pass
 
 ## nx, rune
 
@@ -116,8 +119,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - nx.cpu's Reduce still runs a program once per reduction across rows,
   for Moments and Logsumexp, and over outputs of 16 terms or fewer;
   attention.c:305-306 runs `ranges`' two outputs in two runs
-- nx's `test_cuda` fails, not skips, when the device nodes are hidden
-  (`~/wt/bin/nogpu`), so a CPU-only `@packages/nx/runtest` cannot pass
 - Under `Rune.jit`, `Nx.matmul_segments`' weight gradient stores one
   `[k; n]` partial per block (+0.9 GB at 1,024 rows over 40 heads): it
   needs a tolk reduce with a per-workgroup trip count read from memory
@@ -200,6 +201,9 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   `load` and `tensors` alone), so tessera's cram tests cannot make the .pt
   model file that `encode`, `targets` and `distil --init` read
   (tessera-bin/adjudication.md M9). Found by DM's skeptic
+- rune's trace.ml `unread` turns a known value into a tape variable;
+  `scan_rule`'s `parts` reaches it for a `Prim.Scan` with a constant
+  program and only a carry tangent
 
 ## vega
 
