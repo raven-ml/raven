@@ -63,5 +63,7 @@ cache (`--warm`). Rows are seconds per call.
 | `…-q8_0` | the same with the attention projections and head packed as Q8_0, as llama.cpp's GGUF file stores them |
 | `first-token/12` | a new process from its start to its first token after 12, over a warm kernel cache, and `first-token-cold/12` over an empty one |
 
-`bench/gpt_oss.thumper` and `bench/gpt_oss_first.thumper` hold the
+`llama_cpp.sh`, `vllm_offline.py` and `hf_transformers.py` in `bench/` run the
+same rows with llama.cpp, vLLM and transformers, each pinned, and print them
+alike. `bench/gpt_oss.thumper` and `bench/gpt_oss_first.thumper` hold the
 baselines.
