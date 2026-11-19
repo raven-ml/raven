@@ -48,9 +48,10 @@ def audio():
     return x
 
 
-def load(name, device, fp16):
-    m = whisper.load_model(os.path.join(DIR, name + ".pt"), device=device)
-    return m.half() if fp16 else m
+# Upstream keeps float32 weights and casts them to float16 at each call
+# under fp16=True.
+def load(name, device):
+    return whisper.load_model(os.path.join(DIR, name + ".pt"), device=device)
 
 
 def transcribe(m, x, fp16):
@@ -84,7 +85,7 @@ def main():
     fp16 = "--fp16" in sys.argv
     if args[:1] == ["first"]:  # A first transcript's process.
         _, name, device = args
-        m = load(name, device, fp16)
+        m = load(name, device)
         transcribe(m, audio()[:CLIP], fp16)
         return
     device, models = args[0], args[1:] or MODELS
@@ -94,12 +95,12 @@ def main():
     x = audio()
     clip, seconds = x[:CLIP], len(x) / 16000
     for name in models:
-        m = load(name, device, fp16)
+        m = load(name, device)
         transcribe(m, clip, fp16)
         row(f"minute/{name}", [timed(lambda: transcribe(m, clip, fp16)) for _ in range(5)], 60, 5)
         memory(name, device)
         mel = whisper.log_mel_spectrogram(whisper.pad_or_trim(clip), m.dims.n_mels, device=device)
-        mel = mel[None].to(next(m.parameters()).dtype)
+        mel = mel[None].to(torch.float16 if fp16 else torch.float32)
         encode = torch.no_grad()(lambda: m.embed_audio(mel).sum().item())
         encode()
         row(f"encoder/{name}", [timed(encode) for _ in range(5)], 30, 5)
