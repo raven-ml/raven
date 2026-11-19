@@ -28,7 +28,7 @@ times real time:
   minute's text, loading the model included, the median of 3 after 1;
 and memory/MODEL, the device memory in use after the minute rows (CUDA, by
 NVML), or the process's peak resident memory (CPU). Models default to tiny,
-small, large-v3-turbo and large-v3. compute_type is float32, or float16 with
+small and large-v3-turbo. compute_type is float32, or float16 with
 --fp16, faster-whisper's default on a GPU.
 """
 import glob, os, resource, statistics, subprocess, sys, time
@@ -49,7 +49,7 @@ DIR = os.path.join(
     os.environ.get("RAVEN_CACHE_ROOT")
     or os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "raven"),
     "whisper")
-MODELS = ["tiny", "small", "large-v3-turbo", "large-v3"]
+MODELS = ["tiny", "small", "large-v3-turbo"]
 CLIP = 60 * 16000
 THREADS = int(os.environ.get("THREADS", "4"))
 
@@ -114,7 +114,8 @@ def main():
         memory(name, device)
         text = []
         row(f"recording/{name}", [timed(lambda: text.append(transcribe(m, x)))], seconds, 1)
-        with open(os.path.join(DIR, f"faster-whisper-{name}-{device}.txt"), "w") as f:
+        precision = "-fp16" if fp16 else ""
+        with open(os.path.join(DIR, f"faster-whisper-{name}-{device}{precision}.txt"), "w") as f:
             f.write(text[0])
         del m
         first = [timed(lambda: subprocess.run(

@@ -6,9 +6,12 @@
 #
 # from the repository's root, after `dune build apps/whisper`. It reads
 # fetch.py's files.
-#   recording/MODEL             the whole recording by bench_whisper.exe
-#                               --recording, once, after a call on the clip;
-#                               its text written beside it for wer.py
+#   encoder/MODEL               the encoder alone on the clip's first window,
+#                               by bench_whisper.exe --recording, the median
+#                               of 5 calls after 1
+#   recording/MODEL             the whole recording, by the same, once, after
+#                               a call on the clip; its text written beside
+#                               it for wer.py
 #   first-transcript/MODEL      main.exe from its start to its exit on
 #                               fetch.py's clip, the recording's first
 #                               minute, over tolk's kernel cache that a first
@@ -21,7 +24,7 @@ set -euo pipefail
 
 device=${1:?usage: $0 cuda|cpu [MODEL...]}
 shift
-models=${*:-tiny small large-v3-turbo large-v3}
+models=${*:-tiny small large-v3-turbo}
 build=_build/default/apps/whisper
 cache=${RAVEN_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/raven}
 data=$cache/whisper

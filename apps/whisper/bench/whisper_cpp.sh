@@ -32,12 +32,11 @@ declare -A sha256=(
   [tiny]=be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21
   [small]=1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b
   [large-v3-turbo]=1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69
-  [large-v3]=64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2
 )
 
 device=${1:?usage: $0 cuda|cpu [MODEL...]}
 shift
-models=${*:-tiny small large-v3-turbo large-v3}
+models=${*:-tiny small large-v3-turbo}
 case $device in
 cuda) flags= ;;
 cpu) flags=-ng ;;

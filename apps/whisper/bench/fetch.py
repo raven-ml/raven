@@ -11,7 +11,7 @@ $RAVEN_CACHE_ROOT/whisper (by default ~/.cache/raven/whisper):
   8 min 16 s, CC BY 4.0, https://www.openslr.org/12), its utterances in
   order as one 16 kHz 16-bit file; clip.wav, its first minute; and
   recording.txt, their transcripts;
-- the released checkpoints tiny, small, large-v3-turbo and large-v3 (4.9 GB),
+- the released checkpoints tiny, small and large-v3-turbo (2.2 GB),
   each checked against the SHA-256 its URL names;
 - ranks/gpt2.tiktoken and ranks/multilingual.tiktoken, upstream's rank files
   at 86098128.
@@ -34,7 +34,6 @@ CHECKPOINTS = {
     "tiny": "65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9",
     "small": "9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794",
     "large-v3-turbo": "aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a",
-    "large-v3": "e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb",
 }
 RANKS = "https://raw.githubusercontent.com/openai/whisper/86098128c0b4f24f0e2aa2994de830614b474227/whisper/assets"
 

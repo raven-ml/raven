@@ -5,21 +5,21 @@
 
 (* PERFORMANCE.md's rows: fetch.py's clip, the first minute of its
    recording, transcribed as main.exe transcribes it (Transcript.default in
-   English: greedy, the fallback ladder, timestamps), each release at
-   float32, compiled on the first CUDA, NV or AMD GPU, and tiny eagerly on
-   the host. A minute is three windows, the first two of 30 s, so it
-   transcribes at the whole recording's rate (PERFORMANCE.md). Each row
-   reports the device memory in use once loaded, or the process's peak
-   resident memory on the host.
+   English: greedy, the fallback ladder, timestamps) by tiny, small and
+   large-v3-turbo at float32, compiled on the first CUDA, NV or AMD GPU, and
+   by tiny eagerly on the host. A minute is three windows, the first two of
+   30 s, so it transcribes at the whole recording's rate (PERFORMANCE.md).
+   Each row reports the device memory in use once loaded, or the process's
+   peak resident memory on the host.
 
    [--warm] compiles every kernel into tolk's disk cache first, in a process
-   of its own. [--recording cuda|cpu MODEL...] times the whole recording
-   instead, once, outside thumper (raven.sh). Without fetch.py's files there
-   is nothing to measure. *)
+   of its own. [--recording cuda|cpu MODEL...] times, outside thumper, the
+   encoder alone and the whole recording (raven.sh). Without fetch.py's files
+   there is nothing to measure. *)
 
 open Whisper
 
-let gpu_models = [ "tiny"; "small"; "large-v3-turbo"; "large-v3" ]
+let gpu_models = [ "tiny"; "small"; "large-v3-turbo" ]
 let cpu_models = [ "tiny" ]
 
 let dir =
@@ -61,8 +61,12 @@ let tokenizer (m : _ Model.t) =
   | Ok t -> t
   | Error e -> failwith e
 
+let clip () = Audio.load (path "clip.wav")
+
 (* [transcriber at ~jit name] loads [name] at float32 on [at]: a function
-   transcribing samples, its steps compiled where [jit], and its tokenizer. *)
+   transcribing samples, its steps compiled where [jit], and one running the
+   encoder alone on the clip's first window, its result summed to a scalar
+   read on the host. *)
 let transcriber at ~jit name =
   let m = Model.load Nx.float32 (path (name ^ ".pt")) in
   let t = tokenizer m in
@@ -74,11 +78,23 @@ let transcriber at ~jit name =
   let steps = Transcript.steps ?compile t (Decoding.options t) in
   let o = { Transcript.default with language = Some "en" } in
   let key = Nx.Rng.key 0 in
-  fun x -> Transcript.transcribe ~key steps m o x
+  let encode m mel = Nx.sum (Model.encode m mel) in
+  let encode =
+    if not jit then encode
+    else
+      Nx.Ptree.(
+        Rune.jit
+          (instantiate (module Model.Params) @-> tensor @-> returns tensor)
+          encode)
+  in
+  let mel =
+    Audio.log_mel ~n_mels:m.dims.n_mels (Audio.pad_or_trim (clip ()))
+    |> Nx.unsqueeze ~axes:[ 0 ] |> Nx.place at
+  in
+  ( (fun x -> Transcript.transcribe ~key steps m o x),
+    fun () -> ignore (Nx.item [] (Nx.place Nx.Host.on (encode m mel))) )
 
-let clip () = Audio.load (path "clip.wav")
-
-(* [on device name] is [name]'s transcriber on [device], and a function
+(* [on device name] is [name]'s {!transcriber} on [device], and a function
    stating the memory in use. *)
 let on device name =
   match device with
@@ -107,25 +123,34 @@ let case device name =
   let row = (if device = "cpu" then "minute-cpu/" else "minute/") ^ name in
   Thumper.bench_with_setup row
     ~setup:(fun () ->
-      let transcribe, memory = on device name in
+      let (transcribe, _), memory = on device name in
       let x = clip () in
       ignore (transcribe x);
       Printf.eprintf "whisper: %s: %s\n%!" row (memory ());
       (x, transcribe))
     (fun (x, transcribe) -> transcribe x)
 
-(* The whole recording, once, after a call on the clip, its text written
-   beside it for wer.py, in the reference scripts' format. *)
-let recording device name =
-  let transcribe, memory = on device name in
-  ignore (transcribe (clip ()));
-  let x = Audio.load (path "recording.wav") in
+let row name s audio n =
+  Printf.printf "%-28s %10.1f ms  %7.1fx real time  (%d calls)\n%!" name
+    (s *. 1e3) (audio /. s) n
+
+let timed f =
   let t0 = Unix.gettimeofday () in
-  let r = transcribe x in
-  let s = Unix.gettimeofday () -. t0 in
-  let audio = float (Nx.dim 0 x) /. float Audio.rate in
-  Printf.printf "%-28s %10.1f ms  %7.1fx real time  (1 call)\n"
-    ("recording/" ^ name) (s *. 1e3) (audio /. s);
+  let y = f () in
+  (Unix.gettimeofday () -. t0, y)
+
+(* The encoder alone on a window, the median of 5 calls after 1; then the
+   whole recording, once, after a call on the clip, its text written beside
+   it for wer.py; in the reference scripts' format. *)
+let recording device name =
+  let (transcribe, encode), memory = on device name in
+  ignore (transcribe (clip ()));
+  encode ();
+  let t = List.sort compare (List.init 5 (fun _ -> fst (timed encode))) in
+  row ("encoder/" ^ name) (List.nth t 2) 30. 5;
+  let x = Audio.load (path "recording.wav") in
+  let s, r = timed (fun () -> transcribe x) in
+  row ("recording/" ^ name) s (float (Nx.dim 0 x) /. float Audio.rate) 1;
   Printf.printf "%-28s %s\n%!" ("memory/" ^ name) (memory ());
   Out_channel.with_open_bin
     (path (Printf.sprintf "raven-%s-%s.txt" name device))
@@ -137,7 +162,9 @@ let () =
       if fetched () && Result.is_ok (Rig_gpus.first ()) then
         List.iter
           (fun name ->
-            ignore ((fst (on "cuda" name)) (clip ()));
+            let (transcribe, encode), _ = on "cuda" name in
+            ignore (transcribe (clip ()));
+            encode ();
             Gc.full_major ())
           gpu_models
   | _ :: "--recording" :: device :: models ->

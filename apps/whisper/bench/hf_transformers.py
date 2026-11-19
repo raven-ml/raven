@@ -25,8 +25,8 @@ timestamps on, greedy. The rows, each in milliseconds and times real time:
 - first-transcript/MODEL: a new process from its start to the first
   minute's text, loading the model included, the median of 3 after 1;
 and memory/MODEL, the device memory in use after the minute rows (CUDA), or
-the process's peak resident memory (CPU). Models default to tiny, small,
-large-v3-turbo and large-v3. The model runs at float32, or float16 with
+the process's peak resident memory (CPU). Models default to tiny, small
+and large-v3-turbo. The model runs at float32, or float16 with
 --fp16; transformers' attention is SDPA, its default.
 """
 import os, resource, statistics, subprocess, sys, time
@@ -38,7 +38,7 @@ DIR = os.path.join(
     os.environ.get("RAVEN_CACHE_ROOT")
     or os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "raven"),
     "whisper")
-MODELS = ["tiny", "small", "large-v3-turbo", "large-v3"]
+MODELS = ["tiny", "small", "large-v3-turbo"]
 CLIP = 60 * 16000
 
 
@@ -113,7 +113,8 @@ def main():
         memory(name, device)
         text = []
         row(f"recording/{name}", [timed(lambda: text.append(transcribe(m, x)))], seconds, 1)
-        with open(os.path.join(DIR, f"hf-transformers-{name}-{device}.txt"), "w") as f:
+        precision = "-fp16" if fp16 else ""
+        with open(os.path.join(DIR, f"hf-transformers-{name}-{device}{precision}.txt"), "w") as f:
             f.write(text[0])
         del m
         if device == "cuda":

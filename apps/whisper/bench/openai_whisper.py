@@ -23,9 +23,10 @@ timestamps on. The rows, each in milliseconds and times real time:
 - first-transcript/MODEL: a new process from its start to the first
   minute's text, loading the model included, the median of 3 after 1;
 and memory/MODEL, the device memory in use after the minute rows (CUDA), or
-the process's peak resident memory (CPU). Models default to tiny, small, large-v3-turbo
-and large-v3. --fp16 runs float16, upstream's default on a GPU; the rows
-compare at float32.
+the process's peak resident memory (CPU); and encoder/MODEL, the encoder
+alone on the clip's first window, the median of 5 calls after 1. Models
+default to tiny, small and large-v3-turbo. --fp16 runs float16, upstream's
+default on a GPU; the rows compare at float32.
 """
 import os, resource, statistics, subprocess, sys, time
 import numpy as np
@@ -37,7 +38,7 @@ DIR = os.path.join(
     os.environ.get("RAVEN_CACHE_ROOT")
     or os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "raven"),
     "whisper")
-MODELS = ["tiny", "small", "large-v3-turbo", "large-v3"]
+MODELS = ["tiny", "small", "large-v3-turbo"]
 CLIP = 60 * 16000
 
 
@@ -97,9 +98,15 @@ def main():
         transcribe(m, clip, fp16)
         row(f"minute/{name}", [timed(lambda: transcribe(m, clip, fp16)) for _ in range(5)], 60, 5)
         memory(name, device)
+        mel = whisper.log_mel_spectrogram(whisper.pad_or_trim(clip), m.dims.n_mels, device=device)
+        mel = mel[None].to(next(m.parameters()).dtype)
+        encode = torch.no_grad()(lambda: m.embed_audio(mel).sum().item())
+        encode()
+        row(f"encoder/{name}", [timed(encode) for _ in range(5)], 30, 5)
         text = []
         row(f"recording/{name}", [timed(lambda: text.append(transcribe(m, x, fp16)))], seconds, 1)
-        with open(os.path.join(DIR, f"openai-whisper-{name}-{device}.txt"), "w") as f:
+        precision = "-fp16" if fp16 else ""
+        with open(os.path.join(DIR, f"openai-whisper-{name}-{device}{precision}.txt"), "w") as f:
             f.write(text[0])
         del m
         if device == "cuda":
