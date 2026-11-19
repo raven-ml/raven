@@ -3433,6 +3433,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `Nx.zoom_fft ~start ~step m x`, the transform at `m` equally spaced
+  frequencies on the unit circle by Bluestein's convolution, with its chirp
+  phases reduced exactly at any length and its error bound stated.
 - **Breaking:** `Nx.correlate` conjugates its kernel on complex dtypes, as
   `numpy.correlate` and `Nx.vdot` do. It summed `x k` there, so a port of
   complex cross-correlation got wrong values without an error. Real dtypes

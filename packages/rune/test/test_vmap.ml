@@ -339,6 +339,8 @@ let cases =
         let n = Nx.dim 1 x in
         Nx.contract ~init:(Nx.sin x) f64 pattern x (konst [| n; n |]));
     case ~shape:(rows 2) "fft" (fun x -> parts (Nx.fft (complex x)));
+    case ~shape:(rows 2) "zoom_fft" (fun x ->
+        parts (Nx.zoom_fft ~start:(-0.2) ~step:(1. /. 3.) 4 (complex x)));
     case "rfft" (fun x -> parts (Nx.rfft c128 x));
     case
       ~shape:Gen.(map (fun n -> [| 2; n + 1 |]) (int_range 0 3))

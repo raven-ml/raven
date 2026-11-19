@@ -763,6 +763,274 @@ module Laws = struct
     invalid ~by:"Nx.istft" (fun () -> Nx.istft Nx.float32 ~window:4 ~win z)
 end
 
+(* Transforms at chosen frequencies: zoom_fft against the direct sum at
+   float64 of its definition, each phase reduced modulo one cycle exactly
+   but for one rounding, within the bound its doc states for nx.cpu plus the
+   reference's own error. *)
+module Zoom = struct
+  let u64 = 0x1p-53
+
+  (* [a b] as [hi + lo], exactly. *)
+  let two_product a b =
+    let hi = a *. b in
+    [ hi; Float.fma a b (-.hi) ]
+
+  let centred x = x -. Float.round x
+
+  (* The sum modulo one of exact terms, each first centred exactly, by
+     Neumaier's compensated sum: within [u/2] of the exact phase, to first
+     order. *)
+  let cycles terms =
+    let s = ref 0. and c = ref 0. in
+    List.iter
+      (fun t ->
+        let t = centred t in
+        let r = !s +. t in
+        if Float.abs !s >= Float.abs t then c := !c +. (!s -. r +. t)
+        else c := !c +. (t -. r +. !s);
+        s := centred r)
+      terms;
+    centred (!s +. !c)
+
+  (* [y[k] = Σ_j x[j] e^(-2πi j f_k)], [f_k = start + k step], with the
+     phase [j start + (j k) step] of exact products, summed part by part by
+     Neumaier's sum. [j] and [j k] are integers, so [start] and [step] are
+     first reduced modulo one, exactly. *)
+  let direct ~start ~step m (x : Complex.t array) =
+    let start = Float.rem start 1. and step = Float.rem step 1. in
+    Array.init m (fun k ->
+        let re = ref 0. and re_c = ref 0. and im = ref 0. and im_c = ref 0. in
+        let add acc c t =
+          let r = !acc +. t in
+          if Float.abs !acc >= Float.abs t then c := !c +. (!acc -. r +. t)
+          else c := !c +. (t -. r +. !acc);
+          acc := r
+        in
+        Array.iteri
+          (fun j (v : Complex.t) ->
+            let j' = Float.of_int j in
+            let r =
+              cycles
+                (two_product start j' @ two_product step (Float.of_int (j * k)))
+            in
+            let t = -2. *. Float.pi *. r in
+            let c = cos t and s = sin t in
+            add re re_c ((v.re *. c) -. (v.im *. s));
+            add im im_c ((v.re *. s) +. (v.im *. c)))
+          x;
+        { Complex.re = !re +. !re_c; im = !im +. !im_c })
+
+  (* The reference's error at each [k], in units of [u64] times [Σ |x|]:
+     its phase within [u/2] cycle and [2π r]'s two roundings, about
+     [2π u] radians; [cos] and [sin] within an ulp each; the product's
+     roundings. *)
+  let reference_error = (2. *. Float.pi) +. 6.
+
+  (* nx.cpu's [e(L)] for [L = 2^p] points (Nx_cpu, Fourier transforms). *)
+  let cpu_e p = (8. *. Float.of_int p *. Float.pow 2. 1.5) +. 8.
+
+  (* The chirps' error [δ] in units of [u]: one rounding of a float64 chirp
+     into complex64's parts, or, for complex128, the float64 evaluation's:
+     the phase within [u/2] cycle, [2π r]'s roundings, and nx.cpu's [cos]
+     and [sin] within 2 ulps each. *)
+  let delta ~wide = if wide then (2.5 *. Float.pi) +. (2. *. sqrt 2.) else 1.
+
+  let norm a = sqrt (Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. a)
+
+  (* The worst-case bound of zoom_fft's doc,
+     [(2ε + ε' + 4δ + 3√5 + 1) (n + m - 1) u ‖x‖₂] with [ε = ε'] nx.cpu's
+     constant for [L] points, plus the reference's error over [m] points. *)
+  let allowance ~wide n m x =
+    let rec log2 l p = if l >= n + m - 1 then p else log2 (2 * l) (p + 1) in
+    let e = cpu_e (log2 1 0) in
+    let u = if wide then u64 else 0x1p-24 in
+    let k = Float.of_int (n + m - 1) in
+    let sum = Array.fold_left (fun s z -> s +. Complex.norm z) 0. x in
+    (((3. *. e) +. (4. *. delta ~wide) +. (3. *. sqrt 5.) +. 1.) *. k *. u
+     *. norm x)
+    +. (reference_error *. u64 *. sqrt (Float.of_int m) *. sum)
+
+  type cdt = Cdt : (Complex.t, 's) D.t * bool -> cdt
+
+  let dtypes =
+    Gen.of_list
+      ~pp:(fun ppf (Cdt (dt, _)) -> D.pp ppf dt)
+      [ Cdt (D.Complex64, false); Cdt (D.Complex128, true) ]
+
+  (* A signal rounded into [dt]'s parts, read back at float64. *)
+  let signal (type s) (dt : (Complex.t, s) D.t) s parts =
+    let x = Nx.create dt s parts in
+    (x, Nx.to_array (Nx.cast Nx.complex128 x))
+
+  (* The lines of [a], of shape [s], along [axis]. *)
+  let lines s axis (a : 'a array) =
+    let r = Array.length s in
+    let inner = Array.fold_left ( * ) 1 (Array.sub s (axis + 1) (r - axis - 1)) in
+    let outer = Array.fold_left ( * ) 1 (Array.sub s 0 axis) in
+    let n = s.(axis) in
+    List.concat
+      (List.init outer (fun o ->
+           List.init inner (fun i ->
+               Array.init n (fun j -> a.((((o * n) + j) * inner) + i)))))
+
+  let check (Cdt (dt, wide)) ~start ~step ~axis m s parts =
+    let x, xs = signal dt s parts in
+    let y = Nx.zoom_fft ~axis ~start ~step m x in
+    let out = Array.copy s in
+    out.(axis) <- m;
+    equal ~msg:"shape" (array int) out (Nx.shape y);
+    let ys = Nx.to_array (Nx.cast Nx.complex128 y) in
+    List.iter2
+      (fun x y ->
+        let expected = direct ~start ~step m x in
+        let diff = norm (Array.map2 Complex.sub y expected) in
+        at_most ~msg:"‖ŷ - y‖₂" float_exact
+          ~than:(allowance ~wide s.(axis) m x) diff)
+      (lines s axis xs) (lines out axis ys)
+
+  let pp_float ppf v = Format.fprintf ppf "%h" v
+
+  let case =
+    let open Gen in
+    let frequency =
+      one_of
+        [
+          float_range (-1.) 1.;
+          float_range (-1e6) 1e6;
+          of_list ~pp:pp_float
+            [ 0.; 0.5; 1. /. 3.; -0.25; -7.5; 1e300; Float.max_float; -0x1p1023 ];
+        ]
+    in
+    (* One point, one frequency and the steps 1/2 and 1/3 in about half the
+       cases each, so that every run meets each cover. *)
+    let points = one_of [ constant 1; int_range 1 40 ] in
+    let step =
+      one_of [ of_list ~pp:pp_float [ 0.5; 1. /. 3. ]; frequency ]
+    in
+    (* Parts of magnitudes from [2^-20], so that no square underflows: the
+       bound holds barring underflow. *)
+    let part =
+      map
+        (fun (neg, m) -> if neg then -.m else m)
+        (pair bool (float_range 0x1p-20 1.))
+    in
+    let* dt = dtypes in
+    let* n = points and+ m = points in
+    let* lead = bool in
+    let* axis = if lead then int_range 0 1 else constant 0 in
+    let s = if not lead then [| n |] else if axis = 0 then [| n; 2 |] else [| 2; n |] in
+    let* start = frequency and+ step = step in
+    let+ parts =
+      array
+        ~size:(constant (Array.fold_left ( * ) 1 s))
+        (map (fun (re, im) -> { Complex.re; im }) (pair part part))
+    in
+    (dt, n, m, s, axis, start, step, parts)
+
+  let law_direct =
+    prop "zoom_fft is the direct sum within its bound"
+      (Gen.with_pp
+         (fun ppf (Cdt (dt, _), _, m, s, axis, start, step, _) ->
+           Format.fprintf ppf "%a %s axis %d, m %d, start %h, step %h" D.pp dt
+             (String.concat "x" (Array.to_list (Array.map string_of_int s)))
+             axis m start step)
+         case)
+      (fun (dt, n, m, s, axis, start, step, parts) ->
+        cover "one point" (n = 1);
+        cover "one frequency" (m = 1);
+        cover "a leading axis" (axis = 0 && Array.length s = 2);
+        cover "a step of 1/2 or 1/3" (step = 0.5 || step = 1. /. 3.);
+        cover "a frequency past 2^53" (Float.abs start > 0x1p53 || Float.abs step > 0x1p53);
+        check dt ~start ~step ~axis m s parts)
+
+  (* Where [step] has a small denominator [‖H‖_∞] nears [n + m - 1], the
+     bound's worst case. *)
+  let test_bound () =
+    let parts n =
+      Array.init n (fun j ->
+          let t = Float.of_int j in
+          { Complex.re = sin (t *. 0.7) +. 0.25; im = cos (t *. 1.3) })
+    in
+    List.iter
+      (fun dt ->
+        List.iter
+          (fun (start, step) ->
+            check dt ~start ~step ~axis:0 200 [| 300 |] (parts 300))
+          [ (0., 0.5); (0.1, 0.5); (0., 1. /. 3.); (0.3, 1. /. 3.) ])
+      [ Cdt (D.Complex64, false); Cdt (D.Complex128, true) ]
+
+  (* With [start = 0], [step = 1 / n] and [m = n], fft's transform. *)
+  let test_fft () =
+    let n = 12 in
+    let parts = Array.init n (fun j -> { Complex.re = Float.of_int (j mod 5); im = Float.of_int (j mod 3) -. 1. }) in
+    let x = Nx.create Nx.complex128 [| n |] parts in
+    let y = Nx.to_array (Nx.zoom_fft ~start:0. ~step:(1. /. 12.) n x) in
+    let f = Nx.to_array (Nx.fft x) in
+    (* Both bounds: zoom_fft's for L = 32 and fft's for 12 points,
+       e(12) = 8 (2 · 2^1.5 + 3^1.5) + 8. *)
+    let e12 = (8. *. ((2. *. Float.pow 2. 1.5) +. Float.pow 3. 1.5)) +. 8. in
+    let bound =
+      (allowance ~wide:true n n parts)
+      +. (e12 *. u64 *. sqrt (Float.of_int n) *. norm parts)
+    in
+    at_most float_exact ~than:bound (norm (Array.map2 Complex.sub y f))
+
+  let test_empty () =
+    let x = Nx.create Nx.complex64 [| 2; 0 |] [||] in
+    Nx_support.equal_elements D.Complex64
+      (Array.make 6 Complex.zero)
+      (Nx.to_array (Nx.zoom_fft ~start:0.1 ~step:0.2 3 x));
+    let x = Nx.create Nx.complex64 [| 2; 3 |] (Array.make 6 Complex.one) in
+    equal (array int) [| 2; 0 |]
+      (Nx.shape (Nx.zoom_fft ~start:0.1 ~step:0.2 0 x))
+
+  let test_refusals () =
+    let by = "Nx.zoom_fft" in
+    let invalid f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f in
+    let x = Nx.create Nx.complex64 [| 3 |] (Array.make 3 Complex.one) in
+    invalid (fun () -> Nx.zoom_fft ~start:0. ~step:0.1 (-1) x);
+    invalid (fun () -> Nx.zoom_fft ~axis:1 ~start:0. ~step:0.1 2 x);
+    invalid (fun () -> Nx.zoom_fft ~start:Float.nan ~step:0.1 2 x);
+    invalid (fun () -> Nx.zoom_fft ~start:0. ~step:Float.infinity 2 x);
+    invalid (fun () ->
+        Nx.zoom_fft ~start:0. ~step:0.1 2 (Nx.create Nx.complex64 [||] [| Complex.one |]))
+
+  (* Chirps past [j = 9.49e7], where [j²] leaves float64's integers: each is
+     within [δ] of [e^(-2πi (start j + step j² / 2))], whose phase is exact
+     here in integers: a float [a = M 2^-K] has [a J mod 1] =
+     [(M J mod 2^K) / 2^K], and OCaml's products keep [M J]'s low 63 bits. *)
+  let exact_cycles a big =
+    let f, e = Float.frexp a in
+    let k = 53 - e in
+    assert (k >= 0 && k <= 62);
+    let mant = Float.to_int (Float.ldexp f 53) in
+    let r = mant * big land ((1 lsl k) - 1) in
+    Float.ldexp (Float.of_int r) (-k)
+
+  let test_large () =
+    List.iter
+      (fun (start, step, first, count) ->
+        let c = Nx.to_array (Nx.zoom_chirp D.Complex128 ~start ~step ~first count) in
+        Array.iteri
+          (fun i (got : Complex.t) ->
+            let j = first + i in
+            let r =
+              centred (exact_cycles start j +. exact_cycles (step /. 2.) (j * j))
+            in
+            let t = -2. *. Float.pi *. r in
+            let d = Complex.norm (Complex.sub got { Complex.re = cos t; im = sin t }) in
+            (* [δ] and the reference's own error. *)
+            let tol = (delta ~wide:true +. reference_error +. 2.) *. u64 in
+            at_most ~msg:(Printf.sprintf "j = %d" j) float_exact ~than:tol d)
+          c)
+      [
+        (0.3, 1. /. 3., 94_906_260, 16);
+        (-0.3, 0.999, 94_906_260, 16);
+        (0.1, 1. /. 3., 2_000_000_000, 8);
+        (0.25, 12345.678, 1_500_000_001, 8);
+      ]
+end
+
 let () =
   exit
     (run "nx fft"
@@ -801,5 +1069,11 @@ let () =
              Laws.law_stft;
              test "each refusal names its function" Laws.test_refusals;
              test "a composite names its function" Laws.test_composites_named;
+             Zoom.law_direct;
+             test "zoom_fft within its bound at steps 1/2 and 1/3" Zoom.test_bound;
+             test "zoom_fft at the bins is fft" Zoom.test_fft;
+             test "zoom_fft of no point or to no frequency" Zoom.test_empty;
+             test "zoom_fft's refusals" Zoom.test_refusals;
+             test "zoom_fft's chirps past j = 9.49e7" Zoom.test_large;
            ];
        ])

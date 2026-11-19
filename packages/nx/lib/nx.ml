@@ -7237,6 +7237,113 @@ let hfft dt ?axes ?s ?(norm = Backward) z =
 let ihfft dt ?axes ?s ?(norm = Backward) x =
   rfft_by ~by:"Nx.ihfft" ~conj:true dt ?axes ?s ~norm:(opposite norm) x
 
+(* Transforms at chosen frequencies *)
+
+(* The rounded product [hi] of float64 [a] and [b] and its error:
+   [a b = hi + lo] exactly. *)
+let two_product a b =
+  let hi = E.(a * b) in
+  [ hi; E.(fma a b (neg hi)) ]
+
+(* The rounded sum [s] of float64 [a] and [b] and its error [e]:
+   [a + b = s + e] exactly (Knuth's two-sum). *)
+let two_sum a b =
+  let s = E.(a + b) in
+  let b' = E.(s - a) in
+  (s, E.((a - (s - b')) + (b - b')))
+
+(* A float64 [x] less its nearest integer, exactly: in [-½, ½]. *)
+let centred x = E.(x - round x)
+
+(* The sum of exact float64 [terms] modulo one, in [-½, ½). Each term is
+   centred, and the running sum kept as [acc + tail]: each two-sum's
+   error, at most [u |acc|], adds into [tail], so the last sum's rounding
+   is the only first-order error. *)
+let cycles terms =
+  let lit = E.const D.Float64 in
+  let acc, tail =
+    List.fold_left
+      (fun (acc, tail) t ->
+        let s, e = two_sum acc (centred t) in
+        (centred s, E.(tail + e)))
+      (lit 0., lit 0.) terms
+  in
+  let r = centred E.(acc + tail) in
+  E.(where (r = lit 0.5) (lit (-0.5)) r)
+
+(* The [count] chirps [e^(-2πi (start j + step j² / 2))] at the int64
+   indices [j] below [2{^53}] that [index] reads from coordinate 0, beside
+   [p], computed at float64 and rounded once into [dt]'s parts; zero where
+   [keep] is false. Since [(start + 1) j ≡ start j] and
+   [(step + 2) j² / 2 ≡ step j² / 2] modulo one, [start] is reduced modulo
+   one and [step] modulo two, exactly, so every product is finite. [j²] is
+   the sum of two float64 values, exactly, and each halves exactly; each
+   product of [start] by [j] and of [step] by a half is two exact values,
+   so the phase is the sum of six exact terms, which [cycles] adds. A pair
+   of parts along a last axis of two is bitcast to one complex element. *)
+let chirps (type s d) ~by (p : d Placement.t) (dt : (Complex.t, s) D.t)
+    ~start ~step ?keep count index : (Complex.t, s, d) t =
+  let lit = E.const D.Float64 in
+  let start = Float.rem start 1. and step = Float.rem step 2. in
+  let j = E.cast D.Float64 index in
+  let sq = two_product j j in
+  let terms =
+    two_product (lit start) j
+    @ List.concat_map (fun h -> two_product (lit step) E.(h * lit 0.5)) sq
+  in
+  let theta = E.(lit (2. *. Float.pi) * cycles terms) in
+  let part = E.(where (coord 1 = i64 0) (cos theta) (neg (sin theta))) in
+  let part =
+    match keep with None -> part | Some k -> E.(where k part (lit 0.))
+  in
+  let pairs (type f) (f : (float, f) D.t) =
+    Eval.bitcast ~by dt (leaf ~by p f [| count; 2 |] (E.cast f part))
+  in
+  match dt with
+  | D.Complex64 -> pairs D.Float32
+  | D.Complex128 -> pairs D.Float64
+
+let zoom_chirp dt ~start ~step ~first n =
+  let by = "Nx.zoom_chirp" in
+  if n < 0 || first < 0 then invalid_argf "%s: %d from %d" by n first;
+  chirps ~by Host.on dt ~start ~step n E.(coord 0 + i64 first)
+
+(* Bluestein's convolution: [y[k] = b_k Σ_j (x[j] a_j) c(k - j)] with
+   [a_j = e^(-2πi (start j + step j² / 2))], [b_k = e^(-πi step k²)] and
+   [c(d) = e^(πi step d²)] for [d] from [1 - n] to [m - 1], which [c]
+   holds wrapped at [l] points: [d] at [d < m], [l + d] for [d < 0], zeros
+   between. *)
+let zoom_fft ?axis:(ax = -1) ~start ~step m x =
+  let by = "Nx.zoom_fft" in
+  if m < 0 then invalid_argf "%s: %d frequencies" by m;
+  if not (Float.is_finite start && Float.is_finite step) then
+    invalid_argf "%s: start %a, step %a" by pp_float start pp_float step;
+  if ndim x = 0 then invalid_argf "%s: %a has no axis" by pp_value x;
+  let a = axis ~by x ax and r = ndim x in
+  let n = dim a x in
+  if n = 0 || m = 0 then resized ~by x [ a ] [ m ]
+  else
+    let rec up l = if l >= n + m - 1 then l else up (2 * l) in
+    let l = up 1 in
+    let p = beside x and dt = dtype x and i = E.coord 0 in
+    let along v =
+      Eval.reshape ~by (Array.init r (fun b -> if b = a then dim 0 v else 1)) v
+    in
+    let pre = chirps ~by p dt ~start ~step n i in
+    let post = chirps ~by p dt ~start:0. ~step m i in
+    let d = E.(where (i < i64 m) i (i64 l - i)) in
+    let wrapped = i64 (l - n) in
+    let keep = E.(i < i64 m || i > wrapped) in
+    let c = chirps ~by p dt ~start:0. ~step:(-.step) ~keep l d in
+    let h = complex_by ~by Nx_kernel.Forward c in
+    let y =
+      complex_by ~by Nx_kernel.Forward ~axes:[ a ] ~s:[ l ]
+        (mul_by ~by x (along pre))
+    in
+    let y =
+      complex_by ~by Nx_kernel.Inverse ~axes:[ a ] (mul_by ~by y (along h))
+    in
+    mul_by ~by (resized ~by y [ a ] [ m ]) (along post)
 
 (* Cosine and sine transforms, each from one complex transform along the last
    axis. *)

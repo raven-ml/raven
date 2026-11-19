@@ -3615,6 +3615,62 @@ val ifft :
 (** [ifft x] is the inverse transform of [x] along [axes]: under one [norm],
     [ifft (fft x)] is [x] to rounding. *)
 
+val zoom_fft :
+  ?axis:int ->
+  start:float ->
+  step:float ->
+  int ->
+  (Complex.t, 's, 'd) t ->
+  (Complex.t, 's, 'd) t
+(** [zoom_fft ~start ~step m x] is the transform of [x]'s [n] points along
+    [axis] (default the last) at the [m] frequencies [f_k = start + k step]
+    cycles per sample, [y[k] = Σ_j x[j] e^(-2πi j f_k)], [m] points in
+    place of [n]. With [start = 0.], [step = 1. /. float n] and [m = n] it
+    is {!val-fft}'s transform to rounding. Its points lie on the unit circle;
+    those on a circle of radius [r] are [zoom_fft] of [x[j] r^(-j)], whose
+    norm, which the bound below takes, grows as [r^(-n)].
+
+    It computes by Bluestein's identity [jk = (j² + k² - (k - j)²) / 2]
+    (Rabiner, Schafer and Rader, "The chirp z-transform algorithm and its
+    application", Bell System Technical Journal 48(5), 1969): [x] times a
+    chirp, convolved with a chirp [c] of [n + m - 1] points by {!val-fft}
+    and {!ifft} of [L] points, [L] the least power of two at least
+    [n + m - 1], then times a chirp. The chirps are computed at float64
+    where [x] lies, their phases reduced modulo one cycle exactly but for
+    one rounding, and rounded once into [x]'s dtype; [H], the transform of
+    [c], is computed by {!val-fft} in [x]'s dtype beside [x]. Barring
+    overflow and underflow, to first order [‖ŷ - y‖₂] is within
+    [((ε + ε' + 3δ + 3√5 + 1) ‖H‖_∞ + (ε + δ) √(n (n + m - 1))) u ‖x‖₂],
+    and since [‖H‖_∞ ≤ n + m - 1], within
+    [(2ε + ε' + 4δ + 3√5 + 1) (n + m - 1) u ‖x‖₂]: [ε] and [ε'] are the
+    constants of the forward and inverse transforms of [L] points that the
+    kernel library states, [u] the unit roundoff, and [δ] the chirps' own
+    error in units of [u], [1] for complex64 and, for complex128, the
+    float64 evaluation's, which the kernel library's [cos] and [sin] bound.
+    A value much smaller than [‖x‖₂] may lose every digit. Linear in [x],
+    and differentiable in it.
+
+    Raises [Invalid_argument] if [m < 0], [axis] is not an axis of [x], or
+    [start] or [step] is not finite. *)
+
+(**/**)
+
+val zoom_chirp :
+  (Complex.t, 's) dtype ->
+  start:float ->
+  step:float ->
+  first:int ->
+  int ->
+  (Complex.t, 's, host) t
+(** [zoom_chirp dt ~start ~step ~first n] is the host value of {!zoom_fft}'s
+    chirps [e^(-2πi (start j + step j² / 2))] at [j = first … first + n - 1],
+    computed and rounded as {!zoom_fft} computes them, so that a test reads
+    the chirps at indices past the lengths it can transform.
+
+    Raises [Invalid_argument] if [n] or [first] is negative. *)
+
+(**/**)
+
 val rfft :
   (Complex.t, 'c) dtype ->
   ?axes:int list ->

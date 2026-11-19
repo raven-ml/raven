@@ -883,6 +883,8 @@ let complex_cases =
       ~z:(complex, fun z -> Nx.fft z)
       "fft"
       (fun x -> parts (Nx.fft (complex x)));
+    (let f z = Nx.zoom_fft ~start:0.1 ~step:0.27 3 z in
+     case ~shape:(rows 2) ~z:(complex, f) "zoom_fft" (on_complex f));
     (let g z = Nx.correlate ~padding:`Full (row 0 z) (row 1 z) in
      case ~empty:false
        ~values:(Uniform [ (0.3, 2.); (0.2, 1.); (0.3, 1.5); (-1., 1.) ])

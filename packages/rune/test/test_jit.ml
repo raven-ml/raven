@@ -6170,6 +6170,83 @@ let law_narrow_fma (Narrow dt, seed) =
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal ~msg:"compiled" (list string) [] (misses y)
 
+(* Transforms at chosen frequencies
+
+   A compiled zoom_fft compiles its chirps, leaves of nx's program, into
+   the call's kernels, and transforms by the compiler's algorithm. Each of
+   eager and the compiled call is within Nx.zoom_fft's bound of the exact
+   transform, eager with nx.cpu's constants and the compiled call with
+   rune.mli's, both with the chirps' error [δ], so the two differ by at
+   most the sum. Each row is one dtype and one step: the small
+   denominators 1/2 and 1/3, where the bound is nearest its worst case,
+   and a generic step for each dtype. *)
+
+type zoom =
+  | Zoom : {
+      dt : (Complex.t, 's) Nx.dtype;
+      wide : bool;  (** complex128 *)
+      n : int;
+      m : int;
+      start : float;
+      step : float;
+    }
+      -> zoom
+
+let zooms =
+  [
+    Zoom
+      { dt = Nx.complex64; wide = false; n = 17; m = 9; start = 0.1;
+        step = 0.5 };
+    Zoom
+      { dt = Nx.complex128; wide = true; n = 12; m = 20; start = -0.3;
+        step = 1. /. 3. };
+    Zoom
+      { dt = Nx.complex64; wide = false; n = 24; m = 24; start = 0.37;
+        step = -0.0123 };
+    Zoom
+      { dt = Nx.complex128; wide = true; n = 1; m = 5; start = 0.9;
+        step = 0.271 };
+  ]
+
+let zoom_id (Zoom z) =
+  Format.asprintf "%a, %d points, %d frequencies, step %g" Nx.pp_dtype z.dt
+    z.n z.m z.step
+
+(* The least power of two at least [k], and its exponent. *)
+let points k =
+  let rec up l p = if l >= k then (l, p) else up (2 * l) (p + 1) in
+  up 1 0
+
+(* Nx.zoom_fft's worst-case bound in units of [u ‖x‖₂], for transforms of
+   constants [e] and chirps of error [delta]. *)
+let zoom_bound ~e ~delta n m =
+  let k = Float.of_int (n + m - 1) in
+  ((3. *. e) +. (4. *. delta) +. (3. *. sqrt 5.) +. 1.) *. k
+
+let law_zoom (Zoom z) =
+  let parts =
+    Array.init z.n (fun j ->
+        let t = Float.of_int j in
+        { Complex.re = sin (0.7 *. t) +. 0.25; im = cos (1.3 *. t) })
+  in
+  let x = Nx.create z.dt [| z.n |] parts in
+  let f = Nx.zoom_fft ~start:z.start ~step:z.step z.m in
+  let eager = Nx.to_array (f x) in
+  let jitted = Nx.to_array (Rune.jit' f x) in
+  let p = Float.of_int (snd (points (z.n + z.m - 1))) in
+  let eager_e = (8. *. p *. 2. *. sqrt 2.) +. 8. in
+  let compiled_e = if p = 0. then 0. else (16. *. p) -. 15. in
+  let u = if z.wide then 0x1p-53 else 0x1p-24 in
+  let delta = if z.wide then (2.5 *. Float.pi) +. (2. *. sqrt 2.) else 1. in
+  let norm a = sqrt (Array.fold_left (fun s c -> s +. Complex.norm2 c) 0. a) in
+  let bound =
+    (zoom_bound ~e:eager_e ~delta z.n z.m
+    +. zoom_bound ~e:compiled_e ~delta z.n z.m)
+    *. u *. norm (Nx.to_array (Nx.cast Nx.complex128 x))
+  in
+  let diff = norm (Array.map2 Complex.sub eager jitted) in
+  at_most float_exact ~than:bound diff
+
 let () =
   exit
     (run "rune jit"
@@ -6475,6 +6552,11 @@ let () =
                "fully sharded training of layers that fit a piece over four \
                 devices"
                (test_sharded_bound ~n:4 ~d:256 ~layers:4);
+           ];
+         group "transforms"
+           [
+             Windtrap.cases "zoom_fft compiles within both bounds of eager"
+               ~id:zoom_id zooms law_zoom;
            ];
          group "derived"
            [
