@@ -33,8 +33,8 @@ healpix-pixel-1m/eager	alloc_words	exact	21475
 observation-4096/sub-eager	alloc_words	exact	10799
 orientation-1k/compiled	alloc_words	exact	1343
 orientation-1k/eager	alloc_words	exact	68910
-separation-1m/compiled	alloc_words	exact	1443
-separation-1m/eager	alloc_words	exact	18712
+separation-1m/compiled	alloc_words	exact	1431
+separation-1m/eager	alloc_words	exact	19350
 shapes-104/ellipse-eager	alloc_words	exact	162260
 shapes-104/polygon-eager	alloc_words	exact	550296
 solved-100k/sip-forward-eager	alloc_words	exact	76399
