@@ -2034,6 +2034,83 @@ let compiled_pullback c x w ct =
     (fun x w ct -> eager_pullback c x w ct)
     x w ct
 
+(* Scans of a constant
+
+   The running sum, product, maximum or minimum along [x] of the constant 2,
+   continued from the carry [c]: the program reads none of its load, so [y]
+   varies with [c] alone. [dc] is [∂y_i / ∂c]: for [x] of 3 elements, 1 for a
+   sum, [2^(i + 1)] for a product, and for an extreme 1 where [c] beats 2 and 0
+   where 2 beats [c]. Where [half], it scans float16 from a float32 carry, its
+   carrier. *)
+
+type constant_scan = {
+  name : string;
+  monoid : Nx_kernel.monoid;
+  half : bool;
+  c : float;
+  dc : float array;
+}
+
+let constant_scans =
+  let ones = [| 1.; 1.; 1. |] and zeros = [| 0.; 0.; 0. |] in
+  let case ?(half = false) name monoid c dc = { name; monoid; half; c; dc }
+  in
+  [
+    case "a sum" Sum 3. ones;
+    case "a product" Prod 3. [| 2.; 4.; 8. |];
+    case "a maximum at the carry" Max 3. ones;
+    case "a maximum at the elements" Max 1. zeros;
+    case "a minimum at the carry" Min 1. ones;
+    case "a minimum at the elements" Min 3. zeros;
+    case "a float16 product" ~half:true Prod 3. [| 2.; 4.; 8. |];
+  ]
+
+let scan_in (type s r) (dt : (float, s) D.t) (wide : (float, r) D.t) s (x, c) =
+  let x = Nx.cast dt x and c = Nx.cast wide c in
+  let prog = P.of_exprs ~ins:[| D.Any dt |] [| P.E.any (P.E.const dt 2.) |] in
+  Nx.cast f64
+    (Nx.Prim.eval ~by:"test"
+       (Scan
+          {
+            layout = contiguous (Nx.shape x);
+            axis = 0;
+            prog;
+            reduction = Monoid (s.monoid, 0, dt);
+            loads = [| Plain x |];
+            carry = Some (Any c);
+          }))
+
+let constant_scan s =
+  if s.half then scan_in Nx.float16 Nx.float32 s else scan_in f64 f64 s
+
+(* The tangent along [(1, 1)] is [dc], and the pullback of [w] is [(0, Σ w_i
+   dc_i)], eager and compiled. *)
+let test_constant_scan s =
+  let f = constant_scan s in
+  let x = v [| 5.; 6.; 7. |] and c = v [| s.c |] in
+  let w = v [| 1.; 10.; 100. |] in
+  let jvp x c =
+    snd (Rune.jvp (two ()) T.tensor f (x, c) (Nx.ones_like x, Nx.ones_like c))
+  in
+  let vjp x c w = snd (Rune.vjp (two ()) T.tensor f (x, c)) w in
+  let jit_jvp = Rune.jit T.(tensor @-> tensor @-> returns tensor) jvp
+  and jit_vjp =
+    Rune.jit
+      T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
+      vjp
+  in
+  let gc = [| Nx.item [] (Nx.sum (Nx.mul w (v s.dc))) |] in
+  let pullback what (gx, gc') =
+    equal ~msg:(what ^ " in x") (array float_exact) [| 0.; 0.; 0. |]
+      (Nx.to_array gx);
+    equal ~msg:(what ^ " in c") (array float_exact) gc (Nx.to_array gc')
+  in
+  equal ~msg:"tangent" (array float_exact) s.dc (Nx.to_array (jvp x c));
+  equal ~msg:"compiled tangent" (array float_exact) s.dc
+    (Nx.to_array (jit_jvp x c));
+  pullback "pullback" (vjp x c w);
+  pullback "compiled pullback" (jit_vjp x c w)
+
 (* Errors *)
 
 type message = Is of string | Starts of string
@@ -2523,6 +2600,9 @@ let () =
                conv_gen
                (conv_law compiled_pullback);
            ];
+         cases "scans of a constant from a carry"
+           ~id:(fun s -> s.name)
+           constant_scans test_constant_scan;
          group "placement"
            [
              test "a reduction's cotangent meets a cut" test_cut_residual;

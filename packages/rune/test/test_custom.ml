@@ -211,6 +211,64 @@ let jvp_tests =
           (Rune.grad' (fun x -> Nx.sum (fake_jvp_sin x)) (v3 ())));
     test "with no differentiation the call is its rule's value" (fun () ->
         exact (Nx.sin (v3 ())) (my_sin_fwd (v3 ())));
+    test "a constant a tangent map computes beside a tangent stays constant"
+      (fun () ->
+        (* A loop over [dx] and maybe [x] whose program reads none of them gives
+           a constant [k]: the map of 2 everywhere, or the running sum of 1 from
+           a carry of 0. The tangent map [k dx] is linear, so the gradient is
+           [k], whatever the loop loads. *)
+        let layout = Nx_array.Layout.contiguous (Iarray.of_list [ 3 ]) in
+        let constant c loads =
+          Nx_kernel.Prog.(
+            of_exprs
+              ~ins:(Iarray.map (fun _ -> Nx.Dtype.Any f64) loads)
+              [| E.any (E.const f64 c) |])
+        in
+        let map loads =
+          fst
+            (Nx.Prim.eval ~by:"test"
+               (Map
+                  {
+                    layout;
+                    prog = constant 2. loads;
+                    outs = [ f64 ];
+                    loads;
+                    at = None;
+                  }))
+        and scan loads =
+          Nx.Prim.eval ~by:"test"
+            (Scan
+               {
+                 layout;
+                 axis = 0;
+                 prog = constant 1. loads;
+                 reduction = Monoid (Sum, 0, f64);
+                 loads;
+                 carry = Some (Any (Nx.zeros f64 [| 1 |]));
+               })
+        in
+        let twos = Nx.full f64 [| 3 |] 2. and ramp = vec [| 1.; 2.; 3. |] in
+        List.iter
+          (fun (what, k, loop, loads) ->
+            let f =
+              Rune.custom_jvp tensor tensor (fun x ->
+                  (Nx.mul x k, fun dx -> Nx.mul (loop (loads x dx)) dx))
+            in
+            let grad = Rune.grad' (fun x -> Nx.sum (f x)) in
+            exact ~msg:what k (grad (v3 ()));
+            exact ~msg:(what ^ ", compiled") k (Rune.jit' grad (v3 ())))
+          [
+            ( "a map over x and dx",
+              twos,
+              map,
+              fun x dx -> [| Plain x; Plain dx |] );
+            ( "a map over dx and x",
+              twos,
+              map,
+              fun x dx -> [| Plain dx; Plain x |] );
+            ("a map over dx alone", twos, map, fun _ dx -> [| Plain dx |]);
+            ("a scan over dx alone", ramp, scan, fun _ dx -> [| Plain dx |]);
+          ]);
     test "the rule runs once per call, its derivative once where applied"
       (fun () ->
         let rules = ref 0 and derivatives = ref 0 in

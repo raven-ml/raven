@@ -142,8 +142,13 @@ let load_owned i : 'd Prim.load -> bool = function
 (* Outputs [outs] of a program over the loads they read, the loads [kept]. *)
 type part = { prog : P.t; outs : int array; kept : int array }
 
-let part (p : P.t) outs =
+(* [anchor], where the outputs read no load, is kept all the same: a load they
+   lie beside. *)
+let part ?anchor (p : P.t) outs =
   let keep = Scalar.reads p ~outs in
+  (match anchor with
+  | Some j when not (Array.mem true keep) -> keep.(j) <- true
+  | _ -> ());
   let kept =
     Array.of_list
       (List.filter (fun j -> keep.(j)) (List.init (Array.length keep) Fun.id))
@@ -152,7 +157,9 @@ let part (p : P.t) outs =
 
 (* A program's outputs split by whether they read a load of [mask]:
    [unknown.(k)] for output [k], and the parts of each side, where it has
-   outputs. *)
+   outputs. A known part that reads no load keeps the first load the tape does
+   not own, where there is one, so that it computes at the call beside it: a
+   constant beside a tangent stays a constant. *)
 type plan = {
   unknown : bool array;
   known : part option;
@@ -162,13 +169,17 @@ type plan = {
 let plan (p : P.t) owned =
   let deps = Scalar.depends p owned in
   let unknown = Array.map (fun o -> deps.(o)) (Iarray.to_array p.outs) in
+  let anchor = Array.find_index not owned in
   let side flag =
     let outs =
       List.filter
         (fun k -> unknown.(k) = flag)
         (List.init (Array.length unknown) Fun.id)
     in
-    match outs with [] -> None | outs -> Some (part p (Array.of_list outs))
+    let anchor = if flag then None else anchor in
+    match outs with
+    | [] -> None
+    | outs -> Some (part ?anchor p (Array.of_list outs))
   in
   { unknown; known = side false; recorded = side true }
 
@@ -191,8 +202,9 @@ let kept part loads =
   Iarray.init (Array.length part.kept) (fun j -> Iarray.get loads part.kept.(j))
 
 (* Whether a loop over [loads], which it has, keeps a known part that reads none
-   of them: computed apart, that part would be a creation with no operand to lie
-   beside, so the loop is recorded whole. *)
+   of them, as where the tape owns every load. A map computes that part as a
+   creation beside its first load; a reduction of no load, or a scan of no load
+   or carry, would lie nowhere, so the loop is recorded whole. *)
 let unread plan loads =
   Iarray.length loads > 0
   && match plan.known with Some p -> Array.length p.kept = 0 | None -> false
@@ -250,12 +262,21 @@ let positions n = function
       Array.iteri (fun i o -> a.(o) <- i) part.outs;
       a
 
+(* Where a map's known part lies: a part that reads no load is a creation, at
+   the map's own placement where it has no loads, else whole beside its first
+   load. *)
+let known_at part (loads : 'd Prim.load iarray) at : 'd Nx.Placement.t option =
+  if Array.length part.kept > 0 then None
+  else if Iarray.length loads = 0 then at
+  else
+    match Iarray.get loads 0 with
+    | Plain x -> Some (Nx.beside x)
+    | Padded { x; _ } -> Some (Nx.beside x)
+
 let map_parts (type d r) st i ~by layout prog (outs : (d, r) Prim.outs)
     (loads : d Prim.load iarray) at : r =
   let plan = plan_of i prog loads in
   match (outs, plan.known, plan.recorded) with
-  | _ when unread plan loads ->
-      record_op st i ~by (Map { layout; prog; outs; loads; at })
   | [ a; b ], Some k, Some u when not plan.unknown.(0) ->
       (* A primal and its tangent, as forward mode makes them: without the
          general split. *)
@@ -267,7 +288,7 @@ let map_parts (type d r) st i ~by layout prog (outs : (d, r) Prim.outs)
                prog = k.prog;
                outs = [ a ];
                loads = kept k loads;
-               at = None;
+               at = known_at k loads at;
              })
       in
       let t, () =
@@ -288,7 +309,6 @@ let map_parts (type d r) st i ~by layout prog (outs : (d, r) Prim.outs)
         | [] -> ()
         | _ :: _ as ko ->
             let part = Option.get plan.known in
-            (* With no loads the map is a creation, at its own placement. *)
             Prim.eval ~by
               (Map
                  {
@@ -296,7 +316,7 @@ let map_parts (type d r) st i ~by layout prog (outs : (d, r) Prim.outs)
                    prog = part.prog;
                    outs = ko;
                    loads = kept part loads;
-                   at = (if Iarray.length loads = 0 then at else None);
+                   at = known_at part loads at;
                  })
       in
       let recorded : type u. (d, u) Prim.outs -> u = function
@@ -362,7 +382,11 @@ let scan_part (type d r) st i ~by layout axis prog
     (carry : d Prim.any option) : r =
   let plan = plan_of i prog loads in
   let carried = match carry with Some (Any c) -> owns i c | None -> false in
-  if carried || plan.unknown.(output reduction) || unread plan loads then
+  if
+    carried
+    || plan.unknown.(output reduction)
+    || (unread plan loads && Option.is_none carry)
+  then
     record_op st i ~by (Scan { layout; axis; prog; reduction; loads; carry })
   else
     let part = Option.get plan.known in

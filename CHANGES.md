@@ -500,6 +500,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.vjp` and `Rune.grad` keep constant a value that one operation
+  computes beside a tangent without reading it, as a `Rune.custom_jvp`
+  tangent map may, or the derivative of an `Nx.Prim.Scan` whose program
+  reads none of its loads, continued from a carry with a tangent. They raised
+  that the tangent map was not linear. A reduction whose every load is a
+  tangent still raises.
 - `Rune.vjp` and `Rune.grad` in several arguments at once return the
   pullback where a padding keeps none of an array's elements, as `Nx.conv`
   and `Nx.conv_transpose` do in both operands where a padding cuts every

@@ -195,9 +195,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   `load` and `tensors` alone), so tessera's cram tests cannot make the .pt
   model file that `encode`, `targets` and `distil --init` read
   (tessera-bin/adjudication.md M9). Found by DM's skeptic
-- rune's trace.ml `unread` turns a known value into a tape variable;
-  `scan_rule`'s `parts` reaches it for a `Prim.Scan` with a constant
-  program and only a carry tangent
 
 ## vega
 

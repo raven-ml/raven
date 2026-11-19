@@ -532,10 +532,8 @@ let rec sums_only : type d r. Scalar.t -> (d, r) Prim.reductions -> bool =
 (* A reduction's derivative: [Primal] where no reduction has a tangent its dtype
    holds, the reduction over its primal loads alone; [Fused] where each with one
    is a sum, its program's primal outputs then those sums' tangents, and which
-   of its outputs have a tangent; [Parts] otherwise. A [Primal] reduction read
-   over tangents too would reach a tape, which records whole one that reads no
-   primal load, as nx's fills beside an array do: its results would be tape
-   variables, and a product of one with a tangent not linear. *)
+   of its outputs have a tangent; [Parts] otherwise. A [Primal] reduction reads
+   no tangent load, as a map's rule does where no output has a tangent. *)
 type reduce_plan =
   | Primal
   | Fused of { prog : P.t; has_tangent : bool array }
