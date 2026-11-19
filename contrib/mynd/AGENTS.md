@@ -73,3 +73,32 @@ stays until mynd covers its surface.
   centres only on such positions.
 - torch 2.9's antialiased `interpolate` reads an image one column wide as
   constant: compare one axis along the width.
+
+## Parity
+
+Facts for reproducing another library's numbers in a test or a port.
+The guide pages under `doc/` explain mynd alone.
+
+- Edge rules: `` `Zero `` is OpenCV's `BORDER_CONSTANT`, scipy.ndimage's
+  `constant` and torch's `constant` padding; `` `Replicate `` is
+  `BORDER_REPLICATE`, `nearest` and `replicate`; `` `Symmetric_whole ``
+  is `BORDER_REFLECT_101` (OpenCV's default), `mirror` and `reflect`;
+  `` `Symmetric_half `` is `BORDER_REFLECT` and `reflect` (scipy's
+  default), with no torch mode; `` `Periodic `` is `BORDER_WRAP`, `wrap`
+  and `circular`. OpenCV's `filter2D` takes no `BORDER_WRAP`.
+- A window's tap `k / 2` is the pixel itself, which is scipy.ndimage's
+  `origin` 0 and OpenCV's anchor `(-1, -1)` at every extent.
+  `median_filter` takes rank `n / 2`, the upper median for an even `n`;
+  `rank_filter` at `(n - 1) / 2` is `median_blur`'s lower one.
+- torchvision 0.24's colour adjustments (`ColorJitter`): its grey weighs
+  `0.2989 r + 0.587 g + 0.114 b`, which sums to `0.9999`; each blend is
+  `f x + (1 - f) r`, clamped to `[0, 1]` after every adjustment, and
+  differs from `Nx.lerp` by rounding; contrast takes the mean of the grey
+  over the last three axes, flooring an integer image's grey first, and an
+  image of one channel is its own grey; the hue factor is in turns, in
+  `[-0.5, 0.5]`; an integer result is truncated toward zero;
+  `ColorJitter` applies its four adjustments in an order drawn for each
+  call.
+- torchvision's `GaussianBlur` samples the Gaussian divided by its sum, as
+  `gaussian_blur` does, with `kernel_size = 2 radius + 1`, and draws its
+  deviation uniformly from `(0.1, 2)` by default.

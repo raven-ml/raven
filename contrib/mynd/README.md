@@ -16,6 +16,7 @@ releases on its own schedule and carries no API stability guarantee.
 `opam install mynd` installs it; `opam install raven` does not.
 
 - `lib/mynd.mli` is the API and states every rule.
+- `doc/` composes it into colour adjustments and filters.
 - `test/` holds the laws and the cases against reference implementations
   (torch, torchvision, Pillow, pycocotools, scipy, scikit-image,
   OpenCV).

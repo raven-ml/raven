@@ -1,0 +1,8 @@
+(mdx
+ (files colour.md filters.md)
+ (package mynd)
+ (enabled_if
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
+ (libraries mynd nx rune))
