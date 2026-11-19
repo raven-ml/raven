@@ -1349,11 +1349,15 @@ let split_reduce k r =
    blocked. An upcast
    that took its axis whole lends its second upcast to the output axis the
    same operands read, the other part of one axis: a projection of 16384 rows
-   into 4 heads of 110 took 331 us so and 2549 at 4 by 4. Attention's scores,
-   whose queries the operands that read the heads do not all read, keep 4 by
-   4, and so does a kernel upcast past its two axes by 4 ({!upcast_by_loop}).
-   Unbiased scores, 8 products of 2048 by 64 by 2048, took 970 us blocked in
-   workgroups of 32 threads and 654 in 128.
+   into 4 heads of 110 took 331 us so and 2549 at 4 by 4. So does an upcast
+   that leaves an odd part of its axis: TESSERA's second embedding, its 440
+   columns split by its day encoding into 220 pairs, leaves 55 runs of 4
+   pairs and doubles the pairs, 2.9 ms staged (D497) against 17.1 at 4 by 4
+   on an RTX 5000 Ada. Attention's scores, whose queries the operands that
+   read the heads do not all read, keep 4 by 4, and so does a kernel upcast
+   past its two axes by 4 ({!upcast_by_loop}). Unbiased scores, 8 products
+   of 2048 by 64 by 2048, took 970 us blocked in workgroups of 32 threads
+   and 654 in 128.
 
    It blocks only where its threads give each of the target's units
    ({!Renderer.t.units}) [unit_workgroups] workgroups; a count not known
@@ -1365,27 +1369,39 @@ let split_reduce k r =
    terms in the order it takes where they are not stated. *)
 let block k upcasted =
   let doubles axis = divisible (shape_at k axis) 2 in
-  (* The threads the axes leave a workgroup once doubled. *)
-  let threads axes =
-    List.fold_left
-      (fun n axis ->
-        n * (pow2_dividing (List.nth (K.rngs k) axis) (2 * lanes k) / 2))
-      1 axes
-  in
   let outputs () = List.map (List.nth (K.rngs k)) (K.upcastable_dims k) in
-  (* For an upcast that took its range whole, the output axis besides
-     [other] that the same operands read: the other part of an axis the
-     kernel splits in two, as a projection's heads and their width. *)
+  (* The output axis besides [r] and [other] that the same operands read as
+     [r]: the other part of an axis the kernel splits in two, as a
+     projection's heads and their width. *)
   let operands = operands k in
+  let partner r other =
+    let same x =
+      axis_id x <> axis_id other
+      && axis_id x <> axis_id r
+      && List.for_all (fun b -> indexes x b = indexes r b) operands
+    in
+    List.find_opt same (outputs ())
+  in
+  (* For an upcast that took its range whole, its range's {!partner}. *)
   let lent (_, up, _) other =
-    match rest_of k up with
-    | None -> None
-    | Some up ->
-        let same x =
-          axis_id x <> axis_id other
-          && List.for_all (fun b -> indexes x b = indexes up b) operands
-        in
-        List.find_opt same (outputs ())
+    Option.bind (rest_of k up) (fun up -> partner up other)
+  in
+  (* The range that takes [r]'s second upcast: [r], or where what its upcast
+     left is odd, its {!partner} if that one doubles, as the pairs of a stack
+     of sines and cosines beside 55 runs of 4 of their 220 angles. *)
+  let doubled r other =
+    if doubles (axis_of k r) then Some r
+    else
+      Option.bind (partner r other) (fun x ->
+          if doubles (axis_of k x) then Some x else None)
+  in
+  (* The threads the axes [r] leave a workgroup once [d] is doubled. *)
+  let threads pairs =
+    List.fold_left
+      (fun n (r, d) ->
+        if axis_id d = axis_id r then n * (pow2_dividing r (2 * lanes k) / 2)
+        else n * pow2_dividing r (lanes k))
+      1 pairs
   in
   let axes =
     match List.rev upcasted with
@@ -1404,19 +1420,26 @@ let block k upcasted =
     | Some n -> Bigint.geq n (Bigint.of_int least)
     | None -> true
   in
-  match axes with
-  | Some (ra, rb)
-    when (K.ren k).has_local && narrow k
-         && upcast_by_loop k 16
-         &&
-         let a = axis_of k ra and b = axis_of k rb in
-         reused k a && reused k b && doubles a && doubles b
-         && threads [ a; b ] >= lanes k ->
+  let doubling =
+    match axes with
+    | Some (ra, rb)
+      when (K.ren k).has_local && narrow k
+           && upcast_by_loop k 16
+           && reused k (axis_of k ra)
+           && reused k (axis_of k rb) -> (
+        match (doubled ra rb, doubled rb ra) with
+        | Some da, Some db when threads [ (ra, da); (rb, db) ] >= lanes k ->
+            Some (ra, rb, da, db)
+        | _ -> None)
+    | _ -> None
+  in
+  match doubling with
+  | Some (ra, rb, da, db) ->
       let blocked = filled () in
       if blocked then
         List.iter
           (fun r -> ignore (split k (axis_of k r) 2 Opt.Upcast))
-          [ ra; rb ];
+          [ da; db ];
       (match K.upcastable_dims ~reduce:true k with
       | [] -> ()
       | dims ->

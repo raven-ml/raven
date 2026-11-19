@@ -5958,8 +5958,9 @@ against 2.77).
     at least 2 threads along the later axis, else 16 or 8 there, whichever pads it less, and the rest
     along the other, each axis padded (PADTO) where they do not divide it,
     unless a pad is refused;
-  - where one of the two upcasts took its axis whole, the output axis that
-    the same operands of the product read takes its second upcast;
+  - where one of the two upcasts took its axis whole, or left an odd part
+    of it, the other output axis that the same operands of the product read
+    takes its second upcast, where 2 divides it;
   - where both operands of the product read the unrolled axis at unit
     stride, as a product by the transpose of a matrix stored `[outputs;
     inputs]` does, and so every float32 input gradient `dY Wᵀ` whatever
@@ -5991,7 +5992,12 @@ against 2.77).
   weights, whose products ran at 8.3-8.7 TFLOP/s against 12.8-13.9 with the
   same weights in C order; its own gain is to measure on fudge (rune's
   `Cuda/matmul-float32-transposed-16384x440x1320` against
-  `Cuda/matmul-float32-16384x440x1320`).
+  `Cuda/matmul-float32-16384x440x1320`). A second upcast through the other
+  part of an axis serves TESSERA's second embedding, whose day encoding
+  splits its 440 columns into 220 pairs: blocked and staged (D497) it takes
+  2.9 ms a call of 163840 rows on fudge's RTX 5000 Ada, against 17.1 at 4
+  by 4 in 64 threads (rune's
+  `Cuda/matmul-float32-transposed-pairs-16384x440x440`).
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
   (`matmul`, `matmul_256`, `scores`, `matmul_768`, `batched_768`,
   `two_batches_768`, `matmul_440`, padded, `heads_projection` and
@@ -6001,7 +6007,10 @@ against 2.77).
   `matmul_768`, `batched_768` and `two_batches_768` held at 4 by 4;
   `two_batches_768_biased` and `batched_768_biased`, whose bias the
   batches do not read, optimised as without it; `matmul_1000`, `matmul_48`
-  and `scores_masked` not blocked), and `a contraction laid out along its reduce` (`matmul_256_kt_128`
+  and `scores_masked` not blocked), `a product laid out along its reduce`'s
+  `16384 by 220 pairs over 440` and rune's
+  `Cuda/matmul-float32-transposed-pairs-16384x440x440` on fudge, and
+  `a contraction laid out along its reduce` (`matmul_256_kt_128`
   with its reduce split on CUDA, AMD and sm_75; `matmul_256_kt` and
   `scores`, under 16 trips, and `matmul_256` and `matmul_440` without),
   with the layouts in the suite's `.tolk` files, and `a kernel's sums keep

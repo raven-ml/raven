@@ -2247,6 +2247,30 @@ let gpu_rows g =
               in
               fun () -> ignore (synced (f x w)));
         };
+      (* The same transposed product, 440 by 440, plus an addend stored as
+         two halves of 220 columns interleaved into its 440, as TESSERA's day
+         encoding, a stack of sines and cosines, meets its second embedding:
+         the product's columns split into 220 pairs. *)
+      on_gpu g "matmul-float32-transposed-pairs-16384x440x440"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s)
+              in
+              let x = draw 60 [| 16384; 440 |] and w = draw 61 [| 440; 440 |] in
+              let halves = draw 62 [| 2; 16384; 220 |] in
+              let f =
+                Rune.jit
+                  Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+                  (fun x w halves ->
+                    let pairs = Nx.moveaxis 0 2 halves in
+                    Nx.add
+                      (Nx.matmul x (Nx.matrix_transpose w))
+                      (Nx.reshape [| 16384; 440 |] pairs))
+              in
+              fun () -> ignore (synced (f x w halves)));
+        };
       (* A transposed product summing 64 values, 16 runs of 4: too short a
          reduce to split between threads (16 trips each), as attention's
          scores at a head width of 64. *)

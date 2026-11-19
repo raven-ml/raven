@@ -3168,13 +3168,49 @@ let f32_product ?(by_columns = false) rows cols depth =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (Ops.index out [ (i * int cols) + j ]) sum) [ i; j ] ]
 
+(* The same product [x · wᵀ] as {!f32_product}'s, its [2 cols] columns
+   [2 c + s] split in [cols] pairs [(c, s)] by an addend stored pair by
+   pair, [s] outermost, as TESSERA's day encoding, a stack of sines and
+   cosines, is added to its second embedding. *)
+let paired_product rows cols depth =
+  let open Ops.O in
+  let param slot size = Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32 in
+  let width = Stdlib.(2 * cols) in
+  let out = param 0 Stdlib.(rows * width)
+  and x = param 1 Stdlib.(rows * depth)
+  and w = param 2 Stdlib.(width * depth)
+  and a = param 3 Stdlib.(rows * width) in
+  let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 1 ]
+  and c = Ops.range ~axis_type:Weak (Ops.Int cols) [ 2 ]
+  and s = Ops.range ~axis_type:Weak (Ops.Int 2) [ 3 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
+  let col = (c * int 2) + s in
+  let sum =
+    Ops.reduce
+      (Ops.index x [ (i * int depth) + k ] * Ops.index w [ (col * int depth) + k ])
+      Add [ k ]
+  in
+  let added =
+    Ops.index a [ (s * int Stdlib.(rows * cols)) + (i * int cols) + c ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.end_
+        (Ops.store (Ops.index out [ (i * int width) + col ]) (sum + added))
+        [ i; c; s ];
+    ]
+
 (* A product whose operands both lie along its reduce, on a renderer that
    copies asynchronously, takes a staged product's tile, blocked or short of
    the units: no thread splits its reduce, and its program copies both
    operands into shared memory. TESSERA's feed-forward and projection
-   shapes, 16384 rows over 440 and 1792 terms, and matmul_256_kt_128, short
-   of sm_89's units. Its twin laid out along the columns, and the same
-   product on sm_75, which copies nothing asynchronously, are not staged. *)
+   shapes, 16384 rows over 440 and 1792 terms, matmul_256_kt_128, short
+   of sm_89's units, and a product whose columns an addend splits in 220
+   pairs, as TESSERA's day encoding beside its second embedding: the 55 runs
+   of 4 pairs the columns' upcast leaves do not double, and lend their
+   second upcast to the pairs. Its twin laid out along the columns, and the
+   same product on sm_75, which copies nothing asynchronously, are not
+   staged. *)
 let staged_products =
   let sm_89 =
     lazy
@@ -3204,6 +3240,7 @@ let staged_products =
           ("16384 by 1792 over 440", lazy (f32_product 16384 1792 440));
           ("16384 by 440 over 1792", lazy (f32_product 16384 440 1792));
           ("matmul_256_kt_128", lazy (kernel "matmul_256_kt_128"));
+          ("16384 by 220 pairs over 440", lazy (paired_product 16384 220 440));
         ]
         (fun (_, sink) ->
           let sink = Lazy.force sink and ren = Lazy.force sm_89 in
