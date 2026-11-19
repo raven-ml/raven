@@ -11,43 +11,45 @@ road to 1.0 is gpt-oss-20b, jit-compiled, at least as fast as
 tinygrad, JAX, llama.cpp and vLLM on NVIDIA, through CUDA and through
 NVIDIA's kernel driver directly ("NV"), and on AMD. We are not there yet.
 
+Each cell compares decoding one token at position 512 and prefilling 512
+tokens, in tokens a second, with Raven storing the attention projections and
+the head as the baseline does: Q8_0 against llama.cpp, bfloat16 against vLLM.
+On NVIDIA the baselines run through CUDA.
+
 | As fast as | NVIDIA, CUDA | NVIDIA, NV | AMD |
 | --- | --- | --- | --- |
-| llama.cpp | behind: decode 10.2 against 6.83 ms | behind: decode 12.0 against 6.83 ms (bench median; 10.7 ms of GPU time) | behind: decode 12.7 against 10.38 ms |
-| tinygrad | not measured | not measured | blocked: tinygrad needs Resizable BAR on this machine |
-| JAX | not measured | not measured | not measured |
-| vLLM | not measured | not measured | not measured |
+| llama.cpp | behind on decode, 163.4 against 168.6; ahead on prefill, 11,360 against 9,620 | level on decode, 169.2 against 168.6; behind on prefill, 8,230 against 9,620 | behind on decode, 12.7 against 10.38 ms a token |
+| tinygrad | blocked: tinygrad has no gpt-oss implementation to run | blocked: tinygrad has no gpt-oss implementation to run | blocked: tinygrad needs Resizable BAR on this machine |
+| JAX | blocked: no MXFP4 path, and bfloat16 does not fit in 32 GB | blocked: no MXFP4 path, and bfloat16 does not fit in 32 GB | not measured |
+| vLLM | level on decode, 123.0 against 122.1; behind on prefill, 12,140 against 12,820 | ahead on decode, 127.7 against 122.1; behind on prefill, 8,340 against 12,820 | not measured |
+
+The NVIDIA columns are from 2026-11-19, below. The AMD column is from
+2026-11-08, on a Radeon AI PRO R9700 (machine "nonnormal", gfx1201) at
+502431b668, against llama.cpp b12048 through Vulkan, and has not been
+measured since.
 
 ### gpt-oss-20b on an NVIDIA RTX 5000 Ada
 
-Machine "fudge", under load. llama.cpp b12032, CUDA.
+Machine "fudge", 2026-11-19, Raven at 3c1daa79d5, llama.cpp b12541 and
+vLLM 0.34.0. Tokens a second for one sequence, the median of three rounds.
+First token is a new process's, from its start to its first token, loading
+the weights. Every system keeps the experts as MXFP4.
+[gpt-oss's performance](../apps/gpt-oss/PERFORMANCE.md) gives each number's
+range, how each system was run, memory and the other systems, and how to
+reproduce them.
 
-| Measurement | Raven, CUDA | Raven, NV | llama.cpp, CUDA |
-| --- | --- | --- | --- |
-| Decode, position 512 of a 1,024 cache | 10.2 ms (8ef1902f3) | 10.7 ms of GPU time; bench median 12.0 ms (31aa4521b) | 6.83 ms at depth 512 |
-| Decode, with Q8_0 attention and head | 8.1–8.3 ms (f2af3251b) | not measured | |
-| Prefill, 512 tokens | 122 ms, least of 4 rounds under load (4e23903949) | not measured again | 56.0 ms |
-| First call, kernels cached | 0.37–0.39 s (c29acaee3) | 0.37–0.54 s, 12 tokens; 1.36 / 1.47 s at the first run (31aa4521b) | 75 ms (59 to 151 ms, no warmup) |
+| | Attention, head | Decode | Prefill, 512 tokens | First token |
+| --- | --- | --- | --- | --- |
+| Raven, CUDA | bfloat16 | 123.0 | 12,140 | 2.00 s |
+| Raven, CUDA | Q8_0 | 163.4 | 11,360 | not measured |
+| Raven, NV | bfloat16 | 127.7 | 8,340 | 1.83 s |
+| Raven, NV | Q8_0 | 169.2 | 8,230 | not measured |
+| llama.cpp, CUDA | Q8_0 | 168.6 | 9,620 | 2.12 s |
+| vLLM | bfloat16 | 122.1 | 12,820 | 19.7 s |
 
-### gpt-oss-20b on an AMD Radeon AI PRO R9700
-
-Machine "nonnormal" (gfx1201), at 502431b668. llama.cpp b12048, Vulkan.
-
-| Measurement | Raven | llama.cpp, Vulkan |
-| --- | --- | --- |
-| Decode, position 512 | 12.7 ms, attention on WMMA | 10.38 ms at depth 512 |
-| Prefill, 512 tokens | 0.418 s | 0.308 s |
-| First call, kernels cached | 0.30–0.34 s, 12 tokens; 1.03 s compiling them, of which lowering and linking the first block take 69–131 ms on the host | 0.136 s; 2.19 s without Mesa's shader cache |
-
-Where decode's time goes: the expert products take 5.4 ms at 212–254 GB/s,
-against llama.cpp's 3.0. Top-k's 20-kernel sort and about 37 small kernels a
-layer take about 1.5 ms, and the argmax over the logits 0.63 ms.
-
-Where prefill's time goes: the expert products take 326 ms on WMMA at
-7–8 TFLOPS, against 177. The out projection takes no WMMA: 52 ms, against
-q's 10.
-
-llama.cpp's ROCm build needs HIP libraries this machine lacks.
+Installed, Raven's chat is 32 MB, plus NVRTC (134 MB) to compile kernels it
+has not cached; llama.cpp is 1.15 GB and vLLM 9.32 GB, measured the same day
+at 72377cdbe1 ([gpt-oss without Python](../apps/gpt-oss/README.md#without-python)).
 
 ## The GPU runtime: rig
 
