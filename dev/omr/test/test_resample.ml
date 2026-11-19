@@ -139,13 +139,16 @@ let images =
 
 (* Streams *)
 
+(* swr's kernel to 16 kHz: its cut and length as resample_init computes them, at
+   float64 from the raw rates in that order. *)
 let swr ~from =
-  let s = Float.of_int from /. 16_000. in
-  let taps = Float.to_int (Float.ceil (32. *. s /. 0.97)) in
+  let factor = Float.min (16_000. *. 0.97 /. Float.of_int from) 1. in
+  let taps = Float.to_int (Float.ceil (32. /. factor)) in
   let taps = taps + (taps land 1) in
+  let s = Float.max 1. (Float.of_int from /. 16_000.) in
   K.Sinc
     {
-      cutoff = 0.485;
+      cutoff = factor *. s /. 2.;
       half_width = Float.of_int taps /. 2. /. s;
       window = K.Kaiser 9.;
     }
@@ -529,7 +532,7 @@ let rec gcd a b = if b = 0 then a else gcd b (a mod b)
 let swr_parts ~from x =
   let g = gcd from 16_000 in
   let l = 16_000 / g and m = from / g in
-  let factor = Float.min 1. (0.97 *. Float.of_int l /. Float.of_int m) in
+  let factor = Float.min (16_000. *. 0.97 /. Float.of_int from) 1. in
   let taps = Float.to_int (Float.ceil (32. /. factor)) in
   let taps = taps + (taps land 1) in
   let s = Float.max 1. (Float.of_int m /. Float.of_int l) in

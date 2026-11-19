@@ -146,7 +146,10 @@ let rec gcd a b = if b = 0 then a else gcd b (a mod b)
 let swr_16k ~from x =
   let g = gcd from 16_000 in
   let l = 16_000 / g and m = from / g in
-  let factor = Float.min 1. (0.97 *. Float.of_int l /. Float.of_int m) in
+  (* The cut and the taps as swr computes them, at float64 from the raw
+     rates in this order; another order rounds [32 /. factor] to the other
+     side of an integer at some rates, as 43650 Hz. *)
+  let factor = Float.min (16_000. *. 0.97 /. Float.of_int from) 1. in
   let taps = Float.to_int (Float.ceil (32. /. factor)) in
   let taps = taps + (taps land 1) in
   let s = Float.max 1. (Float.of_int m /. Float.of_int l) in
