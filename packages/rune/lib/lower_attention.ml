@@ -2369,6 +2369,33 @@ let derivative_dims = 160
    the accumulators, ptxas keeps 48 to 158 registers. *)
 let lane_accumulators = 176
 
+(* Where the default's stored weights cost less than the FFMA kernels'
+   recomputation. Past 64 dimensions the kernels take three launches and
+   compute eight products a pair, [S] three times and [dP] twice, where the
+   default computes five, as tolk's contractions over the weights and their
+   cotangents it stores, [heads · rows · keys] elements of the accumulator
+   each. Those contractions sum over a head's keys ([q̄]) or rows ([k̄] and
+   [v̄]), and from {!default_keys} of them they run at their full rate, at
+   about 0.6 ms a product where the kernels take 0.85; at 64 a product takes
+   2.7 times as long, and below that bound the kernels keep every call. The
+   default's products take the head's dimensions in vectors of 4; at 110 one
+   of its contractions runs without them, 7.0 ms against 1.1 for the other
+   two, and it loses at any length. So the default takes calls of whole
+   vectors and long heads while
+   its weights hold at most {!default_weights} bytes; beyond, the kernels,
+   which store no weight, keep the footprint linear in the keys. On fudge's
+   RTX 5000 Ada, float32 over 8 heads of 160 dimensions (an equal count of
+   pairs at each length), the backward took the kernels' 6.25, 6.18, 6.15
+   and 6.89 ms against the default's 3.88, 3.54, 3.52 and 3.39 at 256, 512,
+   1024 and 2048 rows, causal 4.36-4.28 against 3.85-3.34, and float64 at
+   2048 104 against 69 ms; at 110 dimensions the kernels' 4.24 and 4.65
+   against 11.6 and 11.0 ms at 512 and 2048 rows. Over 4096 batches of 4
+   heads of 64 rows the default takes 19 ms against 21, but at 40 rows 15
+   against 13 and with tessera's key bias at 64 rows 26 against 22. *)
+let default_keys = 256
+
+let default_weights = 1 lsl 28
+
 let derivative_tile tc ~wide =
   let n, _, k = Tc.dims tc in
   max (if wide then 16 else 32) (max n k)
@@ -2520,9 +2547,17 @@ let dplan (r : Renderer.t) a ~marked =
              f16's dkdv at d72 causal in 16) hold 168 registers whatever
              -maxrregcount, and store 4 bytes before the tiles' loop and
              reload them once a tile. *)
-          Option.map
-            (fun tile -> dcore ~warps ~tile kc vc)
-            (List.find_opt (fun t -> t <= tile && fits t) [ 32; 16; 8 ]))
+          let weights = numel a.lead * a.hq * a.tq * a.tk * isz acc in
+          if
+            wide
+            && a.dk mod 4 = 0 && a.dv mod 4 = 0
+            && min a.tk (grouped a) >= default_keys
+            && weights <= default_weights
+          then None
+          else
+            Option.map
+              (fun tile -> dcore ~warps ~tile kc vc)
+              (List.find_opt (fun t -> t <= tile && fits t) [ 32; 16; 8 ]))
   | _ -> None
 
 (* Operands *)

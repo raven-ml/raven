@@ -518,6 +518,39 @@ let on_derivative ~must law (t, ds, causal, d) =
         (List.exists (fun (n, _) -> String.starts_with ~prefix:"attention_dkdv" n) ks);
       List.iter (fun (_, ast) -> law t ast) ks
 
+(* Whether float32's derivative over [shape] takes attention's own kernels
+   on CUDA sm_89, plain. *)
+let own_kernels shape =
+  let f () =
+    let z () = Nx.full Nx.float32 shape 0.5 in
+    let q = z () and k = z () and v = z () in
+    fst (Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q)
+  in
+  match Lowered.derivative_kernels ~target:cuda f with
+  | [ Some _ ] -> true
+  | [ None ] -> false
+  | l -> failf "%d calls of attention" (List.length l)
+
+(* Past 64 dimensions on FFMA, heads of 256 rows and keys or more whose
+   weights fit 256 MiB take the default ({!Lower_attention}'s
+   [default_keys]); shorter heads, fewer dimensions, dimensions of no whole
+   vectors of 4 and weights past the bound take the kernels. *)
+let long_heads () =
+  let at shape =
+    String.concat "; " (Array.to_list (Array.map string_of_int shape))
+  in
+  List.iter
+    (fun (shape, own) ->
+      equal ~msg:(at shape) Testable.bool own (own_kernels shape))
+    [
+      ([| 1; 8; 2048; 160 |], false);
+      ([| 8; 4; 256; 144 |], false);
+      ([| 1; 8; 2048; 110 |], true);
+      ([| 1; 8; 2048; 64 |], true);
+      ([| 64; 4; 128; 160 |], true);
+      ([| 1; 8; 8192; 160 |], true);
+    ]
+
 let () =
   exit
     (run "Lower_attention"
@@ -566,6 +599,10 @@ let () =
            ];
          group "the derivative's kernels on an FFMA micro-tile"
            [
+             test
+               "past 64 dimensions leave long heads whose weights fit to the \
+                default"
+               long_heads;
              cases "store each address of workgroup memory once between barriers"
                ~id:derivative_id ffma_derivative_cases (on_derivative ~must:(fun _ -> true) no_races);
              cases "write each buffer their tiles' loop reads in that loop"

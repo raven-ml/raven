@@ -76,7 +76,11 @@
     5000 Ada the tensor core's kernels take 0.19 to 0.94 of the default's time
     at 129 and 160 dimensions, and their footprint is 1.4 to 17 times smaller,
     but at 256 one block or blocks of 128 take 1.5 to 1.6 times the default's
-    time unmasked; the FFMA kernels' are pending. *)
+    time unmasked. Past 64 dimensions on an FFMA micro-tile, where the
+    kernels compute eight products a pair against the default's five, a
+    call of whole vectors of 4 dimensions whose heads hold at least 256 rows
+    and 256 keys takes the default while the weights it stores, rows by keys
+    of each head in the accumulator, hold at most 256 MiB. *)
 
 open Tolk
 
@@ -110,8 +114,9 @@ val linear :
     dtype, no load [spec.tangents] marks, keys of 1 to 160 dimensions and
     values of 0 to 160, rows and keys, on a unit {!lower}'s kernels take, a
     tensor core that chains its accumulator or an FFMA micro-tile, the
-    latter where a tile of 8 keys or rows or more fits. Elsewhere it is
-    [None], and the derivative computes as its default. *)
+    latter where a tile of 8 keys or rows or more fits and not over long
+    heads past 64 dimensions whose weights fit the default's bound.
+    Elsewhere it is [None], and the derivative computes as its default. *)
 
 (**/**)
 
