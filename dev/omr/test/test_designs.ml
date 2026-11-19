@@ -644,6 +644,55 @@ let errors =
                 ~gain:1.));
     ]
 
+(* [analog] maps [s = 2i rate tan (π f / rate)] to frequency [f], so the
+   cascade's response at [f] is the analog filter's at that [s]. Poles lie in
+   the left half-plane and zeros in either, with real parts up to 1.5 times the
+   rate in magnitude and imaginary parts up to twice it, since a zero at [s = 2
+   rate] maps to [z = ∞]. *)
+let analog_law =
+  let roots =
+    Gen.(
+      let real =
+        map
+          (fun r -> [ Complex.{ re = r; im = 0. } ])
+          (float_range (-1.5) (-0.01))
+      in
+      let conj =
+        map
+          (fun (re, im) -> Complex.[ { re; im }; { re; im = -.im } ])
+          (pair (float_range (-1.5) (-0.01)) (float_range 0.01 2.))
+      in
+      map List.concat (list ~size:(int_range 1 4) (one_of [ real; conj ])))
+  in
+  let mirror l = List.map (fun z -> Complex.{ z with re = -.z.re }) l in
+  prop "analog places f at 2i rate tan (π f / rate)"
+    Gen.(quad roots roots bool (float_range 1000. 96_000.))
+    (fun (poles, zeros, right, rate) ->
+      let zeros = if right then mirror zeros else zeros in
+      assume (List.length zeros <= List.length poles);
+      cover "zeros in the right half-plane" right;
+      let scale = List.map (fun z -> Complex.mul { re = rate; im = 0. } z) in
+      let zeros = scale zeros and poles = scale poles in
+      let c = I.analog Nx.float64 ~rate ~zeros ~poles ~gain:1. in
+      let f = Array.init 32 (fun i -> rate *. Float.of_int (i + 1) /. 66.) in
+      let got =
+        response c (Array.map (fun f -> 2. *. Float.pi *. f /. rate) f)
+      in
+      Array.iteri
+        (fun i f ->
+          let s =
+            Complex.
+              { re = 0.; im = 2. *. rate *. Float.tan (Float.pi *. f /. rate) }
+          in
+          let prod l =
+            List.fold_left (fun a r -> Complex.(mul a (sub s r))) Complex.one l
+          in
+          let want = Complex.div (prod zeros) (prod poles) in
+          less float_exact
+            ~than:(1e-11 *. (1. +. Complex.norm want))
+            (Complex.norm (Complex.sub want got.(i))))
+        f)
+
 let () =
   exit
     (run "omr.designs"
@@ -658,6 +707,7 @@ let () =
          bessel_scipy;
          digital;
          digital_law;
+         analog_law;
          digital_edges;
          cookbook;
          biquad_gradient;

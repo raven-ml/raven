@@ -16,10 +16,11 @@
 
     A signal's {e rate} is its number of samples per unit of time, passed as
     [~rate], a positive finite float. Frequencies are in cycles per that unit,
-    so at [~rate:16_000.] samples a second they are in hertz. A perceptual scale
-    such as the mel scale ({!Mel}) is defined in hertz, so an operation that
-    names one takes the second as the unit. An operation in samples alone, such
-    as framing, takes no rate.
+    so at [~rate:16_000.] samples a second they are in hertz; {!Iir.analog}
+    alone takes values of the Laplace variable, where frequency [f] lies at
+    [2πi f]. A perceptual scale such as the mel scale ({!Mel}) is defined in
+    hertz, so an operation that names one takes the second as the unit. An
+    operation in samples alone, such as framing, takes no rate.
 
     Unless a value's doc says otherwise:
     - an operation computes where its operands lie and at their dtype, so that
@@ -73,8 +74,9 @@
     window of one point is [[1.]] and a window of no point is empty.
 
     Each constructor computes at float64 and rounds once into [dt]. Its point
-    [i] has the bits of point [P - i] modulo [n]. Each raises [Invalid_argument]
-    if [n] is negative. *)
+    [i] has the bits of point [P - i] modulo [n], so a window of [n ≥ 2] points
+    is {e centred} on its point [P / 2]; a window of one point is centred on
+    that point, [0]. Each raises [Invalid_argument] if [n] is negative. *)
 
 module Window : sig
   (** The type for the two samplings of a window's shape. *)
@@ -139,10 +141,19 @@ end
     {!Nx.sliding_window} cuts from the signal extended by [lo] samples before it
     and [hi] after it.
 
-    A grid of frames centred on [m hop] has [lo = window / 2]; with
-    [hi = window / 2] it keeps every such frame, [n / hop + 1] of them for an
-    even [window], and with [hi = window / 2 - hop] it drops the last. Ends
-    [(0, 0)] keep the frames that lie within the signal.
+    Point [c] of frame [m], for a real [c] in \[0, window - 1\], lies at
+    position [m hop - lo + c] of the signal. A value computed from a frame under
+    a weighting centred on its point [c], as a short-time transform computes
+    one, stands for the frame at that position, the frame's {e instant}. A
+    window of {!Window} of two points or more is centred on its point [P / 2]
+    ({!section-windows}), so an instant is a sample when [P] is even and lies
+    halfway between two samples when [P] is odd. With [lo = window / 2], frame
+    [m]'s instant is [m hop] under a window of one point, a periodic window of
+    even [window] or a symmetric one of odd [window], [m hop + 1/2] under a
+    periodic one of odd [window] above [1] and [m hop - 1/2] under a symmetric
+    one of even [window]. With [hi = window / 2] such a grid has [n / hop + 1]
+    frames for an even [window], and with [hi = window / 2 - hop] one fewer.
+    Ends [(0, 0)] keep the frames that lie within the signal.
 
     Framing replaces the time axis by the frames, moved to the second-to-last
     place, and appends a frame's samples as the last axis; the other axes keep
@@ -971,13 +982,16 @@ module Iir : sig
     gain:float ->
     (float, 's, Nx.host) Nx.t
   (** [analog dt ~rate ~zeros ~poles ~gain] is the cascade of the analog filter
-      [gain Π (s - zᵢ) / Π (s - pⱼ)], [s] in radians per unit of time, by the
-      bilinear transform without prewarping, paired as {!design} pairs. A zero
-      at infinity, one per pole beyond the zeros, maps to [z = -1]. A caller
-      that needs a frequency [f] exact maps it to [(rate / π) tan (π f / rate)]
-      first. [analog] is {!digital} of the transform's zeros, poles and gain. It
-      refuses a pole whose real part is not negative so that, as for {!design},
-      every pole of the result lies inside the unit circle.
+      [gain Π (s - zᵢ) / Π (s - pⱼ)] by the bilinear transform without
+      prewarping, paired as {!design} pairs. [s] is the Laplace variable, in
+      reciprocal units of time. Frequency [f] lies at [s = 2πi f], and a real
+      pole [-1 / τ] decays with time constant [τ]. A zero at infinity, one per
+      pole beyond the zeros, maps to [z = -1]. The transform maps
+      [s = 2i rate tan (π f / rate)] to frequency [f], so a caller that needs
+      the response at [f] exact uses that value in place of [2πi f]. [analog] is
+      {!digital} of the transform's zeros, poles and gain. It refuses a pole
+      whose real part is not negative so that, as for {!design}, every pole of
+      the result lies inside the unit circle.
 
       Raises [Invalid_argument] if [rate] is not positive and finite, there is
       no pole, there are more zeros than poles, a pole's real part is not
@@ -1358,7 +1372,8 @@ module Resample : sig
     by:int * int ->
     t
   (** [v ~grid ~edge ~kernel ~by] computes the weights of the [l] phases, [l]
-      the reduced [by]'s first part.
+      the reduced [by]'s first part, at most [⌈2 s h⌉] each at float64 and a
+      second copy under [`Renormalise], so its memory and time grow with [l].
 
       Raises [Invalid_argument] unless both parts of [by] are positive. *)
 

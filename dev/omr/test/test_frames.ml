@@ -306,6 +306,110 @@ let count_cases =
       let g = F.v ~edge:`Zero ~ends:(lo, hi) ~window:w ~hop:h in
       equal int want (F.count g n))
 
+(* Instants *)
+
+type centred = { sampling : Omr.Window.sampling; window : int; hop : int }
+
+let pp_centred ppf c =
+  Format.fprintf ppf "{%s; window %d; hop %d}"
+    (match c.sampling with Periodic -> "periodic" | Symmetric -> "symmetric")
+    c.window c.hop
+
+let centred =
+  let open Gen in
+  with_pp pp_centred
+  @@
+  let* sampling = of_list [ Omr.Window.Periodic; Omr.Window.Symmetric ] in
+  let+ window = frequency [ (1, constant 1); (5, int_range 2 40) ]
+  and+ hop = int_range 1 30 in
+  { sampling; window; hop }
+
+let parity (c : centred) =
+  match (c.sampling, c.window mod 2) with
+  | _ when c.window = 1 -> "one point"
+  | Periodic, 0 -> "periodic, even window"
+  | Periodic, _ -> "periodic, odd window"
+  | Symmetric, 0 -> "symmetric, even window"
+  | Symmetric, _ -> "symmetric, odd window"
+
+(* The frames of the ramp [x(i) = i] under [`Antisymmetric_whole] hold the
+   positions their points lie at, the extension reading [2 x(0) - x(i) = -i]
+   before the start and [n - 1 + i] past the end; point [i] of frame [m] is [m
+   hop - lo + i]. A window's points [i] and [P - i] share bits, so the positions
+   of each such pair sum to twice the instant the Frames section states for [lo
+   = window / 2]. A window of one point is centred on it. *)
+let instants =
+  prop "a frame's instant is its window's centre" ~count:400 centred (fun c ->
+      List.iter
+        (fun l -> cover ~share:0.1 l (parity c = l))
+        [
+          "one point";
+          "periodic, even window";
+          "periodic, odd window";
+          "symmetric, even window";
+          "symmetric, odd window";
+        ];
+      let w = c.window and n = (3 * c.hop) + c.window in
+      let lo = w / 2 in
+      let g =
+        F.v ~edge:`Antisymmetric_whole ~ends:(lo, lo) ~window:w ~hop:c.hop
+      in
+      let ramp = Nx.init Nx.float64 [| n |] (fun i -> Float.of_int i.(0)) in
+      let pos = Nx.to_array (F.frames g ramp) in
+      let win = Nx.to_array (Omr.Window.hann Nx.float64 c.sampling w) in
+      let p = match c.sampling with Periodic -> w | Symmetric -> w - 1 in
+      let shift =
+        match (c.sampling, w mod 2) with
+        | _ when w = 1 -> 0.
+        | Periodic, 1 -> 0.5
+        | Symmetric, 0 -> -0.5
+        | _ -> 0.
+      in
+      for m = 0 to F.count g n - 1 do
+        let instant = Float.of_int (m * c.hop) +. shift in
+        for i = 0 to w - 1 do
+          equal
+            ~msg:(Printf.sprintf "frame %d, point %d" m i)
+            float_exact
+            (Float.of_int ((m * c.hop) - lo + i))
+            pos.((m * w) + i)
+        done;
+        if w = 1 then
+          equal ~msg:(Printf.sprintf "frame %d" m) float_exact instant pos.(m)
+        else
+          for i = Int.max 0 (p - w + 1) to Int.min (w - 1) p do
+            let msg = Printf.sprintf "frame %d, points %d and %d" m i (p - i) in
+            equal ~msg float_exact win.(i) win.(p - i);
+            equal ~msg float_exact (2. *. instant)
+              (pos.((m * w) + i) +. pos.((m * w) + p - i))
+          done
+      done)
+
+(* A grid of ends [(window / 2, window / 2)] has [n / hop + 1] frames for an
+   even [window], one fewer with [hi = window / 2 - hop], and ends [(0, 0)] keep
+   the frames within the signal. *)
+let centred_counts =
+  prop "centred grids' counts" centred (fun c ->
+      let w = c.window and h = c.hop in
+      cover ~share:0.1 "even window, hop at most half of it"
+        (w mod 2 = 0 && h <= w / 2);
+      let count lo hi n =
+        F.count (F.v ~edge:`Zero ~ends:(lo, hi) ~window:w ~hop:h) n
+      in
+      for n = 0 to (3 * h) + w do
+        let msg = Printf.sprintf "%d samples" n in
+        if w mod 2 = 0 then begin
+          equal ~msg int ((n / h) + 1) (count (w / 2) (w / 2) n);
+          if h <= w / 2 then
+            equal ~msg int (n / h) (count (w / 2) ((w / 2) - h) n)
+        end;
+        let within = ref 0 in
+        while (!within * h) + w <= n do
+          incr within
+        done;
+        equal ~msg int !within (count 0 0 n)
+      done)
+
 let errors =
   group "misuse"
     [
@@ -346,5 +450,7 @@ let () =
          first_frame;
          layout;
          count_cases;
+         instants;
+         centred_counts;
          errors;
        ])

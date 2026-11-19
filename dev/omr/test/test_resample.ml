@@ -876,6 +876,36 @@ let errors =
                   : ((float, Nx.float32_elt, Nx.host) Nx.t, Nx.host) R.State.t)));
     ]
 
+(* A phase reads the inputs [i] with [-s h ≤ c_j - i < s h], so it holds at most
+   [⌈2 s h⌉] weights. *)
+type phases = { k : K.t; l : int; m : int; cells : bool }
+
+let pp_phases ppf c =
+  Format.fprintf ppf "{%a; by (%d, %d); %s}" pp_kernel c.k c.l c.m
+    (if c.cells then "cells" else "points")
+
+let phase_size =
+  let case =
+    let open Gen in
+    with_pp pp_phases
+    @@
+    let* k = kernel in
+    let+ l = int_range 1 40 and+ m = int_range 1 40 and+ cells = bool in
+    { k; l; m; cells }
+  in
+  prop "a phase holds at most ⌈2 s h⌉ weights" ~count:300 case (fun c ->
+      cover ~share:0.3 "shrinking" (c.m > c.l);
+      let grid = if c.cells then `Cells else `Points in
+      let r = R.v ~grid ~edge:`Zero ~kernel:c.k ~by:(c.l, c.m) in
+      let s = Float.max 1. (Float.of_int c.m /. Float.of_int c.l) in
+      let most = Float.to_int (Float.ceil (2. *. s *. K.half_width c.k)) in
+      Array.iteri
+        (fun j (_, w) ->
+          at_most
+            ~msg:(Printf.sprintf "phase %d" j)
+            int ~than:most (Array.length w))
+        (R.weights r))
+
 let () =
   exit
     (run "omr.resample"
@@ -899,5 +929,6 @@ let () =
          as_bessel;
          weights_bits;
          weights_sum;
+         phase_size;
          errors;
        ])
