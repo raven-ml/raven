@@ -306,6 +306,44 @@ let test_overflow () =
     [| 1.; -1.; 3. /. r; 5. /. r |]
     rms
 
+(* Compiled, [rms_norm] passes over [x] once for its sums, then maps it: two
+   kernels. Before a product, its map stays a kernel of its own, which each
+   output column of the product reads where inlined it would compute the map
+   again. *)
+let test_passes () =
+  let kernels f xs =
+    List.length (snd (Tolk.Realize.kernels (fun () -> ignore (f xs))))
+  in
+  let x = Nx.Rng.uniform ~key:(Nx.Rng.key 1) Nx.float32 [| 64; 256 |] in
+  let m = Nx.Rng.uniform ~key:(Nx.Rng.key 2) Nx.float32 [| 256; 128 |] in
+  let jit1 f = Rune.jit Nx.Ptree.(tensor @-> returns tensor) f in
+  let jit2 f = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f in
+  equal ~msg:"rms_norm" int 2 (kernels (jit1 (fun x -> Nx.rms_norm x)) x);
+  let product = jit2 Nx.matmul in
+  let normed = jit2 (fun x m -> Nx.matmul (Nx.rms_norm x) m) in
+  equal ~msg:"before a product" int
+    (kernels (fun () -> product x m) () + 2)
+    (kernels (fun () -> normed x m) ())
+
+(* Compiled at [eps = 1e-5], a lane of zeros and a lane of 1024
+   subnormals, whose products with the lane's scale are subnormal too and
+   round once from their exact values, take eager's bits, at float32 and
+   float64. *)
+let test_tiny_bits () =
+  let check (type b) name (dt : (float, b) Nx.dtype) least =
+    let n = 1024 in
+    let at i =
+      if i >= n then 0.
+      else Float.of_int (((i * 7919) mod 20000) + 1) *. least
+    in
+    let x = Nx.create dt [| 2; n |] (Array.init (2 * n) at) in
+    let f x = Nx.rms_norm ~eps:1e-5 x in
+    let bits y = Array.map Int64.bits_of_float (Nx.to_array y) in
+    equal ~msg:name (array int64) (bits (f x)) (bits (Rune.jit' f x))
+  in
+  check "float32" Nx.float32 0x1p-149;
+  check "float64" f64 0x1p-1074
+
 let x0 =
   Nx.create f64 [| 3; 5 |]
     (Array.init 15 (fun i -> 100. +. Float.sin (Float.of_int i *. 1.7)))
@@ -354,6 +392,21 @@ let test_closed_form () =
     done
   done
 
+(* At a lane of zeros, [y = x / sqrt eps], so the gradient of [Σ w y scale]
+   is [w scale / sqrt eps], compiled too: within 8 units of float64's
+   roundoff, as the reference rounds three times and each gradient four. *)
+let test_zero_grad () =
+  let zeros = Nx.zeros f64 [| 3; 5 |] in
+  let want =
+    Nx.to_array (Nx.div_s (Nx.mul w0 (Nx.broadcast_to [| 3; 5 |] g0))
+      (Float.sqrt 1e-6))
+  in
+  let loss x = rms_loss x g0 in
+  let close = array (float_rel ~rel:0x1p-50 ~abs:0.) in
+  equal ~msg:"eager" close want (Nx.to_array (Rune.grad' loss zeros));
+  equal ~msg:"compiled" close want
+    (Nx.to_array (Rune.grad' (Rune.jit' loss) zeros))
+
 (* Compiled, the gradients are the eager ones. *)
 let test_jit_grads () =
   List.iter
@@ -379,7 +432,11 @@ let () =
               ~exp_ulps:2);
          test "a lane of equal elements is zero compiled" test_constant;
          test "a lane whose squares overflow, compiled" test_overflow;
+         test "compiled, one pass over x before its map" test_passes;
+         test "subnormal and zero lanes compiled take eager's bits"
+           test_tiny_bits;
          test "gradients against finite differences" test_check_grads;
          test "standardize's gradient in closed form" test_closed_form;
          test "compiled gradients are the eager ones" test_jit_grads;
+         test "the gradient at a lane of zeros" test_zero_grad;
        ])

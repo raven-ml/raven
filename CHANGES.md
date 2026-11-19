@@ -3407,6 +3407,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.rms_norm` under a trace passes over its input once: its sums of
+  squares, plain and scaled by a power of two for a lane that overflows, run
+  in one loop, where a pass for each lane's greatest magnitude came first.
+  The bits are unchanged.
 - `Nx.softmax` states its error bound, relative to each element:
   `(b + |d| + ln n + 11) u`, `d` the element's shifted exponent and `b` its
   sum's rounding count, and that an element whose `scale x` is `-∞` is `+0.`.

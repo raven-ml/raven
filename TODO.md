@@ -87,9 +87,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Routing ids lose their value bounds through `Lower_index.sort`'s `chosen`
   (a reduce) and `Partial.local_ids` (a uint64 bitcast add), so no later
   rule can read their range
-- `Nx.rms_norm` runs a third pass, a lane max, under a trace: 49 kernels a
-  gpt-oss step. The one-pass form is blocked by the buffer limit, which
-  stores the routed rows' 23 MB gather once the norm's map inlines (r3/)
 - AMD thread traces are not collected: through KFD they are parked (after a
   fault no queue of the process runs, so a trace can't be stopped); PCI and
   an amdgpu DRM submission remain

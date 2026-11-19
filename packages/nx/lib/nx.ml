@@ -3390,9 +3390,63 @@ let normalised (type s d) ~by w axes ~eps (x : (float, s, d) t) run r_of =
           if not (holds ~by r suspect) then plain
           else Option.value (scaled ~traced:false) ~default:plain)
 
+(* The exponents that bound [w]'s normal floats: each is below [2^emax] and
+   at least [2^emin]. *)
+let exponent_bounds (type w) (w : (float, w) D.t) =
+  match w with D.Float32 -> (128, -126) | _ -> (1024, -1022)
+
+(* [rms_norm] of a traced [x] in [w] in one pass, for [eps] at least
+   [2^(emin / 2)]: one loop of two sums of squares, one map of each lane's
+   scale, one map of [x] by it and [g]. Tracing cannot branch on a lane's
+   values, so where {!normalised} would pass over [x] for its greatest
+   magnitude first, the loop sums the squares as they are and scaled by
+   [2^-big], where [big] keeps a lane of the greatest floats' squares finite,
+   and the scaled sum serves a lane whose plain sum overflowed. The lane's
+   [r] is stored times [2^off], which keeps it normal whatever the lane,
+   since [eps] bounds it above. The map takes [x r] as [(x (r 2^off)) 2^-off]
+   where that product is normal, else as [x r]: either way, the bits of
+   [x r]. *)
+let rms_one_pass (type s d w) ~by (w : (float, w) D.t) axes ~eps ~n
+    (x : (float, s, d) t) g =
+  let s = shape x and dt = dtype x in
+  let emax, emin = exponent_bounds w in
+  let lit = E.const w in
+  let pw e = lit (Float.ldexp 1. e) in
+  let big = (emax / 2) + int_of_float (Float.ceil (Float.log2 n /. 2.)) + 1 in
+  let off = emax / 2 in
+  let down = pw (-big) and down2 = pw (-2 * big) in
+  let scale_big = pw (off - big) and up = pw off and back = pw (-off) in
+  let least = pw (off + emin) in
+  let xw = at w (operand 0 x) in
+  let s1, (s2, ()) =
+    reduce_outs ~by s axes [ Value.Any x ]
+      Value.[ Monoid (Sum, 0, w); Monoid (Sum, 1, w) ]
+      [| E.any E.(xw * xw); E.any E.(let y = xw * down in y * y) |]
+  in
+  let v =
+    elementwise ~by w [ Any s1; Any s2 ]
+      E.(
+        let a = operand 0 s1 in
+        let big = a = lit Float.infinity in
+        (* An unchosen branch reads 1, so its derivative is finite. *)
+        let b = where big (operand 1 s2) (lit 1.) in
+        where big
+          (scale_big * recip (sqrt ((b / lit n) + (lit eps * down2))))
+          (up * recip (sqrt ((a / lit n) + lit eps))))
+  in
+  let v = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes v) in
+  let y =
+    E.(
+      let vv = operand 1 v in
+      let p = xw * vv in
+      where (abs p < least) (xw * (vv * back)) (p * back))
+  in
+  affine ~by dt w [ Value.Any x; Any v ] y g None
+
 (* One reduction of the squares, a map of each lane's scale, then one map
    of [x] by its lane's scale and [scale]: no array of [x]'s size but the
-   result, as [normalised] runs it. *)
+   result, as [normalised] runs it, or {!rms_one_pass} for a traced [x] at
+   an [eps] it takes. *)
 let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) ?scale
     (x : (float, s, d) t) : (float, s, d) t =
   let by = "Nx.rms_norm" in
@@ -3406,6 +3460,11 @@ let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) ?scale
   else
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
     let n = Float.of_int (reduced_count s axes) in
+    let traced = match x with Value.Traced _ -> true | _ -> false in
+    let _, emin = exponent_bounds w in
+    if traced && eps >= Float.ldexp 1. (emin / 2) then
+      rms_one_pass ~by w axes ~eps ~n x g
+    else
     let lit = E.const w in
     let lanes y = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes y) in
     (* [x] at [w], times its lane's [down] as operand 1 where given. *)
