@@ -53,18 +53,20 @@ val sources :
     them. *)
 
 val program : target:Tolk.Helpers.Target.t -> Tolk.Ops.t -> Tolk.Ops.t option
-(** [program ~target ast] is the program {!sources} or {!derivative_sources}
-    linearized for [target] from the kernel's sink [ast] they gave, as
-    {!Tolk.Codegen.linearize} gives it, or [None] where neither gave [ast]
-    for [target]. *)
+(** [program ~target ast] is the program {!sources} linearized for [target]
+    from the kernel's sink [ast] it gave, as {!Tolk.Codegen.linearize} gives
+    it, or [None] where it gave no [ast] for [target]. *)
 
-val derivative_sources :
+val derivative_kernels :
   target:Tolk.Helpers.Target.t ->
   (unit -> ('v, 's, 'd) Nx.t) ->
-  (string * Tolk.Ops.t * string) list option list
-(** [derivative_sources ~target f] is, for each [Nx.attention] [f ()]
+  (string * Tolk.Ops.t) list option list
+(** [derivative_kernels ~target f] is, for each [Nx.attention] [f ()]
     computes, in turn, the kernels of its derivative's transpose that
     {!Rune.jit} would compile on [target]'s device, at the call's own [o]
-    and [lse] and cotangents of ones, each as {!sources} gives it, or
-    [None] where the derivative takes its default, and so has no kernels of
-    attention's own ([Rune.attention_transposed]). *)
+    and [lse] and cotangents of ones, scheduled as {!sources} schedules
+    them, or [None] where the derivative takes its default, and so has no
+    kernels of attention's own ([Rune.attention_transposed]). Each is its
+    sink's name ({!Tolk.Ops.kernel_info}), which a kernel of attention's
+    own takes from its lowering, and its sink, unlinearized, in the order
+    the schedule calls them. *)

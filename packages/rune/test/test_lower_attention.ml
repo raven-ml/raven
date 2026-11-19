@@ -420,9 +420,10 @@ let ffma_cases =
 
 (* The derivative's kernels of attention's own, [q̄]'s and [k̄]'s and [v̄]'s,
    of a call of the pair [ds] of 2 batches of 2 heads of 128 rows and keys
-   and values of [d] dimensions, unmasked or [causal], rendered for [target]
-   as a compiled gradient takes them ({!Lowered.derivative_sources}); [[]]
-   where its derivative takes its default. *)
+   and values of [d] dimensions, unmasked or [causal], scheduled for
+   [target] as a compiled gradient takes them
+   ({!Lowered.derivative_kernels}); [[]] where its derivative takes its
+   default. *)
 let derivative target (D (dt, acc)) ~causal d =
   let shape = [| 2; 2; 128; d |] in
   let f () =
@@ -431,10 +432,10 @@ let derivative target (D (dt, acc)) ~causal d =
     let mask = if causal then Some Nx.causal else None in
     Nx.cast Nx.float32 (fst (Nx.attention ?mask ~acc ~kv:(Dense { k; v }) q))
   in
-  match Lowered.derivative_sources ~target f with
+  match Lowered.derivative_kernels ~target f with
   | [ Some ks ] ->
       List.filter_map
-        (fun (n, ast, _) ->
+        (fun (n, ast) ->
           if String.starts_with ~prefix:"attention_d" n && n <> "attention_delta"
           then Some (n, ast)
           else None)

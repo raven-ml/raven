@@ -238,9 +238,6 @@ let kernels (type v s d) ?cores (f : unit -> (v, s, d) Nx.t) =
   List.length
     (List.filter (fun c -> Op.equal (Ops.op c) Op.Call) (Ops.src compiled))
 
-(* Each kernel of the schedule of the stores [sink] makes on [device],
-   rendered by [renderer], whose tensor cores it takes: its name, sink and
-   source, in the order the schedule calls them. *)
 (* Each kernel's program, by its target and sink, as {!rendered} linearized
    it. *)
 let programs = Hashtbl.create 64
@@ -250,30 +247,37 @@ let program ~(target : Helpers.Target.t) ast =
     (fun (a, p) -> if a == ast then Some p else None)
     (Hashtbl.find_all programs (target.device, target.renderer, target.arch, Ops.hash ast))
 
-let rendered ~(target : Helpers.Target.t) ~device renderer sink =
+(* The sink of each kernel of the schedule of the stores [sink] makes on
+   [device], whose tensor cores are [renderer]'s, in the order the schedule
+   calls them. *)
+let scheduled ~device renderer sink =
   let linear, _ =
     Schedule.create_linear_with_vars
       ~cores:[ (device, Heuristic.cores renderer) ]
       sink
   in
-  (* A call of a kernel's sink, rendered. *)
-  let render c =
+  let kernel c =
     if not (Op.equal (Ops.op c) Op.Call) then None
     else
       let ast = Ops.body c in
       match (Ops.op ast, Ops.arg ast) with
-      | Op.Sink, Kernel _ ->
-          let p = Codegen.linearize ast renderer in
-          Hashtbl.add programs
-            (target.device, target.renderer, target.arch, Ops.hash ast)
-            (ast, p);
-          let name =
-            match Ops.arg (Ops.nth p 0) with Kernel k -> k.name | _ -> ""
-          in
-          Some (name, ast, renderer.render (Ops.src (Ops.nth p 1)))
+      | Op.Sink, Kernel _ -> Some ast
       | _ -> None
   in
-  List.filter_map render (Ops.toposort ~calls:Skip linear)
+  List.filter_map kernel (Ops.toposort ~calls:Skip linear)
+
+(* Each kernel of {!scheduled}, rendered by [renderer]: its name, sink and
+   source. *)
+let rendered ~(target : Helpers.Target.t) ~device renderer sink =
+  let render ast =
+    let p = Codegen.linearize ast renderer in
+    Hashtbl.add programs
+      (target.device, target.renderer, target.arch, Ops.hash ast)
+      (ast, p);
+    let name = match Ops.arg (Ops.nth p 0) with Kernel k -> k.name | _ -> "" in
+    (name, ast, renderer.render (Ops.src (Ops.nth p 1)))
+  in
+  List.map render (scheduled ~device renderer sink)
 
 (* [target]'s renderer, made without its toolchain, and the place of a
    graph lowered for its device. *)
@@ -290,7 +294,7 @@ let sources (type v s d) ~(target : Helpers.Target.t)
     (Ops.sink
        [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int (max 1 n) ]) ] ])
 
-let derivative_sources (type v s d) ~(target : Helpers.Target.t)
+let derivative_kernels (type v s d) ~(target : Helpers.Target.t)
     (f : unit -> (v, s, d) Nx.t) =
   let renderer, place = off_host target in
   let found = ref [] in
@@ -304,8 +308,12 @@ let derivative_sources (type v s d) ~(target : Helpers.Target.t)
       let o = Ops.new_buffer place.device n (Ops.dtype u) in
       Some (Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int n ]) ])
   in
+  let named ast =
+    match Ops.arg ast with Kernel k -> (k.name, ast) | _ -> ("", ast)
+  in
   List.map
     (Option.map (fun us ->
-         rendered ~target ~device:place.device renderer
-           (Ops.sink (List.filter_map store (Array.to_list us)))))
+         List.map named
+           (scheduled ~device:place.device renderer
+              (Ops.sink (List.filter_map store (Array.to_list us))))))
     !found
