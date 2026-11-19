@@ -144,9 +144,7 @@ let v2_dropout = { layers = 0.1; reducer = 0.2 }
 let no_dropout = { layers = 0.; reducer = 0. }
 
 (* One call's dropout: its rates, each pixel place's key, and where its masks
-   are reported. Kaun.Dropout takes one key a call, and no attention
-   probabilities (a gap of kaun's: keyed dropout), so the masks are drawn
-   here. *)
+   are reported, for {!masks}. *)
 type 'd drop = {
   rates : dropout;
   keys : 'd Nx.Rng.key;
@@ -174,34 +172,18 @@ let token_keys keys ~place ~index =
     (Nx.Rng.of_tensor (Nx.reshape [| r; t; 2 |] words))
     index
 
-(* Keeps [x]'s elements where [m] holds, scaled by [1 / (1 − rate)]. *)
-let keep ~rate m x =
-  Nx.where m (Nx.mul_s x (1. /. (1. -. rate))) (Nx.scalar_like x 0.)
-
-(* A mask over [x], one key of [keys] per element of [x]'s leading axes, shaped
-   as they are followed by ones. *)
-let draw ~rate keys x =
-  let p =
-    Nx.broadcast_to (Nx.shape x) (Nx.cast f32 (Nx.scalar_like x (1. -. rate)))
-  in
-  Nx.Rng.bernoulli ~key:keys p
-
-(* A token site's mask over [x], [[r; t; c]], from token keys [[r; t; 2]]. *)
-let token_mask ~rate k x =
-  let r = Nx.dim 0 x and t = Nx.dim 1 x in
-  draw ~rate
-    (Nx.Rng.reshape [| r; t; 1 |] k)
-    x
-
-(* The attention probabilities' mask over [x], [[r; h; t; t]], one key per pair
-   of tokens drawing each head: the query's key indexed by the key's [index]. *)
-let pair_mask ~rate k ~index x =
-  let r = Nx.dim 0 x and t = Nx.dim 2 x in
+(* Each pair of tokens' key, of batch shape [[r; 1; t; t]], which each head
+   draws from: the query's token key [k] indexed by the key's [index]. *)
+let pair_keys k ~index =
+  let r = Nx.dim 0 index and t = Nx.dim 1 index in
   let q = Nx.Rng.reshape [| r; t; 1 |] k in
   let pairs = Nx.Rng.fold_in_tensor q (Nx.reshape [| r; 1; t |] index) in
-  draw ~rate
-    (Nx.Rng.reshape [| r; 1; t; t |] pairs)
-    x
+  Nx.Rng.reshape [| r; 1; t; t |] pairs
+
+(* [x] dropped at [rate] by [key], its mask reported to [report] as [name]. *)
+let dropped report name ~rate ~key x =
+  report name (fun () -> Kaun.Dropout.mask ~rate ~key x);
+  Kaun.Dropout.apply ~rate ~training:true ~key x
 
 (* The tokens a layer reads: the bounds of each query's keys, [[r; t]], each
    token's pixel place and index in its slot, and where its masks come from. *)
@@ -234,13 +216,13 @@ let sites tk i =
       Some { rate = d.rates.layers; keys; report }
   | _ -> None
 
+(* [x], [[r; t; c]], dropped at site [k], each token's values by its key. *)
 let masked ds ~name k x =
   match ds with
   | None -> x
   | Some s ->
-      let m = token_mask ~rate:s.rate (s.keys k) x in
-      s.report name (fun () -> m);
-      keep ~rate:s.rate m x
+      let key = Nx.Rng.reshape [| Nx.dim 0 x; Nx.dim 1 x; 1 |] (s.keys k) in
+      dropped s.report name ~rate:s.rate ~key x
 
 (* Keys [k] with [start_q ≤ k < stop_q], the bounds [[rows; 1; queries; 1]]. *)
 let within start stop =
@@ -250,51 +232,6 @@ let within start stop =
   fun (p : 'd Nx.pair) ->
     let k = Nx.cast Nx.int32 p.k in
     Nx.logical_and (Nx.greater_equal k start) (Nx.less k stop)
-
-let key_bias b =
-  let n = Nx.dim 0 b and k = Nx.dim 1 b in
-  let b = Nx.reshape [| n; 1; 1; k |] b in
-  fun _ s -> Nx.add s b
-
-(* Attention with its probabilities dropped, as two calls sharing the scores:
-   for the keep mask [z], [Σ_j z_j p_j v_j] is [o_kept] times the kept keys'
-   share of the row's weight, [σ (lse_kept − lse_lost)], from the call over
-   the kept keys and the call over the lost ones, read for its [lse] alone
-   and so given values of no column. The share carries the
-   [lse]s' errors scaled by the lost share, about [rate], where [exp
-   (lse_kept − lse)] would carry them whole; {!Nx.sigmoid} never overflows,
-   where [1 / (1 + exp (lse_lost − lse_kept))] would lose its derivative to
-   [0 · ∞] once the lost keys outweigh the kept ones by [e^89]. [o_kept]
-   rounds to [q]'s dtype before the product, which rounds again.
-
-   A row that keeps no key, whether it sees none (a padding token) or drops
-   every one it sees, gives 0. The kept call gives it [o_kept = 0] and
-   [lse_kept = −∞], and its share is 0 with its argument taken at 0: where
-   the row sees no key, [lse_lost] is [−∞] too, and [−∞ − (−∞)] would make
-   the argument and its cotangent NaN. *)
-let dropped (tk : 'd tokens) s q k v =
-  let r = Nx.dim 0 q and h = Nx.dim 1 q and t = Nx.dim 2 q in
-  let x = Nx.broadcast_to [| r; h; t; t |] (Nx.scalar_like tk.bias 0.) in
-  let m = pair_mask ~rate:s.rate (s.keys attn_p) ~index:tk.index x in
-  s.report "attn_p" (fun () -> m);
-  let within = within tk.start tk.stop and score = key_bias tk.bias in
-  let kept p = Nx.logical_and (within p) m in
-  (* At each pair: [logical_not m] would be an array of its own. *)
-  let lost p = Nx.logical_xor (within p) (kept p) in
-  let o, lse_kept =
-    Nx.attention ~mask:kept ~score ~acc:f32 ~kv:(Nx.Dense { k; v }) q
-  in
-  let none = Nx.slice [ Nx.A; Nx.A; Nx.A; Nx.R (0, 0) ] v in
-  let _, lse_lost =
-    Nx.attention ~mask:lost ~score ~acc:f32 ~kv:(Nx.Dense { k; v = none }) q
-  in
-  let live = Nx.not_equal_s lse_kept Float.neg_infinity in
-  let share =
-    Nx.sigmoid
-      (Nx.where live (Nx.sub lse_kept lse_lost) (Nx.scalar_like lse_kept 0.))
-  in
-  let c = Nx.reshape [| r; h; t; 1 |] (keep ~rate:s.rate live share) in
-  Nx.cast (Nx.dtype v) (Nx.mul (Nx.cast f32 o) c)
 
 let split ~heads (p : ((float, 's, 'd) Nx.t, 'd) Kaun.Linear.t) x =
   let b = Nx.dim 0 x and t = Nx.dim 1 x and d = Nx.dim 0 p.w in
@@ -321,14 +258,22 @@ let attention ~heads l (tk : 'd tokens) ds x =
         in
         (norm gq q, norm gk k)
   in
-  let o =
+  let r = Nx.dim 0 q and t = Nx.dim 2 q in
+  let dropout, key =
     match ds with
-    | Some s -> dropped tk s q k v
-    | None ->
-        let mask = within tk.start tk.stop and score = key_bias tk.bias in
-        fst (Nx.attention ~mask ~score ~acc:f32 ~kv:(Nx.Dense { k; v }) q)
+    | None -> (None, None)
+    | Some s ->
+        let key = pair_keys (s.keys attn_p) ~index:tk.index in
+        let zero = Nx.scalar_like tk.bias 0. in
+        let w = Nx.broadcast_to [| r; heads; t; t |] zero in
+        s.report "attn_p" (fun () -> Kaun.Dropout.mask ~rate:s.rate ~key w);
+        (Some s.rate, Some key)
   in
-  merge p.out o
+  merge p.out
+    (Kaun.Attention.attend
+       ~mask:(within tk.start tk.stop)
+       ~bias:(Nx.reshape [| r; 1; 1; t |] tk.bias)
+       ?dropout ?key q (Nx.Dense { k; v }))
 
 let ffn l ds x =
   let h = linear l.ffn1 x in
@@ -508,14 +453,9 @@ let reduce ~drop (r : _ reducer) x =
   let x =
     match drop with
     | Some d when d.rates.reducer > 0. ->
-        let p = Nx.dim 0 x in
-        let k = site d.keys [ reducer_site ] in
-        let k =
-          Nx.Rng.reshape [| p; 1 |] k
-        in
-        let m = draw ~rate:d.rates.reducer k x in
-        d.mask "reducer" (fun () -> m);
-        keep ~rate:d.rates.reducer m x
+        let key = site d.keys [ reducer_site ] in
+        let key = Nx.Rng.reshape [| Nx.dim 0 x; 1 |] key in
+        dropped d.mask "reducer" ~rate:d.rates.reducer ~key x
     | _ -> x
   in
   Nx.standardize ~eps (linear r.down x)
