@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module W = Omr.Window
+module W = Alda.Window
 
 (* scipy.signal.windows at float64, keyed "<kind>.<sampling>.<n>" *)
 let golden = lazy (Nx_io.load_npz "golden/windows.npz")
@@ -88,21 +88,21 @@ let errors =
   group "misuse"
     [
       test "negative points" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Window.hann") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Window.hann") (fun () ->
               W.hann Nx.float64 W.Periodic (-1)));
       test "no coefficient" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Window.cosine_sum") (fun () ->
-              W.cosine_sum Nx.float64 W.Periodic [||] 4));
+          raises_match (Exn.invalid_arg ~sub:"Alda.Window.cosine_sum")
+            (fun () -> W.cosine_sum Nx.float64 W.Periodic [||] 4));
       test "negative beta" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Window.kaiser") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Window.kaiser") (fun () ->
               W.kaiser Nx.float64 W.Periodic ~beta:(-1.) 4));
       test "infinite beta" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Window.kaiser") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Window.kaiser") (fun () ->
               W.kaiser Nx.float64 W.Periodic ~beta:Float.infinity 4));
       test "zero sigma" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Window.gaussian") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Window.gaussian") (fun () ->
               W.gaussian Nx.float64 W.Periodic ~sigma:0. 4));
     ]
 
 let () =
-  exit (run "omr.window" [ float64_cases; float32_cases; symmetry; errors ])
+  exit (run "alda.window" [ float64_cases; float32_cases; symmetry; errors ])

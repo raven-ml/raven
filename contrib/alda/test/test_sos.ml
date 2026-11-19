@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module S = Omr.Sos
+module S = Alda.Sos
 
 (* Single sections against long-double recursions with the rounding bound's
    weights, and cascades against scipy.signal.sosfilt, from golden/sos.npz *)
@@ -46,7 +46,7 @@ let section (type s) name (dt : (float, s) Nx.dtype) u i =
   let key s = Printf.sprintf "sec.%d.%s.%s" i name s in
   let row = Nx.cast dt (entry Nx.float64 (Printf.sprintf "sec.%d.row" i)) in
   let x = entry dt (key "x") in
-  let got = floats (Omr.sos (Nx.reshape [| 1; 6 |] row) x) in
+  let got = floats (Alda.sos (Nx.reshape [| 1; 6 |] row) x) in
   let r =
     ratio ~u
       (floats (entry Nx.float64 (key "y")))
@@ -74,7 +74,7 @@ let cascades =
       let want = floats (entry Nx.float64 (key "y")) in
       let got =
         floats
-          (Omr.sos (entry Nx.float64 (key "sos")) (entry Nx.float64 (key "x")))
+          (Alda.sos (entry Nx.float64 (key "sos")) (entry Nx.float64 (key "x")))
       in
       let peak =
         Array.fold_left (fun m v -> Float.max m (Float.abs v)) 0. want
@@ -281,7 +281,7 @@ let stable =
 
 (* [loss c x] is a fixed weighting of [sos c x] summed, so that every output
    counts. *)
-let loss w c x = Nx.sum (Nx.mul w (Omr.sos c x))
+let loss w c x = Nx.sum (Nx.mul w (Alda.sos c x))
 
 (* Central differences of [f] at [p] along the coordinates [picks] of [p], every
    one by default. A step of 1e-7 relative: near a double pole the truncation
@@ -456,7 +456,7 @@ let fused =
       in
       let rows32 = floats c in
       let want = df1 (fun _ -> rows32) (floats x) in
-      less float_exact ~than:2e-5 (rel_l2 want (floats (Omr.sos c x))))
+      less float_exact ~than:2e-5 (rel_l2 want (floats (Alda.sos c x))))
 
 (* Rows may change between feeds: the next output is the recursion with the new
    rows on the samples the state holds. *)
@@ -501,8 +501,8 @@ let jit =
           [| 2; (2 * 4096) + 500 |]
           (fun _ -> Random.State.float r 2. -. 1.)
       in
-      let eager = floats (Omr.sos c x) in
-      let jitted = floats (Rune.jit' (fun x -> Omr.sos c x) x) in
+      let eager = floats (Alda.sos c x) in
+      let jitted = floats (Rune.jit' (fun x -> Alda.sos c x) x) in
       let peak =
         Array.fold_left (fun m v -> Float.max m (Float.abs v)) 0. eager
       in
@@ -512,25 +512,25 @@ let errors =
   group "misuse"
     [
       test "a cascade of five columns" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.sos") (fun () ->
-              Omr.sos
+          raises_match (Exn.invalid_arg ~sub:"Alda.sos") (fun () ->
+              Alda.sos
                 (Nx.zeros Nx.float64 [| 1; 5 |])
                 (Nx.zeros Nx.float64 [| 4 |])));
       test "a cascade of no section" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.sos") (fun () ->
-              Omr.sos
+          raises_match (Exn.invalid_arg ~sub:"Alda.sos") (fun () ->
+              Alda.sos
                 (Nx.zeros Nx.float64 [| 0; 6 |])
                 (Nx.zeros Nx.float64 [| 4 |])));
       test "a state of another lead" (fun () ->
           let c = rows_of [ 1.; 0.; 0.; 1.; 0.; 0. ] in
           let s, _ = S.feed c S.start (Nx.zeros Nx.float64 [| 2; 4 |]) in
-          raises_match (Exn.invalid_arg ~sub:"Omr.Sos.feed") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Sos.feed") (fun () ->
               S.feed c s (Nx.zeros Nx.float64 [| 3; 4 |])));
     ]
 
 let () =
   exit
-    (run "omr.sos"
+    (run "alda.sos"
        [
          sections32;
          sections64;

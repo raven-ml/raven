@@ -1,4 +1,4 @@
-# omr
+# alda
 
 Discrete-time signals over nx: windows, framing, short-time transforms,
 spectra and filterbanks. It lives in `dev/` and is never published (no opam
@@ -6,12 +6,12 @@ package, no CHANGES entry).
 
 ## Boundaries
 
-- omr depends on nx, and on rune for a traced loop (`Rune.scan`) and the
+- alda depends on nx, and on rune for a traced loop (`Rune.scan`) and the
   derivatives it states itself (`Rune.custom_jvp`, `Rune.custom_transpose`);
   on nothing else. It never calls `Rune.jit`: the caller compiles.
 - A signal is a plain `Nx.t` with its time axis `?axis`; the rate is
   `~rate:float`. No signal record, units or phantom rate.
-- A capability omr lacks in nx (an extension rule, a transform, a kernel) is
+- A capability alda lacks in nx (an extension rule, a transform, a kernel) is
   built in nx, never worked around here.
 - Features are `[…; frames; bins]`: framing moves the time axis to the
   second-to-last place and appends the frame's samples.
@@ -23,7 +23,7 @@ package, no CHANGES entry).
 
 - A stateful operation is the whole function plus a module with `State`,
   `start`, `feed` and `finish`; the whole call is one feed. Each states its
-  chunked-against-whole law in `omr.mli`.
+  chunked-against-whole law in `alda.mli`.
 - Overlap-add adds frame by frame from `+0` with `Nx.add`, never through a
   fold of the kernel library, so its stream and the whole call share bits.
 - Overlap-add is the adjoint of framing under every edge, the extension's
@@ -60,4 +60,4 @@ package, no CHANGES entry).
 - A resampling stream's first feed moves its state from `start` to arrays
   and emits fewer outputs: inside `Rune.scan` feed the first chunk outside.
 - SciPy's `sosfiltfilt` pad reads coefficient values (zeros in `b2`, `a2`);
-  omr's cannot, so odd orders differ from SciPy near the ends.
+  alda's cannot, so odd orders differ from SciPy near the ends.

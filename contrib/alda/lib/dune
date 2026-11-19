@@ -1,0 +1,5 @@
+; alda: discrete-time signals over nx. Never published.
+
+(library
+ (name alda)
+ (libraries nx rune))

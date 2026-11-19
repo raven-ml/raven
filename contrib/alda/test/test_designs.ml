@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module I = Omr.Iir
+module I = Alda.Iir
 
 (* scipy.signal's butter, cheby1, cheby2 and ellip as sections, and bilinear_zpk
    with zpk2sos, from golden/designs.npz *)
@@ -128,7 +128,7 @@ let stable_and_rounded =
       let c = I.design Nx.float64 ~rate ~order family band in
       equal (array bool)
         (Array.make (Nx.dim 0 c) true)
-        (Nx.to_array (Omr.Sos.stable c));
+        (Nx.to_array (Alda.Sos.stable c));
       let c32 = I.design Nx.float32 ~rate ~order family band in
       equal (array float_exact)
         (Nx.to_array (Nx.cast Nx.float32 c |> Nx.cast Nx.float64))
@@ -462,9 +462,9 @@ let digital_edges =
               ~poles:[ Complex.{ re = 1.5; im = 0. } ]
               ~gain:1.
           in
-          equal (array bool) [| false |] (Nx.to_array (Omr.Sos.stable c)));
+          equal (array bool) [| false |] (Nx.to_array (Alda.Sos.stable c)));
       test "a complex zero without its conjugate" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Iir.digital") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Iir.digital") (fun () ->
               I.digital Nx.float64
                 ~zeros:[ Complex.{ re = 0.; im = 1. } ]
                 ~poles:[] ~gain:1.));
@@ -541,7 +541,7 @@ let cookbook =
   let freq = arr (List.map (fun (f, _, _) -> f) rows)
   and q = arr (List.map (fun (_, q, _) -> q) rows)
   and gain = arr (List.map (fun (_, _, g) -> g) rows) in
-  let module B = Omr.Biquad in
+  let module B = Alda.Biquad in
   let kinds =
     [
       (`Lowpass, "lowpass", B.lowpass ~rate ~freq ~q);
@@ -572,10 +572,10 @@ let biquad_gradient =
       in
       let f p =
         let c =
-          Omr.Biquad.peaking ~rate:8000. ~freq:(Nx.get [ 0 ] p)
+          Alda.Biquad.peaking ~rate:8000. ~freq:(Nx.get [ 0 ] p)
             ~q:(Nx.get [ 1 ] p) ~gain:(Nx.get [ 2 ] p)
         in
-        Nx.sum (Nx.square (Omr.sos (Nx.reshape [| 1; 6 |] c) x))
+        Nx.sum (Nx.square (Alda.sos (Nx.reshape [| 1; 6 |] c) x))
       in
       let p = Nx.create Nx.float64 [| 3 |] [| 700.; 2.; 5. |] in
       let g = Nx.to_array (Rune.grad' f p) in
@@ -595,7 +595,7 @@ let biquad_gradient =
       Array.iteri (fun i d -> equal (float (1e-6 *. Float.abs d)) d g.(i)) fd)
 
 let errors =
-  let raises f = raises_match (Exn.invalid_arg ~sub:"Omr.Iir.design") f in
+  let raises f = raises_match (Exn.invalid_arg ~sub:"Alda.Iir.design") f in
   group "misuse"
     [
       test "order 0" (fun () ->
@@ -616,35 +616,35 @@ let errors =
                 (I.Chebyshev1 { ripple = 0. })
                 (I.Lowpass 0.1)));
       test "a pole on the imaginary axis" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Iir.analog") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Iir.analog") (fun () ->
               I.analog Nx.float64 ~rate:1. ~zeros:[]
                 ~poles:[ Complex.{ re = 0.; im = 0. } ]
                 ~gain:1.));
       test "meet: reject not above ripple" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Iir.meet") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Iir.meet") (fun () ->
               I.meet ~rate:1. ~ripple:3. ~reject:3. `Butterworth
                 (I.Lowpass { pass = 0.1; stop = 0.2 })));
       test "meet: a low pass whose stop edge is below its pass edge" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Iir.meet") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Iir.meet") (fun () ->
               I.meet ~rate:1. ~ripple:1. ~reject:40. `Elliptic
                 (I.Lowpass { pass = 0.2; stop = 0.1 })));
       test "meet: band pass transitions that cross" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Iir.meet") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Iir.meet") (fun () ->
               I.meet ~rate:1. ~ripple:1. ~reject:40. `Chebyshev1
                 (I.Bandpass
                    ({ pass = 0.3; stop = 0.1 }, { pass = 0.2; stop = 0.4 }))));
       test "meet: a stop edge at half the rate" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Iir.meet") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Iir.meet") (fun () ->
               I.meet ~rate:1. ~ripple:1. ~reject:40. `Chebyshev2
                 (I.Lowpass { pass = 0.2; stop = 0.5 })));
       test "a complex pole without its conjugate" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Iir.analog") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Iir.analog") (fun () ->
               I.analog Nx.float64 ~rate:1. ~zeros:[]
                 ~poles:[ Complex.{ re = -1.; im = 1. } ]
                 ~gain:1.));
       (* The transform maps [s = 2 rate] to [z = ∞]. *)
       test "a zero at s = 2 rate" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Iir.analog") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Iir.analog") (fun () ->
               I.analog Nx.float64 ~rate:1000.
                 ~zeros:[ Complex.{ re = 2000.; im = 0. } ]
                 ~poles:[ Complex.{ re = -10.; im = 0. } ]
@@ -702,7 +702,7 @@ let analog_law =
 
 let () =
   exit
-    (run "omr.designs"
+    (run "alda.designs"
        [
          scipy_designs;
          a_weighting;

@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module F = Omr.Fft_convolve
+module F = Alda.Fft_convolve
 
 let bits a =
   Array.map
@@ -129,7 +129,7 @@ let within_bound (type c) (cdt : (Complex.t, c) Nx.dtype) complex =
         let zx = Nx.complex Nx.complex128 ~re:x ~im:xi
         and zk = Nx.complex Nx.complex128 ~re:k ~im:ki in
         let got =
-          Omr.fft_convolve ~axes ~ends:c.ends (Nx.cast cdt zx) (Nx.cast cdt zk)
+          Alda.fft_convolve ~axes ~ends:c.ends (Nx.cast cdt zx) (Nx.cast cdt zk)
         in
         let want = direct Complex.zero zx zk c.ends in
         let err = Nx.sub (Nx.cast Nx.complex128 got) want in
@@ -144,7 +144,7 @@ let within_bound (type c) (cdt : (Complex.t, c) Nx.dtype) complex =
       end
       else begin
         let got =
-          Omr.fft_convolve ~axes ~ends:c.ends (Nx.cast Nx.float32 x)
+          Alda.fft_convolve ~axes ~ends:c.ends (Nx.cast Nx.float32 x)
             (Nx.cast Nx.float32 k)
         in
         let want = direct 0. x k c.ends in
@@ -160,7 +160,7 @@ let per_slice =
       let x = random 5 [| 3; 200 |] in
       List.iter
         (fun k ->
-          let got = Omr.fft_convolve ~axes:[ 1 ] ~ends:[ (14, 0) ] x k in
+          let got = Alda.fft_convolve ~axes:[ 1 ] ~ends:[ (14, 0) ] x k in
           for s = 0 to 2 do
             let ks = if Nx.dim 0 k = 1 then 0 else s in
             let want =
@@ -242,7 +242,7 @@ let stream_case (type c) (cdt : (Complex.t, c) Nx.dtype) complex c =
       (List.exists (fun y -> Nx.dim c.axis y > 0) outs);
     let last = F.finish ~axis:c.axis ~axes ~ends:c.ends k s in
     eq
-      (Omr.fft_convolve ~axes ~ends:c.ends x k)
+      (Alda.fft_convolve ~axes ~ends:c.ends x k)
       (Nx.concatenate ~axis:c.axis (List.rev (last :: outs)))
   in
   let x = random c.seed c.dims and k = random (c.seed + 1) c.m in
@@ -269,28 +269,29 @@ let stream_complex =
 
 let errors =
   let x = Nx.zeros Nx.float64 [| 8 |] and k = Nx.ones Nx.float64 [| 3 |] in
-  let raises f = raises_match (Exn.invalid_arg ~sub:"Omr.fft_convolve") f in
+  let raises f = raises_match (Exn.invalid_arg ~sub:"Alda.fft_convolve") f in
   group "misuse"
     [
       test "a repeated axis" (fun () ->
           raises (fun () ->
-              Omr.fft_convolve ~axes:[ 0; 0 ] ~ends:[ (0, 0); (0, 0) ] x k));
+              Alda.fft_convolve ~axes:[ 0; 0 ] ~ends:[ (0, 0); (0, 0) ] x k));
       test "ends of another length" (fun () ->
-          raises (fun () -> Omr.fft_convolve ~axes:[ 0 ] ~ends:[] x k));
+          raises (fun () -> Alda.fft_convolve ~axes:[ 0 ] ~ends:[] x k));
       test "a kernel of another rank" (fun () ->
           raises (fun () ->
-              Omr.fft_convolve ~axes:[ 0 ]
+              Alda.fft_convolve ~axes:[ 0 ]
                 ~ends:[ (0, 0) ]
                 x
                 (Nx.ones Nx.float64 [| 1; 3 |])));
       test "integers" (fun () ->
           raises (fun () ->
-              Omr.fft_convolve ~axes:[ 0 ]
+              Alda.fft_convolve ~axes:[ 0 ]
                 ~ends:[ (0, 0) ]
                 (Nx.zeros Nx.int32 [| 8 |])
                 (Nx.ones Nx.int32 [| 3 |])));
       test "a stream along an axis not among the axes" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Fft_convolve.feed") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Fft_convolve.feed")
+            (fun () ->
               F.feed ~axis:1 ~axes:[ 0 ]
                 ~ends:[ (0, 0) ]
                 (Nx.ones Nx.float64 [| 3; 1 |])
@@ -300,7 +301,7 @@ let errors =
 
 let () =
   exit
-    (run "omr.fft_convolve"
+    (run "alda.fft_convolve"
        [
          within_bound Nx.complex64 false;
          within_bound Nx.complex64 true;

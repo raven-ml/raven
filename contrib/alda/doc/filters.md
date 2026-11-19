@@ -1,8 +1,8 @@
 # Designing and analysing filters
 
 This page designs filters from specifications, measures what they do, and
-builds the filters that omr leaves to composition. The rules each call
-follows are in [`omr.mli`](../lib/omr.mli): the Classical designs section
+builds the filters that alda leaves to composition. The rules each call
+follows are in [`alda.mli`](../lib/alda.mli): the Classical designs section
 for IIR filters, the Kernels section for windowed sincs and the Tap
 designs section for linear-phase and minimum-phase taps.
 
@@ -23,15 +23,15 @@ which `Iir.design` places them. Here a low pass flat within 0.1 dB to
 
 ```ocaml
 let order, family, band =
-  Omr.Iir.meet ~rate ~ripple:0.1 ~reject:80. `Elliptic
-    (Omr.Iir.Lowpass { pass = 1000.; stop = 1500. })
+  Alda.Iir.meet ~rate ~ripple:0.1 ~reject:80. `Elliptic
+    (Alda.Iir.Lowpass { pass = 1000.; stop = 1500. })
 
-let elliptic = Omr.Iir.design Nx.float64 ~rate ~order family band
+let elliptic = Alda.Iir.design Nx.float64 ~rate ~order family band
 
 let () =
   let butter, _, _ =
-    Omr.Iir.meet ~rate ~ripple:0.1 ~reject:80. `Butterworth
-      (Omr.Iir.Lowpass { pass = 1000.; stop = 1500. })
+    Alda.Iir.meet ~rate ~ripple:0.1 ~reject:80. `Butterworth
+      (Alda.Iir.Lowpass { pass = 1000.; stop = 1500. })
   in
   assert (order < butter)
 ```
@@ -44,14 +44,14 @@ two taps shorter is proved too short.
 
 ```ocaml
 let bands =
-  Omr.Taps.
+  Alda.Taps.
     [
       { lo = 0.; hi = 1000.; gain = (1., 1.); tol = (0.01, 0.01) };
       { lo = 1500.; hi = rate /. 2.; gain = (0., 0.); tol = (1e-4, 1e-4) };
     ]
 
-let m = Omr.Taps.meet ~rate ~odd:true Omr.Taps.Symmetric bands
-let lowpass = Omr.Taps.equiripple Nx.float64 ~rate Omr.Taps.Symmetric bands m
+let m = Alda.Taps.meet ~rate ~odd:true Alda.Taps.Symmetric bands
+let lowpass = Alda.Taps.equiripple Nx.float64 ~rate Alda.Taps.Symmetric bands m
 ```
 
 A tolerance linear in frequency states a relative error. A differentiator
@@ -63,7 +63,7 @@ to zero:
 let differentiator =
   let lo = 100. and hi = 3000. in
   let bands =
-    Omr.Taps.
+    Alda.Taps.
       [
         {
           lo;
@@ -73,8 +73,8 @@ let differentiator =
         };
       ]
   in
-  let m = Omr.Taps.meet ~rate ~odd:false Omr.Taps.Antisymmetric bands in
-  Omr.Taps.equiripple Nx.float64 ~rate Omr.Taps.Antisymmetric bands m
+  let m = Alda.Taps.meet ~rate ~odd:false Alda.Taps.Antisymmetric bands in
+  Alda.Taps.equiripple Nx.float64 ~rate Alda.Taps.Antisymmetric bands m
 ```
 
 ## Responses
@@ -190,7 +190,7 @@ let () =
   let freq = 3_000. and width = 200. in
   let q = notch_q ~freq ~width in
   let row =
-    Omr.Biquad.notch ~rate
+    Alda.Biquad.notch ~rate
       ~freq:(Nx.create Nx.float64 [| 1 |] [| freq |])
       ~q:(Nx.create Nx.float64 [| 1 |] [| q |])
   in
@@ -248,10 +248,10 @@ let delay_at c f =
 let () =
   let edge = 80. in
   let c =
-    Omr.Iir.design Nx.float64 ~rate ~order:4 Omr.Iir.Bessel
-      (Omr.Iir.Lowpass edge)
+    Alda.Iir.design Nx.float64 ~rate ~order:4 Alda.Iir.Bessel
+      (Alda.Iir.Lowpass edge)
   in
-  let step = Omr.sos c (Nx.ones Nx.float64 [| 800 |]) in
+  let step = Alda.sos c (Nx.ones Nx.float64 [| 800 |]) in
   let top = Nx.item [] (Nx.max step) in
   assert (top > 1. && top < 1.01);
   (* ω₃ / Ω seconds at zero frequency, in samples. *)
@@ -295,7 +295,7 @@ let thiran ~order ~tau =
   in
   let poles = Array.to_list (Nx.to_array (Nx.eigvals Nx.complex128 comp)) in
   let gain = Array.fold_left ( +. ) 0. a /. a.(0) in
-  Omr.Iir.digital Nx.float64 ~zeros:[] ~poles ~gain
+  Alda.Iir.digital Nx.float64 ~zeros:[] ~poles ~gain
 
 let () =
   let c = thiran ~order:6 ~tau:12. in
@@ -320,10 +320,10 @@ little below 1 when the two low passes' transition bands reach it.
 
 ```ocaml
 let sinc cutoff =
-  Omr.Kernel.(Sinc { cutoff; half_width = 64.; window = Kaiser 8. })
+  Alda.Kernel.(Sinc { cutoff; half_width = 64.; window = Kaiser 8. })
 
 let band =
-  let taps c = Omr.Kernel.taps Nx.float64 (sinc c) in
+  let taps c = Alda.Kernel.taps Nx.float64 (sinc c) in
   Nx.sub (taps 0.2) (taps 0.1)
 
 let () = assert (Float.abs (Nx.item [] (Nx.sum band)) < 1e-15)
@@ -342,12 +342,12 @@ at least `window` samples.
 let smooth ~window ~order x =
   let h = window / 2 and n = Nx.dim 0 x in
   let taps at =
-    Omr.Taps.savitzky_golay Nx.float64 ~window ~order ~deriv:0 ~at
+    Alda.Taps.savitzky_golay Nx.float64 ~window ~order ~deriv:0 ~at
   in
-  let middle = Omr.fir ~ends:(h, h) (taps (Float.of_int h)) x in
+  let middle = Alda.fir ~ends:(h, h) (taps (Float.of_int h)) x in
   let first = Nx.slice [ Nx.R (0, window) ] x
   and last = Nx.slice [ Nx.R (n - window, n) ] x in
-  let at i w = Nx.item [ 0 ] (Omr.fir ~ends:(0, 0) (taps (Float.of_int i)) w) in
+  let at i w = Nx.item [ 0 ] (Alda.fir ~ends:(0, 0) (taps (Float.of_int i)) w) in
   let head = Array.init h (fun i -> at i first)
   and tail = Array.init h (fun i -> at (window - h + i) last) in
   let mid = Nx.to_array (Nx.slice [ Nx.R (h, n - h) ] middle) in
@@ -370,10 +370,10 @@ ends: the first derivative of a straight line's fit over `2Θ + 1` frames,
 let deltas ~theta c =
   let window = (2 * theta) + 1 in
   let taps =
-    Omr.Taps.savitzky_golay Nx.float64 ~window ~order:1 ~deriv:1
+    Alda.Taps.savitzky_golay Nx.float64 ~window ~order:1 ~deriv:1
       ~at:(Float.of_int theta)
   in
-  Omr.fir ~edge:`Replicate ~ends:(theta, theta) taps c
+  Alda.fir ~edge:`Replicate ~ends:(theta, theta) taps c
 
 let () =
   let c = Nx.init Nx.float64 [| 20 |] (fun i -> Float.of_int (i.(0) * i.(0))) in
@@ -396,7 +396,7 @@ let minimum_phase taps =
   let m = Nx.dim 0 taps in
   let rec go n =
     let g = Nx.magnitude Nx.float64 (Nx.rfft Nx.complex128 ~s:[ n ] taps) in
-    let h = Omr.Taps.minimum_phase Nx.float64 ~length:m g in
+    let h = Alda.Taps.minimum_phase Nx.float64 ~length:m g in
     let fine s =
       Nx.magnitude Nx.float64 (Nx.rfft Nx.complex128 ~s:[ 8 * n ] s)
     in

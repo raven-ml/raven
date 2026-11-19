@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Whisper's log-mel frontend composed from omr, against the oracle's float64
+(* Whisper's log-mel frontend composed from alda, against the oracle's float64
    reference on three LibriSpeech utterances padded to 30 s. Upstream's
    whisper.log_mel_spectrogram on CPU float32 lies within 1e-4 of that reference
    on them (golden/whisper.npz's generator checks it), so within 1e-4 of the
-   reference omr is within 2e-4 of upstream. *)
+   reference alda is within 2e-4 of upstream. *)
 
 open Windtrap
 
@@ -30,18 +30,18 @@ let audio id =
 (* The frontend: torch's centred frames without the last, a periodic Hann
    window, |z|² as re² + im², the Slaney bank, log10 above 1e-10, the whole
    tensor's max - 8 as a floor, (x + 4) / 4. *)
-let grid : [ `Symmetric_whole ] Omr.Frames.t =
-  Omr.Frames.v ~edge:`Symmetric_whole ~ends:(200, 40) ~window:400 ~hop:160
+let grid : [ `Symmetric_whole ] Alda.Frames.t =
+  Alda.Frames.v ~edge:`Symmetric_whole ~ends:(200, 40) ~window:400 ~hop:160
 
-let win = Omr.Window.hann Nx.float32 Omr.Window.Periodic 400
+let win = Alda.Window.hann Nx.float32 Alda.Window.Periodic 400
 
 let power z =
   Nx.add (Nx.square (Nx.real Nx.float32 z)) (Nx.square (Nx.imag Nx.float32 z))
 
 let bank b =
-  Omr.Mel.bank Nx.float32 Omr.Mel.Slaney Omr.Unit_area ~rate:16_000. ~n:400 b
+  Alda.Mel.bank Nx.float32 Alda.Mel.Slaney Alda.Unit_area ~rate:16_000. ~n:400 b
 
-let mel b x = Nx.matmul (power (Omr.stft Nx.complex64 grid ~win x)) (bank b)
+let mel b x = Nx.matmul (power (Alda.stft Nx.complex64 grid ~win x)) (bank b)
 
 let log_mel b x =
   let l = Nx.log10 (Nx.maximum_s (mel b x) 1e-10) in
@@ -90,23 +90,23 @@ let stream =
     (fun () ->
       let x = audio "121-121726-0002" in
       let n = Nx.dim 0 x in
-      let s = ref Omr.Frames.start and frames = ref [] in
+      let s = ref Alda.Frames.start and frames = ref [] in
       for j = 0 to (n / 160) - 1 do
         let s', f =
-          Omr.Frames.feed grid !s (Nx.slice [ R (160 * j, 160 * (j + 1)) ] x)
+          Alda.Frames.feed grid !s (Nx.slice [ R (160 * j, 160 * (j + 1)) ] x)
         in
         s := s';
         frames := f :: !frames
       done;
       let s', f =
-        Omr.Frames.feed grid !s (Nx.slice [ R (160 * (n / 160), n) ] x)
+        Alda.Frames.feed grid !s (Nx.slice [ R (160 * (n / 160), n) ] x)
       in
       let f =
         Nx.concatenate ~axis:0
-          (List.rev (Omr.Frames.finish grid s' :: f :: !frames))
+          (List.rev (Alda.Frames.finish grid s' :: f :: !frames))
       in
       let p_stream = power (Nx.rfft Nx.complex64 (Nx.mul f win)) in
-      let p_whole = power (Omr.stft Nx.complex64 grid ~win x) in
+      let p_whole = power (Alda.stft Nx.complex64 grid ~win x) in
       equal (array int64)
         (Array.map Int64.bits_of_float
            (Nx.to_array (Nx.cast Nx.float64 p_whole)))
@@ -128,4 +128,4 @@ let stream =
             whole.(i) v)
         (Nx.to_array per_frame))
 
-let () = exit (run "omr.whisper" [ parity; stream ])
+let () = exit (run "alda.whisper" [ parity; stream ])

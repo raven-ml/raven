@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module F = Omr.Frames
+module F = Alda.Frames
 
 (* torch.istft's inverses and numpy's least-squares ones, from
    golden/istft.npz *)
@@ -46,7 +46,7 @@ let inverse_case tol name =
   in
   let z = entry Nx.complex128 (name ^ ".z")
   and win = entry Nx.float64 (name ^ ".win") in
-  let got = Omr.istft Nx.float64 g ~win grid.(5) z in
+  let got = Alda.istft Nx.float64 g ~win grid.(5) z in
   let want = entry Nx.float64 (name ^ ".x") in
   equal (array int) (Nx.shape want) (Nx.shape got);
   equal (array (float tol)) (floats want) (floats got)
@@ -64,7 +64,7 @@ let least_squares =
 (* Grids, signals and splits *)
 
 type case = {
-  edge : Omr.edge;
+  edge : Alda.edge;
   lo : int;
   hi : int;
   window : int;
@@ -76,7 +76,7 @@ type case = {
   seed : int;
 }
 
-let name : Omr.edge -> string = function
+let name : Alda.edge -> string = function
   | `Zero -> "Zero"
   | `Replicate -> "Replicate"
   | `Symmetric_whole -> "Symmetric_whole"
@@ -123,7 +123,7 @@ let grid c = F.v ~edge:c.edge ~ends:(c.lo, c.hi) ~window:c.window ~hop:c.hop
 (* The grid of [c] if the inverse takes it. *)
 let inverting c =
   match c.edge with
-  | #Omr.invertible as edge ->
+  | #Alda.invertible as edge ->
       Some (F.v ~edge ~ends:(c.lo, c.hi) ~window:c.window ~hop:c.hop)
   | `Antisymmetric_whole -> None
 
@@ -215,14 +215,14 @@ let istft_stream =
       let g = match inverting c with Some g -> g | None -> reject () in
       let win = random_window c in
       let z = random_spectra c (F.count g c.n) in
-      let whole = Omr.istft ~axis:(axis c) Nx.float64 g ~win c.n z in
+      let whole = Alda.istft ~axis:(axis c) Nx.float64 g ~win c.n z in
       let feed s z =
-        let s = match s with `Start -> Omr.Istft.start | `S s -> s in
-        let s, x = Omr.Istft.feed ~axis:(axis c) Nx.float64 g ~win s z in
+        let s = match s with `Start -> Alda.Istft.start | `S s -> s in
+        let s, x = Alda.Istft.feed ~axis:(axis c) Nx.float64 g ~win s z in
         (`S s, x)
       in
       let finish = function
-        | `S s -> Omr.Istft.finish ~axis:(axis c) g ~extra:(extra g c.n) s
+        | `S s -> Alda.Istft.finish ~axis:(axis c) g ~extra:(extra g c.n) s
         | `Start -> fail "no chunk"
       in
       equal_bits whole (stream c z feed finish))
@@ -277,7 +277,7 @@ let extras =
           else ((m - 1) * c.hop) + c.window - c.lo - c.hi + extra
         in
         if n < 0 then
-          raises_match (Exn.invalid_arg ~sub:"Omr.Frames.Overlap_add.finish")
+          raises_match (Exn.invalid_arg ~sub:"Alda.Frames.Overlap_add.finish")
             (fun () -> finish extra)
         else
           equal_bits (F.overlap_add g n f)
@@ -285,7 +285,7 @@ let extras =
       done;
       List.iter
         (fun extra ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Frames.Overlap_add.finish")
+          raises_match (Exn.invalid_arg ~sub:"Alda.Frames.Overlap_add.finish")
             (fun () -> finish extra))
         [ -1; Int.max 0 range ])
 
@@ -340,10 +340,10 @@ let round_trip =
       let x =
         Nx.init Nx.float64 [| c.n |] (fun _ -> Random.State.float r 2. -. 1.)
       in
-      match Omr.stft Nx.complex128 g ~win x with
+      match Alda.stft Nx.complex128 g ~win x with
       | exception Invalid_argument _ -> assume false
       | z ->
-          let y = floats (Omr.istft Nx.float64 g ~win c.n z) in
+          let y = floats (Alda.istft Nx.float64 g ~win c.n z) in
           let env =
             floats
               (F.overlap_add g c.n
@@ -390,22 +390,22 @@ let errors =
     [
       test "spectra of another count" (fun () ->
           let g = F.v ~edge:`Zero ~ends:(0, 0) ~window:4 ~hop:2 in
-          raises_match (Exn.invalid_arg ~sub:"Omr.istft") (fun () ->
-              Omr.istft Nx.float64 g
+          raises_match (Exn.invalid_arg ~sub:"Alda.istft") (fun () ->
+              Alda.istft Nx.float64 g
                 ~win:(Nx.ones Nx.float64 [| 4 |])
                 8
                 (Nx.zeros Nx.complex128 [| 2; 3 |])));
       test "window of another length" (fun () ->
           let g = F.v ~edge:`Zero ~ends:(0, 0) ~window:4 ~hop:2 in
-          raises_match (Exn.invalid_arg ~sub:"Omr.stft") (fun () ->
-              Omr.stft Nx.complex128 g
+          raises_match (Exn.invalid_arg ~sub:"Alda.stft") (fun () ->
+              Alda.stft Nx.complex128 g
                 ~win:(Nx.ones Nx.float64 [| 3 |])
                 (Nx.zeros Nx.float64 [| 8 |])));
     ]
 
 let () =
   exit
-    (run "omr.stft"
+    (run "alda.stft"
        [
          torch;
          least_squares;

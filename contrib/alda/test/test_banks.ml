@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module M = Omr.Mel
+module M = Alda.Mel
 
 (* librosa's banks at float64 and Whisper's mel_filters.npz, from
    golden/banks.npz *)
@@ -40,7 +40,7 @@ let bank dt i =
     Nx.to_array (entry Nx.float64 (Printf.sprintf "librosa.%d.params" i))
   in
   let scale = if p.(0) = 1. then M.Htk else M.Slaney in
-  let norm = if p.(1) = 1. then Omr.Unit_area else Omr.Unit_peak in
+  let norm = if p.(1) = 1. then Alda.Unit_area else Alda.Unit_peak in
   let n = Float.to_int p.(3) in
   let bands =
     Nx.dim 1 (entry Nx.float64 (Printf.sprintf "librosa.%d.bank" i))
@@ -71,7 +71,7 @@ let whisper =
   cases "Whisper's banks" ~id:string_of_int [ 80; 128 ] (fun b ->
       let want = entry Nx.float32 (Printf.sprintf "whisper.%d" b) in
       let got =
-        M.bank Nx.float32 M.Slaney Omr.Unit_area ~rate:16_000. ~n:400 b
+        M.bank Nx.float32 M.Slaney Alda.Unit_area ~rate:16_000. ~n:400 b
       in
       equal (array int) (Nx.shape want) (Nx.shape got);
       ulps32 ~floor:0. (floats want) (floats got))
@@ -82,7 +82,7 @@ let peaks =
   test "a unit-peak triangle rises and falls linearly" (fun () ->
       let at = Nx.create Nx.float64 [| 7 |] [| 0.; 1.; 2.; 3.; 4.; 5.; 6. |] in
       let e = Nx.create Nx.float64 [| 4 |] [| 1.; 3.; 4.; 6. |] in
-      let t = Omr.triangles Omr.Unit_peak ~at e in
+      let t = Alda.triangles Alda.Unit_peak ~at e in
       equal (array int) [| 7; 2 |] (Nx.shape t);
       equal (array float_exact)
         [| 0.; 0.; 0.; 0.; 0.5; 0.; 1.; 0.; 0.; 1.; 0.; 0.5; 0.; 0. |]
@@ -93,7 +93,7 @@ let areas =
       let k = 4001 in
       let at = Nx.linspace Nx.float64 0. 10. k in
       let e = Nx.create Nx.float64 [| 5 |] [| 1.; 2.5; 4.; 7.; 8.5 |] in
-      let t = Omr.triangles Omr.Unit_area ~at e in
+      let t = Alda.triangles Alda.Unit_area ~at e in
       let dx = 10. /. Float.of_int (k - 1) in
       let area = Nx.to_array (Nx.mul_s (Nx.sum ~axes:[ 0 ] t) dx) in
       equal (array (float 1e-6)) [| 1.; 1.; 1. |] area)
@@ -123,7 +123,7 @@ let gradients =
            (fun p -> Array.for_all (fun e -> Float.abs (p -. e) > 1e-3) t.edges)
            t.at);
       let w = Nx.create Nx.float64 [| k; b |] t.weights in
-      let loss norm (at, e) = Nx.sum (Nx.mul (Omr.triangles norm ~at e) w) in
+      let loss norm (at, e) = Nx.sum (Nx.mul (Alda.triangles norm ~at e) w) in
       List.iter
         (fun norm ->
           let at = Nx.create Nx.float64 [| k |] t.at in
@@ -151,7 +151,7 @@ let gradients =
           equal (array tol)
             (Array.init (b + 2) (central (fun e -> value t.at e) t.edges))
             (Nx.to_array ge))
-        [ Omr.Unit_peak; Omr.Unit_area ])
+        [ Alda.Unit_peak; Alda.Unit_area ])
 
 (* Scales *)
 
@@ -230,25 +230,25 @@ let errors =
   group "misuse"
     [
       test "a band of no bin" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Mel.bank") (fun () ->
-              M.bank Nx.float32 M.Slaney Omr.Unit_area ~rate:16_000. ~n:64 128));
+          raises_match (Exn.invalid_arg ~sub:"Alda.Mel.bank") (fun () ->
+              M.bank Nx.float32 M.Slaney Alda.Unit_area ~rate:16_000. ~n:64 128));
       test "high past half the rate" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Mel.bank") (fun () ->
-              M.bank Nx.float32 M.Htk Omr.Unit_peak ~rate:16_000. ~n:400
+          raises_match (Exn.invalid_arg ~sub:"Alda.Mel.bank") (fun () ->
+              M.bank Nx.float32 M.Htk Alda.Unit_peak ~rate:16_000. ~n:400
                 ~high:9000. 40));
       test "too few edges" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.triangles") (fun () ->
-              Omr.triangles Omr.Unit_peak
+          raises_match (Exn.invalid_arg ~sub:"Alda.triangles") (fun () ->
+              Alda.triangles Alda.Unit_peak
                 ~at:(Nx.zeros Nx.float64 [| 3 |])
                 (Nx.zeros Nx.float64 [| 2 |])));
       test "one edge" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Mel.edges") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Mel.edges") (fun () ->
               M.edges Nx.float64 M.Htk ~low:0. ~high:10. 1));
     ]
 
 let () =
   exit
-    (run "omr.banks"
+    (run "alda.banks"
        [
          librosa64;
          librosa32;

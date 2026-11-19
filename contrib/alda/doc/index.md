@@ -1,10 +1,10 @@
-# omr
+# alda
 
-omr computes on discrete-time signals held as nx arrays: windows, frame
+alda computes on discrete-time signals held as nx arrays: windows, frame
 grids, short-time transforms and their inverse, spectral scaling and
 filterbanks. Each operation is a composition of nx operations, so rune
 differentiates, batches and compiles it. The rules live in
-[`omr.mli`](../lib/omr.mli); this page composes them into features.
+[`alda.mli`](../lib/alda.mli); this page composes them into features.
 
 ## Whisper's log-mel frontend
 
@@ -20,20 +20,20 @@ let rate = 16_000.
    first sample, and 40 past its end: the centred grid without its last
    frame. *)
 let grid =
-  Omr.Frames.v ~edge:`Symmetric_whole ~ends:(200, 40) ~window:400 ~hop:160
+  Alda.Frames.v ~edge:`Symmetric_whole ~ends:(200, 40) ~window:400 ~hop:160
 
 (* A Hann window of 400 points, periodic as spectral analysis needs, and
    the [201; 80] bank of Slaney's mel scale with unit-area triangles over
    the 201 bins of a 400-point transform. Both are host values. *)
-let win = Omr.Window.hann Nx.float32 Omr.Window.Periodic 400
-let bank = Omr.Mel.bank Nx.float32 Omr.Mel.Slaney Omr.Unit_area ~rate ~n:400 80
+let win = Alda.Window.hann Nx.float32 Alda.Window.Periodic 400
+let bank = Alda.Mel.bank Nx.float32 Alda.Mel.Slaney Alda.Unit_area ~rate ~n:400 80
 
 (* Squared magnitudes, re² + im². *)
 let power z =
   Nx.add (Nx.square (Nx.real Nx.float32 z)) (Nx.square (Nx.imag Nx.float32 z))
 
 (* Band energies of each frame, [frames; 80]. *)
-let mel x = Nx.matmul (power (Omr.stft Nx.complex64 grid ~win x)) bank
+let mel x = Nx.matmul (power (Alda.stft Nx.complex64 grid ~win x)) bank
 
 (* log10 above 1e-10, floored 8 decades below the whole tensor's max, and
    scaled to about [-1, 1]. *)
@@ -62,20 +62,20 @@ A microphone delivers 10 ms at a time. Framing streams, and each chunk of
 arrived, and `finish` gives the frames that read past the end. The frames
 of every split equal the whole call's bit for bit, and so do their
 transforms (the Streams section and the Framing a stream section of
-[`omr.mli`](../lib/omr.mli)).
+[`alda.mli`](../lib/alda.mli)).
 
 ```ocaml
 let streamed x =
   let n = Nx.dim 0 x in
   let rec go s j acc =
     if 160 * j >= n then
-      List.rev (Omr.Frames.finish grid s :: acc)
+      List.rev (Alda.Frames.finish grid s :: acc)
     else
       let chunk = Nx.slice [ R (160 * j, Int.min n (160 * (j + 1))) ] x in
-      let s, frames = Omr.Frames.feed grid s chunk in
+      let s, frames = Alda.Frames.feed grid s chunk in
       go s (j + 1) (frames :: acc)
   in
-  let frames = Nx.concatenate ~axis:0 (go Omr.Frames.start 0 []) in
+  let frames = Nx.concatenate ~axis:0 (go Alda.Frames.start 0 []) in
   let p = power (Nx.rfft Nx.complex64 (Nx.mul frames win)) in
   Nx.log10 (Nx.maximum_s (Nx.matmul p bank) 1e-10)
 
@@ -89,7 +89,7 @@ The mel product is the one step whose bits depend on the call. A matrix
 product rounds as its kernel library's contraction does, which may depend
 on the number of frames it is given, so features computed a frame at a time
 equal the whole call's within one rounding of the product (the
-Filterbanks section of [`omr.mli`](../lib/omr.mli)). Here the difference is
+Filterbanks section of [`alda.mli`](../lib/alda.mli)). Here the difference is
 below 1e-5 in log10.
 
 ## MFCC
@@ -113,16 +113,16 @@ let () = assert (Nx.shape (mfcc tone) = [| 100; 13 |])
 ## Inverting a transform
 
 The inverse of a short-time transform is the least-squares signal for its
-spectra (`Omr.istft`, in the Short-time transforms section of
-[`omr.mli`](../lib/omr.mli)). For a signal's own spectra it is the signal
+spectra (`Alda.istft`, in the Short-time transforms section of
+[`alda.mli`](../lib/alda.mli)). For a signal's own spectra it is the signal
 at every sample a frame weighs, which under Whisper's grid is every sample.
 
 ```ocaml
 let () =
   let x = Nx.cast Nx.float64 tone in
-  let win = Omr.Window.hann Nx.float64 Omr.Window.Periodic 400 in
-  let z = Omr.stft Nx.complex128 grid ~win x in
-  let y = Omr.istft Nx.float64 grid ~win 16_000 z in
+  let win = Alda.Window.hann Nx.float64 Alda.Window.Periodic 400 in
+  let z = Alda.stft Nx.complex128 grid ~win x in
+  let y = Alda.istft Nx.float64 grid ~win 16_000 z in
   assert (Nx.item [] (Nx.max (Nx.abs (Nx.sub y x))) < 1e-12)
 ```
 
@@ -154,14 +154,14 @@ let swr_16k ~from x =
   let taps = taps + (taps land 1) in
   let s = Float.max 1. (Float.of_int m /. Float.of_int l) in
   let kernel =
-    Omr.Kernel.Sinc
+    Alda.Kernel.Sinc
       {
         cutoff = factor *. s /. 2.;
         half_width = Float.of_int taps /. 2. /. s;
-        window = Omr.Kernel.Kaiser 9.;
+        window = Alda.Kernel.Kaiser 9.;
       }
   in
-  let r = Omr.Resample.v ~grid:`Points ~edge:`Zero ~kernel ~by:(l, m) in
+  let r = Alda.Resample.v ~grid:`Points ~edge:`Zero ~kernel ~by:(l, m) in
   let n = Nx.dim 0 x in
   (* Zeros before the mirror, up to a multiple of [m] samples, so that the
      signal's first output is one of the outputs. *)
@@ -171,10 +171,10 @@ let swr_16k ~from x =
       (Nx.pad [| (before - taps, 0) |] 0.
          (Nx.extend `Symmetric_whole (taps, 0) x))
   in
-  let w0 = Array.fold_left ( +. ) 0. (snd (Omr.Resample.weights r).(0)) in
+  let w0 = Array.fold_left ( +. ) 0. (snd (Alda.Resample.weights r).(0)) in
   let first = before * l / m in
   Nx.div_s
-    (Nx.slice [ R (first, first + Omr.Resample.count r n) ] (Omr.resample r e))
+    (Nx.slice [ R (first, first + Alda.Resample.count r n) ] (Alda.resample r e))
     w0
 
 let () =
@@ -198,15 +198,15 @@ quality keeps the pass band to 0.9137 of the Nyquist frequency within
 
 ```ocaml
 let hq =
-  Omr.Kernel.lowpass ~rate:16_000. ~pass:(0.9137 *. 8000.) ~stop:8000.
+  Alda.Kernel.lowpass ~rate:16_000. ~pass:(0.9137 *. 8000.) ~stop:8000.
     ~reject:120.4
 
 let hq_16k =
-  Omr.Resample.v ~grid:`Points ~edge:`Symmetric_whole ~kernel:hq ~by:(1, 3)
+  Alda.Resample.v ~grid:`Points ~edge:`Symmetric_whole ~kernel:hq ~by:(1, 3)
 
 let () =
   let x = Nx.zeros Nx.float32 [| 48_000 |] in
-  assert (Nx.shape (Omr.resample hq_16k x) = [| 16_000 |])
+  assert (Nx.shape (Alda.resample hq_16k x) = [| 16_000 |])
 ```
 
 ## A learned equaliser, streamed
@@ -223,20 +223,20 @@ carried state as through one call.
 let rate = 48_000.
 let centres = Nx.create Nx.float64 [| 3 |] [| 100.; 1000.; 8000. |]
 let q = Nx.full Nx.float64 [| 3 |] 1.
-let equaliser gain = Omr.Biquad.peaking ~rate ~freq:centres ~q ~gain
+let equaliser gain = Alda.Biquad.peaking ~rate ~freq:centres ~q ~gain
 
 let signal =
   let r = Random.State.make [| 1 |] in
   Nx.init Nx.float64 [| 8 * 4096 |] (fun _ -> Random.State.float r 2. -. 1.)
 
-let state = Nx.Ptree.instantiate (module Omr.Sos.State)
+let state = Nx.Ptree.instantiate (module Alda.Sos.State)
 
 let streamed gain =
   let c = equaliser gain in
-  let init = Omr.Sos.steady c (Nx.zeros Nx.float64 [||]) in
+  let init = Alda.Sos.steady c (Nx.zeros Nx.float64 [||]) in
   let _, ys =
     Rune.scan state Nx.Ptree.tensor Nx.Ptree.tensor
-      (fun s chunk -> Omr.Sos.feed c s chunk)
+      (fun s chunk -> Alda.Sos.feed c s chunk)
       ~init
       (Nx.reshape [| 8; 4096 |] signal)
   in
@@ -245,17 +245,17 @@ let streamed gain =
 let gain = Nx.create Nx.float64 [| 3 |] [| 3.; -2.; 6. |]
 
 let () =
-  let whole = Omr.sos (equaliser gain) signal in
+  let whole = Alda.sos (equaliser gain) signal in
   assert (Nx.to_array (streamed gain) = Nx.to_array whole)
 
 (* The gains that make the equaliser match a target's output. *)
-let target = Omr.sos (equaliser (Nx.create Nx.float64 [| 3 |] [| 0.; 4.; -3. |])) signal
+let target = Alda.sos (equaliser (Nx.create Nx.float64 [| 3 |] [| 0.; 4.; -3. |])) signal
 let loss gain = Nx.mean (Nx.square (Nx.sub (streamed gain) target))
 
 let () =
   let g = Rune.grad' loss gain in
   let whole gain =
-    Nx.mean (Nx.square (Nx.sub (Omr.sos (equaliser gain) signal) target))
+    Nx.mean (Nx.square (Nx.sub (Alda.sos (equaliser gain) signal) target))
   in
   let g' = Rune.grad' whole gain in
   assert (Nx.item [] (Nx.max (Nx.abs (Nx.sub g g'))) < 1e-12)
@@ -266,7 +266,7 @@ let () =
 A section's poles near the unit circle at `z = 1` or `z = -1`, a narrow
 band near zero or near half the rate, make it ill-conditioned: rounding
 its coefficients to float32 already moves its outputs, and its gradients
-much more (the IIR filters section of [`omr.mli`](../lib/omr.mli)). A
+much more (the IIR filters section of [`alda.mli`](../lib/alda.mli)). A
 20 Hz band of Q 10 at 48 kHz has poles within 3·10⁻³ of `z = 1`. Its
 float32 output differs from the float64 one by about a thousandth of the
 signal; design and run such filters in float64, coefficients included.
@@ -274,11 +274,11 @@ signal; design and run such filters in float64, coefficients included.
 ```ocaml
 let narrow dt =
   let p v = Nx.full dt [| 1 |] v in
-  Omr.Biquad.peaking ~rate ~freq:(p 20.) ~q:(p 10.) ~gain:(p 12.)
+  Alda.Biquad.peaking ~rate ~freq:(p 20.) ~q:(p 10.) ~gain:(p 12.)
 
 let () =
-  let y64 = Omr.sos (narrow Nx.float64) signal in
-  let y32 = Omr.sos (narrow Nx.float32) (Nx.cast Nx.float32 signal) in
+  let y64 = Alda.sos (narrow Nx.float64) signal in
+  let y32 = Alda.sos (narrow Nx.float32) (Nx.cast Nx.float32 signal) in
   let norm a = Nx.item [] (Nx.sqrt (Nx.sum (Nx.square a))) in
   let rel = norm (Nx.sub (Nx.cast Nx.float64 y32) y64) /. norm y64 in
   assert (rel > 1e-4)
@@ -286,11 +286,11 @@ let () =
 
 ## Defaults as arguments
 
-omr requires the conventions that programs choose differently: a window's
+alda requires the conventions that programs choose differently: a window's
 sampling, a frame grid, a mel scale and a bank's normalisation. The table
-writes librosa's `stft` and `melspectrogram` defaults as omr's arguments.
+writes librosa's `stft` and `melspectrogram` defaults as alda's arguments.
 
-| librosa | omr |
+| librosa | alda |
 |---|---|
 | `window="hann"`, a periodic window | `Window.hann dt Periodic n_fft` |
 | `center=True`, `pad_mode="constant"` | ``~edge:`Zero ~ends:(n_fft / 2, n_fft / 2)`` |
@@ -307,15 +307,15 @@ At 22 050 Hz and `n_fft = 2048`, the default `melspectrogram` is:
 let n_fft = 2048
 
 let librosa_grid =
-  Omr.Frames.v ~edge:`Zero ~ends:(n_fft / 2, n_fft / 2) ~window:n_fft ~hop:512
+  Alda.Frames.v ~edge:`Zero ~ends:(n_fft / 2, n_fft / 2) ~window:n_fft ~hop:512
 
 let librosa_mel x =
-  let win = Omr.Window.hann Nx.float32 Omr.Window.Periodic n_fft in
+  let win = Alda.Window.hann Nx.float32 Alda.Window.Periodic n_fft in
   let bank =
-    Omr.Mel.bank Nx.float32 Omr.Mel.Slaney Omr.Unit_area ~rate:22_050. ~n:n_fft
+    Alda.Mel.bank Nx.float32 Alda.Mel.Slaney Alda.Unit_area ~rate:22_050. ~n:n_fft
       128
   in
-  Nx.matmul (power (Omr.stft Nx.complex64 librosa_grid ~win x)) bank
+  Nx.matmul (power (Alda.stft Nx.complex64 librosa_grid ~win x)) bank
 
 let () =
   let x = Nx.zeros Nx.float32 [| 22_050 |] in

@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module T = Omr.Taps
+module T = Alda.Taps
 
 let peak a = Array.fold_left (fun m v -> Float.max m (Float.abs v)) 0. a
 
@@ -454,7 +454,7 @@ let zeros_moved =
         Nx.magnitude Nx.float64
           (Nx.rfft Nx.complex128 ~s:[ n ] (Nx.create Nx.float64 [| m |] h))
       in
-      let got = Omr.Taps.minimum_phase Nx.float64 ~length:m g in
+      let got = Alda.Taps.minimum_phase Nx.float64 ~length:m g in
       equal (array (float (1e-12 *. peak want))) want (Nx.to_array got))
 
 (* The spectral factor: [h = f ∗ flip f] for a minimum-phase [f] has a
@@ -485,7 +485,7 @@ let spectral_factor =
              (Nx.rfft Nx.complex128 ~s:[ n ]
                 (Nx.create Nx.float64 [| Array.length h |] h)))
       in
-      let got = Omr.Taps.minimum_phase Nx.float64 ~length:k g in
+      let got = Alda.Taps.minimum_phase Nx.float64 ~length:k g in
       equal (array (float (1e-12 *. peak f))) f (Nx.to_array got))
 
 (* Savitzky-Golay *)
@@ -585,7 +585,7 @@ let savitzky_golay_law =
         Nx.init Nx.float64 [| n |] (fun i -> deriv_at 0 (Float.of_int i.(0)))
       in
       let h = T.savitzky_golay Nx.float64 ~window ~order ~deriv ~at in
-      let y = Nx.to_array (Omr.fir ~ends:(0, 0) h x) in
+      let y = Nx.to_array (Alda.fir ~ends:(0, 0) h x) in
       let mass = peak (Nx.to_array (Nx.abs h)) *. Float.of_int window in
       let top = peak (Nx.to_array x) in
       let want =
@@ -602,7 +602,7 @@ let savitzky_golay_zeros =
            (T.savitzky_golay Nx.float64 ~window:7 ~order:2 ~deriv:3 ~at:3.)))
 
 let misuse =
-  let raises f = raises_match (Exn.invalid_arg ~sub:"Omr.Taps") f in
+  let raises f = raises_match (Exn.invalid_arg ~sub:"Alda.Taps") f in
   let ok = band 0. 0.2 (1., 1.) (0.1, 0.1) in
   group "misuse"
     [
@@ -671,7 +671,7 @@ let misuse =
 
 let () =
   exit
-    (run "omr.taps"
+    (run "alda.taps"
        [
          least_squares;
          equiripple;

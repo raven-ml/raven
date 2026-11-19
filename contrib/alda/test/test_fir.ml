@@ -16,7 +16,7 @@ let equal_bits want got =
   equal (array int) (Nx.shape want) (Nx.shape got);
   equal (array int64) (bits want) (bits got)
 
-let name : Omr.edge -> string = function
+let name : Alda.edge -> string = function
   | `Zero -> "Zero"
   | `Replicate -> "Replicate"
   | `Symmetric_whole -> "Symmetric_whole"
@@ -24,7 +24,7 @@ let name : Omr.edge -> string = function
   | `Antisymmetric_whole -> "Antisymmetric_whole"
 
 type case = {
-  edge : Omr.edge;
+  edge : Alda.edge;
   ends : (int * int) option;
   m : int;
   n : int;
@@ -98,7 +98,7 @@ let formula =
         | Some (lo, hi) -> c.n <= Int.max lo hi
         | None -> false);
       let h = taps c and x = signal c in
-      let y = Omr.fir ~axis:(axis c) ~edge:c.edge ?ends:c.ends h x in
+      let y = Alda.fir ~axis:(axis c) ~edge:c.edge ?ends:c.ends h x in
       for k = 0 to if c.channels then 1 else 0 do
         let want = direct c h (column c x k) in
         equal (array (float 1e-12)) want (floats (column c y k))
@@ -122,19 +122,19 @@ let piece c x a b =
 let stream_law =
   prop "every split gives fir's bits" ~count:300 case (fun c ->
       let h = taps c and x = signal c in
-      let fir_feed = Omr.Fir.feed ~axis:(axis c) ~edge:c.edge ?ends:c.ends h in
+      let fir_feed = Alda.Fir.feed ~axis:(axis c) ~edge:c.edge ?ends:c.ends h in
       let s, outs, _ =
         List.fold_left
           (fun (s, outs, at) k ->
             let s, y = fir_feed s (piece c x at (at + k)) in
             (s, y :: outs, at + k))
-          (Omr.Fir.start, [], 0) (chunks c.seed c.n)
+          (Alda.Fir.start, [], 0) (chunks c.seed c.n)
       in
       cover ~share:0.3 "outputs from feeds"
         (List.exists (fun y -> Nx.dim (axis c) y > 0) outs);
-      let last = Omr.Fir.finish ~axis:(axis c) ~edge:c.edge ?ends:c.ends h s in
+      let last = Alda.Fir.finish ~axis:(axis c) ~edge:c.edge ?ends:c.ends h s in
       equal_bits
-        (Omr.fir ~axis:(axis c) ~edge:c.edge ?ends:c.ends h x)
+        (Alda.fir ~axis:(axis c) ~edge:c.edge ?ends:c.ends h x)
         (Nx.concatenate ~axis:(axis c) (List.rev (last :: outs))))
 
 let complex =
@@ -149,7 +149,7 @@ let complex =
       in
       let h = Nx.init Nx.complex128 [| 5 |] v
       and x = Nx.init Nx.complex128 [| 40 |] v in
-      let y = Nx.to_array (Omr.fir h x) in
+      let y = Nx.to_array (Alda.fir h x) in
       let h = Nx.to_array h and x = Nx.to_array x in
       let want =
         Array.init 40 (fun j ->
@@ -176,7 +176,7 @@ let gradient =
       and x = random 2 [| 50 |]
       and w = random 3 [| 50 |] in
       let f (h, x) =
-        Nx.sum (Nx.mul w (Omr.fir ~edge:`Symmetric_half ~ends:(3, 3) h x))
+        Nx.sum (Nx.mul w (Alda.fir ~edge:`Symmetric_half ~ends:(3, 3) h x))
       in
       let gh, gx = Rune.grad Nx.Ptree.(pair tensor tensor) f (h, x) in
       let fd p k =
@@ -213,7 +213,7 @@ let even =
       let key s = Printf.sprintf "%d.%s" i s in
       near
         (floats (entry (key "y")))
-        (floats (Omr.zero_phase (entry (key "sos")) (entry (key "x")))))
+        (floats (Alda.zero_phase (entry (key "sos")) (entry (key "x")))))
 
 (* An odd order: SciPy's pad is 6 S, 3 shorter. With it passed the results
    agree. Without it they differ near the ends by a share of the peak, and the
@@ -226,9 +226,9 @@ let odd =
       let p = 6 * Nx.dim 0 c in
       near
         (floats (entry (key "y6")))
-        (floats (Omr.zero_phase ~ends:(p, p) c x));
+        (floats (Alda.zero_phase ~ends:(p, p) c x));
       let want = floats (entry (key "y"))
-      and got = floats (Omr.zero_phase c x) in
+      and got = floats (Alda.zero_phase c x) in
       let n = Array.length want in
       let gap a b =
         let m = ref 0. in
@@ -245,21 +245,21 @@ let errors =
   group "misuse"
     [
       test "taps of two axes" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.fir") (fun () ->
-              Omr.fir
+          raises_match (Exn.invalid_arg ~sub:"Alda.fir") (fun () ->
+              Alda.fir
                 (Nx.ones Nx.float64 [| 2; 2 |])
                 (Nx.ones Nx.float64 [| 5 |])));
       test "no taps" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.fir") (fun () ->
-              Omr.fir (Nx.ones Nx.float64 [| 0 |]) (Nx.ones Nx.float64 [| 5 |])));
+          raises_match (Exn.invalid_arg ~sub:"Alda.fir") (fun () ->
+              Alda.fir (Nx.ones Nx.float64 [| 0 |]) (Nx.ones Nx.float64 [| 5 |])));
       test "a negative end" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.zero_phase") (fun () ->
-              Omr.zero_phase ~ends:(-1, 0)
+          raises_match (Exn.invalid_arg ~sub:"Alda.zero_phase") (fun () ->
+              Alda.zero_phase ~ends:(-1, 0)
                 (Nx.create Nx.float64 [| 1; 6 |] [| 1.; 0.; 0.; 1.; 0.; 0. |])
                 (Nx.ones Nx.float64 [| 5 |])));
     ]
 
 let () =
   exit
-    (run "omr.fir"
+    (run "alda.fir"
        [ formula; stream_law; complex; gradient; even; odd; errors ])

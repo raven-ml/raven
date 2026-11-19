@@ -1,9 +1,9 @@
-# omr's design
+# alda's design
 
-This page explains omr's design to a reader who knows signal processing
+This page explains alda's design to a reader who knows signal processing
 and OCaml but not raven. It gives the foundation, then the operations
 built on it today, whose interfaces may still change.
-[`omr.mli`](../lib/omr.mli) states each rule in full, in the section
+[`alda.mli`](../lib/alda.mli) states each rule in full, in the section
 named.
 
 ## The foundation
@@ -22,7 +22,7 @@ per that unit. (The module preamble.)
 Each operation is a composition of nx operations, so it computes where its
 operands lie, eagerly on the host and compiled on a GPU, and rune
 differentiates (`Rune.grad`), batches (`Rune.vmap`) and compiles
-(`Rune.jit`) it. The caller compiles; omr never calls `Rune.jit`.
+(`Rune.jit`) it. The caller compiles; alda never calls `Rune.jit`.
 
 The cost is that every algorithm must be array operations. An IIR section
 runs as associative scans over blocks of 4096 samples, whose rounding is
@@ -40,7 +40,7 @@ point `P / 2`.
 
 A frame grid is an edge, ends `(lo, hi)` saying how far it reads before
 and past the signal, a window length and a hop. Its frame `m` starts at
-position `m hop - lo`. The edge rules (`Omr.edge`) read zeros, the end
+position `m hop - lo`. The edge rules (`Alda.edge`) read zeros, the end
 sample repeated or the signal mirrored; framing, FIR filtering and
 resampling take them, and zero-phase filtering takes `Nx.extension`, which
 adds a periodic rule. Centred, left-aligned and right-aligned grids, and
@@ -81,15 +81,15 @@ does, so streamed features agree within one rounding of it. (The Streams
 section.) Below, frames fed in two chunks equal the whole call's.
 
 ```ocaml
-let grid = Omr.Frames.v ~edge:`Symmetric_whole ~ends:(3, 3) ~window:8 ~hop:2
+let grid = Alda.Frames.v ~edge:`Symmetric_whole ~ends:(3, 3) ~window:8 ~hop:2
 let x = Nx.init Nx.float32 [| 50 |] (fun i -> Float.of_int i.(0))
 
 let () =
-  let s, a = Omr.Frames.feed grid Omr.Frames.start (Nx.slice [ R (0, 17) ] x) in
-  let s, b = Omr.Frames.feed grid s (Nx.slice [ R (17, 50) ] x) in
-  let c = Omr.Frames.finish grid s in
+  let s, a = Alda.Frames.feed grid Alda.Frames.start (Nx.slice [ R (0, 17) ] x) in
+  let s, b = Alda.Frames.feed grid s (Nx.slice [ R (17, 50) ] x) in
+  let c = Alda.Frames.finish grid s in
   let streamed = Nx.concatenate ~axis:0 [ a; b; c ] in
-  assert (Nx.to_array streamed = Nx.to_array (Omr.Frames.frames grid x))
+  assert (Nx.to_array streamed = Nx.to_array (Alda.Frames.frames grid x))
 ```
 
 Latency is stated as a release rule. An output leaves the feed after which

@@ -3,7 +3,7 @@
 (library
  (name whisper)
  (private_modules space english_json float_text)
- (libraries nx nx.io kaun rune brot lz omr))
+ (libraries nx nx.io kaun rune brot lz alda))
 
 ; english.json is upstream's British to American spelling map
 ; (openai/whisper 86098128, whisper/normalizers/english.json, sha256

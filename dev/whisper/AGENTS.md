@@ -16,7 +16,7 @@ and is never published (no opam package, no CHANGES entry).
   that owns it, never worked around here.
 - `lib/` is the library `whisper`: `Audio` (a WAV or FLAC file's samples,
   mixed to one channel at 16 kHz, the 30 s window, and their log-mel spectrogram of any
-  length, floored over the whole call, composed from omr),
+  length, floored over the whole call, composed from alda),
   `Tokenizer` (the rank-file encodings and
   Whisper's special tokens, numbered after the ranks) and `Model` (the
   dimensions, the parameters as kaun layers and their structure, the

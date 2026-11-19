@@ -4,4 +4,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries omr nx rune))
+ (libraries alda nx rune))

@@ -43,19 +43,19 @@ module Window = struct
     done;
     !acc
 
-  let cosine_sum dt s a n = cosines ~by:"Omr.Window.cosine_sum" dt s a n
-  let hann dt s n = cosines ~by:"Omr.Window.hann" dt s [| 0.5; 0.5 |] n
-  let hamming dt s n = cosines ~by:"Omr.Window.hamming" dt s [| 0.54; 0.46 |] n
+  let cosine_sum dt s a n = cosines ~by:"Alda.Window.cosine_sum" dt s a n
+  let hann dt s n = cosines ~by:"Alda.Window.hann" dt s [| 0.5; 0.5 |] n
+  let hamming dt s n = cosines ~by:"Alda.Window.hamming" dt s [| 0.54; 0.46 |] n
 
   let blackman dt s n =
-    cosines ~by:"Omr.Window.blackman" dt s [| 0.42; 0.5; 0.08 |] n
+    cosines ~by:"Alda.Window.blackman" dt s [| 0.42; 0.5; 0.08 |] n
 
   (* [centred n p] is [(2i - p) / p] at each point [i], [2u - 1] for [u = i /
      p]: one rounding, and the negation of point [p - i]'s. *)
   let centred n p = Nx.div_s (of_ints n (fun i -> (2 * i) - p)) (Float.of_int p)
 
   let kaiser dt s ~beta n =
-    let by = "Omr.Window.kaiser" in
+    let by = "Alda.Window.kaiser" in
     if not (Float.is_finite beta && beta >= 0.) then
       invalid_argf "%s: beta %g" by beta;
     points ~by dt s n @@ fun n p ->
@@ -66,7 +66,7 @@ module Window = struct
     Nx.mul (Nx.div (Nx.i0e a) i0e_beta) (Nx.exp (Nx.sub_s a beta))
 
   let gaussian dt s ~sigma n =
-    let by = "Omr.Window.gaussian" in
+    let by = "Alda.Window.gaussian" in
     if not (Float.is_finite sigma && sigma > 0.) then
       invalid_argf "%s: sigma %g" by sigma;
     points ~by dt s n @@ fun n p ->
@@ -142,7 +142,7 @@ module Frames = struct
   let v ~edge ~ends ~window ~hop =
     let lo, hi = ends in
     if window < 1 || hop < 1 || lo < 0 || hi < 0 then
-      invalid_argf "Omr.Frames.v: window %d, hop %d, ends (%d, %d)" window hop
+      invalid_argf "Alda.Frames.v: window %d, hop %d, ends (%d, %d)" window hop
         lo hi;
     { edge; ends; window; hop }
 
@@ -155,7 +155,7 @@ module Frames = struct
     if d < 0 then 0 else (d / g.hop) + 1
 
   let count g n =
-    if n < 0 then invalid_argf "Omr.Frames.count: %d samples" n;
+    if n < 0 then invalid_argf "Alda.Frames.count: %d samples" n;
     frame_count g n
 
   let extend g (lo, hi) x = Nx.extend (rule g :> Nx.extension) (lo, hi) x
@@ -195,7 +195,7 @@ module Frames = struct
     cut c g e 0 (frame_count g (Nx.dim (-1) x))
 
   let frames ?(axis = -1) g x =
-    let by = "Omr.Frames.frames" in
+    let by = "Alda.Frames.frames" in
     whole_with ~by framer g (time ~by axis x)
 
   (* A state holds the samples [x(s)], …, [x(r - 1)] that frames from the next
@@ -266,7 +266,7 @@ module Frames = struct
     (s, out)
 
   let feed ?(axis = -1) g s x =
-    let by = "Omr.Frames.feed" in
+    let by = "Alda.Frames.feed" in
     feed_with ~by framer g s (time ~by axis x)
 
   let finish_with ~by c g s =
@@ -286,7 +286,7 @@ module Frames = struct
         let room = Nx.dim (-1) e - g.window - at in
         cut c g e at (if room < 0 then 0 else (room / g.hop) + 1)
 
-  let finish g s = finish_with ~by:"Omr.Frames.finish" framer g s
+  let finish g s = finish_with ~by:"Alda.Frames.finish" framer g s
 
   (* Overlap-add *)
 
@@ -426,7 +426,7 @@ module Frames = struct
     fold g (lo, hi) n (fit (ola g none 0 f) (lo + n + hi))
 
   let overlap_add ?(axis = -1) g n f =
-    let by = "Omr.Frames.overlap_add" in
+    let by = "Alda.Frames.overlap_add" in
     untime ~by axis (added ~by g n f)
 
   module Overlap_add = struct
@@ -539,12 +539,12 @@ module Frames = struct
           fold g (0, hi) rest (fit sums (rest + hi))
 
     let feed ?(axis = -1) g s f =
-      let by = "Omr.Frames.Overlap_add.feed" in
+      let by = "Alda.Frames.Overlap_add.feed" in
       let s, x = feed_last ~by g s f in
       (s, untime ~by axis x)
 
     let finish ?(axis = -1) g ~extra s =
-      let by = "Omr.Frames.Overlap_add.finish" in
+      let by = "Alda.Frames.Overlap_add.finish" in
       untime ~by axis (finish_last ~by g ~extra s)
   end
 end
@@ -564,7 +564,7 @@ let check_bins ~by (g : _ Frames.t) z =
       ((g.window / 2) + 1)
 
 let stft ?axis dt g ~win x =
-  check_win ~by:"Omr.stft" g win;
+  check_win ~by:"Alda.stft" g win;
   Nx.rfft dt (Nx.mul (Frames.frames ?axis g x) win)
 
 (* [windowed dt g win z] is each spectrum's frame, times [win]. *)
@@ -580,7 +580,7 @@ let divide x env =
   Nx.where (Nx.equal_s env 0.) (Nx.zeros_like env) (Nx.div x env)
 
 let istft ?(axis = -1) dt (g : [< invertible ] Frames.t) ~win n z =
-  let by = "Omr.istft" in
+  let by = "Alda.istft" in
   check_win ~by g win;
   check_bins ~by g z;
   let x = Frames.added ~by g n (windowed dt g win z) in
@@ -604,7 +604,7 @@ module Istft = struct
 
   let feed ?(axis = -1) dt (g : [< invertible ] Frames.t) ~win (s : _ State.t) z
       =
-    let by = "Omr.Istft.feed" in
+    let by = "Alda.Istft.feed" in
     check_win ~by g win;
     check_bins ~by g z;
     let num, x = Ola.feed_last ~by g s.num (windowed dt g win z) in
@@ -613,7 +613,7 @@ module Istft = struct
 
   let finish ?(axis = -1) (g : [< invertible ] Frames.t) ~extra (s : _ State.t)
       =
-    let by = "Omr.Istft.finish" in
+    let by = "Alda.Istft.finish" in
     let x = Ola.finish_last ~by g ~extra s.num in
     untime ~by axis (divide x (Ola.finish_last ~by g ~extra s.env))
 end
@@ -640,13 +640,13 @@ let one_sided ~by ?n ~win p =
     [ along p 0 1; Nx.mul_s (along p 1 last) 2.; along p last bins ]
 
 let psd ?n ~rate ~win p =
-  let by = "Omr.psd" in
+  let by = "Alda.psd" in
   check_rate ~by rate;
   let p = one_sided ~by ?n ~win p in
   Nx.div p (Nx.mul_s (Nx.sum (Nx.square win)) rate)
 
 let power_spectrum ?n ~win p =
-  let p = one_sided ~by:"Omr.power_spectrum" ?n ~win p in
+  let p = one_sided ~by:"Alda.power_spectrum" ?n ~win p in
   Nx.div p (Nx.square (Nx.sum win))
 
 (* Filterbanks *)
@@ -654,7 +654,7 @@ let power_spectrum ?n ~win p =
 type norm = Unit_peak | Unit_area
 
 let triangles nm ~at e =
-  let by = "Omr.triangles" in
+  let by = "Alda.triangles" in
   if Nx.ndim at <> 1 || Nx.ndim e <> 1 || Nx.dim 0 e < 3 then
     invalid_argf "%s: points %a and edges %a" by pp_shape (Nx.shape at) pp_shape
       (Nx.shape e);
@@ -718,10 +718,10 @@ module Mel = struct
       ]
 
   let edges dt sc ~low ~high k =
-    Nx.cast dt (hz ~by:"Omr.Mel.edges" sc ~low ~high k)
+    Nx.cast dt (hz ~by:"Alda.Mel.edges" sc ~low ~high k)
 
   let bank dt sc nm ~rate ~n ?(low = 0.) ?high b =
-    let by = "Omr.Mel.bank" in
+    let by = "Alda.Mel.bank" in
     check_rate ~by rate;
     let high = Option.value high ~default:(rate /. 2.) in
     if n < 2 || b < 1 then invalid_argf "%s: %d points, %d bands" by n b;
@@ -987,12 +987,12 @@ module Sos = struct
     (State.At { inputs; outputs }, !u)
 
   let feed ?(axis = -1) c s x =
-    let by = "Omr.Sos.feed" in
+    let by = "Alda.Sos.feed" in
     let s, y = feed_last ~by c s (time ~by axis x) in
     (s, untime ~by axis y)
 
   let steady c u =
-    check_cascade ~by:"Omr.Sos.steady" c;
+    check_cascade ~by:"Alda.Sos.steady" c;
     let r = rows c and k = Nx.dim 0 c in
     let gain s =
       let ( + ) = Nx.add in
@@ -1013,7 +1013,7 @@ module Sos = struct
       }
 
   let stable c =
-    check_cascade ~by:"Omr.Sos.stable" c;
+    check_cascade ~by:"Alda.Sos.stable" c;
     let r = rows c in
     let col j = Nx.slice [ Nx.A; Nx.I j ] r in
     let a1 = col 4 and a2 = col 5 in
@@ -1023,7 +1023,7 @@ module Sos = struct
 end
 
 let sos ?(axis = -1) c x =
-  let by = "Omr.sos" in
+  let by = "Alda.sos" in
   untime ~by axis (snd (Sos.feed_last ~by c Sos.start (time ~by axis x)))
 
 (* Designs *)
@@ -1729,7 +1729,7 @@ module Iir = struct
          (Array.concat (Array.to_list rows)))
 
   let design dt ~rate ~order family band =
-    let by = "Omr.Iir.design" in
+    let by = "Alda.Iir.design" in
     check_rate ~by rate;
     if order < 1 then invalid_argf "%s: order %d" by order;
     let edge f =
@@ -1814,7 +1814,7 @@ module Iir = struct
      transform keeps the prototype's gain at each prewarped frequency, so this
      holds in exact arithmetic and no certificate is computed. *)
   let meet ~rate ~ripple ~reject kind spec =
-    let by = "Omr.Iir.meet" in
+    let by = "Alda.Iir.meet" in
     check_rate ~by rate;
     let positive name v =
       if not (v > 0. && Float.is_finite v) then
@@ -1914,11 +1914,11 @@ module Iir = struct
     (order, family, band)
 
   let digital dt ~zeros ~poles ~gain =
-    let by = "Omr.Iir.digital" in
+    let by = "Alda.Iir.digital" in
     cascade dt (sections ~by { z = zeros; p = poles; k = scaled (re gain) })
 
   let analog dt ~rate ~zeros ~poles ~gain =
-    let by = "Omr.Iir.analog" in
+    let by = "Alda.Iir.analog" in
     check_rate ~by rate;
     if List.length zeros > List.length poles then
       invalid_argf "%s: %d zeros for %d poles" by (List.length zeros)
@@ -1972,7 +1972,7 @@ let convolver h =
   { Frames.cut; drop = (fun first y -> along y first (Nx.dim (-1) y)) }
 
 let fir ?(axis = -1) ?edge ?ends h x =
-  let by = "Omr.fir" in
+  let by = "Alda.fir" in
   let g = fir_grid ~by ?edge ?ends h in
   untime ~by axis (Frames.whole_with ~by (convolver h) g (time ~by axis x))
 
@@ -1982,13 +1982,13 @@ module Fir = struct
   let start = Frames.start
 
   let feed ?(axis = -1) ?edge ?ends h s x =
-    let by = "Omr.Fir.feed" in
+    let by = "Alda.Fir.feed" in
     let g = fir_grid ~by ?edge ?ends h in
     let s, y = Frames.feed_with ~by (convolver h) g s (time ~by axis x) in
     (s, untime ~by axis y)
 
   let finish ?(axis = -1) ?edge ?ends h s =
-    let by = "Omr.Fir.finish" in
+    let by = "Alda.Fir.finish" in
     let g = fir_grid ~by ?edge ?ends h in
     untime ~by axis (Frames.finish_with ~by (convolver h) g s)
 end
@@ -1996,7 +1996,7 @@ end
 (* Zero phase *)
 
 let zero_phase ?(axis = -1) ?(edge = `Antisymmetric_whole) ?ends c x =
-  let by = "Omr.zero_phase" in
+  let by = "Alda.zero_phase" in
   check_cascade ~by c;
   let x = time ~by axis x in
   let n = Nx.dim (-1) x and p = 3 * ((2 * Nx.dim 0 c) + 1) in
@@ -2172,7 +2172,7 @@ let check_dtype (type v s) ~by (dt : (v, s) Nx.dtype) =
 let zero_ends x pads = Nx.pad pads (Nx.Dtype.zero (Nx.dtype x)) x
 
 let fft_convolve ~axes ~ends x k =
-  let by = "Omr.fft_convolve" in
+  let by = "Alda.fft_convolve" in
   check_dtype ~by (Nx.dtype x);
   let axes = norm_axes ~by (Nx.ndim x) axes in
   check_ends ~by axes ends;
@@ -2232,7 +2232,7 @@ module Fft_convolve = struct
       x
 
   let feed ~axis ~axes ~ends k s x =
-    let by = "Omr.Fft_convolve.feed" in
+    let by = "Alda.Fft_convolve.feed" in
     let a, axes, (lo, _), pads = setup ~by ~axis ~axes ~ends x k in
     let x = zero_ends x pads in
     let kept =
@@ -2261,7 +2261,7 @@ module Fft_convolve = struct
     (State.Running { samples = span a kept (b * step) len }, out)
 
   let finish ~axis ~axes ~ends k s =
-    let by = "Omr.Fft_convolve.finish" in
+    let by = "Alda.Fft_convolve.finish" in
     match s with
     | State.Start ->
         invalid_argf "%s: no chunk was fed; feed an empty chunk first" by
@@ -2578,7 +2578,7 @@ module Kernel = struct
     else 0.
 
   let lowpass ~rate ~pass ~stop ~reject =
-    let by = "Omr.Kernel.lowpass" in
+    let by = "Alda.Kernel.lowpass" in
     check_rate ~by rate;
     if not (0. < pass && pass < stop && stop <= rate /. 2.) then
       invalid_argf "%s: pass %g, stop %g at rate %g" by pass stop rate;
@@ -2896,7 +2896,7 @@ module Taps = struct
      angles integrate the products of the amplitude's terms, and a constant
      target times a term, exactly. *)
   let least_squares dt ~rate s bands m =
-    let by = "Omr.Taps.least_squares" in
+    let by = "Alda.Taps.least_squares" in
     let bs, rb = setup ~by ~rate s bands m in
     List.iter
       (fun { lo; hi; _ } ->
@@ -3353,7 +3353,7 @@ module Taps = struct
         (c, Array.mapi (fun i q -> (Float.abs e.(i), q.v /. factor bs q.w)) r)
 
   let equiripple dt ~rate s bands m =
-    let by = "Omr.Taps.equiripple" in
+    let by = "Alda.Taps.equiripple" in
     let bs, rb = setup ~by ~rate s bands m in
     if Array.length bs.f = 0 then Nx.zeros dt [| m |]
     else taps dt bs (fst (remez ~by bs rb))
@@ -3361,7 +3361,7 @@ module Taps = struct
   (* Minimum phase *)
 
   let minimum_phase dt ~length g =
-    let by = "Omr.Taps.minimum_phase" in
+    let by = "Alda.Taps.minimum_phase" in
     if Nx.ndim g <> 1 || Nx.dim 0 g < 2 then
       invalid_argf "%s: gain %a is not [k] with k > 1" by pp_shape (Nx.shape g);
     let g = Nx.cast Nx.float64 g in
@@ -3426,7 +3426,7 @@ module Taps = struct
      positions scaled to [[-1, 1]], whose conditioning, unlike scaled
      monomials', does not grow with the order. *)
   let savitzky_golay dt ~window ~order ~deriv ~at =
-    let by = "Omr.Taps.savitzky_golay" in
+    let by = "Alda.Taps.savitzky_golay" in
     if order < 0 || deriv < 0 || window <= order || not (Float.is_finite at)
     then
       invalid_argf "%s: window %d, order %d, deriv %d, at %g" by window order
@@ -3461,7 +3461,7 @@ module Taps = struct
   (* Least length *)
 
   let meet ~rate ~odd s bands =
-    let by = "Omr.Taps.meet" in
+    let by = "Alda.Taps.meet" in
     let first =
       match (s, odd) with Antisymmetric, true -> 3 | _, true -> 1 | _ -> 2
     in
@@ -3567,7 +3567,7 @@ module Resample = struct
   let fdiv a b = if a >= 0 then a / b else -((-a + b - 1) / b)
 
   let v ~grid ~edge ~kernel ~by:(l, m) =
-    if l < 1 || m < 1 then invalid_argf "Omr.Resample.v: by (%d, %d)" l m;
+    if l < 1 || m < 1 then invalid_argf "Alda.Resample.v: by (%d, %d)" l m;
     let g = gcd l m in
     let l = l / g and m = m / g in
     let shrink = m > l in
@@ -3832,17 +3832,17 @@ module Resample = struct
     unflat lead y
 
   let feed ?(axis = -1) r s x =
-    let by = "Omr.Resample.feed" in
+    let by = "Alda.Resample.feed" in
     let s, y = feed_last ~by r s (time ~by axis x) in
     (s, untime ~by axis y)
 
   let finish ?(axis = -1) r s =
-    let by = "Omr.Resample.finish" in
+    let by = "Alda.Resample.finish" in
     untime ~by axis (finish_last ~by r s)
 end
 
 let resample ?(axis = -1) r x =
-  let by = "Omr.resample" in
+  let by = "Alda.resample" in
   let x = time ~by axis x in
   let s, y = Resample.feed_last ~by r Resample.start x in
   untime ~by axis

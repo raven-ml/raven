@@ -32,8 +32,8 @@ let periodogram =
       let params = Nx.to_array (entry (key "params")) in
       let rate = params.(0) and n = Float.to_int params.(1) in
       let p = power n x win in
-      near (entry (key "density")) (Omr.psd ~n ~rate ~win p);
-      near (entry (key "spectrum")) (Omr.power_spectrum ~n ~win p))
+      near (entry (key "density")) (Alda.psd ~n ~rate ~win p);
+      near (entry (key "spectrum")) (Alda.power_spectrum ~n ~win p))
 
 (* A sinusoid of amplitude [a] at a bin's frequency reads [a² / 2] there. *)
 let sinusoid =
@@ -45,8 +45,8 @@ let sinusoid =
             *. Float.cos
                  (2. *. Float.pi *. Float.of_int (k * i.(1)) /. Float.of_int n))
       in
-      let win = Omr.Window.hann Nx.float64 Omr.Window.Periodic n in
-      let s = Omr.power_spectrum ~win (power n x win) in
+      let win = Alda.Window.hann Nx.float64 Alda.Window.Periodic n in
+      let s = Alda.power_spectrum ~win (power n x win) in
       equal (float 1e-12) (a *. a /. 2.) (Nx.item [ 1; k ] s))
 
 let errors =
@@ -54,14 +54,14 @@ let errors =
   group "misuse"
     [
       test "bins of another transform" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.psd") (fun () ->
-              Omr.psd ~rate:1. ~win (Nx.zeros Nx.float64 [| 4 |])));
+          raises_match (Exn.invalid_arg ~sub:"Alda.psd") (fun () ->
+              Alda.psd ~rate:1. ~win (Nx.zeros Nx.float64 [| 4 |])));
       test "transform shorter than the window" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.power_spectrum") (fun () ->
-              Omr.power_spectrum ~n:4 ~win (Nx.zeros Nx.float64 [| 3 |])));
+          raises_match (Exn.invalid_arg ~sub:"Alda.power_spectrum") (fun () ->
+              Alda.power_spectrum ~n:4 ~win (Nx.zeros Nx.float64 [| 3 |])));
       test "rate of zero" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.psd") (fun () ->
-              Omr.psd ~rate:0. ~win (Nx.zeros Nx.float64 [| 5 |])));
+          raises_match (Exn.invalid_arg ~sub:"Alda.psd") (fun () ->
+              Alda.psd ~rate:0. ~win (Nx.zeros Nx.float64 [| 5 |])));
     ]
 
-let () = exit (run "omr.spectra" [ periodogram; sinusoid; errors ])
+let () = exit (run "alda.spectra" [ periodogram; sinusoid; errors ])

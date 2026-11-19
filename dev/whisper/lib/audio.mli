@@ -82,15 +82,15 @@ val length : int
     over the [T] samples [i] with [-T/2 ≤ t - i < T/2], where [w₀] is
     [Σ k(q / s)] over the whole [q] with [-T/2 ≤ q < T/2]. Output [j] lies at
     [t = j r / 16000 = b + p], [b] whole and [0 ≤ p < 1]. Where [16000 / r]
-    reduces to at most 1024 values of [p], output [j] is [y(t)]: {!Omr.resample}
-    on [`Points] by the reduced ratio, divided by [w₀]. Otherwise, with
-    [p = (q + α) / 1024] for a whole [q], it is [v₁ + (v₂ - v₁) α] of
-    [v₁ = y(b + q / 1024)] and [v₂ = y(b + (q + 1) / 1024)], the linear
-    interpolation between 1024 values of [p] that libswresample computes. The
-    signal is extended before its first sample by [T] samples mirrored about it
-    ([`Symmetric_whole]), and after its last by [(min n T + 1) / 2] samples
-    mirrored about the point half a sample past it ([`Symmetric_half]), then by
-    zeros. *)
+    reduces to at most 1024 values of [p], output [j] is [y(t)]:
+    {!Alda.resample} on [`Points] by the reduced ratio, divided by [w₀].
+    Otherwise, with [p = (q + α) / 1024] for a whole [q], it is
+    [v₁ + (v₂ - v₁) α] of [v₁ = y(b + q / 1024)] and
+    [v₂ = y(b + (q + 1) / 1024)], the linear interpolation between 1024 values
+    of [p] that libswresample computes. The signal is extended before its first
+    sample by [T] samples mirrored about it ([`Symmetric_whole]), and after its
+    last by [(min n T + 1) / 2] samples mirrored about the point half a sample
+    past it ([`Symmetric_half]), then by zeros. *)
 
 val load : string -> Nx.host Nx.float32_t
 (** [load path] is the WAV or FLAC file [path], read by {!Nx_io.load_audio}, as

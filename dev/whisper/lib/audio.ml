@@ -97,7 +97,7 @@ let mix w x =
 
    Output [j] lies at input position [j r / 16000]. Where [16000 / r] reduces to
    [l] phases, at most 1024 ([exact_rational], [phase_shift] 10), swr weighs
-   each output by its exact phase: omr's resampling. Otherwise swr keeps 1024
+   each output by its exact phase: alda's resampling. Otherwise swr keeps 1024
    phases and the one after and interpolates linearly between the two phases
    about the output's position ([linear_interp]).
 
@@ -112,10 +112,10 @@ let phases = 1024
 
 (* A resampling's weights. [Exact]'s [lead] zeros go before the mirror so that
    the signal's first output, output [first] of the extended signal, is one of
-   omr's outputs, which [w0] then divides. [Interpolated] holds the [phases]
+   alda's outputs, which [w0] then divides. [Interpolated] holds the [phases]
    rows of [taps] weights. *)
 type bank =
-  | Exact of { r : Omr.Resample.t; lead : int; first : int; w0 : float }
+  | Exact of { r : Alda.Resample.t; lead : int; first : int; w0 : float }
   | Interpolated of float array array
 
 type swr = { from : int; taps : int; bank : bank }
@@ -135,7 +135,7 @@ let rows kernel ~s ~taps =
           in
           -.d /. s)
     in
-    Nx.to_array (Omr.Kernel.eval kernel tau)
+    Nx.to_array (Alda.Kernel.eval kernel tau)
   in
   let rows = Array.init phases row in
   let norm = Array.fold_left ( +. ) 0. rows.(0) in
@@ -150,11 +150,11 @@ let swr from =
   let taps = taps + (taps land 1) in
   let s = Float.max 1. (Float.of_int from /. Float.of_int rate) in
   let kernel =
-    Omr.Kernel.Sinc
+    Alda.Kernel.Sinc
       {
         cutoff = factor *. s /. 2.;
         half_width = Float.of_int taps /. 2. /. s;
-        window = Omr.Kernel.Kaiser kaiser_beta;
+        window = Alda.Kernel.Kaiser kaiser_beta;
       }
   in
   let rec gcd a b = if b = 0 then a else gcd b (a mod b) in
@@ -163,8 +163,8 @@ let swr from =
   let bank =
     if l > phases then Interpolated (rows kernel ~s ~taps)
     else
-      let r = Omr.Resample.v ~grid:`Points ~edge:`Zero ~kernel ~by:(l, m) in
-      let w0 = Array.fold_left ( +. ) 0. (snd (Omr.Resample.weights r).(0)) in
+      let r = Alda.Resample.v ~grid:`Points ~edge:`Zero ~kernel ~by:(l, m) in
+      let w0 = Array.fold_left ( +. ) 0. (snd (Alda.Resample.weights r).(0)) in
       let lead = (m - (taps mod m)) mod m in
       Exact { r; lead; first = (lead + taps) * l / m; w0 }
   in
@@ -177,7 +177,7 @@ let swr from =
 type consumer = { feed : Nx.host Nx.float64_t -> unit; finish : unit -> unit }
 
 let exact ~total r ~lead ~first ~w0 write =
-  let module R = Omr.Resample in
+  let module R = Alda.Resample in
   let state = ref R.start and next = ref 0 in
   (* Keep outputs [first] to [first + total - 1] of the extended signal. *)
   let emit y =
@@ -363,7 +363,7 @@ let hop = 160
    the first, and past the end only what the last frame reads, so [n] samples
    give [n / hop] frames, torch's centred frames without the last. *)
 let grid =
-  Omr.Frames.v ~edge:`Symmetric_whole
+  Alda.Frames.v ~edge:`Symmetric_whole
     ~ends:(window / 2, (window / 2) - hop)
     ~window ~hop
 
@@ -375,18 +375,18 @@ let log_mel ?(padding = 0) ~n_mels x =
   let at = Nx.beside x in
   let bank =
     Nx.place at
-      (Omr.Mel.bank Nx.float32 Omr.Mel.Slaney Omr.Unit_area ~rate:(float rate)
-         ~n:window n_mels)
+      (Alda.Mel.bank Nx.float32 Alda.Mel.Slaney Alda.Unit_area
+         ~rate:(float rate) ~n:window n_mels)
   in
   let x = if padding = 0 then x else Nx.pad [| (0, padding) |] 0. x in
   (* No frame, no maximum to floor at. *)
-  if Omr.Frames.count grid (Nx.dim 0 x) = 0 then
+  if Alda.Frames.count grid (Nx.dim 0 x) = 0 then
     Nx.zeros_at at Nx.float32 [| 0; n_mels |]
   else
     let win =
-      Nx.place at (Omr.Window.hann Nx.float32 Omr.Window.Periodic window)
+      Nx.place at (Alda.Window.hann Nx.float32 Alda.Window.Periodic window)
     in
-    let z = Omr.stft Nx.complex64 grid ~win x in
+    let z = Alda.stft Nx.complex64 grid ~win x in
     let power =
       Nx.add
         (Nx.square (Nx.real Nx.float32 z))

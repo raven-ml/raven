@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module F = Omr.Frames
+module F = Alda.Frames
 
 (* torch.stft's framing and Kaldi's, from golden/frames.npz *)
 let golden = lazy (Nx_io.load_npz "golden/frames.npz")
@@ -85,7 +85,7 @@ let kaldi_frames =
 type layout = Mono | Lead | Channels
 
 type case = {
-  edge : Omr.edge;
+  edge : Alda.edge;
   lo : int;
   hi : int;
   window : int;
@@ -119,14 +119,14 @@ let pp_case ppf c =
     | Channels -> "[n; 3]")
     c.seed
 
-let name : Omr.edge -> string = function
+let name : Alda.edge -> string = function
   | `Zero -> "Zero"
   | `Replicate -> "Replicate"
   | `Symmetric_whole -> "Symmetric_whole"
   | `Symmetric_half -> "Symmetric_half"
   | `Antisymmetric_whole -> "Antisymmetric_whole"
 
-let edges : Omr.edge list =
+let edges : Alda.edge list =
   [ `Zero; `Replicate; `Symmetric_whole; `Symmetric_half; `Antisymmetric_whole ]
 
 let case =
@@ -308,7 +308,7 @@ let count_cases =
 
 (* Instants *)
 
-type centred = { sampling : Omr.Window.sampling; window : int; hop : int }
+type centred = { sampling : Alda.Window.sampling; window : int; hop : int }
 
 let pp_centred ppf c =
   Format.fprintf ppf "{%s; window %d; hop %d}"
@@ -319,7 +319,7 @@ let centred =
   let open Gen in
   with_pp pp_centred
   @@
-  let* sampling = of_list [ Omr.Window.Periodic; Omr.Window.Symmetric ] in
+  let* sampling = of_list [ Alda.Window.Periodic; Alda.Window.Symmetric ] in
   let+ window = frequency [ (1, constant 1); (5, int_range 2 40) ]
   and+ hop = int_range 1 30 in
   { sampling; window; hop }
@@ -356,7 +356,7 @@ let instants =
       in
       let ramp = Nx.init Nx.float64 [| n |] (fun i -> Float.of_int i.(0)) in
       let pos = Nx.to_array (F.frames g ramp) in
-      let win = Nx.to_array (Omr.Window.hann Nx.float64 c.sampling w) in
+      let win = Nx.to_array (Alda.Window.hann Nx.float64 c.sampling w) in
       let p = match c.sampling with Periodic -> w | Symmetric -> w - 1 in
       let shift =
         match (c.sampling, w mod 2) with
@@ -414,33 +414,33 @@ let errors =
   group "misuse"
     [
       test "window below 1" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Frames.v") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Frames.v") (fun () ->
               F.v ~edge:`Zero ~ends:(0, 0) ~window:0 ~hop:1));
       test "negative end" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Frames.v") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Frames.v") (fun () ->
               F.v ~edge:`Zero ~ends:(-1, 0) ~window:4 ~hop:1));
       test "no sample read past an end" (fun () ->
           let g = F.v ~edge:`Symmetric_whole ~ends:(1, 0) ~window:2 ~hop:1 in
-          raises_match (Exn.invalid_arg ~sub:"Omr.Frames.frames") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Frames.frames") (fun () ->
               F.frames g (Nx.zeros Nx.float32 [| 0 |])));
       test "axis outside the signal" (fun () ->
           let g = F.v ~edge:`Zero ~ends:(0, 0) ~window:2 ~hop:1 in
-          raises_match (Exn.invalid_arg ~sub:"Omr.Frames.frames") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Frames.frames") (fun () ->
               F.frames ~axis:1 g (Nx.zeros Nx.float32 [| 4 |])));
       test "chunks of other shapes" (fun () ->
           let g = F.v ~edge:`Zero ~ends:(0, 0) ~window:2 ~hop:1 in
           let s, _ = F.feed g F.start (Nx.zeros Nx.float32 [| 2; 3 |]) in
-          raises_match (Exn.invalid_arg ~sub:"Omr.Frames.feed") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Frames.feed") (fun () ->
               F.feed g s (Nx.zeros Nx.float32 [| 3; 3 |])));
       test "finish before any chunk" (fun () ->
           let g = F.v ~edge:`Zero ~ends:(0, 0) ~window:2 ~hop:1 in
-          raises_match (Exn.invalid_arg ~sub:"Omr.Frames.finish") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Frames.finish") (fun () ->
               (F.finish g F.start : (float, Nx.float32_elt, Nx.host) Nx.t)));
     ]
 
 let () =
   exit
-    (run "omr.frames"
+    (run "alda.frames"
        [
          whisper_counts;
          whisper_frames;

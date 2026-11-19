@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module R = Omr.Resample
-module K = Omr.Kernel
+module R = Alda.Resample
+module K = Alda.Kernel
 
 (* torchaudio's resample and torch's antialiased interpolate, from
    golden/resample.npz *)
@@ -53,14 +53,14 @@ let torchaudio64 =
     (fun i ->
       let key s = Printf.sprintf "ta.%d.f64.%s" i s in
       let want = entry Nx.float64 (key "y") in
-      let got = Omr.resample (ta i) (entry Nx.float64 (key "x")) in
+      let got = Alda.resample (ta i) (entry Nx.float64 (key "x")) in
       equal (array int) (Nx.shape want) (Nx.shape got);
       equal (array (float 1e-13)) (floats want) (floats got))
 
 (* [magnitudes ~by w x start count] is, for outputs [start] to [start + count -
    1] on points of the reduced ratio [by], [Σ |wᵢ| |x(i)|] over the [T] weights
-   [w] of its phase ({!Omr.Resample.weights}), the samples outside [x] zero, and
-   [T] the most weights a phase has. *)
+   [w] of its phase ({!Alda.Resample.weights}), the samples outside [x] zero,
+   and [T] the most weights a phase has. *)
 let magnitudes ~by:(l, m) w x start count =
   let n = Array.length x in
   let taps = Array.fold_left (fun t (_, w) -> Int.max t (Array.length w)) 0 w in
@@ -89,7 +89,7 @@ let within ~bound want got =
 
 let u32 = Float.ldexp 1. (-24)
 
-(* In float32 omr rounds its float64 weights once and sums [T] products, after
+(* In float32 alda rounds its float64 weights once and sums [T] products, after
    the samples were rounded to float32: within [(T + 2) u Σ |wᵢ xᵢ|] of the
    float64 result, which is torchaudio's to 1e-13. torchaudio computes its
    kernel's positions in float32, which costs it up to 2e-5 at 22.05 kHz's 320
@@ -99,7 +99,9 @@ let torchaudio32 =
     (fun i ->
       let key s = Printf.sprintf "ta.%d.%s" i s in
       let want = floats (entry Nx.float64 (key "f64.y")) in
-      let got = floats (Omr.resample (ta i) (entry Nx.float32 (key "f32.x"))) in
+      let got =
+        floats (Alda.resample (ta i) (entry Nx.float32 (key "f32.x")))
+      in
       let src, dst = rates i in
       let rec gcd a b = if b = 0 then a else gcd b (a mod b) in
       let g = gcd src dst in
@@ -129,7 +131,7 @@ let images =
       let x = entry Nx.float64 (Printf.sprintf "img.%d.x" j) in
       let want = entry Nx.float64 (Printf.sprintf "img.%d.%s.y" j mode) in
       let along axis n x =
-        Omr.resample ~axis
+        Alda.resample ~axis
           (R.v ~grid:`Cells ~edge:`Renormalise ~kernel ~by:(n, Nx.dim axis x))
           x
       in
@@ -156,7 +158,7 @@ let swr ~from =
 type case = {
   from : int;
   kernel : string;
-  edge : [ Omr.edge | `Renormalise ];
+  edge : [ Alda.edge | `Renormalise ];
   grid : [ `Points | `Cells ];
   n : int;
   split : [ `By of int | `Random ];
@@ -248,7 +250,7 @@ let stream_law =
       cover ~share:0.05 "a signal shorter than the kernel" (c.n > 0 && c.n < 40);
       let r = resampling c and x = signal c in
       let whole =
-        match Omr.resample ~axis:(axis c) r x with
+        match Alda.resample ~axis:(axis c) r x with
         | y -> y
         | exception Invalid_argument _ ->
             (* an extension of no sample *)
@@ -565,7 +567,7 @@ let swr_16k ~from x =
   Nx.div_s
     (Nx.slice
        [ Nx.R (first, first + R.count r (Nx.dim 0 x)) ]
-       (Omr.resample r e))
+       (Alda.resample r e))
     w0
 
 let swr_golden = lazy (Nx_io.load_npz "golden/swr.npz")
@@ -578,7 +580,7 @@ let swr_entry dt key =
 (* swr computes in float32: it rounds each weight, divided by phase 0's sum, to
    float32 and adds an output's [T] products in float32, then the result is a
    float32. So its output is within [(T + 1) u Σ |wᵢ xᵢ| + u |y|] of the exact
-   composition, which omr computes at float64 on the same samples. *)
+   composition, which alda computes at float64 on the same samples. *)
 let swr =
   cases "Whisper's swr call site is PyAV's" ~id:string_of_int [ 0; 1; 2 ]
     (fun i ->
@@ -866,14 +868,14 @@ let errors =
   group "misuse"
     [
       test "a ratio of zero" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Resample.v") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Resample.v") (fun () ->
               R.v ~grid:`Points ~edge:`Zero ~kernel:K.Box ~by:(0, 1)));
       test "a stop band below the pass band" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Omr.Kernel.lowpass") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Kernel.lowpass") (fun () ->
               K.lowpass ~rate:16_000. ~pass:4000. ~stop:3000. ~reject:60.));
       test "finish before a feed" (fun () ->
           let r = R.v ~grid:`Points ~edge:`Zero ~kernel:K.Box ~by:(1, 2) in
-          raises_match (Exn.invalid_arg ~sub:"Omr.Resample.finish") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Alda.Resample.finish") (fun () ->
               R.finish r
                 (R.start
                   : ((float, Nx.float32_elt, Nx.host) Nx.t, Nx.host) R.State.t)));
@@ -911,7 +913,7 @@ let phase_size =
 
 let () =
   exit
-    (run "omr.resample"
+    (run "alda.resample"
        [
          torchaudio64;
          torchaudio32;
