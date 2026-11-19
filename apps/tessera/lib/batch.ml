@@ -142,8 +142,10 @@ type 'd rows = {
   place : 'd Nx.int64_t;
   at : 'd Nx.int64_t;
 }
+[@@deriving ptree]
 
 type 'd t = { s2 : 'd rows; s1 : 'd rows; pixel : 'd Nx.int64_t }
+[@@deriving ptree]
 
 let invalid fmt =
   Printf.ksprintf (fun m -> invalid_arg ("Tessera.Batch.pack: " ^ m)) fmt
@@ -325,25 +327,6 @@ let pack shape (px : Nx.host Pixels.t) (counts : counts) ~from =
   ({ s2; s1; pixel = Flat.wrap Nx.int64 [| shape.pixels |] pixel }, next)
 
 (* Structure *)
-
-let walk_rows c r =
-  let open Nx.Ptree.Walk in
-  let tokens = field c "tokens" tensor r.tokens in
-  let log_count = field c "log_count" tensor r.log_count in
-  let start = field c "start" tensor r.start in
-  let stop = field c "stop" tensor r.stop in
-  let slot_start = field c "slot_start" tensor r.slot_start in
-  let slot_stop = field c "slot_stop" tensor r.slot_stop in
-  let place = field c "place" tensor r.place in
-  let at = field c "at" tensor r.at in
-  { tokens; log_count; start; stop; slot_start; slot_stop; place; at }
-
-let walk c b =
-  let open Nx.Ptree.Walk in
-  let s2 = field c "s2" walk_rows b.s2 in
-  let s1 = field c "s1" walk_rows b.s1 in
-  let pixel = field c "pixel" tensor b.pixel in
-  { s2; s1; pixel }
 
 module Structure = struct
   type nonrec ('a, 'd) t = 'd t

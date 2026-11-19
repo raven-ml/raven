@@ -7,24 +7,27 @@ type 'd f32 = 'd Nx.float32_t
 
 type ('a, 'd) layer = {
   attn : ('a, 'd) Kaun.Attention.t;
-  qk : ('d f32 * 'd f32) option;
-  norm1 : ('d f32, 'd) Kaun.Layer_norm.t;
+  qk : ('d Nx.float32_t * 'd Nx.float32_t) option;
+  norm1 : ('d Nx.float32_t, 'd) Kaun.Layer_norm.t;
   ffn1 : ('a, 'd) Kaun.Linear.t;
   ffn2 : ('a, 'd) Kaun.Linear.t;
-  norm2 : ('d f32, 'd) Kaun.Layer_norm.t;
+  norm2 : ('d Nx.float32_t, 'd) Kaun.Layer_norm.t;
 }
+[@@deriving ptree]
 
 type ('a, 'd) backbone = {
   embed : ('a, 'd) Kaun.Linear.t * ('a, 'd) Kaun.Linear.t;
   layers : ('a, 'd) layer list;
   pool : ('a, 'd) Kaun.Linear.t;
 }
+[@@deriving ptree]
 
 type ('a, 'd) reducer = {
   up : ('a, 'd) Kaun.Linear.t;
-  norm : ('d f32, 'd) Kaun.Layer_norm.t;
+  norm : ('d Nx.float32_t, 'd) Kaun.Layer_norm.t;
   down : ('a, 'd) Kaun.Linear.t;
 }
+[@@deriving ptree]
 
 type ('a, 'd) net =
   | Post_ln of {
@@ -35,10 +38,11 @@ type ('a, 'd) net =
   | Pre_ln of {
       s2 : ('a, 'd) backbone;
       s1 : ('a, 'd) backbone;
-      modality : 'd f32;
+      modality : 'd Nx.float32_t;
       fusion : ('a, 'd) layer list;
       reducer : ('a, 'd) reducer;
     }
+[@@deriving ptree]
 
 type 'd norm = {
   s2_mean : 'd Nx.float32_t;
@@ -46,88 +50,21 @@ type 'd norm = {
   s1_mean : 'd Nx.float32_t;
   s1_std : 'd Nx.float32_t;
 }
+[@@deriving ptree]
 
 type ('a, 'd) t = {
   net : ('a, 'd) net;
-  heads : int;
+  heads : int; [@ptree.int]
   norm : 'd norm;
-  prefixes : int list;
+  prefixes : int list; [@ptree.skip]
 }
-
-(* Structure *)
-
-(* Norms' parameters are fixed float32 arrays: a cast keeps them. *)
-let norm c n = Nx.Ptree.Walk.(under Kaun.Layer_norm.walk tensor) c n
-
-let walk_layer c l =
-  let open Nx.Ptree.Walk in
-  let attn = field c "attn" Kaun.Attention.walk l.attn in
-  let pair c (q, k) =
-    let q = index c 0 tensor q in
-    let k = index c 1 tensor k in
-    (q, k)
-  in
-  let qk = field c "qk" (option pair) l.qk in
-  let norm1 = field c "norm1" norm l.norm1 in
-  let ffn1 = field c "ffn1" Kaun.Linear.walk l.ffn1 in
-  let ffn2 = field c "ffn2" Kaun.Linear.walk l.ffn2 in
-  let norm2 = field c "norm2" norm l.norm2 in
-  { attn; qk; norm1; ffn1; ffn2; norm2 }
-
-let walk_backbone c b =
-  let open Nx.Ptree.Walk in
-  let e1, e2 = b.embed in
-  let e1 = field c "embed1" Kaun.Linear.walk e1 in
-  let e2 = field c "embed2" Kaun.Linear.walk e2 in
-  let layers = field c "layers" (list walk_layer) b.layers in
-  let pool = field c "pool" Kaun.Linear.walk b.pool in
-  { embed = (e1, e2); layers; pool }
-
-let walk_reducer c r =
-  let open Nx.Ptree.Walk in
-  let up = field c "up" Kaun.Linear.walk r.up in
-  let norm = field c "norm" norm r.norm in
-  let down = field c "down" Kaun.Linear.walk r.down in
-  { up; norm; down }
-
-let walk_net c =
-  let open Nx.Ptree.Walk in
-  function
-  | Post_ln { s2; s1; reducer } ->
-      case c "post_ln";
-      let s2 = field c "s2" walk_backbone s2 in
-      let s1 = field c "s1" walk_backbone s1 in
-      let reducer = field c "reducer" walk_reducer reducer in
-      Post_ln { s2; s1; reducer }
-  | Pre_ln { s2; s1; modality; fusion; reducer } ->
-      case c "pre_ln";
-      let s2 = field c "s2" walk_backbone s2 in
-      let s1 = field c "s1" walk_backbone s1 in
-      let modality = field c "modality" tensor modality in
-      let fusion = field c "fusion" (list walk_layer) fusion in
-      let reducer = field c "reducer" walk_reducer reducer in
-      Pre_ln { s2; s1; modality; fusion; reducer }
-
-let walk_norm c n =
-  let open Nx.Ptree.Walk in
-  let s2_mean = field c "s2_mean" tensor n.s2_mean in
-  let s2_std = field c "s2_std" tensor n.s2_std in
-  let s1_mean = field c "s1_mean" tensor n.s1_mean in
-  let s1_std = field c "s1_std" tensor n.s1_std in
-  { s2_mean; s2_std; s1_mean; s1_std }
+[@@deriving ptree]
 
 module Net = struct
   type nonrec ('a, 'd) t = ('a, 'd) net
 
   let walk = walk_net
 end
-
-let walk c m =
-  let open Nx.Ptree.Walk in
-  let net = field c "net" walk_net m.net in
-  let heads = field c "heads" int m.heads in
-  let norm = field c "norm" walk_norm m.norm in
-  { net; heads; norm; prefixes = m.prefixes }
 
 let reducer_of = function
   | Post_ln { reducer; _ } | Pre_ln { reducer; _ } -> reducer

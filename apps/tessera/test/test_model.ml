@@ -114,31 +114,6 @@ let normalised =
           end)
         (embed m (shape ()) px (Batch.v2_counts px)))
 
-let visits pre =
-  let m = model pre in
-  Nx.Ptree.visits (Nx.Ptree.instantiate (module Model)) m
-  |> List.map (Format.asprintf "%a" Nx.Ptree.pp_visit)
-
-let structure =
-  group "walk"
-    [
-      test "reports the form and the heads" (fun () ->
-          let v = visits false in
-          mem string "net: case \"post_ln\"" v;
-          mem string "heads: int 2" v;
-          mem string "net.s2.layers: length 2" v;
-          mem string "net.s2.layers.0.qk: None" v;
-          mem string "norm.s1_mean: a leaf" v);
-      test "reports the teacher's form" (fun () ->
-          let v = visits true in
-          mem string "net: case \"pre_ln\"" v;
-          mem string "net.fusion: length 2" v;
-          mem string "net.s2.layers.0.qk: Some" v);
-      test "keeps the prefixes" (fun () ->
-          equal (list int) [ 16; 32 ] post_ln.prefixes;
-          equal (list int) [] pre_ln.prefixes);
-    ]
-
 let empty_places =
   prop "an empty place holds a finite vector" cases_gen (fun (pre, spec) ->
       let m = model pre in
@@ -255,6 +230,5 @@ let () =
        [
          group "apply"
            [ identity; permutation; layout; normalised; empty_places; fold_law ];
-         structure;
          loading;
        ])

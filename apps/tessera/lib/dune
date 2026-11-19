@@ -20,4 +20,6 @@
   jord.safe
   jsont
   jsont.bytesrw
-  unix))
+  unix)
+ (preprocess
+  (pps ppx_ptree)))
