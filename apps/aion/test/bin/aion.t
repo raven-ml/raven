@@ -132,6 +132,38 @@ So a seed gives the same draws, and another seed others.
   $ ./npz.exe equal g.npz g8.npz tokens
   tokens differ in 6 of 6 values
 
+--device cpu-jit runs the transformer and the codecs compiled on the host,
+each batch padded to --batch rows. Compiled sums may add their terms in
+another order: test_transformer holds the compiled transformer within 2τŝ
+of the eager one by the narrow network's rounding ensemble, which is at most
+1.5e-5 of an object's largest encoding or logit there. So embeddings, means
+of the encoding, and probabilities, whose softmax takes the logits'
+differences, agree within 2e-5 of their largest value, and these draws
+exactly, none of their uniforms falling that close to a boundary between
+two tokens. Row 2 of each run has no partner, or no present input, so a
+batch keeps fewer objects than it reads.
+
+  $ aion embed --legacysurvey $ls --gaia $gaia --device cpu-jit --out ej.npz
+  embed: 2 objects; of rows 0:3, 1 without a partner in every source, 0 without a present input
+  $ ./npz.exe same embedding e.npz 0 ej.npz 0 2e-5
+  equal within 2e-5
+  $ ./npz.exe same embedding e.npz 1 ej.npz 1 2e-5
+  equal within 2e-5
+  $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --device cpu-jit --out zj.npz > /dev/null
+  $ ./npz.exe same p zg.npz 0 zj.npz 0 2e-5
+  equal within 2e-5
+  $ ./npz.exe same p zg.npz 2 zj.npz 2 2e-5
+  equal within 2e-5
+  $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --device cpu-jit --batch 2 --out z2.npz > /dev/null
+  $ ./npz.exe same p zg.npz 2 z2.npz 2 2e-5
+  equal within 2e-5
+  $ aion generate --gaia $gaia --rows 0:2 --target tok_z --steps 1 --draws 3 --seed 7 --device cpu-jit --out gj.npz > /dev/null
+  $ ./npz.exe equal g.npz gj.npz tokens
+  tokens equal
+  $ aion embed --gaia $gaia --device vulkan --out x.npz
+  aion: --device vulkan: "vulkan" names no device: a name is KIND or KIND:N, where KIND is one of CPU, METAL, CUDA, NV, AMD, NV-PCI, AMD-PCI, in any case, and N a number with no leading zero
+  [2]
+
 A one-token target drawn in one step follows the posterior: the frequencies
 of 2000 draws of each object's redshift token agree with posterior's p, by
 Pearson's test at its 0.999 quantile. Redshift's class 1024 is drawn, and

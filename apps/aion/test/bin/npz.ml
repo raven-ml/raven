@@ -9,8 +9,9 @@
    int64 entry's values, a line per vector of its last axis; [equal F G NAME]
    whether the int64 entries NAME of F and G are equal; [sums F] whether each
    object's probabilities over each token's classes, p and p_1024 where there
-   is one, sum to 1 within 1e-6; [same NAME F I G J] whether row I of F's entry
-   NAME equals row J of G's within 1e-5 of its largest magnitude; [upper F
+   is one, sum to 1 within 1e-6; [same NAME F I G J [TOL]] whether row I of
+   F's entry NAME equals row J of G's within TOL (1e-5 by default) of its
+   largest magnitude; [upper F
    CACHE KEY] whether F's upper is, for each class k of each channel i, edge k
    of codebook i in the Hub cache CACHE, through the inverse of KEY's transform
    (tok_z's the identity, an XP spectrum's sinh twice), within 1e-6 relative;
@@ -134,13 +135,15 @@ let () =
       if worst <= 1e-6 then
         print_endline "each object's probabilities sum to 1 within 1e-6"
       else Printf.printf "an object's probabilities sum to 1 + %g\n" worst
-  | [ "same"; name; f; i; g; j ] ->
+  | "same" :: name :: f :: i :: g :: j :: tol ->
+      let tol = match tol with [ t ] -> t | _ -> "1e-5" in
       let x = row (get Nx.float32 name (load f)) (int_of_string i)
       and y = row (get Nx.float32 name (load g)) (int_of_string j) in
       let big = Array.fold_left (fun m v -> Float.max m (Float.abs v)) 0. x in
       let d = ref 0. in
       Array.iteri (fun k v -> d := Float.max !d (Float.abs (v -. y.(k)))) x;
-      if !d <= 1e-5 *. big then print_endline "equal within 1e-5"
+      if !d <= float_of_string tol *. big then
+        Printf.printf "equal within %s\n" tol
       else Printf.printf "differ by %g of %g\n" !d big
   | [ "upper"; f; cache; key ] -> (
       let want = Array.concat (Array.to_list (codebooks cache key)) in
