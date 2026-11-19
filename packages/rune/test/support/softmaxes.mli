@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** {!Nx.softmax} compiled on a set's first device, against its definition
-    as {!Nx_softmax_support} computes it. *)
+(** {!Nx.softmax} and {!Nx.log_softmax} compiled on a set's first device,
+    against their definitions as {!Nx_softmax_support} computes them. *)
 
 type case
 (** The type for a case: a dtype, lanes along the last axis and a scale. *)
@@ -16,14 +16,22 @@ val gen : case Windtrap.Gen.t
     or a [+inf] in every other lane; scales of [1.] and others. *)
 
 val law :
-  (module Nx.Devices) -> f64:bool -> chain:bool -> exp_ulps:int -> case -> unit
-(** [law s ~f64 ~chain ~exp_ulps c] checks that [Nx.softmax] of [c],
-    compiled on [s]'s first device, is within rune.mli's row for it of the
-    reference, as {!Nx_softmax_support.check} checks it, [E] being
+  (module Nx.Devices) ->
+  f64:bool ->
+  chain:bool ->
+  exp_ulps:int ->
+  ?log_ulps:int ->
+  case ->
+  unit
+(** [law s ~f64 ~chain ~exp_ulps ~log_ulps c] checks that [Nx.softmax] of
+    [c], compiled on [s]'s first device, is within rune.mli's row for it of
+    the reference, as {!Nx_softmax_support.check} checks it, [E] being
     [exp_ulps], [β] being [β(n)], or the larger of [β(n)] and [n - 1] with
     [chain], for a device where a sum may keep one running sum, and a
-    narrow dtype's rounding adding its unit roundoff. An element whose
-    [scale x] is [-inf] in a lane of finite greatest is [+0.], and a lane
+    narrow dtype's rounding adding its unit roundoff. With [log_ulps], [L]
+    in [Nx.log_softmax]'s row, it checks [Nx.log_softmax] of [c] so too, as
+    {!Nx_softmax_support.check_log} checks it. An element whose [scale x] is
+    [-inf] in a lane of finite greatest is [+0.] ([-inf]), and a lane
     holding a NaN or of an infinite greatest is NaN. Without [f64] it
     discards a [float64] case, for a device whose kernels lack [float64].
     It covers lanes of one element, lanes far from [0.], [-inf] elements,

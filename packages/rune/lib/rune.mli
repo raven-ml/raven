@@ -253,8 +253,8 @@
     function nx composes of others takes these rules at its parts' kinks;
     [Nx.softplus], smooth, has its derivative [Nx.sigmoid] everywhere, [1/2]
     at [0.]. [Nx.softmax] and [Nx.log_softmax] shift each lane by its
-    greatest element, on which their values do not depend, and pass no
-    tangent through it. [Nx.Rng.dirichlet]'s derivative in its
+    element of greatest [scale x], on which their values do not depend, and
+    pass no tangent through it. [Nx.Rng.dirichlet]'s derivative in its
     concentrations is that of its gamma draws divided by their row's sum,
     so a row's tangents sum to zero.
 
@@ -1657,7 +1657,7 @@ val jit :
     {!Nx.rsqrt}, {!Nx.hypot} and the special functions
     ({!Nx.section-special}), which nx composes from these and exact
     functions, are exact on a faithful device. Another function nx composes
-    from these, such as {!Nx.log_softmax}, computes as nx composes it.
+    from these computes as nx composes it.
 
     {b Complex functions.} {!Nx.mul}, {!Nx.div}, {!Nx.recip}, {!Nx.sqrt},
     {!Nx.sign}, {!Nx.log}, {!Nx.log2}, {!Nx.exp}, {!Nx.exp2}, {!Nx.pow}, the
@@ -1723,6 +1723,7 @@ val jit :
       Nx.standardize y     (F / 2s + 11u/2) |y| + (β + 1) u A / √s
       Nx.rms_norm          relative k u / (1 - 4 k u)
       Nx.softmax           relative (β + |d| + ln n + 4E + 3) u
+      Nx.log_softmax r     (β + |d| + (2L + 2) ln n + 2E + 1) u + u|r|
     v}
 
     A cumulative output's [n] counts the terms up to it, a contraction's its
@@ -1736,8 +1737,8 @@ val jit :
     [init]. {!Nx.logcumsumexp}'s bound needs [n] exact in the
     accumulator, and {!Nx.var}'s [V] precedes its [ddof] scale, which rounds
     once more. {!Nx.standardize}'s [F] is {!Nx.var}'s bound, and its [s], [A]
-    and affine terms, {!Nx.rms_norm}'s [k], and {!Nx.softmax}'s [d], [n] and
-    [scale] term are as their docs state. The
+    and affine terms, {!Nx.rms_norm}'s [k], and the [d], [n] and [scale] term
+    of {!Nx.softmax} and {!Nx.log_softmax} are as their docs state. The
     compiler adds at most 256 terms of a float sum, a tensor core's products
     counted, into one running sum before adding that sum into another, in
     order. Two kinds of sum keep one running sum: a sum over a range whose
@@ -1751,7 +1752,8 @@ val jit :
     computation adds them ({!Nx.section-reductions}): the bounds of
     {!Nx.sum}, a contraction, {!Nx.var} and {!Nx.standardize} hold with [m]
     in place of [n] and [K] and with [t - 1] added to [β], and
-    {!Nx.softmax}'s with [β(m) + t - 1] in place of [β]. {!Nx.logsumexp}
+    {!Nx.softmax}'s and {!Nx.log_softmax}'s with [β(m) + t - 1] in place of
+    [β]. {!Nx.logsumexp}
     over cut axes is within [ε + ε{_t}], as {!Nx.section-reductions}
     states, [ε] the largest of its row's bounds for the windows' terms and
     [ε{_t}] its row's bound for [t] terms. A product asked for its sum

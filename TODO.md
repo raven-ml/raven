@@ -123,11 +123,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Two error bounds still measure from the exact value: nx.mli's
   `truncated_normal` ("ulps of the exact solution") and rune.mli's
   derivative budgets; restate them from the correctly rounded value
-- `Nx.softmax`'s bound pays `2u (|y| + A)` under a scale not a power of
-  two, vacuous at float32 far from 0: compute `d` as `scale (x - e)`, `e`
-  the lane's max of `x` (min for a negative scale)
-- `Nx.log_softmax` states no error bound; its suite holds it to an ad hoc
-  tolerance
 - rune cannot check data inside compiled code (a token range, a length
   past its row), so a model that validates its inputs, such as AION's
   codecs, checks on the host and its encode cannot run under `Rune.jit`

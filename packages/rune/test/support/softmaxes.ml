@@ -80,7 +80,7 @@ let gen =
 
 (* The law *)
 
-let law (module S : Nx.Devices) ~f64 ~chain ~exp_ulps c =
+let law (module S : Nx.Devices) ~f64 ~chain ~exp_ulps ?log_ulps c =
   let (Dt (dt, u, ud, normal)) = c.dt in
   if Nx.Dtype.equal dt Nx.float64 then assume f64;
   let r = c.s.(0) and k = c.s.(1) in
@@ -92,8 +92,17 @@ let law (module S : Nx.Devices) ~f64 ~chain ~exp_ulps c =
   let x = Nx.cast dt (Nx.create Nx.float64 c.s c.xs) in
   let xs = Nx.to_array (Nx.cast Nx.float64 x) in
   let scale = c.scale in
-  let y = Rune.jit' (fun x -> Nx.softmax ~scale x) (Nx.place S.on x) in
-  let got = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on y)) in
+  let run f =
+    let y = Rune.jit' f (Nx.place S.on x) in
+    Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on y))
+  in
+  let got = run (fun x -> Nx.softmax ~scale x) in
+  (* [log_ulps] and the compiled [log_softmax]. *)
+  let log =
+    Option.map
+      (fun lu -> (lu, run (fun x -> Nx.log_softmax ~scale x)))
+      log_ulps
+  in
   let b = if chain then Stdlib.max (Sm.beta k) (k - 1) else Sm.beta k in
   for lane = 0 to r - 1 do
     let i0 = lane * k in
@@ -103,11 +112,20 @@ let law (module S : Nx.Devices) ~f64 ~chain ~exp_ulps c =
     | None ->
         for i = i0 to i0 + k - 1 do
           if not (Float.is_nan got.(i)) then
-            failf "softmax at %d of a NaN lane: %h" i got.(i)
+            failf "softmax at %d of a NaN lane: %h" i got.(i);
+          Option.iter
+            (fun (_, lsm) ->
+              if not (Float.is_nan lsm.(i)) then
+                failf "log_softmax at %d of a NaN lane: %h" i lsm.(i))
+            log
         done
-    | Some l ->
+    | Some l -> (
         Sm.covers ~normal l;
-        Sm.check u ~narrow:ud ~normal ~exp_ulps ~b ~n:k ~scale l
-          ~at:(fun j -> i0 + j)
-          got
+        let at j = i0 + j in
+        Sm.check u ~narrow:ud ~normal ~exp_ulps ~b ~n:k ~scale l ~at got;
+        match log with
+        | None -> ()
+        | Some (log_ulps, lsm) ->
+            Sm.check_log u ~narrow:ud ~exp_ulps ~log_ulps ~b ~n:k ~scale l ~at
+              lsm)
   done

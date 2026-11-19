@@ -500,6 +500,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit`'s Numerics table states `Nx.log_softmax`'s bound,
+  `(β + |d| + (2L + 2) ln n + 2E + 1) u + u|r|`, as it does `Nx.softmax`'s.
 - Eagerly, `Nx.attention`'s derivative under `~lengths` computes each lead
   index over its keys before its length, rounded up to a power of two,
   where it computed every padded pair. It reads the lengths on the host.
@@ -3410,6 +3412,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.log_softmax` states its error bound, `(b + |d| + 6 ln n + 5) u + u |r|`
+  for an element `r`, in `Nx.softmax`'s terms.
+- `Nx.softmax` and `Nx.log_softmax` take each exponent as `scale (x - e)`,
+  `e` the lane's element of greatest `scale x`, so inputs far from 0 keep
+  their digits under a scale that is not a power of two.
 - The special functions' absolute error bounds, such as `Nx.lbeta`'s `512ε`,
   are measured from the exact value rounded to the dtype, as their bounds in
   ulps are; narrow floats' from the exact value rounded to `float32`.
@@ -5972,6 +5979,8 @@ New pure-OCaml tensor backend that can be swapped in at link time via Dune virtu
 
 ### Rune
 
+- `Rune.jit`'s Numerics table states `Nx.log_softmax`'s bound,
+  `(β + |d| + (2L + 2) ln n + 2E + 1) u + u|r|`, as it does `Nx.softmax`'s.
 - Unify tensor types: `Rune.t` is now `Nx.t`. Rune no longer re-exports the Nx frontend — it is a pure transformation library exporting only `grad`, `grads`, `value_and_grad`, `vjp`, `jvp`, `vmap`, `no_grad`, `detach`, and debugging/gradcheck utilities. All tensor creation and manipulation uses `Nx` directly.
 - Remove `Tensor` module and `Nx_rune` backend. Effect definitions moved to the new `nx.effect` library shared with Nx.
 - Remove `Rune.to_nx` / `Rune.of_nx` (no longer needed — types are identical).
@@ -6129,6 +6138,8 @@ We're closing 8 user-reported issues or feature requests and are totalling 30 co
 
 ### Rune
 
+- `Rune.jit`'s Numerics table states `Nx.log_softmax`'s bound,
+  `(β + |d| + (2L + 2) ln n + 2E + 1) u + u|r|`, as it does `Nx.softmax`'s.
 - Add `Rune.no_grad` and `Rune.detach` to mirror JAX stop-gradient semantics
 - Improve gradient performance slightly by replace the reverse-mode tape's linear PhysicalTbl with an identity hash table
 - Fix `Rune.Rng.shuffle` flattening outputs for multi-dimensional tensors; the

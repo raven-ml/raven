@@ -3176,25 +3176,44 @@ let masked c xs = match c with None -> xs | Some c -> xs @ [ Value.Any c ]
 let outside c k w v q =
   match c with None -> q | Some _ -> E.(where (input k D.Bool) q (const w v))
 
-(* [x] scaled in its wide format [w], [scale x], and the greatest [scale x]
-   each lane holds [m], broadcast to [x]'s shape: of every element, or of
-   those the mask [c] holds, read as operand 1, [-∞] in a lane that holds
-   none. [m] is taken of [x] {!untracked}: the results do not depend on it,
-   so the terms [m]'s derivative adds cancel, and its tangent, a mask of the
-   ties over every element, is never computed. *)
+(* [scale] as an orientation [x] takes exactly and a magnitude [k] that
+   multiplies the difference from the lane's extreme: [x] and [scale] for a
+   positive scale, [-x] and [-scale] for a negative one, and [scale x] and
+   [1.] for a zero or a NaN, which keeps [scale x]'s NaN where [x] is
+   infinite. *)
+let orient w scale x =
+  if scale > 0. then x
+  else if scale < 0. then E.neg x
+  else E.(x * const w scale)
+
+let magnitude scale =
+  if scale > 0. then scale else if scale < 0. then -.scale else 1.
+
+(* [d = scale (x - e)] in [x]'s wide format [w], [e] the lane's element of
+   greatest [scale x], for [x] read as operand 0 and [m] as operand 1, and
+   [m], broadcast to [x]'s shape: the greatest oriented [x] of every element,
+   or of those the mask [c] holds, read as operand 1, [-∞] in a lane that
+   holds none. [d] is [k (orient x - m)]: the orientation is exact and the
+   difference rounds once, so under a power of two [d] rounds once.
+   [scale x - m] would round [scale x] first, an error of [u |scale x|], far
+   more than [u |d|] far from [0].
+
+   [m] is taken of [x] {!untracked}: the results do not depend on it, so the
+   terms [m]'s derivative adds cancel, and its tangent, a mask of the ties
+   over every element, is never computed. *)
 let shift (type s d w) ~by (w : (float, w) D.t) s axes ~scale ?c
     (x : (float, s, d) t) =
-  let scaled =
-    let x = at w (operand 0 x) in
-    if scale = 1. then x else E.(x * const w scale)
-  in
+  let oriented = orient w scale (at w (operand 0 x)) in
   let m, () =
     reduce_by ~by s axes
       (masked c [ Value.Any (untracked ~by x) ])
       Value.[ Monoid (Max, 0, w) ]
-      (outside c 1 w Float.neg_infinity scaled)
+      (outside c 1 w Float.neg_infinity oriented)
   in
-  (scaled, Eval.broadcast ~by s (kept ~by ~keepdims:true s axes m))
+  let k = magnitude scale in
+  let diff = E.(oriented - operand 1 m) in
+  let d = if k = 1. then diff else E.(diff * const w k) in
+  (d, Eval.broadcast ~by s (kept ~by ~keepdims:true s axes m))
 
 (* [where], read by [by], broadcast to [s]. *)
 let mask_of ~by s where =
@@ -3202,29 +3221,29 @@ let mask_of ~by s where =
   | None -> None
   | Some c -> Some (Eval.broadcast ~by s (Donate.read ~by c))
 
-(* [e / Σ e] for [e = exp (scale x - m)], computed in [x]'s wide format and
-   rounded once. At float32 and float64, the wide format itself, each [e] is
-   taken once and stored, the sum read from it, and the quotient written over
-   it. A narrower float's result could not take that memory: the sum takes
-   its exponentials in the reduction and the quotient takes them again, so
-   that nothing of [x]'s size is held but the result.
+(* [exp d / Σ exp d] for [d = scale (x - e)] as {!shift} takes it, computed
+   in [x]'s wide format and rounded once. At float32 and float64, the wide
+   format itself, each [exp d] is taken once and stored, the sum read from
+   it, and the quotient written over it. A narrower float's result could
+   not take that memory: the sum takes its exponentials in the reduction and
+   the quotient takes them again, so that nothing of [x]'s size is held but
+   the result.
 
-   Under [where], at float32 and float64, the lanes are taken of [scale x]
-   where the mask holds and [-∞] elsewhere, stored over [x]'s size once and
-   then written over by [e]: [exp -∞] is [0], with a zero tangent, never an
-   infinite one. A narrower float reads the mask in each pass instead. The
-   quotient is [0] outside the mask, also in a lane that holds a NaN or
-   none.
+   Under [where], at float32 and float64, the lanes are taken of oriented
+   [x] where the mask holds and [-∞] elsewhere, stored over [x]'s size once
+   and then written over by [exp d]: [exp -∞] is [0], with a zero tangent,
+   never an infinite one. A narrower float reads the mask in each pass
+   instead. The quotient is [0] outside the mask, also in a lane that holds
+   a NaN or none.
 
    The bound nx.mli states adds up so: [d] rounds once, an error [exp]
    carries as [u |d|]; [exp] adds [5u], 2 ulps from the exact value rounded
    and that rounding; the terms' errors weigh at most [(ln n + 5) u] in the
    sum, since [Σ p |d| = H(p) - ln Σ exp d <= ln n] for the lane's
    probabilities [p], the greatest term being [exp 0 = 1]; the sum adds
-   [b u] and the quotient [u]. A scale rounds [scale x] by at most [2u]
-   relatively, the scale's rounding into the format and the product's, an
-   error the element's exponent carries as [2u |y|] and the sum as at most
-   [2u A]; a power of two rounds nothing. *)
+   [b u] and the quotient [u]. A scale whose magnitude is not a power of
+   two rounds [d] twice more, into the format and in the product, so the
+   element's exponent carries [3u |d|] and the sum at most [3u ln n]. *)
 let softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
     (x : (float, s, d) t) : (float, s, d) t =
   let by = "Nx.softmax" in
@@ -3238,25 +3257,22 @@ let softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
     let lanes y = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes y) in
     match D.equal_witness w dt with
     | Some Type.Equal ->
-        (* The lanes' operand: [x], or under the mask, stored, its elements
-           outside it [-∞]. *)
+        (* The lanes' operand: [x], or under the mask, stored, oriented, its
+           elements outside it [-∞]. *)
         let x =
           match c with
           | None -> x
           | Some c ->
-              let scaled =
-                if scale = 1. then operand 0 x
-                else E.(operand 0 x * const w scale)
-              in
               elementwise ~by w [ Any x; Any c ]
-                E.(where (input 1 D.Bool) scaled (const w Float.neg_infinity))
+                E.(
+                  where (input 1 D.Bool)
+                    (orient w scale (operand 0 x))
+                    (const w Float.neg_infinity))
         in
-        let scale = match c with None -> scale | Some _ -> 1. in
-        let scaled, m = shift ~by w s axes ~scale x in
+        let scale = match c with None -> scale | Some _ -> magnitude scale in
+        let d, m = shift ~by w s axes ~scale x in
         let x = match c with None -> x | Some _ -> Donate.donate ~by x in
-        let e =
-          elementwise ~by w [ Any x; Any m ] E.(exp (scaled - operand 1 m))
-        in
+        let e = elementwise ~by w [ Any x; Any m ] (E.exp d) in
         let sum, () =
           reduce_by ~by s axes [ Any e ] Value.[ Monoid (Sum, 0, w) ]
             (operand 0 e)
@@ -3266,10 +3282,10 @@ let softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
           (masked c [ Value.Any (Donate.donate ~by e); Any sum ])
           (outside c 2 w 0. E.(operand 0 e / operand 1 sum))
     | None ->
-        let scaled, m = shift ~by w s axes ~scale ?c x in
-        (* [exp (scale x - m)], [0] outside the mask, read as operand 2 in
-           the sum and 3 in the quotient. *)
-        let d = E.(scaled - operand 1 m) and lowest = Float.neg_infinity in
+        let d, m = shift ~by w s axes ~scale ?c x in
+        (* [exp d], [0] outside the mask, read as operand 2 in the sum and 3
+           in the quotient. *)
+        let lowest = Float.neg_infinity in
         let sum, () =
           reduce_by ~by s axes
             (masked c [ Value.Any x; Any m ])
@@ -3282,11 +3298,19 @@ let softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
           (masked c [ Value.Any x; Any m; Any sum ])
           (E.cast dt (outside c 3 w 0. E.(e / operand 2 sum)))
 
-(* [(scale x - m) - log Σ exp (scale x - m)], the sum's exponentials taken in
-   the reduction, computed in [x]'s wide format and rounded once. Under
-   [where], [m] and the sum are the held elements', each [scale x - m]
-   outside the mask is [-∞] in the sum, so that its tangent is zero, and the
-   result is [-∞] there, also in a lane that holds a NaN or none. *)
+(* [d - log Σ exp d] for [d = scale (x - e)] as {!shift} takes it, the
+   sum's exponentials taken in the reduction, computed in [x]'s wide format
+   and rounded once. Under [where], [m] and the sum are the held elements',
+   each [d] outside the mask is [-∞] in the sum, so that its tangent is
+   zero, and the result is [-∞] there, also in a lane that holds a NaN or
+   none.
+
+   The bound nx.mli states adds up as {!softmax}'s: [d] carries [u |d|], or
+   [3u |d|] under a scale whose magnitude is not a power of two, and the
+   sum [s] a relative [(b + ln n + 2E + 1) u], or [(b + 3 ln n + 2E + 1) u],
+   [E] {!exp}'s 2 ulps, which [log s] carries as an absolute error; [log]
+   adds [(2L + 1) u log s <= (2L + 1) u ln n], [L] its ulps, since
+   [1 <= s <= n], and the difference [u |r|] for the result [r]. *)
 let log_softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
     (x : (float, s, d) t) : (float, s, d) t =
   let by = "Nx.log_softmax" in
@@ -3297,9 +3321,8 @@ let log_softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
   if numel x = 0 then x
   else
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-    let scaled, m = shift ~by w s axes ~scale ?c x in
+    let shifted, m = shift ~by w s axes ~scale ?c x in
     let lowest = Float.neg_infinity in
-    let shifted = E.(scaled - operand 1 m) in
     let sum, () =
       reduce_by ~by s axes
         (masked c [ Value.Any x; Any m ])

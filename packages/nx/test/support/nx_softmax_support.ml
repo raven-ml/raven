@@ -29,9 +29,9 @@ let dd_div (ah, al) (bh, bl) =
 
 type lane = {
   p : (float * float) array;
-  y : float array;
+  r : (float * float) array;
   d : float array;
-  a : float;
+  log_sum : float;
 }
 
 let ref_err = 0x1p-51
@@ -64,16 +64,21 @@ let lane ~scale xs =
           if v = 0. then (0., 0.) else fast_two_sum v (v *. dl))
         d
     in
-    let sum = Array.fold_left dd_add (0., 0.) e in
-    let finite a (h, _) =
-      if Float.is_finite h then Float.max a (Float.abs h) else a
+    let ((sh, sl) as sum) = Array.fold_left dd_add (0., 0.) e in
+    (* [log (sh + sl)] is [log sh + sl / sh] but for a term of
+       [(sl / sh)²], below [2{^-106}]. *)
+    let lh = Float.log sh in
+    let log_sum = fast_two_sum lh (sl /. sh) in
+    let minus (dh, dl) =
+      if dh = Float.neg_infinity then (dh, 0.)
+      else dd_add (dh, dl) (-.fst log_sum, -.snd log_sum)
     in
     Some
       {
         p = Array.map (fun e -> dd_div e sum) e;
-        y = Array.map fst t;
+        r = Array.map minus d;
         d = Array.map fst d;
-        a = Array.fold_left finite 0. t;
+        log_sum = lh;
       }
 
 let beta n = (((5 * Stdlib.min n 256) + 3) / 4) + ((n + 127) / 128)
@@ -83,18 +88,29 @@ let beta n = (((5 * Stdlib.min n 256) + 3) / 4) + ((n + 127) / 128)
 (* A power of two rounds to any float format and multiplies exactly. *)
 let power_of_two s = fst (Float.frexp (Float.abs s)) = 0.5
 
+(* The factor the error of [d] takes: [d] rounds once, and a scale
+   whose magnitude is not a power of two twice more. *)
+let d_factor scale = if power_of_two scale then 1. else 3.
+
+let ln n = Float.log (Float.of_int n)
+
 let bound u ~exp_ulps ~b ~n ~scale l j =
   let k =
     Float.of_int (b + (4 * exp_ulps) + 3)
-    +. Float.abs l.d.(j)
-    +. Float.log (Float.of_int n)
-  in
-  let k =
-    if power_of_two scale then k
-    else k +. (2. *. (Float.abs l.y.(j) +. l.a))
+    +. (d_factor scale *. (Float.abs l.d.(j) +. ln n))
   in
   let ku = k *. u in
   if ku >= 1. then Float.infinity else ku /. (1. -. ku)
+
+let log_bound u ~exp_ulps ~log_ulps ~b ~n ~scale l j =
+  let k =
+    Float.of_int (b + (2 * exp_ulps) + 1)
+    +. (d_factor scale *. (Float.abs l.d.(j) +. ln n))
+    +. (Float.of_int ((2 * log_ulps) + 1) *. ln n)
+  in
+  let ku = k *. u in
+  if ku >= 1. then Float.infinity
+  else (ku +. (u *. Float.abs (fst l.r.(j)))) /. (1. -. ku)
 
 let same a b = Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
 
@@ -103,7 +119,7 @@ let check u ?(narrow = 0.) ~normal ~exp_ulps ~b ~n ~scale l ~at got =
     (fun j (ph, pl) ->
       let i = at j in
       let g = got.(i) in
-      if l.y.(j) = Float.neg_infinity then begin
+      if l.d.(j) = Float.neg_infinity then begin
         if not (same g 0.) then failf "softmax at %d, of -inf: %h" i g
       end
       else if ph >= normal then begin
@@ -121,9 +137,29 @@ let check u ?(narrow = 0.) ~normal ~exp_ulps ~b ~n ~scale l ~at got =
       end)
     l.p
 
+let check_log u ?(narrow = 0.) ~exp_ulps ~log_ulps ~b ~n ~scale l ~at got =
+  let ref_err = ref_err *. (1. +. Float.abs l.log_sum) in
+  Array.iteri
+    (fun j (rh, rl) ->
+      let i = at j in
+      let g = got.(i) in
+      if l.d.(j) = Float.neg_infinity then begin
+        if not (same g Float.neg_infinity) then
+          failf "log_softmax at %d, of -inf: %h" i g
+      end
+      else
+        let bound = log_bound u ~exp_ulps ~log_ulps ~b ~n ~scale l j in
+        let err = bound +. ref_err in
+        let tol = err +. (narrow *. (Float.abs rh +. err)) in
+        let off = Float.abs (g -. rh -. rl) in
+        if not (off <= tol) then
+          failf "log_softmax at %d: %h, by definition %h, %.2f bounds" i g rh
+            (off /. tol))
+    l.r
+
 let covers ~normal l =
-  let finite j = l.y.(j) <> Float.neg_infinity in
-  let some f = Array.exists Fun.id (Array.init (Array.length l.y) f) in
+  let finite j = l.d.(j) <> Float.neg_infinity in
+  let some f = Array.exists Fun.id (Array.init (Array.length l.d) f) in
   cover "an element of -inf in a lane of finite greatest"
     (some (fun j -> not (finite j)));
   cover "an element of |d| past 40"

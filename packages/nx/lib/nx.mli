@@ -2551,18 +2551,17 @@ val softmax :
     [0.], in a lane holding a NaN too. A lane that holds none is [0.]
     throughout.
 
-    It takes [d], each element's [scale x] less the lane's greatest, then
-    [exp d], their sum as {!sum} sums, and [exp d] over the sum, each step
-    rounded once. Barring overflow and underflow, to first order in the
-    unit roundoff [u] of the format it computes in, and before a narrow
-    float's rounding, an element is within a relative
+    It takes [d = scale (x - e)], [e] the lane's element of greatest
+    [scale x], then [exp d], their sum as {!sum} sums, and [exp d] over the
+    sum, each step rounded once. Barring overflow and underflow, to first
+    order in the unit roundoff [u] of the format it computes in, and before
+    a narrow float's rounding, an element is within a relative
     [(b + |d| + ln n + 11) u] of its exact value, where [n] counts the
     elements of its lane, held or not, and [b] is [β(n)]
     ({!Nx_kernel.section-bounds}) on one device and [β(m) + t - 1] over cut
     axes, [m] and [t] as for a {!sum} ({!section-reductions}). A [scale]
-    whose magnitude is not a power of two adds [2u (|y| + A)], [y] being
-    the element's [scale x] and [A] the greatest finite [|scale x|] the
-    lane holds.
+    whose magnitude is not a power of two, rounded into the format and
+    multiplied, adds [2u (|d| + ln n)].
 
     Raises [Invalid_argument] naming itself for an axis outside [x]'s rank
     or repeated, or a [where] that does not broadcast to [x]'s shape. *)
@@ -2574,11 +2573,19 @@ val log_softmax :
   (float, 's, 'd) t ->
   (float, 's, 'd) t
 (** [log_softmax ~axes ~scale ~where x] is the logarithm of {!softmax},
-    computed as [(scale x - m) - log Σ exp (scale x - m)] for the lane's
-    greatest [m]: an entry far below [m] keeps its digits where
-    [log (softmax x)] would be [-∞]. An element outside [where], or whose
-    [scale x] is [-∞] in a lane {!softmax} does not make NaN, is [-∞]. Its
-    NaN lanes, [where] and raises are {!softmax}'s. *)
+    computed as [d - log Σ exp d] for {!softmax}'s [d]: an entry far below
+    the lane's greatest keeps its digits where [log (softmax x)] would be
+    [-∞]. An element outside [where], or whose [scale x] is [-∞] in a lane
+    {!softmax} does not make NaN, is [-∞]. Its NaN lanes, [where] and raises
+    are {!softmax}'s.
+
+    It takes [d], [exp d] and their sum as {!softmax} does, then the sum's
+    {!log} and [d] less it, each step rounded once. Barring overflow and
+    underflow, to first order in [u], and before a narrow float's rounding,
+    an element [r] is within [(b + |d| + 6 ln n + 5) u + u |r|] of its exact
+    value, [b], [n] and [u] as for {!softmax}; to first order, that error is
+    the relative error of [exp r]. A [scale] whose magnitude is not a power
+    of two adds [2u (|d| + ln n)]. *)
 
 val rms_norm :
   ?axes:int list ->

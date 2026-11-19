@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Nx's activations and its moving average: sigmoid and softplus within their
-   stated ulps of mpmath's values, softmax within its stated bound of its
-   definition, log_softmax against its definition computed in float64,
+   stated ulps of mpmath's values, softmax and log_softmax within their
+   stated bounds of their definitions,
    rms_norm against its definition computed to twice float64's digits and
    the composition its doc names, ewma against its recurrence and its
    prefix law, and the narrow floats at float32, rounded once. *)
@@ -731,15 +731,6 @@ let dd_sqrt (ah, al) =
 
 (* Softmax and log_softmax *)
 
-(* A lane of [n] values in float64: softmax by its definition, shifted by the
-   greatest scaled value, and its logarithm. *)
-let lane_softmax scale xs =
-  let ys = Array.map (fun x -> scale *. x) xs in
-  let m = Array.fold_left Float.max neg_infinity ys in
-  let sum = Array.fold_left (fun s y -> s +. Float.exp (y -. m)) 0. ys in
-  ( Array.map (fun y -> Float.exp (y -. m) /. sum) ys,
-    Array.map (fun y -> y -. m -. Float.log sum) ys )
-
 (* The lanes of [xs], of shape [s], along its last axis: positions in C order. *)
 let lanes s =
   let r = Array.length s in
@@ -800,23 +791,6 @@ let values_within bound n =
 
 module Sm = Nx_softmax_support
 
-(* log_softmax within the tolerance of its definition this suite has held
-   it to, a baseline: [scale x] and [scale x - m] round to within [u] of
-   the greatest [|scale x|]. Its doc states no bound. *)
-let check_log u ~n lx lsm lane =
-  let _, lp = lane_softmax 1. lx in
-  let big = Array.fold_left (fun b x -> Float.max b (Float.abs x)) 0. lx in
-  let tol = (Float.of_int (n + 4) +. (2. *. big)) *. u in
-  Array.iteri
-    (fun j i ->
-      if lx.(j) = neg_infinity then begin
-        if not (same lsm.(i) neg_infinity) then
-          failf "log_softmax at %d, of -inf: %h" i lsm.(i)
-      end
-      else if Float.abs (lsm.(i) -. lp.(j)) > tol *. (Float.abs lp.(j) +. 1.)
-      then failf "log_softmax at %d: %h, by definition %h" i lsm.(i) lp.(j))
-    lane
-
 type special = Plain | Neg_inf | Nan | Inf
 
 (* Lanes of one element to several blocks, of values within a few units to
@@ -875,10 +849,11 @@ let with_special special seed offset k xs =
       | Inf -> if marked then infinity else x +. offset)
     xs
 
-(* Softmax within the bound its doc states of the definition, [b] [β(k)]
-   for a lane of [k], or [β(m) + t - 1] cut into [t] windows of at most
-   [m]; [+0.] at [-∞]; NaN where the doc makes a lane NaN. [u] is [dt]'s
-   unit roundoff and [normal] its least normal float. *)
+(* Softmax and log_softmax within the bounds their docs state of their
+   definitions, [b] [β(k)] for a lane of [k], or [β(m) + t - 1] cut into
+   [t] windows of at most [m]; [+0.] and [-∞] at [-∞]; NaN where the doc
+   makes a lane NaN. [u] is [dt]'s unit roundoff and [normal] its least
+   normal float. *)
 let law_softmax (type s) (dt : (float, s) D.t) u normal
     (s, xs, offset, special, seed, cut, scale) =
   let k = s.(Array.length s - 1) in
@@ -887,6 +862,8 @@ let law_softmax (type s) (dt : (float, s) D.t) u normal
   cover "lanes cut across devices" cut;
   cover "lanes far from 0" (offset <> 0.);
   cover "a scale other than 1" (scale <> 1.);
+  cover "far from 0 under a scale not a power of two"
+    (offset <> 0. && fst (Float.frexp (Float.abs scale)) <> 0.5);
   cover "-inf elements" (special = Neg_inf);
   let xs = with_special special seed offset k xs in
   let xs = Array.map (D.of_float dt) xs in
@@ -918,15 +895,14 @@ let law_softmax (type s) (dt : (float, s) D.t) u normal
             lane
       | Some l ->
           Sm.covers ~normal l;
-          Sm.check u ~normal ~exp_ulps:2 ~b ~n:k ~scale l
-            ~at:(fun j -> lane.(j))
-            sm;
-          check_log (2. *. u) ~n:k (Array.map (fun x -> scale *. x) lx) lsm
-            lane)
+          let at j = lane.(j) in
+          Sm.check u ~normal ~exp_ulps:2 ~b ~n:k ~scale l ~at sm;
+          Sm.check_log u ~exp_ulps:2 ~log_ulps:2 ~b ~n:k ~scale l ~at lsm)
     (lanes s)
 
 (* Under [~where], each lane is the softmax of the elements it holds, by its
-   definition over those alone, within the bound its doc states, [n] counting
+   definition over those alone, within the bound its doc states, as is its
+   log_softmax, [n] counting
    every element of the lane; an element it does not hold is exactly [+0.]
    (log_softmax: [-∞]) whatever its value, NaN included, in a lane holding a
    NaN too, and a lane holding none is all [+0.] ([-∞]). A NaN held makes its
@@ -947,7 +923,8 @@ let where_case =
   let+ scale = of_list [ 1.; -0.5; 3.; 0.1 ] in
   ([| r; n |], xs, held, scale)
 
-let law_where (type s) (dt : (float, s) D.t) u normal (s, xs, held, scale) =
+let law_where (type s) (dt : (float, s) D.t) u normal
+    (s, xs, held, scale) =
   let xs = Array.map (D.of_float dt) xs in
   let x = value dt s xs in
   let where = Nx.create Nx.bool s held in
@@ -982,11 +959,9 @@ let law_where (type s) (dt : (float, s) D.t) u normal (s, xs, held, scale) =
         match Sm.lane ~scale lx with
         | None -> failf "a lane of finite elements by its definition NaN"
         | Some l ->
-            Sm.check u ~normal ~exp_ulps:2 ~b:(Sm.beta n) ~n ~scale l
-              ~at:(fun j -> mine.(j))
-              sm;
-            check_log (2. *. u) ~n (Array.map (fun x -> scale *. x) lx) lsm
-              mine
+            let b = Sm.beta n and at j = mine.(j) in
+            Sm.check u ~normal ~exp_ulps:2 ~b ~n ~scale l ~at sm;
+            Sm.check_log u ~exp_ulps:2 ~log_ulps:2 ~b ~n ~scale l ~at lsm
       end)
     (lanes s)
 
@@ -1033,7 +1008,24 @@ let test_softmax_cases () =
     [| p.(0); 0.; p.(1); p.(0); 0.; p.(1) |]
     (Nx.to_array (Nx.softmax ~where:cols x));
   invalid ~by:"Nx.softmax" (fun () ->
-      Nx.softmax ~where:(Nx.create Nx.bool [| 2 |] [| true; false |]) m)
+      Nx.softmax ~where:(Nx.create Nx.bool [| 2 |] [| true; false |]) m);
+  (* A zero scale makes the held elements equal, at the stored float64 and
+     the narrow float16 alike, and leaves out the others. *)
+  let held = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
+  equal same_bits [| 0.5; 0.; 0.5 |]
+    (Nx.to_array (Nx.softmax ~scale:0. ~where:held (f64 [| 1.; 9.; -3. |])));
+  equal same_bits [| 0.5; 0.; 0.5 |]
+    (Nx.to_array
+       (Nx.cast Nx.float64
+          (Nx.softmax ~scale:0. ~where:held
+             (Nx.cast Nx.float16 (f64 [| 1.; 9.; -3. |])))));
+  equal (array (float 1e-15))
+    [| -.Float.log 2.; neg_infinity; -.Float.log 2. |]
+    (Nx.to_array
+       (Nx.log_softmax ~scale:0. ~where:held (f64 [| 1.; 9.; -3. |])));
+  (* A negative scale shifts by the least element. *)
+  equal floats [| 1.; 0. |]
+    (Nx.to_array (Nx.softmax ~scale:(-1.) (f64 [| -1e6; 1e6 |])))
 
 (* The bytes the host holds after four rounds of collection, each of which
    returns to it what it collected. *)
@@ -1684,9 +1676,9 @@ let () =
          test "special values" specials;
          group "softmax"
            [
-             prop "float64 within its bound" softmax_case
+             prop "float64 within their bounds" softmax_case
                (law_softmax D.Float64 0x1p-53 0x1p-1022);
-             prop "float32 within its bound" softmax_case
+             prop "float32 within their bounds" softmax_case
                (law_softmax D.Float32 0x1p-24 0x1p-126);
              test "along several axes" test_axes;
              test "cases" test_softmax_cases;
@@ -1694,9 +1686,9 @@ let () =
                test_softmax_memory;
              narrow "softmax" (fun x -> Nx.softmax (in_rows x));
              narrow "log_softmax" (fun x -> Nx.log_softmax (in_rows x));
-             prop "float64 under where within its bound" where_case
+             prop "float64 under where within their bounds" where_case
                (law_where D.Float64 0x1p-53 0x1p-1022);
-             prop "float32 under where within its bound" where_case
+             prop "float32 under where within their bounds" where_case
                (law_where D.Float32 0x1p-24 0x1p-126);
              narrow "softmax under where" (fun x ->
                  let x = in_rows x in
