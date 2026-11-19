@@ -6,8 +6,8 @@ COCO's run-length encoding, connected components and non-maximum
 suppression. It is a project of its own in `contrib/`: its `dune-project`
 declares the opam package `mynd`, and it keeps its own `CHANGES.md`. It
 builds and tests against raven's main, releases on its own schedule and
-carries no API stability guarantee. It replaces `contrib/sowilo`, which
-stays until mynd covers its surface.
+carries no API stability guarantee. It replaces sowilo, raven's earlier
+vision package, removed once mynd covered its surface.
 
 - Changes go in `contrib/mynd/CHANGES.md`.
 - The same rules as raven's libraries: `docs/dev/design.md`, AGENTS.md's code

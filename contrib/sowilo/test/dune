@@ -1,4 +1,0 @@
-(test
- (name test_sowilo)
- (package sowilo)
- (libraries sowilo nx rig windtrap))

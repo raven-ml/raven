@@ -16,12 +16,12 @@ let raven_packages =
     ("kaun", []);
     ("kaun.datasets", []);
     ("hugin", [ "Hugin.pp" ]);
-    ("sowilo", []);
     ("talon", [ "Talon.pp"; "Talon.Query.pp" ]);
     ("talon.csv", []);
     ("talon.parquet", []);
     ("brot", []);
     ("fehu", []);
+    ("mynd", []);
   ]
 
 (* [load_optional ~said pkg] loads [pkg] if it is installed. A package that is

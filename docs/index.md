@@ -26,7 +26,7 @@ Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for n
 | ᛈ | [**quill**](../packages/quill/doc/index.md) | Jupyter + IPython | Interactive REPL and markdown notebooks |
 | ᛗ | [**munin**](../packages/munin/doc/index.md) | W&B / MLflow | Local experiment tracking with live TUI dashboard |
 
-Packages that release on their own schedule, such as Fehu, Sowilo, Ymir and Jord, live in the repository's [`contrib/`](https://github.com/raven-ml/raven/tree/main/contrib) directory.
+Packages that release on their own schedule, such as Fehu, Ymir, Jord and Mynd, live in the repository's [`contrib/`](https://github.com/raven-ml/raven/tree/main/contrib) directory.
 
 ## Project
 

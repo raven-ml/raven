@@ -282,8 +282,8 @@ core libraries that release on their own schedule and install separately
 from `opam install raven`:
 
 - [Fehu](https://github.com/raven-ml/raven/tree/main/contrib/fehu): reinforcement learning environments
-- [Sowilo](https://github.com/raven-ml/raven/tree/main/contrib/sowilo): differentiable computer vision
 - [Ymir](https://github.com/raven-ml/raven/tree/main/contrib/ymir): astronomy: units, frames, FITS, photometry, cosmology
+- [Mynd](https://github.com/raven-ml/raven/tree/main/contrib/mynd): images: colour, sampling, resizing, filters, masks
 
 ## Getting started
 

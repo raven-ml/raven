@@ -198,6 +198,30 @@ let with_bmi df =
   Talon.Query.(df |> derive Talon.Expr.[ "bmi" := weight /. (height *. height) ])
 ```
 
+### Images
+
+torchvision holds an image as a tensor `[c, h, w]`, channels first. Mynd,
+a contrib package, holds it as an `Nx.t` `[h; w; c]`, channels last, with
+any batch axes before. Each of its operations names its border rule, and
+parameters such as a blur's deviation are arrays, so Rune differentiates
+the result in them.
+
+```python
+# torchvision: a float image in [0, 1], mirrored past its border
+blurred = F.gaussian_blur(img, kernel_size=9, sigma=1.5)
+```
+
+<!-- $MDX skip -->
+```ocaml
+(* Mynd: the same blur, with kernel_size = 2 radius + 1 *)
+let blurred =
+  Mynd.gaussian_blur ~edge:`Symmetric_whole ~radius:4 (Nx.scalar Nx.float32 1.5) img
+```
+
+[Mynd's guide](https://github.com/raven-ml/raven/tree/main/contrib/mynd/doc)
+builds colour adjustments, filters, edge detectors and morphology from
+its operations.
+
 ## Detailed comparisons
 
 Each library has a dedicated comparison page with side-by-side code examples:
@@ -207,5 +231,4 @@ Each library has a dedicated comparison page with side-by-side code examples:
 - [Vega vs Optax](../../packages/vega/doc/04-optax-comparison.md)
 - [Brot vs HuggingFace Tokenizers](../../packages/brot/doc/06-hf-tokenizers-comparison.md)
 - [Talon vs pandas](../../packages/talon/doc/05-pandas-comparison.md)
-- [Sowilo vs OpenCV](https://github.com/raven-ml/raven/blob/main/contrib/sowilo/doc/04-opencv-comparison.md) (contrib)
 - [Fehu vs Gymnasium](https://github.com/raven-ml/raven/blob/main/contrib/fehu/doc/04-gymnasium-comparison.md) (contrib)

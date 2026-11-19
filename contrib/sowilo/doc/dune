@@ -1,8 +1,0 @@
-(mdx
- (files *.md)
- (package sowilo)
- (enabled_if
-  (and
-   (<> %{profile} sanitize)
-   (<> %{profile} tsan)))
- (libraries sowilo kaun nx unix))
