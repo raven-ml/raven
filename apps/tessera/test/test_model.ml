@@ -192,18 +192,31 @@ let loading =
               m.net 0
           in
           at_least int ~than:10 weights);
-      test "loads a saved model back, of either form" (fun () ->
+      test "loads a saved model back, of either form, its arch in metadata"
+        (fun () ->
           List.iter
-            (fun m ->
+            (fun pre ->
+              let m = model pre and a = arch pre in
               let file = Filename.temp_file "tessera" ".safetensors" in
               Fun.protect ~finally:(fun () -> Sys.remove file) @@ fun () ->
               Model.save file m;
+              equal
+                (list (pair string string))
+                [
+                  ("dims", string_of_int a.dims);
+                  ("ffn", string_of_int a.ffn);
+                  ("heads", string_of_int a.heads);
+                  ("layers", string_of_int a.layers);
+                  ("pre_ln", string_of_bool a.pre_ln);
+                  ("width", string_of_int a.width);
+                ]
+                (Nx_io.load_safetensors_metadata file);
               let back = Model.load file in
               equal int m.heads back.heads;
               equal
                 (list (pair string (array float_exact)))
                 (arrays m) (arrays back))
-            [ post_ln; pre_ln ]);
+            [ false; true ]);
     ]
 
 let () =

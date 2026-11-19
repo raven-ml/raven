@@ -875,31 +875,45 @@ end
 
 let save file m =
   let a = arch_of m in
-  let shape =
-    [| (if a.pre_ln then 1 else 0); a.width; a.heads; a.layers; a.ffn; a.dims |]
+  let metadata =
+    ("pre_ln", string_of_bool a.pre_ln)
+    :: List.map
+         (fun (k, n) -> (k, string_of_int n))
+         [
+           ("width", a.width);
+           ("heads", a.heads);
+           ("layers", a.layers);
+           ("ffn", a.ffn);
+           ("dims", a.dims);
+         ]
   in
-  Nx_io.save_safetensors file
-    (Nx_io.Archive.union
-       [
-         Nx_io.Archive.of_value ~prefix:"model"
-           (Nx.Ptree.instantiate (module Self))
-           (Nx.Ptree.place (module Self) Nx.Host.on m);
-         Nx_io.Archive.of_list
-           [ ("arch", Nx.P (Nx.create Nx.int64 [| 6 |] (Array.map Int64.of_int shape))) ];
-       ])
+  Nx_io.save_safetensors ~metadata file
+    (Nx_io.Archive.of_value
+       (Nx.Ptree.instantiate (module Self))
+       (Nx.Ptree.place (module Self) Nx.Host.on m))
 
 let load file =
   if not (Filename.check_suffix file ".safetensors") then
     of_pytorch ~name:file (Nx_io.load_pytorch file)
   else
-    let a = Nx_io.load_safetensors file in
-    let v =
-      Array.map Int64.to_int
-        (Nx.to_array (Nx_io.Archive.tensor ~shape:[| 6 |] Nx.int64 "arch" a))
+    let metadata = Nx_io.load_safetensors_metadata file in
+    let field k read =
+      match Option.bind (List.assoc_opt k metadata) read with
+      | Some v -> v
+      | None -> fail file "metadata %s: missing or malformed" k
     in
+    let int k = field k int_of_string_opt in
     let arch =
-      { pre_ln = v.(0) = 1; width = v.(1); heads = v.(2); layers = v.(3); ffn = v.(4); dims = v.(5) }
+      {
+        pre_ln = field "pre_ln" bool_of_string_opt;
+        width = int "width";
+        heads = int "heads";
+        layers = int "layers";
+        ffn = int "ffn";
+        dims = int "dims";
+      }
     in
-    Nx_io.Archive.to_value ~prefix:"model"
+    Nx_io.Archive.to_value
       (Nx.Ptree.instantiate (module Self))
-      ~like:(init ~key:(Nx.Rng.key 0) arch) a
+      ~like:(init ~key:(Nx.Rng.key 0) arch)
+      (Nx_io.load_safetensors file)

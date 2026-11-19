@@ -163,8 +163,8 @@ val init : key:'d Nx.Rng.key -> arch -> ('d Nx.float32_t, 'd) t
 
 val save : string -> ((float, 's, 'd) Nx.t, 'd) t -> unit
 (** [save file m] writes [m] to the SafeTensors [file]: its arrays under their
-    {!walk} paths after [model.], and its {!arch} as [arch], an int64 [[6]] of
-    [pre_ln] (0 or 1), [width], [heads], [layers], [ffn] and [dims]. The model a
+    {!walk} paths, and its {!arch} as the file's metadata, each field under its
+    name, [pre_ln] as [true] or [false] and the others in decimal. The model a
     distillation trains is written so. *)
 
 val load : string -> (Nx.host Nx.float32_t, Nx.host) t
@@ -187,7 +187,8 @@ val load : string -> (Nx.host Nx.float32_t, Nx.host) t
 
     Raises [Failure] as [Nx_io.load_pytorch], [Nx_io.load_safetensors] and
     [Nx_io.Archive.to_value] do, and naming [file] and the tensor or field if
-    a checkpoint is neither form, if a tensor is missing, has another shape
+    a SafeTensors file's metadata lacks a field of {!arch} or holds it
+    malformed, if a checkpoint is neither form, if a tensor is missing, has another shape
     than [args] or [arch] gives it, or is left unused, if the checkpoint,
     [args] or [arch] is not a dict or a field has another type, if a student's
     [enable_qk_norm] is true, or if the teacher's [nhead] is not [4] or its
