@@ -41,6 +41,23 @@ lists each command's options.
 | `test/` | the tests, their fixtures and their recorders |
 | `bench/` | encoding and a distillation step on a real tile |
 
+## Without Python
+
+The commands are one executable that links only the C library.
+
+| | Install |
+|---|---|
+| raven | 32 MB, plus NVRTC (134 MB) to compile kernels not yet cached |
+| TESSERA's PyTorch code | 5.63 GB |
+
+Install is what encodes a tile on the GPU, without the NVIDIA driver and the
+weights: raven's `main.exe`, stripped, and CUDA's NVRTC, which raven loads
+only to compile a kernel that is not in tolk's cache; for TESSERA at
+e368539f, a fresh uv environment with `bench/pytorch.py`'s pins, torch's CUDA
+libraries included, and Python 3.12. Through NV, raven needs no libcuda
+either. Measured on 2026-11-19 on an RTX 5000 Ada (driver 615.71.09, CUDA
+13.4, Debian 13), with raven at 72377cdbe1.
+
 ## Tests
 
 `dune build @apps/tessera/runtest` runs the laws on synthetic pixels and small
