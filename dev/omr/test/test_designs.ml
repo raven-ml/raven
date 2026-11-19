@@ -642,13 +642,20 @@ let errors =
               I.analog Nx.float64 ~rate:1. ~zeros:[]
                 ~poles:[ Complex.{ re = -1.; im = 1. } ]
                 ~gain:1.));
+      (* The transform maps [s = 2 rate] to [z = ∞]. *)
+      test "a zero at s = 2 rate" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Omr.Iir.analog") (fun () ->
+              I.analog Nx.float64 ~rate:1000.
+                ~zeros:[ Complex.{ re = 2000.; im = 0. } ]
+                ~poles:[ Complex.{ re = -10.; im = 0. } ]
+                ~gain:1.));
     ]
 
 (* [analog] maps [s = 2i rate tan (π f / rate)] to frequency [f], so the
    cascade's response at [f] is the analog filter's at that [s]. Poles lie in
    the left half-plane and zeros in either, with real parts up to 1.5 times the
    rate in magnitude and imaginary parts up to twice it, since a zero at [s = 2
-   rate] maps to [z = ∞]. *)
+   rate] raises. *)
 let analog_law =
   let roots =
     Gen.(

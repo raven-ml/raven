@@ -1929,6 +1929,13 @@ module Iir = struct
         if not (p.re < 0.) then
           invalid_argf "%s: a pole of real part %g" by p.re)
       poles;
+    (* The transform sends [s = 2 rate] to [z = ∞], which no factor [1 - zᵢ z⁻¹]
+       of the pairing holds. *)
+    List.iter
+      (fun (z : Complex.t) ->
+        if z.re = 2. *. rate && z.im = 0. then
+          invalid_argf "%s: a zero at s = %g, twice the rate" by z.re)
+      zeros;
     cascade dt
       (sections ~by
          (bilinear (2. *. rate) { z = zeros; p = poles; k = scaled (re gain) }))

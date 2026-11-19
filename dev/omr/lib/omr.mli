@@ -995,7 +995,8 @@ module Iir : sig
 
       Raises [Invalid_argument] if [rate] is not positive and finite, there is
       no pole, there are more zeros than poles, a pole's real part is not
-      negative, or a complex value lacks its conjugate. *)
+      negative, a zero lies at [s = 2 rate], which the transform maps to
+      [z = ∞], or a complex value lacks its conjugate. *)
 end
 
 (** {1:fft_convolution FFT convolution} *)
