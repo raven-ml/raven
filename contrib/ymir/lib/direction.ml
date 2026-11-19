@@ -173,13 +173,21 @@ let pair fn a b =
   let b = rows (fn ^ ": the second direction's vector") b.xyz in
   (components a, components b)
 
-(* [difference p q r s] is [p q - r s] within 2 ulp whatever the cancellation
-   (Kahan): [e] is the rounding error of [r s], exact through a fused
-   multiply-add, and restores it. *)
+(* [difference p q r s] is [p q - r s] by Cornea, Harrison and Tang's method:
+   the rounded products' difference plus the difference of their rounding
+   errors, each error exact through a fused multiply-add. It is within
+   2u = 2^-52 relative, and so 2 ulp, whatever the cancellation (Jeannerod,
+   "A Radix-Independent Error Analysis of the Cornea-Harrison-Tang Method",
+   ACM TOMS 42(3), 2016: "if β is odd or rounding is to nearest even, then
+   the simpler bound 2u is obtained"), where nothing underflows: each product
+   and its rounding error is 0 or normal, roughly each nonzero product above
+   2^-969 in magnitude. Rounding to nearest even is symmetric about zero, so
+   [difference r s p q] is [-(difference p q r s)] up to the sign of a zero,
+   and [separation] reads the same [|a × b|] either way. *)
 let difference p q r s =
-  let w = Nx.mul r s in
-  let e = Nx.fma (Nx.neg r) s w in
-  Nx.add (Nx.fma p q (Nx.neg w)) e
+  let pq = Nx.mul p q and rs = Nx.mul r s in
+  let e = Nx.sub (Nx.fma p q (Nx.neg pq)) (Nx.fma r s (Nx.neg rs)) in
+  Nx.add (Nx.sub pq rs) e
 
 (* [fused_cross a b] is [a × b], each component within 2 ulp. Each keeps its
    relative accuracy however close the rays and whatever the rows' norms. *)

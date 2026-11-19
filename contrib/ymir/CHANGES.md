@@ -4,6 +4,9 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Direction.separation b a` is now `separation a b` bit for bit, where the
+  two could differ in the last bit. `Direction.position_angle`'s last bit can
+  change.
 - **Breaking:** `Wcs.read` takes the world it reads (`Wcs.read ~at (Sky f) kw`
   for an image) and reads headers of any number of axes: a celestial pair with
   linear axes such as `FREQ`, `WAVE` and `STOKES`. `Wcs.write` spells them.

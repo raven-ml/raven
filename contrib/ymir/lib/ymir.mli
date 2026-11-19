@@ -716,7 +716,7 @@ module Direction : sig
       [a × b] within 2 ulp through a fused multiply-add and lifted by a power
       of two where its square would underflow, so it is within 1.3e-15
       relative at any separation above float64's least normal, whatever the
-      rows' norms. *)
+      rows' norms. [separation b a] is [separation a b] bit for bit. *)
 
   val position_angle : ('f, 'd) t -> ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Quantity.t
   (** [position_angle a b] is [b]'s bearing from [a], east of north, in \[+0,

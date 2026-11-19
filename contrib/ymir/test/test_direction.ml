@@ -335,6 +335,20 @@ let reads_the_ray =
 
 (* Measures *)
 
+(* Pairs of rows: of any magnitudes, plain, and near each other or each
+   other's antipode. *)
+let row_pairs =
+  let near =
+    Gen.(
+      let+ (x, y, z) = plain
+      and+ d = triple (float_range (-1e-8) 1e-8) (float_range (-1e-8) 1e-8)
+          (float_range (-1e-8) 1e-8)
+      and+ k = of_list [ 1.; -1.; 3.7 ] in
+      let dx, dy, dz = d in
+      ((x, y, z), (k *. (x +. dx), k *. (y +. dy), k *. (z +. dz))))
+  in
+  Gen.one_of [ Gen.pair rows rows; Gen.pair plain plain; near ]
+
 let measures =
   group "Separation and position angle"
     [
@@ -397,13 +411,36 @@ let measures =
           equal (float 1e-15) 0. (one (position_angle pole (lonlat pi 0.)));
           equal (float 1e-15) (pi /. 2.)
             (one (position_angle pole (lonlat (pi /. 2.) 0.))));
-      prop "separation is symmetric within twice its accuracy"
-        (Gen.pair plain plain) (fun (a, b) ->
+      prop "separation b a has the bits of separation a b" ~count:2000 row_pairs
+        (fun (a, b) ->
           let a = icrs (row a) and b = icrs (row b) in
-          equal
-            (float_rel ~rel:(2. *. separation_accuracy) ~abs:0.)
-            (one (separation a b))
-            (one (separation b a)));
+          let s = one (separation a b) in
+          cover "below 1e-6 rad" (s < 1e-6);
+          cover "near pi" (s > pi -. 1e-6);
+          equal float_exact s (one (separation b a)));
+      (let compiled =
+         Rune.jit
+           Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+           (fun a b -> in_radians (Direction.separation (icrs a) (icrs b)))
+       in
+       let side f ps =
+         vectors
+           (Array.concat
+              (Array.to_list
+                 (Array.map
+                    (fun p ->
+                      let x, y, z = f p in
+                      [| x; y; z |])
+                    ps)))
+       in
+       prop "compiled, separation b a has the bits of separation a b"
+         ~count:5
+         (Gen.array ~size:(Gen.constant 512) row_pairs)
+         (fun ps ->
+           let a = side fst ps and b = side snd ps in
+           equal bits
+             (Nx.to_array (compiled a b))
+             (Nx.to_array (compiled b a))));
       prop "a rotation keeps separations within 1e-15 rad"
         (Gen.pair plain plain) (fun (a, b) ->
           let a = Direction.of_xyz Frame.icrs (row a)
