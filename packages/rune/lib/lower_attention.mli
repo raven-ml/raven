@@ -80,7 +80,7 @@
     kernels compute eight products a pair against the default's five, a
     call of whole vectors of 4 dimensions whose heads hold at least 256 rows
     and 256 keys takes the default while the weights it stores, rows by keys
-    of each head in the accumulator, hold at most 256 MiB. *)
+    of each head in the accumulator, hold at most 2 GiB. *)
 
 open Tolk
 

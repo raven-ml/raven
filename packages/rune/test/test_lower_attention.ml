@@ -532,7 +532,7 @@ let own_kernels shape =
   | l -> failf "%d calls of attention" (List.length l)
 
 (* Past 64 dimensions on FFMA, heads of 256 rows and keys or more whose
-   weights fit 256 MiB take the default ({!Lower_attention}'s
+   weights fit 2 GiB take the default ({!Lower_attention}'s
    [default_keys]); shorter heads, fewer dimensions, dimensions of no whole
    vectors of 4 and weights past the bound take the kernels. *)
 let long_heads () =
@@ -548,7 +548,8 @@ let long_heads () =
       ([| 1; 8; 2048; 110 |], true);
       ([| 1; 8; 2048; 64 |], true);
       ([| 64; 4; 128; 160 |], true);
-      ([| 1; 8; 8192; 160 |], true);
+      ([| 1; 8; 8192; 160 |], false);
+      ([| 1; 8; 16384; 160 |], true);
     ]
 
 let () =

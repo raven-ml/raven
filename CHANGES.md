@@ -564,7 +564,7 @@ All notable changes to this project will be documented in this file.
   own to 160 dimensions, as it computes a 16-bit one's on tensor cores:
   they recompute each weight from `lse` and store none, where the default
   stored the weights of every pair. Past 64 dimensions, heads of 256 rows
-  and keys or more, of dimensions in vectors of 4, whose weights fit 256 MiB
+  and keys or more, of dimensions in vectors of 4, whose weights fit 2 GiB
   keep the default, which is faster there: float32 over 8 heads of 2048
   rows of 160 takes 3.4 ms backward against the kernels' 6.9 ms.
 - `Rune.jit` computes a float32 or float64 `Nx.attention` on a GPU in tiles,

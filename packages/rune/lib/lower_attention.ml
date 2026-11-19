@@ -2394,7 +2394,13 @@ let lane_accumulators = 176
    against 13 and with tessera's key bias at 64 rows 26 against 22. *)
 let default_keys = 256
 
-let default_weights = 1 lsl 28
+(* The weights the default stores at most: a bound on its memory, not its
+   speed, which wins at every length measured. On fudge's RTX 5000 Ada, over
+   8 heads of 160 dimensions, the backward took 11.3 ms against the kernels'
+   24.1 at 4096 rows (512 MiB of weights), 44.4 against 99.8 at 8192 (2 GiB)
+   and causal at 4096 11.0 against 14.2, holding 4.5 GB at 8192 where the
+   kernels hold 0.17. The bound is the largest weights measured. *)
+let default_weights = 1 lsl 31
 
 let derivative_tile tc ~wide =
   let n, _, k = Tc.dims tc in
