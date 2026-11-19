@@ -231,10 +231,11 @@ static mlsize_t program_bound(mlsize_t live) {
    device with [room] bytes left in its budget: the share of the room the
    collector applies to its heap, so that the garbage floating in the
    device's memory stays a share of what the device could still allocate.
-   Memory the host shares, of which [live] bytes are allocated ([live] < 0
-   otherwise), is the program's own: there the bound is the program's
-   ([program_bound]) where the room's share is more, since a share of a
-   large room could leave gigabytes of garbage in the host's memory. Its
+   Memory the host shares, of which [live] bytes are held outside its
+   device's cache ([live] < 0 otherwise), is the program's own: there the
+   bound is the program's ([program_bound]) where the room's share is more,
+   since a share of a large room could leave gigabytes of garbage in the
+   host's memory. Its
    floor matters for a small heap: on fudge, a data-parallel step over 16
    software devices, which drops their results each call, ran a major cycle
    every three to six calls without it and 31% more instructions a call. It

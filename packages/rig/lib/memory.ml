@@ -1943,7 +1943,14 @@ type home = Token | Code of entry ref
    GPU nearly full of its own memory does not hold dropped pinned memory
    back from collection. Memory the host shares, [Pinned] memory by its
    kind and a device's own memory where its driver states the host
-   addresses all of it, takes [d]'s room and allocated bytes. A driver that
+   addresses all of it, takes [d]'s room and its live bytes, those it holds
+   outside its cache. Counted as live, a cache of gigabytes would raise the
+   pace's bound by a share of them, and dropped results would wait for a
+   cycle while fresh ones are allocated. Read without the lock, the
+   difference may be off by what other domains allocate, cache or free
+   between the two reads, which changes only how soon the collector runs;
+   the floor at 0 keeps the sign that says the host shares the memory. A
+   driver that
    states nothing gives its device's memory a host address only for Polled
    with a transport, which this paces as the device's own: the pace then
    differs from the one the host address implies, which changes how soon
@@ -1956,7 +1963,7 @@ let try_token d kind n r =
       (Int.max 0 (Dev.host.budget - heap_held ()), heap_live ())
     else
       let shared = kind = Pinned || d.host_addresses in
-      (room d, if shared then l.used else -1)
+      (room d, if shared then Int.max 0 (l.used - l.cached) else -1)
   in
   let t = token l.release (Memory r) n room live in
   if t == no_token then Dev.raise_lost d;

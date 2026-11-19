@@ -994,8 +994,9 @@ val failure : unit -> string option
        host's room. The memory of a {!software} device and of a driver's
        device whose driver declares [host_addresses]
        ({!Rig_edge.type-facts}) brings a cycle as host buffers do, floors
-       included, with the device's {!allocated} bytes standing for the host
-       buffers live; or sooner, once the dropped bytes reach
+       included, with the device's live bytes, its {!allocated} bytes less
+       those in its cache, standing for the host buffers live; or sooner,
+       once the dropped bytes reach
        [custom_major_ratio] / 150 of the device's room, so a device nearing
        its budget collects in time. A device's other memory brings a cycle
        at that share of its room alone. Either amount is at least a page,

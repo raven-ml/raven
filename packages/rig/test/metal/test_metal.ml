@@ -1697,6 +1697,44 @@ let mapped_pages () =
   Rig_metal.free t.g m;
   H.free_pages p (2 * H.page)
 
+(* Major cycles a MiB over 256 dropped buffers of a MiB on [d], each held
+   across a minor collection that promotes it. *)
+let cycles_per_mib d =
+  Gc.full_major ();
+  let before = (Gc.quick_stat ()).major_collections in
+  for _ = 1 to 256 do
+    let b = B.create d (1 lsl 20) in
+    Gc.minor ();
+    ignore (Sys.opaque_identity b)
+  done;
+  Float.of_int ((Gc.quick_stat ()).major_collections - before) /. 256.
+
+(* Metal's memory is the host's, and its cache is not live memory: dropped
+   buffers bring major cycles beside 512 MiB of other sizes in the cache as
+   often as beside none, give or take half again. Counted as live, the cache
+   would raise the pace's bound by [custom_major_ratio] / 150 of its bytes and
+   bring them several times less often, so that each dropped result waits
+   while the next is allocated afresh. *)
+let paced_beside_cache () =
+  let t = dev () in
+  let mib = 1 lsl 20 in
+  Rig.free_cache t.d;
+  let usual = cycles_per_mib t.d in
+  let held, beside =
+    Fun.protect ~finally:(fun () -> Rig.free_cache t.d) @@ fun () ->
+    for i = 1 to 64 do
+      ignore (Sys.opaque_identity (B.create t.d ((8 * mib) + (i * 16384))))
+    done;
+    Gc.full_major ();
+    ignore (Sys.opaque_identity (B.create t.d 0));
+    let beside = cycles_per_mib t.d in
+    (Rig.allocated t.d, beside)
+  in
+  at_least ~msg:"the bytes free_cache returned" int ~than:(512 * mib)
+    (held - Rig.allocated t.d);
+  at_least ~msg:"cycles per MiB beside the cache" float_exact
+    ~than:(usual /. 1.5) beside
+
 let memory =
   group ~timeout:60. "memory"
     [
@@ -1709,6 +1747,10 @@ let memory =
       test "no other function reaches its memory, and it has no bus" no_dma;
       test "free releases an allocation's or a mapping's buffer" given_back;
       test "a mapping's host address is its first byte's page" mapped_pages;
+      test
+        "dropped buffers bring cycles as often beside the cache as beside \
+         none"
+        paced_beside_cache;
     ]
 
 (* Files

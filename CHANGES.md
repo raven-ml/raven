@@ -52,6 +52,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- Dropped memory of a software device, or of one whose driver declares
+  `host_addresses`, paces the collector by the device's `Rig.allocated` bytes
+  less its cache. A large cache held dropped results for longer, until Metal
+  wired gigabytes and the machine swapped.
 - A GPU driven over PCI and released while another GPU maps its memory gives
   back the system memory of each region freed meanwhile, at the free. It
   kept that memory until the other GPU's last free of the mapping.

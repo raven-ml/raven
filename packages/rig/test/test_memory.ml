@@ -1283,6 +1283,31 @@ let test_paced_software () =
     ~than:(margin *. Float.of_int (kib * kib) /. Float.of_int floor)
     rate
 
+(* A device's cache is not live memory: dropped buffers of a software device
+   bring major cycles beside 512 MiB of other sizes in its cache as often as
+   beside none, give or take half again. Counted as live, the cache would
+   raise the pace's bound by [custom_major_ratio] / 150 of its bytes, about
+   150 MiB at the default, and bring them several times less often, so that
+   dropped results wait while new ones are allocated afresh. *)
+let test_paced_beside_cache () =
+  let d = Result.get_ok (Rig.software "memory:paced-cache") in
+  let mib = kib * kib in
+  let usual = cycles_per_mib ~d 256 in
+  let held, beside =
+    Fun.protect ~finally:(fun () -> Rig.free_cache d) @@ fun () ->
+    for i = 1 to 64 do
+      ignore (Sys.opaque_identity (B.create d ((8 * mib) + (i * 16 * kib))))
+    done;
+    Gc.full_major ();
+    ignore (Sys.opaque_identity (B.create d 0));
+    let beside = cycles_per_mib ~d 256 in
+    (Rig.allocated d, beside)
+  in
+  at_least ~msg:"the bytes free_cache returned" int ~than:(512 * mib)
+    (held - Rig.allocated d);
+  at_least ~msg:"cycles per MiB beside the cache" float_exact
+    ~than:(usual /. margin) beside
+
 (* A software device nearing its budget still collects in time: dropped
    buffers of 20 budgets of 4 MiB, a budget no larger than the floor of host
    memory's pace, never force a collection. One uncounted run takes a fresh
@@ -2044,6 +2069,10 @@ let tests =
           "a software device's dropped buffers bring a cycle per half the \
            last-level cache at most"
           test_paced_software;
+        test
+          "a software device's dropped buffers bring cycles as often beside \
+           its cache as beside none"
+          test_paced_beside_cache;
         test
           "a software device's dropped buffers of many budgets never force a \
            collection"
