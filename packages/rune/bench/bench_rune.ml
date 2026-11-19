@@ -190,12 +190,35 @@ let mlp_rows () =
 
 (* ConvGrad: the weight gradient of a first convolution layer's sum, 32
    float32 images of [28; 28; 1] into 8 channels by a 3 × 3 kernel, as a
-   training step takes it. *)
+   training step takes it; and the weight and input gradients of a 3 × 3
+   depthwise convolution's sum, padded by one, over 8 float32 images of
+   [56; 56; 64], one channel a group, eagerly and compiled, warm. *)
 let conv_rows () =
   let x = normal 12 [| 32; 28; 28; 1 |] and w = normal 13 [| 8; 3; 3; 1 |] in
+  let image = normal 14 [| 8; 56; 56; 64 |] in
+  let kernel = normal 15 [| 64; 3; 3; 1 |] in
+  let depthwise (x, w) =
+    Nx.sum (Nx.conv ~groups:64 ~padding:[| (1, 1); (1, 1) |] x w)
+  in
+  let pair = Nx.Ptree.(pair tensor tensor) in
+  let compiled () =
+    let f =
+      Rune.jit
+        Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+        (fun x w -> Rune.grad pair depthwise (x, w))
+    in
+    ignore (synced2 (f image kernel));
+    f
+  in
   [
     Thumper.bench "conv-grad-f32-32x28x28x1-3x3-to-8" (fun () ->
         synced (Rune.grad' (fun w -> Nx.sum (Nx.conv x w)) w));
+    Thumper.bench "depthwise-weight-grad-f32-8x56x56x64-3x3" (fun () ->
+        synced (Rune.grad' (fun w -> depthwise (image, w)) kernel));
+    Thumper.bench "depthwise-input-grad-f32-8x56x56x64-3x3" (fun () ->
+        synced (Rune.grad' (fun x -> depthwise (x, kernel)) image));
+    Thumper.bench_with_setup "depthwise-grads-jit-f32-8x56x56x64-3x3"
+      ~setup:compiled (fun f -> synced2 (f image kernel));
   ]
 
 (* PerSampleGrads: a gradient per example of a batch of 128, one map of reverse

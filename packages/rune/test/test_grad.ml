@@ -2087,6 +2087,203 @@ let test_residuals () =
     (Memory.held (keep (fun x -> Nx.mul (Nx.sin x) (Nx.exp x))));
   ignore (Sys.opaque_identity !kept)
 
+(* Depthwise convolutions
+
+   A convolution of one input and one output channel a group, and its
+   transpose, whose loop spreads its input: their pullbacks in the input and
+   the kernel, eagerly and compiled, pair with any tangent as the exact
+   change of the values, the convolutions being linear in each, and equal the
+   pullbacks of the same convolution by a kernel zero off its diagonal, which
+   nx computes as a contraction; at strides, paddings that pad or cut,
+   dilations, axes of one element and kernels that reach no element. *)
+
+type depthwise = {
+  transpose : bool;
+  batch : int;
+  channels : int;
+  spatial : int array;
+  taps : int array;
+  stride : int array;
+  dilation : int array;
+  padding : (int * int) array;
+  seed : float;
+}
+
+let pp_semi ppf () = Format.pp_print_string ppf ";"
+let pp_ints = Format.pp_print_array ~pp_sep:pp_semi Format.pp_print_int
+
+let pp_depthwise ppf d =
+  let pair ppf (lo, hi) = Format.fprintf ppf "(%d, %d)" lo hi in
+  Format.fprintf ppf
+    "%s n %d c %d spatial [%a] taps [%a] stride [%a] dilation [%a] padding \
+     [%a]"
+    (if d.transpose then "conv_transpose" else "conv")
+    d.batch d.channels pp_ints d.spatial pp_ints d.taps pp_ints d.stride
+    pp_ints d.dilation
+    (Format.pp_print_array ~pp_sep:pp_semi pair)
+    d.padding
+
+(* The windows a padded axis of [n] elements holds. *)
+let windows_of n (lo, hi) k s d =
+  let span = (d * (k - 1)) + 1 and e = n + lo + hi in
+  if e < span then 0 else ((e - span) / s) + 1
+
+let depthwise_gen =
+  let open Gen in
+  let axis =
+    let+ n = int_range 1 5
+    and+ k = int_range 1 3
+    and+ s = int_range 1 3
+    and+ d = int_range 1 2
+    and+ lo = int_range (-1) 2
+    and+ hi = int_range (-1) 2 in
+    (n, k, s, d, (lo, hi))
+  in
+  with_pp pp_depthwise
+  @@ let+ transpose = bool
+     and+ batch = int_range 1 2
+     and+ channels = int_range 2 3
+     and+ axes = list ~size:(int_range 1 2) axis
+     and+ seed = float_range 0. 6. in
+     let axes = Array.of_list axes in
+     let get f = Array.map f axes in
+     {
+       transpose;
+       batch;
+       channels;
+       spatial = get (fun (n, _, _, _, _) -> n);
+       taps = get (fun (_, k, _, _, _) -> k);
+       stride = get (fun (_, _, s, _, _) -> s);
+       dilation = get (fun (_, _, _, d, _) -> d);
+       padding = get (fun (_, _, _, _, p) -> p);
+       seed;
+     }
+
+let depthwise_law d =
+  let counts =
+    Array.init (Array.length d.spatial) (fun i ->
+        windows_of d.spatial.(i) d.padding.(i) d.taps.(i) d.stride.(i)
+          d.dilation.(i))
+  in
+  cover "a window" (Array.for_all (fun t -> t > 0) counts);
+  cover "an axis of one element" (Array.mem 1 d.spatial);
+  cover "a stride" (Array.exists (fun s -> s > 1) d.stride);
+  cover "a dilation" (Array.exists (fun s -> s > 1) d.dilation);
+  cover "a padding that cuts"
+    (Array.exists (fun (lo, hi) -> lo < 0 || hi < 0) d.padding);
+  cover "conv_transpose" d.transpose;
+  (* conv_transpose's input is a convolution's result, of [counts]. *)
+  if d.transpose && Array.mem 0 counts then ()
+  else begin
+    cover "no window" (Array.mem 0 counts);
+    let c = d.channels in
+    let x_spatial = if d.transpose then counts else d.spatial in
+    let xs = Array.concat [ [| d.batch |]; x_spatial; [| c |] ] in
+    let ws = Array.concat [ [| c |]; d.taps; [| 1 |] ] in
+    let filled seed s =
+      Nx.create f64 s (spread seed (Array.fold_left ( * ) 1 s))
+    in
+    let x = filled d.seed xs and w = filled (d.seed +. 1.) ws in
+    let conv ~groups x w =
+      let stride = d.stride and dilation = d.dilation and padding = d.padding in
+      if d.transpose then
+        Nx.conv_transpose ~groups ~stride ~dilation ~padding x w
+      else Nx.conv ~groups ~stride ~dilation ~padding x w
+    in
+    let depthwise (x, w) = conv ~groups:c x w in
+    (* [w] on the diagonal of a kernel of [c] input channels. *)
+    let diagonal (x, w) =
+      let eye =
+        Nx.reshape
+          (Array.concat [ [| c |]; Array.map (fun _ -> 1) d.taps; [| c |] ])
+          (Nx.eye f64 c)
+      in
+      let square = Array.concat [ [| c |]; d.taps; [| c |] ] in
+      conv ~groups:1 x (Nx.mul (Nx.broadcast_to square w) eye)
+    in
+    let y = depthwise (x, w) in
+    let ybar = filled (d.seed +. 2.) (Nx.shape y) in
+    let pair = T.(pair tensor tensor) in
+    let pullback f (x, w) ybar =
+      let _, pb = Rune.vjp pair T.tensor f (x, w) in
+      pb ybar
+    in
+    let compiled f =
+      Rune.jit
+        T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
+        (fun x w ybar -> pullback f (x, w) ybar)
+    in
+    let sum_abs t = sum_abs (Nx.to_array t) in
+    let size =
+      sum_abs ybar *. (sum_abs x +. sum_abs w +. 1.) *. (sum_abs w +. 1.)
+    in
+    let close msg a b =
+      let a = Nx.to_array a and b = Nx.to_array b in
+      equal ~msg:(msg ^ " length") int (Array.length a) (Array.length b);
+      Array.iteri
+        (fun i ai ->
+          at_most ~msg float_exact
+            ~than:((0x1p-40 *. size) +. 0x1p-1000)
+            (Float.abs (ai -. b.(i))))
+        a
+    in
+    let pair_with a b = Nx.item [] (Nx.sum (Nx.mul a b)) in
+    let check how (xbar, wbar) =
+      (* The exact change along a tangent, that of a linear map. *)
+      let u = filled (d.seed +. 3.) xs and v = filled (d.seed +. 4.) ws in
+      let change f = pair_with ybar (Nx.sub f y) in
+      at_most ~msg:(how ^ ": <x̄, u> is the change along u") float_exact
+        ~than:((0x1p-40 *. size *. 4.) +. 0x1p-1000)
+        (Float.abs (pair_with xbar u -. change (depthwise (Nx.add x u, w))));
+      at_most ~msg:(how ^ ": <w̄, v> is the change along v") float_exact
+        ~than:((0x1p-40 *. size *. 4.) +. 0x1p-1000)
+        (Float.abs (pair_with wbar v -. change (depthwise (x, Nx.add w v))));
+      (* The contraction's pullback in both of conv_transpose's arguments
+         raises: one at a time. *)
+      let in_x x = diagonal (x, w) and in_w w = diagonal (x, w) in
+      let pull f a = snd (Rune.vjp' f a) ybar in
+      close (how ^ ": x̄ is the contraction's") xbar (pull in_x x);
+      close (how ^ ": w̄ is the contraction's") wbar (pull in_w w)
+    in
+    check "eager" (pullback depthwise (x, w) ybar);
+    check "compiled" ((compiled depthwise) x w ybar)
+  end
+
+(* An element of the input that one window reads receives its term, [-0.]
+   included, and one no window reads [+0.]; a tap that reads padding gives
+   no term, even of an infinite weight. *)
+let test_depthwise_zeros () =
+  let x = Nx.create f64 [| 1; 4; 1 |] [| 1.; 2.; 3.; 4. |] in
+  let check msg want ~stride ~padding w =
+    let w = Nx.create f64 [| 1; Array.length w; 1 |] w in
+    let f x =
+      let y = Nx.conv ~groups:1 ~stride ~padding x w in
+      Nx.sum (Nx.mul y (Nx.full_like y (-0.)))
+    in
+    equal ~msg signed want (with_signs (Rune.grad' f x));
+    let g = Rune.jit T.(tensor @-> returns tensor) (Rune.grad' f) in
+    equal ~msg:(msg ^ ", compiled") signed want (with_signs (g x))
+  in
+  let neg = (true, -0.) and pos = (false, 0.) in
+  check "windows apart" [| neg; neg; neg; neg |] ~stride:[| 2 |]
+    ~padding:[| (0, 0) |] [| 1.; 1. |];
+  check "taps apart" [| neg; pos; neg; pos |] ~stride:[| 2 |]
+    ~padding:[| (0, 0) |] [| 1. |];
+  (* Element 3 is tap 1 of window 3 alone; tap 0 of a fourth window would
+     read past the padding. *)
+  let w = Nx.create f64 [| 1; 2; 1 |] [| Float.infinity; 2. |] in
+  let ybar = Nx.create f64 [| 1; 4; 1 |] [| 1.; 1.; 1.; 3. |] in
+  let pull x =
+    let _, pb =
+      Rune.vjp' (fun x -> Nx.conv ~padding:[| (1, 0) |] x w) x
+    in
+    pb ybar
+  in
+  let last g = Nx.item [ 0; 3; 0 ] g in
+  equal ~msg:"the last element's term alone" float_exact 6. (last (pull x));
+  let g = Rune.jit T.(tensor @-> returns tensor) pull in
+  equal ~msg:"compiled" float_exact 6. (last (g x))
+
 let () =
   exit
     (run "rune grad"
@@ -2106,6 +2303,11 @@ let () =
            (where_narrow_law Nx.float16 0x1p-11);
          prop "under where at bfloat16, as float64's" where_gen
            (where_narrow_law Nx.bfloat16 0x1p-8);
+         group "depthwise convolutions"
+           [
+             prop "pullbacks of a depthwise conv" depthwise_gen depthwise_law;
+             test "signs of zero and padded taps" test_depthwise_zeros;
+           ];
          group "conventions"
            [
              test "complex gradients" test_complex;
