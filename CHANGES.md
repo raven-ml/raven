@@ -3407,6 +3407,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- The special functions' absolute error bounds, such as `Nx.lbeta`'s `512ε`,
+  are measured from the exact value rounded to the dtype, as their bounds in
+  ulps are; narrow floats' from the exact value rounded to `float32`.
 - `Nx.rms_norm` under a trace passes over its input once: its sums of
   squares, plain and scaled by a power of two for a lane that overflows, run
   in one loop, where a pass for each lane's greatest magnitude came first.

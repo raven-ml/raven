@@ -1732,19 +1732,20 @@ end
     range is the mathematical one, which rounding can leave at an end: in
     [float8_e4m3fn], [π] rounds to [3.25].
 
-    On floats the {e error} of a result, in {e ulps}, is its distance in
-    floats of the dtype from the exact value rounded to the dtype: a
-    neighbour is one ulp away, and [-0.] and [+0.] are one apart. Each
-    function states a bound on it at float32 and float64. Whatever the
-    bound, a result is exact at the special values of C99's Annex F
-    (ISO/IEC 9899, F.10): [exp (-inf)] is [+0.], [log] of [±0.] is [-inf],
-    [sin] of an infinity is NaN and [atan inf] is [π/2] rounded. Where the
-    exact value rounds to an infinity or to zero, the result is that
-    infinity or zero, of the exact value's sign: [exp 710.] is [inf] and
-    [pow (-2.) (-1101.)] is [-0.]. Another zero result has the sign Annex F
-    gives it: [sin (-0.)] is [-0.]. A NaN operand gives a NaN, but where
-    Annex F gives a number for every value of that operand: [pow nan 0.]
-    and [pow 1. nan] are [1.]. Which NaN, its sign and its payload are
+    On floats the {e error} of a result is measured from the exact value
+    rounded to the dtype. In {e ulps} it is the distance between the two in
+    floats of the dtype: a neighbour is one ulp away, and [-0.] and [+0.]
+    are one apart. Its {e absolute error} is the magnitude of their
+    difference. Each function states a bound on it at float32 and float64.
+    Whatever the bound, a result is exact at the special values of C99's
+    Annex F (ISO/IEC 9899, F.10): [exp (-inf)] is [+0.], [log] of [±0.] is
+    [-inf], [sin] of an infinity is NaN and [atan inf] is [π/2] rounded.
+    Where the exact value rounds to an infinity or to zero, the result is
+    that infinity or zero, of the exact value's sign: [exp 710.] is [inf]
+    and [pow (-2.) (-1101.)] is [-0.]. Another zero result has the sign
+    Annex F gives it: [sin (-0.)] is [-0.]. A NaN operand gives a NaN, but
+    where Annex F gives a number for every value of that operand: [pow nan
+    0.] and [pow 1. nan] are [1.]. Which NaN, its sign and its payload are
     unspecified.
 
     The formats narrower than 32 bits compute at float32 and round once
@@ -1906,17 +1907,17 @@ val erf : (float, 's, 'd) t -> (float, 's, 'd) t
 
     Each function states a bound at float32 and float64 on its error
     ({!section-transcendental}). A bound of [k] ulps {e absolute near zeros}
-    also holds where the exact value is below [1.] in magnitude and the result
-    within [kε] of it, [ε] being the distance from [1.] to the next float of
-    the dtype. An inverse's bound adds [κ] times its forward function's bound,
-    where [κ = |p / (x F'(x))|] at its result [x], for [F] the forward
-    function, is its condition number. A subnormal result is held to its
-    bound in units of the least subnormal, plus half of one. These bounds
-    hold where those of {!section-transcendental} do.
+    also holds where the exact value rounded to the dtype is below [1.] in
+    magnitude and the absolute error at most [kε], [ε] being the distance
+    from [1.] to the next float of the dtype. An inverse's bound adds [κ]
+    times its forward function's bound, where [κ = |p / (x F'(x))|] at its
+    result [x], for [F] the forward function, is its condition number. These
+    bounds hold where those of {!section-transcendental} do.
 
     The formats narrower than 32 bits follow {!section-transcendental};
     where a bound is absolute, their result is within that bound at
-    [float32] plus half an ulp of their dtype. *)
+    [float32], plus half an ulp of their dtype at the result, of the exact
+    value rounded to [float32]. *)
 
 val erfc : (float, 's, 'd) t -> (float, 's, 'd) t
 (** [erfc x] is [1 - erf x], to its own relative precision where [erf x]
@@ -1967,7 +1968,7 @@ val lbeta : (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
     [-log 1e10]. It is [inf] where either is [0.] and the other finite,
     [-inf] where either is [inf] and the other positive, and NaN where one is
     [0.] and the other [inf]. Within 256 ulps, or [512ε] absolutely where it
-    is below [1.] in magnitude. *)
+    rounds below [1.] in magnitude. *)
 
 val gammainc : (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
 (** [gammainc a x] is the regularised lower incomplete gamma function

@@ -104,10 +104,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   needs a call-argument contract: tolk passing a node it stores anyway with
   the view's index, or the scatter fusing its updates' computation (one
   launch a block; branch `fix-kvwrite`)
-- nx measures most errors in floats from the correctly rounded value, but
-  some special functions (nx.mli's "plus half of one" least subnormal and
-  an absolute `kε`) measure from the exact value: a second metric. One
-  metric, stated once
 - The exhaustive sweep of float32 `log` and `asinh` against nx_kinds.h's
   bits on nx_cuda and nx_amd is owed before any accuracy promise names a
   GPU
