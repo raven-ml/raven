@@ -11,6 +11,7 @@ dependencies = [
   "torchvision==0.24.0",
   "pillow==13.0.0",
   "pycocotools==2.0.10",
+  "scikit-image==0.26.0",
 ]
 
 [tool.uv]

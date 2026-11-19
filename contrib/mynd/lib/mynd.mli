@@ -80,6 +80,100 @@ val unpremultiply : (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
 (** [unpremultiply x] divides every channel but the last by the last; where
     alpha is [0] the colour is [0] and its derivative [0]. *)
 
+(** {1:colour Colour}
+
+    A {e colour} is a last axis of extent [3] holding red, green and blue, in
+    that order. The functions of this section read the colours along the last
+    axis of an array of any rank, each on its own, and return a result per
+    colour. They take floats: {!convert} an integer image first. Any channel
+    beyond the three, such as alpha, is split off with {!Nx.split_at} first and
+    joined back with {!Nx.concatenate} after. A last axis other than [3] raises
+    [Invalid_argument].
+
+    {e Luma} is the weighted sum of encoded values that ITU-R BT.601 §2.5.1
+    defines, [0.299 r + 0.587 g + 0.114 b]: the Y of JPEG's YCbCr, and the grey
+    that video and image files carry. {e Luminance} is CIE's Y of linear sRGB
+    ({!srgb_to_linear}), the light a colour emits relative to white. The two
+    differ on the same colour, so each function names the values it reads.
+
+    {e Linear sRGB} has ITU-R BT.709's primaries and white (CIE 1931 xy: red
+    [(0.640, 0.330)], green [(0.300, 0.600)], blue [(0.150, 0.060)], white D65
+    [(0.3127, 0.3290)]). Its matrix [M] to CIE XYZ is derived from them, as CSS
+    Color Module Level 4 gives it in rationals, so white [(1, 1, 1)] has
+    [Y = 1].
+
+    The {e HSV} form of a colour is Smith's hexcone (Color Gamut Transform
+    Pairs, 1978). With [v] the greatest channel and [m] the least, its value is
+    [v], its saturation [(v - m) / v], and its hue the colour's place on the
+    hexagon of hues in turns, in [\[0, 1)]: red [0], yellow [1/6], green [1/3],
+    cyan [1/2], blue [2/3], magenta [5/6]. A {e grey}, [v = m], has hue and
+    saturation [0]. An HSV array holds hue, saturation and value as three
+    fractions, so {!convert} takes it to codes as any image.
+
+    These functions clamp nothing: values outside [[0, 1]] take the same
+    formulas. A NaN channel gives NaN in every channel of the result. Where
+    channels tie, [v] and [m] take the tangents {!Rune} gives [Nx.max] and
+    [Nx.min] ({!Rune.section-kinks}). *)
+
+val luma : (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
+(** [luma x] is the luma of the colours [x], [[…; 3]] to [[…; 1]], computed as
+    [g + 0.299 (r - g) + 0.114 (b - g)] in [x]'s dtype, so that a grey
+    [(v, v, v)] gives [v], equal as a number. Where that form is not finite, as
+    at a grey of infinities or where [r - g] overflows, it is the sum
+    [0.299 r + 0.587 g + 0.114 b]. Linear values take {!luminance}. *)
+
+val luminance : (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
+(** [luminance x] is the luminance of the linear sRGB colours [x], [[…; 3]] to
+    [[…; 1]]: the middle row of [M], [87098/409605], [175762/245763],
+    [12673/175545], in the form and with the greys of {!luma}. On encoded values
+    it is a sum without meaning: apply {!srgb_to_linear} first. *)
+
+val rgb_to_hsv : (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
+(** [rgb_to_hsv x] is the HSV form of the colours [x], [[…; 3]] to [[…; 3]]. The
+    hue is [(g - b) / (6 (r - m))] where [r] is greatest,
+    [1/3 + (b - r) / (6 (g - m))] where [g] is and [r] is not, and
+    [2/3 + (r - g) / (6 (b - m))] elsewhere, taken modulo [1]; two channels tied
+    for the greatest give one hue by either rule. The saturation is infinite
+    where [v = 0 > m]. A colour with an infinite channel has NaN hue and
+    saturation, and value [v].
+
+    Away from greys the hue is continuously differentiable, across ties and
+    across red. At a grey the hue's and the saturation's derivatives are [0]. *)
+
+val hsv_to_rgb : (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
+(** [hsv_to_rgb y] is the colours whose HSV forms are [y], [[…; 3]] to [[…; 3]]:
+    channel [n], [5] for red, [3] for green and [1] for blue, is [v - v s c]
+    with [c = min (max (min k (4 - k)) 0) 1] and [k] the remainder of [n + 6 h]
+    by [6] in [\[0, 6)]. Any finite hue is read modulo [1], so adding [d] to the
+    hue turns the colour by [d] turns; a NaN or infinite component gives NaN in
+    every channel.
+
+    The derivative in the hue is that of the side of a sextant's edge the hue
+    lies on. Where [6 h], or its remainder by 6 (from 0 up to 6), rounds to an
+    integer, at an edge, it is the mean of its two one-sided derivatives, as
+    [Nx.minimum]'s is.
+
+    [hsv_to_rgb (rgb_to_hsv x)] is [x] to rounding for every finite colour that
+    is grey or has [v ≠ 0]. Its derivative is the identity there, at ties of
+    channels too, but at greys and at a colour within rounding of a tie whose
+    hue rounds onto an edge or across it. *)
+
+val linear_to_lab : (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
+(** [linear_to_lab x] is the CIE 1976 L*a*b* coordinates of the linear sRGB
+    colours [x], [[…; 3]] to [[…; 3]], relative to sRGB's own white D65, with no
+    chromatic adaptation. With [(X, Y, Z)] the product of [M] and the colour,
+    each divided by white's, [L* = 116 f(Y) - 16], [a* = 500 (f(X) - f(Y))] and
+    [b* = 200 (f(Y) - f(Z))], where [f t] is [t{^1/3}] above [ε = 216/24389] and
+    [(κ t + 16) / 116] elsewhere, [κ = 24389/27]: CIE's exact constants, with
+    which the two pieces of [f] meet with equal slopes. White is [(100, 0, 0)]
+    and black [(0, 0, 0)]. A colour measured relative to D50, as ICC profiles
+    and many image editors report it, must be adapted to D65 first. *)
+
+val lab_to_linear : (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
+(** [lab_to_linear y] inverts {!linear_to_lab}: [f]'s inverse is [u{^3}] above
+    [6/29], else [(116 u - 16) / κ], then [M]'s inverse. Colours outside sRGB's
+    gamut come back with channels below [0] or above [1]. *)
+
 (** {1:sampling Sampling at positions}
 
     A {e kernel} [k] of half-width [h] weighs a pixel by [k(τ)], [τ] the

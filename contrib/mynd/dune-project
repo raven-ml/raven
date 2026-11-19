@@ -25,7 +25,7 @@
  (name mynd)
  (synopsis "Images for OCaml")
  (description
-  "Images as Nx tensors: their values and conversions between dtypes, colour transfer and alpha, sampling at positions under reconstruction kernels, transforms, band-limited resizing, boxes, masks, COCO's run-length encoding, connected components and non-maximum suppression. Every operation is a composition of nx operations, so rune differentiates, batches and compiles it.")
+  "Images as Nx tensors: their values and conversions between dtypes, colour transfer and alpha, luma, HSV and CIE Lab, sampling at positions under reconstruction kernels, transforms, band-limited resizing, boxes, masks, COCO's run-length encoding, connected components and non-maximum suppression. Every operation is a composition of nx operations, so rune differentiates, batches and compiles it.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -37,6 +37,7 @@
   (windtrap
    (and
     :with-test
-    (>= 0.3.1))))
+    (>= 0.3.1)))
+  (mdx :with-test))
  (tags
   (computer-vision image-processing resizing detection science)))
