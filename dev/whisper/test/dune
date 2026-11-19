@@ -1,0 +1,81 @@
+; test_tokenizer.exe compares the tokenizers with upstream's own Tokenizer
+; (openai/whisper 86098128, whisper/tokenizer.py) over trimmed rank tables.
+; upstream/*.tiktoken and upstream/tokenizer.json were cut on 2026-11-18 by
+;   gen/run.sh P1-impl/tok_tables.py 1000 OUT ../oracle/tokenizer/corpus.jsonl
+; in _plans/whisper-port/gen's pinned environment, outside the repository.
+
+(test
+ (name test_tokenizer)
+ (modules test_tokenizer)
+ (libraries whisper whisper_support windtrap)
+ (deps
+  upstream/tokenizer.json
+  (glob_files upstream/*.tiktoken)))
+
+; test_model.exe compares the model with upstream's Whisper class
+; (openai/whisper 86098128, whisper/model.py) on a small randomly initialised
+; checkpoint, eager and compiled by rune. upstream/small.pt and
+; upstream/small.npz, its inputs and upstream's outputs at float32 and
+; float64, were cut on 2026-11-18 by
+;   gen/run.sh P1-impl/small_model.py OUT
+; and upstream/heads.json, every release's alignment heads, by
+;   gen/run.sh P1-impl/heads_table.py OUT
+; in _plans/whisper-port/gen's pinned environment, outside the repository.
+
+(test
+ (name test_model)
+ (modules test_model)
+ (libraries whisper whisper_support nx nx.io kaun rune windtrap)
+ (deps upstream/small.pt upstream/small.npz upstream/heads.json))
+
+; test_decoding.exe compares decoding with upstream's DecodingTask
+; (openai/whisper 86098128, whisper/decoding.py) over the trimmed tokenizers.
+; upstream/options.json, upstream/filters.json, upstream/filters.npz,
+; upstream/decode.pt, upstream/decode.npz, upstream/decode.json and
+; upstream/beam.json were cut on 2026-11-19 by
+;   gen/run.sh P2b-impl/decoding.py upstream OUT
+; in _plans/whisper-port/gen's pinned environment, outside the repository.
+
+(test
+ (name test_decoding)
+ (modules test_decoding)
+ (libraries whisper whisper_support nx nx.io kaun rune windtrap)
+ (deps
+  upstream/options.json
+  upstream/filters.json
+  upstream/filters.npz
+  upstream/decode.pt
+  upstream/decode.npz
+  upstream/decode.json
+  upstream/beam.json
+  (glob_files upstream/*.tiktoken)))
+
+; test_english.exe and test_wer.exe compare the normaliser with upstream's
+; EnglishTextNormalizer (openai/whisper 86098128,
+; whisper/normalizers/english.py) and word error rates with jiwer 4.0.0.
+; upstream/normalize.json was cut on 2026-11-19 by
+;   gen/run.sh P2-impl/normalize.py ../oracle/subset.tsv ../oracle/greedy OUT
+; in _plans/whisper-port/gen's pinned environment, outside the repository.
+
+(tests
+ (names test_english test_wer)
+ (modules test_english test_wer)
+ (libraries whisper whisper_support windtrap)
+ (deps upstream/normalize.json))
+
+; test_audio.exe compares the features with upstream's log_mel_spectrogram
+; (openai/whisper 86098128, whisper/audio.py). librispeech/ holds a
+; LibriSpeech file (CC BY 4.0, librispeech/NOTICE). upstream/audio.npz and
+; upstream/int8.flac were cut on 2026-11-19 by
+;   P3-impl/run.sh P3-impl/fixture.py librispeech/7902-96594-0025.flac OUT
+; in _plans/whisper-port/gen's pinned environment with ffmpeg 7.0.2 layered,
+; outside the repository.
+
+(test
+ (name test_audio)
+ (modules test_audio)
+ (libraries whisper nx nx.io windtrap)
+ (deps
+  upstream/audio.npz
+  upstream/int8.flac
+  librispeech/7902-96594-0025.flac))

@@ -1,0 +1,7 @@
+; check.exe compares the port with the oracle outside the repository: the
+; full rank files and the released checkpoints, which the repository does
+; not hold, so no test runs it. check.exe --help lists the commands.
+
+(executable
+ (name check)
+ (libraries whisper whisper_support nx nx.io kaun))

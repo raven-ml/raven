@@ -1,0 +1,4870 @@
+{
+"generator": "_plans/whisper-port/gen/P1-impl/tok_tables.py",
+"n": 1000,
+"configs": [
+{
+"name": "gpt299",
+"file": "gpt2-1000.tiktoken",
+"languages": 99,
+"n_vocab": 2608,
+"specials": [
+[
+"<|endoftext|>",
+1000
+],
+[
+"<|startoftranscript|>",
+1001
+],
+[
+"<|en|>",
+1002
+],
+[
+"<|zh|>",
+1003
+],
+[
+"<|de|>",
+1004
+],
+[
+"<|es|>",
+1005
+],
+[
+"<|ru|>",
+1006
+],
+[
+"<|ko|>",
+1007
+],
+[
+"<|fr|>",
+1008
+],
+[
+"<|ja|>",
+1009
+],
+[
+"<|pt|>",
+1010
+],
+[
+"<|tr|>",
+1011
+],
+[
+"<|pl|>",
+1012
+],
+[
+"<|ca|>",
+1013
+],
+[
+"<|nl|>",
+1014
+],
+[
+"<|ar|>",
+1015
+],
+[
+"<|sv|>",
+1016
+],
+[
+"<|it|>",
+1017
+],
+[
+"<|id|>",
+1018
+],
+[
+"<|hi|>",
+1019
+],
+[
+"<|fi|>",
+1020
+],
+[
+"<|vi|>",
+1021
+],
+[
+"<|he|>",
+1022
+],
+[
+"<|uk|>",
+1023
+],
+[
+"<|el|>",
+1024
+],
+[
+"<|ms|>",
+1025
+],
+[
+"<|cs|>",
+1026
+],
+[
+"<|ro|>",
+1027
+],
+[
+"<|da|>",
+1028
+],
+[
+"<|hu|>",
+1029
+],
+[
+"<|ta|>",
+1030
+],
+[
+"<|no|>",
+1031
+],
+[
+"<|th|>",
+1032
+],
+[
+"<|ur|>",
+1033
+],
+[
+"<|hr|>",
+1034
+],
+[
+"<|bg|>",
+1035
+],
+[
+"<|lt|>",
+1036
+],
+[
+"<|la|>",
+1037
+],
+[
+"<|mi|>",
+1038
+],
+[
+"<|ml|>",
+1039
+],
+[
+"<|cy|>",
+1040
+],
+[
+"<|sk|>",
+1041
+],
+[
+"<|te|>",
+1042
+],
+[
+"<|fa|>",
+1043
+],
+[
+"<|lv|>",
+1044
+],
+[
+"<|bn|>",
+1045
+],
+[
+"<|sr|>",
+1046
+],
+[
+"<|az|>",
+1047
+],
+[
+"<|sl|>",
+1048
+],
+[
+"<|kn|>",
+1049
+],
+[
+"<|et|>",
+1050
+],
+[
+"<|mk|>",
+1051
+],
+[
+"<|br|>",
+1052
+],
+[
+"<|eu|>",
+1053
+],
+[
+"<|is|>",
+1054
+],
+[
+"<|hy|>",
+1055
+],
+[
+"<|ne|>",
+1056
+],
+[
+"<|mn|>",
+1057
+],
+[
+"<|bs|>",
+1058
+],
+[
+"<|kk|>",
+1059
+],
+[
+"<|sq|>",
+1060
+],
+[
+"<|sw|>",
+1061
+],
+[
+"<|gl|>",
+1062
+],
+[
+"<|mr|>",
+1063
+],
+[
+"<|pa|>",
+1064
+],
+[
+"<|si|>",
+1065
+],
+[
+"<|km|>",
+1066
+],
+[
+"<|sn|>",
+1067
+],
+[
+"<|yo|>",
+1068
+],
+[
+"<|so|>",
+1069
+],
+[
+"<|af|>",
+1070
+],
+[
+"<|oc|>",
+1071
+],
+[
+"<|ka|>",
+1072
+],
+[
+"<|be|>",
+1073
+],
+[
+"<|tg|>",
+1074
+],
+[
+"<|sd|>",
+1075
+],
+[
+"<|gu|>",
+1076
+],
+[
+"<|am|>",
+1077
+],
+[
+"<|yi|>",
+1078
+],
+[
+"<|lo|>",
+1079
+],
+[
+"<|uz|>",
+1080
+],
+[
+"<|fo|>",
+1081
+],
+[
+"<|ht|>",
+1082
+],
+[
+"<|ps|>",
+1083
+],
+[
+"<|tk|>",
+1084
+],
+[
+"<|nn|>",
+1085
+],
+[
+"<|mt|>",
+1086
+],
+[
+"<|sa|>",
+1087
+],
+[
+"<|lb|>",
+1088
+],
+[
+"<|my|>",
+1089
+],
+[
+"<|bo|>",
+1090
+],
+[
+"<|tl|>",
+1091
+],
+[
+"<|mg|>",
+1092
+],
+[
+"<|as|>",
+1093
+],
+[
+"<|tt|>",
+1094
+],
+[
+"<|haw|>",
+1095
+],
+[
+"<|ln|>",
+1096
+],
+[
+"<|ha|>",
+1097
+],
+[
+"<|ba|>",
+1098
+],
+[
+"<|jw|>",
+1099
+],
+[
+"<|su|>",
+1100
+],
+[
+"<|translate|>",
+1101
+],
+[
+"<|transcribe|>",
+1102
+],
+[
+"<|startoflm|>",
+1103
+],
+[
+"<|startofprev|>",
+1104
+],
+[
+"<|nospeech|>",
+1105
+],
+[
+"<|notimestamps|>",
+1106
+],
+[
+"<|0.00|>",
+1107
+],
+[
+"<|0.02|>",
+1108
+],
+[
+"<|0.04|>",
+1109
+],
+[
+"<|1.08|>",
+1161
+],
+[
+"<|29.98|>",
+2606
+],
+[
+"<|30.00|>",
+2607
+]
+],
+"timestamp_begin": 1107,
+"sot_sequences": {
+"none": [
+1001
+]
+},
+"non_speech_tokens": [
+1,
+2,
+7,
+8,
+9,
+10,
+14,
+25,
+26,
+27,
+28,
+29,
+31,
+58,
+59,
+60,
+61,
+62,
+63,
+90,
+91,
+92,
+93,
+158,
+220,
+357,
+366,
+438,
+532,
+685,
+705,
+796,
+930
+],
+"encode": [
+{
+"text": "",
+"ids": [],
+"upstream_refuses": false,
+"decode": ""
+},
+{
+"text": " ",
+"ids": [
+220
+],
+"upstream_refuses": false,
+"decode": " "
+},
+{
+"text": "  ",
+"ids": [
+220,
+220
+],
+"upstream_refuses": false,
+"decode": "  "
+},
+{
+"text": "\t",
+"ids": [
+197
+],
+"upstream_refuses": false,
+"decode": "\t"
+},
+{
+"text": "\n",
+"ids": [
+198
+],
+"upstream_refuses": false,
+"decode": "\n"
+},
+{
+"text": "\n\n",
+"ids": [
+628
+],
+"upstream_refuses": false,
+"decode": "\n\n"
+},
+{
+"text": " \n ",
+"ids": [
+220,
+198,
+220
+],
+"upstream_refuses": false,
+"decode": " \n "
+},
+{
+"text": "a  b",
+"ids": [
+64,
+220,
+275
+],
+"upstream_refuses": false,
+"decode": "a  b"
+},
+{
+"text": "a\t\tb",
+"ids": [
+64,
+197,
+197,
+65
+],
+"upstream_refuses": false,
+"decode": "a\t\tb"
+},
+{
+"text": "end\n",
+"ids": [
+437,
+198
+],
+"upstream_refuses": false,
+"decode": "end\n"
+},
+{
+"text": " leading",
+"ids": [
+443,
+324,
+278
+],
+"upstream_refuses": false,
+"decode": " leading"
+},
+{
+"text": "Hello, world!",
+"ids": [
+39,
+695,
+78,
+11,
+995,
+0
+],
+"upstream_refuses": false,
+"decode": "Hello, world!"
+},
+{
+"text": " Hello world.",
+"ids": [
+679,
+297,
+78,
+995,
+13
+],
+"upstream_refuses": false,
+"decode": " Hello world."
+},
+{
+"text": "HELLO WORLD",
+"ids": [
+39,
+36,
+43,
+43,
+46,
+370,
+46,
+49,
+43,
+35
+],
+"upstream_refuses": false,
+"decode": "HELLO WORLD"
+},
+{
+"text": " And so my fellow Americans, ask not.",
+"ids": [
+843,
+523,
+616,
+277,
+695,
+322,
+317,
+946,
+504,
+11,
+355,
+74,
+407,
+13
+],
+"upstream_refuses": false,
+"decode": " And so my fellow Americans, ask not."
+},
+{
+"text": "It's a dog's life; isn't it? I'm sure we'll see, they've said, you'd know.",
+"ids": [
+40,
+83,
+338,
+257,
+466,
+70,
+338,
+300,
+901,
+26,
+318,
+77,
+470,
+340,
+30,
+314,
+6,
+76,
+424,
+260,
+356,
+6,
+297,
+766,
+11,
+484,
+6,
+303,
+531,
+11,
+345,
+6,
+67,
+760,
+13
+],
+"upstream_refuses": false,
+"decode": "It's a dog's life; isn't it? I'm sure we'll see, they've said, you'd know."
+},
+{
+"text": "IT'S I'M WE'LL",
+"ids": [
+40,
+51,
+6,
+50,
+314,
+6,
+44,
+370,
+36,
+6,
+43,
+43
+],
+"upstream_refuses": false,
+"decode": "IT'S I'M WE'LL"
+},
+{
+"text": "O'Brien's",
+"ids": [
+46,
+6,
+33,
+380,
+268,
+338
+],
+"upstream_refuses": false,
+"decode": "O'Brien's"
+},
+{
+"text": "rock 'n' roll",
+"ids": [
+305,
+694,
+705,
+77,
+6,
+686,
+297
+],
+"upstream_refuses": false,
+"decode": "rock 'n' roll"
+},
+{
+"text": "\"Quoted,\" (aside) [note] {brace} <angle>.",
+"ids": [
+1,
+48,
+84,
+313,
+276,
+553,
+357,
+292,
+485,
+8,
+685,
+77,
+313,
+68,
+60,
+220,
+90,
+65,
+81,
+558,
+92,
+220,
+27,
+648,
+293,
+29,
+13
+],
+"upstream_refuses": false,
+"decode": "\"Quoted,\" (aside) [note] {brace} <angle>."
+},
+{
+"text": "#hashtag @user a+b=c 5*3/2 x^2 a_b `code` a|b ~tilde",
+"ids": [
+2,
+71,
+292,
+71,
+83,
+363,
+220,
+31,
+385,
+263,
+257,
+10,
+65,
+28,
+66,
+642,
+9,
+18,
+14,
+17,
+220,
+87,
+61,
+17,
+257,
+62,
+65,
+220,
+63,
+66,
+375,
+68,
+63,
+257,
+91,
+65,
+220,
+93,
+83,
+688,
+68
+],
+"upstream_refuses": false,
+"decode": "#hashtag @user a+b=c 5*3/2 x^2 a_b `code` a|b ~tilde"
+},
+{
+"text": "- dash",
+"ids": [
+12,
+288,
+292,
+71
+],
+"upstream_refuses": false,
+"decode": "- dash"
+},
+{
+"text": " -",
+"ids": [
+532
+],
+"upstream_refuses": false,
+"decode": " -"
+},
+{
+"text": " '",
+"ids": [
+705
+],
+"upstream_refuses": false,
+"decode": " '"
+},
+{
+"text": "--",
+"ids": [
+438
+],
+"upstream_refuses": false,
+"decode": "--"
+},
+{
+"text": "<<",
+"ids": [
+27,
+27
+],
+"upstream_refuses": false,
+"decode": "<<"
+},
+{
+"text": ">>",
+"ids": [
+29,
+29
+],
+"upstream_refuses": false,
+"decode": ">>"
+},
+{
+"text": "♪",
+"ids": [
+158,
+247,
+103
+],
+"upstream_refuses": false,
+"decode": "♪"
+},
+{
+"text": "♪♪♪",
+"ids": [
+158,
+247,
+103,
+158,
+247,
+103,
+158,
+247,
+103
+],
+"upstream_refuses": false,
+"decode": "♪♪♪"
+},
+{
+"text": "♩♪♫♬♭♮♯",
+"ids": [
+158,
+247,
+102,
+158,
+247,
+103,
+158,
+247,
+104,
+158,
+247,
+105,
+158,
+247,
+255,
+158,
+247,
+106,
+158,
+247,
+107
+],
+"upstream_refuses": false,
+"decode": "♩♪♫♬♭♮♯"
+},
+{
+"text": "「引用」",
+"ids": [
+159,
+222,
+234,
+161,
+120,
+243,
+163,
+242,
+101,
+159,
+222,
+235
+],
+"upstream_refuses": false,
+"decode": "「引用」"
+},
+{
+"text": "0",
+"ids": [
+15
+],
+"upstream_refuses": false,
+"decode": "0"
+},
+{
+"text": "12",
+"ids": [
+16,
+17
+],
+"upstream_refuses": false,
+"decode": "12"
+},
+{
+"text": "123",
+"ids": [
+16,
+17,
+18
+],
+"upstream_refuses": false,
+"decode": "123"
+},
+{
+"text": "1234",
+"ids": [
+16,
+17,
+18,
+19
+],
+"upstream_refuses": false,
+"decode": "1234"
+},
+{
+"text": "1,234,567.89",
+"ids": [
+16,
+11,
+17,
+18,
+19,
+11,
+20,
+21,
+22,
+13,
+23,
+24
+],
+"upstream_refuses": false,
+"decode": "1,234,567.89"
+},
+{
+"text": "-42",
+"ids": [
+12,
+19,
+17
+],
+"upstream_refuses": false,
+"decode": "-42"
+},
+{
+"text": "$2.07",
+"ids": [
+3,
+17,
+13,
+15,
+22
+],
+"upstream_refuses": false,
+"decode": "$2.07"
+},
+{
+"text": "naïve café",
+"ids": [
+77,
+64,
+127,
+107,
+303,
+269,
+64,
+69,
+127,
+102
+],
+"upstream_refuses": false,
+"decode": "naïve café"
+},
+{
+"text": "Straße",
+"ids": [
+50,
+83,
+430,
+127,
+253,
+68
+],
+"upstream_refuses": false,
+"decode": "Straße"
+},
+{
+"text": "我们今天",
+"ids": [
+162,
+230,
+239,
+160,
+119,
+105,
+160,
+119,
+232,
+161,
+97,
+102
+],
+"upstream_refuses": false,
+"decode": "我们今天"
+},
+{
+"text": "今日は",
+"ids": [
+160,
+119,
+232,
+162,
+245,
+98,
+159,
+223,
+107
+],
+"upstream_refuses": false,
+"decode": "今日は"
+},
+{
+"text": "مرحبا",
+"ids": [
+149,
+227,
+148,
+109,
+148,
+255,
+148,
+101,
+148,
+100
+],
+"upstream_refuses": false,
+"decode": "مرحبا"
+},
+{
+"text": "नमस्ते",
+"ids": [
+156,
+97,
+101,
+156,
+97,
+106,
+156,
+97,
+116,
+156,
+98,
+235,
+156,
+97,
+97,
+156,
+98,
+229
+],
+"upstream_refuses": false,
+"decode": "नमस्ते"
+},
+{
+"text": "Привет, мир!",
+"ids": [
+140,
+253,
+141,
+222,
+140,
+116,
+140,
+110,
+140,
+113,
+141,
+224,
+11,
+220,
+140,
+120,
+140,
+116,
+141,
+222,
+0
+],
+"upstream_refuses": false,
+"decode": "Привет, мир!"
+},
+{
+"text": "안녕",
+"ids": [
+168,
+243,
+230,
+167,
+227,
+243
+],
+"upstream_refuses": false,
+"decode": "안녕"
+},
+{
+"text": "😀",
+"ids": [
+172,
+253,
+246,
+222
+],
+"upstream_refuses": false,
+"decode": "😀"
+},
+{
+"text": "👨‍👩‍👧",
+"ids": [
+172,
+253,
+239,
+101,
+447,
+235,
+172,
+253,
+239,
+102,
+447,
+235,
+172,
+253,
+239,
+100
+],
+"upstream_refuses": false,
+"decode": "👨‍👩‍👧"
+},
+{
+"text": " nbsp",
+"ids": [
+299,
+65,
+82,
+79
+],
+"upstream_refuses": false,
+"decode": " nbsp"
+},
+{
+"text": "zero​width",
+"ids": [
+89,
+263,
+78,
+447,
+233,
+86,
+312,
+400
+],
+"upstream_refuses": false,
+"decode": "zero​width"
+},
+{
+"text": "<|endoftext|>",
+"ids": [
+27,
+91,
+437,
+78,
+69,
+660,
+742,
+91,
+29
+],
+"upstream_refuses": true,
+"decode": "<|endoftext|>"
+},
+{
+"text": "<|en|>",
+"ids": [
+27,
+91,
+268,
+91,
+29
+],
+"upstream_refuses": true,
+"decode": "<|en|>"
+},
+{
+"text": "<|yue|>",
+"ids": [
+27,
+91,
+88,
+518,
+91,
+29
+],
+"upstream_refuses": false,
+"decode": "<|yue|>"
+},
+{
+"text": "<|0.00|>",
+"ids": [
+27,
+91,
+15,
+13,
+405,
+91,
+29
+],
+"upstream_refuses": true,
+"decode": "<|0.00|>"
+},
+{
+"text": "<|30.02|>",
+"ids": [
+27,
+91,
+18,
+15,
+13,
+15,
+17,
+91,
+29
+],
+"upstream_refuses": false,
+"decode": "<|30.02|>"
+},
+{
+"text": "text <|endoftext|> more",
+"ids": [
+660,
+742,
+220,
+27,
+91,
+437,
+78,
+69,
+660,
+742,
+91,
+29,
+517
+],
+"upstream_refuses": true,
+"decode": "text <|endoftext|> more"
+},
+{
+"text": "<|startoftranscript|><|en|><|transcribe|> Hello",
+"ids": [
+27,
+91,
+301,
+433,
+78,
+701,
+81,
+504,
+66,
+380,
+457,
+91,
+29,
+27,
+91,
+268,
+91,
+29,
+27,
+91,
+83,
+81,
+504,
+66,
+822,
+68,
+91,
+29,
+679,
+297,
+78
+],
+"upstream_refuses": true,
+"decode": "<|startoftranscript|><|en|><|transcribe|> Hello"
+},
+{
+"text": "<|endoftext",
+"ids": [
+27,
+91,
+437,
+78,
+69,
+660,
+742
+],
+"upstream_refuses": false,
+"decode": "<|endoftext"
+},
+{
+"text": "<|>",
+"ids": [
+27,
+91,
+29
+],
+"upstream_refuses": false,
+"decode": "<|>"
+},
+{
+"text": " HE BEGAN A CONFUSED COMPLAINT AGAINST THE WIZARD WHO HAD VANISHED BEHIND THE CURTAIN",
+"ids": [
+367,
+36,
+347,
+36,
+38,
+32,
+45,
+317,
+327,
+46,
+45,
+37,
+52,
+50,
+36,
+35,
+327,
+46,
+44,
+47,
+43,
+32,
+40,
+45,
+51,
+317,
+38,
+32,
+40,
+45,
+50,
+51,
+309,
+39,
+36,
+370,
+40,
+57,
+32,
+49,
+35,
+370,
+39,
+46,
+367,
+32,
+35,
+569,
+32,
+45,
+40,
+50,
+39,
+36,
+35,
+347,
+36,
+39,
+40,
+45,
+35,
+309,
+39,
+36,
+327,
+52,
+49,
+51,
+32,
+40,
+45
+],
+"upstream_refuses": false,
+"decode": " HE BEGAN A CONFUSED COMPLAINT AGAINST THE WIZARD WHO HAD VANISHED BEHIND THE CURTAIN"
+},
+{
+"text": " when is a lobster not a lobster when it is a crayfish",
+"ids": [
+618,
+318,
+257,
+300,
+672,
+301,
+263,
+407,
+257,
+300,
+672,
+301,
+263,
+618,
+340,
+318,
+257,
+269,
+81,
+323,
+69,
+680
+],
+"upstream_refuses": false,
+"decode": " when is a lobster not a lobster when it is a crayfish"
+}
+],
+"decode": [
+{
+"ids": [
+1107,
+679,
+297,
+78,
+995,
+13,
+1161,
+1000
+],
+"decode": " Hello world.<|endoftext|>",
+"decode_with_timestamps": "<|0.00|> Hello world.<|1.08|><|endoftext|>"
+},
+{
+"ids": [
+1001,
+1106,
+679,
+297,
+78,
+995,
+13,
+1000
+],
+"decode": "<|startoftranscript|><|notimestamps|> Hello world.<|endoftext|>",
+"decode_with_timestamps": "<|startoftranscript|><|notimestamps|> Hello world.<|endoftext|>"
+},
+{
+"ids": [
+1107,
+1108,
+2606,
+2607
+],
+"decode": "",
+"decode_with_timestamps": "<|0.00|><|0.02|><|29.98|><|30.00|>"
+},
+{
+"ids": [
+1106,
+1107
+],
+"decode": "<|notimestamps|>",
+"decode_with_timestamps": "<|notimestamps|><|0.00|>"
+},
+{
+"ids": [
+1000,
+1104,
+1103,
+1105,
+1102,
+1101
+],
+"decode": "<|endoftext|><|startofprev|><|startoflm|><|nospeech|><|transcribe|><|translate|>",
+"decode_with_timestamps": "<|endoftext|><|startofprev|><|startoflm|><|nospeech|><|transcribe|><|translate|>"
+},
+{
+"ids": [
+162,
+230
+],
+"decode": "�",
+"decode_with_timestamps": "�"
+},
+{
+"ids": [
+162,
+230,
+239
+],
+"decode": "我",
+"decode_with_timestamps": "我"
+},
+{
+"ids": [
+64,
+187,
+65
+],
+"decode": "a�b",
+"decode_with_timestamps": "a�b"
+},
+{
+"ids": [
+162,
+1110,
+230,
+239
+],
+"decode": "我",
+"decode_with_timestamps": "�<|0.06|>��"
+}
+]
+},
+{
+"name": "multilingual99",
+"file": "multilingual-1000.tiktoken",
+"languages": 99,
+"n_vocab": 2609,
+"specials": [
+[
+"<|endoftext|>",
+1001
+],
+[
+"<|startoftranscript|>",
+1002
+],
+[
+"<|en|>",
+1003
+],
+[
+"<|zh|>",
+1004
+],
+[
+"<|de|>",
+1005
+],
+[
+"<|es|>",
+1006
+],
+[
+"<|ru|>",
+1007
+],
+[
+"<|ko|>",
+1008
+],
+[
+"<|fr|>",
+1009
+],
+[
+"<|ja|>",
+1010
+],
+[
+"<|pt|>",
+1011
+],
+[
+"<|tr|>",
+1012
+],
+[
+"<|pl|>",
+1013
+],
+[
+"<|ca|>",
+1014
+],
+[
+"<|nl|>",
+1015
+],
+[
+"<|ar|>",
+1016
+],
+[
+"<|sv|>",
+1017
+],
+[
+"<|it|>",
+1018
+],
+[
+"<|id|>",
+1019
+],
+[
+"<|hi|>",
+1020
+],
+[
+"<|fi|>",
+1021
+],
+[
+"<|vi|>",
+1022
+],
+[
+"<|he|>",
+1023
+],
+[
+"<|uk|>",
+1024
+],
+[
+"<|el|>",
+1025
+],
+[
+"<|ms|>",
+1026
+],
+[
+"<|cs|>",
+1027
+],
+[
+"<|ro|>",
+1028
+],
+[
+"<|da|>",
+1029
+],
+[
+"<|hu|>",
+1030
+],
+[
+"<|ta|>",
+1031
+],
+[
+"<|no|>",
+1032
+],
+[
+"<|th|>",
+1033
+],
+[
+"<|ur|>",
+1034
+],
+[
+"<|hr|>",
+1035
+],
+[
+"<|bg|>",
+1036
+],
+[
+"<|lt|>",
+1037
+],
+[
+"<|la|>",
+1038
+],
+[
+"<|mi|>",
+1039
+],
+[
+"<|ml|>",
+1040
+],
+[
+"<|cy|>",
+1041
+],
+[
+"<|sk|>",
+1042
+],
+[
+"<|te|>",
+1043
+],
+[
+"<|fa|>",
+1044
+],
+[
+"<|lv|>",
+1045
+],
+[
+"<|bn|>",
+1046
+],
+[
+"<|sr|>",
+1047
+],
+[
+"<|az|>",
+1048
+],
+[
+"<|sl|>",
+1049
+],
+[
+"<|kn|>",
+1050
+],
+[
+"<|et|>",
+1051
+],
+[
+"<|mk|>",
+1052
+],
+[
+"<|br|>",
+1053
+],
+[
+"<|eu|>",
+1054
+],
+[
+"<|is|>",
+1055
+],
+[
+"<|hy|>",
+1056
+],
+[
+"<|ne|>",
+1057
+],
+[
+"<|mn|>",
+1058
+],
+[
+"<|bs|>",
+1059
+],
+[
+"<|kk|>",
+1060
+],
+[
+"<|sq|>",
+1061
+],
+[
+"<|sw|>",
+1062
+],
+[
+"<|gl|>",
+1063
+],
+[
+"<|mr|>",
+1064
+],
+[
+"<|pa|>",
+1065
+],
+[
+"<|si|>",
+1066
+],
+[
+"<|km|>",
+1067
+],
+[
+"<|sn|>",
+1068
+],
+[
+"<|yo|>",
+1069
+],
+[
+"<|so|>",
+1070
+],
+[
+"<|af|>",
+1071
+],
+[
+"<|oc|>",
+1072
+],
+[
+"<|ka|>",
+1073
+],
+[
+"<|be|>",
+1074
+],
+[
+"<|tg|>",
+1075
+],
+[
+"<|sd|>",
+1076
+],
+[
+"<|gu|>",
+1077
+],
+[
+"<|am|>",
+1078
+],
+[
+"<|yi|>",
+1079
+],
+[
+"<|lo|>",
+1080
+],
+[
+"<|uz|>",
+1081
+],
+[
+"<|fo|>",
+1082
+],
+[
+"<|ht|>",
+1083
+],
+[
+"<|ps|>",
+1084
+],
+[
+"<|tk|>",
+1085
+],
+[
+"<|nn|>",
+1086
+],
+[
+"<|mt|>",
+1087
+],
+[
+"<|sa|>",
+1088
+],
+[
+"<|lb|>",
+1089
+],
+[
+"<|my|>",
+1090
+],
+[
+"<|bo|>",
+1091
+],
+[
+"<|tl|>",
+1092
+],
+[
+"<|mg|>",
+1093
+],
+[
+"<|as|>",
+1094
+],
+[
+"<|tt|>",
+1095
+],
+[
+"<|haw|>",
+1096
+],
+[
+"<|ln|>",
+1097
+],
+[
+"<|ha|>",
+1098
+],
+[
+"<|ba|>",
+1099
+],
+[
+"<|jw|>",
+1100
+],
+[
+"<|su|>",
+1101
+],
+[
+"<|translate|>",
+1102
+],
+[
+"<|transcribe|>",
+1103
+],
+[
+"<|startoflm|>",
+1104
+],
+[
+"<|startofprev|>",
+1105
+],
+[
+"<|nospeech|>",
+1106
+],
+[
+"<|notimestamps|>",
+1107
+],
+[
+"<|0.00|>",
+1108
+],
+[
+"<|0.02|>",
+1109
+],
+[
+"<|0.04|>",
+1110
+],
+[
+"<|1.08|>",
+1162
+],
+[
+"<|29.98|>",
+2607
+],
+[
+"<|30.00|>",
+2608
+]
+],
+"timestamp_begin": 1108,
+"sot_sequences": {
+"none": [
+1002
+],
+"en/transcribe": [
+1002,
+1003,
+1103
+],
+"en/translate": [
+1002,
+1003,
+1102
+],
+"zh/transcribe": [
+1002,
+1004,
+1103
+],
+"zh/translate": [
+1002,
+1004,
+1102
+],
+"su/transcribe": [
+1002,
+1101,
+1103
+],
+"su/translate": [
+1002,
+1101,
+1102
+]
+},
+"non_speech_tokens": [
+1,
+2,
+7,
+8,
+9,
+10,
+14,
+25,
+26,
+27,
+28,
+29,
+31,
+58,
+59,
+60,
+61,
+62,
+63,
+90,
+91,
+92,
+93,
+158,
+359,
+503,
+522,
+542,
+873,
+893,
+902,
+918,
+922,
+931
+],
+"encode": [
+{
+"text": "",
+"ids": [],
+"upstream_refuses": false,
+"decode": ""
+},
+{
+"text": " ",
+"ids": [
+220
+],
+"upstream_refuses": false,
+"decode": " "
+},
+{
+"text": "  ",
+"ids": [
+220,
+220
+],
+"upstream_refuses": false,
+"decode": "  "
+},
+{
+"text": "\t",
+"ids": [
+197
+],
+"upstream_refuses": false,
+"decode": "\t"
+},
+{
+"text": "\n",
+"ids": [
+198
+],
+"upstream_refuses": false,
+"decode": "\n"
+},
+{
+"text": "\n\n",
+"ids": [
+198,
+198
+],
+"upstream_refuses": false,
+"decode": "\n\n"
+},
+{
+"text": " \n ",
+"ids": [
+220,
+198,
+220
+],
+"upstream_refuses": false,
+"decode": " \n "
+},
+{
+"text": "a  b",
+"ids": [
+64,
+220,
+272
+],
+"upstream_refuses": false,
+"decode": "a  b"
+},
+{
+"text": "a\t\tb",
+"ids": [
+64,
+197,
+197,
+65
+],
+"upstream_refuses": false,
+"decode": "a\t\tb"
+},
+{
+"text": "end\n",
+"ids": [
+521,
+198
+],
+"upstream_refuses": false,
+"decode": "end\n"
+},
+{
+"text": " leading",
+"ids": [
+476,
+345,
+278
+],
+"upstream_refuses": false,
+"decode": " leading"
+},
+{
+"text": "Hello, world!",
+"ids": [
+39,
+898,
+78,
+11,
+469,
+348,
+0
+],
+"upstream_refuses": false,
+"decode": "Hello, world!"
+},
+{
+"text": " Hello world.",
+"ids": [
+634,
+285,
+78,
+469,
+348,
+13
+],
+"upstream_refuses": false,
+"decode": " Hello world."
+},
+{
+"text": "HELLO WORLD",
+"ids": [
+39,
+36,
+43,
+43,
+46,
+343,
+46,
+49,
+43,
+35
+],
+"upstream_refuses": false,
+"decode": "HELLO WORLD"
+},
+{
+"text": " And so my fellow Americans, ask not.",
+"ids": [
+400,
+370,
+452,
+579,
+285,
+305,
+316,
+936,
+299,
+599,
+11,
+382,
+74,
+406,
+13
+],
+"upstream_refuses": false,
+"decode": " And so my fellow Americans, ask not."
+},
+{
+"text": "It's a dog's life; isn't it? I'm sure we'll see, they've said, you'd know.",
+"ids": [
+40,
+83,
+311,
+257,
+360,
+70,
+311,
+993,
+26,
+307,
+77,
+380,
+309,
+30,
+286,
+478,
+988,
+321,
+603,
+536,
+11,
+436,
+600,
+848,
+11,
+291,
+6,
+67,
+458,
+13
+],
+"upstream_refuses": false,
+"decode": "It's a dog's life; isn't it? I'm sure we'll see, they've said, you'd know."
+},
+{
+"text": "IT'S I'M WE'LL",
+"ids": [
+40,
+51,
+6,
+50,
+286,
+6,
+44,
+343,
+36,
+6,
+43,
+43
+],
+"upstream_refuses": false,
+"decode": "IT'S I'M WE'LL"
+},
+{
+"text": "O'Brien's",
+"ids": [
+46,
+6,
+33,
+470,
+268,
+311
+],
+"upstream_refuses": false,
+"decode": "O'Brien's"
+},
+{
+"text": "rock 'n' roll",
+"ids": [
+340,
+547,
+922,
+77,
+6,
+744,
+285
+],
+"upstream_refuses": false,
+"decode": "rock 'n' roll"
+},
+{
+"text": "\"Quoted,\" (aside) [note] {brace} <angle>.",
+"ids": [
+1,
+48,
+84,
+310,
+292,
+11,
+1,
+522,
+296,
+482,
+8,
+542,
+77,
+310,
+68,
+60,
+220,
+90,
+65,
+81,
+617,
+92,
+220,
+27,
+656,
+306,
+29,
+13
+],
+"upstream_refuses": false,
+"decode": "\"Quoted,\" (aside) [note] {brace} <angle>."
+},
+{
+"text": "#hashtag @user a+b=c 5*3/2 x^2 a_b `code` a|b ~tilde",
+"ids": [
+2,
+71,
+296,
+357,
+559,
+220,
+31,
+301,
+260,
+257,
+10,
+65,
+28,
+66,
+220,
+20,
+9,
+18,
+14,
+17,
+220,
+87,
+61,
+17,
+257,
+62,
+65,
+220,
+63,
+66,
+378,
+68,
+63,
+257,
+91,
+65,
+220,
+93,
+83,
+793,
+68
+],
+"upstream_refuses": false,
+"decode": "#hashtag @user a+b=c 5*3/2 x^2 a_b `code` a|b ~tilde"
+},
+{
+"text": "- dash",
+"ids": [
+12,
+274,
+296,
+71
+],
+"upstream_refuses": false,
+"decode": "- dash"
+},
+{
+"text": " -",
+"ids": [
+359
+],
+"upstream_refuses": false,
+"decode": " -"
+},
+{
+"text": " '",
+"ids": [
+922
+],
+"upstream_refuses": false,
+"decode": " '"
+},
+{
+"text": "--",
+"ids": [
+918
+],
+"upstream_refuses": false,
+"decode": "--"
+},
+{
+"text": "<<",
+"ids": [
+27,
+27
+],
+"upstream_refuses": false,
+"decode": "<<"
+},
+{
+"text": ">>",
+"ids": [
+893
+],
+"upstream_refuses": false,
+"decode": ">>"
+},
+{
+"text": "♪",
+"ids": [
+158,
+247,
+103
+],
+"upstream_refuses": false,
+"decode": "♪"
+},
+{
+"text": "♪♪♪",
+"ids": [
+158,
+247,
+103,
+158,
+247,
+103,
+158,
+247,
+103
+],
+"upstream_refuses": false,
+"decode": "♪♪♪"
+},
+{
+"text": "♩♪♫♬♭♮♯",
+"ids": [
+158,
+247,
+102,
+158,
+247,
+103,
+158,
+247,
+104,
+158,
+247,
+105,
+158,
+247,
+255,
+158,
+247,
+106,
+158,
+247,
+107
+],
+"upstream_refuses": false,
+"decode": "♩♪♫♬♭♮♯"
+},
+{
+"text": "「引用」",
+"ids": [
+756,
+234,
+161,
+120,
+243,
+163,
+242,
+101,
+756,
+235
+],
+"upstream_refuses": false,
+"decode": "「引用」"
+},
+{
+"text": "0",
+"ids": [
+15
+],
+"upstream_refuses": false,
+"decode": "0"
+},
+{
+"text": "12",
+"ids": [
+16,
+17
+],
+"upstream_refuses": false,
+"decode": "12"
+},
+{
+"text": "123",
+"ids": [
+16,
+17,
+18
+],
+"upstream_refuses": false,
+"decode": "123"
+},
+{
+"text": "1234",
+"ids": [
+16,
+17,
+18,
+19
+],
+"upstream_refuses": false,
+"decode": "1234"
+},
+{
+"text": "1,234,567.89",
+"ids": [
+16,
+11,
+17,
+18,
+19,
+11,
+20,
+21,
+22,
+13,
+23,
+24
+],
+"upstream_refuses": false,
+"decode": "1,234,567.89"
+},
+{
+"text": "-42",
+"ids": [
+12,
+19,
+17
+],
+"upstream_refuses": false,
+"decode": "-42"
+},
+{
+"text": "$2.07",
+"ids": [
+3,
+17,
+13,
+15,
+22
+],
+"upstream_refuses": false,
+"decode": "$2.07"
+},
+{
+"text": "naïve café",
+"ids": [
+629,
+127,
+107,
+303,
+269,
+64,
+69,
+526
+],
+"upstream_refuses": false,
+"decode": "naïve café"
+},
+{
+"text": "Straße",
+"ids": [
+50,
+83,
+424,
+127,
+253,
+68
+],
+"upstream_refuses": false,
+"decode": "Straße"
+},
+{
+"text": "我们今天",
+"ids": [
+162,
+230,
+239,
+160,
+119,
+105,
+160,
+119,
+232,
+161,
+97,
+102
+],
+"upstream_refuses": false,
+"decode": "我们今天"
+},
+{
+"text": "今日は",
+"ids": [
+160,
+119,
+232,
+162,
+245,
+98,
+487,
+107
+],
+"upstream_refuses": false,
+"decode": "今日は"
+},
+{
+"text": "مرحبا",
+"ids": [
+149,
+227,
+148,
+109,
+148,
+255,
+148,
+101,
+995
+],
+"upstream_refuses": false,
+"decode": "مرحبا"
+},
+{
+"text": "नमस्ते",
+"ids": [
+156,
+97,
+101,
+156,
+97,
+106,
+156,
+97,
+116,
+156,
+98,
+235,
+156,
+97,
+97,
+156,
+98,
+229
+],
+"upstream_refuses": false,
+"decode": "नमस्ते"
+},
+{
+"text": "Привет, мир!",
+"ids": [
+140,
+253,
+481,
+435,
+859,
+387,
+403,
+11,
+333,
+120,
+435,
+481,
+0
+],
+"upstream_refuses": false,
+"decode": "Привет, мир!"
+},
+{
+"text": "안녕",
+"ids": [
+168,
+243,
+230,
+167,
+227,
+243
+],
+"upstream_refuses": false,
+"decode": "안녕"
+},
+{
+"text": "😀",
+"ids": [
+172,
+253,
+246,
+222
+],
+"upstream_refuses": false,
+"decode": "😀"
+},
+{
+"text": "👨‍👩‍👧",
+"ids": [
+172,
+253,
+239,
+101,
+913,
+235,
+172,
+253,
+239,
+102,
+913,
+235,
+172,
+253,
+239,
+100
+],
+"upstream_refuses": false,
+"decode": "👨‍👩‍👧"
+},
+{
+"text": " nbsp",
+"ids": [
+297,
+929,
+79
+],
+"upstream_refuses": false,
+"decode": " nbsp"
+},
+{
+"text": "zero​width",
+"ids": [
+89,
+260,
+78,
+913,
+233,
+86,
+327,
+392
+],
+"upstream_refuses": false,
+"decode": "zero​width"
+},
+{
+"text": "<|endoftext|>",
+"ids": [
+27,
+91,
+521,
+78,
+844,
+68,
+734,
+91,
+29
+],
+"upstream_refuses": true,
+"decode": "<|endoftext|>"
+},
+{
+"text": "<|en|>",
+"ids": [
+27,
+91,
+268,
+91,
+29
+],
+"upstream_refuses": true,
+"decode": "<|en|>"
+},
+{
+"text": "<|yue|>",
+"ids": [
+27,
+91,
+88,
+622,
+91,
+29
+],
+"upstream_refuses": false,
+"decode": "<|yue|>"
+},
+{
+"text": "<|0.00|>",
+"ids": [
+27,
+91,
+15,
+13,
+628,
+91,
+29
+],
+"upstream_refuses": true,
+"decode": "<|0.00|>"
+},
+{
+"text": "<|30.02|>",
+"ids": [
+27,
+91,
+18,
+15,
+13,
+15,
+17,
+91,
+29
+],
+"upstream_refuses": false,
+"decode": "<|30.02|>"
+},
+{
+"text": "text <|endoftext|> more",
+"ids": [
+975,
+734,
+220,
+27,
+91,
+521,
+78,
+844,
+68,
+734,
+91,
+29,
+544
+],
+"upstream_refuses": true,
+"decode": "text <|endoftext|> more"
+},
+{
+"text": "<|startoftranscript|><|en|><|transcribe|> Hello",
+"ids": [
+27,
+91,
+372,
+446,
+78,
+844,
+81,
+599,
+66,
+470,
+662,
+91,
+29,
+27,
+91,
+268,
+91,
+29,
+27,
+91,
+83,
+81,
+599,
+66,
+470,
+650,
+91,
+29,
+634,
+285,
+78
+],
+"upstream_refuses": true,
+"decode": "<|startoftranscript|><|en|><|transcribe|> Hello"
+},
+{
+"text": "<|endoftext",
+"ids": [
+27,
+91,
+521,
+78,
+844,
+68,
+734
+],
+"upstream_refuses": false,
+"decode": "<|endoftext"
+},
+{
+"text": "<|>",
+"ids": [
+27,
+91,
+29
+],
+"upstream_refuses": false,
+"decode": "<|>"
+},
+{
+"text": " HE BEGAN A CONFUSED COMPLAINT AGAINST THE WIZARD WHO HAD VANISHED BEHIND THE CURTAIN",
+"ids": [
+389,
+36,
+363,
+36,
+38,
+32,
+45,
+316,
+383,
+46,
+45,
+37,
+52,
+50,
+36,
+35,
+383,
+46,
+44,
+47,
+43,
+32,
+40,
+45,
+51,
+316,
+38,
+32,
+40,
+45,
+50,
+51,
+314,
+39,
+36,
+343,
+40,
+57,
+32,
+49,
+35,
+343,
+39,
+46,
+389,
+32,
+35,
+691,
+32,
+45,
+40,
+50,
+39,
+36,
+35,
+363,
+36,
+39,
+40,
+45,
+35,
+314,
+39,
+36,
+383,
+52,
+49,
+51,
+32,
+40,
+45
+],
+"upstream_refuses": false,
+"decode": " HE BEGAN A CONFUSED COMPLAINT AGAINST THE WIZARD WHO HAD VANISHED BEHIND THE CURTAIN"
+},
+{
+"text": " when is a lobster not a lobster when it is a crayfish",
+"ids": [
+562,
+307,
+257,
+450,
+65,
+372,
+260,
+406,
+257,
+450,
+65,
+372,
+260,
+562,
+309,
+307,
+257,
+941,
+320,
+69,
+742
+],
+"upstream_refuses": false,
+"decode": " when is a lobster not a lobster when it is a crayfish"
+}
+],
+"decode": [
+{
+"ids": [
+1108,
+634,
+285,
+78,
+469,
+348,
+13,
+1162,
+1001
+],
+"decode": " Hello world.<|endoftext|>",
+"decode_with_timestamps": "<|0.00|> Hello world.<|1.08|><|endoftext|>"
+},
+{
+"ids": [
+1002,
+1003,
+1103,
+1107,
+634,
+285,
+78,
+469,
+348,
+13,
+1001
+],
+"decode": "<|startoftranscript|><|en|><|transcribe|><|notimestamps|> Hello world.<|endoftext|>",
+"decode_with_timestamps": "<|startoftranscript|><|en|><|transcribe|><|notimestamps|> Hello world.<|endoftext|>"
+},
+{
+"ids": [
+1108,
+1109,
+2607,
+2608
+],
+"decode": "",
+"decode_with_timestamps": "<|0.00|><|0.02|><|29.98|><|30.00|>"
+},
+{
+"ids": [
+1107,
+1108
+],
+"decode": "<|notimestamps|>",
+"decode_with_timestamps": "<|notimestamps|><|0.00|>"
+},
+{
+"ids": [
+1001,
+1105,
+1104,
+1106,
+1103,
+1102
+],
+"decode": "<|endoftext|><|startofprev|><|startoflm|><|nospeech|><|transcribe|><|translate|>",
+"decode_with_timestamps": "<|endoftext|><|startofprev|><|startoflm|><|nospeech|><|transcribe|><|translate|>"
+},
+{
+"ids": [
+162,
+230
+],
+"decode": "�",
+"decode_with_timestamps": "�"
+},
+{
+"ids": [
+162,
+230,
+239
+],
+"decode": "我",
+"decode_with_timestamps": "我"
+},
+{
+"ids": [
+64,
+187,
+65
+],
+"decode": "a�b",
+"decode_with_timestamps": "a�b"
+},
+{
+"ids": [
+162,
+1111,
+230,
+239
+],
+"decode": "我",
+"decode_with_timestamps": "�<|0.06|>��"
+},
+{
+"ids": [
+64,
+1000,
+65
+],
+"decode": "ab",
+"decode_with_timestamps": "ab"
+}
+]
+},
+{
+"name": "multilingual100",
+"file": "multilingual-1000.tiktoken",
+"languages": 100,
+"n_vocab": 2610,
+"specials": [
+[
+"<|endoftext|>",
+1001
+],
+[
+"<|startoftranscript|>",
+1002
+],
+[
+"<|en|>",
+1003
+],
+[
+"<|zh|>",
+1004
+],
+[
+"<|de|>",
+1005
+],
+[
+"<|es|>",
+1006
+],
+[
+"<|ru|>",
+1007
+],
+[
+"<|ko|>",
+1008
+],
+[
+"<|fr|>",
+1009
+],
+[
+"<|ja|>",
+1010
+],
+[
+"<|pt|>",
+1011
+],
+[
+"<|tr|>",
+1012
+],
+[
+"<|pl|>",
+1013
+],
+[
+"<|ca|>",
+1014
+],
+[
+"<|nl|>",
+1015
+],
+[
+"<|ar|>",
+1016
+],
+[
+"<|sv|>",
+1017
+],
+[
+"<|it|>",
+1018
+],
+[
+"<|id|>",
+1019
+],
+[
+"<|hi|>",
+1020
+],
+[
+"<|fi|>",
+1021
+],
+[
+"<|vi|>",
+1022
+],
+[
+"<|he|>",
+1023
+],
+[
+"<|uk|>",
+1024
+],
+[
+"<|el|>",
+1025
+],
+[
+"<|ms|>",
+1026
+],
+[
+"<|cs|>",
+1027
+],
+[
+"<|ro|>",
+1028
+],
+[
+"<|da|>",
+1029
+],
+[
+"<|hu|>",
+1030
+],
+[
+"<|ta|>",
+1031
+],
+[
+"<|no|>",
+1032
+],
+[
+"<|th|>",
+1033
+],
+[
+"<|ur|>",
+1034
+],
+[
+"<|hr|>",
+1035
+],
+[
+"<|bg|>",
+1036
+],
+[
+"<|lt|>",
+1037
+],
+[
+"<|la|>",
+1038
+],
+[
+"<|mi|>",
+1039
+],
+[
+"<|ml|>",
+1040
+],
+[
+"<|cy|>",
+1041
+],
+[
+"<|sk|>",
+1042
+],
+[
+"<|te|>",
+1043
+],
+[
+"<|fa|>",
+1044
+],
+[
+"<|lv|>",
+1045
+],
+[
+"<|bn|>",
+1046
+],
+[
+"<|sr|>",
+1047
+],
+[
+"<|az|>",
+1048
+],
+[
+"<|sl|>",
+1049
+],
+[
+"<|kn|>",
+1050
+],
+[
+"<|et|>",
+1051
+],
+[
+"<|mk|>",
+1052
+],
+[
+"<|br|>",
+1053
+],
+[
+"<|eu|>",
+1054
+],
+[
+"<|is|>",
+1055
+],
+[
+"<|hy|>",
+1056
+],
+[
+"<|ne|>",
+1057
+],
+[
+"<|mn|>",
+1058
+],
+[
+"<|bs|>",
+1059
+],
+[
+"<|kk|>",
+1060
+],
+[
+"<|sq|>",
+1061
+],
+[
+"<|sw|>",
+1062
+],
+[
+"<|gl|>",
+1063
+],
+[
+"<|mr|>",
+1064
+],
+[
+"<|pa|>",
+1065
+],
+[
+"<|si|>",
+1066
+],
+[
+"<|km|>",
+1067
+],
+[
+"<|sn|>",
+1068
+],
+[
+"<|yo|>",
+1069
+],
+[
+"<|so|>",
+1070
+],
+[
+"<|af|>",
+1071
+],
+[
+"<|oc|>",
+1072
+],
+[
+"<|ka|>",
+1073
+],
+[
+"<|be|>",
+1074
+],
+[
+"<|tg|>",
+1075
+],
+[
+"<|sd|>",
+1076
+],
+[
+"<|gu|>",
+1077
+],
+[
+"<|am|>",
+1078
+],
+[
+"<|yi|>",
+1079
+],
+[
+"<|lo|>",
+1080
+],
+[
+"<|uz|>",
+1081
+],
+[
+"<|fo|>",
+1082
+],
+[
+"<|ht|>",
+1083
+],
+[
+"<|ps|>",
+1084
+],
+[
+"<|tk|>",
+1085
+],
+[
+"<|nn|>",
+1086
+],
+[
+"<|mt|>",
+1087
+],
+[
+"<|sa|>",
+1088
+],
+[
+"<|lb|>",
+1089
+],
+[
+"<|my|>",
+1090
+],
+[
+"<|bo|>",
+1091
+],
+[
+"<|tl|>",
+1092
+],
+[
+"<|mg|>",
+1093
+],
+[
+"<|as|>",
+1094
+],
+[
+"<|tt|>",
+1095
+],
+[
+"<|haw|>",
+1096
+],
+[
+"<|ln|>",
+1097
+],
+[
+"<|ha|>",
+1098
+],
+[
+"<|ba|>",
+1099
+],
+[
+"<|jw|>",
+1100
+],
+[
+"<|su|>",
+1101
+],
+[
+"<|yue|>",
+1102
+],
+[
+"<|translate|>",
+1103
+],
+[
+"<|transcribe|>",
+1104
+],
+[
+"<|startoflm|>",
+1105
+],
+[
+"<|startofprev|>",
+1106
+],
+[
+"<|nospeech|>",
+1107
+],
+[
+"<|notimestamps|>",
+1108
+],
+[
+"<|0.00|>",
+1109
+],
+[
+"<|0.02|>",
+1110
+],
+[
+"<|0.04|>",
+1111
+],
+[
+"<|1.08|>",
+1163
+],
+[
+"<|29.98|>",
+2608
+],
+[
+"<|30.00|>",
+2609
+]
+],
+"timestamp_begin": 1109,
+"sot_sequences": {
+"none": [
+1002
+],
+"en/transcribe": [
+1002,
+1003,
+1104
+],
+"en/translate": [
+1002,
+1003,
+1103
+],
+"zh/transcribe": [
+1002,
+1004,
+1104
+],
+"zh/translate": [
+1002,
+1004,
+1103
+],
+"yue/transcribe": [
+1002,
+1102,
+1104
+],
+"yue/translate": [
+1002,
+1102,
+1103
+]
+},
+"non_speech_tokens": [
+1,
+2,
+7,
+8,
+9,
+10,
+14,
+25,
+26,
+27,
+28,
+29,
+31,
+58,
+59,
+60,
+61,
+62,
+63,
+90,
+91,
+92,
+93,
+158,
+359,
+503,
+522,
+542,
+873,
+893,
+902,
+918,
+922,
+931
+],
+"encode": [
+{
+"text": "",
+"ids": [],
+"upstream_refuses": false,
+"decode": ""
+},
+{
+"text": " ",
+"ids": [
+220
+],
+"upstream_refuses": false,
+"decode": " "
+},
+{
+"text": "  ",
+"ids": [
+220,
+220
+],
+"upstream_refuses": false,
+"decode": "  "
+},
+{
+"text": "\t",
+"ids": [
+197
+],
+"upstream_refuses": false,
+"decode": "\t"
+},
+{
+"text": "\n",
+"ids": [
+198
+],
+"upstream_refuses": false,
+"decode": "\n"
+},
+{
+"text": "\n\n",
+"ids": [
+198,
+198
+],
+"upstream_refuses": false,
+"decode": "\n\n"
+},
+{
+"text": " \n ",
+"ids": [
+220,
+198,
+220
+],
+"upstream_refuses": false,
+"decode": " \n "
+},
+{
+"text": "a  b",
+"ids": [
+64,
+220,
+272
+],
+"upstream_refuses": false,
+"decode": "a  b"
+},
+{
+"text": "a\t\tb",
+"ids": [
+64,
+197,
+197,
+65
+],
+"upstream_refuses": false,
+"decode": "a\t\tb"
+},
+{
+"text": "end\n",
+"ids": [
+521,
+198
+],
+"upstream_refuses": false,
+"decode": "end\n"
+},
+{
+"text": " leading",
+"ids": [
+476,
+345,
+278
+],
+"upstream_refuses": false,
+"decode": " leading"
+},
+{
+"text": "Hello, world!",
+"ids": [
+39,
+898,
+78,
+11,
+469,
+348,
+0
+],
+"upstream_refuses": false,
+"decode": "Hello, world!"
+},
+{
+"text": " Hello world.",
+"ids": [
+634,
+285,
+78,
+469,
+348,
+13
+],
+"upstream_refuses": false,
+"decode": " Hello world."
+},
+{
+"text": "HELLO WORLD",
+"ids": [
+39,
+36,
+43,
+43,
+46,
+343,
+46,
+49,
+43,
+35
+],
+"upstream_refuses": false,
+"decode": "HELLO WORLD"
+},
+{
+"text": " And so my fellow Americans, ask not.",
+"ids": [
+400,
+370,
+452,
+579,
+285,
+305,
+316,
+936,
+299,
+599,
+11,
+382,
+74,
+406,
+13
+],
+"upstream_refuses": false,
+"decode": " And so my fellow Americans, ask not."
+},
+{
+"text": "It's a dog's life; isn't it? I'm sure we'll see, they've said, you'd know.",
+"ids": [
+40,
+83,
+311,
+257,
+360,
+70,
+311,
+993,
+26,
+307,
+77,
+380,
+309,
+30,
+286,
+478,
+988,
+321,
+603,
+536,
+11,
+436,
+600,
+848,
+11,
+291,
+6,
+67,
+458,
+13
+],
+"upstream_refuses": false,
+"decode": "It's a dog's life; isn't it? I'm sure we'll see, they've said, you'd know."
+},
+{
+"text": "IT'S I'M WE'LL",
+"ids": [
+40,
+51,
+6,
+50,
+286,
+6,
+44,
+343,
+36,
+6,
+43,
+43
+],
+"upstream_refuses": false,
+"decode": "IT'S I'M WE'LL"
+},
+{
+"text": "O'Brien's",
+"ids": [
+46,
+6,
+33,
+470,
+268,
+311
+],
+"upstream_refuses": false,
+"decode": "O'Brien's"
+},
+{
+"text": "rock 'n' roll",
+"ids": [
+340,
+547,
+922,
+77,
+6,
+744,
+285
+],
+"upstream_refuses": false,
+"decode": "rock 'n' roll"
+},
+{
+"text": "\"Quoted,\" (aside) [note] {brace} <angle>.",
+"ids": [
+1,
+48,
+84,
+310,
+292,
+11,
+1,
+522,
+296,
+482,
+8,
+542,
+77,
+310,
+68,
+60,
+220,
+90,
+65,
+81,
+617,
+92,
+220,
+27,
+656,
+306,
+29,
+13
+],
+"upstream_refuses": false,
+"decode": "\"Quoted,\" (aside) [note] {brace} <angle>."
+},
+{
+"text": "#hashtag @user a+b=c 5*3/2 x^2 a_b `code` a|b ~tilde",
+"ids": [
+2,
+71,
+296,
+357,
+559,
+220,
+31,
+301,
+260,
+257,
+10,
+65,
+28,
+66,
+220,
+20,
+9,
+18,
+14,
+17,
+220,
+87,
+61,
+17,
+257,
+62,
+65,
+220,
+63,
+66,
+378,
+68,
+63,
+257,
+91,
+65,
+220,
+93,
+83,
+793,
+68
+],
+"upstream_refuses": false,
+"decode": "#hashtag @user a+b=c 5*3/2 x^2 a_b `code` a|b ~tilde"
+},
+{
+"text": "- dash",
+"ids": [
+12,
+274,
+296,
+71
+],
+"upstream_refuses": false,
+"decode": "- dash"
+},
+{
+"text": " -",
+"ids": [
+359
+],
+"upstream_refuses": false,
+"decode": " -"
+},
+{
+"text": " '",
+"ids": [
+922
+],
+"upstream_refuses": false,
+"decode": " '"
+},
+{
+"text": "--",
+"ids": [
+918
+],
+"upstream_refuses": false,
+"decode": "--"
+},
+{
+"text": "<<",
+"ids": [
+27,
+27
+],
+"upstream_refuses": false,
+"decode": "<<"
+},
+{
+"text": ">>",
+"ids": [
+893
+],
+"upstream_refuses": false,
+"decode": ">>"
+},
+{
+"text": "♪",
+"ids": [
+158,
+247,
+103
+],
+"upstream_refuses": false,
+"decode": "♪"
+},
+{
+"text": "♪♪♪",
+"ids": [
+158,
+247,
+103,
+158,
+247,
+103,
+158,
+247,
+103
+],
+"upstream_refuses": false,
+"decode": "♪♪♪"
+},
+{
+"text": "♩♪♫♬♭♮♯",
+"ids": [
+158,
+247,
+102,
+158,
+247,
+103,
+158,
+247,
+104,
+158,
+247,
+105,
+158,
+247,
+255,
+158,
+247,
+106,
+158,
+247,
+107
+],
+"upstream_refuses": false,
+"decode": "♩♪♫♬♭♮♯"
+},
+{
+"text": "「引用」",
+"ids": [
+756,
+234,
+161,
+120,
+243,
+163,
+242,
+101,
+756,
+235
+],
+"upstream_refuses": false,
+"decode": "「引用」"
+},
+{
+"text": "0",
+"ids": [
+15
+],
+"upstream_refuses": false,
+"decode": "0"
+},
+{
+"text": "12",
+"ids": [
+16,
+17
+],
+"upstream_refuses": false,
+"decode": "12"
+},
+{
+"text": "123",
+"ids": [
+16,
+17,
+18
+],
+"upstream_refuses": false,
+"decode": "123"
+},
+{
+"text": "1234",
+"ids": [
+16,
+17,
+18,
+19
+],
+"upstream_refuses": false,
+"decode": "1234"
+},
+{
+"text": "1,234,567.89",
+"ids": [
+16,
+11,
+17,
+18,
+19,
+11,
+20,
+21,
+22,
+13,
+23,
+24
+],
+"upstream_refuses": false,
+"decode": "1,234,567.89"
+},
+{
+"text": "-42",
+"ids": [
+12,
+19,
+17
+],
+"upstream_refuses": false,
+"decode": "-42"
+},
+{
+"text": "$2.07",
+"ids": [
+3,
+17,
+13,
+15,
+22
+],
+"upstream_refuses": false,
+"decode": "$2.07"
+},
+{
+"text": "naïve café",
+"ids": [
+629,
+127,
+107,
+303,
+269,
+64,
+69,
+526
+],
+"upstream_refuses": false,
+"decode": "naïve café"
+},
+{
+"text": "Straße",
+"ids": [
+50,
+83,
+424,
+127,
+253,
+68
+],
+"upstream_refuses": false,
+"decode": "Straße"
+},
+{
+"text": "我们今天",
+"ids": [
+162,
+230,
+239,
+160,
+119,
+105,
+160,
+119,
+232,
+161,
+97,
+102
+],
+"upstream_refuses": false,
+"decode": "我们今天"
+},
+{
+"text": "今日は",
+"ids": [
+160,
+119,
+232,
+162,
+245,
+98,
+487,
+107
+],
+"upstream_refuses": false,
+"decode": "今日は"
+},
+{
+"text": "مرحبا",
+"ids": [
+149,
+227,
+148,
+109,
+148,
+255,
+148,
+101,
+995
+],
+"upstream_refuses": false,
+"decode": "مرحبا"
+},
+{
+"text": "नमस्ते",
+"ids": [
+156,
+97,
+101,
+156,
+97,
+106,
+156,
+97,
+116,
+156,
+98,
+235,
+156,
+97,
+97,
+156,
+98,
+229
+],
+"upstream_refuses": false,
+"decode": "नमस्ते"
+},
+{
+"text": "Привет, мир!",
+"ids": [
+140,
+253,
+481,
+435,
+859,
+387,
+403,
+11,
+333,
+120,
+435,
+481,
+0
+],
+"upstream_refuses": false,
+"decode": "Привет, мир!"
+},
+{
+"text": "안녕",
+"ids": [
+168,
+243,
+230,
+167,
+227,
+243
+],
+"upstream_refuses": false,
+"decode": "안녕"
+},
+{
+"text": "😀",
+"ids": [
+172,
+253,
+246,
+222
+],
+"upstream_refuses": false,
+"decode": "😀"
+},
+{
+"text": "👨‍👩‍👧",
+"ids": [
+172,
+253,
+239,
+101,
+913,
+235,
+172,
+253,
+239,
+102,
+913,
+235,
+172,
+253,
+239,
+100
+],
+"upstream_refuses": false,
+"decode": "👨‍👩‍👧"
+},
+{
+"text": " nbsp",
+"ids": [
+297,
+929,
+79
+],
+"upstream_refuses": false,
+"decode": " nbsp"
+},
+{
+"text": "zero​width",
+"ids": [
+89,
+260,
+78,
+913,
+233,
+86,
+327,
+392
+],
+"upstream_refuses": false,
+"decode": "zero​width"
+},
+{
+"text": "<|endoftext|>",
+"ids": [
+27,
+91,
+521,
+78,
+844,
+68,
+734,
+91,
+29
+],
+"upstream_refuses": true,
+"decode": "<|endoftext|>"
+},
+{
+"text": "<|en|>",
+"ids": [
+27,
+91,
+268,
+91,
+29
+],
+"upstream_refuses": true,
+"decode": "<|en|>"
+},
+{
+"text": "<|yue|>",
+"ids": [
+27,
+91,
+88,
+622,
+91,
+29
+],
+"upstream_refuses": true,
+"decode": "<|yue|>"
+},
+{
+"text": "<|0.00|>",
+"ids": [
+27,
+91,
+15,
+13,
+628,
+91,
+29
+],
+"upstream_refuses": true,
+"decode": "<|0.00|>"
+},
+{
+"text": "<|30.02|>",
+"ids": [
+27,
+91,
+18,
+15,
+13,
+15,
+17,
+91,
+29
+],
+"upstream_refuses": false,
+"decode": "<|30.02|>"
+},
+{
+"text": "text <|endoftext|> more",
+"ids": [
+975,
+734,
+220,
+27,
+91,
+521,
+78,
+844,
+68,
+734,
+91,
+29,
+544
+],
+"upstream_refuses": true,
+"decode": "text <|endoftext|> more"
+},
+{
+"text": "<|startoftranscript|><|en|><|transcribe|> Hello",
+"ids": [
+27,
+91,
+372,
+446,
+78,
+844,
+81,
+599,
+66,
+470,
+662,
+91,
+29,
+27,
+91,
+268,
+91,
+29,
+27,
+91,
+83,
+81,
+599,
+66,
+470,
+650,
+91,
+29,
+634,
+285,
+78
+],
+"upstream_refuses": true,
+"decode": "<|startoftranscript|><|en|><|transcribe|> Hello"
+},
+{
+"text": "<|endoftext",
+"ids": [
+27,
+91,
+521,
+78,
+844,
+68,
+734
+],
+"upstream_refuses": false,
+"decode": "<|endoftext"
+},
+{
+"text": "<|>",
+"ids": [
+27,
+91,
+29
+],
+"upstream_refuses": false,
+"decode": "<|>"
+},
+{
+"text": " HE BEGAN A CONFUSED COMPLAINT AGAINST THE WIZARD WHO HAD VANISHED BEHIND THE CURTAIN",
+"ids": [
+389,
+36,
+363,
+36,
+38,
+32,
+45,
+316,
+383,
+46,
+45,
+37,
+52,
+50,
+36,
+35,
+383,
+46,
+44,
+47,
+43,
+32,
+40,
+45,
+51,
+316,
+38,
+32,
+40,
+45,
+50,
+51,
+314,
+39,
+36,
+343,
+40,
+57,
+32,
+49,
+35,
+343,
+39,
+46,
+389,
+32,
+35,
+691,
+32,
+45,
+40,
+50,
+39,
+36,
+35,
+363,
+36,
+39,
+40,
+45,
+35,
+314,
+39,
+36,
+383,
+52,
+49,
+51,
+32,
+40,
+45
+],
+"upstream_refuses": false,
+"decode": " HE BEGAN A CONFUSED COMPLAINT AGAINST THE WIZARD WHO HAD VANISHED BEHIND THE CURTAIN"
+},
+{
+"text": " when is a lobster not a lobster when it is a crayfish",
+"ids": [
+562,
+307,
+257,
+450,
+65,
+372,
+260,
+406,
+257,
+450,
+65,
+372,
+260,
+562,
+309,
+307,
+257,
+941,
+320,
+69,
+742
+],
+"upstream_refuses": false,
+"decode": " when is a lobster not a lobster when it is a crayfish"
+}
+],
+"decode": [
+{
+"ids": [
+1109,
+634,
+285,
+78,
+469,
+348,
+13,
+1163,
+1001
+],
+"decode": " Hello world.<|endoftext|>",
+"decode_with_timestamps": "<|0.00|> Hello world.<|1.08|><|endoftext|>"
+},
+{
+"ids": [
+1002,
+1003,
+1104,
+1108,
+634,
+285,
+78,
+469,
+348,
+13,
+1001
+],
+"decode": "<|startoftranscript|><|en|><|transcribe|><|notimestamps|> Hello world.<|endoftext|>",
+"decode_with_timestamps": "<|startoftranscript|><|en|><|transcribe|><|notimestamps|> Hello world.<|endoftext|>"
+},
+{
+"ids": [
+1109,
+1110,
+2608,
+2609
+],
+"decode": "",
+"decode_with_timestamps": "<|0.00|><|0.02|><|29.98|><|30.00|>"
+},
+{
+"ids": [
+1108,
+1109
+],
+"decode": "<|notimestamps|>",
+"decode_with_timestamps": "<|notimestamps|><|0.00|>"
+},
+{
+"ids": [
+1001,
+1106,
+1105,
+1107,
+1104,
+1103
+],
+"decode": "<|endoftext|><|startofprev|><|startoflm|><|nospeech|><|transcribe|><|translate|>",
+"decode_with_timestamps": "<|endoftext|><|startofprev|><|startoflm|><|nospeech|><|transcribe|><|translate|>"
+},
+{
+"ids": [
+162,
+230
+],
+"decode": "�",
+"decode_with_timestamps": "�"
+},
+{
+"ids": [
+162,
+230,
+239
+],
+"decode": "我",
+"decode_with_timestamps": "我"
+},
+{
+"ids": [
+64,
+187,
+65
+],
+"decode": "a�b",
+"decode_with_timestamps": "a�b"
+},
+{
+"ids": [
+162,
+1112,
+230,
+239
+],
+"decode": "我",
+"decode_with_timestamps": "�<|0.06|>��"
+},
+{
+"ids": [
+64,
+1000,
+65
+],
+"decode": "ab",
+"decode_with_timestamps": "ab"
+}
+]
+}
+]
+}

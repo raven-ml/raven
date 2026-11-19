@@ -1,0 +1,317 @@
+{
+ "max_initial_timestamp": 50,
+ "cases": [
+  {
+   "name": "without timestamps",
+   "features": 0,
+   "timestamps": false,
+   "prompt": [],
+   "prefix": [],
+   "suppress_blank": true,
+   "suppress": [],
+   "suppress_non_speech": true,
+   "initial_tokens": [
+    1001,
+    1106
+   ],
+   "steps": 8,
+   "lanes": [
+    {
+     "tokens": [
+      783
+     ],
+     "text": "now",
+     "avg_logprob": -1.0166161060333252,
+     "no_speech_prob": 7.181825367297279e-06,
+     "stop": "eot",
+     "avg_logprob.f64": -1.0166169940213823,
+     "no_speech_prob.f64": 7.181840075539853e-06
+    },
+    {
+     "tokens": [
+      1900,
+      1900,
+      1900,
+      1900,
+      1900,
+      1900,
+      1900,
+      1900
+     ],
+     "text": "",
+     "avg_logprob": -0.26843902799818253,
+     "no_speech_prob": 3.875342372339219e-06,
+     "stop": "sample_len",
+     "avg_logprob.f64": -0.26843954039162676,
+     "no_speech_prob.f64": 3.875341086298886e-06
+    }
+   ]
+  },
+  {
+   "name": "timestamps",
+   "features": 1,
+   "timestamps": true,
+   "prompt": [],
+   "prefix": [],
+   "suppress_blank": true,
+   "suppress": [],
+   "suppress_non_speech": true,
+   "initial_tokens": [
+    1001
+   ],
+   "steps": 8,
+   "lanes": [
+    {
+     "tokens": [
+      1149
+     ],
+     "text": "",
+     "avg_logprob": -0.3890780508518219,
+     "no_speech_prob": 2.7959753623463257e-08,
+     "stop": "eot",
+     "avg_logprob.f64": -0.3890782417102842,
+     "no_speech_prob.f64": 2.7959732350913045e-08
+    },
+    {
+     "tokens": [
+      1144,
+      431,
+      1490,
+      2157,
+      189,
+      2235,
+      2235,
+      880
+     ],
+     "text": "pe\u0001 well",
+     "avg_logprob": -1.0767076280381944,
+     "no_speech_prob": 3.8059218354646873e-07,
+     "stop": "sample_len",
+     "avg_logprob.f64": -1.076708197161336,
+     "no_speech_prob.f64": 3.805894007044912e-07
+    }
+   ]
+  },
+  {
+   "name": "timestamps, louder",
+   "features": 2,
+   "timestamps": true,
+   "prompt": [],
+   "prefix": [],
+   "suppress_blank": true,
+   "suppress": [],
+   "suppress_non_speech": true,
+   "initial_tokens": [
+    1001
+   ],
+   "steps": 2,
+   "lanes": [
+    {
+     "tokens": [
+      1150
+     ],
+     "text": "",
+     "avg_logprob": -0.7856740355491638,
+     "no_speech_prob": 2.0198276615701616e-05,
+     "stop": "eot",
+     "avg_logprob.f64": -0.7856743435930722,
+     "no_speech_prob.f64": 2.0198290021383013e-05
+    },
+    {
+     "tokens": [
+      1150
+     ],
+     "text": "",
+     "avg_logprob": -1.2647488117218018,
+     "no_speech_prob": 3.936858774977736e-06,
+     "stop": "eot",
+     "avg_logprob.f64": -1.2647479894080917,
+     "no_speech_prob.f64": 3.936855827601401e-06
+    }
+   ]
+  },
+  {
+   "name": "without timestamps, prompt and prefix",
+   "features": 3,
+   "timestamps": false,
+   "prompt": [
+    262,
+    627,
+    624,
+    275,
+    305,
+    675,
+    277,
+    78,
+    87,
+    474,
+    388,
+    862,
+    625,
+    262,
+    300,
+    64,
+    89,
+    88,
+    466,
+    70
+   ],
+   "prefix": [
+    262,
+    318,
+    257
+   ],
+   "suppress_blank": true,
+   "suppress": [],
+   "suppress_non_speech": true,
+   "initial_tokens": [
+    1104,
+    262,
+    300,
+    64,
+    89,
+    88,
+    466,
+    70,
+    1001,
+    1106,
+    262,
+    318,
+    257
+   ],
+   "steps": 4,
+   "lanes": [
+    {
+     "tokens": [
+      439,
+      439,
+      439,
+      439
+     ],
+     "text": "allallallall",
+     "avg_logprob": -0.6465459823608398,
+     "no_speech_prob": 1.8788711031447747e-07,
+     "stop": "n_ctx",
+     "avg_logprob.f64": -0.6465457796498033,
+     "no_speech_prob.f64": 1.878870257793761e-07
+    },
+    {
+     "tokens": [
+      43,
+      319,
+      319,
+      319
+     ],
+     "text": "L on on on",
+     "avg_logprob": -1.0421524047851562,
+     "no_speech_prob": 1.5984473122898635e-07,
+     "stop": "n_ctx",
+     "avg_logprob.f64": -1.0421525720882616,
+     "no_speech_prob.f64": 1.598444281120191e-07
+    }
+   ]
+  },
+  {
+   "name": "timestamps, prompt",
+   "features": 4,
+   "timestamps": true,
+   "prompt": [
+    262,
+    627,
+    624
+   ],
+   "prefix": [],
+   "suppress_blank": true,
+   "suppress": [],
+   "suppress_non_speech": true,
+   "initial_tokens": [
+    1104,
+    262,
+    627,
+    624,
+    1001
+   ],
+   "steps": 8,
+   "lanes": [
+    {
+     "tokens": [
+      1143
+     ],
+     "text": "",
+     "avg_logprob": -0.9523672461509705,
+     "no_speech_prob": 1.0820055074134416e-08,
+     "stop": "eot",
+     "avg_logprob.f64": -0.9523673825774298,
+     "no_speech_prob.f64": 1.0820092650388716e-08
+    },
+    {
+     "tokens": [
+      1143,
+      851,
+      851,
+      851,
+      2009,
+      2009,
+      1021
+     ],
+     "text": "\u2014 \u2014 \u2014<|vi|>",
+     "avg_logprob": -0.6731395125389099,
+     "no_speech_prob": 4.404692433013224e-08,
+     "stop": "eot",
+     "avg_logprob.f64": -0.6731395150411068,
+     "no_speech_prob.f64": 4.404685001857554e-08
+    }
+   ]
+  },
+  {
+   "name": "no blank suppression, given ids",
+   "features": 5,
+   "timestamps": false,
+   "prompt": [],
+   "prefix": [],
+   "suppress_blank": false,
+   "suppress": [
+    5,
+    7,
+    220
+   ],
+   "suppress_non_speech": false,
+   "initial_tokens": [
+    1001,
+    1106
+   ],
+   "steps": 8,
+   "lanes": [
+    {
+     "tokens": [
+      545,
+      545,
+      545,
+      545,
+      545,
+      545,
+      545,
+      545
+     ],
+     "text": "im im im im im im im im",
+     "avg_logprob": -0.06133619944254557,
+     "no_speech_prob": 1.461909846511844e-06,
+     "stop": "sample_len",
+     "avg_logprob.f64": -0.06133689944521508,
+     "no_speech_prob.f64": 1.4619119622344923e-06
+    },
+    {
+     "tokens": [
+      783
+     ],
+     "text": "now",
+     "avg_logprob": -0.5671188235282898,
+     "no_speech_prob": 1.183185673880871e-07,
+     "stop": "eot",
+     "avg_logprob.f64": -0.5671189285881132,
+     "no_speech_prob.f64": 1.1831913730324811e-07
+    }
+   ]
+  }
+ ]
+}

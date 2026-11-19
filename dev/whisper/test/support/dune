@@ -1,0 +1,6 @@
+; What the suites and the checks outside runtest share: reading the
+; oracle's JSON, and the tolerance of a comparison with upstream.
+
+(library
+ (name whisper_support)
+ (libraries whisper jsont jsont.bytesrw))

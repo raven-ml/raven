@@ -1,0 +1,23 @@
+; whisper: OpenAI's Whisper speech recognition models. Never published.
+
+(library
+ (name whisper)
+ (private_modules space english_json)
+ (libraries nx nx.io kaun rune brot lz omr))
+
+; english.json is upstream's British to American spelling map
+; (openai/whisper 86098128, whisper/normalizers/english.json, sha256
+; 6607f948be9824d2e1b2fa2223cd94c06c45afa4e05ea0e3d5e1f2bdffde2465), read by
+; English.normalize. It, and the tables english.ml, model.ml and tokenizer.ml
+; copy from upstream, are under upstream's MIT licence, ../LICENSE-whisper.
+
+(rule
+ (target english_json.ml)
+ (deps english.json)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "let text = {json|")
+    (cat %{deps})
+    (echo "|json}\n")))))
