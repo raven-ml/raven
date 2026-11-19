@@ -215,6 +215,12 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - `Nx_io.Hdf5` reads no strings or booleans: fixed-length strings read as
   their bytes at `uint8` (aion's `Survey` trims and decodes band names), and
   h5py's booleans as `int8`
+- nx states no batch-extent invariance: whether on one device an element's
+  result depends only on the extents of the axes it reduces over, not the
+  others' (nx.mli:2271-2274 ties nx.cpu's order of a reduction to "the
+  shape alone", 2706-2709 a contraction's to "the shapes alone"; tolk may
+  split by shape). If it held, a law states it and aion's draws per object
+  stop depending on `--batch`. Found by aion batch 7's skeptic
 
 ## vega
 
