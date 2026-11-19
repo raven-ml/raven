@@ -105,14 +105,24 @@ let load_scales =
       equal (array int32) (bits want) (bits (Nx.to_array got)))
 
 let refuses =
-  cases "load refuses what Whisper does not hear"
-    ~id:(fun (name, _, _, _) -> name)
-    [ ("stereo", A.rate, 2, "2 channels") ]
-    (fun (_, rate, c, sub) ->
+  test "load refuses more than 8 channels at speakers the file does not state"
+    (fun () ->
       let path = temp_file ~suffix:".wav" () in
-      Nx_io.save_wav path ~rate (Nx.zeros Nx.int16 [| 160; c |]);
+      Nx_io.save_wav path ~rate:A.rate (Nx.zeros Nx.int16 [| 160; 9 |]);
       raises_match
-        (fun e -> Exn.failure ~sub e && Exn.failure ~sub:path e)
+        (fun e -> Exn.failure ~sub:"9 channels" e && Exn.failure ~sub:path e)
+        (fun () -> A.load path))
+
+let silent =
+  cases "load refuses channels at speakers that are not mixed"
+    ~id:(Printf.sprintf "0x%x") [ 0x808; 0x28000 ] (fun mask ->
+      let path = temp_file ~suffix:".wav" () in
+      Nx_io.save_wav path ~channel_mask:mask ~rate:A.rate
+        (Nx.ones Nx.int16 [| 160; 2 |]);
+      raises_match
+        (fun e ->
+          Exn.failure ~sub:(Printf.sprintf "0x%x" mask) e
+          && Exn.failure ~sub:path e)
         (fun () -> A.load path))
 
 (* 2^20 - 1 Hz, the largest rate FLAC's STREAMINFO states, loads; a rate past it
@@ -195,9 +205,14 @@ let ffmpeg_files =
     [
       ("mono48.flac", 48_000);
       ("mono8.wav", 8_000);
+      ("stereo44.wav", 44_100);
+      ("stereo16.wav", 16_000);
+      ("surround48.flac", 48_000);
+      ("three22.wav", 22_050);
       ("mono43650.wav", 43_650);
       ("mono47530.wav", 47_530);
       ("mono44101.wav", 44_101);
+      ("stereo96001.wav", 96_001);
     ]
     (fun (path, from) ->
       let a = Nx_io.load_audio ("upstream/" ^ path) in
@@ -223,8 +238,54 @@ let ffmpeg_short =
         (resampled_entry Nx.int16 (Printf.sprintf "short.%d" n))
         (A.load path))
 
-(* A file of [n] samples at [from] Hz, of [c] channels, and the rows of a
-   block. *)
+(* ffmpeg's mix for -ac 1 (libswresample 7.0, rematrix.c's swr_build_matrix2 at
+   its defaults): each speaker's weight, by its bit in a WAV channel mask. *)
+let weight = function
+  | 2 -> 1.
+  | 0 | 1 | 6 | 7 | 12 | 14 -> Float.sqrt 0.5
+  | 4 | 5 | 8 | 9 | 10 -> 0.5
+  | _ -> 0.
+
+(* A 16 kHz WAV file of [c] channels, channel [j] holding [(j + 1) / 16] at
+   every sample, gives each channel's amplitude times its speaker's weight,
+   summed, over the weights' sum where it passes 1. [mask] is the WAV file's, 0
+   for none; [speakers] the speakers' bits ffmpeg reads, its guess for a file
+   that states none. *)
+let mixes =
+  cases "load mixes channels as upstream's ffmpeg"
+    ~id:(fun (name, _, _, _) -> name)
+    [
+      ("stereo", 2, 0x3, [ 0; 1 ]);
+      ("5.1", 6, 0x60F, [ 0; 1; 2; 3; 9; 10 ]);
+      ("7.1 of centre", 8, 0xFF, [ 0; 1; 2; 3; 4; 5; 6; 7 ]);
+      ("top", 6, 0x7803, [ 0; 1; 11; 12; 13; 14 ]);
+      ("back centre", 4, 0x107, [ 0; 1; 2; 8 ]);
+      ("centre and LFE", 2, 0xC, [ 2; 3 ]);
+      ("one channel at the left", 1, 0x1, [ 0 ]);
+      ("3, no mask", 3, 0, [ 0; 1; 3 ]);
+      ("4, no mask", 4, 0, [ 0; 1; 2; 8 ]);
+      ("5, no mask", 5, 0, [ 0; 1; 2; 4; 5 ]);
+      ("6, no mask", 6, 0, [ 0; 1; 2; 3; 4; 5 ]);
+      ("7, no mask", 7, 0, [ 0; 1; 2; 3; 8; 9; 10 ]);
+      ("8, no mask", 8, 0, [ 0; 1; 2; 3; 4; 5; 9; 10 ]);
+      ("3, a mask of 2", 3, 0x3, [ 0; 1; 3 ]);
+    ]
+    (fun (_, c, mask, speakers) ->
+      let v j = Float.of_int (j + 1) /. 16. in
+      let x = Nx.init Nx.float64 [| 160; c |] (fun i -> v i.(1)) in
+      let path = temp_file ~suffix:".wav" () in
+      Nx_io.save_wav path ~channel_mask:mask ~rate:A.rate x;
+      let w = Array.of_list (List.map weight speakers) in
+      let w = if c = 1 then [| 1. |] else w in
+      let total = Array.fold_left ( +. ) 0. w in
+      let w = if total > 1. then Array.map (fun u -> u /. total) w else w in
+      let want =
+        Array.fold_left ( +. ) 0. (Array.mapi (fun j u -> u *. v j) w)
+      in
+      let got = Nx.to_array (Nx.cast Nx.float64 (A.load path)) in
+      equal (array (float 1e-7)) (Array.make 160 want) got)
+
+(* A file of [n] rows of [c] channels at [from] Hz, and the rows of a block. *)
 let stream_gen =
   let open Gen in
   let* from =
@@ -239,19 +300,21 @@ let stream_gen =
   let* rows =
     frequency [ (2, int_range 1 3); (2, int_range 4 120); (1, int_range 1 500) ]
   in
-  let* x = array ~size:(constant n) (int_range (-32768) 32767) in
-  constant (from, x, rows)
+  let* c = frequency [ (3, constant 1); (2, int_range 2 6) ] in
+  let* x = array ~size:(constant (n * c)) (int_range (-32768) 32767) in
+  constant (from, c, x, rows)
 
 let stream =
   prop ~count:60 "load gives the same samples for any blocks it reads"
-    stream_gen (fun (from, x, rows) ->
-      let n = Array.length x in
+    stream_gen (fun (from, c, x, rows) ->
+      let n = Array.length x / c in
       cover "blocks shorter than any filter" (rows < 32);
       cover "one block" (rows >= n);
       cover "16 kHz" (from = A.rate);
       cover "phases interpolated" (from = 44_101);
+      cover "several channels" (c > 1);
       let path = temp_file ~suffix:".wav" () in
-      Nx_io.save_wav path ~rate:from (Nx.create Nx.int16 [| n; 1 |] x);
+      Nx_io.save_wav path ~rate:from (Nx.create Nx.int16 [| n; c |] x);
       let whole = A.load_rows ~rows:(Int.max 1 n) path in
       equal (array int32)
         (bits (Nx.to_array whole))
@@ -437,10 +500,12 @@ let () =
        [
          load_scales;
          refuses;
+         silent;
          top_rate;
          no_rate;
          int8;
          ffmpeg_files;
+         mixes;
          ffmpeg_short;
          stream;
          stream_flac;

@@ -14,8 +14,8 @@ and is never published (no opam package, no CHANGES entry).
 - Raven's rules hold here: no dependencies, public interfaces of raven only,
   `AGENTS.md`'s code style. A capability raven lacks is built in the library
   that owns it, never worked around here.
-- `lib/` is the library `whisper`: `Audio` (a WAV or FLAC file's samples
-  at 16 kHz, the 30 s window, and their log-mel spectrogram of any
+- `lib/` is the library `whisper`: `Audio` (a WAV or FLAC file's samples,
+  mixed to one channel at 16 kHz, the 30 s window, and their log-mel spectrogram of any
   length, floored over the whole call, composed from omr),
   `Tokenizer` (the rank-file encodings and
   Whisper's special tokens, numbered after the ranks) and `Model` (the
@@ -112,24 +112,32 @@ and is never published (no opam package, no CHANGES entry).
   that a batch decodes as each audio alone.
 
 - `Audio.load` takes each sample at its dtype's full scale, rounded once to
-  float32, and resamples another rate by libswresample's computation at
-  float64. Upstream pipes any file through ffmpeg (`-ac 1 -ar 16000 -f
-  s16le`) to 16-bit samples: ffmpeg floors deeper integer samples to 16 bits
-  (a 24-bit 384 gives 1, -129 gives -1), clips float samples to full scale
-  (1.5 gives 32767), and rounds resampled ones to the nearest 16-bit value,
-  clipped. On a 16 kHz mono 16-bit file both give the same samples. Here a
-  deeper file keeps its low bits, and a float file its peaks above 1, and so
-  does a resampled one: a full-scale 16-bit square wave at 44.1 kHz rings to
-  1.186 in `load`, 6099 steps past ffmpeg's clipped samples, at half the
-  samples. Such files give features past the parity gates.
-  - ffmpeg resamples in float32 (swresample.c's `swr_init` picks float32
-    between rates unless both formats' bytes sum to at most 3), then rounds.
-    C4.4 measured its float32 within 1.3e-7 of the float64 computation
-    against PyAV. On the test files every 16-bit sample of ffmpeg's lies
-    within 0.502 of a step of `load`'s times 32768.
-  - An 8-bit file at another rate ffmpeg resamples on 16-bit integers with
-    15-bit weights, up to 2.77 steps from `load`'s (15634 of 32000 samples
-    rounded otherwise at 44.1 kHz).
+  float32, and mixes channels and resamples another rate by libswresample's
+  computation at float64. Upstream pipes any file through ffmpeg (`-ac 1 -ar
+  16000 -f s16le`) to 16-bit samples: ffmpeg floors deeper integer samples to
+  16 bits (a 24-bit 384 gives 1, -129 gives -1), clips float samples to full
+  scale (1.5 gives 32767), and rounds mixed or resampled ones to the nearest
+  16-bit value, clipped. On a 16 kHz mono 16-bit file both give the same
+  samples. Here a deeper file keeps its low bits, and a float file its peaks
+  above 1, and so does a mixed or resampled one: a full-scale 16-bit square
+  wave at 44.1 kHz rings to 1.186 in `load`, 6099 steps past ffmpeg's
+  clipped samples, at half the samples. Such files give features past the
+  parity gates.
+  - ffmpeg mixes and resamples in float32 (swresample.c's `swr_init` picks
+    float32 between filters unless both formats are 16-bit at one rate or
+    their bytes sum to at most 3), then rounds. C4.4 measured its float32
+    within 1.3e-7 of the float64 computation against PyAV. On 20 s files at
+    8, 22.05, 32, 43.65, 44.1, 44.101, 47.53, 48, 96 and 96.001 kHz and 2 s
+    at 1000.003 kHz, of 1, 2 and 6 channels and 16 and 24 bits, every 16-bit
+    sample of ffmpeg's lies within 0.5022 of a step of `load`'s times 32768,
+    so it is `load`'s rounded but for 0.013% to 0.031% of samples, off by one
+    step where `load`'s lies within 0.0022 of a step of a half.
+  - ffmpeg works on 16-bit integers with 15-bit weights where `swr_init` picks
+    them. Two channels at 16 kHz give `⌊(l + r + 1) / 2⌋`, where `load` gives
+    the mean; a 16-bit 5.1 file at 16 kHz differs from `load`'s by up to 1.28
+    steps (6467 of 32000 samples rounded otherwise); an 8-bit file at another
+    rate or of several channels by up to 2.77 steps (15634 of 32000 at 44.1
+    kHz).
   - Past 1024 phases ffmpeg's x86 kernels read the sample after the last its
     filter weighs for row 1024 of its bank, which at the end of a packet of
     input holds a sample ffmpeg has not yet read: at 44.101 kHz one output in
@@ -143,6 +151,14 @@ and is never published (no opam package, no CHANGES entry).
   - `load` gives `⌈16000 n / r⌉` samples; ffmpeg's flush gives that many or
     one fewer, and fewer on a file shorter than the filter (none below 62
     samples at 44.1 kHz).
+  - ffmpeg refuses to mix a layout without a front speaker or with half of a
+    pair (front, side, back, left and right of centre, top front); `load`
+    mixes it by the same weights, and refuses a layout whose weights are all
+    0. ffmpeg guesses the speakers of 10, 12, 14, 16 and 24 channels a file
+    does not place, and refuses other counts past 8; `load` refuses every
+    count past 8. A FLAC file whose channel-mask comment does not number its
+    channels takes FLAC's order in ffmpeg and the guess for a WAV file here,
+    which differ at 3 and 4 channels.
 
 - `Audio.log_mel` mirrors a signal of 200 samples or fewer as often as its
   frames need, so 160 to 200 samples give one frame and fewer none.

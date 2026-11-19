@@ -25,6 +25,67 @@ let amplitudes (type s) (dt : (float, s) Nx.dtype) (Nx.P x) :
   | Nx.Dtype.Float32 | Nx.Dtype.Float64 -> f
   | dt -> failf "Whisper.Audio.load: samples of dtype %s" (Nx.Dtype.name dt)
 
+(* Mixing as ffmpeg's -ac 1 does it, libswresample 7.0 at its defaults
+   (rematrix.c, swr_build_matrix2; options.c: centre and surround mix levels √½,
+   LFE mix level 0, and a mix to 16-bit samples, which may not pass full scale).
+   A channel feeds the speaker of a WAV channel mask's bit [k]: front left and
+   right 0 and 1, centre 2, low frequency 3, back left and right 4 and 5, left
+   and right of centre 6 and 7, back centre 8, side left and right 9 and 10, top
+   centre 11, top front left, centre and right 12 to 14, top back 15 to 17. Into
+   a mono output the centre goes whole (as [clev √2] where front left or right
+   is mixed too), the front pairs at √½, back and side speakers at the surround
+   level times √½, and the rest not at all; weights that sum past 1 are divided
+   by their sum. *)
+let weight k =
+  match k with
+  | 2 -> 1.
+  | 0 | 1 | 6 | 7 | 12 | 14 -> Float.sqrt 0.5
+  | 4 | 5 | 8 | 9 | 10 -> 0.5
+  | _ -> 0.
+
+let speakers = 18
+
+(* The masks ffmpeg guesses for 1 to 8 channels whose speakers a file does not
+   state (libavutil's av_channel_layout_default): mono, stereo, 2.1, 4.0, 5.0,
+   5.1, 6.1 and 7.1. *)
+let guesses = [| 0x4; 0x3; 0xB; 0x107; 0x37; 0x3F; 0x70F; 0x63F |]
+
+let bits mask =
+  List.filter (fun k -> mask land (1 lsl k) <> 0) (List.init speakers Fun.id)
+
+(* [weights path a] is the weight of each of [a]'s channels in the mix. One
+   channel is the mix, whatever its speaker (rematrix.c's clean_layout). *)
+let weights path a =
+  let c = Nx_io.Audio.channels a in
+  if c = 1 then [| 1. |]
+  else
+    let stated = bits (Nx_io.Audio.channel_mask a) in
+    let ks =
+      if List.length stated = c then stated
+      else if c <= Array.length guesses then bits guesses.(c - 1)
+      else failf "%s: %d channels at speakers it does not state" path c
+    in
+    let w = Array.of_list (List.map weight ks) in
+    let total = Array.fold_left ( +. ) 0. w in
+    (* rematrix.c's sane_layout refuses a layout without a front speaker. *)
+    if total = 0. then
+      failf "%s: %d channels at speakers 0x%x, none of them mixed" path c
+        (List.fold_left (fun m k -> m lor (1 lsl k)) 0 ks);
+    if total > 1. then Array.map (fun v -> v /. total) w else w
+
+(* [mix w x] is the channels of [x], [[rows; c]], weighted by [w] and added in
+   order; a channel of weight 0 is skipped, as libswresample skips it. *)
+let mix w x =
+  let term j =
+    if w.(j) = 1. then Nx.slice [ A; I j ] x
+    else Nx.mul_s (Nx.slice [ A; I j ] x) w.(j)
+  in
+  match
+    List.filter (fun j -> w.(j) <> 0.) (List.init (Array.length w) Fun.id)
+  with
+  | [] -> invalid_arg "Whisper.Audio.mix: no channel weighs"
+  | j :: js -> List.fold_left (fun y j -> Nx.add y (term j)) (term j) js
+
 (* Resampling as ffmpeg's -ar does it, libswresample 7.0 at its defaults
    (resample.c's resample_init, build_filter and resample_linear;
    resample_template.c; options.c): a Kaiser-windowed sinc, β 9, cut at 0.97 of
@@ -253,30 +314,30 @@ let load_rows ~rows path =
   if r <= 0 then failf "%s: a rate of %d Hz" path r;
   if r > max_rate then
     failf "%s: a rate of %d Hz, past the %d Hz Whisper reads" path r max_rate;
-  let c = Nx_io.Audio.channels a in
-  if c <> 1 then failf "%s: %d channels, where Whisper hears one" path c;
+  let w = weights path a in
   let blocks = Nx_io.Audio.blocks a ~rows in
-  let column x = Nx.reshape [| Nx.dim 0 x |] x in
   (* [⌈n rate / r⌉] samples, written as they complete. *)
   let out = ref (Nx.zeros Nx.float32 [| ((n * rate) + r - 1) / r |]) in
   let write j y =
     let y = Nx.cast Nx.float32 y in
     out := Nx.set [ R (j, j + Nx.dim 0 y) ] y (Nx.donate !out)
   in
-  if r = rate then begin
+  (* [each f] writes [f] of each block, consecutively. *)
+  let each f =
+    ignore
+      (Seq.fold_left
+         (fun j p ->
+           let y = f p in
+           write j y;
+           j + Nx.dim 0 y)
+         0 blocks)
+  in
+  let mixed p = mix w (amplitudes Nx.float64 p) in
+  if r = rate && Array.length w = 1 then
     (* The samples as stored, each rounded to float32 once. *)
-    let at = ref 0 in
-    Seq.iter
-      (fun p ->
-        let x = column (amplitudes Nx.float32 p) in
-        write !at x;
-        at := !at + Nx.dim 0 x)
-      blocks
-  end
-  else if n > 0 then
-    resampled (swr r) ~n
-      (Seq.map (fun p -> column (amplitudes Nx.float64 p)) blocks)
-      write;
+    each (fun p -> Nx.slice [ A; I 0 ] (amplitudes Nx.float32 p))
+  else if r = rate then each mixed
+  else if n > 0 then resampled (swr r) ~n (Seq.map mixed blocks) write;
   !out
 
 let load path = load_rows ~rows:block path

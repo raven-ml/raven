@@ -52,8 +52,24 @@ val length : int
     less 128 by 128, an [int8] by 128, an [int16] by 32768, an [int32] by
     [2{^31}] and an [int64] by [2{^63}], a float sample as stored. A sample
     deeper than 16 bits keeps its low bits, and a float peak above 1 stays above
-    1. A resampled sample may pass 1 too, as a full-scale square wave rings past
-    it once resampled.
+    1. A mixed or resampled sample may pass 1 too, as a full-scale square wave
+    rings past it once resampled.
+
+    The channels of a file of several are {e mixed} into one, as FFmpeg's
+    libswresample mixes them at its defaults for one channel, which Whisper's
+    upstream loader asks. Each channel feeds the speaker
+    {!Nx_io.Audio.channel_mask} places it at. Where the mask's speakers do not
+    number the channels, they are those FFmpeg guesses for 2 to 8 channels:
+    front left and right, then low frequency (3 channels); front centre, back
+    centre (4); front centre, back left and right (5); front centre, low
+    frequency, back left and right (6); front centre, low frequency, back
+    centre, side left and right (7); front centre, low frequency, back left and
+    right, side left and right (8). A channel weighs 1 at front centre; √½ at
+    front left or right, left or right of centre, or top front left or right; ½
+    at back left, right or centre, or side left or right; 0 at the others. Where
+    the weights sum past 1 each is divided by their sum, so the mix of two
+    channels at front left and right is their mean. A file of one channel is
+    that channel, whatever its speaker.
 
     A signal of [n] samples at a rate [r] other than {!rate} is {e resampled} to
     [⌈16000 n / r⌉] samples at {!rate}, as FFmpeg's libswresample resamples at
@@ -78,9 +94,10 @@ val length : int
 
 val load : string -> Nx.host Nx.float32_t
 (** [load path] is the WAV or FLAC file [path], read by {!Nx_io.load_audio}, as
-    Whisper hears it, of shape [[| n |]]: at {!rate}, its amplitudes, each
-    rounded to float32 once; at another rate, its amplitudes resampled, computed
-    at float64 and rounded to float32 once. It reads the file in blocks
+    Whisper hears it, of shape [[| n |]]. A file of one channel at {!rate} gives
+    its amplitudes, each rounded to float32 once. Another file gives its
+    amplitudes mixed and, at another rate, resampled, computed at float64 and
+    rounded to float32 once. It reads the file in blocks
     ({!Nx_io.Audio.blocks}), so that memory holds the result, one block and, to
     resample, at most [2048 T] weights at float64; [T] grows with the rate the
     file states, about [r / 485].
@@ -88,9 +105,10 @@ val load : string -> Nx.host Nx.float32_t
     Raises [Failure] whose message starts with [path] if the file's rate is 0,
     or past 1048575 Hz ([2{^20} - 1], the largest rate a FLAC file states, above
     every rate in use), naming it, before any weight is built, so that a header
-    cannot ask for the memory of a larger one; or if it holds more than one
-    channel, naming them; and as {!Nx_io.load_audio} and {!Nx_io.Audio.blocks}
-    do. *)
+    cannot ask for the memory of a larger one; if it holds more than 8 channels
+    at speakers it does not state, naming them, or if its channels' speakers all
+    weigh 0, naming the mask; and as {!Nx_io.load_audio} and
+    {!Nx_io.Audio.blocks} do. *)
 
 (** {1:features Features} *)
 
