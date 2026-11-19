@@ -108,6 +108,9 @@ let test_unpack () =
   equal (array float_exact) [| 1.; 2. |] (Nx.to_array (Nx.unpack f32 (Nx.P x)));
   invalid ~by:"Nx.unpack" (fun () -> Nx.unpack Nx.int32 (Nx.P x))
 
+(* A fresh flat bigarray of [n] elements of [k]. *)
+let vector k n = Bigarray.Array1.create k Bigarray.c_layout n
+
 let refusals =
   [
     ( "create: too few values",
@@ -132,6 +135,25 @@ let refusals =
         ignore
           (Nx.of_bigarray (Bigarray.Genarray.create Bigarray.char Bigarray.c_layout [| 2 |]))
     );
+    ( "Host.wrap: a shape of other elements",
+      fun () ->
+        ignore (Nx.Host.wrap [| 2; 2 |] (vector Bigarray.float32 3))
+    );
+    ( "Host.wrap: a negative extent",
+      fun () ->
+        ignore (Nx.Host.wrap [| -1; -2 |] (vector Bigarray.float32 2))
+    );
+    ( "Host.wrap: a char bigarray",
+      fun () ->
+        ignore (Nx.Host.wrap [| 2 |] (vector Bigarray.char 2))
+    );
+    ( "Host.read: a dtype with no Bigarray kind",
+      fun () -> Nx.Host.read (Nx.zeros Nx.bfloat16 [| 2 |]) ignore );
+    ( "Host.read: a dead value",
+      fun () ->
+        let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
+        ignore (Nx.neg (Nx.donate x));
+        Nx.Host.read x ignore );
   ]
 
 let name_of label = "Nx." ^ String.sub label 0 (String.index label ':')
@@ -177,11 +199,76 @@ let test_bigarray_kinds () =
   let h = Nx.to_bigarray Bigarray.float16 (Nx.create Nx.float16 [||] [| 0.5 |]) in
   equal float_exact 0.5 (Bigarray.Genarray.get h [||])
 
+(* A host value of [s] holding [vs], read through a view that is not
+   C-contiguous where [view] asks for one: [x]'s elements are [vs] in C order
+   either way. *)
+let viewed (type v s) (dt : (v, s) D.t) s vs view =
+  let x = Nx.create dt s vs in
+  match view with
+  | `Whole -> (x, Array.map (stored dt) vs)
+  | `Flipped ->
+      let y = Nx.flip x in
+      (y, Nx.to_array y)
+  | `Broadcast ->
+      let y = Nx.broadcast_to (Array.append [| 2 |] s) x in
+      (y, Nx.to_array y)
+
+let views =
+  Gen.of_list
+    ~pp:(fun ppf v ->
+      Format.pp_print_string ppf
+        (match v with
+        | `Whole -> "whole"
+        | `Flipped -> "flipped"
+        | `Broadcast -> "broadcast"))
+    [ `Whole; `Flipped; `Broadcast ]
+
+(* [Host.read] gives a host value's elements in C order, at every dtype a
+   bigarray holds, through views of any strides. *)
+let law_host_read (Case (dt, s, vs), view) =
+  assume (D.to_bigarray_kind dt <> None);
+  cover "no element" (Array.exists (( = ) 0) s);
+  cover "rank 0" (s = [||]);
+  cover "a view" (view <> `Whole);
+  let x, want = viewed dt s vs view in
+  let got =
+    Nx.Host.read x (fun b ->
+        Array.init (Bigarray.Array1.dim b) (Bigarray.Array1.get b))
+  in
+  equal_elements dt want got
+
+let test_host_wrap () =
+  let c = Bigarray.c_layout in
+  let b = Bigarray.Array1.init Bigarray.float32 c 6 float_of_int in
+  let x = Nx.Host.wrap [| 2; 3 |] b in
+  equal (array int) [| 2; 3 |] (Nx.shape x);
+  equal (array float_exact) [| 0.; 1.; 2.; 3.; 4.; 5. |] (Nx.to_array x);
+  equal (array float_exact) [| 3.; 4.; 5. |] (Nx.to_array (Nx.get [ 1 ] x));
+  let one = Bigarray.Array1.init Bigarray.int64 c 1 Int64.of_int in
+  equal (array int) [||] (Nx.shape (Nx.Host.wrap [||] one));
+  let none = vector Bigarray.int8_unsigned 0 in
+  equal (array int) [| 0; 3 |] (Nx.shape (Nx.Host.wrap [| 0; 3 |] none))
+
+let test_host_round_trip () =
+  let b =
+    Bigarray.Array1.init Bigarray.int32 Bigarray.c_layout 4 Int32.of_int
+  in
+  let x = Nx.Host.wrap [| 2; 2 |] b in
+  Nx.Host.read x (fun b' ->
+      equal (array int32) [| 0l; 1l; 2l; 3l |]
+        (Array.init (Bigarray.Array1.dim b') (Bigarray.Array1.get b')))
+
 let bigarrays =
   group "bigarrays"
     [
       test "of_bigarray copies; to_bigarray is fresh" test_bigarray_round_trip;
       test "kinds carry their dtypes" test_bigarray_kinds;
+      prop "Host.read gives a host value's elements in C order"
+        (Gen.pair case views) law_host_read;
+      test "Host.wrap is the value of a shape over a bigarray's elements"
+        test_host_wrap;
+      test "Host.read of Host.wrap gives the bigarray's elements"
+        test_host_round_trip;
     ]
 
 (* Reads at every brand *)

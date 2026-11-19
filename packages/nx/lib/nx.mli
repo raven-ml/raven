@@ -327,8 +327,38 @@ end
 type host
 (** The brand of {!Host}. *)
 
-module Host : Devices with type d = host
-(** The process's host, {!Rig.host}, computed by nx.cpu. *)
+(** The process's host, {!Rig.host}, computed by nx.cpu, and the host's
+    values as flat bigarrays, for loops in OCaml over their elements. *)
+module Host : sig
+  include Devices with type d = host
+
+  val read :
+    ('v, 's, host) t ->
+    (('v, 's, Bigarray.c_layout) Bigarray.Array1.t -> 'a) ->
+    'a
+  (** [read x f] is [f b], [b] [x]'s elements in C order: over [x]'s memory
+      where [x] is C-contiguous, and over a copy otherwise. It is a
+      {{!section-reads}read}, and keeps [x]'s memory as {!Repr.read} does.
+      [f] must not write through [b], and must not keep [b] after it
+      returns.
+
+      Raises [Invalid_argument] naming [Nx.Host.read] for a dead or a traced
+      [x], and if Bigarray has no kind for [x]'s dtype, and a failed check as
+      a wait does. What [f] raises passes on as raised. *)
+
+  val wrap :
+    int array ->
+    ('v, 's, Bigarray.c_layout) Bigarray.Array1.t ->
+    ('v, 's, host) t
+  (** [wrap s b] is the host value of shape [s] over [b]'s memory, its
+      elements [b]'s in C order, of the dtype that stores [b]'s kind. A
+      write to [b] from then on leaves what the value reads unspecified, as
+      for {!Repr.of_array}, and no donation of the value writes [b].
+
+      Raises [Invalid_argument] if [s] is not a shape of [Bigarray.Array1.dim
+      b] elements, or if [b]'s kind is [char], [int] or [nativeint], which
+      no dtype stores. *)
+end
 
 val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
 (** [devices ~kernels ds] mints a new set over [ds], in their order, with a
@@ -831,11 +861,8 @@ val of_bigarray :
     it.
 
     The copy is one pass over [b], into memory the value owns, so its
-    donation may write in place ({!donate}). To read [b]'s bytes in place
-    instead,
-    [Repr.of_array Host.v (Nx_array.of_bigarray dt b)] is the value over them
-    ({!Nx_array.of_bigarray}, {!Repr.of_array}): a write to [b] from then on
-    leaves what that value reads unspecified.
+    donation may write in place ({!donate}). {!Host.wrap} reads a flat
+    bigarray's bytes in place instead.
 
     Raises [Invalid_argument] if [b]'s kind is [char], [int] or [nativeint],
     which no dtype stores. *)
@@ -872,7 +899,8 @@ val to_bigarray :
   ('v, 's, 'd) t ->
   ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t
 (** [to_bigarray k x] is a fresh bigarray of [x]'s shape holding its elements.
-    A dtype Bigarray has no kind for is a type error.
+    A dtype Bigarray has no kind for is a type error. {!Host.read} reads a
+    host value's elements in place.
 
     Raises [Invalid_argument] if [x] has more than 16 axes, Bigarray's most. *)
 

@@ -3470,6 +3470,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `Nx.Host.read x f`, a host value's elements as a flat bigarray in C
+  order, over its memory where it is C-contiguous, and `Nx.Host.wrap s b`,
+  the host value of shape `s` over a flat bigarray's memory: loops in OCaml
+  over a value's elements without copies or `Nx.Repr`.
 - Add `Nx.Rng.reshape b k`, `k`'s keys as a batch of shape `b`, so keys
   align with a sampler's parameters without a round trip through
   `to_tensor` and `of_tensor`.

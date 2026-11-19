@@ -4,8 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** Host arrays as flat bigarrays, for the loops that read tiles and pack
-    batches, through [Nx.Repr]: a gap of nx's, which has no public host loop
-    over a value's memory. *)
+    batches: {!Nx.Host.read} and {!Nx.Host.wrap}. *)
 
 type ('v, 's) t = ('v, 's, Bigarray.c_layout) Bigarray.Array1.t
 
@@ -19,5 +18,6 @@ val create : ('v, 's) Bigarray.kind -> int -> 'v -> ('v, 's) t
 
 val wrap :
   ('v, 's) Nx.dtype -> int array -> ('v, 's) t -> ('v, 's, Nx.host) Nx.t
-(** [wrap dt shape b] is the host value of [shape] over [b]'s memory, which it
-    owns: the caller must not use [b] after the call. *)
+(** [wrap dt shape b] is the host value of [shape] over [b]'s memory, of the
+    dtype [dt] that [b]'s kind fixes. The caller must not write [b] after the
+    call. *)

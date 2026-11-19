@@ -149,7 +149,7 @@ module type Devices = sig
   val split : axis:int -> d Placement.t
 end
 
-module Host = struct
+module Host_set = struct
   type d = host
 
   let v = Devices.host
@@ -211,10 +211,10 @@ let leaf (type v s) ~by p (dt : (v, s) D.t) shape (out : (v, s) E.t) =
 
 let fill ~by p dt shape v = leaf ~by p dt shape (const ~by dt v)
 
-let zeros dt shape = fill ~by:"Nx.zeros" Host.on dt shape (D.zero dt)
-let ones dt shape = fill ~by:"Nx.ones" Host.on dt shape (D.one dt)
-let full dt shape v = fill ~by:"Nx.full" Host.on dt shape v
-let scalar dt v = fill ~by:"Nx.scalar" Host.on dt [||] v
+let zeros dt shape = fill ~by:"Nx.zeros" Host_set.on dt shape (D.zero dt)
+let ones dt shape = fill ~by:"Nx.ones" Host_set.on dt shape (D.one dt)
+let full dt shape v = fill ~by:"Nx.full" Host_set.on dt shape v
+let scalar dt v = fill ~by:"Nx.scalar" Host_set.on dt [||] v
 let zeros_at p dt shape = fill ~by:"Nx.zeros_at" p dt shape (D.zero dt)
 let ones_at p dt shape = fill ~by:"Nx.ones_at" p dt shape (D.one dt)
 let full_at p dt shape v = fill ~by:"Nx.full_at" p dt shape v
@@ -293,7 +293,7 @@ let arange_by ~by p dt start stop step =
   leaf ~by p dt [| n |] E.(cast dt ((coord 0 * i64 step) + i64 start))
 
 let arange dt start stop step =
-  arange_by ~by:"Nx.arange" Host.on dt start stop step
+  arange_by ~by:"Nx.arange" Host_set.on dt start stop step
 
 let arange_at p dt start stop step =
   arange_by ~by:"Nx.arange_at" p dt start stop step
@@ -313,7 +313,7 @@ let arange_f_by ~by p dt start stop step =
   leaf ~by p dt [| n |] (E.cast dt (ramp ~start ~step))
 
 let arange_f dt start stop step =
-  arange_f_by ~by:"Nx.arange_f" Host.on dt start stop step
+  arange_f_by ~by:"Nx.arange_f" Host_set.on dt start stop step
 
 let arange_f_at p dt start stop step =
   arange_f_by ~by:"Nx.arange_f_at" p dt start stop step
@@ -335,7 +335,7 @@ let linspace_by ~by p dt ~endpoint start stop n =
   leaf ~by p dt [| Stdlib.max n 0 |] (E.cast dt v)
 
 let linspace dt ?(endpoint = true) start stop n =
-  linspace_by ~by:"Nx.linspace" Host.on dt ~endpoint start stop n
+  linspace_by ~by:"Nx.linspace" Host_set.on dt ~endpoint start stop n
 
 let linspace_at p dt ?(endpoint = true) start stop n =
   linspace_by ~by:"Nx.linspace_at" p dt ~endpoint start stop n
@@ -345,7 +345,7 @@ let logspace_by ~by p dt ~endpoint ~base start stop n =
   leaf ~by p dt [| Stdlib.max n 0 |] E.(cast dt (const D.Float64 base ** e))
 
 let logspace dt ?(endpoint = true) ?(base = 10.) start stop n =
-  logspace_by ~by:"Nx.logspace" Host.on dt ~endpoint ~base start stop n
+  logspace_by ~by:"Nx.logspace" Host_set.on dt ~endpoint ~base start stop n
 
 let logspace_at p dt ?(endpoint = true) ?(base = 10.) start stop n =
   logspace_by ~by:"Nx.logspace_at" p dt ~endpoint ~base start stop n
@@ -376,7 +376,7 @@ let geomspace_by ~by p dt ~endpoint start stop n =
   leaf ~by p dt [| Stdlib.max n 0 |] (E.cast dt v)
 
 let geomspace dt ?(endpoint = true) start stop n =
-  geomspace_by ~by:"Nx.geomspace" Host.on dt ~endpoint start stop n
+  geomspace_by ~by:"Nx.geomspace" Host_set.on dt ~endpoint start stop n
 
 let geomspace_at p dt ?(endpoint = true) start stop n =
   geomspace_by ~by:"Nx.geomspace_at" p dt ~endpoint start stop n
@@ -395,7 +395,7 @@ let unpack (type v s d) (dt : (v, s) D.t) (P x : d packed) : (v, s, d) t =
 (* The host value over [a], an array nx made: the value's alone, so a donation
    may write into it. *)
 let owned a : (_, _, host) t =
-  Value.Array { at = Devices.one Host.v 0; a; dead = Value.Live }
+  Value.Array { at = Devices.one Host_set.v 0; a; dead = Value.Live }
 
 (* The host value of [dt] and shape [s] holding [vs], naming [by] where
    {!create} refuses them. Only integers can lie outside their dtype, and
@@ -884,6 +884,45 @@ let reshape s x =
     end
   in
   Eval.move ~by (Reshape s) x
+
+(* Host loops *)
+
+module Host = struct
+  include Host_set
+
+  (* A C-contiguous array is a view of its flat array. *)
+  let read x f =
+    let by = "Nx.Host.read" in
+    if D.to_bigarray_kind (dtype x) = None then
+      invalid_argf "%s: %a has no Bigarray kind" by D.pp (dtype x);
+    let n = Iarray.of_array [| numel x |] in
+    Repr.read ~by x (fun a ->
+        let a =
+          if Nx_array.Layout.is_contiguous (Nx_array.layout a) then a
+          else Nx_array.copy a
+        in
+        let flat = Option.get (Nx_array.move (Reshape n) a) in
+        Nx_array.read flat (fun g -> f (Bigarray.array1_of_genarray g)))
+
+  let wrap (type a e) s (b : (a, e, Bigarray.c_layout) Bigarray.Array1.t) =
+    let by = "Nx.Host.wrap" in
+    let n = Bigarray.Array1.dim b and s = Iarray.of_array s in
+    let count = Iarray.fold_left ( * ) 1 s in
+    if not (Nx_array.Layout.fits s && count = n) then
+      invalid_argf "%s: %a is no shape of %d elements" by (pp_s s) () n;
+    let k : (a, e) Bigarray.kind = Bigarray.Array1.kind b in
+    match D.of_bigarray_kind k with
+    | None ->
+        invalid_argf "%s: no dtype stores Bigarray's %s kind" by
+          (match k with
+          | Bigarray.Char -> "char"
+          | Bigarray.Int -> "int"
+          | _ -> "nativeint")
+    | Some dt ->
+        let a = Nx_array.of_bigarray dt (Bigarray.genarray_of_array1 b) in
+        let l = Nx_array.Layout.contiguous s in
+        Repr.of_array v (Nx_array.v dt l (Nx_array.buffer a))
+end
 
 let broadcast_to s x =
   let by = "Nx.broadcast_to" in
