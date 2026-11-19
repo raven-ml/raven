@@ -762,23 +762,41 @@ let in_turn =
            (fun ppf x -> Format.fprintf ppf "%g" x))
         (Array.to_list c.lanes) pp_body c.body pp_lmode c.lmode)
 
-(* Every body under every mode, over lanes that cancel and over one lane, so
-   that every run reaches the cases another order would round. *)
+(* The edges of a map's lanes: none, one, and an odd number past one, which
+   a map of maps takes as one outer lane. *)
+let edges = [ "no lane"; "one lane"; "an odd number of lanes" ]
+
+let edge n =
+  if n = 0 then Some "no lane"
+  else if n = 1 then Some "one lane"
+  else if n mod 2 = 1 then Some "an odd number of lanes"
+  else None
+
+(* The examples' lanes on each edge, one of them negative. *)
+let edge_lanes = [ [||]; [| 1e8 |]; [| -1e8; 3.; 1. |] ]
+
+(* Every body under every mode, over lanes that cancel, so that every run
+   reaches the cases another order would round, and over one of the edges'
+   lanes, the pairs taking them in turn, so that each body and each mode
+   meets each edge under several others: every pair over every edge, 770
+   examples, took 11 s on a cold cache, most of it compiling. *)
 let in_turn_examples =
-  List.concat_map
-    (fun body ->
-      List.concat_map
-        (fun lmode ->
-          let lmode = valid body lmode in
-          [
-            { start = 1.; lanes = [| 1e8; 1.; -1e8; 1. |]; body; lmode };
-            { start = 1.; lanes = [| 1e8; 3.; -1e8; 1. |]; body; lmode };
-            { start = 1.; lanes = [| 1e8 |]; body; lmode };
-            { start = 1.; lanes = [| -1e8; 3.; 1. |]; body; lmode };
-            { start = 1.; lanes = [||]; body; lmode };
-          ])
-        lane_modes)
-    lane_bodies
+  List.concat
+    (List.mapi
+       (fun i body ->
+         List.concat
+           (List.mapi
+              (fun j lmode ->
+                let lmode = valid body lmode in
+                let k = (i * List.length lane_modes) + j in
+                let edge = List.nth edge_lanes (k mod List.length edge_lanes) in
+                [
+                  { start = 1.; lanes = [| 1e8; 1.; -1e8; 1. |]; body; lmode };
+                  { start = 1.; lanes = [| 1e8; 3.; -1e8; 1. |]; body; lmode };
+                  { start = 1.; lanes = edge; body; lmode };
+                ])
+              lane_modes))
+       lane_bodies)
 
 let s = Nx.scalar f32
 
@@ -855,6 +873,20 @@ let law_in_turn c =
   let n = Array.length c.lanes in
   cover "no lane" (n = 0);
   cover "one lane" (n = 1);
+  List.iter
+    (fun e ->
+      let on = edge n = Some e in
+      List.iter
+        (fun b ->
+          cover (Format.asprintf "%a over %s" pp_body b e) (c.body = b && on))
+        lane_bodies;
+      List.iter
+        (fun m ->
+          cover
+            (Format.asprintf "under %a over %s" pp_lmode m e)
+            (c.lmode = m && on))
+        lane_modes)
+    edges;
   let ran k = Array.exists (fun x -> k (x > 2.)) c.lanes in
   cover "lanes held apart"
     ((c.body = Apart || c.body = Nested_apart || c.body = Switch_lane)

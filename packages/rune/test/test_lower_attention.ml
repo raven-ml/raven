@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Attention lowered for each GPU target and rendered on the host, without a
-   device or its toolchain: every dtype a target has takes a kernel of a
-   product unit, an FFMA micro-tile's products sum in K's order
+(* Attention lowered for each GPU target and linearized on the host,
+   without a device or its toolchain: every dtype a target has takes a
+   kernel of a product unit, an FFMA micro-tile's products sum in K's order
    (lower_attention.mli), and the forward's kernels and the derivative's on
    a tensor core use workgroup memory soundly. *)
 
@@ -33,10 +33,10 @@ let supported target (D (dt, acc)) =
   let has dt = List.mem (Rune.Lower_arith.dtype (Nx_array.Dtype.Any dt)) ds in
   has dt && has acc
 
-(* The kernel named [attention] of the forward of [batches] (default 2)
-   batches of 2 heads of 128 query rows and keys of [d] dimensions, unmasked
-   or [causal], and its sink. Few batches split each row's keys, a tile a
-   run. *)
+(* The sink of the kernel named [attention] of the forward of [batches]
+   (default 2) batches of 2 heads of 128 query rows and keys of [d]
+   dimensions, unmasked or [causal]. Few batches split each row's keys, a
+   tile a run. *)
 let forward ?(batches = 2) ?(causal = false) target (D (dt, acc)) d =
   let shape = [| batches; 2; 128; d |] in
   let f () =
@@ -45,8 +45,8 @@ let forward ?(batches = 2) ?(causal = false) target (D (dt, acc)) d =
     let mask = if causal then Some Nx.causal else None in
     Nx.cast Nx.float32 (fst (Nx.attention ?mask ~acc ~kv:(Dense { k; v }) q))
   in
-  match List.filter (fun (n, _, _) -> n = "attention") (Lowered.sources ~target f) with
-  | [ (_, ast, _) ] -> ast
+  match List.filter (fun (n, _) -> n = "attention") (Lowered.own_kernels ~target f) with
+  | [ (_, ast) ] -> ast
   | ks -> failf "%d kernels named attention" (List.length ks)
 
 (* [memo key f] is [f], computed once for each [key x]: the laws of a row
@@ -96,40 +96,49 @@ let params ast =
 (* The linearized kernel [ast] for [target]'s renderer. *)
 let linearized =
   by_kernel (fun target ast ->
-      let p =
-        match Lowered.program ~target ast with
-        | Some p -> p
-        | None -> Tolk.Codegen.linearize ast (Tolk.Cstyle.without_compiler target)
-      in
-      O.src (O.nth p 1))
+      O.src (O.nth (Tolk.Codegen.linearize ast (Tolk.Cstyle.without_compiler target)) 1))
 
 (* Every pair of a query's dtype and an accumulator's that a GPU target has
    takes a kernel of a product unit, at every head dimension: its products
    run on a tensor core or as fused multiply-adds ({!Tolk.Op.Wmma},
    {!Tolk.Op.Mulacc}), which the SIMT kernel's do not, and it reads [q], [k]
    and [v] and writes its two results, with none of the SIMT kernel's
-   scratch. *)
+   scratch. Its linearized program keeps those products. The lowering
+   chooses the unit by the target, the dtypes and the head dimension, and
+   the renderer keeps or decomposes the products by the target and the
+   dtypes, so each pair is linearized at one head dimension, the pairs
+   taking the dimensions in turn: the 174 kernels, each scheduled,
+   linearized and rendered, took 18 to 32 s. *)
 let totality () =
-  List.iter
-    (fun target ->
-      List.iter
-        (fun ds ->
-          if supported target ds then
-            List.iter
-              (fun d ->
-                let msg = Printf.sprintf "%s %s d%d" (target_id target) (dtypes_id ds) d in
-                let ast = forward target ds d in
-                let unit u = List.mem (O.op u) Tolk.Op.[ Wmma; Mulacc ] in
-                is_true ~msg (List.exists unit (linearized target ast));
-                equal ~msg Testable.int 5 (params ast))
-              [ 1; 36; 110; 160; 1024; 2048 ])
-        [
-          D (Nx.float16, Nx.float32); D (Nx.bfloat16, Nx.float32);
-          D (Nx.float16, Nx.float64); D (Nx.bfloat16, Nx.float64);
-          D (Nx.float32, Nx.float32); D (Nx.float32, Nx.float64);
-          D (Nx.float64, Nx.float64);
-        ])
-    gpu_targets
+  let dims = [ 1; 36; 110; 160; 1024; 2048 ] in
+  let pairs =
+    List.concat_map
+      (fun target ->
+        List.filter_map
+          (fun ds -> if supported target ds then Some (target, ds) else None)
+          [
+            D (Nx.float16, Nx.float32); D (Nx.bfloat16, Nx.float32);
+            D (Nx.float16, Nx.float64); D (Nx.bfloat16, Nx.float64);
+            D (Nx.float32, Nx.float32); D (Nx.float32, Nx.float64);
+            D (Nx.float64, Nx.float64);
+          ])
+      gpu_targets
+  in
+  let units us =
+    List.length (List.filter (fun u -> List.mem (O.op u) Tolk.Op.[ Wmma; Mulacc ]) us)
+  in
+  List.iteri
+    (fun i (target, ds) ->
+      List.iteri
+        (fun j d ->
+          let msg = Printf.sprintf "%s %s d%d" (target_id target) (dtypes_id ds) d in
+          let ast = forward target ds d in
+          greater ~msg Testable.int ~than:0 (units (O.toposort ~calls:Skip ast));
+          equal ~msg Testable.int 5 (params ast);
+          if j = i mod List.length dims then
+            greater ~msg:(msg ^ " linearized") Testable.int ~than:0 (units (linearized target ast)))
+        dims)
+    pairs
 
 (* An FFMA micro-tile's step adds its products in K's order: each chain of
    multiply-adds of the forward's linearized kernel takes its [A] operand,
@@ -420,10 +429,9 @@ let ffma_cases =
 
 (* The derivative's kernels of attention's own, [q̄]'s and [k̄]'s and [v̄]'s,
    of a call of the pair [ds] of 2 batches of 2 heads of 128 rows and keys
-   and values of [d] dimensions, unmasked or [causal], scheduled for
-   [target] as a compiled gradient takes them
-   ({!Lowered.derivative_kernels}); [[]] where its derivative takes its
-   default. *)
+   and values of [d] dimensions, unmasked or [causal], lowered for [target]
+   as a compiled gradient takes them ({!Lowered.derivative_kernels}); [[]]
+   where its derivative takes its default. *)
 let derivative target (D (dt, acc)) ~causal d =
   let shape = [| 2; 2; 128; d |] in
   let f () =

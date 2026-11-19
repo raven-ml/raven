@@ -238,15 +238,6 @@ let kernels (type v s d) ?cores (f : unit -> (v, s, d) Nx.t) =
   List.length
     (List.filter (fun c -> Op.equal (Ops.op c) Op.Call) (Ops.src compiled))
 
-(* Each kernel's program, by its target and sink, as {!rendered} linearized
-   it. *)
-let programs = Hashtbl.create 64
-
-let program ~(target : Helpers.Target.t) ast =
-  List.find_map
-    (fun (a, p) -> if a == ast then Some p else None)
-    (Hashtbl.find_all programs (target.device, target.renderer, target.arch, Ops.hash ast))
-
 (* The sink of each kernel of the schedule of the stores [sink] makes on
    [device], whose tensor cores are [renderer]'s, in the order the schedule
    calls them. *)
@@ -268,16 +259,26 @@ let scheduled ~device renderer sink =
 
 (* Each kernel of {!scheduled}, rendered by [renderer]: its name, sink and
    source. *)
-let rendered ~(target : Helpers.Target.t) ~device renderer sink =
+let rendered ~device renderer sink =
   let render ast =
     let p = Codegen.linearize ast renderer in
-    Hashtbl.add programs
-      (target.device, target.renderer, target.arch, Ops.hash ast)
-      (ast, p);
     let name = match Ops.arg (Ops.nth p 0) with Kernel k -> k.name | _ -> "" in
     (name, ast, renderer.render (Ops.src (Ops.nth p 1)))
   in
   List.map render (scheduled ~device renderer sink)
+
+(* The name and sink of each kernel of its own that the graph [u] calls
+   ({!Shape.custom_kernel}), in {!Ops.toposort}'s order of the calls. *)
+let own_kernels_of u =
+  List.filter_map
+    (fun c ->
+      if not (Op.equal (Ops.op c) Op.Call) then None
+      else
+        let ast = Ops.body c in
+        match (Ops.op ast, Ops.arg ast) with
+        | Op.Sink, Kernel k -> Some (k.name, ast)
+        | _ -> None)
+    (Ops.toposort ~calls:Skip u)
 
 (* [target]'s renderer, made without its toolchain, and the place of a
    graph lowered for its device. *)
@@ -290,30 +291,21 @@ let sources (type v s d) ~(target : Helpers.Target.t)
   let renderer, place = off_host target in
   let _, u, dt, _, n = lowered ~direct:true ~local:false ~place f in
   let o = Ops.new_buffer place.device (max 1 n) (L.dtype (D.Any dt)) in
-  rendered ~target ~device:place.device renderer
+  rendered ~device:place.device renderer
     (Ops.sink
        [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int (max 1 n) ]) ] ])
 
+let own_kernels (type v s d) ~(target : Helpers.Target.t)
+    (f : unit -> (v, s, d) Nx.t) =
+  let _, place = off_host target in
+  let _, u, _, _, _ = lowered ~direct:true ~local:false ~place f in
+  own_kernels_of u
+
 let derivative_kernels (type v s d) ~(target : Helpers.Target.t)
     (f : unit -> (v, s, d) Nx.t) =
-  let renderer, place = off_host target in
+  let _, place = off_host target in
   let found = ref [] in
   let _ = lowered ~direct:true ~local:false ~place ~transposed:found f in
-  (* A result's store, where it has an element: an lse-only call's value
-     cotangent has none. *)
-  let store u =
-    let n = Shape.max_numel u in
-    if n = 0 then None
-    else
-      let o = Ops.new_buffer place.device n (Ops.dtype u) in
-      Some (Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int n ]) ])
-  in
-  let named ast =
-    match Ops.arg ast with Kernel k -> (k.name, ast) | _ -> ("", ast)
-  in
   List.map
-    (Option.map (fun us ->
-         List.map named
-           (scheduled ~device:place.device renderer
-              (Ops.sink (List.filter_map store (Array.to_list us))))))
+    (Option.map (fun us -> own_kernels_of (Ops.sink (Array.to_list us))))
     !found

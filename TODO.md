@@ -137,10 +137,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - No tree can check formatting: the only ocamlformat on fudge (0.29.0)
   rejects main's own files and no dev-tools lock pins the repository's
   formatter
-- Slow rune tests near the 60 s limit under load: `test_lower_attention`'s
-  FFMA derivative law (26.5 s alone, `Codegen.linearize` of the dq and dkdv
-  kernels, 0.04-0.2 s each) and "each take a kernel of a product unit"
-  (15-33 s); `test_total`'s lane law, 300 Clang compiles on a cold cache
 - nx.array's `to_array` of unboxed elements and `of_array`
   (nx_array_stubs.c:1022, :1101) copy a whole array with the domain lock
   held, cold mapped pages included, since their walks touch OCaml arrays;
