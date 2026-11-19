@@ -95,9 +95,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - Metal's renderer emits no launch bound; its `local_threads_max` of 1024
   is a maximum a pipeline may refuse, and Mac2's AMD GPUs may run 64-wide
   SIMD groups, which `simd_threads` does not state
-- D404's Metal launch member cap of 40 rests on an M1 Max, and no machine
-  a bench may run on holds a Metal device, so the ledger's (d) cannot be met
-  for it: admit a Mac row for Metal or mark that part "Reason: none"
 
 ## nx, rune
 

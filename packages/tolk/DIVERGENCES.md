@@ -7709,9 +7709,11 @@ reason and its pins.
   256 alike pieces of 64 by 64 run fastest at CUDA's cap of 64, 25-26 µs a
   call, and NVRTC's time a member grows past it, 3.3 ms at 128 against 2.0;
   `launch/cuda/compile-256` and `launch/cuda/alike-64` pin it, their
-  baselines at the scheduled re-record. On an M1 Max, which no bench may
-  run on, Metal's time a member of one or two workgroups is least at 40 members and
-  grows past them, and 878 such members did not build in 4 minutes. In a
+  baselines at the scheduled re-record. Metal's cap of 40: Reason: none.
+  On an M1 Max Metal's time a member of one or two workgroups was least at
+  40 members and grew past them, and 878 such members did not build in 4
+  minutes, but no machine a bench may run on holds a Metal device, so no
+  row can pin it. In a
   loop's body, (b) and (d): rune's remat'd scan steps and NUTS. A remat's
   recompute reads only its step's arguments, so a call that joins any earlier
   launch makes its values at the trip's first launch, where the forward
