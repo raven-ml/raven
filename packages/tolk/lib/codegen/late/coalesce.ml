@@ -179,12 +179,24 @@ let memory_coalescing sink (r : Renderer.t) =
                 && (not volatile)
                 && not (is_invalid idx)
               then begin
-                let base, offset =
+                let split idx =
                   match (op idx, src idx) with
                   | Op.Add, [ b; c ] when is_literal c -> (Some b, int_value c)
                   | Op.Add, [ c; b ] when is_literal c -> (Some b, int_value c)
                   | _ when is_literal idx -> (None, int_value idx)
                   | _ -> (Some idx, Bigint.zero)
+                in
+                (* An index ordered after effects, as a staged tile's read
+                   is after the next trip's copies, keeps its base ordered
+                   so: each element's index lifts its offset into the
+                   order ({!Shape.symbolic_simple}). *)
+                let base, offset =
+                  match (op idx, src idx) with
+                  | Op.After, x :: deps -> (
+                      match split x with
+                      | Some b, o -> (Some (after b deps), o)
+                      | None, _ -> (Some idx, Bigint.zero))
+                  | _ -> split idx
                 in
                 let depth =
                   if addrspace buf = Some Dtype.Global then (fst waits, 0)
@@ -324,7 +336,9 @@ let memory_coalescing sink (r : Renderer.t) =
         in
         let at first =
           match key.base with
-          | Some b -> O.(b + const (`Int first))
+          | Some b ->
+              let b = if op b = Op.After then nth b 0 else b in
+              O.(b + const (`Int first))
           | None -> const (`Int first)
         in
         let sorted = List.sort Bigint.compare (List.map fst offsets) in

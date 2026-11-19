@@ -43,6 +43,11 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
       or [2], and a group every access of which copies into local memory
       into [16], [4] or [2].
 
+    An index ordered after effects ({!Op.After}), as a staged tile's read is
+    ordered after the next trip's copies, merges as its value would, with the
+    accesses ordered after the same effects: rewriting lifts each element's
+    offset into the order, and the offset is read back out of it.
+
     The longest length that fits is taken first. A group starts at an element
     whose count from the boundary behind the buffer's first element, a multiple
     of its alignment (its phase and alignment, {!Ops.type-param_arg}), the
