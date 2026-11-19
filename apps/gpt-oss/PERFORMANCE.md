@@ -35,6 +35,27 @@ checkpoint as stored, as the chat, vLLM and transformers run it. NV is the
 same card through NVIDIA's kernel driver, without CUDA: it decodes 4% faster
 than CUDA and prefills 31% slower.
 
+## Where decode's time goes
+
+GPU time of one decode step with the attention and head packed as Q8_0, by
+kernel, measured with Nsight Systems: raven's `decode-q8_0/512` over 410 steps,
+llama.cpp's 65-token run at depth 512 less its 1-token run. Bandwidth is the
+bytes of the weights each product reads.
+
+| | raven, CUDA | llama.cpp, CUDA |
+|---|---|---|
+| Expert products, MXFP4, 1.27 GB | 2.53 ms, 502 GB/s | 2.49 ms, 510 GB/s |
+| Attention projections, Q8_0, 0.68 GB | 1.45 ms, 467 GB/s | 1.41 ms, 478 GB/s |
+| Head, Q8_0, 0.62 GB | 1.16 ms, 531 GB/s | 1.16 ms, 532 GB/s |
+| Everything else | 1.02 ms in 514 kernels | 0.80 ms in 508 kernels |
+| The step | 6.16 ms in 611 kernels | 5.86 ms in 653 kernels |
+
+The products that read the weights run within 3% of llama.cpp's, near the
+card's 576 GB/s. Most of raven's 5% lies in the small kernels around them,
+the attention itself, the norms and the routing among them. Neither side
+waits on launches: a step's kernel time is within 2% of its decode time in
+the first table.
+
 ## Starting and memory
 
 A new process's first token over an empty kernel cache, which compiles every
@@ -76,6 +97,8 @@ CUDA graphs, in 72 s, and later ones in 13 s.
     mean over positions 512 to 639.
   - Prefill and first token end with the token read back on every system but
     llama.cpp, whose llama-bench stops at the logits.
+- **Profile.** Nsight Systems 2026.3.2, CUDA trace only, one run a side,
+  at main 76adc9a06a.
 - **Not measured.** The AMD card (raven, and llama.cpp's Vulkan and ROCm
   builds, which `llama_cpp.sh vulkan` and `rocm` run); batched decoding;
   llama.cpp at bfloat16, for which ggml-org publishes no file; vLLM and
