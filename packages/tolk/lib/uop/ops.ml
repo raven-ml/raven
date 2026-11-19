@@ -4590,6 +4590,24 @@ type 'ctx rules =
       after : ('ctx, t) Pattern_matcher.t;
     }
 
+(* [u], the node [n] rebuilt on rewritten sources, with the weak constant
+   branches of a where committed at [n]'s type where that type is committed
+   and [u]'s is weak. A where's type is its branches': a weak constant takes
+   the width of the other branch, which an Invalid, the value of no element,
+   does not state. A float64 where of [x] and a weak zero, whose [x] became
+   Invalid, would leave the zero weak, and a bitcast of it no width. *)
+let kept_where_type n u =
+  let weak dt = Dtype.mem dt Dtype.weaks in
+  if u.op <> Op.Where || (not (weak u.dtype)) || weak n.dtype then u
+  else
+    let commit b =
+      if b.op = Op.Const && weak b.dtype then ccast b n.dtype else b
+    in
+    match u.src with
+    | c :: branches ->
+        v Op.Where ~src:(c :: List.map commit branches) ~arg:u.arg
+    | [] -> u
+
 let graph_rewrite ~calls ~pass ~ctx root rules =
   let exception Gate of t in
   let exception Blocked in
@@ -4631,7 +4649,7 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
   let rest_of n = if body_skipped n then drop 1 n.src else n.src in
   let rebuilt n srcs =
     let src = if body_skipped n then List.hd n.src :: srcs else srcs in
-    v n.op ~src ~arg:n.arg
+    kept_where_type n (v n.op ~src ~arg:n.arg)
   in
   let work = Work.create () in
   let waits = Work.create () in

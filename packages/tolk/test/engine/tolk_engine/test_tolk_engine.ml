@@ -2036,6 +2036,22 @@ let one_name_two_types ?(devices = devices) order =
   Engine.run ~vars s [||];
   equal slot_values (expected ~vars big storage) (by_slot storage contents)
 
+(* The bits of a float64 padded twice, on the outer padding alone: its element
+   is invalid in the inner pad, so the kernel's float64 branch folds away and
+   the padding's value [v] must keep the float64's width. *)
+let bitcast_of_outer_padding v () =
+  let x = Shape.reshape (Ops.float ~dtype:Float64 2.) [ Int 1 ] in
+  let o = Ops.new_buffer "CPU" 1 Int64 in
+  let pad ?value u p = Shape.pad ?value u [ Some (Int p, Int (1 - p)) ] in
+  let outer = pad ~value:(`Float v) (pad x 0) 1 in
+  let bits = Ops.bitcast (Shape.shrink outer [ Some (Int 0, Int 1) ]) Int64 in
+  let big = Ops.sink [ Ops.after o [ Ops.store o bits ] ] in
+  let s, vars, storage = linked big in
+  Engine.run ~vars s (slots storage);
+  equal (list values)
+    [ [| `Int (Bigint.of_int64 (Int64.bits_of_float v)) |] ]
+    (List.map contents storage)
+
 (* The pad_idiv programs pad integer quotients of their inputs: of the inputs
    themselves, of a stored divisor at least 1, padded twice, and shrunk. Their
    inputs hold no zero: a kernel divides by zero only on the padding, which
@@ -6418,6 +6434,9 @@ let schedules =
         ~id:Fun.id
         [ "pad_idiv"; "pad_idiv_stored"; "pad_idiv_nested"; "pad_idiv_shrunk" ]
         (fun name -> divides_on_padding name ());
+      cases "a bitcast of a float64's outer padding reads its bits"
+        ~id:string_of_float [ 0.; 1. ]
+        (fun v -> bitcast_of_outer_padding v ());
       test "a pad of a quotient by a constant table writes what it computes"
         (divides_by_a_table "CPU");
       cases "a schedule runs on the buffers each run binds to its parameters"

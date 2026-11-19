@@ -9420,3 +9420,31 @@ D466.
   `.tolk` files headed D495; the tolk bench's `contract/scores-masked-f32`
   and `contract/batched-biased-f32` rows on fudge, their baselines pending
   the scheduled re-record. AMD is untimed.
+
+## D496. A where rebuilt on an Invalid branch keeps its committed type
+
+- **tinygrad:** `uop/ops.py` `RewriteContext.unified_rewrite` (a node whose
+  sources were rewritten is rebuilt as `UOp(op, new_src, arg)`, its type
+  derived again), with `uop/symbolic.py` `pm_data_invalid` (a where of an
+  Invalid condition is Invalid) and `schedule/indexing.py`
+  `convert_pad_to_where_to_keep_behavior_local` (a pad's zero is a weak
+  constant).
+- **tolk:** `Ops.graph_rewrite`, through `kept_where_type`.
+- **Differs:** a where whose type is committed and whose rebuild on its
+  rewritten sources derives a weak type commits its weak constant branches
+  at the type it had. tinygrad rebuilds it weak: a pad's weak zero beside a
+  branch that folded to Invalid, which states no width.
+- **Reason:** (e). A value read on the outer padding of a value padded twice
+  is `where(False, where(Invalid, x, 0), 0)`; once the inner where is
+  Invalid the outer one, and the zero it folds to, are weak. A bitcast of it
+  then reads no width: at the pin,
+  `Tensor([1.0], dtype=float64).pad((0, 1)).pad((1, 0))[0:1].bitcast(int64)`
+  commits the zero at float32 and clang refuses the kernel (`source size
+  does not equal destination size (4 vs 8)`), where tolk raised in
+  `Prepare.expand_bitcast` (`no unsigned integer of 100 bytes`). Committing
+  the pad's zero where the pad becomes a where instead fails 20 of the
+  schedule suites' recorded tests.
+- **Pinned by:** the Ops suite's `graph_rewrite › a where rebuilt on an
+  Invalid branch keeps its committed type` (both passes, both orders) and
+  the engine suite's `link and run › a bitcast of a float64's outer padding
+  reads its bits` (padding of zero and of one).

@@ -1267,6 +1267,24 @@ let rewriting =
               Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:() wide
                 (After_sources raising));
           equal uop expected (rewrite ()));
+      test "a where rebuilt on an Invalid branch keeps its committed type"
+        (fun () ->
+          (* The weak zero takes its width from [x], and Invalid states none:
+             the rebuilt where commits the zero at the where's type. *)
+          let x = fvar ~dtype:Float64 "x" and c = flag "c" in
+          let invalid = Ops.const `Invalid in
+          let where y z = Ops.v Op.Where ~src:[ c; y; z ] in
+          let want = where invalid (Ops.float ~dtype:Float64 0.) in
+          List.iter
+            (fun (order, pass) ->
+              equal uop want
+                (rw ~order ~pass [ (x, invalid) ] (where x (Ops.float 0.))))
+            [
+              (after, Ops.Fixed_point);
+              (after, Ops.Once);
+              (before, Ops.Fixed_point);
+              (before, Ops.Once);
+            ]);
       test "the work list is bounded by REWRITE_STACK_LIMIT" (fun () ->
           equal string "REWRITE_STACK_LIMIT"
             (Setting.key Setting.rewrite_stack_limit);

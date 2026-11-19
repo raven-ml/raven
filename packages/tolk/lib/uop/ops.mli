@@ -1538,6 +1538,11 @@ val graph_rewrite : calls:calls -> pass:pass -> ctx:'ctx -> t -> 'ctx rules -> t
     the first rule that applies, and shared nodes stay shared. A call's body is
     rewritten with its arguments under [Enter], and left alone under [Skip].
 
+    A where of a committed type whose rebuild on its sources derives a weak
+    type, as a weak constant beside an [`Invalid] does, has its weak constant
+    branches committed at the where's type; a weak branch that is not a
+    constant stays weak.
+
     Raises [Invalid_argument] if a {!Fixed_point} rewrite does not terminate: a
     rule before the sources cycles, the work list exceeds
     {!Setting.rewrite_stack_limit}, or a node's rewrite depends on itself, and

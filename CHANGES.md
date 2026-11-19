@@ -1533,6 +1533,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A bitcast of elements that lie in the outer padding of a value padded
+  twice (`Shape.pad`) compiles: the padding's value lost its type once the
+  inner value folded away, and compiling raised `no unsigned integer of 100
+  bytes`. `Ops.graph_rewrite` keeps a where's type when a branch becomes
+  invalid (D496).
 - A computed value of several inputs that a reduction reads again at its
   outputs, as a product's output columns read its rows, stays stored: a
   normalised activation before a prompt's projections is computed once,
