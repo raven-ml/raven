@@ -69,7 +69,11 @@
 ; upstream/int8.flac were cut on 2026-11-19 by
 ;   P3-impl/run.sh P3-impl/fixture.py librispeech/7902-96594-0025.flac OUT
 ; in _plans/whisper-port/gen's pinned environment with ffmpeg 7.0.2 layered,
-; outside the repository.
+; outside the repository. upstream/resample.npz, upstream's load_audio of the
+; WAV and FLAC files of other rates and channel counts beside it, which it
+; wrote, was cut on 2026-11-19 by
+;   P3-impl/run.sh P5-impl/resample.py OUT
+; in the same environment.
 
 (test
  (name test_audio)
@@ -78,4 +82,15 @@
  (deps
   upstream/audio.npz
   upstream/int8.flac
+  upstream/resample.npz
+  upstream/mono48.flac
+  upstream/mono8.wav
+  upstream/stereo44.wav
+  upstream/stereo16.wav
+  upstream/surround48.flac
+  upstream/three22.wav
+  upstream/mono43650.wav
+  upstream/mono47530.wav
+  upstream/mono44101.wav
+  upstream/stereo96001.wav
   librispeech/7902-96594-0025.flac))

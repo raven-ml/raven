@@ -107,16 +107,46 @@ let load_scales =
 let refuses =
   cases "load refuses what Whisper does not hear"
     ~id:(fun (name, _, _, _) -> name)
-    [
-      ("8 kHz", 8_000, 1, "8000 Hz");
-      ("44.1 kHz", 44_100, 1, "44100 Hz");
-      ("stereo", A.rate, 2, "2 channels");
-    ]
+    [ ("stereo", A.rate, 2, "2 channels") ]
     (fun (_, rate, c, sub) ->
       let path = temp_file ~suffix:".wav" () in
       Nx_io.save_wav path ~rate (Nx.zeros Nx.int16 [| 160; c |]);
       raises_match
         (fun e -> Exn.failure ~sub e && Exn.failure ~sub:path e)
+        (fun () -> A.load path))
+
+(* 2^20 - 1 Hz, the largest rate FLAC's STREAMINFO states, loads; a rate past it
+   raises. *)
+let top_rate =
+  test "load refuses rates past 1048575 Hz" (fun () ->
+      let path rate =
+        let p = temp_file ~suffix:".wav" () in
+        Nx_io.save_wav p ~rate (Nx.ones Nx.int16 [| 100; 1 |]);
+        p
+      in
+      let top = path 1_048_575 in
+      (* ⌈100 × 16000 / 1048575⌉ samples. *)
+      equal int 2 (Nx.dim 0 (A.load top));
+      let past = path 1_048_576 in
+      raises_match
+        (fun e -> Exn.failure ~sub:"1048576 Hz" e && Exn.failure ~sub:past e)
+        (fun () -> A.load past))
+
+(* A WAV file whose header states a rate of 0, which Nx_io reads as stated. *)
+let no_rate =
+  test "load refuses a file without a rate" (fun () ->
+      let path = temp_file ~suffix:".wav" () in
+      Nx_io.save_wav path ~rate:1 (Nx.zeros Nx.int16 [| 160; 1 |]);
+      let b =
+        Bytes.of_string (In_channel.with_open_bin path In_channel.input_all)
+      in
+      (* nSamplesPerSec and nAvgBytesPerSec of the fmt chunk. *)
+      Bytes.set_int32_le b 24 0l;
+      Bytes.set_int32_le b 28 0l;
+      Out_channel.with_open_bin path (fun oc -> Out_channel.output_bytes oc b);
+      equal int 0 (Nx_io.Audio.rate (Nx_io.load_audio path));
+      raises_match
+        (fun e -> Exn.failure ~sub:"0 Hz" e && Exn.failure ~sub:path e)
         (fun () -> A.load path))
 
 let int8 =
@@ -126,6 +156,114 @@ let int8 =
       in
       let got = A.load "upstream/int8.flac" in
       equal (array int32) (bits want) (bits (Nx.to_array got)))
+
+(* Resampling *)
+
+(* upstream/resample.npz holds upstream's load_audio, ffmpeg's int16 samples, of
+   each of the files beside it, and of the first samples of a 44.1 kHz clip
+   ("short.x") for each length of "short.lengths". *)
+let resampled = lazy (Nx_io.load_npz "upstream/resample.npz")
+
+let resampled_entry dt key =
+  match Nx_io.Archive.find key (Lazy.force resampled) with
+  | Some p -> Nx.unpack dt p
+  | None -> failf "upstream/resample.npz has no %s" key
+
+(* ffmpeg computes its samples in float32 and rounds each to the nearest 16-bit
+   value. Its float32 samples were measured within 1.3e-7 of full scale of the
+   exact computation (against PyAV's libswresample at 48, 44.1 and 16 to 48 kHz;
+   the worst case of float32 sums of 92 taps is about 5e-6), and load rounds the
+   exact computation to float32, within 2^-25. So each of ffmpeg's samples lies
+   within half a step of 2^-15 and those bounds of load's sample, in steps: a
+   bound measured on these files. *)
+let ffmpeg_steps = 0.5 +. (32768. *. (1.3e-7 +. 0x1p-25))
+
+(* [ffmpeg ~n ~from want got] checks load's samples [got] of [n] samples at
+   [from] Hz against ffmpeg's [want]. load gives [⌈16000 n / from⌉]; ffmpeg's
+   flush gives that many or fewer, and compares on those. *)
+let ffmpeg ~n ~from want got =
+  equal int (((16_000 * n) + from - 1) / from) (Nx.dim 0 got);
+  let want = Nx.to_array (Nx.cast Nx.float64 want) in
+  let k = Array.length want in
+  at_most int ~than:(Nx.dim 0 got) k;
+  let got = Nx.to_array (Nx.cast Nx.float64 (Nx.slice [ R (0, k) ] got)) in
+  equal (array (float ffmpeg_steps)) want (Array.map (fun v -> v *. 32768.) got)
+
+let ffmpeg_files =
+  cases "load resamples as upstream's ffmpeg"
+    ~id:(fun (path, _) -> path)
+    [
+      ("mono48.flac", 48_000);
+      ("mono8.wav", 8_000);
+      ("mono43650.wav", 43_650);
+      ("mono47530.wav", 47_530);
+      ("mono44101.wav", 44_101);
+    ]
+    (fun (path, from) ->
+      let a = Nx_io.load_audio ("upstream/" ^ path) in
+      equal int from (Nx_io.Audio.rate a);
+      ffmpeg ~n:(Nx_io.Audio.length a) ~from
+        (resampled_entry Nx.int16 path)
+        (A.load ("upstream/" ^ path)))
+
+(* Lengths about the filter's 92 taps at 44.1 kHz; ffmpeg gives fewer samples
+   below about 90 and none below 62. *)
+let ffmpeg_short =
+  let x = resampled_entry Nx.int16 "short.x" in
+  let lengths = Nx.to_array (resampled_entry Nx.int64 "short.lengths") in
+  cases "load resamples short files as upstream's ffmpeg"
+    ~id:(fun n -> Printf.sprintf "%Ld samples" n)
+    (Array.to_list lengths)
+    (fun n ->
+      let n = Int64.to_int n in
+      let path = temp_file ~suffix:".wav" () in
+      Nx_io.save_wav path ~rate:44_100
+        (Nx.reshape [| n; 1 |] (Nx.slice [ R (0, n) ] x));
+      ffmpeg ~n ~from:44_100
+        (resampled_entry Nx.int16 (Printf.sprintf "short.%d" n))
+        (A.load path))
+
+(* A file of [n] samples at [from] Hz, of [c] channels, and the rows of a
+   block. *)
+let stream_gen =
+  let open Gen in
+  let* from =
+    frequency
+      [
+        (2, constant 16_000);
+        (2, constant 44_101);
+        (4, of_list [ 8_000; 11_025; 22_050; 44_100; 48_000 ]);
+      ]
+  in
+  let* n = frequency [ (1, int_range 0 3); (4, int_range 4 400) ] in
+  let* rows =
+    frequency [ (2, int_range 1 3); (2, int_range 4 120); (1, int_range 1 500) ]
+  in
+  let* x = array ~size:(constant n) (int_range (-32768) 32767) in
+  constant (from, x, rows)
+
+let stream =
+  prop ~count:60 "load gives the same samples for any blocks it reads"
+    stream_gen (fun (from, x, rows) ->
+      let n = Array.length x in
+      cover "blocks shorter than any filter" (rows < 32);
+      cover "one block" (rows >= n);
+      cover "16 kHz" (from = A.rate);
+      cover "phases interpolated" (from = 44_101);
+      let path = temp_file ~suffix:".wav" () in
+      Nx_io.save_wav path ~rate:from (Nx.create Nx.int16 [| n; 1 |] x);
+      let whole = A.load_rows ~rows:(Int.max 1 n) path in
+      equal (array int32)
+        (bits (Nx.to_array whole))
+        (bits (Nx.to_array (A.load_rows ~rows path))))
+
+let stream_flac =
+  cases "load reads a FLAC file in any blocks" ~id:string_of_int
+    [ 1; 777; 4096 ] (fun rows ->
+      let path = "upstream/mono48.flac" in
+      equal (array int32)
+        (bits (Nx.to_array (A.load path)))
+        (bits (Nx.to_array (A.load_rows ~rows path))))
 
 (* Log-mel *)
 
@@ -299,7 +437,13 @@ let () =
        [
          load_scales;
          refuses;
+         top_rate;
+         no_rate;
          int8;
+         ffmpeg_files;
+         ffmpeg_short;
+         stream;
+         stream_flac;
          librispeech;
          lengths;
          silence;

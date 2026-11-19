@@ -45,18 +45,54 @@ val rate : int
 val length : int
 (** [length] is [480_000], the samples of a window, 30 s at {!rate}. *)
 
-val load : string -> Nx.host Nx.float32_t
-(** [load path] is the samples of the WAV or FLAC file [path], read by
-    {!Nx_io.load_audio}, as amplitudes of full scale 1, of shape [[| n |]]. An
-    integer sample is divided by its dtype's full scale, a [uint8] sample less
-    128 by 128, an [int8] by 128, an [int16] by 32768, an [int32] by [2{^31}]
-    and an [int64] by [2{^63}], and rounded to float32 once, so a sample deeper
-    than 16 bits keeps its low bits. A float sample is rounded to float32 as
-    stored, unclipped: a peak above 1 stays above 1.
+(** {1:files Files}
 
-    Raises [Failure] whose message starts with [path] if the file's rate is not
-    {!rate}, naming its rate, or if it holds more than one channel, naming them;
-    and as {!Nx_io.load_audio} and {!Nx_io.Audio.samples} do. *)
+    A file's samples load at their dtype's full scale ({!Nx_io.section-audio}).
+    Its {e amplitudes} are its samples divided by that scale: a [uint8] sample
+    less 128 by 128, an [int8] by 128, an [int16] by 32768, an [int32] by
+    [2{^31}] and an [int64] by [2{^63}], a float sample as stored. A sample
+    deeper than 16 bits keeps its low bits, and a float peak above 1 stays above
+    1. A resampled sample may pass 1 too, as a full-scale square wave rings past
+    it once resampled.
+
+    A signal of [n] samples at a rate [r] other than {!rate} is {e resampled} to
+    [⌈16000 n / r⌉] samples at {!rate}, as FFmpeg's libswresample resamples at
+    its defaults, which Whisper's upstream loader runs. Its cut is
+    [f = min (16000 × 0.97 / r) 1] and its {e length} [T] the least even integer
+    at or above [⌈32 / f⌉], both computed at float64 in that order. With
+    [s = max 1 (r / 16000)] and the kernel
+    [k = Sinc {cutoff = f s / 2; half_width = T / 2s; window = Kaiser 9.}], the
+    signal's value at a position [t] is [y(t) = Σᵢ x(i) k((t - i) / s) / w₀],
+    over the [T] samples [i] with [-T/2 ≤ t - i < T/2], where [w₀] is
+    [Σ k(q / s)] over the whole [q] with [-T/2 ≤ q < T/2]. Output [j] lies at
+    [t = j r / 16000 = b + p], [b] whole and [0 ≤ p < 1]. Where [16000 / r]
+    reduces to at most 1024 values of [p], output [j] is [y(t)]: {!Omr.resample}
+    on [`Points] by the reduced ratio, divided by [w₀]. Otherwise, with
+    [p = (q + α) / 1024] for a whole [q], it is [v₁ + (v₂ - v₁) α] of
+    [v₁ = y(b + q / 1024)] and [v₂ = y(b + (q + 1) / 1024)], the linear
+    interpolation between 1024 values of [p] that libswresample computes. The
+    signal is extended before its first sample by [T] samples mirrored about it
+    ([`Symmetric_whole]), and after its last by [(min n T + 1) / 2] samples
+    mirrored about the point half a sample past it ([`Symmetric_half]), then by
+    zeros. *)
+
+val load : string -> Nx.host Nx.float32_t
+(** [load path] is the WAV or FLAC file [path], read by {!Nx_io.load_audio}, as
+    Whisper hears it, of shape [[| n |]]: at {!rate}, its amplitudes, each
+    rounded to float32 once; at another rate, its amplitudes resampled, computed
+    at float64 and rounded to float32 once. It reads the file in blocks
+    ({!Nx_io.Audio.blocks}), so that memory holds the result, one block and, to
+    resample, at most [2048 T] weights at float64; [T] grows with the rate the
+    file states, about [r / 485].
+
+    Raises [Failure] whose message starts with [path] if the file's rate is 0,
+    or past 1048575 Hz ([2{^20} - 1], the largest rate a FLAC file states, above
+    every rate in use), naming it, before any weight is built, so that a header
+    cannot ask for the memory of a larger one; or if it holds more than one
+    channel, naming them; and as {!Nx_io.load_audio} and {!Nx_io.Audio.blocks}
+    do. *)
+
+(** {1:features Features} *)
 
 val pad_or_trim : 'd Nx.float32_t -> 'd Nx.float32_t
 (** [pad_or_trim x] is the samples [x], of shape [[| n |]], cut to their first
@@ -74,3 +110,9 @@ val log_mel : ?padding:int -> n_mels:int -> 'd Nx.float32_t -> 'd Nx.float32_t
     Raises [Invalid_argument] if [x] has another number of axes than one, if
     [padding] is negative, if [n_mels < 1], or if [n_mels] is so large that a
     band weighs no bin. *)
+
+(**/**)
+
+val load_rows : rows:int -> string -> Nx.host Nx.float32_t
+(** [load_rows ~rows path] is {!load}[ path], reading [rows] rows of the file at
+    a time. *)

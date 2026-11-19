@@ -14,8 +14,8 @@ and is never published (no opam package, no CHANGES entry).
 - Raven's rules hold here: no dependencies, public interfaces of raven only,
   `AGENTS.md`'s code style. A capability raven lacks is built in the library
   that owns it, never worked around here.
-- `lib/` is the library `whisper`: `Audio` (a 16 kHz mono WAV or FLAC
-  file's samples, the 30 s window, and their log-mel spectrogram of any
+- `lib/` is the library `whisper`: `Audio` (a WAV or FLAC file's samples
+  at 16 kHz, the 30 s window, and their log-mel spectrogram of any
   length, floored over the whole call, composed from omr),
   `Tokenizer` (the rank-file encodings and
   Whisper's special tokens, numbered after the ranks) and `Model` (the
@@ -111,15 +111,38 @@ and is never published (no opam package, no CHANGES entry).
   and stops every lane at the batch's shared limit. The tests hold the law
   that a batch decodes as each audio alone.
 
-- `Audio.load` reads 16 kHz files of one channel and takes each sample at
-  its dtype's full scale, rounded once to float32. Upstream pipes any file
-  through ffmpeg to 16-bit samples, resampled to 16 kHz and mixed down to
-  one channel: ffmpeg floors deeper integer samples to 16 bits (a 24-bit 384
-  gives 1, -129 gives -1) and clips float samples to full scale (1.5 gives
-  32767). On a 16 kHz mono 16-bit file both give the same samples. Here a
-  deeper file keeps its low bits and a float file its peaks above 1, so a
-  float file that peaks above 1 gives features past the parity gates; another
-  rate or channel count raises.
+- `Audio.load` takes each sample at its dtype's full scale, rounded once to
+  float32, and resamples another rate by libswresample's computation at
+  float64. Upstream pipes any file through ffmpeg (`-ac 1 -ar 16000 -f
+  s16le`) to 16-bit samples: ffmpeg floors deeper integer samples to 16 bits
+  (a 24-bit 384 gives 1, -129 gives -1), clips float samples to full scale
+  (1.5 gives 32767), and rounds resampled ones to the nearest 16-bit value,
+  clipped. On a 16 kHz mono 16-bit file both give the same samples. Here a
+  deeper file keeps its low bits, and a float file its peaks above 1, and so
+  does a resampled one: a full-scale 16-bit square wave at 44.1 kHz rings to
+  1.186 in `load`, 6099 steps past ffmpeg's clipped samples, at half the
+  samples. Such files give features past the parity gates.
+  - ffmpeg resamples in float32 (swresample.c's `swr_init` picks float32
+    between rates unless both formats' bytes sum to at most 3), then rounds.
+    C4.4 measured its float32 within 1.3e-7 of the float64 computation
+    against PyAV. On the test files every 16-bit sample of ffmpeg's lies
+    within 0.502 of a step of `load`'s times 32768.
+  - An 8-bit file at another rate ffmpeg resamples on 16-bit integers with
+    15-bit weights, up to 2.77 steps from `load`'s (15634 of 32000 samples
+    rounded otherwise at 44.1 kHz).
+  - Past 1024 phases ffmpeg's x86 kernels read the sample after the last its
+    filter weighs for row 1024 of its bank, which at the end of a packet of
+    input holds a sample ffmpeg has not yet read: at 44.101 kHz one output in
+    320000, at a packet boundary, lies 1.1e-6 from `load`'s. On aarch64, and
+    on x86 where `T` is a multiple of 8 (AVX) or of 4 (SSE alone), the
+    kernels read `T` taps as the C template does, and row 1024 lacks row 0's
+    last tap or holds it `T` samples back: about 4e-6 of full scale from
+    `load`'s at phase 1023.
+  - For 8-byte samples (float64) `swr_init` picks float64 between filters,
+    so ffmpeg computes as `load` does before its rounding to 16 bits.
+  - `load` gives `⌈16000 n / r⌉` samples; ffmpeg's flush gives that many or
+    one fewer, and fewer on a file shorter than the filter (none below 62
+    samples at 44.1 kHz).
 
 - `Audio.log_mel` mirrors a signal of 200 samples or fewer as often as its
   frames need, so 160 to 200 samples give one frame and fewer none.
