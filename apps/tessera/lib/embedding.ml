@@ -83,7 +83,7 @@ let save_int8 name e =
 let load name =
   let file = name ^ ".npy" in
   let fail file fmt =
-    Printf.ksprintf
+    Format.kasprintf
       (fun m -> failwith ("Tessera.Embedding.load: " ^ file ^ ": " ^ m))
       fmt
   in
@@ -103,9 +103,8 @@ let load name =
         with Invalid_argument m -> fail file "%s" m
       in
       if Nx.shape s <> Array.sub (Nx.shape codes) 0 2 then
-        fail file "shape [%s], the codes' [h; w] expected"
-          (String.concat "; "
-             (Array.to_list (Array.map string_of_int (Nx.shape s))));
+        fail file "shape %a, the codes' [h; w] expected" Nx.pp_shape
+          (Nx.shape s);
       let s = Nx.where (Nx.isfinite s) s (Nx.full_like s Float.nan) in
       Nx.mul (Nx.cast Nx.float32 codes) (Nx.unsqueeze ~axes:[ -1 ] s)
 

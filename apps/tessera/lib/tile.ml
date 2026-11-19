@@ -16,22 +16,17 @@ type t = {
   descending_doys : Nx.host Nx.int16_t;
 }
 
-(* A file's fault: [Failure] from a load, which reads what it is given, and
-   [Invalid_argument] from another function, whose caller gave it. *)
-let invalid fn file fmt =
-  let fail =
-    if String.starts_with ~prefix:"load" fn then failwith else invalid_arg
-  in
-  Printf.ksprintf
+(* A file's fault, raised by [fail] naming the function [fn]: [failwith] from
+   a load, which reads what it is given, and [invalid_arg] from another
+   function, whose caller gave it. *)
+let error fail fn file fmt =
+  Format.kasprintf
     (fun m -> fail ("Tessera.Tile." ^ fn ^ ": " ^ file ^ ": " ^ m))
     fmt
 
 let s2_bands = 10
 let s1_bands = 2
 let image_description = 270
-
-let dims shape =
-  String.concat "; " (Array.to_list (Array.map string_of_int shape))
 
 let shape t = (Nx.dim 1 t.bands, Nx.dim 2 t.bands)
 
@@ -50,37 +45,37 @@ let roi_file = "roi.tiff"
 let orbit_file o = "sar_" ^ o ^ ".npy"
 let orbit_doys_file o = "sar_" ^ o ^ "_doy.npy"
 
-let expect fn file x want =
+let expect fail fn file x want =
   if Nx.shape x <> want then
-    invalid fn file "shape [%s], [%s] expected" (dims (Nx.shape x)) (dims want)
+    error fail fn file "shape %a, %a expected" Nx.pp_shape (Nx.shape x)
+      Nx.pp_shape want
 
 (* The frames of [x], of shape [k] followed by [cell]. *)
-let frames fn file x cell =
+let frames fail fn file x cell =
   let s = Nx.shape x in
   let k = if Array.length s > 0 then s.(0) else 0 in
-  expect fn file x (Array.append [| k |] cell);
+  expect fail fn file x (Array.append [| k |] cell);
   k
 
-let check fn t =
+let check fail fn t =
   if Nx.ndim t.bands <> 4 then
-    invalid fn bands_file "shape [%s], [t; h; w; %d] expected"
-      (dims (Nx.shape t.bands))
-      s2_bands;
+    error fail fn bands_file "shape %a, [t; h; w; %d] expected" Nx.pp_shape
+      (Nx.shape t.bands) s2_bands;
   let h, w = shape t in
-  let n = frames fn bands_file t.bands [| h; w; s2_bands |] in
-  expect fn masks_file t.masks [| n; h; w |];
-  expect fn doys_file t.doys [| n |];
+  let n = frames fail fn bands_file t.bands [| h; w; s2_bands |] in
+  expect fail fn masks_file t.masks [| n; h; w |];
+  expect fail fn doys_file t.doys [| n |];
   let orbit o x days =
-    let k = frames fn (orbit_file o) x [| h; w; s1_bands |] in
-    expect fn (orbit_doys_file o) days [| k |]
+    let k = frames fail fn (orbit_file o) x [| h; w; s1_bands |] in
+    expect fail fn (orbit_doys_file o) days [| k |]
   in
   orbit "ascending" t.ascending t.ascending_doys;
   orbit "descending" t.descending t.descending_doys;
   match t.place with
   | Some p when p.grid.rows <> h || p.grid.cols <> w ->
-      invalid fn roi_file "a grid of %d × %d, and the tile is %d × %d"
+      error fail fn roi_file "a grid of %d × %d, and the tile is %d × %d"
         p.grid.rows p.grid.cols h w
-  | Some p -> expect fn roi_file p.roi [| h; w |]
+  | Some p -> expect fail fn roi_file p.roi [| h; w |]
   | None -> ()
 
 let empty ?place (h, w) =
@@ -99,7 +94,7 @@ let empty ?place (h, w) =
       descending_doys = days;
     }
   in
-  check "empty" t;
+  check invalid_arg "empty" t;
   t
 
 let shard ?place (h, w) date ~s2 ~ascending ~descending =
@@ -108,9 +103,9 @@ let shard ?place (h, w) date ~s2 ~ascending ~descending =
   let frame name cell x =
     if Nx.shape x <> Array.append [| h; w |] cell then
       invalid_arg
-        (Printf.sprintf "Tessera.Tile.shard: %s of shape [%s], [%s] expected"
-           name (dims (Nx.shape x))
-           (dims (Array.append [| h; w |] cell)));
+        (Format.asprintf "Tessera.Tile.shard: %s of shape %a, %a expected" name
+           Nx.pp_shape (Nx.shape x) Nx.pp_shape
+           (Array.append [| h; w |] cell));
     Nx.reshape (Array.append [| 1; h; w |] cell) x
   in
   let t =
@@ -153,7 +148,7 @@ let load_place file =
   let grid =
     match Jord_geotiff.grid tags with
     | Ok g -> g
-    | Error e -> invalid "load" file "%s" e
+    | Error e -> error failwith "load" file "%s" e
   in
   let source =
     match List.assoc_opt image_description tags with
@@ -163,9 +158,9 @@ let load_place file =
   let roi =
     match Nx.unpack Nx.uint8 (Nx_io.Tiff.samples d) with
     | x -> x
-    | exception Invalid_argument m -> invalid "load" file "%s" m
+    | exception Invalid_argument m -> error failwith "load" file "%s" m
   in
-  expect "load" file roi [| grid.rows; grid.cols; 1 |];
+  expect failwith "load" file roi [| grid.rows; grid.cols; 1 |];
   { grid; roi = Nx.reshape [| grid.rows; grid.cols |] roi; source }
 
 let equal_place a b =
@@ -182,7 +177,7 @@ let rec mkdir_p d =
   end
 
 let save dir t =
-  check "save" t;
+  check invalid_arg "save" t;
   mkdir_p dir;
   let path f = Filename.concat dir f in
   Nx_io.save_npy (path bands_file) t.bands;
@@ -197,7 +192,7 @@ let save dir t =
 let unpack path dt x =
   match Nx.unpack dt x with
   | x -> x
-  | exception Invalid_argument m -> invalid "load" path "%s" m
+  | exception Invalid_argument m -> error failwith "load" path "%s" m
 
 let load_npy dir file dt =
   let path = Filename.concat dir file in
@@ -209,7 +204,7 @@ let load_npy dir file dt =
    saturated DN. *)
 let load_bands dir =
   let path = Filename.concat dir bands_file in
-  if not (Sys.file_exists path) then invalid "load" path "missing";
+  if not (Sys.file_exists path) then error failwith "load" path "missing";
   let x = Nx_io.load_npy path in
   match Nx.unpack Nx.int16 x with
   | x -> (x, false)
@@ -221,9 +216,8 @@ let load dir =
   let bands, saturated = load_bands dir in
   let path f = Filename.concat dir f in
   if Nx.ndim bands <> 4 then
-    invalid "load" (path bands_file) "shape [%s], [t; h; w; %d] expected"
-      (dims (Nx.shape bands))
-      s2_bands;
+    error failwith "load" (path bands_file) "shape %a, [t; h; w; %d] expected"
+      Nx.pp_shape (Nx.shape bands) s2_bands;
   let t = Nx.dim 0 bands and h = Nx.dim 1 bands and w = Nx.dim 2 bands in
   let or_zeros dt shape = function Some x -> x | None -> Nx.zeros dt shape in
   let orbit o =
@@ -233,7 +227,7 @@ let load dir =
     | Some x -> (
         match load_npy dir (orbit_doys_file o) Nx.int16 with
         | Some days -> (x, days)
-        | None -> invalid "load" (path (orbit_file o)) "no days")
+        | None -> error failwith "load" (path (orbit_file o)) "no days")
   in
   let ascending, ascending_doys = orbit "ascending" in
   let descending, descending_doys = orbit "descending" in
@@ -244,7 +238,7 @@ let load dir =
   let bands, masks =
     if not saturated then (bands, masks)
     else begin
-      expect "load" (path masks_file) masks [| t; h; w |];
+      expect failwith "load" (path masks_file) masks [| t; h; w |];
       let bad = Nx.any ~axes:[ 3 ] ~keepdims:true (Nx.less_s bands 0) in
       ( Nx.where bad (Nx.scalar_like bands 0) bands,
         Nx.where (Nx.squeeze ~axes:[ 3 ] bad) (Nx.scalar_like masks 0) masks )
@@ -265,7 +259,7 @@ let load dir =
       descending_doys;
     }
   in
-  check "load" tile;
+  check failwith "load" tile;
   tile
 
 (* Joining *)
@@ -276,7 +270,7 @@ let concat ~place dir ts =
     | t :: _ -> t
     | [] -> invalid_arg "Tessera.Tile.concat: no tile"
   in
-  List.iter (check "concat") ts;
+  List.iter (check invalid_arg "concat") ts;
   let ((h, w) as cells) = shape first in
   let same t =
     shape t = cells
@@ -347,7 +341,7 @@ let template (g : Jord.Grid.t) mask =
 
 let of_landmask ~source (g : Jord.Grid.t) mask =
   let fail fmt =
-    Printf.ksprintf (fun m -> invalid_arg ("Tessera.Tile.of_landmask: " ^ m))
+    Format.kasprintf (fun m -> invalid_arg ("Tessera.Tile.of_landmask: " ^ m))
       fmt
   in
   let north_up =
@@ -358,8 +352,8 @@ let of_landmask ~source (g : Jord.Grid.t) mask =
   in
   if not north_up then fail "a grid that is not north up";
   if Nx.shape mask <> [| g.rows; g.cols |] then
-    fail "a mask of shape [%s], [%d; %d] expected" (dims (Nx.shape mask)) g.rows
-      g.cols;
+    fail "a mask of shape %a, [%d; %d] expected" Nx.pp_shape (Nx.shape mask)
+      g.rows g.cols;
   let rows, cols, roi = template g mask in
   let x0, y0 = g.origin in
   { grid = on_lattice g.crs ~rows ~cols (down x0, up y0); roi; source }
@@ -377,14 +371,15 @@ let load_landmask ~source file =
   let g =
     match Jord_geotiff.grid (Nx_io.Tiff.tags d) with
     | Ok g -> g
-    | Error e -> invalid "load_landmask" file "%s" e
+    | Error e -> error failwith "load_landmask" file "%s" e
   in
   (* Band 1, as TESSERA reads a landmask. *)
   match Nx_io.Tiff.samples d with
   | Nx.P x -> (
       match of_landmask ~source g (Nx.slice [ Nx.A; Nx.A; Nx.I 0 ] x) with
       | p -> p
-      | exception Invalid_argument m -> invalid "load_landmask" file "%s" m)
+      | exception Invalid_argument m ->
+          error failwith "load_landmask" file "%s" m)
 
 let of_polygons ~source (p : Jord.Polygons.t) =
   if Nx.dim 0 p.points = 0 then
