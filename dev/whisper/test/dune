@@ -104,3 +104,19 @@
   upstream/mono44101.wav
   upstream/stereo96001.wav
   librispeech/7902-96594-0025.flac))
+
+; test_transcript.exe compares the transcribe loop with upstream's transcribe
+; (openai/whisper 86098128, whisper/transcribe.py) over a model whose decode
+; returns scripted results, and transcribes with a small random model.
+; upstream/transcript.json and upstream/transcript.pt were cut on 2026-11-19 by
+;   gen/run.sh P4-impl/transcript.py upstream OUT
+; in _plans/whisper-port/gen's pinned environment, outside the repository.
+
+(test
+ (name test_transcript)
+ (modules test_transcript)
+ (libraries whisper whisper_support nx rune windtrap)
+ (deps
+  upstream/transcript.json
+  upstream/transcript.pt
+  upstream/gpt2-1000.tiktoken))
