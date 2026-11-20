@@ -20,7 +20,9 @@ vision package, removed once mynd covered its surface.
 
 - mynd depends on the public libraries of core packages alone: on nx, and on
   rune for `Rune.iterate` and `Rune.custom_jvp`. It never calls `Rune.jit`:
-  the caller compiles.
+  the caller compiles. The one exception, approved by the maintainer, is
+  jsont for `mynd.coco`'s codecs of COCO's files; the core library `mynd`
+  never depends on it.
 - mynd never depends on alda, raven's signal library. Its kernels and its
   resizing weights are its own; what both need, such as `Nx.sinc`, is built
   in nx.

@@ -1,0 +1,10 @@
+; mynd.coco's tests. golden/ is written by ../gen/coco.py, run through
+; `uv run --locked --script` with its own lock.
+
+(tests
+ (names test_codec)
+ (modules support test_codec)
+ (package mynd)
+ (libraries mynd mynd.coco nx nx.io jsont jsont.bytesrw windtrap)
+ (deps
+  (glob_files golden/*)))

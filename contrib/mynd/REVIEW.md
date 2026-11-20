@@ -5,7 +5,8 @@
 - A loop or kernel of mynd's own where nx operations compose the result;
   rune can't differentiate, batch or compile what mynd hides. A capability
   nx lacks is built in nx.
-- A dependency on alda, or on anything but nx and rune.
+- A dependency on alda, or on anything but nx and rune, except jsont in
+  `mynd.coco` (approved for that library only).
 - An image record, a colour space or an alpha flag where the caller's
   facts and an explicit function serve.
 - A call to `Rune.jit`: the caller compiles.

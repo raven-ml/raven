@@ -36,6 +36,8 @@
    (>= 1.0.0~alpha3))
   (rune
    (>= 1.0.0~alpha3))
+  jsont
+  (bytesrw :with-test)
   (windtrap
    (and
     :with-test
