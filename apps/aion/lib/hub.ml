@@ -54,7 +54,9 @@ let file (m : Modality.t) =
     | Spectrum _ -> "spectrum"
     | Scalar s -> directory s
     | Segmap | Catalog ->
-        Refuse.invalid "Hub.file" "%s has no codec here" (Modality.key m)
+        invalid_arg
+          (Printf.sprintf "Aion.Hub.file: %s has no codec here"
+             (Modality.key m))
   in
   "codecs/" ^ dir ^ "/model.safetensors"
 

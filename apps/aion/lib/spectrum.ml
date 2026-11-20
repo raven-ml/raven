@@ -38,6 +38,8 @@ type ('b, 'd) spectrum = {
    (aion/modalities.py). *)
 let length : Modality.spectrum -> int = function Desi -> 7808 | Sdss -> 4800
 
+let invalid fmt = Format.kasprintf invalid_arg fmt
+
 let shape_of fn x =
   let s = Nx.shape x.flux in
   let same t = Nx.shape t = s in
@@ -45,14 +47,14 @@ let shape_of fn x =
     Array.length s <> 2
     || not (same x.ivar && Nx.shape x.mask = s && same x.wavelength)
   then
-    Refuse.invalid fn "fields not of one 2-d shape";
+    invalid "Aion.%s: fields not of one 2-d shape" fn;
   (s.(0), s.(1))
 
 let pad modality x =
   let n = length modality in
   let _, m = shape_of "Spectrum.encode" x in
   if m > n then
-    Refuse.invalid "Spectrum.encode" "rows of %d pixels, at most %d" m n;
+    invalid "Aion.Spectrum.encode: rows of %d pixels, at most %d" m n;
   let p = [| (0, 0); (0, n - m) |] in
   {
     flux = Nx.pad p 0. x.flux;
@@ -225,6 +227,8 @@ let reduction encoder =
     (fun r -> function Patch c -> r * stride c | _ -> r)
     1 encoder
 
+let failure fmt = Printf.ksprintf failwith fmt
+
 (* Upstream's buffers that restate what the weights fix, checked where present:
    the LFQ's bit weights (aion/codecs/quantizers/ lookup_free_quantization.py,
    [mask]), and the grid's length and first wavelength. *)
@@ -234,19 +238,19 @@ let buffers a grid =
   if has a mask then begin
     let m = Nx_io.Archive.tensor ~shape:[| bits |] Nx.int64 mask a in
     if Array.map Int64.to_int (Nx.to_array m) <> expected then
-      Refuse.failure "Spectrum.of_archive" "LFQ bit weights other than 2^(9-c)"
+      failure "Aion.Spectrum.of_archive: LFQ bit weights other than 2^(9-c)"
   end;
   let length = "latent_grid.length" in
   if has a length then begin
     let n = Nx.item [] (Nx_io.Archive.tensor ~shape:[||] Nx.int64 length a) in
     if Int64.to_int n <> Nx.dim 0 grid then
-      Refuse.failure "Spectrum.of_archive" "a grid length of %Ld" n
+      failure "Aion.Spectrum.of_archive: a grid length of %Ld" n
   end;
   let first = "latent_grid.lambda_min" in
   if has a first then begin
     let w = Nx.item [] (Nx_io.Archive.tensor ~shape:[||] Nx.float32 first a) in
     if w <> Nx.item [ 0 ] grid then
-      Refuse.failure "Spectrum.of_archive" "a grid starting at %g"
+      failure "Aion.Spectrum.of_archive: a grid starting at %g"
         (Nx.item [ 0 ] grid)
   end
 
@@ -267,8 +271,10 @@ let read a =
   let r = reduction encoder in
   let l = Nx.dim 0 grid in
   if l = 0 || l mod r <> 0 then
-    Refuse.failure "Spectrum.of_archive"
-      "a latent grid of %d wavelengths, a positive multiple of %d expected" l r;
+    failure
+      "Aion.Spectrum.of_archive: a latent grid of %d wavelengths, a positive \
+       multiple of %d expected"
+      l r;
   let t =
     {
       encoder;
@@ -363,13 +369,16 @@ let resample ~x ~y xnew =
   let outside = Nx.logical_or (Nx.less xnew first) (Nx.greater xnew last) in
   Nx.where outside (Nx.zeros_like ynew) ynew
 
+let refusal fmt = Printf.ksprintf (fun m -> Invalid_argument m) fmt
+
 let sorted w =
   let m = Nx.dim 1 w in
   let lo = Nx.slice [ Nx.A; Nx.R (0, m - 1) ] w in
   let ok = Nx.less_equal lo (Nx.slice [ Nx.A; Nx.R (1, m) ] w) in
   Nx.check Nx.Ptree.tensor ok lo (fun i _ ->
-      Refuse.exn "Spectrum.encode"
-        "row %d's wavelengths decrease or are NaN between pixels %d and %d"
+      refusal
+        "Aion.Spectrum.encode: row %d's wavelengths decrease or are NaN \
+         between pixels %d and %d"
         i.(0) i.(1)
         (i.(1) + 1))
 
@@ -378,7 +387,7 @@ let sorted w =
 let check_prepare x =
   let _, m = shape_of "Spectrum.encode" x in
   if m < 2 then
-    Refuse.invalid "Spectrum.encode" "rows of %d pixel" m;
+    invalid "Aion.Spectrum.encode: rows of %d pixel" m;
   sorted x.wavelength
 
 let prepare_raw t x =
@@ -485,14 +494,14 @@ let trim lengths x =
 let check_lengths x lengths =
   let b, m = shape_of "Spectrum.encode" x in
   if Nx.shape lengths <> [| b |] then
-    Refuse.invalid "Spectrum.encode" "lengths not of shape [%d]" b;
+    invalid "Aion.Spectrum.encode: lengths not of shape [%d]" b;
   let inside =
     Nx.logical_and
       (Nx.greater_equal_s lengths 1L)
       (Nx.less_equal_s lengths (Int64.of_int m))
   in
   Nx.check Nx.Ptree.tensor inside lengths (fun i l ->
-      Refuse.exn "Spectrum.encode" "length %Ld of row %d outside [1, %d]"
+      refusal "Aion.Spectrum.encode: length %Ld of row %d outside [1, %d]"
         (Nx.item [] l) i.(0) m)
 
 (* The checks of [encode], by shape and by {!Nx.check} of the lengths and of
@@ -521,19 +530,19 @@ let check_decode ?wavelength t k =
   let n = Nx.dim 0 t.grid / reduction t.encoder in
   let s = Nx.shape k in
   if Array.length s <> 2 || s.(1) <> n + 1 then
-    Refuse.invalid "Spectrum.decode" "tokens of shape %a, [b; %d] expected"
+    invalid "Aion.Spectrum.decode: tokens of shape %a, [b; %d] expected"
       Nx.pp_shape s (n + 1);
   let b = s.(0) in
   (match wavelength with
   | Some w when Nx.ndim w <> 2 || Nx.dim 0 w <> b ->
-      Refuse.invalid "Spectrum.decode" "wavelengths not of %d rows" b
+      invalid "Aion.Spectrum.decode: wavelengths not of %d rows" b
   | _ -> ());
   let inside =
     Nx.logical_and (Nx.greater_equal_s k 0L)
       (Nx.less_s k (Int64.of_int token_count))
   in
   Nx.check Nx.Ptree.tensor inside k (fun i k ->
-      Refuse.exn "Spectrum.decode" "token %Ld at [%d; %d] outside [0, %d)"
+      refusal "Aion.Spectrum.decode: token %Ld at [%d; %d] outside [0, %d)"
         (Nx.item [] k) i.(0) i.(1) token_count)
 
 let decode_raw ?wavelength t k =

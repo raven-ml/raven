@@ -5,6 +5,8 @@
 
 type transform = Identity | Log of float | Asinh_asinh
 
+let invalid fmt = Format.kasprintf invalid_arg fmt
+
 (* A compiled codec's programs ({!jit}): encode, at float32 and at float64,
    and decode without its check. *)
 type 'd programs = {
@@ -24,7 +26,7 @@ let v transform edges =
   match Nx.shape edges with
   | [| c; n |] when c > 0 && n > 0 -> { transform; edges; programs = None }
   | s ->
-      Refuse.invalid "Scalar.v" "edges of shape %a, [c; n] expected" Nx.pp_shape
+      invalid "Aion.Scalar.v: edges of shape %a, [c; n] expected" Nx.pp_shape
         s
 
 let transform t = t.transform
@@ -50,7 +52,9 @@ let transform_of : Modality.scalar -> transform = function
    buffer is what AION-1's code reads, so it is read here too. *)
 let codebooks m archive =
   let key = Modality.key (Scalar m) in
-  let fail fmt = Refuse.failure "Scalar.of_archive" ("%s: " ^^ fmt) key in
+  let fail fmt =
+    Printf.ksprintf failwith ("Aion.Scalar.of_archive: %s: " ^^ fmt) key
+  in
   let c = Modality.tokens (Scalar m) in
   (* Probes through [names], which [import] does not note as reads. *)
   let has name = List.mem name (Nx_io.Archive.names archive) in
@@ -112,7 +116,7 @@ let channels (type v s d) fn t (x : (v, s, d) Nx.t) =
   let c = Nx.dim 0 t.edges and s = Nx.shape x in
   let r = Array.length s in
   if c > 1 && (r = 0 || s.(r - 1) <> c) then
-    Refuse.invalid fn "last axis of %d entries, %d expected"
+    invalid "Aion.%s: last axis of %d entries, %d expected" fn
       (if r = 0 then 0 else s.(r - 1))
       c
 
@@ -173,8 +177,9 @@ let encode (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
   | Some p, Nx.Dtype.Float32 -> p.p_encode32 x
   | Some p, Nx.Dtype.Float64 -> p.p_encode64 x
   | Some _, dt ->
-      Refuse.invalid "Scalar.encode"
-        "%s values, a compiled codec takes float32 or float64"
+      invalid
+        "Aion.Scalar.encode: %s values, a compiled codec takes float32 or \
+         float64"
         (Nx.Dtype.name dt)
 
 (* The token [n] is the class past the last edge, which a transformer may
@@ -187,11 +192,12 @@ let check_decode t k =
   in
   Nx.check Nx.Ptree.tensor inside k (fun i k ->
       let k = Nx.item [] k in
-      Refuse.exn "Scalar.decode" "token %Ld at %a outside [0, %d)%s" k
-        Nx.pp_shape i n
-        (if k = Int64.of_int n then
-           ", the class past the last edge, whose value is unknown"
-         else ""))
+      Invalid_argument
+        (Format.asprintf "Aion.Scalar.decode: token %Ld at %a outside [0, %d)%s"
+           k Nx.pp_shape i n
+           (if k = Int64.of_int n then
+              ", the class past the last edge, whose value is unknown"
+            else "")))
 
 let decode_raw (type d) t (k : d Nx.int64_t) : d Nx.float32_t =
   let base = offsets "Scalar.decode" t k in

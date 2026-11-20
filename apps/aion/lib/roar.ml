@@ -40,23 +40,25 @@ let step ~target t key s temp inputs tokens revealed p =
   let shown = Nx.ones_at (Nx.beside x) Nx.bool (Nx.shape x) in
   (Nx.scatter ~axis:1 p x tokens, Nx.scatter ~axis:1 p shown revealed)
 
+let invalid fmt = Printf.ksprintf invalid_arg fmt
+
 (* The checks of a draw's arguments, before any step: the batch's size and
    placement. *)
 let checked fn ~temperature ~reveal inputs target =
   if temperature < 0. || not (Float.is_finite temperature) then
-    Refuse.invalid fn "temperature %g, not in [0, inf)" temperature;
+    invalid "Aion.%s: temperature %g, not in [0, inf)" fn temperature;
   let name = Modality.key target and n = Modality.tokens target in
   List.iter
-    (fun k -> if k < 1 then Refuse.invalid fn "a count of %d in reveal" k)
+    (fun k -> if k < 1 then invalid "Aion.%s: a count of %d in reveal" fn k)
     reveal;
   let total = List.fold_left ( + ) 0 reveal in
   if total <> n then
-    Refuse.invalid fn "reveal sums to %d, %s has %d tokens" total name n;
+    invalid "Aion.%s: reveal sums to %d, %s has %d tokens" fn total name n;
   if List.exists (fun (i : _ Tokens.t) -> i.modality = target) inputs
-  then Refuse.invalid fn "%s is an input" name;
+  then invalid "Aion.%s: %s is an input" fn name;
   match inputs with
   | (i : _ Tokens.t) :: _ -> (Nx.dim 0 i.tokens, Nx.beside i.tokens)
-  | [] -> Refuse.invalid fn "no input"
+  | [] -> invalid "Aion.%s: no input" fn
 
 (* The draw's loop: the orders, then each count's step, from no token
    revealed. *)

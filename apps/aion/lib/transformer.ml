@@ -167,12 +167,14 @@ let weight a name shape = Nx_io.Archive.tensor ~shape Nx.float32 name a
 let linear ?b a name ~inputs ~outputs : _ Kaun.Linear.t =
   { w = weight a (name ^ ".weight") [| outputs; inputs |]; b }
 
+let failure fmt = Printf.ksprintf failwith fmt
+
 (* A layer norm's shift must be zero: AION-1's weights have none, and a file
    with one would compute something [apply] does not. *)
 let norm a name n : _ Kaun.Layer_norm.t =
   let shift = name ^ ".bias" in
   if Nx.item [] (Nx.any (Nx.not_equal_s (weight a shift [| n |]) 0.)) then
-    Refuse.failure "Transformer.of_archive" "%s is not zero" shift;
+    failure "Aion.Transformer.of_archive: %s is not zero" shift;
   { gamma = weight a (name ^ ".weight") [| n |]; beta = None }
 
 let rows w lo n = Nx.slice [ R (lo, lo + n); A ] w
@@ -222,7 +224,7 @@ let embedding a ~dim m =
   (* Both tables are float32 values torch computed, which a formula need not
      reproduce bit for bit, so they are read and must agree. *)
   if not (Nx.item [] (Nx.array_equal pos dec_pos)) then
-    Refuse.failure "Transformer.of_archive" "%s.pos_emb and %s.pos_emb differ"
+    failure "Aion.Transformer.of_archive: %s.pos_emb and %s.pos_emb differ"
       enc dec;
   {
     modality = m;
@@ -265,7 +267,7 @@ let read a =
         if modelled m && has a name then Some (embedding a ~dim m) else None)
       Modality.all
   in
-  if embeddings = [] then Refuse.failure "Transformer.of_archive" "no modality";
+  if embeddings = [] then failure "Aion.Transformer.of_archive: no modality";
   let encoder =
     blocks a "encoder" (fun p ->
         {
@@ -307,13 +309,14 @@ let of_archive a = Nx_io.Archive.import ~unread read a
 (* The names of the refusing functions. *)
 let encode_fn = "Transformer.encode"
 let decode_fn = "Transformer.decode"
+let invalid fmt = Format.kasprintf invalid_arg fmt
 
 let find fn t m =
   match
     List.find_opt (fun (e : _ embedding) -> e.modality = m) t.embeddings
   with
   | Some e -> e
-  | None -> Refuse.invalid fn "no weights for %s" (Modality.key m)
+  | None -> invalid "Aion.%s: no weights for %s" fn (Modality.key m)
 
 (* Refuses the first modality of [ms] that an earlier one repeats. *)
 let distinct fn what ms =
@@ -321,7 +324,7 @@ let distinct fn what ms =
     | [] -> ()
     | m :: rest ->
         if List.mem m seen then
-          Refuse.invalid fn "%s %s given twice" what (Modality.key m);
+          invalid "Aion.%s: %s %s given twice" fn what (Modality.key m);
         go (m :: seen) rest
   in
   go [] ms
@@ -359,7 +362,8 @@ let shaped t (i : _ Tokens.t) =
     | [| b |] when n = 1 -> Nx.reshape [| b; 1 |] i.tokens
     | [| _; n' |] when n' = n -> i.tokens
     | s ->
-        Refuse.invalid encode_fn "%s tokens of shape %a, [b; %d] expected" key
+        invalid
+          "Aion.Transformer.encode: %s tokens of shape %a, [b; %d] expected" key
           Nx.pp_shape s n
   in
   let present =
@@ -369,14 +373,15 @@ let shaped t (i : _ Tokens.t) =
     | Some p when Nx.shape p = Nx.shape i.tokens ->
         Nx.reshape (Nx.shape tokens) p
     | Some p ->
-        Refuse.invalid encode_fn "%s presence of shape %a, %a expected" key
+        invalid
+          "Aion.Transformer.encode: %s presence of shape %a, %a expected" key
           Nx.pp_shape (Nx.shape p) Nx.pp_shape (Nx.shape tokens)
   in
   (e, tokens, present)
 
 (* The inputs' parts by {!shaped}, of one batch. *)
 let parts t inputs =
-  if inputs = [] then Refuse.invalid encode_fn "no input";
+  if inputs = [] then invalid "Aion.Transformer.encode: no input";
   distinct encode_fn "input"
     (List.map (fun (i : _ Tokens.t) -> i.modality) inputs);
   let parts = List.map (shaped t) inputs in
@@ -384,10 +389,12 @@ let parts t inputs =
   List.iter
     (fun ((e : _ embedding), k, _) ->
       if Nx.dim 0 k <> batch then
-        Refuse.invalid encode_fn "%s has %d objects, %d expected"
+        invalid "Aion.Transformer.encode: %s has %d objects, %d expected"
           (Modality.key e.modality) (Nx.dim 0 k) batch)
     parts;
   (batch, parts)
+
+let refusal fmt = Format.kasprintf (fun m -> Invalid_argument m) fmt
 
 (* Every present token in its vocabulary, and every object with one. *)
 let inputs_ok t inputs =
@@ -403,14 +410,16 @@ let inputs_ok t inputs =
         (Nx.logical_or (Nx.logical_not present) inside)
         ()
         (fun _ () ->
-          Refuse.exn encode_fn "a present %s token is outside [0, %d)"
+          refusal
+            "Aion.Transformer.encode: a present %s token is outside [0, %d)"
             (Modality.key e.modality) vocab))
     parts;
   let present = Nx.concatenate ~axis:1 (List.map (fun (_, _, p) -> p) parts) in
   Nx.check Nx.Ptree.unit
     (Nx.any ~axes:[ 1 ] present)
     ()
-    (fun _ () -> Refuse.exn encode_fn "an object has no present token")
+    (fun _ () ->
+      refusal "Aion.Transformer.encode: an object has no present token")
 
 (* [e]'s context is [b; n; width] and each of its [b] lengths in [1, n]. *)
 let check_encoding t context lengths =
@@ -421,10 +430,13 @@ let check_encoding t context lengths =
           (Nx.less_equal_s lengths (Int64.of_int n))
       in
       Nx.check Nx.Ptree.unit inside ()
-        (fun _ () -> Refuse.exn decode_fn "a length outside [1, %d]" n)
+        (fun _ () ->
+          refusal "Aion.Transformer.decode: a length outside [1, %d]" n)
   | c, l ->
-      Refuse.invalid decode_fn
-        "context %a and lengths %a, [b; n; %d] and [b] expected" Nx.pp_shape c
+      invalid
+        "Aion.Transformer.decode: context %a and lengths %a, [b; n; %d] and \
+         [b] expected"
+        Nx.pp_shape c
         Nx.pp_shape l (dim t)
 
 (* A target's positions: [b; k], in [0, n), and distinct within a row, where an
@@ -434,7 +446,8 @@ let check_encoding t context lengths =
 let check_positions ~batch (tg : _ target) =
   let key = Modality.key tg.modality and n = Modality.tokens tg.modality in
   let refuse what i p =
-    Refuse.exn decode_fn "%s position %Ld at %a %s" key (Nx.item [] p)
+    refusal "Aion.Transformer.decode: %s position %Ld at %a %s" key
+      (Nx.item [] p)
       Nx.pp_shape i what
   in
   match tg.positions with
@@ -443,8 +456,10 @@ let check_positions ~batch (tg : _ target) =
       (match Nx.shape p with
       | [| b; k |] when b = batch && k >= 1 -> ()
       | s ->
-          Refuse.invalid decode_fn
-            "%s positions of shape %a, [%d; k >= 1] expected" key Nx.pp_shape s
+          invalid
+            "Aion.Transformer.decode: %s positions of shape %a, [%d; k >= 1] \
+             expected"
+            key Nx.pp_shape s
             batch);
       let inside =
         Nx.logical_and (Nx.greater_equal_s p 0L) (Nx.less_s p (Int64.of_int n))
@@ -461,7 +476,7 @@ let check_positions ~batch (tg : _ target) =
       Nx.check Nx.Ptree.tensor once p (refuse "repeats within its row")
 
 let check_targets t ~batch targets =
-  if targets = [] then Refuse.invalid decode_fn "no target";
+  if targets = [] then invalid "Aion.Transformer.decode: no target";
   distinct decode_fn "target"
     (List.map (fun (tg : _ target) -> tg.modality) targets);
   List.iter
@@ -610,7 +625,7 @@ let check_inputs t inputs =
   if compiled t then check t inputs else inputs_ok t inputs
 
 let checks_decode t (e : _ encoding) targets =
-  if targets = [] then Refuse.invalid decode_fn "no target";
+  if targets = [] then invalid "Aion.Transformer.decode: no target";
   let shape = Nx.shape e.context in
   if compiled t then check_encoding t shape (host e.lengths)
   else check_encoding t shape e.lengths;

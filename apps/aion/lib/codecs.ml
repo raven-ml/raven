@@ -26,7 +26,7 @@ let modality = function
       Modality.Image_hsc
   | Image { bands; _ } when bands <> [] && not (List.exists hsc bands) ->
       Modality.Image
-  | Image _ -> Refuse.invalid "Codecs.modality" "bands of no one survey"
+  | Image _ -> invalid_arg "Aion.Codecs.modality: bands of no one survey"
   | Spectrum { modality; _ } -> Modality.Spectrum modality
   | Scalar { modality; _ } -> Modality.Scalar modality
 
@@ -69,7 +69,8 @@ let jit t =
   }
 
 let missing m =
-  Refuse.invalid "Codecs" "no codec loaded for %s" (Modality.key m)
+  invalid_arg
+    (Printf.sprintf "Aion.Codecs: no codec loaded for %s" (Modality.key m))
 
 let scalar t m =
   match List.assoc_opt m t.scalars with

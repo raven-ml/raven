@@ -9,12 +9,13 @@ type t = { levels : int list; basis : int list; size : int }
 (* The bound's [ε], upstream's FiniteScalarQuantizer default, which both of
    AION-1's codecs keep. *)
 let eps = 1e-3
+let invalid fmt = Printf.ksprintf invalid_arg fmt
 
 let v levels =
-  if levels = [] then Refuse.invalid "Fsq.v" "no level";
+  if levels = [] then invalid "Aion.Fsq.v: no level";
   let step (basis, b) l =
-    if l < 2 then Refuse.invalid "Fsq.v" "level %d, at least 2 expected" l;
-    if b > max_int / l then Refuse.invalid "Fsq.v" "more codes than max_int";
+    if l < 2 then invalid "Aion.Fsq.v: level %d, at least 2 expected" l;
+    if b > max_int / l then invalid "Aion.Fsq.v: more codes than max_int";
     (b :: basis, b * l)
   in
   let basis, size = List.fold_left step ([], 1) levels in
@@ -52,7 +53,7 @@ let check_last fn q x =
   let s = Nx.shape x and d = List.length q.levels in
   let r = Array.length s in
   if r = 0 || s.(r - 1) <> d then
-    Refuse.invalid fn "last axis of %d entries, %d expected"
+    invalid "Aion.%s: last axis of %d entries, %d expected" fn
       (if r = 0 then 0 else s.(r - 1))
       d
 
@@ -71,7 +72,9 @@ let encode q z =
   Nx.check Nx.Ptree.unit
     (Nx.logical_not (Nx.isnan y))
     ()
-    (fun i () -> Refuse.exn "Fsq.encode" "NaN at %a" Nx.pp_shape i);
+    (fun i () ->
+      Invalid_argument
+        (Format.asprintf "Aion.Fsq.encode: NaN at %a" Nx.pp_shape i));
   (* Rounded to integers, the bounded numbers convert to int64 exactly. *)
   let digit =
     Nx.add
@@ -91,8 +94,9 @@ let check_decode q k =
     Nx.logical_and (Nx.greater_equal_s k 0L) (Nx.less_s k (Int64.of_int q.size))
   in
   Nx.check Nx.Ptree.tensor inside k (fun i k ->
-      Refuse.exn "Fsq.decode" "code %Ld at %a outside [0, %d)" (Nx.item [] k)
-        Nx.pp_shape i q.size)
+      Invalid_argument
+        (Format.asprintf "Aion.Fsq.decode: code %Ld at %a outside [0, %d)"
+           (Nx.item [] k) Nx.pp_shape i q.size))
 
 let decode_raw dt q k =
   let k = Nx.unsqueeze ~axes:[ Nx.ndim k ] k in

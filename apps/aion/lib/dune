@@ -4,5 +4,4 @@
 
 (library
  (name aion)
- (private_modules refuse)
  (libraries nx nx.io kaun kaun.hf rune ymir))

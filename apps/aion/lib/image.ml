@@ -140,13 +140,13 @@ type ('b, 'd) t = {
 
 (* Loading *)
 
-let of_archive_fn = "Image.of_archive"
+let failure fmt = Format.kasprintf failwith fmt
 
 let float ?shape a name = Nx_io.Archive.float ?shape Nx.float32 name a
 
 let outputs name o want =
   if o <> want then
-    Refuse.failure of_archive_fn "%s.weight: %d outputs, %d expected" name o
+    failure "Aion.Image.of_archive: %s.weight: %d outputs, %d expected" name o
       want
 
 (* The convolution [name] reading [i] channels with a [k] × [k] kernel, its
@@ -158,8 +158,9 @@ let conv a name ~i ~k =
       let b = float ~shape:[| o |] a (name ^ ".bias") in
       ({ Kaun.Conv.w = Nx.copy (Nx.moveaxis 1 (-1) w); b = Some b }, o)
   | s ->
-      Refuse.failure of_archive_fn
-        "%s.weight: shape %a, [o; %d; %d; %d] expected" name Nx.pp_shape s i k k
+      failure
+        "Aion.Image.of_archive: %s.weight: shape %a, [o; %d; %d; %d] expected"
+        name Nx.pp_shape s i k k
 
 (* A convolution of [o] outputs. *)
 let conv_to a name ~i ~k ~o =
@@ -196,13 +197,14 @@ let linear a name ~i =
       let b = float ~shape:[| o |] a (name ^ ".bias") in
       ({ Kaun.Conv.w = Nx.reshape [| o; 1; 1; i |] w; b = Some b }, o)
   | s ->
-      Refuse.failure of_archive_fn "%s.weight: shape %a, [o; %d] expected" name
+      failure "Aion.Image.of_archive: %s.weight: shape %a, [o; %d] expected"
+        name
         Nx.pp_shape s i
 
 let levels_of a =
   let l = Nx_io.Archive.tensor Nx.int32 "_quantizer.levels" a in
   if Nx.ndim l <> 1 then
-    Refuse.failure of_archive_fn "_quantizer.levels: shape %a, [l] expected"
+    failure "Aion.Image.of_archive: _quantizer.levels: shape %a, [l] expected"
       Nx.pp_shape (Nx.shape l);
   List.map Int32.to_int (Array.to_list (Nx.to_array l))
 
@@ -313,12 +315,14 @@ let dtype t = Nx.dtype t.proj_in.w
 
 (* Checks *)
 
+let invalid fmt = Format.kasprintf invalid_arg fmt
+
 let check_bands fn bs =
-  if bs = [] then Refuse.invalid fn "no band";
+  if bs = [] then invalid "Aion.%s: no band" fn;
   let rec twice = function
     | [] -> ()
     | b :: rest ->
-        if List.mem b rest then Refuse.invalid fn "band %s twice" (name b);
+        if List.mem b rest then invalid "Aion.%s: band %s twice" fn (name b);
         twice rest
   in
   twice bs
@@ -328,11 +332,12 @@ let check_images fn bs x =
   match Nx.shape x with
   | [| _; c; h; w |] ->
       if c <> List.length bs then
-        Refuse.invalid fn "%d bands in the array, %d listed" c (List.length bs);
+        invalid "Aion.%s: %d bands in the array, %d listed" fn c
+          (List.length bs);
       if h < side || w < side then
-        Refuse.invalid fn "images of %d × %d, at least %d × %d expected" h w
+        invalid "Aion.%s: images of %d × %d, at least %d × %d expected" fn h w
           side side
-  | s -> Refuse.invalid fn "shape %a, [n; c; h; w] expected" Nx.pp_shape s
+  | s -> invalid "Aion.%s: shape %a, [n; c; h; w] expected" fn Nx.pp_shape s
 
 (* Preparing *)
 
@@ -456,7 +461,7 @@ let check_decode bs k =
   match Nx.shape k with
   | [| _; c |] when c = grid * grid -> ()
   | s ->
-      Refuse.invalid "Image.decode" "shape %a, [n; %d] expected" Nx.pp_shape s
+      invalid "Aion.Image.decode: shape %a, [n; %d] expected" Nx.pp_shape s
         (grid * grid)
 
 let decode_raw t bs k =
