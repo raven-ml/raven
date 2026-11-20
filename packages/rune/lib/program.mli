@@ -664,9 +664,9 @@ type derivation =
           lane's along a leading axis of [n], [sums.(k)] how the call's sum [k]
           is held where it starts; [named] whether the program names the map.
           Over the arguments; to the results, each with that leading axis where
-          it has lanes, then the running values out. A [Laned] sum, and a
-          [Same] one an addition gives lanes, has that axis in and out, its seed
-          broadcast along it. The flags are the results', then the sums'. *)
+          it has lanes, then the running values out. A [Laned] sum has that
+          axis in and out; a [Same] one an addition gives lanes has it out
+          only. The flags are the results', then the sums'. *)
   | Known of { unknown : bool array; donated : bool array }
       (** The part of the program that reads no argument where [unknown] holds,
           computed at the call. Over the other arguments; to its results, the
@@ -787,9 +787,13 @@ type _ Effect.t +=
             a tape between answers with a variable holding the total's running
             value where the call is, which the program it traces threads. A map
             between answers with the answer around it, shared by its lanes. *)
-  | Replace : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> unit Effect.t
-        (** Answered by the collect or tracer that answered {!Running}, whose
-            running value becomes the value given. *)
+  | Replace :
+      ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form * ('v, 's, 'd) Nx.t
+      -> unit Effect.t
+        (** [Replace (t, f, x)] is answered by the collect or tracer that
+            answered {!Running} of [t] at [f], whose running value becomes [x].
+            A tracer takes [x] at any form: the program it traces then ends that
+            running value at [x]'s. *)
 
 val running :
   ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> ('v, 's, 'd) Nx.t option
@@ -801,7 +805,9 @@ val threaded :
 (** [threaded ~lanes p f] calls [f] with the running values in of [p]'s totals
     and returns its results before the running values out, handing those back.
     With [lanes = (n, laned)], the running value of each total [k] with
-    [laned.(k)] has a leading axis of [n], one row per lane of a map. *)
+    [laned.(k)] has a leading axis of [n], one row per lane of a map, in and
+    out; another's running value out has that axis where [f] gives it one: an
+    addition gave it lanes. *)
 
 val threading :
   ?lanes:int * bool array ->

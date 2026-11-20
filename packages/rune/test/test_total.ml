@@ -1609,9 +1609,29 @@ let test_alike_nested () =
    of a value a callback computes, or both kinds added to one total beside an
    addition every lane makes alike. *)
 
-type dependent = Gained | Called | Mixed | Stopped | Branched
+type dependent =
+  | Gained
+  | Called
+  | Mixed
+  | Stopped
+  | Branched
+  | Rematted
+  | Jitted
+  | Tangent_mapped
+  | Switched
 
-let dependents = [ Gained; Called; Mixed; Stopped; Branched ]
+let dependents =
+  [
+    Gained;
+    Called;
+    Mixed;
+    Stopped;
+    Branched;
+    Rematted;
+    Jitted;
+    Tangent_mapped;
+    Switched;
+  ]
 
 let dependent_name = function
   | Gained -> "a carry that gains lanes"
@@ -1619,6 +1639,10 @@ let dependent_name = function
   | Mixed -> "beside an addition every lane makes alike"
   | Stopped -> "alike additions of an iterate whose lanes stop apart"
   | Branched -> "alike additions of a switch whose lanes take different branches"
+  | Rematted -> "a remat's addition that gives lanes"
+  | Jitted -> "a jit's addition that gives lanes"
+  | Tangent_mapped -> "a custom rule's tangent map's addition that gives lanes"
+  | Switched -> "one branch's addition that gives lanes, the other's alike"
 
 let outer h = Nx.mul (Nx.reshape [| -1; 1 |] h) (Nx.reshape [| 1; -1 |] h)
 
@@ -1628,15 +1652,43 @@ let squared =
     ~like:(Nx.zeros f32 [| 2 |])
     (fun h -> Nx.mul h h)
 
+(* [h] through a construct of [kind] that adds [outer h] to [t], where [kind]
+   names one; [h] itself otherwise. *)
+let through t kind h =
+  let added h =
+    Total.add t (outer h);
+    Nx.mul_s h 0.5
+  in
+  match kind with
+  | Rematted -> Rune.remat Nx.Ptree.(tensor @-> returns tensor) added h
+  | Jitted -> Rune.jit Nx.Ptree.(tensor @-> returns tensor) added h
+  | Tangent_mapped ->
+      let f =
+        Rune.custom_jvp tensor tensor (fun h ->
+            (Nx.mul_s h 0.5, fun dh -> added dh))
+      in
+      snd (Rune.jvp' f h h)
+  | Switched ->
+      Rune.switch tensor (Nx.scalar Nx.int32 0l)
+        [
+          (fun () -> added h);
+          (fun () ->
+            Total.add t (Nx.ones f32 [| 2; 2 |]);
+            h);
+        ]
+  | Gained | Called | Mixed | Stopped | Branched -> h
+
 (* Each lane's sum and carry over [steps] rows. With [d] at 0.5 above
    {!directions} of three lanes, an iterate that stops once its sum reaches 2.4
    runs 3, 2 and 1 steps, and a switch on a sum above 1.5 takes branches 0, 1
-   and 1. *)
+   and 1. A construct the kind names adds once before the scan, its sum one
+   value, and on each step. *)
 let dependent kind ~steps d =
   let t = Total.make () in
   let xs = rows ~steps ~k:2 in
   let (c, _), g =
     Total.collect t ~init:(Nx.zeros f32 [| 2; 2 |]) (fun () ->
+        let d = through t kind d in
         Rune.scan'
           (fun c x ->
             let by =
@@ -1670,6 +1722,8 @@ let dependent kind ~steps d =
                         Total.add t (outer x);
                         Nx.mul_s d 2.);
                     ]
+              | Rematted | Jitted | Tangent_mapped | Switched ->
+                  through t kind (Nx.add d c)
             in
             (Nx.add c by, c))
           ~init:(Nx.zeros f32 [| 2 |]) xs)
@@ -1701,7 +1755,8 @@ let law_dependent c =
     if c.lanes = 0 then Nx.zeros f32 [| 0; 6 |]
     else Nx.stack ~axis:0 (List.init c.lanes (fun r -> f (Nx.get [ r ] ds)))
   in
-  equal ~msg:"eager" bits_t (bits each) (bits (Rune.vmap' f ds));
+  if c.kind = Tangent_mapped then close 1e-6 each (Rune.vmap' f ds)
+  else equal ~msg:"eager" bits_t (bits each) (bits (Rune.vmap' f ds));
   close 1e-5 each (Rune.jit' (Rune.vmap' f) ds)
 
 (* A total added at [[2; 2]] with lanes and at [[2; 2; 2]] without, with no
@@ -1723,6 +1778,41 @@ let test_colliding_sums () =
   let each = Nx.stack ~axis:0 [ f (Nx.get [ 0 ] ds); f (Nx.get [ 1 ] ds) ] in
   equal bits_t (bits each) (bits (Rune.vmap' f ds));
   close 1e-6 each (Rune.jit' (Rune.vmap' f) ds)
+
+(* Two sums of one total in one construct, with no collect open: one at
+   [[2; 2]] that an addition gives lanes, beside one at [[2; 2; 2]] every lane
+   makes alike, the shape of the first's running value with lanes. *)
+let test_meeting_sums () =
+  let t = Total.make () in
+  let both h =
+    Total.add t (outer h);
+    Total.add t (Nx.zeros f32 [| 2; 2; 2 |]);
+    Nx.mul_s h 0.5
+  in
+  let sites =
+    [
+      ("remat", fun d -> Rune.remat Nx.Ptree.(tensor @-> returns tensor) both d);
+      ("jit", fun d -> Rune.jit Nx.Ptree.(tensor @-> returns tensor) both d);
+      ( "switch",
+        fun d ->
+          Rune.switch tensor (Nx.scalar Nx.int32 0l)
+            [ (fun () -> both d); (fun () -> d) ] );
+      ( "tangent map",
+        fun d ->
+          let f =
+            Rune.custom_jvp tensor tensor (fun h ->
+                (Nx.mul_s h 0.5, fun dh -> both dh))
+          in
+          snd (Rune.jvp' f d d) );
+    ]
+  in
+  let ds = directions ~n:2 ~k:2 in
+  List.iter
+    (fun (msg, f) ->
+      let each = Nx.stack ~axis:0 [ f (Nx.get [ 0 ] ds); f (Nx.get [ 1 ] ds) ] in
+      equal ~msg bits_t (bits each) (bits (Rune.vmap' f ds));
+      close ~msg 1e-6 each (Rune.jit' (Rune.vmap' f) ds))
+    sites
 
 let () =
   exit
@@ -1765,8 +1855,10 @@ let () =
            test_alike_footprint;
          test "a total every inner lane adds alike, in nested maps"
            test_alike_nested;
-         prop ~count:100 "a total that depends on the lane is each lane's"
+         prop ~count:200 "a total that depends on the lane is each lane's"
            dep_cases law_dependent;
          test "sums of one total that would meet at one shape"
            test_colliding_sums;
+         test "a sum given lanes beside one at its laned shape"
+           test_meeting_sums;
        ])

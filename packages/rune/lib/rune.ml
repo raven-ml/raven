@@ -544,7 +544,7 @@ module Total = struct
                     (if shape = Nx.shape init then Some !sum else None))
           | None when mine u -> Some (fun k -> Effect.Deep.continue k None)
           | None -> None)
-      | Replace (u, x) -> (
+      | Replace (u, _, x) -> (
           match same_total u (Nx.placement x) t at with
           | Some Type.Equal ->
               Some

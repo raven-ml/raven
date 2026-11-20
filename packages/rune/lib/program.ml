@@ -1002,14 +1002,16 @@ type _ Effect.t +=
   | Running :
       ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form
       -> ('v, 's, 'd) Nx.t option Effect.t
-  | Replace : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> unit Effect.t
+  | Replace :
+      ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form * ('v, 's, 'd) Nx.t
+      -> unit Effect.t
 
 let running t f =
   match Effect.perform (Running (t, f)) with
   | r -> r
   | exception Effect.Unhandled (Running _) -> None
 
-let replace t x = Effect.perform (Replace (t, x))
+let replace t f x = Effect.perform (Replace (t, f, x))
 
 (* Probes *)
 
@@ -1598,14 +1600,25 @@ and threading :
     (value array -> value array * 'a) ->
     'a =
  fun ?lanes adds f ->
+  let laned_form (type v s d) n (f : (v, s, d) Nx.Prim.form) :
+      (v, s, d) Nx.Prim.form =
+    {
+      f with
+      layout = contiguous (Array.append [| n |] (shape_of f));
+      placement = Nx.Placement.with_leading_axis f.placement;
+    }
+  in
   let at (type v s d) k (f : (v, s, d) Nx.Prim.form) : (v, s, d) Nx.Prim.form =
+    match lanes with Some (n, laned) when laned.(k) -> laned_form n f | _ -> f
+  in
+  (* A running value out holds the lanes its value does: those of its running
+     value in, or those an addition gave it, one more axis than it has. *)
+  let at_out (type v s d) k (f : (v, s, d) Nx.Prim.form) shape :
+      (v, s, d) Nx.Prim.form =
     match lanes with
-    | Some (n, laned) when laned.(k) ->
-        {
-          f with
-          layout = contiguous (Array.append [| n |] (shape_of f));
-          placement = Nx.Placement.with_leading_axis f.placement;
-        }
+    | Some (n, laned) when laned.(k) -> laned_form n f
+    | Some (n, _) when shape = Array.append [| n |] (shape_of f) ->
+        laned_form n f
     | _ -> f
   in
   (* Each total's running value in, and how its running value out is handed
@@ -1614,10 +1627,10 @@ and threading :
   let ins =
     Array.mapi
       (fun k (Addition (t, into, out)) ->
-        let into = at k into and out = at k out in
+        let into = at k into in
         let r = running t into in
         let typed (V y as v) =
-          match coerce_at out y with
+          match coerce_at (at_out k out (Nx.shape y)) y with
           | Some y -> y
           | None -> (
               match r with
@@ -1632,7 +1645,7 @@ and threading :
             ( V r,
               fun v ->
                 let y = typed v in
-                fun () -> replace t y )
+                fun () -> replace t into y )
         | _ ->
             if Option.is_none r then accepts t out;
             ( filled ~zero:false (F into),
@@ -1653,7 +1666,7 @@ and threading :
 and add_to : type v s d. (v, s, d) total -> (v, s, d) Nx.t -> unit =
  fun t x ->
   match running t (Nx.Prim.form x) with
-  | Some r -> replace t (accumulate ~lanes:0 r x)
+  | Some r -> replace t (Nx.Prim.form x) (accumulate ~lanes:0 r x)
   | None -> ignore (perform (Add (t, x)))
 
 and accumulate : type v s d.
@@ -1922,8 +1935,8 @@ let gathered f =
                 let r = ref (Nx.full_at f.placement f.dtype shape zero) in
                 sums := Gathered (t, r) :: !sums;
                 Effect.Deep.continue k (Some !r))
-    | Replace (t, x) -> (
-        match find t (Nx.placement x) (Nx.shape x) with
+    | Replace (t, f, x) -> (
+        match find t f.placement (shape_of f) with
         | Some r ->
             Some
               (fun k ->
@@ -1986,7 +1999,7 @@ let run c =
             match same_total u (Nx.placement v) t f.placement with
             | Some Type.Equal ->
                 let y = like v r.(base + k) in
-                fun () -> replace t y
+                fun () -> replace t f y
             | None -> invalid_arg "Rune: a seed of another total")
         | Unseeded ->
             let y = cast f.dtype set r.(base + k) in

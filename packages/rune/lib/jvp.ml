@@ -1406,7 +1406,7 @@ module Rules = struct
       match e with
       | Construct { c = Some (Add (_, x)) } when taped c (V x) ->
           Some (fun k -> Effect.Deep.discontinue k (Invalid_argument added))
-      | Replace (_, x) when taped c (V x) ->
+      | Replace (_, _, x) when taped c (V x) ->
           Some (fun k -> Effect.Deep.discontinue k (Invalid_argument added))
       | _ -> None
     in
@@ -2524,10 +2524,10 @@ and run :
         Some (fun k -> Effect.Deep.continue k (Rules.on_values c r))
     (* A loop hands a total its chain's end as an addition gives it: the
        primal. *)
-    | Program.Replace (t, x), Some i when owned i (Program.V x) ->
+    | Program.Replace (t, f, x), Some i when owned i (Program.V x) ->
         Some
           (fun k ->
-            Effect.perform (Program.Replace (t, primal i x));
+            Effect.perform (Program.Replace (t, f, primal i x));
             Effect.Deep.continue k ())
     | _ -> None
   in

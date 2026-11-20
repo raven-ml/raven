@@ -518,14 +518,16 @@ let placement_of (type v s d) st (t : (v, s, d) total) (p : d Nx.Placement.t) :
   in
   go st.threads
 
-(* [t]'s running value becomes [x], [x] as the trace reads it. *)
-let replace (type v s d) st i (t : (v, s, d) total) (x : (v, s, d) Nx.t) =
-  let shape = Nx.shape x in
+(* [t]'s running value asked at [f] becomes [x], [x] as the trace reads it,
+   at whatever form [x] has. *)
+let replace (type v s d) st i (t : (v, s, d) total)
+    (f : (v, s, d) Nx.Prim.form) (x : (v, s, d) Nx.t) =
+  let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
   let rec find = function
     | [] ->
         invalid_arg "Rune: a running value of a total the trace does not hold"
     | Thread th :: rest -> (
-        match same_total th.total th.into.placement t (Nx.placement x) with
+        match same_total th.total th.into.placement t f.placement with
         | Some Type.Equal
           when Iarray.to_array (Nx_array.Layout.shape th.into.layout) = shape ->
             th.now <- operand st i x
@@ -1395,12 +1397,12 @@ and trace_in ?(totals = [||]) ?asked ?(constants = Inherit) kind ~name inputs f
                   match placement_of st t p with
                   | Some q -> At (Some q)
                   | None -> a)))
-    | Replace (t, x), Some i when st.kind <> Tape ->
+    | Replace (t, f, x), Some i when st.kind <> Tape ->
         Some
           (fun k ->
-            replace st i t x;
+            replace st i t f x;
             Effect.Deep.continue k ())
-    | Replace (_, x), Some i when st.kind = Tape && owns i x ->
+    | Replace (_, _, x), Some i when st.kind = Tape && owns i x ->
         Some
           (fun k ->
             Effect.Deep.discontinue k

@@ -66,9 +66,11 @@ let batch i n x =
    it is each lane's, and it holds lanes as a carry does: where its seed holds
    them or an addition gives them. A sum that holds none is one value, the
    same in every lane, so that additions every lane makes alike, as of the
-   map's [Lanes], cost what one lane's do. A trace holds a total's running
-   value by its total and shape, so a total's sums that are each lane's hold
-   lanes together: one with lanes and one without could otherwise meet at one
+   map's [Lanes], cost what one lane's do. A sum gains lanes at its end, in
+   one trace; only a loop's sum, a carry, is traced again to start with them.
+   A trace holds a total's running value by its total and shape, so a total's
+   sums that are each lane's start with lanes together, and end with them
+   together: one with lanes and one without could otherwise meet at one
    shape. *)
 
 let one_total (Program.Addition (t, _, _)) (Program.Addition (u, _, _)) =
@@ -103,6 +105,12 @@ let apart_sums =
   Array.map (fun (s : Program.sum_in_map) ->
       if s = Program.Shared then s else Program.Laned)
 
+(* The sums held as [sums] at a construct's start, as they end: laned where an
+   addition gave them lanes ([gained]). A later addition is made to the end,
+   so a sum's lanes only grow. *)
+let ended (sums : Program.sum_in_map array) gained =
+  Array.mapi (fun k (s : Program.sum_in_map) -> if gained.(k) then Program.Laned else s) sums
+
 (* [sums] with each that [gained] marks laned. *)
 let gain adds sums gained =
   per_total adds
@@ -112,8 +120,8 @@ let gain adds sums gained =
        sums)
 
 (* [trace sums gained], traced again with each sum it marks in [gained]
-   laned, until it marks none: a sum's lanes are a fixpoint, as a carry's.
-   Gains only grow, so it ends. *)
+   laned, until it marks none: a loop's sum's lanes are a fixpoint, as its
+   carry's. Gains only grow, so it ends. *)
 let settled adds sums trace =
   let rec go sums =
     let gained = Array.make (Array.length sums) false in
@@ -158,19 +166,33 @@ let totals_in w (sums : Program.sum_in_map array) running =
       | Program.Same -> v)
     running
 
-(* A program's running values out of the map [w], from its running values in
-   [running], outside [w]. The end of a sum without lanes that an addition
-   gave lanes marks [gained] and leaves as its running value in, a stand-in:
-   the program is traced again with the sum laned. *)
-let totals_out w n (sums : Program.sum_in_map array) ~running ~gained outs =
+(* A program's running values out of the map [w], its sums [adds] held as
+   [sums]. The end of a sum without lanes that an addition gave lanes leaves
+   with them, a batch, and marks [gained]; so does every other such sum of its
+   total, which could otherwise end at its shape: a construct's sums are one per
+   total and shape they end at. *)
+let totals_out w n adds (sums : Program.sum_in_map array) ~gained outs =
+  let laned =
+    Array.mapi
+      (fun k (Program.V x) ->
+        match sums.(k) with
+        | Program.Shared -> false
+        | Program.Laned -> true
+        | Program.Same -> owned w x)
+      outs
+  in
+  let with_lanes k =
+    Array.exists Fun.id
+      (Array.mapi (fun j l -> l && one_total adds.(j) adds.(k)) laned)
+  in
   Array.mapi
     (fun k (Program.V x as v) ->
       match sums.(k) with
       | Program.Shared -> unshare_v w v
       | Program.Laned -> Program.V (batch w n x)
-      | Program.Same when owned w x ->
+      | Program.Same when with_lanes k ->
           gained.(k) <- true;
-          running.(k)
+          Program.V (batch w n x)
       | Program.Same -> v)
     outs
 
@@ -1053,16 +1075,17 @@ module Rules = struct
      itself otherwise, or its batch. *)
   type put = Laned | Batched
 
-  (* The map, its number of lanes, and [map ~sums ~gained ~la ~puts ~flags f
-     bs], the results of [f] over the lanes of [bs] where [la] holds and over
-     the others as they are, inside a map of the same name and size, put as
-     [puts] says, with which left as batches in [flags]; the last of [bs] and of
-     the results are running values, held as [sums] says, a gain marked in
-     [gained] ({!totals_out}). *)
+  (* The map, its number of lanes, and [map ~adds ~sums ~gained ~la ~puts
+     ~flags f bs], the results of [f] over the lanes of [bs] where [la] holds
+     and over the others as they are, inside a map of the same name and size,
+     put as [puts] says, with which left as batches in [flags]; the last of
+     [bs] and of the results are running values of the sums [adds], held as
+     [sums] says, a gain marked in [gained] ({!totals_out}). *)
   type ctx = {
     i : Prim.interpretation;
     n : int;
     map :
+      adds:Program.addition array ->
       sums:Program.sum_in_map array ->
       gained:bool array ->
       la:bool array ->
@@ -1079,7 +1102,7 @@ module Rules = struct
   let over m ~sums ~gained ~la ~puts ~flags (p : Program.t) vs =
     let nv = Array.length vs in
     Program.threaded ~lanes:(laned m.n sums) p (fun running ->
-        m.map ~sums ~gained ~la ~puts ~flags
+        m.map ~adds:p.adds ~sums ~gained ~la ~puts ~flags
           (fun lanes ->
             eval
               ~totals:(sub lanes nv (Array.length lanes - nv))
@@ -1095,24 +1118,20 @@ module Rules = struct
   (* The form of [v] over the lanes where [l], one lane's otherwise. *)
   let form_at m l v = if l then stacked m.n (form v) else form v
 
-  (* [p] traced over [forms] by [f], its sums settled from [sums]: the
+  (* [p] traced over [forms] by [f], its sums held as [sums] at its start: the
      program, what it captures, which of its results left as batches, and its
-     sums. *)
-  let settle ~name (p : Program.t) sums forms f =
-    let ((p, more), flags), sums =
-      settled p.adds sums (fun sums gained ->
-          let flags = ref [||] in
-          let traced = Trace.trace Body ~name forms (f ~sums ~gained ~flags) in
-          (traced, !flags))
-    in
-    (p, more, flags, sums)
+     sums as they end. *)
+  let settle ~name sums forms f =
+    let gained = Array.make (Array.length sums) false and flags = ref [||] in
+    let p, more = Trace.trace Body ~name forms (f ~sums ~gained ~flags) in
+    (p, more, !flags, ended sums gained)
 
   (* [d] traced at its own signature [forms] over the lanes of its parameters
-     where [la] holds, its results put as [puts] says, its sums from [sums]:
-     the program, what it captures, which of its results left as batches, and
-     its sums. *)
+     where [la] holds, its results put as [puts] says, its sums held as [sums]
+     at its start: the program, what it captures, which of its results left as
+     batches, and its sums as they end. *)
   let traced m ~name ~sums ~la ~puts (d : Program.t) forms =
-    settle ~name d sums forms (fun ~sums ~gained ~flags ->
+    settle ~name sums forms (fun ~sums ~gained ~flags ->
         over m ~sums ~gained ~la ~puts ~flags d)
 
   (* The result [v] of a sum held as [s]. *)
@@ -1152,17 +1171,16 @@ module Rules = struct
         let ops = batches m la ops in
         let nr = residual_count primal ~ny in
         let primal_over ~sums ~puts more =
-          settle ~name primal sums (Array.map form ops)
+          settle ~name sums (Array.map form ops)
             (fun ~sums ~gained ~flags vs ->
               Array.append (over m ~sums ~gained ~la ~puts ~flags primal vs) more)
         in
         let put =
           match derivative with Tangent _ -> Laned | Pullback _ -> Batched
         in
-        let ((_, _, lp, sums) as first) =
-          primal_over
-            ~sums:(sharing m.i primal.adds seeds)
-            ~puts:(Array.make (ny + nr) put) [||]
+        let sums = sharing m.i primal.adds seeds in
+        let ((_, _, lp, _) as first) =
+          primal_over ~sums ~puts:(Array.make (ny + nr) put) [||]
         in
         let ly = sub lp 0 ny and lr = sub lp ny nr in
         let res = Array.map2 (form_at m) lr (sub primal.outputs ny nr) in
@@ -1193,7 +1211,7 @@ module Rules = struct
               in
               (Pullback b, more, ly, [||])
         in
-        let primal, captured, _, sums =
+        let primal, captured, _, ends =
           if Array.length more = 0 && ly = sub lp 0 ny then first
           else
             primal_over ~sums
@@ -1219,7 +1237,7 @@ module Rules = struct
            derivative captures; the primal's sums follow them, then the tangent
            map's. *)
         let base = ny + nr + Array.length more in
-        let ns = Array.length sums in
+        let ns = Array.length ends in
         Some
           (Array.mapi
              (fun k (V b as v) ->
@@ -1227,7 +1245,7 @@ module Rules = struct
                else if k < ny + nr then
                  if residuals && lr.(k - ny) then V (lane m.i b) else v
                else if k < base then v
-               else if k < base + ns then sum_end m sums.(k - base) v
+               else if k < base + ns then sum_end m ends.(k - base) v
                else sum_end m tsums.(k - base - ns) v)
              (perform c))
     | Linear { name; apply; transpose; args; captures; residuals; forms } ->
@@ -1527,7 +1545,7 @@ and scan ~name ?held i axis n (step : Program.t) ~length ~trips ~reverse ~init
                       Array.sub out (nc + ny) (Array.length out - nc - ny)
                     in
                     ys := Array.append c' y;
-                    totals_out w n sums ~running ~gained:sums_gained adds))
+                    totals_out w n step.adds sums ~gained:sums_gained adds))
           in
           !ys
       | _ -> invalid_arg "Rune: a scan's map"
@@ -1680,7 +1698,7 @@ and together ~name i axis n c lc cf ~bsc ~buc ~lsc ~luc ~ny =
                       let nr = Array.length out - Array.length p.adds in
                       Array.append
                         (keep w (Array.sub out 0 nr))
-                        (totals_out w n sums ~running ~gained:own
+                        (totals_out w n p.adds sums ~gained:own
                            (Array.sub out nr (Array.length p.adds))))))
         in
         fold_gains gained feeds own;
@@ -2169,23 +2187,32 @@ and switch_shared ~name ?held i axis n (sw : Program.switch) ~lcap ~bcaps =
               let nr = Array.length out - Array.length totals in
               Array.append
                 (Array.map (batch_v w n) (Array.sub out 0 nr))
-                (totals_out w n sums ~running ~gained:own
+                (totals_out w n b.adds sums ~gained:own
                    (Array.sub out nr (Array.length totals)))))
     in
     fold_gains gained feeds own;
     out
   in
-  let traced, sums =
-    settled sum_adds
-      (sharing i sum_adds sw.seeds)
-      (fun sums gained ->
-        Array.mapi
-          (fun k b ->
-            Trace.trace Staged ~name
-              (Array.map Program.form bcaps)
-              (mapped sums gained b (List.nth feeds k)))
-          sw.branches)
+  (* The branches end their sums at one form: each is traced once, and again
+     with a sum laned from the start where some branch, not all, gave it
+     lanes. *)
+  let ns = Array.length sum_adds in
+  let rec agreed sums =
+    let gains = Array.map (fun _ -> Array.make ns false) sw.branches in
+    let traced =
+      Array.mapi
+        (fun k b ->
+          Trace.trace Staged ~name
+            (Array.map Program.form bcaps)
+            (mapped sums gains.(k) b (List.nth feeds k)))
+        sw.branches
+    in
+    let some = Array.init ns (fun j -> Array.exists (fun g -> g.(j)) gains) in
+    let every = Array.init ns (fun j -> Array.for_all (fun g -> g.(j)) gains) in
+    if some = every then (traced, sums, ended sums some)
+    else agreed (gain sum_adds sums some)
   in
+  let traced, sums, ends = agreed (sharing i sum_adds sw.seeds) in
   let progs, own = Program.unite traced ~params:(Array.length bcaps) in
   let r =
     Program.perform
@@ -2200,7 +2227,7 @@ and switch_shared ~name ?held i axis n (sw : Program.switch) ~lcap ~bcaps =
   let base = Array.length r - Array.length sum_adds in
   Array.append
     (Array.map (lane_v i) (Array.sub r 0 base))
-    (ends_in i sums (Array.sub r base (Array.length sum_adds)))
+    (ends_in i ends (Array.sub r base (Array.length sum_adds)))
 
 (* Each branch some lane takes runs over every lane, a lane that did not take it
    held at its donor, as an iterate's stopped lanes are, and each lane takes its
@@ -2345,17 +2372,16 @@ and remat ~name ?held i axis n (body : Program.t) args seeds ~differentiated =
               (Array.map
                  (fun v -> if owned_v w v then batch_v w n v else v)
                  (Array.sub out 0 no))
-              (totals_out w n sums ~running ~gained
+              (totals_out w n body.adds sums ~gained
                  (Array.sub out no (Array.length sums)))))
   in
-  let (prog, own), sums =
-    (* Traced as the remat's function was: every operation staged. *)
-    settled body.adds
-      (sharing i body.adds seeds)
-      (fun sums gained ->
-        Trace.trace Staged ~name
-          (Array.map Program.form bargs)
-          (mapped sums gained))
+  let sums = sharing i body.adds seeds in
+  let gained = Array.make (Array.length sums) false in
+  (* Traced as the remat's function was: every operation staged. *)
+  let prog, own =
+    Trace.trace Staged ~name
+      (Array.map Program.form bargs)
+      (mapped sums gained)
   in
   let r =
     Program.perform
@@ -2371,7 +2397,7 @@ and remat ~name ?held i axis n (body : Program.t) args seeds ~differentiated =
     (Array.mapi
        (fun k v -> if !laned_out.(k) then lane_v i v else v)
        (Array.sub r 0 no))
-    (ends_in i sums (Array.sub r no (Array.length sums)))
+    (ends_in i (ended sums gained) (Array.sub r no (Array.length sums)))
 
 (* A call's map is the call of its program's map, as JAX batches a compiled
    call's jaxpr: derived once per derivation at the call's site, traced as a
@@ -2411,21 +2437,21 @@ and call ~name ?held i axis n (body : Program.t) args site seeds =
                 (Array.map
                    (fun v -> if owned_v w v then batch_v w n v else v)
                    (Array.sub out 0 no))
-                (totals_out w n sums ~running ~gained
+                (totals_out w n body.adds sums ~gained
                    (Array.sub out no (Array.length sums)))))
     in
-    let (prog, _), sums =
-      settled body.adds sums (fun sums gained ->
-          Trace.trace Jit ~name forms (mapped sums gained))
+    let gained = Array.make (Array.length sums) false in
+    let prog, _ = Trace.trace Jit ~name forms (mapped sums gained) in
+    let laned_sums =
+      Array.map (fun s -> s = Program.Laned) (ended sums gained)
     in
-    let laned_sums = Array.map (fun s -> s = Program.Laned) sums in
     ((prog, forms), Array.append !laned_out laned_sums, None)
   in
   let lanes = Array.append la (Array.map (fun _ -> true) extra) in
   let derivation = Program.Vmap { lanes; sums; n; named } in
   let d = Program.derive ~map:(axis, n) site derivation forms made in
-  (* The sums as the derived program holds them: laned where its flags say. *)
-  let sums =
+  (* The sums as the derived program ends them: laned where its flags say. *)
+  let ends =
     Array.mapi
       (fun k (s : Program.sum_in_map) ->
         if s = Program.Same && d.flags.(no + k) then Program.Laned else s)
@@ -2445,12 +2471,12 @@ and call ~name ?held i axis n (body : Program.t) args site seeds =
     (Array.mapi
        (fun k v -> if d.flags.(k) then lane_v i v else v)
        (Array.sub r 0 no))
-    (ends_in i sums (Array.sub r no (Array.length sums)))
+    (ends_in i ends (Array.sub r no (Array.length sums)))
 
 (* [f]'s results over the lanes of [bs] where [la] holds and over the others as
    they are, in a map of this one's name, size and held lanes, put as [puts]
    says, with which left as batches in [flags]. *)
-and map ~name ?held axis n ~sums ~gained ~la ~puts ~flags f bs =
+and map ~name ?held axis n ~adds ~sums ~gained ~la ~puts ~flags f bs =
   let ns = Array.length sums in
   interpret ~name ~axis ?held n (fun j ->
       let tail vs = Array.sub vs (Array.length vs - ns) ns in
@@ -2468,7 +2494,7 @@ and map ~name ?held axis n ~sums ~gained ~la ~puts ~flags f bs =
       flags := Array.mapi batched ys;
       let put k v = if batched k v then batch_v j n v else v in
       Array.append (Array.mapi put ys)
-        (totals_out j n sums ~running:(tail bs) ~gained (tail out)))
+        (totals_out j n adds sums ~gained (tail out)))
 
 and interpret :
     'a.
@@ -2496,12 +2522,13 @@ and interpret :
         Some
           (fun k ->
             Effect.Deep.continue k (Option.map (share i) (Program.running t f)))
-    | Program.Replace (t, x), Some i when Option.is_some (Prim.payload i x) ->
+    | Program.Replace (t, f, x), Some i when Option.is_some (Prim.payload i x)
+      ->
         Some
           (fun k ->
             match shared i x with
             | Some r ->
-                Effect.perform (Program.Replace (t, r));
+                Effect.perform (Program.Replace (t, f, r));
                 Effect.Deep.continue k ()
             | None ->
                 Effect.Deep.discontinue k
