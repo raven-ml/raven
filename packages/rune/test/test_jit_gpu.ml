@@ -27,7 +27,8 @@
    contraction's result holds its bound, a long sum and a weight gradient
    hold the blocked bound, a kind compiled to nx's sequence, a function nx
    composes from kinds and a draw of Nx.Rng give eager's bits on an NVIDIA
-   GPU and exp holds its bound in ulps of the correctly
+   GPU, a draw cast to float32 that two operations read is stored as its
+   bytes, and exp holds its bound in ulps of the correctly
    rounded result on one that flushes subnormals, a range gather and its
    gradient compile to eager's bits, and an argmax or argmin over a length
    16 does not divide gives nx's position, a sum and a product their exact values, and a first k of a sort
@@ -3345,6 +3346,16 @@ let draws k =
           Draws.law s ~dtypes:R.[ Float64 ] ~shapes k c);
     ]
 
+(* Off the host, a draw two operations read is stored as the bytes it
+   widens: a Bernoulli draw cast to float32, as a dropout mask, is stored as
+   its booleans and widened where each reader loads it. The result is
+   eager's. *)
+let mask_stored_narrow () =
+  let _, s = on_gpu () in
+  let stores, eager = Draws.mask_stores s in
+  equal ~msg:"eager's bits" Testable.bool true eager;
+  equal ~msg:"what the draw stores" Testable.(list string) [ "u8" ] stores
+
 (* dirichlet's rows above take one limb, so its carries and reassembly
    compile on the GPU through Nx.Rng.dirichlet_width: rows of 8 and one row
    of 1025 at limbs of 9 and 21 bits take 2 to 8 limbs, float32 4 and 2, 5
@@ -3523,7 +3534,13 @@ let () =
          group "complex kinds" (List.concat_map complex_ported complex_kinds);
          group "composed functions" (List.concat_map composed_law composed);
          group "draws"
-           (List.concat_map draws Nx_rng_support.samplers @ narrow_limbs);
+           (List.concat_map draws Nx_rng_support.samplers
+           @ narrow_limbs
+           @ [
+               test
+                 "a draw two operations read is stored as the bytes it widens"
+                 mask_stored_narrow;
+             ]);
          group "exp"
            [
              prop ~count:24 "exp within 9 ulps at float32 where it flushes"

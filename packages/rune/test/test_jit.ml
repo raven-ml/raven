@@ -437,6 +437,15 @@ let test_routed_activation () =
   let swiglu g l = Nx.mul (Nx.mul g (Nx.sigmoid g)) (Nx.add_s l 1.) in
   equal int (kernels cheap + 1) (kernels swiglu)
 
+(* On the host, a draw two operations read is stored at its own type, a
+   float32 for a Bernoulli draw cast to float32: widened where it is read,
+   its bytes would cost each reader more than they save. The result is
+   eager's. *)
+let test_draw_stored_whole () =
+  let stores, eager = Draws.mask_stores (module Nx.Host) in
+  equal ~msg:"eager's bits" bool true eager;
+  equal ~msg:"what the draw stores" (list string) [ "f32" ] stores
+
 (* A scatter reads its updates where they lie in storage, as a model writes
    its cache: into a donated pool of [slots; heads; dim], the keys of one
    token, [batch; heads; 1; dim], with their heads and token axes swapped,
@@ -6486,6 +6495,8 @@ let () =
              test "an exponential every output of a product reads is stored"
                test_broadcast_exponential;
              test "a routed product's sigmoid is stored" test_routed_activation;
+             test "on the host, a draw two operations read is stored whole"
+               test_draw_stored_whole;
              test "a scatter reads its updates where they lie"
                test_scatter_in_place;
              test "crossed assemblies of computed pieces compile"

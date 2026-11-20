@@ -670,6 +670,7 @@ type env = {
   reaches : reach array;
   scattered : bool array;
   shared : bool array;
+  passed : bool array;
   drawn : bool array;
   windows : bool array;
       (** Whether each variable is a window that a move or a loop's
@@ -721,6 +722,22 @@ let shared (p : Program.t) =
     p.eqns;
   Array.map (fun k -> k > 1) reads
 
+(* Whether each variable of [p] is passed whole: to a construct, or out as an
+   output. *)
+let passed (p : Program.t) =
+  let whole = Array.make p.slots false in
+  let pass (Program.V x) =
+    let n = slot p x in
+    if n >= 0 then whole.(n) <- true
+  in
+  Array.iter
+    (function
+      | Program.Do { c; _ } -> List.iter pass (Program.operands c)
+      | Op _ -> ())
+    p.eqns;
+  Array.iter pass p.outputs;
+  whole
+
 (* Whether each variable of [p] is a window that a placement reads, or a
    window of a creation, a map that reads no operand, as a loop's coordinates
    over a window are ({!Pieces}). A program's own window of a creation is one
@@ -753,6 +770,7 @@ let env_of ~split ?(carried = 0) ?donated (p : Program.t) =
     reaches = Array.make p.slots nothing;
     scattered = Array.make p.slots false;
     shared = shared p;
+    passed = passed p;
     drawn = Array.make p.slots false;
     windows = (if split then windows p else [||]);
   }
@@ -1690,7 +1708,14 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
       in
       (* A value that computes Threefry blocks, a draw or a key split or a map
          or view of one, is stored where it is read more than once: each
-         reader would compute its blocks again, twenty rounds each. *)
+         reader would compute its blocks again, twenty rounds each. Off the
+         host, one that widens a narrower value is stored narrow and widened
+         where it is read, as tolk stores a widening it stages ({!Ops.widens})
+         and as {!Loop.cut} passes one: a Bernoulli draw cast to float32, as a
+         dropout mask, is stored as its bytes, a quarter of the bytes each
+         reader loads, the same values. On the host a read that widens costs
+         more than the bytes it saves, and a value passed whole to a
+         construct or out is stored at its own type there all the same. *)
       let drawn_at x =
         match var env x with n when n >= 0 -> env.drawn.(n) | _ -> false
       in
@@ -1714,7 +1739,10 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
           (fun k y ->
             let shared = env.shared.(base + k) in
             env.drawn.(base + k) <- drawn && not shared;
-            if drawn && shared then Ops.contiguous y else y)
+            if not (drawn && shared) then y
+            else if Ops.widens y && (not host) && not env.passed.(base + k)
+            then Ops.cast (Ops.contiguous (Ops.nth y 0)) (Ops.dtype y)
+            else Ops.contiguous y)
           ys
       in
       (match (op, !given) with

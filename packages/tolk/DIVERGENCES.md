@@ -2574,7 +2574,9 @@ scalar, for rune's staged scan, which now replaces it by zeros in the step
 - **tolk:** `Ops.widens`, `Rangeify.bufferize_to_store` and
   `Rangeify.pm_add_buffers`' rule for the index of a narrow store through its
   widening. rune's `Loop.cut` keeps the same widening in a loop's body
-  (`Ops.widens`), off the host, so the loop stores its source narrow.
+  (`Ops.widens`), off the host, so the loop stores its source narrow, and
+  rune's `Compile` stores a draw that two operations read narrow where it
+  widens, off the host and unless a construct or the output takes it whole.
 - **Differs:** a stage that is not stored whole, whose value is a cast to a
   wider type that holds every value of its source (`Dtype.can_lossless_cast`,
   `bool` and the weak types excepted), stores the source at its own type, and
@@ -2594,7 +2596,9 @@ scalar, for rune's staged scan, which now replaces it by zeros in the step
   `Rune.Loop` suite's `a widening is passed narrow, but on the host and to a
   call`, and its GPU suite's `products › a scan whose step narrows its
   weights computes, unoptimised, its steps' bits` and `› … is within the
-  bound of its products`.
+  bound of its products`. rune's draw rule: the `Rune.jit` suite's `jit › on
+  the host, a draw two operations read is stored whole` and its GPU suite's
+  `draws › a draw two operations read is stored as the bytes it widens`.
 
 ## D105. A tensor core takes rows that share the other operand's tile
 
