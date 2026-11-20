@@ -981,7 +981,7 @@ let () =
            ];
          group "results"
            [
-             (* The host takes no tensor core: its tiles hold 32 keys at any
+             (* The host takes no tensor core: its tiles hold 16 keys at any
                 number of value columns. *)
              test
                "of values of no column are the full call's lse and gradient \

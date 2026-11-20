@@ -101,13 +101,23 @@ let guard ?(outer = Fun.id) id c body =
   let inside buf = Ops.after (outer buf) [ g ] in
   Ops.end_ (body inside) [ g ]
 
+(* The rows a thread holds: one, or on the host [n] rows of a workgroup in
+   the lanes of a vector ({!simt}), the row of lane [lane], a range of [n]
+   lanes ({!Ops.Axis_type.Upcast}), at element [i · n + lane] of registers
+   of [i] elements a row. *)
+type lanes = { n : int; lane : Ops.t }
+
+let own = { n = 1; lane = int 0 }
+let el ls i =
+  if ls.n = 1 then int i else Ops.O.(int Stdlib.(i * ls.n) + ls.lane)
+
 (* [reg slot n dt v ~at] is registers of [n] elements of [dt] and the stores
    that set each to [v] at each step of the ranges [at]: a row's, so that a
    thread running several rows starts each anew. *)
-let reg slot n dt v ~at =
-  let r = Shape.placeholder ~slot ~addrspace:Reg [ max 1 n ] dt in
+let reg ?(lanes = own) slot n dt v ~at =
+  let r = Shape.placeholder ~slot ~addrspace:Reg [ max 1 (n * lanes.n) ] dt in
   let here = Ops.after r at in
-  (r, Ops.group (List.init n (fun i -> st here (int i) v)))
+  (r, Ops.group (List.init n (fun i -> st here (el lanes i) v)))
 
 (* Slots of the kernels' own buffers, after their arguments'. *)
 let slot_m = 100
@@ -118,9 +128,8 @@ let slot_seen = 109
 
 (* Arguments
 
-   A kernel takes, in slot order: [o], [lse], for the SIMT kernel [sum]
-   ([rows · dv] of the accumulator, value [c] of row [r] at [c · rows + r], so
-   that a workgroup's threads touch adjacent elements), then [q], [k], [v],
+   A kernel takes, in slot order: [o], [lse], for the SIMT kernel [sum] (its
+   rows' accumulators, at the slots {!simt} gives them), then [q], [k], [v],
    the page table, the lengths and the captures where given. *)
 
 type args = {
@@ -256,9 +265,11 @@ let base2 a ~seen outs =
     (fl acc Float.neg_infinity)
 
 (* The base-2 score of the pair of [row] and [key] of raw score [raw], [-∞]
-   where it is not [seen]: the program's output 0 is not evaluated. *)
-let score a x ~inside ~b ~row ~key ~seen raw =
-  base2 a ~seen (outputs a (operands a x ~inside ~b ~row ~key ~ok:seen raw))
+   where it is not [seen], its captures read where [reads], [seen] by
+   default: the program's output 0 is not evaluated. *)
+let score ?reads a x ~inside ~b ~row ~key ~seen raw =
+  let reads = Option.value reads ~default:seen in
+  base2 a ~seen (outputs a (operands a x ~inside ~b ~row ~key ~ok:reads raw))
 
 (* The first range id of the tile classes' reduces over a capture's
    queries, two a capture, past the kernels' own ids. *)
@@ -382,16 +393,26 @@ let id_mask = 11
    [at]: [read], whether each pair is within its row's length, overwritten
    with [mask inside], each pair's mask, under a guard on [not shown] that a
    workgroup takes as one. *)
-let carried ~inside ~at ~shown ~read ~mask n =
-  let r = Shape.placeholder ~slot:slot_seen ~addrspace:Reg [ max 1 n ] Bool in
-  let set_all r vs = Ops.group (Array.to_list (Array.mapi (fun i v -> st r (int i) v) vs)) in
+let carried ~lanes ~inside ~at ~shown ~read ~mask n =
+  (* Rows in lanes carry int32s: tolk merges no boolean registers into
+     vectors. *)
+  let dt = if lanes.n = 1 then Dtype.Bool else Dtype.Int32 in
+  let r =
+    Shape.placeholder ~slot:slot_seen ~addrspace:Reg [ max 1 (n * lanes.n) ] dt
+  in
+  let put v = if lanes.n = 1 then v else Ops.cast v Int32 in
+  let set_all r vs =
+    Ops.group
+      (Array.to_list (Array.mapi (fun i v -> st r (el lanes i) (put v)) vs))
+  in
   let reads = set_all (inside (Ops.after r at)) read in
   let masked =
     guard ~outer:inside id_mask (Ops.logical_not shown) (fun inside ->
         set_all (inside (Ops.after r [ reads ])) (mask inside))
   in
   let seen = inside (Ops.after r [ reads; masked ]) in
-  Array.init n (fun i -> ld seen (int i))
+  let get v = if lanes.n = 1 then v else Ops.ne v (Ops.int ~dtype:Int32 0) in
+  Array.init n (fun i -> get (ld seen (el lanes i)))
 
 (* Whether the program's output 0 reads a capture. A guard holds back only
    loads: a mask of the pair's coordinates alone is integer arithmetic on
@@ -421,8 +442,8 @@ let reads_capture (p : P.t) =
    in a tile its classes show, a pair is shown where its key is within the
    length. The vote is carried out of its guard in a register set at each
    step of the ranges [at]. *)
-let skipping a x ~at ~b ~kh ~len ~rows ~keys ~over ~ids:(id0, id1, id2) pairs
-    body =
+let skipping ?(lanes = own) a x ~at ~b ~kh ~len ~rows ~keys ~over
+    ~ids:(id0, id1, id2) pairs body =
   let read = Array.map (fun ((row : row), key) -> row.live &&: Ops.O.(key < len)) pairs in
   let mask inside =
     Array.map2
@@ -442,7 +463,10 @@ let skipping a x ~at ~b ~kh ~len ~rows ~keys ~over ~ids:(id0, id1, id2) pairs
           let run = ld (Ops.after r [ set; voted ]) (int 0) in
           guard ~outer:inside id2 run (fun inside ->
               if not (reads_capture a.prog) then body inside (mask inside)
-              else body inside (carried ~inside ~at ~shown ~read ~mask (Array.length pairs))))
+              else
+                body inside
+                  (carried ~lanes ~inside ~at ~shown ~read ~mask
+                     (Array.length pairs))))
 
 (* The state [(m', α, p)] of a tile of base-2 scores [x2] over a row's old
    maximum [m]. *)
@@ -492,9 +516,13 @@ let run_tiles ~tk ~bk ~splits ~gs len =
 
    A workgroup holds [simt_rows] rows of a group of heads, one a thread, or
    a SIMD group's threads' worth for fewer rows ([rows_of]), and takes tiles
-   of [simt_keys] keys, whose scores stay in registers. The host has one row
-   a thread, whose accumulator's columns are adjacent and added a vector at a
-   time ({!simt_width}). *)
+   of [simt_keys] keys, whose scores stay in registers. On the host a
+   workgroup is one thread: where a group's rows fill a vector, its rows are
+   the vector's lanes, so that each value of a row is a vector of the
+   workgroup's rows and each element of a tile's keys and values is read
+   once for them all, in tiles of [host_keys]; otherwise it holds one row,
+   whose accumulator's columns are adjacent and added a vector at a time
+   ({!simt_shape}). *)
 
 let simt_rows = 64
 
@@ -506,13 +534,22 @@ let rows_of (r : Renderer.t) a =
 
 let simt_keys = 32
 
-(* The values' columns a SIMT thread adds at a time: on the host as many as
-   fill one of its vector registers, and on a GPU 4, as are the dimensions
-   of a score, so that a thread's loads of a row are 4 elements wide. Each
-   sum keeps its order at any width. On fudge's RTX 5000 Ada, 4 heads of
-   4096 batches of 64 rows of 64 float32 dimensions took 3.05 ms so, and
-   5.27 ms a dimension and a column at a time, where more rows in flight
-   missed the L1 cache on their loads. *)
+(* The keys of a tile of rows in lanes: its scores are 16 vectors of rows,
+   of which AVX2's 16 registers spill 3 a dimension where 32 keys spilled
+   19, and a tile finer by half skips more of the pairs a packed row's mask
+   hides. On fudge, TESSERA's packed rows of 256 keys at 110 dimensions took
+   2.03 ms so and 2.63 ms in tiles of 32. *)
+let host_keys = 16
+
+(* On a GPU the values' columns a SIMT thread adds at a time, 4, as are the
+   dimensions of a score, so that a thread's loads of a row are 4 elements
+   wide; on the host the accumulator's elements one of its vector registers
+   holds: a SIMT thread's rows in lanes, or the columns a thread of one row
+   and the host's combine kernel add at a time. Each sum keeps its order at
+   any width. On fudge's RTX 5000 Ada, 4 heads of 4096 batches of 64 rows of 64
+   float32 dimensions took 3.05 ms so, and 5.27 ms a dimension and a column
+   at a time, where more rows in flight missed the L1 cache on their
+   loads. *)
 let simt_width (r : Renderer.t) a =
   if r.has_local then 4
   else
@@ -520,12 +557,28 @@ let simt_width (r : Renderer.t) a =
     | Some { bytes; _ } -> max 1 (bytes / Dtype.itemsize (Arith.dtype a.acc))
     | None -> 1
 
-let simt ~local ~bq ~width ~splits a xs =
+(* [simt_shape ~local r a] is [(bq, bk, width)] of {!simt} on [r]: a
+   workgroup's rows, its tiles' keys and the values' columns a thread adds
+   at a time. On a GPU [rows_of] rows, a thread each, tiles of [simt_keys]
+   and [simt_width] columns. On the host, where a group's rows fill a vector
+   of the accumulator, [simt_width] rows in its lanes, tiles of [host_keys]
+   and a column at a time; otherwise, as a decode step's few rows, one row a
+   thread, tiles of [simt_keys] and [simt_width] columns: in lanes most
+   lanes would hold no row, and a step of 12 heads of one query row and
+   1000 keys of 64 dimensions took 3.1 times as long on fudge. *)
+let simt_shape ~local (r : Renderer.t) a =
+  let w = simt_width r a in
+  if local then (rows_of r a, simt_keys, w)
+  else if w > 1 && grouped a >= w then (w, host_keys, 1)
+  else (1, simt_keys, w)
+
+let simt ~local ~bq ~bk ~width ~splits a xs =
   let x = args ~scratch:true a xs in
   let sum = Option.get x.sum in
   let acc = Arith.dtype a.acc in
   let gr = grouped a in
-  let bk = simt_keys in
+  (* On the host a workgroup of several rows holds them in a vector's lanes. *)
+  let in_lanes = (not local) && bq > 1 in
   let tiles_q = (gr + bq - 1) / bq in
   let rows = numel a.lead * a.hq * a.tq in
   let heads = numel a.lead * a.hk in
@@ -537,30 +590,55 @@ let simt ~local ~bq ~width ~splits a xs =
      the longest workgroups start first. *)
   let gtr = range outer (Int tiles_q) 1 in
   let gt = int Stdlib.(tiles_q - 1) - gtr in
-  let l = if local then range Local (Int bq) 2 else int 0 in
+  let l =
+    if local then range Local (Int bq) 2
+    else if in_lanes then range Upcast (Int bq) 2
+    else int 0
+  in
   let gs = if Stdlib.(splits > 1) then Some (range outer (Int splits) 9) else None in
   let b = gh // int a.hk and kh = gh % int a.hk in
-  let row = row_at a ~b ~kh ((gt * int bq) + l) in
+  let r = (gt * int bq) + l in
+  (* In lanes, a lane past the last row computes the last row, whose tiles
+     its workgroup takes anyway, and stores nothing: so every read of a tile
+     but a row's own is the same for each lane, and none needs a gate of its
+     own. *)
+  let lanes = if in_lanes then { n = bq; lane = l } else own in
+  let row =
+    if in_lanes then
+      let last = Ops.minimum r (int Stdlib.(gr - 1)) in
+      { (row_at a ~b ~kh last) with live = bool true }
+    else row_at a ~b ~kh r
+  in
   let live = row.live in
+  (* Where a row's [o] and [lse] are stored. *)
+  let stored = if in_lanes then r < int gr else live in
   let len = length a x b in
   let first, tiles = run_tiles ~tk:a.tk ~bk ~splits ~gs len in
   let jr = range Loop (Sym tiles) 3 in
   let j = first + jr in
   let at =
-    (if local then [ gh; gtr; l ] else [ gh; gtr ]) @ Option.to_list gs
+    (if local || in_lanes then [ gh; gtr; l ] else [ gh; gtr ])
+    @ Option.to_list gs
   in
   (* A row's place among the rows of every run. *)
   let part = (row.index * int splits) + Option.value gs ~default:(int 0) in
   let rows = Stdlib.(rows * splits) in
-  let m, m_init = reg slot_m 1 acc (fl acc Float.neg_infinity) ~at in
-  let ls, l_init = reg slot_l 1 acc (fl acc 0.) ~at in
+  let m, m_init = reg ~lanes slot_m 1 acc (fl acc Float.neg_infinity) ~at in
+  let ls, l_init = reg ~lanes slot_l 1 acc (fl acc 0.) ~at in
   let m_j = Ops.after m [ m_init; jr ] and l_j = Ops.after ls [ l_init; jr ] in
   (* A row's accumulators: on a GPU value [c] of row [r] at [c · rows + r],
-     so that a workgroup's threads touch adjacent elements; on the host a
-     row's values adjacent, so that a thread's run of columns is a
-     vector. *)
+     so that a workgroup's threads touch adjacent elements; in lanes the
+     thread's own, value [c] of lane [l] of its workgroup [w] (of heads, rows
+     and runs) at [(w · dv + c) · bq + l], so that a column of its rows is a
+     vector, which a lane past the last row writes too; on the host one row a
+     thread, its values adjacent, so that a run of columns is a vector. *)
   let slot c =
-    if local then (c * int rows) + part else (part * int a.dv) + c
+    if local then (c * int rows) + part
+    else if in_lanes then
+      let g = Option.value gs ~default:(int 0) in
+      let w = (((gh * int tiles_q) + gtr) * int splits) + g in
+      (((w * int a.dv) + c) * int bq) + l
+    else (part * int a.dv) + c
   in
   (* [columns id f] is [f c] at each value column [c], a loop of range id
      [id]. *)
@@ -587,10 +665,14 @@ let simt ~local ~bq ~width ~splits a xs =
     let qs = inside x.q and ks = inside x.k and vs = inside x.v in
     (* Scores: Σ_d q_d k_d in the accumulator, each product widened, on a GPU
        [width] dimensions at a time. *)
-    let s = Shape.placeholder ~slot:slot_s ~addrspace:Reg [ bk ] acc in
+    let s =
+      Shape.placeholder ~slot:slot_s ~addrspace:Reg
+        [ Stdlib.(bk * lanes.n) ]
+        acc
+    in
     let here = inside (Ops.after s (jr :: at)) in
     let s_init =
-      Ops.group (List.init bk (fun i -> st here (int i) (fl acc 0.)))
+      Ops.group (List.init bk (fun i -> st here (el lanes i) (fl acc 0.)))
     in
     let s =
       if a.dk = 0 then Ops.after s [ s_init ]
@@ -617,7 +699,8 @@ let simt ~local ~bq ~width ~splits a xs =
                       Ops.cast (ld_gated ks ((at * int a.dk) + d) ok) acc
                     in
                     let add s d qd = s + (qd * kd d) in
-                    st s_d (int i) (List.fold_left2 add (ld s_d (int i)) ds qds))))
+                    let s0 = ld s_d (el lanes i) in
+                    st s_d (el lanes i) (List.fold_left2 add s0 ds qds))))
             [ dg ]
         in
         Ops.after s [ s_end ]
@@ -627,9 +710,12 @@ let simt ~local ~bq ~width ~splits a xs =
           let seen =
             match a.paged with None -> seen.(i) | Some _ -> seen.(i) &&: fst keys.(i)
           in
-          score a x ~inside ~b ~row ~key:(key i) ~seen (ld s (int i)))
+          let reads = if in_lanes then Some (fst keys.(i)) else None in
+          score ?reads a x ~inside ~b ~row ~key:(key i) ~seen
+            (ld s (el lanes i)))
     in
-    let m_old = ld (inside m_j) (int 0) and l_old = ld (inside l_j) (int 0) in
+    let m_old = ld (inside m_j) (el lanes 0)
+    and l_old = ld (inside l_j) (el lanes 0) in
     let m_new, alpha, p = softmax acc m_old x2 in
     let l_new = Array.fold_left ( + ) (l_old * alpha) p in
     (* Values: acc = α acc + Σ p_j v_j, the products added in key order,
@@ -663,7 +749,11 @@ let simt ~local ~bq ~width ~splits a xs =
         ]
     in
     Ops.group
-      (values @ [ st (inside m_j) (int 0) m_new; st (inside l_j) (int 0) l_new ])
+      (values
+      @ [
+          st (inside m_j) (el lanes 0) m_new;
+          st (inside l_j) (el lanes 0) l_new;
+        ])
   in
   let row_span =
     (gt * int bq, Ops.minimum ((gt * int bq) + int Stdlib.(bq - 1)) (int Stdlib.(gr - 1)))
@@ -671,18 +761,18 @@ let simt ~local ~bq ~width ~splits a xs =
   let keys = (key 0, key Stdlib.(bk - 1)) in
   let loop =
     Ops.end_
-      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows:row_span ~keys
-         ~over:(if local then [ l ] else [])
+      (skipping ~lanes a x ~at:(jr :: at) ~b ~kh ~len ~rows:row_span ~keys
+         ~over:(if local || in_lanes then [ l ] else [])
          ~ids:(6, 7, 8)
          (Array.init bk (fun i -> (row, key i)))
          body)
       [ jr ]
   in
-  let m = ld (Ops.after m [ loop ]) (int 0) in
-  let lsum = ld (Ops.after ls [ loop ]) (int 0) in
+  let m = ld (Ops.after m [ loop ]) (el lanes 0) in
+  let lsum = ld (Ops.after ls [ loop ]) (el lanes 0) in
   let sum = Ops.after sum [ loop ] in
   let out = Arith.dtype a.out in
-  let at_row i = Ops.where live i Ops.invalid in
+  let at_row i = Ops.where stored i Ops.invalid in
   let stores =
     if Stdlib.(splits > 1) then
       Ops.store (Ops.index x.lse [ at_row (int 2 * part) ]) m
@@ -2789,26 +2879,28 @@ let lower ~device ~(renderer : Renderer.t)
           | Some c -> launch ~raw:(raw c) c.splits (core c a) ~scratch:[]
           | None ->
               (* A GPU's runs fill [stream_threads] threads. The host's
-                 threads, a row each, run on its cores, so its runs fill
-                 [local_workgroups] of them, as many as leave each core
-                 about as many: a decode step's 8 rows ran on 8 of fudge's
-                 14 cores. *)
-              let bq = if local then rows_of renderer a else 1 in
+                 threads, a workgroup of rows each, run on its cores, so its
+                 runs fill [local_workgroups] of them, as many as leave each
+                 core about as many: a decode step's 8 rows ran on 8 of
+                 fudge's 14 cores. *)
+              let bq, bk, width = simt_shape ~local renderer a in
+              let workgroups = numel lead * a.hk * ceil_div (grouped a) bq in
               let splits =
                 if not local then
-                  splits_for ~stream:renderer.local_workgroups
-                    ~workgroups:(numel lead * a.hk * grouped a)
-                    ~threads:1 ~tiles:(ceil_div tk simt_keys)
+                  splits_for ~stream:renderer.local_workgroups ~workgroups
+                    ~threads:1 ~tiles:(ceil_div tk bk)
                 else
-                  splits_for ~stream:renderer.stream_threads
-                    ~workgroups:(numel lead * a.hk * ceil_div (grouped a) bq)
-                    ~threads:bq ~tiles:(ceil_div tk simt_keys)
+                  splits_for ~stream:renderer.stream_threads ~workgroups
+                    ~threads:bq ~tiles:(ceil_div tk bk)
               in
+              (* In lanes a workgroup's lanes past its last row have slots
+                 too ({!simt}). *)
+              let slots = if local then rows else workgroups * bq in
               let sum =
-                Ops.new_buffer device (max 1 (rows * splits * dv)) acc_t
+                Ops.new_buffer device (max 1 (slots * splits * dv)) acc_t
               in
               launch ~raw:(splits > 1) splits
-                (simt ~local ~bq ~width:(simt_width renderer a) ~splits a)
+                (simt ~local ~bq ~bk ~width ~splits a)
                 ~scratch:[ sum ]
         in
         let o =

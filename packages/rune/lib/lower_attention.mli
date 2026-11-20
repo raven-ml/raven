@@ -26,9 +26,13 @@
     block a workgroup, which computes the tile's scores for itself; the
     weights stay in the registers of the product they chain into where the
     core chains its accumulator, and otherwise go through workgroup memory,
-    and the block's sums stay in registers. On the host a tile's scores are
-    computed once, then its weights multiply the values a few columns at a
-    time.
+    and the block's sums stay in registers. On the host a workgroup is one
+    thread. Where a group's heads hold as many query rows as fill one of its
+    vector registers of the accumulator, it holds that many, the lanes of
+    each of its values, in tiles of 16 keys; otherwise, as at a decode step,
+    one row, in tiles of 32 keys. A tile's scores are computed once, then
+    its weights multiply the values, a column at a time where the rows are
+    lanes and a few columns at a time otherwise.
 
     {b Numerics.} Scores, their maxima and sums, the weights and [lse] compute
     in the accumulator, in base 2: each score is multiplied by [log₂ e] and
@@ -131,8 +135,9 @@ val forward_tiles :
     [r]'s tensor core for dense queries and keys of [dt] shaped [q] and [k],
     [[lead…; heads; rows; dims]], values of [dv] columns and a float32
     accumulator: the keys a tile holds and the runs each row's keys split
-    into. It is [None] where the call takes no core, whose tiles hold 32 keys
-    and whose runs do not depend on [dv]. *)
+    into. It is [None] where the call takes no core, whose tiles hold 32 keys,
+    16 on the host where a group's rows fill a vector, and whose runs do not
+    depend on [dv]. *)
 
 val derivative_tile : Tc.t -> wide:bool -> int
 (** [derivative_tile tc ~wide] is the keys or rows a tile of {!linear}'s
