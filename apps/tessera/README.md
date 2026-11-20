@@ -9,6 +9,11 @@ v2 students and the 2B teacher load from their PyTorch checkpoints; every
 model runs compiled on the CPU or a GPU, or eagerly on the CPU. Tiles are made from
 Microsoft's Planetary Computer by TESSERA's recipe.
 
+On an NVIDIA RTX 5000 Ada, `main.exe encode` embeds a 500 × 500 tile with the
+nano student in 7.2 s, against 18.0 s for TESSERA's own PyTorch code, and
+with medium in 60.1 s against 70.2 s. [PERFORMANCE.md](PERFORMANCE.md) has
+every number, where raven is slower, and how to reproduce them.
+
 ```bash
 dune exec apps/tessera/bin/main.exe -- preprocess --landmask grid.tiff --year 2024 --out tile
 dune exec apps/tessera/bin/main.exe -- encode --model large --tile tile --out emb
