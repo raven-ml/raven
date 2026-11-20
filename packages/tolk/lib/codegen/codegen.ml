@@ -1046,16 +1046,44 @@ let mark_fusable u = replace u ~arg:fusable
    runs of its decoded vector, against 20 ms reading its lanes apart. *)
 let least_run = 4
 
-(* [slicer ~lanes x idx] is the slice of [x] at the leading indices [idx],
-   computed in its own lanes: the slice of an elementwise operation, or of a
-   permutation of one, is the operation on its sources' slices, a scalar
-   source as it is. Where [lanes], a bitcast that keeps its lane count is
-   one, each lane's bits its source lane's, and any other node's slice is the
-   stack of its lanes, which a vector operation reads in order; elsewhere it
-   is indexed out of it, read lane by lane. A bitcast that changes the lane
-   count is such a node: its lanes are no lanes of its source. A slicer
-   keeps the slices it has computed, which a sum's runs share. *)
-let slicer ~lanes =
+(* The lanes of [dt] a vector register of [ren] holds, at least
+   [least_run]. *)
+let register_lanes (ren : Renderer.t) dt =
+  match ren.registers () with
+  | Some file -> max least_run (file.bytes / Dtype.itemsize dt)
+  | None -> least_run
+
+(* Whether a sum in runs of [width] lanes, [width] of the sum's type filling
+   a register of [ren] or not, computes the bitcast [u] one run at a time. A
+   run narrower than a register computes each operation at part of its
+   width. Where [u]'s lanes fill whole registers of its type, it is computed
+   whole and each run takes its lanes: in runs of 4 rows, the GGUF layout's
+   MXFP4 product of 4096 by 4096 (64 codes) took 3.94 ms decoding each run
+   (160 cycles an iteration by llvm-mca) against 2.63 ms decoding its codes
+   at once, and kaun's Q6_K product 6.09 ms against 4.06. Where they leave a
+   register part empty, it stays in runs: the routed MXFP4 product of 3
+   tokens, 12 codes, took 59.1 ms in runs against 64.1 whole. The rule is
+   fitted to these. *)
+let in_runs (ren : Renderer.t) ~width dt u =
+  width >= register_lanes ren dt
+  ||
+  match List.for_all (function Int _ -> true | Sym _ -> false) (shape u) with
+  | false -> true
+  | true ->
+      let n = Helpers.prod (int_shape (shape u)) in
+      n mod register_lanes ren (dtype u) <> 0
+
+(* [slicer ~lanes ~bitcasts x idx] is the slice of [x] at the leading indices
+   [idx], computed in its own lanes: the slice of an elementwise operation,
+   or of a permutation of one, is the operation on its sources' slices, a
+   scalar source as it is. A bitcast [u] that keeps its lane count is one
+   where [bitcasts u], each lane's bits its source lane's. Where [lanes], any
+   other node's slice is the stack of its lanes, which a vector operation
+   reads in order; elsewhere it is indexed out of it, read lane by lane. A
+   bitcast that changes the lane count is such a node: its lanes are no
+   lanes of its source. A slicer keeps the slices it has computed, which a
+   sum's runs share. *)
+let slicer ~lanes ~bitcasts =
   let memo = Tbl.create 64 in
   let whole s = is_invalid s || shape s = [] in
   let full s sh =
@@ -1063,7 +1091,8 @@ let slicer ~lanes =
   in
   let elementwise u =
     Op.Set.mem (op u) Op.Set.elementwise
-    && ((not (is Op.Bitcast u)) || (lanes && not (is_shape_changing_bitcast u)))
+    && ((not (is Op.Bitcast u))
+       || ((not (is_shape_changing_bitcast u)) && bitcasts u))
     && shape u <> []
     && List.for_all
          (fun s -> whole s || List.compare_lengths (shape s) (shape u) = 0)
@@ -1189,7 +1218,10 @@ let lower_reduce (slots, ren) r =
     else Some (product (List.filteri (fun a _ -> a < last_wide) out))
   in
   let width = Helpers.prod (List.filteri (fun a _ -> a >= last_wide) out) in
-  let slice = slicer ~lanes:(width >= least_run) in
+  let slice =
+    slicer ~lanes:(width >= least_run) ~bitcasts:(fun u ->
+        width >= least_run && in_runs ren ~width (dtype r) u)
+  in
   let run j = sum (List.map (fun k -> slice inp (k @ j)) (product sizes)) in
   let per_run f = reshape (stack (List.map f (Option.get runs))) rest in
   let ret =

@@ -250,6 +250,7 @@
   nx
   nx_array
   nx_kernel
+  nx_quant
   rune
   rune_support
   lowered

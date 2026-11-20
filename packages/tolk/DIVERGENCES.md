@@ -3423,7 +3423,13 @@ driver signals its own (D146).
   one vector of the run's lanes, in their order, the operation on its
   operands' slices, through elementwise operations and, in a run of at
   least 4 lanes, bitcasts that keep the lane count (as an MXFP4 code's
-  decode), any other node's slice then the stack of its lanes, and each
+  decode), unless the run is narrower than a vector register
+  (`Codegen.register_lanes`: 8 float32 lanes on AVX2, 4 on SSE or NEON)
+  and the bitcast's lanes fill whole registers of its type
+  (`Codegen.in_runs`), when it is computed whole and each run takes its
+  lanes of it; in a run
+  of at least 4 lanes any other node's slice is then the stack of its
+  lanes, and each
   multiply-add adds one into the run's running
   sums, which an accumulator holds as vectors; each lane keeps its terms,
   their order and their roundings. A sum that reads lanes of a vector product
@@ -3510,7 +3516,9 @@ driver signals its own (D146).
   unrolled lanes multiplies vectors of its output lanes` (every case), `› a
   host sum whose last lane axis holds one lane multiplies vectors of the axis
   before it`, `› a host sum whose widest lane axis is not its last
-  multiplies vectors of the widest`, `› a host product of operands stored along its sum gathers its
+  multiplies vectors of the widest`, rune's `Lower_reduce`'s `GGUF's MXFP4
+  blocks › by one row, in runs of 4 rows on an AVX2 host, decode their
+  codes whole`, `› a host product of operands stored along its sum gathers its
   vectors by a transpose of two-vector shuffles` (every case), `› a host selection of
   8, 16 or 32 lanes by a comparison of integers takes each lane's arm` and `›
   a host selection of 3, 6, 12, 24 or 48 lanes by a comparison of integers

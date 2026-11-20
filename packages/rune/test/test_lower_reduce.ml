@@ -1982,6 +1982,36 @@ let scaled_contractions =
       cover "a float64 accumulator" (c.acc = D.Any D.Float64);
       contract_check c)
 
+(* GGUF's MXFP4 blocks of a 4096 by 4096 matrix by one float32 row, rendered
+   for an AVX2 host: the product's tile sums in runs of 4 rows, half of a
+   register of float32, and its 64 codes fill whole registers, so they
+   decode whole and no run decodes its own 4 lanes (tolk's D141). *)
+let blocks_decode_whole () =
+  let n = 4096 in
+  let w = Nx_quant.mxfp4_blocks (Nx.copy (Nx.zeros Nx.uint8 [| n; n / 32 * 17 |])) in
+  let x = Nx.copy (Nx.zeros Nx.float32 [| 1; n |]) in
+  let target =
+    Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell")
+  in
+  let count sub s =
+    let rec go i n =
+      match String.index_from_opt s i sub.[0] with
+      | None -> n
+      | Some j ->
+          if j + String.length sub <= String.length s
+             && String.sub s j (String.length sub) = sub
+          then go (j + 1) (n + 1)
+          else go (j + 1) n
+    in
+    go 0 0
+  in
+  let sources = Lowered.sources ~target (fun () -> Nx_quant.apply w x) in
+  let total sub =
+    List.fold_left (fun n (_, _, src) -> n + count sub src) 0 sources
+  in
+  equal int ~msg:"4-lane vectors of decoded codes" 0 (total "unsigned_int4 ");
+  is_true ~msg:"a 64-lane decode" (total "unsigned_int64 " > 0)
+
 (* An MXFP4 product against bfloat16 rows rounds each scaled code to
    bfloat16, the same value, only where a tensor core takes bfloat16, so that
    the core takes both operands: Metal's family 9 does; the host has no core,
@@ -2960,6 +2990,13 @@ let () =
              complex_contractions;
              scaled_contractions;
              scaled_codes_rounded;
+             group "GGUF's MXFP4 blocks"
+               [
+                 test
+                   "by one row, in runs of 4 rows on an AVX2 host, decode \
+                    their codes whole"
+                   blocks_decode_whole;
+               ];
              segmented_contractions;
              blocked_contractions;
              blocked_rows;
