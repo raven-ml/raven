@@ -36,9 +36,6 @@ let huge_page = 2 lsl 20
 
 external clock : int -> int -> int -> int -> int = "caml_rig_nv_nvidia_clock"
 
-(* Video memory of this size or more takes 2 MiB pages. *)
-let huge_from = 8 lsl 20
-
 (* The usermode object's page, whose register at [doorbell_at]
    (NVC361_NOTIFY_CHANNEL_PENDING) wakes a channel. *)
 let usermode_bytes = 0x10000
@@ -643,9 +640,17 @@ let video_steps r p ~cpu ~page_size =
        ~video:(Some r.parent.index))
 
 (* Video memory, mapped for the host too through BAR1 if [cpu]. The RM allocates
-   it first; the addresses follow. *)
+   it first; the addresses follow. The RM's default page for video memory of
+   2 MiB or more is 2 MiB (open-gpu-kernel-modules, mem_mgr.c,
+   _memmgrPickDefaultGpuPageSize), and UVM maps a range with the largest
+   entries its address, its length and its pages all align to
+   (uvm_map_external.c), so such memory is asked in 2 MiB pages, its length
+   rounded and its address aligned to them, as CUDA's is. Aligned to 4 KiB,
+   the same pages took 4 KiB entries, and on an RTX 5000 Ada AION-1's
+   unstaged products, whose workgroups each read all of a 2.4-6.3 MB weight,
+   took 2-2.6 times as long as CUDA's. *)
 let alloc_video g ~cpu size =
-  let page_size = if size >= huge_from then huge_page else page in
+  let page_size = if size >= huge_page then huge_page else page in
   let size = round_up size page_size in
   let p = video_params g ~contiguous:cpu ~page_size size in
   let space = if cpu then Host_visible else Process in
