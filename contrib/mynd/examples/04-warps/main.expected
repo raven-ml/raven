@@ -1,0 +1,10 @@
+turned image [300; 451; 3], labels [300; 451; 1]
+left eye: 3504 pixels, 3501 after
+  box 135 84 207 146, its corners' hull after 149.1 47.6 242.5 137.3
+  box after 161 60 231 125, within the hull grown by 1/2: true
+right eye: 2368 pixels, 2364 after
+  box 287 111 345 163, its corners' hull after 272.3 147.0 348.5 221.0
+  box after 282 157 339 211, within the hull grown by 1/2: true
+nose: 1420 pixels, 1421 after
+  box 232 229 292 259, its corners' hull after 176.6 221.7 243.6 277.6
+  box after 183 230 237 270, within the hull grown by 1/2: true

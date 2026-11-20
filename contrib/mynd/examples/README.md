@@ -19,6 +19,7 @@ dune exec ./main.exe
 | [`01-values`](./01-values/) | An image's codes and fractions | `Mynd.convert` |
 | [`02-colour`](./02-colour/) | Averaging encoded values or light; alpha | `Mynd.srgb_to_linear`, `Mynd.premultiply`, `Colour.luma`, `Colour.luminance` |
 | [`03-model-input`](./03-model-input/) | An image resized and normalised for a model, and a box back | `Sample.resize`, `Box.of_cxcywh` |
+| [`04-warps`](./04-warps/) | An image, its labels and their boxes under one transform | `Sample.centres`, `Transform.rotation`, `Sample.at`, `Sample.nearest` |
 
 Examples that make a picture write it beside `main.ml` with hugin. The
 pictures are not committed.

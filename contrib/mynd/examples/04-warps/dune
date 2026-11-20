@@ -1,0 +1,19 @@
+(executable
+ (name main)
+ (libraries mynd nx nx.io hugin))
+
+; main.exe reads ../chelsea.png and writes its figure where it runs. The
+; sandbox gives it a directory of its own, which dune deletes, so the figure
+; never lands in _build/default.
+
+(rule
+ (alias runtest)
+ (deps
+  (sandbox always)
+  ../chelsea.png)
+ (action
+  (progn
+   (with-stdout-to
+    main.output
+    (run ./main.exe))
+   (diff? main.expected main.output))))
