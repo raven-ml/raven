@@ -198,16 +198,11 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   (tessera-bin/adjudication.md M9). Found by DM's skeptic
 - nx has no `nan_to_num`: aion's `Spectrum.nan_to_num` composes `isnan`,
   `clamp` and `where` to replace NaN and the infinities as torch's does
-- `Nx_io.Hdf5.window` reads one box, every chunk it covers whole, so
-  aion's `Survey.read` reads a source's rows run by run: a scattered row of
-  a Legacy Survey file, chunked (27, 1, 20, 40), decodes 128 chunks of
-  86,400 bytes, 11.1 MB for a 0.41 MB image. A row-subset read needs its
-  own design once a reader measures the cost
 - `Nx_io.Hdf5.values` decodes a whole chunked dataset into memory: 22.5 GB
-  for one Legacy Survey file's `image_array`. Only `window` fits such files
-- `Nx_io.Hdf5` reads no strings or booleans: fixed-length strings read as
-  their bytes at `uint8` (aion's `Survey` trims and decodes band names), and
-  h5py's booleans as `int8`
+  for one Legacy Survey file's `image_array`. Only `window` and `rows` fit
+  such files
+- `Nx_io.Hdf5` reads no booleans: h5py's, stored as an HDF5 enum, read as
+  `int8`
 - nx states no batch-extent invariance: whether on one device an element's
   result depends only on the extents of the axes it reduces over, not the
   others' (nx.mli:2271-2274 ties nx.cpu's order of a reduction to "the

@@ -172,7 +172,7 @@ let check n rows (m : Modality.t) =
           done)
         rows
 
-(* Rows drawn with repeats and out of order, so runs cross chunk edges. *)
+(* Rows drawn with repeats and out of order, across chunk edges. *)
 let draw_rows n =
   Gen.(array ~size:(int_range 0 6) (int_range 0 (Survey.length (source n) - 1)))
 
@@ -249,95 +249,9 @@ let values =
 
 (* Matching *)
 
-let deg = Float.pi /. 180.
-let arcsec = deg /. 3600.
-
-let unit (ra, dec) =
-  ( cos (dec *. deg) *. cos (ra *. deg),
-    cos (dec *. deg) *. sin (ra *. deg),
-    sin (dec *. deg) )
-
-let separation p q =
-  let ax, ay, az = unit p and bx, by, bz = unit q in
-  let cx = (ay *. bz) -. (az *. by)
-  and cy = (az *. bx) -. (ax *. bz)
-  and cz = (ax *. by) -. (ay *. bx) in
-  Float.atan2
-    (Float.sqrt ((cx *. cx) +. (cy *. cy) +. (cz *. cz)))
-    ((ax *. bx) +. (ay *. by) +. (az *. bz))
-
-(* The reciprocal rule by brute force: each row's nearest within 1″, the lowest
-   row on ties, kept where the nearest's nearest is the row. *)
-let reference a b =
-  let nearest p qs =
-    let best = ref None in
-    Array.iteri
-      (fun j q ->
-        let s = separation p q in
-        if s <= arcsec then
-          match !best with
-          | Some (_, s') when s' <= s -> ()
-          | _ -> best := Some (j, s))
-      qs;
-    Option.map fst !best
-  in
-  let is = ref [] in
-  Array.iteri
-    (fun i p ->
-      match nearest p b with
-      | Some j when nearest b.(j) a = Some i -> is := (i, j) :: !is
-      | _ -> ())
-    a;
-  let l = List.rev !is in
-  (Array.of_list (List.map fst l), Array.of_list (List.map snd l))
-
-let directions rows =
-  let n = Array.length rows in
-  let q f =
-    Ymir.Quantity.v Ymir.Unit.degree
-      (Nx.create Nx.float64 [| n |] (Array.map f rows))
-  in
-  Ymir.Direction.lonlat Ymir.Frame.icrs ~lon:(q fst) ~lat:(q snd)
-
-(* Catalogues of up to 10 rows within a few arcseconds of one point: near the
-   equator, across ra 0, or at a pole; some rows repeated, some NaN. *)
-let catalogues =
-  Gen.(
-    let* ra0, dec0 = of_list [ (150., 2.); (0., -30.); (40., 89.9999) ] in
-    let row =
-      let+ dx = float_range (-3.) 3. and+ dy = float_range (-3.) 3. in
-      (ra0 +. (dx /. 3600. /. Float.cos (dec0 *. deg)), dec0 +. (dy /. 3600.))
-    in
-    let cat =
-      array ~size:(int_range 0 10)
-        (frequency [ (12, row); (1, constant (Float.nan, dec0)) ])
-    in
-    let+ a = cat and+ b = cat and+ dup = bool in
-    (* A repeated row of b ties at every separation. *)
-    let b =
-      if dup && Array.length b > 0 then Array.append b [| b.(0) |] else b
-    in
-    (a, b))
-
 let matching =
   group "matching"
     [
-      prop "pairs are the reciprocal nearest rows within 1\"" catalogues
-        (fun (a, b) ->
-          let i, j = Survey.matches (directions a) (directions b) in
-          cover "a pair" (Array.length i > 0);
-          cover "a row of b repeated"
-            (Array.length b > 1 && b.(Array.length b - 1) = b.(0));
-          cover "a NaN row" (Array.exists (fun (r, _) -> Float.is_nan r) a);
-          cover "a row near b left unpaired"
-            (Array.exists Fun.id
-               (Array.mapi
-                  (fun k p ->
-                    Array.exists (fun q -> separation p q <= arcsec) b
-                    && not (Array.mem k i))
-                  a));
-          let ri, rj = reference a b in
-          equal (pair (array int) (array int)) (ri, rj) (i, j));
       test "the tutorial file's groups pair row by row" (fun () ->
           let i, j =
             Survey.pair (source "grouped/legacysurvey") (source "grouped/desi")

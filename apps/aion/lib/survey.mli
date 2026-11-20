@@ -90,7 +90,7 @@ val read : t -> int array -> Modality.t -> Nx.host Codecs.data
     the row for a dataset of another number of rows, for an image whose rows'
     bands differ or name no band of [m] ({!Image.name}), and for a spectrum row
     whose wavelengths of [-1] are not a suffix or are all of its pixels; and as
-    {!Nx_io.Hdf5.window} does. *)
+    {!Nx_io.Hdf5.rows} and {!Nx_io.Hdf5.strings} do. *)
 
 (** {1:matching Cross-matching} *)
 
@@ -106,12 +106,3 @@ val pair : t -> t -> int array * int array
     Raises [Invalid_argument] as {!Ymir.Direction.lonlat} does for an infinite
     angle. *)
 
-(**/**)
-
-(* For aion's tests: [matches a b] is {!pair}'s rule over the directions [a]
-   and [b]. *)
-
-val matches :
-  ('f, Nx.host) Ymir.Direction.t ->
-  ('f, Nx.host) Ymir.Direction.t ->
-  int array * int array

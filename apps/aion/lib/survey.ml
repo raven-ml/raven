@@ -156,53 +156,22 @@ let modalities t =
 
 (* Reading *)
 
-(* [rows] as maximal runs [(start, n)] of consecutive rows, in order. *)
-let runs rows =
-  let acc = ref [] in
-  Array.iter
-    (fun r ->
-      match !acc with
-      | (s, n) :: rest when s + n = r -> acc := (s, n + 1) :: rest
-      | l -> acc := (r, 1) :: l)
-    rows;
-  List.rev !acc
-
-(* The dataset [n]'s elements at [rows], along its first axis, and from [lo]
-   for [width] along its second if [cols] is [Some (lo, width)]. *)
-let window t ?cols n rows =
+(* The dataset [n]'s rows [rows], each its own window. *)
+let select t n rows =
   let d = Hashtbl.find t.datasets n in
   let shape = Nx_io.Hdf5.shape d in
   if Array.length shape = 0 || shape.(0) <> t.length then
     fail "%s: %s: %s rows, %d objects" t.path (Nx_io.Hdf5.path d)
       (if Array.length shape = 0 then "no" else string_of_int shape.(0))
       t.length;
-  let box (s, k) =
-    let start = Array.make (Array.length shape) 0 and size = Array.copy shape in
-    start.(0) <- s;
-    size.(0) <- k;
-    (match cols with
-    | Some (lo, w) ->
-        start.(1) <- lo;
-        size.(1) <- w
-    | None -> ());
-    match Nx_io.Hdf5.window d ~start ~shape:size with
-    | Ok x -> x
-    | Error _ -> fail "%s: %s: a partial read" t.path (Nx_io.Hdf5.path d)
-  in
-  (d, match runs rows with [] -> [ box (0, 0) ] | l -> List.map box l)
+  let ones = Array.make (Array.length rows) 1 in
+  match Nx_io.Hdf5.rows d ~row:rows ~rows:ones with
+  | Ok x -> (d, x)
+  | Error _ -> fail "%s: %s: a partial read" t.path (Nx_io.Hdf5.path d)
 
-let float32 t ?cols n rows =
-  let _, parts = window t ?cols n rows in
-  Nx.concatenate ~axis:0 (List.map (fun (Nx.P x) -> Nx.cast Nx.float32 x) parts)
-
-(* A row of fixed-length strings, NUL- or space-padded: [[|c; w|]] bytes. *)
-let strings x =
-  let c = Nx.dim 0 x and w = Nx.dim 1 x in
-  let b = Nx.to_array x in
-  List.init c (fun i ->
-      String.trim
-        (String.init w (fun k -> Char.chr b.((i * w) + k))
-        |> String.map (fun ch -> if ch = '\000' then ' ' else ch)))
+let float32 t n rows =
+  let _, Nx.P x = select t n rows in
+  Nx.cast Nx.float32 x
 
 let band_of t d row n =
   match
@@ -215,18 +184,16 @@ let band_of t d row n =
 
 let image t rows (m : Modality.t) : Nx.host Codecs.data =
   let flux = float32 t "image_array" rows in
-  let d, parts = window t "image_band" rows in
-  let names =
-    Nx.concatenate ~axis:0 (List.map (fun p -> Nx.unpack Nx.uint8 p) parts)
+  let d, names = select t "image_band" rows in
+  let names = Nx_io.Hdf5.strings d names in
+  let row i =
+    let c = Array.length names / Array.length rows in
+    List.map (band_of t d rows.(i)) (Array.to_list (Array.sub names (i * c) c))
   in
-  let row i = Nx.slice [ Nx.I i ] names in
-  let bands =
-    if Array.length rows = 0 then Codecs.bands m
-    else List.map (band_of t d rows.(0)) (strings (row 0))
-  in
+  let bands = if Array.length rows = 0 then Codecs.bands m else row 0 in
   Array.iteri
     (fun i r ->
-      let bs = List.map (band_of t d r) (strings (row i)) in
+      let bs = row i in
       if bs <> bands then
         fail "%s: %s: row %d lists the bands %s, row %d %s" t.path
           (Nx_io.Hdf5.path d) r
@@ -303,7 +270,8 @@ let read t rows m =
   | Column c, Scalar modality -> Scalar { modality; values = float32 t c rows }
   | Coefficients (c, lo), Scalar modality ->
       let w = Modality.tokens m in
-      Scalar { modality; values = float32 t ~cols:(lo, w) c rows }
+      let values = Nx.slice [ Nx.A; Nx.R (lo, lo + w) ] (float32 t c rows) in
+      Scalar { modality; values }
   | _ -> assert false
 
 (* Cross-matching *)
@@ -317,29 +285,9 @@ let directions t =
   in
   Ymir.Direction.lonlat Ymir.Frame.icrs ~lon:(read "ra") ~lat:(read "dec")
 
-(* For each of [n] rows, its partner [j] at the least separation [s], the
-   lowest on ties; Int64.max_int for a row with none. *)
-let nearest n i j s =
-  let best = Nx.reduce_segments Min ~segments:n i s in
-  let tied = Nx.equal s (Nx.take i best) in
-  let j = Nx.where tied j (Nx.full_like j Int64.max_int) in
-  Nx.reduce_segments Min ~segments:n i j
-
-let matches a b =
-  let rows d = Nx.dim 0 (Ymir.Direction.xyz d) in
-  let i, j, s = Ymir.Direction.pairs ~within:radius a b in
-  let s = Ymir.Quantity.value Ymir.Unit.radian s in
-  let n = rows a in
-  let ab = Nx.to_array (nearest n i j s)
-  and ba = Nx.to_array (nearest (rows b) j i s) in
-  let is = ref [] and js = ref [] in
-  for k = n - 1 downto 0 do
-    let p = ab.(k) in
-    if p <> Int64.max_int && ba.(Int64.to_int p) = Int64.of_int k then begin
-      is := k :: !is;
-      js := Int64.to_int p :: !js
-    end
-  done;
-  (Array.of_list !is, Array.of_list !js)
-
-let pair a b = matches (directions a) (directions b)
+let pair a b =
+  let i, j, _ =
+    Ymir.Direction.reciprocal ~within:radius (directions a) (directions b)
+  in
+  let rows x = Array.map Int64.to_int (Nx.to_array x) in
+  (rows i, rows j)
