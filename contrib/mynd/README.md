@@ -20,6 +20,8 @@ releases on its own schedule and carries no API stability guarantee.
 - [`doc/index.md`](doc/index.md) is the quick start. The other pages
   under `doc/` compose the API into colour adjustments, filters, edge
   detectors and morphological operators.
+- [`examples/`](examples/) applies it to a photograph and to models'
+  outputs, in programs the test suite runs.
 - `test/` holds the laws and the cases against reference implementations
   (torch, torchvision, Pillow, pycocotools, scipy, scikit-image,
   OpenCV).
