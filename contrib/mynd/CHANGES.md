@@ -12,6 +12,11 @@ All notable changes to Mynd are documented in this file.
   `0 0 0 0`. The guide page `doc/annotations.md` moves masks and keypoints.
 - Add `Box.giou`, generalized IoU paired as `Box.iou` pairs boxes, with
   `c - u` clamped at 0 so that rounding never puts it above `iou`.
+- New library `mynd.coco`: COCO's files through jsont, polygon masks by
+  `Mynd_coco.runs`, and `evaluate_boxes`, `evaluate_masks` and `summary`,
+  whose tables equal pycocotools 2.0.11's bit for bit on valid data. A mask
+  result's area range reads its pixel count, where pycocotools reads the
+  `bbox` a results file holds beside it.
 - mynd replaces sowilo, which raven no longer ships. Each sowilo value
   becomes a mynd value, a composition on a page of the guide (`doc/`) or
   an nx call, in the table below. Every replacement takes any float dtype

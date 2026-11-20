@@ -16,6 +16,8 @@ depends: [
   "dune" {>= "3.21"}
   "nx" {>= "1.0.0~alpha3"}
   "rune" {>= "1.0.0~alpha3"}
+  "jsont"
+  "bytesrw" {with-test}
   "windtrap" {with-test & >= "0.3.1"}
   "rig" {with-test & >= "1.0.0~alpha3"}
   "mdx" {with-test}

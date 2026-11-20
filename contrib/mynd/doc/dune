@@ -5,11 +5,12 @@
   filters.md
   edges.md
   morphology.md
+  coco.md
   annotations.md)
  (package mynd)
  (enabled_if
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries mynd nx nx.io rune)
+ (libraries mynd mynd.coco nx nx.io rune jsont.bytesrw)
  (preludes prelude.ml))

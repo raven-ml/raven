@@ -1,0 +1,7 @@
+; mynd.coco: COCO's annotations, polygon masks and detection metric.
+
+(library
+ (name mynd_coco)
+ (public_name mynd.coco)
+ (private_modules raster walk fsum)
+ (libraries mynd nx jsont))
