@@ -912,13 +912,18 @@ let group k =
   in
   (* The axis the group takes, split: of the axes a load reads at unit stride,
      then of the others, the first that splits by the group's threads, else
-     the first longer than [unroll_whole] padded to a multiple of them by its
+     the longest longer than [unroll_whole] padded to a multiple of them by its
      reduction's identity. The maximum of 128 runs of 1571, a prime, took 122
      us in one workgroup of 32 threads looping 1571 times, and 8 us padded to
-     1584 in 128 workgroups of 16. A pad is tried on a copy, since one whose
-     split is refused would leave the axis padded and not grouped. Each class
-     of axes tries [widths] in turn, widest first, so a narrower group of a
-     unit-stride axis is taken before a strided axis. *)
+     1584 in 128 workgroups of 16. Where a kernel's reduces close axes of
+     their own, the longest is the one left to loop otherwise: whisper's
+     timestamp rule, a sum of 1501 exponentials beside a maximum of 35
+     partials, took 79 us with the 35 grouped, each thread adding all 1501,
+     and 9.4 us with the 1501 grouped.
+     A pad is tried on a copy, since one whose split is refused would leave
+     the axis padded and not grouped. Each class of axes tries [widths] in
+     turn, widest first, so a narrower group of a unit-stride axis is taken
+     before a strided axis. *)
   let grouped ?(widths = [ group_threads ]) k =
     let first, rest = List.partition (unit k) (reduce_axes k) in
     let among axes t =
@@ -933,7 +938,13 @@ let group k =
       match List.find_opt (split k) axes with
       | Some axis -> Some axis
       | None ->
-          List.find_opt (fun axis -> padded (K.copy k) axis) axes
+          let size axis =
+            Option.value ~default:Bigint.zero (known_size (shape_at k axis))
+          in
+          let longest a b = Bigint.compare (size b) (size a) in
+          List.find_opt
+            (fun axis -> padded (K.copy k) axis)
+            (List.stable_sort longest axes)
           |> Option.map (fun axis ->
                  ignore (padded k axis);
                  axis)

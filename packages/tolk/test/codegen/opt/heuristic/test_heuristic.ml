@@ -3705,6 +3705,39 @@ let core_rows_settings =
       equal (option int) ~msg:"a core's shape without its instruction" None
         (Setting.context [ Setting.B (Setting.use_tc, 2) ] core_rows))
 
+(* A maximum of 35 values beside a sum of 1501, each reduce closing an axis
+   of its own and neither length a multiple of the group's threads, as
+   whisper's timestamp rule sums 1501 exponentials beside the maximum of a
+   split's 35 partials: the group pads and splits the longer, which every
+   thread would otherwise add whole, and leaves the shorter a loop. *)
+let longest_padded =
+  let kernel () =
+    let open Ops.O in
+    let param slot size =
+      Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32
+    in
+    let out = param 0 1 and a = param 1 35 and b = param 2 1501 in
+    let i = Ops.range ~axis_type:Weak (Ops.Int 35) [ 1 ]
+    and j = Ops.range ~axis_type:Weak (Ops.Int 1501) [ 2 ] in
+    let m = Ops.reduce (Ops.index a [ i ]) Max [ i ]
+    and t = Ops.reduce (Ops.index b [ j ]) Add [ j ] in
+    Ops.sink ~kernel:(Ops.kernel_info ())
+      [ Ops.store (Ops.index out [ int 0 ]) (m + t) ]
+  in
+  test "a group pads the longest of the reduces' axes" (fun () ->
+      let k = K.v (kernel ()) (Lazy.force sm_89) in
+      K.convert_loop_to_global k;
+      let o = Heuristic.hand_coded_optimizations k in
+      let rest id =
+        List.filter_map
+          (fun r -> if Ops.axis_id r = [ id ] then Some (size r) else None)
+          (K.rngs o)
+      in
+      equal ~msg:"the 35 stay a loop" (list bigint) [ Bigint.of_int 35 ] (rest 1);
+      is_true ~msg:"the 1501 are split"
+        (List.for_all (fun n -> Bigint.(lt n (of_int 1501))) (rest 2));
+      equal ~msg:"grouped" int 1 (K.group_for_reduces o))
+
 let () =
   exit
     (Windtrap.run "Tolk.Heuristic"
@@ -3728,6 +3761,7 @@ let () =
          staged_products;
          padded_upcast;
          widths;
+         longest_padded;
          group "streaming"
            [
              loads_once_a_tile;

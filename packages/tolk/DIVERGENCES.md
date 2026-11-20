@@ -8417,7 +8417,7 @@ one reads what the other left, and then they form a chain (D474).
 - **tolk:** `Heuristic.group` and `Heuristic.unroll_whole`.
 - **Differs:** of the first three reduce axes, those a load reads at unit
   stride first (D357), then the others, the group takes the first that splits
-  by its threads (16, or D487's width), else the first longer than 32 padded
+  by its threads (16, or D487's width), else the longest longer than 32 padded
   to a multiple of them by `PADTO`,
   its reduction's identity in the padded steps and its loads gated. So a
   unit-stride axis is padded rather than a strided one that 16 divides
@@ -8435,7 +8435,12 @@ one reads what the other left, and then they form a chain (D474).
   `Cuda/argmax-bfloat16-201088` took 272 us and takes 29.5 us, one interleaved
   pair under load.
   Vocabularies of 151936 (2^7 x 1187) and 128256 (2^8 x 501) split the same way.
-  AMD and Metal take the rule untimed.
+  AMD and Metal take the rule untimed. The longest of the axes that pad, not
+  the first, serves a kernel whose reduces close axes of their own: whisper's
+  timestamp rule sums 1501 exponentials beside the maximum of a split's 35
+  partials, and with the 35 grouped each thread added all 1501: 79 us a
+  decode step of large-v3-turbo on fudge's RTX 5000 Ada, and 9.4 us with the
+  1501 grouped (DEBUG=2).
 - **Pinned by:** the Heuristic suite's `max_vocab_{metal,cuda,amd}`,
   `sum_prime_{metal,cuda,amd}`, `sum_cols_prime_{metal,cuda,amd}` (16 threads
   first across the columns), `sum_33_{metal,cuda,amd}` (the shortest axis
@@ -8443,6 +8448,7 @@ one reads what the other left, and then they form a chain (D474).
   before a strided one that 16 divides), and `a group's fastest threads read
   at unit stride where a load reads a reduce or output axis so` over them;
   `sum_17` and `matmul_half_ragged`, whose axes of 32 or less stay unrolled;
+  `a group pads the longest of the reduces' axes`;
   rune's `Jit_gpu › an argmax or argmin over a length 16 does not divide is
   nx's position` and `› a sum and a product over a length 16 does not divide
   are exact`; rune's bench row `Cuda/argmax-bfloat16-201088` (baseline to
