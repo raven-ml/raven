@@ -42,12 +42,14 @@ header the entries. An input whose value is NaN or infinite is absent for its
 object. Redshift's class 1024 has no value: `posterior` gives its probability
 apart, and `generate` counts it and writes NaN.
 
-`--device` picks where the codecs and the transformer compute: `cpu`,
-eagerly (the default); `cpu-jit`, compiled on the host; or a GPU, compiled
-there, named `cuda`, `nv`, `amd` or `metal`. A compiled device pads each
-batch to `--batch` rows, so that every call runs one program. Compiled
-results agree with eager ones to their last bits, so a draw whose uniform
-falls that close to a boundary between two tokens may differ.
+`--device` names the devices where the codecs and the transformer compute,
+as `Rig_gpus.open_all` reads them: `cpu` (the default), a GPU (`cuda`, `nv`,
+`amd` or `metal`) or a comma list. They compute there compiled by
+`Rune.jit`, or eagerly on the host with `--eager`. The objects with a present
+input are cut into batches of `--batch`, all full but the last, so a
+compiled call runs at most two shapes. Compiled results agree with eager
+ones to their last bits, so a draw whose uniform falls that close to a
+boundary between two tokens may differ.
 
 `--model base` (the default) downloads aion-base, 1.27 GB with its codecs,
 from `polymathic-ai/aion-base` on Hugging Face; `--model large` downloads

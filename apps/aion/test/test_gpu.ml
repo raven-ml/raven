@@ -383,11 +383,12 @@ let scalars =
               equal (list (pair int float_exact)) [] !outside
           | _ -> fail "not a scalar's values"))
 
-(* main.exe on the GPU against main.exe eager on the host, on aion.t's Hub cache
-   and survey files: the same objects, embeddings and probabilities within 2e-5
-   of the largest, as aion.t holds cpu-jit's, the redshift codebook's values
-   exactly, its transform the identity, and the draws aion.t's cpu-jit run
-   makes, none of their uniforms that close to a boundary. *)
+(* main.exe on the GPU against main.exe --eager on the host, on aion.t's Hub
+   cache and survey files: the same objects, embeddings and probabilities
+   within 2e-5 of the largest, as aion.t holds the compiled host's, the
+   redshift codebook's values exactly, its transform the identity, and the
+   draws aion.t's compiled run makes, none of their uniforms that close to a
+   boundary. *)
 
 let bin =
   test "main.exe on the GPU computes as eager main.exe" (fun () ->
@@ -401,13 +402,12 @@ let bin =
       let dir = Lazy.force hub in
       let out dev f = Filename.concat dir (f ^ "." ^ dev ^ ".npz") in
       List.iter
-        (fun dev ->
+        (fun (dev, at) ->
           let main f args =
             exec
               ~env:[| "RAVEN_CACHE_ROOT=" ^ dir |]
               "../bin/main.exe"
-              (String.split_on_char ' ' args
-              @ [ "--device"; dev; "--out"; out dev f ])
+              (String.split_on_char ' ' args @ at @ [ "--out"; out dev f ])
           in
           main "e" "embed --legacysurvey mmu/legacysurvey.h5 --gaia mmu/gaia.h5";
           main "z"
@@ -415,7 +415,7 @@ let bin =
           main "g"
             "generate --gaia mmu/gaia.h5 --rows 0:2 --target tok_z --steps 1 \
              --draws 3 --seed 7")
-        [ device; "cpu" ];
+        [ (device, [ "--device"; device ]); ("cpu", [ "--eager" ]) ];
       let read f dt name =
         let read dev = floats (get (Nx_io.load_npz (out dev f)) dt name) in
         (read device, read "cpu")

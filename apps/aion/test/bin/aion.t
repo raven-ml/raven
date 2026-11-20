@@ -13,7 +13,7 @@ row 2's nearest Gaia row is 1.5″ away. rows holds each object's row in each
 source.
 
   $ aion embed --legacysurvey $ls --gaia $gaia --out e.npz
-  embed: 2 objects; of rows 0:3, 1 without a partner in every source, 0 without a present input
+  embed: 2 objects in 1 batches; of rows 0:3, 1 without a partner in every source, 0 without a present input
   $ ./npz.exe entries e.npz
   embedding float32 [2; 16]
   rows int64 [2; 2]
@@ -27,7 +27,7 @@ FLUX_G is infinite, so its object has Flux_g absent, and its embedding, the
 mean over its present tokens, is the one it has without Flux_g, alone.
 
   $ aion embed --legacysurvey $ls --gaia $gaia --rows 1:2 --inputs tok_xp_bp,tok_xp_rp --out alone.npz
-  embed: 1 objects; of rows 1:2, 0 without a partner in every source, 0 without a present input
+  embed: 1 objects in 1 batches; of rows 1:2, 0 without a partner in every source, 0 without a present input
   $ ./npz.exe same embedding e.npz 1 alone.npz 0
   equal within 1e-5
 
@@ -52,7 +52,7 @@ upper edge of its bin, and for redshift p_1024, the probability of its class
 1024, which decodes to none.
 
   $ aion posterior --legacysurvey $ls --gaia $gaia --target tok_z --out z.npz
-  posterior: 2 objects; of rows 0:3, 1 without a partner in every source, 0 without a present input
+  posterior: 2 objects in 1 batches; of rows 0:3, 1 without a partner in every source, 0 without a present input
   $ ./npz.exe entries z.npz
   p float32 [2; 1024]
   p_1024 float32 [2]
@@ -66,7 +66,7 @@ upper edge of its bin, and for redshift p_1024, the probability of its class
 p is the softmax of the decoder's logits, which reference.exe computes from
 the library for one object, p_1024 the mass past the classes with a value.
 
-  $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --out zg.npz > /dev/null
+  $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --eager --out zg.npz > /dev/null
   $ ./reference.exe $gaia 0 tok_xp_bp tok_z ref.npz
   $ ./npz.exe posterior zg.npz 0 ref.npz
   p is the softmax of the decoder's logits within 1e-6
@@ -74,8 +74,8 @@ the library for one object, p_1024 the mass past the classes with a value.
 An XP target has a distribution per coefficient. Gaia row 2 has a NaN BP
 coefficient, so its only input is absent and it is left out.
 
-  $ aion posterior --gaia $gaia --target tok_xp_rp --inputs tok_xp_bp --out xp.npz
-  posterior: 3 objects; of rows 0:4, 0 without a partner in every source, 1 without a present input
+  $ aion posterior --gaia $gaia --target tok_xp_rp --inputs tok_xp_bp --eager --out xp.npz
+  posterior: 3 objects in 1 batches; of rows 0:4, 0 without a partner in every source, 1 without a present input
   $ ./npz.exe entries xp.npz
   p float32 [3; 55; 1024]
   rows int64 [3; 1]
@@ -95,12 +95,59 @@ Each XP coefficient has its own codebook, and its own row of upper.
   $ ./npz.exe posterior xp.npz 2 ref.npz
   p is the softmax of the decoder's logits within 1e-6
 
+The objects with a present input are cut into batches of --batch, each
+full but the last, and the output holds those objects alone. Of Gaia rows
+1:4, row 2 has no present input, so rows 1 and 3 make one batch of 2.
+
+  $ aion posterior --gaia $gaia --target tok_xp_rp --inputs tok_xp_bp --rows 1:4 --batch 2 --out xb.npz
+  posterior: 2 objects in 1 batches; of rows 1:4, 0 without a partner in every source, 1 without a present input
+  $ ./npz.exe entries xb.npz
+  p float32 [2; 55; 1024]
+  rows int64 [2; 1]
+  upper float32 [55; 1024]
+  $ ./npz.exe ints xb.npz rows
+  1
+  3
+  $ aion generate --gaia $gaia --target tok_xp_rp --inputs tok_xp_bp --rows 1:4 --batch 2 --steps 1 --out xg.npz
+  generate: 2 objects in 1 batches; of rows 1:4, 0 without a partner in every source, 1 without a present input
+  $ ./npz.exe entries xg.npz
+  rows int64 [2; 1]
+  tokens int64 [2; 1; 55]
+  values float32 [2; 1; 55]
+  $ aion embed --gaia $gaia --batch 3 --out e3.npz
+  embed: 4 objects in 2 batches; of rows 0:4, 0 without a partner in every source, 0 without a present input
+  $ ./npz.exe entries e3.npz
+  embedding float32 [4; 16]
+  rows int64 [4; 1]
+
+With no object kept, each command writes its entries with no rows: Legacy
+Survey row 2 has no partner in Gaia, and Gaia row 2 no present input.
+
+  $ aion embed --legacysurvey $ls --gaia $gaia --rows 2:3 --out e0.npz
+  embed: 0 objects in 0 batches; of rows 2:3, 1 without a partner in every source, 0 without a present input
+  $ ./npz.exe entries e0.npz
+  embedding float32 [0; 16]
+  rows int64 [0; 2]
+  $ aion posterior --legacysurvey $ls --gaia $gaia --rows 2:3 --target tok_z --out z0.npz
+  posterior: 0 objects in 0 batches; of rows 2:3, 1 without a partner in every source, 0 without a present input
+  $ ./npz.exe entries z0.npz
+  p float32 [0; 1024]
+  p_1024 float32 [0]
+  rows int64 [0; 2]
+  upper float32 [1024]
+  $ aion generate --gaia $gaia --rows 2:3 --target tok_xp_rp --inputs tok_xp_bp --steps 1 --out g0.npz
+  generate: 0 objects in 0 batches; of rows 2:3, 0 without a partner in every source, 1 without a present input
+  $ ./npz.exe entries g0.npz
+  rows int64 [0; 1]
+  tokens int64 [0; 1; 55]
+  values float32 [0; 1; 55]
+
 generate draws a target's tokens given the inputs, by random-order
 generation in --steps steps, and decodes them with aion-base's codec: for an
 XP target, values holds each draw's 55 coefficients.
 
-  $ aion generate --gaia $gaia --target tok_xp_rp --inputs tok_xp_bp --steps 4 --draws 2 --batch 2 --seed 4 --out x.npz
-  generate: 3 objects; of rows 0:4, 0 without a partner in every source, 1 without a present input
+  $ aion generate --gaia $gaia --target tok_xp_rp --inputs tok_xp_bp --steps 4 --draws 2 --batch 2 --seed 4 --eager --out x.npz
+  generate: 3 objects in 2 batches; of rows 0:4, 0 without a partner in every source, 1 without a present input
   $ ./npz.exe entries x.npz
   rows int64 [3; 1]
   tokens int64 [3; 2; 55]
@@ -111,8 +158,8 @@ XP target, values holds each draw's 55 coefficients.
 Draw j of an object is Roar.sample's with the key fold_in (fold_in (key seed)
 r) j, r the object's row in the first source, and the steps reveal upstream's
 linear counts, the larger first: 14, 14, 14 and 13 of the 55 tokens.
-reference.exe draws them from the library, in main.exe's batches. Here batch
-1 holds Gaia row 3 alone, since row 2 has no present input.
+reference.exe draws them from the library, in main.exe's batches: the
+objects with a present input, Gaia rows 0, 1 and 3, two at a time.
 
   $ ./reference.exe generate $gaia tok_xp_bp tok_xp_rp 4 14,14,14,13 2 2 ref.npz
   $ ./npz.exe equal x.npz ref.npz tokens
@@ -120,8 +167,8 @@ reference.exe draws them from the library, in main.exe's batches. Here batch
 
 So a seed gives the same draws, and another seed others.
 
-  $ aion generate --gaia $gaia --rows 0:2 --target tok_z --steps 1 --draws 3 --seed 7 --out g.npz
-  generate: 2 objects; of rows 0:2, 0 without a partner in every source, 0 without a present input
+  $ aion generate --gaia $gaia --rows 0:2 --target tok_z --steps 1 --draws 3 --seed 7 --eager --out g.npz
+  generate: 2 objects in 1 batches; of rows 0:2, 0 without a partner in every source, 0 without a present input
   $ ./npz.exe ints g.npz tokens
   978
   85
@@ -129,40 +176,43 @@ So a seed gives the same draws, and another seed others.
   482
   147
   12
-  $ aion generate --gaia $gaia --rows 0:2 --target tok_z --steps 1 --draws 3 --seed 8 --out g8.npz > /dev/null
+  $ aion generate --gaia $gaia --rows 0:2 --target tok_z --steps 1 --draws 3 --seed 8 --eager --out g8.npz > /dev/null
   $ ./npz.exe equal g.npz g8.npz tokens
   tokens differ in 6 of 6 values
 
---device cpu-jit runs the transformer and the codecs compiled on the host,
-each batch padded to --batch rows. Compiled sums may add their terms in
-another order: test_transformer holds the compiled transformer within 2τŝ
-of the eager one by the narrow network's rounding ensemble, which is at most
+Without --eager, main.exe runs the transformer and the codecs compiled by
+Rune.jit on the devices --device names, cpu by default; --eager computes
+them eagerly on the host. Compiled sums may add their terms in another
+order: test_transformer holds the compiled transformer within 2τŝ of the
+eager one by the narrow network's rounding ensemble, which is at most
 1.5e-5 of an object's largest encoding or logit there. So embeddings, means
 of the encoding, and probabilities, whose softmax takes the logits'
 differences, agree within 2e-5 of their largest value, and these draws
 exactly, none of their uniforms falling that close to a boundary between
-two tokens. Row 2 of each run has no partner, or no present input, so a
-batch keeps fewer objects than it reads.
+two tokens.
 
-  $ aion embed --legacysurvey $ls --gaia $gaia --device cpu-jit --out ej.npz
-  embed: 2 objects; of rows 0:3, 1 without a partner in every source, 0 without a present input
-  $ ./npz.exe same embedding e.npz 0 ej.npz 0 2e-5
+  $ aion embed --legacysurvey $ls --gaia $gaia --eager --out ee.npz
+  embed: 2 objects in 1 batches; of rows 0:3, 1 without a partner in every source, 0 without a present input
+  $ ./npz.exe same embedding ee.npz 0 e.npz 0 2e-5
   equal within 2e-5
-  $ ./npz.exe same embedding e.npz 1 ej.npz 1 2e-5
+  $ ./npz.exe same embedding ee.npz 1 e.npz 1 2e-5
   equal within 2e-5
-  $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --device cpu-jit --out zj.npz > /dev/null
+  $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --out zj.npz > /dev/null
   $ ./npz.exe same p zg.npz 0 zj.npz 0 2e-5
   equal within 2e-5
   $ ./npz.exe same p zg.npz 2 zj.npz 2 2e-5
   equal within 2e-5
-  $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --device cpu-jit --batch 2 --out z2.npz > /dev/null
+  $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --device cpu --batch 2 --out z2.npz > /dev/null
   $ ./npz.exe same p zg.npz 2 z2.npz 2 2e-5
   equal within 2e-5
-  $ aion generate --gaia $gaia --rows 0:2 --target tok_z --steps 1 --draws 3 --seed 7 --device cpu-jit --out gj.npz > /dev/null
+  $ aion generate --gaia $gaia --rows 0:2 --target tok_z --steps 1 --draws 3 --seed 7 --out gj.npz > /dev/null
   $ ./npz.exe equal g.npz gj.npz tokens
   tokens equal
   $ aion embed --gaia $gaia --device vulkan --out x.npz
   aion: --device vulkan: "vulkan" names no device: a name is KIND or KIND:N, where KIND is one of CPU, METAL, CUDA, NV, AMD, NV-PCI, AMD-PCI, in any case, and N a number with no leading zero
+  [2]
+  $ aion embed --gaia $gaia --device cpu-jit --out x.npz
+  aion: --device cpu-jit: "cpu-jit" names no device: a name is KIND or KIND:N, where KIND is one of CPU, METAL, CUDA, NV, AMD, NV-PCI, AMD-PCI, in any case, and N a number with no leading zero
   [2]
 
 A one-token target drawn in one step follows the posterior: the frequencies
@@ -171,7 +221,7 @@ Pearson's test at its 0.999 quantile. Redshift's class 1024 is drawn, and
 its value is NaN.
 
   $ aion generate --gaia $gaia --target tok_z --inputs tok_xp_bp --steps 1 --draws 2000 --seed 1 --out z.npz
-  generate: 3 objects; of rows 0:4, 0 without a partner in every source, 1 without a present input
+  generate: 3 objects in 1 batches; of rows 0:4, 0 without a partner in every source, 1 without a present input
   generate: 3 draws of tok_z's class 1024, which decodes to no value
   $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --out p.npz > /dev/null
   $ ./npz.exe chi2 z.npz p.npz 1
@@ -192,7 +242,7 @@ A path to an existing file is the file, even where it holds :/.
 
   $ mkdir x: && cp $gaia x:/gaia.h5
   $ aion embed --gaia x:/gaia.h5 --out x.npz
-  embed: 4 objects; of rows 0:4, 0 without a partner in every source, 0 without a present input
+  embed: 4 objects in 1 batches; of rows 0:4, 0 without a partner in every source, 0 without a present input
 
 Refusals.
 

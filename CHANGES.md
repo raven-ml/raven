@@ -9,6 +9,12 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- **Breaking:** aion's commands compile by `Rune.jit` on the devices
+  `--device` names as `Rig_gpus.open_all` reads them, `cpu` by default, and
+  `--eager` computes eagerly. `--device cpu-jit` is gone: `--device cpu`, and
+  no `--device`, now compile, where they ran eagerly. `--device` takes a comma
+  list of devices. A run that keeps no object writes every entry with no rows,
+  such as `embedding` of shape `[0; width]`.
 - **Breaking:** gpt-oss's `main.exe` compiles its decode step on the host
   when `--devices` names none, where it ran eagerly; `--eager` runs it
   eagerly. `--devices` takes `cpu`, as `Rig_gpus.open_all` reads names.

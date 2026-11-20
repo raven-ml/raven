@@ -334,7 +334,7 @@ let init ~key a =
 (* The names of the refusing functions. *)
 let encode_fn = "Transformer.encode"
 let decode_fn = "Transformer.decode"
-let dim t = Nx.dim 0 t.mask_token
+let width t = Nx.dim 0 t.mask_token
 
 let find fn t m =
   match
@@ -404,7 +404,7 @@ let embed t ~batch es (inputs : _ Tokens.t list) present =
            Kaun.Embedding.apply e.table i.tokens)
          es inputs)
   in
-  let d = dim t in
+  let d = width t in
   let emb =
     Nx.concatenate ~axis:1
       (List.map
@@ -478,7 +478,7 @@ let embedding { context; lengths } =
 (* [context] is [b; n; width] and each of the [b] [lengths] in [1, n]. *)
 let check_encoding t context lengths =
   match (Nx.shape context, Nx.shape lengths) with
-  | [| b; n; w |], [| b' |] when b = b' && w = dim t ->
+  | [| b; n; w |], [| b' |] when b = b' && w = width t ->
       let inside =
         Nx.logical_and (Nx.greater_equal_s lengths 1L)
           (Nx.less_equal_s lengths (Int64.of_int n))
@@ -491,7 +491,7 @@ let check_encoding t context lengths =
         "Aion.Transformer.decode: context %a and lengths %a, [b; n; %d] and \
          [b] expected"
         Nx.pp_shape c
-        Nx.pp_shape l (dim t)
+        Nx.pp_shape l (width t)
 
 (* A target's positions: [b; k], in [0, n), and distinct within a row, where an
    element repeats when more than one of its row's elements equals it ([k^2]
@@ -539,7 +539,7 @@ let decode t { context; lengths } targets =
   check_encoding t context lengths;
   distinct decode_fn "target"
     (List.map (fun (tg : _ target) -> tg.modality) targets);
-  let batch = Nx.dim 0 context and d = dim t in
+  let batch = Nx.dim 0 context and d = width t in
   let es =
     List.map
       (fun (tg : _ target) ->

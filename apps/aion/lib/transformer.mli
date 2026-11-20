@@ -109,6 +109,10 @@ val init : key:'d Nx.Rng.key -> arch -> ('d Nx.float32_t, 'd) t
 val modalities : ('a, 'd) t -> Modality.t list
 (** [modalities t] is the modalities [t] reads and predicts. *)
 
+val width : ((float, 'b, 'd) Nx.t, 'd) t -> int
+(** [width t] is the width of [t]'s token vectors ({!arch}'s [width]), the
+    last dimension of an {!embedding}. *)
+
 (** {1:computing Computing}
 
     The encoding and the logits of a batch of [b] objects are functions of the

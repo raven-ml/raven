@@ -42,16 +42,16 @@
    bit for bit.
 
    An input whose value is NaN or infinite is absent for its object, and an
-   object with no present input is left out.
+   object with no present input is left out. The objects kept are cut into
+   batches of --batch, all full but the last, so a compiled call runs at most
+   two shapes.
 
-   --device picks where the codecs and the transformer compute: cpu, eagerly
-   (the default); cpu-jit, compiled on the host; or a GPU as Rig_gpus.open_
-   names it (cuda, nv, amd, metal), compiled there. The inputs move to the
-   device and its results back. A compiled device pads each batch to --batch
-   rows, repeating its first kept object and dropping the copies' results, so
-   that each call runs one program whatever the objects a batch keeps. Compiled
-   results agree with eager ones to the accuracy Rune.jit states, so a draw near
-   a boundary between two tokens may differ. *)
+   --device names the devices where the codecs and the transformer compute, as
+   Rig_gpus.open_all reads them: cpu (the default), a GPU (cuda, nv, amd or
+   metal) or a comma list. They compute there compiled by Rune.jit, or with
+   --eager eagerly, on the host. The inputs move to the devices and the results
+   back. Compiled results agree with eager ones to the accuracy Rune.jit
+   states, so a draw near a boundary between two tokens may differ. *)
 
 open Aion
 
@@ -71,8 +71,6 @@ let parse usage specs =
 
 let required name = function "" -> fail "%s is required" name | v -> v
 
-(* Sources *)
-
 (* The survey flags, each [FILE] or [FILE:GROUP], in the order given. *)
 let sources = ref []
 
@@ -85,80 +83,26 @@ let source_specs =
         Printf.sprintf "FILE[:GROUP] a source of %s's datasets" n ))
     Survey.[ Legacy_survey; Hsc; Desi; Sdss; Gaia ]
 
-(* A path to an existing file is the file, whatever it holds; otherwise a last
-   [:/] starts the group. *)
-let load_source (s, v) =
-  if Sys.file_exists v then Survey.load s v
-  else
-    match String.rindex_opt v ':' with
-    | Some k when k + 1 < String.length v && v.[k + 1] = '/' ->
-        Survey.load
-          ~group:(String.sub v (k + 1) (String.length v - k - 1))
-          s (String.sub v 0 k)
-    | _ -> Survey.load s v
+let model_doc =
+  "M base (the default) or large, AION-1's released weights, downloaded once; \
+   or a safetensors file of aion-base's layout"
 
-(* [A:B], the first source's rows from A to B, excluded. *)
-let range first spec =
-  let n = Survey.length first in
-  match spec with
-  | "" -> (0, n)
-  | _ -> (
-      match String.split_on_char ':' spec with
-      | [ a; b ] -> (
-          match (int_of_string_opt a, int_of_string_opt b) with
-          | Some a, Some b when 0 <= a && a < b && b <= n -> (a, b)
-          | _ -> fail "--rows %s: the first source has rows 0:%d" spec n)
-      | _ -> fail "--rows %s: A:B expected" spec)
+let model name =
+  try
+    Transformer.of_archive
+      (match name with
+      | "base" -> Hub.weights Base
+      | "large" -> Hub.weights Large
+      | file -> Nx_io.load_safetensors file)
+  with Failure m | Sys_error m -> fail "--model %s: %s" name m
 
-(* The objects: each row of [first] in [a, b) with a partner in every other
-   source, as [rows.(o).(s)], object [o]'s row in source [s]. *)
-let objects srcs (a, b) =
-  let first = List.hd srcs in
-  let partners =
-    List.map
-      (fun t ->
-        let i, j = Survey.pair first t in
-        let m = Hashtbl.create (Array.length i) in
-        Array.iteri (fun k r -> Hashtbl.replace m r j.(k)) i;
-        m)
-      (List.tl srcs)
-  in
-  List.init (b - a) (fun k -> a + k)
-  |> List.filter_map (fun r ->
-      let js = List.map (fun m -> Hashtbl.find_opt m r) partners in
-      if List.mem None js then None
-      else Some (Array.of_list (r :: List.map Option.get js)))
-  |> Array.of_list
+(* Computing at a device *)
 
-(* Devices *)
-
-type 'd device = { at : 'd Nx.Placement.t; jit : bool }
-type 'a on = { on : 'd. 'd device -> 'a }
-
-let device_doc =
-  "D cpu (eager, the default), cpu-jit (compiled on the host) or a GPU by \
-   name, compiled: cuda, nv, amd or metal"
-
-let on name k =
-  match name with
-  | "cpu" -> k.on { at = Nx.Host.on; jit = false }
-  | "cpu-jit" -> k.on { at = Nx.Host.on; jit = true }
-  | name ->
-      let gpu =
-        match Rig_gpus.open_ name with
-        | Ok g -> g
-        | Error m -> fail "--device %s: %s" name m
-      in
-      let module D = (val Nx.devices [ gpu ]) in
-      k.on { at = D.on; jit = true }
-
-(* [f], compiled where [d] compiles, [s] its signature. *)
-let compile d s f = if d.jit then Rune.jit s f else f
-
+let host x = Nx.place Nx.Host.on x
 let model_s () = Nx.Ptree.instantiate (module Transformer)
 let inputs_s () = Nx.Ptree.(list (v Tokens.walk))
 
-(* The codecs of [ms] at [d], their encode and decode compiled there where [d]
+(* The codecs [c] at [d], their encode and decode compiled there where [d]
    compiles, the codecs an argument: a program per modality and shape. *)
 type 'd codecs = {
   codecs : ('d Nx.float32_t, 'd) Codecs.t;
@@ -166,8 +110,8 @@ type 'd codecs = {
   decode : Modality.t -> 'd Nx.int64_t -> 'd Codecs.data;
 }
 
-let codecs d ms =
-  let c = Nx.Ptree.place (module Codecs) d.at (Codecs.load ms) in
+let codecs (d : _ Device.t) c =
+  let c = Nx.Ptree.place (module Codecs) d.at c in
   if not d.jit then
     { codecs = c; encode = Codecs.encode c; decode = Codecs.decode c }
   else
@@ -183,129 +127,32 @@ let codecs d ms =
     in
     { codecs = c; encode = encode c; decode = decode c }
 
-(* Compiled calls take batches padded to [--batch] rows, eager ones as they
-   are. *)
-let pad d size = if d.jit then Some size else None
+(* The tokens of the inputs of [objs] at [d]. *)
+let encode (d : _ Device.t) codecs o objs =
+  List.map
+    (fun x -> codecs.encode (Nx.Ptree.place_fixed Codecs.walk_data d.at x))
+    (Objects.read o objs)
 
-let input_at d i = Nx.Ptree.place_fixed Tokens.walk d.at i
-let data_at d x = Nx.Ptree.place_fixed Codecs.walk_data d.at x
-let host x = Nx.place Nx.Host.on x
-let host_data x = Nx.Ptree.place_fixed Codecs.walk_data Nx.Host.on x
+(* The options and inputs shared by the commands *)
 
-(* Models and inputs *)
+type run = {
+  model : (Nx.host Nx.float32_t, Nx.host) Transformer.t;
+  codecs : (Nx.host Nx.float32_t, Nx.host) Codecs.t;
+  objects : Objects.t;
+  target : Modality.t option;
+  batch : int;
+  device : string;
+  eager : bool;
+  out : string;
+}
 
-let model_doc =
-  "M base (the default) or large, AION-1's released weights, downloaded once; \
-   or a safetensors file of aion-base's layout"
-
-let model name =
-  try
-    Transformer.of_archive
-      (match name with
-      | "base" -> Hub.weights Base
-      | "large" -> Hub.weights Large
-      | file -> Nx_io.load_safetensors file)
-  with Failure m | Sys_error m -> fail "--model %s: %s" name m
-
-(* The modality of [key], which the option [flag] gave. *)
-let modality_of flag key =
-  match Modality.of_key key with
-  | Some m -> m
-  | None -> fail "%s %s: names no modality" flag key
-
-(* Each input with the index of the first source that holds it: those [keys]
-   name, or every modality the sources hold and [t] reads but [except]. *)
-let inputs t srcs ~except keys =
-  let held m =
-    let rec go i = function
-      | [] -> None
-      | s :: l ->
-          if List.mem m (Survey.modalities s) then Some i else go (i + 1) l
-    in
-    go 0 srcs
-  in
-  let reads = Transformer.modalities t in
-  match keys with
-  | "" ->
-      List.filter_map
-        (fun m ->
-          if List.mem m except || not (List.mem m reads) then None
-          else Option.map (fun i -> (i, m)) (held m))
-        Modality.all
-  | keys ->
-      List.map
-        (fun k ->
-          let m = modality_of "--inputs" k in
-          if List.mem m except then fail "--inputs %s: the target is no input" k;
-          if not (List.mem m reads) then
-            fail "--inputs %s: the model reads no %s" k k;
-          match held m with
-          | Some i -> (i, m)
-          | None -> fail "--inputs %s: no source holds it" k)
-        (String.split_on_char ',' keys)
-
-(* Batches *)
-
-let int64s a =
-  Nx.create Nx.int64 [| Array.length a |] (Array.map Int64.of_int a)
-
-(* Whether each object has a present token in [p], a modality's presence. *)
-let present p = Nx.to_array (Nx.any ~axes:[ 1 ] p)
-
-(* The tokens of [objs]' inputs, and the objects with a present token. *)
-(* A batch of [objs] padded to [pad] rows by repeating its first: the rows
-   past the batch's are computed and dropped, so a compiled call sees one
-   shape whatever the batch and the objects it keeps. *)
-let padded pad a =
-  match pad with
-  | Some p when Array.length a > 0 && Array.length a < p ->
-      Array.append a (Array.make (p - Array.length a) a.(0))
-  | _ -> a
-
-(* The tokens of [objs]' inputs at [d], and the objects with a present token,
-   whose tokens are the first rows, padded to [pad] rows. Where objects are left
-   out, the rows kept are taken on the host, where every set computes. *)
-let encode ?pad d codecs srcs ins objs =
-  let b = Array.length objs in
-  let rows = padded pad objs in
-  let read (s, m) =
-    let rows = Array.map (fun o -> o.(s)) rows in
-    codecs.encode (data_at d (Survey.read (List.nth srcs s) rows m))
-  in
-  let tokens = List.map read ins in
-  let n = Array.length rows in
-  let presence = List.map (fun (i : _ Tokens.t) -> host i.present) tokens in
-  let any = List.map present presence in
-  let kept =
-    List.init b Fun.id
-    |> List.filter (fun o -> List.exists (fun p -> p.(o)) any)
-    |> Array.of_list
-  in
-  let taken = padded pad kept in
-  if Array.length taken = n && Array.length kept = b then (tokens, objs)
-  else
-    let take x = Nx.take ~axis:0 (int64s taken) x in
-    ( List.map2
-        (fun (i : _ Tokens.t) p ->
-          input_at d { i with tokens = take (host i.tokens); present = take p })
-        tokens presence,
-      Array.map (fun o -> objs.(o)) kept )
-
-(* The first [b] rows of [x], a batch's result. *)
-let first b x = if Nx.dim 0 x = b then x else Nx.slice [ Nx.R (0, b) ] x
-
-let chunks size a =
-  let n = Array.length a in
-  List.init
-    ((n + size - 1) / size)
-    (fun k -> Array.sub a (k * size) (min size (n - (k * size))))
-
-(* The options and inputs shared by the commands, [specs] the command's own
-   options. [check], given, makes the command take --target, and refuses a
-   target and the command's options before any file is read. *)
+(* [specs] are the command's own options. [check], given, makes the command take
+   --target, and refuses a target and the command's options before any file is
+   read. *)
 let run ~usage ?(specs = []) ?check () =
   let rows = ref "" and keys = ref "" and m = ref "base" and size = ref 16 in
   let out = ref "" and target_key = ref "" and device = ref "cpu" in
+  let eager = ref false in
   let target_specs =
     if Option.is_some check then
       [ ("--target", Arg.Set_string target_key, "K the target's key") ]
@@ -323,7 +170,8 @@ let run ~usage ?(specs = []) ?check () =
            and the model reads, each from the first source that holds it)" );
         ("--model", Arg.Set_string m, model_doc);
         ("--batch", Arg.Set_int size, "N objects a call (default 16)");
-        ("--device", Arg.Set_string device, device_doc);
+        ("--device", Arg.Set_string device, Device.doc);
+        ("--eager", Arg.Set eager, Device.eager_doc);
         ("--out", Arg.Set_string out, "FILE the npz file written");
       ]);
   let out = required "--out" !out in
@@ -331,104 +179,74 @@ let run ~usage ?(specs = []) ?check () =
   let target =
     Option.map
       (fun check ->
-        let m = modality_of "--target" (required "--target" !target_key) in
+        let m = Objects.modality "--target" (required "--target" !target_key) in
         check m;
         m)
       check
   in
-  let srcs = List.map load_source (List.rev !sources) in
-  if srcs = [] then
-    fail
-      "no source: give one of --legacysurvey, --hsc, --desi, --sdss or --gaia";
+  let srcs = Objects.sources (List.rev !sources) in
   let t = model !m in
   (match target with
   | Some tg when not (List.mem tg (Transformer.modalities t)) ->
       fail "--target %s: the model predicts no %s" !target_key !target_key
   | _ -> ());
   let except = Option.to_list target in
-  let ins = inputs t srcs ~except !keys in
-  if ins = [] then fail "no input: the sources hold no modality the model reads";
-  let a, b = range (List.hd srcs) !rows in
-  let objs = objects srcs (a, b) in
-  (t, srcs, ins, target, objs, (a, b), !size, out, !device)
-
-let summary name ~range:(a, b) ~objs ~kept =
-  Printf.printf
-    "%s: %d objects; of rows %d:%d, %d without a partner in every source, %d \
-     without a present input\n\
-     %!"
-    name kept a b
-    (b - a - objs)
-    (objs - kept)
-
-let rows_entry rows k =
-  Nx.create Nx.int64
-    [| Array.length rows; k |]
-    (Array.concat (Array.to_list (Array.map (Array.map Int64.of_int) rows)))
+  let reads = Transformer.modalities t in
+  let ins = Objects.inputs srcs ~reads ~except !keys in
+  let range = Objects.range (List.hd srcs) !rows in
+  let codecs = Codecs.load (except @ List.map snd ins) in
+  let objects = Objects.v srcs ins range codecs in
+  let device = !device and eager = !eager in
+  { model = t; codecs; objects; target; batch = !size; device; eager; out }
 
 (* embed *)
 
 let embed () =
-  let t, srcs, ins, _, objs, range, size, out, device =
-    run ~usage:"embed SOURCE... --out FILE [OPTION...]" ()
+  let r = run ~usage:"embed SOURCE... --out FILE [OPTION...]" () in
+  let (module D) = Device.set r.device in
+  let d = { Device.at = D.on; jit = not r.eager } in
+  let t = Nx.Ptree.place (module Transformer) d.at r.model in
+  let embed =
+    Device.compile d
+      Nx.Ptree.(model_s () @-> inputs_s () @-> returns tensor)
+      (fun t x -> Transformer.embedding (Transformer.encode t x))
   in
-  let parts =
-    on device
-      {
-        on =
-          (fun d ->
-            let t = Nx.Ptree.place (module Transformer) d.at t in
-            let embed =
-              compile d
-                Nx.Ptree.(model_s () @-> inputs_s () @-> returns tensor)
-                (fun t x -> Transformer.embedding (Transformer.encode t x))
-            in
-            let codecs = codecs d (List.map snd ins) in
-            List.map
-              (fun batch ->
-                let tokens, kept =
-                  encode ?pad:(pad d size) d codecs srcs ins batch
-                in
-                let b = Array.length kept in
-                if b = 0 then None
-                else
-                  let e = embed t tokens in
-                  Some (first b (host e), kept))
-              (chunks size objs)
-            |> List.filter_map Fun.id);
-      }
-  in
-  let kept = Array.concat (List.map snd parts) in
-  let width = match parts with (e, _) :: _ -> Nx.dim 1 e | [] -> 0 in
-  let e =
-    match parts with
-    | [] -> Nx.zeros Nx.float32 [| 0; width |]
-    | l -> Nx.concatenate ~axis:0 (List.map fst l)
-  in
-  Nx_io.save_npz out
-    (Nx_io.Archive.of_list
-       [
-         ("rows", Nx.P (rows_entry kept (List.length srcs)));
-         ("embedding", Nx.P e);
-       ]);
-  summary "embed" ~range ~objs:(Array.length objs) ~kept:(Array.length kept)
+  let codecs = codecs d r.codecs in
+  let width = Transformer.width r.model in
+  let e = Out.v Nx.float32 [| Objects.length r.objects; width |] in
+  let batches = Objects.batches r.objects r.batch in
+  List.iter
+    (fun (first, objs) ->
+      Out.set e first (host (embed t (encode d codecs r.objects objs))))
+    batches;
+  Out.save r.out r.objects [ Out.entry "embedding" e ];
+  Objects.summary "embed" r.objects ~batches:(List.length batches)
 
 (* posterior *)
 
-let posterior_on d t srcs ins (target : Modality.t option) objs range size
-    out =
-  let t = Nx.Ptree.place (module Transformer) d.at t in
+let posterior () =
+  let scalar : Modality.t -> unit = function
+    | Scalar _ -> ()
+    | m -> fail "--target %s: not a scalar modality" (Modality.key m)
+  in
+  let r =
+    run ~usage:"posterior SOURCE... --target K --out FILE [OPTION...]"
+      ~check:scalar ()
+  in
+  let target = Option.get r.target in
+  let s = match target with Scalar s -> s | _ -> assert false in
+  let (module D) = Device.set r.device in
+  let d = { Device.at = D.on; jit = not r.eager } in
+  let t = Nx.Ptree.place (module Transformer) d.at r.model in
   let forward =
-    compile d
+    Device.compile d
       Nx.Ptree.(
         model_s () @-> inputs_s ()
         @-> list (v Transformer.walk_target)
         @-> returns (list tensor))
       Transformer.forward
   in
-  let target = Option.get target in
-  let s = match target with Scalar s -> s | _ -> assert false in
-  let codecs = codecs d (target :: List.map snd ins) in
+  let codecs = codecs d r.codecs in
   let edges = Scalar.edges (Codecs.scalar codecs.codecs s) in
   let c = Nx.dim 0 edges and k = Nx.dim 1 edges in
   let vocab = Modality.vocab target in
@@ -445,70 +263,33 @@ let posterior_on d t srcs ins (target : Modality.t option) objs range size
         if c = 1 then values else Nx.transpose values
     | _ -> assert false
   in
-  (* The output, allocated once and filled batch by batch: each object's
-     probabilities of the classes with a value, and of the others summed. *)
-  let n = Array.length objs in
-  let p = ref (Nx.zeros Nx.float32 [| n; c; k |]) in
-  let rest = ref (Nx.zeros Nx.float32 [| n |]) in
-  let filled = ref 0 in
-  let kept =
-    List.map
-      (fun batch ->
-        let tokens, kept = encode ?pad:(pad d size) d codecs srcs ins batch in
-        let b = Array.length kept in
-        if b > 0 then begin
-          let logits =
-            List.hd
-              (forward t tokens [ { modality = target; positions = None } ])
-          in
-          let logits = first b (host logits) in
-          let q = Nx.softmax ~axes:[ -1 ] (Nx.cast Nx.float64 logits) in
-          let at = [ Nx.R (!filled, !filled + b) ] in
-          p :=
-            Nx.set at
-              (Nx.cast Nx.float32 (Nx.slice [ Nx.A; Nx.A; Nx.R (0, k) ] q))
-              (Nx.donate !p);
-          if vocab > k then
-            rest :=
-              Nx.set at
-                (Nx.cast Nx.float32
-                   (Nx.sum ~axes:[ 1; 2 ]
-                      (Nx.slice [ Nx.A; Nx.A; Nx.R (k, vocab) ] q)))
-                (Nx.donate !rest);
-          filled := !filled + b
-        end;
-        kept)
-      (chunks size objs)
-    |> Array.concat
-  in
-  let m = Array.length kept in
-  let p = Nx.slice [ Nx.R (0, m) ] !p in
-  let p = if c = 1 then Nx.reshape [| m; k |] p else p in
+  (* Each object's probabilities of the classes with a value, and of the
+     others summed, from a softmax on the host in float64. *)
+  let n = Objects.length r.objects in
+  let p = Out.v Nx.float32 (if c = 1 then [| n; k |] else [| n; c; k |])
+  and rest = Out.v Nx.float32 [| n |] in
+  let batches = Objects.batches r.objects r.batch in
+  List.iter
+    (fun (first, objs) ->
+      let x = encode d codecs r.objects objs in
+      let logits =
+        List.hd (forward t x [ { modality = target; positions = None } ])
+      in
+      let q = Nx.softmax ~axes:[ -1 ] (Nx.cast Nx.float64 (host logits)) in
+      let pk = Nx.cast Nx.float32 (Nx.slice [ Nx.A; Nx.A; Nx.R (0, k) ] q) in
+      Out.set p first (if c = 1 then Nx.squeeze ~axes:[ 1 ] pk else pk);
+      if vocab > k then
+        Out.set rest first
+          (Nx.cast Nx.float32
+             (Nx.sum ~axes:[ 1; 2 ]
+                (Nx.slice [ Nx.A; Nx.A; Nx.R (k, vocab) ] q))))
+    batches;
   let rest =
-    if vocab = k then []
-    else [ (Printf.sprintf "p_%d" k, Nx.P (Nx.slice [ Nx.R (0, m) ] !rest)) ]
+    if vocab = k then [] else [ Out.entry (Printf.sprintf "p_%d" k) rest ]
   in
-  Nx_io.save_npz out
-    (Nx_io.Archive.of_list
-       ([
-          ("rows", Nx.P (rows_entry kept (List.length srcs)));
-          ("p", Nx.P p);
-          ("upper", Nx.P upper);
-        ]
-       @ rest));
-  summary "posterior" ~range ~objs:n ~kept:m
-
-let posterior () =
-  let scalar : Modality.t -> unit = function
-    | Scalar _ -> ()
-    | m -> fail "--target %s: not a scalar modality" (Modality.key m)
-  in
-  let t, srcs, ins, target, objs, range, size, out, device =
-    run ~usage:"posterior SOURCE... --target K --out FILE [OPTION...]"
-      ~check:scalar ()
-  in
-  on device
-    { on = (fun d -> posterior_on d t srcs ins target objs range size out) }
+  Out.save r.out r.objects
+    (Out.entry "p" p :: ("upper", Nx.P upper) :: rest);
+  Objects.summary "posterior" r.objects ~batches:(List.length batches)
 
 (* generate *)
 
@@ -517,143 +298,40 @@ let posterior () =
 let linear n steps =
   List.init steps (fun s -> (n / steps) + if s < n mod steps then 1 else 0)
 
-(* The entries of the draws [y], [[|b; k|]] at [d], decoded at [d], and the
-   number of tokens that decode to no value. The caller holds the draws on the
-   host too, as [x], for its output: a scalar's are read there, since a GPU set
-   has no eager kernels, and an image's or a spectrum's decode where they lie.
-   A scalar codebook of [m] edges decodes the tokens below [m], the others
-   cleared on the host; redshift's vocabulary holds one more. *)
-let decoded d codecs (target : Modality.t) ~rows x y =
-  let first x = first rows x in
-  let decode y = host_data (codecs.decode target y) in
+(* The side of a decoded image, whose pixels are 96 × 96 (Image.decode). *)
+let side = 96
+
+(* The draws [y], [[|b; k|]] at [d] and [h] on the host, decoded at [d]: each
+   object's values or flux, and the number of tokens that decode to no value.
+   A scalar's draws are read on the host, since a GPU set has no eager
+   kernels, an image's or a spectrum's decode where they lie. A scalar
+   codebook of [m] edges decodes the tokens below [m], the others cleared on
+   the host; redshift's vocabulary holds one more. *)
+let decoded (d : _ Device.t) codecs (target : Modality.t) h y =
+  let decode y =
+    Nx.Ptree.place_fixed Codecs.walk_data Nx.Host.on (codecs.decode target y)
+  in
   match target with
   | Scalar s ->
       let m = Nx.dim 1 (Scalar.edges (Codecs.scalar codecs.codecs s)) in
-      let x = if Modality.tokens target = 1 then Nx.reshape [| -1 |] x else x in
+      let x = if Modality.tokens target = 1 then Nx.reshape [| -1 |] h else h in
       let none = Nx.greater_equal_s x (Int64.of_int m) in
       let values =
         match decode (Nx.place d.at (Nx.where none (Nx.zeros_like x) x)) with
         | Scalar { values; _ } -> values
         | _ -> assert false
       in
-      let none = first none in
       let missing = Nx.item [] (Nx.sum (Nx.cast Nx.int64 none)) in
-      ( [
-          ( "values",
-            let values = first values in
-            Nx.where none (Nx.full_like values Float.nan) values );
-        ],
-        Int64.to_int missing )
+      let values = Nx.where none (Nx.full_like values Float.nan) values in
+      (values, Int64.to_int missing)
   | Spectrum _ -> (
       match decode y with
-      | Spectrum { spectrum; _ } ->
-          ( [
-              ("flux", first spectrum.flux);
-              ("wavelength", Nx.slice [ Nx.I 0 ] spectrum.wavelength);
-            ],
-            0 )
+      | Spectrum { spectrum; _ } -> (spectrum.flux, 0)
       | _ -> assert false)
   | _ -> (
       match decode y with
-      | Image { flux; _ } -> ([ ("flux", first flux) ], 0)
+      | Image { flux; _ } -> (flux, 0)
       | _ -> assert false)
-
-let generate_on d t srcs ins (target : Modality.t option) objs range size out
-    ~draws ~seed ~temperature ~reveal =
-  let t = Nx.Ptree.place (module Transformer) d.at t in
-  let target = Option.get target in
-  let codecs = codecs d (target :: List.map snd ins) in
-  let root = Nx.Rng.key seed in
-  (* Roar.sample's fold, compiled where [d] compiles: [step] keeps a program
-     per count for the command's run. *)
-  let draw =
-    let draw_s () = Nx.Ptree.v Roar.walk_draw in
-    let start =
-      compile d
-        Nx.Ptree.(Nx.Rng.ptree @-> inputs_s () @-> returns (draw_s ()))
-        (fun keys x -> Roar.start ~keys ~temperature x target)
-    and step =
-      compile d
-        Nx.Ptree.(
-          model_s () @-> v Walk.int @-> draw_s () @-> returns (draw_s ()))
-        Roar.step
-    in
-    fun ~keys x ->
-      Roar.tokens
-        (List.fold_left (fun r k -> step t k r) (start keys x) reveal)
-  in
-  (* The output, allocated once and filled batch by batch, as posterior's: the
-     tokens, [[|n; draws; k|]], and each decoded entry likewise, allocated at
-     the first decode, which gives its shape. A spectrum's wavelengths are one
-     grid, kept once. *)
-  let n = Array.length objs in
-  let tokens =
-    ref (Nx.zeros Nx.int64 [| n; draws; Modality.tokens target |])
-  in
-  let names = ref [] and buffers = Hashtbl.create 4 and grid = ref None in
-  let missing = ref 0 and filled = ref 0 in
-  let fill at (name, v) =
-    if name = "wavelength" then
-      begin if Option.is_none !grid then (
-        grid := Some v;
-        names := name :: !names)
-      end
-    else
-      let buffer =
-        match Hashtbl.find_opt buffers name with
-        | Some b -> b
-        | None ->
-            let rest = Array.sub (Nx.shape v) 1 (Nx.ndim v - 1) in
-            let shape = Array.append [| n; draws |] rest in
-            names := name :: !names;
-            Nx.zeros (Nx.dtype v) shape
-      in
-      Hashtbl.replace buffers name (Nx.set at v (Nx.donate buffer))
-  in
-  let batch objs =
-    let x, kept = encode ?pad:(pad d size) d codecs srcs ins objs in
-    let b = Array.length kept in
-    if b > 0 then begin
-      (* A key per row of [x], each object's of its first-source row, padded as
-         [x] is. *)
-      let rows = padded (pad d size) (Array.map (fun o -> o.(0)) kept) in
-      let keys = Nx.Rng.fold_in_tensor root (int64s rows) in
-      for j = 0 to draws - 1 do
-        (* Keys are derived on the host, where every set computes. *)
-        let keys = Nx.Rng.place d.at (Nx.Rng.fold_in keys j) in
-        let y = draw ~keys x in
-        let h = host y in
-        let at = [ Nx.R (!filled, !filled + b); Nx.I j ] in
-        tokens := Nx.set at (first b h) (Nx.donate !tokens);
-        let entries, m = decoded d codecs target ~rows:b h y in
-        missing := !missing + m;
-        List.iter (fill at) entries
-      done;
-      filled := !filled + b
-    end;
-    kept
-  in
-  let kept = Array.concat (List.map batch (chunks size objs)) in
-  let m = Array.length kept in
-  let first x = Nx.slice [ Nx.R (0, m) ] x in
-  let entries =
-    ("tokens", Nx.P (first !tokens))
-    :: List.rev_map
-         (fun name ->
-           match !grid with
-           | Some g when name = "wavelength" -> (name, Nx.P g)
-           | _ -> (name, Nx.P (first (Hashtbl.find buffers name))))
-         !names
-  in
-  Nx_io.save_npz out
-    (Nx_io.Archive.of_list
-       (("rows", Nx.P (rows_entry kept (List.length srcs))) :: entries));
-  summary "generate" ~range ~objs:n ~kept:m;
-  if !missing > 0 then
-    Printf.printf
-      "generate: %d draws of %s's class %d, which decodes to no value\n"
-      !missing (Modality.key target)
-      (Modality.vocab target - 1)
 
 let generate () =
   let steps = ref None and draws = ref 1 and seed = ref 0 in
@@ -692,17 +370,80 @@ let generate () =
     if !temperature < 0. || not (Float.is_finite !temperature) then
       fail "--temperature %g: not in [0, inf)" !temperature
   in
-  let t, srcs, ins, target, objs, range, size, out, device =
+  let r =
     run ~usage:"generate SOURCE... --target K --steps N --out FILE [OPTION...]"
       ~specs ~check ()
   in
-  on device
-    {
-      on =
-        (fun d ->
-          generate_on d t srcs ins target objs range size out ~draws:!draws
-            ~seed:!seed ~temperature:!temperature ~reveal:!reveal);
-    }
+  let draws = !draws and temperature = !temperature and reveal = !reveal in
+  let target = Option.get r.target in
+  let (module D) = Device.set r.device in
+  let d = { Device.at = D.on; jit = not r.eager } in
+  let t = Nx.Ptree.place (module Transformer) d.at r.model in
+  let codecs = codecs d r.codecs in
+  (* Roar.sample's fold, compiled where [d] compiles: [step] keeps a program
+     per count for the command's run. *)
+  let draw =
+    let draw_s () = Nx.Ptree.v Roar.walk_draw in
+    let start =
+      Device.compile d
+        Nx.Ptree.(Nx.Rng.ptree @-> inputs_s () @-> returns (draw_s ()))
+        (fun keys x -> Roar.start ~keys ~temperature x target)
+    and step =
+      Device.compile d
+        Nx.Ptree.(
+          model_s () @-> v Walk.int @-> draw_s () @-> returns (draw_s ()))
+        Roar.step
+    in
+    fun ~keys x ->
+      Roar.tokens
+        (List.fold_left (fun r k -> step t k r) (start keys x) reveal)
+  in
+  let n = Objects.length r.objects in
+  let k = Modality.tokens target in
+  (* Each object's decoded draw, past its first two dimensions, and a
+     spectrum's latent grid. *)
+  let shape, grid =
+    match target with
+    | Scalar _ -> ((if k = 1 then [||] else [| k |]), [])
+    | Spectrum s ->
+        let g = Spectrum.grid (Codecs.spectrum r.codecs s) in
+        ([| Nx.dim 0 g |], [ ("wavelength", Nx.P g) ])
+    | _ -> ([| List.length (Codecs.bands target); side; side |], [])
+  in
+  let tokens = Out.v Nx.int64 [| n; draws; k |]
+  and values = Out.v Nx.float32 (Array.append [| n; draws |] shape) in
+  let missing = ref 0 in
+  let root = Nx.Rng.key !seed in
+  let batches = Objects.batches r.objects r.batch in
+  List.iter
+    (fun (first, objs) ->
+      let x = encode d codecs r.objects objs in
+      (* A key per object, of its row in the first source. *)
+      let keys =
+        Array.map (fun o -> Int64.of_int o.(0)) objs
+        |> Nx.create Nx.int64 [| Array.length objs |]
+        |> Nx.Rng.fold_in_tensor root
+      in
+      for j = 0 to draws - 1 do
+        (* Keys are derived on the host, where every set computes. *)
+        let keys = Nx.Rng.place d.at (Nx.Rng.fold_in keys j) in
+        let y = draw ~keys x in
+        let h = host y in
+        let v, m = decoded d codecs target h y in
+        Out.set tokens first ~at:[ Nx.I j ] h;
+        Out.set values first ~at:[ Nx.I j ] v;
+        missing := !missing + m
+      done)
+    batches;
+  let name = match target with Scalar _ -> "values" | _ -> "flux" in
+  Out.save r.out r.objects
+    (Out.entry "tokens" tokens :: Out.entry name values :: grid);
+  Objects.summary "generate" r.objects ~batches:(List.length batches);
+  if !missing > 0 then
+    Printf.printf
+      "generate: %d draws of %s's class %d, which decodes to no value\n"
+      !missing (Modality.key target)
+      (Modality.vocab target - 1)
 
 let commands =
   [ ("embed", embed); ("posterior", posterior); ("generate", generate) ]

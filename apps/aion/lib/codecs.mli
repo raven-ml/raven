@@ -75,6 +75,11 @@ val scalar : ('a, 'd) t -> Modality.scalar -> 'd Scalar.t
 
     Raises [Invalid_argument] if [t] was not loaded for [Scalar m]. *)
 
+val spectrum : ('a, 'd) t -> Modality.spectrum -> ('a, 'd) Spectrum.t
+(** [spectrum t m] is the spectrum codec, which [t] holds for [m].
+
+    Raises [Invalid_argument] if [t] was not loaded for [Spectrum m]. *)
+
 (** {1:tokens Tokens} *)
 
 val encode : ('d Nx.float32_t, 'd) t -> 'd data -> 'd Tokens.t

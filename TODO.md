@@ -107,6 +107,10 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   _plans/aion-port/logs/p5c-cpu.log), unsearched; the narrow fixtures'
   compiled calls are faster than eager. A `BEAM` run and one kernel's
   profile would tell whether search or the kernels' shape is short
+- aion's `generate --device metal` may fail, since Metal has no float64:
+  `Roar` draws the order from a float64 uniform and holds the temperature
+  as a float64 scalar on the device. Unchecked; found by aion batch 7's
+  audit
 
 ## nx, rune
 

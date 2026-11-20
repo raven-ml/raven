@@ -10,8 +10,8 @@
 
    reference.exe generate GAIA INPUT TARGET SEED REVEAL DRAWS BATCH OUT: the
    draws of TARGET from INPUT of the Gaia file's rows, by Roar.sample directly:
-   the rows in batches of BATCH, as main.exe batches them, each batch's objects
-   with a present token, and draw j of row r from the key
+   the rows with a present token in batches of BATCH, as main.exe batches them,
+   and draw j of row r from the key
    [fold_in (fold_in (key SEED) r) j] with the counts REVEAL, comma-separated.
    OUT's tokens is int64 [n; DRAWS; k]. *)
 
@@ -38,43 +38,29 @@ let generate file input target ~seed ~reveal ~draws ~batch out =
   let source = Survey.load Gaia file in
   let codecs = Codecs.load [ input ] in
   let t = Transformer.of_archive (Hub.weights Base) in
-  let n = Survey.length source in
-  let batches = (n + batch - 1) / batch in
-  let draws_of b =
-    let rows =
-      Array.init (min batch (n - (b * batch))) (fun k -> (b * batch) + k)
-    in
-    let i = Codecs.encode codecs (Survey.read source rows input) in
-    let kept =
-      let p = Nx.to_array (Nx.any ~axes:[ 1 ] i.present) in
-      Array.of_list
-        (List.filter (fun k -> p.(k)) (List.init (Array.length p) Fun.id))
-    in
-    if kept = [||] then None
-    else
-      let take x =
-        Nx.take ~axis:0
-          (Nx.create Nx.int64
-             [| Array.length kept |]
-             (Array.map Int64.of_int kept))
-          x
-      in
-      let i : _ Tokens.t =
-        { i with tokens = take i.tokens; present = take i.present }
-      in
-      let keys =
-        Nx.Rng.fold_in_tensor (Nx.Rng.key seed)
-          (Nx.create Nx.int64
-             [| Array.length kept |]
-             (Array.map (fun k -> Int64.of_int rows.(k)) kept))
-      in
-      Some
-        (Nx.stack ~axis:1
-           (List.init draws (fun j ->
-                Roar.sample ~keys:(Nx.Rng.fold_in keys j) ~reveal t [ i ]
-                  target)))
+  let encode rows = Codecs.encode codecs (Survey.read source rows input) in
+  let int64s rows =
+    Nx.create Nx.int64 [| Array.length rows |] (Array.map Int64.of_int rows)
   in
-  let tokens = List.filter_map draws_of (List.init batches Fun.id) in
+  (* The rows with a present token, in batches of [batch], as main.exe cuts
+     them. *)
+  let kept =
+    let rows = Array.init (Survey.length source) Fun.id in
+    let p = Nx.to_array (Nx.any ~axes:[ 1 ] (encode rows).present) in
+    Array.of_list (List.filter (fun r -> p.(r)) (Array.to_list rows))
+  in
+  let n = Array.length kept in
+  let draws_of first =
+    let rows = Array.sub kept first (min batch (n - first)) in
+    let keys = Nx.Rng.fold_in_tensor (Nx.Rng.key seed) (int64s rows) in
+    Nx.stack ~axis:1
+      (List.init draws (fun j ->
+           Roar.sample ~keys:(Nx.Rng.fold_in keys j) ~reveal t [ encode rows ]
+             target))
+  in
+  let tokens =
+    List.init ((n + batch - 1) / batch) (fun b -> draws_of (b * batch))
+  in
   Nx_io.save_npz out
     (Nx_io.Archive.of_list [ ("tokens", Nx.P (Nx.concatenate ~axis:0 tokens)) ])
 

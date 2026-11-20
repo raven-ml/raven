@@ -10,10 +10,10 @@
    and writes main.exe's files to a temporary directory. Both read aion-base's
    weights and codecs from AION_PARITY's huggingface, as RAVEN_CACHE_ROOT.
 
-   For each case the program runs MAIN generate on DIR's files, then draws the
-   same tokens from the library: Survey.read and Codecs.encode of the case's
-   rows, in batches of the case's size as main.exe batches them, each batch's
-   objects with a present token, and Roar.sample with the key
+   For each case the program runs MAIN generate --eager on DIR's files, then
+   draws the same tokens from the library: Survey.read and Codecs.encode of the
+   case's rows with a present token, in batches of the case's size as main.exe
+   batches them, and Roar.sample with the key
    [fold_in (fold_in (key seed) r) j] for draw j of row r, at the counts
    written out below. The tokens must be equal, and each entry main.exe decoded
    must equal Codecs.decode of them within 1e-6 of its largest magnitude. The
@@ -134,6 +134,7 @@ let run c file =
       string_of_int c.draws;
       "--seed";
       string_of_int c.seed;
+      "--eager";
       "--out";
       file;
     ]
@@ -146,83 +147,67 @@ let run c file =
 let replay t codecs c =
   let src = source c in
   let a, b = c.rows in
-  let starts =
-    List.init ((b - a + c.batch - 1) / c.batch) (fun i -> a + (i * c.batch))
+  let encode rows =
+    List.map (fun m -> Codecs.encode codecs (Survey.read src rows m)) c.inputs
   in
-  let batch lo =
-    let rows = Array.init (min c.batch (b - lo)) (fun k -> lo + k) in
-    let ins =
-      List.map (fun m -> Codecs.encode codecs (Survey.read src rows m)) c.inputs
-    in
+  (* The rows with a present token, as main.exe keeps them. *)
+  let kept =
+    let rows = Array.init (b - a) (fun k -> a + k) in
     let present (i : _ Tokens.t) = Nx.to_array (Nx.any ~axes:[ 1 ] i.present) in
-    let any = List.map present ins in
-    let kept =
-      List.filter
-        (fun k -> List.exists (fun p -> p.(k)) any)
-        (List.init (Array.length rows) Fun.id)
-      |> Array.of_list
-    in
-    if kept = [||] then None
-    else
-      let idx =
-        Nx.create Nx.int64 [| Array.length kept |] (Array.map Int64.of_int kept)
-      in
-      let take x = Nx.take ~axis:0 idx x in
-      let ins =
-        List.map
-          (fun (i : _ Tokens.t) ->
-            {
-              i with
-              tokens = take i.tokens;
-              present = take i.present;
-            })
-          ins
-      in
-      let keys =
-        Nx.Rng.fold_in_tensor (Nx.Rng.key c.seed)
-          (Nx.create Nx.int64 [| Array.length kept |]
-             (Array.map (fun k -> Int64.of_int rows.(k)) kept))
-      in
-      let draws =
-        List.init c.draws (fun j ->
-            Roar.sample ~keys:(Nx.Rng.fold_in keys j) ~reveal:c.reveal t ins
-              c.target)
-      in
-      (* A scalar token past its codebook's edges, redshift's class 1024,
-         decodes to NaN, as main.exe states. *)
-      let decoded x : (string * Nx.host Nx.float32_t) list =
-        match c.target with
-        | Scalar s ->
-            let m = Nx.dim 1 (Scalar.edges (Codecs.scalar codecs s)) in
-            let none = Nx.greater_equal_s x (Int64.of_int m) in
-            let v =
-              match
-                Codecs.decode codecs c.target
-                  (Nx.where none (Nx.zeros_like x) x)
-              with
-              | Scalar { values; _ } -> values
-              | _ -> assert false
-            in
-            [ ("values", Nx.where none (Nx.full_like v Float.nan) v) ]
-        | _ -> (
-            match Codecs.decode codecs c.target x with
-            | Spectrum { spectrum; _ } -> [ ("flux", spectrum.flux) ]
-            | Image { flux; _ } -> [ ("flux", flux) ]
-            | Scalar _ -> assert false)
-      in
-      let x =
-        if Modality.tokens c.target = 1 then Nx.reshape [| -1 |] else Fun.id
-      in
-      Some
-        ( Nx.stack ~axis:1 draws,
-          List.map
-            (fun (name, _) ->
-              ( name,
-                Nx.stack ~axis:1
-                  (List.map (fun d -> List.assoc name (decoded (x d))) draws) ))
-            (decoded (x (List.hd draws))) )
+    let any = List.map present (encode rows) in
+    Array.to_list rows
+    |> List.filteri (fun k _ -> List.exists (fun p -> p.(k)) any)
+    |> Array.of_list
   in
-  let parts = List.filter_map batch starts in
+  let n = Array.length kept in
+  let batch first =
+    let rows = Array.sub kept first (min c.batch (n - first)) in
+    let ins = encode rows in
+    let keys =
+      Nx.Rng.fold_in_tensor (Nx.Rng.key c.seed)
+        (Nx.create Nx.int64 [| Array.length rows |]
+           (Array.map Int64.of_int rows))
+    in
+    let draws =
+      List.init c.draws (fun j ->
+          Roar.sample ~keys:(Nx.Rng.fold_in keys j) ~reveal:c.reveal t ins
+            c.target)
+    in
+    (* A scalar token past its codebook's edges, redshift's class 1024,
+       decodes to NaN, as main.exe states. *)
+    let decoded x : (string * Nx.host Nx.float32_t) list =
+      match c.target with
+      | Scalar s ->
+          let m = Nx.dim 1 (Scalar.edges (Codecs.scalar codecs s)) in
+          let none = Nx.greater_equal_s x (Int64.of_int m) in
+          let v =
+            match
+              Codecs.decode codecs c.target (Nx.where none (Nx.zeros_like x) x)
+            with
+            | Scalar { values; _ } -> values
+            | _ -> assert false
+          in
+          [ ("values", Nx.where none (Nx.full_like v Float.nan) v) ]
+      | _ -> (
+          match Codecs.decode codecs c.target x with
+          | Spectrum { spectrum; _ } -> [ ("flux", spectrum.flux) ]
+          | Image { flux; _ } -> [ ("flux", flux) ]
+          | Scalar _ -> assert false)
+    in
+    let x =
+      if Modality.tokens c.target = 1 then Nx.reshape [| -1 |] else Fun.id
+    in
+    ( Nx.stack ~axis:1 draws,
+      List.map
+        (fun (name, _) ->
+          ( name,
+            Nx.stack ~axis:1
+              (List.map (fun d -> List.assoc name (decoded (x d))) draws) ))
+        (decoded (x (List.hd draws))) )
+  in
+  let parts =
+    List.init ((n + c.batch - 1) / c.batch) (fun k -> batch (k * c.batch))
+  in
   ( Nx.concatenate ~axis:0 (List.map fst parts),
     List.map
       (fun (name, _) ->
