@@ -20,6 +20,9 @@ let shape ?(pixels = 4) ?(rows = 3) ?(slots = 3) ?(width = 256) () =
 let alone = shape ~pixels:1 ~rows:1 ~slots:1 ()
 let packed = shape ~pixels:7 ~rows:2 ~slots:5 ~width:300 ()
 
+(* Rows as wide as Batch.typical's, holding every pixel of a case. *)
+let wide = shape ~pixels:7 ~rows:1 ~slots:7 ~width:1024 ()
+
 (* Each place's key: the key of its pixel's index, that of [0] where empty. *)
 let keys_of (b : Nx.host Batch.t) =
   Nx.Rng.fold_in_tensor root (Nx.maximum b.pixel (Nx.scalar Nx.int64 0L))
@@ -77,7 +80,9 @@ let layout =
       let m = model pre in
       let px = training spec in
       cover "pixels sharing a row" (List.length spec.s2 > 1);
-      same (embed ~dropout:half m alone px) (embed ~dropout:half m packed px))
+      let one = embed ~dropout:half m alone px in
+      same one (embed ~dropout:half m packed px);
+      same one (embed ~dropout:half m wide px))
 
 (* A pixel's part of each mask: its tokens' values, or its own row. *)
 let pixel_masks (b : Nx.host Batch.t) masks =

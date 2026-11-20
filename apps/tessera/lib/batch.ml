@@ -374,7 +374,15 @@ let typical_s2 = 40
 let typical_s1 = 64
 let typical_slots = 32
 
+(* A row holds whole pixels, so it wastes what its last pixel leaves, up to a
+   pixel's tokens: rows of [max_bin], the most a pixel holds, filled 77-83%
+   of their tokens on a tile of 2024 whose Sentinel-1 pixels hold 99 each,
+   two to a row. Rows of four times as many fill 93%, and on an RTX 5000 Ada
+   took 13-15% less time a pixel for the teacher and the students; rows of
+   twice as many, 89% and 8-11%. *)
+let typical_width = 4 * max_bin
+
 let typical ~pixels =
-  let width = max_bin and slots = typical_slots in
+  let width = typical_width and slots = typical_slots in
   let rows tokens = max 1 (((pixels * tokens) + width - 1) / width) in
   { pixels; s2_rows = rows typical_s2; s1_rows = rows typical_s1; slots; width }
