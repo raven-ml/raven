@@ -111,6 +111,14 @@ let build_benchmarks () =
     Thumper.group "LARS"
       (optimizer_benches "LARS" Vega.lars_init (fun st ->
            Vega.lars_step p ~lr st));
+    (* Muon's fifteen matrix products a step grow with the cube of the side:
+       the 256 row holds them, and a 1024 row would take 64 times as long. *)
+    Thumper.group "Muon"
+      [
+        make_step_bench Nx.float32 "Muon" Vega.muon_init
+          (fun st -> Vega.muon_step p ~lr st)
+          ("256", [| 256; 256 |]);
+      ];
     Thumper.group "Adan"
       (optimizer_benches "Adan" Vega.adan_init (fun st ->
            Vega.adan_step p ~lr st));

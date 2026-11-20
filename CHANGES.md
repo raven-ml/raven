@@ -372,6 +372,9 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- New `muon_step` and `muon_init`, on an `sgd_state`: Muon steps each matrix
+  along its momentum's orthogonal factor, by about `0.2 * lr` an element.
+  `?stacks` says how a leaf holds its matrices; other leaves are another part.
 - `lars_step` and `lamb_step` take `?adapts`, a rule on each leaf's path
   and shape that leaves it out of the trust ratio, independent of
   `?decays`. A leaf it rejects steps as under momentum SGD for LARS and

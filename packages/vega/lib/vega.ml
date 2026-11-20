@@ -586,6 +586,170 @@ let lars_step p ~lr ?(momentum = 0.9) ?(trust_coefficient = 0.001)
   in
   (params, { velocity = parts.(0); step = Nx.add_s st.step 1l })
 
+(* Muon *)
+
+(* The odd quintic [a s + b s^3 + c s^5] that the iteration applies to each
+   singular value, and the number of times it does (Jordan et al., "Muon: An
+   optimizer for hidden layers in neural networks", 2024). From a value in
+   [1/300; 1] it ends in [0.68; 1.21]. *)
+let muon_a = 3.4445
+let muon_b = -4.7750
+let muon_c = 2.0315
+let muon_iterations = 5
+
+(* The root mean square of a full-rank step's elements, per unit of rate: the
+   factor [u vᵀ] of a matrix of [m] rows and [n] columns has elements of root
+   mean square [1 / sqrt (max m n)], and the step scales it by
+   [0.2 * sqrt (max m n)] (Liu et al., "Muon is Scalable for LLM Training",
+   2025, §2.2). *)
+let muon_rms = 0.2
+
+(* [muon_direction d] is Muon's direction for each matrix of [d], of [m] rows
+   and [n] columns over its last two axes: [muon_rms * sqrt (max m n)] times
+   an approximation of the orthogonal factor [u vᵀ] of the matrix [u s vᵀ].
+
+   The iteration starts from the matrix over its Frobenius norm, whose
+   singular values lie in [0; 1]. The matrix is first divided by its greatest
+   magnitude [top], so that the norm of the quotient, between [1] and
+   [sqrt (m n)], neither overflows nor underflows for any finite matrix. The
+   squares are summed along one axis, then the other: a sum's error bound
+   grows with its number of terms ([Nx]'s reductions), so the norm's follows
+   the longer axis, where a sum over both would follow the element count.
+   The start is zero where [top] is below the least positive normal float of
+   [d]'s dtype, the one the leaf computes at, a bound that a device which
+   flushes subnormals shares with one that keeps them. A NaN [top] is not
+   below it and goes on to the division, so a matrix that holds a NaN is NaN
+   throughout, and so is one that holds an infinity, whose quotient by itself
+   is NaN.
+
+   Each of the five steps is three products. The first forms the smaller of
+   the matrix's two Gram squares, [x xᵀ] for [m <= n] and [xᵀ x] otherwise,
+   and alone sums over the longer axis, the columns of a square matrix. The
+   other two are by that square. Over a leaf cut across devices the first
+   sums by partials where its summed axis is the cut one, and raises where
+   the other axis is ([Nx]'s routing). *)
+let muon_direction d =
+  let rank = Nx.ndim d in
+  let m = Nx.dim (rank - 2) d and n = Nx.dim (rank - 1) d in
+  (* Matrices of no element have no greatest one, and nothing to step. *)
+  if Nx.numel d = 0 then d
+  else
+    let least = (Nx.Dtype.float_format (Nx.dtype d)).min_normal in
+    let top = Nx.max ~axes:[ -2; -1 ] ~keepdims:true (Nx.abs d) in
+    let q = Nx.div d top in
+    let squares = Nx.sum ~axes:[ -1 ] ~keepdims:true (Nx.mul q q) in
+    let norm = Nx.sqrt (Nx.sum ~axes:[ -2 ] ~keepdims:true squares) in
+    let start =
+      Nx.where (Nx.less_s top least) (Nx.zeros_like d) (Nx.div q norm)
+    in
+    let wide = m <= n in
+    let iterate x =
+      let t = Nx.matrix_transpose x in
+      let gram = if wide then Nx.matmul x t else Nx.matmul t x in
+      let odd =
+        Nx.add (Nx.mul_s gram muon_b)
+          (Nx.mul_s (Nx.matmul gram gram) muon_c)
+      in
+      Nx.add (Nx.mul_s x muon_a)
+        (if wide then Nx.matmul odd x else Nx.matmul x odd)
+    in
+    let rec times k x = if k = 0 then x else times (k - 1) (iterate x) in
+    Nx.mul_s
+      (times muon_iterations start)
+      (muon_rms *. Float.sqrt (Float.of_int (Int.max m n)))
+
+(* [muon_stacks fn stacks path shape] is the number of leading axes along
+   which the leaf at [path], of [shape], stacks its matrices: [stacks]'
+   answer, and none for a leaf of two axes where the step was given no
+   rule. A leaf of two axes admits [0] alone, so a rule that answers more for
+   a stack of vectors raises. *)
+let muon_stacks fn stacks path shape =
+  let rank = Array.length shape in
+  let refuse fmt =
+    Format.kasprintf invalid_arg ("%s: %s: " ^^ fmt) fn (describe path)
+  in
+  if rank < 2 then
+    refuse
+      "shape %a has fewer than two axes, so it holds no matrix; step this \
+       leaf in another part"
+      Nx.pp_shape shape;
+  match stacks with
+  | None when rank = 2 -> 0
+  | None ->
+      refuse
+        "shape %a has more than two axes; pass ~stacks to say how it stacks \
+         its matrices"
+        Nx.pp_shape shape
+  | Some rule ->
+      let k = rule path shape in
+      if rank = 2 && k <> 0 then
+        refuse
+          "~stacks gave %d for shape %a, expected 0: a leaf of two axes is \
+           one matrix; step a stack of vectors in another part"
+          k Nx.pp_shape shape;
+      if k < 0 || k > rank - 2 then
+        refuse "~stacks gave %d for shape %a, expected 0 to %d" k Nx.pp_shape
+          shape (rank - 2);
+      k
+
+(* [real_form z] is the real matrices [[re, -im]; [im, re]] by which the
+   complex matrices [z] act on their real coordinates, [z] given as its parts
+   [re] and [im] stacked along a first axis. [complex_form] is its inverse on
+   such matrices of [2m] rows and [2n] columns: the first block column. *)
+let real_form z =
+  let re = Nx.get [ 0 ] z and im = Nx.get [ 1 ] z in
+  Nx.concatenate ~axis:(-2)
+    [
+      Nx.concatenate ~axis:(-1) [ re; Nx.neg im ];
+      Nx.concatenate ~axis:(-1) [ im; re ];
+    ]
+
+let complex_form ~m ~n x =
+  let lead = List.init (Nx.ndim x - 2) (fun _ -> Nx.A) in
+  let rows i = Nx.slice (lead @ [ Nx.R (i * m, (i + 1) * m); Nx.R (0, n) ]) x in
+  Nx.stack [ rows 0; rows 1 ]
+
+let is_complex (type a b d) (x : (a, b, d) Nx.t) =
+  match Nx.Dtype.kind (Nx.dtype x) with
+  | Complex -> true
+  | Float | Signed | Unsigned | Boolean -> false
+
+let muon_init p params = velocity_init "Vega.muon_init" p params
+
+let muon_step p ~lr ?(momentum = 0.95) ?weight_decay ?decays ?stacks
+    ?(nesterov = true) st ~params ~grads =
+  let fn = "Vega.muon_step" in
+  let lr = lr st.step in
+  let wd = decay_at ~default:0.01 weight_decay st.step in
+  validate_unit_interval fn "momentum" momentum;
+  let f path leaf w x g s =
+    let shape = Nx.shape leaf in
+    let rank = Array.length shape in
+    let k = muon_stacks fn stacks path shape in
+    let v = Nx.add (Nx.mul_s s.(0) momentum) g in
+    let d = if nesterov then Nx.add g (Nx.mul_s v momentum) else v in
+    (* The leaf read as matrices: [k] axes of stacks, the next as rows, the
+       rest merged as columns. A complex leaf's parts keep their first axis. *)
+    let m = shape.(k) in
+    let n = Array.fold_left ( * ) 1 (Array.sub shape (k + 1) (rank - k - 1)) in
+    let matrices = Array.append (Array.sub shape 0 k) [| m; n |] in
+    let u =
+      if is_complex leaf then
+        let z = Nx.reshape (Array.append [| 2 |] matrices) d in
+        complex_form ~m ~n (muon_direction (real_form z))
+      else muon_direction (Nx.reshape matrices d)
+    in
+    let u = Nx.reshape (Nx.shape d) u in
+    let decays = asks decays path leaf in
+    (descend ~lr x (decayed wd w ~decays x u), [| v |])
+  in
+  let params, parts =
+    leafwise fn p ~counter:st.step ~params ~grads
+      [ ("the velocity", st.velocity) ]
+      ~f
+  in
+  (params, { velocity = parts.(0); step = Nx.add_s st.step 1l })
+
 (* The Adam family: Adam, AdamW, RAdam and LAMB *)
 
 type ('p, 'd) adam_state = { mu : 'p; nu : 'p; step : 'd Nx.int32_t }

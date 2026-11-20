@@ -15,4 +15,5 @@ where weight decay applies, epsilon's place, default constants.
 - Schedules at step 0, 1 and the last step.
 - Leaves that are neither floats nor complex pass through untouched; each
   part of a complex leaf steps as a real leaf of the complex leaf's shape,
-  with its own state, and a leaf's norms sum both parts.
+  with its own state, and a leaf's norms sum both parts; `muon_step` steps
+  both parts as one real matrix.

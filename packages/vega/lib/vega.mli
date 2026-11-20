@@ -61,10 +61,10 @@
     [('p, 'd) Nx.Ptree.t] built with [Nx.Ptree.instantiate], ['d] the set the
     parameters lie on; see {!section-structures} for what it checks.
 
-    The optimizers are {!sgd_step}, {!lars_step}, {!adam_step}, {!adamw_step},
-    {!radam_step}, {!lamb_step}, {!rmsprop_step}, {!adagrad_step}, {!adan_step},
-    {!lion_step}, {!adafactor_step} and {!lbfgs_step}, each with its [*_init].
-*)
+    The optimizers are {!sgd_step}, {!lars_step}, {!muon_step}, {!adam_step},
+    {!adamw_step}, {!radam_step}, {!lamb_step}, {!rmsprop_step},
+    {!adagrad_step}, {!adan_step}, {!lion_step}, {!adafactor_step} and
+    {!lbfgs_step}, each with its [*_init]. *)
 
 (** {1:structures Parameters and states}
 
@@ -100,8 +100,9 @@
       [z] to [z - lr * conj g], and its velocity holds [conj g]. A norm over
       a leaf ({!lars_step}, {!lamb_step}, {!adafactor_step}'s clipping) sums
       both parts, and {!adafactor_step} factors each part as a leaf of the
-      complex leaf's shape. The parts compute at float32 for complex64 and at
-      float64 for complex128.
+      complex leaf's shape. {!muon_step} steps the two parts together, as one
+      real matrix ({!section-muon}). The parts compute at float32 for
+      complex64 and at float64 for complex128.
     - {b States are structures.} {!sgd_ptree}, {!adam_ptree}, {!rmsprop_ptree},
       {!adagrad_ptree}, {!adan_ptree}, {!lion_ptree}, {!adafactor_ptree} and
       {!lbfgs_ptree} are a state's structure over [p]. A state's leaf paths are
@@ -141,7 +142,7 @@
     equal bits wherever they lie, a checkpoint resumes bit for bit at any
     placement, copies of one state stepped with equal gradients stay equal,
     and a leaf added to the structure changes no other leaf's draws. Under a
-    step that sums over a leaf ({!lars_step}, {!lamb_step},
+    step that sums over a leaf ({!lars_step}, {!muon_step}, {!lamb_step},
     {!adafactor_step}), a leaf cut across devices is the exception. Its bits
     depend on its placement, since a float sum over a cut axis rounds as
     {!Nx.section-reductions} states. Two states stepped at equal counters
@@ -325,9 +326,9 @@ val rate : float -> 'd Schedule.t
 
 (** {1:decay Weight Decay}
 
-    {!lars_step}, {!adamw_step}, {!lamb_step} and {!adan_step} decay the
-    parameters. A step adds [wd * p] to a leaf's direction before its rate
-    scales it, as each step's formula shows, where [wd] is the
+    {!lars_step}, {!muon_step}, {!adamw_step}, {!lamb_step} and {!adan_step}
+    decay the parameters. A step adds [wd * p] to a leaf's direction before
+    its rate scales it, as each step's formula shows, where [wd] is the
     [~weight_decay] rate at the state's counter ({!section-rates}). The decay
     is decoupled (Loshchilov and Hutter, 2019). It acts on the parameters
     directly rather than through the gradient, so an adaptive step does not
@@ -399,9 +400,10 @@ val rate : float -> 'd Schedule.t
     let trunk = part "trunk" trunk_p and head = part "head" head_p
     ]}
 
-    A part that follows the kind of leaf across every layer, such as each
-    block's matrices, is the model itself over optional arrays, [None] at the
-    leaves outside the part. For a model of structure [M] its description is
+    A part that follows the kind of leaf across every layer, such as the
+    matrices {!muon_step} takes where {!adamw_step} takes the other leaves,
+    is the model itself over optional arrays, [None] at the leaves outside
+    the part. For a model of structure [M] its description is
     [Nx.Ptree.nest (module M) Nx.Ptree.(option tensor)], which keeps every
     leaf's path and so its draws. One function [kind] from a leaf's path to
     its part cuts the model, so that each leaf is in one part. [only k x] is
@@ -442,17 +444,19 @@ val rate : float -> 'd Schedule.t
     as in [Rune.grad head (fun h -> loss { params with head = h }) params.head].
 
     A setting of one step that a leaf's path and shape decide, whether it
-    decays ({!section-decay}) or whether its trust ratio applies
-    ({!lars_step}), is a rule on the leaf. A step asks its rules while it is
-    built, and its state's structure does not depend on their answers. A rate
-    is a function of a state's counter and another optimizer keeps another
-    state, so each is another call, over a part. *)
+    decays ({!section-decay}), whether its trust ratio applies ({!lars_step})
+    or how it holds its matrices ({!section-muon}), is a rule on the leaf. A
+    step asks its rules while it is built, and its state's structure does not
+    depend on their answers. A rate is a function of a state's counter and
+    another optimizer keeps another state, so each is another call, over a
+    part. *)
 
 (** {1:sgd Stochastic Gradient Descent} *)
 
 type ('p, 'd) sgd_state = { velocity : 'p; step : 'd Nx.int32_t }
-(** The state for {!sgd_step}: the momentum velocity, with the shape of the
-    parameters, and the number of completed steps as a scalar tensor. Every
+(** The state for {!sgd_step}, {!lars_step} and {!muon_step}: the momentum
+    velocity, with the shape of the parameters, and the number of completed
+    steps as a scalar tensor. Every
     state carries its counter, so a {!Schedule} applies to [st.step] whichever
     optimizer is stepping. *)
 
@@ -562,6 +566,110 @@ val lars_step :
     Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\), if
     [trust_coefficient] is not positive and finite, or as {!section-structures}
     states if [grads] or [st.velocity] does not have [params]' skeleton. *)
+
+(** {1:muon Muon}
+
+    Muon (Jordan et al., 2024) steps a matrix along the orthogonal factor of
+    its momentum [d]. For [d = u s vᵀ] that factor is [u vᵀ], whose singular
+    values are all [1]. [orth d] approximates it by five steps of an
+    iteration from [d / |d|], [|d|] the Frobenius norm. It keeps [d]'s
+    singular vectors. Up to rounding, a singular value of at least
+    [|d| / 300] becomes one in \[[0.68];[1.21]\], no value exceeds [1.21],
+    and a zero one stays zero, so a [d] of low rank steps along its own
+    directions alone.
+
+    [orth d] is zero where [d]'s greatest magnitude is below the least
+    positive normal float of the dtype the leaf computes at
+    ({!section-structures}). Where [d] and [c * d], [c] positive, are both
+    above that bound, it is the same for both up to rounding, and bit for bit
+    where [c] is a power of two and no element of either overflows or is
+    subnormal. A step does not shrink with the velocity. So a matrix the
+    objective stops reading, or reads at some steps only, keeps moving along
+    its last direction at the full rate until [d] decays below that bound,
+    over a thousand steps at float32 and the default [momentum]. Such a
+    matrix must stay out of what {!muon_step} steps. A NaN or an infinity in
+    [d] makes every element of its matrix NaN.
+
+    A leaf holds its matrices as [~stacks] says. [stacks path shape] is the
+    number of leading axes along which the leaf at [path] stacks them. Each
+    matrix has the next axis as its rows and the axes after it, merged, as
+    its columns. So [~stacks:(fun _ _ -> 0)] reads a leaf of two axes as one
+    matrix and a convolution kernel [[out; k…; in]] as one matrix of [out]
+    rows, and [~stacks:(fun _ shape -> Array.length shape - 2)] reads a batch
+    of matrices over its last two axes ({!Nx.section-matrices}). The rule
+    cannot give a matrix rows of several axes, as [[heads; d; out]] read as
+    one matrix of [out] columns. It is asked as [~decays] is
+    ({!section-decay}), of each leaf of two axes or more. A stack of vectors,
+    such as the biases of blocks stacked along a new axis, has two axes and
+    no matrix. It must stay out by its path ({!section-parts}), and a rule
+    that answers [1] for it raises. Without [~stacks], a leaf of two axes is
+    one matrix and a leaf of more raises.
+
+    A complex leaf of [m] rows and [n] columns steps as the real matrix by
+    which it acts on its real coordinates, [[[re, -im]; [im, re]]] of [2m]
+    rows and [2n] columns, so its step scales by [0.2 * sqrt (2 * max m n)].
+    The orthogonal factor of that matrix is the matrix of the leaf's complex
+    factor [u vᴴ]. The velocity holds the leaf's two parts, as every state
+    does ({!section-structures}).
+
+    Muon is a step for the matrices of a network's hidden layers. An
+    embedding table and an output layer are matrices by their shape and
+    commonly take another optimizer. Nothing here tells them apart, so they
+    are another part by their paths ({!section-parts}), as the leaves of
+    fewer than two axes are. *)
+
+val muon_init : ('p, 'd) Nx.Ptree.t -> 'p -> ('p, 'd) sgd_state
+(** [muon_init] is {!sgd_init}: Muon keeps SGD's momentum velocity, and the
+    structure of its state over [p] is [sgd_ptree p]. *)
+
+val muon_step :
+  ('p, 'd) Nx.Ptree.t ->
+  lr:('d Nx.int32_t -> (float, 'b, 'd) Nx.t) ->
+  ?momentum:float ->
+  ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
+  ?decays:(Nx.Ptree.Path.t -> int array -> bool) ->
+  ?stacks:(Nx.Ptree.Path.t -> int array -> int) ->
+  ?nesterov:bool ->
+  ('p, 'd) sgd_state ->
+  params:'p ->
+  grads:'p ->
+  'p * ('p, 'd) sgd_state
+(** [muon_step p ~lr st ~params ~grads] is [(params', st')] after one Muon
+    step. Per matrix of [m] rows and [n] columns ({!section-muon}):
+
+    {v
+    v' = momentum * v + g
+    d  = g + momentum * v'
+    p' = p - lr * (0.2 * sqrt (max m n) * orth d + wd * p)
+    v}
+
+    Without [nesterov], [d = v']. [wd] is the weight decay at the counter
+    ({!section-decay}), and a leaf that does not decay leaves [wd * p] out. A
+    matrix whose [orth d] is zero steps by its decay alone. [momentum]
+    defaults to [0.95] and [weight_decay] to [Vega.rate 0.01]. [nesterov]
+    defaults to [true], where {!lars_step}'s defaults to [false].
+
+    The elements of a step of full rank have a root mean square of about
+    [0.2 * lr], whatever the matrix's shape (Liu et al., 2025). Jordan et
+    al.'s implementation scales [orth d] by [sqrt (max 1 (o / i))] instead,
+    for a layer of [o] outputs and [i] inputs. A recipe at one rate [r] and
+    decay [w] under that scaling steps the leaves of [i] inputs here at the
+    rate [r / (0.2 * sqrt i)] and the decay [0.2 * sqrt i * w], so it is one
+    part for each count of inputs ({!section-parts}).
+
+    A leaf cut across devices along a stack axis, or along the longer axis of
+    its matrices, the columns of square ones, steps where it lies.
+
+    Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\); naming
+    the leaf's path, on a float or complex leaf of fewer than two axes, on
+    one of more than two axes without [stacks], or if [stacks] gives a leaf
+    of [r] axes a number outside \[[0];[r - 2]\]; as {!Nx.matmul} does
+    ({!Nx.section-routing}) on a leaf cut across devices along the shorter
+    axis of its matrices, the rows of square ones; as {!Nx.concatenate} does
+    on a complex leaf cut along either axis of its matrices; as a reshape
+    does ({!Nx.section-shapes}) on a leaf cut along an axis merged into its
+    columns whose cut it does not keep; or as {!section-structures} states if
+    [grads] or [st.velocity] does not have [params]' skeleton. *)
 
 (** {1:adam Adam and AdamW} *)
 

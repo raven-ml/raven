@@ -69,16 +69,18 @@ let centralize p grads =
 | A default for deep networks | `adamw_step` |
 | Unstable early training, no warmup | `radam_step` |
 | Very large batches | `lamb_step` (adaptive), `lars_step` (momentum) |
+| The matrices of hidden layers, the other leaves under `adamw_step` | `muon_step` |
 | Optimizer memory is the limit | `adafactor_step` (no first moment, factored second), `lion_step` (one average) |
 | Sparse or rarely-seen features | `adagrad_step` |
 | Recurrent networks, non-stationary objectives | `rmsprop_step` |
 | Full-batch, deterministic objectives | `Jera.Minimize` to a tolerance; `lbfgs_step` at a fixed rate |
 
-Weight decay in `adamw_step`, `lamb_step`, `lars_step` and `adan_step` is
-decoupled: it is added to the update, where the adaptive scaling does not
-touch it. It applies to every float leaf that `~decays` accepts, a function of
-the leaf's path and shape, by default every leaf. Biases and normalisation
-parameters are commonly left out by their field names:
+Weight decay in `adamw_step`, `lamb_step`, `lars_step`, `muon_step` and
+`adan_step` is decoupled: it is added to the update, where the adaptive
+scaling does not touch it. It applies to every float leaf that `~decays`
+accepts, a function of the leaf's path and shape, by default every leaf.
+Biases and normalisation parameters are commonly left out by their field
+names:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -130,10 +132,13 @@ The gradient is clipped before it is split, so the bound holds for the whole
 model. The trunk, stepped at a tenth of the rate, also decays at a tenth.
 
 A part can also follow the kind of leaf across every layer. Here each block's
-matrix takes AdamW and every other leaf momentum SGD. Such a part is the
-model itself over optional arrays, `None` at the leaves outside it, and one
-function from a leaf's path to its part cuts the model. The parts section of
-[`vega.mli`](../lib/vega.mli) states the rules and their three limits.
+matrix takes Muon and every other leaf AdamW, each at its own rate. The head
+is a matrix by its shape and is kept out of Muon's part by its path, as the
+Muon section of [`vega.mli`](../lib/vega.mli) says of an output layer. Such a
+part is the model itself over optional arrays, `None` at the leaves outside
+it, and one function from a leaf's path to its part cuts the model. The parts
+section of [`vega.mli`](../lib/vega.mli) states the rules and their three
+limits.
 
 ```ocaml
 module Block = struct
@@ -165,12 +170,12 @@ let model : ((leaf, Nx.host) Model.t, Nx.host) Nx.Ptree.t =
 let part : ((leaf option, Nx.host) Model.t, Nx.host) Nx.Ptree.t =
   Nx.Ptree.nest (module Model) Nx.Ptree.(option tensor)
 
-(* Each block's [w] takes AdamW, every other leaf SGD. *)
+(* Each block's [w] takes Muon, every other leaf AdamW. *)
 let kind path =
   let open Nx.Ptree.Path in
   match segments path with
-  | [ Field "blocks"; Index _; Field "w" ] -> `Adamw
-  | _ -> `Sgd
+  | [ Field "blocks"; Index _; Field "w" ] -> `Muon
+  | _ -> `Adamw
 
 let only k x =
   Nx.Ptree.Payload.map (module Model)
@@ -182,19 +187,20 @@ let over part x =
     (fun _ a x -> Option.value a ~default:x)
     part x
 
-let lr = Vega.rate 1e-3
+let muon_lr = Vega.rate 2e-3
+let adamw_lr = Vega.rate 1e-3
 
-let update (params, (adamw, sgd)) grads =
+let update (params, (muon, adamw)) grads =
   let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
-  let w, adamw =
-    Vega.adamw_step part ~lr adamw ~params:(only `Adamw params)
+  let w, muon =
+    Vega.muon_step part ~lr:muon_lr muon ~params:(only `Muon params)
+      ~grads:(only `Muon grads)
+  in
+  let rest, adamw =
+    Vega.adamw_step part ~lr:adamw_lr adamw ~params:(only `Adamw params)
       ~grads:(only `Adamw grads)
   in
-  let rest, sgd =
-    Vega.sgd_step part ~lr ~momentum:0.9 sgd ~params:(only `Sgd params)
-      ~grads:(only `Sgd grads)
-  in
-  (over w (over rest params), (adamw, sgd))
+  (over w (over rest params), (muon, adamw))
 
 let params =
   let block () =
@@ -209,8 +215,8 @@ let params =
   }
 
 let state =
-  ( Vega.adamw_init part (only `Adamw params),
-    Vega.sgd_init part (only `Sgd params) )
+  ( Vega.muon_init part (only `Muon params),
+    Vega.adamw_init part (only `Adamw params) )
 
 (* One step, the parameters standing in for their gradient. *)
 let params, state = update (params, state) params

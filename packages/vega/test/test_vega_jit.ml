@@ -129,6 +129,148 @@ let tests =
            (st.params, st)));
   ]
 
+(* Muon's leaves: a wide and a tall matrix, a square one, a kernel read as one
+   matrix, a stack of matrices, a bfloat16 matrix and a complex matrix. *)
+module Mats = struct
+  type t = {
+    wide : Nx.host Nx.float32_t;
+    tall : Nx.host Nx.float32_t;
+    square : Nx.host Nx.float32_t;
+    kernel : Nx.host Nx.float32_t;
+    stack : Nx.host Nx.float32_t;
+    half : Nx.host Nx.bfloat16_t;
+    z : Nx.host Nx.complex64_t;
+  }
+
+  let walk c { wide; tall; square; kernel; stack; half; z } =
+    let open Nx.Ptree.Walk in
+    let wide = field c "wide" tensor wide in
+    let tall = field c "tall" tensor tall in
+    let square = field c "square" tensor square in
+    let kernel = field c "kernel" tensor kernel in
+    let stack = field c "stack" tensor stack in
+    let half = field c "half" tensor half in
+    let z = field c "z" tensor z in
+    { wide; tall; square; kernel; stack; half; z }
+
+  let ptree : (t, Nx.host) Nx.Ptree.t = Nx.Ptree.v walk
+  let names = [ "wide"; "tall"; "square"; "kernel"; "stack"; "half"; "z" ]
+
+  (* The shapes of the real leaves, in [names]' order, and the complex
+     leaf's. *)
+  let shapes =
+    [
+      [| 3; 5 |];
+      [| 5; 3 |];
+      [| 4; 4 |];
+      [| 2; 3; 2; 2 |];
+      [| 3; 2; 4 |];
+      [| 3; 4 |];
+    ]
+
+  let z_shape = [| 2; 3 |]
+
+  (* The values of each real leaf, in C order, then the parts of [z]. *)
+  type values = float array list * (float array * float array)
+
+  let v ((reals, (re, im)) : values) =
+    match List.map2 (Nx.create Nx.float32) shapes reals with
+    | [ wide; tall; square; kernel; stack; half ] ->
+        let half = Nx.cast Nx.bfloat16 half in
+        let z = Array.map2 (fun re im -> { Complex.re; im }) re im in
+        let z = Nx.create Nx.complex64 z_shape z in
+        { wide; tall; square; kernel; stack; half; z }
+    | _ -> invalid_arg "Mats.v: expected an array of values per real leaf"
+
+  (* [zero mask values] is [values] with leaf [i] zero where [mask.(i)]. *)
+  let zero mask ((reals, (re, im)) : values) : values =
+    let wipe i a = if mask.(i) then Array.map (fun _ -> 0.0) a else a in
+    let z = List.length reals in
+    (List.mapi wipe reals, (wipe z re, wipe z im))
+
+  let gen : values Gen.t =
+    let open Gen in
+    let leaf shape =
+      array
+        ~size:(constant (Array.fold_left ( * ) 1 shape))
+        (float_range (-4.0) 4.0)
+    in
+    let reals =
+      List.fold_right
+        (fun shape rest ->
+          let+ x = leaf shape and+ xs = rest in
+          x :: xs)
+        shapes (constant [])
+    in
+    pair reals (pair (leaf z_shape) (leaf z_shape))
+end
+
+(* A Muon step compiled once gives the eager step from any parameters,
+   gradients and velocity. A third of the leaves have a zero gradient and a
+   zero velocity, as a matrix under a zero-initialised projection has at its
+   first step: such a leaf steps by its decay alone, compiled too, where the
+   quotient it does not select is [0 / 0].
+
+   The rate is one, so that a parameter moves by its element of the step:
+   compiled sums associate apart from eager ones, and the iteration grows a
+   rounding error by under [500]. The bfloat16 leaf's stores draw alike
+   compiled and eager, so they are a spacing apart at most where their float32
+   values differ, [2^-5] for a magnitude below [8]. *)
+let muon_compiles =
+  let both = Nx.Ptree.pair Mats.ptree (Vega.sgd_ptree Mats.ptree) in
+  (* The kernel is one matrix, and the stack its matrices along its first
+     axis. *)
+  let stacks path _ =
+    if Nx.Ptree.Path.to_string path = "stack" then 1 else 0
+  in
+  let body grads (params, st) =
+    Vega.muon_step Mats.ptree ~lr:(Vega.rate 1.0) ~stacks st ~params ~grads
+  in
+  let compiled =
+    lazy (Rune.jit Nx.Ptree.(Mats.ptree @-> both @-> returns both) body)
+  in
+  let gen =
+    let open Gen in
+    let zeroed =
+      array
+        ~size:(constant (List.length Mats.names))
+        (frequency [ (1, constant true); (2, constant false) ])
+    in
+    quad Mats.gen Mats.gen Mats.gen zeroed
+  in
+  prop ~count:50 "muon steps as eager from any leaves" gen
+    (fun (params, grads, velocity, zeroed) ->
+      List.iteri
+        (fun i name -> cover ("a zero momentum in " ^ name) zeroed.(i))
+        Mats.names;
+      cover "a nonzero momentum" (Array.exists not zeroed);
+      let grads = Mats.v (Mats.zero zeroed grads)
+      and velocity = Mats.v (Mats.zero zeroed velocity) in
+      let st = { Vega.velocity; step = Nx.scalar Nx.int32 4l } in
+      let x = (Mats.v params, st) in
+      let eager = body grads x in
+      let compiled = Lazy.force compiled grads x in
+      (* A leaf's floats, a complex one's as its two parts. *)
+      let parts (type v s) (x : (v, s, _) Nx.t) =
+        match Nx.Dtype.kind (Nx.dtype x) with
+        | Complex ->
+            Nx.to_array
+              (Nx.stack [ Nx.real Nx.float64 x; Nx.imag Nx.float64 x ])
+        | Float | Signed | Unsigned | Boolean -> floats x
+      in
+      let tol (type v s) (x : (v, s, _) Nx.t) =
+        match Nx.dtype x with Bfloat16 -> 0x1p-5 +. 1e-3 | _ -> 1e-3
+      in
+      ignore
+        (Nx.Ptree.map2 both
+           (fun path x y ->
+             equal
+               ~msg:(Format.asprintf "%a" Nx.Ptree.Path.pp path)
+               (array (float (tol x)))
+               (parts x) (parts y);
+             x)
+           eager compiled))
+
 (* A loss-scaled Adam step compiles once and follows the eager steps, through a
    step whose gradients overflow: [poison] is added to every gradient, [0.] but
    at the third step, where it is an infinity. *)
@@ -812,6 +954,7 @@ let () =
     (run "vega jit"
        [
          group "a step compiles with its state donated" tests;
+         group "a compiled step is the eager one" [ muon_compiles ];
          group "a bfloat16 step draws as eager's" half_tests;
          group "precision"
            [

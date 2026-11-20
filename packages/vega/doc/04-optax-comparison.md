@@ -22,6 +22,7 @@ the step, as `~lr`.
 | `optax.radam(1e-3)` | `Vega.radam_step p ~lr:(Vega.rate 1e-3)` |
 | `optax.lamb(1e-3)` | `Vega.lamb_step p ~lr:(Vega.rate 1e-3)` |
 | `optax.lars(0.1)` | `Vega.lars_step p ~lr:(Vega.rate 0.1)` |
+| `optax.contrib.muon(1e-3, consistent_rms=0.2)` | `Vega.muon_step p ~lr:(Vega.rate 1e-3)`, over the matrices' part |
 | `optax.rmsprop(1e-3)` | `Vega.rmsprop_step p ~lr:(Vega.rate 1e-3)` |
 | `optax.adagrad(0.01)` | `Vega.adagrad_step p ~lr:(Vega.rate 0.01)` |
 | `optax.adan(1e-3)` | `Vega.adan_step p ~lr:(Vega.rate 1e-3)` |
@@ -33,6 +34,16 @@ decay of `0.01` and its `adan_step` to `0.02`, where Optax's default to none.
 `optax.lamb` defaults to `eps=1e-6` where `lamb_step` uses `1e-8`.
 Vega's `adafactor_step` factors every leaf of two or more axes, whatever their
 sizes, and does not scale updates by the parameters' root mean square.
+
+`optax.contrib.muon` steps the leaves that are not matrices with AdamW in the
+same transformation. Vega's `muon_step` steps matrices alone and raises on a
+leaf of fewer than two axes, which a call of its own steps, over another part
+([Parts of a model](02-optimizers.md#parts-of-a-model)). `muon_step` always
+scales a matrix's step by `0.2 * sqrt (max m n)`, Optax's
+`consistent_rms=0.2`. Optax's default is `sqrt (max 1 (fan_out / fan_in))`,
+and the Muon step's doc in [`vega.mli`](../lib/vega.mli) converts a rate
+between the two. `muon_step` defaults to a weight decay of `0.01`, where
+Optax's defaults to none.
 
 ## Init and update
 

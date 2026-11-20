@@ -118,6 +118,7 @@ advances it. Several share a state type.
 |------|-------------|-------|----------------|
 | `sgd_step` | Stochastic gradient descent | `sgd_state` | `~momentum` |
 | `lars_step` | SGD scaled per leaf by a trust ratio, for large batches | `sgd_state` | `~momentum`, `~trust_coefficient`, `~weight_decay`, `~decays`, `~nesterov` |
+| `muon_step` | Steps along the orthogonal factor of the momentum, for the matrices of hidden layers | `sgd_state` | `~momentum`, `~weight_decay`, `~decays`, `~stacks`, `~nesterov` |
 | `adam_step` | Adam with bias correction | `adam_state` | `~b1`, `~b2`, `~eps` |
 | `adamw_step` | Adam with decoupled weight decay | `adam_state` | `~b1`, `~b2`, `~eps`, `~weight_decay`, `~decays` |
 | `radam_step` | Rectified Adam | `adam_state` | `~b1`, `~b2`, `~eps` |
