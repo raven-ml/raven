@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- **Breaking:** aion's `Codecs.decode` decodes a one-token scalar's `[b; 1]`
+  tokens to `[b]` values, and redshift's class 1024 to NaN, where it raised.
+  New `Scalar.values` and `Image.side`.
 - **Breaking:** aion's commands compile by `Rune.jit` on the devices
   `--device` names as `Rig_gpus.open_all` reads them, `cpu` by default, and
   `--eager` computes eagerly. `--device cpu-jit` is gone: `--device cpu`, and

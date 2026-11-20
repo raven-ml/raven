@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Codecs over scalar codecs planted in a Hub cache: a codebook of 8 edges per
-   channel, and for Mag_g one that ends in NaN edges, as seven of HSC's do. *)
+   channel, for Mag_g one that ends in NaN edges, as seven of HSC's do, and for
+   redshift a grid of 1024 edges, as AION-1's. *)
 
 open Windtrap
 open Aion
@@ -14,7 +15,11 @@ let book = Nx.create Nx.float32 [| 8 |] [| -3.; -1.; 0.; 0.5; 1.; 2.; 4.; 8. |]
 let nan_book =
   Nx.create Nx.float32 [| 8 |] [| -3.; -1.; 0.; 0.5; 1.; 2.; Float.nan; Float.nan |]
 
-(* A cache holding Flux_g's codebook and Xp_bp's 55. *)
+let grid =
+  Nx.create Nx.float32 [| 1024 |]
+    (Array.init 1024 (fun i -> 6. *. float_of_int i /. 1023.))
+
+(* A cache holding Flux_g's codebook, Xp_bp's 55 and redshift's grid. *)
 let cache_dir =
   let dir = Filename.temp_dir "aion" "codecs" in
   let plant m entries =
@@ -24,6 +29,7 @@ let cache_dir =
   plant Flux_g [ ("_quantizer._index_to_val", book) ];
   plant Parallax [ ("_quantizer._index_to_val", book) ];
   plant Mag_g [ ("_quantizer._index_to_val", nan_book) ];
+  plant Z [ ("_quantizer.buckets", grid) ];
   plant Xp_bp
     (List.init 55 (fun i ->
          (Printf.sprintf "_quantizer.quantizers.%d._index_to_val" i, book)));
@@ -31,7 +37,8 @@ let cache_dir =
 
 let codecs =
   Codecs.load ~cache_dir ~offline:true
-    Modality.[ Scalar Flux_g; Scalar Xp_bp; Scalar Parallax; Scalar Mag_g ]
+    Modality.
+      [ Scalar Flux_g; Scalar Xp_bp; Scalar Parallax; Scalar Mag_g; Scalar Z ]
 
 let ints x = Array.map Int64.to_int (Nx.to_array x)
 
@@ -101,15 +108,30 @@ let nan_edges =
 let others =
   group "codecs"
     [
-      test "decode gives each token's value" (fun () ->
-          let k = Nx.create Nx.int64 [| 3 |] [| 0L; 4L; 7L |] in
+      test "decode gives each token's value, [b] for one token" (fun () ->
+          let k = Nx.create Nx.int64 [| 3; 1 |] [| 0L; 4L; 7L |] in
           match Codecs.decode codecs (Scalar Flux_g) k with
           | Scalar { modality = Flux_g; values } ->
+              equal (array int) [| 3 |] (Nx.shape values);
               equal
                 (array (float_rel ~rel:1e-6 ~abs:0.))
                 [| exp (-3.); exp 1.; exp 8. |]
                 (Nx.to_array (Nx.cast Nx.float64 values))
           | _ -> fail "not Flux_g's values");
+      test "redshift's class 1024 decodes to NaN, 1025 and -1 are refused"
+        (fun () ->
+          let k = Nx.create Nx.int64 [| 3; 1 |] [| 0L; 1023L; 1024L |] in
+          (match Codecs.decode codecs (Scalar Z) k with
+          | Scalar { modality = Z; values } ->
+              equal (array float_exact) [| 0.; 6.; Float.nan |]
+                (Nx.to_array (Nx.cast Nx.float64 values))
+          | _ -> fail "not redshift's values");
+          List.iter
+            (fun t ->
+              let k = Nx.create Nx.int64 [| 2; 1 |] [| 0L; t |] in
+              raises_match (Exn.invalid_arg ~sub:"outside [0, 1025)") (fun () ->
+                  Codecs.decode codecs (Scalar Z) k))
+            [ 1025L; -1L ]);
       test "an image's bands give its modality" (fun () ->
           let flux = Nx.zeros Nx.float32 [| 1; 2; 96; 96 |] in
           let image bands = Codecs.Image { bands; flux } in
@@ -153,15 +175,21 @@ let values_of = function
 let compiled =
   prop "compiled encode and decode are the eager ones, bit for bit"
     Gen.(
-      let* m = of_list Modality.[ Flux_g; Xp_bp; Mag_g ] in
+      let* m = of_list Modality.[ Flux_g; Xp_bp; Mag_g; Z ] in
       let c = if m = Xp_bp then 55 else 1 in
+      (* The codebook's length, and the first token past it. *)
+      let n = if m = Z then 1024 else 8 in
       let* v = array ~size:(constant (4 * c)) value in
-      let+ k = array ~size:(constant (4 * c)) (int_range 0 7) in
-      (m, c, v, k))
-    (fun (m, c, v, k) ->
+      let+ k =
+        array ~size:(constant (4 * c))
+          (frequency [ (3, int_range 0 (n - 1)); (1, constant n) ])
+      in
+      (m, c, n, v, k))
+    (fun (m, c, n, v, k) ->
       cover "a codebook of NaN edges" (m = Mag_g);
       cover "an absent value"
         (m <> Mag_g && Array.exists (fun x -> not (Float.is_finite x)) v);
+      cover "a token past the codebook" (Array.exists (fun k -> k >= n) k);
       let shape = if c = 1 then [| 4 |] else [| 4; c |] in
       let d =
         Codecs.Scalar { modality = m; values = Nx.create Nx.float32 shape v }
@@ -169,7 +197,7 @@ let compiled =
       let e = Codecs.encode codecs d and ec = encode_c codecs d in
       equal (array int) (ints e.tokens) (ints ec.tokens);
       equal (array bool) (presence e) (presence ec);
-      let k = Nx.create Nx.int64 shape (Array.map Int64.of_int k) in
+      let k = Nx.create Nx.int64 [| 4; c |] (Array.map Int64.of_int k) in
       let bits x = Array.map Int32.bits_of_float (Nx.to_array (values_of x)) in
       equal (array int32)
         (bits (Codecs.decode codecs (Scalar m) k))

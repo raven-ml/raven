@@ -115,6 +115,8 @@ let inverse tr y =
   | Log _ -> Nx.exp y
   | Asinh_asinh -> Nx.sinh (Nx.sinh y)
 
+let values t = inverse t.transform t.edges
+
 (* A codec of [c] channels takes values whose last axis has [c] entries. *)
 let channels (type v s d) fn t (x : (v, s, d) Nx.t) =
   let c = Nx.dim 0 t.edges and s = Nx.shape x in

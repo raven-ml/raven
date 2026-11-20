@@ -399,6 +399,23 @@ let compiled =
       let bits x = Array.map Int32.bits_of_float (Nx.to_array x) in
       equal (array int32) (bits (Scalar.decode t k)) (bits (decode_c t k)))
 
+(* [values] is each token's value: token [j] of channel [i] at row [i], column
+   [j]. *)
+let all_values =
+  prop "values is decode of every token, bit for bit" codec (fun t ->
+      cover "Log" (match Scalar.transform t with Log _ -> true | _ -> false);
+      cover "Identity" (Scalar.transform t = Identity);
+      cover "Asinh_asinh" (Scalar.transform t = Asinh_asinh);
+      let c = Nx.dim 0 (Scalar.edges t) and n = Nx.dim 1 (Scalar.edges t) in
+      let k =
+        Nx.broadcast_to [| n; c |]
+          (Nx.reshape [| n; 1 |] (Nx.arange Nx.int64 0 n 1))
+      in
+      let bits x = Array.map Int32.bits_of_float (Nx.to_array x) in
+      equal (array int32)
+        (bits (Nx.transpose (Scalar.decode t k)))
+        (bits (Scalar.values t)))
+
 let compiled_refusal =
   test "a compiled codec refuses a token at the call on the host" (fun () ->
       let t = Scalar.v Identity (row [| 0.; 1.; 2. |]) in
@@ -505,7 +522,8 @@ let () =
              asinh;
              channels;
            ];
-         group "decode" [ upper_edge; out_of_range; past_last; decodes ];
+         group "decode"
+           [ upper_edge; out_of_range; past_last; decodes; all_values ];
          shapes;
          group "of_archive" [ layouts; unreadable ];
          group "structure" [ init; walk ];

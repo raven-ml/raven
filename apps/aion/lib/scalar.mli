@@ -70,6 +70,12 @@ val transform : 'd t -> transform
 val edges : 'd t -> 'd Nx.float32_t
 (** [edges t] is [t]'s codebooks, of shape [[|c; n|]]. *)
 
+val values : 'd t -> 'd Nx.float32_t
+(** [values t] is the value each token decodes to, [[|c; n|]]: row [i] is
+    channel [i]'s, {!edges} through the inverse transform. Each is the upper
+    end of its bin, so a mean over a distribution of tokens overstates the
+    value by about half a bin. *)
+
 (** {1:aion AION-1's codecs} *)
 
 val transform_of : Modality.scalar -> transform

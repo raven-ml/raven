@@ -136,6 +136,10 @@ val init : key:'d Nx.Rng.key -> arch -> ('d Nx.float32_t, 'd) t
     if the list is empty or repeats a band, or if its array's band axis does not
     have one entry per band. *)
 
+val side : int
+(** [side] is [96], the side in pixels of a prepared image ({!prepare}) and of
+    a decoded one ({!decode}). *)
+
 val prepare : band list -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [prepare bs x] is the prepared images of [x], [[n; c; 96; 96]].
 

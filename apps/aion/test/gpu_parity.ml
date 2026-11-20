@@ -76,12 +76,8 @@ let check name (c : Spread.check) =
 let codecs at ~hub dir =
   let path = Filename.concat dir and load = Nx_io.load_safetensors in
   let ms = Modality.[ Image_hsc; Spectrum Desi ] in
-  let g =
-    Nx.Ptree.place
-      (module Codecs)
-      at
-      (Codecs.load ~cache_dir:hub ~offline:true ms)
-  in
+  let h = Codecs.load ~cache_dir:hub ~offline:true ms in
+  let g = Nx.Ptree.place (module Codecs) at h in
   let encode, decode =
     let open Nx.Ptree in
     let set () = instantiate (module Codecs) and data () = v Codecs.walk_data in
@@ -135,11 +131,7 @@ let codecs at ~hub dir =
       (encode (Spectrum { modality = Desi; spectrum = x; lengths = None }))
         .tokens
   in
-  let levels =
-    Spectrum.levels
-      (Spectrum.of_archive
-         (Hub.codec ~cache_dir:hub ~offline:true (Spectrum Desi)))
-  in
+  let levels = Spectrum.levels (Codecs.spectrum h Desi) in
   (* The LFQ's input, [b; n; 10], from upstream's [b; 10; n]. *)
   let lfq key =
     floats (Nx.transpose ~axes:[ 0; 2; 1 ] (get Nx.float64 key e))

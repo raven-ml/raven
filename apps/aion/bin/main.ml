@@ -102,10 +102,9 @@ let host x = Nx.place Nx.Host.on x
 let model_s () = Nx.Ptree.instantiate (module Transformer)
 let inputs_s () = Nx.Ptree.(list (v Tokens.walk))
 
-(* The codecs [c] at [d], their encode and decode compiled there where [d]
+(* The encode and decode of the codecs [c] at [d], compiled there where [d]
    compiles, the codecs an argument: a program per modality and shape. *)
 type 'd codecs = {
-  codecs : ('d Nx.float32_t, 'd) Codecs.t;
   encode : 'd Codecs.data -> 'd Tokens.t;
   decode : Modality.t -> 'd Nx.int64_t -> 'd Codecs.data;
 }
@@ -113,7 +112,7 @@ type 'd codecs = {
 let codecs (d : _ Device.t) c =
   let c = Nx.Ptree.place (module Codecs) d.at c in
   if not d.jit then
-    { codecs = c; encode = Codecs.encode c; decode = Codecs.decode c }
+    { encode = Codecs.encode c; decode = Codecs.decode c }
   else
     let open Nx.Ptree in
     let codecs () = instantiate (module Codecs) in
@@ -125,7 +124,7 @@ let codecs (d : _ Device.t) c =
         (codecs () @-> v Modality.walk @-> tensor @-> returns (data ()))
         Codecs.decode
     in
-    { codecs = c; encode = encode c; decode = decode c }
+    { encode = encode c; decode = decode c }
 
 (* The tokens of the inputs of [objs] at [d]. *)
 let encode (d : _ Device.t) codecs o objs =
@@ -247,27 +246,16 @@ let posterior () =
       Transformer.forward
   in
   let codecs = codecs d r.codecs in
-  let edges = Scalar.edges (Codecs.scalar codecs.codecs s) in
-  let c = Nx.dim 0 edges and k = Nx.dim 1 edges in
   let vocab = Modality.vocab target in
   (* Each class's value, [[|k|]] or [[|c; k|]]. *)
-  let upper =
-    let classes = Nx.arange Nx.int64 0 k 1 in
-    let classes =
-      if c = 1 then classes
-      else Nx.broadcast_to [| k; c |] (Nx.reshape [| k; 1 |] classes)
-    in
-    match codecs.decode target (Nx.place d.at classes) with
-    | Scalar { values; _ } ->
-        let values = host values in
-        if c = 1 then values else Nx.transpose values
-    | _ -> assert false
-  in
+  let upper = Scalar.values (Codecs.scalar r.codecs s) in
+  let c = Nx.dim 0 upper and k = Nx.dim 1 upper in
+  let upper = if c = 1 then Nx.squeeze ~axes:[ 0 ] upper else upper in
   (* Each object's probabilities of the classes with a value, and of the
      others summed, from a softmax on the host in float64. *)
   let n = Objects.length r.objects in
   let p = Out.v Nx.float32 (if c = 1 then [| n; k |] else [| n; c; k |])
-  and rest = Out.v Nx.float32 [| n |] in
+  and past = Out.v Nx.float32 [| n |] in
   let batches = Objects.batches r.objects r.batch in
   List.iter
     (fun (first, objs) ->
@@ -279,13 +267,13 @@ let posterior () =
       let pk = Nx.cast Nx.float32 (Nx.slice [ Nx.A; Nx.A; Nx.R (0, k) ] q) in
       Out.set p first (if c = 1 then Nx.squeeze ~axes:[ 1 ] pk else pk);
       if vocab > k then
-        Out.set rest first
+        Out.set past first
           (Nx.cast Nx.float32
              (Nx.sum ~axes:[ 1; 2 ]
                 (Nx.slice [ Nx.A; Nx.A; Nx.R (k, vocab) ] q))))
     batches;
   let rest =
-    if vocab = k then [] else [ Out.entry (Printf.sprintf "p_%d" k) rest ]
+    if vocab = k then [] else [ Out.entry (Printf.sprintf "p_%d" k) past ]
   in
   Out.save r.out r.objects
     (Out.entry "p" p :: ("upper", Nx.P upper) :: rest);
@@ -298,40 +286,15 @@ let posterior () =
 let linear n steps =
   List.init steps (fun s -> (n / steps) + if s < n mod steps then 1 else 0)
 
-(* The side of a decoded image, whose pixels are 96 × 96 (Image.decode). *)
-let side = 96
-
-(* The draws [y], [[|b; k|]] at [d] and [h] on the host, decoded at [d]: each
-   object's values or flux, and the number of tokens that decode to no value.
-   A scalar's draws are read on the host, since a GPU set has no eager
-   kernels, an image's or a spectrum's decode where they lie. A scalar
-   codebook of [m] edges decodes the tokens below [m], the others cleared on
-   the host; redshift's vocabulary holds one more. *)
-let decoded (d : _ Device.t) codecs (target : Modality.t) h y =
-  let decode y =
+(* The draws [y], [[|b; k|]], decoded at their device, then moved to the
+   host: each object's values or flux. *)
+let decoded codecs (target : Modality.t) y =
+  match
     Nx.Ptree.place_fixed Codecs.walk_data Nx.Host.on (codecs.decode target y)
-  in
-  match target with
-  | Scalar s ->
-      let m = Nx.dim 1 (Scalar.edges (Codecs.scalar codecs.codecs s)) in
-      let x = if Modality.tokens target = 1 then Nx.reshape [| -1 |] h else h in
-      let none = Nx.greater_equal_s x (Int64.of_int m) in
-      let values =
-        match decode (Nx.place d.at (Nx.where none (Nx.zeros_like x) x)) with
-        | Scalar { values; _ } -> values
-        | _ -> assert false
-      in
-      let missing = Nx.item [] (Nx.sum (Nx.cast Nx.int64 none)) in
-      let values = Nx.where none (Nx.full_like values Float.nan) values in
-      (values, Int64.to_int missing)
-  | Spectrum _ -> (
-      match decode y with
-      | Spectrum { spectrum; _ } -> (spectrum.flux, 0)
-      | _ -> assert false)
-  | _ -> (
-      match decode y with
-      | Image { flux; _ } -> (flux, 0)
-      | _ -> assert false)
+  with
+  | Scalar { values; _ } -> values
+  | Spectrum { spectrum; _ } -> spectrum.flux
+  | Image { flux; _ } -> flux
 
 let generate () =
   let steps = ref None and draws = ref 1 and seed = ref 0 in
@@ -408,7 +371,17 @@ let generate () =
     | Spectrum s ->
         let g = Spectrum.grid (Codecs.spectrum r.codecs s) in
         ([| Nx.dim 0 g |], [ ("wavelength", Nx.P g) ])
-    | _ -> ([| List.length (Codecs.bands target); side; side |], [])
+    | _ -> ([| List.length (Codecs.bands target); Image.side; Image.side |], [])
+  in
+  (* The draws that decode to no value, a scalar token from its codebook's
+     length up (Codecs.decode), counted from the tokens [h] on the host. *)
+  let none h =
+    match target with
+    | Scalar s ->
+        let m = Nx.dim 1 (Scalar.edges (Codecs.scalar r.codecs s)) in
+        let past = Nx.greater_equal_s h (Int64.of_int m) in
+        Int64.to_int (Nx.item [] (Nx.count past))
+    | _ -> 0
   in
   let tokens = Out.v Nx.int64 [| n; draws; k |]
   and values = Out.v Nx.float32 (Array.append [| n; draws |] shape) in
@@ -429,10 +402,9 @@ let generate () =
         let keys = Nx.Rng.place d.at (Nx.Rng.fold_in keys j) in
         let y = draw ~keys x in
         let h = host y in
-        let v, m = decoded d codecs target h y in
         Out.set tokens first ~at:[ Nx.I j ] h;
-        Out.set values first ~at:[ Nx.I j ] v;
-        missing := !missing + m
+        Out.set values first ~at:[ Nx.I j ] (decoded codecs target y);
+        missing := !missing + none h
       done)
     batches;
   let name = match target with Scalar _ -> "values" | _ -> "flux" in

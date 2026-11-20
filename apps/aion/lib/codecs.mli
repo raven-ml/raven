@@ -97,10 +97,14 @@ val encode : ('d Nx.float32_t, 'd) t -> 'd data -> 'd Tokens.t
     {!Spectrum.pad} for spectra, and as that codec's encode. *)
 
 val decode : ('d Nx.float32_t, 'd) t -> Modality.t -> 'd Nx.int64_t -> 'd data
-(** [decode t m k] is the data of [m]'s tokens [k], [[|b; n|]], or [[|b|]] for a
-    modality of one token: images in every band of their survey, in channel
-    order; spectra on the codec's latent grid ({!Spectrum.grid}); a scalar's
-    values, each the upper end of its token's bin ({!Scalar.decode}).
+(** [decode t m k] is the data of [m]'s tokens [k], [[|b; n|]] as {!encode}
+    gives them: images in every band of their survey, in channel order; spectra
+    on the codec's latent grid ({!Spectrum.grid}); a scalar's values, [[|b|]]
+    for a modality of one token, each the upper end of its token's bin
+    ({!Scalar.decode}). A scalar token from the codebook's length to
+    {!Modality.vocab}[ m - 1] bins no value and decodes to NaN: redshift's
+    class 1024, which the transformer predicts.
 
-    Raises [Invalid_argument] if [t] was not loaded for [m], and as that codec's
-    decode. *)
+    Raises [Invalid_argument] if [t] was not loaded for [m], if a scalar token
+    is outside [\[0, ]{!Modality.vocab}[ m)] where that exceeds the codebook's
+    length, and as that codec's decode. *)

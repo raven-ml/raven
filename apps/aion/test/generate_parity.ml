@@ -50,7 +50,8 @@ let out = Filename.temp_dir "aion-generate" ""
 type case = {
   name : string;
   survey : Survey.survey;
-  source : string;  (** main.exe's argument: a file, or FILE:GROUP. *)
+  source : string;  (** A file under [dir]. *)
+  group : string option;  (** The source's group, if not the file's root. *)
   inputs : Modality.t list;
   target : Modality.t;
   rows : int * int;
@@ -68,7 +69,8 @@ let cases =
     {
       name = "z";
       survey = Legacy_survey;
-      source = "tutorial.h5:/legacysurvey";
+      source = "tutorial.h5";
+      group = Some "/legacysurvey";
       inputs = phot;
       target = Scalar Z;
       rows = (0, 6);
@@ -81,6 +83,7 @@ let cases =
       name = "desi";
       survey = Gaia;
       source = "gaia.h5";
+      group = None;
       inputs = Modality.[ Scalar Xp_bp; Scalar Xp_rp ];
       target = Spectrum Desi;
       rows = (0, 2);
@@ -93,6 +96,7 @@ let cases =
       name = "image";
       survey = Desi;
       source = "desi.h5";
+      group = None;
       inputs = [ Spectrum Desi ];
       target = Image;
       rows = (0, 1);
@@ -103,15 +107,6 @@ let cases =
     };
   ]
 
-let source c =
-  match String.index_opt c.source ':' with
-  | Some k ->
-      Survey.load
-        ~group:(String.sub c.source (k + 1) (String.length c.source - k - 1))
-        c.survey
-        (Filename.concat dir (String.sub c.source 0 k))
-  | None -> Survey.load c.survey (Filename.concat dir c.source)
-
 let run c file =
   let a, b = c.rows in
   let args =
@@ -119,7 +114,8 @@ let run c file =
       main;
       "generate";
       "--" ^ Survey.name c.survey;
-      Filename.concat dir c.source;
+      (let file = Filename.concat dir c.source in
+       match c.group with None -> file | Some g -> file ^ ":" ^ g);
       "--target";
       Modality.key c.target;
       "--inputs";
@@ -145,7 +141,9 @@ let run c file =
 (* The draws of [c] by the library, [[|n; draws; k|]], and each entry main.exe
    decodes, stacked likewise. *)
 let replay t codecs c =
-  let src = source c in
+  let src =
+    Survey.load ?group:c.group c.survey (Filename.concat dir c.source)
+  in
   let a, b = c.rows in
   let encode rows =
     List.map (fun m -> Codecs.encode codecs (Survey.read src rows m)) c.inputs
@@ -173,37 +171,19 @@ let replay t codecs c =
           Roar.sample ~keys:(Nx.Rng.fold_in keys j) ~reveal:c.reveal t ins
             c.target)
     in
-    (* A scalar token past its codebook's edges, redshift's class 1024,
-       decodes to NaN, as main.exe states. *)
     let decoded x : (string * Nx.host Nx.float32_t) list =
-      match c.target with
-      | Scalar s ->
-          let m = Nx.dim 1 (Scalar.edges (Codecs.scalar codecs s)) in
-          let none = Nx.greater_equal_s x (Int64.of_int m) in
-          let v =
-            match
-              Codecs.decode codecs c.target (Nx.where none (Nx.zeros_like x) x)
-            with
-            | Scalar { values; _ } -> values
-            | _ -> assert false
-          in
-          [ ("values", Nx.where none (Nx.full_like v Float.nan) v) ]
-      | _ -> (
-          match Codecs.decode codecs c.target x with
-          | Spectrum { spectrum; _ } -> [ ("flux", spectrum.flux) ]
-          | Image { flux; _ } -> [ ("flux", flux) ]
-          | Scalar _ -> assert false)
-    in
-    let x =
-      if Modality.tokens c.target = 1 then Nx.reshape [| -1 |] else Fun.id
+      match Codecs.decode codecs c.target x with
+      | Scalar { values; _ } -> [ ("values", values) ]
+      | Spectrum { spectrum; _ } -> [ ("flux", spectrum.flux) ]
+      | Image { flux; _ } -> [ ("flux", flux) ]
     in
     ( Nx.stack ~axis:1 draws,
       List.map
         (fun (name, _) ->
           ( name,
             Nx.stack ~axis:1
-              (List.map (fun d -> List.assoc name (decoded (x d))) draws) ))
-        (decoded (x (List.hd draws))) )
+              (List.map (fun d -> List.assoc name (decoded d)) draws) ))
+        (decoded (List.hd draws)) )
   in
   let parts =
     List.init ((n + c.batch - 1) / c.batch) (fun k -> batch (k * c.batch))

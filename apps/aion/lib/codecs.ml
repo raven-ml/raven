@@ -112,6 +112,32 @@ let encode t d : _ Tokens.t =
         present = Nx.reshape shape (present c values);
       }
 
+(* A token from the codebook's length [n] to the vocabulary's last is a class
+   the transformer predicts whose bin holds no value, as redshift's 1024, and
+   decodes to NaN. Where the vocabulary exceeds the codebook, a token outside
+   it is refused here, since the codec's refusal would name its own range. *)
+let decode_scalar c m k =
+  let n = Nx.dim 1 (Scalar.edges c) and vocab = Modality.vocab m in
+  let v =
+    if vocab <= n then Scalar.decode c k
+    else begin
+      let inside =
+        Nx.logical_and (Nx.greater_equal_s k 0L)
+          (Nx.less_s k (Int64.of_int vocab))
+      in
+      Nx.check Nx.Ptree.tensor inside k (fun i k ->
+          Invalid_argument
+            (Format.asprintf
+               "Aion.Codecs.decode: token %Ld at %a outside [0, %d)"
+               (Nx.item [] k) Nx.pp_shape i vocab));
+      let past = Nx.greater_equal_s k (Int64.of_int n) in
+      let v = Scalar.decode c (Nx.where past (Nx.zeros_like k) k) in
+      Nx.where past (Nx.full_like v Float.nan) v
+    end
+  in
+  (* A modality of one token has values [[|b|]], its tokens [[|b; 1|]]. *)
+  if Modality.tokens m = 1 then Nx.reshape [| Nx.dim 0 k |] v else v
+
 let decode t (m : Modality.t) k =
   match m with
   | Image | Image_hsc ->
@@ -124,5 +150,6 @@ let decode t (m : Modality.t) k =
           spectrum = Spectrum.decode (spectrum t s) k;
           lengths = None;
         }
-  | Scalar s -> Scalar { modality = s; values = Scalar.decode (scalar t s) k }
+  | Scalar s ->
+      Scalar { modality = s; values = decode_scalar (scalar t s) m k }
   | Segmap | Catalog -> missing m
