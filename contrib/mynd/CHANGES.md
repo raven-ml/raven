@@ -4,6 +4,11 @@ All notable changes to Mynd are documented in this file.
 
 ## Unreleased
 
+- New library `mynd.coco`: COCO's files through jsont, polygon masks by
+  `Mynd_coco.runs`, and `evaluate_boxes`, `evaluate_masks` and `summary`,
+  whose tables equal pycocotools 2.0.11's bit for bit on valid data. A mask
+  result's area range reads its pixel count, where pycocotools reads the
+  `bbox` a results file holds beside it.
 - Add ten examples (`examples/`) that run with the test suite on a CC0
   photograph, from an image's values to masks, detections and a learned
   warp. sowilo's blurs are in `05-filters`, its Sobel and Canny in
