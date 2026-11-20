@@ -6645,6 +6645,57 @@ let transposed_kernel n =
          ())
     [ Ops.end_ (Ops.store (Ops.index out [ (i * int 8) + j ]) sum) [ i; j ] ]
 
+(* [out[i, j] = sum_k x[i, k] * w[j, k]] for [i] below 8 and [j] below 2 and
+   [k] below [n], float32, [i] and [j] upcast whole and [k] unrolled by 4: the
+   expander numbers the lane axes [i] then [j], so the last is the narrower. *)
+let widest_kernel n =
+  let out = Shape.param ~shape:[ Int 16 ] 0 Float32 in
+  let x = Shape.param ~shape:[ Int (8 * n) ] 1 Float32 in
+  let w = Shape.param ~shape:[ Int (2 * n) ] 2 Float32 in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Int 2) [ 1 ] in
+  let k = Ops.range ~axis_type:Weak (Int n) [ 2 ] in
+  let product =
+    Ops.index x [ (i * int n) + k ] * Ops.index w [ (j * int n) + k ]
+  in
+  let sum = Ops.reduce product Op.Add [ k ] in
+  let split axis amount target =
+    Opt.Split { axis; amount; target; top = false }
+  in
+  Ops.sink
+    ~kernel:
+      (Ops.kernel_info
+         ~opts_to_apply:[ split 0 0 Upcast; split 0 0 Upcast; split 2 4 Upcast ]
+         ())
+    [ Ops.end_ (Ops.store (Ops.index out [ (i * int 2) + j ]) sum) [ i; j ] ]
+
+(* The sum runs along its widest lane axis, [i]'s 8, not its last, [j]'s 2:
+   every multiply-add is a vector of 8 lanes, and every output adds its
+   products in order, exact on small integers. *)
+let runs_widest () =
+  let n = 16 in
+  let prg = Codegen.to_program (widest_kernel n) (Lazy.force host) in
+  let uops = Ops.src (Ops.nth prg 1) in
+  equal (list int) ~msg:"lanes of the multiply-adds" [ 8 ]
+    (List.sort_uniq compare
+       (List.filter_map
+          (fun (o, lanes, _) -> if Op.equal o Op.Mulacc then Some lanes else None)
+          (vector_operations uops)));
+  let x = Array.init (8 * n) (fun k -> Float.of_int ((k mod 7) - 3))
+  and w = Array.init (2 * n) (fun k -> Float.of_int ((k mod 5) - 2)) in
+  let out e =
+    let i = e / 2 and j = e mod 2 in
+    let s = ref 0. in
+    for k = 0 to n - 1 do
+      s := !s +. (x.((i * n) + k) *. w.((j * n) + k))
+    done;
+    `Float !s
+  in
+  let floats = Array.map (fun f -> `Float f) in
+  equal (array Dtypes.value) (Array.init 16 out)
+    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats w) ]))
+
 (* Each step's vectors of [w] along [j] are the columns of the 8 rows of 4
    lanes it loads along the sum: they are computed by a transpose, in pieces
    of 2 doubles, whose every vector takes lanes of at most two others, one
@@ -6980,6 +7031,9 @@ let vectors =
           equal int ~msg:"multiply-adds of one lane" 0
             (List.length
                (List.filter scalar (Ops.src (Ops.nth (program row) 1)))));
+      test
+        "a host sum whose widest lane axis is not its last multiplies vectors \
+         of the widest" runs_widest;
       cases
         "a host product of operands stored along its sum gathers its vectors \
          by a transpose of two-vector shuffles"

@@ -3392,8 +3392,8 @@ driver signals its own (D146).
   `Codegen.split_widths`, `Codegen.split_lanes`, `Codegen.distinct_lanes`,
   `Codegen.vector_dtypes`, `Codegen.do_devectorize`,
   `Codegen.address_lanes`, `Codegen.pm_vector_constants`,
-  `Codegen.product_operands`, `Codegen.first_lane`, `Codegen.slice`,
-  `Codegen.lower_reduce` and `Codegen.transposes`; `Coalesce.memory_coalescing`; `Cstyle.mask_widths`, `Cstyle.clang_lanes`, `Cstyle.clang_vectors` and
+  `Codegen.product_operands`, `Codegen.first_lane`, `Codegen.slicer`,
+  `Codegen.run_widest`, `Codegen.lower_reduce` and `Codegen.transposes`; `Coalesce.memory_coalescing`; `Cstyle.mask_widths`, `Cstyle.clang_lanes`, `Cstyle.clang_vectors` and
   `Cstyle.clang_kernel`; `Decomp_dtype.emulates`; `Uop_weak.pm_commit_weak`'s
   cast over a stack.
 - **Differs:** a renderer may compute on vectors (`Renderer.vector_lanes` past
@@ -3416,8 +3416,10 @@ driver signals its own (D146).
   compute each lane apart; an address is computed lane by lane through the
   vector operations it reads, so accesses still merge, register memory's too
   (where tinygrad merges memory's alone). A sum of products sums each run of
-  its last lane axis of more than one lane, with the axes of one lane after
-  it, as one vector: each unrolled lane's products of a run are
+  its widest lane axis, the last of them on a tie (`Codegen.run_widest`:
+  the sum is rebuilt over its source with that axis last, its running sums
+  held in that order and permuted back once summed), with the axes of one
+  lane after it, as one vector: each unrolled lane's products of a run are
   one vector of the run's lanes, in their order, the operation on its
   operands' slices, through elementwise operations and, in a run of at
   least 4 lanes, bitcasts that keep the lane count (as an MXFP4 code's
@@ -3507,7 +3509,8 @@ driver signals its own (D146).
   computed lanes computes no lane apart` and `› a host sum of a product's
   unrolled lanes multiplies vectors of its output lanes` (every case), `› a
   host sum whose last lane axis holds one lane multiplies vectors of the axis
-  before it`, `› a host product of operands stored along its sum gathers its
+  before it`, `› a host sum whose widest lane axis is not its last
+  multiplies vectors of the widest`, `› a host product of operands stored along its sum gathers its
   vectors by a transpose of two-vector shuffles` (every case), `› a host selection of
   8, 16 or 32 lanes by a comparison of integers takes each lane's arm` and `›
   a host selection of 3, 6, 12, 24 or 48 lanes by a comparison of integers

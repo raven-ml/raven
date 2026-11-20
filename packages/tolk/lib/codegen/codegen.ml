@@ -1102,19 +1102,52 @@ let slicer ~lanes =
   in
   slice
 
+(* The last of the lane axes [out] of more than one lane, [0] where none is. *)
+let last_wide out =
+  List.fold_left2
+    (fun l a n -> if n > 1 then a else l)
+    0
+    (List.mapi (fun a _ -> a) out)
+    out
+
+(* [x] with its axes in [order]: a permutation of a permutation is one. *)
+let permuted x order =
+  if not (is Op.Permute x) then permute x order
+  else
+    match marg x with
+    | Permute o -> permute (nth x 0) (List.map (List.nth o) order)
+    | _ -> permute x order
+
+(* A float sum of products on a renderer that computes on vectors runs along
+   its widest lane axis, the last of them on a tie ({!lower_reduce}'s runs),
+   which a conversion that differs along every lane axis computes whole
+   ({!Heuristic_host.conversion_lanes}). Where that is not its last wide
+   axis, [r] sums a source whose output axes put it last, its running sums
+   held in that order and permuted back once summed. *)
+let run_widest (_, (ren : Renderer.t)) r =
+  let _, num_axes = reduce_arg r and inp = nth r 0 in
+  let out = List.filteri (fun a _ -> a >= num_axes) (max_shape inp) in
+  let last = last_wide out in
+  let widest =
+    List.fold_left
+      (fun w (a, n) -> if n > 1 && n >= List.nth out w then a else w)
+      last
+      (List.mapi (fun a n -> (a, n)) out)
+  in
+  if widest = last || not (fuses ren r inp && ren.vector_lanes > 1) then None
+  else
+    let rest = List.filter (( <> ) widest) (upto (List.length out)) in
+    let order = rest @ [ widest ] in
+    let src = permuted inp (upto num_axes @ List.map (( + ) num_axes) order) in
+    Some (permute (replace r ~src:(src :: srcs r)) (Helpers.argsort order))
+
 (* A reduce of [r]'s source over its first [num_axes] axes, in place, and
    over the ranges after its source, into an accumulator. *)
 let lower_reduce (slots, ren) r =
   let op, num_axes = reduce_arg r and inp = nth r 0 and rngs = srcs r in
   let fused = fuses ren r inp in
   let out = List.filteri (fun a _ -> a >= num_axes) (max_shape inp) in
-  let last_wide =
-    List.fold_left2
-      (fun l a n -> if n > 1 then a else l)
-      0
-      (List.mapi (fun a _ -> a) out)
-      out
-  in
+  let last_wide = last_wide out in
   let add x y =
     let u = alu x op [ y ] in
     if fused then mark_fusable u else u
@@ -1149,7 +1182,8 @@ let lower_reduce (slots, ren) r =
      a vector (Van Zee and van de Geijn, "BLIS: A Framework for Rapidly
      Instantiating BLAS Functionality", ACM TOMS 41(3), 2015, Figure 11).
      [runs] are the indices of the lane axes before the run's, the last of
-     more than one lane, with the axes of one lane after it. *)
+     more than one lane, with the axes of one lane after it, the widest
+     ({!run_widest}). *)
   let runs =
     if not (fused && ren.vector_lanes > 1) then None
     else Some (product (List.filteri (fun a _ -> a < last_wide) out))
@@ -1225,6 +1259,8 @@ let pm_reduce_local =
       rule (Upat.op Op.Reduce ~name:"x") (fun m ->
           fix_group_for_reduce (m "x"));
       (* remove reduces *)
+      rule_ctx (Upat.op Op.Reduce ~name:"r") (fun ctx m ->
+          run_widest ctx (m "r"));
       rule_ctx (Upat.op Op.Reduce ~name:"r") (fun ctx m ->
           lower_reduce ctx (m "r"));
       rule (Upat.op Op.Sink ~name:"sink") (fun m ->
