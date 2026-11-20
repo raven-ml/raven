@@ -41,7 +41,9 @@ val upcast_contiguous : Postrange.Scheduler.t -> unit
     axis at unit stride, its lanes gathered by a transpose: the axis then
     takes the largest power of two that fills one register and fits, and the
     output axis the gathering accesses do not read the largest that fits
-    beside it. *)
+    beside it. In a kernel that sums products, an axis whose largest
+    power-of-two divisor holds fewer than 16 bytes of lanes is first padded to
+    a multiple of 16 bytes, where that adds at most a third of its extent. *)
 
 val unroll_vector : Postrange.Scheduler.t -> fits:(int -> bool) -> int -> int -> unit
 (** [unroll_vector k ~fits unrolled axis] unrolls [axis] by the largest power

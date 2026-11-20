@@ -232,6 +232,14 @@ let fits ?upcast ?unroll k =
       | Some n -> n <= iteration_lanes
       | None -> false)
 
+(* Whether [k] sums products. *)
+let sums_products k =
+  List.exists
+    (fun r ->
+      (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
+      && op (nth r 0) = Op.Mul)
+    (K.reduceops k)
+
 (* On the host, the first output upcast of a reduce kernel takes the axis its
    stores write at unit stride to a host vector of the accumulators' type
    ([host_vector_bytes]), the largest power of two that divides it and fits:
@@ -247,16 +255,9 @@ let fits ?upcast ?unroll k =
 let stored_contiguous k =
   let stored = stored_addresses k in
   let unit r i = List.exists (fun t -> t == r) (split_uop i Op.Add) in
-  let sums_products =
-    List.exists
-      (fun r ->
-        (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
-        && op (nth r 0) = Op.Mul)
-      (K.reduceops k)
-  in
   let summed =
     match List.rev (K.upcastable_dims ~reduce:true k) with
-    | last :: _ when sums_products -> Some (List.nth (K.rngs k) last)
+    | last :: _ when sums_products k -> Some (List.nth (K.rngs k) last)
     | _ -> None
   in
   let gathers r b =
@@ -359,6 +360,11 @@ let upcast_vectors k =
       upcast (host_vector_bytes / widest / Bigint.to_int upcast_size)
   | _ -> ()
 
+(* The most a pad of a stored axis to 16 bytes of lanes may add, a third of
+   its extent ({!upcast_contiguous}): the largest waste measured, every
+   measured one winning. *)
+let pad_waste = (1, 3)
+
 let upcast_contiguous k =
   match (stored_contiguous k, registers k) with
   | None, _ | _, None -> ()
@@ -388,6 +394,31 @@ let upcast_contiguous k =
             else Some r)
           (K.upcastable_dims k)
       in
+      (* In a kernel that sums products, an axis longer than 16 bytes of
+         lanes whose largest power-of-two divisor holds fewer of them, as a
+         head of 110 dimensions (2), is padded to a multiple of 16 bytes
+         where the padding adds at most [pad_waste] of its extent and the
+         budget holds 16 bytes of it: its upcast would otherwise stop at
+         that divisor, and runs of 1 or 2 floats leave a register mostly
+         empty. 16 bytes is the narrowest vector every host computes whole
+         (SSE's, NEON's, half of AVX2's): on fudge, x [3328; 440] by 110,
+         50, 22 and 6 outputs ran 1.6 to 2.7 times as fast padded to 4
+         floats, by 9 and 25, odd, 1.2 to 1.5 times, while padding 36, 44 or
+         100, runs of 4 already, to 8 ran no faster. The padded lanes are
+         computed and never stored. *)
+      let quad = max 1 (16 / bytes) in
+      (match known_size (shape_at k axis) with
+       | Some n when Bigint.fits_int n ->
+           let n = Bigint.to_int n in
+           let up = (n + quad - 1) / quad * quad in
+           let num, den = pad_waste in
+           if
+             sums_products k && n > quad && n mod quad <> 0
+             && (up - n) * den <= n * num
+             && fits ~upcast:(axis, quad) k
+           then
+             ignore (K.apply_opt k (Opt.Padto { axis; amount = quad }))
+       | _ -> ());
       tile_split k axis
         (pow2s_within (min lanes split_lanes))
         ~keep:(fun n -> fits ~upcast:(axis, n) k);

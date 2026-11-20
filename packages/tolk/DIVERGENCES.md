@@ -5187,8 +5187,8 @@ into D183, which holds its rule, its reason and its pins.
   none).
 - **tolk:** `Heuristic_host.host_vector_bytes`,
   `Heuristic_host.parallel_operations`, `Heuristic_host.upcast_vectors`,
-  `Heuristic_host.stored_contiguous`, `Heuristic_host.upcast_contiguous` and
-  `Heuristic_host.unroll_vector`.
+  `Heuristic_host.stored_contiguous`, `Heuristic_host.pad_waste`,
+  `Heuristic_host.upcast_contiguous` and `Heuristic_host.unroll_vector`.
 - **Differs:** on the host a group of lanes computed as one vector spans 64
   bytes of its widest type, two registers of AVX2. A kernel with no reduce
   takes, after its masked axes, one upcast of its last output axis that 2
@@ -5205,7 +5205,11 @@ into D183, which holds its rule, its reason and its pins.
   Such a gathered axis takes one register of lanes, and the output axis the
   gathering accesses do not read is then upcast by the largest power of two
   that fits the budget: a product of float32 operands both stored along its
-  sum takes 8 rows by 8 columns, BLIS's micro-tile with its B gathered. When
+  sum takes 8 rows by 8 columns, BLIS's micro-tile with its B gathered. In
+  a kernel that sums products, a stored axis whose largest power-of-two
+  divisor holds fewer than 16 bytes of lanes is first padded to a multiple of
+  16 bytes, where that adds at most a third of its extent: a head of 110
+  floats to 112, 9 to 12; 36, runs of 4, is left. When
   the last reduce axis is at most 3 and wholly unrolled and the next one is
   larger than 3, the next is unrolled by the largest power of two that
   divides it and keeps the unrolled lanes within 64 bytes of the reduce's
@@ -5215,7 +5219,11 @@ into D183, which holds its rule, its reason and its pins.
   only when it is at most 3 too. On 16-byte registers, SSE's and NEON's, a
   vector is four of them, unmeasured. Whether memory-bound kernels take lanes
   at all is open.
-- **Reason:** (d). A gathered axis: x [3328; 440] by a matrix [1792; 440] took
+- **Reason:** (d). A padded axis: x [3328; 440] by 110, 50, 22 and 6 outputs
+  ran 1.6 to 2.7 times as fast padded to 4 floats, by 9 and 25 (odd) 1.2 to
+  1.5 times, at wastes up to a third; padding runs of 4 (36, 44, 100) to 8
+  ran 0.64 to 1.0 times as fast (fudge, locked, P-cores 2 and 3, max of 3).
+  A gathered axis: x [3328; 440] by a matrix [1792; 440] took
   4 rows by 4 columns, whose vectors span half a register and whose
   transposes no rows share; 8 by 8 runs at 136.4 GFLOP/s on one P-core
   against 62.7 (fudge, locked, min of 5), the same bits, and a 4 by 16 tile,
@@ -5244,7 +5252,10 @@ into D183, which holds its rule, its reason and its pins.
   `experts_down`, and the gathered axes of `scores`, `scores_biased`,
   `scores_biased_first`, `matmul_256_kt`, `matmul_256_kt_128`, `matvec`,
   `matvec_tall`, `rows_m4`, `rows_m12`, `rows_m32`, `rows_short` and
-  `routed_by_argmax`, on `cpu` and `avx2`, with `the host's lanes › on AVX2 a
+  `routed_by_argmax`, the padded axes of `heads_projection` and
+  `heads_projection_biased`, on `cpu` and `avx2`, with `the host's budget ›
+  the register budget › r_128 on AVX2 reads 8 registers once its stored axis
+  is padded` and `the host's lanes › on AVX2 a
   recorded host kernel of few outputs takes its lanes` (`matvec_tall`); rune's
   `Jit/linear-float32-3328x440-to-1792`; the tolk bench's `host/*/heuristic` rows
   and rune's compile bench `trig/sin-nested-8` on fudge. On rune: missing for
