@@ -112,25 +112,6 @@ let compute (type b) (t : ((float, b, Nx.host) Nx.t, Nx.host) Image.t)
       floats (Image.decode t set.bands (get Nx.int64 "ref.tokens" set.e));
   }
 
-(* Each number of each token, rounded, as [q + 3] for the integer [q] it is
-   rounded to: the count of the edges below it of the widest level, seven. *)
-let levels = [ 7; 5; 5; 5; 5 ]
-let edges = [| -2.5; -1.5; -0.5; 0.5; 1.5; 2.5 |]
-
-let digits tokens =
-  Array.concat
-    (Array.to_list
-       (Array.map
-          (fun k ->
-            Array.of_list
-              (List.rev
-                 (snd
-                    (List.fold_left
-                       (fun (k, ds) l ->
-                         (k / l, ((k mod l) - (l / 2) + 3) :: ds))
-                       (k, []) levels))))
-          tokens))
-
 let check ~n ~scale (set : set) o =
   let e = set.e in
   let r name = floats (get Nx.float64 ("ref." ^ name) e)
@@ -143,8 +124,8 @@ let check ~n ~scale (set : set) o =
           ~spread:(cells (get Nx.float64 ("s." ^ scale ^ ".pre") e))
           o.latent );
       ( "token numbers",
-        Spread.levels ~n ~edges ~reference:(r "bounded") ~spread:(s "bounded")
-          (digits o.tokens) );
+        Spread.levels ~n ~edges:Decisions.digit_edges ~reference:(r "bounded")
+          ~spread:(s "bounded") (Decisions.digits o.tokens) );
       ( "decoded",
         Spread.values ~n ~reference:(r "decoded") ~spread:(s "decoded")
           o.decoded );

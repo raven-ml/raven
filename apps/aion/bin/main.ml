@@ -44,15 +44,14 @@
    An input whose value is NaN or infinite is absent for its object, and an
    object with no present input is left out.
 
-   --device picks where the transformer computes: cpu, eagerly (the default);
-   cpu-jit, compiled on the host; or a GPU as Rig_gpus.open_ names it (cuda,
-   nv, amd, metal), compiled there. The codecs compute on the host, compiled
-   unless the device is cpu; tokens move to the device and its results back.
-   A compiled device pads each batch to --batch rows, repeating its first
-   kept object and dropping the copies' results, so that each call runs one
-   program whatever the objects a batch keeps.
-   Compiled results agree with eager ones to the accuracy Rune.jit states, so
-   a draw near a boundary between two tokens may differ. *)
+   --device picks where the codecs and the transformer compute: cpu, eagerly
+   (the default); cpu-jit, compiled on the host; or a GPU as Rig_gpus.open_
+   names it (cuda, nv, amd, metal), compiled there. The inputs move to the
+   device and its results back. A compiled device pads each batch to --batch
+   rows, repeating its first kept object and dropping the copies' results, so
+   that each call runs one program whatever the objects a batch keeps. Compiled
+   results agree with eager ones to the accuracy Rune.jit states, so a draw near
+   a boundary between two tokens may differ. *)
 
 open Aion
 
@@ -159,17 +158,16 @@ let compile d s f = if d.jit then Rune.jit s f else f
 let model_s () = Nx.Ptree.instantiate (module Transformer)
 let inputs_s () = Nx.Ptree.(list (v Tokens.walk))
 
-(* The codecs of [ms] on the host, their encode and decode compiled there
-   where [d] compiles, the codecs an argument: a program per modality and
-   shape. *)
-type codecs = {
-  codecs : (Nx.host Nx.float32_t, Nx.host) Codecs.t;
-  encode : Nx.host Codecs.data -> Nx.host Tokens.t;
-  decode : Modality.t -> Nx.host Nx.int64_t -> Nx.host Codecs.data;
+(* The codecs of [ms] at [d], their encode and decode compiled there where [d]
+   compiles, the codecs an argument: a program per modality and shape. *)
+type 'd codecs = {
+  codecs : ('d Nx.float32_t, 'd) Codecs.t;
+  encode : 'd Codecs.data -> 'd Tokens.t;
+  decode : Modality.t -> 'd Nx.int64_t -> 'd Codecs.data;
 }
 
 let codecs d ms =
-  let c = Codecs.load ms in
+  let c = Nx.Ptree.place (module Codecs) d.at (Codecs.load ms) in
   if not d.jit then
     { codecs = c; encode = Codecs.encode c; decode = Codecs.decode c }
   else
@@ -190,8 +188,9 @@ let codecs d ms =
 let pad d size = if d.jit then Some size else None
 
 let input_at d i = Nx.Ptree.place_fixed Tokens.walk d.at i
-
+let data_at d x = Nx.Ptree.place_fixed Codecs.walk_data d.at x
 let host x = Nx.place Nx.Host.on x
+let host_data x = Nx.Ptree.place_fixed Codecs.walk_data Nx.Host.on x
 
 (* Models and inputs *)
 
@@ -250,8 +249,8 @@ let inputs t srcs ~except keys =
 let int64s a =
   Nx.create Nx.int64 [| Array.length a |] (Array.map Int64.of_int a)
 
-(* Whether each object has a present token in [i]. *)
-let present (i : _ Tokens.t) = Nx.to_array (Nx.any ~axes:[ 1 ] i.present)
+(* Whether each object has a present token in [p], a modality's presence. *)
+let present p = Nx.to_array (Nx.any ~axes:[ 1 ] p)
 
 (* The tokens of [objs]' inputs, and the objects with a present token. *)
 (* A batch of [objs] padded to [pad] rows by repeating its first: the rows
@@ -263,18 +262,20 @@ let padded pad a =
       Array.append a (Array.make (p - Array.length a) a.(0))
   | _ -> a
 
-(* The tokens of [objs]' inputs, and the objects with a present token, whose
-   tokens are the first rows, padded to [pad] rows. *)
-let encode ?pad codecs srcs ins objs =
+(* The tokens of [objs]' inputs at [d], and the objects with a present token,
+   whose tokens are the first rows, padded to [pad] rows. Where objects are left
+   out, the rows kept are taken on the host, where every set computes. *)
+let encode ?pad d codecs srcs ins objs =
   let b = Array.length objs in
   let rows = padded pad objs in
   let read (s, m) =
     let rows = Array.map (fun o -> o.(s)) rows in
-    codecs.encode (Survey.read (List.nth srcs s) rows m)
+    codecs.encode (data_at d (Survey.read (List.nth srcs s) rows m))
   in
   let tokens = List.map read ins in
   let n = Array.length rows in
-  let any = List.map present tokens in
+  let presence = List.map (fun (i : _ Tokens.t) -> host i.present) tokens in
+  let any = List.map present presence in
   let kept =
     List.init b Fun.id
     |> List.filter (fun o -> List.exists (fun p -> p.(o)) any)
@@ -284,10 +285,10 @@ let encode ?pad codecs srcs ins objs =
   if Array.length taken = n && Array.length kept = b then (tokens, objs)
   else
     let take x = Nx.take ~axis:0 (int64s taken) x in
-    ( List.map
-        (fun (i : _ Tokens.t) ->
-          { i with tokens = take i.tokens; present = take i.present })
-        tokens,
+    ( List.map2
+        (fun (i : _ Tokens.t) p ->
+          input_at d { i with tokens = take (host i.tokens); present = take p })
+        tokens presence,
       Array.map (fun o -> objs.(o)) kept )
 
 (* The first [b] rows of [x], a batch's result. *)
@@ -386,12 +387,12 @@ let embed () =
             List.map
               (fun batch ->
                 let tokens, kept =
-                  encode ?pad:(pad d size) codecs srcs ins batch
+                  encode ?pad:(pad d size) d codecs srcs ins batch
                 in
                 let b = Array.length kept in
                 if b = 0 then None
                 else
-                  let e = embed t (List.map (input_at d) tokens) in
+                  let e = embed t tokens in
                   Some (first b (host e), kept))
               (chunks size objs)
             |> List.filter_map Fun.id);
@@ -438,8 +439,10 @@ let posterior_on d t srcs ins (target : Modality.t option) objs range size
       if c = 1 then classes
       else Nx.broadcast_to [| k; c |] (Nx.reshape [| k; 1 |] classes)
     in
-    match codecs.decode target classes with
-    | Scalar { values; _ } -> if c = 1 then values else Nx.transpose values
+    match codecs.decode target (Nx.place d.at classes) with
+    | Scalar { values; _ } ->
+        let values = host values in
+        if c = 1 then values else Nx.transpose values
     | _ -> assert false
   in
   (* The output, allocated once and filled batch by batch: each object's
@@ -451,14 +454,12 @@ let posterior_on d t srcs ins (target : Modality.t option) objs range size
   let kept =
     List.map
       (fun batch ->
-        let tokens, kept = encode ?pad:(pad d size) codecs srcs ins batch in
+        let tokens, kept = encode ?pad:(pad d size) d codecs srcs ins batch in
         let b = Array.length kept in
         if b > 0 then begin
           let logits =
             List.hd
-              (forward t
-                 (List.map (input_at d) tokens)
-                 [ { modality = target; positions = None } ])
+              (forward t tokens [ { modality = target; positions = None } ])
           in
           let logits = first b (host logits) in
           let q = Nx.softmax ~axes:[ -1 ] (Nx.cast Nx.float64 logits) in
@@ -516,18 +517,22 @@ let posterior () =
 let linear n steps =
   List.init steps (fun s -> (n / steps) + if s < n mod steps then 1 else 0)
 
-(* The entries of the draws [x], [[|b; k|]], decoded, and the number of tokens
-   that decode to no value. A scalar codebook of [m] edges decodes the tokens
-   below [m]; redshift's vocabulary holds one more. *)
-let decoded codecs (target : Modality.t) ~rows x =
+(* The entries of the draws [y], [[|b; k|]] at [d], decoded at [d], and the
+   number of tokens that decode to no value. The caller holds the draws on the
+   host too, as [x], for its output: a scalar's are read there, since a GPU set
+   has no eager kernels, and an image's or a spectrum's decode where they lie.
+   A scalar codebook of [m] edges decodes the tokens below [m], the others
+   cleared on the host; redshift's vocabulary holds one more. *)
+let decoded d codecs (target : Modality.t) ~rows x y =
   let first x = first rows x in
+  let decode y = host_data (codecs.decode target y) in
   match target with
   | Scalar s ->
       let m = Nx.dim 1 (Scalar.edges (Codecs.scalar codecs.codecs s)) in
       let x = if Modality.tokens target = 1 then Nx.reshape [| -1 |] x else x in
       let none = Nx.greater_equal_s x (Int64.of_int m) in
       let values =
-        match codecs.decode target (Nx.where none (Nx.zeros_like x) x) with
+        match decode (Nx.place d.at (Nx.where none (Nx.zeros_like x) x)) with
         | Scalar { values; _ } -> values
         | _ -> assert false
       in
@@ -540,7 +545,7 @@ let decoded codecs (target : Modality.t) ~rows x =
         ],
         Int64.to_int missing )
   | Spectrum _ -> (
-      match codecs.decode target x with
+      match decode y with
       | Spectrum { spectrum; _ } ->
           ( [
               ("flux", first spectrum.flux);
@@ -549,7 +554,7 @@ let decoded codecs (target : Modality.t) ~rows x =
             0 )
       | _ -> assert false)
   | _ -> (
-      match codecs.decode target x with
+      match decode y with
       | Image { flux; _ } -> ([ ("flux", first flux) ], 0)
       | _ -> assert false)
 
@@ -606,7 +611,7 @@ let generate_on d t srcs ins (target : Modality.t option) objs range size out
       Hashtbl.replace buffers name (Nx.set at v (Nx.donate buffer))
   in
   let batch objs =
-    let x, kept = encode ?pad:(pad d size) codecs srcs ins objs in
+    let x, kept = encode ?pad:(pad d size) d codecs srcs ins objs in
     let b = Array.length kept in
     if b > 0 then begin
       (* A key per row of [x], each object's of its first-source row, padded as
@@ -616,10 +621,11 @@ let generate_on d t srcs ins (target : Modality.t option) objs range size out
       for j = 0 to draws - 1 do
         (* Keys are derived on the host, where every set computes. *)
         let keys = Nx.Rng.place d.at (Nx.Rng.fold_in keys j) in
-        let y = host (draw ~keys (List.map (input_at d) x)) in
+        let y = draw ~keys x in
+        let h = host y in
         let at = [ Nx.R (!filled, !filled + b); Nx.I j ] in
-        tokens := Nx.set at (first b y) (Nx.donate !tokens);
-        let entries, m = decoded codecs target ~rows:b y in
+        tokens := Nx.set at (first b h) (Nx.donate !tokens);
+        let entries, m = decoded d codecs target ~rows:b h y in
         missing := !missing + m;
         List.iter (fill at) entries
       done;

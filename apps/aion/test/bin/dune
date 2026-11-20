@@ -6,7 +6,7 @@
 
 (executables
  (names cache npz reference)
- (libraries aion nx nx.io kaun.hf))
+ (libraries aion aion_support kaun.hf nx nx.io))
 
 (cram
  (deps

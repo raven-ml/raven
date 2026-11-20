@@ -3,25 +3,34 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* AION-1's transformer compiled on a GPU against eager computation on the
-   host and upstream's float64 reference. It lives outside runtest: it reads
-   AION-1's weights (1.27 GB) and the PyTorch references, which no test run
-   holds; test_gpu.exe runs the narrow fixtures on the GPU inside runtest. Run
-   it as
+(* AION-1's codecs and transformer compiled on a GPU against eager computation
+   on the host and upstream's float64 reference. It lives outside runtest: it
+   reads AION-1's weights (1.27 GB) and the PyTorch references, which no test
+   run holds; test_gpu.exe runs the narrow fixtures on the GPU inside runtest.
+   Run it as
 
-   gpu_parity.exe DEVICE HUB REF64
+   AION_PARITY=DIR gpu_parity.exe DEVICE HUB REF64
 
    with DEVICE a GPU as Rig_gpus.open_ names it (cuda, nv, amd, metal), HUB a
-   Hub cache holding aion-base's model.safetensors at Hub.revision, and REF64
-   the float64 reference gen/reference.py writes (--precision f64): its
-   model.safetensors and codecs.safetensors. On the first 2 of the
-   reference's 8 objects it runs the decodes of redshift from photometry and
-   of a DESI spectrum from an image, one encode of Legacy Survey and DESI
-   inputs, and a one-step draw of that spectrum at temperature 0. For eager on
-   the host and compiled on DEVICE it prints the largest absolute difference
-   from the reference and that over the reference's largest magnitude, and
-   the argmax tokens that differ from the reference's and from eager's. It
-   gates nothing and exits 0 once every part ran. *)
+   Hub cache holding aion-base at Hub.revision, its model.safetensors and its
+   codecs, REF64 the float64 reference gen/reference.py writes (--precision
+   f64): its model.safetensors and codecs.safetensors, and DIR the parity parts'
+   directory, laid out as the README's Tests section says.
+
+   The codecs first: the set of the HSC image and DESI spectrum codecs, compiled
+   on DEVICE as main.exe compiles it, encodes the objects of DIR's ensemble sets
+   hsc and desi and decodes their reference tokens. Each value lies within τ ŝ
+   of upstream's float64 reference, ŝ the ensemble's spread at float32's scale,
+   decisions near a boundary excepted, as image_parity and spectrum_parity hold
+   the eager codecs. These checks gate: it exits 1 when one fails.
+
+   Then the transformer: on the first 2 of the reference's 8 objects it runs the
+   decodes of redshift from photometry and of a DESI spectrum from an image, one
+   encode of Legacy Survey and DESI inputs, and a one-step draw of that spectrum
+   at temperature 0. For eager on the host and compiled on DEVICE it prints the
+   largest absolute difference from the reference and that over the reference's
+   largest magnitude, and the argmax tokens that differ from the reference's and
+   from eager's. These gate nothing. *)
 
 open Aion
 
@@ -50,6 +59,111 @@ let report name x r =
   if Nx.ndim r = 3 then
     printf " argmax %d/%d differ" (differing x r) (Nx.numel r / Nx.dim (-1) r);
   printf "\n%!"
+
+(* The codecs *)
+
+let failures = ref 0
+let floats x = Nx.to_array (Nx.cast Nx.float64 (host x))
+let ints x = Array.map Int64.to_int (Nx.to_array (Nx.cast Nx.int64 (host x)))
+let signs b = Array.map (fun b -> if b then 1. else -1.) (Nx.to_array (host b))
+
+let check name (c : Spread.check) =
+  if c.failures <> [] then incr failures;
+  printf "  %s%s\n%!"
+    (if c.failures = [] then "" else "FAIL ")
+    (Format.asprintf "%a" (Spread.pp name) c)
+
+let codecs at ~hub dir =
+  let path = Filename.concat dir and load = Nx_io.load_safetensors in
+  let ms = Modality.[ Image_hsc; Spectrum Desi ] in
+  let g =
+    Nx.Ptree.place
+      (module Codecs)
+      at
+      (Codecs.load ~cache_dir:hub ~offline:true ms)
+  in
+  let encode, decode =
+    let open Nx.Ptree in
+    let set () = instantiate (module Codecs) and data () = v Codecs.walk_data in
+    ( Rune.jit (set () @-> data () @-> returns (v Tokens.walk)) Codecs.encode g,
+      Rune.jit
+        (set () @-> v Modality.walk @-> tensor @-> returns (data ()))
+        Codecs.decode g )
+  in
+  let encode d = encode (Nx.Ptree.place_fixed Codecs.walk_data at d)
+  and decode m k =
+    Nx.Ptree.place_fixed Codecs.walk_data Nx.Host.on (decode m (Nx.place at k))
+  in
+  (* A set's ensemble, its size, its rows of the subset, the subset, the
+     reference's values and the spreads at float32's scale. *)
+  let set kind name =
+    let e = load (path ("ensemble/" ^ kind ^ "/" ^ name ^ ".safetensors")) in
+    let rows = get Nx.int64 "rows" e in
+    printf "codecs, %s: %d objects\n%!" name (Nx.dim 0 rows);
+    let r key = floats (get Nx.float64 ("ref." ^ key) e)
+    and s key = floats (get Nx.float64 ("s.order." ^ key) e) in
+    let a = load (path ("subset/" ^ name ^ ".safetensors")) in
+    (e, (ints (get Nx.int64 "n" e)).(0), rows, a, r, s)
+  in
+  let e, n, rows, a, r, s = set "image" "hsc" in
+  let sub dt key = Nx.take ~axis:0 rows (get dt key a) in
+  let flux = sub Nx.float32 "image_array" in
+  let k = (encode (Image { bands = Codecs.bands Image_hsc; flux })).tokens in
+  check "token digits"
+    (Spread.levels ~n ~edges:Decisions.digit_edges ~reference:(r "bounded")
+       ~spread:(s "bounded")
+       (Decisions.digits (ints k)));
+  (match decode Image_hsc (get Nx.int64 "ref.tokens" e) with
+  | Image { flux; _ } ->
+      check "decoded"
+        (Spread.values ~n ~reference:(r "decoded") ~spread:(s "decoded")
+           (floats flux))
+  | _ -> failwith "not an image");
+  let e, n, rows, a, r, s = set "spectrum" "desi" in
+  let sub dt key = Nx.take ~axis:0 rows (get dt key a) in
+  let f key = sub Nx.float32 ("spectrum_" ^ key) in
+  let x : _ Spectrum.spectrum =
+    {
+      flux = f "flux";
+      ivar = f "ivar";
+      mask = Nx.not_equal_s (sub Nx.uint8 "spectrum_mask") 0;
+      wavelength = f "lambda";
+    }
+  in
+  let k =
+    host
+      (encode (Spectrum { modality = Desi; spectrum = x; lengths = None }))
+        .tokens
+  in
+  let levels =
+    Spectrum.levels
+      (Spectrum.of_archive
+         (Hub.codec ~cache_dir:hub ~offline:true (Spectrum Desi)))
+  in
+  (* The LFQ's input, [b; n; 10], from upstream's [b; 10; n]. *)
+  let lfq key =
+    floats (Nx.transpose ~axes:[ 0; 2; 1 ] (get Nx.float64 key e))
+  in
+  check "normalisation token"
+    (Spread.levels ~n
+       ~edges:(Array.sub (floats levels) 0 1023)
+       ~reference:(r "norm_pre") ~spread:(s "norm_pre")
+       (ints (Nx.slice [ A; I 0 ] k)));
+  check "LFQ bits"
+    (Spread.signs ~n ~reference:(lfq "ref.pre") ~spread:(lfq "s.order.pre")
+       (floats
+          (Lfq.decode Nx.float64 ~bits:10 (Nx.slice [ A; R (1, Nx.dim 1 k) ] k))));
+  match decode (Spectrum Desi) (get Nx.int64 "ref.tokens" e) with
+  | Spectrum { spectrum = d; _ } ->
+      check "flux"
+        (Spread.values ~n ~reference:(r "flux") ~spread:(s "flux")
+           (floats d.flux));
+      check "mask"
+        (Spread.signs ~n ~reference:(r "logit") ~spread:(s "logit")
+           (signs d.mask))
+  | _ -> failwith "not a spectrum"
+
+(* The transformer *)
 
 let objects = 2
 
@@ -144,11 +258,14 @@ let run at ~hub ~ref64 =
     (Nx.numel k)
 
 let () =
-  match Sys.argv with
-  | [| _; device; hub; ref64 |] ->
+  match (Sys.argv, Sys.getenv_opt "AION_PARITY") with
+  | [| _; device; hub; ref64 |], Some dir when dir <> "" ->
       let gpu = Result.error_to_failure (Rig_gpus.open_ device) in
       let module D = (val Nx.devices [ gpu ]) in
-      run D.on ~hub ~ref64
+      codecs D.on ~hub dir;
+      run D.on ~hub ~ref64;
+      printf "failing codec checks: %d\n" !failures;
+      exit (if !failures = 0 then 0 else 1)
   | _ ->
-      prerr_endline "usage: gpu_parity.exe DEVICE HUB REF64";
+      prerr_endline "usage: AION_PARITY=DIR gpu_parity.exe DEVICE HUB REF64";
       exit 2

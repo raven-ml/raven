@@ -364,23 +364,8 @@ let upstream_sets =
 let holds name (c : Spread.check) =
   if c.failures <> [] then failf "%a" (Spread.pp name) c
 
-(* A token's numbers rounded, [q + 3] for the integer [q] each is rounded to:
-   the count of the edges below it of the widest level, seven. *)
 let image_levels = [ 7; 5; 5; 5; 5 ]
-let digit_edges = [| -2.5; -1.5; -0.5; 0.5; 1.5; 2.5 |]
-
-let digits k =
-  Array.concat
-    (List.map
-       (fun k ->
-         let k = Int64.to_int k in
-         Array.of_list
-           (List.rev
-              (snd
-                 (List.fold_left
-                    (fun (k, ds) l -> (k / l, ((k mod l) - (l / 2) + 3) :: ds))
-                    (k, []) image_levels))))
-       (Array.to_list (Nx.to_array k)))
+let digits k = Decisions.digits (Array.map Int64.to_int (Nx.to_array k))
 
 (* The two checks: the codec in float32 against the ensemble at float32's scale,
    and cast to float64 against the ensemble at float64's. *)
@@ -435,7 +420,7 @@ let upstream_network =
       cases "encode gives upstream's tokens" ~id:row_id rows
         (fun (precision, scale, name, bs) ->
           holds "token digits"
-            (Spread.levels ~n:(ensemble_n ()) ~edges:digit_edges
+            (Spread.levels ~n:(ensemble_n ()) ~edges:Decisions.digit_edges
                ~reference:(ref name "bounded")
                ~spread:(spread scale name "bounded")
                (digits (encode_at precision bs (input name)))));
@@ -581,7 +566,7 @@ let compiled =
              ~spread:(cells (spread "pre"))
              (floats (latent_c t bs x)));
         holds "token digits"
-          (Spread.levels ~n ~edges:digit_edges
+          (Spread.levels ~n ~edges:Decisions.digit_edges
              ~reference:(floats (Fsq.bound quantizer z))
              ~spread:(spread "bounded")
              (digits (encode_c t bs x)));

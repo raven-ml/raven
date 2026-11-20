@@ -6,22 +6,11 @@
 open Windtrap
 open Aion
 
-let rec mkdir_p dir =
-  if not (Sys.file_exists dir) then begin
-    mkdir_p (Filename.dirname dir);
-    Sys.mkdir dir 0o755
-  end
-
 (* A cache holding [m]'s codec file where Kaun_hf caches the repository's file
    at Hub's revision. *)
 let cache_with m archive =
   let cache_dir = Filename.temp_dir "aion" "hub" in
-  let path =
-    Kaun_hf.cache_path ~cache_dir ~revision:Hub.revision ~file:(Hub.file m)
-      Hub.repo
-  in
-  mkdir_p (Filename.dirname path);
-  Nx_io.save_safetensors path archive;
+  Hub_cache.plant cache_dir (Hub.file m) archive;
   cache_dir
 
 let edges = Nx.create Nx.float32 [| 3 |] [| -1.; 0.5; 2. |]
@@ -86,11 +75,7 @@ let models =
     ]
     (fun (_, m, repo, revision) ->
       let cache_dir = Filename.temp_dir "aion" "weights" in
-      let path =
-        Kaun_hf.cache_path ~cache_dir ~revision ~file:"model.safetensors" repo
-      in
-      mkdir_p (Filename.dirname path);
-      Nx_io.save_safetensors path
+      Hub_cache.plant ~repo ~revision cache_dir "model.safetensors"
         (Nx_io.Archive.of_list [ ("w", Nx.P edges) ]);
       let a = Hub.weights ~cache_dir ~offline:true m in
       equal (list string) [ "w" ] (Nx_io.Archive.names a);

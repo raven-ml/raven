@@ -98,24 +98,38 @@
  (action
   (run %{exe:generate_parity.exe} %{exe:../bin/main.exe})))
 
-; test_gpu.exe runs the compiled transformer, draws and codecs on this
-; machine's first GPU against the narrow fixtures, and skips without one. It
-; holds the lock GPU tests share.
+; test_gpu.exe runs the compiled transformer, draws and codecs, and main.exe,
+; on this machine's first GPU against the narrow fixtures, and skips without
+; one. It holds the lock GPU tests share.
 
 (test
  (name test_gpu)
  (modules test_gpu)
  (locks %{workspace_root}/gpu)
- (libraries aion aion_support nx nx.io rig rig.gpus rune tolk.engine windtrap)
+ (libraries
+  aion
+  aion_support
+  nx
+  nx.io
+  rig
+  rig.gpus
+  rune
+  tolk.engine
+  unix
+  windtrap)
  (deps
-  (glob_files upstream/*.safetensors)))
+  ../bin/main.exe
+  bin/cache.exe
+  (glob_files upstream/*.safetensors)
+  (glob_files mmu/*.h5)))
 
-; gpu_parity.exe runs the compiled transformer with AION-1's weights on a GPU
-; against eager computation on the host and upstream's float64 reference. It
-; reads the weights and the references, which no test run holds, so it runs
-; by hand, outside runtest and the alias parity; its header says how.
+; gpu_parity.exe runs the compiled codecs and transformer with AION-1's
+; weights on a GPU against eager computation on the host and upstream's
+; float64 reference. It reads the weights and the references, which no test
+; run holds, so it runs by hand, outside runtest and the alias parity; its
+; header says how.
 
 (executable
  (name gpu_parity)
  (modules gpu_parity)
- (libraries aion nx nx.io rig.gpus rune))
+ (libraries aion aion_support nx nx.io rig.gpus rune))

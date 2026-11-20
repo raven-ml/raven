@@ -68,28 +68,6 @@ let edge t i k =
   let e = Scalar.edges t in
   Nx.item [ i mod Nx.dim 0 e; k ] e
 
-(* Where a float32 transform of [x] may land, [log] within [log] floats and
-   [asinh] within [asinh]. *)
-let forward ~log ~asinh tr x =
-  match tr with
-  | Scalar.Identity -> (x, x)
-  | Log m -> Bounds.around log (Float.log (Float.max x (Bounds.f32 m)))
-  | Asinh_asinh ->
-      Bounds.through asinh Float.asinh (Bounds.around asinh (Float.asinh x))
-
-(* Where a float32 inverse transform of the edge [e] may land, [exp] within
-   [exp] floats and [sinh] within [sinh]. *)
-let inverse ~exp ~sinh tr e =
-  match tr with
-  | Scalar.Identity -> (e, e)
-  | Log _ -> Bounds.around exp (Float.exp e)
-  | Asinh_asinh ->
-      Bounds.through sinh Float.sinh (Bounds.around sinh (Float.sinh e))
-
-(* nx.mli's bounds. *)
-let nx_forward = forward ~log:1 ~asinh:3
-let nx_inverse = inverse ~exp:2 ~sinh:3
-
 (* Tokens: a token is upstream's. Under a transform that rounds, it may instead
    move across one distinct edge value [v] that lies where nx's transform may
    land. Each other difference is listed as (index, upstream's token,
@@ -102,21 +80,16 @@ let tokens =
       let xs = Nx.to_array x in
       let want = ints (golden m "encoded") in
       let got = ints (Nx.P (Scalar.encode t x)) in
+      let e = Scalar.edges t in
+      let channel c = Nx.to_array (Nx.cast Nx.float64 (Nx.slice [ Nx.I c ] e)) in
+      let channels = Array.init (Nx.dim 0 e) channel in
       let refuted = ref [] in
       Array.iteri
         (fun i w ->
           let g = got.(i) in
-          if g <> w then begin
-            let lo = Int.min g w and hi = Int.max g w in
-            let v = edge t i lo in
-            let one = ref true in
-            for k = lo to hi - 1 do
-              if not (Float.equal (edge t i k) v) then one := false
-            done;
-            let rounds = tr <> Scalar.Identity in
-            if not (rounds && !one && Bounds.inside (nx_forward tr xs.(i)) v)
-            then refuted := (i, w, g) :: !refuted
-          end)
+          let c = channels.(i mod Array.length channels) in
+          if not (Scalar_bounds.crosses tr c xs.(i) w g) then
+            refuted := (i, w, g) :: !refuted)
         want;
       equal (list (triple int int int)) [] (List.rev !refuted))
 
@@ -138,7 +111,7 @@ let every_edge =
           let ok =
             if Float.is_nan v then Float.is_nan got
             else if tr = Scalar.Identity then Float.equal v got
-            else Bounds.inside (nx_inverse tr v) got
+            else Bounds.inside (Scalar_bounds.inverse tr v) got
           in
           if not ok then refuted := (ch, k, got) :: !refuted
         done
@@ -164,7 +137,7 @@ let values =
         Array.iteri
           (fun i w ->
             let e = edge t i (Int64.to_int ks.(i)) in
-            let bound = nx_inverse tr e in
+            let bound = Scalar_bounds.inverse tr e in
             if not (Bounds.inside bound got.(i) && Bounds.inside bound w) then
               refuted := (i, w, got.(i)) :: !refuted)
           want;
@@ -193,7 +166,7 @@ let clamp =
       let c =
         Nx.item [] (Nx.log (Nx.clamp ~min:floor (Nx.scalar Nx.float32 0.)))
       in
-      let near = nx_forward (Log floor) 0. in
+      let near = Scalar_bounds.forward (Log floor) 0. in
       let e = Nx.to_array (Scalar.edges t) in
       Array.iter (fun v -> if Bounds.inside near v then equal float_exact c v) e;
       if List.mem m at_clamp then begin

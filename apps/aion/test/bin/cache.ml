@@ -11,16 +11,7 @@
 
 open Aion
 
-let rec mkdir_p d =
-  if not (Sys.file_exists d) then begin
-    mkdir_p (Filename.dirname d);
-    Sys.mkdir d 0o755
-  end
-
-let save dir file a =
-  let path = Kaun_hf.cache_path ~cache_dir:dir ~revision:Hub.revision ~file Hub.repo in
-  mkdir_p (Filename.dirname path);
-  Nx_io.save_safetensors path (Nx_io.Archive.of_list a)
+let save dir file a = Hub_cache.plant dir file (Nx_io.Archive.of_list a)
 
 let even lo hi = Nx.linspace Nx.float32 lo hi 1024
 

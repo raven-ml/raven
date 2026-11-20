@@ -9,12 +9,6 @@
 open Windtrap
 open Aion
 
-let rec mkdir_p dir =
-  if not (Sys.file_exists dir) then begin
-    mkdir_p (Filename.dirname dir);
-    Sys.mkdir dir 0o755
-  end
-
 let book = Nx.create Nx.float32 [| 8 |] [| -3.; -1.; 0.; 0.5; 1.; 2.; 4.; 8. |]
 
 let nan_book =
@@ -24,10 +18,7 @@ let nan_book =
 let cache_dir =
   let dir = Filename.temp_dir "aion" "codecs" in
   let plant m entries =
-    let file = Hub.file (Scalar m) in
-    let path = Kaun_hf.cache_path ~cache_dir:dir ~revision:Hub.revision ~file Hub.repo in
-    mkdir_p (Filename.dirname path);
-    Nx_io.save_safetensors path
+    Hub_cache.plant dir (Hub.file (Scalar m))
       (Nx_io.Archive.of_list (List.map (fun (k, v) -> (k, Nx.P v)) entries))
   in
   plant Flux_g [ ("_quantizer._index_to_val", book) ];
