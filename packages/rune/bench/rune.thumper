@@ -175,10 +175,14 @@ Roots/grad-root-in-scan-16-eager	alloc_words	exact	172544
 Roots/grad-root-in-scan-16-eager	wall_time	batch=16	n=20	6.008e-04	5.904e-04 5.918e-04 5.929e-04 5.930e-04 5.932e-04 5.956e-04 5.963e-04 5.985e-04 5.993e-04 6.005e-04 6.011e-04 6.012e-04 6.015e-04 6.015e-04 6.017e-04 6.018e-04 6.026e-04 6.028e-04 6.032e-04 6.036e-04
 Roots/grad-root-in-scan-16-replay	alloc_words	exact	956
 Roots/grad-root-in-scan-16-replay	wall_time	batch=256	n=20	2.818e-05	2.758e-05 2.758e-05 2.772e-05 2.798e-05 2.804e-05 2.810e-05 2.812e-05 2.815e-05 2.816e-05 2.818e-05 2.818e-05 2.822e-05 2.825e-05 2.826e-05 2.835e-05 2.839e-05 2.840e-05 2.858e-05 2.882e-05 2.888e-05
+Totals/vmap-remat-own-total-64-lanes-eager	alloc_words	exact	4281
+Totals/vmap-remat-own-total-64-lanes-eager	wall_time	batch=512	n=20	1.673e-05	1.663e-05 1.666e-05 1.666e-05 1.669e-05 1.670e-05 1.670e-05 1.671e-05 1.672e-05 1.672e-05 1.673e-05 1.673e-05 1.675e-05 1.675e-05 1.676e-05 1.677e-05 1.678e-05 1.682e-05 1.690e-05 1.706e-05 1.721e-05
 Totals/vmap-scan-64-lanes-eager	alloc_words	exact	170906
 Totals/vmap-scan-64-lanes-eager	wall_time	batch=8	n=20	7.235e-04	7.131e-04 7.134e-04 7.139e-04 7.142e-04 7.146e-04 7.154e-04 7.157e-04 7.165e-04 7.206e-04 7.232e-04 7.239e-04 7.267e-04 7.267e-04 7.273e-04 7.278e-04 7.280e-04 7.299e-04 7.303e-04 7.308e-04 7.321e-04
 Totals/vmap-scan-64-lanes-replay	alloc_words	exact	1392
 Totals/vmap-scan-64-lanes-replay	wall_time	batch=1024	n=20	7.983e-06	7.662e-06 7.801e-06 7.824e-06 7.833e-06 7.916e-06 7.938e-06 7.938e-06 7.942e-06 7.954e-06 7.971e-06 7.994e-06 7.995e-06 8.013e-06 8.070e-06 8.083e-06 8.083e-06 8.090e-06 8.102e-06 8.127e-06 8.148e-06
+Totals/vmap-scan-alike-total-256-lanes-replay	alloc_words	exact	675
+Totals/vmap-scan-alike-total-256-lanes-replay	wall_time	batch=2	n=20	3.844e-03	3.514e-03 3.582e-03 3.611e-03 3.643e-03 3.682e-03 3.752e-03 3.765e-03 3.805e-03 3.807e-03 3.810e-03 3.879e-03 3.910e-03 3.978e-03 4.091e-03 4.115e-03 4.191e-03 4.207e-03 4.240e-03 4.304e-03 4.449e-03
 Trace/chain-100	alloc_words	exact	10397
 Trace/chain-100	wall_time	batch=512	n=20	1.468e-05	1.446e-05 1.450e-05 1.450e-05 1.451e-05 1.452e-05 1.453e-05 1.454e-05 1.456e-05 1.457e-05 1.463e-05 1.473e-05 1.477e-05 1.483e-05 1.484e-05 1.488e-05 1.488e-05 1.491e-05 1.493e-05 1.495e-05 1.511e-05
 TrainStep/train-step	alloc_words	exact	10339
