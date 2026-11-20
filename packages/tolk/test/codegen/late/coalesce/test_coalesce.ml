@@ -258,30 +258,25 @@ let lengths =
             [ (0, 4); (4, 4) ]
             (accesses Op.Load
                (coalesce ~renderer:gpu (loads b (List.init 8 Fun.id)))));
-      test "on a GPU that writes bytes as words, eight consecutive byte \
-            loads are two loads of four"
-        (fun () ->
+      cases "on a GPU that writes bytes as words, eight consecutive"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ("byte loads are two loads of four", Op.Load, loads);
+          ("byte stores are two stores of four", Op.Store, stores);
+        ]
+        (fun (_, op, sink) ->
           let b = Shape.param ~shape:[ Int 64 ] 0 Dtype.Uint8 in
           equal runs
             [ (0, 4); (4, 4) ]
-            (accesses Op.Load
-               (coalesce ~renderer:gpu_words (loads b (List.init 8 Fun.id)))));
-      cases "on a GPU that writes bytes as words, stay apart:"
-        ~id:(fun (name, _, _) -> name)
-        [
-          ( "eight consecutive byte stores",
-            Dtype.Uint8,
-            fun b -> stores b (List.init 8 Fun.id) );
-          ( "eight consecutive int8 loads",
-            Dtype.Int8,
-            fun b -> loads b (List.init 8 Fun.id) );
-        ]
-        (fun (_, dtype, sink) ->
-          let b = Shape.param ~shape:[ Int 64 ] 0 dtype in
-          let merged = coalesce ~renderer:gpu_words (sink b) in
+            (accesses op
+               (coalesce ~renderer:gpu_words (sink b (List.init 8 Fun.id)))));
+      test "on a GPU that writes bytes as words, int8 loads stay apart"
+        (fun () ->
+          let b = Shape.param ~shape:[ Int 64 ] 0 Dtype.Int8 in
           equal runs
             (List.init 8 (fun k -> (k, 1)))
-            (accesses Op.Load merged @ accesses Op.Store merged));
+            (accesses Op.Load
+               (coalesce ~renderer:gpu_words (loads b (List.init 8 Fun.id)))));
       cases "thirty-two consecutive loads of bytes fill registers of"
         ~id:(fun (name, _, dtype, _) ->
           Format.asprintf "%s, %a" name Dtype.pp dtype)

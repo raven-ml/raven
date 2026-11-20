@@ -285,18 +285,17 @@ let memory_coalescing sink (r : Renderer.t) =
                 sixteen_bits dt && r.half8
                 && List.for_all (fun (_, us) -> List.for_all copies us) offsets
               in
-              (* Byte loads merge where the renderer holds the merged bytes
-                 as one integer word, read by shifts: a tensor core's lane
-                 reads an MXFP4 weight's codes two bytes at a time, and one
-                 load of each byte costs an instruction and a request of
-                 the cache. A word leaves no vector of bytes for a compiler's
-                 load combine to fold at a wrong address, as LLVM folds an
-                 or of bytes in descending addresses from vector loads
-                 (above). Stores of bytes stay apart: only loads were
-                 measured. *)
-              let gpu_bytes =
-                key.op = Op.Load && Dtype.equal dt Dtype.Uint8 && r.byte_words
-              in
+              (* Bytes merge where the renderer holds the merged bytes as one
+                 integer word, read by shifts and written as an or of shifted
+                 bytes: a tensor core's lane reads an MXFP4 weight's codes two
+                 bytes at a time, and one access of each byte costs an
+                 instruction and a request of the cache. A dropout's draw of
+                 boolean masks stored a byte at a time took three times as
+                 long as stored by words. A word leaves no vector of bytes
+                 for a compiler's load combine to fold at a wrong address, as
+                 LLVM folds an or of bytes in descending addresses from
+                 vector loads (above). *)
+              let gpu_bytes = Dtype.equal dt Dtype.Uint8 && r.byte_words in
               (* Bytes copied into shared memory merge to 16 where the
                  renderer holds them as words: one asynchronous copy, as a
                  decoded operand's codes and held tiles take. *)

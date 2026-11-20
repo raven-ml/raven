@@ -9086,7 +9086,7 @@ D466.
   one a reduction reads in halves and one read where it is broadcast stay
   stored), and the bench row `GptOss/experts-at-prefill-512`.
 
-## D482. CUDA merges byte loads into words read by shifts
+## D482. CUDA merges byte loads and stores into words
 
 - **tinygrad:** `codegen/late/coalesce.py` (`memory_coalescing`, which on a
   GPU merges `float`, `half`, `int`, `uint` and the 8-bit floats into
@@ -9097,13 +9097,13 @@ D466.
   CUDA's language in `Cstyle` (`word`, `render_dtype`, `render_index`, the
   `Stack` rule, `cuda_kernel`'s vector definitions).
 - **Differs:** where the renderer writes bytes as words, CUDA's and so
-  NV's, adjacent `uint8` loads merge into loads of 4 and 2 under the
-  alignment rule of the other merges. A vector of 2 or 4 `uint8` is an
-  `unsigned short` or a `uint`: lane `i` is read as `(unsigned char)(w >>
-  8i)`, and a vector is built as an or of its lanes shifted by `8i`. An
-  emulated 8-bit float's vectors of 2 and 4 bytes are words too. Stores of
-  bytes and loads of `int8` stay apart; the host keeps D187, and Metal and
-  HIP merge no bytes.
+  NV's, adjacent `uint8` loads and stores merge into accesses of 4 and 2
+  under the alignment rule of the other merges. A vector of 2 or 4 `uint8`
+  is an `unsigned short` or a `uint`: lane `i` is read as `(unsigned
+  char)(w >> 8i)`, and a vector is built as an or of its lanes shifted by
+  `8i`. An emulated 8-bit float's vectors of 2 and 4 bytes are words too.
+  Loads of `int8` stay apart; the host keeps D187, and Metal and HIP merge
+  no bytes.
 - **Reason:** (d). A merged vector of bytes, in CUDA's struct form, needs a
   guard against LLVM's load combine, which folds an or of bytes in
   descending addresses, read from vector loads, into one load at the
@@ -9113,18 +9113,22 @@ D466.
   bytes to fold, so it needs no guard. With rune's MXFP4 decode in
   `bfloat16` (D483), an MXFP4 core's lane reads its codes two bytes at a
   time; loaded byte by byte, gpt-oss-20b's prefill at 512 tokens on fudge's
-  RTX 5000 Ada took 49.9 ms against 48.3. Metal and
-  HIP keep bytes apart, unmeasured.
+  RTX 5000 Ada took 49.9 ms against 48.3. TESSERA's distillation step
+  draws its dropout masks as bytes, four a thread over rows of 440: stored
+  byte by byte its two draws of eight masks took 15.3 and 10.1 ms a step,
+  as words 4.9 and 3.2. Metal and HIP keep bytes apart, unmeasured.
 - **Pinned by:** the Codegen suite's `byte assemblies on CUDA › an int32
   assembled from bytes in descending addresses is exact` (on the machine's
   first CUDA GPU) and `› writes a thread's four bytes as a word read by
   shifts`; its `words of bytes on CUDA ›` `bytes copied from any start,
-  stride and phase keep their values`, `› a gated word reads its bytes where
-  the gate holds, zeros elsewhere`, `› an emulated float's selected lanes,
-  stored as a word, keep each code` and the sources they write; the
-  Coalesce suite's `lengths › on a GPU that writes bytes as words, eight
-  consecutive byte loads are two loads of four` and `› on a GPU that writes
-  bytes as words, stay apart:` (byte stores, `int8` loads); kaun's
+  stride and phase keep their values`, `› bytes stored at any phase keep
+  their values`, `› a gated word of bytes is stored where the gate holds`,
+  `› words of bytes read in descending addresses keep their values`, `› a
+  gated word reads its bytes where the gate holds, zeros elsewhere`, `› an
+  emulated float's selected lanes, stored as a word, keep each code` and the
+  sources they write; the Coalesce suite's `lengths › on a GPU that writes
+  bytes as words, eight consecutive` (byte loads, byte stores) and `› on a
+  GPU that writes bytes as words, int8 loads stay apart`; kaun's
   `GptOss/prefill-512`, `prefill-12` and `experts-at-prefill-512` rows, and
   kaun's decode bench rows
   `Quant/cuda/mxfp4-product-of-16384-1-bfloat16-tokens` and `-512-`,

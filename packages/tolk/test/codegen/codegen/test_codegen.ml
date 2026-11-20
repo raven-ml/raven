@@ -3214,6 +3214,88 @@ let copies_words (phase, stride) =
   equal (array Dtypes.value) exact
     (List.assoc 0 (Run.on d prg [ (1, stored) ]))
 
+(* [c.(i) = uint8 a.(i)] over 64 values, each thread storing four, into a
+   buffer [c] whose first byte lies [phase] bytes past a 16-byte boundary: the
+   stores merge into words only where their bytes start on a word's or a
+   half's boundary, and a merge that ignored the phase would write the wrong
+   bytes or fault. *)
+let word_store ~phase =
+  let n = 64 in
+  let c = Shape.param ~shape:[ Ops.Int n ] ~phase ~align:16 0 Uint8
+  and a = Shape.param ~shape:[ Ops.Int n ] 1 Int32 in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let v = Ops.cast (Ops.index a [ i ]) Uint8 in
+  let opts_to_apply =
+    [ Opt.Split { axis = 0; amount = 4; target = Upcast; top = false } ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply ())
+    [ Ops.end_ (Ops.store (Ops.index c [ i ]) v) [ i ] ]
+
+let stores_words phase =
+  let d, r = on_cuda () in
+  let a = byte_values 64 in
+  let prg = compiled_for r (word_store ~phase) in
+  let merged =
+    List.filter_map
+      (fun u ->
+        if not (is Store u) then None
+        else
+          let n = Shape.max_numel (Ops.nth u 1) in
+          if n > 1 then Some n else None)
+      (Ops.src (Ops.nth prg 1))
+  in
+  (* As the loads of {!copies_words}: one word at phase 0, two halves at 2,
+     the one aligned half at 1 and 3. *)
+  let widths = match phase with 0 -> [ 4 ] | 2 -> [ 2; 2 ] | _ -> [ 2 ] in
+  equal ~msg:"merged stores" (slist int compare) widths merged;
+  let values = Array.map (fun v -> `Int (Bigint.of_int v)) a in
+  equal (array Dtypes.value) values
+    (List.assoc 0 (Run.on d prg [ (1, values) ]))
+
+(* [c.(i) = uint8 a.(i)] stored where [i < 40] alone, each thread storing
+   four: a gated word, written by the threads whose gate holds. *)
+let gated_store =
+  let n = 64 in
+  let c = Shape.param ~shape:[ Ops.Int n ] 0 Uint8
+  and a = Shape.param ~shape:[ Ops.Int n ] 1 Int32 in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let at = Ops.where Ops.O.(i < int 40) i (Shape.const_like i `Invalid) in
+  let v = Ops.cast (Ops.index a [ i ]) Uint8 in
+  let opts_to_apply =
+    [ Opt.Split { axis = 0; amount = 4; target = Upcast; top = false } ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply ())
+    [ Ops.end_ (Ops.store (Ops.index c [ at ]) v) [ i ] ]
+
+(* [c.(i) = a.(63 - i)] over 64 bytes, each thread storing four, from a
+   buffer [a] whose first byte lies [phase] bytes past a 16-byte boundary:
+   each word stored is built from bytes read in descending addresses, the
+   pattern a compiler's load combine may fold. *)
+let reversed_bytes ~phase =
+  let n = 64 in
+  let c = Shape.param ~shape:[ Ops.Int n ] 0 Uint8
+  and a = Shape.param ~shape:[ Ops.Int (n + 4) ] ~phase ~align:16 1 Uint8 in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let last = n - 1 in
+  let v = Ops.index a [ Ops.O.(int last - i) ] in
+  let opts_to_apply =
+    [ Opt.Split { axis = 0; amount = 4; target = Upcast; top = false } ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply ())
+    [ Ops.end_ (Ops.store (Ops.index c [ i ]) v) [ i ] ]
+
+let reverses_bytes phase =
+  let d, r = on_cuda () in
+  let a = byte_values 68 in
+  let prg = compiled_for r (reversed_bytes ~phase) in
+  let values = Array.map (fun v -> `Int (Bigint.of_int v)) a in
+  equal (array Dtypes.value)
+    (Array.init 64 (fun i -> values.(63 - i)))
+    (List.assoc 0 (Run.on d prg [ (1, values) ]))
+
 (* [c.(i) = int32 a.(i)] where [i < 40], else [0], each thread loading four:
    a gated load of a word, whose alternative is a word of zeros built from
    its lanes. *)
@@ -3287,6 +3369,25 @@ let words_on_cuda =
            (fun stride -> List.map (fun p -> (p, stride)) [ 0; 1; 2; 3 ])
            [ 1; 2; 0 ])
         copies_words;
+      cases "bytes stored at any phase keep their values"
+        ~id:(Printf.sprintf "phase %d") [ 0; 1; 2; 3 ] stores_words;
+      test "a gated word of bytes is stored where the gate holds" (fun () ->
+          let d, r = on_cuda () in
+          let a = byte_values 64 in
+          let prg = compiled_for r gated_store in
+          let words =
+            List.filter
+              (fun u -> is Store u && Shape.max_numel (Ops.nth u 1) = 4)
+              (Ops.src (Ops.nth prg 1))
+          in
+          equal ~msg:"stores of a word" int 1 (List.length words);
+          let values = Array.map (fun v -> `Int (Bigint.of_int v)) a in
+          equal (array Dtypes.value)
+            (Array.init 64 (fun i ->
+                 if i < 40 then values.(i) else `Int Bigint.zero))
+            (List.assoc 0 (Run.on d prg [ (1, values) ])));
+      cases "words of bytes read in descending addresses keep their values"
+        ~id:(Printf.sprintf "phase %d") [ 0; 1; 2; 3 ] reverses_bytes;
       test "a gated word reads its bytes where the gate holds, zeros elsewhere"
         (fun () ->
           let d, r = on_cuda () in
