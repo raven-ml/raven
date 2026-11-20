@@ -1117,55 +1117,6 @@ let run_threads ~waste ~lanes n =
    outputs for each of its 2 batches of 2 heads, 256. *)
 let upcast_by_loop k n = holds Sint.(K.upcast_size k <= Int n)
 
-(* Whether [k]'s upcasts take an axis by 4 before 3: a narrow contraction on a
-   renderer with local indices, upcast by nothing yet, whose two output axes,
-   each unread by some operand, would pass {!block}'s guard once upcast by 4,
-   and whose blocked threads, a 64th of its outputs, number at least
-   [core_threads]. Of an output axis split in parts, each read by the same
-   operands, as a projection's heads and their width, the innermost part
-   counts, which the upcast loop takes and {!block} doubles. tinygrad
-   takes 3 first, which leaves such a product at 4 by 3 outputs a thread: on
-   an RTX 5000 Ada float32 products of 163840 rows into 432 to 1920 columns,
-   which 3 divides, ran at 5.3-5.6 TFLOP/s so, and at 15-19 blocked; whisper's
-   projections of 1500 frames into its heads and its feed-forward, at 4.1-4.5
-   so and at 21.7-27.3 staged. A product of 48 rows by 1024 columns blocked
-   kept 768 threads, and took 105 us against 76 at 4 by 3. *)
-let four_first ~waste ~core_threads k =
-  (K.ren k).has_local && narrow k && upcast_by_loop k 1
-  &&
-  let operands = operands k in
-  let reads axis b = indexes (List.nth (K.rngs k) axis) b in
-  let same a b = List.for_all (fun o -> reads a o = reads b o) operands in
-  let rec axes = function
-    | [] -> []
-    | a :: rest ->
-        let parts, others = List.partition (same a) rest in
-        (a :: parts) :: axes others
-  in
-  match axes (List.filter (reused k) (K.upcastable_dims k)) with
-  | [ a; b ] -> (
-      let size parts =
-        match known_size (shape_at k (last parts)) with
-        | Some n when Bigint.fits_int n -> Some (Bigint.to_int n)
-        | _ -> None
-      in
-      let threads =
-        match known_size (prod_at k (K.upcastable_dims k)) with
-        | Some n -> Bigint.fdiv n (Bigint.of_int 64)
-        | None -> Bigint.zero
-      in
-      (* A part's runs of 4, padded to even, then the threads they hold. *)
-      let doubled n =
-        run_threads ~waste ~lanes:(lanes k) ((((n + 3) / 4) + 1) / 2)
-      in
-      match (size a, size b) with
-      | Some x, Some y ->
-          pads_within ~waste x 4 && pads_within ~waste y 4
-          && doubled x * doubled y >= lanes k
-          && Bigint.geq threads (Bigint.of_int core_threads)
-      | _ -> false)
-  | _ -> false
-
 (* Whether the axis [axis] of [k], which 4 does not divide, pads to a
    multiple of 4 within [core_waste] of its size: a head of 110 dimensions
    pads to 112, which a GPU's contraction then upcasts by 4 and {!block}
@@ -1810,6 +1761,66 @@ let staged_product blocking k =
       | _ -> None)
   | _ -> None
 
+(* Whether [k]'s upcasts take an axis by 4 before 3: a narrow contraction on a
+   renderer with local indices, upcast by nothing yet, whose two output axes,
+   each unread by some operand, would pass {!block}'s guard once upcast by 4,
+   and whose blocked threads, a 64th of its outputs, number at least
+   [core_threads], or which the staged product's tile takes
+   ({!staged_product}, short, on a copy). Of an output axis split in parts,
+   each read by the same operands, as a projection's heads and their width,
+   the innermost part counts, which the upcast loop takes and {!block}
+   doubles. tinygrad takes 3 first, which leaves such a product at 4 by 3
+   outputs a thread: on an RTX 5000 Ada float32 products of 163840 rows into
+   432 to 1920 columns, which 3 divides, ran at 5.3-5.6 TFLOP/s so, and at
+   15-19 blocked; whisper's projections of 1500 frames into its heads and its
+   feed-forward, at 4.1-4.5 so and at 21.7-27.3 staged. A product of 48 rows
+   by 1024 columns over 1024, blocked unstaged, kept 768 threads and took 105
+   us against 76 at 4 by 3. Staged, few threads cost less: it took 17-21 us
+   in the short tile and 28 in the blocked one, and one AION-1 object's 858
+   rows by 768 over 2048, 821 us at 4 by 3, 142 and 130. Unstaged, 858 rows
+   padded to 215 runs of 4 leave workgroups of 16 threads, 136 us at 4 by 4
+   against 97 at 4 by 3 over 768, so the threads still bound a product the
+   tile does not take. Short or blocked, the tile sums by the same runs
+   ({!general}), so whether it takes a product follows no units. *)
+let four_first ~waste ~core_threads k =
+  (K.ren k).has_local && narrow k && upcast_by_loop k 1
+  &&
+  let operands = operands k in
+  let reads axis b = indexes (List.nth (K.rngs k) axis) b in
+  let same a b = List.for_all (fun o -> reads a o = reads b o) operands in
+  let rec axes = function
+    | [] -> []
+    | a :: rest ->
+        let parts, others = List.partition (same a) rest in
+        (a :: parts) :: axes others
+  in
+  match axes (List.filter (reused k) (K.upcastable_dims k)) with
+  | [ a; b ] -> (
+      let size parts =
+        match known_size (shape_at k (last parts)) with
+        | Some n when Bigint.fits_int n -> Some (Bigint.to_int n)
+        | _ -> None
+      in
+      let threads =
+        match known_size (prod_at k (K.upcastable_dims k)) with
+        | Some n -> Bigint.fdiv n (Bigint.of_int 64)
+        | None -> Bigint.zero
+      in
+      (* A part's runs of 4, padded to even, then the threads they hold. *)
+      let doubled n =
+        run_threads ~waste ~lanes:(lanes k) ((((n + 3) / 4) + 1) / 2)
+      in
+      match (size a, size b) with
+      | Some x, Some y ->
+          pads_within ~waste x 4 && pads_within ~waste y 4
+          && doubled x * doubled y >= lanes k
+          && (Bigint.geq threads (Bigint.of_int core_threads)
+             ||
+             let r parts = List.nth (K.rngs k) (last parts) in
+             Option.is_some (staged_product (Short (r a, r b)) (K.copy k)))
+      | _ -> false)
+  | _ -> false
+
 (* The rules for a kernel that is not streamed and takes no tensor core. *)
 let general ~core_threads k =
   (* make a copy so it does not mutate the input *)
@@ -1846,7 +1857,21 @@ let general ~core_threads k =
               | padded -> padded)
           | unpadded -> unpadded
       in
-      match Option.bind unblocked (staged_product blocking) with
+      (* The blocked tile, or the short one where the blocked tile's pads
+         are refused: a target that states no units blocks every product
+         {!four_first} lets through, and the short tile then takes those
+         whose rows or columns pad too far for the blocked one, so that
+         whether a product stages, and the order of its sums, follows no
+         units. *)
+      let staged u =
+        match staged_product blocking (K.copy u) with
+        | Some s -> Some s
+        | None -> (
+            match blocking with
+            | Blocked (ra, rb) -> staged_product (Short (ra, rb)) u
+            | Short _ | Free -> None)
+      in
+      match Option.bind unblocked staged with
       | Some s -> s
       | None ->
           (match blocking with Free -> unroll k | Short _ | Blocked _ -> ());

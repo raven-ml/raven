@@ -255,11 +255,11 @@ type t = private {
           [t] threads remain ({!Heuristic}). Fewer leave memory short of loads
           in flight; more refuse reuse. A float32 contraction's blocking reads
           it too: it takes 4 before 3 only where a 64th of its outputs number
-          at least [core_threads]. It is a bound fitted to the products
-          timed on one part of a target: 16384 on an RTX 5000 Ada (sm_89),
-          and Metal's 32768 on an M1 Max, other Apple parts unmeasured. It
-          moves the order of a sum, so it is fixed per target, never read
-          from a device. *)
+          at least [core_threads], or where a staged product's tile takes it.
+          It is a bound fitted to the products timed on one part of a target:
+          16384 on an RTX 5000 Ada (sm_89), and Metal's 32768 on an M1 Max,
+          other Apple parts unmeasured. It moves the order of a sum, so it is
+          fixed per target, never read from a device. *)
   stream_threads : int;
       (** The threads that keep a part's memory busy, about as many loads in
           flight as its latency times its bandwidth. A kernel that streams an

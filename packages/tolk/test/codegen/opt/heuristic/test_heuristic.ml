@@ -1928,6 +1928,31 @@ let optimised_on ren name =
   K.convert_loop_to_global k;
   Heuristic.hand_coded_optimizations k
 
+(* [out[i, j] = sum_k x[i, k] w[j, k]] in float32 over [rows] rows of [cols]
+   columns and [depth] terms, both operands laid out along the sum, as a
+   linear layer reads its weight, optimised on [ren]. *)
+let product_on ren (rows, cols, depth) =
+  let open Ops.O in
+  let param slot size = Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32 in
+  let out = param 0 Stdlib.(rows * cols)
+  and x = param 1 Stdlib.(rows * depth)
+  and w = param 2 Stdlib.(cols * depth) in
+  let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Ops.Int cols) [ 2 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
+  let sum =
+    Ops.reduce
+      (Ops.index x [ (i * int depth) + k ] * Ops.index w [ (j * int depth) + k ])
+      Add [ k ]
+  in
+  let sink =
+    Ops.sink ~kernel:(Ops.kernel_info ())
+      [ Ops.end_ (Ops.store (Ops.index out [ (i * int cols) + j ]) sum) [ i; j ] ]
+  in
+  let s = K.v sink ren in
+  K.convert_loop_to_global s;
+  Heuristic.hand_coded_optimizations s
+
 (* sm_89's renderer, which states the 100 units of an RTX 5000 Ada. *)
 let sm_89 =
   lazy
@@ -2035,6 +2060,28 @@ let blocks =
              too few threads"
         ~id:Fun.id [ "matmul_48_cuda" ]
         (fun name -> equal int 12 (lane_outputs (recorded name)));
+      (* One AION-1 object's 858 rows, 48 rows and 580 rows over 2048 fall
+         short of core_threads; the staged tile takes them, 4 by 4 a thread
+         in 128 threads. 8 columns pad past four times the work in the tile,
+         which refuses them: they keep 4 by 3. *)
+      cases "on sm_89 a float32 product short of core_threads takes the \
+             staged tile where the tile takes it"
+        ~id:(fun ((m, n, k), _) -> Printf.sprintf "%d by %d over %d" m n k)
+        [
+          ((858, 768, 768), (16, 128));
+          ((48, 1024, 1024), (16, 128));
+          ((580, 768, 2048), (16, 128));
+          ((858, 8, 768), (12, 4));
+        ]
+        (fun (shape, (outputs, threads)) ->
+          let o = product_on (Lazy.force sm_89) shape in
+          equal ~msg:"outputs" int outputs (lane_outputs_of o);
+          equal ~msg:"threads" int threads
+            (List.fold_left
+               (fun n axis ->
+                 n * Bigint.to_int (size (List.nth (K.rngs o) axis)))
+               1
+               (K.axes_of o [ Local ])));
       (* The masked upcasts take the mask's 2 batches of 2 heads whole, then
          the queries and the keys by 4, or by 3 at 1536 positions, which 3
          divides. *)
@@ -2103,6 +2150,38 @@ let units_keep_order =
         (list (list string))
         (sum_order (optimised_on (with_units row 0) name))
         (sum_order (optimised_on (with_units row n) name)))
+
+(* The staged tile takes a product short of core_threads whatever units a
+   target states: short of them its short tile, without them its blocked
+   one, or the short one where the blocked one's pads are refused, each
+   summing in the same runs; a product it refuses keeps 4 by 3 on both. *)
+let staged_keep_order =
+  let row =
+    List.find
+      (fun cell -> cell "renderer" = "cuda")
+      (Golden.rows "renderers.golden")
+  in
+  let with_units n =
+    Kernel_opts.renderer_of_row (fun column ->
+        if column = "units" then string_of_int n else row column)
+  in
+  cases "a staged product's sums keep their order whatever units its \
+         renderer states"
+    ~id:(fun (m, n, k) -> Printf.sprintf "%d by %d over %d" m n k)
+    [
+      (858, 768, 768);
+      (858, 768, 24);
+      (858, 768, 110);
+      (858, 12, 768);
+      (858, 8, 768);
+      (23, 768, 768);
+      (48, 1024, 1024);
+    ]
+    (fun shape ->
+      equal
+        (list (list string))
+        (sum_order (product_on (with_units 0) shape))
+        (sum_order (product_on (with_units 100) shape)))
 
 (* Groups past 2048 outputs *)
 
@@ -3900,6 +3979,7 @@ let () =
          leaves_its_argument;
          blocks;
          units_keep_order;
+         staged_keep_order;
          starved;
          keeps_kernel_writes;
          fastest_threads_coalesce;
