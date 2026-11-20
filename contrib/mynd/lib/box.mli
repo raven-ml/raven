@@ -13,6 +13,9 @@ val area : (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
 val iou : (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
 val of_mask : (float, 's) Nx.dtype -> 'd Nx.bool_t -> (float, 's, 'd) Nx.t
 
+val transform :
+  (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
+
 val nms :
   ?classes:'d Nx.int64_t ->
   iou:float ->

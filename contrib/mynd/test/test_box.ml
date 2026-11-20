@@ -150,6 +150,506 @@ let of_mask_empty =
         (Array.make (Array.length (floats b)) 0.)
         (floats b))
 
+(* Moving boxes *)
+
+(* Dyadic boxes moved by dyadic transforms, the exact rule rounded once into
+   float64, from golden/geometry.npz (contrib/mynd/test/gen/geometry.py). *)
+let geometry = archive "golden/geometry.npz"
+
+let f64 shape a = Nx.create Nx.float64 shape a
+let mat a = f64 [| 3; 3 |] a
+let one a = f64 [| 1; 4 |] a
+let fl = Float.of_int
+
+(* Floats compared as numbers: [-0.] is [0.], and NaN equals NaN under
+   [float_exact]. *)
+let numbers x = Array.map (fun v -> v +. 0.) (floats x)
+let identity = [| 1.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 1. |]
+
+(* The flips of an image [w] columns wide or [h] rows high: [x ↦ w - x],
+   [y ↦ h - y]. *)
+let flip_x w = [| -1.; 0.; w; 0.; 1.; 0.; 0.; 0.; 1. |]
+let flip_y h = [| 1.; 0.; 0.; 0.; -1.; h; 0.; 0.; 1. |]
+
+(* The quarter turns: clockwise of an image [h] rows high, [(x, y) ↦ (h - y,
+   x)]; anticlockwise of one [w] columns wide, [(x, y) ↦ (y, w - x)]. *)
+let turn_cw h = [| 0.; -1.; h; 1.; 0.; 0.; 0.; 0.; 1. |]
+let turn_ccw w = [| 0.; 1.; 0.; -1.; 0.; w; 0.; 0.; 1. |]
+let shift x y = [| 1.; 0.; x; 0.; 1.; y; 0.; 0.; 1. |]
+let scale sx sy = [| sx; 0.; 0.; 0.; sy; 0.; 0.; 0.; 1. |]
+
+let turn a =
+  let c = Float.cos a and s = Float.sin a in
+  [| c; -.s; 0.; s; c; 0.; 0.; 0.; 1. |]
+
+(* [d = 1 - x / 4]: [0] on the line [x = 4]. *)
+let horizon = [| 1.; 0.; 0.; 0.; 1.; 0.; -0.25; 0.; 1. |]
+
+let moved_cells =
+  cases "array operations move a box as they move its cells" ~id:fst
+    [
+      ("identity", (identity, [| 1.; 2.; 4.; 5. |]));
+      ("flip of 10 columns", (flip_x 10., [| 6.; 2.; 9.; 5. |]));
+      ("clockwise quarter turn of 8 rows", (turn_cw 8., [| 3.; 1.; 6.; 4. |]));
+      ("crop from row 1, column 2", (shift (-2.) (-1.), [| -1.; 1.; 2.; 4. |]));
+    ]
+    (fun (_, (m, want)) ->
+      equal (array float_exact) want
+        (numbers (V.Box.transform (mat m) (one [| 1.; 2.; 4.; 5. |]))))
+
+type move =
+  | Flip_x
+  | Flip_y
+  | Turn_cw
+  | Turn_ccw
+  | Crop of int * int * int * int
+  | Scale of int * int
+
+let gen_warp =
+  Gen.(
+    let* h = int_range 1 12 in
+    let* w = int_range 1 12 in
+    let* i0 = int_range 0 (h - 1) in
+    let* i1 = int_range i0 (h - 1) in
+    let* j0 = int_range 0 (w - 1) in
+    let* j1 = int_range j0 (w - 1) in
+    let* ci = int_range 0 (h - 1) in
+    let* cj = int_range 0 (w - 1) in
+    let* ch = int_range 1 (h - ci) in
+    let* cw = int_range 1 (w - cj) in
+    let* sx = int_range 1 3 in
+    let* sy = int_range 1 3 in
+    let+ move =
+      of_list
+        [
+          Flip_x;
+          Flip_y;
+          Turn_cw;
+          Turn_ccw;
+          Crop (ci, cj, ch, cw);
+          Scale (sx, sy);
+        ]
+    in
+    ((h, w), (i0, i1, j0, j1), move))
+
+(* The box of a block of pixels, moved and clipped to the new image, is the box
+   of the block's mask warped by [nearest] at the warp's positions. A block
+   moved off the image clips to an empty box, and its mask to no pixel. *)
+let warp_law =
+  prop "a box moves as a warp moves its pixels" gen_warp
+    (fun ((h, w), (i0, i1, j0, j1), move) ->
+      let m, (h', w') =
+        match move with
+        | Flip_x -> (flip_x (fl w), (h, w))
+        | Flip_y -> (flip_y (fl h), (h, w))
+        | Turn_cw -> (turn_cw (fl h), (w, h))
+        | Turn_ccw -> (turn_ccw (fl w), (w, h))
+        | Crop (ci, cj, ch, cw) -> (shift (fl (-cj)) (fl (-ci)), (ch, cw))
+        | Scale (sx, sy) -> (scale (fl sx) (fl sy), (sy * h, sx * w))
+      in
+      cover "flip" (move = Flip_x || move = Flip_y);
+      cover "quarter turn of a non-square image"
+        ((move = Turn_cw || move = Turn_ccw) && h <> w);
+      cover "crop" (match move with Crop _ -> true | _ -> false);
+      cover "scaling" (match move with Scale _ -> true | _ -> false);
+      cover "a box on the border"
+        (i0 = 0 || j0 = 0 || i1 = h - 1 || j1 = w - 1);
+      let mask =
+        Nx.init Nx.bool [| h; w; 1 |] (fun ix ->
+            ix.(0) >= i0 && ix.(0) <= i1 && ix.(1) >= j0 && ix.(1) <= j1)
+      in
+      let m = mat m in
+      let at =
+        V.Transform.apply (Nx.inv m) (V.Sample.centres Nx.float64 (h', w'))
+      in
+      let moved = V.Sample.nearest ~edge:`Zero mask at in
+      let b = one [| fl j0; fl i0; fl (j1 + 1); fl (i1 + 1) |] in
+      let size = f64 [| 4 |] [| fl w'; fl h'; fl w'; fl h' |] in
+      let got = Nx.maximum_s (Nx.minimum (V.Box.transform m b) size) 0. in
+      if Nx.item [] (Nx.any moved) then
+        equal (array float_exact)
+          (floats (V.Box.of_mask Nx.float64 moved))
+          (numbers got)
+      else (
+        cover "a box cropped away" true;
+        equal float_exact 0. (Nx.item [ 0 ] (V.Box.area got))))
+
+let kinds =
+  [
+    ("affine", 0);
+    ("projective, d > 0", 1);
+    ("projective, d < 0", 2);
+    ("d of both signs", 3);
+    ("d = 0 at a corner", 4);
+    ("empty", 5);
+  ]
+
+let exact_moves =
+  cases "a box moves to the least box of its image, rounded once" ~id:fst kinds
+    (fun (_, k) ->
+      let kind = Nx.to_array (entry geometry Nx.int64 "transform.kind") in
+      let rows =
+        List.filter
+          (fun i -> kind.(i) = Int64.of_int k)
+          (List.init (Array.length kind) Fun.id)
+      in
+      let rows =
+        Nx.create Nx.int64
+          [| List.length rows |]
+          (Array.of_list (List.map Int64.of_int rows))
+      in
+      let pick key = Nx.take ~axis:0 rows (entry geometry Nx.float64 key) in
+      equal (array float_exact)
+        (numbers (pick "transform.want"))
+        (numbers (V.Box.transform (pick "transform.m") (pick "transform.b"))))
+
+(* Transforms with entries in [-2, 2], translations in [-20, 20], and a last
+   row [0 0 1] or [p q ±1] with [p] and [q] up to a tenth. *)
+let gen_transform =
+  Gen.(
+    let e = float_range (-2.) 2. and t = float_range (-20.) 20. in
+    let+ a = array ~size:(constant 4) e
+    and+ tx = t
+    and+ ty = t
+    and+ pq =
+      frequency
+        [
+          (1, constant (0., 0.));
+          (2, pair (float_range (-0.1) 0.1) (float_range (-0.1) 0.1));
+        ]
+    and+ s = frequency [ (3, constant 1.); (1, constant (-1.)) ] in
+    [| a.(0); a.(1); tx; a.(2); a.(3); ty; fst pq; snd pq; s |])
+
+let neg_law =
+  prop "-m moves a box as m does" (Gen.pair gen_transform gen_box)
+    (fun (m, b) ->
+      let r = numbers (V.Box.transform (mat m) (one b)) in
+      cover "NaN" (Float.is_nan r.(0));
+      cover "finite" (Float.is_finite r.(0));
+      equal (array float_exact) r
+        (numbers (V.Box.transform (Nx.neg (mat m)) (one b))))
+
+(* A transform whose first row is [0 0 t] collapses every box to a segment of
+   width [0]. *)
+let gen_collapse =
+  Gen.(
+    let+ m = gen_transform in
+    [| 0.; 0.; m.(2); m.(3); m.(4); m.(5); 0.; 0.; 1. |])
+
+let compose_law =
+  prop "moving a box twice gives a box holding the box moved once"
+    Gen.(
+      triple gen_transform
+        (frequency [ (3, gen_transform); (1, gen_collapse) ])
+        gen_box)
+    (fun (a, c, b) ->
+      let a = mat a and c = mat c and b = one b in
+      let inner = floats (V.Box.transform c b) in
+      let twice = floats (V.Box.transform a (V.Box.transform c b)) in
+      let once = floats (V.Box.transform (Nx.matmul a c) b) in
+      (* An empty inner box moves to [0 0 0 0], while the box moved once holds
+         the segment the first move collapsed the box to. *)
+      let collapsed = inner.(2) <= inner.(0) || inner.(3) <= inner.(1) in
+      cover "the first move collapses the box" collapsed;
+      cover "the box moved twice is NaN" (Float.is_nan twice.(0));
+      if not (collapsed || Float.is_nan twice.(0)) then (
+        cover "both are finite boxes" true;
+        (* The first move rounds the box's corners; its error, relative to
+           the coordinates, is far below 1e-9. *)
+        let slack v = 1e-9 *. (1. +. Float.abs v) in
+        at_most float_exact ~than:(once.(0) +. slack once.(0)) twice.(0);
+        at_most float_exact ~than:(once.(1) +. slack once.(1)) twice.(1);
+        at_most float_exact ~than:(twice.(2) +. slack twice.(2)) once.(2);
+        at_most float_exact ~than:(twice.(3) +. slack twice.(3)) once.(3)))
+
+(* Flips, quarter turns, dyadic scalings and integer translations, which move
+   boxes on a grid of quarters exactly. *)
+let gen_axis_map =
+  Gen.(
+    let* k = int_range 0 4 in
+    let* t = int_range (-8) 8 in
+    let* u = int_range (-8) 8 in
+    let+ sx = of_list [ -2.; -0.5; 0.5; 1.; 2.; 4. ]
+    and+ sy = of_list [ -2.; -0.5; 0.5; 1.; 2.; 4. ] in
+    match k with
+    | 0 -> flip_x (fl t)
+    | 1 -> turn_cw (fl t)
+    | 2 -> turn_ccw (fl t)
+    | 3 -> shift (fl t) (fl u)
+    | _ -> scale sx sy)
+
+let gen_quarter_box =
+  Gen.(
+    let q lo hi = map (fun k -> fl k /. 4.) (int_range lo hi) in
+    let+ x = q (-40) 40 and+ y = q (-40) 40 and+ w = q 1 40 and+ h = q 1 40 in
+    [| x; y; x +. w; y +. h |])
+
+let axis_law =
+  prop "axis maps move boxes as their product does"
+    Gen.(triple gen_axis_map gen_axis_map gen_quarter_box)
+    (fun (a, c, b) ->
+      let a = mat a and c = mat c and b = one b in
+      equal (array float_exact)
+        (numbers (V.Box.transform (Nx.matmul a c) b))
+        (numbers (V.Box.transform a (V.Box.transform c b))))
+
+let both_names ((n, _), (n', _)) = n ^ ", " ^ n'
+let nan = Float.nan
+let inf = Float.infinity
+
+let moved_empties =
+  let empties =
+    [
+      ("x1 = x0", [| 2.; 1.; 2.; 5. |]);
+      ("x1 < x0", [| 3.; 1.; 2.; 5. |]);
+      ("y1 = y0", [| 1.; 4.; 3.; 4. |]);
+      ("y1 < y0", [| 1.; 5.; 3.; 4. |]);
+      ("both", [| 3.; 5.; 2.; 4. |]);
+      ("x0 = inf", [| inf; 0.; 5.; 1. |]);
+      ("across d = 0", [| 5.; 1.; 3.; 5. |]);
+    ]
+  and moves =
+    [
+      ("identity", identity);
+      ("30 degrees", turn (Float.pi /. 6.));
+      ("d = 1 - x / 4", horizon);
+      ("NaN in m", [| nan; 0.; 0.; 0.; 1.; 0.; nan; 0.; 1. |]);
+    ]
+  in
+  cases "an empty box moves to 0 0 0 0" ~id:both_names
+    (List.concat_map (fun b -> List.map (fun m -> (b, m)) moves) empties)
+    (fun ((_, b), (_, m)) ->
+      equal (array float_exact) [| 0.; 0.; 0.; 0. |]
+        (floats (V.Box.transform (mat m) (one b))))
+
+let moved_nans =
+  let boxes =
+    [
+      ("x0 = NaN", [| nan; 0.; 5.; 1. |]);
+      ("y1 = NaN", [| 0.; 0.; 5.; nan |]);
+      ("x0 = -inf", [| -.inf; 0.; 5.; 1. |]);
+      ("x1 = inf", [| 0.; 0.; inf; 1. |]);
+      ("the plane", [| -.inf; -.inf; inf; inf |]);
+    ]
+  and moves =
+    [
+      ("identity", identity);
+      ("30 degrees", turn (Float.pi /. 6.));
+      ("d = 1 + x / 4", [| 1.; 0.; 0.; 0.; 1.; 0.; 0.25; 0.; 1. |]);
+    ]
+  in
+  cases "a box with a non-finite coordinate or meeting d = 0 moves to NaN"
+    ~id:both_names
+    (List.concat_map (fun b -> List.map (fun m -> (b, m)) moves) boxes
+    @ [
+        (("across x = 4", [| 1.; 0.; 5.; 1. |]), ("d = 1 - x / 4", horizon));
+        ( ("a corner on x = 4", [| 1.; 0.; 4.; 1. |]),
+          ("d = 1 - x / 4", horizon) );
+        ( ("a corner on x = 4", [| 4.; 0.; 5.; 1. |]),
+          ("d = x / 4 - 1", Array.map Float.neg horizon) );
+        ( ("finite", [| 1.; 0.; 3.; 1. |]),
+          ("NaN in d", [| 1.; 0.; 0.; 0.; 1.; 0.; nan; 0.; 1. |]) );
+      ])
+    (fun ((_, b), (_, m)) ->
+      equal (array float_exact) [| nan; nan; nan; nan |]
+        (floats (V.Box.transform (mat m) (one b))))
+
+let infinite_shift =
+  test "a box moved by an infinite translation (baseline)" (fun () ->
+      let r = V.Box.transform (mat (shift inf 0.)) (one [| 1.; 2.; 4.; 5. |]) in
+      expect
+        (String.concat " "
+           (Array.to_list (Array.map (Printf.sprintf "%g") (floats r))))
+      @@ __POS_OF__ {| inf 2 inf 5 |})
+
+let transform_shapes =
+  group "shapes of moved boxes"
+    [
+      test "no box" (fun () ->
+          let m = Nx.stack [ mat identity; mat (turn 0.5) ] in
+          equal (array int) [| 2; 0; 4 |]
+            (Nx.shape (V.Box.transform m (Nx.zeros Nx.float64 [| 2; 0; 4 |]))));
+      test "each image's boxes move by its transform" (fun () ->
+          let ms = [ identity; turn 0.5; horizon ] in
+          let b =
+            f64 [| 3; 2; 4 |]
+              (Array.init 24 (fun i -> fl ((i * 7) mod 11) +. fl (i mod 4)))
+          in
+          let got = V.Box.transform (Nx.stack (List.map mat ms)) b in
+          List.iteri
+            (fun i m ->
+              equal (array float_exact)
+                (numbers (V.Box.transform (mat m) (Nx.get [ i ] b)))
+                (numbers (Nx.get [ i ] got)))
+            ms);
+      test "a transform of no batch axis moves every box" (fun () ->
+          let b =
+            f64 [| 2; 3; 4 |] (Array.init 24 (fun i -> fl ((i * 5) mod 13)))
+          in
+          let m = mat (turn 0.5) in
+          let got = V.Box.transform m b in
+          equal (array int) [| 2; 3; 4 |] (Nx.shape got);
+          equal (array float_exact)
+            (numbers (V.Box.transform m (Nx.get [ 1 ] b)))
+            (numbers (Nx.get [ 1 ] got)));
+      test "boxes of two axes an image" (fun () ->
+          let b =
+            f64 [| 2; 3; 5; 4 |] (Array.init 120 (fun i -> fl ((i * 5) mod 17)))
+          in
+          let m = Nx.stack [ mat identity; mat (turn 0.5) ] in
+          let got = V.Box.transform m b in
+          equal (array int) [| 2; 3; 5; 4 |] (Nx.shape got);
+          equal (array float_exact)
+            (numbers (V.Box.transform (mat (turn 0.5)) (Nx.get [ 1 ] b)))
+            (numbers (Nx.get [ 1 ] got)));
+      test "compiled is eager" (fun () ->
+          let m = Nx.stack [ mat (turn 0.5); mat horizon ] in
+          let b =
+            f64 [| 2; 3; 4 |]
+              [| 1.; 0.; 3.; 1.; 1.; 0.; 5.; 1.; 3.; 0.; 2.; 1.;
+                 0.; 0.; 2.; 2.; 1.; 1.; 6.; 4.; nan; 0.; 1.; 1. |]
+          in
+          equal (array float_exact)
+            (numbers (V.Box.transform m b))
+            (numbers (Rune.jit' (V.Box.transform m) b)));
+      test "boxes end in 4" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Box.transform") (fun () ->
+              V.Box.transform (mat identity) (Nx.zeros Nx.float64 [| 2; 3 |])));
+      test "fewer axes than the transforms' batch axes and the box's"
+        (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Box.transform") (fun () ->
+              V.Box.transform
+                (Nx.stack (List.init 4 (fun _ -> mat identity)))
+                (Nx.zeros Nx.float64 [| 4 |])));
+      test "batch axes that do not broadcast" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Box.transform") (fun () ->
+              V.Box.transform
+                (Nx.stack [ mat identity; mat identity ])
+                (Nx.zeros Nx.float64 [| 3; 1; 4 |])));
+    ]
+
+type flt = F : string * (float, _) Nx.dtype * float -> flt
+
+(* Boxes of integers moved by axis maps stay exact in every float format. A
+   turn by 30 degrees of boxes within [0, 8] rounds each of the four
+   operations of a corner's numerator by at most half a unit in the last place
+   of 16, so the corners lie within 2 such units of float64's. *)
+let moved_dtypes =
+  cases "boxes move in every float format"
+    ~id:(fun (F (n, _, _)) -> n)
+    [
+      F ("float16", Nx.float16, 2. *. (2. ** -6.));
+      F ("bfloat16", Nx.bfloat16, 2. *. (2. ** -3.));
+      F ("float32", Nx.float32, 2. *. (2. ** -19.));
+    ]
+    (fun (F (_, dt, tol)) ->
+      let b =
+        f64 [| 3; 4 |] [| 1.; 2.; 4.; 5.; 0.; 0.; 8.; 3.; 6.; 1.; 7.; 8. |]
+      in
+      List.iter
+        (fun m ->
+          let want = V.Box.transform (mat m) b in
+          let got =
+            V.Box.transform (Nx.cast dt (mat m)) (Nx.cast dt b)
+            |> Nx.cast Nx.float64
+          in
+          equal (array float_exact) (numbers want) (numbers got))
+        [ flip_x 10.; turn_cw 8.; turn_ccw 8.; shift (-2.) 3.; scale 2. 0.5 ];
+      let m = Nx.cast dt (mat (turn (Float.pi /. 6.))) and b = Nx.cast dt b in
+      let want =
+        V.Box.transform (Nx.cast Nx.float64 m) (Nx.cast Nx.float64 b)
+      in
+      equal (array (float tol)) (floats want) (floats (V.Box.transform m b)))
+
+(* Turns away from multiples of a quarter, with a small projective part, keep
+   [d] near [1]. The law assumes each side of the result at one corner, at
+   least half a pixel from every other corner's coordinate, which the steps
+   of the differences never cross. *)
+let gen_smooth =
+  Gen.(
+    let+ a = float_range 0.2 1.37
+    and+ p = float_range (-0.01) 0.01
+    and+ q = float_range (-0.01) 0.01
+    and+ x = float_range 0. 10.
+    and+ y = float_range 0. 10.
+    and+ w = float_range 1. 10.
+    and+ h = float_range 1. 10. in
+    ( Nx.matmul (mat (turn a)) (mat [| 1.; 0.; 0.; 0.; 1.; 0.; p; q; 1. |]),
+      [| x; y; x +. w; y +. h |] ))
+
+let apart m b =
+  let x0 = b.(0) and y0 = b.(1) and x1 = b.(2) and y1 = b.(3) in
+  let c = f64 [| 4; 2 |] [| x0; y0; x1; y0; x1; y1; x0; y1 |] in
+  let p = floats (V.Transform.apply m c) in
+  let gap k =
+    let v = List.sort compare (List.init 4 (fun i -> p.((2 * i) + k))) in
+    Float.min (List.nth v 1 -. List.nth v 0) (List.nth v 3 -. List.nth v 2)
+  in
+  Float.min (gap 0) (gap 1) > 0.5
+
+let weights = f64 [| 1; 4 |] [| 1.; -2.; 0.5; 3. |]
+let weighed (m, b) = Nx.sum (Nx.mul (V.Box.transform m b) weights)
+
+let transform_grads =
+  prop "the derivative of a moved box is its corners'" gen_smooth
+    (fun (m, b) ->
+      assume (apart m b);
+      let p = Nx.Ptree.(pair tensor tensor) in
+      match Rune.check_grads p weighed (m, one b) with
+      | Ok () -> ()
+      | Error e -> fail e)
+
+let finite_grads =
+  cases "the derivative is finite at boxes near d = 0, NaN or empty" ~id:fst
+    [
+      ("one side of d = 0, near it", (horizon, [| 1.; 0.; 3.999; 1. |]));
+      ("across d = 0", (horizon, [| 1.; 0.; 5.; 1. |]));
+      ("a corner on d = 0", (horizon, [| 1.; 0.; 4.; 1. |]));
+      ("empty", (turn 0.5, [| 3.; 0.; 2.; 1. |]));
+      ("a NaN coordinate", (turn 0.5, [| nan; 0.; 2.; 1. |]));
+      ("an infinite coordinate", (turn 0.5, [| 0.; 0.; inf; 1. |]));
+    ]
+    (fun (_, (m, b)) ->
+      let gm, gb =
+        Rune.grad Nx.Ptree.(pair tensor tensor) weighed (mat m, one b)
+      in
+      let finite g = Array.map Float.is_finite (floats g) in
+      equal (array bool) (Array.make 9 true) (finite gm);
+      equal (array bool) (Array.make 4 true) (finite gb))
+
+(* At an axis map each side of the result is at two tied corners, whose
+   tangents add to the side's derivative. *)
+let tie_grads =
+  cases "the derivative at tied corners is the side's" ~id:fst
+    [
+      ( "flip",
+        ( flip_x 10.,
+          [| 0.; 0.; -1.; 0.; 0.; 1.; 0.; 0.; -1.; 0.; 0.; 0.; 0.; 0.; 0.; 1. |]
+        ) );
+      ( "clockwise quarter turn",
+        ( turn_cw 8.,
+          [| 0.; 0.; 0.; -1.; 1.; 0.; 0.; 0.; 0.; -1.; 0.; 0.; 0.; 0.; 1.; 0. |]
+        ) );
+      ( "scaling",
+        ( scale 2. 3.,
+          [| 2.; 0.; 0.; 0.; 0.; 3.; 0.; 0.; 0.; 0.; 2.; 0.; 0.; 0.; 0.; 3. |]
+        ) );
+      ( "scaling by a negative",
+        ( scale (-2.) 0.5,
+          [|
+            0.; 0.; -2.; 0.; 0.; 0.5; 0.; 0.; -2.; 0.; 0.; 0.; 0.; 0.; 0.; 0.5;
+          |] ) );
+    ]
+    (fun (_, (m, jacobian)) ->
+      let row k =
+        Rune.grad'
+          (fun b ->
+            Nx.sum (Nx.slice [ Nx.A; Nx.I k ] (V.Box.transform (mat m) b)))
+          (one [| 1.; 2.; 4.; 5. |])
+      in
+      equal (array float_exact) jacobian
+        (Array.concat (List.init 4 (fun k -> numbers (row k)))))
+
 (* Non-maximum suppression *)
 
 (* [greedy ?classes iou t s] is greedy NMS from the IoUs [iou] (row-major n ×
@@ -404,6 +904,20 @@ let () =
          of_mask;
          of_mask_golden;
          of_mask_empty;
+         moved_cells;
+         warp_law;
+         exact_moves;
+         neg_law;
+         compose_law;
+         axis_law;
+         moved_empties;
+         moved_nans;
+         infinite_shift;
+         transform_shapes;
+         moved_dtypes;
+         transform_grads;
+         finite_grads;
+         tie_grads;
          golden_nms;
          greedy_law;
          signed_zeros;

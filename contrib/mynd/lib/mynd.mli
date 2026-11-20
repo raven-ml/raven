@@ -752,6 +752,23 @@ module Box : sig
       of [m], [[…; h; w; 1]] to [[…; 4]], and [0 0 0 0] for a mask with none.
       It respects padding by [false]. *)
 
+  val transform :
+    (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
+  (** [transform m b] is each box of [b], [[b…; q…; 4]], moved by its
+      transform in [m], [[b…; 3; 3]], paired with [b] at the leading axes
+      ({!Mynd.section-batches}). It spans the least to the greatest
+      coordinates of the box's corners as {!Transform.apply} maps them. Where
+      the corners' [d] ({!Transform}) are all positive or all negative, these
+      are the bounds of the closed box's image, to the corners' rounding.
+
+      An empty box gives [0 0 0 0], whatever [m]. A box whose corners' [d]
+      differ in sign or include [0] meets the line [d = 0], which [m] sends
+      to infinity, so its image is unbounded and it gives NaN in all four.
+      So does a box that is not empty and has a NaN or infinite coordinate.
+
+      Moving by [a], then by [c], can give a larger box than moving once by
+      [Nx.matmul c a], as two turns by 45° double a square's side. *)
+
   val nms :
     ?classes:'d Nx.int64_t ->
     iou:float ->

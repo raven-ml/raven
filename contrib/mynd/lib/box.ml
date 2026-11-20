@@ -93,6 +93,46 @@ let of_mask dt m =
     let some = Nx.unsqueeze ~axes:[ -1 ] (Nx.any ~axes:[ -1 ] cols) in
     Nx.cast dt (Nx.where some b (Nx.zeros_like b))
 
+(* Moving boxes *)
+
+(* A box's corners (x₀, y₀), (x₁, y₀), (x₁, y₁), (x₀, y₁) as positions
+   [[…; 4; 2]]. *)
+let corner_points (x0, y0, x1, y1) =
+  let xs = Nx.stack ~axis:(-1) [ x0; x1; x1; x0 ]
+  and ys = Nx.stack ~axis:(-1) [ y0; y0; y1; y1 ] in
+  Nx.stack ~axis:(-1) [ xs; ys ]
+
+(* The hull of the mapped corners is kept where the box is finite and not empty
+   and its corners' [d] share one strict sign. Elsewhere the box read is
+   [0 0 1 1] and [d] is [1], so the branch [where] discards has finite
+   derivatives, and its cotangent [0] never meets an infinite or NaN one. *)
+let transform m b =
+  let fn = "Mynd.Box.transform" in
+  if Nx.ndim m >= 2 && Nx.ndim b < Nx.ndim m - 1 then
+    invalid_argf "%s: boxes have axes [b...; q...; 4] with %d batch axes" fn
+      (Nx.ndim m - 2);
+  let x0, y0, x1, y1 = corners fn b in
+  let last x = Nx.unsqueeze ~axes:[ -1 ] x in
+  let empty = Nx.logical_or (Nx.less_equal x1 x0) (Nx.less_equal y1 y0) in
+  let usable =
+    Nx.logical_and (Nx.all ~axes:[ -1 ] (Nx.isfinite b)) (Nx.logical_not empty)
+  in
+  let z = Nx.zeros_like x0 and o = Nx.ones_like x0 in
+  let b = Nx.where (last usable) b (pack z z o o) in
+  let x, y, d = Transform.project fn m (corner_points (corners fn b)) in
+  let one_side =
+    Nx.logical_or
+      (Nx.all ~axes:[ -1 ] (Nx.greater_s d 0.))
+      (Nx.all ~axes:[ -1 ] (Nx.less_s d 0.))
+  in
+  let ok = last (Nx.logical_and usable one_side) in
+  let d = Nx.where ok d (Nx.ones_like d) in
+  let x = Nx.div x d and y = Nx.div y d in
+  let lo v = Nx.min ~axes:[ -1 ] v and hi v = Nx.max ~axes:[ -1 ] v in
+  let hull = pack (lo x) (lo y) (hi x) (hi y) in
+  Nx.where (last empty) (Nx.zeros_like hull)
+    (Nx.where ok hull (Nx.full_like hull Float.nan))
+
 (* Non-maximum suppression *)
 
 (* [above x t] is [x > t] for the real [t]: with [c] the value of [x]'s dtype
