@@ -2123,6 +2123,29 @@ let compiled_pullback c x w ct =
     (fun x w ct -> eager_pullback c x w ct)
     x w ct
 
+(* conv_transpose at stride 2 of three channels into one: its pullbacks in both
+   operands, eagerly and compiled, at values whose sums are exact. The compiled
+   pullback in [w] computes [x]'s channels as the lanes of one vector of
+   float64, and reads [x] spread, a zero between its elements, which it selects
+   lane by lane at float64's width. *)
+let test_spread_channels () =
+  let f (x, w) = Nx.conv_transpose ~stride:[| 2 |] x w in
+  let pullback x w ct = snd (Rune.vjp (two ()) T.tensor f (x, w)) ct in
+  let x = Nx.create f64 [| 1; 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let w = Nx.create f64 [| 3; 1; 1 |] [| 1.; 2.; 3. |] in
+  let ct = Nx.create f64 [| 1; 3; 1 |] [| 1.; 2.; 3. |] in
+  let check how (gx, gw) =
+    equal ~msg:(how ^ ": x's cotangent") (array float_exact)
+      [| 1.; 2.; 3.; 3.; 6.; 9. |] (Nx.to_array gx);
+    equal ~msg:(how ^ ": w's cotangent") (array float_exact)
+      [| 13.; 17.; 21. |] (Nx.to_array gw)
+  in
+  check "eager" (pullback x w ct);
+  check "compiled"
+    (Rune.jit
+       T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
+       pullback x w ct)
+
 (* Scans of a constant
 
    The running sum, product, maximum or minimum along [x] of the constant 2,
@@ -2698,6 +2721,8 @@ let () =
              prop "compiled pullbacks in both operands" ~examples:conv_examples
                conv_gen
                (conv_law compiled_pullback);
+             test "conv_transpose of three channels at stride 2"
+               test_spread_channels;
            ];
          cases "scans of a constant from a carry"
            ~id:(fun s -> s.name)

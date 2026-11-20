@@ -550,24 +550,33 @@ let boolean u =
 (* Constants in vectors. A scalar expanded to a vector, which [const_like] makes
    of the vectors the passes after devectorize compute on, is read as the
    scalar: by an elementwise operation, which reads it in every lane, and at any
-   lane. A selection by a vector of constant conditions picks each lane. *)
+   lane. A selection by a vector of constant conditions picks each lane. A
+   picked constant may be a bare weak literal, whose type the selection derived
+   from its other branch ({!Uop_weak}): it takes the selection's type, which a
+   stack of lanes does not derive, so that a bitcast of the stack reads lanes
+   of that width and not of the literal's default int32. *)
 let pm_vector_constants =
   pm (fun () ->
       [
         rule (Upat.op ~name:"x" Op.Where) (fun m ->
-            match src (m "x") with
+            let x = m "x" in
+            match src x with
             | [ c; a; b ] when is Op.Stack c -> (
                 match List.map boolean (src c) with
                 | picks when List.for_all Option.is_some picks ->
-                    let lane x i =
-                      if shape x = [] then x else index_ints x [ i ]
+                    let lane y i =
+                      if shape y = [] then y else index_ints y [ i ]
+                    in
+                    let lanes =
+                      stack
+                        (List.mapi
+                           (fun i pick ->
+                             lane (if pick = Some true then a else b) i)
+                           picks)
                     in
                     Some
-                      (stack
-                         (List.mapi
-                            (fun i pick ->
-                              lane (if pick = Some true then a else b) i)
-                            picks))
+                      (Uop_weak.commit_weak_consts lanes
+                         (if weak x then None else Some (dtype x)))
                 | _ -> None)
             | _ -> None);
         rule (Upat.v ~op:Op.Set.elementwise ~name:"x" ()) (fun m ->
