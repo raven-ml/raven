@@ -226,3 +226,10 @@ val evaluate_boxes : dataset -> box detection array -> evaluation
     Raises [Invalid_argument] if [d] is not valid, or a detection names an image
     or a category [d] does not list, has a NaN score, has a box that is not
     valid or has an area past [10¹⁰], which no range holds. *)
+
+val evaluate_masks : dataset -> Mynd.Rle.t detection array -> evaluation
+(** [evaluate_masks d dets] matches the masks [dets] to the {!runs} of [d]'s
+    annotations, counting pixels over runs without decoding a mask.
+
+    Raises [Invalid_argument] as {!evaluate_boxes} does, if a mask's size is not
+    its image's, or as {!runs} does on an annotation. *)

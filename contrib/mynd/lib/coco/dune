@@ -3,5 +3,5 @@
 (library
  (name mynd_coco)
  (public_name mynd.coco)
- (private_modules raster)
+ (private_modules raster walk)
  (libraries mynd nx jsont))

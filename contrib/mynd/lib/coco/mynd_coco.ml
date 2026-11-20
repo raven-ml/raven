@@ -523,3 +523,45 @@ let evaluate_boxes d (dets : box detection array) =
     box_iou dets.(j).region a.box a.crowd
   in
   evaluate d c ~place ~det_area ~pair_iou dets
+
+let evaluate_masks d (dets : Mynd.Rle.t detection array) =
+  let fn = "Mynd_coco.evaluate_masks" in
+  let c = check fn d in
+  let ann_runs =
+    Array.mapi
+      (fun j (a : annotation) ->
+        let im = c.images.(c.ann_image.(j)) in
+        (runs ~height:im.height ~width:im.width a.segmentation).counts)
+      d.annotations
+  in
+  let det_area j = Float.of_int (Mynd.Rle.area dets.(j).region) in
+  let place j =
+    let r = dets.(j).region in
+    let ((i, _) as p) = check_detection fn c dets.(j) (det_area j) in
+    let im = c.images.(i) in
+    if r.height <> im.height || r.width <> im.width then
+      invalid_argf "%s: a mask of %d by %d pixels on an image of %d by %d" fn
+        r.height r.width im.height im.width;
+    p
+  in
+  (* Masks share a pixel only where their columns overlap: a cheap test
+     that skips most walks, as rleIou's box test does. *)
+  let ann_cols =
+    Array.mapi
+      (fun j r -> Walk.columns ~height:c.images.(c.ann_image.(j)).height r)
+      ann_runs
+  in
+  let det_cols =
+    Array.map
+      (fun (det : Mynd.Rle.t detection) ->
+        Walk.columns ~height:det.region.height det.region.counts)
+      dets
+  in
+  let pair_iou j g =
+    let d0, d1 = det_cols.(j) and g0, g1 = ann_cols.(g) in
+    if d1 < g0 || g1 < d0 then 0.
+    else
+      Walk.iou dets.(j).region.counts ann_runs.(g)
+        ~crowd:d.annotations.(g).crowd
+  in
+  evaluate d c ~place ~det_area ~pair_iou dets
