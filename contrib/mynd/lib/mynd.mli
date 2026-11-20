@@ -888,12 +888,14 @@ module Mask : sig
       The {e distance} from a pixel [(i, j)] to a mask is [√n], where [n] is
       the least [(i - i')² + (j - j')²] over the mask's [true] pixels
       [(i', j')], the Euclidean distance in pixels between their centres.
-      Only the image's pixels belong to the mask.
+      Only the image's pixels belong to the mask. A pixel's {e closest}
+      pixel is the [true] pixel at that distance with the least index
+      [i' w + j']. A mask with no [true] pixel has no closest pixel.
 
-      [n] is computed exactly, in integers, by Felzenszwalb and
+      Both values compute [n] exactly, in integers, by Felzenszwalb and
       Huttenlocher's separable form ("Distance Transforms of Sampled
       Functions", 2012, §2.2), in [O(h w log h)] work with no loop and no
-      read on the host. It raises [Invalid_argument] for masks of [2²⁹] or
+      read on the host. Both raise [Invalid_argument] for masks of [2²⁹] or
       more rows or columns. *)
 
   val distance : (float, 's) Nx.dtype -> 'd Nx.bool_t -> (float, 's, 'd) Nx.t
@@ -904,6 +906,14 @@ module Mask : sig
       greatest value ({!Nx.Dtype.max_value}) where the mask has no [true]
       pixel. So pixels at one distance read one value, and a farther pixel
       never reads a smaller one. It respects padding by [false]. *)
+
+  val closest : 'd Nx.bool_t -> 'd Nx.int64_t
+  (** [closest m] is, at each pixel of the masks [m], [[…; h; w; 1]], the
+      index [i' w + j'] of its closest pixel [(i', j')] in its own mask, and
+      [-1] where the mask has no [true] pixel. A [true] pixel's is its own.
+      The index addresses the mask's pixels flattened to [[…; h w]], as a
+      label does. A batch padded with [false] keeps each pixel's closest
+      pixel, indexed in the padded width. *)
 
   (**/**)
 

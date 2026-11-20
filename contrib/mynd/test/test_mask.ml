@@ -437,6 +437,48 @@ let oracle =
         (each b h w px (fun (q, _, _) -> Array.map root64 q))
         (floats (V.Mask.distance Nx.float64 m)))
 
+let closest_oracle =
+  prop "closest pixels are the brute force's least indices" gen_masks
+    (fun (batch, h, w, px) ->
+      let b = Array.fold_left ( * ) 1 batch and n = h * w in
+      let tie k =
+        let _, _, t = nearest h w (Array.sub px (k * n) n) in
+        t
+      in
+      cover "an empty mask" (n > 0 && not (Array.exists Fun.id px));
+      cover "a tie" (n > 0 && List.exists tie (List.init b Fun.id));
+      cover "a column of 1000 rows" (h >= 1000);
+      equal (array int64)
+        (each b h w px (fun (_, k, _) -> Array.map Int64.of_int k))
+        (longs (V.Mask.closest (mask_of batch h w px))))
+
+let closest_values =
+  cases "closest pixels the docs state" ~id:fst
+    [
+      ( "a full mask",
+        (Nx.ones Nx.bool [| 2; 3; 1 |], Array.init 6 Int64.of_int) );
+      ("an empty mask", (Nx.zeros Nx.bool [| 2; 3; 1 |], Array.make 6 (-1L)));
+      ( "a tie in a row goes to the lower index",
+        ( Nx.init Nx.bool [| 1; 7; 1 |] (fun i -> i.(1) = 1 || i.(1) = 5),
+          [| 1L; 1L; 1L; 1L; 5L; 5L; 5L |] ) );
+    ]
+    (fun (_, (m, want)) -> equal (array int64) want (longs (V.Mask.closest m)))
+
+let closest_padded =
+  prop "padding keeps closest pixels, indexed in the padded width"
+    Gen.(pair gen_mask (pair (int_range 0 3) (int_range 0 3)))
+    (fun ((h, w, px), (ph, pw)) ->
+      let m = Nx.create Nx.bool [| h; w; 1 |] px in
+      let mp = Nx.pad [| (0, ph); (0, pw); (0, 0) |] false m in
+      let w' = w + pw in
+      let moved k =
+        if k < 0L then k
+        else Int64.(add (mul (div k (of_int w)) (of_int w')) (rem k (of_int w)))
+      in
+      equal (array int64)
+        (Array.map moved (longs (V.Mask.closest m)))
+        (longs (Nx.slice [ Nx.R (0, h); Nx.R (0, w) ] (V.Mask.closest mp))))
+
 (* A float format. *)
 type format = F : (float, 's) Nx.dtype -> format
 
@@ -556,7 +598,7 @@ let distance_morphology =
         (Nx.to_array (Nx.less_equal_s (d m) r')))
 
 let distance_batch =
-  prop "each mask of a batch, mapped or padded, has its own distances"
+  prop "each mask of a batch keeps its results alone, mapped or padded"
     ~count:50
     Gen.(pair gen_batch (pair (int_range 0 3) (int_range 0 3)))
     (fun ((b, h, w, px, _), (ph, pw)) ->
@@ -566,6 +608,10 @@ let distance_batch =
       let one k = floats (d (Nx.slice [ Nx.I k ] m)) in
       equal (array float_exact) (Array.concat (List.init b one)) whole;
       equal (array float_exact) whole (floats (Rune.vmap' d m));
+      let c = longs (V.Mask.closest m) in
+      let one k = longs (V.Mask.closest (Nx.slice [ Nx.I k ] m)) in
+      equal (array int64) (Array.concat (List.init b one)) c;
+      equal (array int64) c (longs (Rune.vmap' V.Mask.closest m));
       let mp = Nx.pad [| (0, 0); (0, ph); (0, pw); (0, 0) |] false m in
       equal (array float_exact) whole
         (floats (Nx.slice [ Nx.A; Nx.R (0, h); Nx.R (0, w) ] (d mp))))
@@ -581,13 +627,17 @@ let compiled_masks () =
   ]
 
 let distance_compiled =
-  test "a compiled and a compiled mapped distance are eager's" (fun () ->
+  test "compiled and compiled mapped distances are eager's" (fun () ->
       List.iter
         (fun m ->
           let d = V.Mask.distance Nx.float64 in
           let want = floats (d m) in
           equal (array float_exact) want (floats (Rune.jit' d m));
-          equal (array float_exact) want (floats (Rune.jit' (Rune.vmap' d) m)))
+          equal (array float_exact) want (floats (Rune.jit' (Rune.vmap' d) m));
+          let c = V.Mask.closest in
+          let want = longs (c m) in
+          equal (array int64) want (longs (Rune.jit' c m));
+          equal (array int64) want (longs (Rune.jit' (Rune.vmap' c) m)))
         (compiled_masks ()))
 
 (* The first NVIDIA GPU that opens, through its runtime or its kernel driver.
@@ -605,7 +655,8 @@ let nvidia =
     |> Option.map (fun d -> Nx.devices [ d ]))
 
 let distance_gpu =
-  test "on an NVIDIA GPU, compiled distances are the host's" (fun () ->
+  test "on an NVIDIA GPU, compiled distances and closest pixels are the host's"
+    (fun () ->
       match Lazy.force nvidia with
       | None -> skip ~reason:"no NVIDIA GPU" ()
       | Some (module S) ->
@@ -616,7 +667,11 @@ let distance_gpu =
               let m' = Nx.place S.on m in
               equal (array float_exact) want (floats (Rune.jit' d m'));
               equal (array float_exact) want
-                (floats (Rune.jit' (Rune.vmap' d) m')))
+                (floats (Rune.jit' (Rune.vmap' d) m'));
+              let c m = V.Mask.closest m in
+              let want = longs (c m) in
+              equal (array int64) want (longs (Rune.jit' c m'));
+              equal (array int64) want (longs (Rune.jit' (Rune.vmap' c) m')))
             (compiled_masks ()))
 
 (* scipy's distance_transform_edt of the complement, from golden/distance.npz
@@ -630,6 +685,18 @@ let distance_scipy =
       equal (array float_exact)
         (floats (entry distance Nx.float64 (key ^ ".d")))
         (floats (V.Mask.distance Nx.float64 m)))
+
+(* scipy breaks ties by its own rule, so only a pixel with one closest pixel
+   is compared. *)
+let closest_scipy =
+  cases "closest pixels are scipy's where they are unique" ~id:Fun.id
+    distance_shapes (fun key ->
+      let m = Nx.unsqueeze ~axes:[ -1 ] (entry distance Nx.bool (key ^ ".m")) in
+      let unique = Nx.to_array (entry distance Nx.bool (key ^ ".unique")) in
+      let keep a = List.filteri (fun i _ -> unique.(i)) (Array.to_list a) in
+      equal (list int64)
+        (keep (longs (entry distance Nx.int64 (key ^ ".i"))))
+        (keep (longs (V.Mask.closest m))))
 
 let refusals =
   group "misuse"
@@ -654,6 +721,15 @@ let refusals =
       test "a distance to masks of two channels" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.distance") (fun () ->
               V.Mask.distance Nx.float32 (Nx.zeros Nx.bool [| 4; 4; 2 |])));
+      test "the closest pixels of masks of 2²⁹ rows or columns" (fun () ->
+          List.iter
+            (fun s ->
+              raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.closest")
+                (fun () -> V.Mask.closest (Nx.zeros Nx.bool s)))
+            [ [| 0; 1 lsl 29; 1; 1 |]; [| 0; 1; 1 lsl 29; 1 |] ]);
+      test "the closest pixels of a mask without its channel axis" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.closest") (fun () ->
+              V.Mask.closest (Nx.zeros Nx.bool [| 4; 4 |])));
       test "masks of two channels" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.reconstruct") (fun () ->
               let m = Nx.zeros Nx.bool [| 4; 4; 2 |] in
@@ -687,5 +763,9 @@ let () =
          distance_compiled;
          distance_gpu;
          distance_scipy;
+         closest_oracle;
+         closest_values;
+         closest_padded;
+         closest_scipy;
          refusals;
        ])

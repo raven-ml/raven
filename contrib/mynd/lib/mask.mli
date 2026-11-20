@@ -19,3 +19,4 @@ val reconstruct :
   connectivity -> marker:'d Nx.bool_t -> 'd Nx.bool_t -> 'd Nx.bool_t
 
 val distance : (float, 's) Nx.dtype -> 'd Nx.bool_t -> (float, 's, 'd) Nx.t
+val closest : 'd Nx.bool_t -> 'd Nx.int64_t

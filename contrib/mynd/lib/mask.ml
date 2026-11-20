@@ -374,3 +374,8 @@ let distance dt m =
   | Some (some, n, _) ->
       let greatest = Nx.scalar_at (Nx.placement m) dt (Nx.Dtype.max_value dt) in
       Nx.where some (root dt n) greatest
+
+let closest m =
+  match nearest "Mynd.Mask.closest" m with
+  | None -> Nx.zeros_at (Nx.placement m) Nx.int64 (Nx.shape m)
+  | Some (_, _, index) -> index
