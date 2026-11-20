@@ -1138,16 +1138,31 @@ let zeros_c f acc = Shape.stack (List.init f.ec (fun _ -> fl acc 0.))
    The forward of a product unit takes the keys' dimensions in chunks of at
    most [chunk_bytes] a row, a loop over them whose sum [S = Q Kᵀ] carries
    its accumulators in registers, and the values' columns in blocks of at
-   most [block_bytes] of accumulators a row, a block a workgroup, whose sums
-   stay in its registers: its code, registers and workgroup memory are those
-   of one chunk and one block whatever [dk] and [dv], and each block's
-   workgroup computes the tile's scores again. A chunk is a workgroup-memory
-   fact, 128 dimensions of a 16-bit float and 64 of a float32; a block is a
-   register fact, 128 columns of a float32 accumulator and 64 of a
-   float64. *)
+   most [block_bytes] of accumulators a row on FFMA and [core_block_bytes]
+   on a tensor core, a block a workgroup, whose sums stay in its registers:
+   its code, registers and workgroup memory are those of one chunk and one
+   block whatever [dk] and [dv], and each block's workgroup computes the
+   tile's scores again. A chunk is a workgroup-memory fact, 128 dimensions
+   of a 16-bit float and 64 of a float32; a block is a register fact, on
+   FFMA 128 columns of a float32 accumulator and 64 of a float64. A core's
+   block is twice FFMA's: its kernel had registers to spare (204 at 128
+   columns on sm_89, where FFMA's reach 254 under a mask), and fewer blocks
+   compute the scores fewer times. Fewer blocks are also fewer workgroups,
+   so a launch may take 4 warps where it took 8, or split its keys further
+   and combine them. On sm_89 a lane holds a quarter of a block's columns
+   for 2 of its warp's 16 rows, so 256 float32 columns take 128 registers,
+   and the kernel at 1024 dimensions 243, no spill; other cores are
+   unmeasured. On fudge's RTX 5000 Ada, bfloat16 values
+   in blocks of 256 columns against 128 took 235 against 285 us at 1024
+   dimensions over 4 heads of 512 rows, 289-300 against 341-353 at 160 over
+   8 heads of 2048, 517-519 against 631 at 256, and TESSERA's teacher, 4
+   heads of 1024 over packed rows of 1024 tokens, 0.274 against 0.424 s a
+   call; over 4096 batches of 4 heads of 64 rows, 2574 against 2570-2575 us
+   at 160 and 4108-4110 against 4099-4102 at 256. *)
 
 let chunk_bytes = 256
 let block_bytes = 512
+let core_block_bytes = 1024
 
 (* [split ~most ~step d] is [(n, w)]: [d] dimensions in the fewest [n] chunks
    of at most [most], each of [w], the least multiple of [step] that holds
@@ -1697,7 +1712,8 @@ let combine ~local ~width ~splits a xs =
    query rows split across warps), and on FFMA {!ffma_rows} rows, whose [Q]
    and weights it stages beside the keys and values; the keys' dimensions in
    chunks of at most {!chunk_bytes} and the values' columns in blocks of at
-   most {!block_bytes} of accumulators ({!split}), so that a lane's operands
+   most {!block_bytes} of accumulators on FFMA and {!core_block_bytes} on a
+   core ({!split}), so that a lane's operands
    of [Q] and accumulators of [o] stay in its registers; and tiles of the
    first of 64, 32 and 16 keys, whole steps of the unit, at which what the
    kernel declares in workgroup memory fits there. On FFMA for sm_89 that is
@@ -1706,7 +1722,8 @@ let combine ~local ~width ~splits a xs =
    compiles with no spill: to 172 to 244 registers at 36 to 160 dimensions,
    and to 254 or 255 for float32's blocks of 128 columns under a mask, a
    score program or lengths, a chunk's steps a loop.
-   On fudge's RTX 5000 Ada, a bfloat16 call of 4 heads of 4096
+   On fudge's RTX 5000 Ada, in blocks of 128 columns, a bfloat16 call of
+   4 heads of 4096
    batches of 64 rows (512 batches at 1024) took 3.94, 6.32 and 3.28 ms at
    160, 256 and 1024 bfloat16 dimensions, against 3.96, 6.32 and 4.76 ms in
    blocks of 64 columns, measured together; over 8 heads of 2048 rows,
@@ -1744,7 +1761,8 @@ let plan_of (r : Renderer.t) ~vt ~acc ~heads ~grouped ~tk ~dk ~dv =
   | Some (tc, mul) when r.has_local && r.has_shared -> (
       let n, m, k = Tc.dims tc in
       let kdims = split ~most:(chunk_bytes / Dtype.itemsize vt) ~step:k dk in
-      let vdims = split ~most:(block_bytes / Dtype.itemsize acc) ~step:n dv in
+      let block = match mul with Wmma _ -> core_block_bytes | Fma -> block_bytes in
+      let vdims = split ~most:(block / Dtype.itemsize acc) ~step:n dv in
       let workgroups warps =
         heads * ceil_div grouped (warps * m) * fst vdims
       in

@@ -3741,7 +3741,7 @@ let () =
              (* The full call's bits where it takes the lse-only call's
                 tiles, and rune's bound elsewhere. Its values share
                 workgroup memory with its keys: Metal's 32 KB hold tiles of
-                64 keys at 160 dimensions, two blocks of 80, and 32 at 110,
+                32 keys at 160 dimensions, one block of 160, and 32 at 110,
                 where the lse-only call's hold 64. *)
              Windtrap.cases
                "an lse-only call's gradient takes attention's kernels, no \
