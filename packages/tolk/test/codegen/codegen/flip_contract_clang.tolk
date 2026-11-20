@@ -1,4 +1,4 @@
-# tolk D80 D151 golden=6f11a13253394da181fd6e249519c50b
+# tolk D80 D141 D151 golden=6f11a13253394da181fd6e249519c50b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 32
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
@@ -63,7 +63,7 @@
 61 Ops.END dtypes.void [60, 45]
 62 Ops.SINK dtypes.void [61] KernelInfo(name="flip_contract_32", estimates=Estimates(lds=256, mem=256), optimized=True, split=(8, 2, 3))
 63 Ops.LINEAR dtypes.void [1, 32, 11, 12, 37, 38, 39, 40, 41, 42, 43, 24, 25, 33, 34, 35, 21, 22, 49, 50, 36, 51, 0, 8, 9, 17, 18, 44, 45, 46, 47, 52, 53, 57, 56, 55, 54, 58, 48, 59, 60, 61, 62]
-64 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void flip_contract_32(unsigned char* restrict args_32) {\n  int val0 = (*(((int*)(args_32))+4));\n  int val1 = (*(((int*)(args_32))+5));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+1));\n  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {\n    int alu0 = ((val0+Lidx0)<<2);\n    float4 val4 = (*((float4*)((((float*)(val3))+alu0))));\n    *((float4*)((((float*)(val2))+alu0))) = (float4){val4[3],val4[2],val4[1],val4[0]};\n  }\n}\n"
+64 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void flip_contract_32(unsigned char* restrict args_32) {\n  int val0 = (*(((int*)(args_32))+4));\n  int val1 = (*(((int*)(args_32))+5));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+1));\n  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {\n    int alu0 = ((val0+Lidx0)<<2);\n    float4 val4 = (*((float4*)((((float*)(val3))+alu0))));\n    *((float4*)((((float*)(val2))+alu0))) = ((float4)__builtin_shufflevector(val4, val4, 3, 2, 1, 0));\n  }\n}\n"
 65 Ops.PROGRAM dtypes.void [62, 63, 64] ProgramInfo(global_size=(8, 1, 1), params=(%2, %14, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 66 Ops.SINK dtypes.void [31, 65]
 

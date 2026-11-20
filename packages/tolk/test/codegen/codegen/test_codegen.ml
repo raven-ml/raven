@@ -6447,6 +6447,79 @@ let sums_products n () =
   equal (array Dtypes.value) [| row 0; row 1 |]
     (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
 
+(* [out[i, j] = sum_k x[i, k] * w[j, k]] for [i] and [j] below 8 and [k]
+   below [n], both float64 operands stored along the sum, as a linear layer's
+   input and its matrix stored [out; in], [i] and [j] upcast whole and [k]
+   unrolled by 4. *)
+let transposed_kernel n =
+  let out = Shape.param ~shape:[ Int 64 ] 0 Float64 in
+  let x = Shape.param ~shape:[ Int (8 * n) ] 1 Float64 in
+  let w = Shape.param ~shape:[ Int (8 * n) ] 2 Float64 in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
+  let k = Ops.range ~axis_type:Weak (Int n) [ 2 ] in
+  let product =
+    Ops.index x [ (i * int n) + k ] * Ops.index w [ (j * int n) + k ]
+  in
+  let sum = Ops.reduce product Op.Add [ k ] in
+  let split axis amount target =
+    Opt.Split { axis; amount; target = target; top = false }
+  in
+  Ops.sink
+    ~kernel:
+      (Ops.kernel_info
+         ~opts_to_apply:[ split 0 0 Upcast; split 0 0 Upcast; split 2 4 Upcast ]
+         ())
+    [ Ops.end_ (Ops.store (Ops.index out [ (i * int 8) + j ]) sum) [ i; j ] ]
+
+(* Each step's vectors of [w] along [j] are the columns of the 8 rows of 4
+   lanes it loads along the sum: they are computed by a transpose, in pieces
+   of 2 doubles, whose every vector takes lanes of at most two others, one
+   shuffle each, and every output adds its products in order, each rounded
+   once with its sum. *)
+let transposes n () =
+  let prg = Codegen.to_program (transposed_kernel n) (Lazy.force host) in
+  let uops = Ops.src (Ops.nth prg 1) in
+  let gathered u =
+    let vectors =
+      List.fold_left
+        (fun vs l ->
+          if Ops.op l <> Op.Index then vs
+          else
+            let v = Ops.nth l 0 in
+            if List.memq v vs then vs else v :: vs)
+        [] (Ops.src u)
+    in
+    Ops.op u = Op.Stack && List.compare_length_with vectors 2 > 0
+  in
+  equal int ~msg:"stacks of lanes of more than two vectors" 0
+    (List.length (List.filter gathered uops));
+  let f = Float.of_int in
+  let x = Array.init (8 * n) (fun k -> Float.sin (f (k + 1)) *. f (k + 1))
+  and w = Array.init (8 * n) (fun k -> Float.cos (f ((2 * k) + 1))) in
+  (* each step of 4 is a product and 3 multiply-adds, added to the sum *)
+  let out i j =
+    let step b =
+      let p t = (x.((i * n) + (4 * b) + t), w.((j * n) + (4 * b) + t)) in
+      let a0, b0 = p 0 in
+      List.fold_left
+        (fun c t ->
+          let a, b = p t in
+          Float.fma a b c)
+        (a0 *. b0) [ 1; 2; 3 ]
+    in
+    let s = ref 0. in
+    for b = 0 to (n / 4) - 1 do
+      s := !s +. step b
+    done;
+    `Float !s
+  in
+  let floats = Array.map (fun f -> `Float f) in
+  equal (array Dtypes.value)
+    (Array.init 64 (fun e -> out (e / 8) (e mod 8)))
+    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats w) ]))
+
 (* The kernel that stores into slot 0, of [dt], element [i] of slot 3 where
    element [i] of slot 1 is below that of slot 2, both of [cmp], and of slot 4
    elsewhere, over [n] elements upcast whole, by their largest power of two
@@ -6723,6 +6796,22 @@ let vectors =
          output lanes"
         ~id:(Printf.sprintf "%d lanes") [ 3; 4; 9 ] (fun n ->
           sums_products n ());
+      test
+        "a host sum whose last lane axis holds one lane multiplies vectors of \
+         the axis before it" (fun () ->
+          (* ffn_clang's sum holds 16 lanes and a last axis of one: each
+             multiply-add is a vector of the 16 *)
+          let row = List.find (fun row -> row "name" = "ffn_clang") rows in
+          let scalar u =
+            Ops.op u = Op.Mulacc && Shape.shape_opt u = Some []
+          in
+          equal int ~msg:"multiply-adds of one lane" 0
+            (List.length
+               (List.filter scalar (Ops.src (Ops.nth (program row) 1)))));
+      cases
+        "a host product of operands stored along its sum gathers its vectors \
+         by a transpose of two-vector shuffles"
+        ~id:(Printf.sprintf "sum of %d") [ 16; 40 ] (fun n -> transposes n ());
       cases
         "a host selection of 8, 16 or 32 lanes by a comparison of integers \
          takes each lane's arm"

@@ -1,4 +1,4 @@
-# tolk D151 golden=cb1e622a537bda08325f379bf05f896a
+# tolk D141 D151 golden=cb1e622a537bda08325f379bf05f896a
 0 Ops.CONST dtypes.weakint [] 3
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -57,7 +57,7 @@
 55 Ops.STORE dtypes.void [53, 54]
 56 Ops.SINK dtypes.void [52, 52, 55] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=3, lds=28, mem=28), optimized=True)
 57 Ops.LINEAR dtypes.void [30, 31, 2, 3, 32, 33, 34, 13, 14, 37, 38, 7, 39, 9, 40, 41, 0, 35, 42, 43, 4, 5, 44, 45, 18, 46, 47, 48, 49, 50, 51, 53, 54, 36, 55, 52, 56]
-58 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\ntypedef float float3 __attribute__((aligned(4),ext_vector_type(3)));\ntypedef float float2 __attribute__((aligned(4),ext_vector_type(2)));\n__attribute__((min_vector_width(512))) void E_3(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  float4 val2 = (*((float4*)((((float*)(val1))+0))));\n  float3 alu0 = ((float3){val2[0],val2[1],val2[2]}+(float3){val2[1],val2[2],val2[3]});\n  *(((float*)(val0))+2) = alu0[2];\n  *((float2*)((((float*)(val0))+0))) = (float2){alu0[0],alu0[1]};\n}\n"
+58 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\ntypedef float float3 __attribute__((aligned(4),ext_vector_type(3)));\ntypedef float float2 __attribute__((aligned(4),ext_vector_type(2)));\n__attribute__((min_vector_width(512))) void E_3(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  float4 val2 = (*((float4*)((((float*)(val1))+0))));\n  float3 alu0 = (((float3)__builtin_shufflevector(val2, val2, 0, 1, 2))+((float3)__builtin_shufflevector(val2, val2, 1, 2, 3)));\n  *(((float*)(val0))+2) = alu0[2];\n  *((float2*)((((float*)(val0))+0))) = ((float2)__builtin_shufflevector(alu0, alu0, 0, 1));\n}\n"
 59 Ops.PROGRAM dtypes.void [56, 57, 58] ProgramInfo(params=(%1, %8), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 60 Ops.SINK dtypes.void [29, 59]
 

@@ -3388,8 +3388,8 @@ driver signals its own (D146).
   `Codegen.split_widths`, `Codegen.split_lanes`, `Codegen.distinct_lanes`,
   `Codegen.vector_dtypes`, `Codegen.do_devectorize`,
   `Codegen.address_lanes`, `Codegen.pm_vector_constants`,
-  `Codegen.product_operands`, `Codegen.first_lane`, `Codegen.slice` and
-  `Codegen.lower_reduce`; `Coalesce.memory_coalescing`; `Cstyle.mask_widths`, `Cstyle.clang_lanes`, `Cstyle.clang_vectors` and
+  `Codegen.product_operands`, `Codegen.first_lane`, `Codegen.slice`,
+  `Codegen.lower_reduce` and `Codegen.transposes`; `Coalesce.memory_coalescing`; `Cstyle.mask_widths`, `Cstyle.clang_lanes`, `Cstyle.clang_vectors` and
   `Cstyle.clang_kernel`; `Decomp_dtype.emulates`; `Uop_weak.pm_commit_weak`'s
   cast over a stack.
 - **Differs:** a renderer may compute on vectors (`Renderer.vector_lanes` past
@@ -3412,7 +3412,8 @@ driver signals its own (D146).
   compute each lane apart; an address is computed lane by lane through the
   vector operations it reads, so accesses still merge, register memory's too
   (where tinygrad merges memory's alone). A sum of products sums each run of
-  its last lane axis as one vector: each unrolled lane's products of a run are
+  its last lane axis of more than one lane, with the axes of one lane after
+  it, as one vector: each unrolled lane's products of a run are
   one vector of the run's lanes, in their order, the operation on its
   operands' slices, and each multiply-add adds one into the run's running
   sums, which an accumulator holds as vectors; each lane keeps its terms,
@@ -3420,12 +3421,21 @@ driver signals its own (D146).
   apart fuses each lane into its running sum, and computes its first lane,
   which it adds to nothing, as a product of scalars, so no vector product is
   left; a selection by constant conditions picks each lane. Any number of lanes up to 64 is one
-  vector, which LLVM computes in the next power of two.
+  vector, which LLVM computes in the next power of two. Stacks that each take
+  lane k of the same rows, c distinct vectors of u lanes (c and u powers of
+  two, c > 2), two or more of them, are the columns of the matrix the rows
+  hold and are computed together by an in-register transpose
+  (`Codegen.transposes`): in pieces of 16 bytes (p lanes, c >= p), each
+  piece's rows concatenated by blocks, then log2 p stages of zips within
+  blocks of p lanes, every step a stack of lanes of two vectors.
 
   Clang writes the vectors as `ext_vector_type` values: a conversion is
   `__builtin_convertvector`, square roots, truncations and multiply-adds are
   `__builtin_elementwise_*`, a scalar operand of a builtin or a selection is
-  splat, and a vector of booleans is a mask of -1 and 0 lanes as wide as the
+  splat, a stack of lanes of one or two vectors of one type is
+  `__builtin_shufflevector` cast to its type (put together lane by lane, LLVM
+  folds a shuffle of shuffles back into a gather from every vector they read),
+  and a vector of booleans is a mask of -1 and 0 lanes as wide as the
   values it compares, converted to the width of the masks or values it meets;
   a lane of a mask is read as a `_Bool`, and a mask of one-byte lanes as
   signed chars. A cast of a stack of weak constants commits them at the
@@ -3457,7 +3467,17 @@ driver signals its own (D146).
   host products become vectors read back lane by lane, with no range apart on
   fudge (kaun's `Quant/host/q8_0-product-1-token` 2.6-3.9 ms against 1.8-3.1
   ms unpinned), against the 2-7 s of Clang per kernel at each first call that
-  lane by lane cost.
+  lane by lane cost. A sum of products' lanes as vectors: on fudge's Clang
+  19.1.7, which compiles without the straight-line vectorizer (D167), a
+  3328 x 440 x 1792 float32 product ran scalar multiply-adds, 11.8 and 17.5
+  GFLOP/s on one P-core with its matrix [in; out] and [out; in]; as vectors
+  97.2 and 62.0, the instructions that vectorizer gives (locked, min of 5).
+  The transpose: written lane by lane, Clang builds each column of the
+  matrix [out; in] with a broadcast and a blend per lane, and folds a
+  network written as vector literals back into that gather; the network of
+  `__builtin_shufflevector`s takes its 8 x 8 x 4 tile (D188) from 88.0 to
+  136.4 GFLOP/s (locked, min of 5), and in 16-byte pieces a float64 one from
+  22.3 to 16.2 cycles a step (llvm-mca).
 - **Rejected:** a power of two of lanes per vector, made for Clang 18.1.3's
   crash on rune's uint4 sort (D167), which was not from its vector and gains
   no speed; an odd number as vectors of powers of two and its last lane apart,
@@ -3478,7 +3498,10 @@ driver signals its own (D146).
   a host operation of any lanes computes vectors of at most 64 and writes what
   its kernel writes` (every case), `› a host selection by a broadcast of
   computed lanes computes no lane apart` and `› a host sum of a product's
-  unrolled lanes multiplies vectors of its output lanes` (every case), `› a host selection of
+  unrolled lanes multiplies vectors of its output lanes` (every case), `› a
+  host sum whose last lane axis holds one lane multiplies vectors of the axis
+  before it`, `› a host product of operands stored along its sum gathers its
+  vectors by a transpose of two-vector shuffles` (every case), `› a host selection of
   8, 16 or 32 lanes by a comparison of integers takes each lane's arm` and `›
   a host selection of 3, 6, 12, 24 or 48 lanes by a comparison of integers
   takes each lane's arm` (every case), `› a weak constant stored into four
@@ -5164,7 +5187,8 @@ into D183, which holds its rule, its reason and its pins.
   none).
 - **tolk:** `Heuristic_host.host_vector_bytes`,
   `Heuristic_host.parallel_operations`, `Heuristic_host.upcast_vectors`,
-  `Heuristic_host.upcast_contiguous` and `Heuristic_host.unroll_vector`.
+  `Heuristic_host.stored_contiguous`, `Heuristic_host.upcast_contiguous` and
+  `Heuristic_host.unroll_vector`.
 - **Differs:** on the host a group of lanes computed as one vector spans 64
   bytes of its widest type, two registers of AVX2. A kernel with no reduce
   takes, after its masked axes, one upcast of its last output axis that 2
@@ -5174,7 +5198,14 @@ into D183, which holds its rule, its reason and its pins.
   none when its stored values hold 5 arithmetic operations or more for each
   of their longest chain (a sine is one operation when the heuristic runs),
   or when it computes a type the target emulates. A reduce kernel's first
-  upcast takes its stored axis to 64 bytes of its accumulators (D186). When
+  upcast takes its stored axis to 64 bytes of its accumulators (D186). In a
+  kernel that sums products, an access may read that axis apart when it reads
+  the last reduce axis at unit stride, as a matrix stored [out; in] is read by
+  its product: its lanes along the axis are gathered by a transpose (D141).
+  Such a gathered axis takes one register of lanes, and the output axis the
+  gathering accesses do not read is then upcast by the largest power of two
+  that fits the budget: a product of float32 operands both stored along its
+  sum takes 8 rows by 8 columns, BLIS's micro-tile with its B gathered. When
   the last reduce axis is at most 3 and wholly unrolled and the next one is
   larger than 3, the next is unrolled by the largest power of two that
   divides it and keeps the unrolled lanes within 64 bytes of the reduce's
@@ -5184,7 +5215,11 @@ into D183, which holds its rule, its reason and its pins.
   only when it is at most 3 too. On 16-byte registers, SSE's and NEON's, a
   vector is four of them, unmeasured. Whether memory-bound kernels take lanes
   at all is open.
-- **Reason:** (d). Elementwise kernels (RFC 0025's special functions, D141):
+- **Reason:** (d). A gathered axis: x [3328; 440] by a matrix [1792; 440] took
+  4 rows by 4 columns, whose vectors span half a register and whose
+  transposes no rows share; 8 by 8 runs at 136.4 GFLOP/s on one P-core
+  against 62.7 (fudge, locked, min of 5), the same bits, and a 4 by 16 tile,
+  two registers a column, at 82.2. Elementwise kernels (RFC 0025's special functions, D141):
   lanes give the core independent chains while each waits on its latency, and
   computed as vectors (D141) they compile once; eight nested float64 sines
   over 1024 elements replay 1.25 times as fast at 64 bytes as at 32 and as
@@ -5206,7 +5241,12 @@ into D183, which holds its rule, its reason and its pins.
   `add_half`, `add_uchar`, `cast_to_double`, `compare`, `add_24`, `add_17`,
   `wide_tree`, `long_chain` and every host case without a reduce, and
   `vecmat_decoded`, `gpt_oss_gate_up`, `routed_blocks`, `routed_tiles` and
-  `experts_down`, on `cpu` and `avx2`; the tolk bench's `host/*/heuristic` rows
+  `experts_down`, and the gathered axes of `scores`, `scores_biased`,
+  `scores_biased_first`, `matmul_256_kt`, `matmul_256_kt_128`, `matvec`,
+  `matvec_tall`, `rows_m4`, `rows_m12`, `rows_m32`, `rows_short` and
+  `routed_by_argmax`, on `cpu` and `avx2`, with `the host's lanes › on AVX2 a
+  recorded host kernel of few outputs takes its lanes` (`matvec_tall`); rune's
+  `Jit/linear-float32-3328x440-to-1792`; the tolk bench's `host/*/heuristic` rows
   and rune's compile bench `trig/sin-nested-8` on fudge. On rune: missing for
   a quantised product decoding a checkpoint's codes 16 at once on the host.
 

@@ -2590,9 +2590,11 @@ let scan_work n =
 (* With fewer rows than groups, each row of [Rows] loads its own group's
    slice, so tolk cannot share a slice's loads, or [x]'s, between rows and
    columns as it does the unsegmented contraction's: a float32 one loads a
-   few times its bytes, a float4 one, whose slice is an eighth of [x]'s
-   bytes, more. A load of every group's slice would grow the bytes with [g],
-   which grow no more than a quarter from 128 groups to 256. A scaled
+   few times its bytes, at most 5 (over 256 contracted, 1118720 against
+   266240: the unsegmented one gathers each column of its slice once for 8
+   rows), a float4 one, whose slice is an eighth of [x]'s bytes, more. A load
+   of every group's slice would grow the bytes with [g], which grow no more
+   than a quarter from 128 groups to 256. A scaled
    slice's decode is computed again in each row, so a scaled contraction's
    unit is [n] unsegmented contractions of one row by one slice. The bounds
    hold at any [k], 256 among them.
@@ -2611,7 +2613,7 @@ let work_bounds =
         if scaled then n * fst (work ~scaled Plain ~n:1 ~k ~j 1) else ops
       in
       at_most int ~msg:"operations" ~than:(2 * unit) o;
-      if not scaled then at_most int ~msg:"bytes" ~than:(4 * lds) l;
+      if not scaled then at_most int ~msg:"bytes" ~than:(5 * lds) l;
       l
     in
     let l128 = at 128 in

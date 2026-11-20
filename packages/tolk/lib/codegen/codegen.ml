@@ -1043,6 +1043,14 @@ let rec slice x idx =
 let lower_reduce (slots, ren) r =
   let op, num_axes = reduce_arg r and inp = nth r 0 and rngs = srcs r in
   let fused = fuses ren r inp in
+  let out = List.filteri (fun a _ -> a >= num_axes) (max_shape inp) in
+  let last_wide =
+    List.fold_left2
+      (fun l a n -> if n > 1 then a else l)
+      0
+      (List.mapi (fun a _ -> a) out)
+      out
+  in
   let add x y =
     let u = alu x op [ y ] in
     if fused then mark_fusable u else u
@@ -1076,12 +1084,11 @@ let lower_reduce (slots, ren) r =
      the output as rows of vectors, each step a rank-1 update of a broadcast by
      a vector (Van Zee and van de Geijn, "BLIS: A Framework for Rapidly
      Instantiating BLAS Functionality", ACM TOMS 41(3), 2015, Figure 11).
-     [runs] are the indices of the leading lane axes, one a run. *)
+     [runs] are the indices of the lane axes before the run's, the last of
+     more than one lane, with the axes of one lane after it. *)
   let runs =
     if not (fused && ren.vector_lanes > 1) then None
-    else
-      let out = List.filteri (fun a _ -> a >= num_axes) (max_shape inp) in
-      Some (product (List.filteri (fun a _ -> a < List.length out - 1) out))
+    else Some (product (List.filteri (fun a _ -> a < last_wide) out))
   in
   let run j = sum (List.map (fun k -> slice inp (k @ j)) (product sizes)) in
   let per_run f = reshape (stack (List.map f (Option.get runs))) rest in
@@ -1566,6 +1573,131 @@ let int_vmax u = match vmax u with `Int z -> Bigint.to_int z | _ -> 0
    first past those already taken, which the numbering of the kernel's other
    variables keeps; their names, fresh among the kernel's variables, only name
    them in its source. *)
+(* Transposes on a renderer that computes on vectors
+
+   A stack whose lanes are lane [k] of each of [c] distinct vectors of [u]
+   lanes, the rows, is column [k] of the [c] by [u] matrix the rows hold. Two
+   or more columns of the same rows are computed together by the interleave
+   network of an in-register transpose, each step a stack of lanes of two
+   vectors, which a target computes as one shuffle. The rows are cut into
+   pieces of [p] lanes, 16 bytes, the width within which every vector
+   instruction set interleaves (SSE's and AVX's [unpck], NEON's [zip]): wider,
+   a zip crosses AVX's halves and costs more than the gather. For each piece,
+   with [c >= p], the [c] pieces' [p] columns are computed by the network:
+   piece [j] of each block of [p] rows is concatenated with pieces [p + j],
+   [2p + j], ..., so that block [b] of [y_j] is piece [bp + j]; then
+   [log2 p] stages zip [z_j] with [z_(j + p/2)] within blocks of [p] lanes,
+   their low halves' lanes then their high halves' making [z_2j] and
+   [z_(2j+1)]; column [t] of the piece is [z_t]. [c] and [u] are powers of
+   two and [c > 2]. Gathered lane by lane, each column took a target an
+   insertion or a broadcast and a blend per lane. The lanes move and are
+   never computed. *)
+let transposes sink =
+  let pow2 n = n > 0 && n land (n - 1) = 0 in
+  let piece_lanes v = min (max_numel v) (16 / Dtype.itemsize (dtype v)) in
+  let column s =
+    let lane x =
+      match src x with
+      | [ v; i ] when is Op.Index x && is_literal i -> (
+          match shape v with
+          | [ Int u ] -> Some (v, u, Dtype.Value.to_int (vmax i))
+          | _ -> None)
+      | _ -> None
+    in
+    if not (is Op.Stack s) then None
+    else
+      match List.map lane (src s) with
+      | Some (v, u, k) :: _ as l when List.for_all Option.is_some l ->
+          let l = List.map Option.get l in
+          let rows = List.map (fun (v, _, _) -> v) l in
+          let c = List.length rows in
+          let alike (v', u', k') =
+            u' = u && k' = k && Dtype.equal (dtype v') (dtype v)
+          in
+          let rec distinct = function
+            | [] -> true
+            | x :: rest -> (not (List.memq x rest)) && distinct rest
+          in
+          let p = piece_lanes v in
+          if
+            List.for_all alike l && distinct rows && pow2 c && pow2 u && c > 2
+            && p >= 2 && c >= p
+          then Some (rows, u, k, nth (List.hd (src s)) 1)
+          else None
+      | _ -> None
+  in
+  let groups =
+    List.fold_left
+      (fun groups s ->
+        match column s with
+        | None -> groups
+        | Some (rows, u, k, at) -> (
+            match
+              List.find_opt (fun (r, _, _, _) -> List.equal ( == ) r rows) groups
+            with
+            | Some (_, _, _, cols) ->
+                cols := (k, s) :: !cols;
+                groups
+            | None -> (rows, u, at, ref [ (k, s) ]) :: groups))
+      [] (toposort ~calls:Skip sink)
+  in
+  let network (rows, u, at, cols) =
+    (* Lane [i] of [x], indexed as the columns index their rows: an index by
+       a bare constant into a stack is that stack's source. *)
+    let lane x i =
+      v Op.Index ~src:[ x; cast (int ~dtype:(dtype (nth at 0)) i) (dtype at) ]
+    in
+    let lanes x = List.init (max_numel x) (lane x) in
+    let rec concat = function
+      | [ v ] -> v
+      | vs ->
+          let n = List.length vs / 2 in
+          let a = concat (List.filteri (fun i _ -> i < n) vs)
+          and b = concat (List.filteri (fun i _ -> i >= n) vs) in
+          stack (lanes a @ lanes b)
+    in
+    let rows = Array.of_list rows in
+    let c = Array.length rows and p = piece_lanes rows.(0) in
+    (* The [p] columns of [pieces], [c] vectors of [p] lanes. *)
+    let transpose pieces =
+      let y j = concat (List.init (c / p) (fun b -> pieces.((b * p) + j))) in
+      let zip a b half =
+        let block i =
+          List.init (p / 2) (fun t -> (p * i) + t + (half * p / 2))
+        in
+        stack
+          (List.concat_map
+             (fun i -> List.concat_map (fun t -> [ lane a t; lane b t ]) (block i))
+             (List.init (c / p) Fun.id))
+      in
+      let rec stages z n =
+        if n >= p then z
+        else
+          stages
+            (Array.init p (fun j ->
+                 zip z.(j / 2) z.((j / 2) + (p / 2)) (j mod 2)))
+            (n * 2)
+      in
+      stages (Array.init p y) 1
+    in
+    let piece q x =
+      if p = u then x else stack (List.init p (fun t -> lane x ((q * p) + t)))
+    in
+    let columns =
+      Array.concat
+        (List.init (u / p) (fun q -> transpose (Array.map (piece q) rows)))
+    in
+    List.map (fun (k, s) -> (s, columns.(k))) !cols
+  in
+  match
+    List.concat_map network
+      (List.filter
+         (fun (_, _, _, cols) -> List.compare_length_with !cols 1 > 0)
+         groups)
+  with
+  | [] -> sink
+  | subs -> substitute ~calls:Skip ~pass:Fixed_point sink subs
+
 let split_blocks sink =
   let all = Nodes.to_list (backward_slice_with_self ~calls:Skip sink) in
   let slots, names =
@@ -2045,6 +2177,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren sink
       (After_sources pm_final_rewrite)
   in
+  let sink = if ren.vector_lanes > 1 then transposes sink else sink in
   (* commit every const still bare so no renderer reads one *)
   let sink =
     graph_rewrite ~calls:Skip ~pass:Once ~ctx:() sink

@@ -13,7 +13,7 @@ __attribute__((min_vector_width(512))) void E_16(unsigned char* restrict args_24
   __fp168 val4 = (*((__fp168*)((((__fp16*)(val1))+8))));
   __fp168 val5 = (*((__fp168*)((((__fp16*)(val2))+0))));
   __fp168 val6 = (*((__fp168*)((((__fp16*)(val2))+8))));
-  float16 cast0 = __builtin_convertvector((__fp1616){val3[0],val3[1],val3[2],val3[3],val3[4],val3[5],val3[6],val3[7],val4[0],val4[1],val4[2],val4[3],val4[4],val4[5],val4[6],val4[7]}, float16);
+  float16 cast0 = __builtin_convertvector(((__fp1616)__builtin_shufflevector(val3, val4, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)), float16);
   int16 alu0 = (cast0!=cast0);
   float16 alu1 = ((cast0!=((float)(-__builtin_inff())))?cast0:0.0f);
   float16 alu2 = (alu0?0.0f:alu1);
@@ -36,10 +36,10 @@ __attribute__((min_vector_width(512))) void E_16(unsigned char* restrict args_24
   float16 alu8 = ((cast0<-150.0f)?0.0f:alu7);
   float16 alu9 = (alu0?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu8);
   __fp1616 cast12 = __builtin_convertvector(alu9, __fp1616);
-  float16 cast13 = __builtin_convertvector((cast12+__builtin_elementwise_sqrt((__fp1616){val5[0],val5[1],val5[2],val5[3],val5[4],val5[5],val5[6],val5[7],val6[0],val6[1],val6[2],val6[3],val6[4],val6[5],val6[6],val6[7]})), float16);
-  *((float4*)((((float*)(val0))+0))) = (float4){cast13[0],cast13[1],cast13[2],cast13[3]};
-  *((float4*)((((float*)(val0))+12))) = (float4){cast13[12],cast13[13],cast13[14],cast13[15]};
-  *((float4*)((((float*)(val0))+4))) = (float4){cast13[4],cast13[5],cast13[6],cast13[7]};
-  *((float4*)((((float*)(val0))+8))) = (float4){cast13[8],cast13[9],cast13[10],cast13[11]};
+  float16 cast13 = __builtin_convertvector((cast12+__builtin_elementwise_sqrt(((__fp1616)__builtin_shufflevector(val5, val6, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)))), float16);
+  *((float4*)((((float*)(val0))+0))) = ((float4)__builtin_shufflevector(cast13, cast13, 0, 1, 2, 3));
+  *((float4*)((((float*)(val0))+12))) = ((float4)__builtin_shufflevector(cast13, cast13, 12, 13, 14, 15));
+  *((float4*)((((float*)(val0))+4))) = ((float4)__builtin_shufflevector(cast13, cast13, 4, 5, 6, 7));
+  *((float4*)((((float*)(val0))+8))) = ((float4)__builtin_shufflevector(cast13, cast13, 8, 9, 10, 11));
 }
 

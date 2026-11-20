@@ -1853,6 +1853,51 @@ let clang_vectors =
               Some
                 (strf "__builtin_elementwise_%s(%s)" name
                    (String.concat ", " args)));
+        (* A stack of lanes of one or two vectors of one type is one
+           [__builtin_shufflevector], which reaches LLVM as one shuffle: put
+           together lane by lane, LLVM folds a shuffle of shuffles back into a
+           gather from every vector they read, which a target builds a lane
+           at a time. *)
+        r (Upat.op ~name:"x" Op.Stack) (fun ctx m ->
+            let x = m "x" in
+            let lane y =
+              match (op y, src y) with
+              | Op.Index, [ v; i ] when is_value v && max_numel v > 1 -> (
+                  match (op i, src i) with
+                  | Op.Cast, [ c ] when is Op.Const c ->
+                      Some (v, Dtype.Value.to_int (cval c))
+                  | _ -> None)
+              | _ -> None
+            in
+            let lanes = List.map lane (src x) in
+            if Dtype.is_bool (dtype x) || List.exists Option.is_none lanes then
+              None
+            else
+              let lanes = List.map Option.get lanes in
+              let a = fst (List.hd lanes) in
+              let b =
+                Option.value ~default:a
+                  (List.find_map
+                     (fun (v, _) -> if v == a then None else Some v)
+                     lanes)
+              in
+              let n = max_numel a in
+              let at (v, i) =
+                if v == a then Some i else if v == b then Some (n + i) else None
+              in
+              let picks = List.map at lanes in
+              if
+                List.exists Option.is_none picks
+                || max_numel b <> n
+                || not (Dtype.equal (dtype a) (dtype b))
+              then None
+              else
+                (* its result is a GCC vector, cast back to the lanes' type *)
+                Some
+                  (strf "((%s)__builtin_shufflevector(%s, %s, %s))"
+                     (render_type ctx.lang x) ctx.%{a} ctx.%{b}
+                     (String.concat ", "
+                        (List.map (fun i -> string_of_int (Option.get i)) picks))));
         (* a stack of booleans is a mask of one-byte lanes *)
         r (Upat.op ~name:"x" Op.Stack) (fun ctx m ->
             let x = m "x" in

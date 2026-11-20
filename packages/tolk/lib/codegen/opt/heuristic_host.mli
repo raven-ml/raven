@@ -36,7 +36,12 @@ val upcast_vectors : Postrange.Scheduler.t -> unit
 val upcast_contiguous : Postrange.Scheduler.t -> unit
 (** [upcast_contiguous k] upcasts the axis [k]'s stores write at unit stride,
     when every access reading it does so at unit stride, by the largest power
-    of two that fills a vector and fits the budget. *)
+    of two that fills a vector and fits the budget. In a kernel that sums
+    products an access may instead read the axis apart and the last reduce
+    axis at unit stride, its lanes gathered by a transpose: the axis then
+    takes the largest power of two that fills one register and fits, and the
+    output axis the gathering accesses do not read the largest that fits
+    beside it. *)
 
 val unroll_vector : Postrange.Scheduler.t -> fits:(int -> bool) -> int -> int -> unit
 (** [unroll_vector k ~fits unrolled axis] unrolls [axis] by the largest power

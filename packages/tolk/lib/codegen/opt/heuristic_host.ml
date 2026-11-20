@@ -236,19 +236,43 @@ let fits ?upcast ?unroll k =
    stores write at unit stride to a host vector of the accumulators' type
    ([host_vector_bytes]), the largest power of two that divides it and fits:
    as the target's vector width splits a contiguous dimension, its stores fill
-   each register. Every access
-   that reads the axis must read it at unit stride, or its lanes gather from
-   apart, as a matrix's rows would for a product with a vector. *)
+   each register. Every access that reads the axis must read it at unit
+   stride, or gather it as a transpose: read it apart, and the kernel's last
+   reduce axis at unit stride, in a kernel that sums products, as the rows of
+   a matrix stored [out; in] are read by a product summed along [in]. Such an
+   access's lanes along the axis are the columns of the rows it loads along
+   the sum, which code generation computes by an in-register transpose
+   ({!Codegen}) for the products' vectors, and the axis is said to be
+   gathered. *)
 let stored_contiguous k =
   let stored = stored_addresses k in
   let unit r i = List.exists (fun t -> t == r) (split_uop i Op.Add) in
-  List.find_opt
+  let sums_products =
+    List.exists
+      (fun r ->
+        (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
+        && op (nth r 0) = Op.Mul)
+      (K.reduceops k)
+  in
+  let summed =
+    match List.rev (K.upcastable_dims ~reduce:true k) with
+    | last :: _ when sums_products -> Some (List.nth (K.rngs k) last)
+    | _ -> None
+  in
+  let gathers r b =
+    (not (unit r (idx b)))
+    && match summed with Some s -> unit s (idx b) | None -> false
+  in
+  List.find_map
     (fun axis ->
       let r = List.nth (K.rngs k) axis in
-      List.exists (fun b -> List.memq b stored && unit r (idx b)) (K.bufs k)
-      && List.for_all (fun b -> (not (reads r b)) || unit r (idx b)) (K.bufs k))
+      let readers = List.filter (reads r) (K.bufs k) in
+      if
+        List.exists (fun b -> List.memq b stored && unit r (idx b)) (K.bufs k)
+        && List.for_all (fun b -> unit r (idx b) || gathers r b) readers
+      then Some (axis, List.filter (gathers r) readers)
+      else None)
     (List.rev (K.upcastable_dims k))
-
 (* On the host, a kernel without a reduce computes its upcast lanes as vectors,
    and its output axis is upcast until one value spans [host_vector_bytes]: the
    lanes give the core independent work while each lane waits on the latency of
@@ -336,9 +360,9 @@ let upcast_vectors k =
   | _ -> ()
 
 let upcast_contiguous k =
-  match stored_contiguous k with
-  | None -> ()
-  | Some axis ->
+  match (stored_contiguous k, registers k) with
+  | None, _ | _, None -> ()
+  | Some (axis, gathering), Some file ->
       if debug () >= 4 then
         Format.eprintf "host contiguous axis : %d of %s@." axis
           (K.colored_shape k);
@@ -347,9 +371,34 @@ let upcast_contiguous k =
           (fun b u -> max b (computed_bytes (dtype u)))
           1 (K.reduceops k)
       in
+      (* A gathered axis takes one register: the transpose's shuffles grow
+         with the registers of a column, which every row of the tile shares.
+         The rows then fill the accumulators' budget: the output axis the
+         gathering accesses do not read, by the largest power of two that
+         fits, as BLIS's micro-tile holds [mr] rows of [nr] lanes. *)
+      let lanes =
+        if gathering = [] then host_vector_bytes / bytes else file.bytes / bytes
+      in
+      let rows =
+        List.filter_map
+          (fun a ->
+            let r = List.nth (K.rngs k) a in
+            if gathering = [] || a = axis || List.exists (reads r) gathering
+            then None
+            else Some r)
+          (K.upcastable_dims k)
+      in
       tile_split k axis
-        (pow2s_within (min (host_vector_bytes / bytes) split_lanes))
-        ~keep:(fun n -> fits ~upcast:(axis, n) k)
+        (pow2s_within (min lanes split_lanes))
+        ~keep:(fun n -> fits ~upcast:(axis, n) k);
+      match List.rev rows with
+      | [] -> ()
+      | r :: _ -> (
+          match List.find_index (fun x -> x == r) (K.rngs k) with
+          | None -> ()
+          | Some a ->
+              tile_split k a (pow2s_within split_lanes) ~keep:(fun n ->
+                  fits ~upcast:(a, n) k))
 
 (* On the host, a reduce whose last axis unrolls [unrolled] lanes of at most 3
    fills the rest of a vector of [host_vector_bytes] of its type with lanes of

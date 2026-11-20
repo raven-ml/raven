@@ -2128,8 +2128,8 @@ let split_iterations (info : Ops.kernel_info) =
 (* Recorded kernels of few outputs on AVX2's file, with the iterations of the
    loop their launch splits into blocks and their output lanes, as the rules
    state them: however few outputs remain, an upcast takes what the budget
-   holds. 8 products of 2^20 values take 4 lanes, by 4 of 8 that some access
-   does not index, and leave 2 iterations; 64 sums of 2^15 bfloat16 values
+   holds. 8 products of 2^20 values take 8 lanes, a register of rows their
+   matrix gathers by a transpose, and leave 1 iteration; 64 sums of 2^15 bfloat16 values
    32, 16 at unit stride and one 2 that fills them; the sums of 64 columns
    over 2^17 rows 16, a host vector of floats; 32 sums of 32, 4 lanes.
    gpt-oss's key and value projection takes 32 lanes of its 512 outputs and
@@ -2139,7 +2139,7 @@ let lane_cases =
   cases "on AVX2 a recorded host kernel of few outputs takes its lanes"
     ~id:(fun (name, _, _) -> name)
     [
-      ("matvec_tall", 2, 4);
+      ("matvec_tall", 1, 8);
       ("vecmat_long", 2, 32);
       ("column_sums", 4, 16);
       ("sum_rows", 8, 4);
