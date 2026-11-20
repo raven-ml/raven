@@ -6,8 +6,8 @@ components. The Morphology section of [`Mynd.Filter`](../lib/mynd.mli)
 defines footprints, their reads at the border and the adjoint pair
 `erode` and `dilate`, and the preamble of [`Mynd.Mask`](../lib/mynd.mli)
 defines components and labels. The operators below, from footprint
-shapes to small objects, are compositions of `erode` and `dilate`, and
-of `components` and `reconstruct`.
+shapes to small objects, are compositions of `erode` and `dilate`, of
+`components` and `reconstruct`, and of `distance` and `closest`.
 
 ```ocaml
 let img =
@@ -257,4 +257,105 @@ let () =
   let m = mask [ "###....."; "###..#.."; "####...."; "........" ] in
   assert (bools (open_by_reconstruction `Eight (rectangle 3 3) m)
           = bools (mask [ "###....."; "###....."; "####...."; "........" ]))
+```
+
+## Distances
+
+The Distances section of [`Mynd.Mask`](../lib/mynd.mli) defines a
+pixel's distance to a mask, the root of an exact squared distance, and
+its closest pixel. The examples below measure in float64:
+
+```ocaml
+let distance m = Mynd.Mask.distance Nx.float64 m
+```
+
+The distance to the `false` pixels is the distance to the complement.
+The difference of the two is a signed distance,
+negative inside the mask and positive outside. It has no zero, since the
+boundary lies between pixel centres:
+
+```ocaml
+let signed m = Nx.sub (distance m) (distance (Nx.logical_not m))
+
+let () =
+  let m = mask [ "....."; ".###."; "....." ] in
+  assert (floats (Nx.slice [ Nx.R (1, 2) ] (signed m)) = [| 1.; -1.; -1.; -1.; 1. |])
+```
+
+A mask with no `true` pixel gives the greatest float, `infinity`, so the
+signed distance of an empty or a full mask is infinite everywhere.
+
+The squared distance comes back exactly in integers from the closest
+pixel. Its index `k` is the row `k / w` and the column `k mod w`, and is
+`-1` where the mask is empty:
+
+```ocaml
+let squared m =
+  let h = Nx.dim (-3) m and w = Nx.dim (-2) m in
+  let k = Mynd.Mask.closest m in
+  let i = Nx.div_s k (Int64.of_int w) and j = Nx.mod_s k (Int64.of_int w) in
+  let rows = Nx.reshape [| h; 1; 1 |] (Nx.arange Nx.int64 0 h 1) in
+  let cols = Nx.reshape [| 1; w; 1 |] (Nx.arange Nx.int64 0 w 1) in
+  let di = Nx.sub rows i and dj = Nx.sub cols j in
+  Nx.add (Nx.mul di di) (Nx.mul dj dj)
+
+let () =
+  let m = mask [ "#...."; "....."; "....#" ] in
+  let n = Nx.to_array (squared m) in
+  assert (Array.map (fun n -> Float.sqrt (Int64.to_float n)) n = floats (distance m))
+```
+
+A threshold of distances is a morphological operator by a disk. A pixel
+is farther than `r` from every `false` pixel exactly where `erode` by
+the disk of radius `r` keeps it, and within `r` of a `true` pixel where
+`dilate` sets it. Pixels outside the image are left out of both:
+
+```ocaml
+let () =
+  let m = mask [ "........"; ".#####.."; ".######."; ".#####.."; "........" ] in
+  List.iter
+    (fun r ->
+      let r' = Float.of_int r in
+      assert (bools (Mynd.Filter.erode (disk r) m)
+              = bools (Nx.greater_s (distance (Nx.logical_not m)) r'));
+      assert (bools (Mynd.Filter.dilate (disk r) m)
+              = bools (Nx.less_equal_s (distance m) r')))
+    [ 1; 2; 3 ]
+```
+
+The closest pixel's index addresses the mask's pixels flattened, as a
+label does, so a gather at it reads the closest pixel's value of any
+image of the same size. Labels grown into the background by at most `r`
+pixels take each pixel's closest labelled pixel:
+
+```ocaml
+let flat x =
+  let s = Nx.shape x in
+  Nx.reshape [| s.(0) * s.(1); s.(2) |] x
+
+let grow c r m =
+  let labels = Mynd.Mask.components c m in
+  let near = Nx.take_along_axis ~axis:0 (flat (Mynd.Mask.closest m)) (flat labels) in
+  let near = Nx.reshape (Nx.shape m) near in
+  Nx.where (Nx.less_equal_s (distance m) (Float.of_int r)) near (Nx.full_like near (-1L))
+
+let () =
+  let m = mask [ "#.....#" ] in
+  assert (Nx.to_array (grow `Eight 3 m) = [| 0L; 0L; 0L; 0L; 6L; 6L; 6L |]);
+  assert (Nx.to_array (grow `Eight 2 m) = [| 0L; 0L; 0L; -1L; 6L; 6L; 6L |])
+```
+
+The middle pixel lies three pixels from both, and takes the lower
+index.
+
+Filling the invalid pixels of an image from the closest valid one is the
+same gather over every channel:
+
+```ocaml
+let fill valid img = Nx.take_along_axis ~axis:0 (flat (Mynd.Mask.closest valid)) (flat img)
+
+let () =
+  let img = Nx.create Nx.float64 [| 1; 4; 2 |] [| 1.; 2.; 0.; 0.; 0.; 0.; 5.; 6. |] in
+  let valid = mask [ "#..#" ] in
+  assert (floats (fill valid img) = [| 1.; 2.; 1.; 2.; 5.; 6.; 5.; 6. |])
 ```

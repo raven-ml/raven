@@ -102,8 +102,8 @@ let () =
   Laplacian, rank and bilateral filters, and the discrete Gaussian.
 - [Gradients and edges](edges.md): Canny's edges, wider stencils,
   thresholds and the structure tensor.
-- [Morphology](morphology.md): openings and closings, hit-or-miss, holes
-  and small objects.
+- [Morphology](morphology.md): openings and closings, hit-or-miss, holes,
+  small objects and distances.
 - [Moving annotations with an image](annotations.md): boxes, masks and
   keypoints under flips, crops, resizes and warps, the boxes that
   survive, training recipes and GIoU as a loss.
