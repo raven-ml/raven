@@ -6615,7 +6615,7 @@ let () =
              stateful ~count:300 ~steps:10
                "a call retraces iff its shape and its trace's answers are new"
                (placed_commands ~demand:true);
-             stateful ~domains:2 ~count:5 ~steps:8
+             stateful ~domains:2 ~count:10 ~steps:8
                "calls on two domains retrace iff their shape and their trace's \
                 answers are new"
                (placed_commands ~demand:false);
