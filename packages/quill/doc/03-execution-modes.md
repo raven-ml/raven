@@ -265,10 +265,10 @@ which loads each of these packages that is installed:
 - **Norn** — probabilistic inference
 - **Kaun** — neural networks and training
 - **Hugin** — visualization and plotting
-- **Sowilo** — image processing
 - **Talon** — dataframes
 - **Brot** — tokenization
 - **Fehu** — reinforcement learning
+- **Mynd** — images
 
 A package that is not installed is skipped. One that is installed but does
 not load, such as one whose C stubs fail to load or that requires a package

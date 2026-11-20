@@ -203,11 +203,6 @@ jobs:
           opam exec -- dune build --release contrib/fehu
           bash .github/memcap.sh opam exec -- dune build --release @contrib/fehu/runtest
 
-      - name: Build and test sowilo
-        run: |
-          opam exec -- dune build --release contrib/sowilo
-          bash .github/memcap.sh opam exec -- dune build --release @contrib/sowilo/runtest
-
       - name: Build and test munin
         run: |
           opam exec -- dune build --release packages/munin
@@ -237,6 +232,11 @@ jobs:
         run: |
           opam exec -- dune build --release contrib/alda
           bash .github/memcap.sh opam exec -- dune build --release @contrib/alda/runtest
+
+      - name: Build and test mynd
+        run: |
+          opam exec -- dune build --release contrib/mynd
+          bash .github/memcap.sh opam exec -- dune build --release @contrib/mynd/runtest
 
       - name: Build and test tolk
         run: |

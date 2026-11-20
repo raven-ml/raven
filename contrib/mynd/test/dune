@@ -1,0 +1,21 @@
+; Each golden/*.npz is written by the generator its test names, in gen/,
+; run through `uv run --locked` in gen/'s pinned environment or, for a
+; script with its own lock, `uv run --locked --script`.
+
+(tests
+ (names
+  test_values
+  test_colour
+  test_sample
+  test_resize
+  test_transform
+  test_filter
+  test_gradient
+  test_morphology
+  test_box
+  test_mask
+  test_rle)
+ (package mynd)
+ (libraries mynd nx nx.io rig rig.gpus rune windtrap)
+ (deps
+  (glob_files golden/*.npz)))

@@ -1,0 +1,220 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+open Image
+
+(* Conversions and measures *)
+
+let corners fn b =
+  if Nx.ndim b < 1 || Nx.dim (-1) b <> 4 then
+    invalid_argf "%s: boxes have axes [...; 4]" fn;
+  (coordinate b 0, coordinate b 1, coordinate b 2, coordinate b 3)
+
+let pack a b c d = Nx.stack ~axis:(-1) [ a; b; c; d ]
+
+let of_xywh b =
+  let x, y, w, h = corners "Mynd.Box.of_xywh" b in
+  pack x y (Nx.add x w) (Nx.add y h)
+
+let to_xywh b =
+  let x0, y0, x1, y1 = corners "Mynd.Box.to_xywh" b in
+  pack x0 y0 (Nx.sub x1 x0) (Nx.sub y1 y0)
+
+let of_cxcywh b =
+  let cx, cy, w, h = corners "Mynd.Box.of_cxcywh" b in
+  let hw = Nx.mul_s w 0.5 and hh = Nx.mul_s h 0.5 in
+  pack (Nx.sub cx hw) (Nx.sub cy hh) (Nx.add cx hw) (Nx.add cy hh)
+
+let to_cxcywh b =
+  let x0, y0, x1, y1 = corners "Mynd.Box.to_cxcywh" b in
+  pack
+    (Nx.mul_s (Nx.add x0 x1) 0.5)
+    (Nx.mul_s (Nx.add y0 y1) 0.5)
+    (Nx.sub x1 x0) (Nx.sub y1 y0)
+
+(* An empty box, [x₁ <= x₀] or [y₁ <= y₀], has area [0]: a difference's sign is
+   exact. *)
+let area_of (x0, y0, x1, y1) =
+  let w = Nx.sub x1 x0 and h = Nx.sub y1 y0 in
+  let empty = Nx.logical_or (Nx.less_equal_s w 0.) (Nx.less_equal_s h 0.) in
+  Nx.where empty (Nx.zeros_like w) (Nx.mul w h)
+
+let area b = area_of (corners "Mynd.Box.area" b)
+
+let row x = Nx.unsqueeze ~axes:[ -1 ] x
+let col x = Nx.unsqueeze ~axes:[ -2 ] x
+
+(* [ratio x y] is [x / y], and [0] where [y] is [0]. The branch [where]
+   discards divides by [1], so its derivative stays finite. The guard is an
+   equality, so a NaN [y] still gives NaN. *)
+let ratio x y =
+  let zero = Nx.equal_s y 0. in
+  let safe = Nx.where zero (Nx.ones_like y) y in
+  Nx.where zero (Nx.zeros_like x) (Nx.div x safe)
+
+(* torchvision's arithmetic: the overlap's sides clamped at [0], their product
+   [i], and the union [(area a + area b) - i]. *)
+let meet a b =
+  let ((ax0, ay0, ax1, ay1) as ca) = a and ((bx0, by0, bx1, by1) as cb) = b in
+  let side lo lo' hi hi' =
+    Nx.maximum_s
+      (Nx.sub (Nx.minimum (row hi) (col hi')) (Nx.maximum (row lo) (col lo')))
+      0.
+  in
+  let i = Nx.mul (side ax0 bx0 ax1 bx1) (side ay0 by0 ay1 by1) in
+  (i, Nx.sub (Nx.add (row (area_of ca)) (col (area_of cb))) i)
+
+let overlap a b =
+  let i, union = meet a b in
+  ratio i union
+
+let pairs fn a b =
+  if Nx.ndim a < 2 || Nx.ndim b < 2 then
+    invalid_argf "%s: boxes have axes [...; n; 4]" fn;
+  (corners fn a, corners fn b)
+
+let iou a b =
+  let ca, cb = pairs "Mynd.Box.iou" a b in
+  overlap ca cb
+
+(* [p / c] is [0] where [c] is [0], so the result is [iou] there. *)
+let giou a b =
+  let ((ax0, ay0, ax1, ay1) as ca), ((bx0, by0, bx1, by1) as cb) =
+    pairs "Mynd.Box.giou" a b
+  in
+  let i, u = meet ca cb in
+  let lo x x' = Nx.minimum (row x) (col x')
+  and hi x x' = Nx.maximum (row x) (col x') in
+  let c = area_of (lo ax0 bx0, lo ay0 by0, hi ax1 bx1, hi ay1 by1) in
+  Nx.sub (ratio i u) (ratio (Nx.maximum_s (Nx.sub c u) 0.) c)
+
+let of_mask dt m =
+  let fn = "Mynd.Box.of_mask" in
+  mask_shape fn m;
+  let h = Nx.dim (-3) m and w = Nx.dim (-2) m in
+  if h = 0 || w = 0 then
+    (* No pixel: [any] of nothing is [false], [0] once cast. *)
+    let none = Nx.cast dt (Nx.any ~axes:[ -3; -2; -1 ] ~keepdims:true m) in
+    let s = Nx.shape m in
+    let lead = Array.sub s 0 (Array.length s - 3) in
+    Nx.copy
+      (Nx.broadcast_to
+         (Array.append lead [| 4 |])
+         (Nx.reshape (Array.append lead [| 1 |]) none))
+  else
+    (* [first a n] is the first index where [a] holds along its last axis;
+       [last] one past the last. *)
+    let first a = Nx.argmax ~axis:(-1) (Nx.cast Nx.uint8 a) in
+    let past a n =
+      Nx.rsub_s (Int64.of_int n) (first (Nx.flip ~axes:[ -1 ] a))
+    in
+    let rows = Nx.any ~axes:[ -2; -1 ] m and cols = Nx.any ~axes:[ -3; -1 ] m in
+    let b =
+      Nx.stack ~axis:(-1) [ first cols; first rows; past cols w; past rows h ]
+    in
+    let some = Nx.unsqueeze ~axes:[ -1 ] (Nx.any ~axes:[ -1 ] cols) in
+    Nx.cast dt (Nx.where some b (Nx.zeros_like b))
+
+(* Moving boxes *)
+
+(* A box's corners (x₀, y₀), (x₁, y₀), (x₁, y₁), (x₀, y₁) as positions
+   [[…; 4; 2]]. *)
+let corner_points (x0, y0, x1, y1) =
+  let xs = Nx.stack ~axis:(-1) [ x0; x1; x1; x0 ]
+  and ys = Nx.stack ~axis:(-1) [ y0; y0; y1; y1 ] in
+  Nx.stack ~axis:(-1) [ xs; ys ]
+
+(* The hull of the mapped corners is kept where the box is finite and not empty
+   and its corners' [d] share one strict sign. Elsewhere the box read is
+   [0 0 1 1] and [d] is [1], so the branch [where] discards has finite
+   derivatives, and its cotangent [0] never meets an infinite or NaN one. *)
+let transform m b =
+  let fn = "Mynd.Box.transform" in
+  if Nx.ndim m >= 2 && Nx.ndim b < Nx.ndim m - 1 then
+    invalid_argf "%s: boxes have axes [b...; q...; 4] with %d batch axes" fn
+      (Nx.ndim m - 2);
+  let x0, y0, x1, y1 = corners fn b in
+  let last x = Nx.unsqueeze ~axes:[ -1 ] x in
+  let empty = Nx.logical_or (Nx.less_equal x1 x0) (Nx.less_equal y1 y0) in
+  let usable =
+    Nx.logical_and (Nx.all ~axes:[ -1 ] (Nx.isfinite b)) (Nx.logical_not empty)
+  in
+  let z = Nx.zeros_like x0 and o = Nx.ones_like x0 in
+  let b = Nx.where (last usable) b (pack z z o o) in
+  let x, y, d = Transform.project fn m (corner_points (corners fn b)) in
+  let one_side =
+    Nx.logical_or
+      (Nx.all ~axes:[ -1 ] (Nx.greater_s d 0.))
+      (Nx.all ~axes:[ -1 ] (Nx.less_s d 0.))
+  in
+  let ok = last (Nx.logical_and usable one_side) in
+  let d = Nx.where ok d (Nx.ones_like d) in
+  let x = Nx.div x d and y = Nx.div y d in
+  let lo v = Nx.min ~axes:[ -1 ] v and hi v = Nx.max ~axes:[ -1 ] v in
+  let hull = pack (lo x) (lo y) (hi x) (hi y) in
+  Nx.where (last empty) (Nx.zeros_like hull)
+    (Nx.where ok hull (Nx.full_like hull Float.nan))
+
+(* Non-maximum suppression *)
+
+(* [above x t] is [x > t] for the real [t]: with [c] the value of [x]'s dtype
+   nearest [t], [x > t] is [x >= c] where [c > t], since no value lies in [(t,
+   c)], and [x > c] otherwise, since none lies in [(c, t]]. *)
+let above x t =
+  let c = Nx.Dtype.of_float (Nx.dtype x) t in
+  if c > t then Nx.greater_equal_s x c else Nx.greater_s x c
+
+(* The keep mask is the fixed point of [keep i = ¬∃ j earlier than i: keep j ∧
+   conflict i j] from all true. Each round decides every box from the boxes
+   kept so far, over the [n × n] conflicts. A box ranked [r] is final after
+   round [r + 1], so [n + 1] rounds suffice, the last changing nothing; a box
+   Blelloch, Fineman and Shun's parallel greedy step decides in its step [s] is
+   final by round [2s]. *)
+let suppress ?classes ~iou b s =
+  let fn = "Mynd.Box.nms" in
+  if Nx.ndim b < 2 || Nx.dim (-1) b <> 4 then
+    invalid_argf "%s: boxes have axes [...; n; 4]" fn;
+  let lead = Array.sub (Nx.shape b) 0 (Nx.ndim b - 1) in
+  let same name x =
+    if Nx.shape x <> lead then
+      invalid_argf "%s: %s's axes differ from the boxes' [...; n]" fn name
+  in
+  same "the scores" s;
+  Option.iter (same "the classes") classes;
+  let n = lead.(Array.length lead - 1) in
+  (* The sort orders [0.] before [-0.]; adding [0.] makes every zero [0.], so
+     equal scores tie by position. *)
+  let order = Nx.argsort ~descending:true ~axis:(-1) (Nx.add_s s 0.) in
+  let rank = Nx.argsort ~axis:(-1) order in
+  let earlier =
+    Nx.less (Nx.unsqueeze ~axes:[ -2 ] rank) (Nx.unsqueeze ~axes:[ -1 ] rank)
+  in
+  let c = corners fn b in
+  let conflict = Nx.logical_and earlier (above (overlap c c) iou) in
+  let conflict =
+    match classes with
+    | None -> conflict
+    | Some k ->
+        Nx.logical_and conflict
+          (Nx.equal (Nx.unsqueeze ~axes:[ -1 ] k) (Nx.unsqueeze ~axes:[ -2 ] k))
+  in
+  let step (keep, (_, k)) =
+    let hit = Nx.logical_and conflict (Nx.unsqueeze ~axes:[ -2 ] keep) in
+    let keep' = Nx.logical_not (Nx.any ~axes:[ -1 ] hit) in
+    (keep', (Nx.any (Nx.not_equal keep' keep), Nx.add_s k 1l))
+  in
+  let at = Nx.placement b in
+  let carry = Nx.Ptree.(pair tensor (pair tensor tensor)) in
+  let keep, (_, rounds) =
+    Rune.iterate carry ~max:(n + 1)
+      ~until:(fun (_, (changed, _)) -> Nx.logical_not changed)
+      step
+      ( Nx.copy (Nx.broadcast_to lead (Nx.scalar_at at Nx.bool true)),
+        (Nx.scalar_at at Nx.bool true, Nx.scalar_at at Nx.int32 0l) )
+  in
+  (keep, rounds)
+
+let nms ?classes ~iou b s = fst (suppress ?classes ~iou b s)
+let nms_rounds = suppress

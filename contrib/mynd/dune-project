@@ -1,0 +1,49 @@
+(lang dune 3.21)
+
+(name mynd)
+
+(source
+ (github raven-ml/raven))
+
+(authors "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(maintainers "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(license ISC)
+
+(documentation "https://github.com/raven-ml/raven/tree/main/contrib/mynd")
+
+(bug_reports "https://github.com/raven-ml/raven/issues")
+
+(using mdx 0.4)
+
+(version 1.0.0~alpha3)
+
+(implicit_transitive_deps false)
+
+(generate_opam_files true)
+
+(package
+ (name mynd)
+ (synopsis "Images for OCaml")
+ (description
+  "Images as Nx tensors: their values and conversions between dtypes, colour transfer and alpha, luma, HSV and CIE Lab, sampling at positions under reconstruction kernels, transforms, band-limited resizing, filtering by correlation and Gaussian and median blurs, gradients and their maxima, erosion and dilation, boxes, masks, COCO's run-length encoding, connected components, reconstruction and non-maximum suppression. Every operation is a composition of nx operations, so rune differentiates, batches and compiles it.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (nx
+   (>= 1.0.0~alpha3))
+  (rune
+   (>= 1.0.0~alpha3))
+  (windtrap
+   (and
+    :with-test
+    (>= 0.3.1)))
+  (rig
+   (and
+    :with-test
+    (>= 1.0.0~alpha3)))
+  (mdx :with-test))
+ (tags
+  (computer-vision image-processing resizing detection science)))

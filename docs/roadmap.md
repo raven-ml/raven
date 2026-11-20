@@ -12,7 +12,7 @@ The next goal post on the road to 1.0 raises the bar to a mixture-of-experts mod
 
 We're also pretty happy with where we landed on our design: in particular on an Nx whose every function issues a small set of primitive operations, and Rune on top interpreting them, through effect handlers, for automatic differentiation, JIT compilation, and vectorization. The APIs will keep changing until v1, but we like how well they compose and make difficult things simple without unnecessary abstractions.
 
-Raven's ambition is bigger than LLM workflows: a complete numerical computing ecosystem for OCaml. That broader goal has progressed too, with Hugin for plotting, Talon for dataframes, and Quill for notebooks. Norn brings probabilistic inference to the core. Fehu for reinforcement learning and Sowilo for image processing are contrib packages, which live in the same repository and release on their own schedule.
+Raven's ambition is bigger than LLM workflows: a complete numerical computing ecosystem for OCaml. That broader goal has progressed too, with Hugin for plotting, Talon for dataframes, and Quill for notebooks. Norn brings probabilistic inference to the core. Fehu for reinforcement learning and Mynd for images are contrib packages, which live in the same repository and release on their own schedule.
 
 ## The road ahead: 1.0
 

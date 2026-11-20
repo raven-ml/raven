@@ -1,5 +1,0 @@
-(library
- (name sowilo)
- (public_name sowilo)
- (libraries nx nx.array)
- (private_modules helpers color transform filter morphology edge))

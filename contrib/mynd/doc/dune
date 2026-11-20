@@ -1,0 +1,15 @@
+(mdx
+ (files
+  index.md
+  colour.md
+  filters.md
+  edges.md
+  morphology.md
+  annotations.md)
+ (package mynd)
+ (enabled_if
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
+ (libraries mynd nx nx.io rune)
+ (preludes prelude.ml))
