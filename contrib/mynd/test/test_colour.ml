@@ -99,9 +99,9 @@ type fn = { f : 's 'd. (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t }
 
 let weights =
   [
-    ("luma", { f = V.luma }, (0.299, 0.587, 0.114));
+    ("luma", { f = V.Colour.luma }, (0.299, 0.587, 0.114));
     ( "luminance",
-      { f = V.luminance },
+      { f = V.Colour.luminance },
       (87098. /. 409605., 175762. /. 245763., 12673. /. 175545.) );
   ]
 
@@ -164,7 +164,7 @@ let limits =
       let x = colours Nx.float16 [ (6e4, -6e4, 0.) ] in
       let r = Nx.slice [ Nx.A; Nx.I 0 ] x and g = Nx.slice [ Nx.A; Nx.I 1 ] x in
       let sum = Nx.add (Nx.mul_s r 0.299) (Nx.mul_s g 0.587) in
-      equal (array float_exact) (floats sum) (floats (V.luma x)))
+      equal (array float_exact) (floats sum) (floats (V.Colour.luma x)))
 
 (* Agreement with the weighted sum in float64. Each of the form's five roundings
    and the weights' own errs by at most [u] times a term no larger than [2 M],
@@ -219,7 +219,7 @@ let near tol want got =
       if not ok then failf "element %d is %h, not %h" i g w)
     want
 
-let hsv c = floats (V.rgb_to_hsv (one c))
+let hsv c = floats (V.Colour.to_hsv (one c))
 
 let named_hsv =
   cases "the hexagon's corners, greys and black"
@@ -245,7 +245,7 @@ let hue_range =
     Gen.(pair colour (of_list wide))
     (fun ((kind, c), F (_, dt)) ->
       covered kind;
-      let h = (floats (V.rgb_to_hsv (colours dt [ c ]))).(0) in
+      let h = (floats (V.Colour.to_hsv (colours dt [ c ]))).(0) in
       if not (h >= 0. && h < 1.) then failf "hue %h" h)
 
 (* float32 (1, 0, 1e-9): the hue [-1e-9 / 6] wraps to [1 - 1.7e-10], which
@@ -253,7 +253,7 @@ let hue_range =
 let hue_wrap =
   test "a hue that rounds to 1 wraps to 0 with its derivative" (fun () ->
       let x = Nx.create Nx.float32 [| 3 |] [| 1.; 0.; 1e-9 |] in
-      let hue x = Nx.slice [ Nx.I 0 ] (V.rgb_to_hsv x) in
+      let hue x = Nx.slice [ Nx.I 0 ] (V.Colour.to_hsv x) in
       equal float_exact 0. (Nx.item [] (hue x));
       equal
         (array (float 1e-7))
@@ -297,14 +297,14 @@ let hue_differences =
       in
       let fd = Array.init 3 (fun k -> (at k d -. at k (-.d)) /. (2. *. d)) in
       let got =
-        Rune.grad' (fun x -> Nx.slice [ Nx.I 0 ] (V.rgb_to_hsv x)) (one c)
+        Rune.grad' (fun x -> Nx.slice [ Nx.I 0 ] (V.Colour.to_hsv x)) (one c)
       in
       equal (array (float 1e-6)) fd (Nx.to_array got))
 
 (* The round trip within [16 ε] of the largest channel's magnitude, every colour
    with [v ≠ 0] or grey. *)
 let round_trip =
-  prop "hsv_to_rgb inverts rgb_to_hsv within 16 ε" ~count:400
+  prop "of_hsv inverts to_hsv within 16 ε" ~count:400
     Gen.(pair colour (of_list wide))
     (fun ((kind, c), F (_, dt)) ->
       covered kind;
@@ -313,7 +313,7 @@ let round_trip =
       let v = Array.fold_left Float.max Float.neg_infinity xs in
       let m = Array.fold_left Float.min Float.infinity xs in
       assume (v <> 0. || v = m);
-      let y = floats (V.hsv_to_rgb (V.rgb_to_hsv x)) in
+      let y = floats (V.Colour.of_hsv (V.Colour.to_hsv x)) in
       let bound = 16. *. eps dt *. magnitude (xs.(0), xs.(1), xs.(2)) in
       Array.iteri
         (fun i want ->
@@ -326,12 +326,13 @@ let identity = [| 1.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 1. |]
 let third = Array.make 9 (1. /. 3.)
 
 (* [on_edge h] is whether [6 h], rounded, lies on a sextant's edge: [fmod (6 h)
-   6], as [hsv_to_rgb] computes it, is an integer. *)
+   6], as [of_hsv] computes it, is an integer. *)
 let on_edge h =
   let t = Float.rem (6. *. h) 6. in
   Float.is_integer t
 
-let jacobian c = Rune.jacfwd' (fun x -> V.hsv_to_rgb (V.rgb_to_hsv x)) (one c)
+let jacobian c =
+  Rune.jacfwd' (fun x -> V.Colour.of_hsv (V.Colour.to_hsv x)) (one c)
 
 (* The round trip's Jacobian is the identity, at ties too, and [(1/3)·ones] at a
    grey, in float64, but where the hue rounds onto a sextant's edge. Free
@@ -344,7 +345,7 @@ let round_trip_jacobian =
       let v = Float.max r (Float.max g b) and m = Float.min r (Float.min g b) in
       let grey = v = m in
       assume (grey || (v <> 0. && v -. m > 1e-3));
-      let h = Nx.item [ 0 ] (V.rgb_to_hsv (one c)) in
+      let h = Nx.item [ 0 ] (V.Colour.to_hsv (one c)) in
       if grey || not (on_edge h) then
         equal
           (array (float 1e-10))
@@ -357,8 +358,8 @@ let round_trip_jacobian =
    is the odd integer between the two homes for the greatest, and the third
    channel's home for the least. Where the hue's rounding keeps it on that side,
    the round trip's derivative is the identity; where it rounds onto [e] or
-   across, it is not, as [hsv_to_rgb] states. [v - m] is at least [0.05], so
-   each derivative is under [20] and rounds to within [1e-12]. *)
+   across, it is not, as [of_hsv] states. [v - m] is at least [0.05], so each
+   derivative is under [20] and rounds to within [1e-12]. *)
 let near_ties =
   let gen =
     let open Gen in
@@ -401,7 +402,7 @@ let near_ties =
       let larger = if c.(i) > c.(j) then i else j in
       let toward = around (home larger -. e) in
       let rgb = (c.(0), c.(1), c.(2)) in
-      let h = Nx.item [ 0 ] (V.rgb_to_hsv (one rgb)) in
+      let h = Nx.item [ 0 ] (V.Colour.to_hsv (one rgb)) in
       let off = around ((6. *. h) -. e) in
       let kept = off <> 0. && Float.sign_bit off = Float.sign_bit toward in
       cover ~share:0.2 "kept its side" kept;
@@ -442,7 +443,7 @@ let sextant_edges =
           [| 5.; 3.; 1. |]
       in
       let rgb h =
-        V.hsv_to_rgb
+        V.Colour.of_hsv
           (Nx.stack [ h; Nx.scalar Nx.float64 s; Nx.scalar Nx.float64 v ])
       in
       equal
@@ -457,7 +458,7 @@ let whole_turns =
       quad (int_range 0 63) (int_range (-3) 3) (float_range 0. 1.)
         (float_range 0. 1.))
     (fun (j, k, s, v) ->
-      let at h = floats (V.hsv_to_rgb (one (h, s, v))) in
+      let at h = floats (V.Colour.of_hsv (one (h, s, v))) in
       let h = Float.of_int j /. 64. in
       equal (array float_exact) (at h) (at (h +. Float.of_int k)))
 
@@ -471,7 +472,7 @@ let grey_derivative =
     (fun (v, (_, k)) ->
       let g =
         Rune.grad'
-          (fun x -> Nx.slice [ Nx.I k ] (V.rgb_to_hsv x))
+          (fun x -> Nx.slice [ Nx.I k ] (V.Colour.to_hsv x))
           (one (v, v, v))
       in
       equal (array (float 0x1p-1074)) [| 0.; 0.; 0. |] (Nx.to_array g))
@@ -505,19 +506,19 @@ let nan_in =
   cases "a NaN gives NaN in every channel"
     ~id:(fun (n, _, _) -> n)
     [
-      ("rgb_to_hsv red", V.rgb_to_hsv, (nan, 0.5, 0.2));
-      ("rgb_to_hsv green", V.rgb_to_hsv, (0.5, nan, 0.2));
-      ("rgb_to_hsv blue", V.rgb_to_hsv, (0.5, 0.2, nan));
-      ("hsv_to_rgb hue", V.hsv_to_rgb, (nan, 0.5, 0.5));
-      ("hsv_to_rgb saturation", V.hsv_to_rgb, (0.3, nan, 0.5));
-      ("hsv_to_rgb value", V.hsv_to_rgb, (0.3, 0.5, nan));
-      ("hsv_to_rgb infinite hue", V.hsv_to_rgb, (inf, 0.5, 0.5));
-      ("hsv_to_rgb infinite saturation", V.hsv_to_rgb, (0.3, inf, 0.5));
-      ("hsv_to_rgb infinite value", V.hsv_to_rgb, (0.3, 0.5, -.inf));
-      ("linear_to_lab red", V.linear_to_lab, (nan, 0.5, 0.2));
-      ("linear_to_lab blue", V.linear_to_lab, (0.5, 0.2, nan));
-      ("lab_to_linear a", V.lab_to_linear, (50., nan, 0.));
-      ("lab_to_linear b", V.lab_to_linear, (50., 0., nan));
+      ("to_hsv red", V.Colour.to_hsv, (nan, 0.5, 0.2));
+      ("to_hsv green", V.Colour.to_hsv, (0.5, nan, 0.2));
+      ("to_hsv blue", V.Colour.to_hsv, (0.5, 0.2, nan));
+      ("of_hsv hue", V.Colour.of_hsv, (nan, 0.5, 0.5));
+      ("of_hsv saturation", V.Colour.of_hsv, (0.3, nan, 0.5));
+      ("of_hsv value", V.Colour.of_hsv, (0.3, 0.5, nan));
+      ("of_hsv infinite hue", V.Colour.of_hsv, (inf, 0.5, 0.5));
+      ("of_hsv infinite saturation", V.Colour.of_hsv, (0.3, inf, 0.5));
+      ("of_hsv infinite value", V.Colour.of_hsv, (0.3, 0.5, -.inf));
+      ("linear_to_lab red", V.Colour.linear_to_lab, (nan, 0.5, 0.2));
+      ("linear_to_lab blue", V.Colour.linear_to_lab, (0.5, 0.2, nan));
+      ("lab_to_linear a", V.Colour.lab_to_linear, (50., nan, 0.));
+      ("lab_to_linear b", V.Colour.lab_to_linear, (50., 0., nan));
     ]
     (fun (_, f, c) ->
       equal (array float_exact) [| nan; nan; nan |] (floats (f (one c))))
@@ -547,10 +548,10 @@ let libraries =
   cases "agrees with scikit-image and torchvision"
     ~id:(fun (n, _, _, _) -> n)
     [
-      ("rgb_to_hsv, scikit-image", V.rgb_to_hsv, "hsv.x", "hsv.skimage");
-      ("rgb_to_hsv, torchvision", V.rgb_to_hsv, "hsv.x", "hsv.torchvision");
-      ("hsv_to_rgb, scikit-image", V.hsv_to_rgb, "rgb.y", "rgb.skimage");
-      ("hsv_to_rgb, torchvision", V.hsv_to_rgb, "rgb.y", "rgb.torchvision");
+      ("to_hsv, scikit-image", V.Colour.to_hsv, "hsv.x", "hsv.skimage");
+      ("to_hsv, torchvision", V.Colour.to_hsv, "hsv.x", "hsv.torchvision");
+      ("of_hsv, scikit-image", V.Colour.of_hsv, "rgb.y", "rgb.skimage");
+      ("of_hsv, torchvision", V.Colour.of_hsv, "rgb.y", "rgb.torchvision");
     ]
     (fun (name, f, input, want) ->
       let got = floats (f (entry input)) in
@@ -567,18 +568,22 @@ let white_black =
     (fun (F (_, dt)) ->
       let x = colours dt [ (1., 1., 1.); (0., 0., 0.) ] in
       let lab = [| 100.; 0.; 0.; 0.; 0.; 0. |] in
-      equal (array float_exact) lab (floats (V.linear_to_lab x));
+      equal (array float_exact) lab (floats (V.Colour.linear_to_lab x));
       equal (array float_exact)
         [| 1.; 1.; 1.; 0.; 0.; 0. |]
-        (floats (V.lab_to_linear (colours dt [ (100., 0., 0.); (0., 0., 0.) ]))))
+        (floats
+           (V.Colour.lab_to_linear
+              (colours dt [ (100., 0., 0.); (0., 0., 0.) ]))))
 
 let grey_axis =
   prop "a grey has a* and b* 0"
     Gen.(pair (float_range (-1.) 2.) (of_list wide))
     (fun (v, F (_, dt)) ->
-      let lab = floats (V.linear_to_lab (colours dt [ (v, v, v) ])) in
+      let lab = floats (V.Colour.linear_to_lab (colours dt [ (v, v, v) ])) in
       equal (array float_exact) [| 0.; 0. |] [| lab.(1) +. 0.; lab.(2) +. 0. |];
-      let back = floats (V.lab_to_linear (colours dt [ (lab.(0), 0., 0.) ])) in
+      let back =
+        floats (V.Colour.lab_to_linear (colours dt [ (lab.(0), 0., 0.) ]))
+      in
       equal (array float_exact) [| back.(0) |] [| back.(1) |];
       equal (array float_exact) [| back.(0) |] [| back.(2) |])
 
@@ -588,8 +593,8 @@ let lab_exact =
   cases "Lab is CSS Color 4's rationals rounded"
     ~id:(fun (n, _, _, _) -> n)
     [
-      ("linear_to_lab", V.linear_to_lab, "lab.x", "lab.y");
-      ("lab_to_linear", V.lab_to_linear, "linear.y", "linear.x");
+      ("linear_to_lab", V.Colour.linear_to_lab, "lab.x", "lab.y");
+      ("lab_to_linear", V.Colour.lab_to_linear, "linear.y", "linear.x");
     ]
     (fun (_, f, input, want) ->
       equal
@@ -609,7 +614,7 @@ let lab_round_trip =
       covered kind;
       let x = colours dt [ c ] in
       let xs = floats x in
-      let y = floats (V.lab_to_linear (V.linear_to_lab x)) in
+      let y = floats (V.Colour.lab_to_linear (V.Colour.linear_to_lab x)) in
       let bound = 64. *. eps dt *. Float.max 1. (magnitude c) in
       Array.iteri
         (fun i want ->
@@ -636,7 +641,7 @@ let lab_near_black =
       cover ~share:0.3 "below ε" (m < 216. /. 24389.);
       let f = Nx.Dtype.float_format dt in
       let eta = f.min_normal *. f.epsilon in
-      let y = floats (V.lab_to_linear (V.linear_to_lab x)) in
+      let y = floats (V.Colour.lab_to_linear (V.Colour.linear_to_lab x)) in
       Array.iteri
         (fun i want ->
           if Float.abs (y.(i) -. want) > (64. *. eps dt *. m) +. (64. *. eta)
@@ -655,7 +660,7 @@ let lab_knee =
           let x = Nx.create Nx.float64 [| 1 |] [| v |] in
           let l x =
             Nx.slice [ Nx.A; Nx.I 0 ]
-              (V.linear_to_lab
+              (V.Colour.linear_to_lab
                  (Nx.broadcast_to [| 1; 3 |] (Nx.reshape [| 1; 1 |] x)))
           in
           equal
@@ -684,8 +689,8 @@ let lab_differences =
           in
           equal ~msg:name (array (float_rel ~rel:1e-5 ~abs:1e-5)) fd j)
         [
-          ("linear_to_lab", V.linear_to_lab);
-          ("lab_to_linear", fun x -> V.lab_to_linear (Nx.mul_s x 50.));
+          ("linear_to_lab", V.Colour.linear_to_lab);
+          ("lab_to_linear", fun x -> V.Colour.lab_to_linear (Nx.mul_s x 50.));
         ])
 
 (* Compiled. A compiler may fuse a product into a sum, which rounds once less:
@@ -695,12 +700,12 @@ let compiled =
   cases "compiled is eager to rounding"
     ~id:(fun (n, _, _, _, _) -> n)
     [
-      ("luma", V.luma, "hsv.x", 1., read);
-      ("luminance", V.luminance, "hsv.x", 1., read);
-      ("rgb_to_hsv", V.rgb_to_hsv, "hsv.x", 1., circular_tol);
-      ("hsv_to_rgb", V.hsv_to_rgb, "rgb.y", 1., read);
-      ("linear_to_lab", V.linear_to_lab, "lab.x", 100., read);
-      ("lab_to_linear", V.lab_to_linear, "linear.y", 1., read);
+      ("luma", V.Colour.luma, "hsv.x", 1., read);
+      ("luminance", V.Colour.luminance, "hsv.x", 1., read);
+      ("to_hsv", V.Colour.to_hsv, "hsv.x", 1., circular_tol);
+      ("of_hsv", V.Colour.of_hsv, "rgb.y", 1., read);
+      ("linear_to_lab", V.Colour.linear_to_lab, "lab.x", 100., read);
+      ("lab_to_linear", V.Colour.lab_to_linear, "linear.y", 1., read);
     ]
     (fun (_, f, input, scale, check) ->
       let x = Nx.cast Nx.float32 (entry input) in
@@ -713,22 +718,22 @@ let compiled =
 
 let shapes =
   test "any rank, a last axis of 3" (fun () ->
-      equal (array int) [| 1 |] (Nx.shape (V.luma (one (0.1, 0.2, 0.3))));
+      equal (array int) [| 1 |] (Nx.shape (V.Colour.luma (one (0.1, 0.2, 0.3))));
       let x = Nx.zeros Nx.float32 [| 2; 4; 5; 3 |] in
-      equal (array int) [| 2; 4; 5; 1 |] (Nx.shape (V.luminance x));
-      equal (array int) [| 2; 4; 5; 3 |] (Nx.shape (V.rgb_to_hsv x));
+      equal (array int) [| 2; 4; 5; 1 |] (Nx.shape (V.Colour.luminance x));
+      equal (array int) [| 2; 4; 5; 3 |] (Nx.shape (V.Colour.to_hsv x));
       equal (array int) [| 0; 3 |]
-        (Nx.shape (V.linear_to_lab (Nx.zeros Nx.float64 [| 0; 3 |]))))
+        (Nx.shape (V.Colour.linear_to_lab (Nx.zeros Nx.float64 [| 0; 3 |]))))
 
 let refusals =
   let fs =
     [
-      ("Mynd.luma", V.luma);
-      ("Mynd.luminance", V.luminance);
-      ("Mynd.rgb_to_hsv", V.rgb_to_hsv);
-      ("Mynd.hsv_to_rgb", V.hsv_to_rgb);
-      ("Mynd.linear_to_lab", V.linear_to_lab);
-      ("Mynd.lab_to_linear", V.lab_to_linear);
+      ("Mynd.Colour.luma", V.Colour.luma);
+      ("Mynd.Colour.luminance", V.Colour.luminance);
+      ("Mynd.Colour.to_hsv", V.Colour.to_hsv);
+      ("Mynd.Colour.of_hsv", V.Colour.of_hsv);
+      ("Mynd.Colour.linear_to_lab", V.Colour.linear_to_lab);
+      ("Mynd.Colour.lab_to_linear", V.Colour.lab_to_linear);
     ]
   in
   cases "a last axis other than 3 raises"

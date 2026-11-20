@@ -1,12 +1,12 @@
 # Filtering images
 
 This page builds the filters that mynd leaves to composition over
-`Mynd.correlate`, `Mynd.windows` and `Mynd.gaussian_blur`: box blurs,
-unsharp masks, a constant other than zero past the edge, the Laplacian,
-rank, minimum and maximum filters, the bilateral filter and the discrete
-Gaussian. The rules each call follows, windows, taps, edges and weights
-paired with batch axes, are in the Filtering section of
-[`mynd.mli`](../lib/mynd.mli).
+`Mynd.Filter.correlate`, `Mynd.Filter.windows` and
+`Mynd.Filter.gaussian`: box blurs, unsharp masks, a constant other than
+zero past the edge, the Laplacian, rank, minimum and maximum filters,
+the bilateral filter and the discrete Gaussian. The rules each call
+follows, windows, offsets, edges and weights paired with batch axes, are
+in `Mynd.Filter` in [`mynd.mli`](../lib/mynd.mli).
 
 ```ocaml
 let img =
@@ -27,7 +27,7 @@ are a column of `1 / k` times a row of `1 / k`, so it is two calls of
 ```ocaml
 let box edge k x =
   let w = Nx.full Nx.float64 [| k; 1 |] (1. /. Float.of_int k) in
-  Mynd.correlate ~edge (Nx.reshape [| 1; k |] w) (Mynd.correlate ~edge w x)
+  Mynd.Filter.correlate ~edge (Nx.reshape [| 1; k |] w) (Mynd.Filter.correlate ~edge w x)
 ```
 
 For a large `k`, running sums cost two subtractions a pixel at any
@@ -65,7 +65,7 @@ region has no detail and stays flat:
 
 ```ocaml
 let sharpen a x =
-  let blur = Mynd.gaussian_blur ~edge:`Symmetric_half ~radius:4 (Nx.scalar Nx.float64 1.2) x in
+  let blur = Mynd.Filter.gaussian ~edge:`Symmetric_half ~radius:4 (Nx.scalar Nx.float64 1.2) x in
   Nx.lerp blur x (Nx.full_like x (1. +. a))
 
 let () =
@@ -82,7 +82,7 @@ which a correlation of a constant image gives:
 ```ocaml
 let correlate_with_fill v k x =
   let s = Nx.item [] (Nx.sum k) in
-  Nx.add_s (Mynd.correlate ~edge:`Zero k (Nx.sub_s x v)) (v *. s)
+  Nx.add_s (Mynd.Filter.correlate ~edge:`Zero k (Nx.sub_s x v)) (v *. s)
 
 let () =
   let k = Nx.full Nx.float64 [| 3; 3 |] (1. /. 9.) in
@@ -99,7 +99,7 @@ at every pixel whose window lies inside the image:
 ```ocaml
 let laplacian edge x =
   let w = Nx.create Nx.float64 [| 3; 3 |] [| 0.; 1.; 0.; 1.; -4.; 1.; 0.; 1.; 0. |] in
-  Mynd.correlate ~edge w x
+  Mynd.Filter.correlate ~edge w x
 
 let () =
   let bowl = Nx.init Nx.float64 [| 6; 7; 1 |] (fun i -> Float.of_int ((i.(0) * i.(0)) + (i.(1) * i.(1)))) in
@@ -108,30 +108,30 @@ let () =
   assert (distance inside (Nx.full_like inside 4.) = 0.)
 ```
 
-Second differences amplify noise; blurring first, by `gaussian_blur`,
+Second differences amplify noise; blurring first, by `Filter.gaussian`,
 gives the Laplacian of the Gaussian.
 
 ## Rank, minimum and maximum filters
 
-`Mynd.windows` gives each pixel's window as two trailing axes. Any
-reduction over them is a filter: the rank `r` of each window sorted, its
-least or its greatest element. Rank `(n - 1) / 2` of a window of `n` taps
-is the lower median, which `Mynd.median_blur` computes in bands of rows
-to hold less memory.
+`Mynd.Filter.windows` gives each pixel's window as two trailing axes.
+Any reduction over them is a filter: the rank `r` of each window sorted,
+its least or its greatest element. Rank `(n - 1) / 2` of a window of `n`
+taps is the lower median, which `Mynd.Filter.median` computes in bands
+of rows to hold less memory.
 
 ```ocaml
 let rank edge (kh, kw) r x =
-  let w = Mynd.windows ~edge (kh, kw) x in
+  let w = Mynd.Filter.windows ~edge (kh, kw) x in
   let s = Nx.shape w in
   let flat = Nx.reshape (Array.append (Array.sub s 0 (Array.length s - 2)) [| kh * kw |]) w in
   let sorted, _ = Nx.sort ~axis:(-1) flat in
   Nx.slice [ Nx.A; Nx.A; Nx.A; Nx.I r ] sorted
 
-let minimum edge size x = Nx.min ~axes:[ -2; -1 ] (Mynd.windows ~edge size x)
-let maximum edge size x = Nx.max ~axes:[ -2; -1 ] (Mynd.windows ~edge size x)
+let minimum edge size x = Nx.min ~axes:[ -2; -1 ] (Mynd.Filter.windows ~edge size x)
+let maximum edge size x = Nx.max ~axes:[ -2; -1 ] (Mynd.Filter.windows ~edge size x)
 
 let () =
-  assert (distance (rank `Periodic (3, 3) 4 img) (Mynd.median_blur ~edge:`Periodic (3, 3) img) = 0.);
+  assert (distance (rank `Periodic (3, 3) 4 img) (Mynd.Filter.median ~edge:`Periodic (3, 3) img) = 0.);
   assert (distance (rank `Replicate (3, 3) 0 img) (minimum `Replicate (3, 3) img) = 0.)
 ```
 
@@ -150,7 +150,7 @@ weights and no colour bleeds across an edge into another channel.
 ```ocaml
 let bilateral edge ~radius ~space ~range x =
   let k = (2 * radius) + 1 in
-  let w = Mynd.windows ~edge (k, k) x in
+  let w = Mynd.Filter.windows ~edge (k, k) x in
   let centre = Nx.unsqueeze ~axes:[ -2; -1 ] x in
   let d2 = Nx.sum ~axes:[ -3 ] ~keepdims:true (Nx.square (Nx.sub w centre)) in
   let spatial =
@@ -168,13 +168,13 @@ Gaussian blur of the same deviation:
 ```ocaml
 let () =
   let b = bilateral `Replicate ~radius:3 ~space:1.1 ~range:Float.infinity img in
-  let g = Mynd.gaussian_blur ~edge:`Replicate ~radius:3 (Nx.scalar Nx.float64 1.1) img in
+  let g = Mynd.Filter.gaussian ~edge:`Replicate ~radius:3 (Nx.scalar Nx.float64 1.1) img in
   assert (distance b g < 1e-12)
 ```
 
 ## The discrete Gaussian
 
-`Mynd.gaussian_blur` samples the Gaussian at the pixels. Below a
+`Mynd.Filter.gaussian` samples the Gaussian at the pixels. Below a
 deviation of about one pixel those samples blur less than the deviation
 states, and their derivative in it vanishes as it falls to zero. Scale
 space wants another kernel: Lindeberg's discrete analogue of the
@@ -202,8 +202,8 @@ let discrete ~radius sigma =
 
 let discrete_blur edge ~radius sigma x =
   let g = discrete ~radius sigma in
-  Mynd.correlate ~edge (Nx.unsqueeze ~axes:[ -1 ] g)
-    (Mynd.correlate ~edge (Nx.unsqueeze ~axes:[ -2 ] g) x)
+  Mynd.Filter.correlate ~edge (Nx.unsqueeze ~axes:[ -1 ] g)
+    (Mynd.Filter.correlate ~edge (Nx.unsqueeze ~axes:[ -2 ] g) x)
 
 let () =
   let g = discrete ~radius:12 (Nx.scalar Nx.float64 1.5) in
@@ -221,7 +221,7 @@ hold the kernel's tails, as for the sampled Gaussian.
 
 ## A deviation for each image
 
-`gaussian_blur` pairs a deviation with each image of a batch, so an
+`Filter.gaussian` pairs a deviation with each image of a batch, so an
 augmentation that draws a deviation for each image, here uniformly from
 `(0.1, 2)`, blurs the batch in one call:
 
@@ -229,7 +229,7 @@ augmentation that draws a deviation for each image, here uniformly from
 let () =
   let batch = Nx.broadcast_to [| 4; 6; 8; 1 |] img in
   let sigmas = Nx.create Nx.float64 [| 4 |] (Array.init 4 (fun _ -> 0.1 +. Random.float 1.9)) in
-  let blurred = Mynd.gaussian_blur ~edge:`Symmetric_whole ~radius:4 sigmas batch in
+  let blurred = Mynd.Filter.gaussian ~edge:`Symmetric_whole ~radius:4 sigmas batch in
   assert (Nx.shape blurred = [| 4; 6; 8; 1 |])
 ```
 

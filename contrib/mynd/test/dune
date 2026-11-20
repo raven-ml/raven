@@ -5,14 +5,15 @@
  (names
   test_values
   test_colour
-  test_filter
-  test_edges
-  test_morphology
   test_sample
   test_resize
-  test_annot
-  test_components
-  test_nms)
+  test_transform
+  test_filter
+  test_gradient
+  test_morphology
+  test_box
+  test_mask
+  test_rle)
  (package mynd)
  (libraries mynd nx nx.io rig rune windtrap)
  (deps

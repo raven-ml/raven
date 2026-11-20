@@ -6,16 +6,58 @@
 open Windtrap
 module V = Mynd
 
-(* scipy's connected-component labels, from golden/select.npz
-   (contrib/mynd/test/gen/select.py) *)
-let golden = lazy (Nx_io.load_npz "golden/select.npz")
+let archive file = (file, lazy (Nx_io.load_npz file))
 
-let entry dt key =
-  match Nx_io.Archive.find key (Lazy.force golden) with
+(* pycocotools' mask IoU, from golden/annot.npz
+   (contrib/mynd/test/gen/annot.py); scipy's connected-component labels, from
+   golden/select.npz (contrib/mynd/test/gen/select.py) *)
+let annot = archive "golden/annot.npz"
+let select = archive "golden/select.npz"
+
+let entry (file, npz) dt key =
+  match Nx_io.Archive.find key (Lazy.force npz) with
   | Some p -> Nx.unpack dt p
-  | None -> failf "golden/select.npz has no %s" key
+  | None -> failf "%s has no %s" file key
+
+let floats x = Nx.to_array (Nx.cast Nx.float64 x)
+
+let close tol want got =
+  equal (array int) (Nx.shape want) (Nx.shape got);
+  equal
+    (array (if tol = 0. then float_exact else float tol))
+    (floats want) (floats got)
 
 let longs x = Nx.to_array (Nx.cast Nx.int64 x)
+
+(* Mask IoU *)
+
+let mask_iou =
+  test "mask IoU is pycocotools'" (fun () ->
+      let m =
+        Nx.unsqueeze ~axes:[ -1 ] (Nx.cast Nx.bool (entry annot Nx.uint8 "m"))
+      in
+      close 1e-15 (entry annot Nx.float64 "iou") (V.Mask.iou Nx.float64 m m))
+
+(* The quotient of the exact counts, rounded once into the dtype, where counts
+   past float16's range or bfloat16's precision still give it: a full 300 × 300
+   mask with itself, and with its first 100 rows, a third. *)
+let mask_iou_narrow =
+  test "mask IoU rounds the exact quotient once" (fun () ->
+      let full = Nx.ones Nx.bool [| 1; 300; 300; 1 |] in
+      let part =
+        Nx.pad
+          [| (0, 0); (0, 200); (0, 0); (0, 0) |]
+          false
+          (Nx.ones Nx.bool [| 1; 100; 300; 1 |])
+      in
+      let both = Nx.concatenate ~axis:0 [ full; part ] in
+      let third = 30000. /. 90000. in
+      equal (array float_exact)
+        [| 1.; Nx.Dtype.of_float Nx.float16 third |]
+        (floats (Nx.slice [ Nx.I 0 ] (V.Mask.iou Nx.float16 full both)));
+      equal (array float_exact)
+        [| 1.; Nx.Dtype.of_float Nx.bfloat16 third |]
+        (floats (Nx.slice [ Nx.I 0 ] (V.Mask.iou Nx.bfloat16 full both))))
 
 (* Components *)
 
@@ -23,9 +65,9 @@ let golden_components =
   cases "components are scipy's labels" ~id:fst
     [ ("four", `Four); ("eight", `Eight) ]
     (fun (name, conn) ->
-      let m = Nx.unsqueeze ~axes:[ -1 ] (entry Nx.bool "cc.m") in
-      let want = entry Nx.int64 ("cc." ^ name) in
-      equal (array int64) (longs want) (longs (V.components conn m)))
+      let m = Nx.unsqueeze ~axes:[ -1 ] (entry select Nx.bool "cc.m") in
+      let want = entry select Nx.int64 ("cc." ^ name) in
+      equal (array int64) (longs want) (longs (V.Mask.components conn m)))
 
 (* [reference conn h w px] labels by a sequential union-find, each component by
    its least row-major index. *)
@@ -71,7 +113,8 @@ let union_find =
       let conn = if eight then `Eight else `Four in
       cover "empty" (h * w = 0);
       let m = Nx.create Nx.bool [| h; w; 1 |] px in
-      equal (array int64) (reference conn h w px) (longs (V.components conn m)))
+      equal (array int64) (reference conn h w px)
+        (longs (V.Mask.components conn m)))
 
 (* A serpentine of one-pixel rows joined at alternate ends: one component whose
    least index is far along its path. *)
@@ -89,14 +132,14 @@ let rounds =
       ("serpentine 64", serpentine 64);
       ("serpentine 64, flipped", Nx.flip ~axes:[ 0; 1 ] (serpentine 64));
       ( "noise",
-        Nx.unsqueeze ~axes:[ -1 ] (Nx.slice [ Nx.I 0 ] (entry Nx.bool "cc.m"))
-      );
+        Nx.unsqueeze ~axes:[ -1 ]
+          (Nx.slice [ Nx.I 0 ] (entry select Nx.bool "cc.m")) );
     ]
     (fun (_, m) ->
       let h = Nx.dim 0 m and w = Nx.dim 1 m in
       List.iter
         (fun conn ->
-          let labels, k = V.components_rounds conn m in
+          let labels, k = V.Mask.components_rounds conn m in
           let px = Nx.to_array (Nx.reshape [| h * w |] m) in
           equal (array int64) (reference conn h w px) (longs labels);
           less int ~than:(bound (h * w) + 1) (Int32.to_int (Nx.item [] k)))
@@ -116,34 +159,36 @@ let padded =
         if l < 0L then l
         else Int64.(add (mul (div l (of_int w)) (of_int w')) (rem l (of_int w)))
       in
-      let want = Array.map moved (longs (V.components conn m)) in
+      let want = Array.map moved (longs (V.Mask.components conn m)) in
       let got =
-        longs (Nx.slice [ Nx.R (0, h); Nx.R (0, w) ] (V.components conn mp))
+        longs
+          (Nx.slice [ Nx.R (0, h); Nx.R (0, w) ] (V.Mask.components conn mp))
       in
       equal (array int64) want got)
 
 let batch_and_vmap =
   test "each mask of a batch is labelled alone, under vmap too" (fun () ->
-      let m = Nx.unsqueeze ~axes:[ -1 ] (entry Nx.bool "cc.m") in
-      let whole = longs (V.components `Eight m) in
-      let one i = longs (V.components `Eight (Nx.slice [ Nx.I i ] m)) in
+      let m = Nx.unsqueeze ~axes:[ -1 ] (entry select Nx.bool "cc.m") in
+      let whole = longs (V.Mask.components `Eight m) in
+      let one i = longs (V.Mask.components `Eight (Nx.slice [ Nx.I i ] m)) in
       equal (array int64) (Array.append (one 0) (one 1)) whole;
-      equal (array int64) whole (longs (Rune.vmap' (V.components `Eight) m)))
+      equal (array int64) whole
+        (longs (Rune.vmap' (V.Mask.components `Eight) m)))
 
 let compiled =
   test "compiled is eager" (fun () ->
-      let m = Nx.unsqueeze ~axes:[ -1 ] (entry Nx.bool "cc.m") in
+      let m = Nx.unsqueeze ~axes:[ -1 ] (entry select Nx.bool "cc.m") in
       equal (array int64)
-        (longs (V.components `Four m))
-        (longs (Rune.jit' (V.components `Four) m)))
+        (longs (V.Mask.components `Four m))
+        (longs (Rune.jit' (V.Mask.components `Four) m)))
 
 (* Areas per mask of a batch: ones scattered at each mask's own flattened
    labels, read back at them. *)
 let areas =
   test "areas compose from the labels, per mask" (fun () ->
-      let m = Nx.unsqueeze ~axes:[ -1 ] (entry Nx.bool "cc.m") in
+      let m = Nx.unsqueeze ~axes:[ -1 ] (entry select Nx.bool "cc.m") in
       let b = Nx.dim 0 m and n = Nx.dim 1 m * Nx.dim 2 m in
-      let labels = Nx.reshape [| b; n |] (V.components `Four m) in
+      let labels = Nx.reshape [| b; n |] (V.Mask.components `Four m) in
       let ones = Nx.ones Nx.int64 [| b; n |] in
       let counts =
         Nx.scatter ~combine:Add ~axis:(-1) labels ones
@@ -234,7 +279,7 @@ let reconstruct_fixed_point =
                  (Array.sub marker (k * n) n)))
       in
       let t a = Nx.create Nx.bool [| b; h; w; 1 |] a in
-      let got = V.reconstruct conn ~marker:(t marker) (t m) in
+      let got = V.Mask.reconstruct conn ~marker:(t marker) (t m) in
       equal (array bool) want (Nx.to_array got))
 
 let reconstruct_padded =
@@ -248,16 +293,16 @@ let reconstruct_padded =
       in
       let pad x = Nx.pad [| (0, ph); (0, pw); (0, 0) |] false x in
       equal (array bool)
-        (Nx.to_array (pad (V.reconstruct conn ~marker m)))
-        (Nx.to_array (V.reconstruct conn ~marker:(pad marker) (pad m))))
+        (Nx.to_array (pad (V.Mask.reconstruct conn ~marker m)))
+        (Nx.to_array (V.Mask.reconstruct conn ~marker:(pad marker) (pad m))))
 
 let reconstruct_compiled =
   test "a compiled and a mapped reconstruct are eager's" (fun () ->
-      let m = Nx.unsqueeze ~axes:[ -1 ] (entry Nx.bool "cc.m") in
+      let m = Nx.unsqueeze ~axes:[ -1 ] (entry select Nx.bool "cc.m") in
       let marker =
         Nx.init Nx.bool (Nx.shape m) (fun i -> ((i.(1) * 7) + i.(2)) mod 11 = 3)
       in
-      let f marker m = V.reconstruct `Eight ~marker m in
+      let f marker m = V.Mask.reconstruct `Eight ~marker m in
       let want = Nx.to_array (f marker m) in
       let s = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
       equal (array bool) want (Nx.to_array (Rune.jit s f marker m));
@@ -289,7 +334,8 @@ let holes =
             i.(1) = 0 || i.(1) = h - 1 || i.(2) = 0 || i.(2) = w - 1)
       in
       let filled =
-        Nx.logical_not (V.reconstruct conn ~marker:frame (Nx.logical_not m))
+        Nx.logical_not
+          (V.Mask.reconstruct conn ~marker:frame (Nx.logical_not m))
       in
       equal (array bool)
         (Nx.to_array (get ("holes." ^ name)))
@@ -299,23 +345,25 @@ let refusals =
   group "misuse"
     [
       test "a mask without its channel axis" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Mynd.components") (fun () ->
-              V.components `Four (Nx.zeros Nx.bool [| 4; 4 |])));
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.components") (fun () ->
+              V.Mask.components `Four (Nx.zeros Nx.bool [| 4; 4 |])));
       test "a marker of another shape" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Mynd.reconstruct") (fun () ->
-              V.reconstruct `Four
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.reconstruct") (fun () ->
+              V.Mask.reconstruct `Four
                 ~marker:(Nx.zeros Nx.bool [| 4; 5; 1 |])
                 (Nx.zeros Nx.bool [| 4; 4; 1 |])));
       test "masks of two channels" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Mynd.reconstruct") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.reconstruct") (fun () ->
               let m = Nx.zeros Nx.bool [| 4; 4; 2 |] in
-              V.reconstruct `Four ~marker:m m));
+              V.Mask.reconstruct `Four ~marker:m m));
     ]
 
 let () =
   exit
-    (run "mynd.components"
+    (run "mynd.mask"
        [
+         mask_iou;
+         mask_iou_narrow;
          golden_components;
          union_find;
          rounds;

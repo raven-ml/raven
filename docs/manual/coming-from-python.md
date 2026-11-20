@@ -215,7 +215,7 @@ blurred = F.gaussian_blur(img, kernel_size=9, sigma=1.5)
 ```ocaml
 (* Mynd: the same blur, with kernel_size = 2 radius + 1 *)
 let blurred =
-  Mynd.gaussian_blur ~edge:`Symmetric_whole ~radius:4 (Nx.scalar Nx.float32 1.5) img
+  Mynd.Filter.gaussian ~edge:`Symmetric_whole ~radius:4 (Nx.scalar Nx.float32 1.5) img
 ```
 
 [Mynd's guide](https://github.com/raven-ml/raven/tree/main/contrib/mynd/doc)

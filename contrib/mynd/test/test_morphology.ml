@@ -231,7 +231,9 @@ let definition =
                 in
                 show (List.fold_left better id read))
       in
-      let y = (if least then V.erode else V.dilate) (footprint f) x in
+      let y =
+        (if least then V.Filter.erode else V.Filter.dilate) (footprint f) x
+      in
       equal (list int) [ h; w; c ] (Array.to_list (Nx.shape y));
       equal (array string) want (Array.map show (Nx.to_array y)))
 
@@ -261,8 +263,8 @@ let laws =
       let h = Nx.dim 0 x and w = Nx.dim 1 x in
       cover_fp f ~h ~w;
       let fp = footprint f in
-      let opening x = V.dilate fp (V.erode fp x) in
-      let closing x = V.erode fp (V.dilate fp x) in
+      let opening x = V.Filter.dilate fp (V.Filter.erode fp x) in
+      let closing x = V.Filter.erode fp (V.Filter.dilate fp x) in
       pointwise ~msg:"opening <= x" ( <= ) (opening x) x;
       pointwise ~msg:"closing >= x" ( >= ) (closing x) x;
       equal ~msg:"opening twice" (array float_exact)
@@ -293,7 +295,7 @@ let adjunction =
         Nx.create Nx.bool [| h; w; 1 |]
           (Array.init (h * w) (fun k -> draw.(k) < 0.2))
       in
-      let d = Nx.to_array (V.dilate fp y) in
+      let d = Nx.to_array (V.Filter.dilate fp y) in
       let x =
         Array.mapi
           (fun k b ->
@@ -307,7 +309,8 @@ let adjunction =
       let within a b =
         Array.for_all2 (fun a b -> (not a) || b) (Nx.to_array a) (Nx.to_array b)
       in
-      let left = within (V.dilate fp y) x and right = within y (V.erode fp x) in
+      let left = within (V.Filter.dilate fp y) x
+      and right = within y (V.Filter.erode fp x) in
       cover "related" left;
       cover "unrelated" (not left);
       equal bool left right)
@@ -328,7 +331,7 @@ let stamp =
             and q = (k mod w) - j0 + (f.kw / 2) in
             p >= 0 && p < f.kh && q >= 0 && q < f.kw && selected f p q)
       in
-      equal (array bool) want (Nx.to_array (V.dilate (footprint f) m)))
+      equal (array bool) want (Nx.to_array (V.Filter.dilate (footprint f) m)))
 
 (* Erosion is dual to dilation by the reflected footprint, and the greatest of
    the taps erosion reads is dilation by it. *)
@@ -341,11 +344,11 @@ let reflection =
       let fp = footprint f and rp = footprint (reflect_pad f) in
       let m = Nx.greater_s x 0. in
       equal ~msg:"masks" (array bool)
-        (Nx.to_array (V.erode fp m))
-        (Nx.to_array (Nx.logical_not (V.dilate rp (Nx.logical_not m))));
+        (Nx.to_array (V.Filter.erode fp m))
+        (Nx.to_array (Nx.logical_not (V.Filter.dilate rp (Nx.logical_not m))));
       equal ~msg:"greatest of erosion's taps" (array float_exact)
-        (floats (Nx.neg (V.erode fp (Nx.neg x))))
-        (floats (V.dilate rp x)))
+        (floats (Nx.neg (V.Filter.erode fp (Nx.neg x))))
+        (floats (V.Filter.dilate rp x)))
 
 let batch =
   test "each image's result is the same in any batch" (fun () ->
@@ -361,7 +364,7 @@ let batch =
               (List.init 3 (fun i -> floats (f fp (Nx.slice [ Nx.I i ] x))))
           in
           equal (array float_exact) alone whole)
-        [ V.erode; V.dilate ])
+        [ V.Filter.erode; V.Filter.dilate ])
 
 (* Derivatives *)
 
@@ -435,7 +438,7 @@ let derivative =
       in
       cover "a NaN" (Array.exists Float.is_nan x);
       cover "an extreme" (Array.exists (fun v -> Float.abs v = big) x);
-      let op = if least then V.erode else V.dilate in
+      let op = if least then V.Filter.erode else V.Filter.dilate in
       let tx = Nx.create dt [| h; w; 1 |] x in
       let tr =
         Nx.cast dt (Nx.create Nx.float64 [| h; w; 1 |] (Array.sub r 0 (h * w)))
@@ -495,7 +498,9 @@ let many_ties =
         Nx.init dt [| k; k; 1 |] (fun i ->
             if i.(0) = k / 2 && i.(1) = k / 2 then 1. else 0.)
       in
-      let g = Rune.grad' (fun x -> Nx.sum (Nx.mul (V.erode fp x) centre)) x in
+      let g =
+        Rune.grad' (fun x -> Nx.sum (Nx.mul (V.Filter.erode fp x) centre)) x
+      in
       let share = 1. /. Float.of_int (k * k) in
       let e = (Nx.Dtype.float_format dt).epsilon in
       Array.iteri
@@ -522,7 +527,7 @@ let compiled =
           equal ~msg:n (array float_exact)
             (floats (g x))
             (floats (Rune.jit' g x)))
-        [ ("erode", V.erode); ("dilate", V.dilate) ])
+        [ ("erode", V.Filter.erode); ("dilate", V.Filter.dilate) ])
 
 (* Against OpenCV, scikit-image and scipy, from golden/morphology.npz
    (contrib/mynd/test/gen/morphology.py) *)
@@ -571,11 +576,13 @@ let libraries =
       if r = "scipy.dilation" then
         equal (array float_exact)
           (floats (entry Nx.float32 (Printf.sprintf "%s.%s.f32" r n)))
-          (floats (V.dilate (footprint f) (entry Nx.float32 "f32")))
+          (floats (V.Filter.dilate (footprint f) (entry Nx.float32 "f32")))
       else
         let least, f = (List.assoc r rules) f in
         let fp = footprint f in
-        let op fp x = if least then V.erode fp x else V.dilate fp x in
+        let op fp x =
+          if least then V.Filter.erode fp x else V.Filter.dilate fp x
+        in
         equal ~msg:"float32" (array float_exact)
           (floats (entry Nx.float32 (Printf.sprintf "%s.%s.f32" r n)))
           (floats (op fp (entry Nx.float32 "f32")));
@@ -589,19 +596,19 @@ let refusals =
     ~id:(fun (n, _) -> n)
     [
       ( "a footprint of one axis",
-        fun () -> ignore (V.erode (Nx.ones Nx.bool [| 3 |]) x) );
+        fun () -> ignore (V.Filter.erode (Nx.ones Nx.bool [| 3 |]) x) );
       ( "a footprint of three axes",
-        fun () -> ignore (V.dilate (Nx.ones Nx.bool [| 3; 3; 1 |]) x) );
+        fun () -> ignore (V.Filter.dilate (Nx.ones Nx.bool [| 3; 3; 1 |]) x) );
       ( "an image of two axes",
         fun () ->
           ignore
-            (V.erode
+            (V.Filter.erode
                (Nx.ones Nx.bool [| 3; 3 |])
                (Nx.zeros Nx.float32 [| 4; 4 |])) );
       ( "complex values",
         fun () ->
           ignore
-            (V.dilate
+            (V.Filter.dilate
                (Nx.ones Nx.bool [| 3; 3 |])
                (Nx.zeros Nx.complex64 [| 4; 4; 1 |])) );
     ]

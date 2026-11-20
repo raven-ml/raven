@@ -1,15 +1,15 @@
 # Goldens for Mynd's filters, in float64 but for OpenCV's 8-bit median.
-# Images are [h, w, c]; a window's tap k / 2 is the pixel itself, which is
+# Images are [h, w, c]; a window's offset k / 2 is the pixel itself, which is
 # scipy.ndimage's origin 0 and OpenCV's anchor (-1, -1) for every extent.
 # Edge rules: Zero is scipy's constant 0 and OpenCV's BORDER_CONSTANT,
 # Replicate nearest and BORDER_REPLICATE, Symmetric_whole mirror and
 # BORDER_REFLECT_101, Symmetric_half reflect and BORDER_REFLECT, Periodic
 # wrap and BORDER_WRAP.
 # - correlate: scipy.ndimage.correlate and cv2.filter2D.
-# - gaussian_blur: scipy.ndimage.gaussian_filter with its radius, and
+# - gaussian: scipy.ndimage.gaussian_filter with its radius, and
 #   cv2.GaussianBlur of extent 2 radius + 1, both the sampled Gaussian
 #   divided by its sum.
-# - median_blur: scipy.ndimage.rank_filter at rank (n - 1) / 2, the lower
+# - median: scipy.ndimage.rank_filter at rank (n - 1) / 2, the lower
 #   median (median_filter takes rank n / 2, the upper one for even n), and
 #   cv2.medianBlur on uint8 under BORDER_REPLICATE.
 # Run from this directory: uv run --locked filter.py ../golden/filter.npz

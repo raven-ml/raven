@@ -1,11 +1,12 @@
 # Gradients and edges
 
 This page builds edge detectors and derivative filters from
-`Mynd.gradient`, `Mynd.gradient_maxima`, `Mynd.gaussian_blur` and
-`Mynd.reconstruct`: Canny's edges, wider derivative stencils, the
-Laplacian of a Gaussian, thresholds, the border, and the structure
-tensor. The rules each call follows are in the Gradients and edges, the
-Filtering and the Selection sections of [`mynd.mli`](../lib/mynd.mli).
+`Mynd.Filter.gradient`, `Mynd.Filter.gradient_maxima`,
+`Mynd.Filter.gaussian` and `Mynd.Mask.reconstruct`: Canny's edges, wider
+derivative stencils, the Laplacian of a Gaussian, thresholds, the
+border, and the structure tensor. The rules each call follows are in
+`Mynd.Filter`, its Gradients and edges section among them, and in
+`Mynd.Mask`, in [`mynd.mli`](../lib/mynd.mli).
 
 The programs below work on grey images of `float32` values in `[0, 1]`:
 
@@ -24,17 +25,17 @@ let distance a b = largest (floats (Nx.sub a b))
 
 (* [pieces m] is the number of 8-connected components of a mask. *)
 let pieces m =
-  Mynd.components `Eight m |> floats |> Array.to_list
+  Mynd.Mask.components `Eight m |> floats |> Array.to_list
   |> List.filter (fun l -> l >= 0.)
   |> List.sort_uniq compare |> List.length
 ```
 
 ## Gradients
 
-`Mynd.gradient` gives the pair `(gx, gy)` in values per pixel. A ramp
-that grows by `a` a column and `b` a row reads `a` and `b` under every
-stencil, so thresholds on the strength `Nx.hypot gx gy` mean the same
-under each:
+`Mynd.Filter.gradient` gives the pair `(gx, gy)` in values per pixel. A
+ramp that grows by `a` a column and `b` a row reads `a` and `b` under
+every stencil, so thresholds on the strength `Nx.hypot gx gy` mean the
+same under each:
 
 ```ocaml
 let ramp = Nx.init Nx.float32 [| 6; 7; 1 |] (fun i -> (0.25 *. Float.of_int i.(1)) -. (0.125 *. Float.of_int i.(0)))
@@ -42,7 +43,7 @@ let ramp = Nx.init Nx.float32 [| 6; 7; 1 |] (fun i -> (0.25 *. Float.of_int i.(1
 let () =
   List.iter
     (fun s ->
-      let gx, gy = Mynd.gradient ~edge:`Antisymmetric_whole s ramp in
+      let gx, gy = Mynd.Filter.gradient ~edge:`Antisymmetric_whole s ramp in
       assert (distance gx (Nx.full_like gx 0.25) = 0.);
       assert (distance gy (Nx.full_like gy (-0.125)) = 0.))
     [ `Central; `Sobel; `Scharr ]
@@ -51,8 +52,8 @@ let () =
 Under `` `Antisymmetric_whole `` the image continues past its border as
 the line through its last two pixels, so the slope holds to the border.
 
-`` `Central `` takes the difference alone. After `Mynd.gaussian_blur` of
-deviation `σ` it is a Gaussian derivative whose scale is `σ` alone.
+`` `Central `` takes the difference alone. After `Mynd.Filter.gaussian`
+of deviation `σ` it is a Gaussian derivative whose scale is `σ` alone.
 `` `Sobel `` and `` `Scharr `` smooth across the difference too, which
 adds a little blur along the edge and makes the gradient's direction
 more accurate on detail a few pixels wide.
@@ -66,10 +67,10 @@ sum to `1`, so the slope stays in values per pixel:
 let binomial edge x =
   let b = Nx.create Nx.float32 [| 3 |] [| 0.25; 0.5; 0.25 |] in
   x
-  |> Mynd.correlate ~edge (Nx.reshape [| 1; 3 |] b)
-  |> Mynd.correlate ~edge (Nx.reshape [| 3; 1 |] b)
+  |> Mynd.Filter.correlate ~edge (Nx.reshape [| 1; 3 |] b)
+  |> Mynd.Filter.correlate ~edge (Nx.reshape [| 3; 1 |] b)
 
-let sobel5 edge x = Mynd.gradient ~edge `Sobel (binomial edge x)
+let sobel5 edge x = Mynd.Filter.gradient ~edge `Sobel (binomial edge x)
 
 let () =
   let gx, _ = sobel5 `Antisymmetric_whole ramp in
@@ -86,11 +87,11 @@ scale, so responses at several deviations compare:
 ```ocaml
 let laplacian edge x =
   let w = Nx.create Nx.float32 [| 3; 3 |] [| 0.; 1.; 0.; 1.; -4.; 1.; 0.; 1.; 0. |] in
-  Mynd.correlate ~edge w x
+  Mynd.Filter.correlate ~edge w x
 
 let log ~radius sigma x =
   let edge = `Symmetric_whole in
-  let b = Mynd.gaussian_blur ~edge ~radius (Nx.scalar Nx.float32 sigma) x in
+  let b = Mynd.Filter.gaussian ~edge ~radius (Nx.scalar Nx.float32 sigma) x in
   Nx.mul_s (laplacian edge b) (sigma *. sigma)
 
 let () =
@@ -113,11 +114,11 @@ they join one above a high threshold. Each step is a call:
    mirrored past its border. *)
 let canny ~radius ~sigma ~low ~high x =
   let edge = `Symmetric_whole in
-  let b = Mynd.gaussian_blur ~edge ~radius sigma x in
-  let ((gx, gy) as g) = Mynd.gradient ~edge `Central b in
+  let b = Mynd.Filter.gaussian ~edge ~radius sigma x in
+  let ((gx, gy) as g) = Mynd.Filter.gradient ~edge `Central b in
   let m = Nx.hypot gx gy in
-  let candidates = Nx.logical_and (Mynd.gradient_maxima g) (Nx.greater_s m low) in
-  Mynd.reconstruct `Eight ~marker:(Nx.greater_s m high) candidates
+  let candidates = Nx.logical_and (Mynd.Filter.gradient_maxima g) (Nx.greater_s m low) in
+  Mynd.Mask.reconstruct `Eight ~marker:(Nx.greater_s m high) candidates
 
 let () =
   let e = canny ~radius:6 ~sigma:(Nx.scalar Nx.float32 1.4) ~low:0.05 ~high:0.15 square in
@@ -153,8 +154,8 @@ A threshold relative to each image's own strengths takes a quantile of
 ```ocaml
 let relative ~radius ~sigma q x =
   let edge = `Symmetric_whole in
-  let b = Mynd.gaussian_blur ~edge ~radius sigma x in
-  let gx, gy = Mynd.gradient ~edge `Central b in
+  let b = Mynd.Filter.gaussian ~edge ~radius sigma x in
+  let gx, gy = Mynd.Filter.gradient ~edge `Central b in
   let m = Nx.hypot gx gy in
   let n = Nx.dim 0 m in
   let flat = Nx.reshape [| n; Nx.numel m / n |] m in
@@ -200,13 +201,13 @@ let canny_extended rule ~radius ~sigma ~low ~high x =
   let r = radius + 2 in
   let x' = Nx.extend ~axis:(-3) rule (r, r) (Nx.extend ~axis:(-2) rule (r, r) x) in
   let edge = `Zero in
-  let b = Mynd.gaussian_blur ~edge ~radius sigma x' in
-  let ((gx, gy) as g) = Mynd.gradient ~edge `Central b in
+  let b = Mynd.Filter.gaussian ~edge ~radius sigma x' in
+  let ((gx, gy) as g) = Mynd.Filter.gradient ~edge `Central b in
   let m = Nx.hypot gx gy in
   let h = Nx.dim (-3) x and w = Nx.dim (-2) x in
   let crop y = Nx.slice [ Nx.R (r, r + h); Nx.R (r, r + w) ] y in
-  let candidates = crop (Nx.logical_and (Mynd.gradient_maxima g) (Nx.greater_s m low)) in
-  Mynd.reconstruct `Eight ~marker:(crop (Nx.greater_s m high)) candidates
+  let candidates = crop (Nx.logical_and (Mynd.Filter.gradient_maxima g) (Nx.greater_s m low)) in
+  Mynd.Mask.reconstruct `Eight ~marker:(crop (Nx.greater_s m high)) candidates
 
 let () =
   let sigma = Nx.scalar Nx.float32 1.4 in
@@ -228,9 +229,9 @@ blur covers them, and Harris' response `det - k trace²` follows:
 
 ```ocaml
 let harris ~k x =
-  let gx, gy = Mynd.gradient ~edge:`Symmetric_whole `Scharr x in
+  let gx, gy = Mynd.Filter.gradient ~edge:`Symmetric_whole `Scharr x in
   let products = Nx.stack [ Nx.mul gx gx; Nx.mul gx gy; Nx.mul gy gy ] in
-  let t = Mynd.gaussian_blur ~edge:`Symmetric_whole ~radius:4 (Nx.scalar Nx.float32 1.) products in
+  let t = Mynd.Filter.gaussian ~edge:`Symmetric_whole ~radius:4 (Nx.scalar Nx.float32 1.) products in
   let at i = Nx.slice [ Nx.I i ] t in
   let det = Nx.sub (Nx.mul (at 0) (at 2)) (Nx.square (at 1)) in
   let trace = Nx.add (at 0) (at 2) in

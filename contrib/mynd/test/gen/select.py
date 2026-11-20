@@ -1,6 +1,6 @@
 # scipy's connected-component labels and torchvision's NMS, as goldens for
-# Mynd.components and Mynd.nms. Labels are each component's least row-major
-# index, -1 off the mask.
+# Mynd.Mask.components and Mynd.Box.nms. Labels are each component's least
+# row-major index, -1 off the mask.
 # Run from this directory: uv run --locked select.py ../golden/select.npz
 import sys
 import numpy as np

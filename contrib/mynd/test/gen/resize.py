@@ -1,8 +1,9 @@
-# Goldens for Mynd.resize and Mynd.resize_weights: torch's antialiased
-# interpolate in float32 and float64 along the width of a one-row image, at
-# the size pairs of SAM 2's and RT-DETR's inputs (torch 2.9's antialiased
-# path reads a one-column image as constant), and Pillow's 8-bit resize of L,
-# RGB and RGBA images (RGBA through Pillow's premultiplied RGBa).
+# Goldens for Mynd.Sample.resize and Mynd.Sample.resize_weights: torch's
+# antialiased interpolate in float32 and float64 along the width of a one-row
+# image, at the size pairs of SAM 2's and RT-DETR's inputs (torch 2.9's
+# antialiased path reads a one-column image as constant), and Pillow's 8-bit
+# resize of L, RGB and RGBA images (RGBA through Pillow's premultiplied
+# RGBa).
 # Run from this directory: uv run --locked resize.py ../golden/resize.npz
 #
 # Keys: torch.<n>.<n'>.x float32 [n]; torch.<n>.<n'>.<mode>.<f32|f64> [n'],

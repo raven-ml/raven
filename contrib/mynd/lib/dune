@@ -3,4 +3,17 @@
 (library
  (name mynd)
  (public_name mynd)
+ (private_modules
+  image
+  values
+  colour
+  sample
+  resize
+  transform
+  filter
+  gradient
+  morphology
+  box
+  mask
+  rle)
  (libraries nx rune))

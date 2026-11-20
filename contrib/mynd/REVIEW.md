@@ -12,7 +12,7 @@
 
 ## Semantics
 
-References: the specifications and programs each section of `mynd.mli`
+References: the specifications and programs each module of `mynd.mli`
 cites (Vulkan's fixed-point conversions, CSS Color 4, Keys, Liu and
 Tarjan, pycocotools, torchvision), and the generator of each golden under
 `test/gen/`.

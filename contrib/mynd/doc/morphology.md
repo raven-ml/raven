@@ -1,12 +1,13 @@
 # Morphology
 
 This page builds the morphological operators that mynd leaves to
-composition over `Mynd.erode`, `Mynd.dilate`, `Mynd.components` and
-`Mynd.reconstruct`: footprint shapes, openings and closings, top-hats,
-the morphological gradient, hit-or-miss, hole filling, clearing the
-border, areas and small objects. The rules each call follows, the
-footprint, the reads at the border and the adjunction, are in the
-Morphology and the Selection sections of [`mynd.mli`](../lib/mynd.mli).
+composition over `Mynd.Filter.erode`, `Mynd.Filter.dilate`,
+`Mynd.Mask.components` and `Mynd.Mask.reconstruct`: footprint shapes,
+openings and closings, top-hats, the morphological gradient,
+hit-or-miss, hole filling, clearing the border, areas and small objects.
+The rules each call follows, the footprint, the reads at the border and
+the adjunction, are in the Morphology section of `Mynd.Filter` and in
+`Mynd.Mask`, in [`mynd.mli`](../lib/mynd.mli).
 
 ```ocaml
 let img =
@@ -62,8 +63,8 @@ so a footprint flipped by hand for the second step breaks the laws
 below for every footprint that is not symmetric about its origin.
 
 ```ocaml
-let opening fp x = Mynd.dilate fp (Mynd.erode fp x)
-let closing fp x = Mynd.erode fp (Mynd.dilate fp x)
+let opening fp x = Mynd.Filter.dilate fp (Mynd.Filter.erode fp x)
+let closing fp x = Mynd.Filter.erode fp (Mynd.Filter.dilate fp x)
 
 let () =
   List.iter
@@ -91,7 +92,7 @@ footprint holds its origin both terms read the pixel, so it is at least
 ```ocaml
 let white fp x = Nx.sub x (opening fp x)
 let black fp x = Nx.sub (closing fp x) x
-let gradient fp x = Nx.sub (Mynd.dilate fp x) (Mynd.erode fp x)
+let gradient fp x = Nx.sub (Mynd.Filter.dilate fp x) (Mynd.Filter.erode fp x)
 
 let () =
   let fp = disk 1 in
@@ -108,7 +109,7 @@ pixels `bg`, two footprints of one shape that share no tap. It erodes the
 mask by `fg` and its complement by `bg`, so it uses erosions alone:
 
 ```ocaml
-let hit_or_miss fg bg m = Nx.logical_and (Mynd.erode fg m) (Mynd.erode bg (Nx.logical_not m))
+let hit_or_miss fg bg m = Nx.logical_and (Mynd.Filter.erode fg m) (Mynd.Filter.erode bg (Nx.logical_not m))
 
 (* Isolated pixels: the pixel itself set, its eight neighbours clear. *)
 let () =
@@ -142,7 +143,7 @@ let frame m =
       i.(r - 3) = 0 || i.(r - 3) = h - 1 || i.(r - 2) = 0 || i.(r - 2) = w - 1)
 
 let fill_holes background m =
-  Nx.logical_not (Mynd.reconstruct background ~marker:(frame m) (Nx.logical_not m))
+  Nx.logical_not (Mynd.Mask.reconstruct background ~marker:(frame m) (Nx.logical_not m))
 
 let () =
   let ring = mask [ "......."; "..###.."; ".#...#."; "..###.."; "......." ] in
@@ -158,7 +159,7 @@ Clearing the objects that touch the border is reconstruction from the
 frame too, removed from the mask:
 
 ```ocaml
-let clear_border c m = Nx.logical_and m (Nx.logical_not (Mynd.reconstruct c ~marker:(frame m) m))
+let clear_border c m = Nx.logical_and m (Nx.logical_not (Mynd.Mask.reconstruct c ~marker:(frame m) m))
 
 let () =
   let m = mask [ "##...."; "....#."; "....#."; "......" ] in
@@ -167,18 +168,18 @@ let () =
 
 ## Areas and small objects
 
-`Mynd.components` labels each mask in its own indices: a component's
-label is the least flat index `i w + j` of its pixels. Counting each
-label's pixels by a scatter along the last axis of the masks flattened
-to `[…; h w]` gives every mask its own counts, in a batch too, and a
-gather at the labels reads each pixel's area back:
+`Mynd.Mask.components` labels each mask in its own indices: a
+component's label is the least flat index `i w + j` of its pixels.
+Counting each label's pixels by a scatter along the last axis of the
+masks flattened to `[…; h w]` gives every mask its own counts, in a
+batch too, and a gather at the labels reads each pixel's area back:
 
 ```ocaml
 let areas c m =
   let s = Nx.shape m in
   let r = Array.length s in
   let flat x = Nx.reshape (Array.append (Array.sub s 0 (r - 3)) [| s.(r - 3) * s.(r - 2) |]) x in
-  let l = flat (Mynd.components c m) in
+  let l = flat (Mynd.Mask.components c m) in
   let ones = Nx.ones_like l in
   let counts = Nx.scatter ~combine:Add ~axis:(-1) l ones (Nx.zeros_like l) in
   Nx.reshape s (Nx.take_along_axis ~axis:(-1) l counts)
@@ -223,7 +224,7 @@ erodes the corners of those it keeps. Reconstructing the mask from its
 erosion keeps every object that survives the erosion, whole:
 
 ```ocaml
-let open_by_reconstruction c fp m = Mynd.reconstruct c ~marker:(Mynd.erode fp m) m
+let open_by_reconstruction c fp m = Mynd.Mask.reconstruct c ~marker:(Mynd.Filter.erode fp m) m
 
 let () =
   let m = mask [ "###....."; "###..#.."; "####...."; "........" ] in

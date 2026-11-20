@@ -37,7 +37,7 @@ let same want got =
   same_shape want got;
   equal (array int64) (bits want) (bits got)
 
-let kernels : (string * V.kernel) list =
+let kernels : (string * V.Sample.kernel) list =
   [
     ("box", `Box);
     ("triangle", `Triangle);
@@ -47,7 +47,7 @@ let kernels : (string * V.kernel) list =
     ("lanczos3", `Lanczos 3);
   ]
 
-let edges : (string * V.edge) list =
+let edges : (string * V.Sample.edge) list =
   [
     ("zero", `Zero);
     ("replicate", `Replicate);
@@ -61,10 +61,10 @@ let image ~h ~w ~c seed =
   let st = Random.State.make [| seed |] in
   Nx.init Nx.float64 [| h; w; c |] (fun _ -> Random.State.float st 2. -. 1.)
 
-(* [rows ~edge k n n'] is {!V.resize_weights}' rows, each its taps' pixels and
-   weights, the padding left out. *)
+(* [rows ~edge k n n'] is {!V.Sample.resize_weights}' rows, each its taps'
+   pixels and weights, the padding left out. *)
 let rows ~edge k n n' =
-  let idx, w = V.resize_weights ~edge k n n' in
+  let idx, w = V.Sample.resize_weights ~edge k n n' in
   let t = Nx.dim 1 idx in
   let idx = Nx.to_array idx and w = Nx.to_array w in
   Array.init n' (fun j ->
@@ -88,7 +88,7 @@ let torch64 =
       let x = entry sample_npz Nx.float64 "rz.x" in
       close 1e-13
         (entry sample_npz Nx.float64 (Printf.sprintf "rz.%s.%dx%d" m h w))
-        (V.resize ~edge:`Renormalise k (h, w) x))
+        (V.Sample.resize ~edge:`Renormalise k (h, w) x))
 
 (* Against torch in float32. The values lie in [[0, 1)], and [u = 2⁻²⁴].
 
@@ -109,7 +109,7 @@ let torch64 =
    moves by half that. torch's own roundings add [(t + 5) u s]: the kernel's
    value, the division and the sum. Where [n / n'] is dyadic, as in 480 to 640,
    [δc] is [0]. *)
-let kernel_value (k : V.kernel) t =
+let kernel_value (k : V.Sample.kernel) t =
   let a = Float.abs t in
   match k with
   | `Triangle -> 1. -. a
@@ -145,7 +145,8 @@ let torch32 =
         Nx.reshape [| 1; n; 1 |] (entry resize_npz Nx.float32 (key "x"))
       in
       let got =
-        floats (Nx.reshape [| n' |] (V.resize ~edge:`Renormalise k (1, n') x))
+        floats
+          (Nx.reshape [| n' |] (V.Sample.resize ~edge:`Renormalise k (1, n') x))
       in
       let t32 = floats (entry resize_npz Nx.float32 (key (m ^ ".f32"))) in
       let t64 = floats (entry resize_npz Nx.float64 (key (m ^ ".f64"))) in
@@ -301,7 +302,7 @@ let pillow8 =
 let table_values =
   test "a table from the formulas" (fun () ->
       let check ?(n = 4) ?(n' = 2) edge want_i want_w =
-        let i, w = V.resize_weights ~edge `Triangle n n' in
+        let i, w = V.Sample.resize_weights ~edge `Triangle n n' in
         equal (array int64) want_i (Nx.to_array i);
         equal (array float_exact) want_w (Nx.to_array w)
       in
@@ -342,7 +343,7 @@ let flat =
       cover "shrinking" (h' < h || w' < w);
       cover "enlarging" (h' > h || w' > w);
       let x = Nx.full Nx.float64 [| h; w; 1 |] c in
-      let y = floats (V.resize ~edge k (h', w') x) in
+      let y = floats (V.Sample.resize ~edge k (h', w') x) in
       Array.iter (fun v -> equal (float_rel ~rel:1e-14 ~abs:0x1p-1000) c v) y)
 
 (* In float32 a flat row resizes to itself within rounding: each new pixel is [Σ
@@ -356,7 +357,7 @@ let flat32 =
       let _, edge = List.nth edges e and _, k = List.nth kernels k in
       let c = Int32.float_of_bits (Int32.bits_of_float c) in
       let x = Nx.full Nx.float32 [| 1; n; 1 |] c in
-      let y = floats (V.resize ~edge k (1, n') x) in
+      let y = floats (V.Sample.resize ~edge k (1, n') x) in
       let table = if n = n' then [||] else rows ~edge k n n' in
       Array.iteri
         (fun j v ->
@@ -396,7 +397,7 @@ let local =
       let want =
         Array.init (h' * w') (fun q -> not (ri.(q / w') && cj.(q mod w')))
       in
-      let y = floats (V.resize ~edge k (h', w') x) in
+      let y = floats (V.Sample.resize ~edge k (h', w') x) in
       equal (array bool) want (Array.map Float.is_finite y))
 
 (* Enlarging reads as sampling at the new centres, [(j + ½) n / n'], under every
@@ -417,7 +418,7 @@ let enlarge_is_sample =
         Nx.init Nx.float64 [| h'; w'; 2 |] (fun ix ->
             if ix.(2) = 0 then centre w w' ix.(1) else centre h h' ix.(0))
       in
-      close 1e-13 (V.sample ~edge k x p) (V.resize ~edge k (h', w') x))
+      close 1e-13 (V.Sample.at ~edge k x p) (V.Sample.resize ~edge k (h', w') x))
 
 (* Under [`Renormalise] each row's weights sum to [1] and the pixel holding the
    new centre weighs more than [0], so the sum the weights were divided by was
@@ -486,9 +487,11 @@ let narrow =
       let check (type s) (dt : (float, s) Nx.dtype) =
         let x = Nx.cast dt (Nx.abs (image ~h ~w ~c:1 seed)) in
         let want =
-          floats (V.resize ~edge:`Renormalise k (h', w') (Nx.cast Nx.float64 x))
+          floats
+            (V.Sample.resize ~edge:`Renormalise k (h', w')
+               (Nx.cast Nx.float64 x))
         in
-        let got = floats (V.resize ~edge:`Renormalise k (h', w') x) in
+        let got = floats (V.Sample.resize ~edge:`Renormalise k (h', w') x) in
         let p = (Nx.Dtype.float_format dt).fraction_bits + 1 in
         Array.iteri
           (fun q r ->
@@ -508,7 +511,9 @@ let derivative =
   cases "the derivative in the image" ~id:fst kernels (fun (_, k) ->
       let x = image ~h:5 ~w:6 ~c:1 11 in
       let r = image ~h:3 ~w:8 ~c:1 12 in
-      let f x = Nx.sum (Nx.mul (V.resize ~edge:`Symmetric_half k (3, 8) x) r) in
+      let f x =
+        Nx.sum (Nx.mul (V.Sample.resize ~edge:`Symmetric_half k (3, 8) x) r)
+      in
       let g = floats (Rune.grad' f x) in
       let unit q =
         Nx.init Nx.float64 [| 5; 6; 1 |] (fun ix ->
@@ -522,35 +527,35 @@ let derivative =
 let compiled =
   cases "compiled is eager" ~id:fst kernels (fun (_, k) ->
       let x = Nx.cast Nx.float32 (image ~h:7 ~w:9 ~c:2 13) in
-      let f x = V.resize ~edge:`Periodic k (4, 13) x in
+      let f x = V.Sample.resize ~edge:`Periodic k (4, 13) x in
       same (f x) (Rune.jit' f x))
 
 let unchanged =
   test "an unchanged extent is left as it is" (fun () ->
       let x = image ~h:5 ~w:6 ~c:2 14 in
-      same x (V.resize ~edge:`Zero (`Lanczos 3) (5, 6) x);
-      let y = V.resize ~edge:`Zero (`Lanczos 3) (5, 9) x in
+      same x (V.Sample.resize ~edge:`Zero (`Lanczos 3) (5, 6) x);
+      let y = V.Sample.resize ~edge:`Zero (`Lanczos 3) (5, 9) x in
       let row i a = Nx.slice [ Nx.R (i, i + 1) ] a in
-      same (row 2 y) (V.resize ~edge:`Zero (`Lanczos 3) (1, 9) (row 2 x)))
+      same (row 2 y) (V.Sample.resize ~edge:`Zero (`Lanczos 3) (1, 9) (row 2 x)))
 
 let refusals =
   group "misuse"
     [
       test "resize to no pixel" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Mynd.resize") (fun () ->
-              V.resize ~edge:`Zero `Box (0, 3)
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Sample.resize") (fun () ->
+              V.Sample.resize ~edge:`Zero `Box (0, 3)
                 (Nx.zeros Nx.float32 [| 4; 4; 1 |])));
       test "resize an image of no row" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Mynd.resize") (fun () ->
-              V.resize ~edge:`Zero `Box (2, 3)
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Sample.resize") (fun () ->
+              V.Sample.resize ~edge:`Zero `Box (2, 3)
                 (Nx.zeros Nx.float32 [| 0; 4; 1 |])));
       test "an invalid kernel" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Mynd.resize") (fun () ->
-              V.resize ~edge:`Zero (`Lanczos 0) (2, 3)
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Sample.resize") (fun () ->
+              V.Sample.resize ~edge:`Zero (`Lanczos 0) (2, 3)
                 (Nx.zeros Nx.float32 [| 4; 4; 1 |])));
       test "a table from no pixel" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Mynd.resize_weights") (fun () ->
-              V.resize_weights ~edge:`Zero `Triangle 0 3));
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Sample.resize_weights")
+            (fun () -> V.Sample.resize_weights ~edge:`Zero `Triangle 0 3));
     ]
 
 let () =

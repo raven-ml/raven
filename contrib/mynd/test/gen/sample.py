@@ -1,7 +1,7 @@
 # torch's grid_sample (align_corners=False) and antialiased interpolate in
-# float64, as goldens for Mynd.sample and Mynd.resize. Positions are in
-# pixels, centre of pixel j at j + 1/2: the grid holds g = 2u/w - 1. The
-# image is 4 x 8, so on positions that are multiples of 1/16 torch's
+# float64, as goldens for Mynd.Sample.at and Mynd.Sample.resize. Positions
+# are in pixels, centre of pixel j at j + 1/2: the grid holds g = 2u/w - 1.
+# The image is 4 x 8, so on positions that are multiples of 1/16 torch's
 # unnormalisation ((g + 1) w - 1) / 2 is exact and its kinks fall where
 # ours do.
 # Run from this directory: uv run --locked sample.py ../golden/sample.npz

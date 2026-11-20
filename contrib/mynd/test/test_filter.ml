@@ -154,7 +154,7 @@ let windows_reads =
         done
       done;
       let check (type a b) (dt : (a, b) Nx.dtype) =
-        let y = V.windows ~edge:e (kh, kw) (Nx.cast dt x) in
+        let y = V.Filter.windows ~edge:e (kh, kw) (Nx.cast dt x) in
         equal (list int) [ h; w; c; kh; kw ] (shape_of y);
         equal (array float_exact) want (floats y)
       in
@@ -164,7 +164,7 @@ let windows_reads =
       let m = Nx.greater_s x 20. in
       equal (array bool)
         (Array.map (fun v -> v > 20.) want)
-        (Nx.to_array (V.windows ~edge:e (kh, kw) m)))
+        (Nx.to_array (V.Filter.windows ~edge:e (kh, kw) m)))
 
 let windows_derivative =
   test "windows' derivative adds back to the pixel each reads" (fun () ->
@@ -175,7 +175,8 @@ let windows_derivative =
           let rw = uniform [| h; w; c; kh; kw |] in
           let g =
             Rune.grad'
-              (fun x -> Nx.sum (Nx.mul (V.windows ~edge:e (kh, kw) x) rw))
+              (fun x ->
+                Nx.sum (Nx.mul (V.Filter.windows ~edge:e (kh, kw) x) rw))
               x
           in
           let want = Array.make (h * w * c) 0. in
@@ -207,23 +208,26 @@ let correlate_naive =
     (List.concat_map (fun e -> List.map (fun s -> (e, s)) shapes) rules)
     (fun ((_, e), (kh, kw)) ->
       let x = random 5 7 2 and k = uniform [| kh; kw |] in
-      within (naive e k x) (floats (V.correlate ~edge:e k x)))
+      within (naive e k x) (floats (V.Filter.correlate ~edge:e k x)))
 
 let correlate_empty =
   test "an image of no row or no channel" (fun () ->
       let k = Nx.ones Nx.float64 [| 3; 2 |] in
       equal (list int) [ 0; 4; 2 ]
         (shape_of
-           (V.correlate ~edge:`Zero k (Nx.zeros Nx.float64 [| 0; 4; 2 |])));
+           (V.Filter.correlate ~edge:`Zero k
+              (Nx.zeros Nx.float64 [| 0; 4; 2 |])));
       equal (list int) [ 3; 0; 2 ]
         (shape_of
-           (V.correlate ~edge:`Zero k (Nx.zeros Nx.float64 [| 3; 0; 2 |])));
+           (V.Filter.correlate ~edge:`Zero k
+              (Nx.zeros Nx.float64 [| 3; 0; 2 |])));
       equal (list int) [ 3; 4; 0 ]
         (shape_of
-           (V.correlate ~edge:`Periodic k (Nx.zeros Nx.float64 [| 3; 4; 0 |])));
+           (V.Filter.correlate ~edge:`Periodic k
+              (Nx.zeros Nx.float64 [| 3; 4; 0 |])));
       equal (list int) [ 0; 3; 4; 2 ]
         (shape_of
-           (V.correlate ~edge:`Replicate
+           (V.Filter.correlate ~edge:`Replicate
               (Nx.ones Nx.float64 [| 0; 3; 2 |])
               (Nx.zeros Nx.float64 [| 3; 4; 2 |]))))
 
@@ -244,20 +248,24 @@ let batch_law =
       let n = 3 and h = 6 and w = 8 and c = 2 in
       let xs = uniform [| n; h; w; c |] in
       let ks = uniform [| n; kh; kw |] in
-      let alone i k = floats (V.correlate ~edge:e k (Nx.slice [ Nx.I i ] xs)) in
+      let alone i k =
+        floats (V.Filter.correlate ~edge:e k (Nx.slice [ Nx.I i ] xs))
+      in
       let ki i = Nx.slice [ Nx.I i ] ks in
       let x0 = Nx.slice [ Nx.I 0 ] xs in
       let loop f = Array.concat (List.init n f) in
-      same (loop (fun i -> alone i (ki i))) (floats (V.correlate ~edge:e ks xs));
+      same
+        (loop (fun i -> alone i (ki i)))
+        (floats (V.Filter.correlate ~edge:e ks xs));
       same
         (loop (fun i -> alone i (ki 0)))
-        (floats (V.correlate ~edge:e (ki 0) xs));
+        (floats (V.Filter.correlate ~edge:e (ki 0) xs));
       same
-        (loop (fun i -> floats (V.correlate ~edge:e (ki i) x0)))
-        (floats (V.correlate ~edge:e ks x0));
+        (loop (fun i -> floats (V.Filter.correlate ~edge:e (ki i) x0)))
+        (floats (V.Filter.correlate ~edge:e ks x0));
       (* [[n; 1]] weights against [[1; n]] images: every pair. *)
       let pairs =
-        V.correlate ~edge:e
+        V.Filter.correlate ~edge:e
           (Nx.reshape [| n; 1; kh; kw |] ks)
           (Nx.reshape [| 1; n; h; w; c |] xs)
       in
@@ -272,8 +280,10 @@ let separable =
       let u = uniform [| 5; 1 |] and v = uniform [| 1; 4 |] in
       List.iter
         (fun (name, e) ->
-          let one = V.correlate ~edge:e (Nx.matmul u v) x in
-          let two = V.correlate ~edge:e v (V.correlate ~edge:e u x) in
+          let one = V.Filter.correlate ~edge:e (Nx.matmul u v) x in
+          let two =
+            V.Filter.correlate ~edge:e v (V.Filter.correlate ~edge:e u x)
+          in
           equal ~msg:name (array (float 1e-13)) (floats one) (floats two))
         rules)
 
@@ -308,7 +318,7 @@ let derivatives =
           done
         done
       done;
-      let loss k x = Nx.sum (Nx.mul (V.correlate ~edge:e k x) r) in
+      let loss k x = Nx.sum (Nx.mul (V.Filter.correlate ~edge:e k x) r) in
       equal ~msg:"weights"
         (array (float 1e-12))
         gk
@@ -325,7 +335,7 @@ let ramp =
       in
       let d = Nx.create Nx.float64 [| 1; 3 |] [| -0.5; 0.; 0.5 |] in
       equal (array float_exact) (Array.make 18 0.5)
-        (floats (V.correlate ~edge:`Antisymmetric_whole d x)))
+        (floats (V.Filter.correlate ~edge:`Antisymmetric_whole d x)))
 
 (* One NaN pixel makes NaN exactly the results whose window reads it. *)
 let nan_reach =
@@ -357,9 +367,10 @@ let nan_reach =
           (* Weights of [0] read their taps all the same. *)
           let k = Nx.zeros Nx.float64 [| kh; kw |] in
           let isnan y = Array.map Float.is_nan (floats y) in
-          equal ~msg:"eager" (array bool) want (isnan (V.correlate ~edge:e k x));
+          equal ~msg:"eager" (array bool) want
+            (isnan (V.Filter.correlate ~edge:e k x));
           equal ~msg:"compiled" (array bool) want
-            (isnan (Rune.jit' (V.correlate ~edge:e k) x)))
+            (isnan (Rune.jit' (V.Filter.correlate ~edge:e k) x)))
         [ (0, 0); (2, 3); (4, 5) ])
 
 let compiled =
@@ -370,8 +381,8 @@ let compiled =
           let s = Nx.sum (Nx.abs k) |> Nx.item [] in
           equal ~msg:name
             (array (float (21. *. epsilon_float *. s)))
-            (floats (V.correlate ~edge:e k x))
-            (floats (Rune.jit' (V.correlate ~edge:e k) x)))
+            (floats (V.Filter.correlate ~edge:e k x))
+            (floats (Rune.jit' (V.Filter.correlate ~edge:e k) x)))
         rules)
 
 (* Against scipy and OpenCV, from golden/filter.npz
@@ -400,7 +411,7 @@ let correlate_libraries =
       let _, bound = naive (e :> Nx.extension) k x in
       within
         (Nx.to_array (entry key), Array.map (fun b -> 2. *. b) bound)
-        (floats (V.correlate ~edge:e k x)))
+        (floats (V.Filter.correlate ~edge:e k x)))
 
 (* Gaussian blur *)
 
@@ -423,7 +434,7 @@ let constant =
       let check (type s) (dt : (float, s) Nx.dtype) =
         let x = Nx.full dt [| 4; 5; 2 |] v in
         let y =
-          floats (V.gaussian_blur ~edge:e ~radius (Nx.scalar dt sigma) x)
+          floats (V.Filter.gaussian ~edge:e ~radius (Nx.scalar dt sigma) x)
         in
         let v = (floats x).(0) in
         let f = Nx.Dtype.float_format dt in
@@ -452,7 +463,7 @@ let truncation =
     (fun ((name, e), sigma, radius) ->
       let x = random 6 7 1 in
       let blur radius =
-        floats (V.gaussian_blur ~edge:e ~radius (scalar sigma) x)
+        floats (V.Filter.gaussian ~edge:e ~radius (scalar sigma) x)
       in
       let delta =
         2. *. Float.erfc (Float.of_int radius /. (sigma *. Float.sqrt 2.))
@@ -506,7 +517,7 @@ let tiny_sigma =
       let r = Nx.cast dt (uniform [| 4; 5; 1 |]) in
       let s = Nx.scalar dt sigma in
       let sigma = Nx.item [] (Nx.cast Nx.float64 s) in
-      let blur s = V.gaussian_blur ~edge:`Symmetric_half ~radius:3 s x in
+      let blur s = V.Filter.gaussian ~edge:`Symmetric_half ~radius:3 s x in
       let y = floats (blur s) in
       let g =
         Nx.item []
@@ -524,7 +535,8 @@ let tiny_sigma =
 let nan_sigma =
   test "a NaN σ gives NaN" (fun () ->
       let y =
-        V.gaussian_blur ~edge:`Zero ~radius:2 (scalar Float.nan) (random 3 4 1)
+        V.Filter.gaussian ~edge:`Zero ~radius:2 (scalar Float.nan)
+          (random 3 4 1)
       in
       equal (array float_exact) (Array.make 12 Float.nan) (floats y))
 
@@ -537,7 +549,7 @@ let narrow =
     rules
     (fun (_, e) ->
       let blur (type s) (dt : (float, s) Nx.dtype) sigma x =
-        V.gaussian_blur ~edge:e ~radius:3 (Nx.scalar dt sigma) (Nx.cast dt x)
+        V.Filter.gaussian ~edge:e ~radius:3 (Nx.scalar dt sigma) (Nx.cast dt x)
       in
       List.iter
         (fun (F (_, dt)) ->
@@ -561,22 +573,22 @@ let sigma_batch =
       let xs = uniform [| 3; 5; 6; 2 |] and sigmas = [| 0.4; 1.; 2.5 |] in
       let s = Nx.create Nx.float64 [| 3 |] sigmas in
       let alone x sigma =
-        floats (V.gaussian_blur ~edge:`Periodic ~radius:4 (scalar sigma) x)
+        floats (V.Filter.gaussian ~edge:`Periodic ~radius:4 (scalar sigma) x)
       in
       let x i = Nx.slice [ Nx.I i ] xs in
       same
         (Array.concat (List.init 3 (fun i -> alone (x i) sigmas.(i))))
-        (floats (V.gaussian_blur ~edge:`Periodic ~radius:4 s xs));
+        (floats (V.Filter.gaussian ~edge:`Periodic ~radius:4 s xs));
       same
         (Array.concat (List.init 3 (fun i -> alone (x 0) sigmas.(i))))
-        (floats (V.gaussian_blur ~edge:`Periodic ~radius:4 s (x 0))))
+        (floats (V.Filter.gaussian ~edge:`Periodic ~radius:4 s (x 0))))
 
 let sigma_derivative =
   prop "the derivative in σ is its central difference" ~count:50
     Gen.(pair (of_list rules) (float_range 0.5 3.))
     (fun ((name, e), sigma) ->
       let x = random 4 5 1 and r = uniform [| 4; 5; 1 |] in
-      let f s = Nx.sum (Nx.mul (V.gaussian_blur ~edge:e ~radius:5 s x) r) in
+      let f s = Nx.sum (Nx.mul (V.Filter.gaussian ~edge:e ~radius:5 s x) r) in
       let at s = Nx.item [] (f (scalar s)) in
       let d = 1e-6 in
       let fd = (at (sigma +. d) -. at (sigma -. d)) /. (2. *. d) in
@@ -591,7 +603,7 @@ let gaussian_compiled =
       let s = Nx.scalar Nx.float32 1.4 in
       List.iter
         (fun (name, e) ->
-          let blur s = V.gaussian_blur ~edge:e ~radius:4 s x in
+          let blur s = V.Filter.gaussian ~edge:e ~radius:4 s x in
           equal ~msg:name
             (array (float (64. *. eps Nx.float32)))
             (floats (blur s))
@@ -612,7 +624,7 @@ let gaussian_libraries =
       edges
   in
   let opencv = List.filter (fun (n, _) -> n <> "periodic") extensions in
-  cases "gaussian_blur agrees with scipy and OpenCV"
+  cases "gaussian agrees with scipy and OpenCV"
     ~id:(fun (lib, (n, _), (s, r)) ->
       Printf.sprintf "%s σ %s radius %d %s" lib s r n)
     (rows "scipy" extensions @ rows "opencv" opencv)
@@ -634,7 +646,7 @@ let gaussian_libraries =
       let _, bound = naive (e :> Nx.extension) k x in
       within
         (Nx.to_array (entry key), Array.map (fun b -> 2. *. b) bound)
-        (floats (V.gaussian_blur ~edge:e ~radius (scalar s) x)))
+        (floats (V.Filter.gaussian ~edge:e ~radius (scalar s) x)))
 
 (* Median *)
 
@@ -703,7 +715,7 @@ let median_sort =
       let x = Nx.cast dt (Nx.create Nx.float64 [| h; w; c |] v) in
       let v = floats x in
       let want = Array.map fst (median_ref e (kh, kw) h w c v) in
-      let got = V.median_blur ~edge:e (kh, kw) x in
+      let got = V.Filter.median ~edge:e (kh, kw) x in
       equal (list int) [ h; w; c ] (shape_of got);
       same want (floats got))
 
@@ -716,7 +728,7 @@ let median_tall =
           let want =
             Array.map fst (median_ref `Replicate (kh, kw) h w c (floats x))
           in
-          same want (floats (V.median_blur ~edge:`Replicate (kh, kw) x)))
+          same want (floats (V.Filter.median ~edge:`Replicate (kh, kw) x)))
         [ (2, 2); (3, 3); (5, 1); (1, 1) ])
 
 let median_nan =
@@ -743,7 +755,7 @@ let median_nan =
             2 * !nans > kh * kw)
       in
       equal (array bool) want
-        (Array.map Float.is_nan (floats (V.median_blur ~edge:e (kh, kw) x))))
+        (Array.map Float.is_nan (floats (V.Filter.median ~edge:e (kh, kw) x))))
 
 let median_derivative =
   cases "the derivative goes to the pixel the chosen tap reads"
@@ -768,7 +780,7 @@ let median_derivative =
         want
         (Nx.to_array
            (Rune.grad'
-              (fun x -> Nx.sum (Nx.mul (V.median_blur ~edge:e (kh, kw) x) r))
+              (fun x -> Nx.sum (Nx.mul (V.Filter.median ~edge:e (kh, kw) x) r))
               x)))
 
 let median_compiled =
@@ -778,7 +790,7 @@ let median_compiled =
       in
       List.iter
         (fun (name, e) ->
-          let f = V.median_blur ~edge:e (3, 2) in
+          let f = V.Filter.median ~edge:e (3, 2) in
           equal ~msg:name (array int64)
             (bits (floats (f x)))
             (bits (floats (Rune.jit' f x))))
@@ -791,7 +803,7 @@ let median_libraries =
         List.map (fun s -> (e, s)) [ (3, 3); (2, 2); (2, 3); (4, 4); (5, 1) ])
       extensions
   in
-  cases "median_blur agrees with scipy's lower rank"
+  cases "median agrees with scipy's lower rank"
     ~id:(fun ((n, _), (kh, kw)) -> Printf.sprintf "%s %dx%d" n kh kw)
     rows
     (fun ((n, e), (kh, kw)) ->
@@ -801,7 +813,7 @@ let median_libraries =
         (zero
            (Nx.to_array
               (entry (Printf.sprintf "median.scipy.%dx%d.%s" kh kw n))))
-        (zero (floats (V.median_blur ~edge:e (kh, kw) (entry "m")))))
+        (zero (floats (V.Filter.median ~edge:e (kh, kw) (entry "m")))))
 
 (* Batch axes index independent images: a batch's windows and medians are each
    image's. *)
@@ -819,8 +831,8 @@ let batches =
                    floats (f (Nx.slice [ Nx.I a; Nx.I b ] xs))))
              [ 0; 1 ])
       in
-      let wins x = V.windows ~edge:e (3, 2) x in
-      let med x = V.median_blur ~edge:e (3, 3) x in
+      let wins x = V.Filter.windows ~edge:e (3, 2) x in
+      let med x = V.Filter.median ~edge:e (3, 3) x in
       same (each wins) (floats (wins xs));
       same (each med) (floats (med xs)))
 
@@ -866,10 +878,10 @@ let median_memory =
         extended + (e * elements) + (2 * ((2 * e * elements) + (8 * elements)))
       in
       equal bool true
-        (within bound (fun () -> V.median_blur ~edge:`Replicate (k, k) x)))
+        (within bound (fun () -> V.Filter.median ~edge:`Replicate (k, k) x)))
 
 let median_opencv =
-  test "median_blur agrees with OpenCV's on uint8" (fun () ->
+  test "median agrees with OpenCV's on uint8" (fun () ->
       let x =
         match Nx_io.Archive.find "u8" (Lazy.force golden) with
         | Some p -> Nx.unpack Nx.uint8 p
@@ -889,7 +901,7 @@ let median_opencv =
           equal (array int)
             (Array.map Int.of_float (floats want))
             (Array.map Int.of_float
-               (floats (V.median_blur ~edge:`Replicate (k, k) x))))
+               (floats (V.Filter.median ~edge:`Replicate (k, k) x))))
         [ 3; 5 ])
 
 let refusals =
@@ -899,33 +911,37 @@ let refusals =
     ~id:(fun (n, _) -> n)
     [
       ( "two axes",
-        fun () -> V.correlate ~edge:`Zero k (Nx.zeros Nx.float32 [| 4; 4 |]) );
+        fun () ->
+          V.Filter.correlate ~edge:`Zero k (Nx.zeros Nx.float32 [| 4; 4 |]) );
       ( "weights of one axis",
-        fun () -> V.correlate ~edge:`Zero (Nx.ones Nx.float32 [| 3 |]) x );
+        fun () -> V.Filter.correlate ~edge:`Zero (Nx.ones Nx.float32 [| 3 |]) x
+      );
       ( "an empty extent",
-        fun () -> V.correlate ~edge:`Zero (Nx.ones Nx.float32 [| 0; 3 |]) x );
+        fun () ->
+          V.Filter.correlate ~edge:`Zero (Nx.ones Nx.float32 [| 0; 3 |]) x );
       ( "batches that do not broadcast",
         fun () ->
-          V.correlate ~edge:`Zero
+          V.Filter.correlate ~edge:`Zero
             (Nx.ones Nx.float32 [| 2; 3; 3 |])
             (Nx.zeros Nx.float32 [| 3; 4; 4; 1 |]) );
       ( "no row past the edge",
         fun () ->
-          V.correlate ~edge:`Antisymmetric_whole k
+          V.Filter.correlate ~edge:`Antisymmetric_whole k
             (Nx.zeros Nx.float32 [| 0; 4; 1 |]) );
-      ("windows of no row", fun () -> V.windows ~edge:`Zero (0, 2) x);
+      ("windows of no row", fun () -> V.Filter.windows ~edge:`Zero (0, 2) x);
       ( "windows of two axes",
-        fun () -> V.windows ~edge:`Zero (2, 2) (Nx.zeros Nx.float32 [| 4; 4 |])
+        fun () ->
+          V.Filter.windows ~edge:`Zero (2, 2) (Nx.zeros Nx.float32 [| 4; 4 |])
       );
       ( "windows past no column",
         fun () ->
-          V.windows ~edge:`Periodic (2, 2) (Nx.zeros Nx.float32 [| 4; 0; 1 |])
-      );
+          V.Filter.windows ~edge:`Periodic (2, 2)
+            (Nx.zeros Nx.float32 [| 4; 0; 1 |]) );
       ( "a negative radius",
         fun () ->
-          V.gaussian_blur ~edge:`Zero ~radius:(-1) (Nx.scalar Nx.float32 1.) x
+          V.Filter.gaussian ~edge:`Zero ~radius:(-1) (Nx.scalar Nx.float32 1.) x
       );
-      ("a median of no column", fun () -> V.median_blur ~edge:`Zero (3, 0) x);
+      ("a median of no column", fun () -> V.Filter.median ~edge:`Zero (3, 0) x);
     ]
     (fun (_, f) ->
       raises_match (Exn.invalid_arg ~sub:"Mynd.") (fun () -> ignore (f ())))

@@ -25,7 +25,7 @@ let rules : (string * Nx.extension) list =
     ("antisymmetric_whole", `Antisymmetric_whole);
   ]
 
-let stencils : (string * V.stencil) list =
+let stencils : (string * V.Filter.stencil) list =
   [ ("central", `Central); ("sobel", `Sobel); ("scharr", `Scharr) ]
 
 (* Values in [-1, 1) from the test's own [Random] state. *)
@@ -76,13 +76,13 @@ let against_correlate =
     (fun ((_, e), (_, s)) ->
       let x = random [| 2; 5; 7; 2 |] in
       let kx, ky = products s in
-      let gx, gy = V.gradient ~edge:e s x in
+      let gx, gy = V.Filter.gradient ~edge:e s x in
       let tol = float (2. *. 10. *. epsilon_float *. 9.) in
       equal ~msg:"gx" (array tol)
-        (floats (V.correlate ~edge:e kx x))
+        (floats (V.Filter.correlate ~edge:e kx x))
         (floats gx);
       equal ~msg:"gy" (array tol)
-        (floats (V.correlate ~edge:e ky x))
+        (floats (V.Filter.correlate ~edge:e ky x))
         (floats gy))
 
 (* A ramp [a j + b i + c] with slopes and offset in eighths and values below
@@ -102,7 +102,7 @@ let ramp =
         Nx.init Nx.float64 [| h; w; 1 |] (fun i ->
             (a *. Float.of_int i.(1)) +. (b *. Float.of_int i.(0)) +. c)
       in
-      let gx, gy = V.gradient ~edge:e s (Nx.cast dt x) in
+      let gx, gy = V.Filter.gradient ~edge:e s (Nx.cast dt x) in
       let gx = floats gx and gy = floats gy in
       let all = e = `Antisymmetric_whole in
       cover "antisymmetric_whole" all;
@@ -138,7 +138,7 @@ let symmetries =
         (pair (int_range 1 6) (int_range 1 6)))
     (fun (F (_, dt), (_, s), (_, e), (h, w)) ->
       let x = Nx.cast dt (random [| 2; h; w; 2 |]) in
-      let g = V.gradient ~edge:e s in
+      let g = V.Filter.gradient ~edge:e s in
       let gx, gy = g x in
       let flip a v = Nx.flip ~axes:[ a ] v in
       let t v = Nx.transpose ~axes:[ 0; 2; 1; 3 ] v in
@@ -164,8 +164,8 @@ let narrow =
        rules)
     (fun ((_, e), F (_, dt)) ->
       let x = Nx.cast dt (random [| 5; 6; 2 |]) in
-      let wx, wy = V.gradient ~edge:e `Scharr (Nx.cast Nx.float32 x) in
-      let gx, gy = V.gradient ~edge:e `Scharr x in
+      let wx, wy = V.Filter.gradient ~edge:e `Scharr (Nx.cast Nx.float32 x) in
+      let gx, gy = V.Filter.gradient ~edge:e `Scharr x in
       same (floats (Nx.cast dt wx)) (floats gx);
       same (floats (Nx.cast dt wy)) (floats gy))
 
@@ -186,13 +186,15 @@ let derivative =
       in
       let want =
         Rune.grad'
-          (fun x -> loss (V.correlate ~edge:e kx x, V.correlate ~edge:e ky x))
+          (fun x ->
+            loss
+              (V.Filter.correlate ~edge:e kx x, V.Filter.correlate ~edge:e ky x))
           x
       in
       equal
         (array (float (2. *. 37. *. 6. *. epsilon_float)))
         (floats want)
-        (floats (Rune.grad' (fun x -> loss (V.gradient ~edge:e s x)) x)))
+        (floats (Rune.grad' (fun x -> loss (V.Filter.gradient ~edge:e s x)) x)))
 
 let compiled =
   test "compiled is eager" (fun () ->
@@ -201,7 +203,7 @@ let compiled =
         (fun (name, e) ->
           List.iter
             (fun (_, s) ->
-              let f x = V.gradient ~edge:e s x in
+              let f x = V.Filter.gradient ~edge:e s x in
               let sig_ = Nx.Ptree.(tensor @-> returns (pair tensor tensor)) in
               let gx, gy = f x and cx, cy = Rune.jit sig_ f x in
               same ~msg:name (floats gx) (floats cx);
@@ -250,7 +252,7 @@ let libraries =
          mynd forms from a read of up to [3] times [x]'s largest. *)
       let reach = if lib = "numpy" then 3. else 1. in
       let tol = float (2. *. 10. *. epsilon_float *. n *. reach *. big) in
-      let gx, gy = V.gradient ~edge:e s x in
+      let gx, gy = V.Filter.gradient ~edge:e s x in
       equal ~msg:"x" (array tol)
         (floats (entry Nx.float64 (key "x")))
         (floats (Nx.mul_s gx n));
@@ -342,7 +344,7 @@ let maxima_rule =
       let tx, ty = field f in
       let m = floats (Nx.hypot tx ty) in
       let want = reference h w c gx gy m in
-      let got = Nx.to_array (V.gradient_maxima (tx, ty)) in
+      let got = Nx.to_array (V.Filter.gradient_maxima (tx, ty)) in
       cover ~share:0.9 "decided" (Array.for_all Option.is_some want);
       (* A neighbour [a = p - u] along an axis or a diagonal, inside, with [p]'s
          strength: [p], pointed toward, is never kept. *)
@@ -388,7 +390,7 @@ let maxima_symmetries =
   prop "flips and transposes of the gradients commute with the maxima"
     ~count:200 gen_field (fun f ->
       let gx, gy = field f in
-      let g = V.gradient_maxima in
+      let g = V.Filter.gradient_maxima in
       let k = g (gx, gy) in
       let flip a v = Nx.flip ~axes:[ a ] v in
       let t v = Nx.transpose ~axes:[ 1; 0; 2 ] v in
@@ -411,17 +413,17 @@ let maxima_narrow =
           let gx = Nx.create dt [| 1; 2; 1 |] [| 1.; 1. |] in
           let gy = Nx.create dt [| 1; 2; 1 |] [| 0.; 0x1p-6 |] in
           equal ~msg:n (array bool) [| false; true |]
-            (Nx.to_array (V.gradient_maxima (gx, gy))))
+            (Nx.to_array (V.Filter.gradient_maxima (gx, gy))))
         [ F ("float16", Nx.float16); F ("bfloat16", Nx.bfloat16) ];
       let x = random [| 2; 9; 11; 1 |] in
-      let g = V.gradient ~edge:`Symmetric_whole `Central x in
+      let g = V.Filter.gradient ~edge:`Symmetric_whole `Central x in
       let cast dt (a, b) = (Nx.cast dt a, Nx.cast dt b) in
       List.iter
         (fun (F (n, dt)) ->
           let gn = cast dt g in
           equal ~msg:n (array bool)
-            (Nx.to_array (V.gradient_maxima (cast Nx.float32 gn)))
-            (Nx.to_array (V.gradient_maxima gn)))
+            (Nx.to_array (V.Filter.gradient_maxima (cast Nx.float32 gn)))
+            (Nx.to_array (V.Filter.gradient_maxima gn)))
         [ F ("float16", Nx.float16); F ("bfloat16", Nx.bfloat16) ])
 
 let maxima_compiled =
@@ -429,7 +431,7 @@ let maxima_compiled =
       let small _ = Float.of_int (Random.int 7 - 3) in
       let gx = Nx.init Nx.float32 [| 2; 7; 8; 2 |] small in
       let gy = Nx.init Nx.float32 [| 2; 7; 8; 2 |] small in
-      let f gx gy = V.gradient_maxima (gx, gy) in
+      let f gx gy = V.Filter.gradient_maxima (gx, gy) in
       let sig_ = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
       equal (array bool)
         (Nx.to_array (f gx gy))
@@ -444,7 +446,7 @@ let maxima_skimage =
       and gy = entry Nx.float64 "maxima.gy" in
       let h = Nx.dim 0 gx and w = Nx.dim 1 gx in
       let k =
-        V.gradient_maxima
+        V.Filter.gradient_maxima
           (Nx.reshape [| h; w; 1 |] gx, Nx.reshape [| h; w; 1 |] gy)
       in
       let inner x =
@@ -459,8 +461,8 @@ let maxima_skimage =
 let blurred_gradient sigma x =
   let edge = `Symmetric_whole in
   let radius = Float.to_int (Float.ceil (4. *. sigma)) in
-  let b = V.gaussian_blur ~edge ~radius (Nx.scalar Nx.float64 sigma) x in
-  V.gradient ~edge `Central b
+  let b = V.Filter.gaussian ~edge ~radius (Nx.scalar Nx.float64 sigma) x in
+  V.Filter.gradient ~edge `Central b
 
 (* A step between columns 5 and 6 keeps one pixel a row at every σ. Unblurred,
    the two pixels of the step tie, and the darker is kept. *)
@@ -479,14 +481,16 @@ let step =
         (fun sigma ->
           let ((gx, gy) as g) = blurred_gradient sigma x in
           let strong = Nx.greater_s (Nx.hypot gx gy) 1e-3 in
-          let k = Nx.logical_and (V.gradient_maxima g) strong in
+          let k = Nx.logical_and (V.Filter.gradient_maxima g) strong in
           List.iter
             (fun cols ->
               equal ~msg:(Printf.sprintf "σ %g" sigma) int 1 (List.length cols))
             (columns k))
         [ 0.6; 1.; 1.4; 2.; 3. ];
       let keep x =
-        columns (V.gradient_maxima (V.gradient ~edge:`Replicate `Central x))
+        columns
+          (V.Filter.gradient_maxima
+             (V.Filter.gradient ~edge:`Replicate `Central x))
       in
       equal (list (list int)) (List.init 6 (fun _ -> [ 5 ])) (keep x);
       equal
@@ -510,10 +514,11 @@ let square =
         (fun sigma ->
           let ((gx, gy) as g) = blurred_gradient sigma x in
           let k =
-            Nx.logical_and (V.gradient_maxima g)
+            Nx.logical_and
+              (V.Filter.gradient_maxima g)
               (Nx.greater_s (Nx.hypot gx gy) 0.05)
           in
-          let labels = Nx.to_array (V.components `Eight k) in
+          let labels = Nx.to_array (V.Mask.components `Eight k) in
           let pieces =
             List.sort_uniq compare
               (List.filter (fun l -> l >= 0L) (Array.to_list labels))
@@ -537,21 +542,23 @@ let canny_skimage =
       let sigma = Float.of_int s in
       let radius = Float.to_int ((4. *. sigma) +. 0.5) in
       let blur =
-        V.gaussian_blur ~edge:`Zero ~radius (Nx.scalar Nx.float64 sigma)
+        V.Filter.gaussian ~edge:`Zero ~radius (Nx.scalar Nx.float64 sigma)
       in
       let b =
         Nx.div (blur x) (Nx.add_s (blur (Nx.ones_like x)) epsilon_float)
       in
-      let ((gx, gy) as g) = V.gradient ~edge:`Symmetric_half `Sobel b in
+      let ((gx, gy) as g) = V.Filter.gradient ~edge:`Symmetric_half `Sobel b in
       let m = Nx.hypot gx gy in
       let ring =
         Nx.init Nx.bool [| h; w; 1 |] (fun i ->
             i.(0) = 0 || i.(0) = h - 1 || i.(1) = 0 || i.(1) = w - 1)
       in
-      let thin = Nx.logical_and (V.gradient_maxima g) (Nx.logical_not ring) in
+      let thin =
+        Nx.logical_and (V.Filter.gradient_maxima g) (Nx.logical_not ring)
+      in
       let candidates = Nx.logical_and thin (Nx.greater_equal_s m (0.1 /. 8.)) in
       let edges =
-        V.reconstruct `Eight
+        V.Mask.reconstruct `Eight
           ~marker:(Nx.greater_equal_s m (0.2 /. 8.))
           candidates
       in
@@ -566,20 +573,21 @@ let refusals =
       ( "two axes",
         fun () ->
           ignore
-            (V.gradient ~edge:`Zero `Sobel (Nx.zeros Nx.float32 [| 4; 4 |])) );
+            (V.Filter.gradient ~edge:`Zero `Sobel
+               (Nx.zeros Nx.float32 [| 4; 4 |])) );
       ( "no row past the edge",
         fun () ->
           ignore
-            (V.gradient ~edge:`Replicate `Central
+            (V.Filter.gradient ~edge:`Replicate `Central
                (Nx.zeros Nx.float32 [| 0; 4; 1 |])) );
       ( "maxima of two axes",
         fun () ->
           let g = Nx.zeros Nx.float32 [| 4; 4 |] in
-          ignore (V.gradient_maxima (g, g)) );
+          ignore (V.Filter.gradient_maxima (g, g)) );
       ( "maxima of two shapes",
         fun () ->
           ignore
-            (V.gradient_maxima
+            (V.Filter.gradient_maxima
                ( Nx.zeros Nx.float32 [| 4; 4; 1 |],
                  Nx.zeros Nx.float32 [| 4; 5; 1 |] )) );
     ]
@@ -587,7 +595,7 @@ let refusals =
 
 let () =
   exit
-    (run "mynd.edges"
+    (run "mynd.gradient"
        [
          against_correlate;
          ramp;

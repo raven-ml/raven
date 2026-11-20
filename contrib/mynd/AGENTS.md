@@ -31,8 +31,8 @@ vision package, removed once mynd covered its surface.
   form of a function) is built in nx, never worked around here. The edge
   rule's index fold is `Nx.extension_index`.
 - Run IoU, run unions, polygons and crowd IoU belong to the COCO evaluator,
-  not here. Pillow's 8-bit resize is a composition over `resize_weights` at
-  its call site.
+  not here. Pillow's 8-bit resize is a composition over
+  `Sample.resize_weights` at its call site.
 
 ## Decisions
 
@@ -42,49 +42,49 @@ vision package, removed once mynd covered its surface.
 - One coordinate system: pixel `(i, j)` is the cell
   `[j, j + 1) × [i, i + 1)`; nearest reads `⌊u⌋`, a cell edge the cell it
   starts.
-- Kernels are data with a whole `2h`, so `sample` reads exactly `2h` taps
-  an axis. A tap's argument is `f - (t - ⌊u⌋ + ½)` with `f = u - ⌊u⌋`
-  exact, one rounding, so the derivative at a kink is the right-hand one.
-  Each axis's weights are divided by their sum: every read is a weighted
-  mean, under every kernel and edge.
-- `resize` is a gather and a sum per tap slot of a host table, columns then
-  rows, never a dense matrix, so a pixel reaches only the new pixels that
-  weigh it. The table's weights come from exact ratios at float64. A trace
-  stages every nx operation, so the table is built from OCaml floats and
-  integers, the kernels' formulas evaluated there too, and the weights are
-  stored straight into the pass's dtype. The fold stays
+- Kernels are data with a whole `2h`, so `Sample.at` reads exactly `2h` taps
+  an axis. A tap's argument is `f - (t - ⌊u⌋ + ½)` with `f = u - ⌊u⌋` exact,
+  one rounding, so the derivative at a kink is the right-hand one. Each
+  axis's weights are divided by their sum: every read is a weighted mean,
+  under every kernel and edge.
+- `Sample.resize` is a gather and a sum per tap slot of a host table,
+  columns then rows, never a dense matrix, so a pixel reaches only the new
+  pixels that weigh it. The table's weights come from exact ratios at
+  float64. A trace stages every nx operation, so the table is built from
+  OCaml floats and integers, the kernels' formulas evaluated there too, and
+  the weights are stored straight into the pass's dtype. The fold stays
   `Nx.extension_index`, so under a trace each slot's fold, and its `where`
   for the padding, are staged: a compiled resize runs them on the host at
   every call and copies the indices to the image's device.
-- `components` is Liu and Tarjan's R with two shortcuts a round; its
-  `~max` is their proven bound. `nms` is the Jacobi fixed point of the
+- `Mask.components` is Liu and Tarjan's R with two shortcuts a round; its
+  `~max` is their proven bound. `Box.nms` is the Jacobi fixed point of the
   greedy rule; its threshold compares exactly with the OCaml float.
-- `gradient` is in values per pixel: a difference of `-½ 0 ½` after
-  weights across that sum to one, so `Sobel` and `Scharr` are the
-  libraries' kernels over 8 and 32. Outer weights multiply the sum of
-  their two pixels, so flips and transposes are exact on images.
-  `gradient_maxima` is Canny's ring interpolation, ties kept on the side
-  the gradient points away from, and reads nothing outside the image.
-  Canny's detector is a guide composition: with `gaussian_blur ~edge:`Zero`
-  over the blur of ones, `Sobel` under `Symmetric_half`, the border ring
-  dropped and thresholds `>=` over 8, it equals scikit-image's `canny` at
-  its defaults (test_edges).
-- Morphology reads no extension rule (outside taps left out, the dtype's
+- `Filter.gradient` is in values per pixel: a difference of `-½ 0 ½` after
+  weights across that sum to one, so `Sobel` and `Scharr` are the libraries'
+  kernels over 8 and 32. Outer weights multiply the sum of their two pixels,
+  so flips and transposes are exact on images. `gradient_maxima` is Canny's
+  ring interpolation, ties kept on the side the gradient points away from,
+  and reads nothing outside the image. Canny's detector is a guide
+  composition: with `Filter.gaussian ~edge:`Zero` over the blur of ones,
+  `Sobel` under `Symmetric_half`, the border ring dropped and thresholds
+  `>=` over 8, it equals scikit-image's `canny` at its defaults
+  (test_gradient).
+- Morphology reads no extension rule (outside offsets left out, the dtype's
   extreme where none is inside), and `dilate` is Minkowski addition, the
   convention under which `dilate fp (erode fp x)` is an opening for every
-  footprint. OpenCV's and scikit-image 1.x's `dilate` read erosion's taps,
-  and scikit-image anchors an even axis one tap earlier: their parity is a
-  footprint conversion (test_morphology), and their opening of a
-  footprint asymmetric about its origin tap is no opening. The tie
+  footprint. OpenCV's and scikit-image 1.x's `dilate` read erosion's
+  offsets, and scikit-image anchors an even axis one offset earlier: their
+  parity is a footprint conversion (test_morphology), and their opening of a
+  footprint asymmetric about its origin offset is no opening. The tie
   derivative counts and sums at float32 for the formats narrower than 32
   bits, as rune's `Nx.min` counts in the carrier. Complex images raise.
-- `reconstruct` is the components holding a marker pixel, in `components`'
-  rounds, never dilation iterated to stability, which takes up to `h w / 2`
-  rounds on a serpentine. Labels index each mask's own pixels, so per-label
-  sums scatter along the last axis of `[…; h w]`; a flat
+- `Mask.reconstruct` is the components holding a marker pixel, in
+  `components`' rounds, never dilation iterated to stability, which takes up
+  to `h w / 2` rounds on a serpentine. Labels index each mask's own pixels,
+  so per-label sums scatter along the last axis of `[…; h w]`; a flat
   `reduce_segments` over a batch merges labels across masks.
-- `components_rounds` and `nms_rounds`, behind the `.mli`'s stop, give the
-  tests their step counts.
+- `Mask.components_rounds` and `Box.nms_rounds`, behind their modules'
+  stops, give the tests their step counts.
 
 ## Traps
 
@@ -111,10 +111,10 @@ The guide pages under `doc/` explain mynd alone.
   `` `Symmetric_half `` is `BORDER_REFLECT` and `reflect` (scipy's
   default), with no torch mode; `` `Periodic `` is `BORDER_WRAP`, `wrap`
   and `circular`. OpenCV's `filter2D` takes no `BORDER_WRAP`.
-- A window's tap `k / 2` is the pixel itself, which is scipy.ndimage's
+- A window's offset `k / 2` is the pixel itself, which is scipy.ndimage's
   `origin` 0 and OpenCV's anchor `(-1, -1)` at every extent.
   `median_filter` takes rank `n / 2`, the upper median for an even `n`;
-  `rank_filter` at `(n - 1) / 2` is `median_blur`'s lower one.
+  `rank_filter` at `(n - 1) / 2` is `Filter.median`'s lower one.
 - torchvision 0.24's colour adjustments (`ColorJitter`): its grey weighs
   `0.2989 r + 0.587 g + 0.114 b`, which sums to `0.9999`; each blend is
   `f x + (1 - f) r`, clamped to `[0, 1]` after every adjustment, and
@@ -125,7 +125,7 @@ The guide pages under `doc/` explain mynd alone.
   `ColorJitter` applies its four adjustments in an order drawn for each
   call.
 - torchvision's `GaussianBlur` samples the Gaussian divided by its sum, as
-  `gaussian_blur` does, with `kernel_size = 2 radius + 1`, and draws its
+  `Filter.gaussian` does, with `kernel_size = 2 radius + 1`, and draws its
   deviation uniformly from `(0.1, 2)` by default.
 - mynd's gradient strengths are in values per pixel on images in
   `[0, 1]`. Another library's strength is a multiple of mynd's:
@@ -150,30 +150,30 @@ The guide pages under `doc/` explain mynd alone.
   divided by the blur of ones (plus float64's epsilon), radius
   `⌊4σ + ½⌋`; Sobel under `reflect` (`Symmetric_half`); the border ring is
   never an edge; thresholds compare with `>=`; it keeps both pixels of a
-  tie. test_edges composes it exactly.
+  tie. test_gradient composes it exactly.
 - MATLAB's thresholds are fractions of a strength its page leaves
   undefined; a scalar sets low to `0.4 ·` high.
 - OpenCV's `Canny` replicates, where its filters default to
   `BORDER_REFLECT_101`.
-- OpenCV `erode fp` is `erode fp`. OpenCV `dilate fp` reads erosion's taps:
-  it is `dilate (reflect_pad fp)`, `reflect_pad` flipping `fp` and putting
-  a row or column of `false` before each even axis. A footprint with a
-  `true` tap in the first row or column of an even axis, a full rectangle
-  included, is asymmetric about tap `k / 2`, so OpenCV's dilation by
-  `np.ones((2, 2))` differs from mynd's by a pixel. Its `MORPH_OPEN` of
-  such a footprint is no opening; do not reflect the footprint in mynd's
-  opening.
-- scikit-image 1.x anchors an even axis one tap earlier (`pad_front`, a
+- OpenCV `erode fp` is `erode fp`. OpenCV `dilate fp` reads erosion's
+  offsets: it is `dilate (reflect_pad fp)`, `reflect_pad` flipping `fp` and
+  putting a row or column of `false` before each even axis. A footprint with
+  a `true` offset in the first row or column of an even axis, a full
+  rectangle included, is asymmetric about offset `k / 2`, so OpenCV's
+  dilation by `np.ones((2, 2))` differs from mynd's by a pixel. Its
+  `MORPH_OPEN` of such a footprint is no opening; do not reflect the
+  footprint in mynd's opening.
+- scikit-image 1.x anchors an even axis one offset earlier (`pad_front`, a
   row of `false` before it): `erosion fp` is `erode (pad_front fp)`,
   `dilation fp` is `dilate (reflect_pad (pad_front fp))`, with
   `mode="ignore"`. scipy's `grey_dilation` and kornia's dilation are
   mynd's under the reduction's identity outside.
-- Other border rules equal mynd's left-out taps for some footprints:
-  `nearest` when each row and column of taps is one run through the
+- Other border rules equal mynd's left-out offsets for some footprints:
+  `nearest` when each row and column of offsets is one run through the
   origin's row or column; `reflect` when also each run's ends `a ≤ 0 ≤ b`
   have `|a + b| ≤ 1`; `mirror` when each run is centred.
 - scipy's `binary_fill_holes` is `not (reconstruct c ~marker:frame
-  (not m))` with `c` its structure's connectivity (test_components).
+  (not m))` with `c` its structure's connectivity (test_mask).
 - SAM 2's mask post-processing labels with 8-connectivity, removes
   components and fills background components of area `<=` its limit, the
   latter touching the border included, both from the same mask.
