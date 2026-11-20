@@ -1021,6 +1021,35 @@ let shapes =
           i32_f16 [| 2; 3 |] x y z);
     ]
 
+(* An e2m1 code decodes through float32's own fields: no integer is converted
+   to a float, which the subnormal arm of an exponent and fraction decode
+   would, and no float32 subnormal is computed (Lower_arith.e2m1). *)
+let e2m1_fields =
+  test "an e2m1 code decodes with no conversion of an integer to a float"
+    (fun () ->
+      let codes =
+        Nx.cast D.Float4_e2m1fn
+          (Nx.create D.Float32 [| 16 |] (Array.init 16 (fun i -> Float.of_int i)))
+      in
+      let target =
+        Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell")
+      in
+      let converts u =
+        Tolk.Ops.op u = Tolk.Op.Cast
+        && Tolk.Dtype.is_float (Tolk.Ops.dtype u)
+        && Tolk.Dtype.is_int (Tolk.Ops.dtype (Tolk.Ops.nth u 0))
+      in
+      let sinks =
+        Lowered.sources ~target (fun () -> Nx.cast D.Float32 (Nx.copy codes))
+      in
+      equal int ~msg:"integers converted to floats" 0
+        (List.fold_left
+           (fun n (_, sink, _) ->
+             n
+             + List.length
+                 (List.filter converts (Tolk.Ops.toposort ~calls:Skip sink)))
+           0 sinks))
+
 let () =
   exit
     (run "Lower_arith"
@@ -1036,4 +1065,5 @@ let () =
          bitcast;
          folded_nans;
          shapes;
+         e2m1_fields;
        ])

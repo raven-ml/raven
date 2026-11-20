@@ -119,6 +119,20 @@ let mini_value q m bias =
 (* [v], positive, with the sign bit [s], 0 or 1. *)
 let with_sign v s = f32 (bits v lor (s lsl 31))
 
+(* The e2m1 code in the low 4 bits of the [Uint32] [c], decoded through
+   float32's own fields: its magnitude's 3 bits moved under float32's low
+   exponent bits and top fraction bit, the bias added. A normal's value, [c land 7 >= 2], is
+   then its own; a subnormal's is [1 + f/2] under the exponent of [1], less
+   [1] (F. Giesen, "Half to float done quick", 2012, half_to_float_fast2's
+   magic subtraction), exact. No operand is a float32 subnormal, which x86
+   multiplies through a microcode assist, and 10 operations a code decode it,
+   against 15 for {!mini_value}'s arms and {!with_sign}. *)
+let e2m1 c =
+  let b = (c land 7) lsl 22 in
+  let normal = f32 (b + num c Stdlib.(126 lsl 23)) in
+  let sub = Ops.sub (f32 (b + num c Stdlib.(127 lsl 23))) (pow2 c 0) in
+  f32 (bits (where (c land 6 = num c 0) sub normal) lor ((c land 8) lsl 28))
+
 (* A byte float's code [c], as a [Uint32], decoded. *)
 let of_byte (D.Any dt) c =
   match dt with
@@ -137,7 +151,7 @@ let of_byte (D.Any dt) c =
           (where (q = num q 0x7C) inf (mini_value q 2 15))
       in
       with_sign v (c lsr 7)
-  | _ -> with_sign (mini_value (c land 7) 1 1) ((c lsr 3) land 1)
+  | _ -> e2m1 c
 
 let decode (D.Any dt as d) x =
   match dt with

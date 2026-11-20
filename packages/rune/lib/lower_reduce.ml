@@ -1034,12 +1034,12 @@ let rec expands u =
    place, where storing it would copy each row once per position; a part
    that computes over an expanded value, as [f (broadcast x)], is stored
    at every position, still at most the slots. *)
+let store u =
+  if expands u || not (Op.Set.mem (Ops.op (Ops.base u)) Op.Set.elementwise)
+  then u
+  else Ops.contiguous u
+
 let stored x =
-  let store u =
-    if expands u || not (Op.Set.mem (Ops.op (Ops.base u)) Op.Set.elementwise)
-    then u
-    else Ops.contiguous u
-  in
   let parts = List.map store (Arith.parts x.dtype x.node) in
   { x with node = Arith.of_parts x.dtype parts }
 
@@ -1143,7 +1143,16 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       let owner = spread r.owner sb b_sides b_axis in
       let b' = picked ~clamped:true b b_axis owner in
       let a' = entered ~renderer acc ~other:b.dtype a' in
+      let scaled = Option.is_some b'.scale in
       let b' = entered ~stored:true ~renderer acc ~other:a.dtype b' in
+      (* On the host, which has no core, each block's decoded slice of
+         scaled codes is stored, as {!entered} rounds it to be, whatever its
+         decode costs: the block's tiles of rows each read it, and a cheaper
+         decode inlined into each tile ran slower, gpt-oss-20b's float32
+         gate and up of 512 tokens 1.91 s stored against 3.38 s inlined on
+         fudge. *)
+      let host = not (Lazy.force renderer).Renderer.has_local in
+      let b' = if host && scaled then List.map store b' else b' in
       let up x = if x > a_axis then x + 1 else x in
       let shift = List.map (fun (x, y) -> (up x, y)) in
       let pairs = shift batch @ [ (a_axis, b_axis) ] in
