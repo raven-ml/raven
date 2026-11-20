@@ -108,10 +108,11 @@ XP target, values holds each draw's 55 coefficients.
   $ ./npz.exe values x.npz hub/huggingface tok_xp_rp
   values are the tokens' edges, decoded, within 1e-6, NaN past the edges
 
-Draw j of batch b is Roar.sample's with the key fold_in (fold_in (key seed) b)
-j, and the steps reveal upstream's linear counts, the larger first: 14, 14,
-14 and 13 of the 55 tokens. reference.exe draws them from the library. Here
-batch 1 holds Gaia row 3 alone, since row 2 has no present input.
+Draw j of an object is Roar.sample's with the key fold_in (fold_in (key seed)
+r) j, r the object's row in the first source, and the steps reveal upstream's
+linear counts, the larger first: 14, 14, 14 and 13 of the 55 tokens.
+reference.exe draws them from the library, in main.exe's batches. Here batch
+1 holds Gaia row 3 alone, since row 2 has no present input.
 
   $ ./reference.exe generate $gaia tok_xp_bp tok_xp_rp 4 14,14,14,13 2 2 ref.npz
   $ ./npz.exe equal x.npz ref.npz tokens
@@ -125,9 +126,9 @@ So a seed gives the same draws, and another seed others.
   978
   85
   312
-  510
-  299
-  966
+  482
+  147
+  12
   $ aion generate --gaia $gaia --rows 0:2 --target tok_z --steps 1 --draws 3 --seed 8 --out g8.npz > /dev/null
   $ ./npz.exe equal g.npz g8.npz tokens
   tokens differ in 6 of 6 values
@@ -171,7 +172,7 @@ its value is NaN.
 
   $ aion generate --gaia $gaia --target tok_z --inputs tok_xp_bp --steps 1 --draws 2000 --seed 1 --out z.npz
   generate: 3 objects; of rows 0:4, 0 without a partner in every source, 1 without a present input
-  generate: 2 draws of tok_z's class 1024, which decodes to no value
+  generate: 3 draws of tok_z's class 1024, which decodes to no value
   $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --out p.npz > /dev/null
   $ ./npz.exe chi2 z.npz p.npz 1
   the draws' frequencies agree with p: chi2 below its 0.999 quantile

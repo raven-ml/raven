@@ -31,9 +31,10 @@ dune exec apps/aion/bin/main.exe -- generate --gaia gaia-1631.hdf5 \
   image. `--steps N` sets the number of steps, each revealing a share of the
   target's tokens by upstream's linear counts: one step draws every token at
   once, each given the inputs alone; as many steps as the target has tokens
-  draws them one at a time, from their joint distribution. A draw depends on
-  `--seed`, `--rows` and `--batch`: the same seed reproduces draws only with
-  the same rows and batch size.
+  draws them one at a time, from their joint distribution. An object's draws
+  depend on `--seed` and its row in the first source, where its logits agree
+  bit for bit across batch sizes, so giving the sources in another order
+  changes them.
 
 Each writes one npz file whose `rows` entry gives each object's row in each
 source. `main.exe COMMAND --help` lists the options, and `bin/main.ml`'s

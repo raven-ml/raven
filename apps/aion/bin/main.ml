@@ -35,9 +35,11 @@
    class 1024, which decodes to no value; [flux], float32 [n; draws; 8704], and
    [wavelength], float32 [8704], the codec's latent grid, for a spectrum;
    [flux], float32 [n; draws; c; 96; 96], for an image in its survey's c bands.
-   Draw j of the objects of batch b, the b-th --batch objects in row order, is
-   Roar.sample with the key [Nx.Rng.fold_in (Nx.Rng.fold_in (Nx.Rng.key seed) b)
-   j], so the draws are a function of the files, the options and the weights.
+   Draw j of an object whose row in the first source is r is Roar.sample's with
+   the object's key [Nx.Rng.fold_in (Nx.Rng.fold_in (Nx.Rng.key seed) r) j], so
+   the draws are a function of the files, the options and the weights, and an
+   object's do not depend on the objects batched with it where its logits agree
+   bit for bit.
 
    An input whose value is NaN or infinite is absent for its object, and an
    object with no present input is left out.
@@ -564,15 +566,16 @@ let generate_on d t srcs ins (target : Modality.t option) objs range size out
     let start =
       compile d
         Nx.Ptree.(Nx.Rng.ptree @-> inputs_s () @-> returns (draw_s ()))
-        (fun key x -> Roar.start ~key ~temperature x target)
+        (fun keys x -> Roar.start ~keys ~temperature x target)
     and step =
       compile d
         Nx.Ptree.(
           model_s () @-> v Walk.int @-> draw_s () @-> returns (draw_s ()))
         Roar.step
     in
-    fun ~key x ->
-      Roar.tokens (List.fold_left (fun r k -> step t k r) (start key x) reveal)
+    fun ~keys x ->
+      Roar.tokens
+        (List.fold_left (fun r k -> step t k r) (start keys x) reveal)
   in
   (* The output, allocated once and filled batch by batch, as posterior's: the
      tokens, [[|n; draws; k|]], and each decoded entry likewise, allocated at
@@ -602,15 +605,18 @@ let generate_on d t srcs ins (target : Modality.t option) objs range size out
       in
       Hashtbl.replace buffers name (Nx.set at v (Nx.donate buffer))
   in
-  let batch c objs =
+  let batch objs =
     let x, kept = encode ?pad:(pad d size) codecs srcs ins objs in
     let b = Array.length kept in
     if b > 0 then begin
-      let key = Nx.Rng.fold_in root c in
+      (* A key per row of [x], each object's of its first-source row, padded as
+         [x] is. *)
+      let rows = padded (pad d size) (Array.map (fun o -> o.(0)) kept) in
+      let keys = Nx.Rng.fold_in_tensor root (int64s rows) in
       for j = 0 to draws - 1 do
         (* Keys are derived on the host, where every set computes. *)
-        let key = Nx.Rng.place d.at (Nx.Rng.fold_in key j) in
-        let y = host (draw ~key (List.map (input_at d) x)) in
+        let keys = Nx.Rng.place d.at (Nx.Rng.fold_in keys j) in
+        let y = host (draw ~keys (List.map (input_at d) x)) in
         let at = [ Nx.R (!filled, !filled + b); Nx.I j ] in
         tokens := Nx.set at (first b y) (Nx.donate !tokens);
         let entries, m = decoded codecs target ~rows:b y in
@@ -621,7 +627,7 @@ let generate_on d t srcs ins (target : Modality.t option) objs range size out
     end;
     kept
   in
-  let kept = Array.concat (List.mapi batch (chunks size objs)) in
+  let kept = Array.concat (List.map batch (chunks size objs)) in
   let m = Array.length kept in
   let first x = Nx.slice [ Nx.R (0, m) ] x in
   let entries =
@@ -656,8 +662,9 @@ let generate () =
       ("--draws", Arg.Set_int draws, "M draws per object (default 1)");
       ( "--seed",
         Arg.Set_int seed,
-        "S the seed of every draw's key (default 0): the same seed reproduces \
-         draws only with the same --rows and --batch" );
+        "S the seed of the draws' keys (default 0): an object's draws depend \
+         on the seed and its row in the first source, so giving the sources \
+         in another order changes them" );
       ( "--temperature",
         Arg.Set_float temperature,
         "T the temperature: 1 (the default) draws from the model's \

@@ -157,7 +157,7 @@ let draws =
       let start =
         Rune.jit
           Nx.Ptree.(Nx.Rng.ptree @-> list (v Tokens.walk) @-> returns (draw ()))
-          (fun key x -> Roar.start ~key ~temperature x target)
+          (fun keys x -> Roar.start ~keys ~temperature x target)
       and step =
         Rune.jit
           Nx.Ptree.(
@@ -166,10 +166,10 @@ let draws =
           Roar.step
       in
       let on = Nx.Ptree.place_fixed Tokens.walk D.on in
-      let x = inputs () and key = Nx.Rng.key 23 in
+      let x = inputs () and keys = Nx.Rng.split_batch ~n:4 (Nx.Rng.key 23) in
       let reveal = [ 7; 7; 7; 7; 7; 7; 7; 6 ] in
-      let eager = Roar.sample ~key ~temperature ~reveal t x target in
-      let d = start (Nx.Rng.place D.on key) (List.map on x) in
+      let eager = Roar.sample ~keys ~temperature ~reveal t x target in
+      let d = start (Nx.Rng.place D.on keys) (List.map on x) in
       let drawn =
         Roar.tokens (List.fold_left (fun d k -> step g k d) d reveal)
       in

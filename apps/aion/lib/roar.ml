@@ -8,11 +8,11 @@ let invalid fmt = Printf.ksprintf invalid_arg fmt
 type 'd temperature = Greedy | Tempered of 'd Nx.float64_t
 [@@deriving ptree]
 
-(* [order] is each object's order rotated so that the positions not yet
-   revealed come first, and [step], 0-d, the index the next step's key folds
-   in. *)
+(* [keys] holds a key per object, [order] each object's order rotated so that
+   the positions not yet revealed come first, and [step], 0-d, the index the
+   next step's keys fold in. *)
 type 'd draw = {
-  key : 'd Nx.Rng.key;
+  keys : 'd Nx.Rng.key;
   inputs : 'd Tokens.t list;
   target : 'd Tokens.t;
   order : 'd Nx.int64_t;
@@ -21,7 +21,7 @@ type 'd draw = {
 }
 [@@deriving ptree]
 
-let start ~key ?(temperature = 1.) inputs target =
+let start ~keys ?(temperature = 1.) inputs target =
   if temperature < 0. || not (Float.is_finite temperature) then
     invalid "Aion.Roar.start: temperature %g, not in [0, inf)" temperature;
   if List.exists (fun (i : _ Tokens.t) -> i.modality = target) inputs then
@@ -31,9 +31,19 @@ let start ~key ?(temperature = 1.) inputs target =
     | (i : _ Tokens.t) :: _ -> i.tokens
     | [] -> invalid "Aion.Roar.start: no input"
   in
+  let b = Nx.dim 0 first in
+  (match Nx.shape (Nx.Rng.to_tensor keys) with
+  | [| b'; 2 |] when b' = b -> ()
+  | s ->
+      invalid "Aion.Roar.start: keys of shape %s, [%d; 2] expected"
+        (Format.asprintf "%a" Nx.pp_shape s)
+        b);
   let at = Nx.beside first in
-  let shape = [| Nx.dim 0 first; Modality.tokens target |] in
-  let u = Nx.Rng.uniform_at at ~key:(Nx.Rng.fold_in key 0) Nx.float64 shape in
+  let n = Modality.tokens target in
+  let u =
+    Nx.Rng.uniform_at at ~key:(Nx.Rng.fold_in keys 0) Nx.float64 [| n |]
+  in
+  let shape = [| b; n |] in
   let tokens = Nx.zeros_at at Nx.int64 shape in
   let present = Nx.zeros_at at Nx.bool shape in
   let temperature =
@@ -41,7 +51,7 @@ let start ~key ?(temperature = 1.) inputs target =
     else Tempered (Nx.scalar_at at Nx.float64 temperature)
   in
   {
-    key;
+    keys;
     inputs;
     target = { modality = target; tokens; present };
     order = Nx.argsort ~axis:1 u;
@@ -82,7 +92,12 @@ let step t k d =
     { modality = d.target.modality; positions = Some p }
   in
   let l = List.hd (Transformer.decode t e [ next ]) in
-  let x = pick ~key:(Nx.Rng.fold_in_tensor d.key d.step) d.temperature l in
+  (* Keys of batch shape [b; 1; 1] against the [b; k; v] logits: each object
+     draws its logits from its own key, as it would alone. *)
+  let key =
+    Nx.Rng.reshape [| Nx.dim 0 l; 1; 1 |] (Nx.Rng.fold_in_tensor d.keys d.step)
+  in
+  let x = pick ~key d.temperature l in
   let shown = Nx.ones_at (Nx.beside x) Nx.bool (Nx.shape x) in
   let target : _ Tokens.t =
     {
@@ -96,7 +111,7 @@ let step t k d =
 
 let tokens d = d.target.tokens
 
-let sample ~key ?temperature ~reveal t inputs target =
+let sample ~keys ?temperature ~reveal t inputs target =
   let check k =
     if k < 1 then invalid "Aion.Roar.sample: a count of %d in reveal" k
   in
@@ -105,5 +120,5 @@ let sample ~key ?temperature ~reveal t inputs target =
   if total <> n then
     invalid "Aion.Roar.sample: reveal sums to %d, %s has %d tokens" total
       (Modality.key target) n;
-  let d = start ~key ?temperature inputs target in
+  let d = start ~keys ?temperature inputs target in
   tokens (List.fold_left (fun d k -> step t k d) d reveal)

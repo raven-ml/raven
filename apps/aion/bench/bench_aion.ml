@@ -299,7 +299,10 @@ let decode () =
 let roar_step () =
   let t = transformer () and i = inputs () in
   fun () ->
-    ignore (Roar.sample ~key:(Nx.Rng.key 7) ~reveal:[ 1 ] t i (Scalar Z))
+    ignore
+      (Roar.sample
+         ~keys:(Nx.Rng.reshape [| 1 |] (Nx.Rng.key 7))
+         ~reveal:[ 1 ] t i (Scalar Z))
 
 let () =
   exit

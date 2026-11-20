@@ -122,20 +122,21 @@ let run at ~hub ~ref64 =
     (encode g (List.map on x)).context
     r;
   printf "a DESI spectrum drawn from an image, one step, temperature 0\n%!";
-  let target = Modality.Spectrum Desi and key = Nx.Rng.key 7 in
+  let target = Modality.Spectrum Desi in
+  let keys = Nx.Rng.split_batch ~n:objects (Nx.Rng.key 7) in
   let reveal = [ Modality.tokens target ] and x = [ input Image ] in
-  let k = Roar.sample ~key ~temperature:0. ~reveal t x target in
+  let k = Roar.sample ~keys ~temperature:0. ~reveal t x target in
   let draw () = Nx.Ptree.v Roar.walk_draw in
   let start =
     Rune.jit
       Nx.Ptree.(Nx.Rng.ptree @-> inputs () @-> returns (draw ()))
-      (fun key x -> Roar.start ~key ~temperature:0. x target)
+      (fun keys x -> Roar.start ~keys ~temperature:0. x target)
   and step =
     Rune.jit
       Nx.Ptree.(model () @-> v Walk.int @-> draw () @-> returns (draw ()))
       Roar.step
   in
-  let d = start (Nx.Rng.place at key) (List.map on x) in
+  let d = start (Nx.Rng.place at keys) (List.map on x) in
   let kg = Roar.tokens (List.fold_left (fun d k -> step g k d) d reveal) in
   printf "  device %d of %d tokens differ from eager\n%!"
     (Int64.to_int

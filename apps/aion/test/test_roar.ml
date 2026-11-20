@@ -47,24 +47,29 @@ let xp =
 let z = (Modality.Scalar Z, inputs Modality.[ Scalar Xp_bp; Scalar Flux_g ])
 let ints x = Array.map Int64.to_int (Nx.to_array x)
 
-(* The orders the interface states for [b] objects of [n] positions from [key]:
-   argsort of float64 uniforms from [fold_in key 0]. *)
-let order ~key b n =
+(* A key for each of the fixture's four objects, from [seed]. *)
+let keys seed = Nx.Rng.split_batch ~n:4 (Nx.Rng.key seed)
+
+(* The orders the interface states for objects of [n] positions from [keys], a
+   key each: argsort of float64 uniforms from [fold_in keys 0], [[|n|]] a
+   key. *)
+let order ~keys n =
   Nx.argsort ~axis:1
-    (Nx.Rng.uniform_at Nx.Host.on ~key:(Nx.Rng.fold_in key 0) Nx.float64
-       [| b; n |])
+    (Nx.Rng.uniform_at Nx.Host.on ~key:(Nx.Rng.fold_in keys 0) Nx.float64
+       [| n |])
 
 (* Replaying a draw *)
 
-(* Step [s] of a draw of [tokens] from [key]: the next positions of each
+(* Step [s] of a draw of [tokens] from [keys]: the next positions of each
    object's order, decoded with the tokens of the steps before present, and
-   drawn as the interface states, from [fold_in key (s + 1)] at the logits less
-   their row's largest over the temperature, or as their argmax at [0.]. Gives
-   [tokens] at each step's positions, and the tokens drawn there. *)
-let replay ~key ~temperature ~reveal (target, inputs) tokens =
+   drawn as the interface states, each object from its key of
+   [fold_in keys (s + 1)] at the logits less their row's largest over the
+   temperature, or as their argmax at [0.]. Gives [tokens] at each step's
+   positions, the tokens drawn there, and each step's logits. *)
+let replay ~keys ~temperature ~reveal (target, inputs) tokens =
   let t = Lazy.force model in
   let b = Nx.dim 0 tokens and n = Modality.tokens target in
-  let order = order ~key b n in
+  let order = order ~keys n in
   let step (s, o, revealed, acc) k =
     let p = Nx.slice [ A; R (o, o + k) ] order in
     let target_input : _ Tokens.t =
@@ -81,23 +86,25 @@ let replay ~key ~temperature ~reveal (target, inputs) tokens =
       else
         let d = Nx.sub l (Nx.max ~axes:[ -1 ] ~keepdims:true l) in
         Nx.Rng.categorical
-          ~key:(Nx.Rng.fold_in key (s + 1))
+          ~key:(Nx.Rng.reshape [| b; 1; 1 |] (Nx.Rng.fold_in keys (s + 1)))
           (Nx.div_s d temperature)
     in
     let drawn = Nx.take_along_axis ~axis:1 p tokens in
     let revealed =
       Nx.scatter ~axis:1 p (Nx.ones Nx.bool (Nx.shape p)) revealed
     in
-    (s + 1, o + k, revealed, (ints drawn, ints x) :: acc)
+    (s + 1, o + k, revealed, (ints drawn, ints x, l) :: acc)
   in
   let _, _, _, acc =
     List.fold_left step (0, 0, Nx.zeros Nx.bool [| b; n |], []) reveal
   in
-  let drawn, replayed = List.split (List.rev acc) in
-  (Array.concat drawn, Array.concat replayed)
+  let acc = List.rev acc in
+  ( Array.concat (List.map (fun (d, _, _) -> d) acc),
+    Array.concat (List.map (fun (_, x, _) -> x) acc),
+    List.map (fun (_, _, l) -> l) acc )
 
-let sample ~key ?temperature ~reveal (target, inputs) =
-  Roar.sample ~key ?temperature ~reveal (Lazy.force model) inputs target
+let sample ~keys ?temperature ~reveal (target, inputs) =
+  Roar.sample ~keys ?temperature ~reveal (Lazy.force model) inputs target
 
 let linear8 = [ 7; 7; 7; 7; 7; 7; 7; 6 ]
 let ones n = List.init n (fun _ -> 1)
@@ -124,20 +131,22 @@ let replays =
     [
       cases "an XP spectrum's draws are its stated keys' draws" ~id rows
         (fun (_, reveal, temperature) ->
-          let key = Nx.Rng.key 11 in
-          let tokens = sample ~key ~temperature ~reveal xp in
-          let drawn, replayed = replay ~key ~temperature ~reveal xp tokens in
+          let keys = keys 11 in
+          let tokens = sample ~keys ~temperature ~reveal xp in
+          let drawn, replayed, _ =
+            replay ~keys ~temperature ~reveal xp tokens
+          in
           equal (array int) replayed drawn);
       cases "a redshift's draw is one step's" ~id:(Printf.sprintf "%g")
         [ 1.; 0.5; 0. ] (fun temperature ->
-          let key = Nx.Rng.key 12 in
-          let tokens = sample ~key ~temperature ~reveal:[ 1 ] z in
-          let drawn, replayed =
-            replay ~key ~temperature ~reveal:[ 1 ] z tokens
+          let keys = keys 12 in
+          let tokens = sample ~keys ~temperature ~reveal:[ 1 ] z in
+          let drawn, replayed, _ =
+            replay ~keys ~temperature ~reveal:[ 1 ] z tokens
           in
           equal (array int) replayed drawn);
       test "a draw holds tokens of the vocabulary" (fun () ->
-          let tokens = sample ~key:(Nx.Rng.key 13) ~reveal:linear8 xp in
+          let tokens = sample ~keys:(keys 13) ~reveal:linear8 xp in
           equal (array int) [| 4; 55 |] (Nx.shape tokens);
           let k = ints tokens in
           at_least int ~than:0 (Array.fold_left min max_int k);
@@ -156,7 +165,9 @@ let replays =
             { i with tokens = row i.tokens; present = row i.present }
           in
           let tokens =
-            Roar.sample ~key:(Nx.Rng.key 18) ~temperature:1e6 ~reveal:[ 1 ]
+            Roar.sample
+              ~keys:(Nx.Rng.split_batch ~n:copies (Nx.Rng.key 18))
+              ~temperature:1e6 ~reveal:[ 1 ]
               (Lazy.force model) (List.map copy inputs) target
           in
           let drawn =
@@ -166,10 +177,63 @@ let replays =
           in
           at_least int ~than:1 drawn);
       test "other keys draw other tokens" (fun () ->
-          let a = sample ~key:(Nx.Rng.key 14) ~reveal:linear8 xp in
-          let b = sample ~key:(Nx.Rng.key 15) ~reveal:linear8 xp in
+          let a = sample ~keys:(keys 14) ~reveal:linear8 xp in
+          let b = sample ~keys:(keys 15) ~reveal:linear8 xp in
           not_equal (array int) (ints a) (ints b));
     ]
+
+(* Batches *)
+
+(* The fixture's objects [ids] as a batch, with their keys: object [i]'s is
+   [fold_in (key 26) i], as main.exe keys an object by its row. *)
+let select ids inputs =
+  let ids =
+    Nx.create Nx.int64 [| Array.length ids |] (Array.map Int64.of_int ids)
+  in
+  let take x = Nx.take ~axis:0 ids x in
+  ( Nx.Rng.fold_in_tensor (Nx.Rng.key 26) ids,
+    List.map
+      (fun (i : _ Tokens.t) : _ Tokens.t ->
+        { i with tokens = take i.tokens; present = take i.present })
+      inputs )
+
+(* A batch of the fixture's objects: some, then copies of the first, as a
+   compiled device pads a batch. *)
+let batches =
+  Gen.(
+    let+ ids = list ~size:(int_range 1 4) (int_range 0 3)
+    and+ pad = int_range 0 3 in
+    (Array.of_list (ids @ List.init pad (fun _ -> List.hd ids)), pad))
+
+let batch_law =
+  let target, inputs = xp in
+  prop "an object draws alone what it draws in a batch" ~count:20 batches
+    (fun (ids, pad) ->
+      cover "two drawn objects" (Array.length ids - pad > 1);
+      cover "a padded batch" (pad > 0);
+      let t = Lazy.force model in
+      (* A draw of [ids], and the logits of each of its steps. *)
+      let draw ids =
+        let keys, inputs = select ids inputs in
+        let tokens = Roar.sample ~keys ~reveal:linear8 t inputs target in
+        let _, _, logits =
+          replay ~keys ~temperature:1. ~reveal:linear8 (target, inputs) tokens
+        in
+        (tokens, logits)
+      in
+      let tokens, logits = draw ids in
+      Array.iteri
+        (fun i id ->
+          let row x = Nx.slice [ R (i, i + 1) ] x in
+          let alone, alone_logits = draw [| id |] in
+          (* The premise: at each step, the object's logits are those it has
+             alone, bit for bit. *)
+          List.iter2
+            (fun a l ->
+              equal (array float_exact) (Nx.to_array a) (Nx.to_array (row l)))
+            alone_logits logits;
+          equal (array int) (ints alone) (ints (row tokens)))
+        ids)
 
 (* Temperature *)
 
@@ -185,7 +249,7 @@ let temperatures =
                  [ { modality = target; positions = None } ])
           in
           let tokens =
-            sample ~key:(Nx.Rng.key 16) ~temperature:0. ~reveal:[ 1 ] z
+            sample ~keys:(keys 16) ~temperature:0. ~reveal:[ 1 ] z
           in
           equal (array int) (ints (Nx.argmax ~axis:(-1) l)) (ints tokens));
       cases "a tiny temperature takes the largest logit"
@@ -195,9 +259,9 @@ let temperatures =
              row's largest it is -inf or 0. Below float32's least subnormal the
              temperature rounds to 0, and the largest logits keep their 0. *)
           let g =
-            sample ~key:(Nx.Rng.key 17) ~temperature:0. ~reveal:linear8 xp
+            sample ~keys:(keys 17) ~temperature:0. ~reveal:linear8 xp
           in
-          let s = sample ~key:(Nx.Rng.key 17) ~temperature ~reveal:linear8 xp in
+          let s = sample ~keys:(keys 17) ~temperature ~reveal:linear8 xp in
           equal (array int) (ints g) (ints s));
     ]
 
@@ -216,9 +280,10 @@ let chi2 counts =
 let chi2_19 = 43.82019596451753
 let chi2_29 = 58.301173489794905
 
-(* The orders of [b] objects of [n] positions from the key [seed], as lists. *)
+(* The orders of [b] objects of [n] positions from [b] keys of [seed], as
+   lists. *)
 let orders seed b n =
-  let o = ints (order ~key:(Nx.Rng.key seed) b n) in
+  let o = ints (order ~keys:(Nx.Rng.split_batch ~n:b (Nx.Rng.key seed)) n) in
   List.init b (fun i -> Array.to_list (Array.sub o (i * n) n))
 
 (* Each object's order cut into counts [cuts]: the sets revealed at each step,
@@ -259,7 +324,7 @@ let orders_law =
       cases "steps of 2, 2 and 1 of 5 positions are a uniform partition"
         ~id:string_of_int [ 23; 24 ]
         (law ~cuts:[ 2; 2; 1 ] ~cells:30 ~quantile:chi2_29);
-      test "copies of one object take their own orders" (fun () ->
+      test "objects of distinct keys take their own orders" (fun () ->
           equal int 64 (List.length (List.sort_uniq compare (orders 25 64 55))));
     ]
 
@@ -279,7 +344,7 @@ let start ?temperature target =
   Rune.jit
     Nx.Ptree.(
       Nx.Rng.ptree @-> list (v Tokens.walk) @-> returns (v Roar.walk_draw))
-    (fun key x -> Roar.start ~key ?temperature x target)
+    (fun keys x -> Roar.start ~keys ?temperature x target)
 
 (* The fold of a caller who compiles: [start], and [step], the count an
    argument, whose traces [traces] counts: one per program. *)
@@ -294,9 +359,9 @@ let compiled ?(traces = ref 0) () =
         incr traces;
         Roar.step t k d)
   in
-  fun ~key ?temperature ~reveal t inputs target ->
+  fun ~keys ?temperature ~reveal t inputs target ->
     let start = start ?temperature target in
-    let d = start key inputs in
+    let d = start keys inputs in
     Roar.tokens (List.fold_left (fun d k -> step t k d) d reveal)
 
 let draws =
@@ -319,24 +384,24 @@ let draws =
     [
       cases "compiled start and step draw the eager tokens" ~id rows
         (fun (_, reveal, temperature) ->
-          let key = Nx.Rng.key 19 in
-          let eager = sample ~key ~temperature ~reveal xp in
+          let keys = keys 19 in
+          let eager = sample ~keys ~temperature ~reveal xp in
           let c =
-            (Lazy.force draw) ~key ~temperature ~reveal (Lazy.force model)
+            (Lazy.force draw) ~keys ~temperature ~reveal (Lazy.force model)
               inputs target
           in
           equal (array int) (ints eager) (ints c));
       cases "they draw on a set without eager kernels" ~id:(Printf.sprintf "%g")
         [ 1.; 0. ] (fun temperature ->
-          let key = Nx.Rng.key 20 in
+          let keys = keys 20 in
           let k =
-            compiled () ~key:(Nx.Rng.place Soft.on key) ~temperature
+            compiled () ~keys:(Nx.Rng.place Soft.on keys) ~temperature
               ~reveal:linear8
               (Nx.Ptree.place (module Transformer) Soft.on (Lazy.force model))
               (List.map (Nx.Ptree.place_fixed Tokens.walk Soft.on) inputs)
               target
           in
-          let c = sample ~key ~temperature ~reveal:linear8 xp in
+          let c = sample ~keys ~temperature ~reveal:linear8 xp in
           equal (array int) (ints c) (ints (Nx.place Nx.Host.on k)));
       test "every positive temperature shares one step program" (fun () ->
           let traces = ref 0 in
@@ -344,7 +409,7 @@ let draws =
           let run temperature =
             ignore
               (ints
-                 (draw ~key:(Nx.Rng.key 21) ~temperature ~reveal:[ 55 ]
+                 (draw ~keys:(keys 21) ~temperature ~reveal:[ 55 ]
                     (Lazy.force model) inputs target))
           in
           List.iter run [ 1.; 0.5; 2. ];
@@ -353,17 +418,17 @@ let draws =
           equal int 2 !traces);
       test "a compiled start refuses at its trace" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"temperature -1") (fun () ->
-              start ~temperature:(-1.) target (Nx.Rng.key 0) inputs));
+              start ~temperature:(-1.) target (keys 0) inputs));
       test "a compiled step refuses a revealed position" (fun () ->
           (* Of 55 positions, the second step's last 5 are the first's. *)
           raises_match (Exn.invalid_arg ~sub:"already revealed") (fun () ->
-              (Lazy.force draw) ~key:(Nx.Rng.key 0) ~reveal:[ 30; 30 ]
+              (Lazy.force draw) ~keys:(keys 0) ~reveal:[ 30; 30 ]
                 (Lazy.force model) inputs target));
       test "so does one on a set without eager kernels" (fun () ->
           (* Its check raises at the wait that reads the tokens. *)
           raises_match (Exn.invalid_arg ~sub:"already revealed") (fun () ->
               Nx.place Nx.Host.on
-                (compiled () ~key:(Nx.Rng.place Soft.on (Nx.Rng.key 0))
+                (compiled () ~keys:(Nx.Rng.place Soft.on (keys 0))
                    ~reveal:[ 30; 30 ]
                    (Nx.Ptree.place (module Transformer) Soft.on
                       (Lazy.force model))
@@ -379,7 +444,7 @@ let draws =
             }
           in
           raises_match (Exn.invalid_arg ~sub:"outside [0, 1024)") (fun () ->
-              (Lazy.force draw) ~key:(Nx.Rng.key 0) ~reveal:linear8
+              (Lazy.force draw) ~keys:(keys 0) ~reveal:linear8
                 (Lazy.force model) (List.map bad inputs) target));
     ]
 
@@ -387,14 +452,14 @@ let draws =
 
 let refusals =
   let refuses sub f = raises_match (Exn.invalid_arg ~sub) f in
-  let key = Nx.Rng.key 0 in
+  let keys = keys 0 in
   group "refusals"
     [
       cases "a temperature outside [0, inf)" ~id:(Printf.sprintf "%g")
         [ -1.; -1e-300; Float.nan; Float.infinity; Float.neg_infinity ]
         (fun temperature ->
           refuses "temperature" (fun () ->
-              sample ~key ~temperature ~reveal:[ 55 ] xp));
+              sample ~keys ~temperature ~reveal:[ 55 ] xp));
       cases "counts that are not a schedule"
         ~id:(fun (name, _, _) -> name)
         [
@@ -404,26 +469,45 @@ let refusals =
           ("too many", [ 50; 6 ], "sums to 56");
           ("none", [], "sums to 0");
         ]
-        (fun (_, reveal, sub) -> refuses sub (fun () -> sample ~key ~reveal xp));
+        (fun (_, reveal, sub) ->
+          refuses sub (fun () -> sample ~keys ~reveal xp));
       test "a target among the inputs" (fun () ->
           let _, inputs = xp in
           refuses "tok_z is an input" (fun () ->
-              sample ~key ~reveal:[ 1 ] (Modality.Scalar Z, inputs)));
+              sample ~keys ~reveal:[ 1 ] (Modality.Scalar Z, inputs)));
+      cases "keys of another shape"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ("a key", Nx.Rng.key 0, "keys of shape [2], [4; 2] expected");
+          ( "three keys",
+            Nx.Rng.split_batch ~n:3 (Nx.Rng.key 0),
+            "keys of shape [3; 2], [4; 2] expected" );
+        ]
+        (fun (_, keys, sub) ->
+          refuses sub (fun () -> sample ~keys ~reveal:[ 55 ] xp));
       test "no input" (fun () ->
           refuses "no input" (fun () ->
-              sample ~key ~reveal:[ 1 ] (Modality.Scalar Z, [])));
+              sample ~keys ~reveal:[ 1 ] (Modality.Scalar Z, [])));
       cases "a step's count outside [1, n]" ~id:string_of_int [ 0; -1; 56 ]
         (fun k ->
           let target, inputs = xp in
-          let d = Roar.start ~key inputs target in
+          let d = Roar.start ~keys inputs target in
           refuses (Printf.sprintf "a count of %d, not in [1, 55]" k) (fun () ->
               Roar.step (Lazy.force model) k d));
       test "a step at a revealed position" (fun () ->
           let target, inputs = xp and t = Lazy.force model in
-          let d = Roar.step t 30 (Roar.start ~key inputs target) in
+          let d = Roar.step t 30 (Roar.start ~keys inputs target) in
           refuses "already revealed" (fun () -> Roar.step t 30 d));
     ]
 
 let () =
   exit
-    (run "aion.roar" [ replays; temperatures; orders_law; draws; refusals ])
+    (run "aion.roar"
+       [
+         replays;
+         group "batches" [ batch_law ];
+         temperatures;
+         orders_law;
+         draws;
+         refusals;
+       ])

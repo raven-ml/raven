@@ -33,14 +33,17 @@
     the target's whole vocabulary ({!Modality.vocab}): redshift's holds one
     token more than its codec decodes ({!Scalar.decode}).
 
-    The draws are a function of the key, the transformer's weights and dtype,
-    the inputs, [reveal] and the temperature. Each object's order is
-    [Nx.argsort ~axis:1] of {!Nx.Rng.uniform_at} at the inputs' placement, from
-    [Nx.Rng.fold_in key 0], of dtype float64 and shape [[|b; n|]]. Step [s]'s
-    tokens are {!Nx.Rng.categorical} from [Nx.Rng.fold_in key (s + 1)] of the
-    step's [[|b; k; v|]] logits less each row's largest, divided by the
-    temperature. Logits that differ in their last bits, as on another device
-    set, can move a draw near a boundary between two tokens.
+    Each object draws from a key of its own: [keys], of shape [[|b; 2|]], holds
+    one per object. Object [i]'s order is [Nx.argsort] of {!Nx.Rng.uniform_at}
+    at the inputs' placement, from key [i] of [Nx.Rng.fold_in keys 0], of dtype
+    float64 and shape [[|n|]]. Its step-[s] tokens are {!Nx.Rng.categorical}
+    from key [i] of [Nx.Rng.fold_in keys (s + 1)] of its [[|k; v|]] logits less
+    each row's largest, divided by the temperature. So an object's draws are a
+    function of its key, its inputs, the transformer's weights and dtype,
+    [reveal] and the temperature, and not of the objects drawn beside it, where
+    its logits are the same bit for bit in either batch. Logits that differ in
+    their last bits, as on another device set or possibly in a batch of another
+    size, can move a draw near a boundary between two tokens.
 
     AION-1's code reveals the [n] tokens in near-equal counts, larger first. For
     a DESI spectrum from an object's Gaia XP coefficients, at eight steps:
@@ -51,7 +54,8 @@
         let present = Nx.ones Nx.bool (Nx.shape tokens) in
         { modality = Modality.Scalar m; tokens; present }
       in
-      Roar.sample ~key:(Nx.Rng.key 0)
+      Roar.sample
+        ~keys:(Nx.Rng.split_batch ~n:(Nx.dim 0 xp_bp) (Nx.Rng.key 0))
         ~reveal:[ 35; 34; 34; 34; 34; 34; 34; 34 ]
         (Transformer.of_archive (Hub.weights Base))
         [ input Xp_bp xp_bp; input Xp_rp xp_rp ]
@@ -59,18 +63,19 @@
     ]} *)
 
 val sample :
-  key:'d Nx.Rng.key ->
+  keys:'d Nx.Rng.key ->
   ?temperature:float ->
   reveal:int list ->
   ((float, 'b, 'd) Nx.t, 'd) Transformer.t ->
   'd Tokens.t list ->
   Modality.t ->
   'd Nx.int64_t
-(** [sample ~key ~reveal t inputs target] is a draw of [target]'s tokens,
-    [[|b; n|]], for each of the [b] objects of [inputs], [n] the target's
-    {!Modality.tokens}: the {!tokens} of {!step}[ t] folded over [reveal] from
-    {!start}[ ~key ~temperature inputs target], so step [s] reveals
-    [List.nth reveal s] tokens of each object. [temperature] defaults to [1.].
+(** [sample ~keys ~reveal t inputs target] is a draw of [target]'s tokens,
+    [[|b; n|]], for each of the [b] objects of [inputs] from its key of [keys],
+    [n] the target's {!Modality.tokens}: the {!tokens} of {!step}[ t] folded
+    over [reveal] from {!start}[ ~keys ~temperature inputs target], so step [s]
+    reveals [List.nth reveal s] tokens of each object. [temperature] defaults to
+    [1.].
 
     It computes eagerly, so [t]'s set must have eager kernels: on another set,
     such as a GPU's, compile {!start} and {!step} and fold them as [sample]
@@ -91,7 +96,7 @@ val sample :
     let start =
       Rune.jit
         Nx.Ptree.(Nx.Rng.ptree @-> list (v Tokens.walk) @-> returns (draw ()))
-        (fun key x -> Roar.start ~key ~temperature x target)
+        (fun keys x -> Roar.start ~keys ~temperature x target)
     and step =
       Rune.jit
         Nx.Ptree.(
@@ -99,7 +104,7 @@ val sample :
           @-> v Walk.int @-> draw () @-> returns (draw ()))
         Roar.step
     in
-    Roar.tokens (List.fold_left (fun d k -> step t k d) (start key x) reveal)
+    Roar.tokens (List.fold_left (fun d k -> step t k d) (start keys x) reveal)
     ]}
 
     They draw {!sample}'s tokens where the logits agree, to the accuracy
@@ -117,24 +122,25 @@ val walk_draw : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd draw -> 'e draw
     its temperature is [0.], and walks its arrays as fixed ones. *)
 
 val start :
-  key:'d Nx.Rng.key ->
+  keys:'d Nx.Rng.key ->
   ?temperature:float ->
   'd Tokens.t list ->
   Modality.t ->
   'd draw
-(** [start ~key inputs target] is a draw of [target]'s tokens given [inputs]
-    with no token revealed, each object's order drawn from [key], at the
-    temperature [temperature] (defaults to [1.]).
+(** [start ~keys inputs target] is a draw of [target]'s tokens given [inputs]
+    with no token revealed, each object's order drawn from its key of [keys], at
+    the temperature [temperature] (defaults to [1.]).
 
-    Raises [Invalid_argument] if [temperature] is negative or not finite, or if
-    [inputs] holds [target] or is empty. *)
+    Raises [Invalid_argument] if [temperature] is negative or not finite, if
+    [inputs] holds [target] or is empty, or if [keys] is not a batch of [b]
+    keys, [b] the objects of [inputs]. *)
 
 val step :
   ((float, 'b, 'd) Nx.t, 'd) Transformer.t -> int -> 'd draw -> 'd draw
 (** [step t k d] is [d] after one more step, which reveals the next [k]
-    positions of each object's order with [t]. It draws from
-    [Nx.Rng.fold_in key (s + 1)], [key] the one {!start} took and [s] the
-    number of steps [d] has taken.
+    positions of each object's order with [t]. Object [i] draws from key [i] of
+    [Nx.Rng.fold_in keys (s + 1)], [keys] those {!start} took and [s] the number
+    of steps [d] has taken.
 
     Raises [Invalid_argument] if [k] is not in [[1, n]], [n] the target's
     {!Modality.tokens}, if a position it would reveal is revealed already, as

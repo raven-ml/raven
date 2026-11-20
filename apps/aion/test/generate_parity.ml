@@ -12,11 +12,12 @@
 
    For each case the program runs MAIN generate on DIR's files, then draws the
    same tokens from the library: Survey.read and Codecs.encode of the case's
-   rows, in batches of the case's size, each batch's objects with a present
-   token, and Roar.sample with the key [fold_in (fold_in (key seed) b) j] for
-   draw j of batch b, at the counts written out below. The tokens must be equal,
-   and each entry main.exe decoded must equal Codecs.decode of them within 1e-6
-   of its largest magnitude. The cases are:
+   rows, in batches of the case's size as main.exe batches them, each batch's
+   objects with a present token, and Roar.sample with the key
+   [fold_in (fold_in (key seed) r) j] for draw j of row r, at the counts
+   written out below. The tokens must be equal, and each entry main.exe decoded
+   must equal Codecs.decode of them within 1e-6 of its largest magnitude. The
+   cases are:
 
    - [z]: redshift from the tutorial file's Legacy Survey image and g, r, i, z
    fluxes (AION-1 §7.1.1), rows 0:6 in batches of 4, three draws;
@@ -148,7 +149,7 @@ let replay t codecs c =
   let starts =
     List.init ((b - a + c.batch - 1) / c.batch) (fun i -> a + (i * c.batch))
   in
-  let batch i lo =
+  let batch lo =
     let rows = Array.init (min c.batch (b - lo)) (fun k -> lo + k) in
     let ins =
       List.map (fun m -> Codecs.encode codecs (Survey.read src rows m)) c.inputs
@@ -177,10 +178,14 @@ let replay t codecs c =
             })
           ins
       in
-      let key = Nx.Rng.fold_in (Nx.Rng.key c.seed) i in
+      let keys =
+        Nx.Rng.fold_in_tensor (Nx.Rng.key c.seed)
+          (Nx.create Nx.int64 [| Array.length kept |]
+             (Array.map (fun k -> Int64.of_int rows.(k)) kept))
+      in
       let draws =
         List.init c.draws (fun j ->
-            Roar.sample ~key:(Nx.Rng.fold_in key j) ~reveal:c.reveal t ins
+            Roar.sample ~keys:(Nx.Rng.fold_in keys j) ~reveal:c.reveal t ins
               c.target)
       in
       (* A scalar token past its codebook's edges, redshift's class 1024,
@@ -217,7 +222,7 @@ let replay t codecs c =
                   (List.map (fun d -> List.assoc name (decoded (x d))) draws) ))
             (decoded (x (List.hd draws))) )
   in
-  let parts = List.filter_map Fun.id (List.mapi batch starts) in
+  let parts = List.filter_map batch starts in
   ( Nx.concatenate ~axis:0 (List.map fst parts),
     List.map
       (fun (name, _) ->

@@ -10,9 +10,10 @@
 
    reference.exe generate GAIA INPUT TARGET SEED REVEAL DRAWS BATCH OUT: the
    draws of TARGET from INPUT of the Gaia file's rows, by Roar.sample directly:
-   the rows in batches of BATCH, each batch's objects with a present token, and
-   draw j of batch b from the key [fold_in (fold_in (key SEED) b) j] with the
-   counts REVEAL, comma-separated. OUT's tokens is int64 [n; DRAWS; k]. *)
+   the rows in batches of BATCH, as main.exe batches them, each batch's objects
+   with a present token, and draw j of row r from the key
+   [fold_in (fold_in (key SEED) r) j] with the counts REVEAL, comma-separated.
+   OUT's tokens is int64 [n; DRAWS; k]. *)
 
 open Aion
 
@@ -61,11 +62,17 @@ let generate file input target ~seed ~reveal ~draws ~batch out =
       let i : _ Tokens.t =
         { i with tokens = take i.tokens; present = take i.present }
       in
-      let key = Nx.Rng.fold_in (Nx.Rng.key seed) b in
+      let keys =
+        Nx.Rng.fold_in_tensor (Nx.Rng.key seed)
+          (Nx.create Nx.int64
+             [| Array.length kept |]
+             (Array.map (fun k -> Int64.of_int rows.(k)) kept))
+      in
       Some
         (Nx.stack ~axis:1
            (List.init draws (fun j ->
-                Roar.sample ~key:(Nx.Rng.fold_in key j) ~reveal t [ i ] target)))
+                Roar.sample ~keys:(Nx.Rng.fold_in keys j) ~reveal t [ i ]
+                  target)))
   in
   let tokens = List.filter_map draws_of (List.init batches Fun.id) in
   Nx_io.save_npz out
