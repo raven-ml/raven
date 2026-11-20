@@ -1,12 +1,13 @@
 # Gradients and edges
 
-This page builds edge detectors and derivative filters from
-`Mynd.Filter.gradient`, `Mynd.Filter.gradient_maxima`,
-`Mynd.Filter.gaussian` and `Mynd.Mask.reconstruct`: Canny's edges, wider
-derivative stencils, the Laplacian of a Gaussian, thresholds, the
-border, and the structure tensor. The rules each call follows are in
-`Mynd.Filter`, its Gradients and edges section among them, and in
-`Mynd.Mask`, in [`mynd.mli`](../lib/mynd.mli).
+An edge is where an image's values change fast, and the gradient
+measures that change. The Gradients and edges section of
+[`Mynd.Filter`](../lib/mynd.mli) defines the gradient, its strength and
+Canny's edges. The programs below build Canny's detector, wider
+derivative stencils, the Laplacian of a Gaussian, thresholds, detection
+at the border and the structure tensor from `Mynd.Filter.gradient`,
+`Mynd.Filter.gradient_maxima`, `Mynd.Filter.gaussian` and
+`Mynd.Mask.reconstruct`.
 
 The programs below work on grey images of `float32` values in `[0, 1]`:
 
@@ -23,7 +24,7 @@ let largest a = Array.fold_left (fun m v -> Float.max m (Float.abs v)) 0. a
 let floats x = Nx.to_array (Nx.cast Nx.float64 x)
 let distance a b = largest (floats (Nx.sub a b))
 
-(* [pieces m] is the number of 8-connected components of a mask. *)
+(* [pieces m] is the number of components of a mask under [`Eight]. *)
 let pieces m =
   Mynd.Mask.components `Eight m |> floats |> Array.to_list
   |> List.filter (fun l -> l >= 0.)
@@ -32,10 +33,11 @@ let pieces m =
 
 ## Gradients
 
-`Mynd.Filter.gradient` gives the pair `(gx, gy)` in values per pixel. A
-ramp that grows by `a` a column and `b` a row reads `a` and `b` under
-every stencil, so thresholds on the strength `Nx.hypot gx gy` mean the
-same under each:
+[`Mynd.Filter.gradient`](../lib/mynd.mli) gives the pair `(gx, gy)` in
+values per pixel. A ramp that grows by `a` a column and `b` a row reads
+`a` and `b` under every stencil
+([`Mynd.Filter.stencil`](../lib/mynd.mli)), so thresholds on the
+strength `Nx.hypot gx gy` mean the same under each:
 
 ```ocaml
 let ramp = Nx.init Nx.float32 [| 6; 7; 1 |] (fun i -> (0.25 *. Float.of_int i.(1)) -. (0.125 *. Float.of_int i.(0)))
@@ -49,11 +51,14 @@ let () =
     [ `Central; `Sobel; `Scharr ]
 ```
 
-Under `` `Antisymmetric_whole `` the image continues past its border as
-the line through its last two pixels, so the slope holds to the border.
+Under `` `Antisymmetric_whole `` the pixel `i` past the border reads
+`2 x(0) - x(i)`, so a ramp continues as the same line and the slope holds
+to the border (the section Reading outside the image of
+[`Mynd`](../lib/mynd.mli)).
 
 `` `Central `` takes the difference alone. After `Mynd.Filter.gaussian`
-of deviation `σ` it is a Gaussian derivative whose scale is `σ` alone.
+of deviation `σ` it is a Gaussian derivative whose scale is `σ` alone
+(the Gradients and edges section of [`Mynd.Filter`](../lib/mynd.mli)).
 `` `Sobel `` and `` `Scharr `` smooth across the difference too, which
 adds a little blur along the edge and makes the gradient's direction
 more accurate on detail a few pixels wide.
@@ -103,53 +108,69 @@ let () =
 
 Canny's edges are the pixels where the strength of a Gaussian derivative
 is a maximum along the gradient and above a low threshold, kept where
-they join one above a high threshold. Each step is a call:
+they join one above a high threshold (the Gradients and edges section of
+[`Mynd.Filter`](../lib/mynd.mli)). The detector's stages are a blur, the
+gradient, the *thinning* by `gradient_maxima` to the maxima along the
+gradient, and the *hysteresis*. The *candidates* are the maxima above
+the low threshold, and the hysteresis keeps those joined to a *strong*
+pixel, one above the high threshold. Each stage is a call. The
+thresholds are arrays, so each image of a batch can have its own:
 
 ```ocaml
 (* Canny's edges of grey images [x], [[…; h; w; 1]], float32, values in
    [0, 1]. [sigma] is [[b'…]], in [x]'s dtype; [low] and [high] are
-   strengths in values per pixel. A step of height [a] has strength about
-   [a / (σ √(2π))], so thresholds scale with [1 / σ]. One symmetric edge
-   rule for every step computes what the detector computes on the image
-   mirrored past its border. *)
+   strengths in values per pixel, as a scalar or [[n; 1; 1; 1]] for [x] of
+   [[n; h; w; 1]], which broadcast with the strengths as nx broadcasts. A
+   jump of height [a] has strength about [a / (σ √(2π))], so thresholds
+   scale with [1 / σ]. The blur and the gradient read the image mirrored
+   past its border. The thinning compares no position outside the image,
+   and the hysteresis reads none. *)
 let canny ~radius ~sigma ~low ~high x =
   let edge = `Symmetric_whole in
   let b = Mynd.Filter.gaussian ~edge ~radius sigma x in
   let ((gx, gy) as g) = Mynd.Filter.gradient ~edge `Central b in
   let m = Nx.hypot gx gy in
-  let candidates = Nx.logical_and (Mynd.Filter.gradient_maxima g) (Nx.greater_s m low) in
-  Mynd.Mask.reconstruct `Eight ~marker:(Nx.greater_s m high) candidates
+  let candidates = Nx.logical_and (Mynd.Filter.gradient_maxima g) (Nx.greater m low) in
+  Mynd.Mask.reconstruct `Eight ~marker:(Nx.greater m high) candidates
+
+let f32 = Nx.scalar Nx.float32
 
 let () =
-  let e = canny ~radius:6 ~sigma:(Nx.scalar Nx.float32 1.4) ~low:0.05 ~high:0.15 square in
+  let e = canny ~radius:6 ~sigma:(f32 1.4) ~low:(f32 0.05) ~high:(f32 0.15) square in
   assert (pieces e = 1)
 ```
 
-The square's step has height `0.7`, so at `σ = 1.4` its strength is
-about `0.2`, above both thresholds. The outline is one piece because
-`gradient_maxima` interpolates the strength along the gradient at every
-direction, so a contour turning a corner keeps a pixel there.
+The square's border is a jump of height `0.7`, so at `σ = 1.4` its
+strength is about `0.2`, above both thresholds. The outline is one piece
+because [`gradient_maxima`](../lib/mynd.mli) interpolates the strength
+along the gradient at every direction, so a contour turning a corner
+keeps a pixel there.
 
-`reconstruct` keeps the candidates joined to a strong pixel through
-8-connected neighbours. It ignores a marker pixel outside the
+[`Mynd.Mask.reconstruct`](../lib/mynd.mli) keeps the candidates joined
+to a strong pixel through pixels next under `` `Eight ``, which share a
+side or a corner (8-connected). It ignores a marker pixel outside the
 candidates, so the strong pixels need no masking first.
 
-Images in a narrow float format lose the strength's low bits: convert
-them to `float32` first, as `canny`'s comment asks. A colour image gives
-edges per channel. `reconstruct` takes masks of one channel, so either
-move the channels into the batch, or join them before hysteresis with
+The gradient of an image in a narrow float format rounds into that
+format ([`Mynd.Filter.gradient`](../lib/mynd.mli) computes wide), and
+its strength loses low bits. Convert such images to `float32` first, as
+`canny`'s comment requires. A colour image gives edges per channel. A mask
+has one channel ([`Mynd`](../lib/mynd.mli)), so either move the channels
+into the batch, or join them before hysteresis with
 `Nx.any ~axes:[ -1 ] ~keepdims:true`, of the candidates and of the strong
 pixels each, which gives one edge map.
 
 ## Thresholds
 
-Strengths are in values per pixel, so a threshold reads as the height of
-a step over the pixels that blur it: a step of height `a` has strength
-`a (g(0) + g(1)) / 2` beside it, `g` the blur's weights, about
-`a / (σ √(2π))`. Halving `σ` doubles the strength of every step.
+Strengths are in values per pixel. A *step*, a jump of height `a`
+between two flat regions, blurred by weights `g`, has strength
+`a (g(0) + g(1)) / 2` beside it, about `a / (σ √(2π))`. Halving `σ`
+about doubles the strength of every step.
 
 A threshold relative to each image's own strengths takes a quantile of
-`m` per image. The batch axes pair with the quantiles by a reshape:
+`m` per image. Shaped `[n; 1; 1; 1]`, the quantiles broadcast over each
+image's pixels, and `canny` takes them as thresholds. Halving an image
+halves its strengths and its quantiles, so its edges stay the same:
 
 ```ocaml
 let relative ~radius ~sigma q x =
@@ -165,35 +186,40 @@ let relative ~radius ~sigma q x =
 
 let () =
   let batch = Nx.stack [ square; Nx.mul_s square 0.5 ] in
-  let t = relative ~radius:6 ~sigma:(Nx.scalar Nx.float32 1.4) 0.9 batch in
-  assert (Nx.shape t = [| 2; 1; 1; 1 |]);
-  let t = floats t in
-  assert (Float.abs (t.(1) -. (t.(0) /. 2.)) < 1e-6)
+  let sigma = f32 1.4 in
+  let low = relative ~radius:6 ~sigma 0.9 batch in
+  let high = relative ~radius:6 ~sigma 0.95 batch in
+  assert (Nx.shape low = [| 2; 1; 1; 1 |]);
+  let e = canny ~radius:6 ~sigma ~low ~high batch in
+  assert (Nx.to_array (Nx.slice [ Nx.I 0 ] e) = Nx.to_array (Nx.slice [ Nx.I 1 ] e))
 ```
 
 Where an image is a linear ramp, the strength is constant up to
-rounding, and rounding decides which pixels are maxima. Those pixels
-have the ramp's strength, so a low threshold above the ramp's slope
-removes them:
+rounding away from the border, and rounding decides which pixels are
+maxima ([`Mynd.Filter.gradient_maxima`](../lib/mynd.mli)). The pixels
+kept have at most the ramp's strength, to rounding, so a low threshold
+above the ramp's slope removes them:
 
 ```ocaml
 let () =
   let ramp = Nx.init Nx.float32 [| 32; 48; 1 |] (fun i -> 0.004 *. Float.of_int i.(1)) in
-  let e = canny ~radius:6 ~sigma:(Nx.scalar Nx.float32 1.4) ~low:0.008 ~high:0.01 ramp in
+  let e = canny ~radius:6 ~sigma:(f32 1.4) ~low:(f32 0.008) ~high:(f32 0.01) ramp in
   assert (not (Nx.item [] (Nx.any e)))
 ```
 
 ## The border
 
-Under `` `Symmetric_whole `` every step reads the image mirrored about
-its border pixels. The derivative across the border is then `0` on the
-border row itself, so an edge that runs along the border between rows
-`0` and `1` is marked on row `1`.
+Under `` `Symmetric_whole `` the blur and the gradient read the image
+mirrored about its border pixels (the section Reading outside the image of
+[`Mynd`](../lib/mynd.mli)).
+The derivative across the border is then `0` on the border row itself,
+so an edge that runs along the border between rows `0` and `1` is marked
+on row `1`.
 
 To run the detector on the image continued by another rule, extend the
 image by that rule first, by the blur's radius and the two pixels that
-the gradient and the thinning read, and crop the candidates and the
-strong pixels before hysteresis, so that edges join only through the
+the gradient and the thinning read. Then crop the candidates and the
+strong pixels before the hysteresis, so that edges join only through the
 image's own pixels:
 
 ```ocaml
@@ -205,26 +231,31 @@ let canny_extended rule ~radius ~sigma ~low ~high x =
   let ((gx, gy) as g) = Mynd.Filter.gradient ~edge `Central b in
   let m = Nx.hypot gx gy in
   let h = Nx.dim (-3) x and w = Nx.dim (-2) x in
-  let crop y = Nx.slice [ Nx.R (r, r + h); Nx.R (r, r + w) ] y in
-  let candidates = crop (Nx.logical_and (Mynd.Filter.gradient_maxima g) (Nx.greater_s m low)) in
-  Mynd.Mask.reconstruct `Eight ~marker:(crop (Nx.greater_s m high)) candidates
+  let lead = List.init (Nx.ndim x - 3) (fun _ -> Nx.A) in
+  let crop y = Nx.slice (lead @ [ Nx.R (r, r + h); Nx.R (r, r + w) ]) y in
+  let candidates = crop (Nx.logical_and (Mynd.Filter.gradient_maxima g) (Nx.greater m low)) in
+  Mynd.Mask.reconstruct `Eight ~marker:(crop (Nx.greater m high)) candidates
 
 let () =
-  let sigma = Nx.scalar Nx.float32 1.4 in
-  let a = canny ~radius:6 ~sigma ~low:0.05 ~high:0.15 square in
-  let b = canny_extended `Symmetric_whole ~radius:6 ~sigma ~low:0.05 ~high:0.15 square in
-  assert (Nx.to_array a = Nx.to_array b)
+  let e = canny_extended `Replicate ~radius:6 ~sigma:(f32 1.4) ~low:(f32 0.05) ~high:(f32 0.15) square in
+  assert (pieces e = 1);
+  let batch = Nx.stack [ square; square ] in
+  let eb = canny_extended `Replicate ~radius:6 ~sigma:(f32 1.4) ~low:(f32 0.05) ~high:(f32 0.15) batch in
+  assert (Nx.to_array (Nx.slice [ Nx.I 1 ] eb) = Nx.to_array e)
 ```
 
-Under `` `Symmetric_whole `` the two agree, since every step's reads past
-the border are the mirrored image's own pixels.
+On the extended image the thinning compares the border pixels with the
+extension's, where `canny` compares no position outside the image
+([`Mynd.Filter.gradient_maxima`](../lib/mynd.mli)). So under
+`` `Symmetric_whole `` the two can differ on the border pixels, where an
+edge reaches the border.
 
 ## The structure tensor
 
 The structure tensor is the blur of the gradient's products `gx²`,
 `gx gy` and `gy²`. Its eigenvalues measure how much the image changes
-along its two principal directions: both large at a corner, one at an
-edge. Stacking the three products puts them on a batch axis, so one
+along its two principal directions. Both are large at a corner, and one
+at an edge. Stacking the three products puts them on a batch axis, so one
 blur covers them, and Harris' response `det - k trace²` follows:
 
 ```ocaml
@@ -242,6 +273,9 @@ let () =
   assert (Nx.shape r = [| 48; 48; 1 |])
 ```
 
-A gradient transforms as a covector: under a warp `p ↦ A p` of the
-image, `(gx, gy)` maps by the inverse transpose of `A`, so it is not
-a position for `Mynd.Transform`.
+A gradient maps unlike a position under a warp. Let an affine warp move
+the content at each input position `p` to the output position `A p`, and
+let `L` be `A`'s linear part, its top-left 2×2 block. The gradient of the
+warped image at `A p` is then `L⁻ᵀ` times the gradient at `p`.
+`Mynd.Transform.apply` maps positions, and a program maps gradients by
+`L⁻ᵀ` with `Nx.matmul`.

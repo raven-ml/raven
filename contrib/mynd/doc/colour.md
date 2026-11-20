@@ -1,13 +1,16 @@
 # Adjusting colour
 
-This page builds the colour adjustments that mynd leaves to composition:
-brightness, contrast, saturation and hue, hue rotation that keeps
-luminance, and CIE Lab relative to D50. The rules each call follows are
-in `Mynd.Colour` in [`mynd.mli`](../lib/mynd.mli), and the values an
-image holds in its Values section.
+A colour adjustment moves each colour toward a reference colour or away
+from it, or turns its hue. [`Mynd.Colour`](../lib/mynd.mli) leaves these
+to composition, and the programs below build brightness, contrast,
+saturation, hue, a hue rotation that keeps luminance, and CIE Lab
+relative to D50. Each rule a program relies on is linked where it is
+used.
 
 The programs below work on a small image of encoded sRGB values in
-`[0, 1]`, as a decoder returns them after `Mynd.convert`.
+`[0, 1]`, as a decoder returns them after
+[`Mynd.convert`](../lib/mynd.mli), whose fractions the preamble of `Mynd`
+defines.
 
 ```ocaml
 let img =
@@ -22,12 +25,14 @@ let distance a b = largest (floats (Nx.sub a b))
 
 ## Brightness, contrast and saturation
 
-Each adjustment blends the image with a reference image by a factor `f`:
-`Nx.lerp r x f` is `r + f (x - r)`, so `f = 1` keeps the image, `f = 0`
-gives the reference, and a factor above `1` moves away from it. The
-references are black for brightness, the image's mean luma for contrast,
-and each pixel's luma for saturation. `Mynd.Colour.luma` reads encoded
-values, which these are.
+Each adjustment blends the image with a reference image by a factor `f`.
+`Nx.lerp r x f` is `r + f (x - r)` (`Nx.lerp` in
+[`nx.mli`](../../../packages/nx/lib/nx.mli)), so `f = 1` keeps the
+image, `f = 0` gives the reference, and a factor above `1` moves away
+from it. The references are black for brightness, the image's mean luma
+for contrast, and each pixel's luma for saturation. Luma is a weighted
+sum of encoded values, which these are (the preamble of
+[`Mynd.Colour`](../lib/mynd.mli)).
 
 ```ocaml
 let clamp x = Nx.clamp ~min:0. ~max:1. x
@@ -47,7 +52,8 @@ let saturation f x =
 
 A saturation of `0` gives every pixel its luma in all three channels. A
 grey has no colour to remove, and stays as it is under any saturation,
-since `Nx.lerp a a w` is `a` and the luma of a grey is that grey:
+since `Nx.lerp a a w` is `a` and the weighted sum of a grey is that grey
+(the preamble of [`Mynd.Colour`](../lib/mynd.mli)):
 
 ```ocaml
 let () =
@@ -58,11 +64,43 @@ let () =
   assert (distance (saturation 1.7 grey) grey = 0.)
 ```
 
+## Alpha in linear light
+
+An image with alpha is interpolated premultiplied, and averaged in linear
+light. The transfer function applies to the colours alone, since alpha
+is linear ([`Mynd.srgb_to_linear`](../lib/mynd.mli)), and it applies to
+straight colours, before `premultiply` and after `unpremultiply`
+([`Mynd.premultiply`](../lib/mynd.mli)). So a program splits off alpha,
+makes the colours linear, joins them and premultiplies, and reverses the
+steps after.
+
+```ocaml
+let split x =
+  match Nx.split_at ~axis:(-1) [ Nx.dim (-1) x - 1 ] x with
+  | [ colour; alpha ] -> (colour, alpha)
+  | _ -> assert false
+
+let to_working x =
+  let colour, alpha = split x in
+  Mynd.premultiply (Nx.concatenate ~axis:(-1) [ Mynd.srgb_to_linear colour; alpha ])
+
+let of_working y =
+  let colour, alpha = split (Mynd.unpremultiply y) in
+  Nx.concatenate ~axis:(-1) [ Mynd.linear_to_srgb colour; alpha ]
+
+let () =
+  let alpha = Nx.full Nx.float32 [| 4; 5; 1 |] 0.6 in
+  let rgba = Nx.concatenate ~axis:(-1) [ img; alpha ] in
+  assert (distance (of_working (to_working rgba)) rgba < 1e-5)
+```
+
 ## Hue
 
-The hue of `Mynd.Colour.to_hsv` is in turns, and `Mynd.Colour.of_hsv`
-reads any finite hue modulo `1`, so turning every colour by `d` turns is
-an addition. A whole turn gives the image back.
+The hue of the HSV form is in turns (the preamble of
+[`Mynd.Colour`](../lib/mynd.mli)), and
+[`Mynd.Colour.of_hsv`](../lib/mynd.mli) reads any finite hue modulo `1`,
+so turning every colour by `d` turns is an addition. A whole turn gives
+the image back.
 
 ```ocaml
 let turn d x =
@@ -78,9 +116,11 @@ let () =
 ```
 
 The turn is differentiable in `d` and in the image. Where a colour
-crosses the edge of a sextant of the hexagon of hues, the derivative in
-`d` is the mean of its two one-sided derivatives, so a loss that turns
-colours by a learned `d` receives a gradient at every value of `d`:
+crosses a sextant boundary of the hexagon of hues (the preamble of
+[`Mynd.Colour`](../lib/mynd.mli)), the derivative in
+`d` is the mean of its two one-sided derivatives
+([`Mynd.Colour.of_hsv`](../lib/mynd.mli)), so a loss that turns colours
+by a learned `d` receives a gradient at every value of `d`:
 
 ```ocaml
 let () =
@@ -90,15 +130,16 @@ let () =
 ```
 
 The turn keeps each colour's value and saturation. It changes its luma
-and its luminance, since the primaries differ in brightness: a red turned
-to green brightens.
+and its luminance, since the primaries differ in brightness. A red
+turned to green brightens.
 
 ### Turning hue at constant luminance
 
 The W3C's Filter Effects Module Level 1 defines a hue rotation by a
 matrix (`feColorMatrix`, type `hueRotate`) that keeps the weighted sum
-`0.213 r + 0.715 g + 0.072 b`, the luminance weights to three digits. It
-applies to linear values, where that sum is luminance. Each row sums to
+`0.213 r + 0.715 g + 0.072 b`, the weights of
+[`Mynd.Colour.luminance`](../lib/mynd.mli) to three digits. It applies to
+linear values, where that sum is luminance. Each row sums to
 `1`, so greys stay grey.
 
 ```ocaml
@@ -133,18 +174,19 @@ each colour by the ratio of its luminances before and after.
 
 ## Lab relative to D50
 
-`Mynd.Colour.linear_to_lab` measures colours against D65, the white of
-linear sRGB. ICC profiles and image editors that offer Lab measure
-against D50, and reach it by adapting the colour's XYZ with the Bradford
-transform.
+[`Mynd.Colour.linear_to_lab`](../lib/mynd.mli) measures colours against
+D65, the white of linear sRGB. ICC profiles and image editors that offer
+Lab measure against D50, and reach it by adapting the colour's XYZ with
+the Bradford transform, the usual matrix of chromatic adaptation.
 
 Lab depends on XYZ only through XYZ divided by the white. So Lab
 relative to D50 of a colour adapted to D50 is
 `Mynd.Colour.linear_to_lab` of the linear sRGB colour whose XYZ, divided
 by D65, equals the adapted XYZ divided by D50. That colour is one 3×3
-matrix away: sRGB's matrix `M` to XYZ, the Bradford adaptation, the
-ratio of the whites, and `M`'s inverse. The constants are CSS Color
-Module Level 4's.
+matrix away, the product of sRGB's matrix `M` to XYZ (the preamble of
+[`Mynd.Colour`](../lib/mynd.mli)), the Bradford adaptation, the ratio of
+the whites, and `M`'s inverse. The constants are CSS Color Module Level
+4's.
 
 ```ocaml
 let mat a b =

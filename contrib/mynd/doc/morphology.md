@@ -1,13 +1,13 @@
 # Morphology
 
-This page builds the morphological operators that mynd leaves to
-composition over `Mynd.Filter.erode`, `Mynd.Filter.dilate`,
-`Mynd.Mask.components` and `Mynd.Mask.reconstruct`: footprint shapes,
-openings and closings, top-hats, the morphological gradient,
-hit-or-miss, hole filling, clearing the border, areas and small objects.
-The rules each call follows, the footprint, the reads at the border and
-the adjunction, are in the Morphology section of `Mynd.Filter` and in
-`Mynd.Mask`, in [`mynd.mli`](../lib/mynd.mli).
+Morphology compares the pixels that a footprint selects about each
+pixel, by their least or their greatest, and groups a mask's pixels into
+components. The Morphology section of [`Mynd.Filter`](../lib/mynd.mli)
+defines footprints, their reads at the border and the adjoint pair
+`erode` and `dilate`, and the preamble of [`Mynd.Mask`](../lib/mynd.mli)
+defines components and labels. The operators below, from footprint
+shapes to small objects, are compositions of `erode` and `dilate`, and
+of `components` and `reconstruct`.
 
 ```ocaml
 let img =
@@ -29,9 +29,11 @@ let all le a b = Array.for_all2 le (floats a) (floats b)
 
 ## Footprints
 
-A footprint is a host boolean array whose `true` taps select a window's
-pixels, its tap `(kh / 2, kw / 2)` on the pixel. Shapes are predicates on
-the offset `(dy, dx)` from that tap:
+A footprint is a host boolean array whose `true` elements select the
+offsets of a window, its anchor `(kh / 2, kw / 2)` on the pixel (the
+preamble and the Morphology section of
+[`Mynd.Filter`](../lib/mynd.mli)). Shapes are predicates on the
+displacement `(dy, dx)` from the anchor:
 
 ```ocaml
 let shape r f =
@@ -48,19 +50,22 @@ let count fp = Array.fold_left (fun n b -> if b then n + 1 else n) 0 (bools fp)
 let () = assert (List.map (fun r -> count (disk r)) [ 1; 2; 3; 4; 5 ] = [ 5; 13; 29; 49; 81 ])
 ```
 
-A footprint of an even extent, such as `rectangle 2 2`, has its origin
-tap at `(1, 1)`: erosion reads the pixel and those above and to its left,
-and dilation, which reads the window reflected about the pixel, those
-below and to its right.
+A footprint of an even extent, such as `rectangle 2 2`, has its anchor
+at offset `(1, 1)`. Erosion reads the pixel and those above and to its
+left, and dilation, which reads the window reflected about the pixel
+([`Mynd.Filter.dilate`](../lib/mynd.mli)), those below and to its right.
+So dilating a mask with one `true` pixel draws the footprint there, its
+anchor on that pixel.
 
 ## Openings and closings
 
-The opening `dilate fp (erode fp x)` removes the bright details that the
-footprint does not fit in, and the closing `erode fp (dilate fp x)` the
-dark ones. Both use the same footprint in their two steps: `dilate`
-already reads the reflected window, which is what makes the two adjoint,
-so a footprint flipped by hand for the second step breaks the laws
-below for every footprint that is not symmetric about its origin.
+The *opening* `dilate fp (erode fp x)` removes the bright details that
+the footprint does not fit in, and the *closing* `erode fp (dilate fp x)`
+the dark ones. Both use the same footprint in their two stages. `dilate`
+already reads the reflected window, and so `erode` and `dilate` are
+adjoint (the Morphology section of [`Mynd.Filter`](../lib/mynd.mli)). A
+footprint flipped by hand for the second stage breaks the laws below for
+every footprint that is not symmetric about its anchor.
 
 ```ocaml
 let opening fp x = Mynd.Filter.dilate fp (Mynd.Filter.erode fp x)
@@ -76,18 +81,21 @@ let () =
     [ rectangle 2 2; rectangle 1 4; cross 1; disk 2; Nx.create Nx.bool [| 2; 3 |] [| true; false; false; true; true; true |] ]
 ```
 
-The opening is at most the image and the closing at least it, and a
-second application changes nothing, at every pixel, the border included,
-because no step reads past the border.
+Adjointness gives the laws, for images without NaN. The opening is at
+most the image and the closing at least it. Both are *increasing*, in
+the sense that a larger image at every pixel gives a larger result at
+every pixel, and a second application changes nothing. These laws hold
+at every pixel, the border included, because neither stage reads past
+the border.
 
 ## Top-hats and the morphological gradient
 
 The white top-hat `x - opening x` keeps the bright details the footprint
-does not fit in, and the black top-hat `closing x - x` the dark ones;
-both are at least `0` by the laws above. The morphological gradient
-`dilate fp x - erode fp x` is the range of each window; where the
-footprint holds its origin both terms read the pixel, so it is at least
-`0`:
+does not fit in, and the black top-hat `closing x - x` the dark ones.
+Both are at least `0` by the laws above. For a footprint symmetric about
+its anchor, the morphological gradient `dilate fp x - erode fp x` is the
+range of each window. Where the footprint holds its anchor both terms
+read the pixel, so it is at least `0`:
 
 ```ocaml
 let white fp x = Nx.sub x (opening fp x)
@@ -105,8 +113,8 @@ let () =
 ## Hit-or-miss
 
 Hit-or-miss finds a pattern of foreground pixels `fg` and background
-pixels `bg`, two footprints of one shape that share no tap. It erodes the
-mask by `fg` and its complement by `bg`, so it uses erosions alone:
+pixels `bg`, two footprints of one shape that select no offset in
+common. It erodes the mask by `fg` and its complement by `bg`:
 
 ```ocaml
 let hit_or_miss fg bg m = Nx.logical_and (Mynd.Filter.erode fg m) (Mynd.Filter.erode bg (Nx.logical_not m))
@@ -120,18 +128,18 @@ let () =
   assert (bools found = bools (mask [ "......"; ".#...."; "......"; "......" ]))
 ```
 
-Past the border no tap is read, so a pixel at the border passes on the
-neighbours it has.
+An offset past the border is left out, so a pixel at the border is
+judged on the pixels about it that lie inside.
 
 ## Holes
 
 A hole is a component of the background that reaches no border pixel.
-`reconstruct` grows the background from the frame of border pixels; what
-it does not reach is a hole, and the mask with its holes filled is the
-complement of what it reaches. The background's connectivity pairs with
-the foreground's: a foreground joined through corners (`` `Eight ``)
-encloses the background components joined only through edges
-(`` `Four ``).
+[`Mynd.Mask.reconstruct`](../lib/mynd.mli) grows the background from the
+frame of border pixels. What it does not reach is a hole, and the mask
+with its holes filled is the complement of what it reaches. The
+background takes the connectivity the foreground does not. A foreground
+joined through corners (`` `Eight ``) encloses the background components
+joined only through sides (`` `Four ``).
 
 ```ocaml
 (* The frame is a predicate on the index, so that masks of one row or
@@ -152,8 +160,8 @@ let () =
   assert (bools (fill_holes `Eight ring) = bools ring)
 ```
 
-The ring's corners touch only diagonally, so under an 8-connected
-background its inside leaks out through them, and it holds no hole.
+The ring's corners touch only diagonally, so with the background under
+`` `Eight `` its inside leaks out through them, and it holds no hole.
 
 Clearing the objects that touch the border is reconstruction from the
 frame too, removed from the mask:
@@ -168,11 +176,12 @@ let () =
 
 ## Areas and small objects
 
-`Mynd.Mask.components` labels each mask in its own indices: a
-component's label is the least flat index `i w + j` of its pixels.
-Counting each label's pixels by a scatter along the last axis of the
-masks flattened to `[…; h w]` gives every mask its own counts, in a
-batch too, and a gather at the labels reads each pixel's area back:
+`Mynd.Mask.components` labels each mask in its own indices. A
+component's label is the least flat index `i w + j` of its pixels (the
+preamble of [`Mynd.Mask`](../lib/mynd.mli)). Counting each label's
+pixels by a scatter along the last axis of the masks flattened to
+`[…; h w]` gives every mask its own counts, in a batch too, and a gather
+at the labels reads each pixel's area back:
 
 ```ocaml
 let areas c m =
@@ -191,21 +200,26 @@ let () =
   assert (floats (areas `Eight a) = [| 4.; 4.; 0.; 0.; 4.; 4.; 0.; 1.; 0.; 0.; 0.; 0. |])
 ```
 
-A label of `-1`, a pixel outside every component, writes nothing and
-reads `0`.
+A label of `-1`, at a pixel outside every component, writes nothing and
+reads `0`, as `Nx.scatter` and `Nx.take_along_axis` treat an index
+outside the axis (the section Indexing and slicing of
+[`nx.mli`](../../../packages/nx/lib/nx.mli)).
 
 Removing the components of at most `n` pixels, and filling the holes of
 at most `n` pixels, cleans a predicted mask of specks. A hole here is any
 component of the background, the ones that touch the border included, so
-that a gap at the edge of the image fills too; take the holes of the
-previous section to keep those.
+that a gap at the edge of the image fills too. The holes of the previous
+section leave those gaps. The background takes the other connectivity,
+as for holes.
 
 ```ocaml
 let remove_small c n m = Nx.logical_and m (Nx.greater_s (areas c m) (Int64.of_int n))
 
+let other = function `Four -> `Eight | `Eight -> `Four
+
 let fill_small c n m =
   let bg = Nx.logical_not m in
-  Nx.logical_or m (Nx.logical_and bg (Nx.less_equal_s (areas c bg) (Int64.of_int n)))
+  Nx.logical_or m (Nx.logical_and bg (Nx.less_equal_s (areas (other c) bg) (Int64.of_int n)))
 
 let () =
   let m = mask [ "#....###"; ".....#.#"; "..#..###"; "........" ] in
@@ -214,8 +228,21 @@ let () =
 ```
 
 Each reads the areas of the mask it is given, so where a speck sits in a
-small hole the order of the two decides the result. Computing both from
-the same mask and joining them avoids the choice.
+small hole the order of the two decides the result. Filling first joins
+such a speck to the object around it, so the object comes out whole.
+Removing first can leave the hole empty.
+
+```ocaml
+let clean c n m = remove_small c n (fill_small c n m)
+
+let () =
+  let m = mask [ "#....###"; ".....#.#"; "..#..###"; "........" ] in
+  assert (bools (clean `Eight 1 m) = bools (mask [ ".....###"; ".....###"; ".....###"; "........" ]));
+  let ring = mask [ "......."; ".#####."; ".#...#."; ".#.#.#."; ".#...#."; ".#####."; "......." ] in
+  let solid = mask [ "......."; ".#####."; ".#####."; ".#####."; ".#####."; ".#####."; "......." ] in
+  assert (bools (clean `Eight 8 ring) = bools solid);
+  assert (bools (fill_small `Eight 8 (remove_small `Eight 8 ring)) <> bools solid)
+```
 
 ## Opening by reconstruction
 

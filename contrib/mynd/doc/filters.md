@@ -1,12 +1,13 @@
 # Filtering images
 
-This page builds the filters that mynd leaves to composition over
+A filter computes each pixel from its window, whose pixels the preamble
+of [`Mynd.Filter`](../lib/mynd.mli) indexes by offset. The rules that
+read past the border are in the section Reading outside the image of
+[`Mynd`](../lib/mynd.mli). The filters below are made of
 `Mynd.Filter.correlate`, `Mynd.Filter.windows` and
 `Mynd.Filter.gaussian`: box blurs, unsharp masks, a constant other than
-zero past the edge, the Laplacian, rank, minimum and maximum filters,
-the bilateral filter and the discrete Gaussian. The rules each call
-follows, windows, offsets, edges and weights paired with batch axes, are
-in `Mynd.Filter` in [`mynd.mli`](../lib/mynd.mli).
+zero past the border, the Laplacian, rank, minimum and maximum filters,
+the bilateral filter and the discrete Gaussian.
 
 ```ocaml
 let img =
@@ -22,7 +23,9 @@ let distance a b = largest (floats (Nx.sub a b))
 
 A box blur of extent `k` is the mean of a `k` by `k` window. Its weights
 are a column of `1 / k` times a row of `1 / k`, so it is two calls of
-`k` products a pixel each:
+`k` products a pixel each. Each call rounds once
+([`Mynd.Filter.correlate`](../lib/mynd.mli)), so the two differ from one
+call of `k²` products by rounding:
 
 ```ocaml
 let box edge k x =
@@ -57,6 +60,11 @@ let () = assert (distance (box `Replicate 5 img) (box_sums `Replicate 5 img) < 1
 The running sums grow along the image, so their differences carry the
 rounding of the largest of them. In float32, take the sums in float64.
 
+A window of even extents is centred on its pixel's top-left corner (the
+preamble of [`Mynd.Filter`](../lib/mynd.mli)). Weights with a row and a
+column of zeros put before them centre it on the opposite corner, and
+read one more row and column.
+
 ## Unsharp mask
 
 An unsharp mask adds back `a` times the detail that a blur removes,
@@ -73,9 +81,11 @@ let () =
   assert (distance (sharpen 0.8 flat) flat < 1e-15)
 ```
 
-## A constant past the edge
+## A constant past the border
 
-`` `Zero `` reads zero past the edge. To read a constant `v` there,
+`` `Zero `` reads zero past the border
+(the section Reading outside the image of
+[`Mynd`](../lib/mynd.mli)). To read a constant `v` there,
 correlate the image less `v` and add back `v` times the weights' sum,
 which a correlation of a constant image gives:
 
@@ -108,16 +118,17 @@ let () =
   assert (distance inside (Nx.full_like inside 4.) = 0.)
 ```
 
-Second differences amplify noise; blurring first, by `Filter.gaussian`,
-gives the Laplacian of the Gaussian.
+Second differences amplify noise. Blurring first, by
+`Mynd.Filter.gaussian`, gives the Laplacian of the Gaussian.
 
 ## Rank, minimum and maximum filters
 
-`Mynd.Filter.windows` gives each pixel's window as two trailing axes.
-Any reduction over them is a filter: the rank `r` of each window sorted,
-its least or its greatest element. Rank `(n - 1) / 2` of a window of `n`
-taps is the lower median, which `Mynd.Filter.median` computes in bands
-of rows to hold less memory.
+[`Mynd.Filter.windows`](../lib/mynd.mli) gives each pixel's window as
+two trailing axes. Any reduction over them is a filter, such as the
+rank `r` of each window sorted, its least element or its greatest. Rank
+`(n - 1) / 2` of a window of `n` offsets is the lower median
+([`Mynd.Filter.median`](../lib/mynd.mli)), which `median` computes in
+less memory.
 
 ```ocaml
 let rank edge (kh, kw) r x =
@@ -136,8 +147,11 @@ let () =
 ```
 
 Sorting stores `kh kw` elements a pixel, and the minimum and maximum read
-that many. A NaN in a window makes its minimum and maximum NaN, where a
-rank in the sort order is NaN only past the window's numbers.
+that many ([`Mynd.Filter.windows`](../lib/mynd.mli)). A NaN in a window
+makes its minimum and maximum NaN, and the sort puts NaN after every
+number, so a rank is NaN only past the window's numbers (`Nx.min`,
+`Nx.max` and the section Order and counted lengths of
+[`nx.mli`](../../../packages/nx/lib/nx.mli)).
 
 ## Bilateral filter
 
@@ -174,19 +188,21 @@ let () =
 
 ## The discrete Gaussian
 
-`Mynd.Filter.gaussian` samples the Gaussian at the pixels. Below a
-deviation of about one pixel those samples blur less than the deviation
-states, and their derivative in it vanishes as it falls to zero. Scale
-space wants another kernel: Lindeberg's discrete analogue of the
-Gaussian, whose blurs compose, a blur by `σ₁` then by `σ₂` being
-the blur by `√(σ₁² + σ₂²)`, and whose variance is `σ²` at every
-deviation.
+[`Mynd.Filter.gaussian`](../lib/mynd.mli) samples the Gaussian at the
+pixels. Below a deviation of about one pixel those samples blur less
+than the deviation states ([`Mynd.Filter.gaussian`](../lib/mynd.mli)).
+Scale space,
+the family of an image's blurs by every deviation, needs another kernel,
+Lindeberg's discrete analogue of the Gaussian. Its blurs compose, so a
+blur by `σ₁` then by `σ₂` is the blur by `√(σ₁² + σ₂²)`, and its
+variance is `σ²` at every deviation.
 
-Its transform is `e^(σ² (cos θ - 1))` at each frequency `θ`. Its taps on
-`2r + 1` pixels follow by an inverse discrete Fourier transform at
-`M = 2r + 1` frequencies, which folds the tails past `r` back onto the
-taps, so they sum to `1` exactly. The deviation is data, so the taps
-have a derivative in it, at zero too.
+Its transform is `e^(σ² (cos θ - 1))` at each frequency `θ`. Its
+weights on `2r + 1` pixels follow by an inverse discrete Fourier
+transform at `M = 2r + 1` frequencies, which folds the tails past `r`
+back onto those weights, so they sum to `1` exactly. The deviation is
+data, so the weights are differentiable in it, and their variance `σ²`
+has derivative `2σ`.
 
 ```ocaml
 let discrete ~radius sigma =
@@ -212,18 +228,22 @@ let () =
   assert (Float.abs (Nx.item [] (Nx.sum (Nx.mul g (Nx.square n))) -. 2.25) < 1e-8);
   let impulse = floats (discrete ~radius:2 (Nx.scalar Nx.float64 0.)) in
   assert (largest (Array.mapi (fun i v -> if i = 2 then v -. 1. else v) impulse) < 1e-15);
-  let d = Rune.grad' (fun s -> Nx.sum (discrete_blur `Periodic ~radius:3 s img)) (Nx.scalar Nx.float64 0.) in
-  assert (Float.is_finite (Nx.item [] d))
+  let variance s = Nx.sum (Nx.mul (discrete ~radius:12 s) (Nx.square n)) in
+  let d = Rune.grad' variance (Nx.scalar Nx.float64 1.5) in
+  assert (Float.abs (Nx.item [] d -. 3.) < 1e-6);
+  let b = discrete_blur `Replicate ~radius:3 (Nx.scalar Nx.float64 0.8) img in
+  assert (Nx.shape b = Nx.shape img)
 ```
 
-The taps past `r` fold back onto those within it, so the radius must
+The weights past `r` fold back onto those within it, so the radius must
 hold the kernel's tails, as for the sampled Gaussian.
 
 ## A deviation for each image
 
-`Filter.gaussian` pairs a deviation with each image of a batch, so an
-augmentation that draws a deviation for each image, here uniformly from
-`(0.1, 2)`, blurs the batch in one call:
+Deviations are paired with the images (the preamble of
+[`Mynd.Filter`](../lib/mynd.mli)), so an augmentation that draws a
+deviation for each image, here uniformly from `(0.1, 2)`, blurs the
+batch in one call:
 
 ```ocaml
 let () =
@@ -235,5 +255,5 @@ let () =
 
 A small deviation blurs little. Below `0.3` a neighbour one pixel away
 weighs under `e^(-1/2σ²)`, `0.39 %`, of the centre, and the two passes
-give all the neighbours together under `1.6 %` of a pixel's result, so the
-blur moves a pixel of an 8-bit image by under 4 levels.
+give all the neighbours together under `1.55 %` of a pixel's result. So
+the blur moves a pixel of an 8-bit image by under 4 levels.
