@@ -1,10 +1,10 @@
 # TESSERA's performance
 
 On an NVIDIA RTX 5000 Ada, `main.exe encode` embeds a 500 × 500 tile with
-TESSERA's nano student 2.5 times as fast as TESSERA's own PyTorch code, and
-with medium 1.17 times as fast. The model alone runs 5–12% faster than
-PyTorch's with nano, small and medium, within 3% of them under
-`torch.compile`, and 7% slower with large. The teacher in bfloat16, a
+TESSERA's nano student 2.5 times as fast as TESSERA's own PyTorch code, with
+medium 1.17 times and with large 1.04 times as fast. The model alone runs
+5–12% faster than PyTorch's with nano, small and medium, within 3% of them
+under `torch.compile`, and 7% slower with large. The teacher in bfloat16, a
 distillation step and the CPU are slower.
 
 ## Embedding a tile
@@ -78,14 +78,14 @@ allocator caches included, the CUDA context left out.
 | nano | 7.20 s (7.01–7.24) | 18.0 s (18.0–18.3) | 1.2 GiB | 3.4 GiB |
 | small | 22.9 s (22.8–22.9) | 34.5 s (34.1–34.8) | 2.0 GiB | 7.7 GiB |
 | medium | 60.1 s (60.0–60.1) | 70.2 s (69.8–75.7) | 3.2 GiB | 17.5 GiB |
-| large | not measured | not measured | 4.7 GiB | 19.4 GiB |
+| large | 108.0 s (107.9–108.0) | 111.8 s (110.5–111.9) | 4.7 GiB | 19.4 GiB |
 | teacher | not measured | not measured | 6.7 GiB | 23.2 GiB |
 
-The whole command adds about 0.2–2 s to raven's model time and 7–12 s to
-PyTorch's, whose Python loads and prepares the tile on the host before
-encoding it. Over an empty kernel cache, which compiles every kernel,
-medium's command takes 61.0 s (60.8–61.4): 0.9 s more. PyTorch ships its
-kernels compiled.
+With nano, small and medium, the whole command adds about 0.2–2 s to raven's
+model time and 7–12 s to PyTorch's, whose Python loads and prepares the tile
+on the host before encoding it. Over an empty kernel cache, which compiles
+every kernel, medium's command takes 61.0 s (60.8–61.4): 0.9 s more. PyTorch
+ships its kernels compiled.
 
 ## Training
 
