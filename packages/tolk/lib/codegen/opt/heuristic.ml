@@ -1093,15 +1093,22 @@ let reused k axis =
   let r = List.nth (K.rngs k) axis in
   List.exists (fun b -> not (indexes r b)) (operands k)
 
-(* The threads that [n] outputs left of an axis upcast by 4 hold once doubled,
-   in a power of two (as {!block} counts them), [n] padded to even where it
-   is odd. *)
-let doubled_threads ~lanes n =
-  let n = n + (n land 1) in
+(* The bound on the pads the blocked layout takes ({!general}): none at
+   first, then, where it does not block so, [core_waste]. Padded rows are
+   work for nothing, so a layout that blocks without them keeps them out. *)
+let no_waste = (1, 1)
+
+(* Whether [n] padded to a multiple of [m] is within [waste] of it. *)
+let pads_within ~waste:(num, den) n m = (n + m - 1) / m * m * den <= n * num
+
+(* The threads, a power of two at most [lanes], that [n] runs of an axis
+   hold once padded to a multiple of them within [waste], as {!block}
+   counts them and {!blocked_threads} pads them. *)
+let run_threads ~waste ~lanes n =
   let rec pow2 cap =
-    if cap <= 1 || n mod cap = 0 then cap else pow2 (cap / 2)
+    if cap <= 1 || pads_within ~waste n cap then cap else pow2 (cap / 2)
   in
-  pow2 (2 * lanes) / 2
+  pow2 lanes
 
 (* Whether [k] is upcast by [n] lanes at most, the upcast loop's own:
    {!block}'s premise, [n] 1 before the loop and 16 after its two upcasts by
@@ -1123,7 +1130,7 @@ let upcast_by_loop k n = holds Sint.(K.upcast_size k <= Int n)
    projections of 1500 frames into its heads and its feed-forward, at 4.1-4.5
    so and at 21.7-27.3 staged. A product of 48 rows by 1024 columns blocked
    kept 768 threads, and took 105 us against 76 at 4 by 3. *)
-let four_first ~core_threads k =
+let four_first ~waste ~core_threads k =
   (K.ren k).has_local && narrow k && upcast_by_loop k 1
   &&
   let operands = operands k in
@@ -1147,12 +1154,14 @@ let four_first ~core_threads k =
         | Some n -> Bigint.fdiv n (Bigint.of_int 64)
         | None -> Bigint.zero
       in
+      (* A part's runs of 4, padded to even, then the threads they hold. *)
+      let doubled n =
+        run_threads ~waste ~lanes:(lanes k) ((((n + 3) / 4) + 1) / 2)
+      in
       match (size a, size b) with
       | Some x, Some y ->
-          x mod 4 = 0 && y mod 4 = 0
-          && doubled_threads ~lanes:(lanes k) (x / 4)
-             * doubled_threads ~lanes:(lanes k) (y / 4)
-             >= lanes k
+          pads_within ~waste x 4 && pads_within ~waste y 4
+          && doubled x * doubled y >= lanes k
           && Bigint.geq threads (Bigint.of_int core_threads)
       | _ -> false)
   | _ -> false
@@ -1162,14 +1171,12 @@ let four_first ~core_threads k =
    pads to 112, which a GPU's contraction then upcasts by 4 and {!block}
    blocks, where unpadded its upcast loop stops at one axis and a thread holds
    4 outputs. *)
-let padded_to_four k axis =
+let padded_to_four ~waste k axis =
   match known_size (shape_at k axis) with
   | Some n when Bigint.fits_int n ->
       let n = Bigint.to_int n in
-      let up = (n + 3) / 4 * 4 in
-      let num, den = core_waste in
       n mod 4 <> 0
-      && up * den <= n * num
+      && pads_within ~waste n 4
       && Result.is_ok
            (K.apply_opt (K.copy k) (Opt.Padto { axis; amount = 4 }))
   | _ -> false
@@ -1179,7 +1186,7 @@ let padded_to_four k axis =
    of its loop, latest first, each as the range it split, the upcast range it
    made and its amount: what a split leaves of a range keeps its axis id, and
    one that takes the whole range leaves none. *)
-let upcast_more ~four_first k =
+let upcast_more ~waste ~four_first k =
   if budgeted k then upcast_contiguous k;
   let rec loop upcasted =
     let upcasted_axis = List.map (fun (axis, _, _) -> axis) upcasted in
@@ -1259,10 +1266,10 @@ let upcast_more ~four_first k =
       in
       (* On a GPU, a contraction summed in 4 bytes or fewer whose loop has no
          axis left that 3 or 4 divides pads one to 4 ({!padded_to_four}). *)
-      let padded () =
+      let padded ~waste =
         if (K.ren k).has_local && narrow k then
           choices ~pad:true ~fill:false [ 4 ]
-            (List.filter (padded_to_four k) (K.upcastable_dims k))
+            (List.filter (padded_to_four ~waste k) (K.upcastable_dims k))
         else []
       in
       (* consider all upcastable axes with 3 or 4 upcast; on the host, when none
@@ -1270,7 +1277,8 @@ let upcast_more ~four_first k =
       let xb_choices =
         match choices ~fill:false [ 3; 4 ] (K.upcastable_dims k) with
         | [] when budgeted k -> choices ~fill:true [ 2 ] (K.upcastable_dims k)
-        | [] -> padded ()
+        | [] -> padded ~waste:core_waste
+        | xb_choices when four_first -> xb_choices @ padded ~waste
         | xb_choices -> xb_choices
       in
       let key (n, s, axis, amount) =
@@ -1409,9 +1417,15 @@ let split_reduce k r =
    pairs and doubles the pairs, 2.9 ms staged (D497) against 17.1 at 4 by 4
    on an RTX 5000 Ada. An odd part with no other part that doubles pads to
    even and doubles itself: whisper's 1500 frames leave 375 runs of 4,
-   padded to 376. Attention's scores, whose queries the operands that
-   read the heads do not all read, keep 4 by 4, and so does a kernel upcast
-   past its two axes by 4 ({!upcast_by_loop}). Unbiased scores, 8 products
+   padded to 376. Where no layout blocks without pads, {!general} asks
+   again with each axis padded within [core_waste] ([waste]), its threads
+   counted padded: AION-1's projections into 12 heads of 64, a batch of 16
+   objects of 858 tokens, which 4 does not divide, or of 580, whose 145
+   runs of 4 the batch doubles, leaving them one thread, ran at 4 by 3 or 4
+   by 4 outputs a thread, 2.5-3.0 TFLOP/s, and blocked, staged, at 27.
+   Attention's scores, whose queries the operands that read the heads do
+   not all read, keep 4 by 4, and so does a kernel upcast past its two axes
+   by 4 ({!upcast_by_loop}). Unbiased scores, 8 products
    of 2048 by 64 by 2048, took 970 us blocked in workgroups of 32 threads
    and 654 in 128.
 
@@ -1423,7 +1437,7 @@ let split_reduce k r =
    of them its reduce is still unrolled by 4, whatever those rules would
    unroll: the units move the kernel's speed alone, and each output adds its
    terms in the order it takes where they are not stated. *)
-let block k upcasted =
+let block ~waste k upcasted =
   let doubles axis = divisible (shape_at k axis) 2 in
   let outputs () = List.map (List.nth (K.rngs k)) (K.upcastable_dims k) in
   (* The output axis besides [r] and [other] that the same operands read as
@@ -1456,16 +1470,19 @@ let block k upcasted =
           Some (r, true)
       | _ -> None
   in
-  (* The threads the axes [r] leave a workgroup once [d] is doubled. *)
+  (* The threads the axes [r] leave a workgroup once [d] is doubled, an odd
+     part padded to even, each padded within [waste] ({!run_threads}). *)
   let threads pairs =
     List.fold_left
-      (fun n (r, (d, padded)) ->
-        if padded then
-          let size = Bigint.to_int (size_at k (axis_of k r)) in
-          n * doubled_threads ~lanes:(lanes k) size
-        else if axis_id d = axis_id r then
-          n * (pow2_dividing r (2 * lanes k) / 2)
-        else n * pow2_dividing r (lanes k))
+      (fun n (r, (d, _)) ->
+        let halved = axis_id d = axis_id r in
+        match known_size (shape_at k (axis_of k r)) with
+        | Some s when Bigint.fits_int s ->
+            let s = Bigint.to_int s in
+            let runs = if halved then (s + 1) / 2 else s in
+            n * run_threads ~waste ~lanes:(lanes k) runs
+        | _ when halved -> n * (pow2_dividing r (2 * lanes k) / 2)
+        | _ -> n * pow2_dividing r (lanes k))
       1 pairs
   in
   let axes =
@@ -1525,7 +1542,8 @@ let block k upcasted =
 
 (* The threads of a blocked contraction's workgroup along the two axes [rs]
    that {!block} doubled: [greedy]'s where it lays a power of two of them, at
-   least 2, along the later axis; else [across] along the later axis and the
+   least 2, along the later axis and a SIMD group in all, the threads
+   {!block} counted; else [across] along the later axis and the
    rest of [workgroup_threads] along the other, each axis padded to its
    threads, with [across] 16 or 8, whichever pads the later axis less. In
    workgroups of 32 threads, a product of 262144 rows by 440 columns, 55 runs
@@ -1546,7 +1564,8 @@ let blocked_threads k ~held ranked greedy (ra, rb) =
       let later = max a0 a1 and earlier = min a0 a1 in
       let on axis = Option.value ~default:1 (List.assoc_opt axis greedy) in
       let pow2 n = n >= 2 && n land (n - 1) = 0 in
-      if held = 1 && pow2 (on later) then greedy
+      let laid = List.fold_left (fun n (_, t) -> n * t) 1 greedy in
+      if held = 1 && pow2 (on later) && laid >= lanes k then greedy
       else if not (List.mem later ranked && List.mem earlier ranked) then greedy
       else
         let waste n =
@@ -1810,8 +1829,23 @@ let general ~core_threads k =
     else
       (* The kernel before [block], for a staged product's tile. *)
       let unblocked = if (K.ren k).async_copy then Some (K.copy k) else None in
-      let four_first = four_first ~core_threads k in
-      let blocking = block k (upcast_more ~four_first k) in
+      (* The upcasts and the blocked layout of [k], its pads within
+         [waste]: none, and where that does not block a GPU's contraction,
+         [core_waste], each on a copy of [k]. *)
+      let layout ~waste k =
+        let four_first = four_first ~waste ~core_threads k in
+        (k, block ~waste k (upcast_more ~waste ~four_first k))
+      in
+      let k, blocking =
+        if not ((K.ren k).has_local && narrow k) then layout ~waste:no_waste k
+        else
+          match layout ~waste:no_waste (K.copy k) with
+          | _, Free as unpadded -> (
+              match layout ~waste:core_waste (K.copy k) with
+              | _, Free -> unpadded
+              | padded -> padded)
+          | unpadded -> unpadded
+      in
       match Option.bind unblocked (staged_product blocking) with
       | Some s -> s
       | None ->

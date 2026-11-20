@@ -2249,6 +2249,57 @@ let test_padded_frames () =
         (Float.abs (y.(i) -. z)))
     exact
 
+(* A batch's projections into heads, and their merge, as kaun's
+   [Attention.split] and [Attention.merge] lay them out, [[b; h; n; d]],
+   over tokens that leave no padding-free blocked layout: 4 does not divide
+   858, and 580's 145 runs of 4 are odd. The batch and the tokens are two
+   axes of the kernel, which pads the tokens. Within the bound of a sum of
+   [k + 1] terms. *)
+let test_padded_tokens () =
+  let _, (module S) = on_gpu () in
+  let h = 4 and d = 64 in
+  let draw seed s =
+    let x = Nx.Rng.uniform ~key:(Nx.Rng.key seed) Nx.float32 s in
+    Nx.sub_s (Nx.mul_s x 4.) 2.
+  in
+  let f x = Nx.cast Nx.float64 x in
+  let u = 0x1p-24 in
+  let check ~k pattern x w c =
+    let y =
+      Rune.jit
+        Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+        (fun x w c -> Nx.contract Nx.float32 ~init:c pattern x w)
+        (Nx.place S.on x) (Nx.place S.on w) (Nx.place S.on c)
+    in
+    let y = Nx.to_array (Nx.cast Nx.float64 (host y)) in
+    let exact =
+      Nx.to_array (Nx.contract Nx.float64 ~init:(f c) pattern (f x) (f w))
+    in
+    let mass =
+      Nx.to_array
+        (Nx.contract Nx.float64 ~init:(Nx.abs (f c)) pattern (Nx.abs (f x))
+           (Nx.abs (f w)))
+    in
+    Array.iteri
+      (fun i z ->
+        let e = product (k + 2) *. mass.(i) in
+        less ~msg:(string_of_int i) float_exact
+          ~than:(e +. (u *. (Float.abs z +. e)))
+          (Float.abs (y.(i) -. z)))
+      exact
+  in
+  let split = Nx.Pattern.v "b n k, h d k -> b h n d | k" in
+  let merge = Nx.Pattern.v "b h n d, o h d -> b n o | h d" in
+  List.iter
+    (fun n ->
+      check ~k:64 split (draw 1 [| 16; n; 64 |]) (draw 2 [| h; d; 64 |])
+        (draw 3 [| h; 1; d |]))
+    [ 858; 580 ];
+  check ~k:(h * d) merge
+    (draw 4 [| 16; h; 858; d |])
+    (draw 5 [| h * d; h; d |])
+    (draw 6 [| h * d |])
+
 (* A routed expert at a prompt of 12 tokens: each token goes through the
    experts its logits rank first, 4 of 32, as gpt-oss-20b's do, each expert
    an MXFP4 projection up, a nonlinearity and an MXFP4 projection down. 48
@@ -3530,6 +3581,10 @@ let () =
                "a projection of 1500 frames into heads, its frames padded, \
                 plus a bias, is within its bound"
                test_padded_frames;
+             test
+               "a batch's projections into heads, and their merge, its \
+                tokens padded, plus a bias, are within their bound"
+               test_padded_tokens;
              test
                "a dense attention step's gradient is the host's within \
                 float32's rounding"

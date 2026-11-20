@@ -1927,7 +1927,9 @@ let blocks =
          second upcast to the width, padded, with or without a bias of each
          head, which the width does not read; attention's scores plus
          biases of each key and query, which no head reads, along the
-         queries and keys. *)
+         queries and keys; and 1000 rows by 1000 columns, 125 runs of 8 that
+         no power of two divides, which hold a SIMD group padded to 128,
+         within core_waste, where no layout blocks unpadded. *)
       cases "on a GPU, both upcast axes reused, a thread holds 8 by 8 outputs \
              in a workgroup of 128 threads"
         ~id:Fun.id
@@ -1952,6 +1954,8 @@ let blocks =
           "scores_biased_amd";
           "scores_biased_first_cuda";
           "scores_biased_first_amd";
+          "matmul_1000_cuda";
+          "matmul_1000_amd";
         ]
         (fun name ->
           let c = recorded name in
@@ -1981,11 +1985,6 @@ let blocks =
              too few threads"
         ~id:Fun.id [ "matmul_48_cuda" ]
         (fun name -> equal int 12 (lane_outputs (recorded name)));
-      cases "a thread holds 4 by 4 outputs where halved axes hold no SIMD \
-             group"
-        ~id:Fun.id
-        [ "matmul_1000_cuda" ]
-        (fun name -> equal int 16 (lane_outputs (recorded name)));
       (* The masked upcasts take the mask's 2 batches of 2 heads whole, then
          the queries and the keys by 4, or by 3 at 1536 positions, which 3
          divides. *)
@@ -3224,6 +3223,103 @@ let heads_product rows heads width depth =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (Ops.index out [ at ]) sum) [ h; i; c ] ]
 
+(* The same projection into heads as {!heads_product}'s, of [batch] objects
+   of [rows] tokens each, [x] [[batch; rows; depth]] into
+   [[batch; heads; rows; width]], as kaun's [Attention.split] lays out a
+   batch: the batch and the tokens are two axes, which merge in no index of
+   the result. *)
+let batched_heads_product batch rows heads width depth =
+  let open Ops.O in
+  let param slot size = Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32 in
+  let cols = Stdlib.(heads * width) in
+  let out = param 0 Stdlib.(batch * rows * cols)
+  and x = param 1 Stdlib.(batch * rows * depth)
+  and w = param 2 Stdlib.(cols * depth) in
+  let b = Ops.range ~axis_type:Weak (Ops.Int batch) [ 1 ]
+  and h = Ops.range ~axis_type:Weak (Ops.Int heads) [ 2 ]
+  and i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 3 ]
+  and c = Ops.range ~axis_type:Weak (Ops.Int width) [ 4 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
+  let sum =
+    Ops.reduce
+      (Ops.index x [ (b * int Stdlib.(rows * depth)) + (i * int depth) + k ]
+      * Ops.index w [ (h * int Stdlib.(width * depth)) + (c * int depth) + k ])
+      Add [ k ]
+  in
+  let at =
+    (b * int Stdlib.(rows * cols)) + (h * int Stdlib.(rows * width))
+    + (i * int width) + c
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ at ]) sum) [ b; h; i; c ] ]
+
+(* Its inverse, the out-projection of attention's result [y]
+   [[batch; heads; rows; width]] into [[batch; rows; cols]], [w] stored
+   [[cols; heads · width]], as kaun's [Attention.merge] reads it. *)
+let batched_heads_merge batch rows heads width cols =
+  let open Ops.O in
+  let param slot size = Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32 in
+  let depth = Stdlib.(heads * width) in
+  let out = param 0 Stdlib.(batch * rows * cols)
+  and y = param 1 Stdlib.(batch * rows * depth)
+  and w = param 2 Stdlib.(cols * depth) in
+  let b = Ops.range ~axis_type:Weak (Ops.Int batch) [ 2 ]
+  and i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 3 ]
+  and o = Ops.range ~axis_type:Weak (Ops.Int cols) [ 4 ]
+  and h = Ops.range ~axis_type:Weak (Ops.Int heads) [ 0 ]
+  and c = Ops.range ~axis_type:Weak (Ops.Int width) [ 1 ] in
+  let sum =
+    Ops.reduce
+      (Ops.index y
+         [ (b * int Stdlib.(rows * depth)) + (h * int Stdlib.(rows * width))
+           + (i * int width) + c ]
+      * Ops.index w [ (o * int depth) + (h * int width) + c ])
+      Add [ h; c ]
+  in
+  let at = (b * int Stdlib.(rows * cols)) + (i * int cols) + o in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ at ]) sum) [ b; i; o ] ]
+
+(* AION-1's projections into 12 heads of 64 over 768, and their merges, at a
+   batch of 16 (8 at 581) objects whose tokens no padding-free layout blocks:
+   4 divides neither 858 nor 581 nor 383, and 580 leaves 145 runs of 4, odd,
+   whose doubling by the batch leaves one thread along them. Padded within
+   [core_waste], a thread holds 8 by 8 outputs: staged on sm_89, in
+   workgroups of 128 on sm_75. *)
+let batched_heads =
+  let optimised ren sink =
+    let s = K.v sink ren in
+    K.convert_loop_to_global s;
+    Heuristic.hand_coded_optimizations s
+  in
+  let shapes =
+    [
+      ("16 by 858 tokens", lazy (batched_heads_product 16 858 12 64 768));
+      ("16 by 580 tokens", lazy (batched_heads_product 16 580 12 64 768));
+      ("8 by 581 tokens", lazy (batched_heads_product 8 581 12 64 768));
+      ("16 by 383 tokens", lazy (batched_heads_product 16 383 12 64 768));
+      ("16 by 858 tokens, merged", lazy (batched_heads_merge 16 858 12 64 768));
+      ("16 by 383 tokens, merged", lazy (batched_heads_merge 16 383 12 64 768));
+    ]
+  in
+  group "a batch's projection into heads"
+    [
+      cases "is staged on sm_89" ~id:fst shapes (fun (_, sink) ->
+          let ren = Lazy.force sm_89 in
+          let o = optimised ren (Lazy.force sink) in
+          is_true ~msg:"staged" (Stage.stages_product ren (K.ast o)));
+      cases "holds 8 by 8 outputs a thread on sm_75" ~id:fst shapes
+        (fun (_, sink) ->
+          let o = optimised (Lazy.force sm_75) (Lazy.force sink) in
+          equal int 64 (lane_outputs_of o));
+      (* 88 rows by 88 columns leave 11 runs of 8 each, 4 threads padded
+         within core_waste: 16, no SIMD group. *)
+      test "a product whose halved axes hold no SIMD group, even padded, holds \
+            4 by 4 outputs a thread" (fun () ->
+          let o = optimised (renderer "cuda") (f32_product 88 88 64) in
+          equal int 16 (lane_outputs_of o));
+    ]
+
 (* A product whose operands both lie along its reduce, on a renderer that
    copies asynchronously, takes a staged product's tile, blocked or short of
    the units: no thread splits its reduce, and its program copies both
@@ -3759,6 +3855,7 @@ let () =
          fastest_threads_coalesce;
          along_reduce_threads;
          staged_products;
+         batched_heads;
          padded_upcast;
          widths;
          longest_padded;

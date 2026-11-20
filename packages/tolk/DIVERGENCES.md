@@ -6022,6 +6022,13 @@ against 2.77).
     takes its second upcast, where 2 divides it; an odd part with no such
     axis is padded (PADTO) to even and takes it, as whisper's 1500 frames
     leave 375 runs of 4;
+  - where these rules block no contraction without padding, they run
+    again with each output axis padded (PADTO) within `core_waste` (6/5)
+    of its size, and block where they block so: a part 4 does not divide
+    counts as padded to 4 for the 4 before 3 below, and the upcast loop
+    pads it to 4 before taking 3; what is left of each axis holds its
+    threads padded to them, which the workgroup's split pads, taking the
+    local loop's split only where it fills a SIMD group;
   - where both operands of the product read the unrolled axis at unit
     stride, as a product by the transpose of a matrix stored `[outputs;
     inputs]` does, and so every float32 input gradient `dY Wᵀ` whatever
@@ -6069,7 +6076,19 @@ against 2.77).
   114-116 ms against 478-487 for large-v3-turbo, 19.8-21.3 against
   64.1-65.6 for small and 4.7 against 5.7-5.8 for tiny, three alternated
   runs on fudge's RTX 5000 Ada (whisper's `bench_whisper.exe --recording`),
-  where openai-whisper's PyTorch takes 111 ms for large-v3-turbo.
+  where openai-whisper's PyTorch takes 111 ms for large-v3-turbo. The
+  padded pass serves AION-1's projections into heads and their merges,
+  which keep a batch's objects and their tokens apart, two axes that merge
+  in no index: 858 tokens, which 4 does not divide, ran 4 by 3 at
+  2.8-3.0 TFLOP/s; 580, whose 145 runs of 4 the batch doubles, 4 by 4 at
+  2.5; 383 and 581 at 5.1-6.8. Blocked and staged they run at 22-28, 16
+  objects of 858 tokens into 12 heads of 64 over 768 taking 0.58 ms
+  against 5.49 (DEBUG=2, two alternated rounds), and an embed of 16
+  objects with aion-base takes 172 ms a call against 370 (DEBUG=2), where
+  AION-1's PyTorch takes 257. A layout that blocks without pads keeps its
+  kernel: with the pads first, TESSERA medium's projections into 4 heads
+  of 110 unstaged ran 7-10% slower padded to 112 than lending the heads'
+  second upcast to the width.
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
   (`matmul`, `matmul_256`, `scores`, `matmul_768`, `batched_768`,
   `two_batches_768`, `matmul_440`, padded, `heads_projection` and
@@ -6078,8 +6097,13 @@ against 2.77).
   which state no units; on sm_89's renderer `heads_projection` blocked and
   `matmul_768`, `batched_768` and `two_batches_768` held at 4 by 4;
   `two_batches_768_biased` and `batched_768_biased`, whose bias the
-  batches do not read, optimised as without it; `matmul_1000`, `matmul_48`
-  and `scores_masked` not blocked), `a product laid out along its reduce`'s
+  batches do not read, optimised as without it; `matmul_1000` blocked
+  padded to 1024; `matmul_48` and `scores_masked` not blocked),
+  `a batch's projection into heads` (16 objects of 858, 580 or 383 tokens
+  and 8 of 581, staged on sm_89 and 8 by 8 a thread on sm_75, and a
+  product of 88 by 88 that holds no SIMD group even padded), rune's
+  `a batch's projections into heads, and their merge, its tokens padded,
+  plus a bias, are within their bound`, `a product laid out along its reduce`'s
   `16384 by 220 pairs over 440`, `1500 by 1280 over 1280` and `1500 by 20
   heads of 64 over 1280`, rune's
   `Cuda/matmul-float32-transposed-pairs-16384x440x440` and
