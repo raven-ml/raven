@@ -1,0 +1,31 @@
+# thumper baseline v1
+# suite: aion-cuda
+
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+
+cuda/codec/image/16	alloc_words	exact	36093
+cuda/codec/image/16	wall_time	batch=1	n=5	7.636e-02	7.558e-02 7.577e-02 7.636e-02 7.641e-02 7.662e-02
+cuda/codec/spectrum-decode/16	alloc_words	exact	68433
+cuda/codec/spectrum-decode/16	wall_time	batch=1	n=5	6.908e-03	6.764e-03 6.873e-03 6.908e-03 6.989e-03 7.097e-03
+cuda/codec/spectrum/16	alloc_words	exact	71240
+cuda/codec/spectrum/16	wall_time	batch=1	n=5	1.998e-02	1.951e-02 1.985e-02 1.998e-02 2.008e-02 2.020e-02
+cuda/embed/base/1	alloc_words	exact	82459
+cuda/embed/base/1	wall_time	batch=1	n=5	3.052e-02	3.016e-02 3.017e-02 3.052e-02 3.056e-02 3.063e-02
+cuda/embed/base/16	alloc_words	exact	82459
+cuda/embed/base/16	wall_time	batch=1	n=5	1.561e-01	1.553e-01 1.559e-01 1.561e-01 1.563e-01 1.565e-01
+cuda/embed/large/16	alloc_words	exact	146307
+cuda/embed/large/16	wall_time	batch=1	n=5	5.425e-01	5.379e-01 5.389e-01 5.425e-01 5.445e-01 5.447e-01
+cuda/generate/base/1	alloc_words	exact	970649
+cuda/generate/base/1	wall_time	batch=1	n=5	1.136e-01	1.126e-01 1.135e-01 1.136e-01 1.136e-01 1.137e-01
+cuda/generate/base/16	alloc_words	exact	969689
+cuda/generate/base/16	wall_time	batch=1	n=5	9.579e-01	9.550e-01 9.571e-01 9.579e-01 9.586e-01 9.588e-01
+cuda/generate/large/16	alloc_words	exact	1776329
+cuda/generate/large/16	wall_time	batch=1	n=5	3.701e+00	3.693e+00 3.698e+00 3.701e+00 3.704e+00 3.709e+00
+cuda/posterior/base/1	alloc_words	exact	83706
+cuda/posterior/base/1	wall_time	batch=1	n=5	1.753e-02	1.714e-02 1.746e-02 1.753e-02 1.761e-02 1.769e-02
+cuda/posterior/base/16	alloc_words	exact	83706
+cuda/posterior/base/16	wall_time	batch=1	n=5	1.189e-01	1.170e-01 1.189e-01 1.189e-01 1.191e-01 1.191e-01
+cuda/posterior/large/16	alloc_words	exact	150882
+cuda/posterior/large/16	wall_time	batch=1	n=5	4.146e-01	4.116e-01 4.138e-01 4.146e-01 4.155e-01 4.179e-01
