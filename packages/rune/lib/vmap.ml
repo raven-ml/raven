@@ -67,8 +67,11 @@ let batch i n x =
    them or an addition gives them. A sum that holds none is one value, the
    same in every lane, so that additions every lane makes alike, as of the
    map's [Lanes], cost what one lane's do. A sum gains lanes at its end, in
-   one trace. A loop's sum, a carry, is traced again to start with them, as
-   is a switch's where its branches end it differently.
+   one trace: it enters at one lane's shape, and the addition that gives it
+   lanes broadcasts it inside the construct, one more equation where a seed
+   known to gain them would have been batched before. A loop's sum, a carry,
+   is traced again to start with them, as is a switch's where its branches
+   end it differently.
    A trace holds a total's running value by its total and shape, so a total's
    sums that are each lane's start with lanes together, and end with them
    together: one with lanes and one without could otherwise meet at one
