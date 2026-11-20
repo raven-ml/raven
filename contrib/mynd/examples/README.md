@@ -17,6 +17,7 @@ dune exec ./main.exe
 | Example | Shows | Key functions |
 |---|---|---|
 | [`01-values`](./01-values/) | An image's codes and fractions | `Mynd.convert` |
+| [`02-colour`](./02-colour/) | Averaging encoded values or light; alpha | `Mynd.srgb_to_linear`, `Mynd.premultiply`, `Colour.luma`, `Colour.luminance` |
 
 Examples that make a picture write it beside `main.ml` with hugin. The
 pictures are not committed.

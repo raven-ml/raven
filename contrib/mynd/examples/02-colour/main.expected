@@ -1,0 +1,7 @@
+a checkerboard halved: 0.500 in encoded values, 0.735 in light
+chelsea quartered: mean code 115.3 in encoded values, 116.2 in light
+  mean difference 0.87 codes, largest 23.5
+red and transparent green averaged (r g b a):
+  straight       0.500 0.500 0.000 0.500
+  premultiplied  1.000 0.000 0.000 0.500
+green: luma 0.587, luminance 0.715
