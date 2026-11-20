@@ -5210,9 +5210,12 @@ into D183, which holds its rule, its reason and its pins.
   only in blocks of at least 16 terms, every reduce axis it reads as such a
   quotient, as a row's scales are read once a block of 32 codes.
   Such a gathered axis takes one register of lanes, and the output axis the
-  gathering accesses do not read is then upcast by the largest power of two
-  that fits the budget: a product of float32 operands both stored along its
-  sum takes 8 rows by 8 columns, BLIS's micro-tile with its B gathered. In
+  gathering accesses do not read, or read only as a quotient by d, as a block
+  of d routed rows reads its expert's matrix, is then upcast by the largest
+  power of two that divides each d and fits the budget: a product of float32
+  operands both stored along its sum takes 8 rows by 8 columns, BLIS's
+  micro-tile with its B gathered, and so do a prompt's blocks of 64 routed
+  rows against their decoded experts. In
   a kernel that sums products, a stored axis whose largest power-of-two
   divisor holds fewer than 16 bytes of lanes is first padded to a multiple of
   16 bytes, where that adds at most a third of its extent: a head of 110

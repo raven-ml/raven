@@ -445,8 +445,10 @@ let upcast_contiguous k =
       (* A gathered axis takes one register: the transpose's shuffles grow
          with the registers of a column, which every row of the tile shares.
          The rows then fill the accumulators' budget: the output axis the
-         gathering accesses do not read, by the largest power of two that
-         fits, as BLIS's micro-tile holds [mr] rows of [nr] lanes. *)
+         gathering accesses do not read, or read only as a quotient by [d],
+         as a block of [d] routed rows reads its expert's matrix, by the
+         largest power of two that fits and divides each [d], as BLIS's
+         micro-tile holds [mr] rows of [nr] lanes. *)
       let lanes =
         if gathering = [] then host_vector_bytes / bytes else file.bytes / bytes
       in
@@ -454,9 +456,16 @@ let upcast_contiguous k =
         List.filter_map
           (fun a ->
             let r = List.nth (K.rngs k) a in
-            if gathering = [] || a = axis || List.exists (reads r) gathering
+            let runs =
+              List.filter_map
+                (fun b -> if reads r b then Some (run (idx b) r) else None)
+                gathering
+            in
+            if
+              gathering = [] || a = axis
+              || List.exists (Bigint.equal Bigint.one) runs
             then None
-            else Some r)
+            else Some (r, runs))
           (K.upcastable_dims k)
       in
       (* In a kernel that sums products, an axis longer than 16 bytes of
@@ -489,12 +498,17 @@ let upcast_contiguous k =
         ~keep:(fun n -> fits ~upcast:(axis, n) k);
       match List.rev rows with
       | [] -> ()
-      | r :: _ -> (
+      | (r, runs) :: _ -> (
           match List.find_index (fun x -> x == r) (K.rngs k) with
           | None -> ()
           | Some a ->
+              let divides n =
+                List.for_all
+                  (fun d -> Bigint.(equal (rem d (of_int n)) zero))
+                  runs
+              in
               tile_split k a (pow2s_within split_lanes) ~keep:(fun n ->
-                  fits ~upcast:(a, n) k))
+                  divides n && fits ~upcast:(a, n) k))
 
 (* On the host, a reduce whose last axis unrolls [unrolled] lanes of at most 3
    fills the rest of a vector of [host_vector_bytes] of its type with lanes of
