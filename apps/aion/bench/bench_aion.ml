@@ -231,7 +231,7 @@ let cutout () =
 
 (* A DESI spectrum: 7781 pixels from 3600 Å at 0.8 Å, as DESI's coadds and
    Multimodal Universe's rows hold them. *)
-let desi_spectrum () : (Nx.float32_elt, Nx.host) Spectrum.spectrum =
+let desi_spectrum () : (Nx.host Nx.float32_t, Nx.host) Spectrum.spectrum =
   let m = 7781 in
   {
     flux = Nx.Rng.normal ~key:(Nx.Rng.key 102) Nx.float32 [| 1; m |];
@@ -279,7 +279,7 @@ let image_encode () =
 
 let spectrum_encode () =
   let c = Spectrum.of_archive (spectrum_archive ()) and x = desi_spectrum () in
-  fun () -> ignore (Spectrum.encode c Desi x)
+  fun () -> ignore (Spectrum.encode c (Spectrum.pad Desi x))
 
 let models = Modality.(Spectrum Desi :: Scalar Z :: phot)
 let transformer () = Transformer.of_archive (transformer_archive models)

@@ -38,8 +38,9 @@ type scalar =
   | Dec
   | Xp_bp
   | Xp_rp
+[@@deriving ptree]
 
-type spectrum = Desi | Sdss
+type spectrum = Desi | Sdss [@@deriving ptree]
 
 type t =
   | Image
@@ -48,6 +49,7 @@ type t =
   | Spectrum of spectrum
   | Catalog
   | Scalar of scalar
+[@@deriving ptree]
 
 let scalars =
   [

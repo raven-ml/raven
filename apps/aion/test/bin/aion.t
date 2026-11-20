@@ -132,9 +132,8 @@ So a seed gives the same draws, and another seed others.
   $ ./npz.exe equal g.npz g8.npz tokens
   tokens differ in 6 of 6 values
 
---device cpu-jit runs the transformer and the image and spectrum codecs
-compiled on the host, and the scalar codecs eagerly there, each batch padded
-to --batch rows. Compiled sums may add their terms in
+--device cpu-jit runs the transformer and the codecs compiled on the host,
+each batch padded to --batch rows. Compiled sums may add their terms in
 another order: test_transformer holds the compiled transformer within 2τŝ
 of the eager one by the narrow network's rounding ensemble, which is at most
 1.5e-5 of an object's largest encoding or logit there. So embeddings, means

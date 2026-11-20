@@ -13,7 +13,7 @@ type transform = Identity | Log of float [@ptree.walk walk_floor] | Asinh_asinh
 [@@deriving ptree]
 
 (* [edges] is [c] codebooks of [n] edges, [c; n]. *)
-type (_, 'd) t = { transform : transform; edges : 'd Nx.float32_t }
+type 'd t = { transform : transform; edges : 'd Nx.float32_t }
 [@@deriving ptree]
 
 let v transform edges =

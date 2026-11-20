@@ -8,3 +8,4 @@ type 'd t = {
   tokens : 'd Nx.int64_t;
   present : 'd Nx.bool_t option;
 }
+[@@deriving ptree]

@@ -1,8 +1,6 @@
-; The rounding ensemble's rule (spread), running error bounds of the spectrum
-; codec's preparation (shadow) and where a float32 computation may land by
-; nx's error bounds (bounds).
+; The rounding ensemble's rule (spread) and where a float32 computation may
+; land by nx's error bounds (bounds).
 
 (library
  (name aion_support)
- (wrapped false)
- (libraries aion kaun nx))
+ (wrapped false))

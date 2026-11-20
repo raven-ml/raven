@@ -329,7 +329,7 @@ let walk =
     List.map
       (Format.asprintf "%a" Nx.Ptree.pp_visit)
       (Nx.Ptree.visits
-         (Nx.Ptree.instantiate (module Scalar))
+         (Nx.Ptree.v Scalar.walk)
          (Scalar.v tr (row e)))
   in
   group "walk"
@@ -350,7 +350,7 @@ let walk =
    functions Rune.jit computes exactly on the host, so tokens and values agree
    bit for bit. *)
 let signature () =
-  Nx.Ptree.(instantiate (module Scalar) @-> tensor @-> returns tensor)
+  Nx.Ptree.(v Scalar.walk @-> tensor @-> returns tensor)
 
 let encode32 = Rune.jit (signature ()) Scalar.encode
 let encode64 = Rune.jit (signature ()) Scalar.encode

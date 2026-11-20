@@ -171,7 +171,18 @@ let spectrum =
   test "a compiled spectrum codec meets upstream" (fun () ->
       let module D = (val on_gpu ()) in
       let c = Spectrum.of_archive (fixture "spectrum_codec") in
-      let g = Spectrum.jit (Spectrum.place D.on c) in
+      let g = Nx.Ptree.place (module Spectrum) D.on c in
+      let codec () = Nx.Ptree.instantiate (module Spectrum) in
+      let spectra () = Nx.Ptree.instantiate (module Spectrum.Spectra) in
+      let encode =
+        Rune.jit
+          Nx.Ptree.(codec () @-> spectra () @-> returns tensor)
+          (fun t x -> Spectrum.encode t (Spectrum.pad Modality.Desi x))
+      and decode =
+        Rune.jit
+          Nx.Ptree.(codec () @-> tensor @-> returns (spectra ()))
+          (fun t k -> Spectrum.decode t k)
+      in
       let a = fixture "spectrum_golden" in
       let n = Int64.to_int (Nx.item [ 0 ] (get a Nx.int64 "n")) in
       let f64 name = floats (get a Nx.float64 name) in
@@ -183,7 +194,7 @@ let spectrum =
           wavelength = Nx.place D.on (get a Nx.float32 "input.lambda");
         }
       in
-      let k = Nx.place Nx.Host.on (Spectrum.encode g Modality.Desi x) in
+      let k = Nx.place Nx.Host.on (encode g x) in
       let edges = Array.sub (floats (Spectrum.levels c)) 0 1023 in
       holds "normalisation token"
         (Spread.levels ~n ~edges ~reference:(f64 "f64.desi.norm_pre")
@@ -195,9 +206,7 @@ let spectrum =
            (floats
               (Lfq.decode Nx.float64 ~bits:10
                  (Nx.slice [ A; R (1, Nx.dim 1 k) ] k))));
-      let d =
-        Spectrum.decode g (Nx.place D.on (get a Nx.int64 "f64.desi.tokens"))
-      in
+      let d = decode g (Nx.place D.on (get a Nx.int64 "f64.desi.tokens")) in
       holds "flux"
         (Spread.values ~n ~reference:(f64 "f64.desi.flux")
            ~spread:(f64 "s.desi.flux") (floats d.flux));
@@ -205,8 +214,8 @@ let spectrum =
         (Spread.signs ~n ~reference:(f64 "f64.desi.logit")
            ~spread:(f64 "s.desi.logit") (signs d.mask)))
 
-(* The image codec, against upstream on an HSC image of two bands, its
-   token's digits as test_image counts them. *)
+(* The image codec, against upstream on an HSC image of two bands, its token's
+   digits as test_image counts them. *)
 
 let digits k =
   let levels = [ 7; 5; 5; 5; 5 ] in
@@ -225,24 +234,37 @@ let digits k =
 let image =
   test "a compiled image codec meets upstream" (fun () ->
       let module D = (val on_gpu ()) in
-      let c = Image.of_archive (fixture "image_codec") in
-      let g = Image.jit (Image.place D.on c) in
+      let g =
+        Nx.Ptree.place
+          (module Image)
+          D.on
+          (Image.of_archive (fixture "image_codec"))
+      in
+      let signature () =
+        Nx.Ptree.(
+          instantiate (module Image)
+          @-> list (v Image.walk_band)
+          @-> tensor @-> returns tensor)
+      in
+      let encode = Rune.jit (signature ()) Image.encode
+      and decode = Rune.jit (signature ()) Image.decode in
       let a = fixture "image_golden" in
       let n = Int64.to_int (Nx.item [ 0 ] (get a Nx.int64 "n")) in
       let f64 name = floats (get a Nx.float64 name) in
       let s name = floats (get a Nx.float32 name) in
       let bs = Image.[ Hsc_i; Hsc_y ] in
       let x = Nx.place D.on (get a Nx.float32 "input.hsc") in
-      let k = Image.encode g bs x in
+      let k = encode g bs x in
       holds "token digits"
-        (Spread.levels ~n ~edges:[| -2.5; -1.5; -0.5; 0.5; 1.5; 2.5 |]
+        (Spread.levels ~n
+           ~edges:[| -2.5; -1.5; -0.5; 0.5; 1.5; 2.5 |]
            ~reference:(f64 "f64.hsc.bounded") ~spread:(s "s.order.hsc.bounded")
            (digits k));
       let k = Nx.place D.on (get a Nx.int64 "f64.hsc.tokens") in
       holds "decoded"
         (Spread.values ~n ~reference:(f64 "f64.hsc.decoded")
            ~spread:(s "s.order.hsc.decoded")
-           (floats (Image.decode g [ Image.Hsc_i ] k))))
+           (floats (decode g [ Image.Hsc_i ] k))))
 
 let () =
   exit

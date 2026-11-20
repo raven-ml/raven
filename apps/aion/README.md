@@ -43,9 +43,9 @@ apart, and `generate` counts it and writes NaN.
 
 `--device` picks where the transformer computes: `cpu`, eagerly (the
 default); `cpu-jit`, compiled on the host; or a GPU, compiled there, named
-`cuda`, `nv`, `amd` or `metal`. The image and spectrum codecs then compute
-compiled on the host, the scalar codecs eagerly there, and each batch is
-padded to `--batch` rows, so that every call runs one program. Compiled
+`cuda`, `nv`, `amd` or `metal`. The codecs then compute compiled on the
+host, and each batch is padded to `--batch` rows, so that every call runs
+one program. Compiled
 results agree with eager ones to their last bits, so a draw whose uniform
 falls that close to a boundary between two tokens may differ.
 

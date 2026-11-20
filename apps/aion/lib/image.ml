@@ -15,6 +15,7 @@ type band =
   | Des_r
   | Des_i
   | Des_z
+[@@deriving ptree]
 
 let bands = [ Hsc_g; Hsc_r; Hsc_i; Hsc_z; Hsc_y; Des_g; Des_r; Des_i; Des_z ]
 
@@ -76,67 +77,62 @@ let eps = 1e-5
 
 (* Layers *)
 
-type ('b, 'd) conv = ((float, 'b, 'd) Nx.t, 'd) Kaun.Conv.t
-
 (* A residual unit, [x + excite (elu (c1 (elu (c3 x))))], whose global-context
    squeeze-excite scores the cells with [to_k] and gates the channels with [gate
    (leaky_relu (hidden ctx))]. *)
-type ('b, 'd) excite = {
-  to_k : ('b, 'd) conv;
-  hidden : ('b, 'd) conv;
-  gate : ('b, 'd) conv;
+type ('a, 'd) excite = {
+  to_k : ('a, 'd) Kaun.Conv.t;
+  hidden : ('a, 'd) Kaun.Conv.t;
+  gate : ('a, 'd) Kaun.Conv.t;
 }
+[@@deriving ptree]
 
-type ('b, 'd) residual = {
-  c3 : ('b, 'd) conv;
-  c1 : ('b, 'd) conv;
-  excite : ('b, 'd) excite;
+type ('a, 'd) residual = {
+  c3 : ('a, 'd) Kaun.Conv.t;
+  c1 : ('a, 'd) Kaun.Conv.t;
+  excite : ('a, 'd) excite;
 }
+[@@deriving ptree]
 
-type ('b, 'd) encoder = {
-  conv_in : ('b, 'd) conv;
-  unit0 : ('b, 'd) residual;
-  down1 : ('b, 'd) conv;
-  units1 : ('b, 'd) residual list;
-  down2 : ('b, 'd) conv;
-  units2 : ('b, 'd) residual list;
-  conv7 : ('b, 'd) conv;
-  units3 : ('b, 'd) residual list;
-  norm : ((float, 'b, 'd) Nx.t, 'd) Kaun.Layer_norm.t;
+type ('a, 'd) encoder = {
+  conv_in : ('a, 'd) Kaun.Conv.t;
+  unit0 : ('a, 'd) residual;
+  down1 : ('a, 'd) Kaun.Conv.t;
+  units1 : ('a, 'd) residual list;
+  down2 : ('a, 'd) Kaun.Conv.t;
+  units2 : ('a, 'd) residual list;
+  conv7 : ('a, 'd) Kaun.Conv.t;
+  units3 : ('a, 'd) residual list;
+  norm : ('a, 'd) Kaun.Layer_norm.t;
 }
+[@@deriving ptree]
 
 (* The decoder, in the order it runs: upstream's decoder_layers 0 to 6, then
    conv_out. *)
-type ('b, 'd) decoder = {
-  units3' : ('b, 'd) residual list;
-  conv3 : ('b, 'd) conv;
-  units2' : ('b, 'd) residual list;
-  up2 : ('b, 'd) conv;
-  units1' : ('b, 'd) residual list;
-  up1 : ('b, 'd) conv;
-  unit0' : ('b, 'd) residual;
-  conv_out : ('b, 'd) conv;
+type ('a, 'd) decoder = {
+  units3' : ('a, 'd) residual list;
+  conv3 : ('a, 'd) Kaun.Conv.t;
+  units2' : ('a, 'd) residual list;
+  up2 : ('a, 'd) Kaun.Conv.t;
+  units1' : ('a, 'd) residual list;
+  up1 : ('a, 'd) Kaun.Conv.t;
+  unit0' : ('a, 'd) residual;
+  conv_out : ('a, 'd) Kaun.Conv.t;
 }
-
-(* A compiled codec's programs ({!jit}): encode and decode without their
-   checks, for a list of bands. *)
-type ('b, 'd) programs = {
-  p_encode : band list -> (float, 'b, 'd) Nx.t -> 'd Nx.int64_t;
-  p_decode : band list -> 'd Nx.int64_t -> (float, 'b, 'd) Nx.t;
-}
+[@@deriving ptree]
 
 (* [proj_in] and [proj_out] are the subsampled linear maps between the nine
    channels and the network's, as 1 × 1 convolutions. *)
-type ('b, 'd) t = {
-  proj_in : ('b, 'd) conv;
-  encoder : ('b, 'd) encoder;
-  pre : ('b, 'd) conv;
+type ('a, 'd) t = {
+  proj_in : ('a, 'd) Kaun.Conv.t;
+  encoder : ('a, 'd) encoder;
+  pre : ('a, 'd) Kaun.Conv.t;
   quantizer : Fsq.t;
-  post : ('b, 'd) conv;
-  decoder : ('b, 'd) decoder;
-  proj_out : ('b, 'd) conv;
-  programs : ('b, 'd) programs option;
+  post : ('a, 'd) Kaun.Conv.t;
+  decoder : ('a, 'd) decoder;
+  proj_out : ('a, 'd) Kaun.Conv.t;
 }
+[@@deriving ptree]
 
 (* Loading *)
 
@@ -160,7 +156,8 @@ let conv a name ~i ~k =
   | s ->
       failure
         "Aion.Image.of_archive: %s.weight: shape %a, [o; %d; %d; %d] expected"
-        name Nx.pp_shape s i k k
+        name
+        Nx.pp_shape s i k k
 
 (* A convolution of [o] outputs. *)
 let conv_to a name ~i ~k ~o =
@@ -255,60 +252,76 @@ let read a =
     post = conv_to a "post_quant_proj" ~i:e ~k:1 ~o:d2;
     decoder;
     proj_out;
-    programs = None;
   }
 
 let of_archive a = Nx_io.Archive.import read a
 
-(* Placing *)
+(* Initialising *)
 
-(* [t] with [f] applied to each of its tensors. *)
-let map f t =
-  let c (c : _ conv) : _ conv = { w = f c.w; b = Option.map f c.b } in
-  let r r =
-    let e = r.excite in
+type arch = { projected : int; width : int }
+
+(* The levels of AION-1's quantizer. *)
+let levels = [ 7; 5; 5; 5; 5 ]
+
+let init ~key a =
+  if a.projected < 1 || a.width < 1 then
+    invalid_arg "Aion.Image.init: a field of the architecture is not positive";
+  let at = Nx.Rng.placement key in
+  let n = ref 0 in
+  let key () =
+    incr n;
+    Nx.Rng.fold_in key !n
+  in
+  let conv i o k =
+    Kaun.Conv.init ~key:(key ()) ~in_channels:i ~out_channels:o
+      ~kernel_size:[| k; k |]
+  in
+  (* Squeeze-excite to half a unit's width, as AION-1's. *)
+  let residual c =
+    let h = max 1 (c / 2) in
     {
-      c3 = c r.c3;
-      c1 = c r.c1;
-      excite = { to_k = c e.to_k; hidden = c e.hidden; gate = c e.gate };
+      c3 = conv c c 3;
+      c1 = conv c c 1;
+      excite = { to_k = conv c 1 1; hidden = conv c h 1; gate = conv h c 1 };
     }
   in
-  let rs = List.map r in
-  let e = t.encoder and d = t.decoder in
+  let residuals c = List.init 4 (fun _ -> residual c) in
+  let p = a.projected and d = a.width in
+  let d1 = 2 * d and d2 = 4 * d in
+  let e = List.length levels in
   let encoder =
     {
-      conv_in = c e.conv_in;
-      unit0 = r e.unit0;
-      down1 = c e.down1;
-      units1 = rs e.units1;
-      down2 = c e.down2;
-      units2 = rs e.units2;
-      conv7 = c e.conv7;
-      units3 = rs e.units3;
-      norm = { gamma = f e.norm.gamma; beta = Option.map f e.norm.beta };
+      conv_in = conv p d 7;
+      unit0 = residual d;
+      down1 = conv d d1 3;
+      units1 = residuals d1;
+      down2 = conv d1 d2 3;
+      units2 = residuals d2;
+      conv7 = conv d2 d2 7;
+      units3 = residuals d2;
+      norm = Kaun.Layer_norm.init ~dim:d2 at;
     }
   in
   let decoder =
     {
-      units3' = rs d.units3';
-      conv3 = c d.conv3;
-      units2' = rs d.units2';
-      up2 = c d.up2;
-      units1' = rs d.units1';
-      up1 = c d.up1;
-      unit0' = r d.unit0';
-      conv_out = c d.conv_out;
+      units3' = residuals d2;
+      conv3 = conv d2 d2 3;
+      units2' = residuals d2;
+      up2 = conv d2 (4 * d1) 1;
+      units1' = residuals d1;
+      up1 = conv d1 (4 * d) 1;
+      unit0' = residual d;
+      conv_out = conv d p 3;
     }
   in
   {
-    proj_in = c t.proj_in;
+    proj_in = conv channels p 1;
     encoder;
-    pre = c t.pre;
-    quantizer = t.quantizer;
-    post = c t.post;
+    pre = conv d2 e 1;
+    quantizer = Fsq.v levels;
+    post = conv e d2 1;
     decoder;
-    proj_out = c t.proj_out;
-    programs = None;
+    proj_out = conv p channels 1;
   }
 
 let dtype t = Nx.dtype t.proj_in.w
@@ -401,25 +414,23 @@ let residual r x =
 
 let residuals rs x = List.fold_left (fun x r -> residual r x) x rs
 
-(* The prepared bands in their channels, zeros elsewhere, channels last. *)
+(* The prepared bands in their channels, channels last: each of the nine takes
+   its band's image, or a zero image appended at index [c]. *)
 let nine bs p =
-  let p = Nx.moveaxis 1 3 p in
-  let zero =
-    Nx.zeros_at (Nx.beside p) (Nx.dtype p) [| Nx.dim 0 p; side; side; 1 |]
+  let c = List.length bs in
+  let index b =
+    Int64.of_int (Option.value ~default:c (List.find_index (( = ) b) bs))
   in
-  let at b =
-    let rec find i = function
-      | [] -> zero
-      | b' :: rest ->
-          if b' = b then Nx.slice [ A; A; A; R (i, i + 1) ] p
-          else find (i + 1) rest
-    in
-    find 0 bs
+  let at = Nx.beside p in
+  let k =
+    Nx.create Nx.int64 [| channels |] (Array.of_list (List.map index bands))
   in
-  Nx.concatenate ~axis:3 (List.map at bands)
+  let zero = Nx.zeros_at at (Nx.dtype p) [| Nx.dim 0 p; 1; side; side |] in
+  let p = Nx.concatenate ~axis:1 [ p; zero ] in
+  Nx.moveaxis 1 3 (Nx.take ~axis:1 (Nx.place at k) p)
 
 let embed t bs p =
-  check_bands "Image.embed" bs;
+  check_images "Image.embed" bs p;
   (* PyTorch's [(9 / c) ** 0.5]: a quotient rounded, then its square root, as
      its pow takes at the exponent 0.5. *)
   let q = Float.of_int channels /. Float.of_int (List.length bs) in
@@ -438,7 +449,7 @@ let latent t bs x =
   let z = apply t.pre (Kaun.Layer_norm.apply ~eps e.norm h) in
   Nx.reshape [| Nx.dim 0 z; grid * grid; Nx.dim 3 z |] z
 
-let encode_raw t bs x = Fsq.encode t.quantizer (latent t bs x)
+let encode t bs x = Fsq.encode t.quantizer (latent t bs x)
 
 (* Decoding *)
 
@@ -456,15 +467,13 @@ let restore bs y =
   Nx.concatenate ~axis:1
     (List.map (fun b -> of_nanomaggies b (band_at (channel b) y)) bs)
 
-let check_decode bs k =
+let decode t bs k =
   check_bands "Image.decode" bs;
-  match Nx.shape k with
+  (match Nx.shape k with
   | [| _; c |] when c = grid * grid -> ()
   | s ->
       invalid "Aion.Image.decode: shape %a, [n; %d] expected" Nx.pp_shape s
-        (grid * grid)
-
-let decode_raw t bs k =
+        (grid * grid));
   let n = Nx.dim 0 k in
   let d = t.decoder in
   let z = Fsq.decode (dtype t) t.quantizer k in
@@ -475,54 +484,3 @@ let decode_raw t bs k =
   let h = residual d.unit0' (upsample d.up1 h) in
   let y = apply t.proj_out (apply ~pad:1 d.conv_out h) in
   restore bs (Nx.moveaxis 3 1 y)
-
-(* Entry points: the checks, then the computation. A compiled codec checks the
-   codes it decodes on the host, so that a refusal comes before its program
-   runs; its programs check them again, and the latents' NaN, which only the
-   computation finds. *)
-
-let encode t bs x =
-  match t.programs with
-  | None -> encode_raw t bs x
-  | Some p ->
-      check_images "Image.prepare" bs x;
-      p.p_encode bs x
-
-let decode t bs k =
-  check_decode bs k;
-  match t.programs with
-  | None -> decode_raw t bs k
-  | Some p ->
-      (* Fsq.decode of a host copy refuses a code as the program would. *)
-      ignore (Fsq.decode Nx.float32 t.quantizer (Nx.place Nx.Host.on k));
-      p.p_decode bs k
-
-(* Compiling *)
-
-let bands_s () =
-  Nx.Ptree.v (fun c bs ->
-      let open Nx.Ptree.Walk in
-      list (fun c b -> case c (name b); b) c bs)
-
-let jit t =
-  let t = { t with programs = None } in
-  let open Nx.Ptree in
-  let programs =
-    {
-      p_encode =
-        Rune.jit (bands_s () @-> tensor @-> returns tensor) (encode_raw t);
-      p_decode =
-        Rune.jit (bands_s () @-> tensor @-> returns tensor) (decode_raw t);
-    }
-  in
-  { t with programs = Some programs }
-
-let compiled t = Option.is_some t.programs
-
-let place p t =
-  let t' = map (Nx.place p) t in
-  if compiled t then jit t' else t'
-
-let cast dt t =
-  let t' = map (Nx.cast dt) t in
-  if compiled t then jit t' else t'

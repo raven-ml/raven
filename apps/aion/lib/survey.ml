@@ -213,7 +213,7 @@ let band_of t d row n =
   | Some b -> b
   | None -> fail "%s: %s: row %d: %S names no band" t.path (Nx_io.Hdf5.path d) row n
 
-let image t rows (m : Modality.t) : Codecs.data =
+let image t rows (m : Modality.t) : Nx.host Codecs.data =
   let flux = float32 t "image_array" rows in
   let d, parts = window t "image_band" rows in
   let names =
@@ -261,7 +261,7 @@ let lengths t d rows (w : Nx.host Nx.float32_t) =
       Int64.of_int !l)
     rows
 
-let spectrum t rows modality : Codecs.data =
+let spectrum t rows modality : Nx.host Codecs.data =
   let read n = float32 t n rows in
   let wavelength = read "spectrum_lambda" in
   let d = Hashtbl.find t.datasets "spectrum_lambda" in

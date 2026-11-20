@@ -44,10 +44,8 @@
 
    --device picks where the transformer computes: cpu, eagerly (the default);
    cpu-jit, compiled on the host; or a GPU as Rig_gpus.open_ names it (cuda,
-   nv, amd, metal), compiled there. The codecs compute on the host, the image
-   and spectrum codecs compiled unless the device is cpu and the scalar codecs
-   eagerly, which gives a compiled codec's tokens and values bit for bit;
-   tokens move to the device and its results back.
+   nv, amd, metal), compiled there. The codecs compute on the host, compiled
+   unless the device is cpu; tokens move to the device and its results back.
    A compiled device pads each batch to --batch rows, repeating its first
    kept object and dropping the copies' results, so that each call runs one
    program whatever the objects a batch keeps.
@@ -157,18 +155,37 @@ let transformer d t =
   let t = Transformer.place d.at t in
   if d.jit then Transformer.jit t else t
 
-let codecs_at d c = if d.jit then Codecs.jit c else c
+(* The codecs of [ms] on the host, their encode and decode compiled there
+   where [d] compiles, the codecs an argument: a program per modality and
+   shape. *)
+type codecs = {
+  codecs : (Nx.host Nx.float32_t, Nx.host) Codecs.t;
+  encode : Nx.host Codecs.data -> Nx.host Tokens.t;
+  decode : Modality.t -> Nx.host Nx.int64_t -> Nx.host Codecs.data;
+}
+
+let codecs d ms =
+  let c = Codecs.load ms in
+  if not d.jit then
+    { codecs = c; encode = Codecs.encode c; decode = Codecs.decode c }
+  else
+    let open Nx.Ptree in
+    let codecs () = instantiate (module Codecs) in
+    let data () = v Codecs.walk_data in
+    let encode =
+      Rune.jit (codecs () @-> data () @-> returns (v Tokens.walk)) Codecs.encode
+    and decode =
+      Rune.jit
+        (codecs () @-> v Modality.walk @-> tensor @-> returns (data ()))
+        Codecs.decode
+    in
+    { codecs = c; encode = encode c; decode = decode c }
 
 (* Compiled calls take batches padded to [--batch] rows, eager ones as they
    are. *)
 let pad d size = if d.jit then Some size else None
 
-let input_at d (i : _ Tokens.t) : _ Tokens.t =
-  {
-    i with
-    tokens = Nx.place d.at i.tokens;
-    present = Option.map (Nx.place d.at) i.present;
-  }
+let input_at d i = Nx.Ptree.place_fixed Tokens.walk d.at i
 
 let host x = Nx.place Nx.Host.on x
 
@@ -268,7 +285,7 @@ let encode ?pad codecs srcs ins objs =
   let rows = padded pad objs in
   let read (s, m) =
     let rows = Array.map (fun o -> o.(s)) rows in
-    Codecs.encode codecs (Survey.read (List.nth srcs s) rows m)
+    codecs.encode (Survey.read (List.nth srcs s) rows m)
   in
   let tokens = List.map read ins in
   let n = Array.length rows in
@@ -374,7 +391,7 @@ let embed () =
         on =
           (fun d ->
             let t = transformer d t and embedding = embedding d in
-            let codecs = codecs_at d (Codecs.load (List.map snd ins)) in
+            let codecs = codecs d (List.map snd ins) in
             List.map
               (fun batch ->
                 let tokens, kept =
@@ -411,8 +428,8 @@ let posterior_on d t srcs ins (target : Modality.t option) objs range size
   let t = transformer d t in
   let target = Option.get target in
   let s = match target with Scalar s -> s | _ -> assert false in
-  let codecs = codecs_at d (Codecs.load (target :: List.map snd ins)) in
-  let edges = Scalar.edges (Codecs.scalar codecs s) in
+  let codecs = codecs d (target :: List.map snd ins) in
+  let edges = Scalar.edges (Codecs.scalar codecs.codecs s) in
   let c = Nx.dim 0 edges and k = Nx.dim 1 edges in
   let vocab = Modality.vocab target in
   (* Each class's value, [[|k|]] or [[|c; k|]]. *)
@@ -422,7 +439,7 @@ let posterior_on d t srcs ins (target : Modality.t option) objs range size
       if c = 1 then classes
       else Nx.broadcast_to [| k; c |] (Nx.reshape [| k; 1 |] classes)
     in
-    match Codecs.decode codecs target classes with
+    match codecs.decode target classes with
     | Scalar { values; _ } -> if c = 1 then values else Nx.transpose values
     | _ -> assert false
   in
@@ -507,13 +524,11 @@ let decoded codecs (target : Modality.t) ~rows x =
   let first x = first rows x in
   match target with
   | Scalar s ->
-      let m = Nx.dim 1 (Scalar.edges (Codecs.scalar codecs s)) in
+      let m = Nx.dim 1 (Scalar.edges (Codecs.scalar codecs.codecs s)) in
       let x = if Modality.tokens target = 1 then Nx.reshape [| -1 |] x else x in
       let none = Nx.greater_equal_s x (Int64.of_int m) in
       let values =
-        match
-          Codecs.decode codecs target (Nx.where none (Nx.zeros_like x) x)
-        with
+        match codecs.decode target (Nx.where none (Nx.zeros_like x) x) with
         | Scalar { values; _ } -> values
         | _ -> assert false
       in
@@ -526,7 +541,7 @@ let decoded codecs (target : Modality.t) ~rows x =
         ],
         Int64.to_int missing )
   | Spectrum _ -> (
-      match Codecs.decode codecs target x with
+      match codecs.decode target x with
       | Spectrum { spectrum; _ } ->
           ( [
               ("flux", first spectrum.flux);
@@ -535,7 +550,7 @@ let decoded codecs (target : Modality.t) ~rows x =
             0 )
       | _ -> assert false)
   | _ -> (
-      match Codecs.decode codecs target x with
+      match codecs.decode target x with
       | Image { flux; _ } -> ([ ("flux", first flux) ], 0)
       | _ -> assert false)
 
@@ -543,7 +558,7 @@ let generate_on d t srcs ins (target : Modality.t option) objs range size out
     ~draws ~seed ~temperature ~reveal =
   let t = transformer d t in
   let target = Option.get target in
-  let codecs = codecs_at d (Codecs.load (target :: List.map snd ins)) in
+  let codecs = codecs d (target :: List.map snd ins) in
   let root = Nx.Rng.key seed in
   (* A compiled device draws with a sampler, which keeps its programs for the
      command's run. *)

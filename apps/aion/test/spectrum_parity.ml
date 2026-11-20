@@ -62,7 +62,7 @@ let lfq t = floats (Nx.transpose ~axes:[ 0; 2; 1 ] t)
 type set = {
   name : string;
   modality : Modality.spectrum option; (* None: encoded unpadded *)
-  spectra : (Nx.float32_elt, Nx.host) Spectrum.spectrum;
+  spectra : (Nx.host Nx.float32_t, Nx.host) Spectrum.spectrum;
   e : Nx.host Nx_io.Archive.t;
 }
 
@@ -141,16 +141,12 @@ type outputs = {
   mask : float array; (* 1 where bad, -1 elsewhere *)
 }
 
-let compute (type b) (t : (b, Nx.host) Spectrum.t) (set : set)
-    (x : (b, Nx.host) Spectrum.spectrum) =
+let compute (type b) (t : ((float, b, Nx.host) Nx.t, Nx.host) Spectrum.t)
+    (set : set) (x : ((float, b, Nx.host) Nx.t, Nx.host) Spectrum.spectrum) =
   let padded =
     match set.modality with Some m -> Spectrum.pad m x | None -> x
   in
-  let k =
-    match set.modality with
-    | Some m -> Spectrum.encode t m x
-    | None -> Spectrum.encode_unpadded t x
-  in
+  let k = Spectrum.encode t padded in
   let h, _ = Spectrum.latent t padded in
   let d = Spectrum.decode t (get Nx.int64 "ref.tokens" set.e) in
   {
@@ -206,7 +202,7 @@ let () =
   let hub = path "huggingface" and goldens = path "goldens" in
   let subset = path "subset" and ensemble = path "ensemble/spectrum" in
   let t32 = Spectrum.of_archive (Hub.codec ~cache_dir:hub (Spectrum Desi)) in
-  let t64 = Spectrum.cast Nx.float64 t32 in
+  let t64 = Nx.Ptree.cast (module Spectrum) Nx.float64 t32 in
   let levels = floats (Spectrum.levels t32) in
   List.iter
     (fun (set : set) ->

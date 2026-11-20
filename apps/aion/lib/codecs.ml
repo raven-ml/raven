@@ -3,14 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type data =
-  | Image of { bands : Image.band list; flux : Nx.host Nx.float32_t }
+type 'd data =
+  | Image of { bands : Image.band list; flux : 'd Nx.float32_t }
   | Spectrum of {
       modality : Modality.spectrum;
-      spectrum : (Nx.float32_elt, Nx.host) Spectrum.spectrum;
-      lengths : Nx.host Nx.int64_t option;
+      spectrum : ('d Nx.float32_t, 'd) Spectrum.Spectra.t;
+      lengths : 'd Nx.int64_t option;
     }
-  | Scalar of { modality : Modality.scalar; values : Nx.host Nx.float32_t }
+  | Scalar of { modality : Modality.scalar; values : 'd Nx.float32_t }
+[@@deriving ptree]
 
 let hsc : Image.band -> bool = function
   | Hsc_g | Hsc_r | Hsc_i | Hsc_z | Hsc_y -> true
@@ -32,11 +33,12 @@ let modality = function
 
 (* Codecs *)
 
-type t = {
-  image : (Nx.float32_elt, Nx.host) Image.t option;
-  spectrum : (Nx.float32_elt, Nx.host) Spectrum.t option;
-  scalars : (Modality.scalar * (Nx.host Nx.float32_t, Nx.host) Scalar.t) list;
+type ('a, 'd) t = {
+  image : ('a, 'd) Image.t option;
+  spectrum : ('a, 'd) Spectrum.t option;
+  scalars : (Modality.scalar * 'd Scalar.t) list;
 }
+[@@deriving ptree]
 
 let load ?cache_dir ?offline ms =
   (* Refuses a modality without a codec before any file is fetched. *)
@@ -61,15 +63,6 @@ let load ?cache_dir ?offline ms =
   in
   { image; spectrum; scalars }
 
-(* A scalar codec computes eagerly on the host: its comparisons and gathers
-   are what a compiled one computes, bit for bit. *)
-let jit t =
-  {
-    t with
-    image = Option.map Image.jit t.image;
-    spectrum = Option.map Spectrum.jit t.spectrum;
-  }
-
 let missing m =
   invalid_arg
     (Printf.sprintf "Aion.Codecs: no codec loaded for %s" (Modality.key m))
@@ -87,30 +80,34 @@ let spectrum t m =
 (* Tokens *)
 
 (* An object is present unless one of its values is not finite where its
-   channel's codebook holds no NaN edge, and every token of the object goes
-   with it: [[|b|]] or [[|b; c|]] like [values]. A codebook that ends in NaN
-   edges was trained with NaN as a value, so its values all keep their
-   tokens. *)
+   channel's codebook holds no NaN edge, and every token of the object goes with
+   it: [[|b|]] or [[|b; c|]] like [values]. A codebook that ends in NaN edges
+   was trained with NaN as a value, so its values all keep their tokens.
+   Presence is given whatever the values, so that it computes without reading
+   them and [encode] compiles. *)
 let present codec values =
   let nan_edge = Nx.any ~axes:[ 1 ] (Nx.isnan (Scalar.edges codec)) in
   let ok = Nx.logical_or (Nx.isfinite values) nan_edge in
-  if Nx.item [] (Nx.all ok) then None
-  else if Nx.ndim values = 1 then Some ok
-  else
-    Some
-      (Nx.broadcast_to (Nx.shape values) (Nx.all ~axes:[ 1 ] ~keepdims:true ok))
+  if Nx.ndim values = 1 then ok
+  else Nx.broadcast_to (Nx.shape values) (Nx.all ~axes:[ 1 ] ~keepdims:true ok)
 
 let encode t d : _ Tokens.t =
   let m = modality d in
   match d with
   | Image { bands; flux } ->
-      { modality = m; tokens = Image.encode (image t m) bands flux; present = None }
+      {
+        modality = m;
+        tokens = Image.encode (image t m) bands flux;
+        present = None;
+      }
   | Spectrum { modality; spectrum = x; lengths } ->
       let c = spectrum t modality in
-      { modality = m; tokens = Spectrum.encode ?lengths c modality x; present = None }
+      let tokens = Spectrum.encode c (Spectrum.pad ?lengths modality x) in
+      { modality = m; tokens; present = None }
   | Scalar { modality; values } ->
       let c = scalar t modality in
-      { modality = m; tokens = Scalar.encode c values; present = present c values }
+      let tokens = Scalar.encode c values in
+      { modality = m; tokens; present = Some (present c values) }
 
 let decode t (m : Modality.t) k =
   match m with
@@ -118,6 +115,11 @@ let decode t (m : Modality.t) k =
       let bands = bands m in
       Image { bands; flux = Image.decode (image t m) bands k }
   | Spectrum s ->
-      Spectrum { modality = s; spectrum = Spectrum.decode (spectrum t s) k; lengths = None }
+      Spectrum
+        {
+          modality = s;
+          spectrum = Spectrum.decode (spectrum t s) k;
+          lengths = None;
+        }
   | Scalar s -> Scalar { modality = s; values = Scalar.decode (scalar t s) k }
   | Segmap | Catalog -> missing m

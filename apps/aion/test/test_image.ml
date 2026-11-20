@@ -3,80 +3,19 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The image codec on a narrow network of random weights, named as upstream's
-   state dict names them: the steps' formulas, shapes and the laws that tie
-   bands together. The full network's agreement with upstream is
-   test/weights/test_image_weights.ml, outside runtest. *)
+(* The image codec on a narrow network of Image.init: the steps' formulas,
+   shapes and the laws that tie bands together; and on a narrow upstream
+   network, its agreement with upstream's code, eager and compiled. AION-1's
+   network's agreement with upstream is image_parity.exe, outside runtest. *)
 
 open Windtrap
 open Aion
 
 let u32 = 0x1p-24
 
-(* A narrow codec: [p] projected channels, widths [d], [2d] and [4d], and
-   squeeze-excite widths [h]. Each tensor is drawn from its own key, at a scale
-   that keeps activations of order one. *)
-let narrow ?(p = 3) ?(d = 2) ?(h = 3) seed =
-  let entries = ref [] and k = ref seed in
-  let draw shape scale =
-    incr k;
-    Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key !k) Nx.float32 shape) scale
-  in
-  let add name x = entries := (name, Nx.P x) :: !entries in
-  let conv name o i kk =
-    let fan = Float.of_int (i * kk * kk) in
-    add (name ^ ".weight") (draw [| o; i; kk; kk |] (1. /. Float.sqrt fan));
-    add (name ^ ".bias") (draw [| o |] 0.1)
-  in
-  let ru name c =
-    conv (name ^ ".net.0.conv") c c 3;
-    conv (name ^ ".net.2") c c 1;
-    conv (name ^ ".net.4.to_k") 1 c 1;
-    conv (name ^ ".net.4.net.0") h c 1;
-    conv (name ^ ".net.4.net.2") c h 1
-  in
-  let rus name c =
-    List.iter (fun i -> ru (Printf.sprintf "%s.%d" name i) c) [ 0; 1; 2; 3 ]
-  in
-  let d1 = 2 * d and d2 = 4 * d in
-  conv "model.conv_in.conv" d p 7;
-  ru "model.encoder_layers.0" d;
-  conv "model.encoder_layers.1.conv" d1 d 3;
-  rus "model.encoder_layers.2" d1;
-  conv "model.encoder_layers.3.conv" d2 d1 3;
-  rus "model.encoder_layers.4" d2;
-  conv "model.encoder_layers.5.conv" d2 d2 7;
-  rus "model.encoder_layers.6" d2;
-  add "model.encoder_layers.7.1.weight" (Nx.add_s (draw [| d2 |] 0.1) 1.);
-  add "model.encoder_layers.7.1.bias" (draw [| d2 |] 0.1);
-  conv "pre_quant_proj" 5 d2 1;
-  conv "post_quant_proj" d2 5 1;
-  rus "model.decoder_layers.0" d2;
-  conv "model.decoder_layers.1.conv" d2 d2 3;
-  rus "model.decoder_layers.2" d2;
-  conv "model.decoder_layers.3.net.0" (4 * d1) d2 1;
-  rus "model.decoder_layers.4" d1;
-  conv "model.decoder_layers.5.net.0" (4 * d) d1 1;
-  ru "model.decoder_layers.6" d;
-  conv "model.conv_out.conv" p d 3;
-  add "subsample_in.weight" (draw [| p; 9 |] (1. /. 3.));
-  add "subsample_in.bias" (draw [| p |] 0.1);
-  add "subsample_out.weight"
-    (draw [| 9; p |] (1. /. Float.sqrt (Float.of_int p)));
-  add "subsample_out.bias" (draw [| 9 |] 0.1);
-  add "_quantizer.levels" (Nx.create Nx.int32 [| 5 |] [| 7l; 5l; 5l; 5l; 5l |]);
-  Nx_io.Archive.of_list !entries
-
-let archive = narrow 7
-let codec () = Image.of_archive archive
-
-let entry name =
-  Nx_io.Archive.float
-    ~shape:
-      (match Nx_io.Archive.find name archive with
-      | Some (Nx.P x) -> Nx.shape x
-      | None -> [||])
-    Nx.float64 name archive
+(* A narrow codec: three projected channels, widths 2, 4 and 8. *)
+let narrow = lazy (Image.init ~key:(Nx.Rng.key 7) { projected = 3; width = 2 })
+let codec () = Lazy.force narrow
 
 (* Distinct bands, in any order: one, all nine, or any set. *)
 let bands_gen =
@@ -271,6 +210,33 @@ let restores =
       in
       equal (list (pair float_exact float_exact)) [] refuted)
 
+(* Upstream's network. upstream/image_codec.safetensors is a narrow codec of
+   AION-1's layout (widths 2, 4 and 8, three projected channels) with random
+   weights, designed so that each constant matters: the squeeze-excite gates
+   open, the final layer norm's lane variance near its eps, two bands of nine.
+   upstream/image_golden.safetensors holds what upstream's PyTorch code computes
+   with it in float64 on a Legacy Survey and an HSC image of two bands, and the
+   spread of its rounding ensemble at float32's scale and at float64's
+   ([Spread]); the generator is named in the dune file. At both dtypes every
+   latent and decoded value lies within [τ ŝ] of the float64 reference, and
+   every digit of a token is the reference's but where the reference's bounded
+   value lies within [τ ŝ] of a rounding boundary. *)
+
+let fixture name = Nx_io.load_safetensors ("upstream/" ^ name ^ ".safetensors")
+let upstream_archive = lazy (fixture "image_codec")
+let upstream_codec = lazy (Image.of_archive (Lazy.force upstream_archive))
+let golden = lazy (fixture "image_golden")
+
+(* An entry of the upstream codec's file, in float64. *)
+let entry name =
+  let a = Lazy.force upstream_archive in
+  let shape =
+    match Nx_io.Archive.find name a with
+    | Some (Nx.P x) -> Nx.shape x
+    | None -> [||]
+  in
+  Nx_io.Archive.float ~shape Nx.float64 name a
+
 (* The projection in: each pixel's nine channels by subsample_in's weights, plus
    its bias, times √(9 / c). *)
 let embeds =
@@ -280,7 +246,7 @@ let embeds =
       cover "one band" (c = 1);
       cover "nine bands" (c = 9);
       let p = Image.prepare bs (images bs h w seed) in
-      let e = Image.embed (codec ()) bs p in
+      let e = Image.embed (Lazy.force upstream_codec) bs p in
       let m = Nx.dim 0 (entry "subsample_in.bias") in
       equal (array int) [| 2; 96; 96; m |] (Nx.shape e);
       let x9 = Nx.cast Nx.float64 (Nx.moveaxis 1 3 (nine bs p)) in
@@ -384,22 +350,6 @@ let reciprocals =
           same want (Image.restore [ Image.Des_g ] nine));
     ]
 
-(* Upstream's network. upstream/image_codec.safetensors is a narrow codec of
-   AION-1's layout (widths 2, 4 and 8, three projected channels) with random
-   weights, designed so that each constant matters: the squeeze-excite gates
-   open, the final layer norm's lane variance near its eps, two bands of nine.
-   upstream/image_golden.safetensors holds what upstream's PyTorch code computes
-   with it in float64 on a Legacy Survey and an HSC image of two bands, and the
-   spread of its rounding ensemble at float32's scale and at float64's
-   ([Spread]); the generator is named in the dune file. At both dtypes every
-   latent and decoded value lies within [τ ŝ] of the float64 reference, and
-   every digit of a token is the reference's but where the reference's bounded
-   value lies within [τ ŝ] of a rounding boundary. *)
-
-let fixture name = Nx_io.load_safetensors ("upstream/" ^ name ^ ".safetensors")
-let upstream_codec = lazy (Image.of_archive (fixture "image_codec"))
-let golden = lazy (fixture "image_golden")
-
 let golden_get dt name =
   match Nx_io.Archive.find name (Lazy.force golden) with
   | Some p -> Nx.unpack dt p
@@ -443,7 +393,8 @@ let rows =
 let row_id (precision, _, name, _) =
   (match precision with `F32 -> "float32 " | `F64 -> "float64 ") ^ name
 
-let codec64 = lazy (Image.cast Nx.float64 (Lazy.force upstream_codec))
+let codec64 =
+  lazy (Nx.Ptree.cast (module Image) Nx.float64 (Lazy.force upstream_codec))
 
 let latent_at precision bs x =
   match precision with
@@ -526,6 +477,14 @@ let refusals =
           Image.prepare Image.[ Des_g ] (Nx.zeros Nx.float32 [| 1; 1; 96; 95 |]));
       bad "a batch of rank 3" (fun () ->
           Image.prepare Image.[ Des_g ] (Nx.zeros Nx.float32 [| 1; 96; 96 |]));
+      test "embed: fewer bands than the array's" (fun () ->
+          raises_match
+            (Exn.invalid_arg
+               ~sub:"Aion.Image.embed: 3 bands in the array, 1 listed")
+            (fun () ->
+              Image.embed (codec ())
+                Image.[ Hsc_g ]
+                (Nx.zeros Nx.float32 [| 1; 3; 96; 96 |])));
       bad "tokens not [n; 576]" (fun () ->
           Image.decode (codec ())
             Image.[ Des_g ]
@@ -539,7 +498,7 @@ let refusals =
           let a =
             Nx_io.Archive.union
               [
-                archive;
+                Lazy.force upstream_archive;
                 Nx_io.Archive.of_list
                   [ (extra, Nx.P (Nx.zeros Nx.float32 [| 4 |])) ];
               ]
@@ -580,76 +539,113 @@ let bands =
             (Ymir.Unit.to_string (Image.unit b)))
         Image.bands)
 
-(* Compiled codecs. A compiled codec meets upstream as the eager one does, at
-   both rungs, and refuses at the call on a set without eager kernels, where a
-   check in its program would raise only at a later wait. *)
+(* Compiled codecs: the codec an argument of Rune.jit, a program per list of
+   bands, rung and shape. Eager and compiled are computations of one exact value
+   at one dtype, each within τ ŝ of it (the checks above), so they differ by at
+   most 2 τ ŝ: each latent and decoded value, and each digit of a token but
+   where eager's bounded value lies within 2 τ ŝ of a rounding boundary. *)
 
-module Soft = (val Nx.devices [ Result.get_ok (Rig.software "aion-image") ])
+let signature () =
+  Nx.Ptree.(
+    instantiate (module Image)
+    @-> list (v Image.walk_band)
+    @-> tensor @-> returns tensor)
+
+(* The compiled latent, encode and decode, at one dtype each. *)
+let compiled_fns () =
+  ( Rune.jit (signature ()) Image.latent,
+    Rune.jit (signature ()) Image.encode,
+    Rune.jit (signature ()) Image.decode )
+
+let c32 = compiled_fns ()
+let c64 = compiled_fns ()
+let _, encode_c, decode_c = c32
+let quantizer = Fsq.v image_levels
 
 let compiled =
-  let c32 = lazy (Image.jit (Lazy.force upstream_codec)) in
-  let c64 = lazy (Image.jit (Lazy.force codec64)) in
-  let input name = golden_get Nx.float32 ("input." ^ name) in
-  let ref name part =
-    floats (golden_get Nx.float64 ("f64." ^ name ^ "." ^ part))
-  in
-  let spread scale name part =
-    floats (golden_get Nx.float32 ("s." ^ scale ^ "." ^ name ^ "." ^ part))
-  in
-  let encode rung bs x =
-    match rung with
-    | `F32 -> Image.encode (Lazy.force c32) bs x
-    | `F64 -> Image.encode (Lazy.force c64) bs (Nx.cast Nx.float64 x)
-  in
-  let decode rung bs k =
-    match rung with
-    | `F32 -> floats (Image.decode (Lazy.force c32) bs k)
-    | `F64 -> floats (Image.decode (Lazy.force c64) bs k)
-  in
-  let soft =
-    lazy (Image.jit (Image.place Soft.on (Lazy.force upstream_codec)))
-  in
-  group "compiled"
+  cases "compiled computes as eager, within 2 τ ŝ" ~id:row_id rows
+    (fun (rung, _, name, bs) ->
+      let scale = match rung with `F32 -> "order" | `F64 -> "order64" in
+      let spread part =
+        let key = "s." ^ scale ^ "." ^ name ^ "." ^ part in
+        Array.map (fun s -> 2. *. s) (floats (golden_get Nx.float32 key))
+      in
+      let n = ensemble_n () in
+      let cells a =
+        floats (Nx.moveaxis 1 2 (Nx.create Nx.float64 [| 1; 5; 576 |] a))
+      in
+      let check (latent_c, encode_c, decode_c) t x =
+        let z = Image.latent t bs x in
+        holds "latent"
+          (Spread.values ~n ~reference:(floats z)
+             ~spread:(cells (spread "pre"))
+             (floats (latent_c t bs x)));
+        holds "token digits"
+          (Spread.levels ~n ~edges:digit_edges
+             ~reference:(floats (Fsq.bound quantizer z))
+             ~spread:(spread "bounded")
+             (digits (encode_c t bs x)));
+        let k = golden_get Nx.int64 ("f64." ^ name ^ ".tokens") in
+        let one = [ List.hd bs ] in
+        holds "decoded"
+          (Spread.values ~n
+             ~reference:(floats (Image.decode t one k))
+             ~spread:(spread "decoded")
+             (floats (decode_c t one k)))
+      in
+      let x = golden_get Nx.float32 ("input." ^ name) in
+      match rung with
+      | `F32 -> check c32 (Lazy.force upstream_codec) x
+      | `F64 -> check c64 (Lazy.force codec64) (Nx.cast Nx.float64 x))
+
+(* A set over a software device, without kernels: it computes only under
+   Rune.jit, on this machine's CPU. *)
+module Soft = (val Nx.devices [ Result.get_ok (Rig.software "aion-image") ])
+
+let encode_s = Rune.jit (signature ()) Image.encode
+let decode_s = Rune.jit (signature ()) Image.decode
+
+let compiled_soft =
+  test "a compiled codec computes on a set without eager kernels" (fun () ->
+      (* Its programs compile for the host's CPU there too, so they give the
+         host's bits. *)
+      let t = Lazy.force upstream_codec in
+      let soft = Nx.Ptree.place (module Image) Soft.on t in
+      let bs = Image.[ Hsc_i; Hsc_y ] in
+      let x = golden_get Nx.float32 "input.hsc" in
+      let k = encode_c t bs x in
+      let ks = encode_s soft bs (Nx.place Soft.on x) in
+      equal (array int64) (Nx.to_array k) (Nx.to_array (Nx.place Nx.Host.on ks));
+      equal (array float_exact)
+        (floats (decode_c t bs k))
+        (floats (Nx.place Nx.Host.on (decode_s soft bs (Nx.place Soft.on k)))))
+
+(* On the host a compiled call raises a refusal at the call, as eagerly: a
+   shape's at the trace, a value's by Nx.check. Each input fails one check. *)
+let compiled_refusals =
+  let k = Nx.zeros Nx.int64 [| 1; 576 |] in
+  group "compiled refusals"
     [
-      cases "a compiled codec encodes upstream's tokens" ~id:row_id rows
-        (fun (rung, scale, name, bs) ->
-          holds "token digits"
-            (Spread.levels ~n:(ensemble_n ()) ~edges:digit_edges
-               ~reference:(ref name "bounded")
-               ~spread:(spread scale name "bounded")
-               (digits (encode rung bs (input name)))));
-      cases "a compiled codec decodes upstream's images" ~id:row_id rows
-        (fun (rung, scale, name, bs) ->
-          let k = golden_get Nx.int64 ("f64." ^ name ^ ".tokens") in
-          holds "decoded"
-            (Spread.values ~n:(ensemble_n ()) ~reference:(ref name "decoded")
-               ~spread:(spread scale name "decoded")
-               (decode rung [ List.hd bs ] k)));
-      test "a compiled codec computes on a set without eager kernels"
-        (fun () ->
-          (* Its programs compile for the host's CPU there too, so they give the
-             host's bits. *)
-          let bs = Image.[ Hsc_i; Hsc_y ] in
-          let x = input "hsc" in
-          let k = Image.encode (Lazy.force c32) bs x in
-          let ks = Image.encode (Lazy.force soft) bs (Nx.place Soft.on x) in
-          equal (array int64) (Nx.to_array k)
-            (Nx.to_array (Nx.place Nx.Host.on ks));
-          equal (array float_exact)
-            (floats (Image.decode (Lazy.force c32) bs k))
-            (floats
-               (Nx.place Nx.Host.on
-                  (Image.decode (Lazy.force soft) bs (Nx.place Soft.on k)))));
-      test "a compiled codec refuses a code outside [0, 4375) at the call"
-        (fun () ->
+      test "a code outside [0, 4375)" (fun () ->
           let k =
             Nx.create Nx.int64 [| 1; 576 |]
               (Array.init 576 (fun i -> if i = 7 then 4375L else 0L))
           in
           raises_match (Exn.invalid_arg ~sub:"code 4375 at [0; 7]") (fun () ->
-              Image.decode (Lazy.force soft)
+              decode_c (codec ()) Image.[ Des_g ] k));
+      test "a band twice" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"band DES-G twice") (fun () ->
+              decode_c (codec ()) Image.[ Des_g; Des_g ] k));
+      test "tokens not [n; 576]" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"[n; 576] expected") (fun () ->
+              decode_c (codec ())
                 Image.[ Des_g ]
-                (Nx.place Soft.on k)));
+                (Nx.zeros Nx.int64 [| 1; 575 |])));
+      test "an image under 96 rows" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"at least 96 × 96") (fun () ->
+              encode_c (codec ())
+                Image.[ Des_g ]
+                (Nx.zeros Nx.float32 [| 1; 1; 95; 96 |])));
     ]
 
 let () =
@@ -660,7 +656,7 @@ let () =
            [ prepare_formula; per_band; restores; reciprocals; bands ];
          group "embed" [ embeds ];
          upstream_network;
-         compiled;
+         group "compiled" [ compiled; compiled_soft; compiled_refusals ];
          shapes;
          group "decode" [ decodes_per_band ];
          refusals;

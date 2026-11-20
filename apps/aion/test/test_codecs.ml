@@ -44,11 +44,12 @@ let codecs =
 
 let ints x = Array.map Int64.to_int (Nx.to_array x)
 
-(* The presence [encode] gives each token, [None] read as all present. *)
+(* The presence [encode] gives each token: a scalar modality's is always
+   given. *)
 let presence (i : _ Tokens.t) =
   match i.present with
   | Some p -> Nx.to_array p
-  | None -> Array.make (Array.fold_left ( * ) 1 (Nx.shape i.tokens)) true
+  | None -> failf "%s's presence is None" (Modality.key i.modality)
 
 let value =
   Gen.(
@@ -132,26 +133,71 @@ let others =
           raises_match (Exn.invalid_arg ~sub:"tok_flux_r") (fun () ->
               Codecs.encode codecs
                 (Scalar { modality = Flux_r; values = Nx.zeros Nx.float32 [| 1 |] })));
-      test "compiled codecs encode and decode as the eager ones" (fun () ->
-          let c = Codecs.jit codecs in
-          let values =
-            Nx.create Nx.float32 [| 4 |] [| -2.; 0.25; Float.nan; 9. |]
-          in
-          let d = Codecs.Scalar { modality = Flux_g; values } in
-          let e = Codecs.encode codecs d and ec = Codecs.encode c d in
-          equal (array int) (ints e.tokens) (ints ec.tokens);
-          equal (array bool) (presence e) (presence ec);
-          let k = Nx.create Nx.int64 [| 3 |] [| 0L; 4L; 7L |] in
-          match
-            ( Codecs.decode codecs (Scalar Flux_g) k,
-              Codecs.decode c (Scalar Flux_g) k )
-          with
-          | Scalar { values = v; _ }, Scalar { values = vc; _ } ->
-              equal (array float_exact) (Nx.to_array v) (Nx.to_array vc)
-          | _ -> fail "not Flux_g's values");
       test "load refuses the segmentation map" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"tok_segmap") (fun () ->
               Codecs.load ~cache_dir ~offline:true [ Modality.Segmap ]));
     ]
 
-let () = exit (run "aion.codecs" [ absent; nan_edges; others ])
+(* Compiled with the codecs an argument: a scalar codec's search and gathers,
+   and its presence, compute exactly under Rune.jit on the host, so tokens,
+   presence and values are the eager ones bit for bit. *)
+let encode_c =
+  Rune.jit
+    Nx.Ptree.(
+      instantiate (module Codecs)
+      @-> v Codecs.walk_data
+      @-> returns (v Tokens.walk))
+    Codecs.encode
+
+let decode_c =
+  Rune.jit
+    Nx.Ptree.(
+      instantiate (module Codecs)
+      @-> v Modality.walk @-> tensor
+      @-> returns (v Codecs.walk_data))
+    Codecs.decode
+
+let values_of = function
+  | Codecs.Scalar { values; _ } -> values
+  | _ -> failwith "not a scalar's values"
+
+let compiled =
+  prop "compiled encode and decode are the eager ones, bit for bit"
+    Gen.(
+      let* m = of_list Modality.[ Flux_g; Xp_bp; Mag_g ] in
+      let c = if m = Xp_bp then 55 else 1 in
+      let* v = array ~size:(constant (4 * c)) value in
+      let+ k = array ~size:(constant (4 * c)) (int_range 0 7) in
+      (m, c, v, k))
+    (fun (m, c, v, k) ->
+      cover "a codebook of NaN edges" (m = Mag_g);
+      cover "an absent value"
+        (m <> Mag_g && Array.exists (fun x -> not (Float.is_finite x)) v);
+      let shape = if c = 1 then [| 4 |] else [| 4; c |] in
+      let d =
+        Codecs.Scalar { modality = m; values = Nx.create Nx.float32 shape v }
+      in
+      let e = Codecs.encode codecs d and ec = encode_c codecs d in
+      equal (array int) (ints e.tokens) (ints ec.tokens);
+      equal (array bool) (presence e) (presence ec);
+      let k = Nx.create Nx.int64 shape (Array.map Int64.of_int k) in
+      let bits x = Array.map Int32.bits_of_float (Nx.to_array (values_of x)) in
+      equal (array int32)
+        (bits (Codecs.decode codecs (Scalar m) k))
+        (bits (decode_c codecs (Scalar m) k)))
+
+let compiled_refusal =
+  test "a compiled encode refuses a modality without its codec" (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"tok_flux_r") (fun () ->
+          encode_c codecs
+            (Scalar { modality = Flux_r; values = Nx.zeros Nx.float32 [| 1 |] })))
+
+let () =
+  exit
+    (run "aion.codecs"
+       [
+         absent;
+         nan_edges;
+         others;
+         group "compiled" [ compiled; compiled_refusal ];
+       ])

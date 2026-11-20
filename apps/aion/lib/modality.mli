@@ -70,6 +70,17 @@ type t =
   | Catalog  (** Legacy Survey catalog of neighbours, ["catalog"]. *)
   | Scalar of scalar  (** A scalar modality. *)
 
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> t -> t
+(** [walk c m] reports [m] as cases, so that [Rune.jit] keys a program on a
+    modality. *)
+
+val walk_scalar : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> scalar -> scalar
+(** [walk_scalar c s] reports [s] as a case. *)
+
+val walk_spectrum :
+  ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> spectrum -> spectrum
+(** [walk_spectrum c s] reports [s] as a case. *)
+
 val all : t list
 (** [all] is AION-1's 40 modalities. *)
 

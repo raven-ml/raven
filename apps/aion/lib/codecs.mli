@@ -8,27 +8,37 @@
     A run picks its modalities when it starts, so the data of one modality is a
     value of {!data}, whatever its codec, and a set of codecs ({!t}) holds one
     codec for each modality it was loaded for. One image codec serves both
-    surveys' images. Everything lies on the host. *)
+    surveys' images.
+
+    A set of codecs is a structure ({!walk}), and so is data ({!walk_data}): a
+    caller compiles {!encode} and {!decode} with [Rune.jit], the codecs an
+    argument, as in
+    [Rune.jit Nx.Ptree.(instantiate (module Codecs) @-> v walk_data @-> returns
+     (v Tokens.walk)) Codecs.encode]. Each then computes as its codec does
+    compiled. *)
 
 (** {1:data Data} *)
 
-(** The type for one modality's data of [b] objects. *)
-type data =
-  | Image of { bands : Image.band list; flux : Nx.host Nx.float32_t }
-      (** Cutouts, [[|b; c; h; w|]], the [c] bands in the order of [bands],
-          each pixel in its band's {!Image.unit}. Bands of the Hyper
-          Suprime-Cam make {!Modality.Image_hsc}, the Legacy Survey's
-          {!Modality.Image}. *)
+(** The type for one modality's data of [b] objects on the device set ['d]. *)
+type 'd data =
+  | Image of { bands : Image.band list; flux : 'd Nx.float32_t }
+      (** Cutouts, [[|b; c; h; w|]], the [c] bands in the order of [bands], each
+          pixel in its band's {!Image.unit}. Bands of the Hyper Suprime-Cam make
+          {!Modality.Image_hsc}, the Legacy Survey's {!Modality.Image}. *)
   | Spectrum of {
       modality : Modality.spectrum;
-      spectrum : (Nx.float32_elt, Nx.host) Spectrum.spectrum;
-      lengths : Nx.host Nx.int64_t option;
-          (** Each row's number of pixels ({!Spectrum.encode}). *)
+      spectrum : ('d Nx.float32_t, 'd) Spectrum.spectrum;
+      lengths : 'd Nx.int64_t option;
+          (** Each row's number of pixels ({!Spectrum.pad}). *)
     }  (** Spectra of one survey. *)
-  | Scalar of { modality : Modality.scalar; values : Nx.host Nx.float32_t }
+  | Scalar of { modality : Modality.scalar; values : 'd Nx.float32_t }
       (** Values, [[|b|]], or [[|b; 55|]] for a Gaia XP spectrum. *)
 
-val modality : data -> Modality.t
+val walk_data : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd data -> 'e data
+(** [walk_data c d] reports [d]'s case, its bands or its modality, and whether
+    its lengths are given, and walks its arrays as fixed ones. *)
+
+val modality : 'd data -> Modality.t
 (** [modality d] is [d]'s modality.
 
     Raises [Invalid_argument] for an image whose bands are of both surveys or of
@@ -41,10 +51,18 @@ val bands : Modality.t -> Image.band list
 
 (** {1:codecs Codecs} *)
 
-type t
-(** The type for sets of codecs. *)
+type ('a, 'd) t
+(** The type for sets of codecs of weights ['a] on the device set ['d]. *)
 
-val load : ?cache_dir:string -> ?offline:bool -> Modality.t list -> t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
+(** [walk c t] walks [t]'s codecs, reporting which it holds and the modality of
+    each scalar codec. *)
+
+val load :
+  ?cache_dir:string ->
+  ?offline:bool ->
+  Modality.t list ->
+  (Nx.host Nx.float32_t, Nx.host) t
 (** [load ms] is the codecs of the modalities [ms], each read by {!Hub.codec}
     with [cache_dir] and [offline]: aion-base's files, which aion-large's
     repository holds too, byte for byte.
@@ -52,36 +70,33 @@ val load : ?cache_dir:string -> ?offline:bool -> Modality.t list -> t
     Raises [Invalid_argument] as {!Hub.file}, before any file is fetched, and
     [Failure] as {!Hub.codec} and each codec's [of_archive]. *)
 
-val jit : t -> t
-(** [jit t] is [t] with its image and spectrum codecs compiled, {!Image.jit}
-    and {!Spectrum.jit}, whose programs live as long as the result. Its scalar
-    codecs compute eagerly, as they would compiled, bit for bit. *)
-
-val scalar :
-  t -> Modality.scalar -> (Nx.host Nx.float32_t, Nx.host) Scalar.t
+val scalar : ('a, 'd) t -> Modality.scalar -> 'd Scalar.t
 (** [scalar t m] is [m]'s codec.
 
     Raises [Invalid_argument] if [t] was not loaded for [Scalar m]. *)
 
 (** {1:tokens Tokens} *)
 
-val encode : t -> data -> Nx.host Tokens.t
-(** [encode t d] is the tokens of [d]. A scalar modality is absent for an object
-    one of whose values is NaN or infinite, all its tokens with it, unless that
-    value's codebook holds NaN edges: such a value carries no measurement, and a
+val encode : ('d Nx.float32_t, 'd) t -> 'd data -> 'd Tokens.t
+(** [encode t d] is the tokens of [d], spectra padded to their modality's length
+    ({!Spectrum.pad}). A scalar modality is absent for an object one of whose
+    values is NaN or infinite, all its tokens with it, unless that value's
+    codebook holds NaN edges: such a value carries no measurement, and a
     codebook would give it a token of the distribution's edge. A codebook with
     NaN edges, as seven of HSC's, was trained with NaN as a value, and every
-    value it encodes keeps its token ({!Scalar.encode}). Every other token is
-    present.
+    value it encodes keeps its token ({!Scalar.encode}). A scalar modality's
+    [present] is always [Some], all [true] where every value is present, so that
+    it is computed without reading the values; an image's or a spectrum's is
+    [None], all present.
 
-    Raises [Invalid_argument] if [t] was not loaded for [d]'s modality, and as
-    that codec's encode. *)
+    Raises [Invalid_argument] if [t] was not loaded for [d]'s modality, as
+    {!Spectrum.pad} for spectra, and as that codec's encode. *)
 
-val decode : t -> Modality.t -> Nx.host Nx.int64_t -> data
+val decode : ('d Nx.float32_t, 'd) t -> Modality.t -> 'd Nx.int64_t -> 'd data
 (** [decode t m k] is the data of [m]'s tokens [k], [[|b; n|]], or [[|b|]] for a
     modality of one token: images in every band of their survey, in channel
     order; spectra on the codec's latent grid ({!Spectrum.grid}); a scalar's
     values, each the upper end of its token's bin ({!Scalar.decode}).
 
-    Raises [Invalid_argument] if [t] was not loaded for [m], and as that
-    codec's decode. *)
+    Raises [Invalid_argument] if [t] was not loaded for [m], and as that codec's
+    decode. *)

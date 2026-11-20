@@ -39,7 +39,7 @@
     and [dec], DESI's [Z]). Bands are named in lower case, as ["des-g"],
     {!Image.name}'s in upper case. MMU pads each row of a spectrum file to its
     longest row with pixels of wavelength [-1]; a row's length is the number of
-    pixels before them ({!Spectrum.encode}).
+    pixels before them ({!Spectrum.pad}).
 
     Two sources' objects are the same object where they are each other's
     nearest neighbour within {!radius}, as AION-1's training set was
@@ -81,7 +81,7 @@ val modalities : t -> Modality.t list
 (** [modalities t] is the modalities whose datasets [t] holds, in
     {!Modality.all}'s order. *)
 
-val read : t -> int array -> Modality.t -> Codecs.data
+val read : t -> int array -> Modality.t -> Nx.host Codecs.data
 (** [read t rows m] is [m]'s data of the objects [rows] of [t], in that order:
     a spectrum with each row's length.
 

@@ -20,3 +20,8 @@ type 'd t = {
 }
 (** The type for the tokens of one modality of each of [b] objects, on the
     device set ['d]. *)
+
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd t -> 'e t
+(** [walk c t] reports [t]'s modality ({!Modality.walk}) and whether its
+    presence is given, and walks its arrays as fixed ones: [Nx.Ptree.v walk]
+    describes tokens to [Rune.jit]. *)
