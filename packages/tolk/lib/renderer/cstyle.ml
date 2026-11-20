@@ -2558,15 +2558,15 @@ let cuda_lang =
 
 (* Asynchronous copies
 
-   A store into shared memory of a 16-byte load from global memory is PTX's
-   [cp.async], which copies without the thread waiting for it; a gated load
-   ignores its source where its gate fails and copies zeros (PTX ISA
-   §9.7.10.28.3.1, [ignore-src]). A thread waits only for its own copies, so
-   every barrier of a kernel holding one first waits for all of them
-   ([cp.async.wait_all]), then for the workgroup (CUDA C++ Programming Guide
-   §4.12.1: "if you use LDGSTS to prefetch some data that will be shared with
-   other threads, a __syncthreads() is necessary after synchronizing with the
-   LDGSTS completion mechanism"). *)
+   A store into shared memory of a load from global memory of 8 or 16 bytes
+   is PTX's [cp.async], which copies without the thread waiting for
+   it; a gated load ignores its source where its gate fails and copies zeros
+   (PTX ISA §9.7.10.28.3.1, [ignore-src]). A thread waits only for its own
+   copies, so every barrier of a kernel holding one first waits for all of
+   them ([cp.async.wait_all]), then for the workgroup (CUDA C++ Programming
+   Guide §4.12.1: "if you use LDGSTS to prefetch some data that will be
+   shared with other threads, a __syncthreads() is necessary after
+   synchronizing with the LDGSTS completion mechanism"). *)
 
 let zeros u =
   let zero c =
@@ -2579,27 +2579,39 @@ let zeros u =
   in
   zero u || (is Op.Stack u && List.for_all zero (src u))
 
-let copies_async u =
+(* The bytes [u] copies asynchronously, if it is such a store. *)
+let async_bytes u =
   match (op u, src u) with
   | Op.Store, [ bidx; var ] when addrspace bidx = Some Dtype.Local -> (
       let from = if is Op.Load var then Some (nth var 0) else None in
+      let bytes = max_numel bidx * Dtype.itemsize (dtype bidx) in
       match (from, src var) with
-      | Some from, ([ _ ] | [ _; _; _ ]) ->
-          addrspace from = Some Dtype.Global
-          && max_numel from = max_numel bidx
-          && max_numel bidx * Dtype.itemsize (dtype bidx) = 16
-          && (List.length (src var) = 1 || zeros (nth var 1))
-      | _ -> false)
-  | _ -> false
+      | Some from, ([ _ ] | [ _; _; _ ])
+        when addrspace from = Some Dtype.Global
+             && max_numel from = max_numel bidx
+             && List.mem bytes [ 8; 16 ]
+             && (List.length (src var) = 1 || zeros (nth var 1)) ->
+          Some bytes
+      | _ -> None)
+  | _ -> None
 
-(* [.cg] caches the copy in L2 alone, the only level of a 16-byte copy that
-   skips L1. *)
-let cp_async =
-  "__device__ __forceinline__ void tg_cp_async(void *d, const void *s, int \
-   ignore) { asm volatile(\"{ .reg .pred p; setp.ne.b32 p, %2, 0; \
-   cp.async.cg.shared.global [%0], [%1], 16, p; }\" :: \
-   \"r\"((unsigned)__cvta_generic_to_shared(d)), \"l\"(s), \"r\"(ignore) : \
-   \"memory\"); }"
+(* The copy of [bytes]: [.cg] caches a 16-byte copy in L2 alone; an 8-byte
+   copy has only [.ca], which caches in L1 too (PTX ISA §9.7.10.28.3.1:
+   "cp-size can only be 4, 8 and 16", [.cg] takes 16). A store of 4 bytes,
+   one value, stays a store: a shared-memory reduction stores so, and its
+   kernels keep their form. *)
+let cp_async_name = function 16 -> "tg_cp_async" | n -> strf "tg_cp_async%d" n
+
+let cp_async bytes =
+  strf
+    "__device__ __forceinline__ void %s(void *d, const void *s, int ignore) { \
+     asm volatile(\"{ .reg .pred p; setp.ne.b32 p, %%2, 0; \
+     cp.async.%s.shared.global [%%0], [%%1], %d, p; }\" :: \
+     \"r\"((unsigned)__cvta_generic_to_shared(d)), \"l\"(s), \"r\"(ignore) : \
+     \"memory\"); }"
+    (cp_async_name bytes)
+    (if bytes = 16 then "cg" else "ca")
+    bytes
 
 let async_rewrite =
   Pattern_matcher.fold
@@ -2608,16 +2620,18 @@ let async_rewrite =
         (Upat.op ~name:"x" ~src:[ Upat.var "bidx"; Upat.var "var" ] Op.Store)
         (fun ctx m ->
           let x = m "x" and var = m "var" in
-          if not (copies_async x) then None
-          else
-            let ignore =
-              match src var with
-              | [ _; _; gate ] -> strf "!(%s)" ctx.%{gate}
-              | _ -> "0"
-            in
-            Some
-              (strf "tg_cp_async(%s, %s, %s);" (render_ptr ctx (m "bidx"))
-                 (render_ptr ctx (nth var 0)) ignore));
+          match async_bytes x with
+          | None -> None
+          | Some bytes ->
+              let ignore =
+                match src var with
+                | [ _; _; gate ] -> strf "!(%s)" ctx.%{gate}
+                | _ -> "0"
+              in
+              Some
+                (strf "%s(%s, %s, %s);" (cp_async_name bytes)
+                   (render_ptr ctx (m "bidx"))
+                   (render_ptr ctx (nth var 0)) ignore));
     ])
 
 let cuda_async_lang =
@@ -2731,7 +2745,7 @@ let cuda_wmma l (name, (n, m, k), dtype_in, dtype_out, upcast_sizes) =
       "}";
     ]
 
-let cuda_kernel ?(copies = false) ?(prefix = []) l ~name
+let cuda_kernel ?(copies = []) ?(prefix = []) l ~name
     kernel bufs uops =
   let used = uops_to_dtypes uops in
   let uses p = List.exists (fun (dt, _) -> p dt) used in
@@ -2764,7 +2778,7 @@ let cuda_kernel ?(copies = false) ?(prefix = []) l ~name
        then
          [ "#define make_nv_bfloat162 make_bfloat162" ]
        else [])
-    @ (if copies then [ cp_async ] else [])
+    @ List.map cp_async copies
     @ List.map (cuda_vector_prefix l)
         (List.filter (fun (dt, n) -> vector (dt, n) && not (word l dt n)) used)
     @ List.map (cuda_wmma l) (wmma_args uops)
@@ -2818,8 +2832,15 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
         (callees uops)
       @ uops
     in
-    let copies = async_copy && List.exists copies_async all in
-    let l = if copies then cuda_async_lang else cuda_lang in
+    (* The sizes of its asynchronous copies, widest first. *)
+    let copies =
+      if not async_copy then []
+      else
+        List.filter
+          (fun n -> List.exists (fun u -> async_bytes u = Some n) all)
+          [ 16; 8 ]
+    in
+    let l = if copies <> [] then cuda_async_lang else cuda_lang in
     render (cuda_kernel ~copies) l uops
   in
   let name = if sync then "CUDARenderer without cp.async" else "CUDARenderer" in

@@ -9544,9 +9544,10 @@ D466.
   transposed on its store into local memory).
 - **tolk:** `Heuristic.staged_product`, `Heuristic.general`;
   `Stage.product_tile`, `Stage.stages_product`, `Stage.products`,
-  `Stage.staged_products`, `Stage.deepen` and `Stage.trip_steps`, beside
-  D262's `Stage.operands`; `Coalesce.memory_coalescing` (an index ordered
-  after effects).
+  `Stage.staged_products`, `Stage.deepen`, `Stage.nest` and
+  `Stage.trip_steps`, beside D262's `Stage.operands`;
+  `Coalesce.memory_coalescing` (an index ordered after effects);
+  `Cstyle.async_bytes` and `Cstyle.cp_async`.
 - **Differs:**
   - **The tile.** On a renderer that copies asynchronously, two stages
     fitting, a contraction that D212 blocks, blocked or short of the units,
@@ -9555,8 +9556,9 @@ D466.
     takes 16 threads along M and 8 along N, the threads splitting each axis
     first so that adjacent threads hold adjacent rows, 8 by 8 outputs a
     thread (4 by 4 short of the units), each axis padded to the tile, and its
-    reduce unrolled by a copy of 16 bytes, 4 float32 values, where D212
-    unrolls by 4 and splits the reduce into threads.
+    reduce unrolled by a copy of 16 bytes, 4 float32 values, or where 16
+    bytes do not divide the sum and it holds at least 16 copies of them, of
+    8 bytes, where D212 unrolls by 4 and splits the reduce into threads.
   - **Staging.** A sum of products in registers (a `Mul` a `Reduce` of `Add`
     sums) is staged as D262 stages a core's operands, where each staged
     tile's innermost dimension is the sum's lanes and every other dimension
@@ -9567,8 +9569,12 @@ D466.
     trips, keeping the running sums' blocks whole (D480) and two stages
     within `shared_max`; the steps are a loop inside the trips, part of the
     tile, so each output adds the same terms in the same order as the
-    unstaged loop. D212's layout, the C-order `[K; N]` operand and every
-    kernel with other shared memory stay unstaged.
+    unstaged loop. A sum over a nest of loops, as a projection's heads and
+    their dimensions, takes the steps in its innermost loop, and its two
+    stages step through the nest. A copy of 8 bytes is PTX's
+    `cp.async.ca`, the only form of that size (`.cg` takes 16). D212's
+    layout, the C-order `[K; N]` operand and every kernel with other shared
+    memory stay unstaged.
   - **Reads merge.** A staged tile's reads, ordered after the next trip's
     copies, merge into vector loads as unordered reads do: 16 bytes of
     float32 a step, and pairs of 16-bit values of a core's fragments (D262).
@@ -9584,16 +9590,22 @@ D466.
   the medium student and from 75.6 to 54.1 s for the large, below
   PyTorch's 35.4 and 56.6. The tolk bench's `contract/qk-f32-2048` takes
   283 us against 336-341 and `stream/q8_0-64` 2.56 ms against 3.00.
+  Copies of 8 bytes and a nest's trips stage the medium student's output
+  projection, a sum over 4 heads of 110: perf_500's model time falls from
+  29.6-30.1 to 28.4-28.5 s.
 - **Pinned by:** `Tolk.Heuristic`'s `a product laid out along its reduce`
   (`is staged where the renderer copies asynchronously`, `is not staged
   laid out along its columns, or on sm_75`) and `a contraction laid out
   along its reduce` on sm_75; the Stage suite's `kernels the race checker
-  runs › products in registers in trips of several steps …` and its race
-  check, and the Stage suite's `sources` (`bf16_2048.cu`, `f16_padded.cu`,
+  runs › products in registers in trips of several steps …` (over 110 in
+  copies of 8 bytes too) and `a product summed over heads of 110 in copies
+  of 8 bytes …`, and their race checks, and the Stage suite's `sources`
+  (`bf16_2048.cu`, `f16_padded.cu`,
   merged reads); the tolk bench's `contract/qk-f32-2048` and
   `stream/q8_0-64` rows and rune's
-  `Cuda/matmul-float32-transposed-16384x440x1320` and
-  `Cuda/matmul-float32-input-gradient-16384x1320x440` on fudge.
+  `Cuda/matmul-float32-transposed-16384x440x1320`,
+  `Cuda/matmul-float32-input-gradient-16384x1320x440` and
+  `Cuda/matmul-float32-merged-heads-16384x4x110x440` on fudge.
 
 ## D498. A GPU's contraction pads an axis 4 does not divide, to upcast it
 

@@ -2314,6 +2314,27 @@ let gpu_rows g =
               in
               fun () -> ignore (synced (f x w)));
         };
+      (* An attention's output projection: 4 heads of 110 laid out heads
+         first, as attention writes them, read through the swap of heads and
+         rows by a matrix stored [440; 440], [outputs; inputs]. A row's 110
+         values lie 440 bytes apart, so 16 bytes divide no run of them. *)
+      on_gpu g "matmul-float32-merged-heads-16384x4x110x440"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s)
+              in
+              let o = draw 69 [| 64; 4; 256; 110 |]
+              and w = draw 61 [| 440; 440 |] in
+              let f =
+                Rune.jit (pair_fn ()) (fun o w ->
+                    Nx.matmul
+                      (Nx.reshape [| 16384; 440 |] (Nx.swapaxes 1 2 o))
+                      (Nx.matrix_transpose w))
+              in
+              fun () -> ignore (synced (f o w)));
+        };
       (* A transposed product summing 64 values, 16 runs of 4: too short a
          reduce to split between threads (16 trips each), as attention's
          scores at a head width of 64. *)

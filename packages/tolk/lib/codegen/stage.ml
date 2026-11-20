@@ -309,7 +309,8 @@ let same_loops a b = List.equal ( == ) a.loops b.loops
 (* Whether the loops [ls] of the core [w], outermost first, are a nest that
    two stages step through as one sequence of trips: none or one loop, or
    loops of constant extents that one node closes, closing no other loop of
-   more than one trip inside the outermost. A loop closed elsewhere cannot
+   more than one trip inside the outermost but the steps of a trip
+   ({!deepen}), which the tiles take whole. A loop closed elsewhere cannot
    run between them, since they end together. The trip after the last of an
    inner loop's is then the first of the next outer trip's. *)
 let nest all w ls =
@@ -327,6 +328,7 @@ let nest all w ls =
             List.filter
               (fun r ->
                 op r = Op.Range && is_serial r && extent r > 1
+                && (not (is_step r))
                 && compare_range_arg r l >= 0)
               (ended_ranges y)
             |> List.sort compare_range_arg
@@ -1181,7 +1183,8 @@ let deepen (ren : Renderer.t) sink =
   let plan m =
     let tiles = List.filter_map snd (operand_tiles ~async:true all (src m)) in
     match List.map (fun t -> t.loops) tiles with
-    | [ x ] :: rest when List.for_all (List.equal ( == ) [ x ]) rest -> (
+    | (_ :: _ as ls) :: rest when List.for_all (List.equal ( == ) ls) rest -> (
+        let x = List.nth ls (List.length ls - 1) in
         let lanes = List.map (fun t -> (List.hd t.dims).extent) tiles in
         let bytes = List.fold_left (fun n t -> n + bytes t) 0 tiles in
         match (constant (nth x 0), lanes) with
@@ -1617,16 +1620,38 @@ let stages_product (ren : Renderer.t) sink =
    loads of one element. On an RTX 5000 Ada TESSERA's float32 products of
    16384 rows by weights stored [outputs; inputs] ran so at 23.9-30.1 TFLOP/s,
    against 15.4-18.5 split across threads ({!Heuristic}), and cuBLAS's SIMT
-   kernels' 23-31. *)
+   kernels' 23-31.
+
+   The sum is unrolled by a copy's run: 16 bytes, or where they do not
+   divide it, 8, whose copies move half as much, taken only for a sum of at
+   least [narrow_copies] times 16 bytes. A run of 4 bytes, one float32
+   value, holds no lanes for the tile's innermost dimension
+   ({!interleaved}). An attention's
+   output projection, 4 heads of 110 float32 values, whose rows lie 440
+   bytes apart, runs at 8 bytes; on an RTX 5000 Ada a float32 product of
+   16384 rows over 110 by 440 took 94 us so against 147 split across
+   threads, but a bfloat16 one over 36, 72 bytes, 18.4 us against 14.3-15.2,
+   and one of 163840 rows over 10 float32 values 578-581 us against 584. *)
 type product_tile = { threads : int * int; outputs : int; run : int }
 
+let narrow_copies = 16
+
 let product_tile (ren : Renderer.t) ~itemsize ~k ~short =
-  let run = copy / itemsize in
-  if
-    itemsize <= copy && k mod run = 0 && k / run >= 2
-    && depth ren [ copy ] = 2
-  then Some { threads = (16, 8); outputs = (if short then 4 else 8); run }
-  else None
+  let runs =
+    List.filter_map
+      (fun b -> if b mod itemsize = 0 then Some (b / itemsize) else None)
+      [ copy; copy / 2 ]
+  in
+  let takes run =
+    k mod run = 0
+    &&
+    if run * itemsize = copy then k / run >= 2
+    else k * itemsize >= narrow_copies * copy
+  in
+  match List.find_opt takes runs with
+  | Some run when depth ren [ copy ] = 2 ->
+      Some { threads = (16, 8); outputs = (if short then 4 else 8); run }
+  | _ -> None
 
 (* Decoded panels on the host *)
 

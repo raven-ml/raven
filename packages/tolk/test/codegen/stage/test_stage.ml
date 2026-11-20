@@ -1667,14 +1667,20 @@ let heads_law =
    Float32 products whose operands both lie along the sum, [b] stored [N; K],
    take the staged product's tile: 512 by 256 over 440, blocked, its trips of
    20 values a loop of 5 steps of 4, and 256 by 256 over 160 and an affine
-   operand over 64, short of the units, at 32 values and 8 steps. Each copies
-   both operands' loads into shared memory and computes the bits of the same
-   optimisations unstaged, whose loop runs one step a trip. *)
+   operand over 64, short of the units, at 32 values and 8 steps; and over
+   110, which 16 bytes do not divide, in copies of 8 bytes. Each
+   copies both operands' loads into shared memory and computes the bits of
+   the same optimisations unstaged, whose loop runs one step a trip. *)
 let products_in_registers =
   List.map
     (fun (m, k, n, form) ->
       { dt = Float32; batch = 1; m; k; n; layout = Nk; form })
-    [ (512, 440, 256, Plain); (256, 160, 256, Plain); (128, 64, 128, Affine) ]
+    [
+      (512, 440, 256, Plain);
+      (256, 160, 256, Plain);
+      (128, 64, 128, Affine);
+      (256, 110, 256, Plain);
+    ]
 
 let run_products () =
   let d, r = on_cuda () in
@@ -1695,6 +1701,59 @@ let run_products () =
       equal (array Dtypes.value) (run (compiled (unstaged r) k)) (run prg))
     products_in_registers
 
+(* [c.(i, j) = Σ_(g, r) a.(g, i, r) * b.(j, g k + r)] in float32: a sum over
+   [h] heads of [k] dimensions, [a] laid out heads first, as attention's
+   output reaches its projection, and [b] stored [N; h k]. At [k = 110] a
+   row of [a] starts every 440 bytes, so its tiles copy in runs of 8 bytes,
+   and the sum's loops, the heads' and the dimensions' trips, are a nest
+   that two stages step through. *)
+let merged = (256, 4, 110, 256)
+
+let merged_kernel ?opts_to_apply (m, h, k, n) =
+  let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (h * m * k) ] 1 Float32
+  and b = Shape.param ~shape:[ Ops.Int (n * h * k) ] 2 Float32 in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and g = Ops.range ~axis_type:Weak (Int h) [ 2 ]
+  and r = Ops.range ~axis_type:Weak (Int k) [ 3 ] in
+  let sum =
+    Ops.reduce
+      (Ops.index a [ (g * int Stdlib.(m * k)) + (i * int k) + r ]
+      * Ops.index b [ (j * int Stdlib.(h * k)) + (g * int k) + r ])
+      Add [ g; r ]
+  in
+  let store = Ops.store (Ops.index c [ (i * int n) + j ]) sum in
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ i; j ] ]
+
+let run_merged () =
+  let d, r = on_cuda () in
+  let module K = Postrange.Scheduler in
+  let o =
+    Setting.context
+      Setting.[ B (stage, true) ]
+      (fun () ->
+        let s = K.v (merged_kernel merged) r in
+        K.convert_loop_to_global s;
+        Heuristic.hand_coded_optimizations s)
+  in
+  let k = merged_kernel ~opts_to_apply:(K.applied_opts o) merged in
+  let prg = compiled r k in
+  equal ~msg:"8-byte copies" bool true (says "tg_cp_async8(" (source prg));
+  (* Short of the units, the tile is 64 rows by 32 columns, and a trip takes
+     22 values, 11 steps of 2 of the 110 in 5 trips: two stages of each
+     operand's tile. *)
+  let sizes prg = List.map Shape.max_numel (locals (Ops.nth prg 1)) in
+  equal ~msg:"two stages" (list int)
+    [ 2 * 64 * 22; 2 * 32 * 22 ]
+    (sizes prg);
+  let m, h, kk, n = merged in
+  let inputs = [ (1, values 1 (h * m * kk)); (2, values 2 (n * h * kk)) ] in
+  let run prg = List.assoc 0 (Run.on d prg inputs) in
+  equal (array Dtypes.value) (run (compiled (unstaged r) k)) (run prg)
+
 let checked = "kernels the race checker runs"
 let in_two = "a product of 128 cubed in two stages of cp.async is exact"
 let in_one = "a product of 128 cubed in one stage is exact"
@@ -1706,6 +1765,9 @@ let gathered_mxfp4 =
 let nested_loops =
   "a product over a nest of loops in two stages computes its unstaged \
    twin's bits"
+let merged_heads =
+  "a product summed over heads of 110 in copies of 8 bytes computes its \
+   unstaged twin's bits"
 
 let in_registers =
   "products in registers in trips of several steps compute their unstaged \
@@ -1722,6 +1784,7 @@ let checked_kernels =
       test dense run_dense;
       test gathered_mxfp4 run_routed_mxfp4;
       test nested_loops run_nest;
+      test merged_heads run_merged;
     ]
 
 (* [compute-sanitizer] attaches to the process it starts, so each kernel runs
@@ -1766,6 +1829,10 @@ let races =
         "the race checker finds no hazard in a kernel staged over a nest of \
          loops"
         (racecheck nested_loops);
+      test
+        "the race checker finds no hazard in a product summed over heads in \
+         copies of 8 bytes"
+        (racecheck merged_heads);
       test
         "the race checker finds no hazard in a kernel whose scales are held \
          whole"
