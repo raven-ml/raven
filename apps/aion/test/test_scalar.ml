@@ -299,95 +299,111 @@ let shapes =
               Scalar.v Identity (Nx.zeros Nx.float32 s)));
     ]
 
-(* A set over a software device, without kernels: it computes only under
-   Rune.jit, on this machine's CPU. *)
-module Soft = (val Nx.devices [ Result.get_ok (Rig.software "aion-scalar") ])
+(* init *)
+
+let transform =
+  Testable.structural ~pp:(fun ppf -> function
+    | Scalar.Identity -> Format.pp_print_string ppf "Identity"
+    | Log m -> Format.fprintf ppf "Log %h" m
+    | Asinh_asinh -> Format.pp_print_string ppf "Asinh_asinh")
+
+let init =
+  cases "init has the modality's transform and shapes, edges sorted"
+    ~id:(fun s -> Modality.key (Scalar s))
+    Modality.[ Flux_g; Z; Xp_bp ]
+    (fun s ->
+      let t = Scalar.init ~key:(Nx.Rng.key 3) s in
+      equal transform (Scalar.transform_of s) (Scalar.transform t);
+      equal (array int)
+        [| Modality.tokens (Scalar s); 1024 |]
+        (Nx.shape (Scalar.edges t));
+      let e = Scalar.edges t in
+      let sorted, _ = Nx.sort ~axis:1 e in
+      equal (array float_exact) (Nx.to_array sorted) (Nx.to_array e))
+
+(* The walk reports a Log's floor by its bits: floors of other bits, as [0.]
+   and [-0.], key other programs, and equal floors the same, whatever the
+   edges. *)
+let walk =
+  let visits tr e =
+    List.map
+      (Format.asprintf "%a" Nx.Ptree.pp_visit)
+      (Nx.Ptree.visits
+         (Nx.Ptree.instantiate (module Scalar))
+         (Scalar.v tr (row e)))
+  in
+  group "walk"
+    [
+      test "floors of other bits give other visits" (fun () ->
+          not_equal (list string)
+            (visits (Log 0.) [| 0.; 1. |])
+            (visits (Log (-0.)) [| 0.; 1. |]));
+      test "equal floors give equal visits" (fun () ->
+          equal (list string)
+            (visits (Log (exp (-3.))) [| 0.; 1. |])
+            (visits (Log (exp (-3.))) [| -2.; 5. |]));
+    ]
+
+(* Compiled with the codec as an argument, one function serves every codec:
+   its walk reports the transform, a floor included, and its edges are an
+   argument. The search is comparisons and gathers and the transforms are
+   functions Rune.jit computes exactly on the host, so tokens and values agree
+   bit for bit. *)
+let signature () =
+  Nx.Ptree.(instantiate (module Scalar) @-> tensor @-> returns tensor)
+
+let encode32 = Rune.jit (signature ()) Scalar.encode
+let encode64 = Rune.jit (signature ()) Scalar.encode
+let decode_c = Rune.jit (signature ()) Scalar.decode
+
+(* Codecs from init at three modalities' shapes, and at another floor. *)
+let codec =
+  Gen.(
+    let* m = of_list Modality.[ Flux_g; Z; Xp_bp ] in
+    let* seed = int_range 0 1000 in
+    let+ floor = of_list [ None; Some 0.05 ] in
+    let t = Scalar.init ~key:(Nx.Rng.key seed) m in
+    match (floor, Scalar.transform t) with
+    | Some f, Log _ -> Scalar.v (Log f) (Scalar.edges t)
+    | _ -> t)
+
+(* Four objects' values: edges, normal draws and values that are not finite. *)
+let values_of t =
+  let e = Nx.to_array (Scalar.edges t) in
+  let c = Nx.dim 0 (Scalar.edges t) in
+  Gen.(
+    let+ v =
+      array ~size:(constant (4 * c))
+        (frequency
+           [
+             (2, of_list (Array.to_list e));
+             (3, map Bounds.f32 (float_range (-4.) 4.));
+             ( 1,
+               of_list [ Float.nan; Float.infinity; Float.neg_infinity; -0. ]
+             );
+           ])
+    in
+    Nx.create Nx.float32 (if c = 1 then [| 4 |] else [| 4; c |]) v)
 
 let compiled =
-  test "encode and decode compile to the host's tokens and values" (fun () ->
-      let e = [| [| -3.; -1.; 0.; Float.nan |]; [| -2.; 0.5; 1.; 2. |] |] in
-      let t =
-        Scalar.v
-          (Log (exp (-3.)))
-          (Nx.create Nx.float32 [| 2; 4 |] (Array.concat (Array.to_list e)))
-      in
-      let v =
-        Nx.create Nx.float32 [| 3; 2 |] [| 0.; 0.3; 0.5; Float.nan; 2.; 10. |]
-      in
+  prop "compiled equals eager, bit for bit"
+    Gen.(bind codec (fun t -> pair (constant t) (values_of t)))
+    (fun (t, v) ->
+      cover "a floor other than AION-1's"
+        (match Scalar.transform t with Log f -> f = 0.05 | _ -> false);
+      cover "a codec of 55 channels" (Nx.dim 0 (Scalar.edges t) = 55);
       let k = Scalar.encode t v in
-      let host x = Nx.place Nx.Host.on x in
-      let soft = Scalar.place Soft.on t in
-      let kj = Rune.jit' (Scalar.encode soft) (Nx.place Soft.on v) in
-      equal (array int) (ints k) (ints (host kj));
-      let dj = Rune.jit' (Scalar.decode soft) (Nx.place Soft.on k) in
-      equal (array float_exact)
-        (Nx.to_array (Scalar.decode t k))
-        (Nx.to_array (host dj)))
+      equal (array int) (ints k) (ints (encode32 t v));
+      let v64 = Nx.cast Nx.float64 v in
+      equal (array int) (ints (Scalar.encode t v64)) (ints (encode64 t v64));
+      let bits x = Array.map Int32.bits_of_float (Nx.to_array x) in
+      equal (array int32) (bits (Scalar.decode t k)) (bits (decode_c t k)))
 
-(* A compiled codec's tokens and values are the eager one's, bit for bit:
-   comparisons, gathers, and transforms that Rune.jit computes exactly on the
-   host. Codebooks of 12 edges and 16 values, so that every case runs one
-   program per entry point, whose captured edges are its data. *)
-let jitted =
-  let transforms = Scalar.[ Identity; Log (exp (-3.)); Asinh_asinh ] in
-  let fixed =
-    Gen.(
-      let* xs = array ~size:(constant 12) (int_range (-8) 8) in
-      let e = Array.map (fun i -> float_of_int i /. 2.) xs in
-      Array.sort compare e;
-      let+ ys =
-        array ~size:(constant 16)
-          (frequency
-             [
-               (3, of_list (Array.to_list e));
-               (3, map f32 (float_range (-5.) 5.));
-               ( 1,
-                 of_list
-                   [ Float.nan; Float.infinity; Float.neg_infinity; -0. ] );
-             ])
-      in
-      (e, ys))
-  in
-  prop "a compiled codec encodes and decodes as the eager one"
-    Gen.(pair fixed (pair (of_list transforms) bool))
-    (fun ((e, ys), (tr, wide)) ->
-      let t = Scalar.v tr (row e) in
-      let c = Scalar.jit t in
-      let v = values ys in
-      let k = Scalar.encode t v in
-      equal (array int) (ints k) (ints (Scalar.encode c v));
-      if wide then begin
-        let v = Nx.cast Nx.float64 v in
-        equal (array int) (ints (Scalar.encode t v)) (ints (Scalar.encode c v))
-      end;
-      equal (array float_exact)
-        (Nx.to_array (Scalar.decode t k))
-        (Nx.to_array (Scalar.decode c k)))
-
-(* A compiled codec keeps programs for float32 and float64 values alone, so it
-   refuses a narrower float, which no set without eager kernels could encode. *)
-let narrow_floats =
-  let refuses x =
-    let t = Scalar.jit (Scalar.v Identity (row [| 0.; 1.; 2. |])) in
-    raises_match (Exn.invalid_arg ~sub:"float32 or float64") (fun () ->
-        Scalar.encode t x)
-  in
-  let v = values [| 0.5; 1.5 |] in
-  cases "a compiled codec refuses a float narrower than float32" ~id:fst
-    [
-      ("float16", fun () -> refuses (Nx.cast Nx.float16 v));
-      ("bfloat16", fun () -> refuses (Nx.cast Nx.bfloat16 v));
-    ]
-    (fun (_, f) -> f ())
-
-let refuses_at_call =
-  test "a compiled codec refuses a token at the call" (fun () ->
-      (* On a set without eager kernels a check in its program would raise only
-         at a later wait. *)
+let compiled_refusal =
+  test "a compiled codec refuses a token at the call on the host" (fun () ->
       let t = Scalar.v Identity (row [| 0.; 1.; 2. |]) in
-      let t = Scalar.jit (Scalar.place Soft.on t) in
       raises_match (Exn.invalid_arg ~sub:"token 3 at [1] outside [0, 3)")
-        (fun () -> Scalar.decode t (Nx.place Soft.on (tokens [| 0; 3 |]))))
+        (fun () -> decode_c t (tokens [| 0; 3 |])))
 
 (* of_archive's three layouts of codebooks. Row [i] holds [i + j / 10], so a
    transposed or reordered channel shows. *)
@@ -492,5 +508,6 @@ let () =
          group "decode" [ upper_edge; out_of_range; past_last; decodes ];
          shapes;
          group "of_archive" [ layouts; unreadable ];
-         group "devices" [ compiled; jitted; narrow_floats; refuses_at_call ];
+         group "structure" [ init; walk ];
+         group "compiled" [ compiled; compiled_refusal ];
        ])

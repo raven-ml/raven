@@ -502,38 +502,6 @@ let lengths =
             [ 0L; 3L ]);
     ]
 
-(* Tokens *)
-
-let codes =
-  group "LFQ"
-    [
-      cases "value c sets bit 9 - c where positive" ~id:string_of_int
-        [ 0; 1; 5; 9 ] (fun c ->
-          let h = Array.init 10 (fun i -> if i = c then 0.5 else -0.5) in
-          equal (array int)
-            [| 1 lsl (9 - c) |]
-            (ints (Spectrum.codes (tensor [| 1; 10 |] h))));
-      test "a value of 0 or NaN clears its bit" (fun () ->
-          let h = [| 0.; -0.; Float.nan; 1.; 1.; 1.; 1.; 1.; 1.; 1. |] in
-          equal (array int) [| 127 |]
-            (ints (Spectrum.codes (tensor [| 1; 10 |] h))));
-      prop "a code's bits are its values' signs"
-        Gen.(array ~size:(constant 10) (map f32 (float_range (-2.) 2.)))
-        (fun h ->
-          let k = ints (Spectrum.codes (tensor [| 1; 10 |] h)) in
-          let expected =
-            Array.fold_left ( + ) 0
-              (Array.mapi (fun c v -> if v > 0. then 1 lsl (9 - c) else 0) h)
-          in
-          equal (array int) [| expected |] k);
-      test "values invert codes on every token" (fun () ->
-          let k = Nx.arange Nx.int64 0 1024 1 in
-          let v = Spectrum.values Nx.float32 k in
-          equal (array int) (ints k) (ints (Spectrum.codes v));
-          equal (list float_exact) [ -1.; 1. ]
-            (List.sort_uniq compare (Array.to_list (floats v))));
-    ]
-
 (* Encoding and decoding *)
 
 let flat b m v = Array.make b (Array.make m v)
@@ -683,7 +651,8 @@ let upstream =
                ~spread:(f64s (s name "norm_pre"))
                (ints (Nx.slice [ A; I 0 ] k)));
           let bits =
-            Spectrum.values Nx.float64 (Nx.slice [ A; R (1, Nx.dim 1 k) ] k)
+            Lfq.decode Nx.float64 ~bits:10
+              (Nx.slice [ A; R (1, Nx.dim 1 k) ] k)
           in
           holds "LFQ bits"
             (Spread.signs ~n:(n ())
@@ -854,7 +823,7 @@ let compiled_upstream =
                ~reference:(lfq (v name "pre"))
                ~spread:(lfq (s name "pre"))
                (floats
-                  (Spectrum.values Nx.float64
+                  (Lfq.decode Nx.float64 ~bits:10
                      (Nx.slice [ A; R (1, Nx.dim 1 k) ] k)))));
       cases "a compiled codec decodes upstream's spectrum" ~id:Fun.id padded
         (fun name ->
@@ -953,7 +922,6 @@ let () =
          norm_token;
          pad;
          lengths;
-         codes;
          shapes;
          decoded;
          upstream;

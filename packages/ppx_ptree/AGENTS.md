@@ -3,7 +3,8 @@
 Derives a structure's `walk` (`Nx.Ptree.S`) from its type: the function a
 hand-written structure would have.
 
-- It is for users. No raven library depends on it, not even for its tests.
+- It is for users and apps' libraries, as tessera's and aion's. No
+  package's library depends on it, not even for its tests.
 - A derived type's parameters are read by position, payload then set, as
   the hand-written structures of nx, kaun and vega are. It generates walks
   only: a description is at one set, so users make it where they use it.

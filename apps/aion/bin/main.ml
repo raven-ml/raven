@@ -44,8 +44,10 @@
 
    --device picks where the transformer computes: cpu, eagerly (the default);
    cpu-jit, compiled on the host; or a GPU as Rig_gpus.open_ names it (cuda,
-   nv, amd, metal), compiled there. The codecs compute on the host, compiled
-   unless the device is cpu; tokens move to the device and its results back.
+   nv, amd, metal), compiled there. The codecs compute on the host, the image
+   and spectrum codecs compiled unless the device is cpu and the scalar codecs
+   eagerly, which gives a compiled codec's tokens and values bit for bit;
+   tokens move to the device and its results back.
    A compiled device pads each batch to --batch rows, repeating its first
    kept object and dropping the copies' results, so that each call runs one
    program whatever the objects a batch keeps.

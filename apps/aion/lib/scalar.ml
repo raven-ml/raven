@@ -3,31 +3,26 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type transform = Identity | Log of float | Asinh_asinh
+(* A floor is reported by its bits, so that each floor has programs of its
+   own. *)
+let walk_floor c m =
+  Nx.Ptree.Walk.case c (Printf.sprintf "%h" m);
+  m
 
-let invalid fmt = Format.kasprintf invalid_arg fmt
-
-(* A compiled codec's programs ({!jit}): encode, at float32 and at float64,
-   and decode without its check. *)
-type 'd programs = {
-  p_encode32 : 'd Nx.float32_t -> 'd Nx.int64_t;
-  p_encode64 : 'd Nx.float64_t -> 'd Nx.int64_t;
-  p_decode : 'd Nx.int64_t -> 'd Nx.float32_t;
-}
+type transform = Identity | Log of float [@ptree.walk walk_floor] | Asinh_asinh
+[@@deriving ptree]
 
 (* [edges] is [c] codebooks of [n] edges, [c; n]. *)
-type 'd t = {
-  transform : transform;
-  edges : 'd Nx.float32_t;
-  programs : 'd programs option;
-}
+type (_, 'd) t = { transform : transform; edges : 'd Nx.float32_t }
+[@@deriving ptree]
 
 let v transform edges =
   match Nx.shape edges with
-  | [| c; n |] when c > 0 && n > 0 -> { transform; edges; programs = None }
+  | [| c; n |] when c > 0 && n > 0 -> { transform; edges }
   | s ->
-      invalid "Aion.Scalar.v: edges of shape %a, [c; n] expected" Nx.pp_shape
-        s
+      invalid_arg
+        (Format.asprintf "Aion.Scalar.v: edges of shape %a, [c; n] expected"
+           Nx.pp_shape s)
 
 let transform t = t.transform
 let edges t = t.edges
@@ -95,6 +90,15 @@ let of_archive m a =
   let unread = reservoir (Modality.tokens (Scalar m)) in
   v (transform_of m) (Nx_io.Archive.import ~unread (codebooks m) a)
 
+(* AION-1's codebooks hold 1024 edges, redshift's grid included. *)
+let codebook = 1024
+
+let init ~key m =
+  let c = Modality.tokens (Scalar m) in
+  let at = Nx.Rng.placement key in
+  let e = Nx.Rng.normal_at at ~key Nx.float32 [| c; codebook |] in
+  v (transform_of m) (fst (Nx.sort ~axis:1 e))
+
 (* The clamp's logarithm is an edge most of a codebook's mass can sit on: 36 %
    of FLUX_W3's and 48 % of FLUX_W4's training sample lie on log(float32 e⁻³) =
    -3, so a [log] one ulp off at that one input would move half their tokens.
@@ -116,9 +120,10 @@ let channels (type v s d) fn t (x : (v, s, d) Nx.t) =
   let c = Nx.dim 0 t.edges and s = Nx.shape x in
   let r = Array.length s in
   if c > 1 && (r = 0 || s.(r - 1) <> c) then
-    invalid "Aion.%s: last axis of %d entries, %d expected" fn
-      (if r = 0 then 0 else s.(r - 1))
-      c
+    invalid_arg
+      (Printf.sprintf "Aion.%s: last axis of %d entries, %d expected" fn
+         (if r = 0 then 0 else s.(r - 1))
+         c)
 
 (* The position of each value's codebook in the flattened edges: [i * n] for
    channel [i], along the values' last axis. *)
@@ -159,7 +164,7 @@ let search ~n ~base flat y =
    edges: float64 for a float64 input, which a float32 comparison would round (1
    + 1e-12 lies above the edge 1, its float32 rounding on it), and float32 for
    any narrower one. *)
-let encode_raw (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
+let encode (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
   let n = Nx.dim 1 t.edges in
   let base = offsets "Scalar.encode" t x in
   let flat = Nx.flatten t.edges in
@@ -168,25 +173,11 @@ let encode_raw (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
   | Nx.Dtype.Float64 -> search ~n ~base (Nx.cast Nx.float64 flat) y
   | _ -> search ~n ~base flat (Nx.cast Nx.float32 y)
 
-(* A compiled codec keeps a program for float32 and one for float64, and
-   refuses other floats, which a set without eager kernels could not encode. *)
-let encode (type s d) t (x : (float, s, d) Nx.t) : d Nx.int64_t =
-  channels "Scalar.encode" t x;
-  match (t.programs, Nx.dtype x) with
-  | None, _ -> encode_raw t x
-  | Some p, Nx.Dtype.Float32 -> p.p_encode32 x
-  | Some p, Nx.Dtype.Float64 -> p.p_encode64 x
-  | Some _, dt ->
-      invalid
-        "Aion.Scalar.encode: %s values, a compiled codec takes float32 or \
-         float64"
-        (Nx.Dtype.name dt)
-
 (* The token [n] is the class past the last edge, which a transformer may
    predict (redshift's vocabulary holds it), so the refusal names it. *)
-let check_decode t k =
+let decode (type d) t (k : d Nx.int64_t) : d Nx.float32_t =
   let n = Nx.dim 1 t.edges in
-  channels "Scalar.decode" t k;
+  let base = offsets "Scalar.decode" t k in
   let inside =
     Nx.logical_and (Nx.greater_equal_s k 0L) (Nx.less_s k (Int64.of_int n))
   in
@@ -197,37 +188,5 @@ let check_decode t k =
            k Nx.pp_shape i n
            (if k = Int64.of_int n then
               ", the class past the last edge, whose value is unknown"
-            else "")))
-
-let decode_raw (type d) t (k : d Nx.int64_t) : d Nx.float32_t =
-  let base = offsets "Scalar.decode" t k in
+            else "")));
   inverse t.transform (Nx.take (Nx.add k base) (Nx.flatten t.edges))
-
-(* A compiled codec checks a copy on the host, so that a refusal comes before
-   its program runs. *)
-let decode t k =
-  match t.programs with
-  | None ->
-      check_decode t k;
-      decode_raw t k
-  | Some p ->
-      check_decode t (Nx.place Nx.Host.on k);
-      p.p_decode k
-
-(* Compiling *)
-
-let jit t =
-  let t = { t with programs = None } in
-  let open Nx.Ptree in
-  let programs =
-    {
-      p_encode32 = Rune.jit (tensor @-> returns tensor) (encode_raw t);
-      p_encode64 = Rune.jit (tensor @-> returns tensor) (encode_raw t);
-      p_decode = Rune.jit (tensor @-> returns tensor) (decode_raw t);
-    }
-  in
-  { t with programs = Some programs }
-
-let place p t =
-  let t' = { t with edges = Nx.place p t.edges; programs = None } in
-  if Option.is_some t.programs then jit t' else t'

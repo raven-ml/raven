@@ -193,7 +193,7 @@ let spectrum =
         (Spread.signs ~n ~reference:(lfq a "f64.desi.pre")
            ~spread:(lfq a "s.desi.pre")
            (floats
-              (Spectrum.values Nx.float64
+              (Lfq.decode Nx.float64 ~bits:10
                  (Nx.slice [ A; R (1, Nx.dim 1 k) ] k))));
       let d =
         Spectrum.decode g (Nx.place D.on (get a Nx.int64 "f64.desi.tokens"))

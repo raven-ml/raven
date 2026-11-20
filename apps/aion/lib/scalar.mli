@@ -32,8 +32,13 @@
     the [i]th by codebook [i]. A codec of one channel takes values of any shape.
     Tokens have their values' shape.
 
-    A codec lies on a device set, as its codebooks do, and computes with values
-    of that set: {!place} moves it. *)
+    A codec is a structure ({!walk}) whose codebooks are fixed arrays on a
+    device set, so [Nx.Ptree.place (module Scalar)] moves it and
+    [Nx.Ptree.cast] keeps its codebooks. It computes with values of its set.
+    Compiled by [Rune.jit] with the codec as an argument, its tokens and values
+    are the eager ones bit for bit on a faithful device: the computation is
+    comparisons, gathers and the transform's functions, which [Rune.jit]
+    computes exactly there. *)
 
 (** {1:codecs Codecs} *)
 
@@ -45,37 +50,26 @@ type transform =
           kept, decoded by [exp]. *)
   | Asinh_asinh  (** [asinh (asinh v)], decoded by [sinh (sinh y)]. *)
 
-type 'd t
-(** The type for scalar codecs on the device set ['d]. *)
+type ('a, 'd) t
+(** The type for scalar codecs on the device set ['d]. A codec holds no
+    parameter, so ['a] is free: it is there because [Nx.Ptree.place] and
+    [Nx.Ptree.cast] take a structure of a payload and a set. *)
 
-val v : transform -> 'd Nx.float32_t -> 'd t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
+(** [walk c t] reports [t]'s transform as a case, with the floor of a [Log]
+    by its bits, and walks its codebooks as a fixed array at ["edges"]. *)
+
+val v : transform -> 'd Nx.float32_t -> ('a, 'd) t
 (** [v tr edges] is the codec of [tr] whose codebooks are the rows of [edges],
     of shape [[|c; n|]].
 
     Raises [Invalid_argument] if [edges] is not 2-d, or [c] or [n] is [0]. *)
 
-val transform : 'd t -> transform
+val transform : ('a, 'd) t -> transform
 (** [transform t] is [t]'s transform. *)
 
-val edges : 'd t -> 'd Nx.float32_t
+val edges : ('a, 'd) t -> 'd Nx.float32_t
 (** [edges t] is [t]'s codebooks, of shape [[|c; n|]]. *)
-
-val place : 'e Nx.Placement.t -> 'd t -> 'e t
-(** [place p t] is [t] with its codebooks at [p], as {!Nx.place}, compiled if
-    [t] is ({!jit}).
-
-    Raises as {!Nx.place} does. *)
-
-val jit : 'd t -> 'd t
-(** [jit t] is [t] computing by compiled programs: its {!encode} of float32 and
-    float64 values and its {!decode} check their arguments as [t]'s do, on the
-    host, then run a program [Rune.jit] compiles, with [t]'s codebooks
-    captured, one per shape and placement of the argument, for as long as the
-    compiled codec lives. Its {!encode} raises [Invalid_argument] for values
-    of another dtype. A codec on a set without eager kernels, as a GPU's,
-    computes only so. Tokens and values agree with [t]'s bit for bit: the
-    computation is comparisons, gathers and the transform's functions, which
-    [Rune.jit] computes exactly on a faithful device. *)
 
 (** {1:aion AION-1's codecs} *)
 
@@ -84,7 +78,7 @@ val transform_of : Modality.scalar -> transform
     Legacy Survey fluxes and radius, the Gaia fluxes and the parallax,
     [Asinh_asinh] for the XP coefficients, and [Identity] for the others. *)
 
-val of_archive : Modality.scalar -> 'd Nx_io.Archive.t -> 'd t
+val of_archive : Modality.scalar -> 'd Nx_io.Archive.t -> ('a, 'd) t
 (** [of_archive m a] is [m]'s codec, of transform {!transform_of}[ m], with the
     codebooks of [a], named as in its file in {!Hub.codec}: one for each of
     {!Modality.tokens}[ (Scalar m)], stored as [_quantizer._index_to_val] for a
@@ -96,15 +90,20 @@ val of_archive : Modality.scalar -> 'd Nx_io.Archive.t -> 'd t
     Raises [Failure] if [a] does not hold that many float32 codebooks of one
     length, or holds an entry it does not read. *)
 
+val init : key:'d Nx.Rng.key -> Modality.scalar -> ('a, 'd) t
+(** [init ~key m] is a codec of [m]'s transform and shapes, at [key]'s set:
+    {!Modality.tokens}[ (Scalar m)] codebooks of 1024 edges, as AION-1's, each
+    of sorted standard normal draws from [key]. *)
+
 (** {1:tokens Tokens} *)
 
-val encode : 'd t -> (float, 's, 'd) Nx.t -> 'd Nx.int64_t
+val encode : ('a, 'd) t -> (float, 's, 'd) Nx.t -> 'd Nx.int64_t
 (** [encode t v] is the token of each value of [v].
 
     Raises [Invalid_argument] if [t] has more than one channel and [v]'s last
     axis does not have one entry per channel. *)
 
-val decode : 'd t -> 'd Nx.int64_t -> 'd Nx.float32_t
+val decode : ('a, 'd) t -> 'd Nx.int64_t -> 'd Nx.float32_t
 (** [decode t k] is the value of each token of [k].
 
     Raises [Invalid_argument] if a token is outside [\[0, n)], or if [t] has
@@ -112,10 +111,3 @@ val decode : 'd t -> 'd Nx.int64_t -> 'd Nx.float32_t
     channel. The token [n] is the class past the last edge, which the
     transformer predicts for redshift ({!Modality.vocab} is [1025] there) and
     whose value is unknown: its refusal names it. *)
-
-(**/**)
-
-(* For Spectrum: [decode_raw t k] is {!decode} without its check, for a codec
-   that checks its tokens itself. *)
-
-val decode_raw : 'd t -> 'd Nx.int64_t -> 'd Nx.float32_t

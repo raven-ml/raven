@@ -28,6 +28,7 @@
   test_scalar
   test_spectrum
   test_fsq
+  test_lfq
   test_image
   test_codecs
   test_survey

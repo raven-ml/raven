@@ -3,8 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* [basis] holds [B(i)], [size] their last product. *)
-type t = { levels : int list; basis : int list; size : int }
+type t = { levels : int list; [@ptree.int] } [@@deriving ptree]
 
 (* The bound's [ε], upstream's FiniteScalarQuantizer default, which both of
    AION-1's codecs keep. *)
@@ -13,16 +12,16 @@ let invalid fmt = Printf.ksprintf invalid_arg fmt
 
 let v levels =
   if levels = [] then invalid "Aion.Fsq.v: no level";
-  let step (basis, b) l =
+  let step b l =
     if l < 2 then invalid "Aion.Fsq.v: level %d, at least 2 expected" l;
     if b > max_int / l then invalid "Aion.Fsq.v: more codes than max_int";
-    (b :: basis, b * l)
+    b * l
   in
-  let basis, size = List.fold_left step ([], 1) levels in
-  { levels; basis = List.rev basis; size }
+  ignore (List.fold_left step 1 levels);
+  { levels }
 
 let levels q = q.levels
-let size q = q.size
+let size q = List.fold_left ( * ) 1 q.levels
 let offset l = if l mod 2 = 0 then 0.5 else 0.
 let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
@@ -43,6 +42,13 @@ let constants (type s) (dt : (float, s) Nx.dtype) l =
         (h, f32 (Float.atanh (f32 (offset l /. h))))
   in
   (h, s)
+
+(* [B(i)], the product of the levels before [i], on [x]'s set. *)
+let basis x q =
+  let step (b, bs) l = (b * l, Int64.of_int b :: bs) in
+  let bs = List.rev (snd (List.fold_left step (1, []) q.levels)) in
+  let bs = Array.of_list bs in
+  Nx.place (Nx.beside x) (Nx.create Nx.int64 [| Array.length bs |] bs)
 
 (* The vector of [f] of each level, on [x]'s set. *)
 let per_level dt x q f =
@@ -81,39 +87,23 @@ let encode q z =
       (Nx.cast Nx.int64 (Nx.roundeven y))
       (per_level Nx.int64 y q (fun l -> Int64.of_int (l / 2)))
   in
-  let b =
-    Nx.place (Nx.beside y)
-      (Nx.create Nx.int64
-         [| List.length q.basis |]
-         (Array.of_list (List.map Int64.of_int q.basis)))
-  in
-  Nx.sum ~axes:[ -1 ] (Nx.mul digit b)
+  Nx.sum ~axes:[ -1 ] (Nx.mul digit (basis y q))
 
-let check_decode q k =
+let decode dt q k =
+  let size = size q in
   let inside =
-    Nx.logical_and (Nx.greater_equal_s k 0L) (Nx.less_s k (Int64.of_int q.size))
+    Nx.logical_and (Nx.greater_equal_s k 0L) (Nx.less_s k (Int64.of_int size))
   in
   Nx.check Nx.Ptree.tensor inside k (fun i k ->
       Invalid_argument
         (Format.asprintf "Aion.Fsq.decode: code %Ld at %a outside [0, %d)"
-           (Nx.item [] k) Nx.pp_shape i q.size))
-
-let decode_raw dt q k =
+           (Nx.item [] k) Nx.pp_shape i size));
   let k = Nx.unsqueeze ~axes:[ Nx.ndim k ] k in
-  let b =
-    Nx.place (Nx.beside k)
-      (Nx.create Nx.int64
-         [| List.length q.basis |]
-         (Array.of_list (List.map Int64.of_int q.basis)))
-  in
   (* Codes and their quotients are not negative, so [div] and [mod_], which
      truncate, are floor division and its remainder. *)
   let digit =
-    Nx.mod_ (Nx.div k b) (per_level Nx.int64 k q (fun l -> Int64.of_int l))
+    Nx.mod_ (Nx.div k (basis k q))
+      (per_level Nx.int64 k q (fun l -> Int64.of_int l))
   in
   let w = per_level dt k q (fun l -> Float.of_int (l / 2)) in
   Nx.div (Nx.sub (Nx.cast dt digit) w) w
-
-let decode dt q k =
-  check_decode q k;
-  decode_raw dt q k

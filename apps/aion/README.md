@@ -43,11 +43,11 @@ apart, and `generate` counts it and writes NaN.
 
 `--device` picks where the transformer computes: `cpu`, eagerly (the
 default); `cpu-jit`, compiled on the host; or a GPU, compiled there, named
-`cuda`, `nv`, `amd` or `metal`. The codecs then compute compiled on the
-host, and each batch is padded to `--batch` rows, so that every call runs
-one program. Compiled results agree with eager ones to their last bits, so a
-draw whose uniform falls that close to a boundary between two tokens may
-differ.
+`cuda`, `nv`, `amd` or `metal`. The image and spectrum codecs then compute
+compiled on the host, the scalar codecs eagerly there, and each batch is
+padded to `--batch` rows, so that every call runs one program. Compiled
+results agree with eager ones to their last bits, so a draw whose uniform
+falls that close to a boundary between two tokens may differ.
 
 `--model base` (the default) downloads aion-base, 1.27 GB with its codecs,
 from `polymathic-ai/aion-base` on Hugging Face; `--model large` downloads
@@ -106,7 +106,7 @@ from A to B.
 | `lib/tokens.mli` | one modality's tokens for a batch, between the codecs and the transformer |
 | `lib/hub.mli` | the Hub repositories and the revision every file is read at |
 | `lib/scalar.mli` | the codecs of one number per object |
-| `lib/spectrum.mli` | the spectrum codec |
+| `lib/spectrum.mli`, `lib/lfq.mli` | the spectrum codec and its quantizer |
 | `lib/image.mli`, `lib/fsq.mli` | the image codec and its quantizer |
 | `lib/codecs.mli` | the codecs a run picks, from data to tokens and back |
 | `lib/transformer.mli` | the encoder-decoder: embeddings and logits |

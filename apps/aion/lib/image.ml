@@ -467,7 +467,7 @@ let check_decode bs k =
 let decode_raw t bs k =
   let n = Nx.dim 0 k in
   let d = t.decoder in
-  let z = Fsq.decode_raw (dtype t) t.quantizer k in
+  let z = Fsq.decode (dtype t) t.quantizer k in
   let h = apply t.post (Nx.reshape [| n; grid; grid; Nx.dim 2 z |] z) in
   let h = residuals d.units3' h in
   let h = residuals d.units2' (apply ~pad:1 d.conv3 h) in
@@ -478,7 +478,7 @@ let decode_raw t bs k =
 
 (* Entry points: the checks, then the computation. A compiled codec checks the
    codes it decodes on the host, so that a refusal comes before its program
-   runs, and its programs check nothing but the latents' NaN, which only the
+   runs; its programs check them again, and the latents' NaN, which only the
    computation finds. *)
 
 let encode t bs x =
@@ -491,11 +491,10 @@ let encode t bs x =
 let decode t bs k =
   check_decode bs k;
   match t.programs with
-  | None ->
-      Fsq.check_decode t.quantizer k;
-      decode_raw t bs k
+  | None -> decode_raw t bs k
   | Some p ->
-      Fsq.check_decode t.quantizer (Nx.place Nx.Host.on k);
+      (* Fsq.decode of a host copy refuses a code as the program would. *)
+      ignore (Fsq.decode Nx.float32 t.quantizer (Nx.place Nx.Host.on k));
       p.p_decode bs k
 
 (* Compiling *)

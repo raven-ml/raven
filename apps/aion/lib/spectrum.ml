@@ -104,7 +104,7 @@ type ('b, 'd) t = {
   post_quant : ((float, 'b, 'd) Nx.t, 'd) Kaun.Linear.t;
   decoder : ('b, 'd) layer list;
   grid : (float, 'b, 'd) Nx.t;
-  norm : 'd Scalar.t;
+  norm : ('d Nx.float32_t, 'd) Scalar.t;
   programs : ('b, 'd) programs option;
 }
 
@@ -392,7 +392,7 @@ let check_prepare x =
 
 let prepare_raw t x =
   let code = Scalar.encode t.norm (normalisation x) in
-  let v = Nx.cast (Nx.dtype x.flux) (Scalar.decode_raw t.norm code) in
+  let v = Nx.cast (Nx.dtype x.flux) (Scalar.decode t.norm code) in
   let s = Nx.reshape [| -1; 1 |] (scale v) in
   let signal =
     Nx.mul_s (Nx.sub_s (Nx.div (nan_to_num x.flux) s) 1.) input_scaling
@@ -448,27 +448,9 @@ let latent t x =
 
 (* Tokens *)
 
-(* Bit [bits - 1 - c] for value [c], so value 0 is the most significant, as
-   upstream's LFQ masks with 2^(arange(bits - 1, -1, -1)). *)
-let weights at =
-  Nx.place at
-    (Nx.create Nx.int64 [| bits |]
-       (Array.init bits (fun c -> Int64.shift_left 1L (bits - 1 - c))))
-
-(* A value of exactly 0 gives a clear bit, as upstream's [x > 0]. *)
-let codes h =
-  Nx.sum ~axes:[ -1 ]
-    (Nx.mul (Nx.cast Nx.int64 (Nx.greater_s h 0.)) (weights (Nx.beside h)))
-
-let values dt k =
-  let k = Nx.unsqueeze ~axes:[ -1 ] k in
-  let set = Nx.not_equal_s (Nx.bitwise_and k (weights (Nx.beside k))) 0L in
-  let one = Nx.ones_at (Nx.beside k) dt [||] in
-  Nx.where set one (Nx.neg one)
-
 let encode_unpadded_raw t x =
   let h, code = latent_raw t x in
-  Nx.concatenate ~axis:1 [ Nx.reshape [| -1; 1 |] code; codes h ]
+  Nx.concatenate ~axis:1 [ Nx.reshape [| -1; 1 |] code; Lfq.encode h ]
 
 let encode_unpadded t x =
   check_prepare x;
@@ -551,9 +533,9 @@ let decode_raw ?wavelength t k =
   let b = Nx.dim 0 k in
   let dt = Nx.dtype t.grid in
   let v =
-    Nx.cast dt (Scalar.decode_raw t.norm (Nx.slice [ Nx.A; Nx.R (0, 1) ] k))
+    Nx.cast dt (Scalar.decode t.norm (Nx.slice [ Nx.A; Nx.R (0, 1) ] k))
   in
-  let z = values dt (Nx.slice [ Nx.A; Nx.R (1, n + 1) ] k) in
+  let z = Lfq.decode dt ~bits (Nx.slice [ Nx.A; Nx.R (1, n + 1) ] k) in
   let h = Kaun.Linear.apply t.post_quant z in
   let out = List.fold_left (fun h l -> layer l h) h t.decoder in
   let y = Nx.squeeze ~axes:[ 2 ] (Nx.slice [ Nx.A; Nx.A; Nx.R (0, 1) ] out)
@@ -647,7 +629,7 @@ let jit t =
 let compiled t = Option.is_some t.programs
 
 let place p t =
-  let t' = map (Nx.place p) (Scalar.place p) t in
+  let t' = map (Nx.place p) (Nx.Ptree.place (module Scalar) p) t in
   if compiled t then jit t' else t'
 
 let cast dt t =

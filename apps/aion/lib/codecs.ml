@@ -35,7 +35,7 @@ let modality = function
 type t = {
   image : (Nx.float32_elt, Nx.host) Image.t option;
   spectrum : (Nx.float32_elt, Nx.host) Spectrum.t option;
-  scalars : (Modality.scalar * Nx.host Scalar.t) list;
+  scalars : (Modality.scalar * (Nx.host Nx.float32_t, Nx.host) Scalar.t) list;
 }
 
 let load ?cache_dir ?offline ms =
@@ -61,11 +61,13 @@ let load ?cache_dir ?offline ms =
   in
   { image; spectrum; scalars }
 
+(* A scalar codec computes eagerly on the host: its comparisons and gathers
+   are what a compiled one computes, bit for bit. *)
 let jit t =
   {
+    t with
     image = Option.map Image.jit t.image;
     spectrum = Option.map Spectrum.jit t.spectrum;
-    scalars = List.map (fun (m, c) -> (m, Scalar.jit c)) t.scalars;
   }
 
 let missing m =

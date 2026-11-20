@@ -202,25 +202,96 @@ let shapes =
       equal int 4375 (Fsq.size q);
       equal (list int) image (Fsq.levels q))
 
-(* A set over a software device, without kernels: it computes only under
-   Rune.jit, on this machine's CPU. *)
-module Soft = (val Nx.devices [ Result.get_ok (Rig.software "aion-fsq") ])
+(* The walk reports the levels: other levels of one length key other
+   programs, equal levels the same. *)
+let walk =
+  let visits l =
+    List.map
+      (Format.asprintf "%a" Nx.Ptree.pp_visit)
+      (Nx.Ptree.visits (Nx.Ptree.v Fsq.walk) (Fsq.v l))
+  in
+  group "walk"
+    [
+      test "other levels give other visits" (fun () ->
+          not_equal (list string) (visits segmap) (visits [ 7; 5; 5; 5 ]));
+      test "equal levels give equal visits" (fun () ->
+          equal (list string) (visits segmap) (visits [ 8; 5; 5; 5 ]));
+    ]
+
+(* Compiled with the quantizer as an argument, one function serves every
+   quantizer: its walk reports the levels, so quantizers of as many levels key
+   programs of their own. Bounding is tanh and IEEE arithmetic, which Rune.jit
+   computes exactly on the host, so codes and vectors agree bit for bit. *)
+let signature () = Nx.Ptree.(v Fsq.walk @-> tensor @-> returns tensor)
+let encode32 = Rune.jit (signature ()) Fsq.encode
+let encode64 = Rune.jit (signature ()) Fsq.encode
+let decode32 = Rune.jit (signature ()) (Fsq.decode Nx.float32)
+let bound32 = Rune.jit (signature ()) Fsq.bound
+let bound64 = Rune.jit (signature ()) Fsq.bound
+
+(* Quantizers of four levels, so that their programs share a shape. *)
+let fours = [ segmap; [ 7; 5; 5; 5 ]; [ 5; 5; 5; 5 ] ]
+
+(* A value's bits, every NaN as one: which NaN a function gives is
+   unspecified. *)
+let bits x =
+  let bits v = if Float.is_nan v then 0x7ff8L else Int64.bits_of_float v in
+  Array.map bits (Nx.to_array (Nx.cast Nx.float64 x))
+
+(* Numbers near the bound's rounding steps, large magnitudes whose tanh is
+   ±1, infinities, -0. and NaN, which bound keeps and encode refuses. *)
+let number =
+  Gen.(
+    frequency
+      [
+        (6, float_range (-3.) 3.);
+        (1, of_list [ 1e30; -1e30; 1e300; -1e300 ]);
+        (1, of_list [ Float.infinity; Float.neg_infinity; -0.; 0. ]);
+        (1, constant Float.nan);
+      ])
 
 let compiled =
-  test "encode and decode compile to the host's codes and vectors" (fun () ->
-      let q = Fsq.v segmap in
-      let z =
-        Nx.create Nx.float32 [| 3; 4 |]
-          [| 0.; 0.3; -0.2; 2.; -1.; 0.1; 0.7; -3.; 5.; -5.; 0.25; 0. |]
-      in
-      let host x = Nx.place Nx.Host.on x in
-      let k = Fsq.encode q z in
-      let kj = Rune.jit' (Fsq.encode q) (Nx.place Soft.on z) in
-      equal (array int) (ints k) (ints (host kj));
-      let dj = Rune.jit' (Fsq.decode Nx.float32 q) (Nx.place Soft.on k) in
-      equal (array float_exact)
-        (Nx.to_array (Fsq.decode Nx.float32 q k))
-        (Nx.to_array (host dj)))
+  prop "compiled equals eager, bit for bit"
+    Gen.(
+      let* levels = of_list fours in
+      let n = List.fold_left ( * ) 1 levels in
+      let* z = array ~size:(constant 12) number in
+      let+ k = array ~size:(constant 3) (int_range 0 (n - 1)) in
+      (levels, z, k))
+    (fun (levels, z, k) ->
+      cover "the segmentation map's levels" (levels = segmap);
+      cover "levels of another quantizer of four" (levels <> segmap);
+      let nan = Array.exists Float.is_nan z in
+      cover "NaN" nan;
+      cover "no NaN" (not nan);
+      cover "an infinity" (Array.exists (fun x -> Float.abs x = infinity) z);
+      let q = Fsq.v levels in
+      let z64 = Nx.create Nx.float64 [| 3; 4 |] z in
+      let z32 = Nx.cast Nx.float32 z64 in
+      equal (array int64) (bits (Fsq.bound q z32)) (bits (bound32 q z32));
+      equal (array int64) (bits (Fsq.bound q z64)) (bits (bound64 q z64));
+      if not nan then begin
+        equal (array int) (ints (Fsq.encode q z32)) (ints (encode32 q z32));
+        equal (array int) (ints (Fsq.encode q z64)) (ints (encode64 q z64))
+      end;
+      let k = codes k in
+      equal (array int64)
+        (bits (Fsq.decode Nx.float32 q k))
+        (bits (decode32 q k)))
+
+(* On the host a compiled call raises a refusal at the call, as eagerly. *)
+let compiled_refusals =
+  group "compiled refusals"
+    [
+      test "decode refuses a code outside [0, size)" (fun () ->
+          raises_match
+            (Exn.invalid_arg ~sub:"code 4375 at [1] outside [0, 4375)")
+            (fun () -> decode32 (Fsq.v image) (codes [| 0; 4375 |])));
+      test "encode refuses NaN" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"NaN at [0; 1]") (fun () ->
+              encode32 (Fsq.v image)
+                (vec Nx.float32 [| 0.; Float.nan; 0.; 0.; 0. |])));
+    ]
 
 let () =
   exit
@@ -231,5 +302,6 @@ let () =
          group "decode" [ decoded ];
          refusals;
          shapes;
-         group "devices" [ compiled ];
+         walk;
+         group "compiled" [ compiled; compiled_refusals ];
        ])

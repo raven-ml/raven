@@ -23,10 +23,19 @@
 
     A quantizer reads its vectors along the last axis of its input. AION-1's
     images use the levels [[7; 5; 5; 5; 5]], 4375 codes, and its segmentation
-    maps [[8; 5; 5; 5]], 1000 codes. *)
+    maps [[8; 5; 5; 5]], 1000 codes.
+
+    A quantizer holds no array. Compiled by [Rune.jit] with the quantizer as
+    an argument, described by [Nx.Ptree.v walk], its codes and vectors are the
+    eager ones bit for bit on a faithful device, a program for each list of
+    levels. *)
 
 type t
 (** The type for quantizers. *)
+
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> t -> t
+(** [walk c q] reports [q]'s levels, so that [Rune.jit] keys a program on
+    them. *)
 
 val v : int list -> t
 (** [v levels] is the quantizer of [levels].
@@ -52,6 +61,12 @@ val encode : t -> (float, 's, 'd) Nx.t -> 'd Nx.int64_t
     level, or if [z] holds NaN, which has no digit; on a set other than the
     host it raises at the next wait ({!Nx.check}). *)
 
+val bound : t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
+(** [bound q z] is each number of [z] bounded, as {!encode} bounds it before
+    rounding.
+
+    Raises [Invalid_argument] as {!encode} does for [z]'s shape. *)
+
 val decode : (float, 's) Nx.dtype -> t -> 'd Nx.int64_t -> (float, 's, 'd) Nx.t
 (** [decode dt q k] is the vector of each code of [k], along a last axis added
     to [k]'s shape, each number computed in [dt]: [(k - ⌊L/2⌋) / ⌊L/2⌋] rounded
@@ -59,19 +74,3 @@ val decode : (float, 's) Nx.dtype -> t -> 'd Nx.int64_t -> (float, 's, 'd) Nx.t
 
     Raises [Invalid_argument] if a code is outside [\[0, size q)], as {!encode}
     raises for NaN. *)
-
-(**/**)
-
-(* For tests: [bound q z] is each number of [z] bounded, as {!encode} bounds
-   it, before rounding. *)
-
-val bound : t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
-
-(* For Image: [check_decode q k] is {!decode}'s check of the codes [k], and
-   [decode_raw dt q k] is {!decode} without it, for a codec that checks its
-   codes on the host before a compiled program decodes them. *)
-
-val check_decode : t -> 'd Nx.int64_t -> unit
-
-val decode_raw :
-  (float, 's) Nx.dtype -> t -> 'd Nx.int64_t -> (float, 's, 'd) Nx.t

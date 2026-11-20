@@ -53,10 +53,12 @@ val load : ?cache_dir:string -> ?offline:bool -> Modality.t list -> t
     [Failure] as {!Hub.codec} and each codec's [of_archive]. *)
 
 val jit : t -> t
-(** [jit t] is [t] with each codec compiled: {!Image.jit}, {!Spectrum.jit} and
-    {!Scalar.jit}, whose programs live as long as the result. *)
+(** [jit t] is [t] with its image and spectrum codecs compiled, {!Image.jit}
+    and {!Spectrum.jit}, whose programs live as long as the result. Its scalar
+    codecs compute eagerly, as they would compiled, bit for bit. *)
 
-val scalar : t -> Modality.scalar -> Nx.host Scalar.t
+val scalar :
+  t -> Modality.scalar -> (Nx.host Nx.float32_t, Nx.host) Scalar.t
 (** [scalar t m] is [m]'s codec.
 
     Raises [Invalid_argument] if [t] was not loaded for [Scalar m]. *)

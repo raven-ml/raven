@@ -29,13 +29,15 @@
 
     A ConvNeXt V2 network over the latent grid, the {e encoder}, then makes [n]
     latent vectors of 10 values, [n = L / 32] for AION-1's weights, and each
-    becomes a token whose bit [9 - c] is set where value [c] is positive: value
-    0 gives the most significant bit. The normalisation's token comes first.
+    becomes a token by {!Lfq.encode}: its bit [9 - c] is set where value [c] is
+    positive, value 0 giving the most significant bit. The normalisation's
+    token comes first.
 
-    Decoding reverses this: each token's bits give a vector of [±1], a second
-    network, the {e decoder}, makes two values on each latent wavelength, a
-    signal [y] and a mask logit [z], and the flux is [(y + 1) · s] and the pixel
-    bad where [sigmoid z], computed in float32, exceeds [0.5]. The decoder was
+    Decoding reverses this: each token's bits give a vector of [±1]
+    ({!Lfq.decode}), a second network, the {e decoder}, makes two values on
+    each latent wavelength, a signal [y] and a mask logit [z], and the flux is
+    [(y + 1) · s] and the pixel bad where [sigmoid z], computed in float32,
+    exceeds [0.5]. The decoder was
     trained to emit [flux / s - 1], without the encoder's [asinh] and factor
     [0.2]. The inverse variance is not encoded and decodes as [1].
 
@@ -183,5 +185,3 @@ val grn :
 val latent :
   ('b, 'd) t -> ('b, 'd) spectrum -> (float, 'b, 'd) Nx.t * 'd Nx.int64_t
 
-val codes : (float, 'b, 'd) Nx.t -> 'd Nx.int64_t
-val values : (float, 'b) Nx.dtype -> 'd Nx.int64_t -> (float, 'b, 'd) Nx.t
