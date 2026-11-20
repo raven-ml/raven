@@ -834,7 +834,8 @@ module Box : sig
 end
 
 module Mask : sig
-  (** Masks ({!Mynd}), their overlaps, components and reconstruction.
+  (** Masks ({!Mynd}), their overlaps, components, reconstruction and
+      distances.
 
       Pixels are {e next} to each other when they share a side, or under
       [`Eight] a corner ({!type-connectivity}). A {e component} of a mask is a
@@ -881,6 +882,28 @@ module Mask : sig
       the growth reaches, and respects padding by [false].
 
       Raises [Invalid_argument] unless [marker] has [m]'s shape. *)
+
+  (** {1:distances Distances}
+
+      The {e distance} from a pixel [(i, j)] to a mask is [√n], where [n] is
+      the least [(i - i')² + (j - j')²] over the mask's [true] pixels
+      [(i', j')], the Euclidean distance in pixels between their centres.
+      Only the image's pixels belong to the mask.
+
+      [n] is computed exactly, in integers, by Felzenszwalb and
+      Huttenlocher's separable form ("Distance Transforms of Sampled
+      Functions", 2012, §2.2), in [O(h w log h)] work with no loop and no
+      read on the host. It raises [Invalid_argument] for masks of [2²⁹] or
+      more rows or columns. *)
+
+  val distance : (float, 's) Nx.dtype -> 'd Nx.bool_t -> (float, 's, 'd) Nx.t
+  (** [distance dt m] is, at each pixel of the masks [m], [[…; h; w; 1]],
+      its distance to its own mask, [√n] rounded once into [dt] as
+      {!Nx.cast} rounds it where [n < 2⁵²], and one of the two values of
+      [dt] around [√n] beyond. It is [0] at a [true] pixel and [dt]'s
+      greatest value ({!Nx.Dtype.max_value}) where the mask has no [true]
+      pixel. So pixels at one distance read one value, and a farther pixel
+      never reads a smaller one. It respects padding by [false]. *)
 
   (**/**)
 

@@ -341,6 +341,296 @@ let holes =
         (Nx.to_array (get ("holes." ^ name)))
         (Nx.to_array filled))
 
+(* Distances *)
+
+(* [nearest h w px] is, at each pixel of one mask, the least squared distance
+   [n] to a true pixel ([-1] where there is none), the least row-major index
+   of a true pixel at it ([-1] for none), and whether two true pixels tie at
+   it, by a brute force over the true pixels in integers. *)
+let nearest h w px =
+  let pts = List.filter (fun k -> px.(k)) (List.init (h * w) Fun.id) in
+  let n = Array.make (h * w) (-1) and idx = Array.make (h * w) (-1) in
+  let tie = ref false in
+  for i = 0 to h - 1 do
+    for j = 0 to w - 1 do
+      let p = (i * w) + j in
+      List.iter
+        (fun k ->
+          let di = i - (k / w) and dj = j - (k mod w) in
+          let q = (di * di) + (dj * dj) in
+          if n.(p) < 0 || q < n.(p) then (
+            n.(p) <- q;
+            idx.(p) <- k)
+          else if q = n.(p) then tie := true)
+        pts
+    done
+  done;
+  (n, idx, !tie)
+
+(* The float64 distance of a squared distance: the root of the exact integer,
+   [infinity] for none. *)
+let root64 q = if q < 0 then Float.infinity else Float.sqrt (Float.of_int q)
+
+(* [each b h w px f] applies [nearest] to each of the [b] masks of [px]. *)
+let each b h w px f =
+  let n = h * w in
+  Array.concat (List.init b (fun k -> f (nearest h w (Array.sub px (k * n) n))))
+
+type fill = Empty | Full | Corner | Lattice of int | Random of float
+
+let pixel fill h w k u =
+  let i = k / w mod h and j = k mod w in
+  match fill with
+  | Empty -> false
+  | Full -> true
+  | Corner -> i = 0 && j = 0
+  | Lattice s -> i mod s = 0 && j mod s = 0
+  | Random d -> u < d
+
+(* Masks [batch @ [h; w]]: sides of 0 to 64, or a column of 1000 to 1100
+   rows; empty, full, one corner pixel, lattices whose pixels tie, or drawn
+   at a density from 0.005 to 0.5. *)
+let gen_masks =
+  Gen.(
+    let side = of_list [ 0; 1; 2; 3; 7; 13; 31; 64 ] in
+    let* batch = of_list [ [||]; [| 2 |]; [| 2; 3 |] ] in
+    let* h, w =
+      frequency
+        [
+          (8, pair side side);
+          (2, map (fun n -> (n, 1)) (int_range 1000 1100));
+        ]
+    in
+    let* fill =
+      frequency
+        [
+          (1, constant Empty);
+          (1, constant Full);
+          (1, constant Corner);
+          (1, map (fun s -> Lattice s) (int_range 2 3));
+          (4, map (fun d -> Random d) (float_range 0.005 0.5));
+        ]
+    in
+    let n = Array.fold_left ( * ) 1 batch * h * w in
+    let+ u = array ~size:(constant n) (float_range 0. 1.) in
+    (batch, h, w, Array.mapi (fun k u -> pixel fill h w k u) u))
+
+let mask_of batch h w px =
+  Nx.create Nx.bool (Array.append batch [| h; w; 1 |]) px
+
+let oracle =
+  prop "distances are the brute force's roots of exact integers" gen_masks
+    (fun (batch, h, w, px) ->
+      let b = Array.fold_left ( * ) 1 batch in
+      let any = Array.exists Fun.id px and n = h * w in
+      cover "no row or no column" (n = 0);
+      cover "an empty mask" (n > 0 && not any);
+      cover "a full mask" (n > 0 && Array.for_all Fun.id px);
+      cover "a column of 1000 rows" (h >= 1000);
+      let tie k =
+        let _, _, t = nearest h w (Array.sub px (k * n) n) in
+        t
+      in
+      cover "a tie" (n > 0 && List.exists tie (List.init b Fun.id));
+      let m = mask_of batch h w px in
+      equal (array float_exact)
+        (each b h w px (fun (q, _, _) -> Array.map root64 q))
+        (floats (V.Mask.distance Nx.float64 m)))
+
+(* A float format. *)
+type format = F : (float, 's) Nx.dtype -> format
+
+let distance_values =
+  let line n ks =
+    Nx.init Nx.bool [| 1; n; 1 |] (fun i -> List.mem i.(1) ks)
+  in
+  cases "distances the docs state" ~id:(fun (name, _, _, _) -> name)
+    [
+      ("a true pixel", F Nx.float32, Nx.ones Nx.bool [| 1; 1; 1 |],
+       [| 0. |]);
+      ("an empty pixel", F Nx.float32, Nx.zeros Nx.bool [| 1; 1; 1 |],
+       [| Float.infinity |]);
+      ("a full mask", F Nx.float32, Nx.ones Nx.bool [| 2; 3; 1 |],
+       Array.make 6 0.);
+      ("an empty mask, float32", F Nx.float32, Nx.zeros Nx.bool [| 4; 5; 1 |],
+       Array.make 20 Float.infinity);
+      ("an empty mask, float8_e4m3fn", F Nx.float8_e4m3fn,
+       Nx.zeros Nx.bool [| 4; 5; 1 |], Array.make 20 448.);
+      ("an empty mask, float4_e2m1fn", F Nx.float4_e2m1fn,
+       Nx.zeros Nx.bool [| 4; 5; 1 |], Array.make 20 6.);
+      ("a row from its first pixel, float32", F Nx.float32, line 4098 [ 0 ],
+       Array.init 4098 Float.of_int);
+      ("a row from its first pixel, float64", F Nx.float64, line 4098 [ 0 ],
+       Array.init 4098 Float.of_int);
+      ("a row between two pixels", F Nx.float64, line 7 [ 1; 5 ],
+       [| 1.; 0.; 1.; 2.; 1.; 0.; 1. |]);
+    ]
+    (fun (_, F dt, m, want) ->
+      equal (array float_exact) want (floats (V.Mask.distance dt m)))
+
+(* The narrow formats: every distance, the farthest past float16's and
+   float8_e4m3fn's greatest values included, is the float64 one cast. *)
+let narrow_formats =
+  let formats =
+    [
+      F Nx.float32; F Nx.float16; F Nx.bfloat16; F Nx.float8_e5m2;
+      F Nx.float8_e4m3fn; F Nx.float4_e2m1fn;
+    ]
+  in
+  prop "a narrow format's distances are float64's rounded once"
+    Gen.(
+      frequency
+        [
+          (2, map (fun n -> (1, n)) (int_range 1 70000));
+          (1, map (fun n -> (1, n)) (int_range 65600 70000));
+          (2, pair (int_range 1 64) (int_range 1 64));
+        ])
+    (fun (h, w) ->
+      cover "past float16's greatest value" (w > 65520);
+      cover "past float8_e4m3fn's greatest value" (w > 449);
+      (* One true pixel at the start of a row, or a sparse lattice. *)
+      let m =
+        Nx.init Nx.bool [| h; w; 1 |] (fun i ->
+            if h = 1 then i.(1) = 0 else i.(0) mod 11 = 0 && i.(1) mod 17 = 0)
+      in
+      let wide = V.Mask.distance Nx.float64 m in
+      List.iter
+        (fun (F dt) ->
+          equal (array float_exact)
+            (floats (Nx.cast dt wide))
+            (floats (V.Mask.distance dt m)))
+        formats)
+
+(* A rearrangement of an image's pixels. *)
+type move = { t : 'v 's. ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t }
+
+let distance_symmetric =
+  prop "distances commute with flips and the transpose" gen_mask
+    (fun (h, w, px) ->
+      let m = Nx.create Nx.bool [| h; w; 1 |] px in
+      let d = V.Mask.distance Nx.float64 in
+      List.iter
+        (fun { t } ->
+          equal (array float_exact) (floats (t (d m))) (floats (d (t m))))
+        [
+          { t = (fun x -> Nx.flip ~axes:[ 0 ] x) };
+          { t = (fun x -> Nx.flip ~axes:[ 1 ] x) };
+          { t = (fun x -> Nx.copy (Nx.transpose ~axes:[ 1; 0; 2 ] x)) };
+        ])
+
+let distance_monotone =
+  prop "more true pixels never lengthen a distance"
+    Gen.(pair gen_mask (float_range 0. 1.))
+    (fun ((h, w, px), seed) ->
+      let more =
+        Array.mapi
+          (fun k v -> v || Float.of_int ((k * 7919) mod 101) /. 101. < seed)
+          px
+      in
+      let d a =
+        V.Mask.distance Nx.float64 (Nx.create Nx.bool [| h; w; 1 |] a)
+      in
+      let a = d px and b = d more in
+      equal (array float_exact) (floats (Nx.minimum a b)) (floats b))
+
+(* Erosion by the disk of radius [r] keeps the pixels farther than [r] from
+   every false pixel, dilation those within [r] of a true one. *)
+let distance_morphology =
+  let disk r =
+    let k = (2 * r) + 1 in
+    Nx.init Nx.bool [| k; k |] (fun i ->
+        let dy = i.(0) - r and dx = i.(1) - r in
+        (dy * dy) + (dx * dx) <= r * r)
+  in
+  prop "thresholds of distances are erosions and dilations by disks"
+    Gen.(pair gen_mask (int_range 0 4))
+    (fun ((h, w, px), r) ->
+      let m = Nx.create Nx.bool [| h; w; 1 |] px in
+      let d m = V.Mask.distance Nx.float64 m in
+      let r' = Float.of_int r in
+      equal (array bool)
+        (Nx.to_array (V.Filter.erode (disk r) m))
+        (Nx.to_array (Nx.greater_s (d (Nx.logical_not m)) r'));
+      equal (array bool)
+        (Nx.to_array (V.Filter.dilate (disk r) m))
+        (Nx.to_array (Nx.less_equal_s (d m) r')))
+
+let distance_batch =
+  prop "each mask of a batch, mapped or padded, has its own distances"
+    ~count:50
+    Gen.(pair gen_batch (pair (int_range 0 3) (int_range 0 3)))
+    (fun ((b, h, w, px, _), (ph, pw)) ->
+      let m = Nx.create Nx.bool [| b; h; w; 1 |] px in
+      let d = V.Mask.distance Nx.float64 in
+      let whole = floats (d m) in
+      let one k = floats (d (Nx.slice [ Nx.I k ] m)) in
+      equal (array float_exact) (Array.concat (List.init b one)) whole;
+      equal (array float_exact) whole (floats (Rune.vmap' d m));
+      let mp = Nx.pad [| (0, 0); (0, ph); (0, pw); (0, 0) |] false m in
+      equal (array float_exact) whole
+        (floats (Nx.slice [ Nx.A; Nx.R (0, h); Nx.R (0, w) ] (d mp))))
+
+(* Masks for the compiled calls: a batch of drawn ones and a column of 1100
+   rows, whose columns take 11 rounds. *)
+let compiled_masks () =
+  let st = Random.State.make [| 7 |] in
+  [
+    Nx.init Nx.bool [| 3; 31; 13; 1 |] (fun _ ->
+        Random.State.float st 1. < 0.1);
+    Nx.init Nx.bool [| 2; 1100; 1; 1 |] (fun i -> (i.(0) * 397) + i.(1) = 900);
+  ]
+
+let distance_compiled =
+  test "a compiled and a compiled mapped distance are eager's" (fun () ->
+      List.iter
+        (fun m ->
+          let d = V.Mask.distance Nx.float64 in
+          let want = floats (d m) in
+          equal (array float_exact) want (floats (Rune.jit' d m));
+          equal (array float_exact) want (floats (Rune.jit' (Rune.vmap' d) m)))
+        (compiled_masks ()))
+
+(* The first NVIDIA GPU that opens, through its runtime or its kernel driver.
+   No other GPU is opened: Metal has no float64. *)
+let nvidia =
+  let first (p : Rig_gpus.path) =
+    match p.gpus () with
+    | Ok (g :: _) -> Result.to_option (g.open_ ())
+    | Ok [] | Error _ -> None
+  in
+  lazy
+    (Rig_gpus.paths ()
+    |> List.filter (fun (p : Rig_gpus.path) -> p.kind = "CUDA" || p.kind = "NV")
+    |> List.find_map first
+    |> Option.map (fun d -> Nx.devices [ d ]))
+
+let distance_gpu =
+  test "on an NVIDIA GPU, compiled distances are the host's" (fun () ->
+      match Lazy.force nvidia with
+      | None -> skip ~reason:"no NVIDIA GPU" ()
+      | Some (module S) ->
+          List.iter
+            (fun m ->
+              let d m = V.Mask.distance Nx.float64 m in
+              let want = floats (d m) in
+              let m' = Nx.place S.on m in
+              equal (array float_exact) want (floats (Rune.jit' d m'));
+              equal (array float_exact) want
+                (floats (Rune.jit' (Rune.vmap' d) m')))
+            (compiled_masks ()))
+
+(* scipy's distance_transform_edt of the complement, from golden/distance.npz
+   (contrib/mynd/test/gen/distance.py). *)
+let distance = archive "golden/distance.npz"
+let distance_shapes = [ "9x13"; "32x32"; "1x40"; "40x1"; "64x17" ]
+
+let distance_scipy =
+  cases "distances are scipy's" ~id:Fun.id distance_shapes (fun key ->
+      let m = Nx.unsqueeze ~axes:[ -1 ] (entry distance Nx.bool (key ^ ".m")) in
+      equal (array float_exact)
+        (floats (entry distance Nx.float64 (key ^ ".d")))
+        (floats (V.Mask.distance Nx.float64 m)))
+
 let refusals =
   group "misuse"
     [
@@ -352,6 +642,18 @@ let refusals =
               V.Mask.reconstruct `Four
                 ~marker:(Nx.zeros Nx.bool [| 4; 5; 1 |])
                 (Nx.zeros Nx.bool [| 4; 4; 1 |])));
+      test "a distance to a mask without its channel axis" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.distance") (fun () ->
+              V.Mask.distance Nx.float32 (Nx.zeros Nx.bool [| 4; 4 |])));
+      test "a distance to masks of 2²⁹ rows or columns" (fun () ->
+          List.iter
+            (fun s ->
+              raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.distance")
+                (fun () -> V.Mask.distance Nx.float32 (Nx.zeros Nx.bool s)))
+            [ [| 0; 1 lsl 29; 1; 1 |]; [| 0; 1; 1 lsl 29; 1 |] ]);
+      test "a distance to masks of two channels" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.distance") (fun () ->
+              V.Mask.distance Nx.float32 (Nx.zeros Nx.bool [| 4; 4; 2 |])));
       test "masks of two channels" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Mynd.Mask.reconstruct") (fun () ->
               let m = Nx.zeros Nx.bool [| 4; 4; 2 |] in
@@ -375,5 +677,15 @@ let () =
          reconstruct_padded;
          reconstruct_compiled;
          holes;
+         oracle;
+         distance_values;
+         narrow_formats;
+         distance_symmetric;
+         distance_monotone;
+         distance_morphology;
+         distance_batch;
+         distance_compiled;
+         distance_gpu;
+         distance_scipy;
          refusals;
        ])

@@ -17,3 +17,5 @@ val components_rounds :
 
 val reconstruct :
   connectivity -> marker:'d Nx.bool_t -> 'd Nx.bool_t -> 'd Nx.bool_t
+
+val distance : (float, 's) Nx.dtype -> 'd Nx.bool_t -> (float, 's, 'd) Nx.t

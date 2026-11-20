@@ -16,6 +16,6 @@
   test_mask
   test_rle)
  (package mynd)
- (libraries mynd nx nx.io rig rune windtrap)
+ (libraries mynd nx nx.io rig rig.gpus rune windtrap)
  (deps
   (glob_files golden/*.npz)))
