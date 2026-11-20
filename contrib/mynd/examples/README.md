@@ -25,6 +25,7 @@ dune exec ./main.exe
 | [`07-morphology`](./07-morphology/) | A mask opened, closed and split into components | `Filter.erode`, `Filter.dilate`, `Mask.components`, `Box.of_mask` |
 | [`08-masks`](./08-masks/) | Mask logits to masks, boxes and COCO's RLE | `Sample.resize`, `Mask.components`, `Box.of_mask`, `Rle.encode` |
 | [`09-detections`](./09-detections/) | A detector's outputs to COCO's detections | `Box.of_cxcywh`, `Box.iou`, `Box.nms`, `Box.to_xywh` |
+| [`10-learned-warp`](./10-learned-warp/) | An angle found by gradient descent through sampling | `Sample.at`, `Transform.rotation`, `Rune.value_and_grad'` |
 
 Examples that make a picture write it beside `main.ml` with hugin. The
 pictures are not committed.
