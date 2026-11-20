@@ -71,15 +71,15 @@ spectrum on the codec's grid: 16 objects a call on the GPU, 4 on the CPU.
 ## Where the time goes
 
 Device time of one call at 16 objects with aion-base on CUDA, by kernel:
-raven's from tolk's `DEBUG=2` timing of each kernel, PyTorch's from
-`torch.profiler`.
+raven's from tolk's `DEBUG=2` timing of each kernel, at dee7042d32, whose
+kernels take eba27a14be's time within 1%; PyTorch's from `torch.profiler`.
 
 | | raven, embed | PyTorch, embed | raven, spectrum | PyTorch, spectrum |
 |---|---|---|---|---|
-| Products | 118 ms, 20.5 TFLOP/s | 77 ms, 30.3 TFLOP/s | 839 ms, 18.7 TFLOP/s | 396 ms, 25.0 TFLOP/s |
+| Products | 118 ms, 20.5 TFLOP/s | 77 ms, 30.3 TFLOP/s | 840 ms, 19.0 TFLOP/s | 396 ms, 25.0 TFLOP/s |
 | Attention | 26 ms | 59 ms | 51 ms | 77 ms |
 | Norms, elementwise, small reductions | 12 ms | 120 ms | 79 ms | 206 ms |
-| In all | 156 ms | 257 ms | 969 ms | 679 ms |
+| In all | 156 ms | 257 ms | 970 ms | 679 ms |
 
 - **Embedding and the posterior.** raven's products run at two thirds of
   cuBLAS's rate, but it fuses the norms and elementwise work into a tenth of
@@ -90,21 +90,22 @@ raven's from tolk's `DEBUG=2` timing of each kernel, PyTorch's from
   only, 110 at the first step and 361 at the last, 236 on average. raven's
   encoder computes 1.6 times the rows, which with its products' rate makes
   2.1 times PyTorch's product time. aion-large widens the gap: its products
-  run at 16.6 TFLOP/s against cuBLAS's 25.2.
+  run at 17.0 TFLOP/s against cuBLAS's 25.2.
 - **One object.** A single object's 858 rows tile poorly in raven's products
   (5.3 TFLOP/s against cuBLAS's 23.0), which take 29 of embed's 32 ms of
   kernels.
 - **NV.** Where NV is slower than CUDA, its products are: aion-large's draws
-  run them at 13.9 TFLOP/s against 16.4 through CUDA, and one object's
-  posterior at 6.1 against 8.9.
-- **The codecs.** raven's image codec runs its convolutions at 20 TFLOP/s in
+  run them at 14.2 TFLOP/s against 17.0 through CUDA, and one object's
+  posterior at 6.4 against 9.2.
+- **The codecs.** raven's image codec runs its convolutions at 22 TFLOP/s in
   float32; PyTorch's run on cuDNN with TF32, cuDNN's default, in 20 ms
-  against raven's 75, so that part of upstream is not IEEE float32.
+  against raven's 71, so that part of upstream is not IEEE float32.
 - **The CPU.** Eager raven draws spectra slower than PyTorch for the same 1.6
   times the encoder's rows. Compiled, embed spends 59% of its kernel time
-  in products and 41% in attention (`DEBUG=2`, 4 objects), where eager
-  raven runs nx's own kernels 4.3 times as fast. Other users' jobs shared
-  the host's cores at times, which the lower ends of the CPU ranges show.
+  in products and 41% in attention (`DEBUG=2`, 4 objects, at eba27a14be),
+  where eager raven runs nx's own kernels 4.3 times as fast. Other users'
+  jobs shared the host's cores at times, which the lower ends of the CPU
+  ranges show.
 
 ## Whole commands, starting and memory
 
@@ -117,17 +118,22 @@ on the CPU, in batches of 16; raven's kernels come from its disk cache.
 
 | | raven, CUDA | PyTorch, CUDA | raven, CPU compiled (default) | raven, CPU eager (`--eager`) | PyTorch, CPU |
 |---|---|---|---|---|---|
-| `embed`, image, spectrum and 9 values | 1.80 (1.80–1.82) | 7.95 (7.88–7.98) | not measured | not measured | not measured |
-| `posterior` of redshift, image and 4 fluxes | 1.75 (1.72–1.88) | 5.99 (5.96–6.02) | not measured | not measured | not measured |
-| `generate` of a DESI spectrum from XP, 12 steps | 5.08 (5.04–5.12) | 7.66 (7.66–7.66) | not measured | not measured | not measured |
-| `embed` over an empty kernel cache | 9.88 (9.73–9.88) | | not measured | nothing to compile | |
+| `embed`, image, spectrum and 9 values | 1.80 (1.80–1.82) | 7.95 (7.88–7.98) | 64.1 (63.9–64.3) | 24.6 (23.7–28.2) | 32.5 (32.3–34.0) |
+| `posterior` of redshift, image and 4 fluxes | 1.75 (1.72–1.88) | 5.99 (5.96–6.02) | 34.2 (34.2–34.2) | 18.9 (17.5–44.3) | 21.3 (20.7–21.8) |
+| `generate` of a DESI spectrum from XP, 12 steps | 5.08 (5.04–5.12) | 7.66 (7.66–7.66) | 50.6 (50.4–50.6) | 22.7 (22.1–71.8) | 17.7 (17.2–17.7) |
+| `embed` over an empty kernel cache | 9.88 (9.73–9.88) | | 69.3 (68.9–69.4) | nothing to compile | |
 
 On the GPU, besides the model's time at the tables' rates, `main.exe`'s
 `embed` takes 1.2 s to start, load the weights, read the rows and run the
 codecs, which it runs on the GPU as PyTorch does; PyTorch's process takes
 6.9 s. `generate` draws spectra slower (The model on a GPU) but starts
 faster, so it finishes first. Compiling raven's kernels over an empty cache
-adds 8 s to `embed`; PyTorch ships its kernels compiled.
+adds 8 s to `embed`, 5 s on the CPU; PyTorch ships its kernels compiled.
+On the CPU, compiled, `main.exe` takes 1.6 to 2.9 times PyTorch's time, as
+its compiled model rows do (The model on the CPU); eager, the commands
+follow the eager rows. Other users' jobs ran on the timing cores during the
+eager commands' third round, at a load of 44, which the tops of their
+ranges show.
 
 Device memory while embedding 16 objects, the most each side held,
 allocator caches included: raven 1.1 GiB with aion-base and 3.1 GiB with
@@ -154,8 +160,10 @@ which PyTorch's holds.
   others `pytorch.py`'s (5 calls on the GPU, 3 on the host, after 1 or 2);
   the tables give the median of the three rounds and their range. The
   compiled host's spectrum row, at 25 s a call, ran in the first round
-  only; `torch.compile` and the batch of 64 ran once. The breakdowns are
-  one profiled call each, outside the timed rounds.
+  only; `torch.compile` and the batch of 64 ran once. The whole commands
+  ran three rounds of `whole.sh` each, PyTorch's CPU cells in the compiled
+  commands' rounds. The breakdowns are one profiled call each, outside the
+  timed rounds.
 - **Same work.** The rows run at random weights of the released
   architectures, since the time does not depend on the values; the whole
   commands load the released weights. Both sides compute in float32, and
