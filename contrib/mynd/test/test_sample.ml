@@ -451,6 +451,59 @@ let warp =
         fd
         (Nx.item [] (Rune.grad' f (Nx.scalar Nx.float64 a))))
 
+(* An array operation that moves whole pixels is the warp by the transform
+   that maps its input's positions to its output's: [nearest] at that
+   transform's inverse of the output's centres reads the operation's result.
+   Flips are [x ↦ w - x] and [y ↦ h - y], the exchange of the row and column
+   axes is [(x, y) ↦ (y, x)], and a crop from row [i₀] and column [j₀] is
+   the translation by [(-j₀, -i₀)]. *)
+type array_op =
+  | Flip_columns
+  | Flip_rows
+  | Exchange
+  | Crop of int * int * int * int
+
+let array_warps =
+  prop "flips, axis exchanges and crops are warps"
+    Gen.(
+      let* h = int_range 1 9 in
+      let* w = int_range 1 9 in
+      let* i0 = int_range 0 (h - 1) in
+      let* j0 = int_range 0 (w - 1) in
+      let* ch = int_range 1 (h - i0) in
+      let* cw = int_range 1 (w - j0) in
+      let+ op =
+        of_list [ Flip_columns; Flip_rows; Exchange; Crop (i0, j0, ch, cw) ]
+      in
+      (h, w, op))
+    (fun (h, w, op) ->
+      cover "a flip" (op = Flip_columns || op = Flip_rows);
+      cover "an exchange of a non-square image" (op = Exchange && h <> w);
+      cover "a crop" (match op with Crop _ -> true | _ -> false);
+      let x = image ~h ~w ~c:2 (h + (10 * w)) in
+      let fl = Float.of_int in
+      let m, size, want =
+        match op with
+        | Flip_columns ->
+            ([| -1.; 0.; fl w; 0.; 1.; 0. |], (h, w), Nx.flip ~axes:[ 1 ] x)
+        | Flip_rows ->
+            ([| 1.; 0.; 0.; 0.; -1.; fl h |], (h, w), Nx.flip ~axes:[ 0 ] x)
+        | Exchange ->
+            ( [| 0.; 1.; 0.; 1.; 0.; 0. |],
+              (w, h),
+              Nx.transpose ~axes:[ 1; 0; 2 ] x )
+        | Crop (i0, j0, ch, cw) ->
+            ( [| 1.; 0.; fl (-j0); 0.; 1.; fl (-i0) |],
+              (ch, cw),
+              Nx.slice [ Nx.R (i0, i0 + ch); Nx.R (j0, j0 + cw) ] x )
+      in
+      let m =
+        Nx.create Nx.float64 [| 3; 3 |] (Array.append m [| 0.; 0.; 1. |])
+      in
+      let c = V.Sample.centres Nx.float64 size in
+      same want
+        (V.Sample.nearest ~edge:`Zero x (V.Transform.apply (Nx.inv m) c)))
+
 (* Weighted means *)
 
 (* A read is a weighted mean, so a flat image reads its value wherever a pixel
@@ -600,6 +653,7 @@ let () =
          padded;
          centres;
          warp;
+         array_warps;
          flat;
          flat32;
          renormalise_zero_sum;

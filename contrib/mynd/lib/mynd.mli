@@ -321,7 +321,15 @@ module Sample : sig
       Positions [[b…; q…; 2]] are paired with images [[b…; h; w; c]] at the
       leading axes ({!Mynd.section-batches}). The axes [q…] index the
       positions read in each image, and the result is [[b…; q…; c]]. A
-      {e warp} samples at positions mapped by a transform ({!Transform}). *)
+      {e warp} samples at positions mapped by a transform ({!Transform}).
+
+      An array operation that moves whole pixels is a warp, and annotations
+      move with it by the transform from its input's positions to its
+      output's. {!Nx.flip} along the columns of an image [w] pixels wide
+      moves column [j]'s centre [j + ½] to [w - j - ½], the centre of column
+      [w - 1 - j], so it is [x ↦ w - x]. Exchanging the row and column axes
+      is [(x, y) ↦ (y, x)], and a crop from row [i₀] and column [j₀] is the
+      translation by [(-j₀, -i₀)]. *)
 
   type kernel = [ `Box | `Triangle | `Cubic of float | `Lanczos of int ]
   (** The type for kernels:
