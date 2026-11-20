@@ -121,6 +121,36 @@ val dataset_jsont : dataset Jsont.t
     encodes as polygons or a string. Decoding fails on any other absent field.
 *)
 
+(** {1:masks Masks}
+
+    {e COCO's rule} gives a polygon's mask in an image of [h] rows and [w]
+    columns. It works on a grid of fifths of a pixel, in float64 with each
+    operation rounded on its own. Each vertex [(x, y)] moves to
+    [(trunc ((5x) + ½), trunc ((5y) + ½))], [trunc] rounding toward zero. Each
+    edge becomes grid points one step apart along its longer axis, [x] on a tie,
+    from its end of lesser coordinate on that axis; at step [t] the other
+    coordinate is [trunc ((c + (s t)) + ½)], for [c] that end's coordinate and
+    [s] the edge's slope. A {e crossing} of column [j] is a step of this closed
+    path between grid columns [5j + 2] and [5j + 3]. It lies at row
+    [⌈(v - 2)/5⌉], clamped to [[0, h]], for [v] the lesser grid row of the step.
+    Pixel [(i, j)] is covered when an odd number of column [j]'s crossings lie
+    at rows up to [i]. So a polygon that crosses itself covers what it encloses
+    an odd number of times, a polygon of fewer than three vertices covers no
+    pixel, and vertices may lie outside the image.
+
+    Vertices move by up to a tenth of a pixel and a crossing takes the upper
+    point of its step, so the rule differs from covering the pixels whose
+    centres lie inside the polygon. *)
+
+val runs : height:int -> width:int -> segmentation -> Mynd.Rle.t
+(** [runs ~height ~width s] is the mask [s] covers in an image of [height] rows
+    and [width] columns: [r] for [Runs r], and for polygons the union of each
+    polygon's mask by COCO's rule.
+
+    Raises [Invalid_argument] if [height] or [width] is negative, a polygon has
+    an odd number of coordinates or a coordinate [x] that is not finite or has
+    [|5x + ½| ≥ 2³¹], or [r]'s size is not [height] by [width]. *)
+
 (** {1:detections Detections}
 
     Within an image and a category, detections of equal score rank in their

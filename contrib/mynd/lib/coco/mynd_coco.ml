@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let invalid_argf fmt = Format.kasprintf invalid_arg fmt
+
 (* Datasets *)
 
 type box = { x : float; y : float; w : float; h : float }
@@ -137,6 +139,29 @@ let dataset_jsont =
   |> Jsont.Object.mem "annotations" (Jsont.array annotation_jsont)
        ~dec_absent:[||] ~enc:(fun d -> d.annotations)
   |> Jsont.Object.finish
+
+(* Masks *)
+
+let runs ~height ~width s =
+  let fn = "Mynd_coco.runs" in
+  if height < 0 || width < 0 then
+    invalid_argf "%s: an image of %d by %d pixels" fn height width;
+  match s with
+  | Runs r ->
+      if r.height <> height || r.width <> width then
+        invalid_argf "%s: runs of %d by %d pixels in an image of %d by %d" fn
+          r.height r.width height width;
+      r
+  | Polygons ps ->
+      let counts =
+        List.fold_left
+          (fun acc p ->
+            let c = Raster.polygon fn ~height ~width p in
+            match acc with None -> Some c | Some a -> Some (Raster.union a c))
+          None ps
+      in
+      let counts = Option.value counts ~default:[| height * width |] in
+      Mynd.Rle.v ~height ~width counts
 
 (* Detections *)
 

@@ -2,8 +2,8 @@
 ; `uv run --locked --script` with its own lock.
 
 (tests
- (names test_codec)
- (modules support test_codec)
+ (names test_codec test_runs)
+ (modules support test_codec test_runs)
  (package mynd)
  (libraries mynd mynd.coco nx nx.io jsont jsont.bytesrw windtrap)
  (deps
