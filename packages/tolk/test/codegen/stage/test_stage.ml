@@ -2342,13 +2342,28 @@ let decodes prg =
 let rec tile_rows m at_most =
   if m mod at_most = 0 then at_most else tile_rows m (at_most - 1)
 
-(* A panel holds the values one trip of the columns' loop reads: the 4 columns
-   the tile upcasts by [k] values, of 4 bytes. *)
-let panel_fits p = 4 * p.dk * 4 <= 64 * 1024
+(* The output lanes of the tile the hand-coded rules choose for [p] on [r]:
+   its rows by its columns. *)
+let tile_lanes p r =
+  let module S = Postrange.Scheduler in
+  let s = S.v (decoded_kernel p) r in
+  S.convert_loop_to_global s;
+  let s = Heuristic.hand_coded_optimizations s in
+  List.fold_left
+    (fun n a ->
+      match List.nth (S.full_shape s) a with Ops.Int k -> n * k | Sym _ -> n)
+    1
+    (S.axes_of ~reduce:false s [ Upcast ])
 
-let expected_decodes p (count, _) =
-  let trips = p.dm / tile_rows p.dm (min 16 (count / 2)) in
-  if trips >= 2 && panel_fits p then 1 else trips
+(* A panel holds the values one trip of the columns' loop reads: the columns
+   the tile upcasts by [k] values, of 4 bytes. *)
+let panel_fits p columns = columns * p.dk * 4 <= 64 * 1024
+
+let expected_decodes p ((count, _) as file) =
+  let rows = tile_rows p.dm (min 16 (count / 2)) in
+  let trips = p.dm / rows in
+  let columns = tile_lanes p (host_file file) / rows in
+  if trips >= 2 && panel_fits p columns then 1 else trips
 
 let decoded_cases =
   let shapes =

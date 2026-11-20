@@ -113,7 +113,11 @@ let held ?upcast k (file : Renderer.registers) =
    unroll. So on the host a conversion takes at most [converted_lanes]. Its
    lanes are those holding distinct values: [n] lanes of an axis read as a
    quotient by [d] hold [n / gcd n d], as a block of rows reads its expert
-   once, and a reduce's lanes are summed before it. *)
+   once, and a reduce's lanes are summed before it. A float sum of products
+   computes a conversion that differs along every upcast axis one run at a
+   time ({!conversion_lanes}): MXFP4's decode, in gpt-oss's routed product,
+   so takes 4 experts by 16 rows unrolled by 8 codes, within this budget, and
+   ran 2-3 times as fast as in 4 experts by 3 rows unrolled by 4. *)
 let converted_lanes = 64
 
 (* The most lanes a conversion of [k] computes at once once [upcast] and
@@ -171,10 +175,38 @@ let conversion_lanes ?upcast ?unroll k =
         Tbl.replace known u s;
         s
   in
+  (* A float sum of products on a renderer that computes on vectors computes
+     its product one run of its output's lanes at a time, for each unrolled
+     lane (D141's sums by runs), through the operations whose every source
+     holds all the lanes: a conversion that differs along every upcast axis
+     computes at most the lanes of one output axis, and one that a broadcast
+     repeats along some axis computes its own lanes whole. *)
+  let reduced r =
+    List.exists (fun red -> List.memq r (List.tl (src red))) (K.reduceops k)
+  in
+  let by_runs =
+    if (K.ren k).vector_lanes <= 1 then []
+    else
+      List.filter_map
+        (fun red ->
+          match arg red with
+          | Reduce { op = Op.Add; _ }
+            when op (nth red 0) = Op.Mul
+                 && Dtype.mem (dtype red) Dtype.[ Float32; Float64 ] ->
+              Some (backward_slice_with_self ~calls:Skip (nth red 0))
+          | _ -> None)
+        (K.reduceops k)
+  in
+  let converted u =
+    let s = spread u in
+    if
+      List.exists (Nodes.mem u) by_runs
+      && List.for_all (fun (r, _) -> List.mem_assq r s) upcasts
+    then List.fold_left (fun n (r, l) -> if reduced r then n else max n l) 1 s
+    else List.fold_left (fun n (_, l) -> n * l) 1 s
+  in
   List.fold_left
-    (fun most u ->
-      if op u <> Op.Cast then most
-      else max most (List.fold_left (fun n (_, l) -> n * l) 1 (spread u)))
+    (fun most u -> if op u <> Op.Cast then most else max most (converted u))
     1
     (toposort ~calls:Skip (K.ast k))
 
@@ -240,29 +272,60 @@ let sums_products k =
       && op (nth r 0) = Op.Mul)
     (K.reduceops k)
 
+(* The fewest terms of a block of a sum that an access reading an output axis
+   apart may read once ({!stored_contiguous}): 16, the float32 lanes of the 64
+   bytes a sum unrolls at most at once ({!unroll_vector}), so that such an
+   access is loaded apart at most once an unrolled step. *)
+let block_terms = 16
+
 (* On the host, the first output upcast of a reduce kernel takes the axis its
    stores write at unit stride to a host vector of the accumulators' type
    ([host_vector_bytes]), the largest power of two that divides it and fits:
    as the target's vector width splits a contiguous dimension, its stores fill
    each register. Every access that reads the axis must read it at unit
-   stride, or gather it as a transpose: read it apart, and the kernel's last
-   reduce axis at unit stride, in a kernel that sums products, as the rows of
-   a matrix stored [out; in] are read by a product summed along [in]. Such an
-   access's lanes along the axis are the columns of the rows it loads along
-   the sum, which code generation computes by an in-register transpose
-   ({!Codegen}) for the products' vectors, and the axis is said to be
-   gathered. *)
+   stride, or, in a kernel that sums products, read it apart in one of two
+   ways. It may gather it as a transpose: read at unit stride the last reduce
+   axis it reads, past which every reduce axis is short enough to unroll
+   whole, as the rows of a matrix stored [out; in] are read by a product
+   summed along [in], or a row of MXFP4 codes, two codes a byte, by its
+   bytes. Such an access's lanes along the axis are the columns of the rows it
+   loads along the sum, which code generation computes by an in-register
+   transpose ({!Codegen}) for the products' vectors, and the axis is said to
+   be gathered. Or it may read the sum only in blocks of at least
+   [block_terms], every reduce axis it reads as such a quotient, as a row's
+   scales are read once a block of its codes: its lanes are loaded apart once
+   a block. *)
 let stored_contiguous k =
   let stored = stored_addresses k in
   let unit r i = List.exists (fun t -> t == r) (split_uop i Op.Add) in
+  (* The reduce axes, the last first, in a kernel that sums products. *)
   let summed =
-    match List.rev (K.upcastable_dims ~reduce:true k) with
-    | last :: _ when sums_products k -> Some (List.nth (K.rngs k) last)
+    if not (sums_products k) then []
+    else
+      List.rev_map
+        (fun a -> (List.nth (K.rngs k) a, known_size (shape_at k a)))
+        (K.upcastable_dims ~reduce:true k)
+  in
+  (* The last reduce axis [b] reads, if every reduce axis after it is short
+     enough to unroll whole: the unroll then reaches it. *)
+  let rec last_read b = function
+    | [] -> None
+    | (s, _) :: _ when reads s b -> Some s
+    | (_, Some n) :: rest when Bigint.(leq n (of_int 3)) -> last_read b rest
     | _ -> None
   in
   let gathers r b =
     (not (unit r (idx b)))
-    && match summed with Some s -> unit s (idx b) | None -> false
+    && match last_read b summed with Some s -> unit s (idx b) | None -> false
+  in
+  let blocked r b =
+    (not (unit r (idx b)))
+    && List.exists (fun (s, _) -> reads s b) summed
+    && List.for_all
+         (fun (s, _) ->
+           (not (reads s b))
+           || Bigint.(geq (run (idx b) s) (of_int block_terms)))
+         summed
   in
   List.find_map
     (fun axis ->
@@ -270,7 +333,9 @@ let stored_contiguous k =
       let readers = List.filter (reads r) (K.bufs k) in
       if
         List.exists (fun b -> List.memq b stored && unit r (idx b)) (K.bufs k)
-        && List.for_all (fun b -> unit r (idx b) || gathers r b) readers
+        && List.for_all
+             (fun b -> unit r (idx b) || gathers r b || blocked r b)
+             readers
       then Some (axis, List.filter (gathers r) readers)
       else None)
     (List.rev (K.upcastable_dims k))

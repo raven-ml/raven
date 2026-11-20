@@ -5203,8 +5203,12 @@ into D183, which holds its rule, its reason and its pins.
   or when it computes a type the target emulates. A reduce kernel's first
   upcast takes its stored axis to 64 bytes of its accumulators (D186). In a
   kernel that sums products, an access may read that axis apart when it reads
-  the last reduce axis at unit stride, as a matrix stored [out; in] is read by
-  its product: its lanes along the axis are gathered by a transpose (D141).
+  the last reduce axis it reads at unit stride, as a matrix stored [out; in]
+  is read by its product, or a row of MXFP4 codes by its bytes: its lanes
+  along the axis are gathered by a transpose (D141), where every reduce axis
+  after that one is short enough to unroll whole; or when it reads the sum
+  only in blocks of at least 16 terms, every reduce axis it reads as such a
+  quotient, as a row's scales are read once a block of 32 codes.
   Such a gathered axis takes one register of lanes, and the output axis the
   gathering accesses do not read is then upcast by the largest power of two
   that fits the budget: a product of float32 operands both stored along its
@@ -5217,6 +5221,11 @@ into D183, which holds its rule, its reason and its pins.
   larger than 3, the next is unrolled by the largest power of two that
   divides it and keeps the unrolled lanes within 64 bytes of the reduce's
   type, if the budget holds: 8 beside a pair of float32 lanes, 4 beside 3.
+  The budget holds a conversion to 64 lanes, counted, where a float sum of
+  products computes it a run at a time (D141), one that differs along every
+  upcast axis, at one output axis's lanes: gpt-oss's routed MXFP4 product
+  then takes 4 experts by 16 rows, 8 of them gathered, unrolling 4 bytes of
+  codes beside their pairs.
   tinygrad upcasts output axes by 3 or 4 while 1024 elements remain and fewer
   than 32 lanes, by 4 a kernel that has none, and unrolls the next reduce axis
   only when it is at most 3 too. On 16-byte registers, SSE's and NEON's, a
