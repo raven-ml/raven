@@ -129,6 +129,98 @@ let update (params, (st_t, st_h)) grads =
 The gradient is clipped before it is split, so the bound holds for the whole
 model. The trunk, stepped at a tenth of the rate, also decays at a tenth.
 
+A part can also follow the kind of leaf across every layer. Here each block's
+matrix takes AdamW and every other leaf momentum SGD. Such a part is the
+model itself over optional arrays, `None` at the leaves outside it, and one
+function from a leaf's path to its part cuts the model. The parts section of
+[`vega.mli`](../lib/vega.mli) states the rules and their three limits.
+
+```ocaml
+module Block = struct
+  type ('a, _) t = { w : 'a; b : 'a }
+
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let b = field c "b" leaf b in
+    { w; b }
+end
+
+module Model = struct
+  type ('a, 'd) t = { blocks : ('a, 'd) Block.t list; head : 'a }
+
+  let walk c { blocks; head } =
+    let open Nx.Ptree.Walk in
+    let blocks = field c "blocks" (list Block.walk) blocks in
+    let head = field c "head" leaf head in
+    { blocks; head }
+end
+
+type leaf = Nx.host Nx.float32_t
+
+let model : ((leaf, Nx.host) Model.t, Nx.host) Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Model)
+
+(* The model over optional arrays describes every part. *)
+let part : ((leaf option, Nx.host) Model.t, Nx.host) Nx.Ptree.t =
+  Nx.Ptree.nest (module Model) Nx.Ptree.(option tensor)
+
+(* Each block's [w] takes AdamW, every other leaf SGD. *)
+let kind path =
+  let open Nx.Ptree.Path in
+  match segments path with
+  | [ Field "blocks"; Index _; Field "w" ] -> `Adamw
+  | _ -> `Sgd
+
+let only k x =
+  Nx.Ptree.Payload.map (module Model)
+    (fun path a -> if kind path = k then Some a else None)
+    x
+
+let over part x =
+  Nx.Ptree.Payload.map2 (module Model)
+    (fun _ a x -> Option.value a ~default:x)
+    part x
+
+let lr = Vega.rate 1e-3
+
+let update (params, (adamw, sgd)) grads =
+  let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
+  let w, adamw =
+    Vega.adamw_step part ~lr adamw ~params:(only `Adamw params)
+      ~grads:(only `Adamw grads)
+  in
+  let rest, sgd =
+    Vega.sgd_step part ~lr ~momentum:0.9 sgd ~params:(only `Sgd params)
+      ~grads:(only `Sgd grads)
+  in
+  (over w (over rest params), (adamw, sgd))
+
+let params =
+  let block () =
+    {
+      Block.w = Nx.ones Nx.float32 [| 4; 4 |];
+      b = Nx.zeros Nx.float32 [| 4 |];
+    }
+  in
+  {
+    Model.blocks = [ block (); block () ];
+    head = Nx.ones Nx.float32 [| 2; 4 |];
+  }
+
+let state =
+  ( Vega.adamw_init part (only `Adamw params),
+    Vega.sgd_init part (only `Sgd params) )
+
+(* One step, the parameters standing in for their gradient. *)
+let params, state = update (params, state) params
+```
+
+`update` is one step of the whole model. `kind` puts each leaf in one part,
+each part's description keeps the model's paths, each state holds an array for
+its own part's leaves alone, and `over` lays the two stepped parts back over
+the parameters.
+
 ## States are structures
 
 An optimizer state is a record whose parameter-shaped fields have the

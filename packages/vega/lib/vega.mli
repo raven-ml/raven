@@ -140,15 +140,19 @@
     the same at every placement. So a step is deterministic: equal inputs give
     equal bits wherever they lie, a checkpoint resumes bit for bit at any
     placement, copies of one state stepped with equal gradients stay equal,
-    and a leaf added to the structure changes no other leaf's draws. Two states stepped at equal counters draw alike at
-    equal paths, as identical sub-models with a state each, or two models in
-    one process, do: each store is still unbiased, but their rounding errors
-    correlate. The counter is an input of every step: a state re-made at each
-    step, by its [*_init], repeats its draws, and a value whose update is
-    below half a spacing then stalls as under rounding to nearest. Thread the
-    state from step to step. Under [Rune.jit] the draws are the same, so a
-    compiled step stores an element apart from an eager one only where its
-    float32 value differs, and then by one spacing.
+    and a leaf added to the structure changes no other leaf's draws. Under a
+    step that sums over a leaf ({!lars_step}, {!lamb_step},
+    {!adafactor_step}), a leaf cut across devices is the exception. Its bits
+    depend on its placement, since a float sum over a cut axis rounds as
+    {!Nx.section-reductions} states. Two states stepped at equal counters
+    draw alike at equal paths, as identical sub-models with a state each, or
+    two models in one process, do: each store is still unbiased, but their
+    rounding errors correlate. The counter is an input of every step: a state
+    re-made at each step, by its [*_init], repeats its draws, and a value
+    whose update is below half a spacing then stalls as under rounding to
+    nearest. Thread the state from step to step. Under [Rune.jit] the draws
+    are the same, so a compiled step stores an element apart from an eager
+    one only where its float32 value differs, and then by one spacing.
 
     Float16 cannot hold an average of squared gradients: below its least
     subnormal, [2^-24], the average is zero, and the steps that keep one divide
@@ -378,11 +382,13 @@ val rate : float -> 'd Schedule.t
 (** {1:parts Settings that differ across parameters}
 
     A part of the model that takes its own rate, its own optimizer or no step
-    at all is a part of the value, such as a record field or a list element.
-    Each part is stepped by a call of its own, with its own description and
-    state. A part's description made with [Nx.Ptree.v] and
-    {!Nx.Ptree.Walk.structure} keeps each leaf's path from the root of the
-    model, such as [trunk.fc.w], so the part's half-precision draws
+    at all is a part of the value. Each part is stepped by a call of its own,
+    with its own description and state.
+
+    A part that follows the model's structure, such as a trunk or a head, is
+    a record field or a list element. Its description made with [Nx.Ptree.v]
+    and {!Nx.Ptree.Walk.structure} keeps each leaf's path from the root of
+    the model, such as [trunk.fc.w], so the part's half-precision draws
     ({!section-half}) are those of an unsplit step at equal counters, and two
     parts with equal paths inside them draw apart:
 
@@ -393,14 +399,54 @@ val rate : float -> 'd Schedule.t
     let trunk = part "trunk" trunk_p and head = part "head" head_p
     ]}
 
+    A part that follows the kind of leaf across every layer, such as each
+    block's matrices, is the model itself over optional arrays, [None] at the
+    leaves outside the part. For a model of structure [M] its description is
+    [Nx.Ptree.nest (module M) Nx.Ptree.(option tensor)], which keeps every
+    leaf's path and so its draws. One function [kind] from a leaf's path to
+    its part cuts the model, so that each leaf is in one part. [only k x] is
+    the part [k] of [x], and [over part x] lays a stepped part back over the
+    parameters [x]:
+
+    {[
+    let only k x =
+      Nx.Ptree.Payload.map (module M)
+        (fun path a -> if kind path = k then Some a else None)
+        x
+
+    let over part x =
+      Nx.Ptree.Payload.map2 (module M)
+        (fun _ a x -> Option.value a ~default:x)
+        part x
+    ]}
+
+    The gradients are cut as the parameters are. A part's state holds an
+    array for each leaf of the part and none for the others. A step given
+    one part's state and another part's parameters raises as
+    {!section-structures} states. Three limits hold:
+
+    - Nothing checks the function against the model, so a name the model
+      does not use matches no leaf, silently.
+    - A structure's fixed arrays ({!Nx.Ptree.Walk.tensor}) belong to no
+      part. Every part and its state hold them, and each part's call steps
+      the float and complex ones. A structure stepped by kind must hold no
+      float or complex one.
+    - A description made with {!Nx.Ptree.v} holds arrays alone, with no
+      position to leave empty, so its parts follow its fields.
+
     The gradient is clipped whole, before it is split, so that its norm spans
     every part. The decay is scaled by the learning rate ({!section-decay}),
     so a part stepped at a tenth of the rate also decays at a tenth. A frozen
     part is left out of what is differentiated and stepped. The objective
     takes the trainable part and reads the frozen one as a value it is given,
     as in [Rune.grad head (fun h -> loss { params with head = h }) params.head].
-    A setting that differs by the kind of leaf across every layer, such as
-    which leaves decay, is a rule on the leaf ({!section-decay}). *)
+
+    A setting of one step that a leaf's path and shape decide, whether it
+    decays ({!section-decay}) or whether its trust ratio applies
+    ({!lars_step}), is a rule on the leaf. A step asks its rules while it is
+    built, and its state's structure does not depend on their answers. A rate
+    is a function of a state's counter and another optimizer keeps another
+    state, so each is another call, over a part. *)
 
 (** {1:sgd Stochastic Gradient Descent} *)
 

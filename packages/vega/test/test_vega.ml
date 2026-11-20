@@ -1923,6 +1923,174 @@ let test_leaves_on_two_devices () =
   equal ~msg:"first leaf" (array float_exact) (Nx.to_array a) (Nx.to_array a');
   equal ~msg:"second leaf" (array float_exact) (Nx.to_array b) (Nx.to_array b')
 
+(* Parts by the kind of leaf *)
+
+(* Two matrices, two vectors and a head at the parameter's positions, and a
+   fixed counter, which every part holds. *)
+module Net = struct
+  type ('a, 'd) t = {
+    w : 'a list;
+    b : 'a list;
+    head : 'a;
+    seen : 'd Nx.int32_t;
+  }
+
+  let walk c { w; b; head; seen } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" (list leaf) w in
+    let b = field c "b" (list leaf) b in
+    let head = field c "head" leaf head in
+    let seen = field c "seen" tensor seen in
+    { w; b; head; seen }
+end
+
+let net_paths = [ "w.0"; "w.1"; "b.0"; "b.1"; "head" ]
+let net_shapes = [ [| 2; 3 |]; [| 3; 2 |]; [| 3 |]; [| 2 |]; [| 1; 4 |] ]
+
+(* A [Net] of leaves at [dt] from one array of values per position. *)
+let net dt values =
+  match List.map2 (Nx.create dt) net_shapes values with
+  | [ w0; w1; b0; b1; head ] ->
+      let seen = Nx.create Nx.int32 [| 2 |] [| 7l; 11l |] in
+      { Net.w = [ w0; w1 ]; b = [ b0; b1 ]; head; seen }
+  | _ -> invalid_arg "net: expected an array of values per position"
+
+let net_values =
+  let open Gen in
+  let leaf s =
+    array ~size:(constant (Array.fold_left ( * ) 1 s)) (float_range (-4.0) 4.0)
+  in
+  List.fold_right
+    (fun s rest ->
+      let+ v = leaf s and+ vs = rest in
+      v :: vs)
+    net_shapes (constant [])
+
+(* [only kind k x] is the part [k] of [x], [None] at the other positions,
+   and [over part x] is [x] with [part]'s arrays laid over it. *)
+let only kind k x =
+  Nx.Ptree.Payload.map
+    (module Net)
+    (fun path a -> if kind path = k then Some a else None)
+    x
+
+let over part x =
+  Nx.Ptree.Payload.map2
+    (module Net)
+    (fun _ a x -> Option.value a ~default:x)
+    part x
+
+(* The arrays two parts hold between them, each position's from the part
+   that holds it. *)
+let either a b =
+  Nx.Ptree.Payload.map2
+    (module Net)
+    (fun path a b ->
+      match (a, b) with
+      | Some x, None | None, Some x -> x
+      | Some _, Some _ | None, None ->
+          failf "%a is in both parts or in neither" Nx.Ptree.Path.pp path)
+    a b
+
+let rec repeat k step x = if k = 0 then x else repeat (k - 1) step (step x)
+
+(* Three steps over the model cut in two parts by a drawn function from a
+   leaf's path to its part, each part with its own state, the stepped parts
+   laid back over the parameters: the parameters and the states' arrays have
+   the bits of three steps over the whole model. At bfloat16 the stores'
+   draws agree too, since a part keeps the model's paths. A part of no
+   parameter still holds the fixed counter. *)
+let parts_by_kind (type b) (dt : (float, b) Nx.dtype) =
+  let model :
+      (((float, b, Nx.host) Nx.t, Nx.host) Net.t, Nx.host) Nx.Ptree.t =
+    Nx.Ptree.instantiate (module Net)
+  in
+  let part :
+      (((float, b, Nx.host) Nx.t option, Nx.host) Net.t, Nx.host) Nx.Ptree.t =
+    Nx.Ptree.nest (module Net) Nx.Ptree.(option tensor)
+  in
+  let lr = Vega.rate 0.05 in
+  let gen =
+    let open Gen in
+    let n = List.length net_paths in
+    let picked =
+      frequency
+        [ (1, constant (Array.make n true)); (5, array ~size:(constant n) bool) ]
+    in
+    triple net_values net_values picked
+  in
+  prop "a step over two parts, merged, is the step over the model" gen
+    (fun (x, g, picked) ->
+      cover "each part holds a parameter"
+        (Array.exists Fun.id picked && Array.exists not picked);
+      cover "one part holds every parameter" (Array.for_all Fun.id picked);
+      let x = net dt x and g = net dt g in
+      let picks = List.combine net_paths (Array.to_list picked) in
+      let kind path = List.assoc (Nx.Ptree.Path.to_string path) picks in
+      let only k = only kind k in
+      let same msg whole split =
+        equal ~msg leaves_equal (by_path model whole) (by_path model split)
+      in
+      (* [split init step] steps each part with its own state. *)
+      let both init = (init part (only true x), init part (only false x)) in
+      let split step (x, (a, b)) =
+        let xa, a = step a ~params:(only true x) ~grads:(only true g) in
+        let xb, b = step b ~params:(only false x) ~grads:(only false g) in
+        (over xa (over xb x), (a, b))
+      in
+      let whole, st =
+        repeat 3
+          (fun (x, st) -> Vega.adamw_step model ~lr st ~params:x ~grads:g)
+          (x, Vega.adamw_init model x)
+      in
+      let merged, (a, b) =
+        repeat 3
+          (split (fun st -> Vega.adamw_step part ~lr st))
+          (x, both Vega.adamw_init)
+      in
+      same "adamw: parameters" whole merged;
+      same "adamw: mu" st.mu (either a.mu b.mu);
+      same "adamw: nu" st.nu (either a.nu b.nu);
+      let whole, st =
+        repeat 3
+          (fun (x, st) ->
+            Vega.sgd_step model ~lr ~momentum:0.9 st ~params:x ~grads:g)
+          (x, Vega.sgd_init model x)
+      in
+      let merged, (a, b) =
+        repeat 3
+          (split (fun st -> Vega.sgd_step part ~lr ~momentum:0.9 st))
+          (x, both Vega.sgd_init)
+      in
+      same "sgd: parameters" whole merged;
+      same "sgd: velocity" st.velocity (either a.velocity b.velocity))
+
+(* A state made over one part and stepped over the other raises at the first
+   position the two parts hold apart. *)
+let test_part_state_over_another () =
+  let part :
+      ((Nx.host Nx.float32_t option, Nx.host) Net.t, Nx.host) Nx.Ptree.t =
+    Nx.Ptree.nest (module Net) Nx.Ptree.(option tensor)
+  in
+  let ones s = Array.make (Array.fold_left ( * ) 1 s) 1.0 in
+  let x = net Nx.float32 (List.map ones net_shapes) in
+  let kind path = Nx.Ptree.Path.to_string path <> "b.0" in
+  let only k = only kind k in
+  let lr = Vega.rate 0.1 in
+  raises
+    (Invalid_argument
+       "Vega.adamw_step: w.0: Some in mu, None in the parameters") (fun () ->
+      Vega.adamw_step part ~lr
+        (Vega.adamw_init part (only true x))
+        ~params:(only false x) ~grads:(only false x));
+  raises
+    (Invalid_argument
+       "Vega.sgd_step: w.0: None in the velocity, Some in the parameters")
+    (fun () ->
+      Vega.sgd_step part ~lr ~momentum:0.9
+        (Vega.sgd_init part (only false x))
+        ~params:(only true x) ~grads:(only true x))
+
 let test_empty_structures () =
   let p = Nx.Ptree.unit in
   equal ~msg:"clipping a structure of no array returns it" unit ()
@@ -2042,6 +2210,13 @@ let tests =
     group "placement"
       [
         test "leaves alone on two devices of one set" test_leaves_on_two_devices;
+      ];
+    group "parts by the kind of leaf"
+      [
+        group "float32" [ parts_by_kind Nx.float32 ];
+        group "bfloat16" [ parts_by_kind Nx.bfloat16 ];
+        test "a state stepped over another part raises"
+          test_part_state_over_another;
       ];
     group "lbfgs"
       [
