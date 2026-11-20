@@ -1,0 +1,13 @@
+# thumper baseline v1
+# suite: tessera
+
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+
+cuda/distil-step/medium	wall_time	batch=1	n=3	1.213e+00	1.212e+00 1.213e+00 1.214e+00
+cuda/encode/large	wall_time	batch=1	n=3	3.504e+00	3.496e+00 3.504e+00 3.509e+00
+cuda/encode/medium	wall_time	batch=1	n=3	1.879e+00	1.874e+00 1.879e+00 1.884e+00
+cuda/encode/nano	wall_time	batch=1	n=3	1.682e-01	1.675e-01 1.682e-01 1.688e-01
+cuda/encode/small	wall_time	batch=1	n=3	6.821e-01	6.789e-01 6.821e-01 6.825e-01
+cuda/encode/teacher	wall_time	batch=1	n=3	6.963e+00	6.959e+00 6.963e+00 6.964e+00
