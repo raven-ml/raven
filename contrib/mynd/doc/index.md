@@ -104,9 +104,15 @@ let () =
   thresholds and the structure tensor.
 - [Morphology](morphology.md): openings and closings, hit-or-miss, holes
   and small objects.
+- [Moving annotations with an image](annotations.md): boxes, masks and
+  keypoints under flips, crops, resizes and warps, the boxes that
+  survive, training recipes and GIoU as a loss.
+- [COCO evaluation](coco.md): COCO's files, detections from a model's
+  boxes and masks, and the precision of each category.
 
 Each rule of mynd's that these pages use is stated in
-[`mynd.mli`](../lib/mynd.mli), and each rule of nx's in
+[`mynd.mli`](../lib/mynd.mli), or for `mynd.coco` in
+[`mynd_coco.mli`](../lib/coco/mynd_coco.mli), and each rule of nx's in
 [`nx.mli`](../../../packages/nx/lib/nx.mli), such as the reads and
 writes of positions outside an axis in its section Indexing and slicing.
 The pages link each where they use it.

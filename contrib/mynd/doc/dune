@@ -1,5 +1,12 @@
 (mdx
- (files index.md colour.md filters.md edges.md morphology.md coco.md)
+ (files
+  index.md
+  colour.md
+  filters.md
+  edges.md
+  morphology.md
+  coco.md
+  annotations.md)
  (package mynd)
  (enabled_if
   (and
