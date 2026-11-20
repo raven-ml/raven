@@ -929,12 +929,12 @@ val lane_count : axis -> int option
 
     A [collect] inside the map holds its running value once per lane only where
     its [init] or an addition depends on the lane, a {!callback}'s result
-    included, or where the lanes run apart: an {!iterate} whose lanes stop apart,
-    a {!switch} whose lanes take different branches. Otherwise a loop, a
-    {!val-jit}, a {!val-remat}, a {!switch} or a custom rule inside the map holds
-    it once, as a loop's carry that no lane changes ({!section-loops}): a sum
-    of blocks every lane gathers with {!lanes} costs one block, whatever the
-    number of lanes. *)
+    included, or where the lanes may run apart: in an {!iterate} whose stop
+    depends on the lane, a {!switch} whose index depends on the lane, and the
+    constructs inside them. Otherwise a loop, a {!val-jit}, a {!val-remat}, a
+    {!switch} or a custom rule inside the map holds it once, as a loop's carry
+    that no lane changes ({!section-loops}): a sum of blocks every lane gathers
+    with {!lanes} costs one block, whatever the number of lanes. *)
 
 (** Write-only sums. *)
 module Total : sig

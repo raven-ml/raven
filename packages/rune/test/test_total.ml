@@ -1481,22 +1481,20 @@ let close ?msg tol want got =
 type alike_case = { site : site; lanes : int; steps : int }
 
 let alike_cases =
-  let open Gen in
-  (let* site = of_list sites
-   and+ lanes = of_list [ 0; 1; 3 ]
-   and+ steps = of_list [ 0; 2 ] in
-   constant { site; lanes; steps })
-  |> with_pp (fun ppf c ->
-      Format.fprintf ppf "%s, %d lanes, %d steps" (site_name c.site) c.lanes
-        c.steps)
+  List.concat_map
+    (fun site ->
+      List.concat_map
+        (fun lanes ->
+          List.map (fun steps -> { site; lanes; steps }) [ 0; 2 ])
+        [ 0; 1; 3 ])
+    sites
+
+let alike_name c =
+  Printf.sprintf "%s, %d lanes, %d steps" (site_name c.site) c.lanes c.steps
 
 (* A custom rule's tangent map sums its additions from the identity and adds
    that sum once, so its rounding is the summed value's only within a bound. *)
 let law_alike c =
-  List.iter (fun s -> cover (site_name s) (c.site = s)) sites;
-  cover "no lane" (c.lanes = 0);
-  cover "one lane" (c.lanes = 1);
-  cover "no step" (c.steps = 0);
   let ds = directions ~n:c.lanes ~k:3 in
   let f kept = alike c.site kept ~k:3 ~steps:c.steps in
   let want = f Value ds in
@@ -1619,6 +1617,8 @@ type dependent =
   | Jitted
   | Tangent_mapped
   | Switched
+  | Custom_primal
+  | Custom_tangent
 
 let dependents =
   [
@@ -1631,6 +1631,8 @@ let dependents =
     Jitted;
     Tangent_mapped;
     Switched;
+    Custom_primal;
+    Custom_tangent;
   ]
 
 let dependent_name = function
@@ -1643,6 +1645,10 @@ let dependent_name = function
   | Jitted -> "a jit's addition that gives lanes"
   | Tangent_mapped -> "a custom rule's tangent map's addition that gives lanes"
   | Switched -> "one branch's addition that gives lanes, the other's alike"
+  | Custom_primal -> "a custom rule's primal's addition that gives lanes"
+  | Custom_tangent ->
+      "a custom rule's tangent map's addition that gives lanes, under a \
+       differentiation around the map"
 
 let outer h = Nx.mul (Nx.reshape [| -1; 1 |] h) (Nx.reshape [| 1; -1 |] h)
 
@@ -1676,6 +1682,14 @@ let through t kind h =
             Total.add t (Nx.ones f32 [| 2; 2 |]);
             h);
         ]
+  | Custom_primal ->
+      Rune.custom_jvp tensor tensor
+        (fun h -> (added h, fun dh -> Nx.mul_s dh 0.5))
+        h
+  | Custom_tangent ->
+      Rune.custom_jvp tensor tensor
+        (fun h -> (Nx.mul_s h 0.5, fun dh -> added dh))
+        h
   | Gained | Called | Mixed | Stopped | Branched -> h
 
 (* Each lane's sum and carry over [steps] rows. With [d] at 0.5 above
@@ -1722,7 +1736,8 @@ let dependent kind ~steps d =
                         Total.add t (outer x);
                         Nx.mul_s d 2.);
                     ]
-              | Rematted | Jitted | Tangent_mapped | Switched ->
+              | Rematted | Jitted | Tangent_mapped | Switched | Custom_primal
+              | Custom_tangent ->
                   through t kind (Nx.add d c)
             in
             (Nx.add c by, c))
@@ -1732,32 +1747,65 @@ let dependent kind ~steps d =
 
 type dep_case = { kind : dependent; lanes : int; steps : int }
 
-let dep_cases =
-  let open Gen in
-  (let* kind = of_list dependents
-   and+ lanes = of_list [ 0; 1; 3 ]
-   and+ steps = of_list [ 0; 1; 3 ] in
-   constant { kind; lanes; steps })
-  |> with_pp (fun ppf c ->
-      Format.fprintf ppf "%s, %d lanes, %d steps" (dependent_name c.kind)
-        c.lanes c.steps)
+let dep_product kinds steps =
+  List.concat_map
+    (fun kind ->
+      List.concat_map
+        (fun lanes -> List.map (fun steps -> { kind; lanes; steps }) steps)
+        [ 0; 1; 3 ])
+    kinds
+
+let dep_cases = dep_product dependents [ 0; 1; 3 ]
+
+let dep_name c =
+  Printf.sprintf "%s, %d lanes, %d steps" (dependent_name c.kind) c.lanes
+    c.steps
+
+(* Each lane's [f] stacked, [f]'s results being of [width] elements. *)
+let stacked ~width f ds =
+  let n = (Nx.shape ds).(0) in
+  if n = 0 then Nx.zeros f32 (Array.append [| 0 |] width)
+  else Nx.stack ~axis:0 (List.init n (fun r -> f (Nx.get [ r ] ds)))
+
+(* A sum of rounded floats: where the map sums a custom rule's additions in
+   another order than a lane does, they agree within a bound. *)
+let regrouped kind = kind = Tangent_mapped || kind = Custom_primal
 
 let law_dependent c =
-  List.iter
-    (fun k -> cover (dependent_name k) (c.kind = k))
-    dependents;
-  cover "no lane" (c.lanes = 0);
-  cover "an odd number of lanes" (c.lanes = 3);
-  cover "a scan of no row" (c.steps = 0);
   let ds = Nx.add_s (directions ~n:c.lanes ~k:2) 0.5 in
   let f = dependent c.kind ~steps:c.steps in
-  let each =
-    if c.lanes = 0 then Nx.zeros f32 [| 0; 6 |]
-    else Nx.stack ~axis:0 (List.init c.lanes (fun r -> f (Nx.get [ r ] ds)))
-  in
-  if c.kind = Tangent_mapped then close 1e-6 each (Rune.vmap' f ds)
+  let each = stacked ~width:[| 6 |] f ds in
+  if regrouped c.kind then close 1e-6 each (Rune.vmap' f ds)
   else equal ~msg:"eager" bits_t (bits each) (bits (Rune.vmap' f ds));
   close 1e-5 each (Rune.jit' (Rune.vmap' f) ds)
+
+(* Kinds whose gaining addition a differentiation around the map reaches: a
+   remat's, a jit's, a switch's, a custom rule's primal and tangent map. *)
+let differentiated_cases =
+  dep_product [ Rematted; Jitted; Switched; Custom_primal; Custom_tangent ]
+    [ 0; 2 ]
+
+(* Under a differentiation around the map, each lane's tangents and
+   gradients, a collect inside it receiving tangents too. *)
+let law_dependent_derivatives c =
+  let ds = Nx.add_s (directions ~n:c.lanes ~k:2) 0.5 in
+  let dds = Nx.add_s (Nx.mul_s ds 0.25) 0.125 in
+  let f = dependent c.kind ~steps:c.steps in
+  let loss d = Nx.sum (f d) in
+  let tangent d dd = snd (Rune.jvp' f d dd) in
+  let n = c.lanes in
+  let each_tangent =
+    if n = 0 then Nx.zeros f32 [| 0; 6 |]
+    else
+      Nx.stack ~axis:0
+        (List.init n (fun r -> tangent (Nx.get [ r ] ds) (Nx.get [ r ] dds)))
+  in
+  close ~msg:"jvp" 1e-5 each_tangent (snd (Rune.jvp' (Rune.vmap' f) ds dds));
+  (* Reverse mode refuses a tangent map's addition to a total. *)
+  if c.kind <> Custom_tangent then
+    close ~msg:"grad" 1e-5
+      (stacked ~width:[| 2 |] (Rune.grad' loss) ds)
+      (Rune.grad' (fun ds -> Nx.sum (Rune.vmap' f ds)) ds)
 
 (* A total added at [[2; 2]] with lanes and at [[2; 2; 2]] without, with no
    collect open, under a map of two lanes: two sums that a laned running value
@@ -1777,7 +1825,8 @@ let test_colliding_sums () =
   let ds = directions ~n:2 ~k:2 in
   let each = Nx.stack ~axis:0 [ f (Nx.get [ 0 ] ds); f (Nx.get [ 1 ] ds) ] in
   equal bits_t (bits each) (bits (Rune.vmap' f ds));
-  close 1e-6 each (Rune.jit' (Rune.vmap' f) ds)
+  close ~msg:"jit around" 1e-6 each (Rune.jit' (Rune.vmap' f) ds);
+  close ~msg:"jit inside" 1e-6 each (Rune.vmap' (Rune.jit' f) ds)
 
 (* Two sums of one total in one construct, with no collect open: one at
    [[2; 2]] that an addition gives lanes, beside one at [[2; 2; 2]] every lane
@@ -1811,7 +1860,10 @@ let test_meeting_sums () =
     (fun (msg, f) ->
       let each = Nx.stack ~axis:0 [ f (Nx.get [ 0 ] ds); f (Nx.get [ 1 ] ds) ] in
       equal ~msg bits_t (bits each) (bits (Rune.vmap' f ds));
-      close ~msg 1e-6 each (Rune.jit' (Rune.vmap' f) ds))
+      close ~msg:(msg ^ ", jit around") 1e-6 each
+        (Rune.jit' (Rune.vmap' f) ds);
+      close ~msg:(msg ^ ", jit inside") 1e-6 each
+        (Rune.vmap' (Rune.jit' f) ds))
     sites
 
 let () =
@@ -1847,16 +1899,20 @@ let () =
            test_jit_between_maps;
          prop ~examples:in_turn_examples "a map's lanes add in turn" in_turn
            law_in_turn;
-         prop ~count:100 "a total every lane adds alike is the summed value"
-           alike_cases law_alike;
+         cases ~id:alike_name
+           "a total every lane adds alike is the summed value" alike_cases
+           law_alike;
          test "a total every lane adds alike, differentiated"
            test_alike_derivatives;
          test "a total every lane adds alike holds one value"
            test_alike_footprint;
          test "a total every inner lane adds alike, in nested maps"
            test_alike_nested;
-         prop ~count:200 "a total that depends on the lane is each lane's"
+         cases ~id:dep_name "a total that depends on the lane is each lane's"
            dep_cases law_dependent;
+         cases ~id:dep_name
+           "a total that depends on the lane, differentiated around the map"
+           differentiated_cases law_dependent_derivatives;
          test "sums of one total that would meet at one shape"
            test_colliding_sums;
          test "a sum given lanes beside one at its laned shape"

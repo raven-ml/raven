@@ -666,7 +666,8 @@ type derivation =
           Over the arguments; to the results, each with that leading axis where
           it has lanes, then the running values out. A [Laned] sum has that
           axis in and out; a [Same] one an addition gives lanes has it out
-          only. The flags are the results', then the sums'. *)
+          only. The flags are the results', whether each has lanes, then the
+          sums', whether each ends with lanes. *)
   | Known of { unknown : bool array; donated : bool array }
       (** The part of the program that reads no argument where [unknown] holds,
           computed at the call. Over the other arguments; to its results, the
