@@ -1,0 +1,9 @@
+chelsea.png: [300; 451; 3] uint8
+pixel (150, 225):
+  uint8    190 150 124
+  float32  0.7451 0.5882 0.4863
+  uint16   48830 38550 31868
+uint8 to float32 and back: 0 of 405900 codes changed
+after a gamma of 0.8, truncation is one code below rounding
+  for 141 of the 256 codes
+  for 238300 of the photograph's 405900 values

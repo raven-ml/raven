@@ -14,6 +14,10 @@ cd contrib/mynd/examples/08-masks
 dune exec ./main.exe
 ```
 
+| Example | Shows | Key functions |
+|---|---|---|
+| [`01-values`](./01-values/) | An image's codes and fractions | `Mynd.convert` |
+
 Examples that make a picture write it beside `main.ml` with hugin. The
 pictures are not committed.
 
