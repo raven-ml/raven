@@ -169,3 +169,60 @@ val mask_detections_jsont : Mynd.Rle.t detection array Jsont.t
     {!box_detections_jsont} with [segmentation] in place of [bbox], runs as
     {!segmentation_jsont} reads them, written with [counts] a string. A [bbox]
     member is skipped. *)
+
+(** {1:evaluation Evaluation}
+
+    The protocol, for one category in one image. The 100 detections of highest
+    score are kept, equal scores in array order. Under an area {e range}, one of
+    all [[0, 10¹⁰]], small [[0, 32²]], medium [[32², 96²]] and large
+    [[96², 10¹⁰]], bounds included, an annotation is {e ignored} if it is a
+    crowd or its [area] lies outside the range; the others {e count}. At each
+    IoU threshold [t], each detection in rank order takes the annotation of
+    greatest IoU at least [t], the later of equal ones, among those not yet
+    taken and the crowds, which any number may take. Annotations that count come
+    first, and once one is taken no ignored one is. A detection is {e ignored}
+    when it took an ignored annotation, or took none and its area, [w h] for a
+    box and the pixel count for a mask, lies outside the range.
+
+    {e IoU.} Of boxes it is [i / ((w h + w' h') - i)], for [i = a b] where [a]
+    is the least right edge [x + w] minus the greatest left edge, and [b]
+    likewise, and [0] when [a] or [b] is not positive. Of masks it is the exact
+    pixel counts' quotient, rounded once, and [0] when the masks share no pixel.
+    Against a crowd the divisor is the detection's area alone. *)
+
+(** {2:tables Tables}
+
+    For each category, range and limit [m] of 1, 10 and 100, the first [m] kept
+    detections of each image, images by increasing [id], are ranked by
+    descending score, equal scores keeping that order. Leaving out ignored
+    detections, let [tp] and [fp] count the detections up to a rank that took an
+    annotation and that took none, and [n] the annotations that count. A rank's
+    recall is [tp / n] and its precision [tp / ((tp + fp) + 2⁻⁵²)], then raised
+    to the greatest precision at any later rank. The precision at a recall
+    threshold is that of the first rank whose recall is at least the threshold,
+    or [0] where none is; the recall is the last rank's, [0] with none. Where no
+    annotation of the category counts under the range, both are NaN.
+
+    {e Thresholds.} The IoU thresholds are the floats nearest 0.5, 0.55, 0.6,
+    0.65, 0.7, 0.75, 0.8, 0.85 and 0.95, and the float below the one nearest
+    0.9. The recall thresholds are the floats nearest [i / 100] for [i] from 0
+    to 100, except that for [i] of 35, 41, 47, 57, 69, 70, 82, 83, 94 and 95
+    each is the next float above. So a recall of exactly [i / 100] does not
+    reach those ten. These are the thresholds pycocotools computes, and the
+    tables keep them so that results compare with its results. *)
+
+type evaluation = {
+  categories : category array;  (** By increasing [id]. *)
+  precision : Nx.host Nx.float64_t;
+      (** [[10; 101; k; 4; 3]]: IoU threshold, recall threshold, category, range
+          (all, small, medium, large) and limit (1, 10, 100). *)
+  recall : Nx.host Nx.float64_t;  (** [[10; k; 4; 3]], the same axes. *)
+}
+(** The type for evaluations. *)
+
+val evaluate_boxes : dataset -> box detection array -> evaluation
+(** [evaluate_boxes d dets] matches the boxes [dets] to [d]'s annotation boxes.
+
+    Raises [Invalid_argument] if [d] is not valid, or a detection names an image
+    or a category [d] does not list, has a NaN score, has a box that is not
+    valid or has an area past [10¹⁰], which no range holds. *)

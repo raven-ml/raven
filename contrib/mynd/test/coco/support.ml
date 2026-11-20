@@ -82,3 +82,73 @@ let dataset ?(images = [ image 1 ]) ?(categories = [ category 1 ]) anns =
     categories = Array.of_list categories;
     annotations = Array.of_list anns;
   }
+
+(* The tables' entries. [k] is a category's position by increasing id, [a] a
+   range (all, small, medium, large) and [m] a limit (1, 10, 100). *)
+let precision (e : evaluation) ~t ~r ~k ~a ~m =
+  Nx.item [ t; r; k; a; m ] e.precision
+
+let recall (e : evaluation) ~t ~k ~a ~m = Nx.item [ t; k; a; m ] e.recall
+
+(* Bits of tables, NaN where pycocotools writes -1. *)
+let of_coco a = Array.map (fun v -> if v = -1. then Float.nan else v) a
+let bits (e : evaluation) = (Nx.to_array e.precision, Nx.to_array e.recall)
+
+(* A drawn dataset: up to four images of 40 by 40 pixels and three
+   categories, annotations of integer boxes, a tenth of them crowds, and
+   detections near them with distinct scores, or scores on a grid of tenths
+   when [ties]. *)
+let gen_case ~ties =
+  Gen.(
+    let* ni, nk = pair (int_range 1 4) (int_range 1 3) in
+    let gbox =
+      let+ x = int_range 0 30
+      and+ y = int_range 0 30
+      and+ w = int_range 1 10
+      and+ h = int_range 1 10 in
+      box (Float.of_int x) (Float.of_int y) (Float.of_int w) (Float.of_int h)
+    in
+    let gann =
+      let+ i = int_range 1 ni
+      and+ k = int_range 1 nk
+      and+ b = gbox
+      and+ c = int_range 0 9 in
+      ann ~crowd:(c = 0) ~image:i ~category:k b
+    in
+    let* anns = list ~size:(int_range 0 12) gann in
+    let jitter (b : box) =
+      let+ dx = int_range (-2) 2 and+ dy = int_range (-2) 2 in
+      box (b.x +. Float.of_int dx) (b.y +. Float.of_int dy) b.w b.h
+    in
+    let free =
+      let+ i = int_range 1 ni and+ k = int_range 1 nk and+ b = gbox in
+      (i, k, b)
+    in
+    let gdet =
+      match anns with
+      | [] -> free
+      | _ ->
+          let near =
+            let* (a : annotation) = of_list anns in
+            let+ b = jitter a.box in
+            (a.image, a.category, b)
+          in
+          frequency [ (3, near); (1, free) ]
+    in
+    let* dets = list ~size:(int_range 0 14) gdet in
+    let n = List.length dets in
+    let+ scores =
+      if ties then
+        list ~size:(constant n)
+          (map (fun s -> Float.of_int s /. 10.) (int_range 1 9))
+      else permutation (List.init n (fun s -> Float.of_int (s + 1) /. 64.))
+    in
+    let dets =
+      List.map2 (fun (i, k, b) s -> det ~image:i ~category:k s b) dets scores
+    in
+    let anns = List.mapi (fun j a -> { a with id = j + 1 }) anns in
+    ( dataset
+        ~images:(List.init ni (fun i -> image ~height:40 ~width:40 (i + 1)))
+        ~categories:(List.init nk (fun k -> category (k + 1)))
+        anns,
+      Array.of_list dets ))
