@@ -68,49 +68,81 @@ val sample :
   'd Nx.int64_t
 (** [sample ~key ~reveal t inputs target] is a draw of [target]'s tokens,
     [[|b; n|]], for each of the [b] objects of [inputs], [n] the target's
-    {!Modality.tokens}: step [s] reveals [List.nth reveal s] tokens of each
-    object. [temperature] defaults to [1.].
+    {!Modality.tokens}: the {!tokens} of {!step}[ t] folded over [reveal] from
+    {!start}[ ~key ~temperature inputs target], so step [s] reveals
+    [List.nth reveal s] tokens of each object. [temperature] defaults to [1.].
 
-    Each step encodes and decodes with [t] as {!Transformer.encode} and
-    {!Transformer.decode} do, checks included, and draws eagerly, so [t]'s set
-    must have eager kernels: on another set, such as a GPU's, draw with a
-    {!sampler}.
+    It computes eagerly, so [t]'s set must have eager kernels: on another set,
+    such as a GPU's, compile {!start} and {!step} and fold them as [sample]
+    does.
 
-    Raises [Invalid_argument] if [temperature] is negative or not finite, if a
-    count of [reveal] is below [1] or they do not sum to [n], if [inputs] is
-    empty or holds [target], and as {!Transformer.encode} and
-    {!Transformer.decode} do. *)
+    Raises [Invalid_argument] if a count of [reveal] is below [1] or they do
+    not sum to [n], and as {!start} and {!step} do. *)
 
-(** {1:samplers Compiled samplers} *)
+(** {1:steps Steps}
 
-type ('b, 'd) sampler
-(** The type for compiled samplers of one target modality with a transformer
-    computing at float dtype ['b] on the device set ['d]. *)
+    A draw in progress is a value: {!start} makes it and {!step} takes it one
+    step further. Compiled with [Rune.jit], with the transformer an argument of
+    [step] and its count reported by [Nx.Ptree.Walk.int], they draw on any
+    set:
 
-val sampler :
-  ((float, 'b, 'd) Nx.t, 'd) Transformer.t -> Modality.t -> ('b, 'd) sampler
-(** [sampler t target] draws [target]'s tokens as {!sample} with [t] does, each
-    step one program [Rune.jit] compiles from [t]'s computation, with [t]'s
-    weights captured.
+    {[
+    let draw () = Nx.Ptree.v Roar.walk_draw in
+    let start =
+      Rune.jit
+        Nx.Ptree.(Nx.Rng.ptree @-> list (v Tokens.walk) @-> returns (draw ()))
+        (fun key x -> Roar.start ~key ~temperature x target)
+    and step =
+      Rune.jit
+        Nx.Ptree.(
+          instantiate (module Transformer)
+          @-> v Walk.int @-> draw () @-> returns (draw ()))
+        Roar.step
+    in
+    Roar.tokens (List.fold_left (fun d k -> step t k d) (start key x) reveal)
+    ]}
 
-    The sampler keeps, for as long as it lives, a program of the orders per
-    batch size and placement, and step programs per count of [reveal], list
-    of inputs' modalities and shapes, and placement: one for a positive
-    temperature, which is the program's argument, and one for the temperature
-    [0.]. So a sweep over temperatures adds no program, and the programs go
-    with the sampler. *)
+    They draw {!sample}'s tokens where the logits agree, to the accuracy
+    [Rune.jit] states. [step] keeps a program per count, list of inputs'
+    modalities and shapes, placement, and whether the temperature is [0.]:
+    every positive temperature shares one program. [start]'s temperature is
+    captured, a constant of its program, and [start] refuses as it traces. *)
 
-val draw :
-  ('b, 'd) sampler ->
+type 'd draw
+(** The type for draws in progress of a target's tokens for a batch of
+    objects, on the device set ['d]. *)
+
+val walk_draw : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd draw -> 'e draw
+(** [walk_draw c d] reports [d]'s target, its inputs' modalities and whether
+    its temperature is [0.], and walks its arrays as fixed ones. *)
+
+val start :
   key:'d Nx.Rng.key ->
   ?temperature:float ->
-  reveal:int list ->
   'd Tokens.t list ->
-  'd Nx.int64_t
-(** [draw s ~key ~reveal inputs] is {!sample}[ ~key ~reveal t inputs target]
-    for [s]'s transformer and target, computed by [s]'s programs: the same
-    draws where the logits agree, to the accuracy [Rune.jit] states. Its
-    programs check [inputs] as {!sample}'s steps do: on the host at the call,
-    on another set at a later wait.
+  Modality.t ->
+  'd draw
+(** [start ~key inputs target] is a draw of [target]'s tokens given [inputs]
+    with no token revealed, each object's order drawn from [key], at the
+    temperature [temperature] (defaults to [1.]).
 
-    Raises [Invalid_argument] as {!sample}. *)
+    Raises [Invalid_argument] if [temperature] is negative or not finite, or if
+    [inputs] holds [target] or is empty. *)
+
+val step :
+  ((float, 'b, 'd) Nx.t, 'd) Transformer.t -> int -> 'd draw -> 'd draw
+(** [step t k d] is [d] after one more step, which reveals the next [k]
+    positions of each object's order with [t]. It draws from
+    [Nx.Rng.fold_in key (s + 1)], [key] the one {!start} took and [s] the
+    number of steps [d] has taken.
+
+    Raises [Invalid_argument] if [k] is not in [[1, n]], [n] the target's
+    {!Modality.tokens}, if a position it would reveal is revealed already, as
+    after counts that sum past [n], and as {!Transformer.encode} and
+    {!Transformer.decode} do. The positions are checked as {!Nx.check} does:
+    at the call on the host, eagerly or compiled, and at a later wait on
+    another set. *)
+
+val tokens : 'd draw -> 'd Nx.int64_t
+(** [tokens d] is [d]'s tokens of the target, [[|b; n|]]: the tokens drawn at
+    the positions revealed, and [0] at the others. *)

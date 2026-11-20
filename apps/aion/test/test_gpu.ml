@@ -3,16 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The compiled transformer, sampler and codecs on this machine's first GPU,
+(* The compiled transformer, draws and codecs on this machine's first GPU,
    which has no eager kernels, on the narrow fixtures of upstream/ (the test
    dune file names their generators). The transformer computes within 2 τ ŝ of
    the eager one on the host, ŝ its fixture's rounding ensemble's spread, as
    test_transformer holds the compiled one on the host: both are float32
-   computations of one exact value, each within τ ŝ of it. A sampler draws the
-   eager tokens on fixed keys, as test_roar's do. The codecs meet upstream's
-   float64 reference within τ ŝ, decisions near a boundary excepted, as
-   test_spectrum's and test_image's do. It skips without a GPU, or without the
-   compiler its kernels need. *)
+   computations of one exact value, each within τ ŝ of it. Compiled draws are
+   the eager tokens on fixed keys, as test_roar's are. The codecs meet
+   upstream's float64 reference within τ ŝ, decisions near a boundary
+   excepted, as test_spectrum's and test_image's do. It skips without a GPU,
+   or without the compiler its kernels need. *)
 
 open Windtrap
 open Aion
@@ -143,24 +143,35 @@ let transformer =
         (List.hd (forward g (List.map on x) [ z ]))
         (List.hd (Transformer.forward t x [ z ])))
 
-(* A sampler's draws are the eager ones' on fixed keys: logits that differ in
-   their last bits move a draw only where its uniform lands that close to a
-   boundary between two tokens, about 10⁻⁶ of a draw at float32's precision. *)
-let sampler =
-  cases "a sampler draws the eager tokens" ~id:(Printf.sprintf "%g") [ 1.; 0. ]
-    (fun temperature ->
+(* Compiled start and step draw the eager tokens on fixed keys: logits that
+   differ in their last bits move a draw only where its uniform lands that close
+   to a boundary between two tokens, about 10⁻⁶ of a draw at float32's
+   precision. *)
+let draws =
+  cases "compiled start and step draw the eager tokens"
+    ~id:(Printf.sprintf "%g") [ 1.; 0. ] (fun temperature ->
       let module D = (val on_gpu ()) in
       let t = Lazy.force model and target = Modality.Scalar Xp_rp in
-      let s =
-        Roar.sampler (Nx.Ptree.place (module Transformer) D.on t) target
+      let g = Nx.Ptree.place (module Transformer) D.on t in
+      let draw () = Nx.Ptree.v Roar.walk_draw in
+      let start =
+        Rune.jit
+          Nx.Ptree.(Nx.Rng.ptree @-> list (v Tokens.walk) @-> returns (draw ()))
+          (fun key x -> Roar.start ~key ~temperature x target)
+      and step =
+        Rune.jit
+          Nx.Ptree.(
+            instantiate (module Transformer)
+            @-> v Walk.int @-> draw () @-> returns (draw ()))
+          Roar.step
       in
       let on = Nx.Ptree.place_fixed Tokens.walk D.on in
       let x = inputs () and key = Nx.Rng.key 23 in
       let reveal = [ 7; 7; 7; 7; 7; 7; 7; 6 ] in
       let eager = Roar.sample ~key ~temperature ~reveal t x target in
+      let d = start (Nx.Rng.place D.on key) (List.map on x) in
       let drawn =
-        Roar.draw s ~key:(Nx.Rng.place D.on key) ~temperature ~reveal
-          (List.map on x)
+        Roar.tokens (List.fold_left (fun d k -> step g k d) d reveal)
       in
       equal (array int) (ints eager) (ints drawn))
 
@@ -273,4 +284,4 @@ let image =
 
 let () =
   exit
-    (run "aion.gpu" [ group "gpu" [ transformer; sampler; spectrum; image ] ])
+    (run "aion.gpu" [ group "gpu" [ transformer; draws; spectrum; image ] ])

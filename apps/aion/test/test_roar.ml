@@ -263,19 +263,45 @@ let orders_law =
           equal int 64 (List.length (List.sort_uniq compare (orders 25 64 55))));
     ]
 
-(* Compiled samplers *)
+(* Compiled draws *)
 
-(* A sampler's draws are the eager ones': the same keys, and logits that differ
-   in their last bits, which move a draw only where its uniform lands that
-   close to a boundary between two tokens' probabilities, about 10⁻⁶ of a draw
-   at float32's precision. The keys here are fixed, so each run decides the
-   same. The temperatures share one program, the temperature 0 another. *)
+(* [start] and [step] compiled draw the eager tokens: the same keys, and logits
+   that differ in their last bits, which move a draw only where its uniform
+   lands that close to a boundary between two tokens' probabilities, about 10⁻⁶
+   of a draw at float32's precision. The keys here are fixed, so each run
+   decides the same. The temperatures share one step program, the temperature 0
+   another. *)
 
 module Soft = (val Nx.devices [ Result.get_ok (Rig.software "aion-roar") ])
 
-let compiled =
+(* [start] compiled, capturing the temperature and the target. *)
+let start ?temperature target =
+  Rune.jit
+    Nx.Ptree.(
+      Nx.Rng.ptree @-> list (v Tokens.walk) @-> returns (v Roar.walk_draw))
+    (fun key x -> Roar.start ~key ?temperature x target)
+
+(* The fold of a caller who compiles: [start], and [step], the count an
+   argument, whose traces [traces] counts: one per program. *)
+let compiled ?(traces = ref 0) () =
+  let open Nx.Ptree in
+  let draw () = v Roar.walk_draw in
+  let step =
+    Rune.jit
+      (instantiate (module Transformer)
+      @-> v Walk.int @-> draw () @-> returns (draw ()))
+      (fun t k d ->
+        incr traces;
+        Roar.step t k d)
+  in
+  fun ~key ?temperature ~reveal t inputs target ->
+    let start = start ?temperature target in
+    let d = start key inputs in
+    Roar.tokens (List.fold_left (fun d k -> step t k d) d reveal)
+
+let draws =
   let target, inputs = xp in
-  let s = lazy (Roar.sampler (Lazy.force model) target) in
+  let draw = lazy (compiled ()) in
   let rows =
     List.concat_map
       (fun (name, reveal) ->
@@ -289,28 +315,61 @@ let compiled =
       ]
   in
   let id (name, _, temperature) = Printf.sprintf "%s at %g" name temperature in
-  group "samplers"
+  group "compiled"
     [
-      cases "a sampler draws the eager tokens" ~id rows
+      cases "compiled start and step draw the eager tokens" ~id rows
         (fun (_, reveal, temperature) ->
           let key = Nx.Rng.key 19 in
           let eager = sample ~key ~temperature ~reveal xp in
-          let c = Roar.draw (Lazy.force s) ~key ~temperature ~reveal inputs in
+          let c =
+            (Lazy.force draw) ~key ~temperature ~reveal (Lazy.force model)
+              inputs target
+          in
           equal (array int) (ints eager) (ints c));
-      test "a sampler draws on a set without eager kernels" (fun () ->
+      cases "they draw on a set without eager kernels" ~id:(Printf.sprintf "%g")
+        [ 1.; 0. ] (fun temperature ->
           let key = Nx.Rng.key 20 in
-          let soft =
-            Roar.sampler
+          let k =
+            compiled () ~key:(Nx.Rng.place Soft.on key) ~temperature
+              ~reveal:linear8
               (Nx.Ptree.place (module Transformer) Soft.on (Lazy.force model))
+              (List.map (Nx.Ptree.place_fixed Tokens.walk Soft.on) inputs)
               target
           in
-          let k =
-            Roar.draw soft ~key:(Nx.Rng.place Soft.on key) ~reveal:linear8
-              (List.map (Nx.Ptree.place_fixed Tokens.walk Soft.on) inputs)
-          in
-          let c = Roar.draw (Lazy.force s) ~key ~reveal:linear8 inputs in
+          let c = sample ~key ~temperature ~reveal:linear8 xp in
           equal (array int) (ints c) (ints (Nx.place Nx.Host.on k)));
-      test "a sampler refuses a token outside the vocabulary" (fun () ->
+      test "every positive temperature shares one step program" (fun () ->
+          let traces = ref 0 in
+          let draw = compiled ~traces () in
+          let run temperature =
+            ignore
+              (ints
+                 (draw ~key:(Nx.Rng.key 21) ~temperature ~reveal:[ 55 ]
+                    (Lazy.force model) inputs target))
+          in
+          List.iter run [ 1.; 0.5; 2. ];
+          equal int 1 !traces;
+          run 0.;
+          equal int 2 !traces);
+      test "a compiled start refuses at its trace" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"temperature -1") (fun () ->
+              start ~temperature:(-1.) target (Nx.Rng.key 0) inputs));
+      test "a compiled step refuses a revealed position" (fun () ->
+          (* Of 55 positions, the second step's last 5 are the first's. *)
+          raises_match (Exn.invalid_arg ~sub:"already revealed") (fun () ->
+              (Lazy.force draw) ~key:(Nx.Rng.key 0) ~reveal:[ 30; 30 ]
+                (Lazy.force model) inputs target));
+      test "so does one on a set without eager kernels" (fun () ->
+          (* Its check raises at the wait that reads the tokens. *)
+          raises_match (Exn.invalid_arg ~sub:"already revealed") (fun () ->
+              Nx.place Nx.Host.on
+                (compiled () ~key:(Nx.Rng.place Soft.on (Nx.Rng.key 0))
+                   ~reveal:[ 30; 30 ]
+                   (Nx.Ptree.place (module Transformer) Soft.on
+                      (Lazy.force model))
+                   (List.map (Nx.Ptree.place_fixed Tokens.walk Soft.on) inputs)
+                   target)));
+      test "a compiled step refuses a token outside the vocabulary" (fun () ->
           (* On the host its program's check raises at the call. *)
           let bad (i : _ Tokens.t) : _ Tokens.t =
             {
@@ -320,8 +379,8 @@ let compiled =
             }
           in
           raises_match (Exn.invalid_arg ~sub:"outside [0, 1024)") (fun () ->
-              Roar.draw (Lazy.force s) ~key:(Nx.Rng.key 0) ~reveal:linear8
-                (List.map bad inputs)));
+              (Lazy.force draw) ~key:(Nx.Rng.key 0) ~reveal:linear8
+                (Lazy.force model) (List.map bad inputs) target));
     ]
 
 (* Refusals *)
@@ -353,8 +412,18 @@ let refusals =
       test "no input" (fun () ->
           refuses "no input" (fun () ->
               sample ~key ~reveal:[ 1 ] (Modality.Scalar Z, [])));
+      cases "a step's count outside [1, n]" ~id:string_of_int [ 0; -1; 56 ]
+        (fun k ->
+          let target, inputs = xp in
+          let d = Roar.start ~key inputs target in
+          refuses (Printf.sprintf "a count of %d, not in [1, 55]" k) (fun () ->
+              Roar.step (Lazy.force model) k d));
+      test "a step at a revealed position" (fun () ->
+          let target, inputs = xp and t = Lazy.force model in
+          let d = Roar.step t 30 (Roar.start ~key inputs target) in
+          refuses "already revealed" (fun () -> Roar.step t 30 d));
     ]
 
 let () =
   exit
-    (run "aion.roar" [ replays; temperatures; orders_law; compiled; refusals ])
+    (run "aion.roar" [ replays; temperatures; orders_law; draws; refusals ])

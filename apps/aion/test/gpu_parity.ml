@@ -125,10 +125,18 @@ let run at ~hub ~ref64 =
   let target = Modality.Spectrum Desi and key = Nx.Rng.key 7 in
   let reveal = [ Modality.tokens target ] and x = [ input Image ] in
   let k = Roar.sample ~key ~temperature:0. ~reveal t x target in
-  let kg =
-    Roar.draw (Roar.sampler g target) ~key:(Nx.Rng.place at key)
-      ~temperature:0. ~reveal (List.map on x)
+  let draw () = Nx.Ptree.v Roar.walk_draw in
+  let start =
+    Rune.jit
+      Nx.Ptree.(Nx.Rng.ptree @-> inputs () @-> returns (draw ()))
+      (fun key x -> Roar.start ~key ~temperature:0. x target)
+  and step =
+    Rune.jit
+      Nx.Ptree.(model () @-> v Walk.int @-> draw () @-> returns (draw ()))
+      Roar.step
   in
+  let d = start (Nx.Rng.place at key) (List.map on x) in
+  let kg = Roar.tokens (List.fold_left (fun d k -> step g k d) d reveal) in
   printf "  device %d of %d tokens differ from eager\n%!"
     (Int64.to_int
        (Nx.item [] (Nx.sum (Nx.cast Nx.int64 (Nx.not_equal k (host kg))))))

@@ -98,7 +98,7 @@
  (action
   (run %{exe:generate_parity.exe} %{exe:../bin/main.exe})))
 
-; test_gpu.exe runs the compiled transformer, sampler and codecs on this
+; test_gpu.exe runs the compiled transformer, draws and codecs on this
 ; machine's first GPU against the narrow fixtures, and skips without one. It
 ; holds the lock GPU tests share.
 

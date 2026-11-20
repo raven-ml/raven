@@ -557,13 +557,22 @@ let generate_on d t srcs ins (target : Modality.t option) objs range size out
   let target = Option.get target in
   let codecs = codecs d (target :: List.map snd ins) in
   let root = Nx.Rng.key seed in
-  (* A compiled device draws with a sampler, which keeps its programs for the
-     command's run. *)
+  (* Roar.sample's fold, compiled where [d] compiles: [step] keeps a program
+     per count for the command's run. *)
   let draw =
-    if d.jit then
-      let s = Roar.sampler t target in
-      fun ~key x -> Roar.draw s ~key ~temperature ~reveal x
-    else fun ~key x -> Roar.sample ~key ~temperature ~reveal t x target
+    let draw_s () = Nx.Ptree.v Roar.walk_draw in
+    let start =
+      compile d
+        Nx.Ptree.(Nx.Rng.ptree @-> inputs_s () @-> returns (draw_s ()))
+        (fun key x -> Roar.start ~key ~temperature x target)
+    and step =
+      compile d
+        Nx.Ptree.(
+          model_s () @-> v Walk.int @-> draw_s () @-> returns (draw_s ()))
+        Roar.step
+    in
+    fun ~key x ->
+      Roar.tokens (List.fold_left (fun r k -> step t k r) (start key x) reveal)
   in
   (* The output, allocated once and filled batch by batch, as posterior's: the
      tokens, [[|n; draws; k|]], and each decoded entry likewise, allocated at
