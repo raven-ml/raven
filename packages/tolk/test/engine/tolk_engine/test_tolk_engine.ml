@@ -7257,6 +7257,43 @@ let reports_each_kernel ?(devices = devices) name () =
       end)
     lines
 
+(* At [DEBUG=2], two kernels of one name, a fill of one buffer and a copy
+   between two, report each its own name and arguments: the copy's line is
+   named apart from the fill's and counts its two buffers. *)
+let reports_kernels_of_one_name () =
+  let y, fill = fill "CPU" 1. in
+  let copy =
+    let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+    let at slot = Ops.index (Shape.placeholder ~slot [ 4 ] Float32) [ i ] in
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"fill" ())
+      [ Ops.end_ (Ops.store (at 0) (at 1)) [ i ] ]
+  in
+  let z = Ops.new_buffer "CPU" 4 Float32 in
+  let bound =
+    [ (y, Run.buffer host Float32 a); (z, Run.buffer host Float32 a) ]
+  in
+  Setting.context
+    [ B (Setting.debug, 2) ]
+    (fun () ->
+      let s =
+        Engine.link ~devices ~bound
+          (compile (Ops.v Op.Linear ~src:[ fill; Ops.call copy [ z; y ] ]))
+      in
+      Engine.run s [||]);
+  let name_and_args words =
+    let rec args = function
+      | "arg" :: n :: _ -> n
+      | _ :: rest -> args rest
+      | [] -> failwith "the line gives no arguments"
+    in
+    (List.nth words 3, int_of_string (args words))
+  in
+  equal
+    (list (pair string int))
+    [ ("fill", 1); ("filln1", 2) ]
+    (List.map name_and_args (reported ()))
+
 let runs =
   group "runs"
     [
@@ -7286,6 +7323,8 @@ let runs =
       test
         "at DEBUG=2, a run prints a timed line per kernel of a software device"
         (reports_each_kernel "CPU:1");
+      test "at DEBUG=2, kernels of one name report each its own arguments"
+        reports_kernels_of_one_name;
     ]
 
 (* Timing *)

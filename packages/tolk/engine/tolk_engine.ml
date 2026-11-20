@@ -292,6 +292,8 @@ type builder = {
   memories : int Ops.Tbl.t;
   images : Rig_program.image Dynarray.t;
   image_of : (int * string, int) Hashtbl.t;
+  labels : (string, Ops.t list) Hashtbl.t;
+      (* each kernel name's programs, in the order first launched *)
   inputs : (input * Rig_program.input) Dynarray.t;
   slot_inputs : (int, int) Hashtbl.t;
   mutable bound_inputs : (Rig.Buffer.t * int) list;
@@ -833,10 +835,29 @@ let note_start b (l : located) =
             (phase buf align) align p
       | Bound _ -> ())
 
+(* The label of a launch of the program [prg], whose kernel is named [name]:
+   the name for the schedule's first program of that name, numbered past it
+   for each other ([n1], [n2], ...) in the order they are first launched, so
+   that a profile's work tells apart the kernels of one name. Two programs
+   that compile to one binary, as an attention's over two numbers of rows,
+   are told apart too, since their calls' arguments and estimates differ.
+   The numbers are the schedule's own: another schedule numbers its programs
+   afresh, and compilation's output names the programs unnumbered. *)
+let label b name prg =
+  let seen = Option.value (Hashtbl.find_opt b.labels name) ~default:[] in
+  let k =
+    match List.find_index (Ops.equal prg) seen with
+    | Some k -> k
+    | None ->
+        Hashtbl.replace b.labels name (seen @ [ prg ]);
+        List.length seen
+  in
+  if k = 0 then name else name ^ "n" ^ string_of_int k
+
 (* The launch of the compiled program [prg] that [call] makes on [d]. *)
 let launch b call prg d =
   let info = program_info prg and k = kernel_of prg in
-  let kname = Ops.function_name k in
+  let kname = label b (Ops.function_name k) prg in
   let kind = (target d).device in
   if kind <> info.target.device then
     fail b.fn "%s runs no %s program" (Rig.name d) info.target.device;
@@ -1111,6 +1132,7 @@ let builder ~fn ~separate ~devices bound =
     memories = Ops.Tbl.create 16;
     images = Dynarray.create ();
     image_of = Hashtbl.create 16;
+    labels = Hashtbl.create 16;
     inputs = Dynarray.create ();
     slot_inputs = Hashtbl.create 16;
     bound_inputs = [];
@@ -1455,9 +1477,8 @@ let print_reports t events =
   let vars = bindings t in
   let line k time =
     let args = Realize.get_call_arg_uops k.call in
-    report ~device:(Rig.name k.device)
-      ~name:(Realize.get_call_name ~var_vals:vars k.call args)
-      ~args:(List.length args) ~vars k.estimates time
+    report ~device:(Rig.name k.device) ~name:k.name ~args:(List.length args)
+      ~vars k.estimates time
   in
   let kernel d name =
     List.find_opt

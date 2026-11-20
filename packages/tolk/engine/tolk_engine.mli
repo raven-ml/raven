@@ -119,6 +119,9 @@ val link :
       ({!Rig.Submission}), and each of them is a submission of its own while
       {!Tolk.Setting.debug} is [2] or more, so that a submission's work in a
       profile ({!Rig.Profile.Work}) is one kernel's.
+    - A launch is labelled with its kernel's name, numbered past the
+      schedule's first program of that name ([n1], [n2], ...), so that a
+      profile's work names kernels of one name apart.
     - A range around calls is a loop of the program, and so is a back edge,
       which reads its flag before each trip.
 
@@ -186,8 +189,8 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     or more, [run] first prints ["jit execs n calls"] on standard output, [n]
     its number of calls. When it is [2] or more, [run] prints a line for each
     kernel on standard output: its device, how many kernels ran before it, its
-    name, its number of arguments, and its time and throughput, where its device
-    records its submission's work ({!Rig.Profile.Work}).
+    launch's label, its number of arguments, and its time and throughput, where
+    its device records its submission's work ({!Rig.Profile.Work}).
 
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
     a buffer of its device holding its parameter's bytes, if a
