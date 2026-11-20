@@ -3,9 +3,10 @@
 On an NVIDIA RTX 5000 Ada, raven embeds objects with aion-base 1.6 times as
 fast as AION-1's own PyTorch code and computes redshift posteriors 1.3 times
 as fast (level with PyTorch under `torch.compile`), and draws DESI spectra at
-0.74 times its speed. On two CPU cores, raven embeds 1.4 times as fast as
-PyTorch eagerly (`--eager`), and at a third of its speed compiled, the
-default.
+0.74 times its speed. As a whole command, `main.exe embed` takes 1.8 s for
+64 real objects against 8.0 s for upstream's code. On two CPU cores, raven
+embeds 1.4 times as fast as PyTorch eagerly (`--eager`), and at a third of
+its speed compiled, the default.
 
 ## The model on a GPU
 
@@ -111,19 +112,22 @@ Seconds for a new process from its start to its exit: `main.exe` and
 `bench/upstream.py`, the tutorial's code, each loading aion-base's released
 weights from a warm page cache, reading real rows of the Multimodal Universe
 with h5py or `Survey`, and writing an npz file. 64 objects of the tutorial's
-file, 64 stars of Gaia's healpix 1631, in batches of 16; raven's kernels
-come from its disk cache.
+file and 64 stars of Gaia's healpix 1631 on the GPU, 16 objects and 4 stars
+on the CPU, in batches of 16; raven's kernels come from its disk cache.
 
-| | raven, CUDA | PyTorch, CUDA | raven, CPU eager (`--eager`) | PyTorch, CPU |
-|---|---|---|---|---|
-| `embed`, image, spectrum and 9 values | not measured | 8.32 (8.18–8.36) | 22.6 (22.5–23.4) | 31.8 (31.5–32.1) |
-| `posterior` of redshift, image and 4 fluxes | not measured | 6.32 (6.32–6.34) | 15.3 (15.2–15.7) | 20.2 (19.8–20.7) |
-| `generate` of a DESI spectrum from XP, 12 steps | not measured | 8.10 (8.07–8.19) | 20.2 (19.7–21.2) | 17.0 (16.9–17.2) |
+| | raven, CUDA | PyTorch, CUDA | raven, CPU compiled (default) | raven, CPU eager (`--eager`) | PyTorch, CPU |
+|---|---|---|---|---|---|
+| `embed`, image, spectrum and 9 values | 1.80 (1.80–1.82) | 7.95 (7.88–7.98) | not measured | not measured | not measured |
+| `posterior` of redshift, image and 4 fluxes | 1.75 (1.72–1.88) | 5.99 (5.96–6.02) | not measured | not measured | not measured |
+| `generate` of a DESI spectrum from XP, 12 steps | 5.08 (5.04–5.12) | 7.66 (7.66–7.66) | not measured | not measured | not measured |
+| `embed` over an empty kernel cache | 9.88 (9.73–9.88) | | not measured | nothing to compile | |
 
-On the CPU the commands take 16 objects and 4 stars, and follow the model's
-rows: raven embeds and computes posteriors faster, and draws spectra
-slower. `main.exe` now runs the codecs on the GPU it computes on, and
-compiles by default; its CUDA rows and its compiled CPU rows are owed.
+On the GPU, besides the model's time at the tables' rates, `main.exe`'s
+`embed` takes 1.2 s to start, load the weights, read the rows and run the
+codecs, which it runs on the GPU as PyTorch does; PyTorch's process takes
+6.9 s. `generate` draws spectra slower (The model on a GPU) but starts
+faster, so it finishes first. Compiling raven's kernels over an empty cache
+adds 8 s to `embed`; PyTorch ships its kernels compiled.
 
 Device memory while embedding 16 objects, the most each side held,
 allocator caches included: raven 1.1 GiB with aion-base and 3.1 GiB with
@@ -138,10 +142,12 @@ which PyTorch's holds.
   two cores (`taskset`), torch with two threads, the CPU rows with the GPU
   hidden. Other users' jobs shared the host, at a load of 6 to 21, never the
   GPU: its process list was empty before and after every GPU run.
-- **Versions.** raven at eba27a14be. AION-1 (`polymathic-aion`) at
-  db7fba6d on torch 2.15.0+cu132, Python 3.12.15, cuDNN 9.26. The whole
-  commands load polymathic-ai/aion-base at 40541618 and aion-large at
-  cfdb89e8, the Hub's current commits, which `Hub` pins.
+- **Versions.** raven at eba27a14be for the model's and the codecs' rows,
+  and at 50d61418f0 for the whole commands, after `main.exe` moved its
+  codecs to the device and compiled by default. AION-1 (`polymathic-aion`)
+  at db7fba6d on torch 2.15.0+cu132, Python 3.12.15, cuDNN 9.26. The whole
+  commands load polymathic-ai/aion-base at 40541618, the Hub's current
+  commit, which `Hub` pins.
 - **Statistic.** Three rounds on 2026-11-20, each running raven and PyTorch
   in turn on one device, in alternate orders. raven's cells are thumper's
   medians (5 samples on the GPU, 3 on the host, after 3 warmup calls), the
