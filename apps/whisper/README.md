@@ -8,6 +8,11 @@ fallback to higher temperatures. The transcript is written as text,
 subtitles (VTT, SRT), tab-separated values or JSON, as upstream's `whisper`
 command writes them.
 
+On an NVIDIA RTX 5000 Ada at float32, raven transcribes speech at 374 times
+real time with tiny, 120 with small and 65 with large-v3-turbo, against
+openai-whisper's 202, 68 and 71 and faster-whisper's 341, 107 and 73.
+[PERFORMANCE.md](PERFORMANCE.md) has every number and how to reproduce it.
+
 ```bash
 dune exec apps/whisper/bin/main.exe -- --model tiny.en.pt --tokenizer ranks talk.flac
 ```
@@ -96,8 +101,7 @@ curl -LO https://openaipublic.azureedge.net/main/whisper/models/d3dd57d32accea0b
 - `cpu`, the default: eagerly on the host;
 - `cpu-jit`: compiled by `Rune.jit` for the host;
 - a GPU by name, compiled: `cuda`, `nv`, `amd` or `metal` for the first GPU
-  of that kind that rig opens, `cuda:1` for the second. This path has not
-  been run on a GPU.
+  of that kind that rig opens, `cuda:1` for the second.
 
 ## Tests
 
