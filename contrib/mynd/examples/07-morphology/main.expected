@@ -1,0 +1,5 @@
+luma above 0.5: 57569 pixels in 394 pieces
+opened by a disk of radius 2: 49660 pixels in 61 pieces
+closed: 64467 pixels in 125 pieces
+without pieces of at most 100 pixels: 55103 pixels in 16 pieces
+largest piece: 13838 pixels, box [19, 178, 250, 300]
