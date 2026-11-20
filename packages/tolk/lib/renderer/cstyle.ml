@@ -2797,6 +2797,11 @@ let cuda_kernel ?(copies = []) ?(prefix = []) l ~name
 let sm89_units = 100
 let sm89_in_flight = 18304
 
+(* sm_89's L2 is that of the part its facts were measured on, fudge's RTX
+   5000 Ada: 64 MiB, its CUDA's cudaDevAttrL2CacheSize. Other sm_89 parts
+   hold other caches and take the same programs ({!Renderer.t.l2}). *)
+let sm89_l2 = 64 * 1024 * 1024
+
 let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
   let arch = target.arch in
   let tensor_cores = Tc.cuda arch in
@@ -2844,8 +2849,8 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
     render (cuda_kernel ~copies) l uops
   in
   let name = if sync then "CUDARenderer without cp.async" else "CUDARenderer" in
-  let units, in_flight =
-    if ver = 89 then (sm89_units, sm89_in_flight) else (0, 0)
+  let units, in_flight, l2 =
+    if ver = 89 then (sm89_units, sm89_in_flight, sm89_l2) else (0, 0, 0)
   in
   (* A launch of 64 members runs fastest, and NVRTC's time a member, least
      at 16 to 32, grows steeply past 64. On fudge with CUDA 13, 256 alike
@@ -2866,7 +2871,7 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~local_threads_max:1024 ~shared_max:49152
     ~async_copy ~tensor_cores
-    ~units ~in_flight ~extra_matcher:(cuda_extra_matcher ver)
+    ~units ~in_flight ~l2 ~extra_matcher:(cuda_extra_matcher ver)
     ~code_for_op:cuda_lang.code_for_op ~native ~fma ~render ~compiler target
 
 (* A cubin on every device: the disk cache keeps the GPU's code, which the

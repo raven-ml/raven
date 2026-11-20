@@ -236,8 +236,8 @@ end
 
 val split_targets : Opt.target -> Ops.Axis_type.t list
 (** [split_targets target] is the roles of the axes a split can move to
-    [target]: global, local and weak axes to {!Opt.Upcast}, and global and weak
-    axes to {!Opt.Local}. *)
+    [target]: global, local and weak axes to {!Opt.Upcast}, global and weak
+    axes to {!Opt.Local}, and global axes to {!Opt.Global}. *)
 
 val threads_fixed : Ops.t -> bool
 (** [threads_fixed ast] is [true] iff the builder of the kernel [ast], or of a

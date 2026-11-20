@@ -505,10 +505,12 @@ let opt : Opt.t codec =
   let ints = list int in
   let target =
     let write : Opt.target -> Ops.Axis_type.t = function
+      | Global -> Global
       | Upcast -> Upcast
       | Local -> Local
     in
     let read : Ops.Axis_type.t -> Opt.target = function
+      | Global -> Global
       | Upcast -> Upcast
       | Local -> Local
       | t ->

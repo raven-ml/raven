@@ -1696,7 +1696,8 @@ let add_opt b (o : Opt.t) =
       Buffer.add_char b 's';
       add_int b axis;
       add_int b amount;
-      Buffer.add_char b (match target with Upcast -> 'u' | Local -> 'l');
+      Buffer.add_char b
+        (match target with Upcast -> 'u' | Local -> 'l' | Global -> 'g');
       add_bool b top
   | Padto { axis; amount } ->
       Buffer.add_char b 'p';

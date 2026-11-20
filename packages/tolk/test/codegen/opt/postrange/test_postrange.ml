@@ -654,7 +654,10 @@ let shifts =
   in
   let name (n, target, amount, top) =
     Printf.sprintf "axis %d by %d to %s%s" n amount
-      (match target with Opt.Upcast -> "upcast" | Local -> "local")
+      (match target with
+      | Opt.Upcast -> "upcast"
+      | Local -> "local"
+      | Global -> "global")
       (if top then " from the top" else "")
   in
   group "shift_to"
@@ -732,6 +735,21 @@ let split_targets =
       test "locals come from global and weak axes" (fun () ->
           equal (list axis_type) [ Global; Weak ]
             (Postrange.split_targets Local));
+      test "globals come from global axes" (fun () ->
+          equal (list axis_type) [ Global ] (Postrange.split_targets Global));
+      (* gpudims gives the hardware's first axis to the global axis of the
+         greatest id: a split to a global axis makes its steps the launch's
+         first. *)
+      test "a split to a global axis numbers it after every other axis"
+        (fun () ->
+          let k = K.v (kernel "sum_rows_64") (renderer "cuda") in
+          K.convert_loop_to_global k;
+          let g = List.hd (K.axes_of ~reduce:false k [ Global ]) in
+          let others = List.map Ops.axis_id (K.rngs k) in
+          let made = List.nth (Result.get_ok (K.apply_opt k (split g 2 Global))) 1 in
+          equal axis_type Global (Ops.axis_type made);
+          is_true
+            (List.for_all (fun id -> compare (Ops.axis_id made) id > 0) others));
     ]
 
 (* Choosing optimisations *)

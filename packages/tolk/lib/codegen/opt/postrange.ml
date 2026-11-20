@@ -18,10 +18,12 @@ exception Refused of string
 let check cond msg = if not cond then raise_notrace (Refused msg)
 
 let role : Opt.target -> Axis_type.t = function
+  | Global -> Global
   | Upcast -> Upcast
   | Local -> Local
 
 let split_targets : Opt.target -> Axis_type.t list = function
+  | Global -> [ Global ]
   | Upcast -> [ Global; Local; Weak ]
   | Local -> [ Global; Weak ]
 

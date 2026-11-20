@@ -11,10 +11,10 @@
     by its position among the kernel's axes. *)
 
 (** The type for the roles a split gives the axis it makes, in the order of
-    their axis types ({!Ops.Axis_type.compare}): an axis across the threads of
-    a workgroup, or an axis unrolled into the lanes of a thread, which a
-    reduction's axis unrolls as its loop. *)
-type target = Local | Upcast
+    their axis types ({!Ops.Axis_type.compare}): an axis across workgroups,
+    an axis across the threads of a workgroup, or an axis unrolled into the
+    lanes of a thread, which a reduction's axis unrolls as its loop. *)
+type target = Global | Local | Upcast
 
 (** The type for kernel optimisations. *)
 type t =

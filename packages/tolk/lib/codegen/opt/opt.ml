@@ -5,7 +5,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-type target = Local | Upcast
+type target = Global | Local | Upcast
 
 type t =
   | Tc of { axis : int; tc_select : int; tc_opt : int; use_tc : int }
@@ -18,7 +18,7 @@ let axis = function
       axis
 
 let rank = function Tc _ -> 0 | Split _ -> 1 | Padto _ -> 2 | Swap _ -> 3
-let target_rank = function Local -> 0 | Upcast -> 1
+let target_rank = function Global -> 0 | Local -> 1 | Upcast -> 2
 
 let args = function
   | Tc t -> [ t.tc_select; t.tc_opt; t.use_tc ]
@@ -37,6 +37,7 @@ let compare o0 o1 =
 let equal o0 o1 = compare o0 o1 = 0
 
 let target_name = function
+  | Global -> "AxisType.GLOBAL"
   | Local -> "AxisType.LOCAL"
   | Upcast -> "AxisType.UPCAST"
 

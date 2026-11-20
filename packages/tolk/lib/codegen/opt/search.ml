@@ -245,7 +245,7 @@ let get_kernel_actions ?max_up k =
 let opt_ints = function
   | Opt.Tc t -> [ 0; t.axis; t.tc_select; t.tc_opt; t.use_tc ]
   | Split s ->
-      let target = match s.target with Upcast -> 0 | Local -> 2 in
+      let target = match s.target with Upcast -> 0 | Global -> 1 | Local -> 2 in
       [ 1; s.axis; s.amount; target; Bool.to_int s.top ]
   | Padto p -> [ 2; p.axis; p.amount; 0; 0 ]
   | Swap s -> [ 3; s.axis; s.with_axis; 0; 0 ]
@@ -264,8 +264,10 @@ let decode_opts s =
     | [] -> []
     | 0 :: axis :: tc_select :: tc_opt :: use_tc :: rest ->
         Opt.Tc { axis; tc_select; tc_opt; use_tc } :: opts rest
-    | 1 :: axis :: amount :: ((0 | 2) as target) :: top :: rest ->
-        let target = if target = 0 then Opt.Upcast else Local in
+    | 1 :: axis :: amount :: ((0 | 1 | 2) as target) :: top :: rest ->
+        let target =
+          match target with 0 -> Opt.Upcast | 1 -> Global | _ -> Local
+        in
         Opt.Split { axis; amount; target; top = top <> 0 } :: opts rest
     | 2 :: axis :: amount :: _ :: _ :: rest ->
         Opt.Padto { axis; amount } :: opts rest

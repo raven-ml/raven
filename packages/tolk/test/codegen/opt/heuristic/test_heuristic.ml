@@ -669,7 +669,7 @@ type operand = Loaded | Divided | Relu | Affine | Affine_rows
    product, [x] read as [operand] says and [w] of type [matrix], laid out by
    its rows, or by its columns, [w[k, j]], where [by_columns]. *)
 let dense ?(operand = Loaded) ?(matrix = Dtype.Bfloat16) ?(by_columns = false)
-    rows cols depth =
+    ?(ids = (1, 2)) rows cols depth =
   let open Ops.O in
   let param slot size dt = Shape.param ~shape:[ Ops.Int size ] slot dt in
   let affine = operand = Affine || operand = Affine_rows in
@@ -681,8 +681,8 @@ let dense ?(operand = Loaded) ?(matrix = Dtype.Bfloat16) ?(by_columns = false)
   and norm = param 3 rows Dtype.Float32
   and gamma = param 4 (if operand = Affine then depth else rows) Dtype.Float32
   and beta = param 5 (if operand = Affine then depth else rows) Dtype.Float32 in
-  let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 1 ]
-  and j = Ops.range ~axis_type:Weak (Ops.Int cols) [ 2 ]
+  let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ fst ids ]
+  and j = Ops.range ~axis_type:Weak (Ops.Int cols) [ snd ids ]
   and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
   let ld p at = Ops.cast (Ops.index p [ at ]) Dtype.Float32 in
   let a =
@@ -908,6 +908,56 @@ let passes_or_core =
       let o = Heuristic.hand_coded_optimizations s in
       equal Testable.bool streamed (streams o);
       equal Testable.bool (not streamed) (takes_core o))
+
+(* A staged core's workgroups start in groups of up to 16 tiles along the
+   slower of its two workgroup axes, the one of the lesser id ({!Stage}):
+   that axis splits into the groups and the group's tiles, the latter
+   launched first, by the most tiles to 16 that divide it, where the
+   operand the faster axis walks is larger than the target's L2 and the
+   kernel's workgroups are the core's tiles of rows and of columns alone.
+   The grid lists the workgroup axes by id. *)
+let grouped_tiles =
+  let gpu arch =
+    Cstyle.without_compiler
+      { Helpers.Target.device = "CUDA"; renderer = "CUDA"; arch; interface = "";
+        indices = "" }
+  in
+  cases "a staged core's workgroups start in groups along its slower axis"
+    ~id:(fun (name, _, _, _, _, _) -> name)
+    [
+      ("160 tiles of rows by 128 of columns", gpu "sm_89", (1, 2), 20480,
+       16384, Some [ 10; 128; 16 ]);
+      ("the columns' tiles, slower where they take the lesser id",
+       gpu "sm_89", (2, 1), 20480, 16384, Some [ 8; 160; 16 ]);
+      ("40 tiles of rows in groups of 10", gpu "sm_89", (1, 2), 5120, 16384,
+       Some [ 4; 128; 10 ]);
+      ("16 tiles of rows in one group", gpu "sm_89", (1, 2), 2048, 16384,
+       Some [ 128; 16 ]);
+      ("one tile of columns", gpu "sm_89", (1, 2), 20480, 64, None);
+      ("a weight the L2 holds", gpu "sm_89", (1, 2), 4096, 4096, None);
+      ("a part stating no units", gpu "sm_86", (1, 2), 20480, 16384, None);
+    ]
+    (fun (_, ren, ids, rows, cols, grid) ->
+      let s = K.v (dense ~ids rows cols 4096) ren in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      let grouped =
+        List.exists
+          (function Opt.Split { target = Global; _ } -> true | _ -> false)
+          (K.applied_opts o)
+      in
+      equal Testable.bool (Option.is_some grid) grouped;
+      Option.iter
+        (fun grid ->
+          let shape = K.full_shape o in
+          equal (list int) grid
+            (List.map
+               (fun a ->
+                 match List.nth shape a with
+                 | Ops.Int n -> n
+                 | Ops.Sym _ -> -1)
+               (K.axes_of o [ Global ])))
+        grid)
 
 let passes_unstaged =
   test "a contraction of several passes streams with staging off" (fun () ->
@@ -3867,6 +3917,7 @@ let () =
              loads_together;
              applies;
              passes_or_core;
+             grouped_tiles;
              passes_unstaged;
              relu_product;
              affine_staged;

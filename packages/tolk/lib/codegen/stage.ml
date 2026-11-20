@@ -1388,6 +1388,30 @@ let admits (ren : Renderer.t) sink =
    threads. *)
 let warp_tile = 64
 
+(* A staged core's workgroups start in groups of up to [group_tiles] tiles
+   along the slower of its two workgroup axes, each group across the faster
+   axis's tiles, then the next group (Triton's matrix-multiplication
+   tutorial, "L2 Cache Optimizations": "'super-grouping' blocks in groups of
+   GROUP_M rows before switching to the next column"; CUTLASS's threadblock
+   rasterization), so that the workgroups running at once share their
+   operands' panels in L2. Started along the faster axis alone, a run of
+   many of its tiles reads all of the other axis's operand before the next
+   run reads it again: the first FFN product of TESSERA's teacher, 20480
+   bfloat16 rows by a weight of 16384 by 4096, its 128 column tiles on the
+   faster axis, streamed its 134 MB weight from memory for each band of
+   rows, at the same time whatever the clock. An operand the L2 holds is
+   read from it whatever the order, and grouping a 4096 × 4096 bfloat16
+   weight's product cost 2.5%. On an RTX 5000 Ada it took
+   27.9 ms so and 16.3 grouped by 16 rows, with the same bits, 32768 rows
+   44.6 and 26.0 ms, and a teacher call 5.9-6.0 s against 6.88; in groups
+   of 8, alternated with 16, a call took 6.09-6.16 s against 6.02-6.07.
+   CUDA does not promise the order its workgroups start in; this is the
+   order an RTX 5000 Ada was measured to start them in, their ids' order,
+   the first axis fastest. The groups are a split of the slower axis whose
+   inner part takes the kernel's next id, which gpudims gives the
+   hardware's first axis ({!Opt.target}). *)
+let group_tiles = 16
+
 (* A staged trip lasts about one copy's latency while its busiest compute
    unit copies few bytes, and those bytes over the unit's rate of fill when
    it copies many: [max (L, B / F)] for [B] bytes a trip (Volkov,
@@ -1579,6 +1603,32 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
             | None -> List.fold_left max unroll depths
         in
         let um, un, lm, ln = best in
+        (* The workgroups in groups along the axis the launch numbers the
+           slower of the two, the one of the lesser id, by the most tiles
+           to [group_tiles] that divide it ({!group_tiles}), where the
+           operand the faster axis walks is larger than the target's L2
+           and the kernel's workgroups are the core's tiles of rows and of
+           columns alone: gpudims folds a third axis into the hardware's
+           first and would undo the order. *)
+        let global r = axis_type r = Axis_type.Global in
+        let rows = sm / (um * lm) and columns = sn / (un * ln) in
+        let alone =
+          global rm && global rn && rows > 1 && columns > 1
+          && List.for_all
+               (fun u ->
+                 (not (Op.equal (op u) Op.Range))
+                 || (not (global u))
+                 || axis_id u = axis_id rm || axis_id u = axis_id rn)
+               all
+        in
+        let slow, tiles, walked =
+          if compare_range_arg rm rn < 0 then (1, rows, sn0 * n)
+          else (0, columns, sm * m)
+        in
+        let walked = walked * sk * kd * Dtype.itemsize w.dtype_in in
+        let rec most d = if d <= 1 || tiles mod d = 0 then d else most (d - 1) in
+        let group = most (min group_tiles tiles) in
+        let grouped = ren.l2 > 0 && walked > ren.l2 && alone && group > 1 in
         let when_ c opt = if c then [ opt ] else [] in
         let split axis amount target =
           Opt.Split { axis; amount; target; top = false }
@@ -1591,7 +1641,8 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
                else when_ (un > 1) (split 0 un Opt.Upcast))
             @ when_ (lm = 2) (split 1 2 Opt.Local)
             @ when_ (ln = 2) (split 0 2 Opt.Local)
-            @ when_ (u > 1) (split 2 u Opt.Upcast),
+            @ when_ (u > 1) (split 2 u Opt.Upcast)
+            @ when_ grouped (split slow group Opt.Global),
             two_stages )
   in
   let core =

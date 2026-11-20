@@ -297,6 +297,15 @@ type t = private {
           ({!Stage.tile}). [0] where unmeasured, which keeps a staged core's
           trips at [32] values and its tile at [core_threads]'s. It moves no
           sum's order. Fixed per target, as [core_threads] is. *)
+  l2 : int;
+      (** The bytes of the cache a part of the target's units share between
+          them and memory, [0] where not stated, which starts no workgroup
+          in a group: a staged core's workgroups start in groups where the
+          operand they walk is larger ({!Stage.tile}). It moves no sum's
+          order, but a program is kept under its target alone
+          ({!Codegen.program_key}), so it is fixed per target, at the part
+          measured, as [units] is: a part of another cache takes the same
+          programs at another speed. *)
   extra_matcher : (unit, Ops.t) Ops.Pattern_matcher.t;
       (** The rewrites the target needs after every other. *)
   launch_members : int;
@@ -361,6 +370,7 @@ val v :
   ?local_workgroups:int ->
   ?units:int ->
   ?in_flight:int ->
+  ?l2:int ->
   ?extra_matcher:(unit, Ops.t) Ops.Pattern_matcher.t ->
   ?launch_members:int ->
   ?launch_args:int ->
@@ -389,7 +399,7 @@ val v :
     - [per_byte_first] is [64], [sm_89]'s crossover, [core_threads] is
       [16384], [stream_threads] [32768] and [local_workgroups] [256],
       [sm_89]'s, which every target takes until its own are measured;
-    - [units] and [in_flight] are [0];
+    - [units], [in_flight] and [l2] are [0];
     - [launch_members] is [max_int]; CUDA's and Metal's renderers bound
       it;
     - [launch_args] is [max_int];
