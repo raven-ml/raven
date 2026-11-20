@@ -1,17 +1,7 @@
-# /// script
-# requires-python = "==3.12.*"
-# dependencies = [
-#   "numpy==2.5.5",
-#   "h5py==3.16.0",
-#   "fsspec==2026.9.0",
-#   "aiohttp==3.14.5",
-#   "requests==2.34.2",
-# ]
-# ///
-"""Cut real Multimodal Universe rows into small local HDF5 files, for mmu_parity.exe and
-generate_parity.exe.
+"""Cut real Multimodal Universe rows into small local HDF5 files, for parity.exe's parts
+mmu and generate.
 
-    uv run test/gen/mmu_cut.py OUT_DIR [GAIA]
+    uv run --locked mmu_cut.py OUT_DIR [GAIA]
 
 Reads each source by HTTP Range through h5py and fsspec, so only the rows' bytes and the
 files' metadata are fetched, and writes OUT_DIR/<name>.h5 with the first rows of each

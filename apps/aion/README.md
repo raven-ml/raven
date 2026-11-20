@@ -157,9 +157,17 @@ AION_PARITY=DIR dune build @apps/aion/test/parity
 ```
 
 The codecs, Survey's tokens of real rows and `generate`'s draws must match,
-and fail the alias otherwise. Each program's header in `test/` says what it
-compares. Without `AION_PARITY`, or with a set's ensemble file missing, the
-alias fails and names what is missing. A dune server running in watch mode
+and fail the alias otherwise. Each is a part of `test/parity/parity.exe` with
+a rule of its own, so one part's failure leaves the others' verdicts; each
+part's module says what it compares. The codecs and the transformer compiled
+on a GPU are the part `gpu`, under an alias of its own, since it needs a GPU:
+
+```bash
+AION_PARITY=DIR dune build @apps/aion/test/parity-gpu
+```
+
+Without `AION_PARITY`, with an input missing, or for `gpu` without a GPU, a
+part fails and names what is missing. A dune server running in watch mode
 reads `AION_PARITY` from its own environment, never from the client's: start
 the server with it set, or stop the server before running the alias. `DIR`
 holds:
@@ -167,15 +175,16 @@ holds:
 | Path | What it holds | Written by |
 |---|---|---|
 | `huggingface/` | a Hub cache holding aion-base at `Hub.revision`, as `RAVEN_CACHE_ROOT=DIR` reads it | `main.exe`'s first run |
-| `goldens/` | AION-1's `tests/test_data` as safetensors | `test/gen/goldens.py` |
-| `subset/` | the parity subset: rows of the tutorial's file and of each survey | `test/gen/subset.py` |
-| `ensemble/spectrum/`, `ensemble/image/` | the codecs' rounding ensembles, a file per set | `test/gen/spectrum_ensemble.py`, `image_ensemble.py` |
-| `mmu/` | a few rows of each survey's file and of the tutorial's, with AION-1's tokens of them | `test/gen/mmu_cut.py`, `mmu_tokens.py` |
+| `goldens/` | AION-1's `tests/test_data` as safetensors | `goldens.py` |
+| `subset/` | the parity subset: rows of the tutorial's file and of each survey | `subset.py` |
+| `ensemble/spectrum/`, `ensemble/image/` | the codecs' rounding ensembles, a file per set | `spectrum.py`, `image.py`, `--weights aion-base` |
+| `mmu/` | a few rows of each survey's file and of the tutorial's, with AION-1's tokens of them | `mmu_cut.py`, `mmu_tokens.py` |
+| `reference/f64/` | AION-1's codecs and transformer in float64 on the parity subset | `transformer.py --weights aion-base --precision f64` |
 
-The scripts in `test/gen` run with `uv run` from `apps/aion`, with AION-1's
-code at db7fba6d and torch 2.14.1 on the CPU; their headers give their
-arguments. The same scripts record the fixtures in `test/upstream` and
-`test/mmu`, as `test/dune` says.
+The scripts in `test/gen` run from there with `uv run --locked`, in the
+environment of its `pyproject.toml`: AION-1's code at db7fba6d and torch
+2.14.1 on the CPU. Their headers give their arguments. The same scripts
+record the fixtures in `test/upstream` and `test/mmu`, as `test/dune` says.
 
 ## Benchmarks
 

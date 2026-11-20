@@ -1,26 +1,9 @@
-# /// script
-# requires-python = "==3.12.*"
-# dependencies = [
-#   "torch==2.14.1",
-#   "numpy==2.5.5",
-#   "safetensors==0.8.0",
-#   "polymathic-aion @ git+https://github.com/PolymathicAI/AION@db7fba6df53b605e3a1a58b7f52fc33bfaaa96d3",
-# ]
-#
-# [tool.uv]
-# sources = { torch = { index = "pytorch-cpu" } }
-#
-# [[tool.uv.index]]
-# name = "pytorch-cpu"
-# url = "https://download.pytorch.org/whl/cpu"
-# explicit = true
-# ///
 """Fixture for test_roar: upstream's ROAR step on the narrow transformer, and the rounding
 ensemble of its logits.
 
-    uv run test/gen/roar.py DIR [--n 32]
+    uv run --locked roar.py DIR [--n 32]
 
-DIR is test/upstream, which holds transformer.py's narrow AION
+DIR is ../upstream, which holds transformer.py's narrow AION
 (transformer.safetensors) and its inputs (transformer_golden.safetensors). The model is
 rebuilt from that file with upstream's code (polymathic-aion at db7fba6d): the encoder's
 modality embeddings from the decoder's, as the file aliases them; the decoder's token
@@ -51,11 +34,9 @@ this script, torch's version and upstream's commit.
 """
 import argparse
 import os
-import sys
 import types
 from collections import OrderedDict
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
 import torch
 from safetensors.numpy import load_file, save_file
@@ -63,7 +44,7 @@ from safetensors.numpy import load_file, save_file
 from aion.model import AION
 from aion.fourm.generate import GenerationSampler, init_full_input_modality
 import perturb
-from perturb import U32, Ensemble
+from perturb import U32, Ensemble, spread
 
 perturb.NOROUND.add("embedding")
 
@@ -208,15 +189,15 @@ for i, (tgt, rev, pos) in enumerate(states):
     f32 = run(model, torch.float32, tgt, rev, pos)
     s = run(model64, torch.float64, tgt, rev, pos, copies=a.n,
             mode=Ensemble(4100 + i, U32))
-    spread = np.sqrt(((s.reshape((a.n,) + ref.shape) - ref) ** 2).mean(0))
+    sp = spread(s, ref)
     data[f"{name}.tokens"] = tgt
     data[f"{name}.revealed"] = rev.astype(np.uint8)
     data[f"{name}.positions"] = pos.astype(np.int64)
     data[f"f64.{name}"] = ref
-    data[f"s.{name}"] = spread.astype(np.float32)
-    z = np.abs(f32 - ref) / spread
+    data[f"s.{name}"] = sp.astype(np.float32)
+    z = np.abs(f32 - ref) / sp
     print(f"{name}: positions {pos.tolist()}, |ref| max {np.abs(ref).max():.3g}, spread"
-          f" median {np.median(spread):.3g}, float32 torch max z {z.max():.2f}", flush=True)
+          f" median {np.median(sp):.3g}, float32 torch max z {z.max():.2f}", flush=True)
 
 meta = {"script": "apps/aion/test/gen/roar.py", "torch": torch.__version__,
         "upstream": "PolymathicAI/AION db7fba6df53b", "seed": "numpy 4, torch 0, ensemble 4100+i"}

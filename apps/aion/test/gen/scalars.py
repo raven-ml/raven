@@ -1,13 +1,6 @@
-# /// script
-# requires-python = "==3.12.*"
-# dependencies = [
-#   "numpy==2.5.5",
-#   "safetensors==0.8.0",
-# ]
-# ///
 """Fixtures for test_parity: the scalar codecs' codebooks and upstream's goldens.
 
-    uv run test/gen/scalars.py [--whole] CODECS GOLDENS_ST test/upstream
+    uv run --locked scalars.py [--whole] CODECS GOLDENS_ST ../upstream
 
 CODECS is polymathic-ai/aion-base's codecs/ directory at 40541618 (the HF
 snapshot), GOLDENS_ST upstream's tests/test_data goldens converted to

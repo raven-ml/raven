@@ -3,21 +3,20 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* generate_parity.exe MAIN: main.exe's generate against Roar.sample on real
-   Multimodal Universe rows, with AION-1's weights, under the alias parity.
+(* main.exe's generate against Roar.sample on real Multimodal Universe rows,
+   with AION-1's weights and codecs (1.27 GB).
 
-   MAIN is main.exe. It reads AION_PARITY's mmu, the rows mmu_parity.exe reads,
+   MAIN is main.exe. It reads AION_PARITY's mmu, the rows the mmu part reads,
    and writes main.exe's files to a temporary directory. Both read aion-base's
    weights and codecs from AION_PARITY's huggingface, as RAVEN_CACHE_ROOT.
 
-   For each case the program runs MAIN generate --eager on DIR's files, then
-   draws the same tokens from the library: Survey.read and Codecs.encode of the
-   case's rows with a present token, in batches of the case's size as main.exe
-   batches them, and Roar.sample with the key
-   [fold_in (fold_in (key seed) r) j] for draw j of row r, at the counts
-   written out below. The tokens must be equal, and each entry main.exe decoded
-   must equal Codecs.decode of them within 1e-6 of its largest magnitude. The
-   cases are:
+   For each case the part runs MAIN generate --eager on DIR's files, then draws
+   the same tokens from the library: Survey.read and Codecs.encode of the case's
+   rows with a present token, in batches of the case's size as main.exe batches
+   them, and Roar.sample with the key [fold_in (fold_in (key seed) r) j] for
+   draw j of row r, at the counts written out below. The tokens must be equal,
+   and each entry main.exe decoded must equal Codecs.decode of them within 1e-6
+   of its largest magnitude. The cases are:
 
    - [z]: redshift from the tutorial file's Legacy Survey image and g, r, i, z
    fluxes (AION-1 §7.1.1), rows 0:6 in batches of 4, three draws;
@@ -25,33 +24,16 @@
    - [desi]: a DESI spectrum from Gaia's XP coefficients (§7.1.2), rows 0:2 in
    batches of 1, in 12 steps of upstream's linear counts;
 
-   - [image]: a Legacy Survey image from a DESI spectrum, row 0, in 4 steps.
-
-   It runs outside runtest: the weights are 1.27 GB with the codecs, and MMU's
-   rows are not committed. *)
+   - [image]: a Legacy Survey image from a DESI spectrum, row 0, in 4 steps. *)
 
 open Aion
-
-(* The inputs, under AION_PARITY as the README's Tests section lays them out. *)
-let parity =
-  match Sys.getenv_opt "AION_PARITY" with
-  | Some d when d <> "" -> d
-  | _ ->
-      prerr_endline
-        "generate_parity: AION_PARITY is unset: set it to the directory of the \
-         README's Tests section";
-      exit 1
-
-let () = Unix.putenv "RAVEN_CACHE_ROOT" parity
-let main = Sys.argv.(1)
-let dir = Filename.concat parity "mmu"
-let out = Filename.temp_dir "aion-generate" ""
+open Part
 
 type case = {
   name : string;
   survey : Survey.survey;
-  source : string;  (** A file under [dir]. *)
-  group : string option;  (** The source's group, if not the file's root. *)
+  source : string; (* A file under AION_PARITY's mmu. *)
+  group : string option; (* The source's group, if not the file's root. *)
   inputs : Modality.t list;
   target : Modality.t;
   rows : int * int;
@@ -107,40 +89,34 @@ let cases =
     };
   ]
 
-let run c file =
-  let a, b = c.rows in
-  let args =
+let generate main dir c file =
+  let a, b = c.rows and source = Filename.concat dir c.source in
+  let source =
+    match c.group with None -> source | Some g -> source ^ ":" ^ g
+  in
+  let flags =
     [
-      main;
-      "generate";
-      "--" ^ Survey.name c.survey;
-      (let file = Filename.concat dir c.source in
-       match c.group with None -> file | Some g -> file ^ ":" ^ g);
-      "--target";
-      Modality.key c.target;
-      "--inputs";
-      String.concat "," (List.map Modality.key c.inputs);
-      "--rows";
-      Printf.sprintf "%d:%d" a b;
-      "--batch";
-      string_of_int c.batch;
-      "--steps";
-      string_of_int (List.length c.reveal);
-      "--draws";
-      string_of_int c.draws;
-      "--seed";
-      string_of_int c.seed;
-      "--eager";
-      "--out";
-      file;
+      (Survey.name c.survey, source);
+      ("target", Modality.key c.target);
+      ("inputs", String.concat "," (List.map Modality.key c.inputs));
+      ("rows", Printf.sprintf "%d:%d" a b);
+      ("batch", string_of_int c.batch);
+      ("steps", string_of_int (List.length c.reveal));
+      ("draws", string_of_int c.draws);
+      ("seed", string_of_int c.seed);
+      ("out", file);
     ]
   in
-  let cmd = String.concat " " (List.map Filename.quote args) in
+  let args = List.concat_map (fun (k, v) -> [ "--" ^ k; v ]) flags in
+  let cmd =
+    String.concat " "
+      (List.map Filename.quote (main :: "generate" :: "--eager" :: args))
+  in
   if Sys.command cmd <> 0 then failwith (cmd ^ ": failed")
 
 (* The draws of [c] by the library, [[|n; draws; k|]], and each entry main.exe
    decodes, stacked likewise. *)
-let replay t codecs c =
+let replay dir t codecs c =
   let src =
     Survey.load ?group:c.group c.survey (Filename.concat dir c.source)
   in
@@ -163,7 +139,8 @@ let replay t codecs c =
     let ins = encode rows in
     let keys =
       Nx.Rng.fold_in_tensor (Nx.Rng.key c.seed)
-        (Nx.create Nx.int64 [| Array.length rows |]
+        (Nx.create Nx.int64
+           [| Array.length rows |]
            (Array.map Int64.of_int rows))
     in
     let draws =
@@ -198,32 +175,29 @@ let replay t codecs c =
 
 let largest x = Nx.item [] (Nx.max (Nx.abs (Nx.cast Nx.float64 x)))
 
-let () =
+let run main =
+  Unix.putenv "RAVEN_CACHE_ROOT" (Lazy.force dir);
+  let mmu = path "mmu" and out = Filename.temp_dir "aion-generate" "" in
   let t = Transformer.of_archive (Hub.weights Base) in
-  let bad = ref 0 in
   List.iter
     (fun c ->
       let file = Filename.concat out (c.name ^ ".npz") in
-      run c file;
+      generate main mmu c file;
       let a = Nx_io.load_npz file in
-      let got =
-        Nx.unpack Nx.int64 (Option.get (Nx_io.Archive.find "tokens" a))
-      in
+      let got = get Nx.int64 "tokens" a in
       let codecs = Codecs.load (c.target :: c.inputs) in
-      let want, entries = replay t codecs c in
+      let want, entries = replay mmu t codecs c in
       let same =
         Nx.shape got = Nx.shape want && Nx.item [] (Nx.array_equal got want)
       in
-      if not same then incr bad;
-      Printf.printf "%-6s tokens [%s] %s\n%!" c.name
+      if not same then fail ();
+      printf "%-6s tokens [%s] %s\n%!" c.name
         (String.concat "; "
            (List.map string_of_int (Array.to_list (Nx.shape got))))
         (if same then "equal" else "differ");
       List.iter
         (fun (name, w) ->
-          let g =
-            Nx.unpack Nx.float32 (Option.get (Nx_io.Archive.find name a))
-          in
+          let g = get Nx.float32 name a in
           (* NaN, redshift's class 1024, is equal to NaN here. *)
           let nan x = Nx.isnan x in
           let d =
@@ -234,13 +208,12 @@ let () =
           in
           let d = largest d and m = largest w in
           let ok = d <= 1e-6 *. m in
-          if not ok then incr bad;
-          Printf.printf "%-6s %s %s, largest difference %.3g of %.3g\n%!" c.name
-            name
+          if not ok then fail ();
+          printf "%-6s %s %s, largest difference %.3g of %.3g\n%!" c.name name
             (if ok then "equal" else "differ")
             d m)
         entries)
     cases;
   Array.iter (fun f -> Sys.remove (Filename.concat out f)) (Sys.readdir out);
   Sys.rmdir out;
-  exit (if !bad = 0 then 0 else 1)
+  finish ()

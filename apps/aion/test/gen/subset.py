@@ -1,18 +1,7 @@
-# /// script
-# requires-python = "==3.12.*"
-# dependencies = [
-#   "numpy==2.5.5",
-#   "safetensors==0.8.0",
-#   "h5py==3.16.0",
-#   "fsspec==2026.9.0",
-#   "aiohttp==3.14.5",
-#   "requests==2.34.2",
-# ]
-# ///
 """Extract the AION-1 parity subset from remote HDF5 files by HTTP Range reads.
 
-    uv run test/gen/subset.py --list SOURCE          # dataset names of one source
-    uv run test/gen/subset.py OUT_DIR [SOURCE ...]   # write OUT_DIR/<source>.safetensors
+    uv run --locked subset.py --list SOURCE          # dataset names of one source
+    uv run --locked subset.py OUT_DIR [SOURCE ...]   # write OUT_DIR/<source>.safetensors
 
 Every source file is HDF5 (the tutorial's cross-matched provabgs_desi_ls.hdf5 and the
 Multimodal Universe v1 tree at Flatiron). h5py reads them through fsspec's HTTP file,

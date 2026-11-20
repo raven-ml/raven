@@ -1,22 +1,6 @@
-# /// script
-# requires-python = "==3.12.*"
-# dependencies = [
-#   "torch==2.14.1",
-#   "numpy==2.5.5",
-#   "safetensors==0.8.0",
-# ]
-#
-# [tool.uv]
-# sources = { torch = { index = "pytorch-cpu" } }
-#
-# [[tool.uv.index]]
-# name = "pytorch-cpu"
-# url = "https://download.pytorch.org/whl/cpu"
-# explicit = true
-# ///
 """Convert upstream's tests/test_data/*.pt goldens to safetensors, one file per golden.
 
-    uv run test/gen/goldens.py SRC_DIR DST_DIR
+    uv run --locked goldens.py SRC_DIR DST_DIR
 
 SRC_DIR is upstream's tests/test_data (PolymathicAI/AION at db7fba6d).
 

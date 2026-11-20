@@ -1,5 +1,5 @@
-"""The perturbing dispatch mode of the rounding ensemble, which the fixture and ensemble
-recorders import.
+"""The perturbing dispatch mode of the rounding ensemble, which the generators import,
+the ensemble's samples and their spread, and a recorder of one file from each object's.
 
 The unit roundoff is a parameter so that one mode serves float32's local scale (2^-24)
 and float64's (2^-53). Every rounding aten operation's float64 result is moved by
@@ -18,9 +18,14 @@ ELU as expm1 within 1 ulp below 0 and exact above (kaun's elu); SiLU as x times
 sigmoid within 3 ulps (kaun's silu); LeakyReLU's negative branch as one product.
 """
 import math
+import os
+import time
 from collections import Counter
 
+import numpy as np
 import torch
+from safetensors import safe_open
+from safetensors.numpy import load_file, save_file
 from torch.utils._python_dispatch import TorchDispatchMode
 
 U32 = 2.0 ** -24
@@ -212,3 +217,53 @@ class Ensemble(TorchDispatchMode):
         return y, m, r
 
 
+def samples(run, keys, n, chunk, seed, u):
+    """n runs of run(copies, mode) under the dispatch mode at scale u, in batches of chunk
+    copies, the batch from copy lo drawing from seed + lo: each of keys' outputs
+    concatenated along the first axis."""
+    parts, census = [], Counter()
+    for lo in range(0, n, chunk):
+        mode = Ensemble(seed + lo, u)
+        parts.append(run(min(chunk, n - lo), mode))
+        census.update(mode.census)
+    unknown = {k: v for k, v in census.items() if k.startswith("UNKNOWN")}
+    if unknown:
+        print("unknown ops", unknown, flush=True)
+    return {k: np.concatenate([q[k] for q in parts], 0) for k in keys}
+
+
+def spread(s, ref):
+    """The root mean square distance from ref of the samples s, the runs of ref's
+    computation stacked along the first axis, per value."""
+    n = s.shape[0] // ref.shape[0]
+    return np.sqrt(((s.reshape((n,) + ref.shape) - ref) ** 2).mean(0))
+
+
+def per_object(out, rows, one, meta):
+    """Writes out, the rows, n and each object's arrays one(i) for i in rows,
+    concatenated. Each object is saved as it finishes, under out's name with .parts for
+    .safetensors, and a rerun reads the objects saved there with meta's n and scales."""
+    parts = os.path.splitext(os.path.abspath(out))[0] + ".parts"
+    os.makedirs(parts, exist_ok=True)
+    t0 = time.time()
+    objs = []
+    for j, i in enumerate(rows):
+        path = f"{parts}/row{i}.safetensors"
+        saved = None
+        if os.path.exists(path):
+            with safe_open(path, "np") as f:
+                saved = f.metadata() or {}
+        if saved and (saved.get("n"), saved.get("scales")) == (meta["n"], meta["scales"]):
+            print(f"{meta['set']}: object {j + 1}/{len(rows)} (row {i}) already saved", flush=True)
+        else:
+            obj = {k: np.ascontiguousarray(v) for k, v in one(i).items()}
+            save_file(obj, path + ".tmp", metadata=meta)
+            os.replace(path + ".tmp", path)
+            print(f"{meta['set']}: object {j + 1}/{len(rows)} (row {i}) saved at"
+                  f" {time.time() - t0:.0f} s", flush=True)
+        objs.append(load_file(path))
+    data = {"rows": np.array(rows, np.int64), "n": np.array([int(meta["n"])], np.int64)}
+    for k in objs[0]:
+        data[k] = np.ascontiguousarray(np.concatenate([o[k] for o in objs], 0))
+    save_file(data, out, metadata=meta)
+    print("wrote", out, "in", f"{time.time() - t0:.0f} s", flush=True)

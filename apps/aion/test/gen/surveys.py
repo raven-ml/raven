@@ -1,16 +1,8 @@
-# /// script
-# requires-python = "==3.12.*"
-# dependencies = [
-#   "numpy==2.5.5",
-#   "safetensors==0.8.0",
-#   "h5py==3.16.0",
-# ]
-# ///
 """Synthetic Multimodal Universe files for test_survey and test/bin/aion.t.
 
-    uv run test/gen/surveys.py test/mmu
+    uv run --locked surveys.py ../mmu
 
-DIR is test/mmu. Each file has the layout of one MMU survey's HDF5 file
+DIR is ../mmu. Each file has the layout of one MMU survey's HDF5 file
 (MultimodalUniverse v1 at Flatiron, read 2026-11-19: dataset names, dtypes, string
 widths, chunking and filters), a few rows each, with values made up:
 

@@ -1,0 +1,59 @@
+; AION-1's released weights against upstream's code, outside runtest, since
+; the parts read the weights and recorded runs of upstream. Each part runs
+; under the alias parity, by a rule of its own so that one part's failure
+; leaves the others' verdicts, one at a time, on the directory AION_PARITY
+; names, laid out as the README's Tests section says:
+;   AION_PARITY=DIR dune build @apps/aion/test/parity
+; Without it, or with an input missing, a part fails.
+
+(executable
+ (name parity)
+ (libraries aion aion_support nx nx.io rig.gpus rune unix))
+
+(rule
+ (alias parity)
+ (locks %{workspace_root}/aion-parity)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:parity.exe} spectrum)))
+
+(rule
+ (alias parity)
+ (locks %{workspace_root}/aion-parity)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:parity.exe} image)))
+
+(rule
+ (alias parity)
+ (locks %{workspace_root}/aion-parity)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:parity.exe} mmu)))
+
+(rule
+ (alias parity)
+ (locks %{workspace_root}/aion-parity)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:parity.exe} generate %{exe:../../bin/main.exe})))
+
+; The gpu part has an alias of its own, since it needs a GPU:
+;   AION_PARITY=DIR dune build @apps/aion/test/parity-gpu
+
+(rule
+ (alias parity-gpu)
+ (locks %{workspace_root}/aion-parity %{workspace_root}/gpu)
+ (deps
+  (env_var AION_PARITY)
+  (universe))
+ (action
+  (run %{exe:parity.exe} gpu)))

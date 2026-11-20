@@ -1,0 +1,29 @@
+# The environment of aion's test generators, on the CPU. Run one from this
+# directory with `uv run --locked NAME.py ARGS`, its header giving ARGS.
+[project]
+name = "aion-test-gen"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = [
+  "torch==2.14.1",
+  "numpy==2.5.5",
+  "safetensors==0.8.0",
+  "huggingface-hub==2.4.0",
+  "h5py==3.16.0",
+  "fsspec==2026.9.0",
+  "aiohttp==3.14.5",
+  "requests==2.34.2",
+  # AION-1's code, PolymathicAI/AION at db7fba6d.
+  "polymathic-aion @ git+https://github.com/PolymathicAI/AION@db7fba6df53b605e3a1a58b7f52fc33bfaaa96d3",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

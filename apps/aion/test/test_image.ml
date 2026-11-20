@@ -6,7 +6,7 @@
 (* The image codec on a narrow network of Image.init: the steps' formulas,
    shapes and the laws that tie bands together; and on a narrow upstream
    network, its agreement with upstream's code, eager and compiled. AION-1's
-   network's agreement with upstream is image_parity.exe, outside runtest. *)
+   network's agreement with upstream is parity.exe image, outside runtest. *)
 
 open Windtrap
 open Aion

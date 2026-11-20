@@ -1,25 +1,6 @@
-# /// script
-# requires-python = "==3.12.*"
-# dependencies = [
-#   "torch==2.14.1",
-#   "numpy==2.5.5",
-#   "safetensors==0.8.0",
-#   "huggingface-hub==2.4.0",
-#   "h5py==3.16.0",
-#   "polymathic-aion @ git+https://github.com/PolymathicAI/AION@db7fba6df53b605e3a1a58b7f52fc33bfaaa96d3",
-# ]
-#
-# [tool.uv]
-# sources = { torch = { index = "pytorch-cpu" } }
-#
-# [[tool.uv.index]]
-# name = "pytorch-cpu"
-# url = "https://download.pytorch.org/whl/cpu"
-# explicit = true
-# ///
-"""Upstream's tokens of the real rows mmu_cut.py cut, for mmu_parity.exe.
+"""Upstream's tokens of the real rows mmu_cut.py cut, for parity.exe mmu.
 
-    uv run test/gen/mmu_tokens.py DIR
+    uv run --locked mmu_tokens.py DIR
 
 DIR holds mmu_cut.py's files. Each modality of each file is built as AION's tutorial
 builds it (Tutorial.ipynb cell 26): the column read with h5py and cast to float32, the

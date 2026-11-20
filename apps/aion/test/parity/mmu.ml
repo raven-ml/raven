@@ -4,36 +4,21 @@
   ---------------------------------------------------------------------------*)
 
 (* Survey and Codecs against upstream on real Multimodal Universe rows, with
-   AION-1's codecs, under the alias parity.
+   AION-1's codecs (400 MB).
 
    AION_PARITY's mmu holds rows cut from MMU's files by gen/mmu_cut.py (the
    tutorial's cross-matched file, a file of each survey, Gaia's whole healpix
    1631) and tokens.safetensors, upstream's tokens of the same rows
    (gen/mmu_tokens.py: the columns cast to float32 as the tutorial casts them,
-   SDSS rows trimmed, upstream's CodecManager at db7fba6d). The codecs are read
-   through Hub.codec from AION_PARITY's huggingface.
+   SDSS rows trimmed, upstream's CodecManager at db7fba6d).
 
    For every modality of every file, the tokens Codecs.encode makes of
    Survey.read's data must equal upstream's, token for token, where a token is
    present; a value that is not finite is absent here (Codecs.encode) and
-   counted apart. It runs outside runtest: the codecs' weights are 400 MB and the rows
-   are MMU's, neither of them committed. *)
+   counted apart. *)
 
 open Aion
-
-(* The inputs, under AION_PARITY as the README's Tests section lays them out. *)
-let parity =
-  match Sys.getenv_opt "AION_PARITY" with
-  | Some d when d <> "" -> d
-  | _ ->
-      prerr_endline
-        "mmu_parity: AION_PARITY is unset: set it to the directory of the \
-         README's Tests section";
-      exit 1
-
-let dir = Filename.concat parity "mmu"
-let cache_dir = Some (Filename.concat parity "huggingface")
-let upstream = Nx_io.load_safetensors (Filename.concat dir "tokens.safetensors")
+open Part
 
 (* Each file with its name in tokens.safetensors, its survey and its group. *)
 let files =
@@ -54,22 +39,22 @@ let files =
 (* Rows a call: an image batch of 4 holds about 300 MB of activations. *)
 let batch = 4
 
-let () =
-  let differ = ref 0 in
+let run () =
+  let dir = path "mmu" and cache_dir = path "huggingface" in
+  let upstream = load "mmu/tokens.safetensors" in
   List.iter
     (fun (name, survey, file, group) ->
       let t = Survey.load ?group survey (Filename.concat dir file) in
       let ms = Survey.modalities t in
-      let codecs = Codecs.load ?cache_dir ms in
+      let codecs = Codecs.load ~cache_dir ms in
       List.iter
         (fun m ->
           let key = name ^ "." ^ Modality.key m in
           match Nx_io.Archive.find key upstream with
-          | None -> Printf.printf "%-40s no upstream tokens\n%!" key
+          | None -> printf "%-40s no upstream tokens\n%!" key
           | Some p ->
               let want = Nx.unpack Nx.int64 p in
-              let n = Nx.dim 0 want in
-              let w = Nx.to_array want in
+              let n = Nx.dim 0 want and w = Nx.to_array want in
               let per = Array.length w / n in
               let same = ref 0 and diff = ref 0 and absent = ref 0 in
               let lo = ref 0 in
@@ -88,10 +73,9 @@ let () =
                   got;
                 lo := !lo + batch
               done;
-              differ := !differ + !diff;
-              Printf.printf "%-40s %6d equal %4d differ %4d absent\n%!" key
-                !same !diff !absent)
+              if !diff > 0 then fail ();
+              printf "%-40s %6d equal %4d differ %4d absent\n%!" key !same !diff
+                !absent)
         ms)
     files;
-  Printf.printf "%d tokens differ\n" !differ;
-  exit (if !differ = 0 then 0 else 1)
+  finish ()

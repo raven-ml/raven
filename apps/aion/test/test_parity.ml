@@ -43,18 +43,9 @@ let entry name a =
   | Some p -> p
   | None -> failwith ("no entry " ^ name)
 
-(* A codec's name in the fixtures: the generator read
-   codecs/NAME/model.safetensors, so NAME is the entry whose file is the
-   codec's Hub.file. *)
-let id m =
-  let file name = "codecs/" ^ name ^ "/model.safetensors" in
-  match
-    List.find_opt
-      (fun name -> file name = Hub.file (Scalar m))
-      (Nx_io.Archive.names edges)
-  with
-  | Some name -> name
-  | None -> failwith ("no codebook of " ^ Modality.key (Scalar m))
+(* A codec's name in the fixtures: NAME of its Hub.file,
+   codecs/NAME/model.safetensors, which the generator read. *)
+let id m = Filename.basename (Filename.dirname (Hub.file (Scalar m)))
 
 let codec m =
   Scalar.v (Scalar.transform_of m) (Nx.unpack Nx.float32 (entry (id m) edges))
