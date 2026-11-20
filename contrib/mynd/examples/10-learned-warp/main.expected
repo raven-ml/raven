@@ -1,0 +1,5 @@
+step  1: loss 0.0175, angle 0.0000
+step 10: loss 0.0000, angle 0.2006
+step 20: loss 0.0000, angle 0.2000
+step 30: loss 0.0000, angle 0.2000
+angle found: 0.2000 radians

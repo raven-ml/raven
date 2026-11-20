@@ -1,0 +1,6 @@
+mean error to the photograph, in codes:
+  noisy     12.63
+  box 5     8.95
+  gaussian  9.69
+  median 5  4.16
+top row's mean code: 108.0, blurred 64.5 under `Zero, 107.8 under `Symmetric_whole

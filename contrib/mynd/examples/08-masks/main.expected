@@ -1,0 +1,13 @@
+logits [3; 256; 256; 1], masks [3; 300; 451; 1]
+left eye: 2 piece(s) and 1 hole(s), cleaned to 1 and 0
+  IoU with the raw mask 0.9575
+  bbox [136, 84, 72, 62] (x, y, w, h), area 3504
+  counts "^nW1:n88J4L4L4M2…" (152 characters), decodes back: true
+right eye: 1 piece(s) and 0 hole(s), cleaned to 1 and 0
+  IoU with the raw mask 1.0000
+  bbox [289, 111, 58, 52] (x, y, w, h), area 2366
+  counts "`id2:o86J6L2M4M2…" (124 characters), decodes back: true
+nose: 1 piece(s) and 0 hole(s), cleaned to 1 and 0
+  IoU with the raw mask 1.0000
+  bbox [232, 228, 60, 30] (x, y, w, h), area 1420
+  counts "`VT26T94M2N2N2N2…" (128 characters), decodes back: true

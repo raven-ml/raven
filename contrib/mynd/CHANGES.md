@@ -17,6 +17,10 @@ All notable changes to Mynd are documented in this file.
   whose tables equal pycocotools 2.0.11's bit for bit on valid data. A mask
   result's area range reads its pixel count, where pycocotools reads the
   `bbox` a results file holds beside it.
+- Add ten examples (`examples/`) that run with the test suite on a CC0
+  photograph, from an image's values to masks, detections and a learned
+  warp. sowilo's blurs are in `05-filters`, its Sobel and Canny in
+  `06-edges`, and its threshold and morphology in `07-morphology`.
 - mynd replaces sowilo, which raven no longer ships. Each sowilo value
   becomes a mynd value, a composition on a page of the guide (`doc/`) or
   an nx call, in the table below. Every replacement takes any float dtype
