@@ -48,7 +48,8 @@
     {[
     let desi xp_bp xp_rp =
       let input m tokens : _ Tokens.t =
-        { modality = Modality.Scalar m; tokens; present = None }
+        let present = Nx.ones Nx.bool (Nx.shape tokens) in
+        { modality = Modality.Scalar m; tokens; present }
       in
       Roar.sample ~key:(Nx.Rng.key 0)
         ~reveal:[ 35; 34; 34; 34; 34; 34; 34; 34 ]
@@ -61,7 +62,7 @@ val sample :
   key:'d Nx.Rng.key ->
   ?temperature:float ->
   reveal:int list ->
-  ('b, 'd) Transformer.t ->
+  ((float, 'b, 'd) Nx.t, 'd) Transformer.t ->
   'd Tokens.t list ->
   Modality.t ->
   'd Nx.int64_t
@@ -86,10 +87,11 @@ type ('b, 'd) sampler
 (** The type for compiled samplers of one target modality with a transformer
     computing at float dtype ['b] on the device set ['d]. *)
 
-val sampler : ('b, 'd) Transformer.t -> Modality.t -> ('b, 'd) sampler
+val sampler :
+  ((float, 'b, 'd) Nx.t, 'd) Transformer.t -> Modality.t -> ('b, 'd) sampler
 (** [sampler t target] draws [target]'s tokens as {!sample} with [t] does, each
-    step one program [Rune.jit] compiles from [t]'s computation
-    ({!Transformer.eager}), with [t]'s weights captured.
+    step one program [Rune.jit] compiles from [t]'s computation, with [t]'s
+    weights captured.
 
     The sampler keeps, for as long as it lives, a program of the orders per
     batch size and placement, and step programs per count of [reveal], list
@@ -107,8 +109,8 @@ val draw :
   'd Nx.int64_t
 (** [draw s ~key ~reveal inputs] is {!sample}[ ~key ~reveal t inputs target]
     for [s]'s transformer and target, computed by [s]'s programs: the same
-    draws where the logits agree, to the accuracy [Rune.jit] states. It checks
-    [inputs] on the host first, as {!Transformer.check} does, so a refusal
-    comes before any program runs.
+    draws where the logits agree, to the accuracy [Rune.jit] states. Its
+    programs check [inputs] as {!sample}'s steps do: on the host at the call,
+    on another set at a later wait.
 
     Raises [Invalid_argument] as {!sample}. *)

@@ -153,12 +153,7 @@ let replay t codecs c =
     let ins =
       List.map (fun m -> Codecs.encode codecs (Survey.read src rows m)) c.inputs
     in
-    let present (i : _ Tokens.t) =
-      match i.present with
-      | None -> Array.make (Array.length rows) true
-      | Some p ->
-          Nx.to_array (if Nx.ndim p = 1 then p else Nx.any ~axes:[ 1 ] p)
-    in
+    let present (i : _ Tokens.t) = Nx.to_array (Nx.any ~axes:[ 1 ] i.present) in
     let any = List.map present ins in
     let kept =
       List.filter
@@ -178,7 +173,7 @@ let replay t codecs c =
             {
               i with
               tokens = take i.tokens;
-              present = Option.map take i.present;
+              present = take i.present;
             })
           ins
       in

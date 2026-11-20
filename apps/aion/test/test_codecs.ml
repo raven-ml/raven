@@ -44,12 +44,7 @@ let codecs =
 
 let ints x = Array.map Int64.to_int (Nx.to_array x)
 
-(* The presence [encode] gives each token: a scalar modality's is always
-   given. *)
-let presence (i : _ Tokens.t) =
-  match i.present with
-  | Some p -> Nx.to_array p
-  | None -> failf "%s's presence is None" (Modality.key i.modality)
+let presence (i : _ Tokens.t) = Nx.to_array i.present
 
 let value =
   Gen.(
@@ -82,6 +77,9 @@ let absent =
           in
           let values = Nx.create Nx.float32 shape v in
           let input = Codecs.encode codecs (Scalar { modality; values }) in
+          (* Tokens and presence are [b; n], [n] the modality's tokens. *)
+          equal (array int) [| b; c |] (Nx.shape input.tokens);
+          equal (array int) [| b; c |] (Nx.shape input.present);
           let expected = Array.init (b * c) (fun k -> ok (k / c)) in
           equal (array bool) expected (presence input);
           let direct = ints (Scalar.encode (Codecs.scalar codecs modality) values) in

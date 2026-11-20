@@ -74,7 +74,7 @@ let inputs ?(rows = [ 0; 1; 2; 3 ]) () =
         {
           modality = m;
           tokens = pick (get g Nx.int64 ("input." ^ key ^ ".tokens"));
-          present = Some (pick (Nx.logical_not absent));
+          present = pick (Nx.logical_not absent);
         })
     Modality.[ Scalar Xp_bp; Scalar Flux_g; Scalar Z ]
 
@@ -87,7 +87,7 @@ let step_inputs () =
         {
           modality = Scalar Xp_rp;
           tokens = get r Nx.int64 "roar.1.tokens";
-          present = Some (Nx.not_equal_s (get r Nx.uint8 "roar.1.revealed") 0);
+          present = Nx.not_equal_s (get r Nx.uint8 "roar.1.revealed") 0;
         };
     ]
 
@@ -102,18 +102,28 @@ let transformer =
   test "a compiled transformer computes as the eager one" (fun () ->
       let module D = (val on_gpu ()) in
       let t = Lazy.force model in
-      let g = Transformer.jit (Transformer.place D.on t) in
-      let on (i : _ Tokens.t) : _ Tokens.t =
-        {
-          i with
-          tokens = Nx.place D.on i.tokens;
-          present = Option.map (Nx.place D.on) i.present;
-        }
+      let g = Nx.Ptree.place (module Transformer) D.on t in
+      let model () = Nx.Ptree.instantiate (module Transformer) in
+      let inputs_s () = Nx.Ptree.(list (v Tokens.walk)) in
+      let encode =
+        Rune.jit
+          Nx.Ptree.(
+            model () @-> inputs_s ()
+            @-> returns (instantiate (module Transformer.Encoding)))
+          Transformer.encode
+      and forward =
+        Rune.jit
+          Nx.Ptree.(
+            model () @-> inputs_s ()
+            @-> list (v Transformer.walk_target)
+            @-> returns (list tensor))
+          Transformer.forward
       in
+      let on = Nx.Ptree.place_fixed Tokens.walk D.on in
       let x = inputs () in
       close "context"
         ~spread:(get (Lazy.force golden) Nx.float32 "s.embed")
-        (Transformer.encode g (List.map on x)).context
+        (encode g (List.map on x)).context
         (Transformer.encode t x).context;
       let p = get (Lazy.force roar) Nx.int64 "roar.1.positions" in
       let target p : _ Transformer.target =
@@ -122,8 +132,7 @@ let transformer =
       let x = step_inputs () in
       close "a step's logits"
         ~spread:(get (Lazy.force roar) Nx.float32 "s.roar.1")
-        (List.hd
-           (Transformer.forward g (List.map on x) [ target (Nx.place D.on p) ]))
+        (List.hd (forward g (List.map on x) [ target (Nx.place D.on p) ]))
         (List.hd (Transformer.forward t x [ target p ]));
       let x = inputs ~rows:[ 1; 2 ] () in
       let z : _ Transformer.target =
@@ -131,7 +140,7 @@ let transformer =
       in
       close "redshift's logits"
         ~spread:(get (Lazy.force golden) Nx.float32 "s.logits.tok_z")
-        (List.hd (Transformer.forward g (List.map on x) [ z ]))
+        (List.hd (forward g (List.map on x) [ z ]))
         (List.hd (Transformer.forward t x [ z ])))
 
 (* A sampler's draws are the eager ones' on fixed keys: logits that differ in
@@ -142,14 +151,10 @@ let sampler =
     (fun temperature ->
       let module D = (val on_gpu ()) in
       let t = Lazy.force model and target = Modality.Scalar Xp_rp in
-      let s = Roar.sampler (Transformer.place D.on t) target in
-      let on (i : _ Tokens.t) : _ Tokens.t =
-        {
-          i with
-          tokens = Nx.place D.on i.tokens;
-          present = Option.map (Nx.place D.on) i.present;
-        }
+      let s =
+        Roar.sampler (Nx.Ptree.place (module Transformer) D.on t) target
       in
+      let on = Nx.Ptree.place_fixed Tokens.walk D.on in
       let x = inputs () and key = Nx.Rng.key 23 in
       let reveal = [ 7; 7; 7; 7; 7; 7; 7; 6 ] in
       let eager = Roar.sample ~key ~temperature ~reveal t x target in

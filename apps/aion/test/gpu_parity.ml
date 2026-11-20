@@ -65,27 +65,39 @@ let run at ~hub ~ref64 =
     let key = Modality.key m in
     match Nx_io.Archive.find ("ls_desi." ^ key ^ ".tokens") codecs with
     | Some (Nx.P t) ->
-        { modality = m; tokens = rows (Nx.cast Nx.int64 t); present = None }
+        let shape = [| objects; Modality.tokens m |] in
+        let tokens = Nx.reshape shape (rows (Nx.cast Nx.int64 t)) in
+        { modality = m; tokens; present = Nx.ones Nx.bool shape }
     | None -> failwith ("no tokens ls_desi." ^ key)
   in
-  let on (i : _ Tokens.t) : _ Tokens.t =
-    {
-      i with
-      tokens = Nx.place at i.tokens;
-      present = Option.map (Nx.place at) i.present;
-    }
-  in
+  let on = Nx.Ptree.place_fixed Tokens.walk at in
   let t =
     Transformer.of_archive (Hub.weights ~cache_dir:hub ~offline:true Base)
   in
-  let g = Transformer.jit (Transformer.place at t) in
+  let g = Nx.Ptree.place (module Transformer) at t in
+  let model () = Nx.Ptree.instantiate (module Transformer) in
+  let inputs () = Nx.Ptree.(list (v Tokens.walk)) in
+  let encode =
+    Rune.jit
+      Nx.Ptree.(
+        model () @-> inputs ()
+        @-> returns (instantiate (module Transformer.Encoding)))
+      Transformer.encode
+  and forward =
+    Rune.jit
+      Nx.Ptree.(
+        model () @-> inputs ()
+        @-> list (v Transformer.walk_target)
+        @-> returns (list tensor))
+      Transformer.forward
+  in
   let whole m : _ Transformer.target = { modality = m; positions = None } in
   let logits name ms target reference =
     printf "%s\n%!" name;
     let x = List.map input ms in
     let r = rows (get Nx.float64 reference r64) in
     let l = List.hd (Transformer.forward t x [ whole target ]) in
-    let lg = List.hd (Transformer.forward g (List.map on x) [ whole target ]) in
+    let lg = List.hd (forward g (List.map on x) [ whole target ]) in
     report "eager" l r;
     report "compiled on the device" lg r;
     printf "  argmax: device %d differ from eager\n%!" (differing lg l)
@@ -107,7 +119,7 @@ let run at ~hub ~ref64 =
   let r = rows (get Nx.float64 "embed.ls_desi.all" r64) in
   report "eager" (Transformer.encode t x).context r;
   report "compiled on the device"
-    (Transformer.encode g (List.map on x)).context
+    (encode g (List.map on x)).context
     r;
   printf "a DESI spectrum drawn from an image, one step, temperature 0\n%!";
   let target = Modality.Spectrum Desi and key = Nx.Rng.key 7 in

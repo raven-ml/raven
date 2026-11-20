@@ -79,11 +79,7 @@ let () =
                 in
                 let i = Codecs.encode codecs (Survey.read t rows m) in
                 let got = Nx.to_array i.tokens in
-                let present =
-                  match i.present with
-                  | Some p -> Nx.to_array p
-                  | None -> Array.make (Array.length got) true
-                in
+                let present = Nx.to_array i.present in
                 Array.iteri
                   (fun k g ->
                     if not present.(k) then incr absent

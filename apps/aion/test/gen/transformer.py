@@ -23,8 +23,8 @@ ensemble.
 OUT is test/upstream.
 
 Builds upstream's AION (polymathic-aion at db7fba6d) with aion-base's structure (SwiGLU
-without biases, query-key norm, layer norms without shift at eps 1e-6, a context
-projection with a bias) at small sizes: width 16, 2 heads, 2 encoder and 2 decoder
+without biases, query-key norm, layer norms whose shift is a buffer, at eps 1e-6, a
+context projection with a bias) at small sizes: width 16, 2 heads, 2 encoder and 2 decoder
 blocks, over four modalities (tok_xp_bp, tok_flux_g, tok_z, tok_xp_rp). Every weight
 is random (torch.manual_seed(0)), designed so that each constant matters:
 
@@ -34,14 +34,18 @@ is random (torch.manual_seed(0)), designed so that each constant matters:
 - query and key projections (self- and cross-attention) are scaled by 1e-3, so the
   query-key norms see a variance near their eps, and without them the scores would be
   near zero;
-- layer norms' and query-key norms' scales are 1 + U(-0.5, 0.5);
+- layer norms' and query-key norms' scales are 1 + U(-0.5, 0.5), and their shifts,
+  buffers that AION-1's weights hold at zero but upstream's layer norm adds,
+  U(-0.5, 0.5);
 - the context projection's bias is U(-0.5, 0.5);
 - the decoder's token tables, which no path reads, hold N(0, 1); the file keeps
   tok_z's alone.
 
-The positional buffers are upstream's sine-cosine tables times 1e-3, the same in the
-encoder and the decoder; the modality embeddings are shared, and the weights file
-stores each under its decoder name only, as aion-base's file does.
+The encoder's positional buffers are upstream's sine-cosine tables times 1e-3, and the
+decoder's N(0, 1e-6), so that each table is checked where upstream reads it; the
+modality embeddings are shared, and the weights file stores each under its decoder
+name only, as aion-base's file does. The shifts and the decoder's tables are drawn
+after every other weight, from torch's generator at seed 1.
 
 Inputs: four objects, tok_xp_bp (55 tokens), tok_flux_g and tok_z, some absent
 (upstream's input mask): object 1 lacks tok_xp_bp, object 2 lacks tok_flux_g and
@@ -129,6 +133,12 @@ for name, prm in model.named_parameters():
 for name, buf in model.named_buffers():
     if name.endswith("pos_emb"):
         buf.mul_(SMALL)
+buffers = torch.Generator().manual_seed(1)
+for name, buf in model.named_buffers():
+    if name.startswith("decoder_embeddings") and name.endswith("pos_emb"):
+        buf.copy_(torch.randn(buf.shape, generator=buffers) * SMALL)
+    elif "norm" in name and name.endswith("bias"):
+        buf.copy_(torch.rand(buf.shape, generator=buffers) - 0.5)
 
 # The file stores each modality embedding under its decoder name only, as aion-base's
 # does, and one of the decoder's token tables, which no path reads, to keep it small.
@@ -215,7 +225,7 @@ for k, r in ref.items():
           f" {np.median(spread):.3g}, float32 torch max z {z.max():.2f}", flush=True)
 
 meta = {"script": "apps/aion/test/gen/transformer.py", "torch": torch.__version__,
-        "upstream": "PolymathicAI/AION db7fba6df53b", "seed": "torch 0, numpy 0, random 0"}
+        "upstream": "PolymathicAI/AION db7fba6df53b", "seed": "torch 0 and 1, numpy 0, random 0"}
 os.makedirs(a.out, exist_ok=True)
 save_file(state, os.path.join(a.out, "transformer.safetensors"), metadata=meta)
 save_file({k: np.ascontiguousarray(v) for k, v in data.items()},

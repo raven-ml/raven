@@ -45,14 +45,9 @@ let generate file input target ~seed ~reveal ~draws ~batch out =
     in
     let i = Codecs.encode codecs (Survey.read source rows input) in
     let kept =
-      match i.present with
-      | None -> Array.init (Array.length rows) Fun.id
-      | Some p ->
-          let p =
-            Nx.to_array (if Nx.ndim p = 1 then p else Nx.any ~axes:[ 1 ] p)
-          in
-          Array.of_list
-            (List.filter (fun k -> p.(k)) (List.init (Array.length p) Fun.id))
+      let p = Nx.to_array (Nx.any ~axes:[ 1 ] i.present) in
+      Array.of_list
+        (List.filter (fun k -> p.(k)) (List.init (Array.length p) Fun.id))
     in
     if kept = [||] then None
     else
@@ -64,7 +59,7 @@ let generate file input target ~seed ~reveal ~draws ~batch out =
           x
       in
       let i : _ Tokens.t =
-        { i with tokens = take i.tokens; present = Option.map take i.present }
+        { i with tokens = take i.tokens; present = take i.present }
       in
       let key = Nx.Rng.fold_in (Nx.Rng.key seed) b in
       Some

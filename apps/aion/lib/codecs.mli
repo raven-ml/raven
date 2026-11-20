@@ -84,10 +84,9 @@ val encode : ('d Nx.float32_t, 'd) t -> 'd data -> 'd Tokens.t
     codebook holds NaN edges: such a value carries no measurement, and a
     codebook would give it a token of the distribution's edge. A codebook with
     NaN edges, as seven of HSC's, was trained with NaN as a value, and every
-    value it encodes keeps its token ({!Scalar.encode}). A scalar modality's
-    [present] is always [Some], all [true] where every value is present, so that
-    it is computed without reading the values; an image's or a spectrum's is
-    [None], all present.
+    value it encodes keeps its token ({!Scalar.encode}). Presence is an array
+    computed from the values, none read on the host, so that [encode]
+    compiles; an image's or a spectrum's tokens are all present.
 
     Raises [Invalid_argument] if [t] was not loaded for [d]'s modality, as
     {!Spectrum.pad} for spectra, and as that codec's encode. *)

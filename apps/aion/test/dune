@@ -118,4 +118,4 @@
 (executable
  (name gpu_parity)
  (modules gpu_parity)
- (libraries aion nx nx.io rig.gpus))
+ (libraries aion nx nx.io rig.gpus rune))

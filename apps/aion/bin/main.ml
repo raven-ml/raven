@@ -151,9 +151,11 @@ let on name k =
       let module D = (val Nx.devices [ gpu ]) in
       k.on { at = D.on; jit = true }
 
-let transformer d t =
-  let t = Transformer.place d.at t in
-  if d.jit then Transformer.jit t else t
+(* [f], compiled where [d] compiles, [s] its signature. *)
+let compile d s f = if d.jit then Rune.jit s f else f
+
+let model_s () = Nx.Ptree.instantiate (module Transformer)
+let inputs_s () = Nx.Ptree.(list (v Tokens.walk))
 
 (* The codecs of [ms] on the host, their encode and decode compiled there
    where [d] compiles, the codecs an argument: a program per modality and
@@ -188,20 +190,6 @@ let pad d size = if d.jit then Some size else None
 let input_at d i = Nx.Ptree.place_fixed Tokens.walk d.at i
 
 let host x = Nx.place Nx.Host.on x
-
-(* [Transformer.embedding], compiled where [d] compiles: a set without eager
-   kernels computes only so. *)
-let embedding (type d) (d : d device) : (_, d) Transformer.encoding -> _ =
-  if not d.jit then Transformer.embedding
-  else
-    let encoding =
-      Nx.Ptree.v (fun c (e : _ Transformer.encoding) ->
-          let open Nx.Ptree.Walk in
-          let context = field c "context" tensor e.context in
-          let lengths = field c "lengths" tensor e.lengths in
-          Transformer.{ context; lengths })
-    in
-    Rune.jit Nx.Ptree.(encoding @-> returns tensor) Transformer.embedding
 
 (* Models and inputs *)
 
@@ -260,13 +248,8 @@ let inputs t srcs ~except keys =
 let int64s a =
   Nx.create Nx.int64 [| Array.length a |] (Array.map Int64.of_int a)
 
-(* Whether each of [b] objects has a present token in [input]. *)
-let present b (i : _ Tokens.t) =
-  match i.present with
-  | None -> Array.make b true
-  | Some p ->
-      let p = if Nx.ndim p = 1 then p else Nx.any ~axes:[ 1 ] p in
-      Nx.to_array p
+(* Whether each object has a present token in [i]. *)
+let present (i : _ Tokens.t) = Nx.to_array (Nx.any ~axes:[ 1 ] i.present)
 
 (* The tokens of [objs]' inputs, and the objects with a present token. *)
 (* A batch of [objs] padded to [pad] rows by repeating its first: the rows
@@ -289,9 +272,10 @@ let encode ?pad codecs srcs ins objs =
   in
   let tokens = List.map read ins in
   let n = Array.length rows in
+  let any = List.map present tokens in
   let kept =
     List.init b Fun.id
-    |> List.filter (fun o -> List.exists (fun i -> (present n i).(o)) tokens)
+    |> List.filter (fun o -> List.exists (fun p -> p.(o)) any)
     |> Array.of_list
   in
   let taken = padded pad kept in
@@ -300,7 +284,7 @@ let encode ?pad codecs srcs ins objs =
     let take x = Nx.take ~axis:0 (int64s taken) x in
     ( List.map
         (fun (i : _ Tokens.t) ->
-          { i with tokens = take i.tokens; present = Option.map take i.present })
+          { i with tokens = take i.tokens; present = take i.present })
         tokens,
       Array.map (fun o -> objs.(o)) kept )
 
@@ -390,7 +374,12 @@ let embed () =
       {
         on =
           (fun d ->
-            let t = transformer d t and embedding = embedding d in
+            let t = Nx.Ptree.place (module Transformer) d.at t in
+            let embed =
+              compile d
+                Nx.Ptree.(model_s () @-> inputs_s () @-> returns tensor)
+                (fun t x -> Transformer.embedding (Transformer.encode t x))
+            in
             let codecs = codecs d (List.map snd ins) in
             List.map
               (fun batch ->
@@ -400,8 +389,8 @@ let embed () =
                 let b = Array.length kept in
                 if b = 0 then None
                 else
-                  let e = Transformer.encode t (List.map (input_at d) tokens) in
-                  Some (first b (host (embedding e)), kept))
+                  let e = embed t (List.map (input_at d) tokens) in
+                  Some (first b (host e), kept))
               (chunks size objs)
             |> List.filter_map Fun.id);
       }
@@ -425,7 +414,15 @@ let embed () =
 
 let posterior_on d t srcs ins (target : Modality.t option) objs range size
     out =
-  let t = transformer d t in
+  let t = Nx.Ptree.place (module Transformer) d.at t in
+  let forward =
+    compile d
+      Nx.Ptree.(
+        model_s () @-> inputs_s ()
+        @-> list (v Transformer.walk_target)
+        @-> returns (list tensor))
+      Transformer.forward
+  in
   let target = Option.get target in
   let s = match target with Scalar s -> s | _ -> assert false in
   let codecs = codecs d (target :: List.map snd ins) in
@@ -457,7 +454,7 @@ let posterior_on d t srcs ins (target : Modality.t option) objs range size
         if b > 0 then begin
           let logits =
             List.hd
-              (Transformer.forward t
+              (forward t
                  (List.map (input_at d) tokens)
                  [ { modality = target; positions = None } ])
           in
@@ -556,7 +553,7 @@ let decoded codecs (target : Modality.t) ~rows x =
 
 let generate_on d t srcs ins (target : Modality.t option) objs range size out
     ~draws ~seed ~temperature ~reveal =
-  let t = transformer d t in
+  let t = Nx.Ptree.place (module Transformer) d.at t in
   let target = Option.get target in
   let codecs = codecs d (target :: List.map snd ins) in
   let root = Nx.Rng.key seed in

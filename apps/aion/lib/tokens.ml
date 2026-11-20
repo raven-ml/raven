@@ -6,6 +6,6 @@
 type 'd t = {
   modality : Modality.t;
   tokens : 'd Nx.int64_t;
-  present : 'd Nx.bool_t option;
+  present : 'd Nx.bool_t;
 }
 [@@deriving ptree]

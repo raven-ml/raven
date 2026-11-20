@@ -255,7 +255,7 @@ let tokens seed m : _ Tokens.t =
     tokens =
       Nx.Rng.randint ~key:(Nx.Rng.key seed)
         (Nx.full Nx.int64 [| 1; n |] (Int64.of_int v));
-    present = None;
+    present = Nx.ones Nx.bool [| 1; n |];
   }
 
 let inputs () = List.mapi (fun i m -> tokens (200 + i) m) phot

@@ -34,7 +34,7 @@ let inputs ms =
         {
           modality = m;
           tokens = get Nx.int64 ("input." ^ key ^ ".tokens");
-          present = Some (Nx.logical_not absent);
+          present = Nx.logical_not absent;
         })
     ms
 
@@ -68,7 +68,7 @@ let replay ~key ~temperature ~reveal (target, inputs) tokens =
   let step (s, o, revealed, acc) k =
     let p = Nx.slice [ A; R (o, o + k) ] order in
     let target_input : _ Tokens.t =
-      { modality = target; tokens; present = Some revealed }
+      { modality = target; tokens; present = revealed }
     in
     let l =
       List.hd
@@ -153,7 +153,7 @@ let replays =
               s.(0) <- copies;
               Nx.broadcast_to s (Nx.slice [ R (0, 1) ] x)
             in
-            { i with tokens = row i.tokens; present = Option.map row i.present }
+            { i with tokens = row i.tokens; present = row i.present }
           in
           let tokens =
             Roar.sample ~key:(Nx.Rng.key 18) ~temperature:1e6 ~reveal:[ 1 ]
@@ -297,46 +297,31 @@ let compiled =
           let eager = sample ~key ~temperature ~reveal xp in
           let c = Roar.draw (Lazy.force s) ~key ~temperature ~reveal inputs in
           equal (array int) (ints eager) (ints c));
-      test "a sampler of a compiled transformer draws as one of the eager"
-        (fun () ->
-          let key = Nx.Rng.key 21 in
-          let c = Roar.sampler (Transformer.jit (Lazy.force model)) target in
-          equal (array int)
-            (ints (Roar.draw (Lazy.force s) ~key ~reveal:linear8 inputs))
-            (ints (Roar.draw c ~key ~reveal:linear8 inputs)));
       test "a sampler draws on a set without eager kernels" (fun () ->
           let key = Nx.Rng.key 20 in
-          let on x = Nx.place Soft.on x in
           let soft =
-            Roar.sampler (Transformer.place Soft.on (Lazy.force model)) target
-          in
-          let on_soft (i : _ Tokens.t) : _ Tokens.t =
-            { i with tokens = on i.tokens; present = Option.map on i.present }
+            Roar.sampler
+              (Nx.Ptree.place (module Transformer) Soft.on (Lazy.force model))
+              target
           in
           let k =
             Roar.draw soft ~key:(Nx.Rng.place Soft.on key) ~reveal:linear8
-              (List.map on_soft inputs)
+              (List.map (Nx.Ptree.place_fixed Tokens.walk Soft.on) inputs)
           in
           let c = Roar.draw (Lazy.force s) ~key ~reveal:linear8 inputs in
           equal (array int) (ints c) (ints (Nx.place Nx.Host.on k)));
-      test "a sampler refuses a token outside the vocabulary at the call"
-        (fun () ->
-          (* On a set without eager kernels, a check in its program would
-             raise only at a later wait. *)
-          let soft =
-            Roar.sampler (Transformer.place Soft.on (Lazy.force model)) target
-          in
+      test "a sampler refuses a token outside the vocabulary" (fun () ->
+          (* On the host its program's check raises at the call. *)
           let bad (i : _ Tokens.t) : _ Tokens.t =
             {
               i with
-              tokens = Nx.place Soft.on (Nx.full_like i.tokens 5000L);
-              present = None;
+              tokens = Nx.full_like i.tokens 5000L;
+              present = Nx.ones_like i.present;
             }
           in
           raises_match (Exn.invalid_arg ~sub:"outside [0, 1024)") (fun () ->
-              Roar.draw soft
-                ~key:(Nx.Rng.place Soft.on (Nx.Rng.key 0))
-                ~reveal:linear8 (List.map bad inputs)));
+              Roar.draw (Lazy.force s) ~key:(Nx.Rng.key 0) ~reveal:linear8
+                (List.map bad inputs)));
     ]
 
 (* Refusals *)

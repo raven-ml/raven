@@ -30,9 +30,7 @@ let orders n first key = order (Nx.beside first) ~key (Nx.dim 0 first) n
 (* Step [s], a 0-d index ([s + 1] for its key), draws [target]'s tokens at the
    positions [p] at the temperature [temp] and makes them present. *)
 let step ~target t key s temp inputs tokens revealed p =
-  let known : _ Tokens.t =
-    { modality = target; tokens; present = Some revealed }
-  in
+  let known : _ Tokens.t = { modality = target; tokens; present = revealed } in
   let e = Transformer.encode t (inputs @ [ known ]) in
   let next : _ Transformer.target = { modality = target; positions = Some p } in
   let l = List.hd (Transformer.decode t e [ next ]) in
@@ -90,7 +88,6 @@ let sample ~key ?(temperature = 1.) ~reveal t inputs target =
 (* Samplers *)
 
 type ('b, 'd) sampler = {
-  t : ('b, 'd) Transformer.t;
   target : Modality.t;
   orders : 'd Nx.int64_t -> 'd Nx.Rng.key -> 'd Nx.int64_t;
   draws :
@@ -112,29 +109,11 @@ type ('b, 'd) sampler = {
     'd Nx.int64_t * 'd Nx.bool_t;
 }
 
-(* A list of inputs, each modality reported as a case. *)
-let inputs_s () =
-  Nx.Ptree.list
-    (Nx.Ptree.v (fun c (i : _ Tokens.t) ->
-         let open Nx.Ptree.Walk in
-         let modality =
-           field c "modality"
-             (fun c m ->
-               case c (Modality.key m);
-               m)
-             i.modality
-         in
-         let tokens = field c "tokens" tensor i.tokens in
-         let present = field c "present" (option tensor) i.present in
-         Tokens.{ modality; tokens; present }))
-
 let sampler t target =
-  let t = Transformer.eager t in
   let open Nx.Ptree in
-  let inputs = inputs_s () and result = pair tensor tensor in
+  let inputs = list (v Tokens.walk) and result = pair tensor tensor in
   let step = step ~target t in
   {
-    t;
     target;
     orders =
       Rune.jit
@@ -154,18 +133,6 @@ let sampler t target =
 
 let draw s ~key ?(temperature = 1.) ~reveal inputs =
   let b, at = checked "Roar.draw" ~temperature ~reveal inputs s.target in
-  let n = Modality.tokens s.target in
-  (* Every step's checks, made once on the host: the drawn tokens are in the
-     vocabulary, and the positions distinct and in range, by construction. *)
-  Transformer.check s.t
-    (inputs
-    @ [
-        {
-          modality = s.target;
-          tokens = Nx.zeros_at at Nx.int64 [| b; n |];
-          present = Some (Nx.zeros_at at Nx.bool [| b; n |]);
-        };
-      ]);
   let step key st temp =
     match temp with
     | None -> s.argmaxes key st

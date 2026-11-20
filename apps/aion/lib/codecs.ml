@@ -93,21 +93,24 @@ let present codec values =
 
 let encode t d : _ Tokens.t =
   let m = modality d in
+  let all tokens : _ Tokens.t =
+    let present = Nx.ones_at (Nx.beside tokens) Nx.bool (Nx.shape tokens) in
+    { modality = m; tokens; present }
+  in
   match d with
-  | Image { bands; flux } ->
-      {
-        modality = m;
-        tokens = Image.encode (image t m) bands flux;
-        present = None;
-      }
+  | Image { bands; flux } -> all (Image.encode (image t m) bands flux)
   | Spectrum { modality; spectrum = x; lengths } ->
       let c = spectrum t modality in
-      let tokens = Spectrum.encode c (Spectrum.pad ?lengths modality x) in
-      { modality = m; tokens; present = None }
+      all (Spectrum.encode c (Spectrum.pad ?lengths modality x))
   | Scalar { modality; values } ->
       let c = scalar t modality in
-      let tokens = Scalar.encode c values in
-      { modality = m; tokens; present = Some (present c values) }
+      (* A modality of one token has values [[|b|]]. *)
+      let shape = [| Nx.dim 0 values; Modality.tokens m |] in
+      {
+        modality = m;
+        tokens = Nx.reshape shape (Scalar.encode c values);
+        present = Nx.reshape shape (present c values);
+      }
 
 let decode t (m : Modality.t) k =
   match m with

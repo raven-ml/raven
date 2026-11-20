@@ -12,16 +12,14 @@
 type 'd t = {
   modality : Modality.t;
   tokens : 'd Nx.int64_t;
-      (** [[|b; n|]], [n] the modality's {!Modality.tokens}, or [[|b|]] for a
-          modality of one token. *)
-  present : 'd Nx.bool_t option;
-      (** [true] where a token is present, of [tokens]' shape; [None] where all
-          are. An absent token's value is not read. *)
+      (** [[|b; n|]], [n] the modality's {!Modality.tokens}. *)
+  present : 'd Nx.bool_t;
+      (** [true] where a token is present, [[|b; n|]]. An absent token's value
+          is not read. *)
 }
 (** The type for the tokens of one modality of each of [b] objects, on the
     device set ['d]. *)
 
 val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd t -> 'e t
-(** [walk c t] reports [t]'s modality ({!Modality.walk}) and whether its
-    presence is given, and walks its arrays as fixed ones: [Nx.Ptree.v walk]
-    describes tokens to [Rune.jit]. *)
+(** [walk c t] reports [t]'s modality ({!Modality.walk}) and walks its arrays
+    as fixed ones: [Nx.Ptree.v walk] describes tokens to [Rune.jit]. *)

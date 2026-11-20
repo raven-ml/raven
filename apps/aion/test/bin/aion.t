@@ -124,9 +124,9 @@ So a seed gives the same draws, and another seed others.
   $ ./npz.exe ints g.npz tokens
   978
   85
-  154
+  312
   510
-  217
+  299
   966
   $ aion generate --gaia $gaia --rows 0:2 --target tok_z --steps 1 --draws 3 --seed 8 --out g8.npz > /dev/null
   $ ./npz.exe equal g.npz g8.npz tokens
@@ -171,7 +171,7 @@ its value is NaN.
 
   $ aion generate --gaia $gaia --target tok_z --inputs tok_xp_bp --steps 1 --draws 2000 --seed 1 --out z.npz
   generate: 3 objects; of rows 0:4, 0 without a partner in every source, 1 without a present input
-  generate: 5 draws of tok_z's class 1024, which decodes to no value
+  generate: 2 draws of tok_z's class 1024, which decodes to no value
   $ aion posterior --gaia $gaia --target tok_z --inputs tok_xp_bp --out p.npz > /dev/null
   $ ./npz.exe chi2 z.npz p.npz 1
   the draws' frequencies agree with p: chi2 below its 0.999 quantile
