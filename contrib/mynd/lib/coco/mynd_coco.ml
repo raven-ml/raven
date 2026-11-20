@@ -565,3 +565,91 @@ let evaluate_masks d (dets : Mynd.Rle.t detection array) =
         ~crowd:d.annotations.(g).crowd
   in
   evaluate d c ~place ~det_area ~pair_iou dets
+
+(* Summary *)
+
+type summary = {
+  ap : float;
+  ap50 : float;
+  ap75 : float;
+  ap_small : float;
+  ap_medium : float;
+  ap_large : float;
+  ar1 : float;
+  ar10 : float;
+  ar100 : float;
+  ar_small : float;
+  ar_medium : float;
+  ar_large : float;
+}
+
+(* summarize (cocoeval.py): the mean of the defined entries of a slice. *)
+let summary (e : evaluation) =
+  let fn = "Mynd_coco.summary" in
+  let nk =
+    match Nx.shape e.precision with
+    | [| t; r; k; a; m |] when t = nt && r = nr && a = na && m = nm -> k
+    | s ->
+        invalid_argf "%s: precision of shape [%s]" fn
+          (String.concat "; " (Array.to_list (Array.map string_of_int s)))
+  in
+  if Nx.shape e.recall <> [| nt; nk; na; nm |] then
+    invalid_argf "%s: recall's shape is not [%d; %d; %d; %d]" fn nt nk na nm;
+  if Array.length e.categories <> nk then
+    invalid_argf "%s: %d categories for tables of %d" fn
+      (Array.length e.categories)
+      nk;
+  let p = Nx.to_array e.precision and r = Nx.to_array e.recall in
+  (* The exact sum needs finite entries, and the tables hold fractions. *)
+  let fraction v = Float.is_nan v || (v >= 0. && v <= 1.) in
+  Array.iter
+    (fun table ->
+      Array.iter
+        (fun v ->
+          if not (fraction v) then
+            invalid_argf "%s: an entry is %g, outside [0, 1]" fn v)
+        table)
+    [| p; r |];
+  let buf = Array.make (Int.max (Array.length p) 1) 0. in
+  let mean table n idx =
+    let c = ref 0 in
+    for i = 0 to n - 1 do
+      let v = table.(idx i) in
+      if not (Float.is_nan v) then begin
+        buf.(!c) <- v;
+        incr c
+      end
+    done;
+    Fsum.mean buf !c
+  in
+  (* Precision over IoU thresholds [ts], every recall threshold and
+     category, at range [a] and limit 100. *)
+  let ap ?(ts = List.init nt Fun.id) a =
+    let ts = Array.of_list ts in
+    let per_t = nr * nk in
+    mean p
+      (Array.length ts * per_t)
+      (fun i ->
+        let t = ts.(i / per_t) and i = i mod per_t in
+        let ri = i / nk and k = i mod nk in
+        (((((((t * nr) + ri) * nk) + k) * na) + a) * nm) + 2)
+  in
+  let ar a mi =
+    mean r (nt * nk) (fun i ->
+        let t = i / nk and k = i mod nk in
+        (((((t * nk) + k) * na) + a) * nm) + mi)
+  in
+  {
+    ap = ap 0;
+    ap50 = ap ~ts:[ 0 ] 0;
+    ap75 = ap ~ts:[ 5 ] 0;
+    ap_small = ap 1;
+    ap_medium = ap 2;
+    ap_large = ap 3;
+    ar1 = ar 0 0;
+    ar10 = ar 0 1;
+    ar100 = ar 0 2;
+    ar_small = ar 1 2;
+    ar_medium = ar 2 2;
+    ar_large = ar 3 2;
+  }

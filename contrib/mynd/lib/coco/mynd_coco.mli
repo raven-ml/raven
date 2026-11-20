@@ -233,3 +233,32 @@ val evaluate_masks : dataset -> Mynd.Rle.t detection array -> evaluation
 
     Raises [Invalid_argument] as {!evaluate_boxes} does, if a mask's size is not
     its image's, or as {!runs} does on an annotation. *)
+
+(** {2:summary Summary} *)
+
+type summary = {
+  ap : float;  (** Precision, every IoU threshold, all areas, limit 100. *)
+  ap50 : float;  (** At IoU threshold 0.5. *)
+  ap75 : float;  (** At IoU threshold 0.75. *)
+  ap_small : float;
+  ap_medium : float;
+  ap_large : float;
+  ar1 : float;  (** Recall, every IoU threshold, all areas, limit 1. *)
+  ar10 : float;
+  ar100 : float;
+  ar_small : float;  (** Limit 100, and so are the other ranges. *)
+  ar_medium : float;
+  ar_large : float;
+}
+(** The type for COCO's twelve numbers. *)
+
+val summary : evaluation -> summary
+(** [summary e] is the mean of the entries of [e] each field selects that are
+    not NaN, their exactly rounded sum divided by their count, and NaN when
+    every one is. A mean summed in another order can differ in its last bits,
+    and so can its value printed to three decimals when it lies within a few
+    floats of a half.
+
+    Raises [Invalid_argument] unless [e.precision]'s axes are
+    [[10; 101; k; 4; 3]] and [e.recall]'s [[10; k; 4; 3]] for the [k] categories
+    of [e.categories], or if an entry is neither NaN nor in [[0, 1]]. *)
