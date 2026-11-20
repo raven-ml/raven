@@ -1982,6 +1982,58 @@ let scaled_contractions =
       cover "a float64 accumulator" (c.acc = D.Any D.Float64);
       contract_check c)
 
+(* An MXFP4 product against bfloat16 rows rounds each scaled code to
+   bfloat16, the same value, only where a tensor core takes bfloat16, so that
+   the core takes both operands: Metal's family 9 does; the host has no core,
+   where the round trip would cost a cast per element for nothing. *)
+let scaled_codes_rounded =
+  let product () =
+    let codes =
+      Nx.cast D.Float4_e2m1fn
+        (Nx.create D.Float32 [| 4; 64 |]
+           (Array.init 256 (fun i -> Float.of_int (i mod 7) /. 2.)))
+    in
+    P.eval ~by:"t"
+      (P.Contract
+         {
+           batch = Iarray.of_list [];
+           contracting = Iarray.of_list [ (1, 1) ];
+           acc = D.Any D.Float32;
+           out = D.Bfloat16;
+           a =
+             Nx.cast D.Bfloat16
+               (Nx.create D.Float32 [| 2; 64 |]
+                  (Array.init 128 (fun i -> Float.of_int (i mod 5))));
+           b = codes;
+           init = None;
+           a_scale = None;
+           b_scale =
+             Some
+               (P.Exponent (Nx.create D.Uint8 [| 4; 2 |] (Array.make 8 127)));
+           segments = None;
+           sum = false;
+         })
+  in
+  let rounded target =
+    let target = Result.get_ok (Tolk.Helpers.Target.of_string target) in
+    let rounds v =
+      Tolk.Ops.op v = Tolk.Op.Cast
+      && Tolk.Dtype.equal (Tolk.Ops.dtype v) Tolk.Dtype.Bfloat16
+      && Tolk.Ops.op (Tolk.Ops.nth v 0) = Tolk.Op.Mul
+    in
+    List.exists
+      (fun (_, sink, _) ->
+        List.exists rounds (Tolk.Ops.toposort ~calls:Skip sink))
+      (Lowered.sources ~target product)
+  in
+  group "a bfloat16 product of scaled e2m1 codes"
+    [
+      test "rounds each code on a target whose core takes bfloat16" (fun () ->
+          is_true (rounded "METAL:METAL:Apple9"));
+      test "rounds no code on the host" (fun () ->
+          is_false (rounded "CPU:CLANG:x86_64,haswell"));
+    ]
+
 (* Segmented contractions: rows whose group [1] is empty and one of which is
    in no group; rows by groups of matrices, one in none; a pair of one group
    and an int64 extreme; unsorted ids and an int64 extreme. *)
@@ -2907,6 +2959,7 @@ let () =
              float_contractions;
              complex_contractions;
              scaled_contractions;
+             scaled_codes_rounded;
              segmented_contractions;
              blocked_contractions;
              blocked_rows;

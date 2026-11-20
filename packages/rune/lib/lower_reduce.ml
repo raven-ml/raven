@@ -632,8 +632,13 @@ let e2m1_bfloat16 code scale =
    another dtype no core takes both, and the round trip would cost a cast per
    element for nothing. Where [renderer]'s multiplies keep subnormals at full
    rate, the bfloat16 of an e2m1 product is built in bfloat16
-   ({!e2m1_bfloat16}), and elsewhere rounded from its float32. *)
-let entered ~renderer acc ~other { dtype; node; scale } =
+   ({!e2m1_bfloat16}); elsewhere it is rounded from its float32 where
+   [renderer] has a core that takes bfloat16, or where [stored] (default
+   [false]): blocks of routed rows store their slices' decoded values, which
+   rounded take half the bytes. It enters unrounded otherwise, as in the
+   host's decode step, where the rounding took a third of the routed MXFP4
+   product's time. *)
+let entered ?(stored = false) ~renderer acc ~other { dtype; node; scale } =
   let x = Arith.cast ~src:dtype acc node in
   match (scale, acc) with
   | None, _ -> Arith.parts acc x
@@ -646,13 +651,20 @@ let entered ~renderer acc ~other { dtype; node; scale } =
       in
       let bf16 = D.Any D.Bfloat16 in
       let paired = match other with D.Any D.Bfloat16 -> true | _ -> false in
-      let subnormals () =
-        (Lazy.force renderer).Tolk.Renderer.full_rate_subnormals
+      let ren () = Lazy.force renderer in
+      let subnormals () = (ren ()).Renderer.full_rate_subnormals in
+      let bf16_core () =
+        stored
+        ||
+        List.exists
+          (fun (tc : Tc.t) -> Dtype.equal tc.dtype_in Bfloat16)
+          (ren ()).Renderer.tensor_cores
       in
       match sc with
       | _ when not (paired && bfloat16_values dtype sc acc) -> [ v ]
       | Exponent c when subnormals () ->
           [ Arith.cast ~src:bf16 acc (e2m1_bfloat16 node (blocks c s)) ]
+      | _ when not (bf16_core ()) -> [ v ]
       | _ -> [ Arith.cast ~src:bf16 acc (Arith.cast ~src:acc bf16 v) ])
   | Some _, D.Any d ->
       raise
@@ -1132,7 +1144,7 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       let owner = spread r.owner sb b_sides b_axis in
       let b' = picked ~clamped:true b b_axis owner in
       let a' = entered ~renderer acc ~other:b.dtype a' in
-      let b' = entered ~renderer acc ~other:a.dtype b' in
+      let b' = entered ~stored:true ~renderer acc ~other:a.dtype b' in
       let up x = if x > a_axis then x + 1 else x in
       let shift = List.map (fun (x, y) -> (up x, y)) in
       let pairs = shift batch @ [ (a_axis, b_axis) ] in
