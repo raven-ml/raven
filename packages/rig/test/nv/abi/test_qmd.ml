@@ -109,6 +109,25 @@ let descriptors =
                 (fun c -> equal ~msg:"config" int 26 (field b c))
                 configs)
             [ 0; 128; Launch.dynamic_shared l ]);
+      cases
+        "a kernel's own shared memory takes the largest configuration, a \
+         kernel without the least"
+        ~id:S.class_name S.classes (fun cls ->
+          (* MIN, TARGET and MAX_SM_CONFIG: 32 KiB is 9, 100 KiB 26, their 4
+             KiB pages plus one. gpt-oss-20b's expert products declare 27,712
+             bytes, which 32 KiB would hold one block of. *)
+          let configs =
+            if cls = S.blackwell then
+              [ (1168, 1163); (1180, 1175); (1174, 1169) ]
+            else [ (567, 562); (662, 657); (574, 569) ]
+          in
+          let got shared_bytes =
+            let b = qmd ~k:(S.kernel ~shared_bytes ()) cls base in
+            List.map (field b) configs
+          in
+          equal (list int) ~msg:"none" [ 9; 9; 26 ] (got 0);
+          equal (list int) ~msg:"128 bytes" [ 26; 26; 26 ] (got 128);
+          equal (list int) ~msg:"27,712 bytes" [ 26; 26; 26 ] (got 27712));
     ]
 
 (* Limits *)
@@ -246,8 +265,8 @@ let words =
             0010 7f 00 00 00 00 00 00 3c 00 00 00 00 00 00 00 00
             0020 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 44
             0030 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-            0040 13 00 00 00 00 0c 24 34 30 00 00 00 00 00 00 00
-            0050 09 28 12 00 00 00 00 00 00 00 00 00 00 00 00 08
+            0040 13 00 00 00 00 0c 68 34 30 00 00 00 00 00 00 00
+            0050 09 28 34 00 00 00 00 00 00 00 00 00 00 00 00 08
             0060 00 00 00 00 00 00 80 a0 00 00 00 00 00 00 00 00
             0070 00 00 00 00 00 00 80 20 00 00 00 00 00 00 00 00
             0080 00 00 00 00 00 00 c4 00 00 00 00 00 00 00 00 00
@@ -296,7 +315,7 @@ let words =
             0060 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
             0070 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
             0080 00 00 00 00 00 00 20 00 00 00 00 00 00 28 02 00
-            0090 18 48 b4 04 00 00 00 00 00 00 00 00 00 00 00 00
+            0090 18 d0 34 0d 00 00 00 00 00 00 00 00 00 00 00 00
             00a0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 c0 00
             00b0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
             00c0 00 00 00 00 00 00 20 00 00 00 00 00 00 00 00 00

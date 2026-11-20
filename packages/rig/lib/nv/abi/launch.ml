@@ -18,11 +18,17 @@ let round_up n a = (n + a - 1) / a * a
 let reserved_shared = 0x400
 let reserved_local = 0x240
 
-(* The shared memory a multiprocessor may be configured with, in KiB: the
-   largest is what a launch can take. A configuration is set as its 4 KiB pages
-   plus one, as NAK does (Mesa 25.2, nak/qmd.rs:338-354). *)
-let shared_configs = [ 32; 64; 100 ]
-let max_shared_kib = List.fold_left Int.max 0 shared_configs
+(* The shared memory a multiprocessor is configured with, in KiB, the rest of
+   its unified data cache being L1. A kernel that declares none runs in the
+   least, which leaves the most L1. One that declares some runs in the most a
+   launch can take, as a launch with dynamic shared memory does, so that its
+   registers and threads bound the blocks a multiprocessor runs at once: a
+   configuration sized to one block bounds them instead, to one of
+   gpt-oss-20b's expert products, 28 KB, where their registers allow three. A
+   configuration is set as its 4 KiB pages plus one, as NAK does (Mesa 25.2,
+   nak/qmd.rs:338-354). *)
+let least_shared_kib = 32
+let max_shared_kib = 100
 let config kib = (kib * 1024 / 4096) + 1
 let max_shared_config = config max_shared_kib
 
@@ -77,11 +83,6 @@ let refusal (k : Cubin.kernel) =
          k.registers max_registers)
   else banks_refusal k.banks
 
-(* The smallest configuration that holds [bytes]. *)
-let rec config_for bytes = function
-  | [] -> max_shared_config
-  | c :: cs -> if c * 1024 >= bytes then config c else config_for bytes cs
-
 let make (g : Gpu.t) (k : Cubin.kernel) =
   let layout =
     match Repr.layout g with
@@ -105,7 +106,9 @@ let make (g : Gpu.t) (k : Cubin.kernel) =
           kernel = k;
           gpu = g;
           shared_bytes;
-          shared_config = config_for shared_bytes shared_configs;
+          shared_config =
+            (if k.shared_bytes = 0 then config least_shared_kib
+             else max_shared_config);
           max_shared_config;
         }
 

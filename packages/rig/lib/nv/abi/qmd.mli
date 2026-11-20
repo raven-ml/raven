@@ -71,7 +71,9 @@ type t = {
       (** [Some v] if each block takes [v] bytes of dynamic shared memory beside
           its own: a multiple of 128, at most {!Launch.dynamic_shared}. The
           multiprocessors then run the launch in their configuration of the most
-          shared memory, which holds any such [v]. *)
+          shared memory, which holds any such [v], as they run any launch of a
+          kernel that declares shared memory of its own. With [None], a kernel
+          that declares none runs in the least, which leaves the most L1. *)
   chain : Template.operand option;
       (** [Some addr] if the launch of the descriptor at [addr], 256-byte
           aligned, follows: scheduling this one schedules it too, and it starts
