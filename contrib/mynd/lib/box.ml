@@ -103,10 +103,11 @@ let above x t =
   if c > t then Nx.greater_equal_s x c else Nx.greater_s x c
 
 (* The keep mask is the fixed point of [keep i = ¬∃ j earlier than i: keep j ∧
-   conflict i j] from all true. A box ranked [r] is final after round [r + 1],
-   so [n + 1] rounds suffice, the last changing nothing; a box Blelloch, Fineman
-   and Shun's parallel greedy step decides in its step [s] is final by round
-   [2s]. *)
+   conflict i j] from all true. Each round decides every box from the boxes
+   kept so far, over the [n × n] conflicts. A box ranked [r] is final after
+   round [r + 1], so [n + 1] rounds suffice, the last changing nothing; a box
+   Blelloch, Fineman and Shun's parallel greedy step decides in its step [s] is
+   final by round [2s]. *)
 let suppress ?classes ~iou b s =
   let fn = "Mynd.Box.nms" in
   if Nx.ndim b < 2 || Nx.dim (-1) b <> 4 then

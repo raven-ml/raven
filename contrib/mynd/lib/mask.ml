@@ -52,12 +52,12 @@ let iou dt a b =
 
 (* Components *)
 
-(* Liu and Tarjan's algorithm R with two shortcuts a round over the pixel graph.
-   Every pixel starts as its own root. A round reads the parents [p] once: for
-   each edge [{v, w}] between true pixels whose parent [p v] is a root and [p w
-   < p v], the root takes the least such [p w] as its parent
-   (parent-root-connect, a scatter of [Min]); then each pixel's parent becomes
-   its grandparent, twice. The rounds end when none changes a parent, every tree
+(* Liu and Tarjan's algorithm R with two shortcuts a round over the pixel graph
+   ("Simple Concurrent Connected Components Algorithms"). Every pixel starts as
+   its own root. A round reads the parents [p] once: for each edge [{v, w}]
+   between true pixels whose parent [p v] is a root and [p w < p v], the root
+   takes the least such [p w] as its parent (parent-root-connect, a scatter of
+   [Min]); then each pixel's parent becomes its grandparent, twice. The rounds end when none changes a parent, every tree
    then flat and rooted at its least pixel. Their §4.3: with two shortcuts Lemma
    23 holds for [b = 2^(1/3)], so no tree is active once [b^(k - 5) > 3n / 2],
    at most [6 + ⌊3 log₂ (3n / 2)⌋] rounds with the last, which changes

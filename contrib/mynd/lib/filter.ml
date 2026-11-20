@@ -147,11 +147,11 @@ let spans n size =
 let join axis = function [ x ] -> x | xs -> Nx.concatenate ~axis xs
 
 (* The lower median by a stable sort of each window, a band of about [h w / n]
-   pixels an image at a time: [h / n] rows, or where [h < n] one row cut into
-   runs of [h w / n] columns. A band stores its [n] windows' elements twice, the
-   reshaped windows and the sorted values, and an [int64] position each, about
-   twice [x]'s elements and as many positions; each band's medians are copied
-   out of its sorted values, which then die. *)
+   pixels of every image at a time: [h / n] rows, or where [h < n] one row cut
+   into runs of [h w / n] columns. A band stores its windows' elements twice,
+   the reshaped windows and the sorted values, and an [int64] position for each
+   sorted value: about twice [x]'s elements, and one position for each of them.
+   Each band's medians are copied out of its sorted values, which then die. *)
 let median ~edge (kh, kw) x =
   let fn = "Mynd.Filter.median" in
   image fn x;
