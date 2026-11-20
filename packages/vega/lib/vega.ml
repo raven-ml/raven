@@ -232,30 +232,29 @@ let refuse_float16 fn path =
 
 (* [leafwise fn p ~counter ~params ~grads parts ~f] steps [params] leaf by
    leaf. [parts] are the state's values of the parameters' skeleton, each with
-   its name for errors. At a float leaf, [f w x g s] takes the parameter, its
-   gradient and its leaf of each part, in order, cast to the compute dtype
-   [w], and returns the new parameter and the parts' new leaves, which are
-   stored back at the leaf's dtype, a half one with draws keyed by [counter].
-   A part [f] returns as it took it, or as the gradient, is the input itself,
-   with nothing drawn. With [squared], the parts average squared gradients
-   and a float16 leaf raises. [f]'s [~decays] is [decays path shape] and its
-   [~adapts] is [adapts path shape], each asked once per float or complex leaf
-   with the parameter's own shape, and true with nothing asked where the step
-   was given no rule.
+   its name for errors. At a float leaf, [f path leaf w x g s] takes the
+   parameter's path, the parameter [leaf] as it is stored, and the parameter
+   [x], its gradient and its leaf of each part, in order, cast to the compute
+   dtype [w]. It returns the new parameter and the parts' new leaves, which
+   are stored back at the leaf's dtype, a half one with draws keyed by
+   [counter]. [leaf] is read for its shape and dtype alone: a step asks its
+   rules with them ([asks]). A part [f] returns as it took it, or as the
+   gradient, is the input itself, with nothing drawn. With [squared], the
+   parts average squared gradients and a float16 leaf raises.
 
    A complex leaf steps as its real and imaginary parts, two real coordinates
    per element, stacked along a new first axis: [f] sees the leaf of real
-   parameters a real optimizer would. Its gradient there is the conjugate of
-   Rune's: the gradient of a real objective of [z = x + iy] is
-   [∂f/∂x - i ∂f/∂y], whose parts' gradient is [(∂f/∂x, ∂f/∂y)], so the step
-   descends along the conjugate. Other leaves pass through unchanged. The
-   result is the new parameters and the new parts. *)
-let leafwise ?(squared = false) ?decays ?adapts fn p ~counter ~params ~grads
-    parts
+   parameters a real optimizer would, and the complex [leaf]. Its gradient
+   there is the conjugate of Rune's: the gradient of a real objective of
+   [z = x + iy] is [∂f/∂x - i ∂f/∂y], whose parts' gradient is
+   [(∂f/∂x, ∂f/∂y)], so the step descends along the conjugate. Other leaves
+   pass through unchanged. The result is the new parameters and the new
+   parts. *)
+let leafwise ?(squared = false) fn p ~counter ~params ~grads parts
     ~(f :
-       'w.
-       decays:bool ->
-       adapts:bool ->
+       'a 'b 'w.
+       Nx.Ptree.Path.t ->
+       ('a, 'b, 'd) Nx.t ->
        'w wide ->
        ('w, 'd) compute ->
        ('w, 'd) compute ->
@@ -268,17 +267,13 @@ let leafwise ?(squared = false) ?decays ?adapts fn p ~counter ~params ~grads
   let leaves = Array.map (fun (name, x) -> (name, aligned name x)) parts in
   let parts' = Array.map (fun _ -> ref []) parts in
   let base = base counter in
-  let ask rule path x =
-    match rule with None -> true | Some rule -> rule path (Nx.shape x)
-  in
   let real (type b w) path (w : w wide) (x : (float, b, _) Nx.t) g s =
-    let decays = ask decays path x and adapts = ask adapts path x in
     (match Nx.dtype x with
     | Float16 when squared -> refuse_float16 fn path
     | _ -> ());
     let wide = dtype w in
     let g' = Nx.cast wide g and s' = Array.map (Nx.cast wide) s in
-    let x', t = f ~decays ~adapts w (Nx.cast wide x) g' s' in
+    let x', t = f path x w (Nx.cast wide x) g' s' in
     match Nx.dtype x with
     | Float16 | Bfloat16 ->
         let draw = draws base path in
@@ -291,12 +286,11 @@ let leafwise ?(squared = false) ?decays ?adapts fn p ~counter ~params ~grads
     | dt -> (Nx.cast dt x', Array.map (Nx.cast dt) t)
   in
   let complex (type b w) path (w : w wide) (x : (Complex.t, b, _) Nx.t) g s =
-    let decays = ask decays path x and adapts = ask adapts path x in
     let dt = Nx.dtype x and wide = dtype w in
     let parts z = Nx.stack [ Nx.real wide z; Nx.imag wide z ] in
     let join r = Nx.complex dt ~re:(Nx.get [ 0 ] r) ~im:(Nx.get [ 1 ] r) in
     let g = Nx.stack [ Nx.real wide g; Nx.neg (Nx.imag wide g) ] in
-    let x, s = f ~decays ~adapts w (parts x) g (Array.map parts s) in
+    let x, s = f path x w (parts x) g (Array.map parts s) in
     (join x, Array.map join s)
   in
   let step (type a b) path (x : (a, b, _) Nx.t) (g : (a, b, _) Nx.t)
@@ -320,6 +314,12 @@ let leafwise ?(squared = false) ?decays ?adapts fn p ~counter ~params ~grads
   let params = Nx.Ptree.map p update params in
   let rebuild i (_, like) = Nx.Ptree.rebuild p ~like (List.rev !(parts'.(i))) in
   (params, Array.mapi rebuild parts)
+
+(* [asks rule path leaf] is [rule]'s answer for the parameter [leaf] at
+   [path], and [true], with nothing asked, for a step given no rule: such a
+   step does not allocate the leaf's shape. *)
+let asks rule path leaf =
+  match rule with None -> true | Some rule -> rule path (Nx.shape leaf)
 
 (* A scalar of the step counter, computed once per step at each compute dtype
    that asks for it. *)
@@ -540,14 +540,14 @@ let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
     (* Plain gradient descent: the velocity is exactly the gradient. Skipping
        the [momentum * v + g] arithmetic avoids touching (and, under [jit],
        capturing) the velocity tensors at all. *)
-    let f ~decays:_ ~adapts:_ _ x g _ = (descend ~lr x g, [||]) in
+    let f _ _ _ x g _ = (descend ~lr x g, [||]) in
     let params, _ = leafwise fn p ~counter:st.step ~params ~grads [] ~f in
     (* The velocity a later step with momentum reads holds what [leafwise]'s
        would: a complex leaf's descent coordinates, the conjugate gradient. *)
     let velocity = Nx.Ptree.map p (fun _ g -> Nx.conjugate g) grads in
     (params, { velocity; step })
   else
-    let f ~decays:_ ~adapts:_ _ x g s =
+    let f _ _ _ x g s =
       let v = Nx.add (Nx.mul_s s.(0) momentum) g in
       (descend ~lr x v, [| v |])
     in
@@ -567,10 +567,12 @@ let lars_step p ~lr ?(momentum = 0.9) ?(trust_coefficient = 0.001)
   let wd = decay_at ~default:0.01 weight_decay st.step in
   validate_unit_interval fn "momentum" momentum;
   validate_positive_finite fn "trust_coefficient" trust_coefficient;
-  let f ~decays ~adapts w x g s =
+  let f path leaf w x g s =
+    let decays = asks decays path leaf in
     let u = decayed wd w ~decays x g in
     let u =
-      if adapts then Nx.mul u (trust_ratio ~coefficient:trust_coefficient x u)
+      if asks adapts path leaf then
+        Nx.mul u (trust_ratio ~coefficient:trust_coefficient x u)
       else u
     in
     let v = Nx.add (Nx.mul_s s.(0) momentum) u in
@@ -578,7 +580,7 @@ let lars_step p ~lr ?(momentum = 0.9) ?(trust_coefficient = 0.001)
     (descend ~lr x d, [| v |])
   in
   let params, parts =
-    leafwise ?decays ?adapts fn p ~counter:st.step ~params ~grads
+    leafwise fn p ~counter:st.step ~params ~grads
       [ ("the velocity", st.velocity) ]
       ~f
   in
@@ -613,16 +615,17 @@ let bias_correction step b =
   counted (fun dt ->
       one_minus_exp (Nx.mul_s (Nx.cast dt step) (Float.log b)))
 
-(* One step of Adam's moments over every leaf, shared by the family: [apply x
-   mu_hat nu_hat] is the new parameter from the old one and the bias-corrected
-   moments. The corrections derive from the state's counter inside the step, so
-   the whole step traces under jit and the state carries nothing the counter
-   does not already determine. *)
-let adam_update ?decays ?adapts fn p ~b1 ~b2
+(* One step of Adam's moments over every leaf, shared by the family: [apply
+   path leaf w x mu_hat nu_hat] is the new parameter from the old one and the
+   bias-corrected moments, [path] and [leaf] as [leafwise] passes them. The
+   corrections derive from the state's counter inside the step, so the whole
+   step traces under jit and the state carries nothing the counter does not
+   already determine. *)
+let adam_update fn p ~b1 ~b2
     ~(apply :
-       'w.
-       decays:bool ->
-       adapts:bool ->
+       'a 'b 'w.
+       Nx.Ptree.Path.t ->
+       ('a, 'b, 'd) Nx.t ->
        'w wide ->
        ('w, 'd) compute ->
        ('w, 'd) compute ->
@@ -631,14 +634,13 @@ let adam_update ?decays ?adapts fn p ~b1 ~b2
     ~params ~grads =
   let step = Nx.add_s st.step 1l in
   let c1 = bias_correction step b1 and c2 = bias_correction step b2 in
-  let f ~decays ~adapts w x g s =
+  let f path leaf w x g s =
     let m = ema b1 s.(0) g and n = ema b2 s.(1) (Nx.mul g g) in
-    ( apply ~decays ~adapts w x (Nx.div m (at c1 w)) (Nx.div n (at c2 w)),
+    ( apply path leaf w x (Nx.div m (at c1 w)) (Nx.div n (at c2 w)),
       [| m; n |] )
   in
   let params, parts =
-    leafwise ~squared:true ?decays ?adapts fn p ~counter:st.step ~params
-      ~grads
+    leafwise ~squared:true fn p ~counter:st.step ~params ~grads
       [ ("mu", st.mu); ("nu", st.nu) ]
       ~f
   in
@@ -657,7 +659,7 @@ let adam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
   let fn = "Vega.adam_step" in
   let lr = lr st.step in
   validate_adam fn ~b1 ~b2 ~eps;
-  let apply ~decays:_ ~adapts:_ _ x mu_hat nu_hat =
+  let apply _ _ _ x mu_hat nu_hat =
     descend ~lr x (adam_direction ~eps mu_hat nu_hat)
   in
   adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
@@ -670,10 +672,11 @@ let adamw_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?weight_decay
   let lr = lr st.step in
   let wd = decay_at ~default:0.01 weight_decay st.step in
   validate_adam fn ~b1 ~b2 ~eps;
-  let apply ~decays ~adapts:_ w x mu_hat nu_hat =
+  let apply path leaf w x mu_hat nu_hat =
+    let decays = asks decays path leaf in
     descend ~lr x (decayed wd w ~decays x (adam_direction ~eps mu_hat nu_hat))
   in
-  adam_update ?decays fn p ~b1 ~b2 ~apply st ~params ~grads
+  adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
 
 let radam_init p params = moments_init "Vega.radam_init" p params
 
@@ -716,7 +719,7 @@ let radam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
              (Nx.mul_s (Nx.mul (Nx.sub_s rho 4.0) (Nx.sub_s rho 2.0)) k)
              rho))
   in
-  let apply ~decays:_ ~adapts:_ w x mu_hat nu_hat =
+  let apply _ _ w x mu_hat nu_hat =
     let rectification = Nx.mul (at r w) (adam_direction ~eps mu_hat nu_hat) in
     descend ~lr x (Nx.where rectified rectification mu_hat)
   in
@@ -730,12 +733,15 @@ let lamb_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?weight_decay
   let lr = lr st.step in
   let wd = decay_at ~default:0.01 weight_decay st.step in
   validate_adam fn ~b1 ~b2 ~eps;
-  let apply ~decays ~adapts w x mu_hat nu_hat =
+  let apply path leaf w x mu_hat nu_hat =
+    let decays = asks decays path leaf in
     let u = decayed wd w ~decays x (adam_direction ~eps mu_hat nu_hat) in
     descend ~lr x
-      (if adapts then Nx.mul u (trust_ratio ~coefficient:1.0 x u) else u)
+      (if asks adapts path leaf then
+         Nx.mul u (trust_ratio ~coefficient:1.0 x u)
+       else u)
   in
-  adam_update ?decays ?adapts fn p ~b1 ~b2 ~apply st ~params ~grads
+  adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
 
 (* RMSprop *)
 
@@ -768,7 +774,7 @@ let rmsprop_step p ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.0) st ~params
   validate_unit_interval fn "decay" decay;
   validate_positive fn "eps" eps;
   validate_unit_interval fn "momentum" momentum;
-  let f ~decays:_ ~adapts:_ _ x g s =
+  let f _ _ _ x g s =
     let nu = ema decay s.(0) (Nx.mul g g) in
     let u = Nx.div g (Nx.add_s (Nx.sqrt nu) eps) in
     let v =
@@ -808,7 +814,7 @@ let adagrad_step p ~lr ?(eps = 1e-8) st ~params ~grads =
   let fn = "Vega.adagrad_step" in
   let lr = lr st.step in
   validate_positive fn "eps" eps;
-  let f ~decays:_ ~adapts:_ _ x g s =
+  let f _ _ _ x g s =
     let s = Nx.add s.(0) (Nx.mul g g) in
     let d = Nx.div g (Nx.add_s (Nx.sqrt s) eps) in
     (descend ~lr x d, [| s |])
@@ -862,7 +868,7 @@ let adan_step p ~lr ?(b1 = 0.98) ?(b2 = 0.92) ?(b3 = 0.99) ?(eps = 1e-8)
   validate_unit_interval fn "b2" b2;
   validate_unit_interval fn "b3" b3;
   validate_positive fn "eps" eps;
-  let f ~decays ~adapts:_ w x g s =
+  let f path leaf w x g s =
     let dg = Nx.sub g s.(3) in
     let mu = ema b1 s.(0) g and delta = ema b2 s.(1) dg in
     let ahead = Nx.add g (Nx.mul_s dg b2) in
@@ -872,6 +878,7 @@ let adan_step p ~lr ?(b1 = 0.98) ?(b2 = 0.92) ?(b3 = 0.99) ?(eps = 1e-8)
         (Nx.add mu (Nx.mul_s delta b2))
         (Nx.add_s (Nx.sqrt nu) eps)
     in
+    let decays = asks decays path leaf in
     (descend ~lr x (decayed wd w ~decays x d), [| mu; delta; nu; g |])
   in
   let parts =
@@ -883,8 +890,7 @@ let adan_step p ~lr ?(b1 = 0.98) ?(b2 = 0.92) ?(b3 = 0.99) ?(eps = 1e-8)
     ]
   in
   let params, parts =
-    leafwise ~squared:true ?decays fn p ~counter:st.step ~params ~grads parts
-      ~f
+    leafwise ~squared:true fn p ~counter:st.step ~params ~grads parts ~f
   in
   let step = Nx.add_s st.step 1l in
   ( params,
@@ -919,7 +925,7 @@ let lion_step p ~lr ?(b1 = 0.9) ?(b2 = 0.99) st ~params ~grads =
   let lr = lr st.step in
   validate_unit_interval fn "b1" b1;
   validate_unit_interval fn "b2" b2;
-  let f ~decays:_ ~adapts:_ _ x g s =
+  let f _ _ _ x g s =
     (descend ~lr x (Nx.sign (ema b1 s.(0) g)), [| ema b2 s.(0) g |])
   in
   let params, parts =
@@ -993,7 +999,7 @@ let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
   in
   let keep = counted (fun dt -> one_minus_exp (exponent dt)) in
   let fresh = counted (fun dt -> Nx.exp (exponent dt)) in
-  let f ~decays:_ ~adapts:_ w x g s =
+  let f _ _ w x g s =
     let average m v = Nx.add (Nx.mul m (at keep w)) (Nx.mul v (at fresh w)) in
     let g2 = Nx.mul g g in
     let n = Nx.ndim x in

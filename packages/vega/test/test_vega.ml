@@ -1670,40 +1670,81 @@ let mixed_rule =
            (decaying ~decays:(fun _ _ -> true) ())
            (decaying ~decays:rejects ())))
 
-(* The rule is asked once per float or complex leaf, with the parameter's
-   own shape, and never for an integer leaf. *)
-let test_decays_is_asked () =
+(* A rule that records what it is asked, and what it was asked, sorted. *)
+let counting () =
+  let asked = ref [] in
+  let rule path shape =
+    asked := (Nx.Ptree.Path.to_string path, Array.to_list shape) :: !asked;
+    true
+  in
+  (rule, fun () -> List.sort compare !asked)
+
+(* Each rule of each step that takes one is asked once per float or complex
+   leaf, with the parameter's own shape, alone or beside the step's other
+   rule, and never for an integer leaf. A rule given alone is asked once per
+   leaf: the step asks nothing in place of the rule it was not given. *)
+let rules_are_asked =
   let x =
     ( {
         Mixed.h = Nx.ones Nx.bfloat16 [| 3 |];
         s = Nx.ones Nx.float32 [| 2; 3 |];
         d = Nx.ones Nx.float64 [||];
-        z = Nx.ones Nx.complex64 [| 3 |];
+        z = Nx.ones Nx.complex64 [| 1; 3 |];
       },
       Nx.zeros Nx.int32 [| 4 |] )
   in
   let p = Nx.Ptree.pair Mixed.ptree Nx.Ptree.tensor in
-  let asked = ref [] in
-  let decays path shape =
-    asked := (Nx.Ptree.Path.to_string path, Array.to_list shape) :: !asked;
-    true
+  let lr = Vega.rate 0.1 in
+  let lars ?decays ?adapts () =
+    ignore
+      (Vega.lars_step p ~lr ?decays ?adapts (Vega.lars_init p x) ~params:x
+         ~grads:x)
+  and lamb ?decays ?adapts () =
+    ignore
+      (Vega.lamb_step p ~lr ?decays ?adapts (Vega.lamb_init p x) ~params:x
+         ~grads:x)
+  in
+  let one step =
+    let rule, asked = counting () in
+    step rule;
+    [ asked () ]
+  and both step =
+    let decays, decayed = counting () and adapts, adapted = counting () in
+    step ~decays ~adapts;
+    [ decayed (); adapted () ]
+  in
+  let rows =
+    [
+      ("lars ~decays", fun () -> one (fun decays -> lars ~decays ()));
+      ("lars ~adapts", fun () -> one (fun adapts -> lars ~adapts ()));
+      ( "lars, both rules",
+        fun () -> both (fun ~decays ~adapts -> lars ~decays ~adapts ()) );
+      ( "adamw ~decays",
+        fun () ->
+          one (fun decays ->
+              ignore
+                (Vega.adamw_step p ~lr ~decays (Vega.adamw_init p x) ~params:x
+                   ~grads:x)) );
+      ("lamb ~decays", fun () -> one (fun decays -> lamb ~decays ()));
+      ("lamb ~adapts", fun () -> one (fun adapts -> lamb ~adapts ()));
+      ( "lamb, both rules",
+        fun () -> both (fun ~decays ~adapts -> lamb ~decays ~adapts ()) );
+      ( "adan ~decays",
+        fun () ->
+          one (fun decays ->
+              ignore
+                (Vega.adan_step p ~lr ~decays (Vega.adan_init p x) ~params:x
+                   ~grads:x)) );
+    ]
   in
   let expected =
-    [ ("0.d", []); ("0.h", [ 3 ]); ("0.s", [ 2; 3 ]); ("0.z", [ 3 ]) ]
+    [ ("0.d", []); ("0.h", [ 3 ]); ("0.s", [ 2; 3 ]); ("0.z", [ 1; 3 ]) ]
   in
-  let check name =
-    equal ~msg:name
-      (list (Windtrap.pair string (list int)))
-      expected
-      (List.sort compare !asked);
-    asked := []
-  in
-  let lr = Vega.rate 0.1 in
-  let adamw = Vega.adamw_step p ~lr ~decays (Vega.adamw_init p x) in
-  ignore (adamw ~params:x ~grads:x);
-  check "adamw";
-  ignore (Vega.lars_step p ~lr ~decays (Vega.lars_init p x) ~params:x ~grads:x);
-  check "lars"
+  cases "each rule is asked once per float or complex leaf" ~id:fst rows
+    (fun (_, run) ->
+      List.iter
+        (equal (list (Windtrap.pair string (list int))) expected)
+        (run ()))
 
 (* The trust ratio's rule *)
 
@@ -1994,8 +2035,7 @@ let tests =
         rejected_is_adam;
         rejected_ignores_the_decay;
         mixed_rule;
-        test "the rule is asked once per float leaf, with its shape"
-          test_decays_is_asked;
+        rules_are_asked;
       ];
     group "trust ratio"
       [ rejected_is_the_base; rejected_lars_closed_form; mixed_adapts ];
