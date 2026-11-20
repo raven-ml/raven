@@ -57,8 +57,13 @@ aion-large; `--model FILE` reads a safetensors file of aion-base's layout. The
 codecs always come from aion-base, whose files aion-large's repository holds
 byte for byte.
 
-On fudge's CPU, eager, a DESI spectrum drawn from Gaia's XP coefficients at
-`--steps 12` takes 17 s (the median of three, 16.6 to 17.4 s).
+On an NVIDIA RTX 5000 Ada, raven embeds 101 objects a second with aion-base,
+16 a batch, against 62 for AION-1's own PyTorch code, and draws 16 DESI
+spectra a second against 22; on two CPU cores it embeds 1.2 objects a second
+against 0.83. `main.exe` computes the codecs on the host, so on a GPU a whole
+`embed` of 64 objects takes 26 s against PyTorch's 8.3.
+[PERFORMANCE.md](PERFORMANCE.md) has every number, where raven is slower,
+and how to reproduce them.
 
 A command's memory is its weights and codecs plus a batch's work and the
 output. Measured on fudge, peak resident memory on eight objects of the
@@ -116,7 +121,7 @@ from A to B.
 | `lib/survey.mli` | the Multimodal Universe's files, read as modalities, and their cross-match |
 | `bin/main.ml` | the commands |
 | `test/` | the tests, their fixtures and the parity programs |
-| `bench/` | the codecs, the transformer and a generation step on random weights |
+| `bench/` | the commands' rows and the codecs on random weights, against AION-1's code |
 
 ## Differences from AION-1
 
@@ -176,9 +181,17 @@ arguments. The same scripts record the fixtures in `test/upstream` and
 
 ## Benchmarks
 
-`dune build @apps/aion/bench/bench` times one object's calls on the CPU at
-aion-base's shapes, on random weights: an image encode, a spectrum encode,
-the transformer's encode of an image and four fluxes, the decode of a DESI
-spectrum's 273 tokens, and a one-step draw of redshift. `bench/pytorch.py`
-times the same rows with AION-1's code. `bench/aion.thumper` holds fudge's
-baselines.
+```bash
+AION_DEVICE=cuda dune build @apps/aion/bench/bench
+uv run apps/aion/bench/pytorch.py cuda
+```
+
+times the three commands' work on a batch, the model alone from tokens to
+its result, and the codecs, at random weights of aion-base's and
+aion-large's architectures, on the device `AION_DEVICE` names as `--device`
+does (`cpu`, eagerly, by default), at a batch of `AION_BATCH` (16 on a GPU
+and 1 on the host by default). `bench/pytorch.py` times the same rows with
+AION-1's code, `bench/whole.sh` the whole commands on real rows that
+`bench/fetch.py` fetches, and `bench/roles.py` sums a row's kernel times.
+`bench/*.thumper` hold fudge's baselines, a file per device, and
+[PERFORMANCE.md](PERFORMANCE.md) the numbers.
