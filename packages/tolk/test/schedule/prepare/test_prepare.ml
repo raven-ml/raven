@@ -1073,6 +1073,30 @@ let earliest =
           in
           is_false (has Stage u);
           is_false (has Alloc u));
+      test
+        "a split pads with its identity an axis no divisor from 256 to 8 \
+         divides" (fun () ->
+          let total = Shape.param ~device:cpu ~shape:[] 0 Float32 in
+          let n = 65537 in
+          let u =
+            prepare
+              (Ops.sink
+                 [
+                   Ops.after total
+                     [ Ops.store total (Shape.rop (flat n) Max [ 0 ]) ];
+                 ])
+          in
+          equal (list int) [ 256 ]
+            (List.filter_map
+               (fun n ->
+                 if Ops.op n = Alloc then Some (Shape.max_numel n) else None)
+               (Ops.toposort ~calls:Enter u));
+          is_true ~msg:"padded with the maximum's identity"
+            (List.exists
+               (fun u ->
+                 Ops.op u = Const
+                 && Ops.value u = `Float Float.neg_infinity)
+               (Ops.toposort ~calls:Enter u)));
       test "a split is announced at debug level 3" (fun () ->
           let total = Shape.param ~device:cpu ~shape:[] 0 Float32 in
           let sum = Shape.rop (flat 65536) Add [ 0 ] in

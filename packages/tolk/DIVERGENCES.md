@@ -9666,3 +9666,22 @@ D466.
   bfloat16 give eager's bits`; tolk's bench rows `stream/q8_0-core-64` and
   `stream/q8_0-512`, the latter's baseline pending the scheduled
   re-record, and kaun's gpt-oss row `prefill 512, Q8_0`.
+
+## D500. A large reduction splits along a padded axis where no divisor divides it
+
+- **tinygrad:** `schedule/prepare.py` (`split_reduceop`: a reduced axis's
+  divisors from `min(256, 2**22 // prod(reduce.shape))` down to 8; none, no
+  split; the same at `6b7b018da`).
+- **tolk:** `Prepare.split_reduceop`.
+- **Differs:** where none divides, the longest reduced axis of at least 8
+  times the largest split is padded with the reduction's identity to a
+  multiple of it and split so: at most an eighth more work.
+- **Reason:** (d): whisper's vocabulary of 51866 is twice a prime, so each of
+  a decode step's seven reductions over its logits ran in one workgroup of
+  32 threads looping 1621 times, 111 to 244 us. Split, a minute of
+  large-v3-turbo's decoding spends 8.8 ms in them against 205 (DEBUG=2,
+  fudge's RTX 5000 Ada).
+- **Pinned by:** the Prepare suite's `split_prime` (`.tolk`) and `a split pads
+  with its identity an axis no divisor from 256 to 8 divides`; rune's
+  `Jit_gpu`'s argmax, argmin, sum and product over 51866 and 65537, and its
+  bench row `Cuda/log-softmax-float32-51866` on fudge (358 us to 27.5).

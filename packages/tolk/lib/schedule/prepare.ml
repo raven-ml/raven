@@ -250,7 +250,12 @@ let refuse_broadcast_store dest =
    reduction reads it with the most locality. The first reduction's output is
    capped at 2^22 elements, enough to occupy a device with locals and upcasts; a
    split of 256 at most leaves a negligible second reduction, and one of 8 at
-   least is worth a kernel. *)
+   least is worth a kernel. Where no such divisor divides a reduced axis, the
+   longest, if at least 8 times the largest split, is padded with the
+   reduction's identity to a multiple of that split, an eighth more of the
+   reduction at most: whisper's vocabulary of 51866, twice a prime, took 111 to
+   244 us a row's maximum or sum in one workgroup of 32 threads, and takes
+   about 6 us in two kernels on an RTX 5000 Ada. *)
 let split_reduceop reduce x =
   let concrete shape =
     List.fold_right
@@ -297,23 +302,44 @@ let split_reduceop reduce x =
                 divisors)
             (List.init num_axes Fun.id)
         in
+        (* [x] read as [divisor] runs of its axis [dim], [n] long. *)
+        let split (dim, divisor, x, n) =
+          let order = List.init (List.length xs + 1) Fun.id in
+          let splitted =
+            permute
+              (unflatten x dim [ Int divisor; Int (n / divisor) ])
+              (List.filter (( <> ) dim) order @ [ dim ])
+          in
+          if Setting.value Setting.debug >= 3 then
+            Format.printf "split %d: %a -> %a -> %a@." divisor pp_shape
+              (shape x) pp_shape (shape splitted) pp_shape (shape reduce);
+          let first =
+            contiguous (rop splitted reduce_op (List.init num_axes Fun.id))
+          in
+          rop first reduce_op [ ndim reduce ]
+        in
+        (* The longest reduced axis of at least [8 limit] padded after with
+           the identity to a multiple of [limit]. *)
+        let padded () =
+          let long i =
+            limit >= 8
+            && List.nth xs i >= 8 * limit
+            && Nodes.mem (List.nth rngs i) reached
+          in
+          let longest a i = if List.nth xs i > List.nth xs a then i else a in
+          match List.filter long (List.init num_axes Fun.id) with
+          | [] -> None
+          | i :: is ->
+              let dim = List.fold_left longest i is in
+              let n = List.nth xs dim in
+              let extra = (limit - (n mod limit)) mod limit in
+              let value = identity_element reduce_op (dtype x) in
+              let at i _ = if i = dim then Some (Int 0, Int extra) else None in
+              Some (dim, limit, pad ~value x (List.mapi at xs), n + extra)
+        in
         match candidates with
-        | [] -> None
-        | (dim, divisor) :: _ ->
-            let order = List.init (List.length xs + 1) Fun.id in
-            let splitted =
-              permute
-                (unflatten x dim
-                   [ Int divisor; Int (List.nth xs dim / divisor) ])
-                (List.filter (( <> ) dim) order @ [ dim ])
-            in
-            if Setting.value Setting.debug >= 3 then
-              Format.printf "split %d: %a -> %a -> %a@." divisor pp_shape
-                (shape x) pp_shape (shape splitted) pp_shape (shape reduce);
-            let first =
-              contiguous (rop splitted reduce_op (List.init num_axes Fun.id))
-            in
-            Some (rop first reduce_op [ ndim reduce ]))
+        | (dim, divisor) :: _ -> Some (split (dim, divisor, x, List.nth xs dim))
+        | [] -> Option.map split (padded ()))
   | _ -> None
 
 let resolve_function c =

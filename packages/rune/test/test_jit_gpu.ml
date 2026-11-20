@@ -532,7 +532,7 @@ let extremes =
         (fun peak ->
           [ Extreme (n, Nx.float32, peak); Extreme (n, Nx.bfloat16, peak) ])
         [ First; Last; Tie; Nan; Zeros; Flat; Negative; Infinite ])
-    [ 33; 47; 1571; 4099; 128 * 257; 151936; 201088 ]
+    [ 33; 47; 1571; 4099; 128 * 257; 51866; 65537; 151936; 201088 ]
 
 (* The values of [peak] at length [n], below 0 but those it sets, and the
    position of their greatest. *)
@@ -3439,7 +3439,7 @@ let () =
          Windtrap.cases
            "a sum and a product over a length 16 does not divide are exact"
            ~id:string_of_int
-           [ 33; 47; 1571; 4099; 128 * 257; 151936; 201088 ]
+           [ 33; 47; 1571; 4099; 128 * 257; 51866; 65537; 151936; 201088 ]
            folds;
          group "top k"
            [

@@ -2400,6 +2400,20 @@ let gpu_rows g =
               let f = Rune.jit' (Nx.argmax ~axis:0) in
               fun () -> ignore (synced (f x)));
         };
+      (* The log-softmax of whisper's 51866 float32 logits, twice a prime,
+         as a decode step takes it: a maximum and a sum of exponentials, each
+         split into 256 runs of a padded axis. *)
+      on_gpu g "log-softmax-float32-51866"
+        {
+          at =
+            (fun at ->
+              let x =
+                Nx.place at
+                  (Nx.Rng.uniform ~key:(Nx.Rng.key 58) f32 [| 1; 51866 |])
+              in
+              let f = Rune.jit' (Nx.log_softmax ~axes:[ 1 ]) in
+              fun () -> ignore (synced (f x)));
+        };
       (* gpt-oss's gate and up projection with bfloat16 experts at prompts
          of 64 and 512 tokens, routed into blocks of 48 and of 64 rows for a
          tensor core, each block reading its rows through a row map. *)
