@@ -4,6 +4,9 @@ All notable changes to Mynd are documented in this file.
 
 ## Unreleased
 
+- Add `Mask.distance`, each pixel's Euclidean distance to its mask's
+  nearest `true` pixel, computed exactly in integers and rounded once into
+  the dtype, and `Mask.closest`, that pixel's index. Both compile and map.
 - Add `Box.transform`, which moves boxes by a transform. A box that meets
   `d = 0`, whose image is unbounded, moves to NaN, and an empty box to
   `0 0 0 0`. The guide page `doc/annotations.md` moves masks and keypoints.
