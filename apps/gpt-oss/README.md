@@ -9,7 +9,7 @@ eagerly on the host with `--eager`.
 
 On an NVIDIA RTX 5000 Ada, raven decodes gpt-oss-20b at 123 tokens a second,
 as vLLM does, and at 163 packed as llama.cpp packs it, against llama.cpp's 169;
-it prefills 512 tokens at 12,140 a second. [PERFORMANCE.md](PERFORMANCE.md)
+it prefills 512 tokens at 12,090 a second. [PERFORMANCE.md](PERFORMANCE.md)
 has every number and how to reproduce it.
 
 ```bash

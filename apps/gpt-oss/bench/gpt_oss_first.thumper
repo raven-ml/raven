@@ -1,0 +1,9 @@
+# thumper baseline v1
+# suite: gpt_oss_first
+
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+
+first-token-cold/12	wall_time	batch=1	n=3	2.519e+00	2.488e+00 2.519e+00 2.541e+00
+first-token/12	wall_time	batch=1	n=3	1.490e+00	1.465e+00 1.490e+00 1.499e+00

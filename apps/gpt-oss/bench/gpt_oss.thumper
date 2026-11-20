@@ -4,15 +4,15 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
-# forced: blessed under load 10.2 on 14 cores
 
-GptOss/decode-step-Q8_0-cache-1024	alloc_words	exact	128008
-GptOss/decode-step-cache-1024	alloc_words	exact	125128
-GptOss/experts-at-prefill-512	alloc_words	exact	1215
-GptOss/experts-at-prefill-536	alloc_words	exact	1215
-GptOss/prefill-12	alloc_words	exact	125041
-GptOss/prefill-512	alloc_words	exact	125041
-GptOss/prefill-512-Q8_0	alloc_words	exact	127921
+decode-q8_0/512	alloc_words	exact	118323
+decode-q8_0/512	wall_time	batch=1	n=20	6.115e-03	6.095e-03 6.096e-03 6.103e-03 6.109e-03 6.111e-03 6.114e-03 6.114e-03 6.114e-03 6.114e-03 6.115e-03 6.115e-03 6.116e-03 6.116e-03 6.117e-03 6.117e-03 6.117e-03 6.117e-03 6.117e-03 6.120e-03 6.521e-03
+decode/512	alloc_words	exact	116883
+decode/512	wall_time	batch=1	n=20	8.119e-03	8.113e-03 8.114e-03 8.114e-03 8.117e-03 8.117e-03 8.117e-03 8.118e-03 8.118e-03 8.119e-03 8.119e-03 8.120e-03 8.120e-03 8.121e-03 8.121e-03 8.123e-03 8.124e-03 8.125e-03 8.126e-03 8.129e-03 8.437e-03
+prefill-q8_0/512	alloc_words	exact	118235
+prefill-q8_0/512	wall_time	batch=1	n=20	4.370e-02	4.330e-02 4.342e-02 4.342e-02 4.347e-02 4.347e-02 4.367e-02 4.367e-02 4.369e-02 4.369e-02 4.370e-02 4.370e-02 4.370e-02 4.370e-02 4.371e-02 4.371e-02 4.372e-02 4.373e-02 4.375e-02 4.382e-02 4.384e-02
+prefill/512	alloc_words	exact	116795
+prefill/512	wall_time	batch=1	n=20	4.253e-02	4.224e-02 4.235e-02 4.241e-02 4.244e-02 4.245e-02 4.248e-02 4.250e-02 4.251e-02 4.252e-02 4.253e-02 4.253e-02 4.254e-02 4.255e-02 4.258e-02 4.259e-02 4.261e-02 4.261e-02 4.261e-02 4.266e-02 4.268e-02
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
