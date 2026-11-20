@@ -461,6 +461,12 @@ type rm = {
           [group] as [p], an [NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS] of
           {!field-release}, says ([NVA06C_CTRL_CMD_GPFIFO_SCHEDULE]), or is the
           RM's refusal. *)
+  promote : int -> params -> (unit, refusal) result;
+      (** [promote group p] sets how many bytes a miss in the GPU's caches
+          fetches from video memory for the channels of the channel group
+          [group], as [p], an [NV0090_CTRL_PROGRAM_VIDMEM_PROMOTE_PARAMS],
+          says ([NV0090_CTRL_CMD_PROGRAM_VIDMEM_PROMOTE], which the group
+          hands to its graphics context), or is the RM's refusal. *)
   boost : int -> (unit, refusal) result;
       (** [boost subdevice] raises the clocks of the GPU of [subdevice] to
           their maximum, at CUDA's high priority, with no end
@@ -701,7 +707,15 @@ val make : word:nativeint -> 'm path -> (t, string) result
     is the 8 bytes at the host address [word] ({!Rig_edge.type-opener}).
     Under [p.device] it allocates a channel group with one context share,
     the two channels, whose rings {!section-submitting} sizes, and their
-    memory, and asks the RM to run the GPU at its highest clocks.
+    memory, and asks the RM to run the GPU at its highest clocks. It asks
+    the RM to have a miss in the GPU's caches fetch 128 bytes from video
+    memory for the group's channels ([p.rm.promote]), where until set it
+    fetches only the 32-byte sectors it names, as CUDA's context does once
+    its [CU_LIMIT_MAX_L2_FETCH_GRANULARITY] is 128: a kernel that reads a few
+    bytes of each of many rows in each iteration of a loop then misses a
+    quarter as often, and a random scalar read from video memory moves four
+    times the bytes. That is a hint: a refusal of it leaves the fetches at
+    32 bytes and fails nothing.
 
     It then takes its first measure of the GPU's timer through [p.clock].
 

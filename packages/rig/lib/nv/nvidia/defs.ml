@@ -39,6 +39,7 @@
    Copyright (c) 2017-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2020-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2021-2021 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES
 
    Permission is hereby granted, free of charge, to any person obtaining a
@@ -136,6 +137,7 @@ let nv2080_ctrl_perf_gpumon_sample_count_perfmon_util = 0x48
 let nv2080_ctrl_cmd_timer_get_time = 0x20800403
 let nvc36f_ctrl_cmd_gpfifo_get_work_submit_token = 0xc36f0108
 let nva06c_ctrl_cmd_gpfifo_schedule = 0xa06c0101
+let nv0090_ctrl_cmd_program_vidmem_promote = 0x900107
 let nv2080_ctrl_cmd_perf_boost = 0x2080200a
 let nv83de_ctrl_cmd_debug_read_all_sm_error_states = 0x83de030c
 let nv83de_ctrl_cmd_debug_read_mmu_fault_info = 0x83de0328

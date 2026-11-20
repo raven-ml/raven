@@ -25,6 +25,7 @@
    Copyright (c) 2017-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2021-2021 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES
@@ -58,6 +59,7 @@ let nv2080_engine_type_graphics = 1
 let nv_ctxshare_allocation_flags_subcontext_async = 1
 let nv_channelgpfifo_notification_type_error = 0
 let nv_channelgpfifo_notification_type__size_1 = 3
+let nv0090_ctrl_program_vidmem_promote_size_128b = 2
 
 (* Bit fields of their words: (lowest bit, bits). *)
 let nv_ctxshare_allocation_flags_subcontext = (0, 2)
@@ -115,6 +117,12 @@ module Notification = struct
   let info32 = (8, 4)
   let info16 = (0xc, 2)
   let status = (0xe, 2)
+end
+
+module Vidmem_promote = struct
+  let sizeof = 8
+  let l1_size = (0, 4)
+  let t1_size = (4, 4)
 end
 
 (* dev_fault.h's fault types, by value. *)

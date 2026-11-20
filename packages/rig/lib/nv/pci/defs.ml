@@ -159,6 +159,7 @@ let nv2080_ctrl_perf_boost_duration_infinite = 0xffffffff
 let nva06c_ctrl_cmd_gpfifo_schedule = 0xa06c0101
 let nv83de_ctrl_cmd_debug_read_all_sm_error_states = 0x83de030c
 let nv83de_ctrl_cmd_debug_read_mmu_fault_info = 0x83de0328
+let nv0090_ctrl_cmd_program_vidmem_promote = 0x900107
 let nvos04_flags_channel_userd_index_page_fixed_true = 1
 let nv_virtual_function_doorbell_runlist_doorbell_enable = 1
 

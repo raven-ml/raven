@@ -205,6 +205,7 @@ NV = Defs(
         "clc56f.h": SDK + "class/clc56f.h",
         "cl2080_notification.h": SDK + "class/cl2080_notification.h",
         "ctrla06c.h": SDK + "ctrl/ctrla06c.h",
+        "ctrl0090.h": SDK + "ctrl/ctrl0090.h",
         "ctrla06fgpfifo.h": SDK + "ctrl/ctrla06f/ctrla06fgpfifo.h",
         "ctrl83dedebug.h": SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
         "dev_fault.h": UVM + "hwref/ampere/ga100/dev_fault.h",
@@ -216,6 +217,8 @@ NV = Defs(
         "NV2080_ENGINE_TYPE_GRAPHICS", "NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC",
         # a channel's error notifier
         "NV_CHANNELGPFIFO_NOTIFICATION_TYPE_ERROR", "NV_CHANNELGPFIFO_NOTIFICATION_TYPE__SIZE_1",
+        # a channel group's fetches from video memory
+        "NV0090_CTRL_PROGRAM_VIDMEM_PROMOTE_SIZE_128B",
     ],
     fields=[
         "NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT",
@@ -236,6 +239,7 @@ NV = Defs(
             "hObjectError", "hObjectBuffer", "gpFifoOffset", "gpFifoEntries", "hContextShare", "hUserdMemory",
             "userdOffset"]),
         "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS": ("Group_schedule", ["bEnable"]),
+        "NV0090_CTRL_PROGRAM_VIDMEM_PROMOTE_PARAMS": ("Vidmem_promote", ["l1__size", "t1__size"]),
     },
     per_release={"NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS", "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS",
                  "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS"},
@@ -267,6 +271,7 @@ NVIDIA = Defs(
         "ctrl2080gr.h": SDK + "ctrl/ctrl2080/ctrl2080gr.h",
         "ctrl2080fb.h": SDK + "ctrl/ctrl2080/ctrl2080fb.h",
         "ctrla06c.h": SDK + "ctrl/ctrla06c.h",
+        "ctrl0090.h": SDK + "ctrl/ctrl0090.h",
         "ctrlc36f.h": SDK + "ctrl/ctrlc36f.h",
         "ctrl2080perf.h": SDK + "ctrl/ctrl2080/ctrl2080perf.h",
         "ctrl2080gpumon.h": SDK + "ctrl/ctrl2080/ctrl2080gpumon.h",
@@ -317,6 +322,7 @@ NVIDIA = Defs(
         "NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2", "NV2080_CTRL_GPUMON_SAMPLE_TYPE_PERFMON_UTIL",
         "NV2080_CTRL_PERF_GPUMON_SAMPLE_COUNT_PERFMON_UTIL", "NV2080_CTRL_CMD_TIMER_GET_TIME",
         "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN", "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE",
+        "NV0090_CTRL_CMD_PROGRAM_VIDMEM_PROMOTE",
         "NV2080_CTRL_CMD_PERF_BOOST", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
         "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO", "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX",
         "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH",
@@ -469,6 +475,7 @@ PCI_SOURCES = {
     "ctrl2080perf.h": R570 + SDK + "ctrl/ctrl2080/ctrl2080perf.h",
     "ctrl90f1.h": R570 + SDK + "ctrl/ctrl90f1.h",
     "ctrla06c.h": R570 + SDK + "ctrl/ctrla06c.h",
+    "ctrl0090.h": R570 + SDK + "ctrl/ctrl0090.h",
     "ctrl83dedebug.h": R570 + SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
     "g_chipset_nvoc.h": R570 + "src/nvidia/generated/g_chipset_nvoc.h",
     "gpu_acpi_data.h": R570 + "src/nvidia/inc/kernel/gpu/gpu_acpi_data.h",
@@ -648,7 +655,7 @@ PCI_CONSTANTS += [
     "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES",
     "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH", "NV2080_CTRL_PERF_BOOST_DURATION_INFINITE",
     "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
-    "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO",
+    "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO", "NV0090_CTRL_CMD_PROGRAM_VIDMEM_PROMOTE",
     "NVOS04_FLAGS_CHANNEL_USERD_INDEX_PAGE_FIXED_TRUE", "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_DOORBELL_ENABLE",
 ]
 

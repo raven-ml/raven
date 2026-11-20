@@ -2538,6 +2538,54 @@ let faults =
         late_rm_hang;
     ]
 
+(* Fetches from video memory *)
+
+(* Each channel group an open makes has a miss in the GPU's caches fetch 128
+   bytes from video memory for both units, as CUDA's context does with its
+   L2 fetch granularity at 128 bytes, and the RM takes the command. The value
+   2 is NV0090_CTRL_PROGRAM_VIDMEM_PROMOTE_SIZE_128B (ctrl0090.h), each unit's
+   size a word of the parameters. *)
+let fetches_128_bytes () =
+  on_kernel ();
+  let sent = ref [] in
+  let wrap (p : _ N.path) =
+    let promote group q =
+      let r = p.rm.promote group q in
+      let answer = match r with Ok () -> "taken" | Error _ -> "refused" in
+      let l1 = N.get q (0, 4) and t1 = N.get q (4, 4) in
+      sent := Printf.sprintf "l1 %d, t1 %d, %s" l1 t1 answer :: !sent;
+      r
+    in
+    { p with rm = { p.rm with promote } }
+  in
+  let opener = Rig_nv_nvidia.gpu_with 0 ~wrap in
+  N.stop (require_ok (Rig_gpu_support.opened opener)) ~fault:None;
+  equal (list string) ~msg:"the commands" [ "l1 2, t1 2, taken" ] !sent
+
+(* The command is a hint: an RM that refuses it leaves the fetches as they
+   were, and the GPU opens and runs work. *)
+let refused_promote () =
+  on_kernel ();
+  let wrap (p : _ N.path) =
+    let promote _ _ = Error (N.Refused "the RM refused the promotion") in
+    { p with rm = { p.rm with promote } }
+  in
+  let d = require_ok (Rig.open_ (Rig_nv_nvidia.gpu_with 0 ~wrap)) in
+  Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
+  let b = B.create d 4096 and h = B.create Rig.host 4096 in
+  B.fill b 'x';
+  B.copy ~src:b ~dst:h;
+  equal char ~msg:"a byte the GPU filled" 'x'
+    (B.read h Bigarray.char (fun a -> Bigarray.Array1.get a 4095));
+  equal (option string) ~msg:"the loss" None (Rig.lost d)
+
+let fetches =
+  group ~timeout:60. "fetches from video memory"
+    [
+      test "a channel group fetches 128 bytes a miss" fetches_128_bytes;
+      test "a refused promotion leaves the open as it was" refused_promote;
+    ]
+
 (* Usage *)
 
 (* The RM samples a GPU's load from the work it runs: after three seconds of
@@ -2584,5 +2632,6 @@ let () =
          timeline;
          stateful;
          faults;
+         fetches;
          usage;
        ])

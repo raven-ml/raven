@@ -182,6 +182,7 @@ type rm = {
   alloc : parent:int -> int -> params option -> (int, refusal) result;
   token : int -> (int, refusal) result;
   schedule : int -> params -> (unit, refusal) result;
+  promote : int -> params -> (unit, refusal) result;
   boost : int -> (unit, refusal) result;
   sm_errors : int -> params -> (unit, refusal) result;
   mmu_faults : int -> params -> (unit, refusal) result;
@@ -1120,6 +1121,18 @@ let make_channels (type m) (p : m path) (module R : D.RELEASE) ~taken entries
   let schedule = params R.Group_schedule.sizeof in
   set schedule R.Group_schedule.b_enable 1;
   let* () = in_rm "scheduling the channels" (p.rm.schedule group schedule) in
+  (* A miss in the L2 fetches 128 bytes from video memory, where it fetches
+     only the 32-byte sectors it names until set: CUDA's own setting for a
+     context ([cuCtxSetLimit] of [CU_LIMIT_MAX_L2_FETCH_GRANULARITY], which
+     rig.cuda sets to 128), which sends this command to the context's group
+     with 128 bytes for both units. A hint, as CUDA's limit is: where the RM
+     refuses it, the fetches stay at the 32-byte sectors and the channels
+     work as before. *)
+  let promote = params D.Vidmem_promote.sizeof in
+  let bytes_128 = D.nv0090_ctrl_program_vidmem_promote_size_128b in
+  set promote D.Vidmem_promote.l1_size bytes_128;
+  set promote D.Vidmem_promote.t1_size bytes_128;
+  ignore (p.rm.promote group promote : (unit, refusal) result);
   let set =
     {
       id = block.address;

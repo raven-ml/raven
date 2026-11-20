@@ -225,6 +225,7 @@ let rm c =
     alloc;
     token;
     schedule = control D.nva06c_ctrl_cmd_gpfifo_schedule;
+    promote = control D.nv0090_ctrl_cmd_program_vidmem_promote;
     boost;
     sm_errors = control D.nv83de_ctrl_cmd_debug_read_all_sm_error_states;
     mmu_faults = control D.nv83de_ctrl_cmd_debug_read_mmu_fault_info;

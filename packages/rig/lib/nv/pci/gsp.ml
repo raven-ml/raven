@@ -943,6 +943,11 @@ let client_rm g ~client ~locate =
        kchannelIsSchedulable_IMPL). A client's compute context is bound when
        its object is made ([alloc]), before any schedule. *)
     schedule = forward Defs.nva06c_ctrl_cmd_gpfifo_schedule;
+    (* The group's handler hands it to the group's graphics context
+       (kchangrpapiCtrlProgramVidmemPromote, g_kernel_channel_group_api_nvoc.h),
+       whose handler sends the command as it is
+       (kgrctxCtrlProgramVidmemPromote_IMPL). *)
+    promote = forward Defs.nv0090_ctrl_cmd_program_vidmem_promote;
     boost = boost g ~client;
     (* Its method table marks it ROUTE_TO_PHYSICAL, which sends it to the GSP
        as it is (rmresControl_Prologue_IMPL). *)
