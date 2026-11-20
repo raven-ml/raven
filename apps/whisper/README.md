@@ -8,9 +8,9 @@ fallback to higher temperatures. The transcript is written as text,
 subtitles (VTT, SRT), tab-separated values or JSON, as upstream's `whisper`
 command writes them.
 
-On an NVIDIA RTX 5000 Ada at float32, raven transcribes speech at 374 times
-real time with tiny, 120 with small and 65 with large-v3-turbo, against
-openai-whisper's 202, 68 and 71 and faster-whisper's 341, 107 and 73.
+On an NVIDIA RTX 5000 Ada at float32, raven transcribes speech at 408 times
+real time with tiny, 124 with small and 89 with large-v3-turbo, against
+faster-whisper's 341, 107 and 73 and openai-whisper's 202, 68 and 71.
 [PERFORMANCE.md](PERFORMANCE.md) has every number and how to reproduce it.
 
 ```bash
