@@ -321,11 +321,18 @@ let walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks ~ux f args =
     let values =
       if chunked then List.map2 (Ops.where was) combined us else combined
     in
+    let combines =
+      List.mapi
+        (fun c v -> st acc_s (int c) (Ops.where run v (List.nth olds c)))
+        values
+    in
+    (* The step sets its mark after the combines that read it. A register's
+       load read once is rendered into its reader, so unordered, a combine
+       could read the mark its own update had just set, and combine the
+       chunk's first update with the [0] the element starts at. *)
+    let seen_w = Ops.after seen ([ inits; s ] @ combines) in
     let steps =
-      st seen_s (int 0) (Ops.where run one8 (ld seen_s (int 0)))
-      :: List.mapi
-           (fun c v -> st acc_s (int c) (Ops.where run v (List.nth olds c)))
-           values
+      st seen_w (int 0) (Ops.where run one8 (ld seen_s (int 0))) :: combines
     in
     let loop = Ops.end_ (Ops.group steps) [ s ] in
     let acc = Ops.after acc [ loop ] and seen = Ops.after seen [ loop ] in
@@ -360,8 +367,11 @@ let walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks ~ux f args =
       | _ -> f olds us
     in
     let stores = List.mapi (fun c v -> Ops.store (at_part y e c) v) values in
+    (* The mark is set after the stores whose values read it. *)
     let marks =
-      match hit with None -> [] | Some m -> [ Ops.store (at_mark m e) one8 ]
+      match hit with
+      | None -> []
+      | Some m -> [ Ops.store (at_mark (Ops.after m stores) e) one8 ]
     in
     let body = Ops.group (stores @ marks) in
     let ends =

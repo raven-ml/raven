@@ -216,6 +216,41 @@ let example i (d, (combine : Nx.combine), positions, offset, donated, n, k) =
     donated;
   }
 
+(* Integer extremes of 98, 99 and 2000 updates into one target a lane, every
+   value on the side of [0] away from the extreme's direction: positive for
+   [Min], negative for [Max], so that an extreme started from [0] rather than
+   from the first update gives [0]. The updates are a permutation, their
+   extreme mid-walk. *)
+let one_signed =
+  let case (d, (combine : Nx.combine), k) =
+    let sign = if combine = Min then 1. else -1. in
+    let v x = F (sign *. Float.of_int x) in
+    let s = [| 2; 1; 3 |] and t = [| 2; k; 3 |] in
+    let updates =
+      Array.init (numel t) (fun j -> v (100 + (j * 37 mod numel t)))
+    in
+    {
+      dtype = d;
+      combine;
+      into_shape = s;
+      updates_shape = t;
+      positions = Trailing;
+      pos = Array.make (numel (drawn Trailing t)) 0L;
+      into = { view = Plain; values = Array.make (numel s) (v 1_000_000) };
+      updates = { view = Plain; values = updates };
+      donated = false;
+    }
+  in
+  List.concat_map
+    (fun (d, c) -> List.map (fun k -> case (d, c, k)) [ 98; 99; 2000 ])
+    Nx.Dtype.
+      [
+        (Any Nx.int32, Min);
+        (Any Nx.int32, Max);
+        (Any Nx.int64, Min);
+        (Any Nx.int64, Max);
+      ]
+
 let examples =
   List.mapi example
     Nx.Dtype.
@@ -244,6 +279,8 @@ let examples =
         (Any Nx.float32, Add, Full, false, false, 200, 2000);
         (Any Nx.int32, Set, Trailing, false, true, 200, 2000);
       ]
+  @ one_signed
+
 
 (* The law *)
 
@@ -299,6 +336,13 @@ let law ?(flushes = false) (module S : Nx.Devices) c =
     ((not trailing) && q > 1);
   let n = c.into_shape.(1) in
   cover "many updates into few targets" (n <= 20 && c.updates_shape.(1) >= 1800);
+  let integer = not (is_floating c.dtype || is_bool c.dtype) in
+  let one_sign =
+    Array.for_all (function F x -> x > 0. | _ -> false) c.updates.values
+    || Array.for_all (function F x -> x < 0. | _ -> false) c.updates.values
+  in
+  cover "an integer extreme of updates of one sign into one target"
+    (integer && n = 1 && (c.combine = Min || c.combine = Max) && one_sign);
   cover "a position outside the axis"
     (Array.exists (fun p -> p < 0L || p >= Int64.of_int n) c.pos);
   let t = c.updates_shape in

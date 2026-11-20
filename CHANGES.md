@@ -528,6 +528,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.scatter` of integers by `Min` or `Max` on a GPU gives the
+  extreme where about 100 or more updates land on one element. It could give
+  `0`: each run of updates took its first update's extreme with `0`.
+
 - `Rune.Total.collect` inside `Rune.vmap` holds and adds to one running
   value, where it held one per lane, when every lane adds alike (a block from
   `Rune.lanes`) in a loop, jit, remat, switch or custom rule: `n` times less

@@ -45,8 +45,9 @@ val examples : t list
 (** [examples] holds a case of each combine of each kind of dtype, of each
     kind of {!positions}, with its target donated, of one or a few updates
     into a donated target, with its updates an offset view, of each narrow
-    float's [Add] and each complex combine, and of many updates into few
-    targets and into 200. *)
+    float's [Add] and each complex combine, of many updates into few
+    targets and into 200, and of [int32] and [int64] [Min] and [Max] of 98, 99
+    and 2000 updates of one sign into one target. *)
 
 val law : ?flushes:bool -> (module Nx.Devices) -> t -> unit
 (** [law ~flushes s c] checks that a compiled call on [s]'s first device gives
@@ -59,4 +60,5 @@ val law : ?flushes:bool -> (module Nx.Devices) -> t -> unit
     {!positions}, positions broadcast along the trailing axes and positions
     not, a donated target, one of a few updates, a position outside the axis,
     a narrow float's [Add], an offset view of the updates, each complex
-    combine, and many updates into few targets. *)
+    combine, many updates into few targets, and an integer extreme of
+    updates of one sign into one target. *)
