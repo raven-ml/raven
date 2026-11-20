@@ -36,6 +36,7 @@
   nx
   nx_array
   nx_kernel
+  nx_kernels_support
   nx_quant
   nx_rng_support
   nx_softmax_support

@@ -25,13 +25,9 @@ module T = Nx.Ptree
 
 let numel = Array.fold_left ( * ) 1
 
-(* A dtype's unit roundoff, [u] in the bounds below, and its [λ + 2], the
-   factor of [ln tk] in nx.cpu's [ε] (nx_cpu.mli). *)
+(* A dtype's unit roundoff, [u] in the bounds below. *)
 let unit_roundoff (type s) (dt : (float, s) Nx.dtype) =
   match dt with Float64 -> 0x1p-53 | _ -> 0x1p-24
-
-let log_factor (type s) (dt : (float, s) Nx.dtype) =
-  match dt with Float64 -> 7. | _ -> 5.
 
 type mask = Unmasked | Causal | Captured
 
@@ -147,8 +143,8 @@ let keys dt c lead =
       (draw dt c 2. [| 3; c.hk; p; c.dk |], draw dt c 3. [| 3; c.hk; p; c.dv |])
 
 (* The sum of the bounds nx.mli states for two computations of [c] in
-   [acc], to first order in its [u], of a query of [dt]: one with nx.cpu's [ε],
-   [(13n + 9 + (λ + 2) ln tk) u + u |lse|] and its exp of 5u, and one with
+   [acc], to first order in its [u], of a query of [dt]: one with nx.cpu's [ε]
+   (Nx_kernels_support.cpu) and its exp of 5u, and one with
    rune.mli's compiled [Nx.logsumexp],
    [(1.37 (tk - 1) + 2E + 1 + 3 ln tk) u + u |lse|] for [E = 9] ulps, and
    its exp of 9 ulps, 19u, in [w]. Values lie in [[-1, 1]], so a score is
@@ -161,10 +157,9 @@ let tolerances dt acc c lse =
   let b = a +. Float.of_int (c.tq + c.tk) in
   let eta = (Float.of_int ((2 * c.dk) + 4) *. u *. a) +. (2. *. u *. b) in
   let ln = Float.log (Float.of_int (max 1 c.tk)) in
-  let n = (c.tk + 63) / 64 in
   let kernel =
-    ((Float.of_int ((13 * n) + 9) +. (log_factor acc *. ln)) *. u)
-    +. (u *. Float.abs lse)
+    (Option.get Nx_kernels_support.cpu.attention).epsilon
+      (Nx_array.Dtype.Any acc) (max 1 c.tk) lse
   in
   let compiled =
     (((1.37 *. Float.of_int (c.tk - 1)) +. 19. +. (3. *. ln)) *. u)

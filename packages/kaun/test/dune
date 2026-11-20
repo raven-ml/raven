@@ -21,7 +21,17 @@
  (package kaun)
  (deps
   (glob_files golden/*.npz))
- (libraries kaun rune vega nx nx.array nx.io rig windtrap unix))
+ (libraries
+  kaun
+  rune
+  vega
+  nx
+  nx.array
+  nx.io
+  nx_kernels_support
+  rig
+  windtrap
+  unix))
 
 (tests
  (names test_cache_index_metal)

@@ -3485,6 +3485,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.attention` on nx.cpu sums each block of 64 keys' value products
+  apart, then adds them to the rescaled accumulator, where it chained them
+  over every key: a float32 row of 1500 keys errs about 5 times less, and
+  `o`'s sum is within `γ(min (t, 64) + ⌈t/64⌉)`. Results' bits change.
 - Add `Nx.Ptree.place_fixed walk p x`, which places a structure of fixed
   arrays only, a `'d t` such as `Nx_quant.t`, from its walk, with no module
   that names a payload it does not hold.

@@ -29,7 +29,7 @@ the file, and prints each segment as its window is decided.
   start	end	text
   0	260	used
   $ cat out/talk.json
-  {"text": " used\u0015\u0015\u0015\u0015\u0015\u0015", "segments": [{"id": 0, "seek": 0, "start": 0.0, "end": 0.26, "text": " used\u0015\u0015\u0015\u0015\u0015\u0015", "tokens": [1120, 973, 209, 209, 209, 209, 209, 209], "temperature": 0.0, "avg_logprob": -0.6695049073961046, "compression_ratio": 0.5555555555555556, "no_speech_prob": 0.0002996644761878997}], "language": "en"}
+  {"text": " used\u0015\u0015\u0015\u0015\u0015\u0015", "segments": [{"id": 0, "seek": 0, "start": 0.0, "end": 0.26, "text": " used\u0015\u0015\u0015\u0015\u0015\u0015", "tokens": [1120, 973, 209, 209, 209, 209, 209, 209], "temperature": 0.0, "avg_logprob": -0.6695049073961046, "compression_ratio": 0.5555555555555556, "no_speech_prob": 0.00029966438887640834}], "language": "en"}
 
 One format, compiled on the host:
 

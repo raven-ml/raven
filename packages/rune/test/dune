@@ -54,6 +54,7 @@
   nx_array_support
   nx_kernel
   nx_kernel_cases
+  nx_kernels_support
   nx_quant
   nx_support
   rig

@@ -623,12 +623,13 @@ let law ?(composed = false) ?wide (module S : Nx.Devices) c =
           (((1.37 *. Float.of_int (c.tk - 1)) +. 19. +. (3. *. ln)) *. u)
           +. (u *. Float.abs l)
         in
-        (* The float64 reference's own error, nx.cpu's, where it is as wide
-           as the compiled call. *)
-        let n = (c.tk + 63) / 64 in
+        (* The float64 reference's own error, nx.cpu's [ε]
+           (Nx_kernels_support.cpu), where it is as wide as the compiled
+           call. *)
         let eps_ref =
           if wide then
-            ((Float.of_int ((13 * n) + 9) +. (7. *. ln)) *. u) +. (u *. Float.abs l)
+            (Option.get Nx_kernels_support.cpu.attention).epsilon
+              (Nx_array.Dtype.Any Nx_array.Dtype.Float64) (max 1 c.tk) l
           else 0.
         in
         let w = ((1. +. u) *. ((2. *. eta) +. eps)) +. (((2. *. b) +. ln +. 19.) *. u) in

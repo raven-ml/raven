@@ -30,18 +30,12 @@ let numel s = Array.fold_left ( * ) 1 s
 let u32 = 0x1p-24
 let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
-(* An accumulator: its dtype, its unit roundoff [u], its least positive
-   subnormal and nx.cpu's [λ], [Log] erring by a relative [e{^λu} - 1]
-   (nx_cpu.mli). *)
-type 'a accum = {
-  acc : (float, 'a) D.t;
-  u : float;
-  least : float;
-  lambda : float;
-}
+(* An accumulator: its dtype, its unit roundoff [u] and its least positive
+   subnormal. *)
+type 'a accum = { acc : (float, 'a) D.t; u : float; least : float }
 
-let in32 = { acc = D.Float32; u = u32; least = 0x1p-149; lambda = 3. }
-let in64 = { acc = D.Float64; u = 0x1p-53; least = 0x1p-1074; lambda = 5. }
+let in32 = { acc = D.Float32; u = u32; least = 0x1p-149 }
+let in64 = { acc = D.Float64; u = 0x1p-53; least = 0x1p-1074 }
 
 (* Double-word numbers: [hi + lo] unevaluated, [|lo|] at most half an ulp
    of [hi]. [two_sum] and the product by [Float.fma] are error-free (Knuth;
@@ -301,15 +295,9 @@ let score_error ac c h i j ~a s =
   | Bias _ -> (dot *. (1. +. u)) +. (u *. Float.abs s)
 
 (* nx.cpu's bound for attention, nx.mli's [ε], of a row of [t] keys whose
-   [lse] is [r]:
-   [e{^λu} (13n + 9 + ln t) u' + (e{^λu} - 1) ln t + u' |r|] for [n] blocks
-   of 64 keys, [u' = u / (1 - u)]. *)
+   [lse] is [r] (Nx_kernels_support.cpu). *)
 let logsumexp_bound ac t r =
-  let n = (t + 63) / 64 and ln = Float.log (Float.of_int t) in
-  let u' = ac.u /. (1. -. ac.u) and grow = Float.exp (ac.lambda *. ac.u) in
-  (grow *. (Float.of_int ((13 * n) + 9) +. ln) *. u')
-  +. ((grow -. 1.) *. ln)
-  +. (u' *. Float.abs r)
+  (Option.get Nx_kernels_support.cpu.attention).epsilon (D.Any ac.acc) t r
 
 (* The definition's own bound, to first order in float64's [u], for a row of
    [t] keys: each [e{^(s - m)}] within [3u] relative, so [l] too; [lse]
@@ -1234,6 +1222,182 @@ let float_causal (p : _ Nx.pair) =
   let seen = Nx.add p.q (Nx.sub_s p.len (Int64.of_int p.tq)) in
   Nx.(less_equal (cast float32 p.k) (cast float32 seen))
 
+(* [o]'s sum within nx_cpu.mli's factor [γ(min (t, 64) + n)] for [t] keys
+   in [n] blocks, against the exact result. Each row's keys are one key
+   repeated, so its scores tie and its weights are exactly [1]:
+   [exp (+0)], with [α] [exp (-∞) = +0] at the first block and [1] after
+   (Nx_kernel.Prog's special values), and [l] sums [t] ones exactly. Each
+   column's value is one constant [c] over the keys, so the exact [o] is
+   [c]; the sum errs by at most [γ |c|] and the division by [u |o|].
+   Whisper's base.en encoder's shape: 8 heads of 1500 keys and 64
+   dimensions, scores within [±45.6] and values within [±5.2]; its 1500
+   rows, and one row, which take different products. *)
+let test_blocked_sum () =
+  let heads = 8 and t = 1500 and d = 64 in
+  let wave seed i = Float.sin ((Float.of_int i *. 0.37) +. seed) in
+  let key = Array.init (heads * d) (wave 2.) in
+  let norm h =
+    Array.fold_left (fun s x -> s +. (x *. x)) 0. (Array.sub key (h * d) d)
+  in
+  (* Row r of head h scores about 45.6 sin (…) against the head's key. *)
+  let q tq =
+    Array.init (heads * tq * d) (fun x ->
+        let h = x / (tq * d) and e = x mod d in
+        let score = 45.6 *. wave 1. (x / d) in
+        score *. 8. *. key.((h * d) + e) /. norm h)
+  in
+  let per_key f =
+    Array.init (heads * t * d) (fun x -> f.(((x / (t * d)) * d) + (x mod d)))
+  in
+  let c = Array.init (heads * d) (fun x -> round32 (5.2 *. wave 3. x)) in
+  let k = f32 [| 1; heads; t; d |] (per_key key) in
+  let v = f32 [| 1; heads; t; d |] (per_key c) in
+  let n = (t + 63) / 64 in
+  let g = gamma (min t 64 + n) u32 in
+  let rel = g +. (u32 *. (1. +. g)) in
+  List.iter
+    (fun tq ->
+      let o, _ =
+        Nx.attention ~acc:Nx.float32 ~kv:(Nx.Dense { k; v })
+          (f32 [| 1; heads; tq; d |] (q tq))
+      in
+      let want =
+        Array.init (heads * tq * d) (fun x ->
+            c.(((x / (tq * d)) * d) + (x mod d)))
+      in
+      equal ~msg:(Printf.sprintf "%d rows" tq)
+        (array (float_rel ~rel ~abs:0.)) want (Nx.to_array o))
+    [ t; 1 ]
+
+(* nx_cpu.mli's order of a float64 row, from its statement: each score's
+   products fused in increasing dimension from +0, times the scale; per
+   block of 64 keys in which the row sees a key, [m'], weights
+   [exp (x - m')] by Nx.exp ({!Nx_kernel.Prog.Exp}'s bits), [α], [l]
+   becoming [α l + s] and [a] becoming [α a + p], each one fused
+   multiply-add, [s] summed in 8 lanes and [p] from +0 in increasing key,
+   each product fused, over the block's keys or, where a value hidden from
+   the row is not finite, over its visible ones; [o = a / l + 0] and
+   [lse = m + log l]. *)
+let exps xs =
+  if Array.length xs = 0 then [||]
+  else Nx.to_array (Nx.exp (Nx.create Nx.float64 [| Array.length xs |] xs))
+
+let lanes_sum s =
+  let lane = Array.make 8 0. in
+  Array.iteri (fun j x -> lane.(j mod 8) <- lane.(j mod 8) +. x) s;
+  List.iter
+    (fun h -> for i = 0 to h - 1 do lane.(i) <- lane.(i) +. lane.(i + h) done)
+    [ 4; 2; 1 ];
+  lane.(0)
+
+let stated_row ~scale ~dv ~tk q k v visible =
+  let m = ref neg_infinity and l = ref 0. and a = Array.make dv 0. in
+  for b = 0 to ((tk + 63) / 64) - 1 do
+    let j0 = b * 64 in
+    let nk = min 64 (tk - j0) in
+    let seen = List.filter (fun j -> visible (j0 + j)) (List.init nk Fun.id) in
+    if seen <> [] then begin
+      let score j =
+        if not (visible (j0 + j)) then neg_infinity
+        else begin
+          let x = ref 0. in
+          Array.iteri (fun d qd -> x := Float.fma qd k.(j0 + j).(d) !x) q;
+          !x *. scale
+        end
+      in
+      let s = Array.init nk score in
+      let m' = Array.fold_left (fun x y -> if y > x || Float.is_nan y then y else x) !m s in
+      let alpha, p =
+        if m' = neg_infinity then (1., Array.make nk 0.)
+        else
+          let e = exps (Array.append [| !m -. m' |] (Array.map (fun x -> x -. m') s)) in
+          (e.(0), Array.init nk (fun j -> if visible (j0 + j) then e.(j + 1) else 0.))
+      in
+      if m' <> neg_infinity then begin
+        l := Float.fma alpha !l (lanes_sum p);
+        m := m'
+      end;
+      let hidden_bad =
+        List.exists
+          (fun j ->
+            (not (visible (j0 + j)))
+            && Array.exists (fun x -> not (Float.is_finite x)) v.(j0 + j))
+          (List.init nk Fun.id)
+      in
+      let part = Array.make dv 0. in
+      for j = 0 to nk - 1 do
+        if visible (j0 + j) || not hidden_bad then
+          for e = 0 to dv - 1 do
+            part.(e) <- Float.fma p.(j) v.(j0 + j).(e) part.(e)
+          done
+      done;
+      Array.iteri (fun e x -> a.(e) <- Float.fma alpha x part.(e)) a
+    end
+  done;
+  if !l = 0. then (Array.make dv 0., neg_infinity)
+  else
+    let log1 = (Nx.to_array (Nx.log (Nx.create Nx.float64 [| 1 |] [| !l |]))).(0) in
+    ( Array.map (fun x -> (x /. !l) +. 0.) a,
+      if !m = infinity then !m else !m +. log1 )
+
+(* The kinds a law of the stated order needs: a decode row and few rows,
+   which take a gemv, many rows on the chain kernel's tiles, a mask hiding
+   a NaN value from some rows, and one block. *)
+type order_case = { tq : int; tk : int; nan_at : int option; masked : bool }
+
+let order_kinds =
+  [| { tq = 1; tk = 230; nan_at = None; masked = false };
+     { tq = 11; tk = 230; nan_at = None; masked = false };
+     { tq = 40; tk = 230; nan_at = None; masked = false };
+     { tq = 5; tk = 230; nan_at = Some 100; masked = true };
+     { tq = 40; tk = 230; nan_at = Some 100; masked = true };
+     { tq = 40; tk = 50; nan_at = None; masked = false } |]
+
+(* [o] and [lse] in float64 bit for bit against the stated order. Keys
+   grow with their index, so a row's maximum rises block after block and
+   [α] is below [1]. The mask shows key [j] to row [i] where
+   [j <= i + 70]. *)
+let law_order (kind, seed) =
+  let c = order_kinds.(kind) in
+  cover "one row" (c.tq = 1);
+  cover "few rows" (c.tq = 11);
+  cover "the chain kernel's tiles" (c.tq = 40 && not c.masked);
+  cover "a hidden NaN" c.masked;
+  cover "one block" (c.tk <= 64);
+  let dk = 16 and dv = 24 in
+  let wave s i = Float.sin ((Float.of_int i *. 0.37) +. s +. seed) in
+  let q = Array.init c.tq (fun i -> Array.init dk (fun e -> (0.8 *. wave 1. ((i * dk) + e)) +. 0.3)) in
+  let k =
+    Array.init c.tk (fun j ->
+        Array.init dk (fun e -> wave 2. ((j * dk) + e) +. (Float.of_int j /. 40.)))
+  in
+  let v =
+    Array.init c.tk (fun j ->
+        Array.init dv (fun e ->
+            if Some j = c.nan_at then nan else 3. *. wave 3. ((j * dv) + e)))
+  in
+  let flat a = Array.concat (Array.to_list a) in
+  let scale = 1. /. Float.sqrt (Float.of_int dk) in
+  let mask = if c.masked then Some (fun (p : _ Nx.pair) -> Nx.less_equal p.k (Nx.add_s p.q 70L)) else None in
+  let o, lse =
+    Nx.attention ~scale ?mask ~acc:Nx.float64
+      ~kv:
+        (Nx.Dense
+           { k = Nx.create Nx.float64 [| 1; 1; c.tk; dk |] (flat k);
+             v = Nx.create Nx.float64 [| 1; 1; c.tk; dv |] (flat v) })
+      (Nx.create Nx.float64 [| 1; 1; c.tq; dk |] (flat q))
+  in
+  let rows =
+    Array.init c.tq (fun i ->
+        stated_row ~scale ~dv ~tk:c.tk q.(i) k v (fun j ->
+            (not c.masked) || j <= i + 70))
+  in
+  equal ~msg:"o" same_bits (Array.concat (Array.to_list (Array.map fst rows))) (Nx.to_array o);
+  equal ~msg:"lse" same_bits (Array.map snd rows) (Nx.to_array lse)
+
+let order_gen =
+  Gen.pair (Gen.int_range 0 (Array.length order_kinds - 1)) (Gen.float_range 0. 6.)
+
 let test_threads_targets dt () =
   let q, k, v = big dt () in
   List.iter
@@ -1365,5 +1529,7 @@ let () =
              test "layouts change no bit, float64" (test_layouts Nx.float64);
              test "a row's bits are its own, float32" (test_rows Nx.float32);
              test "a row's bits are its own, float64" (test_rows Nx.float64);
+             test "o's sum in blocks of keys" test_blocked_sum;
+             prop ~count:120 "float64 bits by the stated order" order_gen law_order;
            ];
        ])

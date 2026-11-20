@@ -16,10 +16,10 @@ typedef struct {
   T *s;         /* ROWS × KEYS: scores, then weights */
   T *t;         /* ROWS × KEYS: a score program's output */
   T *acc;       /* ROWS × dv */
-  T *save;      /* ROWS × dv: rows the block leaves as they were */
+  T *part;      /* ROWS × dv: the block's products */
   T *kt;        /* dk × KEYS: the keys transposed */
   T *vf;        /* KEYS × dv */
-  T m[ROWS], l[ROWS];
+  T m[ROWS], l[ROWS], alpha[ROWS];
   uint8_t *vis; /* ROWS × KEYS, row r's at r·nk */
   uint8_t *lo, *hi; /* blocks each: the mask's least and greatest */
   uint8_t sees[ROWS], hides[ROWS], picks[ROWS];
@@ -44,7 +44,7 @@ static void F(lay_out)(const att *c, F(scratch) *x) {
   TAKE(s, ROWS * KEYS);
   TAKE(t, ROWS * KEYS);
   TAKE(acc, ROWS * c->dv);
-  TAKE(save, ROWS * c->dv);
+  TAKE(part, ROWS * c->dv);
   TAKE(kt, KEYS * c->dk);
   TAKE(vf, KEYS * c->dv);
 #undef TAKE
@@ -80,10 +80,10 @@ static void F(values_of)(const att *c, F(scratch) *x, int n) {
 }
 
 /* Row r's update by its block's [nk] scores at [s], hidden ones -inf:
-   its maximum, its weights into [s] and its sum, and its accumulator
-   rescaled. A block whose visible scores are all -inf gives weights 0
-   and leaves the state as it was. Eight lanes of T, of the integers of
-   T's width for comparisons. */
+   its maximum, its weights into [s], its sum and its α. A block whose
+   visible scores are all -inf gives weights 0 and leaves the state as it
+   was, α 1. Eight lanes of T, of the integers of T's width for
+   comparisons. */
 typedef T F(v8) __attribute__((vector_size(8 * sizeof(T))));
 typedef SWORD F(v8i) __attribute__((vector_size(8 * sizeof(T))));
 
@@ -130,27 +130,34 @@ static T F(lanes_sum)(const T *s, int n) {
   return lane[0];
 }
 
-static void F(update)(const att *c, F(scratch) *x, int r, int nk) {
+static void F(update)(F(scratch) *x, int r, int nk) {
   T *s = x->s + r * KEYS;
   T m = x->m[r], mx = F(greatest)(s, nk, m);
   if (mx == -INFINITY) {
     memset(s, 0, sizeof(T) * (size_t)nk);
+    x->alpha[r] = 1;
     return;
   }
   T alpha = EXP(m - mx);
   for (int j = 0; j < nk; j++) s[j] = EXP(s[j] - mx);
-  x->l[r] = x->l[r] * alpha + F(lanes_sum)(s, nk);
+  x->l[r] = FMA(alpha, x->l[r], F(lanes_sum)(s, nk));
   x->m[r] = mx;
-  if (alpha != 1) {
-    T *acc = x->acc + r * c->dv;
-    for (int64_t e = 0; e < c->dv; e++) acc[e] *= alpha;
-  }
+  x->alpha[r] = alpha;
 }
 
-/* Row r's products of its visible pairs alone, as the kernel adds them:
-   in increasing key, each fused into its sum. */
+/* Row r's accumulator after its block: α acc plus the block's products,
+   each element one fused multiply-add. */
+static void F(rescale)(const att *c, F(scratch) *x, int r) {
+  T *acc = x->acc + r * c->dv, alpha = x->alpha[r];
+  const T *p = x->part + r * c->dv;
+  for (int64_t e = 0; e < c->dv; e++) acc[e] = FMA(alpha, acc[e], p[e]);
+}
+
+/* Row r's products of its visible pairs alone into its part, as the
+   kernel adds them: from +0 in increasing key, each fused into its sum. */
 static void F(picked)(const att *c, F(scratch) *x, int r, int nr, int nk) {
-  T *acc = x->acc + r * c->dv;
+  T *y = x->part + r * c->dv;
+  memset(y, 0, sizeof(T) * (size_t)c->dv);
   const T *p = x->s + r * KEYS;
   const uint8_t *vis = x->vis + r * nk;
   for (int u = 0; u < nr; u++) {
@@ -159,7 +166,7 @@ static void F(picked)(const att *c, F(scratch) *x, int r, int nr, int nk) {
       if (!vis[g->j + i]) continue;
       T pj = p[g->j + i];
       const T *v = (const T *)g->v + i * g->vs;
-      for (int64_t e = 0; e < c->dv; e++) acc[e] = FMA(pj, v[e], acc[e]);
+      for (int64_t e = 0; e < c->dv; e++) y[e] = FMA(pj, v[e], y[e]);
     }
   }
 }
@@ -322,47 +329,46 @@ static void F(unit)(att *c, F(scratch) *x, int64_t u) {
       }
     }
     for (int i = 0; i < rows; i++) {
-      if (x->sees[i]) F(update)(c, x, i, nk);
+      if (x->sees[i]) F(update)(x, i, nk);
       else memset(x->s + i * KEYS, 0, sizeof(T) * (size_t)nk);
     }
-    if (rows < CHAIN_ROWS) {
+    /* Each row's products of the block into its part, from +0: a gemv a
+       row for few rows, else the chain kernel's tiles, whose parts of the
+       rows that see no key or add their visible pairs apart are not
+       read. */
+    if (rows < CHAIN_ROWS)
       for (int i = 0; i < rows; i++) {
         if (!x->sees[i]) continue;
         if (picking && x->picks[i]) {
           F(picked)(c, x, i, nr, nk);
           continue;
         }
+        memset(x->part + i * dv, 0, sizeof(T) * (size_t)dv);
         for (int g = 0; g < nr; g++) {
           const run *v = &x->runs[g];
           c->gemv(dv, v->n, v->v, v->vs, x->s + i * KEYS + v->j,
-                  x->acc + i * dv);
+                  x->part + i * dv);
         }
       }
-      continue;
-    }
-    /* Rows the products must leave as they are: those that see no key,
-       and those whose visible pairs are added apart. */
-    for (int i = 0; i < rows; i++)
-      if (!x->sees[i] || (picking && x->picks[i]))
-        memcpy(x->save + i * dv, x->acc + i * dv, sizeof(T) * (size_t)dv);
-    for (int64_t e = 0; e < dv; e += c->nr) {
-      int n = (int)(dv - e < c->nr ? dv - e : c->nr);
-      for (int g = 0; g < nr; g++) {
-        const run *v = &x->runs[g];
-        c->pv(rows, n, v->n, x->s + v->j, KEYS, 1, (const T *)v->v + e, v->vs,
-              x->acc + e, dv, NX_CPU_FROM_TILE);
+    else {
+      for (int64_t e = 0; e < dv; e += c->nr) {
+        int n = (int)(dv - e < c->nr ? dv - e : c->nr);
+        for (int g = 0; g < nr; g++) {
+          const run *v = &x->runs[g];
+          c->pv(rows, n, v->n, x->s + v->j, KEYS, 1, (const T *)v->v + e,
+                v->vs, x->part + e, dv,
+                g == 0 ? NX_CPU_FROM_ZERO : NX_CPU_FROM_TILE);
+        }
       }
+      for (int i = 0; i < rows; i++)
+        if (x->sees[i] && picking && x->picks[i]) F(picked)(c, x, i, nr, nk);
     }
-    for (int i = 0; i < rows; i++) {
-      int pick = picking && x->picks[i];
-      if (!x->sees[i] || pick)
-        memcpy(x->acc + i * dv, x->save + i * dv, sizeof(T) * (size_t)dv);
-      if (pick) F(picked)(c, x, i, nr, nk);
-    }
+    for (int i = 0; i < rows; i++)
+      if (x->sees[i]) F(rescale)(c, x, i);
   }
   /* o = acc / l + 0, rounded once to o's dtype, and lse. The +0 makes +0
-     a -0 that α acc leaves of zero products, as α = 0 does of a negative
-     acc: a sum of zeros is +0 (nx.mli). */
+     a -0 that α acc + part leaves of zero products, as α = 0 does of a
+     negative acc: a sum of zeros is +0 (nx.mli). */
   nx_cpu_run store = nx_cpu_convert(DT, c->odt);
   const nx_array *o = &c->a[O], *lse = &c->a[LSE];
   for (int hh = 0; hh < nh; hh++)

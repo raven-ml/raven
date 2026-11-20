@@ -495,16 +495,18 @@ let gamma n u = Float.of_int n *. u /. (1. -. (Float.of_int n *. u))
 
 (* nx.mli's bound for a row of [tk] keys, [a] its greatest [|scale| Σ |q k|]
    over its visible keys: [lse]'s, [η + ε], and the factor
-   [e^w - 1 + γ(tk + 1, 2u) e^w] of [M] in [o]'s. [ε] is nx.cpu's,
-   [(13 n + 9 + 5 ln tk) u + u |lse|] for [n] blocks of 64 keys. *)
+   [e^w - 1 + γ(tk + 1, 2u) e^w] of [M] in [o]'s. [ε] is nx.cpu's float32
+   one (Nx_kernels_support.cpu). *)
 let row_bound ~dk ~tk ~a ~lse =
   let u = u32 in
   let eta =
     ((((1. +. u) ** 2.) *. (1. +. gamma (dk + 1) (2. *. u))) -. 1.) *. a
   in
   let ln = Float.log (Float.of_int (max 1 tk)) in
-  let n = Float.of_int ((tk + 63) / 64) in
-  let eps = ((((13. *. n) +. 9. +. (5. *. ln)) *. u) +. (u *. Float.abs lse)) in
+  let eps =
+    (Option.get Nx_kernels_support.cpu.attention).epsilon
+      (Nx_array.Dtype.Any Nx_array.Dtype.Float32) (max 1 tk) lse
+  in
   let w =
     ((1. +. u) *. ((2. *. eta) +. eps)) +. (((2. *. a) +. ln +. 5.) *. u)
   in

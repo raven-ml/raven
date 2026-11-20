@@ -47,7 +47,7 @@ let every_kind _ _ = true
 
 (* nx_cpu.mli's attention. Its error factor is [γ(k + 1)] in the
    accumulator, its [ε] is
-   [e{^λu} (13n + 9 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|], [n] the
+   [e{^λu} (11n + 11 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|], [n] the
    blocks of 64 keys and [λ] [3] in float32 and [5] in float64. Where every
    output is [0], its weights are exact: [exp (+0)] is [1] and [log 1] is
    [+0] (Nx_kernel.Prog's special values), [l] sums [tk] ones exactly, [α]
@@ -66,7 +66,7 @@ let cpu_attention =
     let u' = u /. (1. -. u) and ln = Float.log (Float.of_int t) in
     let lambda = if u = 0x1p-24 then 3. else 5. in
     let grow = Float.exp (lambda *. u) in
-    (grow *. (Float.of_int ((13 * ((t + 63) / 64)) + 9) +. ln) *. u')
+    (grow *. (Float.of_int ((11 * ((t + 63) / 64)) + 11) +. ln) *. u')
     +. ((grow -. 1.) *. ln)
     +. (u' *. Float.abs lse)
   in
@@ -76,10 +76,11 @@ let cpu_attention =
    merges of the parts a row of [k] keys spans, its error factor is
    [γ(k + 1 + p(k))], and [γ(k + 2⌈k/8⌉ + p(k))] for float16 and bfloat16
    queries, keys and values, which the matrix units may sum; its [ε] is
-   nx.cpu's with [n + 2p(t)] blocks. Where every output is [0], its weights
-   are exact, as nx.cpu's are, and a merge of parts multiplies by
-   [exp (+0)]: [1]. It may apply weights through a rounding to the
-   values' dtype. *)
+   [e{^λu} (13 (n + 2p(t)) + 9 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|],
+   nx_cuda.mli's own: its products chain over each part's keys. Where
+   every output is [0], its weights are exact, as nx.cpu's are, and a
+   merge of parts multiplies by [exp (+0)]: [1]. It may apply weights
+   through a rounding to the values' dtype. *)
 let cuda_attention =
   let unit acc =
     if acc = Nx_array.Dtype.Any Float32 then 0x1p-24 else 0x1p-53

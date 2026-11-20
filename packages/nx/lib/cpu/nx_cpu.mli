@@ -395,22 +395,23 @@
       dimension from [+0], each fused into its sum, times the scale
       rounded to the accumulator, rewritten by the program's output 1;
     - [m'] is the greatest of [m] and the block's visible scores, a NaN
-      where one is. Where it is [-∞], the block's weights are [0] and [m]
-      and [l] are left as they were; otherwise each weight is
-      [exp (x - m')], [0] at a hidden pair, [l] becomes [α l + s] with
-      [α = exp (m - m')] and [s] the block's weights summed term [j] into
-      lane [j mod 8], lanes [i] and [i + 4], then [i + 2], then [i + 1]
-      added, and [a] becomes [α a], unchanged where [α] is [1];
-    - [a] then adds each weight times its key's value, in increasing key,
-      each product fused into its sum, over the block's keys, a hidden
-      pair's weight [0] included, whatever [m']; where a value of the
-      block hidden from the row is a NaN or an infinity, over its visible
-      pairs alone. So a value at a visible pair counts wherever its block
-      lies, its score [-∞] included: a NaN there, or an infinity of weight
-      [0], makes [a] a NaN.
+      where one is. Where it is [-∞], the block's weights are [0], [m]
+      and [l] are left as they were and [α] is [1]; otherwise each weight
+      is [exp (x - m')], [0] at a hidden pair, [α = exp (m - m')], and [l]
+      becomes [α l + s], one fused multiply-add, [s] the block's weights
+      summed term [j] into lane [j mod 8], lanes [i] and [i + 4], then
+      [i + 2], then [i + 1] added;
+    - [a] becomes [α a + p], one fused multiply-add for each element, [p]
+      the sum from [+0] of each weight times its key's value, in
+      increasing key, each product fused into its sum, over the block's
+      keys, a hidden pair's weight [0] included, whatever [m']; where a
+      value of the block hidden from the row is a NaN or an infinity, over
+      its visible pairs alone. So a value at a visible pair counts
+      wherever its block lies, its score [-∞] included: a NaN there, or an
+      infinity of weight [0], makes [a] a NaN.
     A block in which the row has no visible pair leaves its state as it
     was. At the end, [o = a / l + 0] in the accumulator, rounded once to
-    [o]'s dtype: the [+0] makes [+0] a [-0] that [α a] leaves of zero
+    [o]'s dtype: the [+0] makes [+0] a [-0] that [α a + p] leaves of zero
     products, as [α = 0] does of a negative [a]. [lse = m + log l], [+∞]
     where [m] is; a row of [l = 0] has [o = +0] and [lse = -∞]. [exp] and
     [log] are {!Nx_kernel.Prog.Exp}'s and {!Nx_kernel.Prog.Log}'s. So a
@@ -459,20 +460,22 @@
     and {!Nx_kernel.Prog.Exp}, within 2 ulps, by at most [5u'].
     {!Nx_kernel.Prog.Log}, within 1 ulp in float32 and 2 in float64, errs
     by a relative [e{^λu} - 1], [λ] being [3] and [5]. Then [l] is within
-    [(7n + 9 + ln t) u'] of its exact value in log space, [lse] is within
-    [e{^λu} (7n + 9 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|] of [L], and
+    [(6n + 10 + ln t) u'] of its exact value in log space, [lse] is within
+    [e{^λu} (6n + 10 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|] of [L], and
     each weight [w] for an element of [o], which holds that element's
-    roundings of [α a] and of the division by [l], has
-    [|ln w - (x - L)| ≤ 2bu + (13n + 9 + ln t) u'], as attention.c
+    rounding of the division by [l], has
+    [|ln w - (x - L)| ≤ 2bu + (11n + 11 + ln t) u'], as attention.c
     derives. nx.cpu's [ε] ({!Nx_kernel.section-attention}) is
-    [e{^λu} (13n + 9 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|], which
+    [e{^λu} (11n + 11 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|], which
     bounds [lse]'s error and keeps each weight's [δ] within
     [(1 + u) ε + (2b + ln t) u + 5u'].
 
-    A score's [q·k] rounds [dk] times, and [o]'s sum rounds a term once at
-    each visible pair's fused product from its own on, so both are within
-    [γ(k + 1)], [k] their terms. The value product
-    takes the weights in the accumulator. *)
+    A score's [q·k] rounds [dk] times, within [γ(dk + 1)]. [o]'s sum
+    rounds a term once at each fused product of its block from its own
+    on, at most [min (t, 64)] times, and once at each [α a + p] from its
+    block's on, at most [n] times: within [γ(min (t, 64) + n)], so within
+    [γ(t + 1)]. The value product takes the weights in the
+    accumulator. *)
 
 (** {1:matrices Matrices}
 

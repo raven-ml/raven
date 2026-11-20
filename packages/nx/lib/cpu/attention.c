@@ -22,8 +22,9 @@
                dimension, each fused (chain order), times the scale,
                rewritten by the program's output 1, -inf where hidden
      update    m' = max (m, scores); α = exp (m - m'); p = exp (s - m');
-               l = α l + Σ p; acc = α acc + p v, the products added in
-               chain order onto acc
+               l = α l + Σ p and acc = α acc + Σ p v, each one fused
+               multiply-add, the block's products added in chain order
+               from +0
 
    Units of many rows compute both products on the chain kernel's tiles
    (cpu.h, nx_cpu_kernel), over the keys staged transposed; units of few,
@@ -64,24 +65,25 @@
       e^(-βx), and β times that mean is its entropy less ln Σ e^(-βx),
       at most ln t: u' ln t in all, and -u ln t below.
    2. l. A key's term passes p_j's exp (5u'), its block's sum (at most 7
-      additions in its lane and 3 in the lanes' tree, 10u') and the
-      addition into l (u'); each later block multiplies l by α (exp 5u',
-      product u') and adds into it (u'): 7u'. With 1's u' ln t, the
-      computed l' is within (7n + 9 + ln t) u' of l = Σ e^(s_j - m) in
-      log space.
+      additions in its lane and 3 in the lanes' tree, 10u') and the fused
+      α l + Σ p (u'); each later block's α (exp 5u') and fused α l + Σ p
+      (u'): 6u'. With 1's u' ln t, the computed l' is within
+      (6n + 10 + ln t) u' of l = Σ e^(s_j - m) in log space.
    3. lse = m + log l', l in [1, t]: log errs by
-      (e^(λu) - 1) |ln l'| <= (e^(λu) - 1) (ln t + (7n + 9 + ln t) u'), the
-      addition by u' |lse|: e^(λu) (7n + 9 + ln t) u' + (e^(λu) - 1) ln t
-      + u' |lse|.
+      (e^(λu) - 1) |ln l'| <= (e^(λu) - 1) (ln t + (6n + 10 + ln t) u'),
+      the addition by u' |lse|: e^(λu) (6n + 10 + ln t) u'
+      + (e^(λu) - 1) ln t + u' |lse|.
    4. A weight at an element of o, p_j Π α / l with that element's
-      roundings of α acc and of the division: the exponents' 2bu, p_j's
-      exp (5u'), each later block's α (exp 5u', product u'), l's
-      (7n + 9 + ln t) u' and the division's u': within
-      2bu + (13n + 9 + ln t) u' of s_j - L. The sums of products round a
-      term once at each later visible pair's fused product: γ(t), within
-      nx.cpu's error factor γ(t + 1).
-   The ε nx_cpu.mli states covers 3 and 4's (13n + 9 + ln t) u':
-   e^(λu) (13n + 9 + ln t) u' + (e^(λu) - 1) ln t + u' |lse|.
+      rounding of the division: the exponents' 2bu, p_j's exp (5u'), each
+      later block's α (exp 5u'), l's (6n + 10 + ln t) u' and the
+      division's u': within 2bu + (11n + 11 + ln t) u' of s_j - L. The
+      sums of products round a term once at each fused product of its
+      block from its own on, at most min (t, 64), and once at each fused
+      α acc + Σ p v from its block's on, at most n: γ(min (t, 64) + n),
+      within nx.cpu's error factor γ(t + 1), where one chain over the t
+      keys would pass t.
+   The ε nx_cpu.mli states covers 3 and 4's (11n + 11 + ln t) u':
+   e^(λu) (11n + 11 + ln t) u' + (e^(λu) - 1) ln t + u' |lse|.
 
    At the end o = acc / l + 0, rounded once to o's dtype, and
    lse = m + log l; a row of l = 0 has o = +0 and lse = -inf. Scores,
