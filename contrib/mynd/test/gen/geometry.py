@@ -26,12 +26,27 @@ one strict sign, NaN where they do not, 0 0 0 0 for an empty box. The
 script checks that a 9 x 9 grid of each closed box maps inside the exact
 result, and that each side is a mapped corner's coordinate, so the result
 is the least box holding the box's image.
+
+giou.p, giou.g, giou.exact: the paper's Algorithm 2 (Rezatofighi et al.,
+"Generalized Intersection over Union", CVPR 2019) in exact rationals, on
+the pairs it admits without ordering the prediction's coordinates: the
+ground truth g not empty, the prediction p with x1 >= x0 and y1 >= y0.
+Coordinates are quarters, so every area is exact in float64. giou.kind
+labels each pair (KINDS below).
+
+giou.{a,b,want}{32,64}: torchvision's generalized_box_iou on boxes that
+are not empty, pairwise, in float32 and float64. Where its c - u rounds
+below 0 the want is the IoU, which Box.giou's clamp of c - u at 0 gives;
+giou.clamped{32,64} counts those entries.
 """
 import sys
 from fractions import Fraction as F
 import random
 
 import numpy as np
+import torch
+from torchvision.ops import generalized_box_iou
+from torchvision.ops.boxes import _box_inter_union
 
 random.seed(23)
 out = {}
@@ -151,5 +166,127 @@ out["transform.b"] = np.array(bs, np.float64)
 out["transform.want"] = np.array(wants, np.float64)
 out["transform.kind"] = np.array(kinds, np.int64)
 
+# Box.giou
+
+KINDS = ["overlapping", "disjoint", "nested", "touching", "zero width",
+         "zero height", "point"]
+
+
+def area(b):
+    return (b[2] - b[0]) * (b[3] - b[1]) if b[2] > b[0] and b[3] > b[1] else 0
+
+
+def algorithm2(p, g):
+    # Step 1 orders p's coordinates; the pairs drawn need no ordering.
+    assert p[2] >= p[0] and p[3] >= p[1] and area(g) > 0
+    ap = (p[2] - p[0]) * (p[3] - p[1])
+    ag = (g[2] - g[0]) * (g[3] - g[1])
+    xi1, xi2 = max(p[0], g[0]), min(p[2], g[2])
+    yi1, yi2 = max(p[1], g[1]), min(p[3], g[3])
+    i = (xi2 - xi1) * (yi2 - yi1) if xi2 > xi1 and yi2 > yi1 else 0
+    ac = ((max(p[2], g[2]) - min(p[0], g[0]))
+          * (max(p[3], g[3]) - min(p[1], g[1])))
+    u = ap + ag - i
+    return i / u - (ac - u) / ac
+
+
+def kind(p, g):
+    w, h = p[2] - p[0], p[3] - p[1]
+    if w == 0 and h == 0:
+        return "point"
+    if w == 0:
+        return "zero width"
+    if h == 0:
+        return "zero height"
+    if p[0] >= g[0] and p[1] >= g[1] and p[2] <= g[2] and p[3] <= g[3]:
+        return "nested"
+    iw = min(p[2], g[2]) - max(p[0], g[0])
+    ih = min(p[3], g[3]) - max(p[1], g[1])
+    if iw > 0 and ih > 0:
+        return "overlapping"
+    if iw == 0 or ih == 0:
+        return "touching" if iw >= 0 and ih >= 0 else "disjoint"
+    return "disjoint"
+
+
+def quarter(lo, hi):
+    return F(random.randint(lo, hi), 4)
+
+
+per_kind = 40
+pairs = {k: [] for k in KINDS}
+while min(len(v) for v in pairs.values()) < per_kind:
+    gx, gy = quarter(-24, 24), quarter(-24, 24)
+    g = (gx, gy, gx + quarter(1, 24), gy + quarter(1, 24))
+    shape = random.choice(["any", "zero", "inside", "beside"])
+    if shape == "inside":
+        px = g[0] + quarter(0, int((g[2] - g[0]) * 4))
+        py = g[1] + quarter(0, int((g[3] - g[1]) * 4))
+        p = (px, py, min(px + quarter(0, 12), g[2]),
+             min(py + quarter(0, 12), g[3]))
+    elif shape == "beside":
+        px = random.choice([g[2], g[0] - quarter(1, 12)])
+        py = g[1] + quarter(-8, 8)
+        right = px + quarter(1, 12) if px == g[2] else g[0]
+        p = (px, py, right, py + quarter(1, 12))
+    else:
+        px, py = quarter(-24, 24), quarter(-24, 24)
+        hi = 0 if shape == "zero" else 24
+        p = (px, py, px + quarter(0, hi),
+             py + quarter(0, random.choice([0, hi])))
+    k = kind(p, g)
+    if len(pairs[k]) < per_kind:
+        pairs[k].append((p, g))
+ps, gs, exact, kinds = [], [], [], []
+for k, rs in pairs.items():
+    for p, g in rs:
+        ps.append([float(v) for v in p])
+        gs.append([float(v) for v in g])
+        exact.append(float(algorithm2(p, g)))
+        kinds.append(KINDS.index(k))
+out["giou.p"] = np.array(ps, np.float64)
+out["giou.g"] = np.array(gs, np.float64)
+out["giou.exact"] = np.array(exact, np.float64)
+out["giou.kind"] = np.array(kinds, np.int64)
+
+np_rng = np.random.default_rng(29)
+
+
+def nonempty(n):
+    # Boxes anywhere, and tiny boxes inside large ones far from the origin,
+    # where c - u can round below 0.
+    xy = np_rng.uniform(0, 600, (n, 2))
+    wh = np_rng.uniform(0.5, 300, (n, 2))
+    b = np.concatenate([xy, xy + wh], 1)
+    k = n // 3
+    outer = np_rng.uniform(1000, 4000, (k, 2))
+    owh = np_rng.uniform(100, 400, (k, 2))
+    inner = outer + np_rng.uniform(0, 1, (k, 2)) * (owh - 1)
+    iwh = np_rng.uniform(1e-3, 1, (k, 2))
+    b[:k] = np.concatenate([outer, outer + owh], 1)
+    b[k:2 * k] = np.concatenate([inner, inner + iwh], 1)
+    return b
+
+
+for bits, dt in ((32, np.float32), (64, np.float64)):
+    a = nonempty(96).astype(dt)
+    b = nonempty(90).astype(dt)
+    ta, tb = torch.tensor(a), torch.tensor(b)
+    got = generalized_box_iou(ta, tb)
+    inter, union = _box_inter_union(ta, tb)
+    iou = inter / union
+    lt = torch.min(ta[:, None, :2], tb[None, :, :2])
+    rb = torch.max(ta[:, None, 2:], tb[None, :, 2:])
+    wh = (rb - lt).clamp(min=0)
+    c = wh[..., 0] * wh[..., 1]
+    assert torch.equal(got, iou - (c - union) / c)
+    clamped = (c - union) < 0
+    out[f"giou.a{bits}"], out[f"giou.b{bits}"] = a, b
+    out[f"giou.want{bits}"] = torch.where(clamped, iou, got).numpy()
+    out[f"giou.clamped{bits}"] = np.array(int(clamped.sum()), np.int64)
+    print(f"giou float{bits}: {int(clamped.sum())} of {clamped.numel()}",
+          "entries clamped")
+
 np.savez(sys.argv[1], **out)
 print("transform:", {k: len(v) for k, v in rows.items()}, "of", draws, "draws")
+print("giou exact:", {k: len(v) for k, v in pairs.items()})

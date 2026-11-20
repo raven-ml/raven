@@ -715,7 +715,9 @@ module Box : sig
       and rows [i₀] to [i₁] is [j₀ i₀ (j₁ + 1) (i₁ + 1)]. A box is clipped to
       an image by {!Nx.minimum} with [[w; h; w; h]] then {!Nx.maximum_s} of
       [0]. Each operation a function's doc states is rounded once, in the
-      boxes' dtype.
+      boxes' dtype. A derivative is finite wherever the result is, at empty
+      boxes and zero denominators too, and {!transform}'s also where a
+      finite transform gives NaN.
 
       {e Non-maximum suppression} takes the boxes in descending order of score
       and keeps
@@ -746,6 +748,25 @@ module Box : sig
       [i / ((area a + area b) - i)], with [i] the intersection's area, the
       product of its sides each clamped at [0], and [0] where the union is
       [0]. *)
+
+  val giou :
+    (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t -> (float, 's, 'd) Nx.t
+  (** [giou a b] is the generalized intersection over union of every box of
+      [a], [[…; n; 4]], with every box of [b], [[…; m; 4]], paired as {!iou}
+      pairs them (Rezatofighi et al., CVPR 2019, Algorithm 1). It is
+      [iou a b - p / c], where [c] is the {!area} of the box from the least
+      [x₀] and [y₀] of the two boxes to the greatest [x₁] and [y₁], and [p]
+      is [c] less the union {!iou} divides by, clamped at [0] against
+      rounding. It is [iou a b] where [c] is [0], and lies in
+      [[-1, iou a b]] where [c] is finite. An infinite [c], as float16 boxes
+      in pixels reach past 256 by 256, gives NaN, and so does a NaN
+      coordinate, in its row and column.
+
+      An empty box adds its corners to the enclosing box and nothing to the
+      union. Descent on [1 - giou a b] never widens an inverted box, one with
+      [x₁ < x₀] or [y₁ < y₀]. A model whose raw outputs can come out
+      inverted must order each pair of coordinates first, as the paper's
+      Algorithm 2 does. *)
 
   val of_mask : (float, 's) Nx.dtype -> 'd Nx.bool_t -> (float, 's, 'd) Nx.t
   (** [of_mask dt m] is the least box holding every [true] pixel of each mask

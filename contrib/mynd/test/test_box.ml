@@ -531,16 +531,16 @@ let transform_shapes =
 type flt = F : string * (float, _) Nx.dtype * float -> flt
 
 (* Boxes of integers moved by axis maps stay exact in every float format. A
-   turn by 30 degrees of boxes within [0, 8] rounds each of the four
-   operations of a corner's numerator by at most half a unit in the last place
-   of 16, so the corners lie within 2 such units of float64's. *)
+   turn by 30 degrees moves boxes within [[0, 8]] to corners below 16, each
+   rounding two products and a sum, by at most half a unit in the last place
+   of the values below 16, compared with float64 on the same rounded inputs. *)
 let moved_dtypes =
   cases "boxes move in every float format"
     ~id:(fun (F (n, _, _)) -> n)
     [
-      F ("float16", Nx.float16, 2. *. (2. ** -6.));
-      F ("bfloat16", Nx.bfloat16, 2. *. (2. ** -3.));
-      F ("float32", Nx.float32, 2. *. (2. ** -19.));
+      F ("float16", Nx.float16, 3. *. Float.ldexp 1. (-8));
+      F ("bfloat16", Nx.bfloat16, 3. *. Float.ldexp 1. (-5));
+      F ("float32", Nx.float32, 3. *. Float.ldexp 1. (-21));
     ]
     (fun (F (_, dt, tol)) ->
       let b =
@@ -649,6 +649,330 @@ let tie_grads =
       in
       equal (array float_exact) jacobian
         (Array.concat (List.init 4 (fun k -> numbers (row k)))))
+
+(* Generalized intersection over union *)
+
+let giou1 a b = Nx.item [ 0; 0 ] (V.Box.giou (one a) (one b))
+
+let giou_cases =
+  cases "GIoU of boxes whose value the definition gives" ~id:fst
+    [
+      ("equal boxes", ([| 0.; 0.; 2.; 3. |], [| 0.; 0.; 2.; 3. |], 1.));
+      ("apart", ([| 0.; 0.; 1.; 1. |], [| 3.; 0.; 4.; 1. |], -0.5));
+      ("nested", ([| 0.; 0.; 4.; 4. |], [| 1.; 1.; 2.; 2. |], 1. /. 16.));
+      ("touching", ([| 0.; 0.; 1.; 1. |], [| 1.; 0.; 2.; 1. |], 0.));
+      ("zero width", ([| 5.; 0.; 5.; 1. |], [| 0.; 0.; 1.; 1. |], -0.8));
+      ("a point", ([| 5.; 5.; 5.; 5. |], [| 0.; 0.; 1.; 1. |], -0.96));
+      ("one segment twice", ([| 0.; 0.; 0.; 1. |], [| 0.; 0.; 0.; 1. |], 0.));
+      ("two segments apart", ([| 0.; 0.; 0.; 1. |], [| 3.; 0.; 3.; 1. |], -1.));
+      ("inverted", ([| 5.; 0.; 3.; 1. |], [| 0.; 0.; 1.; 1. |], -2. /. 3.));
+    ]
+    (fun (_, (a, b, want)) ->
+      (* Each value is two quotients of small integers and their difference,
+         each rounded by at most half a unit in the last place of 1. *)
+      equal (float (2. *. epsilon_float)) want (giou1 a b))
+
+let giou_kinds =
+  [
+    "overlapping";
+    "disjoint";
+    "nested";
+    "touching";
+    "zero width";
+    "zero height";
+    "point";
+  ]
+
+(* Coordinates on quarters make [i], [u] and [c] exact, so [iou], [p / c] and
+   their difference round once each, each by at most [2⁻⁵⁴] or [2⁻⁵³]: within
+   [epsilon_float] of the exact value. *)
+let giou_exact =
+  cases "GIoU is the paper's Algorithm 2 where it needs no ordering"
+    ~id:Fun.id giou_kinds (fun k ->
+      let kind = Nx.to_array (entry geometry Nx.int64 "giou.kind") in
+      let index = ref (-1) in
+      List.iteri (fun i k' -> if k' = k then index := i) giou_kinds;
+      let rows =
+        List.filter
+          (fun i -> kind.(i) = Int64.of_int !index)
+          (List.init (Array.length kind) Fun.id)
+      in
+      let n = List.length rows in
+      let rows =
+        Nx.create Nx.int64 [| n |] (Array.of_list (List.map Int64.of_int rows))
+      in
+      let pick key = Nx.take ~axis:0 rows (entry geometry Nx.float64 key) in
+      let p = Nx.reshape [| n; 1; 4 |] (pick "giou.p")
+      and g = Nx.reshape [| n; 1; 4 |] (pick "giou.g") in
+      equal (array (float epsilon_float))
+        (floats (pick "giou.exact"))
+        (floats (V.Box.giou p g)))
+
+(* [F (name, dtype, tolerance)] is a float format and a tolerance there. *)
+let giou_golden =
+  cases "GIoU is torchvision's where its c - u is not below 0"
+    ~id:(fun (F (n, _, _)) -> n)
+    [ F ("float32", Nx.float32, 0.); F ("float64", Nx.float64, 0.) ]
+    (fun (F (_, dt, _)) ->
+      let bits = Nx.Dtype.bits dt in
+      let get k = entry geometry dt (Printf.sprintf "giou.%s%d" k bits) in
+      let clamped = Printf.sprintf "giou.clamped%d" bits in
+      greater int64 ~than:0L (Nx.item [] (entry geometry Nx.int64 clamped));
+      close 0. (get "want") (V.Box.giou (get "a") (get "b")))
+
+(* Boxes of every kind: arbitrary, inverted ones among them; tiny boxes in
+   large ones far from the origin; boxes of zero width; and strips, two boxes
+   of one height overlapping across, whose union is their enclosing box, so
+   that [c = u] in the reals and [c - u] rounds below [0] in float32 for
+   about a fifth of them. *)
+let gen_any_pair =
+  Gen.(
+    let tiny =
+      let+ x = float_range 1000. 4000.
+      and+ y = float_range 1000. 4000.
+      and+ w = float_range 100. 400.
+      and+ h = float_range 100. 400.
+      and+ fx = float_range 0. 1.
+      and+ fy = float_range 0. 1.
+      and+ iw = float_range 1e-3 1.
+      and+ ih = float_range 1e-3 1. in
+      let ix = x +. (fx *. (w -. 1.)) and iy = y +. (fy *. (h -. 1.)) in
+      ([| x; y; x +. w; y +. h |], [| ix; iy; ix +. iw; iy +. ih |])
+    and segment =
+      let+ a = gen_box and+ x = float_range (-50.) 50. in
+      (a, [| x; a.(1); x; a.(3) |])
+    and strip =
+      let+ x = float_range (-50.) 50.
+      and+ y = float_range (-50.) 50.
+      and+ w = float_range 1. 40.
+      and+ h = float_range 1. 40.
+      and+ f = float_range 0. 1.
+      and+ e = float_range 0. 40. in
+      ([| x; y; x +. w; y +. h |], [| x +. (f *. w); y; x +. w +. e; y +. h |])
+    in
+    frequency
+      [ (2, pair gen_box gen_box); (1, tiny); (1, segment); (2, strip) ])
+
+let f32 a = Nx.create Nx.float32 [| 1; 4 |] a
+
+(* [c - u] in float32, each operation rounded once: a float32 operation's
+   exact result rounded to float64 and then to float32 is rounded once. *)
+let enclosure_less_union a b =
+  let r x = Int32.float_of_bits (Int32.bits_of_float x) in
+  let area x0 y0 x1 y1 =
+    let w = r (x1 -. x0) and h = r (y1 -. y0) in
+    if w <= 0. || h <= 0. then 0. else r (w *. h)
+  in
+  let side lo lo' hi hi' =
+    Float.max (r (Float.min hi hi' -. Float.max lo lo')) 0.
+  in
+  let i = r (side a.(0) b.(0) a.(2) b.(2) *. side a.(1) b.(1) a.(3) b.(3)) in
+  let areas = area a.(0) a.(1) a.(2) a.(3) +. area b.(0) b.(1) b.(2) b.(3) in
+  let u = r (r areas -. i) in
+  let lo k = Float.min a.(k) b.(k) and hi k = Float.max a.(k) b.(k) in
+  area (lo 0) (lo 1) (hi 2) (hi 3) -. u
+
+let giou_range =
+  prop "GIoU lies in [-1, iou a b]" ~count:300 gen_any_pair (fun (a, b) ->
+      let a = f32 a and b = f32 b in
+      cover "c - u rounds below 0"
+        (enclosure_less_union (floats a) (floats b) < 0.);
+      let iou = Nx.item [ 0; 0 ] (V.Box.iou a b)
+      and g = Nx.item [ 0; 0 ] (V.Box.giou a b) in
+      let empty x = x.(2) <= x.(0) || x.(3) <= x.(1) in
+      cover "an empty box" (empty (floats a) || empty (floats b));
+      cover "nested, a tiny box far from the origin"
+        (Nx.item [ 0; 0 ] a > 999.);
+      at_most float_exact ~than:iou g;
+      at_most float_exact ~than:g (-1.))
+
+let giou_symmetric =
+  prop "GIoU of b and a is the transpose of a and b's" gen_any_pair
+    (fun (a, b) ->
+      let a = Nx.stack [ one a; one b ] |> Nx.reshape [| 2; 4 |]
+      and b = Nx.stack [ one b; one a; one a ] |> Nx.reshape [| 3; 4 |] in
+      equal (array float_exact)
+        (floats (V.Box.giou a b))
+        (floats (Nx.transpose (V.Box.giou b a))))
+
+let giou_scaled =
+  prop "GIoU is unchanged by scaling both boxes by a power of 2"
+    Gen.(pair gen_any_pair (int_range (-8) 8))
+    (fun ((a, b), k) ->
+      (* Coordinates on a grid of [2⁻²⁰] keep every area clear of the
+         subnormals, where scaling would round. *)
+      let grid = Array.map (fun v -> Float.round (Float.ldexp v 20)) in
+      let a = Array.map (fun v -> Float.ldexp v (-20)) (grid a)
+      and b = Array.map (fun v -> Float.ldexp v (-20)) (grid b) in
+      let s = Float.ldexp 1. k in
+      let scaled x = Nx.mul_s (one x) s in
+      equal (array float_exact)
+        (floats (V.Box.giou (one a) (one b)))
+        (floats (V.Box.giou (scaled a) (scaled b))))
+
+(* The other box is at least 1 a side, so [c] and [u] are at least [1], and
+   every box lies within [[-10, 20]]. A change of [2⁻²⁰] in a width then moves
+   [i] and [c] by less than [30 · 2⁻²⁰], and GIoU by less than [1e-4]. *)
+let giou_continuous =
+  prop "GIoU is continuous as a box collapses or inverts"
+    Gen.(
+      let+ x = float_range (-10.) 10.
+      and+ y = float_range (-10.) 10.
+      and+ h = float_range 0. 10.
+      and+ w = float_range (-.Float.ldexp 1. (-20)) (Float.ldexp 1. (-20))
+      and+ ox = float_range (-10.) 10.
+      and+ oy = float_range (-10.) 10.
+      and+ ow = float_range 1. 10.
+      and+ oh = float_range 1. 10. in
+      ([| x; y; x; y +. h |], w, [| ox; oy; ox +. ow; oy +. oh |]))
+    (fun (a, w, o) ->
+      let wide = Array.copy a in
+      wide.(2) <- a.(2) +. w;
+      cover "inverted" (w < 0.);
+      equal (float 1e-4) (giou1 a o) (giou1 wide o))
+
+let giou_shapes =
+  group "shapes of GIoU"
+    [
+      test "no box" (fun () ->
+          equal (array int) [| 0; 3 |]
+            (Nx.shape
+               (V.Box.giou
+                  (Nx.zeros Nx.float64 [| 0; 4 |])
+                  (Nx.ones Nx.float64 [| 3; 4 |]))));
+      test "matched pairs are the diagonal" (fun () ->
+          let a =
+            f64 [| 3; 4 |]
+              [| 0.; 0.; 2.; 2.; 1.; 1.; 5.; 3.; 4.; 0.; 2.; 1. |]
+          and b =
+            f64 [| 3; 4 |]
+              [| 1.; 0.; 3.; 3.; 0.; 0.; 1.; 1.; 6.; 2.; 7.; 2. |]
+          in
+          let matched =
+            V.Box.giou (Nx.reshape [| 3; 1; 4 |] a) (Nx.reshape [| 3; 1; 4 |] b)
+          in
+          equal (array int) [| 3; 1; 1 |] (Nx.shape matched);
+          let all = floats (V.Box.giou a b) in
+          equal (array float_exact)
+            [| all.(0); all.(4); all.(8) |]
+            (floats matched));
+      test "a NaN coordinate gives NaN in its row and column" (fun () ->
+          let a = f64 [| 2; 4 |] [| nan; 0.; 1.; 1.; 0.; 0.; 2.; 2. |]
+          and b = f64 [| 2; 4 |] [| 0.; 0.; 1.; 1.; 5.; 5.; 6.; nan |] in
+          let g = floats (V.Box.giou a b) in
+          equal (array bool)
+            [| true; true; false; true |]
+            (Array.map Float.is_nan g));
+      test "boxes end in 4" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Mynd.Box.giou") (fun () ->
+              V.Box.giou
+                (Nx.zeros Nx.float64 [| 2; 3 |])
+                (Nx.zeros Nx.float64 [| 2; 4 |])));
+    ]
+
+let loss (a, b) = Nx.sum (Nx.rsub_s 1. (V.Box.giou a b))
+
+let giou_grads =
+  prop "the derivative of GIoU away from ties"
+    Gen.(pair gen_quarter_box gen_quarter_box)
+    (fun (a, b) ->
+      (* Moving each coordinate off the grid of quarters keeps the sides of
+         the intersection and the enclosing box from tying. *)
+      let a = Array.mapi (fun i v -> v +. (0.1 *. fl (i + 1))) a in
+      let p = Nx.Ptree.(pair tensor tensor) in
+      match Rune.check_grads p loss (one a, one b) with
+      | Ok () -> ()
+      | Error e -> fail e)
+
+let giou_finite =
+  cases "the derivative of GIoU is finite where c, u or an area is 0" ~id:fst
+    [
+      ("c = 0", ([| 0.; 0.; 0.; 1. |], [| 0.; 0.; 0.; 1. |]));
+      ("u = 0", ([| 0.; 0.; 0.; 1. |], [| 3.; 0.; 3.; 1. |]));
+      ("an empty box", ([| 5.; 0.; 3.; 1. |], [| 0.; 0.; 1.; 1. |]));
+      ("a point", ([| 5.; 5.; 5.; 5. |], [| 0.; 0.; 1.; 1. |]));
+    ]
+    (fun (_, (a, b)) ->
+      let p = Nx.Ptree.(pair tensor tensor) in
+      let ga, gb = Rune.grad p loss (one a, one b) in
+      let finite g = Array.map Float.is_finite (floats g) in
+      equal (array bool) (Array.make 4 true) (finite ga);
+      equal (array bool) (Array.make 4 true) (finite gb))
+
+let target = [| 0.; 0.; 1.; 1. |]
+let descent a = floats (Rune.grad' (fun a -> loss (a, one target)) (one a))
+
+let giou_widens =
+  test "descent widens a box just wider than a segment" (fun () ->
+      let g = descent [| 5.; 0.; 5. +. Float.ldexp 1. (-20); 1. |] in
+      (* Descent moves [x₁ - x₀] by [-(g₂ - g₀)]. *)
+      greater float_exact ~than:g.(2) g.(0))
+
+(* Inverted boxes in x, y or both, inside the target's span or reaching out of
+   it. *)
+let gen_inverted =
+  Gen.(
+    let* inside = bool in
+    let side = if inside then float_range 0.01 0.99 else float_range (-3.) 4. in
+    let+ x0 = side and+ x1 = side and+ y0 = side and+ y1 = side
+    and+ which = int_range 0 2 in
+    let lo a b = Float.min a b and hi a b = Float.max a b in
+    match which with
+    | 0 -> [| hi x0 x1; lo y0 y1; lo x0 x1; hi y0 y1 |]
+    | 1 -> [| lo x0 x1; hi y0 y1; hi x0 x1; lo y0 y1 |]
+    | _ -> [| hi x0 x1; hi y0 y1; lo x0 x1; lo y0 y1 |])
+
+let giou_shrinks =
+  prop "descent never widens an inverted box" gen_inverted (fun a ->
+      assume (a.(2) < a.(0) || a.(3) < a.(1));
+      let g = descent a in
+      let inside = Array.for_all (fun v -> v > 0. && v < 1.) a in
+      cover "inside the target's span" inside;
+      cover "reaching out of it" (not inside);
+      at_most float_exact ~than:0. (-.(g.(2) -. g.(0)));
+      at_most float_exact ~than:0. (-.(g.(3) -. g.(1)));
+      if inside then
+        equal (array float_exact) [| 0.; 0.; 0.; 0. |]
+          (Array.map (fun v -> v +. 0.) g))
+
+(* Coordinates of eighths within [[0, 1]] keep every difference, area and sum
+   exact in float16 and bfloat16, so only [i / u], [p / c] and their
+   difference round, each by at most half a unit in the last place of 1. *)
+let giou_dtypes =
+  cases "GIoU in every float format, boxes within [0, 1]"
+    ~id:(fun (F (n, _, _)) -> n)
+    [
+      F ("float16", Nx.float16, 3. *. Float.ldexp 1. (-11));
+      F ("bfloat16", Nx.bfloat16, 3. *. Float.ldexp 1. (-8));
+      F ("float32", Nx.float32, 3. *. Float.ldexp 1. (-24));
+    ]
+    (fun (F (_, dt, tol)) ->
+      let a =
+        f64 [| 3; 4 |]
+          [| 0.; 0.; 0.5; 0.5; 0.25; 0.125; 0.875; 0.75; 0.5; 0.5; 0.25; 1. |]
+      and b =
+        f64 [| 2; 4 |] [| 0.125; 0.25; 0.625; 1.; 0.75; 0.; 1.; 0.25 |]
+      in
+      let a = Nx.cast dt a and b = Nx.cast dt b in
+      let want = V.Box.giou (Nx.cast Nx.float64 a) (Nx.cast Nx.float64 b) in
+      equal (array (float tol)) (floats want) (floats (V.Box.giou a b)))
+
+(* float16's largest float is 65504. A box of 300 by 300 has an infinite
+   area, and so its IoU with itself is NaN. Boxes of 200 by 200 and 50 by 50
+   have finite areas and IoU [0], and the box enclosing both, 300 by 300, has
+   an infinite area. *)
+let giou_overflow =
+  cases "float16 boxes whose areas overflow give NaN GIoU" ~id:fst
+    [
+      ( "a box of 300 by 300",
+        ([| 0.; 0.; 300.; 300. |], [| 0.; 0.; 300.; 300. |], nan) );
+      ( "an enclosing box of 300 by 300",
+        ([| 0.; 0.; 200.; 200. |], [| 250.; 250.; 300.; 300. |], 0.) );
+    ]
+    (fun (_, (a, b, iou)) ->
+      let box x = Nx.create Nx.float16 [| 1; 4 |] x in
+      equal float_exact iou (Nx.item [ 0; 0 ] (V.Box.iou (box a) (box b)));
+      equal float_exact nan (Nx.item [ 0; 0 ] (V.Box.giou (box a) (box b))))
 
 (* Non-maximum suppression *)
 
@@ -918,6 +1242,20 @@ let () =
          transform_grads;
          finite_grads;
          tie_grads;
+         giou_cases;
+         giou_exact;
+         giou_golden;
+         giou_range;
+         giou_symmetric;
+         giou_scaled;
+         giou_continuous;
+         giou_shapes;
+         giou_grads;
+         giou_finite;
+         giou_widens;
+         giou_shrinks;
+         giou_dtypes;
+         giou_overflow;
          golden_nms;
          greedy_law;
          signed_zeros;

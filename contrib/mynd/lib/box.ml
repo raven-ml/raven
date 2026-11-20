@@ -43,28 +43,52 @@ let area_of (x0, y0, x1, y1) =
 
 let area b = area_of (corners "Mynd.Box.area" b)
 
-(* torchvision's arithmetic: the overlap's sides clamped at [0], their product,
-   and [(area a + area b) - i]. *)
-let overlap a b =
+let row x = Nx.unsqueeze ~axes:[ -1 ] x
+let col x = Nx.unsqueeze ~axes:[ -2 ] x
+
+(* [ratio x y] is [x / y], and [0] where [y] is [0]. The branch [where]
+   discards divides by [1], so its derivative stays finite. The guard is an
+   equality, so a NaN [y] still gives NaN. *)
+let ratio x y =
+  let zero = Nx.equal_s y 0. in
+  let safe = Nx.where zero (Nx.ones_like y) y in
+  Nx.where zero (Nx.zeros_like x) (Nx.div x safe)
+
+(* torchvision's arithmetic: the overlap's sides clamped at [0], their product
+   [i], and the union [(area a + area b) - i]. *)
+let meet a b =
   let ((ax0, ay0, ax1, ay1) as ca) = a and ((bx0, by0, bx1, by1) as cb) = b in
-  let row x = Nx.unsqueeze ~axes:[ -1 ] x
-  and col x = Nx.unsqueeze ~axes:[ -2 ] x in
   let side lo lo' hi hi' =
     Nx.maximum_s
       (Nx.sub (Nx.minimum (row hi) (col hi')) (Nx.maximum (row lo) (col lo')))
       0.
   in
   let i = Nx.mul (side ax0 bx0 ax1 bx1) (side ay0 by0 ay1 by1) in
-  let union = Nx.sub (Nx.add (row (area_of ca)) (col (area_of cb))) i in
-  let empty = Nx.equal_s union 0. in
-  let safe = Nx.where empty (Nx.ones_like union) union in
-  Nx.where empty (Nx.zeros_like i) (Nx.div i safe)
+  (i, Nx.sub (Nx.add (row (area_of ca)) (col (area_of cb))) i)
 
-let iou a b =
-  let fn = "Mynd.Box.iou" in
+let overlap a b =
+  let i, union = meet a b in
+  ratio i union
+
+let pairs fn a b =
   if Nx.ndim a < 2 || Nx.ndim b < 2 then
     invalid_argf "%s: boxes have axes [...; n; 4]" fn;
-  overlap (corners fn a) (corners fn b)
+  (corners fn a, corners fn b)
+
+let iou a b =
+  let ca, cb = pairs "Mynd.Box.iou" a b in
+  overlap ca cb
+
+(* [p / c] is [0] where [c] is [0], so the result is [iou] there. *)
+let giou a b =
+  let ((ax0, ay0, ax1, ay1) as ca), ((bx0, by0, bx1, by1) as cb) =
+    pairs "Mynd.Box.giou" a b
+  in
+  let i, u = meet ca cb in
+  let lo x x' = Nx.minimum (row x) (col x')
+  and hi x x' = Nx.maximum (row x) (col x') in
+  let c = area_of (lo ax0 bx0, lo ay0 by0, hi ax1 bx1, hi ay1 by1) in
+  Nx.sub (ratio i u) (ratio (Nx.maximum_s (Nx.sub c u) 0.) c)
 
 let of_mask dt m =
   let fn = "Mynd.Box.of_mask" in
