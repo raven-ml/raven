@@ -1,0 +1,7 @@
+SAM 2 input [1; 3; 1024; 1024]
+  mean 0.411 -0.085 -0.292, std 0.55 0.56 0.65
+RT-DETR input [1; 3; 640; 640]
+  mean 0.579 0.437 0.340, std 0.12 0.13 0.15
+box [cx cy w h] 0.5 0.53125 0.5 0.6875 of the input
+  [x0 y0 x1 y1] 112.75 56.25 338.25 262.50 in the photograph
+  [x0 y0 x1 y1] 256.00 192.00 768.00 896.00 in SAM 2's input
