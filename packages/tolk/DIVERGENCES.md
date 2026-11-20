@@ -9762,3 +9762,32 @@ D466.
   with its identity an axis no divisor from 256 to 8 divides`; rune's
   `Jit_gpu`'s argmax, argmin, sum and product over 51866 and 65537, and its
   bench row `Cuda/log-softmax-float32-51866` on fudge (358 us to 27.5).
+
+## D501. A map's innermost threads store 16 bytes together
+
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (each
+  ranked axis takes the first of `[32] * (axis == 0) + [16,8,4,3,2]` that
+  divides it within 128 threads; the same at `6b7b018da`).
+- **tolk:** `Heuristic.run_bytes`, `Heuristic.store_lanes` and
+  `Heuristic.locals`.
+- **Differs:** in a map on a GPU, where every store reads the innermost axis
+  at the stride of a thread's run of consecutive elements (its upcast along
+  the stores' unit stride, or one element), and that axis's candidate gives
+  it fewer threads than the runs of the narrowest store's elements that
+  span 16 bytes, the axis takes the least divisor of its size that reaches
+  them, within the workgroup's 128 threads. Those threads are `lidx0`'s
+  (D486), consecutive in a SIMD group. Elsewhere, where no divisor reaches
+  them, and in a kernel that reduces, the candidate stands.
+- **Reason:** (d): the concurrent accesses of a warp coalesce into as many
+  transactions as the 32-byte sectors they touch (CUDA C++ Best Practices
+  Guide §10.2.1). A head of 110 channels, TESSERA's, takes 2 threads under
+  tinygrad's candidates, so a bfloat16 transpose `[r; h; t; d] → [r; t; h;
+  d]` spread each warp's accesses over 16 runs of 4 bytes: on fudge's RTX
+  5000 Ada 391 us a launch (235 GB/s), runs of 8 bytes 221 us (416 GB/s),
+  and from 10 bytes on, 10 threads included, 177 to 184 us (499 to
+  519 GB/s), a contiguous add's rate. AMD and Metal are untimed.
+- **Pinned by:** the Codegen suite's `a head transpose's lid.x threads store
+  16 bytes together` and its `phi_arange_255` and `phi_arange_float` stage
+  goldens of CUDA, HIP and Metal; the heuristic suite's `add_odd` goldens of
+  Metal, CUDA and AMD and its table (`.tolk`, D501); tessera's
+  `distil-step/medium` row on CUDA.

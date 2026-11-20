@@ -1,4 +1,4 @@
-# tolk D89 D141 D175 D188 D212 D450 D451 D467 D471 D479 D486 D487 D491 D493 D495 golden=21cc96171ae940540502583b017b6879
+# tolk D89 D141 D175 D188 D212 D450 D451 D467 D471 D479 D486 D487 D491 D493 D495 D501 golden=21cc96171ae940540502583b017b6879
 case	kernel	renderer	context	opts
 add_cpu	add	cpu		(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),)
 add_avx2	add	avx2		(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),)
@@ -22,9 +22,9 @@ add_large_cuda	add_large	cuda		(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UP
 add_large_amd	add_large	amd		(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))
 add_odd_cpu	add_odd	cpu		()
 add_odd_avx2	add_odd	avx2		()
-add_odd_metal	add_odd	metal		(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),)
-add_odd_cuda	add_odd	cuda		(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),)
-add_odd_amd	add_odd	amd		(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),)
+add_odd_metal	add_odd	metal		(Opt(op=OptOps.SPLIT, axis=0, arg=(5, AxisType.LOCAL)),)
+add_odd_cuda	add_odd	cuda		(Opt(op=OptOps.SPLIT, axis=0, arg=(5, AxisType.LOCAL)),)
+add_odd_amd	add_odd	amd		(Opt(op=OptOps.SPLIT, axis=0, arg=(5, AxisType.LOCAL)),)
 transpose_cpu	transpose	cpu		(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)),)
 transpose_avx2	transpose	avx2		(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)),)
 transpose_metal	transpose	metal		(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)))

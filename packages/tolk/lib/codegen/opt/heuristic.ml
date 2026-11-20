@@ -1548,6 +1548,45 @@ let blocked_threads k ~held ranked greedy (ra, rb) =
         if pads (K.copy k) && pads k then plan else greedy
   | _ -> greedy
 
+(* The bytes of consecutive elements that the lanes along a map's innermost
+   axis store together at least ({!locals}). On an RTX 5000 Ada a bfloat16
+   head transpose whose warps stored runs of 4 bytes ran at 235 GB/s, of 8
+   at 416, and of 10 to 220 at a contiguous copy's 490 to 519, 16 at 519. *)
+let run_bytes = 16
+
+(* The threads along the range [r] whose runs of [k]'s stores span
+   {!run_bytes}: where each store reads [r] at the stride of the run of
+   consecutive elements a thread stores (its upcast along the store's unit
+   stride, or one element), the fewest such runs of the narrowest store's
+   elements that do. A store that reads [r] otherwise, or stores whose runs
+   differ, ask for none. *)
+let store_lanes k r =
+  let upcast = ranges_of k [ Upcast ] in
+  let run a =
+    match List.filter (fun u -> List.memq u upcast) (units a) with
+    | [] -> Some 1
+    | [ u ] -> Some (Bigint.to_int (size_at k (index_of u (K.rngs k))))
+    | _ -> None
+  in
+  let along a =
+    Option.bind (run a) (fun n ->
+        match stride r (idx a) with
+        | Some s when Bigint.(equal s (of_int n)) -> Some n
+        | _ -> None)
+  in
+  match stored_addresses k with
+  | [] -> None
+  | stores -> (
+      match List.map along stores with
+      | Some n :: rest when List.for_all (( = ) (Some n)) rest ->
+          let bytes =
+            List.fold_left
+              (fun m a -> min m (Dtype.itemsize (dtype a)))
+              max_int stores
+          in
+          Some ((run_bytes + (n * bytes) - 1) / (n * bytes))
+      | _ -> None)
+
 (* prioritize making expand axes local, of those every call and custom code
    reads; a blocked contraction's ({!block}) take its plan *)
 let locals ?blocked k =
@@ -1569,6 +1608,18 @@ let locals ?blocked k =
   let order (e0, a0) (e1, a1) =
     match Bool.compare e1 e0 with 0 -> Int.compare a1 a0 | c -> c
   in
+  (* A map's innermost axis, whose threads are [lidx0]'s, consecutive in a
+     SIMD group, takes the least divisor of its size whose threads store
+     {!run_bytes} together ({!store_lanes}) where tinygrad's candidate gives
+     it fewer: a head of 110 bfloat16 channels takes 10 threads, not 2, so
+     a warp's stores make 3 runs where they made 16. A reduce stores once an
+     output, so its stores' runs count for little. *)
+  let innermost = List.fold_left (fun m (_, a) -> max m a) (-1) ranking in
+  let wanted axis =
+    if axis = innermost && K.reduceop k = None then
+      store_lanes k (List.nth (K.rngs k) axis)
+    else None
+  in
   let greedy =
     List.fold_left
       (fun to_local (_, axis) ->
@@ -1576,13 +1627,27 @@ let locals ?blocked k =
         let candidates =
           (if axis = 0 then [ 32 ] else []) @ [ 16; 8; 4; 3; 2 ]
         in
-        match
+        let pick =
           List.find_opt
             (fun x ->
               divisible (shape_at k axis) x
               && local_size * x * held <= workgroup_threads)
             candidates
-        with
+        in
+        let pick =
+          match (wanted axis, known_size (shape_at k axis)) with
+          | Some want, Some n
+            when Option.value pick ~default:1 < want && Bigint.fits_int n ->
+              let n = Bigint.to_int n in
+              let rec least d =
+                if d > n || local_size * d * held > workgroup_threads then pick
+                else if n mod d = 0 then Some d
+                else least (d + 1)
+              in
+              least want
+          | _ -> pick
+        in
+        match pick with
         | Some sz -> to_local @ [ (axis, sz) ]
         | None -> to_local)
       []

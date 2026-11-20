@@ -10761,6 +10761,39 @@ let map_threads =
         (run a, run (a + n))
         (first, stored_by stores 1))
 
+(* [o] [[r; t; h; d]] of [x] [[r; h; t; d]], bfloat16: heads of [d] channels
+   merged back into their tokens, as a transformer does after attention. *)
+let head_transpose ~r ~h ~t ~d =
+  let o = Shape.param ~shape:[ Ops.Int (r * t * h * d) ] 0 Bfloat16
+  and x = Shape.param ~shape:[ Ops.Int (r * h * t * d) ] 1 Bfloat16 in
+  let open Ops.O in
+  let rr = Ops.range ~axis_type:Weak (Int r) [ 0 ]
+  and tt = Ops.range ~axis_type:Weak (Int t) [ 1 ]
+  and hh = Ops.range ~axis_type:Weak (Int h) [ 2 ]
+  and dd = Ops.range ~axis_type:Weak (Int d) [ 3 ] in
+  let src = (((((rr * int h) + hh) * int t) + tt) * int d) + dd
+  and dst = (((((rr * int t) + tt) * int h) + hh) * int d) + dd in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.end_
+        (Ops.store (Ops.index o [ dst ]) (Ops.index x [ src ]))
+        [ rr; tt; hh; dd ];
+    ]
+
+(* A head of 110 channels, which no power of two past 2 divides: its lid.x
+   threads, consecutive in a SIMD group, store at least 16 bytes of bfloat16
+   together (D501), where tinygrad's 2 store 4. *)
+let transpose_lanes () =
+  let prg =
+    Codegen.linearize
+      (head_transpose ~r:2 ~h:4 ~t:256 ~d:110)
+      (renderer_for (target "CUDA" "CUDA" "sm_89"))
+  in
+  match Ops.arg prg with
+  | Program { local_size = Ops.Int n :: _; _ } ->
+      is_true ~msg:(Printf.sprintf "%d lanes of 2 bytes" n) (n * 2 >= 16)
+  | _ -> fail "a program of no known lid.x threads"
+
 (* Hand-written kernels on the host
 
    Kernels a builder writes whole, run on the host, each reading back what it
@@ -11176,6 +11209,8 @@ let () =
            lanes_and_threads;
            threads_of_workgroups;
            map_threads;
+           test "a head transpose's lid.x threads store 16 bytes together"
+             transpose_lanes;
            variable_sizes;
            multiply_adds;
            narrow_multiply_adds;

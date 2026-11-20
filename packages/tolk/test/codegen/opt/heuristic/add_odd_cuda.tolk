@@ -1,0 +1,18 @@
+# tolk D501 golden=bf339aaaa1de28d8f22d511ba15c9a67
+0 Ops.CONST dtypes.weakint [] 105
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 21
+3 Ops.RANGE dtypes.weakint [2] (AxisType.GLOBAL, 0)
+4 Ops.CONST dtypes.weakint [] 5
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 1)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.INDEX dtypes.f32 [1, 7]
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+10 Ops.INDEX dtypes.f32 [9, 7]
+11 Ops.CONST dtypes.weakfloat [] 1.0
+12 Ops.ADD dtypes.f32 [10, 11]
+13 Ops.STORE dtypes.void [8, 12]
+14 Ops.END dtypes.void [13, 3, 6]
+15 Ops.SINK dtypes.void [14] KernelInfo(name="E_21_5", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(5, AxisType.LOCAL)),), optimized=True)
+

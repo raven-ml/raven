@@ -1,0 +1,30 @@
+# tolk D501 golden=1365006913598bdd9a456e0cb109db7b
+0 Ops.CONST dtypes.weakint [] 255
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+2 Ops.CONST dtypes.weakint [] 51
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.SPECIAL dtypes.i32 [3] "gidx0"
+5 Ops.CONST dtypes.weakint [] 5
+6 Ops.CAST dtypes.i32 [5] dtypes.i32
+7 Ops.MUL dtypes.i32 [4, 6]
+8 Ops.SPECIAL dtypes.i32 [6] "lidx0"
+9 Ops.ADD dtypes.i32 [7, 8]
+10 Ops.INDEX dtypes.i32 [1, 9]
+11 Ops.STORE dtypes.void [10, 9]
+12 Ops.SINK dtypes.void [11] KernelInfo(name="E_51_5", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(5, AxisType.LOCAL)),), optimized=True)
+13 Ops.CONST dtypes.weakint [] 8
+14 Ops.PARAM dtypes.u8 [13] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+15 Ops.BITCAST dtypes.u64 [14] dtypes.u64
+16 Ops.CONST dtypes.weakint [] 0
+17 Ops.CAST dtypes.i32 [16] dtypes.i32
+18 Ops.INDEX dtypes.u64 [15, 17]
+19 Ops.LOAD dtypes.u64 [18]
+20 Ops.REFPARAM dtypes.i32 [0, 19] ParamArg(slot=0, dtype=dtypes.i32)
+21 Ops.INDEX dtypes.i32 [20, 9]
+22 Ops.STORE dtypes.void [21, 9]
+23 Ops.SINK dtypes.void [22] KernelInfo(name="E_51_5", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(5, AxisType.LOCAL)),), estimates=Estimates(lds=1020, mem=1020), optimized=True)
+24 Ops.LINEAR dtypes.void [13, 14, 16, 17, 15, 18, 19, 2, 3, 4, 5, 6, 8, 0, 20, 7, 9, 21, 22, 23]
+25 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void E_51_5(device unsigned char* args_8, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  unsigned long val0 = (*(((device unsigned long*)(args_8))+0));\n  int gidx0 = gid.x; /* 51 */\n  int lidx0 = lid.x; /* 5 */\n  int alu0 = ((gidx0*5)+lidx0);\n  *(((device int*)(val0))+alu0) = alu0;\n}"
+26 Ops.PROGRAM dtypes.void [23, 24, 25] ProgramInfo(global_size=(51, 1, 1), local_size=(5, 1, 1), params=(%1,), globals=(0,), outs=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+27 Ops.SINK dtypes.void [12, 26]
+
