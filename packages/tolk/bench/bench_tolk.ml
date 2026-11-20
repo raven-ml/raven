@@ -50,6 +50,15 @@
    matrix of 2880 rows of 64 columns, streamed along its columns.
    Without a CUDA GPU the group is empty.
 
+   [stream-nv] runs two stream rows on the first GPU NVIDIA's kernel driver
+   holds, through rig's own driver, NV, which sets for its kernels what CUDA
+   sets: [dense-bf16-32] reads a few bytes of each of many rows a trip, and
+   takes 0.62 times its time when a miss in the L2 fetches 128 bytes from
+   memory rather than 32; [mxfp4-512] stages its tensor cores' operands in
+   shared memory, and takes 0.92 times its time when the multiprocessors run
+   it in their largest shared memory configuration rather than in one that
+   holds one of its blocks. Without such a GPU the group is empty.
+
    [gated] runs, on the first CUDA GPU, a 2048-cubed bfloat16 product stored
    only where its block of 128 rows is flagged, with 5 of its 16 blocks off and
    with every block on: a block flagged off skips its loop. Without a CUDA GPU
@@ -342,11 +351,11 @@ let rows_of all =
 let cold =
   [ "key-projection-64"; "mxfp4-64"; "mxfp4-512"; "q8_0-core-64"; "q8_0-512" ]
 
-let gpu_rows name all =
+let gpu_rows ?(gpu = "CUDA") name all =
   let case (row, kernels) =
     Thumper.bench_with_setup
       ~setup:(fun () ->
-        let d = cuda () in
+        let d = Result.error_to_failure (Rig_gpus.open_ gpu) in
         let bytes = ref 0 in
         let scratch d dt n =
           bytes := !bytes + (n * Dtype.itemsize dt);
@@ -375,9 +384,17 @@ let gpu_rows name all =
   in
   Thumper.group name
     ~metrics:[ Thumper.Metric.wall_time ]
-    (if cuda_opens () then List.map case (rows_of all) else [])
+    (if Result.is_ok (Rig_gpus.opens gpu) then List.map case (rows_of all)
+     else [])
 
 let stream () = gpu_rows "stream" Stream_kernels.all
+
+let stream_nv () =
+  let rows = [ "dense-bf16-32."; "mxfp4-512." ] in
+  let kept (name, _) =
+    List.exists (fun prefix -> String.starts_with ~prefix name) rows
+  in
+  gpu_rows ~gpu:"NV" "stream-nv" (List.filter kept Stream_kernels.all)
 
 (* Contractions on tensor cores and in registers *)
 
@@ -746,6 +763,7 @@ let suite () =
       host;
       gpt_oss ();
       stream ();
+      stream_nv ();
       contract ();
       gated ();
       launch ();
@@ -773,6 +791,7 @@ let () =
                  `Id "host/";
                  `Id "gpt_oss/";
                  `Id "stream/";
+                 `Id "stream-nv/";
                  `Id "gated/";
                  `Id "launch/";
                ])
