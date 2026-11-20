@@ -698,6 +698,127 @@ let closest_scipy =
         (keep (longs (entry distance Nx.int64 (key ^ ".i"))))
         (keep (longs (V.Mask.closest m))))
 
+(* Rounding the root. [below p n] is [(m, t)], [m 2ᵗ] the greatest value of
+   [p] significant bits at most [√n], with no exponent range, and [up p n]
+   whether [√n] rounds above it, ties to even, by integers alone. *)
+let isqrt x =
+  let m = ref (Float.to_int (Float.sqrt (Float.of_int x))) in
+  while !m * !m > x do decr m done;
+  while (!m + 1) * (!m + 1) <= x do incr m done;
+  !m
+
+let binade n =
+  let rec go k = if k < 30 && 1 lsl (2 * (k + 1)) <= n then go (k + 1) else k in
+  go 0
+
+let below p n =
+  let t = binade n - p + 1 in
+  if t <= 0 then (isqrt (n lsl (-2 * t)), t) else (isqrt (n asr (2 * t)), t)
+
+let up p n =
+  let m, t = below p n in
+  if t <= 0 then
+    let x = n lsl (-2 * t) in
+    let l = 4 * x and r = ((2 * m) + 1) * ((2 * m) + 1) in
+    l > r || (l = r && m land 1 = 1)
+  else
+    (* n - (m² + m) 4ᵗ against 4ᵗ⁻¹, the square of the midpoint's excess. *)
+    let q = n - ((m * m) lsl (2 * t)) - (m lsl (2 * t)) in
+    let half = 1 lsl ((2 * t) - 2) in
+    q > half || (q = half && m land 1 = 1)
+
+(* The formats of at most 25 bits, with their significant bits and the
+   greatest binade [k] whose roots [\[2ᵏ, 2ᵏ⁺¹)] stay finite. *)
+let rounded_formats =
+  [
+    (F Nx.float32, 24, 30); (F Nx.bfloat16, 8, 30); (F Nx.float16, 11, 14);
+    (F Nx.float8_e5m2, 3, 14); (F Nx.float8_e4m3fn, 4, 7);
+    (F Nx.float4_e2m1fn, 2, 1);
+  ]
+
+(* Integers next to the squares of midpoints, where a second rounding can
+   fail, and integers drawn in a binade. *)
+let gen_near p kmax =
+  Gen.(
+    let* k, near = pair (int_range 0 kmax) bool in
+    if near then
+      let+ m = int_range (1 lsl (p - 1)) ((1 lsl p) - 1)
+      and+ d = int_range (-2) 2 in
+      let c = ((2 * m) + 1) * ((2 * m) + 1) in
+      let e = 2 * (k - p) in
+      let base = if e >= 0 then c lsl e else c asr -e in
+      Int.max 0 (base + d)
+    else int_range (1 lsl (2 * k)) ((1 lsl ((2 * k) + 2)) - 1))
+
+let squares ns =
+  Nx.create Nx.int64 [| List.length ns |]
+    (Array.of_list (List.map Int64.of_int ns))
+
+let root_rounding =
+  prop "roots are correctly rounded below 2⁵² and faithful beyond" ~count:300
+    Gen.(
+      let* i = int_range 0 (List.length rounded_formats - 1) in
+      let _, p, kmax = List.nth rounded_formats i in
+      let+ ns = list ~size:(constant 32) (gen_near p kmax) in
+      (i, ns))
+    (fun (i, ns) ->
+      let F dt, p, _ = List.nth rounded_formats i in
+      cover "beyond 2⁵²" (List.exists (fun n -> n >= 1 lsl 52) ns);
+      let got = floats (V.Mask.root dt (squares ns)) in
+      List.iteri
+        (fun j n ->
+          let m, t = below p n in
+          let at m = Float.ldexp (Float.of_int m) t in
+          if n < 1 lsl 52 then
+            equal float_exact (at (if up p n then m + 1 else m)) got.(j)
+          else mem float_exact got.(j) [ at m; at (m + 1) ])
+        ns)
+
+(* [sign_square q n] is the sign of [q² - n] for a float [q] below 2³¹ and
+   an integer [n] from 2⁵³ to 2⁶², exactly: [q²] is [hi + lo] by a fused
+   multiply-add, [n] is [nh + nl] with [nh] its nearest float, [hi - nh] is
+   an exact even integer by Sterbenz's lemma, and the one rounding of an
+   integer plus [lo] keeps the sum's sign. *)
+let sign_square q n =
+  let hi = q *. q in
+  let lo = Float.fma q q (-.hi) in
+  let nh = Float.of_int n in
+  let c = Float.to_int (hi -. nh) - (n - Float.to_int nh) in
+  Float.compare (Float.of_int c +. lo) 0.
+
+(* float64's root of an integer below 2⁵³, which float64 holds exactly. *)
+let root_float64 =
+  prop "float64 roots are correctly rounded below 2⁵³"
+    Gen.(list ~size:(constant 32) (int_range 0 ((1 lsl 53) - 1)))
+    (fun ns ->
+      equal (array float_exact)
+        (Array.of_list (List.map (fun n -> Float.sqrt (Float.of_int n)) ns))
+        (floats (V.Mask.root Nx.float64 (squares ns))))
+
+(* Beyond 2⁵³: each root [r] has its neighbours on either side of [√n], so
+   it is one of the two floats around [√n]. Draws next to squares, where a
+   root lies close to a float, and across the range. *)
+let root_float64_faithful =
+  (* Below 2⁶² by more than float64's ulp there, so [n]'s nearest float
+     converts back to an [int]. *)
+  let top = (1 lsl 62) - (1 lsl 10) in
+  prop "float64 roots are faithful from 2⁵³ to 2⁶²"
+    Gen.(
+      let near =
+        let+ m = int_range (1 lsl 27) ((1 lsl 31) - 1)
+        and+ d = int_range (-1) 1 in
+        Int.max (1 lsl 53) (Int.min top ((m * m) + d))
+      in
+      list ~size:(constant 32) (one_of [ near; int_range (1 lsl 53) top ]))
+    (fun ns ->
+      let got = floats (V.Mask.root Nx.float64 (squares ns)) in
+      List.iteri
+        (fun i n ->
+          let r = got.(i) in
+          equal int ~msg:"below" (-1) (sign_square (Float.pred r) n);
+          equal int ~msg:"above" 1 (sign_square (Float.succ r) n))
+        ns)
+
 let refusals =
   group "misuse"
     [
@@ -767,5 +888,8 @@ let () =
          closest_values;
          closest_padded;
          closest_scipy;
+         root_rounding;
+         root_float64;
+         root_float64_faithful;
          refusals;
        ])

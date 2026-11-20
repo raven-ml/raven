@@ -20,3 +20,4 @@ val reconstruct :
 
 val distance : (float, 's) Nx.dtype -> 'd Nx.bool_t -> (float, 's, 'd) Nx.t
 val closest : 'd Nx.bool_t -> 'd Nx.int64_t
+val root : (float, 's) Nx.dtype -> 'd Nx.int64_t -> (float, 's, 'd) Nx.t

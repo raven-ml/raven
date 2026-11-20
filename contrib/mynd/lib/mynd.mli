@@ -67,7 +67,9 @@
     A function {e computes wide} if it computes on values of a float format
     narrower than 32 bits in float32 throughout, intermediate results
     included, and rounds its result once into that format at the end. Its
-    derivative computes wide too.
+    derivative computes wide too. A result a doc states as rounded once from
+    a quotient or a square root is so on a faithful device
+    ({!Rune.section-numerics}).
 
     This averages two photographs of 8-bit sRGB codes, three channels each,
     in linear light.
@@ -921,6 +923,10 @@ module Mask : sig
 
   val components_rounds :
     connectivity -> 'd Nx.bool_t -> 'd Nx.int64_t * 'd Nx.int32_t
+
+  (** For the tests: [√n] of each [n >= 0] as {!distance} rounds it. *)
+
+  val root : (float, 's) Nx.dtype -> 'd Nx.int64_t -> (float, 's, 'd) Nx.t
 end
 
 module Rle : sig
