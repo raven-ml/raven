@@ -8,3 +8,11 @@
  (libraries mynd mynd.coco nx nx.io jsont jsont.bytesrw windtrap)
  (deps
   (glob_files golden/*)))
+
+; Not run by runtest: ../gen/coco.py --check runs it on the whole of
+; val2017, which needs COCO's 20 MB annotation file.
+
+(executable
+ (name coco_eval)
+ (modules coco_eval)
+ (libraries mynd.coco nx nx.io jsont.bytesrw))

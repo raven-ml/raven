@@ -38,8 +38,9 @@ reductions sum in another order, and asserts the tables bit-equal.
 
 --check runs the evaluation on the whole of val2017 with detections drawn
 the same way, through pycocotools and through EXE (test/coco/coco_eval.exe),
-and compares every entry of the tables bit for bit. It needs a few minutes
-and the 25 MB annotation file, so it lives outside runtest.
+and compares every entry of the tables bit for bit; each --results FILE, a
+model's results on val2017, is compared as well. It needs the 20 MB
+annotation file, so it lives outside runtest.
 """
 import argparse, contextlib, copy, hashlib, io, json, math, os, platform
 import subprocess, sys, tempfile, urllib.request, zipfile
@@ -526,15 +527,21 @@ def write(val, out):
     np.savez_compressed(os.path.join(out, "tie.npz"), **tie())
 
 
-def check(gt, val, exe, work):
+def check(gt, val, exe, work, results):
     os.makedirs(work, exist_ok=True)
     dts = detections(val, 7, lambda iid: iid % 97 == 0)
     dt = os.path.join(work, "dets_val2017.json")
     dump(dt, dts)
     print(f"val2017: {len(val['images'])} images, {len(dts)} detections",
           file=sys.stderr)
+    runs = [(dt, dts, "bbox"), (dt, dts, "segm")]
+    for f in results:
+        with open(f) as h:
+            res = json.load(h)
+        runs.append((f, res, "segm" if "segmentation" in res[0] else "bbox"))
     bad = 0
-    for kind in ("bbox", "segm"):
+    for dt, dts, kind in runs:
+        print(f"{os.path.basename(dt)}, {kind}:", file=sys.stderr)
         p, r, _ = evaluate(val, dts, kind)
         out = os.path.join(work, f"ocaml_{kind}.npz")
         subprocess.run([exe, gt, dt, kind, out], check=True,
@@ -544,7 +551,11 @@ def check(gt, val, exe, work):
             want = np.where(want == -1, np.nan, want)
             got = o[name]
             assert got.shape == want.shape, (name, got.shape, want.shape)
-            differ = int(np.sum(got.view(np.uint64) != want.view(np.uint64)))
+            # Equal when both are NaN, whatever their payloads, and
+            # otherwise when their bits are.
+            nan = np.isnan(got) & np.isnan(want)
+            bits = got.view(np.uint64) != want.view(np.uint64)
+            differ = int(np.sum(bits & ~nan))
             print(f"{kind} {name}: {differ} of {want.size} entries differ in "
                   f"bits", file=sys.stderr)
             bad += differ
@@ -556,6 +567,8 @@ def main():
     ap.add_argument("--annotations")
     ap.add_argument("--check", metavar="EXE")
     ap.add_argument("--work")
+    ap.add_argument("--results", action="append", default=[],
+                    help="a model's results file to compare as well")
     ap.add_argument("--tables", nargs=3, metavar=("GT", "DT", "OUT"))
     ap.add_argument("out", nargs="?")
     a = ap.parse_args()
@@ -566,7 +579,7 @@ def main():
     if a.check:
         if not a.work:
             sys.exit("--check needs --work DIR")
-        check(path, val, a.check, a.work)
+        check(path, val, a.check, a.work, a.results)
     else:
         write(val, a.out)
 
