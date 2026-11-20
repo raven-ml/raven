@@ -4712,6 +4712,26 @@ let staged_on_cuda pattern =
 let cuda_renderer () = renderer_for (target "CUDA" "CUDA" "sm_89")
 let host_renderer () = Lazy.force host_uncompiled
 
+(* A gated sum of 2880 terms a row, on the host: the gate bounds its loop
+   [where (fl <> 0, n, 0)], whose trips no literal states, and the sum still
+   runs in blocks of at most 256 terms, the gate bounding the blocks' loop.
+   Each block is [k]'s range with [256] after its identity. *)
+let gated_blocks () =
+  let r = host_renderer () in
+  let k = Gated.product Stored ~dt:Float32 (4 * gate_block, 2880, gated_n) in
+  let sink = Codegen.blocked_sums k r in
+  let ranges = List.filter (is Range) (Ops.toposort ~calls:Skip sink) in
+  let block u = List.rev (Ops.axis_id u) |> List.hd = 256 in
+  let bounded u = is Where (Ops.nth u 0) in
+  equal ~msg:"sums left in one chain" (list Uops.uop) []
+    (Codegen.unblocked r sink);
+  equal ~msg:"blocks of the sum" int 1
+    (List.length (List.filter block ranges));
+  let blocks = List.find block ranges in
+  let id = List.rev (List.tl (List.rev (Ops.axis_id blocks))) in
+  equal ~msg:"the blocks' loop is the gated one" (list (list int)) [ id ]
+    (List.map Ops.axis_id (List.filter bounded ranges))
+
 let reduces_under_gates =
   group "reduces under a uniform gate"
     [
@@ -4719,7 +4739,7 @@ let reduces_under_gates =
         "on the host, equal the reference with every block off, every block \
          on, and one off"
         ~id:gated_id
-        (gated_shapes [ 16; 17; 256 ])
+        (gated_shapes [ 16; 17; 256; 2900 ])
         (equals_reference Host Float32);
       cases
         "on CUDA, equal the reference with every block off, every block on, \
@@ -4727,7 +4747,7 @@ let reduces_under_gates =
         ~id:(fun (dt, s) -> Format.asprintf "%a, %s" Dtype.pp dt (gated_id s))
         (List.concat_map
            (fun dt ->
-             List.map (fun s -> (dt, s)) (gated_shapes [ 16; 17; 256 ]))
+             List.map (fun s -> (dt, s)) (gated_shapes [ 16; 17; 256; 2900 ]))
            [ Dtype.Float32; Dtype.Bfloat16 ])
         (fun (dt, s) -> equals_reference Cuda dt s);
       cases
@@ -4797,6 +4817,14 @@ let reduces_under_gates =
             true );
         ]
         bounded_loop;
+      test
+        "a sum of 2880 terms a row runs in blocks, the gate bounding their \
+         loop" gated_blocks;
+      test "a padded trip of a sum of 2900 terms reads nothing past the buffer"
+        (fun () ->
+          past_reads
+            (Gated.product Stored ~dt:Float32 (4 * gate_block, 2900, gated_n))
+            (host_renderer ()));
       cases "keeps its serial loop whole, for"
         ~id:(fun (n, _, _) -> n)
         [

@@ -681,12 +681,24 @@ let held = Chains.held
 
 let serial = Chains.serial
 
-(* The trips of [r], if they are a literal. *)
+(* The bounds a loop's bound [b] selects between: a literal, or each arm of
+   a selection between literals, as a uniform gate lifted onto a loop bounds
+   it: [where g n 0] runs [n] trips or none ({!lift_uniform_gates}). Any
+   other bound selects none that a literal states. *)
+let selected b =
+  if is_literal b then [ b ]
+  else if is Op.Where b && is_literal (nth b 1) && is_literal (nth b 2) then
+    [ nth b 1; nth b 2 ]
+  else []
+
+(* The most trips of [r], if its bound is a literal or selects between
+   literals. *)
 let trips r =
-  if not (is_literal (nth r 0)) then None
-  else
-    let n = Bigint.succ (Dtype.Value.to_z (vmax r)) in
-    if Bigint.fits_int n then Some (Bigint.to_int n) else None
+  match selected (nth r 0) with
+  | [] -> None
+  | _ ->
+      let n = Bigint.succ (Dtype.Value.to_z (vmax r)) in
+      if Bigint.fits_int n then Some (Bigint.to_int n) else None
 
 (* The products a core adds into its accumulator at once. *)
 let rec core_terms x =
@@ -734,7 +746,7 @@ let inner r =
    the room,
    padded: its last block's trips past the range read nothing and add [+0].
    A range of trips no literal states, as one a loaded count bounds, stays
-   whole. *)
+   whole; one a gate selects splits at its most trips. *)
 let splits ren sink =
   let wanted = ref [] in
   List.iter
@@ -755,13 +767,16 @@ let splits ren sink =
 
 (* [sink] with the range [x] of [n] trips read in blocks of [d], at [o d + b]
    for a range [o] of [⌈n / d⌉] trips and [b] of [d]. Where [d] does not
-   divide [n], the trips past [n] index no memory and add [+0] to each sum
-   over [x]. *)
+   divide [n], the trips past [x]'s bound index no memory and add [+0] to each
+   sum over [x]. Where a gate selects [x]'s trips, [o]'s bound selects the
+   blocks of each, put in once the sums list [o] and [b]: flattened from
+   [o d + b], the ranges of [o]'s bound, which a gate reads, would be summed
+   over too ({!Simplify.pm_flatten_range}). *)
 let split ren sink (x, n, d) =
-  let o =
-    replace x
-      ~src:[ const_like (nth x 0) (`Int (Bigint.of_int ((n + d - 1) / d))) ]
+  let blocks t =
+    const_like (nth x 0) (`Int (Bigint.of_int ((t + d - 1) / d)))
   in
+  let o = replace x ~src:[ blocks n ] in
   (* The block nests just inside the blocks, outside the ranges after them,
      so that the terms keep the order of their memory. *)
   let b =
@@ -769,8 +784,11 @@ let split ren sink (x, n, d) =
       (axis_id x @ [ chain ])
   in
   let at = O.((o * int d) + b) in
+  let ts =
+    List.map (fun c -> Dtype.Value.to_int (vmax c)) (selected (nth x 0))
+  in
   let sink =
-    if n mod d = 0 then sink
+    if List.for_all (fun t -> t mod d = 0) ts then sink
     else
       let inside = O.(at < nth x 0) in
       let zero u = const ~dtype:(dtype u) (identity_element Op.Add (dtype u)) in
@@ -808,9 +826,18 @@ let split ren sink (x, n, d) =
                       gate_reduce (m "u"));
                 ])))
   in
-  substitute
-    ~extra_pm:(Pattern_matcher.with_ctx Simplify.pm_flatten_range)
-    ~calls:Skip ~pass:Fixed_point sink [ (x, at) ]
+  let sink =
+    substitute
+      ~extra_pm:(Pattern_matcher.with_ctx Simplify.pm_flatten_range)
+      ~calls:Skip ~pass:Fixed_point sink [ (x, at) ]
+  in
+  match ts with
+  | [ _ ] -> sink
+  | ts ->
+      let bound = nth x 0 in
+      let gated = replace bound ~src:(nth bound 0 :: List.map blocks ts) in
+      substitute ~calls:Skip ~pass:Fixed_point sink
+        [ (o, replace o ~src:[ gated ]) ]
 
 (* [sink] with each capped reduce of more than [chain] terms a thread nested.
    Where a trip's lanes leave no room for a range, past [chain / 2], the inner

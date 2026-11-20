@@ -1755,14 +1755,15 @@ val jit :
     compiler adds at most 256 terms of a float sum, a tensor core's products
     counted, into one running sum before adding that sum into another, in
     order. Two kinds of sum keep one running sum: a sum over a range whose
-    trip count is not a constant, and, on a GPU, any sum whose accumulators
-    pass 320 bytes a thread, [float32] past 80 accumulators and [float64]
-    past 40, a staged tensor core's tile among them. Their bounds are a
-    single chain's: those stated here with [n - 1] in place of [β(n)] and
-    [2K + 1] in place of [β(K)]. Over axes cut across devices, each device
-    sums the terms or products of its window, at most [m], and the partial
-    sums of the [t] windows holding any are added in turn, as eager
-    computation adds them ({!Nx.section-reductions}): the bounds of
+    trip count is not a constant, as one read from memory (a gate that runs
+    a range's trips or none counts them), and, on a GPU, any sum whose
+    accumulators pass 320 bytes a thread, [float32] past 80 accumulators
+    and [float64] past 40, a staged tensor core's tile among them. Their
+    bounds are a single chain's: those stated here with [n - 1] in place of
+    [β(n)] and [2K + 1] in place of [β(K)]. Over axes cut across devices,
+    each device sums the terms or products of its window, at most [m], and
+    the partial sums of the [t] windows holding any are added in turn, as
+    eager computation adds them ({!Nx.section-reductions}): the bounds of
     {!Nx.sum}, a contraction, {!Nx.var} and {!Nx.standardize} hold with [m]
     in place of [n] and [K] and with [t - 1] added to [β], and
     {!Nx.softmax}'s and {!Nx.log_softmax}'s with [β(m) + t - 1] in place of

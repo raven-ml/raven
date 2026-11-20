@@ -9015,9 +9015,13 @@ D466.
   over one range splits it alike, at the least room any of them leaves, so
   siblings keep one loop. A reduce whose lanes leave no room, past 128,
   nests with no range inside: each trip's lanes sum from `+0`, in blocks of
-  256, and the outer reduce adds them. Two kinds of sum keep one running
-  sum, and their bounds are a single chain's: a sum over a range whose trip
-  count is not a constant, and, on a renderer with local threads, any sum
+  256, and the outer reduce adds them. A range a uniform gate bounds,
+  `where (c, n, 0)` (D305), splits at its `n` trips, its blocks' loop
+  bounded by `where (c, ⌈n / d⌉, 0)`, and a sum over it ends that loop and
+  its block's, not the ranges the gate reads. Two kinds of sum keep one
+  running sum, and their bounds are a single chain's: a sum over a range
+  whose trip count no constant or gate's selection of constants states, as
+  a count read from memory, and, on a renderer with local threads, any sum
   whose accumulators pass 320 bytes a thread, float32 past 80 and float64
   past 40, a staged tensor core's tile among them, since a second set would
   spill the thread's registers (on CUDA the staged tile's 128 float32
@@ -9040,7 +9044,11 @@ D466.
   terms`, over every kernel it lowers, and its `› a padded block's trips
   read nothing past the buffer`, `› a padded trip reads nothing past a held
   tile of scales` (shared memory, on sm_89) and `› a padded trip reads
-  nothing past a host's decoded panel` (registers); the Stage suite's `a
+  nothing past a host's decoded panel` (registers); its `reduces under a
+  uniform gate › a sum of 2880 terms a row runs in blocks, the gate bounding
+  their loop`, `› a padded trip of a sum of 2900 terms reads nothing past
+  the buffer` and `› on the host` and `› on CUDA, equal the reference ...
+  k = 2900` (blocks padded under the gate); the Stage suite's `a
   staged core's padded trips read no global memory`, over a staged core's
   copies; the `codegen` goldens `readout_*`, `sum_all_clang`, `matvec_clang`
   and `linearizer_fail_1_clang`, whose `.tolk` hold the blocked loops.

@@ -999,10 +999,9 @@ let core_held = 3
    kernel's reduce across workgroups, not the block's rows, would remove
    these losses.
 
-   Both forms keep one running sum over a reduce whose trip count is not a
-   constant, bounded as one chain ({!Rune}); a core's chain holds the whole
-   reduce, 2880 terms on gpt-oss-20b, a stream's 90 terms a lane, then 32
-   lanes.
+   The gate that skips a block of no rows bounds the reduce's loop by its
+   trips or none, which tolk counts as its trips: both forms sum in blocks
+   ({!Rune}), 2880 terms on gpt-oss-20b.
 
    Without a core every block streams and padding rows cost as much as
    real ones: blocks of 4 from one row a group, of 8 from 5 and of 64 from

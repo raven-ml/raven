@@ -331,8 +331,10 @@ val unblocked : Renderer.t -> Ops.t -> Ops.t list
 (** [unblocked ren sink] is each float [Add] reduce of [sink], a
     {!blocked_sums} result, whose running sum takes more than 256 terms a
     thread and is neither an outer sum of blocks nor a stated exception: a
-    range of trips no literal states, or accumulators past 320 bytes a thread
-    on a renderer with local threads. For the tests. *)
+    range whose bound is neither a literal nor a selection between literals,
+    or accumulators past 320 bytes a thread on a renderer with local threads.
+    A range a gate bounds, [where g n 0], counts its [n] trips. For the
+    tests. *)
 
 val index_lane : Indexing.memo -> Ops.t -> int list -> Ops.t
 (** [index_lane memo x lane] is [x] indexed at the constants [lane], the index
