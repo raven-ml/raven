@@ -21,6 +21,7 @@ dune exec ./main.exe
 | [`03-model-input`](./03-model-input/) | An image resized and normalised for a model, and a box back | `Sample.resize`, `Box.of_cxcywh` |
 | [`04-warps`](./04-warps/) | An image, its labels and their boxes under one transform | `Sample.centres`, `Transform.rotation`, `Sample.at`, `Sample.nearest` |
 | [`05-filters`](./05-filters/) | Blurs and what they read past the border | `Filter.correlate`, `Filter.gaussian`, `Filter.median` |
+| [`06-edges`](./06-edges/) | Gradients and Canny's edges | `Filter.gradient`, `Filter.gradient_maxima`, `Mask.reconstruct` |
 
 Examples that make a picture write it beside `main.ml` with hugin. The
 pictures are not committed.
