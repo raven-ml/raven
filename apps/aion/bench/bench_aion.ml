@@ -22,10 +22,12 @@
    main.exe's 16 on a GPU and 1 on the host, where generate runs at 1
    whatever AION_BATCH is; on a GPU aion-base's commands run at 1 as well.
 
-   AION_DEVICE names the device as main.exe's --device does: [cpu], eager
-   (the default), [cpu-jit], compiled on the host, or a GPU as
-   Rig_gpus.open_ names it, compiled there. The codecs compute on the same
-   device. Each case opens its device and makes its weights in its worker,
+   AION_DEVICE names the device as main.exe's --device does, as
+   Rig_gpus.open_ reads it: [cpu] (the default) or a GPU. The rows compute
+   there compiled, as main.exe does, or eagerly on the host where AION_EAGER
+   is set, as with --eager. The codecs compute on the same device. Each
+   suite, [cpu], [cpu-eager] or the GPU's name, keeps a baseline file of its
+   own. Each case opens its device and makes its weights in its worker,
    which thumper forks, so this process starts no driver; the worker then
    prints the device memory raven held, its cache included, or its peak
    resident memory on the host. [--warm] runs every case once in this
@@ -46,7 +48,12 @@ type 'd target = { at : 'd Nx.Placement.t; jit : bool }
 type make = { make : 'd. 'd target -> unit -> unit }
 
 let device = Option.value ~default:"cpu" (Sys.getenv_opt "AION_DEVICE")
-let gpu = device <> "cpu" && device <> "cpu-jit"
+let eager = Option.is_some (Sys.getenv_opt "AION_EAGER")
+
+(* Whether AION_DEVICE names a GPU, read from the name, so that this process
+   opens no driver. *)
+let gpu = String.lowercase_ascii device <> "cpu"
+let suite = if eager then device ^ "-eager" else device
 
 (* The call [c] makes at AION_DEVICE, and a function stating the memory it
    held. *)
@@ -57,15 +64,14 @@ let call c =
     |> Option.fold ~none:"" ~some:(fun kb ->
         Printf.sprintf "peak resident memory %d MiB" (kb / 1024))
   in
-  match device with
-  | "cpu" -> (c.make { at = Nx.Host.on; jit = false }, peak)
-  | "cpu-jit" -> (c.make { at = Nx.Host.on; jit = true }, peak)
-  | name ->
-      let g = Result.error_to_failure (Rig_gpus.open_ name) in
-      let module D = (val Nx.devices [ g ]) in
-      ( c.make { at = D.on; jit = true },
-        fun () ->
-          Printf.sprintf "device memory %d MiB" (Rig.allocated g / 1048576) )
+  if not gpu then (c.make { at = Nx.Host.on; jit = not eager }, peak)
+  else if eager then failwith "AION_EAGER: only the host computes eagerly"
+  else
+    let g = Result.error_to_failure (Rig_gpus.open_ device) in
+    let module D = (val Nx.devices [ g ]) in
+    ( c.make { at = D.on; jit = true },
+      fun () ->
+        Printf.sprintf "device memory %d MiB" (Rig.allocated g / 1048576) )
 
 (* [f], compiled where [t] compiles, [s] its signature: main.exe's way. *)
 let compile t s f = if t.jit then Rune.jit s f else f
@@ -286,8 +292,10 @@ let spectrum_decode b =
   { make }
 
 (* The batch of the batched rows: AION_BATCH, by default main.exe's 16 on a
-   GPU and 1 on the host, where generate runs at 1 whatever it is, so that a
-   suite runs in about two minutes. PERFORMANCE.md's host rows run at 4. *)
+   GPU and 1 on the host, where generate runs at 1 whatever it is. A GPU's
+   suite and the host's eager one run in about two minutes; the host's
+   compiled one in about five, its calls 4 to 6 times eager's.
+   PERFORMANCE.md's host rows run at 4. *)
 let batch =
   Option.fold ~none:(if gpu then 16 else 1) ~some:int_of_string
     (Sys.getenv_opt "AION_BATCH")
@@ -321,13 +329,13 @@ let case (name, c) =
       Gc.full_major ();
       (f, memory))
     ~teardown:(fun (_, memory) ->
-      Printf.eprintf "aion: %s/%s: %s\n%!" device name (memory ()))
+      Printf.eprintf "aion: %s/%s: %s\n%!" suite name (memory ()))
     (fun (f, _) -> f ())
 
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--warm" ] ->
-      if device <> "cpu" then
+      if not eager then
         List.iter
           (fun (_, c) ->
             let f, _ = call c in
@@ -343,14 +351,14 @@ let () =
       Printf.printf "profile: end, the call in %.3f s\n%!"
         (Unix.gettimeofday () -. t0)
   | _ ->
-      (* A suite, and a baseline file, per device: aion.thumper for the
-         host's eager rows, aion-cuda.thumper for CUDA's. *)
-      let suite = if device = "cpu" then "aion" else "aion-" ^ device in
+      (* A baseline file per suite: aion.thumper for the host's compiled
+         rows, aion-cuda.thumper for CUDA's. *)
       exit
-        (Thumper.run suite
+        (Thumper.run
+           (if suite = "cpu" then "aion" else "aion-" ^ suite)
            ~config:
              Thumper.Config.(
                default
                |> samples (if gpu then 5 else 3)
                |> warmup 0. |> deadline 600.)
-           [ Thumper.group device (List.map case rows) ])
+           [ Thumper.group suite (List.map case rows) ])

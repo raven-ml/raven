@@ -196,9 +196,10 @@ uv run apps/aion/bench/pytorch.py cuda
 times the three commands' work on a batch, the model alone from tokens to
 its result, and the codecs, at random weights of aion-base's and
 aion-large's architectures, on the device `AION_DEVICE` names as `--device`
-does (`cpu`, eagerly, by default), at a batch of `AION_BATCH` (16 on a GPU
-and 1 on the host by default). `bench/pytorch.py` times the same rows with
-AION-1's code, `bench/whole.sh` the whole commands on real rows that
-`bench/fetch.py` fetches, and `bench/roles.py` sums a row's kernel times.
-`bench/*.thumper` hold fudge's baselines, a file per device, and
-[PERFORMANCE.md](PERFORMANCE.md) the numbers.
+does (`cpu` by default), compiled, or eagerly where `AION_EAGER` is set, at a
+batch of `AION_BATCH` (16 on a GPU and 1 on the host by default).
+`bench/pytorch.py` times the same rows with AION-1's code, `bench/whole.sh`
+the whole commands on real rows that `bench/fetch.py` fetches, and
+`bench/roles.py` sums a row's kernel times. `bench/*.thumper` hold fudge's
+baselines, a file per suite, and [PERFORMANCE.md](PERFORMANCE.md) the
+numbers.

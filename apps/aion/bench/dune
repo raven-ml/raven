@@ -1,7 +1,7 @@
 ; AION-1's rows in ../PERFORMANCE.md that a suite holds, against pytorch.py's
 ; timings of AION-1's own code. Not attached to runtest:
 ;   AION_DEVICE=cuda dune build @apps/aion/bench/bench
-; AION_DEVICE (cpu, cpu-jit or a GPU) and AION_BATCH choose the rows.
+; AION_DEVICE (cpu or a GPU), AION_EAGER and AION_BATCH choose the rows.
 ; [--warm] compiles the kernels into tolk's disk cache first, in a process of
 ; its own, so the measurement compiles nothing.
 
@@ -15,6 +15,7 @@
  (deps
   (env_var AION_DEVICE)
   (env_var AION_BATCH)
+  (env_var AION_EAGER)
   (glob_files *.thumper))
  (action
   (progn

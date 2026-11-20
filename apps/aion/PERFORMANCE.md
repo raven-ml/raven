@@ -168,7 +168,7 @@ which PyTorch's holds.
 ```bash
 AION_DEVICE=cuda dune build @apps/aion/bench/bench    # nv for NV
 uv run apps/aion/bench/pytorch.py cuda                # TORCH_COMPILE=1 to compile
-AION_DEVICE=cpu AION_BATCH=4 dune build @apps/aion/bench/bench    # cpu-jit to compile
+AION_BATCH=4 dune build @apps/aion/bench/bench    # AION_EAGER=1 for --eager
 AION_BATCH=4 uv run apps/aion/bench/pytorch.py cpu
 uv run apps/aion/bench/fetch.py DATA
 apps/aion/bench/whole.sh DATA DIR cuda                # cpu on the host
