@@ -1011,32 +1011,69 @@ let fuses (ren : Renderer.t) r x =
 let fusable = String "fusable"
 let mark_fusable u = replace u ~arg:fusable
 
-(* The slice of [x] at the leading indices [idx], computed in its own lanes:
-   the slice of an elementwise operation, or of a permutation of one, is the
-   operation on its sources' slices, a scalar source as it is. Any other
-   node's slice is indexed out of it. *)
-let rec slice x idx =
+(* The fewest lanes of a sum of products' run that code generation computes
+   through a bitcast and from a value's lanes ({!slicer}): 16 bytes of
+   float32, the narrowest vector every host computes whole. A narrower run
+   put together from a wider vector costs more than its lanes computed apart:
+   in runs of 3 rows, a dense MXFP4 product of 5760 by 2880 took 96 ms reading
+   runs of its decoded vector, against 20 ms reading its lanes apart. *)
+let least_run = 4
+
+(* [slicer ~lanes x idx] is the slice of [x] at the leading indices [idx],
+   computed in its own lanes: the slice of an elementwise operation, or of a
+   permutation of one, is the operation on its sources' slices, a scalar
+   source as it is. Where [lanes], a bitcast that keeps its lane count is
+   one, each lane's bits its source lane's, and any other node's slice is the
+   stack of its lanes, which a vector operation reads in order; elsewhere it
+   is indexed out of it, read lane by lane. A bitcast that changes the lane
+   count is such a node: its lanes are no lanes of its source. A slicer
+   keeps the slices it has computed, which a sum's runs share. *)
+let slicer ~lanes =
+  let memo = Tbl.create 64 in
   let whole s = is_invalid s || shape s = [] in
   let full s sh =
     if whole s || equal_shape (shape s) sh then s else expand s sh
   in
   let elementwise u =
     Op.Set.mem (op u) Op.Set.elementwise
-    && (not (is Op.Bitcast u))
+    && ((not (is Op.Bitcast u)) || (lanes && not (is_shape_changing_bitcast u)))
     && shape u <> []
     && List.for_all
          (fun s -> whole s || List.compare_lengths (shape s) (shape u) = 0)
          (src u)
   in
-  if idx = [] then x
-  else if is Op.Permute x && elementwise (nth x 0) then
-    let e = nth x 0 in
-    let moved s = if whole s then s else mop (full s (shape e)) (marg x) in
-    slice (replace e ~src:(List.map moved (src e))) idx
-  else if elementwise x then
-    let part s = if whole s then s else slice (full s (shape x)) idx in
-    replace x ~src:(List.map part (src x))
-  else index_ints x idx
+  let rec slice x idx =
+    let seen = Option.value (Tbl.find_opt memo x) ~default:[] in
+    match List.assoc_opt idx seen with
+    | Some sl -> sl
+    | None ->
+        let sl =
+          if idx = [] then x
+          else if is Op.Permute x && elementwise (nth x 0) then
+            let e = nth x 0 in
+            let moved s =
+              if whole s then s else mop (full s (shape e)) (marg x)
+            in
+            slice (replace e ~src:(List.map moved (src e))) idx
+          else if elementwise x then
+            let part s =
+              if whole s then s else slice (full s (shape x)) idx
+            in
+            replace x ~src:(List.map part (src x))
+          else
+            let block = List.drop (List.length idx) (shape x) in
+            if
+              lanes
+              && List.for_all (function Int _ -> true | Sym _ -> false) block
+            then
+              let lane i = index_ints x (idx @ i) in
+              reshape (stack (List.map lane (product (int_shape block)))) block
+            else index_ints x idx
+        in
+        Tbl.replace memo x ((idx, sl) :: seen);
+        sl
+  in
+  slice
 
 (* A reduce of [r]'s source over its first [num_axes] axes, in place, and
    over the ranges after its source, into an accumulator. *)
@@ -1090,6 +1127,8 @@ let lower_reduce (slots, ren) r =
     if not (fused && ren.vector_lanes > 1) then None
     else Some (product (List.filteri (fun a _ -> a < last_wide) out))
   in
+  let width = Helpers.prod (List.filteri (fun a _ -> a >= last_wide) out) in
+  let slice = slicer ~lanes:(width >= least_run) in
   let run j = sum (List.map (fun k -> slice inp (k @ j)) (product sizes)) in
   let per_run f = reshape (stack (List.map f (Option.get runs))) rest in
   let ret =

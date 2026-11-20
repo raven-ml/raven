@@ -4974,6 +4974,26 @@ let tile n =
     ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole 0; whole 0 ] ())
     [ Ops.end_ (Ops.store (Ops.index out [ (i * int 4) + j ]) sum) [ i; j ] ]
 
+(* [out[i] = sum_k 2^(e[i, k] - 127) * b[k]], the power decoded from the byte
+   [e] by a bitcast of its bits, as an e8m0 scale is, for [i] below [rows]
+   upcast by 4 and [k] unrolled by 4: a sum of products whose operand is
+   decoded through a bitcast. *)
+let decoded_matvec ~rows n =
+  let out = Shape.param ~shape:[ Int rows ] 0 Float32 in
+  let e = Shape.param ~shape:[ Int (rows * n) ] 1 Uint8 in
+  let b = Shape.param ~shape:[ Int n ] 2 Float32 in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let k = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+  let open Ops.O in
+  let bits = Ops.cast (Ops.index e [ (i * int n) + k ]) Uint32 in
+  let power = Ops.bitcast (bits lsl Ops.int ~dtype:Uint32 23) Float32 in
+  let sum = Ops.reduce (power * Ops.index b [ k ]) Op.Add [ k ] in
+  let split axis target = Opt.Split { axis; amount = 4; target; top = false } in
+  Ops.sink
+    ~kernel:
+      (Ops.kernel_info ~opts_to_apply:[ split 0 Upcast; split 2 Upcast ] ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
+
 (* [out[i] = sum_k f a[i, k] * b[k]] for [i] below [rows] and [k] below [n],
    [f] the reciprocal, or nothing where [plain]: a sum of products whose
    left factor a producer computes, as a fused prologue does. [f 0] is
@@ -5106,6 +5126,29 @@ let multiply_adds =
           let out = Run.on_host prg [ (1, floats a); (2, floats b) ] in
           equal (array Dtypes.value)
             (Array.make 8 (`Float 0x1p-24))
+            (List.assoc 0 out));
+      test
+        "a sum of products whose operand decodes through a bitcast \
+         multiply-adds vectors" (fun () ->
+          let rows = 8 and n = 16 in
+          let prg =
+            Codegen.to_program (decoded_matvec ~rows n) (Lazy.force host)
+          in
+          (* each step's 4 running sums are one vector, which adds a product
+             and 3 multiply-adds of the decoded powers' vectors *)
+          equal int ~msg:"multiply-adds of vectors" 3
+            (occurrences "__builtin_elementwise_fma(" (source prg));
+          equal int ~msg:"multiply-adds of one lane" 0
+            (occurrences "__builtin_fmaf(" (source prg));
+          (* row [i] holds the powers [2^(i mod 3)], [b] the integers [k]:
+             every sum is exact, [2^(i mod 3)] times 120 *)
+          let e =
+            Array.init (rows * n) (fun j ->
+                `Int (Bigint.of_int (127 + (j / n mod 3))))
+          and b = Array.init n (fun k -> `Float (Float.of_int k)) in
+          let out = Run.on_host prg [ (1, e); (2, b) ] in
+          equal (array Dtypes.value)
+            (Array.init rows (fun i -> `Float (Float.ldexp 120. (i mod 3))))
             (List.assoc 0 out));
       cases
         "a sum of products padded computes the bits of its factors with \

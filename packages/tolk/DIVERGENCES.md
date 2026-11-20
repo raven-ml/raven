@@ -3415,7 +3415,10 @@ driver signals its own (D146).
   its last lane axis of more than one lane, with the axes of one lane after
   it, as one vector: each unrolled lane's products of a run are
   one vector of the run's lanes, in their order, the operation on its
-  operands' slices, and each multiply-add adds one into the run's running
+  operands' slices, through elementwise operations and, in a run of at
+  least 4 lanes, bitcasts that keep the lane count (as an MXFP4 code's
+  decode), any other node's slice then the stack of its lanes, and each
+  multiply-add adds one into the run's running
   sums, which an accumulator holds as vectors; each lane keeps its terms,
   their order and their roundings. A sum that reads lanes of a vector product
   apart fuses each lane into its running sum, and computes its first lane,
