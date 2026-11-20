@@ -11,10 +11,13 @@
 set -eu
 upstream=$1 tile=$2 dir=$3; shift 3
 models=${*:-nano small medium large}
-main=$PWD/_build/default/apps/tessera/main.exe
-py=$(uv run -q --no-project --with torch==2.15.0 --with numpy==2.5.4 \
-  python -c 'import sys; print(sys.executable)')
+main=$PWD/_build/default/apps/tessera/bin/main.exe
 mkdir -p "$dir"
+# PyTorch's own environment in DIR: uv's --with environment is gone once its
+# command exits.
+py=$dir/venv/bin/python
+[ -x "$py" ] || { uv venv -q "$dir/venv" &&
+  uv pip install -q --python "$py" torch==2.15.0 numpy==2.5.4; }
 for m in $models; do
   case $m in nano) r=N:bd08c90bf56ca6a1e7609a395cd47115fa12f1d8 ;;
     small) r=S:9e1a725f1ac1a3a8ab93fd85b08633754cacb508 ;;
