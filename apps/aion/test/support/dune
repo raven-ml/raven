@@ -1,8 +1,10 @@
 ; The rounding ensemble's rule (spread), where a float32 computation may land
 ; by nx's error bounds (bounds), and their reading of aion's codecs
-; (scalar_bounds, decisions); Hub caches planted with test codecs (hub_cache).
+; (scalar_bounds, decisions); Hub caches planted with test codecs (hub_cache);
+; the narrow upstream fixtures (fixture) and the narrow transformer and draws
+; compiled against eager ones (compiled).
 
 (library
  (name aion_support)
  (wrapped false)
- (libraries aion kaun.hf nx nx.io))
+ (libraries aion kaun.hf nx nx.io rune windtrap))

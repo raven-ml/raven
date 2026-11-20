@@ -85,3 +85,5 @@ let pp name ppf c =
       if j < 5 then
         Format.fprintf ppf "@\n  %d: %.9g, reference %.9g, tau s %.3g" i v r b)
     c.failures
+
+let holds name c = if c.failures <> [] then Windtrap.failf "%a" (pp name) c

@@ -35,7 +35,6 @@
   test_image
   test_codecs
   test_survey
-  test_parity
   test_transformer
   test_roar)
  (modules :standard \ test_gpu)

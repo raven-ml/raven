@@ -1,4 +1,4 @@
-"""Fixtures for test_parity: the scalar codecs' codebooks and upstream's goldens.
+"""Fixtures for test_scalar: the scalar codecs' codebooks and upstream's goldens.
 
     uv run --locked scalars.py [--whole] CODECS GOLDENS_ST ../upstream
 
@@ -28,7 +28,7 @@ row 20 one bin above the correctly rounded value. Of those, each
 row; row 20 is kept whatever it covers. Rows are added greedily, the one
 reaching most uncovered pairs first, lowest index on ties.
 
-With --whole the XP goldens and codebooks are kept whole: test_parity.exe
+With --whole the XP goldens and codebooks are kept whole: test_scalar.exe
 run from a directory whose upstream/ holds those files checks every row and
 coefficient (2.2 MB more, outside the repository).
 

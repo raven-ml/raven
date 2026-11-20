@@ -78,3 +78,7 @@ val levels :
 
 val pp : string -> Format.formatter -> check -> unit
 (** [pp name] prints a check's count, [τ], worst ratio and first failures. *)
+
+val holds : string -> check -> unit
+(** [holds name c] fails the running test with {!pp}[ name] unless [c] has no
+    failure. *)
