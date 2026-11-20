@@ -91,6 +91,14 @@ val walk :
 (** [walk (module U) leaf v x] is [U.walk] of [x] from the root, each position
     of the parameter mapped by [leaf] and the rest visited by [v]. *)
 
+val walk_fixed :
+  ('a 'b. ('a, 'b, 'd, 'e) Walk.cursor -> 's -> 't) ->
+  ('d, 'e) visitor ->
+  's ->
+  't
+(** [walk_fixed walk v x] is [walk] of [x] from the root, its fixed arrays and
+    reports visited by [v]. [walk] reaches no position of a parameter. *)
+
 val keep : ('d, 'd) visitor
 (** [keep] returns each array and ignores each report. *)
 

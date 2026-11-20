@@ -75,7 +75,7 @@ No description is generated, since a description is at one dtype and one
 set, which its first use fixes. Make it where it is used:
 `Nx.Ptree.instantiate (module M)` for `('a, 'd) t`, and `Nx.Ptree.v M.walk`
 for `'d t` and `t`. `Nx.Ptree.place` and `Nx.Ptree.cast` take the module of
-a type of two parameters.
+a type of two parameters, and `Nx.Ptree.place_fixed M.walk` places a `'d t`.
 
 ## How a part is walked
 

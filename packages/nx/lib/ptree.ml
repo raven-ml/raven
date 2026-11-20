@@ -107,6 +107,11 @@ let walk (type a b d e) (module U : S) leaf visitor (x : (a, d) U.t) :
     (b, e) U.t =
   U.walk { Walk.path = Path.root; leaf = (fun _ a -> leaf a); visitor } x
 
+(* [walk] reaches no position, so the leaf is never called. *)
+let walk_fixed (walk : 'a 'b. ('a, 'b, 'd, 'e) Walk.cursor -> 's -> 't) visitor
+    x =
+  walk { Walk.path = Path.root; leaf = (fun _ x -> x); visitor } x
+
 (* Structures *)
 
 let nest (type s d) (module U : S) (s : (s, d) t) : ((s, d) U.t, d) t =

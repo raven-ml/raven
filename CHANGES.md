@@ -3481,6 +3481,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `Nx.Ptree.place_fixed walk p x`, which places a structure of fixed
+  arrays only, a `'d t` such as `Nx_quant.t`, from its walk, with no module
+  that names a payload it does not hold.
 - `Nx_io.Archive.tensor` and `Nx_io.Archive.float` take `~shape` as optional:
   without it, an entry is read at the shape the file stores, still checked by
   dtype, and a missing entry still raises `Failure` naming it.

@@ -7973,15 +7973,30 @@ module Ptree = struct
     ignore (walk (module U) note noted x);
     List.rev !seen
 
+  (* [x] with each array [walk] visits at [p], as [Nx.place]. The walk's
+     type keeps its arrays from being seen at their own set before they move,
+     so each is checked live as it moves, its path formatted only if dead. *)
+  let placed ~by (walk : 'a 'b. ('a, 'b, 'd, 'e) Walk.cursor -> 's -> 't)
+      (p : 'e Placement.t) x =
+    let tensor path a =
+      (match Prim.death a with
+      | Value.Live -> ()
+      | Value.Died _ ->
+          Prim.alive ~by:(Format.asprintf "%s: %a" by pp_path path) a);
+      Eval.place ~by p (Donate.lent a)
+    in
+    walk_fixed walk { tensor; report = (fun _ _ -> ()) } x
+
+  (* [U]'s positions walked as fixed arrays. [U.walk] reaches every array at its
+     own set, so all are checked before any moves. *)
   let place (type v s d e) (module U : S) (p : e Placement.t)
       (x : ((v, s, d) tensor, d) U.t) : ((v, s, e) tensor, e) U.t =
     let by = "Nx.Ptree.place" in
     alive_all ~by (arrays (module U) ~fixed:true x);
-    let placed a = Eval.place ~by p (Donate.lent a) in
-    let visitor =
-      { tensor = (fun _ a -> placed a); report = (fun _ _ -> ()) }
-    in
-    walk (module U) placed visitor x
+    placed ~by (fun c x -> Walk.under U.walk Walk.tensor c x) p x
+
+  let place_fixed (walk : 'a 'b. ('a, 'b, 'd, 'e) Walk.cursor -> 's -> 't) p x =
+    placed ~by:"Nx.Ptree.place_fixed" walk p x
 
   let cast (type v s w r d) (module U : S) (dt : (w, r) dtype)
       (x : ((v, s, d) tensor, d) U.t) : ((w, r, d) tensor, d) U.t =

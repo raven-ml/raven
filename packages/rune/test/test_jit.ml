@@ -1480,6 +1480,38 @@ let test_placements () =
   at (Device 1);
   at Cut
 
+(* A structure of fixed arrays only. *)
+type 'd scaled = { values : 'd Nx.float32_t; factors : 'd Nx.float32_t }
+
+let walk_scaled c s =
+  let open T.Walk in
+  let values = field c "values" tensor s.values in
+  let factors = field c "factors" tensor s.factors in
+  { values; factors }
+
+(* A function that moves a structure from its walk compiles to eager's
+   placement and bits, between devices of a set and from whole to cut. *)
+let test_placed_structure () =
+  let s =
+    { values = v [| 1.; 2.; -0.; 4. |]; factors = v [| 0.5; -1.; 3.; nan |] }
+  in
+  let moved (type d) (src : d where) (dst : d where) =
+    let msg = Format.asprintf "%a to %a" pp_where src pp_where dst in
+    let f s =
+      let s = T.place_fixed walk_scaled (on dst) s in
+      Nx.mul s.values s.factors
+    in
+    let s = T.place_fixed walk_scaled (on src) s in
+    let eager = f s in
+    let y = Rune.jit T.(v walk_scaled @-> returns tensor) f s in
+    equal ~msg:(msg ^ ": placement") bool true
+      (Nx.Placement.equal (Nx.placement eager) (Nx.placement y));
+    equal ~msg bits_t (bits eager) (bits y)
+  in
+  moved (Device 0) (Device 1);
+  moved (Device 1) Cut;
+  moved Cut (Device 0)
+
 (* A function searched at a width gives eager's bits, as do the programs derived
    from it, over operands drawn to break it: -0., infinities, NaN. The operands
    share a shape, so each kernel is searched once. *)
@@ -6468,6 +6500,8 @@ let () =
                test_sliced_grad;
              test "structures in and out" test_structures;
              test "a result lies where eager puts it" test_placements;
+             test "a structure placed from its walk inside jit"
+               test_placed_structure;
              prop "a function searched at a width" searched_cases law_searched;
              prop "a constant placed where the program computes" placed_cases
                law_placed;

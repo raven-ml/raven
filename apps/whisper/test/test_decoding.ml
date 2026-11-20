@@ -1142,8 +1142,8 @@ let jit_decode =
       | None ->
           let fn =
             Rune.jit
-              (params @-> v D.Search.walk @-> v D.Starts.walk @-> tensor
-              @-> returns (v D.Outcome.walk))
+              (params @-> v D.walk_search @-> v D.walk_starts @-> tensor
+              @-> returns (v D.walk_outcome))
               (fun m search starts f -> D.decode m t o search starts f)
           in
           Hashtbl.replace jitted o fn;

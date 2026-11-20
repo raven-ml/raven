@@ -164,10 +164,11 @@ type 'd search =
           [size * patience] rounded half to even. An audio's search ends once it
           holds [m] finished. *)
 
-module Search : Nx.Ptree.S with type ('a, 'd) t = 'd search
-(** The structure of {!type-search}: its case, its integers, and under [Sample]
-    its [temperature] and [key]. A compiled {!val-decode} keeps a program per
-    case. *)
+val walk_search :
+  ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd search -> 'e search
+(** [walk_search c s] walks [s] at [c]'s path: its case, its integers, and
+    under [Sample] its [temperature] and [key]. A compiled {!val-decode} keeps
+    a program per case. *)
 
 (** {1:decode Decoding} *)
 
@@ -188,8 +189,9 @@ val starts : ?width:int -> start array -> Nx.host starts
     Raises [Invalid_argument] if [s] is empty or a start is longer than [width].
 *)
 
-module Starts : Nx.Ptree.S with type ('a, 'd) t = 'd starts
-(** The structure of {!type-starts}: [tokens] and [sot]. *)
+val walk_starts :
+  ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd starts -> 'e starts
+(** [walk_starts c s] walks [s] at [c]'s path: [tokens] and [sot]. *)
 
 type 'd outcome = {
   tokens : 'd Nx.int64_t;
@@ -212,8 +214,9 @@ type 'd outcome = {
 }
 (** The type for what a decoding gives. *)
 
-module Outcome : Nx.Ptree.S with type ('a, 'd) t = 'd outcome
-(** The structure of {!type-outcome}, its fields in order. *)
+val walk_outcome :
+  ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd outcome -> 'e outcome
+(** [walk_outcome c o] walks [o] at [c]'s path, its fields in order. *)
 
 val decode :
   ((float, 'b, 'd) Nx.t, 'd) Model.t ->

@@ -571,18 +571,12 @@ let aliases : host Aliases.t =
     any = z Nx.float64;
   }
 
-module Aliases_s = struct
-  type (_, 'd) t = 'd Aliases.t
-
-  let walk = Aliases.walk
-end
-
 let test_aliases () =
   let expected = List.map (fun f -> f ^ ": a leaf") alias_fields in
   equal ~msg:"qualified" (list string) expected
     (words (P.v Aliases.walk) aliases);
   equal ~msg:"opened" (list string) expected (words (P.v Opened.walk) aliases);
-  let y = P.place (module Aliases_s) S.on aliases in
+  let y = P.place_fixed Aliases.walk S.on aliases in
   all_on S.on ~msg:"each alias is a fixed array"
     (placements (P.v Aliases.walk) y)
 

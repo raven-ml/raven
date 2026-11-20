@@ -68,7 +68,8 @@
     which its first use fixes. Make one where it is used,
     [Nx.Ptree.instantiate (module M)] for a type of two parameters and
     [Nx.Ptree.v M.walk] for the others. [Nx.Ptree.place] and [Nx.Ptree.cast]
-    take the module [M] of a type of two parameters.
+    take the module [M] of a type of two parameters, and
+    [Nx.Ptree.place_fixed] the walk of a type of one.
 
     A type with no payload is declared either way, and the choice decides how it
     is described and moved. [(_, 'd) t] is a module that [Nx.Ptree.place] and
@@ -76,8 +77,9 @@
     leaving the dtype of the absent payload free: a top-level description in an
     implementation without an interface needs an annotation, as
     [((Nx.host Nx.float32_t, Nx.host) M.t, Nx.host) Nx.Ptree.t]. ['d t] is
-    described by [Nx.Ptree.v M.walk] without one, but placing or casting it
-    takes a module [struct type ('a, 'd) t = 'd M.t let walk = M.walk end].
+    described by [Nx.Ptree.v M.walk] without one and placed by
+    [Nx.Ptree.place_fixed M.walk]; a cast keeps fixed arrays, so it has
+    nothing to cast.
 
     {1:rules How a part is walked}
 

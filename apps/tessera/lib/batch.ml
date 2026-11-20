@@ -339,13 +339,7 @@ let pack shape (px : Nx.host Pixels.t) (counts : counts) ~from =
 
 (* Structure *)
 
-module Structure = struct
-  type nonrec ('a, 'd) t = 'd t
-
-  let walk = walk
-end
-
-let place at b = Nx.Ptree.place (module Structure) at b
+let place at b = Nx.Ptree.place_fixed walk at b
 
 (* Each batch's arrays by path, then the first's arrays replaced by the stack of
    every batch's at their path (a gap of nx's: Ptree.stack). *)

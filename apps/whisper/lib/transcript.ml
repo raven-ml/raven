@@ -49,9 +49,9 @@ let steps ?(compile = eager) t o =
         (fun m f -> Decoding.languages m t f);
     decode =
       compile.compile
-        (params () @-> v Decoding.Search.walk @-> v Decoding.Starts.walk
+        (params () @-> v Decoding.walk_search @-> v Decoding.walk_starts
        @-> tensor
-        @-> returns (v Decoding.Outcome.walk))
+        @-> returns (v Decoding.walk_outcome))
         (fun m search starts f -> Decoding.decode m t o search starts f);
   }
 
@@ -403,14 +403,12 @@ let transcribe ?key ?each steps (m : _ model) o x =
     in
     let search = search at key r (List.nth o.ladder r.rung) in
     let starts =
-      Nx.Ptree.place
-        (module Decoding.Starts)
-        at
+      Nx.Ptree.place_fixed Decoding.walk_starts at
         (Decoding.starts ~width [| r.start |])
     in
     let out = steps.decode m search starts f in
     (Decoding.results t d
-       (Nx.Ptree.place (module Decoding.Outcome) Nx.Host.on out)).(0)
+       (Nx.Ptree.place_fixed Decoding.walk_outcome Nx.Host.on out)).(0)
   in
   let windows = run ?each t d dims o ~language ~frames decode in
   let tokens =

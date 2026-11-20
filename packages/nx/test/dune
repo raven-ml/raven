@@ -146,3 +146,12 @@
  (modules test_place_gpu)
  (locks %{workspace_root}/gpu)
  (libraries nx nx_array nx_support rig rig.gpus windtrap))
+
+; place_fixed.t compiles against the installed nx: which walks place_fixed
+; takes is a matter of types.
+
+(cram
+ (applies_to place_fixed)
+ (package nx)
+ (deps
+  (package nx)))

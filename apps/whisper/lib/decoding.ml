@@ -260,41 +260,33 @@ let candidates size patience =
   in
   int_of_float r
 
-module Search = struct
-  type ('a, 'd) t = 'd search
-
-  let walk c s =
-    let open Nx.Ptree.Walk in
-    match s with
-    | Greedy ->
-        case c "greedy";
-        Greedy
-    | Sample { best_of; temperature; key } ->
-        case c "sample";
-        let best_of = field c "best_of" int best_of in
-        let temperature = field c "temperature" tensor temperature in
-        let key = field c "key" Nx.Rng.walk key in
-        Sample { best_of; temperature; key }
-    | Beam { size; patience } ->
-        case c "beam";
-        let size = field c "size" int size in
-        ignore (field c "candidates" int (candidates size patience));
-        Beam { size; patience }
-end
+let walk_search c s =
+  let open Nx.Ptree.Walk in
+  match s with
+  | Greedy ->
+      case c "greedy";
+      Greedy
+  | Sample { best_of; temperature; key } ->
+      case c "sample";
+      let best_of = field c "best_of" int best_of in
+      let temperature = field c "temperature" tensor temperature in
+      let key = field c "key" Nx.Rng.walk key in
+      Sample { best_of; temperature; key }
+  | Beam { size; patience } ->
+      case c "beam";
+      let size = field c "size" int size in
+      ignore (field c "candidates" int (candidates size patience));
+      Beam { size; patience }
 
 (* Starts *)
 
 type 'd starts = { tokens : 'd Nx.int64_t; sot : 'd Nx.int64_t }
 
-module Starts = struct
-  type ('a, 'd) t = 'd starts
-
-  let walk c s =
-    let open Nx.Ptree.Walk in
-    let tokens = field c "tokens" tensor s.tokens in
-    let sot = field c "sot" tensor s.sot in
-    { tokens; sot }
-end
+let walk_starts c s =
+  let open Nx.Ptree.Walk in
+  let tokens = field c "tokens" tensor s.tokens in
+  let sot = field c "sot" tensor s.sot in
+  { tokens; sot }
 
 let starts ?width (s : start array) =
   let n = Array.length s in
@@ -340,19 +332,15 @@ type 'd outcome = {
   no_speech : 'd Nx.float32_t;
 }
 
-module Outcome = struct
-  type ('a, 'd) t = 'd outcome
-
-  let walk c o =
-    let open Nx.Ptree.Walk in
-    let tokens = field c "tokens" tensor o.tokens in
-    let sums = field c "sums" tensor o.sums in
-    let finished = field c "finished" tensor o.finished in
-    let scores = field c "scores" tensor o.scores in
-    let count = field c "count" tensor o.count in
-    let no_speech = field c "no_speech" tensor o.no_speech in
-    { tokens; sums; finished; scores; count; no_speech }
-end
+let walk_outcome c o =
+  let open Nx.Ptree.Walk in
+  let tokens = field c "tokens" tensor o.tokens in
+  let sums = field c "sums" tensor o.sums in
+  let finished = field c "finished" tensor o.finished in
+  let scores = field c "scores" tensor o.scores in
+  let count = field c "count" tensor o.count in
+  let no_speech = field c "no_speech" tensor o.no_speech in
+  { tokens; sums; finished; scores; count; no_speech }
 
 (* Decoding
 

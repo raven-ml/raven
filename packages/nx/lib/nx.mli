@@ -4541,7 +4541,8 @@ val moments_ranges :
     A {e description}, [('s, 'd) t], is a structure at one type ['s] whose
     arrays are all on ['d]. A map's function may then close over an array of
     ['d]. Changing the set of a value, as changing a dtype, goes through the
-    structure's module: {!Ptree.place} and {!Ptree.cast} take one.
+    structure's module: {!Ptree.place} and {!Ptree.cast} take one. A structure
+    of fixed arrays only moves by its walk, with {!Ptree.place_fixed}.
 
     A description is made where it is used. Every description but
     {!Ptree.val-tensor}, {!Ptree.unit} and {!Rng.ptree} is a function's result,
@@ -4826,8 +4827,9 @@ module Ptree : sig
   (** [v walk] is the description whose values [walk] walks: a structure without
       a parameter, on one set, such as a record of parts walked with
       {!Walk.structure}. [walk] keeps the contract of {!S}'s [walk], with no
-      position of a parameter. {!place} cannot move its values: a structure that
-      moves between sets has a module. *)
+      position of a parameter. Where [walk] also walks its values from one set
+      to another, as a walk of fixed arrays only does, {!place_fixed}[ walk]
+      moves them; a walk that calls {!Walk.structure} is at one set. *)
 
   val tensor : (('v, 's, 'd) tensor, 'd) t
   (** [tensor] is one array, at the root. *)
@@ -4922,7 +4924,8 @@ module Ptree : sig
 
       A structure's [walk] also changes the type of its parameter's positions
       and the set of its fixed arrays. These take the structure's module, since
-      only a module names its type constructor. *)
+      only a module names its type constructor, except {!place_fixed}: a walk of
+      fixed arrays only names its types itself. *)
 
   val place :
     (module U : S) ->
@@ -4935,6 +4938,37 @@ module Ptree : sig
       Raises what a walk of [x] raises: {!Rng.walk} refuses a key at a [p]
       that cuts its words' axis. Place such keys apart, at
       [Placement.uncut p] by {!Rng.place}. *)
+
+  val place_fixed :
+    ('a 'b. ('a, 'b, 'd, 'e) Walk.cursor -> 's -> 't) ->
+    'e Placement.t ->
+    's ->
+    't
+  (** [place_fixed walk p x] is [x] with each array at [p], as {!Nx.place}.
+      [walk] walks a structure of fixed arrays only, with no parameter, such as
+      [Nx_quant.walk] or {!Rng.walk}, and needs no module:
+
+      {[
+      type 'd steps = { count : 'd Nx.int32_t; lr : 'd Nx.float32_t }
+
+      let walk_steps c x =
+        let open Nx.Ptree.Walk in
+        let count = field c "count" tensor x.count in
+        let lr = field c "lr" tensor x.lr in
+        { count; lr }
+
+      let on_gpu = Nx.Ptree.place_fixed walk_steps Gpu.on steps
+      ]}
+
+      A walk that reaches a position of a parameter, such as [Linear.walk]
+      ({!Ptree}), is a type error: its structure moves by {!place}.
+
+      Raises what a walk of [x] raises, as {!place} does, and
+      [Invalid_argument] naming [Nx.Ptree.place_fixed] and the path of the
+      first dead array, as [Nx.Ptree.place_fixed: count: int32 [1] was
+      donated]. Unlike {!place}, which checks every array first, it checks
+      each as it moves, so the arrays before the dead one may already have
+      moved. *)
 
   val cast :
     (module U : S) ->

@@ -5,8 +5,9 @@
 
 (* Nx.Ptree: what a walk visits; the laws between flatten, rebuild, map and
    fold, at every dtype; the messages of two values that differ; payload maps
-   and folds, casts and placement through a structure's module; structures
-   nested across sets; and the vector arithmetic of a value's float arrays. *)
+   and folds, casts and placement through a structure's module or its walk;
+   structures nested across sets; and the vector arithmetic of a value's float
+   arrays. *)
 
 open Windtrap
 open Nx_support
@@ -129,6 +130,16 @@ module Keyed = struct
     let key = field c "key" Nx.Rng.walk x.key in
     { held; key }
 end
+
+(* [Block] with a fixed array at each position: a structure of fixed arrays
+   only. *)
+let walk_frozen c x = P.Walk.under Block.walk P.Walk.tensor c x
+
+let walk_two c (a, b) =
+  let open P.Walk in
+  let a = index c 0 tensor a in
+  let b = index c 1 tensor b in
+  (a, b)
 
 let linear : (f32 linear, host) P.t = P.instantiate (module Linear)
 let block : ((f32, host) block, host) P.t = P.instantiate (module Block)
@@ -742,6 +753,52 @@ let payloads =
           equal ~msg:"values" (array float_exact) [| 1.; 2. |]
             (Nx.to_array (List.hd y.layers).w);
           equal ~msg:"steps" (array int32) [| 7l |] (Nx.to_array y.steps));
+      prop
+        "place_fixed keeps a structure's parts and puts each array at the \
+         placement"
+        blocks (fun x ->
+          cover "an empty list" (x.layers = []);
+          cover "an absent bias"
+            (List.exists (fun l -> Option.is_none l.b) x.layers);
+          let y = P.place_fixed walk_frozen S2.on x in
+          let arrays s v =
+            P.fold s (fun p a acc -> (p, Nx.P a) :: acc) v [] |> List.rev
+          in
+          let xs = arrays (P.v walk_frozen) x in
+          let ys = arrays (P.v walk_frozen) y in
+          let show (p, Nx.P a) =
+            P.Path.to_string p ^ ": " ^ Nx.to_string (Nx.place Nx.Host.on a)
+          in
+          let where (_, Nx.P a) = Nx.placement a in
+          equal ~msg:"visits"
+            (list visit)
+            (P.visits (P.v walk_frozen) x)
+            (P.visits (P.v walk_frozen) y);
+          equal ~msg:"values" (list string) (List.map show xs)
+            (List.map show ys);
+          equal ~msg:"placements"
+            (list (placement ()))
+            (List.map (fun _ -> S2.on) ys)
+            (List.map where ys));
+      test
+        "place_fixed raises at a dead array, naming its path, once the arrays \
+         before it may have moved"
+        (fun () ->
+          let a = f32 [| 1.; 2. |] and b = f32 [| 3. |] in
+          ignore (Nx.copy (Nx.donate b));
+          raises
+            (Invalid_argument "Nx.Ptree.place_fixed: 1: float32 [1] was donated")
+            (fun () -> P.place_fixed walk_two S.on (a, b));
+          equal ~msg:"the first array" (array float_exact) [| 1.; 2. |]
+            (Nx.to_array a));
+      test "place_fixed raises as the walk does" (fun () ->
+          let p = S2.split ~axis:0 in
+          equal string
+            (Format.asprintf
+               "Nx.Rng.of_tensor: %a cuts a key's words, which lie whole on \
+                one device"
+               Nx.Placement.pp p)
+            (message (fun () -> P.place_fixed Nx.Rng.walk p (Nx.Rng.key 7))));
     ]
 
 (* Structures nested across sets *)

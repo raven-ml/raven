@@ -38,16 +38,12 @@ type 'd sampling = {
   p : 'd Nx.float32_t;
 }
 
-module Sampling = struct
-  type (_, 'd) t = 'd sampling
-
-  let walk c s =
-    let open Nx.Ptree.Walk in
-    let temperature = field c "temperature" tensor s.temperature in
-    let k = field c "k" tensor s.k in
-    let p = field c "p" tensor s.p in
-    { temperature; k; p }
-end
+let walk_sampling c s =
+  let open Nx.Ptree.Walk in
+  let temperature = field c "temperature" tensor s.temperature in
+  let k = field c "k" tensor s.k in
+  let p = field c "p" tensor s.p in
+  { temperature; k; p }
 
 (* [bucket n] is the least power of two at or above [n]. *)
 let bucket n =
@@ -98,7 +94,7 @@ let generate (type b d) ~jit
     if not jit then fun token index key sampling caches ->
       step token (Cache_index.place whole index) key sampling caches
     else
-      let sampling = Nx.Ptree.instantiate (module Sampling)
+      let sampling = Nx.Ptree.v walk_sampling
       and caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
       and key = Nx.Rng.ptree in
       let compiled =

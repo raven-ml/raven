@@ -711,12 +711,4 @@ end
 
 let walk = Walked.walk
 
-(* A structure of an index's own; its parameter has no position. *)
-module Placed = struct
-  type nonrec ('a, 'd) t = 'd t
-
-  let walk = walk
-end
-
-let place at index =
-  Nx.Ptree.place (module Placed) (Nx.Placement.uncut at) index
+let place at index = Nx.Ptree.place_fixed walk (Nx.Placement.uncut at) index

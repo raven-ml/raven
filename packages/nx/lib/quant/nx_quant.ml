@@ -787,12 +787,4 @@ let walk c w =
       case c "q6_k";
       Q6_K { blocks = blocks "Q6_K" q6_k_bytes b }
 
-type 'd weight = 'd t
-
-module Structure = struct
-  type ('a, 'd) t = 'd weight
-
-  let walk = walk
-end
-
-let place p w = Nx.Ptree.place (module Structure) p w
+let place p w = Nx.Ptree.place_fixed walk p w
