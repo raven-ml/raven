@@ -27,6 +27,15 @@ let address = S.address
 let alloc g kind n = require_some (N.alloc g kind n)
 let still = Rig_gpu_support.still
 
+(* Waits for [g]'s word to reach [v], then checks that it stays at [v] for
+   [ms]. The work up to [v] runs once the GPU's other processes let it, and
+   the work the test holds keeps the word at [v] after. *)
+let held_at ?(msg = "the word") g v ~ms =
+  while N.signaled g < v do
+    Domain.cpu_relax ()
+  done;
+  still ~msg int v (fun () -> N.signaled g) ~ms
+
 (* The [n] unsigned 32-bit words at [a]. *)
 let words32 a n = List.init n (fun i -> H.get32 (a + (4 * i)))
 
@@ -624,10 +633,7 @@ let high_word () =
   let s = Rig.Submission.make t.d [| S.words (release l (address b) 9) |] in
   S.watchdog "a wait on a high host word" (fun () ->
       let v = Rig.submit s ~waits:[| point |] ~buffers:[||] ~args:[||] in
-      still ~msg:"the word" int
-        (Rig.Point.value v - 1)
-        (fun () -> N.signaled t.g)
-        ~ms:20;
+      held_at t.g (Rig.Point.value v - 1) ~ms:20;
       ignore (P.run p);
       Rig.Point.wait v);
   equal int ~msg:"released" 9 (H.get64 (host b));
@@ -1290,14 +1296,12 @@ let join_alternation () =
   let fixed = [ (h, Rig.Read); (b, Rig.Read) ] in
   S.pattern ha bytes 7;
   let n = 2_000 in
-  S.watchdog "work across alternating joins" (fun () ->
-      for i = 1 to n do
-        (* Large copies exercise the private kernel without transferring a
-           whole image at every value. *)
-        let parts = if i > n - 16 then large else small in
-        let s = Sub.make ~fixed t.d parts.(i land 1) in
-        Rig.Point.wait (Rig.submit s ~buffers:[||] ~args:[||])
-      done);
+  S.watch_rounds "a round of work across alternating joins" n (fun i ->
+      (* Large copies exercise the private kernel without transferring a
+         whole image at every value. *)
+      let parts = if i > n - 16 then large else small in
+      let s = Sub.make ~fixed t.d parts.(i land 1) in
+      Rig.Point.wait (Rig.submit s ~buffers:[||] ~args:[||]));
   equal int ~msg:"the compute part's release" 1 (H.get64 (host scratch));
   equal int ~msg:"the copied bytes" (-1) (S.mismatch ha bytes 7);
   S.free_launches l;
@@ -1355,7 +1359,7 @@ let carry_tear () =
   in
   let open_gate i = H.set64 (host gates.(i)) 1 in
   let torn = ref [] in
-  S.watchdog "unordered releases across a carry" (fun () ->
+  S.watchdog "ordered releases across a carry" (fun () ->
       Array.iteri
         (fun first value ->
           start ();
@@ -1367,15 +1371,15 @@ let carry_tear () =
             ~msg:(strf "engine %d releases last" (1 - first))
             (if first = 0 then above else below)
             (H.get64 (host w)))
-        [| below; above |];
-      for i = 1 to tear_rounds do
-        start ();
-        open_gate (i land 1);
-        open_gate (1 - (i land 1));
-        reached ();
-        let x = H.get64 (host w) in
-        if x <> below && x <> above then torn := x :: !torn
-      done);
+        [| below; above |]);
+  S.watch_rounds "a round of unordered releases across a carry" tear_rounds
+    (fun i ->
+      start ();
+      open_gate (i land 1);
+      open_gate (1 - (i land 1));
+      reached ();
+      let x = H.get64 (host w) in
+      if x <> below && x <> above then torn := x :: !torn);
   equal (list int) ~msg:"torn values" [] !torn;
   S.free_launches l;
   List.iter (N.free g) words
@@ -1606,9 +1610,7 @@ let growth () =
         S.submit t
           [| S.words (S.launch l k "stack" ~blocks:4 [ address next; n ]) |]
       in
-      still ~msg:"the word while held" int (Rig.Point.value v - 2)
-        (fun () -> N.signaled t.g)
-        ~ms:20;
+      held_at ~msg:"the word while held" t.g (Rig.Point.value v - 2) ~ms:20;
       H.set64 (host flag) 1;
       Rig.Point.wait v);
   let want = List.init n stacked in
@@ -1912,7 +1914,7 @@ let stop_waiting () =
     Array.append (acquire l (address w) 1) (release l (address marked) 7)
   in
   let v = Rig.Point.value (S.submit t [| S.words ws |]) in
-  still ~msg:"the word" int (v - 1) (fun () -> N.signaled t.g) ~ms:20;
+  held_at t.g (v - 1) ~ms:20;
   S.watchdog "stop" (fun () -> S.stop_driver t.g);
   equal int ~msg:"the word" v (N.signaled t.g);
   H.set64 (host w) 1;
@@ -1937,7 +1939,7 @@ let stop_running () =
       let v2 =
         Rig.Point.value (S.submit t [| S.words (release l (address marked) 7) |])
       in
-      still ~msg:"the word" int (v1 - 1) (fun () -> N.signaled t.g) ~ms:20;
+      held_at t.g (v1 - 1) ~ms:20;
       S.watchdog "stop" (fun () -> S.stop_driver t.g);
       equal int ~msg:"the word" v2 (N.signaled t.g));
   still ~msg:"the queued work" int 0 (fun () -> H.get64 (host marked)) ~ms:200;

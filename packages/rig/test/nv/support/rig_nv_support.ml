@@ -130,13 +130,20 @@ let shared t n =
   | Some b -> (b, H.at h)
   | None -> fail "the device does not borrow host memory"
 
-let watchdog what f =
-  let finished = Atomic.make false in
+(* [watch what f] is [f steps]. A domain ends the process once [steps] has not
+   moved for 10 s and [f] has not returned. *)
+let watch what f =
+  let finished = Atomic.make false and steps = Atomic.make 0 in
   let d =
     Domain.spawn (fun () ->
-        let until = Unix.gettimeofday () +. 10. in
-        while (not (Atomic.get finished)) && Unix.gettimeofday () < until do
-          Unix.sleepf 0.01
+        let seen = ref 0 and until = ref (Unix.gettimeofday () +. 10.) in
+        while (not (Atomic.get finished)) && Unix.gettimeofday () < !until do
+          Unix.sleepf 0.01;
+          let s = Atomic.get steps in
+          if s <> !seen then begin
+            seen := s;
+            until := Unix.gettimeofday () +. 10.
+          end
         done;
         if not (Atomic.get finished) then begin
           prerr_endline ("watchdog: " ^ what ^ " did not return in 10 s");
@@ -147,7 +154,16 @@ let watchdog what f =
     ~finally:(fun () ->
       Atomic.set finished true;
       Domain.join d)
-    f
+    (fun () -> f steps)
+
+let watchdog what f = watch what (fun _ -> f ())
+
+let watch_rounds what n round =
+  watch what @@ fun steps ->
+  for i = 1 to n do
+    round i;
+    Atomic.incr steps
+  done
 
 (* Kernels *)
 

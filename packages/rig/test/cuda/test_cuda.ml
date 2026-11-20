@@ -980,14 +980,19 @@ let write_after_failure () =
 
 (* Two fills on one queue in one C submission, the first with 64 bytes of
    argument: each runs on its own argument, wherever the first placed its
-   own, and the second's failure answers the submit. *)
+   own, and the second's failure answers the submit. Its value still drains,
+   on the GPU: the stop waits for it, or a GPU that another process shares
+   may not have run the write yet, and the next open finds work running. *)
 let fills_own_arguments () =
   if not (S.present ()) then skip ~reason:"the machine has no CUDA GPU" ();
   S.release ();
   let g = require_ok (Rig_gpu_support.opened (C.gpu 0)) in
   Fun.protect ~finally:(fun () -> C.stop g ~fault:None) @@ fun () ->
   is_some ~msg:"the second fill's failure"
-    (S.submit_edge g ~v:1 [ (1, S.failing ~bytes:64 0); (1, S.failing 3) ])
+    (S.submit_edge g ~v:1 [ (1, S.failing ~bytes:64 0); (1, S.failing 3) ]);
+  while C.signaled g < 1 do
+    Domain.cpu_relax ()
+  done
 
 let registry_is_the_process () =
   let p = H.pages H.page in
@@ -1289,9 +1294,12 @@ let placeholder_bounds () =
    launches kernels from the GPU, loads without CUDA's linker, so the
    refusal comes from a bound: [rotate]'s largest shared memory, lowered
    behind rig's back below the 1 KiB a run of two takes, which CUDA then
-   refuses at the first update and at the plain launch that follows it. *)
+   refuses at the first update and at the plain launch that follows it. The
+   lost submit's value still drains, on the GPU: the close waits for it, or a
+   GPU that another process shares may not have run the write yet, and the
+   next open finds work running. *)
 let refused_update () =
-  S.with_ @@ fun { d; g } ->
+  S.with_ @@ fun ({ d; g } as t) ->
   let fn = func (launch_image d) "rotate" in
   let rotate =
     launch fn ~params:16 ~threads:(256, 1, 1) ~shared:1024 ~store:(fun b ->
@@ -1307,6 +1315,7 @@ let refused_update () =
   let why, counts =
     replaying g (fun () -> lost (fun () -> submitted run [| out |]))
   in
+  drained t (Rig.submitted d);
   starts_with ~prefix:"launching a kernel: CUDA_ERROR_INVALID_VALUE" why;
   equal (pair int int) ~msg:"pieces and plain launches after" (0, 1) counts
 
