@@ -1767,16 +1767,11 @@ let stacked ~width f ds =
   if n = 0 then Nx.zeros f32 (Array.append [| 0 |] width)
   else Nx.stack ~axis:0 (List.init n (fun r -> f (Nx.get [ r ] ds)))
 
-(* A sum of rounded floats: where the map sums a custom rule's additions in
-   another order than a lane does, they agree within a bound. *)
-let regrouped kind = kind = Tangent_mapped || kind = Custom_primal
-
 let law_dependent c =
   let ds = Nx.add_s (directions ~n:c.lanes ~k:2) 0.5 in
   let f = dependent c.kind ~steps:c.steps in
   let each = stacked ~width:[| 6 |] f ds in
-  if regrouped c.kind then close 1e-6 each (Rune.vmap' f ds)
-  else equal ~msg:"eager" bits_t (bits each) (bits (Rune.vmap' f ds));
+  equal ~msg:"eager" bits_t (bits each) (bits (Rune.vmap' f ds));
   close 1e-5 each (Rune.jit' (Rune.vmap' f) ds)
 
 (* Kinds whose gaining addition a differentiation around the map reaches: a
