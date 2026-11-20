@@ -127,7 +127,16 @@ val stages_product : Renderer.t -> Ops.t -> bool
     whole ({!Chains.block}) and whose two stages fit
     {!Renderer.t.shared_max}. The steps are a loop inside the trips that
     the tiles take whole, so each output adds the same terms in the same
-    order as the loop unstaged. *)
+    order as the loop unstaged. A load that two products read, as a SwiGLU's
+    two projections read one input, is copied once, by the first, and the
+    second reads that tile. *)
+
+val stages_every_product : Renderer.t -> Ops.t -> bool
+(** [stages_every_product ren sink] is {!stages_product} of [sink] with its
+    staged products' loops in trips of several steps, as {!operands} copies
+    them: every product's tiles of a trip, beside the others', fit their
+    stages. [stages_product] asks it of each step's tiles, which fit
+    wherever one product's do. *)
 
 type product_tile = {
   threads : int * int;  (** The workgroup's threads along M and along N. *)

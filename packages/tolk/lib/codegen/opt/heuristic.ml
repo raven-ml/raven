@@ -136,16 +136,17 @@ let reduces_in over u =
       op x = Op.Reduce && List.exists (fun c -> Nodes.mem c (ranges x)) over)
     (Nodes.to_list (backward_slice_with_self ~calls:Skip u))
 
+(* Whether the reduce [r] adds products. *)
+let sums_product r =
+  (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
+  && op (nth r 0) = Op.Mul
+
 (* [k]'s contraction: its first reduction that sums a product of two
    computations of accesses, neither reading a reduction that runs in a
    range the sum closes, over at least one of [k]'s weak axes, and the ranges
    it closes in the order of [k]'s axes. A reduction an operand reads, such as
    a row's expert, comes before it. *)
 let contraction k =
-  let sums_product r =
-    (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
-    && op (nth r 0) = Op.Mul
-  in
   List.find_map
     (fun r ->
       if not (sums_product r) then None
@@ -1727,36 +1728,63 @@ let staged_product blocking k =
           match Stage.product_tile (K.ren k) ~itemsize ~k:(size r) ~short with
           | None -> None
           | Some { Stage.threads = (tm, tn); outputs = u; run } ->
-              (* Each optimisation finds its axis by identity, which what a
-                 split leaves of a range keeps: the axes move as they split. *)
-              let on x opt =
-                match
-                  List.find_index (fun y -> axis_id y = axis_id x) (K.rngs k)
-                with
-                | Some axis -> Result.is_ok (K.apply_opt k (opt axis))
-                | None -> false
-              in
-              let pad x t =
-                size x mod t = 0
-                || on x (fun axis -> Opt.Padto { axis; amount = t })
-              in
-              let split x amount target =
-                on x (fun axis ->
-                    Opt.Split { axis; amount; target; top = false })
+              (* Several products of the kernel hold their accumulators in
+                 one thread's registers: N's outputs halve until a thread
+                 holds 64 of them in all, the blocked tile's of one product.
+                 Products that read the same rows, as a SwiGLU's two
+                 projections of one input, stage them once
+                 (Stage.staging), so the tile takes what one product's
+                 does. *)
+              let un =
+                let p =
+                  List.length (List.filter sums_product (K.reduceops k))
+                in
+                let rec fit un =
+                  if un > 1 && u * un * p > 64 then fit (un / 2) else un
+                in
+                fit u
               in
               (* Staging reads the operands' tiles off the kernel the splits
                  leave, so whether it takes them is known only once they
-                 are applied. *)
-              if
-                pad n (tn * u)
+                 are applied: [take k un check] applies them to [k], N
+                 upcast by [un], and asks [check]. Each optimisation finds
+                 its axis by identity, which what a split leaves of a range
+                 keeps: the axes move as they split. *)
+              let take k un check =
+                let on x opt =
+                  match
+                    List.find_index (fun y -> axis_id y = axis_id x) (K.rngs k)
+                  with
+                  | Some axis -> Result.is_ok (K.apply_opt k (opt axis))
+                  | None -> false
+                in
+                let pad x t =
+                  size x mod t = 0
+                  || on x (fun axis -> Opt.Padto { axis; amount = t })
+                in
+                let split x amount target =
+                  on x (fun axis ->
+                      Opt.Split { axis; amount; target; top = false })
+                in
+                pad n (tn * un)
                 && pad m (tm * u)
                 && split n tn Opt.Local
                 && split m tm Opt.Local
-                && split n u Opt.Upcast
+                && split n un Opt.Upcast
                 && split m u Opt.Upcast
                 && split r run Opt.Upcast
-                && Stage.stages_product (K.ren k) (K.ast k)
-              then Some k
+                && check (K.ren k) (K.ast k)
+              in
+              (* Halved, the tile is taken only where staging stages every
+                 product, its trips deepened as it stages them
+                 ({!Stage.stages_every_product}): three products along the
+                 sum that share nothing ran 1.44 times as long halved, one of
+                 them staged. Otherwise the kernel keeps one product's tile,
+                 as staging takes it. *)
+              let halved = K.copy k in
+              if un < u && take halved un Stage.stages_every_product then
+                Some halved
+              else if take k u Stage.stages_product then Some k
               else None)
       | _ -> None)
   | _ -> None

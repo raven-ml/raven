@@ -1953,6 +1953,36 @@ let product_on ren (rows, cols, depth) =
   K.convert_loop_to_global s;
   Heuristic.hand_coded_optimizations s
 
+(* [out[i, j] = a[i, j] * b[i, j]] with [a = sum_k x[i, k] w1[j, k]] and
+   [b = sum_k x[i, k] w3[j, k]] in float32, two products of one [x], as a
+   SwiGLU's two projections of one input, optimised on [ren]. *)
+let paired_on ren (rows, cols, depth) =
+  let open Ops.O in
+  let param slot size = Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32 in
+  let out = param 0 Stdlib.(rows * cols)
+  and x = param 1 Stdlib.(rows * depth)
+  and w1 = param 2 Stdlib.(cols * depth)
+  and w3 = param 3 Stdlib.(cols * depth) in
+  let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Ops.Int cols) [ 2 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
+  let sum w =
+    Ops.reduce
+      (Ops.index x [ (i * int depth) + k ] * Ops.index w [ (j * int depth) + k ])
+      Add [ k ]
+  in
+  let sink =
+    Ops.sink ~kernel:(Ops.kernel_info ())
+      [
+        Ops.end_
+          (Ops.store (Ops.index out [ (i * int cols) + j ]) (sum w1 * sum w3))
+          [ i; j ];
+      ]
+  in
+  let s = K.v sink ren in
+  K.convert_loop_to_global s;
+  Heuristic.hand_coded_optimizations s
+
 (* sm_89's renderer, which states the 100 units of an RTX 5000 Ada. *)
 let sm_89 =
   lazy
@@ -2060,6 +2090,18 @@ let blocks =
              too few threads"
         ~id:Fun.id [ "matmul_48_cuda" ]
         (fun name -> equal int 12 (lane_outputs (recorded name)));
+      (* Two products of one input, 6128 rows by 2048 over 768 (AION-1's fc1
+         and fc3 at 16 objects of 383 tokens), take the staged tile with 8 by
+         4 outputs of each a thread, 64 accumulators in all: their shared
+         rows staged once, every product's tiles fit two stages. *)
+      test
+        "on sm_89 two products of one input take the staged tile, each at 8 \
+         by 4 a thread"
+        (fun () ->
+          let o = paired_on (Lazy.force sm_89) (6128, 2048, 768) in
+          equal ~msg:"outputs" int 32 (lane_outputs_of o);
+          equal ~msg:"every product staged" bool true
+            (Stage.stages_every_product (K.ren o) (K.ast o)));
       (* One AION-1 object's 858 rows, 48 rows and 580 rows over 2048 fall
          short of core_threads; the staged tile takes them, 4 by 4 a thread
          in 128 threads. 8 columns pad past four times the work in the tile,

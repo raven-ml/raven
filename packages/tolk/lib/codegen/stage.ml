@@ -957,11 +957,18 @@ let stages ~used ren all w staged ~loops sizes =
 (* The staging of the core [w] of [all] beside [used] bytes of other cores'
    stages: the tiles of its operands ({!operand_tiles}), its staged tiles,
    the loops they step through, the same for each, and its stages; [None]
-   where it stages nothing. *)
-let staging (ren : Renderer.t) all ~used w =
+   where it stages nothing. A load an earlier core staged, of [seen], is
+   read from that core's tile, which takes no room of [w]'s: two products of
+   one kernel that read the same rows, as a SwiGLU's two projections of one
+   input, copy them once. *)
+let staging (ren : Renderer.t) all ~used ~seen w =
   let operands = List.filteri (fun i _ -> i < 2) (src w) in
   let tiles = operand_tiles ~async:ren.async_copy all operands in
-  let staged = List.filter_map snd tiles in
+  let staged =
+    List.filter_map
+      (fun (x, t) -> if List.memq x seen then None else t)
+      tiles
+  in
   match List.map (fun t -> t.loops) staged with
   | loops :: rest when List.for_all (List.equal ( == ) loops) rest -> (
       match stages ~used ren all w staged ~loops (List.map bytes staged) with
@@ -1068,18 +1075,22 @@ let cores ren all =
 let staged_bytes (_, staged, _, d) =
   d * List.fold_left (fun n t -> n + bytes t) 0 staged
 
+(* The loads a staging [st] copies. *)
+let staged_loads (tiles, _, _, _) =
+  List.filter_map (fun (x, t) -> Option.map (fun _ -> x) t) tiles
+
 (* The bytes of shared memory the stages of [all]'s cores before [w] take,
-   as {!operands} stages them, in order. *)
-let used_before ren all w =
-  let rec go used = function
-    | [] -> used
-    | c :: _ when c == w -> used
+   and the loads they copy, as {!operands} stages them, in order. *)
+let before ren all w =
+  let rec go used seen = function
+    | [] -> (used, seen)
+    | c :: _ when c == w -> (used, seen)
     | c :: rest -> (
-        match staging ren all ~used c with
-        | Some st -> go (used + staged_bytes st) rest
-        | None -> go used rest)
+        match staging ren all ~used ~seen c with
+        | Some st -> go (used + staged_bytes st) (staged_loads st @ seen) rest
+        | None -> go used seen rest)
   in
-  go 0 (cores ren all)
+  go 0 [] (cores ren all)
 
 (* Trips of a row's sector
 
@@ -1124,7 +1135,8 @@ let steps (ren : Renderer.t) sink ~k =
      covers a sector, if [k] keeps more than one trip to pipeline and the
      stages keep their depth. *)
   let least w =
-    match staging ren all ~used:(used_before ren all w) w with
+    let used, seen = before ren all w in
+    match staging ren all ~used ~seen w with
     | None -> 1
     | Some (_, staged, _, d) -> (
         let runs = List.filter_map (row_run k) staged in
@@ -1134,7 +1146,6 @@ let steps (ren : Renderer.t) sink ~k =
         let sizes u =
           List.map (fun t -> bytes t * if reads t then u else 1) staged
         in
-        let used = used_before ren all w in
         let keeps u =
           u >= need && u < n && n mod u = 0
           && depth ~used ren (sizes u) >= d
@@ -1248,17 +1259,21 @@ let operands (ren : Renderer.t) sink =
       (* Every core's stages first, then the held tiles in the room they
          leave, so that a held tile never takes a stage's room. *)
       let cores = cores ren all in
-      let used = ref 0 in
+      let used = ref 0 and seen = ref [] in
       let stagings =
         List.filter_map
           (fun w ->
-            match staging ren all ~used:!used w with
+            match staging ren all ~used:!used ~seen:!seen w with
             | None -> None
             | Some st ->
                 used := !used + staged_bytes st;
+                seen := staged_loads st @ !seen;
                 Some (w, st))
           cores
       in
+      (* The reads of each load staged so far, which a later core that reads
+         the same load takes as they are. *)
+      let shared = ref [] in
       let stage (w, (tiles, _, loops, d)) =
         let operands = List.filteri (fun i _ -> i < 2) (src w) in
         let plans =
@@ -1266,6 +1281,7 @@ let operands (ren : Renderer.t) sink =
             (fun (x, t) ->
               match t with
               | None -> (x, None)
+              | Some _ when List.mem_assq x !shared -> (x, None)
               | Some t ->
                   let buf =
                     Shape.alloc ~slot:!next_slot ~addrspace:Dtype.Local
@@ -1337,15 +1353,23 @@ let operands (ren : Renderer.t) sink =
         let slot = if List.is_empty ahead then rslot else after rslot ahead in
         (* An operand reads its copies back: itself where it is a load,
            or the loads it computes on. *)
-        let reads =
+        let own =
           List.filter_map
             (fun (x, p) ->
               Option.map (fun st -> (x, st.read ~deps:waits ~slot)) p)
             plans
+        in
+        let reads =
+          own
+          @ List.filter_map
+              (fun (x, _) ->
+                Option.map (fun r -> (x, r)) (List.assq_opt x !shared))
+              tiles
           @ List.map
               (fun (l, st, _) -> (l, st.read ~deps:waits ~slot:(int 0)))
               held
         in
+        shared := own @ !shared;
         let srcs =
           List.map
             (fun x ->
@@ -1497,7 +1521,7 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
   (* The plan and the depth of the core [c], the largest plan [top]. *)
   let choose c top =
     let operands = List.filteri (fun i _ -> i < 2) (src c) in
-    let used = used_before ren all c in
+    let used = fst (before ren all c) in
     (* The tiles staging copies at [u] of the core's steps a trip, the core's
        [K] none of their loops where a trip takes it whole, as a per-head
        scale is copied once a trip takes a head whole. *)
@@ -1657,11 +1681,14 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
 let stages_product (ren : Renderer.t) sink =
   let all = toposort ~calls:Skip sink in
   let staged p =
-    Option.is_some (staging ren all ~used:(used_before ren all p) p)
+    let used, seen = before ren all p in
+    Option.is_some (staging ren all ~used ~seen p)
   in
   match staged_products ren all with
   | [] -> false
   | ps -> List.for_all staged ps
+
+let stages_every_product ren sink = stages_product ren (deepen ren sink)
 
 (* A staged product's tile. A workgroup of 128 threads, 16 along M by 8 along
    N, each holding 8 by 8 outputs, is the blocked contraction's in registers,
