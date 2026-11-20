@@ -18,37 +18,37 @@ On NVIDIA the baselines run through CUDA.
 
 | As fast as | NVIDIA, CUDA | NVIDIA, NV | AMD |
 | --- | --- | --- | --- |
-| llama.cpp | behind on decode, 163.4 against 168.6; ahead on prefill, 11,360 against 9,620 | level on decode, 169.2 against 168.6; behind on prefill, 8,230 against 9,620 | behind on decode, 12.7 against 10.38 ms a token |
+| llama.cpp | behind on decode, 163.4 against 168.9; ahead on prefill, 11,800 against 9,590 | level on decode, 168.6 against 168.9; ahead on prefill, 11,530 against 9,590 | behind on decode, 12.7 against 10.38 ms a token |
 | tinygrad | blocked: tinygrad has no gpt-oss implementation to run | blocked: tinygrad has no gpt-oss implementation to run | blocked: tinygrad needs Resizable BAR on this machine |
 | JAX | blocked: no MXFP4 path, and bfloat16 does not fit in 32 GB | blocked: no MXFP4 path, and bfloat16 does not fit in 32 GB | not measured |
-| vLLM | level on decode, 123.0 against 122.1; behind on prefill, 12,140 against 12,820 | ahead on decode, 127.7 against 122.1; behind on prefill, 8,340 against 12,820 | not measured |
+| vLLM | level on decode, 123.2 against 122.1; behind on prefill, 12,090 against 12,820 | ahead on decode, 128.2 against 122.1; behind on prefill, 12,150 against 12,820 | not measured |
 
-The NVIDIA columns are from 2026-11-19, below. The AMD column is from
-2026-11-08, on a Radeon AI PRO R9700 (machine "nonnormal", gfx1201) at
-502431b668, against llama.cpp b12048 through Vulkan, and has not been
+The NVIDIA columns are from 2026-11-19 and 2026-11-20, below. The AMD column
+is from 2026-11-08, on a Radeon AI PRO R9700 (machine "nonnormal", gfx1201)
+at 502431b668, against llama.cpp b12048 through Vulkan, and has not been
 measured since.
 
 ### gpt-oss-20b on an NVIDIA RTX 5000 Ada
 
-Machine "fudge", 2026-11-19, Raven at 3c1daa79d5, llama.cpp b12541 and
-vLLM 0.34.0. Tokens a second for one sequence, the median of three rounds.
-First token is a new process's, from its start to its first token, loading
-the weights. Every system keeps the experts as MXFP4.
+Machine "fudge", Raven at 69f14bbeee and llama.cpp b12541 on 2026-11-20,
+vLLM 0.34.0 on 2026-11-19. Tokens a second for one sequence, the median of
+three rounds. First token is a new process's, from its start to its first
+token, loading the weights. Every system keeps the experts as MXFP4.
 [gpt-oss's performance](../apps/gpt-oss/PERFORMANCE.md) gives each number's
 range, how each system was run, memory and the other systems, and how to
 reproduce them.
 
 | | Attention, head | Decode | Prefill, 512 tokens | First token |
 | --- | --- | --- | --- | --- |
-| Raven, CUDA | bfloat16 | 123.0 | 12,140 | 2.00 s |
-| Raven, CUDA | Q8_0 | 163.4 | 11,360 | not measured |
-| Raven, NV | bfloat16 | 127.7 | 8,340 | 1.83 s |
-| Raven, NV | Q8_0 | 169.2 | 8,230 | not measured |
-| llama.cpp, CUDA | Q8_0 | 168.6 | 9,620 | 2.12 s |
+| Raven, CUDA | bfloat16 | 123.2 | 12,090 | 1.78 s |
+| Raven, CUDA | Q8_0 | 163.4 | 11,800 | not measured |
+| Raven, NV | bfloat16 | 128.2 | 12,150 | 1.52 s |
+| Raven, NV | Q8_0 | 168.6 | 11,530 | not measured |
+| llama.cpp, CUDA | Q8_0 | 168.9 | 9,590 | 1.73 s |
 | vLLM | bfloat16 | 122.1 | 12,820 | 19.7 s |
 
 Installed, Raven's chat is 32 MB, plus NVRTC (134 MB) to compile kernels it
-has not cached; llama.cpp is 1.15 GB and vLLM 9.32 GB, measured the same day
+has not cached; llama.cpp is 1.15 GB and vLLM 9.32 GB, measured on 2026-11-19
 at 72377cdbe1 ([gpt-oss without Python](../apps/gpt-oss/README.md#without-python)).
 
 ## The GPU runtime: rig
