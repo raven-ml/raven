@@ -4,11 +4,12 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
+# forced: blessed connect/two-agents connect/floor under load 4.9 on 2 cores
 
-connect/floor	alloc_words	exact	1404
-connect/floor	wall_time	batch=1	n=20	1.226e-02	1.100e-02 1.114e-02 1.126e-02 1.128e-02 1.139e-02 1.166e-02 1.198e-02 1.206e-02 1.208e-02 1.225e-02 1.228e-02 1.265e-02 1.266e-02 1.267e-02 1.294e-02 1.311e-02 1.313e-02 1.326e-02 1.355e-02 1.395e-02
-connect/two-agents	alloc_words	batch=1	n=20	4.750e+03	4.716e+03 4.728e+03 4.728e+03 4.733e+03 4.734e+03 4.739e+03 4.739e+03 4.741e+03 4.745e+03 4.749e+03 4.751e+03 4.757e+03 4.759e+03 4.759e+03 4.763e+03 4.763e+03 4.765e+03 4.769e+03 4.775e+03 4.923e+03
-connect/two-agents	wall_time	batch=1	n=20	1.184e-02	1.120e-02 1.140e-02 1.140e-02 1.155e-02 1.155e-02 1.171e-02 1.174e-02 1.177e-02 1.179e-02 1.183e-02 1.185e-02 1.188e-02 1.196e-02 1.196e-02 1.213e-02 1.220e-02 1.222e-02 1.251e-02 1.269e-02 1.329e-02
+connect/floor	alloc_words	exact	484
+connect/floor	wall_time	batch=1	n=20	8.004e-03	7.408e-03 7.638e-03 7.672e-03 7.675e-03 7.688e-03 7.694e-03 7.848e-03 7.885e-03 7.918e-03 7.993e-03 8.014e-03 8.054e-03 8.067e-03 8.178e-03 8.280e-03 8.395e-03 8.748e-03 8.887e-03 9.926e-03 1.008e-02
+connect/two-agents	alloc_words	exact	3834
+connect/two-agents	wall_time	batch=1	n=20	8.873e-03	7.898e-03 8.218e-03 8.230e-03 8.291e-03 8.355e-03 8.463e-03 8.660e-03 8.685e-03 8.783e-03 8.797e-03 8.949e-03 8.971e-03 8.979e-03 9.027e-03 9.212e-03 9.243e-03 9.255e-03 9.258e-03 9.417e-03 1.017e-02
 copy/from-32x4K	alloc_words	exact	0
 copy/from-32x4K	wall_time	batch=64	n=20	1.446e-04	1.281e-04 1.306e-04 1.315e-04 1.336e-04 1.337e-04 1.343e-04 1.347e-04 1.355e-04 1.403e-04 1.438e-04 1.454e-04 1.488e-04 1.498e-04 1.510e-04 1.535e-04 1.589e-04 1.616e-04 1.684e-04 1.700e-04 1.725e-04
 copy/from-4K	alloc_words	exact	7

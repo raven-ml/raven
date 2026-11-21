@@ -185,24 +185,24 @@ let rail_rows =
    An agent holds a lock in [TMPDIR], one agent of a user on a machine at a
    time, and a connect row runs two: each gets a [TMPDIR] of its own. The
    agent takes its lock before it listens and holds it by its descriptor, so
-   the directory goes once the agent listens. *)
+   the directory goes once the agent listens.
+
+   The agent inherits the worker's environment, whose [TMPDIR] is set to the
+   directory first: a copy made in OCaml would count words for each variable
+   of the shell that ran the bench. Only agents read it; the worker's own
+   temporary files keep the directory OCaml read at its start. *)
 let agent () =
   let exe =
     Filename.concat (Filename.dirname Sys.executable_name) "../../bin/main.exe"
   in
   let dir = Filename.temp_dir "rig-bench-agent" "" in
-  let env =
-    Unix.environment () |> Array.to_list
-    |> List.filter (fun v -> not (String.starts_with ~prefix:"TMPDIR=" v))
-    |> List.cons ("TMPDIR=" ^ dir)
-    |> Array.of_list
-  in
   let key_r, key_w = Unix.pipe ~cloexec:true () in
   let out_r, out_w = Unix.pipe ~cloexec:true () in
+  Unix.putenv "TMPDIR" dir;
   let pid =
-    Unix.create_process_env exe
+    Unix.create_process exe
       [| exe; "agent"; "127.0.0.1:0" |]
-      env key_r out_w Unix.stderr
+      key_r out_w Unix.stderr
   in
   Unix.close key_r;
   Unix.close out_w;
