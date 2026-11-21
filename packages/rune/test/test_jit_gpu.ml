@@ -3305,13 +3305,18 @@ let complex_ported k =
         Kinds.folded s ~f64 k);
   ]
 
-(* Over a cold disk cache NVRTC compiles the largest kernels below, binomial's
-   and betaincinv's, one program a test, since its cases share their shape: on
-   an RTX 5000 Ada at a load of 12 to 14, a block's binomial took 57 s to
-   compile at float32 and 130 s at float64, and betaincinv 76 s at float64,
-   and each ran in milliseconds. Fewer or smaller cases save none of it. Warm,
-   each takes seconds. *)
+(* Over a cold disk cache NVRTC compiles the largest kernels below, one program
+   a test, since its cases share their shape: on an RTX 5000 Ada at a load of 12
+   to 14, a block's binomial took 57 s to compile at float32 and ran in a
+   millisecond. Fewer or smaller cases save none of it. Warm, each takes
+   seconds. *)
 let cold = 240.
+
+(* At float64 binomial's kernel took 130 s to compile and betaincinv's 76 s, so
+   they and betainccinv compile at float32 alone here: test_draws and
+   test_composed hold their float64 programs compiled against eager on the host,
+   and the kinds above the GPU's float64 arithmetic. *)
+let float32_only = [ "binomial"; "betaincinv"; "betainccinv" ]
 
 (* Functions nx composes from kinds and exact operations give eager's bits on
    an NVIDIA GPU, as the kinds above, each float type a test of its own. *)
@@ -3323,15 +3328,20 @@ let composed_law k =
       (name ^ " at float32 gives eager's bits")
       (Kinds.gen k)
       (fun c -> Kinds.law (snd (keeps ())) ~f64:false k c);
-    prop ~timeout:cold ~count:12
-      ~examples:[ Kinds.example k ]
-      (name ^ " at float64 gives eager's bits")
-      (Kinds.gen k)
-      (fun c ->
-        let f64, s = keeps () in
-        if not f64 then skip ~reason:"the GPU's kernels have no float64" ();
-        Kinds.law ~f32:false s ~f64 k c);
   ]
+  @
+  if List.mem name float32_only then []
+  else
+    [
+      prop ~timeout:cold ~count:12
+        ~examples:[ Kinds.example k ]
+        (name ^ " at float64 gives eager's bits")
+        (Kinds.gen k)
+        (fun c ->
+          let f64, s = keeps () in
+          if not f64 then skip ~reason:"the GPU's kernels have no float64" ();
+          Kinds.law ~f32:false s ~f64 k c);
+    ]
 
 let composed =
   Kinds.
@@ -3361,7 +3371,7 @@ let draws k =
            Draws.law (snd (keeps ())) ~dtypes:R.[ Float32 ] ~shapes k c);
      ])
   @
-  if not (at R.Float64) then []
+  if (not (at R.Float64)) || List.mem (R.name k) float32_only then []
   else
     [
       prop ~timeout:cold ~count:4
