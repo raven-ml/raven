@@ -3558,6 +3558,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.conv` of one channel a group over few channels last, such as a blur's
+  pass over an RGB image, reads the image in place on nx.cpu: a 1080p
+  image's 1 x 5 pass takes about a third of the time. Results keep their bits.
 - `Nx.attention` on nx.cuda sums each block of 64 keys' value products from
   `+0`, then adds them to the rescaled accumulator in one fused multiply-add,
   and fuses the weights' sum likewise, as nx.cpu does: its fused multiply-add

@@ -34,6 +34,7 @@
 # pending: wall_time of order/searchsorted-along-f32-64x4K-in-64x1K, to record on a quiet machine
 # pending: wall_time of io/hdf5-rows-2048-of-8192-chunked, to record on a quiet machine
 # pending: wall_time of io/hdf5-window-a-row-2048-of-8192-chunked, to record on a quiet machine
+# pending: wall_time of conv/depthwise-f32-1x1080x1920x3-1x5, to record on a quiet machine
 # forced: blessed placed/add-1-two-memory-devices placed/matmul-f32-64-rows-two-memory-devices placed/item-f32-1M-split4 placed/sum-f32-8192x4096-cols-split8 placed/sum-f32-8192x1000-split4-axis1 placed/cumsum-f32-1M-split4 placed/cumsum-f32-256x8192-rows-split4 placed/matmul-f32-256x4096x256-k-split4 under load 16.7 on 2 cores
 # forced: blessed dispatch/prim-eval-sin-1 place/borrow-memory-device-16 statistics/argmax-f32-1M statistics/argmax-bf16-1M statistics/argmax-bool-1M quant/mxfp4-gemv-4096 quant/q8_0-gemv-4096 quant/q8_0-gemv-4096-f64 quant/mxfp4-gemv-4096-n-split4 quant/mxfp4-gemv-4096-k-split4 quant/mxfp4-moe-64x8of32 quant/mxfp4-moe-64x8of32-experts-split4 quant/mxfp4-moe-64x8of32-k-split4 io/load-tiff-1024x1024-u16-deflate-tiles under load 5.6 on 2 cores
 
@@ -111,6 +112,7 @@ conv/conv-f32-8x56x56x64-3x3	alloc_words	exact	1197
 conv/conv-f32-8x56x56x64-3x3-to-3	alloc_words	exact	1197
 conv/conv-input-grad-f32-8x56x56x64-3x3	alloc_words	exact	1373
 conv/conv-weight-grad-f32-8x56x56x64-3x3	alloc_words	exact	642
+conv/depthwise-f32-1x1080x1920x3-1x5	alloc_words	exact	1574
 conv/depthwise-f32-8x56x56x64-3x3	alloc_words	exact	1574
 conv/max-pool-f32-8x64x56x56-3x3s2	alloc_words	exact	577
 conv/max-pool-grad-f32-8x64x56x56-3x3s2	alloc_words	exact	1807

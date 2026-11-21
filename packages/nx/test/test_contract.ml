@@ -3172,6 +3172,272 @@ module Conv = struct
           let w = Nx.create Nx.complex64 (w_shape c) ws in
           equal (array int64) (bits want) (bits (conv_of c x w)))
 
+  (* Depthwise cases: [groups] channels last, one input and one output channel
+     each, [x] laid out as [view] says and [w] as [layout]: [w]'s channels lie
+     [numel taps] elements apart, none, or [m] times as far, a slice of an array
+     of [m] channels a group. *)
+  type view = Contiguous | Transposed | Broadcast
+  type layout = Packed | Shared | Strided of int
+
+  let view_name = function
+    | Contiguous -> "contiguous"
+    | Transposed -> "transposed from planes"
+    | Broadcast -> "broadcast across channels"
+
+  let layout_name = function
+    | Packed -> "packed"
+    | Shared -> "broadcast across channels"
+    | Strided m -> Printf.sprintf "a slice of %d channels a group" m
+
+  (* [w]'s step from one channel to the next. *)
+  let channel_step c = function
+    | Packed -> numel c.taps
+    | Shared -> 0
+    | Strided m -> m * numel c.taps
+
+  let depthwise_case =
+    let open Gen in
+    let pp ppf (c, v, l) =
+      Format.fprintf ppf "%a, x %s, w %s" pp_case c (view_name v)
+        (layout_name l)
+    in
+    (* Floats of (-2, 2) and the values that break a sum: signed zeros,
+       infinities and NaN. *)
+    let value =
+      frequency
+        [
+          (8, float_range (-2.) 2.);
+          (1, of_list [ -0.; 0.; Float.infinity; Float.neg_infinity; Float.nan ]);
+        ]
+    in
+    with_pp pp
+      ((* Three cases in ten of 64, 65, 128 or 129 channels, about a float64 row
+          and a float32 row of 512 bytes, over a short image of one batch
+          element, at stride and dilation one with outputs along each axis. *)
+       let* many = int_range 0 9 in
+       let many = many < 3 in
+       (* One case in eight of the others of more taps than a lane holds, 4x5
+          over two axes long enough for outputs: drawn freely, about one in a
+          hundred, which some seeds never reach. *)
+       let* wide = int_range 0 7 in
+       let wide = wide = 0 && not many in
+       let* k = if wide then constant 2 else int_range 1 2 in
+       let ints n lo hi = array ~size:(constant n) (int_range lo hi) in
+       let* groups =
+         if many then of_list [ 64; 65; 128; 129 ]
+         else of_list [ 1; 2; 2; 3; 3; 5; 8; 16 ]
+       in
+       let* n =
+         if many then constant 1
+         else frequency [ (1, constant 0); (6, int_range 1 2) ]
+       in
+       (* The last axis long enough, one case in three, for more than 128
+          outputs of its positions and channels. *)
+       let* long = int_range 0 2 in
+       let* last = if long = 0 then int_range 44 90 else int_range 0 12 in
+       let* first = ints (k - 1) 0 8 in
+       let spatial = Array.append first [| last |] in
+       let* taps = ints k 1 5 in
+       let taps = if wide then [| 4; 5 |] else taps in
+       let spatial = if wide then Array.map (Int.max 6) spatial else spatial in
+       let* untapped = int_range 0 19 in
+       let taps =
+         if untapped = 0 && not many then Array.map (fun _ -> 0) taps else taps
+       in
+       (* Many channels: three to five positions along the last axis, one or two
+          along the first. *)
+       let* more = ints k 0 2 in
+       let spatial =
+         if not many then spatial
+         else
+           Array.mapi
+             (fun i q -> q + if i = k - 1 then 2 + more.(i) else more.(i) / 2)
+             taps
+       in
+       let* stride = ints k 1 2 in
+       let* dilation = ints k 1 2 in
+       let dilation =
+         if wide || many then Array.map (fun _ -> 1) dilation else dilation
+       in
+       (* A negative padding one side in eight: more leave most cases with no
+          output. *)
+       let pads =
+         array ~size:(constant k)
+           (if many then constant 0
+            else frequency [ (1, constant (-1)); (7, int_range 0 2) ])
+       in
+       let* los = pads in
+       let* his = pads in
+       (* Stride one along the last axis, three cases in four, where an output's
+          neighbours along it and across channels lie one after the other in the
+          result and in [x]. *)
+       let* stepped = int_range 0 3 in
+       let stride =
+         if stepped = 0 && not many then stride
+         else Array.mapi (fun i s -> if i = k - 1 then 1 else s) stride
+       in
+       let* v =
+         if many then
+           frequency [ (3, constant Contiguous); (1, constant Transposed) ]
+         else
+           frequency
+             [
+               (4, constant Contiguous);
+               (1, constant Transposed);
+               (1, constant Broadcast);
+             ]
+       in
+       (* A slice wide enough that [w]'s channels lie further apart than
+          [groups] elements: four cases in five of many channels, one in five of
+          the others. *)
+       let strided = Strided ((groups / Int.max 1 (numel taps)) + 2) in
+       let* l =
+         if many then
+           frequency
+             [
+               (8, constant strided); (1, constant Packed); (1, constant Shared);
+             ]
+         else
+           frequency
+             [
+               (3, constant Packed); (1, constant Shared); (1, constant strided);
+             ]
+       in
+       let c0 =
+         {
+           n;
+           spatial;
+           groups;
+           cg = 1;
+           og = 1;
+           taps;
+           stride;
+           dilation;
+           padding = Array.map2 (fun a b -> (a, b)) los his;
+           xs = [||];
+           ws = [||];
+         }
+       in
+       let xn =
+         if v = Broadcast then numel (x_shape c0) / groups
+         else numel (x_shape c0)
+       in
+       let wn =
+         if l = Shared then numel (w_shape c0) / groups else numel (w_shape c0)
+       in
+       let+ xs = array ~size:(constant xn) value
+       and+ ws = array ~size:(constant wn) value in
+       ({ c0 with xs; ws }, v, l))
+
+  (* A depthwise convolution over channels last has, at every float, the bits of
+     each channel's plane convolved alone: an output sums its taps' products in
+     their order, whatever the layout. NaNs compare as a class. Cases of many
+     channels check float32 and float64 alone. *)
+  let law_planes =
+    prop ~count:300
+      "depthwise conv channels last has its planes' bits, at every float"
+      depthwise_case (fun (c, v, l) ->
+        let k = Array.length c.spatial and g = c.groups in
+        let t = Array.init k (windows c) in
+        let outputs = c.n * numel t > 0 in
+        let products = numel c.taps <= 16 in
+        (* Where nx.cpu sums rows of positions and channels together, up to
+           [row] outputs a row: sums of 16 products or fewer, stride one along
+           the last axis over [x] laid out channels last, and [x]'s step from
+           one position to the next, [groups], below its step from one channel
+           to the next plus [w]'s. *)
+        let rows row =
+          g > 1 && products && outputs && v <> Broadcast
+          && c.stride.(k - 1) = 1
+          && t.(k - 1) > 1
+          && g < 1 + channel_step c l
+          && g <= row
+        in
+        cover "rows of positions and channels at every float, past 128 outputs"
+          (rows 64 && g * t.(k - 1) > 128);
+        cover "rows of positions and channels at float32, not float64"
+          (rows 128 && g > 64);
+        cover "positions and channels past a float32 row"
+          (rows max_int && g > 128);
+        cover "rows of positions and channels, w packed" (rows 64 && l = Packed);
+        cover "more taps than a lane holds, under outputs"
+          ((not products) && outputs);
+        cover "a stride above one along the last axis, under outputs"
+          (g > 1 && c.stride.(k - 1) > 1 && outputs);
+        cover "x transposed from planes, under outputs"
+          (v = Transposed && outputs);
+        cover "x broadcast across channels, under outputs"
+          (v = Broadcast && outputs);
+        cover "w broadcast across channels, under outputs"
+          (l = Shared && outputs);
+        cover "a kernel axis of no tap" (Array.mem 0 c.taps);
+        cover "no output" (not outputs);
+        let bits y =
+          Array.map
+            (fun f ->
+              if Float.is_nan f then 0x7FF8000000000000L
+              else Int64.bits_of_float f)
+            (Nx.to_array (Nx.cast Nx.float64 y))
+        in
+        let check (type v s) name (dt : (v, s) D.t) =
+          let at s xs = Nx.cast dt (Nx.create Nx.float64 s xs) in
+          let x =
+            match v with
+            | Contiguous -> at (x_shape c) c.xs
+            | Broadcast ->
+                Nx.broadcast_to (x_shape c)
+                  (at
+                     (Array.append (Array.sub (x_shape c) 0 (k + 1)) [| 1 |])
+                     c.xs)
+            | Transposed ->
+                let planes =
+                  Array.append [| g |] (Array.sub (x_shape c) 0 (k + 1))
+                in
+                Nx.transpose
+                  ~axes:(List.init (k + 1) (fun i -> i + 1) @ [ 0 ])
+                  (at planes c.xs)
+          in
+          let w =
+            match l with
+            | Packed -> at (w_shape c) c.ws
+            | Shared ->
+                Nx.broadcast_to (w_shape c)
+                  (at
+                     (Array.append [| 1 |] (Array.sub (w_shape c) 1 (k + 1)))
+                     c.ws)
+            | Strided m ->
+                (* [c.ws] at channel 0 of [m], zeros elsewhere. *)
+                let s =
+                  Array.append (Array.sub (w_shape c) 0 (k + 1)) [| m |]
+                in
+                let wide =
+                  Array.init (numel s) (fun i ->
+                      if i mod m = 0 then c.ws.(i / m) else 0.)
+                in
+                Nx.slice
+                  (List.init (k + 2) (fun i ->
+                       if i = k + 1 then Nx.R (0, 1) else Nx.A))
+                  (at s wide)
+          in
+          let plane j =
+            let along a =
+              List.init (k + 2) (fun i ->
+                  if i = a then Nx.R (j, j + 1) else Nx.A)
+            in
+            Nx.conv ~stride:c.stride ~padding:c.padding ~dilation:c.dilation
+              (Nx.slice (along (k + 1)) x)
+              (Nx.slice (along 0) w)
+          in
+          let want = Nx.concatenate ~axis:(k + 1) (List.init g plane) in
+          equal ~msg:name (array int64) (bits want) (bits (conv_of c x w))
+        in
+        check "float32" D.Float32;
+        check "float64" D.Float64;
+        if g < 64 then begin
+          check "bfloat16" D.Bfloat16;
+          check "float16" D.Float16
+        end)
+
   (* [c]'s values rounded to [dt] and read back, the convolution of those,
      in float64. *)
   let rounded (type v s) (dt : (v, s) D.t) c =
@@ -3792,6 +4058,7 @@ module Conv = struct
       [
         law_conv;
         law_order;
+        law_planes;
         law_bound;
         law_init;
         law_add;

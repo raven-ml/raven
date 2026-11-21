@@ -92,7 +92,9 @@
    channels, where its loads step least. A Sum of a lane or fewer terms an
    output, each the product of two loads at float32 or float64, as a
    depthwise convolution's, reads the loads itself: the table's products
-   multiply and sum them in registers, in the lanes' order.
+   multiply and sum them in registers, in the lanes' order. Its row axis
+   and the kept axis inside it merge where one load broadcasts along the
+   row axis and the other steps on across both (Periods).
 
    Several reductions. A call's reductions of one program, each of its
    own output, kind and dtype, that lay out the same units run in one job,
@@ -276,6 +278,11 @@ typedef struct {
      along the row axis and the band's. */
   int factor[2];
   int64_t foff[2][LANES], fs[2], fs2[2];
+  /* Where the row axis is two kept axes merged (periods), the outputs of
+     the inner one, above 1, and the factor, 0 or 1, that repeats with that
+     period along the row, stepping [fs] within one; else 0. */
+  int64_t period;
+  int periodic;
   _Atomic int *failed; /* set where a thread's work could not be taken */
 } plan;
 
@@ -885,13 +892,20 @@ typedef struct {
   int64_t at[2], w[2];
 } staged;
 
+/* [d]'s first [n] elements of [w] bytes repeated to fill its [m]. */
+static void repeat(uint8_t *d, int64_t n, int64_t m, int64_t w) {
+  for (int64_t k = n; k < m; k *= 2)
+    memcpy(d + k * w, d, (size_t)((k < m - k ? k : m - k) * w));
+}
+
 /* The unit's sums of the products of two loads, a lane or fewer an output.
    Each factor's terms are read in place where they
    are of the carrier and step one along a row, else staged into the
    carrier, a row of the unit's outputs a term, once for the rows and units
    that read the same ones, as a broadcast factor's do: the table then
    computes the unit's rows at once, but one at a time where a staged
-   factor steps along them. */
+   factor steps along them. A periodic factor's row is its first period
+   staged, then repeated. */
 static void products(const plan *q, work *wk, const unit *x, staged *kept) {
   const fused *z = q->fused;
   int64_t at[2], rows[LANES];
@@ -901,7 +915,8 @@ static void products(const plan *q, work *wk, const unit *x, staged *kept) {
   int64_t each = x->H;
   for (int f = 0; f < 2; f++) {
     const nx_array *l = &z->loads[q->factor[f]];
-    place[f] = l->dtype == q->carrier && (q->fs[f] == 1 || x->W == 1);
+    place[f] = l->dtype == q->carrier && (q->fs[f] == 1 || x->W == 1) &&
+               !(q->period > 1 && q->periodic == f);
     if (!place[f] && q->fs2[f] != 0) each = 1;
   }
   uint8_t *buf[2] = {wk->terms, wk->terms + sizeof wk->terms / 2};
@@ -922,9 +937,13 @@ static void products(const plan *q, work *wk, const unit *x, staged *kept) {
       off[f] = rows;
       step[f] = 0;
       if (kept->at[f] == p && kept->w[f] == x->W) continue;
-      for (int t = 0; t < n; t++)
-        nx_cpu_stage_as(l, p + q->foff[f][t], q->fs[f], 0, x->W, 1,
-                        q->carrier, buf[f] + t * x->W * q->w, x->W);
+      int64_t span = q->period > 1 && q->periodic == f ? q->period : x->W;
+      for (int t = 0; t < n; t++) {
+        uint8_t *d = buf[f] + t * x->W * q->w;
+        nx_cpu_stage_as(l, p + q->foff[f][t], q->fs[f], 0, span, 1,
+                        q->carrier, d, span);
+        repeat(d, span, x->W, q->w);
+      }
       kept->at[f] = p;
       kept->w[f] = x->W;
     }
@@ -1111,11 +1130,61 @@ static void keep(plan *q, int64_t e, int64_t s, int64_t d, int64_t d1,
   q->kd1[q->nk++] = d1;
 }
 
+/* Periods
+
+   A sum of products whose row axis [r] holds, for each of its indices, a
+   few outputs of the kept axis [r + 1] inside it, takes the two as one
+   row axis where one factor then steps one along the row and the other,
+   which [r] broadcasts, repeats with the period of [r + 1]'s extent: the
+   first is read in place, the second staged a period at a time. A
+   depthwise convolution over an image of three channels last took rows of
+   positions, along which the image steps three elements, so each unit
+   staged its taps: 14 ms for a 1080x1920 image's 1x5 kernel on two fudge
+   cores, where its planes took 3.6. Its rows of positions and channels
+   take 4.3, its planes 4.0 in the same run. A row holds whole periods, so
+   that each unit's starts at the period's first output and one staged row
+   serves them all. */
+static void periods(plan *q, int r) {
+  int c = r + 1;
+  if (q->factor[0] < 0 || c >= q->nk) return;
+  int64_t e = q->ke[c];
+  if (e > ROW / q->size || q->ks[r] != e * q->ks[c] ||
+      q->kd[r] != e * q->kd[c] || q->kd1[r] != e * q->kd1[c])
+    return;
+  const nx_cpu_places *pl = &q->fused->pl;
+  for (int f = 0; f < 2; f++) {
+    int a = q->factor[f], b = q->factor[1 - f];
+    if (nx_cpu_place_step(pl, a, q->ks[c]) != 1 ||
+        nx_cpu_place_step(pl, a, q->ks[r]) != e ||
+        nx_cpu_place_step(pl, b, q->ks[r]) != 0)
+      continue;
+    q->ke[r] *= e;
+    q->ks[r] = q->ks[c];
+    q->kd[r] = q->kd[c];
+    q->kd1[r] = q->kd1[c];
+    q->kc[r] = q->kc[c];
+    q->kr[r] = q->kr[c];
+    for (int i = c; i < q->nk - 1; i++) {
+      q->ke[i] = q->ke[i + 1];
+      q->ks[i] = q->ks[i + 1];
+      q->kd[i] = q->kd[i + 1];
+      q->kd1[i] = q->kd1[i + 1];
+      q->kc[i] = q->kc[i + 1];
+      q->kr[i] = q->kr[i + 1];
+    }
+    q->nk--;
+    q->period = e;
+    q->periodic = 1 - f;
+    return;
+  }
+}
+
 /* Picks the path for [q]'s axes and lays out its units. The kept axis that
    steps least, by its reach then its step, becomes the row axis, last,
    where it steps less than every reduced axis or the outputs have few
-   terms. A scan's slices otherwise run SLICES side by side along that
-   axis, so that as many running sums are in flight. Outputs of a lane of
+   terms, a sum of products' with the axis inside it where Periods holds.
+   A scan's slices otherwise run SLICES side by side along that axis, so
+   that as many running sums are in flight. Outputs of a lane of
    terms or fewer whose rows are short take bands of rows of the kept axis
    before the row axis, so that a unit holds about a row's worth of
    outputs. */
@@ -1142,6 +1211,7 @@ static void choose(plan *q, task op) {
               steps_less(q->kr[least], q->ks[least], q->rr[red], q->rs[red]) ||
               q->terms < FEW);
   if (least < 0 || (!rows && op != SCAN)) return;
+  if (op == REDUCE) periods(q, least);
   int64_t e = q->ke[least], s = q->ks[least], d = q->kd[least],
           d1 = q->kd1[least], c = q->kc[least], r = q->kr[least];
   for (int i = least; i < q->nk - 1; i++) {
@@ -1165,6 +1235,7 @@ static void choose(plan *q, task op) {
      depend on the rows. */
   if (!q->slices && op == SCAN && q->f != NULL && q->threads == 1)
     most = SCAN_ROW / q->size;
+  if (q->period > 1) most -= most % q->period;
   q->row = most < e ? most : e;
   q->chunks = (e + q->row - 1) / q->row;
   q->outer = outputs / e;

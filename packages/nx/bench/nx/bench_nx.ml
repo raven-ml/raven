@@ -807,18 +807,18 @@ let contract_rows =
    @ decode_rows @ chain_rows @ attention_rows @ gradient_rows
    @ [ plan_row 11 ] @ dtype_rows)
 
-(* Convolution and pooling over images of [8; 56; 56; 64]
-   float32 channels last, as a user writes each today: a 3 × 3 convolution
-   of 64 channels padded by one, in float32 and bfloat16, and into 3
-   channels, as an image's last layer, which sums in lane order, as do an
-   RGB image's into 3 and a complex64 one's into 4; its input gradient,
-   conv_transpose, and its weight gradient, a contraction over
-   the padded image's windows; the depthwise convolution, one channel a
-   group; a first layer's, 32 images of [28; 28; 1] into 8 channels; a
-   3 × 3 max-pool at stride 2 of the image channels first,
-   padded by -∞, as pad, two window views and max; and its gradient, as
-   those and where: the windows holding the maximum take the output's
-   gradient, folded back onto the image. *)
+(* Convolution and pooling over images of [8; 56; 56; 64] float32 channels last,
+   as a user writes each today: a 3 × 3 convolution of 64 channels padded by
+   one, in float32 and bfloat16, and into 3 channels, as an image's last layer,
+   which sums in lane order, as do an RGB image's into 3 and a complex64 one's
+   into 4; its input gradient, conv_transpose, and its weight gradient, a
+   contraction over the padded image's windows; the depthwise convolution, one
+   channel a group, and over a 1080p image of three channels by a 1 × 5 kernel,
+   as a blur's pass; a first layer's, 32 images of [28; 28; 1] into 8 channels;
+   a 3 × 3 max-pool at stride 2 of the image channels first, padded by -∞, as
+   pad, two window views and max; and its gradient, as those and where: the
+   windows holding the maximum take the output's gradient, folded back onto the
+   image. *)
 
 let image dt = filled dt [| 8; 56; 56; 64 |] 1.
 let pad1 = [| (1, 1); (1, 1) |]
@@ -892,6 +892,13 @@ let conv_rows =
         ~setup:(fun () -> (image D.Float32, image D.Float32)) weight_grad;
       Thumper.bench_with_setup "depthwise-f32-8x56x56x64-3x3"
         ~setup:(conv_by D.Float32 [| 64; 3; 3; 1 |]) (conv ~groups:64);
+      Thumper.bench_with_setup "depthwise-f32-1x1080x1920x3-1x5"
+        ~setup:(fun () ->
+          ( filled D.Float32 [| 1; 1080; 1920; 3 |] 1.,
+            filled D.Float32 [| 3; 1; 5; 1 |] 1. ))
+        (fun (x, w) ->
+          Nx.Repr.array ~by:"bench"
+            (Nx.conv ~groups:3 ~padding:[| (0, 0); (2, 2) |] x w));
       Thumper.bench_with_setup "conv-f32-32x28x28x1-3x3-to-8"
         ~setup:(fun () ->
           (filled D.Float32 [| 32; 28; 28; 1 |] 1., filled D.Float32 [| 8; 3; 3; 1 |] 1.))
