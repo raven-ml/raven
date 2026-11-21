@@ -132,16 +132,34 @@ let decode (type v s) (dt : (v, s) D.t) shape (bytes : Bytes.t) : v array =
       let b = host_buffer (Bytes.to_string bytes) in
       A.to_array (A.v dt (A.Layout.contiguous (Iarray.of_array shape)) b)
 
-(* Lowering *)
+(* Lowering
 
-let rule ~direct ~local ~place ?transposed bound i ~by (type r)
+   A value [f] did not compute is bound once, however many operations read it,
+   as a compiled call binds each argument and each value it captures: by
+   identity. *)
+
+type value = V : ('v, 's, 'd) Nx.t -> value
+
+let same (type v s d) (x : (v, s, d) Nx.t) (V y) =
+  let set = Nx.Placement.devices (Nx.placement x) in
+  match Nx.Prim.coerce (Nx.dtype x) set y with
+  | Some y -> y == x
+  | None -> false
+
+let rule ~direct ~local ~place ?transposed bound seen i ~by (type r)
     (op : r Nx.Prim.t) : r =
   let node : type v s d. (v, s, d) Nx.t -> Ops.t =
    fun x ->
     match Nx.Prim.payload i x with
     | Some (Node u) -> u
     | Some _ -> invalid_arg "Lowered: a value of another payload"
-    | None -> bind ~direct ~device:place.device bound x
+    | None -> (
+        match List.find_opt (fun (y, _) -> same x y) !seen with
+        | Some (_, u) -> u
+        | None ->
+            let u = bind ~direct ~device:place.device bound x in
+            seen := (V x, u) :: !seen;
+            u)
   in
   (match (transposed, op) with
   | Some found, Nx.Prim.Attention _ ->
@@ -161,10 +179,11 @@ let rule ~direct ~local ~place ?transposed bound i ~by (type r)
 (* [f ()]'s graph, the storage it binds and its result's elements. *)
 let lowered (type v s d) ?(direct = false) ?(local = true) ?(place = on_host)
     ?transposed (f : unit -> (v, s, d) Nx.t) =
-  let bound = ref [] in
+  let bound = ref [] and seen = ref [] in
   let y, u =
     Nx.Prim.interpret ~name:"Lowered" Nx.Prim.Extent
-      (fun i ~by op -> rule ~direct ~local ~place ?transposed bound i ~by op)
+      (fun i ~by op ->
+        rule ~direct ~local ~place ?transposed bound seen i ~by op)
       (fun i ->
         let y = f () in
         match Nx.Prim.payload i y with

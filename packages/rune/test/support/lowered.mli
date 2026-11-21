@@ -14,9 +14,11 @@ val run :
     operation [f] applies ({!Rune.Lower.op}) into one tolk graph, compiled and
     run on the host. A value [f] did not compute is bound as storage that holds
     its elements, read through its layout where it is a view of an array's
-    storage. [local] (default [true]) is the lowering's [local]: with
-    [~local:false] it lowers as for a device whose work is not this process's
-    code, though the graph still runs on the host. [cores] are the tensor
+    storage, and once however many operations read it, as a compiled call
+    binds each argument and capture once. [local] (default [true]) is the
+    lowering's [local]: with [~local:false] it lowers as for a device whose
+    work is not this process's code, though the graph still runs on the
+    host. [cores] are the tensor
     cores the schedule takes each device to have
     ({!Tolk.Schedule.create_linear_with_vars}), by default the host's own
     ({!Tolk.Heuristic.val-cores} of its renderer): given others for ["CPU"], the

@@ -1050,6 +1050,24 @@ let e2m1_fields =
                  (List.filter converts (Tolk.Ops.toposort ~calls:Skip sink)))
            0 sinks))
 
+(* A value read twice is one parameter of its kernel, as a compiled call binds
+   it (Lowered.run). *)
+let bound_once =
+  test "a value read twice is one parameter of its kernel" (fun () ->
+      let x = Nx.create D.Float32 [| 8 |] (Array.init 8 Float.of_int) in
+      let target =
+        Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell")
+      in
+      let params sink =
+        List.length
+          (List.filter
+             (fun u -> Tolk.Ops.op u = Tolk.Op.Param)
+             (Tolk.Ops.toposort ~calls:Skip sink))
+      in
+      match Lowered.sources ~target (fun () -> Nx.mul x x) with
+      | [ (_, sink, _) ] -> equal int ~msg:"x and the result" 2 (params sink)
+      | ks -> failf "%d kernels" (List.length ks))
+
 let () =
   exit
     (run "Lower_arith"
@@ -1066,4 +1084,5 @@ let () =
          folded_nans;
          shapes;
          e2m1_fields;
+         bound_once;
        ])
