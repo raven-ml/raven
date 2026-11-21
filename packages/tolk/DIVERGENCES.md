@@ -7599,7 +7599,10 @@ reason and its pins.
   load reads at unit stride first. Where no load reads the axis the group
   takes at unit stride but one reads an output axis so, 16 threads first take
   consecutive indices of the first such axis whose split leaves the group
-  one, and, made first, are the workgroup's fastest. tinygrad's group takes
+  one, padded first to a multiple of 16 (`PADTO`, its tail's loads and stores
+  gated) where 16 does not divide it and the pad keeps within
+  `Heuristic.core_waste`, and, made first, are the workgroup's fastest.
+  tinygrad's group takes
   the outer end of the first axis, so that each thread sums a run of it and
   consecutive threads read a run apart: the threads of a sum of rows of 8192
   read 512 floats apart. The rule is the renderers' alike, as the SIMD group
@@ -7609,17 +7612,27 @@ reason and its pins.
   order changes with the threads' parts.
 - **Reason:** (d): rune's compiled sums of few outputs on fudge's RTX 5000 Ada,
   as `Cuda/sum-rows-float32-2048x8192` (71.7-72.7 us against 23.7-23.8 us); no
-  other `Cuda/` row moved past its range. Apple is untimed, since no machine a
-  bench may run on holds a Metal device, and the Metal source is checked
-  instead.
+  other `Cuda/` row moved past its range. The pad serves TESSERA's
+  distillation step, whose gradients sum 23040 tokens of 440 columns, and of
+  each head's 110, widths 16 does not divide: a workgroup a column read 32
+  rows a load. tolk's kernels on fudge's RTX 5000 Ada, timed in a harness
+  from DRAM: the bfloat16 sum of 440 columns 130-139 us and 49.0-49.2 padded
+  to 448, the float32 one 134-143 and 80.9, a float32 sum of 16384 rows of
+  1320 330-342 and 185. In the step (`distil-step/medium`), its three such
+  sums took 33.2 ms of kernels a call and take 10.8 (DEBUG=2), and the row
+  1.05-1.06 s and 1.03, three alternated rounds. Apple is untimed, since no
+  machine a bench may run on holds a Metal device, and the Metal source is
+  checked instead.
 - **Pinned by:** the Codegen suite's `consecutive lid.x threads of the
   readout read one address or consecutive ones` (Metal, CUDA and HIP);
   `Tolk.Heuristic`'s `a group's fastest threads read at unit stride where a
-  load reads a reduce or output axis so` and its `readout` cases; the goldens
-  generated from tinygrad with this rule; on fudge the rune bench rows
-  `Cuda/sum-rows-float32-2048x8192`, `Cuda/sum-columns-float32-16384x2048`
+  load reads a reduce or output axis so` and its `readout` cases, and its `a
+  group's fastest threads take 16 across an output axis a load reads at unit
+  stride, padded within the bound on a pad where 16 does not divide it`; the
+  goldens generated from tinygrad with this rule; on fudge the rune bench
+  rows `Cuda/sum-rows-float32-2048x8192`, `Cuda/sum-columns-float32-16384x2048`
   and `Cuda/set-row-of-1024x1024-summed`, their baselines pending the
-  scheduled re-record.
+  scheduled re-record, and tessera's `distil-step/medium` on CUDA.
 
 ## D403. A power's exponent is a number, read at no width
 

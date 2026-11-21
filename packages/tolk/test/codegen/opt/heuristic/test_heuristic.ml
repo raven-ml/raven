@@ -3368,6 +3368,57 @@ let fastest_threads_coalesce =
           is_true ~msg:"a load reads runs adjacent along it"
             (List.exists adjacent (loads o)))
 
+(* [out[c] = sum_r x[r, c]] over [rows] rows of [cols] columns of [dt], summed
+   in float32: a gradient's sum over its tokens. *)
+let column_sum dt rows cols =
+  let open Ops.O in
+  let out = Shape.param ~shape:[ Ops.Int cols ] 0 Dtype.Float32
+  and x = Shape.param ~shape:[ Ops.Int Stdlib.(rows * cols) ] 1 dt in
+  let c = Ops.range ~axis_type:Weak (Ops.Int cols) [ 1 ]
+  and r = Ops.range ~axis_type:Weak (Ops.Int rows) [ 0 ] in
+  let sum =
+    Ops.reduce (Ops.cast (Ops.index x [ (r * int cols) + c ]) Float32) Add [ r ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ c ]) sum) [ c ] ]
+
+(* Each case: the target, the columns' type, rows and columns, and the threads
+   across the columns, the workgroup's fastest, or [None] where the fastest
+   run along the rows: 440 pads to 448, 110 to 112 and 1571 to 1584; 34 and 12
+   would pad past the bound. *)
+let across_cases =
+  [
+    ("CUDA:CUDA:sm_89", Dtype.Bfloat16, 23040, 440, Some 16);
+    ("AMD:HIP:gfx942", Dtype.Bfloat16, 23040, 440, Some 16);
+    ("CUDA:CUDA:sm_89", Dtype.Float32, 4096, 110, Some 16);
+    ("METAL:METAL:Apple9", Dtype.Float32, 4096, 110, Some 16);
+    ("CUDA:CUDA:sm_89", Dtype.Float32, 4096, 1571, Some 16);
+    ("CUDA:CUDA:sm_89", Dtype.Float32, 4096, 2048, Some 16);
+    ("CUDA:CUDA:sm_89", Dtype.Bfloat16, 4096, 34, None);
+    ("CUDA:CUDA:sm_89", Dtype.Float32, 32000, 12, None);
+  ]
+
+let across_threads =
+  cases
+    "a group's fastest threads take 16 across an output axis a load reads at \
+     unit stride, padded within the bound on a pad where 16 does not divide it"
+    ~id:(fun (t, dt, rows, cols, _) ->
+      Format.asprintf "%a %d by %d on %s" Dtype.pp dt rows cols t)
+    across_cases
+    (fun (t, dt, rows, cols, threads) ->
+      let ren =
+        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+      in
+      let k = K.v (column_sum dt rows cols) ren in
+      K.convert_loop_to_global k;
+      let o = Heuristic.hand_coded_optimizations k in
+      is_true ~msg:"grouped" (K.group_for_reduces o > 0);
+      let r = Option.get (fastest o) in
+      let along b = stride r (Ops.get_idx (Ops.nth b 1)) = Some Bigint.one in
+      equal (option int) threads
+        (if List.exists along (loads o) then Some (Bigint.to_int (size r))
+         else None))
+
 (* A contraction in registers whose operands are both laid out along its
    reduce, as [x @ matrix_transpose w] reads a matrix stored [outputs;
    inputs], splits what its unroll leaves of the reduce into its fastest
@@ -4130,6 +4181,7 @@ let () =
          starved;
          keeps_kernel_writes;
          fastest_threads_coalesce;
+         across_threads;
          along_reduce_threads;
          staged_products;
          batched_heads;

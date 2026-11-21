@@ -915,12 +915,18 @@ let columns_layout (g, k, across, wanted) =
    threads take consecutive indices of the reduce axis they split, of the first
    three, one that a load reads at unit stride first. Where no load reads the
    axis it takes at unit stride but one reads an output axis so, 16 threads
-   first take consecutive indices of that axis, the first made and so the
-   fastest, and the group's threads follow them. Threads that each took a run of
-   the axis read addresses a run apart: on an RTX 5000 Ada, a compiled sum of
-   2048 rows of 8192 float32 took 72 us so and 24 us coalesced, a sum of 2048
-   columns of 16384 took 872 us so and 297 us with threads across the
-   columns. *)
+   first take consecutive indices of that axis, padded to a multiple of 16
+   within [core_waste] of its size where 16 does not divide it, the first made
+   and so the fastest, and the group's threads follow them. Threads that each
+   took a run of the axis read addresses a run apart: on an RTX 5000 Ada, a
+   compiled sum of 2048 rows of 8192 float32 took 72 us so and 24 us
+   coalesced, a sum of 2048 columns of 16384 took 872 us so and 297 us with
+   threads across the columns, and of 23040 rows of 440 bfloat16 columns, a
+   distillation's gradient summed over its tokens, 130 us with a column a
+   warp, 32 rows of it, and 49 us across the columns padded to 448. The bound
+   keeps a few columns, which 16 threads across would gather into one
+   workgroup, a workgroup each: 6 to 12 columns of 32000 float32 rows took
+   1.6 to 1.7 times as long so. *)
 let group_threads = 16
 
 (* The fewest values an output's reduce sums for a group past 2048 outputs.
@@ -984,12 +990,22 @@ let group k =
       (fun axes -> List.find_map (among axes) widths)
       [ first; rest ]
   in
+  (* [c]'s output axis split by the group's threads, padded first by a
+     masked tail where they do not divide it and the pad stays within
+     [core_waste]. *)
+  let split_across c axis =
+    (divisible (shape_at c axis) group_threads
+    || pads_to ~waste:core_waste c axis group_threads
+       && Result.is_ok
+            (K.apply_opt c (Opt.Padto { axis; amount = group_threads })))
+    && try_split c axis group_threads Opt.Local
+  in
   (* An output axis whose split leaves the group one, tried on a copy. *)
   let across axis =
     unit k axis
     &&
     let t = K.copy k in
-    try_split t axis group_threads Opt.Local && Option.is_some (grouped t)
+    split_across t axis && Option.is_some (grouped t)
   in
   (* A kernel of at most 2048 outputs groups. Past them, while they are fewer
      than [stream_threads], the part runs too few threads to hide a load's
@@ -1040,7 +1056,7 @@ let group k =
     let widths =
       match List.find_opt across outputs with
       | Some axis ->
-          ignore (split k axis group_threads Opt.Local);
+          ignore (split_across k axis);
           [ group_threads ]
       | None ->
           let reduces = K.reduceops k in

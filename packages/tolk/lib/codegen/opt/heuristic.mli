@@ -190,8 +190,10 @@
       then the group's [t] partials, each step one instruction of its SIMD
       group. Where no load reads the axis the group takes at unit stride but
       one reads an output axis so, 16 threads first take consecutive indices
-      of the first such axis whose split leaves the group one, and are the
-      workgroup's fastest ([lidx0]); the group then takes 16. Consecutive
+      of the first such axis whose split leaves the group one, padded first
+      to a multiple of 16 where 16 does not divide it and the padded axis
+      holds at most 6/5 of its size, and are the workgroup's fastest
+      ([lidx0]); the group then takes 16. Consecutive
       threads of a SIMD group then read consecutive addresses where a load
       allows it.
     - Masked axes, those a selection's condition runs in, of size at most 7,
