@@ -3306,10 +3306,11 @@ let complex_ported k =
   ]
 
 (* Over a cold disk cache NVRTC compiles the largest kernels below, binomial's
-   and betaincinv's at float64, and a float64 betaincinv runs for seconds on
-   an RTX 5000 Ada: measured cold, binomial's test took 131 s at float64 and
-   47 s at float32, and betaincinv's at float64 ran three cases in 60 s.
-   Warm, each takes seconds. *)
+   and betaincinv's, one program a test, since its cases share their shape: on
+   an RTX 5000 Ada at a load of 12 to 14, a block's binomial took 57 s to
+   compile at float32 and 130 s at float64, and betaincinv 76 s at float64,
+   and each ran in milliseconds. Fewer or smaller cases save none of it. Warm,
+   each takes seconds. *)
 let cold = 240.
 
 (* Functions nx composes from kinds and exact operations give eager's bits on
