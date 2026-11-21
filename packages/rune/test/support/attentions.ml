@@ -1194,30 +1194,16 @@ let lse_only (module S : Nx.Devices) ~bits:same ~rows ~dims dtype =
   in
   List.map (fun (k : Tolk.Realize.kernel) -> k.name) ks
 
-(* The fewest batches of [heads] heads of [rows] rows at which a compiled
-   attention on [r] holds 8 warps a workgroup: the plan takes 8 where
-   workgroups of 8 warps of [M] rows each, one a head and block of rows,
-   number at least [r]'s [local_workgroups]. [M] is taken as the largest
-   side of [r]'s cores, so that a core taken either way round reaches 8. *)
-let eight_warps (r : Tolk.Renderer.t) ~heads ~rows =
-  let ceil_div a b = (a + b - 1) / b in
-  let side c =
-    let n, m, _ = Tolk.Tc.dims c in
-    max n m
-  in
-  let m = List.fold_left (fun acc c -> max acc (side c)) 1 r.tensor_cores in
-  ceil_div r.local_workgroups (heads * ceil_div rows (8 * m))
-
 (* {!lse_only}'s call of [rows] batches holds rune's bound: its [lse] and its
-   gradient from an [l̄se] cotangent alone, which the gradient law takes at
-   seed 1. The laws run at the fewest batches that keep the call's 8 warps
-   ({!eight_warps}), checked first to take as many keys a tile: fewer batches
-   move only its runs. *)
+   gradient from an [l̄se] cotangent alone, which the gradient law takes at seed
+   1. The laws run at one batch, checked first to take as many keys a tile: its
+   values fit one block, so its warps do not change with its batches, and fewer
+   batches move only its runs. *)
 let lse_only_bound (module S : Nx.Devices) r dtype ~rows ~dims =
   let c =
     {
       (base dtype) with
-      lead = min rows (eight_warps r ~heads:4 ~rows:256);
+      lead = 1;
       hq = 4;
       hk = 4;
       tq = 256;

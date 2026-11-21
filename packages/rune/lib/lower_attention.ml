@@ -1843,34 +1843,44 @@ let combine ~local ~width ~splits a xs =
    with workgroup memory, and [plan renderer a] that of [a]: a narrow float
    accumulated in float32 on the first core of its products that chains as
    {!core} needs, as it is or transposed, and every other float on the FFMA
-   micro-tile of the target's SIMD group, in the accumulator ({!ffma}). On
-   a core it holds [warps]
-   of 8 while the launch keeps the renderer's [local_workgroups] workgroups,
-   else 4, as many warps as balance a part's units (FlashAttention-2 §3.3:
-   query rows split across warps), and on FFMA {!ffma_rows} rows, whose [Q]
-   and weights it stages beside the keys and values; the keys' dimensions in
-   chunks of at most {!chunk_bytes} and the values' columns in blocks of at
-   most {!block_bytes} of accumulators on FFMA and {!core_block_bytes} on a
-   core ({!split}), so that a lane's operands
-   of [Q] and accumulators of [o] stay in its registers; and tiles of the
-   first of 64, 32 and 16 keys, whole steps of the unit, at which what the
-   kernel declares in workgroup memory fits there. On FFMA for sm_89 that is
-   64 keys at 36 float32 dimensions and 32 at 64 to 160, and 32 keys at 36
-   float64 dimensions and 16 at 64 to 160, in 36 to 44.5 KB, which ptxas
-   compiles with no spill: to 172 to 244 registers at 36 to 160 dimensions,
-   and to 254 or 255 for float32's blocks of 128 columns under a mask, a
-   score program or lengths, a chunk's steps a loop.
-   On fudge's RTX 5000 Ada, in blocks of 128 columns, a bfloat16 call of
-   4 heads of 4096
-   batches of 64 rows (512 batches at 1024) took 3.94, 6.32 and 3.28 ms at
-   160, 256 and 1024 bfloat16 dimensions, against 3.96, 6.32 and 4.76 ms in
-   blocks of 64 columns, measured together; over 8 heads of 2048 rows,
-   0.36, 0.65 and 6.8 ms against 0.50, 0.93 and 11.1 ms. Where one
-   workgroup took every block and summed past one in device memory, a call
-   took 8.0, 14.4 and 11.4 ms over 64 rows, against 4.56, 6.31 and 3.53 in
-   the same session. At 110 dimensions over 64 rows the kernel spills with tiles of 64
-   keys, 255 MB of local loads at 4096 batches, and takes the time it took
-   with 32. *)
+   micro-tile of the target's SIMD group, in the accumulator ({!ffma}). On a
+   core it holds [warps] of 4 where its values fit one block, and past one of 8
+   while the launch keeps the renderer's [local_workgroups] workgroups, else 4
+   (FlashAttention-2 §3.3: query rows split across warps), and on FFMA
+   {!ffma_rows} rows, whose [Q] and weights it stages beside the keys and
+   values; the keys' dimensions in chunks of at most {!chunk_bytes} and the
+   values' columns in blocks of at most {!block_bytes} of accumulators on FFMA
+   and {!core_block_bytes} on a core ({!split}), so that a lane's operands of
+   [Q] and accumulators of [o] stay in its registers; and tiles of the first of
+   64, 32 and 16 keys, whole steps of the unit, at which what the kernel
+   declares in workgroup memory fits there. On FFMA for sm_89 that is 64 keys at
+   36 float32 dimensions and 32 at 64 to 160, and 32 keys at 36 float64
+   dimensions and 16 at 64 to 160, in 36 to 44.5 KB, which ptxas compiles with
+   no spill: to 172 to 244 registers at 36 to 160 dimensions, and to 254 or 255
+   for float32's blocks of 128 columns under a mask, a score program or lengths,
+   a chunk's steps a loop. On fudge's RTX 5000 Ada, in blocks of 128 columns, a
+   bfloat16 call of 4 heads of 4096 batches of 64 rows (512 batches at 1024)
+   took 3.94, 6.32 and 3.28 ms at 160, 256 and 1024 bfloat16 dimensions, against
+   3.96, 6.32 and 4.76 ms in blocks of 64 columns, measured together; over 8
+   heads of 2048 rows, 0.36, 0.65 and 6.8 ms against 0.50, 0.93 and 11.1 ms.
+   Where one workgroup took every block and summed past one in device memory, a
+   call took 8.0, 14.4 and 11.4 ms over 64 rows, against 4.56, 6.31 and 3.53 in
+   the same session. At 110 dimensions over 64 rows the kernel spills with tiles
+   of 64 keys, 255 MB of local loads at 4096 batches, and takes the time it took
+   with 32.
+
+   A core's warps: registers, not workgroup memory, bound the warps a unit holds
+   (on sm_89, 197 to 218 registers a thread at 110 dimensions, one workgroup of
+   8 warps or two of 4; 124 to 128 at 64, two of 8 or four of 4), so 4 warps
+   hold as many and let two workgroups overlap each other's barriers, the tile's
+   copies and the rows' maxima, at twice the copies of [K] and [V] a row. Where
+   the values fit one block the barriers' share wins; past one the products'
+   does. On fudge's RTX 5000 Ada, bfloat16 forwards over 8 heads, 4 warps took
+   0.84 to 0.96 of 8's time over 2048 rows at 64 to 256 dimensions, unmasked and
+   causal, 0.79 causal over 256 rows, 0.87 under documents of 256 tokens, 0.86
+   over TESSERA's packed rows at 110 dimensions, 1.01 under gpt-oss's 64 query
+   heads over 8, and 1.03 and 1.04 at 512 and 1024 dimensions, two and four
+   blocks. Metal's and AMD's cores take the same rule, unmeasured. *)
 let plan_of (r : Renderer.t) ~vt ~acc ~heads ~grouped ~tk ~dk ~dv =
   let vt = Arith.dtype vt and acc = Arith.dtype acc in
   let chains (tc : Tc.t) =
@@ -1906,7 +1916,8 @@ let plan_of (r : Renderer.t) ~vt ~acc ~heads ~grouped ~tk ~dk ~dv =
       in
       let warps =
         match mul with
-        | Wmma _ -> if workgroups 8 >= r.local_workgroups then 8 else 4
+        | Wmma _ ->
+            if fst vdims > 1 && workgroups 8 >= r.local_workgroups then 8 else 4
         | Fma -> max 1 (ffma_rows / m)
       in
       (* Few rows take fewer warps: a decode step's one query of each head. *)

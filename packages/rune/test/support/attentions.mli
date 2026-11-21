@@ -191,10 +191,9 @@ val lse_only_bound :
   rows:int ->
   dims:int ->
   unit
-(** [lse_only_bound s r dt ~rows ~dims] checks that {!lse_only}'s call of
-    [rows] batches holds rune's bound ({!law} and {!grad_law}), run at the
-    fewest batches that keep its 8 warps a workgroup on [r], after checking
-    that these take tiles of as many keys. *)
+(** [lse_only_bound s r dt ~rows ~dims] checks that {!lse_only}'s call of [rows]
+    batches holds rune's bound ({!law} and {!grad_law}), run at one batch, after
+    checking that it takes tiles of as many keys on [r]. *)
 
 val apart : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [apart s dt] checks that a compiled call returning one attention's [o]

@@ -143,11 +143,27 @@ let examples =
       nans = true;
     };
     { base with dtype = f32; tq = 33; mask = Reach; holes = Tile };
-    (* 8 warps of rows, keys of 272 dimensions: values of 64 overflowed a
-       workgroup's memory beside tiles of 64 keys, and of 56 fill it within
-       a byte a key. *)
-    { base with hq = 128; hk = 1; tq = 256; max_pages = 256; dk = 272; dv = 64 };
-    { base with hq = 128; hk = 1; tq = 256; max_pages = 256; dk = 272; dv = 56 };
+    (* 8 warps of rows, which values past one block take, keys of 272
+       dimensions: on sm_89 values of 449 columns, two blocks of 225, overflow a
+       workgroup's memory beside tiles of 64 keys, and of 448 fit it. *)
+    {
+      base with
+      hq = 128;
+      hk = 1;
+      tq = 256;
+      max_pages = 256;
+      dk = 272;
+      dv = 449;
+    };
+    {
+      base with
+      hq = 128;
+      hk = 1;
+      tq = 256;
+      max_pages = 256;
+      dk = 272;
+      dv = 448;
+    };
   ]
 
 let host_examples =
