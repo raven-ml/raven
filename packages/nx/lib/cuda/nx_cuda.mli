@@ -27,13 +27,13 @@
     large matrices ({!section-matrices_memory}), some moves
     ({!section-moves_memory}), a numbering ({!section-sorts_memory}) and
     the transforms ({!section-transforms_memory}). Beside its arrays, a
-    kernel takes {e workspace}, the memory on [d] its section states, and
-    keeps at most 192 MiB of it for later calls on [d]; the rest returns
-    to [d] once the call's work is done. Kept memory that a later call
-    replaces, by a larger buffer or another transform's plan, returns once
-    collected ({!Rig.section-reclaim}), since another domain's call may
-    still use it. A kernel raises {!Rig.Out_of_memory} where [d] lacks that
-    memory.
+    kernel takes {e workspace}, the memory on [d] its section states. It
+    keeps at most 192 MiB of it for later calls on [d], and a call that
+    needs more takes buffers of its own, which return to [d] once its work
+    is done. Kept memory that a later call replaces, by a larger buffer or
+    another transform's plan, returns once collected
+    ({!Rig.section-reclaim}), since another domain's call may still use
+    it. A kernel raises {!Rig.Out_of_memory} where [d] lacks that memory.
 
     Where a kernel computes a kind of {!Nx_kernel.Prog}, it computes it
     through the C function of its name in [nx_kinds.h], with that
