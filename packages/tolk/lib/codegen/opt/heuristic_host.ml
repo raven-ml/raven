@@ -425,10 +425,25 @@ let upcast_vectors k =
       upcast (host_vector_bytes / widest / Bigint.to_int upcast_size)
   | _ -> ()
 
-(* The most a pad of a stored axis to 16 bytes of lanes may add, a third of
-   its extent ({!upcast_contiguous}): the largest waste measured, every
-   measured one winning. *)
+(* The most a pad of a product's axis may add, a third of its extent
+   ({!upcast_contiguous}): a stored axis's to 16 bytes of lanes, the largest
+   waste measured, every measured one winning, and the rows' to a tile's. *)
 let pad_waste = (1, 3)
+
+(* Pads the axis [axis] of [k] to a multiple of [m] where it is longer than
+   [m], [m] does not divide it, the padding adds at most [pad_waste] of its
+   extent, and the budget holds [m] of it. *)
+let padded k axis m =
+  match known_size (shape_at k axis) with
+  | Some n when Bigint.fits_int n ->
+      let n = Bigint.to_int n in
+      let num, den = pad_waste in
+      if
+        n > m && n mod m <> 0
+        && (((n + m - 1) / m * m) - n) * den <= n * num
+        && fits ~upcast:(axis, m) k
+      then ignore (K.apply_opt k (Opt.Padto { axis; amount = m }))
+  | _ -> ()
 
 let upcast_contiguous k =
   match (stored_contiguous k, registers k) with
@@ -480,19 +495,7 @@ let upcast_contiguous k =
          floats, by 9 and 25, odd, 1.2 to 1.5 times, while padding 36, 44 or
          100, runs of 4 already, to 8 ran no faster. The padded lanes are
          computed and never stored. *)
-      let quad = max 1 (16 / bytes) in
-      (match known_size (shape_at k axis) with
-       | Some n when Bigint.fits_int n ->
-           let n = Bigint.to_int n in
-           let up = (n + quad - 1) / quad * quad in
-           let num, den = pad_waste in
-           if
-             sums_products k && n > quad && n mod quad <> 0
-             && (up - n) * den <= n * num
-             && fits ~upcast:(axis, quad) k
-           then
-             ignore (K.apply_opt k (Opt.Padto { axis; amount = quad }))
-       | _ -> ());
+      if sums_products k then padded k axis (max 1 (16 / bytes));
       tile_split k axis
         (pow2s_within (min lanes split_lanes))
         ~keep:(fun n -> fits ~upcast:(axis, n) k);
@@ -507,6 +510,28 @@ let upcast_contiguous k =
                   (fun d -> Bigint.(equal (rem d (of_int n)) zero))
                   runs
               in
+              (* Rows that no access reads as a quotient, of which the
+                 upcasts so far leave a number 4 does not divide, are first
+                 padded to a multiple of the most the budget holds, as the
+                 stored axis is: each tile of rows reads the gathered operand
+                 again, and the upcasts after take at most 3 of such rows,
+                 leaving a tile that holds fewer outputs than the budget and
+                 reads the operand in more passes. 57 rows took tiles of 3,
+                 19 passes; a prime count took tiles of 1. On fudge a
+                 bfloat16 product of 57 rows by [5120; 2880] ran 1.22 times
+                 as fast padded to 64, of 25 rows 2.12 times. Padded, a tile
+                 gates its loads of the rows and its stores, at about a
+                 third of its time: rows that 4 divides already fill the
+                 budget's tile of 4 by 16, and padding 12 to 16 ran slower.
+                 The padded rows are computed and never stored. *)
+              (if runs = [] && not (divisible (shape_at k a) 4) then
+                 match
+                   List.find_opt
+                     (fun n -> fits ~upcast:(a, n) k)
+                     (pow2s_within split_lanes)
+                 with
+                 | Some most -> padded k a most
+                 | None -> ());
               tile_split k a (pow2s_within split_lanes) ~keep:(fun n ->
                   divides n && fits ~upcast:(a, n) k))
 

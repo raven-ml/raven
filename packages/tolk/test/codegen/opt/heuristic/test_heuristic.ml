@@ -3031,12 +3031,22 @@ let decode_bound =
 
 (* On the host, the rows of a decoded product share one decode of each value:
    as many as divide [R] up to the rows of a tile (Heuristic.tile_rows), whose
-   accumulators take a register a row, since the rows' stores lie apart. *)
+   accumulators take a register a row, since the rows' stores lie apart.
+   Rows that the tile's upcasts leave and 4 does not divide are padded to a
+   multiple of the rows the budget holds there, which decodes each value
+   fewer times than that rule: 13 rows pad to 16 on AVX2. *)
 let rec largest_dividing n at_most =
   if n mod at_most = 0 then at_most else largest_dividing n (at_most - 1)
 
 let tile_rows file = Option.get (Heuristic.tile_rows (host file))
+
 let host_decodes rows file = rows / largest_dividing rows (tile_rows file)
+
+(* The pad of the rows, axis 0, that [o]'s optimisations took, if any. *)
+let rows_pad o =
+  List.find_map
+    (function Opt.Padto { axis = 0; amount } -> Some amount | _ -> None)
+    (K.applied_opts o)
 
 (* The host's renderer without its registers. *)
 let unbudgeted =
@@ -3168,13 +3178,27 @@ let host_decode_cases =
     rows
     (fun (r, file) ->
       let o = host_decoded file r in
-      equal
-        ~msg:
-          (Format.asprintf "%a" (Format.pp_print_list Opt.pp)
-             (K.applied_opts o))
-        int
-        (host_decodes (fst r) file)
-        (host_loading o))
+      let msg =
+        Format.asprintf "%a" (Format.pp_print_list Opt.pp) (K.applied_opts o)
+      in
+      let shared = host_decodes (fst r) file in
+      match rows_pad o with
+      | None -> equal ~msg int shared (host_loading o)
+      | Some m ->
+          at_most ~msg int ~than:(tile_rows file) m;
+          at_most ~msg int ~than:(shared - 1) (host_loading o))
+
+(* On AVX2's 16 registers of 32 bytes, 13 rows of a decoded product, which 4
+   does not divide, pad to 16 and take 2 tiles of 8, decoding each value
+   twice where they decoded it 13 times; 12 rows, which 4 divides, keep 2
+   tiles of 6, their largest divisor up to 8. *)
+let host_rows_padded =
+  cases "on AVX2 rows that 4 does not divide pad to tiles of 8" ~id:fst
+    [ ("13 rows", (13, Some 8, 2)); ("12 rows", (12, None, 2)) ]
+    (fun (_, (rows, pad, decodes)) ->
+      let o = host_decoded (16, 32) (rows, "float") in
+      equal (option int) pad (rows_pad o);
+      equal int decodes (host_loading o))
 
 (* A host that knows no registers shares a decode over at most 4 rows. *)
 let unbudgeted_decodes =
@@ -4366,6 +4390,7 @@ let () =
              tile_outputs_bound;
              copy_entries_cases;
              host_decode_cases;
+             host_rows_padded;
              unbudgeted_decodes;
              routed_rows;
              host_decodes_monotone;

@@ -5301,7 +5301,12 @@ into D183, which holds its rule, its reason and its pins.
   a kernel that sums products, a stored axis whose largest power-of-two
   divisor holds fewer than 16 bytes of lanes is first padded to a multiple of
   16 bytes, where that adds at most a third of its extent: a head of 110
-  floats to 112, 9 to 12; 36, runs of 4, is left. When
+  floats to 112, 9 to 12; 36, runs of 4, is left. So are the rows the
+  gathering accesses do not read and that no access reads as a quotient,
+  where the upcasts before leave a number of them that 4 does not divide:
+  padded to a multiple of the most the budget holds, within a third, they
+  take tiles of 8 rows on AVX2 where they took 3, 2 or 1 (57 rows to 64);
+  12, which 4 divides, keep a tile of 4 by 16. When
   the last reduce axis is at most 3 and wholly unrolled and the next one is
   larger than 3, the next is unrolled by the largest power of two that
   divides it and keeps the unrolled lanes within 64 bytes of the reduce's
@@ -5320,6 +5325,13 @@ into D183, which holds its rule, its reason and its pins.
   ran 1.6 to 2.7 times as fast padded to 4 floats, by 9 and 25 (odd) 1.2 to
   1.5 times, at wastes up to a third; padding runs of 4 (36, 44, 100) to 8
   ran 0.64 to 1.0 times as fast (fudge, locked, P-cores 2 and 3, max of 3).
+  Padded rows (fudge, locked, P-cores 2 and 3, median of two rounds): a
+  bfloat16 product of 57 rows by [5120; 2880] ran 1.22 times as fast
+  padded to 64, of 25 and 50 rows 2.12 and 1.77 times, the o projection of
+  57 rows 1.29 times; AION's CPU embed and generate 1.45 and 2.33 times,
+  gpt-oss-20b's 57-token prefill 1.04 times. A padded tile gates its loads
+  of the rows and its stores, about a third of its time: 12 rows, which 4
+  divides, padded to 16 ran 1.26 times slower (untimed).
   A gathered axis: x [3328; 440] by a matrix [1792; 440] took
   4 rows by 4 columns, whose vectors span half a register and whose
   transposes no rows share; 8 by 8 runs at 136.4 GFLOP/s on one P-core
@@ -5352,7 +5364,8 @@ into D183, which holds its rule, its reason and its pins.
   `routed_by_argmax`, the padded axes of `heads_projection` and
   `heads_projection_biased`, on `cpu` and `avx2`, with `the host's budget ›
   the register budget › r_128 on AVX2 reads 8 registers once its stored axis
-  is padded` and `the host's lanes › on AVX2 a
+  is padded`, `the host's decodes › on AVX2 rows that 4 does not divide pad
+  to tiles of 8` and `the host's lanes › on AVX2 a
   recorded host kernel of few outputs takes its lanes` (`matvec_tall`); rune's
   `Jit/linear-float32-3328x440-to-1792`; the tolk bench's `host/*/heuristic` rows
   and rune's compile bench `trig/sin-nested-8` on fudge. On rune: missing for
