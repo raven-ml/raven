@@ -4,7 +4,9 @@ On an NVIDIA RTX 5000 Ada, raven decodes gpt-oss-20b 2% faster than vLLM at
 the checkpoint's precision and 2% behind llama.cpp packed as llama.cpp packs
 it (2% ahead of it through NV), prefills 21% faster than llama.cpp and 6%
 slower than vLLM, and gives a new process its first token in 1.8 seconds, as
-llama.cpp does.
+llama.cpp does. On two of the same machine's CPU cores it decodes 4.2 times
+slower than llama.cpp's CPU build and prefills 1.5 times slower, and gives a
+first token twice as fast.
 
 ## Decoding and prefilling
 
@@ -76,6 +78,49 @@ Compiling raven's kernels adds about 1.7 s to a first token. vLLM's first
 process on a machine starts its engine, compiling and warming its kernels and
 CUDA graphs, in 72 s, and later ones in 13 s.
 
+## On the host
+
+On two P-cores of the same machine's Core Ultra 5 235, raven decodes
+gpt-oss-20b 4.2 times slower than llama.cpp's CPU build and prefills 1.5
+times slower, and gives a new process its first token 2.1 times faster. The
+rows are the first table's, in tokens a second, on the host.
+
+| | Attention, head | Decode | Prefill 512 | First token |
+|---|---|---|---|---|
+| raven, CPU | bfloat16 | 2.89 (2.88–2.90) | 24.6 (24.6–24.6) | 2.61 s (2.60–2.62) |
+| raven, CPU | Q8_0 | 2.64 (2.64–2.65) | 24.6 (24.5–24.6) | not measured |
+| llama.cpp b12541, CPU | Q8_0 | 12.1 (12.0–12.2) | 36.5 (36.4–36.6) | 5.37 s (5.37–5.48) |
+
+Kernel time of one decode step at position 512 and one 512-token prefill,
+the attention and head as bfloat16, from tolk's DEBUG=2 times (an untimed
+run on two other P-cores, whose step took 27% longer than the table's).
+Bandwidth is the bytes of the weights each product reads.
+
+| | Decode | Prefill 512 |
+|---|---|---|
+| Expert products, MXFP4, 1.27 GB a step | 332 ms (76%), 3.8 GB/s | 11.2 s (53%) |
+| Attention projections, bfloat16, 1.27 GB | 46 ms (11%), 27.6 GB/s | 6.0 s (29%) |
+| Head, bfloat16, 1.16 GB | 40 ms (9%), 28.8 GB/s | 0.04 s |
+| Everything else | 21 ms in 439 kernels | 3.8 s in 731 kernels |
+| The step | 439 ms in 536 kernels | 21.1 s in 828 kernels |
+
+The bfloat16 projections and the head stream their weights at what two
+P-cores read from memory. The expert products read theirs at a seventh of
+it, bound by the work in their tiles: raven decodes each 4-bit code to
+float32 and multiplies floats, 8 lanes a multiply-add, its loops waiting on
+the shuffles that put the decoded codes and the rows into lanes.
+llama.cpp's `ggml_vec_dot_mxfp4_q8_0` (ggml-cpu/arch/x86/quants.c at
+b12541) quantizes the activations to Q8_0 once and multiplies integers: for
+each block of 32 values a byte shuffle looks the codes up as signed bytes
+and one `maddubs` makes their 32 products, and one float multiply-add
+applies both blocks' scales, so its step reads its 2.6 GB of weights at
+about 31 GB/s, the memory's rate. raven's Q8_0 attention is slower than
+its bfloat16 on the host for the same reason, the codes decoded in the
+tile. In the prefill each weight serves many rows and the products are
+bound by the cores' arithmetic on both sides: raven's expert products take
+half of its time, decoded and multiplied as floats, where llama.cpp
+multiplies them as integers, as above.
+
 ## How it was measured
 
 - **Machine.** fudge: Intel Core Ultra 5 235, NVIDIA RTX 5000 Ada (sm_89,
@@ -116,14 +161,29 @@ CUDA graphs, in 72 s, and later ones in 13 s.
   by node, one run a side, at main eb532024b8. Each of raven's five products
   is one program by its source's digest in a DEBUG=4 run of the row, and its
   parameters give the bytes it reads.
+- **On the host.** raven at main e23edc73df with the bench's host device
+  (`GPT_OSS_DEVICE=cpu`); llama.cpp b12541's CPU release build (its x86-64
+  binaries, which load their Alder Lake backend), a thread on each of the two
+  cores, on the same GGUF file. Both ran on P-cores 2 and 3, otherwise idle
+  before and after each run, under the machine's timing lock; each round ran
+  raven's rows after an untimed decode that brings its weights into the page
+  cache, the order of the two alternating. Three rounds on 2026-11-21, the
+  median and range given; a fourth replaced the first, in which llama.cpp's
+  decode spread from 88 to 119 ms and its cells ran 5 to 20% past the others'.
+  raven's cells are thumper's medians of 3 calls after the first, llama.cpp's
+  of 10 decodes, 3 prefills and 3 processes. The profile is one run of
+  `decode/512` and `prefill/512` under DEBUG=2, its first call left out.
 - **Not measured.** The AMD card (raven, and llama.cpp's Vulkan and ROCm
-  builds, which `llama_cpp.sh vulkan` and `rocm` run); the CPU; batched
-  decoding; llama.cpp at bfloat16, for which ggml-org publishes no file; vLLM
-  and transformers with Q8_0.
+  builds, which `llama_cpp.sh vulkan` and `rocm` run); batched decoding;
+  llama.cpp at bfloat16, for which ggml-org publishes no file; vLLM and
+  transformers with Q8_0, and either on the host; raven's first token on
+  the host with Q8_0.
 
 ```bash
 dune build @apps/gpt-oss/bench/bench   # raven, on the first GPU that opens
+GPT_OSS_DEVICE=cpu dune build @apps/gpt-oss/bench/bench   # raven on the host
 apps/gpt-oss/bench/llama_cpp.sh        # llama.cpp
+apps/gpt-oss/bench/llama_cpp.sh cpu    # llama.cpp on the host
 uv run apps/gpt-oss/bench/vllm_offline.py
 uv run apps/gpt-oss/bench/hf_transformers.py
 ```

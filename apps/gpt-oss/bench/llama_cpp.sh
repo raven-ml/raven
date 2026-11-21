@@ -4,14 +4,15 @@
 # to, ggml-org/gpt-oss-20b-GGUF. That file packs the experts as MXFP4 and the
 # attention projections and the head as Q8_0, as the bench's rows do.
 #
-#   apps/gpt-oss/bench/llama_cpp.sh [cuda|vulkan|rocm]
+#   apps/gpt-oss/bench/llama_cpp.sh [cuda|vulkan|rocm|cpu]
 #
-# The first run downloads llama.cpp's release binaries for the backend
-# (cuda by default) and the 12.1 GB file into raven's cache. Each row prints
-# its median time, as thumper does, and the rate a user reads:
+# The first run downloads llama.cpp's release binaries for the backend (cuda
+# by default; cpu runs a thread on each core the process may use) and the
+# 12.1 GB file into raven's cache. Each row prints its median time, as thumper
+# does, and the rate a user reads:
 #
-#   decode-q8_0/512   one token at position 512, 30 calls
-#   prefill-q8_0/512  a 512-token prompt, 10 calls
+#   decode-q8_0/512   one token at position 512, 30 calls (10 on the CPU)
+#   prefill-q8_0/512  a 512-token prompt, 10 calls (3 on the CPU)
 #   first-token/12    a new process from its start to the end of its first
 #                     12-token prompt, loading the weights included, 3 processes
 #
@@ -31,8 +32,13 @@ cuda) assets="llama-$release-bin-ubuntu-cuda-12.8-x64.tar.gz
 cudart-llama-$release-bin-ubuntu-cuda-12.8-x64.tar.gz" ;;
 vulkan) assets="llama-$release-bin-ubuntu-vulkan-x64.tar.gz" ;;
 rocm) assets="llama-$release-bin-ubuntu-rocm-10.0-x64.tar.gz" ;;
-*) echo "usage: $0 [cuda|vulkan|rocm]" >&2; exit 2 ;;
+cpu) assets="llama-$release-bin-ubuntu-x64.tar.gz" ;;
+*) echo "usage: $0 [cuda|vulkan|rocm|cpu]" >&2; exit 2 ;;
 esac
+# On the CPU a thread a core it may use, and fewer calls: a prefill takes
+# seconds there.
+threads=() decode=30 prefill=10
+if [ "$backend" = cpu ]; then threads=(-t "$(nproc)") decode=10 prefill=3; fi
 
 cache=${RAVEN_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/raven}
 bin=$cache/llama.cpp/$release-$backend
@@ -61,7 +67,7 @@ stats() {
 
 # llama-bench's time of each call, in seconds, one a line.
 samples() {
-  "$bin/llama-bench" -m "$model" -o jsonl "$@" |
+  "$bin/llama-bench" -m "$model" "${threads[@]}" -o jsonl "$@" |
     sed -n 's/.*"samples_ns": \[\([^]]*\)\].*/\1/p' | tr ',' '\n' |
     awk 'NF { print $1 / 1e9 }'
 }
@@ -77,14 +83,15 @@ used() {
   nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1
 }
 
-echo "llama.cpp $release ($backend), $repo@$revision"
+echo "llama.cpp $release ($backend${threads[*]:+, ${threads[1]} threads})," \
+  "$repo@$revision"
 
 if [ "$backend" = cuda ]; then
   peak=$(mktemp)
   (while :; do used; sleep 0.1; done) >"$peak" &
   sampler=$!
 fi
-samples -p 0 -n 1 -d 512 -r 30 | row decode-q8_0/512 1
+samples -p 0 -n 1 -d 512 -r $decode | row decode-q8_0/512 1
 if [ "$backend" = cuda ]; then
   kill $sampler
   sort -n "$peak" | tail -1 |
@@ -93,13 +100,14 @@ if [ "$backend" = cuda ]; then
   rm -f "$peak"
 fi
 
-samples -p 512 -n 0 -r 10 | row prefill-q8_0/512 512
+samples -p 512 -n 0 -r $prefill | row prefill-q8_0/512 512
 
 # The first process brings the file into the page cache, as the other rows
 # did for the bench's.
 for i in 0 1 2 3; do
   start=$(date +%s.%N)
-  "$bin/llama-bench" -m "$model" -p 12 -n 0 -r 1 --no-warmup -o jsonl >/dev/null
+  "$bin/llama-bench" -m "$model" "${threads[@]}" -p 12 -n 0 -r 1 --no-warmup \
+    -o jsonl >/dev/null
   [ $i = 0 ] || echo "$start $(date +%s.%N)" | awk '{ print $2 - $1 }'
 done | stats | awk '{
   printf "%-16s %8.2f s   (%.2f-%.2f s, %d processes)\n",

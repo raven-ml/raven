@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* gpt-oss-20b's rows in PERFORMANCE.md, on the first CUDA, NV or AMD GPU that
-   opens, compiled one layer at a time ([Layer_loop]):
+   opens, or on the device GPT_OSS_DEVICE names ([cpu] for the host), compiled
+   one layer at a time ([Layer_loop]):
 
    - [decode/512], one decode step at position 512, its token read back;
    - [prefill/512], a prompt of 512 tokens;
@@ -23,7 +24,7 @@
    experts, and random weights spread them evenly. Each step case loads them in
    the worker thumper forks for it, so no GPU driver starts before the fork.
    [--warm] compiles every kernel into tolk's disk cache first, in a process of
-   its own. Without such a GPU, or without the weights, there is nothing to
+   its own. Without such a device, or without the weights, there is nothing to
    measure. *)
 
 open Kaun
@@ -43,10 +44,26 @@ let weights_cached () =
   Sys.file_exists
     (Kaun_hf.cache_path ~revision ~file:"model.safetensors.index.json" repo)
 
-(* The GPUs tried, in order: CUDA, NV, AMD. [Rig_gpus.first] would also try
-   Metal and the PCI paths. Hiding the CUDA devices ([CUDA_VISIBLE_DEVICES=])
-   measures the card through NV. *)
-let names = [ "CUDA"; "NV"; "AMD" ]
+(* The devices tried, in order: the one GPT_OSS_DEVICE names as
+   [Rig_gpus.open_] reads it ([cpu] for the host), else CUDA, NV and AMD.
+   [Rig_gpus.first] would also try Metal and the PCI paths. Hiding the CUDA
+   devices ([CUDA_VISIBLE_DEVICES=]) measures the card through NV. *)
+let names =
+  match Sys.getenv_opt "GPT_OSS_DEVICE" with
+  | Some name -> [ name ]
+  | None -> [ "CUDA"; "NV"; "AMD" ]
+
+(* Whether the device is the host, where a call takes seconds, so that the
+   rows take the fewest samples. *)
+let host =
+  List.for_all
+    (fun n -> String.starts_with ~prefix:"CPU" (String.uppercase_ascii n))
+    names
+
+(* A suite's name, which names its baseline file: the host's rows keep a
+   file of their own, [gpt_oss-cpu.thumper] beside the GPU's
+   [gpt_oss.thumper]. *)
+let suite name = if host then name ^ "-cpu" else name
 
 let first () =
   let rec go why = function
@@ -205,25 +222,31 @@ let () =
         exit 0
       end;
       if not (opens_in_child ()) then begin
-        prerr_endline "gpt_oss: no CUDA, NV or AMD GPU, nothing to measure";
+        prerr_endline
+          ("gpt_oss: no " ^ String.concat ", " names ^ ", nothing to measure");
         exit 0
       end;
       (* A trial's deadline covers its setup, which loads the 13.8 GB of
-         weights onto the GPU. *)
+         weights onto the device. *)
+      let config =
+        if host then Thumper.Config.(default |> samples 3 |> warmup 0.)
+        else Thumper.Config.(default |> warmup warmup_seconds)
+      in
+      let seconds = if host then 3600. else 120. in
       let code =
-        Thumper.run "gpt_oss"
-          ~config:
-            Thumper.Config.(default |> deadline 120. |> warmup warmup_seconds)
+        Thumper.run (suite "gpt_oss")
+          ~config:Thumper.Config.(config |> deadline seconds)
           ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
           (List.map step_case steps)
       in
       (* Each call is a process of its own, so the rows take the fewest
          samples. *)
       let first =
-        Thumper.run "gpt_oss_first"
+        Thumper.run (suite "gpt_oss_first")
           ~config:
             Thumper.Config.(
-              default |> samples 3 |> warmup 0. |> deadline 300.
+              default |> samples 3 |> warmup 0.
+              |> deadline (if host then 3600. else 300.)
               |> metrics [ Thumper.Metric.wall_time ])
           ~budgets:[ Thumper.Budget.no_slower_than 0.1 ]
           [

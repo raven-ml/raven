@@ -1,0 +1,16 @@
+# thumper baseline v1
+# suite: gpt_oss-cpu
+
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+# forced: blessed under load 1.1 on 2 cores
+
+decode-q8_0/512	alloc_words	exact	117974
+decode-q8_0/512	wall_time	batch=1	n=3	3.770e-01	3.745e-01 3.770e-01 3.781e-01
+decode/512	alloc_words	exact	116534
+decode/512	wall_time	batch=1	n=3	3.469e-01	3.441e-01 3.469e-01 3.478e-01
+prefill-q8_0/512	alloc_words	exact	117863
+prefill-q8_0/512	wall_time	batch=1	n=3	2.082e+01	2.081e+01 2.082e+01 2.083e+01
+prefill/512	alloc_words	exact	116423
+prefill/512	wall_time	batch=1	n=3	2.080e+01	2.076e+01 2.080e+01 2.080e+01
