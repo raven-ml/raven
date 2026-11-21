@@ -261,7 +261,10 @@ val apply_experts :
     as it is summed, but for a weight {!apply} decodes at float32 first, of
     which it decodes, for [p] positions with [0 < p < e], ids whole on each
     device and experts not cut, [p] matrices, each position's id's, a
-    position out of range decoding the first. A
+    position out of range decoding the first. Compiled for the host, where
+    rows are routed into blocks, a lowering may store decoded matrices for
+    the blocks to read: rune's stores each expert's once, at the dtype of
+    the sum, past a few rows an expert. A
     row's bits are a function of the shapes, the placements, its row and its
     expert: they do not depend on the other positions' experts, and may
     differ from {!apply}'s. Cut along [k], each device sums its window of

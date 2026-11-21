@@ -218,7 +218,8 @@ val contract :
     operands no core takes a block. Where a core takes one, [c] is 4 while
     [n <= 2 g] and an operand is scaled, else [r] while [3 n < r g], else the
     greater of [r] and 64. Where none does, [c] is 4 below 5 rows a group on
-    average, 8 below 16 and 64 from 16.
+    average; from 5, on the host, the rows of a tile of its product
+    ({!Tolk.Heuristic.tile_rows}), and elsewhere 8 below 16 and 64 from 16.
 
     A row's sum runs over the contracted extent in the kernel's order
     whatever its slot, and the form is chosen from the shapes, the dtypes,

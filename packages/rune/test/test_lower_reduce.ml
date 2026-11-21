@@ -1460,12 +1460,12 @@ let pp_contraction ppf c =
    which the lowering cuts into blocks, the first of up to two pairs.
    [Long_rows] segments [a]'s first free axis, of 48 to 140 rows or 260 to
    300 in a third of the draws, by [b]'s first, of 1 or 2 groups, which the
-   lowering routes into blocks of 64 rows by comparisons or, past the host's
-   budget of them, as the longer always are, by a search. [Few_rows] segments
-   it by 2 to 6 groups, with fewer rows than groups, 1 to 5 rows a group or 5
-   to 16 in a third of the draws each. Both contract a first pair of 6 to 12,
-   so that a slice holds as many elements as there are groups, which routing
-   needs. *)
+   lowering routes into blocks (of 64 rows off the host, of 8 on it) by
+   comparisons or, past the host's budget of them, as the longer always
+   are, by a search. [Few_rows] segments it by 2 to 6 groups, with fewer
+   rows than groups, 1 to 5 rows a group or 5 to 16 in a third of the draws
+   each. Both contract a first pair of 6 to 12, so that a slice holds as
+   many elements as there are groups, which routing needs. *)
 type extras =
   | Plain_contraction
   | Scaled
@@ -2014,15 +2014,18 @@ let blocks_decode_whole () =
   is_true ~msg:"a 64-lane decode" (total "unsigned_int64 " > 0)
 
 (* Routed rows of 4 MXFP4 experts of 16 by 64, 4 ids a token, rendered for an
-   AVX2 host, whose product's tile holds 8 rows (Tolk.Heuristic.tile_rows): 8
-   tokens route into blocks of 8 rows, which decode their expert's codes in
-   the product, 16 into blocks of 64, which first store each block's decoded
-   slice. A kernel that reads the codes and sums nothing stores the slice. *)
+   AVX2 host, whose product's tile holds 8 rows (Tolk.Heuristic.tile_rows): 2
+   tokens, 2 rows a group, route into blocks of 4 rows, which decode their
+   expert's codes in the product; 64 tokens, 64 rows a group, into blocks of
+   8 rows that read their expert's slice, decoded once into storage. A kernel
+   that reads the codes and sums nothing stores slices: at 64 tokens, 4 of
+   1024 values, one an expert. The product stores its slots' outputs, 16 a
+   slot: at 64 tokens 35 blocks of 8 rows, 280 slots. *)
 let routed_slices () =
   let target =
     Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell")
   in
-  let stores_slices tokens =
+  let lowered tokens =
     let w =
       Nx_quant.mxfp4
         ~scales:(Nx.full Nx.uint8 [| 4; 16; 2 |] 127)
@@ -2033,18 +2036,41 @@ let routed_slices () =
         (Array.init (4 * tokens) (fun i -> Int64.of_int (i mod 4)))
     in
     let x = Nx.full Nx.bfloat16 [| tokens; 1; 64 |] 0.5 in
-    let is op u = Tolk.Ops.op u = op in
-    let codes u =
-      is Tolk.Op.Param u && Tolk.Dtype.equal (Tolk.Ops.dtype u) Tolk.Dtype.Uint8
-    in
-    List.exists
-      (fun (_, sink, _) ->
-        let nodes = Tolk.Ops.toposort ~calls:Skip sink in
-        List.exists codes nodes && not (List.exists (is Tolk.Op.Reduce) nodes))
+    List.map
+      (fun (_, sink, _) -> Tolk.Ops.toposort ~calls:Skip sink)
       (Lowered.sources ~target (fun () -> Nx_quant.apply_experts ~ids w x))
   in
-  is_false ~msg:"blocks of 8 store their slices" (stores_slices 8);
-  is_true ~msg:"blocks of 64 store their slices" (stores_slices 16)
+  let is op u = Tolk.Ops.op u = op in
+  let param dt u =
+    is Tolk.Op.Param u && Tolk.Dtype.equal (Tolk.Ops.dtype u) dt
+  in
+  let size u =
+    match Tolk.Ops.value (Tolk.Ops.nth u 0) with
+    | `Int n -> Tolk.Bigint.to_int n
+    | _ -> 0
+  in
+  let sizes dt nodes = List.map size (List.filter (param dt) nodes) in
+  let sums nodes = List.exists (is Tolk.Op.Reduce) nodes in
+  let stored tokens =
+    List.fold_left
+      (fun total nodes ->
+        if List.exists (param Tolk.Dtype.Uint8) nodes && not (sums nodes) then
+          List.fold_left ( + ) total (sizes Tolk.Dtype.Float32 nodes)
+        else total)
+      0 (lowered tokens)
+  in
+  let slots tokens =
+    List.fold_left
+      (fun most nodes ->
+        if sums nodes then
+          List.fold_left max most (sizes Tolk.Dtype.Bfloat16 nodes)
+        else most)
+      0 (lowered tokens)
+    / 16
+  in
+  equal int ~msg:"values stored at 2 rows a group" 0 (stored 2);
+  equal int ~msg:"values stored at 64 rows a group" (4 * 16 * 64) (stored 64);
+  equal int ~msg:"slots at 64 rows a group" 280 (slots 64)
 
 (* An MXFP4 product against bfloat16 rows rounds each scaled code to
    bfloat16, the same value, only where a tensor core takes bfloat16, so that
@@ -2311,12 +2337,13 @@ let batched_block =
    first free axis: its contracted and other free extents. *)
 let slice c g = numel c.ek * (numel c.fb / max 1 g)
 
-(* Whether [Rows] of [n] rows over [g] groups in blocks of 64 at each of [bs]
-   batch indices route by comparisons: their [S n] comparisons a batch
-   index, [S] slots, within the host's budget of [2^16]. *)
+(* Whether [Rows] of [n] rows over [g] groups, past 16 rows a group, in the
+   host's blocks of 8 at each of [bs] batch indices route by comparisons:
+   their [S n] comparisons a batch index, [S] slots, within the host's budget
+   of [2^16]. *)
 let compared ~bs ~n g =
   let m = min n g in
-  let slots = (m + ((n - m) / 64)) * 64 in
+  let slots = (m + ((n - m) / 8)) * 8 in
   bs * slots * n <= 1 lsl 16
 
 (* 300 rows over 257 groups, each row's slice of 257: the groups' first
@@ -2348,8 +2375,9 @@ let many_groups =
                  if r mod 7 = 0 then -1L else Int64.of_int (r * 31 mod 200)) ));
   }
 
-(* Rows of 24 a group or more, which the lowering routes into blocks of 64:
-   groups past a block's rows, empty groups and rows in no group. *)
+(* Rows of 24 a group or more, which the lowering routes into blocks of 64,
+   of 8 on the host: groups past 64 rows, empty groups and rows in no
+   group. *)
 let blocked_rows =
   prop ~count:24
     "rows in blocks give eager's integers and hold their bound"
@@ -2364,12 +2392,12 @@ let blocked_rows =
       let any f = List.exists f os in
       let groups = List.init g Fun.id in
       let blocked = n >= 16 * g && g <= slice c g in
-      cover "rows in blocks of 64" blocked;
+      cover "rows past 16 a group" blocked;
       cover "rows routed by comparisons"
         (blocked && compared ~bs:(numel c.eb) ~n g);
       cover "rows routed by the running count's search"
         (blocked && not (compared ~bs:(numel c.eb) ~n g));
-      cover "a group past a block's rows"
+      cover "a group past 64 rows"
         (any (fun o -> List.exists (fun e -> count o e > 64) groups));
       cover "an empty group"
         (any (fun o -> List.exists (fun e -> count o e = 0) groups));
@@ -2386,7 +2414,7 @@ let blocked_rows =
       cover "a part-full block at each of two batch indices"
         (numel c.eb = 2
         && List.for_all
-             (fun o -> List.exists (fun e -> count o e mod 64 <> 0) groups)
+             (fun o -> List.exists (fun e -> count o e mod 8 <> 0) groups)
              os);
       contract_check c)
 
@@ -2737,9 +2765,9 @@ let work_bounds =
     at_most int ~msg:"bytes at 256 groups" ~than:(l128 + (l128 / 4)) l256
   in
   let blocked ~k g () =
-    (* The block's rows: 4 below 5 rows a group on average, 8 below 16 and
-       64 from 16. *)
-    let c = if n < 5 * g then 4 else if n < 16 * g then 8 else 64 in
+    (* The host's block of rows: 4 below 5 rows a group on average, 8 from
+       5. *)
+    let c = if n < 5 * g then 4 else 8 in
     let slots = (g + ((n - g) / c)) * c in
     let unit = fst (work Plain ~n:slots ~k ~j 1) in
     let routing = 64 * ((n * g) + (slots * 9)) in
@@ -3032,8 +3060,8 @@ let () =
                    blocks_decode_whole;
                ];
              test
-               "routed MXFP4 rows on an AVX2 host store their blocks' \
-                decoded slices only past a tile's rows"
+               "routed MXFP4 rows on an AVX2 host decode their slices in the \
+                tile below 3 rows an expert, else once an expert"
                routed_slices;
              segmented_contractions;
              blocked_contractions;

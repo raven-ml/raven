@@ -1000,10 +1000,11 @@ let gathered dt u axis p =
    favours 48 there by 3.5%. 3 holds the crossover with a margin. *)
 let core_held = 3
 
-(* [block_rows ~core ~n ~g] is the rows of a block of [n] rows over [g]
-   groups, or [1] for each row reading its own slice, as rows share slices
-   from one row a group on average. [core] is the fewest rows a core takes
-   of the product, if one does.
+(* [block_rows ~core ~host ~n ~g] is the rows of a block of [n] rows over
+   [g] groups, or [1] for each row reading its own slice, as rows share
+   slices from one row a group on average. [core] is the fewest rows a core
+   takes of the product, if one does, and [host] whether it renders for the
+   host.
 
    Where a core takes the product it takes the blocks, the slice decoded or
    stored. While a group holds at most 4 rows, a core's blocks and blocks of
@@ -1034,21 +1035,32 @@ let core_held = 3
    trips or none, which tolk counts as its trips: both forms sum in blocks
    ({!Rune}), 2880 terms on gpt-oss-20b.
 
-   Without a core every block streams and padding rows cost as much as
-   real ones: blocks of 4 from one row a group, of 8 from 5 and of 64 from
-   16, the fastest of 2, 4, 8 and 64 on gpt-oss-20b's MXFP4 experts layer
+   Without a core, off the host, every block streams and padding rows cost
+   as much as real ones: blocks of 4 from one row a group, of 8 from 5 and
+   of 64 from 16, the fastest of 2, 4, 8 and 64 on gpt-oss-20b's MXFP4
+   experts layer
    streamed, rows routed uniformly at random (4 rows a group: 1.99 ms in
    blocks of 4, 1.51 of 8, 1.60 of 64), and on the host (1.5 rows a group:
    83 ms in blocks of 4 against 106 per row; 12 rows: 273 of 8 against 306 of
    4). A block holds at least a staged warp's rows ({!Tolk.Stage.warp_tile}),
    the most a core takes in one warp: blocks of 80 read 10-13% slower than 64
-   at equal reads of their slices. *)
-let block_rows ~core ~n ~g =
+   at equal reads of their slices.
+
+   On the host, where each block reads a stored copy of its group's slice
+   or decodes it in the product's tile ({!rows}), blocks stay at 8 rows past
+   16 a group, where blocks of 64 leave each group's last block part empty:
+   the 512 tokens of gpt-oss-20b's gate and up projection routed uniformly
+   took 0.89 s in blocks of 8 against 1.77 s in blocks of 64 with a copy a
+   block (untimed), the blocks' grid 2272 slots against 4032. *)
+let block_rows ~core ~host ~n ~g =
   if n < g then 1
   else
     match Lazy.force core with
     | Some c -> if core_held * n < c * g then c else max c Tolk.Stage.warp_tile
-    | None -> if n < 5 * g then 4 else if n < 16 * g then 8 else 64
+    | None ->
+        if n < 5 * g then 4
+        else if n < 16 * g || Lazy.force host then 8
+        else 64
 
 (* Whether a movement of [u], down to its base, expands it: a row read again
    at several positions, as one token's row by each of its experts. *)
@@ -1110,6 +1122,7 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
      blocks from 16 rows on CUDA, unmeasured, and blocks of 32 ran slower
      than 48 on an RTX 5000 Ada, gpt-oss-20b's Q8_0 prefill 22.6-23.1 ms against
      20.6-20.8 at 12 tokens and 28.4-29.4 against 27.8-28.1 at 64. *)
+  let tile = lazy (Tolk.Heuristic.tile_rows (Lazy.force renderer)) in
   let core =
     lazy
       (let bound = b_axis :: List.map snd (batch @ contracting) in
@@ -1141,7 +1154,10 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
   in
   let r =
     let c =
-      if g = 0 || g > slice then 1 else block_rows ~core ~n ~g
+      if g = 0 || g > slice then 1
+      else
+        let host = lazy (Option.is_some (Lazy.force tile)) in
+        block_rows ~core ~host ~n ~g
     in
     if c = 1 then
       let id = Ops.where inside o (int o 0) in
@@ -1172,33 +1188,41 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       let a' = picked a a_axis (spread r.row sa a_sides a_axis) in
       let a' = split a' a_axis [ blocks; c ] in
       let owner = spread r.owner sb b_sides b_axis in
-      let b' = picked ~clamped:true b b_axis owner in
       let a' = entered ~renderer acc ~other:b.dtype a' in
-      let scale = b'.scale in
-      (* On the host, which has no core, each tile of a block's rows reads
-         the block's decoded slice of scaled codes. Where the block holds
-         more rows than a tile ({!Tolk.Heuristic.tile_rows}), the slice is
-         stored, whatever its decode costs: a cheaper decode inlined into
-         each tile ran slower, gpt-oss-20b's float32 gate and up of 512
-         tokens 1.91 s stored against 3.38 s inlined on fudge. A block of
-         one tile decodes its slice there once, as the copy would, without
-         the copy's store and load: the bfloat16 gate and up of 64 tokens,
-         blocks of 8, took 241 ms against 287-293 stored, of 12 tokens,
-         blocks of 4, 93 against 131-136. Only codes of an exponent scale,
-         MXFP4's, decode in the tile: a Q8_0 slice decoded there took 8 rows
-         by 2 columns, its block's 32 values unrolled filling the
-         conversions' budget, and 64 tokens 439 ms against 275 stored
-         (untimed). The host stores the float32 values, so no slice of it
-         enters rounded; a GPU's do ({!entered}). *)
-      let tile = Tolk.Heuristic.tile_rows (Lazy.force renderer) in
-      let b' =
-        entered ~stored:(Option.is_none tile) ~renderer acc ~other:a.dtype b'
+      (* On the host, which has no core, each block's rows read its group's
+         decoded slice of scaled codes in tiles of rows of the product
+         ({!Tolk.Heuristic.tile_rows}). A block of one tile of MXFP4 codes,
+         of an exponent scale, decodes its slice in the tile while the
+         groups hold fewer than 3 rows on average, about as many blocks as
+         groups: at 12 tokens of gpt-oss-20b, blocks of 4, its gate and up
+         took 89-95 ms there against 114-127 copied (untimed). Past that,
+         and for other scales, each group's slice is decoded once and stored
+         at the accumulator's type, and each block reads its group's: at 32
+         tokens 141-155 ms against 162-167 in the tile, at 57 194-199
+         against 225-233, at 512, in blocks of 8 not 64, 0.89 s against
+         1.77 with a copy a block (untimed). A copy a block decodes a
+         group's slice at least as often wherever [n >= g]; in the tile a
+         Q8_0 slice took 8 rows by 2 columns, its block's 32 values
+         unrolled filling the conversions' budget. No slice of the host
+         enters rounded to bfloat16; a GPU's do, and the schedule chooses
+         what it stores ({!entered}). *)
+      let tile = Lazy.force tile in
+      let in_tile =
+        match (tile, b.scale) with
+        | Some t, Some (Exponent _) -> c <= t && n < 3 * g
+        | _ -> false
       in
       let b' =
-        match (tile, scale) with
-        | Some rows, Some (Exponent _) when c <= rows -> b'
-        | Some _, Some _ -> List.map store b'
-        | _ -> b'
+        match (tile, b.scale) with
+        | Some _, Some _ when not in_tile ->
+            let whole = entered ~renderer acc ~other:a.dtype b in
+            let node = Arith.of_parts acc (List.map store whole) in
+            let b = { dtype = acc; node; scale = None } in
+            entered ~renderer acc ~other:a.dtype
+              (picked ~clamped:true b b_axis owner)
+        | _ ->
+            entered ~stored:(Option.is_none tile) ~renderer acc ~other:a.dtype
+              (picked ~clamped:true b b_axis owner)
       in
       let up x = if x > a_axis then x + 1 else x in
       let shift = List.map (fun (x, y) -> (up x, y)) in
