@@ -3499,6 +3499,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- New `Nx.Placement.cut_axes p`, the axes that the placement `p` cuts across
+  its devices, in increasing order. A function of several operations reads it
+  to choose the operations that compute where its argument lies.
 - New `Nx.sinc`, `sin (πx) / (πx)`: a polynomial below `|x| = ¼`, so its
   derivatives at and near `0` are accurate, and exactly `0` at every nonzero
   integer.

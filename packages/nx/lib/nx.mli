@@ -274,6 +274,17 @@ module Placement : sig
       mesh axis that cut one holding copies, and the value no sum. It is [p]
       itself if [p] cuts no axis and is not partial. *)
 
+  val cut_axes : 'd t -> int list
+  (** [cut_axes p] is the axes that [p] cuts into two windows or more, in
+      increasing order, each counted from the front as {!split}'s [axis] is.
+      So [cut_axes (split ~axis s)] is [[]] where [s] has one device, and
+      [cut_axes (mesh m cuts)] leaves out an axis that [cuts] cuts over mesh
+      axes of extent [1] alone. A value that {!place} puts at [p] has each
+      axis of [cut_axes p]. [cut_axes (closed p)] is [cut_axes p], since the
+      mesh axes of a sum hold terms of the whole shape. Two placements of
+      equal [cut_axes] need not be {!equal}, since they may cut an axis into
+      other windows. *)
+
   val pp : Format.formatter -> 'd t -> unit
   (** [pp] formats a placement on one device as the device's name, others as
       [on [CUDA:0; CUDA:1]], [split ~axis:0 [CUDA:0; CUDA:1]],

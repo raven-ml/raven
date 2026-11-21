@@ -125,6 +125,13 @@ module Placement = struct
     Devices.same (Devices.set p : d Devices.t) (Devices.set q : e Devices.t)
 
   let uncut p = Devices.uncut p
+
+  let cut_axes p =
+    Array.fold_right
+      (fun (axis, _) axes -> axis :: axes)
+      (Grid.cuts (Devices.grid p))
+      []
+
   let pp = Devices.pp_placement
 
   let with_leading_axis p =

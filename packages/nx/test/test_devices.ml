@@ -141,6 +141,90 @@ let meshes =
               Nx.Placement.mesh mesh cuts));
     ]
 
+(* The axes a placement cuts into two windows or more. In the law, each axis
+   of a mesh over [S4]'s devices takes a role: it holds copies, the value is
+   a sum over it, or it cuts one of the value's axes [0] to [2]. A value's
+   axis is cut into as many windows as the extents of the mesh axes that cut
+   it multiply to. *)
+let cut_axes =
+  let module S1 = (val Nx.devices [ m 2 ]) in
+  let grid = Nx.Mesh.v S4.v [ ("a", 2); ("b", 2) ] in
+  let summed = Nx.Placement.partial grid [ "a" ] [ (1, [ "b" ]) ] in
+  let row name expected p =
+    (name, expected, fun () -> Nx.Placement.cut_axes p)
+  in
+  let layouts = [| [ 4 ]; [ 2; 2 ]; [ 1; 4 ]; [ 4; 1 ]; [ 2; 1; 2 ] |] in
+  let copies = -2 and sums = -1 in
+  let meshes =
+    Gen.(
+      pair
+        (int_range 0 (Array.length layouts - 1))
+        (list ~size:(constant 3) (int_range copies 2)))
+  in
+  group "cut axes"
+    [
+      cases "cut_axes is the axes cut into two windows or more"
+        ~id:(fun (name, _, _) -> name)
+        [
+          row "the host" [] Nx.Host.on;
+          row "on" [] S4.on;
+          row "one device of a set" [] (Nx.Placement.device S4.v (m 2));
+          row "a split over one device" [] (S1.split ~axis:1);
+          row "a split over two devices" [ 1 ] (S2.split ~axis:1);
+          row "a split along an axis counted from the front" [ 5 ]
+            (S4.split ~axis:5);
+          row "a mesh that cuts two axes" [ 0; 2 ]
+            (Nx.Placement.mesh grid [ (2, [ "a" ]); (0, [ "b" ]) ]);
+          row "a mesh that cuts one axis over both of its own" [ 3 ]
+            (Nx.Placement.mesh grid [ (3, [ "a"; "b" ]) ]);
+          row "a mesh that cuts no axis" [] (Nx.Placement.mesh grid []);
+          row "a sum" [] (Nx.Placement.partial grid [ "a"; "b" ] []);
+          row "a sum of terms cut along an axis" [ 1 ] summed;
+          row "that sum closed" [ 1 ] (Nx.Placement.closed summed);
+          row "that sum uncut" [] (Nx.Placement.uncut summed);
+          row "a split uncut" [] (Nx.Placement.uncut (S4.split ~axis:0));
+        ]
+        (fun (_, expected, axes) -> equal (list int) expected (axes ()));
+      test "placements of equal cut_axes need not be equal" (fun () ->
+          let over name = Nx.Placement.mesh grid [ (0, [ name ]) ] in
+          equal (list int)
+            (Nx.Placement.cut_axes (over "a"))
+            (Nx.Placement.cut_axes (over "b"));
+          not_equal (placement ()) (over "a") (over "b"));
+      prop ~count:400
+        "a mesh cuts each axis it cuts over two devices or more" meshes
+        (fun (layout, roles) ->
+          let axis g extent =
+            (Printf.sprintf "g%d" g, extent, List.nth roles g)
+          in
+          let laid = List.mapi axis layouts.(layout) in
+          let mesh = Nx.Mesh.v S4.v (List.map (fun (n, e, _) -> (n, e)) laid) in
+          let over r = List.filter (fun (_, _, role) -> role = r) laid in
+          let names over = List.map (fun (name, _, _) -> name) over in
+          let tiles r = List.fold_left (fun t (_, e, _) -> t * e) 1 (over r) in
+          (* The value's axes that a mesh axis cuts, given last first. *)
+          let named = List.filter (fun a -> over a <> []) [ 2; 1; 0 ] in
+          let expected = List.rev (List.filter (fun a -> tiles a >= 2) named) in
+          cover "no axis cut" (expected = []);
+          cover "two axes cut" (List.length expected = 2);
+          cover "an axis cut over one device alone"
+            (List.exists (fun a -> tiles a = 1) named);
+          cover "an axis cut over two mesh axes"
+            (List.exists (fun a -> List.length (over a) = 2) named);
+          cover "a sum over two devices or more" (tiles sums >= 2);
+          let cut = List.map (fun a -> (a, names (over a))) named in
+          let p = Nx.Placement.partial mesh (names (over sums)) cut in
+          let closed = Nx.Placement.closed p and uncut = Nx.Placement.uncut p in
+          let axes p = Nx.Placement.cut_axes p in
+          equal ~msg:"the sum" (list int) expected (axes p);
+          equal ~msg:"the mesh" (list int) expected
+            (axes (Nx.Placement.mesh mesh cut));
+          equal ~msg:"closed" (list int) expected (axes closed);
+          equal ~msg:"uncut" (list int) [] (axes uncut);
+          equal ~msg:"every axis whole on each device" bool (expected = [])
+            (Nx.Placement.equal uncut closed));
+    ]
+
 (* Coercions: a dtype and a set are each checked. Two mints of one device list
    are two sets. *)
 let coercions =
@@ -278,4 +362,4 @@ let layouts =
 let () =
   exit
     (run "nx devices"
-       [ sets; placements; meshes; coercions; witnesses; layouts ])
+       [ sets; placements; meshes; cut_axes; coercions; witnesses; layouts ])
