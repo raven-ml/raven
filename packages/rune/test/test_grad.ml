@@ -2007,7 +2007,7 @@ let conv_gen =
    and+ dilation = axes k (int_range 1 2)
    and+ groups = int_range 1 2
    and+ cg = int_range 1 2
-   and+ og = int_range 1 2
+   and+ og = int_range 1 4
    and+ seed = float_range 0. 6. in
    { transpose; n; d; taps; stride; padding; dilation; groups; cg; og; seed })
   |> with_pp pp_conv
@@ -2072,6 +2072,7 @@ let conv_law pullback c =
   cover "a transpose" c.transpose;
   cover "groups" (c.groups > 1);
   cover "one channel in and out a group" (c.cg = 1 && c.og = 1);
+  cover "three channels out or more" (c.groups * c.og >= 3);
   cover "a stride past 1" (Array.exists (fun s -> s > 1) c.stride);
   cover "a cutting padding"
     (Array.exists (fun (lo, hi) -> lo < 0 || hi < 0) c.padding);
