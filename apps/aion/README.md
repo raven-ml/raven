@@ -59,9 +59,9 @@ byte for byte.
 
 On an NVIDIA RTX 5000 Ada, raven embeds 125 objects a second with aion-base,
 16 a batch, against 62 for AION-1's own PyTorch code, and draws 21 DESI
-spectra a second against 23; a whole `embed` of 64 real objects takes 1.8 s
-against 8.0. On two CPU cores, with `--eager`, it embeds 1.2 objects a second
-against 0.89. [PERFORMANCE.md](PERFORMANCE.md) has every number, where raven
+spectra a second against 23; a whole `embed` of 64 real objects takes 1.7 s
+against 8.3. On two CPU cores, with `--eager`, it embeds 1.3 objects a second
+against 0.92. [PERFORMANCE.md](PERFORMANCE.md) has every number, where raven
 is slower, and how to reproduce them.
 
 A command's memory is its weights and codecs plus a batch's work and the

@@ -6,26 +6,26 @@
 # ocaml: 5.5.2 · 64-bit · release
 
 nv/codec/image/16	alloc_words	exact	36359
-nv/codec/image/16	wall_time	batch=1	n=5	1.059e-01	1.057e-01 1.058e-01 1.059e-01 1.071e-01 1.073e-01
+nv/codec/image/16	wall_time	batch=1	n=5	7.255e-02	7.062e-02 7.186e-02 7.255e-02 7.257e-02 7.321e-02
 nv/codec/spectrum-decode/16	alloc_words	exact	69098
-nv/codec/spectrum-decode/16	wall_time	batch=1	n=5	6.624e-03	6.541e-03 6.588e-03 6.624e-03 6.638e-03 6.990e-03
+nv/codec/spectrum-decode/16	wall_time	batch=1	n=5	6.582e-03	6.537e-03 6.564e-03 6.582e-03 6.606e-03 7.138e-03
 nv/codec/spectrum/16	alloc_words	exact	72570
-nv/codec/spectrum/16	wall_time	batch=1	n=5	1.993e-02	1.944e-02 1.950e-02 1.993e-02 2.000e-02 2.068e-02
+nv/codec/spectrum/16	wall_time	batch=1	n=5	1.983e-02	1.957e-02 1.972e-02 1.983e-02 1.995e-02 2.047e-02
 nv/embed/base/1	alloc_words	exact	85385
-nv/embed/base/1	wall_time	batch=1	n=5	3.414e-02	3.376e-02 3.388e-02 3.414e-02 3.417e-02 3.481e-02
+nv/embed/base/1	wall_time	batch=1	n=5	1.054e-02	1.046e-02 1.053e-02 1.054e-02 1.059e-02 1.131e-02
 nv/embed/base/16	alloc_words	exact	85385
-nv/embed/base/16	wall_time	batch=1	n=5	1.594e-01	1.586e-01 1.593e-01 1.594e-01 1.595e-01 1.604e-01
+nv/embed/base/16	wall_time	batch=1	n=5	1.277e-01	1.254e-01 1.262e-01 1.277e-01 1.298e-01 1.312e-01
 nv/embed/large/16	alloc_words	exact	151095
-nv/embed/large/16	wall_time	batch=1	n=5	5.471e-01	5.423e-01 5.467e-01 5.471e-01 5.476e-01 5.478e-01
+nv/embed/large/16	wall_time	batch=1	n=5	4.409e-01	4.392e-01 4.399e-01 4.409e-01 4.412e-01 4.435e-01
 nv/generate/base/1	alloc_words	exact	929414
-nv/generate/base/1	wall_time	batch=1	n=5	1.192e-01	1.185e-01 1.192e-01 1.192e-01 1.192e-01 1.194e-01
-nv/generate/base/16	alloc_words	exact	994113
-nv/generate/base/16	wall_time	batch=1	n=5	9.755e-01	9.743e-01 9.755e-01 9.755e-01 9.755e-01 9.758e-01
+nv/generate/base/1	wall_time	batch=1	n=5	8.984e-02	8.850e-02 8.955e-02 8.984e-02 9.026e-02 9.032e-02
+nv/generate/base/16	alloc_words	exact	917371
+nv/generate/base/16	wall_time	batch=1	n=5	7.651e-01	7.625e-01 7.639e-01 7.651e-01 7.652e-01 7.664e-01
 nv/generate/large/16	alloc_words	exact	1747294
-nv/generate/large/16	wall_time	batch=1	n=5	4.314e+00	4.309e+00 4.314e+00 4.314e+00 4.315e+00 4.316e+00
+nv/generate/large/16	wall_time	batch=1	n=5	3.019e+00	3.009e+00 3.013e+00 3.019e+00 3.021e+00 3.025e+00
 nv/posterior/base/1	alloc_words	exact	86233
-nv/posterior/base/1	wall_time	batch=1	n=5	2.331e-02	2.305e-02 2.329e-02 2.331e-02 2.336e-02 2.405e-02
+nv/posterior/base/1	wall_time	batch=1	n=5	1.016e-02	9.767e-03 9.812e-03 1.016e-02 1.018e-02 1.085e-02
 nv/posterior/base/16	alloc_words	exact	86233
-nv/posterior/base/16	wall_time	batch=1	n=5	1.209e-01	1.200e-01 1.209e-01 1.209e-01 1.210e-01 1.215e-01
+nv/posterior/base/16	wall_time	batch=1	n=5	9.725e-02	9.630e-02 9.664e-02 9.725e-02 9.766e-02 9.865e-02
 nv/posterior/large/16	alloc_words	exact	153409
-nv/posterior/large/16	wall_time	batch=1	n=5	4.179e-01	4.168e-01 4.171e-01 4.179e-01 4.200e-01 4.215e-01
+nv/posterior/large/16	wall_time	batch=1	n=5	3.458e-01	3.398e-01 3.435e-01 3.458e-01 3.487e-01 3.537e-01

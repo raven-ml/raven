@@ -1,0 +1,20 @@
+# thumper baseline v1
+# suite: aion-cpu-eager
+
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+# forced: blessed under load 5.2 on 2 cores
+
+cpu-eager/codec/image/1	alloc_words	exact	137533
+cpu-eager/codec/image/1	wall_time	batch=1	n=3	2.633e-01	2.633e-01 2.633e-01 2.637e-01
+cpu-eager/codec/spectrum-decode/1	alloc_words	exact	152415
+cpu-eager/codec/spectrum-decode/1	wall_time	batch=1	n=3	5.194e-02	5.088e-02 5.194e-02 5.220e-02
+cpu-eager/codec/spectrum/1	alloc_words	exact	332137
+cpu-eager/codec/spectrum/1	wall_time	batch=1	n=3	1.498e-01	1.484e-01 1.498e-01 1.510e-01
+cpu-eager/embed/base/1	alloc_words	exact	223418
+cpu-eager/embed/base/1	wall_time	batch=1	n=3	8.528e-01	8.447e-01 8.528e-01 8.539e-01
+cpu-eager/generate/base/1	alloc_words	exact	7341589
+cpu-eager/generate/base/1	wall_time	batch=1	n=3	4.559e+00	4.558e+00 4.559e+00 4.579e+00
+cpu-eager/posterior/base/1	alloc_words	exact	606314
+cpu-eager/posterior/base/1	wall_time	batch=1	n=3	5.757e-01	5.754e-01 5.757e-01 5.768e-01
