@@ -122,8 +122,8 @@
     setting's level: at [2], the default, the core pads the extents its tile
     does not divide, each padded step multiplying zeros, and is taken only
     while the extents padded hold at most 6/5 of the work of the extents
-    themselves; a staged core's pad of N to its tile ({!Stage.tile}) comes
-    beside that bound, as does a pad of [N] or [M] past 16 that a decoded
+    themselves; a staged core's pad of N or M to its tile ({!Stage.tile})
+    comes beside that bound, as does a pad of [N] or [M] past 16 that a decoded
     operand does not read: its outputs share each value the operand decodes,
     and only a pad's own bound, at most four times the axis
     ({!Postrange.Scheduler.apply_opt}), holds it. Its [M] and [N] axes are
@@ -159,13 +159,16 @@
 
     A core whose operands are staged ({!Stage.tile}) takes the staged tile
     instead of those splits and floors, its [N] padded to the tile's where no
-    tile divides it. Where the operands read [M] only as
+    tile divides it, and its [M] likewise where no operand reads its rows in
+    runs.
+    Where the operands read [M] only as
     its quotient by [d], as blocks of [d] rows read their expert's matrix,
     and the core's tile times [M]'s upcast does not divide [d], [M] is upcast
     by the first of 5, 4, 3 and 2 that divides it and whose warp divides
     [d], if one does: a warp whose rows cross blocks loads each block's
     matrix. The staged tile keeps its warps' and workgroups' rows within such
-    a run by halving [M]'s upcast and leaving out its local split.
+    a run by lowering [M]'s upcast a tile at a time and leaving out its local
+    split.
 
     {b Decodes.} On a GPU, a value of an operand decoded from integers, whose
     [R] outputs along one axis read it at one index, is decoded at most

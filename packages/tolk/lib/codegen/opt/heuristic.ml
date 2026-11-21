@@ -186,7 +186,7 @@ let decoded_operands k =
    that one kernel serves every size (Van Zee and van de Geijn, "BLIS", ACM
    TOMS, §5.1.1). The padding is work the core does for no output: a core
    takes a product whose padded volume is at most [core_waste] times its
-   own; a staged core's pad of N to its tile ({!Stage.tile}) is not
+   own; a staged core's pad of N or M to its tile ({!Stage.tile}) is not
    counted, nor a pad of N or M past [upcast_max] that a decoded operand
    does not read: its outputs share each value the operand decodes, so the
    pad adds no decode and no byte of the operand, and only {!Opt.Padto}'s
@@ -321,25 +321,39 @@ let staged_tile ~core_threads k tk rngs split =
       with
       | None -> None
       | Some (opts, two_stages) ->
-          let apply = function
-            | Opt.Split { axis = i; amount; target; _ } ->
-                split i amount target;
-                true
-            | Opt.Padto { axis = i; amount } -> (
-                (* A range of one trip the core left is no axis: no pad. *)
-                match List.find_index (fun r -> r == rngs.(i)) (K.rngs tk) with
-                | None -> false
-                | Some axis -> (
-                    match K.apply_opt tk (Opt.Padto { axis; amount }) with
-                    | Ok [ r ] ->
-                        rngs.(i) <- r;
-                        true
-                    | _ -> false))
-            | _ -> invalid_arg "a staged tile is splits and pads"
+          let pads, splits =
+            List.partition_map
+              (function
+                | Opt.Padto { axis; amount } -> Either.Left (axis, amount)
+                | Opt.Split { axis; amount; target; _ } ->
+                    Either.Right (axis, amount, target)
+                | _ -> invalid_arg "a staged tile is splits and pads")
+              opts
           in
-          (* A pad comes first, and one refused or on no axis leaves the core
-             unstaged. *)
-          if List.for_all apply opts then Some two_stages else None)
+          (* [rngs.(i)] of [t] padded to a multiple of [amount], where [t] has
+             it as an axis, a range of one trip the core left being none, and
+             {!Opt.t.Padto} takes it. *)
+          let pad t (i, amount) =
+            match List.find_index (fun r -> r == rngs.(i)) (K.rngs t) with
+            | None -> None
+            | Some axis -> (
+                match K.apply_opt t (Opt.Padto { axis; amount }) with
+                | Ok [ r ] -> Some r
+                | _ -> None)
+          in
+          (* The pads come before the splits, each tried on a copy before any
+             applies, so that one refused, as past PADTO's 4x or on no axis,
+             leaves the core unstaged and no axis padded. *)
+          let trial = K.copy tk in
+          if List.for_all (fun p -> Option.is_some (pad trial p)) pads then
+          begin
+            List.iter
+              (fun ((i, _) as p) -> rngs.(i) <- Option.get (pad tk p))
+              pads;
+            List.iter (fun (i, amount, target) -> split i amount target) splits;
+            Some two_stages
+          end
+          else None)
 
 (* The longest reduce axis that [unroll] unrolls whole, which no group
    pads. *)

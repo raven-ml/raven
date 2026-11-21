@@ -267,9 +267,16 @@ let same_bits ((p, staged_tile, depth, seed) as _case) =
   cover "an operand refused, the other staged" (cored && operands = 1);
   cover "an axis the core pads"
     (cored && shared && (p.m mod 16 <> 0 || p.k mod 16 <> 0));
-  cover "N padded to the staged tile"
-    (cored && shared
-    && List.exists (function Opt.Padto _ -> true | _ -> false) opts);
+  (* The staged tile pads N by 8 tiles of the core's 8 columns, M by 4 of its
+     16 rows. *)
+  let padded_by n =
+    cored && shared
+    && List.exists
+         (function Opt.Padto { amount; _ } -> amount = n | _ -> false)
+         opts
+  in
+  cover "N padded to the staged tile" (padded_by 8);
+  cover "M padded to the staged tile" (padded_by 4);
   cover "two stages, cp.async" (shared && says "cp.async" src);
   cover "one stage" (shared && depth = 1);
   cover "the staged tile" (shared && staged_tile);
@@ -302,6 +309,9 @@ let law =
         ( { dt = Bfloat16; batch = 1; m = 128; k = 56; n = 128; layout = Nk;
             form = Affine },
           true, 2, 6 );
+        ( { dt = Bfloat16; batch = 1; m = 44; k = 64; n = 120; layout = Kn;
+            form = Plain },
+          true, 2, 7 );
       ]
     "a staged kernel computes the bits of the same optimisations unstaged"
     (Gen.with_pp
@@ -1344,21 +1354,25 @@ let slotted_kernel ~block ~blocks ~experts ~k ~n =
   let store = Ops.store (Ops.index c [ (s * int n) + j ]) sum in
   Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ store [ s; j ] ]
 
-(* A slotted product of 50 blocks of [block] rows over 8 experts of [2880;
-   2560] on sm_89, staged: its workgroups, the threads of one and the core's
-   trips. *)
-let slotted_tile block =
-  planned (slotted_kernel ~block ~blocks:50 ~experts:8 ~k:2880 ~n:2560)
+(* A slotted product of [blocks] blocks of [block] rows over 8 experts of
+   [2880; 2560] on sm_89, staged: its workgroups, the threads of one and the
+   core's trips. *)
+let slotted_tile (blocks, block) =
+  planned (slotted_kernel ~block ~blocks ~experts:8 ~k:2880 ~n:2560)
 
 (* A block's rows read one matrix, so a staged warp holds as many of the
    core's 16-row tiles as a block has: 3 of 48 rows, 4 of 64, and one
    workgroup loads a block's tile of the matrix. A block takes 20 workgroups
    of 2 warps along its 2560 outputs, and the core 90 trips of 32 of its 2880
-   values. *)
+   values. 49 blocks of 48 rows are 147 tiles, which no warp's 4 tiles
+   divide: rows in runs take no pad, which would leave a warp one tile. *)
 let slotted_tiles =
   cases "a staged warp holds a block's rows of one matrix"
-    ~id:(Printf.sprintf "blocks of %d") [ 48; 64 ]
-    (fun block -> equal (triple int int int) (1000, 64, 90) (slotted_tile block))
+    ~id:(fun (blocks, block) ->
+      Printf.sprintf "%d blocks of %d" blocks block)
+    [ (50, 48); (50, 64); (49, 48) ]
+    (fun ((blocks, _) as p) ->
+      equal (triple int int int) (blocks * 20, 64, 90) (slotted_tile p))
 
 let cube =
   { dt = Bfloat16; batch = 1; m = 128; k = 128; n = 128; layout = Kn;
@@ -2114,7 +2128,9 @@ let stage_off () =
    whose renderer states its units and their bytes in flight, the busiest
    unit's copies a trip reach those bytes where shared memory and the sum's
    blocks allow: 512 by 512 over 2880 keeps one workgroup of 64 by 64 a unit
-   and takes 96 values a trip, 30 trips. *)
+   and takes 96 values a trip, 30 trips. M pads as N does: 110 by 440 takes
+   the tile of 440 by 110. 16 rows by 440 are one tile of M, whose pad has
+   no axis, so the core stays unstaged with N's 55 tiles unpadded. *)
 
 let tile (dt, m, k, n, sync) =
   planned ~sync
@@ -2132,6 +2148,9 @@ let staged_tiles =
       ((Dtype.Bfloat16, 512, 2880, 512, false), (64, 128, 30));
       ((Dtype.Bfloat16, 512, 2880, 4096, true), (128, 128, 90));
       ((Dtype.Float16, 256, 2880, 256, true), (16, 128, 90));
+      ((Dtype.Bfloat16, 110, 2880, 440, false), (56, 128, 15));
+      ((Dtype.Bfloat16, 440, 2880, 110, false), (56, 128, 15));
+      ((Dtype.Bfloat16, 16, 64, 440, false), (55, 32, 4));
     ]
     (fun (case, expected) ->
       equal (triple int int int) expected (tile case))

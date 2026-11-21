@@ -6544,10 +6544,11 @@ against 2.77).
     blocks, so each output sums the same terms in the same order, and a part
     of another count runs the same programs, at another speed. Where no
     plan's upcast of N divides it, N is first padded to the full warp tile's
-    upcast (D491). Its rows stay within a run of rows that read one value of
-    an operand, a warp's tiles of rows falling by one until they fit it, so
-    that a run of three tiles takes one warp, and the heuristic takes it only
-    where `Stage.admits` the kernel as the core leaves it, so a core staging
+    upcast, and M likewise where no operand reads its rows in runs (D491).
+    Its rows stay within a run of rows that read one value of an operand, a
+    warp's tiles of rows falling by one until they fit it, so that a run of
+    three tiles takes one warp, and the heuristic takes it only where
+    `Stage.admits` the kernel as the core leaves it, so a core staging
     refuses keeps the unstaged splits.
   - **Gathered rows.** One dimension of a tile may be rows gathered through
     a row map: a term whose only read of the box's ranges is one load of
@@ -9605,14 +9606,21 @@ D466.
   (at `TC_OPT` 0 or 1 the bound is 1, divisibility). An extent the kernel
   holds as a range of one trip is no axis, and a core that would pad it is
   refused, where tinygrad's lookup of the axis raises. At level 2, a staged
-  core pads N to a multiple of its whole warp tile's upcast where neither
-  that upcast nor its half divides N (`Stage.tile`, D262), on a padded or an
-  unpadded core, beside the bound and within PADTO's 4x; a pad on no axis
-  of the kernel leaves the core unstaged. At `TC_OPT=0` no core and no
-  staged tile pads, so the kernels are those of tinygrad's default and the
-  staging of D262. Padding computes the padded steps' products of zeros
-  (D490): values stay within `Nx.contract`'s bound, and a kernel's bits
-  move only where it pads.
+  core pads N and M alike, each to a multiple of its whole warp tile's
+  upcast where neither that upcast nor its half divides it (`Stage.tile`,
+  D262), on a padded or an unpadded core, beside the bound and each within
+  PADTO's 4x; M only where no operand reads its rows in runs: rows in runs
+  already have a plan, a warp's tiles falling to what a run holds, and a
+  pad would gate the routed operand by rows its tile does not hold. A core
+  that pads tries the product's first factor as its A, along M, first, so
+  a pad of N alone could stage a product in one order of its factors and
+  leave it on the core's own tile in the other. The pads are tried on a
+  copy of the kernel before any applies: one refused, or on no axis of the
+  kernel, leaves the core unstaged and no axis padded. At `TC_OPT=0` no
+  core and no staged tile pads, so the kernels are those of tinygrad's
+  default and the staging of D262. Padding computes the padded steps' products
+  of zeros (D490): values stay within `Nx.contract`'s bound, and a kernel's
+  bits move only where it pads.
 - **Reason:** (d). On fudge's RTX 5000 Ada, against main on PROJ-2's staged
   plans, three interleaved rounds, each case on an empty GPU, minimum over
   rounds of the minimum of 10 calls: tessera's distillation step, bfloat16
@@ -9637,7 +9645,24 @@ D466.
   136, 72, 24 and 20 (tiles of 448, 192, 128 and 64 columns), and 0.99 at
   40; the 440 by 440 weight gradient, a split sum, takes about 2.27 ms
   staged against 1.78 with staging off (1.28x), both about 11 times
-  faster than main. AMD and Metal take the default unmeasured.
+  faster than main. The staged pad of M: TESSERA's q, k and v weight
+  gradients, the attention's cotangent through the split into 4 heads of
+  110 by the layer's input, which rune multiplies cotangent first so that
+  the heads lie along M (7 tiles of 16), took 1074 and 761 us at 23040 and
+  34816 tokens on the core's own tile in workgroups of one warp, and take
+  310 and 374 padded to 128 rows a head, where the same products with
+  their factors swapped take 309 and 364; distil-step/medium went from
+  1.064 s (1.064-1.066) to 0.952 (0.951-0.952), against 0.994 with rune's
+  factors in the other order. It moves 58 of the census's 1490 renders on
+  five targets, each padding M from 68 rows or more, by at most 1.88 times
+  (68 to 128 rows). No product of 16 rows or fewer pads M: the 4x refuses
+  one tile, and two of Metal's 8 rows, and two of CUDA's and AMD's 16 need
+  none. The gpt-oss-20b q projections above, bfloat16 [tokens; 2880] by
+  [4096; 2880], now pad M (medians of 15 calls): 44, 68 and 100 tokens take
+  23.6, 30.7 and 30.7 us against 81.8, 106.3 and 117.6 on the core's own
+  tile, beside 32.8 at 128 tokens, which pads nothing. A stream the staged
+  tile now sends to a core of two stages, 48 rows by 4096 by 20, takes
+  16.4 us against 16.3 streamed. AMD and Metal take the default unmeasured.
 - **Pinned by:** the Heuristic suite's `streaming › a core pads what its tile
   does not divide, within a bound`, `core_fits names the contractions a core
   takes`, `core_fits reads the core settings`, `core_rows names the fewest
@@ -9649,10 +9674,15 @@ D466.
   GPU` (a row of one trip), the Codegen suite's `conv_big_metal`, the
   Setting suite's defaults, the Stage suite's `sources › a float16 product
   whose core pads M and K`, its value law (`an axis the core pads`, `N
-  padded to the staged tile`) and its barriers law's HIP case of N one
-  tile, and rune's `Jit_gpu › products › a sum a tensor core pads computes
-  the bits of its operands with zeros appended` and `› a product whose N is
-  one tile of the core gives eager's bits`.
+  padded to the staged tile`, `M padded to the staged tile`), its barriers
+  law's HIP case of N one tile, its `a staged core's workgroups, threads
+  and trips` at 110 by 440 and at 440 by 110 (M padded as N is, the same
+  tile for a product and its transpose) and at 16 by 440 (M's pad on no
+  axis, N left unpadded), its `a staged warp holds a block's rows of one
+  matrix` at 49 blocks of 48 rows (rows in runs take no pad), and rune's
+  `Jit_gpu › products › a sum a tensor core pads computes the bits of its
+  operands with zeros appended` and `› a product whose N is one tile of
+  the core, or whose M and N the staged tile pads, gives eager's bits`.
 
 ## D492. A kernel declares the type of every parameter it names
 

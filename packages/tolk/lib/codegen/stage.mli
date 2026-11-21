@@ -186,8 +186,8 @@ val tile :
   in_run:(int -> bool) ->
   (Opt.t list * bool) option
 (** [tile ren sink core ~core_threads ~workgroups ~sizes:(n, m, k) ~axes
-    ~in_run] is the optimisations of a tensor core's staged tile, splits and
-    a pad ({!Opt.t.Split}, {!Opt.t.Padto}) whose [axis] is [0], [1] or [2]
+    ~in_run] is the optimisations of a tensor core's staged tile, pads and
+    splits ({!Opt.t.Padto}, {!Opt.t.Split}) whose [axis] is [0], [1] or [2]
     for the core's N, M and K, in the order to apply them, and whether the
     core has two stages and a known count of workgroups, when {!admits} and
     {!depth} stage the core; [None] otherwise, as for a core
@@ -208,7 +208,10 @@ val tile :
     in flight. Where neither the whole warp tile's upcast of [N] nor its
     half divides [n], and {!Setting.tc_opt} is [2], [N] is first padded to a
     multiple of the whole tile's ({!Opt.t.Padto}): its padded columns
-    multiply zeros into outputs never stored, and every plan divides it.
+    multiply zeros into outputs never stored, and every plan divides it. [M]
+    pads the same way where no operand reads its rows in runs, so that
+    [in_run] holds of its padded count of tiles; rows in runs already have a
+    plan, a warp's tiles falling to what a run holds.
 
     Where [ren] states its compute units and the bytes a unit keeps in
     flight ({!Renderer.t.units}, {!Renderer.t.in_flight}), the core has two

@@ -1449,25 +1449,40 @@ let group_tiles = 16
    512 over 2880, its operands read from memory, ran 8 workgroups of 64 by 64
    on 8 of its 100 SMs in 39.7 us, and 15.7 spread and deepened. *)
 let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
-    ~sizes:(sn0, sm, sk) ~axes:(rn, rm, rk) ~in_run =
+    ~sizes:(sn0, sm0, sk) ~axes:(rn, rm, rk) ~in_run =
   let n, m, kd = w.dims in
-  (* N's extent is the product's, which a model's widths fix (440 columns are
-     55 tiles of 8): where no plan's upcast divides it and the core pads
-     ({!Setting.tc_opt} [2]), N pads to a multiple of the whole warp tile's,
-     its padded columns stored nowhere, and every plan below divides it. On
-     an RTX 5000 Ada bfloat16 products of 65536 rows by 512 by 440 and by
-     136, whose core divides N but whose tiles no plan divides, took 0.35
-     and 0.20 ms staged on 448 and 192 columns against 0.67 and 0.71 on the
-     unstaged core. *)
-  let sn =
-    let divides hn = sn0 mod max 1 (warp_tile / n / hn) = 0 in
-    let un = warp_tile / n in
-    if sn0 > 0 && un > 1 && Setting.value Setting.tc_opt >= 2
-       && not (List.exists divides [ 1; 2 ])
-    then (sn0 + un - 1) / un * un
-    else sn0
+  (* N's and M's extents are the product's, which a model's widths fix (440
+     columns are 55 tiles of 8, a head of 110 rows 7 tiles of 16): where no
+     plan's upcast divides one, as the half of the whole warp tile's does
+     not, and the core pads ({!Setting.tc_opt} [2]), it pads to a multiple
+     of the whole warp tile's, its padded columns or rows stored nowhere, and
+     every plan below divides it. Where the core pads, it tries the
+     product's first factor as its A, along M, so a pad of N alone could
+     stage a product in one order of its factors and leave it on the core's
+     own tile in the other. M pads only where no operand reads its rows in
+     runs, the rows [in_run] holds of at a padded count: rows in runs
+     already have a plan, a warp's tiles falling to what a run holds, and a
+     pad would gate the operand that reads them by rows its tile does not
+     hold. On an RTX 5000 Ada bfloat16 products of 65536 rows by 512 by 440
+     and by 136, whose core divides N but whose tiles no plan divides, took
+     0.35 and 0.20 ms staged on 448 and 192 columns against 0.67 and 0.71 on
+     the unstaged core. *)
+  let padded s0 d =
+    let u = warp_tile / d in
+    if
+      s0 > 0 && u > 1
+      && Setting.value Setting.tc_opt >= 2
+      && s0 mod (u / 2) <> 0
+    then (s0 + u - 1) / u * u
+    else s0
   in
-  let workgroups = Option.map (fun g -> g * sn / max 1 sn0) workgroups in
+  let sn = padded sn0 n in
+  let sm =
+    match padded sm0 m with p when p > sm0 && in_run p -> p | _ -> sm0
+  in
+  let workgroups =
+    Option.map (fun g -> g * sn / max 1 sn0 * sm / max 1 sm0) workgroups
+  in
   let unroll =
     if chunk mod kd = 0 && sk mod (chunk / kd) = 0 then chunk / kd else 1
   in
@@ -1647,7 +1662,7 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
         in
         let slow, tiles, walked =
           if compare_range_arg rm rn < 0 then (1, rows, sn0 * n)
-          else (0, columns, sm * m)
+          else (0, columns, sm0 * m)
         in
         let walked = walked * sk * kd * Dtype.itemsize w.dtype_in in
         let rec most d = if d <= 1 || tiles mod d = 0 then d else most (d - 1) in
@@ -1659,6 +1674,7 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
         in
         Some
           ( when_ (sn > sn0) (Opt.Padto { axis = 0; amount = warp_tile / n })
+            @ when_ (sm > sm0) (Opt.Padto { axis = 1; amount = warp_tile / m })
             @ when_ (um > 1) (split 1 um Opt.Upcast)
             @ (if un > 4 then
                  [ split 0 4 Opt.Upcast; split 0 (un / 4) Opt.Upcast ]

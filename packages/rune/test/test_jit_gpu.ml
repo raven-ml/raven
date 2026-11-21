@@ -2138,9 +2138,13 @@ let test_padded_appended () =
 
 (* A product whose N is one tile of the core, 8 columns on CUDA, computes
    eager's bits: the staged core's pad of N has no axis to pad there and
-   leaves the core unstaged. Its values are halves, so that every product and
-   partial sum is exact in float32, in any order: [[128; 64] by [64; 8]] in
-   bfloat16 and float16, and 93 rows by 16 by 8 with the output transposed. *)
+   leaves the core unstaged. So does one whose M and N the staged tile pads:
+   110 rows, 7 of CUDA's tiles of 16, to 8, and 440 columns, 55 tiles of 8,
+   to 56, and the same product's transpose, whose N alone pads. Its values
+   are halves, so that every product and partial sum is exact in float32,
+   in any order: [[128; 64] by [64; 8]] in bfloat16 and float16, 93 rows by
+   16 by 8 with the output transposed, and 110 by 64 by 440 and 440 by 64 by
+   110. *)
 let test_one_tile_of_n () =
   let _, (module S) = on_gpu () in
   let st = Random.State.make [| 11 |] in
@@ -2164,7 +2168,9 @@ let test_one_tile_of_n () =
   in
   case (Any Nx.bfloat16) "n i, i o -> n o | i" (128, 64, 8);
   case (Any Nx.float16) "n i, i o -> n o | i" (128, 64, 8);
-  case (Any Nx.bfloat16) "n i, i o -> o n | i" (93, 16, 8)
+  case (Any Nx.bfloat16) "n i, i o -> o n | i" (93, 16, 8);
+  case (Any Nx.bfloat16) "n i, i o -> n o | i" (110, 64, 440);
+  case (Any Nx.bfloat16) "n i, i o -> n o | i" (440, 64, 110)
 
 (* Optimised, the scan's sum of its steps' products is within the bound of a
    sum of all their terms, in any order: tensor cores take the narrow
@@ -3648,7 +3654,9 @@ let () =
                "a sum a tensor core pads computes the bits of its operands \
                 with zeros appended"
                test_padded_appended;
-             test "a product whose N is one tile of the core gives eager's bits"
+             test
+               "a product whose N is one tile of the core, or whose M and N \
+                the staged tile pads, gives eager's bits"
                test_one_tile_of_n;
              test
                "a scan whose step narrows its weights computes, unoptimised, \
