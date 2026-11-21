@@ -1360,6 +1360,27 @@ let split_reduce k r =
     List.fold_left (fun n b -> max n (Dtype.itemsize (dtype b))) 1 (operands k)
   in
   let size = size_at k (axis_of k r) in
+  (* The partials pass through the workgroup's shared memory, a slot for
+     each output lane of each sum the split closes, for each of the
+     [workgroup_threads] threads {!locals} then gives the workgroup: where
+     they pass its shared memory the reduce stays whole. A sum of three
+     products along their sum, blocked, takes 96 KiB, which no workgroup of
+     sm_75 or gfx942 holds, and its threads' split failed the compile. *)
+  let partials =
+    let closes red =
+      List.exists (fun u -> axis_id u = axis_id r) (List.tl (src red))
+    in
+    let bytes =
+      List.fold_left
+        (fun n red -> if closes red then n + Dtype.itemsize (dtype red) else n)
+        0 (K.reduceops k)
+    in
+    Sint.(prod_at k (K.axes_of ~reduce:false k [ Upcast ]) * Int bytes)
+  in
+  let fits =
+    Sint.resolve ~default:false
+      Sint.(partials * Int workgroup_threads <= Int (K.ren k).shared_max)
+  in
   let rec split t =
     if
       t > 1
@@ -1369,7 +1390,7 @@ let split_reduce k r =
            && try_split k (axis_of k r) t Opt.Local)
     then split (t / 2)
   in
-  split (sector_bytes / (4 * itemsize))
+  if fits then split (sector_bytes / (4 * itemsize))
 
 (* A contraction on a GPU, summed in 4 bytes or fewer, whose two upcast
    output axes are each reused, an operand not reading it, is blocked: each

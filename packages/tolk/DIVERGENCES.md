@@ -6087,7 +6087,9 @@ against 2.77).
     (`lidx0`), as many as read in their runs of 4 a 32-byte sector of the
     widest operand's row, 2 for float32 and 4 for bfloat16, halved while
     they do not divide it or leave each fewer than 16 trips; their partials
-    meet through shared memory, as a group's do. The later axis then takes
+    meet through shared memory, as a group's do, and the reduce stays whole
+    where they would not fit it: a slot for each output lane of each sum
+    the split closes, for each of the workgroup's 128 threads; The later axis then takes
     the largest power of two of threads whose square the SIMD group's other
     lanes hold, 4 on CUDA, and the other the rest of the workgroup's 128,
     each padded as above, where tinygrad's 16 lanes across the columns each
@@ -6111,7 +6113,10 @@ against 2.77).
   weights, whose products ran at 8.3-8.7 TFLOP/s against 12.8-13.9 with the
   same weights in C order; its own gain is to measure on fudge (rune's
   `Cuda/matmul-float32-transposed-16384x440x1320` against
-  `Cuda/matmul-float32-16384x440x1320`). A second upcast through the other
+  `Cuda/matmul-float32-16384x440x1320`). A sum of three float32 products
+  along their sum, blocked, holds 96 KiB of partials, past every target's
+  workgroup: split, it failed the compile on sm_75, gfx1201 and gfx942,
+  where no staged tile takes it first. A second upcast through the other
   part of an axis serves TESSERA's second embedding, whose day encoding
   splits its 440 columns into 220 pairs: blocked and staged (D497) it takes
   2.9 ms a call of 163840 rows on fudge's RTX 5000 Ada, against 17.1 at 4
@@ -6146,7 +6151,9 @@ against 2.77).
   `matmul_768`, `batched_768` and `two_batches_768` held at 4 by 4;
   `two_batches_768_biased` and `batched_768_biased`, whose bias the
   batches do not read, optimised as without it; `matmul_1000` blocked
-  padded to 1024; `matmul_48` and `scores_masked` not blocked),
+  padded to 1024; `matmul_48` and `scores_masked` not blocked; `a reduce
+  split into threads keeps its partials within shared memory`, three
+  products on sm_75 and gfx942),
   `a batch's projection into heads` (16 objects of 858, 580 or 383 tokens
   and 8 of 581, staged on sm_89 and 8 by 8 a thread on sm_75, and a
   product of 88 by 88 that holds no SIMD group even padded), rune's

@@ -2012,6 +2012,38 @@ let paired_on ren (rows, cols, depth) =
   K.convert_loop_to_global s;
   Heuristic.hand_coded_optimizations s
 
+(* [out[i, j] = sum_k x1[i, k] w1[j, k] + sum_k x2[i, k] w2[j, k] + sum_k
+   x3[i, k] w3[j, k]] in float32, three products along their sum that share
+   no operand, as a layer's input gradient sums its three projections',
+   optimised on [ren]. *)
+let three_on ren (rows, cols, depth) =
+  let open Ops.O in
+  let param slot size = Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32 in
+  let out = param 0 Stdlib.(rows * cols) in
+  let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Ops.Int cols) [ 2 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
+  let sum n =
+    let x = param Stdlib.((2 * n) + 1) Stdlib.(rows * depth)
+    and w = param Stdlib.((2 * n) + 2) Stdlib.(cols * depth) in
+    Ops.reduce
+      (Ops.index x [ (i * int depth) + k ] * Ops.index w [ (j * int depth) + k ])
+      Add [ k ]
+  in
+  let sink =
+    Ops.sink ~kernel:(Ops.kernel_info ())
+      [
+        Ops.end_
+          (Ops.store
+             (Ops.index out [ (i * int cols) + j ])
+             (sum 0 + sum 1 + sum 2))
+          [ i; j ];
+      ]
+  in
+  let s = K.v sink ren in
+  K.convert_loop_to_global s;
+  Heuristic.hand_coded_optimizations s
+
 (* sm_89's renderer, which states the 100 units of an RTX 5000 Ada. *)
 let sm_89 =
   lazy
@@ -2036,9 +2068,25 @@ let sm_75 =
          indices = "";
        })
 
+(* gfx942's renderer, a CDNA part whose workgroup shares 64 KiB. *)
+let gfx942 =
+  Cstyle.without_compiler
+    (Result.get_ok (Helpers.Target.of_string "AMD:HIP:gfx942"))
+
 let blocks =
   group "a contraction in registers"
     [
+      (* Blocked, a sum of three products along their sum would hold 64
+         partials of each product for each of 128 threads, 96 KiB, where sm_75
+         holds 48 and gfx942 64: its reduce stays whole, where its threads'
+         split failed the compile. *)
+      cases
+        "a reduce split into threads keeps its partials within shared memory"
+        ~id:fst
+        [ ("sm_75", Lazy.force sm_75); ("gfx942", gfx942) ]
+        (fun (_, ren) ->
+          let o = three_on ren (6128, 768, 768) in
+          equal ~msg:"blocked" int 64 (lane_outputs_of o));
       (* Two workgroups of 128 threads on each of 100 units are 25600
          threads: the heads' projection blocked keeps 28160, a product of
          2048 by 768 would keep 24576. *)
