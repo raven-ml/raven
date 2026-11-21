@@ -662,28 +662,36 @@ let poisson =
     pairs;
   }
 
-(* binomial's trials, int32: 0, 1 and the greatest, then drawn from 20 to 10^6,
-   whose mean against a drawn probability is mostly past the switch to
-   rejection at 10. *)
+(* binomial's trials, int32: 0, 1 and the greatest, then drawn from 1 to 10^6 on
+   a logarithmic scale, so that the mean of the rarer outcome against a drawn
+   probability lies below the switch to rejection at 10 in about one element in
+   six, most of those from 1 up, where inversion sums several terms, and past it
+   in about two in three. *)
 let binomial =
   let fixed = [ 0L; 1L; Int64.of_int32 Int32.max_int ] in
+  let trials =
+    Gen.map
+      (fun l -> Int64.of_float (Float.exp l))
+      (Gen.float_range 0. (Float.log 1e6))
+  in
   let gen =
     Gen.(
       let+ seed = int
       and+ cols = columns [ probability ]
-      and+ t = array ~size:(constant (n - 3)) (int_range 20 1_000_000) in
-      let t = Array.append (Array.of_list fixed) (Array.map Int64.of_int t) in
+      and+ t = array ~size:(constant (n - 3)) trials in
+      let t = Array.append (Array.of_list fixed) t in
       { seed; cols; ints = [| t |] })
   in
-  let mean_region c =
+  (* The drawn elements whose mean of the rarer outcome is in [lo, hi). *)
+  let means lo hi c =
     let ps = c.cols.(0) and ts = c.ints.(0) in
     let k = ref 0 in
     Array.iteri
       (fun i p ->
         match p with
         | Value p ->
-            let t = Int64.to_float ts.(i) in
-            if t *. Float.min p (1. -. p) >= 10. then incr k
+            let m = Int64.to_float ts.(i) *. Float.min p (1. -. p) in
+            if m >= lo && m < hi then incr k
         | Bound _ | Spread _ -> ())
       ps;
     !k
@@ -705,8 +713,11 @@ let binomial =
     covers =
       [
         ("n at 0, 1 and the greatest int32; p at 0 and 1", fun _ -> true);
+        ( "inversion sums terms: 100 drawn means of the rarer outcome from 1 \
+           to 10",
+          fun c -> means 1. 10. c >= 100 );
         ( "a round rejects: 200 drawn means of the rarer outcome at 10 or more",
-          fun c -> mean_region c >= 200 );
+          fun c -> means 10. Float.infinity c >= 200 );
       ];
     rows = false;
     dtypes = floats;

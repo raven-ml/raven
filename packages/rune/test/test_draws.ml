@@ -22,11 +22,22 @@ module Four = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
 let mesh = Nx.Mesh.v Four.v [ ("x", 2); ("y", 2) ]
 let dtypes = R.[ Float16; Bfloat16; Float32; Float64 ]
 
+(* Each dtype and shape is a program of its own, compiled once for the cases.
+   binomial's, of 48 inversion terms and 18 rejection rounds, takes about 3 s to
+   compile, so it draws at its two compute dtypes alone, float32 and float64, at
+   no element and at the block, which holds its cases' bounds and rejections: a
+   narrower float's program is float32's after a cast of [p], and one element's
+   the block's at another extent, which the other samplers hold at every
+   dtype. *)
 let law k =
+  let dtypes, shapes =
+    if R.name k = "binomial" then (R.[ Float32; Float64 ], R.[ Zero; Block ])
+    else (dtypes, R.[ Zero; One; Block; Row ])
+  in
   prop ~count:4
     (R.name k ^ " compiles to eager's draws")
     (R.gen k)
-    (Draws.law (module Nx.Host) ~dtypes ~shapes:R.[ Zero; One; Block; Row ] k)
+    (Draws.law (module Nx.Host) ~dtypes ~shapes k)
 
 (* [cut r] places an argument of rank [r] cut along its last axis. *)
 let placed name whole cut k =
