@@ -607,6 +607,12 @@ let muon_rms = 0.2
 (* The axis of a matrix that a Gram product sums over. *)
 type matrix_axis = Rows | Columns
 
+(* [muon_odd gram] is [b A + c A A], the square that a step of the iteration
+   multiplies the matrix by, for the Gram square [A = gram]. Local to
+   [muon_direction], it would be a field of [iterate]'s closure. *)
+let muon_odd gram =
+  Nx.add (Nx.mul_s gram muon_b) (Nx.mul_s (Nx.matmul gram gram) muon_c)
+
 (* [muon_direction ~summed d] is Muon's direction for each matrix of [d], of
    [m] rows and [n] columns over its last two axes: [muon_rms * sqrt (max m n)]
    times an approximation of the orthogonal factor [u vᵀ] of the matrix
@@ -649,15 +655,12 @@ let muon_direction ~summed d =
     let start =
       Nx.where (Nx.less_s top least) (Nx.zeros_like d) (Nx.div q norm)
     in
-    let odd gram =
-      Nx.add (Nx.mul_s gram muon_b) (Nx.mul_s (Nx.matmul gram gram) muon_c)
-    in
     let iterate x =
       let t = Nx.matrix_transpose x in
       let step =
         match summed with
-        | Columns -> Nx.matmul (odd (Nx.matmul x t)) x
-        | Rows -> Nx.matmul x (odd (Nx.matmul t x))
+        | Columns -> Nx.matmul (muon_odd (Nx.matmul x t)) x
+        | Rows -> Nx.matmul x (muon_odd (Nx.matmul t x))
       in
       Nx.add (Nx.mul_s x muon_a) step
     in
