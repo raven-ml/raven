@@ -1494,8 +1494,14 @@ let backend name kernels floors =
 
 (* Each case warms up for 20 ms, at least three batches after its
    calibration, in place of thumper's 100 ms: the suite's 440 cases, most of
-   them a few microseconds, spent a third of their time warming up. *)
-let config = Thumper.Config.(default |> warmup 0.02)
+   them a few microseconds, spent a third of their time warming up.
+
+   A trial may take 30 s. cpu/contract-f32-4096, the square product past
+   every cache and over two panels of b's columns (3072 a panel on AVX2,
+   2048 on the M1's AMX), takes about 0.53 s a call on two cores, and its
+   trial outlasts thumper's 10 s; a square whose trial fits them spans one
+   panel on AVX2 or fits in the M1 Max's 48 MiB system cache. *)
+let config = Thumper.Config.(default |> warmup 0.02 |> deadline 30.)
 
 let () =
   exit
