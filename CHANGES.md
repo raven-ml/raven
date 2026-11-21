@@ -3512,6 +3512,9 @@ its lock and from samples the dashboard saw arrive.
   to choose the operations that compute where its argument lies.
 - `Nx.log10` states 4 ulps at float64, the bound `Nx.log2`'s 2 ulps
   derive; it stated 2, which nothing derived. Measured, it is within 1.
+- New `Nx.nan_to_num`: NaN to `0.` and the infinities to the dtype's
+  greatest and least finite values, or to values given, a complex number's
+  parts each.
 - New `Nx.sinc`, `sin (πx) / (πx)`: a polynomial below `|x| = ¼`, so its
   derivatives at and near `0` are accurate, and exactly `0` at every nonzero
   integer.

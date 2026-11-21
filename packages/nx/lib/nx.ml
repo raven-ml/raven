@@ -3806,6 +3806,38 @@ let conjugate_by ~by x =
 
 let conjugate x = conjugate_by ~by:"Nx.conjugate" x
 
+(* NaN, [inf] and [-inf] replaced: a float's elements selected in its own dtype,
+   so that the others keep their bits, and a complex value's parts each as a
+   float's, over its pairs of parts. *)
+let nan_to_num (type v s d) ?(nan = 0.) ?posinf ?neginf (x : (v, s, d) t) :
+    (v, s, d) t =
+  let by = "Nx.nan_to_num" in
+  let fill (type w r) (y : (w, r, d) t) : (w, r, d) t =
+    let dt = dtype y in
+    match D.kind dt with
+    | D.Float ->
+        let f = D.float_format dt in
+        let lit v = E.const dt (D.of_float dt v) in
+        let x = operand 0 y in
+        let kept =
+          if not f.infinities then x
+          else
+            let big = f.max_finite in
+            let high = Option.value posinf ~default:big in
+            let low = Option.value neginf ~default:(-.big) in
+            E.(
+              where
+                (x = lit Float.infinity)
+                (lit high)
+                (where (x = lit Float.neg_infinity) (lit low) x))
+        in
+        elementwise ~by dt [ Any y ] E.(where (x = x) kept (lit nan))
+    | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
+        Prim.alive ~by y;
+        y
+  in
+  complex_parts ~by fill x
+
 (* Matrices *)
 
 let matrix ~by x =

@@ -879,6 +879,40 @@ let test_roundeven () =
   at f32;
   at f64
 
+(* Nx.nan_to_num compiles to eager's bits at every dtype, by its defaults and by
+   values given: it selects among its operand and constants, which rune.mli
+   states exact. *)
+type nan_case =
+  | Nan_case :
+      ('v, 's) Nx.dtype
+      * int array
+      * Operand.t
+      * (float * float option * float option)
+      -> nan_case
+
+let nan_cases =
+  let open Gen in
+  (let* s = shape in
+   let* x = draw s in
+   let* fills =
+     triple
+       (of_list [ 0.; -1.5; 1e300 ])
+       (option (of_list [ 2.; -0. ]))
+       (option (of_list [ -7.; 1e300 ]))
+   in
+   let+ (Nx.Dtype.Any dt) = of_list Nx.Dtype.all in
+   Nan_case (dt, s, x, fills))
+  |> with_pp (fun ppf (Nan_case (dt, s, x, (nan, _, _))) ->
+      Format.fprintf ppf "%a %a, x %a, nan %h" Nx.pp_dtype dt pp_shape s pp_view
+        x.view nan)
+
+let law_nan_to_num (Nan_case (dt, s, xo, (nan, posinf, neginf))) =
+  let x = make dt s xo in
+  let f x = Nx.nan_to_num ~nan ?posinf ?neginf x in
+  let eager = outcome (fun () -> codes (f x)) in
+  let jitted = compiled (fun () -> codes (Rune.jit' f x)) in
+  equal (outcome_t codes_t) eager jitted
+
 (* Nx.log10, compiled on the host, gives eager's bits at the points of nx's
    golden, which nx's gen/special.py writes from mpmath and dune copies here,
    and at each power of ten the dtype holds: nx composes it from Nx.log2,
@@ -6437,6 +6471,8 @@ let () =
              test "special values are exact" test_specials;
              test "roundeven is exact" test_roundeven;
              test "log10 gives eager's bits" test_log10;
+             prop "nan_to_num gives eager's bits at every dtype" nan_cases
+               law_nan_to_num;
              prop
                "log and asinh give eager's bits at float32's edges"
                float32_edges law_log_asinh;

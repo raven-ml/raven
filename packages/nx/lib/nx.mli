@@ -2304,6 +2304,19 @@ val clamp : ?min:'v -> ?max:'v -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Raises [Invalid_argument] if a bound is an [int] outside [x]'s dtype's
     range. *)
 
+val nan_to_num :
+  ?nan:float ->
+  ?posinf:float ->
+  ?neginf:float ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [nan_to_num ~nan ~posinf ~neginf x] is [x] with each NaN replaced by [nan]
+    (default [0.]), each [inf] by [posinf] and each [-inf] by [neginf], by
+    default the dtype's greatest and least finite values, each replacement
+    stored as {!Dtype.of_float} stores it. Its other elements keep their bits. A
+    complex number's parts are replaced each as a float. Every dtype: [x] itself
+    for the integers and booleans. *)
+
 val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [where c x y] is [x]'s element where [c] is [true] and [y]'s elsewhere.
 

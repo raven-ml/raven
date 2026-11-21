@@ -333,6 +333,107 @@ let clamps =
               Nx.clamp ~max:300 (Nx.zeros Nx.uint8 [| 1 |])));
     ]
 
+(* NaN and the infinities replaced *)
+
+(* [v] with a NaN replaced by [nan], [inf] by [posinf] and [-inf] by [neginf],
+   by default the format's ends, each stored by [D.of_float]; a complex number's
+   parts each so. *)
+let replaced (type v s) (dt : (v, s) D.t) ~nan ~posinf ~neginf (v : v) : v =
+  let part (type r) (f : (float, r) D.t) x =
+    let big = (D.float_format f).max_finite in
+    if Float.is_nan x then D.of_float f nan
+    else if x = Float.infinity then
+      D.of_float f (Option.value posinf ~default:big)
+    else if x = Float.neg_infinity then
+      D.of_float f (Option.value neginf ~default:(-.big))
+    else x
+  in
+  match (D.kind dt, dt) with
+  | D.Float, _ -> part dt v
+  | D.Complex, D.Complex64 ->
+      { Complex.re = part D.Float32 v.Complex.re; im = part D.Float32 v.im }
+  | D.Complex, _ ->
+      { Complex.re = part D.Float64 v.Complex.re; im = part D.Float64 v.im }
+  | (D.Signed | D.Unsigned | D.Boolean), _ -> v
+
+let fills =
+  Gen.triple
+    (Gen.of_list [ 0.; -1.5; 1e300; nan ])
+    (Gen.option (Gen.of_list [ 2.; -0.; 1e300 ]))
+    (Gen.option (Gen.of_list [ -7.; 0x1p-1074 ]))
+
+(* A float or complex value whose elements, a complex number's parts each, are
+   NaN, an infinity, a signed zero or finite, 3 in 8 special. *)
+let specials =
+  let pool = [| nan; infinity; -.infinity; 0.; -0.; 1.5; -3.; 1e30 |] in
+  let inexact =
+    List.filter (fun (D.Any dt) -> D.is D.Float dt || D.is D.Complex dt) all
+  in
+  Gen.with_pp
+    (fun ppf (One (_, x)) -> pp_value ppf x)
+    (let open Gen in
+     let* (D.Any dt) = of_dtypes inexact in
+     let* s = shape in
+     let n = Array.fold_left ( * ) 1 s in
+     let+ fs = array ~size:(constant (2 * n)) (int_range 0 7) in
+     let f i = pool.(fs.(i)) in
+     let element (type v s) (dt : (v, s) D.t) i : v =
+       match D.kind dt with
+       | D.Float -> f i
+       | D.Complex -> { Complex.re = f (2 * i); im = f ((2 * i) + 1) }
+       | D.Signed | D.Unsigned | D.Boolean -> assert false
+     in
+     One (dt, Nx.create dt s (Array.init n (element dt))))
+
+let law_nan_to_num (One (dt, x), (nan, posinf, neginf)) =
+  equal_elements dt
+    (Array.map (replaced dt ~nan ~posinf ~neginf) (Nx.to_array x))
+    (Nx.to_array (Nx.nan_to_num ~nan ?posinf ?neginf x))
+
+let nan_to_nums =
+  group "nan_to_num"
+    [
+      prop "each NaN and infinity replaced, the other elements kept"
+        (Gen.pair (one all) fills)
+        law_nan_to_num;
+      prop "each NaN and infinity replaced, at a float or complex dtype"
+        (Gen.pair specials fills) law_nan_to_num;
+      test "NaN to zero, the infinities to the largest finite floats" (fun () ->
+          let x =
+            Nx.create Nx.float32 [| 5 |]
+              [| nan; infinity; -.infinity; 3.25; -0. |]
+          in
+          let m = (D.float_format D.Float32).max_finite in
+          equal (array float_exact)
+            [| 0.; m; -.m; 3.25; -0. |]
+            (Nx.to_array (Nx.nan_to_num x));
+          equal (array float_exact)
+            [| 2.; 1.; -.m; 3.25; -0. |]
+            (Nx.to_array (Nx.nan_to_num ~nan:2. ~posinf:1. x)));
+      test "a complex number's parts each" (fun () ->
+          let x =
+            Nx.create Nx.complex128 [| 2 |]
+              [|
+                { Complex.re = nan; im = infinity };
+                { re = -.infinity; im = 1. };
+              |]
+          in
+          let m = Float.max_float in
+          equal (array float_exact) [| 0.; m; -.m; 1. |]
+            (Array.concat
+               (List.map
+                  (fun z -> [| z.Complex.re; z.im |])
+                  (Array.to_list (Nx.to_array (Nx.nan_to_num x))))));
+      test "a format without infinities keeps its largest finite value"
+        (fun () ->
+          let x = Nx.create Nx.float8_e4m3fn [| 2 |] [| 448.; nan |] in
+          equal (array float_exact) [| 448.; 0. |]
+            (Nx.to_array (Nx.nan_to_num x)));
+      test "an integer value is itself" (fun () ->
+          let x = Nx.create Nx.int8 [| 2 |] [| -128; 127 |] in
+          equal bool true (Nx.nan_to_num x == x));
+    ]
+
 (* Whole values *)
 
 (* Two values of one dtype: the second the first, the first with one element
@@ -390,4 +491,5 @@ let wholes =
           equal bool false (Nx.item [] (Nx.array_equal a b)));
     ]
 
-let () = exit (run "nx logic" [ truths; bits; classes; clamps; wholes ])
+let () =
+  exit (run "nx logic" [ truths; bits; classes; clamps; nan_to_nums; wholes ])

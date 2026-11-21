@@ -370,18 +370,12 @@ let init ~key (a : arch) =
 
 (* Preparation *)
 
-(* torch.nan_to_num: NaN to 0 and the infinities to the dtype's largest finite
-   floats. *)
-let nan_to_num x =
-  let big = (Nx.Dtype.float_format (Nx.dtype x)).max_finite in
-  Nx.where (Nx.isnan x) (Nx.zeros_like x) (Nx.clamp ~min:(-.big) ~max:big x)
-
 (* The normalisation, before its token: log10 (1 + max mean 0.1), the mean
    dividing the unmasked fluxes' sum by one more than their count, as upstream
    does (aion/codecs/spectrum.py, _encode). *)
 let normalisation x =
   let valid = Nx.logical_not x.mask in
-  let flux = Nx.where valid (nan_to_num x.flux) (Nx.zeros_like x.flux) in
+  let flux = Nx.where valid (Nx.nan_to_num x.flux) (Nx.zeros_like x.flux) in
   let sum = Nx.sum ~axes:[ 1 ] flux in
   let count =
     Nx.add_s (Nx.sum ~axes:[ 1 ] (Nx.cast (Nx.dtype flux) valid)) 1.
@@ -443,9 +437,9 @@ let prepare t x =
   let v = Nx.cast (Nx.dtype x.flux) (Scalar.decode t.norm code) in
   let s = Nx.reshape [| -1; 1 |] (scale v) in
   let signal =
-    Nx.mul_s (Nx.sub_s (Nx.div (nan_to_num x.flux) s) 1.) input_scaling
+    Nx.mul_s (Nx.sub_s (Nx.div (Nx.nan_to_num x.flux) s) 1.) input_scaling
   in
-  let ivar = Nx.clamp ~min:0. ~max:ivar_max (nan_to_num x.ivar) in
+  let ivar = Nx.clamp ~min:0. ~max:ivar_max (Nx.nan_to_num x.ivar) in
   let noise = Nx.mul_s (Nx.div (Nx.sqrt ivar) s) input_scaling in
   let grid = Nx.reshape [| 1; -1 |] t.grid in
   let on_grid y = resample ~x:x.wavelength ~y grid in
