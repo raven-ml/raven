@@ -2954,9 +2954,14 @@ encodes its barriers (D146).
   search keeps and drops the same candidates.
 - **Reason:** (d): a beam search of lorenz_simple's step (`Rune.jit ~beam`),
   whose candidates past the cap are the largest unrolls, the slowest to
-  compile. On fudge, the tolk bench's
-  `search/beam/r_128_16_3_4_4_3_3_400_400` takes 0.47 to 0.59 s against 0.71
-  to 1.58 s when each candidate compiles before the cap drops it.
+  compile. On two of fudge's cores, the tolk bench's
+  `search/beam/r_32_3_2_4_3_400`, a width-1 search of one of the step's
+  kernels whose cap of 800 drops its two largest candidates, takes 0.64 and
+  0.66 s (medians of 11, interleaved runs) against 0.75 and 0.71 s when each
+  candidate compiles before the cap drops it. At the default cap of 3000, a
+  width-1 search of the step's three kernels drops none (the largest has
+  2,582 instructions): the gain at the workload's own settings is to
+  re-measure.
 - **Pinned by:** `Tolk.Search › BEAM_PADTO=1 ... › a candidate of
   BEAM_UOPS_MAX instructions or more is not compiled`; `Tolk.Codegen ›
   linearize and compile › compile completes linearize into the program

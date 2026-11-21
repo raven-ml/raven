@@ -519,11 +519,12 @@ let kernel_actions cuda_renderer =
            (fun s -> Search.get_kernel_actions s))
        Lorenz.all)
 
-(* A whole search of width 1 of lorenz's r_128_16_3_4_4_3_3_400_400 on the
-   host, its candidates compiled by Clang with no compile cache, and timed by
-   a function of their optimisations alone, so that every run compiles the
-   same candidates over the same rounds, whose last ones drop candidates past
-   BEAM_UOPS_MAX. *)
+(* A whole search of width 1 of lorenz's r_32_3_2_4_3_400 on the host, its
+   candidates compiled by Clang with no compile cache, and timed by a function
+   of their optimisations alone, so that every run compiles the same
+   candidates over the same rounds. BEAM_UOPS_MAX at [searched_cap] drops its
+   two largest candidates, of 954 and 1,048 instructions, before they compile:
+   at the default 3000, no lorenz kernel's search drops one. *)
 let host_renderer = Cstyle.clang target
 
 let applied prg =
@@ -539,7 +540,8 @@ let opts_time ~vars:_ prg =
   let tie = Float.of_int (Hashtbl.hash opts mod 1000) /. 1e4 in
   1e-3 /. (Float.of_int (1 + List.length opts) +. tie)
 
-let searched = "r_128_16_3_4_4_3_3_400_400"
+let searched = "r_32_3_2_4_3_400"
+let searched_cap = 800
 
 let searches =
   Thumper.group "beam"
@@ -551,7 +553,11 @@ let searches =
         searched
         (fun s ->
           Setting.context
-            [ B (Setting.ccache, false); B (Setting.ignore_beam_cache, true) ]
+            [
+              B (Setting.ccache, false);
+              B (Setting.ignore_beam_cache, true);
+              B (Setting.beam_uops_max, searched_cap);
+            ]
             (fun () ->
               Search.beam_search ~part:"made-up" ~link:Ops.body
                 ~time:opts_time 1
