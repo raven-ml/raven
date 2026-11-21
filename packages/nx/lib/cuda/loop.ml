@@ -872,9 +872,9 @@ let temporaries buffer xs =
 (* Buffers of temporaries
 
    A plan lays its temporaries out in stand-ins, empty buffers that
-   allocate nothing, and makes a buffer for each stand-in its calls name
-   only once it is whole: a call tried, too wide, and planned again in
-   parts makes none. *)
+   allocate nothing, and makes one buffer for the stand-ins its calls name
+   only once it is whole, each stand-in a view of it: a call tried, too
+   wide, and planned again in parts takes none of it. *)
 
 (* The stand-ins a plan made, each with its bytes. *)
 type stand_ins = (Rig.Buffer.t * int) list ref
@@ -887,23 +887,30 @@ let fresh (s : stand_ins) xs =
   s := (b, bytes) :: !s;
   fst (temporaries b xs)
 
-(* [cs] with each stand-in of [s] they name replaced by a buffer of its
-   bytes on [dev], which their first call frees once they are submitted,
-   so that its memory returns when their work is done. *)
+(* [cs] with each stand-in of [s] they name replaced by a view of one
+   buffer on [dev], each from a multiple of 256 bytes, where a buffer of
+   its own would start. Their first call frees the buffer once they are
+   submitted, so that its memory returns when their work is done. *)
 let made dev (s : stand_ins) cs =
-  let make cs (b, bytes) =
-    let named (c : Launch.call) = Array.memq b c.buffers in
-    match cs with
-    | (c : Launch.call) :: rest when List.exists named cs ->
-        let m = Rig.Buffer.create dev bytes in
+  let named (b, _) =
+    List.exists (fun (c : Launch.call) -> Array.memq b c.buffers) cs
+  in
+  match (List.filter named !s, cs) with
+  | [], _ | _, [] -> cs
+  | used, (c : Launch.call) :: rest ->
+      let up n = (n + 255) land lnot 255 in
+      let bytes = List.fold_left (fun at (_, n) -> up at + n) 0 used in
+      let m = Rig.Buffer.create dev bytes in
+      let place at (b, n) =
+        let v = Rig.Buffer.view m ~first:(up at) ~length:n in
         let swap (c : Launch.call) =
-          Array.iteri (fun i x -> if x == b then c.buffers.(i) <- m) c.buffers
+          Array.iteri (fun i x -> if x == b then c.buffers.(i) <- v) c.buffers
         in
         List.iter swap cs;
-        { c with frees = m :: c.frees } :: rest
-    | _ -> cs
-  in
-  List.fold_left make cs !s
+        up at + n
+      in
+      ignore (List.fold_left place 0 used);
+      { c with frees = m :: c.frees } :: rest
 
 (* [p] with its outputs [ks] alone, in that order. *)
 let outputs (p : P.t) ks =
