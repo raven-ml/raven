@@ -9843,9 +9843,11 @@ D466.
   the stores' unit stride, or one element), and that axis's candidate gives
   it fewer threads than the runs of the narrowest store's elements that
   span 16 bytes, the axis takes the least divisor of its size that reaches
-  them, within the workgroup's 128 threads. Those threads are `lidx0`'s
-  (D486), consecutive in a SIMD group. Elsewhere, where no divisor reaches
-  them, and in a kernel that reduces, the candidate stands.
+  them, within the workgroup's 128 threads; where the axes tinygrad ranks
+  before it would leave it fewer, it takes them first and those axes share
+  the rest. Those threads are `lidx0`'s (D486), consecutive in a SIMD group.
+  Elsewhere, where no divisor reaches them, and in a kernel that reduces,
+  the candidate stands.
 - **Reason:** (d): the concurrent accesses of a warp coalesce into as many
   transactions as the 32-byte sectors they touch (CUDA C++ Best Practices
   Guide §10.2.1). A head of 110 channels, TESSERA's, takes 2 threads under
@@ -9853,9 +9855,19 @@ D466.
   d]` spread each warp's accesses over 16 runs of 4 bytes: on fudge's RTX
   5000 Ada 391 us a launch (235 GB/s), runs of 8 bytes 221 us (416 GB/s),
   and from 10 bytes on, 10 threads included, 177 to 184 us (499 to
-  519 GB/s), a contiguous add's rate. AMD and Metal are untimed.
+  519 GB/s), a contiguous add's rate. Taking them ahead of the ranking
+  serves AION's image codec, which scales each image's channels by a factor
+  of its own: in `[16; 96; 96; 128]` float32 the spatial axes, ranked first
+  as the factor does not index them, took the 128 threads and left the
+  channels none, so each warp stored 32 values 1.5 KiB apart, 1.08 ms a
+  launch, and 0.40 with 4 threads along the channels; its five such maps
+  took 3.60 ms of a `codec/image/16` call and take 1.50 (DEBUG=2), and the
+  row 72.62-72.67 ms and 70.56-70.78, three alternated rounds. AMD and
+  Metal are untimed.
 - **Pinned by:** the Codegen suite's `a head transpose's lid.x threads store
   16 bytes together` and its `phi_arange_255` and `phi_arange_float` stage
   goldens of CUDA, HIP and Metal; the heuristic suite's `add_odd` goldens of
-  Metal, CUDA and AMD and its table (`.tolk`, D501); tessera's
-  `distil-step/medium` row on CUDA.
+  Metal, CUDA and AMD and its table (`.tolk`, D501), and its `a map's
+  innermost threads store 16 bytes together where the axes ranked before
+  them would take the workgroup`; tessera's `distil-step/medium` row and
+  AION's `codec/image/16` on CUDA.

@@ -3419,6 +3419,66 @@ let across_threads =
         (if List.exists along (loads o) then Some (Bigint.to_int (size r))
          else None))
 
+(* [out[b, h, w, c] = x[b, h, w, c] s[b, c] + y[b, h, w, c]] over [batch]
+   images of [side] by [side] pixels of [channels] channels of [dt]: a
+   codec's scale of each image's channels, whose pixel axes no access of [s]
+   indexes. *)
+let channel_scale dt batch side channels =
+  let open Ops.O in
+  let n = Stdlib.(batch * side * side * channels) in
+  let param slot size = Shape.param ~shape:[ Ops.Int size ] slot dt in
+  let out = param 0 n and x = param 1 n and y = param 3 n
+  and s = param 2 Stdlib.(batch * channels) in
+  let b = Ops.range ~axis_type:Weak (Ops.Int batch) [ 0 ]
+  and h = Ops.range ~axis_type:Weak (Ops.Int side) [ 1 ]
+  and w = Ops.range ~axis_type:Weak (Ops.Int side) [ 2 ]
+  and c = Ops.range ~axis_type:Weak (Ops.Int channels) [ 3 ] in
+  let at = (((((b * int side) + h) * int side) + w) * int channels) + c in
+  let v =
+    (Ops.index x [ at ] * Ops.index s [ (b * int channels) + c ])
+    + Ops.index y [ at ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ at ]) v) [ b; h; w; c ] ]
+
+(* The stores of [k]'s optimised kernel. *)
+let stores k =
+  List.filter_map
+    (fun u -> if Ops.op u = Op.Store then Some (Ops.nth u 0) else None)
+    (Ops.toposort ~calls:Skip (K.ast k))
+
+let innermost_first =
+  cases
+    "a map's innermost threads store 16 bytes together where the axes ranked \
+     before them would take the workgroup"
+    ~id:(fun (t, dt, b, p, c) ->
+      Format.asprintf "%a %d by %d by %d by %d on %s" Dtype.pp dt b p p c t)
+    [
+      ("CUDA:CUDA:sm_89", Dtype.Float32, 4, 96, 128);
+      ("CUDA:CUDA:sm_89", Dtype.Float32, 4, 48, 256);
+      ("AMD:HIP:gfx942", Dtype.Float32, 4, 96, 128);
+      ("METAL:METAL:Apple9", Dtype.Bfloat16, 4, 48, 100);
+    ]
+    (fun (t, dt, b, p, c) ->
+      let ren =
+        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+      in
+      let k = K.v (channel_scale dt b p c) ren in
+      K.convert_loop_to_global k;
+      let o = Heuristic.hand_coded_optimizations k in
+      let r = Option.get (fastest o) in
+      List.iter
+        (fun a ->
+          let run = run_of o a in
+          equal ~msg:"the next thread stores the next run" (option bigint)
+            (Some run) (stride r (Ops.get_idx (Ops.nth a 1)));
+          is_true ~msg:"the threads' runs span 16 bytes"
+            Bigint.(
+              geq
+                (mul (mul (size r) run) (of_int (Dtype.itemsize dt)))
+                (of_int 16)))
+        (stores o))
+
 (* A contraction in registers whose operands are both laid out along its
    reduce, as [x @ matrix_transpose w] reads a matrix stored [outputs;
    inputs], splits what its unroll leaves of the reduce into its fastest
@@ -4182,6 +4242,7 @@ let () =
          keeps_kernel_writes;
          fastest_threads_coalesce;
          across_threads;
+         innermost_first;
          along_reduce_threads;
          staged_products;
          batched_heads;

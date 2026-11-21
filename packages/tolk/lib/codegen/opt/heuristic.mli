@@ -238,15 +238,19 @@
       local: up to three axes, those some access does not index first, split
       by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides them
       while the workgroup stays within 128 threads, those along a reduce
-      counted. A blocked contraction keeps that split where it lays a power
-      of two of at least 2 threads along the later of its two axes; else 16
-      or 8 threads, whichever pads it less, lie along the later axis and the
-      rest of 128 along the other, each axis padded to its threads
-      ({!Opt.t.Padto}), unless one takes no threads or a pad is refused. One
-      whose reduce took threads, blocked or not, lays in their place along
-      the later axis the largest power of two whose square the lanes of a
-      SIMD group beside those threads hold, 4 beside 2 on CUDA, so that a load
-      reads as many rows of each operand.
+      counted. In a map, the innermost axis, which every store reads at the
+      stride of a thread's run of consecutive elements, takes where that
+      gives it fewer the least divisor of its size whose threads' runs of the
+      narrowest store's elements span 16 bytes, ahead of the other axes where
+      they would leave it fewer. A blocked contraction keeps that split
+      where it lays a power of two of at least 2 threads along the later of
+      its two axes; else 16 or 8 threads, whichever pads it less, lie along
+      the later axis and the rest of 128 along the other, each axis padded
+      to its threads ({!Opt.t.Padto}), unless one takes no threads or a pad
+      is refused. One whose reduce took threads, blocked or not, lays in
+      their place along the later axis the largest power of two whose square
+      the lanes of a SIMD group beside those threads hold, 4 beside 2 on
+      CUDA, so that a load reads as many rows of each operand.
 
     {1:host The host}
 

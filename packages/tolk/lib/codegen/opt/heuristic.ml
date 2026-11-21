@@ -1668,46 +1668,69 @@ let locals ?blocked k =
      SIMD group, takes the least divisor of its size whose threads store
      {!run_bytes} together ({!store_lanes}) where tinygrad's candidate gives
      it fewer: a head of 110 bfloat16 channels takes 10 threads, not 2, so
-     a warp's stores make 3 runs where they made 16. A reduce stores once an
-     output, so its stores' runs count for little. *)
+     a warp's stores make 3 runs where they made 16. Where the axes ranked
+     before it, which an access does not index, leave it fewer than that, it
+     takes them first and they share what is left: AION's image codec scales
+     [16; 96; 96; 128] float32 by a factor of each image and channel, whose
+     spatial axes took the workgroup's 128 threads and left the channels
+     none, so that each warp stored 32 values 1.5 KiB apart, in 1.08 ms on an
+     RTX 5000 Ada; 4 threads along the channels took 0.40. A reduce stores
+     once an output, so its stores' runs count for little. *)
   let innermost = List.fold_left (fun m (_, a) -> max m a) (-1) ranking in
   let wanted axis =
     if axis = innermost && K.reduceop k = None then
       store_lanes k (List.nth (K.rngs k) axis)
     else None
   in
+  (* The least divisor of [axis]'s size from [want] whose threads, beside
+     [local_size], keep within the workgroup's. *)
+  let reaching axis want local_size =
+    match known_size (shape_at k axis) with
+    | Some n when Bigint.fits_int n ->
+        let n = Bigint.to_int n in
+        let rec least d =
+          if d > n || local_size * d * held > workgroup_threads then None
+          else if n mod d = 0 then Some d
+          else least (d + 1)
+        in
+        least want
+    | _ -> None
+  in
+  let take to_local (_, axis) =
+    let local_size = Helpers.prod (List.map snd to_local) in
+    let candidates = (if axis = 0 then [ 32 ] else []) @ [ 16; 8; 4; 3; 2 ] in
+    let pick =
+      List.find_opt
+        (fun x ->
+          divisible (shape_at k axis) x
+          && local_size * x * held <= workgroup_threads)
+        candidates
+    in
+    let pick =
+      match wanted axis with
+      | Some want when Option.value pick ~default:1 < want -> (
+          match reaching axis want local_size with
+          | Some d -> Some d
+          | None -> pick)
+      | _ -> pick
+    in
+    match pick with
+    | Some sz -> to_local @ [ (axis, sz) ]
+    | None -> to_local
+  in
+  let ranked = List.stable_sort order ranking in
+  let greedy = List.fold_left take [] ranked in
   let greedy =
-    List.fold_left
-      (fun to_local (_, axis) ->
-        let local_size = Helpers.prod (List.map snd to_local) in
-        let candidates =
-          (if axis = 0 then [ 32 ] else []) @ [ 16; 8; 4; 3; 2 ]
-        in
-        let pick =
-          List.find_opt
-            (fun x ->
-              divisible (shape_at k axis) x
-              && local_size * x * held <= workgroup_threads)
-            candidates
-        in
-        let pick =
-          match (wanted axis, known_size (shape_at k axis)) with
-          | Some want, Some n
-            when Option.value pick ~default:1 < want && Bigint.fits_int n ->
-              let n = Bigint.to_int n in
-              let rec least d =
-                if d > n || local_size * d * held > workgroup_threads then pick
-                else if n mod d = 0 then Some d
-                else least (d + 1)
-              in
-              least want
-          | _ -> pick
-        in
-        match pick with
-        | Some sz -> to_local @ [ (axis, sz) ]
-        | None -> to_local)
-      []
-      (List.stable_sort order ranking)
+    let threads = Option.value (List.assoc_opt innermost greedy) ~default:1 in
+    match if innermost < 0 then None else wanted innermost with
+    | Some want when threads < want -> (
+        match reaching innermost want 1 with
+        | Some d ->
+            List.fold_left take
+              [ (innermost, d) ]
+              (List.filter (fun (_, a) -> a <> innermost) ranked)
+        | None -> greedy)
+    | _ -> greedy
   in
   let to_local =
     match blocked with
