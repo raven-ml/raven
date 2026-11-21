@@ -54,12 +54,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - rune's routed products with no core: one row a block loses 12-33% to
   blocks of 4 at 3-7 tokens; Q8_0's blocks of 64 from 16 rows take 1.5-2.9x
   as long as 8 or 16
-- MXFP4's float32 decode on Metal multiplies by a subnormal at scale byte
-  0, which Metal may flush (MSL 4.1 §8.1); no test reaches it there
-- aion's `generate --device metal` may fail, since Metal has no float64:
-  `Roar` draws the order from a float64 uniform and holds the temperature
-  as a float64 scalar on the device. Unchecked; found by aion batch 7's
-  audit
 
 ## nx, rune
 
@@ -69,9 +63,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   needs a call-argument contract: tolk passing a node it stores anyway with
   the view's index, or the scatter fusing its updates' computation (one
   launch a block; branch `fix-kvwrite`)
-- The exhaustive sweep of float32 `log` and `asinh` against nx_kinds.h's
-  bits on nx_cuda and nx_amd is owed before any accuracy promise names a
-  GPU
 - main differs from its pinned ocamlformat (0.29.0) in 1,837 files, hand
   wrapping since September's style commits; one `dune fmt` makes the tree
   clean (+117,607/-102,814). Before it: ignore entries or generators for the
@@ -101,25 +92,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   Found by the TARGETFACTS audit (_plans/consolidate/targetfacts, A3);
   measured by attention2 M3, in its adjudication's amendment
   (_plans/tessera-port/design/attention2/adjudication.md)
-- rune states a compiled complex contraction's part within
-  `γ(β + 2) Σ(|ar br| + |ai bi|)`, β = β(K) (rune.mli:1706-1707,
-  lower_reduce.mli:143-145), while `Nx.contract` and the kernel contract
-  give `√2 γ(β(2K))` in modulus (nx.mli:2685-2688, nx_kernel.mli:303). At
-  K = 1 alone, rune's bound is larger: `γ(5)` a part against `√2 γ(4)` in
-  modulus. From K = 2 on, `β(K) + 2 ≤ β(2K)`. It matters if compiled
-  programs must hold `Nx.contract`'s bound. Found by NXBOUND
-- `Nx.log10` states 2 ulps at float64 (nx.mli:1750-1753) and derives it
-  nowhere: it composes over `log2`, itself stated at 2 ulps there
-  (:1746-1748), and since rune compiles nx's own sequence (b1c79a2bcc;
-  rune.mli:1619-1651) a compiled log10 has eager's bits, so the 1-ulp
-  route over tolk's `xlog2` under host jit is gone. The float32 bound and
-  the exact powers of ten are measured at every float32. A `log2` given as
-  two parts would derive the float64 bound, once a consumer needs log10
-  bounded there. Found by the DD audit (S2)
-- nx has no `nan_to_num`: aion's `Spectrum.nan_to_num` composes `isnan`,
-  `clamp` and `where` to replace NaN and the infinities as torch's does
-- `Nx_io.Hdf5` reads no booleans: h5py's, stored as an HDF5 enum, read as
-  `int8`
 
 ## rig
 
@@ -136,8 +108,3 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - talon's stored allocation baselines for its Parquet read rows have
   drifted from main (read-nullable: 34,263 words stored, 36,671 measured
   on main); re-record them, and find which change moved them
-
-## kaun, ymir
-
-- ymir_units' odoc has an unresolved reference to `Nx.Dtype.name` in
-  `Unit.ratio`'s doc; odoc warnings are fatal in `@doc`
