@@ -1041,7 +1041,11 @@ let near_cpu (cuda : Support.backend) c =
    fused multiply-add rounds it to [1 + 2{^-23}]; each weight rounds once
    to float16, so [exp (-20)], below half float16's least subnormal, applies
    as [0] to a value of 1024, which a fused multiply-add would add as
-   [2.1e-6]. The row's [o] and [lse], at scale 1. *)
+   [2.1e-6]; a block's products [y] sum from [+0] and [a] becomes
+   [α a + y] in one fused multiply-add, so key 0's value 43.25 at
+   [α = exp (-20)] against the next block's value 1 gives [1 + 2{^-23}],
+   where a matrix unit adding [α a] and the product would truncate it to
+   [1]. The row's [o] and [lse], at scale 1. *)
 let units_cases =
   let case tk q k v =
     { d = F16; rows = 17; tk; len = None; dk = Array.length q; dv = 1; q; k; v }
@@ -1053,6 +1057,13 @@ let units_cases =
     ( "a weight rounds to the values' dtype",
       case 2 [| 1. |] [| 0.; -20. |] [| 0.; 1024. |],
       ([| 0. |], [| 0. |]) );
+    ( "a block's products add to α a in one fused multiply-add",
+      case 65 [| 1. |]
+        (Array.init 65 (fun j ->
+             if j = 0 then 0. else if j = 64 then 20. else Float.neg_infinity))
+        (Array.init 65 (fun j ->
+             if j = 0 then 43.25 else if j = 64 then 1. else 0.)),
+      ([| 1. +. 0x1p-23 |], [| 20. |]) );
   ]
 
 let units_case (cuda : Support.backend) (msg, c, (o, lse)) =

@@ -19,21 +19,21 @@
            range; each row's visible keys: output 0 on a mixed block; its
            kept keys: output 2 where it runs
        --> S = q k^T, times the scale; output 1 on the visible pairs
-       --> m' = max (m, S); weights exp (s - m'); l = α l + Σ, the sum in
-           nx.cpu's eight lanes and their tree; a = α a
+       --> m' = max (m, S); weights exp (s - m'); l = α l + Σ, fused,
+           the sum in nx.cpu's eight lanes and their tree
        --> the weights of the visible pairs output 2 drops, 0
-       --> a += p v
+       --> a = α a + y, fused, y the block's p v from +0
      then o = a / l + 0 and lse = m + log l, or a part's (m, l, a)
 
    The FFMA kernel (simt) computes nx.cpu's arithmetic, so a row's bits are
    nx.cpu's: each score's products fused in increasing dimension from +0,
-   each value product fused in increasing key. The matrix-unit kernel
-   (mma) takes float16 or bfloat16 q, k and v into float32: q k^T and p v
-   on mma.sync m16n8k16, each weight rounded once to v's dtype for p v,
-   the softmax in registers in nx.cpu's lane order. A block whose values
-   hold one that is not finite takes, in either kernel, p v by fused
-   products over each row's visible and kept pairs alone, so a value hidden
-   from a row or dropped never reaches its o.
+   each block's value products fused in increasing key from +0. The
+   matrix-unit kernel (mma) takes float16 or bfloat16 q, k and v into
+   float32: q k^T and p v on mma.sync m16n8k16, each weight rounded once to
+   v's dtype for p v, the softmax in registers in nx.cpu's lane order. A
+   block whose values hold one that is not finite takes, in either kernel,
+   p v by fused products over each row's visible and kept pairs alone, so a
+   value hidden from a row or dropped never reaches its o.
 
    The pair program runs on loop.cu's tape over NX_ATT_THREADS x V
    elements, the kinds NX_ATT_KINDS lists in line, its planes first in
@@ -1044,8 +1044,7 @@ __device__ __noinline__ void simt(const u64 *w) {
           for (int hh = 4; hh > 0; hh /= 2)
             for (int i = 0; i < hh; i++) ln[i] = ln[i] + ln[i + hh];
           al = exp_(M[tid] - mx);
-          A t = L[tid] * al;
-          L[tid] = t + ln[0];
+          L[tid] = fma_(al, L[tid], ln[0]);
           M[tid] = mx;
         }
         AL[tid] = al;
@@ -1063,16 +1062,14 @@ __device__ __noinline__ void simt(const u64 *w) {
         __syncthreads();
       }
 
-      /* o = alpha o, then the products by chunks of VKC keys. A chunk
-         holding a value not finite takes the pairs its rows see and keep
-         alone. */
+      /* The block's products y from +0, by chunks of VKC keys, then
+         o = alpha o + y, fused. A chunk holding a value not finite takes
+         the pairs its rows see and keep alone. */
+      A y[RPT][DPT];
 #pragma unroll
-      for (int rr = 0; rr < RPT; rr++) {
-        A al = AL[ty * RPT + rr];
-        if (al != 1)
+      for (int rr = 0; rr < RPT; rr++)
 #pragma unroll
-          for (int x = 0; x < DPT; x++) o[rr][x] = o[rr][x] * al;
-      }
+        for (int x = 0; x < DPT; x++) y[rr][x] = 0;
       for (int vk = 0; vk < nk; vk += VKC) {
         int nv = nk - vk < VKC ? nk - vk : VKC;
         __syncthreads();
@@ -1085,11 +1082,11 @@ __device__ __noinline__ void simt(const u64 *w) {
         if (!bad && nv == VKC) {
 #pragma unroll 2
           for (int jj = 0; jj < VKC; jj++)
-            pv_step<A, RPT, DPT>(P + (vk + jj) * PS + ty * RPT, Vc + jj * DVC + tx * DPT, o);
+            pv_step<A, RPT, DPT>(P + (vk + jj) * PS + ty * RPT, Vc + jj * DVC + tx * DPT, y);
         } else if (!bad) {
 #pragma unroll 1
           for (int jj = 0; jj < nv; jj++)
-            pv_step<A, RPT, DPT>(P + (vk + jj) * PS + ty * RPT, Vc + jj * DVC + tx * DPT, o);
+            pv_step<A, RPT, DPT>(P + (vk + jj) * PS + ty * RPT, Vc + jj * DVC + tx * DPT, y);
         } else {
           for (int jj = 0; jj < nv; jj++) {
             const A *pr = P + (vk + jj) * PS + ty * RPT, *vv = Vc + jj * DVC + tx * DPT;
@@ -1099,10 +1096,16 @@ __device__ __noinline__ void simt(const u64 *w) {
                   VIS[ty * RPT + rr] & (keeps ? KEEP[ty * RPT + rr] : ~0ull);
               if (!((use >> (vk + jj)) & 1)) continue;
 #pragma unroll
-              for (int x = 0; x < DPT; x++) o[rr][x] = fma_(pr[rr], vv[x], o[rr][x]);
+              for (int x = 0; x < DPT; x++) y[rr][x] = fma_(pr[rr], vv[x], y[rr][x]);
             }
           }
         }
+      }
+#pragma unroll
+      for (int rr = 0; rr < RPT; rr++) {
+        A al = AL[ty * RPT + rr];
+#pragma unroll
+        for (int x = 0; x < DPT; x++) o[rr][x] = fma_(al, o[rr][x], y[rr][x]);
       }
     }
 
@@ -1184,8 +1187,9 @@ template <class A> __device__ void merge(const u64 *w) {
        (cp.async); S = q k^T (8 key tiles x dk/16 steps); scale, output 1,
        hidden -inf; the row's greatest, the weights, lanes 2t and 2t + 1
        in the thread, the tree across the quad (xor 2, xor 1): nx.cpu's
-       lane order; o = alpha o; p rounded into A fragments; o += p v
-       (dv/8 tiles x 4 steps), v by ldmatrix.trans
+       lane order; p rounded into A fragments; per pair of tiles of 8
+       columns, y = p v from +0 (4 steps), v by ldmatrix.trans, then
+       o = alpha o + y, fused
 
    dk at most NX_ATT_MMA_DK (registers), any dv by chunks of 128
    columns. */
@@ -1532,8 +1536,7 @@ __device__ __noinline__ void mma(const u64 *w) {
         float sum = l0 + l1, al = 1;
         if (on) {
           al = exp_(m[x] - mx);
-          float t = l[x] * al;
-          l[x] = t + sum;
+          l[x] = fmaf(al, l[x], sum);
           m[x] = mx;
         }
         alpha[x] = al;
@@ -1547,43 +1550,50 @@ __device__ __noinline__ void mma(const u64 *w) {
               if (!((kp >> (8 * n + 2 * t4 + e)) & 1)) s[n][2 * x + e] = 0.f;
         }
       }
-#pragma unroll
-      for (int n = 0; n < MMA_DVC / 8; n++) {
-        if (alpha[0] != 1) o[n][0] = o[n][0] * alpha[0], o[n][1] = o[n][1] * alpha[0];
-        if (alpha[1] != 1) o[n][2] = o[n][2] * alpha[1], o[n][3] = o[n][3] * alpha[1];
-      }
-
       if (!bad) {
-        /* o += p v: p from the score fragments, rounded into v's dtype. */
+        /* o = alpha o + p v, p from the score fragments, rounded into v's
+           dtype: a pair of tiles' products from +0, then fused into o. */
         auto pv = [&](auto bfc) {
           constexpr bool BF = decltype(bfc)::value;
+          unsigned pa[4][4];
 #pragma unroll
           for (int kk = 0; kk < 4; kk++) {
-            unsigned pa[4] = {pack2<BF>(s[2 * kk][0], s[2 * kk][1]),
-                              pack2<BF>(s[2 * kk][2], s[2 * kk][3]),
-                              pack2<BF>(s[2 * kk + 1][0], s[2 * kk + 1][1]),
-                              pack2<BF>(s[2 * kk + 1][2], s[2 * kk + 1][3])};
+            pa[kk][0] = pack2<BF>(s[2 * kk][0], s[2 * kk][1]);
+            pa[kk][1] = pack2<BF>(s[2 * kk][2], s[2 * kk][3]);
+            pa[kk][2] = pack2<BF>(s[2 * kk + 1][0], s[2 * kk + 1][1]);
+            pa[kk][3] = pack2<BF>(s[2 * kk + 1][2], s[2 * kk + 1][3]);
+          }
 #pragma unroll
-            for (int n = 0; n < MMA_DVC / 8; n += 2) {
-              if (8 * n >= ndv) break;
+          for (int n = 0; n < MMA_DVC / 8; n += 2) {
+            if (8 * n >= ndv) break;
+            float y[2][4] = {};
+#pragma unroll
+            for (int kk = 0; kk < 4; kk++) {
               unsigned vf[4];
               ldsm4t(vf, va + 2 * (16 * kk * MMA_VS + 8 * n));
-              mma16816<BF>(o[n], pa, vf[0], vf[1]);
-              mma16816<BF>(o[n + 1], pa, vf[2], vf[3]);
+              mma16816<BF>(y[0], pa[kk], vf[0], vf[1]);
+              mma16816<BF>(y[1], pa[kk], vf[2], vf[3]);
             }
+#pragma unroll
+            for (int t = 0; t < 2; t++)
+#pragma unroll
+              for (int e = 0; e < 4; e++)
+                o[n + t][e] = fmaf(alpha[e / 2], o[n + t][e], y[t][e]);
           }
         };
         if (bf) pv(std::true_type());
         else pv(std::false_type());
       } else {
-        /* The pairs each row sees and keeps, fused in increasing key: each key's
-           weights from the quad's thread that holds them. */
+        /* The pairs each row sees and keeps, fused in increasing key from
+           +0, then fused into o: each key's weights from the quad's thread
+           that holds them. */
         unsigned long long v0 = r0 < c.rows ? VIS[r0] : 0;
         unsigned long long v1 = r0 + 8 < c.rows ? VIS[r0 + 8] : 0;
         if (keeps) {
           v0 &= r0 < c.rows ? KEEP[r0] : 0;
           v1 &= r0 + 8 < c.rows ? KEEP[r0 + 8] : 0;
         }
+        float y[MMA_DVC / 8][4] = {};
         for (int j = 0; j < nk; j++) {
           int n = j / 8, e = j % 2, from = (lane & ~3) | (j % 8) / 2;
           float w0 = 0, w1 = 0;
@@ -1602,11 +1612,16 @@ __device__ __noinline__ void mma(const u64 *w) {
             for (int e2 = 0; e2 < 2; e2++) {
               int col = 8 * n2 + 2 * t4 + e2;
               uint16_t x = Vs[j * MMA_VS + col];
-              float y = bf ? nx_bf16_to_float(x) : nx_f16_to_float(x);
-              if (s0) o[n2][e2] = fmaf(p0, y, o[n2][e2]);
-              if (s1) o[n2][2 + e2] = fmaf(p1, y, o[n2][2 + e2]);
+              float vx = bf ? nx_bf16_to_float(x) : nx_f16_to_float(x);
+              if (s0) y[n2][e2] = fmaf(p0, vx, y[n2][e2]);
+              if (s1) y[n2][2 + e2] = fmaf(p1, vx, y[n2][2 + e2]);
             }
         }
+#pragma unroll
+        for (int n2 = 0; n2 < MMA_DVC / 8; n2++)
+#pragma unroll
+          for (int e = 0; e < 4; e++)
+            o[n2][e] = fmaf(alpha[e / 2], o[n2][e], y[n2][e]);
       }
       __syncthreads(); /* buffer sl is free for the block after next */
       sl ^= 1;

@@ -497,23 +497,24 @@
     Let [m'] be the greatest of [m] and the [x] of a row's visible pairs in a
     block, a NaN where one is. A block leaves the row's [m], [l] and [a] as they
     were where the row has no visible pair in it. Where [m'] is [-∞], each
-    weight is [0] and [m] and [l] are left as they were. Otherwise each weight
-    is [exp (x - m')], [0] at a hidden pair. [l] becomes [α l + s],
-    [α = exp (m - m')] and [s] the block's weights summed term [j] into lane
-    [j mod 8], then lane [i] taking lane [i + h] for [i] below [h], for [h] = 4,
-    2 and 1, and [a] becomes [α a], unchanged where [α] is [1]; then each weight
-    of a visible pair output 2 drops is [0]. In either case [a] then adds each
-    weight times its key's value over the block's keys, a hidden or dropped
-    pair's weight [0] included, or over the kept pairs alone where a hidden or
-    dropped value of the block is a NaN or an infinity. So a value at a kept
-    pair counts wherever its block lies, its [x] [-∞] included: a NaN there, or
-    an infinity of weight [0], makes [a] a NaN. *)
+    weight is [0], [m] and [l] are left as they were and [α] is [1]. Otherwise
+    each weight is [exp (x - m')], [0] at a hidden pair, [α = exp (m - m')],
+    and [l] becomes [α l + s], one fused multiply-add, [s] the block's weights
+    summed term [j] into lane [j mod 8], then lane [i] taking lane [i + h] for
+    [i] below [h], for [h] = 4, 2 and 1; then each weight of a visible pair
+    output 2 drops is [0]. In either case [a] becomes [α a + y], one fused
+    multiply-add for each element, [y] the sum from [+0] of each weight times
+    its key's value ({!section-attention_sums}) over the block's keys, a hidden
+    or dropped pair's weight [0] included, or over the kept pairs alone where a
+    hidden or dropped value of the block is a NaN or an infinity. So a value at
+    a kept pair counts wherever its block lies, its [x] [-∞] included: a NaN
+    there, or an infinity of weight [0], makes [a] a NaN. *)
 
 (** {2:attention_results Results}
 
     Once the row's parts merge ({!section-attention_merges}), [o = a / l + 0] in
     the accumulator, rounded once to [o]'s dtype, the [+0] turning into [+0] a
-    [-0] that [α a] leaves. [lse = m + log l], [+∞] where [m] is; a row of
+    [-0] that [α a + y] leaves. [lse = m + log l], [+∞] where [m] is; a row of
     [l = 0] has [o = +0] and [lse = -∞]. [exp] and [log] are
     {!Nx_kernel.Prog.Exp}'s and {!Nx_kernel.Prog.Log}'s. So a value at a pair
     hidden from a row or dropped, finite or not, never reaches its [o]. *)
@@ -522,13 +523,13 @@
 
     On fused multiply-adds, [q·k] adds the [dk] products of the row's and
     the key's elements, each widened to the accumulator, in increasing
-    dimension from [+0], and [a] adds the weights times the values in
+    dimension from [+0], and [y] adds the weights times the values in
     increasing key. Each product fuses into its sum.
 
     On the matrix units, [q·k] adds its products from [+0] in increasing
     dimension, 8 at a time, as a matrix unit sums them
     ({!section-matrix_units}). Each weight rounds once to nearest into the
-    values' dtype ([c = 1], {!Nx_kernel.section-attention}), and [a] adds the
+    values' dtype ([c = 1], {!Nx_kernel.section-attention}), and [y] adds the
     value products in increasing key on the matrix units as [q·k] does, but a
     block whose values hold a NaN or an infinity adds them as fused
     multiply-adds of the unrounded weights, over each row's kept pairs alone. *)
@@ -596,7 +597,7 @@
 
     For a row that reads [t] keys in [n = ⌈t / 64⌉] blocks, the [ε] of
     {!Nx_kernel.section-attention} is
-    [e{^λu} (13 (n + 2p(t)) + 9 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|],
+    [e{^λu} (11 (n + 2p(t)) + 11 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|],
     [u' = u / (1 - u)] and [λ] being 3 in [float32] and 5 in [float64]. *)
 
 (** {2:attention_memory Memory}

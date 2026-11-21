@@ -3541,6 +3541,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.attention` on nx.cuda sums each block of 64 keys' value products from
+  `+0`, then adds them to the rescaled accumulator in one fused multiply-add,
+  and fuses the weights' sum likewise, as nx.cpu does: its fused multiply-add
+  path gives nx.cpu's bits again past 64 keys, and on the matrix units a
+  product passes one rounding a later block, where it passed one a later key.
+  Results' bits change.
 - **Breaking:** `Nx.attention` takes `?keep`, the visible pairs whose
   values count after the softmax: `o` sums their values at their weights,
   and `lse` stays the log-sum-exp of every visible pair. Dropout of the
