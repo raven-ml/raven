@@ -527,7 +527,7 @@ let log10_values () =
 let logarithm =
   group "logarithm"
     [
-      unary "log10" ~bound32:(everywhere (Ulps 1)) ~bound:(everywhere (Ulps 2))
+      unary "log10" ~bound32:(everywhere (Ulps 1)) ~bound:(everywhere (Ulps 4))
         { u = Nx.log10 };
       test "exact at the powers of ten, and Annex F's values" log10_values;
     ]

@@ -2678,7 +2678,16 @@ let hypot x y =
    product with [log2 x], one fma, adds about its own rounding to [log2]'s
    error. Where [log2 x] is an infinity or NaN the fma would be NaN, and the
    head alone scales it: the same value, and both arms' derivative is
-   [log10 2] times [log2]'s, [1 / (x ln 10)], below zero too. *)
+   [log10 2] times [log2]'s, [1 / (x ln 10)], below zero too.
+
+   nx.mli's float64 bound follows from [log2]'s 2 ulps. [log2 x] is then within
+   2.5 of its ulps of the exact value, or 4.5 just below a power of two, where
+   the floats above are twice as far apart. The product scales that error by
+   [log10 2], and an ulp of [log2 x] is four ulps of [log10 x], or two where
+   [log2 x] is past [1 / (2 log10 2) = 1.66] times the power of two below it, as
+   just below the next: at most [max (2.5 × 4) (4.5 × 2) × log10 2 = 3.01] ulps
+   of [log10 x]. The fma's rounding adds half of one, so the result is within 4
+   floats of the exact value rounded. *)
 let log10_2 = 0x1.34413509f79ffp-2
 let log10_2_tail = -0x1.9dc1da994fd21p-59
 
