@@ -203,6 +203,7 @@ let thread_bound slice rngs =
 
 module Scheduler = struct
   let upcast_max = 16
+  let unroll_max = 32
 
   (* What the axis queries read of a kernel. The heuristic and the search ask
      them many times between two rewrites of the kernel, so they are computed
@@ -745,7 +746,9 @@ module Scheduler = struct
               (not (List.memq rng (read_by_opaque k)))
               (strf "a call or custom code reads axis %d" axis);
             if is_reduce then
-              check Bigint.(leq amt (of_int 32)) "don't unroll more than 32"
+              check
+                Bigint.(leq amt (of_int unroll_max))
+                "don't unroll more than 32"
             else
               check
                 Bigint.(leq amt (of_int upcast_max))

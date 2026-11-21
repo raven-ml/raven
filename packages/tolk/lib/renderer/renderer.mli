@@ -263,8 +263,9 @@ type t = private {
   stream_threads : int;
       (** The threads that keep a part's memory busy, about as many loads in
           flight as its latency times its bandwidth. A kernel that streams an
-          operand runs about as many, and a kernel of fewer outputs with a
-          long reduce groups its reduce ({!Heuristic}). It is a bound fitted
+          operand runs about as many, or keeps more loads in flight a
+          thread in fewer, and a kernel of fewer outputs with a long reduce
+          groups its reduce ({!Heuristic}). It is a bound fitted
           to the products timed on one part of a target: 32768 on an RTX 5000
           Ada (sm_89), and Metal's 16384 on an M1 Max, other Apple parts
           unmeasured. It moves the order of a sum, so it is fixed per target,

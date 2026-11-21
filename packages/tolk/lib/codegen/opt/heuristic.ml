@@ -842,6 +842,24 @@ let unroll_together k x u =
         (units a))
     (accesses x)
 
+(* The loads of its row a thread of [k]'s rows layout keeps in flight, its
+   rows not held, once its threads are laid out. A memory serves its
+   bandwidth when it holds its bandwidth times its latency in flight
+   (Little's law), which the renderer's [stream_threads] threads keep with
+   [in_flight] loads each. A kernel of [t] fewer threads keeps more a thread
+   toward that sum, [ceil (in_flight * stream_threads / t)], at most
+   Postrange's bound on an unroll ([unroll_max]), which binds below 8192
+   threads on sm_89: a thread that keeps fewer waits on a load's latency
+   more often. A size not known keeps [in_flight]. On an RTX 5000 Ada,
+   gpt-oss-20b's router at a decode step, 32 rows of 2880 bfloat16 values in
+   1024 threads, took 4.9 us a layer unrolled by 6 and 3.3 by 30. *)
+let row_in_flight k =
+  match prod_at k (K.axes_of k [ Global; Local; Warp ]) with
+  | Int t ->
+      let all = in_flight * (K.ren k).stream_threads in
+      max in_flight (min K.unroll_max ((all + t - 1) / t))
+  | Sym _ -> in_flight
+
 (* The splits of the rows layout, on a copy of [k]. A split that Postrange
    refuses, as a local split past the shared memory, is skipped: the kernel
    only runs on the threads it has. *)
@@ -881,7 +899,9 @@ let rows_layout k (w, x, reuse) (u, a, g, threads) =
   let left = if whole then Option.bind next (rest_of k) else rest_of k u in
   (match left with
   | Some r ->
-      let n = divisor_at_most r (if held then in_flight_held else in_flight) in
+      let n =
+        divisor_at_most r (if held then in_flight_held else row_in_flight k)
+      in
       if n > 1 then ignore (try_split k (axis_of k r) n Opt.Upcast)
   | None -> ());
   unroll_together k x u;

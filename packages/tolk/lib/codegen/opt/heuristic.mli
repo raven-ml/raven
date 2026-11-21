@@ -86,7 +86,11 @@
         not and 4 divides, or else one both read, splits by 4: into local
         threads without reuse, into upcast lanes with it.}
      {- What the threads leave of [u], or else the axis of the next stride,
-        is unrolled by its largest divisor up to 8, or 4 with reuse.}
+        is unrolled by its largest divisor up to 8, or 4 with reuse. Without
+        reuse, a kernel of [t] threads, fewer than
+        {!Renderer.t.stream_threads} [S], takes up to [ceil (8 S / t)], at
+        most {!Postrange.Scheduler.unroll_max}: more loads in flight a
+        thread, toward the [8 S] that many threads keep.}
      {- Each contracted axis that no split has taken, other than [u], and
         along which the other operand is read at unit stride, is unrolled
         whole where its values there fit one load of 16 bytes and a SIMD

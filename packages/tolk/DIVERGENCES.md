@@ -2177,8 +2177,10 @@ Withdrawn: multi-device is out of scope, see README.
 - **tolk:** `Heuristic.lanes` (`Renderer.t.simd_threads`), `Heuristic.rows`,
   `Heuristic.columns`, `Heuristic.sector_lanes`,
   `Renderer.t.local_threads_max`, `Renderer.t.stream_threads`,
-  `Heuristic.in_flight`, `Heuristic.in_flight_held`, `Heuristic.stream_first`,
-  `Postrange.Scheduler.upcast_max`, `Heuristic.summed`,
+  `Heuristic.in_flight`, `Heuristic.in_flight_held`,
+  `Heuristic.row_in_flight`, `Heuristic.stream_first`,
+  `Postrange.Scheduler.upcast_max`, `Postrange.Scheduler.unroll_max`,
+  `Heuristic.summed`,
   `Renderer.t.per_byte_first`,
   `Heuristic.per_byte`, `Heuristic_common.run`,
   `Heuristic.reuse_ranges`, `Heuristic.reuse`, `Heuristic_common.stride`,
@@ -2228,7 +2230,15 @@ Withdrawn: multi-device is out of scope, see README.
     (D96's part), else one both read, go to 4 SIMD groups at `R = 1` and to
     each thread's registers at `R > 1`; what the threads leave of `u`, or
     else the range of the next stride, is unrolled by its largest divisor up
-    to 8, or 4 with rows held. When that range is a global axis (columns),
+    to 8, or 4 with rows held. A kernel of rows not held that runs `t`
+    threads, fewer than `stream_threads` `S`, unrolls up to `ceil (8 S /
+    t)`, at most `Postrange.Scheduler.unroll_max` (32, tinygrad's bound on
+    an unroll): it keeps more loads in flight a thread toward the `8 S`
+    that D89's constants keep a memory busy with, its bandwidth times its
+    latency (Little's law); the bound binds below 8192 threads on sm_89.
+    Rows held keep 4: their registers grow with the rows times the unroll,
+    and no product of held rows in few threads was measured. When that
+    range is a global axis (columns),
     after the reuse upcast it splits into 32 local threads and 2 upcast
     lanes, and the first contracted range into the threads, up to 32, that
     make `stream_threads` threads, halved until the workgroup's shared
@@ -2258,7 +2268,8 @@ Withdrawn: multi-device is out of scope, see README.
   - the constants: `lanes`, `in_flight`, `in_flight_held`,
     `stream_threads`, `stream_first`, `summed`, `per_byte_first`, D175's
     `core_threads` and D479's `group_least` each move the order of a sum,
-    `stream_threads` also through `Heuristic.group` (D479). They are fixed
+    `stream_threads` also through `Heuristic.group` (D479) and the unroll of
+    a kernel of fewer threads. They are fixed
     per target, never read from a device, since the program key names the
     target alone (D170). `stream_threads`, D175's `local_workgroups`,
     `core_threads` and `per_byte_first` are fields of the renderer, since a
@@ -2304,7 +2315,21 @@ Withdrawn: multi-device is out of scope, see README.
   by `[2880; 440]` 172 and 58. The cost is the layout's own at few columns,
   whose workgroups are a 16th of them: bfloat16 products of 8 and 16 rows
   by `[2880; 440]` took 34-50 us on the other rules and take 48-63, the
-  layout's time at 448 columns.
+  layout's time at 448 columns. The unroll of a kernel of fewer threads:
+  gpt-oss-20b's router at a decode step, 32 rows of 2880 bfloat16 values in
+  1024 threads, took 4.9 us a layer unrolled by 6 and takes 3.3 by 30 (nsys
+  node trace of the decode step), 38 us a step; alone, with its matrices
+  read from memory, 4.42 us and 2.88, where the other rules' kernel
+  (`MV=0`), 32 workgroups whose loop of 90 nvcc unrolls whole, takes 2.59.
+  One row by `[n; k]` alone on CUDA, its matrices past the L2: bfloat16 8 by
+  4096 5.70 us and 3.58, 64 by 1280 2.30 and 2.08, 256 by 2880 5.09 and
+  4.42, 512 by 4096 9.79 and 9.25; float32 64 by 2880 4.54 and 4.07, 128 by
+  4096 6.78 and 5.89, 384 by 384 even. Float32 gains less: bfloat16's
+  unrolled loads, which the C source lists apart from the sum that reads
+  them, ptxas issues before the first multiply-add, 60 at 70 registers for
+  the router, where float32's interleave, about 12 in flight. Untimed: the
+  decoded operands (Q8_0 and MXFP4 products of few outputs, routed
+  experts), float16, AMD and Metal.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are tinygrad's ›
   <environment> › the optimised kernel`, cases `matvec_*`, `vecmat_*`,
   `gpt_oss_*`, `experts_down_*`, `routed_blocks_*`, `routed_own_*`,
@@ -2314,10 +2339,12 @@ Withdrawn: multi-device is out of scope, see README.
   streamed operand's reuse outside a thread is its reuse over its tile`, `› a
   SIMD group's load of an operand streamed along the reduce reads whole
   sectors`, `› the unroll is the largest divisor of its loop up to 8, 4 with
-  reuse`, `› a contraction streams up to a reuse of 32, before a tensor core`,
-  `› a contraction of several passes streams unless a two-stage core takes
-  it` and `› a recorded contraction streams before a tensor core up to 64
-  multiply-adds per byte of its streamed operand`, `› each renderer streams
+  reuse, more in fewer threads`, `› a product streamed by its rows of few
+  threads keeps their loads in flight`, `› a contraction streams up to a
+  reuse of 32, before a tensor core`, `› a contraction of several passes
+  streams unless a two-stage core takes it` and `› a recorded contraction
+  streams before a tensor core up to 64 multiply-adds per byte of its
+  streamed operand`, `› each renderer streams
   before a core up to 64 multiply-adds a byte` and `› a contraction streams
   before a core up to the renderer's bound a byte`, `› a product's workgroups
   hold at most a block's threads on every GPU`, `› a product streamed by

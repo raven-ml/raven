@@ -189,6 +189,10 @@ module Scheduler : sig
   (** [upcast_max] is the most values an upcast of an axis that no reduction
       closes takes: {!apply_opt} refuses more. *)
 
+  val unroll_max : int
+  (** [unroll_max] is the most values an upcast of a reduce axis, an unroll,
+      takes: {!apply_opt} refuses more. *)
+
   val apply_opt : ?append_opt:bool -> t -> Opt.t -> (Ops.t list, string) result
   (** [apply_opt k opt] applies [opt] to [k], records it among [k]'s applied
       optimisations if [append_opt] (default [true]), and is [Ok] the axes it
@@ -201,9 +205,9 @@ module Scheduler : sig
       cannot come from its axis's role or its axis's trips are not known at
       launch ({!Ops.known_at_launch}), as [j < 4 (i + 1)]'s, its axis takes no
       lanes for an upcast or no threads for a local split
-      ({!section-rewriting}), a split exceeds what the renderer allows (32
-      lanes of a reduce axis or {!upcast_max} of another, locals only with
-      local indices, the workgroup's shared memory),
+      ({!section-rewriting}), a split exceeds what the renderer allows
+      ({!unroll_max} lanes of a reduce axis or {!upcast_max} of another,
+      locals only with local indices, the workgroup's shared memory),
       a local split, a pad of a local axis or a tensor core makes a
       workgroup of more threads than {!Renderer.t.local_threads_max}, the
       product of its warp and local axes, each counted at its bound, a local

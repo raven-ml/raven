@@ -522,14 +522,37 @@ let coalesces =
    least stride, what the lanes leave of the reduce, by its largest divisor
    up to 8, or 4 when it holds rows that reuse each element: the unrolled
    lanes times the loop they leave, whose stride in the main access is theirs
-   times their count, or the loop itself where nothing is unrolled. *)
+   times their count, or the loop itself where nothing is unrolled. A kernel
+   of rows not held that runs [t] threads, fewer than its renderer's
+   [stream_threads] [S], takes up to [ceil (8 S / t)], at most 32. *)
 let unrolls_in_flight =
-  prop "the unroll is the largest divisor of its loop up to 8, 4 with reuse"
+  prop
+    "the unroll is the largest divisor of its loop up to 8, 4 with reuse, \
+     more in fewer threads"
     (Gen.with_pp
        (fun ppf c -> Format.pp_print_string ppf (id c))
        (Gen.of_list streamed_cases))
     (fun (_, k, o, (_, r, w')) ->
-      let cap = if Bigint.(equal r one) then 8 else 4 in
+      let threads =
+        List.fold_left
+          (fun n r ->
+            match (n, Shape.known_size (Ops.Sym (Ops.nth r 0))) with
+            | Some n, Some s -> Some (n * Bigint.to_int s)
+            | _ -> None)
+          (Some 1)
+          (ranges_at o ~reduce:false [ Global; Local; Warp ]
+          @ ranges_at o ~reduce:true [ Global; Local; Warp ])
+      in
+      let most = (K.ren o).stream_threads in
+      let cap =
+        match threads with
+        | _ when not Bigint.(equal r one) -> 4
+        | Some t -> max 8 (min 32 (((8 * most) + t - 1) / t))
+        | None -> 8
+      in
+      cover "a kernel of fewer threads than stream_threads"
+        (Bigint.(equal r one)
+        && match threads with Some t -> t < most | None -> false);
       let ids = List.map Ops.axis_id (K.rngs k) in
       let a =
         match main_access o w' with
@@ -796,6 +819,44 @@ let rows_take_simd =
            (fun n r -> n * Bigint.to_int (size r))
            1
            (ranges_at o ~reduce:true [ Local ])))
+
+(* A decode step's product of few rows, streamed along its matrix's rows,
+   keeps more loads in flight a thread where it runs fewer threads than the
+   renderer's [stream_threads] [S]: [t] threads unroll what their lanes
+   leave of the reduce by its largest divisor up to [ceil (8 S / t)], at most
+   32. gpt-oss's router, 32 rows of 2880, runs 1024 threads on CUDA, 8
+   workgroups of 4 rows, and its lanes leave 90 values, of which it unrolls
+   30 (6 at 8 a thread); on gfx942, whose waves are 64 threads, 2048 threads
+   and 45 values, 15. 512 rows of 4096 run 16384 threads on CUDA and unroll
+   16 of the 128, and on Apple9, whose [S] is 16384, 8. 1000 rows of 2880 run
+   32000 threads and unroll 9 of 90, ceil (8 S / t); 2880 rows run 92160 and
+   unroll 6, as many threads do. *)
+let rows_in_flight =
+  let cases_of t = List.map (fun (shape, unroll) -> ((t, shape), unroll)) in
+  cases
+    "a product streamed by its rows of few threads keeps their loads in \
+     flight"
+    ~id:(fun ((t, (n, k)), _) -> Printf.sprintf "%s, %d rows of %d" t n k)
+    (cases_of "CUDA:CUDA:sm_89"
+       [
+         ((32, 2880), 30); ((512, 4096), 16); ((1000, 2880), 9);
+         ((2880, 2880), 6);
+       ]
+    @ cases_of "AMD:HIP:gfx942" [ ((32, 2880), 15) ]
+    @ cases_of "METAL:METAL:Apple9" [ ((32, 2880), 30); ((512, 4096), 8) ])
+    (fun ((t, (cols, depth)), unroll) ->
+      let ren =
+        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+      in
+      let s = K.v (dense 1 cols depth) ren in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      equal ~msg:"streams" Testable.bool true (streams o);
+      equal int unroll
+        (List.fold_left
+           (fun n r -> n * Bigint.to_int (size r))
+           1
+           (ranges_at o ~reduce:true [ Upcast ])))
 
 (* A product streamed by its matrix's columns splits its reduce into the
    threads the columns layout wants (heuristic.mli), halved until the
@@ -4363,6 +4424,7 @@ let () =
              one_trip_product;
              within_block;
              rows_take_simd;
+             rows_in_flight;
              columns_split;
              columns_pad;
            ];
