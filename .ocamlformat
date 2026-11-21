@@ -1,8 +1,9 @@
 # OCamlFormat configuration file
 
-# Pin the version of OCamlFormat to ensure consistent formatting across different environments.
-# Uncomment and update this line to specify a version:
-# version = 0.26.2
+# The version of OCamlFormat the tree is formatted with. `dune tools install
+# ocamlformat` builds this version, and OCamlFormat refuses to run when its
+# version differs.
+version = 0.29.0
 
 # The formatting style to use. Options include 'default', 'ocamlformat', and 'janestreet'.
 # 'default' is a good starting point for most projects.
