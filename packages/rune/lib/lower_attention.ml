@@ -125,6 +125,10 @@ let slot_l = 101
 let slot_s = 102
 let slot_vote = 108
 let slot_seen = 109
+let slot_votes = 116
+
+(* The range id of the loop over a vote's warps ({!vote}). *)
+let id_votes = 250
 
 (* Arguments
 
@@ -389,13 +393,38 @@ let classes a x ~inside ~b ~kh ~rows:(r0, r1) ~keys:(k0, k1) =
       in
       Some (Ops.logical_not (truth outs.(1)), truth outs.(0))
 
-(* [vote ~inside ~over seen] is whether a pair of [seen], a thread's, is
-   visible to some thread of the ranges [over], [[]] for the thread alone,
-   read inside the guard of a tile of unknown class. *)
+(* [vote ~inside ~over seen] is whether a pair of [seen], a thread's, is visible
+   to some thread of the ranges [over], each with its count, [[]] for the thread
+   alone, read inside the guard of a tile of unknown class. tolk stages a reduce
+   through workgroup memory, a cell a thread, which each thread then reads
+   whole: over [[warp; lane]] every thread's cell, 256 a thread at 8 CUDA warps.
+   So the warps' vote reduces over the lanes, then the first lane of each warp
+   stores its warp's in a cell of its own, which each thread reads: 40 cells at
+   8 CUDA warps. *)
 let vote ~inside ~over seen =
   let any = inside (Array.fold_left Ops.bitwise_or (Ops.O.bool false) seen) in
-  if over = [] then any
-  else Ops.ne (Ops.reduce (Ops.cast any Int32) Max over) (Ops.int ~dtype:Int32 0)
+  let zero = Ops.int ~dtype:Int32 0 in
+  match over with
+  | [] -> any
+  | [ (warp, warps); (lane, _) ] ->
+      let mine = Ops.reduce (Ops.cast any Int32) Max [ lane ] in
+      let cells =
+        Shape.placeholder ~slot:slot_votes ~addrspace:Local [ warps ] Int32
+      in
+      let first = Ops.eq lane (int 0) in
+      let put =
+        Ops.store
+          (Ops.index (inside cells) [ Ops.where first warp Ops.invalid ])
+          mine
+      in
+      let w = range Loop (Int warps) id_votes in
+      let all =
+        Ops.reduce (ld (Ops.after (inside cells) [ put ]) w) Max [ w ]
+      in
+      Ops.ne all zero
+  | _ ->
+      let all = Ops.reduce (Ops.cast any Int32) Max (List.map fst over) in
+      Ops.ne all zero
 
 (* The range id of the guard of a tile's mask, past each kernel's own. *)
 let id_mask = 11
@@ -775,7 +804,7 @@ let simt ~local ~bq ~bk ~width ~splits a xs =
   let loop =
     Ops.end_
       (skipping ~lanes a x ~at:(jr :: at) ~b ~kh ~len ~rows:row_span ~keys
-         ~over:(if local || in_lanes then [ l ] else [])
+         ~over:(if local || in_lanes then [ (l, bq) ] else [])
          ~ids:(6, 7, 8)
          (Array.init bk (fun i -> (row, key i)))
          body)
@@ -1649,7 +1678,8 @@ let core c a xs =
   let keys = (key (int 0), key (int Stdlib.(bk - 1))) in
   let loop =
     Ops.end_
-      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows ~keys ~over:[ warp; lane ]
+      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows ~keys
+         ~over:[ (warp, c.warps); (lane, lanes) ]
          ~ids:(7, 8, 9) pairs body)
       [ jr ]
   in
@@ -1882,17 +1912,17 @@ let plan_of (r : Renderer.t) ~vt ~acc ~heads ~grouped ~tk ~dk ~dv =
       (* Few rows take fewer warps: a decode step's one query of each head. *)
       let warps = min warps (ceil_div grouped m) in
       (* What {!core} declares in workgroup memory: a tile's rows of keys and
-         values and a byte a key for their table checks, on FFMA the rows'
-         chunk of [Q], in the values' memory, and their weights, and beside
-         them the rows' maxima and sums, [bq · sharers] accumulators each,
-         and the vote's [int] a thread. The checks and the vote count where
-         the kernel has neither, so that keys paged or dense, under any mask,
-         take the same tiles. *)
+         values and a byte a key for their table checks, on FFMA the rows' chunk
+         of [Q], in the values' memory, and their weights, and beside them the
+         rows' maxima and sums, [bq · sharers] accumulators each, and the vote's
+         [int] a thread and a warp. The checks and the vote count where the
+         kernel has neither, so that keys paged or dense, under any mask, take
+         the same tiles. *)
       let sharers = 1 lsl count Nb tc.frag_c.lanes in
       let threads = warps * Tc.threads tc in
       let bq = warps * m in
       let isz = Dtype.itemsize in
-      let beside = (2 * bq * sharers * isz acc) + (threads * 4) in
+      let beside = (2 * bq * sharers * isz acc) + ((threads + warps) * 4) in
       let kw = row mul vt (snd kdims) and cols = row mul vt (snd vdims) in
       let bytes keys =
         match mul with
@@ -2262,7 +2292,8 @@ let core_dq c a tr xs =
   let keys = (key (int 0), key (int Stdlib.(bk - 1))) in
   let loop =
     Ops.end_
-      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows ~keys ~over:[ warp; lane ]
+      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows ~keys
+         ~over:[ (warp, c.qwarps); (lane, f.lanes) ]
          ~ids:(7, 8, 9) pairs body)
       [ jr ]
   in
@@ -2457,7 +2488,8 @@ let core_dkdv ~(part : part) c a tr xs =
   let keys = (k0, k0 + int Stdlib.(bkk - 1)) in
   let loop =
     Ops.end_
-      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows ~keys ~over:[ warp; lane ]
+      (skipping a x ~at:(jr :: at) ~b ~kh ~len ~rows ~keys
+         ~over:[ (warp, c.kwarps); (lane, f.lanes) ]
          ~ids:(7, 8, 9) pairs body)
       [ jr ]
   in
@@ -2621,20 +2653,18 @@ let dplan (r : Renderer.t) a ~marked =
       match c.mul with
       | Wmma _ -> Some (dcore ~warps:(warps (4 * m)) ~tile (1, kw) (1, vw))
       | Fma ->
-          (* FFMA copies two row operands a chunk at a time beside the two
-             tiles it stages whole, so its chunks hold half the forward's
-             bytes, and at most the forward's once a step converts them to
-             the accumulator. A 16-bit query's chunks in float64 at 64
-             dimensions (d128) and at 48 (d144) spilled 12 to 40 bytes at
-             255 registers, causal, in tiles of 16 and of 8; at 32
-             dimensions nothing spills at any width. Its tiles are the
-             first of 32, 16 and 8 keys or rows, to [tile], at which what
-             each launch declares in workgroup
-             memory fits there (the two tiles, the two chunks, the chained
-             weights and cotangents of a tile, and the vote's [int] a
-             thread) and a lane's accumulators, of its sums and of a tile's
-             scores and their cotangents, hold at most {!lane_accumulators}
-             registers. *)
+          (* FFMA copies two row operands a chunk at a time beside the two tiles
+             it stages whole, so its chunks hold half the forward's bytes, and
+             at most the forward's once a step converts them to the accumulator.
+             A 16-bit query's chunks in float64 at 64 dimensions (d128) and at
+             48 (d144) spilled 12 to 40 bytes at 255 registers, causal, in tiles
+             of 16 and of 8; at 32 dimensions nothing spills at any width. Its
+             tiles are the first of 32, 16 and 8 keys or rows, to [tile], at
+             which what each launch declares in workgroup memory fits there (the
+             two tiles, the two chunks, the chained weights and cotangents of a
+             tile, and the vote's [int] a thread and a warp) and a lane's
+             accumulators, of its sums and of a tile's scores and their
+             cotangents, hold at most {!lane_accumulators} registers. *)
           let isz = Dtype.itemsize and stride = row c.mul vt in
           let chunks w =
             split ~step:k w
@@ -2648,7 +2678,7 @@ let dplan (r : Renderer.t) a ~marked =
             (t * (stride (fst kc * snd kc) + stride (fst vc * snd vc)) * isz vt)
             + (rows * nc * isz vt)
             + (chained * rows * row c.mul acc t * isz acc)
-            + (threads * 4)
+            + ((threads + (ffma_rows / m)) * 4)
           in
           let both = stride (snd kc) + stride (snd vc) in
           (* A launch's lane's accumulators, in 32-bit registers: [sums]

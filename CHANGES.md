@@ -561,6 +561,12 @@ All notable changes to this project will be documented in this file.
 
 - A compiled `Nx.attention` and its derivatives drop the weights its
   `?keep` drops in attention's own kernels, past each row's sum.
+- A compiled `Nx.attention` on a GPU asks whether a tile of keys holds a
+  visible pair a warp at a time, then across the warps, where each thread
+  read every thread's answer: 40 loads a thread at 8 warps, not 256. Under
+  a mask that no tile's bounds decide, documents of 256 tokens over 8 heads
+  of 2048 rows of 64, the forward takes 259 µs on an RTX 5000 Ada, against
+  326.
 - A compiled MXFP4 product scales a block of scale byte 0 by two normal
   factors on a GPU whose multiplies may flush subnormals, as Apple's do:
   through byte 0's subnormal `2^-127` there, its codes of magnitude 2 or more
