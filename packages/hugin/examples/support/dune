@@ -1,0 +1,3 @@
+(executable
+ (name agree)
+ (libraries nx nx.io))

@@ -3,7 +3,8 @@
 Each example is a directory holding `main.ml` and the image it renders. The
 images are committed, and a build compiles the examples without running them.
 To render them again into `_build` and replace the committed images that
-differ from their renders, run
+differ from their renders by more than rounding moves a pixel between systems
+([`support/agree.ml`](support/agree.ml)), run
 
 ```sh
 dune build @packages/hugin/examples/assets

@@ -3,7 +3,8 @@
  (libraries hugin nx))
 
 ; The image is committed. dune build @assets renders it under render/ in
-; _build and fails where it differs from the committed one, which dune
+; _build and fails where it differs from the committed one by more than
+; rounding moves a pixel between systems (support/agree.ml), which dune
 ; promote then replaces. The render is no rule's target, so a plain build
 ; never runs the example, and no-infer keeps cmp from asking for it as a
 ; dependency.
@@ -16,5 +17,6 @@
   (action
    (progn
     (run ../main.exe)
+    (run %{exe:../../support/agree.exe} ../dashboard.png dashboard.png)
     (no-infer
      (cmp ../dashboard.png dashboard.png))))))
