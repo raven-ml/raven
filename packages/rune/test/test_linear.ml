@@ -455,6 +455,30 @@ let test_transpose_fresh () =
   ignore (Nx.add (Nx.donate (lt w)) at);
   equal bits_t (bits (direction 3.)) (bits w)
 
+(* The transpose in [w] of a product by [w] stored [o; i], its contracted axis
+   last, as a linear layer stores its weight: one product of the cotangent by
+   [x], which comes in [w]'s order and is the result, with no transpose and no
+   copy. The fewest words of ten calls: an allocation that is not the call's,
+   as another thread's, adds to some calls only. *)
+let test_transpose_in_order () =
+  let p = Nx.Pattern.v "x i, o i -> x o | i" in
+  let x = Nx.full Nx.float32 [| 8; 16 |] 0.5 in
+  let w = Nx.full Nx.float32 [| 4; 16 |] 0.25 in
+  let lt =
+    Rune.linear_transpose T.tensor T.tensor (Nx.contract Nx.float32 p x) w
+  in
+  let ct = Nx.full Nx.float32 [| 8; 4 |] 1. in
+  let words () =
+    let before = Gc.minor_words () in
+    ignore (Sys.opaque_identity (lt ct));
+    Gc.minor_words () -. before
+  in
+  ignore (words ());
+  let fewest =
+    List.fold_left Float.min infinity (List.init 10 (fun _ -> words ()))
+  in
+  expect (Printf.sprintf "%.0f words" fewest) @@ __POS_OF__ {| 708 words |}
+
 (* Sums of zeros: a single contribution keeps its sign; a broadcast's copies sum
    from [+0.]; an element with no contribution is [+0.]. *)
 let signs =
@@ -532,6 +556,8 @@ let () =
              test "an affine term is dropped" test_affine;
              test "an integer's cotangent is zero" test_integer;
              test "a transpose is fresh" test_transpose_fresh;
+             test "a transpose in a weight stored [o; i] is one product"
+               test_transpose_in_order;
              cases "a constant reduced from the argument alone"
                ~id:(fun (n, _, _) -> n) reduced test_reduced;
              cases "signs of zero" ~id:(fun (n, _, _, _) -> n) signs test_sign;

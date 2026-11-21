@@ -957,16 +957,15 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
                sum = false;
              })
       in
+      let rec in_order r = function
+        | [] -> true
+        | q :: order -> q = r && in_order (r + 1) order
+      in
       (* A contraction's result is its own memory in C order, its axes reordered
          a view of it. *)
       let give x scale order y =
-        let order = Array.of_list order in
-        let in_order = ref true in
-        for r = 0 to Array.length order - 1 do
-          if order.(r) <> r then in_order := false
-        done;
-        let fresh = ref !in_order in
-        let y = if !in_order then y else reorder order y in
+        let fresh = ref (in_order 0 order) in
+        let y = if !fresh then y else reorder (Array.of_list order) y in
         let y =
           match scale_at env r scale with
           | None -> y
@@ -975,6 +974,31 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
               Nx.mul y (expanded (Nx.dtype x) (Nx.shape x) s)
         in
         env.give x { v = V y; fresh = !fresh }
+      in
+      let flip l = List.map (fun (p, q) -> (q, p)) l in
+      (* [x]'s cotangent from the unsegmented product of [p], scaled by [ps],
+         by [q], scaled by [qs], whose result's axes are [x]'s in [order], the
+         product of [q] by [p] coming in [swapped]. Where only [swapped] is
+         [x]'s own order, a real product of unscaled operands is taken that
+         way: its own memory, where a reordered one is a view, which the
+         gradient copies. The swap exchanges the product's rows and columns
+         and keeps the numbering of its contracted indices, which leave the
+         host's association as it was (nx_cpu.mli, Order); a complex product
+         would add its imaginary part's terms the other way round. *)
+      let product x scale ~batch ~contracting p ps q qs order swapped =
+        if
+          Option.is_none ps && Option.is_none qs
+          && (not (D.is D.Complex (Nx.dtype x)))
+          && (not (in_order 0 order))
+          && in_order 0 swapped
+        then
+          give x scale swapped
+            (contract ~batch:(flip batch) ~contracting:(flip contracting)
+               ~segments:None q None p None (Nx.dtype x))
+        else
+          give x scale order
+            (contract ~batch ~contracting ~segments:None p ps q qs
+               (Nx.dtype x))
       in
       let (V w) = w in
       if env.lin a then begin
@@ -985,11 +1009,9 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
         let bs = scale_at env r b_scale in
         match segments with
         | None ->
-            let y =
-              contract ~batch:pairs ~contracting:meets ~segments:None ct None b'
-                bs (Nx.dtype a)
-            in
-            give a a_scale (batch_a @ a_free @ List.map to_a b_con) y
+            product a a_scale ~batch:pairs ~contracting:meets ct None b' bs
+              (batch_a @ a_free @ List.map to_a b_con)
+              (batch_a @ List.map to_a b_con @ a_free)
         | Some (Rows s) ->
             let segments =
               Some
@@ -1016,7 +1038,6 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
                      b_axis = 0;
                    })
             in
-            let flip l = List.map (fun (c, x) -> (x, c)) l in
             let y =
               contract ~batch:(flip pairs) ~contracting:(flip meets) ~segments
                 b' bs ct None (Nx.dtype a)
@@ -1051,11 +1072,18 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
                      }),
                 [] )
         in
-        let y =
-          contract ~batch:pairs ~contracting:meets ~segments a'
-            (scale_at env r a_scale) ct None (Nx.dtype b)
-        in
-        give b b_scale (groups @ batch_b @ List.map to_b a_con @ b_free) y
+        let as_ = scale_at env r a_scale in
+        match segments with
+        | None ->
+            product b b_scale ~batch:pairs ~contracting:meets a' as_ ct None
+              (batch_b @ List.map to_b a_con @ b_free)
+              (batch_b @ b_free @ List.map to_b a_con)
+        | Some _ ->
+            let y =
+              contract ~batch:pairs ~contracting:meets ~segments a' as_ ct None
+                (Nx.dtype b)
+            in
+            give b b_scale (groups @ batch_b @ List.map to_b a_con @ b_free) y
       end
 
 (* Fourier transforms

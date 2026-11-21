@@ -386,6 +386,25 @@ let contract_cases =
           ~batch:[| (0, 1) |]
           ~contracting:[| (2, 0) |]
           ());
+    (* Operands whose cotangents come in their own order only when the
+       cotangent's product is taken the other way round: b stored [o; i], as
+       a linear layer's weight, and a stored [k; m]. *)
+    c "a contraction of b's free axis before its contracted one" (fun x ->
+        contract_of x ~a:[| 2; 4 |] ~b:[| 3; 4 |] ~batch:[||]
+          ~contracting:[| (1, 1) |]
+          ());
+    c "a contraction of a's contracted axis before its free one" (fun x ->
+        contract_of x ~a:[| 4; 2 |] ~b:[| 4; 3 |] ~batch:[||]
+          ~contracting:[| (0, 0) |]
+          ());
+    case ~empty:false ~shape:(Gen.constant [| 24 |])
+      "a batched contraction of b's free axis before its contracted one"
+      (fun x ->
+        Nx.reshape [| -1 |]
+          (contract_of x ~a:[| 2; 2; 3 |] ~b:[| 2; 2; 3 |]
+             ~batch:[| (0, 0) |]
+             ~contracting:[| (2, 2) |]
+             ()));
     case ~empty:false ~shape:(Gen.constant [| 24 |])
       "a contraction of two batch pairs" (fun x ->
         Nx.reshape [| -1 |]
