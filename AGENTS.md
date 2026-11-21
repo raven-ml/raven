@@ -103,6 +103,13 @@ instead of a long-running one.
 
 - Build or test one package: `dune build @packages/<pkg>/runtest`. Don't
   wait for the machine to be quiet; only timing needs that.
+- Formatting: `.ocamlformat` pins ocamlformat's version, and
+  `dune tools install ocamlformat` builds that version into `_build`, once
+  per tree and again when the pin moves. Then `dune build @fmt` checks
+  formatting and `dune fmt` applies it. Until main passes `dune build @fmt`,
+  don't run `dune fmt`: it reformats files your change doesn't touch. Edit
+  your own lines until the diff `dune build @<dir>/fmt` prints has no hunk
+  in them.
 - Rerun a cached test: run its executable from `_build/default/…`, from the
   directory holding its goldens, with `CACHEDB=cache`. Never use `--force`.
 - tolk goldens: `uv run packages/tolk/test/gen/generate.py --check`.
