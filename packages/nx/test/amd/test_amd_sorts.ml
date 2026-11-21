@@ -416,14 +416,18 @@ let law_unique c =
 (* nx_amd.mli: a sort takes workspace of at most 66 bytes an element and
    512 KiB, and a numbering at most 65 bytes a row, 16 KiB a column and
    544 KiB. Each sorts by radix, a float32 sort with 8-byte items, a
-   complex128 sort with 24-byte items and 16-byte keys. *)
+   complex128 sort with 24-byte items and 16-byte keys. Each workspace is
+   past the 64 MiB the device keeps, a buffer of the call's own, which the
+   bound counts in the driver's units ({!Rig.allocation}); its tickets, a
+   ticket a slice and one, the device keeps. *)
 let test_sort_workspace (type v s) (dt : (v, s) D.t) n () =
   let b = amd () in
   let module K = (val b.kernels) in
   let x = A.create b.device dt [| n |] in
   let values = A.create b.device dt [| n |] in
   let positions = A.create b.device D.Int64 [| n |] in
-  Kernels_cases.loop_held b ~calls:4 ~bound:((66 * n) + (512 * 1024))
+  Kernels_cases.loop_held b ~calls:4
+    ~bound:(Rig.allocation b.device ((66 * n) + (512 * 1024)))
     (fun () ->
       equal answer A.Done (K.sort ~axis:0 ~descending:false ~values ~positions x);
       Rig.Buffer.wait (A.buffer values) Read_write)
@@ -437,7 +441,7 @@ let test_unique_workspace () =
   let ids = index [| n |] and first = index [| n |] and counts = index [| n |] in
   let count = index [||] in
   Kernels_cases.loop_held b ~calls:4
-    ~bound:((65 * n) + (16 * 1024 * w) + (544 * 1024))
+    ~bound:(Rig.allocation d ((65 * n) + (16 * 1024 * w) + (544 * 1024)))
     (fun () ->
       equal answer A.Done (K.unique ~ids ~first ~counts ~count keys);
       Rig.Buffer.wait (A.buffer count) Read_write)

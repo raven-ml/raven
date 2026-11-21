@@ -983,7 +983,8 @@ let test_constant_count () =
 
 (* nx_amd.mli: a call whose constants exceed what the device keeps uploads
    them for itself, and they return once its work is done, so calls in a
-   loop hold one call's. *)
+   loop hold one call's: its constant, a buffer of [4 constant_n] bytes,
+   counted in the driver's units ({!Rig.allocation}). *)
 let test_constant_own () =
   let b =
     match Support.amd () with
@@ -1002,7 +1003,8 @@ let test_constant_own () =
       equal ~msg:"kept" int kept (Nx_amd.kept_constants b.device);
       let dst = A.create b.device D.Int32 [| constant_n |] in
       let bytes () = table in
-      Kernels_cases.loop_held ~calls:8 b ~bound:(4 * constant_n) (fun () ->
+      let bound = Rig.allocation b.device (4 * constant_n) in
+      Kernels_cases.loop_held ~calls:8 b ~bound (fun () ->
           let c = constant_call ~key bytes dst in
           let call = Nx_amd.call b.device ~written:[| A.Any dst |] ~read:[||] in
           equal answer A.Done (call c);
@@ -1907,11 +1909,15 @@ let law_plain_scan c =
 (* nx_amd.mli's memory of the loops: with bounds of 0 bytes, a call's
    workspace and tickets are buffers of its own, which return to the
    device once its work is done, so calls in a loop hold one call's: the
-   bytes the section states. *)
-let held label c ~bound =
+   bytes the section states, a buffer of [workspace] and one of [tickets],
+   each counted in the driver's units ({!Rig.allocation}). *)
+let held label c ~workspace ~tickets =
   test label (fun () ->
       let b = amd_backend () in
       let call, dsts = prepared b c in
+      let bound =
+        Rig.allocation b.device workspace + Rig.allocation b.device tickets
+      in
       all_fresh (fun () ->
           Kernels_cases.loop_held ~calls:4 b ~bound (fun () ->
               equal answer A.Done (call ());
@@ -1927,22 +1933,24 @@ let memory_laws =
   let module Kn = Nx_amd.Kernels in
   let ticket = 4 and part = 32 in
   [
-    held "a sum of 16 groups' parts" ~bound:((part * 16) + ticket)
+    held "a sum of 16 groups' parts" ~workspace:(part * 16) ~tickets:ticket
       (looped "" ~takes:Kn.Loop_plain (Monoid Sum) (D.Any D.Int64)
          [| 256 * tile |] 0);
-    held "a sum spread over its 64 tiles' groups" ~bound:((8 * 64) + ticket)
+    held "a sum spread over its 64 tiles' groups" ~workspace:(8 * 64)
+      ~tickets:ticket
       (looped "" ~takes:Kn.Loop_plain (Monoid Sum) (D.Any D.Int64)
          [| 64 * tile |] 0);
-    held "a sum of 130 groups' parts" ~bound:((part * 130) + ticket)
+    held "a sum of 130 groups' parts" ~workspace:(part * 130) ~tickets:ticket
       (looped "" ~takes:Kn.Loop_plain (Monoid Sum) (D.Any D.Int64)
          [| 130 * 16384 |] 0);
     held "a Logsumexp of 3 groups' parts an output"
-      ~bound:((2 * part * 3) + 16 + (2 * ticket))
+      ~workspace:((2 * part * 3) + 16)
+      ~tickets:(2 * ticket)
       (looped "" ~takes:Kn.Loop_reduce Logsumexp f32 [| 2; 3 * 16384 |] 1);
-    held "a scan of 301 chunks a slice" ~bound:(part * 2 * 301)
+    held "a scan of 301 chunks a slice" ~workspace:(part * 2 * 301) ~tickets:0
       (looped "" ~scan:true ~takes:Kn.Loop_plain_scan (Monoid Sum) f32
          [| 2; (300 * 4096) + 1 |] 1);
-    held "a Logsumexp scan of slices of many runs" ~bound:0
+    held "a Logsumexp scan of slices of many runs" ~workspace:0 ~tickets:0
       (looped "" ~scan:true ~takes:Kn.Loop_network Logsumexp f32
          [| 3; 20000 |] 1);
   ]
@@ -2581,23 +2589,31 @@ let test_transform_kept () =
 
 (* Lines of a prime past 2^20, each by Bluestein's convolution of
    [m = 2^21] points, take a workspace past the 64 MiB the device keeps:
-   nx_amd.mli states at most [3m] complex points a line, [m = 4n]. *)
+   nx_amd.mli states at most [3m] complex points a line, [m = 4n]. The
+   bound counts that workspace, a buffer of the call's own, and the line's
+   constant, another of at most [9n] points and 3 KiB, which a device keeps
+   only within 64 MiB, each in the driver's units ({!Rig.allocation}). *)
 let test_transform_workspace () =
   let b = amd () in
   let lines = 4 and n = 1048583 in
   let x = A.create b.device D.Complex64 [| lines; n |] in
   let y = A.create b.device D.Complex64 [| lines; n |] in
   let m = 4 * n in
-  Kernels_cases.loop_held b ~bound:(lines * 3 * m * 8) (fun () ->
+  let bound =
+    Rig.allocation b.device (lines * 3 * m * 8)
+    + Rig.allocation b.device ((9 * n * 8) + 3072)
+  in
+  Kernels_cases.loop_held b ~bound (fun () ->
       equal answer A.Done (Nx_amd.c2c Nx_kernel.Forward ~axes:[| 1 |] ~dst:y x);
       Rig.Buffer.wait (A.buffer y) Read_write)
 
 (* A complex128 line of the prime 1013, by Bluestein's convolution of [m]
    points, 2n - 1 <= m <= 4n, on a device that keeps no constant: each
    call uploads its tables, which nx_amd.mli says return once the call's
-   work is done. A call holds at most that constant, [9n] points and
-   3 KiB, and its [3m] points of workspace, calls after the first hold no
-   more, and the device keeps none of them. *)
+   work is done. A call holds at most that constant, a buffer of [9n]
+   points and 3 KiB, and its [3m] points of workspace, each buffer counted
+   in the driver's units ({!Rig.allocation}); calls after the first hold
+   no more, and the device keeps none of the constants. *)
 let test_own_table () =
   let b = amd () in
   let n = 1013 in
@@ -2607,7 +2623,11 @@ let test_own_table () =
   let kept = Nx_amd.kept_constants b.device in
   Fun.protect ~finally:restore_constants (fun () ->
       Nx_amd.bound_constants 0;
-      Kernels_cases.loop_held b ~bound:((((9 * n) + (3 * m)) * 16) + 3072)
+      let bound =
+        Rig.allocation b.device ((9 * n * 16) + 3072)
+        + Rig.allocation b.device (3 * m * 16)
+      in
+      Kernels_cases.loop_held b ~bound
         (fun () ->
           equal answer A.Done
             (Nx_amd.c2c Nx_kernel.Forward ~axes:[| 0 |] ~dst:y x);

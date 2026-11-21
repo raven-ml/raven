@@ -1293,20 +1293,23 @@ let law_held (b : Support.backend) h =
 let held_large =
   { hg = 2; htq = 128; htk = 16384; hdk = 16; hdv = 16; hn = 48; hseed = 1 }
 
-(* The bytes nx_cuda.mli states [h]'s call takes at most, each temporary
-   from 16-byte aligned bytes: the int64 keys [key + i] and rows
-   [row + tk - tq + i], their comparisons and the conjunctions of these,
-   and the parts' states. *)
-let held_bytes h =
-  let n = h.hn and pairs = h.htq * h.htk in
-  let nodes = (n * 8 * h.htk) + ((n + 1) * 8 * h.htq) + (((2 * n) - 1) * pairs) in
-  nodes + (16 * ((4 * n) + 1)) + (256 * h.hg * h.htq * (h.hdv + 2) * 4)
+(* The bytes [d] counts of what nx_cuda.mli states [h]'s call takes at
+   most, each temporary a buffer of the call's own and the parts' states
+   another, in the driver's units ({!Rig.allocation}): the int64 keys
+   [key + i] and rows [row + tk - tq + i], their comparisons and the
+   conjunctions of these, and the parts' states. *)
+let held_bytes d h =
+  let n = h.hn and pairs = h.htq * h.htk and a = Rig.allocation d in
+  (n * a (8 * h.htk))
+  + ((n + 1) * a (8 * h.htq))
+  + (((2 * n) - 1) * a pairs)
+  + a (256 * h.hg * h.htq * (h.hdv + 2) * 4)
 
 let test_held_loop (b : Support.backend) () =
   let h = held_large in
   let outputs, call = held_call b h in
   let outs = outputs () in
-  Kernels_cases.loop_held b ~calls:8 ~bound:(held_bytes h) (fun () ->
+  Kernels_cases.loop_held b ~calls:8 ~bound:(held_bytes b.device h) (fun () ->
       Array.iter
         (fun (A.Any x) -> Rig.Buffer.wait (A.buffer x) Read_write)
         (call outs h.hn))

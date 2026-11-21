@@ -619,7 +619,8 @@ let cpu (b : Support.backend) =
 
 (* nx_cuda.mli: a sort takes a workspace of at most 70 bytes an element
    and a few kilobytes. One of 2^24 elements takes one past the 64 MiB the
-   device keeps. *)
+   device keeps, a buffer of the call's own, which the bound counts in the
+   driver's units ({!Rig.allocation}). *)
 let test_loop_workspace (b : Support.backend) () =
   let module K = (val b.kernels) in
   let module A = Nx_array in
@@ -627,7 +628,8 @@ let test_loop_workspace (b : Support.backend) () =
   let x = A.create b.device A.Dtype.Float32 [| n |] in
   let values = A.create b.device A.Dtype.Float32 [| n |] in
   let positions = A.create b.device A.Dtype.Int64 [| n |] in
-  Kernels_cases.loop_held b ~calls:10 ~bound:((70 * n) + 65536) (fun () ->
+  let bound = Rig.allocation b.device ((70 * n) + 65536) in
+  Kernels_cases.loop_held b ~calls:10 ~bound (fun () ->
       equal answer A.Done (K.sort ~axis:0 ~descending:false ~values ~positions x);
       Rig.Buffer.wait (A.buffer values) Read_write)
 

@@ -245,14 +245,17 @@ let product ~rows ~cols ~k ~init =
   let y = piece (rows * cols) in
   piece (rows * k) + piece (k * cols) + if init then 2 * y else y
 
-(* [own] float32 elements and bytes, alignment and the largest of
-   [products] as {!product} bounds it. *)
-let held ~own products =
-  own + 512 + 2048
-  + List.fold_left
-      (fun most (rows, cols, k, init) ->
-        Int.max most (product ~rows ~cols ~k ~init))
-      0 products
+(* The bytes [d] counts of a call's workspace, one buffer of its own: [own]
+   float32 elements and bytes, alignment and the largest of [products] as
+   {!product} bounds it, in the driver's units ({!Rig.allocation}). The
+   products' sums of fewer than 2048 terms take one range, so no ticket. *)
+let held d ~own products =
+  Rig.allocation d
+    (own + 512 + 2048
+    + List.fold_left
+        (fun most (rows, cols, k, init) ->
+          Int.max most (product ~rows ~cols ~k ~init))
+        0 products)
 
 (* [x], a float32 matrix of [m] x [n] in [b]'s buffer, read through its
    transpose where [transposed]. *)
@@ -277,7 +280,7 @@ let test_loop_eigh ~n ~transposed (b : Support.backend) () =
   let elements = (2 * n * n) + (97 * n) + 2048 + copy in
   let reals = (3 * n * n) + (78 * n) - (2 * l * (32 - l)) in
   let own = (4 * (elements + reals)) + (24 * n) + 32 in
-  let bound = held ~own [ (n, n, 32, true); (32, n, n, false) ] in
+  let bound = held b.device ~own [ (n, n, 32, true); (32, n, n, false) ] in
   all_fresh (fun () ->
       Kernels_cases.loop_held b ~bound (fun () ->
           equal answer A.Done (K.eigh ~w ~v a);
@@ -298,7 +301,7 @@ let test_loop_svd ~m ~n ~transposed (b : Support.backend) () =
   let elements = (mm * ((2 * k) + 33)) + (k * k) + (66 * k) + 2048 + copy in
   let reals = (2 * k * k) + (263 * k) + 260 in
   let own = (4 * (elements + reals)) + (4 * ((192 * k) + 203)) in
-  let bound = held ~own [ (k, mm, 32, true); (32, k, mm, false) ] in
+  let bound = held b.device ~own [ (k, mm, 32, true); (32, k, mm, false) ] in
   all_fresh (fun () ->
       Kernels_cases.loop_held b ~bound (fun () ->
           equal answer A.Done (K.svd ~s ~vectors:(~u, ~vh) a);
@@ -315,7 +318,7 @@ let test_loop_eig ~n ~transposed (b : Support.backend) () =
   let elements = (4 * n * n) + n + copy in
   let reals = (2 * n * n) + (4 * n) in
   let own = (4 * (elements + reals)) + 16 in
-  let bound = held ~own [ (n, n, n, false) ] in
+  let bound = held b.device ~own [ (n, n, n, false) ] in
   all_fresh (fun () ->
       Kernels_cases.loop_held b ~bound (fun () ->
           equal answer A.Done (K.eig ~w ~v a);

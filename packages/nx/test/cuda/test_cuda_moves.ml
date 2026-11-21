@@ -368,13 +368,14 @@ let test_misaligned (b : Support.backend) () =
     want (misaligned_moves b)
 
 (* nx_cuda.mli: a [Set] without [~unique] takes 4 bytes a target while it
-   runs, here past the 64 MiB the device keeps. *)
+   runs, here past the 64 MiB the device keeps: its workspace, a buffer of
+   the call's own, which counts in the driver's units ({!Rig.allocation}). *)
 let test_loop_set (b : Support.backend) () =
   let module K = (val b.kernels) in
   let n = 1 lsl 25 and d = b.device in
   let into = A.create d D.Uint8 [| n |] and dst = A.create d D.Uint8 [| n |] in
   let idx = A.create d D.Int64 [| 4 |] and u = A.create d D.Uint8 [| 4 |] in
-  Kernels_cases.loop_held b ~bound:(4 * n) (fun () ->
+  Kernels_cases.loop_held b ~bound:(Rig.allocation d (4 * n)) (fun () ->
       done_ (K.scatter Set ~unique:false ~axis:0 ~dst ~into idx u);
       Rig.Buffer.wait (A.buffer dst) Read_write)
 

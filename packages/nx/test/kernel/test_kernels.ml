@@ -569,7 +569,8 @@ let held_program =
 
 (* The bytes nx_cuda.mli states the map of [held_program] takes at most:
    its [2n - 1] values and sums along the keys, its output along both axes,
-   each from 16-byte aligned bytes. *)
+   each from 16-byte aligned bytes. They lie in a buffer of the call's own,
+   which its device counts in its driver's units ({!Rig.allocation}). *)
 let held_bytes =
   let aligned n = (n + 15) / 16 * 16 in
   ((2 * held_keys) - 1) * aligned (8 * held_cols)
@@ -591,7 +592,7 @@ let test_held_memory (b : Support.backend) () =
   let n = held_keys and d = b.device in
   let dst, map = held_map b in
   let budget = Rig.budget d in
-  Rig.set_budget d (Support.settled d + held_bytes);
+  Rig.set_budget d (Support.settled d + Rig.allocation d held_bytes);
   Fun.protect ~finally:(fun () -> Rig.set_budget d budget) map;
   let want =
     Array.init (held_rows * held_cols) (fun i ->
@@ -602,14 +603,16 @@ let test_held_memory (b : Support.backend) () =
 
 let test_held_loop (b : Support.backend) () =
   let _, map = held_map b in
-  loop_held b ~calls:32 ~bound:held_bytes map
+  loop_held b ~calls:32 ~bound:(Rig.allocation b.device held_bytes) map
 
 (* A map with a destination identical to its load, and a scan in nx.cuda's
    own order, of [wide_program]'s 130 int64 values held at once: each call
    is too wide for a launch whole and after each part it plans, and is
    tried again after each. nx_cuda.mli bounds its bytes by a temporary
    for each node and an array of the loop's shape, for the destination or
-   the scan's terms; each node varies along both axes. *)
+   the scan's terms; each node varies along both axes. They lie in a
+   buffer of the call's own, counted in its driver's units
+   ({!Rig.allocation}). *)
 
 let retried =
   { mode = Held; dt = D.Any D.Int64; padded = false; aliased = true; seed = 7 }
@@ -637,14 +640,14 @@ let retried_call (b : Support.backend) k =
 
 let test_retried_map (b : Support.backend) () =
   let module K = (val b.kernels) in
-  loop_held b ~bound:retried_bytes
+  loop_held b ~bound:(Rig.allocation b.device retried_bytes)
     (retried_call b (fun p x y ->
          let p = P.v ~ins:p.ins p.nodes ~outs:[| Iarray.get p.outs 0; 0 |] in
          K.map p ~dsts:[| A.Any x; A.Any y |] [| Nx_kernel.Plain x |]))
 
 let test_retried_scan (b : Support.backend) () =
   let module K = (val b.kernels) in
-  loop_held b ~bound:retried_bytes
+  loop_held b ~bound:(Rig.allocation b.device retried_bytes)
     (retried_call b (fun p x y ->
          K.scan p ~axis:1 (Monoid Sum, 0) ~dsts:[| A.Any y |]
            [| Nx_kernel.Plain x |]))

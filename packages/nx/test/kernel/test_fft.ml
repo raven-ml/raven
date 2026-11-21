@@ -1456,14 +1456,17 @@ let test_kept_plans (b : Support.backend) () =
 
 (* Lines of a prime past 2^20, each by Bluestein's convolution of
    [m = 2^21] points, take a workspace past the 64 MiB the device keeps:
-   nx_cuda.mli states at most [3m] complex points a line. *)
+   nx_cuda.mli states at most [3m] complex points a line. The bound counts
+   that workspace, a buffer of the call's own, in the driver's units
+   ({!Rig.allocation}); the line's plan is one the device keeps. *)
 let test_loop_workspace (b : Support.backend) () =
   let module K = (val b.kernels) in
   let lines = 4 and n = 1048583 in
   let x = A.create b.device D.Complex64 [| lines; n |] in
   let y = A.create b.device D.Complex64 [| lines; n |] in
   let m = 4 * n in
-  Kernels_cases.loop_held b ~bound:(lines * 3 * m * 8) (fun () ->
+  let bound = Rig.allocation b.device (lines * 3 * m * 8) in
+  Kernels_cases.loop_held b ~bound (fun () ->
       check (K.c2c Forward ~axes:[| 1 |] ~dst:y x);
       Rig.Buffer.wait (A.buffer y) Read_write)
 

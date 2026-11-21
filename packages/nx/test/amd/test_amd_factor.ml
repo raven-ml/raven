@@ -214,9 +214,10 @@ let all_fresh f =
       f ())
 
 (* Routine [r] on [ops], [matrices] of them, in a loop: each call holds at most
-   nx_amd.mli's [bytes] a matrix and the 3 KiB its alignment adds, into the same
-   results. *)
-let held (b : Support.backend) r ops ~matrices ~bytes =
+   nx_amd.mli's [bytes] of workspace a matrix and the 3 KiB its alignment adds,
+   a buffer of its own, and [tickets] bytes of tickets a matrix, another, each
+   counted in the driver's units ({!Rig.allocation}), into the same results. *)
+let held (b : Support.backend) ?(tickets = 0) r ops ~matrices ~bytes =
   let ops = Array.map (fun (A.Any x) -> A.Any (Support.on b x)) ops in
   let ys = Option.get (run b r ops) in
   let replay () =
@@ -226,9 +227,12 @@ let held (b : Support.backend) r ops ~matrices ~bytes =
       incr i;
       y
   in
+  let bound =
+    Rig.allocation b.device ((matrices * bytes) + 3072)
+    + Rig.allocation b.device (matrices * tickets)
+  in
   all_fresh (fun () ->
-      Kernels_cases.loop_held b
-        ~bound:((matrices * bytes) + 3072)
+      Kernels_cases.loop_held b ~bound
         (fun () ->
           ignore (run ~alloc:(replay ()) b r ops);
           Array.iter
@@ -255,8 +259,8 @@ let lu_bytes ~e ~m ~n ~matrices =
   let panel = (m * (((w + 1) * e) + 16)) + (p * ((3 * w * e) + e + 117)) in
   if n > w then Int.max panel ((m + (2 * n)) * ((n * e) + 16)) else panel
 
-(* A [qr]'s of [m] x [n] into [c] columns of [q], [blocked] where it takes the
-   second workspace, of a [complex] dtype or a real one. *)
+(* A [qr]'s workspace of [m] x [n] into [c] columns of [q], [blocked] where
+   it takes the second workspace, of a [complex] dtype or a real one. *)
 let qr_bytes ~e ~complex ~m ~n ~c ~blocked =
   let k = Int.min m n in
   let w = Int.min n (if e = 16 then 16 else 32) in
@@ -277,11 +281,16 @@ let qr_bytes ~e ~complex ~m ~n ~c ~blocked =
   let covered (h, v) = cdiv b h * h * cdiv cols v * v in
   let outputs = List.fold_left (fun n t -> Int.max n (covered t)) 0 tiles in
   let partials =
-    if m >= 2048 then
-      (Int.min (cdiv m 512) 128 * outputs * e') + (4 * cdiv b 32 * cdiv big 16)
-    else 0
+    if m >= 2048 then Int.min (cdiv m 512) 128 * outputs * e' else 0
   in
   first + if blocked then second + partials else 0
+
+(* A [qr]'s tickets of [m] x [n] into [c] columns of [q], [blocked] as for
+   {!qr_bytes}. *)
+let qr_tickets ~e ~m ~n ~c ~blocked =
+  let k = Int.min m n in
+  let b = Int.min k (if e = 16 then 64 else 128) in
+  if blocked && m >= 2048 then 4 * cdiv b 32 * cdiv (Int.max n c) 16 else 0
 
 let f32 = D.Any D.Float32
 let f64 = D.Any D.Float64
@@ -339,6 +348,7 @@ let test_lu_held b () =
 let test_qr_held b () =
   let tall = fixed ~seed:10 f32 2500 40 in
   held b (Qr Reduced)
+    ~tickets:(qr_tickets ~e:4 ~m:2500 ~n:40 ~c:40 ~blocked:true)
     [| snd (lu_operand tall) |]
     ~matrices:1
     ~bytes:(qr_bytes ~e:4 ~complex:false ~m:2500 ~n:40 ~c:40 ~blocked:true);

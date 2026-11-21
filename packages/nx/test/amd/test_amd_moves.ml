@@ -1069,12 +1069,16 @@ let all_fresh f =
       f ())
 
 (* nx_amd.mli: a call's own buffers return to the device once its work is done,
-   so calls in a loop hold one call's workspace, of the bytes its section
-   states, at most [bound]. [setup b] makes the call's arrays once, outside the
-   count, and gives the call. *)
-let held ~bound setup =
+   so calls in a loop hold one call's: its workspace, a buffer of [workspace]
+   bytes at most, and its tickets, one of [tickets], each counted in the
+   driver's units ({!Rig.allocation}). [setup b] makes the call's arrays once,
+   outside the count, and gives the call. *)
+let held ~workspace ?(tickets = 0) setup =
   let b = amd () in
   let call = setup b in
+  let bound =
+    Rig.allocation b.device workspace + Rig.allocation b.device tickets
+  in
   all_fresh (fun () ->
       Kernels_cases.loop_held b ~bound (fun () ->
           let (A.Any dst) = call () in
@@ -1109,10 +1113,10 @@ let scatter_held (type v s) ?(rows = false) c ~unique (dt : (v, s) D.t) ~m ~d
 let test_set_held () =
   let d = 4096 and cols = 3 in
   held
-    ~bound:(8 * d * cols)
+    ~workspace:(8 * d * cols)
     (scatter_held Set ~unique:false D.Uint8 ~m:100 ~d ~cols);
   held
-    ~bound:(4 * d * cols)
+    ~workspace:(4 * d * cols)
     (scatter_held Set ~unique:false D.Float64 ~m:100 ~d ~cols)
 
 (* A complex [Max] or [Min]: 8 bytes a target for complex64, 16 for
@@ -1123,7 +1127,7 @@ let test_extreme_held () =
     List.iter
       (fun c ->
         held
-          ~bound:(bytes * d * cols)
+          ~workspace:(bytes * d * cols)
           (scatter_held c ~unique:false dt ~m:300 ~d ~cols))
       Nx_kernel.[ Max; Min ]
   in
@@ -1131,15 +1135,16 @@ let test_extreme_held () =
   each D.Complex128 16
 
 (* A float Add past one tile: at most 64 + 4 w bytes an update, w the bytes of
-   an element, 4 for a narrow float, and 3 KiB, through each of its paths: the
-   updates or rows of them sorted, where a slice has more than a tile's
-   targets, and the tiles' entries, of row tiles too; each with the sort's
-   items narrow where they fit and wide always. *)
+   an element, 4 for a narrow float, 3 KiB and a ticket, through each of its
+   paths: the updates or rows of them sorted, where a slice has more than a
+   tile's targets, and the tiles' entries, of row tiles too; each with the
+   sort's items narrow where they fit and wide always. *)
 let test_add_held () =
   let each ?rows (D.Any dt) ~m ~d ~cols =
     let w = Int.max 4 (D.bits dt / 8) in
     held
-      ~bound:(((64 + (4 * w)) * m * cols) + 3072)
+      ~workspace:(((64 + (4 * w)) * m * cols) + 3072)
+      ~tickets:4
       (scatter_held ?rows Add ~unique:false dt ~m ~d ~cols)
   in
   let dts =
@@ -1168,7 +1173,7 @@ let test_ranges_held () =
   let runs = rows * k in
   let chunks = (k + 4095) / 4096 in
   held
-    ~bound:((24 * runs) + (8 * rows * chunks))
+    ~workspace:((24 * runs) + (8 * rows * chunks))
     (fun b ->
       let module K = (val b.kernels) in
       let x = A.create b.device D.Float32 [| rows; n |] in
