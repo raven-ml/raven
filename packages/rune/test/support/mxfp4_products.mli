@@ -50,24 +50,32 @@ type decode = {
   experts : bool;
       (** Whether the product runs through [Nx_quant.apply_experts], each
           token's id choosing one of two equal experts, or [Nx_quant.apply]. *)
+  row : int;  (** [x]'s elements are [2{^row}]. *)
 }
-(** The type for decode cases: an MXFP4 weight of [112] rows by [256]
-    inputs, row [16 b + c] holding the code [c] at each input and the [b]-th
-    of the scale bytes 0, 1, 126, 127, 128, 254 and 255 in each block, by
-    [bfloat16] rows of [2{^-8}]. *)
+(** The type for decode cases: an MXFP4 weight of [4096] rows by [256] inputs,
+    row [16 b + c] holding the code [c] at each input and the scale byte [b] in
+    each block, by [bfloat16] rows of [2{^row}]. *)
 
 val pp_decode : Format.formatter -> decode -> unit
 
 val decodes : decode list
 (** [decodes] holds 1 and 64 tokens, each through [apply] and through
-    [apply_experts]. *)
+    [apply_experts], by rows of [2{^-8}] and of [2{^8}]. *)
 
 val decode_law : ?flushes:bool -> (module Nx.Devices) -> decode -> unit
 (** [decode_law ~flushes s d] checks that the product compiled on [s]'s first
     device gives, in every token's output [16 b + c], the [float32] value of
-    code [c] at its scale byte, rounded to [bfloat16], bit for bit: [+0] for
-    both zeros, an infinity where the value passes [float32]'s range, a NaN
-    at byte 255. Its [256] terms are equal, so the sum is exact.
+    code [c] at its scale byte times [2{^(row + 8)}], rounded to [bfloat16], bit
+    for bit: [+0] for both zeros, an infinity where it passes [float32]'s range,
+    a NaN at byte 255. Its [256] terms are equal, so the sum is exact.
 
-    With [~flushes:true] (default [false]) only the rows of bytes 126 and
-    above are checked, whose values are normal. *)
+    With [~flushes:true] (default [false]) only the rows whose value and
+    products are not subnormal are checked: by rows of [2{^8}], byte 0's codes
+    of magnitude 2 or more among them. *)
+
+val dequant_law : ?flushes:bool -> (module Nx.Devices) -> unit -> unit
+(** [dequant_law ~flushes s ()] checks that [Nx_quant.dequant Nx.float32] of an
+    MXFP4 weight compiled on [s]'s first device gives each code at each scale
+    byte as its [float32] value, bit for bit, as {!decode_law} states it. With
+    [~flushes:true] (default [false]) only the values that are not subnormal are
+    checked: byte 0's codes of magnitude 2 or more among them. *)

@@ -3635,6 +3635,10 @@ let () =
                (fun c ->
                  let d, s = on_gpu () in
                  Mxfp4_products.decode_law ~flushes:(flushes d) s c);
+             test "an MXFP4 dequant decodes each code at each scale exactly"
+               (fun () ->
+                 let d, s = on_gpu () in
+                 Mxfp4_products.dequant_law ~flushes:(flushes d) s ());
              test
                "a routed MXFP4 expert of 12 tokens streams its matrices across \
                 threads"

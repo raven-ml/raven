@@ -6468,6 +6468,8 @@ let () =
                ~id:(Format.asprintf "%a" Mxfp4_products.pp_decode)
                Mxfp4_products.decodes
                (Mxfp4_products.decode_law (module Nx.Host));
+             test "an MXFP4 dequant decodes each code at each scale exactly"
+               (Mxfp4_products.dequant_law (module Nx.Host));
              test "special values are exact" test_specials;
              test "roundeven is exact" test_roundeven;
              test "log10 gives eager's bits" test_log10;

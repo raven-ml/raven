@@ -548,9 +548,16 @@ let sum ~batch ~contracting ~acc ~out a b init =
 
    A scale is read at each element of its block: the scale's axis of [k]
    repeated [n / k] times in place, for an operand's axis of [n]. A code [e]
-   is the float of bits [e << 23] in [float32], [2^-127] being the subnormal
-   of bits [1 << 22], and of bits [(e + 896) << 52] in [float64]: [2^(e -
-   127)] exactly. *)
+   scales by [2^(e - 127)], NaN at [255]: the float of bits [(e + 896) << 52] in
+   [float64], and of bits [e << 23] in [float32], but at [0], whose [2^-127] is
+   the subnormal of bits [1 << 22]. Where the target keeps subnormals, the
+   host's processors (rune.mli's faithful devices) or a GPU whose multiplies
+   take them at full rate ({!Tolk.Renderer.t.full_rate_subnormals}), an element
+   is multiplied by that subnormal. Elsewhere, where a multiply may flush it to
+   zero, as on Apple's GPUs, the element is multiplied by [1/2] at [0], [1]
+   above it, and then by [2^-126]: two normal factors, the first exact wherever
+   the product is not below the least subnormal, so the same product, subnormal
+   only where it is. *)
 
 let blocks u s =
   let e = extents u in
@@ -559,16 +566,28 @@ let blocks u s =
   let u = Shape.reshape u (dims (List.concat_map (fun k -> [ k; 1 ]) e)) in
   Shape.reshape (Shape.expand u (dims spread)) (dims s)
 
-let power (t : Dtype.t) code =
+(* Whether [r]'s float multiplies keep a subnormal operand. *)
+let keeps_subnormals (r : Renderer.t) =
+  r.full_rate_subnormals || String.equal r.target.device "CPU"
+
+(* [scaled ~keeps t x code] is [x] times the scale of [code], in [t]; [keeps] is
+   {!keeps_subnormals} of the target's renderer. *)
+let scaled ~keeps (t : Dtype.t) x code =
   let e = Ops.cast code (Bits.unsigned t) in
   let k n = Shape.const_like e (`Int (Bigint.of_int n)) in
-  let bits =
-    match t with
-    | Float32 -> Ops.where (Ops.eq e (k 0)) (k 0x400000) (Ops.shl e (k 23))
-    | _ -> Ops.shl (Ops.add e (k 896)) (k 52)
+  let power bits =
+    let p = Ops.bitcast bits t in
+    Ops.where (Ops.eq e (k 255)) (Bits.nan p) p
   in
-  let x = Ops.bitcast bits t in
-  Ops.where (Ops.eq e (k 255)) (Bits.nan x) x
+  let least = Ops.eq e (k 0) in
+  match t with
+  | Float32 when keeps () ->
+      Ops.mul x (power (Ops.where least (k 0x400000) (Ops.shl e (k 23))))
+  | Float32 ->
+      let p = power (Ops.where least (k 0x800000) (Ops.shl e (k 23))) in
+      let f v = Shape.const_like ~dtype:Float32 p (`Float v) in
+      Ops.mul (Ops.mul x (Ops.where least (f 0.5) (f 1.))) p
+  | _ -> Ops.mul x (power (Ops.shl (Ops.add e (k 896)) (k 52)))
 
 (* Whether every element of [dt] times a scale of [scale] in [acc] is a
    bfloat16: an e2m1 value, of two significant bits, times a power of two of
@@ -602,7 +621,8 @@ let e2m1_placed = Float.ldexp 1. 126
    exponent field [e] and top mantissa bit [m], which is the code times
    [2^-126], the subnormal [m/2 · 2^-126] where [e] is [0]; one product by
    [2^126] makes it the code. The scale is the bfloat16 of bits [s << 7],
-   [2^-127] (bits [0x0040]) at [0] and NaN at [255], as {!power}'s float32.
+   [2^-127] (bits [0x0040]) at [0] and NaN at [255], as {!scaled}'s float32
+   where the target keeps subnormals.
    A code, of two significant bits, times a power of two of bfloat16's
    range is exact, an overflow's infinity included: bfloat16 and float32
    share the range. One product by [2^(s - 1)] would overflow past
@@ -653,16 +673,17 @@ let entered ?(stored = false) ~renderer acc ~other { dtype; node; scale } =
   match (scale, acc) with
   | None, _ -> Arith.parts acc x
   | Some sc, D.Any (D.Float32 | D.Float64) -> (
+      let ren () = Lazy.force renderer in
+      let subnormals () = (ren ()).Renderer.full_rate_subnormals in
+      let keeps () = keeps_subnormals (ren ()) in
       let t = Arith.dtype acc and s = extents x in
       let v =
         match sc with
-        | Exponent c -> Ops.mul x (power t (blocks c s))
+        | Exponent c -> scaled ~keeps t x (blocks c s)
         | Value (d, v) -> Ops.mul x (blocks (Arith.cast ~src:d acc v) s)
       in
       let bf16 = D.Any D.Bfloat16 in
       let paired = match other with D.Any D.Bfloat16 -> true | _ -> false in
-      let ren () = Lazy.force renderer in
-      let subnormals () = (ren ()).Renderer.full_rate_subnormals in
       let bf16_core () =
         stored
         ||

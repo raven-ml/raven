@@ -162,21 +162,34 @@ let pick n f =
 
 (* MXFP4. A code is an e2m1 float, a nibble that float4_e2m1fn reads as it is: a
    sign bit, two exponent bits and a mantissa bit. A scale byte is an e8m0
-   exponent, 2^(s - 127), with 255 a NaN; its float32 bits are built with
-   integer operations, 2^-127, a subnormal, at 0. Every value, scaled, is exact
-   at float32 barring overflow. *)
+   exponent, 2^(s - 127), with 255 a NaN, its float32 bits built with integer
+   operations. Byte 0's 2^-127 is a subnormal, which a device that flushes
+   subnormals reads as zero. The host keeps them, and there a value is
+   multiplied by its scale; elsewhere, by two normal factors, 1/2 at 0 and 1
+   above, then 2^(s - 127), or 2^-126 at 0. Every value, scaled, is exact at
+   float32 barring overflow, and subnormal only where it is below 2^-126. *)
 
 (* [e2m1 codes] is the codes of the bytes [codes], two to a byte, along a new
    last axis, low nibble first, at float32. *)
 let e2m1 codes = Nx.cast Nx.float32 (Nx.bitcast Nx.float4_e2m1fn codes)
 
-(* [e8m0 s] is the scales of the bytes [s] at float32. *)
-let e8m0 s =
+(* [scaled v s] is the float32 values [v] times the scales of the bytes [s],
+   which broadcast to them. *)
+let scaled v s =
   let s = Nx.cast Nx.uint32 s in
   let k = Nx.scalar_like s in
-  Nx.bitcast Nx.float32
-    (Nx.where (Nx.equal_s s 0l) (k 0x00400000l)
-       (Nx.where (Nx.equal_s s 255l) (k 0x7FC00000l) (Nx.lshift s 23)))
+  let least = Nx.equal_s s 0l in
+  let power least_bits =
+    Nx.bitcast Nx.float32
+      (Nx.where least (k least_bits)
+         (Nx.where (Nx.equal_s s 255l) (k 0x7FC00000l) (Nx.lshift s 23)))
+  in
+  let devices = Nx.Devices.to_list (Nx.Placement.devices (Nx.placement s)) in
+  if List.for_all Rig.runs_on_host devices then Nx.mul v (power 0x00400000l)
+  else
+    let p = power 0x00800000l in
+    let f = Nx.scalar_like p in
+    Nx.mul (Nx.mul v (Nx.where least (f 0.5) (f 1.))) p
 
 (* [follow scales] is [scales], [[| …; n; b |]], read where a split of the codes
    into groups leaves them. The split keeps a cut of [k] whose tiles divide the
@@ -204,7 +217,7 @@ let follow scales =
 let mxfp4_values codes scales =
   let g = Nx.shape scales in
   let codes = split ~bytes:mxfp4_bytes codes in
-  let v = Nx.mul (e2m1 codes) (per g 1 (e8m0 (follow scales))) in
+  let v = scaled (e2m1 codes) (per g 1 (follow scales)) in
   rows g ~values:mxfp4_group v
 
 (* A GGUF block's byte [j] holds values [j] and [j + 16], so its nibbles are the
@@ -213,7 +226,7 @@ let mxfp4_blocks_values blocks =
   let b = split ~bytes:mxfp4_block_bytes blocks in
   let g = groups b in
   let codes = Nx.swapaxes (-1) (-2) (e2m1 (bytes b 1 mxfp4_block_bytes)) in
-  let v = Nx.mul codes (per g 1 (e8m0 (bytes b 0 1))) in
+  let v = scaled codes (per g 1 (bytes b 0 1)) in
   rows g ~values:mxfp4_group v
 
 (* The GGUF formats, decoded as ggml's dequantize_row_q8_0, _q4_K and _q6_K

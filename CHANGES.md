@@ -545,6 +545,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled MXFP4 product scales a block of scale byte 0 by two normal
+  factors on a GPU whose multiplies may flush subnormals, as Apple's do:
+  through byte 0's subnormal `2^-127` there, its codes of magnitude 2 or more
+  gave 0. The host's and CUDA's kernels are unchanged.
 - `Rune.jit` states each part of a compiled complex contraction within
   `γ(β(K))` of its products' magnitudes, which implies `Nx.contract`'s bound
   at every `K`; it stated `γ(β(K) + 2)`. A real contraction on a tensor core
@@ -3514,6 +3518,9 @@ its lock and from samples the dashboard saw arrive.
   `FALSE = 0` and `TRUE = 1` over a byte, as `bool`, where it read `int8`.
 - `Nx.log10` states 4 ulps at float64, the bound `Nx.log2`'s 2 ulps
   derive; it stated 2, which nothing derived. Measured, it is within 1.
+- `Nx_quant`'s MXFP4 values scale a block of scale byte 0 by two normal
+  factors off the host, so a device that flushes subnormals, as Apple's GPUs
+  do, keeps its codes of magnitude 2 or more, which gave 0 there.
 - New `Nx.nan_to_num`: NaN to `0.` and the infinities to the dtype's
   greatest and least finite values, or to values given, a complex number's
   parts each.

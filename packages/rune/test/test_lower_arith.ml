@@ -1050,6 +1050,55 @@ let e2m1_fields =
                  (List.filter converts (Tolk.Ops.toposort ~calls:Skip sink)))
            0 sinks))
 
+(* An MXFP4 product for Apple's GPUs, whose multiplies may flush subnormals,
+   holds no float32 subnormal, a constant or built from the bits of one: scale
+   byte 0's [2^-127] enters as two normal factors (Lower_reduce.scaled). The
+   bits a bitcast to float32 takes whole are its operand's, a selection's arms'
+   included. *)
+let mxfp4_normal_factors =
+  test "an MXFP4 product on Metal multiplies by no subnormal" (fun () ->
+      let w =
+        Nx_quant.mxfp4
+          ~scales:(Nx.zeros Nx.uint8 [| 4; 1 |])
+          (Nx.zeros Nx.uint8 [| 4; 16 |])
+      in
+      let x = Nx.zeros D.Float32 [| 2; 32 |] in
+      let target =
+        Result.get_ok (Tolk.Helpers.Target.of_string "METAL:METAL:Apple9")
+      in
+      let rec consts u =
+        match (Tolk.Ops.op u, Tolk.Ops.src u) with
+        | Tolk.Op.Const, _ -> [ u ]
+        | Tolk.Op.Where, [ _; a; b ] -> consts a @ consts b
+        | _ -> []
+      in
+      let subnormal u =
+        match Tolk.Ops.arg u with
+        | Const (`Int b) -> Tolk.Bigint.(b > zero && b < of_int 0x800000)
+        | _ -> false
+      in
+      let float32 u = Tolk.Dtype.equal (Tolk.Ops.dtype u) Tolk.Dtype.Float32 in
+      let tiny u =
+        match Tolk.Ops.arg u with
+        | Const (`Float f) -> f <> 0. && Float.abs f < 0x1p-126
+        | _ -> false
+      in
+      let bits sink =
+        List.concat_map
+          (fun u ->
+            if Tolk.Ops.op u = Tolk.Op.Bitcast && float32 u then
+              List.filter subnormal (List.concat_map consts (Tolk.Ops.src u))
+            else if Tolk.Ops.op u = Tolk.Op.Const && float32 u && tiny u then
+              [ u ]
+            else [])
+          (Tolk.Ops.toposort ~calls:Skip sink)
+      in
+      let sinks = Lowered.sources ~target (fun () -> Nx_quant.apply w x) in
+      equal int ~msg:"subnormals' bits" 0
+        (List.fold_left
+           (fun n (_, sink, _) -> n + List.length (bits sink))
+           0 sinks))
+
 (* A value read twice is one parameter of its kernel, as a compiled call binds
    it (Lowered.run). *)
 let bound_once =
@@ -1084,5 +1133,6 @@ let () =
          folded_nans;
          shapes;
          e2m1_fields;
+         mxfp4_normal_factors;
          bound_once;
        ])
