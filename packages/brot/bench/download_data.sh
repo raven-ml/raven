@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DATA_DIR="$(cd "$(dirname "$0")/data" && pwd)"
+# The directory given, else data/ beside this script.
+DATA_DIR="${1:-$(dirname "$0")/data}"
+mkdir -p "$DATA_DIR"
+DATA_DIR="$(cd "$DATA_DIR" && pwd)"
 # Under a Cygwin bash the native curl cannot open a /cygdrive path.
 if command -v cygpath >/dev/null 2>&1; then
   DATA_DIR="$(cygpath -m "$DATA_DIR")"

@@ -1,8 +1,14 @@
 (data_only_dirs data)
 
+; The executable reads data/ and runs download_data.sh beside itself, so
+; both come with it.
+
 (executable
  (name bench_brot)
  (modules bench_brot)
+ (link_deps
+  download_data.sh
+  (source_tree data))
  (libraries brot jsont jsont.bytesrw thumper unix))
 
 ; Throughput over a large corpus, run by hand (see bench_owt.ml); not on any

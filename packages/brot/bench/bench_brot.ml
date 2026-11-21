@@ -10,11 +10,48 @@ open Brot
 module Fixtures = struct
   (* Resolve fixtures next to the executable, not the working directory: the
      bench rule runs with the bench dir as cwd, dune exec with the project root
-     — the exe path is the one stable anchor in both. *)
-  let data_dir = Filename.concat (Filename.dirname Sys.executable_name) "data"
+     — the exe path is the one stable anchor in both.
+
+     The tokenizers are not committed. download_data.sh fetches them, each
+     checked against its SHA-256, into data/, which dune copies beside the
+     executable with the script, as CI does before building. A tokenizer that
+     is not there is read from raven's cache, $RAVEN_CACHE_ROOT/brot (else
+     $XDG_CACHE_HOME/raven/brot, else ~/.cache/raven/brot), into which the
+     script fetches them first if it lacks it. *)
+  let exe_dir = Filename.dirname Sys.executable_name
+
+  let cache =
+    let nonempty v =
+      match Sys.getenv_opt v with Some "" | None -> None | d -> d
+    in
+    let root =
+      match (nonempty "RAVEN_CACHE_ROOT", nonempty "XDG_CACHE_HOME") with
+      | Some r, _ -> r
+      | None, Some x -> Filename.concat x "raven"
+      | None, None -> Filename.concat (Sys.getenv "HOME") ".cache/raven"
+    in
+    Filename.concat root "brot"
+
+  let fetch =
+    lazy
+      (let script = Filename.concat exe_dir "download_data.sh" in
+       (* Its progress goes to stderr, out of a report or a list. *)
+       if
+         Sys.command (Filename.quote_command "bash" [ script; cache ] ^ " 1>&2")
+         <> 0
+       then failwith (script ^ " failed"))
+
+  let locate name =
+    let beside = Filename.concat (Filename.concat exe_dir "data") name in
+    let cached = Filename.concat cache name in
+    if Sys.file_exists beside then beside
+    else begin
+      if not (Sys.file_exists cached) then Lazy.force fetch;
+      cached
+    end
 
   let read_file name =
-    let path = Filename.concat data_dir name in
+    let path = locate name in
     let ic = open_in_bin path in
     let len = in_channel_length ic in
     let content = really_input_string ic len in
@@ -22,7 +59,7 @@ module Fixtures = struct
     content
 
   let load_tokenizer name =
-    let path = Filename.concat data_dir name in
+    let path = locate name in
     match from_file path with
     | Ok tok -> tok
     | Error msg ->
