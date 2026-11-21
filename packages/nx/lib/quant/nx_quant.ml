@@ -466,6 +466,13 @@ let stored ~wide ws w =
   | Mxfp4 _ | Mxfp4_blocks _ | Q4_K _ ->
       Stored { elements = values w; inner = [ k ]; scales = None; blocks = [] }
 
+(* The position of axis [i] among the axes [ax]. *)
+let index ax i = Option.get (List.find_index (Int.equal i) ax)
+
+(* [y]'s axes, named in the order [from], in the order [into]. *)
+let reorder ~from ~into y =
+  if from = into then y else Nx.transpose ~axes:(List.map (index from) into) y
+
 (* [scaled ~by ~wide x ws s] is the product of [x], [[| …; m; k |]] or
    [[| k |]], with a weight of shape [ws], [[| …; n; k |]], stored as [s], in
    one contraction of [x]'s [k] with the elements' [inner] axes, each element
@@ -495,7 +502,6 @@ let scaled ?(sum = false) ?init ~by ~wide x ws
   let w_lead = leads (fun i -> holds lead_w i || not (holds lead_x i)) in
   let both = List.filter (fun i -> List.mem i w_lead) x_lead in
   let only ax = List.filter (fun i -> not (List.mem i both)) ax in
-  let index ax i = Option.get (List.find_index (Int.equal i) ax) in
   let extents ax last = Array.of_list (List.map (Array.get lead) ax @ last) in
   let m = if xr = 1 then [] else [ xs.(xr - 2) ] in
   let a = Nx.reshape (extents x_lead (m @ inner)) x in
@@ -521,17 +527,12 @@ let scaled ?(sum = false) ?init ~by ~wide x ws
   let row = if xr = 1 then [] else [ l ] in
   let kernel = both @ only x_lead @ row @ only w_lead @ [ l + 1 ] in
   let result = List.init l Fun.id @ row @ [ l + 1 ] in
-  (* [y]'s axes, named in the order [from], in the order [into]. *)
-  let reorder ~from ~into y =
-    if from = into then y
-    else Nx.transpose ~axes:(List.map (index from) into) y
-  in
   let init =
-    Option.map
-      (fun i ->
+    match init with
+    | None -> None
+    | Some i ->
         let shape = Array.concat [ lead; Array.of_list m; [| n |] ] in
-        reorder ~from:result ~into:kernel (init_to ~by shape i))
-      init
+        Some (reorder ~from:result ~into:kernel (init_to ~by shape i))
   in
   let y =
     Nx.Prim.eval ~by
@@ -740,10 +741,11 @@ let experts ?(sum = false) ?init ~ids w x =
   let q = List.length inner in
   let contracting = Iarray.of_list (List.init q (fun i -> (1 + i, 2 + i))) in
   let init =
-    Option.map
-      (fun i ->
-        Nx.reshape [| p; n |] (init_to ~by (Array.append lead [| n |]) i))
-      init
+    match init with
+    | None -> None
+    | Some i ->
+        let shape = Array.append lead [| n |] in
+        Some (Nx.reshape [| p; n |] (init_to ~by shape i))
   in
   let y =
     Nx.Prim.eval ~by
