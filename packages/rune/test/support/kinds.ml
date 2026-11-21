@@ -1820,10 +1820,10 @@ let asinh =
     ]
 
 let sinc =
-  composed1 "sinc" { f1 = Nx.sinc } [ 0.25; 0.; 1.; 0.5 ] [ 1.; 1e4 ]
+  composed1 "sinc" { f1 = Nx.sinc } [ 0.5; 0.; 1.; 1.5 ] [ 1.; 1e4 ]
     [
-      ("|x| below 1/4", fun _ e -> mag e < 0.25);
-      ("|x| from 1/4, finite", fun _ e -> mag e >= 0.25 && finite_pos (mag e));
+      ("|x| below 1/2", fun _ e -> mag e < 0.5);
+      ("|x| from 1/2, finite", fun _ e -> mag e >= 0.5 && finite_pos (mag e));
     ]
 
 let acosh =

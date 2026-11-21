@@ -3546,7 +3546,7 @@ its lock and from samples the dashboard saw arrive.
 - New `Nx.nan_to_num`: NaN to `0.` and the infinities to the dtype's
   greatest and least finite values, or to values given, a complex number's
   parts each.
-- New `Nx.sinc`, `sin (πx) / (πx)`: a polynomial below `|x| = ¼`, so its
+- New `Nx.sinc`, `sin (πx) / (πx)`: a polynomial below `|x| = ½`, so its
   derivatives at and near `0` are accurate, and exactly `0` at every nonzero
   integer.
 - `Nx.attention` on nx.cpu sums each block of 64 keys' value products

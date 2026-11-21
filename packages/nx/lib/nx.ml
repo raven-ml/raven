@@ -2700,9 +2700,10 @@ let log10 x =
       E.(where (finite w y) (fma y hi (y * lo)) (y * hi)))
 
 (* Taylor's coefficients of [sin (πx) / (πx)] in [x²], [(-1)ᵏ π²ᵏ / (2k + 1)!]
-   for [k] from 1 to 8, each the float64 nearest the exact value. The first term
-   left out is under 2⁻⁶³ where [|x|] is below ¼, a thousandth of float64's ulp
-   there. *)
+   for [k] from 1 to 11, each the float64 nearest the exact value. Where [|x|]
+   is below ½ the first term left out is under 2⁻⁶⁸ and its derivative under
+   2⁻⁶², each under a thousandth of float64's ulp of the value and of the
+   derivative there. *)
 let sinc_coefficients =
   [|
     -0x1.a51a6625307d3p+0;
@@ -2713,12 +2714,21 @@ let sinc_coefficients =
     0x1.374719fab3915p-13;
     -0x1.d42498d1ce099p-18;
     0x1.0fc992ff39e13p-22;
+    -0x1.f5f9d970ca6dfp-28;
+    0x1.79788684225eap-33;
+    -0x1.d7353939082fep-39;
   |]
 
-let sinc_small = 0.25
+let sinc_small = 0.5
 
-(* Below [|x| = ¼] the polynomial, whose derivatives of every order are its own:
-   the quotient's would cancel near [0], where [sin (πx)] rounds to [πx].
+(* Below [|x| = ½] the polynomial, whose derivatives of every order are its own.
+   There the quotient's derivative, [(cos (πx) - sinc x) / x], subtracts two
+   positive terms: near [0], where [sin (πx)] rounds to [πx], they cancel
+   entirely, and at ¼ they are 8 times their difference, which multiplies their
+   rounding errors as much. At ½ [cos (πx)] is [0] and up to 1 the terms add;
+   past 1, where they cancel again, they are under [1.32 / x] together, so the
+   error stays a few ulps of 1.
+
    Elsewhere [sin (πx)] is [±sin (πr)] for the exact [r = x - k], [k] the
    nearest integer, so the sine is [0] at every integer; the sign is [k]'s
    parity. Each arm reads [x] where it is selected and a point of its domain

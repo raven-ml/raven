@@ -1875,11 +1875,12 @@ val sin : ('v, 's, 'd) t -> ('v, 's, 'd) t
     float64. *)
 
 val sinc : (float, 's, 'd) t -> (float, 's, 'd) t
-(** [sinc x] is [sin (πx) / (πx)], and [1] at [0]. Below [|x| = ¼] it is a
-    polynomial in [(πx)²], so its derivatives of every order are accurate at [0]
-    and near it; elsewhere the sine is taken of [π] times [x]'s distance to the
-    nearest integer, so [sinc] is exactly [0] at every other integer. It is NaN
-    at NaN and at infinities. *)
+(** [sinc x] is [sin (πx) / (πx)], and [1] at [0]. Below [|x| = ½], where the
+    quotient's derivative cancels, it is a polynomial in [(πx)²], so its
+    derivatives of every order are accurate at [0] and near it; elsewhere the
+    sine is taken of [π] times [x]'s distance to the nearest integer, so [sinc]
+    is exactly [0] at every other integer. It is NaN at NaN and at infinities.
+*)
 
 val cos : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [cos x] is the cosine of [x] radians. Within 2 ulps at float32 and

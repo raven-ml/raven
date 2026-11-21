@@ -335,7 +335,7 @@ let test_logarithms () =
 
 (* sinc's derivatives
 
-   Below [|x| = ¼] sinc is its Taylor series in [x²], whose coefficients
+   Below [|x| = ½] sinc is its Taylor series in [x²], whose coefficients
    [sinc_series] gives, and its derivatives at and near [0] are the series': at
    [0] the odd ones are [0], the second is [-π²/3] and the fourth [π⁴/5].
    Elsewhere the first is [(cos (πx) - sinc x) / x], which is [(-1)ⁿ / n] at an
@@ -349,10 +349,10 @@ let sinc_series k =
   done;
   !c
 
-(* The first derivative: the series' to [x²⁴] below [¼], where the next term is
-   under 2⁻⁶⁰, and the closed form above. *)
+(* The first derivative: the series' to [x²⁴] below [½], where the next term is
+   under 2⁻⁷⁰, and the closed form above. *)
 let sinc_d1 x =
-  if Float.abs x < 0.25 then begin
+  if Float.abs x < 0.5 then begin
     let d = ref 0. in
     for k = 12 downto 1 do
       d := (!d *. x *. x) +. (Float.of_int (2 * k) *. sinc_series k)
@@ -365,24 +365,36 @@ let sinc_d1 x =
 
 let sinc_gen =
   let open Gen in
-  frequency
-    [
-      (3, float_range (-8.) 8.);
-      (1, constant 0.);
-      (1, map (fun e -> Float.ldexp 1. (-e)) (int_range 1 60));
-      (1, map (fun e -> -.Float.ldexp 1. (-e)) (int_range 1 60));
-      (1, map Float.of_int (int_range (-6) 6));
-      ( 1,
-        let+ n = int_range (-6) 6 and+ e = int_range 4 30 in
-        Float.of_int n +. Float.ldexp 1. (-e) );
-    ]
+  with_pp
+    (fun ppf x -> Format.fprintf ppf "%.17g" x)
+    (frequency
+       [
+         (3, float_range (-8.) 8.);
+         (1, float_range (-1.) 1.);
+         (1, constant 0.);
+         (1, map (fun e -> Float.ldexp 1. (-e)) (int_range 1 60));
+         (1, map (fun e -> -.Float.ldexp 1. (-e)) (int_range 1 60));
+         (1, map Float.of_int (int_range (-6) 6));
+         ( 1,
+           let+ n = int_range (-6) 6 and+ e = int_range 4 30 in
+           Float.of_int n +. Float.ldexp 1. (-e) );
+       ])
 
-(* At float32 the derivative is within [2⁻²¹] of the exact one, a few ulps of
-   its scale, where the quotient's would be off by [6.5e-4] near [0]; at float64
-   within [2⁻⁴⁸]. *)
+(* At float32 the derivative is within [2⁻²¹] of the exact one, 8 units of
+   [2⁻²⁴]: over every float32 in [[2⁻⁸, 8)] the largest error is 6.7 units, at
+   0.69 on the quotient's side of ½, where sin's and cos's 2 ulps and the
+   roundings bound it at 18 to first order. The quotient below ½ would err by up
+   to 14.8 units near ¼, and by [6.5e-4] near [0]. At float64 within [2⁻⁴⁹],
+   twice the largest difference from [sinc_d1] measured, 8 units of [2⁻⁵³]: the
+   derivative errs by up to 6 and [sinc_d1] by up to 4.5. The examples are a
+   draw the quotient failed, at 0.31, and the points of the largest errors
+   measured. *)
+let sinc_examples =
+  [ 0.31237856069554404; 0x1.01bd74p-2; 0x1.6012cp-1; 0x1.465108p-1 ]
+
 let sinc_law x =
   cover "at 0" (x = 0.);
-  cover "below 1/4, not 0" (x <> 0. && Float.abs x < 0.25);
+  cover "below 1/2, not 0" (x <> 0. && Float.abs x < 0.5);
   cover "at an integer but 0" (x <> 0. && Float.is_integer x);
   let at (type s) (dt : (float, s) Nx.dtype) tol =
     let x = Nx.Dtype.of_float dt x in
@@ -393,7 +405,7 @@ let sinc_law x =
     equal ~msg:(Nx.Dtype.name dt) (float tol) want
       (Nx.item [ 0 ] (Nx.cast f64 g))
   in
-  at f64 0x1p-48;
+  at f64 0x1p-49;
   at Nx.float32 0x1p-21
 
 let test_sinc_at_zero () =
@@ -2708,8 +2720,8 @@ let () =
              test "a dirichlet draw's gradient against differences"
                test_dirichlet_differences;
              test "the logarithms' gradients below zero too" test_logarithms;
-             prop "sinc's derivative, near 0 and at integers too" sinc_gen
-               sinc_law;
+             prop "sinc's derivative, near 0 and at integers too"
+               ~examples:sinc_examples sinc_gen sinc_law;
              test "sinc's derivatives at 0 are its series'" test_sinc_at_zero;
            ];
          group "interface"

@@ -268,9 +268,8 @@ let sinc_values (type s) (dt : (float, s) D.t) =
 
 let law_sinc_drawn dt k x =
   let has p = Array.exists p (Nx.to_array x) in
-  cover "below 1/4, not 0" (has (fun x -> x <> 0. && Float.abs x < 0.25));
-  cover "from 1/4 to 8"
-    (has (fun x -> Float.abs x >= 0.25 && Float.abs x <= 8.));
+  cover "below 1/2, not 0" (has (fun x -> x <> 0. && Float.abs x < 0.5));
+  cover "from 1/2 to 8" (has (fun x -> Float.abs x >= 0.5 && Float.abs x <= 8.));
   cover "near an integer"
     (has (fun x -> x <> Float.round x && Float.abs (x -. Float.round x) < 1e-3));
   law_sinc dt k x
