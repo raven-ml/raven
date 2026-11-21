@@ -384,61 +384,59 @@
 
 (** {1:cpu_attention Attention}
 
-    [attention] computes every case of [q], [k] and [v] of float16,
-    bfloat16, float32 or float64 in an accumulator, [lse]'s dtype, of
-    float32 or float64 and not narrower. Each query row reads its keys in
-    {e blocks} of 64 from key 0, up to its lead index's length, and keeps a
-    maximum [m], a sum [l] and an accumulator [a] of [dv] elements, from [-∞],
-    [+0] and [+0]. For each block in which the row has a visible pair:
-    - each pair's score is the sum of the [dk] products of the row's and
-      the key's elements in the accumulator, added in increasing
-      dimension from [+0], each fused into its sum, times the scale
-      rounded to the accumulator, rewritten by the program's output 1;
-    - [m'] is the greatest of [m] and the block's visible scores, a NaN
-      where one is. Where it is [-∞], the block's weights are [0], [m]
-      and [l] are left as they were and [α] is [1]; otherwise each weight
-      is [exp (x - m')], [0] at a hidden pair, [α = exp (m - m')], and [l]
-      becomes [α l + s], one fused multiply-add, [s] the block's weights
-      summed term [j] into lane [j mod 8], lanes [i] and [i + 4], then
-      [i + 2], then [i + 1] added;
-    - [a] becomes [α a + p], one fused multiply-add for each element, [p]
-      the sum from [+0] of each weight times its key's value, in
-      increasing key, each product fused into its sum, over the block's
-      keys, a hidden pair's weight [0] included, whatever [m']; where a
-      value of the block hidden from the row is a NaN or an infinity, over
-      its visible pairs alone. So a value at a visible pair counts
-      wherever its block lies, its score [-∞] included: a NaN there, or an
-      infinity of weight [0], makes [a] a NaN.
-    A block in which the row has no visible pair leaves its state as it
-    was. At the end, [o = a / l + 0] in the accumulator, rounded once to
-    [o]'s dtype: the [+0] makes [+0] a [-0] that [α a + p] leaves of zero
-    products, as [α = 0] does of a negative [a]. [lse = m + log l], [+∞]
-    where [m] is; a row of [l = 0] has [o = +0] and [lse = -∞]. [exp] and
-    [log] are {!Nx_kernel.Prog.Exp}'s and {!Nx_kernel.Prog.Log}'s. So a
-    value at a pair hidden from a row, finite or not, never reaches its
-    [o], and a row's bits depend on its own pairs, [dk], [dv] and the
-    dtypes alone.
+    [attention] computes every case of [q], [k] and [v] of float16, bfloat16,
+    float32 or float64 in an accumulator, [lse]'s dtype, of float32 or float64
+    and not narrower. Each query row reads its keys in {e blocks} of 64 from key
+    0, up to its lead index's length, and keeps a maximum [m], a sum [l] and an
+    accumulator [a] of [dv] elements, from [-∞], [+0] and [+0]. For each block
+    in which the row has a visible pair:
+    - each pair's score is the sum of the [dk] products of the row's and the
+      key's elements in the accumulator, added in increasing dimension from
+      [+0], each fused into its sum, times the scale rounded to the accumulator,
+      rewritten by the program's output 1;
+    - [m'] is the greatest of [m] and the block's visible scores, a NaN where
+      one is. Where it is [-∞], the block's weights are [0], [m] and [l] are
+      left as they were and [α] is [1]; otherwise each weight is [exp (x - m')],
+      [0] at a hidden pair, [α = exp (m - m')], and [l] becomes [α l + s], one
+      fused multiply-add, [s] the block's weights summed term [j] into lane
+      [j mod 8], lanes [i] and [i + 4], then [i + 2], then [i + 1] added; then
+      each weight of a visible pair the program's output 2 drops is [0];
+    - [a] becomes [α a + p], one fused multiply-add for each element, [p] the
+      sum from [+0] of each weight times its key's value, in increasing key,
+      each product fused into its sum, over the block's keys, a hidden or
+      dropped pair's weight [0] included, whatever [m']; where a value of the
+      block hidden from the row or dropped is a NaN or an infinity, over its
+      kept pairs alone. So a value at a kept pair counts wherever its block
+      lies, its score [-∞] included: a NaN there, or an infinity of weight [0],
+      makes [a] a NaN. A block in which the row has no visible pair leaves its
+      state as it was. At the end, [o = a / l + 0] in the accumulator, rounded
+      once to [o]'s dtype: the [+0] makes [+0] a [-0] that [α a + p] leaves of
+      zero products, as [α = 0] does of a negative [a]. [lse = m + log l], [+∞]
+      where [m] is; a row of [l = 0] has [o = +0] and [lse = -∞]. [exp] and
+      [log] are {!Nx_kernel.Prog.Exp}'s and {!Nx_kernel.Prog.Log}'s. So a value
+      at a pair hidden from a row or dropped, finite or not, never reaches its
+      [o], and a row's bits depend on its own pairs, [dk], [dv] and the dtypes
+      alone. An output 2 of the constant [true] drops no weight.
 
     The program runs, as [map] computes it, for the pairs of the blocks the
-    kernel reads: its output 0 for a block before its keys are read, its
-    output 1 on the block's scores. A program whose output 0 is the
-    constant [true], or whose output 1 is its operand 0, runs no node for
-    it. The rows of a lead index's key head go in {e units}: [h]
-    consecutive query heads of its group, [h] the lesser of the group's
-    size and 64, and [⌊64 / h⌋] consecutive rows of each. Before a unit
-    reads its blocks, it runs the ranges of output 0
-    ({!Nx_kernel.Prog.val-ranges}) over each block's box: the unit's lead
-    index, heads and rows, the block's 64 keys, and each load's least and
-    greatest element over them, a load of fewer than 8 bits taking its
-    dtype's ends. A block whose ranges hide every pair is skipped, and one
-    whose ranges show every pair is read without running output 0. Where
-    output 0 reads neither the score, nor a coordinate of the lead axes or
-    the heads, nor a load that steps along one, and there are more units
-    than the rows of one query head fill, as with several lead indices or
-    key heads, or a group of more than 64 heads, the classes are taken
-    once a call, at lead index 0 and head 0: the ranges first, then output
-    0 at every pair of a block they leave mixed, which is read, or skipped,
-    without running it again where it shows or hides all its pairs.
+    kernel reads: its output 0 for a block before its keys are read, its output
+    1 on the block's scores, its output 2 on the block's pairs. A program whose
+    output 0 or 2 is the constant [true], or whose output 1 is its operand 0,
+    runs no node for it. The rows of a lead index's key head go in {e units}:
+    [h] consecutive query heads of its group, [h] the lesser of the group's size
+    and 64, and [⌊64 / h⌋] consecutive rows of each. Before a unit reads its
+    blocks, it runs the ranges of output 0 ({!Nx_kernel.Prog.val-ranges}) over
+    each block's box: the unit's lead index, heads and rows, the block's 64
+    keys, and each load's least and greatest element over them, a load of fewer
+    than 8 bits taking its dtype's ends. A block whose ranges hide every pair is
+    skipped, and one whose ranges show every pair is read without running output
+    0. Where output 0 reads neither the score, nor a coordinate of the lead axes
+    or the heads, nor a load that steps along one, and there are more units than
+    the rows of one query head fill, as with several lead indices or key heads,
+    or a group of more than 64 heads, the classes are taken once a call, at lead
+    index 0 and head 0: the ranges first, then output 0 at every pair of a block
+    they leave mixed, which is read, or skipped, without running it again where
+    it shows or hides all its pairs.
 
     Keys and values of the accumulator's dtype whose dimension steps one
     element are read in place, keys only in float32 and for fewer than 12

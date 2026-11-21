@@ -493,32 +493,30 @@
 
 (** {2:attention_blocks A block}
 
-    A pair's [x] is its output 1 on its score
-    ({!Nx_kernel.section-attention}). Let [m'] be the greatest of [m] and
-    the [x] of a row's visible pairs in a block, a NaN where one is. A
-    block leaves the row's [m], [l] and [a] as they were where the row has
-    no visible pair in it. Where [m'] is [-∞], each weight is [0] and [m]
-    and [l] are left as they were. Otherwise each weight is
-    [exp (x - m')], [0] at a hidden pair. [l] becomes [α l + s],
-    [α = exp (m - m')] and [s] the block's weights summed term [j] into
-    lane [j mod 8], then lane [i] taking lane [i + h] for [i] below [h],
-    for [h] = 4, 2 and 1, and [a] becomes [α a], unchanged where [α] is
-    [1]. In either case [a] then adds each weight times its key's value
-    over the block's keys, a hidden pair's weight [0] included, or over
-    the visible pairs alone where a hidden value of the block is a NaN or
-    an infinity. So a value at a visible pair counts wherever its block
-    lies, its [x] [-∞] included: a NaN there, or an infinity of weight
-    [0], makes [a] a NaN. *)
+    A pair's [x] is its output 1 on its score ({!Nx_kernel.section-attention}).
+    Let [m'] be the greatest of [m] and the [x] of a row's visible pairs in a
+    block, a NaN where one is. A block leaves the row's [m], [l] and [a] as they
+    were where the row has no visible pair in it. Where [m'] is [-∞], each
+    weight is [0] and [m] and [l] are left as they were. Otherwise each weight
+    is [exp (x - m')], [0] at a hidden pair. [l] becomes [α l + s],
+    [α = exp (m - m')] and [s] the block's weights summed term [j] into lane
+    [j mod 8], then lane [i] taking lane [i + h] for [i] below [h], for [h] = 4,
+    2 and 1, and [a] becomes [α a], unchanged where [α] is [1]; then each weight
+    of a visible pair output 2 drops is [0]. In either case [a] then adds each
+    weight times its key's value over the block's keys, a hidden or dropped
+    pair's weight [0] included, or over the kept pairs alone where a hidden or
+    dropped value of the block is a NaN or an infinity. So a value at a kept
+    pair counts wherever its block lies, its [x] [-∞] included: a NaN there, or
+    an infinity of weight [0], makes [a] a NaN. *)
 
 (** {2:attention_results Results}
 
-    Once the row's parts merge ({!section-attention_merges}),
-    [o = a / l + 0] in the accumulator, rounded once to [o]'s dtype, the
-    [+0] turning into [+0] a [-0] that [α a] leaves. [lse = m + log l],
-    [+∞] where [m] is; a row of [l = 0] has [o = +0] and [lse = -∞]. [exp]
-    and [log] are {!Nx_kernel.Prog.Exp}'s and {!Nx_kernel.Prog.Log}'s. So
-    a value at a pair hidden from a row, finite or not, never reaches its
-    [o]. *)
+    Once the row's parts merge ({!section-attention_merges}), [o = a / l + 0] in
+    the accumulator, rounded once to [o]'s dtype, the [+0] turning into [+0] a
+    [-0] that [α a] leaves. [lse = m + log l], [+∞] where [m] is; a row of
+    [l = 0] has [o = +0] and [lse = -∞]. [exp] and [log] are
+    {!Nx_kernel.Prog.Exp}'s and {!Nx_kernel.Prog.Log}'s. So a value at a pair
+    hidden from a row or dropped, finite or not, never reaches its [o]. *)
 
 (** {2:attention_sums Sums of each path}
 
@@ -530,11 +528,10 @@
     On the matrix units, [q·k] adds its products from [+0] in increasing
     dimension, 8 at a time, as a matrix unit sums them
     ({!section-matrix_units}). Each weight rounds once to nearest into the
-    values' dtype ([c = 1], {!Nx_kernel.section-attention}), and [a] adds
-    the value products in increasing key on the matrix units as [q·k] does,
-    but a block whose values hold a NaN or an infinity adds them as fused
-    multiply-adds of the unrounded weights, over each row's visible pairs
-    alone. *)
+    values' dtype ([c = 1], {!Nx_kernel.section-attention}), and [a] adds the
+    value products in increasing key on the matrix units as [q·k] does, but a
+    block whose values hold a NaN or an infinity adds them as fused
+    multiply-adds of the unrounded weights, over each row's kept pairs alone. *)
 
 (** {2:attention_parts Parts}
 
@@ -579,15 +576,14 @@
 
 (** {3:attention_maps Split programs}
 
-    A program with a node of another kind, or too large for that memory,
-    is split. [map] first computes some of its nodes into temporaries on
-    [d], which the call then reads as loads: the first of these that
-    leaves a program the kernel holds. They are output 0; the nodes of
-    output 1 that do not read the score but feed one that does; both; and
-    output 1 itself, from the scores that a first launch of the call's path
-    stores, with output 0 as it is or as a temporary. A temporary holds its
-    node's values exactly, so the results are those of the whole program.
-    *)
+    A program with a node of another kind, or too large for that memory, is
+    split. [map] first computes some of its nodes into temporaries on [d], which
+    the call then reads as loads: the first of these that leaves a program the
+    kernel holds. They are output 0, output 2 or both; the nodes of output 1
+    that do not read the score but feed one that does, with them; and output 1
+    itself, from the scores that a first launch of the call's path stores, with
+    outputs 0 and 2 as they are or as temporaries. A temporary holds its node's
+    values exactly, so the results are those of the whole program. *)
 
 (** {2:attention_bounds Bounds}
 

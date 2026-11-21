@@ -30,17 +30,18 @@ let rows_of path =
 
 let columns_of path = if path = K.att_f64 then 64 else K.att_columns
 
-(* A path's shared bytes past the tapes' planes (attention.cu's layouts:
-   Simt, and the mma kernel's MMA_OFF_X on, the classes last), and the
-   bytes of its staging region, which an FFMA path lays over the planes: no
-   tape runs while it stages. *)
-let kernel_bytes path =
+(* A path's shared bytes past the tapes' planes (attention.cu's layouts: Simt,
+   and the mma kernel's MMA_OFF_X on, the classes last), with [keeps] each row's
+   kept keys of a block (NX_ATT_KEEP), and the bytes of its staging region,
+   which an FFMA path lays over the planes: no tape runs while it stages. *)
+let kernel_bytes path ~keeps =
   let keys = K.att_keys and cls = K.att_class_run in
   if path = K.att_mma then
     let qs = K.att_mma_dk + 8 and vs = K.att_columns + 8 in
     let kv = (2 * keys * qs) + (2 * keys * vs) in
     let off_b = Int.max (2 * 128 * qs) kv in
-    (off_b + kv + (2 * 8 * 128) + (2 * 2 * 8 * keys) + cls, 0)
+    let kept = if keeps then 2 * 8 * 128 else 0 in
+    (off_b + kv + (2 * 8 * 128) + (2 * 2 * 8 * keys) + kept + cls, 0)
   else
     let rt = rows_of path and dvc = columns_of path in
     let a = if path = K.att_f64 then 8 else 4 in
@@ -49,12 +50,13 @@ let kernel_bytes path =
     let g = K.att_threads / rt in
     let stage = Int.max ((32 * qs) + (32 * ks)) (32 * dvc) in
     let n_a = stage + (keys * ps) + (4 * rt) + (g * rt) + (8 * rt) in
-    ((a * n_a) + (8 * rt) + (16 * keys) + (8 * rt) + cls, a * stage)
+    let kept = if keeps then 8 * rt else 0 in
+    ((a * n_a) + (8 * rt) + (16 * keys) + (8 * rt) + kept + cls, a * stage)
 
 (* A path's byte where its own shared memory starts past [planes] bytes of
    the tapes' planes, and its shared bytes in all. *)
-let layout path ~planes =
-  let bytes, stage = kernel_bytes path in
+let layout path ~keeps ~planes =
+  let bytes, stage = kernel_bytes path ~keeps in
   let start = Int.max 0 (planes - stage + 15) land lnot 15 in
   (start, start + bytes)
 
@@ -115,7 +117,8 @@ type tape = {
   planes : int;
 }
 
-let no_tape = { words = Bytes.empty; given = []; outs = [| 0; 0 |]; planes = 0 }
+let no_tape =
+  { words = Bytes.empty; given = []; outs = [| 0; 0; 0 |]; planes = 0 }
 
 (* The tape of [p]'s outputs [roots], each leaf [x] of dtype [dt] given in
    planes of [entry x dt]'s dtype, as its kind and index. Raises
@@ -132,7 +135,7 @@ let lower_tape (p : P.t) roots ~entry =
         (kind, i, q))
       (leaves p roots)
   in
-  let outs = [| 0; 0 |] in
+  let outs = [| 0; 0; 0 |] in
   let first, n =
     Loop.lower_given t p ~roots ~given:(Hashtbl.find_opt planes)
       ~out:(fun k q -> outs.(k) <- q)
@@ -171,23 +174,43 @@ let in_line words =
   in
   go 0
 
-type tapes = { flags : int; mask : tape; score : tape; ranges : tape }
+type tapes = {
+  flags : int;
+  mask : tape;
+  score : tape;
+  keep : tape;
+  ranges : tape;
+}
+
+let no_tapes =
+  {
+    flags = 0;
+    mask = no_tape;
+    score = no_tape;
+    keep = no_tape;
+    ranges = no_tape;
+  }
+
+(* Whether [tp] runs output 2. *)
+let keeps tp = tp.flags land K.att_keep <> 0
 
 (* The bytes of [tp]'s planes, the pairs' tapes of [e] elements and the
    ranges' of a block an element. *)
 let plane_bytes tp e =
   4
   * Int.max
-      (e * Int.max tp.mask.planes tp.score.planes)
+      (e * Int.max tp.mask.planes (Int.max tp.score.planes tp.keep.planes))
       (K.att_class_run * tp.ranges.planes)
 
-(* The tapes of [p] over a loop of [rank] axes and a score in [acc]: output
-   0 on pairs where it is not true everywhere, output 1 where it is not the
-   score, and, where [ranges], output 0's ranges over a block's box where
-   they decide some block. Raises [Loop.Too_wide] as {!lower_tape}. *)
+(* The tapes of [p] over a loop of [rank] axes and a score in [acc]: output 0 on
+   pairs where it is not true everywhere, output 1 where it is not the score,
+   output 2 where it is not true everywhere, and, where [ranges], output 0's
+   ranges over a block's box where they decide some block. Raises
+   [Loop.Too_wide] as {!lower_tape}. *)
 let tapes (p : P.t) ~rank ~acc ~ranges:want =
   let out0 = Iarray.get p.nodes (Iarray.get p.outs 0) in
   let out1 = Iarray.get p.nodes (Iarray.get p.outs 1) in
+  let out2 = Iarray.get p.nodes (Iarray.get p.outs 2) in
   let ranges =
     if is_true out0 || not want then None
     else
@@ -202,6 +225,7 @@ let tapes (p : P.t) ~rank ~acc ~ranges:want =
   in
   let mask = (not (is_true out0)) && ranges <> Some `Shown in
   let score = out1 <> P.In 0 in
+  let keep = not (is_true out2) in
   let pair x dt =
     match x with
     | P.In 0 -> (K.att_give_score, 0, acc)
@@ -233,9 +257,11 @@ let tapes (p : P.t) ~rank ~acc ~ranges:want =
     flags =
       ((if mask then K.att_mask else 0)
       lor (if score then K.att_score else 0)
+      lor (if keep then K.att_keep else 0)
       lor if Option.is_some rg then K.att_ranges else 0);
     mask = (if mask then lower_tape p [ 0 ] ~entry:pair else no_tape);
     score = (if score then lower_tape p [ 1 ] ~entry:pair else no_tape);
+    keep = (if keep then lower_tape p [ 2 ] ~entry:pair else no_tape);
     ranges = Option.value rg ~default:no_tape;
   }
 
@@ -421,7 +447,7 @@ let launches g ~path ~ve ~(tp : tapes) ~loads ~scores =
   set K.att_parts parts;
   set K.att_pblocks pblocks;
   set K.att_v ve;
-  set K.att_shared (fst (layout path ~planes));
+  set K.att_shared (fst (layout path ~keeps:(keeps tp) ~planes));
   set K.att_flags
     (tp.flags lor if Option.is_some scores then K.att_scores else 0);
   (* The loads' table, then their descriptors. *)
@@ -452,10 +478,12 @@ let launches g ~path ~ve ~(tp : tapes) ~loads ~scores =
   in
   place tp.mask ~at:K.att_mask_at ~n:K.att_mask_n ~given:K.att_mask_given;
   place tp.score ~at:K.att_score_at ~n:K.att_score_n ~given:K.att_score_given;
+  place tp.keep ~at:K.att_keep_at ~n:K.att_keep_n ~given:K.att_keep_given;
   place tp.ranges ~at:K.att_ranges_at ~n:K.att_ranges_n
     ~given:K.att_ranges_given;
   set K.att_mask_out tp.mask.outs.(0);
   set K.att_score_out tp.score.outs.(1);
+  set K.att_keep_out tp.keep.outs.(2);
   set K.att_ranges_lo tp.ranges.outs.(0);
   set K.att_ranges_hi tp.ranges.outs.(1);
   let params = ws.b in
@@ -484,7 +512,7 @@ let launches g ~path ~ve ~(tp : tapes) ~loads ~scores =
   let main =
     launch attention_kernel ~gx:(Int.min units 0x7fffffff)
       ~gy:(Int.min ncols 65535) ~gz:parts
-      ~shared:(snd (layout path ~planes))
+      ~shared:(snd (layout path ~keeps:(keeps tp) ~planes))
   in
   let launches =
     if parts = 1 then [| main |]
@@ -513,11 +541,13 @@ let fit g (p : P.t) loads =
       when not
              (List.for_all
                 (fun t -> in_line t.words)
-                [ tp.mask; tp.score; tp.ranges ]) ->
+                [ tp.mask; tp.score; tp.keep; tp.ranges ]) ->
         None
     | tp -> (
         let fits path v =
-          snd (layout path ~planes:(plane_bytes tp (v * K.att_threads)))
+          snd
+            (layout path ~keeps:(keeps tp)
+               ~planes:(plane_bytes tp (v * K.att_threads)))
           <= shared_most
         in
         let chosen =
@@ -541,14 +571,14 @@ let fit g (p : P.t) loads =
 
 (* Programs past the kernel
 
-   A program whose tapes do not fit the kernel's planes or parameters
-   computes in part through map, into temporaries the kernel reads as
-   loads, the first plan that fits of: output 0 into a temporary; each
-   node of output 1 that reads no score but that a node reading it reads;
-   both; output 1 itself from the scores a first pass stores, with output
-   0 in the kernel or a temporary. A temporary spans the axes its node's
-   leaves vary along, a load's of more than one element and a stride and
-   a coordinate's, and is broadcast along the others. *)
+   A program whose tapes do not fit the kernel's planes or parameters computes
+   in part through map, into temporaries the kernel reads as loads, the first
+   plan that fits of: output 0, output 2 or both into temporaries; each node of
+   output 1 that reads no score but that a node reading it reads, with them;
+   output 1 itself from the scores a first pass stores, with outputs 0 and 2 in
+   the kernel or temporaries. A temporary spans the axes its node's leaves vary
+   along, a load's of more than one element and a stride and a coordinate's, and
+   is broadcast along the others. *)
 
 (* A temporary: its node of the call's program, its dtype and whether it
    varies along each axis. *)
@@ -612,10 +642,10 @@ let frontier (p : P.t) =
     p.nodes;
   List.filter (fun i -> marked.(i)) (List.init (Iarray.length p.nodes) Fun.id)
 
-(* [p] with output 1 read through operand [subs i] in place of each node
-   [i] it maps, its other nodes reading the score copied past [p]'s, and
-   with output 0 the operand [out0] where given, over operands [ins]. *)
-let rewrite (p : P.t) ~ins ~subs ~out0 =
+(* [p] with output 1 read through operand [subs i] in place of each node [i] it
+   maps, its other nodes reading the score copied past [p]'s, and with outputs 0
+   and 2 the operands [out0] and [out2] where given, over operands [ins]. *)
+let rewrite (p : P.t) ~ins ~subs ~out0 ~out2 =
   let nodes = ref (List.rev (Iarray.to_list p.nodes)) in
   let n = ref (Iarray.length p.nodes) in
   let add x =
@@ -645,12 +675,17 @@ let rewrite (p : P.t) ~ins ~subs ~out0 =
   let o0 =
     match out0 with Some j -> add (P.In j) | None -> Iarray.get p.outs 0
   in
-  P.v ~ins (Iarray.of_list (List.rev !nodes)) ~outs:(Iarray.of_list [ o0; o1 ])
+  let o2 =
+    match out2 with Some j -> add (P.In j) | None -> Iarray.get p.outs 2
+  in
+  P.v ~ins
+    (Iarray.of_list (List.rev !nodes))
+    ~outs:(Iarray.of_list [ o0; o1; o2 ])
 
 (* [p] over its operands that its outputs read, the score kept, and those
    operands' loads. *)
 let compact (p : P.t) (loads : load array) =
-  let live = reached p [ 0; 1 ] in
+  let live = reached p [ 0; 1; 2 ] in
   let used = Array.make (Iarray.length p.ins) false in
   used.(0) <- true;
   Iarray.iteri
@@ -839,23 +874,29 @@ let attention (type v s w r c) (p : P.t) ~scale ~(o : (w, r) A.t)
     let nins = Iarray.length p.ins in
     let out0 = Iarray.get p.nodes (Iarray.get p.outs 0) in
     let out1 = Iarray.get p.nodes (Iarray.get p.outs 1) in
+    let out2 = Iarray.get p.nodes (Iarray.get p.outs 2) in
     (* Without keys no pair runs the program. *)
     let p, user =
       if tk = 0 then
         ( P.v ~ins:(Iarray.of_list [ acc ])
             (Iarray.of_list [ P.In 0; P.Const (D.Any D.Bool, "\001") ])
-            ~outs:(Iarray.of_list [ 1; 0 ]),
+            ~outs:(Iarray.of_list [ 1; 0; 1 ]),
           [||] )
       else (p, user)
     in
     let along = varying p user rank in
     let temp i = { node = i; tdt = P.dtype p i; along = along.(i) } in
-    (* Output 0 in the kernel or a temporary; output 1 in the kernel, its
+    (* Outputs 0 and 2 in the kernel or temporaries; output 1 in the kernel, its
        nodes reading no score in temporaries, or from the scores. *)
     let front = if tk = 0 then [] else frontier p in
-    let masks =
-      if tk = 0 || is_true out0 || not (computed out0) then [ `Kernel ]
+    let in_temp out =
+      if tk = 0 || is_true out || not (computed out) then [ `Kernel ]
       else [ `Kernel; `Temp ]
+    in
+    let masks =
+      List.concat_map
+        (fun m -> List.map (fun k -> (m, k)) (in_temp out2))
+        (in_temp out0)
     in
     let rescores =
       if tk = 0 || out1 = P.In 0 then [ `Kernel ]
@@ -866,14 +907,15 @@ let attention (type v s w r c) (p : P.t) ~scale ~(o : (w, r) A.t)
       List.concat_map (fun s -> List.map (fun m -> (m, s)) masks) rescores
     in
     let accb = if f64 then 8 else 4 in
-    let plan (mask, score) =
+    let plan ((mask, keep), score) =
       let ts = if score = `Frontier then List.map temp front else [] in
-      let o0 = Iarray.get p.outs 0 in
-      let ts =
-        if mask = `Temp && not (List.exists (fun (t : temp) -> t.node = o0) ts)
-        then ts @ [ temp o0 ]
+      let o0 = Iarray.get p.outs 0 and o2 = Iarray.get p.outs 2 in
+      let with_temp ts (where, o) =
+        if where = `Temp && not (List.exists (fun (t : temp) -> t.node = o) ts)
+        then ts @ [ temp o ]
         else ts
       in
+      let ts = List.fold_left with_temp ts [ (mask, o0); (keep, o2) ] in
       let xs = List.map (temp_load g dev) ts in
       let scores =
         if score <> `Scores then None
@@ -894,11 +936,12 @@ let attention (type v s w r c) (p : P.t) ~scale ~(o : (w, r) A.t)
         else Hashtbl.find_opt index i
       in
       let out0 = if mask = `Temp then Hashtbl.find_opt index o0 else None in
+      let out2 = if keep = `Temp then Hashtbl.find_opt index o2 else None in
       let ins =
         Iarray.append p.ins
           (Iarray.of_list (List.map (fun (x : load) -> x.dt) extra))
       in
-      let p' = if extra = [] then p else rewrite p ~ins ~subs ~out0 in
+      let p' = if extra = [] then p else rewrite p ~ins ~subs ~out0 ~out2 in
       let p', kl = compact p' (Array.append user (Array.of_list extra)) in
       match fit g p' kl with None -> None | Some c -> Some (ts, xs, scores, c)
     in
@@ -914,15 +957,8 @@ let attention (type v s w r c) (p : P.t) ~scale ~(o : (w, r) A.t)
               (* The scores, then output 1 over them in their place. *)
               let path = List.hd paths in
               let pass =
-                launches g ~path ~ve:1
-                  ~tp:
-                    {
-                      flags = 0;
-                      mask = no_tape;
-                      score = no_tape;
-                      ranges = no_tape;
-                    }
-                  ~loads:[||] ~scores:(Some s.buffer)
+                launches g ~path ~ve:1 ~tp:no_tapes ~loads:[||]
+                  ~scores:(Some s.buffer)
               in
               let (D.Any d) = acc in
               let sa = A.v d s.layout (Lazy.force s.buffer) in

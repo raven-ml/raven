@@ -22,21 +22,22 @@
                dimension, each fused (chain order), times the scale,
                rewritten by the program's output 1, -inf where hidden
      update    m' = max (m, scores); α = exp (m - m'); p = exp (s - m');
-               l = α l + Σ p and acc = α acc + Σ p v, each one fused
-               multiply-add, the block's products added in chain order
-               from +0
+               l = α l + Σ p over the visible pairs, then p = 0 where the
+               program's output 2 drops a visible pair, and acc = α acc +
+               Σ p v, each one fused multiply-add, the block's products
+               added in chain order from +0
 
    Units of many rows compute both products on the chain kernel's tiles
    (cpu.h, nx_cpu_kernel), over the keys staged transposed; units of few,
    each row against the keys as they lie and a gemv of the values. Each
    adds the same products in the same order. A row with no visible pair in
    a block leaves its state as it was, and a block no row of the unit sees
-   is skipped before its keys are read. A row whose hidden pairs in a
-   block hold a value that is not finite adds its visible pairs' products
-   alone, in the same order: a hidden value never reaches o. Each row's
-   arithmetic is a function of its own pairs and the blocks from key 0, so
-   the units, the threads and the extents other than the keys' and their
-   dimensions change no bit.
+   is skipped before its keys are read. A row whose hidden or dropped
+   pairs in a block hold a value that is not finite adds its kept pairs'
+   products alone, in the same order: such a value never reaches o. Each
+   row's arithmetic is a function of its own pairs and the blocks from key
+   0, so the units, the threads and the extents other than the keys' and
+   their dimensions change no bit.
 
    Each unit classes its blocks first by the ranges of the mask's output
    0 over its box of pairs (Classes): a block the mask hides from every
@@ -145,10 +146,11 @@ typedef struct {
   /* Units: heads of a group and rows of a head each holds. */
   int64_t hg, tr, chunks, tiles;
   /* The program, where an output is not the default: [mask] where output 0
-     is not [true], [score] where output 1 is not the score itself. */
+     is not [true], [score] where output 1 is not the score itself, [keep]
+     where output 2 is not [true]. */
   const nx_cpu_prog *prog;
   nx_cpu_places pl;
-  int mask, score;
+  int mask, score, keep;
   /* Keys and values read in place. */
   int k_in, v_in;
   /* The ranges of the mask's output 0 bound over the tiles' loop
@@ -404,7 +406,7 @@ static const nx_cpu_micro *pv_kernel(int acc) {
 /* Programs */
 
 /* Whether output [o] of the program at [vp] is its default: [true] for
-   output 0, operand 0 itself for output 1. */
+   outputs 0 and 2, operand 0 itself for output 1. */
 static int is_default(value vp, int o) {
   value outs = Field(vp, NX_PROG_OUTS), nodes = Field(vp, NX_PROG_NODES);
   value d = Field(nodes, Int_val(Field(outs, o)));
@@ -843,14 +845,15 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
   /* The dtypes and the program are ones Nx_kernel.attention_refusal lets
      through (nx_cpu.ml): q float16 to float64, the accumulator, lse's
      dtype, float32 or float64 and not narrower, o of either, and the
-     program over the score and the loads, its output 0 a bool reading no
-     score and its output 1 in the accumulator. */
+     program over the score and the loads, its outputs 0 and 2 bools
+     reading no score and its output 1 in the accumulator. */
   int dt = nx_array_dtype(vq), acc = nx_array_dtype(vlse);
   int nl = (int)Wosize_val(vloads);
   int paged = Tag_val(vkv) == 1, lengths = Is_block(vlengths);
   att c = {0};
   c.mask = !is_default(vp, 0);
   c.score = !is_default(vp, 1);
+  c.keep = !is_default(vp, 2);
   c.scale = Double_val(vscale);
   c.dt = dt;
   c.acc = acc;
@@ -864,7 +867,7 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
   *(held *)Data_custom_val(owner) = (held){NULL, NULL, NULL};
   held *h = Data_custom_val(owner);
   nx_cpu_prog *g = NULL;
-  if (c.mask || c.score) {
+  if (c.mask || c.score || c.keep) {
     g = nx_cpu_prog_copy(&vp);
     if (g == NULL) caml_raise_out_of_memory();
     h->g = g;

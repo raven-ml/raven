@@ -175,13 +175,20 @@ let program_refusal (type c) (p : Prog.t) ~rank ~(acc : (float, c) D.t) v
     wrong "load %d is %s where the program reads %s" bad
       (name (v.dtype loads bad))
       (name (Iarray.get p.ins (bad + 1)))
-  else if not (is_bool (output p 0) && is_of acc (output p 1)) then
-    wrong "a pair's program gives %s and %s, not bool and %s"
-      (name (output p 0)) (name (output p 1)) (D.name acc)
+  else if
+    not (is_bool (output p 0) && is_of acc (output p 1) && is_bool (output p 2))
+  then
+    wrong "a pair's program gives %s, %s and %s, not bool, %s and bool"
+      (name (output p 0))
+      (name (output p 1))
+      (name (output p 2))
+      (D.name acc)
   else if axis >= 0 then
     misfits "a coordinate along axis %d of pairs of rank %d" axis rank
   else if reads_score p (Iarray.get p.outs 0) then
     misfits "a pair's visibility reads its score"
+  else if reads_score p (Iarray.get p.outs 2) then
+    misfits "a pair's keep reads its score"
   else None
 
 let attention_refusal (type v s w r c) (p : Prog.t) ~(q : (v, s) D.t) ~rank
@@ -201,8 +208,7 @@ let attention_refusal (type v s w r c) (p : Prog.t) ~(q : (v, s) D.t) ~rank
       (D.name acc) (D.name q)
   else if ins <> n + 1 then
     misfits "a pair's program of %d operands over a score and %d loads" ins n
-  else if outs <> 2 then
-    misfits "a pair's program of %d outputs, not 2" outs
+  else if outs <> 3 then misfits "a pair's program of %d outputs, not 3" outs
   else program_refusal p ~rank ~acc v loads
 
 (* Loops *)

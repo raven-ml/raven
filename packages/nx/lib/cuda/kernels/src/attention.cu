@@ -16,10 +16,12 @@
 
      classes (output 0's ranges, a chunk of blocks at once)
        --> per block: keys' offsets, absent where a table entry is out of
-           range; each row's visible keys: output 0 on a mixed block
+           range; each row's visible keys: output 0 on a mixed block; its
+           kept keys: output 2 where it runs
        --> S = q k^T, times the scale; output 1 on the visible pairs
        --> m' = max (m, S); weights exp (s - m'); l = α l + Σ, the sum in
            nx.cpu's eight lanes and their tree; a = α a
+       --> the weights of the visible pairs output 2 drops, 0
        --> a += p v
      then o = a / l + 0 and lse = m + log l, or a part's (m, l, a)
 
@@ -30,8 +32,8 @@
    on mma.sync m16n8k16, each weight rounded once to v's dtype for p v,
    the softmax in registers in nx.cpu's lane order. A block whose values
    hold one that is not finite takes, in either kernel, p v by fused
-   products over each row's visible pairs alone, so a value hidden from a
-   row never reaches its o.
+   products over each row's visible and kept pairs alone, so a value hidden
+   from a row or dropped never reaches its o.
 
    The pair program runs on loop.cu's tape over NX_ATT_THREADS x V
    elements, the kinds NX_ATT_KINDS lists in line, its planes first in
@@ -474,6 +476,38 @@ __device__ __noinline__ void mask_vis(const u64 *w, const unit &c,
   }
 }
 
+/* Output 2 on the pairs of the block [j0, j0 + nk) of the unit whose keys
+   are present, into KEEP: each row's keys whose values count. Every
+   thread of the group calls it, past the barrier after which KO holds the
+   block's keys. */
+template <int RT>
+__device__ __noinline__ void keep_bits(const u64 *w, const unit &c,
+                                       int64_t j0, int nk,
+                                       unsigned long long *KEEP,
+                                       const int64_t *KO) {
+  int V = (int)w[NX_ATT_V], E = V * AT, out = (int)w[NX_ATT_KEEP_OUT];
+  int g = (int)w[NX_ATT_KEEP_GIVEN];
+  const int tid = threadIdx.x;
+  __syncthreads(); /* the previous block's readers of KEEP are done */
+  if (tid < RT) KEEP[tid] = 0;
+  __syncthreads();
+  for (int e0 = 0; e0 < RT * nk; e0 += E) {
+    for (int v = 0; v < V; v++) {
+      int e = e0 + slot(v), r = e % RT, j = e / RT;
+      if (r >= c.rows || j >= nk || KO[j] < 0) continue;
+      give<float>(w, g, E, slot(v), c, c.h0 + r / c.nt, c.i0 + r % c.nt,
+                  j0 + j, 0.f);
+    }
+    tape(w, E, V, (int)w[NX_ATT_KEEP_AT], (int)w[NX_ATT_KEEP_N]);
+    for (int v = 0; v < V; v++) {
+      int e = e0 + slot(v), r = e % RT, j = e / RT;
+      if (r >= c.rows || j >= nk || KO[j] < 0) continue;
+      if (word(E, out, slot(v))) atomicOr(&KEEP[r], 1ull << j);
+    }
+  }
+  __syncthreads();
+}
+
 /* Block [j0, j0 + nk) of the unit for its rows: KO, VO its keys'
    offsets (-1 where absent), VIS each row's visible keys, by output 0
    where the block is mixed. False where no row sees a key: the caller
@@ -834,10 +868,13 @@ __device__ __noinline__ void simt(const u64 *w) {
   A *P = sa + S::OFF_P, *M = sa + S::OFF_M, *L = sa + S::OFF_L;
   A *AL = sa + S::OFF_AL, *MX = sa + S::OFF_MX, *RED = sa + S::OFF_RED;
   A *LANE = sa + S::OFF_LANE;
+  const bool scores = w[NX_ATT_FLAGS] & NX_ATT_SCORES;
+  const bool keeps = (w[NX_ATT_FLAGS] & NX_ATT_KEEP) && !scores;
   unsigned long long *VIS = (unsigned long long *)(sa + S::N_A);
   int64_t *KO = (int64_t *)(VIS + RT), *VO = KO + KEYS;
   int64_t *ROWQ = VO + KEYS;
-  uint8_t *CLS = (uint8_t *)(ROWQ + RT);
+  unsigned long long *KEEP = (unsigned long long *)(ROWQ + RT);
+  uint8_t *CLS = (uint8_t *)(KEEP + (keeps ? RT : 0));
 
   const int tid = threadIdx.x, ty = tid / 16, tx = tid % 16;
   const int dt = (int)(w[NX_ATT_DT] & 0xff);
@@ -849,7 +886,6 @@ __device__ __noinline__ void simt(const u64 *w) {
   const void *vx = base(w, desc(w, NX_ATT_VALUES));
   const int64_t qsd = stride(qd, nl + 2);
   const bool rescores = w[NX_ATT_FLAGS] & NX_ATT_SCORE;
-  const bool scores = w[NX_ATT_FLAGS] & NX_ATT_SCORES;
   A *const SC = (A *)w[NX_ATT_HEADER + w[NX_ATT_WORK]];
   int64_t kb0, kb1;
   part_blocks(w, &kb0, &kb1);
@@ -883,6 +919,7 @@ __device__ __noinline__ void simt(const u64 *w) {
       int nk = (int)(c.len - j0 < KEYS ? c.len - j0 : KEYS);
       int cls = class_of(w, c, kb0, e1, kb, CLS);
       if (!block_vis<RT, false>(w, c, cls, j0, nk, VIS, KO, VO)) continue;
+      if (keeps) keep_bits<RT>(w, c, j0, nk, KEEP, KO);
 
       /* S = q k^T: chunks of DKC dimensions, staged widened and
          transposed. */
@@ -1014,9 +1051,21 @@ __device__ __noinline__ void simt(const u64 *w) {
         AL[tid] = al;
       }
       __syncthreads();
+      /* Phase E: the weights of the pairs output 2 drops, 0, past the
+         rows' sums. */
+      if (keeps) {
+        int r = tid % RT, k = tid / RT;
+        if (r < c.rows) {
+          unsigned long long kp = KEEP[r];
+          for (int j = k; j < nk; j += G)
+            if (!((kp >> j) & 1)) P[j * PS + r] = (A)0;
+        }
+        __syncthreads();
+      }
 
       /* o = alpha o, then the products by chunks of VKC keys. A chunk
-         holding a value not finite takes the pairs its rows see alone. */
+         holding a value not finite takes the pairs its rows see and keep
+         alone. */
 #pragma unroll
       for (int rr = 0; rr < RPT; rr++) {
         A al = AL[ty * RPT + rr];
@@ -1046,7 +1095,9 @@ __device__ __noinline__ void simt(const u64 *w) {
             const A *pr = P + (vk + jj) * PS + ty * RPT, *vv = Vc + jj * DVC + tx * DPT;
 #pragma unroll
             for (int rr = 0; rr < RPT; rr++) {
-              if (!((VIS[ty * RPT + rr] >> (vk + jj)) & 1)) continue;
+              unsigned long long use =
+                  VIS[ty * RPT + rr] & (keeps ? KEEP[ty * RPT + rr] : ~0ull);
+              if (!((use >> (vk + jj)) & 1)) continue;
 #pragma unroll
               for (int x = 0; x < DPT; x++) o[rr][x] = fma_(pr[rr], vv[x], o[rr][x]);
             }
@@ -1144,8 +1195,8 @@ constexpr int MMA_QS = MMA_DK + 8;  /* q and k rows, in 16-bit elements */
 constexpr int MMA_VS = MMA_DVC + 8; /* v rows */
 
 /* Shared memory: the q tile, whose region then holds the second buffer
-   of k and v; the first buffer; then VIS, KO, VO for each buffer, and
-   CLS. */
+   of k and v; the first buffer; then VIS, KO, VO for each buffer, KEEP
+   for each where output 2 runs, and CLS. */
 constexpr size_t MMA_KV = 2 * KEYS * MMA_QS + 2 * KEYS * MMA_VS; /* bytes */
 constexpr size_t MMA_OFF_B =
     2 * MMA_RT * MMA_QS > MMA_KV ? 2 * MMA_RT * MMA_QS : MMA_KV;
@@ -1292,9 +1343,12 @@ __device__ __noinline__ void mma(const u64 *w) {
   unsigned char *sm = smem + (size_t)w[NX_ATT_SHARED];
   uint16_t *Qs = (uint16_t *)sm;
   uint16_t *KB[2] = {(uint16_t *)(sm + MMA_OFF_B), (uint16_t *)sm};
+  const bool scores = w[NX_ATT_FLAGS] & NX_ATT_SCORES;
+  const bool keeps = (w[NX_ATT_FLAGS] & NX_ATT_KEEP) && !scores;
   unsigned long long *VISB = (unsigned long long *)(sm + MMA_OFF_X);
   int64_t *KOB = (int64_t *)(VISB + 2 * MMA_RT), *VOB = KOB + 2 * KEYS;
-  uint8_t *CLS = (uint8_t *)(VOB + 2 * KEYS);
+  unsigned long long *KEEPB = (unsigned long long *)(VOB + 2 * KEYS);
+  uint8_t *CLS = (uint8_t *)(KEEPB + (keeps ? 2 * MMA_RT : 0));
 
   const int tid = threadIdx.x, lane = tid % 32, warp = tid / 32;
   const int t4 = lane % 4, r0 = warp * 16 + lane / 4; /* rows r0, r0 + 8 */
@@ -1305,7 +1359,6 @@ __device__ __noinline__ void mma(const u64 *w) {
   const int64_t dk = hw(w, NX_ATT_DK), dv = hw(w, NX_ATT_DV);
   const int nks = (int)((dk + 15) / 16);
   const bool rescores = w[NX_ATT_FLAGS] & NX_ATT_SCORE;
-  const bool scores = w[NX_ATT_FLAGS] & NX_ATT_SCORES;
   float *const SC = (float *)w[NX_ATT_HEADER + w[NX_ATT_WORK]];
   int64_t kb0, kb1;
   part_blocks(w, &kb0, &kb1);
@@ -1357,6 +1410,8 @@ __device__ __noinline__ void mma(const u64 *w) {
         if (!block_vis<MMA_RT, true>(w, c, cls, j0, nk, VISB + slt * MMA_RT,
                                KOB + slt * KEYS, VOB + slt * KEYS))
           continue;
+        if (keeps)
+          keep_bits<MMA_RT>(w, c, j0, nk, KEEPB + slt * MMA_RT, KOB + slt * KEYS);
         nk_next = nk;
         issue_kv(w, KB[slt], KB[slt] + KEYS * MMA_QS, KOB + slt * KEYS,
                  VOB + slt * KEYS, cbase);
@@ -1373,6 +1428,7 @@ __device__ __noinline__ void mma(const u64 *w) {
       __syncthreads();
       uint16_t *Ks = KB[sl], *Vs = KB[sl] + KEYS * MMA_QS;
       const unsigned long long *VIS = VISB + sl * MMA_RT;
+      const unsigned long long *KEEP = KEEPB + sl * MMA_RT;
       int64_t j0 = kb * KEYS;
       /* whether a value of the block is not finite */
       int bad = 0;
@@ -1481,6 +1537,15 @@ __device__ __noinline__ void mma(const u64 *w) {
           m[x] = mx;
         }
         alpha[x] = al;
+        /* The weights of the pairs output 2 drops, 0, past the row's sum. */
+        if (keeps) {
+          unsigned long long kp = r < c.rows ? KEEP[r] : 0;
+#pragma unroll
+          for (int n = 0; n < 8; n++)
+#pragma unroll
+            for (int e = 0; e < 2; e++)
+              if (!((kp >> (8 * n + 2 * t4 + e)) & 1)) s[n][2 * x + e] = 0.f;
+        }
       }
 #pragma unroll
       for (int n = 0; n < MMA_DVC / 8; n++) {
@@ -1511,10 +1576,14 @@ __device__ __noinline__ void mma(const u64 *w) {
         if (bf) pv(std::true_type());
         else pv(std::false_type());
       } else {
-        /* The pairs each row sees, fused in increasing key: each key's
+        /* The pairs each row sees and keeps, fused in increasing key: each key's
            weights from the quad's thread that holds them. */
         unsigned long long v0 = r0 < c.rows ? VIS[r0] : 0;
         unsigned long long v1 = r0 + 8 < c.rows ? VIS[r0 + 8] : 0;
+        if (keeps) {
+          v0 &= r0 < c.rows ? KEEP[r0] : 0;
+          v1 &= r0 + 8 < c.rows ? KEEP[r0 + 8] : 0;
+        }
         for (int j = 0; j < nk; j++) {
           int n = j / 8, e = j % 2, from = (lane & ~3) | (j % 8) / 2;
           float w0 = 0, w1 = 0;

@@ -3141,10 +3141,10 @@ val matrix_power : ('v, 's, 'd) t -> int -> ('v, 's, 'd) t
 
 (** {2:attention Attention}
 
-    Attention weighs values by how well their keys match a query: for each
-    query row, a softmax over the row's scores against the keys, times the
-    values. Masks and score rewrites are plain Nx code over the coordinates
-    of one query-key pair. *)
+    Attention weighs values by how well their keys match a query: for each query
+    row, a softmax over the row's scores against the keys, times the values.
+    Masks, score rewrites and the pairs kept after the softmax are plain Nx code
+    over the coordinates of one query-key pair. *)
 
 (** Keys and values, by key head [hk] and key [tk]. *)
 type ('v, 's, 'd) kv =
@@ -3178,6 +3178,7 @@ val attention :
   ?lengths:'d int64_t ->
   ?mask:('d pair -> 'd bool_t) ->
   ?score:('d pair -> (float, 'a, 'd) t -> (float, 'a, 'd) t) ->
+  ?keep:('d pair -> 'd bool_t) ->
   acc:(float, 'a) dtype ->
   kv:('v, 's, 'd) kv ->
   ('v, 's, 'd) t ->
@@ -3192,18 +3193,26 @@ val attention :
     [tk]), and a paged key's table entry is in [\[0, pages)]. A row with no
     visible key, or only [-∞] scores, gives [o = 0] and [lse = -∞].
 
-    A hidden pair's score never changes [o] or [lse], and a table entry
-    outside [\[0, pages)] reads no page. A finite value at a hidden key never
-    changes [o]: its weight is exactly zero. Values past a row's length are
-    never read. nx.cpu never lets a value at a key hidden from a row reach
-    its [o], a NaN or an infinity included. Other interpretations may make
-    the row's [o] NaN for a NaN or an infinity at a hidden key within its
-    length, as [Rune.jit] and rune's derivatives do. A visible key whose
-    weight underflows to zero still counts: a NaN in its value makes the
-    row's [o] NaN. A sum of zeros is [+0].
+    [keep] (default every pair) drops weights after the softmax: [o] sums only
+    the visible pairs where [keep] holds, each value at its weight
+    [exp (x - lse)], while [lse] stays the log-sum-exp of every visible score. A
+    row that keeps no visible key gives [o = 0]. Dropout of the attention
+    weights at rate [r] is [keep] a draw of [1 - r] and [o] scaled by
+    [1 / (1 - r)] after the call (FlashAttention, Dao et al. 2022, Algorithm 2).
 
-    [mask] and [score] are plain [Nx] code over 0-d values, applied once to
-    stand-ins and kept as programs that run at each pair. Their results, and
+    A hidden pair's score never changes [o] or [lse], and a table entry outside
+    [\[0, pages)] reads no page. A finite value at a hidden key never changes
+    [o]: its weight is exactly zero. Values past a row's length are never read.
+    A pair [keep] drops is to [o] as a hidden one: a finite value there never
+    changes [o]. nx.cpu never lets a value at a key hidden from a row or dropped
+    reach its [o], a NaN or an infinity included. Other interpretations may make
+    the row's [o] NaN for a NaN or an infinity at a hidden key within its length
+    or a dropped one, as [Rune.jit] and rune's derivatives do. A kept key whose
+    weight underflows to zero still counts: a NaN in its value makes the row's
+    [o] NaN. A sum of zeros is [+0].
+
+    [mask], [score] and [keep] are plain [Nx] code over 0-d values, applied once
+    to stand-ins and kept as programs that run at each pair. Their results, and
     the arrays they capture, broadcast to [[lead…; hq; tq; tk]]; a captured
     array is read at each pair. On the pair's values they apply elementwise
     functions and broadcasts; another operation on them, or a read of one,
@@ -3238,50 +3247,48 @@ val attention :
     [u{_q} |o| + (1 + u{_q}) (e{^w} - 1 + γ(tk + 1, 2u) e{^w}) M] of the
     exact one, and [lse] within [η + ε], where
     [w = (1 + u) (2η + ε) + (2b + ln tk) u + 5u/(1 - u)]. Here [M] is the
-    element's [Σ p |v|] over the row's visible keys at their exact weights
-    [p], at most its greatest [|v|], [ε] is the bound the kernels' library
-    states for attention's [lse] of [tk] keys, and [γ] is as {!contract}
-    defines it. Where the value product takes the weights rounded to [v]'s
-    dtype, the bound adds [g (u{_v} e{^w} M + 2{^-25} Σ |v|)], where
-    [g = (1 + u{_q}) (1 + γ(tk + 1, 2u))], [u{_v}] is [v]'s unit
-    roundoff, and the sum, for float16 alone, is over the visible keys
-    whose exact weight is below [2{^-14} e{^w}].
-    Without [score], [η] is [((1 + u)² (1 + γ(dk + 1, 2u)) - 1) a], about
-    [(2dk + 4) u a], and [b] is at most [a], where [a] is the greatest
-    [|scale| Σ |q k|] of a visible key. The bound holds where a set's
-    kernels compute, as those of {!section-transcendental} do. Under
-    [Rune.jit], the bound that [Rune]'s Numerics section states for a
-    compiled attention holds.
+    element's [Σ p |v|] over the row's kept keys at their exact weights [p], at
+    most its greatest [|v|], [ε] is the bound the kernels' library states for
+    attention's [lse] of [tk] keys, and [γ] is as {!contract} defines it. Where
+    the value product takes the weights rounded to [v]'s dtype, the bound adds
+    [g (u{_v} e{^w} M + 2{^-25} Σ |v|)], where
+    [g = (1 + u{_q}) (1 + γ(tk + 1, 2u))], [u{_v}] is [v]'s unit roundoff, and
+    the sum, for float16 alone, is over the kept keys whose exact weight is
+    below [2{^-14} e{^w}]. Without [score], [η] is
+    [((1 + u)² (1 + γ(dk + 1, 2u)) - 1) a], about [(2dk + 4) u a], and [b] is at
+    most [a], where [a] is the greatest [|scale| Σ |q k|] of a visible key. The
+    bound holds where a set's kernels compute, as those of
+    {!section-transcendental} do. Under [Rune.jit], the bound that [Rune]'s
+    Numerics section states for a compiled attention holds.
 
     Over keys cut across devices into [n] parts, a page table's pages for
     [Paged], each device computes [(o, lse)] over its part in [acc] as one
-    device does, its mask and score reading the pair's coordinates in the
-    whole; [lse] is the parts' log-sum-exp, a [Logsumexp] of [n] terms, and
-    [o] the sum over the parts in their order of each one's [o] times
-    [exp (lse_part - lse)], each product fused, rounded once to [q]'s
-    dtype. Its bits depend on the placement alone. The bound above then
-    holds with [η] doubled, [ε] three times the greatest part's plus the
-    library's bound for a [Logsumexp] of [n] terms plus
-    [(2b + ln tk + 5) u], and [γ(tk + n + 1, 2u)] in place of
-    [γ(tk + 1, 2u)]. A paged call's loads are read whole. Pools cut along
-    their key heads are read where they lie, with the queries' heads. Pools
-    cut along their pages, and along their key heads at most, are read
-    through the table as {!take} reads them, into [Dense] keys and values
-    with a key whose entry is outside [\[0, pages)] hidden: the result is
-    that dense call's on one device. A pool cut along another axis raises.
+    device does, its mask, score and keep reading the pair's coordinates in the
+    whole; [lse] is the parts' log-sum-exp, a [Logsumexp] of [n] terms, and [o]
+    the sum over the parts in their order of each one's [o] times
+    [exp (lse_part - lse)], each product fused, rounded once to [q]'s dtype. Its
+    bits depend on the placement alone. The bound above then holds with [η]
+    doubled, [ε] three times the greatest part's plus the library's bound for a
+    [Logsumexp] of [n] terms plus [(2b + ln tk + 5) u], and [γ(tk + n + 1, 2u)]
+    in place of [γ(tk + 1, 2u)]. A paged call's loads are read whole. Pools cut
+    along their key heads are read where they lie, with the queries' heads.
+    Pools cut along their pages, and along their key heads at most, are read
+    through the table as {!take} reads them, into [Dense] keys and values with a
+    key whose entry is outside [\[0, pages)] hidden: the result is that dense
+    call's on one device. A pool cut along another axis raises.
 
-    It is one operation, {!Prim.Attention}, whose [mask] and [score] are
-    one program of two outputs over a pair. The set's kernel library
-    computes it ({!Nx_kernel.S.val-attention}), reading paged keys and values
-    in place; nx.cpu stores no array of [[lead…; hq; tq; tk]]. An
-    interpretation receives it whole, except over pools cut along their
-    pages, where it receives the {!take} of each pool and the dense call.
+    It is one operation, {!Prim.Attention}, whose [mask], [score] and [keep] are
+    one program of three outputs over a pair. The set's kernel library computes
+    it ({!Nx_kernel.S.val-attention}), reading paged keys and values in place;
+    nx.cpu stores no array of [[lead…; hq; tq; tk]]. An interpretation receives
+    it whole, except over pools cut along their pages, where it receives the
+    {!take} of each pool and the dense call.
 
-    Raises [Invalid_argument] if [q]'s dtype is another, [acc] is not
-    float32 or float64 or is narrower than [q]'s dtype, [q] has fewer than
-    three axes, extents disagree, [hk] does not divide [hq], [lengths] is not
-    of shape [[lead…]], [dk] is [0] without [scale], or a result or capture
-    of [mask] or [score] does not broadcast to [[lead…; hq; tq; tk]]. *)
+    Raises [Invalid_argument] if [q]'s dtype is another, [acc] is not float32 or
+    float64 or is narrower than [q]'s dtype, [q] has fewer than three axes,
+    extents disagree, [hk] does not divide [hq], [lengths] is not of shape
+    [[lead…]], [dk] is [0] without [scale], or a result or capture of [mask],
+    [score] or [keep] does not broadcast to [[lead…; hq; tq; tk]]. *)
 
 (** {2:matrices Matrices}
 
@@ -6429,7 +6436,7 @@ module Prim : sig
       }
         -> (('w, 'r, 'd) nx * (float, 'a, 'd) nx) t
         (** {!val-attention} of [q] over [kv] in [acc], bounded by [lengths], at
-            [scale], its mask and score the pair program [prog] over its
+            [scale], its mask, score and keep the pair program [prog] over its
             [loads], each of shape [[lead…; hq; tq; tk]], as
             {!Nx_kernel.S.val-attention} states: [o], C-contiguous of
             [[lead…; hq; tq; dv]] in [out], and [lse], of

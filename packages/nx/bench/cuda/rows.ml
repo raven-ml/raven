@@ -1749,9 +1749,9 @@ let matrices =
    program that does not fit before it. *)
 let attention_launches = S.loop_launches
 
-(* Nx.attention's program without lengths over a score in [acc]: a pair's
-   length is the constant [tk], output 0 Nx.causal's [k <= q + (len - tq)]
-   or [true], output 1 the score. *)
+(* Nx.attention's program without lengths over a score in [acc]: a pair's length
+   is the constant [tk], output 0 Nx.causal's [k <= q + (len - tq)] or [true],
+   output 1 the score, output 2 [true]. *)
 let pair_program acc ~tq ~tk ~causal =
   let int64 x = P.Const (D.Any D.Int64, P.bits D.Int64 (Int64.of_int x)) in
   let pair = [ P.In 0; int64 tk; Coord 2; Coord 3 ] in
@@ -1765,9 +1765,10 @@ let pair_program acc ~tq ~tk ~causal =
       ]
     else [ Const (D.Any D.Bool, P.bits D.Bool true) ]
   in
-  let nodes = pair @ mask in
+  let nodes = pair @ mask @ [ Const (D.Any D.Bool, P.bits D.Bool true) ] in
+  let n = List.length nodes in
   P.v ~ins:(Iarray.of_list [ acc ]) (Iarray.of_list nodes)
-    ~outs:(Iarray.of_list [ List.length nodes - 1; 0 ])
+    ~outs:(Iarray.of_list [ n - 2; 0; n - 1 ])
 
 (* Each batch element's keys under the mask ["lengths"]. *)
 let key_lengths ~b ~tk = Array.init b (fun i -> (i + 1) * tk / b)

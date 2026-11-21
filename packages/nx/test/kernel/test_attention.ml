@@ -66,15 +66,20 @@ let past : P.node iarray =
     P.In 0; Coord 3; Const (i64, P.bits D.Int64 0L); Op2 (Compare Less, 2, 1);
   |]
 
-(* [true] and the score: the program of attention without a mask or a
-   score, over a score of [score] and loads of [lds]. *)
+(* [true], the score and [true]: the program of attention without a mask, a
+   score or a keep, over a score of [score] and loads of [lds]. *)
 let plain score lds =
-  P.v ~ins:(Iarray.of_list (score :: lds)) [| In 0; truth |] ~outs:[| 1; 0 |]
+  P.v ~ins:(Iarray.of_list (score :: lds)) [| In 0; truth |] ~outs:[| 1; 0; 1 |]
 
-(* The program over a float32 score and loads of [lds] whose outputs are
-   nodes [o0] and [o1] of [nodes]. *)
-let prog ?(lds = []) nodes o0 o1 =
-  P.v ~ins:(Iarray.of_list (f32 :: lds)) nodes ~outs:[| o0; o1 |]
+(* The program over a float32 score and loads of [lds] whose outputs are nodes
+   [o0], [o1] and [o2] of [nodes], [o2] by default a [true] past them. *)
+let prog ?(lds = []) ?o2 nodes o0 o1 =
+  let nodes, o2 =
+    match o2 with
+    | Some o2 -> (nodes, o2)
+    | None -> (Iarray.append nodes [| truth |], Iarray.length nodes)
+  in
+  P.v ~ins:(Iarray.of_list (f32 :: lds)) nodes ~outs:[| o0; o1; o2 |]
 
 let table (b : Support.backend) =
   let call ?tq ?lds p =
@@ -143,10 +148,24 @@ let table (b : Support.backend) =
     ( "a load past the operands",
       Refused A.Shape_mismatch,
       fun () -> call ~lds:[ f32 ] (plain f32 []) );
-    ( "three outputs",
+    ( "two outputs",
+      Refused A.Shape_mismatch,
+      fun () -> call (P.v ~ins:[| f32 |] [| In 0; truth |] ~outs:[| 1; 0 |]) );
+    ( "four outputs",
       Refused A.Shape_mismatch,
       fun () ->
-        call (P.v ~ins:[| f32 |] [| In 0; truth |] ~outs:[| 1; 0; 0 |]) );
+        call (P.v ~ins:[| f32 |] [| In 0; truth |] ~outs:[| 1; 0; 1; 1 |]) );
+    ( "a causal keep",
+      Fits,
+      fun () -> call (prog ~o2:3 (Iarray.append causal [| truth |]) 4 0) );
+    ( "an output 2 of float32",
+      Refused A.Wrong_dtype,
+      fun () -> call (prog ~o2:1 [| In 0; zero; truth |] 2 0) );
+    ( "a keep that reads the score",
+      Refused A.Shape_mismatch,
+      fun () ->
+        call (prog ~o2:2 [| In 0; zero; Op2 (Compare Less, 1, 0); truth |] 3 0)
+    );
     ( "a coordinate past the query's rank",
       Refused A.Shape_mismatch,
       fun () ->
@@ -520,8 +539,8 @@ let test_infinite_scores (b : Support.backend) (a : Support.attention) () =
     let s = D.Any acc in
     let p =
       P.v ~ins:[| s; s; D.Any D.Bool |]
-        [| In 0; In 1; Op2 (Binary Add, 0, 1); In 2 |]
-        ~outs:[| 3; 2 |]
+        [| In 0; In 1; Op2 (Binary Add, 0, 1); In 2; truth |]
+        ~outs:[| 3; 2; 4 |]
     in
     let o = A.create b.device acc [| 1; rows; 2 |] in
     let lse = A.create b.device acc [| 1; rows |] in
@@ -607,6 +626,10 @@ type mask = No_mask | Causal | Docs | Causal_docs | Docs32 | Wide | Many
 
 type rescore = No_score | Bias | Alibi | Sine | Half_bias | Wide_bias | Wide_score
 
+(* Which visible pairs keep their weight: all, those of a row and key whose sum
+   3 does not divide, or those a bool load holds, most of them. *)
+type keep = Keep_all | Keep_coords | Keep_load
+
 type call = {
   cd : dtypes;
   nb : int;
@@ -621,6 +644,7 @@ type call = {
   lens : int array option;
   mask : mask;
   rescore : rescore;
+  keep : keep;
   seed : int;
 }
 
@@ -642,15 +666,20 @@ let rescore_name = function
   | Wide_bias -> "wide alibi"
   | Wide_score -> "wide score"
 
+let keep_name = function
+  | Keep_all -> "all"
+  | Keep_coords -> "by coordinates"
+  | Keep_load -> "by a load"
+
 let pp_call ppf c =
   Format.fprintf ppf
     "@[%a, lead %d and %d axes, hk %d, g %d, tq %d, tk %d, dk %d, dv %d, page \
-     %d,@ lengths %s, mask %s, score %s, seed %d@]"
+     %d,@ lengths %s, mask %s, score %s, keep %s, seed %d@]"
     pp_dtypes c.cd c.nb c.axes c.hk c.g c.tq c.ck c.cdk c.cdv c.page
     (match c.lens with
     | None -> "none"
     | Some l -> String.concat " " (List.map string_of_int (Array.to_list l)))
-    (mask_name c.mask) (rescore_name c.rescore) c.seed
+    (mask_name c.mask) (rescore_name c.rescore) (keep_name c.keep) c.seed
 
 (* Calls whose keys stay below 8 blocks, so that nx.cuda cuts no keys into
    parts, and, with [fused], whose float16 and bfloat16 key heads hold 16
@@ -660,42 +689,72 @@ let calls ~fused =
   let open Gen in
   with_pp pp_call
   @@ let* cd = dtypes in
-  let* nb = int_range 1 2 in
-  let* axes = frequency [ (3, constant 0); (1, constant 28) ] in
-  let* hk = int_range 1 2 in
-  let* g = int_range 1 3 in
-  let narrow = cd = F16 || cd = Bf16 in
-  let* tq = int_range 1 (if fused && narrow then 16 / g else 40) in
-  let* page = frequency [ (2, constant 0); (1, of_list [ 1; 7; 16 ]) ] in
-  let* tk = int_range 1 200 in
-  let ck = if page = 0 then tk else (tk + page - 1) / page * page in
-  let* cdk = frequency [ (3, int_range 1 40); (1, int_range 41 140) ] in
-  let* cdv = frequency [ (3, int_range 1 40); (1, int_range 120 140) ] in
-  let* lens =
-    frequency
-      [ (1, constant None);
-        (1, map Option.some (array ~size:(constant nb) (int_range (-2) (ck + 2)))) ]
-  in
-  let* mask = of_list [ No_mask; Causal; Docs; Causal_docs; Docs32; Wide; Many ] in
-  let* rescore =
-    of_list [ No_score; Bias; Alibi; Sine; Half_bias; Wide_bias; Wide_score ]
-  in
-  let+ seed = int_range 0 0x3fffffff in
-  { cd; nb; axes; hk; g; tq; ck; cdk; cdv; page; lens; mask; rescore; seed }
+     let* nb = int_range 1 2 in
+     let* axes = frequency [ (3, constant 0); (1, constant 28) ] in
+     let* hk = int_range 1 2 in
+     let* g = int_range 1 3 in
+     let narrow = cd = F16 || cd = Bf16 in
+     let* tq = int_range 1 (if fused && narrow then 16 / g else 40) in
+     let* page = frequency [ (2, constant 0); (1, of_list [ 1; 7; 16 ]) ] in
+     let* tk = int_range 1 200 in
+     let ck = if page = 0 then tk else (tk + page - 1) / page * page in
+     let* cdk = frequency [ (3, int_range 1 40); (1, int_range 41 140) ] in
+     let* cdv = frequency [ (3, int_range 1 40); (1, int_range 120 140) ] in
+     let* lens =
+       frequency
+         [
+           (1, constant None);
+           ( 1,
+             map Option.some
+               (array ~size:(constant nb) (int_range (-2) (ck + 2))) );
+         ]
+     in
+     let* mask =
+       of_list [ No_mask; Causal; Docs; Causal_docs; Docs32; Wide; Many ]
+     in
+     let* rescore =
+       of_list [ No_score; Bias; Alibi; Sine; Half_bias; Wide_bias; Wide_score ]
+     in
+     let* keep =
+       frequency
+         [
+           (2, constant Keep_all);
+           (1, constant Keep_coords);
+           (1, constant Keep_load);
+         ]
+     in
+     let+ seed = int_range 0 0x3fffffff in
+     {
+       cd;
+       nb;
+       axes;
+       hk;
+       g;
+       tq;
+       ck;
+       cdk;
+       cdv;
+       page;
+       lens;
+       mask;
+       rescore;
+       keep;
+       seed;
+     }
 
 (* The documents of [Many]'s eight loads: by the row for an even load, by
    the key for an odd one. *)
 let many = 8
 
-(* [c]'s program over a score in [acc] and its loads, and the loads'
-   dtypes: output 0 by its mask, output 1 by its score. A document mask
-   reads two loads of int64 or int32, a row's document and a key's, and
-   [Many] eight int64 ones; a bias reads one load in the accumulator, or in
-   float16. [Wide] is the causal mask through 48 int64 values held at once,
-   past what a kernel holds in shared memory; [Many] at 32 axes reads more
-   loads than a launch's parameters describe; [Sine] adds the sine of the
-   score; [Wide_bias] subtracts the sum of 48 int64 distances of the row
-   and the key, held at once, cast and scaled; [Wide_score] sums 96
+(* [c]'s program over a score in [acc] and its loads, and the loads' dtypes:
+   output 0 by its mask, output 1 by its score, output 2 by its keep, whose
+   load, a bool, comes last. A document mask reads two loads of int64 or int32,
+   a row's document and a key's, and [Many] eight int64 ones; a bias reads one
+   load in the accumulator, or in float16. [Wide] is the causal mask through 48
+   int64 values held at once, past what a kernel holds in shared memory; [Many]
+   at 32 axes reads more loads than a launch's parameters describe; [Sine] adds
+   the sine of the score; [Wide_bias] subtracts the sum of 48 int64 distances of
+   the row and the key, held at once, cast and scaled; [Wide_score] sums 96
    products of the score held at once. *)
 let program c acc =
   let i64 = D.Any D.Int64 and i32 = D.Any D.Int32 in
@@ -711,11 +770,14 @@ let program c acc =
     | Docs32 -> [ i32; i32 ]
     | Many -> List.init many (fun _ -> i64)
     | No_mask | Causal | Wide -> [])
+    @ (match c.rescore with
+      | Bias -> [ acc ]
+      | Half_bias -> [ D.Any D.Float16 ]
+      | No_score | Alibi | Sine | Wide_bias | Wide_score -> [])
     @
-    match c.rescore with
-    | Bias -> [ acc ]
-    | Half_bias -> [ D.Any D.Float16 ]
-    | No_score | Alibi | Sine | Wide_bias | Wide_score -> []
+    match c.keep with
+    | Keep_load -> [ D.Any D.Bool ]
+    | Keep_all | Keep_coords -> []
   in
   let rank = 4 + c.axes in
   let score = add (P.In 0) in
@@ -748,7 +810,7 @@ let program c acc =
              keys)
     | Many -> all (List.init (many / 2) (fun i -> same ((2 * i) + 1) ((2 * i) + 2)))
   in
-  let bias = P.In (List.length lds) in
+  let bias = P.In (List.length lds - if c.keep = Keep_load then 1 else 0) in
   let o1 =
     match c.rescore with
     | No_score -> score
@@ -776,9 +838,18 @@ let program c acc =
         in
         add (P.Op2 (Binary Sub, score, add (P.Op2 (Binary Mul, f, slope))))
   in
+  let o2 =
+    match c.keep with
+    | Keep_all -> add (P.Const (D.Any D.Bool, P.bits D.Bool true))
+    | Keep_coords ->
+        let sum = add (P.Op2 (Binary Add, row, key)) in
+        let r = add (P.Op2 (Binary Mod, sum, int64 3)) in
+        add (P.Op2 (Compare Not_equal, r, int64 0))
+    | Keep_load -> add (P.In (List.length lds))
+  in
   ( P.v ~ins:(Iarray.of_list (acc :: lds))
       (Iarray.of_list (List.rev !nodes))
-      ~outs:(Iarray.of_list [ o0; o1 ]),
+      ~outs:(Iarray.of_list [ o0; o1; o2 ]),
     lds )
 
 (* [c]'s call on [b]: its destinations [o] and [lse], or none where [b]
@@ -843,6 +914,8 @@ let run_call (b : Support.backend) c =
                  let x = Array.init numel (fun e -> Int32.of_int (doc j e)) in
                  A.Any (Kernels_cases.on b (A.of_array D.Int32 lshape x))
              | D.Float16 -> A.Any (arr D.Float16 lshape finite)
+             | D.Bool ->
+                 A.Any (arr D.Bool lshape (fun () -> Random.State.int st 5 > 0))
              | _ -> A.Any (arr acc lshape finite))
            lds)
     in
@@ -909,6 +982,8 @@ let law_fused (cuda : Support.backend) c =
     (c.rescore = Sine || c.rescore = Half_bias);
   cover "a score past a launch's planes"
     (c.rescore = Wide_bias || c.rescore = Wide_score);
+  cover "a keep" (c.keep <> Keep_all);
+  cover "a keep by a load" (c.keep = Keep_load);
   same_floats (run_call Support.cpu c) (run_call cuda c)
 
 (* rig.nv loads the cubin CUDA loads, so an attention through it has
@@ -997,16 +1072,34 @@ let law_units (cuda : Support.backend) c =
    values near its own. *)
 let past_cases =
   let c =
-    { cd = F32; nb = 2; axes = 0; hk = 1; g = 2; tq = 20; ck = 150; cdk = 24;
-      cdv = 20; page = 0; lens = Some [| 150; 97 |]; mask = No_mask;
-      rescore = No_score; seed = 7 }
+    {
+      cd = F32;
+      nb = 2;
+      axes = 0;
+      hk = 1;
+      g = 2;
+      tq = 20;
+      ck = 150;
+      cdk = 24;
+      cdv = 20;
+      page = 0;
+      lens = Some [| 150; 97 |];
+      mask = No_mask;
+      rescore = No_score;
+      keep = Keep_all;
+      seed = 7;
+    }
   in
   let units c = { c with cd = F16; tq = 20 } in
   (* one row of a head over 11 blocks, which nx.cuda cuts into 2 parts *)
   let parts c = { c with nb = 1; g = 1; tq = 2; ck = 700; lens = Some [| 650 |] } in
   [
     ("a mask of 48 values", { c with mask = Wide });
+    ( "a mask of 48 values and a keep by a load",
+      { c with mask = Wide; keep = Keep_load } );
     ("eight loads at 32 axes", { c with axes = 28; mask = Many; rescore = Bias });
+    ( "eight loads at 32 axes and a keep by a load",
+      { c with axes = 28; mask = Many; rescore = Bias; keep = Keep_load } );
     ("int32 documents", { c with mask = Docs32 });
     ("a float16 bias", { c with rescore = Half_bias; mask = Causal });
     ("the sine of the score", { c with rescore = Sine; mask = Causal_docs });
@@ -1015,11 +1108,16 @@ let past_cases =
     ("a mask of 48 values and the sine of the score", { c with mask = Wide; rescore = Sine });
     ("a mask of 48 values on the matrix units", units { c with mask = Wide });
     ("eight loads at 32 axes on the matrix units", units { c with axes = 28; mask = Many });
+    ( "a keep by coordinates on the matrix units",
+      units { c with mask = Causal; keep = Keep_coords } );
     ("the sine of the score on the matrix units", units { c with rescore = Sine; page = 7; ck = 154 });
     ("a score of 96 values on the matrix units", units { c with rescore = Wide_score; mask = Causal });
     ( "a mask of 48 values and a score of 96 on the matrix units",
       units { c with mask = Wide; rescore = Wide_score } );
-    ("a float16 bias over parts", parts { c with rescore = Half_bias; mask = Causal });
+    ( "a float16 bias over parts",
+      parts { c with rescore = Half_bias; mask = Causal } );
+    ( "a keep by a load over parts",
+      parts { c with keep = Keep_load; mask = Causal } );
     ( "a mask of 48 values and the sine over parts",
       parts { c with mask = Wide; rescore = Sine } );
     ( "a mask of 48 values and the sine over parts on the matrix units",
@@ -1042,8 +1140,23 @@ let past_case (cuda : Support.backend) (_, c) =
    its own. *)
 let cut_cases =
   let c =
-    { cd = F32; nb = 1; axes = 0; hk = 1; g = 1; tq = 40; ck = 124; cdk = 24;
-      cdv = 20; page = 0; lens = None; mask = Causal; rescore = No_score; seed = 11 }
+    {
+      cd = F32;
+      nb = 1;
+      axes = 0;
+      hk = 1;
+      g = 1;
+      tq = 40;
+      ck = 124;
+      cdk = 24;
+      cdv = 20;
+      page = 0;
+      lens = None;
+      mask = Causal;
+      rescore = No_score;
+      keep = Keep_all;
+      seed = 11;
+    }
   in
   [
     ("rows of one head", c);

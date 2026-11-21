@@ -3533,6 +3533,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.attention` takes `?keep`, the visible pairs whose
+  values count after the softmax: `o` sums their values at their weights,
+  and `lse` stays the log-sum-exp of every visible pair. Dropout of the
+  attention weights is `keep` a draw, `o` scaled after the call. The pair
+  program of `Prim.Attention` has three outputs, the third `keep`'s, `true`
+  without one, which nx.cpu and nx.cuda compute.
 - New `Nx.Placement.cut_axes p`, the axes that the placement `p` cuts across
   its devices, in increasing order. A function of several operations reads it
   to choose the operations that compute where its argument lies.

@@ -6833,8 +6833,8 @@ let causal p =
   let seen = binary ~by (Binary Add) p.q last in
   comparison ~by (Compare Less_equal) p.k seen
 
-(* A mask or a score runs once on stand-ins for a pair's values, under an
-   interpretation that records each map it receives as cells of one list, so
+(* A mask, a score or a keep runs once on stand-ins for a pair's values, under
+   an interpretation that records each map it receives as cells of one list, so
    that it computes at every pair as part of one program:
 
      stand-ins --maps--> cells --pair_program--> the map over every pair
@@ -6851,7 +6851,7 @@ type recording = {
   mutable captures : int;
 }
 
-(* An array a mask or score captures, with its number. *)
+(* An array a mask, score or keep captures, with its number. *)
 type +'d captured = Captured : int * ('v, 's, 'd) t -> 'd captured
 
 type ('v, 's, 'd) Value.payload +=
@@ -6946,8 +6946,8 @@ let record (type r) st i ~by (op : r Value.prim) : r =
 (* [mask] and [score] applied to stand-ins at [at]: the recording, and each
    one's cell, captures and shape. A result that no stand-in reaches is a
    capture. *)
-let recorded (type a d) ~(at : d Devices.placement) ~(acc : (float, a) D.t)
-    ~tq ?mask ?score () =
+let recorded (type a d) ~(at : d Devices.placement) ~(acc : (float, a) D.t) ~tq
+    ?mask ?score ?keep () =
   let st = { cells = []; count = 0; captures = 0 } in
   let stand_in i dt leaf =
     let layout = Nx_array.Layout.contiguous [||] in
@@ -6956,7 +6956,7 @@ let recorded (type a d) ~(at : d Devices.placement) ~(acc : (float, a) D.t)
     in
     Eval.traced i form (Cell (push st (Leaf leaf), []))
   in
-  let i, m, s =
+  let i, m, s, kp =
     Eval.interpret ~name:"Nx.attention" Values
       (fun i ~by op -> record st i ~by op)
       (fun i ->
@@ -6969,7 +6969,10 @@ let recorded (type a d) ~(at : d Devices.placement) ~(acc : (float, a) D.t)
           }
         in
         let s = stand_in i acc Score in
-        (i, Option.map (fun f -> f p) mask, Option.map (fun f -> f p s) score))
+        ( i,
+          Option.map (fun f -> f p) mask,
+          Option.map (fun f -> f p s) score,
+          Option.map (fun f -> f p) keep ))
   in
   let result y =
     match cell i y with
@@ -6978,15 +6981,15 @@ let recorded (type a d) ~(at : d Devices.placement) ~(acc : (float, a) D.t)
         let c, n = capture st in
         (n, [ Captured (c, y) ], shape y)
   in
-  (st, Option.map result m, Option.map result s)
+  (st, Option.map result m, Option.map result s, Option.map result kp)
 
 (* The pair program over the loop [[lead…; hq; tq; tk]] ({!Nx_kernel}'s
    attention): operand 0 the scaled score in [acc], then the captures
    [captures], each a number and a dtype, then, at [length] where given, the
-   rows' lengths; output 0 [mask]'s cell, or [true], output 1 [score]'s
-   cell, or the score. A pair's length reads that operand, or the constant
-   [tk]. *)
-let pair_program ~acc ~rank ~tk ?length st ~mask ~score captures =
+   rows' lengths; output 0 [mask]'s cell, or [true], output 1 [score]'s cell, or
+   the score, output 2 [keep]'s cell, or [true]. A pair's length reads that
+   operand, or the constant [tk]. *)
+let pair_program ~acc ~rank ~tk ?length st ~mask ~score ~keep captures =
   let nodes = ref [] and count = ref 0 in
   let add (n : P.node) =
     nodes := n :: !nodes;
@@ -7032,18 +7035,16 @@ let pair_program ~acc ~rank ~tk ?length st ~mask ~score captures =
       at.(c) <- n;
       n
   in
-  let visible =
-    match mask with
-    | None -> add (Const (D.Any D.Bool, P.bits D.Bool true))
-    | Some c -> node c
-  in
+  let truth () = add (Const (D.Any D.Bool, P.bits D.Bool true)) in
+  let visible = match mask with None -> truth () | Some c -> node c in
   let out = match score with None -> score_in | Some c -> node c in
+  let kept = match keep with None -> truth () | Some c -> node c in
   let ins =
     (acc :: List.map snd captures)
     @ match length with Some _ -> [ D.Any D.Int64 ] | None -> []
   in
   let nodes = Iarray.of_list (List.rev !nodes) in
-  P.v ~ins:(Iarray.of_list ins) nodes ~outs:[| visible; out |]
+  P.v ~ins:(Iarray.of_list ins) nodes ~outs:[| visible; out; kept |]
 
 (* Whether [cell] of [st], or a cell it reads, is a pair's length. *)
 let reads_length st cells =
@@ -7067,7 +7068,7 @@ let reads_length st cells =
 (* Dtypes as Nx_kernel's rules read them. *)
 let dtype_array = { Nx_kernel.arrays = Array.length; dtype = Array.get }
 
-let attention_op (type v s a d) ?scale ?lengths ?mask ?score
+let attention_op (type v s a d) ?scale ?lengths ?mask ?score ?keep
     ~(acc : (float, a) D.t) ~(kv : (v, s, d) kv) (q : (v, s, d) t) :
     (v, s, d) t * (float, a, d) t =
   let by = "Nx.attention" in
@@ -7118,9 +7119,9 @@ let attention_op (type v s a d) ?scale ?lengths ?mask ?score
     | None -> 1. /. Float.sqrt (Float.of_int dk)
   in
   let at = beside q in
-  let st, mask, score = recorded ~at ~acc ~tq ?mask ?score () in
+  let st, mask, score, keep = recorded ~at ~acc ~tq ?mask ?score ?keep () in
   let captures =
-    List.filter_map Fun.id [ mask; score ]
+    List.filter_map Fun.id [ mask; score; keep ]
     |> List.concat_map (fun (_, cs, _) -> cs)
     |> List.sort_uniq (fun (Captured (a, _)) (Captured (b, _)) ->
            Int.compare a b)
@@ -7135,13 +7136,14 @@ let attention_op (type v s a d) ?scale ?lengths ?mask ?score
   let result what (_, _, s) = fits ("a " ^ what ^ " of shape") s in
   Option.iter (result "mask") mask;
   Option.iter (result "score") score;
+  Option.iter (result "keep") keep;
   List.iter
     (fun (Captured (_, x)) -> fits "a captured array of shape" (shape x))
     captures;
   let cell (n, _, _) = n in
-  let cells = List.filter_map (Option.map cell) [ mask; score ] in
-  (* A pair's length is an operand of its program where lengths are given
-     and the mask or the score reads it. *)
+  let cells = List.filter_map (Option.map cell) [ mask; score; keep ] in
+  (* A pair's length is an operand of its program where lengths are given and
+     the mask, the score or the keep reads it. *)
   let length =
     match lengths with
     | Some l when reads_length st cells -> Some l
@@ -7151,6 +7153,7 @@ let attention_op (type v s a d) ?scale ?lengths ?mask ?score
     pair_program ~acc:(D.Any acc) ~rank:r ~tk
       ?length:(Option.map (fun _ -> 1 + List.length captures) length)
       st ~mask:(Option.map cell mask) ~score:(Option.map cell score)
+      ~keep:(Option.map cell keep)
       (List.map (fun (Captured (c, x)) -> (c, D.Any (dtype x))) captures)
   in
   (* The program's and the arrays' dtypes are refused before any operation
@@ -7165,16 +7168,16 @@ let attention_op (type v s a d) ?scale ?lengths ?mask ?score
    with
    | Some (_, why) -> invalid_argf "%s: %s" by why
    | None -> ());
-  (* Operands in the call's order: the query, the keys, the values and the
-     page table, the lengths, then the arrays [mask] and [score] capture. *)
+  (* Operands in the call's order: the query, the keys, the values and the page
+     table, the lengths, then the arrays [mask], [score] and [keep] capture. *)
   let operands =
     (Value.Any q :: kv_operands)
     @ Option.to_list (Option.map (fun l -> Value.Any l) lengths)
     @ List.map (fun (Captured (_, x)) -> Value.Any x) captures
   in
   alive_all ~by operands;
-  (* A capture is lent: one returned from [mask] or [score] lives, as one
-     an operation of theirs reads does. *)
+  (* A capture is lent: one returned from [mask], [score] or [keep] lives, as
+     one an operation of theirs reads does. *)
   let load (Captured (_, x)) =
     Value.Any (Eval.broadcast ~by f (Donate.lent x))
   in
@@ -7218,7 +7221,7 @@ let cut_pages x =
    [t mod page], and a key whose entry is outside [[0, pages)] is hidden, as
    the read in place hides it. Each device then reads the keys its part of
    the call needs. A refusal names the call's arguments. *)
-let attention (type v s a d) ?scale ?lengths ?mask ?score
+let attention (type v s a d) ?scale ?lengths ?mask ?score ?keep
     ~(acc : (float, a) D.t) ~(kv : (v, s, d) kv) (q : (v, s, d) t) :
     (v, s, d) t * (float, a, d) t =
   match kv with
@@ -7265,10 +7268,11 @@ let attention (type v s a d) ?scale ?lengths ?mask ?score
         | None -> fun _ -> named
         | Some m -> fun p -> logical_and (m p) named
       in
-      attention_op ?scale ?lengths ~mask ?score ~acc
+      attention_op ?scale ?lengths ~mask ?score ?keep ~acc
         ~kv:(Dense { k = gathered k; v = gathered v })
         q
-  | Dense _ | Paged _ -> attention_op ?scale ?lengths ?mask ?score ~acc ~kv q
+  | Dense _ | Paged _ ->
+      attention_op ?scale ?lengths ?mask ?score ?keep ~acc ~kv q
 
 (* Fourier transforms *)
 

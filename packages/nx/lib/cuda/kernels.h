@@ -1335,7 +1335,7 @@ enum {
   NX_ATT_V,       /* a thread's elements of a tape's run */
   NX_ATT_SHARED,  /* the byte of the kernel's shared memory past the tapes'
                      planes; an FFMA path's staging overlaps them */
-  NX_ATT_FLAGS,   /* NX_ATT_MASK to NX_ATT_SCORES bits */
+  NX_ATT_FLAGS,   /* NX_ATT_MASK to NX_ATT_KEEP bits */
   NX_ATT_MASK_AT, /* output 0 on pairs: its tape's first word, its
                      constants first */
   NX_ATT_MASK_N,  /* its words */
@@ -1345,6 +1345,10 @@ enum {
   NX_ATT_SCORE_N,
   NX_ATT_SCORE_GIVEN,
   NX_ATT_SCORE_OUT,
+  NX_ATT_KEEP_AT,    /* output 2 on pairs */
+  NX_ATT_KEEP_N,
+  NX_ATT_KEEP_GIVEN,
+  NX_ATT_KEEP_OUT,
   NX_ATT_RANGES_AT,  /* output 0's least and greatest over a block's box */
   NX_ATT_RANGES_N,
   NX_ATT_RANGES_GIVEN,
@@ -1363,8 +1367,15 @@ enum { NX_ATT_F32, NX_ATT_F32_R16, NX_ATT_F64, NX_ATT_MMA };
    block's pairs; output 1 is not the score and runs on it; output 0's
    ranges class the blocks; the launch stores each pair's score, in the
    array at the workspace's slot ([lead...; hq; tq; tk], C-contiguous),
-   and nothing else, its keys in one part. */
-enum { NX_ATT_MASK = 1, NX_ATT_SCORE = 2, NX_ATT_RANGES = 4, NX_ATT_SCORES = 8 };
+   and nothing else, its keys in one part; output 2 is not true everywhere
+   and runs on a block's pairs, and a pair it drops weighs nothing in o. */
+enum {
+  NX_ATT_MASK = 1,
+  NX_ATT_SCORE = 2,
+  NX_ATT_RANGES = 4,
+  NX_ATT_SCORES = 8,
+  NX_ATT_KEEP = 16
+};
 
 /* A table of given planes is its count, then an entry a word: the plane's
    kind, an index << 8 (a loop axis or a load) and the first plane << 32.

@@ -4,13 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (* Nx's attention against its definition: the softmax of each row's visible
-   scaled scores, rewritten by its score, times the values, over dense and
-   paged keys, grouped heads, lead axes, lengths, masks as programs and as
-   captured arrays, empty sequences, and float16, bfloat16, float32 and
-   float64 accumulating in float32 and in float64, each within the error
-   bound nx.mli states. The definition computes in double-double arithmetic
-   (below), within a bound of its own that the comparison adds. A hidden
-   value, finite or not, never changes the result on nx.cpu. *)
+   scaled scores, rewritten by its score, times the values of the pairs it
+   keeps, over dense and paged keys, grouped heads, lead axes, lengths, masks
+   and keeps as programs and as captured arrays, empty sequences, and float16,
+   bfloat16, float32 and float64 accumulating in float32 and in float64, each
+   within the error bound nx.mli states. The definition computes in
+   double-double arithmetic (below), within a bound of its own that the
+   comparison adds. A hidden or dropped value, finite or not, never changes the
+   result on nx.cpu. *)
 
 open Windtrap
 module D = Nx_array.Dtype
@@ -115,6 +116,8 @@ type case = {
   mask : mask;  (** A captured mask is [[hq; tq; tk]]. *)
   score : score;
       (** ALiBi's slopes, one per query head, or a bias [[hq; tq; tk]]. *)
+  keep : bool array option;
+      (** The pairs whose values count, captured as [[hq; tq; tk]]. *)
   q : float array;
   k : float array;
   v : float array;
@@ -146,6 +149,12 @@ let pp_case ppf c =
     | Identity -> "identity"
     | Alibi _ -> "alibi"
     | Bias _ -> "bias");
+  (match c.keep with
+  | None -> ()
+  | Some a ->
+      Format.fprintf ppf "@ keep [%s]"
+        (String.concat "; "
+           (Array.to_list (Array.map (fun b -> if b then "1" else "0") a))));
   let floats name xs =
     Format.fprintf ppf "@ %s [%s]" name
       (String.concat "; " (Array.to_list (Array.map (Printf.sprintf "%h") xs)))
@@ -244,11 +253,34 @@ let sized ~lead ~hk ~groups ~tq ~tk ~dk ~dv =
             (array ~size:(constant hq) (map round32 (float_range 0. 0.5))) );
       ]
   in
+  let* keep =
+    frequency
+      [
+        (2, constant None);
+        (1, map Option.some (array ~size:(constant (hq * tq * tk)) bool));
+      ]
+  in
   let n = numel lead in
   let* q = array ~size:(constant (n * hq * tq * dk)) element in
   let* k = array ~size:(constant (n * hk * tk * dk)) element in
   let+ v = array ~size:(constant (n * hk * tk * dv)) element in
-  { lead; hk; groups; tq; tk; dk; dv; lengths; scale; mask; score; q; k; v }
+  {
+    lead;
+    hk;
+    groups;
+    tq;
+    tk;
+    dk;
+    dv;
+    lengths;
+    scale;
+    mask;
+    score;
+    keep;
+    q;
+    k;
+    v;
+  }
 
 let case =
   let open Gen in
@@ -342,8 +374,8 @@ let rewritten c h i j s =
   | Bias bias -> add s (dd bias.((((h * c.tq) + i) * c.tk) + j))
 
 (* What a case reaches, at a row that has a visible key: a finite and a
-   non-finite value hidden from it within its length, and a NaN value at a
-   visible key whose weight is zero. *)
+   non-finite value hidden from it within its length or dropped by its keep, and
+   a NaN value at a kept key whose weight is zero. *)
 type reached = {
   mutable hidden_finite : bool;
   mutable hidden_nonfinite : bool;
@@ -395,6 +427,11 @@ let definition ac c ~visible ~key ~value q =
       for i = 0 to c.tq - 1 do
         let row = (((b * hq) + h) * c.tq) + i in
         let seen j = visible b h i j in
+        let kept j =
+          match c.keep with
+          | None -> true
+          | Some a -> a.((((h * c.tq) + i) * c.tk) + j)
+        in
         let s =
           Array.init c.tk (fun j ->
               let dot = ref (dd 0.) and size = ref 0. in
@@ -427,8 +464,8 @@ let definition ac c ~visible ~key ~value q =
               let p = if p < ac.least /. 2. then 0. else p in
               for d = 0 to c.dv - 1 do
                 let y = value b kh j d and at = (row * c.dv) + d in
-                if not (seen j) then begin
-                  if j < length c b then
+                if not (seen j && kept j) then
+                  begin if j < length c b then
                     if Float.is_finite y then reached.hidden_finite <- true
                     else reached.hidden_nonfinite <- true
                 end
@@ -455,6 +492,9 @@ let definition ac c ~visible ~key ~value q =
 (* Nx's call *)
 
 let ints s xs = Nx.create Nx.int64 s (Array.map Int64.of_int xs)
+
+let keep_of c : (Nx.host Nx.pair -> Nx.host Nx.bool_t) option =
+  Option.map (fun a _ -> Nx.create Nx.bool [| hq c; c.tq; c.tk |] a) c.keep
 
 let mask_of c : (Nx.host Nx.pair -> Nx.host Nx.bool_t) option =
   match c.mask with
@@ -574,7 +614,9 @@ let dense (type s a) (dt : (float, s) D.t) uq tiny (ac : a accum) c =
   let value b kh j d = vs.((((((b * c.hk) + kh) * c.tk) + j) * c.dv) + d) in
   let result =
     Nx.attention ?scale:c.scale ?lengths:(lengths_of c) ?mask:(mask_of c)
-      ?score:(score_of ac.acc c) ~acc:ac.acc ~kv:(Nx.Dense { k; v }) q
+      ?score:(score_of ac.acc c) ?keep:(keep_of c) ~acc:ac.acc
+      ~kv:(Nx.Dense { k; v })
+      q
   in
   equal ~msg:"o's shape" (array int) (shape c [| hq; c.tq; c.dv |]) (Nx.shape (fst result));
   equal ~msg:"lse's shape" (array int) (shape c [| hq; c.tq |]) (Nx.shape (snd result));
@@ -593,6 +635,7 @@ let law_dense dt u tiny ac c =
   cover "spans" (match c.mask with Spans _ -> true | _ -> false);
   cover "a limit per head" (match c.mask with Limit _ -> true | _ -> false);
   cover "alibi" (c.score <> Identity);
+  cover "a keep" (c.keep <> None);
   cover "lengths" (c.lengths <> None);
   cover "grouped heads" (c.groups > 1);
   cover "lead axes" (Array.length c.lead > 0);
@@ -705,7 +748,7 @@ let paged_of ~pages ~page ~max_pages cases =
         (1, map Option.some (array ~size:(constant (numel c.lead)) (int_range (-1) (tk + 1))));
       ]
   in
-  let+ mask =
+  let* mask =
     frequency
       [
         ( 2,
@@ -716,7 +759,12 @@ let paged_of ~pages ~page ~max_pages cases =
         (1, map (fun m -> Captured m) (array ~size:(constant (hq c * c.tq * tk)) bool));
       ]
   in
-  ({ c with tk; k; v; lengths; mask }, (pages, page, max_pages, table))
+  let+ keep =
+    match c.keep with
+    | None -> constant None
+    | Some _ -> map Option.some (array ~size:(constant (hq c * c.tq * tk)) bool)
+  in
+  ({ c with tk; k; v; lengths; mask; keep }, (pages, page, max_pages, table))
 
 let paged =
   let open Gen in
@@ -755,7 +803,7 @@ let law_paged (type s a) ?(long = false) (dt : (float, s) D.t) uq tiny
   let visible b h i j = in_range b j && visible c b h i j in
   let result =
     Nx.attention ?scale:c.scale ?lengths:(lengths_of c) ?mask:(mask_of c)
-      ?score:(score_of ac.acc c) ~acc:ac.acc
+      ?score:(score_of ac.acc c) ?keep:(keep_of c) ~acc:ac.acc
       ~kv:(Nx.Paged { k; v; table = ints (shape c [| max_pages |]) table })
       q
   in
@@ -1063,6 +1111,7 @@ let test_scored_visibility () =
       [|
         E.any E.(const D.Float32 0. < input 0 D.Float32);
         E.any (E.input 0 D.Float32);
+        E.any (E.const D.Bool true);
       |]
   in
   let q = f32 [| 1; 1; 1 |] [| 1. |] in
@@ -1158,9 +1207,21 @@ let test_wide_keys () =
   in
   let c =
     {
-      lead = [||]; hk = 1; groups = 2; tq = 3; tk = 70; dk = 1100; dv = 3;
-      lengths = None; scale = None; mask = Causal; score = Identity;
-      q = draw 1. (2 * 3 * 1100); k = draw 2. (70 * 1100); v = draw 3. (70 * 3);
+      lead = [||];
+      hk = 1;
+      groups = 2;
+      tq = 3;
+      tk = 70;
+      dk = 1100;
+      dv = 3;
+      lengths = None;
+      scale = None;
+      mask = Causal;
+      score = Identity;
+      keep = None;
+      q = draw 1. (2 * 3 * 1100);
+      k = draw 2. (70 * 1100);
+      v = draw 3. (70 * 3);
     }
   in
   ignore (dense D.Float32 u32 0x1p-149 in32 c : reached);

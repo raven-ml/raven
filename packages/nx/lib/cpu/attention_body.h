@@ -21,8 +21,9 @@ typedef struct {
   T *vf;        /* KEYS × dv */
   T m[ROWS], l[ROWS], alpha[ROWS];
   uint8_t *vis; /* ROWS × KEYS, row r's at r·nk */
+  uint8_t *kept; /* ROWS × KEYS: the visible pairs output 2 keeps */
   uint8_t *lo, *hi; /* blocks each: the mask's least and greatest */
-  uint8_t sees[ROWS], hides[ROWS], picks[ROWS];
+  uint8_t sees[ROWS], hides[ROWS], drops[ROWS], picks[ROWS];
   uint8_t bad[KEYS]; /* a value not finite */
   run runs[KEYS];
 } F(scratch);
@@ -31,8 +32,8 @@ static int64_t F(scratch_bytes)(const att *c) {
   int64_t f = ROWS * c->dk + 2 * ROWS * KEYS + 2 * ROWS * c->dv +
               KEYS * c->dk + KEYS * c->dv;
   int64_t classes = c->ranges != NULL ? 2 * c->blocks : 0;
-  return (int64_t)sizeof(F(scratch)) + (int64_t)sizeof(T) * f + ROWS * KEYS +
-         classes + 10 * 64;
+  return (int64_t)sizeof(F(scratch)) + (int64_t)sizeof(T) * f +
+         2 * ROWS * KEYS + classes + 11 * 64;
 }
 
 static void F(lay_out)(const att *c, F(scratch) *x) {
@@ -49,7 +50,8 @@ static void F(lay_out)(const att *c, F(scratch) *x) {
   TAKE(vf, KEYS * c->dv);
 #undef TAKE
   x->vis = p;
-  x->lo = p + ROWS * KEYS;
+  x->kept = align64(p + ROWS * KEYS);
+  x->lo = x->kept + ROWS * KEYS;
   x->hi = x->lo + c->blocks;
 }
 
@@ -153,13 +155,14 @@ static void F(rescale)(const att *c, F(scratch) *x, int r) {
   for (int64_t e = 0; e < c->dv; e++) acc[e] = FMA(alpha, acc[e], p[e]);
 }
 
-/* Row r's products of its visible pairs alone into its part, as the
+/* Row r's products of the pairs [use] marks alone into its part, as the
    kernel adds them: from +0 in increasing key, each fused into its sum. */
-static void F(picked)(const att *c, F(scratch) *x, int r, int nr, int nk) {
+static void F(picked)(const att *c, F(scratch) *x, const uint8_t *use, int r,
+                      int nr, int nk) {
   T *y = x->part + r * c->dv;
   memset(y, 0, sizeof(T) * (size_t)c->dv);
   const T *p = x->s + r * KEYS;
-  const uint8_t *vis = x->vis + r * nk;
+  const uint8_t *vis = use + r * nk;
   for (int u = 0; u < nr; u++) {
     const run *g = &x->runs[u];
     for (int i = 0; i < g->n; i++) {
@@ -309,10 +312,35 @@ static void F(unit)(att *c, F(scratch) *x, int64_t u) {
         const uint8_t *vi = x->vis + i * nk;
         for (int j = 0; j < nk; j++) s[j] = vi[j] ? s[j] : -INFINITY;
       }
-    /* A value not finite at a key hidden from a row sends the row's
-       products through its visible pairs alone. */
+    /* Output 2 on the visible pairs: [kept] the pairs whose values count,
+       [drops] the rows with a visible pair it drops. */
+    const uint8_t *use = x->vis;
+    int dropping = 0;
+    if (c->keep) {
+      for (int hh = 0; hh < nh; hh++) {
+        int64_t p = (((b * c->hq + h0 + hh) * c->tq + i0) * c->tk) + j0;
+        nx_cpu_prog_terms(c->prog, &c->pl, 2, p, 1, nk, c->tk, nt,
+                          x->kept + hh * nt * nk);
+      }
+      for (int i = 0; i < rows; i++) {
+        uint8_t *ki = x->kept + i * nk;
+        const uint8_t *vi = x->vis + i * nk;
+        int d = 0;
+        for (int j = 0; j < nk; j++) {
+          int seen = mask || !all ? vi[j] != 0 : 1;
+          d |= seen && !ki[j];
+          ki[j] = seen && ki[j];
+        }
+        x->drops[i] = (uint8_t)(x->sees[i] && d);
+        dropping |= x->drops[i];
+      }
+      use = x->kept;
+    } else
+      for (int i = 0; i < rows; i++) x->drops[i] = 0;
+    /* A value not finite at a key hidden from a row or dropped sends the
+       row's products through the pairs it keeps alone. */
     int picking = 0;
-    if (hidden) {
+    if (hidden || dropping) {
       for (int j = 0; j < nk; j++) x->bad[j] = 0;
       for (int g = 0; g < nr; g++) {
         const run *v = &x->runs[g];
@@ -322,8 +350,8 @@ static void F(unit)(att *c, F(scratch) *x, int64_t u) {
       }
       for (int i = 0; i < rows; i++) {
         x->picks[i] = 0;
-        if (!x->hides[i]) continue;
-        const uint8_t *vi = x->vis + i * nk;
+        if (!x->hides[i] && !x->drops[i]) continue;
+        const uint8_t *vi = use + i * nk;
         for (int j = 0; j < nk; j++) x->picks[i] |= !vi[j] && x->bad[j];
         picking |= x->picks[i];
       }
@@ -332,6 +360,14 @@ static void F(unit)(att *c, F(scratch) *x, int64_t u) {
       if (x->sees[i]) F(update)(x, i, nk);
       else memset(x->s + i * KEYS, 0, sizeof(T) * (size_t)nk);
     }
+    /* The weights of the pairs output 2 drops are 0, past the row's sum. */
+    if (dropping)
+      for (int i = 0; i < rows; i++) {
+        if (!x->drops[i]) continue;
+        T *s = x->s + i * KEYS;
+        const uint8_t *ki = x->kept + i * nk;
+        for (int j = 0; j < nk; j++) s[j] = ki[j] ? s[j] : 0;
+      }
     /* Each row's products of the block into its part, from +0: a gemv a
        row for few rows, else the chain kernel's tiles, whose parts of the
        rows that see no key or add their visible pairs apart are not
@@ -340,7 +376,7 @@ static void F(unit)(att *c, F(scratch) *x, int64_t u) {
       for (int i = 0; i < rows; i++) {
         if (!x->sees[i]) continue;
         if (picking && x->picks[i]) {
-          F(picked)(c, x, i, nr, nk);
+          F(picked)(c, x, use, i, nr, nk);
           continue;
         }
         memset(x->part + i * dv, 0, sizeof(T) * (size_t)dv);
@@ -361,7 +397,8 @@ static void F(unit)(att *c, F(scratch) *x, int64_t u) {
         }
       }
       for (int i = 0; i < rows; i++)
-        if (x->sees[i] && picking && x->picks[i]) F(picked)(c, x, i, nr, nk);
+        if (x->sees[i] && picking && x->picks[i])
+          F(picked)(c, x, use, i, nr, nk);
     }
     for (int i = 0; i < rows; i++)
       if (x->sees[i]) F(rescale)(c, x, i);
