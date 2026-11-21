@@ -515,9 +515,11 @@ let parallel =
    for the devices' terms, which the top-2 combine keeps and one closing
    after the residual add closes. Closing each expert's rows instead moves
    two rows a token. Compiled; its allocation counts the closing's steps as
-   the step runs them. In its first few hundred calls rig's buffer cache
-   misses until finalisers return its buffers, so its words follow the
-   collection's timing and its baseline is sampled. *)
+   the step runs them. Until finalisers return its buffers, rig's cache
+   misses and a call takes 164 words more: on fudge, calls 0-8, 17-62,
+   115-171 and 279-283 of a process, then one call in about 113. The setup
+   runs [5 * warm_calls] calls first, past the runs of misses; the lone
+   misses after them fell in no exactness probe of 18 quick checks. *)
 let experts_layer =
   let experts = 4 and per_token = 2 and width = 256 and tokens = 4 in
   let setup () =
@@ -553,6 +555,9 @@ let experts_layer =
     let f = Rune.jit' step in
     let x = own D.on (Nx.full Nx.float32 [| tokens; width |] 0.5) in
     ignore (lowered "mixture of experts" (fun () -> f x));
+    for _ = 1 to 5 * warm_calls do
+      Nx.sync (f x)
+    done;
     fun () -> Nx.sync (f x)
   in
   [

@@ -7,13 +7,15 @@
 # forced: blessed under load 39.9 on 14 cores
 # forced: blessed Quant/host/mxfp4-product-of-1024-10-bfloat16-tokens Quant/host/mxfp4-product-of-1024-64-bfloat16-tokens Quant/cuda/mxfp4-product-of-16384-12-bfloat16-tokens Quant/cuda/mxfp4-product-of-16384-64-bfloat16-tokens Quant/cuda/mxfp4-product-of-16384-128-bfloat16-tokens Quant/cuda/mxfp4-product-of-16384-64-float32-tokens under load 67.0 on 14 cores
 # forced: blessed Parallel/tensor-parallel-feed-forward-over-4-memory-devices under load 10.3 on 2 cores
+# forced: blessed Parallel/mixture-of-experts-row-parallel-over-4-memory-devices under load 2.3 on 2 cores
 
 Gpt2/decode-step-at-128-width-1024	alloc_words	exact	18261
 Gpt2/decode-step-at-128-width-256	alloc_words	exact	18261
 Gpt2/decode-step-at-128-width-4096	alloc_words	exact	18261
 Gpt2/decode-step-cache-1024	alloc_words	exact	18261
 Gpt2/decode-step-cache-256	alloc_words	exact	18261
-Parallel/mixture-of-experts-row-parallel-over-4-memory-devices	alloc_words	batch=8	n=20	8.895e+03	8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.900e+03 8.900e+03 8.911e+03 8.916e+03 8.916e+03
+Parallel/mixture-of-experts-row-parallel-over-4-memory-devices	alloc_words	exact	2313
+Parallel/mixture-of-experts-row-parallel-over-4-memory-devices	wall_time	batch=64	n=20	1.068e-04	1.007e-04 1.013e-04 1.015e-04 1.015e-04 1.018e-04 1.022e-04 1.030e-04 1.034e-04 1.063e-04 1.068e-04 1.069e-04 1.074e-04 1.075e-04 1.076e-04 1.078e-04 1.079e-04 1.082e-04 1.086e-04 1.087e-04 1.092e-04
 Parallel/tensor-parallel-feed-forward-over-4-memory-devices	alloc_words	exact	2313
 Parallel/tensor-parallel-feed-forward-over-4-memory-devices	wall_time	batch=8	n=20	8.915e-04	8.126e-04 8.184e-04 8.265e-04 8.337e-04 8.342e-04 8.508e-04 8.704e-04 8.803e-04 8.830e-04 8.904e-04 8.927e-04 8.964e-04 9.019e-04 9.031e-04 9.055e-04 9.110e-04 9.121e-04 9.285e-04 9.476e-04 9.683e-04
 Quant/cuda/mxfp4-product-of-16384-12-bfloat16-tokens	wall_time	batch=16	n=20	6.556e-04	6.278e-04 6.290e-04 6.409e-04 6.420e-04 6.446e-04 6.459e-04 6.506e-04 6.535e-04 6.550e-04 6.556e-04 6.556e-04 6.601e-04 6.639e-04 6.662e-04 6.751e-04 6.791e-04 6.914e-04 6.929e-04 7.641e-04 9.242e-04
