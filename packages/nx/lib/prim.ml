@@ -1122,9 +1122,8 @@ let has_layout_shape x l =
   done;
   !i = r
 
-(* A loop's arrays as Nx_kernel's rules read them: its loads in place, a
-   map's results and a reduction's as arrays of their dtypes, and its
-   reductions as the kernels take them. *)
+(* A loop's arrays as Nx_kernel's rules read them, in place: its loads, a
+   map's results, a reduction's reductions and their results. *)
 let loads_view =
   {
     Nx_kernel.arrays = Iarray.length;
@@ -1135,31 +1134,37 @@ let loads_view =
         | Padded { x; _ } -> D.Any (dtype x));
   }
 
-let dtype_array = { Nx_kernel.arrays = Array.length; dtype = Array.get }
+(* What the [i]th of [rs] computes, and the program output it reduces. *)
+let rec kind_at : type d r. (d, r) reductions -> int -> Nx_kernel.reduction =
+ fun rs i ->
+  match rs with
+  | [] -> invalid_arg "Prim.kind_at"
+  | r :: rest -> if i = 0 then reduction_kind r else kind_at rest (i - 1)
+
+let rec output_at : type d r. (d, r) reductions -> int -> int =
+ fun rs i ->
+  match rs with
+  | [] -> invalid_arg "Prim.output_at"
+  | r :: rest -> if i = 0 then output r else output_at rest (i - 1)
 
 let reductions_view =
   {
-    Nx_kernel.reductions = Array.length;
-    kind = (fun (rs : (Nx_kernel.reduction * int) array) i -> fst rs.(i));
-    output = (fun (rs : (Nx_kernel.reduction * int) array) i -> snd rs.(i));
+    Nx_kernel.reductions = count_reductions;
+    kind = kind_at;
+    output = output_at;
   }
 
 let rec outs_count : type d r. (d, r) outs -> int = function
   | [] -> 0
   | _ :: rest -> 1 + outs_count rest
 
-let rec fill_outs : type d r. D.any array -> int -> (d, r) outs -> unit =
- fun a i -> function
-  | [] -> ()
-  | dt :: rest ->
-      a.(i) <- D.Any dt;
-      fill_outs a (i + 1) rest
+let rec out_dtype : type d r. (d, r) outs -> int -> D.any =
+ fun outs i ->
+  match outs with
+  | [] -> invalid_arg "Prim.out_dtype"
+  | dt :: rest -> if i = 0 then D.Any dt else out_dtype rest (i - 1)
 
-(* The dtypes of [outs], in order. *)
-let outs_dtypes outs =
-  let a = Array.make (outs_count outs) (D.Any D.Bool) in
-  fill_outs a 0 outs;
-  a
+let outs_view = { Nx_kernel.arrays = outs_count; dtype = out_dtype }
 
 (* The dtype of result [i] of [r]: an Arg's position, its second, is an
    int64. *)
@@ -1181,21 +1186,15 @@ let rec results_count : type d r. (d, r) reductions -> int = function
   | [] -> 0
   | r :: rest -> width r + results_count rest
 
-let rec fill_results : type d r. D.any array -> int -> (d, r) reductions -> unit
-    =
- fun a i -> function
-  | [] -> ()
+(* The dtype of result [i] of [rs], whose results are numbered in order. *)
+let rec result_at : type d r. (d, r) reductions -> int -> D.any =
+ fun rs i ->
+  match rs with
+  | [] -> invalid_arg "Prim.result_at"
   | r :: rest ->
-      for j = 0 to width r - 1 do
-        a.(i + j) <- result_dtype r j
-      done;
-      fill_results a (i + width r) rest
+      if i < width r then result_dtype r i else result_at rest (i - width r)
 
-(* The dtypes of [rs]' results, in order. *)
-let results_dtypes rs =
-  let a = Array.make (results_count rs) (D.Any D.Bool) in
-  fill_results a 0 rs;
-  a
+let results_view = { Nx_kernel.arrays = results_count; dtype = result_at }
 
 (* Raises naming [by] for a refusal of a rule of Nx_kernel. *)
 let refused_by ~by = function
@@ -1241,8 +1240,8 @@ let check_at (type d) ~by ~what ?(sums = false) layout (loads : d load iarray)
 let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
     (loads : d load iarray) (at : d Devices.placement option) =
   refused_by ~by
-    (Nx_kernel.map_refusal prog ~rank:(L.rank layout) ~dsts:dtype_array
-       (outs_dtypes outs) ~loads:loads_view loads);
+    (Nx_kernel.map_refusal prog ~rank:(L.rank layout) ~dsts:outs_view outs
+       ~loads:loads_view loads);
   check_loads ~by ~what:"map" layout loads;
   check_at ~by ~what:"map" ~sums:true layout loads at
 
@@ -1256,8 +1255,8 @@ let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
     (loads : d load iarray) at =
   refused_by ~by
     (Nx_kernel.reduce_refusal prog ~rank:(L.rank layout)
-       ~reductions:reductions_view (kernel_reductions rs) ~dsts:dtype_array
-       (results_dtypes rs) ~loads:loads_view loads);
+       ~reductions:reductions_view rs ~dsts:results_view rs ~loads:loads_view
+       loads);
   check_loads ~by ~what:"reduction" layout loads;
   check_at ~by ~what:"reduction" layout loads at;
   reduced_shape ~by layout axes rs
