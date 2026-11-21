@@ -624,7 +624,9 @@ let laws ?paths ?(more = []) (b : Support.backend) =
 (* nx_cuda.mli and nx_amd.mli: an operand whose contracted axes do not
    form one run of strides is copied, here [2k] float32 elements past the
    64 MiB the device keeps; a sum cut into ranges of k holds each range's
-   sums of a tile of outputs, here within [ranges] bytes. *)
+   sums of a tile of outputs, here within [ranges] bytes. Both lie in the
+   call's workspace, past what the device keeps a buffer of the call's
+   own, which the device counts in its driver's units ({!Rig.allocation}). *)
 let test_loop_copy ~ranges (b : Support.backend) () =
   let module K = (val b.kernels) in
   let k = 1 lsl 24 and d = b.device in
@@ -636,7 +638,7 @@ let test_loop_copy ~ranges (b : Support.backend) () =
   let dst = A.create d D.Float32 [| 1; 1 |] in
   let operand x : Nx_kernel.operand = { array = A.Any x; scale = None } in
   Kernels_cases.loop_held b
-    ~bound:((2 * k * 4) + ranges)
+    ~bound:(Rig.allocation d ((2 * k * 4) + ranges))
     (fun () ->
       equal Elements.answer A.Done
         (K.contract ~batch:[||] ~contracting:[| (1, 0); (2, 1) |] ~segments:None
