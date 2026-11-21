@@ -5,15 +5,16 @@
 
 (** {!Nx.attention}'s derivative, as its construct's default computes it.
 
-    At a call's operands and its [o] and [lse], the derivative is linear in
-    the tangents of the query, keys, values and the pair program's float
-    loads, and its transpose maps cotangents of [o] and [lse] back to them.
-    A pair's weight is [p = exp (x - lse)], [0] where hidden; [ẋ] is the
-    pair program's tangent. Along tangents, [l̇se = Σ p ẋ] and
-    [ȯ = Σ p ẋ v - l̇se o + Σ p v̇]. Transposed, [δ = ō·o - l̄se] and each
-    pair's score receives [p (ō·v - δ)], which the program's transpose
-    reads back to the scaled score and each load. A row of no visible pair
-    has zero weights and zero cotangents. *)
+    At a call's operands and its [o] and [lse], the derivative is linear in the
+    tangents of the query, keys, values and the pair program's float loads, and
+    its transpose maps cotangents of [o] and [lse] back to them. A pair's weight
+    is [p = exp (x - lse)], [0] where hidden; [κ] is [1] where the program's
+    output 2 keeps a pair, [0] where it drops one; [ẋ] is the pair program's
+    tangent. Along tangents, [l̇se = Σ p ẋ] and
+    [ȯ = Σ κ p ẋ v - l̇se o + Σ κ p v̇]. Transposed, [δ = ō·o - l̄se] and each
+    pair's score receives [p (κ ō·v - δ)], which the program's transpose reads
+    back to the scaled score and each load, and each value [Σ κ p ō]. A row of
+    no visible pair has zero weights and zero cotangents. *)
 
 type spec = {
   prog : Nx_kernel.Prog.t;  (** The call's pair program. *)

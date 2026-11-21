@@ -162,14 +162,14 @@
     between the read and the differentiation, it stages the read, which raises.
 
     {b Attention.} {!Nx.val-attention}'s derivative recomputes each pair's
-    weight from [lse]. Given lengths no transformation traces, on one
-    device, and outside every construct that stages, it reads them on the
-    host, a wait on their set, and computes each lead index over its keys
-    before its length rounded up to a power of two and to whole pages: a
-    row of [n] keys over at most [max (2n) page] keys, in at most
-    [⌈log₂ tk⌉ + 2] groups of lead indices. Otherwise it computes the
-    whole pair loop, except in the compiled kernels {!section-numerics}
-    names, which skip a tile past every row's length.
+    weight from [lse], [0] in the value products at a pair its [keep] drops.
+    Given lengths no transformation traces, on one device, and outside every
+    construct that stages, it reads them on the host, a wait on their set, and
+    computes each lead index over its keys before its length rounded up to a
+    power of two and to whole pages: a row of [n] keys over at most
+    [max (2n) page] keys, in at most [⌈log₂ tk⌉ + 2] groups of lead indices.
+    Otherwise it computes the whole pair loop, except in the compiled kernels
+    {!section-numerics} names, which skip a tile past every row's length.
 
     {b Nesting.} Each differentiation tracks the values of its own function
     alone: in
@@ -1790,24 +1790,23 @@ val jit :
     [+0.].
 
     {b Attention.} A compiled {!Nx.val-attention} folds each query row over its
-    keys in tiles, with a running maximum, sum and accumulator, so its
-    results hold {!Nx.val-attention}'s bound with [ε] the bound of a compiled
-    {!Nx.logsumexp} of [tk] terms above. On a tensor core, float16 and
-    bfloat16 weights are rounded once to [v]'s dtype for the value product,
-    as {!Nx.val-attention} allows. On one device, a paged call's [o] and
-    [lse] have the bits of a dense call's whose keys and values are the
-    pool entries its table names and whose mask hides the keys of entries
-    out of range, where the values at the keys either call hides within a
-    row's length are finite.
-    Its derivatives recompute each pair's weight
-    from [lse] and sum their products by contractions and maps of the whole
-    pair loop, each within its row above. On a GPU, for keys of 1 to 160
-    dimensions and values of 0 to 160, [o] in the query's dtype, no float
-    capture and no page table, reverse mode sums them in kernels of its own
-    instead, on the forward's unit. On a tensor core (float16 and bfloat16
-    keys and values, a float32 accumulator) each weight and each score's
-    cotangent rounds once to the operands' dtype before its product, which
-    adds that dtype's unit roundoff times the product's magnitude, and for
+    keys in tiles, with a running maximum, sum and accumulator, so its results
+    hold {!Nx.val-attention}'s bound with [ε] the bound of a compiled
+    {!Nx.logsumexp} of [tk] terms above; a pair its [keep] drops counts in the
+    row's sum and weighs [0] in the value product. On a tensor core, float16 and
+    bfloat16 weights are rounded once to [v]'s dtype for the value product, as
+    {!Nx.val-attention} allows. On one device, a paged call's [o] and [lse] have
+    the bits of a dense call's whose keys and values are the pool entries its
+    table names and whose mask hides the keys of entries out of range, where the
+    values at the keys either call hides within a row's length are finite. Its
+    derivatives recompute each pair's weight from [lse] and sum their products
+    by contractions and maps of the whole pair loop, each within its row above.
+    On a GPU, for keys of 1 to 160 dimensions and values of 0 to 160, [o] in the
+    query's dtype, no float capture and no page table, reverse mode sums them in
+    kernels of its own instead, on the forward's unit. On a tensor core (float16
+    and bfloat16 keys and values, a float32 accumulator) each weight and each
+    score's cotangent rounds once to the operands' dtype before its product,
+    which adds that dtype's unit roundoff times the product's magnitude, and for
     float16 at most [2{^-25}] times the other factor's for a value below
     [2{^-14}]. On an FFMA micro-tile (float32 and float64, and a 16-bit
     query that no tensor core takes) they stay in the accumulator, and each

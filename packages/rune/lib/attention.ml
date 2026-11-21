@@ -11,20 +11,20 @@ module Prim = Nx.Prim
 
 (* Attention's derivative
 
-   At [(q, k, v)] with the call's [o] and [lse], a pair's weight is
-   [p = exp (x - lse)], [x] its score as the pair program rewrites
-   [s = scale · q·k], and [p = 0] where it is hidden. Along tangents,
-   [ẋ] is the program's tangent at [(s, ṡ = scale (q̇·k + q·k̇))] and the
-   loads' tangents:
+   At [(q, k, v)] with the call's [o] and [lse], a pair's weight is [p = exp (x
+   - lse)], [x] its score as the pair program rewrites [s = scale · q·k], and [p
+   = 0] where it is hidden; [κ] is [1] where the program's output 2 keeps a pair
+   and [0] where it drops one. Along tangents, [ẋ] is the program's tangent at
+   [(s, ṡ = scale (q̇·k + q·k̇))] and the loads' tangents:
 
-     l̇se = Σ_j p ẋ                ȯ = Σ_j p ẋ v - l̇se o + Σ_j p v̇
+     l̇se = Σ_j p ẋ                ȯ = Σ_j κ p ẋ v - l̇se o + Σ_j κ p v̇
 
    and its transpose, from cotangents [ō] and [l̄se]:
 
-     δ = ō·o - l̄se                dP = ō·v_j
+     δ = ō·o - l̄se                dP = κ ō·v_j
      s̄ = p (dP - δ)               the program's transpose of [s̄] gives each
                                   read's: [r̄] of [s], [c̄] of each load
-     q̄ = scale Σ_j r̄ k_j          k̄_j = scale Σ_i r̄ q_i     v̄_j = Σ_i p ō_i
+     q̄ = scale Σ_j r̄ k_j          k̄_j = scale Σ_i r̄ q_i     v̄_j = Σ_i κ p ō_i
 
    summed over a group's heads for the keys and values, and into the pools
    through the table where paged. A row whose [lse] is [-∞] has no visible
@@ -183,15 +183,16 @@ let paged_write e (positions : 'd Nx.int64_t) (pool : ('v, 's, 'd) Nx.t)
   in
   permute e [| 1; 0; 2; 3 |] (reshape e [| hk; pages; page; d |] summed)
 
-(* The programs a call's derivative runs, made once per pair program and
-   marked loads: its visibility and its score alone; the score's tangent,
-   over the pair program's operands then the tangents of its operand 0 and
-   of each marked load; and that tangent's transpose's outputs, one program
-   per tangent operand that receives a cotangent, over the pair program's
-   operands then the score's cotangent. *)
+(* The programs a call's derivative runs, made once per pair program and marked
+   loads: its visibility, its score and its keep alone; the score's tangent,
+   over the pair program's operands then the tangents of its operand 0 and of
+   each marked load; and that tangent's transpose's outputs, one program per
+   tangent operand that receives a cotangent, over the pair program's operands
+   then the score's cotangent. *)
 type plan = {
   visible : P.t;
   score : P.t;
+  keep : P.t;
   tangent : P.t option;
   reads : P.t option array;  (** Operand 0's, then each marked load's. *)
 }
@@ -226,7 +227,13 @@ let make_plan (prog : P.t) tangents =
                 Some (one k tr)
             | _ -> None)
   in
-  { visible = one 0 prog; score = one 1 prog; tangent; reads }
+  {
+    visible = one 0 prog;
+    score = one 1 prog;
+    keep = one 2 prog;
+    tangent;
+    reads;
+  }
 
 let plan spec =
   let n = Iarray.length spec.prog.ins in
@@ -251,7 +258,9 @@ type ('v, 's, 'a, 'd) pieces = {
   positions : 'd Nx.int64_t option;
   s : (float, 'a, 'd) Nx.t;  (** Scaled scores. *)
   seen : (bool, D.bool_elt, 'd) Nx.t;
+  kept : (bool, D.bool_elt, 'd) Nx.t;  (** The program's output 2. *)
   p : (float, 'a, 'd) Nx.t;  (** Weights, [0] where hidden. *)
+  pk : (float, 'a, 'd) Nx.t;  (** Weights, [0] where hidden or dropped. *)
 }
 
 (* [contract acc spec a b] in [acc], [#] in [spec] standing for the lead
@@ -325,6 +334,7 @@ let pieces (type v s a d) e spec ~(acc : (float, a) D.t) (q : (v, s, d) Nx.t)
   let pl = plan spec in
   let visible = map1 e D.Bool f pl.visible (Prim.Any s :: loads) in
   let score = map1 e acc f pl.score (Prim.Any s :: loads) in
+  let kept = map1 e D.Bool f pl.keep (Prim.Any s :: loads) in
   (* A pair is seen where its key is before the row's length and its table
      entry is in range. *)
   let extra =
@@ -364,7 +374,11 @@ let pieces (type v s a d) e spec ~(acc : (float, a) D.t) (q : (v, s, d) Nx.t)
              (exp (input 1 acc - row)))
           (const acc 0.)))
   in
-  { lead = l; f; shape; k; v; positions; s; seen; p }
+  let pk =
+    map e ~name:"kept weight" acc f [ Prim.Any kept; Prim.Any p ] (fun () ->
+        E.(where (input 0 D.Bool) (input 1 acc) (const acc 0.)))
+  in
+  { lead = l; f; shape; k; v; positions; s; seen; kept; p; pk }
 
 (* [x] where the pair is seen, [0] elsewhere: a hidden pair's NaN never
    counts. *)
@@ -372,6 +386,12 @@ let where_seen e pc x =
   let dt = Nx.dtype x in
   map e ~name:"seen only" dt pc.f
     [ Prim.Any pc.seen; Prim.Any x ] (fun () -> E.(where (input 0 D.Bool) (input 1 dt) (const dt (D.zero dt))))
+
+(* [x] where the pair is kept, [0] elsewhere. *)
+let where_kept e pc x =
+  let dt = Nx.dtype x in
+  map e ~name:"kept only" dt pc.f [ Prim.Any pc.kept; Prim.Any x ] (fun () ->
+      E.(where (input 0 D.Bool) (input 1 dt) (const dt (D.zero dt))))
 
 let tangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
     (q : (v, s, d) Nx.t) (kv : (v, s, d) Nx.kv) lengths
@@ -407,7 +427,9 @@ let tangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
   in
   let os = Nx.shape o in
   let dlse_o = Nx.mul (spread e ~ones:1 os dlse) (Nx.cast acc o) in
-  let dout = Nx.add (Nx.sub (prod t pc.v) dlse_o) (prod pc.p dv) in
+  let dout =
+    Nx.add (Nx.sub (prod (where_kept e pc t) pc.v) dlse_o) (prod pc.pk dv)
+  in
   (Nx.cast (Nx.dtype o) dout, dlse)
 
 let cotangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
@@ -424,7 +446,8 @@ let cotangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
       (contract acc ~lead:l "# h g i c, # h j c -> # h g i j | c" (grouped e pc ~hk bo) pc.v)
   in
   let ds =
-    where_seen e pc (Nx.mul pc.p (Nx.sub dp (spread e ~ones:1 pc.f delta)))
+    where_seen e pc
+      (Nx.mul pc.p (Nx.sub (where_kept e pc dp) (spread e ~ones:1 pc.f delta)))
   in
   (* The program's transpose: the score's cotangent [ds] read back to the
      operands its tangent was computed from: operand 0, then each marked
@@ -445,8 +468,8 @@ let cotangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
   in
   let bk = contract acc ~lead:l "# h g i j, # h g i d -> # h j d | g i" gr (grouped e pc ~hk q) in
   let bv =
-    contract acc ~lead:l "# h g i j, # h g i c -> # h j c | g i" (grouped e pc ~hk pc.p)
-      (grouped e pc ~hk bo)
+    contract acc ~lead:l "# h g i j, # h g i c -> # h j c | g i"
+      (grouped e pc ~hk pc.pk) (grouped e pc ~hk bo)
   in
   let vt = Nx.dtype q in
   let bk, bv =

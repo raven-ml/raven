@@ -22,7 +22,7 @@ module Arith = Lower_arith
      α   = 2^(m - μ)             the old state's scale
      p_j = 2^(x_j - μ)           0 at a hidden pair
      l   = α l + Σ p_j
-     acc = α acc + Σ p_j v_j
+     acc = α acc + Σ κ_j p_j v_j   κ_j the program's output 2 (0 drops)
 
    and at the end [o = acc / l + 0] and [lse = (m + log₂ l) ln 2],
    [o = +0] and [lse = -∞] where [l = 0]. A row's rows of a workgroup are
@@ -264,12 +264,24 @@ let base2 a ~seen outs =
     (Ops.mul (List.hd outs.(1)) (fl acc ln2e))
     (fl acc Float.neg_infinity)
 
+(* Whether a pair is kept: the program's output 2 at [outs]. A hidden pair's
+   weight is [0] whatever it says. *)
+let kept outs =
+  match outs.(2) with
+  | [ k ] -> Ops.ne k (Ops.const ~dtype:(Ops.dtype k) (`Int Bigint.zero))
+  | _ -> invalid_arg "Lower_attention: a keep of parts"
+
+(* The weight [p] of a pair where it is [kept], [0] elsewhere: the value
+   product's operand past the row's sum. *)
+let dropped acc ~kept p = Ops.where kept p (fl acc 0.)
+
 (* The base-2 score of the pair of [row] and [key] of raw score [raw], [-∞]
-   where it is not [seen], its captures read where [reads], [seen] by
-   default: the program's output 0 is not evaluated. *)
+   where it is not [seen], and whether it is kept, its captures read where
+   [reads], [seen] by default: the program's output 0 is not evaluated. *)
 let score ?reads a x ~inside ~b ~row ~key ~seen raw =
   let reads = Option.value reads ~default:seen in
-  base2 a ~seen (outputs a (operands a x ~inside ~b ~row ~key ~ok:reads raw))
+  let outs = outputs a (operands a x ~inside ~b ~row ~key ~ok:reads raw) in
+  (base2 a ~seen outs, kept outs)
 
 (* The first range id of the tile classes' reduces over a capture's
    queries, two a capture, past the kernels' own ids. *)
@@ -716,8 +728,9 @@ let simt ~local ~bq ~bk ~width ~splits a xs =
     in
     let m_old = ld (inside m_j) (el lanes 0)
     and l_old = ld (inside l_j) (el lanes 0) in
-    let m_new, alpha, p = softmax acc m_old x2 in
+    let m_new, alpha, p = softmax acc m_old (Array.map fst x2) in
     let l_new = Array.fold_left ( + ) (l_old * alpha) p in
+    let p = Array.map2 (fun p (_, kept) -> dropped acc ~kept p) p x2 in
     (* Values: acc = α acc + Σ p_j v_j, the products added in key order,
        [width] columns at a time: each column's sum is a chain of additions,
        which a vector of columns runs side by side. *)
@@ -1563,6 +1576,8 @@ let core c a xs =
               let r, ky = pairs.(i) in
               score a x ~inside ~b ~row:r ~key:ky ~seen:seen.(i) s.(nt).(e)))
     in
+    let keeps = Array.map (Array.map snd) x2 in
+    let x2 = Array.map (Array.map fst) x2 in
     let m_old = Array.init slots (fun s -> ld (inside m_j) (int s)) in
     let l_old = Array.init slots (fun s -> ld (inside l_j) (int s)) in
     (* Each row's maximum over its lane's scores, then over its sharers'. *)
@@ -1609,6 +1624,9 @@ let core c a xs =
        the table again there: entries kept from K's copy would live across
        the scores and the softmax. *)
     let late buf = Ops.after (inside buf) [ red_r ] in
+    let p =
+      Array.map2 (Array.map2 (fun p kept -> dropped acc ~kept p)) p keeps
+    in
     let values =
       let staged =
         copy late (inside x.v) (late vs) ~width:a.dv ~first:first_col ~cols
@@ -1912,17 +1930,18 @@ let forward_tiles r vt ~q ~k ~dv =
 
 (* The derivative's kernels
 
-   The transposed derivative ({!Attention}), from the cotangents [ō] and
-   [l̄se], recomputes each pair's weight from the call's [lse],
-   [p = 2^(x·log₂e - lse·log₂e)], [0] where hidden or where [lse] is [-∞],
-   and never stores one (FlashAttention-2's backward, Dao 2023, §3.2 and
-   Algorithm 2, without its atomics):
+   The transposed derivative ({!Attention}), from the cotangents [ō] and [l̄se],
+   recomputes each pair's weight from the call's [lse], [p = 2^(x·log₂e -
+   lse·log₂e)], [0] where hidden or where [lse] is [-∞], and never stores one
+   (FlashAttention-2's backward, Dao 2023, §3.2 and Algorithm 2, without its
+   atomics; a dropped pair's [κ = 0] as FlashAttention's backward with dropout,
+   Dao et al. 2022, Algorithm 4):
 
      δ   = ō·o - l̄se                    a kernel of one row a thread
-     dP  = ō vᵀ        ds = p (dP - δ)   r̄ the pair program's transpose of ds
+     dP  = κ ō vᵀ      ds = p (dP - δ)   r̄ the pair program's transpose of ds
      q̄  = scale Σ_j r̄ k_j               by query rows, over their keys
      k̄  = scale Σ_i r̄ q_i               by keys, over their group's rows
-     v̄  = Σ_i p ō_i
+     v̄  = Σ_i κ p ō_i
 
    Both kernels run their products on {!plan}'s unit: a warp holds [M]
    query rows ([dq]) or [M] keys ([dkdv]), the other side's tiles in
@@ -1962,13 +1981,15 @@ let dargs a ~outs xs =
       | _ -> invalid_arg "Lower_attention: the derivative's arguments")
   | _ -> invalid_arg "Lower_attention: the derivative's arguments"
 
-(* The pair of [row] and [key], [seen] where visible, of raw score [raw]:
-   its score in base 2, and [back ds], the score's cotangent [ds] read back
-   to the scaled score by the program's transpose [tr], [0] where hidden. *)
+(* The pair of [row] and [key], [seen] where visible, of raw score [raw]: its
+   score in base 2, [back ds], the score's cotangent [ds] read back to the
+   scaled score by the program's transpose [tr], [0] where hidden, and whether
+   it is kept. *)
 let pair_back a x ~tr ~inside ~b ~row ~key ~seen raw =
   let acc = Arith.dtype a.acc in
   let ((coord, caps, s) as ops) = operands a x ~inside ~b ~row ~key ~ok:seen raw in
-  let x2 = base2 a ~seen (outputs a ops) in
+  let outs = outputs a ops in
+  let x2 = base2 a ~seen outs in
   let back ds =
     match tr with
     | None -> fl acc 0.
@@ -1978,7 +1999,7 @@ let pair_back a x ~tr ~inside ~b ~row ~key ~seen raw =
         in
         Ops.where seen (List.hd outs.(0)) (fl acc 0.)
   in
-  (x2, back)
+  (x2, back, kept outs)
 
 (* A pair's weight from its row's [lse], [0] where hidden or [lse] is
    [-∞]. *)
@@ -2223,11 +2244,12 @@ let core_dq c a tr xs =
               let sl = f.slot_of e in
               let i = Stdlib.((nt * f.ec) + e) in
               let r, ky = pairs.(i) and vis = seen.(i) in
-              let x2, back =
+              let x2, back, kept =
                 pair_back a x ~tr ~inside ~b ~row:r ~key:ky ~seen:vis s.(nt).(e)
               in
               let p = weight acc ~seen:vis ~x2 ~lse:lses.(sl) in
-              back (Ops.where vis (p * (dp.(nt).(e) - deltas.(sl))) (fl acc 0.))))
+              let dp = dropped acc ~kept dp.(nt).(e) in
+              back (Ops.where vis (p * (dp - deltas.(sl))) (fl acc 0.))))
     in
     (* q̄ += r̄ K, [K] read along its keys. *)
     let chained, ra = chain_a u ~inside ~tile:(rs, warp * int m_) rbar in
@@ -2399,15 +2421,17 @@ let core_dkdv ~(part : part) c a tr xs =
           Array.init f.ec (fun e ->
               let i = Stdlib.((nt * f.ec) + e) in
               let r, ky = pairs.(i) and vis = seen.(i) in
-              let x2, back =
+              let x2, back, kept =
                 pair_back a x ~tr ~inside ~b ~row:r ~key:ky ~seen:vis s.(nt).(e)
               in
               let lse = ld_gated (inside x.lse) r.index r.live in
               let p = weight acc ~seen:vis ~x2 ~lse in
-              if not want_k then (p, p)
+              let pv = dropped acc ~kept p in
+              if not want_k then (pv, pv)
               else
                 let delta = ld_gated (inside d.delta) r.index r.live in
-                (p, back (Ops.where vis (p * (dp.(nt).(e) - delta)) (fl acc 0.)))))
+                let dp = dropped acc ~kept dp.(nt).(e) in
+                (pv, back (Ops.where vis (p * (dp - delta)) (fl acc 0.)))))
     in
     let p = Array.map (Array.map fst) weights and rbar = Array.map (Array.map snd) weights in
     (* v̄ += Pᵀ ō and k̄ += r̄ᵀ Q, the staged rows read along the rows. *)

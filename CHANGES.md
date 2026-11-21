@@ -559,6 +559,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.attention` and its derivatives drop the weights its
+  `?keep` drops in attention's own kernels, past each row's sum.
 - A compiled MXFP4 product scales a block of scale byte 0 by two normal
   factors on a GPU whose multiplies may flush subnormals, as Apple's do:
   through byte 0's subnormal `2^-127` there, its codes of magnitude 2 or more

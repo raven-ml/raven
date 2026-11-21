@@ -66,6 +66,9 @@ type t = {
           and key, and the first key's values [0]: each other weight is
           about [2{^-15.9}] of the first's, below float16's smallest normal,
           and [o] is their sum alone. Dense keys only. *)
+  keep : bool;
+      (** A keep capturing a bool array of four pairs in five kept: the value
+          products of the others drop past the rows' sums. *)
   seed : int;
 }
 (** The type for cases. *)
