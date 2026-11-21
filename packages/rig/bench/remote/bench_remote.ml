@@ -256,8 +256,18 @@ let finished c =
   Unix.close c.input;
   reap c.pid
 
+(* Copies to and from an agent's host. A copy waits for the agent's process,
+   and the few words its wait takes move with that process's progress, which
+   on fudge took copy/to-64M from 7 words to 31 in one check of five on one
+   tree: no relative budget holds a count that small. Their words are held
+   under a cap instead, which a copy that allocated for each page of 64 MiB,
+   16,384 words, would pass. *)
+let copy_cap = 1024.
+
 let copy_rows =
-  Thumper.group "copy"
+  Thumper.group
+    ~budgets:[ Thumper.Budget.at_most ~metric:Thumper.Metric.alloc_words copy_cap ]
+    "copy"
     (Thumper.bench_with_setup "from-32x4K"
        ~setup:(fun () ->
          let c = copy (32 * 4 * kib) () in

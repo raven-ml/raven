@@ -471,7 +471,13 @@ let quant () =
    gate and up projections cut along their outputs, the down projection
    along its inputs and asked for the devices' terms, closed once after the
    residual add, at width 2880 and 720 hidden features for 8 tokens. Its
-   allocation counts the closing's steps as the step runs them. *)
+   allocation counts the closing's steps as the step runs them. Until the
+   collector first returns its buffers, rig's cache misses and a call takes
+   up to 290 words more, for about 32 calls; thumper's warmup is timed, so on
+   a loaded machine its count fell among them. The setup, in each trial's
+   worker, runs [warm_calls] calls first. *)
+let warm_calls = 64
+
 let parallel =
   let dim = 2880 and hidden = 2880 / 4 and tokens = 8 in
   let setup () =
@@ -496,6 +502,9 @@ let parallel =
     let f = Rune.jit' step in
     let x = own D.on (Nx.full Nx.float32 [| tokens; dim |] 0.5) in
     ignore (lowered "tensor-parallel feed-forward" (fun () -> f x));
+    for _ = 1 to warm_calls do
+      Nx.sync (f x)
+    done;
     fun () -> Nx.sync (f x)
   in
   [ { name = "tensor-parallel feed-forward over 4 memory devices"; setup } ]
