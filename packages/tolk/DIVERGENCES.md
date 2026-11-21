@@ -5330,10 +5330,12 @@ into D183, which holds its rule, its reason and its pins.
   16 bytes, where that adds at most a third of its extent: a head of 110
   floats to 112, 9 to 12; 36, runs of 4, is left. So are the rows the
   gathering accesses do not read and that no access reads as a quotient,
-  where the upcasts before leave a number of them that 4 does not divide:
-  padded to a multiple of the most the budget holds, within a third, they
-  take tiles of 8 rows on AVX2 where they took 3, 2 or 1 (57 rows to 64);
-  12, which 4 divides, keep a tile of 4 by 16. When
+  where they are more than half the most the budget holds and not a
+  multiple of it: padded to a multiple of it, they take tiles of 8 rows on
+  AVX2 where they took 3, 2 or 1 rows that 4 does not divide (57 rows to 64,
+  7 to 8, 17 to 24) and 4 rows by 16 columns that it does (12 to 16); 3 rows,
+  half a tile, take one pass already and are left. A padded row's loads
+  read the last real row (D502). When
   the last reduce axis is at most 3 and wholly unrolled and the next one is
   larger than 3, the next is unrolled by the largest power of two that
   divides it and keeps the unrolled lanes within 64 bytes of the reduce's
@@ -5356,9 +5358,15 @@ into D183, which holds its rule, its reason and its pins.
   bfloat16 product of 57 rows by [5120; 2880] ran 1.22 times as fast
   padded to 64, of 25 and 50 rows 2.12 and 1.77 times, the o projection of
   57 rows 1.29 times; AION's CPU embed and generate 1.45 and 2.33 times,
-  gpt-oss-20b's 57-token prefill 1.04 times. A padded tile gates its loads
-  of the rows and its stores, about a third of its time: 12 rows, which 4
-  divides, padded to 16 ran 1.26 times slower (untimed).
+  gpt-oss-20b's 57-token prefill 1.04 times. With a padded row's loads
+  ungated (D502), every row count past half a tile pays (fudge, locked,
+  P-cores 2 and 3, against the rule above with gated loads, two rounds where
+  two are given): a bfloat16 product of 5, 7, 12, 17, 20, 36, 57 and 100
+  rows by [5120; 2880] ran 2.48, 3.47-3.49, 1.19, 2.89, 1.31, 1.43, 1.45-1.46
+  and 1.52 times as fast, the o projection of 57 rows 1.49 times; AION's CPU
+  embed, posterior and generate 1.22-1.24, 1.14-1.16 and 1.20-1.21 times;
+  TESSERA's encode/medium 1.13-1.17 times, its other sizes unchanged. 3 rows padded to 8 ran 1.1 times slower (untimed), and
+  are left.
   A gathered axis: x [3328; 440] by a matrix [1792; 440] took
   4 rows by 4 columns, whose vectors span half a register and whose
   transposes no rows share; 8 by 8 runs at 136.4 GFLOP/s on one P-core
@@ -5391,8 +5399,11 @@ into D183, which holds its rule, its reason and its pins.
   `routed_by_argmax`, the padded axes of `heads_projection` and
   `heads_projection_biased`, on `cpu` and `avx2`, with `the host's budget ›
   the register budget › r_128 on AVX2 reads 8 registers once its stored axis
-  is padded`, `the host's decodes › on AVX2 rows that 4 does not divide pad
-  to tiles of 8` and `the host's lanes › on AVX2 a
+  is padded`, `the host's decodes › on AVX2 decoded rows that no tile of
+  rows divides pad to tiles of 8` and `› on the host a larger register file
+  decodes a value no more times` (whose one exception, 17 rows of a narrow
+  float on 32 registers of 64 bytes, says why), and `the host's lanes › on
+  AVX2 a
   recorded host kernel of few outputs takes its lanes` (`matvec_tall`); rune's
   `Jit/linear-float32-3328x440-to-1792`; the tolk bench's `host/*/heuristic` rows
   and rune's compile bench `trig/sin-nested-8` on fudge. On rune: missing for
@@ -9960,3 +9971,40 @@ D466.
   innermost threads store 16 bytes together where the axes ranked before
   them would take the workgroup`; tessera's `distil-step/medium` row and
   AION's `codec/image/16` on CUDA.
+
+## D502. A padded range no reduce sums is loaded at its last index on the host
+
+- **tinygrad:** `codegen/opt/postrange.py` `Scheduler.apply_opt`'s `PADTO`
+  (every access whose index reads the padded range takes its validity, a
+  load as a store: `i.get_idx().valid(valid&i.get_valid())`).
+- **tolk:** `Postrange.Scheduler.apply_opt`'s `pad_buf`.
+- **Differs:** on a renderer of the `CPU` device, where no reduce of the
+  kernel sums the padded range, a load whose index reads it reads the
+  padded steps at the range's last real index, `where (r < n) r (n - 1)`,
+  ungated: what it reads reaches only the padded outputs, whose stores keep
+  their gate. Tinygrad's gated loads stay where a reduce sums the range, its
+  factors selected under the gate already (D490); where a loop's bound reads
+  it, or an effect is ordered into the load's index, which the substitution
+  would rebuild apart from the kernel's own; for a load of an index a store
+  writes; and on a GPU.
+- **Reason:** (d): the host renders a gated load as a select of each lane
+  in every step of the reduce around it, a third of a padded product's
+  time. Where the rows pad either way, 57 rows of a bfloat16 product by
+  [5120; 2880] ran 1.45-1.46 times as fast loaded at the last row (24.10 to
+  16.67 ms, 24.03 to 16.49), by [2880; 4096] 1.49 times, the same bits (fudge, locked, P-cores 2
+  and 3); D188 has the rows the pad then reaches. The clamp is a lane's own, so lanes adjacent in
+  memory whose gate does not fold load apart where tinygrad's load them as
+  one gated vector (`padto_idiv_upcast`: two gated pairs, four loads): the
+  pads the heuristic takes are of a product's rows, a row apart, and of a
+  stored axis, whose last lanes alone (2 of 16 at 110 to 112) keep a gate.
+- **Pinned by:** the Postrange suite's `padding › on the host a padded
+  range no reduce sums is loaded at its last index, ungated, and stored
+  under its gate`, `› on the host a padded range a loop's bound reads
+  keeps its loads gated, and one loop` and `› on a GPU a padded range's
+  loads and stores are gated`, and the host's padded goldens of `apply_opts optimises a kernel
+  as recorded` (`padto_*`, `cumsum_unrolled_padded`; `.tolk`) and the
+  Codegen suite's `stages` of `conv_clang`, `conv_big_clang` and
+  `padto_idiv_upcast_clang` (`.tolk`); the
+  heuristic suite's `heads_projection`, `heads_projection_biased`,
+  `rows_m12` and `mxfp4_m12` goldens on `cpu` and `avx2`; the bench rows
+  of D188's padded rows.

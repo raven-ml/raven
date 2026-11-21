@@ -1,4 +1,4 @@
-# tolk D141 D188 golden=891fe40cb84d09a8f39f58aea81ee2f1
+# tolk D141 D188 D502 golden=891fe40cb84d09a8f39f58aea81ee2f1
 0 Ops.CONST dtypes.weakint [] 1802240
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 7
@@ -46,18 +46,19 @@
 44 Ops.INDEX dtypes.f32 [33, 43]
 45 Ops.PARAM dtypes.f32 [22] ParamArg(slot=2, dtype=dtypes.f32)
 46 Ops.MUL dtypes.weakint [21, 8]
-47 Ops.ADD dtypes.weakint [46, 7]
-48 Ops.CONST dtypes.weakint [] 440
-49 Ops.MUL dtypes.weakint [39, 48]
-50 Ops.ADD dtypes.weakint [47, 49]
-51 Ops.WHERE dtypes.weakint [11, 50, 29]
-52 Ops.INDEX dtypes.f32 [45, 51]
-53 Ops.MUL dtypes.f32 [44, 52]
-54 Ops.REDUCE dtypes.f32 [53, 36, 38] (Ops.ADD, 0)
-55 Ops.PARAM dtypes.f32 [20] ParamArg(slot=3, dtype=dtypes.f32)
-56 Ops.INDEX dtypes.f32 [55, 21]
-57 Ops.ADD dtypes.f32 [54, 56]
-58 Ops.STORE dtypes.void [31, 57]
-59 Ops.END dtypes.void [58, 25, 21, 13, 16, 3, 6]
-60 Ops.SINK dtypes.void [59] KernelInfo(name="r_16_4_128_7_16_2_16_4", applied_opts=(Opt(op=OptOps.PADTO, axis=3, arg=4), Opt(op=OptOps.SPLIT, axis=3, arg=(16, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=6, arg=(4, AxisType.UPCAST))), optimized=True)
+47 Ops.CONST dtypes.weakint [] 109
+48 Ops.WHERE dtypes.weakint [9, 7, 47]
+49 Ops.ADD dtypes.weakint [46, 48]
+50 Ops.CONST dtypes.weakint [] 440
+51 Ops.MUL dtypes.weakint [39, 50]
+52 Ops.ADD dtypes.weakint [49, 51]
+53 Ops.INDEX dtypes.f32 [45, 52]
+54 Ops.MUL dtypes.f32 [44, 53]
+55 Ops.REDUCE dtypes.f32 [54, 36, 38] (Ops.ADD, 0)
+56 Ops.PARAM dtypes.f32 [20] ParamArg(slot=3, dtype=dtypes.f32)
+57 Ops.INDEX dtypes.f32 [56, 21]
+58 Ops.ADD dtypes.f32 [55, 57]
+59 Ops.STORE dtypes.void [31, 58]
+60 Ops.END dtypes.void [59, 25, 21, 13, 16, 3, 6]
+61 Ops.SINK dtypes.void [60] KernelInfo(name="r_16_4_128_7_16_2_16_4", applied_opts=(Opt(op=OptOps.PADTO, axis=3, arg=4), Opt(op=OptOps.SPLIT, axis=3, arg=(16, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=6, arg=(4, AxisType.UPCAST))), optimized=True)
 

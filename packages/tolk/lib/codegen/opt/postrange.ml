@@ -839,8 +839,54 @@ module Scheduler = struct
             replace b
               ~src:[ nth b 0; valid (get_idx i) O.(valid_ land get_valid i) ]
           in
+          (* On the host, where no reduce sums the padded range, a load reads
+             its padded steps at the range's last real index instead of under
+             the gate (D502): the values reach only padded outputs, whose
+             stores {!pad_effect} gates, and a gated load is a select of each
+             lane in every step of the reduce around it, about a third of a
+             padded product's time. A load of an index a store writes keeps
+             the gate. So does every load where a reduce sums the range,
+             which selects its factors under the gate already (D490), or a
+             loop's bound reads it, and a load whose index an effect is
+             ordered into: the substitution would rebuild the loop or the
+             effect. *)
+          let stores =
+            List.filter_map
+              (fun u ->
+                match (op u, src u) with
+                | Op.Store, i :: _ when op i = Op.Index -> Some i
+                | _ -> None)
+              (slice k)
+          in
+          let clamps =
+            k.ren.target.device = "CPU"
+            && (not (List.memq rng (read_by_bounds k)))
+            && not
+                 (List.exists
+                    (fun r -> List.memq rng (List.tl (src r)))
+                    (reduceops k))
+          in
+          let ordered b =
+            List.exists
+              (fun u -> op u = Op.After)
+              (Nodes.to_list (backward_slice ~calls:Skip (nth b 1)))
+          in
+          let last =
+            O.(where (replaced_rng < z sz) replaced_rng (z Bigint.(pred sz)))
+          in
+          let clamp b =
+            replace b
+              ~src:
+                [
+                  nth b 0;
+                  substitute ~calls:Skip ~pass:Once (nth b 1) [ (rng, last) ];
+                ]
+          in
           let pad_buf b =
-            if mem_ranges rng (nth b 1) then [ (b, gate b) ] else []
+            if not (mem_ranges rng (nth b 1)) then []
+            else if clamps && not (List.memq b stores || ordered b) then
+              [ (b, clamp b) ]
+            else [ (b, gate b) ]
           in
           (* The padded steps are no-ops: an indexed store's index and a
              loop's back edge are gated; any other effect but a barrier cannot

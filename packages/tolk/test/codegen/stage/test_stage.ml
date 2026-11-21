@@ -2342,6 +2342,17 @@ let decodes prg =
 let rec tile_rows m at_most =
   if m mod at_most = 0 then at_most else tile_rows m (at_most - 1)
 
+(* The pad of the rows, the kernel's first axis, that the hand-coded rules
+   choose for [p] on [r], if any: a multiple of the rows a tile then takes
+   (D188). *)
+let rows_pad p r =
+  let module S = Postrange.Scheduler in
+  let s = S.v (decoded_kernel p) r in
+  S.convert_loop_to_global s;
+  List.find_map
+    (function Opt.Padto { axis = 0; amount } -> Some amount | _ -> None)
+    (S.applied_opts (Heuristic.hand_coded_optimizations s))
+
 (* The output lanes of the tile the hand-coded rules choose for [p] on [r]:
    its rows by its columns. *)
 let tile_lanes p r =
@@ -2360,8 +2371,13 @@ let tile_lanes p r =
 let panel_fits p columns = columns * p.dk * 4 <= 64 * 1024
 
 let expected_decodes p ((count, _) as file) =
-  let rows = tile_rows p.dm (min 16 (count / 2)) in
-  let trips = p.dm / rows in
+  let rows, trips =
+    match rows_pad p (host_file file) with
+    | Some m -> (m, (p.dm + m - 1) / m)
+    | None ->
+        let rows = tile_rows p.dm (min 16 (count / 2)) in
+        (rows, p.dm / rows)
+  in
   let columns = tile_lanes p (host_file file) / rows in
   if trips >= 2 && panel_fits p columns then 1 else trips
 

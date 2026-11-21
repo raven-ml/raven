@@ -1,0 +1,23 @@
+# tolk D502 golden=7f8cf0b070da399eb9e1ec0ee0a8c5e2
+0 Ops.CONST dtypes.weakint [] 17
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+2 Ops.CONST dtypes.weakint [] 32
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.CMPLT dtypes.bool [3, 0]
+5 Ops.CONST dtypes.bool [] True
+6 Ops.AND dtypes.bool [4, 5]
+7 Ops.CONST dtypes.bool [] Invalid
+8 Ops.WHERE dtypes.weakint [6, 3, 7]
+9 Ops.INDEX dtypes.i32 [1, 8]
+10 Ops.PARAM dtypes.bool [0] ParamArg(slot=1, dtype=dtypes.bool)
+11 Ops.CONST dtypes.weakint [] 16
+12 Ops.WHERE dtypes.weakint [4, 3, 11]
+13 Ops.INDEX dtypes.bool [10, 12]
+14 Ops.CONST dtypes.weakint [] 2
+15 Ops.CONST dtypes.weakint [] 0
+16 Ops.WHERE dtypes.weakint [13, 14, 15]
+17 Ops.CAST dtypes.i32 [16] dtypes.i32
+18 Ops.STORE dtypes.void [9, 17]
+19 Ops.END dtypes.void [18, 3]
+20 Ops.SINK dtypes.void [19] KernelInfo(name="E_32", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=32),), optimized=True)
+

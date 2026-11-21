@@ -1,0 +1,31 @@
+# tolk D502 golden=4ed3c8b5f9604e45c9e1d46341582e5c
+0 Ops.CONST dtypes.weakint [] 17
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+4 Ops.CONST dtypes.weakint [] 8
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 2)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.CMPLT dtypes.bool [7, 0]
+9 Ops.CONST dtypes.bool [] True
+10 Ops.AND dtypes.bool [8, 9]
+11 Ops.CONST dtypes.bool [] Invalid
+12 Ops.WHERE dtypes.weakint [10, 7, 11]
+13 Ops.INDEX dtypes.f32 [1, 12]
+14 Ops.CONST dtypes.weakint [] 324
+15 Ops.PARAM dtypes.f32 [14] ParamArg(slot=1, dtype=dtypes.f32)
+16 Ops.CONST dtypes.weakint [] 16
+17 Ops.WHERE dtypes.weakint [8, 7, 16]
+18 Ops.CONST dtypes.weakint [] 18
+19 Ops.MUL dtypes.weakint [17, 18]
+20 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+21 Ops.ADD dtypes.weakint [19, 20]
+22 Ops.INDEX dtypes.f32 [15, 21]
+23 Ops.REDUCE dtypes.f32 [22, 20] (Ops.ADD, 0)
+24 Ops.CONST dtypes.weakfloat [] 100.0
+25 Ops.MUL dtypes.f32 [23, 24]
+26 Ops.STORE dtypes.void [13, 25]
+27 Ops.END dtypes.void [26, 3, 6]
+28 Ops.SINK dtypes.void [27] KernelInfo(name="r_4_8_17", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=32), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST))), optimized=True)
+

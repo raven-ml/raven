@@ -714,9 +714,68 @@ let whole_store () =
   in
   Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ (Ops.store c v) [ r ] ]
 
+(* [out[i] = a[i]] over 3 [i]. *)
+let copied_rows () =
+  let i = Ops.range ~axis_type:Weak (Int 3) [ 0 ] in
+  let out = Shape.param ~shape:[ Int 3 ] 0 Int32
+  and a = Shape.param ~shape:[ Int 3 ] 1 Int32 in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.index a [ i ])) [ i ] ]
+
+(* [out[i] = sum over r < i + 1 of a[i * 4 + r]] over 4 [i]: a loop whose
+   bound reads [i]. *)
+let bounded_sums () =
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+  let r = Ops.range ~axis_type:Loop (Sym Ops.O.(i + Ops.int 1)) [ 1 ] in
+  let out = Shape.param ~shape:[ Int 4 ] 0 Int32
+  and a = Shape.param ~shape:[ Int 16 ] 1 Int32 in
+  let sum =
+    Ops.reduce (Ops.index a [ Ops.O.((i * Ops.int 4) + r) ]) Op.Add [ r ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
+
+(* The accesses of [ast] gated by a validity other than [true]. *)
+let gated ast =
+  List.length
+    (List.filter
+       (fun u ->
+         Ops.op u = Op.Index
+         &&
+         let v = Ops.get_valid (Ops.nth u 1) in
+         not (Ops.op v = Op.Const && Ops.value v = `Bool true))
+       (Ops.toposort ~calls:Skip ast))
+
 let padding =
   group "padding"
     [
+      test
+        "on the host a padded range no reduce sums is loaded at its last \
+         index, ungated, and stored under its gate"
+        (fun () ->
+          let k = K.v (copied_rows ()) (renderer "cpu") in
+          is_ok ~pp:Format.pp_print_string
+            (K.apply_opt k (Opt.Padto { axis = 0; amount = 4 }));
+          equal int 1 (gated (K.ast k)));
+      test
+        "on the host a padded range a loop's bound reads keeps its loads \
+         gated, and one loop"
+        (fun () ->
+          let k = K.v (bounded_sums ()) (renderer "cpu") in
+          is_ok ~pp:Format.pp_print_string
+            (K.apply_opt k (Opt.Padto { axis = 0; amount = 8 }));
+          let loops =
+            List.filter
+              (fun u -> Ops.op u = Op.Range && Ops.axis_id u = [ 1 ])
+              (Ops.toposort ~calls:Skip (K.ast k))
+          in
+          equal int 1 (List.length loops);
+          equal int 2 (gated (K.ast k)));
+      test "on a GPU a padded range's loads and stores are gated" (fun () ->
+          let k = K.v (copied_rows ()) (renderer "cuda") in
+          is_ok ~pp:Format.pp_print_string
+            (K.apply_opt k (Opt.Padto { axis = 0; amount = 4 }));
+          equal int 2 (gated (K.ast k)));
       test "apply_opt refuses a pad of an axis a whole store runs along"
         (fun () ->
           let k = K.v (whole_store ()) (renderer "cpu") in
