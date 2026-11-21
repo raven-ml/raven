@@ -59,15 +59,6 @@ let check_dtype : type b. fn:string -> (float, b) Nx.dtype -> unit =
         "Attention.%s: %s is not float16, bfloat16, float32 or float64" fn
         (Format.asprintf "%a" Nx.pp_dtype dt)
 
-(* [kv] with values of no column, for a call read for its [lse] alone. *)
-let valueless (kv : _ Nx.kv) : _ Nx.kv =
-  let none v =
-    Nx.slice (List.init (Nx.ndim v - 1) (fun _ -> Nx.A) @ [ Nx.R (0, 0) ]) v
-  in
-  match kv with
-  | Dense { k; v } -> Dense { k; v = none v }
-  | Paged { k; v; table } -> Paged { k; v = none v; table }
-
 (* {!Nx.attention} of [q] [[lead; hq; tq; dk]] over [k] and [v] bounded by
    [lengths] [[lead]], in float64 for a float64 [q] and float32 otherwise,
    with [bias] added to the scores in that accumulator and the sinks [sinks],
@@ -76,16 +67,12 @@ let valueless (kv : _ Nx.kv) : _ Nx.kv =
    [Σ e^s / (Σ e^s + e^σ)], which is [sigmoid (lse - σ)], [0] for a row that
    sees no key. The product computes in the accumulator and rounds once.
 
-   With [drop], a rate and the keep mask [z] of the weights' shape, the
-   weights are dropped by two calls sharing the scores: for the kept pairs,
-   [Σ_j z_j p_j v_j] is [o_kept] times the kept keys' share of the row's
-   weight, [sigmoid (lse_kept − lse_rest)], [lse_rest] the log-sum-exp of the
-   lost keys' scores and the sink, from a call over the lost pairs given
-   values of no column. The share carries the [lse]s' errors scaled by the
-   lost share, about the rate, where [exp (lse_kept − lse)] would carry them
-   whole, and [sigmoid] never overflows. A row that keeps no key gives 0:
-   its share is taken at 0, since where it sees no key [lse_rest] is [−∞]
-   too, and [−∞ − (−∞)] would make the share and its cotangent NaN. *)
+   With [drop], a rate and the keep mask [z] of the weights' shape, the call
+   keeps the pairs [z] holds ({!Nx.attention}'s [keep]): their weights stay
+   those of the softmax over every visible key and the sink, the others' are
+   [0], and the row is then scaled by [1 / (1 - rate)] (FlashAttention, Dao et
+   al. 2022, Algorithm 2), in the same product as the sink's. A row that keeps
+   no key gives 0. *)
 let attention (type b) ?mask ?lengths ?scale ?bias ?sinks ?drop
     (q : (float, b, _) Nx.t) kv =
   let within (type a) (acc : (float, a) Nx.dtype) =
@@ -96,42 +83,23 @@ let attention (type b) ?mask ?lengths ?scale ?bias ?sinks ?drop
           fun _ s -> Nx.add s b)
         bias
     in
-    let attend ?mask kv =
-      Nx.attention ?scale ?lengths ?mask ?score ~acc ~kv q
+    let keep = Option.map (fun (_, z) _ -> z) drop in
+    let o, lse = Nx.attention ?scale ?lengths ?mask ?score ?keep ~acc ~kv q in
+    let sunk =
+      Option.map
+        (fun sinks -> Nx.sigmoid (Nx.sub lse (Nx.cast acc sinks)))
+        sinks
     in
-    let weigh o c =
+    let weigh c =
       let c = Nx.unsqueeze ~axes:[ -1 ] c in
       Nx.cast (Nx.dtype o) (Nx.mul (Nx.cast acc o) c)
     in
-    match drop with
-    | None -> (
-        let o, lse = attend ?mask kv in
-        match sinks with
-        | None -> o
-        | Some sinks -> weigh o (Nx.sigmoid (Nx.sub lse (Nx.cast acc sinks))))
-    | Some (rate, z) ->
-        let kept p =
-          match mask with None -> z | Some m -> Nx.logical_and (m p) z
-        in
-        (* At each pair: [logical_not z] would be an array of its own. *)
-        let lost p =
-          match mask with
-          | None -> Nx.logical_not z
-          | Some m -> Nx.logical_xor (m p) (kept p)
-        in
-        let o, lse_kept = attend ~mask:kept kv in
-        let _, lse_lost = attend ~mask:lost (valueless kv) in
-        let rest =
-          match sinks with
-          | None -> lse_lost
-          | Some sinks ->
-              let s = Nx.broadcast_to (Nx.shape lse_lost) (Nx.cast acc sinks) in
-              Nx.logsumexp ~axes:[ 0 ] (Nx.stack [ lse_lost; s ])
-        in
-        let live = Nx.not_equal_s lse_kept Float.neg_infinity in
-        let zero = Nx.scalar_like lse_kept 0. in
-        let share = Nx.sigmoid (Nx.where live (Nx.sub lse_kept rest) zero) in
-        weigh o (Nx.where live (Nx.mul_s share (1. /. (1. -. rate))) zero)
+    match (drop, sunk) with
+    | None, None -> o
+    | None, Some c -> weigh c
+    | Some (rate, _), None ->
+        Nx.cast (Nx.dtype o) (Nx.mul_s (Nx.cast acc o) (1. /. (1. -. rate)))
+    | Some (rate, _), Some c -> weigh (Nx.mul_s c (1. /. (1. -. rate)))
   in
   match Nx.dtype q with
   | Float64 -> within Nx.float64

@@ -265,10 +265,10 @@ val train :
     [[pixels; 2]], row [k] the key of place [k]. Each site drops a value with
     its rate and scales a kept one by [1 / (1 − rate)]. At a rate above [0] a
     layer's attention draws its mask whole, [[rows; heads; width; width]]
-    booleans, and computes as two calls of {!Nx.attention}, over the kept keys
-    and over the others. A token that keeps no key, one with no key to see
-    included, attends to [0] in each head that keeps none. [i] must be inputs by
-    [m]'s statistics: inputs by another model's are computed on as they are.
+    booleans, and computes as one call of {!Nx.attention} that keeps the pairs
+    its mask keeps. A token that keeps no key, one with no key to see included,
+    attends to [0] in each head that keeps none. [i] must be inputs by [m]'s
+    statistics: inputs by another model's are computed on as they are.
 
     A mask is a function of the place's key, the site, and the index in its slot
     of each token the value reads, so a pixel's embedding is the same in any

@@ -334,14 +334,14 @@ val attend :
     - [sinks], of shape [[| heads |]]: one attention-sink logit per query head,
       as for {!scaled_dot_product_attention}.
     - [dropout], a rate in \[[0];[1]): each row's result is
-      [Σ_j z_j w_j v_j / (1 - dropout)], [w] the row's weights, sinks counted
-      in their normalisation, and [z] {!Dropout.mask}[ ~rate:dropout ?key]
-      of the weights' shape. [key]'s batch aligns with the weights on the
-      right, so keys of batch shape [[| batch; 1; n; m |]] give each
-      query-key pair a key, whose draws its heads take in order. It computes
-      {!Nx.val-attention} twice, over the kept and the lost pairs, and makes
-      the mask but no array of weights; the result rounds to [q]'s dtype
-      twice.
+      [Σ_j z_j w_j v_j / (1 - dropout)], [w] the row's weights, sinks counted in
+      their normalisation, and [z] {!Dropout.mask}[ ~rate:dropout ?key] of the
+      weights' shape. [key]'s batch aligns with the weights on the right, so
+      keys of batch shape [[| batch; 1; n; m |]] give each query-key pair a key,
+      whose draws its heads take in order. It computes {!Nx.val-attention} once,
+      keeping the pairs [z] keeps ([keep]), and scales its result by
+      [1 / (1 - dropout)]: it makes the mask but no array of weights, and the
+      result rounds to [q]'s dtype twice.
 
     It is {!Nx.val-attention} of [q] over [kv], with sinks as
     {!scaled_dot_product_attention} adds them, and shares that function's

@@ -4583,6 +4583,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun.Attention.attend ~dropout` computes one `Nx.attention`, keeping the
+  pairs its mask keeps, where it computed two, over the kept pairs and, for
+  their share of the softmax, over the dropped ones. Results' bits change.
 - `Kaun.Attention.attend` takes `?dropout` and `?key`, dropping the
   attention weights without an array of them, and `?bias`, added to the
   scores in the accumulator. `Kaun.Dropout.apply` refuses keys whose batch
