@@ -1623,6 +1623,14 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Independent calls beside each other at the top level of a schedule run as
+  one launch on a GPU: a call of many elements joins the launch of the call
+  just before it where no step from that launch's start would hold more of
+  the schedule's storage than its peak. gpt-oss-20b's decode block runs 22
+  kernels where it ran 25, and decodes 1.6% faster on an RTX 5000 Ada over
+  CUDA and NV. A loop's trip storage no longer counts at the steps of the
+  level around it (D404).
+
 - Compiled Q8_0 products of `bfloat16` rows (`Nx_quant.apply`) run faster on
   CUDA from sm_80 to sm_89: a cast of an integer within `2^24` to `bfloat16`
   converts once, through `float32`, where CUDA's took three and a select (D499).

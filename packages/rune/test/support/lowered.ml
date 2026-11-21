@@ -196,14 +196,17 @@ let lowered (type v s d) ?(direct = false) ?(local = true) ?(place = on_host)
 (* The host's tensor cores, as its renderer's kernels take them. *)
 let host_cores () = [ (cpu, Heuristic.cores (Lazy.force on_host.renderer)) ]
 
-(* The compiled schedule storing [u], of [n] elements, into [o], each device
-   taking the tensor cores [cores] gives it ({!Schedule}), the host's own by
-   default. *)
-let compiled ?(cores = host_cores ()) u o n =
+(* The schedule storing [u], of [n] elements, into [o], each device taking
+   the tensor cores [cores] gives it ({!Schedule}), the host's own by
+   default, and {!compiled} it compiled. *)
+let schedule ?(cores = host_cores ()) u o n =
   let sink =
     Ops.sink [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int n ]) ] ]
   in
-  let linear, vars = Schedule.create_linear_with_vars ~cores sink in
+  Schedule.create_linear_with_vars ~cores sink
+
+let compiled ?cores u o n =
+  let linear, vars = schedule ?cores u o n in
   let targets _ = Tolk_engine.target Rig.host in
   (Realize.compile_linear ~targets linear, vars)
 
@@ -250,12 +253,19 @@ let work (type v s d) (f : unit -> (v, s, d) Nx.t) =
       (ops + count e.ops, lds + count e.lds))
     (0, 0) (Ops.src compiled)
 
+(* The calls among [us], each launch's members in its place. *)
+let calls us =
+  List.concat_map
+    (fun c ->
+      if not (Op.equal (Ops.op c) Op.Call) then []
+      else if Shape.is_launch (Ops.body c) then Shape.launch_members c
+      else [ c ])
+    us
+
 let kernels (type v s d) ?cores (f : unit -> (v, s, d) Nx.t) =
   let _, u, dt, _, n = lowered ~direct:true f in
   let o = Ops.new_buffer cpu (max 1 n) (L.dtype (D.Any dt)) in
-  let compiled, _ = compiled ?cores u o (max 1 n) in
-  List.length
-    (List.filter (fun c -> Op.equal (Ops.op c) Op.Call) (Ops.src compiled))
+  List.length (calls (Ops.src (fst (schedule ?cores u o (max 1 n)))))
 
 (* The sink of each kernel of the schedule of the stores [sink] makes on
    [device], whose tensor cores are [renderer]'s, in the order the schedule
@@ -267,14 +277,12 @@ let scheduled ~device renderer sink =
       sink
   in
   let kernel c =
-    if not (Op.equal (Ops.op c) Op.Call) then None
-    else
-      let ast = Ops.body c in
-      match (Ops.op ast, Ops.arg ast) with
-      | Op.Sink, Kernel _ -> Some ast
-      | _ -> None
+    let ast = Ops.body c in
+    match (Ops.op ast, Ops.arg ast) with
+    | Op.Sink, Kernel _ -> Some ast
+    | _ -> None
   in
-  List.filter_map kernel (Ops.toposort ~calls:Skip linear)
+  List.filter_map kernel (calls (Ops.toposort ~calls:Skip linear))
 
 (* Each kernel of {!scheduled}, rendered by [renderer]: its name, sink and
    source. *)

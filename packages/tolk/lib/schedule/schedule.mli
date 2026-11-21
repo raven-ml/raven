@@ -184,15 +184,21 @@ val create_linear_with_vars :
       regions no byte test shows apart, as an assembly's columns are, join
       when their write is marked disjoint ({!Ops.after_disjoint}), which
       exempts them on the state they write, and only there. At the top level a
-      call moves up only where no storage's life grows: past the first use of
-      each storage it takes, unless it is [held] or holds one element; and a
-      call of many elements joins only a launch that writes storage it
-      writes. In a loop's body a call joins the earliest launch at whose
-      start no step up to it would hold more bytes of the body's own storage
-      ({!Memory.bytes}), from each buffer's first use to its last, than the
-      body held at its peak before any call joined: storage that is [held],
-      that entries outside the body take, or that holds one element does not
-      count. A member is a
+      call of one element, or one joining a launch that writes storage it
+      writes, moves up only where no storage's life grows: past the first use
+      of each storage it takes, unless it is [held] or holds one element. A
+      call of many elements that joins no such launch may join the launch of
+      the call just before it, as a call in a loop's body joins the earliest
+      launch: where no step from the launch's start up to the call would hold
+      more bytes of the entries' own storage ({!Memory.bytes}), from each
+      buffer's first use to its last, than they held at their peak before any
+      call joined, the storage of one element a call makes left out. Storage
+      that is [held], that entries outside a loop's body take, or that one
+      loop alone takes, which it places within a trip, counts at no step, and
+      where the peak decides a call joins no launch before a loop. The peak
+      bounds the bytes live at once, not the plan's arenas
+      ({!Memory.memory_plan_rewrite}). A run of [k] calls each joining the
+      launch of the one before checks about [k²/2] steps. A member is a
       call of a kernel whose ranges have constant sizes and whose storage
       lies on one device that is no disk.
       Limits of the target ({!Realize.lower_and_compile}) split a launch

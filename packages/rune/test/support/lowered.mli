@@ -40,7 +40,7 @@ val work : (unit -> ('v, 's, 'd) Nx.t) -> int * int
 val kernels :
   ?cores:(string * Tolk.Tc.t list) list -> (unit -> ('v, 's, 'd) Nx.t) -> int
 (** [kernels ~cores f] is the number of kernels of {!run}'s schedule for
-    [f], given [cores] as {!run} is. *)
+    [f], given [cores] as {!run} is, each member of a launch one. *)
 
 val sources :
   target:Tolk.Helpers.Target.t ->

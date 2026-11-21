@@ -7816,24 +7816,37 @@ reason and its pins.
     interfere. A call joins only a launch of its device that starts after the
     last position it interferes with, so it moves up only past calls it does
     not interfere with.
-  - At the top level it moves up only where no storage's life grows: past the
+  - At the top level a call of one element, or one joining a launch writing
+    storage it writes, moves up only where no storage's life grows: past the
     first use of each storage it takes, unless the storage is given to the
-    schedule or holds one element; and a call of many elements joins only a
-    launch writing storage it writes. The top level is tinygrad's schedule,
-    one call a kernel, but for these launches of one state's stores and of
-    calls of one element: that is what the recorded linears hold.
+    schedule or holds one element. A call of many elements that joins no such
+    launch may join the launch of the call just before it, where no step from
+    that launch's start would hold more of the schedule's own storage than its
+    peak, as in a loop's body. The top level is tinygrad's schedule, one call
+    a kernel, but for these launches of one state's stores, of calls of one
+    element and of a call beside the one before it: the recorded linears hold
+    none of the last. A call joins beside only where the call just before it
+    is a member of its device's latest launch, so a data-parallel step whose
+    devices' calls interleave makes as many programs at every count of
+    devices. The peak bounds the bytes live at once, not the plan's arenas:
+    best fit may place moved storage less tightly (random schedules of 6 to
+    23 calls grew in 16% of cases, by up to 48%), while gpt-oss-20b's decode
+    and prefill blocks plan the same arenas, 0.28 MB and 61.82 MB. A run of `k`
+    calls each joining the launch of the one before checks about `k²/2`
+    steps, 1.25 s at 4000.
   - A loop's body (D60) has no tinygrad schedule, and runs its calls every
     trip, its own storage planned within a trip (D476): a call there joins
     the earliest launch at whose start no step up to it would hold more of
     the body's own storage (`Memory.bytes`, each buffer from its first use to
     its last) than the body's peak before any call joined, storage that the
-    schedule is given, that entries outside the body take or that holds one
-    element not counting, as at the top level. The
-    check counts what the call makes and leaves out what it frees by moving
-    up. A capturer passes the storage it holds (`create_linear_with_vars
-    ~held`); without it the call's arguments are held, which for
-    `Tolk_engine.compile` would leave rune's loop rows and carries out of what
-    a trip holds.
+    schedule is given, that entries outside the body take or that one loop
+    alone takes, which it places within a trip, not counting, and the storage
+    of one element a call makes left out. Where the peak decides, no call
+    joins a launch before a loop, at any level. The check counts what the call makes and leaves
+    out what it frees by moving up. A capturer passes the storage it holds
+    (`create_linear_with_vars ~held`); without it the call's arguments are
+    held, which for `Tolk_engine.compile` would leave rune's loop rows and
+    carries out of what a trip holds.
   - A member is a call of a kernel whose ranges have constant sizes and whose
     storage lies on one device that is no disk. The arguments of a launch are
     its members', each once, storage first; a variable a member's call binds
@@ -7875,8 +7888,15 @@ reason and its pins.
     time. On the host a launch compiles cold in 0.46 s against 0.09 s apart
     and costs nothing at run time.
 - **Reason:** (d). On CUDA a launch costs about 1.3-2 µs, so a kernel's calls
-  are its cost: on fudge's RTX 5000 Ada 16 pieces concatenated along axis 1
-  under `Rune.jit` run as one launch, a median 7.2 µs a call, against 29-33
+  are its cost. At the top level, gpt-oss-20b's decode block on fudge's RTX
+  5000 Ada runs its query and key rotations and its value copy, three kernels
+  reading one product into three buffers, as one launch (1.94 µs against
+  1.86 + 1.60 + 1.41), and its two cache writes as one (1.92 against 1.76 +
+  1.62): the step's kernels 611 to 536, its decode at position 512 with Q8_0
+  attention 6090 to 5995 µs over CUDA and 5889 to 5798 over NV (P-cores,
+  three alternated rounds), with the same tokens. Further: on fudge's RTX
+  5000 Ada 16 pieces concatenated along axis 1 under `Rune.jit` run as one
+  launch, a median 7.2 µs a call, against 29-33
   with rune's mark removed, with the same bits. The member caps: on fudge,
   256 alike pieces of 64 by 64 run fastest at CUDA's cap of 64, 25-26 µs a
   call, and NVRTC's time a member grows past it, 3.3 ms at 128 against 2.0;
@@ -7926,8 +7946,9 @@ reason and its pins.
   out of line`, `› on CUDA, sixteen products on tensor cores run as one launch`,
   `› on the host, a launch's blocks split its members`, `› on CUDA, members of
   fewer threads run gated`, `› on CUDA, a state past a launch's members runs as
-  several`, `› a launch never makes storage live longer` and `› a launch is
-  split by what its target can run`; the `Tolk.Schedule` suite's
+  several`, `› a launch holds no more values at once than the schedule` and
+  `› a launch is split by what its target can run`; the `Tolk.Schedule`
+  suite's
   `create_linear_with_vars › launches`; `Tolk_engine › a scan's merged calls
   carry in place as its calls apart do` and the custom-kernel cases of two
   values of one name, on each GPU present; `Jit › variables › merged custom
@@ -7940,7 +7961,16 @@ reason and its pins.
   of 512 one-element pieces on Metal and rune's Set of rows at 878 written
   positions (`Row_sets.examples`). The rows `launch/host/*`, `launch/cuda/*`,
   `launch/lower-256`, rune's `Cuda/cat-16-columns-of-exp-64x64`, and norn's
-  `nuts/schools/4` and `nuts/schools-density-cuda/4`. The loop body's rule:
+  `nuts/schools/4` and `nuts/schools-density-cuda/4`. The top level's beside
+  rule: the Schedule suite's `create_linear_with_vars › launches › calls of
+  many elements at the top level run as one`, `› a call of many elements at
+  the top level joins the launch of the call before it only where no step
+  holds more than the schedule's peak`, `› calls beside a loop's temporaries
+  grow no plan`, the Launch_law suite's `launches › a one-element store and a
+  store of many run as one launch`, rune's `programs › a data-parallel step's
+  programs do not grow over 2 to 16` and `Tolk_engine › custom kernels of
+  many elements run as one that read one name at two values read each its
+  own`. The loop body's rule:
   the Schedule suite's `create_linear_with_vars › launches › a call in a
   loop's body joins an earlier launch only where no step holds more than the
   trip's peak` and `› a loop's independent calls run as few launches`, the

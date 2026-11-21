@@ -199,6 +199,18 @@ let schedule_of name =
   let program, n = split name in
   program ^ "_schedule" ^ n
 
+(* [linear] with each launch's members in its place: tinygrad's schedule runs
+   a call a kernel, and the recorded linears are its (D404). *)
+let unlaunched linear =
+  Ops.replace linear
+    ~src:
+      (List.concat_map
+         (fun e ->
+           if Ops.op e = Call && Shape.is_launch (Ops.body e) then
+             Shape.launch_members e
+           else [ e ])
+         (Ops.src linear))
+
 let linears =
   group "create_linear_with_vars › recorded"
     (List.map
@@ -206,8 +218,9 @@ let linears =
          let file = name ^ "_linear.golden" in
          Golden.graph file (fun () ->
              Uops.numbered_like (Golden.sink file)
-               (fst (Schedule.create_linear_with_vars
-                       ~cores:Cores.host (program name)))))
+               (unlaunched
+                  (fst (Schedule.create_linear_with_vars
+                          ~cores:Cores.host (program name))))))
        programs)
 
 let var_vals =
@@ -1720,7 +1733,7 @@ let variables =
                 if Ops.op n = Call && Ops.op (Ops.nth n 0) = Sink then
                   Some (Ops.nth n 0)
                 else None)
-              (Ops.toposort ~calls:Skip linear)
+              (Ops.toposort ~calls:Skip (unlaunched linear))
           in
           match List.filter (fun k -> List.length (scalars k) = 2) kernels with
           | [ a; b ] -> equal uop ~msg:"the kernels" a b
@@ -2663,6 +2676,26 @@ let chained_calls ?(size = 1) n =
   Ops.v Op.Linear
     ~src:(List.init n (fun j -> add_one ~read:bufs.(j) ~write:bufs.(j + 2)))
 
+(* [add_each n ~read ~write] is the call of a kernel of [n] elements that
+   stores one more than each element of [read] into [write]. *)
+let add_each n ~read ~write =
+  let x = Ops.new_buffer cpu n Float32 and o = Ops.new_buffer cpu n Float32 in
+  let shaped b = Shape.reshape b [ Ops.Int n ] in
+  match calls_of (Ops.sink [ into (shaped o) Ops.O.(shaped x + float 1.) ]) with
+  | [ call ] ->
+      let at b =
+        let rec go i = function
+          | [] -> failf "no argument"
+          | a :: rest -> if Ops.storage_base a == b then i else go (i + 1) rest
+        in
+        go 0 (Ops.src_without_body call)
+      in
+      let args = Array.make 2 read in
+      args.(at o) <- write;
+      args.(at x) <- read;
+      Ops.replace call ~src:(Ops.body call :: Array.to_list args)
+  | calls -> failf "%d calls" (List.length calls)
+
 (* A program of outputs of one type and shape: each output [j] stores [x + 2],
    [x * 2] or [max x 2] of its own input or, where its source names one, of an
    earlier output, which it then waits for. *)
@@ -2975,14 +3008,14 @@ let merged_calls =
               [ into o Ops.O.(x * float 2.); into o' Ops.O.(y + float 1.) ]
           in
           equal int 1 (List.length (calls_of big)));
-      test "calls of many elements at the top level run apart" (fun () ->
+      test "calls of many elements at the top level run as one" (fun () ->
           let buf () = Ops.new_buffer cpu 4 Float32 in
           let x = buf () and y = buf () and o = buf () and o' = buf () in
           let big =
             Ops.sink
               [ into o Ops.O.(x * float 2.); into o' Ops.O.(y + float 1.) ]
           in
-          equal int 2 (List.length (calls_of big)));
+          equal int 1 (List.length (calls_of big)));
       test "a call that reads what another writes runs apart" (fun () ->
           let x = element () and o = element () and o' = element () in
           let first = into o Ops.O.(x * float 2.) in
@@ -3104,6 +3137,117 @@ let merged_calls =
           equal int ~msg:"given storage of many elements" 1
             (calls big ~held:[ big ]);
           equal int ~msg:"storage of one element" 1 (calls (buf 1) ~held:[]));
+      (* [x] to [t] makes 4 KiB that [t] to [o] reads; [y] to [u] makes
+         256 bytes, independent of both, and joins the launch of the call
+         before it, [t] to [o]'s, only where [u] beside [t] stays within the
+         peak: a later chain through 8 KiB raises it. *)
+      test
+        "a call of many elements at the top level joins the launch of the call \
+         before it only where no step holds more than the schedule's peak"
+        (fun () ->
+          let buf n = Ops.new_buffer cpu n Float32 in
+          let x = buf 1024 and y = buf 64 and x' = buf 2048 in
+          let o = buf 1024 and o' = buf 64 and o'' = buf 2048 in
+          let t = buf 1024 and u = buf 64 and z = buf 2048 in
+          let calls ~later =
+            let body =
+              [
+                add_each 1024 ~read:x ~write:t;
+                add_each 1024 ~read:t ~write:o;
+                add_each 64 ~read:y ~write:u;
+                add_each 64 ~read:u ~write:o';
+              ]
+              @
+              if later then
+                [ add_each 2048 ~read:x' ~write:z;
+                  add_each 2048 ~read:z ~write:o'' ]
+              else []
+            in
+            List.length
+              (Ops.src
+                 (Schedule.launches ~held:[ x; y; x'; o; o'; o'' ]
+                    (Ops.v Op.Linear ~src:body)))
+          in
+          equal int ~msg:"at t's peak" 4 (calls ~later:false);
+          equal int ~msg:"under a later, higher peak" 5 (calls ~later:true));
+      (* [k] pairs, each making 8 KiB from a given 8 KiB and adding it into
+         an output, then a loop whose body chains eight temporaries of 2 KiB:
+         16 KiB in all, 4 KiB at once in a trip. The temporaries are the
+         loop's, which count at no step outside it, so the pairs make one 8
+         KiB at a time, as apart, and the plan holds no more than before. *)
+      test "calls beside a loop's temporaries grow no plan" (fun () ->
+          let buf n = Ops.new_buffer cpu n Float32 in
+          let arena linear =
+            List.fold_left
+              (fun n u ->
+                if Ops.op u = Buffer && Dtype.equal (Ops.dtype u) Dtype.Int8
+                then n + Shape.max_numel u
+                else n)
+              0
+              (Ops.toposort ~calls:Skip linear)
+          in
+          List.iter
+            (fun k ->
+              let xs = List.init k (fun _ -> buf 2048) in
+              let os = List.init k (fun _ -> buf 2048) in
+              let pairs =
+                List.concat
+                  (List.map2
+                     (fun x o ->
+                       let m = buf 2048 in
+                       [ add_each 2048 ~read:x ~write:m;
+                         add_each 2048 ~read:m ~write:o ])
+                     xs os)
+              in
+              let y = buf 512 and o' = buf 512 in
+              let rec chain prev = function
+                | [] -> [ add_each 512 ~read:prev ~write:o' ]
+                | s :: rest -> add_each 512 ~read:prev ~write:s :: chain s rest
+              in
+              let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+              let loop =
+                Ops.end_
+                  (Ops.v Op.Linear
+                     ~src:(chain y (List.init 8 (fun _ -> buf 512))))
+                  [ r ]
+              in
+              let held = (y :: o' :: xs) @ os in
+              let planned src =
+                let linear = Ops.v Op.Linear ~src in
+                let plan l =
+                  arena (Memory.memory_plan_rewrite ~held_bufs:held l)
+                in
+                (plan linear, plan (Schedule.launches ~held linear))
+              in
+              let before, after = planned (pairs @ [ loop ]) in
+              equal int ~msg:(Printf.sprintf "%d pairs" k) before after;
+              (* 64 KiB that one loop writes and a later one reads lives
+                 between them, beside the pairs there, which a 16 KiB value
+                 before the loops must not let make two at once. *)
+              let b = buf 16384 and b_in = buf 16384 and b_out = buf 16384 in
+              let x0 = buf 4096 and x_out = buf 4096 and xbig = buf 4096 in
+              let loop_of call r =
+                Ops.end_ (Ops.v Op.Linear ~src:[ call ])
+                  [ Ops.range ~axis_type:Loop (Int 2) [ r ] ]
+              in
+              let src =
+                [
+                  add_each 4096 ~read:x0 ~write:xbig;
+                  add_each 4096 ~read:xbig ~write:x_out;
+                  loop_of (add_each 16384 ~read:b_in ~write:b) 101;
+                ]
+                @ pairs
+                @ [ loop_of (add_each 16384 ~read:b ~write:b_out) 102 ]
+              in
+              let held = held @ [ b_in; b_out; x0; x_out ] in
+              let linear = Ops.v Op.Linear ~src in
+              let plan l =
+                arena (Memory.memory_plan_rewrite ~held_bufs:held l)
+              in
+              equal int ~msg:(Printf.sprintf "%d pairs between loops" k)
+                (plan linear)
+                (plan (Schedule.launches ~held linear)))
+            [ 3; 6; 10 ]);
       (* [x0] to [t] makes [t] at step 1, which steps 1 and 2 hold; [y] to [u]
          would make [u] there too. *)
       test
@@ -4672,7 +4816,7 @@ let kernels_of big =
   List.length
     (List.filter
        (fun n -> Ops.op n = Call && Ops.op (Ops.nth n 0) = Sink)
-       (Ops.toposort ~calls:Skip (unplanned big)))
+       (Ops.toposort ~calls:Skip (unlaunched (unplanned big))))
 
 let row_sums ?(o = f32 ~n:4 2) ?(o' = f32 ~n:16 3) read () =
   let x = Shape.reshape (f32 ~n:16 1) [ Int 4; Int 4 ] in

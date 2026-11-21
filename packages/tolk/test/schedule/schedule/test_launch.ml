@@ -535,9 +535,9 @@ let peak big linear =
   in
   List.fold_left max 0 (List.init (Array.length entries) live)
 
-(* A launch never makes storage live longer than the schedule's order does:
-   each value is made and freed in turn, one at a time, however the stores
-   could run together. *)
+(* A launch holds no more values at once than the schedule's order does: each
+   value is made and freed in turn, one at a time, however the stores could
+   run together. *)
 let storage_order_holds () =
   let big = made_first () in
   let linear = fst (Schedule.create_linear_with_vars
@@ -1102,7 +1102,8 @@ let () =
             (out_of_line "CPU" "noinline");
           test "on CUDA, a launch's bodies are out of line"
             (out_of_line "CUDA" "__noinline__");
-          test "a launch never makes storage live longer" storage_order_holds;
+          test "a launch holds no more values at once than the schedule"
+            storage_order_holds;
           test "a launch is split by what its target can run" fits_target;
           test "on the host, a launch's blocks split its members" blocks;
           test "on CUDA, members of fewer threads run gated" fewer_threads;

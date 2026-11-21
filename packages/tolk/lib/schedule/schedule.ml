@@ -2012,32 +2012,40 @@ let at_or_after gs bound =
   in
   go 0 (Dynarray.length gs)
 
-(* The bytes each step of a loop's body holds of the body's own storage on
-   one device, from each buffer's first use to its last, and the most a step
-   held before any call joined a launch. *)
+(* The bytes each step of a schedule or a loop's body holds of its own
+   storage on one device, from each buffer's first use to its last, and the
+   most a step held before any call joined a launch. *)
 type lane = { live : int array; peak : int }
 
-(* The storage of a loop's body whose bytes grouping moves: a buffer the
-   memory plan places, which the schedule is not given and no entry outside
-   the body takes. Each one's uses, at the positions their entries run at,
-   and each device's lane. *)
+(* Whether the entry [e] is a loop over a body of calls. *)
+let loops e = is_loop e && op (nth e 0) = Op.Linear
+
+(* The storage of a schedule or of a loop's body whose bytes grouping moves:
+   a buffer the memory plan places, which the schedule is not given and, in a
+   loop's body, no entry outside the body takes. Storage that one loop alone
+   takes is that loop's, which the plan places within a trip, so it counts at
+   no step: no call that it would weigh on joins a launch across a loop
+   ({!launched_entries}). Each one's uses, at the positions their entries run
+   at, and each device's lane. *)
 let own_storage ~fixed entries =
   let n = Array.length entries in
   let taken = Array.map Memory.buffers entries in
-  let own b =
-    (not (Tbl.mem fixed b))
-    && match device b with Some d -> not (is_disk_device d) | None -> false
-  in
-  let uses = Tbl.create n in
+  let takers = Tbl.create n in
   Array.iteri
     (fun i bs ->
       List.iter
         (fun b ->
-          if own b then
-            Tbl.replace uses b
-              (i :: Option.value (Tbl.find_opt uses b) ~default:[]))
+          Tbl.replace takers b
+            (i :: Option.value (Tbl.find_opt takers b) ~default:[]))
         bs)
     taken;
+  let own b us =
+    (not (Tbl.mem fixed b))
+    && (match us with [ i ] -> not (loops entries.(i)) | _ -> true)
+    && match device b with Some d -> not (is_disk_device d) | None -> false
+  in
+  let uses = Tbl.create n in
+  Tbl.iter (fun b us -> if own b us then Tbl.replace uses b us) takers;
   let live = Hashtbl.create 4 in
   let lane b =
     let d = Option.get (device b) in
@@ -2048,16 +2056,21 @@ let own_storage ~fixed entries =
         Hashtbl.replace live d l;
         l
   in
+  (* Each buffer adds its bytes at its first use and takes them back past its
+     last, and a lane is the running sum. *)
   Tbl.iter
     (fun b us ->
       let l = lane b in
-      for s = List.fold_left min n us to List.fold_left max (-1) us do
-        l.(s) <- l.(s) + Memory.bytes b
-      done)
+      let lo = List.fold_left min n us and hi = List.fold_left max (-1) us in
+      l.(lo) <- l.(lo) + Memory.bytes b;
+      if hi + 1 < n then l.(hi + 1) <- l.(hi + 1) - Memory.bytes b)
     uses;
   let lanes = Hashtbl.create 4 in
   Hashtbl.iter
     (fun d l ->
+      for s = 1 to n - 1 do
+        l.(s) <- l.(s) + l.(s - 1)
+      done;
       Hashtbl.replace lanes d { live = l; peak = Array.fold_left max 0 l })
     live;
   (taken, uses, lanes)
@@ -2068,15 +2081,16 @@ let own_storage ~fixed entries =
    outside the body take; [facts] holds the bodies met. *)
 let launched_entries ~facts ~held ?fixed entries =
   let n = Array.length entries in
-  let body = Option.map (fun fixed -> own_storage ~fixed entries) fixed in
-  (* In a loop's body, the earliest of the device's groups [gs], back from its
-     last, that call [i] joins: one that starts after [conflict], the last
-     call [i] interferes with, at whose start every step up to [i] still
-     holds no more than its lane's peak with the buffers [i] makes. Only the
-     body's own storage counts: what the loop is given or shares outside its
-     body lives through every trip. A call that joins frees its last reads
-     earlier, which the check leaves out. *)
-  let in_loop (taken, uses, lanes) gs i conflict =
+  let own = own_storage ~fixed:(Option.value fixed ~default:held) entries in
+  (* The earliest of the device's groups [gs], back from its last, or with
+     [latest] the last alone, that call [i] joins: one that starts after
+     [conflict], the last call [i] interferes with, at whose start every step
+     up to [i] still holds no more than its lane's peak with the buffers [i]
+     makes. Only the entries' own storage counts: what the schedule is given,
+     and in a loop's body what it shares outside the body, lives through
+     every entry. A call that joins frees its last reads earlier, which the
+     check leaves out. *)
+  let peaked ~latest (taken, uses, lanes) gs i conflict =
     let made = Hashtbl.create 2 in
     List.iter
       (fun b ->
@@ -2108,6 +2122,7 @@ let launched_entries ~facts ~held ?fixed entries =
           s < g.first || Hashtbl.length made = 0 || (holds s && down (s - 1))
         in
         if g.first <= conflict || not (down from) then best
+        else if latest then Some g
         else back (j - 1) (g.first - 1) (Some g)
     in
     back (Dynarray.length gs - 1) (i - 1) None
@@ -2139,10 +2154,13 @@ let launched_entries ~facts ~held ?fixed entries =
   let log tbl b x =
     Tbl.replace tbl b (x :: Option.value (Tbl.find_opt tbl b) ~default:[])
   in
-  (* The groups of each device, by their first call, and the groups writing
-     each storage, last first by their first calls. *)
+  (* The groups of each device, by their first call, the groups writing each
+     storage, last first by their first calls, and the last loop. *)
   let groups = Hashtbl.create 4 and writers = Tbl.create n in
-  let opened = Array.make n None and joined = Array.make n false in
+  let last_loop = ref (-1) in
+  (* The group of each call that runs in one, which it opened where the group
+     starts at it. *)
+  let member_of = Array.make n None in
   let add_writer g b =
     let rec insert = function
       | x :: rest when x.first > g.first -> x :: insert rest
@@ -2182,6 +2200,7 @@ let launched_entries ~facts ~held ?fixed entries =
     let e = entries.(i) in
     let acc = accesses e in
     let taken = storage_taken e in
+    if loops e then last_loop := i;
     let conflict =
       List.fold_left
         (fun c a ->
@@ -2217,28 +2236,41 @@ let launched_entries ~facts ~held ?fixed entries =
                 Hashtbl.replace groups d gs;
                 gs
           in
+          (* Where the peak decides, a call joins no launch before the last
+             loop, whose trip storage counts at no step. *)
+          let past_loops = max conflict !last_loop in
           let picked =
-            match body with
-            | Some b -> in_loop b gs i conflict
+            match fixed with
+            | Some _ -> peaked ~latest:false own gs i past_loops
             | None when f.one_element ->
                 let j = at_or_after gs bound in
                 if j < Dynarray.length gs then Some (Dynarray.get gs j)
                 else None
-            | None ->
+            | None -> (
                 (* Groups of other devices write other storage. *)
-                writing written bound
+                match writing written bound with
+                | Some g -> Some g
+                | None -> (
+                    (* The launch of the call just before, its device's
+                       latest. *)
+                    match if i > 0 then member_of.(i - 1) else None with
+                    | Some g
+                      when Dynarray.length gs > 0
+                           && Dynarray.get gs (Dynarray.length gs - 1) == g ->
+                        peaked ~latest:true own gs i past_loops
+                    | _ -> None))
           in
           match picked with
           | Some g ->
-              Option.iter (fun b -> move b i g.first) body;
+              move own i g.first;
               join g e written;
-              joined.(i) <- true;
+              member_of.(i) <- Some g;
               g.first
           | None ->
               let g = { first = i; members = []; writes = [] } in
               join g e written;
               Dynarray.add_last gs g;
-              opened.(i) <- Some g;
+              member_of.(i) <- Some g;
               i)
     in
     List.iter
@@ -2248,18 +2280,14 @@ let launched_entries ~facts ~held ?fixed entries =
         if not (Tbl.mem first_use a.base) then Tbl.replace first_use a.base pos)
       acc
   done;
-  let out =
-    List.filter_map
-      (fun i ->
-        if joined.(i) then None
-        else
-          match opened.(i) with
-          | Some g when List.compare_length_with g.members 1 > 0 ->
-              Some (Shape.launch (List.rev g.members))
-          | _ -> Some entries.(i))
-      (List.init n Fun.id)
-  in
-  out
+  List.filter_map
+    (fun i ->
+      match member_of.(i) with
+      | Some g when g.first <> i -> None
+      | Some g when List.compare_length_with g.members 1 > 0 ->
+          Some (Shape.launch (List.rev g.members))
+      | _ -> Some entries.(i))
+    (List.init n Fun.id)
 
 (* [linear] with its calls launched, in its loops' bodies too. [fixed], in
    a loop's body, is the storage whose life the body does not decide. *)

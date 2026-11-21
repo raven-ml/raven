@@ -807,9 +807,10 @@ let same_program_same_schedule seed =
   equal string ~msg text (schedule_text ~slots second);
   ignore (Sys.opaque_identity (kept, others_kept))
 
-(* A store of one element and a store of many into other storage. The one
-   element joins a launch of the many, and the many open none of its own: so
-   the listing decides, and the order the nodes were built in does not. *)
+(* A store of one element and a store of many into other storage run as one
+   launch whichever is listed first: the one element joins the many's, or the
+   many the latest launch, the one's. The order the nodes were built in does
+   not change it. *)
 let listing_decides () =
   let launches ~built_first ~listed_first =
     uncached @@ fun () ->
@@ -843,7 +844,7 @@ let listing_decides () =
     a
   in
   equal int ~msg:"the many first" 1 (launches ~listed_first:`Many);
-  equal int ~msg:"the one first" 0 (launches ~listed_first:`One)
+  equal int ~msg:"the one first" 1 (launches ~listed_first:`One)
 
 (* The mark: an assembly of columns, which no byte range separates, runs as
    one launch only because it is marked; unmarked, it runs apart. *)
@@ -1007,7 +1008,7 @@ let () =
           prop
             "a schedule does not depend on what the process built before it"
             (Gen.int_range 1 1_000_000) same_program_same_schedule;
-          test "the listing places a one-element store beside a store of many"
+          test "a one-element store and a store of many run as one launch"
             listing_decides;
           test "a write marked disjoint runs its columns as one launch"
             marked_columns_launch;

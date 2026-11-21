@@ -1627,8 +1627,8 @@ let runs_beside_another_variable ?(devices = devices) () =
 
 (* Two custom kernels on CPU:1 that add a variable [k] to [a], of [n]
    elements, into their own outputs, [k] bound to [k1] in one and [k2] in the
-   other. Independent, they run as one kernel when they compute one element,
-   and apart otherwise; either way each output takes its own [k]. *)
+   other. Independent, one just after the other, they run as one launch,
+   and each output takes its own [k]. *)
 let custom_kernels_of_one_name ?(devices = devices) ~n (k1, k2) () =
   let k = Ops.variable "k" (Dtype.Value.of_int 0) (Dtype.Value.of_int 8) in
   let add = function
@@ -1656,7 +1656,7 @@ let custom_kernels_of_one_name ?(devices = devices) ~n (k1, k2) () =
   let big = Ops.sink [ s1; s2 ] in
   let calls = Ops.src (fst (Schedule.create_linear_with_vars
                               ~cores:Cores.host big)) in
-  equal int ~msg:"kernels" (if n = 1 then 1 else 2) (List.length calls);
+  equal int ~msg:"launches" 1 (List.length calls);
   let s, vars, storage = linked ~devices big in
   equal
     (list (pair string int))
@@ -1890,8 +1890,9 @@ let custom_kernel_scalars ?(devices = devices) () =
     test "a custom kernel runs as one with a kernel that reads its name"
       (custom_kernel_beside_one_by_name ~devices);
     test
-      "custom kernels run apart that read one name at two values read each \
-       its own" (custom_kernels_of_one_name ~devices ~n:4 (3, 5));
+      "custom kernels of many elements run as one that read one name at two \
+       values read each its own"
+      (custom_kernels_of_one_name ~devices ~n:4 (3, 5));
     test "a custom kernel takes a variable between its buffers"
       (runs_a_custom_kernel_scalar ~devices "custom_kernel_scalar");
     test "a custom kernel takes a variable before its buffers"
