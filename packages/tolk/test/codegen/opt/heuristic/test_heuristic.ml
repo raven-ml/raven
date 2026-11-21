@@ -839,6 +839,35 @@ let columns_split =
            1
            (ranges_at o ~reduce:true [ Local ])))
 
+(* A product streamed by its columns pads columns that its threads and lanes
+   across them, 16 on sm_89, do not divide, within 6/5 of their count: a
+   projection's weight gradient of 10 by 440 over 23040 tokens streams on
+   448 columns, 1000 columns on 1008 and 67 on 80; 66 columns, which 80 holds
+   1.21 times, and 8, which a pad would double, take no pad. *)
+let columns_pad =
+  let ren =
+    Cstyle.without_compiler
+      (Result.get_ok (Helpers.Target.of_string "CUDA:CUDA:sm_89"))
+  in
+  cases "a product streamed by its columns pads what its threads do not divide"
+    ~id:(fun ((m, n, k), _) -> Printf.sprintf "%d by %d over %d" m n k)
+    [
+      ((10, 440, 23040), true);
+      ((10, 1000, 4096), true);
+      ((10, 67, 23040), true);
+      ((10, 66, 23040), false);
+      ((10, 8, 23040), false);
+    ]
+    (fun ((rows, cols, depth), padded) ->
+      let s = K.v (dense ~by_columns:true rows cols depth) ren in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      if padded then equal ~msg:"streams" Testable.bool true (streams o);
+      equal ~msg:"columns padded" Testable.bool padded
+        (List.exists
+           (function Opt.Padto { amount = 16; _ } -> true | _ -> false)
+           (K.applied_opts o)))
+
 (* A product's workgroups hold at most a block's threads on every GPU target,
    whatever the threads of its SIMD groups. *)
 let within_block =
@@ -4084,6 +4113,7 @@ let () =
              within_block;
              rows_take_simd;
              columns_split;
+             columns_pad;
            ];
          no_threads_beside_call;
          warps_within_runs;

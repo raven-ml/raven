@@ -2196,7 +2196,10 @@ Withdrawn: multi-device is out of scope, see README.
     make `stream_threads` threads, halved until the workgroup's shared
     memory holds a slot for each output of each thread, which their sum
     passes through; with more outputs than `stream_threads` the kernel takes
-    the other rules. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`
+    the other rules. An axis those threads and lanes do not divide is padded
+    to a multiple of them within 6/5 of its size, the ratio D491 bounds a
+    core's padded work by, its padded columns loading nothing and stored
+    nowhere, where tinygrad's case takes only an axis 16 divides. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`
     and `MV_ROWS_PER_THREAD` are gone;
   - few outputs (D110's part): when the outputs are too few for the columns
     layout to run `stream_threads` threads, a workgroup of the renderer's
@@ -2250,7 +2253,20 @@ Withdrawn: multi-device is out of scope, see README.
   other rules past 32 until a tolk row confirms them streamed. Metal's
   `stream_threads` of 16384: Reason: none. It was fitted on an M1 Max
   (Apple7), other Apple parts unmeasured, but no machine a bench may run on
-  holds a Metal device, so no row can pin it.
+  holds a Metal device, so no row can pin it. The columns' pad: on fudge,
+  TESSERA's distillation step's weight gradient of its 10-band input layer
+  over 23040 tokens, 440 columns that 16 does not divide, took 1.43 ms a
+  launch on the other rules (330 threads of 16 outputs, 14 GB/s) and 0.14
+  streamed on 448 columns; its sums of 440-column products over the tokens,
+  three of their five programs now streamed, 38.7 ms a call and 31.4; the
+  step's kernels 1077.6 and 1058.3 ms a call (DEBUG=2), and
+  `distil-step/medium` 1.069-1.070 s and 1.052-1.053 (thumper's medians,
+  three alternated rounds under TIMING). A float32 row by `[4096; 1000]`
+  (`vecmat_1000`) took 54.3 us and takes 38.9, 10 rows 231 and 85, 16 rows
+  by `[2880; 440]` 172 and 58. The cost is the layout's own at few columns,
+  whose workgroups are a 16th of them: bfloat16 products of 8 and 16 rows
+  by `[2880; 440]` took 34-50 us on the other rules and take 48-63, the
+  layout's time at 448 columns.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are tinygrad's ›
   <environment> › the optimised kernel`, cases `matvec_*`, `vecmat_*`,
   `gpt_oss_*`, `experts_down_*`, `routed_blocks_*`, `routed_own_*`,
@@ -2267,8 +2283,10 @@ Withdrawn: multi-device is out of scope, see README.
   before a core up to 64 multiply-adds a byte` and `› a contraction streams
   before a core up to the renderer's bound a byte`, `› a product's workgroups
   hold at most a block's threads on every GPU`, `› a product streamed by
-  its rows reduces over a SIMD group's threads` and `› a product streamed by
-  its columns splits its reduce into threads`; the Cstyle suite's `a
+  its rows reduces over a SIMD group's threads`, `› a product streamed by
+  its columns splits its reduce into threads` and `› a product streamed by
+  its columns pads what its threads do not divide`, and the cases
+  `vecmat_1000_{cuda,metal,amd}`; the Cstyle suite's `a
   renderer states its SIMD group's threads and a workgroup's most`; `the
   hand-coded optimisations keep a kernel's writes › small kernels ›
   experts_down_metal` (a group inside another reduce); the Postrange suite's

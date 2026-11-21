@@ -203,6 +203,20 @@ let decoded_operands k =
    the work. *)
 let core_waste = (6, 5)
 
+(* Whether [n] padded to a multiple of [m] is within [waste] of it. *)
+let pads_within ~waste:(num, den) n m = (n + m - 1) / m * m * den <= n * num
+
+(* Whether the axis [axis] of [k], which [m] does not divide, pads to a
+   multiple of [m] within [waste] of its size, a pad Postrange takes. *)
+let pads_to ~waste k axis m =
+  match known_size (shape_at k axis) with
+  | Some n when Bigint.fits_int n ->
+      let n = Bigint.to_int n in
+      n mod m <> 0
+      && pads_within ~waste n m
+      && Result.is_ok (K.apply_opt (K.copy k) (Opt.Padto { axis; amount = m }))
+  | _ -> false
+
 (* Whether a core of [dims] [(n, m, k)] takes extents [(a, b, c)] along them:
    padded, within [core_waste] of their volume, under {!Setting.tc_opt} [2],
    and below it only where [dims] divide them. *)
@@ -768,8 +782,24 @@ let streamed_layout k (w, x, reuse) =
       in
       let most = (K.ren c).local_threads_max in
       let across = max sector_lanes (most / max wanted (lanes c)) in
-      if wanted <= 1 || not (divisible_at c g (across * columns)) then None
-      else Some (`Columns (g, c, across, wanted))
+      (* The threads and lanes across the axis each read a sector: an axis
+         they do not divide pads to them within [core_waste], the ratio a
+         core's padded work is bounded by, its padded columns loading
+         nothing and stored nowhere: they idle a lane and move no byte. On
+         an RTX 5000 Ada, TESSERA's distillation step's weight
+         gradient of its 10-band input layer over 23040 tokens, 440 columns
+         that 16 threads and lanes do not divide, took 1.43 ms in 330
+         threads of the other rules and 0.14 ms streamed on 448. *)
+      let width = across * columns in
+      let axis = axis_of c g in
+      let fits () =
+        divisible_at c g width
+        || pads_to ~waste:core_waste c axis width
+           && Result.is_ok
+                (K.apply_opt c (Opt.Padto { axis; amount = width }))
+      in
+      if wanted > 1 && fits () then Some (`Columns (g, c, across, wanted))
+      else None
 
 (* Each contracted range that no split has taken, other than the lanes' [u],
    along which [x] is read at unit stride is unrolled whole where its values
@@ -1099,9 +1129,6 @@ let reused k axis =
    work for nothing, so a layout that blocks without them keeps them out. *)
 let no_waste = (1, 1)
 
-(* Whether [n] padded to a multiple of [m] is within [waste] of it. *)
-let pads_within ~waste:(num, den) n m = (n + m - 1) / m * m * den <= n * num
-
 (* The threads, a power of two at most [lanes], that [n] runs of an axis
    hold once padded to a multiple of them within [waste], as {!block}
    counts them and {!blocked_threads} pads them. *)
@@ -1123,15 +1150,7 @@ let upcast_by_loop k n = holds Sint.(K.upcast_size k <= Int n)
    pads to 112, which a GPU's contraction then upcasts by 4 and {!block}
    blocks, where unpadded its upcast loop stops at one axis and a thread holds
    4 outputs. *)
-let padded_to_four ~waste k axis =
-  match known_size (shape_at k axis) with
-  | Some n when Bigint.fits_int n ->
-      let n = Bigint.to_int n in
-      n mod 4 <> 0
-      && pads_within ~waste n 4
-      && Result.is_ok
-           (K.apply_opt (K.copy k) (Opt.Padto { axis; amount = 4 }))
-  | _ -> false
+let padded_to_four ~waste k axis = pads_to ~waste k axis 4
 
 (* potentially do more upcasts of non reduce axes based on a heuristic; on the
    host, after the contiguous axis, while the accumulators fit. The upcasts

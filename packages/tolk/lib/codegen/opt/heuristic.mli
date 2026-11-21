@@ -101,10 +101,14 @@
     32768 threads, at most what a workgroup's most leaves beside those across
     the axis, or the largest that divides it, halved until the workgroup's
     shared memory, through which those threads sum their outputs, holds
-    them. It does not apply when more than 32768
-    outputs are left after the upcast, or when the axis does not divide by the
-    local threads and lanes; 32768 threads is [sm_89]'s bound, fixed for every
-    target as the tensor core's floor is.
+    them. An axis the local threads and lanes do not divide is padded to a
+    multiple of them, its padded columns loading nothing and stored nowhere,
+    where that holds at most 6/5 of its size, the ratio a tensor core's
+    padded work is bounded by ({{!section-cores}below}): a padded column
+    idles a lane and moves no byte. It does not apply when more than 32768
+    outputs are left after the upcast, or when such a pad passes that
+    bound; 32768 threads is [sm_89]'s bound, fixed for every target as the
+    tensor core's floor is.
 
     {1:cores Tensor cores}
 
