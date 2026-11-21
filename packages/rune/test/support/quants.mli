@@ -20,8 +20,8 @@ val block_values : format -> int
 val weight : format -> rows:int -> blocks:int -> Nx.host Nx_quant.t
 (** [weight f ~rows ~blocks] is a weight of [rows] rows of [blocks] blocks of
     [f], on the host, its bytes a fixed pattern, its float16 fields of either
-    sign in [[2^-9, 2^-4)] and its MXFP4 scale bytes in [[118, 136]], so that
-    every value is finite. *)
+    sign at least [2^-9] and under [2^-4] in magnitude and its MXFP4 scale
+    bytes in [[118, 136]], so that every value is finite. *)
 
 val reference :
   (float, 'b, Nx.host) Nx.t ->
