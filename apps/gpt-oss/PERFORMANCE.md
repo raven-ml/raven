@@ -2,11 +2,11 @@
 
 On an NVIDIA RTX 5000 Ada, raven decodes gpt-oss-20b 2% faster than vLLM at
 the checkpoint's precision and 2% behind llama.cpp packed as llama.cpp packs
-it (2% ahead of it through NV), prefills 21% faster than llama.cpp and 6%
-slower than vLLM, and gives a new process its first token in 1.8 seconds, as
-llama.cpp does. On two of the same machine's CPU cores it decodes 4.2 times
-slower than llama.cpp's CPU build and prefills 1.5 times slower, and gives a
-first token twice as fast.
+it (2% ahead of it through NV), prefills 20% faster than llama.cpp and as
+fast as vLLM (0.3% ahead through CUDA, 1.4% through NV), and gives a new
+process its first token in 1.8 seconds, as llama.cpp does. On two of the
+same machine's CPU cores it decodes 4.2 times slower than llama.cpp's CPU
+build and prefills 1.5 times slower, and gives a first token twice as fast.
 
 ## Decoding and prefilling
 
@@ -19,12 +19,12 @@ head.
 
 | | Attention, head | Decode | Prefill 512 | First token |
 |---|---|---|---|---|
-| raven, CUDA | bfloat16 | 124.5 (124.4–124.5) | 12,020 (11,990–12,160) | 1.78 s (1.77–1.78) |
-| raven, CUDA | Q8_0 | 166.1 (166.1–166.4) | 11,710 (11,690–11,880) | not measured |
-| raven, NV | bfloat16 | 130.0 (130.0–130.0) | 12,080 (12,060–12,120) | 1.52 s (1.51–1.54) |
-| raven, NV | Q8_0 | 171.8 (171.8–172.1) | 11,520 (11,500–11,530) | not measured |
+| raven, CUDA | bfloat16 | 124.5 (124.4–124.5) | 11,970 (11,950–12,090) | 1.78 s (1.77–1.78) |
+| raven, CUDA | Q8_0 | 166.1 (166.1–166.4) | 11,630 (11,620–11,740) | not measured |
+| raven, NV | bfloat16 | 130.0 (130.0–130.0) | 12,100 (11,990–12,200) | 1.52 s (1.51–1.54) |
+| raven, NV | Q8_0 | 171.8 (171.8–172.1) | 11,530 (11,530–11,640) | not measured |
 | llama.cpp b12541, CUDA | Q8_0 | 168.9 (168.4–168.9) | 9,700 (9,700–9,710) | 1.73 s (1.72–1.73) |
-| vLLM 0.34.0 | bfloat16 | 122.1 (122.1–122.1) | 12,820 (12,790–12,900) | 19.7 s (18.1–22.8) |
+| vLLM 0.34.0 | bfloat16 | 122.1 (122.1–122.1) | 11,930 (11,930–11,960) | 19.7 s (18.1–22.8) |
 | transformers 5.23.0 | bfloat16 | 35.8 (35.6–36.6) | 5,480 (5,480–5,500) | 5.26 s (4.81–5.41) |
 | OpenAI's PyTorch implementation | | does not fit in 32 GB: it upcasts the experts to bfloat16, about 42 GB | | |
 | JAX ([jax-llm-examples](https://github.com/jax-ml/jax-llm-examples/tree/main/gpt_oss)) | | no MXFP4 path, and bfloat16 does not fit in 32 GB | | |
@@ -35,8 +35,10 @@ The Q8_0 rows do llama.cpp's work: its GGUF file of gpt-oss-20b stores the
 attention projections and the head as Q8_0. The bfloat16 rows keep the
 checkpoint as stored, as the chat, vLLM and transformers run it. NV is the
 same card through NVIDIA's kernel driver, without CUDA: it decodes 3 to 4%
-faster than CUDA and prefills as fast. The first-token column is from
-2026-11-20, at main 69f14bbeee: How it was measured says why.
+faster than CUDA and prefills as fast. Every prefill is timed back to back,
+at the card's power limit, and is from 2026-11-21 at main 0df67735d8; the
+first-token column is from 2026-11-20, at main 69f14bbeee: How it was
+measured says why.
 
 ## Where decode's time goes
 
@@ -129,9 +131,9 @@ multiplies them as integers, as above.
   was empty before and after every run. Each timed process ran on two P-cores
   (`taskset`), 2 and 3, which other work kept at most 15% busy before and
   after each run (4 and 5 on 2026-11-20).
-- **Versions.** raven at main eb532024b8, but for the first-token cells, warm
-  and cold, at main 69f14bbeee. llama.cpp b12541's release binaries
-  (CUDA 12.8 build) on ggml-org/gpt-oss-20b-GGUF at 41e8a94d. vLLM 0.34.0
+- **Versions.** raven at main eb532024b8, but for the prefill cells, at main
+  0df67735d8, and the first-token cells, warm and cold, at main 69f14bbeee.
+  llama.cpp b12541's release binaries (CUDA 12.8 build) on ggml-org/gpt-oss-20b-GGUF at 41e8a94d. vLLM 0.34.0
   (torch 2.14.0+cu130), transformers 5.23.0 (torch 2.15.0+cu132, kernels
   0.18.3). raven, vLLM and transformers read openai/gpt-oss-20b at 6cee5e81.
 - **Statistic.** Three rounds on 2026-11-21, each running raven over CUDA,
@@ -145,11 +147,25 @@ multiplies them as integers, as above.
   has not moved. vLLM's and transformers' three rounds are from 2026-11-19,
   interleaved with raven at 3c1daa79d5, whose bfloat16 decode over CUDA was
   1% slower than this one's and its prefill 1% faster; vLLM's cold start is
-  from a round before them. raven's cells are thumper's
+  from a round before them. The prefill cells of raven and vLLM are three
+  rounds of one hold on 2026-11-21, each running raven over CUDA, raven over
+  NV, vLLM and llama.cpp's prefill in a rotated order, with the board's
+  clock and power read every 100 ms; llama.cpp's prefill, the control, came
+  within 1.2% of its cell, 9,590 to 9,680. raven's cells are thumper's
   medians (20 samples after 3 s of warmup; 3 processes for the first token),
   the others the scripts' (30 calls for llama.cpp's decode, 10 for its
-  prefill, 3 processes for a first token). The table gives the median of the
-  three rounds and their range.
+  prefill, 20 calls after 3 s of warmup for vLLM's, 3 processes for a first
+  token). The table gives the median of the three rounds and their range.
+- **Prefill, back to back.** Every system's prefill runs a call after the one
+  before, after a warmup of the same call, as a server's sustained prompts
+  do, and llama-bench's do. The board then sits at its power limit: raven's
+  prefills drew 239 W at 2,130 to 2,175 MHz, vLLM's 211 to 225 W at 2,310 to
+  2,415 MHz, its host leaving the GPU idle about 3.5 ms of each 43. Timed
+  right after a decode, as `vllm_offline.py` timed it until 2026-11-21, a
+  prefill starts near the boost clock, about 2,730 MHz, and runs faster: in
+  one run that day, raven's took 39.4 ms each after 128 decode steps and 42.2
+  back to back, vLLM's 41.8 and 43.4. The prefill cells before these compared
+  raven back to back with vLLM after a decode.
 - **Same work.** Every system runs batch 1, greedy, from token ids.
   - llama.cpp's decode copies the full logits to the host, where raven reads
     back one token, and pads its KV cache.

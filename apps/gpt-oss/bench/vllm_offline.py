@@ -14,7 +14,12 @@ vLLM's offline engine with its defaults otherwise:
 - decode/512: a 512-token prompt generating 129 tokens, less the same prompt
   generating 1, over 128: a token at positions 512 to 639; the median of 10
   pairs after 3;
-- prefill/512: the 512-token prompt generating 1 token; the median of 10 after 3;
+- prefill/512: the 512-token prompt generating 1 token, back to back, as
+  bench_gpt_oss.ml's rows run: the median of 20 calls after 3 s of the same
+  call. A prefill timed right after a decode starts with the board at its
+  boost clock, while back to back it runs at its power limit, as a server's
+  sustained prompts do; on fudge's RTX 5000 Ada that made each system's
+  prefill 4 to 7% faster;
 - first-token/12: a new process from its start to the token after a 12-token
   prompt, loading the weights included; the median of 3 processes after
   one that fills the compilation caches.
@@ -65,7 +70,10 @@ def main():
     row("decode/512", 1, [(long - short) / 128 for short, long in pairs])
     free, total = torch.cuda.mem_get_info()
     print(f"{'device memory':<16} {(total - free) / 1e9:8.2f} GB in use after decode/512", flush=True)
-    row("prefill/512", 512, [short for short, _ in pairs])
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < 3:
+        generate(llm, 512, 1)
+    row("prefill/512", 512, [generate(llm, 512, 1) for _ in range(20)])
     print(f"{'first-token/12':<16} {statistics.median(first):8.2f} s   "
           f"({min(first):.2f}-{max(first):.2f} s, 3 processes)", flush=True)
 
