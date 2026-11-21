@@ -24,13 +24,3 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   21 generated files it rewrites, every runtest (74 files use `__LOC__`), a
   moment with no branch in flight, then `.git-blame-ignore-revs`, a CI step
   and AGENTS.md's interim sentence dropped (_plans/todo-sweep/n8-fmt/)
-- rune's attention core takes 8 warps where 8 still leave
-  `local_workgroups` workgroups, else 4 (lower_attention.ml:1516), though
-  renderer.mli scopes that field to cores whose operands are not staged,
-  and this core shares its tiles among its warps in workgroup memory. On
-  fudge's RTX 5000 Ada, 4 warps run masked T256 rows 21-48% faster and
-  unmasked T2048 rows 6-25% slower than 8, so a rule on workgroups alone
-  misses the key tiles a mask skips. TESSERA's packed rows are masked.
-  Found by the TARGETFACTS audit (_plans/consolidate/targetfacts, A3);
-  measured by attention2 M3, in its adjudication's amendment
-  (_plans/tessera-port/design/attention2/adjudication.md)
