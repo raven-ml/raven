@@ -65,17 +65,21 @@ let judged s =
   let held x = x >= norm *. band_floor && not (zero x) in
   (zero, held)
 
+(* [values (u, s, vh) x] is the values that [x] gives the singular values [s]
+   of [d = u s vᵀ]: the diagonal of [uᵀ x v]. *)
+let values (u, s, vh) x =
+  let ut = Nx.matrix_transpose u and v = Nx.matrix_transpose vh in
+  let c = Nx.matmul ut (Nx.matmul x v) in
+  Array.init (Nx.numel s) (fun i -> Nx.item [ i; i ] c)
+
 (* [in_band ~tol (u, s, vh) x] checks [x], an [orth d] read back from a step,
    against the singular value decomposition [u s vᵀ] of [d] at float64. [x]
    is [u c vᵀ] for the values [c] it gives [d]'s singular values: each in the
    band where [d]'s is held, none above the band, and zero where [d]'s is
    zero. *)
-let in_band ~tol (u, s, vh) x =
-  let s = Nx.to_array s in
+let in_band ~tol ((u, s, vh) as svd) x =
+  let c = values svd x and s = Nx.to_array s in
   let zero, held = judged s and k = Array.length s in
-  let ut = Nx.matrix_transpose u and v = Nx.matrix_transpose vh in
-  let c = Nx.matmul ut (Nx.matmul x v) in
-  let c = Array.init k (fun i -> Nx.item [ i; i ] c) in
   let diagonal = Nx.create Nx.float64 [| 1; k |] c in
   equal ~msg:"d's singular vectors"
     (array (float tol))
@@ -88,6 +92,21 @@ let in_band ~tol (u, s, vh) x =
       if held s.(i) then at_least ~msg float_exact ~than:(band_low -. tol) c;
       if zero s.(i) then at_most ~msg float_exact ~than:tol (Float.abs c))
     c
+
+(* [iterated ~tol (u, s, vh) x] checks the value [x] gives each singular
+   value of [d] against Jordan's five steps from that value over [|d|], the
+   Frobenius norm. It holds the norm the iteration starts from and the
+   number of its steps, which the band alone does not: five steps from a
+   norm twice too large, or six from the right one, stay in the band. A zero
+   [d] steps by nothing. An element of [x] is off by [tol] at most, and a
+   value by the Frobenius norm of the elements' errors. *)
+let iterated ~tol ((_, s, _) as svd) x =
+  let s = Nx.to_array s in
+  let norm = sqrt (Array.fold_left (fun sum x -> sum +. (x *. x)) 0.0 s) in
+  let jordan s = if norm = 0.0 then 0.0 else orth_value (s /. norm) in
+  equal ~msg:"Jordan's five steps of each singular value"
+    (array (float (tol *. sqrt (Float.of_int (Nx.numel x)))))
+    (Array.map jordan s) (values svd x)
 
 (* Rows and columns, each kind of shape drawn often. *)
 let shapes =
@@ -489,6 +508,20 @@ let turns dt parts =
         (coordinates (Nx.mul_s (step g) phase))
         (coordinates (step (Nx.mul_s g (Complex.conj phase)))))
 
+(* Devices *)
+
+(* Four software devices: [S2] lays two in a line and [S4] four, which
+   [over] lays two by two to cut two axes of a leaf. *)
+let device k = Result.get_ok (Rig.software (Printf.sprintf "vega-muon-%d" k))
+
+module S2 = (val Nx.devices [ device 0; device 1 ])
+module S4 = (val Nx.devices [ device 0; device 1; device 2; device 3 ])
+
+let over cuts = Nx.Placement.mesh (Nx.Mesh.v S4.v [ ("a", 2); ("b", 2) ]) cuts
+
+(* Where a value lies, as its placement prints. *)
+let where x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x)
+
 (* The formula *)
 
 let diagonal d = Nx.create Nx.float64 [| 2; 2 |] [| d.(0); 0.0; 0.0; d.(1) |]
@@ -511,7 +544,9 @@ let product a b = Sys.opaque_identity (a *. b)
    [v] and a gradient [g] make [v' = momentum * v + g] and the momentum
    [d = g + momentum * v'], or [v'] without Nesterov's form, and the
    parameters [p] step to [p - lr * (factor * orth d + wd * p)]. A row passes
-   the arguments it names, and the step's defaults stand for the others. *)
+   the arguments it names, and the step's defaults stand for the others. Each
+   row steps on the host, and cut across two devices along its rows and
+   along its columns, where the Gram products sum over the cut axis. *)
 let formula =
   let lr = 0.5 and x = [| 2.0; -4.0 |] in
   let rows =
@@ -542,31 +577,41 @@ let formula =
     ~id:(fun (name, _, _, _, _, _) -> name)
     rows
     (fun (_, momentum, nesterov, decay, v, g) ->
-      let st = { Vega.velocity = diagonal v; step = counter 0 } in
-      let y, (st : (_, _) Vega.sgd_state) =
-        Vega.muon_step p ~lr:(rate64 lr) ?momentum
-          ?weight_decay:(Option.map rate64 decay)
-          ?nesterov st ~params:(diagonal x) ~grads:(diagonal g)
-      in
-      let momentum = Option.value momentum ~default:default_momentum in
+      let by = Option.value momentum ~default:default_momentum in
       let wd = Option.value decay ~default:default_decay in
-      let v' = Array.map2 (fun v g -> product momentum v +. g) v g in
+      let v' = Array.map2 (fun v g -> product by v +. g) v g in
       let d =
         if Option.value nesterov ~default:true then
-          Array.map2 (fun g v' -> g +. product momentum v') g v'
+          Array.map2 (fun g v' -> g +. product by v') g v'
         else v'
       in
       let o = orth_diagonal d in
       let expected i =
         x.(i) -. (lr *. ((factor 2 2 *. o.(i)) +. (wd *. x.(i))))
       in
-      equal ~msg:"parameters"
-        (array (float 1e-12))
-        [| expected 0; 0.0; 0.0; expected 1 |]
-        (Nx.to_array y);
-      equal ~msg:"velocity" (array float_exact)
-        (Nx.to_array (diagonal v'))
-        (unsigned st.velocity))
+      (* The step of the leaves that [placed] places, read on the host. *)
+      let steps name placed =
+        subtest name (fun () ->
+            let leaf d = placed (diagonal d) in
+            let velocity = leaf v in
+            let step = Nx.scalar_at (Nx.beside velocity) Nx.int32 0l in
+            let y, (st : (_, _) Vega.sgd_state) =
+              Vega.muon_step p ~lr:(rate64 lr) ?momentum
+                ?weight_decay:(Option.map rate64 decay)
+                ?nesterov { Vega.velocity; step } ~params:(leaf x)
+                ~grads:(leaf g)
+            in
+            equal ~msg:"parameters"
+              (array (float 1e-12))
+              [| expected 0; 0.0; 0.0; expected 1 |]
+              (Nx.to_array (Nx.place Nx.Host.on y));
+            equal ~msg:"velocity" (array float_exact)
+              (Nx.to_array (diagonal v'))
+              (unsigned (Nx.place Nx.Host.on st.velocity)))
+      in
+      steps "on the host" Fun.id;
+      steps "cut along its rows" (Nx.place (S2.split ~axis:0));
+      steps "cut along its columns" (Nx.place (S2.split ~axis:1)))
 
 (* The start *)
 
@@ -719,90 +764,229 @@ let test_rules_are_asked () =
 
 (* Leaves cut across devices *)
 
-(* Leaves on two software devices. A matrix's Gram product sums over its
-   longer axis, the columns of a square one. Cut along that axis, the devices
-   sum by partials: the leaf steps where it lies, and [orth] holds its band.
-   Cut along the other axis the product has no placement, and the step raises
-   as [Nx.matmul] does.
-
-   A stack cut along its stack axis holds whole matrices on each device. A
-   kernel of [3; 2; 4] is one matrix of 8 columns: a reshape keeps the cut of
-   its second axis, whose windows hold whole runs of the columns, and reads
-   its third whole. A complex leaf's real form joins its parts along both
-   axes of its matrices, and [Nx.concatenate] reads the axis it joins whole.
-
-   A refusal is nx's own, in the words of its routing: the function, the
-   operand and where it lies, where it is read, and the [place] that puts it
-   there. *)
-let test_cut_leaves () =
-  let device name = Result.get_ok (Rig.software name) in
-  let d0 = device "vega-muon-0" and d1 = device "vega-muon-1" in
-  let module S = (val Nx.devices [ d0; d1 ]) in
-  let element e = sin (Float.of_int ((7 * e) + 1)) in
-  let leaf shape =
-    Nx.create Nx.float32 shape (Array.init (numel shape) element)
+(* [stepped ?stacks at g] is the parameters after one step of a leaf whose
+   gradient is the host value [g] placed at [at], from zero parameters and a
+   fresh state, at a unit rate and without decay, as [orth] steps it. They
+   and the velocity lie at [at], and are read back on the host. *)
+let stepped ?stacks at g =
+  let grads = Nx.place at g in
+  let params = Nx.zeros_like grads in
+  let params', (st : (_, _) Vega.sgd_state) =
+    Vega.muon_step p ~lr:(rate64 1.0) ~weight_decay:(Vega.rate 0.0) ?stacks
+      (Vega.muon_init p params) ~params ~grads
   in
+  equal ~msg:"where the parameters lie" string (where grads) (where params');
+  equal ~msg:"where the velocity lies" string (where grads) (where st.velocity);
+  Nx.place Nx.Host.on params'
+
+(* [each_orth ~tol d x] holds each matrix of the stack [x] as [orth] of the
+   matrix of the stack [d] it steps along, both at float64: [d]'s singular
+   vectors, their values in the band ([in_band]), and each value Jordan's
+   five steps of [d]'s ([iterated]), which either Gram product gives. *)
+let each_orth ~tol d x =
+  for i = 0 to Nx.dim 0 d - 1 do
+    let svd = Nx.svd Nx.float64 (Nx.get [ i ] d) and x = Nx.get [ i ] x in
+    in_band ~tol svd x;
+    iterated ~tol svd x
+  done
+
+(* [holds_orth ~tol ?stacks ~m ~n at g]: a real leaf of gradient [g] placed
+   at [at] steps where it lies ([stepped]), each of its matrices, of [m]
+   rows and [n] columns, by [orth] of its gradient's ([each_orth]). *)
+let holds_orth ~tol ?stacks ~m ~n at g =
+  let matrices x = Nx.reshape [| -1; m; n |] (Nx.cast Nx.float64 x) in
+  let x = Nx.div_s (matrices (stepped ?stacks at g)) (-.factor m n) in
+  each_orth ~tol (matrices g) x
+
+(* A real leaf cut along one axis steps where it lies. Cut along the rows of
+   its matrices or along their columns, the shorter axis or the longer, each
+   matrix steps by [orth] of its momentum, a zero one by nothing. A stack
+   cut along its first axis holds whole matrices on each device. An axis of
+   fewer elements than devices leaves a device an empty window. *)
+let cut_along_an_axis (type b) (dt : (float, b) Nx.dtype) =
+  let tol = tolerance dt in
+  let gen =
+    let open Gen in
+    (* Wide, tall and square matrices, each a third of the draws. *)
+    let* short = int_range 1 4 in
+    let* long = int_range (short + 1) 5 in
+    let* m, n =
+      map
+        (function 0 -> (short, long) | 1 -> (long, short) | _ -> (short, short))
+        (int_range 0 2)
+    in
+    let* count = frequency [ (2, constant 0); (1, int_range 1 2) ] in
+    let* axis = int_range 0 (if count = 0 then 1 else 2) in
+    let+ four = bool
+    and+ ds = list ~size:(constant (max 1 count)) (matrix m n) in
+    (m, n, count, axis, four, ds)
+  in
+  prop ~count:200 "a real leaf cut along one axis steps where it lies" gen
+    (fun (m, n, count, axis, four, ds) ->
+      let stacked = count > 0 in
+      let rows = if stacked then 1 else 0 in
+      let shape = if stacked then [| count; m; n |] else [| m; n |] in
+      let along_rows = axis = rows and along_columns = axis = rows + 1 in
+      cover "wide matrices cut along their rows" (m < n && along_rows);
+      cover "wide matrices cut along their columns" (m < n && along_columns);
+      cover "tall matrices cut along their rows" (m > n && along_rows);
+      cover "tall matrices cut along their columns" (m > n && along_columns);
+      cover "square matrices cut along their rows" (m = n && along_rows);
+      cover "square matrices cut along their columns" (m = n && along_columns);
+      cover "a stack cut along its stack axis" (stacked && axis = 0);
+      cover "a stack cut along an axis of its matrices" (stacked && axis > 0);
+      cover "four devices" four;
+      cover "an axis of fewer elements than devices"
+        (shape.(axis) < if four then 4 else 2);
+      cover "a zero momentum"
+        (List.exists (Array.for_all (fun e -> e = 0.0)) ds);
+      let g = Nx.cast dt (Nx.create Nx.float64 shape (Array.concat ds)) in
+      let stacks _ _ = rows in
+      if four then holds_orth ~tol ~stacks ~m ~n (S4.split ~axis) g
+      else holds_orth ~tol ~stacks ~m ~n (S2.split ~axis) g)
+
+(* Leaves at float32 whose elements are distinct and of several magnitudes. *)
+let element e = sin (Float.of_int ((7 * e) + 1))
+let sines shape = Nx.create Nx.float32 shape (Array.init (numel shape) element)
+
+let sines_complex shape =
+  let part e = { Complex.re = element e; im = element (e + numel shape) } in
+  Nx.create Nx.complex64 shape (Array.init (numel shape) part)
+
+(* A stack cut along its stack axis and along one axis of its matrices holds
+   a window of some of its matrices on each device.
+
+   A kernel of [3; 2; 4] or [8; 2; 2] under [~stacks:(fun _ _ -> 0)] is one
+   matrix whose columns merge its last two axes. A reshape keeps the cut of
+   the second axis, whose windows hold whole runs of the columns, so the
+   kernel steps as a matrix cut along its columns, the shorter axis of the
+   second kernel.
+
+   A bfloat16 leaf computes at float32 and stores each element of its step
+   within one spacing, which its tolerance holds. *)
+let cut_twice_or_merged =
   let tol = tolerance Nx.float32 in
-  let cut axis g = Nx.place (S.split ~axis) g in
-  (* [refused by (i, name) axis]: [by] refuses its operand [i], which lies
-     cut along [axis] and is read whole on each device. *)
-  let refused by (operand, name) axis =
-    let devices = "[vega-muon-0; vega-muon-1]" in
-    Invalid_argument
-      (Printf.sprintf
-         "%s: operand %d lies at split ~axis:%d %s and is read at on %s; \
-          Nx.place (Placement.on s) %s"
-         by operand axis devices devices name)
-  in
-  List.iter
-    (fun (m, n, longer, operand, lies) ->
-      let g = leaf [| m; n |] in
-      let svd = Nx.svd Nx.float64 (Nx.cast Nx.float64 g) in
-      let stepped axis = orth ~m ~n (cut axis g) in
-      let msg = Printf.sprintf "[%d; %d] cut along axis %d" m n in
-      subtest (msg longer) (fun () ->
-          in_band ~tol svd (Nx.place Nx.Host.on (stepped longer)));
-      subtest (msg (1 - longer)) (fun () ->
-          raises (refused "Nx.matmul" operand lies) (fun () ->
-              stepped (1 - longer))))
+  let stack _ _ = 1 and one _ _ = 0 in
+  cases "a stack cut twice, a kernel and a bfloat16 leaf step where they lie"
+    ~id:fst
     [
-      (3, 6, 1, (1, "y"), 1); (6, 3, 0, (1, "y"), 1); (4, 4, 1, (1, "y"), 1);
-    ];
-  (* A leaf cut across the devices steps as it does on the host, within
-     rounding. *)
-  let as_whole name host placed =
-    subtest name (fun () ->
-        equal
-          (array (float tol))
-          (Nx.to_array host)
-          (Nx.to_array (Nx.place Nx.Host.on placed)))
-  in
-  let stack = leaf [| 2; 3; 6 |] in
-  let stacked g = orth ~stacks:(fun _ _ -> 1) ~m:3 ~n:6 g in
-  as_whole "a stack cut along its stack axis" (stacked stack)
-    (stacked (cut 0 stack));
-  as_whole "a stack cut along the longer axis of its matrices" (stacked stack)
-    (stacked (cut 2 stack));
-  let kernel = leaf [| 3; 2; 4 |] in
-  let one g = orth ~stacks:(fun _ _ -> 0) ~m:3 ~n:8 g in
-  as_whole "a kernel cut along the first axis of its columns" (one kernel)
-    (one (cut 1 kernel));
-  subtest "a kernel cut along the last axis of its columns" (fun () ->
-      raises
-        (refused "Nx.reshape" (0, "x") 2)
-        (fun () -> one (cut 2 kernel)));
-  let z =
-    let part e = { Complex.re = element e; im = element (e + 18) } in
-    Nx.create Nx.complex64 [| 3; 6 |] (Array.init 18 part)
-  in
-  List.iter
-    (fun axis ->
-      let name = Printf.sprintf "a complex leaf cut along axis %d" axis in
-      subtest name (fun () ->
-          raises
-            (refused "Nx.concatenate" (0, "x") axis)
-            (fun () -> orth ~m:6 ~n:12 (cut axis z))))
+      ( "a stack cut along its stack axis and its rows",
+        fun () ->
+          holds_orth ~tol ~stacks:stack ~m:4 ~n:6
+            (over [ (0, [ "a" ]); (1, [ "b" ]) ])
+            (sines [| 2; 4; 6 |]) );
+      ( "a stack cut along its stack axis and its columns",
+        fun () ->
+          holds_orth ~tol ~stacks:stack ~m:4 ~n:6
+            (over [ (0, [ "a" ]); (2, [ "b" ]) ])
+            (sines [| 2; 4; 6 |]) );
+      ( "a kernel cut along its rows",
+        fun () ->
+          holds_orth ~tol ~stacks:one ~m:3 ~n:8 (S2.split ~axis:0)
+            (sines [| 3; 2; 4 |]) );
+      ( "a wide kernel cut along the first axis of its columns",
+        fun () ->
+          holds_orth ~tol ~stacks:one ~m:3 ~n:8 (S2.split ~axis:1)
+            (sines [| 3; 2; 4 |]) );
+      ( "a tall kernel cut along the first axis of its columns",
+        fun () ->
+          holds_orth ~tol ~stacks:one ~m:8 ~n:4 (S2.split ~axis:1)
+            (sines [| 8; 2; 2 |]) );
+      ( "a bfloat16 matrix cut along its rows",
+        fun () ->
+          holds_orth ~tol:(tolerance Nx.bfloat16) ~m:3 ~n:6 (S2.split ~axis:0)
+            (Nx.cast Nx.bfloat16 (sines [| 3; 6 |])) );
+    ]
+    (fun (_, steps) -> steps ())
+
+(* A complex stack cut along its stack axis holds whole matrices on each
+   device, and steps where it lies. The real form of each matrix of its step
+   is [orth] of the real form of the conjugate of its gradient's. *)
+let test_cut_complex_stack () =
+  let count = 2 and m = 2 and n = 3 in
+  let g = sines_complex [| count; m; n |] in
+  let z = stepped ~stacks:(fun _ _ -> 1) (S2.split ~axis:0) g in
+  let form i z = Nx.cast Nx.float64 (real_form Nx.float32 (Nx.get [ i ] z)) in
+  let forms z = Nx.stack (List.init count (fun i -> form i z)) in
+  each_orth ~tol:(tolerance Nx.float32)
+    (forms (Nx.conjugate g))
+    (Nx.div_s (forms z) (-.factor (2 * m) (2 * n)))
+
+(* A NaN in [d] makes every element of its matrix NaN. Here it is the last
+   element, in the second device's window of a matrix cut along either axis,
+   and the elements the first device holds are NaN too. *)
+let cut_nan =
+  cases "a NaN in one device's window makes its whole matrix NaN"
+    ~id:(Printf.sprintf "cut along axis %d")
     [ 0; 1 ]
+    (fun axis ->
+      let poisoned e = if e = 15 then nan else element e in
+      let g = Nx.create Nx.float32 [| 4; 4 |] (Array.init 16 poisoned) in
+      equal (array float_exact) (Array.make 16 nan)
+        (Nx.to_array (stepped (S2.split ~axis) g)))
+
+(* The cuts under which no device can step its window. The step refuses them
+   itself, naming the leaf, the axes of its matrices along which its
+   momentum is cut, and the values to place. A kernel cut along the last
+   axis of its columns is refused by the reshape that merges them, in the
+   words of nx's routing: the function, the operand and where it lies, where
+   it is read, and the [place] that puts it there. *)
+let cut_refusals =
+  (* The step of an uncut matrix beside the leaf [g] placed at [at], both on
+     [at]'s devices. *)
+  let step ?stacks at g () =
+    let pairs = Nx.Ptree.(pair tensor tensor) in
+    let whole = Nx.Placement.uncut at in
+    let x = (Nx.place whole (sines [| 2; 3 |]), Nx.place at g) in
+    ignore
+      (Vega.muon_step pairs ?stacks ~lr:(Vega.rate 0.1)
+         (Vega.muon_init pairs x) ~params:x ~grads:x)
+  in
+  let both = over [ (0, [ "a" ]); (1, [ "b" ]) ] in
+  let rows =
+    [
+      ( "a matrix cut along both axes",
+        "Vega.muon_step: 1: the leaf's momentum is cut across devices along \
+         the rows and the columns of its matrices; place the leaf, its \
+         gradient and its velocity with the rows or the columns whole on \
+         each device",
+        step both (sines [| 4; 4 |]) );
+      ( "a stack cut along both axes of its matrices",
+        "Vega.muon_step: 1: the leaf's momentum is cut across devices along \
+         the rows and the columns of its matrices; place the leaf, its \
+         gradient and its velocity with the rows or the columns whole on \
+         each device",
+        step
+          ~stacks:(fun _ shape -> Array.length shape - 2)
+          (over [ (1, [ "a" ]); (2, [ "b" ]) ])
+          (sines [| 2; 4; 4 |]) );
+      ( "a complex leaf cut along its rows",
+        "Vega.muon_step: 1: the complex leaf's momentum is cut across devices \
+         along the rows of its matrices; place the leaf, its gradient and \
+         its velocity with the rows and the columns whole on each device",
+        step (S2.split ~axis:0) (sines_complex [| 3; 6 |]) );
+      ( "a complex leaf cut along its columns",
+        "Vega.muon_step: 1: the complex leaf's momentum is cut across devices \
+         along the columns of its matrices; place the leaf, its gradient and \
+         its velocity with the rows and the columns whole on each device",
+        step (S2.split ~axis:1) (sines_complex [| 3; 6 |]) );
+      ( "a complex leaf cut along both axes",
+        "Vega.muon_step: 1: the complex leaf's momentum is cut across devices \
+         along the rows and the columns of its matrices; place the leaf, its \
+         gradient and its velocity with the rows and the columns whole on \
+         each device",
+        step both (sines_complex [| 4; 4 |]) );
+      ( "a kernel cut along the last axis of its columns",
+        "Nx.reshape: operand 0 lies at split ~axis:2 [vega-muon-0; \
+         vega-muon-1] and is read at on [vega-muon-0; vega-muon-1]; Nx.place \
+         (Placement.on s) x",
+        step ~stacks:(fun _ _ -> 0) (S2.split ~axis:2) (sines [| 3; 2; 4 |]) );
+    ]
+  in
+  cases "a leaf cut where no device can step its window raises"
+    ~id:(fun (name, _, _) -> name)
+    rows
+    (fun (_, message, run) -> raises (Invalid_argument message) run)
 
 (* Refusals *)
 
@@ -922,8 +1106,16 @@ let () =
              group "stacks of any depth" (each any_stacks);
              test "each rule is asked of each float or complex leaf"
                test_rules_are_asked;
-             test "a leaf cut across devices steps where its sums allow"
-               test_cut_leaves;
+           ];
+         group "leaves cut across devices"
+           [
+             group "float32" [ cut_along_an_axis Nx.float32 ];
+             group "float64" [ cut_along_an_axis Nx.float64 ];
+             cut_twice_or_merged;
+             test "a complex stack cut along its stack axis steps where it lies"
+               test_cut_complex_stack;
+             cut_nan;
+             cut_refusals;
            ];
          group "complex leaves"
            [

@@ -8,4 +8,4 @@
  (name test_vega_jit)
  (modules test_vega_jit)
  (package vega)
- (libraries vega nx rune windtrap))
+ (libraries vega nx rig rune windtrap))

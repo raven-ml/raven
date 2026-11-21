@@ -271,6 +271,54 @@ let muon_compiles =
              x)
            eager compiled))
 
+(* A Muon step over leaves cut across two software devices compiles, and
+   steps as the eager step at the same placements: a wide matrix cut along
+   its rows, the shorter axis, a tall one cut along its rows, a square one
+   cut along its rows and one along its columns, and a stack cut along its
+   stack axis. Each result lies where its leaf lay. The tolerance is
+   [muon_compiles]'. *)
+let test_muon_cut_compiles () =
+  let device name = Result.get_ok (Rig.software name) in
+  let module S = (val Nx.devices [ device "vega-jit-0"; device "vega-jit-1" ])
+  in
+  let leaves = Nx.Ptree.(list tensor) in
+  let both = Nx.Ptree.pair leaves (Vega.sgd_ptree leaves) in
+  let stacks _ shape = Array.length shape - 2 in
+  let body grads (params, st) =
+    Vega.muon_step leaves ~lr:(Vega.rate 1.0) ~stacks st ~params ~grads
+  in
+  let leaf i (shape, axis) =
+    let size = Array.fold_left ( * ) 1 shape in
+    Nx.place (S.split ~axis) (Nx.create Nx.float32 shape (fill i size))
+  in
+  let cut =
+    [
+      ([| 3; 6 |], 0);
+      ([| 6; 3 |], 0);
+      ([| 4; 4 |], 0);
+      ([| 4; 4 |], 1);
+      ([| 2; 3; 4 |], 0);
+    ]
+  in
+  let made i = List.mapi (fun k leaf_at -> leaf (i + k) leaf_at) cut in
+  let st = { Vega.velocity = made 9; step = Nx.scalar_at S.on Nx.int32 4l } in
+  let x = (made 1, st) and grads = made 5 in
+  let eager = body grads x in
+  let before = Rune.evaluations () in
+  let compiled =
+    Rune.jit Nx.Ptree.(leaves @-> both @-> returns both) body grads x
+  in
+  equal ~msg:"the step compiled" int 0 (Rune.evaluations () - before);
+  let where x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x) in
+  ignore
+    (Nx.Ptree.map2 both
+       (fun path x y ->
+         let msg = Format.asprintf "%a" Nx.Ptree.Path.pp path in
+         equal ~msg:(msg ^ ", where it lies") string (where x) (where y);
+         equal ~msg (array (float 1e-3)) (floats x) (floats y);
+         x)
+       eager compiled)
+
 (* A loss-scaled Adam step compiles once and follows the eager steps, through a
    step whose gradients overflow: [poison] is added to every gradient, [0.] but
    at the third step, where it is an infinity. *)
@@ -954,7 +1002,12 @@ let () =
     (run "vega jit"
        [
          group "a step compiles with its state donated" tests;
-         group "a compiled step is the eager one" [ muon_compiles ];
+         group "a compiled step is the eager one"
+           [
+             muon_compiles;
+             test "muon over leaves cut across devices steps as eager"
+               test_muon_cut_compiles;
+           ];
          group "a bfloat16 step draws as eager's" half_tests;
          group "precision"
            [

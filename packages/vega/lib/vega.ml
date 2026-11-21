@@ -604,9 +604,13 @@ let muon_iterations = 5
    2025, §2.2). *)
 let muon_rms = 0.2
 
-(* [muon_direction d] is Muon's direction for each matrix of [d], of [m] rows
-   and [n] columns over its last two axes: [muon_rms * sqrt (max m n)] times
-   an approximation of the orthogonal factor [u vᵀ] of the matrix [u s vᵀ].
+(* The axis of a matrix that a Gram product sums over. *)
+type matrix_axis = Rows | Columns
+
+(* [muon_direction ~summed d] is Muon's direction for each matrix of [d], of
+   [m] rows and [n] columns over its last two axes: [muon_rms * sqrt (max m n)]
+   times an approximation of the orthogonal factor [u vᵀ] of the matrix
+   [u s vᵀ].
 
    The iteration starts from the matrix over its Frobenius norm, whose
    singular values lie in [0; 1]. The matrix is first divided by its greatest
@@ -622,13 +626,16 @@ let muon_rms = 0.2
    throughout, and so is one that holds an infinity, whose quotient by itself
    is NaN.
 
-   Each of the five steps is three products. The first forms the smaller of
-   the matrix's two Gram squares, [x xᵀ] for [m <= n] and [xᵀ x] otherwise,
-   and alone sums over the longer axis, the columns of a square matrix. The
-   other two are by that square. Over a leaf cut across devices the first
-   sums by partials where its summed axis is the cut one, and raises where
-   the other axis is ([Nx]'s routing). *)
-let muon_direction d =
+   Each of the five steps is three products. The first forms a Gram square
+   [A] of the matrix and alone sums over the axis [summed]. [A = x xᵀ] sums
+   over the columns and steps to [a x + (b A + c A A) x]. [A = xᵀ x] sums
+   over the rows and steps to [a x + x (b A + c A A)]. The two steps are
+   equal in exact arithmetic. Over matrices cut across devices along
+   [summed], the first product sums by partials into a square whole on each
+   device, and each device computes its window of the other two, so only
+   the partial sums move ([Nx]'s routing). Cut along the other axis, the
+   first product has no placement and raises. *)
+let muon_direction ~summed d =
   let rank = Nx.ndim d in
   let m = Nx.dim (rank - 2) d and n = Nx.dim (rank - 1) d in
   (* Matrices of no element have no greatest one, and nothing to step. *)
@@ -642,16 +649,17 @@ let muon_direction d =
     let start =
       Nx.where (Nx.less_s top least) (Nx.zeros_like d) (Nx.div q norm)
     in
-    let wide = m <= n in
+    let odd gram =
+      Nx.add (Nx.mul_s gram muon_b) (Nx.mul_s (Nx.matmul gram gram) muon_c)
+    in
     let iterate x =
       let t = Nx.matrix_transpose x in
-      let gram = if wide then Nx.matmul x t else Nx.matmul t x in
-      let odd =
-        Nx.add (Nx.mul_s gram muon_b)
-          (Nx.mul_s (Nx.matmul gram gram) muon_c)
+      let step =
+        match summed with
+        | Columns -> Nx.matmul (odd (Nx.matmul x t)) x
+        | Rows -> Nx.matmul x (odd (Nx.matmul t x))
       in
-      Nx.add (Nx.mul_s x muon_a)
-        (if wide then Nx.matmul odd x else Nx.matmul x odd)
+      Nx.add (Nx.mul_s x muon_a) step
     in
     let rec times k x = if k = 0 then x else times (k - 1) (iterate x) in
     Nx.mul_s
@@ -692,6 +700,43 @@ let muon_stacks fn stacks path shape =
           shape (rank - 2);
       k
 
+(* A complex leaf's momentum cut along [axes] of its matrices has no form
+   that computes where it lies: its real form joins its parts along both. *)
+let refuse_complex_cut fn path axes =
+  invalid_argf
+    "%s: %s: the complex leaf's momentum is cut across devices along %s of its \
+     matrices; place the leaf, its gradient and its velocity with the rows \
+     and the columns whole on each device"
+    fn (describe path) axes
+
+(* [muon_summed fn path ~complex ~m ~n x] is the axis that the Gram products
+   of the leaf at [path] sum over, [x] its momentum as matrices of [m] rows
+   and [n] columns over its last two axes. It is the axis of the matrices
+   that [x]'s placement cuts across devices, so that the leaf steps where it
+   lies ([muon_direction]). Where the placement cuts neither, it is the
+   longer axis, the columns of square matrices, whose Gram square is the
+   smaller.
+
+   A momentum cut along both axes has no form that computes where it lies,
+   nor has a complex leaf's cut along either. The momentum lies where the
+   gradient and the velocity put it, so a refusal names it and the three
+   values to place. *)
+let muon_summed fn path ~complex ~m ~n x =
+  let rows = Nx.ndim x - 2 and cut = Nx.Placement.cut_axes (Nx.placement x) in
+  match (complex, List.mem rows cut, List.mem (rows + 1) cut) with
+  | _, false, false -> if m <= n then Columns else Rows
+  | false, true, false -> Rows
+  | false, false, true -> Columns
+  | false, true, true ->
+      invalid_argf
+        "%s: %s: the leaf's momentum is cut across devices along the rows and \
+         the columns of its matrices; place the leaf, its gradient and its \
+         velocity with the rows or the columns whole on each device"
+        fn (describe path)
+  | true, true, false -> refuse_complex_cut fn path "the rows"
+  | true, false, true -> refuse_complex_cut fn path "the columns"
+  | true, true, true -> refuse_complex_cut fn path "the rows and the columns"
+
 (* [real_form z] is the real matrices [[re, -im]; [im, re]] by which the
    complex matrices [z] act on their real coordinates, [z] given as its parts
    [re] and [im] stacked along a first axis. [complex_form] is its inverse on
@@ -729,15 +774,20 @@ let muon_step p ~lr ?(momentum = 0.95) ?weight_decay ?decays ?stacks
     let v = Nx.add (Nx.mul_s s.(0) momentum) g in
     let d = if nesterov then Nx.add g (Nx.mul_s v momentum) else v in
     (* The leaf read as matrices: [k] axes of stacks, the next as rows, the
-       rest merged as columns. A complex leaf's parts keep their first axis. *)
+       rest merged as columns. A complex leaf's parts keep their first axis.
+       [ds] is the momentum of each matrix. *)
     let m = shape.(k) in
     let n = Array.fold_left ( * ) 1 (Array.sub shape (k + 1) (rank - k - 1)) in
     let matrices = Array.append (Array.sub shape 0 k) [| m; n |] in
+    let complex = is_complex leaf in
+    let as_matrices =
+      if complex then Array.append [| 2 |] matrices else matrices
+    in
+    let ds = Nx.reshape as_matrices d in
+    let summed = muon_summed fn path ~complex ~m ~n ds in
     let u =
-      if is_complex leaf then
-        let z = Nx.reshape (Array.append [| 2 |] matrices) d in
-        complex_form ~m ~n (muon_direction (real_form z))
-      else muon_direction (Nx.reshape matrices d)
+      if complex then complex_form ~m ~n (muon_direction ~summed (real_form ds))
+      else muon_direction ~summed ds
     in
     let u = Nx.reshape (Nx.shape d) u in
     let decays = asks decays path leaf in

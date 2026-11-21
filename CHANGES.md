@@ -372,6 +372,9 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- `muon_step` steps a real leaf cut across devices along one axis of its
+  matrices where it lies, each device holding a square of the other axis's
+  extent. Cut along both, or complex and cut along either, it raises.
 - New `muon_step` and `muon_init`, on an `sgd_state`: Muon steps each matrix
   along its momentum's orthogonal factor, by about `0.2 * lr` an element.
   `?stacks` says how a leaf holds its matrices; other leaves are another part.

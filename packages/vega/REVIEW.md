@@ -17,3 +17,6 @@ where weight decay applies, epsilon's place, default constants.
   part of a complex leaf steps as a real leaf of the complex leaf's shape,
   with its own state, and a leaf's norms sum both parts; `muon_step` steps
   both parts as one real matrix.
+- A step that reads a leaf's cut: each cut the `.mli` accepts keeps the
+  properties it states, every other raises naming the path, and the cost by
+  cut is stated.

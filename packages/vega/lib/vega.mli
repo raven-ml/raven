@@ -145,15 +145,17 @@
     step that sums over a leaf ({!lars_step}, {!muon_step}, {!lamb_step},
     {!adafactor_step}), a leaf cut across devices is the exception. Its bits
     depend on its placement, since a float sum over a cut axis rounds as
-    {!Nx.section-reductions} states. Two states stepped at equal counters
-    draw alike at equal paths, as identical sub-models with a state each, or
-    two models in one process, do: each store is still unbiased, but their
-    rounding errors correlate. The counter is an input of every step: a state
-    re-made at each step, by its [*_init], repeats its draws, and a value
-    whose update is below half a spacing then stalls as under rounding to
-    nearest. Thread the state from step to step. Under [Rune.jit] the draws
-    are the same, so a compiled step stores an element apart from an eager
-    one only where its float32 value differs, and then by one spacing.
+    {!Nx.section-reductions} and {!Nx.section-contraction} state, and
+    {!muon_step} chooses its product by the cut ({!section-muon}). Two states
+    stepped at equal counters draw alike at equal paths, as identical
+    sub-models with a state each, or two models in one process, do: each store
+    is still unbiased, but their rounding errors correlate. The counter is an
+    input of every step: a state re-made at each step, by its [*_init], repeats
+    its draws, and a value whose update is below half a spacing then stalls as
+    under rounding to nearest. Thread the state from step to step. Under
+    [Rune.jit] the draws are the same, so a compiled step stores an element
+    apart from an eager one only where its float32 value differs, and then by
+    one spacing.
 
     Float16 cannot hold an average of squared gradients: below its least
     subnormal, [2^-24], the average is zero, and the steps that keep one divide
@@ -612,6 +614,27 @@ val lars_step :
     factor [u vᴴ]. The velocity holds the leaf's two parts, as every state
     does ({!section-structures}).
 
+    A leaf cut across devices ({!Nx.section-devices}) along an axis that
+    stacks its matrices steps where it lies, each device stepping the
+    matrices it holds. So does a real leaf cut along the rows or along the
+    columns of its matrices. Each step of the iteration then multiplies the
+    matrix by its transpose in the product that sums over the cut axis, a
+    square whose side is the extent of the axis that is not cut. Each device
+    holds that square whole, multiplies it by itself and moves one partial
+    sum of it at each step of the iteration ({!Nx.section-contraction}), so
+    a leaf is best cut along the longer axis of its matrices. A leaf cut
+    along neither sums over its longer axis, which gives the smaller square.
+    The step of a leaf cut along an axis of its matrices differs by rounding
+    from the step of the same leaf uncut or cut along the other axis. Up to
+    rounding each has the properties of [orth d] stated above.
+
+    A cut along an axis merged into the columns is a cut along the columns
+    where a reshape keeps it ({!Nx.section-shapes}). A real leaf must be cut
+    along at most one axis of its matrices and a complex leaf along neither,
+    since its real matrix joins its parts along both. {!muon_step} raises on
+    any other cut. Before the step, place such a leaf, its gradient and its
+    velocity at a placement the step takes ({!Nx.place}).
+
     Muon is a step for the matrices of a network's hidden layers. An
     embedding table and an output layer are matrices by their shape and
     commonly take another optimizer. Nothing here tells them apart, so they
@@ -657,19 +680,15 @@ val muon_step :
     rate [r / (0.2 * sqrt i)] and the decay [0.2 * sqrt i * w], so it is one
     part for each count of inputs ({!section-parts}).
 
-    A leaf cut across devices along a stack axis, or along the longer axis of
-    its matrices, the columns of square ones, steps where it lies.
-
     Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\); naming
     the leaf's path, on a float or complex leaf of fewer than two axes, on
-    one of more than two axes without [stacks], or if [stacks] gives a leaf
-    of [r] axes a number outside \[[0];[r - 2]\]; as {!Nx.matmul} does
-    ({!Nx.section-routing}) on a leaf cut across devices along the shorter
-    axis of its matrices, the rows of square ones; as {!Nx.concatenate} does
-    on a complex leaf cut along either axis of its matrices; as a reshape
-    does ({!Nx.section-shapes}) on a leaf cut along an axis merged into its
-    columns whose cut it does not keep; or as {!section-structures} states if
-    [grads] or [st.velocity] does not have [params]' skeleton. *)
+    one of more than two axes without [stacks], if [stacks] gives a leaf of
+    [r] axes a number outside \[[0];[r - 2]\], on a leaf cut across devices
+    along both axes of its matrices, or on a complex leaf cut along either
+    ({!section-muon}); as a reshape does ({!Nx.section-shapes}) on a leaf
+    cut along an axis merged into its columns whose cut the reshape does not
+    keep; or as {!section-structures} states if [grads] or [st.velocity]
+    does not have [params]' skeleton. *)
 
 (** {1:adam Adam and AdamW} *)
 
