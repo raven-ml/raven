@@ -9,30 +9,15 @@ Measurements and parked work behind these items:
 _plans/perf-campaign/todo-archive-2026-11-18.md. A path in parentheses is
 under _plans/perf-campaign/ unless it names another directory of _plans/.
 
-- The rows layout runs rows(W)/4 workgroups: the router at 64 tokens or
-  fewer and the 12-token k and v take 7-24 us where a grouped reduce or BEAM
-  take 5-11; bare cores at 16 rows or fewer trail BEAM's (routercore/)
 - D212's blocked contractions lose to tinygrad's heuristic on long reduces
   (`contract/f32-2048` 1.03 of main against 0.92; attention values 256 wide
   1.04 against 0.86); `Heuristic.group` never groups a contraction
-- rig builds a program's whole submit before its first launch: 120 us of
-  host time ahead of a one-program decode step. Submitting in pieces would
-  start the GPU sooner (perf-campaign/chains/parked.md)
 - Since D479, GPU `Set` elections of 16384 and 24576 rows run 1.4x and 1.9x
   slower than rune's former split, and near `stream_threads` outputs up to
   3.5x: split where the renderer is known (consolidate/groupgate/)
-- rune's paged attention with pages of 16 keys runs at 168 registers on
-  CUDA, one workgroup an SM, and refills its spilled values every tile,
-  skipped ones included
 
 ## nx, rune
 
-- gpt-oss's decode copies v (`E_16_8_4`, a stride-640 slice of the fused
-  q, k, v product) before rune's scatter writes the cache, since a custom
-  kernel's argument that views a computed node is stored apart. Removing it
-  needs a call-argument contract: tolk passing a node it stores anyway with
-  the view's index, or the scatter fusing its updates' computation (one
-  launch a block; branch `fix-kvwrite`)
 - main differs from its pinned ocamlformat (0.29.0) in 1,837 files, hand
   wrapping since September's style commits; one `dune fmt` makes the tree
   clean (+117,607/-102,814). Before it: ignore entries or generators for the
@@ -62,12 +47,6 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
   Found by the TARGETFACTS audit (_plans/consolidate/targetfacts, A3);
   measured by attention2 M3, in its adjudication's amendment
   (_plans/tessera-port/design/attention2/adjudication.md)
-
-## rig
-
-- gpt-oss decode runs 26 CUDA chains, one a submit; the 32 cap binds only
-  at prefill. 24 boundaries of 0.8 us and a 23 us host gap before the
-  first layer cost 42-76 us of 6.12 ms (perf-campaign/chaincap/cause.md)
 
 ## talon, hugin, brot, munin, quill
 
