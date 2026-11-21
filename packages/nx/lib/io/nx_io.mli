@@ -1064,8 +1064,9 @@ val save_tiff :
        [float32], [float64] or [bfloat16];}
     {- complex, of two such float32 or float64 parts, as [complex64] or
        [complex128];}
-    {- an enumeration, as its base type, so a boolean that h5py writes
-       reads as [int8];}
+    {- an enumeration, as its base type, but h5py's boolean, the members
+       [FALSE = 0] and [TRUE = 1] over a one-byte integer or bitfield, as
+       [bool];}
     {- an array, as its base type with the array's axes after the
        dataset's;}
     {- a fixed-length string, an opaque type or a compound type, as its

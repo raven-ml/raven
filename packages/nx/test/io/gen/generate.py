@@ -766,8 +766,6 @@ def hdf5_fixtures():
             native = obj.id.get_type().get_class() == h5py.h5t.COMPLEX
             if a.dtype.kind in "SV" or (a.dtype.kind == "c" and not native):
                 a = np.ascontiguousarray(a).view(np.uint8).reshape(a.shape + (a.dtype.itemsize,))
-            elif a.dtype.kind == "b":
-                a = a.view(np.int8)
             # Without the metadata h5py gives an enumeration's dtype.
             out[path] = np.asarray(a).view(np.dtype(a.dtype.str))
 

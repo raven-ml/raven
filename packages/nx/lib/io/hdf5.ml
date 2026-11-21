@@ -674,6 +674,35 @@ let floats =
     ((8, 63, 52, 11, 0, 52, 1023), D.Any D.Float64);
   ]
 
+(* h5py's boolean (h5t.templ.pyx: [_c_bool] writes it, [TypeEnumID.py_dtype]
+   reads it): an enumeration of the members FALSE = 0 and TRUE = 1 over a
+   one-byte integer. Its properties from [p] are the base's datatype message, 8
+   bytes and 4 of a fixed-point or bitfield's properties, then the [members]
+   names, each NUL-terminated and, before version 3, padded to a multiple of 8
+   bytes, then their values, one byte each. *)
+let boolean s ~version ~members p (base : element) =
+  let cls = byte s p land 0xf in
+  members = 2
+  && (cls = 0 || cls = 4)
+  && base.bytes = 1
+  &&
+  let rec names q k acc =
+    if k = 0 then (q, List.rev acc)
+    else begin
+      need s q 1 "an enumeration's names";
+      match String.index_from_opt s q '\000' with
+      | None -> Fail.failf "%s ends inside its fields" "an enumeration's names"
+      | Some z ->
+          let n = z - q + 1 in
+          let n = if version < 3 then (n + 7) / 8 * 8 else n in
+          names (q + n) (k - 1) (String.sub s q (z - q) :: acc)
+    end
+  in
+  let q, ns = names (p + 12) members [] in
+  need s q members "an enumeration's values";
+  let vs = List.init members (fun k -> byte s (q + k)) in
+  List.sort compare (List.combine ns vs) = [ ("FALSE", 0); ("TRUE", 1) ]
+
 (* The element the datatype message [s] from [i] describes. *)
 let rec element s i =
   need s i 8 "a datatype message";
@@ -719,7 +748,8 @@ let rec element s i =
       let e = element s p in
       if e.bytes <> n then
         refuse "an enumeration of %d bytes over %d" n e.bytes;
-      e
+      if boolean s ~version ~members:bits p e then { e with dt = D.Any D.Bool }
+      else e
   | 10 ->
       if version < 2 then refuse "an array datatype of version %d" version;
       need s p 1 "a datatype message";
