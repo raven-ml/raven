@@ -580,4 +580,14 @@ let share_decodes k m =
   if operands <> [] then
     List.iter share (List.rev (K.upcastable_dims k))
 
+(* The rows [share_decodes] takes along an axis whose stores lie apart, as a
+   block of routed rows: each row's accumulators then take a register of
+   their own, which [held_share] bounds before [upcast_max] does. *)
+let tile_rows (ren : Renderer.t) =
+  if ren.target.device <> "CPU" then None
+  else
+    match ren.registers () with
+    | Some file -> Some (min K.upcast_max (file.count / held_share))
+    | None -> Some unbudgeted_rows
+
 let held_registers k file = held k file

@@ -2012,6 +2012,39 @@ let blocks_decode_whole () =
   equal int ~msg:"4-lane vectors of decoded codes" 0 (total "unsigned_int4 ");
   is_true ~msg:"a 64-lane decode" (total "unsigned_int64 " > 0)
 
+(* Routed rows of 4 MXFP4 experts of 16 by 64, 4 ids a token, rendered for an
+   AVX2 host, whose product's tile holds 8 rows (Tolk.Heuristic.tile_rows): 8
+   tokens route into blocks of 8 rows, which decode their expert's codes in
+   the product, 16 into blocks of 64, which first store each block's decoded
+   slice. A kernel that reads the codes and sums nothing stores the slice. *)
+let routed_slices () =
+  let target =
+    Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell")
+  in
+  let stores_slices tokens =
+    let w =
+      Nx_quant.mxfp4
+        ~scales:(Nx.full Nx.uint8 [| 4; 16; 2 |] 127)
+        (Nx.full Nx.uint8 [| 4; 16; 32 |] 0x35)
+    in
+    let ids =
+      Nx.create Nx.int64 [| tokens; 4 |]
+        (Array.init (4 * tokens) (fun i -> Int64.of_int (i mod 4)))
+    in
+    let x = Nx.full Nx.bfloat16 [| tokens; 1; 64 |] 0.5 in
+    let is op u = Tolk.Ops.op u = op in
+    let codes u =
+      is Tolk.Op.Param u && Tolk.Dtype.equal (Tolk.Ops.dtype u) Tolk.Dtype.Uint8
+    in
+    List.exists
+      (fun (_, sink, _) ->
+        let nodes = Tolk.Ops.toposort ~calls:Skip sink in
+        List.exists codes nodes && not (List.exists (is Tolk.Op.Reduce) nodes))
+      (Lowered.sources ~target (fun () -> Nx_quant.apply_experts ~ids w x))
+  in
+  is_false ~msg:"blocks of 8 store their slices" (stores_slices 8);
+  is_true ~msg:"blocks of 64 store their slices" (stores_slices 16)
+
 (* An MXFP4 product against bfloat16 rows rounds each scaled code to
    bfloat16, the same value, only where a tensor core takes bfloat16, so that
    the core takes both operands: Metal's family 9 does; the host has no core,
@@ -2997,6 +3030,10 @@ let () =
                     their codes whole"
                    blocks_decode_whole;
                ];
+             test
+               "routed MXFP4 rows on an AVX2 host store their blocks' \
+                decoded slices only past a tile's rows"
+               routed_slices;
              segmented_contractions;
              blocked_contractions;
              blocked_rows;

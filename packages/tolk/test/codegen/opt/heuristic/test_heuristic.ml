@@ -2953,13 +2953,41 @@ let decode_bound =
         (loading o * copies))
 
 (* On the host, the rows of a decoded product share one decode of each value:
-   as many as divide [R], at most 16, and keep their accumulators within the
-   budget, one register a row, since the rows' stores lie apart. *)
+   as many as divide [R] up to the rows of a tile (Heuristic.tile_rows), whose
+   accumulators take a register a row, since the rows' stores lie apart. *)
 let rec largest_dividing n at_most =
   if n mod at_most = 0 then at_most else largest_dividing n (at_most - 1)
 
-let host_decodes rows file =
-  rows / largest_dividing rows (min 16 (fst file / 2))
+let tile_rows file = Option.get (Heuristic.tile_rows (host file))
+let host_decodes rows file = rows / largest_dividing rows (tile_rows file)
+
+(* A tile's rows: half the registers, at most 16; 4 on a host that knows no
+   registers; none off the host. *)
+let tile_rows_cases =
+  let unbudgeted =
+    let row =
+      List.find
+        (fun cell -> cell "renderer" = "cpu")
+        (Golden.rows "renderers.golden")
+    in
+    Kernel_opts.renderer_of_row (fun column ->
+        if column = "registers" then "" else row column)
+  in
+  cases "tile_rows names the rows of a host tile" ~id:fst
+    (List.map
+       (fun file ->
+         ( "file of " ^ file_id file,
+           (Heuristic.tile_rows (host file), Some (min 16 (fst file / 2))) ))
+       files
+    @ [
+        ( "a host that knows no registers",
+          (Heuristic.tile_rows unbudgeted, Some 4) );
+        ("SSE", (Heuristic.tile_rows (renderer "cpu"), Some 8));
+        ("AVX2", (Heuristic.tile_rows (renderer "avx2"), Some 8));
+        ("CUDA", (Heuristic.tile_rows (renderer "cuda"), None));
+        ("Metal", (Heuristic.tile_rows (renderer "metal"), None));
+      ])
+    (fun (_, (actual, want)) -> equal (option int) want actual)
 
 (* The times [o] decodes each code on the host: the product of its output
    loops absent from a load's index. *)
@@ -3022,20 +3050,20 @@ let unbudgeted_decodes =
         (host_loading (Heuristic.hand_coded_optimizations s)))
 
 (* Blocks of [d] rows that read their expert's matrix as [r / d]: the rows
-   axis, the kernel's first, takes the largest amount up to 16 that divides
-   [d] and fits, one register a row. *)
+   axis, the kernel's first, takes the largest amount up to a tile's rows that
+   divides [d], so a block of at most a tile's rows takes them all. *)
 let routed_rows =
   let rows =
     List.concat_map
       (fun d -> List.map (fun file -> (d, file)) files)
-      [ 16; 32; 64; 128 ]
+      [ 4; 8; 16; 32; 64; 128 ]
   in
   cases "on the host blocks of rows that read one matrix share its decodes"
     ~id:(fun (d, file) -> Printf.sprintf "blocks of %d on %s" d (file_id file))
     rows
     (fun (d, file) ->
       let o = optimized (kernel (Printf.sprintf "routed_run_%d" d)) file in
-      let a = largest_dividing d (min 16 (fst file / 2)) in
+      let a = largest_dividing d (tile_rows file) in
       equal
         (option Kernel_opts.opt)
         (Some
@@ -4076,6 +4104,7 @@ let () =
          decode_bound;
          group "the host's decodes"
            [
+             tile_rows_cases;
              host_decode_cases;
              unbudgeted_decodes;
              routed_rows;

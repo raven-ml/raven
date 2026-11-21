@@ -256,7 +256,10 @@
     [d]. Each such axis, later axes first, is upcast by the largest amount up
     to 16 that divides the axis and one such operand's [f] and keeps the
     kernel within {{!section-budget}the budget}. A host that does not know
-    its registers takes at most 4.
+    its registers takes at most 4. These upcasts come before any other, so
+    along an axis whose stores lie apart, as a product's rows, each row's
+    accumulators take a register of their own, and the budget holds at most
+    {!tile_rows} rows.
 
     {2:budget The budget}
 
@@ -372,6 +375,22 @@ val core_rows :
     such multiple. {!core_fits} holds of these rows. A caller that cuts rows
     into blocks asks it for the smallest block a core takes with the rows
     along its [M]. *)
+
+val tile_rows : Renderer.t -> int option
+(** [tile_rows ren] is, where [ren] renders for the host, the most rows the
+    {{!section-decodes}decodes on the host} upcast along an output axis whose
+    stores lie apart, as a product's rows: half the target's vector
+    registers, a register a row, at most 16, or 4 where [ren] does not know
+    its registers. It is [None] off the host.
+
+    The rows of one tile share a decode of each value they read at one
+    index. So in a kernel of one reduce whose decoded operand reads every
+    output axis after the rows', blocks of at most this many rows, each block
+    reading one matrix, have each block's matrix decoded once, in its tile,
+    under the hand-coded optimisations (a search or recorded optimisations
+    may choose otherwise). A caller that cuts rows into blocks asks it
+    whether a block's decoded matrix needs storing for its rows to share
+    it. *)
 
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 (** [held_registers k file] is the registers of [file] that [k]'s reduces'

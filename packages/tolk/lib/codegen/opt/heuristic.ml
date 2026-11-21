@@ -2124,4 +2124,5 @@ let core_rows ren ~decoded ~dtype_in ~dtype_out ~outputs ~block =
     None
     (List.filter_map least (cores_of ren ~dtype_in ~dtype_out))
 
+let tile_rows = tile_rows
 let held_registers = held_registers

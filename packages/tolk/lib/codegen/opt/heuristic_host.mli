@@ -60,6 +60,11 @@ val share_decodes : Postrange.Scheduler.t -> Ops.t -> unit
     operands of [k]'s summed product [m] read one value, so a tile's rows
     share a decode of it. *)
 
+val tile_rows : Renderer.t -> int option
+(** [tile_rows ren] is the most rows {!share_decodes} upcasts along an axis
+    whose stores lie apart, where [ren] renders for the [CPU] device, and
+    [None] elsewhere. *)
+
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 (** [held_registers k file] is the registers of [file] that [k]'s reduces'
     accumulators take. *)

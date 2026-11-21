@@ -634,10 +634,10 @@ let e2m1_bfloat16 code scale =
    rate, the bfloat16 of an e2m1 product is built in bfloat16
    ({!e2m1_bfloat16}); elsewhere it is rounded from its float32 where
    [renderer] has a core that takes bfloat16, or where [stored] (default
-   [false]): blocks of routed rows store their slices' decoded values, which
-   rounded take half the bytes. It enters unrounded otherwise, as in the
-   host's decode step, where the rounding took a third of the routed MXFP4
-   product's time. *)
+   [false]): a GPU's blocks of routed rows, whose slices' decoded values the
+   schedule may store, which rounded take half the bytes. It enters
+   unrounded otherwise, as in the host's decode step, where the rounding took
+   a third of the routed MXFP4 product's time. *)
 let entered ?(stored = false) ~renderer acc ~other { dtype; node; scale } =
   let x = Arith.cast ~src:dtype acc node in
   match (scale, acc) with
@@ -1143,16 +1143,32 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       let owner = spread r.owner sb b_sides b_axis in
       let b' = picked ~clamped:true b b_axis owner in
       let a' = entered ~renderer acc ~other:b.dtype a' in
-      let scaled = Option.is_some b'.scale in
-      let b' = entered ~stored:true ~renderer acc ~other:a.dtype b' in
-      (* On the host, which has no core, each block's decoded slice of
-         scaled codes is stored, as {!entered} rounds it to be, whatever its
-         decode costs: the block's tiles of rows each read it, and a cheaper
-         decode inlined into each tile ran slower, gpt-oss-20b's float32
-         gate and up of 512 tokens 1.91 s stored against 3.38 s inlined on
-         fudge. *)
-      let host = not (Lazy.force renderer).Renderer.has_local in
-      let b' = if host && scaled then List.map store b' else b' in
+      let scale = b'.scale in
+      (* On the host, which has no core, each tile of a block's rows reads
+         the block's decoded slice of scaled codes. Where the block holds
+         more rows than a tile ({!Tolk.Heuristic.tile_rows}), the slice is
+         stored, whatever its decode costs: a cheaper decode inlined into
+         each tile ran slower, gpt-oss-20b's float32 gate and up of 512
+         tokens 1.91 s stored against 3.38 s inlined on fudge. A block of
+         one tile decodes its slice there once, as the copy would, without
+         the copy's store and load: the bfloat16 gate and up of 64 tokens,
+         blocks of 8, took 241 ms against 287-293 stored, of 12 tokens,
+         blocks of 4, 93 against 131-136. Only codes of an exponent scale,
+         MXFP4's, decode in the tile: a Q8_0 slice decoded there took 8 rows
+         by 2 columns, its block's 32 values unrolled filling the
+         conversions' budget, and 64 tokens 439 ms against 275 stored
+         (untimed). The host stores the float32 values, so no slice of it
+         enters rounded; a GPU's do ({!entered}). *)
+      let tile = Tolk.Heuristic.tile_rows (Lazy.force renderer) in
+      let b' =
+        entered ~stored:(Option.is_none tile) ~renderer acc ~other:a.dtype b'
+      in
+      let b' =
+        match (tile, scale) with
+        | Some rows, Some (Exponent _) when c <= rows -> b'
+        | Some _, Some _ -> List.map store b'
+        | _ -> b'
+      in
       let up x = if x > a_axis then x + 1 else x in
       let shift = List.map (fun (x, y) -> (up x, y)) in
       let pairs = shift batch @ [ (a_axis, b_axis) ] in
