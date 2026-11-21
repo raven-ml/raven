@@ -1086,6 +1086,111 @@ let stored x =
   let parts = List.map store (Arith.parts x.dtype x.node) in
   { x with node = Arith.of_parts x.dtype parts }
 
+(* Entered once a call
+
+   An element of an operand enters the products of as many outputs as the
+   other operand's free extents hold: its reuse. A tile of the host holds at
+   most {!Tolk.Heuristic.tile_outputs} outputs, so an element of more reuse
+   enters several tiles, and each computes it again where rune computes it
+   in the tile: {!entered}'s conversion, or the routed rows' gather at their
+   slots, a slot of no index read as zeros ({!rows}). The tile's runs then
+   read a lane of a computed vector, shuffles at each entry, where a loaded
+   float is a broadcast from memory. Stored once a call, entered at the
+   accumulator's type, the operand is read as loads: a packed copy "is
+   amortized over 2mc × kc × n computation so that O(n) computations will
+   be performed for every copied item" (Goto and van de Geijn, "Anatomy of
+   High-Performance Matrix Multiplication", TOMS 34(3), 5.1). The copy costs
+   {!Tolk.Heuristic.copy_entries} entries, so it pays where the tiles would
+   enter each element more often. An element of either operand enters as
+   many products in all, so the copy of the operand of more reuse holds the
+   fewer elements; the other's, as a projection's weights, is the one a
+   product's tiles of rows read again from memory, at twice a bfloat16's
+   bytes each time, and is not stored. A scaled operand is decoded in the
+   tile, which tolk stages once a tile of rows ({!Tolk.Stage.decodes}).
+
+   A copy that no kernel running anyway makes, of an argument read in place
+   or of the routed rows at their slots, is a kernel of its own, whose launch
+   the tiles' saving repays too ({!Tolk.Heuristic.launch_entries}): copied,
+   gpt-oss-20b's bfloat16 projections of one row of an argument took 54 to
+   76 µs a call more. A computed operand, as a norm's output, is copied by
+   the kernel that computes it, which stores it at the accumulator's type in
+   place of its own type.
+
+   Where the other operand enters each output once and carries no scale, as
+   a decode step's row of a norm by bfloat16 weights, the product streams it
+   and its tiles' entries of the copy's operand hide behind that stream: the
+   copy only adds its bytes. With its normed row stored at float32,
+   gpt-oss-20b's key, query and value projection of one row took 1.15-1.21
+   ms a call against 1.11-1.13 with the row converted in the tile, and its
+   head 42.0-42.2 ms against 40.5 (fudge, two P-cores, locked); its decode
+   step at 512 took up to 1.8% longer. Against decoded weights, whose tile
+   decodes them, the copy pays: Q8_0's decode step took 2% less.
+
+   tolk's schedule states the general rule (its D106): a value a reduction
+   reads again at outputs its index does not count stays stored, where it
+   reads more than one buffer, does work and holds no more bytes than it
+   reads. A conversion of one buffer it inlines, and a widening it would
+   store at its narrow type, which brings the conversion back into each
+   tile. The schedule is the same for every target, and the cost of entering
+   a computed value again lies in the host's tile alone, a lane broadcast
+   across its run: a GPU's product stages its operands at their input type
+   or reads them per thread. So the host's lowering, which knows its target,
+   stores the operand before the schedule. *)
+
+(* Whether [u] reads storage through movements and conversions alone, as an
+   argument passed in: no kernel computes it. *)
+let rec loaded u =
+  let u = Ops.base u in
+  match Ops.op u with
+  | Op.Param | Op.Buffer | Op.After | Op.Stage -> true
+  | Op.Cast | Op.Bitcast -> loaded (Ops.nth u 0)
+  | _ -> false
+
+(* [entered_once ~renderer ~acc ~batch ~contracting ~gathered a b] is the
+   operand of a product, if either, that the host stores entered at [acc]
+   once a call: of [a] and [b], laid as {!sum} pairs them, the one of more
+   reuse, [a] on a tie, where rune computes it in the product's tile, by
+   {!entered}'s conversion or, for [a] where [gathered], the routed rows'
+   gather at their slots, where it carries no scale, and where the entries
+   its tiles save, its reuse over {!Tolk.Heuristic.tile_outputs} past
+   {!Tolk.Heuristic.copy_entries} for each of its elements, exceed
+   {!Tolk.Heuristic.launch_entries} where its copy is a kernel of its own,
+   as a gather's or a copy of storage read in place is, and zero elsewhere,
+   a reuse past 512 for float32 on AVX2; none where the other operand enters
+   each output once unscaled. Only a float accumulator's operand is stored,
+   the case measured. *)
+let entered_once ~renderer ~acc ~batch ~contracting ~gathered a b =
+  let t = Arith.dtype acc in
+  let free_extents x side =
+    let s = extents (List.hd (Arith.parts x.dtype x.node)) in
+    let bound = List.map side (batch @ contracting) in
+    List.fold_left (fun n i -> n * List.nth s i) 1 (free (List.length s) bound)
+  in
+  let ra = free_extents b snd and rb = free_extents a fst in
+  let side, x, reuse, gathered, other, other_reuse =
+    if ra >= rb then (`A, a, ra, gathered, b, rb) else (`B, b, rb, false, a, ra)
+  in
+  let streamed = other_reuse = 1 && Option.is_none other.scale in
+  let computed = gathered || not (Dtype.equal (Arith.dtype x.dtype) t) in
+  let part = List.hd (Arith.parts x.dtype x.node) in
+  let pays () =
+    match Tolk.Heuristic.tile_outputs (Lazy.force renderer) t with
+    | None -> false
+    | Some outputs ->
+        let elements = List.fold_left ( * ) 1 (extents part) in
+        let launch =
+          if gathered || loaded part then Tolk.Heuristic.launch_entries else 0
+        in
+        elements * (reuse - (outputs * Tolk.Heuristic.copy_entries t))
+        > outputs * launch
+  in
+  if
+    Dtype.is_float t && Option.is_none x.scale && computed && (not streamed)
+    && pays ()
+  then
+    Some side
+  else None
+
 (* [core_in acc x y] is the dtype a tensor core multiplies the rows [x] and
    the slices [y] in, if one may: bfloat16 for unscaled bfloat16 rows against
    codes whose scaled values a bfloat16 holds ({!entered}), else an unscaled
@@ -1188,7 +1293,19 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       let a' = picked a a_axis (spread r.row sa a_sides a_axis) in
       let a' = split a' a_axis [ blocks; c ] in
       let owner = spread r.owner sb b_sides b_axis in
+      let up x = if x > a_axis then x + 1 else x in
+      let shift = List.map (fun (x, y) -> (up x, y)) in
+      let pairs = shift batch @ [ (a_axis, b_axis) ] in
+      let contracting = shift contracting in
+      (* On the host the rows at their slots, or the slices, are stored
+         entered once a call where the tiles would enter them again
+         ({!entered_once}), a slice whole. *)
+      let once =
+        entered_once ~renderer ~acc ~batch:pairs ~contracting ~gathered:true
+          a' b
+      in
       let a' = entered ~renderer acc ~other:b.dtype a' in
+      let a' = if once = Some `A then List.map store a' else a' in
       (* On the host, which has no core, each block's rows read its group's
          decoded slice of scaled codes in tiles of rows of the product
          ({!Tolk.Heuristic.tile_rows}). A block of one tile of MXFP4 codes,
@@ -1203,7 +1320,8 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
          1.77 with a copy a block (untimed). A copy a block decodes a
          group's slice at least as often wherever [n >= g]; in the tile a
          Q8_0 slice took 8 rows by 2 columns, its block's 32 values
-         unrolled filling the conversions' budget. No slice of the host
+         unrolled filling the conversions' budget. An unscaled slice that
+         {!entered_once} stores is stored so too. No slice of the host
          enters rounded to bfloat16; a GPU's do, and the schedule chooses
          what it stores ({!entered}). *)
       let tile = Lazy.force tile in
@@ -1212,21 +1330,21 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
         | Some t, Some (Exponent _) -> c <= t && n < 3 * g
         | _ -> false
       in
-      let b' =
-        match (tile, b.scale) with
-        | Some _, Some _ when not in_tile ->
-            let whole = entered ~renderer acc ~other:a.dtype b in
-            let node = Arith.of_parts acc (List.map store whole) in
-            let b = { dtype = acc; node; scale = None } in
-            entered ~renderer acc ~other:a.dtype
-              (picked ~clamped:true b b_axis owner)
-        | _ ->
-            entered ~stored:(Option.is_none tile) ~renderer acc ~other:a.dtype
-              (picked ~clamped:true b b_axis owner)
+      let whole =
+        once = Some `B
+        || (Option.is_some tile && Option.is_some b.scale && not in_tile)
       in
-      let up x = if x > a_axis then x + 1 else x in
-      let shift = List.map (fun (x, y) -> (up x, y)) in
-      let pairs = shift batch @ [ (a_axis, b_axis) ] in
+      let b' =
+        if whole then
+          let whole = entered ~renderer acc ~other:a.dtype b in
+          let node = Arith.of_parts acc (List.map store whole) in
+          let b = { dtype = acc; node; scale = None } in
+          entered ~renderer acc ~other:a.dtype
+            (picked ~clamped:true b b_axis owner)
+        else
+          entered ~stored:(Option.is_none tile) ~renderer acc ~other:a.dtype
+            (picked ~clamped:true b b_axis owner)
+      in
       (* The result's slots: [blocks] at [nb], the rows of a block at [j + 1],
          read back at each row's slot. *)
       let cut u =
@@ -1236,7 +1354,6 @@ let rows ~renderer ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       let laid =
         Option.map (fun i -> move ~src:j ~dst:nb (cut (init_at i r.row))) init
       in
-      let contracting = shift contracting in
       let y = sum ~batch:pairs ~contracting ~acc ~out a' b' laid in
       let y = move ~src:nb ~dst:j y in
       (* The groups take the first blocks, each at least one row: a block past
@@ -1482,8 +1599,12 @@ let contract ~renderer ~batch ~contracting ~segments ~acc ~out a b init =
       match partial ~renderer ~batch ~contracting ~acc ~out a b init with
       | Some r -> r
       | None ->
-          let a, b = entered () in
-          sum ~batch ~contracting ~acc ~out a b init)
+          let a', b' = entered () in
+          let once =
+            entered_once ~renderer ~acc ~batch ~contracting ~gathered:false a b
+          in
+          let copy side x = if once = Some side then List.map store x else x in
+          sum ~batch ~contracting ~acc ~out (copy `A a') (copy `B b') init)
   | Some (Rows { ids; a_axis; b_axis }) ->
       rows ~renderer ~batch ~contracting ~acc ~out a b init ids ~a_axis ~b_axis
   | Some (Contracting { ids; groups; pair }) -> (

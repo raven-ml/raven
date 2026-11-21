@@ -590,4 +590,40 @@ let tile_rows (ren : Renderer.t) =
     | Some file -> Some (min K.upcast_max (file.count / held_share))
     | None -> Some unbudgeted_rows
 
+(* The outputs of a reduce of [dt] whose accumulators fill [held_share]'s
+   share of the registers, as many lanes to a register as [held] counts: the
+   most a tile of the host holds, 8 rows of 8 float32 lanes on AVX2. A host
+   that does not know its registers bounds no tile. *)
+let tile_outputs (ren : Renderer.t) dt =
+  if ren.target.device <> "CPU" then None
+  else
+    Option.map
+      (fun (file : Renderer.registers) ->
+        file.count / held_share * max 1 (file.bytes / computed_bytes dt))
+      (ren.registers ())
+
+(* A tile enters a value it computes, a narrow float it converts or a value
+   it loads at a computed address, into its lanes by shuffles: an insert to
+   gather the value and a broadcast of its lane across the run, where the
+   load of a stored value broadcasts it. Those take at least the time memory
+   streams a byte to a core: counted on Arrow Lake's ports, a bfloat16's
+   entry into an 8 by 8 tile takes 0.36 to 0.52 cycles, where two cores
+   stream 2.8 bytes a cycle each (gpt-oss-20b's head read at 27 GB/s, at 4.8
+   GHz). A copy of a value stored at [dt] moves twice [dt]'s bytes past the
+   value read in place: its store, and its reader's load of [dt] in place of
+   the source's, which the copy reads instead. So it costs at most an entry a
+   byte, 8 for float32. *)
+let copy_entries dt = 2 * Dtype.itemsize dt
+
+(* A kernel the host launches of its own costs about 100 µs before its work,
+   derived, not timed: on fudge (Core Ultra 5 235, two P-cores, under a
+   timing lock), a copy of their row in a kernel of its own took
+   gpt-oss-20b's bfloat16 projections of one row, 2880 by 5120 and 4096 by
+   2880, from 1.065 to 1.141 ms and from 0.912 to 0.966 ms a call, where its
+   tiles' saving was modelled at about 48 µs from Arrow Lake's port counts:
+   a launch of 102 to 124 µs, the least taken. At the 27 GB/s two such
+   cores stream, an entry a byte ([copy_entries]), 100 µs is 2.7 million
+   entries. *)
+let launch_entries = 2_700_000
+
 let held_registers k file = held k file

@@ -65,6 +65,19 @@ val tile_rows : Renderer.t -> int option
     whose stores lie apart, where [ren] renders for the [CPU] device, and
     [None] elsewhere. *)
 
+val tile_outputs : Renderer.t -> Dtype.t -> int option
+(** [tile_outputs ren dt] is the most outputs of a reduce of [dt] that the
+    accumulators' share of [ren]'s registers holds, where [ren] renders for
+    the [CPU] device and knows its registers, and [None] elsewhere. *)
+
+val copy_entries : Dtype.t -> int
+(** [copy_entries dt] is the most entries of a value into a host tile's lanes
+    that a copy of the value stored at [dt] costs. *)
+
+val launch_entries : int
+(** [launch_entries] is the entries into host tiles' lanes that the launch of
+    a kernel of its own costs. *)
+
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 (** [held_registers k file] is the registers of [file] that [k]'s reduces'
     accumulators take. *)

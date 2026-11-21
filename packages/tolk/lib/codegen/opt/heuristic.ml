@@ -2209,4 +2209,7 @@ let core_rows ren ~decoded ~dtype_in ~dtype_out ~outputs ~block =
     (List.filter_map least (cores_of ren ~dtype_in ~dtype_out))
 
 let tile_rows = tile_rows
+let tile_outputs = tile_outputs
+let copy_entries = copy_entries
+let launch_entries = launch_entries
 let held_registers = held_registers

@@ -2013,6 +2013,26 @@ let blocks_decode_whole () =
   equal int ~msg:"4-lane vectors of decoded codes" 0 (total "unsigned_int4 ");
   is_true ~msg:"a 64-lane decode" (total "unsigned_int64 " > 0)
 
+(* The nodes of each kernel [f] lowers to for [target], and of a kernel's
+   nodes, the element counts of its parameters of [dt] and whether it sums. *)
+let kernel_nodes target f =
+  List.map
+    (fun (_, sink, _) -> Tolk.Ops.toposort ~calls:Skip sink)
+    (Lowered.sources ~target f)
+
+let param_sizes dt nodes =
+  let size u =
+    match Tolk.Ops.value (Tolk.Ops.nth u 0) with
+    | `Int n -> Tolk.Bigint.to_int n
+    | _ -> 0
+  in
+  let param u =
+    Tolk.Ops.op u = Tolk.Op.Param && Tolk.Dtype.equal (Tolk.Ops.dtype u) dt
+  in
+  List.map size (List.filter param nodes)
+
+let sums nodes = List.exists (fun u -> Tolk.Ops.op u = Tolk.Op.Reduce) nodes
+
 (* Routed rows of 4 MXFP4 experts of 16 by 64, 4 ids a token, rendered for an
    AVX2 host, whose product's tile holds 8 rows (Tolk.Heuristic.tile_rows): 2
    tokens, 2 rows a group, route into blocks of 4 rows, which decode their
@@ -2036,26 +2056,13 @@ let routed_slices () =
         (Array.init (4 * tokens) (fun i -> Int64.of_int (i mod 4)))
     in
     let x = Nx.full Nx.bfloat16 [| tokens; 1; 64 |] 0.5 in
-    List.map
-      (fun (_, sink, _) -> Tolk.Ops.toposort ~calls:Skip sink)
-      (Lowered.sources ~target (fun () -> Nx_quant.apply_experts ~ids w x))
+    kernel_nodes target (fun () -> Nx_quant.apply_experts ~ids w x)
   in
-  let is op u = Tolk.Ops.op u = op in
-  let param dt u =
-    is Tolk.Op.Param u && Tolk.Dtype.equal (Tolk.Ops.dtype u) dt
-  in
-  let size u =
-    match Tolk.Ops.value (Tolk.Ops.nth u 0) with
-    | `Int n -> Tolk.Bigint.to_int n
-    | _ -> 0
-  in
-  let sizes dt nodes = List.map size (List.filter (param dt) nodes) in
-  let sums nodes = List.exists (is Tolk.Op.Reduce) nodes in
   let stored tokens =
     List.fold_left
       (fun total nodes ->
-        if List.exists (param Tolk.Dtype.Uint8) nodes && not (sums nodes) then
-          List.fold_left ( + ) total (sizes Tolk.Dtype.Float32 nodes)
+        if param_sizes Tolk.Dtype.Uint8 nodes <> [] && not (sums nodes) then
+          List.fold_left ( + ) total (param_sizes Tolk.Dtype.Float32 nodes)
         else total)
       0 (lowered tokens)
   in
@@ -2063,7 +2070,7 @@ let routed_slices () =
     List.fold_left
       (fun most nodes ->
         if sums nodes then
-          List.fold_left max most (sizes Tolk.Dtype.Bfloat16 nodes)
+          List.fold_left max most (param_sizes Tolk.Dtype.Bfloat16 nodes)
         else most)
       0 (lowered tokens)
     / 16
@@ -2071,6 +2078,181 @@ let routed_slices () =
   equal int ~msg:"values stored at 2 rows a group" 0 (stored 2);
   equal int ~msg:"values stored at 64 rows a group" (4 * 16 * 64) (stored 64);
   equal int ~msg:"slots at 64 rows a group" 280 (slots 64)
+
+(* Products rendered for an AVX2 host, whose tile holds 64 float32 outputs
+   (Tolk.Heuristic.tile_outputs), and whether a kernel's parameters hold [e]
+   elements of [dt]. *)
+let avx2 =
+  lazy
+    (Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell"))
+
+let holds dt e nodes = List.mem e (param_sizes dt nodes)
+let projection = Nx.Pattern.v "x i, o i -> x o | i"
+
+(* gpt-oss's query projection over a prompt of 512 tokens, bfloat16 rows
+   [512; 2880] by bfloat16 weights [4096; 2880]. A row's element enters 4096
+   outputs, past the 8 entries a copy costs (Tolk.Heuristic.copy_entries)
+   times 64, and more than a weight's 512. The rows' copy, of an argument,
+   is a kernel of its own, whose launch the tiles' saving repays many times
+   (Tolk.Heuristic.launch_entries): the rows are stored once at float32 by a
+   kernel that sums nothing, and the product reads them there, where it
+   would convert them in each tile. *)
+let rows_entered_once () =
+  let m, k, n = (512, 2880, 4096) in
+  let x = Nx.full Nx.bfloat16 [| m; k |] 0.5 in
+  let w = Nx.full Nx.bfloat16 [| n; k |] 0.25 in
+  let kernels =
+    kernel_nodes (Lazy.force avx2) (fun () ->
+        Nx.contract Nx.bfloat16 projection x w)
+  in
+  let rows dt = holds dt (m * k) in
+  let copies =
+    List.filter
+      (fun nodes ->
+        (not (sums nodes))
+        && rows Tolk.Dtype.Bfloat16 nodes
+        && rows Tolk.Dtype.Float32 nodes)
+      kernels
+  in
+  match List.filter sums kernels with
+  | [ product ] ->
+      equal int ~msg:"kernels storing the rows at float32" 1
+        (List.length copies);
+      is_true ~msg:"the product reads float32 rows"
+        (rows Tolk.Dtype.Float32 product);
+      is_false ~msg:"the product reads bfloat16 rows"
+        (rows Tolk.Dtype.Bfloat16 product)
+  | ps -> failf "%d products" (List.length ps)
+
+(* A decode step's key, query and value projection of one row of an
+   argument, bfloat16 [1; 2880] by bfloat16 weights [5120; 2880]. A row's
+   element enters 5120 outputs, past 512, but the rows' copy would be a
+   kernel of its own, and the tiles' saving, 5120 / 64 - 8 entries for each
+   of 2880 elements, about 0.2 million, does not repay its launch's 2.7
+   million: the product converts the row in its tile, in one kernel. *)
+let argument_row_in_tile () =
+  let x = Nx.full Nx.bfloat16 [| 1; 2880 |] 0.5 in
+  let w = Nx.full Nx.bfloat16 [| 5120; 2880 |] 0.25 in
+  match
+    kernel_nodes (Lazy.force avx2) (fun () ->
+        Nx.contract Nx.bfloat16 projection x w)
+  with
+  | [ product ] ->
+      is_true ~msg:"the product reads bfloat16 rows"
+        (holds Tolk.Dtype.Bfloat16 2880 product);
+      is_false ~msg:"the product reads float32 rows"
+        (holds Tolk.Dtype.Float32 2880 product)
+  | ks -> failf "%d kernels" (List.length ks)
+
+(* A decode step's key, query and value projection of a row that an RMS norm
+   computes, [1; 2880] by bfloat16 weights [5120; 2880]. The weights enter
+   each output once, unscaled, so the product streams them: the row stays
+   bfloat16, which no kernel stores at float32, and the product converts it
+   in its tile. *)
+let normed_row_streamed () =
+  let k = 2880 in
+  let x = Nx.full Nx.bfloat16 [| 1; k |] 0.5 in
+  let scale = Nx.full Nx.bfloat16 [| k |] 1.5 in
+  let w = Nx.full Nx.bfloat16 [| 5120; k |] 0.25 in
+  let kernels =
+    kernel_nodes (Lazy.force avx2) (fun () ->
+        Nx.contract Nx.bfloat16 projection (Nx.rms_norm ~eps:1e-5 ~scale x) w)
+  in
+  is_false ~msg:"a kernel stores the row at float32"
+    (List.exists (holds Tolk.Dtype.Float32 k) kernels);
+  let weights nodes =
+    sums nodes && holds Tolk.Dtype.Bfloat16 (5120 * k) nodes
+  in
+  match List.filter weights kernels with
+  | [ product ] ->
+      is_true ~msg:"the product reads the bfloat16 row"
+        (holds Tolk.Dtype.Bfloat16 k product)
+  | ps -> failf "%d products" (List.length ps)
+
+(* A decode step's Q8_0 projection of a row that an RMS norm computes,
+   [1; 2880] by Q8_0 codes of [4096; 2880]. The norm's kernel, which runs
+   anyway, stores the row at float32 in place of bfloat16, reading the row
+   and its scale, so the copy costs no launch, and the product reads the
+   float32 row. *)
+let normed_row_stored () =
+  let k = 2880 in
+  let x = Nx.full Nx.bfloat16 [| 1; k |] 0.5 in
+  let scale = Nx.full Nx.bfloat16 [| k |] 1.5 in
+  let w = Nx_quant.q8_0 (Nx.full Nx.uint8 [| 4096; k / 32 * 34 |] 0x11) in
+  let kernels =
+    kernel_nodes (Lazy.force avx2) (fun () ->
+        Nx_quant.apply w (Nx.rms_norm ~eps:1e-5 ~scale x))
+  in
+  let narrow nodes =
+    List.length
+      (List.filter (Int.equal k) (param_sizes Tolk.Dtype.Bfloat16 nodes))
+  in
+  let codes nodes = param_sizes Tolk.Dtype.Uint8 nodes <> [] in
+  match List.filter codes kernels with
+  | [ product ] ->
+      is_true ~msg:"the product reads float32 rows"
+        (holds Tolk.Dtype.Float32 k product);
+      equal int ~msg:"bfloat16 rows the product reads" 0 (narrow product);
+      is_true ~msg:"the norm's kernel stores the float32 row"
+        (List.exists
+           (fun nodes ->
+             (not (sums nodes)) && holds Tolk.Dtype.Float32 k nodes
+             && narrow nodes = 2)
+           kernels)
+  | ps -> failf "%d products" (List.length ps)
+
+(* A routed bfloat16 product whose slices, which an RMS norm computes, have
+   more reuse than its rows: 32 rows of 80 by 64 in 4 groups route into
+   blocks of 8 rows, so a slice's element, of 4 by 64, enters 8 rows' 80
+   outputs, 640, past 8 times the tile's 64, where a row's element enters 4.
+   The slices are stored once, whole, at float32, and the product reads them
+   there. *)
+let slices_entered_once () =
+  let n = 32 and h = 80 and k = 64 and g = 4 and j = 4 in
+  let ramp s =
+    let v i = Float.of_int ((i * 5) mod 7 - 3) in
+    Nx.cast D.Bfloat16 (Nx.create D.Float32 s (Array.init (numel s) v))
+  in
+  let ids =
+    Nx.create D.Int64 [| n |] (Array.init n (fun r -> Int64.of_int (r mod g)))
+  in
+  let a = ramp [| n; h; k |] and b = ramp [| g; j; k |] in
+  let scale = Nx.full D.Bfloat16 [| k |] 1.5 in
+  let op () =
+    P.eval ~by:"t"
+      (P.Contract
+         {
+           batch = Iarray.of_list [];
+           contracting = Iarray.of_list [ (2, 2) ];
+           acc = D.Any D.Float32;
+           out = D.Float32;
+           a;
+           b = Nx.rms_norm ~eps:1e-5 ~scale b;
+           init = None;
+           a_scale = None;
+           b_scale = None;
+           segments = Some (K.Rows { ids; a_axis = 0; b_axis = 0 });
+           sum = false;
+         })
+  in
+  let kernels = kernel_nodes (Lazy.force avx2) op in
+  let slices dt = holds dt (g * j * k) in
+  is_true ~msg:"a kernel stores the slices at float32"
+    (List.exists
+       (fun nodes ->
+         (not (sums nodes))
+         && slices Tolk.Dtype.Bfloat16 nodes
+         && slices Tolk.Dtype.Float32 nodes)
+       kernels);
+  match
+    List.filter
+      (fun nodes -> sums nodes && holds Tolk.Dtype.Bfloat16 (n * h * k) nodes)
+      kernels
+  with
+  | [ product ] ->
+      is_true ~msg:"the product reads float32 slices"
+        (slices Tolk.Dtype.Float32 product)
+  | ps -> failf "%d products" (List.length ps)
 
 (* An MXFP4 product against bfloat16 rows rounds each scaled code to
    bfloat16, the same value, only where a tensor core takes bfloat16, so that
@@ -3063,6 +3245,29 @@ let () =
                "routed MXFP4 rows on an AVX2 host decode their slices in the \
                 tile below 3 rows an expert, else once an expert"
                routed_slices;
+             group "on an AVX2 host"
+               [
+                 test
+                   "a 512-row bfloat16 product stores its rows once, at \
+                    float32"
+                   rows_entered_once;
+                 test
+                   "a bfloat16 product of one row of an argument converts it \
+                    in the tile"
+                   argument_row_in_tile;
+                 test
+                   "a bfloat16 product of one normed row converts it in the \
+                    tile, the weights streamed"
+                   normed_row_streamed;
+                 test
+                   "a Q8_0 product of one normed row has the norm store it \
+                    at float32"
+                   normed_row_stored;
+                 test
+                   "a routed bfloat16 product stores its normed slices once, \
+                    at float32, where they have more reuse than its rows"
+                   slices_entered_once;
+               ];
              segmented_contractions;
              blocked_contractions;
              blocked_rows;

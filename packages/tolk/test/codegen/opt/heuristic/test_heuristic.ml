@@ -3038,18 +3038,19 @@ let rec largest_dividing n at_most =
 let tile_rows file = Option.get (Heuristic.tile_rows (host file))
 let host_decodes rows file = rows / largest_dividing rows (tile_rows file)
 
+(* The host's renderer without its registers. *)
+let unbudgeted =
+  let row =
+    List.find
+      (fun cell -> cell "renderer" = "cpu")
+      (Golden.rows "renderers.golden")
+  in
+  Kernel_opts.renderer_of_row (fun column ->
+      if column = "registers" then "" else row column)
+
 (* A tile's rows: half the registers, at most 16; 4 on a host that knows no
    registers; none off the host. *)
 let tile_rows_cases =
-  let unbudgeted =
-    let row =
-      List.find
-        (fun cell -> cell "renderer" = "cpu")
-        (Golden.rows "renderers.golden")
-    in
-    Kernel_opts.renderer_of_row (fun column ->
-        if column = "registers" then "" else row column)
-  in
   cases "tile_rows names the rows of a host tile" ~id:fst
     (List.map
        (fun file ->
@@ -3065,6 +3066,78 @@ let tile_rows_cases =
         ("Metal", (Heuristic.tile_rows (renderer "metal"), None));
       ])
     (fun (_, (actual, want)) -> equal (option int) want actual)
+
+(* A tile's outputs: the lanes of half the registers, a lane of a type
+   narrower than 4 bytes taking 4; none on a host that knows no registers, or
+   off the host. *)
+let tile_outputs_cases =
+  let lanes (count, bytes) dt =
+    count / 2 * (bytes / max 4 (Dtype.itemsize dt))
+  in
+  let outputs ren = Heuristic.tile_outputs ren Dtype.Float32 in
+  cases "tile_outputs names the outputs of a host tile" ~id:fst
+    (List.concat_map
+       (fun file ->
+         List.map
+           (fun dt ->
+             ( Format.asprintf "%a on a file of %s" Dtype.pp dt (file_id file),
+               (Heuristic.tile_outputs (host file) dt, Some (lanes file dt)) ))
+           [ Dtype.Float32; Dtype.Float64; Dtype.Bfloat16 ])
+       files
+    @ [
+        ("a host that knows no registers", (outputs unbudgeted, None));
+        ("SSE", (outputs (renderer "cpu"), Some 32));
+        ("AVX2", (outputs (renderer "avx2"), Some 64));
+        ("CUDA", (outputs (renderer "cuda"), None));
+        ("Metal", (outputs (renderer "metal"), None));
+      ])
+    (fun (_, (actual, want)) -> equal (option int) want actual)
+
+(* A host kernel's outputs fit a tile of each of its reduces' types, since
+   its accumulators take at most half the registers. *)
+let tile_outputs_bound =
+  cases "a host kernel's outputs fit a tile of each of its reduces"
+    ~id:(fun (name, _, file) -> name ^ " " ^ file_id file)
+    (List.filter budget_checked budget_rows)
+    (fun (name, k, file) ->
+      let s = optimized (Lazy.force k) file in
+      List.iter
+        (fun r ->
+          match Heuristic.tile_outputs (host file) (Ops.dtype r) with
+          | Some most -> at_most ~msg:name int ~than:most (output_lanes s)
+          | None -> fail "a host file bounds no tile")
+        (K.reduceops s))
+
+(* A copy stores a value at its type and its reader loads it there: an entry
+   a byte of both. On AVX2 a float32 copy so pays past a reuse of 512. A
+   launch of its own costs 2.7 million entries: more than a copy of a row of
+   2880 values read by 5120 outputs saves on AVX2, less than 57 rows'. *)
+let copy_entries_cases =
+  let saved rows =
+    let outputs = Heuristic.tile_outputs (renderer "avx2") Dtype.Float32 in
+    rows * 2880
+    * ((5120 / Option.get outputs) - Heuristic.copy_entries Dtype.Float32)
+  in
+  group "copy_entries"
+    [
+      cases "counts an entry a byte a copy stores and loads" ~id:fst
+        [
+          ("float32", (Dtype.Float32, 8));
+          ("float64", (Dtype.Float64, 16));
+          ("bfloat16", (Dtype.Bfloat16, 4));
+        ]
+        (fun (_, (dt, want)) -> equal int want (Heuristic.copy_entries dt));
+      test "on AVX2 a float32 copy pays past a reuse of 512" (fun () ->
+          equal (option int) (Some 512)
+            (Option.map
+               (fun outputs -> Heuristic.copy_entries Dtype.Float32 * outputs)
+               (Heuristic.tile_outputs (renderer "avx2") Dtype.Float32)));
+      test "a launch costs 2.7 million entries" (fun () ->
+          equal int 2_700_000 Heuristic.launch_entries);
+      test "on AVX2 a launch outweighs one row's copy, not 57 rows'" (fun () ->
+          at_most int ~than:Heuristic.launch_entries (saved 1);
+          at_most int ~than:(saved 57) Heuristic.launch_entries);
+    ]
 
 (* The times [o] decodes each code on the host: the product of its output
    loops absent from a load's index. *)
@@ -3105,21 +3178,14 @@ let host_decode_cases =
 
 (* A host that knows no registers shares a decode over at most 4 rows. *)
 let unbudgeted_decodes =
-  let host_row =
-    List.find
-      (fun cell -> cell "renderer" = "cpu")
-      (Golden.rows "renderers.golden")
-  in
-  let ren =
-    Kernel_opts.renderer_of_row (fun column ->
-        if column = "registers" then "" else host_row column)
-  in
   cases "on a host that knows no registers the rows share at most 4 decodes"
     ~id:(fun (rows, dtype) -> Printf.sprintf "%d %s" rows dtype)
     decoded_rows
     (fun (rows, dtype) ->
       let s =
-        K.v (kernel (Printf.sprintf "decoded_rows_%d_%s" rows dtype)) ren
+        K.v
+          (kernel (Printf.sprintf "decoded_rows_%d_%s" rows dtype))
+          unbudgeted
       in
       K.convert_loop_to_global s;
       equal int
@@ -4296,6 +4362,9 @@ let () =
          group "the host's decodes"
            [
              tile_rows_cases;
+             tile_outputs_cases;
+             tile_outputs_bound;
+             copy_entries_cases;
              host_decode_cases;
              unbudgeted_decodes;
              routed_rows;

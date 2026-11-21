@@ -413,6 +413,46 @@ val tile_rows : Renderer.t -> int option
     whether a block's decoded matrix needs storing for its rows to share
     it. *)
 
+val tile_outputs : Renderer.t -> Dtype.t -> int option
+(** [tile_outputs ren dt] is, where [ren] renders for the host and knows its
+    vector registers ({!Renderer.t.registers}), the most outputs of a reduce
+    of [dt] that one tile of a kernel holds: the lanes of the half of the
+    registers that {{!section-budget}the budget} leaves its accumulators, a
+    register holding as many lanes of [dt] as fit, at 4 bytes for a type
+    narrower than 4. On AVX2 a [float32] tile holds 64, {!tile_rows} rows of
+    a register's 8 lanes. It is [None] off the host and where [ren] does not
+    know its registers.
+
+    A tile enters each value its outputs read into its lanes once: it loads
+    it, or computes it from what it loads. So a value of an operand that [r]
+    outputs of a product read enters at least [r / tile_outputs ren dt]
+    tiles, each computing it again where the product computes it, as a
+    conversion. A caller that writes a product asks it how often the tiles
+    would compute a value of an operand that a copy could hold instead
+    ({!copy_entries}). *)
+
+val copy_entries : Dtype.t -> int
+(** [copy_entries dt] is the most entries into a host tile's lanes that a
+    copy of a value stored once at [dt] costs: [2 * Dtype.itemsize dt], 8 for
+    [float32]. The copy stores the value at [dt], and its reader loads it at
+    [dt] in place of its source, which the copy loads instead: twice [dt]'s
+    bytes more. A tile enters a value it computes, a narrow float it converts
+    or a value it loads at a computed address, by shuffles that gather the
+    value and broadcast its lane, where a load of a stored value broadcasts
+    it; those take at least the time the host's memory streams a byte to a
+    core. So a copy pays where the tiles would enter each value more than
+    [copy_entries dt] times: a reuse past [copy_entries dt] times
+    {!tile_outputs}, where the copy joins a kernel that runs anyway. *)
+
+val launch_entries : int
+(** [launch_entries] is the entries into host tiles' lanes that the launch
+    of a kernel of its own costs: about 100 µs on two P-cores of an Arrow
+    Lake part, in which their memory streams 2.7 million bytes, an entry a
+    byte as {!copy_entries} counts them. A copy that no kernel running anyway
+    can make, such as a copy of an argument, is such a kernel: it pays where
+    the entries the tiles save, past its {!copy_entries} a value, exceed
+    this. *)
+
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 (** [held_registers k file] is the registers of [file] that [k]'s reduces'
     accumulators take: one accumulator for each output lane of each reduce. A
