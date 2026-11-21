@@ -85,10 +85,19 @@ static _Thread_local uint64_t synchronized;
    rest of its stack is committed, but for its last STACK_TAIL bytes, which
    stay reserved so that an overflow still faults. A commit charges the
    system's commit limit; a page takes memory only once written. If the
-   system refuses the commit, a large frame faults as it would without it. */
+   system refuses the commit, a large frame faults as it would without it.
+
+   The tail is the only fault left below the committed stack, so it must
+   exceed the largest frame linked code takes: tolk's host kernels hold a
+   panel of up to Stage's panel_bytes, 64 KiB, and a frame of at most about
+   1 KiB around it (768 bytes measured). A tail of 64 KiB let such a frame,
+   entered near the bottom, write below the stack's reservation. Linked code
+   probing its stack (__chkstk, which rig would then supply) would remove
+   the bound; the tail, reserved and never committed, costs no time. This
+   holds on x86_64 and arm64 alike. */
 
 #if defined(_WIN32)
-#define STACK_TAIL (64 * 1024)
+#define STACK_TAIL (256 * 1024)
 
 static _Thread_local int stack_committed;
 

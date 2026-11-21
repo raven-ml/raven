@@ -1736,7 +1736,9 @@ let product_tile (ren : Renderer.t) ~itemsize ~k ~short =
 (* The panel lies on the stack of the thread that runs the kernel: a rig pool's
    worker has 8 MiB, the calling thread its own, which a thread a program starts
    takes at the C library's default, 512 KiB on macOS. An eighth of that leaves
-   the rest to the caller. *)
+   the rest to the caller. A kernel's frame is its panel and at most about 1
+   KiB more (768 bytes measured), which rig's stack tail on Windows must
+   exceed (STACK_TAIL in rig_host_code.c): a host kernel probes no stack. *)
 let panel_bytes = 64 * 1024
 
 let by_axis rs =
