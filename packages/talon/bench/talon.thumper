@@ -21,6 +21,7 @@
 # forced: blessed under load 38.6 on 14 cores
 # forced: blessed under load 46.2 on 14 cores
 # forced: blessed Talon_parquet/head-16-of-512-images under load 11.9 on 2 cores
+# forced: blessed Talon_parquet/read-nullable Talon_parquet/read-text Talon_parquet/read-flags Talon_parquet/head-16-of-512-images Talon_parquet/filter-text Talon_parquet/read-keys Talon_parquet/write-nullable Talon_parquet/write-text Talon_parquet/many-files-1000-mixed-filter under load 8.9 on 2 cores
 
 Talon/Filter/high_value	alloc_words	exact	12436
 Talon/Group/category_region	alloc_words	exact	6512
@@ -71,12 +72,24 @@ Talon/Window/running-max-1M	alloc_words	exact	68240
 Talon/Window/running-std-1M	alloc_words	exact	153416
 Talon/Window/running-sum-1M	alloc_words	exact	65084
 Talon_csv/read-mixed	alloc_words	exact	507688
-Talon_parquet/filter-text	alloc_words	exact	21373
-Talon_parquet/head-16-of-512-images	alloc_words	exact	15793
-Talon_parquet/head-16-of-512-images	wall_time	batch=1	n=20	3.974e-03	3.270e-03 3.437e-03 3.461e-03 3.728e-03 3.751e-03 3.867e-03 3.892e-03 3.922e-03 3.944e-03 3.955e-03 3.993e-03 4.055e-03 4.142e-03 4.228e-03 4.394e-03 4.595e-03 4.638e-03 4.841e-03 4.904e-03 4.910e-03
-Talon_parquet/read-keys	alloc_words	exact	9858
-Talon_parquet/read-nullable	alloc_words	exact	34263
-Talon_parquet/read-text	alloc_words	exact	9669
+Talon_parquet/filter-text	alloc_words	exact	22829
+Talon_parquet/filter-text	wall_time	batch=2	n=20	7.608e-04	6.937e-04 7.072e-04 7.175e-04 7.239e-04 7.419e-04 7.428e-04 7.476e-04 7.503e-04 7.517e-04 7.590e-04 7.626e-04 7.635e-04 7.708e-04 7.849e-04 8.004e-04 8.043e-04 8.222e-04 8.489e-04 1.018e-03 1.560e-03
+Talon_parquet/head-16-of-512-images	alloc_words	exact	15522
+Talon_parquet/head-16-of-512-images	wall_time	batch=1	n=20	2.318e-03	2.211e-03 2.220e-03 2.244e-03 2.266e-03 2.268e-03 2.293e-03 2.296e-03 2.304e-03 2.304e-03 2.315e-03 2.321e-03 2.332e-03 2.337e-03 2.345e-03 2.348e-03 2.350e-03 2.357e-03 2.377e-03 2.382e-03 2.392e-03
+Talon_parquet/many-files-1000-mixed-filter	alloc_words	batch=1	n=20	1.051e+07	1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.051e+07 1.052e+07 1.052e+07
+Talon_parquet/many-files-1000-mixed-filter	wall_time	batch=1	n=20	2.645e-02	2.435e-02 2.522e-02 2.580e-02 2.580e-02 2.590e-02 2.598e-02 2.610e-02 2.615e-02 2.615e-02 2.635e-02 2.655e-02 2.667e-02 2.690e-02 2.748e-02 2.757e-02 2.782e-02 2.792e-02 2.800e-02 2.823e-02 2.823e-02
+Talon_parquet/read-flags	alloc_words	exact	5333
+Talon_parquet/read-flags	wall_time	batch=1	n=20	4.956e-04	4.060e-04 4.198e-04 4.256e-04 4.592e-04 4.675e-04 4.761e-04 4.771e-04 4.834e-04 4.846e-04 4.893e-04 5.019e-04 5.024e-04 5.038e-04 5.040e-04 5.155e-04 5.649e-04 5.724e-04 5.762e-04 6.054e-04 1.475e-03
+Talon_parquet/read-keys	alloc_words	exact	10719
+Talon_parquet/read-keys	wall_time	batch=2	n=20	7.885e-04	7.396e-04 7.411e-04 7.477e-04 7.490e-04 7.536e-04 7.545e-04 7.684e-04 7.771e-04 7.817e-04 7.883e-04 7.886e-04 7.950e-04 8.023e-04 8.034e-04 8.277e-04 8.485e-04 8.591e-04 8.977e-04 1.080e-03 1.127e-03
+Talon_parquet/read-nullable	alloc_words	exact	36168
+Talon_parquet/read-nullable	wall_time	batch=1	n=20	5.978e-03	5.769e-03 5.777e-03 5.824e-03 5.859e-03 5.877e-03 5.896e-03 5.915e-03 5.921e-03 5.922e-03 5.959e-03 5.997e-03 6.049e-03 6.058e-03 6.094e-03 6.142e-03 6.209e-03 6.239e-03 6.399e-03 6.471e-03 9.379e-03
+Talon_parquet/read-text	alloc_words	exact	10613
+Talon_parquet/read-text	wall_time	batch=1	n=20	1.945e-03	1.832e-03 1.853e-03 1.865e-03 1.878e-03 1.893e-03 1.928e-03 1.932e-03 1.936e-03 1.941e-03 1.944e-03 1.946e-03 1.954e-03 1.955e-03 1.969e-03 1.976e-03 1.977e-03 1.997e-03 2.063e-03 2.202e-03 3.019e-03
+Talon_parquet/write-nullable	alloc_words	exact	206313
+Talon_parquet/write-nullable	wall_time	batch=1	n=20	2.582e-02	2.534e-02 2.539e-02 2.544e-02 2.557e-02 2.557e-02 2.558e-02 2.559e-02 2.571e-02 2.574e-02 2.581e-02 2.583e-02 2.588e-02 2.590e-02 2.601e-02 2.602e-02 2.613e-02 2.615e-02 2.628e-02 2.650e-02 2.808e-02
+Talon_parquet/write-text	alloc_words	exact	41866
+Talon_parquet/write-text	wall_time	batch=1	n=20	6.062e-03	6.020e-03 6.028e-03 6.031e-03 6.031e-03 6.034e-03 6.037e-03 6.038e-03 6.042e-03 6.049e-03 6.054e-03 6.069e-03 6.094e-03 6.153e-03 6.154e-03 6.156e-03 6.159e-03 6.163e-03 6.207e-03 6.218e-03 7.178e-03
 Talon_text/parse-float64-17-digits	alloc_words	exact	322
 
 # machine: 943935ae6b4f79ac

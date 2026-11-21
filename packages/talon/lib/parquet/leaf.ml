@@ -30,7 +30,8 @@ type node =
       element : node;
     }
 
-type column = { name : string; node : node; text : string }
+type raw = { e : Meta.element; kids : raw list }
+type column = { name : string; node : node; elements : raw }
 type schema = { leaves : t array; columns : column array }
 
 (* Annotations *)
@@ -128,8 +129,6 @@ let physical_name (p : Meta.physical) length =
    level entries, in the terms of Dremel's striping: an entry's repetition level
    says which repeated field repeated, and its definition level how many
    optional or repeated fields on its path are present. *)
-
-type raw = { e : Meta.element; kids : raw list }
 
 let parse (es : Meta.element array) =
   let n = Array.length es in
@@ -372,14 +371,15 @@ let of_schema (es : Meta.element array) =
   if next <> n then children_mismatch ();
   distinct
     (List.map (fun r -> r.e.name) raws)
-    (Meta.fail "two columns are named %S");
-  let column r =
-    let b = Buffer.create 64 in
-    text b r;
-    { name = r.e.name; node = field root r; text = Buffer.contents b }
-  in
+    (fun n -> Meta.fail "two columns are named %S" n);
+  let column r = { name = r.e.name; node = field root r; elements = r } in
   let columns = List.map column raws in
   { leaves = Array.of_list (List.rev !leaves); columns = Array.of_list columns }
+
+let column_text c =
+  let b = Buffer.create 64 in
+  text b c.elements;
+  Buffer.contents b
 
 (* Types *)
 

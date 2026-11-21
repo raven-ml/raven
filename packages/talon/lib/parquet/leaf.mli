@@ -57,9 +57,12 @@ type node =
       (** A list. An entry of levels [r] and [d] adds an element iff
           [r <= elem_rep] and [d >= elem_def]. *)
 
-type column = { name : string; node : node; text : string }
-(** The type for a top-level column: its name, its node, and its Parquet type in
-    Parquet's schema language, without its name. *)
+type raw
+(** The type for a field's schema elements, as the file states them. *)
+
+type column = { name : string; node : node; elements : raw }
+(** The type for a top-level column: its name, its node, and its schema
+    elements. *)
 
 type schema = { leaves : t array; columns : column array }
 (** The type for a file's schema: its leaves, in column chunk order, and its
@@ -80,6 +83,10 @@ val of_schema : Meta.element array -> schema
     fields of a group have the same name or a name is not valid UTF-8, or if a
     field is one talon refuses, named in the message: a repeated [LIST] or [MAP]
     outside a list, an interval or a variant. *)
+
+val column_text : column -> string
+(** [column_text c] is [c]'s Parquet type in Parquet's schema language, without
+    its name, written at each call: [optional binary (STRING)]. *)
 
 val name : t -> string
 (** [name l] is [l]'s dotted path: ["a.list.element"]. It takes time linear in

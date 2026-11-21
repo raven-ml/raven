@@ -1344,14 +1344,11 @@ let word_length offsets =
   let n = Nx.dim 0 offsets - 2 in
   if n <= 0 then None
   else
-    let lengths =
-      Nx.sub
-        (Nx.slice [ Nx.R (1, n + 1) ] offsets)
-        (Nx.slice [ Nx.R (0, n) ] offsets)
-    in
-    let w = Nx.item [ 0 ] lengths in
-    if Nx.item [] (Nx.all (Nx.equal_s lengths w)) then Some (Int64.to_int w)
-    else None
+    reading ~by:decoder i64 offsets @@ fun o ->
+    let length i = Int64.sub (A1.unsafe_get o (i + 1)) (A1.unsafe_get o i) in
+    let w = length 0 in
+    let rec same i = i = n || (Int64.equal (length i) w && same (i + 1)) in
+    if same 1 then Some (Int64.to_int w) else None
 
 (* [gather_words codes data ~n w] is the [n] words of [w] bytes that [data]
    holds at [codes], and their offsets: a gather of rows of [w] bytes, against

@@ -94,7 +94,8 @@ let with_type name t f =
       (Format.asprintf
          "Talon_parquet.with_type: column %S (%s) reads as %a, not %s. Cast it \
           once read (Expr.cast)."
-         name field.text Leaf.pp_node_reads field.node (type_name t));
+         name (Leaf.column_text field) Leaf.pp_node_reads field.node
+         (type_name t));
   let columns = Array.copy f.columns in
   columns.(i) <- { field; ty = Some t };
   { f with columns }
@@ -137,7 +138,7 @@ let pp_format ppf f =
     (fun i c ->
       Format.fprintf ppf "@,  %s%s ← %s" left.(i)
         (String.make (width - scalars left.(i)) ' ')
-        c.field.text)
+        (Leaf.column_text c.field))
     f.columns;
   Format.fprintf ppf "@]"
 
@@ -730,7 +731,7 @@ let declared fn (c : column) =
   | Some ty -> (c.field.name, ty)
   | None ->
       Decimal.undeclared ~fn:("Talon_parquet." ^ fn) ~column:c.field.name
-        ~text:c.field.text ~flat:(is_flat c.field)
+        ~text:(Leaf.column_text c.field) ~flat:(is_flat c.field)
 
 let make fn ?file ?rows f b =
   let name =
@@ -788,13 +789,14 @@ let encode f q w =
   let same (c : column) =
     let column = stated c in
     let schema = Leaf.of_schema (Writer.schema_elements [ written column ]) in
-    let text = schema.columns.(0).text in
-    if not (String.equal c.field.text text) then
+    let text = Leaf.column_text schema.columns.(0)
+    and given = Leaf.column_text c.field in
+    if not (String.equal given text) then
       invalid_arg
         (Printf.sprintf
            "Talon_parquet.encode: column %S is %s in the format, and encode \
             writes %s. State the file with format."
-           c.field.name c.field.text text)
+           c.field.name given text)
   in
   Array.iter same f.columns;
   Writer.encode ~codec:(codec f.compression) ~row_group:f.row_group ~columns q w
