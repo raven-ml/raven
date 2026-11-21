@@ -50,6 +50,9 @@ let driver_facts () =
   equal string "mem3" f.arch;
   equal int ((1 lsl 30) + 3) f.budget;
   equal ~msg:"the account's alignment" int (16 lsl 3) f.alignment;
+  equal ~msg:"the account's granules" (list (pair int int))
+    [ (0, 4); (1 lsl 19, 1 lsl 19) ]
+    f.granules;
   equal ~msg:"the account's cache" (option int)
     (Some ((1 lsl 20) + 3))
     f.cache_bytes;

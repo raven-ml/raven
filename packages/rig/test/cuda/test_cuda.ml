@@ -308,6 +308,34 @@ let capacity () =
   at_least int ~msg:"free" ~than:(Int.min before after) c.free;
   at_most int ~msg:"free" ~than:(Int.max before after) c.free
 
+(* CUDA takes an allocation of more than 1 MiB in whole blocks of 2 MiB of its
+   own: a buffer counts so in the device's allocated bytes, and the
+   capacity's free falls by as much. A smaller one counts its bytes in
+   multiples of 256, the least it takes of a block it shares. The GPU runs no
+   other process's work while the suite holds the GPU lock. *)
+let counts_blocks () =
+  S.with_ @@ fun t ->
+  let mib = 1 lsl 20 in
+  let free () = (require_some (Rig.capacity t.d)).free in
+  equal int ~msg:"one byte" 256 (Rig.allocation t.d 1);
+  equal int ~msg:"1 MiB" mib (Rig.allocation t.d mib);
+  List.iter
+    (fun (n, taken) ->
+      let msg = Printf.sprintf "%d bytes" n in
+      equal ~msg int taken (Rig.allocation t.d n);
+      Rig.free_cache t.d;
+      let before = free () and allocated = Rig.allocated t.d in
+      let b = Rig.Buffer.create t.d n in
+      let held = free () in
+      equal ~msg int taken (Rig.allocated t.d - allocated);
+      equal ~msg int taken (before - held);
+      ignore (Rig.Buffer.free b : bool))
+    [
+      (mib + 4096, 2 * mib);
+      ((2 * mib) + 1, 4 * mib);
+      ((8 * mib) + 1, 10 * mib);
+    ]
+
 let facts =
   group ~timeout:60. "facts"
     [
@@ -315,6 +343,7 @@ let facts =
       test "finds the functions a fill calls" symbols;
       test "rig finds its record" declared;
       test "reports cuMemGetInfo's capacity" capacity;
+      test "counts an allocation past 1 MiB in CUDA's blocks" counts_blocks;
     ]
 
 (* Memory *)

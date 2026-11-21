@@ -795,6 +795,7 @@ let account s id d : Wire.account =
     arch = Rig.arch d;
     budget = Rig.budget d;
     alignment = Rig.alignment d;
+    granules = Rig.granules d;
     cache_bytes = Rig.cache_bytes d;
     reaches = List.sort compare reaches;
     reached_by = List.sort compare reached_by;

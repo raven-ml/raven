@@ -120,6 +120,62 @@ let test_allocation () =
   raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
       Rig.allocation Rig.host (-1))
 
+(* A device counts a buffer in the units its driver states: here 64 KiB below
+   2 MiB and 2 MiB from there, as NVIDIA's RM takes video memory. A [Pinned]
+   buffer of a device the host does not address counts in the host's budget,
+   in whole words. *)
+let test_granules () =
+  let kib = 1024 and mib = 1 lsl 20 in
+  let granules = [ (0, 64 * kib); (2 * mib, 2 * mib) ] in
+  let d, _ = P.open_ ~host_visible:false ~granules "memory:granules" in
+  equal ~msg:"its granules" (list (pair int int)) granules (Rig.granules d);
+  let settled () =
+    Gc.full_major ();
+    ignore (B.create d 0);
+    Rig.free_cache d;
+    Rig.allocated d
+  in
+  let start = settled () in
+  List.iter
+    (fun (n, taken) ->
+      let msg = Printf.sprintf "%d bytes" n in
+      equal ~msg int taken (Rig.allocation d n);
+      let before = settled () in
+      let b = B.create d n in
+      equal ~msg int taken (settled () - before);
+      ignore (Sys.opaque_identity b))
+    [
+      (1, 64 * kib);
+      (64 * kib, 64 * kib);
+      ((64 * kib) + 1, 128 * kib);
+      ((2 * mib) - 4, 2 * mib);
+      (2 * mib, 2 * mib);
+      ((2 * mib) + 1, 4 * mib);
+      (3 * mib, 4 * mib);
+    ];
+  equal ~msg:"what the buffers gave back, cached and freed" int start
+    (settled ());
+  equal ~msg:"pinned bytes, in the host's budget" int 8
+    (Rig.allocation ~memory:B.Pinned d 5);
+  equal ~msg:"pinned memory's budget" string (Rig.name Rig.host)
+    (Rig.name (Rig.charged ~memory:B.Pinned d))
+
+(* An open refuses units that do not start from 0 and increase, each a power
+   of two of at least a word and none below the one before. *)
+let test_granules_refused () =
+  List.iteri
+    (fun i granules ->
+      raises_match (Exn.invalid_arg ~sub:"units") (fun () ->
+          P.open_ ~granules (Printf.sprintf "memory:granules-%d" i)))
+    [
+      [];
+      [ (4, 4) ];
+      [ (0, 2) ];
+      [ (0, 12) ];
+      [ (0, 4); (0, 8) ];
+      [ (0, 64); (1024, 16) ];
+    ]
+
 (* An array {!B.export} made keeps its buffer's memory, which counts in the
    host's allocated bytes while the array is reachable, once its buffer is
    collected too, and leaves once the array is collected. *)
@@ -1952,6 +2008,8 @@ let tests =
           test_host_allocated;
         test "a buffer adds its allocation to its device's bytes"
           test_allocation;
+        test "a device counts a buffer in its driver's units" test_granules;
+        test "an open refuses units that do not increase" test_granules_refused;
         test "an exported array's memory counts until it is collected"
           test_host_exported;
         test "an allocation over the budget raises at once and keeps the cache"

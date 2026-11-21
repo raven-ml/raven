@@ -47,6 +47,7 @@ module D = struct
       host_addresses = true;
       mapped = false;
       alignment;
+      granules = [ (0, Dev.word_bytes) ];
       (* Its memory is the host's, behind the host's caches. *)
       cache_bytes = Dev.host.Def.cache_bytes;
       counters = [];

@@ -301,6 +301,19 @@ val alignment : t -> int
     hold for those sizes only. For a device of another machine, it is that
     machine's device's. *)
 
+val granules : t -> (int * int) list
+(** [granules d] is the units in which [d]'s driver takes [d]'s own memory,
+    the memory that counts in [d]'s budget, as it states them
+    ({!Rig_edge.type-facts}): pairs [(from, unit)] by increasing [from], the
+    first's [0]. A buffer of [n] bytes takes a whole number of the [unit] of
+    the last pair whose [from] is at most [n], and counts so in {!allocated}:
+    [[(0, 65536); (2097152, 2097152)]] for an NVIDIA GPU through its kernel
+    driver, whose RM takes video memory in 64 KiB below 2 MiB and in 2 MiB
+    from there. [[(0, 4)]] states no unit beyond the {!word}: {!host}, whose
+    budget counts the C library's memory, an io device and a {!software}
+    device. For a device of another machine, it is that machine's
+    device's. *)
+
 val cache_bytes : t -> int option
 (** [cache_bytes d] is [Some n] with [n] the bytes of [d]'s last-level cache,
     the cache farthest from its compute units through which its work's memory
@@ -1045,7 +1058,8 @@ val budget : t -> int
 
 val allocated : t -> int
 (** [allocated d] is the bytes that [d] holds now of the memory that counts
-    in its budget ({!section-reclaim}). *)
+    in its budget ({!section-reclaim}), its cache included, each region as
+    {!allocation} counts it. *)
 
 type capacity = Rig_edge.capacity = {
   total : int;
@@ -1101,11 +1115,13 @@ val charged : ?memory:Rig_edge.memory -> t -> t
     for [Pinned] memory where the host addresses [d]'s memory; {!host} for
     other [Pinned] memory. *)
 
-val allocation : t -> int -> int
-(** [allocation d n] is the bytes a buffer of [n] bytes made on [d]
-    ({!Buffer.create}) counts in the budget of {!charged}: on {!host}, the
-    bytes it takes of the C library's memory, its whole words and those its
-    start takes; on any other device, of any kind, its whole words.
+val allocation : ?memory:Rig_edge.memory -> t -> int -> int
+(** [allocation ~memory d n] is the bytes a buffer of [n] bytes of [d]'s
+    memory of kind [memory] (default [Device], {!Buffer.kind}) counts in the
+    budget of {!charged}[ ~memory d]: on {!host}, the bytes it takes of the C
+    library's memory, its whole words and those its start takes; in another
+    device's budget, the bytes its driver takes, its whole words in whole
+    units of {!granules}; in the host's budget, its whole words.
 
     Raises [Invalid_argument] if [n < 0]. *)
 

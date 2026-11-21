@@ -20,6 +20,7 @@ let computes d =
 let runs_on_host d = Dev.is_host d || d.software
 let offers = Buffer.offers
 let alignment d = d.alignment
+let granules d = d.granules
 let cache_bytes d = d.cache_bytes
 let reaches = Dev.reaches
 let budget d = d.budget

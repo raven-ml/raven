@@ -68,6 +68,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- **Breaking:** `Rig.allocated` and the budget count a buffer in the units its
+  driver takes memory in, `Rig.granules`, where they counted the requested
+  words: an NVIDIA GPU through its kernel driver counts 64 KiB below 2 MiB
+  and 2 MiB from there, as its RM takes video memory, and a CUDA device
+  counts an allocation over 1 MiB in blocks of 2 MiB. `Rig.allocation` takes `?memory`, as
+  `Rig.charged` does, and a driver states `granules` in `Rig_edge.facts`.
 - Dropped memory of a software device, or of one whose driver declares
   `host_addresses`, paces the collector by the device's `Rig.allocated` bytes
   less its cache. A large cache held dropped results for longer, until Metal

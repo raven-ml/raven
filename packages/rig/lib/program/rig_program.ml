@@ -1441,7 +1441,7 @@ let footprint t devices =
       | Alloc { device; kind; bytes; _ } ->
           let d = List.nth devices device in
           let n = memory_bytes t d m bytes in
-          add (Rig.charged ~memory:kind d) (Rig.allocation d n)
+          add (Rig.charged ~memory:kind d) (Rig.allocation ~memory:kind d n)
       | Rail _ -> ())
     t.memory;
   add Rig.host (2 * Rig.allocation Rig.host (ints_bytes t));

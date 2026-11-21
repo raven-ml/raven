@@ -336,6 +336,7 @@ let path g h fn ~index : Memory.region Amd.path =
     available =
       Some
         (fun () -> protect mem (fun () -> (Memory.capacity mem.memory).free));
+    granules = Memory.granules;
     (* The discovery table's GC info states the L2 from version 1.2 and its
        MALL info the MALL per memory controller; the path reads neither. *)
     cache_bytes = None;

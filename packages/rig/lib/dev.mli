@@ -38,6 +38,10 @@ exception Lost of device * string
 exception Out_of_memory of device * int
 (** {!Rig.Out_of_memory}. *)
 
+val word_bytes : int
+(** [word_bytes] is {!Rig.word}, the least unit a driver takes memory in
+    ({!Rig_edge.type-facts}'s [granules]). *)
+
 val host : device
 (** [host] is {!Rig.host}, of index [0]. *)
 

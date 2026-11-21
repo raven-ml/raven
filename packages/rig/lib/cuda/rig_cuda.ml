@@ -275,6 +275,12 @@ let rec on_host = function
    least 256 bytes." [cuMemAlloc] and [cuMemHostAlloc] are such routines. *)
 let allocation_alignment = 256
 
+(* The units in which CUDA takes memory, as measured (rig_cuda.mli): an
+   allocation of more than 1 MiB in whole blocks of 2 MiB, a smaller one in
+   blocks it shares, of which it takes at least its aligned bytes. *)
+let granules =
+  [ (0, allocation_alignment); ((1 lsl 20) + 1, 2 lsl 20) ]
+
 (* An image's [entries] are those [entry] made, each once, under [lock]. *)
 type image = {
   owner : int; (* the C state of the device that loaded it *)
@@ -537,6 +543,7 @@ let open_ ~word i =
                     host_addresses = false;
                     mapped = false;
                     alignment = allocation_alignment;
+                    granules;
                     cache_bytes = (if l2 > 0 then Some l2 else None);
                     counters = [];
                     capability = Rig_cuda_abi.declare cap;

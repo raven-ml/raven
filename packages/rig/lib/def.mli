@@ -136,6 +136,7 @@ type device = {
   bus : string option;  (** {!Rig.bus}. *)
   maps_host : bool;  (** Whether it maps host memory. *)
   alignment : int;  (** {!Rig.alignment}. *)
+  granules : (int * int) list;  (** {!Rig.granules}. *)
   cache_bytes : int option;  (** {!Rig.cache_bytes}. *)
   host_addresses : bool;  (** Whether the host addresses all its regions. *)
   mapped_memory : bool;  (** Whether its driver makes [Mapped] memory. *)
@@ -290,6 +291,10 @@ and entry = {
       (** Whether a PCI function other than its owner's reaches it by DMA
           ({!Rig.Buffer.dma}), so that it never returns to the cache. Set
           under [owner]'s lock. *)
+  room : int;
+      (** The bytes it counts in its budget, as {!Rig.allocation} counts
+          them: its driver's units in a device's budget, whole words in the
+          host's. *)
 }
 
 (** The type for the entries of one key of a device's cache: the first [n]

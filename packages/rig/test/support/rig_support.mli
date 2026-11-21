@@ -41,6 +41,7 @@ module Polled : sig
     ?peers:bool ->
     ?maps_host:bool ->
     ?alignment:int ->
+    ?granules:(int * int) list ->
     ?cache_bytes:int ->
     ?counters:(string * int) list ->
     ?budget:int ->
@@ -81,7 +82,8 @@ module Polled : sig
       Without [peers] (defaults to [true]) it maps no memory of another device,
       and without [maps_host] (defaults to [true]) no host memory. Its facts
       state [alignment] (defaults to [4096]), and its regions start on a
-      page, which may break a larger [alignment]. They state [cache_bytes]
+      page, which may break a larger [alignment]. They state [granules]
+      (defaults to [[(0, 4)]]) as given. They state [cache_bytes]
       (defaults to none) and [counters] (defaults to none) as given,
       unchecked, though its [measures] is [NULL]. Its budget is
       [budget] (defaults to 1 GiB); it holds at most [memory] bytes of [Device]
@@ -140,6 +142,7 @@ module Polled : sig
     ?peers:bool ->
     ?maps_host:bool ->
     ?alignment:int ->
+    ?granules:(int * int) list ->
     ?cache_bytes:int ->
     ?budget:int ->
     ?memory:int ->

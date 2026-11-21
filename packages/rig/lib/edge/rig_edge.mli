@@ -183,6 +183,15 @@ type 'region facts = {
       (** The power of two that the address of every region {!Driver.alloc}
           makes is a multiple of, for every memory kind: its [address] and
           its [host] address ({!Driver.locate}). *)
+  granules : (int * int) list;
+      (** The units in which the driver takes the device's own memory, the
+          memory that counts in its budget: pairs [(from, unit)] by
+          increasing [from], the first's [0], each [unit] a power of two of at
+          least [4] bytes, rig's word, and none below the one before. A
+          region of [n] bytes takes a whole
+          number of the [unit] of the last pair whose [from] is at most [n],
+          and counts so in the budget ([Rig.allocation]). [[(0, 4)]] states
+          no unit beyond the word. *)
   cache_bytes : int option;
       (** [Some n] with [n] the bytes of the device's last-level cache
           ([Rig.cache_bytes]), and [None] where the driver does not know it.
@@ -219,7 +228,10 @@ type 'region facts = {
     them makes the open return [Error]. The open raises [Invalid_argument]
     if [copy_engine] names no queue of [queues] or one whose [runs] lacks
     [Copy], [hang_ms] or [cache_bytes] is below [1], [alignment] is not a power
-    of two, [edge] is [0n], or the state's first member is [NULL]. rig
+    of two, [granules] is empty, starts from other than [0], does not
+    increase or has a unit that is not a power of two of at least [4] or is
+    below the one before,
+    [edge] is [0n], or the state's first member is [NULL]. rig
     checks nothing else of [edge]. A region {!Driver.alloc} makes that breaks
     [host_addresses] or [alignment], or [Mapped] memory without a [host]
     address, is a fault of the device: rig frees the region and loses the

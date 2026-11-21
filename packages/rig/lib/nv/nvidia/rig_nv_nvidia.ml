@@ -36,6 +36,13 @@ let huge_page = 2 lsl 20
 
 external clock : int -> int -> int -> int -> int = "caml_rig_nv_nvidia_clock"
 
+(* The units in which the RM takes video memory, whatever page rig asks: a
+   request of 2 MiB or more in its huge pages of 2 MiB, any other in pages of
+   64 KiB, its big page and PMA's least (mem_mgr.c's
+   _memmgrPickDefaultGpuPageSize; video_mem.c raises a 4 KiB page to 64 KiB
+   and allocates whole pages). *)
+let granules = [ (0, 0x10000); (huge_page, huge_page) ]
+
 (* The usermode object's page, whose register at [doorbell_at]
    (NVC361_NOTIFY_CHANNEL_PENDING) wakes a channel. *)
 let usermode_bytes = 0x10000
@@ -1240,6 +1247,7 @@ let path g =
     gpu = g.facts;
     budget = g.budget;
     available = (fun () -> heap_free g);
+    granules;
     cache_bytes = g.cache_bytes;
     doorbell = g.doorbell + doorbell_at;
     flush = g.flush;

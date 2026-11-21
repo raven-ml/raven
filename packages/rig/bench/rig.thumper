@@ -52,7 +52,7 @@ copy/staged-4K/after-1024-closed	alloc_words	exact	67
 copy/staged-4K/after-1024-closed	wall_time	batch=8192	n=20	7.571e-07	7.562e-07 7.563e-07 7.564e-07 7.564e-07 7.565e-07 7.566e-07 7.567e-07 7.569e-07 7.570e-07 7.570e-07 7.572e-07 7.572e-07 7.575e-07 7.576e-07 7.576e-07 7.576e-07 7.578e-07 7.582e-07 7.585e-07 7.749e-07
 device/open-again/among-4096	alloc_words	exact	34
 device/open-again/among-4096	wall_time	batch=131072	n=20	5.398e-08	5.388e-08 5.391e-08 5.391e-08 5.392e-08 5.393e-08 5.393e-08 5.393e-08 5.395e-08 5.398e-08 5.398e-08 5.398e-08 5.398e-08 5.399e-08 5.400e-08 5.400e-08 5.401e-08 5.401e-08 5.402e-08 5.402e-08 5.404e-08
-device/open-close-memory	alloc_words	exact	840
+device/open-close-memory	alloc_words	exact	836
 device/open-close-memory	wall_time	batch=4096	n=20	1.988e-06	1.956e-06 1.959e-06 1.959e-06 1.960e-06 1.961e-06 1.968e-06 1.977e-06 1.978e-06 1.986e-06 1.987e-06 1.988e-06 1.990e-06 1.992e-06 1.993e-06 1.994e-06 1.996e-06 1.999e-06 2.001e-06 2.005e-06 2.031e-06
 drain/allocate-4K/closed-devices-1024	alloc_words	exact	42
 drain/allocate-4K/closed-devices-1024	wall_time	batch=1024	n=20	4.280e-07	1.894e-07 1.905e-07 1.905e-07 1.908e-07 1.911e-07 1.914e-07 2.046e-07 2.108e-07 4.246e-07 4.259e-07 4.302e-07 4.376e-07 4.468e-07 4.544e-07 5.545e-07 5.547e-07 5.564e-07 5.619e-07 5.628e-07 5.667e-07
@@ -82,7 +82,7 @@ drain/deferred-frees-64	alloc_words	batch=64	n=20	1.397e+04	1.396e+04 1.396e+04 
 drain/deferred-frees-64	wall_time	batch=64	n=20	9.949e-05	8.981e-05 9.126e-05 9.224e-05 9.339e-05 9.356e-05 9.537e-05 9.611e-05 9.701e-05 9.858e-05 9.939e-05 9.958e-05 1.005e-04 1.006e-04 1.018e-04 1.033e-04 1.042e-04 1.053e-04 1.056e-04 1.059e-04 1.091e-04
 drain/dropped-1000	alloc_words	exact	42042
 drain/dropped-1000	wall_time	batch=8	n=20	6.906e-04	6.768e-04 6.771e-04 6.807e-04 6.856e-04 6.860e-04 6.872e-04 6.872e-04 6.897e-04 6.899e-04 6.904e-04 6.907e-04 6.918e-04 6.931e-04 6.933e-04 6.948e-04 6.953e-04 6.953e-04 6.957e-04 6.969e-04 7.061e-04
-drain/free-cache-1000	alloc_words	exact	88115
+drain/free-cache-1000	alloc_words	exact	89115
 drain/free-cache-1000	wall_time	batch=4	n=20	1.262e-03	1.245e-03 1.248e-03 1.249e-03 1.249e-03 1.254e-03 1.259e-03 1.260e-03 1.260e-03 1.261e-03 1.261e-03 1.263e-03 1.264e-03 1.266e-03 1.266e-03 1.267e-03 1.267e-03 1.269e-03 1.269e-03 1.274e-03 1.275e-03
 floor/atomic-cas-2	alloc_words	exact	0
 floor/atomic-cas-2	wall_time	batch=2097152	n=20	3.007e-09	3.007e-09 3.007e-09 3.007e-09 3.007e-09 3.007e-09 3.007e-09 3.007e-09 3.007e-09 3.007e-09 3.007e-09 3.008e-09 3.008e-09 3.008e-09 3.008e-09 3.009e-09 3.009e-09 3.023e-09 3.033e-09 3.040e-09 3.042e-09

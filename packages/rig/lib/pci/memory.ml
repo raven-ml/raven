@@ -133,6 +133,7 @@ and shared = {
 let page = 0x1000
 let large_page = 2 lsl 20
 let large = 4 * large_page
+let granules = [ (0, page); (large, large_page) ]
 let round_up n a = (n + a - 1) / a * a
 
 (* Whether [n] rounded up to [a] passes [max_int]: no memory holds it. *)

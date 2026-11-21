@@ -179,6 +179,7 @@ module Driver = struct
       mapped = false;
       (* [alloc] rounds each region's start up to 64 bytes. *)
       alignment = 64;
+      granules = [ (0, 4) ];
       cache_bytes = None;
       counters = [];
       capability = Capability (capability_key, ());

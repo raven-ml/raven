@@ -208,6 +208,11 @@ val host : region -> Window.t option
     function's give-back ({b Holders}), or, on a GPU kept for another
     function ({!bus}), to the process's exit. *)
 
+val granules : (int * int) list
+(** [granules] is the units in which {!alloc} rounds the GPU's memory, as
+    {!Rig_edge.type-facts} states them: 4 KiB below 8 MiB and 2 MiB from
+    there. *)
+
 val alloc : ?uncached:bool -> t -> kind -> int -> (region option, string) result
 (** [alloc m k n] is [n] new bytes of kind [k]. System memory is rounded up to
     the machine's page. The GPU's memory is rounded up to 4 KiB, or to 2 MiB

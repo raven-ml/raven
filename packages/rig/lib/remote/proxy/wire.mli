@@ -22,8 +22,8 @@
     job's key over both ends' nonces, the dialing end first:
 
     {v
-     accepting: "rig-job\n", version 15 (u32), 0, its nonce (32 bytes)
-                or "rig-job\n", version 15 (u32), 1 and why
+     accepting: "rig-job\n", version 16 (u32), 0, its nonce (32 bytes)
+                or "rig-job\n", version 16 (u32), 1 and why
      dialing:   its nonce (32 bytes), its process, the accepting end's
                 process, its proof (32 bytes)
      accepting: 0 and its proof (32 bytes)
@@ -100,7 +100,7 @@
 (** {1:handshakes Handshakes} *)
 
 val version : int
-(** [version] is the protocol's version, the handshake's: 15. Ends at other
+(** [version] is the protocol's version, the handshake's: 16. Ends at other
     versions refuse each other, so a request kind an end does not know never
     reaches it. Adding or removing a level of an x86-64
     host's [Rig.arch], which an account carries and [Rig_program.load]
@@ -172,6 +172,7 @@ type account = {
   arch : string;  (** Its [Rig.arch] there. *)
   budget : int;  (** Its [Rig.budget] there when it opened. *)
   alignment : int;  (** Its [Rig.alignment] there. *)
+  granules : (int * int) list;  (** Its [Rig.granules] there. *)
   cache_bytes : int option;
       (** Its [Rig.cache_bytes] there, which crosses as a u64, [0] for
           [None]. *)

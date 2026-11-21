@@ -388,6 +388,8 @@ let open_ ~word i =
           host_addresses = true;
           mapped = false;
           alignment = region_align;
+          (* Metal states no unit it takes a buffer's memory in. *)
+          granules = [ (0, 4) ];
           (* No public API of Metal states the GPU's caches. *)
           cache_bytes = None;
           counters = [];

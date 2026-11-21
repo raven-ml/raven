@@ -79,6 +79,14 @@
     33,881,587,712 bytes, CUDA's total for the GPU ([Rig_cuda]); and the
     448 MiB between them is nvidia-smi's [memory.reserved].
 
+    The RM takes video memory, [Gpu] and [Bar], in whole pages: of 2 MiB for
+    a request of 2 MiB or more, and otherwise of its big page, 64 KiB, which
+    it also gives a request for 4 KiB pages
+    ([_memmgrPickDefaultGpuPageSize] in [mem_mgr.c], and [video_mem.c], in
+    open-gpu-kernel-modules). The path's [granules] state these units, so a
+    device's {!Rig.allocated} counts what the heap's free loses: a buffer of
+    one byte takes 64 KiB, one of 2 MiB and one byte takes 4 MiB.
+
     {!Rig_nv.val-dma} exports the RM object a region lies in as a new
     dma-buf ({!Rig_edge.Dmabuf}), through the GPU's file, at the region's
     offset in it. The dma-buf holds the object until its last reference

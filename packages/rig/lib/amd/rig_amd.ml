@@ -124,6 +124,7 @@ type 'm path = {
   wgps : int array array;
   budget : int;
   available : (unit -> int) option;
+  granules : (int * int) list;
   cache_bytes : int option;
   alloc : place -> int -> 'm memory option;
   map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
@@ -449,6 +450,7 @@ type t = {
   hdp : int option;
   mapped : bool; (* whether it offers [Bar] memory as [Mapped] memory *)
   budget : int;
+  granules : (int * int) list;
   cache_bytes : int option;
   hang_ms : int option;
   waits64 : bool; (* its queues run 64-bit waits *)
@@ -851,6 +853,7 @@ let facts g =
     host_addresses = false;
     mapped = g.mapped;
     alignment = region_alignment;
+    granules = g.granules;
     cache_bytes = g.cache_bytes;
     capability = Abi.declare g.capability;
     counters = g.counters;
@@ -1518,6 +1521,7 @@ let make (type m) ?measure ~word (p : m path) =
         hdp = p.hdp;
         mapped = p.combines && Option.is_some p.hdp;
         budget = p.budget;
+        granules = p.granules;
         cache_bytes = p.cache_bytes;
         hang_ms = p.hang_ms;
         waits64;

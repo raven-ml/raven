@@ -584,6 +584,9 @@ type 'm path = {
           device's memory holds as held. It raises {!Fault} where the path
           cannot read it. [None] where the path reports none, and the
           device's capacity is then [None]. *)
+  granules : (int * int) list;
+      (** The units in which [alloc] takes the GPU's memory, [Gpu] and [Bar],
+          as {!Rig_edge.type-facts} states them. *)
   cache_bytes : int option;
       (** [Some n] with [n] the bytes of the GPU's L2 and its MALL (Infinity
           Cache) together, or [None] if the path does not know the L2's. *)

@@ -1317,6 +1317,8 @@ let path d ~gpus ~index : mem Amd.path =
     available =
       (if reports_free g.version then Some (fun () -> free_memory fd g)
        else None);
+    (* [alloc] asks KFD for whole pages, which its buffer objects hold. *)
+    granules = [ (0, page) ];
     cache_bytes = g.cache_bytes;
     alloc = alloc fd g;
     map_host = Some (map_host fd g);

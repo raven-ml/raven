@@ -162,7 +162,7 @@ module Strings = Tbl.Make (String)
 let no_waits = { Rig_edge.stores = false; hosts = false }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
-    ~completion ~waits ~hang_ms ~maps_host ~alignment ~cache_bytes
+    ~completion ~waits ~hang_ms ~maps_host ~alignment ~granules ~cache_bytes
     ~host_addresses ~mapped_memory ~word ~word_region ~key ~software ~fault
     ~capability ~counters ~budget ~opened =
   let live =
@@ -207,6 +207,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
     arch;
     maps_host;
     alignment;
+    granules;
     cache_bytes;
     host_addresses;
     mapped_memory;
@@ -230,6 +231,10 @@ exception No_fault
    buffer starts on at least ([rig_heap.c]). *)
 let malloc_alignment = 16
 
+(* The bytes of rig's word, the least unit a driver takes memory in
+   ({!Rig.word}). *)
+let word_bytes = 4
+
 (* The host runs launches of linked code ([rig_host_code.c]) on its one queue,
    and waits on the host for other devices' points. *)
 let host =
@@ -238,7 +243,7 @@ let host =
     make_device ~index:0 ~name:"CPU" ~machine:Here ~kind:Host
       ~c:(c_host_new "CPU") ~arch:Cpu.host_arch ~bus:None ~queues
       ~copy_engine:None ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None
-      ~maps_host:false ~alignment:malloc_alignment
+      ~maps_host:false ~alignment:malloc_alignment ~granules:[ (0, word_bytes) ]
       ~cache_bytes:(host_cache_bytes ()) ~host_addresses:false
       ~mapped_memory:false ~word:(Nativeint.to_int (c_slot_word 0))
       ~word_region:None ~key:(-1)
@@ -1307,6 +1312,22 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       "Rig.open_: %s's regions start on multiples of %d, expected a power of \
        two"
       name f.alignment;
+  let rec granules last unit = function
+    | [] -> true
+    | (from, g) :: gs ->
+        from > last && g >= unit && g land (g - 1) = 0 && granules from g gs
+  in
+  (match f.granules with
+  | (0, _) :: _ when granules (-1) word_bytes f.granules -> ()
+  | gs ->
+      let pair (from, g) = Printf.sprintf "(%d, %d)" from g in
+      invalid_argf
+        "Rig.open_: %s takes memory in units [%s], expected units from 0, \
+         each a power of two of at least %d bytes and none below the one \
+         before"
+        name
+        (String.concat "; " (List.map pair gs))
+        word_bytes);
   Option.iter
     (fun n ->
       if n < 1 then
@@ -1353,7 +1374,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~c ~arch:f.arch ~bus:f.bus ~queues ~copy_engine:f.copy_engine
       ~completion:f.completion
       ~waits:f.waits ~hang_ms:f.hang_ms ~maps_host:f.maps_host
-      ~alignment:f.alignment ~cache_bytes:f.cache_bytes
+      ~alignment:f.alignment ~granules:f.granules ~cache_bytes:f.cache_bytes
       ~host_addresses:f.host_addresses ~mapped_memory:f.mapped ~word
       ~word_region:(Some (Region { m; h; rid; r = Some f.word; mapped = Never }))
       ~key:(Type.Id.uid D.key) ~software
@@ -1422,7 +1443,8 @@ let open_io ~machine name =
     make_device ~index ~name:full ~machine ~kind:Io ~c ~arch:""
       ~bus:None ~queues:[||] ~copy_engine:None ~completion:Rig_edge.Host
       ~waits:no_waits ~hang_ms:None ~maps_host:false ~alignment:1
-      ~cache_bytes:None ~host_addresses:false ~mapped_memory:false ~word:0
+      ~granules:[ (0, word_bytes) ] ~cache_bytes:None ~host_addresses:false
+      ~mapped_memory:false ~word:0
       ~word_region:None
       ~key:io_key ~software:false ~fault:[%extension_constructor No_fault]
       ~capability:None ~counters:[] ~budget:max_int ~opened

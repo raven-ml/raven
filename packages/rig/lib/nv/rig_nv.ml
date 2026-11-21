@@ -214,6 +214,7 @@ type 'm path = {
   gpu : gpu;
   budget : int;
   available : unit -> int;
+  granules : (int * int) list;
   cache_bytes : int option;
   doorbell : int;
   flush : int option;
@@ -539,6 +540,7 @@ type 'm dev = {
   self : int;
   arch : string;
   budget : int;
+  granules : (int * int) list;
   cache_bytes : int option;
   hang_ms : int option;
   maps_host : bool;
@@ -617,6 +619,7 @@ let facts (T d) =
     host_addresses = false;
     mapped = d.mapped;
     alignment = region_alignment;
+    granules = d.granules;
     cache_bytes = d.cache_bytes;
     counters = [];
     capability = Abi.declare d.capability;
@@ -1287,6 +1290,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
         self;
         arch = arch_of g.sm_version;
         budget = p.budget;
+        granules = p.granules;
         cache_bytes = p.cache_bytes;
         hang_ms = p.hang_ms;
         maps_host = Option.is_some p.map_host;

@@ -157,10 +157,11 @@ val token_link : token -> unit
 (** [token_link t] puts [t]'s record on its list now, as [t]'s collection
     would, which then puts nothing. It allocates nothing. *)
 
-val entry : ?access:access -> device -> backing -> int -> int -> entry
-(** [entry owner backing bytes st] is a new entry of [bytes] bytes of
-    [owner]'s memory, whose stamps are [st], mapped by no device. [access]
-    defaults to [Read_write]. *)
+val entry :
+  ?access:access -> room:int -> device -> backing -> int -> int -> entry
+(** [entry ~room owner backing bytes st] is a new entry of [bytes] bytes of
+    [owner]'s memory, which counts [room] bytes in its budget, whose stamps
+    are [st], mapped by no device. [access] defaults to [Read_write]. *)
 
 val no_entry : entry
 (** [no_entry] is the entry of host memory no device borrowed: no stamps,
@@ -184,7 +185,7 @@ val word : int
 
 val whole : int -> int
 (** [whole n] is [n] rounded up to a multiple of {!word}: the bytes rig asks
-    a driver for, and counts in a budget, for [n] bytes. *)
+    a driver for, and counts in the host's budget, for [n] bytes. *)
 
 val locate : region -> Rig_edge.location
 (** [locate r] is where [r] lies, as its driver states it. Raises
@@ -200,8 +201,8 @@ val allocated : device -> int
 val budget_device : ?memory:Rig_edge.memory -> device -> device
 (** [budget_device ~memory d] is {!Rig.charged}[ ~memory d]. *)
 
-val allocation : device -> int -> int
-(** [allocation d n] is {!Rig.allocation}[ d n]. *)
+val allocation : ?memory:Rig_edge.memory -> device -> int -> int
+(** [allocation ~memory d n] is {!Rig.allocation}[ ~memory d n]. *)
 
 val account : alloc -> device
 (** [account a] is the device in whose {!allocated} count [a]'s memory lies,

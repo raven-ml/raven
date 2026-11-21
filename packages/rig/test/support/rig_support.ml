@@ -203,6 +203,7 @@ module Driver = struct
     peers : bool;
     maps_host : bool;
     alignment : int;
+    granules : (int * int) list;
     cache_bytes : int option;
     counters : (string * int) list;
     budget : int;
@@ -306,6 +307,7 @@ module Driver = struct
       host_addresses = d.host_visible && not d.transport;
       mapped = d.makes_mapped;
       alignment = d.alignment;
+      granules = d.granules;
       cache_bytes = d.cache_bytes;
       counters = d.counters;
       capability = d.capability;
@@ -638,7 +640,7 @@ module Polled = struct
   let make ?(capacity = 1024) ?grows ?(copies = true)
       ?(host_visible = true) ?(mapped = true) ?(addresses = true)
       ?(transport = false) ?(peers = true) ?(maps_host = true)
-      ?(alignment = 4096) ?cache_bytes
+      ?(alignment = 4096) ?(granules = [ (0, 4) ]) ?cache_bytes
       ?(counters = []) ?(budget = 1 lsl 30) ?(memory = max_int)
       ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
@@ -665,6 +667,7 @@ module Polled = struct
         peers;
         maps_host;
         alignment;
+        granules;
         cache_bytes;
         counters;
         budget;
@@ -722,14 +725,14 @@ module Polled = struct
     }
 
   let open_ ?capacity ?grows ?copies ?host_visible ?mapped ?addresses
-      ?transport ?peers ?maps_host ?alignment ?cache_bytes ?budget ?memory
-      ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?timed
-      ?hang_ms ?bus ?arch name =
+      ?transport ?peers ?maps_host ?alignment ?granules ?cache_bytes ?budget
+      ?memory ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag
+      ?timed ?hang_ms ?bus ?arch name =
     let p =
       make ?capacity ?grows ?copies ?host_visible ?mapped ?addresses
-        ?transport ?peers ?maps_host ?alignment ?cache_bytes ?budget ?memory
-        ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?timed
-        ?hang_ms ?bus ?arch ()
+        ?transport ?peers ?maps_host ?alignment ?granules ?cache_bytes ?budget
+        ?memory ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag
+        ?timed ?hang_ms ?bus ?arch ()
     in
     match Rig.open_ (opener name p) with
     | Ok d -> (d, p)

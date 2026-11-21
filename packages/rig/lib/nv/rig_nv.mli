@@ -568,6 +568,9 @@ type 'm path = {
           still give, to any process, at the call: {!Rig.val-capacity}'s
           [free]. It counts as held what the device's memory holds. It
           raises {!Fault} where the path cannot read it. *)
+  granules : (int * int) list;
+      (** The units in which [alloc] takes the GPU's memory, [Gpu] and [Bar],
+          as {!Rig_edge.type-facts} states them. *)
   cache_bytes : int option;
       (** [Some n] with [n] the bytes of the GPU's L2 cache, its last level,
           as the RM states it, or [None] where the RM states none. *)

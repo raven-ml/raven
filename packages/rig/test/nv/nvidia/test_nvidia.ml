@@ -289,6 +289,35 @@ let capacity_counts_device () =
     ~than:(c.free - n) held.free;
   is_true ~msg:"freed" (Rig.Buffer.free b)
 
+(* The RM takes video memory in pages of 64 KiB below 2 MiB and of 2 MiB from
+   there: a buffer counts so in the device's allocated bytes, and the
+   capacity's free falls by as much. The GPU runs no other process's work
+   while the GPU lock is held. *)
+let counts_rm_pages () =
+  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  let d = require_ok ~pp:Format.pp_print_string (Rig.open_ (N.gpu 0)) in
+  Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
+  let kib = 1024 and mib = 1 lsl 20 in
+  let free () = (require_some ~msg:"capacity" (Rig.capacity d)).free in
+  List.iter
+    (fun (n, taken) ->
+      let msg = Printf.sprintf "%d bytes" n in
+      equal ~msg int taken (Rig.allocation d n);
+      Rig.free_cache d;
+      let before = free () and allocated = Rig.allocated d in
+      let b = Rig.Buffer.create d n in
+      let held = free () in
+      equal ~msg int taken (Rig.allocated d - allocated);
+      equal ~msg int taken (before - held);
+      ignore (Rig.Buffer.free b : bool))
+    [
+      (1, 64 * kib);
+      ((64 * kib) + 1, 128 * kib);
+      ((2 * mib) - (4 * kib), 2 * mib);
+      ((2 * mib) + 1, 4 * mib);
+      ((8 * mib) + 1, 10 * mib);
+    ]
+
 let () =
   exit
   @@ run "rig_nv_nvidia"
@@ -345,6 +374,8 @@ let () =
              test "a GPU's load is within its bounds" usage_bounds;
              test "a device's capacity is the RM's heap, less what it holds"
                capacity_counts_device;
+             test "a device counts video memory in the RM's pages"
+               counts_rm_pages;
              test "a negative GPU or window raises" (fun () ->
                  raises_match Exn.invalid_arg (fun () ->
                      N.usage ~window:1. (-1));

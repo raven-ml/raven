@@ -78,6 +78,7 @@ let path_of gpu : unit A.path =
     wgps = [| [| 1 |] |];
     budget = 1 lsl 30;
     available = None;
+    granules = [ (0, 4096) ];
     cache_bytes = None;
     alloc = (fun _ _ -> unused ());
     map_host = None;

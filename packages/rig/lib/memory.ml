@@ -247,7 +247,7 @@ let is_io_memory (e : entry) =
 
 let entry_ids = Atomic.make 0
 
-let entry ?(access = Read_write) owner backing bytes stamps =
+let entry ?(access = Read_write) ~room owner backing bytes stamps =
   {
     id = Atomic.fetch_and_add entry_ids 1;
     owner;
@@ -260,9 +260,10 @@ let entry ?(access = Read_write) owner backing bytes stamps =
     pages = Unasked;
     proxy = 0;
     reached = false;
+    room;
   }
 
-let no_entry = entry Dev.host (Kept Nothing) 0 0
+let no_entry = entry ~room:0 Dev.host (Kept Nothing) 0 0
 
 (* Claim words *)
 
@@ -450,17 +451,34 @@ let account (a : alloc) =
   | Device_budget | No_budget -> a.owner
 
 (* The bytes of rig's word, by which it orders memory (rig.mli's Order). *)
-let word = 4
+let word = Dev.word_bytes
 
 (* [n] rounded up to whole words: the bytes rig asks a driver for, so that
-   the memory of a buffer of [n] bytes runs on to whole words, and that its
-   budget counts. [alloc_entry] refuses an [n] within a word of [max_int]. *)
+   the memory of a buffer of [n] bytes runs on to whole words, and that the
+   host's budget counts. [alloc_entry] refuses an [n] within a word of
+   [max_int]. *)
 let whole n = (n + word - 1) land -word
+
+(* The unit of the last of [granules] from at most [n] bytes, a word if none
+   is. *)
+let rec unit_of n u = function
+  | (from, g) :: gs when from <= n -> unit_of n g gs
+  | _ -> u
+
+(* [granted d n] is the bytes [d]'s driver takes for a region of [n] bytes:
+   [n] in whole words, then in whole units of its granules ([Rig_edge.facts]).
+   A size within a unit of [max_int] takes [max_int], which no budget admits.
+   Its walk of the granules polls, so an entry keeps its count ([room]) for
+   the steps that must not. *)
+let granted (d : device) n =
+  let n = whole n in
+  let u = unit_of n word d.granules in
+  if n > max_int - u then max_int else (n + u - 1) land -u
 
 (* The device whose budget [d]'s memory of [kind] counts in, and the bytes a
    buffer of [n] bytes of it counts there: on the host, what the heap takes
-   ([host_buffer]); in a device's or the host's budget, whole words
-   ([new_counted]). *)
+   ([host_buffer]); in a device's, what its driver takes; in the host's,
+   whole words ([new_counted]). *)
 let budget_device ?(memory = Device) d =
   if d == Dev.host then d
   else
@@ -468,26 +486,35 @@ let budget_device ?(memory = Device) d =
     | Host_budget -> Dev.host
     | Device_budget | No_budget -> d
 
-let allocation d n =
-  if n < 0 then invalid_argf "Rig.allocation: %d bytes is negative" n;
-  if d == Dev.host then heap_footprint n else whole n
+(* The bytes a buffer of [n] bytes of [d]'s memory of [kind] counts in its
+   budget ([Rig.allocation]). *)
+let counts d kind n =
+  if d == Dev.host then heap_footprint n
+  else
+    match budget_of d kind with
+    | Host_budget -> whole n
+    | Device_budget | No_budget -> granted d n
 
-let give_room d budget n =
-  let n = whole n in
+let allocation ?(memory = Device) d n =
+  if n < 0 then invalid_argf "Rig.allocation: %d bytes is negative" n;
+  counts d memory n
+
+(* Gives back [room] bytes of the budget memory of [d] counts in. *)
+let give_room d budget room =
   match budget with
   | Device_budget ->
       let l = d.live in
       Lock.hold l.lock;
-      l.used <- l.used - n;
+      l.used <- l.used - room;
       Lock.release l.lock
-  | Host_budget -> heap_release n
+  | Host_budget -> heap_release room
   | No_budget -> ()
 
 (* Gives back the room taken for memory that was never made. *)
-let refuse_room d budget n =
+let refuse_room d budget room =
   match budget with
-  | Host_budget -> heap_refuse (whole n)
-  | Device_budget | No_budget -> give_room d budget n
+  | Host_budget -> heap_refuse room
+  | Device_budget | No_budget -> give_room d budget room
 
 (* Releases *)
 
@@ -567,7 +594,7 @@ let breaks d kind n (l : Rig_edge.location) =
 (* A new entry of [n] bytes of [d]'s memory of [kind], whose memory is not
    made yet ([make_memory]), and so lies nowhere. An io device's memory has no
    kind. *)
-let fresh_entry d (kind : memory_kind) n =
+let fresh_entry d (kind : memory_kind) n ~room =
   let backing =
     match d.kind with
     | Driver { m; h; rid } ->
@@ -580,7 +607,7 @@ let fresh_entry d (kind : memory_kind) n =
     | Io -> invalid_arg "Rig: an io device makes no memory"
     | Host -> invalid_arg "Rig: the host's memory has no driver"
   in
-  entry d backing n (stamps_new ())
+  entry ~room d backing n (stamps_new ())
 
 (* Whether [e]'s memory is made: a new entry's is once its driver's call
    returned it into the entry's record. *)
@@ -776,7 +803,7 @@ let give_back (e : entry) : Dev.given =
   | Given ->
       drop_stamps e;
       let budget = entry_budget e in
-      give_room d budget e.bytes;
+      give_room d budget e.room;
       if budget = Device_budget then note d;
       Given
   | Later -> waits d (Give e) Later
@@ -968,7 +995,7 @@ let[@poll error] put l (c : cached) (e : entry) w =
 (* Puts [e] in its owner's cache, for reuse. The owner's lock is held. *)
 let cache (e : entry) =
   let c = cache_room e in
-  put e.owner.live c e (whole e.bytes)
+  put e.owner.live c e e.room
 
 (* Takes the latest entry of [c], at [n], of [w] bytes, out of [l]'s
    cache. *)
@@ -982,7 +1009,7 @@ let[@poll error] unput l (c : cached) n w =
 let uncache l (c : cached) =
   let n = c.n - 1 in
   let e = c.entries.(n) in
-  unput l c n (whole e.bytes);
+  unput l c n e.room;
   e
 
 (* Puts [e] among [l]'s retiring memory at [n], its end. *)
@@ -1238,7 +1265,7 @@ let rec judged_from d lost =
       l.judged <- i + 1;
       judged_from d lost
   | Cached ->
-      recache l (cache_room e) e (whole e.bytes) i;
+      recache l (cache_room e) e e.room i;
       judged_from d lost
   | Freed -> true
 
@@ -1386,7 +1413,7 @@ let release_cache ?upto ~wait d =
       release_cache_if ~wait d (fun e ->
           owns e && !held > upto
           && begin
-            held := !held - whole e.bytes;
+            held := !held - e.room;
             true
           end)
 
@@ -1720,7 +1747,7 @@ let take_cached_key (l, k, r) =
   | c ->
       let n = c.n - 1 in
       let e = c.entries.(n) in
-      unput_into l c n (whole e.bytes) e r;
+      unput_into l c n e.room e r;
       e
   | exception Not_found -> no_entry
 
@@ -2022,34 +2049,34 @@ let of_entry d (e : entry) t =
    with nothing that polls between, for the handler. *)
 let new_counted d kind n ((r, _) as s) =
   let budget = budget_of d kind in
-  let room = whole n in
-  let taken = ref false and counted = ref false in
+  let room = ref 0 and taken = ref false and counted = ref false in
   if Dev.is_host d then no_entry
   else
     match
+      room := if budget = Device_budget then granted d n else whole n;
       (match budget with
       | Device_budget ->
           let l = d.live in
           Lock.hold l.lock;
-          if l.used + room <= d.budget then begin
-            l.used <- l.used + room;
+          if l.used + !room <= d.budget then begin
+            l.used <- l.used + !room;
             taken := true
           end;
           Lock.release l.lock
-      | Host_budget -> taken := heap_reserve room Dev.host.budget
+      | Host_budget -> taken := heap_reserve !room Dev.host.budget
       | No_budget -> taken := true);
       if not !taken then no_entry
       else begin
-        let e = fresh_entry d kind n in
+        let e = fresh_entry d kind n ~room:!room in
         r := e;
         make_memory d e;
         if budget = Host_budget && made_memory e then begin
-          heap_made room;
+          heap_made !room;
           counted := true
         end;
         if made_memory e then e
         else begin
-          refuse_room d budget n;
+          refuse_room d budget !room;
           taken := false;
           no_entry
         end
@@ -2062,8 +2089,8 @@ let new_counted d kind n ((r, _) as s) =
         let e = !r in
         if not !taken then ()
         else if e == no_entry || not (made_memory e) then
-          refuse_room d budget n
-        else if budget = Host_budget && not !counted then heap_made room;
+          refuse_room d budget !room
+        else if budget = Host_budget && not !counted then heap_made !room;
         let bt = Printexc.get_raw_backtrace () in
         let_go_try s;
         Printexc.raise_with_backtrace x bt
@@ -2102,7 +2129,7 @@ let alloc_entry d kind n home =
     | Host_budget -> Dev.host.budget
     | No_budget -> max_int
   in
-  if n > max_int - word || whole n > limit then
+  if n > max_int - word || counts d kind n > limit then
     raise (Dev.Out_of_memory (d, n));
   drain d;
   laddered d kind n home
@@ -2203,7 +2230,7 @@ let[@poll error] set_entry (a : alloc) e t =
 let make_entry (a : alloc) =
   if a.entry == no_entry then begin
     let d = a.owner in
-    let e = entry d (Kept a.keep) a.size (stamps_new ()) in
+    let e = entry ~room:(whole a.size) d (Kept a.keep) a.size (stamps_new ()) in
     let t = token d.live.release (Memory (ref e)) 0 max_int (-1) in
     if t == no_token then begin
       stamps_unref e.stamps;
@@ -2650,7 +2677,7 @@ let prefetch d (m : memory) ~at ~len =
 let of_io d r ~access n =
   if Dev.is_lost d then Dev.raise_lost d;
   drain d;
-  let e = entry ~access d (Io_memory r) n (stamps_new ()) in
+  let e = entry ~access ~room:(whole n) d (Io_memory r) n (stamps_new ()) in
   let m = make d e in
   m.alloc.token <- token d.live.release (Memory (ref e)) n max_int (-1);
   if m.alloc.token == no_token then begin

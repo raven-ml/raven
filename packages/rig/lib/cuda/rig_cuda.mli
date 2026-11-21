@@ -173,6 +173,7 @@ val capability : t -> Rig_cuda_abi.t
       | [maps_host]      | [CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED]    |
       | [host_addresses] | [false]                                          |
       | [alignment]      | [256], as CUDA aligns every allocation           |
+      | [granules]       | [[(0, 256); (1048577, 2097152)]], measured below |
       | [cache_bytes]    | [CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE], [None] if 0 |
       | [capability]     | {!Rig_cuda_abi.t} ({!val-capability})            |
       | [word]           | The word [make] was given, registered            |
@@ -186,11 +187,16 @@ val capability : t -> Rig_cuda_abi.t
     on the device that is free according to the OS": the total less every
     process's allocations. CUDA states that it "is not guaranteed to be able
     to allocate all of" it, and states no granularity for an allocation.
-    Measured on an RTX 5000 Ada, the free falls in whole blocks of 2 MiB,
-    which small allocations share: 1 byte, 4 KiB and 64 KiB each take
-    2 MiB, 64 allocations of one byte take 2 MiB together, 2 MiB and one
-    byte take 4 MiB, and 16 MiB takes 16 MiB. The total there is
-    33,881,587,712 bytes, as [cuDeviceTotalMem] also states.
+    Measured on an RTX 5000 Ada, the free falls in whole blocks of 2 MiB.
+    Allocations of up to 1 MiB share them: 1 byte, 4 KiB and 64 KiB each
+    take 2 MiB, 64 allocations of one byte take 2 MiB together, as do 32
+    of 64 KiB or two of 1 MiB. A larger one takes whole blocks of its own:
+    1 MiB and 4 KiB takes 2 MiB, 2 MiB and one byte 4 MiB, and 8 MiB and
+    one byte 10 MiB. The device's [granules] ({!Rig.granules}) state the
+    blocks of a larger allocation, and for a smaller one its bytes in
+    multiples of [alignment], the least it takes of a block it shares. The
+    total there is 33,881,587,712 bytes, as [cuDeviceTotalMem] also
+    states.
 
     [arch] is ["sm_89"] for compute capability 8.9. ["COMPUTE:0"] runs
     [Fill], [Copy] and [Launch], and ["COPY:0"] runs [Fill] and [Copy]. The
