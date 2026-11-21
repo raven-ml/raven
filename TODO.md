@@ -72,9 +72,12 @@ under _plans/perf-campaign/ unless it names another directory of _plans/.
 - The exhaustive sweep of float32 `log` and `asinh` against nx_kinds.h's
   bits on nx_cuda and nx_amd is owed before any accuracy promise names a
   GPU
-- No tree can check formatting: the only ocamlformat on fudge (0.29.0)
-  rejects main's own files and no dev-tools lock pins the repository's
-  formatter
+- main differs from its pinned ocamlformat (0.29.0) in 1,837 files, hand
+  wrapping since September's style commits; one `dune fmt` makes the tree
+  clean (+117,607/-102,814). Before it: ignore entries or generators for the
+  21 generated files it rewrites, every runtest (74 files use `__LOC__`), a
+  moment with no branch in flight, then `.git-blame-ignore-revs`, a CI step
+  and AGENTS.md's interim sentence dropped (_plans/todo-sweep/n8-fmt/)
 - nx's bench rows `placed/*` and `placed/matmul-f32-256x4096x256-k-split4`
   (bench_nx.ml:337-367; nx.thumper:261-268) record exact allocated words
   that vary from run to run, so `check --quick` can fail them on an
