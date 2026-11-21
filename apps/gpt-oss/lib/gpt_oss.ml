@@ -429,11 +429,23 @@ let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
          | Q8_0 ->
              Some (Quant { w = quantize (place Column ~axis:0 w); b = None })
          | Unpacked ->
-             (* A copy in [inputs; outputs] memory, seen through a
+             (* On a GPU, a copy in [inputs; outputs] memory, seen through a
                 transpose, which tolk's bfloat16 matrix-vector kernel reads
-                faster than the file's [outputs; inputs]. *)
-             let w = place Column ~axis:1 (Nx.matrix_transpose w) in
-             let w = Nx.matrix_transpose (Rune.jit' Nx.copy w) in
+                faster than the file's [outputs; inputs]. The host's reads
+                the file's faster: gpt-oss-20b's head took 42.6-43.3 ms a
+                token there against 77.0-79.4 ms through the copy, which
+                took 0.9 s to make (fudge, two P-cores). *)
+             let at = placement Column ~axis:0 in
+             let host =
+               List.for_all Rig.runs_on_host
+                 (Nx.Devices.to_list (Nx.Placement.devices at))
+             in
+             let w =
+               if host then Nx.place at w
+               else
+                 let w = place Column ~axis:1 (Nx.matrix_transpose w) in
+                 Nx.matrix_transpose (Rune.jit' Nx.copy w)
+             in
              Some (Float { Linear.w = w; b = None }));
   }
 
