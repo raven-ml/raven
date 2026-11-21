@@ -3180,15 +3180,8 @@ let tile_outputs_bound =
         (K.reduceops s))
 
 (* A copy stores a value at its type and its reader loads it there: an entry
-   a byte of both. On AVX2 a float32 copy so pays past a reuse of 512. A
-   launch of its own costs 2.7 million entries: more than a copy of a row of
-   2880 values read by 5120 outputs saves on AVX2, less than 57 rows'. *)
+   a byte of both. On AVX2 a float32 copy so pays past a reuse of 512. *)
 let copy_entries_cases =
-  let saved rows =
-    let outputs = Heuristic.tile_outputs (renderer "avx2") Dtype.Float32 in
-    rows * 2880
-    * ((5120 / Option.get outputs) - Heuristic.copy_entries Dtype.Float32)
-  in
   group "copy_entries"
     [
       cases "counts an entry a byte a copy stores and loads" ~id:fst
@@ -3203,11 +3196,6 @@ let copy_entries_cases =
             (Option.map
                (fun outputs -> Heuristic.copy_entries Dtype.Float32 * outputs)
                (Heuristic.tile_outputs (renderer "avx2") Dtype.Float32)));
-      test "a launch costs 2.7 million entries" (fun () ->
-          equal int 2_700_000 Heuristic.launch_entries);
-      test "on AVX2 a launch outweighs one row's copy, not 57 rows'" (fun () ->
-          at_most int ~than:Heuristic.launch_entries (saved 1);
-          at_most int ~than:(saved 57) Heuristic.launch_entries);
     ]
 
 (* The times [o] decodes each code on the host: the product of its output

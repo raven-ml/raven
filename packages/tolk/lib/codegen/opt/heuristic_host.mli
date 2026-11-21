@@ -74,10 +74,6 @@ val copy_entries : Dtype.t -> int
 (** [copy_entries dt] is the most entries of a value into a host tile's lanes
     that a copy of the value stored at [dt] costs. *)
 
-val launch_entries : int
-(** [launch_entries] is the entries into host tiles' lanes that the launch of
-    a kernel of its own costs. *)
-
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 (** [held_registers k file] is the registers of [file] that [k]'s reduces'
     accumulators take. *)

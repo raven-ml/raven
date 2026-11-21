@@ -2092,11 +2092,9 @@ let projection = Nx.Pattern.v "x i, o i -> x o | i"
 (* gpt-oss's query projection over a prompt of 512 tokens, bfloat16 rows
    [512; 2880] by bfloat16 weights [4096; 2880]. A row's element enters 4096
    outputs, past the 8 entries a copy costs (Tolk.Heuristic.copy_entries)
-   times 64, and more than a weight's 512. The rows' copy, of an argument,
-   is a kernel of its own, whose launch the tiles' saving repays many times
-   (Tolk.Heuristic.launch_entries): the rows are stored once at float32 by a
-   kernel that sums nothing, and the product reads them there, where it
-   would convert them in each tile. *)
+   times 64, and more than a weight's 512: the rows, an argument, are stored
+   once at float32 by a kernel of their own that sums nothing, and the
+   product reads them there, where it would convert them in each tile. *)
 let rows_entered_once () =
   let m, k, n = (512, 2880, 4096) in
   let x = Nx.full Nx.bfloat16 [| m; k |] 0.5 in
@@ -2126,10 +2124,9 @@ let rows_entered_once () =
 
 (* A decode step's key, query and value projection of one row of an
    argument, bfloat16 [1; 2880] by bfloat16 weights [5120; 2880]. A row's
-   element enters 5120 outputs, past 512, but the rows' copy would be a
-   kernel of its own, and the tiles' saving, 5120 / 64 - 8 entries for each
-   of 2880 elements, about 0.2 million, does not repay its launch's 2.7
-   million: the product converts the row in its tile, in one kernel. *)
+   element enters 5120 outputs, past 512, but the weights enter each output
+   once, unscaled, so the product streams them: it converts the row in its
+   tile, in one kernel. *)
 let argument_row_in_tile () =
   let x = Nx.full Nx.bfloat16 [| 1; 2880 |] 0.5 in
   let w = Nx.full Nx.bfloat16 [| 5120; 2880 |] 0.25 in
@@ -2143,6 +2140,37 @@ let argument_row_in_tile () =
       is_false ~msg:"the product reads float32 rows"
         (holds Tolk.Dtype.Float32 2880 product)
   | ks -> failf "%d kernels" (List.length ks)
+
+(* 64 rows of an argument, bfloat16 [64; 1024], by MXFP4 weights [1024;
+   1024], kaun's dense product of a prompt: a row's element enters 1024
+   outputs, past 512, and the weights, decoded in the tile, are not
+   streamed. The rows are stored once at float32 by a kernel of their own,
+   and the product reads them there. *)
+let argument_rows_decoded () =
+  let m, n = (64, 1024) in
+  let x = Nx.full Nx.bfloat16 [| m; n |] 0.5 in
+  let w =
+    Nx_quant.mxfp4
+      ~scales:(Nx.full Nx.uint8 [| n; n / 32 |] 127)
+      (Nx.full Nx.uint8 [| n; n / 2 |] 0x35)
+  in
+  let kernels =
+    kernel_nodes (Lazy.force avx2) (fun () -> Nx_quant.apply w x)
+  in
+  let rows dt = holds dt (m * n) in
+  is_true ~msg:"a kernel stores the rows at float32"
+    (List.exists
+       (fun nodes ->
+         (not (sums nodes))
+         && rows Tolk.Dtype.Bfloat16 nodes
+         && rows Tolk.Dtype.Float32 nodes)
+       kernels);
+  let codes nodes = param_sizes Tolk.Dtype.Uint8 nodes <> [] && sums nodes in
+  match List.filter codes kernels with
+  | [ product ] ->
+      is_true ~msg:"the product reads float32 rows"
+        (rows Tolk.Dtype.Float32 product)
+  | ps -> failf "%d products" (List.length ps)
 
 (* A decode step's key, query and value projection of a row that an RMS norm
    computes, [1; 2880] by bfloat16 weights [5120; 2880]. The weights enter
@@ -2172,8 +2200,7 @@ let normed_row_streamed () =
 (* A decode step's Q8_0 projection of a row that an RMS norm computes,
    [1; 2880] by Q8_0 codes of [4096; 2880]. The norm's kernel, which runs
    anyway, stores the row at float32 in place of bfloat16, reading the row
-   and its scale, so the copy costs no launch, and the product reads the
-   float32 row. *)
+   and its scale, and the product reads the float32 row. *)
 let normed_row_stored () =
   let k = 2880 in
   let x = Nx.full Nx.bfloat16 [| 1; k |] 0.5 in
@@ -3259,6 +3286,10 @@ let () =
                    "a bfloat16 product of one normed row converts it in the \
                     tile, the weights streamed"
                    normed_row_streamed;
+                 test
+                   "64 rows of an argument by MXFP4 weights are stored once \
+                    at float32"
+                   argument_rows_decoded;
                  test
                    "a Q8_0 product of one normed row has the norm store it \
                     at float32"

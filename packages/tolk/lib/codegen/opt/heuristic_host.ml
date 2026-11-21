@@ -640,15 +640,4 @@ let tile_outputs (ren : Renderer.t) dt =
    byte, 8 for float32. *)
 let copy_entries dt = 2 * Dtype.itemsize dt
 
-(* A kernel the host launches of its own costs about 100 µs before its work,
-   derived, not timed: on fudge (Core Ultra 5 235, two P-cores, under a
-   timing lock), a copy of their row in a kernel of its own took
-   gpt-oss-20b's bfloat16 projections of one row, 2880 by 5120 and 4096 by
-   2880, from 1.065 to 1.141 ms and from 0.912 to 0.966 ms a call, where its
-   tiles' saving was modelled at about 48 µs from Arrow Lake's port counts:
-   a launch of 102 to 124 µs, the least taken. At the 27 GB/s two such
-   cores stream, an entry a byte ([copy_entries]), 100 µs is 2.7 million
-   entries. *)
-let launch_entries = 2_700_000
-
 let held_registers k file = held k file

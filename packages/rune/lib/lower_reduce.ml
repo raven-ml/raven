@@ -1108,23 +1108,26 @@ let stored x =
    bytes each time, and is not stored. A scaled operand is decoded in the
    tile, which tolk stages once a tile of rows ({!Tolk.Stage.decodes}).
 
-   A copy that no kernel running anyway makes, of an argument read in place
-   or of the routed rows at their slots, is a kernel of its own, whose launch
-   the tiles' saving repays too ({!Tolk.Heuristic.launch_entries}): copied,
-   gpt-oss-20b's bfloat16 projections of one row of an argument took 54 to
-   76 µs a call more. A computed operand, as a norm's output, is copied by
-   the kernel that computes it, which stores it at the accumulator's type in
-   place of its own type.
+   A computed operand, as a norm's output, is copied by the kernel that
+   computes it, which stores it at the accumulator's type in place of its own
+   type; an argument read in place, or the routed rows at their slots, by a
+   kernel of its own. Either way the copy costs its bytes: stored by a kernel
+   of its own, the 64 rows of an argument of a product by MXFP4 weights of
+   1024 by 1024 took it from 1.17 to 0.77 ms a call, the row of a product of
+   one row by Q8_0 weights of 4096 by 2880 from 0.99 to 0.89 (fudge, two
+   P-cores, locked).
 
-   Where the other operand enters each output once and carries no scale, as
-   a decode step's row of a norm by bfloat16 weights, the product streams it
-   and its tiles' entries of the copy's operand hide behind that stream: the
-   copy only adds its bytes. With its normed row stored at float32,
-   gpt-oss-20b's key, query and value projection of one row took 1.15-1.21
-   ms a call against 1.11-1.13 with the row converted in the tile, and its
-   head 42.0-42.2 ms against 40.5 (fudge, two P-cores, locked); its decode
-   step at 512 took up to 1.8% longer. Against decoded weights, whose tile
-   decodes them, the copy pays: Q8_0's decode step took 2% less.
+   The cost that does appear is the copy's where the other operand enters
+   each output once and carries no scale, as a decode step's row by bfloat16
+   weights: the product streams those weights, its tiles' entries of the
+   copy's operand hide behind that stream, and the copy only adds its bytes.
+   Stored at float32, the row of gpt-oss-20b's key, query and value
+   projection of one row took 1.15-1.21 ms a call against 1.11-1.13 with the
+   row converted in the tile, whether a norm's kernel or one of its own
+   stored it, and its head 42.0-42.2 ms against 40.5 (fudge, two P-cores,
+   locked); its decode step at 512 took up to 1.8% longer. Against decoded
+   weights, whose tile decodes them, the copy pays: Q8_0's decode step took
+   2% less.
 
    tolk's schedule states the general rule (its D106): a value a reduction
    reads again at outputs its index does not count stays stored, where it
@@ -1137,28 +1140,16 @@ let stored x =
    or reads them per thread. So the host's lowering, which knows its target,
    stores the operand before the schedule. *)
 
-(* Whether [u] reads storage through movements and conversions alone, as an
-   argument passed in: no kernel computes it. *)
-let rec loaded u =
-  let u = Ops.base u in
-  match Ops.op u with
-  | Op.Param | Op.Buffer | Op.After | Op.Stage -> true
-  | Op.Cast | Op.Bitcast -> loaded (Ops.nth u 0)
-  | _ -> false
-
 (* [entered_once ~renderer ~acc ~batch ~contracting ~gathered a b] is the
    operand of a product, if either, that the host stores entered at [acc]
    once a call: of [a] and [b], laid as {!sum} pairs them, the one of more
    reuse, [a] on a tie, where rune computes it in the product's tile, by
    {!entered}'s conversion or, for [a] where [gathered], the routed rows'
-   gather at their slots, where it carries no scale, and where the entries
-   its tiles save, its reuse over {!Tolk.Heuristic.tile_outputs} past
-   {!Tolk.Heuristic.copy_entries} for each of its elements, exceed
-   {!Tolk.Heuristic.launch_entries} where its copy is a kernel of its own,
-   as a gather's or a copy of storage read in place is, and zero elsewhere,
-   a reuse past 512 for float32 on AVX2; none where the other operand enters
-   each output once unscaled. Only a float accumulator's operand is stored,
-   the case measured. *)
+   gather at their slots, where it carries no scale, and where its reuse
+   passes {!Tolk.Heuristic.copy_entries} times
+   {!Tolk.Heuristic.tile_outputs}, 512 for float32 on AVX2; none where the
+   other operand enters each output once unscaled. Only a float
+   accumulator's operand is stored, the case measured. *)
 let entered_once ~renderer ~acc ~batch ~contracting ~gathered a b =
   let t = Arith.dtype acc in
   let free_extents x side =
@@ -1172,17 +1163,10 @@ let entered_once ~renderer ~acc ~batch ~contracting ~gathered a b =
   in
   let streamed = other_reuse = 1 && Option.is_none other.scale in
   let computed = gathered || not (Dtype.equal (Arith.dtype x.dtype) t) in
-  let part = List.hd (Arith.parts x.dtype x.node) in
   let pays () =
     match Tolk.Heuristic.tile_outputs (Lazy.force renderer) t with
     | None -> false
-    | Some outputs ->
-        let elements = List.fold_left ( * ) 1 (extents part) in
-        let launch =
-          if gathered || loaded part then Tolk.Heuristic.launch_entries else 0
-        in
-        elements * (reuse - (outputs * Tolk.Heuristic.copy_entries t))
-        > outputs * launch
+    | Some outputs -> reuse > outputs * Tolk.Heuristic.copy_entries t
   in
   if
     Dtype.is_float t && Option.is_none x.scale && computed && (not streamed)

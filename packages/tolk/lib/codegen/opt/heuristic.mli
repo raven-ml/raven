@@ -446,16 +446,8 @@ val copy_entries : Dtype.t -> int
     it; those take at least the time the host's memory streams a byte to a
     core. So a copy pays where the tiles would enter each value more than
     [copy_entries dt] times: a reuse past [copy_entries dt] times
-    {!tile_outputs}, where the copy joins a kernel that runs anyway. *)
-
-val launch_entries : int
-(** [launch_entries] is the entries into host tiles' lanes that the launch
-    of a kernel of its own costs: about 100 µs on two P-cores of an Arrow
-    Lake part, in which their memory streams 2.7 million bytes, an entry a
-    byte as {!copy_entries} counts them. A copy that no kernel running anyway
-    can make, such as a copy of an argument, is such a kernel: it pays where
-    the entries the tiles save, past its {!copy_entries} a value, exceed
-    this. *)
+    {!tile_outputs}, whether the copy joins a kernel that runs anyway or
+    runs as a kernel of its own. *)
 
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 (** [held_registers k file] is the registers of [file] that [k]'s reduces'
