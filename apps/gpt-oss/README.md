@@ -7,10 +7,10 @@ through the harmony format. The decode step runs compiled over the devices
 `--devices` names, the host by default, expert-parallel over several, or
 eagerly on the host with `--eager`.
 
-On an NVIDIA RTX 5000 Ada, raven decodes gpt-oss-20b at 123 tokens a second,
-as vLLM does, and at 163 packed as llama.cpp packs it, against llama.cpp's 169;
-it prefills 512 tokens at 12,090 a second. [PERFORMANCE.md](PERFORMANCE.md)
-has every number and how to reproduce it.
+On an NVIDIA RTX 5000 Ada, raven decodes gpt-oss-20b at 125 tokens a second,
+against vLLM's 122, and at 166 packed as llama.cpp packs it (172 through
+NV), against llama.cpp's 169; it prefills 512 tokens at 12,020 a second.
+[PERFORMANCE.md](PERFORMANCE.md) has every number and how to reproduce it.
 
 ```bash
 dune exec apps/gpt-oss/bin/main.exe -- --prompt "What is the capital of France?"
