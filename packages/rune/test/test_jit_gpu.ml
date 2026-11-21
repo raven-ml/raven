@@ -867,6 +867,32 @@ let top_k c =
   equal ~msg:"positions" codes_t (codes positions) (codes (host positions'));
   equal ~msg:"values" codes_t (raw values) (raw (host values'))
 
+(* Nx.nan_to_num compiled on the GPU gives the host's eager bits at each float
+   dtype the GPU's kernels have and at complex64: NaN to 0, the infinities to
+   the dtype's ends, a signed zero kept, and a float32 subnormal where the GPU
+   keeps subnormals. *)
+let test_nan_to_num () =
+  let d, (module S) = on_gpu () in
+  let tiny = if flushes d then 0.25 else 0x1p-140 in
+  let xs = [| Float.nan; infinity; -.infinity; -0.; tiny; 1.5; -3. |] in
+  let at (type v s) (dt : (v, s) Nx.dtype) (x : (v, s, Nx.host) Nx.t) =
+    let f x = Nx.nan_to_num ~posinf:2. x in
+    let y = Rune.jit' f (Nx.place S.on x) in
+    equal ~msg:(Nx.Dtype.name dt) codes_t
+      (codes (f x))
+      (codes (Nx.place Nx.Host.on y))
+  in
+  let floats (type s) (dt : (float, s) Nx.dtype) =
+    at dt (Nx.cast dt (Nx.create Nx.float64 [| 7 |] xs))
+  in
+  floats Nx.float32;
+  floats Nx.float16;
+  floats Nx.bfloat16;
+  if has_float64 d then floats Nx.float64;
+  let part = Nx.create Nx.float32 [| 7 |] in
+  let ys = Array.init 7 (fun i -> xs.((i + 3) mod 7)) in
+  at Nx.complex64 (Nx.complex Nx.complex64 ~re:(part xs) ~im:(part ys))
+
 (* A stack of 64 rows of 64, each computed on the GPU, compiles to the host's
    eager bits. Doubling is exact, a [-0.] kept. *)
 let test_stack () =
@@ -3531,6 +3557,7 @@ let () =
                   tanh; asin; acos; atan; atan2; erf; pow; mod_;
                 ]);
          group "clamped operands" (List.map clamped_law clamped);
+         test "nan_to_num compiles to eager's bits" test_nan_to_num;
          group "complex kinds" (List.concat_map complex_ported complex_kinds);
          group "composed functions" (List.concat_map composed_law composed);
          group "draws"
