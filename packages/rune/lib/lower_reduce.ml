@@ -435,11 +435,21 @@ let scan r axis ~carry ~src dt x =
    the products; tolk lays out the reduce of a product itself. A complex product
    is [(ar br - ai bi) + i (ar bi + ai br)].
 
-   For the bound in [lower_reduce.mli], tolk may fuse a product into the sum
-   that takes it, and an element times its scale rounds once, so a float result
-   takes [K + 1 + s] roundings, each within [2u] where a matrix unit truncates
-   its sums. A complex part takes two products and a difference or a sum per
-   term, so [γ(K + 2)]. *)
+   For the bound in [lower_reduce.mli]: before the sum, a product rounds once,
+   or not at all where tolk fuses it into the addition that takes it or where a
+   matrix unit multiplies narrow operands; a scale rounds its element or its
+   partial sum once; and a complex part's product rounds once more in the
+   difference or sum with its pair. In any association a sum of [K] terms passes
+   each through at most [K - 1] inexact additions, since an addition is exact
+   where one side holds no term, and off a matrix unit, by the blocks [β]
+   counts, through at most [256 + ⌈K / 128⌉]: [β]'s [5/4] pays for a matrix
+   unit's truncations. So off a matrix unit a term rounds at most [K + 1 + s]
+   times for [K] up to 256 and [258 + ⌈K / 128⌉ + s] past it, within [β(K) + s]
+   for every [K] of a sum in blocks; a single running sum's are rune.mli's
+   single chain's. On a matrix unit of narrow operands a real product is exact
+   and rounds only in the sum and its scale, within [β(K) + s] too; one of
+   float32 operands, as Metal's, may round it once more. A complex accumulator
+   never takes a matrix unit. *)
 
 type scale = Exponent of Ops.t | Value of D.any * Ops.t
 type operand = { dtype : D.any; node : Ops.t; scale : scale option }

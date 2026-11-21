@@ -1726,8 +1726,8 @@ val jit :
       Nx.cumsum            γ(n - 1) Σ|x|
       Nx.prod, Nx.cumprod  relative γ(n - 1)
       Nx.matmul, ...       Nx.contract's
-        complex real       u|r| + (1 + u) γ(β + 2) Σ(|ar br| + |ai bi|)
-        complex imaginary  u|r| + (1 + u) γ(β + 2) Σ(|ar bi| + |ai br|)
+        complex real       u|r| + (1 + u) γ(β) Σ(|ar br| + |ai bi|)
+        complex imaginary  u|r| + (1 + u) γ(β) Σ(|ar bi| + |ai br|)
       Nx.scatter by Add    γ(n) (|x| + Σ|ui|)
       Nx.combine_patches   γ(n - 1) Σ|x|
       Nx.logsumexp r       (1.37 β + 2E + 1 + (2L + 1) ln n) u + u|r|
@@ -1740,11 +1740,13 @@ val jit :
     v}
 
     A cumulative output's [n] counts the terms up to it, a contraction's its
-    products. A real contraction ({!Nx.matmul}, {!Nx.dot}, {!Nx.einsum},
-    {!Nx.contract}) holds {!Nx.contract}'s bound, and each part of a complex
-    one the bound of its row. A scatter adds [n] updates [ui] to [x]. [E] and
-    [L] are the ulp bounds of {!Nx.exp} and {!Nx.log}, an exact function's
-    that of its [Nx] doc,
+    products, a complex one's its complex products. A real contraction
+    ({!Nx.matmul}, {!Nx.dot}, {!Nx.einsum}, {!Nx.contract}) holds
+    {!Nx.contract}'s bound, with [β(K) + 1] for [β(K)] on a tensor core of
+    [float32] operands, as Apple's GPUs have, and each part of a complex one
+    the bound of its row, which implies {!Nx.contract}'s. A scatter adds
+    [n] updates [ui] to [x]. [E] and [L] are the ulp bounds of {!Nx.exp} and
+    {!Nx.log}, an exact function's that of its [Nx] doc,
     [D = max 0 (2⌈log₂ n⌉ - 1)], [B = (β + 2) u M] for [M] the mean of the
     terms' magnitudes. A part [r] of a complex result is that part with
     [init]. {!Nx.logcumsumexp}'s bound needs [n] exact in the

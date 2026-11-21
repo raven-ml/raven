@@ -545,6 +545,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` states each part of a compiled complex contraction within
+  `γ(β(K))` of its products' magnitudes, which implies `Nx.contract`'s bound
+  at every `K`; it stated `γ(β(K) + 2)`. A real contraction on a tensor core
+  of `float32` operands, as Apple's GPUs have, is within `Nx.contract`'s bound
+  with `β(K) + 1` for `β(K)`.
 - A compiled `Nx.scatter` of integers by `Min` or `Max` on a GPU gives the
   extreme where about 100 or more updates land on one element. It could give
   `0`: each run of updates took its first update's extreme with `0`.

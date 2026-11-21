@@ -1774,11 +1774,11 @@ let subnormal (D.Any dt) =
   | _ -> Float.ldexp 1. (-149)
 
 (* Integers give eager's bits. A float result of [K] contracted terms is within
-   [γ(β(K) + 1 + s) (|init| + Σ|a·b|)] of the exact one on each side, [s] its
+   [γ(β(K) + s) (|init| + Σ|a·b|)] of the exact one on each side, [s] its
    scaled operands and [β(K) = ⌈5 min(K, 256) / 4⌉ + ⌈K / 128⌉] the kernel
-   contract's, a complex result's part within [γ(β(2K) + 2)] of that part's
-   magnitudes, as a kernel library sums a part's [2K] terms, and each of its
-   roundings errs by a subnormal step more where
+   contract's, a complex result's part within [γ(β(K))] of that part's
+   magnitudes compiled and [γ(β(2K))] eager, as a kernel library sums a part's
+   [2K] terms, and each of its roundings errs by a subnormal step more where
    it underflows. With an init, a zero result's sign follows the order of
    summation, which the bound leaves open: [+0] added last, or a [-0] init
    first; so does that of a result with a nonzero product, by whether tolk fuses
@@ -1792,10 +1792,11 @@ let contract_check c =
       let s = Bool.to_int (c.sa <> None) + Bool.to_int (c.sb <> None) in
       let complex = D.is D.Complex dt in
       let beta n = ((5 * min n 256) + 3) / 4 + ((n + 127) / 128) in
-      let depth = s + if complex then beta (2 * k) + 2 else beta k + 1 in
+      let compiled = s + beta k in
+      let eager = s + beta (if complex then 2 * k else k) in
       let u = carrier_roundoff c.acc in
-      let g = gamma u depth in
-      let under = 2. *. Float.of_int (depth + 1) *. subnormal c.acc in
+      let g = gamma u compiled +. gamma u eager in
+      let under = 2. *. Float.of_int (eager + 1) *. subnormal c.acc in
       let bits = part_bits dt and round = rounding_of dt in
       let products = nonzero_products c a b in
       let check (e, l) mags =
@@ -1805,7 +1806,7 @@ let contract_check c =
             near
               ~zeros:(c.init = None && products.(o) = 0.)
               ~bits
-              ~bound:((2. *. g *. mags.(o)) +. under +. round e l.(o))
+              ~bound:((g *. mags.(o)) +. under +. round e l.(o))
               e l.(o))
           e
       in

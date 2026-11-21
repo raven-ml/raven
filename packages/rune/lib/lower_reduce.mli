@@ -138,13 +138,16 @@ val scan :
     narrow operands.
 
     A float [acc]'s result [r] of [K] products is within
-    [u|r| + (1 + u) γ(β(K) + 1 + s) Σ|a||b|] of the exact [r], where [s] is
-    the number of scaled operands, and the [u|r|] term is [0] without [init]:
-    {!Nx.contract}'s bound with [β(K) + 1 + s] for [β(K)]. A complex
-    [acc]'s real part is within
-    [u|r| + (1 + u) γ(β(K) + 2) Σ(|ar br| + |ai bi|)] of the exact one, and
-    its imaginary part within
-    [u|r| + (1 + u) γ(β(K) + 2) Σ(|ar bi| + |ai br|)], [r] that part. *)
+    [u|r| + (1 + u) γ(β(K) + s) Σ|a||b|] of the exact [r], where [s] is the
+    number of scaled operands, and the [u|r|] term is [0] without [init]:
+    {!Nx.contract}'s bound where [s] is [0]. On a tensor core of [float32]
+    operands, as Apple's GPUs have, a product may round as well as the sum, and
+    [β(K) + 1 + s] stands in place of [β(K) + s]. A complex [acc]'s real part is
+    within [u|r| + (1 + u) γ(β(K)) Σ(|ar br| + |ai bi|)] of the exact one, and
+    its imaginary part within [u|r| + (1 + u) γ(β(K)) Σ(|ar bi| + |ai br|)], [r]
+    that part. Since
+    [(|ar br| + |ai bi|){^2} + (|ar bi| + |ai br|){^2} <= 2 |a|{^2} |b|{^2}], a
+    complex result is within {!Nx.contract}'s bound in modulus. *)
 
 (** The type for a contraction operand's block scale ({!Nx_kernel.type-scale}):
     the node of an array of its rank whose extents divide the operand's. *)
