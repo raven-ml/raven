@@ -2122,7 +2122,7 @@ let hand_coded_with ~core_threads k =
 let hand_coded_optimizations k =
   hand_coded_with ~core_threads:(K.ren k).core_threads k
 
-let cores (ren : Renderer.t) =
+let taken_cores (ren : Renderer.t) =
   (* A selected core the target lacks is none, as {!Opt.Tc} refuses it. *)
   let cores =
     match setting Setting.tc_select with
@@ -2134,13 +2134,18 @@ let cores (ren : Renderer.t) =
   if setting Setting.use_tc = 1 then List.filter (Renderer.takes_core ren) cores
   else []
 
+type cores = { tensor : Tc.t list; at_once : bool }
+
+let cores (ren : Renderer.t) =
+  { tensor = taken_cores ren; at_once = ren.has_local }
+
 (* The cores of [ren] that {!Opt.Tc} takes for a contraction of [dtype_in]
    operands accumulated in [dtype_out], whatever its extents. *)
 let cores_of ren ~dtype_in ~dtype_out =
   List.filter
     (fun (tc : Tc.t) ->
       Dtype.equal tc.dtype_in dtype_in && Dtype.equal tc.dtype_out dtype_out)
-    (cores ren)
+    (taken_cores ren)
 
 (* Whether a core comes before a stream of a contraction of two factors laid
    out along the reduce, the first of [rows] and the second of [outputs] free,

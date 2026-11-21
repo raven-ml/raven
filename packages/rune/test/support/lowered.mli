@@ -7,7 +7,7 @@
 
 val run :
   ?local:bool ->
-  ?cores:(string * Tolk.Tc.t list) list ->
+  ?cores:(string * Tolk.Heuristic.cores) list ->
   (unit -> ('v, 's, 'd) Nx.t) ->
   'v array
 (** [run f] is the elements, in C order, of [f ()] computed by lowering each
@@ -18,12 +18,12 @@ val run :
     binds each argument and capture once. [local] (default [true]) is the
     lowering's [local]: with [~local:false] it lowers as for a device whose
     work is not this process's code, though the graph still runs on the
-    host. [cores] are the tensor
-    cores the schedule takes each device to have
+    host. [cores] are what the schedule takes each device's kernels to be
     ({!Tolk.Schedule.create_linear_with_vars}), by default the host's own
     ({!Tolk.Heuristic.val-cores} of its renderer): given others for ["CPU"], the
-    host's schedule keeps apart the products such cores take, though its
-    kernels run without them. *)
+    host's schedule keeps apart the products their tensor cores take, and
+    computes where they are read the values it would where points run at
+    once, though its kernels run without them. *)
 
 val map : (Tolk.Ops.t -> Tolk.Ops.t) -> (float, 's, 'd) Nx.t -> float array
 (** [map f x] is the elements, in C order, of [f] applied to the node of
@@ -38,7 +38,9 @@ val work : (unit -> ('v, 's, 'd) Nx.t) -> int * int
     Raises [Invalid_argument] if the schedule runs calls in a loop. *)
 
 val kernels :
-  ?cores:(string * Tolk.Tc.t list) list -> (unit -> ('v, 's, 'd) Nx.t) -> int
+  ?cores:(string * Tolk.Heuristic.cores) list ->
+  (unit -> ('v, 's, 'd) Nx.t) ->
+  int
 (** [kernels ~cores f] is the number of kernels of {!run}'s schedule for
     [f], given [cores] as {!run} is, each member of a launch one. *)
 
@@ -47,7 +49,7 @@ val sources :
   (unit -> ('v, 's, 'd) Nx.t) ->
   (string * Tolk.Ops.t * string) list
 (** [sources ~target f] is each kernel of the schedule that computes [f ()]
-    on [target]'s device, its tensor cores those of [target]'s renderer
+    on [target]'s device, as [target]'s renderer tells of its kernels
     ({!Tolk.Heuristic.val-cores}), lowered as for a device whose work is not this
     process's code: its name, the sink it was compiled from and the source
     [target]'s renderer writes for it, made without the target's toolchain

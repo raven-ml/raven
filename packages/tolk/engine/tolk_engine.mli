@@ -317,8 +317,9 @@ val compile :
 (** [compile ~beam ~search ~devices ~held_bufs ~inputs sink] is the
     schedule {!link} takes: what {!Tolk.Jit.jit_lower} makes of [sink]'s
     schedule ({!Tolk.Schedule.create_linear_with_vars}
-    [~capturing:true], each device given the tensor cores of its renderer,
-    {!Tolk.Heuristic.val-cores}), and the variables of its capture, compiled
+    [~capturing:true], each device given what its renderer tells of its
+    kernels, {!Tolk.Heuristic.val-cores}: its tensor cores, and whether it runs
+    a kernel's points at once), and the variables of its capture, compiled
     for each device name's device. A later process that compiles an equal
     [sink], up to the numbers of its ranges and storage
     ({!Tolk.Schedule.numbered}), with the same inputs and held buffers in the

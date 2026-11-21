@@ -1640,6 +1640,23 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On a GPU, a value that runs a transcendental and that its readers
+  broadcast is computed where it is read when each point reads it once, as
+  tinygrad computes it: gpt-oss-20b's attention sinks, `sigmoid (lse − σ)` for
+  each head, run in the map that weighs attention's output, where they took a
+  kernel of their own, and a decode step on an RTX 5000 Ada takes 30-40 us
+  less over CUDA and NV. Such a value stays stored where a thread would
+  compute an element of it again (in a reduction, as a SwiGLU's sigmoid
+  before a product, or where gathers read it at more positions than it
+  holds), and on the host, whose loops run a kernel's points in turn.
+  **Breaking:** `Heuristic.cores` is a record of a device's tensor cores and
+  whether it runs a kernel's points at once (its renderer's `has_local`), and
+  the schedule's `~cores` (`Schedule.create_linear_with_vars`,
+  `Rangeify.get_kernel_graph`, `Indexing.run_rangeify`) take it for each
+  device; the schedule's key holds both. A value a reduction reads again no
+  longer spreads through a stage that every output of a reduction reads,
+  which stays stored (D77, D106).
+
 - Independent calls beside each other at the top level of a schedule run as
   one launch on a GPU: a call of many elements joins the launch of the call
   just before it where no step from that launch's start would hold more of

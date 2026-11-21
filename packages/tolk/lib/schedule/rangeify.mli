@@ -12,9 +12,13 @@
     whose loops are ranges ({!Op.Range}) and whose storage is its parameters.
     The graph holds no movements: a value is its storage. *)
 
-val get_kernel_graph : cores:(Ops.device * Tc.t list) list -> Ops.t -> Ops.t
+val get_kernel_graph :
+  cores:(Ops.device * Heuristic.cores) list -> Ops.t -> Ops.t
 (** [get_kernel_graph ~cores sink] is the kernel graph of the prepared tensor
-    graph [sink] ({!Prepare.prepare_rangeify}). In turn:
+    graph [sink] ({!Prepare.prepare_rangeify}). [cores] tell each device's
+    kernels ({!Heuristic.val-cores} of its renderer): their tensor cores, and
+    whether they run their points at once, a device it does not list taking
+    no core and running them in turn. In turn:
 
     {ol
      {- ranges index the graph ({!Indexing.run_rangeify}, given [cores]);
@@ -135,4 +139,10 @@ val transcendental_work : unit -> int
 (** [transcendental_work ()] is the work, in elementwise operations, at which
     {!get_kernel_graph} keeps a value read where it is broadcast stored: that
     of tolk's float32 exponential ({!Transcendental.xexp2}), simplified, a
-    multiply-add counting as two and positions as none. For the suites. *)
+    multiply-add counting as two and positions as none. On a device whose
+    kernels run their points at once ({!Heuristic.cores}) such a value is kept
+    only where a thread would compute an element again: where its reads
+    compute an element more than once, in a reduction or at more positions
+    than it holds, or where a reduction reads again at outputs a stage that
+    may inline it; read once at each point, it is computed there. For the
+    suites. *)

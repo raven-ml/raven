@@ -1044,9 +1044,10 @@ type numbering = {
    ([in_order]), whether a loop holds it ([loop]), which its order reads
    ({!storage_order}) and the function does not show, every setting and
    variable that shapes what compilation makes ([Setting.shaping]), the
-   types of each device's tensor cores ([cores]), which decide the products
-   that share no kernel, and the digest of this library's sources, of which a
-   schedule is a function. *)
+   types of each device's tensor cores and whether its kernels run their
+   points at once ([cores]), which decide the products that share no kernel
+   and the values computed where they are read, and the digest of this
+   library's sources, of which a schedule is a function. *)
 let schedule_key ~loop ~cores fn_key =
   let core (tc : Tc.t) =
     Dtype.name tc.dtype_in ^ ">" ^ Dtype.name tc.dtype_out
@@ -1055,7 +1056,10 @@ let schedule_key ~loop ~cores fn_key =
     ([ Source_digest.digest; fn_key; Bool.to_string loop ]
     @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ())
     @ List.map
-        (fun (d, tcs) -> d ^ " " ^ String.concat " " (List.map core tcs))
+        (fun (d, (c : Heuristic.cores)) ->
+          String.concat " "
+            ((d :: List.map core c.tensor)
+            @ if c.at_once then [ "at-once" ] else []))
         cores)
 
 (* [fn]'s numbering by its own order ({!numbering}): [fn] with its placeholders

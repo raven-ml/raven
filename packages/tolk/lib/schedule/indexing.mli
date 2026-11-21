@@ -60,11 +60,11 @@ val stack_select : Ops.t -> Ops.t list -> Ops.t
 
     Raises [Invalid_argument] if [lanes] is empty. *)
 
-val run_rangeify : cores:(Ops.device * Tc.t list) list -> Ops.t -> Ops.t
+val run_rangeify : cores:(Ops.device * Heuristic.cores) list -> Ops.t -> Ops.t
 (** [run_rangeify ~cores sink] is the tensor graph [sink] with its elements
-    indexed by ranges. [cores] are the tensor cores each device takes
-    ({!Heuristic.val-cores} of its renderer; a device it does not list takes
-    none).
+    indexed by ranges. [cores] tell each device's kernels
+    ({!Heuristic.val-cores} of its renderer); here their tensor cores, a
+    device it does not list taking none.
 
     First, two matrix products never share a kernel where a core of their
     device takes them: sums of products into the core's output type, of

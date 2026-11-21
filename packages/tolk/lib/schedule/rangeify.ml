@@ -358,7 +358,8 @@ let stored_readers tsink =
    each once asked. [stored] tells, by an axis of their ranges, whether the
    readers of the stages are stored as they are ({!stored_readers}).
    [across] holds the axes of the ranges of the stages that a reduction reads
-   again at outputs their reads do not count ({!stage_reads}). *)
+   again at outputs their reads do not count ({!stage_reads}). [threads]
+   holds the devices whose kernels run their points at once. *)
 type reads = {
   by_axis : (Axis_type.t * int list, axis_copies) Hashtbl.t;
   reduce_axes : (Axis_type.t * int list, Ops.t) Hashtbl.t;
@@ -366,6 +367,7 @@ type reads = {
   collapsed : (Axis_type.t * int list, bool) Hashtbl.t;
   stored : Axis_type.t * int list -> bool;
   across : (Axis_type.t * int list, unit) Hashtbl.t;
+  threads : Ops.device list;
 }
 
 (* Whether the range [r] is one a reduction of the graph [reads] was taken from
@@ -471,15 +473,50 @@ let reduces_storage v =
            Op.[ Param; Stage; After ])
     (toposort ~calls:Skip ~gate:inside v)
 
+(* The nodes the value [v] computes, and the number of buffers it reads: its
+   walk stops at storage after its writes and at stages stored to global
+   memory, each a buffer, and does not enter stores. *)
+let computed_and_buffers v =
+  let accessed = Tbl.create 8 in
+  let access u = Tbl.replace accessed u () in
+  let gate x =
+    match op x with
+    | Op.After ->
+        access (buf_uop x);
+        false
+    | Op.Stage when (opts x).addrspace = Dtype.Global ->
+        access x;
+        false
+    | Op.Store -> false
+    | Op.Param ->
+        access x;
+        true
+    | _ -> true
+  in
+  let computed = toposort ~calls:Skip ~gate v in
+  (computed, Tbl.length accessed)
+
+(* Whether every output of a reduction reads the stage [buf] at [idx], as a
+   matrix-vector product reads its vector: the index runs only along ranges
+   that reductions close. *)
+let read_by_every_output reads buf idx =
+  (opts buf).keep = Broadcast
+  &&
+  let read = read_ranges (List.tl (src idx)) in
+  read <> [] && List.for_all (reduced reads) read
+
 (* The axes of the stages a reduction reads again at outputs their reads do
    not count ({!reread_across}), into [across]. Once such a stage is inlined,
    a read in its value is read again with it, as the stage it reads is
    inlined in turn: so is each stage read on the data path of the value of a
-   marked stage that may be inlined (one kept whole or reducing storage
-   stays stored, so its reads run once), through an index that runs over at
+   marked stage that may be inlined, through an index that runs over at
    least as many points as the stage holds, as a read of every element does.
-   A read of fewer points, as of a row of a running count, reads only those
-   again. *)
+   A stage stays stored, so its reads run once, when it is kept whole,
+   reduces storage, or reads more than one buffer, counted on the graph
+   before the cleanups, and every output of a reduction reads it at each of
+   its reads ({!remove_bufferize}): inlining a stage it reads brings that
+   stage's buffers, at least one where a mark matters. A read of fewer
+   points, as of a row of a running count, reads only those again. *)
 let mark_across reads nodes =
   let mark b =
     List.iter
@@ -497,13 +534,22 @@ let mark_across reads nodes =
           (fun u -> if reread_across reads red u then mark (nth u 0))
           (data_reads (nth red 0)))
     nodes;
+  let every = Tbl.create 16 in
+  List.iter
+    (fun u ->
+      if op u = Op.Index && op (nth u 0) = Op.Stage then
+        let b = nth u 0 in
+        let all = Option.value (Tbl.find_opt every b) ~default:true in
+        Tbl.replace every b (all && read_by_every_output reads b u))
+    nodes;
+  let stays_stored c =
+    kept_whole c
+    || reduces_storage (nth c 0)
+    || Tbl.find_opt every c = Some true
+       && snd (computed_and_buffers (nth c 0)) > 1
+  in
   let stages =
-    List.filter
-      (fun c ->
-        op c = Op.Stage
-        && (not (kept_whole c))
-        && not (reduces_storage (nth c 0)))
-      nodes
+    List.filter (fun c -> op c = Op.Stage && not (stays_stored c)) nodes
   in
   let whole u b =
     extent (read_ranges (List.tl (src u))) >= extent (stage_ranges b)
@@ -530,7 +576,7 @@ let mark_across reads nodes =
 (* The reads of the stages of [tsink]. A read through a stack is not counted: by
    now every stage has a device, so the cleanups never turn it into a read of
    the stage. *)
-let stage_reads tsink =
+let stage_reads ~threads tsink =
   let by_axis = Hashtbl.create 16 and seen = Tbl.create 64 in
   let reduce_axes = Hashtbl.create 16 in
   let count c r =
@@ -576,6 +622,7 @@ let stage_reads tsink =
       collapsed = Hashtbl.create 16;
       stored = stored_readers tsink;
       across = Hashtbl.create 16;
+      threads;
     }
   in
   mark_across reads nodes;
@@ -757,50 +804,48 @@ let remove_bufferize ~reads src buf idx =
   else
     (* The cost: the buffers the value reads, and whether a reduction reads
        one. *)
-    let accessed = Tbl.create 8 in
-    let access u = Tbl.replace accessed u () in
-    let red_gate x =
-      match op x with
-      | Op.After ->
-          access (buf_uop x);
-          false
-      | Op.Stage when (opts x).addrspace = Dtype.Global ->
-          access x;
-          false
-      (* Stores do not count as buffer accesses. *)
-      | Op.Store -> false
-      | Op.Param ->
-          access x;
-          true
-      | _ -> true
-    in
-    let computed = toposort ~calls:Skip ~gate:red_gate src in
+    let computed, buffers = computed_and_buffers src in
     let reduces = List.filter (fun x -> op x = Op.Reduce) computed in
-    (* Inlined where it is broadcast, the value would be computed again for each
-       element of the ranges it does not vary along, and read by gathers at
-       more positions than it holds, again for some elements: one whose
-       computing runs a transcendental operation, or does at least the work of
-       tolk's exponential inside its ranges, as rune's restatement of nx's
-       exponential does, stays stored. The work test is not taken for this
-       read where it runs in a sum that selects one trip, whose copies the
-       budget below counts at the selected index. Its producers are already
-       stored or inlined, so the walk sees what inlining would compute. *)
+    (* Inlined where it is broadcast, the value is computed again for each
+       element of the ranges it does not vary along: one whose computing runs
+       a transcendental operation, or does at least the work of tolk's
+       exponential inside its ranges, as rune's restatement of nx's
+       exponential does, stays stored, unless its device runs a kernel's
+       points at once, as a GPU's threads, and each point computes it once.
+       There a kernel computes it once a thread, or once for the loops that
+       only broadcast it, which costs each thread the work of one element, far
+       less than the launch storing it costs. A thread computes it again in
+       turn where its reads compute an element more than once, at each trip of
+       a reduction, as each output of a product computes every element it
+       reads, or at more positions than it holds, as gathers read a table, or
+       where a reduction reads again a stage that may inline it
+       ([read_across]): there it stays stored. A stage it is inlined into is
+       weighed with its work, or, read at several indices, bounded by the
+       budget below. The work test is not taken for this read where it runs in
+       a sum that selects one trip, whose copies the budget below counts at
+       the selected index. Its producers are already stored or inlined, so the
+       walk sees what inlining would compute. *)
     let recomputes =
       (opts buf).keep = Broadcast
       && (List.exists (fun x -> Op.Set.mem (op x) transcendental) computed
          || work (copied_nodes buf computed) >= transcendental_work ()
             && not (read_selected reads buf idx))
+      &&
+      let at_once =
+        match (opts buf).device with
+        | Some d -> List.mem d reads.threads
+        | None -> false
+      in
+      (not at_once)
+      || (not (least_copies (fun a -> a.cover) reads buf <= 1.))
+      || read_across reads buf
     in
     (* Read by every output of a reduction, as a matrix-vector product reads its
        vector, the value would be computed again for each output and each of its
        buffers loaded again: one that reads more than one buffer stays
        stored. *)
     let read_by_every_output =
-      let read = read_ranges (List.tl (Ops.src idx)) in
-      (opts buf).keep = Broadcast
-      && read <> []
-      && List.for_all (reduced reads) read
-      && Tbl.length accessed > 1
+      read_by_every_output reads buf idx && buffers > 1
     in
     (* Inlined, the value is copied to each position it is read at, and
        computed again at each trip of a reduction over a window. Its producers
@@ -827,7 +872,7 @@ let remove_bufferize ~reads src buf idx =
        may add, as a decode step's rotated query. *)
     let reread =
       (opts buf).keep = Broadcast
-      && Tbl.length accessed > 1
+      && buffers > 1
       && (not view) && read_across reads buf
       && held_bytes buf src <= read_bytes computed
       && extent (stage_ranges buf)
@@ -859,7 +904,7 @@ let remove_bufferize ~reads src buf idx =
        ranges its index does not count, or at the positions its gathers read
        again, and stays stored. *)
     let limited =
-      Tbl.length accessed > 3
+      buffers > 3
       && not
            ((opts buf).keep = Removable
            && least_copies (fun a -> a.cover) reads buf <= 1.
@@ -1742,6 +1787,11 @@ let store_shared ctx tsink =
       Option.value (Tbl.find_opt image tsink) ~default:tsink
 
 let get_kernel_graph ~cores tsink =
+  let threads =
+    List.filter_map
+      (fun (d, (c : Heuristic.cores)) -> if c.at_once then Some d else None)
+      cores
+  in
   let setting = Setting.value in
   let tsink = Indexing.run_rangeify ~cores tsink in
   (* An argument of a call that another kernel reads is indexed by that
@@ -1752,7 +1802,8 @@ let get_kernel_graph ~cores tsink =
       (After_sources pm_no_indexing_calls)
   in
   let tsink =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(stage_reads tsink) tsink
+    graph_rewrite ~calls:Skip ~pass:Fixed_point
+      ~ctx:(stage_reads ~threads tsink) tsink
       (After_sources pm_cleanups)
   in
   let ranges =

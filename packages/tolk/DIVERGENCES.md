@@ -1869,7 +1869,7 @@ expanded to its shape (`uop/symbolic.py` `Shape.pm_data_invalid`), which keeps
 the width, and devectorizes no expanded scalar into a stack; with it
 `Tolk.Codegen › lanes all Invalid` and `lanes of an unrolled reduce` sum to 0.
 
-## D77. A broadcast value that runs a transcendental stays stored
+## D77. A broadcast value that runs a transcendental stays stored where a thread would compute it again
 
 - **tinygrad:** `schedule/indexing.py` `run_rangeify` (stores an elementwise
   value or reduction whose ranges a broadcast ends),
@@ -1882,14 +1882,30 @@ the width, and devectorizes no expanded scalar into a stack; with it
   of inlined) and `Indexing.bufferize_and_index` (which marks
   their stages `Broadcast`); `Ops.keep`, in place of `removable`;
   `Rangeify.remove_bufferize`, which keeps such a stage, with `Rangeify.work`,
-  `Rangeify.transcendental_work` and `Rangeify.read_selected`.
+  `Rangeify.transcendental_work`, `Rangeify.read_selected` and
+  `Rangeify.least_copies` (the reads' cover, D163); `Heuristic.cores`'s
+  `at_once`, whether a device's renderer launches workgroups of threads
+  (`Renderer.t`'s `has_local`), which each device's cores carry into the
+  schedule and its key.
 - **Differs:** where a broadcast ends ranges below a value, its store is
   marked, and the cost check keeps it if computing it runs `EXP2`, `LOG2`,
   `SIN` or `POW`, or at least the work of tolk's float32 exponential
   (`Transcendental.xexp2`, simplified, a multiply-add counting as two) in
   elementwise operations inside the value's ranges, as rune's restatement of
   nx's exponential, sine and logarithm spells them, except at a read in a sum
-  that selects one trip, where D163 counts its copies. The cost check sees
+  that selects one trip, where D163 counts its copies. On a device whose
+  kernels run their points at once, as a GPU's threads, it is kept only where
+  a thread would compute an element again in turn: its reads compute an
+  element more than once, as a read in a reduction does, each output of a
+  product computing every element it reads, or as gathers at more positions
+  than it holds do (D163's cover), or a reduction reads again at outputs a
+  stage that may inline it (D106's mark). There a value read once at each
+  point where it is broadcast is inlined, as tinygrad inlines it: a kernel
+  computes it once a thread, or once for the loops that only broadcast it.
+  The stage it is inlined into is weighed with its work, or, read at several
+  indices, bounded by D163's budget. On the host, whose loops run the points
+  in turn, the value stays stored wherever it is broadcast.
+  The cost check sees
   the value with its producers already stored or inlined, so a value that
   reads a stored exponential computes none, and is inlined. A marked store still
   loses the axes its value does not vary along. A value read once per
@@ -1902,10 +1918,11 @@ the width, and devectorizes no expanded scalar into a stack; with it
   carries the ranges that end above each node, as tinygrad's `ending_ranges`
   does. tinygrad's cost check counts
   buffers and reductions only, so its consumer computes the value again for
-  every element of the ranges it does not vary along.
+  every element of the ranges it does not vary along, at every trip of a
+  reduction too.
 - **Reason:** (d): gpt-oss-20b (`apps/gpt-oss`), where inlining
-  computes a SwiGLU's sigmoid once per output column of the down projection and
-  a RoPE's sines and cosines once per head. Since rune lowers `Nx.attention` to
+  computes a SwiGLU's sigmoid once per output column of the down projection.
+  Since rune lowers `Nx.attention` to
   kernels of its own, gpt-oss's attention no longer meets this rule; the rest of
   its layers still do. On fudge's RTX 5000 Ada `GptOss/prefill-512` takes 132 ms
   against 265 ms without the rule. The prefill rows' fudge wall-time baselines
@@ -1920,11 +1937,21 @@ the width, and devectorizes no expanded scalar into a stack; with it
   and like the operation test it ignores the broadcast's extent. A read in a
   selecting sum, as of `selected_scaled`'s 160 nodes, is left to D163,
   which counts its copies at the selected index and inlines it as tinygrad
-  does, unless an enclosing sum reads it again at outputs (D106). A
-  broadcast value of that much plain arithmetic read elsewhere is
-  stored too, which no bench row runs. A table its gathers read again is
-  the same case: on fudge's host a table of 64 rows read at 4096 takes
-  0.8-1.2 ms stored against 2.8-3.2 ms inlined.
+  does, unless an enclosing sum reads it again at outputs (D106). A table
+  its gathers read again is the same case: on fudge's host a table of 64
+  rows read at 4096 takes 0.8-1.2 ms stored against 2.8-3.2 ms inlined. A
+  value read once at each point is inlined on a GPU, where storing it costs a
+  launch and computing it again costs each thread one element's work:
+  gpt-oss-20b's attention sinks, `sigmoid (lse − σ)` of 64 heads, run in the
+  map that weighs attention's output, one kernel less a block. On fudge's RTX
+  5000 Ada, three alternated rounds, `decode-q8_0/512` takes 6.00 ms against
+  6.03-6.04 over CUDA and 5.80 against 5.83-5.84 over NV, and a decode step
+  at position 512, 400 steps a round, 5992-6007 us against 6009-6040 (CUDA)
+  and 5801-5804 against 5823-5841 (NV), with the same greedy tokens; the
+  prefill rows are unchanged. On the host the same rule ran rune's
+  `Jit/fft-4096` 2.5 times as slow (64 against 158 us, untimed), its twiddled
+  butterflies computed again at every point of the loops, so the host keeps
+  this rule as it was.
 - **Pinned by:** the Rangeify suite's `swiglu_down`, `attention`,
   `exp_dead_axis` (a kept exponential of a row expanded to a matrix is stored
   as the row), `exp_cheap_consumer` (a value that reads a kept exponential is
@@ -1939,7 +1966,18 @@ the width, and devectorizes no expanded scalar into a stack; with it
   an exponential every output of a product reads is stored` and `› a routed
   product's sigmoid is stored` (`Nx.exp`,
   `Nx.sigmoid`, `Nx.sin` and `Nx.log` as rune compiles them, at every float
-  dtype); kaun's `GptOss/prefill-512` and `GptOss/prefill-512-Q8_0`.
+  dtype); kaun's `GptOss/prefill-512` and `GptOss/prefill-512-Q8_0`, and
+  gpt-oss's `decode-q8_0/512` and `decode/512`; on devices whose points run
+  at once, the Rangeify suite's `get_kernel_graph › broadcast exponentials ›
+  where points run at once, …` cases (an exponential broadcast, inlined; one a
+  stored matrix reads where it broadcasts it, computed there; a value of an
+  exponential's work every output reads, stored), `› gathers read where
+  broadcast › where points run at once, a gathered exponential read where it
+  is broadcast is computed where it is read`, `› gathers that read more than
+  their table holds › where points run at once, a gathered exponential read
+  at more positions than it holds stays stored` and `› values a reduction
+  reads again › where points run at once, an exponential a matrix broadcasts
+  to a product stays stored`.
 
 ## D79. A chain of one operation keeps its right operand's grouping
 
@@ -2675,9 +2713,11 @@ scalar, for rune's staged scan, which now replaces it by zeros in the step
   output columns, would compute the value again. A read inside a sum that
   selects one trip counts where an enclosing sum reads it so. It must do
   work and hold no more bytes than it reads. A read in the value of such a
-  stage, one neither kept whole nor running a reduction of storage, counts
-  too where its index runs over at least as many points as the stage it
-  reads holds: inlined, that stage is read again with it. A value whose
+  stage, one neither kept whole, nor running a reduction of storage, nor
+  read only by every output of reductions while it reads more than one
+  buffer (stored at each read by the rule below), counts too where its index
+  runs over at least as many points as the stage it reads holds: inlined,
+  that stage is read again with it. A value whose
   elements times the work of each are within 360 operations, the budget
   that bounds an inlining's copies in nodes, is inlined, since storing costs a launch the schedule does not
   price and computing it again adds no more to each output than an
@@ -2693,7 +2733,9 @@ scalar, for rune's staged scan, which now replaces it by zeros in the step
   normalised activation again at each output, and whose experts' gathered
   rows, given the activation's buffers, were stored in its place. On
   fudge, `GptOss/decode-step-cache-1024` took 10.2 ms against 11.2-11.3 ms
-  without the rule for a value every output reads.
+  without the rule for a value every output reads. A stage every output
+  reads is not read again through: the attention sinks' weights, which the
+  map that weighs attention's output reads, are computed in that map (D77).
 - **Pinned by:** the Rangeify suite's `normed_vecmat` (a normalised vector
   read by a product), `normed_vecmats` (by two products, stored once),
   `normed_matmul` (a normalised matrix, stored), `selected_scaled`
@@ -2701,8 +2743,10 @@ scalar, for rune's staged scan, which now replaces it by zeros in the step
   (values within the budget, inlined) rows of `kernel_counts.golden` and
   their kernel goldens, `variable_read_twice`
   (a value two full reductions read, inlined), its `get_kernel_graph ›
-  gathers that read more than their table holds` and `get_kernel_graph ›
-  values a reduction reads again`, and rune's `rune norms › compiled, one
+  gathers that read more than their table holds`, `get_kernel_graph ›
+  values a reduction reads again` and `get_kernel_graph › broadcast
+  exponentials › a value of two storages a stored matrix reads where it
+  broadcasts it is computed there`, and rune's `rune norms › compiled, one
   pass over x before its map`.
 
 ## D107. Withdrawn

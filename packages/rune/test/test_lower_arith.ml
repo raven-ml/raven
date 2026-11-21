@@ -1117,6 +1117,25 @@ let bound_once =
       | [ (_, sink, _) ] -> equal int ~msg:"x and the result" 2 (params sink)
       | ks -> failf "%d kernels" (List.length ks))
 
+(* A sigmoid of a row, broadcast into each row of a matrix: for a GPU, whose
+   threads run a kernel's points at once, it is computed in the product's
+   kernel, once a thread; for the host, whose loops run them in turn, it is
+   computed in a kernel of its own. *)
+let broadcast_sigmoid =
+  test "a broadcast sigmoid is computed where it is read on a GPU alone"
+    (fun () ->
+      let draw key s = Nx.Rng.uniform ~key:(Nx.Rng.key key) D.Float32 s in
+      let v = draw 1 [| 64 |] and m = draw 2 [| 64; 64 |] in
+      let f () = Nx.mul m (Nx.unsqueeze ~axes:[ 0 ] (Nx.sigmoid v)) in
+      let on t =
+        List.length
+          (Lowered.sources
+             ~target:(Result.get_ok (Tolk.Helpers.Target.of_string t))
+             f)
+      in
+      equal int ~msg:"sm_89" 1 (on "CUDA:CUDA:sm_89");
+      equal int ~msg:"the host" 2 (on "CPU:CLANG:x86_64,haswell"))
+
 let () =
   exit
     (run "Lower_arith"
@@ -1135,4 +1154,5 @@ let () =
          e2m1_fields;
          mxfp4_normal_factors;
          bound_once;
+         broadcast_sigmoid;
        ])

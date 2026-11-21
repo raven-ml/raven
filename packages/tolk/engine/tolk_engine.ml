@@ -1832,9 +1832,11 @@ let devices_of sink =
          | _ -> None)
        (Ops.toposort ~calls:Enter sink))
 
-(* Each device's tensor cores that its renderer's kernels take, which decide
-   the products its schedule keeps in kernels of their own; a device without
-   a renderer, as a disk, takes none. *)
+(* What each device's renderer tells its schedule of its kernels: the tensor
+   cores they take, which decide the products kept in kernels of their own,
+   and whether they run their points at once, which decides the values
+   computed where they are read; a device without a renderer, as a disk, is
+   not listed. *)
 let cores ~targets sink =
   List.filter_map
     (fun d ->

@@ -765,6 +765,31 @@ let separates setting () =
     [ "CACHE MISS"; "CACHE MISS" ]
     (List.map (fun (_, verdict, _) -> verdict) (reports ()))
 
+(* A spelled exponential of 4 values broadcast into the rows of a 4 by 4
+   matrix: stored for a device whose kernels run their points in turn, as the
+   host's loops, and computed where it is read for one that runs them at once,
+   so its body keys apart for the two. *)
+let broadcast_exponential () =
+  let buffer slot n = Ops.new_buffer ~slot "CPU" n Float32 in
+  let o = buffer 0 16 in
+  let e = Transcendental.xexp2 (buffer 1 4) in
+  let row = Shape.expand (Shape.reshape e [ Int 1; Int 4 ]) [ Int 4; Int 4 ] in
+  let m = Shape.reshape (buffer 2 16) [ Int 4; Int 4 ] in
+  Ops.sink
+    [ Ops.after o [ Ops.store o (Shape.reshape Ops.O.(m * row) [ Int 16 ]) ] ]
+
+let apart_at_once () =
+  let big = broadcast_exponential () in
+  with_settings ~debug:3 ~scache:1 (fun () ->
+      ignore (Schedule.create_linear_with_vars ~cores:Cores.host big);
+      ignore (Schedule.create_linear_with_vars ~cores:Cores.at_once big));
+  match reports () with
+  | [ (n0, _, k0); (n1, v1, k1) ] ->
+      equal ~msg:"kernels" (pair int int) (2, 1) (n0, n1);
+      equal ~msg:"the second" string "CACHE MISS" v1;
+      not_equal string k0 k1
+  | lines -> failf "scheduling twice printed %d lines" (List.length lines)
+
 let cache =
   group "create_linear_with_vars › cache"
     [
@@ -784,6 +809,9 @@ let cache =
       test "a hit is the schedule the miss made" hit_is_the_miss;
       test "with SCACHE=0 every schedule misses" uncached;
       test "two bodies miss under two keys" keys_differ;
+      test
+        "a body scheduled where points run in turn misses where they run at \
+         once" apart_at_once;
       test "DEBUG=1 prints only schedules of several kernels" debug_one;
       test "DEBUG=0 prints nothing" quiet;
       test "the time printed is the time scheduling took" timed;

@@ -1373,10 +1373,14 @@ let stored_as consumers p =
 let split_products rctx ~cores topo =
   let cores_of u =
     match device u with
-    | Some d -> Option.value (List.assoc_opt d cores) ~default:[]
+    | Some d -> (
+        match List.assoc_opt d cores with
+        | Some (c : Heuristic.cores) -> c.tensor
+        | None -> [])
     | None -> []
   in
-  if List.exists (fun (_, cs) -> cs <> []) cores then begin
+  if List.exists (fun (_, (c : Heuristic.cores)) -> c.tensor <> []) cores
+  then begin
     let consumers = Tbl.create 256 in
     List.iter
       (fun c ->

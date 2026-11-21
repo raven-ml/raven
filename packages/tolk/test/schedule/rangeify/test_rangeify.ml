@@ -471,9 +471,15 @@ let stores value =
       Ops.after out [ Ops.store (Shape.reshape out (Shape.shape value)) value ];
     ]
 
-let schedule sink = Rangeify.get_kernel_graph
-                      ~cores:Cores.host (Prepare.prepare_rangeify sink)
-let kernels_of sink = kernels (schedule sink)
+(* [cores] are what each device's kernels are taken to be: the host's by
+   default, whose loops run a kernel's points in turn. *)
+let schedule ?(cores = Cores.host) sink =
+  Rangeify.get_kernel_graph ~cores (Prepare.prepare_rangeify sink)
+
+let kernels_of ?cores sink = kernels (schedule ?cores sink)
+
+(* The tests' storage on a device taken to run its kernels' points at once. *)
+let at_once = Cores.at_once
 
 let sum_of us =
   List.fold_left (fun acc u -> Ops.O.(acc + u)) (List.hd us) (List.tl us)
@@ -571,11 +577,11 @@ let two_sum a b =
   let bb = s - a in
   (s, a - (s - bb) + (b - bb))
 
-let writes sink =
+let writes ?cores sink =
   let buffers = filled sink in
   equal (list write)
     (Tensors.writes ~buffers sink)
-    (Kernel_graphs.writes ~buffers (schedule sink))
+    (Kernel_graphs.writes ~buffers (schedule ?cores sink))
 
 let shared =
   let hi, lo = two_sum (input 1) (input 2) in
@@ -807,9 +813,18 @@ let limit =
    function stays stored, whether the function is an operation or spelled in
    elementwise operations, as a compiler that restates a library's exponential
    emits it: inlined, each element of the ranges it does not vary along would
-   compute it again. [broadcast v] multiplies the vector [v] of 4 elements
-   into each of the 4 rows of a matrix, and [vecmat v] by a matrix of 16 rows,
-   each of whose outputs reads all of [v]. *)
+   compute it again. On a device whose kernels run their points at once it is
+   computed where it is read when each point computes it once, and stays
+   stored where a thread would compute an element again: in a reduction
+   every output of which reads it, or through a stage that reduction may
+   inline. [broadcast v] multiplies the vector [v] of 4 elements into each of
+   the 4 rows of a matrix, and [vecmat v] by a matrix of 16 rows, each of
+   whose outputs reads all of [v]. [weighed ~n v] multiplies [v] of [n]
+   elements into each of the 4 rows of a stored matrix, and the [4 n]
+   products into a product whose 16 outputs each read all of them, as
+   attention's sinks weigh its output before its output projection: the
+   weighed matrix reads two storages and every output reads it, so it stays
+   stored whatever [v] costs. *)
 
 let row v = Shape.reshape v (ints [ 1; 4 ])
 let broadcast v = stores Ops.O.(input 5 * Shape.expand (row v) (ints [ 4; 4 ]))
@@ -817,6 +832,13 @@ let broadcast v = stores Ops.O.(input 5 * Shape.expand (row v) (ints [ 4; 4 ]))
 let vecmat v =
   let m = input ~shape:[ 16; 4 ] 5 in
   stores (Shape.rop Ops.O.(m * Shape.expand (row v) (ints [ 16; 4 ])) Add [ 1 ])
+
+let weighed ?(n = 4) v =
+  let rows = Shape.expand (Shape.reshape v (ints [ 1; n ])) (ints [ 4; n ]) in
+  let k = 4 * n in
+  let w = Ops.O.(input ~shape:[ 4; n ] 5 * rows) in
+  let w = Shape.expand (Shape.reshape w (ints [ 1; k ])) (ints [ 16; k ]) in
+  stores (Shape.rop Ops.O.(w * input ~shape:[ 16; k ] 6) Add [ 1 ])
 
 let spelled () = Transcendental.xexp2 (input ~shape:[ 4 ] 1)
 
@@ -854,6 +876,42 @@ let broadcast_exponentials =
           let x = input ~shape:[ 4 ] 1 in
           let sink = broadcast Ops.O.((x * x) + x) in
           equal int 1 (kernels_of sink);
+          writes sink);
+      test "where points run at once, an exponential broadcast is inlined"
+        (fun () ->
+          let sink = broadcast (spelled ()) in
+          equal int 1 (kernels_of ~cores:at_once sink);
+          writes ~cores:at_once sink);
+      test "an exponential broadcast stays stored where only another device \
+            runs points at once" (fun () ->
+          let gpu = List.map (fun (_, c) -> ("GPU", c)) at_once in
+          let sink = broadcast (spelled ()) in
+          equal int 2 (kernels_of ~cores:(Cores.host @ gpu) sink);
+          writes ~cores:(Cores.host @ gpu) sink);
+      test "where points run at once, a value of an exponential's work every \
+            output reads stays stored" (fun () ->
+          let sink = vecmat (products (Rangeify.transcendental_work ())) in
+          equal int 2 (kernels_of ~cores:at_once sink);
+          writes ~cores:at_once sink);
+      test "an exponential a stored matrix reads where it broadcasts it stays \
+            stored" (fun () ->
+          let sink = weighed (spelled ()) in
+          equal int 3 (kernels_of sink);
+          writes sink);
+      test "where points run at once, an exponential a stored matrix reads \
+            where it broadcasts it is computed there" (fun () ->
+          let sink = weighed (spelled ()) in
+          equal int 2 (kernels_of ~cores:at_once sink);
+          writes ~cores:at_once sink);
+      (* Of two storages, 16 elements of 41 operations: past the budget, and
+         under an exponential's work. *)
+      test "a value of two storages a stored matrix reads where it \
+            broadcasts it is computed there" (fun () ->
+          let x = Ops.O.(input ~shape:[ 16 ] 1 + input ~shape:[ 16 ] 2) in
+          let rec go v k = if k = 0 then v else go Ops.O.(v * x) (k - 1) in
+          let v = go x (Rangeify.transcendental_work () - 2) in
+          let sink = weighed ~n:16 v in
+          equal int 2 (kernels_of sink);
           writes sink);
     ]
 
@@ -916,6 +974,12 @@ let gathered_broadcast =
           let sink = gathered ~rows:64 (Ops.exp2 (input ~shape:[ 16 ] 1)) in
           equal int 2 (kernels_of sink);
           writes sink);
+      test
+        "where points run at once, a gathered exponential read where it is \
+         broadcast is computed where it is read" (fun () ->
+          let sink = gathered (Ops.exp2 (input ~shape:[ 2 ] 1)) in
+          equal int 1 (kernels_of ~cores:at_once sink);
+          writes ~cores:at_once sink);
     ]
 
 (* Gathers that read more than their table holds
@@ -967,6 +1031,12 @@ let gathered_again =
           let sink = taken ~reads:16 (Ops.exp2 (input ~shape:[ 2 ] 1)) in
           equal int 2 (kernels_of sink);
           writes sink);
+      test
+        "where points run at once, a gathered exponential read at more \
+         positions than it holds stays stored" (fun () ->
+          let sink = taken ~reads:16 (Ops.exp2 (input ~shape:[ 2 ] 1)) in
+          equal int 2 (kernels_of ~cores:at_once sink);
+          writes ~cores:at_once sink);
       test
         "a gathered value of an exponential's work read at more positions \
          than it holds stays stored" (fun () ->
@@ -2754,6 +2824,18 @@ let reread =
           equal int 2 (kernels_of (product 2 180 16 (scaled 2 180))));
       test "a scaled matrix of work past the budget stays stored" (fun () ->
           equal int 3 (kernels_of (product 2 181 16 (scaled 2 181))));
+      (* Inlined into the matrix the product's columns read, the exponential
+         would be computed at each of the matrix's 16 elements, and the matrix
+         stored in its place. *)
+      test
+        "where points run at once, an exponential a matrix broadcasts to a \
+         product stays stored" (fun () ->
+          let v = Transcendental.xexp2 (input ~shape:[ 4 ] 1) in
+          let rows =
+            Shape.expand (Shape.reshape v (ints [ 1; 4 ])) (ints [ 4; 4 ])
+          in
+          let sink = product 4 4 8 Ops.O.(input 5 * rows) in
+          equal (list int) [ 4 ] (allocs (schedule ~cores:at_once sink)));
       (* Inlined into the gathered rows, the scaled matrix would bring them
          its three storages and the positions' to read again, and the buffer
          limit would store the rows, four times the matrix. *)

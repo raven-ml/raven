@@ -310,12 +310,23 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
 (** [hand_coded_optimizations k] is a copy of [k] with the optimisations these
     rules pick; [k] itself is left as it is. *)
 
-val cores : Renderer.t -> Tc.t list
-(** [cores ren] is the tensor cores of [ren] that {!Opt.Tc} takes for a
-    contraction whose types they compute ({!Tc.takes}) and whose shape they
-    fit ({!core_fits_shape}), under the core settings: none unless {!Setting.use_tc} is [1], the one
-    {!Setting.tc_select} names if any (none where [ren] lacks it), and of
-    those the ones {!Renderer.takes_core} takes. *)
+(** The type for what a device's renderer tells a schedule of its kernels. *)
+type cores = {
+  tensor : Tc.t list;
+      (** The tensor cores that {!Opt.Tc} takes for a contraction whose types
+          they compute ({!Tc.takes}) and whose shape they fit
+          ({!core_fits_shape}), under the core settings: none unless
+          {!Setting.use_tc} is [1], the one {!Setting.tc_select} names if any
+          (none where the renderer lacks it), and of those the ones
+          {!Renderer.takes_core} takes. *)
+  at_once : bool;
+      (** Whether the device runs a kernel's points at once, as workgroups of
+          threads ({!Renderer.t}'s [has_local]), rather than in turn, as a
+          host's loops. *)
+}
+
+val cores : Renderer.t -> cores
+(** [cores ren] is what [ren] tells a schedule of its kernels. *)
 
 val core_fits :
   Renderer.t ->
