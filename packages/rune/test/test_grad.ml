@@ -1198,6 +1198,9 @@ let test_draws () =
    [2 Σ_j |w_j| x_j (γ(n - 1) (S + 4Q) + 32u Q)]. *)
 type dirichlet_case = { dkey : int; wide : bool; len : int; seed : int }
 
+(* Rows of one, of two and past a tile of 1024 terms, at either dtype. *)
+let dirichlet_lens = [ 1; 2; 1025 ]
+
 let dirichlet_gen =
   let open Gen in
   let pp ppf c =
@@ -1208,25 +1211,36 @@ let dirichlet_gen =
   with_pp pp
     (let+ dkey = int
      and+ wide = bool
-     and+ len = of_list [ 1; 2; 8; 1025 ]
+     and+ len = of_list dirichlet_lens
      and+ seed = int in
      { dkey; wide; len; seed })
 
+(* Each dtype and row length at fixed keys, so every run draws each. *)
+let dirichlet_examples =
+  List.concat_map
+    (fun wide ->
+      List.map (fun len -> { dkey = len; wide; len; seed = 7 }) dirichlet_lens)
+    [ false; true ]
+
+(* Each dtype and row length is a program of its own, whose tangent and gradient
+   take about 3 s to compile, 6 s past a tile. So the compiled side is held at
+   float64 on rows past a tile, whose allowance float64 keeps tight, and at
+   float32 on rows of two; every case holds the eager side. *)
+let compiled_at c = if c.wide then c.len > 1024 else c.len = 2
+
 (* A draw's tangent and its weighted sum's gradient, compiled once for each
-   dtype: a draw's key, concentrations, tangent and weights are arguments, so
-   the cases of one shape share a variant. *)
-let compiled_jvp () =
+   dtype as one program: a draw's key, concentrations, tangent and weights are
+   arguments, so the cases of one shape share a variant. *)
+let compiled () =
   Rune.jit
-    T.(Nx.Rng.ptree @-> tensor @-> tensor @-> returns (pair tensor tensor))
-    (fun key a t -> Rune.jvp' (fun a -> Nx.Rng.dirichlet ~key a) a t)
+    T.(
+      Nx.Rng.ptree @-> tensor @-> tensor @-> tensor
+      @-> returns (pair (pair tensor tensor) tensor))
+    (fun key a t w ->
+      let draw a = Nx.Rng.dirichlet ~key a in
+      (Rune.jvp' draw a t, Rune.grad' (fun a -> Nx.sum (Nx.mul w (draw a))) a))
 
-let compiled_grad () =
-  Rune.jit
-    T.(Nx.Rng.ptree @-> tensor @-> tensor @-> returns tensor)
-    (fun key w a ->
-      Rune.grad' (fun a -> Nx.sum (Nx.mul w (Nx.Rng.dirichlet ~key a))) a)
-
-let dirichlet_law_at (type s) (dt : (float, s) Nx.dtype) u jvp grad c =
+let dirichlet_law_at (type s) (dt : (float, s) Nx.dtype) u compiled c =
   let key = Nx.Rng.key c.dkey in
   let st = Random.State.make [| c.seed |] in
   let rows = 3 in
@@ -1301,9 +1315,12 @@ let dirichlet_law_at (type s) (dt : (float, s) Nx.dtype) u jvp grad c =
     done
   in
   within ~msg:"eager" dx;
-  let cx, cdx = jvp key a t in
-  equal ~msg:"compiled primal" (array int64) (bits x) (bits (wide cx));
-  within ~msg:"compiled" (wide cdx);
+  let compiled = if compiled_at c then Some (compiled key a t w) else None in
+  Option.iter
+    (fun ((cx, cdx), _) ->
+      equal ~msg:"compiled primal" (array int64) (bits x) (bits (wide cx));
+      within ~msg:"compiled" (wide cdx))
+    compiled;
   let loss a = Nx.sum (Nx.mul w (draw a)) in
   let ws = wide w in
   let allowed =
@@ -1322,19 +1339,20 @@ let dirichlet_law_at (type s) (dt : (float, s) Nx.dtype) u jvp grad c =
     at_most ~msg float_exact ~than:allowed (Float.abs (!lhs -. !rhs))
   in
   pairs ~msg:"gradient" (wide (Rune.grad' loss a));
-  pairs ~msg:"compiled gradient" (wide (grad key w a))
+  Option.iter (fun (_, cg) -> pairs ~msg:"compiled gradient" (wide cg)) compiled
 
 let dirichlet_law =
-  let jvp32 = compiled_jvp () and grad32 = compiled_grad () in
-  let jvp64 = compiled_jvp () and grad64 = compiled_grad () in
+  let c32 = compiled () and c64 = compiled () in
   fun c ->
     cover "float32" (not c.wide);
     cover "float64" c.wide;
     cover "a row of one" (c.len = 1);
     cover "a row of two" (c.len = 2);
     cover "a row past a tile of 1024 terms" (c.len > 1024);
-    if c.wide then dirichlet_law_at f64 0x1p-53 jvp64 grad64 c
-    else dirichlet_law_at Nx.float32 0x1p-24 jvp32 grad32 c
+    cover "compiled at float32" (compiled_at c && not c.wide);
+    cover "compiled at float64" (compiled_at c && c.wide);
+    if c.wide then dirichlet_law_at f64 0x1p-53 c64 c
+    else dirichlet_law_at Nx.float32 0x1p-24 c32 c
 
 (* At fixed keys and concentrations, away from the edges where a gamma draw
    takes another round, the gradient of a weighted sum of a draw agrees with
@@ -2684,8 +2702,9 @@ let () =
              prop "reads of regions sum each element's contributions"
                reads_gen regions_law;
              test "a truncated normal's bounds" test_draws;
-             prop "a dirichlet draw's tangents and gradient in its \
-                   concentrations" dirichlet_gen dirichlet_law;
+             prop ~count:6 ~examples:dirichlet_examples
+               "a dirichlet draw's tangents and gradient in its concentrations"
+               dirichlet_gen dirichlet_law;
              test "a dirichlet draw's gradient against differences"
                test_dirichlet_differences;
              test "the logarithms' gradients below zero too" test_logarithms;
