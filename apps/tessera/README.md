@@ -10,8 +10,8 @@ model runs compiled on the CPU or a GPU, or eagerly on the CPU. Tiles are made f
 Microsoft's Planetary Computer by TESSERA's recipe.
 
 On an NVIDIA RTX 5000 Ada, `main.exe encode` embeds a 500 × 500 tile with the
-nano student in 7.2 s, against 18.0 s for TESSERA's own PyTorch code, and
-with medium in 60.1 s against 70.2 s. [PERFORMANCE.md](PERFORMANCE.md) has
+nano student in 6.0 s, against 11.4 s for TESSERA's own PyTorch code, and
+with medium in 50.7 s against 68.4 s. [PERFORMANCE.md](PERFORMANCE.md) has
 every number, where raven is slower, and how to reproduce them.
 
 ```bash
@@ -109,4 +109,5 @@ encode` and TESSERA's `infer_v2.py` on the whole tile, each a new process,
 with the released students, and a first tile over an empty kernel cache.
 `bench/roles.py` splits an encoding's device time into products, attention
 and the rest, on both sides. `bench/tessera.thumper` holds the baselines:
-fudge's (NVIDIA RTX 5000 Ada) for the GPU rows.
+fudge's (Intel Core Ultra 5 235, NVIDIA RTX 5000 Ada) for the GPU and CPU
+rows.
