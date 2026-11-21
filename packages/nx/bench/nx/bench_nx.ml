@@ -328,6 +328,26 @@ let k_four () =
   and b = filled D.Float32 [| 4096; 256 |] 1. in
   Operands (Nx.place (Four.split ~axis:1) a, Nx.place (Four.split ~axis:0) b)
 
+(* A row over software devices, warmed in its setup. A call reuses the memory
+   of earlier calls once the collector returns it, and every call before the
+   first collection that does takes its memory from the devices: the first 21
+   calls of sum-f32-8192x1000-split4-axis1, 640 words more each. thumper's
+   warmup is timed, so on a loaded machine its count of a call fell among
+   them, 8% over the row's. The setup runs in each trial's worker, so
+   [warm_calls] calls there leave every trial past them. Later, a call that
+   comes before a late collection still takes some memory from the devices,
+   axis1 every 22 calls or so for up to 2.8% more words: within the row's
+   budget, though thumper may then find the count inexact. *)
+let warm_calls = 64
+
+let placed name ~setup f =
+  Thumper.bench_with_setup name f ~setup:(fun () ->
+      let x = setup () in
+      for _ = 1 to warm_calls do
+        ignore (Sys.opaque_identity (f x))
+      done;
+      x)
+
 (* Reductions, scans and a contraction along cut axes, each device computing
    partial results where its terms lie: a column sum of rows over eight
    devices; a sum of all of a [8192; 1000] cut by columns, whose windows
@@ -336,30 +356,30 @@ let k_four () =
    chunk; and a matmul cut along k. *)
 let partial_rows =
   [
-    Thumper.bench_with_setup "sum-f32-8192x4096-cols-split8"
+    placed "sum-f32-8192x4096-cols-split8"
       ~setup:(split_over 8 ~axis:0 [| 8192; 4096 |])
       (fun (Value x) -> Value (Nx.sum ~axes:[ 0 ] x));
-    Thumper.bench_with_setup "sum-f32-8192x1000-split4-axis1"
+    placed "sum-f32-8192x1000-split4-axis1"
       ~setup:(split_over 4 ~axis:1 [| 8192; 1000 |])
       (fun (Value x) -> Value (Nx.sum x));
-    Thumper.bench_with_setup "cumsum-f32-1M-split4"
+    placed "cumsum-f32-1M-split4"
       ~setup:(split_over 4 ~axis:0 [| 1 lsl 20 |])
       (fun (Value x) -> Value (Nx.cumsum ~axis:0 x));
-    Thumper.bench_with_setup "cumsum-f32-256x8192-rows-split4"
+    placed "cumsum-f32-256x8192-rows-split4"
       ~setup:(split_over 4 ~axis:1 [| 256; 8192 |])
       (fun (Value x) -> Value (Nx.cumsum ~axis:1 x));
-    Thumper.bench_with_setup "matmul-f32-256x4096x256-k-split4" ~setup:k_four
+    placed "matmul-f32-256x4096x256-k-split4" ~setup:k_four
       (fun (Operands (a, b)) -> Value (Nx.matmul a b));
   ]
 
 let placed_rows =
   Thumper.group "placed"
     ([
-       Thumper.bench_with_setup "add-1-two-memory-devices" ~setup:split_two
+       placed "add-1-two-memory-devices" ~setup:split_two
          (fun (Value two) -> Value (Nx.add two two));
-       Thumper.bench_with_setup "matmul-f32-64-rows-two-memory-devices"
+       placed "matmul-f32-64-rows-two-memory-devices"
          ~setup:rows_two (fun (Operands (a, b)) -> Value (Nx.matmul a b));
-       Thumper.bench_with_setup "item-f32-1M-split4"
+       placed "item-f32-1M-split4"
          ~setup:(split_over 4 ~axis:0 [| 1 lsl 20 |])
          (fun (Value x) -> Nx.item [ 524_287 ] x);
      ]

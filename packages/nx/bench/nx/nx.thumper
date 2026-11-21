@@ -34,6 +34,7 @@
 # pending: wall_time of order/searchsorted-along-f32-64x4K-in-64x1K, to record on a quiet machine
 # pending: wall_time of io/hdf5-rows-2048-of-8192-chunked, to record on a quiet machine
 # pending: wall_time of io/hdf5-window-a-row-2048-of-8192-chunked, to record on a quiet machine
+# forced: blessed placed/add-1-two-memory-devices placed/matmul-f32-64-rows-two-memory-devices placed/item-f32-1M-split4 placed/sum-f32-8192x4096-cols-split8 placed/sum-f32-8192x1000-split4-axis1 placed/cumsum-f32-1M-split4 placed/cumsum-f32-256x8192-rows-split4 placed/matmul-f32-256x4096x256-k-split4 under load 16.7 on 2 cores
 
 attention/decode-f32-64x8x4096x64	alloc_words	exact	876
 attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
@@ -267,14 +268,22 @@ place/borrow-memory-device-16	alloc_words	exact	35
 place/equal-1	alloc_words	exact	4
 place/host-to-split-axis1	alloc_words	exact	548
 place/split-to-split	alloc_words	exact	2445
-placed/add-1-two-memory-devices	alloc_words	exact	1027
-placed/cumsum-f32-1M-split4	alloc_words	exact	10216
-placed/cumsum-f32-256x8192-rows-split4	alloc_words	exact	11095
-placed/item-f32-1M-split4	alloc_words	exact	308
-placed/matmul-f32-256x4096x256-k-split4	alloc_words	exact	16460
-placed/matmul-f32-64-rows-two-memory-devices	alloc_words	exact	3039
-placed/sum-f32-8192x1000-split4-axis1	alloc_words	exact	11496
-placed/sum-f32-8192x4096-cols-split8	alloc_words	exact	43062
+placed/add-1-two-memory-devices	alloc_words	exact	1033
+placed/add-1-two-memory-devices	wall_time	batch=2048	n=20	2.395e-06	2.345e-06 2.352e-06 2.358e-06 2.367e-06 2.376e-06 2.378e-06 2.380e-06 2.390e-06 2.393e-06 2.394e-06 2.396e-06 2.398e-06 2.399e-06 2.401e-06 2.404e-06 2.404e-06 2.408e-06 2.410e-06 2.425e-06 2.445e-06
+placed/cumsum-f32-1M-split4	alloc_words	exact	10229
+placed/cumsum-f32-1M-split4	wall_time	batch=16	n=20	3.456e-04	3.281e-04 3.285e-04 3.356e-04 3.367e-04 3.384e-04 3.386e-04 3.387e-04 3.418e-04 3.423e-04 3.446e-04 3.466e-04 3.476e-04 3.476e-04 3.541e-04 3.542e-04 3.548e-04 3.554e-04 3.568e-04 3.591e-04 3.620e-04
+placed/cumsum-f32-256x8192-rows-split4	alloc_words	exact	11108
+placed/cumsum-f32-256x8192-rows-split4	wall_time	batch=8	n=20	7.204e-04	6.231e-04 6.902e-04 6.984e-04 7.055e-04 7.102e-04 7.104e-04 7.133e-04 7.134e-04 7.145e-04 7.203e-04 7.205e-04 7.214e-04 7.256e-04 7.317e-04 7.361e-04 7.381e-04 7.394e-04 7.395e-04 7.527e-04 7.736e-04
+placed/item-f32-1M-split4	alloc_words	exact	283
+placed/item-f32-1M-split4	wall_time	batch=16384	n=20	4.537e-07	4.515e-07 4.516e-07 4.518e-07 4.518e-07 4.519e-07 4.520e-07 4.522e-07 4.526e-07 4.530e-07 4.537e-07 4.537e-07 4.539e-07 4.549e-07 4.552e-07 4.557e-07 4.561e-07 4.572e-07 4.574e-07 4.599e-07 4.661e-07
+placed/matmul-f32-256x4096x256-k-split4	alloc_words	exact	16584
+placed/matmul-f32-256x4096x256-k-split4	wall_time	batch=4	n=20	2.381e-03	2.282e-03 2.284e-03 2.287e-03 2.296e-03 2.301e-03 2.332e-03 2.338e-03 2.358e-03 2.368e-03 2.379e-03 2.383e-03 2.389e-03 2.395e-03 2.401e-03 2.403e-03 2.410e-03 2.412e-03 2.413e-03 2.460e-03 2.492e-03
+placed/matmul-f32-64-rows-two-memory-devices	alloc_words	exact	3043
+placed/matmul-f32-64-rows-two-memory-devices	wall_time	batch=1024	n=20	7.164e-06	7.036e-06 7.055e-06 7.081e-06 7.088e-06 7.090e-06 7.097e-06 7.127e-06 7.138e-06 7.161e-06 7.163e-06 7.165e-06 7.166e-06 7.178e-06 7.199e-06 7.209e-06 7.210e-06 7.237e-06 7.267e-06 7.268e-06 7.327e-06
+placed/sum-f32-8192x1000-split4-axis1	alloc_words	exact	11776
+placed/sum-f32-8192x1000-split4-axis1	wall_time	batch=4	n=20	1.851e-03	1.704e-03 1.718e-03 1.725e-03 1.774e-03 1.781e-03 1.783e-03 1.795e-03 1.811e-03 1.814e-03 1.850e-03 1.852e-03 1.862e-03 1.866e-03 1.872e-03 1.899e-03 1.900e-03 1.940e-03 1.941e-03 1.959e-03 2.030e-03
+placed/sum-f32-8192x4096-cols-split8	alloc_words	exact	43886
+placed/sum-f32-8192x4096-cols-split8	wall_time	batch=2	n=20	4.705e-03	4.492e-03 4.565e-03 4.571e-03 4.592e-03 4.646e-03 4.647e-03 4.654e-03 4.657e-03 4.660e-03 4.703e-03 4.707e-03 4.732e-03 4.763e-03 4.769e-03 4.785e-03 4.795e-03 4.799e-03 4.805e-03 4.868e-03 4.944e-03
 quant/mxfp4-gemv-4096	alloc_words	exact	488
 quant/mxfp4-gemv-4096-k-split4	alloc_words	batch=4	n=20	2.952e+04	2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04 2.952e+04
 quant/mxfp4-gemv-4096-n-split4	alloc_words	exact	16706
