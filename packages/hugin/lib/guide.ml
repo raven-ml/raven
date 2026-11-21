@@ -623,7 +623,9 @@ let lay cx g ~length ~across ~wrap ~span =
       match guide_title s titles cx.ticks.(scale).note with
       | None -> empty
       | Some text ->
-          let align = if horizontal axis then `Center else `Left in
+          (* Along its axis a title is centred; above a vertical one it starts
+             at its labels. *)
+          let align = if equal_side g.side axis then `Center else `Left in
           title cx g ~length ~wrap ~span align 1. text)
   | Legend { guide; scale } ->
       let titles = Option.to_list guide.title in

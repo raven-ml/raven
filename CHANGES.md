@@ -281,6 +281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- A y axis sets its title beyond its tick labels, centred along the axis,
+  where a legend stands on its side, in place of above it, where it read as
+  one heading with the legend's title.
 - A facet header on the left or right reads its scale's title before its
   category, `layer 0`, in place of a title above the column of headers.
 - **Breaking:** an axis of named categories (`strings`, `dim ~labels`) labels

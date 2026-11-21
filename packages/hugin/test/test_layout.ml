@@ -1077,6 +1077,50 @@ let titles =
             box_of (List.find (fun line -> contains line "label") labels)
           in
           equal (float 1e-3) lx x0);
+      test "beside a legend, a y title stands beyond its labels, centred along"
+        (fun () ->
+          let f =
+            layer
+              [
+                dot ~x:(num ramp) ~y:(num ~title:"loss" ramp)
+                  ~fill:(strings ~title:"optimiser" [| "a"; "b"; "a"; "b" |])
+                  ();
+                axis ~side:`Right "y";
+              ]
+          in
+          let l = lay (Size.panels 80. 60.) f in
+          let x0, y0, _, y1 = text_box l {|(text "loss")|} in
+          let labels =
+            List.filter_map
+              (fun line ->
+                if contains line "label" then Some (box_of line) else None)
+              (List.concat (guide_lines l "axis axis.y"))
+          in
+          let right =
+            List.fold_left (fun m (_, _, x1, _) -> Float.max m x1) 0. labels
+          in
+          let panel = List.hd (boxes l) in
+          equal (float 1e-3) title_gap (x0 -. right);
+          equal (float 1e-3) (P2.y (Box2.mid panel)) ((y0 +. y1) /. 2.));
+      cases "a y title shares no line with a legend's title on its side"
+        ~id:(fun (name, _) -> name)
+        [ ("left", `Left); ("right", `Right) ]
+        (fun (_, side) ->
+          let f =
+            layer
+              [
+                dot ~x:(num ramp) ~y:(num ~title:"loss" ramp)
+                  ~fill:(strings ~title:"optimiser" [| "a"; "b"; "a"; "b" |])
+                  ();
+                axis ~side "y";
+                legend ~side "color";
+              ]
+          in
+          let l = lay (Size.panels 80. 60.) f in
+          let _, y0, _, _ = text_box l {|(text "loss")|} in
+          let _, _, _, t1 = text_box l {|(text "optimiser")|} in
+          greater float_exact ~msg:"the y title's top, below the legend's title"
+            ~than:t1 y0);
       test "no text is turned: headers beside a row read upright" (fun () ->
           let f =
             dot ~x:(num ramp) ~y:(num ramp)

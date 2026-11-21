@@ -411,12 +411,40 @@ let rec retitle f = function
       Grid
         { g with cells = List.map cell g.cells; guides = List.map f g.guides }
 
+(* [beside_legends node] is [node] with the title of each y axis set beside
+   the axis, on its side, where a legend stands on that side of the node. *)
+let rec beside_legends node =
+  let beside guides =
+    let legend_on side =
+      List.exists
+        (fun (g : Guide.spec) ->
+          match g.kind with
+          | Legend _ -> equal_side g.side side
+          | Axis _ | Title _ -> false)
+        guides
+    in
+    let move (g : Guide.spec) =
+      match g.kind with
+      | Axis { part = Scale_title { side = (`Left | `Right) as side; _ }; _ }
+        when legend_on side ->
+          { g with side }
+      | Axis _ | Legend _ | Title _ -> g
+    in
+    List.map move guides
+  in
+  match node with
+  | Panel p -> Panel { p with guides = beside p.guides }
+  | Grid g ->
+      let cell c = { c with node = beside_legends c.node } in
+      Grid { g with cells = List.map cell g.cells; guides = beside g.guides }
+
 (* [build r scales] is the node of [r]: the title of an axis or of headers is on
    the smallest node holding the panels showing them, and a legend on the
    smallest node holding the panels its readers lie in, or an inside one on
    that node's panel at its place. Headers on the left or right read their
-   title themselves: above a column of headers, it would sit beside the
-   titles of a legend there. A categorical legend
+   title themselves, and a y title stands beside its axis where a legend
+   stands on its side of the node: above a column of headers or labels, a
+   title would sit beside the legend's title. A categorical legend
    whose readers each have the data of a position channel of their mark, whose
    axis is shown in their panels, is left out: the axis names its categories.
    An explicit legend, or a mark's, keeps it. *)
@@ -550,7 +578,7 @@ let build (r : Resolved.t) scales =
       in
       (attach ?corner pids spec tree, i + 1)
   in
-  fst (List.fold_left legend (tree, 0) r.scales)
+  beside_legends (fst (List.fold_left legend (tree, 0) r.scales))
 
 (* Bands *)
 
@@ -1076,9 +1104,9 @@ let guide_length em hull (g : Guide.spec) =
 (* Laying out guides *)
 
 (* [span shown hull g length] is the interval along its side that [g] aligns to:
-   for the title of axes or headers, the hull of the panels it titles, or, on a
-   vertical side, starting at the left edge of their texts, of the labelled axes
-   and headers [shown]. *)
+   for the title of axes or headers, the hull of the labelled axes and headers
+   [shown] it titles, along their side, or, for a title above a vertical side,
+   across it, from the left edge of their texts. *)
 let span shown hull (g : Guide.spec) length =
   match g.kind with
   | Axis { scale; part = Scale_title { side; _ }; _ } -> (
@@ -1090,8 +1118,10 @@ let span shown hull (g : Guide.spec) length =
             i = scale
         | Axis _ | Legend _ | Title _ -> false
       in
+      let along = equal_side g.side side in
       let extent ((g' : Guide.t), o) =
-        if horizontal side then [ (P2.x o, P2.x o +. g'.length) ]
+        if along && horizontal side then [ (P2.x o, P2.x o +. g'.length) ]
+        else if along then [ (P2.y o, P2.y o +. g'.length) ]
         else
           List.filter_map
             (function
@@ -1109,7 +1139,11 @@ let span shown hull (g : Guide.spec) length =
               (fun (lo, hi) (a, b) -> (Float.min lo a, Float.max hi b))
               e es
           in
-          (lo -. Box2.minx hull, hi -. Box2.minx hull))
+          let start =
+            if along && not (horizontal side) then Box2.miny hull
+            else Box2.minx hull
+          in
+          (lo -. start, hi -. start))
   | Axis _ | Legend _ | Title _ -> (0., length)
 
 (* [map f node geo] is [node] with the guides [gs] of each of its nodes

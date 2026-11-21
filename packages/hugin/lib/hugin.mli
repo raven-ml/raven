@@ -822,15 +822,17 @@ val contour :
     holding them. An axis shared by the panels of a column, for x, or of a row,
     for y, is labelled on the outer panels and titled once. An x title is
     centred below the panels it titles. A y title is horizontal, set above its
-    axis and left-aligned with its tick labels. Facet headers are upright on
+    axis and left-aligned with its tick labels, or, where a legend stands on the
+    axis's side, beyond its tick labels and centred along the axis, so that it
+    stands on no line with the legend's title. Facet headers are upright on
     every side: an [fx] header is centred above its column, and an [fy] header
     reads beside its row. The title of headers on the top or bottom is centred
     beyond them, as an x title is; a header on the left or right reads its
     scale's title before its category, as [layer 0] for the title [layer], so
-    that no title stands above a column of headers, beside a legend's. A
-    legend stands beside the smallest panel or grid holding every panel that a
-    channel reading its scale lies in, and a colour bar is as long as that panel
-    or grid. No text is turned.
+    that no title stands above a column of headers, beside a legend's. A legend
+    stands beside the smallest panel or grid holding every panel that a channel
+    reading its scale lies in, and a colour bar is as long as that panel or
+    grid. No text is turned.
 
     A scale read by several roles has a guide for each: a scale named by a user
     and read by [x] in one panel and by [fill] in another has an axis there and
