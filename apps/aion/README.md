@@ -57,9 +57,9 @@ aion-large; `--model FILE` reads a safetensors file of aion-base's layout. The
 codecs always come from aion-base, whose files aion-large's repository holds
 byte for byte.
 
-On an NVIDIA RTX 5000 Ada, raven embeds 101 objects a second with aion-base,
-16 a batch, against 62 for AION-1's own PyTorch code, and draws 16 DESI
-spectra a second against 22; a whole `embed` of 64 real objects takes 1.8 s
+On an NVIDIA RTX 5000 Ada, raven embeds 125 objects a second with aion-base,
+16 a batch, against 62 for AION-1's own PyTorch code, and draws 21 DESI
+spectra a second against 23; a whole `embed` of 64 real objects takes 1.8 s
 against 8.0. On two CPU cores, with `--eager`, it embeds 1.2 objects a second
 against 0.89. [PERFORMANCE.md](PERFORMANCE.md) has every number, where raven
 is slower, and how to reproduce them.
