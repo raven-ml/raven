@@ -28,17 +28,18 @@
 
     A token is drawn with probability proportional to [exp ((l - m) / T)], as
     {!Nx.Rng.categorical} draws it, [l] its logit, [m] the largest logit of its
-    row and [T] the {e temperature}: at [1.] the model's distribution, and at
-    [0.] the token of the largest logit, the first on ties. A draw ranges over
-    the target's whole vocabulary ({!Modality.vocab}): redshift's holds one
-    token more than its codec decodes ({!Scalar.decode}).
+    row and [T] the {e temperature}, rounded to [float32] and then to the
+    logits' dtype: at [1.] the model's distribution, and at [0.] the token of
+    the largest logit, the first on ties. A draw ranges over the target's whole
+    vocabulary ({!Modality.vocab}): redshift's holds one token more than its
+    codec decodes ({!Scalar.decode}).
 
     Each object draws from a key of its own: [keys], of shape [[|b; 2|]], holds
-    one per object. Object [i]'s order is [Nx.argsort] of {!Nx.Rng.uniform_at}
-    at the inputs' placement, from key [i] of [Nx.Rng.fold_in keys 0], of dtype
-    float64 and shape [[|n|]]. Its step-[s] tokens are {!Nx.Rng.categorical}
-    from key [i] of [Nx.Rng.fold_in keys (s + 1)] of its [[|k; v|]] logits less
-    each row's largest, divided by the temperature. So an object's draws are a
+    one per object. Object [i]'s order is {!Nx.Rng.permutation_at} of [n] at the
+    inputs' placement, from key [i] of [Nx.Rng.fold_in keys 0]. Its step-[s]
+    tokens are {!Nx.Rng.categorical} from key [i] of
+    [Nx.Rng.fold_in keys (s + 1)] of its [[|k; v|]] logits less each row's
+    largest, divided by the temperature. So an object's draws are a
     function of its key, its inputs, the transformer's weights and dtype,
     [reveal] and the temperature, and not of the objects drawn beside it, where
     its logits are the same bit for bit in either batch. Logits that differ in
@@ -89,7 +90,8 @@ val sample :
     A draw in progress is a value: {!start} makes it and {!step} takes it one
     step further. Compiled with [Rune.jit], with the transformer an argument of
     [step] and its count reported by [Nx.Ptree.Walk.int], they draw on any
-    set:
+    set. They compute no [float64] value but the transformer's own, so they
+    compile for a device without [float64], as Apple's GPUs are:
 
     {[
     let draw () = Nx.Ptree.v Roar.walk_draw in

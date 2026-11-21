@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- **Breaking:** aion's `Roar` draws each object's order with
+  `Nx.Rng.permutation_at`, where it sorted `float64` uniforms, and holds the
+  temperature at `float32`, so `Roar.start` and `Roar.step` compile for a
+  device without `float64`, as Apple's GPUs are. An order from a key
+  changes.
 - **Breaking:** `sowilo` is removed. `mynd`, in `contrib/mynd`, replaces it;
   its `CHANGES.md` maps each `sowilo` value to its replacement.
 - **Breaking:** aion's `Codecs.decode` decodes a one-token scalar's `[b; 1]`

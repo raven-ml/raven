@@ -5,7 +5,7 @@
 
 let invalid fmt = Printf.ksprintf invalid_arg fmt
 
-type 'd temperature = Greedy | Tempered of 'd Nx.float64_t
+type 'd temperature = Greedy | Tempered of 'd Nx.float32_t
 [@@deriving ptree]
 
 (* [keys] holds a key per object, [order] each object's order rotated so that
@@ -40,21 +40,19 @@ let start ~keys ?(temperature = 1.) inputs target =
         b);
   let at = Nx.beside first in
   let n = Modality.tokens target in
-  let u =
-    Nx.Rng.uniform_at at ~key:(Nx.Rng.fold_in keys 0) Nx.float64 [| n |]
-  in
+  let order = Nx.Rng.permutation_at at ~key:(Nx.Rng.fold_in keys 0) n in
   let shape = [| b; n |] in
   let tokens = Nx.zeros_at at Nx.int64 shape in
   let present = Nx.zeros_at at Nx.bool shape in
   let temperature =
     if temperature = 0. then Greedy
-    else Tempered (Nx.scalar_at at Nx.float64 temperature)
+    else Tempered (Nx.scalar_at at Nx.float32 temperature)
   in
   {
     keys;
     inputs;
     target = { modality = target; tokens; present };
-    order = Nx.argsort ~axis:1 u;
+    order;
     step = Nx.scalar_at at Nx.int64 1L;
     temperature;
   }

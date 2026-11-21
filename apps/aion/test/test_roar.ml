@@ -28,12 +28,10 @@ let keys seed = Nx.Rng.split_batch ~n:4 (Nx.Rng.key seed)
 let sample ~keys ?temperature ~reveal (target, inputs) =
   Roar.sample ~keys ?temperature ~reveal (Fixture.transformer ()) inputs target
 
-(* The orders the interface states: argsort of float64 uniforms from [fold_in
-   keys 0], [[|n|]] a key. *)
+(* The orders the interface states: permutations of [n] from [fold_in keys 0],
+   one a key. *)
 let order ~keys n =
-  Nx.argsort ~axis:1
-    (Nx.Rng.uniform_at Nx.Host.on ~key:(Nx.Rng.fold_in keys 0) Nx.float64
-       [| n |])
+  Nx.Rng.permutation_at Nx.Host.on ~key:(Nx.Rng.fold_in keys 0) n
 
 (* Step [s] of a draw of [tokens] from [keys], as the interface states it: the
    next positions of each object's order, decoded with the tokens of the steps
@@ -290,6 +288,34 @@ let draws =
           equal int 1 !traces;
           run 0.;
           equal int 2 !traces);
+      test "start and step compute no float64" (fun () ->
+          (* The programs' dtypes, each value's as pp_program prints it, at a
+             positive temperature, whose step divides by it. *)
+          let shown f x = Format.asprintf "%a" Rune.pp_program (f x) in
+          let d = Roar.start ~keys:(keys 0) ~temperature:0.5 inputs target in
+          let draw () = Nx.Ptree.v Roar.walk_draw in
+          let start =
+            shown
+              (Rune.program
+                 Nx.Ptree.(pair Nx.Rng.ptree (list (v Tokens.walk)))
+                 (draw ())
+                 (fun (keys, x) -> Roar.start ~keys ~temperature:0.5 x target))
+              (keys 0, inputs)
+          and step =
+            shown
+              (Rune.program (draw ()) (draw ())
+                 (Roar.step (Fixture.transformer ()) 7))
+              d
+          in
+          let has s =
+            let n = String.length s in
+            let rec go i =
+              i + 7 <= n && (String.sub s i 7 = "float64" || go (i + 1))
+            in
+            go 0
+          in
+          equal bool ~msg:"start" false (has start);
+          equal bool ~msg:"step" false (has step));
       test "a step on a set without eager kernels refuses at a later wait"
         (fun () ->
           (* Of 55 positions, the second step's last 5 are the first's. *)
