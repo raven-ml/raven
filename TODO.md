@@ -9,51 +9,21 @@ Measurements and parked work behind these items:
 _plans/perf-campaign/todo-archive-2026-11-18.md. A path in parentheses is
 under _plans/perf-campaign/ unless it names another directory of _plans/.
 
-- f32 SIMT products run at 15-17.5 TFLOP/s where cuBLAS runs TESSERA's
-  shapes at 26-30 (no TF32, `ampere_sgemm_128x64_tn` and `128x128_tn`):
-  TESSERA large's model time is 73.4 s against PyTorch's 56.6, all of it in
-  ffn2, q/k/v and the projections. Stage k-contiguous tiles through shared
-  memory, double-buffered, for f32 SIMT products as the bf16 cores do. The
-  TESSERA campaign has it (tessera-port/gpu-lane-logs/2026-11-19/gap/,
-  tessera-port/design/kcontig-b2/)
 - The rows layout runs rows(W)/4 workgroups: the router at 64 tokens or
   fewer and the 12-token k and v take 7-24 us where a grouped reduce or BEAM
   take 5-11; bare cores at 16 rows or fewer trail BEAM's (routercore/)
 - D212's blocked contractions lose to tinygrad's heuristic on long reduces
   (`contract/f32-2048` 1.03 of main against 0.92; attention values 256 wide
   1.04 against 0.86); `Heuristic.group` never groups a contraction
-- `Heuristic.four_first` still gates on the fitted `core_threads`. Gated
-  on `units`, matmul_768 takes 4 by 3 at 1.5x the time; ungated, targets
-  that state no `units` (sm_80, AMD, Metal) block small products, 1.38x by
-  an old measurement. Stating `units` on every target would let it go
-  (branch `fix-unitsgate` 3a8321ea33)
 - rig builds a program's whole submit before its first launch: 120 us of
   host time ahead of a one-program decode step. Submitting in pieces would
   start the GPU sooner (perf-campaign/chains/parked.md)
-- A bf16 product of 6-32 rows by weights laid `[K; N]` streams by its
-  columns on 4 workgroups: `contract/bf16-16x64x2880` takes 47-50 us where
-  BEAM's split of the reduce over 8 threads and upcast by 4 take 8-9
-- A lone per-head projection at head size 80 (kaun's `Attention.apply`
-  projects q and k apart) pads N from 80 to 128, 1.6x the core's work,
-  where a warp tile of 40 columns (N upcast by 5) covers it; D491's 440 to
-  448 was never measured against 5 either
-- A staged core pads N to its tile (D491) but not M: q at 100 tokens (M
-  padded to 112) takes 115 us against 56 at 128. A pad of M must keep
-  routed rows within a run (`in_run`)
-- The 440 by 440 weight gradient over 68608 rows, 16 partials, takes the
-  staged tile on 448 padded columns in 2.27 ms where staging off takes 1.78
 - Since D479, GPU `Set` elections of 16384 and 24576 rows run 1.4x and 1.9x
   slower than rune's former split, and near `stream_threads` outputs up to
   3.5x: split where the renderer is known (consolidate/groupgate/)
 - rune's paged attention with pages of 16 keys runs at 168 registers on
   CUDA, one workgroup an SM, and refills its spilled values every tile,
   skipped ones included
-- A core sums its whole reduce in each thread, so a grid under or just past
-  one wave reads slower than a stream: `Cuda/experts-mxfp4-4x2of8-14336x4096`
-  +38%. A split of the reduce from the SM count would remove it (splitcount/)
-- rune's routed products with no core: one row a block loses 12-33% to
-  blocks of 4 at 3-7 tokens; Q8_0's blocks of 64 from 16 rows take 1.5-2.9x
-  as long as 8 or 16
 
 ## nx, rune
 
