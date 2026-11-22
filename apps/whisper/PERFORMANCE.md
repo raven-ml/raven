@@ -122,7 +122,7 @@ alone.
 
 ```bash
 uv run apps/whisper/bench/fetch.py                # recording, checkpoints
-dune build @apps/whisper/bench/bench              # raven's minute rows
+WHISPER_DEVICE=cuda dune build @apps/whisper/bench/bench  # raven's minute rows
 apps/whisper/bench/raven.sh cuda                  # chapter, first transcript, kernels
 uv run apps/whisper/bench/openai_whisper.py cuda  # --fp16 for float16, cpu for the host
 uv run apps/whisper/bench/fasterwhisper.py cuda

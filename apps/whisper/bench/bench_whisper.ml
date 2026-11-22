@@ -5,17 +5,21 @@
 
 (* PERFORMANCE.md's rows: fetch.py's clip, the first minute of its
    recording, transcribed as main.exe transcribes it (Transcript.default in
-   English: greedy, the fallback ladder, timestamps) by tiny, small and
-   large-v3-turbo at float32, compiled on the first CUDA, NV or AMD GPU, and
-   by tiny eagerly on the host. A minute is three windows, the first two of
-   30 s, so it transcribes at the whole recording's rate (PERFORMANCE.md).
-   Each row reports the device memory in use once loaded, or the process's
-   peak resident memory on the host.
+   English: greedy, the fallback ladder, timestamps) on the device
+   WHISPER_DEVICE names, as Rig_gpus.open_ reads it: by tiny eagerly on the
+   host ([cpu], the default), or by tiny, small and large-v3-turbo at
+   float32, compiled on a GPU ([cuda], [nv], [amd]). A minute is three
+   windows, the first two of 30 s, so it transcribes at the whole
+   recording's rate (PERFORMANCE.md). Each row reports the device memory in
+   use once loaded, or the process's peak resident memory on the host. Each
+   device's suite keeps a baseline file of its own, so that blessing one
+   device's rows leaves the others': whisper.thumper for the host's,
+   whisper-cuda.thumper for CUDA's.
 
    [--warm] compiles every kernel into tolk's disk cache first, in a process
-   of its own. [--recording cuda|cpu MODEL...] times, outside thumper, the
+   of its own. [--recording DEVICE MODEL...] times, outside thumper, the
    encoder alone and the whole recording, and [--profile MODEL] runs the
-   encoder and the clip once each on the GPU for DEBUG=2's kernel times
+   encoder and the clip once each on CUDA for DEBUG=2's kernel times
    (raven.sh). Without fetch.py's files there is nothing to measure. *)
 
 open Whisper
@@ -39,16 +43,15 @@ let path f = Filename.concat dir f
 let fetched () =
   List.for_all (fun m -> Sys.file_exists (path (m ^ ".pt"))) gpu_models
 
-(* The GPUs tried, in order, as gpt-oss's bench tries them. *)
-let names = [ "CUDA"; "NV"; "AMD" ]
+let device = Option.value ~default:"cpu" (Sys.getenv_opt "WHISPER_DEVICE")
 
-let gpu () =
-  let rec go = function
-    | [] -> failwith "bench_whisper: no CUDA, NV or AMD GPU"
-    | name :: rest -> (
-        match Rig_gpus.open_ name with Ok d -> d | Error _ -> go rest)
-  in
-  go names
+(* Whether [d] names the host, read from the name, so that this process
+   opens no driver. *)
+let host d = String.lowercase_ascii d = "cpu"
+
+(* The suite, which names the baseline file. *)
+let suite =
+  if host device then "whisper" else "whisper-" ^ String.lowercase_ascii device
 
 let tokenizer (m : _ Model.t) =
   let file =
@@ -98,30 +101,29 @@ let transcriber at ~jit name =
 (* [on device name] is [name]'s {!transcriber} on [device], and a function
    stating the memory in use. *)
 let on device name =
-  match device with
-  | "cpu" ->
-      let peak () =
-        In_channel.with_open_text "/proc/self/status" In_channel.input_lines
-        |> List.find_map (fun l -> Scanf.sscanf_opt l "VmHWM: %d kB" Fun.id)
-        |> Option.fold ~none:"" ~some:(fun kb ->
-            Printf.sprintf "%.2f GB peak resident" (float kb *. 1024. /. 1e9))
-      in
-      (transcriber Nx.Host.on ~jit:false name, peak)
-  | _ ->
-      let d = gpu () in
-      let module G = (val Nx.devices [ d ]) in
-      (* The device memory in use as the driver reports it, every process's:
-         this one's alone on an otherwise empty GPU. *)
-      let in_use () =
-        Option.fold ~none:""
-          ~some:(fun { Rig.total; free } ->
-            Printf.sprintf "%.2f GB in use" (float (total - free) /. 1e9))
-          (Rig.capacity d)
-      in
-      (transcriber G.on ~jit:true name, in_use)
+  if host device then
+    let peak () =
+      In_channel.with_open_text "/proc/self/status" In_channel.input_lines
+      |> List.find_map (fun l -> Scanf.sscanf_opt l "VmHWM: %d kB" Fun.id)
+      |> Option.fold ~none:"" ~some:(fun kb ->
+          Printf.sprintf "%.2f GB peak resident" (float kb *. 1024. /. 1e9))
+    in
+    (transcriber Nx.Host.on ~jit:false name, peak)
+  else
+    let d = Result.error_to_failure (Rig_gpus.open_ device) in
+    let module G = (val Nx.devices [ d ]) in
+    (* The device memory in use as the driver reports it, every process's:
+       this one's alone on an otherwise empty GPU. *)
+    let in_use () =
+      Option.fold ~none:""
+        ~some:(fun { Rig.total; free } ->
+          Printf.sprintf "%.2f GB in use" (float (total - free) /. 1e9))
+        (Rig.capacity d)
+    in
+    (transcriber G.on ~jit:true name, in_use)
 
 let case device name =
-  let row = (if device = "cpu" then "minute-cpu/" else "minute/") ^ name in
+  let row = (if host device then "minute-cpu/" else "minute/") ^ name in
   Thumper.bench_with_setup row
     ~setup:(fun () ->
       let (transcribe, _), memory = on device name in
@@ -171,10 +173,10 @@ let profile name =
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--warm" ] ->
-      if fetched () && Result.is_ok (Rig_gpus.first ()) then
+      if fetched () && not (host device) then
         List.iter
           (fun name ->
-            let (transcribe, encode), _ = on "cuda" name in
+            let (transcribe, encode), _ = on device name in
             ignore (transcribe (clip ()));
             encode ();
             Gc.full_major ())
@@ -193,13 +195,15 @@ let () =
          ^ ", nothing to measure (apps/whisper/bench/fetch.py fetches them)");
         exit 0
       end;
-      let gpu =
-        if List.exists (fun n -> Result.is_ok (Rig_gpus.opens n)) names then
-          List.map (case "cuda") gpu_models
-        else []
+      let cases =
+        if host device then List.map (case device) cpu_models
+        else begin
+          Result.error_to_failure (Rig_gpus.opens device);
+          List.map (case device) gpu_models
+        end
       in
       exit
-        (Thumper.run "whisper"
+        (Thumper.run suite
            ~config:Thumper.Config.(default |> samples 5 |> deadline 120.)
            ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-           [ Thumper.group "Whisper" (gpu @ List.map (case "cpu") cpu_models) ])
+           [ Thumper.group "Whisper" cases ])

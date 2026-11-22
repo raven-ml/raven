@@ -7,9 +7,3 @@
 
 Whisper/minute-cpu/tiny	alloc_words	exact	12561215
 Whisper/minute-cpu/tiny	wall_time	batch=1	n=5	1.575e+00	1.562e+00 1.570e+00 1.575e+00 1.576e+00 1.579e+00
-Whisper/minute/large-v3-turbo	alloc_words	exact	558305
-Whisper/minute/large-v3-turbo	wall_time	batch=1	n=5	6.681e-01	6.658e-01 6.677e-01 6.681e-01 6.729e-01 6.748e-01
-Whisper/minute/small	alloc_words	exact	482382
-Whisper/minute/small	wall_time	batch=1	n=5	4.800e-01	4.744e-01 4.750e-01 4.800e-01 4.861e-01 4.897e-01
-Whisper/minute/tiny	alloc_words	exact	261035
-Whisper/minute/tiny	wall_time	batch=1	n=5	1.456e-01	1.394e-01 1.428e-01 1.456e-01 1.468e-01 1.473e-01
