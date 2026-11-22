@@ -148,19 +148,23 @@ static void F(update)(F(scratch) *x, int r, int nk) {
 }
 
 /* Row r's accumulator after its block: α acc plus the block's products,
-   each element one fused multiply-add. */
+   each element one fused multiply-add, in vectors: the bound is read once,
+   since under -fno-strict-aliasing a store to acc could change c->dv, and
+   gcc keeps a loop scalar whose count it cannot compute. */
 static void F(rescale)(const att *c, F(scratch) *x, int r) {
-  T *acc = x->acc + r * c->dv, alpha = x->alpha[r];
-  const T *p = x->part + r * c->dv;
-  for (int64_t e = 0; e < c->dv; e++) acc[e] = FMA(alpha, acc[e], p[e]);
+  int64_t dv = c->dv;
+  T *acc = x->acc + r * dv, alpha = x->alpha[r];
+  const T *p = x->part + r * dv;
+  for (int64_t e = 0; e < dv; e++) acc[e] = FMA(alpha, acc[e], p[e]);
 }
 
 /* Row r's products of the pairs [use] marks alone into its part, as the
    kernel adds them: from +0 in increasing key, each fused into its sum. */
 static void F(picked)(const att *c, F(scratch) *x, const uint8_t *use, int r,
                       int nr, int nk) {
-  T *y = x->part + r * c->dv;
-  memset(y, 0, sizeof(T) * (size_t)c->dv);
+  int64_t dv = c->dv;
+  T *y = x->part + r * dv;
+  memset(y, 0, sizeof(T) * (size_t)dv);
   const T *p = x->s + r * KEYS;
   const uint8_t *vis = use + r * nk;
   for (int u = 0; u < nr; u++) {
@@ -169,7 +173,7 @@ static void F(picked)(const att *c, F(scratch) *x, const uint8_t *use, int r,
       if (!vis[g->j + i]) continue;
       T pj = p[g->j + i];
       const T *v = (const T *)g->v + i * g->vs;
-      for (int64_t e = 0; e < c->dv; e++) y[e] = FMA(pj, v[e], y[e]);
+      for (int64_t e = 0; e < dv; e++) y[e] = FMA(pj, v[e], y[e]);
     }
   }
 }
