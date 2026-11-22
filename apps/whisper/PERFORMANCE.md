@@ -36,15 +36,15 @@ median of three rounds and their range.
 
 | | Precision | tiny | small |
 |---|---|---|---|
-| raven, eager | float32 | 42 (42–42) | 7.0 (7.0–7.0) |
-| openai-whisper | float32 | 48 (48–48) | 8.0 (8.0–8.1) |
-| faster-whisper | float32 | 51 (48–53) | 7.8 (7.7–7.8) |
-| transformers | float32 | 27 (27–27) | 5.0 (4.9–5.0) |
-| whisper.cpp | float16 | 33 (33–33) | 4.9 (4.9–4.9) |
+| raven, eager | float32 | 45 (45–45) | 7.6 (7.6–7.6) |
+| openai-whisper | float32 | 48 (47–48) | 8.1 (8.0–8.1) |
+| faster-whisper | float32 | 47 (47–48) | 7.6 (7.6–7.7) |
+| transformers | float32 | 27 (26–27) | 5.0 (4.9–5.0) |
+| whisper.cpp | float16 | 33 (33–33) | 4.8 (4.8–4.9) |
 
-raven runs the host's eager kernels, one call each; its encoder takes 1.2
-to 1.3 times PyTorch's on a window (193 against 151 ms with tiny, 1.58
-against 1.35 s with small).
+raven runs the host's eager kernels, one call each; its encoder takes 1.1
+times PyTorch's on a window (170 against 151 ms with tiny, 1.46 against
+1.35 s with small).
 
 ## Where the time goes
 
@@ -96,7 +96,7 @@ alone.
 - **Recording.** Chapter 122797 of LibriSpeech's test-clean (speaker 672,
   8 min 16 s, CC BY 4.0), its utterances in order; the minute rows read its
   first minute, three windows, the third of 2 s.
-- **Versions.** raven at main 50116b53ea, and at 8f688d3761 for the CPU's
+- **Versions.** raven at main 50116b53ea, and at d7fd1f4ba0 for the CPU's
   rows. openai-whisper at 86098128 and
   transformers 5.23.0 on torch 2.15.0+cu132; faster-whisper 1.2.1 on
   CTranslate2 4.8.5; whisper.cpp v1.9.5, built with CUDA 13.4 for sm_89, on
@@ -110,10 +110,11 @@ alone.
   every system in turn; raven's and openai-whisper's float32 rows come from
   three later rounds at raven's commit. On the CPU, three rounds on
   2026-11-22, each in a hold of the timing lock of its own, at a load of
-  0.7 to 2.5: every system in turn, the references in alternate orders and
+  0.2 to 4.3: every system in turn, the references in alternate orders and
   raven last, each run started once both cores had been under 5% busy for
   5 s. A round counted if no raven row ran more than 3% faster or slower
-  than in both other rounds, and every round did. raven's minute rows are
+  than in both other rounds; one, at a load of up to 5.3, did not, and a
+  fourth took its place. raven's minute rows are
   thumper's medians (5 samples), the others the scripts' (5 calls after
   1); first transcripts are the median of 3 processes after 1. The tables
   give the median of the three rounds and their range. The breakdown sums

@@ -5,5 +5,5 @@
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
 
-Whisper/minute-cpu/tiny	alloc_words	exact	12408204
-Whisper/minute-cpu/tiny	wall_time	batch=1	n=5	1.573e+00	1.565e+00 1.572e+00 1.573e+00 1.577e+00 1.577e+00
+Whisper/minute-cpu/tiny	alloc_words	exact	12406304
+Whisper/minute-cpu/tiny	wall_time	batch=1	n=5	1.388e+00	1.378e+00 1.379e+00 1.388e+00 1.391e+00 1.411e+00
