@@ -351,6 +351,8 @@ static int class_of(uint8_t lo, uint8_t hi) {
 #define SWORD int32_t
 #define EXPONENT 0x7f800000u
 #define EXP nx_exp_f32
+#define EXP_NEAR nx_exp_near_f32
+#define EXP_BIG nx_exp_big_f32
 #define LOG nx_log_f32
 #define FMA fmaf
 #define ROWWISE ROW_SCORES
@@ -363,6 +365,8 @@ static int class_of(uint8_t lo, uint8_t hi) {
 #define SWORD int64_t
 #define EXPONENT 0x7ff0000000000000u
 #define EXP nx_exp_f64
+#define EXP_NEAR nx_exp_near_f64
+#define EXP_BIG nx_exp_big_f64
 #define LOG nx_log_f64
 #define FMA fma
 #define ROWWISE 0

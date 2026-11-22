@@ -6,8 +6,9 @@
 /* attention.c's units in one accumulator, included once per accumulator
    with T its element, DT its dtype code, WORD and SWORD the unsigned and
    signed integers of its width, EXPONENT its exponent's bits in WORD, EXP
-   and LOG its kinds, FMA its fused multiply-add and ROWWISE 1 where
-   row_scores serves it, which it undefines at its end. F(name) names the
+   and LOG its kinds, EXP_NEAR and EXP_BIG exp's near function and its test
+   (nx_kinds.h), FMA its fused multiply-add and ROWWISE 1 where row_scores
+   serves it, which it undefines at its end. F(name) names the
    accumulator's instance. */
 
 /* A worker's scratch, by unit. */
@@ -81,11 +82,7 @@ static void F(values_of)(const att *c, F(scratch) *x, int n) {
   }
 }
 
-/* Row r's update by its block's [nk] scores at [s], hidden ones -inf:
-   its maximum, its weights into [s], its sum and its α. A block whose
-   visible scores are all -inf gives weights 0 and leaves the state as it
-   was, α 1. Eight lanes of T, of the integers of T's width for
-   comparisons. */
+/* Eight lanes of T, of the integers of T's width for comparisons. */
 typedef T F(v8) __attribute__((vector_size(8 * sizeof(T))));
 typedef SWORD F(v8i) __attribute__((vector_size(8 * sizeof(T))));
 
@@ -132,19 +129,50 @@ static T F(lanes_sum)(const T *s, int n) {
   return lane[0];
 }
 
-static void F(update)(F(scratch) *x, int r, int nk) {
-  T *s = x->s + r * KEYS;
-  T m = x->m[r], mx = F(greatest)(s, nk, m);
-  if (mx == -INFINITY) {
-    memset(s, 0, sizeof(T) * (size_t)nk);
-    x->alpha[r] = 1;
-    return;
+/* The rows' updates by the block's [nk] scores at x->s, hidden ones
+   -inf: each row's maximum, its weights into its scores, its sum and its
+   α. A row that sees no key of the block takes weights 0 and keeps its
+   state, as does one whose visible scores are all -inf, its α 1. Each
+   step is a pass over the unit's rows, every row's maximum, then the αs,
+   the weights and the sums, so that a row's chain of dependent steps, a
+   maximum across its lanes, an exp and a sum, overlaps the other rows'
+   where a row's steps in turn ran them one after another. A row's
+   weights take exp's near function where no difference to its maximum
+   lies past exp's near test, which gives the kind's bits (nx_kinds.h),
+   as the rows' runs of exp take it (rows.c). On two performance cores of
+   fudge Whisper tiny's encoder shape, 6 heads of 1500 queries and keys of
+   64 dimensions, took 17.9 ms with each row's steps in turn, 16.3 in
+   passes and 15.6 with the near function. */
+static void F(updates)(F(scratch) *x, int rows, int nk) {
+  T mx[ROWS];
+  for (int i = 0; i < rows; i++)
+    mx[i] = x->sees[i] ? F(greatest)(x->s + i * KEYS, nk, x->m[i])
+                       : -INFINITY;
+  for (int i = 0; i < rows; i++) {
+    T alpha = EXP(x->m[i] - mx[i]);
+    x->alpha[i] = mx[i] == -INFINITY ? 1 : alpha;
   }
-  T alpha = EXP(m - mx);
-  for (int j = 0; j < nk; j++) s[j] = EXP(s[j] - mx);
-  x->l[r] = FMA(alpha, x->l[r], F(lanes_sum)(s, nk));
-  x->m[r] = mx;
-  x->alpha[r] = alpha;
+  for (int i = 0; i < rows; i++) {
+    T *s = x->s + i * KEYS, m = mx[i];
+    if (m == -INFINITY) {
+      memset(s, 0, sizeof(T) * (size_t)nk);
+      continue;
+    }
+    int big = 0;
+    for (int j = 0; j < nk; j++) {
+      s[j] = s[j] - m;
+      big |= EXP_BIG(s[j]);
+    }
+    if (big)
+      for (int j = 0; j < nk; j++) s[j] = EXP(s[j]);
+    else
+      for (int j = 0; j < nk; j++) s[j] = EXP_NEAR(s[j]);
+  }
+  for (int i = 0; i < rows; i++) {
+    if (mx[i] == -INFINITY) continue;
+    x->l[i] = FMA(x->alpha[i], x->l[i], F(lanes_sum)(x->s + i * KEYS, nk));
+    x->m[i] = mx[i];
+  }
 }
 
 /* Row r's accumulator after its block: α acc plus the block's products,
@@ -360,10 +388,7 @@ static void F(unit)(att *c, F(scratch) *x, int64_t u) {
         picking |= x->picks[i];
       }
     }
-    for (int i = 0; i < rows; i++) {
-      if (x->sees[i]) F(update)(x, i, nk);
-      else memset(x->s + i * KEYS, 0, sizeof(T) * (size_t)nk);
-    }
+    F(updates)(x, rows, nk);
     /* The weights of the pairs output 2 drops are 0, past the row's sum. */
     if (dropping)
       for (int i = 0; i < rows; i++) {
@@ -451,6 +476,8 @@ static void F(body)(int64_t lo, int64_t hi, int worker, void *ctx) {
 #undef SWORD
 #undef EXPONENT
 #undef EXP
+#undef EXP_NEAR
+#undef EXP_BIG
 #undef LOG
 #undef FMA
 #undef ROWWISE
