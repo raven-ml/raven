@@ -5,7 +5,7 @@ fast as AION-1's own PyTorch code and computes redshift posteriors 1.6 times
 as fast, ahead of PyTorch under `torch.compile` too, and draws DESI spectra
 at 0.92 times its speed. As a whole command, `main.exe embed` takes 1.7 s for
 64 real objects against 8.3 s for upstream's code. On two CPU cores, raven
-embeds 1.4 times as fast as PyTorch eagerly (`--eager`), and at 0.73 times
+embeds 1.5 times as fast as PyTorch eagerly (`--eager`), and at 0.92 times
 its speed compiled, the default.
 
 ## The model on a GPU
@@ -53,15 +53,16 @@ posterior at 4 objects a call, a spectrum one at a time.
 
 | aion-base | raven, compiled (default) | raven, eager (`--eager`) | PyTorch |
 |---|---|---|---|
-| embed | 0.666 (0.658–0.667) | 1.26 (1.25–1.27) | 0.917 (0.905–0.933) |
-| redshift posterior | 1.06 (1.05–1.06) | 1.72 (1.71–1.74) | 1.51 (1.44–1.53) |
-| DESI spectrum, 12 steps | 0.060 (0.060–0.060) | 0.220 (0.219–0.220) | 0.357 (0.357–0.361) |
+| embed | 0.814 (0.810–0.816) | 1.31 (1.30–1.31) | 0.884 (0.883–0.971) |
+| redshift posterior | 1.17 (1.17–1.17) | 1.77 (1.77–1.77) | 1.47 (1.45–1.69) |
+| DESI spectrum, 12 steps | 0.171 (0.170–0.171) | 0.222 (0.222–0.223) | 0.364 (0.363–0.364) |
 
-Compiled raven embeds 1.5 times as fast as at eb04a315af, which embedded
-0.442 objects a second, computes posteriors 1.26 times and draws spectra
-1.36 times as fast, from tolk's host products (c1f4e4e834 runs a sum of
-products along its widest lane axis). The eager and PyTorch columns, whose
-code did not change, moved by 3 to 9% between the two measurements.
+Compiled raven embeds 1.22 times as fast as at e4e0b64ea7, which embedded
+0.666 objects a second, computes posteriors 1.10 times and draws spectra
+2.8 times as fast, from tolk's host products: d06fbdd593 pads a product's
+rows that 4 does not divide to a tile, and 341de1f36d loads the padded rows
+without a gate. The eager and PyTorch columns moved by 1 to 4% between the
+two measurements.
 
 ## The codecs
 
@@ -70,9 +71,9 @@ spectrum on the codec's grid: 16 objects a call on the GPU, 4 on the CPU.
 
 | | raven, CUDA | PyTorch, CUDA | raven, CPU compiled (default) | raven, CPU eager (`--eager`) | PyTorch, CPU |
 |---|---|---|---|---|---|
-| Image encode, 4 × 160 × 160 | 219 (219–220) | 727 (725–733) | 3.67 (3.64–3.67) | 3.70 (3.67–3.70) | 4.38 (4.35–4.47) |
-| Spectrum encode, 7781 pixels | 797 (796–806) | 402 (402–403) | 9.84 (9.75–9.93) | 6.10 (6.09–6.12) | 8.76 (8.75–8.89) |
-| Spectrum decode, 273 tokens | 2,309 (2,273–2,356) | 859 (858–860) | 37.1 (36.7–37.6) | 17.9 (17.7–17.9) | 28.1 (27.8–28.6) |
+| Image encode, 4 × 160 × 160 | 219 (219–220) | 727 (725–733) | 3.70 (3.70–3.71) | 3.80 (3.79–3.81) | 4.56 (4.55–4.56) |
+| Spectrum encode, 7781 pixels | 797 (796–806) | 402 (402–403) | 10.1 (10.1–10.1) | 6.27 (6.26–6.29) | 9.09 (9.00–9.10) |
+| Spectrum decode, 273 tokens | 2,309 (2,273–2,356) | 859 (858–860) | 38.1 (38.0–38.2) | 18.1 (18.1–18.2) | 28.7 (28.2–28.8) |
 
 ## Where the time goes
 
@@ -101,9 +102,9 @@ raven's from tolk's `DEBUG=2` timing of each kernel, PyTorch's from
   ms of kernels for 16 images; PyTorch's run on cuDNN with TF32, cuDNN's
   default, in 20 ms, so that part of upstream is not IEEE float32.
 - **The CPU.** Eager raven draws spectra slower than PyTorch for the same 1.6
-  times the encoder's rows. Compiled, embed spends 77% of its kernel time
-  in products, at 70 GFLOP/s on the two cores, and 22% in attention
-  (`DEBUG=2`, 4 objects), where eager raven runs nx's own kernels 1.9
+  times the encoder's rows. Compiled, embed spends 74% of its kernel time
+  in products, at 164 GFLOP/s on the two cores, and 25% in attention
+  (`DEBUG=2`, 4 objects), where eager raven runs nx's own kernels 1.6
   times as fast.
 
 ## Whole commands, starting and memory
@@ -117,10 +118,10 @@ on the CPU, in batches of 16; raven's kernels come from its disk cache.
 
 | | raven, CUDA | PyTorch, CUDA | raven, CPU compiled (default) | raven, CPU eager (`--eager`) | PyTorch, CPU |
 |---|---|---|---|---|---|
-| `embed`, image, spectrum and 9 values | 1.73 (1.73–1.76) | 8.29 (8.27–8.29) | 30.6 (30.5–30.8) | 24.6 (23.7–28.2) | 31.4 (31.2–31.7) |
-| `posterior` of redshift, image and 4 fluxes | 1.72 (1.70–1.72) | 6.20 (6.14–6.48) | 20.2 (20.2–20.3) | 18.9 (17.5–44.3) | 19.9 (19.7–20.3) |
-| `generate` of a DESI spectrum from XP, 12 steps | 4.29 (4.28–4.36) | 7.85 (7.84–8.04) | 30.6 (30.5–30.7) | 22.7 (22.1–71.8) | 16.9 (16.6–17.2) |
-| `embed` over an empty kernel cache | 9.43 (9.22–9.48) | | 35.4 (35.3–35.6) | nothing to compile | |
+| `embed`, image, spectrum and 9 values | 1.73 (1.73–1.76) | 8.29 (8.27–8.29) | 26.6 (26.5–27.2) | 21.8 (21.8–21.9) | 31.2 (30.6–32.4) |
+| `posterior` of redshift, image and 4 fluxes | 1.72 (1.70–1.72) | 6.20 (6.14–6.48) | 19.1 (19.1–20.1) | 14.8 (14.8–14.8) | 20.0 (19.6–20.8) |
+| `generate` of a DESI spectrum from XP, 12 steps | 4.29 (4.28–4.36) | 7.85 (7.84–8.04) | 26.1 (26.0–27.7) | 20.2 (20.1–20.2) | 16.5 (16.4–17.3) |
+| `embed` over an empty kernel cache | 9.43 (9.22–9.48) | | 31.1 (31.0–31.9) | nothing to compile | |
 
 On the GPU, besides the model's time at the tables' rates, `main.exe`'s
 `embed` takes 1.2 s to start, load the weights, read the rows and run the
@@ -128,11 +129,9 @@ codecs, which it runs on the GPU as PyTorch does; PyTorch's process takes
 7.3 s. `generate` draws spectra slower (The model on a GPU) but starts
 faster, so it finishes first. Compiling raven's kernels over an empty cache
 adds 8 s to `embed`, 5 s on the CPU; PyTorch ships its kernels compiled.
-On the CPU, compiled, `main.exe` embeds and computes posteriors in
-PyTorch's time, 0.98 and 1.01 times it, and takes 1.8 times its time to draw
-spectra; eager, the commands follow the eager rows. Other users' jobs ran on
-the timing cores during the eager commands' third round, at a load of 44,
-which the tops of their ranges show.
+On the CPU, compiled, `main.exe` embeds in 0.85 times PyTorch's time,
+computes posteriors in its time, 0.95 times it, and takes 1.6 times its
+time to draw spectra; eager, the commands follow the eager rows.
 
 Device memory while embedding 16 objects, the most each side held,
 allocator caches included: raven 1.1 GiB with aion-base and 3.1 GiB with
@@ -145,40 +144,42 @@ which PyTorch's holds.
 - **Machine.** fudge: Intel Core Ultra 5 235, NVIDIA RTX 5000 Ada (sm_89,
   32 GB), driver 615.71.09, CUDA 13.4, Debian 13. Every timed process ran on
   two cores (`taskset`), torch with two threads, the CPU rows with the GPU
-  hidden. Other users' jobs shared the host, at loads from 1 to 44, never the
-  GPU: its process list was empty before and after every GPU run.
-- **The host's rounds.** The CPU's rows ran three rounds back to back in
-  one hold of the timing lock, beside other users' jobs at a load of 3 to
-  6, each run starting only once no other process had taken 5% of a core
-  on its two cores in 5 s. A round counted if every row's spread stayed
-  within 3.5%; if the eager and PyTorch rows, the controls, ran no more than
-  5% slower than in eb04a315af's rounds, on a quiet host (contention only
+  hidden. Other users' jobs shared the host, never the GPU: its process
+  list was empty before and after every GPU run.
+- **The host's rounds.** The CPU's rows ran rounds on 2026-11-22, each in
+  a hold of the timing lock of its own, each run starting only once both
+  its cores had been under 5% busy for 5 s. A round counted if every row's
+  spread stayed within 3.5%; if the eager and PyTorch rows, the controls,
+  ran no more than 5% slower than in e4e0b64ea7's rounds (contention only
   slows a control, and PyTorch's posterior varies by 5% either way on its
   own); and if no raven row ran more than its spread or 3%, whichever is
-  larger, faster or slower than in both of the block's other rounds, so
-  that a faster or slower host flatters neither side. One round failed the
-  last check, its compiled posterior 5.1% slower, and ran again. Two rounds
-  earlier that day ran 1 to 13% slower on every side, on a busier host, and
-  were set aside. The CUDA and compiled host's whole commands ran under the
-  same check of the cores, PyTorch's times within 5% of their last
-  measurement, every side's range within 3.5%.
-- **Versions.** raven at e4e0b64ea7 for the rows, their breakdowns, and the
-  CUDA and compiled host's whole commands; at 50d61418f0, after `main.exe`
-  moved its codecs to the device and compiled by default, for the eager
-  host's whole commands. AION-1
+  larger, faster or slower than in both other rounds, so that a faster or
+  slower host flatters neither side. The first three rounds, beside other
+  users' jobs at a load of 2.4 to 7.6, ran the controls up to 12% slower
+  and were set aside; the next three, at a load of 0.4 to 2.2, counted, and
+  in one of them PyTorch's embed and posterior ran 9 and 13% faster than in
+  the other two. The CUDA whole commands ran under the same check of the
+  cores, PyTorch's times within 5% of their last measurement, every side's
+  range within 3.5%; so did the host's, each round in a hold of its own,
+  PyTorch's times within 3% of their last measurement.
+- **Versions.** raven at e4e0b64ea7 for the GPU's rows, their breakdowns
+  and the CUDA whole commands; at d93d815855 for the host's rows, its
+  breakdown and the host's whole commands. AION-1
   (`polymathic-aion`) at db7fba6d on torch 2.15.0+cu132, Python 3.12.15,
   cuDNN 9.26. The whole
   commands load polymathic-ai/aion-base at 40541618, the Hub's current
   commit, which `Hub` pins.
-- **Statistic.** Three rounds on 2026-11-20 and 21, each running raven and
-  PyTorch in turn on one device, in alternate orders. raven's cells are
+- **Statistic.** Three rounds on 2026-11-20 and 21 on the GPU and on
+  2026-11-22 on the host, each running raven and PyTorch in turn on one
+  device, in alternate orders. raven's cells are
   thumper's medians (5 samples on the GPU, 3 on the host, after 3 warmup
   calls), the others `pytorch.py`'s (5 calls on the GPU, 3 on the host,
   after 1 or 2); the tables give the median of the three rounds and their
   range. `torch.compile`, beside eba27a14be's rounds, and the batch of 64
-  ran once. The whole commands ran three rounds of `whole.sh` each,
-  PyTorch's CPU cells in the compiled commands' rounds. The breakdowns are
-  one profiled call each, outside the timed rounds.
+  ran once. The whole commands ran three rounds of `whole.sh` each, on the
+  host one round a hold (`ROUNDS=1`), raven and PyTorch in alternate
+  orders, PyTorch's CPU cells in the compiled commands' rounds. The
+  breakdowns are one profiled call each, outside the timed rounds.
 - **Same work.** The rows run at random weights of the released
   architectures, since the time does not depend on the values; the whole
   commands load the released weights. Both sides compute in float32, and
