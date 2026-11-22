@@ -161,7 +161,12 @@ kernels as raven joins its launches, 1,080 ms with them kept apart, which
 - **Profiles.** One call each, after the bench's setup and a first call, by
   a build of tolk that keeps its joined launches apart and names each
   kernel by the first ten hex digits of its source's MD5 (a measurement
-  patch, not in the tree).
+  patch, not in the tree). The tree's tolk prints a joined launch as one
+  line of its members' summed work, which `roles.py` counts as one kernel:
+  at d93d815855 the medium student over the whole tile gave products 36.1 s
+  at 24.9 TFLOP/s, attention 3.7 s and the rest 8.1 s, 48.0 s in all,
+  within 2% of the table (one run on 2026-11-22, under the timing, heavy
+  and GPU locks).
 - **Same work.** The rows run at random weights of the released
   architectures, since the time does not depend on the values; the whole
   commands load the released students. The students run in float32 on both
@@ -177,6 +182,9 @@ dune exec apps/tessera/bin/main.exe -- preprocess \
 TESSERA_TILE=tile TESSERA_DEVICE=cuda dune build @apps/tessera/bench/bench
 uv run apps/tessera/bench/pytorch.py UPSTREAM tile cuda
 apps/tessera/bench/whole.sh UPSTREAM tile DIR
+DEBUG=2 dune exec apps/tessera/bin/main.exe -- encode --model DIR/student_medium.pt \
+  --tile tile --device cuda --out e 2>&1 | uv run apps/tessera/bench/roles.py raven
+uv run apps/tessera/bench/roles.py torch UPSTREAM tile medium
 ```
 
 `UPSTREAM` is a checkout of github.com/ucam-eo/tessera at e368539f. On the
