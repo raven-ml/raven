@@ -365,7 +365,7 @@ let piece =
     of_list ~pp:(fun ppf (p, _) -> Format.pp_print_string ppf p) lengths
   in
   let* row =
-    frequency [ (1, constant 0); (1, constant n); (6, int_range 0 n) ]
+    frequency [ (2, constant 0); (1, constant n); (5, int_range 0 n) ]
   in
   let+ rows =
     frequency
