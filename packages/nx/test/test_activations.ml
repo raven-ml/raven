@@ -1442,6 +1442,49 @@ let law_z_composed (type s) (dt : (float, s) D.t) (s, xs, eps, g, b, small)
   equal same_bits (Nx.to_array want)
     (Nx.to_array (Nx.standardize ~eps ?scale ?shift x))
 
+(* [standardize ~eps x] along the last axis by the steps its doc names, each
+   one operation: [c = Σ x / n], the sums [s₁] of [d = x - c] and [s₂] of
+   [d²], [c₂ = s₁ / n], [v = (s₂ - s₁ c₂) / n] as the kernels' moments take
+   it, at least [0.] and [s₂] where that is [∞], then [(d - c₂) r] for
+   [r = 1 / sqrt (v + eps)], [+0.] where [d = c₂]. *)
+let z_steps ~eps x =
+  let n = Float.of_int (Nx.dim (Nx.ndim x - 1) x) in
+  let lane y = Nx.sum ~axes:[ -1 ] ~keepdims:true y in
+  let d = Nx.sub x (Nx.div_s (lane x) n) in
+  let s1 = lane d and s2 = lane (Nx.mul d d) in
+  let c2 = Nx.div_s s1 n in
+  let v = Nx.div_s (Nx.sub s2 (Nx.mul s1 c2)) n in
+  let v = Nx.where (Nx.less_s v 0.) (Nx.zeros_like v) v in
+  let v = Nx.where (Nx.equal_s s2 Float.infinity) s2 v in
+  let r = Nx.recip (Nx.sqrt (Nx.add_s v eps)) in
+  let q = Nx.sub d c2 in
+  Nx.where (Nx.equal_s q 0.) (Nx.zeros_like q) (Nx.mul q r)
+
+(* At float32 and float64, a lane that needs no power of two, as no case
+   but the subnormal ones does, has the bits of its doc's steps. *)
+let law_z_steps (type s) (dt : (float, s) D.t) (s, xs, eps, _, _, small) =
+  assume (not small);
+  let xs = drawn dt small xs in
+  let lanes = List.map (Array.map (fun i -> xs.(i))) (lanes s) in
+  let equal_elements l = Array.for_all (fun x -> x = l.(0)) l in
+  (* A lane whose mean is a thousand times its greatest deviation or more. *)
+  let far l =
+    let n = Float.of_int (Array.length l) in
+    let m = Array.fold_left ( +. ) 0. l /. n in
+    let dev =
+      Array.fold_left (fun a x -> Float.max a (Float.abs (x -. m))) 0. l
+    in
+    dev > 0. && Float.abs m >= 1000. *. dev
+  in
+  cover "a lane of equal elements, +0. throughout"
+    (List.exists equal_elements lanes);
+  cover "no eps" (eps = 0.);
+  cover "a lane whose mean is far from its spread" (List.exists far lanes);
+  let x = value dt s xs in
+  equal same_bits
+    (Nx.to_array (z_steps ~eps x))
+    (Nx.to_array (Nx.standardize ~eps x))
+
 (* A lane of equal elements is [+0.], whatever their mean's rounding, up to
    [2^17] of them at float32: the old composition gave [0.21] for [1000.1]. *)
 let test_z_constant () =
@@ -1722,6 +1765,10 @@ let () =
                (law_z_composed D.Float32);
              prop "float64's bits are its composition's" z_case
                (law_z_composed D.Float64);
+             prop "float32's bits are its doc's steps'" z_case
+               (law_z_steps D.Float32);
+             prop "float64's bits are its doc's steps'" z_case
+               (law_z_steps D.Float64);
              test "a lane of equal elements is zero" test_z_constant;
              test "cases" test_z_cases;
              test "views" test_z_views;
