@@ -1622,11 +1622,13 @@ let law_programmed (b : Support.backend) c =
 
 (* Several reductions of one program *)
 
-(* Loops as [programmed]'s, of zero to five elements an axis among the
-   small ones, reduced; rows of planes reduced across a kept axis; columns
-   of up to three blocks of terms reduced across rows, in pairs too; and as
-   many rows of more than eight blocks as a call's units need for a block
-   group each. *)
+(* Loops as [programmed]'s, of zero to five elements an axis among the small
+   ones, reduced; rows of planes reduced across a kept axis; columns of up to
+   three blocks of terms reduced across rows, in pairs too; and as many rows of
+   more than eight blocks as a call's units need for a block group each.
+   Programs of hundreds of nodes run over loops of at most 2^16 elements: over
+   larger ones they took four fifths of the law's time. [several_examples] runs
+   one over each large profile. *)
 let several =
   let open Gen in
   let small = array ~size:(int_range 1 4) (int_range 0 5) in
@@ -1699,9 +1701,35 @@ let several =
   in
   let* dts = array ~size:(int_range 1 3) (of_list ~pp:pp_dtype dtypes) in
   let* padded = bool in
-  let* long = frequency [ (2, constant false); (1, constant true) ] in
+  let* long =
+    if Array.fold_left ( * ) 1 shape > 1 lsl 16 then constant false
+    else frequency [ (2, constant false); (1, constant true) ]
+  in
   let+ seed = int in
   { scanned = false; summed = false; shape; axes; dts; padded; long; seed }
+
+(* Programs of hundreds of nodes over rows of more than eight blocks and over a
+   long axis, of two loads; and two monoids across rows of a float16 output,
+   which the draws miss about one run in 20. *)
+let several_examples =
+  let case ?(long = true) ?(dts = D.[| Any Float32; Any Float16 |]) shape axes
+      seed =
+    {
+      scanned = false;
+      summed = false;
+      shape;
+      axes;
+      dts;
+      padded = true;
+      long;
+      seed;
+    }
+  in
+  [
+    case [| 64; 8193 |] [| 1 |] 7;
+    case [| 2; 70_000 |] [| 1 |] 7;
+    case ~long:false ~dts:D.[| Any Float16 |] [| 1788; 64 |] [| 0 |] 1;
+  ]
 
 (* nx_cpu.mli: a Reduce of several reductions computes each one's bits
    alone, so its destinations hold the bits of each reduction reduced by a
@@ -2073,7 +2101,7 @@ let laws (b : Support.backend) =
     @ (if b != Support.cpu then []
        else
          [
-           prop ~count:200
+           prop ~count:200 ~examples:several_examples
              "a reduction of several reductions of a program has the bits \
               of each reduced alone"
              (Gen.with_pp pp_programmed several)
