@@ -564,19 +564,23 @@ let to_one (type v s d e) (at : d Devices.placement) (a : (v, s) A.t)
     (p : e Devices.placement) : (v, s, e) Value.t =
   Value.Array { at = p; a = one_array at a p; dead = Value.Live }
 
-let overlaps a b = Rig.Buffer.overlaps (A.buffer a) (A.buffer b)
+(* Whether [b] lies over [a]'s memory: kept, [a]'s own buffer, or borrowed,
+   sharing its bytes. A kept buffer of no bytes overlaps nothing
+   ({!Rig.Buffer.overlaps}), yet a take of [a]'s memory kills it. *)
+let over a b =
+  let a = A.buffer a and b = A.buffer b in
+  a == b || Rig.Buffer.overlaps a b
 
-(* Whether an array of [xs] from position [i] overlaps [b]. *)
-let rec overlaps_any xs b i =
-  i < Iarray.length xs
-  && (overlaps (Iarray.get xs i) b || overlaps_any xs b (i + 1))
+(* Whether [b] lies over the memory of an array of [xs] from position [i]. *)
+let rec over_any xs b i =
+  i < Iarray.length xs && (over (Iarray.get xs i) b || over_any xs b (i + 1))
 
 (* [to_one], its array marked shared where it lies over [a]'s memory, as
    {!place} marks it. *)
 let placed_one (type v s d e) (at : d Devices.placement) (a : (v, s) A.t)
     (p : e Devices.placement) : (v, s, e) Value.t =
   let b = one_array at a p in
-  if overlaps a b then Rig.Buffer.share (A.buffer b);
+  if over a b then Rig.Buffer.share (A.buffer b);
   Value.Array { at = p; a = b; dead = Value.Live }
 
 (* Creations *)
@@ -852,7 +856,7 @@ let place : type v s d e.
       let xs = Prim.arrays x and ys = Prim.arrays y in
       for j = 0 to Iarray.length ys - 1 do
         let b = Iarray.get ys j in
-        if overlaps_any xs b 0 then Rig.Buffer.share (A.buffer b)
+        if over_any xs b 0 then Rig.Buffer.share (A.buffer b)
       done;
       y
 

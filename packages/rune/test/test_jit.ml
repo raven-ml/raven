@@ -2816,6 +2816,29 @@ let test_evaluated_donation () =
     (Rune.evaluations () - before);
   equal bits_t expected (bits y)
 
+(* An evaluated program gives a donated argument of no elements, and a value
+   of no elements an operation made, to the operation that reads it last, here
+   a place where it lies, whose result keeps that memory of no bytes. *)
+let test_evaluated_empty_placed () =
+  let p = on (Device 0) in
+  let placed f =
+    Rune.jit
+      T.(pair tensor tensor @-> returns tensor)
+      (fun (a, x) ->
+        declining Nx.isfinite (Nx.sum a);
+        Nx.place p (f x))
+  in
+  let check ~msg f =
+    let a = Nx.place p (v [| 1.; 2. |]) in
+    let x = Nx.add_s (Nx.zeros_at p f32 [| 0 |]) 1. in
+    let before = Rune.evaluations () in
+    let y = placed f (a, Nx.donate x) in
+    equal ~msg:(msg ^ ": evaluated") bool true (Rune.evaluations () > before);
+    equal ~msg (array float_exact) [||] (Nx.to_array y)
+  in
+  check ~msg:"the argument" Fun.id;
+  check ~msg:"a value an operation made" (fun x -> Nx.add_s x 1.)
+
 type donation_case =
   | Donation_case :
       (float, 's) Nx.dtype * int array * Operand.t * Operand.t * Expr.t
@@ -6599,6 +6622,8 @@ let () =
              test "a shared donor lends nothing" test_shared;
              test "an evaluated program consumes its donations"
                test_evaluated_donation;
+             test "an evaluated program places a donation of no elements"
+               test_evaluated_empty_placed;
              prop ~examples:donation_examples "donation keeps the values"
                donation_cases law_donation;
              prop ~examples:state_examples

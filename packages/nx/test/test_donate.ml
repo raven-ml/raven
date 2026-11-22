@@ -537,6 +537,24 @@ let test_shards_of_one_allocation () =
   donated [| 4; 2 |] 0;
   donated [| 4; 2 |] 1
 
+(* A value of no elements donated to a place where it lies is the result's
+   memory, though it has no bytes: on the host, on one device of a set, whole
+   on each device and cut across them. *)
+let test_empty_placed () =
+  let placed (type d) ~msg (p : d Nx.Placement.t) s =
+    let x = Nx.add_s (Nx.zeros_at p f32 s) 1. in
+    let y = Nx.place p (Nx.donate x) in
+    equal ~msg (array float_exact) [||] (Nx.to_array y);
+    raises (Invalid_argument (donated_in "Nx.copy" x)) (fun () -> Nx.copy x)
+  in
+  placed ~msg:"on the host" Nx.Host.on [| 0 |];
+  placed ~msg:"[2; 0] on the host" Nx.Host.on [| 2; 0 |];
+  placed ~msg:"on one device"
+    (Nx.Placement.device Two.v (Nx_support.memory 1))
+    [| 0 |];
+  placed ~msg:"whole on each device" (Nx.Placement.on Two.v) [| 0 |];
+  placed ~msg:"cut across devices" (Two.split ~axis:0) [| 0 |]
+
 (* A gather moves its positions where its route reads them: across the set,
    over the positions' memory where the devices address it. A donation of the
    positions afterwards writes over that memory, after the gather's reads of
@@ -3229,6 +3247,8 @@ let () =
              test "a donated creation dies" test_creation_dies;
              test "a value whose shards lie in one allocation is donated"
                test_shards_of_one_allocation;
+             test "a value of no elements donated to a place is its result"
+               test_empty_placed;
              test "a function of several operations shares its handles"
                test_several_reads;
              test "a sampler shares its key's handle" test_key_lent;
