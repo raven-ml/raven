@@ -208,9 +208,12 @@
     - While the upcastable axes hold at least 1024 elements and fewer than 32
       lanes are upcast, one more axis is upcast by 3 or 4, chosen among axes
       some access does not index while indexing every upcast axis, least
-      indexed and of least stride first, 3 before 4 of one axis; 4 before 3
-      for a contraction that the next rule would block once its two output
-      axes some operand does not index are upcast by 4, and whose blocked
+      indexed and of least stride first, 3 before 4 of one axis; 4 before 3,
+      on a renderer with local indices, for an axis of a map that a store
+      reads at unit stride, in a type whose accesses the renderer merges by
+      4 ({!Coalesce.merges_four}) and has natively, and for every axis of a
+      contraction that the next rule would block once its two output axes
+      some operand does not index are upcast by 4, and whose blocked
       threads, a 64th of its outputs, number at least [core_threads].
     - On a renderer with local indices, a contraction summed in 4 bytes or
       fewer whose loop upcast two axes, each by 4 and each leaving part of

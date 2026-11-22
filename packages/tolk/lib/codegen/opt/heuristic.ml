@@ -1299,11 +1299,12 @@ let upcast_more ~waste ~four_first k =
         match choices ~fill:false [ 3; 4 ] (K.upcastable_dims k) with
         | [] when budgeted k -> choices ~fill:true [ 2 ] (K.upcastable_dims k)
         | [] -> padded ~waste:core_waste
-        | xb_choices when four_first -> xb_choices @ padded ~waste
+        | xb_choices when List.exists four_first (K.upcastable_dims k) ->
+            xb_choices @ padded ~waste
         | xb_choices -> xb_choices
       in
       let key (n, s, axis, amount) =
-        (n, s, axis, if four_first then -amount else amount)
+        (n, s, axis, if four_first axis then -amount else amount)
       in
       let by_key a b = Stdlib.compare (key a) (key b) in
       match List.sort by_key xb_choices with
@@ -1967,16 +1968,16 @@ let staged_product blocking k =
       | _ -> None)
   | _ -> None
 
-(* Whether [k]'s upcasts take an axis by 4 before 3: a narrow contraction on a
-   renderer with local indices, upcast by nothing yet, whose two output axes,
+(* Whether [k]'s upcasts take an axis by 4 before 3, of a kernel that reduces:
+   a narrow contraction, upcast by nothing yet, whose two output axes,
    each unread by some operand, would pass {!block}'s guard once upcast by 4,
    and whose blocked threads, a 64th of its outputs, number at least
    [core_threads], or which the staged product's tile takes
    ({!staged_product}, short, on a copy). Of an output axis split in parts,
    each read by the same operands, as a projection's heads and their width,
    the innermost part counts, which the upcast loop takes and {!block}
-   doubles. tinygrad takes 3 first, which leaves such a product at 4 by 3
-   outputs a thread: on an RTX 5000 Ada float32 products of 163840 rows into
+   doubles. Taken 3 first, such a product holds 4 by 3 outputs a thread:
+   on an RTX 5000 Ada float32 products of 163840 rows into
    432 to 1920 columns, which 3 divides, ran at 5.3-5.6 TFLOP/s so, and at
    15-19 blocked; whisper's projections of 1500 frames into its heads and its
    feed-forward, at 4.1-4.5 so and at 21.7-27.3 staged. A product of 48 rows
@@ -1988,8 +1989,8 @@ let staged_product blocking k =
    against 97 at 4 by 3 over 768, so the threads still bound a product the
    tile does not take. Short or blocked, the tile sums by the same runs
    ({!general}), so whether it takes a product follows no units. *)
-let four_first ~waste ~core_threads k =
-  (K.ren k).has_local && narrow k && upcast_by_loop k 1
+let product_four_first ~waste ~core_threads k =
+  narrow k && upcast_by_loop k 1
   &&
   let operands = operands k in
   let reads axis b = indexes (List.nth (K.rngs k) axis) b in
@@ -2026,6 +2027,34 @@ let four_first ~waste ~core_threads k =
              Option.is_some (staged_product (Short (r a, r b)) (K.copy k)))
       | _ -> false)
   | _ -> false
+
+(* Whether [k]'s stores move 4 lanes along [axis] as one vector: a store
+   reads the axis at unit stride, in a type whose accesses the renderer
+   merges by 4 ({!Coalesce.merges_four}) and has natively. A type it
+   emulates, as bfloat16 before sm_80, is stored as another, element by
+   element whatever the lanes. *)
+let vector_axis k axis =
+  let ren = K.ren k and r = List.nth (K.rngs k) axis in
+  List.exists
+    (fun a ->
+      List.memq r (units a)
+      && Coalesce.merges_four ren (dtype a)
+      && ren.native (dtype a))
+    (stored_addresses k)
+
+(* Which axes of [k] its upcasts take by 4 before 3, on a renderer with local
+   indices: every axis of a contraction {!product_four_first} lets through,
+   and of a map, which reduces nothing, each axis {!vector_axis} holds of. A
+   map's two amounts reuse a broadcast operand alike, and 3 lanes move
+   element by element where 4 move as one vector: gpt-oss-20b's norm of 512
+   tokens by 2880 took 3 of its columns by 4 rows a thread, and takes 4 by
+   4. *)
+let four_first ~waste ~core_threads k =
+  if not (K.ren k).has_local then fun _ -> false
+  else if K.reduceop k = None then vector_axis k
+  else
+    let product = product_four_first ~waste ~core_threads k in
+    fun _ -> product
 
 (* The rules for a kernel that is not streamed and takes no tensor core. *)
 let general ~core_threads k =
@@ -2065,8 +2094,8 @@ let general ~core_threads k =
       in
       (* The blocked tile, or the short one where the blocked tile's pads
          are refused: a target that states no units blocks every product
-         {!four_first} lets through, and the short tile then takes those
-         whose rows or columns pad too far for the blocked one, so that
+         {!product_four_first} lets through, and the short tile then takes
+         those whose rows or columns pad too far for the blocked one, so that
          whether a product stages, and the order of its sums, follows no
          units. *)
       let staged u =

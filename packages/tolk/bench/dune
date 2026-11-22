@@ -88,12 +88,16 @@
 
 ; The gpt-oss kernels are kernel graphs of gpt-oss-20b's step at bfloat16 as
 ; rune compiles it for CUDA (apps/gpt-oss), without optimisations: a
-; decode step's attention values and a prefill's router.
+; decode step's attention values, a prefill's router, and the scaled output
+; of a prefill's norm of 512 tokens by 2880, a map (D501).
 
 (rule
  (target gpt_oss_kernels.ml)
  (deps
-  (:graphs gpt_oss_decode_values.graph gpt_oss_prefill_router.graph))
+  (:graphs
+   gpt_oss_decode_values.graph
+   gpt_oss_prefill_router.graph
+   gpt_oss_prefill_norm.graph))
  (action
   (with-stdout-to
    %{target}

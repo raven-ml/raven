@@ -6146,8 +6146,8 @@ against 2.77).
   upcast loop takes each axis once, by 3 or 4, 3 first where both divide it,
   while fewer than 32 lanes are upcast; the unroll needs fewer than 64; the
   locals stop at 128 threads; the same at `6b7b018da`).
-- **tolk:** `Heuristic.four_first`, `Heuristic.block`, `Heuristic.upcast_more`,
-  `Heuristic.along_reduce`, `Heuristic.split_reduce`,
+- **tolk:** `Heuristic.product_four_first`, `Heuristic.block`,
+  `Heuristic.upcast_more`, `Heuristic.along_reduce`, `Heuristic.split_reduce`,
   `Heuristic.sector_bytes`, `Heuristic.split_trips`,
   `Heuristic.blocked_threads`, `Heuristic.locals` and `Heuristic.general`.
 - **Differs:**
@@ -6197,9 +6197,10 @@ against 2.77).
   - a kernel upcast past those two axes' 16 lanes, as the masked upcasts
     take a materialised mask's axes whole, is not blocked, nor a sum in 8
     bytes;
-  - only for such a contraction, upcast by nothing before the loop, whose
-    blocked threads, a 64th of its outputs, number at least the renderer's
-    `core_threads`, does the upcast loop take an axis by 4 before 3; of an
+  - of the kernels that reduce, only for such a contraction, upcast by
+    nothing before the loop, whose blocked threads, a 64th of its outputs,
+    number at least the renderer's `core_threads`, does the upcast loop take
+    an axis by 4 before 3 (a map does too, D501); of an
     output axis split into parts that the same operands read, as a
     projection's heads and their width, the innermost part counts there,
     which the loop upcasts and `block` doubles.
@@ -9971,9 +9972,11 @@ D466.
 
 - **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (each
   ranked axis takes the first of `[32] * (axis == 0) + [16,8,4,3,2]` that
-  divides it within 128 threads; the same at `6b7b018da`).
-- **tolk:** `Heuristic.run_bytes`, `Heuristic.store_lanes` and
-  `Heuristic.locals`.
+  divides it within 128 threads; the upcast loop's choices,
+  `itertools.product(k.upcastable_dims, [3,4])`, sorted, so 3 before 4 of
+  one axis; the same at `6b7b018da`).
+- **tolk:** `Heuristic.run_bytes`, `Heuristic.store_lanes`,
+  `Heuristic.locals`, `Heuristic.four_first` and `Heuristic.vector_axis`.
 - **Differs:** in a map on a GPU, where every store reads the innermost axis
   at the stride of a thread's run of consecutive elements (its upcast along
   the stores' unit stride, or one element), and that axis's candidate gives
@@ -9983,7 +9986,17 @@ D466.
   before it would leave it fewer, it takes them first and those axes share
   the rest. Those threads are `lidx0`'s (D486), consecutive in a SIMD group.
   Elsewhere, where no divisor reaches them, and in a kernel that reduces,
-  the candidate stands.
+  the candidate stands. Its upcast loop takes an axis that both 3 and 4
+  divide by 4, not 3, where a store reads the axis at unit stride, in a
+  type whose accesses the target merges by 4 (`Coalesce.merges_four`) and
+  has natively: a thread's run of it is then one vector of 4 elements,
+  where 3 move one by one. Other axes, the types a GPU does not merge
+  (float64, 64-, 16- and 8-bit integers) and a type the target emulates,
+  as bfloat16 before sm_80, keep 3 first. Unit stride is not alignment: a
+  store into rows 2883 elements wide keeps its scalar accesses, and so
+  loses only threads. Taking 4 leaves 3/4 of the threads along the axis,
+  which a small map feels: one token by 2880 runs 45 workgroups of 16
+  threads against 30 of 32.
 - **Reason:** (d): the concurrent accesses of a warp coalesce into as many
   transactions as the 32-byte sectors they touch (CUDA C++ Best Practices
   Guide §10.2.1). A head of 110 channels, TESSERA's, takes 2 threads under
@@ -9998,14 +10011,26 @@ D466.
   channels none, so each warp stored 32 values 1.5 KiB apart, 1.08 ms a
   launch, and 0.40 with 4 threads along the channels; its five such maps
   took 3.60 ms of a `codec/image/16` call and take 1.50 (DEBUG=2), and the
-  row 72.62-72.67 ms and 70.56-70.78, three alternated rounds. AMD and
-  Metal are untimed.
+  row 72.62-72.67 ms and 70.56-70.78, three alternated rounds. The upcast
+  by 4: gpt-oss-20b's norm of 512 tokens by 2880 in bfloat16, its scaled
+  output `E_16_60_16_8_3_4` 9.91-10.45 us to `E_16_45_16_8_4_4` 5.02-5.33
+  (DEBUG=2, three rounds), 49 of them a prefill; its prefill of 512 tokens
+  over NV 42.59 (42.39-42.64) to 42.24 (42.16-42.29) ms and 42.52
+  (42.50-42.57) to 42.11 (41.95-42.12) on its bench row, four alternated
+  rounds, its Q8_0 prefill over both, and over CUDA 42.79 (42.47-42.99)
+  against 42.60 (42.44-42.63), within the ranges; its decode on the bench's
+  rows, AION's rows and whisper's on CUDA within theirs, whisper
+  large-v3-turbo's 680.71 (679.88-680.94) to 677.86 (677.39-679.15).
+  AMD and Metal are untimed.
 - **Pinned by:** the Codegen suite's `a head transpose's lid.x threads store
   16 bytes together` and its `phi_arange_255` and `phi_arange_float` stage
   goldens of CUDA, HIP and Metal; the heuristic suite's `add_odd` goldens of
   Metal, CUDA and AMD and its table (`.tolk`, D501), and its `a map's
   innermost threads store 16 bytes together where the axes ranked before
-  them would take the workgroup`; tessera's `distil-step/medium` row and
+  them would take the workgroup` and `a GPU map upcasts by 4 an axis it
+  stores as a vector`, and the Codegen suite's `outer` stage goldens of
+  CUDA, HIP and Metal (`.tolk`, D501); the tolk bench's
+  `gpt_oss/gpt_oss_prefill_norm`, tessera's `distil-step/medium` row and
   AION's `codec/image/16` on CUDA.
 
 ## D502. A padded range no reduce sums is loaded at its last index on the host

@@ -3624,6 +3624,58 @@ let innermost_first =
                 (of_int 16)))
         (stores o))
 
+(* [out[r, c] = x[r, c] s[r] g[c]] over [rows] by [cols] of [dt]: a norm's
+   scaled output, each row scaled by its own factor and each column by its
+   weight. *)
+let row_scale dt rows cols =
+  let open Ops.O in
+  let param slot size = Shape.param ~shape:[ Ops.Int size ] slot dt in
+  let out = param 0 Stdlib.(rows * cols) and x = param 1 Stdlib.(rows * cols)
+  and s = param 2 rows and g = param 3 cols in
+  let r = Ops.range ~axis_type:Weak (Ops.Int rows) [ 0 ]
+  and c = Ops.range ~axis_type:Weak (Ops.Int cols) [ 1 ] in
+  let at = (r * int cols) + c in
+  let v = Ops.index x [ at ] * Ops.index s [ r ] * Ops.index g [ c ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ at ]) v) [ r; c ] ]
+
+(* A map on a renderer with local indices upcasts by 4 an axis that both 3
+   and 4 divide and that its store reads at unit stride, in a type the
+   renderer has natively: gpt-oss-20b's norm of 512 tokens by 2880 takes 4
+   along each axis, its columns stored in place and its 512 rows, which 3
+   does not divide, and a map of 32 by 48 4 along its columns. On sm_75,
+   which emulates bfloat16, the norm's columns keep 3, and so do sm_89's in
+   float64, whose accesses a GPU does not merge; 1500 frames by 1280, stored
+   at a stride of 1280, keep 3 beside the columns' 4. *)
+let maps_four_first =
+  cases "a GPU map upcasts by 4 an axis it stores as a vector"
+    ~id:(fun (t, dt, rows, cols, _) ->
+      Format.asprintf "%a %d by %d on %s" Dtype.pp dt rows cols t)
+    [
+      ("CUDA:CUDA:sm_89", Dtype.Bfloat16, 512, 2880, [ 4; 4 ]);
+      ("CUDA:CUDA:sm_75", Dtype.Float32, 512, 2880, [ 4; 4 ]);
+      ("AMD:HIP:gfx942", Dtype.Bfloat16, 512, 2880, [ 4; 4 ]);
+      ("METAL:METAL:Apple9", Dtype.Float32, 32, 48, [ 4 ]);
+      ("CUDA:CUDA:sm_75", Dtype.Bfloat16, 512, 2880, [ 3; 4 ]);
+      ("CUDA:CUDA:sm_89", Dtype.Float32, 1500, 1280, [ 4; 3 ]);
+      ("CUDA:CUDA:sm_89", Dtype.Float64, 512, 2880, [ 3; 4 ]);
+    ]
+    (fun (t, dt, rows, cols, expected) ->
+      let ren =
+        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+      in
+      let k = K.v (row_scale dt rows cols) ren in
+      K.convert_loop_to_global k;
+      let o = Heuristic.hand_coded_optimizations k in
+      let upcasts =
+        List.filter_map
+          (function
+            | Opt.Split { amount; target = Opt.Upcast; _ } -> Some amount
+            | _ -> None)
+          (K.applied_opts o)
+      in
+      equal (list int) expected upcasts)
+
 (* A contraction in registers whose operands are both laid out along its
    reduce, as [x @ matrix_transpose w] reads a matrix stored [outputs;
    inputs], splits what its unroll leaves of the reduce into its fastest
@@ -4388,6 +4440,7 @@ let () =
          fastest_threads_coalesce;
          across_threads;
          innermost_first;
+         maps_four_first;
          along_reduce_threads;
          staged_products;
          batched_heads;

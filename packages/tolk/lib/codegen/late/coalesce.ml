@@ -79,6 +79,29 @@ let runs l =
   in
   match l with [] -> [] | _ -> go [] [] l
 
+(* The types whose consecutive elements merge into vectors of 4 or 2 where
+   the renderer's vector registers are not known, as a GPU's: 32- and
+   16-bit floats and integers of 32 bits, 8-bit floats, bfloat16 on a GPU
+   and bytes where the renderer holds them as words. *)
+let merged = Dtype.([ Float32; Float16; Int32; Uint32 ] @ fp8s)
+
+(* A GPU merges bfloat16 accesses as float16's: a tensor core's operands,
+   loaded two bytes at a time, made an RTX 5000 Ada's bfloat16 products 1.5
+   times slower than its float16 ones. Bytes merge where the renderer holds
+   the merged bytes as one integer word, read by shifts and written as an or
+   of shifted bytes: a tensor core's lane reads an MXFP4 weight's codes two
+   bytes at a time, and one access of each byte costs an instruction and a
+   request of the cache. A dropout's draw of boolean masks stored a byte at
+   a time took three times as long as stored by words. A word leaves no
+   vector of bytes for a compiler's load combine to fold at a wrong address,
+   as LLVM folds an or of bytes in descending addresses from vector loads
+   (below). *)
+let merges_four (r : Renderer.t) dt =
+  r.supports_float4
+  && (Dtype.mem dt merged
+     || (Dtype.equal dt Dtype.Bfloat16 && r.target.device <> "CPU")
+     || (Dtype.equal dt Dtype.Uint8 && r.byte_words))
+
 let memory_coalescing sink (r : Renderer.t) =
   if Setting.value Setting.dmc then sink
   else begin
@@ -229,7 +252,6 @@ let memory_coalescing sink (r : Renderer.t) =
         in
         let accesses o = List.assoc o offsets in
         let dt = dtype key.buf and size = Dtype.itemsize (dtype key.buf) in
-        let merged = Dtype.([ Float32; Float16; Int32; Uint32 ] @ fp8s) in
         (* Where the target's vector registers are known, an access of these
            types, of doubles or of bytes fills up to one register: Clang packs
            a kernel's values into registers as wide as the stores it reads them
@@ -269,12 +291,6 @@ let memory_coalescing sink (r : Renderer.t) =
               let rec halves l = if l < 2 then [ 1 ] else l :: halves (l / 2) in
               halves (bytes / size)
           | _ ->
-              (* A GPU merges bfloat16 accesses as float16's: a tensor core's
-                 operands, loaded two bytes at a time, made an RTX 5000 Ada's
-                 bfloat16 products 1.5 times slower than its float16 ones. *)
-              let gpu_bfloat16 =
-                Dtype.equal dt Dtype.Bfloat16 && r.target.device <> "CPU"
-              in
               (* 16-bit floats copied into shared memory merge to 16 bytes
                  where the target writes vectors of eight: a copy of 16 bytes
                  is one instruction, as a tensor core's operands staged there
@@ -285,17 +301,6 @@ let memory_coalescing sink (r : Renderer.t) =
                 sixteen_bits dt && r.half8
                 && List.for_all (fun (_, us) -> List.for_all copies us) offsets
               in
-              (* Bytes merge where the renderer holds the merged bytes as one
-                 integer word, read by shifts and written as an or of shifted
-                 bytes: a tensor core's lane reads an MXFP4 weight's codes two
-                 bytes at a time, and one access of each byte costs an
-                 instruction and a request of the cache. A dropout's draw of
-                 boolean masks stored a byte at a time took three times as
-                 long as stored by words. A word leaves no vector of bytes
-                 for a compiler's load combine to fold at a wrong address, as
-                 LLVM folds an or of bytes in descending addresses from
-                 vector loads (above). *)
-              let gpu_bytes = Dtype.equal dt Dtype.Uint8 && r.byte_words in
               (* Bytes copied into shared memory merge to 16 where the
                  renderer holds them as words: one asynchronous copy, as a
                  decoded operand's codes and held tiles take. *)
@@ -303,11 +308,7 @@ let memory_coalescing sink (r : Renderer.t) =
                 Dtype.equal dt Dtype.Uint8 && r.byte_words
                 && List.for_all (fun (_, us) -> List.for_all copies us) offsets
               in
-              (if
-                 (Dtype.mem dt merged || gpu_bfloat16 || gpu_bytes
-                 || byte_copy ())
-                 && r.supports_float4
-               then
+              (if merges_four r dt then
                  if copy () then [ 8; 4; 2 ]
                  else if byte_copy () then [ 16; 4; 2 ]
                  else [ 4; 2 ]

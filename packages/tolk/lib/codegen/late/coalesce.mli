@@ -19,6 +19,15 @@ val indexing_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
     [cond], so [cond] simplifies the arithmetic around it, which sees only its
     bounds, and the load keeps its own index and gate. *)
 
+val merges_four : Renderer.t -> Dtype.t -> bool
+(** [merges_four r dt] is whether {!memory_coalescing} merges accesses of 4
+    consecutive elements of [dt] into one where [r]'s vector registers are
+    not known, as on a GPU: [r] supports vectors ([supports_float4]) and
+    [dt] is {!Dtype.Float32}, {!Dtype.Float16}, {!Dtype.Int32},
+    {!Dtype.Uint32}, an 8-bit float, {!Dtype.Bfloat16} on a renderer other
+    than the [CPU] device's, or {!Dtype.Uint8} where [r] writes bytes as
+    words ({!Renderer.t.byte_words}). *)
+
 val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
 (** [memory_coalescing sink r] merges the loads, and the stores, of [sink] that
     access consecutive elements of one buffer, under one gate, with one
