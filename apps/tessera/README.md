@@ -108,6 +108,7 @@ them alike. `bench/whole.sh` times what a suite cannot hold: `main.exe
 encode` and TESSERA's `infer_v2.py` on the whole tile, each a new process,
 with the released students, and a first tile over an empty kernel cache.
 `bench/roles.py` splits an encoding's device time into products, attention
-and the rest, on both sides. `bench/tessera.thumper` holds the baselines:
-fudge's (Intel Core Ultra 5 235, NVIDIA RTX 5000 Ada) for the GPU and CPU
+and the rest, on both sides. Each device keeps its baselines in a file of
+its own, fudge's (Intel Core Ultra 5 235, NVIDIA RTX 5000 Ada):
+`bench/tessera.thumper` the CPU rows, `bench/tessera-cuda.thumper` the GPU
 rows.

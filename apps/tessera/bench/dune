@@ -1,6 +1,8 @@
 ; TESSERA's rows on a tile, against pytorch.py's timings of TESSERA's own
 ; code (../PERFORMANCE.md). Not attached to runtest:
 ;   TESSERA_TILE=DIR TESSERA_DEVICE=cuda dune build @apps/tessera/bench/bench
+; Each device keeps a baseline file of its own: tessera.thumper for the
+; host's rows, tessera-cuda.thumper for CUDA's.
 
 (executable
  (name bench_tessera)
@@ -10,6 +12,10 @@
  (alias bench)
  (locks %{workspace_root}/bench)
  (deps
+  (env_var TESSERA_DEVICE)
+  (env_var TESSERA_EAGER)
+  (env_var TESSERA_TILE)
+  (env_var TESSERA_SAMPLE)
   (glob_files *.thumper))
  (action
   (progn

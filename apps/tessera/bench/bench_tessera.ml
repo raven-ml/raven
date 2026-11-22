@@ -30,7 +30,10 @@
    worker on a GPU prints the device memory raven held, its cache included:
    the most its calls held. [--warm] compiles each case in this process
    first, to fill tolk's disk cache: a worker forked on a Mac cannot reach
-   Metal's compiler. *)
+   Metal's compiler. Each suite, the host's ([cpu]), a GPU's ([cuda]) and
+   their eager ones, keeps a baseline file of its own, so that blessing one
+   device's rows leaves the others': tessera.thumper for the host's compiled
+   rows, tessera-cuda.thumper for CUDA's. *)
 
 open Tessera
 
@@ -40,6 +43,12 @@ type make = { make : 'd. 'd target -> unit -> unit }
 let device = Option.value ~default:"cpu" (Sys.getenv_opt "TESSERA_DEVICE")
 let jit = Sys.getenv_opt "TESSERA_EAGER" = None
 let tile = Option.value ~default:"" (Sys.getenv_opt "TESSERA_TILE")
+
+(* The suite, which names the baseline file. *)
+let suite =
+  match if jit then device else device ^ "-eager" with
+  | "cpu" -> "tessera"
+  | s -> "tessera-" ^ s
 
 (* Whether a device [device] names is not the host's: a name of [Rig_gpus]
    whose kind is not CPU. Read from the names, so that this process opens
@@ -204,7 +213,7 @@ let () =
     exit 0
   end;
   exit
-    (Thumper.run "tessera"
+    (Thumper.run suite
        ~config:
          Thumper.Config.(
            default |> samples 3 |> warmup 0. |> deadline 600.
