@@ -102,8 +102,9 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   AVX2, FMA, F16C and BMI2 (`probe/avx2.ml`), which is no psABI level.
   Code that runs before `target.c` checks the host stays there.
 - nx.cpu's C compiles under OCaml's `-fno-strict-aliasing`: a store through
-  any pointer may change a field, so gcc keeps scalar a loop whose bound is
-  read through a pointer (`e < c->dv`). Read the bound into a local first.
+  any pointer may change a field, so gcc keeps scalar a loop whose bound or
+  array is read through a pointer (`e < c->dv`, `g->hash[q]`). Read both into
+  locals first.
 - A kernel's external is never `[@@noalloc]`: the door may run OCaml.
 - Benches are `bench/array`, `bench/kernel` and `bench/nx`. A baseline
   comes from thumper's bless proposal, never by hand.
