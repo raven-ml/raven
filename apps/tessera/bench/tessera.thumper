@@ -4,10 +4,8 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
-# forced: blessed cpu/encode/nano cpu/encode/small cpu/encode/medium under load 1.1 on 2 cores
-# forced: blessed cpu/encode/large under load 1.0 on 2 cores
 
-cpu/encode/large	wall_time	batch=1	n=3	7.036e-01	7.035e-01 7.036e-01 7.050e-01
-cpu/encode/medium	wall_time	batch=1	n=3	3.928e-01	3.919e-01 3.928e-01 3.930e-01
-cpu/encode/nano	wall_time	batch=1	n=3	1.964e-02	1.962e-02 1.964e-02 1.994e-02
-cpu/encode/small	wall_time	batch=1	n=3	1.274e-01	1.269e-01 1.274e-01 1.277e-01
+cpu/encode/large	wall_time	batch=1	n=3	7.032e-01	7.024e-01 7.032e-01 7.050e-01
+cpu/encode/medium	wall_time	batch=1	n=3	3.456e-01	3.453e-01 3.456e-01 3.462e-01
+cpu/encode/nano	wall_time	batch=1	n=3	1.966e-02	1.961e-02 1.966e-02 1.989e-02
+cpu/encode/small	wall_time	batch=1	n=3	1.262e-01	1.256e-01 1.262e-01 1.263e-01

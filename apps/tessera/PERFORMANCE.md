@@ -5,7 +5,7 @@ TESSERA's nano student 1.9 times as fast as TESSERA's own PyTorch code, with
 medium 1.35 times and with large 1.18 times as fast. The model alone runs
 9–25% faster than PyTorch's with every student, and 6–16% faster than under
 `torch.compile`. The teacher in bfloat16 is 5% slower, a distillation step
-takes 1.54 times PyTorch's time, and the CPU 1.30–1.44 times.
+takes 1.54 times PyTorch's time, and the CPU 1.27–1.35 times.
 
 ## Embedding a tile
 
@@ -16,10 +16,10 @@ median of three rounds, with their range.
 
 | Model | raven | PyTorch | PyTorch, `torch.compile` (one run) | raven, CPU | PyTorch, CPU |
 |---|---|---|---|---|---|
-| nano | 4.45 (4.45–4.46) | 5.91 (5.88–5.93) | 5.17 | 246 (246–246) | 182 (182–193) |
+| nano | 4.45 (4.45–4.46) | 5.91 (5.88–5.93) | 5.17 | 247 (246–249) | 183 (182–183) |
 | small | 17.7 (17.6–17.8) | 22.2 (22.0–22.5) | 20.7 | 1,580 (1,580–1,590) | 1,180 (1,180–1,180) |
-| medium | 49.0 (48.4–49.2) | 60.8 (60.4–61.1) | 58.6 | 4,890 (4,880–4,900) | 3,400 (3,400–3,410) |
-| large | 90.4 (90.4–91.1) | 99.4 (98.9–100) | 96.6 | 8,800 (8,780–8,880) | 6,770 (6,750–6,880) |
+| medium | 49.0 (48.4–49.2) | 60.8 (60.4–61.1) | 58.6 | 4,280 (4,270–4,310) | 3,370 (3,370–3,380) |
+| large | 90.4 (90.4–91.1) | 99.4 (98.9–100) | 96.6 | 8,780 (8,760–8,790) | 6,780 (6,770–6,800) |
 | teacher | 612 (608–612) | 584 (584–585) | not measured | not measured | not measured |
 
 The CPU columns run on two cores of an Intel Core Ultra 5 235.
@@ -28,13 +28,13 @@ Where raven is slower:
 - **the teacher**: raven's bfloat16 products run at 163 TFLOP/s against
   cuBLAS's 192, over 2% more rows, and take 77% of its time against
   PyTorch's 64%.
-- **the CPU**: on a sample of 64 pixels, medium's products take raven 1.47
-  times PyTorch's time a pixel. They run at 220 GFLOP/s against MKL's 273,
+- **the CPU**: on a sample of 64 pixels, medium's products take raven 1.27
+  times PyTorch's time a pixel. They run at 254 GFLOP/s against MKL's 273,
   over 18% more rows: raven's batches of 32 places hold 20 pixels, 81% of
   their token slots. Its query, key and value projections, joined in one
-  launch, run at 162 GFLOP/s, its feed-forward products at 244–264.
-  Attention takes 4% of medium's time on both sides, and 17% of nano's
-  against PyTorch's 15%.
+  launch, run at 272 GFLOP/s, its feed-forward products at 244–263.
+  Attention takes 5% of medium's time against PyTorch's 4%, and 17% of
+  nano's against PyTorch's 15%.
 
 Where raven is faster, on medium, its float32 products run at 24.8 TFLOP/s
 against cuBLAS's 19.7, more than paying for the 7% more rows they multiply,
@@ -47,8 +47,9 @@ sample's full batches, whose rows of 1024 tokens hold 7,221 of its pixels
 on the GPU and 20 on the CPU, and PyTorch all of them; each side is scaled
 by its own count. A whole-tile run of medium takes raven 50.2 s and PyTorch
 62.3 s: the sample runs 2.4% faster a pixel on both sides, and their ratio
-agrees within 0.1%. On the CPU a sample of 512 pixels gives medium 4,880 s on
-raven and 4,000 s on PyTorch, a ratio of 1.22 against the table's 1.43.
+agrees within 0.1%. On the CPU a sample of 512 pixels, in two runs a side,
+gives medium 4,280 and 4,270 s on raven and 4,360 and 4,210 s on PyTorch, a
+ratio of 0.98 and 1.01 against the table's 1.27.
 
 ## Where the time goes
 
@@ -125,13 +126,14 @@ kernels as raven joins its launches, 1,080 ms with them kept apart, which
 - **Machine.** An Intel Core Ultra 5 235 and an NVIDIA RTX 5000 Ada (sm_89,
   32 GB), driver 615.71.09, CUDA 13.4, Debian 13. The GPU's process list was
   empty before and after every GPU run. Other users' jobs shared the host,
-  at a load of 1 to 5; each timed run started once its two pinned cores had
+  at a load of 0.5 to 5; each timed run started once its two pinned cores had
   been under 5% busy for 5 s. The GPU rows ran their host threads on cores 6
   and 7, the CPU rows on the performance cores 2 and 3 with the GPU hidden.
   The whole commands ran unpinned, at a load of 1 to 5: a first run of
   nano's and small's, at a load of 8, ranged 12–15% and 3.4% across its
   rounds and ran again.
-- **Versions.** raven at e23edc73df. TESSERA at e368539f, on torch
+- **Versions.** raven at e23edc73df, and at d93d815855 for the CPU's rows
+  and their profile. TESSERA at e368539f, on torch
   2.15.0+cu132 and Python 3.15.0, with TF32 off as it ships. The released
   students are `geotessera/TESSERA-V-2.0-2B-{N,S,M,L}` at the revisions
   `bench/whole.sh` names.
@@ -140,7 +142,8 @@ kernels as raven joins its launches, 1,080 ms with them kept apart, which
   frames and 99 Sentinel-1 frames, 55 ascending and 44 descending. A pixel
   has 49–74 Sentinel-2 observations (median 66) and 98–99 Sentinel-1.
 - **Statistic.** Three rounds back to back on 2026-11-21, alternating raven
-  and PyTorch.
+  and PyTorch; the CPU's rows in three rounds on 2026-11-22, each in a hold
+  of the timing lock of its own.
   - raven's rows are thumper's medians of three calls, after one uncounted
     call that compiles.
   - PyTorch's rows are `pytorch.py`'s medians of three, after one or two
@@ -150,9 +153,11 @@ kernels as raven joins its launches, 1,080 ms with them kept apart, which
   - A round counted if no raven row ran more than max(its spread, 3%)
     faster or slower than in both other rounds, and PyTorch's rows, the
     control, no more than 5% slower than in the last measurement's rounds.
-    Every round counted. PyTorch's GPU rows ran within 1% of then; its CPU
-    rows up to 8% faster, as core 2 was busy then, and within 1% of that
-    measurement's quiet round.
+    On the GPU every round counted, PyTorch's rows within 1% of then. On
+    the CPU, three earlier rounds that day, at a load of 3.5 to 7, ran
+    PyTorch's rows up to 8% slower than e23edc73df's and were set aside;
+    in the three that counted, at a load of 0.5 to 1, PyTorch's rows ran
+    within 1% of e23edc73df's.
 - **Profiles.** One call each, after the bench's setup and a first call, by
   a build of tolk that keeps its joined launches apart and names each
   kernel by the first ten hex digits of its source's MD5 (a measurement
