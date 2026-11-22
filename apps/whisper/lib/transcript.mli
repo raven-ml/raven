@@ -77,11 +77,12 @@ val steps :
     [{ compile = fun s f -> Rune.jit s f }] compiles them, on any set, a GPU's
     included: a program for the features, one for the languages and one for
     decoding per kind of rung and its integers, for each model's dimensions.
-    Every window is 3000 frames, every start is placed in rows of the least
-    power of two at or above [n_text_ctx / 2 + 4], the longest start
-    ({!Decoding.val-starts}), and keys and temperatures are arrays, so later
-    windows and recordings compile nothing. Make the value once and pass it to
-    each transcription.
+    Every window is 3000 frames, and keys and temperatures are arrays; given
+    [compile], every start is placed in rows of the least power of two at or
+    above [n_text_ctx / 2 + 4], the longest start ({!Decoding.val-starts}), so
+    later windows and recordings compile nothing. Without it each start takes
+    its own rows, so a window's first step computes none past its tokens. Make
+    the value once and pass it to each transcription.
 
     Raises [Invalid_argument] as {!Decoding.suppressed} does. *)
 

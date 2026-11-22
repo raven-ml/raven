@@ -331,12 +331,7 @@ let draws_law =
       in
       let d = D.options gpt2 in
       let start = D.start gpt2 model.dims d None in
-      let width =
-        let rec up w =
-          if w >= (model.dims.n_text_ctx / 2) + 4 then w else up (2 * w)
-        in
-        up 1
-      in
+      let width = Array.length start.tokens in
       let attempts = ref 0 in
       List.iter
         (fun (w : Tr.window) ->
@@ -365,8 +360,7 @@ let draws_law =
                     key = Nx.Rng.fold_in (Nx.Rng.fold_in key w.seek) i;
                   }
               in
-              (* Steps place every start in rows of the least power of two at or
-                 above [n_text_ctx / 2 + 4]. *)
+              (* Eager steps place every start in rows of its own. *)
               let out =
                 D.decode model gpt2 d search (D.starts ~width [| start |]) f
               in

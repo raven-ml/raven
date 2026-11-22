@@ -30,17 +30,23 @@ type ('b, 'd) steps = {
     'd Decoding.starts ->
     (float, 'b, 'd) Nx.t ->
     'd Decoding.outcome;
+  fixed : bool;
+      (* Whether every start takes rows of one width (width), so that a
+         compiled decode sees one shape. *)
 }
 
 let eager = { compile = (fun _ f -> f) }
 
-let steps ?(compile = eager) t o =
+let steps ?compile t o =
   ignore (Decoding.suppressed t o);
+  let fixed = Option.is_some compile in
+  let compile = Option.value ~default:eager compile in
   let open Nx.Ptree in
   let params () = instantiate (module Model.Params) in
   {
     tokenizer = t;
     options = o;
+    fixed;
     encode =
       compile.compile (params () @-> tensor @-> returns tensor) Model.encode;
     languages =
@@ -348,13 +354,16 @@ let search at key (r : request) = function
           key = Nx.Rng.place at key;
         }
 
-(* The least power of two at or above the longest start: [<|startofprev|>], a
-   prompt of [n_text_ctx / 2 - 1] ids, a language's start sequence and
-   [<|notimestamps|>]. *)
-let width (dims : Model.dims) =
-  let longest = 1 + ((dims.n_text_ctx / 2) - 1) + 3 + 1 in
-  let rec up w = if w >= longest then w else up (2 * w) in
-  up 1
+(* The rows of a start: for compiled steps the least power of two at or above
+   the longest start, [<|startofprev|>], a prompt of [n_text_ctx / 2 - 1] ids,
+   a language's start sequence and [<|notimestamps|>]; for eager ones the
+   start's own, so that the first step computes no row past it. *)
+let width steps (dims : Model.dims) (start : Decoding.start) =
+  if not steps.fixed then Array.length start.tokens
+  else
+    let longest = 1 + ((dims.n_text_ctx / 2) - 1) + 3 + 1 in
+    let rec up w = if w >= longest then w else up (2 * w) in
+    up 1
 
 let transcribe ?key ?each steps (m : _ model) o x =
   if Nx.ndim x <> 1 then
@@ -388,7 +397,6 @@ let transcribe ?key ?each steps (m : _ model) o x =
         (Tokenizer.languages t).(Int32.to_int best)
   in
   ignore (sot_language t dims o language);
-  let width = width dims in
   (* The features of the last window encoded, each window's attempts reading
      them. *)
   let features = ref None in
@@ -404,7 +412,7 @@ let transcribe ?key ?each steps (m : _ model) o x =
     let search = search at key r (List.nth o.ladder r.rung) in
     let starts =
       Nx.Ptree.place_fixed Decoding.walk_starts at
-        (Decoding.starts ~width [| r.start |])
+        (Decoding.starts ~width:(width steps dims r.start) [| r.start |])
     in
     let out = steps.decode m search starts f in
     (Decoding.results t d
