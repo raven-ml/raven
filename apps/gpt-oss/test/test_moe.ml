@@ -101,19 +101,22 @@ let test_split weight baseline () =
   expect (Printf.sprintf "largest gap %h" (gap host y)) baseline;
   equal ~msg:"whole on each device" placement S.on (Nx.placement y)
 
+(* The lines of [f]'s compiled program at [x]. *)
+let program_lines f x =
+  let program = Rune.program Nx.Ptree.tensor Nx.Ptree.tensor f x in
+  String.split_on_char '\n' (Format.asprintf "%a" Rune.pp_program program)
+
+let has sub l =
+  let k = String.length sub and n = String.length l in
+  let rec go i = i + k <= n && (String.sub l i k = sub || go (i + 1)) in
+  go 0
+
 (* The lines of [f]'s compiled program at [x] that close a sum: place a
    value that lies partial. *)
 let places f x =
-  let program = Rune.program Nx.Ptree.tensor Nx.Ptree.tensor f x in
-  let lines =
-    String.split_on_char '\n' (Format.asprintf "%a" Rune.pp_program program)
-  in
-  let has sub l =
-    let k = String.length sub and n = String.length l in
-    let rec go i = i + k <= n && (String.sub l i k = sub || go (i + 1)) in
-    go 0
-  in
-  List.filter (fun l -> has "= Place (" l && has "partial" l) lines
+  List.filter
+    (fun l -> has "= Place (" l && has "partial" l)
+    (program_lines f x)
 
 (* Expert parallelism compiled: each device computes its experts' rows, so
    the down projection's product is a sum, which the step closes once, after
@@ -155,6 +158,55 @@ let test_ties () =
     (List.init 3 (fun r ->
          List.init 4 (fun j -> Int64.to_int (Nx.item [ r; j ] ids))))
 
+(* The weights are [Nx.softmax] of the [k] greatest logits: its bits
+   eagerly, and compiled, where both sum each lane's [k] terms in the one
+   association tolk takes, the same bits too; a lane holding a NaN is NaN.
+   [Nx.top_k] puts the greatest first, so the shift the softmax subtracts is
+   the first weight's logit, and the traced program reduces no max. The
+   lanes: finite, one NaN, one and two [+∞], all [-∞], some [-∞], and a
+   greatest [+0], [-0] and both. *)
+let test_weights () =
+  let base = Nx.to_array (floats [| 9; width |] 11) in
+  let set r cols v = List.iter (fun c -> base.((r * width) + c) <- v) cols in
+  set 1 [ 5 ] Float.nan;
+  set 2 [ 7 ] Float.infinity;
+  set 3 [ 3; 9 ] Float.infinity;
+  set 4 (List.init width Fun.id) Float.neg_infinity;
+  set 5 [ 0; 1; 2; 3 ] Float.neg_infinity;
+  for r = 6 to 8 do
+    set r (List.init width Fun.id) (-1.)
+  done;
+  set 6 [ 10 ] 0.;
+  set 7 [ 10 ] (-0.);
+  set 8 [ 4 ] (-0.);
+  set 8 [ 12 ] 0.;
+  let logits = Nx.create Nx.float32 [| 9; width |] base in
+  let same a b =
+    let bits x = Nx.to_array (Nx.cast Nx.float64 x) in
+    Array.for_all2
+      (fun a b ->
+        (Float.is_nan a && Float.is_nan b)
+        || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b))
+      (bits a) (bits b)
+  in
+  let maxes f l =
+    List.length (List.filter (has "Reduce [Max") (program_lines f l))
+  in
+  let check (type b) name (dt : (float, b) Nx.dtype) =
+    let l = Nx.cast dt logits in
+    let softmax l = Nx.softmax (fst (Nx.top_k ~k:4 l)) in
+    let route l = snd (Moe.route ~k:4 l) in
+    equal ~msg:(name ^ ", eager") bool true (same (softmax l) (route l));
+    equal ~msg:(name ^ ", compiled") bool true
+      (same (Rune.jit' softmax l) (Rune.jit' route l));
+    equal ~msg:(name ^ ", maxes traced") (pair int int) (1, 0)
+      (maxes softmax l, maxes route l)
+  in
+  check "float32" Nx.float32;
+  check "bfloat16" Nx.bfloat16;
+  check "float16" Nx.float16;
+  check "float64" Nx.float64
+
 (* A token's output is its own: each row of a batch is the token's output
    alone. *)
 let test_independent weight () =
@@ -176,6 +228,8 @@ let () =
          group "routing"
            [
              test "equal logits: the lowest experts first" test_ties;
+             test "weights: the softmax of the greatest, its shift the first"
+               test_weights;
              test "float experts: each token alone"
                (test_independent float_weight);
              test "MXFP4 experts: each token alone"

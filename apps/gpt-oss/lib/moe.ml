@@ -30,9 +30,26 @@ let walk c p =
   let down_bias = field c "down_bias" leaf p.down_bias in
   { gate_up; gate_up_bias; down; down_bias }
 
+(* [Nx.softmax] along the last axis of [v], whose lanes [Nx.top_k] sorted
+   greatest first: the shift the softmax subtracts, its lane's greatest
+   element, is the lane's first, read where it is, not reduced, and as
+   untracked as [Nx.softmax]'s. Each step as nx.mli states [Nx.softmax]'s,
+   in [v]'s carrier: [d = v - v0], [exp d], their sum as [Nx.sum] sums,
+   [exp d] over it, rounded once to [v]'s dtype. Eagerly those are
+   [Nx.softmax]'s bits; compiled, its steps, each lane's sum in the
+   association tolk takes, and a lane holding a NaN NaN. *)
+let softmax_sorted v =
+  let dt = Nx.dtype v in
+  let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
+  let x = Nx.cast w v in
+  let lead = List.init (Nx.ndim x - 1) (fun _ -> Nx.A) in
+  let first = Rune.detach (Nx.slice (lead @ [ Nx.R (0, 1) ]) x) in
+  let e = Nx.exp (Nx.sub x first) in
+  Nx.cast dt (Nx.div e (Nx.sum ~axes:[ -1 ] ~keepdims:true e))
+
 let route ~k logits =
   let logits, experts = Nx.top_k ~k logits in
-  (experts, Nx.softmax logits)
+  (experts, softmax_sorted logits)
 
 let activation ~limit h =
   let shape = Nx.shape h in
