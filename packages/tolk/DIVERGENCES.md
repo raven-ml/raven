@@ -8000,6 +8000,10 @@ reason and its pins.
     workgroups is no power of two the cap costs launches and saves no compile
     time. On the host a launch compiles cold in 0.46 s against 0.09 s apart
     and costs nothing at run time.
+  - A launch's program states its members' work: the sum of each member's
+    estimates as its own program states them, a GPU member's counted under
+    the hardware indices the launch passes it as parameters, so that a
+    profile's line for the launch (`DEBUG=2`) gives its throughput.
 - **Reason:** (d). On CUDA a launch costs about 1.3-2 µs, so a kernel's calls
   are its cost. At the top level, gpt-oss-20b's decode block on fudge's RTX
   5000 Ada runs its query and key rotations and its value copy, three kernels
@@ -8074,7 +8078,9 @@ reason and its pins.
   of 512 one-element pieces on Metal and rune's Set of rows at 878 written
   positions (`Row_sets.examples`). The rows `launch/host/*`, `launch/cuda/*`,
   `launch/lower-256`, rune's `Cuda/cat-16-columns-of-exp-64x64`, and norn's
-  `nuts/schools/4` and `nuts/schools-density-cuda/4`. The top level's beside
+  `nuts/schools/4` and `nuts/schools-density-cuda/4`. The estimates: the
+  Codegen suite's `a launch's estimates are its members' summed`, on CUDA
+  and the host. The top level's beside
   rule: the Schedule suite's `create_linear_with_vars › launches › calls of
   many elements at the top level run as one`, `› a call of many elements at
   the top level joins the launch of the call before it only where no step

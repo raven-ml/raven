@@ -2976,9 +2976,13 @@ let lower_member ?beam ctx b ~nargs =
   in
   let name = numbered ctx "member" low in
   let m_body = v Op.Linear ~src:lines ~arg:(String name) in
+  (* The member's hardware indices are now parameters, which count no
+     iterations: its lines count under the indices they replace, as its own
+     program's do, so that the launch states its members' work. *)
   let m_estimates =
     whole_loop (kernel_info low) m_body
-      (Renderer.Estimates.of_uops ~ignore_indexing:true lines)
+      (Renderer.Estimates.of_uops ~ignore_indexing:true
+         (List.map (fun ((u, _), _) -> u) specials @ lines))
   in
   { m_body; m_slots = !next; m_vars = vars; m_specials; m_split; m_estimates }
 

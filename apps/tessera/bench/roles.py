@@ -11,8 +11,9 @@
 raven reads tolk's DEBUG=2 line of each kernel launch: its time, and its
 GFLOPS, from tolk's count of its FLOPs. A kernel named attention is
 attention; another of 50 FLOPs a byte or more is a product; the rest are the
-norms, elementwise kernels and small reductions. The products' rate is
-printed.
+norms, elementwise kernels and small reductions. A launch tolk joins of
+several kernels prints one line, their FLOPs and bytes summed, and takes one
+role by them. The products' rate is printed.
 
 torch profiles tessera_infer_v2's encode_tile of the tile on cuda, at random
 weights, after one uncounted call. Each aten op's own device time, that of

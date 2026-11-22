@@ -8432,6 +8432,65 @@ let blocks =
         numbers_past_a_skipped_slot;
     ]
 
+(* Launches
+
+   A launch's members compile to one program, which states their work: the
+   sum of each member's estimates, as its own program states them, so that a
+   profile's line for the launch gives its throughput. *)
+
+(* [out[i] = a[i] * 2 + 1] over 4096 floats and [out[i] = a[i] * a[i]] over
+   2048, called on buffers of [device]: members a GPU's launch joins, which
+   holds no member that reduces beside another kernel's. *)
+let launch_members device =
+  let buf n = Ops.new_buffer device n Float32 in
+  let a = buf 4096 in
+  let i = Ops.range ~axis_type:Weak (Int 4096) [ 0 ] in
+  let scaled =
+    Ops.sink ~kernel:(Ops.kernel_info ~name:"scaled" ())
+      [
+        Ops.end_
+          (Ops.store
+             (Ops.index (floats 4096 0) [ i ])
+             Ops.O.((Ops.index (floats 4096 1) [ i ] * float 2.) + float 1.))
+          [ i ];
+      ]
+  in
+  let k = Ops.range ~axis_type:Weak (Int 2048) [ 0 ] in
+  let squared =
+    let x = Ops.index (floats 4096 1) [ k ] in
+    Ops.sink ~kernel:(Ops.kernel_info ~name:"squared" ())
+      [ Ops.end_ (Ops.store (Ops.index (floats 2048 0) [ k ]) Ops.O.(x * x)) [ k ] ]
+  in
+  [ Ops.call scaled [ buf 4096; a ]; Ops.call squared [ buf 2048; a ] ]
+
+let estimates_of ren sink =
+  match (kernel_info (Ops.nth (Codegen.linearize sink ren) 0)).estimates with
+  | Some e -> Format.asprintf "%a" Ops.pp_estimates e
+  | None -> "no estimates"
+
+let launch_estimates (device, ren) =
+  let ren = Lazy.force ren in
+  let calls = launch_members device in
+  let members =
+    List.map
+      (fun c ->
+        match (kernel_info (Ops.nth (Codegen.linearize (Ops.body c) ren) 0))
+                .estimates
+        with
+        | Some e -> e
+        | None -> failf "a member of no estimates")
+      calls
+  in
+  equal string
+    (Format.asprintf "%a" Ops.pp_estimates
+       (List.fold_left Renderer.Estimates.add Renderer.Estimates.zero members))
+    (estimates_of ren (Ops.body (Shape.launch calls)))
+
+let launches =
+  cases "a launch's estimates are its members' summed" ~id:fst
+    [ ("CUDA", lazy (cuda_renderer ())); ("CPU", lazy clang) ]
+    launch_estimates
+
 (* Calls in a kernel
 
    A call of an external function calls the symbol the program is linked
@@ -11238,6 +11297,7 @@ let () =
            divisions;
            range_shrinking;
            blocks;
+           launches;
            memory_bounds;
            beam_search;
            caching;
