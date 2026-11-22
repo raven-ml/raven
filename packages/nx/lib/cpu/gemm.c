@@ -625,18 +625,26 @@ static void put(const problem *p, nx_cpu_micro k, nx_cpu_from f, int64_t kc,
   else tile_apart(p, k, f, kc, a, b, e, i, j, m, n);
 }
 
-/* Adds the [n] sums at [t] into R's outputs at [r], [step] elements
-   apart. */
+/* Adds the [n] elements at [t], [ts] apart, into R's outputs at [r],
+   [step] apart: in vectors where both are adjacent, as R's rows and a
+   bias mostly are. */
 static void add_row(const problem *p, uint8_t *r, int64_t step,
-                    const uint8_t *t, int64_t n) {
+                    const uint8_t *t, int64_t ts, int64_t n) {
+  int adjacent = step == 1 && ts == 1;
   if (p->acc == NX_FLOAT32) {
     float *y = (float *)r;
     const float *x = (const float *)t;
-    for (int64_t j = 0; j < n; j++) y[j * step] += x[j];
+    if (adjacent)
+      for (int64_t j = 0; j < n; j++) y[j] += x[j];
+    else
+      for (int64_t j = 0; j < n; j++) y[j * step] += x[j * ts];
   } else {
     double *y = (double *)r;
     const double *x = (const double *)t;
-    for (int64_t j = 0; j < n; j++) y[j * step] += x[j];
+    if (adjacent)
+      for (int64_t j = 0; j < n; j++) y[j] += x[j];
+    else
+      for (int64_t j = 0; j < n; j++) y[j * step] += x[j * ts];
   }
 }
 
@@ -656,20 +664,31 @@ static __attribute__((noinline)) void joined(const problem *p,
         NX_CPU_FROM_ZERO);
     for (int64_t r = 0; r < rows; r++)
       add_row(p, at_r(p, e, i + r0 + r, j), p->op[DST].st[COL],
-              t + r * k.nr * w, n);
+              t + r * k.nr * w, 1, n);
   }
 }
 
 /* Adds init into R's rows [i, i + m) × columns [j, j + n) of element [e],
-   n at most a kernel's NR, each row staged into acc. */
+   n at most a kernel's NR: each row read in place where init is in acc
+   along one run of each axis, as a bias is, else staged into acc. On two
+   performance cores of fudge a 1500 × 384 × 384 float32 product with a
+   bias took 2.03 ms with its rows staged, 1.70 read in place. */
 static __attribute__((noinline)) void finish(const problem *p, int64_t e,
                                              int64_t i, int64_t j, int64_t m,
                                              int64_t n) {
   _Alignas(ALIGN) uint8_t t[NX_CPU_TILE];
-  const int64_t *s = p->op[INIT].st;
+  const operand *q = &p->op[INIT];
+  int64_t ds = p->op[DST].st[COL];
+  int in_place = raw(p, INIT);
   for (int64_t r = i; r < i + m; r++) {
-    stage_acc(p, INIT, pos(p, INIT, e, r, j, 0), s[COL], 0, n, 1, t, 0);
-    add_row(p, at_r(p, e, r, j), p->op[DST].st[COL], t, n);
+    int64_t at = pos(p, INIT, e, r, j, 0);
+    if (in_place) {
+      add_row(p, at_r(p, e, r, j), ds, q->x->base + at * p->w, q->st[COL],
+              n);
+      continue;
+    }
+    stage_acc(p, INIT, at, q->st[COL], 0, n, 1, t, 0);
+    add_row(p, at_r(p, e, r, j), ds, t, 1, n);
   }
 }
 
