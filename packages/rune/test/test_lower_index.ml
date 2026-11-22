@@ -1646,6 +1646,7 @@ let sort_examples =
   empty
   :: long (D.Any D.Float32) [| 2; 17 |] 1
   :: long (D.Any D.Float16) [| 17; 256 |] 0
+  :: { (long (D.Any D.Float32) [| 2; 17 |] 1) with o_k = Some 17 }
   :: { (long (D.Any D.Int8) [| 400; 10 |] 1) with o_k = Some 10 }
   :: { (long (D.Any D.Int64) [| 9; 2 |] 0) with o_descending = true }
   :: List.mapi each D.all
