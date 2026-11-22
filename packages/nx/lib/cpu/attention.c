@@ -196,9 +196,32 @@ static uint8_t *align64(uint8_t *p) {
   return p + (64 - (uintptr_t)p % 64) % 64;
 }
 
+/* Whether the page of [m] keys from the block's key [j], at [ka] and
+   [va] and stepping [kk] and [vk] within the page, continues the run [u],
+   which it then extends: from u's last key by u's steps, or, where u holds
+   one key, by the steps from that key to the page. A table of one position
+   a page over one contiguous run of slots, as a cache holds a sequence,
+   so reads a block's keys as one run, whose scores row_scores takes eight
+   keys a gather, where a run of one key takes a scalar dot. Each sum adds
+   its keys in their order either way, so the bits are the same. */
+static int extends(run *u, int j, int m, int64_t ka, int64_t va, int64_t kk,
+                   int64_t vk) {
+  if (u->j + u->n != j) return 0;
+  int64_t ck = u->n == 1 ? ka - u->ka : u->kk;
+  int64_t cv = u->n == 1 ? va - u->va : u->vk;
+  if (ck <= 0 || cv <= 0) return 0;
+  if (ka != u->ka + u->n * ck || va != u->va + u->n * cv) return 0;
+  if (m > 1 && (kk != ck || vk != cv)) return 0;
+  u->kk = ck;
+  u->vk = cv;
+  u->n += m;
+  return 1;
+}
+
 /* The block of [nk] keys from [j0] of lead index [b] and key head [kh] as
    runs into [runs], each key's presence into [present]: a key whose page
-   table entry is out of range is absent. Answers the runs' count. */
+   table entry is out of range is absent, and a page that continues the run
+   before it joins it (extends). Answers the runs' count. */
 static int runs_of(const att *c, run *runs, int64_t b, int64_t kh,
                    int64_t j0, int nk, uint8_t *present) {
   const nx_array *k = &c->a[K], *v = &c->a[V];
@@ -233,13 +256,16 @@ static int runs_of(const att *c, run *runs, int64_t b, int64_t kh,
                    at * step(k, 2);
       int64_t va = v->offset + e * step(v, 0) + kh * step(v, 1) +
                    at * step(v, 2);
-      run *u = &runs[n++];
-      u->j = j;
-      u->n = m;
-      u->ka = ka;
-      u->kk = step(k, 2);
-      u->va = va;
-      u->vk = step(v, 2);
+      if (n == 0 || !extends(&runs[n - 1], j, m, ka, va, step(k, 2),
+                             step(v, 2))) {
+        run *u = &runs[n++];
+        u->j = j;
+        u->n = m;
+        u->ka = ka;
+        u->kk = step(k, 2);
+        u->va = va;
+        u->vk = step(v, 2);
+      }
     }
     j += m;
   }
