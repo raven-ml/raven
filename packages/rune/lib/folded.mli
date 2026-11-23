@@ -20,7 +20,8 @@
     constants: the operation built over the operands' scalar literals and
     rewritten by {!Tolk.Shape.symbolic_simple}, the rules by which its code
     generation folds them. So folding here changes no value a compiled program
-    computes.
+    computes. An integer division by [0] is [0] and its remainder the dividend,
+    as tolk computes them.
 
     {b Operations left to code generation.} Every node folds but these, which
     are built as they are:
@@ -29,10 +30,12 @@
       decomposition, and [Threefry];
     - a [Mulacc] of floats narrower than [float32], which a target that emulates
       them may round twice;
-    - a shift by a count outside the width of a committed integer type, an
-      integer division by [0] and a conversion of a float to an integer type
-      that does not hold its truncation, NaN and infinities included, which C
-      leaves undefined and tolk's code generation decides;
+    - a shift by a count outside the width of a committed integer type, which
+      tolk's rules do not compute, and a conversion of a float to an integer
+      type that does not hold its truncation, NaN and infinities included, which
+      C leaves undefined and tolk's code generation decides;
+    - an operation that builds a node of neither a literal nor arithmetic, such
+      as a movement;
     - an operation with an [`Invalid] operand. *)
 
 include Tolk.Ops.Elementwise with type t = Tolk.Ops.t

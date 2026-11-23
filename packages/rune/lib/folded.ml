@@ -123,10 +123,7 @@ let kept u =
             && Bigint.lt n (Bigint.of_int (Dtype.bitsize dt)))
       | _ -> true)
   | Op.Truncdiv | Op.Truncmod | Op.Div | Op.Mod -> (
-      match source_value u 1 with
-      | Some (`Int d) -> Bigint.equal d Bigint.zero
-      | Some (`Bool d) -> not d
-      | _ -> true)
+      match source_value u 1 with Some (`Int _) -> false | _ -> true)
   | Op.Cast when Dtype.mem dt Dtype.ints -> (
       let s = Ops.nth u 0 in
       if not (Dtype.is_float (Ops.dtype s)) then false
