@@ -55,7 +55,7 @@ let zstd_unit = (4 * kib) + (2 * 128 * kib) + 3 + 18 + 4
    work is [w], holds the lock at [t - 1] and releases it once at [t]. *)
 let neighbours name t work =
   cases name
-    ~id:(fun (w, _) -> string_of_int w)
+    ~id:(fun (w, n) -> Printf.sprintf "%d bytes, %d releases" w n)
     [ (t - 1, 0); (t, 1) ]
     (fun (w, n) ->
       let call = work w in
@@ -198,7 +198,7 @@ let encode_case name t bound encode =
       fun () -> is_some (encode src dst))
 
 let whole =
-  group "whole-buffer calls"
+  group "a whole-buffer call releases once its work reaches the threshold"
     [
       decode_case "deflate decode" deflate_decode
         (fun w -> let s, d = deflate_work w in (s, String.length d))
@@ -243,7 +243,7 @@ let one_block name t work decode =
     (fun (_, input, n) -> equal int ~msg:"releases" n (run input))
 
 let blocks =
-  group "single blocks"
+  group "a single block releases once its work passes the threshold"
     [
       one_block "LZ4 block decode" lz4_decode lz4_work Lz.Lz4.Block.decode;
       one_block "Snappy decode" snappy_decode snappy_work Lz.Snappy.decode;
@@ -336,7 +336,7 @@ let fixed_block ~matches =
   (Buffer.contents b, 1 + (258 * matches))
 
 let short_input =
-  group "a short input decoding long"
+  group "a short input decoding long releases"
     [
       test "a Zstandard frame of 2 KiB decoding to 64 MiB releases within \
             a block of the threshold" (fun () ->
@@ -405,7 +405,7 @@ let frames name t f decode =
         (count (fun () -> ok_produced 0 (decode src dst))))
 
 let concatenated =
-  group "concatenated frames"
+  group "concatenated frames release as their work adds up"
     [
       frames "empty Zstandard frames" zstd_decode zstd_empty Lz.Zstd.decode;
       frames "skippable Zstandard frames" zstd_decode skippable Lz.Zstd.decode;
@@ -538,7 +538,7 @@ let tiny_steps e s =
   go 0 0
 
 let steps =
-  group "steps"
+  group "a step releases by its work, whatever its input"
     [
       neighbours "a deflate decoder step" deflate_decode (fun w ->
           decode_step (Lz.Deflate.decoder ()) (fst (deflate_work w)));
