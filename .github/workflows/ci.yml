@@ -14,6 +14,9 @@ jobs:
         os:
           - ubuntu-latest
           - ubuntu-24.04-arm
+          # GCC 11 and glibc 2.35, older than ubuntu-latest's, build the C. The
+          # sanitizers' steps skip there: ubuntu-latest's run checks the same C.
+          - ubuntu-22.04
           - macos-latest
           - windows-2025
 
@@ -95,7 +98,7 @@ jobs:
       # process cannot load, and a later step that installs the package
       # without rebuilding it, such as quill's preload, would load it.
       - name: Test lz under the sanitizers
-        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        if: ${{ !cancelled() && runner.os != 'Windows' && matrix.os != 'ubuntu-22.04' }}
         env:
           DUNE_BUILD_DIR: _build_sanitize
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
@@ -126,7 +129,7 @@ jobs:
       # as its own. The documentation's examples run in the step above: the
       # mdx stanzas are off under the sanitizers.
       - name: Test nx under the sanitizers
-        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        if: ${{ !cancelled() && runner.os != 'Windows' && matrix.os != 'ubuntu-22.04' }}
         env:
           DUNE_BUILD_DIR: _build_sanitize
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
@@ -155,7 +158,7 @@ jobs:
       # fuzz suites included, run with the C built under AddressSanitizer and
       # UndefinedBehaviorSanitizer, each property over 1000 files.
       - name: Test talon's decoders under the sanitizers
-        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        if: ${{ !cancelled() && runner.os != 'Windows' && matrix.os != 'ubuntu-22.04' }}
         env:
           DUNE_BUILD_DIR: _build_sanitize
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
@@ -283,3 +286,112 @@ jobs:
         run: |
           { grep -rlsE 'Sanitizer|runtime error:' _build/_tests _build_sanitize/_tests || true; } |
             while read -r f; do echo "::group::$f"; cat "$f"; echo "::endgroup::"; done
+
+  # Each released package built and tested alone from the release's sources,
+  # as opam-repository's CI builds it, on the oldest OCaml it admits.
+  packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        # brot admits 5.2; munin and quill 5.4, through matrix; the others 5.5.
+        ocaml-compiler:
+          - '5.5'
+          - '5.4'
+          - '5.2'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    # opam prints a failed build's whole log, test reports included.
+    env:
+      OPAMERRLOGLEN: 0
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
+
+      # The release's archive holds the committed files of HEAD. Pinned from
+      # it, a package builds as `dune build -p <package> @install @runtest`
+      # against the others installed, without the tree's other directories.
+      - name: Pin the release's packages
+        run: |
+          git archive --prefix=raven/ HEAD | tar -x -C "$RUNNER_TEMP"
+          opam pin add -n -y "$RUNNER_TEMP/raven"
+
+      # --with-test tests the named package only. The steps run in dependency
+      # order, since a package that an earlier step installed as a dependency
+      # would not be tested. A step after a failed one installs the failed
+      # package without its tests.
+      - name: Build and test lz
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test lz
+
+      - name: Build and test rig
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test rig
+
+      - name: Build and test nx
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test nx
+
+      - name: Build and test tolk
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test tolk
+
+      - name: Build and test brot
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.2' }}
+        run: bash .github/memcap.sh opam install -y --with-test brot
+
+      - name: Build and test talon
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test talon
+
+      - name: Build and test rune
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test rune
+
+      - name: Build and test ppx_ptree
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test ppx_ptree
+
+      - name: Build and test kaun
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test kaun
+
+      - name: Build and test vega
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test vega
+
+      - name: Build and test munin
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.4' }}
+        run: bash .github/memcap.sh opam install -y --with-test munin
+
+      - name: Build and test jera
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test jera
+
+      - name: Build and test norn
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test norn
+
+      - name: Build and test hugin
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test hugin
+
+      - name: Build and test quill
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.4' }}
+        run: bash .github/memcap.sh opam install -y --with-test quill
+
+      # raven installs every package; brot, munin and quill join it here.
+      - name: Build and test raven
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        run: bash .github/memcap.sh opam install -y --with-test raven
