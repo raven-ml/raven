@@ -622,6 +622,25 @@ let metal_one () =
       fun () ->
         compile (fun x -> Nx.sum ~axes:[ 1 ] (Nx.sin (Nx.mul_s x salt))) x
 
+(* The gradient in its input of 16 layers whose weights it captures, drawn by
+   each process from its id: a later process's call reads back the schedules a
+   function over other weights kept, each weight bound as a buffer it holds. A
+   layer centres its rows, then takes the softmax of their product. *)
+let captured_layers () =
+  let draw shape = Nx.place Nx.Host.on (Nx.Rng.normal Nx.float32 shape) in
+  let layers =
+    Nx.Rng.with_key (Nx.Rng.key (Unix.getpid ())) @@ fun () ->
+    List.init 16 (fun _ -> (draw [| 128; 128 |], draw [| 128 |]))
+  in
+  let forward x =
+    List.fold_left
+      (fun h (w, b) ->
+        let centred = Nx.sub h (Nx.mean ~axes:[ 1 ] ~keepdims:true h) in
+        Nx.softmax ~axes:[ 1 ] (Nx.add (Nx.matmul centred w) b))
+      x layers
+  in
+  compile (Rune.grad' (fun x -> Nx.sum (forward x))) (draw [| 16; 128 |])
+
 let pendulum () =
   let steps x =
     let theta = ref x and v = ref (Nx.zeros_like x) in
@@ -678,6 +697,7 @@ let cases =
        kernel of 3.6 MB of C, which the host writes as several functions, since
        Clang's time on one function grows faster than the function. *)
     ("long/pendulum-200", pendulum);
+    ("capture/grad-16-layers", captured_layers);
     ("products/vecmat-bf16", vecmat_bf16);
     ("products/segments-grad", segments_grad);
     ("devices/dp-step-16", data_parallel);
@@ -702,12 +722,14 @@ let parallel_cases = [ "metal/sums-32"; "parallel/checks-48" ]
 
 (* The cases timed again over a warm disk cache, as a user's next run of a
    program makes its first call: a model's first steps, whose schedule reads 40
-   programs back, a scan that reads 112, a decomposition, a kernel whose
-   binary CUDA's driver loads, and 32 kernels whose pipelines rig prepares
-   together and Metal finds in its cache. *)
+   programs back, a scan that reads 112, a decomposition, a gradient over
+   weights no earlier process captured, a kernel whose binary CUDA's driver
+   loads, and 32 kernels whose pipelines rig prepares together and Metal finds
+   in its cache. *)
 let warm_cases =
   [
     "model/schools-start";
+    "capture/grad-16-layers";
     "scan/checks-48";
     "linalg/eigh-8x8";
     "cuda/sin-nested-8";
@@ -715,7 +737,7 @@ let warm_cases =
   ]
 
 (* The cases timed warm only. *)
-let warm_only = [ "metal/sums-32-cached" ]
+let warm_only = [ "capture/grad-16-layers"; "metal/sums-32-cached" ]
 
 (* Whether [gpu]'s first GPU opens, [gpu] being ["cuda"], ["amd"] or
    ["metal"], asked of a forked child: the fresh processes that time a case
