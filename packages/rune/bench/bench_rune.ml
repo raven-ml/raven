@@ -111,8 +111,17 @@ let declined_rows () =
              xs));
   ]
 
+(* [ops] products by 2, 3 and 2 in turn: each [Nx.mul_s] builds its program,
+   equal to the one before last, which forward mode finds again. *)
+let scaled_chain x =
+  let t = ref x in
+  for i = 1 to ops do
+    t := Nx.mul_s !t (if i mod 3 = 2 then 3. else 2.)
+  done;
+  Nx.sum !t
+
 (* DeepChain: rune's chain over 64 elements, eagerly and under forward and
-   reverse mode. *)
+   reverse mode, and a chain of products by scalars under forward mode. *)
 let deep_rows () =
   let x = x64 () in
   let v = host (Nx.ones_like x) in
@@ -120,6 +129,8 @@ let deep_rows () =
     Thumper.bench "chain-fwd-nx-eager" (fun () -> synced (chain_sum x));
     Thumper.bench "chain-jvp" (fun () -> synced2 (Rune.jvp' chain_sum x v));
     Thumper.bench "chain-grad" (fun () -> synced (Rune.grad' chain_sum x));
+    Thumper.bench "scaled-chain-jvp" (fun () ->
+        synced2 (Rune.jvp' scaled_chain x v));
   ]
 
 (* Remat: DeepChain's gradient through a remat, whose backward pass computes the
@@ -728,6 +739,8 @@ let jit_rows () =
   let wide = between f64 50 0. 1. [| 1_000_000 |] in
   let kv_cache = between f32 58 (-1.) 1. [| 4096; 128 |]
   and kv_row = between f32 59 (-1.) 1. [| 1; 128 |] in
+  let normed = between f32 63 (-1.) 1. [| 64; 256 |]
+  and normed_by = between f32 64 (-1.) 1. [| 256; 128 |] in
   let views =
     List.map
       (fun (k, rows) -> between f32 k (-1.) 1. [| rows; 64 |])
@@ -1126,6 +1139,12 @@ let jit_rows () =
           Nx.Ptree.(list tensor @-> returns tensor)
           (fun xs -> Nx.mul_s (Nx.concatenate ~axis:0 xs) 2.))
       (fun f -> synced (f views));
+    (* A norm of 64 rows of 256 before their product by 256 x 128: the norm's
+       map stays a kernel of its own, which the product would compute again at
+       each of its 128 output columns. *)
+    warm "rms-norm-matmul-64x256x128"
+      (fun () -> Rune.jit (pair_fn ()) (fun x m -> Nx.matmul (Nx.rms_norm x) m))
+      (fun f -> synced (f normed normed_by));
     data_parallel_step ();
     domain_steps ();
     sharded_backward ();
