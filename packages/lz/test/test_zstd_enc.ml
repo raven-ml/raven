@@ -213,6 +213,19 @@ let cuts =
          (2, Gen.int_range 100_000 300_000);
        ])
 
+(* Levels *)
+
+let levels_outside =
+  cases "a level outside 1 to 12 raises" ~id:string_of_int [ -1; 0; 13 ]
+    (fun level ->
+      let src = Lz_support.of_string "abc" and dst = Lz_support.create 64 in
+      raises_match ~msg:"encode" (Exn.invalid_arg ~sub:"level") (fun () ->
+          Lz.Zstd.encode ~level src dst);
+      raises_match ~msg:"encode_string" (Exn.invalid_arg ~sub:"level")
+        (fun () -> Lz.Zstd.encode_string ~level "abc");
+      raises_match ~msg:"encoder" (Exn.invalid_arg ~sub:"level") (fun () ->
+          Lz.Zstd.encoder ~level ()))
+
 (* Round trips *)
 
 let round_trip =
@@ -289,6 +302,11 @@ let short =
       untouched g;
       equal (option int) ~msg:"exactly its length" (Some k)
         (Lz.Zstd.encode ~level src (Lz_support.create k)))
+
+let negative =
+  test "a negative size has no bound" (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
+          Lz.Zstd.bound (-1)))
 
 (* Cuts into steps *)
 
@@ -484,13 +502,11 @@ let () =
   exit
     (run "Zstd_enc"
        [
-         cases "a level outside 1 to 12 raises" ~id:string_of_int [ 0; 13 ]
-           (fun level ->
-             raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
-                 Lz.Zstd.encode_string ~level "abc"));
-         group "round trip" [ round_trip; strings; stepped_round_trip ];
-         group "bound" [ bound; short ];
+         levels_outside;
+         group "round trip" ([ round_trip; strings; stepped_round_trip ] @ empty);
+         group "bound"
+           [ bound; short; negative; Lz_support.largest_bound Lz.Zstd.bound ];
          group "steps" [ cut_free; wide; edges; quota; frames ];
+         group "frames" [ headers ];
          group "paths" [ paths; rebased ];
-         group "frames" (headers :: empty);
        ])

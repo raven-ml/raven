@@ -1,16 +1,15 @@
 (* Zstandard decoding (RFC 8878): the vendor's goldens, the specification's
-   refusals on frames built byte by byte, the stream against the
-   whole-buffer decode, and the decoder's memory. Round trips and
-   the bound belong to the encoder.
+   refusals on frames built byte by byte, the decoder's windows and runs, and
+   the decode's memory. Round trips, levels and the bound belong to the encoder;
+   Step states the decoder's laws over every format.
 
-   An error's offset is the first byte of what is wrong: of a field the
-   format refuses or the library declines, of a section or table
-   description that runs past its block, of a bitstream not read exactly
-   to its start; the byte holding a sequence's first bit when the
-   sequence breaks a rule; a frame's first byte when no frame begins
-   there; the input's length when it ends inside a frame. A block that
-   asks for more output than the destination holds is Too_long at its
-   header. *)
+   An error's offset is the first byte of what is wrong: of a field the format
+   refuses or the library declines, of a section or table description that runs
+   past its block, of a bitstream not read exactly to its start; the byte
+   holding a sequence's first bit when the sequence breaks a rule; a frame's
+   first byte when no frame begins there; the input's length when it ends inside
+   a frame. A block that asks for more output than the destination holds is
+   Too_long at its header. *)
 
 open Windtrap
 
@@ -114,6 +113,8 @@ let golden name =
 let data name = Lazy.force (golden name).Lz_support.data
 let raw_of name = Lazy.force (golden name).Lz_support.raw
 
+let decode_result = result Lz_support.progress Lz_support.error
+
 (* A destination with guard bytes after it. *)
 let guard = 64
 
@@ -143,61 +144,42 @@ let frames =
             (Printf.sprintf "consumed %d, produced %d" (String.length s) 200)
             (decode s);
           let dst = Lz_support.create 200 in
-          is_ok (Lz.Zstd.decode (Lz_support.of_string s) dst);
+          equal decode_result
+            (Ok { Lz.consumed = String.length s; produced = 200 })
+            (Lz.Zstd.decode (Lz_support.of_string s) dst);
           equal string
             (raw_of "text_100.zst3" ^ raw_of "columns_100.zst1")
             (Lz_support.to_string dst));
-      test "bytes that begin no frame are malformed where they begin"
-        (fun () ->
+      test "bytes that begin no frame are Malformed where they begin" (fun () ->
           let a = data "text_100.zst3" in
           equal string
             (Printf.sprintf "malformed at %d" (String.length a))
             (decode (a ^ "\x28\xB5\x00")));
-      test "a cut inside the next magic is truncated" (fun () ->
+      test "a cut inside the next magic is Truncated" (fun () ->
           let a = data "text_100.zst3" in
           equal string
             (Printf.sprintf "truncated at %d" (String.length a + 2))
             (decode (a ^ "\x28\xB5")));
-      test "an empty input is truncated at 0" (fun () ->
+      test "an empty input is Truncated at 0" (fun () ->
           equal string "truncated at 0" (decode ""));
-      test "a magic no frame begins with is malformed at its first byte"
+      test "a magic no frame begins with is Malformed at its first byte"
         (fun () ->
           equal string "malformed at 0" (decode "\x00\xB5\x2F\xFD");
           equal string "malformed at 0" (decode "\x28\xB5\x2E\xFD");
           equal string "malformed at 0" (decode "\x5F\x2B"));
-      test "frames end in Done only on the step with ~last:true" (fun () ->
-          let d = Lz.Zstd.decoder () in
-          let got = Buffer.create 65636 in
-          let add run = Buffer.add_string got (Lz_support.to_string run) in
-          let step ~last s =
-            Lz.Decoder.step d ~last (Lz_support.of_string s) add
-          in
-          let rec feed s =
-            let n = String.length s in
-            match step ~last:false s with
-            | Ok (More k) when k < n -> feed (String.sub s k (n - k))
-            | r -> equal (result Lz_support.step Lz_support.error) (Ok (More n)) r
-          in
-          feed (data "frames.zst");
-          equal (result Lz_support.step Lz_support.error) (Ok (Done 0))
-            (step ~last:true "");
-          equal string (raw_of "frames.zst") (Buffer.contents got));
     ]
 
 (* Headers, blocks and checksums *)
 
 let header =
-  let fcs n = magic ^ "\x40\x00" ^ le 2 (n - 256) in
-  let xs = String.make 300 'x' in
   group "header"
     [
-      test "a reserved descriptor bit is malformed" (fun () ->
+      test "a reserved descriptor bit is Malformed" (fun () ->
           equal string "malformed at 4" (decode (magic ^ "\x08\x00" ^ raw "abc")));
       test "the unused descriptor bit is ignored" (fun () ->
           equal string "consumed 12, \"abc\""
             (decode (magic ^ "\x10\x00" ^ raw "abc")));
-      test "a dictionary identifier is unsupported at its first byte"
-        (fun () ->
+      test "a dictionary identifier is Unsupported at its first byte" (fun () ->
           equal string "unsupported at 6"
             (decode (magic ^ "\x01\x00\x07" ^ raw "abc"));
           equal string "unsupported at 6"
@@ -205,81 +187,48 @@ let header =
       test "a dictionary identifier of 0 names no dictionary" (fun () ->
           equal string "consumed 13, \"abc\""
             (decode (magic ^ "\x01\x00\x00" ^ raw "abc")));
-      test "the reserved block type is malformed" (fun () ->
+      test "the reserved block type is Malformed" (fun () ->
           equal string "malformed at 6"
             (decode (windowed 0 ^ block_header ~last:true 3 1 ^ "a")));
-      test "a block above 128 KiB is malformed at its header" (fun () ->
+      test "a block above 128 KiB is Malformed at its header" (fun () ->
           let n = (128 * kib) + 1 in
           equal string "malformed at 6"
             (decode ~cap:(2 * n) (windowed 10 ^ raw (String.make n 'a')));
           equal string "malformed at 6"
-            (decode ~cap:(2 * n) (windowed 10 ^ rle 'a' n));
+            (decode ~cap:(2 * n) (windowed 10 ^ rle 'a' n)));
+      test "a block of 128 KiB decodes" (fun () ->
+          let n = 128 * kib in
           equal string
-            (Printf.sprintf "consumed 10, produced %d" (n - 1))
-            (decode ~cap:(2 * n) (windowed 10 ^ rle 'a' (n - 1))));
-      test "a block above the window is malformed at its header" (fun () ->
+            (Printf.sprintf "consumed 10, produced %d" n)
+            (decode ~cap:(2 * n) (windowed 10 ^ rle 'a' n)));
+      test "a block above the window is Malformed at its header" (fun () ->
           equal string "malformed at 6"
             (decode (single 100 ^ raw (String.make 101 'a')));
           equal string "malformed at 6"
             (decode (windowed 0 ^ raw (String.make 1025 'a'))));
-      (* Frame_Content_Size, at 6, is what does not match, however the
-         blocks show it: a raw block's header, the last block, or a
-         compressed block's output. *)
-      test "a content size larger than the content is malformed at it"
-        (fun () ->
-          equal string "malformed at 6" (decode (fcs 301 ^ raw xs));
-          equal string "malformed at 6"
-            (decode
-               (fcs 301
-               ^ raw ~last:false (String.sub xs 0 200)
-               ^ raw (String.sub xs 0 100))));
-      test "a content size smaller than the content is malformed at it"
-        (fun () ->
-          equal string "malformed at 6" (decode (fcs 299 ^ raw xs));
-          equal string "malformed at 6"
-            (decode
-               (fcs 299
-               ^ raw ~last:false (String.sub xs 0 200)
-               ^ raw (String.sub xs 0 100)));
-          equal string "malformed at 6"
-            (decode (fcs 257 ^ compressed (raw_literals "abcd" ^ "\x00")));
-          equal string "consumed 311, produced 300" (decode (fcs 300 ^ raw xs)));
-      test "a wrong checksum is malformed at the checksum" (fun () ->
-          let s = data "text_100.zst3" in
-          let n = String.length s in
-          let b = Bytes.of_string s in
-          Bytes.set b (n - 1) (Char.chr (Char.code s.[n - 1] lxor 1));
-          equal string
-            (Printf.sprintf "malformed at %d" (n - 4))
-            (decode (Bytes.to_string b)));
-      cases "a refusal's message names the field at its offset"
-        ~id:(fun (field, _) -> field)
-        [
-          ("Magic_Number", "\x28\xB5\x2E\xFD");
-          ("Frame_Header_Descriptor", magic ^ "\x08\x00" ^ raw "abc");
-          ("Dictionary_ID", magic ^ "\x01\x00\x07" ^ raw "abc");
-          ("Block_Type", windowed 0 ^ block_header ~last:true 3 1 ^ "a");
-          ("Block_Size", single 100 ^ raw (String.make 101 'a'));
-          ("Frame_Content_Size", fcs 301 ^ raw xs);
-        ]
-        (fun (field, s) ->
-          let dst = Lz_support.create 4096 in
-          contains ~sub:field
-            (match Lz.Zstd.decode (Lz_support.of_string s) dst with
-            | Error { Lz.why = Malformed m | Unsupported m; _ } -> m
-            | _ -> "no refusal"));
-      test "a zip bomb ends at the destination" (fun () ->
-          (* Blocks of 128 KiB from 4 bytes each: 10 MiB of input state
-             320 GiB. 8 blocks fill 1 MiB; the ninth's header is at 38. *)
-          let block = rle ~last:false 'z' (128 * kib) in
-          let s =
-            windowed 7 ^ String.concat "" (List.init (10 * mib / 4) (fun _ -> block))
-          in
-          let g = guarded mib in
-          equal string "too long at 38"
-            (seen (Lz.Zstd.decode (Lz_support.of_string s) (snd g)));
-          untouched g);
     ]
+
+(* Errors *)
+
+let messages =
+  let fcs n = magic ^ "\x40\x00" ^ le 2 (n - 256) in
+  let xs = String.make 300 'x' in
+  cases "a refusal's message names the field at its offset"
+    ~id:(fun (field, _) -> field)
+    [
+      ("Magic_Number", "\x28\xB5\x2E\xFD");
+      ("Frame_Header_Descriptor", magic ^ "\x08\x00" ^ raw "abc");
+      ("Dictionary_ID", magic ^ "\x01\x00\x07" ^ raw "abc");
+      ("Block_Type", windowed 0 ^ block_header ~last:true 3 1 ^ "a");
+      ("Block_Size", single 100 ^ raw (String.make 101 'a'));
+      ("Frame_Content_Size", fcs 301 ^ raw xs);
+    ]
+    (fun (field, s) ->
+      let dst = Lz_support.create 4096 in
+      contains ~sub:field
+        (match Lz.Zstd.decode (Lz_support.of_string s) dst with
+        | Error { Lz.why = Malformed m | Unsupported m; _ } -> m
+        | _ -> "no refusal"))
 
 (* Destinations *)
 
@@ -298,20 +247,47 @@ let destinations =
         | Too_long -> "too long"
         | Unsupported _ -> "unsupported")
   in
-  cases "a destination of the decoded size holds it, one byte less is too long"
-    ~id:(fun g -> g.Lz_support.file)
-    nonempty
-    (fun g ->
-      let raw = Lazy.force g.Lz_support.raw in
-      let src = Lz_support.of_string (Lazy.force g.data) in
-      let n = String.length raw in
-      let exact = guarded n in
-      is_ok (Lz.Zstd.decode src (snd exact));
-      equal string raw (Lz_support.to_string (snd exact));
-      untouched exact;
-      let short = guarded (n - 1) in
-      equal string "too long" (kind (Lz.Zstd.decode src (snd short)));
-      untouched short)
+  group "destinations"
+    [
+      cases "a destination of the decoded size holds the output"
+        ~id:(fun g -> g.Lz_support.file)
+        nonempty
+        (fun g ->
+          let raw = Lazy.force g.Lz_support.raw in
+          let data = Lazy.force g.data in
+          let exact = guarded (String.length raw) in
+          equal decode_result
+            (Ok
+               {
+                 Lz.consumed = String.length data;
+                 produced = String.length raw;
+               })
+            (Lz.Zstd.decode (Lz_support.of_string data) (snd exact));
+          equal string raw (Lz_support.to_string (snd exact));
+          untouched exact);
+      cases "a destination one byte short is Too_long"
+        ~id:(fun g -> g.Lz_support.file)
+        nonempty
+        (fun g ->
+          let n = String.length (Lazy.force g.Lz_support.raw) in
+          let src = Lz_support.of_string (Lazy.force g.data) in
+          let short = guarded (n - 1) in
+          equal string "too long" (kind (Lz.Zstd.decode src (snd short)));
+          untouched short);
+      test "a zip bomb is Too_long at the first block past the destination"
+        (fun () ->
+          (* Blocks of 128 KiB from 4 bytes each: 10 MiB of input state 320 GiB.
+             8 blocks fill 1 MiB; the ninth's header is at 38. *)
+          let block = rle ~last:false 'z' (128 * kib) in
+          let s =
+            windowed 7
+            ^ String.concat "" (List.init (10 * mib / 4) (fun _ -> block))
+          in
+          let g = guarded mib in
+          equal string "too long at 38"
+            (seen (Lz.Zstd.decode (Lz_support.of_string s) (snd g)));
+          untouched g);
+    ]
 
 (* Windows *)
 
@@ -324,16 +300,20 @@ let window =
   let expected = lazy (raw_of "window1m.zst") in
   group "window"
     [
-      test "the default decoder holds a 1 MiB window" (fun () ->
+      cases "a window below 1 KiB raises" ~id:string_of_int [ -1; 0; 1023 ]
+        (fun window ->
+          raises_match (Exn.invalid_arg ~sub:"window") (fun () ->
+              Lz.Zstd.decoder ~window ()));
+      test "the default decoder takes a 1 MiB window" (fun () ->
           equal (result string string) (Ok (Lazy.force expected))
             (step (Lz.Zstd.decoder ())));
-      test "a window above the decoder's is unsupported at its descriptor"
+      test "a window above the decoder's is Unsupported at its descriptor"
         (fun () ->
           equal (result string string) (Error "unsupported at 5")
             (step (Lz.Zstd.decoder ~window:(512 * kib) ()));
           equal (result string string) (Error "unsupported at 5")
             (step (Lz.Zstd.decoder ~window:(mib - 1) ())));
-      test "a window equal to the decoder's is decoded" (fun () ->
+      test "a window equal to the decoder's decodes" (fun () ->
           equal (result string string) (Ok (Lazy.force expected))
             (step (Lz.Zstd.decoder ~window:mib ())));
       test "a single segment's window is its content size" (fun () ->
@@ -374,7 +354,7 @@ let literals =
   group "literals"
     [
       cases
-        "huffman weights that build no prefix code are malformed at the \
+        "Huffman weights that build no prefix code are Malformed at the \
          description's first byte"
         ~id:(fun (n, _) -> n)
         [
@@ -384,7 +364,7 @@ let literals =
         (fun (_, ws) ->
           equal string "malformed at 12"
             (decode (frame (huffman 4 (direct ws) "\x01"))));
-      test "a weight above 11 is malformed at its byte" (fun () ->
+      test "a weight above 11 is Malformed at its byte" (fun () ->
           (* Weights 1 and 1 in the description's byte 13, 12 in 14. *)
           equal string "malformed at 14"
             (decode (frame (huffman 4 (direct [ 1; 1; 12 ]) "\x01"))));
@@ -394,7 +374,7 @@ let literals =
              after the end mark: 00 01 10 11. *)
           equal string "consumed 18, \"\\000\\001\\002\\003\""
             (decode (frame (huffman 4 (direct [ 2; 2; 2 ]) "\x1B\x01"))));
-      test "treeless literals with no earlier tree are malformed" (fun () ->
+      test "treeless literals with no earlier tree are Malformed" (fun () ->
           equal string "malformed at 9"
             (decode (frame (huffman ~typ:3 4 "" "\x01"))));
       (* Weights 1 and 1 complete with a 2: codes 00, 01 and 1 for 0, 1 and
@@ -411,14 +391,14 @@ let literals =
           equal string
             (Printf.sprintf "consumed 25, %S" (String.sub "\x02\x00\x01\x02" 0 n))
             (decode (frame lits)));
-      test "four streams of 5 literals are malformed at Regenerated_Size"
+      test "four streams of 5 literals are Malformed at Regenerated_Size"
         (fun () ->
           (* The first three streams take 2 each, the last none left. *)
           equal string "malformed at 9"
             (decode
                (frame
                   (huffman ~four:true 5 (direct [ 1; 1 ]) (String.make 10 '\x01')))));
-      test "a jump table past its streams is malformed at its first byte"
+      test "a jump table past its streams is Malformed at its first byte"
         (fun () ->
           (* The jump table, at 14, states 9 bytes of streams of 4. *)
           equal string "malformed at 14"
@@ -426,13 +406,13 @@ let literals =
                (frame
                   (huffman ~four:true 8 (direct [ 1; 1 ])
                      (le 2 3 ^ le 2 3 ^ le 2 3 ^ String.make 4 '\x01')))));
-      test "an FSE description cut by its section is malformed at its first \
-            byte" (fun () ->
+      test "an FSE description past its section is Malformed at its first byte"
+        (fun () ->
           (* Weights FSE-coded in 1 byte at 13, accuracy log 5: its first
              probability needs bits past the byte. *)
           equal string "malformed at 13"
             (decode (frame (huffman 4 "\x01\x00" "\x01"))));
-      test "raw literals past the block are malformed" (fun () ->
+      test "raw literals past the block are Malformed" (fun () ->
           equal string "malformed at 9" (decode (windowed 0 ^ compressed "\x28abc")));
     ]
 
@@ -450,18 +430,18 @@ let sequences =
           (* Offset code 2 with extra bits 00: Offset_Value 4, offset 1. *)
           equal string "consumed 20, \"abcdddd\""
             (decode (frame (one_sequence ~ll:4 ~of_:2 ~ml:0 "\x04"))));
-      test "an offset before the frame's start is malformed" (fun () ->
+      test "an offset before the frame's start is Malformed" (fun () ->
           (* Offset code 5: Offset_Value 32, offset 29, after 4 bytes. *)
           equal string "malformed at 19"
             (decode (frame (one_sequence ~ll:4 ~of_:5 ~ml:0 "\x20"))));
-      test "a repeat offset of 0 is malformed" (fun () ->
+      test "a repeat offset of 0 is Malformed" (fun () ->
           (* Literals length 0 and Offset_Value 3: Repeated_Offset1 - 1. *)
           equal string "malformed at 19"
             (decode (frame (one_sequence ~ll:0 ~of_:1 ~ml:0 "\x03"))));
-      test "a literals length past the literals is malformed" (fun () ->
+      test "a literals length past the literals is Malformed" (fun () ->
           equal string "malformed at 19"
             (decode (frame (one_sequence ~ll:5 ~of_:2 ~ml:0 "\x04"))));
-      test "a match past the block's maximum is malformed" (fun () ->
+      test "a match past the block's maximum is Malformed" (fun () ->
           (* A window, so a block, of 20 bytes; 4 + 34 bytes. *)
           equal string "malformed at 19"
             (decode
@@ -477,32 +457,32 @@ let sequences =
           let two bits = "\x02\x54\x03\x02\x2B" ^ bits in
           equal string "malformed at 20" (decode (frame (two "\x00\x00\x04")));
           equal string "malformed at 21" (decode (frame (two "\x00\x00\x07"))));
-      test "a compressed block's output past the destination is too long at \
-            its header" (fun () ->
+      test "a block's output past the destination is Too_long at its header"
+        (fun () ->
           (* The first sequence writes 102 bytes. *)
           equal string "too long at 6"
             (decode ~cap:50 (frame ("\x02\x54\x03\x02\x2B\x00\x00\x04"))));
-      test "a bitstream not read to its start is malformed" (fun () ->
+      test "a bitstream not read to its start is Malformed" (fun () ->
           equal string "malformed at 19"
             (decode (frame (one_sequence ~ll:4 ~of_:2 ~ml:0 "\x08"))));
-      test "reserved compression mode bits are malformed" (fun () ->
+      test "reserved compression mode bits are Malformed" (fun () ->
           equal string "malformed at 15"
             (decode (frame "\x01\x55\x04\x02\x00\x04")));
-      test "a repeated table with none before is malformed at its mode"
+      test "a repeated table with none before is Malformed at its mode"
         (fun () ->
           equal string "malformed at 15" (decode (frame "\x01\xC0\x04")));
-      test "an FSE table decodes" (fun () ->
+      test "an offset coded with an FSE table decodes" (fun () ->
           (* Offsets coded by a table of accuracy log 5 giving code 2 all 32
              points: a 5-bit state, then code 2's 2 extra bits. *)
           equal string "consumed 22, \"abcdddd\""
             (decode
                (frame ("\x01\x64\x04" ^ ncount ~log:5 [ 0; 0; 32 ] ^ "\x00\x80"))));
-      test "an FSE description cut by the block is malformed at its first byte"
+      test "an FSE description cut by the block is Malformed at its first byte"
         (fun () ->
           (* Literals lengths, at 16, accuracy log 6: the first probability
              needs bits past the block. *)
           equal string "malformed at 16" (decode (frame "\x01\x80\x01")));
-      cases "an accuracy log above the limit is malformed"
+      cases "an accuracy log above the limit is Malformed"
         ~id:(fun (n, _) -> n)
         [
           ("literals lengths, 10 above 9", "\x01\x80\x05");
@@ -510,25 +490,64 @@ let sequences =
           ("match lengths, 10 above 9", "\x01\x08\x05");
         ]
         (fun (_, s) -> equal string "malformed at 16" (decode (frame s)));
-      test "a distribution short of its total is malformed past its alphabet"
-        (fun () ->
-          (* 36 literals length codes of 1 point each, 36 of 64: a 37th
-             probability begins in the description's last byte. *)
-          let d = ncount ~log:6 (List.init 36 (fun _ -> 1)) in
+      (* 36 literals length codes of 1 point each, 36 of 64: a 37th probability
+         begins in the description's last byte. Offset codes 0 to 30 at 1 point
+         and 31 at 0: 31 of 32, and a 33rd probability begins in the
+         description's last byte. *)
+      cases "a distribution short of its total is Malformed past its alphabet"
+        ~id:fst
+        [
+          ( "literals lengths",
+            "\x01\x80" ^ ncount ~log:6 (List.init 36 (fun _ -> 1)) );
+          ( "offsets, to the last code",
+            "\x01\x20" ^ ncount ~log:5 (List.init 31 (fun _ -> 1) @ [ 0 ]) );
+        ]
+        (fun (_, s) ->
           equal string
-            (Printf.sprintf "malformed at %d" (16 + String.length d - 1))
-            (decode (frame ("\x01\x80" ^ d))));
-      test "a distribution short of its total at the last offset code is \
-            malformed past its alphabet" (fun () ->
-          (* Offset codes 0 to 30 at 1 point and 31 at 0: 31 of 32, and a
-             33rd probability begins in the description's last byte. *)
-          let d = ncount ~log:5 (List.init 31 (fun _ -> 1) @ [ 0 ]) in
-          equal string
-            (Printf.sprintf "malformed at %d" (16 + String.length d - 1))
-            (decode (frame ("\x01\x20" ^ d))));
+            (Printf.sprintf "malformed at %d" (14 + String.length s - 1))
+            (decode (frame s)));
     ]
 
-(* The stream against the whole-buffer decode *)
+(* Frame content *)
+
+let content =
+  let fcs n = magic ^ "\x40\x00" ^ le 2 (n - 256) in
+  let xs = String.make 300 'x' in
+  group "content"
+    [
+      (* Frame_Content_Size, at 6, is what does not match, however the blocks
+         show it: a raw block's header, the last block, or a compressed block's
+         output. *)
+      test "a content size larger than the content is Malformed at it"
+        (fun () ->
+          equal string "malformed at 6" (decode (fcs 301 ^ raw xs));
+          equal string "malformed at 6"
+            (decode
+               (fcs 301
+               ^ raw ~last:false (String.sub xs 0 200)
+               ^ raw (String.sub xs 0 100))));
+      test "a content size smaller than the content is Malformed at it"
+        (fun () ->
+          equal string "malformed at 6" (decode (fcs 299 ^ raw xs));
+          equal string "malformed at 6"
+            (decode
+               (fcs 299
+               ^ raw ~last:false (String.sub xs 0 200)
+               ^ raw (String.sub xs 0 100)));
+          equal string "malformed at 6"
+            (decode (fcs 257 ^ compressed (raw_literals "abcd" ^ "\x00")));
+          equal string "consumed 311, produced 300" (decode (fcs 300 ^ raw xs)));
+      test "a wrong checksum is Malformed at the checksum" (fun () ->
+          let s = data "text_100.zst3" in
+          let n = String.length s in
+          let b = Bytes.of_string s in
+          Bytes.set b (n - 1) (Char.chr (Char.code s.[n - 1] lxor 1));
+          equal string
+            (Printf.sprintf "malformed at %d" (n - 4))
+            (decode (Bytes.to_string b)));
+    ]
+
+(* Decoders *)
 
 (* The output of complete frames, an input that ends inside a frame, or an
    error. *)
@@ -559,19 +578,6 @@ let stepped d data seed =
   | Ok (s, _) -> Output s
   | Error { Lz.why = Truncated; _ } -> Cut
   | Error e -> Failed e
-
-(* The whole-buffer decode, with room for what a mutation adds, and the
-   input the stream is given: what the decode read. *)
-let whole data room =
-  let dst = Lz_support.create room in
-  match Lz.Zstd.decode (Lz_support.of_string data) dst with
-  | Ok { Lz.consumed; produced } ->
-      Some
-        ( String.sub data 0 consumed,
-          Output (Lz_support.to_string ~length:produced dst) )
-  | Error { Lz.why = Truncated; _ } -> Some (data, Cut)
-  | Error { Lz.why = Too_long; _ } -> None
-  | Error e -> Some (data, Failed e)
 
 (* A golden, unchanged, with a byte replaced, or cut. *)
 type change = Same | Replace of int * char | Cut_at of int
@@ -607,32 +613,6 @@ let changed k change =
 
 let golden_index = Gen.int_range 0 (List.length (Lz_support.goldens_of "zstd") - 1)
 
-let steps =
-  let pp ppf (k, change, seed) =
-    Format.fprintf ppf "%a, seed %d" pp_change (k, change) seed
-  in
-  prop "whole equals steps"
-    Gen.(with_pp pp (triple golden_index change nat))
-    (fun (k, change, seed) ->
-      let g = (Lazy.force goldens).(k) in
-      let data = changed k change in
-      match whole data (String.length (Lazy.force g.raw) + mib) with
-      | None -> reject ()
-      | Some (input, expected) ->
-          let got = stepped (Lz.Zstd.decoder ()) input seed in
-          (* A window above the stream's limit is the whole-buffer
-             decode's to take. *)
-          (match got with
-          | Failed { Lz.why = Unsupported _; _ } when got <> expected -> reject ()
-          | _ -> ());
-          cover "frames that decode" (match expected with Output _ -> true | _ -> false);
-          cover "an input cut short" (expected = Cut);
-          cover "a malformed input"
-            (match expected with
-            | Failed { Lz.why = Malformed _; _ } -> true
-            | _ -> false);
-          equal outcome expected got)
-
 (* A frame with a 1 KiB window whose 20,000 blocks are each a few raw
    literals and one match up to the window back, built with the
    specification's codes beside the output it states: about 500 KB, so
@@ -641,33 +621,35 @@ let steps =
 let far_blocks = 20_000
 
 let far_matches =
-  let rng = Random.State.make [| 7 |] in
-  let out = Buffer.create (1 lsl 19) and frame = Buffer.create (1 lsl 19) in
-  Buffer.add_string frame (windowed 0);
-  for b = 1 to far_blocks do
-    let lits =
-      String.init (1 + Random.State.int rng 15) (fun _ ->
-          Char.chr (97 + Random.State.int rng 26))
-    in
-    Buffer.add_string out lits;
-    let have = Buffer.length out in
-    let off = 1 + Random.State.int rng (min have 1024) in
-    let ml = 3 + Random.State.int rng 32 in
-    for _ = 1 to ml do
-      Buffer.add_char out (Buffer.nth out (Buffer.length out - off))
-    done;
-    (* Offset_Value off + 3 is code c and c extra bits; the end mark
-       follows them. *)
-    let v = off + 3 in
-    let rec high x k = if x <= 1 then k else high (x lsr 1) (k + 1) in
-    let c = high v 0 in
-    let bits = le ((c / 8) + 1) ((v - (1 lsl c)) lor (1 lsl c)) in
-    Buffer.add_string frame
-      (compressed ~last:(b = far_blocks)
-         (raw_literals lits
-         ^ one_sequence ~ll:(String.length lits) ~of_:c ~ml:(ml - 3) bits))
-  done;
-  (Buffer.contents frame, Buffer.contents out)
+  lazy
+    (let rng = Random.State.make [| 7 |] in
+     let out = Buffer.create (1 lsl 19) and frame = Buffer.create (1 lsl 19) in
+     Buffer.add_string frame (windowed 0);
+     for b = 1 to far_blocks do
+       let lits =
+         String.init
+           (1 + Random.State.int rng 15)
+           (fun _ -> Char.chr (97 + Random.State.int rng 26))
+       in
+       Buffer.add_string out lits;
+       let have = Buffer.length out in
+       let off = 1 + Random.State.int rng (min have 1024) in
+       let ml = 3 + Random.State.int rng 32 in
+       for _ = 1 to ml do
+         Buffer.add_char out (Buffer.nth out (Buffer.length out - off))
+       done;
+       (* Offset_Value off + 3 is code c and c extra bits; the end mark follows
+          them. *)
+       let v = off + 3 in
+       let rec high x k = if x <= 1 then k else high (x lsr 1) (k + 1) in
+       let c = high v 0 in
+       let bits = le ((c / 8) + 1) ((v - (1 lsl c)) lor (1 lsl c)) in
+       Buffer.add_string frame
+         (compressed ~last:(b = far_blocks)
+            (raw_literals lits
+            ^ one_sequence ~ll:(String.length lits) ~of_:c ~ml:(ml - 3) bits))
+     done;
+     (Buffer.contents frame, Buffer.contents out))
 
 (* A frame with a 1 MiB window of 1 MiB of text in compressed blocks of
    100 raw literals and no sequence (a 2-byte literals header, Size_Format
@@ -742,7 +724,7 @@ let growing =
        in
        go 0 []
      in
-     let frame_c, out_c = far_matches in
+     let frame_c, out_c = Lazy.force far_matches in
      ( (magic ^ "\x60" ^ le 2 (4096 - 256) ^ raw a) ^ (windowed 10 ^ raws b) ^ frame_c,
        a ^ b ^ out_c ))
 
@@ -752,9 +734,17 @@ let grow_then_shrink =
     (fun slice ->
       let data, expected = Lazy.force growing in
       let dst = Lz_support.create (String.length expected) in
-      is_ok (Lz.Zstd.decode (Lz_support.of_string data) dst);
+      equal decode_result ~msg:"decode"
+        (Ok
+           {
+             Lz.consumed = String.length data;
+             produced = String.length expected;
+           })
+        (Lz.Zstd.decode (Lz_support.of_string data) dst);
       equal string ~msg:"decode" expected (Lz_support.to_string dst);
-      equal (result string Lz_support.error) ~msg:"steps" (Ok expected)
+      equal
+        (result string Lz_support.error)
+        ~msg:"steps" (Ok expected)
         (Result.map fst
            (Lz_support.stepped (Lz.Zstd.decoder ()) data ~cut:(fun _ -> slice)));
       (* In one slice, the first step's run holds the first frame and the
@@ -762,21 +752,28 @@ let grow_then_shrink =
       if slice = max_int then begin
         let first = ref 0 in
         is_ok
-          (Lz.Decoder.step (Lz.Zstd.decoder ()) ~last:true (Lz_support.of_string data)
-             (fun r -> first := Bigarray.Array1.dim r));
-        less int ~msg:"the first frame's 4096 bytes, under the first run" ~than:!first 4096
+          (Lz.Decoder.step (Lz.Zstd.decoder ()) ~last:true
+             (Lz_support.of_string data) (fun r ->
+               first := Bigarray.Array1.dim r));
+        less int ~msg:"the first frame's 4096 bytes, under the first run"
+          ~than:!first 4096
       end)
 
 let stream =
-  group "stream"
+  group "decoder"
     [
-      steps;
       small_blocks;
       grow_then_shrink;
-      test "matches across the stream's window wraps decode" (fun () ->
-          let frame, expected = far_matches in
+      test "matches across the decoder's window wraps decode" (fun () ->
+          let frame, expected = Lazy.force far_matches in
           let dst = Lz_support.create (String.length expected) in
-          is_ok (Lz.Zstd.decode (Lz_support.of_string frame) dst);
+          equal decode_result
+            (Ok
+               {
+                 Lz.consumed = String.length frame;
+                 produced = String.length expected;
+               })
+            (Lz.Zstd.decode (Lz_support.of_string frame) dst);
           equal string expected (Lz_support.to_string dst);
           List.iter
             (fun seed ->
@@ -786,7 +783,10 @@ let stream =
       test "a decoder is dead after an error" (fun () ->
           let d = Lz.Zstd.decoder () in
           let src = Lz_support.of_string "\x00" in
-          is_error (Lz.Decoder.step d ~last:false src ignore);
+          equal (option int) ~msg:"Malformed at" (Some 0)
+            (match Lz.Decoder.step d ~last:false src ignore with
+            | Error { Lz.at; why = Malformed _ } -> Some at
+            | _ -> None);
           raises_match (Exn.invalid_arg ~sub:"dead") (fun () ->
               Lz.Decoder.step d ~last:false src ignore));
     ]
@@ -800,7 +800,8 @@ let paths =
   let run decode data room =
     let dst = Lz_support.create room in
     match decode (Lz_support.of_string data) dst with
-    | Ok { Lz.produced; _ } as r -> (r, Lz_support.to_string ~length:produced dst)
+    | Ok { Lz.produced; _ } as r ->
+        (r, Lz_support.to_string ~length:produced dst)
     | Error _ as r -> (r, "")
   in
   let outcome = pair (result Lz_support.progress Lz_support.error) string in
@@ -833,11 +834,16 @@ let paths =
                 (run p.Lz_support.decode data room))
             Lz_support.zstd_paths);
       test "every path decodes matches across the window" (fun () ->
-          let frame, expected = far_matches in
+          let frame, expected = Lazy.force far_matches in
           List.iter
             (fun (p : Lz_support.zstd_path) ->
               let dst = Lz_support.create (String.length expected) in
-              is_ok ~msg:p.Lz_support.label
+              equal decode_result ~msg:p.Lz_support.label
+                (Ok
+                   {
+                     Lz.consumed = String.length frame;
+                     produced = String.length expected;
+                   })
                 (p.Lz_support.decode (Lz_support.of_string frame) dst);
               equal string ~msg:p.label expected (Lz_support.to_string dst))
             Lz_support.zstd_paths);
@@ -864,33 +870,15 @@ let () =
   exit
     (run "Zstd"
        [
-         Lz_support.agreement "zstd";
+         messages;
+         group "decode" [ Lz_support.agreement "zstd"; allocation ];
          frames;
          header;
-         destinations;
-         window;
          literals;
          sequences;
+         content;
+         destinations;
+         window;
          stream;
          paths;
-         allocation;
-         group "arguments"
-           [
-             cases "a level outside 1 to 12 raises" ~id:string_of_int
-               [ 0; 13; -1 ] (fun level ->
-                 let src = Lz_support.of_string "abc" in
-                 let dst = Lz_support.create 64 in
-                 raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
-                     Lz.Zstd.encode ~level src dst);
-                 raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
-                     Lz.Zstd.encoder ~level ()));
-             cases "a window below 1 KiB raises" ~id:string_of_int
-               [ -1; 0; 1023 ] (fun window ->
-                 raises_match (Exn.invalid_arg ~sub:"window") (fun () ->
-                     Lz.Zstd.decoder ~window ()));
-             test "a negative size has no bound" (fun () ->
-                 raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
-                     Lz.Zstd.bound (-1)));
-             Lz_support.largest_bound Lz.Zstd.bound;
-           ];
        ])
