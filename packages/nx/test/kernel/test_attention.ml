@@ -1221,8 +1221,9 @@ let helds =
   let+ hseed = int_range 0 0x3fffffff in
   { hg; htq; htk; hdk; hdv; hn; hseed }
 
-(* The causal mask of [h]'s rows over its keys through [n] int64 values
-   held at once: [key + i <= row + tk - tq + i] for every [i < n]. *)
+(* The causal mask of [h]'s rows over its keys through [n] int64 values held at
+   once: [key + i <= row + tk - tq + i] for every [i < n]. Every visible pair is
+   kept. *)
 let held_causal h n =
   let nodes = ref [] and k = ref 0 in
   let add x =
@@ -1244,12 +1245,13 @@ let held_causal h n =
     | [] -> invalid_arg "held_causal: no value"
     | x :: xs -> List.fold_left (fun a x -> add (P.Op2 (Binary And, a, x))) x xs
   in
+  let keep = add (P.Const (D.Any D.Bool, P.bits D.Bool true)) in
   P.v ~ins:(Iarray.of_list [ f32 ]) (Iarray.of_list (List.rev !nodes))
-    ~outs:(Iarray.of_list [ o0; score ])
+    ~outs:(Iarray.of_list [ o0; score; keep ])
 
-(* Fresh o and lse for [h]'s calls on [b], and [h]'s call on [b] by its
-   mask through [n] values held into them, on finite q, k and v drawn
-   from [h.hseed]: o and lse. *)
+(* Fresh o and lse for [h]'s calls on [b], and [h]'s call on [b] by its mask
+   through [n] values held into them, on finite q, k and v drawn from [h.hseed]:
+   o and lse. The call must answer [Done]. *)
 let held_call (b : Support.backend) h =
   let (module K : Nx_kernel.S) = b.kernels in
   let st = Random.State.make [| h.hseed |] in
@@ -1267,9 +1269,9 @@ let held_call (b : Support.backend) h =
   in
   let call (o, lse) n =
     let p = held_causal h n in
-    match K.attention p ~scale:0.375 ~o ~lse q (Nx_kernel.Dense { k; v }) [||] with
-    | A.Done -> [| A.Any o; A.Any lse |]
-    | _ -> [||]
+    equal ~msg:(b.name ^ ": answer") Kernels_cases.answer A.Done
+      (K.attention p ~scale:0.375 ~o ~lse q (Nx_kernel.Dense { k; v }) [||]);
+    [| A.Any o; A.Any lse |]
   in
   (outputs, call)
 
