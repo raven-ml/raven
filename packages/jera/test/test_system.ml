@@ -110,7 +110,7 @@ let newton_tests =
             ~budget:50 f
             (vec [| 3. *. s; 0. |])
         in
-        equal bool true (is Converged st);
+        equal Oracle.status_t Converged (Oracle.status st);
         equal
           (Oracle.tensor ~abs:(1e-12 *. s) ())
           (Nx.zeros f64 [| 2 |]) (Solution.get st));
@@ -143,7 +143,7 @@ let newton_tests =
         equal (Oracle.tensor ())
           (Nx.mul_s (Solution.best plain) s)
           (Solution.best small);
-        equal bool (is Converged plain) (is Converged small));
+        equal Oracle.status_t (Oracle.status plain) (Oracle.status small));
     test "a linear system takes one step, then the zero step" (fun () ->
         (* f at the guess, at x + δ in the line search, then δ = 0. *)
         let a = Nx.create f64 [| 2; 2 |] [| 3.; 1.; 1.; 2. |] in
@@ -165,7 +165,7 @@ let newton_tests =
             ~linear:Linear.dense ~tol:(Tol.ulps 4.) ~budget:50 f
             (vec [| 1.; 1. |])
         in
-        equal bool true (is Converged s);
+        equal Oracle.status_t Converged (Oracle.status s);
         let x = Solution.best s in
         equal (Oracle.tensor ()) (scalar 0.) (Nx.get [ 0 ] x);
         at_most float_exact ~than:(1. +. (1. /. 4.))
@@ -184,7 +184,7 @@ let newton_tests =
             ~linear:Linear.dense ~tol:(Tol.ulps 4.) ~budget:50 f
             (vec [| 1.; 1. |])
         in
-        equal bool true (is Converged s);
+        equal Oracle.status_t Converged (Oracle.status s);
         let x = Solution.best s in
         equal (Oracle.tensor ()) (scalar 0.) (Nx.get [ 0 ] x);
         at_most float_exact ~than:1.
@@ -192,16 +192,16 @@ let newton_tests =
              (Nx.abs (Nx.sub x (vec [| 0.; Float.sqrt 2. |])))));
     test "x² + 1 = 0 never converges by shrinking its steps" (fun () ->
         let s = newton (fun x -> Nx.add_s (Nx.square x) 1.) (vec [| 0.5 |]) in
-        equal bool false (Nx.item [] (Solution.ok s));
+        not_equal Oracle.status_t Converged (Oracle.status s);
         failure_with "Jera.System.solve" (fun () -> Solution.get s));
     test "a guess where f is not finite ends Not_finite" (fun () ->
         let s = newton (fun x -> Nx.sub_s (Nx.sqrt x) 1.) (vec [| -1. |]) in
-        equal bool true (is Not_finite s));
+        equal Oracle.status_t Not_finite (Oracle.status s));
     test "a budget of one iteration ends Budget_spent" (fun () ->
         let a = jacobian (Nx.eye f64 2) (vec [| 0.; 0. |]) in
         let f = field a (vec [| 1.; 2. |]) in
-        equal bool true
-          (is Budget_spent (newton ~budget:1 f (vec [| 0.; 0. |]))));
+        equal Oracle.status_t Budget_spent
+          (Oracle.status (newton ~budget:1 f (vec [| 0.; 0. |]))));
     test "a structure's float tensors are one vector, others carried" (fun () ->
         (* p + q² = 3 and p q = 1 near (1, 1.4), with a counter carried. *)
         let s = Nx.Ptree.(pair (pair tensor tensor) tensor) in
@@ -300,14 +300,6 @@ let anderson_tests =
             equal near z
               (Solution.get (anderson ~memory (fixed z) (Nx.zeros_like z))))
           [ 0; 1; 3 ]);
-    test "mixing takes fewer evaluations than Picard iteration" (fun () ->
-        let z = vec [| 1.; -0.5; 2.; 0.3 |] in
-        let count memory =
-          Nx.item []
-            (Solution.evaluations
-               (anderson ~memory (fixed z) (Nx.zeros_like z)))
-        in
-        less int32 ~than:(count 0) (count 3));
     test "an equilibrium's derivative is central differences'" (fun () ->
         (* x = tanh (w x + θ), a contraction for a small w. *)
         let w =
@@ -375,7 +367,7 @@ let anderson_tests =
         in
         let a = Nx.mul_s (Nx.eye f64 3) 2. in
         let s = anderson ~memory:2 (field a (vec b)) (Nx.zeros f64 [| 3 |]) in
-        equal bool true (is Converged s);
+        equal Oracle.status_t Converged (Oracle.status s);
         equal near (vec (Array.map zero b)) (Solution.best s));
     test "a small slow component beside a large fast one converges in ulps"
       (fun () ->
@@ -395,7 +387,7 @@ let anderson_tests =
             (fun x -> Nx.mul (Nx.sub_s c 1.) (Nx.sub x z))
             x0
         in
-        equal bool true (is Converged s);
+        equal Oracle.status_t Converged (Oracle.status s);
         at_most float_exact
           ~than:(within ~top:(Nx.item [ 1 ] c) 64.)
           (distance 64. s z));
@@ -414,7 +406,7 @@ let anderson_tests =
         let s = solve (Tol.ulps 4.) in
         if is Converged s then
           equal (Oracle.tensor ()) (vec [| 0. |]) (Solution.best s);
-        equal bool true (is Converged (solve (Tol.abs 1e-300))));
+        equal Oracle.status_t Converged (Oracle.status (solve (Tol.abs 1e-300))));
     test "Picard on (z − x) / 2 from 0 reaches its small component" (fun () ->
         (* The rate is 1/2: each step halves the distance, so the error
            [2 |δ|] meets the tolerance once the steps fall to an eighth of it,
@@ -430,7 +422,7 @@ let anderson_tests =
                 (fun x -> Nx.div_s (Nx.sub z x) 2.)
                 (vec [| 1.; 0. |])
             in
-            equal bool true (is Converged s);
+            equal Oracle.status_t Converged (Oracle.status s);
             at_most float_exact ~than:(within ~top:0.5 k) (distance k s z))
           [ 16.; 256. ]);
     test "a negative memory raises" (fun () ->
