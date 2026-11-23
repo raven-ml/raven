@@ -283,8 +283,9 @@
    (= %{architecture} arm64)))
  (deps search.exe))
 
-; declines.t pins why programs over several devices evaluate. It compiles,
-; so it runs where rig links host code: on x86_64 and arm64.
+; declines.t reads which programs over several devices compile, and what
+; RUNE_JIT_DEBUG prints of their declines and moves. It compiles, so it runs
+; where rig links host code: on x86_64 and arm64.
 
 (executable
  (name declines)
