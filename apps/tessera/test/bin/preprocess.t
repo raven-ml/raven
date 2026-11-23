@@ -24,7 +24,7 @@ The same request again reads the recorded items, and asks nothing.
   $ pre --days 2025-07-01,2025-07-03
   0 Sentinel-2 items (0 distinct), 0 Sentinel-1 items
   d: 0 Sentinel-2 frames, 0 ascending, 0 descending
-  $ wc -l < fake/log
+  $ grep -c '' fake/log
   2
 
 Another span is refused, naming both requests, and so is another region of
