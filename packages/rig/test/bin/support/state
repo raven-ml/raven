@@ -4,19 +4,33 @@
 #  SPDX-License-Identifier: ISC
 #---------------------------------------------------------------------------
 
-# [state PID STATE] returns once ps shows process PID in STATE, such as T,
+# [state PID STATE] returns once process PID is in STATE, such as T,
 # stopped, or Z, exited and not reaped. A signal is pending when kill
 # returns, and takes effect only once the process runs: a test that stops
 # a process waits here before what the stop must precede. After 60 s it
-# fails, printing the process: a hang guard, never a bound on the code's
-# time.
+# fails, printing the process's state: a hang guard, never a bound on the
+# code's time.
+#
+# Linux gives the state in /proc/PID/stat, whose third field follows the
+# command name in parentheses, which may itself hold spaces and
+# parentheses: a container may have no ps. Elsewhere ps gives it, which
+# macOS and the BSDs always have.
+
+now() {
+  if [ -r /proc/self/stat ]; then
+    s=$(cat "/proc/$1/stat" 2>/dev/null) || return
+    s=${s##*) }
+    echo "${s%% *}"
+  else
+    ps -o stat= -p "$1"
+  fi
+}
 
 i=0
-until ps -o stat= -p "$1" | grep -q "^[[:space:]]*$2"; do
+until now "$1" | grep -q "^[[:space:]]*$2"; do
   i=$((i + 1))
   if [ $i -gt 600 ]; then
-    echo "state: process $1 not in state $2 after 60 s:" >&2
-    ps -o pid,ppid,stat,command -p "$1" >&2
+    echo "state: process $1 not in state $2 after 60 s: '$(now "$1")'" >&2
     exit 1
   fi
   sleep 0.1
