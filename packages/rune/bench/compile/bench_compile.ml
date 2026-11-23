@@ -398,6 +398,15 @@ let gammainccinv_f16 () =
 let lgamma_constant () =
   compile (fun x -> Nx.sub x (Nx.lgamma (Nx.scalar_like x 3.5))) (input 0. 1.)
 
+(* 1024 float64 values offset by the beta quantile of fixed parameters: a Newton
+   solve whose steps each evaluate an incomplete beta's series, all of
+   constants. *)
+let betaincinv_constant () =
+  let c = Nx.scalar_like in
+  compile
+    (fun x -> Nx.sub x (Nx.betaincinv (c x 2.) (c x 3.) (c x 0.25)))
+    (input 0. 1.)
+
 (* 1024 float32 binomial counts of 100 trials from a key argument: inversion
    below a mean of 10 and transformed rejection above, both in one program. *)
 let binomial () =
@@ -663,6 +672,7 @@ let cases =
     ("special/gammaincinv-grad-f64", gammaincinv_grad);
     ("special/gammainccinv-f16", gammainccinv_f16);
     ("special/lgamma-constant", lgamma_constant);
+    ("special/betaincinv-constant", betaincinv_constant);
     ("wide/sum-1e6", wide_sum);
     (* A pendulum of 200 fixed steps written as an OCaml loop: one elementwise
        kernel of 3.6 MB of C, which the host writes as several functions, since

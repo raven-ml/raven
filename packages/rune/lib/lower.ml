@@ -264,6 +264,7 @@ let draws (prog : Nx_kernel.Prog.t) =
 let op ?dst ~renderer ~device ~host ~local
     (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
     (o : r P.t) =
+  Folded.memoised @@ fun () ->
   match o with
   | Map { layout; prog; loads; outs = _; at = _ } -> body node layout prog loads
   | Reduce { layout; axes; prog; reductions = rs; loads; at = _ } ->

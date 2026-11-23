@@ -1995,6 +1995,7 @@ let located st q u =
 let node_at st env x = located st (Nx.placement x) (node st env x)
 
 let rec program st cs env =
+  Folded.memoised @@ fun () ->
   Array.iter
     (function
       | Op { op; base; _ } -> issue st cs env base op

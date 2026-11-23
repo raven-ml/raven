@@ -147,6 +147,57 @@ let rec rewritten s =
         | Some v when v != u -> rewritten v
         | _ -> Some u
 
+(* Memo
+
+   What this domain's lowering has folded: each graph of scalars to its
+   rewriting, and each value to its last moved node. A lowering folds the same
+   few over and over: a lgamma's series terms and a Newton step's over the same
+   literals, the same truth's byte in every comparison. A graph is hash-consed,
+   so its node is the key: its operations, types and literals' bits. *)
+
+type memo = {
+  rewritings : Ops.t option Ops.Tbl.t;
+  moved : (Ops.sint list * Ops.t) Ops.Tbl.t;
+}
+
+let memo : memo option Domain.DLS.key = Domain.DLS.new_key (fun () -> None)
+
+let memoised f =
+  match Domain.DLS.get memo with
+  | Some _ -> f ()
+  | None ->
+      let m =
+        { rewritings = Ops.Tbl.create 4096; moved = Ops.Tbl.create 1024 }
+      in
+      Domain.DLS.set memo (Some m);
+      Fun.protect ~finally:(fun () -> Domain.DLS.set memo None) f
+
+let rewriting s =
+  match Domain.DLS.get memo with
+  | None -> rewritten s
+  | Some m -> (
+      match Ops.Tbl.find_opt m.rewritings s with
+      | Some r -> r
+      | None ->
+          let r = rewritten s in
+          Ops.Tbl.add m.rewritings s r;
+          r)
+
+(* The scalar [v] at [dims]. *)
+let moved v dims =
+  let at () =
+    Shape.expand (Shape.reshape v (List.map (fun _ -> Ops.Int 1) dims)) dims
+  in
+  match Domain.DLS.get memo with
+  | None -> at ()
+  | Some m -> (
+      match Ops.Tbl.find_opt m.moved v with
+      | Some (d, u) when Ops.equal_shape d dims -> u
+      | _ ->
+          let u = at () in
+          Ops.Tbl.replace m.moved v (dims, u);
+          u)
+
 (* The shape of operands of one shape. *)
 let common = function
   | [] -> None
@@ -165,14 +216,11 @@ let fold build args =
   let folded =
     if List.compare_lengths ls args <> 0 then None
     else
-      match (common args, rewritten (build ls)) with
+      match (common args, rewriting (build ls)) with
       | Some dims, Some v when scalar v -> Some (dims, v)
       | _ -> None
   in
-  match folded with
-  | None -> build args
-  | Some (dims, v) ->
-      Shape.expand (Shape.reshape v (List.map (fun _ -> Ops.Int 1) dims)) dims
+  match folded with None -> build args | Some (dims, v) -> moved v dims
 
 let unary f x = fold (function [ x ] -> f x | _ -> assert false) [ x ]
 

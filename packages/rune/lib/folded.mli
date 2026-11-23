@@ -41,3 +41,10 @@ include Tolk.Ops.Elementwise with type t = Tolk.Ops.t
 
 val bitcast : t -> Tolk.Dtype.t -> t
 (** [bitcast x dt] is {!Tolk.Ops.bitcast}[ x dt], folded as above. *)
+
+val memoised : (unit -> 'a) -> 'a
+(** [memoised f] is [f ()], whose folds in this domain each rewrite a graph of
+    scalars once: a later fold of the same graph, the same operations over
+    literals of the same bits, takes its first value, and its node where the
+    shape is the same. A [memoised] within another shares its memo. Outside one,
+    each fold rewrites its graph. *)
