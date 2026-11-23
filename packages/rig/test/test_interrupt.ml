@@ -893,8 +893,9 @@ let test_release_signaled ?budget ~cache release () =
 
 (* Re-entry: a call that may take a lock, made from a [Gc.Memprof] callback
    inside a lock of its thread's, raises [Invalid_argument] naming it, having
-   done nothing; outside every lock it runs as any call does. A call that
-   takes no lock runs either way ({!Rig.section-domains}). *)
+   done nothing; outside every lock it runs as any call does, but a close
+   inside a driver's call, which raises too ({!Rig.close}). A call that takes
+   no lock runs either way ({!Rig.section-domains}). *)
 
 (* A lock a library counts through the edge refuses rig's calls on its
    thread until it is given back, and changes nothing meanwhile. *)
@@ -1038,25 +1039,28 @@ let probes () =
 
 (* Makes every probe's call from a [Gc.Memprof] callback at the [n]-th
    allocation of [f]: each call that may take a lock raises exactly when the
-   callback runs inside a lock, and then changes nothing; every other call
-   runs. rig stays consistent: [f] runs again once no callback lands. Is
-   whether the allocation was reached, and whether the callback ran inside a
-   lock. *)
+   callback runs inside a lock, and then changes nothing, and a close raises
+   also inside a driver's call; every other call runs. rig stays consistent:
+   [f] runs again once no callback lands. Is whether the allocation was
+   reached, and whether the callback ran inside a lock. *)
 let reenter f n =
   let at = Printf.sprintf ", re-entered at allocation %d" n in
   in_child at (fun () ->
       let probes, state = probes () in
-      let held = ref false and answers = ref [] and changed = ref None in
+      let held = ref false and inside = ref false in
+      let answers = ref [] and changed = ref None in
       let call () =
         held := Rig_edge_primitive.holds () > 0;
+        inside := S.counted () > 0;
         let before = state () in
         answers := List.map (fun p -> (p.what, answer p)) probes;
         if !held && state () <> before then changed := Some ()
       in
       let reached = S.interrupted ~landing:(Call call) n f in
       if reached then begin
+        let refused p = !held || (p.fn = "close" && !inside) in
         let expected p =
-          (p.what, if p.locks && !held then "refused" else "done")
+          (p.what, if p.locks && refused p then "refused" else "done")
         in
         equal ~msg:"the calls' answers"
           (list (pair string string))

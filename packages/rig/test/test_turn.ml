@@ -479,10 +479,10 @@ let test_signal_in_wait () =
 
 (* A close from a signal's handler that lands inside a wait on the closed
    device, on the waiting thread, as a test runner's release of its fixtures
-   on SIGTERM does, ends: it returns or refuses, and the wait then returns.
-   Either way a close after the wait ends the device, stopped once. A close
-   that waited for the wait it interrupted would never end, so the test's
-   limit is short. *)
+   on SIGTERM does, raises Invalid_argument and leaves the device as it was:
+   it would wait for the wait it interrupted. The wait then returns, and a
+   close after it ends the device, stopped once. A close that waited would
+   never end, so the test's limit is short. *)
 let test_close_in_wait () =
   let d, p = P.open_ "turn:close-in-wait" in
   let first = point (no_part d) in
@@ -501,8 +501,10 @@ let test_close_in_wait () =
   Fun.protect
     ~finally:(fun () -> Sys.set_signal Sys.sigint before)
     (fun () -> Rig.Point.wait first);
-  mem ~msg:"the close in the handler" (option string) !closed
-    [ Some "returned"; Some "refused" ];
+  equal ~msg:"the close in the handler" (option string) (Some "refused")
+    !closed;
+  equal ~msg:"the loss before the last close" (option string) None
+    (Rig.lost d);
   Rig.close d;
   equal ~msg:"the loss" (option string) (Some "closed") (Rig.lost d);
   equal ~msg:"stops" int 1 (count "stop" p)
@@ -708,7 +710,7 @@ let tests =
           test_break_after_escape;
         test "a signal whose handler returns ends no wait" test_signal_in_wait;
         test ~timeout:10.
-          "a close from a handler inside a wait on its device ends"
+          "a close from a handler inside a wait on its device raises"
           test_close_in_wait;
         test "Sys.Break while waiting for room assigns no value"
           test_break_waiting_for_room;

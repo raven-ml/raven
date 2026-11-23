@@ -1210,6 +1210,35 @@ let test_mapped_close () =
   Rig.close d;
   is_some ~msg:"the loss of a close after the write" (Rig.lost d)
 
+(* A close from a callback that lands in the flush after the function of a
+   write of Mapped memory, as a finaliser may, raises Invalid_argument
+   whatever the device and changes nothing: a close of the written memory's
+   device would wait for the flush. A close after the write ends each. *)
+let test_flush_close () =
+  let d, p = P.open_ ~host_visible:false "memory:flush-close" in
+  let other = Result.get_ok (Rig.software "memory:flush-close-other") in
+  let m = B.create ~memory:Mapped d 64 in
+  let close e =
+    match Rig.close e with
+    | () -> "returned"
+    | exception Invalid_argument why
+      when String.starts_with ~prefix:"Rig.close: " why ->
+        "refused"
+  in
+  let answers = ref [] in
+  P.before p "flush" (fun () -> answers := [ close other; close d ]);
+  B.write m Bigarray.char (fun a -> a.{0} <- 'w');
+  equal ~msg:"closes in the flush" (list string) [ "refused"; "refused" ]
+    !answers;
+  let losses () = [ Rig.lost other; Rig.lost d ] in
+  equal ~msg:"the losses after the write" (list (option string))
+    [ None; None ] (losses ());
+  Rig.close other;
+  Rig.close d;
+  equal ~msg:"the losses of closes after the write" (list (option string))
+    [ Some "closed"; Some "closed" ]
+    (losses ())
+
 (* Mapped memory counts in its device's budget: a buffer of it adds its bytes
    to the device's allocated bytes, and one past the budget raises
    Out_of_memory, asking the driver nothing. *)
@@ -2115,6 +2144,8 @@ let tests =
            and read through its device"
           test_mapped_window;
         test "a close inside a write of mapped memory raises" test_mapped_close;
+        test ~timeout:10. "a close inside the flush of a write raises"
+          test_flush_close;
         test "mapped memory counts in its device's budget" test_mapped_budget;
         test "mapped memory the window cannot hold raises once reclaimed"
           test_mapped_room;

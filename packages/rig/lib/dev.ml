@@ -85,8 +85,7 @@ external c_fail : string -> bool = "caml_rig_fail"
 external c_failed : unit -> string option = "caml_rig_failed"
 external c_first : unit -> int = "caml_rig_first" [@@noalloc]
 external c_enter : c -> int = "caml_rig_enter"
-external c_storing : int -> unit = "caml_rig_storing" [@@noalloc]
-external c_stores : unit -> int = "caml_rig_stores" [@@noalloc]
+external c_counted : unit -> int = "caml_rig_counted" [@@noalloc]
 external c_exit : c -> unit = "caml_rig_exit"
 external c_spin : c -> int -> int -> int = "caml_rig_spin"
 external c_producers : c -> int array = "caml_rig_producers"
@@ -658,8 +657,8 @@ let counted d scope f x =
           raise_lost d)
   | _ -> raise_lost d
 
-(* [f] runs unmasked inside the count, as the caller's code, and the thread
-   counts it ([c_storing]) so that a close from it refuses; the flush runs
+(* [f] runs unmasked inside the count, as the caller's code, so a close from
+   it refuses as any close inside a count does ([close]); the flush runs
    masked as [counted]'s call does. Nothing polls between [f]'s end and the
    mask, so a signal pending as [f] returns or raises lands after the count
    ended. A flush that raises after [f] raised loses [d] as [counted] loses
@@ -668,14 +667,11 @@ let counted d scope f x =
    count, which the fork forgot, ends nothing. *)
 let stores d flush h f x =
   if c_enter d.live.c <> 0 then raise_lost d;
-  c_storing 1;
   match f x with
   | r when orphaned d ->
-      c_storing (-1);
       c_exit d.live.c;
       r
   | r -> (
-      c_storing (-1);
       Rig_edge_primitive.mask ();
       match flush h with
       | () ->
@@ -686,12 +682,10 @@ let stores d flush h f x =
           raised d Any e;
           raise_lost d)
   | exception e when orphaned d ->
-      c_storing (-1);
       let bt = Printexc.get_raw_backtrace () in
       c_exit d.live.c;
       Printexc.raise_with_backtrace e bt
   | exception e ->
-      c_storing (-1);
       Rig_edge_primitive.mask ();
       let bt = Printexc.get_raw_backtrace () in
       (match flush h with
@@ -1501,15 +1495,18 @@ let start_close (d : device) m =
 
 (* A machine's devices end before its host, so [host_of] of an open device is
    never closed: the machine stops taking opens, the opens in flight finish,
-   then its devices close. *)
-(* A close inside [stores]'s function would wait for the write's count to
-   end: it refuses instead. *)
+   then its devices close.
+
+   A close inside a counted call of its thread, such as from a signal's
+   handler in a wait or from [stores]'s function, would wait for that count
+   to end, which comes only after the close returns: it refuses instead,
+   whatever [d], since the thread's count does not say whose its calls are. *)
 let close d =
   check_held "close";
-  if c_stores () > 0 then
+  if c_counted () > 0 then
     invalid_arg
-      "Rig.close: called inside the function of a write of Mapped memory, \
-       which the stop of its device waits for";
+      "Rig.close: called inside a driver call or a write of Mapped memory, \
+       which the close would wait for; Rig.lose ends a device from there";
   if is_host d then invalid_arg "Rig.close: the host is never closed";
   match d.machine with
   | Here | On _ -> close_one d

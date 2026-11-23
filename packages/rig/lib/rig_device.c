@@ -379,12 +379,9 @@ static _Atomic int first;
 static _Atomic(char *) failed;
 
 /* The counted calls the calling thread is inside: entered, its turn
-   included, and not yet ended ([rig_counted] in rig.h). */
+   included, and not yet ended ([rig_counted] in rig.h). A close there would
+   wait for its own thread's count, so [Dev.close] refuses. */
 static _Thread_local int counted_here;
-
-/* The writes of Mapped memory whose function the calling thread runs
-   ([Dev.stores]): a close there would wait for its own write's count. */
-static _Thread_local int storing_here;
 
 /* The counted calls the calling thread was inside when it forked this
    process, which the child's fork forgot ([forked_child]). A thread ends
@@ -1222,16 +1219,6 @@ int rig_counted(void) { return counted_here; }
 value caml_rig_counted(value unit) {
   (void)unit;
   return Val_int(counted_here);
-}
-
-value caml_rig_storing(value v_delta) {
-  storing_here += Int_val(v_delta);
-  return Val_unit;
-}
-
-value caml_rig_stores(value unit) {
-  (void)unit;
-  return Val_int(storing_here);
 }
 
 /* Ends a counted call on [d]. */

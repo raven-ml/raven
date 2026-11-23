@@ -581,6 +581,32 @@ let test_mapped_write () =
   equal ~msg:"the parent's flushes" (list string) [ "flush" ]
     (List.filter (String.equal "flush") (P.log p))
 
+(* A child forked inside the function of a write of Mapped memory is inside
+   no call of rig's, its fork having forgotten the parent's: a close there,
+   before the function returns, ends a device of its own. *)
+let test_close_in_write () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
+  let d, _ = P.open_ ~host_visible:false "fork:close-in-write" in
+  let m = B.create ~memory:Mapped d 64 in
+  let pipe = Unix.pipe () in
+  let closed = ref "" in
+  let pid =
+    B.write m Bigarray.char (fun _ ->
+        match Unix.fork () with
+        | 0 ->
+            let own = Result.get_ok (Rig.software "fork:close-in-write-own") in
+            (closed :=
+               match Rig.close own with
+               | () -> Option.value ~default:"open" (Rig.lost own)
+               | exception Invalid_argument why -> why);
+            0
+        | pid -> pid)
+  in
+  let lines, ended = answer pipe pid (fun () -> [ !closed ]) in
+  equal string "exited 0" (status ended);
+  equal ~msg:"its own device's close" (list string) [ "closed" ] lines
+
 (* A child forked by a callback inside a driver's counted call, here an
    allocation's, ends that call with its counts at 0, so it closes a device
    of its own. *)
@@ -647,6 +673,8 @@ let tests =
           test_word_maps;
         test "a child forked inside a write of Mapped memory calls no driver"
           test_mapped_write;
+        test "a child forked inside a write of Mapped memory closes in it"
+          test_close_in_write;
         test "a child forked inside a driver's counted call ends no count"
           test_counted_call;
       ];

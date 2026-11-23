@@ -597,8 +597,9 @@ let test_map_raises () =
   no_violations ()
 
 (* An exception while a consumer maps a producer's word keeps its backtrace,
-   also when the producer's slot was freed meanwhile, so that the word goes
-   back, and its free faults. *)
+   also when another thread closed the producer meanwhile, freeing its slot,
+   so that the word goes back, and its free faults. The close runs on another
+   thread, since one inside the consumer's driver call would raise. *)
 let test_map_raises_trace () =
   Printexc.record_backtrace true;
   let consumer, c = P.open_ ~waits_on:[ `Host ] "reuse:trace-consumer" in
@@ -606,7 +607,7 @@ let test_map_raises_trace () =
   let q = submit (Sub.make d [||]) in
   P.before c "map_peer" (fun () ->
       ignore (P.run p);
-      Rig.close d;
+      spawn (fun () -> Rig.close d) ();
       Rig.free_cache d;
       P.fault p "freed after its stop";
       raise Exit);
