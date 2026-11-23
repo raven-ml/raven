@@ -839,6 +839,12 @@ let frame_refusals =
         (fun () ->
           equal string "too long at 7"
             (decode_seen frame ~cap:3 (header () ^ stored "hello" ^ end_mark)));
+      test "a stored block past the content size first is Malformed at it"
+        (fun () ->
+          (* The bytes pass a content size of 3 before 4 bytes of room. *)
+          let h = header ~flg:(version lor content_size) ~size:3 () in
+          equal string (malformed_at 6)
+            (decode_seen frame ~cap:4 (h ^ stored "hello" ^ end_mark)));
       test "a zip bomb is Too_long at the first block past the destination"
         (fun () ->
           (* Blocks of 4 MiB from 16 KiB each: 10 MiB of input state 2.5 GiB. *)
