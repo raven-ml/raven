@@ -130,30 +130,22 @@ let test_async () =
 (* Scans *)
 
 (* Rows of [s] at [dt], [n] of them, a scan over them emitting at two sites each
-   step. *)
+   step. A case draws the values of one of a few forms, each a dtype, a row's
+   shape, a number of rows and a view, so that the compiled modes compile each
+   form once: [runs] makes their probes and compiled functions at the form's
+   first case. *)
 type scan =
   | Scan : {
       dt : (float, 's) Nx.dtype;
       s : int array;
       n : int;
-      xs : operand;
+      view : view;
+      runs :
+        ((float, 's, Nx.host) Nx.t -> (string * (int * offer) list) list) Lazy.t;
     }
       -> scan
 
-(* A row of rank 0, 1 and 2 and a zero-size one: how many rows a step offers
-   does not depend on its row's extent, and a few shapes let the compiled
-   modes' programs repeat across cases. *)
-let rows = [ [||]; [| 0 |]; [| 3 |]; [| 2; 3 |] ]
-
-let scans =
-  let open Gen in
-  (let* s = of_list ~pp:pp_shape rows in
-   let* n = int_range 0 3 in
-   let* xs = operand (Array.append [| n |] s) in
-   let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any f64 ] in
-   match D.kind dt with Float -> Scan { dt; s; n; xs } | _ -> assert false)
-  |> with_pp (fun ppf (Scan c) ->
-      Format.fprintf ppf "%a %d rows of %a" Nx.pp_dtype c.dt c.n pp_shape c.s)
+and offer = int array * int64 array
 
 (* A step emitting its carry at site 0 and its row's square at site 1. *)
 let step p c r =
@@ -171,6 +163,78 @@ let scanned p xs =
   in
   Nx.add (Nx.sum c) (Nx.sum ys)
 
+(* The modes that compile, each over a probe and a compiled function of its own,
+   made once. *)
+let compiled_runs () =
+  let mode name build =
+    let p = Probe.make (tagged ()) in
+    (name, p, build (scanned p))
+  in
+  let modes =
+    [
+      mode "jit" (fun f -> Rune.jit' f);
+      mode "jit of grad" (fun f -> Rune.jit' (Rune.grad' f));
+      mode "grad of jit" (fun f -> Rune.grad' (Rune.jit' f));
+    ]
+  in
+  fun xs ->
+    List.map
+      (fun (name, p, g) -> (name, offers p (fun () -> ignore (g xs))))
+      modes
+
+let form dt s n view = Scan { dt; s; n; view; runs = lazy (compiled_runs ()) }
+
+(* Rows of rank 0, 1 and 2 and zero-size ones, at both float dtypes: how many
+   rows a step offers does not depend on its row's extent. *)
+let scan_forms =
+  [|
+    form Nx.float32 [||] 0 Plain;
+    form f64 [||] 3 Flipped;
+    form Nx.float32 [| 0 |] 2 Strided;
+    form f64 [| 0 |] 0 Broadcast;
+    form Nx.float32 [| 3 |] 1 Plain;
+    form f64 [| 3 |] 3 Strided;
+    form Nx.float32 [| 2; 3 |] 2 Broadcast;
+    form f64 [| 2; 3 |] 1 Flipped;
+  |]
+
+let shape_of (Scan c) = Array.append [| c.n |] c.s
+
+(* The number of values a form's view stores. *)
+let size_of (Scan c as f) =
+  let s = shape_of f in
+  match c.view with
+  | Plain | Flipped -> numel s
+  | Strided -> numel s * 2
+  | Broadcast -> if Array.length s = 0 then 1 else numel s / Int.max 1 s.(0)
+
+let pp_form ppf (Scan c) =
+  Format.fprintf ppf "%a %d rows of %a, %a" Nx.pp_dtype c.dt c.n pp_shape c.s
+    pp_view c.view
+
+let scans =
+  let open Gen in
+  let value =
+    frequency
+      [
+        (3, map (fun i -> pool.(i)) (int_range 0 (Array.length pool - 1)));
+        (2, float_range (-4.) 4.);
+      ]
+  in
+  (let* i = int_range 0 (Array.length scan_forms - 1) in
+   let+ values = array ~size:(constant (size_of scan_forms.(i))) value in
+   (i, values))
+  |> with_pp (fun ppf (i, _) -> pp_form ppf scan_forms.(i))
+
+(* Each form, so that every run compiles them all. *)
+let scan_examples =
+  List.init (Array.length scan_forms) (fun i ->
+      let m = Array.length pool in
+      ( i,
+        Array.init
+          (size_of scan_forms.(i))
+          (fun k -> pool.(((k * 3) + i) mod m)) ))
+
 (* The emits of the scan's steps written out. *)
 let scan_offers xs =
   let n = (Nx.shape xs).(0) in
@@ -186,7 +250,7 @@ let scan_offers xs =
     done;
     [ offer 0 (List.rev !cs); offer 1 (List.rev !ys) ]
 
-(* Each way of running [f] that runs its primal once. *)
+(* Each way of running [f] that runs its primal once, and compiles nothing. *)
 type mode = {
   name : string;
   run :
@@ -199,7 +263,6 @@ type mode = {
 let modes =
   [
     { name = "eager"; run = (fun f x -> ignore (f x)) };
-    { name = "jit"; run = (fun f x -> ignore (Rune.jit' f x)) };
     { name = "jvp"; run = (fun f x -> ignore (Rune.jvp' f x x)) };
     { name = "grad"; run = (fun f x -> ignore (Rune.grad' f x)) };
     {
@@ -216,14 +279,6 @@ let modes =
           ignore (Rune.grad' (Rune.remat T.(tensor @-> returns tensor) f) x));
     };
     {
-      name = "jit of grad";
-      run = (fun f x -> ignore (Rune.jit' (Rune.grad' f) x));
-    };
-    {
-      name = "grad of jit";
-      run = (fun f x -> ignore (Rune.grad' (Rune.jit' f) x));
-    };
-    {
       name = "a map of one lane";
       run =
         (fun f x ->
@@ -232,7 +287,42 @@ let modes =
     };
   ]
 
-let law_scan (Scan c) =
+let law_scan_form (Scan c as f) values =
+  cover "no row" (c.n = 0);
+  cover "several rows" (c.n > 1);
+  cover "zero-size rows" (numel c.s = 0 && c.n > 0);
+  let xs = make c.dt (shape_of f) ({ view = c.view; values } : operand) in
+  let expected = scan_offers xs in
+  List.iter
+    (fun (name, got) -> equal ~msg:name offers_t expected got)
+    (Lazy.force c.runs xs)
+
+let law_scan (i, values) = law_scan_form scan_forms.(i) values
+
+(* Rows of [s] at [dt], [n] of them, drawn for the modes that compile nothing: a
+   row of rank 0, 1 or 2 or a zero-size one. *)
+type drawn_scan =
+  | Drawn_scan : {
+      dt : (float, 's) Nx.dtype;
+      s : int array;
+      n : int;
+      xs : operand;
+    }
+      -> drawn_scan
+
+let drawn_scans =
+  let open Gen in
+  (let* s = of_list ~pp:pp_shape [ [||]; [| 0 |]; [| 3 |]; [| 2; 3 |] ] in
+   let* n = int_range 0 3 in
+   let* xs = operand (Array.append [| n |] s) in
+   let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any f64 ] in
+   match D.kind dt with
+   | Float -> Drawn_scan { dt; s; n; xs }
+   | _ -> assert false)
+  |> with_pp (fun ppf (Drawn_scan c) ->
+      Format.fprintf ppf "%a %d rows of %a" Nx.pp_dtype c.dt c.n pp_shape c.s)
+
+let law_drawn_scan (Drawn_scan c) =
   cover "no row" (c.n = 0);
   cover "several rows" (c.n > 1);
   cover "zero-size rows" (numel c.s = 0 && c.n > 0);
@@ -416,18 +506,10 @@ let lane_major lanes =
       (k, (s, Array.concat (List.map (fun (_, (_, b)) -> b) rows))))
     tags
 
-(* Each way of running a map [f] of lanes [x]. *)
+(* Each way of running a map [f] of lanes [x] that compiles nothing. *)
 let map_modes =
   [
     { name = "eager"; run = (fun f x -> ignore (Rune.vmap' f x)) };
-    {
-      name = "jit of the map";
-      run = (fun f x -> ignore (Rune.jit' (Rune.vmap' f) x));
-    };
-    {
-      name = "the map of jit";
-      run = (fun f x -> ignore (Rune.vmap' (Rune.jit' f) x));
-    };
     {
       name = "grad of the map";
       run =
@@ -440,52 +522,74 @@ let map_modes =
   ]
 
 (* [f p] mapped over the lanes of [x] in every mode offers each lane's offers,
-   lane-major. *)
-let mapped ~f x =
+   lane-major. [compiled] runs the modes made once, as {!compiled_maps} does. *)
+let mapped ?(compiled = fun _ -> []) ~modes ~f x =
   let n = (Nx.shape x).(0) in
   let lane k =
     let p = Probe.make (tagged ()) in
     offers p (fun () -> ignore (f p (Nx.get [ k ] x)))
   in
   let expected = lane_major (List.init n lane) in
+  let sorted = List.stable_sort (fun (a, _) (b, _) -> Int.compare a b) in
   List.iter
     (fun m ->
       let p = Probe.make (tagged ()) in
       let got = offers p (fun () -> m.run (f p) x) in
-      let got = List.stable_sort (fun (a, _) (b, _) -> Int.compare a b) got in
-      equal ~msg:m.name offers_t expected got)
-    map_modes
+      equal ~msg:m.name offers_t expected (sorted got))
+    modes;
+  List.iter
+    (fun (name, got) -> equal ~msg:name offers_t expected (sorted got))
+    (compiled x)
 
-(* Lanes of two rows each, and of a trip count beside an array. *)
+(* The modes of {!map_modes} and {!modes} that compile, over [f p], each with a
+   probe and a compiled function of its own: made once, they compile once per
+   form of their arguments. *)
+let compiled_of modes f =
+  let modes =
+    List.map
+      (fun (name, build) ->
+        let p = Probe.make (tagged ()) in
+        (name, p, build (f p)))
+      modes
+  in
+  fun x ->
+    List.map
+      (fun (name, p, g) -> (name, offers p (fun () -> ignore (g x))))
+      modes
+
+let compiled_maps f =
+  compiled_of
+    [
+      ("jit of the map", fun g -> Rune.jit' (Rune.vmap' g));
+      ("the map of jit", fun g -> Rune.vmap' (Rune.jit' g));
+    ]
+    f
+
+let compiled_lanes f =
+  compiled_of
+    [
+      ("jit", fun g -> Rune.jit' g);
+      ("jit of grad", fun g -> Rune.jit' (Rune.grad' g));
+      ("grad of jit", fun g -> Rune.grad' (Rune.jit' g));
+    ]
+    f
+
+(* Lanes of two rows each, and of a trip count beside an array. A case draws the
+   trip counts and values of one of a few forms, each a dtype, a lane's shape, a
+   number of lanes and an iterate's bound, whose compiled modes are made at the
+   form's first case and trace once. *)
 type lanes =
   | Lanes : {
       dt : (float, 's) Nx.dtype;
       s : int array;
-      trips : int array;
+      n : int;
       max : int;
-      rows : operand;
-      x : operand;
+      scans :
+        ((float, 's, Nx.host) Nx.t -> (string * (int * offer) list) list) Lazy.t;
+      iterates :
+        ((float, 's, Nx.host) Nx.t -> (string * (int * offer) list) list) Lazy.t;
     }
       -> lanes
-
-let lanes =
-  let open Gen in
-  (let* s = shape in
-   let* n = int_range 0 3 in
-   let* trips = array ~size:(constant n) (int_range 0 3) in
-   let most = Array.fold_left Int.max 0 trips in
-   let* max = of_list [ most; most + 2 ] in
-   let* rows = operand (Array.concat [ [| n; 2 |]; s ]) in
-   let* x = operand [| n; numel s |] in
-   let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any f64 ] in
-   match D.kind dt with
-   | Float -> Lanes { dt; s; trips; max; rows; x }
-   | _ -> assert false)
-  |> with_pp (fun ppf (Lanes c) ->
-      Format.fprintf ppf "%a %a, trips [%s], max %d" Nx.pp_dtype c.dt pp_shape
-        c.s
-        (String.concat "; " (Array.to_list (Array.map string_of_int c.trips)))
-        c.max)
 
 (* An iterate over a lane [z], its trip count then its array's elements, whose
    step emits the carry at site 0 and its double at site 1. *)
@@ -506,16 +610,130 @@ let iterated s ~max p z =
   in
   Nx.sum x
 
-let law_lanes (Lanes c) =
+let lane_form dt s n max =
+  Lanes
+    {
+      dt;
+      s;
+      n;
+      max;
+      scans = lazy (compiled_maps scanned);
+      iterates = lazy (compiled_maps (iterated s ~max));
+    }
+
+let lane_forms =
+  [|
+    lane_form Nx.float32 [||] 2 3;
+    lane_form f64 [| 2 |] 3 2;
+    lane_form Nx.float32 [| 0 |] 0 0;
+    lane_form f64 [| 2; 2 |] 1 1;
+    lane_form Nx.float32 [| 3 |] 3 5;
+    lane_form f64 [||] 0 2;
+  |]
+
+type lane_case = { form : int; trips : int array; rows : operand; x : operand }
+
+let lane_count (Lanes c) = c.n
+let lane_bound (Lanes c) = c.max
+let lane_shape (Lanes c) = c.s
+
+let lanes =
+  let open Gen in
+  (let* form = int_range 0 (Array.length lane_forms - 1) in
+   let f = lane_forms.(form) in
+   let n = lane_count f and s = lane_shape f in
+   let* trips =
+     array ~size:(constant n) (int_range 0 (Int.min 3 (lane_bound f)))
+   in
+   let* rows = operand (Array.concat [ [| n; 2 |]; s ]) in
+   let+ x = operand [| n; numel s |] in
+   { form; trips; rows; x })
+  |> with_pp (fun ppf c ->
+      match lane_forms.(c.form) with
+      | Lanes f ->
+          Format.fprintf ppf "%a %a, trips [%s], max %d" Nx.pp_dtype f.dt
+            pp_shape f.s
+            (String.concat "; "
+               (Array.to_list (Array.map string_of_int c.trips)))
+            f.max)
+
+(* Each form, its lanes' trips apart, so that every run traces them all. *)
+let lane_examples =
+  List.init (Array.length lane_forms) (fun form ->
+      let f = lane_forms.(form) in
+      let n = lane_count f and s = lane_shape f in
+      let plain s =
+        {
+          view = Plain;
+          values =
+            Array.init (numel s) (fun k -> pool.(k mod Array.length pool));
+        }
+      in
+      {
+        form;
+        trips =
+          Array.init n (fun k -> (k + form) mod (Int.min 3 (lane_bound f) + 1));
+        rows = plain (Array.concat [ [| n; 2 |]; s ]);
+        x = plain [| n; numel s |];
+      })
+
+let law_lane_form (Lanes c) trips rows x =
+  let n = Array.length trips in
+  cover "no lane" (n = 0);
+  cover "lanes stopping apart" (n > 1 && Array.exists (( <> ) trips.(0)) trips);
+  cover "a lane with no step" (Array.exists (( = ) 0) trips);
+  mapped ~compiled:(Lazy.force c.scans) ~modes:[] ~f:scanned
+    (make c.dt (Array.concat [ [| n; 2 |]; c.s ]) rows);
+  let t = Nx.create c.dt [| n; 1 |] (Array.map float_of_int trips) in
+  let z = Nx.concatenate ~axis:1 [ t; make c.dt [| n; numel c.s |] x ] in
+  mapped ~compiled:(Lazy.force c.iterates) ~modes:[]
+    ~f:(iterated c.s ~max:c.max) z
+
+let law_lanes c = law_lane_form lane_forms.(c.form) c.trips c.rows c.x
+
+(* Lanes drawn for the modes that compile nothing: any lane's shape, 0 to 3
+   lanes of 0 to 3 trips, under a bound their most or 2 past it. *)
+type drawn_lanes =
+  | Drawn_lanes : {
+      dt : (float, 's) Nx.dtype;
+      s : int array;
+      trips : int array;
+      max : int;
+      rows : operand;
+      x : operand;
+    }
+      -> drawn_lanes
+
+let drawn_lanes =
+  let open Gen in
+  (let* s = shape in
+   let* n = int_range 0 3 in
+   let* trips = array ~size:(constant n) (int_range 0 3) in
+   let most = Array.fold_left Int.max 0 trips in
+   let* max = of_list [ most; most + 2 ] in
+   let* rows = operand (Array.concat [ [| n; 2 |]; s ]) in
+   let* x = operand [| n; numel s |] in
+   let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any f64 ] in
+   match D.kind dt with
+   | Float -> Drawn_lanes { dt; s; trips; max; rows; x }
+   | _ -> assert false)
+  |> with_pp (fun ppf (Drawn_lanes c) ->
+      Format.fprintf ppf "%a %a, trips [%s], max %d" Nx.pp_dtype c.dt pp_shape
+        c.s
+        (String.concat "; " (Array.to_list (Array.map string_of_int c.trips)))
+        c.max)
+
+let law_drawn_lanes (Drawn_lanes c) =
   let n = Array.length c.trips in
   cover "no lane" (n = 0);
   cover "lanes stopping apart"
     (n > 1 && Array.exists (( <> ) c.trips.(0)) c.trips);
   cover "a lane with no step" (Array.exists (( = ) 0) c.trips);
-  mapped ~f:scanned (make c.dt (Array.concat [ [| n; 2 |]; c.s ]) c.rows);
+  mapped ~modes:map_modes ~f:scanned
+    (make c.dt (Array.concat [ [| n; 2 |]; c.s ]) c.rows);
   let t = Nx.create c.dt [| n; 1 |] (Array.map float_of_int c.trips) in
   let z = Nx.concatenate ~axis:1 [ t; make c.dt [| n; numel c.s |] c.x ] in
-  mapped ~f:(iterated c.s ~max:c.max) z
+  mapped ~modes:map_modes ~f:(iterated c.s ~max:c.max) z
 
 (* A switch over a lane [z], its branch index then its array's elements: branch
    0 emits at site 0, branch 1 at site 1, branch 2 nowhere. *)
@@ -536,16 +754,109 @@ let switched s p z =
          branch 2 Nx.neg;
        ])
 
+(* A case draws the branch indices and values of one of a few forms, each a
+   dtype, a lane's shape and a number of lanes, whose compiled modes are made at
+   the form's first case and compile once. *)
 type branches =
   | Branches : {
+      dt : (float, 's) Nx.dtype;
+      s : int array;
+      n : int;
+      maps :
+        ((float, 's, Nx.host) Nx.t -> (string * (int * offer) list) list) Lazy.t;
+      lanes :
+        ((float, 's, Nx.host) Nx.t -> (string * (int * offer) list) list) Lazy.t;
+    }
+      -> branches
+
+let branch_form dt s n =
+  Branches
+    {
+      dt;
+      s;
+      n;
+      maps = lazy (compiled_maps (switched s));
+      lanes = lazy (compiled_lanes (switched s));
+    }
+
+let branch_forms =
+  [|
+    branch_form Nx.float32 [||] 2;
+    branch_form f64 [| 2 |] 3;
+    branch_form Nx.float32 [| 0 |] 0;
+    branch_form f64 [| 2; 2 |] 1;
+    branch_form Nx.float32 [| 3 |] 3;
+    branch_form f64 [||] 0;
+  |]
+
+type branch_case = { form : int; index : int array; x : operand }
+
+let branch_lanes (Branches c) = c.n
+let branch_size (Branches c) = numel c.s
+
+let branches =
+  let open Gen in
+  (let* form = int_range 0 (Array.length branch_forms - 1) in
+   let f = branch_forms.(form) in
+   let* index = array ~size:(constant (branch_lanes f)) (int_range 0 2) in
+   let+ x = operand [| branch_lanes f; branch_size f |] in
+   { form; index; x })
+  |> with_pp (fun ppf c ->
+      match branch_forms.(c.form) with
+      | Branches f ->
+          Format.fprintf ppf "%a %a, branches [%s]" Nx.pp_dtype f.dt pp_shape
+            f.s
+            (String.concat "; "
+               (Array.to_list (Array.map string_of_int c.index))))
+
+(* Each form, its lanes in turn in each branch, so that every run compiles them
+   all. *)
+let branch_examples =
+  List.init (Array.length branch_forms) (fun form ->
+      let f = branch_forms.(form) in
+      let n = branch_lanes f
+      and m = numel [| branch_lanes f; branch_size f |] in
+      {
+        form;
+        index = Array.init n (fun k -> (k + form) mod 3);
+        x =
+          {
+            view = Plain;
+            values = Array.init m (fun k -> pool.(k mod Array.length pool));
+          };
+      })
+
+let law_branch_form (Branches c) index x =
+  let n = Array.length index in
+  cover "lanes in different branches"
+    (n > 1 && Array.exists (( <> ) index.(0)) index);
+  cover "no lane" (n = 0);
+  let i = Nx.create c.dt [| n; 1 |] (Array.map float_of_int index) in
+  let z = Nx.concatenate ~axis:1 [ i; make c.dt [| n; numel c.s |] x ] in
+  mapped ~compiled:(Lazy.force c.maps) ~modes:[] ~f:(switched c.s) z;
+  for k = 0 to n - 1 do
+    let zk = Nx.get [ k ] z in
+    let p = Probe.make (tagged ()) in
+    let expected = offers p (fun () -> ignore (switched c.s p zk)) in
+    List.iter
+      (fun (name, got) -> equal ~msg:name offers_t expected got)
+      (Lazy.force c.lanes zk)
+  done
+
+let law_branches c = law_branch_form branch_forms.(c.form) c.index c.x
+
+(* Branch indices drawn for the modes that compile nothing: any lane's shape, 0
+   to 3 lanes. *)
+type drawn_branches =
+  | Drawn_branches : {
       dt : (float, 's) Nx.dtype;
       s : int array;
       index : int array;
       x : operand;
     }
-      -> branches
+      -> drawn_branches
 
-let branches =
+let drawn_branches =
   let open Gen in
   (let* s = shape in
    let* n = int_range 0 3 in
@@ -553,31 +864,31 @@ let branches =
    let* x = operand [| n; numel s |] in
    let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any f64 ] in
    match D.kind dt with
-   | Float -> Branches { dt; s; index; x }
+   | Float -> Drawn_branches { dt; s; index; x }
    | _ -> assert false)
-  |> with_pp (fun ppf (Branches c) ->
+  |> with_pp (fun ppf (Drawn_branches c) ->
       Format.fprintf ppf "%a %a, branches [%s]" Nx.pp_dtype c.dt pp_shape c.s
         (String.concat "; " (Array.to_list (Array.map string_of_int c.index))))
 
-let law_branches (Branches c) =
+let law_drawn_branches (Drawn_branches c) =
   let n = Array.length c.index in
   cover "lanes in different branches"
     (n > 1 && Array.exists (( <> ) c.index.(0)) c.index);
   cover "no lane" (n = 0);
   let i = Nx.create c.dt [| n; 1 |] (Array.map float_of_int c.index) in
   let z = Nx.concatenate ~axis:1 [ i; make c.dt [| n; numel c.s |] c.x ] in
-  mapped ~f:(switched c.s) z;
-  List.iter
-    (fun m ->
-      for k = 0 to n - 1 do
-        let p = Probe.make (tagged ()) in
-        let zk = Nx.get [ k ] z in
-        let expected = offers p (fun () -> ignore (switched c.s p zk)) in
+  mapped ~modes:map_modes ~f:(switched c.s) z;
+  for k = 0 to n - 1 do
+    let zk = Nx.get [ k ] z in
+    let p = Probe.make (tagged ()) in
+    let expected = offers p (fun () -> ignore (switched c.s p zk)) in
+    List.iter
+      (fun m ->
         let p = Probe.make (tagged ()) in
         equal ~msg:m.name offers_t expected
-          (offers p (fun () -> m.run (switched c.s p) zk))
-      done)
-    modes
+          (offers p (fun () -> m.run (switched c.s p) zk)))
+      modes
+  done
 
 (* A map in a scan's step: each row's lanes, row by row. *)
 let test_map_in_scan () =
@@ -920,7 +1231,11 @@ let () =
            ];
          group "scans"
            [
-             prop "a step offers a row per row, in every mode" scans law_scan;
+             prop "a step offers a row per row, in every mode compiling nothing"
+               drawn_scans law_drawn_scan;
+             prop ~examples:scan_examples
+               "a step offers a row per row, in every compiled mode" scans
+               law_scan;
              test "a raise keeps the rows before" test_scan_raise;
              test "off the host, every row emits before the check raises"
                test_scan_raise_off_host;
@@ -932,9 +1247,17 @@ let () =
            ];
          group "maps"
            [
-             prop "lanes offer lane-major, each its own steps" lanes law_lanes;
+             prop "lanes offer lane-major, each its own steps" drawn_lanes
+               law_drawn_lanes;
+             prop ~examples:lane_examples
+               "lanes offer lane-major, each its own steps, compiled" lanes
+               law_lanes;
              test "an emit in an iterate's until" test_until;
-             prop "lanes offer the branches they take" branches law_branches;
+             prop "lanes offer the branches they take" drawn_branches
+               law_drawn_branches;
+             prop ~examples:branch_examples
+               "lanes offer the branches they take, compiled" branches
+               law_branches;
              test "a map in a scan's step" test_map_in_scan;
              test "maps in maps" test_nested_maps;
            ];
