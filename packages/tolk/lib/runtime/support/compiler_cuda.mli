@@ -14,17 +14,19 @@
     from any domain, and waits idle between them, so that NVRTC's setup is paid
     once per process; a compile that finds none idle starts another. This
     process keeps as many as it ran compiles at once, a search's parallelism,
-    each holding about 18 MB of its own memory, until it exits. A process
-    forked from this one starts its own and never uses its parent's. On Linux the program runs from memory;
-    elsewhere it is written to {!Helpers.cache_dir}, under a name holding its
-    digest. The library, [libnvrtc], is the file {!C.findlib} finds for [nvrtc]
-    when the compiler is made: the file [NVRTC_PATH] names, then the system's
-    library directories and those of the CUDA toolkit. Each process loads
-    it. NVRTC's own cache of
-    binaries, which NVIDIA's libraries keep under [CUDA_CACHE_PATH], is
-    disabled in those processes alone: its key misses some of the options,
-    math and headers among them, so it could serve a binary compiled under
-    others. *)
+    each holding about 18 MB of its own memory, until it exits. A process forked
+    from this one starts its own and never uses its parent's. On Linux the
+    program runs from memory, unless the system refuses; elsewhere, or then, it
+    is written to {!Helpers.cache_dir}, under a name holding its digest, or to
+    the temporary directory if the cache cannot be written or the system refuses
+    to run it from there: where the system runs no program this process writes,
+    every compile fails. The library, [libnvrtc], is the file {!C.findlib} finds
+    for [nvrtc] when the compiler is made: the file [NVRTC_PATH] names, then the
+    system's library directories and those of the CUDA toolkit. Each process
+    loads it. NVRTC's own cache of binaries, which NVIDIA's libraries keep under
+    [CUDA_CACHE_PATH], is disabled in those processes alone: its key misses some
+    of the options, math and headers among them, so it could serve a binary
+    compiled under others. *)
 
 val nvrtc : ?ptx:bool -> ?cache_key:string -> string -> Renderer.Compiler.t
 (** [nvrtc ~ptx ~cache_key arch] is the compiler of CUDA C++ source for the GPU

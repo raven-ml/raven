@@ -1,8 +1,9 @@
 ; Settings are read when the program starts, so CACHEDB is set here, to a
 ; directory of the sandbox, as is NVRTC's cache of binaries, CUDA_CACHE_PATH.
 ; The tests tagged no-library run in a second process, where NVRTC_PATH names a
-; file that is no library, and those tagged no-spawn in a third, which they
-; forbid to start any process.
+; file that is no library, those tagged no-spawn in a third, which they forbid
+; to start any process, and those tagged unrunnable-memory in a fourth, where
+; XDG_CACHE_HOME names a directory of the sandbox.
 
 (test
  (name test_compiler_cuda)
@@ -20,13 +21,24 @@
     CUDA_CACHE_PATH
     nvrtc_cache
     (progn
-     (run %{test} --exclude-tag no-library --exclude-tag no-spawn)
+     (run
+      %{test}
+      --exclude-tag
+      no-library
+      --exclude-tag
+      no-spawn
+      --exclude-tag
+      unrunnable-memory)
      (setenv
       NVRTC_PATH
       ./not_a_library
       (progn
        (run %{test} --tag no-library)
-       (run %{test} --tag no-spawn))))))))
+       (run %{test} --tag no-spawn)
+       (setenv
+        XDG_CACHE_HOME
+        unrunnable
+        (run %{test} --tag unrunnable-memory)))))))))
 
 ; A fork needs a process that never spawned a domain: the fork tests run in
 ; programs of their own, with NVRTC and with a file that is no library.

@@ -8,24 +8,27 @@
 (** The compiler of HIP for AMD GPUs.
 
     comgr, ROCm's code object manager library, compiles the source. comgr
-    compiles one source at a time in a process, so compiles run in processes
-    of their own, which tolk starts from a program it carries: compiles from
-    several domains run at once, and a compile that crashes ends its own
-    process only. Each process serves compiles in turn, from any domain, and
-    waits idle between them, so that loading comgr is paid once per process;
-    a compile that finds none idle starts another. This process keeps as many
-    as it ran compiles at once, a search's parallelism, each holding about
-    15 MB of its own memory, until it exits. A process forked from this one
-    starts its own and never uses its parent's. On Linux the program runs
-    from memory; elsewhere it is written to {!Helpers.cache_dir}, under a name
-    holding its digest. The library, [libamd_comgr], is the file {!C.findlib}
-    finds when the compiler is made: the file [COMGR_PATH] names, then
-    [lib/libamd_comgr.so] in the directory {!Setting.rocm_path} names, then
-    the system's library directories. Each process loads it. Its major
-    version picks its numbering of languages and actions, which version 3
-    changed. comgr's own cache of the code it generates, which it keeps under
-    [~/.cache/comgr] or [AMD_COMGR_CACHE_DIR], is disabled in those processes
-    alone: code objects are cached in one place, {!Setting.ccache}'s table. *)
+    compiles one source at a time in a process, so compiles run in processes of
+    their own, which tolk starts from a program it carries: compiles from
+    several domains run at once, and a compile that crashes ends its own process
+    only. Each process serves compiles in turn, from any domain, and waits idle
+    between them, so that loading comgr is paid once per process; a compile that
+    finds none idle starts another. This process keeps as many as it ran
+    compiles at once, a search's parallelism, each holding about 15 MB of its
+    own memory, until it exits. A process forked from this one starts its own
+    and never uses its parent's. On Linux the program runs from memory, unless
+    the system refuses; elsewhere, or then, it is written to
+    {!Helpers.cache_dir}, under a name holding its digest, or to the temporary
+    directory if the cache cannot be written or the system refuses to run it
+    from there: where the system runs no program this process writes, every
+    compile fails. The library, [libamd_comgr], is the file {!C.findlib} finds
+    when the compiler is made: the file [COMGR_PATH] names, then
+    [lib/libamd_comgr.so] in the directory {!Setting.rocm_path} names, then the
+    system's library directories. Each process loads it. Its major version picks
+    its numbering of languages and actions, which version 3 changed. comgr's own
+    cache of the code it generates, which it keeps under [~/.cache/comgr] or
+    [AMD_COMGR_CACHE_DIR], is disabled in those processes alone: code objects
+    are cached in one place, {!Setting.ccache}'s table. *)
 
 val hip : string -> Renderer.Compiler.t
 (** [hip arch] is the compiler of HIP source to executable code objects for the

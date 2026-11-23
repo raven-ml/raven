@@ -365,9 +365,61 @@ let no_spawn =
                  cubin kernel));
        ]
 
+(* A memory file that cannot run: these tests run in a process of their own,
+   where NVRTC_PATH names a file that is no library and XDG_CACHE_HOME a
+   directory of the sandbox. The test makes the program's memory file one that
+   the system refuses to run, as a sandbox's policy may refuse them all. *)
+
+(* The memory file this process runs the program from, through /proc/self/fd:
+   there is one, or the test skips where the system refuses to make one, as
+   under vm.memfd_noexec=2. *)
+let memory_file () =
+  let fds = "/proc/self/fd" in
+  let ours fd =
+    match Unix.readlink (Filename.concat fds fd) with
+    | link -> String.starts_with ~prefix:"/memfd:tolk-nvrtc-worker" link
+    | exception Unix.Unix_error _ -> false
+  in
+  match List.filter ours (Array.to_list (Sys.readdir fds)) with
+  | [ fd ] -> Filename.concat fds fd
+  | [] -> skip ~reason:"the system makes no memory file of the program" ()
+  | found -> failf "%d memory files of the program" (List.length found)
+
+(* The program's files in the cache. *)
+let cached_programs () =
+  List.filter
+    (fun f ->
+      String.starts_with ~prefix:"nvrtc-worker-" f
+      && not (Filename.check_suffix f ".tmp"))
+    (Array.to_list (Sys.readdir Helpers.cache_dir))
+
+let unrunnable_memory =
+  tag "unrunnable-memory"
+  @@ group "a memory file that cannot run"
+       [
+         test "a compile is served by a worker run from the cache" (fun () ->
+             if not (Sys.file_exists "/proc/self/fd") then
+               skip ~reason:"no memory files: Linux only" ();
+             let first = load_failure () in
+             is_some first;
+             let memory = memory_file () in
+             kill_children ();
+             Unix.chmod memory 0o644;
+             equal (option string) first (load_failure ());
+             equal int ~msg:"programs in the cache" 1
+               (List.length (cached_programs ())));
+       ]
+
 let () =
   exit
     (run "Tolk.Compiler_cuda"
        [
-         cache; without_nvrtc; not_a_library; disassembly; smoke; process; no_spawn;
+         cache;
+         without_nvrtc;
+         not_a_library;
+         disassembly;
+         smoke;
+         process;
+         no_spawn;
+         unrunnable_memory;
        ])

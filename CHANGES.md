@@ -1686,6 +1686,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On Linux, NVRTC's and comgr's worker processes start from a file in the
+  cache or the temporary directory where the system refuses to run them from
+  memory, as Ubuntu 26.04's opam sandbox does: every compile failed with
+  "worker /proc/self/fd/N: Permission denied".
 - New `Tolk.Device.Uncomputable`, raised for a kernel its device cannot
   compute. `Tolk_engine.target` raises it for a host or software device where
   rig links no host code (`Rig.Image.links`), and `Tolk_engine.compile` for a

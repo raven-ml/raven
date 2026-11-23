@@ -38,15 +38,19 @@ type serving = {
   temp : string;
 }
 
-(* [lock] guards [path], [refused], the directories whose program the system
-   refused to run, each with why, and [idle], the serving workers no call
-   holds. *)
+(* Where the program runs from: a sealed memory file, on Linux, or a file in a
+   directory. *)
+type place = Memory | Dir of string
+
+(* [lock] guards [path], the program's place and path, [refused], the places
+   whose program the system refused to create or run, each with why, and [idle],
+   the serving workers no call holds. *)
 type t = {
   name : string;
   program : string;
   lock : Mutex.t;
-  mutable path : string option;
-  mutable refused : (string * string) list;
+  mutable path : (place * string) option;
+  mutable refused : (place * string) list;
   mutable idle : serving list;
 }
 
@@ -83,10 +87,15 @@ let rec mkdir_p dir =
     try Sys.mkdir dir 0o755 with Sys_error _ when Sys.file_exists dir -> ()
   end
 
-(* The directories the program is written to, in order: the cache, then the
-   temporary directory, for a cache that cannot be written, that other users
-   can write, or whose files cannot run, as on a volume mounted noexec. *)
-let program_dirs () = [ Helpers.cache_dir; Filename.get_temp_dir_name () ]
+(* The places the program runs from, in order. On Linux a memory file first,
+   which runs where every directory is mounted noexec. Then the cache, then the
+   temporary directory, for a memory file the system refuses, as a sandbox's
+   policy may, for a cache that cannot be written, that other users can write,
+   or whose files cannot run, as on a volume mounted noexec. *)
+let places () =
+  let dirs = [ Dir Helpers.cache_dir; Dir (Filename.get_temp_dir_name ()) ] in
+  if Host_config.system = "linux" then Memory :: dirs else dirs
+
 let digest w = Digest.to_hex (Digest.string w.program)
 let prefix w = w.name ^ "-worker-"
 
@@ -146,52 +155,56 @@ let program_file w dir =
   | Sys_error e -> fail e
   | Unix.Unix_error (e, _, _) -> fail (Unix.error_message e)
 
-(* The program written to the first of [dirs] that takes it. A failure names
-   each directory's. *)
-let rec first_file w errors = function
-  | [] -> failwith (String.concat "; " (List.rev errors))
-  | dir :: dirs -> (
-      try program_file w dir with Failure e -> first_file w (e :: errors) dirs)
+(* The program at [place], and its path. *)
+let place_program w = function
+  | Dir dir as place -> (place, program_file w dir)
+  | Memory -> (
+      match memfd ("tolk-" ^ w.name ^ "-worker") w.program with
+      | fd -> (Memory, "/proc/self/fd/" ^ string_of_int fd)
+      | exception Failure e ->
+          failwith (Printf.sprintf "%s worker in memory: %s" w.name e))
 
-(* Written by whichever domain first runs [w], to the first directory whose
-   program the system has not refused to run, and written again when it is no
-   longer [trusted]: removed, as a cache cleaner does, or replaced. A failure
-   is raised to that run and tried again by the next. *)
+(* The program at the first of [places] that takes it. A failure names each
+   place's. *)
+let rec first_place w errors = function
+  | [] -> failwith (String.concat "; " (List.rev errors))
+  | place :: places -> (
+      try place_program w place
+      with Failure e -> first_place w (e :: errors) places)
+
+(* Placed by whichever domain first runs [w], at the first place whose program
+   the system has not refused to run, and written again when a file is no longer
+   [trusted]: removed, as a cache cleaner does, or replaced. A failure is raised
+   to that run and tried again by the next. *)
 let program_path w =
   Mutex.protect w.lock @@ fun () ->
   match w.path with
-  | Some path when Host_config.system = "linux" || trusted w path -> path
+  | Some ((Memory, _) as program) -> program
+  | Some ((Dir _, path) as program) when trusted w path -> program
   | Some _ | None ->
-      let path =
-        if Host_config.system = "linux" then
-          let fd = memfd ("tolk-" ^ w.name ^ "-worker") w.program in
-          "/proc/self/fd/" ^ string_of_int fd
-        else
-          let usable dir = not (List.mem_assoc dir w.refused) in
-          first_file w [] (List.filter usable (program_dirs ()))
-      in
-      w.path <- Some path;
-      path
+      let usable place = not (List.mem_assoc place w.refused) in
+      let refusals = List.map snd w.refused in
+      let program = first_place w refusals (List.filter usable (places ())) in
+      w.path <- Some program;
+      program
 
-(* [Ok ()] if the program at [path], which the system refused to run for
-   [why], has a directory left to be written to: then the directory of [path]
-   is refused, and the next [program_path] writes the program to a later one.
-   Otherwise [Error] names each refusal. *)
-let refuse w path why =
+(* [Ok ()] if the program at [place] and [path], which the system refused to run
+   for [why], has a place left: then [place] is refused, and the next
+   [program_path] places the program at a later one. Otherwise [Error] names
+   each refusal. A refused memory file stays open: another domain may be
+   starting the program from it, and its descriptor's number, once closed, could
+   name another file. *)
+let refuse w (place, path) why =
   Mutex.protect w.lock @@ fun () ->
-  let in_dir dir =
-    Filename.dirname (program_name w dir) = Filename.dirname path
-  in
   let refusal = path ^ ": " ^ why in
-  match List.rev (program_dirs ()) with
-  | last :: earlier when not (in_dir last) -> (
-      match List.find_opt in_dir earlier with
-      | Some dir ->
-          if not (List.mem_assoc dir w.refused) then
-            w.refused <- (dir, refusal) :: w.refused;
-          if w.path = Some path then w.path <- None;
-          Ok ()
-      | None -> Error refusal)
+  match List.rev (places ()) with
+  | last :: _ when last <> place ->
+      if not (List.mem_assoc place w.refused) then
+        w.refused <- (place, refusal) :: w.refused;
+      (match w.path with
+      | Some (current, _) when current = place -> w.path <- None
+      | Some _ | None -> ());
+      Ok ()
   | _ -> Error (String.concat "; " (List.rev_map snd w.refused @ [ refusal ]))
 
 (* Running *)
@@ -290,8 +303,15 @@ let spawn_worker program library temp input output errors =
     spawn program cmdline input output errors
   else Unix.create_process program (Array.of_list args) input output errors
 
+(* Whether the system refused to run the program at [place] with [e]. Without
+   /proc a memory file has no path to run from. *)
+let refusal (place, _) (e : Unix.error) =
+  match (e, place) with
+  | (EACCES | EPERM), _ | ENOENT, Memory -> true
+  | _, (Memory | Dir _) -> false
+
 let rec start w library =
-  let program = program_path w in
+  let ((_, program) as placed) = program_path w in
   let fail why =
     failwith (Printf.sprintf "%s worker %s: %s" w.name program why)
   in
@@ -320,10 +340,10 @@ let rec start w library =
   | pid ->
       close_pair theirs;
       { owner = Unix.getpid (); pid; library; replies; requests; log; temp }
-  | exception Unix.Unix_error (((EACCES | EPERM) as e), _, _) -> (
+  | exception Unix.Unix_error (e, _, _) when refusal placed e -> (
       close_all ();
       remove temp;
-      match refuse w program (Unix.error_message e) with
+      match refuse w placed (Unix.error_message e) with
       | Ok () -> start w library
       | Error refusals -> failwith (w.name ^ " worker " ^ refusals))
   | exception e ->
