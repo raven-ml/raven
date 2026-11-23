@@ -39,7 +39,8 @@ for lack of memory, has no end in its log. While a session is open its
 process holds the run's lock, and the system releases the lock when the
 process exits, however it exits. A reader on the same machine probes the
 lock, and reads the run as running while it is held and as crashed once it
-is free. A reader that cannot probe it, such as one on another machine,
+is free. It can tell crashed only on Linux and macOS, whose kernels name
+their boot. A reader that cannot probe it, such as one on another machine,
 reads the run as silent. The status section of
 [`store_format.mli`](../lib/store_format.mli) states the whole rule, and
 `Run.status` in [`run.mli`](../lib/run.mli) names each case.

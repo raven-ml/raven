@@ -1352,10 +1352,21 @@ let wait pid =
   | Unix.WEXITED 0 -> ()
   | _ -> fail "the child failed"
 
+(* The kernel's name, as [uname -s] prints it. *)
+let kernel =
+  if Sys.win32 then "Windows"
+  else
+    let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
+    let name = input_line ic in
+    match Unix.close_process_in ic with
+    | WEXITED 0 -> name
+    | _ -> failwith "uname -s failed"
+
 (* How a run reads once its writer exited without an end: crashed where the
-   writer records the boot it ran under, which a writer on Windows does not
+   writer records the boot it ran under, which only Linux and macOS name
    (Munin.Store_format, status). *)
-let dead_status = if Sys.win32 then `Silent else `Crashed
+let dead_status =
+  if kernel = "Linux" || kernel = "Darwin" then `Crashed else `Silent
 
 let no_ulimit () =
   if Sys.win32 then skip ~reason:"Windows has no ulimit" ()

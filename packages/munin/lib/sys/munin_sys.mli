@@ -68,7 +68,10 @@ val host : unit -> unit -> (string * float) list
       of the percent of the window each had requests in flight, each disk's
       capped at [100.], since Linux counts busy time when a request starts
       or ends.
-    - [sys/interval_s]: the window's length. *)
+    - [sys/interval_s]: the window's length.
+
+    Another system than Linux, macOS and Windows, such as FreeBSD, gives
+    [sys/load_per_core] and [sys/interval_s] alone. *)
 
 (** {1:process This process} *)
 
@@ -76,7 +79,8 @@ val process : unit -> unit -> (string * float) list
 (** [process ()] is a new reading of this process. Its keys:
     - [sys/proc_cpu_cores], a rate: the process's CPU seconds per second,
     so [2.] is two cores busy.
-    - [sys/proc_rss_bytes], a level: its resident memory.
+    - [sys/proc_rss_bytes], a level: its resident memory, on Linux, macOS and
+      Windows.
     - [sys/proc_interval_s]: the window's length. *)
 
 (** {1:devices Devices}

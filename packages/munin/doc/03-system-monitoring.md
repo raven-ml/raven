@@ -42,7 +42,10 @@ val host : unit -> (string * float) list = <fun>
 this process. Their keys start with `sys/`, and the Machine and This
 process sections of [`munin_sys.mli`](../lib/sys/munin_sys.mli) list each
 key, its unit and the system it is read on. A key the system cannot read
-is left out of the pairs, such as the load average on Windows.
+is left out of the pairs, such as the load average on Windows. Linux,
+macOS and Windows give the CPU, memory and disk keys and the process's
+resident memory; another system, such as FreeBSD, gives the load average
+and the process's CPU time alone.
 
 Each reading keeps the counters of its previous call, so each one belongs
 to one sampler.

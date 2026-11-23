@@ -14,3 +14,14 @@
  (applies_to posix)
  (enabled_if
   (<> %{os_type} Win32)))
+
+; A run reads crashed only to a reader under its writer's boot, which only
+; Linux and macOS name (Munin.Store_format, status).
+
+(cram
+ (package munin)
+ (applies_to crashed)
+ (enabled_if
+  (or
+   (= %{os} linux)
+   (= %{os} macos))))

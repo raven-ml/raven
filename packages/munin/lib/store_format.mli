@@ -199,17 +199,17 @@ v}
     programs it starts do not inherit it. The system releases the lock when
     the writer's process ends, however it ends.
 
-    The {e boot identity} is the text that names the kernel's current
-    boot: Linux's [/proc/sys/kernel/random/boot_id] and macOS's
-    [kern.bootsessionuuid]. The {e machine identity} is the 64 lowercase
-    hexadecimal digits of the BLAKE2b-256 digest, keyed with the ASCII
-    bytes [munin], of the bytes that name the machine: on Linux the 32
-    hexadecimal digits of [/etc/machine-id] without its line feed, and on
-    macOS [IOPlatformUUID] as IOKit returns it. A missing or empty
-    [/etc/machine-id] gives no machine identity. The machine's own
-    identity is not written, since it is confidential to the machine. No
-    source of either identity is chosen on Windows yet, so a writer there
-    records neither.
+    The {e boot identity} is the text that names the kernel's current boot:
+    Linux's [/proc/sys/kernel/random/boot_id] and macOS's
+    [kern.bootsessionuuid]. No source of it is chosen on other systems, such as
+    FreeBSD, yet. The {e machine identity} is the 64 lowercase hexadecimal
+    digits of the BLAKE2b-256 digest, keyed with the ASCII bytes [munin], of the
+    bytes that name the machine: on macOS [IOPlatformUUID] as IOKit returns it,
+    and on other POSIX systems the 32 hexadecimal digits of [/etc/machine-id]
+    without its line feed. A missing or empty [/etc/machine-id] gives no machine
+    identity. The machine's own identity is not written, since it is
+    confidential to the machine. No source of either identity is chosen on
+    Windows yet, so a writer there records neither.
 
     [writer] names who writes the run now: an object of [machine] and
     [boot], the machine and boot identities of the run's latest writer,

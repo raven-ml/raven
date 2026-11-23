@@ -8,8 +8,23 @@ open Windtrap
 let pairs = list (pair string float_exact)
 let keys pairs = List.map fst pairs
 let value key pairs = List.assoc key pairs
-let linux = Sys.file_exists "/proc/self/status"
-let macos = Sys.os_type = "Unix" && not linux
+
+(* The kernel's name, as [uname -s] prints it. *)
+let kernel =
+  if Sys.win32 then "Windows"
+  else
+    let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
+    let name = input_line ic in
+    match Unix.close_process_in ic with
+    | WEXITED 0 -> name
+    | _ -> failwith "uname -s failed"
+
+let linux = kernel = "Linux"
+let macos = kernel = "Darwin"
+
+(* Linux, macOS and Windows: the systems munin.sys reads beyond the load
+   average. *)
+let read_whole = linux || macos || Sys.win32
 
 let in_range ~low ~high key pairs =
   let v = value key pairs in
@@ -34,7 +49,7 @@ let host_keys =
     "sys/interval_s";
   ]
 
-(* What every supported system reads. Windows keeps no load average; a Linux
+(* What Linux, macOS and Windows read. Windows keeps no load average; a Linux
    machine or a Windows VM may have no physical disk that gives counters. *)
 let host_required =
   [
@@ -55,11 +70,8 @@ let test_host_first () =
   let read = Munin_sys.host () in
   equal pairs [] (read ())
 
-let test_host_second () =
-  let read = Munin_sys.host () in
-  ignore (read ());
-  Unix.sleepf window;
-  let got = read () in
+(* The pairs of a system munin.sys reads whole. *)
+let host_whole got =
   let ks = keys got in
   equal (list string) (List.sort_uniq compare ks) (List.sort compare ks);
   List.iter (fun k -> mem string k host_keys) ks;
@@ -79,7 +91,15 @@ let test_host_second () =
     non_negative "sys/disk_write_bytes_per_s" got
   end;
   if List.mem_assoc "sys/disk_busy_pct" got then
-    in_range ~low:0. ~high:100. "sys/disk_busy_pct" got;
+    in_range ~low:0. ~high:100. "sys/disk_busy_pct" got
+
+let test_host_second () =
+  let read = Munin_sys.host () in
+  ignore (read ());
+  Unix.sleepf window;
+  let got = read () in
+  if read_whole then host_whole got
+  else equal (list string) [ "sys/load_per_core"; "sys/interval_s" ] (keys got);
   at_least float_exact ~than:window (value "sys/interval_s" got)
 
 (* This process *)
@@ -109,12 +129,14 @@ let test_process_second () =
   burn 0.02;
   let got = read () in
   ignore (Sys.opaque_identity block);
+  let rss = if read_whole then [ "sys/proc_rss_bytes" ] else [] in
   equal (list string)
-    [ "sys/proc_cpu_cores"; "sys/proc_rss_bytes"; "sys/proc_interval_s" ]
+    (("sys/proc_cpu_cores" :: rss) @ [ "sys/proc_interval_s" ])
     (keys got);
   greater float_exact ~than:0. (value "sys/proc_cpu_cores" got);
-  at_least float_exact ~than:(Float.of_int block_bytes)
-    (value "sys/proc_rss_bytes" got);
+  if read_whole then
+    at_least float_exact ~than:(Float.of_int block_bytes)
+      (value "sys/proc_rss_bytes" got);
   greater float_exact ~than:0. (value "sys/proc_interval_s" got)
 
 (* CPU busy on Linux *)

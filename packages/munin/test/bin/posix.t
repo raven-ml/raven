@@ -16,8 +16,7 @@ The root is absolute, whether it exists or not.
   $ munin root --root store
   $TESTCASE_ROOT/store
 
-A run being written cannot be removed. Once its writer exits, it reads
-crashed and can be.
+A run being written cannot be removed or ended.
 
   $ mkfifo input
   $ ./make_store.exe hold store < input > held &
@@ -30,13 +29,12 @@ crashed and can be.
   munin: run HELD is being written
   $ munin end --root store $held 2>&1 | sed "s/$held/HELD/"
   munin: run HELD is being written
+
+Once its writer exits, end ends the run as killed, and refuses an ended
+one.
+
   $ exec 3>&-
   $ wait
-  $ munin runs --root store --status crashed | sed "s/$held/HELD/" | ids
-  HELD	crashed	TIME	held	-	-
-
-end ends a crashed run as killed, and refuses an ended one.
-
   $ munin end --root store $held
   $ munin runs --root store --status killed | sed "s/$held/HELD/" | ids
   HELD	killed	TIME	held	-	-

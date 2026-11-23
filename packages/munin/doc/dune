@@ -1,13 +1,17 @@
 ; mdx runs the OCaml fences, except those marked skip: installation commands,
 ; which need the network, and the glue over rig, which needs a GPU. Shell
 ; examples (`munin`, `jq`, `tail`) are marked skip: they name run ids drawn
-; per run and print what the reader's store holds. The guides stand for a
-; crashed program with a forked child, so they do not run on Windows.
+; per run and print what the reader's store holds. The guides read a crashed
+; run, which a forked child stands for, and the machine's memory, which only
+; Linux and macOS give together: Windows has no fork and names no boot, and
+; munin reads neither a boot nor memory on other systems, such as FreeBSD.
 
 (mdx
  (files *.md)
  (package munin)
  (enabled_if
-  (<> %{os_type} Win32))
+  (or
+   (= %{os} linux)
+   (= %{os} macos)))
  (preludes prelude.ml)
  (libraries munin munin.sys unix))
