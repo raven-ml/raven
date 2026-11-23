@@ -467,3 +467,5 @@ let bytes (type v s) (a : (v, s) A.t) =
   let c = A.copy a in
   let u = Option.get (A.bitcast D.Uint8 c) in
   A.to_array u
+
+let log10_golden = Log10_golden.text

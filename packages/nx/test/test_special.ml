@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* nx's special functions and log10 against correctly rounded references
-   (golden/special/, written by gen/special.py), at the bounds nx.mli
-   states per function and dtype; the narrow floats at the rule nx.mli states
-   for them; the laws the functions keep; their edges. *)
+   (golden/special/ and nx_support's log10, written by gen/special.py), at the
+   bounds nx.mli states per function and dtype; the narrow floats at the rule
+   nx.mli states for them; the laws the functions keep; their edges. *)
 
 open Windtrap
 module D = Nx_array.Dtype
@@ -27,14 +27,21 @@ type row = { args : float array; value : float; overflow : bool; scale : float }
 
 let goldens = "golden/special"
 
+(* The lines of the golden of [name]. log10's is nx_support's, whose points
+   rune's suites compile too. *)
+let lines name =
+  if name = "log10" then String.split_on_char '\n' Nx_support.log10_golden
+  else
+    let dir = Filename.concat (Filename.dirname Sys.executable_name) goldens in
+    let path = Filename.concat dir (name ^ ".golden") in
+    In_channel.with_open_bin path In_channel.input_lines
+
 (* The rows of the golden of [name] at the dtype named [short] ("f32",
    "f64"). *)
 let rows name short =
-  let dir = Filename.concat (Filename.dirname Sys.executable_name) goldens in
-  let path = Filename.concat dir (name ^ ".golden") in
-  let lines = In_channel.with_open_bin path In_channel.input_lines in
-  match List.filter (fun l -> not (String.starts_with ~prefix:"#" l)) lines with
-  | [] -> failwith (path ^ ": no header")
+  let table l = l <> "" && not (String.starts_with ~prefix:"#" l) in
+  match List.filter table (lines name) with
+  | [] -> failwith (name ^ ".golden: no header")
   | header :: lines ->
       (* The columns are the dtype, the arguments, [f] and maybe a scale. *)
       let columns = String.split_on_char '\t' header in

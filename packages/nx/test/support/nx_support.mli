@@ -141,3 +141,9 @@ val bytes : ('v, 's) Nx_array.t -> int array
 (** [bytes a] is the bytes of [a]'s elements in C order of indices, each
     element's in memory order, read on the host. [a] must lie in memory the
     host addresses. *)
+
+(** {1:goldens Goldens} *)
+
+val log10_golden : string
+(** [log10_golden] is the text of log10's golden, which gen/special.py writes
+    from mpmath: a table of hexadecimal floats, one row per point and dtype. *)

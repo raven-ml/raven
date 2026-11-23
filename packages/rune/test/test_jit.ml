@@ -914,16 +914,11 @@ let law_nan_to_num (Nan_case (dt, s, xo, (nan, posinf, neginf))) =
   equal (outcome_t codes_t) eager jitted
 
 (* Nx.log10, compiled on the host, gives eager's bits at the points of nx's
-   golden, which nx's gen/special.py writes from mpmath and dune copies here,
-   and at each power of ten the dtype holds: nx composes it from Nx.log2,
-   which compiles to nx's bits, and exact functions. *)
+   golden (Nx_support.log10_golden) and at each power of ten the dtype holds: nx
+   composes it from Nx.log2, which compiles to nx's bits, and exact
+   functions. *)
 let test_log10 () =
-  let dir = Filename.dirname Sys.executable_name in
-  let lines =
-    In_channel.with_open_bin
-      (Filename.concat dir "log10.golden")
-      In_channel.input_lines
-  in
+  let lines = String.split_on_char '\n' Nx_support.log10_golden in
   let at (type s) (dt : (float, s) Nx.dtype) short most =
     let xs =
       List.filter_map
