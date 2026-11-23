@@ -160,10 +160,35 @@ let dispatch_rows =
         (fun (cache, row, at) -> cache := Nx.set at row !cache);
     ]
 
+(* A read of [x]'s elements as a dataframe library reads a column: its first
+   element through the bytes of its host array. *)
+let read_first x =
+  Nx.Repr.read ~by:"bench" x (fun a ->
+      Rig.Buffer.read (A.buffer a) Bigarray.float32 (fun b ->
+          Bigarray.Array1.unsafe_get b 0))
+
+(* [n] domains beside this one, each adding a 16-element float32 value of its
+   own until [stop_rivals]. *)
+let rivals n =
+  let stop = Atomic.make false in
+  let rival () =
+    let x = filled D.Float32 [| 16 |] 1.5 in
+    while not (Atomic.get stop) do
+      ignore (Sys.opaque_identity (Nx.add x x))
+    done
+  in
+  (stop, List.init n (fun _ -> Domain.spawn rival))
+
+let stop_rivals (stop, ds) =
+  Atomic.set stop true;
+  List.iter Domain.join ds
+
 (* Calls on 16 elements, where a call's own cost outweighs its arithmetic,
    as a sampler's steps over a small state make them: elementwise kinds,
-   a scalar form, a sum, a cumsum, and a leapfrog step x + dt (v + dt/2 g)
-   of three such calls and two scalar forms. *)
+   a scalar form, a sum, a truth reduction through a program, a cumsum, a
+   concatenation, a read as a dataframe library reads, a leapfrog step
+   x + dt (v + dt/2 g) of three such calls and two scalar forms, and an add
+   while seven other domains add, as a program adding on eight domains. *)
 let small_rows =
   let f32 () = filled D.Float32 [| 16 |] 1.5 in
   let f64 () = filled D.Float64 [| 16 |] 1.5 in
@@ -174,6 +199,10 @@ let small_rows =
   Thumper.group "small"
     [
       Thumper.bench_with_setup "add-f32-16" ~setup:f32 (fun x -> Nx.add x x);
+      Thumper.bench_with_setup "add-f32-16-8-domains"
+        ~setup:(fun () -> (rivals 7, f32 ()))
+        ~teardown:(fun (r, _) -> stop_rivals r)
+        (fun (_, x) -> Nx.add x x);
       Thumper.bench_with_setup "exp-f32-16" ~setup:f32 Nx.exp;
       Thumper.bench_with_setup "where-f32-16"
         ~setup:(fun () ->
@@ -188,8 +217,12 @@ let small_rows =
           Nx.mul_s x 0.5);
       Thumper.bench_with_setup "sum-f32-16" ~setup:f32 (fun x -> Nx.sum x);
       Thumper.bench_with_setup "sum-f64-16" ~setup:f64 (fun x -> Nx.sum x);
+      Thumper.bench_with_setup "any-f32-16" ~setup:f32 (fun x -> Nx.any x);
       Thumper.bench_with_setup "cumsum-f32-16" ~setup:f32 (fun x ->
           Nx.cumsum x);
+      Thumper.bench_with_setup "concatenate-f32-2x16" ~setup:f32 (fun x ->
+          Nx.concatenate ~axis:0 [ x; x ]);
+      Thumper.bench_with_setup "repr-read-f32-16" ~setup:f32 read_first;
       Thumper.bench_with_setup "leapfrog-step-f32-16"
         ~setup:(fun () -> (f32 (), f32 (), f32 ()))
         step;
