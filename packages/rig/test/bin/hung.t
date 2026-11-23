@@ -4,7 +4,9 @@ its bound, and waits for the machine as for one that does not answer.
 Here b's half is stopped while the job runs, and c's agent killed.
 Hold the runner until c's half has reported and exited, so that a delayed
 half cannot miss the runner's cleanup bound. Its zombie stays visible
-until the runner resumes and reaps it.
+until the runner resumes and reaps it. The job's silence bound, 2 s,
+outlasts a loaded machine's pauses, which could otherwise fail the job of
+an agent's silence before c's agent is killed.
 
   $ . support/env.sh
   $ host a 127.0.0.1
@@ -12,7 +14,7 @@ until the runner resumes and reaps it.
   $ host c ::1
   $ agent_of() { cat machines/$1/rig-agent-$(id -u).lock; }
 
-  $ rig run --silence 0.5 --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
+  $ rig run --silence 2 --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
   $ ./support/await out joined
   $ b=$(cat machines/b/pid); c=$(cat machines/c/pid)
