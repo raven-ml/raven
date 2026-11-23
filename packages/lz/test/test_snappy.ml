@@ -749,6 +749,10 @@ let () =
              encode_strings;
              law_exact;
              law_short;
+             cases "bound n is 32 + n + n / 6"
+               ~id:(fun (n, _) -> string_of_int n)
+               [ (0, 32); (5, 37); (6, 39); (65_536, 76_490) ]
+               (fun (n, k) -> equal int k (Lz.Snappy.bound n));
              test "a negative size has no bound" (fun () ->
                  raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
                      Lz.Snappy.bound (-1)));

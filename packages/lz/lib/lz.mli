@@ -644,8 +644,8 @@ module Snappy : sig
       ({!section-decoding}). *)
 
   val bound : int -> int
-  (** [bound n] is a destination size for the block of any [n] bytes
-      ({!section-encoding}).
+  (** [bound n] is [32 + n + n / 6], a destination size for the block of any [n]
+      bytes ({!section-encoding}).
 
       Raises [Invalid_argument] if [n] is above 2{^32} - 1. *)
 

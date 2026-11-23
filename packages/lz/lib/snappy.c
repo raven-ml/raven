@@ -524,6 +524,7 @@ static uint8_t *fragment(const uint8_t *in, size_t n, uint8_t *op,
   }
 }
 
+/* snappy.cc's MaxCompressedLength of [n] bytes. */
 size_t lz_snappy_bound(size_t n) { return 32 + n + n / 6; }
 
 enum lz_status lz_snappy_encode(struct lz_io *io) {
