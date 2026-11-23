@@ -1403,9 +1403,11 @@ val jit :
 
     Whether an argument is donated is not part of the key. A call retraces
     exactly when its key is new to [jit s f], over stand-ins in C order, so
-    [f]'s code and its side effects run once per key. Domains share the
-    programs. A call whose key is being traced waits for that trace, except on
-    the tracing domain, where it traces again.
+    [f]'s code and its side effects run once per key, except as below. Domains
+    share the programs. A call whose key is being traced waits for that trace,
+    another systhread of the tracing domain included, except on the tracing
+    thread itself, from inside the trace or a fiber it resumes meanwhile, where
+    it traces again.
 
     With the variable [RUNE_JIT_DEBUG] holding a nonzero integer in the
     environment when rune is initialised, each retrace prints on standard error
