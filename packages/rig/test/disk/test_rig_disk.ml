@@ -151,10 +151,18 @@ let exe =
 let root = Filename.dirname exe
 let dir = Filename.concat root (strf "files-%d" (Unix.getpid ()))
 
-(* Whether the system gives the suite's files an identity. Where it gives none,
-   the disk keeps each file's descriptor until the file is collected, beyond its
-   bound, and never reopens a file. *)
-let identified = lazy (Support.identified root)
+(* Whether the system gives the suite's files an identity, asked of a file made
+   in their directory. Where it gives none, the disk keeps each file's
+   descriptor until the file is collected, beyond its bound, and never reopens a
+   file. *)
+let identified =
+  lazy
+    (let path = Filename.concat dir "identity" in
+     Out_channel.with_open_bin path ignore;
+     Fun.protect
+       ~finally:(fun () -> Sys.remove path)
+       (fun () -> Support.identified path))
+
 let names = Atomic.make 0
 
 let clear dir =
@@ -1350,7 +1358,7 @@ let test_release_words (_, use) =
 let test_too_many () =
   if Sys.win32 then skip ~reason:"no limit of open files" ();
   let ninth =
-    if Lazy.force identified then "f8" else "refused naming its path"
+    if Lazy.force identified then "f8" else "refused for too many open files"
   in
   equal text ("ninth: " ^ ninth ^ "\nfirst: f0") (child [ "open-files" ])
 
@@ -2035,8 +2043,9 @@ let open_files_child () =
   limit_open_files ();
   let said i = function
     | Ok f -> read (Rig_disk.buffer f)
-    | Error why when String.starts_with ~prefix:paths.(i) why ->
-        "refused naming its path"
+    | Error why when why = strf "%s: %s" paths.(i) (Unix.error_message EMFILE)
+      ->
+        "refused for too many open files"
     | Error why -> "Error " ^ why
   in
   let opened = Array.init 8 (fun i -> Rig_disk.of_file paths.(i)) in

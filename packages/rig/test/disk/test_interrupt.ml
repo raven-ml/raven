@@ -91,10 +91,10 @@ let paths =
          Out_channel.with_open_bin path (fun oc -> output_string oc (bytes i));
          path))
 
-(* Whether the system gives the files an identity. Where it gives none, the disk
-   keeps every file's descriptor, beyond its bound, until the file is
-   collected. *)
-let identified = lazy (Support.identified root)
+(* Whether the system gives the files an identity, asked of the first. Where it
+   gives none, the disk keeps every file's descriptor, beyond its bound, until
+   the file is collected. *)
+let identified = lazy (Support.identified (List.hd (Lazy.force paths)))
 
 let read b =
   let h = B.create Rig.host (B.length b) in
