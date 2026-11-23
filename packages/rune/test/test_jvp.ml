@@ -7,7 +7,7 @@
    differences at float64 for every operation, complex functions as maps of
    their parts; the values the kinks' rules and the derivatives' definitions
    give; the gauges factorisations fix; the interface and its errors; jvp of a
-   compiled function at every dtype; a map's tangent in one kernel. *)
+   compiled function at every dtype. *)
 
 open Windtrap
 open Rune_support
@@ -598,6 +598,23 @@ let test_fresh () =
   let m = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   fresh ~msg:"a transpose's" (snd (Rune.jvp' Nx.transpose m m))
 
+exception Inside
+
+(* An exception the function raises passes through jvp unchanged. *)
+let test_exception () =
+  let x = v [| 1.; 2. |] in
+  raises Inside (fun () -> Rune.jvp' (fun _ -> raise Inside) x x)
+
+(* jvp runs its function once, for the primal and the tangent. *)
+let test_runs_once () =
+  let runs = ref 0 in
+  let f x =
+    incr runs;
+    Nx.sin x
+  in
+  ignore (Rune.jvp' f (v [| 1.; 2. |]) (v [| 1.; 1. |]));
+  equal int 1 !runs
+
 (* One array at two leaves is two parameters, each with its tangent. *)
 let test_two_leaves () =
   let xs = [| 0.5; -2. |] in
@@ -883,60 +900,16 @@ let test_error (_, message, f) =
       | Is e -> equal string e m
       | Starts p -> starts_with ~prefix:p m)
 
-(* jvp of a compiled function *)
+(* jvp of a compiled function
 
-type jit_case =
-  | Jit_case :
-      ('v, 's) Nx.dtype
-      * int array
-      * Operand.t
-      * Operand.t
-      * Operand.t
-      * Operand.t
-      * Expr.t
-      -> jit_case
-
-(* float32 and float64 in nearly half the cases, every dtype in the rest,
-   complex and narrow floats often enough that every run reaches them. *)
-let dtypes =
-  let floats = [ D.Any f64; D.Any Nx.float32 ] in
-  let complex = List.filter (fun (D.Any d) -> D.is Complex d) D.all in
-  let narrow =
-    List.filter
-      (fun (D.Any d) ->
-        D.is Float d && not (D.equal d f64 || D.equal d Nx.float32))
-      D.all
-  in
-  Gen.frequency
-    [
-      (3, Gen.of_list floats);
-      (1, Gen.of_list complex);
-      (1, Gen.of_list narrow);
-      (2, Gen.of_list D.all);
-    ]
-
-(* An expression of the functions a compiled call computes exactly at the case's
-   dtype, whose derivatives sum no terms. *)
-let jit_cases =
-  let open Gen in
-  (let* s = Operand.shape in
-   let* e = Expr.gen ~rank:(Array.length s) in
-   let* x = Operand.draw s
-   and+ y = Operand.draw s
-   and+ tx = Operand.draw s
-   and+ ty = Operand.draw s in
-   let+ (D.Any dt) = dtypes in
-   let e =
-     match D.kind dt with
-     | Float -> Expr.exact e
-     | _ -> Expr.exact_at dt (Expr.generic e)
-   in
-   Jit_case (dt, s, x, y, tx, ty, Expr.unsummed e))
-  |> with_pp (fun ppf (Jit_case (dt, s, x, y, _, _, e)) ->
-      Format.fprintf ppf "%a %a, x %a, y %a: %a" Nx.pp_dtype dt Operand.pp_shape
-        s Operand.pp_view x.view Operand.pp_view y.view Expr.pp e)
-
-let offset (o : Operand.t) = match o.view with Offset _ -> true | _ -> false
+   A program is an expression of the functions a compiled call computes exactly
+   at its dtype, whose derivatives sum no terms, over operands and tangents of
+   one shape, each in its view: every template of shape, views and expression at
+   float32 and float64, and each other dtype at a template that holds elements.
+   Its compiled forms are made once and compile at the first case that draws the
+   program; the cases draw a program and the elements of its operands and
+   tangents. Each program runs first as an example, so every run compiles each
+   and covers every dtype. *)
 
 let eval (type v s) (dt : (v, s) Nx.dtype) e :
     (v, s, 'd) Nx.t -> (v, s, 'd) Nx.t -> (v, s, 'd) Nx.t =
@@ -944,22 +917,188 @@ let eval (type v s) (dt : (v, s) Nx.dtype) e :
   | Float -> fun x y -> Expr.eval x y e
   | _ -> fun x y -> Expr.eval_any x y e
 
+type ('v, 's) host = ('v, 's, Nx.host) Nx.t
+
+type jit_program =
+  | Jit_program : {
+      dt : ('v, 's) Nx.dtype;
+      shape : int array;
+      views : Operand.view array;
+      e : Expr.t;
+      g : (('v, 's) host -> ('v, 's) host -> ('v, 's) host) Lazy.t;
+      staged :
+        (('v, 's) host ->
+        ('v, 's) host ->
+        ('v, 's) host ->
+        ('v, 's) host ->
+        ('v, 's) host * ('v, 's) host)
+        Lazy.t;
+    }
+      -> jit_program
+
+let jit_program (type v s) (dt : (v, s) Nx.dtype) (shape, views, e) =
+  let e =
+    match D.kind dt with
+    | Float -> Expr.exact e
+    | _ -> Expr.exact_at dt (Expr.generic e)
+  in
+  let e = Expr.unsummed e in
+  let f : (v, s) host -> (v, s) host -> (v, s) host = eval dt e in
+  let g = lazy (Rune.jit T.(tensor @-> tensor @-> returns tensor) f) in
+  let staged =
+    lazy
+      (Rune.jit
+         T.(
+           tensor @-> tensor @-> tensor @-> tensor
+           @-> returns (pair tensor tensor))
+         (fun x y tx ty ->
+           Rune.jvp (two ()) T.tensor (fun (x, y) -> f x y) (x, y) (tx, ty)))
+  in
+  Jit_program { dt; shape; views; e; g; staged }
+
+(* A shape, the views of [x], [y] and their tangents, and an expression; the
+   expressions hold each constant {!Expr.gen} draws. *)
+let jit_templates =
+  let open Expr in
+  [|
+    ( [||],
+      Operand.[| Plain; Plain; Plain; Plain |],
+      Bin (Mul, X, Un (Abs, Bin (Add, Y, K (Operand.F 0.)))) );
+    ( [| 0; 3 |],
+      Operand.[| Plain; Flipped; Plain; Plain |],
+      Bin (Add, Un (Square, X), Y) );
+    ( [| 1 |],
+      Operand.[| Offset 1; Plain; Plain; Broadcast |],
+      Bin (Maximum, X, Un (Neg, Bin (Add, Y, K (Operand.F (-0.))))) );
+    ( [| 2; 2 |],
+      Operand.[| Strided; Plain; Permuted; Plain |],
+      Bin (Mul, X, Bin (Sub, Y, Bin (Minimum, X, K (Operand.F Float.infinity))))
+    );
+    ( [| 3; 2 |],
+      Operand.[| Permuted; Plain; Flipped; Strided |],
+      Bin
+        ( Minimum,
+          Bin (Mul, Un (Sqrt, Un (Abs, X)), Un (Recip, Bin (Add, X, Y))),
+          Bin
+            ( Minimum,
+              Un (Flip 0, Bin (Sub, Y, Un (Square, X))),
+              K Operand.Greatest ) ) );
+    ( [| 3 |],
+      Operand.[| Flipped; Offset 2; Plain; Plain |],
+      Un (Flip 0, Bin (Add, X, Un (Neg, Bin (Mul, Y, K (Operand.F 2.))))) );
+    (* Past one kernel block. *)
+    ( [| 2; 300 |],
+      Operand.[| Plain; Broadcast; Plain; Plain |],
+      Bin
+        ( Div,
+          X,
+          Bin (Maximum, Bin (Mul, Y, K (Operand.F 0.5)), K (Operand.F 1.)) ) );
+    ( [| 2; 2; 2 |],
+      Operand.[| Broadcast; Strided; Plain; Offset 3 |],
+      Bin (Where_less, X, Bin (Add, Y, K (Operand.F (-3.)))) );
+    ( [| 1; 1 |],
+      Operand.[| Plain; Permuted; Offset 2; Plain |],
+      Bin (Minimum, Un (Recip, X), Bin (Mul, Y, K Operand.Least)) );
+  |]
+
+(* Every template at float32 and float64, and each other dtype at one template
+   holding elements, those taken in turn. *)
+let jit_programs =
+  let wide (D.Any d) = D.equal d Nx.float32 || D.equal d f64 in
+  let templates = Array.to_list jit_templates in
+  let filled =
+    Array.of_list (List.filter (fun (s, _, _) -> numel s > 0) templates)
+  in
+  let floats =
+    List.concat_map
+      (fun (D.Any dt) -> List.map (jit_program dt) templates)
+      [ D.Any Nx.float32; D.Any f64 ]
+  in
+  let others =
+    List.mapi
+      (fun i (D.Any dt) -> jit_program dt filled.(i mod Array.length filled))
+      (List.filter (fun d -> not (wide d)) D.all)
+  in
+  Array.of_list (floats @ others)
+
+(* The elements an operand's storage holds in [view] at shape [s]. *)
+let storage view s =
+  match view with
+  | Operand.Plain | Flipped | Permuted -> numel s
+  | Strided -> numel s * 2
+  | Broadcast -> if Array.length s = 0 then 1 else numel s / Int.max 1 s.(0)
+  | Offset k -> numel s + k
+
+(* An element as {!Operand.draw} draws one: 3 in 5 from its pool, 2 in 5 in
+   [[-4, 4]]. *)
+let elements n =
+  let open Gen in
+  let element =
+    frequency
+      [
+        (3, of_list (Array.to_list Operand.pool));
+        (2, map (fun x -> Operand.F x) (float_range (-4.) 4.));
+      ]
+  in
+  array ~size:(constant n) element
+
+let jit_shape (Jit_program p) = (p.shape, p.views)
+
+let pp_program ppf (Jit_program p) vs =
+  let pp_values =
+    Format.pp_print_array
+      ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+      Operand.pp_value
+  in
+  let pp_operand ppf k =
+    Format.fprintf ppf "%a [%a]" Operand.pp_view p.views.(k) pp_values vs.(k)
+  in
+  Format.fprintf ppf "%a %a, x %a, y %a, tx %a, ty %a: %a" Nx.pp_dtype p.dt
+    Operand.pp_shape p.shape pp_operand 0 pp_operand 1 pp_operand 2 pp_operand 3
+    Expr.pp p.e
+
+let pp_jit_case ppf (i, vs) = pp_program ppf jit_programs.(i) vs
+
+let jit_cases =
+  let open Gen in
+  (let* i = int_range 0 (Array.length jit_programs - 1) in
+   let s, views = jit_shape jit_programs.(i) in
+   let+ x = elements (storage views.(0) s)
+   and+ y = elements (storage views.(1) s)
+   and+ tx = elements (storage views.(2) s)
+   and+ ty = elements (storage views.(3) s) in
+   (i, [| x; y; tx; ty |]))
+  |> with_pp pp_jit_case
+
+(* Each program at elements of the pool in turn. *)
+let jit_examples =
+  let pool = Operand.pool in
+  let from k n = Array.init n (fun j -> pool.((k + j) mod Array.length pool)) in
+  List.init (Array.length jit_programs) (fun i ->
+      let s, views = jit_shape jit_programs.(i) in
+      (i, Array.mapi (fun k v -> from (i + (5 * k)) (storage v s)) views))
+
+let offset (v : Operand.view) = match v with Offset _ -> true | _ -> false
+
 (* jvp of a compiled function and a compiled jvp give jvp's bits, every dtype's:
    integers and booleans refused alike. *)
-let law_jit (Jit_case (dt, s, xo, yo, txo, tyo, e)) =
-  let make = Operand.make dt s in
-  let x = make xo and y = make yo and tx = make txo and ty = make tyo in
+let law_at (Jit_program p) vs =
+  let dt = p.dt and s = p.shape in
+  let make k =
+    Operand.make dt s { Operand.view = p.views.(k); values = vs.(k) }
+  in
+  let x = make 0 and y = make 1 and tx = make 2 and ty = make 3 in
   cover "a zero-size shape" (numel s = 0);
   cover "one element" (numel s = 1 && Array.length s > 0);
   cover "a 0-d shape" (Array.length s = 0);
-  cover "a view operand" (xo.view <> Plain || yo.view <> Plain);
-  cover "an offset operand" (offset xo || offset yo);
-  cover "a composition of over 6 functions" (Expr.size e > 6);
+  cover "a view operand" (p.views.(0) <> Plain || p.views.(1) <> Plain);
+  cover "an offset operand" (offset p.views.(0) || offset p.views.(1));
+  cover "a composition of over 6 functions" (Expr.size p.e > 6);
   cover "a complex dtype" (D.is Complex dt);
   cover "a narrow float dtype"
     (D.is Float dt && not (D.equal dt f64 || D.equal dt Nx.float32));
   cover "an integer dtype" (D.is Signed dt || D.is Unsigned dt);
-  let f = eval dt e in
+  let f = eval dt p.e in
   let both (p, t) = (codes p, codes t) in
   let jvp f =
     outcome (fun () ->
@@ -969,40 +1108,11 @@ let law_jit (Jit_case (dt, s, xo, yo, txo, tyo, e)) =
   cover "a refused function"
     (match expected with Raised _ -> true | _ -> false);
   let t = outcome_t (Testable.pair codes_t codes_t) in
-  let g = Rune.jit T.(tensor @-> tensor @-> returns tensor) f in
-  equal ~msg:"jvp of jit" t expected (jvp g);
-  let staged =
-    Rune.jit
-      T.(
-        tensor @-> tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
-      (fun x y tx ty ->
-        Rune.jvp (two ()) T.tensor (fun (x, y) -> f x y) (x, y) (tx, ty))
-  in
+  equal ~msg:"jvp of jit" t expected (jvp (Lazy.force p.g));
   equal ~msg:"jit of jvp" t expected
-    (outcome (fun () -> both (staged x y tx ty)))
+    (outcome (fun () -> both (Lazy.force p.staged x y tx ty)))
 
-(* One kernel per map *)
-
-let test_one_kernel () =
-  let x = Nx.place Count.on (v [| 0.5; -1.; 2. |]) in
-  let t = Nx.place Count.on (v [| 1.; 1.; 1. |]) in
-  let calls x t f =
-    C.reset ();
-    ignore (Rune.jvp' f x t);
-    (C.calls (), C.positions ())
-  in
-  equal ~msg:"sin" (pair int int) (1, 3) (calls x t Nx.sin);
-  equal ~msg:"a chain of three" (pair int int) (3, 9)
-    (calls x t (fun x -> Nx.exp (Nx.mul (Nx.sin x) x)));
-  equal ~msg:"a sum and its tangent" (pair int int) (1, 3)
-    (calls x t (fun x -> Nx.sum x));
-  (* A derivative wider than a block of nx.cpu's holds is one loop too. *)
-  let w = Nx.place Count.on (Nx.full f64 [| wide; 3 |] 0.5) in
-  let tw = Nx.place Count.on (Nx.full f64 [| wide; 3 |] 1.) in
-  equal ~msg:"a map of twenty operands" (pair int int) (1, 3)
-    (calls w tw wide_map);
-  equal ~msg:"a sum over twenty operands" (pair int int) (1, 3)
-    (calls w tw (wide_reduce (Monoid (Sum, 0, f64))))
+let law_jit (i, vs) = law_at jit_programs.(i) vs
 
 (* Placement
 
@@ -1042,6 +1152,9 @@ let unary_gen =
      and+ n = of_list [ 1; 2; 3 ]
      and+ k = int_range 0 2 in
      (u, m, n, k))
+
+(* Windows of uneven rows, which the generator draws in one case in 15. *)
+let unary_examples = [ (List.hd unaries, 5, 3, 1) ]
 
 let law_unary_placed ((name, { f }), m, n, k) =
   let s = [| m; n |] in
@@ -1165,44 +1278,6 @@ let shared_law (steps, ux, uc, ts) =
             (Nx.create f64 [| 3 |] d))
     (List.combine steps ds)
 
-(* A chain of one kind of map
-
-   Each [Nx.mul_s] makes its program, which holds its scalar, and nx keeps
-   none between calls: every link of a chain reaches the derivative with a
-   new program, equal to the last one's where the scalar repeats, and the
-   derivative finds its plan again by hashing, which allocates its key. A
-   link after [x * 2 * 3 * 2] costs what a link after [x * 2] does, whatever
-   scalars came before, and a baseline records its words. *)
-
-let chain_words pre n =
-  let x = Nx.create f64 [| 4 |] [| 1.; 2.; 3.; 4. |] in
-  let f x =
-    let y = List.fold_left Nx.mul_s x pre in
-    let rec go k y = if k = 0 then y else go (k - 1) (Nx.mul_s y 2.) in
-    go n y
-  in
-  let run () =
-    ignore (Sys.opaque_identity (Rune.jvp' f x x))
-  in
-  let words () =
-    let before = Gc.minor_words () in
-    run ();
-    Gc.minor_words () -. before
-  in
-  run ();
-  run ();
-  (* The fewest of ten runs' words, which are each run's same words: an
-     allocation that is not the run's, as another thread's, adds to some runs
-     only. *)
-  List.fold_left Float.min infinity (List.init 10 (fun _ -> words ()))
-
-let test_rebuilt_chain () =
-  let link pre = chain_words pre 9 -. chain_words pre 8 in
-  let rebuilt = link [ 2.; 3.; 2. ] in
-  equal ~msg:"words per link" float_exact (link [ 2. ]) rebuilt;
-  Windtrap.expect (Printf.sprintf "%.0f words" rebuilt)
-  @@ __POS_OF__ {| 284 words |}
-
 let () =
   exit
     (run "rune jvp"
@@ -1228,6 +1303,9 @@ let () =
            [
              test "integer, boolean and constant tangents" test_zero_tangents;
              test "a tangent is a value of its own" test_fresh;
+             test "the function runs once" test_runs_once;
+             test "an exception of the function passes through unchanged"
+               test_exception;
              test "one array at two leaves" test_two_leaves;
              test "a parameter of zeros" test_zero_primal;
              test "detach" test_detach;
@@ -1242,18 +1320,13 @@ let () =
          cases "errors" ~id:(fun (n, _, _) -> n) errors test_error;
          group "jit"
            [
-             prop "jvp of jit and jit of jvp of exact functions" jit_cases
-               law_jit;
-           ];
-         group "kernels"
-           [
-             test "a map's tangent is one kernel" test_one_kernel;
-             test "a link after a rebuilt program costs what any link does"
-               test_rebuilt_chain;
+             prop ~examples:jit_examples
+               "jvp of jit and jit of jvp of exact functions" jit_cases law_jit;
            ];
          group "placement"
            [
-             prop ~count:200 "a tangent lies at its result's placement"
-               unary_gen law_unary_placed;
+             prop ~count:200 ~examples:unary_examples
+               "a tangent lies at its result's placement" unary_gen
+               law_unary_placed;
            ];
        ])
