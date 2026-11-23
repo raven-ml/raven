@@ -221,6 +221,10 @@ let whole =
       neighbours "CRC-32 of a buffer" checksum (fun w ->
           let b = Lz_support.create w in
           fun () -> ignore (Lz.Crc32.bigbytes b));
+      test "CRC-32 of a string holds the lock" (fun () ->
+          let s = String.make (2 * checksum) 'x' in
+          equal int ~msg:"releases" 0
+            (count (fun () -> ignore (Lz.Crc32.string s))));
     ]
 
 (* A block of LZ4 or Snappy has no block inside to report before: its

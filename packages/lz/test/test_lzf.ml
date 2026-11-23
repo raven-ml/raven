@@ -231,5 +231,20 @@ let changed =
         (fun (z, cap) -> equal outcome (model ~cap z) (decode ~cap z));
     ]
 
+(* Memory *)
+
+let allocation =
+  test "a decode allocates only its result" (fun () ->
+      let s = build (Corpus (Text, 64 * 1024)) in
+      let src = of_string (lzf s) and dst = create (String.length s) in
+      let words f =
+        let before = Gc.minor_words () in
+        let r = Sys.opaque_identity (f ()) in
+        (r, int_of_float (Gc.minor_words () -. before))
+      in
+      let (), baseline = words (fun () -> ()) in
+      let r, allocated = words (fun () -> Lz.Lzf.decode src dst) in
+      equal int (baseline + Obj.reachable_words (Obj.repr r)) allocated)
+
 let () =
-  exit (run "lz.lzf" [ elements; round_trips; refusals; changed ])
+  exit (run "lz.lzf" [ allocation; elements; round_trips; refusals; changed ])

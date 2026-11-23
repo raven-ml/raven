@@ -518,6 +518,18 @@ let gzip =
             (result (pair string int) Lz_support.error)
             ~msg:"stepped" (Error e)
             (Lz_support.stepped (Lz.Gzip.decoder ()) padded));
+      test "the members before the padding decode up to the error's offset"
+        (fun () ->
+          let padded = member ^ member ^ String.make 512 '\000' in
+          let at = 2 * n in
+          bad padded (malformed at "incorrect header check");
+          let src = Array1.sub (Lz_support.of_string padded) 0 at in
+          let dst = Lz_support.create 10 in
+          equal
+            (result Lz_support.progress Lz_support.error)
+            (Ok { Lz.consumed = at; produced = 10 })
+            (Lz.Gzip.decode src dst);
+          equal string "hellohello" (Lz_support.to_string dst));
       test "a later member's ID1, ID2 and CM are checked as each arrives"
         (fun () ->
           bad (member ^ "\x1f\x8b\007") (malformed (n + 2) "unknown compression method");
@@ -808,10 +820,18 @@ let allocation =
         r;
       equal int ~msg:"words allocated" (baseline + Obj.reachable_words (Obj.repr r)) words)
 
+(* lz.mli's example of pp_error. *)
+let printed =
+  test "pp_error prints the kind, the offset and the message" (fun () ->
+      let e = malformed 1024 "invalid distance too far back" in
+      equal string "malformed at byte 1024: invalid distance too far back"
+        (Format.asprintf "%a" Lz.pp_error e))
+
 let () =
   exit
     (run "Deflate"
        [
+         printed;
          empty;
          group "decode" [ goldens; allocation ];
          group "decoder" [ exact_end; window ];

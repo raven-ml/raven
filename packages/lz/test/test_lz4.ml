@@ -691,6 +691,8 @@ let frame_refusals =
           ("FLG bit 1", version lor 0x02, max64k, 4);
           ("BD bit 7", version, max64k lor 0x80, 5);
           ("BD bit 3", version, max64k lor 0x08, 5);
+          ("BD bit 2", version, max64k lor 0x04, 5);
+          ("BD bit 1", version, max64k lor 0x02, 5);
           ("BD bit 0", version, max64k lor 0x01, 5);
         ]
         (fun (_, flg, bd, at) ->
