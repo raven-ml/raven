@@ -155,6 +155,25 @@ let domain_tests =
     test "a derivative along a missing axis raises" (fun () ->
         raises_with "axis = 2 is not in [0, 2)" (fun () ->
             Grid.derivative ~axis:2 g));
+    test "an integral along a negative axis raises" (fun () ->
+        raises_with "axis = -1 is not in [0, 2)" (fun () ->
+            Grid.integral ~axis:(-1) g));
+    cases "chebyshev rejects its arguments"
+      ~id:(fun (name, _) -> name)
+      (let cheb ?(degree = 3) ?(pieces = 2) ?(lo = vec [| 0.; 0. |]) f () =
+         ignore (Grid.chebyshev ~degree ~pieces f ~lo ~hi:(vec [| 1.; 1. |]))
+       and sum x = Nx.sum ~axes:[ -1 ] x in
+       [
+         ("degree -1", ("degree = -1 is negative", cheb ~degree:(-1) sum));
+         ("no piece", ("pieces = 0 is not positive", cheb ~pieces:0 sum));
+         ( "corners of two shapes",
+           ( "lo and hi must have one shape [d], got [3] and [2]",
+             cheb ~lo:(vec [| 0.; 0.; 0. |]) sum ) );
+         ( "a result without the points' shape",
+           ("the function returned shape [] for points of shape", cheb Nx.sum)
+         );
+       ])
+      (fun (_, (sub, f)) -> raises_with sub f);
   ]
 
 let structure_tests =
