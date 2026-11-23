@@ -11,18 +11,26 @@
 # forced: blessed nuts/schools/4 nuts/schools/64 nuts/eager/schools/4 nuts/eager/gp_pois_regr/4 hmc/eager/schools/4 hmc/eager/gp_pois_regr/4 under load 34.8 on 14 cores
 # forced: blessed nuts/schools/4 nuts/schools/64 nuts/eager/schools/4 nuts/eager/gp_pois_regr/4 under load 28.5 on 14 cores
 
-dist/beta/100000	alloc_words	exact	6588
-dist/beta/100000/grad	alloc_words	exact	1324
+dist/beta/100000	alloc_words	exact	8022
+dist/beta/100000	wall_time	batch=1	n=20	1.660e-03	1.246e-03 1.252e-03 1.253e-03 1.312e-03 1.321e-03 1.382e-03 1.580e-03 1.604e-03 1.613e-03 1.640e-03 1.680e-03 1.706e-03 1.708e-03 1.749e-03 1.900e-03 2.036e-03 2.248e-03 2.287e-03 2.368e-03 2.974e-03
+dist/beta/100000/grad	alloc_words	exact	1263
+dist/beta/100000/grad	wall_time	batch=16	n=20	7.028e-04	4.529e-04 5.071e-04 5.437e-04 5.539e-04 5.740e-04 6.040e-04 6.154e-04 6.286e-04 6.349e-04 6.986e-04 7.070e-04 7.193e-04 7.208e-04 7.226e-04 7.322e-04 7.357e-04 7.376e-04 7.406e-04 7.505e-04 7.854e-04
 dist/binomial/100000	alloc_words	exact	31774
 dist/binomial/100000/grad	alloc_words	exact	1324
-dist/dirichlet/100000	alloc_words	exact	5512
-dist/dirichlet/100000/grad	alloc_words	exact	1182
-dist/gamma/100000	alloc_words	exact	4104
-dist/gamma/100000/grad	alloc_words	exact	1324
+dist/dirichlet/100000	alloc_words	exact	6265
+dist/dirichlet/100000	wall_time	batch=1	n=20	4.252e-03	3.160e-03 3.289e-03 3.552e-03 3.629e-03 3.649e-03 3.656e-03 3.744e-03 3.781e-03 4.087e-03 4.247e-03 4.256e-03 4.313e-03 4.391e-03 4.404e-03 4.474e-03 4.525e-03 4.562e-03 4.737e-03 4.829e-03 5.136e-03
+dist/dirichlet/100000/grad	alloc_words	exact	1127
+dist/dirichlet/100000/grad	wall_time	batch=8	n=20	1.168e-03	7.960e-04 8.001e-04 8.504e-04 8.840e-04 9.145e-04 9.344e-04 9.448e-04 1.112e-03 1.152e-03 1.165e-03 1.170e-03 1.201e-03 1.205e-03 1.222e-03 1.223e-03 1.248e-03 1.262e-03 1.304e-03 1.320e-03 1.321e-03
+dist/gamma/100000	alloc_words	exact	4818
+dist/gamma/100000	wall_time	batch=1	n=20	7.815e-04	2.964e-04 2.988e-04 3.060e-04 3.072e-04 3.150e-04 3.255e-04 4.259e-04 5.277e-04 6.625e-04 6.865e-04 8.765e-04 9.645e-04 1.005e-03 1.048e-03 1.073e-03 1.090e-03 1.092e-03 1.147e-03 1.460e-03 1.621e-03
+dist/gamma/100000/grad	alloc_words	exact	1263
+dist/gamma/100000/grad	wall_time	batch=16	n=20	4.862e-04	3.700e-04 3.846e-04 4.151e-04 4.439e-04 4.624e-04 4.676e-04 4.698e-04 4.772e-04 4.772e-04 4.833e-04 4.891e-04 4.966e-04 5.071e-04 5.081e-04 5.089e-04 5.098e-04 5.107e-04 5.255e-04 5.357e-04 5.651e-04
 dist/hmm/100	alloc_words	exact	15154
 dist/hmm/100/grad	alloc_words	exact	1608
-dist/inverse_gamma/100000	alloc_words	exact	4106
-dist/inverse_gamma/100000/grad	alloc_words	exact	1324
+dist/inverse_gamma/100000	alloc_words	exact	4820
+dist/inverse_gamma/100000	wall_time	batch=1	n=20	5.956e-04	2.372e-04 2.398e-04 2.577e-04 2.589e-04 2.645e-04 2.872e-04 3.460e-04 5.516e-04 5.583e-04 5.945e-04 5.966e-04 6.098e-04 6.302e-04 6.535e-04 6.701e-04 6.706e-04 6.956e-04 7.059e-04 7.091e-04 1.230e-03
+dist/inverse_gamma/100000/grad	alloc_words	exact	1263
+dist/inverse_gamma/100000/grad	wall_time	batch=16	n=20	5.330e-04	3.786e-04 3.921e-04 4.015e-04 4.554e-04 4.601e-04 4.851e-04 4.980e-04 5.058e-04 5.174e-04 5.262e-04 5.399e-04 5.536e-04 5.542e-04 5.959e-04 6.213e-04 6.382e-04 6.613e-04 6.776e-04 7.406e-04 7.529e-04
 dist/lkj_cholesky/10000	alloc_words	exact	4101
 dist/lkj_cholesky/10000/grad	alloc_words	exact	1182
 dist/neg_binomial/100000	alloc_words	exact	40147
@@ -37,13 +45,17 @@ dist/von_mises/100000	alloc_words	exact	2347
 dist/von_mises/100000/grad	alloc_words	exact	1324
 hmc/eager/gp_pois_regr/4	alloc_words	exact	775736
 hmc/eager/schools/4	alloc_words	exact	317393
-nested/gaussian5/400	alloc_words	exact	5158
-nested/run/gaussian5/100	alloc_words	exact	3372
+nested/gaussian5/400	alloc_words	exact	4912
+nested/gaussian5/400	wall_time	batch=1	n=20	7.258e-03	5.803e-03 6.644e-03 6.931e-03 7.143e-03 7.224e-03 7.235e-03 7.244e-03 7.245e-03 7.255e-03 7.257e-03 7.258e-03 7.271e-03 7.281e-03 7.283e-03 7.288e-03 7.292e-03 7.295e-03 7.369e-03 7.465e-03 7.645e-03
+nested/run/gaussian5/100	alloc_words	exact	3239
+nested/run/gaussian5/100	wall_time	batch=1	n=20	6.078e-02	5.846e-02 5.852e-02 5.855e-02 5.935e-02 5.962e-02 6.016e-02 6.017e-02 6.038e-02 6.055e-02 6.055e-02 6.101e-02 6.108e-02 6.110e-02 6.127e-02 6.141e-02 6.249e-02 6.263e-02 6.294e-02 6.512e-02 6.540e-02
 nuts/eager/gp_pois_regr/4	alloc_words	exact	10382013
 nuts/eager/schools/4	alloc_words	exact	625739
 nuts/schools/4	alloc_words	exact	9270
 nuts/schools/64	alloc_words	exact	9270
 pathfinder/schools/4	alloc_words	exact	9445904
+smc/slice/gaussian5/400	alloc_words	exact	3889
+smc/slice/gaussian5/400	wall_time	batch=8	n=20	8.520e-04	8.494e-04 8.500e-04 8.501e-04 8.501e-04 8.505e-04 8.506e-04 8.508e-04 8.508e-04 8.515e-04 8.517e-04 8.523e-04 8.526e-04 8.550e-04 8.590e-04 8.657e-04 8.832e-04 8.982e-04 8.984e-04 9.000e-04 9.063e-04
 vi/schools/4	alloc_words	exact	11106123
 
 # machine: 943935ae6b4f79ac
