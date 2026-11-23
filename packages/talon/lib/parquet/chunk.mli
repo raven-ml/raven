@@ -72,6 +72,10 @@ type t =
           values of the chunk's [PLAIN] pages, then an empty word, which every
           null row reads. *)
 
+val first_page : Meta.column_meta -> int
+(** [first_page cm] is the position of the first page of the chunk [cm]: its
+    dictionary page's when it has one before its data pages. *)
+
 val check : Meta.file -> row_group:int -> int -> Leaf.t -> unit
 (** [check m ~row_group i l] checks that the chunk [i] of the row group
     [row_group] of [m] can be read as the leaf [l], as {!Talon_parquet.sniff}

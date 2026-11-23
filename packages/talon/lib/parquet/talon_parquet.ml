@@ -68,6 +68,20 @@ let sniffed (schema : Leaf.schema) =
 
 let sniff b = with_bytes b @@ fun bytes -> sniffed (snd (open_ bytes))
 
+let chunks b =
+  with_bytes b @@ fun bytes ->
+  let m, schema = open_ bytes in
+  let column (l : Leaf.t) = List.nth l.rev_path (List.length l.rev_path - 1) in
+  Array.to_list m.row_groups
+  |> List.concat_map (fun (rg : Meta.row_group) ->
+      List.mapi
+        (fun i (c : Meta.chunk) ->
+          (* [open_] checked that every chunk has its metadata. *)
+          let cm = Option.get c.meta in
+          let first = Chunk.first_page cm in
+          (column schema.leaves.(i), first, first + cm.compressed_size))
+        (Array.to_list rg.chunks))
+
 let is_flat (c : Leaf.column) =
   match c.node with Leaf.Prim l -> not l.nested | _ -> false
 

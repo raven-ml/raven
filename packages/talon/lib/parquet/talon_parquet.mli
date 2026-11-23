@@ -324,3 +324,11 @@ val encode :
     types, if [f] leaves a column {{!undeclared}undeclared}, or if a column of
     [f] has a Parquet type {!encode} does not write, such as a [required] one
     from {!sniff}. A format from {!val-format} writes. *)
+
+(**/**)
+
+val chunks : Rig.Buffer.t -> ((string * int * int) list, Talon.Error.t) result
+(** [chunks b] is, in the order of the footer of the Parquet file [b], each of
+    its column chunks as the top-level column it belongs to, the position of its
+    first byte and the position past its last, as {!sniff} reads them. Errors
+    are {!sniff}'s. *)
