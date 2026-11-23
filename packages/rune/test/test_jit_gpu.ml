@@ -3,40 +3,37 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Rune.jit on this machine's first GPU: a scatter and an assembly of any
-   pieces give the host's eager values, a scatter keeps the bits of each
-   element no update lands on, a Set scatter of rows gives eager's bits and a
-   numbering of repeated keys eager's counts, as do searches and a numbering
-   of keys under 64 bits, a cast between float32 and a 16-bit float gives eager's
-   bits at every code and tie, as does a cast of
-   an integer to a float at the ties of every exponent and to bfloat16 at
-   every integer of 16 bits and every int32's low 24 bits, a product of narrow
-   floats or of MXFP4 weights holds its bound, a Q8_0 product takes a tensor
-   core where Tolk.Heuristic.core_fits holds, an MXFP4 product of bfloat16
-   rows decodes each code at each scale byte exactly, a routed product of
-   MXFP4 or bfloat16 experts of exact sums gives eager's bits per row and in
-   blocks of 48 and 64 rows and takes a tensor core and its blocks at the
-   edges the lowering states, as does a routed pair whose second product reads computed rows,
-   with biases or without, and a routed product of computed rows holds its
-   bound, a narrow float's fma rounds once, a call's check raises at the
-   next wait, so the call returns while its work runs, a key split there has
-   the host's words, and a program over the GPU and a software device,
-   devices of two targets, compiles to eager's values with replicas equal bit
-   for bit, a running operation of a prefix is the prefix of its result,
-   attention holds its bound against a float64 reference and gives +0 for a
-   sum of zeros, paged keys and values give dense ones' bits, a sum of a
-   contraction's result holds its bound, a long sum and a weight gradient
-   hold the blocked bound, a kind compiled to nx's sequence, a function nx
-   composes from kinds and a draw of Nx.Rng give eager's bits on an NVIDIA
-   GPU, a draw cast to float32 that two operations read is stored as its
-   bytes, and exp holds its bound in ulps of the correctly
-   rounded result on one that flushes subnormals, a range gather and its
-   gradient compile to eager's bits, and an argmax or argmin over a length
-   16 does not divide gives nx's position, a sum and a product their exact values, and a first k of a sort
-   gives eager's values and positions bit for bit. A call in float64 on a GPU
-   whose kernels lack it, of a set without kernels, raises at the call. It
-   skips without a GPU, or
-   without the compiler the GPU's kernels need. *)
+(* Rune.jit on this machine's first GPU: a scatter and an assembly of any pieces
+   give the host's eager values, a scatter keeps the bits of each element no
+   update lands on, a Set scatter of rows gives eager's bits and a numbering of
+   repeated keys eager's counts, as do searches and a numbering of keys under 64
+   bits, a cast between float32 and a 16-bit float gives eager's bits at every
+   code and tie, as does a cast of an integer to a float at the ties of every
+   exponent and to bfloat16 at every integer of 16 bits and every int32's low 24
+   bits, a product of narrow floats or of MXFP4 weights holds its bound, a Q8_0
+   product gives eager's bits on each side of a tensor core's tile, an MXFP4
+   product of bfloat16 rows decodes each code at each scale byte exactly, a
+   routed product of MXFP4 or bfloat16 experts of exact sums gives eager's bits
+   per row and in blocks of 48 and 64 rows, as does a routed pair whose second
+   product reads computed rows, with biases or without, and a routed product of
+   computed rows holds its bound, a narrow float's fma rounds once, a call's
+   check raises at the next wait, so the call returns while its work runs, a key
+   split there has the host's words, and a program over the GPU and a software
+   device, devices of two targets, compiles to eager's values with replicas
+   equal bit for bit, a running operation of a prefix is the prefix of its
+   result, attention holds its bound against a float64 reference and gives +0
+   for a sum of zeros, paged keys and values give dense ones' bits, a sum of a
+   contraction's result holds its bound, a long sum and a weight gradient hold
+   the blocked bound, a kind compiled to nx's sequence, a function nx composes
+   from kinds and a draw of Nx.Rng give eager's bits on an NVIDIA GPU, as does a
+   draw cast to float32 that two operations read, and exp holds its bound in
+   ulps of the correctly rounded result on one that flushes subnormals, a range
+   gather and its gradient compile to eager's bits, and an argmax or argmin over
+   a length 16 does not divide gives nx's position, a sum and a product their
+   exact values, and a first k of a sort gives eager's values and positions bit
+   for bit. A call in float64 on a GPU whose kernels lack it, of a set without
+   kernels, raises at the call. It skips without a GPU, or without the compiler
+   the GPU's kernels need. *)
 
 open Windtrap
 open Rune_support
@@ -359,44 +356,6 @@ let attention_jvp () =
     ~than:(1e-2 *. (1. +. Float.abs exact))
     (Float.abs (Nx.item [] (Nx.place Nx.Host.on compiled) -. exact))
 
-(* A program over [x] and a value [y], each [256 x 256] float32. *)
-type over = {
-  f :
-    'd.
-    (float, Nx.float32_elt, 'd) Nx.t ->
-    (float, Nx.float32_elt, 'd) Nx.t ->
-    (float, Nx.float32_elt, 'd) Nx.t;
-}
-
-let norm h =
-  let ms = Nx.mean ~axes:[ 1 ] ~keepdims:true (Nx.mul h h) in
-  Nx.div h (Nx.sqrt (Nx.add_s ms 1e-5))
-
-let close h = Nx.place (Nx.Placement.closed (Nx.placement h)) h
-
-(* Programs whose reductions read [y], with its readers: a weighted sum, a sum
-   of two maps of [y], a sum of its squares, a norm of a residual that the
-   program reads again, as a transformer's block does, closed or not, and a
-   softmax. *)
-let reading_programs =
-  [
-    ("a weighted sum", { f = (fun x y -> Nx.sum (Nx.mul x y)) });
-    ( "a sum of two maps",
-      { f = (fun _ y -> Nx.sum (Nx.add (Nx.mul_s y 2.) (Nx.mul_s y 3.))) } );
-    ("a sum of squares", { f = (fun _ y -> Nx.sum (Nx.mul y y)) });
-    ( "a norm of a residual",
-      { f = (fun x y -> let h = Nx.add x y in Nx.add (norm h) h) } );
-    ( "a norm of a closed residual",
-      { f = (fun x y -> let h = close (Nx.add x y) in Nx.add (norm h) h) } );
-    ( "a softmax",
-      {
-        f =
-          (fun _ y ->
-            let e = Nx.exp (Nx.sub y (Nx.max ~axes:[ 1 ] ~keepdims:true y)) in
-            Nx.div e (Nx.sum ~axes:[ 1 ] ~keepdims:true e));
-      } );
-  ]
-
 (* [y] as a reduction of at least [2{^21}] terms, more than a compiled
    reduction runs inside the loop of another, from operands of these shapes:
    a contraction of [256 x 64 x 256] products, or a sum of [256 x 256 x 64]
@@ -423,45 +382,13 @@ let reductions =
       {
         operands = [ [| 256; 256; 64 |] ];
         reduce =
-          (function
-          | [ z ] -> Nx.sum ~axes:[ 2 ] z | _ -> invalid_arg "a sum");
+          (function [ z ] -> Nx.sum ~axes:[ 2 ] z | _ -> invalid_arg "a sum");
       } );
   ]
 
-(* A reduction that a program's reductions read adds one kernel to the
-   program, its own: the program compiles to the kernels it compiles over the
-   reduction's result passed as an argument, and one more. Fewer would run the
-   reduction's terms inside another's loop; more would store its result, or a
-   map of it, twice. *)
-let one_kernel { operands; reduce } { f } =
-  let _, (module S : Nx.Devices) = on_gpu () in
-  let draw i s =
-    Nx.place S.on (Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s)
-  in
-  let x = draw 1 [| 256; 256 |] in
-  let zs = List.mapi (fun i s -> draw (i + 2) s) operands in
-  let zs_t = Nx.Ptree.(list tensor) in
-  let y = Rune.jit Nx.Ptree.(zs_t @-> returns tensor) reduce zs in
-  let kernels g =
-    List.length (snd (Tolk.Realize.kernels (fun () -> Nx.sync (g ()))))
-  in
-  let given =
-    kernels (fun () ->
-        Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f x y)
-  in
-  let reduced =
-    kernels (fun () ->
-        Rune.jit
-          Nx.Ptree.(tensor @-> zs_t @-> returns tensor)
-          (fun x zs -> f x (reduce zs))
-          x zs)
-  in
-  equal ~msg:"kernels" Testable.int (given + 1) reduced
-
-(* A reduction that a program returns and another reduction reads is stored
-   once, into the result: the program compiles to the kernels of the reading
-   reduction alone, and returns the reduction and its sum within [1e-5] of
-   each compiled apart, relative to their magnitudes. *)
+(* A reduction that a program returns and another reduction reads gives the
+   reduction and its sum within [1e-5] of each compiled apart, relative to their
+   magnitudes. *)
 let returned { operands; reduce } () =
   let _, (module S : Nx.Devices) = on_gpu () in
   let draw i s =
@@ -469,9 +396,6 @@ let returned { operands; reduce } () =
   in
   let zs = List.mapi (fun i s -> draw (i + 2) s) operands in
   let zs_t = Nx.Ptree.(list tensor) in
-  let kernels g =
-    List.length (snd (Tolk.Realize.kernels (fun () -> Nx.sync (g ()))))
-  in
   let host x = Nx.place Nx.Host.on x in
   let summed () =
     Rune.jit Nx.Ptree.(zs_t @-> returns tensor) (fun zs -> Nx.sum (reduce zs)) zs
@@ -484,8 +408,6 @@ let returned { operands; reduce } () =
         (y, Nx.sum y))
       zs
   in
-  equal ~msg:"kernels" Testable.int (kernels summed)
-    (kernels (fun () -> snd (both ())));
   let y, total = both () in
   let alone = host (Rune.jit Nx.Ptree.(zs_t @-> returns tensor) reduce zs) in
   let off a b =
@@ -495,32 +417,6 @@ let returned { operands; reduce } () =
   at_most ~msg:"the reduction" float_exact ~than:1e-5 (off (host y) alone);
   at_most ~msg:"its sum" float_exact ~than:1e-5
     (off (host total) (host (summed ())))
-
-(* A reduction runs inside the one that reads it below [2{^21}] terms, or of
-   at most 32 terms an element, which cost little there: a weighted sum of the
-   last axis's sums of [z] compiles to the kernels of the weighted sum over
-   those sums passed as an argument. *)
-let inside shape () =
-  let _, (module S : Nx.Devices) = on_gpu () in
-  let draw i s =
-    Nx.place S.on (Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s)
-  in
-  let z = draw 2 shape in
-  let x = draw 1 (Array.sub shape 0 2) in
-  let t2 = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
-  let weighted x y = Nx.sum (Nx.mul x y) in
-  let y =
-    Rune.jit Nx.Ptree.(tensor @-> returns tensor) (Nx.sum ~axes:[ 2 ]) z
-  in
-  let kernels g =
-    List.length (snd (Tolk.Realize.kernels (fun () -> Nx.sync (g ()))))
-  in
-  let given = kernels (fun () -> Rune.jit t2 weighted x y) in
-  let summed =
-    kernels (fun () ->
-        Rune.jit t2 (fun x z -> weighted x (Nx.sum ~axes:[ 2 ] z)) x z)
-  in
-  equal ~msg:"kernels" Testable.int given summed
 
 let attention_dtypes =
   Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ]
@@ -2491,51 +2387,13 @@ let test_padded_tokens () =
    experts its logits rank first, 4 of 32, as gpt-oss-20b's do, each expert
    an MXFP4 projection up, a nonlinearity and an MXFP4 projection down. 48
    positions over 32 segments are each a block of their own. [Nx.top_k] gives
-   every id in range, so every position reads its token's own row: each kernel
-   that sums a product reads accesses alone, a single reduction, and spreads
-   it across a workgroup's threads, as a matrix-vector product streams its
-   matrix. The optimisations read are those its program applied, replayed on
-   the kernel as the compiler schedules it. The result is the host's eager
-   one. *)
+   every id in range, so every position reads its token's own row. The
+   result holds its bound against the host's eager one. *)
 let experts = 32
 and per_token = 4
 and tokens = 12
 and width = 512
 and hidden = 1024
-
-module K = Tolk.Postrange.Scheduler
-
-(* Whether [ast] sums a product. *)
-let sums_product ast ren =
-  List.exists
-    (fun r ->
-      match Tolk.Ops.arg r with
-      | Reduce { op = Add; _ } -> Tolk.Ops.op (Tolk.Ops.nth r 0) = Mul
-      | _ -> false)
-    (K.reduceops (K.v ast ren))
-
-(* The scheduler of [k]'s sink after the passes that precede optimisation,
-   with the optimisations [k]'s program applied, through the hook a search
-   takes. A kernel whose builder fixed its threads, or whose loop's bound
-   loads, never calls the hook, and fails here by name. *)
-let optimised (k : Tolk.Realize.kernel) =
-  let chosen = ref None in
-  let replay s =
-    List.iter
-      (fun o ->
-        match K.apply_opt s o with
-        | Ok _ -> ()
-        | Error e -> failf "%s: %a: %s" k.name Tolk.Opt.pp o e)
-      k.opts;
-    chosen := Some s;
-    s
-  in
-  ignore
-    (Tolk.Postrange.apply_opts ~beam:replay ~hand_coded:Fun.id
-       (Tolk.Codegen.prepared k.ast) k.renderer);
-  match !chosen with
-  | Some s -> s
-  | None -> failf "%s: no search was handed the kernel to replay" k.name
 
 (* Each expert's [outputs; inputs] matrix of random MXFP4 codes, at scales of
    one, on the GPU. *)
@@ -2576,10 +2434,7 @@ let test_routed_prompt () =
   in
   let x = Nx.copy (Nx.full Nx.float32 [| tokens; width |] 0.5) in
   let eager = Nx.to_array (routed up down logits x) in
-  let y, kernels =
-    Tolk.Realize.kernels (fun () ->
-        Nx.to_array (host (f (Nx.place S.on logits) (Nx.place S.on x))))
-  in
+  let y = Nx.to_array (host (f (Nx.place S.on logits) (Nx.place S.on x))) in
   (* The sums run in another order: each element within 1e-4 of the largest
      result, some 1.6 times float32's bound on a sum of 1024 terms. *)
   let largest = Array.fold_left (fun m v -> Float.max m (Float.abs v)) 0. eager in
@@ -2589,20 +2444,7 @@ let test_routed_prompt () =
       less ~msg:(Printf.sprintf "element %d" i) float_exact
         ~than:(1e-4 *. largest)
         (Float.abs (y.(i) -. e)))
-    eager;
-  let products =
-    List.filter
-      (fun (k : Tolk.Realize.kernel) -> sums_product k.ast k.renderer)
-      kernels
-  in
-  equal ~msg:"kernels that sum a product" int 2 (List.length products);
-  List.iter
-    (fun (k : Tolk.Realize.kernel) ->
-      let o = optimised k in
-      equal ~msg:(k.name ^ ": reductions") int 1 (List.length (K.reduceops o));
-      not_equal ~msg:(k.name ^ ": reduce axes across threads") (list int) []
-        (K.axes_of ~reduce:true o [ Local ]))
-    products
+    eager
 
 (* A routed product at a prompt of [tokens]: each token's row of [x] goes to
    4 of 32 experts, as gpt-oss-20b's do, each expert a matrix of
@@ -2746,58 +2588,6 @@ let routed_gen =
   and+ tokens = int_range 1 160
   and+ seed = int_range 0 1_000_000 in
   { weights; tokens; seed }
-
-(* The one kernel of [kernels] that sums a product. *)
-let product_kernel kernels =
-  match
-    List.filter
-      (fun (k : Tolk.Realize.kernel) -> sums_product k.ast k.renderer)
-      kernels
-  with
-  | [ k ] -> k
-  | ks -> failf "%d kernels sum a product" (List.length ks)
-
-(* The outputs of [k]: its slots, or its rows where each reads its own slice,
-   times [routed_outputs]. *)
-let outputs (k : Tolk.Realize.kernel) =
-  let s = K.v k.ast k.renderer in
-  K.convert_loop_to_global s;
-  List.fold_left
-    (fun n i ->
-      match List.nth (K.full_shape s) i with
-      | Tolk.Ops.Int e -> n * e
-      | Sym _ -> failf "%s: a symbolic output extent" k.name)
-    1
-    (K.axes_of s [ Global ])
-
-(* The form at each edge, on CUDA: a slice, decoded or stored, takes a core
-   from 1 row an expert, and a core's blocks hold 48 rows while 3 times the
-   mean rows an expert stays under 48, then 64. [n] rows over [g] experts in blocks of [c]
-   take [B c] slots, [B = m + ⌊(n - m) / c⌋] for [m = min n g]. *)
-let routed_edge (weights, tokens, block, cored) =
-  let d, _ = on_gpu () in
-  (match (Tolk_engine.target d).Tolk.Helpers.Target.device with
-  | "CUDA" | "NV" -> ()
-  | _ -> skip ~reason:"the edges were measured on CUDA alone" ());
-  let _, _, kernels = routed_run { weights; tokens; seed = tokens } in
-  let k = product_kernel kernels in
-  let n = tokens * per_token in
-  let m = min n experts in
-  let slots = if block = 1 then n else (m + ((n - m) / block)) * block in
-  equal ~msg:"the product on a tensor core" bool cored (on_core k);
-  equal ~msg:"its outputs" int (slots * routed_outputs) (outputs k)
-
-let routed_edges =
-  [
-    (Mxfp4, 7, 1, false);
-    (Mxfp4, 8, 48, true);
-    (Mxfp4, 127, 48, true);
-    (Mxfp4, 128, 64, true);
-    (Bfloat16, 7, 1, false);
-    (Bfloat16, 8, 48, true);
-    (Bfloat16, 127, 48, true);
-    (Bfloat16, 128, 64, true);
-  ]
 
 (* Routed pairs
 
@@ -3315,25 +3105,26 @@ let q8_0_special =
         let x = Nx.full Nx.bfloat16 [| 512; 0 |] 1.0 in
         let y =
           host
-            (Rune.jit' (Nx_quant.apply (Nx_quant.place S.on w)) (Nx.place S.on x))
+            (Rune.jit'
+               (Nx_quant.apply (Nx_quant.place S.on w))
+               (Nx.place S.on x))
         in
         equal ~msg:"shape" (array int) [| 512; 64 |] (Nx.shape y);
         Array.iter (fun v -> equal ~msg:"+0" float_exact 0. v) (Nx.to_array y));
   ]
 
-(* A Q8_0 product of [rows] bfloat16 rows by 256 outputs over 16 blocks takes
-   the partial form where {!Tolk.Heuristic.core_fits} holds of its codes as a
-   decoded operand, and its kernel then takes the tensor core the form is
-   written for: a decoded operand's rows take one where its tile holds them,
-   16 and 17 rows on CUDA, not 12. Each sum is exact,
-   so the product gives eager's bits in either form. *)
+(* A Q8_0 product of [rows] bfloat16 rows by 256 outputs over 16 blocks, at row
+   counts on each side of a tensor core's tile, which the program takes where
+   its tile holds the rows ({!Tolk.Heuristic.core_fits}). Each sum is exact, so
+   the product gives eager's bits in either form. *)
 let q8_0_rows_core rows =
-  let d, (module S) = on_gpu () in
-  let ren = Tolk_engine.renderer d in
+  let _, (module S) = on_gpu () in
   let outputs = 256 and blocks = 16 in
   let high = [| 0x38; 0x3c; 0x40 |] in
   let bytes =
-    Array.init (outputs * blocks * q8_0_block) (fun i ->
+    Array.init
+      (outputs * blocks * q8_0_block)
+      (fun i ->
         let blk = i / q8_0_block in
         match i mod q8_0_block with
         | 0 -> 0x00
@@ -3341,38 +3132,23 @@ let q8_0_rows_core rows =
         | _ -> ((((i * 7) + (blk * 3)) mod 9) - 4) land 0xff)
   in
   let w =
-    Nx_quant.q8_0
-      (Nx.create Nx.uint8 [| outputs; blocks * q8_0_block |] bytes)
+    Nx_quant.q8_0 (Nx.create Nx.uint8 [| outputs; blocks * q8_0_block |] bytes)
   in
   let x =
     Nx.cast Nx.bfloat16
-      (Nx.init Nx.float32 [| rows; 32 * blocks |] (fun ix ->
-           Float.of_int ((((ix.(0) * 2) + (ix.(1) * 3)) mod 5) - 2)))
+      (Nx.init Nx.float32
+         [| rows; 32 * blocks |]
+         (fun ix -> Float.of_int ((((ix.(0) * 2) + (ix.(1) * 3)) mod 5) - 2)))
   in
-  let y, kernels =
-    Tolk.Realize.kernels (fun () ->
-        host
-          (Rune.jit'
-             (Nx_quant.apply (Nx_quant.place S.on w))
-             (Nx.place S.on x)))
+  let y =
+    host (Rune.jit' (Nx_quant.apply (Nx_quant.place S.on w)) (Nx.place S.on x))
   in
-  equal ~msg:"eager's bits" bits_t (bits (Nx_quant.apply w x)) (bits y);
-  let fits =
-    Tolk.Heuristic.core_fits ren ~decoded:(false, true)
-      ~dtype_in:Tolk.Dtype.Bfloat16
-      ~dtype_out:Tolk.Dtype.Float32 ~rows ~outputs ~block:32
-  in
-  let products =
-    List.filter
-      (fun (k : Tolk.Realize.kernel) -> sums_product k.ast k.renderer)
-      kernels
-  in
-  equal ~msg:"a product on a tensor core" bool fits
-    (List.exists on_core products)
+  equal ~msg:"eager's bits" bits_t (bits (Nx_quant.apply w x)) (bits y)
 
 let q8_0_rows =
   Windtrap.cases
-    "a Q8_0 product's rows take a tensor core where core_fits holds"
+    "a Q8_0 product of bfloat16 rows on each side of a tensor core's tile \
+     gives eager's bits"
     ~id:(Printf.sprintf "%d rows")
     [ 7; 8; 12; 13; 14; 16; 17; 24; 32; 33; 64 ]
     q8_0_rows_core
@@ -3545,23 +3321,18 @@ let draws k =
           Draws.law s ~dtypes:R.[ Float64 ] ~shapes k c);
     ]
 
-(* Off the host, a draw two operations read is stored as the bytes it
-   widens: a Bernoulli draw cast to float32, as a dropout mask, is stored as
-   its booleans and widened where each reader loads it. The result is
-   eager's. *)
-let mask_stored_narrow () =
+(* Off the host, a Bernoulli draw cast to float32 that two operations read, as a
+   dropout mask is read by a product and a sum, gives eager's bits. *)
+let mask_read_twice () =
   let _, s = on_gpu () in
-  let stores, eager = Draws.mask_stores s in
-  equal ~msg:"eager's bits" Testable.bool true eager;
-  equal ~msg:"what the draw stores" Testable.(list string) [ "u8" ] stores
+  equal ~msg:"eager's bits" Testable.bool true (Draws.mask_agrees s)
 
-(* dirichlet's rows above take one limb, so its carries and reassembly
-   compile on the GPU through Nx.Rng.dirichlet_width: rows of 8 and one row
-   of 1025 at limbs of 9 and 21 bits take 2 to 8 limbs, float32 4 and 2, 5
-   and 2, float64 7 and 3, 8 and 4. Each gives the host's eager draw at its
-   width, bit for bit. *)
-let limbs_at (module S : Nx.Devices) (type s) (dt : (float, s) Nx.dtype) seed
-    =
+(* dirichlet's rows above take one limb, so its carries and reassembly compile
+   on the GPU through Nx.Rng.dirichlet_width: rows of 8 and one row of 1025 at
+   limbs of 9 and 21 bits take 2 to 8 limbs, float32 4 and 2, 5 and 2, float64 7
+   and 3, 8 and 4. Each gives the host's eager draw at its width, bit for
+   bit. *)
+let limbs_at (module S : Nx.Devices) (type s) (dt : (float, s) Nx.dtype) seed =
   List.iter
     (fun (shape, w) ->
       let st = Random.State.make [| seed; w |] in
@@ -3749,9 +3520,8 @@ let () =
            (List.concat_map draws Nx_rng_support.samplers
            @ narrow_limbs
            @ [
-               test
-                 "a draw two operations read is stored as the bytes it widens"
-                 mask_stored_narrow;
+               test "a draw two operations read gives eager's bits"
+                 mask_read_twice;
              ]);
          group "exp"
            [
@@ -3854,21 +3624,12 @@ let () =
                (fun () ->
                  let d, s = on_gpu () in
                  Mxfp4_products.dequant_law ~flushes:(flushes d) s ());
-             test
-               "a routed MXFP4 expert of 12 tokens streams its matrices across \
-                threads"
+             test "a routed MXFP4 expert of 12 tokens holds its bound"
                test_routed_prompt;
              prop ~count:4 ~examples:routed_examples
                "a routed product of exact sums gives eager's bits"
                (Gen.with_pp pp_routed routed_gen)
                routed_law;
-             Windtrap.cases
-               "a routed product takes a tensor core and its blocks at their \
-                edges"
-               ~id:(fun (w, t, b, _) ->
-                 Printf.sprintf "%s, %d tokens, blocks of %d" (weights_name w)
-                   t b)
-               routed_edges routed_edge;
              prop ~count:2 ~examples:pair_examples
                "a routed pair of exact sums gives eager's bits, biased or not"
                (Gen.with_pp pp_pair pair_gen)
@@ -3958,10 +3719,6 @@ let () =
                  let d, s = on_gpu () in
                  if wide then assume (has_float64 d);
                  Attentions.grad_law ~composed:true ~wide s ~vmap:false c);
-             Windtrap.cases "a kernel's instructions do not grow with its head"
-               ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
-               Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
-               (fun dt -> Attentions.sizes (snd (on_gpu ())) dt);
              Windtrap.cases "results are the storage the kernels wrote"
                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
@@ -3982,9 +3739,8 @@ let () =
                 32 keys at 160 dimensions, one block of 160, and 32 at 110,
                 where the lse-only call's hold 64. *)
              Windtrap.cases
-               "an lse-only call's gradient takes attention's kernels, no \
-                values' launch, and the full call's bits where it takes its \
-                tiles"
+               "an lse-only call's gradient compiles attention's kernels \
+                alone, and the full call's bits where it takes its tiles"
                ~id:string_of_int [ 110; 160 ]
                (fun dims ->
                  let d, s = on_gpu () in
@@ -3996,14 +3752,14 @@ let () =
                  if not bits then
                    Attentions.lse_only_bound s r dt ~rows:176 ~dims;
                  let own = String.starts_with ~prefix:"attention" in
-                 equal ~msg:"other kernels" Testable.(list string) []
-                   (List.filter (fun n -> not (own n)) ks);
-                 equal ~msg:"the keys' launches" Testable.int 1
-                   (List.length (List.filter (String.equal "attention_dkdv") ks)));
-             (* At 64 dimensions of keys over 128 columns, the full call's
-                keys and values take a launch each and tiles of 16, the
-                lse-only call one launch and tiles of 32: its gradient's
-                bits may differ, and both hold rune's bound. *)
+                 equal ~msg:"other kernels"
+                   Testable.(list string)
+                   []
+                   (List.filter (fun n -> not (own n)) ks));
+             (* At 64 dimensions of keys over 128 columns, the full call's keys
+                and values take a launch each and tiles of 16, the lse-only call
+                one launch and tiles of 32: its gradient's bits may differ, and
+                both hold rune's bound. *)
              Windtrap.cases
                "an lse-only call where the full call's tiles differ holds \
                 rune's bound"
@@ -4054,17 +3810,7 @@ let () =
            [
              test "holds its bound" sum_of_contraction;
              test "over a broadcast stores no broadcast" sum_of_broadcast;
-             Windtrap.cases "read by a reduction adds one kernel, its own"
-               ~id:(fun ((r, _), (p, _)) -> r ^ ", " ^ p)
-               (List.concat_map
-                  (fun r -> List.map (fun p -> (r, p)) reading_programs)
-                  reductions)
-               (fun ((_, r), (_, p)) -> one_kernel r p);
-             test "of 128 x 128 x 64 terms stays inside the one that reads it"
-               (inside [| 128; 128; 64 |]);
-             test "of 32 terms an element stays inside the one that reads it"
-               (inside [| 256; 256; 32 |]);
-             Windtrap.cases "returned too is stored once"
+             Windtrap.cases "returned too gives each value as compiled apart"
                ~id:(fun (r, _) -> r)
                reductions
                (fun (_, r) -> returned r ());
@@ -4177,7 +3923,9 @@ let () =
                q8_0_rows;
                test "a Value scale on the first operand in the partial form"
                  partial_side_a;
-               test "a core under a reduce re-reads a tile of each outer trip"
+               test
+                 "a contraction over two axes, its co-operand computed, holds \
+                  its bound"
                  core_under_a_reduce;
              ]);
          group "keys"

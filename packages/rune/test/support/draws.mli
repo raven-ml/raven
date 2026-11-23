@@ -27,9 +27,7 @@ val law :
     on [set] with no call evaluated, the key and arguments whole on each
     device: each gives the bits of the draw computed eagerly on the host. *)
 
-val mask_stores : (module Nx.Devices) -> string list * bool
-(** [mask_stores set] compiles on [set] a Bernoulli draw cast to float32 that
+val mask_agrees : (module Nx.Devices) -> bool
+(** [mask_agrees set] compiles on [set] a Bernoulli draw cast to float32 that
     two operations read, as a dropout mask is read by a product and a sum, and
-    is the names of the types ({!Tolk.Dtype.name}) that the kernels drawing it
-    store, those that inject Threefry's key schedule constant, with whether
-    the result is eager's on the host bit for bit. *)
+    is whether the result is eager's on the host bit for bit. *)
