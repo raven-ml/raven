@@ -31,11 +31,21 @@ let of_kind ?(renderer = "") ?(arch = "") device =
    "arm64,generic,fp16". This machine's host tunes for its own processor,
    which allows no instruction its arch lacks. *)
 let target d =
+  let host_code = Rig.equal (Rig.host_of d) d || Rig.runs_on_host d in
   match vendor d with
   | Some kind -> of_kind ~arch:(Rig.arch d) kind
-  | None
-    when Rig.computes d && (Rig.equal (Rig.host_of d) d || Rig.runs_on_host d)
-    ->
+  | None when Rig.computes d && host_code && not (Rig.Image.links d) ->
+      let isa =
+        match Rig.instruction_set (Rig.host_of d) with
+        | "" -> "an instruction set it does not know"
+        | isa -> isa
+      in
+      failwith
+        (strf
+           "Tolk_engine.target: %s runs no compiled program: rig links no host \
+            code for %s"
+           (Rig.name d) isa)
+  | None when Rig.computes d && host_code ->
       let host = Rig.host_of d in
       let here = Rig.equal host Rig.host in
       let machine = Rig.instruction_set host in

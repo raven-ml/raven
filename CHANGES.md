@@ -1678,6 +1678,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Tolk_engine.target` raises `Failure` for a host or software device where
+  rig links no host code (`Rig.Image.links`), naming its instruction set.
 - Under a Clang before LLVM 23, or one that names no release,
   `Compiler_cpu.clang` compiles x86_64 kernels without AVX-512
   (`-mno-avx512f`): these Clangs write the wrong truth table for some masked

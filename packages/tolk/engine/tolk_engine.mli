@@ -44,15 +44,17 @@ val target : Rig.t -> Helpers.Target.t
     architecture names no system.
 
     Raises [Invalid_argument] if [d] runs no program: an io device, or another
-    device that no vendor claims. *)
+    device that no vendor claims; and [Failure] naming its host's instruction
+    set if [d] is a host or software device on which rig links no host code
+    ({!Rig.Image.links}). *)
 
 val renderer : Rig.t -> Renderer.t
 (** [renderer d] is the renderer of [d]'s {!target}, which writes the source of
     its programs, made once per target ({!Tolk.Device.renderer}).
 
-    Raises [Invalid_argument] as {!target} does, and [Failure] with the reason
-    when the target's renderer is not available, such as a compiler the machine
-    lacks. *)
+    Raises [Invalid_argument] and [Failure] as {!target} does, and [Failure]
+    with the reason when the target's renderer is not available, such as a
+    compiler the machine lacks. *)
 
 val part : Rig.t -> string
 (** [part d] names [d]'s physical part as rig states it: its {!Rig.arch}, the
