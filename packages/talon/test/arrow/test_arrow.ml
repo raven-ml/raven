@@ -16,6 +16,19 @@ let is_float (type a) (t : a Type.t) =
 let hex s = String.concat "" (List.map (fun c -> Printf.sprintf "%02x" (Char.code c)) (List.of_seq (String.to_seq s)))
 let or_e s = if s = "" then "e" else s
 
+(* [g17 x] is [x] as C99's [%.17g] writes it, as the generator's Python does,
+   with an exponent of at least two digits. OCaml's [%.17g] is the C library's,
+   which on Windows writes three ([1e-018]). *)
+let g17 x =
+  let s = Printf.sprintf "%.17g" x in
+  match String.index_opt s 'e' with
+  | None -> s
+  | Some i ->
+      let e = int_of_string (String.sub s (i + 1) (String.length s - i - 1)) in
+      Printf.sprintf "%se%c%02d" (String.sub s 0 i)
+        (if e < 0 then '-' else '+')
+        (abs e)
+
 (* The buffer of the file at [path]. *)
 let opened path = Rig_disk.buffer (Result.get_ok (Rig_disk.of_file path))
 
@@ -40,8 +53,7 @@ let rec tokens (Type.Any t) c : string array =
             ^ String.concat " "
                 (List.init cells (fun j ->
                      let v = Nx.item [ (i * cells) + j ] flat in
-                     if is_float then Printf.sprintf "%.17g" v
-                     else Printf.sprintf "%.0f" v))
+                     if is_float then g17 v else Printf.sprintf "%.0f" v))
             ^ "]")
   | (String | Categorical _), _ ->
       Array.map
@@ -56,7 +68,7 @@ let rec tokens (Type.Any t) c : string array =
       let as_float = Nx.cast Nx.float64 x and as_int = Nx.cast Nx.int64 x in
       Array.init n (fun i ->
           if not valid.(i) then "n"
-          else if is_float t then Printf.sprintf "%.17g" (Nx.item [ i ] as_float)
+          else if is_float t then g17 (Nx.item [ i ] as_float)
           else Int64.to_string (Nx.item [ i ] as_int))
   | List e, Varsize { validity; offsets; child } ->
       let valid = validity_at validity n in
