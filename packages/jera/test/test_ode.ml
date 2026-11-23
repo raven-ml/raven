@@ -92,7 +92,7 @@ let taylor k z =
   in
   go 0 1. 0.
 
-let order_tests =
+let method_tests =
   [
     cases "each method reaches its order on a forced pendulum" ~id:name methods
       (fun (_, m, p, n) ->
@@ -118,19 +118,6 @@ let order_tests =
               (float_rel ~rel:1e-14 ~abs:0.)
               (poly z) (step z))
           [ -2.5; -1.; -0.3; 0.7 ]);
-    test "a tableau of rk4's coefficients marches as rk4" (fun () ->
-        let m =
-          Ode.tableau
-            ~a:[| [||]; [| 0.5 |]; [| 0.; 0.5 |]; [| 0.; 0.; 1. |] |]
-            ~b:[| 1. /. 6.; 1. /. 3.; 1. /. 3.; 1. /. 6. |]
-            ~c:[| 0.; 0.5; 0.5; 1. |]
-        in
-        let run m =
-          Ode.march pair m ~steps:3 forced
-            ~at:(vec [| 0.; 0.4; 1. |])
-            (scalar 1., scalar 0.)
-        in
-        equal (Oracle.structure pair) (run Ode.rk4) (run m));
   ]
 
 (* Intervals whose steps round: t0 + j h past the end in [0; 1.5e-323], and
@@ -300,14 +287,35 @@ let transformation_tests =
           (Rune.vmap' positions q0));
   ]
 
-let error_tests =
-  let raises_with sub f = raises_match (Exn.invalid_arg ~sub) f in
+let raises_with sub f = raises_match (Exn.invalid_arg ~sub) f
+
+let tableau_tests =
   let tableau ?(a = [| [||]; [| 1. |] |]) ?(b = [| 0.5; 0.5 |])
       ?(c = [| 0.; 1. |]) () =
-    ignore (Ode.tableau ~a ~b ~c)
+    Ode.tableau ~a ~b ~c
   in
   [
-    test "tableau accepts Heun's method" (fun () -> tableau ());
+    test "a tableau of rk4's coefficients marches as rk4" (fun () ->
+        let m =
+          Ode.tableau
+            ~a:[| [||]; [| 0.5 |]; [| 0.; 0.5 |]; [| 0.; 0.; 1. |] |]
+            ~b:[| 1. /. 6.; 1. /. 3.; 1. /. 3.; 1. /. 6. |]
+            ~c:[| 0.; 0.5; 0.5; 1. |]
+        in
+        let run m =
+          Ode.march pair m ~steps:3 forced
+            ~at:(vec [| 0.; 0.4; 1. |])
+            (scalar 1., scalar 0.)
+        in
+        equal (Oracle.structure pair) (run Ode.rk4) (run m));
+    test "tableau of Heun's method takes Heun's step" (fun () ->
+        (* On y' = y from 1, a step of 1/2 is 1 + h + h²/2 = 1.625, exact. *)
+        equal (Oracle.tensor ())
+          (vec [| 1.; 1.625 |])
+          (Ode.march one (tableau ()) ~steps:1
+             (fun _ y -> y)
+             ~at:(vec [| 0.; 0.5 |])
+             (scalar 1.)));
     test "tableau rejects an empty b" (fun () ->
         raises_with "b is empty" (fun () -> tableau ~a:[||] ~b:[||] ~c:[||] ()));
     test "tableau rejects a short c" (fun () ->
@@ -320,6 +328,10 @@ let error_tests =
             tableau ~b:[| 0.5; 0.6 |] ()));
     test "tableau rejects a NaN" (fun () ->
         raises_with "not finite" (fun () -> tableau ~c:[| 0.; nan |] ()));
+  ]
+
+let march_error_tests =
+  [
     test "march rejects zero steps" (fun () ->
         raises_with "steps = 0" (fun () ->
             Ode.march one Ode.rk4 ~steps:0
@@ -408,8 +420,7 @@ let solve_tests =
         equal (Oracle.tensor ~rel:1e-9 ()) (scalar 1.) y);
     test "the budget ends a solve and the report says where" (fun () ->
         let s = solve ~budget:3 forced2 ~t0:0. ~t1:10. (scalar 1.) in
-        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
-          (Solution.is Budget_spent s);
+        equal Oracle.status_t Budget_spent (Oracle.status s);
         raises_match (Exn.failure ~sub:"Jera.Ode.solve: the budget is spent")
           (fun () -> Solution.get s);
         let report = Format.asprintf "%a" Solution.pp s in
@@ -438,8 +449,7 @@ let solve_tests =
             ~at:(vec [| 0.; 1.; 0.5 |])
             (scalar 1.)
         in
-        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
-          (Solution.is Stalled s);
+        equal Oracle.status_t Stalled (Oracle.status s);
         raises_match
           (Exn.failure ~sub:"The times are not strictly monotone at [2].")
           (fun () -> Solution.get s));
@@ -650,8 +660,7 @@ let path_tests =
         equal (Oracle.tensor ()) (scalar 2.) (Nx.get [ n - 2 ] breaks));
     test "a path over no time ends its lane Stalled and says why" (fun () ->
         let s = path (decay (scalar 1.)) ~t0:1. ~t1:1. (scalar 1.) in
-        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
-          (Solution.is Stalled s);
+        equal Oracle.status_t Stalled (Oracle.status s);
         raises_match (Exn.failure ~sub:"A path needs t1 ≠ t0.") (fun () ->
             Solution.get s));
     test "its error is the accumulated estimate, as sample's" (fun () ->
@@ -908,8 +917,7 @@ let event_tests =
             [ q; Nx.where near (Nx.full_like t Float.nan) (Nx.sub_s t 1.) ]
         in
         let s = drop event (scalar 10.) in
-        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
-          (Solution.is Stalled s);
+        equal Oracle.status_t Stalled (Oracle.status s);
         raises_match (Exn.failure ~sub:"The crossing of component [1] near t")
           (fun () -> Solution.get s));
     test "a compiled function returns the answer as a triple" (fun () ->
@@ -1049,10 +1057,16 @@ let delay_tests =
               lagged ~lags:(vec [| 1. |])
               ~history:(fun _ -> vec [| 1. |])
               ~at:times (scalar 1.)));
+    test "pieces below 1 raise" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"pieces = 0 is below 1") (fun () ->
+            delayed ~pieces:0 times));
+    test "no lag raises" (fun () ->
+        raises_match
+          (Exn.invalid_arg ~sub:"lags must be 1-D and non-empty, got shape [0]")
+          (fun () -> delayed ~lags:(vec [||]) times));
     test "a lag that is not positive ends the lane Stalled" (fun () ->
         let s = delayed ~lags:(vec [| 0. |]) times in
-        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
-          (Solution.is Stalled s);
+        equal Oracle.status_t Stalled (Oracle.status s);
         raises_match (Exn.failure ~sub:"Every lag must be positive.") (fun () ->
             Solution.get s));
     test "a lag past the pieces kept ends the lane with the count it needs"
@@ -1063,8 +1077,7 @@ let delay_tests =
           Nx.add (Nx.neg (Nx.squeeze ~axes:[ 0 ] d)) (Nx.sin (Nx.mul_s t 5.))
         in
         let s = delayed ~pieces:1 ~f times in
-        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
-          (Solution.is Stalled s);
+        equal Oracle.status_t Stalled (Oracle.status s);
         let report =
           match Solution.get s with
           | _ -> failf "the solve converged"
@@ -1294,14 +1307,13 @@ let () =
   exit
     (run "Jera.Ode"
        [
+         group "methods" method_tests;
+         group "tableau" tableau_tests;
+         group "kvaerno5" stiff_tests;
+         group "march" (march_tests @ transformation_tests @ march_error_tests);
          group "solve" solve_tests;
          group "solve derivatives" solve_derivative_tests;
-         group "stiff" stiff_tests;
          group "path" path_tests;
          group "event" event_tests;
          group "delay" delay_tests;
-         group "order" order_tests;
-         group "march" march_tests;
-         group "transformations" transformation_tests;
-         group "errors" error_tests;
        ])
