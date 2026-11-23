@@ -11,6 +11,30 @@ opam switch create raven 5.5.0
 eval $(opam env)
 ```
 
+## Supported platforms
+
+Every release passes its tests on these platforms, and a bug on one of them
+blocks the release:
+
+- Linux on x86_64 and arm64, with glibc
+- macOS on arm64
+- Windows on x86_64, with the mingw-w64 OCaml
+
+Raven also builds and passes its tests on other 64-bit little-endian
+systems: Linux with musl, FreeBSD, and Linux on ppc64le and riscv64. Bugs
+there are fixed, but they don't hold back a release. On these systems
+`Rune.jit` can't load the kernels it compiles for the CPU unless the
+processor is x86_64 or arm64; it raises an error saying so, and eager code
+runs everywhere.
+
+Big-endian and 32-bit systems are not supported. Raven's file formats and
+kernels assume little-endian bytes, and its arrays and devices address
+memory beyond what a 32-bit `int` holds.
+
+The GPU backends are tested on the hardware they target: Metal on Apple
+silicon, CUDA on NVIDIA GPUs of compute capability 8.9, and AMD GPUs of
+RDNA4. Other GPUs of a supported vendor compute through `Rune.jit`.
+
 ## Installing from opam
 
 Install the entire ecosystem:
