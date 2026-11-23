@@ -9,6 +9,7 @@
 open Windtrap
 open Compose
 module Total = Rune.Total
+module Batch = Rune_support.Batch
 
 let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let f32 = Nx.float32
@@ -113,19 +114,59 @@ let additions =
       Format.fprintf ppf "zero %h, adds %s" z
         (String.concat " " (List.map (Printf.sprintf "%h") cs)))
 
+(* The law's total, a function adding [x] times each of [cs]'s values to it, and
+   its jit, made at the test's first case: the jit compiles once per number of
+   additions. *)
+let added =
+  lazy
+    (let t = Total.make () in
+     let f (x, cs) =
+       for k = 0 to (Nx.shape cs).(0) - 1 do
+         Total.add t (Nx.mul x (Nx.get [ k ] cs))
+       done;
+       Nx.neg x
+     in
+     (t, f, Rune.jit Nx.Ptree.(pair tensor tensor @-> returns tensor) f))
+
 let law_additions (z, cs) =
   cover "no addition" (cs = []);
   cover "a -0 zero" (z = 0. && 1. /. z < 0.);
+  let t, f, g = Lazy.force added in
+  let x = Nx.scalar f32 1. and zero () = Nx.scalar f32 z in
+  let cs = Nx.create f32 [| List.length cs |] (Array.of_list cs) in
+  let y, s = Total.collect t ~init:(zero ()) (fun () -> f (x, cs)) in
+  let y', s' = Total.collect t ~init:(zero ()) (fun () -> g (x, cs)) in
+  equal bits_t (bits y) (bits y');
+  equal bits_t (bits s) (bits s')
+
+(* Scales written into the function as constants, which the compiler may fold
+   ([x * -0.], [x * 1.]): each of the drawn law's values, infinities, NaN and
+   ones float32 does not represent among them, and one near float32's largest.
+   Each row's function is compiled once and called at a positive and a negative
+   [x], so that a fold that loses a sign shows. *)
+let constant_scales =
+  let one k c =
+    (Printf.sprintf "a scale of %h" c, (if k mod 2 = 0 then -0. else 0.), [ c ])
+  in
+  List.mapi one (Array.to_list pool @ [ 3e38 ])
+  @ [ ("every scale", -0., [ 0.; -0.; 1.; -1.; 3e38 ]) ]
+
+let law_constant_scales (_, z, cs) =
   let t = Total.make () in
   let f x =
     List.iter (fun c -> Total.add t (Nx.mul x (Nx.scalar f32 c))) cs;
     Nx.neg x
   in
-  let x = Nx.scalar f32 1. and zero () = Nx.scalar f32 z in
-  let y, s = Total.collect t ~init:(zero ()) (fun () -> f x) in
-  let y', s' = Total.collect t ~init:(zero ()) (fun () -> Rune.jit' f x) in
-  equal bits_t (bits y) (bits y');
-  equal bits_t (bits s) (bits s')
+  let g = Rune.jit' f in
+  List.iter
+    (fun x ->
+      let msg = Printf.sprintf "x = %g" x in
+      let x = Nx.scalar f32 x and zero () = Nx.scalar f32 z in
+      let y, s = Total.collect t ~init:(zero ()) (fun () -> f x) in
+      let y', s' = Total.collect t ~init:(zero ()) (fun () -> g x) in
+      equal ~msg bits_t (bits y) (bits y');
+      equal ~msg bits_t (bits s) (bits s'))
+    [ 1.; -2.5 ]
 
 let test_shape_refused () =
   let t = Total.make () in
@@ -133,15 +174,15 @@ let test_shape_refused () =
     (fun () ->
       Total.collect t ~init:(zero ()) (fun () -> Total.add t (v [| 1.; 2. |])))
 
-(* A total made at the top level serves every set; each addition lies on its
-   collect's [init]'s set, eagerly and traced. *)
+(* A total of any device type, as one made at a library's top level is, serves
+   every set; each addition lies on its collect's [init]'s set, eagerly and
+   traced. Each test makes its own. *)
 module M1 = (val Nx.devices [ Nx_support.memory 1 ])
 module M2 = (val Nx.devices [ Nx_support.memory 2 ])
 
-let top : (float, Nx.float32_elt, 'd) Total.t = Total.make ()
 let placed x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x)
 
-let summed (type d) (p : d Nx.Placement.t) ~jit =
+let summed (type d) top (p : d Nx.Placement.t) ~jit =
   let at x = Nx.scalar_at p f32 x in
   let f () =
     Total.add top (at 1.5);
@@ -161,14 +202,15 @@ let summed (type d) (p : d Nx.Placement.t) ~jit =
   (bits sum, placed sum)
 
 let test_sets () =
+  let top = Total.make () in
   let want =
     bits Nx.(add (add (zero ()) (scalar f32 1.5)) (scalar f32 (-0.25)))
   in
   List.iter
     (fun jit ->
       let msg = if jit then "jit" else "eager" in
-      equal ~msg (pair bits_t string) (want, "m1") (summed M1.on ~jit);
-      equal ~msg (pair bits_t string) (want, "m2") (summed M2.on ~jit))
+      equal ~msg (pair bits_t string) (want, "m1") (summed top M1.on ~jit);
+      equal ~msg (pair bits_t string) (want, "m2") (summed top M2.on ~jit))
     [ false; true ]
 
 (* Another mint of [M1]'s device list: another set. *)
@@ -180,6 +222,7 @@ let test_set_refused () =
   let sub =
     "Rune.Total.add: a value on [m2], where the total's init lies on [m1]"
   in
+  let top = Total.make () in
   let x2 () = Nx.scalar_at M2.on f32 1. in
   let add x = Total.add top x in
   let warm =
@@ -751,19 +794,6 @@ let valid body lmode =
   | Pullback, Map_of_jvp -> Map_of_grad
   | _ -> lmode
 
-let in_turn =
-  let open Gen in
-  let value = of_list [ 1e8; -1e8; 1.; 3.; 0.1; -0.; 7.25 ] in
-  (let* start = value and+ lanes = array ~size:(int_range 0 6) value in
-   let* body = of_list lane_bodies and+ lmode = of_list lane_modes in
-   constant { start; lanes; body; lmode = valid body lmode })
-  |> with_pp (fun ppf c ->
-      Format.fprintf ppf "start %g, lanes [%a], %a under %a" c.start
-        (Format.pp_print_list
-           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-           (fun ppf x -> Format.fprintf ppf "%g" x))
-        (Array.to_list c.lanes) pp_body c.body pp_lmode c.lmode)
-
 (* The edges of a map's lanes: none, one, and an odd number past one, which
    a map of maps takes as one outer lane. *)
 let edges = [ "no lane"; "one lane"; "an odd number of lanes" ]
@@ -777,11 +807,47 @@ let edge n =
 (* The examples' lanes on each edge, one of them negative. *)
 let edge_lanes = [ [||]; [| 1e8 |]; [| -1e8; 3.; 1. |] ]
 
+(* The edge's lanes of the [k]th pair of a body and a mode. *)
+let edge_of k = List.nth edge_lanes (k mod List.length edge_lanes)
+
+(* The [k]th pair's lanes of a count neither the edges nor the cancelling lanes
+   take: 2, which a map of maps takes as two outer lanes of one, 5, and 6, two
+   outer lanes of three. Each mode and each body meets each, under several
+   others. *)
+let more_lanes =
+  [
+    [| 1e8; -1e8 |];
+    [| 1e8; 1.; -1e8; 1.; 3. |];
+    [| 1e8; 1.; -1e8; 1.; 3.; -1e8 |];
+  ]
+
+let more_of k = List.nth more_lanes (k mod List.length more_lanes)
+
+(* A pair of a body and a mode, over values of its examples' numbers of lanes,
+   so that each pair compiles once per number, three at most. *)
+let in_turn =
+  let open Gen in
+  let value = of_list [ 1e8; -1e8; 1.; 3.; 0.1; -0.; 7.25 ] in
+  let bodies = List.length lane_bodies and modes = List.length lane_modes in
+  (let* i = int_range 0 (bodies - 1) and+ j = int_range 0 (modes - 1) in
+   let body = List.nth lane_bodies i and lmode = List.nth lane_modes j in
+   let k = (i * modes) + j in
+   let* n = of_list [ 4; Array.length (edge_of k); Array.length (more_of k) ] in
+   let* start = value and+ lanes = array ~size:(constant n) value in
+   constant { start; lanes; body; lmode = valid body lmode })
+  |> with_pp (fun ppf c ->
+      Format.fprintf ppf "start %g, lanes [%a], %a under %a" c.start
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+           (fun ppf x -> Format.fprintf ppf "%g" x))
+        (Array.to_list c.lanes) pp_body c.body pp_lmode c.lmode)
+
 (* Every body under every mode, over lanes that cancel, so that every run
-   reaches the cases another order would round, and over one of the edges'
-   lanes, the pairs taking them in turn, so that each body and each mode
-   meets each edge under several others: every pair over every edge, 770
-   examples, took 11 s on a cold cache, most of it compiling. *)
+   reaches the cases another order would round, and over one of the edges' lanes
+   and one of {!more_lanes}, the pairs taking them in turn, so that each body
+   and each mode meets each edge and each other count under several others:
+   every pair over every edge, 770 examples, took 11 s on a cold cache, most of
+   it compiling. *)
 let in_turn_examples =
   List.concat
     (List.mapi
@@ -791,11 +857,12 @@ let in_turn_examples =
               (fun j lmode ->
                 let lmode = valid body lmode in
                 let k = (i * List.length lane_modes) + j in
-                let edge = List.nth edge_lanes (k mod List.length edge_lanes) in
+                let edge = edge_of k in
                 [
                   { start = 1.; lanes = [| 1e8; 1.; -1e8; 1. |]; body; lmode };
                   { start = 1.; lanes = [| 1e8; 3.; -1e8; 1. |]; body; lmode };
                   { start = 1.; lanes = edge; body; lmode };
+                  { start = 1.; lanes = more_of k; body; lmode };
                 ])
               lane_modes))
        lane_bodies)
@@ -865,43 +932,37 @@ let from_identity t c =
       Total.add t (List.fold_left add (zero ()) (lane_adds c x)))
     c.lanes
 
-let law_in_turn c =
-  List.iter
-    (fun b -> cover (Format.asprintf "%a" pp_body b) (c.body = b))
-    lane_bodies;
-  List.iter
-    (fun m -> cover (Format.asprintf "under %a" pp_lmode m) (c.lmode = m))
-    lane_modes;
-  let n = Array.length c.lanes in
-  cover "no lane" (n = 0);
-  cover "one lane" (n = 1);
-  List.iter
-    (fun e ->
-      let on = edge n = Some e in
-      List.iter
-        (fun b ->
-          cover (Format.asprintf "%a over %s" pp_body b e) (c.body = b && on))
-        lane_bodies;
-      List.iter
-        (fun m ->
-          cover
-            (Format.asprintf "under %a over %s" pp_lmode m e)
-            (c.lmode = m && on))
-        lane_modes)
-    edges;
-  let ran k = Array.exists (fun x -> k (x > 2.)) c.lanes in
-  cover "lanes held apart"
-    ((c.body = Apart || c.body = Nested_apart || c.body = Switch_lane)
-    && ran Fun.id && ran not);
-  cover "a lane stopping at its init"
-    (c.body = Apart && Array.exists (fun x -> x < 0.) c.lanes);
+(* A body under a mode: its total, and the code a case runs, each compiled
+   function in it made once, so that it compiles once per number of lanes. *)
+type program = {
+  t : (float, Nx.float32_elt, Nx.host) Total.t;
+  lane :
+    (float, Nx.float32_elt, Nx.host) Nx.t ->
+    (float, Nx.float32_elt, Nx.host) Nx.t;
+  mapped : (float, Nx.float32_elt, Nx.host) Nx.t -> unit;
+  alone : (float, Nx.float32_elt, Nx.host) Nx.t -> unit;
+}
+
+let make_program kind lmode =
   let t = Total.make () in
   let pair y =
     Total.add t y;
     Total.add t (Nx.sub (s 1.) y)
   in
+  let jitted =
+    lazy
+      (Rune.jit' (fun x ->
+           pair x;
+           x))
+  in
+  let scaled =
+    lazy
+      (Rune.jit' (fun k ->
+           pair (Nx.mul_s k 1e8);
+           k))
+  in
   let body x =
-    match c.body with
+    match kind with
     | Direct ->
         pair x;
         x
@@ -912,12 +973,7 @@ let law_in_turn c =
                pair (Nx.mul x k);
                (y, y))
              (v [| 1.; 2. |]))
-    | Jit_lane ->
-        Rune.jit'
-          (fun x ->
-            pair x;
-            x)
-          x
+    | Jit_lane -> Lazy.force jitted x
     | Remat_lane ->
         Rune.remat
           Nx.Ptree.(tensor @-> returns tensor)
@@ -988,15 +1044,10 @@ let law_in_turn c =
         Total.add t (Nx.sub (s 1.) x);
         x
     | Scan_jit ->
-        let g =
-          Rune.jit' (fun k ->
-              pair (Nx.mul_s k 1e8);
-              k)
-        in
         fst
           (Rune.scan' ~init:x
              (fun y k ->
-               ignore (g k);
+               ignore (Lazy.force scaled k);
                pair x;
                (y, y))
              (v [| 1.; 2. |]))
@@ -1040,37 +1091,100 @@ let law_in_turn c =
           x
   in
   (* The transformation inside the map, and the one around it. *)
-  let inside f x =
-    match c.lmode with
-    | Map_of_jit -> Rune.jit' f x
-    | Map_of_grad -> Rune.grad' (fun x -> Nx.sum (f x)) x
-    | Map_of_jvp -> snd (Rune.jvp' f x x)
-    | Map_grad_map -> Rune.grad' (fun x -> Nx.sum (f x)) x
-    | Map_of_grad_of_jit -> Rune.grad' (fun x -> Nx.sum (Rune.jit' f x)) x
+  let inside f =
+    match lmode with
+    | Map_of_jit -> Rune.jit' f
+    | Map_of_grad | Map_grad_map ->
+        fun x -> Rune.grad' (fun x -> Nx.sum (f x)) x
+    | Map_of_jvp -> fun x -> snd (Rune.jvp' f x x)
+    | Map_of_grad_of_jit ->
+        let g = Rune.jit' f in
+        fun x -> Rune.grad' (fun x -> Nx.sum (g x)) x
     | Map | Jit_of_map | Grad_of_map | Jvp_of_map | Map_of_map
     | Grad_of_jit_of_map ->
-        f x
+        f
   in
-  let under f x =
-    match c.lmode with
+  let under f =
+    match lmode with
     | Map | Map_of_map | Map_of_jit | Map_of_grad | Map_of_jvp | Map_grad_map
     | Map_of_grad_of_jit ->
-        ignore (f x)
+        fun x -> ignore (f x)
     | Grad_of_jit_of_map ->
-        ignore (Rune.grad' (fun x -> Nx.sum (Rune.jit' f x)) x)
-    | Jit_of_map -> ignore (Rune.jit' f x)
-    | Grad_of_map -> ignore (Rune.grad' (fun x -> Nx.sum (f x)) x)
-    | Jvp_of_map -> ignore (Rune.jvp' f x x)
+        let g = Rune.jit' f in
+        fun x -> ignore (Rune.grad' (fun x -> Nx.sum (g x)) x)
+    | Jit_of_map ->
+        let g = Rune.jit' f in
+        fun x -> ignore (g x)
+    | Grad_of_map -> fun x -> ignore (Rune.grad' (fun x -> Nx.sum (f x)) x)
+    | Jvp_of_map -> fun x -> ignore (Rune.jvp' f x x)
   in
+  let inside_body = inside body in
+  let mapped =
+    match lmode with
+    | Map_of_map -> under (Rune.vmap' (Rune.vmap' inside_body))
+    | Map_grad_map ->
+        (* The backward pass of each outer lane's inner map. *)
+        under (Rune.vmap' (inside (Rune.vmap' body)))
+    | _ -> under (Rune.vmap' inside_body)
+  in
+  { t; lane = body; mapped; alone = under inside_body }
+
+let programs = Hashtbl.create 16
+
+let program kind lmode =
+  match Hashtbl.find_opt programs (kind, lmode) with
+  | Some p -> p
+  | None ->
+      let p = make_program kind lmode in
+      Hashtbl.add programs (kind, lmode) p;
+      p
+
+let law_in_turn c =
+  List.iter
+    (fun b -> cover (Format.asprintf "%a" pp_body b) (c.body = b))
+    lane_bodies;
+  List.iter
+    (fun m -> cover (Format.asprintf "under %a" pp_lmode m) (c.lmode = m))
+    lane_modes;
+  let n = Array.length c.lanes in
+  cover "no lane" (n = 0);
+  cover "one lane" (n = 1);
+  List.iter
+    (fun m ->
+      let msg k =
+        Format.asprintf "under %a, two outer lanes of %s" pp_lmode m k
+      in
+      cover (msg "one") (c.lmode = m && n = 2);
+      cover (msg "three") (c.lmode = m && n = 6))
+    [ Map_of_map; Map_grad_map ];
+  List.iter
+    (fun e ->
+      let on = edge n = Some e in
+      List.iter
+        (fun b ->
+          cover (Format.asprintf "%a over %s" pp_body b e) (c.body = b && on))
+        lane_bodies;
+      List.iter
+        (fun m ->
+          cover
+            (Format.asprintf "under %a over %s" pp_lmode m e)
+            (c.lmode = m && on))
+        lane_modes)
+    edges;
+  let ran k = Array.exists (fun x -> k (x > 2.)) c.lanes in
+  cover "lanes held apart"
+    ((c.body = Apart || c.body = Nested_apart || c.body = Switch_lane)
+    && ran Fun.id && ran not);
+  cover "a lane stopping at its init"
+    (c.body = Apart && Array.exists (fun x -> x < 0.) c.lanes);
+  let p = program c.body c.lmode in
+  let t = p.t in
   let split = if n >= 2 && n mod 2 = 0 then 2 else 1 in
   let grid () = Nx.reshape [| split; n / split |] (v c.lanes) in
   let mapped () =
     match c.lmode with
-    | Map_of_map -> under (Rune.vmap' (Rune.vmap' (inside body))) (grid ())
-    | Map_grad_map ->
-        (* The backward pass of each outer lane's inner map. *)
-        under (Rune.vmap' (inside (Rune.vmap' body))) (grid ())
-    | _ -> under (Rune.vmap' (inside body)) (v c.lanes)
+    | Map_of_map | Map_grad_map -> p.mapped (grid ())
+    | _ -> p.mapped (v c.lanes)
   in
   let collected f = bits (snd (Total.collect t ~init:(s c.start) f)) in
   let expected = collected (fun () -> ordered t (rows c c.lanes)) in
@@ -1085,7 +1199,7 @@ let law_in_turn c =
   cover "jit of vmap compiled" (c.lmode = Jit_of_map && compiled);
   if n = 1 then
     equal ~msg:"one lane, without the map" bits_t expected
-      (collected (fun () -> under (inside body) (s c.lanes.(0))));
+      (collected (fun () -> p.alone (s c.lanes.(0))));
   (* A collect between two maps receives the inner map's lanes of its row. *)
   if c.lmode = Map_of_map then begin
     let per_row =
@@ -1098,7 +1212,7 @@ let law_in_turn c =
         (fun row ->
           snd
             (Total.collect t ~init:(s c.start) (fun () ->
-                 ignore (Rune.vmap' body row))))
+                 ignore (Rune.vmap' p.lane row))))
         (grid ())
     in
     let each = Array.concat (Array.to_list (Array.map snd per_row)) in
@@ -1497,13 +1611,23 @@ let alike_name c =
 
 (* A custom rule's tangent map sums its additions from the identity and adds
    that sum once, so its rounding is the summed value's only within a bound. *)
-let law_alike c =
+let alike_call c =
+  Batch.call Nx.Ptree.tensor
+    (directions ~n:c.lanes ~k:3)
+    Nx.Ptree.tensor
+    (alike c.site Total ~k:3 ~steps:c.steps)
+    Fun.id
+
+(* The cases compiled several to a program, each compiled result its own. *)
+let alike_rows = Batch.table ~per:8 alike_call alike_cases
+
+let law_alike (c, compiled) =
   let ds = directions ~n:c.lanes ~k:3 in
   let f kept = alike c.site kept ~k:3 ~steps:c.steps in
   let want = f Value ds in
   if c.site = Tangent then close 1e-5 want (f Total ds)
   else equal ~msg:"eager" bits_t (bits want) (bits (f Total ds));
-  close 1e-5 want (Rune.jit' (f Total) ds)
+  close 1e-5 want (compiled ())
 
 (* Under a differentiation around the map, a collect inside it receives its
    additions' tangents too: its derivative is the summed value's. *)
@@ -1772,12 +1896,35 @@ let stacked ~width f ds =
   if n = 0 then Nx.zeros f32 (Array.append [| 0 |] width)
   else Nx.stack ~axis:0 (List.init n (fun r -> f (Nx.get [ r ] ds)))
 
-let law_dependent c =
-  let ds = Nx.add_s (directions ~n:c.lanes ~k:2) 0.5 in
+let dep_lanes c = Nx.add_s (directions ~n:c.lanes ~k:2) 0.5
+
+let dep_call c =
+  Batch.call Nx.Ptree.tensor (dep_lanes c) Nx.Ptree.tensor
+    (Rune.vmap' (dependent c.kind ~steps:c.steps))
+    Fun.id
+
+(* The cases compiled several to a program, each compiled result its own. A
+   callback's cases compile alone: a program holding a callback is evaluated
+   around it, which a batch refuses. *)
+let dep_rows =
+  let called c = c.kind = Called in
+  let batched =
+    Batch.table ~per:8 dep_call (List.filter (Fun.negate called) dep_cases)
+  in
+  List.map
+    (fun c ->
+      if called c then
+        let f = dependent c.kind ~steps:c.steps in
+        (c, fun () -> Rune.jit' (Rune.vmap' f) (dep_lanes c))
+      else (c, List.assq c batched))
+    dep_cases
+
+let law_dependent (c, compiled) =
+  let ds = dep_lanes c in
   let f = dependent c.kind ~steps:c.steps in
   let each = stacked ~width:[| 6 |] f ds in
   equal ~msg:"eager" bits_t (bits each) (bits (Rune.vmap' f ds));
-  close 1e-5 each (Rune.jit' (Rune.vmap' f) ds)
+  close 1e-5 each (compiled ())
 
 (* Kinds whose gaining addition a differentiation around the map reaches: a
    remat's, a jit's, a switch's, a custom rule's primal and tangent map. *)
@@ -1874,6 +2021,10 @@ let () =
          test "the innermost scope of a total" test_same_total;
          test "a scope inside a jit" test_scope_in_jit;
          prop "jit adds what eager adds" additions law_additions;
+         cases
+           ~id:(fun (name, _, _) -> name)
+           "jit adds what eager adds, by constant scales" constant_scales
+           law_constant_scales;
          test "a jit that raises adds nothing" test_raising_jit;
          test "a jit traced with no collect open adds inside one"
            test_collect_after_none;
@@ -1899,8 +2050,9 @@ let () =
            test_jit_between_maps;
          prop ~examples:in_turn_examples "a map's lanes add in turn" in_turn
            law_in_turn;
-         cases ~id:alike_name
-           "a total every lane adds alike is the summed value" alike_cases
+         cases
+           ~id:(fun (c, _) -> alike_name c)
+           "a total every lane adds alike is the summed value" alike_rows
            law_alike;
          test "a total every lane adds alike, differentiated"
            test_alike_derivatives;
@@ -1908,8 +2060,10 @@ let () =
            test_alike_footprint;
          test "a total every inner lane adds alike, in nested maps"
            test_alike_nested;
-         cases ~id:dep_name "a total that depends on the lane is each lane's"
-           dep_cases law_dependent;
+         cases
+           ~id:(fun (c, _) -> dep_name c)
+           "a total that depends on the lane is each lane's" dep_rows
+           law_dependent;
          cases ~id:dep_name
            "a total that depends on the lane, differentiated around the map"
            differentiated_cases law_dependent_derivatives;
