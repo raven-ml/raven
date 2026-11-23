@@ -137,14 +137,14 @@ let gen =
      and+ shape = array ~size:(int_range 0 3) (int_range 0 4) in
      { wide; values; shape })
 
-(* Each special value at every operand, the widths alternating, in a shape of no
-   element, of one, and of several of ranks 1 and 2 in turn. *)
+(* Each special value at every operand, the eight at the eight pairs of a width
+   and a shape: of rank 0, of no element, of several at rank 2, and of one. *)
 let examples =
   let shapes = [| [||]; [| 0 |]; [| 2; 3 |]; [| 1 |] |] in
   List.mapi
     (fun i v ->
       {
-        wide = i mod 2 = 1;
+        wide = i / 4 = 1;
         values = List.init 6 (fun _ -> v);
         shape = shapes.(i mod 4);
       })
