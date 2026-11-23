@@ -986,12 +986,15 @@ let test_region_zeros () =
 
    Reads of an array by slices and by windows, each summed and scaled: an
    element's gradient is the sum of the scales of the reads that reach it, a
-   term each time a read reaches it, the reads taken from the last back, as
-   the transpose meets them, with no zero before the first, and [+0.] where
-   none does. A read of windows that share elements contributes [+0.] to each
-   element it does not reach. Scales of far magnitudes and zeros of both
-   signs show the order of the sums and their signs, in bits, eagerly and
-   compiled. *)
+   term each time a read reaches it, the reads taken from the last back, as the
+   transpose meets them, with no zero before the first, and [+0.] where none
+   does. A read of windows that share elements contributes [+0.] to each element
+   it does not reach. Scales of far magnitudes and zeros of both signs show the
+   order of the sums and their signs, in bits, eagerly and compiled. Eagerly the
+   cases draw the reads; compiled they draw the scales of one of a few programs
+   of reads, each compiled once, which takes the scales as an argument, and each
+   program runs too compiled once at its examples' scales as constants, which
+   the compiler may fold. *)
 
 type read = Slice of int * int * int | Windows of int * int
 type reads = { n : int; reads : (read * float) list }
@@ -1088,12 +1091,10 @@ let read_of n r x =
       Nx.slice [ Rs (start, stop, step) ] x
   | Windows (size, step) -> Nx.sliding_window ~window:size ~step x
 
-let regions_law { n; reads } =
-  let f x =
-    List.fold_left
-      (fun s (r, k) -> Nx.add s (Nx.mul_s (Nx.sum (read_of n r x)) k))
-      (Nx.scalar f64 0.) reads
-  in
+(* With [~covers:false], for a table, whose rows windtrap runs outside a
+   property's law, the law marks no cover. *)
+let regions_law ~covers ~how grad { n; reads } =
+  let cover label c = if covers then cover label c in
   let element i =
     let term (r, k) =
       let at, shares = reached n r in
@@ -1150,9 +1151,104 @@ let regions_law { n; reads } =
   let x = Nx.create f64 [| n |] (Array.make n 1.) in
   let bits a = Array.map Int64.bits_of_float (Nx.to_array a) in
   let want = Array.map Int64.bits_of_float (Array.init n element) in
-  equal ~msg:"eager" (array int64) want (bits (Rune.grad' f x));
-  let g = Rune.jit T.(tensor @-> returns tensor) (Rune.grad' f) in
-  equal ~msg:"compiled" (array int64) want (bits (g x))
+  equal ~msg:how (array int64) want (bits (grad x))
+
+(* The reads' scaled sums, each scale a constant of the program. *)
+let regions_f { n; reads } x =
+  List.fold_left
+    (fun s (r, k) -> Nx.add s (Nx.mul_s (Nx.sum (read_of n r x)) k))
+    (Nx.scalar f64 0.) reads
+
+let regions_eager r =
+  regions_law ~covers:true ~how:"eager" (Rune.grad' (regions_f r)) r
+
+(* A [-0.] read of the last element after two that overlap, which the generator
+   draws in one case in 6. *)
+let regions_eager_examples =
+  [
+    {
+      n = 4;
+      reads =
+        [ (Slice (3, 1, 1), -0.); (Slice (0, 3, 1), 1.); (Slice (1, 2, 1), 3.) ];
+    };
+  ]
+
+(* Programs of reads that reach each case the law covers, with the scales of
+   their examples. *)
+let region_programs =
+  [|
+    (0, [ (Slice (0, 0, 1), 1.); (Windows (1, 1), 1.) ]);
+    (4, [ (Slice (0, 3, 1), -0.); (Slice (2, 2, 1), 0x1p53) ]);
+    (5, [ (Windows (3, 1), 3.); (Slice (4, 3, -2), -2.) ]);
+    (* A [-0.] read of the last element after two reads that overlap. *)
+    (4, [ (Slice (3, 1, 1), -0.); (Slice (0, 3, 1), 1.); (Slice (1, 2, 1), 3.) ]);
+    ( 6,
+      [
+        (Windows (2, 2), 0x1p53);
+        (Slice (5, 6, -1), -0x1p53);
+        (Windows (1, 3), -0.);
+        (Slice (1, 2, 3), 1.);
+      ] );
+    (3, [ (Slice (1, 1, 1), -0.); (Windows (2, 3), 0.) ]);
+  |]
+
+(* A program's gradient, compiled once, of its scales [ks] and [x]. *)
+let region_compiled =
+  Array.map
+    (fun (n, reads) ->
+      lazy
+        (Rune.jit
+           T.(tensor @-> tensor @-> returns tensor)
+           (fun ks x ->
+             let f x =
+               List.fold_left
+                 (fun (s, j) (r, _) ->
+                   let k = Nx.get [ j ] ks in
+                   (Nx.add s (Nx.mul (Nx.sum (read_of n r x)) k), j + 1))
+                 (Nx.scalar f64 0., 0)
+                 reads
+             in
+             Rune.grad' (fun x -> fst (f x)) x)))
+    region_programs
+
+(* A program, and a scale for each of its reads. *)
+let regions_drawn =
+  let open Gen in
+  let scale = of_list [ 0x1p53; 1.; -0x1p53; -0.; 0.; 3.; -2. ] in
+  let reads (i, ks) =
+    let n, reads = region_programs.(i) in
+    { n; reads = List.map2 (fun (r, _) k -> (r, k)) reads ks }
+  in
+  with_pp
+    (fun ppf c -> pp_reads ppf (reads c))
+    (let* i = int_range 0 (Array.length region_programs - 1) in
+     let+ ks =
+       list ~size:(constant (List.length (snd region_programs.(i)))) scale
+     in
+     (i, ks))
+
+let regions_examples =
+  List.init (Array.length region_programs) (fun i ->
+      (i, List.map snd (snd region_programs.(i))))
+
+(* Each program at its examples' scales, compiled once with the scales as
+   constants, which the compiler may fold into the cotangent's sums. *)
+let regions_constant_rows =
+  List.map (fun (n, reads) -> { n; reads }) (Array.to_list region_programs)
+
+let regions_constant r =
+  regions_law ~covers:false ~how:"compiled, constant scales"
+    (Rune.jit T.(tensor @-> returns tensor) (Rune.grad' (regions_f r)))
+    r
+
+let regions_jit (i, ks) =
+  let n, reads = region_programs.(i) in
+  let reads = List.map2 (fun (r, _) k -> (r, k)) reads ks in
+  let g =
+    Lazy.force region_compiled.(i)
+      (Nx.create f64 [| List.length ks |] (Array.of_list ks))
+  in
+  regions_law ~covers:true ~how:"compiled" g { n; reads }
 
 (* A truncated normal over [[0, inf]] does not move with its upper bound,
    whose masses' unselected branches meet a zero cotangent with no infinite
@@ -1368,25 +1464,26 @@ let dirichlet_law =
 
 (* At fixed keys and concentrations, away from the edges where a gamma draw
    takes another round, the gradient of a weighted sum of a draw agrees with
-   central differences, eager and compiled. *)
+   central differences, eager and compiled. The compiled loss takes the key as
+   an argument, so the rows, of one length, share its program. *)
 let test_dirichlet_differences () =
+  let n = 8 in
+  let w = Nx.create f64 [| 1; n |] (spread 0.4 n) in
+  let loss key a = Nx.sum (Nx.mul w (Nx.Rng.dirichlet ~key a)) in
+  let compiled = Rune.jit T.(Nx.Rng.ptree @-> tensor @-> returns tensor) loss in
   List.iter
     (fun (k, conc) ->
-      let key = Nx.Rng.key k and n = Array.length conc in
+      let key = Nx.Rng.key k in
       let a = Nx.create f64 [| 1; n |] conc in
-      let w = Nx.create f64 [| 1; n |] (spread 0.4 n) in
-      let loss a = Nx.sum (Nx.mul w (Nx.Rng.dirichlet ~key a)) in
       let msg = Printf.sprintf "key %d" k in
       equal ~msg (result unit string) (Ok ())
-        (Rune.check_grads T.tensor loss a);
+        (Rune.check_grads T.tensor (loss key) a);
       equal ~msg:(msg ^ ", compiled") (result unit string) (Ok ())
-        (Rune.check_grads T.tensor
-           (Rune.jit T.(tensor @-> returns tensor) loss)
-           a))
+        (Rune.check_grads T.tensor (compiled key) a))
     [
-      (3, [| 0.7; 2.; 5.; 1.3 |]);
+      (3, [| 0.7; 2.; 5.; 1.3; 3.1; 0.8; 6.5; 1.9 |]);
       (11, [| 4.; 0.9; 12.; 3.5; 1.1; 7.; 2.2; 6. |]);
-      (29, [| 1.5; 9. |]);
+      (29, [| 1.5; 9.; 2.7; 0.6; 4.4; 1.2; 8.; 3.3 |]);
     ]
 
 (* Interface *)
@@ -1440,6 +1537,21 @@ let test_aux () =
     (Nx.to_array (Nx.reshape [| 1 |] y));
   equal ~msg:"gradient" floats [| Float.cos 0.5 |] (Nx.to_array g);
   equal ~msg:"aux" floats [| Float.cos 0.5 |] (Nx.to_array aux)
+
+exception Inside
+
+(* An exception the function raises passes through each transformation
+   unchanged, at the call. *)
+let test_exception () =
+  let x = v [| 1.; 2. |] and f _ = raise Inside in
+  raises ~msg:"grad" Inside (fun () -> Rune.grad' (fun x -> Nx.sum (f x)) x);
+  raises ~msg:"value_and_grad" Inside (fun () ->
+      Rune.value_and_grad' (fun x -> Nx.sum (f x)) x);
+  raises ~msg:"vjp" Inside (fun () -> Rune.vjp' f x);
+  raises ~msg:"linearize" Inside (fun () ->
+      Rune.linearize T.tensor T.tensor f x);
+  raises ~msg:"linear_transpose" Inside (fun () ->
+      Rune.linear_transpose T.tensor T.tensor f x x)
 
 (* A pullback runs no part of [f] again, gives its own memory, and may be
    applied any number of times. *)
@@ -2148,11 +2260,61 @@ let eager_pullback c x w ct =
   let _, pb = Rune.vjp (two ()) T.tensor (fun (x, w) -> conv_of c x w) (x, w) in
   pb ct
 
-let compiled_pullback c x w ct =
-  Rune.jit
-    T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
-    (fun x w ct -> eager_pullback c x w ct)
-    x w ct
+(* Compiled, the cases draw one of a few convolutions, each compiled once: the
+   examples, then convolutions that reach every other case the law covers. *)
+let conv_programs =
+  let c transpose n d taps stride padding dilation groups cg og =
+    {
+      transpose;
+      n;
+      d;
+      taps;
+      stride;
+      padding;
+      dilation;
+      groups;
+      cg;
+      og;
+      seed = 0.;
+    }
+  in
+  Array.of_list
+    (conv_examples
+    @ [
+        c false 2 [| 4; 3 |] [| 2; 2 |] [| 1; 2 |]
+          [| (0, -1); (1, 0) |]
+          [| 2; 1 |] 2 1 2;
+        c false 1 [| 3 |] [| 0 |] [| 1 |] [| (0, 0) |] [| 1 |] 1 1 1;
+        c true 1 [| 4 |] [| 3 |] [| 3 |] [| (1, 2) |] [| 2 |] 2 2 1;
+        c false 1 [| 2; 2 |] [| 1; 3 |] [| 2; 1 |]
+          [| (-1, 0); (2, 2) |]
+          [| 1; 1 |] 1 2 3;
+      ])
+
+let conv_compiled =
+  Array.map
+    (fun c ->
+      lazy
+        (Rune.jit
+           T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
+           (eager_pullback c)))
+    conv_programs
+
+(* A program and the seed of its operands. *)
+let conv_drawn =
+  let open Gen in
+  let pp ppf (i, seed) = pp_conv ppf { (conv_programs.(i)) with seed } in
+  with_pp pp
+    (let+ i = int_range 0 (Array.length conv_programs - 1)
+     and+ seed = float_range 0. 6. in
+     (i, seed))
+
+let conv_drawn_examples =
+  List.init (Array.length conv_programs) (fun i -> (i, 0.))
+
+let conv_jit (i, seed) =
+  let pull _ x w ct = Lazy.force conv_compiled.(i) x w ct in
+  conv_law pull { (conv_programs.(i)) with seed }
 
 (* conv_transpose at stride 2 of three channels into one: its pullbacks in both
    operands, eagerly and compiled, at values whose sums are exact. The compiled
@@ -2389,52 +2551,149 @@ let domain_commands =
     command "jvp" (k @-> returns bits_t) jvp jvp;
   ]
 
-(* grad of jit and jit of grad of exact functions give grad's bits *)
+(* grad of jit and jit of grad of exact functions give grad's bits
 
-type jit_case =
-  | Jit_case :
-      (float, 's) Nx.dtype * int array * Operand.t * Operand.t * Expr.t
-      -> jit_case
+   A program is an expression of functions a compiled call computes exactly,
+   whose derivatives sum no terms, over two operands of one dtype and shape,
+   each in its view. Its compiled forms are made once and compile at the first
+   case that draws the program; the cases draw a program and its operands'
+   elements. Each program runs first as an example, so every run compiles each
+   and covers the shapes and views it holds. *)
 
-(* Expressions of functions a compiled call computes exactly, whose derivatives
-   sum no terms. *)
+type jit_program =
+  | Jit_program : {
+      dt : (float, 's) Nx.dtype;
+      shape : int array;
+      xv : Operand.view;
+      yv : Operand.view;
+      e : Expr.t;
+      g : ('s ft -> 's ft -> 's ft) Lazy.t;
+      staged : ('s ft -> 's ft -> 's ft * 's ft) Lazy.t;
+    }
+      -> jit_program
+
+let jit_program (type s) (dt : (float, s) Nx.dtype) shape xv yv e =
+  let e = Expr.unsummed (Expr.exact e) in
+  let f (x : s ft) (y : s ft) = Nx.sum (Expr.eval x y e) in
+  let g = lazy (Rune.jit T.(tensor @-> tensor @-> returns tensor) f) in
+  let staged =
+    lazy
+      (Rune.jit
+         T.(tensor @-> tensor @-> returns (pair tensor tensor))
+         (fun x y -> Rune.grad (two ()) (fun (x, y) -> f x y) (x, y)))
+  in
+  Jit_program { dt; shape; xv; yv; e; g; staged }
+
+(* The expressions hold each constant {!Expr.gen} draws. *)
+let jit_programs =
+  let open Expr in
+  let f32 = Nx.float32 in
+  [|
+    jit_program f64 [||] Operand.Plain Operand.Plain
+      (Bin (Mul, X, Un (Abs, Bin (Add, Y, K (Operand.F 0.)))));
+    jit_program f32 [| 0; 3 |] Operand.Plain Operand.Flipped
+      (Bin (Add, Un (Square, X), Y));
+    jit_program f64 [| 1 |] (Operand.Offset 2) Operand.Plain
+      (Bin
+         ( Where_less,
+           X,
+           Bin (Maximum, Bin (Div, Y, K (Operand.F 2.)), K Operand.Least) ));
+    jit_program f32 [| 2; 3 |] Operand.Strided Operand.Broadcast
+      (Bin (Maximum, Un (Neg, X), Bin (Mul, Y, Bin (Mul, Y, K (Operand.F 0.5)))));
+    jit_program f64 [| 3; 2 |] Operand.Permuted Operand.Plain
+      (Bin
+         ( Minimum,
+           Bin (Mul, Un (Sqrt, Un (Abs, X)), Un (Recip, Bin (Add, X, Y))),
+           Bin
+             ( Minimum,
+               Un (Flip 0, Bin (Sub, Y, Un (Square, X))),
+               K (Operand.F Float.infinity) ) ));
+    jit_program f32 [| 4 |] Operand.Flipped (Operand.Offset 1)
+      (Bin (Div, X, Bin (Maximum, Y, K Operand.Greatest)));
+    jit_program f64 [| 2; 2; 2 |] Operand.Broadcast Operand.Strided
+      (Un (Flip 2, Bin (Sub, X, Un (Neg, Bin (Add, Y, K (Operand.F 1.))))));
+    jit_program f32 [| 3; 1 |] Operand.Plain Operand.Permuted
+      (Bin (Mul, Bin (Where_less, Y, X), Bin (Add, X, K (Operand.F (-0.)))));
+    (* Past one kernel block. *)
+    jit_program f64 [| 2; 300 |] Operand.Plain Operand.Plain
+      (Bin (Mul, X, Bin (Minimum, X, Bin (Add, Y, K (Operand.F (-3.))))));
+  |]
+
+(* The elements an operand's storage holds in [view] at shape [s]. *)
+let storage view s =
+  match view with
+  | Operand.Plain | Flipped | Permuted -> numel s
+  | Strided -> numel s * 2
+  | Broadcast -> if Array.length s = 0 then 1 else numel s / Int.max 1 s.(0)
+  | Offset k -> numel s + k
+
+(* An element as {!Operand.draw} draws one: 3 in 5 from its pool, 2 in 5 in
+   [[-4, 4]]. *)
+let elements n =
+  let open Gen in
+  let element =
+    frequency
+      [
+        (3, of_list (Array.to_list Operand.pool));
+        (2, map (fun x -> Operand.F x) (float_range (-4.) 4.));
+      ]
+  in
+  array ~size:(constant n) element
+
+let pp_values =
+  Format.pp_print_array
+    ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+    Operand.pp_value
+
+let jit_shape (Jit_program p) = (p.shape, p.xv, p.yv)
+
+let pp_program ppf (Jit_program p) xs ys =
+  Format.fprintf ppf "%a %a, x %a [%a], y %a [%a]: %a" Nx.pp_dtype p.dt
+    Operand.pp_shape p.shape Operand.pp_view p.xv pp_values xs Operand.pp_view
+    p.yv pp_values ys Expr.pp p.e
+
+let pp_jit_case ppf (i, xs, ys) = pp_program ppf jit_programs.(i) xs ys
+
 let jit_cases =
   let open Gen in
-  (let* s = Operand.shape in
-   let* e = Expr.gen ~rank:(Array.length s) in
-   let* x = Operand.draw s and+ y = Operand.draw s in
-   let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any f64 ] in
-   let e = Expr.unsummed (Expr.exact e) in
-   match D.kind dt with Float -> Jit_case (dt, s, x, y, e) | _ -> assert false)
-  |> with_pp (fun ppf (Jit_case (dt, s, x, y, e)) ->
-      Format.fprintf ppf "%a %a, x %a, y %a: %a" Nx.pp_dtype dt Operand.pp_shape
-        s Operand.pp_view x.view Operand.pp_view y.view Expr.pp e)
+  (let* i = int_range 0 (Array.length jit_programs - 1) in
+   let s, xv, yv = jit_shape jit_programs.(i) in
+   let+ xs = elements (storage xv s) and+ ys = elements (storage yv s) in
+   (i, xs, ys))
+  |> with_pp pp_jit_case
 
-let offset (o : Operand.t) = match o.view with Offset _ -> true | _ -> false
+(* Each program at elements of the pool in turn. *)
+let jit_examples =
+  let pool = Operand.pool in
+  let from k n = Array.init n (fun j -> pool.((k + j) mod Array.length pool)) in
+  List.init (Array.length jit_programs) (fun i ->
+      let s, xv, yv = jit_shape jit_programs.(i) in
+      (i, from i (storage xv s), from (i + 7) (storage yv s)))
 
-let law_jit (Jit_case (dt, s, xo, yo, e)) =
-  let x = Operand.make dt s xo and y = Operand.make dt s yo in
+let offset (v : Operand.view) = match v with Offset _ -> true | _ -> false
+
+let law_at (Jit_program p) xs ys =
+  let s = p.shape in
+  let x = Operand.make p.dt s { Operand.view = p.xv; values = xs }
+  and y = Operand.make p.dt s { Operand.view = p.yv; values = ys } in
   cover "a zero-size shape" (numel s = 0);
   cover "one element" (numel s = 1);
   cover "a 0-d shape" (Array.length s = 0);
-  cover "a view operand" (xo.view <> Plain || yo.view <> Plain);
-  cover "an offset operand" (offset xo || offset yo);
-  cover "a composition of over 6 functions" (Expr.size e > 6);
-  let f x y = Nx.sum (Expr.eval x y e) in
+  cover "a view operand" (p.xv <> Plain || p.yv <> Plain);
+  cover "an offset operand" (offset p.xv || offset p.yv);
+  cover "a composition of over 6 functions" (Expr.size p.e > 6);
+  let f x y = Nx.sum (Expr.eval x y p.e) in
   let pair (a, b) = (bits a, bits b) in
   let grad f =
     outcome (fun () -> pair (Rune.grad (two ()) (fun (x, y) -> f x y) (x, y)))
   in
   let expected = grad f in
   let t = outcome_t (Testable.pair bits_t bits_t) in
-  let g = Rune.jit T.(tensor @-> tensor @-> returns tensor) f in
-  equal ~msg:"grad of jit" t expected (grad g);
-  let staged =
-    Rune.jit
-      T.(tensor @-> tensor @-> returns (pair tensor tensor))
-      (fun x y -> Rune.grad (two ()) (fun (x, y) -> f x y) (x, y))
-  in
-  equal ~msg:"jit of grad" t expected (outcome (fun () -> pair (staged x y)))
+  equal ~msg:"grad of jit" t expected (grad (Lazy.force p.g));
+  equal ~msg:"jit of grad" t expected
+    (outcome (fun () -> pair (Lazy.force p.staged x y)))
+
+let law_jit (i, xs, ys) = law_at jit_programs.(i) xs ys
 
 (* Residuals *)
 
@@ -2478,13 +2737,14 @@ let test_residuals () =
 
 (* Depthwise convolutions
 
-   A convolution of one input and one output channel a group, and its
-   transpose, whose loop spreads its input: their pullbacks in the input and
-   the kernel, eagerly and compiled, pair with any tangent as the exact
-   change of the values, the convolutions being linear in each, and equal the
-   pullbacks of the same convolution by a kernel zero off its diagonal, which
-   nx computes as a contraction; at strides, paddings that pad or cut,
-   dilations, axes of one element and kernels that reach no element. *)
+   A convolution of one input and one output channel a group, and its transpose,
+   whose loop spreads its input: their pullbacks in the input and the kernel
+   pair with any tangent as the exact change of the values, the convolutions
+   being linear in each, and equal the pullbacks of the same convolution by a
+   kernel zero off its diagonal, which nx computes as a contraction; at strides,
+   paddings that pad or cut, dilations, axes of one element and kernels that
+   reach no element. Eagerly the cases draw the convolution; compiled they draw
+   one of a few, each compiled once. *)
 
 type depthwise = {
   transpose : bool;
@@ -2548,7 +2808,18 @@ let depthwise_gen =
        seed;
      }
 
-let depthwise_law d =
+let depthwise_conv d ~groups x w =
+  let stride = d.stride and dilation = d.dilation and padding = d.padding in
+  if d.transpose then Nx.conv_transpose ~groups ~stride ~dilation ~padding x w
+  else Nx.conv ~groups ~stride ~dilation ~padding x w
+
+(* The pullbacks of [d] at [(x, w)] of [ybar], eagerly. *)
+let depthwise_pullback d x w ybar =
+  let f (x, w) = depthwise_conv d ~groups:d.channels x w in
+  let _, pb = Rune.vjp T.(pair tensor tensor) T.tensor f (x, w) in
+  pb ybar
+
+let depthwise_law ~how pull d =
   let counts =
     Array.init (Array.length d.spatial) (fun i ->
         windows_of d.spatial.(i) d.padding.(i) d.taps.(i) d.stride.(i)
@@ -2573,12 +2844,7 @@ let depthwise_law d =
       Nx.create f64 s (spread seed (Array.fold_left ( * ) 1 s))
     in
     let x = filled d.seed xs and w = filled (d.seed +. 1.) ws in
-    let conv ~groups x w =
-      let stride = d.stride and dilation = d.dilation and padding = d.padding in
-      if d.transpose then
-        Nx.conv_transpose ~groups ~stride ~dilation ~padding x w
-      else Nx.conv ~groups ~stride ~dilation ~padding x w
-    in
+    let conv = depthwise_conv d in
     let depthwise (x, w) = conv ~groups:c x w in
     (* [w] on the diagonal of a kernel of [c] input channels. *)
     let diagonal (x, w) =
@@ -2592,16 +2858,6 @@ let depthwise_law d =
     in
     let y = depthwise (x, w) in
     let ybar = filled (d.seed +. 2.) (Nx.shape y) in
-    let pair = T.(pair tensor tensor) in
-    let pullback f (x, w) ybar =
-      let _, pb = Rune.vjp pair T.tensor f (x, w) in
-      pb ybar
-    in
-    let compiled f =
-      Rune.jit
-        T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
-        (fun x w ybar -> pullback f (x, w) ybar)
-    in
     let sum_abs t = sum_abs (Nx.to_array t) in
     let size =
       sum_abs ybar *. (sum_abs x +. sum_abs w +. 1.) *. (sum_abs w +. 1.)
@@ -2634,13 +2890,66 @@ let depthwise_law d =
       close (how ^ ": x̄ is the contraction's") xbar (pull in_x x);
       close (how ^ ": w̄ is the contraction's") wbar (pull in_w w)
     in
-    check "eager" (pullback depthwise (x, w) ybar);
-    check "compiled" ((compiled depthwise) x w ybar)
+    check how (pull x w ybar)
   end
 
+let depthwise_eager d = depthwise_law ~how:"eager" (depthwise_pullback d) d
+
+(* Convolutions that reach each case the law covers. *)
+let depthwise_programs =
+  let d transpose batch channels spatial taps stride dilation padding =
+    {
+      transpose;
+      batch;
+      channels;
+      spatial;
+      taps;
+      stride;
+      dilation;
+      padding;
+      seed = 0.;
+    }
+  in
+  [|
+    d false 1 2 [| 5 |] [| 3 |] [| 2 |] [| 1 |] [| (1, 1) |];
+    d false 2 3 [| 4; 1 |] [| 2; 1 |] [| 1; 1 |] [| 2; 1 |]
+      [| (0, -1); (0, 0) |];
+    d true 1 2 [| 3 |] [| 2 |] [| 3 |] [| 1 |] [| (0, 0) |];
+    (* A dilated window of 5 over 2 elements: no window. *)
+    d false 1 2 [| 2 |] [| 3 |] [| 1 |] [| 2 |] [| (0, 0) |];
+    d true 2 3 [| 4; 3 |] [| 3; 2 |] [| 1; 2 |] [| 1; 2 |] [| (2, -1); (1, 0) |];
+  |]
+
+let depthwise_compiled =
+  Array.map
+    (fun d ->
+      lazy
+        (Rune.jit
+           T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
+           (depthwise_pullback d)))
+    depthwise_programs
+
+(* A program and the seed of its operands. *)
+let depthwise_drawn =
+  let open Gen in
+  let pp ppf (i, seed) =
+    pp_depthwise ppf { (depthwise_programs.(i)) with seed }
+  in
+  with_pp pp
+    (let+ i = int_range 0 (Array.length depthwise_programs - 1)
+     and+ seed = float_range 0. 6. in
+     (i, seed))
+
+let depthwise_examples =
+  List.init (Array.length depthwise_programs) (fun i -> (i, 1.5))
+
+let depthwise_jit (i, seed) =
+  let pull x w ybar = Lazy.force depthwise_compiled.(i) x w ybar in
+  depthwise_law ~how:"compiled" pull { (depthwise_programs.(i)) with seed }
+
 (* An element of the input that one window reads receives its term, [-0.]
-   included, and one no window reads [+0.]; a tap that reads padding gives
-   no term, even of an infinite weight. *)
+   included, and one no window reads [+0.]; a tap that reads padding gives no
+   term, even of an infinite weight. *)
 let test_depthwise_zeros () =
   let x = Nx.create f64 [| 1; 4; 1 |] [| 1.; 2.; 3.; 4. |] in
   let check msg want ~stride ~padding w =
@@ -2694,7 +3003,10 @@ let () =
            (where_narrow_law Nx.bfloat16 0x1p-8);
          group "depthwise convolutions"
            [
-             prop "pullbacks of a depthwise conv" depthwise_gen depthwise_law;
+             prop "pullbacks of a depthwise conv" depthwise_gen depthwise_eager;
+             prop ~examples:depthwise_examples
+               "compiled pullbacks of a depthwise conv" depthwise_drawn
+               depthwise_jit;
              test "signs of zero and padded taps" test_depthwise_zeros;
            ];
          group "conventions"
@@ -2711,8 +3023,17 @@ let () =
              test "selections" test_selections;
              test "signs of zero" test_zeros;
              test "signs of zero through reads of regions" test_region_zeros;
-             prop "reads of regions sum each element's contributions"
-               reads_gen regions_law;
+             prop ~examples:regions_eager_examples
+               "reads of regions sum each element's contributions" reads_gen
+               regions_eager;
+             prop ~examples:regions_examples
+               "compiled reads of regions sum each element's contributions"
+               regions_drawn regions_jit;
+             cases
+               "compiled reads of regions at constant scales sum each \
+                element's contributions"
+               ~id:(Format.asprintf "%a" pp_reads)
+               regions_constant_rows regions_constant;
              test "a truncated normal's bounds" test_draws;
              prop ~count:6 ~examples:dirichlet_examples
                "a dirichlet draw's tangents and gradient in its concentrations"
@@ -2730,6 +3051,8 @@ let () =
              test "an objective of one element" test_one_element;
              test "value_and_grad" test_value_and_grad;
              test "value_and_grad_aux" test_aux;
+             test "an exception of the function passes through unchanged"
+               test_exception;
              test "a pullback" test_pullback;
              test "an integer cotangent" test_int_cotangent;
              test "one array at two leaves" test_two_leaves;
@@ -2750,9 +3073,8 @@ let () =
            [
              prop "pullbacks in both operands" ~examples:conv_examples conv_gen
                (conv_law eager_pullback);
-             prop "compiled pullbacks in both operands" ~examples:conv_examples
-               conv_gen
-               (conv_law compiled_pullback);
+             prop "compiled pullbacks in both operands"
+               ~examples:conv_drawn_examples conv_drawn conv_jit;
              test "conv_transpose of three channels at stride 2"
                test_spread_channels;
            ];
@@ -2775,7 +3097,8 @@ let () =
            "results on two domains are one domain's" domain_commands;
          group "jit"
            [
-             prop "grad of jit and jit of grad of exact functions" jit_cases
+             prop ~examples:jit_examples
+               "grad of jit and jit of grad of exact functions" jit_cases
                law_jit;
            ];
          group "memory"
