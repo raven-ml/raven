@@ -1318,6 +1318,21 @@ let test_copy_host_staged () =
   equal ~msg:"host memory mapped: staging memory alone" (list int)
     [ half_bytes ] (P.host_maps p)
 
+(* The first copy through staging memory fixes the size of its allocations: a
+   change after it is refused and changes nothing, and a size that is no
+   positive multiple of 256 is refused whenever. *)
+let test_half_bytes_fixed () =
+  let d, _ = P.open_ ~host_visible:false "buffer:half-fixed" in
+  roundtrip ~src:(B.create Rig.host 64) ~dst:(B.create d 64);
+  raises_match (Exn.invalid_arg ~sub:"a copy fixed the size") (fun () ->
+      Rig.set_half_bytes (64 * 1024));
+  raises_match (Exn.invalid_arg ~sub:"multiple of 256") (fun () ->
+      Rig.set_half_bytes 100);
+  let d, p = P.open_ ~host_visible:false "buffer:half-fixed-after" in
+  roundtrip ~src:(B.create Rig.host 64) ~dst:(B.create d 64);
+  equal ~msg:"host memory mapped: a half of the fixed size" (list int)
+    [ half_bytes ] (P.host_maps p)
+
 (* A copy from a borrow of host memory on the device that copies runs directly
    through the borrow's mapping, made at the borrow: the copy maps nothing.
    One from the host buffer itself goes through staging memory while the
@@ -2558,6 +2573,8 @@ let tests =
       [
         test "a device copies host memory through staging memory, mapping none"
           test_copy_host_staged;
+        test "a change of staging memory's size after a copy is refused"
+          test_half_bytes_fixed;
         test "a copy names a borrow to run directly" test_copy_borrowed_direct;
         test "a copy into a host buffer returns once its bytes are there"
           test_copy_into_host_waits;

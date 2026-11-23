@@ -93,6 +93,9 @@
     next leg names. A queued copy or fill returns a point of {!Dev.host}
     ({!Submission.mark}) where the host made its last transfer. *)
 
+val set_half_bytes : int -> unit
+(** [set_half_bytes n] is {!Rig.set_half_bytes}[ n]. *)
+
 val row : ?src_offset:int -> ?dst_offset:int -> int -> Def.box
 (** [row ~src_offset ~dst_offset n] is {!Rig.Buffer.row}[ ~src_offset
     ~dst_offset n]. *)

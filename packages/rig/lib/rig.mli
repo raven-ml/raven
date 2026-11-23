@@ -2838,6 +2838,18 @@ val time_pairs : t -> int
 (** [time_pairs d] is the number of [d]'s pairs of times that are taken: given
     to a value its driver times and not given back. *)
 
+val set_half_bytes : int -> unit
+(** [set_half_bytes n] makes each allocation of staging memory
+    ({!Buffer.section-copying}) [n] bytes: where that section says 32 MiB, read
+    [n]. For rig's tests, which walk every allocation and poll point of copies
+    of a few KiB: a C library that writes each allocation it makes, to catch
+    reads of uninitialized and freed memory, would write 32 MiB for each,
+    several times a run. Call it before any copy: the first copy through staging
+    memory fixes the size for the process.
+
+    Raises [Invalid_argument] if [n] is not a positive multiple of 256, or once
+    a copy fixed the size. *)
+
 val on_host_exchange : (int -> unit) -> unit
 (** [on_host_exchange f] makes the next load that links host code call [f a]
     once, [a] being the new link's first address, after the load found no link

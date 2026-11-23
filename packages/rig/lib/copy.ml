@@ -451,8 +451,32 @@ let leg_run fn ~waits ~into_half src s dst t n =
    its start once its work is done, which asks nothing more of a take. Pieces
    start at multiples of [piece_align] bytes in their half. *)
 
-let half_bytes = 32 * 1024 * 1024
 let piece_align = 256
+
+(* A half's bytes. The first read fixes them, so that every copy sizes its
+   pieces and its halves alike: [set_half_bytes] changes them only before. *)
+type half_size = Unread of int | Read of int
+
+let half_size = Atomic.make (Unread (32 * 1024 * 1024))
+
+let rec half_bytes () =
+  match Atomic.get half_size with
+  | Read n -> n
+  | Unread n as v ->
+      if Atomic.compare_and_set half_size v (Read n) then n else half_bytes ()
+
+let set_half_bytes n =
+  if n <= 0 || n mod piece_align <> 0 then
+    invalid_argf "Rig.set_half_bytes: %d is not a positive multiple of %d" n
+      piece_align;
+  let rec set () =
+    match Atomic.get half_size with
+    | Read _ -> invalid_arg "Rig.set_half_bytes: a copy fixed the size"
+    | Unread _ as v ->
+        if not (Atomic.compare_and_set half_size v (Unread n)) then set ()
+  in
+  set ()
+
 let round n = (n + piece_align - 1) land lnot (piece_align - 1)
 
 (* Who writes the pieces of a staged copy into its halves: the host, or a
@@ -478,7 +502,7 @@ let rec find l ok better i found =
     find l ok better (i + 1) found
 
 let has_room need h =
-  h.buffer <> None && h.cursor + need <= half_bytes
+  h.buffer <> None && h.cursor + need <= half_bytes ()
 
 let uses_done h =
   match h.buffer with None -> true | Some b -> Memory.uses_done b.mem
@@ -574,7 +598,7 @@ let no_half =
     buffer = None;
     held = false;
     names = [];
-    cursor = half_bytes;
+    cursor = max_int;
     lap = 0;
     last = 0;
     waits = false;
@@ -618,8 +642,8 @@ let ready h =
     (* A device's staging memory is memory both it and the host address:
        its Pinned memory, or its own where the host addresses that. *)
     let b =
-      if Buffer.host_addresses d then Buffer.create d half_bytes
-      else Buffer.create ~memory:Pinned d half_bytes
+      if Buffer.host_addresses d then Buffer.create d (half_bytes ())
+      else Buffer.create ~memory:Pinned d (half_bytes ())
     in
     h.names <- [];
     h.buffer <- Some b;
@@ -643,7 +667,7 @@ let ready h =
 let half_on fn stage d b =
   match Memory.staging d b.mem with
   | Some m -> { b with mem = m }
-  | None when Dev.is_host stage -> raise (Dev.Out_of_memory (d, half_bytes))
+  | None when Dev.is_host stage -> raise (Dev.Out_of_memory (d, half_bytes ()))
   | None ->
       invalid_argf "Rig.%s: no device copies between %s and %s" fn d.name
         stage.name
@@ -720,6 +744,7 @@ let starts boxes =
   ats
 
 let split boxes =
+  let half = half_bytes () in
   let out = ref [] and parts = ref [] and fill = ref 0 in
   let close () =
     if !parts <> [] then begin
@@ -740,7 +765,7 @@ let split boxes =
     for i = 0 to x.rows - 1 do
       let c = ref 0 in
       while !c < x.width do
-        let w = Int.min half_bytes (x.width - !c) in
+        let w = Int.min half (x.width - !c) in
         add
           {
             src_offset = x.src_offset + (i * x.src_pitch) + !c;
@@ -758,7 +783,7 @@ let split boxes =
   let rows x =
     let r = ref 0 in
     while !r < x.rows do
-      let fit = (half_bytes - !fill) / x.width in
+      let fit = (half - !fill) / x.width in
       if fit = 0 then close ()
       else begin
         let k = Int.min fit (x.rows - !r) in
@@ -773,7 +798,7 @@ let split boxes =
       end
     done
   in
-  Array.iter (fun x -> if x.width > half_bytes then wide x else rows x) boxes;
+  Array.iter (fun x -> if x.width > half then wide x else rows x) boxes;
   close ();
   Array.of_list (List.rev !out)
 
@@ -783,13 +808,14 @@ let at_start = [| 0 |]
 (* A row of [n] bytes past a half, from [src_offset] and [dst_offset], in
    pieces of a half of it each, as [split] would make them. *)
 let wide_row ~src_offset ~dst_offset n =
+  let half = half_bytes () in
   Array.init
-    ((n + half_bytes - 1) / half_bytes)
+    ((n + half - 1) / half)
     (fun k ->
-      let at = k * half_bytes in
+      let at = k * half in
       let x =
         row ~src_offset:(src_offset + at) ~dst_offset:(dst_offset + at)
-          (Int.min half_bytes (n - at))
+          (Int.min half (n - at))
       in
       { bytes = x.width; boxes = [| x |]; ats = at_start })
 
@@ -799,7 +825,7 @@ let wide_row ~src_offset ~dst_offset n =
 let pieces boxes =
   let n = total boxes in
   match boxes with
-  | _ when n <= half_bytes ->
+  | _ when n <= half_bytes () ->
       let ats = if Array.length boxes = 1 then at_start else starts boxes in
       [| { bytes = n; boxes; ats } |]
   | [| { rows = 1; src_offset; dst_offset; width; _ } |] ->
@@ -845,7 +871,7 @@ let leg_out_of fn ~waits h base dst p =
    cursor once the copy gives it back. *)
 let extent writer ps =
   if writer = Host && Array.length ps = 1 then round ps.(0).bytes
-  else half_bytes
+  else half_bytes ()
 
 (* The half of piece [k] of a copy through the halves [h0] and [h1], which
    take the pieces in turn, and the byte of its half where the piece goes:
@@ -865,7 +891,7 @@ let piece_base base0 k = if k = 0 then base0 else 0
    have passed them by. An exception after the give leaves the buffers it
    took to their collection. *)
 let holding d writer need ~two f =
-  let lock = d.live.lock in
+  let lock = d.live.lock and half = half_bytes () in
   let c0 = ref no_half and c1 = ref no_half and locked = ref false in
   match
     (* The sections under [d]'s lock end in this handler, which reads
@@ -898,11 +924,11 @@ let holding d writer need ~two f =
       if not !locked then Lock.hold lock;
       let h0 = !c0 and h1 = !c1 in
       if h0 != no_half then begin
-        h0.cursor <- half_bytes;
+        h0.cursor <- half;
         h0.held <- false
       end;
       if h1 != no_half then begin
-        h1.cursor <- half_bytes;
+        h1.cursor <- half;
         h1.held <- false
       end;
       Lock.release lock;
@@ -1006,8 +1032,8 @@ and between fn ~waits src dst ps =
                 : int);
             last := pipelined n (leg_out_of fn ~waits hb base dst ps.(k))
           done;
-          a0.cursor <- half_bytes;
-          a1.cursor <- half_bytes;
+          a0.cursor <- half_bytes ();
+          a1.cursor <- half_bytes ();
           b0.cursor <- base0 + extent Host ps;
           b1.cursor <- base0 + extent Host ps;
           !last))

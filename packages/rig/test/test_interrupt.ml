@@ -1848,7 +1848,14 @@ let poll_walks starts =
         test "open of a lost device's name" (stops `Open);
       ])
 
+(* Halves with room for the pieces of every copy a run makes, which pack as they
+   do in halves of 32 MiB. A run that settles makes its halves again, and the
+   suite's C library writes each in full (MALLOC_PERTURB_ and MallocScribble in
+   the dune file). *)
+let half_bytes = 16 * staged_bytes
+
 let () =
+  Rig.set_half_bytes half_bytes;
   if Sys.backend_type <> Native then
     exit @@ run "rig.interrupt" [ poll_walks [ Used; Settled ] ];
   exit
