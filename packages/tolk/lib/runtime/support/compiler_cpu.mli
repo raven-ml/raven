@@ -44,28 +44,28 @@ val clang : string -> Renderer.Compiler.t
     do not set [errno], so that a square root is one instruction. For an x86_64
     processor without F16C, which converts no half in hardware, each object
     defines the conversions between halves and floats that Clang calls
-    ([__extendhfsf2] and [__truncsfhf2]): IEEE's, rounding to nearest with
-    ties to even, with subnormals and infinities, and a NaN made quiet with
-    the high bits of its payload, as the processors' conversions make it. On
-    [arm64] the
-    register [x18] is left alone, since macOS and Windows clobber it, and
-    LLVM's interleaved load combine, which reads loads that shuffles put
-    together as one interleaved load, is off: its time grows much faster than
-    the lanes of a vector gathered from loads. Loop idiom recognition, which
-    replaces a loop by the library call or table it computes, is off: the
-    source makes no such call, and under LLVM 22 and 23 its time grows
-    exponentially with a chain of selections that each read the last twice.
-    Under a
-    Clang of LLVM 18, 19 or 20, and under Apple's Clang 17 for [x86_64], the
-    straight-line vectorizer, which packs
-    independent scalar operations into vectors, is off, since it writes
-    invalid code or wrong values for some packed integer lanes; under LLVM
-    18 so are AVX10.1 and AVX-512's half arithmetic ({!flags}). On x86_64 Windows the stack is not probed, since
-    rig commits a thread's stack before it runs linked code, and nothing is
-    kept below the stack pointer, which Windows may write. A source of more
-    than 400 000 bytes compiles without the loop vectorizer, which packs a
-    loop's iterations into vectors, so that a long source compiles in a
-    fraction of the time.
+    ([__extendhfsf2] and [__truncsfhf2]): IEEE's, rounding to nearest with ties
+    to even, with subnormals and infinities, and a NaN made quiet with the high
+    bits of its payload, as the processors' conversions make it. On [arm64] the
+    register [x18] is left alone, since macOS and Windows clobber it, and LLVM's
+    interleaved load combine, which reads loads that shuffles put together as
+    one interleaved load, is off: its time grows much faster than the lanes of a
+    vector gathered from loads. Loop idiom recognition, which replaces a loop by
+    the library call or table it computes, is off: the source makes no such
+    call, and under LLVM 22 and 23 its time grows exponentially with a chain of
+    selections that each read the last twice. Under a Clang of LLVM 18, 19 or
+    20, and under Apple's Clang 17 for [x86_64], the straight-line vectorizer,
+    which packs independent scalar operations into vectors, is off, since it
+    writes invalid code or wrong values for some packed integer lanes. Under a
+    Clang before LLVM 23, under Apple's and under one that states no release,
+    AVX-512 is off for [x86_64] ({!flags}); where Clang keeps it on all the
+    same, as LLVM 21 does for an AVX10.1 that [arch] or [native] names, a
+    compile raises {!Renderer.Compiler.Compile_error} saying so. On x86_64
+    Windows the stack is not probed, since rig commits a thread's stack before
+    it runs linked code, and nothing is kept below the stack pointer, which
+    Windows may write. A source of more than 400 000 bytes compiles without the
+    loop vectorizer, which packs a loop's iterations into vectors, so that a
+    long source compiles in a fraction of the time.
 
     Clang's compiler proper runs as Clang states it runs for these options
     ([clang -###]), its [-cc1] command, with LLVM's IR verifier on, which a
@@ -106,27 +106,30 @@ val clang : string -> Renderer.Compiler.t
 val flags : version:string -> string -> string list
 (** [flags ~version arch] is the arguments that make a Clang whose [--version]
     states [version], such as ["Ubuntu clang version 18.1.3 (1ubuntu1)"],
-    compile for [arch] as {!clang} reads it: its target, processor, features
-    and the processor it tunes for, in that order. Under LLVM 18 an x86_64
-    [arch]'s arguments end by disabling AVX10.1 and AVX-512's half
-    arithmetic, [avx512fp16], which AVX10.1 implies, whatever [arch] or
-    [native] enables: LLVM 18 crashes compiling some loops over halves with
-    them. Without them halves convert
-    to and from [float] by other instructions, to the same values. Any other
-    [version], including one that names no
-    LLVM release, such as Apple's, and any other machine take [arch]'s
-    arguments alone.
+    compile for [arch] as {!clang} reads it: its target, processor, features and
+    the processor it tunes for, in that order. Under a Clang before LLVM 23,
+    under Apple's, and under one whose [version] names no release, an x86_64
+    [arch]'s arguments end by disabling AVX-512 ([-mno-avx512f]): these Clangs
+    write wrong values for some bitwise selections under AVX-512's write masks.
+    Under LLVM 18, 19 and 20 and Apple's Clang 17 they disable AVX10.1 first
+    ([-mno-avx10.1-512], [-mno-avx10.1-256]), which implies AVX-512 and which
+    [native] enables by name. The code is then AVX2's, of the same values. LLVM
+    21 keeps an AVX10.1 that [arch] or [native] names, and AVX-512 with it,
+    whatever follows; {!clang} then compiles nothing for [arch], and its
+    {!Renderer.Compiler.Compile_error} says to name a processor or level without
+    the [avx10.1] feature or [native], or to use LLVM 22 or later. LLVM 23 and
+    later and any other machine take [arch]'s arguments alone.
 
     Raises [Invalid_argument] as {!clang} does. *)
 
 val registers : string -> Renderer.registers option
 (** [registers arch] is the vector register file of the processor
     {!clang}[ arch] compiles for, as the macros of the Clang run {!Setting.cc}
-    state its features: on [x86_64], [16] registers, [32] with AVX-512, of [32]
-    bytes with AVX and [16] without (a processor with AVX-512 is taken at [32]
-    bytes); on [arm64], [32] of [16]; on [riscv64], [None]. On [x86_64] a Clang
-    that does not run gives [16] of [16]. Each Clang and [arch] is asked once
-    per process.
+    state its features under {!flags}: on [x86_64], [16] registers, [32] with
+    AVX-512, of [32] bytes with AVX and [16] without (a processor with AVX-512
+    is taken at [32] bytes); on [arm64], [32] of [16]; on [riscv64], [None]. On
+    [x86_64] a Clang that does not run gives [16] of [16]. Each Clang and [arch]
+    is asked once per process.
 
     Raises [Invalid_argument] as {!clang} does. *)
 

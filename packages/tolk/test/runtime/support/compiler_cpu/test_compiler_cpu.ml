@@ -918,42 +918,51 @@ let windows =
     "-mno-red-zone";
   ]
 
-let llvm18_off = [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512fp16" ]
+let avx10_off = [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512f" ]
 
 let flags =
   group "flags"
     [
-      cases "under LLVM 18, x86_64 ends by disabling AVX10.1 and avx512fp16:"
+      cases "under LLVM 18, x86_64 ends by disabling AVX10.1 and AVX-512:"
         ~id:fst
         [
-          ("x86_64,native", [ x86_64_elf; "-march=native" ] @ llvm18_off);
+          ("x86_64,native", [ x86_64_elf; "-march=native" ] @ avx10_off);
           ( "x86_64,graniterapids,avx10.1-256",
-            [ x86_64_elf; "-march=graniterapids"; "-mavx10.1-256" ]
-            @ llvm18_off );
+            [ x86_64_elf; "-march=graniterapids"; "-mavx10.1-256" ] @ avx10_off
+          );
           ( "x86_64,sapphirerapids,avx512fp16,-avx",
             [ x86_64_elf; "-march=sapphirerapids"; "-mavx512fp16"; "-mno-avx" ]
-            @ llvm18_off );
-          ("x86_64-windows,native", windows @ [ "-march=native" ] @ llvm18_off);
+            @ avx10_off );
+          ("x86_64-windows,native", windows @ [ "-march=native" ] @ avx10_off);
         ]
         (fun (arch, expected) ->
           equal (list string) expected
             (Compiler_cpu.flags ~version:llvm18 arch));
       test "LLVM's own release of 18 is LLVM 18" (fun () ->
           equal (list string)
-            ([ x86_64_elf; "-march=native" ] @ llvm18_off)
-            (Compiler_cpu.flags ~version:"clang version 18.1.8"
-               "x86_64,native"));
-      cases "x86_64,native takes its own arguments alone under" ~id:Fun.id
+            ([ x86_64_elf; "-march=native" ] @ avx10_off)
+            (Compiler_cpu.flags ~version:"clang version 18.1.8" "x86_64,native"));
+      cases
+        "x86_64,native ends by disabling AVX-512 before LLVM 23 and under a \
+         Clang that names no release:"
+        ~id:fst
         [
-          "Debian clang version 19.1.7 (3+b1)";
-          "Homebrew clang version 20.1.8";
-          "clang version 17.0.6";
-          "Apple clang version 18.0.0 (clang-1800.0.31.1)";
-          "";
+          ("clang version 17.0.6", [ "-mno-avx512f" ]);
+          ("Debian clang version 19.1.7 (3+b1)", avx10_off);
+          ("Homebrew clang version 20.1.8", avx10_off);
+          ("Homebrew clang version 21.1.8", [ "-mno-avx512f" ]);
+          ("Homebrew clang version 22.1.8", [ "-mno-avx512f" ]);
+          ("Apple clang version 17.0.0 (clang-1700.6.4.2)", avx10_off);
+          ("Apple clang version 18.0.0 (clang-1800.0.31.1)", [ "-mno-avx512f" ]);
+          ("Homebrew clang version 23.1.5", []);
+          ("clang version 24.0.0", []);
+          ( "Intel(R) oneAPI DPC++/C++ Compiler 2025.0.0 (2025.0.0.20241008)",
+            [ "-mno-avx512f" ] );
+          ("", [ "-mno-avx512f" ]);
         ]
-        (fun version ->
+        (fun (version, off) ->
           equal (list string)
-            [ x86_64_elf; "-march=native" ]
+            ([ x86_64_elf; "-march=native" ] @ off)
             (Compiler_cpu.flags ~version "x86_64,native"));
       cases "another machine under LLVM 18 takes its own arguments alone:"
         ~id:fst
@@ -987,7 +996,7 @@ let flags =
         ]
         (fun (arch, expected) ->
           equal (list string) expected
-            (Compiler_cpu.flags ~version:"clang version 19.1.7" arch));
+            (Compiler_cpu.flags ~version:"clang version 23.1.5" arch));
       test "tuning for this processor adds none of its instructions"
         (fun () ->
           x86_host ();
@@ -1114,6 +1123,11 @@ let compile_time =
 
 let missing_clang = "/nonexistent/clang"
 
+(* What the Clang run states as its version, "" where it does not run. *)
+let cc_version () =
+  try Helpers.system (Setting.value Setting.cc ^ " --version")
+  with Failure _ -> ""
+
 (* The macros of each processor name its features; Clang's statement names the
    processor alone. *)
 let registers =
@@ -1122,17 +1136,63 @@ let registers =
       (fun (r : Renderer.registers) -> (r.count, r.bytes))
       (Compiler_cpu.registers arch)
   in
+  (* The registers of a processor with AVX-512, as the Clang run compiles for
+     it: 32, or SSE's 16 where {!Compiler_cpu.flags} turns AVX-512 off. *)
+  let avx512 () =
+    let version = cc_version () in
+    let flags = Compiler_cpu.flags ~version "x86_64,x86-64-v4" in
+    Some ((if List.mem "-mno-avx512f" flags then 16 else 32), 32)
+  in
+  let fixed v () = v in
   cases "the vector registers, their number and bytes, of" ~id:fst
     [
-      ("x86_64,x86-64", Some (16, 16));
-      ("x86_64,x86-64-v3", Some (16, 32));
-      ("x86_64,x86-64-v4", Some (32, 32));
-      ("x86_64,znver4", Some (32, 32));
-      ("x86_64-windows,x86-64-v3", Some (16, 32));
-      ("arm64,apple-m1", Some (32, 16));
-      ("riscv64,rv64g", None);
+      ("x86_64,x86-64", fixed (Some (16, 16)));
+      ("x86_64,x86-64-v3", fixed (Some (16, 32)));
+      ("x86_64,x86-64-v4", avx512);
+      ("x86_64,znver4", avx512);
+      ("x86_64-windows,x86-64-v3", fixed (Some (16, 32)));
+      ("arm64,apple-m1", fixed (Some (32, 16)));
+      ("riscv64,rv64g", fixed None);
     ]
-    (fun (arch, expected) -> equal (option (pair int int)) expected (file arch))
+    (fun (arch, expected) ->
+      equal (option (pair int int)) (expected ()) (file arch))
+
+(* Processors with AVX-512, three naming AVX10.1, which LLVM 21 keeps on with
+   AVX-512 after -mno-avx512f. A compile for one that Clang keeps AVX-512 off
+   for is refused for no such reason; a Clang that rejects a feature's name
+   keeps none on. Under LLVM 21 each that names AVX10.1 is refused, whatever the
+   registers say. *)
+let kept_avx512 =
+  let refused = "keeps AVX-512 on" in
+  let refuses arch =
+    raises_match
+      (function
+        | Compiler.Compile_error msg -> has_infix ~affix:refused msg
+        | _ -> false)
+      (fun () -> Compiler.compile (Compiler_cpu.clang arch) "int x;")
+  in
+  cases
+    "a Clang that keeps AVX-512 on where flags turn it off compiles nothing, \
+     saying so:"
+    ~id:Fun.id
+    [
+      "x86_64,x86-64-v4";
+      "x86_64,x86-64-v3,avx10.1-512";
+      "x86_64,x86-64-v3,avx10.1";
+      "x86_64,graniterapids,avx10.1-256";
+    ] (fun arch ->
+      let version = cc_version () in
+      let off = List.mem "-mno-avx512f" (Compiler_cpu.flags ~version arch) in
+      let llvm21 = has_infix ~affix:"clang version 21." version in
+      if llvm21 && has_infix ~affix:"avx10.1" arch then refuses arch
+      else
+        match Compiler_cpu.registers arch with
+        | Some { count = 32; _ } when off -> refuses arch
+      | Some _ | None -> (
+          match Compiler.compile (Compiler_cpu.clang arch) "int x;" with
+          | _ -> ()
+          | exception Compiler.Compile_error msg ->
+              equal bool ~msg:"refused" false (has_infix ~affix:refused msg)))
 
 let without_clang =
   tag "no-clang"
@@ -1294,6 +1354,7 @@ let () =
          features;
          flags;
          registers;
+         kept_avx512;
          architectures;
          errors;
          invalid_ir;

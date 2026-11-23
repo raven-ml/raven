@@ -1676,6 +1676,13 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Under a Clang before LLVM 23, or one that names no release,
+  `Compiler_cpu.clang` compiles x86_64 kernels without AVX-512
+  (`-mno-avx512f`): these Clangs write the wrong truth table for some masked
+  bitwise selections, and compiled bfloat16 `sinh`, `atan` and `erf` were
+  wrong for every input but a NaN or a zero on processors with AVX-512. Where
+  Clang keeps AVX-512 on all the same, as LLVM 21 does for a named AVX10.1, a
+  compile raises `Compile_error`.
 - On arm64, `Cstyle.clang` holds bfloat16 as its bits, an `unsigned short`,
   as on x86: Clang 18 failed to compile a bfloat16 negation, absolute value
   or bitcast of stacked lanes ("Cannot select: bf16 = fneg").

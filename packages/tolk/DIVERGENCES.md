@@ -5456,44 +5456,69 @@ into D183, which holds its rule, its reason and its pins.
   contractions › contracting pairs in blocks give eager's integers and hold
   their bound`.
 
-## D190. Clang of LLVM 18 compiles for x86_64 without AVX10.1 and avx512fp16
+## D190. A Clang before LLVM 23 compiles for x86_64 without AVX-512
 
 - **tinygrad:** `runtime/support/compiler_cpu.py` `ClangCompiler`'s x86_64
   arguments (`-march=<cpu>` and its features); `runtime/ops_cpu.py`
   `CPUDevice.__init__` (the CPU's arch, its machine and `native`).
-- **tolk:** `Compiler_cpu.flags` (`fixed` and `llvm18_x86_off`), which
-  `Compiler_cpu.clang` and `Compiler_cpu.registers` take, with the
-  release `Compiler_cpu.stated_release` reads from the statement
+- **tolk:** `Compiler_cpu.flags` (`fixed` and `avx512_off`), which
+  `Compiler_cpu.clang` and `Compiler_cpu.registers` take, and
+  `Compiler_cpu.clang`'s refusal (`keeps_avx512`), with the release `Compiler_cpu.stated_release` reads from the statement
   `Compiler_cpu.version` asks for.
-- **Differs:** under a Clang that states LLVM 18, an x86_64 arch's arguments
-  end with `-mno-avx10.1-512 -mno-avx10.1-256 -mno-avx512fp16`, after
+- **Differs:** under a Clang that states an LLVM release before 23, or
+  Apple's, or that states none, an x86_64 arch's arguments end with
+  `-mno-avx512f`, after
   `-march` and the arch's features, so they win over what `native` or the
-  arch enables. A Clang host's half is an `__fp16`, which computes in
-  `float` on every processor (D17), so values are unchanged: only the
-  instructions converting halves differ, as on a processor without AVX-512
-  FP16. Every other Clang, and every other machine, takes tinygrad's
-  arguments.
-- **Reason:** (b): rune's `Lower_arith › casts give eager's values` at
-  `(float16, 11)` and `rune vmap › compositions › under jit` at float16
-  failed on GitHub's ubuntu-latest under Ubuntu 24.04's Clang 18.1.3 ("clang
-  frontend command failed with exit code 139") on runners whose processor
-  states AVX10.1. Clang 18.1.3 and 18.1.8 crash in machine loop-invariant
-  code motion on the cast kernel `E_21_230` for `sapphirerapids`,
-  `graniterapids`, `x86-64-v3` with `-mavx10.1-256` and `x86-64-v4` with
-  `-mavx512fp16`, and compile it for `x86-64-v4`, `znver4` and each of these
-  with avx512fp16 off. AVX10.1 implies avx512fp16,
-  and under LLVM 18 disabling avx512fp16 or avx10.1-256 alone leaves it on:
-  avx10.1-512, then avx10.1-256, then avx512fp16 must go. Clang 17.0.6 and
-  19.1.7 compile the kernel for each of these processors, so every other
-  Clang keeps the features.
+  arch enables. Under LLVM 18, 19 and 20 and Apple's Clang 17,
+  `-mno-avx10.1-512 -mno-avx10.1-256` come first. The code is AVX2's, of the
+  same values; `Compiler_cpu.registers` gives 16 registers, which the
+  renderer upcasts for. Where the macros Clang defines under these arguments
+  still state AVX-512F, as LLVM 21's do for an arch or `native` that names
+  AVX10.1, a compile raises `Compile_error`. LLVM 23 and later take
+  tinygrad's arguments, as does every other machine.
+- **Reason:** (b): rune's `Lower_real › kinds › sinh, atan and erf of every
+  narrow float give eager's bits` failed at bfloat16 on GitHub's x86 runners
+  whose processor has AVX-512 (`x86-64-v4`), under Ubuntu 24.04's Clang
+  18.1.3 and on Windows: 65280 of 65536 elements differ, `sinh(0x1p-133)`
+  compiled to `0x0p+0`. Before LLVM 23, x86's instruction selection writes
+  the wrong truth table for a ternary logic instruction under a write mask
+  when it moves its memory operand last (LLVM issue 157929, PR 209782:
+  `VPTERNLOG231_imm8` and `VPTERNLOG312_imm8` had their bodies swapped). The
+  kernel's last step, `isnan x ? x : (r & 0x7fffffff) | (x & 0x80000000)`,
+  became `vpternlogd $184` over a broadcast `0x80000000` under the mask of
+  `x`'s order, which computes `(r & 0x80000000) | (x & ~r)`, wrong for
+  every `x` but a NaN or a zero, 254 and 2 of bfloat16's 65536 values, and
+  0 where `r` is near `x`. Clang 18.1.8, 19.1.7 and Apple's 17.0.0 write it for that
+  kernel; 21.1.8 and 22.1.8 write a correct sequence for it, but the wrong
+  immediates for LLVM's own `avx512-vpternlog-commute.ll` cases
+  `vpternlog_v16i32_231_rmik` and `_231_rmbik`, which 23.1.5 writes
+  correctly. The masked forms exist only with AVX-512, so without it no
+  Clang meets the defect. Disabling AVX-512 also keeps LLVM 18 off AVX-512's
+  half arithmetic, on which Clang 18.1.3 and 18.1.8 crash in machine
+  loop-invariant code motion compiling rune's cast kernel `E_21_230` (rune's
+  `Lower_arith › casts give eager's values` at `(float16, 11)` failed so on
+  runners whose processor states AVX10.1). AVX10.1 implies AVX-512, and under
+  LLVM 18 to 20 disabling avx10.1-256 alone leaves it on: avx10.1-512, then
+  avx10.1-256, then avx512f must go. LLVM 21's feature map applies AVX10.1
+  after every other feature, so that neither its driver's options nor
+  `-Xclang -target-feature -Xclang -avx10.1-512` disable an AVX10.1 that an
+  arch or `native` names: Clang 21.1.8 for `x86-64-v3,avx10.1-512` writes
+  AVX-512 code under `-mno-avx512f`. Since such code can be wrong, nothing
+  compiles, and the error says to name a processor or level without the
+  `avx10.1` feature or `native`, or to use LLVM 22 or later; rig names an x86 host by its level, never `native`. A Clang that
+  states no release, such as one built on Clang that names itself, could be
+  of any release, so AVX-512 is off.
 - **Pinned by:** `Tolk.Compiler_cpu › flags › under LLVM 18, x86_64 ends by
-  disabling AVX10.1 and avx512fp16:` (every row), `› LLVM's own release of
-  18 is LLVM 18`, `› x86_64,native takes its own arguments alone under`
-  (every row) and `› another machine under LLVM 18 takes its own arguments
-  alone:`; `Tolk.Compiler_cpu › features › a loop of half casts compiles
-  with AVX-512's half arithmetic on` (`x86_64,sapphirerapids`,
-  `x86_64,x86-64-v4,avx512fp16`), which crashes Clang 18 without the flags;
-  rune's two tests above, under Clang 18 on an x86 host with avx512fp16.
+  disabling AVX10.1 and AVX-512:` (every row), `› LLVM's own release of 18 is
+  LLVM 18`, `› x86_64,native ends by disabling AVX-512 before LLVM 23 and
+  under a Clang that names no release:` (every row) and `› another machine under LLVM 18 takes its own arguments
+  alone:`; `Tolk.Compiler_cpu › registers` at `x86-64-v4` and `znver4`;
+  `Tolk.Compiler_cpu › a Clang that keeps AVX-512 on where flags turn it off
+  compiles nothing, saying so:`, whose AVX10.1 rows Clang 21 refuses;
+  `Tolk.Compiler_cpu › features › a loop of half casts compiles with
+  AVX-512's half arithmetic on`, which crashes Clang 18 without the flags;
+  rune's `Lower_real` tests above, on an x86 host with AVX-512 under a Clang
+  before LLVM 23.
 
 ## D191. A loop bounded by a load outside any range counts its greatest trips
 

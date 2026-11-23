@@ -290,18 +290,32 @@ let mac_native = if mac_fp16 () then [ "fp16" ] else []
 let win64 arch =
   List.hd (String.split_on_char ',' arch) = "x86_64-windows"
 
-(* LLVM 18 crashes, in machine loop-invariant code motion, compiling some
-   loops over halves for a processor with AVX-512's half arithmetic
-   ([avx512fp16]), such as one that stores a half's double bits in one row and
-   the half converted to a short in the others: rune's casts from float16.
-   AVX10.1 implies it, and [native] on a runner whose processor states AVX10.1
-   enables both. LLVM 17 and 19 compile the loop. Under LLVM 18 these flags
-   follow [arch]'s, so they win; avx10.1-512 is disabled first, since
-   disabling avx10.1-256 leaves it on. A half is a storage format that
-   computes in float ([Cstyle.clang]), so only the instructions converting it
-   change: F16C's or AVX-512F's, as on a processor without AVX-512 FP16. *)
-let llvm18_x86_off =
-  [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512fp16" ]
+(* Before LLVM 23, x86's instruction selection writes the wrong truth table for
+   a ternary logic instruction under a write mask whose memory operand it moves
+   to the last place (LLVM issue 157929, fixed in LLVM 23). AVX-512 alone has
+   write masks. A selection of a bitwise select meets it: for rune's bfloat16
+   sinh, [isnan x ? x : (r & 0x7fffffff) | (x & 0x80000000)] on x86-64-v4 became
+   [vpternlogd $184] over a broadcast sign mask, which computes [(r &
+   0x80000000) | (x & ~r)]: wrong for every [x] but a NaN or a zero. LLVM 18 and
+   19 and Apple's Clang 17 write it for that kernel, LLVM 21 and 22 for LLVM's
+   own tests of the instruction. Under those Clangs AVX-512 is off, and the code
+   is AVX2's. These flags follow [arch]'s, so they win. AVX10.1 implies AVX-512,
+   and [native] on a processor that states AVX10.1 enables it by name, which
+   under LLVM 18 to 20 and Apple's Clang 17 is disabled first: avx10.1-512
+   before avx10.1-256, since disabling avx10.1-256 leaves it on. LLVM 21's
+   driver has no option that disables an AVX10.1 that [arch] or [native] names:
+   its feature map applies AVX10.1 after every other feature, and AVX10.1
+   enables AVX-512F again ([keeps_avx512]). LLVM 22's disables it with AVX-512F.
+   A Clang that states no release, such as a compiler built on Clang that names
+   itself, is taken as one before LLVM 23.
+
+   It also keeps LLVM 18 off AVX-512's half arithmetic, with which it crashes in
+   machine loop-invariant code motion on rune's casts from float16. *)
+let avx512_off = function
+  | Some (Llvm (18 | 19 | 20) | Apple 17) ->
+      [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512f" ]
+  | Some (Llvm r) when r >= 23 -> []
+  | Some (Llvm _ | Apple _) | None -> [ "-mno-avx512f" ]
 
 (* The machine of [arch] without its system, its processor, its features as
    written, and the flags that tune it. *)
@@ -385,8 +399,7 @@ let selection arch =
 
 (* The flags of a [selection] for a Clang of release [release]. *)
 let fixed ~release (machine, flags) =
-  if machine = "x86_64" && release = Some (Llvm 18) then flags @ llvm18_x86_off
-  else flags
+  if machine = "x86_64" then flags @ avx512_off release else flags
 
 let flags ~version arch =
   fixed ~release:(stated_release version) (selection arch)
@@ -464,17 +477,29 @@ let compile_args selected ~release =
 
 (* The macros Clang's preprocessor defines for an x86_64 [selected], which name
    the processor's features for every processor, where Clang's statement names
-   them only for [native]; none where Clang does not run. *)
-let x86_macros cc selected =
-  let release = stated_release (own_statement cc (compile_args selected)) in
-  let flags = fixed ~release selected in
-  let macros =
-    match run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) "" with
-    | Ok (WEXITED 0, out, _) -> String.split_on_char '\n' out
-    | Ok _ | Error _ -> []
-  in
-  fun m ->
-    List.exists (String.starts_with ~prefix:("#define " ^ m ^ " ")) macros
+   them only for [native]; none where Clang does not run. Clang is run once per
+   process for each Clang and flags, whose macros serve every question asked of
+   them: each run costs about what a small kernel's compile does. *)
+let x86_macros =
+  let lock = Mutex.create () and known = Hashtbl.create 4 in
+  fun cc selected ->
+    let release = stated_release (own_statement cc (compile_args selected)) in
+    let flags = fixed ~release selected in
+    let macros =
+      Mutex.protect lock @@ fun () ->
+      match Hashtbl.find_opt known (cc, flags) with
+      | Some macros -> macros
+      | None ->
+          let macros =
+            match run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) "" with
+            | Ok (WEXITED 0, out, _) -> String.split_on_char '\n' out
+            | Ok _ | Error _ -> []
+          in
+          Hashtbl.replace known (cc, flags) macros;
+          macros
+    in
+    fun m ->
+      List.exists (String.starts_with ~prefix:("#define " ^ m ^ " ")) macros
 
 (* [f cc arch] for each Clang and [arch], asked once per process. *)
 let per_clang f =
@@ -562,6 +587,16 @@ let converts_halves =
   per_clang @@ fun cc selected ->
   fst selected = "x86_64" && not (x86_macros cc selected "__F16C__")
 
+(* Whether Clang keeps AVX-512 on for an x86_64 [arch] that [avx512_off] turns
+   it off for, as LLVM 21 does for an AVX10.1 that [arch] or [native] names: its
+   masked ternary logic would compile into wrong values, so nothing compiles. *)
+let keeps_avx512 =
+  per_clang @@ fun cc selected ->
+  fst selected = "x86_64"
+  && avx512_off (stated_release (own_statement cc (compile_args selected)))
+     <> []
+  && x86_macros cc selected "__AVX512F__"
+
 let clang arch =
   let cc = Setting.value Setting.cc in
   let selected = selection arch in
@@ -569,7 +604,16 @@ let clang arch =
   let stated () = own_statement cc (compile_args selected) in
   let command ~long =
     let short = cc1 (stated ()) in
-    if long then Result.map without_loop_vectorizer short else short
+    if keeps_avx512 arch then
+      Error
+        (Printf.sprintf
+           "%s keeps AVX-512 on for %s after -mno-avx512f, and its masked \
+            ternary logic computes wrong values before LLVM 23 (LLVM issue \
+            157929): name a processor or level without the avx10.1 feature or \
+            native, or use LLVM 22 or later"
+           cc arch)
+    else if long then Result.map without_loop_vectorizer short
+    else short
   in
   (* An object is a function of its source, of the Clang, of the command its
      length selects and of the conversions it defines, so the table names what
