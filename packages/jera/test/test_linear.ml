@@ -16,7 +16,6 @@ let vec a = Nx.create f64 [| Array.length a |] a
 let one = Nx.Ptree.tensor
 let failure_with sub f = raises_match (Exn.failure ~sub) f
 let invalid_with sub f = raises_match (Exn.invalid_arg ~sub) f
-let is st s = Nx.item [] (Solution.is st s)
 
 (* A system of [n] unknowns, diagonally dominant so well conditioned: a matrix
    of entries in [-1, 1] plus [n + 1] on its diagonal, and a right-hand side. *)
@@ -105,7 +104,7 @@ let dense_tests =
     test "a singular system ends the lane Stalled" (fun () ->
         let a = Nx.create f64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
         let s = dense a (vec [| 1.; 1. |]) in
-        equal bool true (is Stalled s);
+        equal Oracle.status_t Stalled (Oracle.status s);
         failure_with "Jera.Linear.solve" (fun () -> Solution.get s));
     test "an affine a misses the check and ends the lane Stalled" (fun () ->
         let s =
@@ -113,12 +112,12 @@ let dense_tests =
             (fun u -> Nx.add_s (Nx.mul_s u 2.) 1.)
             (vec [| 1.; 2.; 3. |])
         in
-        equal bool true (is Stalled s);
+        equal Oracle.status_t Stalled (Oracle.status s);
         failure_with "The residual |a u - r| exceeds the solver's bound"
           (fun () -> Solution.get s));
     test "a non-finite r ends the lane Not_finite" (fun () ->
         let s = dense (Nx.eye f64 2) (vec [| 1.; Float.nan |]) in
-        equal bool true (is Not_finite s));
+        equal Oracle.status_t Not_finite (Oracle.status s));
     test "float tensors of two dtypes raise" (fun () ->
         invalid_with "Jera.Linear.solve: the float tensors of r" (fun () ->
             Linear.solve
@@ -197,13 +196,14 @@ let banded_tests =
                (Nx.diag ~k:(-2) (Nx.ones f64 [| n - 2 |])))
         in
         let s = banded 1 a (Nx.ones f64 [| n |]) in
-        equal bool true (is Stalled s);
+        equal Oracle.status_t Stalled (Oracle.status s);
         failure_with "The residual |a u - r| exceeds" (fun () -> Solution.get s));
     test "a singular band ends the lane Stalled" (fun () ->
         let a =
           Nx.create f64 [| 3; 3 |] [| 1.; 1.; 0.; 1.; 1.; 0.; 0.; 0.; 1. |]
         in
-        equal bool true (is Stalled (banded 1 a (vec [| 1.; 2.; 3. |]))));
+        equal Oracle.status_t Stalled
+          (Oracle.status (banded 1 a (vec [| 1.; 2.; 3. |]))));
     test "a negative width raises" (fun () ->
         invalid_with "Jera.Linear.banded: width = -1 is negative" (fun () ->
             Linear.banded ~width:(-1)));
@@ -261,16 +261,16 @@ let cg_tests =
     test "a direction of non-positive curvature ends the lane Stalled"
       (fun () ->
         let s = cg (Nx.neg (Nx.eye f64 3)) (vec [| 1.; 2.; 3. |]) in
-        equal bool true (is Stalled s);
+        equal Oracle.status_t Stalled (Oracle.status s);
         failure_with "curvature" (fun () -> Solution.get s));
     test "a spent budget ends the lane Budget_spent" (fun () ->
         let a = Nx.diag (vec [| 1.; 2.; 3.; 4.; 5. |]) in
         let s = cg ~budget:2 a (Nx.ones f64 [| 5 |]) in
-        equal bool true (is Budget_spent s);
+        equal Oracle.status_t Budget_spent (Oracle.status s);
         equal int32 3l (Nx.item [] (Solution.evaluations s)));
     test "a non-finite r ends the lane Not_finite" (fun () ->
-        equal bool true
-          (is Not_finite (cg (Nx.eye f64 2) (vec [| Float.infinity; 1. |]))));
+        equal Oracle.status_t Not_finite
+          (Oracle.status (cg (Nx.eye f64 2) (vec [| Float.infinity; 1. |]))));
     test "a tolerance outside (0, 1) raises" (fun () ->
         invalid_with "Jera.Linear.cg: rel = 0 is not in (0, 1)" (fun () ->
             Linear.cg ~rel:0. ~budget:10 ~precondition:Fun.id));
@@ -319,7 +319,7 @@ let gmres_tests =
         (* A rotation: pᵀ a p = 0 for every p. *)
         let a = Nx.create f64 [| 2; 2 |] [| 0.; 1.; -1.; 0. |] in
         let r = vec [| 1.; 2. |] in
-        equal bool true (is Stalled (cg a r));
+        equal Oracle.status_t Stalled (Oracle.status (cg a r));
         equal
           (Oracle.tensor ~rel:1e-14 ~abs:1e-15 ())
           (Nx.solve a r)
@@ -344,11 +344,11 @@ let gmres_tests =
     test "a spent budget ends the lane Budget_spent" (fun () ->
         let a = Nx.diag (vec [| 1.; 2.; 3.; 4.; 5. |]) in
         let s = gmres ~restart:1 ~budget:2 a (Nx.ones f64 [| 5 |]) in
-        equal bool true (is Budget_spent s);
+        equal Oracle.status_t Budget_spent (Oracle.status s);
         equal int32 4l (Nx.item [] (Solution.evaluations s)));
     test "a non-finite r ends the lane Not_finite" (fun () ->
-        equal bool true
-          (is Not_finite (gmres (Nx.eye f64 2) (vec [| Float.nan; 1. |]))));
+        equal Oracle.status_t Not_finite
+          (Oracle.status (gmres (Nx.eye f64 2) (vec [| Float.nan; 1. |]))));
     test "a restart below 1 raises" (fun () ->
         invalid_with "Jera.Linear.gmres: restart = 0 is below 1" (fun () ->
             Linear.gmres ~restart:0 ~rel:1e-6 ~budget:10 ~precondition:Fun.id));

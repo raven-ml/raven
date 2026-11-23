@@ -104,6 +104,29 @@ let central ~eps f x v =
 
 let slope e1 e2 = Float.log2 (e1 /. e2)
 
+(* Statuses *)
+
+let status s =
+  let lanes = Nx.numel (Jera.Solution.ok s) in
+  if lanes <> 1 then
+    invalid_arg (Printf.sprintf "Oracle.status: %d lanes, not one" lanes);
+  List.find
+    (fun st -> Nx.item [] (Nx.reshape [||] (Jera.Solution.is st s)))
+    Jera.Solution.
+      [ Converged; Budget_spent; Not_bracketed; Not_finite; Stalled ]
+
+let status_t =
+  Windtrap.Testable.make
+    ~pp:(fun ppf st ->
+      Format.pp_print_string ppf
+        (match st with
+        | Jera.Solution.Converged -> "Converged"
+        | Budget_spent -> "Budget_spent"
+        | Not_bracketed -> "Not_bracketed"
+        | Not_finite -> "Not_finite"
+        | Stalled -> "Stalled"))
+    ~equal:( = )
+
 (* Errors *)
 
 let message f =

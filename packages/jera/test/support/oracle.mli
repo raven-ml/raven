@@ -47,6 +47,16 @@ val slope : float -> float -> float
 (** [slope e1 e2] is [log2 (e1 /. e2)], the order an error shows when its step
     halves from [e1]'s to [e2]'s. *)
 
+(** {1:statuses Statuses} *)
+
+val status : ('a, 'd) Jera.Solution.t -> Jera.Solution.status
+(** [status s] is the status of [s]'s one lane.
+
+    Raises [Invalid_argument] if [s] has other than one lane. *)
+
+val status_t : Jera.Solution.status Windtrap.testable
+(** [status_t] compares statuses and prints one as its constructor. *)
+
 (** {1:errors Errors} *)
 
 val message : (unit -> 'a) -> string
