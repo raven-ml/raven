@@ -1,0 +1,5 @@
+# The drivers include the kernel's headers, which other distributions install
+# with their C library's.
+depexts: [
+  ["linux-headers"] {os-distribution = "alpine"}
+]
