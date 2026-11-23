@@ -3,10 +3,10 @@
 On an NVIDIA RTX 5000 Ada, raven embeds objects with aion-base 2.0 times as
 fast as AION-1's own PyTorch code and computes redshift posteriors 1.6 times
 as fast, ahead of PyTorch under `torch.compile` too, and draws DESI spectra
-at 0.92 times its speed. As a whole command, `main.exe embed` takes 1.7 s for
-64 real objects against 8.3 s for upstream's code. On two CPU cores, raven
-embeds 1.5 times as fast as PyTorch eagerly (`--eager`), and at 0.92 times
-its speed compiled, the default.
+at 0.92 times its speed. As a whole command, `main.exe embed` takes 1.65 s
+for 64 real objects against 7.86 s for upstream's code. On two CPU cores,
+raven embeds 1.5 times as fast as PyTorch eagerly (`--eager`), and at 0.92
+times its speed compiled, the default.
 
 ## The model on a GPU
 
@@ -16,12 +16,12 @@ on both sides. Each cell is the median of three rounds and their range.
 
 | | raven, CUDA | raven, NV | PyTorch | PyTorch, `torch.compile` (one run) |
 |---|---|---|---|---|
-| aion-base: embed | 125 (122–125) | 122 (120–124) | 62.2 (62.0–62.4) | 96.0 |
-| aion-base: redshift posterior | 163 (160–164) | 161 (160–161) | 100 (99.4–101) | 137 |
-| aion-base: DESI spectrum from Gaia XP, 12 steps | 20.8 (20.5–20.9) | 20.5 (20.5–20.5) | 22.6 (22.2–22.7) | 25.8 |
-| aion-large: embed | 36.5 (36.1–36.7) | 36.1 (36.0–36.2) | 21.5 (21.4–21.5) | 31.2 |
-| aion-large: redshift posterior | 46.2 (46.2–46.6) | 46.2 (46.1–46.2) | 33.0 (33.0–33.1) | 43.7 |
-| aion-large: DESI spectrum from Gaia XP, 12 steps | 5.32 (5.32–5.33) | 5.26 (5.26–5.28) | 7.13 (7.10–7.26) | 8.04 |
+| aion-base: embed | 124 (122–126) | 124 (123–124) | 62.0 (62.0–62.1) | 94.9 |
+| aion-base: redshift posterior | 161 (161–163) | 161 (161–162) | 100 (100–100) | 139 |
+| aion-base: DESI spectrum from Gaia XP, 12 steps | 20.8 (20.7–21.0) | 20.8 (20.8–20.8) | 22.7 (22.7–22.8) | 26.6 |
+| aion-large: embed | 36.3 (36.2–36.6) | 36.1 (36.1–36.2) | 21.4 (21.3–21.5) | 32.0 |
+| aion-large: redshift posterior | 46.2 (46.2–46.4) | 46.1 (45.8–46.2) | 33.0 (33.0–33.1) | 44.4 |
+| aion-large: DESI spectrum from Gaia XP, 12 steps | 5.30 (5.30–5.32) | 5.25 (5.25–5.25) | 7.20 (7.18–7.20) | 8.25 |
 
 `embed` encodes the tutorial file's inputs, a Legacy Survey image, nine
 Legacy Survey values and a DESI spectrum (858 tokens), and averages the
@@ -31,20 +31,20 @@ upstream's 12 linear steps from the 110 tokens of Gaia's XP coefficients.
 NV is the same card through NVIDIA's kernel driver, without CUDA.
 `torch.compile` of the transformer's encoder and decoder narrows the gap:
 raven still embeds 1.3 times as fast and computes posteriors 1.2 times as
-fast as compiled PyTorch, which draws spectra 1.24 times as fast as raven;
+fast as compiled PyTorch, which draws spectra 1.28 times as fast as raven;
 upstream ships it eager.
 
-At 64 objects a call, the tutorial's batch, raven embeds 117 objects a
-second against PyTorch's 62, computes 151 posteriors against 100, and draws
+At 64 objects a call, the tutorial's batch, raven embeds 115 objects a
+second against PyTorch's 62, computes 150 posteriors against 100, and draws
 17.4 spectra against 23.5 (one run each).
 
 One object at a time, in milliseconds a call:
 
 | aion-base | raven, CUDA | raven, NV | PyTorch |
 |---|---|---|---|
-| embed | 10.7 (10.1–11.0) | 10.9 (10.8–10.9) | 13.8 (13.8–13.9) |
-| redshift posterior | 10.1 (9.98–10.2) | 10.4 (10.4–10.5) | 11.0 (10.9–11.2) |
-| DESI spectrum, 12 steps | 87.7 (86.9–87.8) | 90.8 (90.8–91.5) | 100 (99.8–100) |
+| embed | 10.8 (9.78–10.9) | 10.7 (10.5–11.0) | 13.7 (13.6–13.7) |
+| redshift posterior | 9.74 (9.63–10.0) | 9.88 (9.81–9.93) | 10.8 (10.5–10.8) |
+| DESI spectrum, 12 steps | 86.6 (85.6–86.8) | 89.2 (89.0–89.3) | 90.7 (90.1–91.1) |
 
 ## The model on the CPU
 
@@ -71,9 +71,9 @@ spectrum on the codec's grid: 16 objects a call on the GPU, 4 on the CPU.
 
 | | raven, CUDA | PyTorch, CUDA | raven, CPU compiled (default) | raven, CPU eager (`--eager`) | PyTorch, CPU |
 |---|---|---|---|---|---|
-| Image encode, 4 × 160 × 160 | 219 (219–220) | 727 (725–733) | 3.70 (3.70–3.71) | 3.80 (3.79–3.81) | 4.56 (4.55–4.56) |
-| Spectrum encode, 7781 pixels | 797 (796–806) | 402 (402–403) | 10.1 (10.1–10.1) | 6.27 (6.26–6.29) | 9.09 (9.00–9.10) |
-| Spectrum decode, 273 tokens | 2,309 (2,273–2,356) | 859 (858–860) | 38.1 (38.0–38.2) | 18.1 (18.1–18.2) | 28.7 (28.2–28.8) |
+| Image encode, 4 × 160 × 160 | 225 (225–226) | 749 (748–749) | 3.70 (3.70–3.71) | 3.80 (3.79–3.81) | 4.56 (4.55–4.56) |
+| Spectrum encode, 7781 pixels | 801 (800–804) | 406 (405–406) | 10.1 (10.1–10.1) | 6.27 (6.26–6.29) | 9.09 (9.00–9.10) |
+| Spectrum decode, 273 tokens | 2,367 (2,305–2,392) | 865 (865–867) | 38.1 (38.0–38.2) | 18.1 (18.1–18.2) | 28.7 (28.2–28.8) |
 
 ## Where the time goes
 
@@ -83,10 +83,10 @@ raven's from tolk's `DEBUG=2` timing of each kernel, PyTorch's from
 
 | | raven, embed | PyTorch, embed | raven, spectrum | PyTorch, spectrum |
 |---|---|---|---|---|
-| Products | 88 ms, 27.4 TFLOP/s | 77 ms, 30.3 TFLOP/s | 659 ms, 24.6 TFLOP/s | 396 ms, 25.0 TFLOP/s |
-| Attention | 27 ms | 59 ms | 53 ms | 77 ms |
-| Norms, elementwise, small reductions | 12 ms | 120 ms | 81 ms | 206 ms |
-| In all | 128 ms | 257 ms | 793 ms | 679 ms |
+| Products | 89 ms, 27.3 TFLOP/s | 77 ms, 30.3 TFLOP/s | 656 ms, 24.7 TFLOP/s | 405 ms, 24.5 TFLOP/s |
+| Attention | 28 ms | 59 ms | 54 ms | 79 ms |
+| Norms, elementwise, small reductions | 12 ms | 120 ms | 77 ms | 207 ms |
+| In all | 128 ms | 257 ms | 788 ms | 690 ms |
 
 - **Embedding and the posterior.** raven's products run at nine tenths of
   cuBLAS's rate; it fuses the norms and elementwise work into a tenth of
@@ -95,10 +95,10 @@ raven's from tolk's `DEBUG=2` timing of each kernel, PyTorch's from
 - **Spectra.** raven's draw encodes all 383 tokens at each of the 12 steps,
   the target's absent ones included; upstream's encodes the present ones
   only, 110 at the first step and 361 at the last, 236 on average. raven's
-  encoder computes 1.6 times the rows, at cuBLAS's rate, which makes 1.7
-  times PyTorch's product time. aion-large's products run at 21.4 TFLOP/s
+  encoder computes 1.6 times the rows, at cuBLAS's rate, which makes 1.6
+  times PyTorch's product time. aion-large's products run at 21.3 TFLOP/s
   against cuBLAS's 25.2.
-- **The codecs.** raven's image codec runs its convolutions in float32, 67
+- **The codecs.** raven's image codec runs its convolutions in float32, 70
   ms of kernels for 16 images; PyTorch's run on cuDNN with TF32, cuDNN's
   default, in 20 ms, so that part of upstream is not IEEE float32.
 - **The CPU.** Eager raven draws spectra slower than PyTorch for the same 1.6
@@ -118,24 +118,24 @@ on the CPU, in batches of 16; raven's kernels come from its disk cache.
 
 | | raven, CUDA | PyTorch, CUDA | raven, CPU compiled (default) | raven, CPU eager (`--eager`) | PyTorch, CPU |
 |---|---|---|---|---|---|
-| `embed`, image, spectrum and 9 values | 1.73 (1.73–1.76) | 8.29 (8.27–8.29) | 26.6 (26.5–27.2) | 21.8 (21.8–21.9) | 31.2 (30.6–32.4) |
-| `posterior` of redshift, image and 4 fluxes | 1.72 (1.70–1.72) | 6.20 (6.14–6.48) | 19.1 (19.1–20.1) | 14.8 (14.8–14.8) | 20.0 (19.6–20.8) |
-| `generate` of a DESI spectrum from XP, 12 steps | 4.29 (4.28–4.36) | 7.85 (7.84–8.04) | 26.1 (26.0–27.7) | 20.2 (20.1–20.2) | 16.5 (16.4–17.3) |
-| `embed` over an empty kernel cache | 9.43 (9.22–9.48) | | 31.1 (31.0–31.9) | nothing to compile | |
+| `embed`, image, spectrum and 9 values | 1.65 (1.63–1.66) | 7.86 (7.82–7.94) | 26.6 (26.5–27.2) | 21.8 (21.8–21.9) | 31.2 (30.6–32.4) |
+| `posterior` of redshift, image and 4 fluxes | 1.64 (1.63–1.68) | 5.89 (5.87–5.90) | 19.1 (19.1–20.1) | 14.8 (14.8–14.8) | 20.0 (19.6–20.8) |
+| `generate` of a DESI spectrum from XP, 12 steps | 4.22 (4.21–4.23) | 7.64 (7.62–7.64) | 26.1 (26.0–27.7) | 20.2 (20.1–20.2) | 16.5 (16.4–17.3) |
+| `embed` over an empty kernel cache | 9.29 (9.09–9.41) | | 31.1 (31.0–31.9) | nothing to compile | |
 
 On the GPU, besides the model's time at the tables' rates, `main.exe`'s
-`embed` takes 1.2 s to start, load the weights, read the rows and run the
+`embed` takes 1.1 s to start, load the weights, read the rows and run the
 codecs, which it runs on the GPU as PyTorch does; PyTorch's process takes
-7.3 s. `generate` draws spectra slower (The model on a GPU) but starts
+6.8 s. `generate` draws spectra slower (The model on a GPU) but starts
 faster, so it finishes first. Compiling raven's kernels over an empty cache
-adds 8 s to `embed`, 5 s on the CPU; PyTorch ships its kernels compiled.
+adds 7.6 s to `embed`, 5 s on the CPU; PyTorch ships its kernels compiled.
 On the CPU, compiled, `main.exe` embeds in 0.85 times PyTorch's time,
 computes posteriors in its time, 0.95 times it, and takes 1.6 times its
 time to draw spectra; eager, the commands follow the eager rows.
 
 Device memory while embedding 16 objects, the most each side held,
-allocator caches included: raven 1.1 GiB with aion-base and 3.1 GiB with
-aion-large, PyTorch 3.3 and 6.1 GiB. raven's bench transformer leaves out
+allocator caches included: raven 1.4 GiB with aion-base and 3.3 GiB with
+aion-large, in the driver's pages, PyTorch 3.3 and 6.1 GiB. raven's bench transformer leaves out
 the tables of the 25 modalities the rows do not use, 0.29 GiB of aion-base,
 which PyTorch's holds.
 
@@ -160,23 +160,28 @@ which PyTorch's holds.
   in one of them PyTorch's embed and posterior ran 9 and 13% faster than in
   the other two. The CUDA whole commands ran under the same check of the
   cores, PyTorch's times within 5% of their last measurement, every side's
-  range within 3.5%; so did the host's, each round in a hold of its own,
-  PyTorch's times within 3% of their last measurement.
-- **Versions.** raven at e4e0b64ea7 for the GPU's rows, their breakdowns
+  range within 3.5%. On 2026-11-23 the first of three runs ranged past it
+  (raven's embed 4.2%, PyTorch's generate 4.7%), and so did the third, at
+  a load of 7 to 9; the second counts, its PyTorch commands 2.7 to 5.2%
+  faster than their last measurement, none slower. So did the host's, each
+  round in a hold of its own, PyTorch's times within 3% of their last
+  measurement.
+- **Versions.** raven at 76fdde9051 for the GPU's rows, their breakdowns
   and the CUDA whole commands; at d93d815855 for the host's rows, its
   breakdown and the host's whole commands. AION-1
   (`polymathic-aion`) at db7fba6d on torch 2.15.0+cu132, Python 3.12.15,
   cuDNN 9.26. The whole
   commands load polymathic-ai/aion-base at 40541618, the Hub's current
   commit, which `Hub` pins.
-- **Statistic.** Three rounds on 2026-11-20 and 21 on the GPU and on
+- **Statistic.** Three rounds on 2026-11-23 on the GPU, each in a hold of
+  the timing, heavy and GPU locks of its own at a load of 1 to 3, and on
   2026-11-22 on the host, each running raven and PyTorch in turn on one
   device, in alternate orders. raven's cells are
   thumper's medians (5 samples on the GPU, 3 on the host, after 3 warmup
   calls), the others `pytorch.py`'s (5 calls on the GPU, 3 on the host,
   after 1 or 2); the tables give the median of the three rounds and their
-  range. `torch.compile`, beside eba27a14be's rounds, and the batch of 64
-  ran once. The whole commands ran three rounds of `whole.sh` each, on the
+  range. `torch.compile` and the batch of 64 ran once, after the GPU's
+  rounds. The whole commands ran three rounds of `whole.sh` each, on the
   host one round a hold (`ROUNDS=1`), raven and PyTorch in alternate
   orders, PyTorch's CPU cells in the compiled commands' rounds. The
   breakdowns are one profiled call each, outside the timed rounds.
