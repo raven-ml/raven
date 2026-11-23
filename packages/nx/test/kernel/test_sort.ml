@@ -382,7 +382,8 @@ let shifted (b : Support.backend) dt s ~align x =
   y
 
 (* Complex numbers of both widths at a component's alignment, by each path:
-   short slices, long ones keeping all and a few. *)
+   short slices, long ones keeping all and a few, and a complex64 slice of 64Ki,
+   which nx.cpu sorts whole on the job's threads where it has more than one. *)
 let aligned_cases =
   List.concat_map
     (fun d ->
@@ -392,6 +393,7 @@ let aligned_cases =
         example d [| 2; 9000 |] ~k:10;
       ])
     [ D.Any D.Complex64; D.Any D.Complex128 ]
+  @ [ example (D.Any D.Complex64) [| 1 lsl 16 |] ~draw:Special ]
 
 (* The operand and both destinations at their least alignment give the
    reference's values and positions. *)
@@ -402,6 +404,11 @@ let law_aligned (b : Support.backend) c =
   let align = D.bits dt / 16 in
   let y = Array.copy s in
   y.(c.axis) <- kept c;
+  cover "a complex64 slice of 64Ki sorted whole"
+    (D.equal dt D.Complex64
+    && Array.length s = 1
+    && s.(0) >= 1 lsl 16
+    && kept c = s.(0));
   let x = shifted b dt s ~align (Some x) in
   let values = shifted b dt y ~align None in
   let positions = A.create b.device D.Int64 (Iarray.of_array y) in
@@ -592,8 +599,9 @@ let laws (b : Support.backend) =
         (run (law_prefix b));
       prop ~examples "sorts each slice stably in the order" cases
         (run (law_reference b));
-      test "sorts complex numbers at a component's alignment" (fun () ->
-          List.iter (run (law_aligned b)) aligned_cases);
+      prop ~count:0 ~examples:aligned_cases
+        "sorts complex numbers at a component's alignment" cases
+        (run (law_aligned b));
       prop ~count:12 ~examples:long_examples
         "sorts long slices stably in the order, keeping any number" long
         (run (law_long b));

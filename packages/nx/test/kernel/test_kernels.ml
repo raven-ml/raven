@@ -886,6 +886,13 @@ let offset_cases =
   let+ seed = int in
   { dt; shape; src; dst; seed }
 
+(* Complex64 arrays from 4 bytes past 8 whose copies of a transpose move blocks
+   and zip pairs, and whose scatter sorts its updates. *)
+let offset_examples =
+  List.map
+    (fun shape -> { dt = D.Any D.Complex64; shape; src = 4; dst = 4; seed = 7 })
+    [ [| 8; 8 |]; [| 2; 9 |]; [| 1 lsl 16 |] ]
+
 (* [x]'s bytes on [b]'s device in a fresh buffer from its byte [at]. *)
 let placed (type v s) (b : Support.backend) at (x : (v, s) A.t) : (v, s) A.t =
   let src = A.buffer x in
@@ -902,13 +909,15 @@ let blank (type v s) (b : Support.backend) at (dt : (v, s) D.t) s :
   let buffer = B.view (B.create b.device (at + n)) ~first:at ~length:n in
   A.v dt (L.contiguous (Iarray.of_array s)) buffer
 
-(* A copy, a padded load's map, a sum along the last axis and a sum's scan
-   along the first from a carry, each with its source at byte [src] and its
-   destination and carry at byte [dst], or the multiple of the carrier's
-   alignment below it: each answer, and each result where the host reads
-   it. *)
-let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src
-    ~dst =
+(* A copy, of [x] and of its last two axes swapped, a padded load's map, a
+   where, a gather and a scatter by Set along the first axis, a sum along the
+   last and a sum's scan along the first from a carry, each with its sources at
+   byte [src] and its destination, scattered-into array and carry at byte [dst],
+   or the multiple of the carrier's alignment below it: each answer, and each
+   result where the host reads it. The positions are drawn from one before the
+   first axis to one past it, so a gather reads zeros and a scatter drops
+   updates, and several updates share a target. *)
+let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src ~dst =
   let module K = (val b.kernels) in
   let dt = A.dtype x and s = c.shape in
   let x = placed b src x in
@@ -916,13 +925,46 @@ let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src
   let ran name f y = (name, f y, y) in
   let p = Reduce_cases.identity c.dt in
   let r = Array.length s - 1 in
+  let swapped =
+    if r < 1 then []
+    else
+      let perm = Array.init (r + 1) Fun.id in
+      perm.(r - 1) <- r;
+      perm.(r) <- r - 1;
+      let t = Option.get (A.move (M.Permute (Iarray.of_array perm)) x) in
+      let ts = Array.map (fun a -> s.(a)) perm in
+      [
+        ran "copy of the last axes swapped"
+          (fun y -> Support.map1 (module K) Copy ~dst:y t)
+          (into ts);
+      ]
+  in
+  let n = Array.fold_left ( * ) 1 s in
+  let st = Random.State.make [| c.seed + 2 |] in
+  let at () = Int64.of_int (Random.State.int st (s.(0) + 2) - 1) in
+  let positions =
+    Support.on b
+      (A.of_array D.Int64 (Iarray.of_array s) (Array.init n (fun _ -> at ())))
+  in
+  let cond = placed b src (seeded D.Bool (Iarray.of_array s) (c.seed + 3)) in
+  let other = placed b src (seeded dt (Iarray.of_array s) (c.seed + 4)) in
+  let target = placed b dst (seeded dt (Iarray.of_array s) (c.seed + 5)) in
   let maps =
-    [
-      ran "copy" (fun y -> Support.map1 (module K) Copy ~dst:y x) (into s);
-      ran "padded load"
-        (fun y -> K.map p ~dsts:[| A.Any y |] [| unpadded x |])
-        (into s);
-    ]
+    [ ran "copy" (fun y -> Support.map1 (module K) Copy ~dst:y x) (into s) ]
+    @ swapped
+    @ [
+        ran "padded load"
+          (fun y -> K.map p ~dsts:[| A.Any y |] [| unpadded x |])
+          (into s);
+        ran "where"
+          (fun y -> Support.map3 (module K) Where ~dst:y cond x other)
+          (into s);
+        ran "gather" (fun y -> K.gather ~axis:0 ~dst:y positions x) (into s);
+        ran "scatter by Set"
+          (fun y ->
+            K.scatter Set ~unique:false ~axis:0 ~dst:y ~into:target positions x)
+          (into s);
+      ]
   in
   if not (Reduce_cases.accepts Sum c.dt) then maps
   else
@@ -947,17 +989,29 @@ let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src
           (into s);
       ]
 
-(* A map, a reduction and a scan over arrays at any offset their dtype's
-   alignment admits give the answers and the bits they give over arrays at
-   a buffer's start. *)
+(* A map, a reduction, a scan, a gather and a scatter over arrays at any offset
+   their dtype's alignment admits give the answers and the bits they give over
+   arrays at a buffer's start. *)
 let law_offsets (b : Support.backend) c =
   let (D.Any dt) = c.dt in
   let complex bytes = D.is D.Complex dt && 8 * bytes = D.bits dt in
   let off o = o mod (D.bits dt / 8) <> 0 in
+  let r = Array.length c.shape - 1 in
+  let last k = if r < 1 then 0 else c.shape.(r - k) in
   cover "complex64 from 4 bytes past 8" (complex 8 && off c.src);
   cover "complex64 into 4 bytes past 8" (complex 8 && off c.dst);
   cover "complex128 from 8 bytes past 16" (complex 16 && off c.src);
   cover "complex128 into 8 bytes past 16" (complex 16 && off c.dst);
+  (* nx.cpu's copies of a transpose: square blocks of 4 x 4 8-byte elements, and
+     two columns zipped. *)
+  cover "complex64 swapped in blocks from 4 bytes past 8"
+    (complex 8 && off c.src && last 1 >= 4 && last 0 >= 4);
+  cover "complex64 pairs swapped from 4 bytes past 8"
+    (complex 8 && off c.src && last 1 = 2 && last 0 >= 2);
+  (* nx.cpu sorts the updates of a scatter of 64Ki or more by target on a host
+     of more than one thread. *)
+  cover "a scatter of 64Ki complex64 updates from 4 bytes past 8"
+    (complex 8 && off c.src && c.shape.(0) >= 1 lsl 16);
   let x = seeded dt (Iarray.of_array c.shape) c.seed in
   let want = offset_runs b c x ~src:0 ~dst:0 in
   let got = offset_runs b c x ~src:c.src ~dst:c.dst in
@@ -1599,9 +1653,9 @@ let laws (b : Support.backend) =
         (unit (test_wide_in_place b));
       test "a map of a padded load reads its coordinates"
         (unit (test_padded_coordinate b));
-      prop ~count:200
-        "a map, a sum and a scan at any offset their dtype admits have the \
-         bits they have at a buffer's start"
+      prop ~count:200 ~examples:offset_examples
+        "a map, a sum, a scan, a gather and a scatter at any offset their \
+         dtype admits have the bits they have at a buffer's start"
         (Gen.with_pp pp_offsets offset_cases) (run (law_offsets b));
       (* "a where" and "a load of one repeated element" come in 4.4% and
          5.0% of cases: 600 cases miss each with probability below 2e-12. *)

@@ -139,7 +139,9 @@ static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
    and each row written as two 16-byte vectors, the pairs of columns
    interleaved. block's round trip through memory made a transposed
    float64 pack of 96 rows by 256 7.5% slower than moving its elements one
-   by one on six kimchi cores. */
+   by one on six kimchi cores. On arm64 the vectors load and store as
+   bytes: a complex64 element lies on a multiple of 4 bytes alone
+   (nx_array.mli), where a uint64_t pointer to it would be undefined. */
 #if defined(__aarch64__)
 static inline __attribute__((always_inline)) void block4x8(uint8_t *d,
                                                            int64_t dr,
@@ -148,13 +150,13 @@ static inline __attribute__((always_inline)) void block4x8(uint8_t *d,
   uint64x2_t x[4][2];
   for (int q = 0; q < 4; q++)
     for (int h = 0; h < 2; h++)
-      x[q][h] = vld1q_u64((const uint64_t *)(s + q * sc + 16 * h));
+      x[q][h] = vreinterpretq_u64_u8(vld1q_u8(s + q * sc + 16 * h));
   for (int h = 0; h < 2; h++)
     for (int v = 0; v < 2; v++) {
       uint64x2_t a = x[2 * v][h], b = x[2 * v + 1][h];
-      vst1q_u64((uint64_t *)(d + 2 * h * dr + 16 * v), vtrn1q_u64(a, b));
-      vst1q_u64((uint64_t *)(d + (2 * h + 1) * dr + 16 * v),
-                vtrn2q_u64(a, b));
+      vst1q_u8(d + 2 * h * dr + 16 * v, vreinterpretq_u8_u64(vtrn1q_u64(a, b)));
+      vst1q_u8(d + (2 * h + 1) * dr + 16 * v,
+               vreinterpretq_u8_u64(vtrn2q_u64(a, b)));
     }
 }
 #elif defined(__x86_64__)
@@ -212,7 +214,7 @@ static inline __attribute__((always_inline)) void block4x8_nt(
   uint64x2_t x[4][2];
   for (int q = 0; q < 4; q++)
     for (int h = 0; h < 2; h++)
-      x[q][h] = vld1q_u64((const uint64_t *)(s + q * sc + 16 * h));
+      x[q][h] = vreinterpretq_u64_u8(vld1q_u8(s + q * sc + 16 * h));
   for (int h = 0; h < 2; h++) {
     uint64x2_t r[2][2] = {
         {vtrn1q_u64(x[0][h], x[1][h]), vtrn1q_u64(x[2][h], x[3][h])},
@@ -262,7 +264,8 @@ static inline __attribute__((always_inline)) void block4x8_nt(
 /* Interleaves the [n] elements of [w] bytes at [a] and at [b] into [d]:
    a's i-th element at d's 2i-th, b's at the 2i+1-th, as a window two
    elements wide reads its rows. 4- and 8-byte elements zip in registers,
-   four or two pairs at a time. */
+   four or two pairs at a time, the 8-byte ones loaded and stored as bytes
+   as block4x8's. */
 static inline __attribute__((always_inline)) void zip2(uint8_t *d,
                                                        const uint8_t *a,
                                                        const uint8_t *b,
@@ -277,9 +280,10 @@ static inline __attribute__((always_inline)) void zip2(uint8_t *d,
     }
   if (w == 8)
     for (; i + 2 <= n; i += 2) {
-      uint64x2x2_t x = {{vld1q_u64((const uint64_t *)(a + 8 * i)),
-                         vld1q_u64((const uint64_t *)(b + 8 * i))}};
-      vst2q_u64((uint64_t *)(d + 16 * i), x);
+      uint64x2_t x = vreinterpretq_u64_u8(vld1q_u8(a + 8 * i));
+      uint64x2_t y = vreinterpretq_u64_u8(vld1q_u8(b + 8 * i));
+      vst1q_u8(d + 16 * i, vreinterpretq_u8_u64(vzip1q_u64(x, y)));
+      vst1q_u8(d + 16 * i + 16, vreinterpretq_u8_u64(vzip2q_u64(x, y)));
     }
 #elif defined(__x86_64__)
   if (w == 4)

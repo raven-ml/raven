@@ -446,7 +446,10 @@ static int sort_long(const sorter *s, int64_t blocks, int64_t bytes,
     int kb = nx_cpu_span_bytes(most - least);
     int whole = s->keep == n;
     uint64_t *in_pos = whole && s->sp == 1 ? (uint64_t *)p.pos : NULL;
-    uint64_t *in_v = whole && s->sv == 1 && s->w == 8 ? (uint64_t *)p.v : NULL;
+    /* Values of 8 bytes hold the keys in place where they lie on words: a
+       complex64's may lie on 4 bytes alone. */
+    int words = s->w == 8 && (uintptr_t)p.v % sizeof(uint64_t) == 0;
+    uint64_t *in_v = whole && s->sv == 1 && words ? (uint64_t *)p.v : NULL;
     if (kb <= 4) {
       p.src = take(in_pos, n, own, &owned);
       p.dst = take(NULL, n, own, &owned);
@@ -583,7 +586,7 @@ static void sort_slice(const sorter *s, int64_t pv, int64_t pp, int64_t px,
     case 1: MOVE(uint8_t);
     case 2: MOVE(uint16_t);
     case 4: MOVE(uint32_t);
-    case 8: MOVE(uint64_t);
+    case 8: MOVE(nx_cpu_w8);
 #undef MOVE
     default:
       for (int64_t i = 0; i < keep; i++)

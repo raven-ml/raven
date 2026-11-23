@@ -543,7 +543,7 @@ typedef struct {
 WHERE(1, uint8_t, BY_MASK)
 WHERE(2, uint16_t, BY_MASK)
 WHERE(4, uint32_t, BY_MASK)
-WHERE(8, uint64_t, BY_MASK)
+WHERE(8, nx_cpu_w8, BY_MASK)
 WHERE(16, w16, BY_BRANCH)
 
 #define FILL(W, T)                                                           \
@@ -561,7 +561,7 @@ WHERE(16, w16, BY_BRANCH)
 FILL(1, uint8_t)
 FILL(2, uint16_t)
 FILL(4, uint32_t)
-FILL(8, uint64_t)
+FILL(8, nx_cpu_w8)
 FILL(16, w16)
 
 /* The table, by kind then dtype: NULL where Nx_kernel.Prog refuses the

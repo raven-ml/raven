@@ -210,7 +210,7 @@ static inline int inside(const int64_t *idx, int64_t n, uint64_t dim) {
 GATHER_ROW(gather_1, uint8_t)
 GATHER_ROW(gather_2, uint16_t)
 GATHER_ROW(gather_4, uint32_t)
-GATHER_ROW(gather_8, uint64_t)
+GATHER_ROW(gather_8, nx_cpu_w8)
 GATHER_ROW(gather_16, u128)
 
 /* Copies [m] rows of [n] bytes, the destination's from [d] stepping [sd]
@@ -992,7 +992,7 @@ static inline nx_c128 add_c128(nx_c128 a, nx_c128 b) {
 SCATTER_RUN(set_1, uint8_t, SET)
 SCATTER_RUN(set_2, uint16_t, SET)
 SCATTER_RUN(set_4, uint32_t, SET)
-SCATTER_RUN(set_8, uint64_t, SET)
+SCATTER_RUN(set_8, nx_cpu_w8, SET)
 SCATTER_RUN(set_16, u128, SET)
 SCATTER_RUN(add_f32_run, float, nx_add_f32)
 SCATTER_RUN(add_f64_run, double, nx_add_f64)
@@ -1636,7 +1636,7 @@ static void sort_chunks(int64_t lo, int64_t hi, int worker, void *ctx) {
         case 1: PLACE(uint8_t, AT(uint8_t)) break;
         case 2: PLACE(uint16_t, AT(uint16_t)) break;
         case 4: PLACE(uint32_t, AT(uint32_t)) break;
-        case 8: PLACE(uint64_t, AT(uint64_t)) break;
+        case 8: PLACE(nx_cpu_w8, AT(nx_cpu_w8)) break;
         default: PLACE(u128, AT(u128))
       }
 #undef AT

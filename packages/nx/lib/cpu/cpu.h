@@ -44,6 +44,14 @@
 #include "nx_kernel.h"
 #include "rig_pool.h"
 
+/* An element of 8 bytes as one word, for code that moves elements by their
+   width. A complex64 element lies on a multiple of 4 bytes alone
+   (nx_array.mli), so the word has that alignment: through a uint64_t, its
+   load would be undefined. x86-64 and arm64 load and store 8 bytes at any
+   address: clang emits the same code as through a uint64_t, and gcc the
+   same loops. */
+typedef uint64_t nx_cpu_w8 __attribute__((aligned(4)));
+
 /* The counts of nx_kernel.h's kinds and constructors that nx.cpu's tables
    and switches take: a code added there fails nx.cpu's build here until
    nx.cpu computes it. */
