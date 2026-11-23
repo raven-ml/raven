@@ -14,6 +14,13 @@ let timeout = 60.
 let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
 let memory name = Result.get_ok (Rig.software name)
 
+(* The operating system's name, as [uname -s] prints it. *)
+let os () =
+  let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
+  let name = input_line ic in
+  ignore (Unix.close_process_in ic);
+  name
+
 let test_same_name () =
   let d = memory "open:same" in
   equal device d (memory "open:same");
@@ -54,21 +61,23 @@ let test_host () =
   equal bool true (Rig.reaches Rig.host Rig.host);
   equal device Rig.host (Rig.host_of Rig.host);
   (* macOS states the caches, and Linux in sysfs where the firmware describes
-     them: a cache's size file that holds a positive size. *)
-  let sysfs = "/sys/devices/system/cpu" in
+     them: a cache's size file that holds a positive size. A sandbox may show
+     no sysfs, and other systems state none. *)
+  let sysfs = "/sys/devices/system/cpu/cpu0/cache" in
   let sized i =
-    let file = Printf.sprintf "%s/cpu0/cache/index%d/size" sysfs i in
+    let file = Printf.sprintf "%s/index%d/size" sysfs i in
     match In_channel.with_open_text file In_channel.input_all with
     | s -> Scanf.sscanf_opt s "%d" Fun.id
     | exception Sys_error _ -> None
   in
   let rec stated i =
-    Sys.file_exists (Printf.sprintf "%s/cpu0/cache/index%d" sysfs i)
+    Sys.file_exists (Printf.sprintf "%s/index%d" sysfs i)
     && (Option.fold ~none:false ~some:(fun n -> n > 0) (sized i)
        || stated (i + 1))
   in
   let states =
-    Sys.os_type = "Unix" && ((not (Sys.file_exists sysfs)) || stated 0)
+    Sys.os_type = "Unix"
+    && match os () with "Darwin" -> true | "Linux" -> stated 0 | _ -> false
   in
   match Rig.cache_bytes Rig.host with
   | Some n -> greater int ~msg:"the host's cache" ~than:0 n
