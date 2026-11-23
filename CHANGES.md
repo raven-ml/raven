@@ -200,6 +200,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- The scores of `Dist.gamma`, `Dist.inverse_gamma`, `Dist.beta` and
+  `Dist.dirichlet` keep their digits where a concentration lies far below its
+  mean count: `Dist.beta ~a:1e8 ~b:1.`'s score in `b` at `0.5` was off by
+  `1.6e-9`, an error that grew with the mean count.
 - `Dist.gamma`, `Dist.inverse_gamma`, `Dist.beta` and `Dist.dirichlet` no
   longer give a log density of `-inf`, and infinite scores, where a
   concentration below about `1e-16` meets a mean count that rounds to zero,

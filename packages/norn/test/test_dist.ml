@@ -1604,9 +1604,10 @@ let concentration =
            (1, float_range 7. 30.);
          ]))
 
-(* A unit gamma point of concentration [a]: [a] times [10^e]. *)
-let unit_point a =
-  Gen.(map (fun e -> a *. (10. ** e)) (float_range (-3.) 1.))
+(* A unit gamma point of concentration [a]: [a] times [10^e], its mean count
+   from [1e-3 a] to [1e6 a], where the logarithm of the count over its mean
+   takes each of its forms. *)
+let unit_point a = Gen.(map (fun e -> a *. (10. ** e)) (float_range (-3.) 6.))
 
 let score_tol terms =
   let scale = List.fold_left (fun s t -> s +. Float.abs t) 1. terms in
@@ -1657,6 +1658,8 @@ let continuous_scores =
           assume (Float.is_finite x && x > 0. && rate *. x > 0.);
           cover "concentration below 1e-3" (a < 1e-3);
           cover "concentration above 1e7" (a > 1e7);
+          cover "a mean count above twice the concentration"
+            (rate *. x > 2. *. a);
           let ga, gr =
             grad2
               (fun a rate ->
@@ -1680,6 +1683,7 @@ let continuous_scores =
           assume (Float.is_finite x && x > 0. && s /. x > 0.);
           cover "concentration below 1e-3" (a < 1e-3);
           cover "concentration above 1e7" (a > 1e7);
+          cover "a mean count above twice the concentration" (s /. x > 2. *. a);
           let ga, gs =
             grad2
               (fun a scale ->
@@ -1694,24 +1698,36 @@ let continuous_scores =
             (score_tol [ a /. s; 1. /. x ])
             ((a /. s) -. (1. /. x))
             gs);
+      (* The point from its logit: [log (a / b)] and [z] of the logit's spread,
+         about [sqrt (1 / a + 1 / b)], within [[-700, 36]], where [x] is a float
+         of [(0, 1)]. The examples hold counts far below their means, where [a]
+         is large and [x] near [1/2]. *)
       prop "the beta's scores are log x - ψ(a) + ψ(a + b) and its mirror"
         ~examples:
-          [ (1e-5, 1., 0.5); (1e8, 2., 1. -. 2e-8); (1e-20, 1e-25, 1e-304) ]
+          [
+            (1e-5, 1., 0.5);
+            (1e8, 2., 1. -. 2e-8);
+            (1e-20, 1e-25, 1e-304);
+            (1e4, 0.1, 0.5);
+            (1e8, 1., 0.5);
+          ]
         Gen.(
           with_pp
             (fun ppf (a, b, x) ->
               Format.fprintf ppf "a = %h, b = %h, x = %h" a b x)
             (let+ a = concentration
              and+ b = concentration
-             and+ z = float_range (-6.) 6. in
-             let n = a +. b in
-             let m = a /. n in
-             let sd = Float.sqrt (m *. (1. -. m) /. (n +. 1.)) in
-             (a, b, m +. (z *. sd))))
+             and+ z = float_range (-30.) 30. in
+             let spread = Float.sqrt ((1. /. a) +. (1. /. b)) in
+             let t = Float.log a -. Float.log b +. (z *. spread) in
+             let t = Float.min 36. (Float.max (-700.) t) in
+             (a, b, 1. /. (1. +. Float.exp (-.t)))))
         (fun (a, b, x) ->
-          assume (x > 0. && x < 1.);
+          let total = a +. b in
           cover "a below 1e-3" (a < 1e-3);
           cover "a above 1e7" (a > 1e7);
+          cover "a count below half its mean"
+            (a < total *. x /. 2. || b < total *. (1. -. x) /. 2.);
           let ga, gb =
             grad2 (fun a b -> D.factors (D.beta ~a ~b) (f64 x)) a b
           in
@@ -1790,14 +1806,25 @@ let continuous_scores =
             exact
             (density_at Nx.float64 family args));
       prop "a dirichlet's scores are ψ(A) - ψ(α_k) + log x_k"
-        Gen.(triple concentration concentration concentration)
-        (fun (a1, a2, a3) ->
+        Gen.(
+          (* The point is the mean, or the mean's components each scaled by
+             [10^e] and normalised. *)
+          let off = map (fun e -> 10. ** e) (float_range (-3.) 6.) in
+          pair
+            (triple concentration concentration concentration)
+            (frequency [ (1, constant (1., 1., 1.)); (2, triple off off off) ]))
+        (fun ((a1, a2, a3), (w1, w2, w3)) ->
           let alpha = [| a1; a2; a3 |] in
           let total = a1 +. a2 +. a3 in
-          let x = Array.map (fun a -> a /. total) alpha in
-          assume (Array.for_all (fun v -> v > 0.) x);
+          let weight = [| a1 *. w1; a2 *. w2; a3 *. w3 |] in
+          let whole = Array.fold_left ( +. ) 0. weight in
+          let x = Array.map (fun w -> w /. whole) weight in
+          assume (Float.is_finite whole && Array.for_all (fun v -> v > 0.) x);
           cover "a concentration above 1e7"
             (Array.exists (fun a -> a > 1e7) alpha);
+          cover "the mean point" (w1 = 1. && w2 = 1. && w3 = 1.);
+          cover "a mean count above twice its concentration"
+            (Array.exists2 (fun a v -> total *. v > 2. *. a) alpha x);
           let g =
             Rune.grad'
               (fun a -> D.factors (D.dirichlet ~concentration:a) (vec x))

@@ -600,23 +600,30 @@ let binomial_mass logits trials x rest =
    [Λ = 1 + |log ν| + |log σ|] and no mean. *)
 
 (* [ratio_log (x, (lx, (m, log_m)))] is [log (x / m)] for [x > 0] and [m >= 0],
-   [lx] and [log_m] being their logs: [log1p t], [t = (x - m) / m], where [x /
-   m] lies between [ε] and the floats' largest over [e] and [m] is normal, and
-   [lx - log_m] elsewhere, the arm read from [lx - log_m] and [m]. Below [ε] the
-   logs' error, [4 u (|lx| + |log_m|)], times [x] is below [u m <= u D]; above,
-   [|log (x / m)| > 708] and the error is within [16 u] of it at float64. Where
-   [m] is subnormal it has lost digits, or rounded to [0] while [x / m] is
-   finite, as at a count of [1e-20] and a mean of [1e-324]. There [lx - log_m]
-   serves every [x], and its error times [x], [4 u x (|lx| + |log_m|)], is
-   within [4 u (D + x + 0.74)]: [x (|lx| + |log_m|)] is [x log (x / m) = D + x -
-   m], plus [2 x |log x| <= 0.74] below [x = 1]. Either [x / m < e^708], and [x]
-   is below [e^708] times the least normal, [0.67], or [D >= 707 x]; so the
-   error is within [4.01 u D + 6 u], which [D <= |f| + Λ] puts inside the
-   density's bound. Its derivative is stated, that of [lx - log_m]: taken
-   through the quotient it would form [x / m²], and [dm / m] overflows where [m]
-   underflows, while the logs' derivatives, formed by the caller from the
-   parameters and the point, stay finite. No arm needs a guard and none is
-   differentiated. *)
+   [lx] and [log_m] being their logs. Where [m] is finite and normal and [x / m]
+   lies within the floats' largest over [e] of [1], either way, it is [log1p r],
+   [r = |x - m| / min x m], negated below [m]; elsewhere it is [lx - log_m]. [lx
+   - log_m] and [m] choose the arm. [log1p r] is within [2 u] of [|log (x / m)|]
+   plus [u] of itself: from [m / 2] to [2 m], [x - m] is exact (Sterbenz) and
+   the quotient carries [u]; farther, the difference and the quotient carry [u]
+   each, [2 u r] in [r] and at most [2 u] in [log1p r]. Taken over [m] where [x]
+   is below it, [1 + r] would carry the rounding of [x - m] relative to [m], [u
+   m / x] in the log. That error multiplies [x] in [D], and alone it is the
+   error of [D]'s derivative in a parameter. Past the floats, the logs' error,
+   [4 u (|lx| + |log_m|)], times [x] is below [u m <= u D] for [x / m] below [e
+   / huge], [1.5e-308] at float64; above [huge / e], [|log (x / m)| > 708] and
+   the error is within [16 u] of it at float64. Where [m] is subnormal it has
+   lost digits, or rounded to [0] while [x / m] is finite, as at a count of
+   [1e-20] and a mean of [1e-324]. There [lx - log_m] serves every [x], and its
+   error times [x], [4 u x (|lx| + |log_m|)], is within [4 u (D + x + 0.74)]: [x
+   (|lx| + |log_m|)] is [x log (x / m) = D + x - m], plus [2 x |log x| <= 0.74]
+   below [x = 1]. Either [x / m < e^708], and [x] is below [e^708] times the
+   least normal, [0.67], or [D >= 707 x]; so the error is within [4.01 u D + 6
+   u], which [D <= |f| + Λ] puts inside the density's bound. Its derivative is
+   stated, that of [lx - log_m]: taken through the quotient it would form [x /
+   m²], and [dm / m] overflows where [m] underflows, while the logs'
+   derivatives, formed by the caller from the parameters and the point, stay
+   finite. No arm needs a guard and none is differentiated. *)
 let ratio_log args =
   Rune.custom_jvp
     Nx.Ptree.(pair tensor (pair tensor (pair tensor tensor)))
@@ -624,25 +631,26 @@ let ratio_log args =
     (fun (x, (lx, (m, log_m))) ->
       let logs = Nx.sub lx log_m in
       let dt = Nx.dtype logs in
-      let near =
+      let finite =
         Nx.logical_and
-          (Nx.greater_equal m (const m (Prec.tiny dt)))
           (Nx.logical_and
-             (Nx.greater_equal logs (const logs (Float.log (Prec.eps dt))))
-             (Nx.less_equal logs (const logs (Float.log (Prec.huge dt) -. 1.))))
+             (Nx.greater_equal m (const m (Prec.tiny dt)))
+             (Nx.less_equal m (const m (Prec.huge dt))))
+          (Nx.less_equal (Nx.abs logs)
+             (const logs (Float.log (Prec.huge dt) -. 1.)))
       in
-      let l = Nx.where near (Nx.log1p (Nx.div (Nx.sub x m) m)) logs in
-      (l, fun (_, (dlx, (_, dlog_m))) -> Nx.sub dlx dlog_m))
+      let r = Nx.log1p (Nx.div (Nx.abs (Nx.sub x m)) (Nx.minimum x m)) in
+      let l = Nx.where (Nx.less x m) (Nx.neg r) r in
+      (Nx.where finite l logs, fun (_, (dlx, (_, dlog_m))) -> Nx.sub dlx dlog_m))
     args
 
 (* [mean_deviance x lx m log_m] is [D(x, m)] for a real count [x > 0] whose
-   distance from its mean [m] the bound counts, [lx] and [log_m] being
-   their logs: [x log (x / m) - (x - m)] from [ratio_log], one
-   transcendental per element and no series. Near [m], [x - m] is exact
-   (Sterbenz) and [log1p t] within [2 ε] of itself, so the two terms near
-   [x - m] leave [6 ε |x - m|]. Below [x = m / 2], [1 + t] carries the
-   rounding [u] of [x - m] relative to [m], [u m <= 7 u D] in [D], which is
-   at least [0.15 m] there. *)
+   distance from its mean [m] the bound counts, [lx] and [log_m] being their
+   logs: [x log (x / m) - (x - m)] from [ratio_log], one transcendental per
+   element and no series. Near [m], [x - m] is exact (Sterbenz) and [log1p r]
+   within [2 ε] of itself, so the two terms near [x - m] leave [6 ε |x - m|].
+   Below [x = m / 2], the log's error times [x], [u x (2 + |log (x / m)|)], is
+   below [1.35 u m <= 9 u D], [D] being at least [0.15 m] there. *)
 let mean_deviance x lx m log_m =
   Nx.sub (Nx.mul x (ratio_log (x, (lx, (m, log_m))))) (Nx.sub x m)
 
