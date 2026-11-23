@@ -45,6 +45,10 @@ val fits : gap:int -> int -> int -> bool
 val on_linux : bool
 (** [on_linux] is [true] iff this machine has [/sys/bus/pci]. *)
 
+val linux : bool
+(** [linux] is [true] iff the system is Linux, with or without [/sys/bus/pci]: a
+    virtual machine may have no PCI bus. *)
+
 val flocks : bool
 (** [flocks] is [true] iff the system locks a function's file with flock and
     maps its BARs, as every system but Windows does. System memory for a

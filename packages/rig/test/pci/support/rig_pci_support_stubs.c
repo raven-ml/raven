@@ -356,6 +356,16 @@ value rig_pci_test_close_number(value v_n) {
 #endif
 }
 
+/* Whether the system is Linux. */
+value rig_pci_test_linux(value unit) {
+  (void)unit;
+#ifdef __linux__
+  return Val_true;
+#else
+  return Val_false;
+#endif
+}
+
 /* Whether the system has open file description locks. */
 value rig_pci_test_ofd_locks(value unit) {
   (void)unit;
