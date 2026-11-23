@@ -249,6 +249,17 @@ let derivative x k =
   | 1 -> Nx.mul_s x 2.
   | _ -> Nx.neg (Nx.exp (Nx.neg x))
 
+let mapped f = Rune.vmap Nx.Ptree.(tensor @-> tensor @-> returns tensor) f
+
+(* One jit of the map for every case: it compiles once per number of lanes. *)
+let jit_mapped =
+  lazy (Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) (mapped three))
+
+(* No lane, which a case draws one time in six, and three lanes each taking
+   another branch. *)
+let lane_examples =
+  [ (vec [||], [||]); (vec [| 0.5; -1.; 1.5 |], [| 0; 1; 2 |]) ]
+
 let law_lanes (xs, ks) =
   let n = Array.length ks in
   cover "no lane" (n = 0);
@@ -260,13 +271,9 @@ let law_lanes (xs, ks) =
     else Nx.stack (List.init n (fun j -> f (Nx.get [ j ] xs) ks.(j)))
   in
   let value x k = three x (Nx.scalar Nx.int32 (Int32.of_int k)) in
-  let mapped f = Rune.vmap Nx.Ptree.(tensor @-> tensor @-> returns tensor) f in
   begin
     equal ~msg:"vmap" close (each value) (mapped three xs idx);
-    equal ~msg:"jit of vmap" close (each value)
-      (Rune.jit
-         Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-         (mapped three) xs idx);
+    equal ~msg:"jit of vmap" close (each value) (Lazy.force jit_mapped xs idx);
     equal ~msg:"grad of vmap" close (each derivative)
       (Rune.grad' (fun xs -> Nx.sum (mapped three xs idx)) xs);
     equal ~msg:"vmap of grad" close (each derivative)
@@ -596,65 +603,73 @@ let test_compiled () =
       Rune.jit' (fun x -> three x (index x)) (scalar (-2.)));
   Rune_support.Compiled.here ();
   equal ~msg:"out of range: compiled" int 0 (Rune.evaluations () - before);
-  (* An untaken branch runs none of its work under jit: here a loop of [trips]
-     steps, each over the [4096] elements of a capture, which takes hundreds
-     of milliseconds where it runs. *)
-  let trips = 1_000_000 and w = Nx.linspace f64 0. 1. 4096 in
-  let slow x =
-    Rune.cond' (Nx.greater_s x 0.)
-      (fun () ->
-        fst
-          (Rune.scan' ~init:x
-             (fun c _ -> (Nx.sum (Nx.mul w c), c))
-             (Nx.zeros f64 [| trips; 0 |])))
-      (fun () -> Nx.neg x)
+  (* An untaken branch runs none of its work under jit: here a loop whose step
+     adds to a total and checks what fails at every step, over a capture or over
+     constants alone, the function's own arrays. *)
+  let w = Nx.linspace f64 0. 1. 4 in
+  let failing c =
+    Total.add t (scalar 1.);
+    Nx.check T.tensor (Nx.greater_s c 0.) c (fun _ _ -> Exit)
   in
-  (* The same loop over constants alone, the function's own arrays. *)
-  let constant x =
+  let looped init =
+    fst
+      (Rune.scan' ~init
+         (fun c _ ->
+           failing c;
+           (Nx.sum (Nx.mul w c), c))
+         (Nx.zeros f64 [| 3; 0 |]))
+  in
+  let over_capture x =
+    Rune.cond' (Nx.greater_s x 0.) (fun () -> looped x) (fun () -> Nx.neg x)
+  in
+  let over_constants x =
     Rune.cond' (Nx.greater_s x 0.)
-      (fun () ->
-        Nx.add x
-          (fst
-             (Rune.scan' ~init:(Nx.scalar f64 0.)
-                (fun c _ -> (Nx.sum (Nx.mul w (Nx.add_s c 1.)), c))
-                (Nx.zeros f64 [| trips; 0 |]))))
+      (fun () -> Nx.add x (looped (Nx.scalar f64 0.)))
       (fun () -> Nx.neg x)
   in
   List.iter
     (fun (msg, f) ->
       let jitted = Rune.jit' f in
-      equal ~msg close (scalar 1.) (jitted (scalar (-1.)));
-      let start = Sys.time () in
-      equal ~msg close (scalar 2.) (jitted (scalar (-2.)));
-      less
-        ~msg:(msg ^ ": processor seconds")
-        float_exact ~than:0.05
-        (Sys.time () -. start))
-    [ ("a loop over a capture", slow); ("a loop over constants", constant) ]
+      let before = Rune.evaluations () in
+      let y, n =
+        Total.collect t ~init:(scalar 0.) (fun () -> jitted (scalar (-2.)))
+      in
+      equal ~msg close (scalar 2.) y;
+      equal ~msg:(msg ^ ": additions") close (scalar 0.) n;
+      Rune_support.Compiled.here ();
+      equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before))
+    [
+      ("a loop over a capture", over_capture);
+      ("a loop over constants", over_constants);
+    ]
 
-(* A branch after the first carries the results in the previous branch's
-   storage, so a result costs each branch at most the kernel that computes it,
-   none to carry it from the branch before: switches of [k] branches, each
-   returning a value of [a] and in the second one a value of [b], each value
-   one elementwise kernel, differ by at most one kernel a branch. *)
+(* A switch's loops update its results in the storage of the loop before, so a
+   branch adds no storage for them: switches of [k] branches, each returning a
+   value of [a] and in the second one a value of [b], of [n] elements, differ in
+   their footprints by less than one result a branch. A branch that carried its
+   results into storage of its own would hold it beside the previous branch's
+   while it copies them: at the second branch, one result more for the second
+   switch than for the first. *)
 let test_branch_storage () =
-  let a = vec [| 1.; 2.; 3.; 4. |] and b = vec [| 5.; 6.; 7.; 8. |] in
+  Rune_support.Compiled.here ();
+  let n = 4096 in
+  let result = n * 8 in
+  let a = Nx.linspace f64 1. 2. n and b = Nx.linspace f64 (-1.) 3. n in
   let i = Nx.scalar Nx.int32 0l in
   let first j = Nx.add_s a (Float.of_int j) in
   let second j = Nx.mul_s b (Float.of_int (j + 2)) in
-  let kernels s f =
-    let (), ks =
-      Tolk.Realize.kernels (fun () ->
-          ignore (Rune.jit T.(tensor @-> returns s) f i))
-    in
-    List.length ks
+  let on_host fp =
+    List.fold_left
+      (fun bytes (r, k) -> if Rig.equal r Rig.host then bytes + k else bytes)
+      0 fp
   in
+  let footprint s f = on_host (Rune.footprint T.(tensor @-> returns s) f i) in
   let one k =
-    kernels T.tensor (fun i ->
+    footprint T.tensor (fun i ->
         Rune.switch T.tensor i (List.init k (fun j () -> first j)))
   in
   let two k =
-    kernels
+    footprint
       T.(pair tensor tensor)
       (fun i ->
         Rune.switch
@@ -664,9 +679,9 @@ let test_branch_storage () =
   in
   List.iter
     (fun k ->
-      at_most int
+      less int
         ~msg:(Printf.sprintf "branch %d" (k + 1))
-        ~than:1
+        ~than:result
         (two (k + 1) - two k - (one (k + 1) - one k)))
     [ 1; 2; 3 ]
 
@@ -676,23 +691,24 @@ let () =
        [
          test "the taken branch's values" test_values;
          test "switch picks its branch" test_switch;
-         test "the taken branch's derivatives" test_derivatives;
          test "the untaken branch computes nothing" test_untaken;
          test "each branch is traced once" test_traced_once;
          test "a read in a branch raises" test_reads;
-         test "refusals" test_refusals;
+         test "the documented examples" test_examples;
+         test "the taken branch's derivatives" test_derivatives;
+         test "a total's tangent is the taken branch's" test_total_derivatives;
          test "maps" test_maps;
          test "a lane computes only its branch" test_lane_masks;
-         prop "each lane takes its own branch" lane_cases law_lanes;
+         prop ~examples:lane_examples "each lane takes its own branch"
+           lane_cases law_lanes;
          test "a lane's zero gradient keeps its sign" test_lane_zeros;
          test "lanes under a trace" test_traced_lanes;
-         test "an index out of range raises" test_out_of_range;
          test "nested lane masks" test_nested_masks;
-         test "a total's tangent is the taken branch's" test_total_derivatives;
          test "lanes in a branch" test_lanes_in_branch;
+         test "refusals" test_refusals;
+         test "an index out of range raises" test_out_of_range;
          test "stated cases" test_stated;
-         test "the documented examples" test_examples;
          test "a switch compiles under jit" test_compiled;
-         test "a later branch carries in the earlier's storage"
+         test "a later branch updates the results of the one before"
            test_branch_storage;
        ])
