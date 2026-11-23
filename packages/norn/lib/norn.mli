@@ -860,7 +860,9 @@ module Dist : sig
       the count [x] in [{0, ..., trials}] with probability
       [C(trials, x) p^x (1 - p)^(trials - x)]. [trials] is non-negative. A logit
       may be infinite: [-inf] puts all mass at [0], [inf] at [trials]. Draws are
-      {!Nx.Rng.binomial}'s, within the limits it states. *)
+      {!Nx.Rng.binomial}'s, within the limits it states; on a faithful device,
+      as {!Rune} defines one, a draw compiled by {!Rune.val-jit} is the eager
+      one, bit for bit. *)
 
   val categorical : logits:(float, 'f, 'd) Nx.t -> ('d Nx.int64_t, 'f, 'd) t
   (** [categorical ~logits] is the index [k] with probability [softmax logits]

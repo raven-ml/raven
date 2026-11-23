@@ -977,6 +977,11 @@ let binomial =
           equal close
             (Float.log 0.5 +. item (D.log_density seven (i32 5)))
             (item (D.log_density d (i32 5))));
+      (* A draw is [Nx.Rng.binomial] at [sigmoid (-|logits|)], mirrored by
+         [where] and a subtraction. Rune's interface states exact on a faithful
+         device, as the host is, the draws of [Nx.Rng] and [sigmoid], which nx
+         composes from [exp], a division and exact operations, so compiled a
+         draw gives eager's bits. *)
       test "a compiled draw is the eager one" (fun () ->
           let d logits = D.iid [| 50 |] (D.binomial ~trials:(i32 30) ~logits) in
           let k = Nx.Rng.key 4 in
