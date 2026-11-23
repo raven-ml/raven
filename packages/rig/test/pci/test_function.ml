@@ -874,6 +874,8 @@ let test_released_holder how () =
    function stays until that function's GPU is reset. *)
 let test_left_files () =
   if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  if not ofd_locks then
+    skip ~reason:"telling a dead process's memory needs file locks" ();
   let gpu0 = "0000:03:00.0" and gpu1 = "0000:04:00.0" in
   let root = Tree.make [ Tree.gpu gpu0; Tree.gpu gpu1 ] in
   let add name = Tree.add root ("dev/hugepages/" ^ name) "" in

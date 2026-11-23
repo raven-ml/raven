@@ -2536,8 +2536,12 @@ let test_renew_error (_, answers) =
 
 (* A process that died leaving GPU 0 reaching memory left a memory file under
    the machine's dev/hugepages that no process locks, with a marker beside it
-   that names the GPU among the functions reaching it. *)
+   that names the GPU among the functions reaching it. Only a lock tells the
+   process dead, so a system without open file description locks keeps the
+   file. *)
 let dead_file t =
+  if not ofd_locks then
+    skip ~reason:"telling a dead process's memory needs file locks" ();
   let name = "dev/hugepages/rig-pci-999999-1" in
   Tree.add t.root name "";
   Tree.add t.root (name ^ ".reach-" ^ gpu_bus) "";
