@@ -25,11 +25,6 @@ let vendor d =
 let of_kind ?(renderer = "") ?(arch = "") device =
   { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
 
-(* A host compiles for its arch: on x86-64 its level, which Clang takes as its
-   processor, and on arm64 its base architecture, Clang's [generic], with the
-   features its arch names, which Clang names alike: "arm64+fp16" compiles as
-   "arm64,generic,fp16". This machine's host tunes for its own processor,
-   which allows no instruction its arch lacks. *)
 exception Unlinked of Rig.t
 
 let () =
@@ -47,6 +42,11 @@ let () =
              (Rig.name d) isa)
     | _ -> None)
 
+(* A host compiles for its arch: on x86-64 its level, which Clang takes as its
+   processor, and on arm64 its base architecture, Clang's [generic], with the
+   features its arch names, which Clang names alike: "arm64+fp16" compiles as
+   "arm64,generic,fp16". This machine's host tunes for its own processor,
+   which allows no instruction its arch lacks. *)
 let target d =
   let host_code = Rig.equal (Rig.host_of d) d || Rig.runs_on_host d in
   match vendor d with
