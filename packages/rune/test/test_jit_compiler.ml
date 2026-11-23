@@ -4,11 +4,12 @@
   ---------------------------------------------------------------------------*)
 
 (* What a compiled call does where it cannot compile. An operation the compiler
-   does not lower is evaluated, to eager's values. A compiler that is missing or
-   broken raises its own failure at the call, on the host and on a GPU: the
-   tests tagged no-clang run where CC names no program, no-nvrtc where no NVRTC
-   is found, and broken-nvrtc where NVRTC_PATH names a file that is no
-   library. *)
+   does not lower is evaluated, to eager's values; the compiler declines nothing
+   else, so the programs of two fixed bugs, which ran evaluated, compile to
+   eager's bits. A compiler that is missing or broken raises its own failure at
+   the call, on the host and on a GPU: the tests tagged no-clang run where CC
+   names no program, no-nvrtc where no NVRTC is found, and broken-nvrtc where
+   NVRTC_PATH names a file that is no library. *)
 
 open Windtrap
 open Rune_support
@@ -27,14 +28,16 @@ let has_infix ~affix s =
 
 type unlowered =
   | Unlowered :
-      string * (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) * ('v, 's, 'd) Nx.t
+      string
+      * (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t)
+      * (unit -> ('v, 's, 'd) Nx.t)
       -> unlowered
 
 (* Operations the compiler does not lower, each a function and its argument on
    the host. *)
 let unlowered =
-  let a = Nx.create f64 [| 2; 2 |] [| 2.; 1.; -1.; 3. |] in
-  let z =
+  let a () = Nx.create f64 [| 2; 2 |] [| 2.; 1.; -1.; 3. |] in
+  let z () =
     Nx.create Nx.complex64 [| 3 |]
       Complex.[| { re = 1.; im = 2. }; { re = -0.5; im = 0. }; one |]
   in
@@ -44,6 +47,7 @@ let unlowered =
   ]
 
 let evaluated (Unlowered (_, f, x)) =
+  let x = x () in
   let eager = codes (f x) in
   let before = Rune.evaluations () in
   let got = codes (Rune.jit' f x) in
@@ -52,30 +56,34 @@ let evaluated (Unlowered (_, f, x)) =
 
 (* Compiled *)
 
-(* [f ()], whose compiled calls must compile: none is evaluated. *)
-let compiled f =
+(* [compiled ()], whose calls must compile, none evaluated, has the bits of
+   [eager ()]: each program computes exactly ({!Rune} Numerics). *)
+let compiles ~eager compiled =
+  let want = eager () in
   let before = Rune.evaluations () in
-  ignore (f ());
+  let got = compiled () in
   Compiled.here ();
-  equal ~msg:"evaluated" int 0 (Rune.evaluations () - before)
+  equal ~msg:"evaluated" int 0 (Rune.evaluations () - before);
+  equal (list codes_t) want got
 
 (* A compiled call that adds to a total, under reverse mode: its known part
    threads the total's running value. *)
 let total_under_grad () =
   let t = Rune.Total.make () in
   let x = Nx.create f64 [| 3 |] [| 1.; 2.; 3. |] in
-  let g =
-    Rune.jit' (fun x ->
-        Rune.Total.add t (Nx.sum x);
-        Nx.mul x x)
+  let g x =
+    Rune.Total.add t (Nx.sum x);
+    Nx.mul x x
   in
-  let loss x =
+  let loss g x =
     let y, total =
       Rune.Total.collect t ~init:(Nx.zeros f64 [||]) (fun () -> g x)
     in
     Nx.add (Nx.sum y) total
   in
-  compiled (fun () -> Nx.to_array (Rune.grad' loss x))
+  compiles
+    ~eager:(fun () -> [ codes (Rune.grad' (loss g) x) ])
+    (fun () -> [ codes (Rune.grad' (loss (Rune.jit' g)) x) ])
 
 (* The derivative of a scan whose step gives back its carry: the carry and its
    tangent each store a value into themselves. *)
@@ -83,17 +91,20 @@ let scan_carried_back () =
   let p = Nx.Ptree.(pair tensor tensor) in
   let step c _ = (Nx.neg (Nx.neg c), c) in
   let scanned (c, xs) = Rune.scan' step ~init:c xs in
+  let derivative c xs tc txs = Rune.jvp p p scanned (c, xs) (tc, txs) in
   let f =
     Rune.jit
       Nx.Ptree.(tensor @-> tensor @-> tensor @-> tensor @-> returns (pair p p))
-      (fun c xs tc txs -> Rune.jvp p p scanned (c, xs) (tc, txs))
+      derivative
   in
-  let ones s = Nx.ones Nx.float32 s in
-  compiled (fun () ->
-      let (c, _), (tc, _) =
-        f (ones [| 2 |]) (ones [| 1; 2 |]) (ones [| 2 |]) (ones [| 1; 2 |])
-      in
-      (Nx.to_array c, Nx.to_array tc))
+  let c = Nx.create Nx.float32 [| 2 |] [| 1.5; -2. |] in
+  let xs = Nx.create Nx.float32 [| 1; 2 |] [| 0.25; 3. |] in
+  let tc = Nx.create Nx.float32 [| 2 |] [| -0.5; 4. |] in
+  let txs = Nx.create Nx.float32 [| 1; 2 |] [| 1.; -1. |] in
+  let all ((c, ys), (tc, tys)) = List.map codes [ c; ys; tc; tys ] in
+  compiles
+    ~eager:(fun () -> all (derivative c xs tc txs))
+    (fun () -> all (f c xs tc txs))
 
 (* Missing compilers *)
 
@@ -158,8 +169,11 @@ let () =
          cases "an operation the compiler does not lower is evaluated"
            ~id:(fun (Unlowered (name, _, _)) -> name)
            unlowered evaluated;
-         test "a call adding to a total under grad compiles" total_under_grad;
-         test "a jit of jvp of a scan giving back its carry compiles"
+         test "a call adding to a total under grad compiles to eager's bits"
+           total_under_grad;
+         test
+           "a jit of jvp of a scan giving back its carry compiles to eager's \
+            bits"
            scan_carried_back;
          tag "no-clang"
          @@ test "a call on the host raises Compile_error naming CC's program"
