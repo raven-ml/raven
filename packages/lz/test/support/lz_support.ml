@@ -718,7 +718,7 @@ let decode_string codec data n =
   | Error e -> Error e
 
 let agreement codec =
-  Windtrap.cases "vendor goldens"
+  Windtrap.cases "every golden decodes to its input, all of it consumed"
     ~id:(fun g -> g.file)
     (goldens_of codec)
     (fun g ->
@@ -733,7 +733,7 @@ let truncations codec =
       (fun g -> g.members = 1 && String.length (Lazy.force g.data) <= 1024)
       (goldens_of codec)
   in
-  Windtrap.cases "every prefix is Truncated"
+  Windtrap.cases "every proper prefix is Truncated at its length"
     ~id:(fun g -> g.file)
     files
     (fun g ->
@@ -767,7 +767,7 @@ let mutations codec =
     decoder codec (of_string data) (create (String.length (Lazy.force g.raw)))
   in
   let flips =
-    Windtrap.cases "every bit flipped"
+    Windtrap.cases "a bit flipped decodes or fails inside the input"
       ~id:(fun g -> g.file)
       (files 512)
       (fun g ->
@@ -783,7 +783,7 @@ let mutations codec =
   in
   let pool = Array.of_list (files 65536) in
   let replaced =
-    Windtrap.prop "any byte replaced"
+    Windtrap.prop "a byte replaced decodes or fails inside the input"
       Windtrap.Gen.(triple (int_range 0 (max 0 (Array.length pool - 1))) nat char)
       (fun (k, at, c) ->
         if Array.length pool = 0 then Windtrap.skip ();
