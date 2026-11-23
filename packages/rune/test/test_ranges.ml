@@ -3,14 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A range gather ({!Nx.Prim.Gather_ranges}) through rune: its transpose
-   satisfies the adjoint law, so it reads the positions the kernel reads,
-   at starts and ends near int64's opposite extremes too; its gradient is
-   its finite differences; its tangent is the range gather of the tangent;
-   a map over any of its operands is its lanes one by one; and a compiled
-   call has eager's bits. *)
+(* A range gather ({!Nx.Prim.Gather_ranges}) through rune: its tangent is the
+   range gather of the tangent; its gradient is its finite differences; its
+   transpose satisfies the adjoint law, so it reads the positions the kernel
+   reads, at starts and ends near int64's opposite extremes too; a map over any
+   of its operands is its lanes one by one; and a compiled call has eager's
+   bits. *)
 
 open Windtrap
+open Rune_support
 module T = Nx.Ptree
 
 (* Cases *)
@@ -41,13 +42,10 @@ let pp_case ppf c =
     pp_ints c.lead c.n pp_ints c.cells c.size pp_int64s c.starts pp_int64s
     c.ends
 
-let case_gen =
+(* Runs over the rows of a source of [lead], [n] and [cells], [k] a row, packed
+   into [size] positions. *)
+let case_at ~lead ~n ~cells ~size ~k =
   let open Gen in
-  let* lead = of_list [ [||]; [| 2 |] ] in
-  let* n = int_range 0 6 in
-  let* cells = of_list [ [||]; [| 2 |] ] in
-  let* k = int_range 0 4 in
-  let* size = int_range 0 10 in
   let* wrap = bool in
   let rows = Array.fold_left ( * ) 1 lead in
   let start =
@@ -78,6 +76,15 @@ let case_gen =
       starts
   in
   { lead; n; cells; size; k; starts; ends }
+
+let case_gen =
+  let open Gen in
+  let* lead = of_list [ [||]; [| 2 |] ] in
+  let* n = int_range 0 6 in
+  let* cells = of_list [ [||]; [| 2 |] ] in
+  let* k = int_range 0 4 in
+  let* size = int_range 0 10 in
+  case_at ~lead ~n ~cells ~size ~k
 
 let cases = Gen.with_pp pp_case case_gen
 
@@ -226,6 +233,82 @@ let law_vmap (c, (bs, be, bx)) =
   in
   equal (array float_exact) (Nx.to_array want) (Nx.to_array got)
 
+(* Compiled calls
+
+   A compiled call takes its runs as arguments, so that one program, compiled
+   once at its first case, serves every case of its form and dtype: a form is a
+   case's geometry, its runs unread. *)
+
+let form ~lead ~n ~cells ~size ~k =
+  { lead; n; cells; size; k; starts = [||]; ends = [||] }
+
+(* The wrapping example's form; runs of two rows over two cells; an axis of no
+   element; an axis of one element; no run; one run; a result of no position. *)
+let forms =
+  [|
+    form ~lead:[||] ~n:6 ~cells:[||] ~size:6 ~k:2;
+    form ~lead:[| 2 |] ~n:5 ~cells:[| 2 |] ~size:7 ~k:3;
+    form ~lead:[||] ~n:0 ~cells:[| 2 |] ~size:4 ~k:2;
+    form ~lead:[| 2 |] ~n:1 ~cells:[| 2 |] ~size:3 ~k:2;
+    form ~lead:[| 2 |] ~n:3 ~cells:[||] ~size:3 ~k:0;
+    form ~lead:[||] ~n:4 ~cells:[| 2 |] ~size:5 ~k:1;
+    form ~lead:[||] ~n:4 ~cells:[||] ~size:0 ~k:2;
+  |]
+
+(* The forms' covers, each reached at its own form. *)
+let cover_form c =
+  cover "an empty axis" (c.n = 0);
+  cover "an axis of one element" (c.n = 1);
+  cover "no run" (c.k = 0);
+  cover "one run" (c.k = 1);
+  cover "no position" (c.size = 0)
+
+(* A form's runs, fixed: starts from -1 to 1 and ends of 2, 4, ... in each row,
+   so that the examples reach each form on every run. *)
+let fixed g =
+  let m = numel g.lead * g.k in
+  {
+    g with
+    starts = Array.init m (fun i -> Int64.of_int ((i mod 3) - 1));
+    ends = Array.init m (fun i -> Int64.of_int (2 * ((i mod g.k) + 1)));
+  }
+
+let gathered size starts ends x =
+  Nx.Prim.eval ~by:"test" (Gather_ranges { size; starts; ends; x })
+
+(* A form and a dtype, and their range gather of the runs and the source
+   compiled, once, at its first use. *)
+type program =
+  | Program : {
+      form : case;
+      dt : ('v, 's) Nx.dtype;
+      f :
+        (Nx.host Nx.int64_t ->
+        Nx.host Nx.int64_t ->
+        ('v, 's, Nx.host) Nx.t ->
+        ('v, 's, Nx.host) Nx.t)
+        Lazy.t;
+    }
+      -> program
+
+(* The signature of a function of bounds or runs and a source. *)
+let three () = T.(tensor @-> tensor @-> tensor @-> returns tensor)
+
+let program (type v s) form (dt : (v, s) Nx.dtype) =
+  Program { form; dt; f = lazy (Rune.jit (three ()) (gathered form.size)) }
+
+(* A case of a program: its index, and runs at its form. *)
+let drawn programs =
+  let open Gen in
+  let* p = int_range 0 (Array.length programs - 1) in
+  let (Program { form = g; _ }) = programs.(p) in
+  let+ c = case_at ~lead:g.lead ~n:g.n ~cells:g.cells ~size:g.size ~k:g.k in
+  (p, c)
+
+let pp_drawn programs ppf (p, c) =
+  let (Program { dt; _ }) = programs.(p) in
+  Format.fprintf ppf "%a, %s" pp_case c (Nx.Dtype.name dt)
+
 (* Values of every dtype: a sub-byte one's and a boolean's cast from small
    integers, any other's bytes, every third element a special one of its
    width, -0 then NaNs of payloads, and the rest from a cycle of bytes. *)
@@ -264,71 +347,142 @@ let bits_of (type v s) (y : (v, s, Nx.host) Nx.t) =
     Nx.to_array (Nx.cast Nx.int32 y)
   else Array.map Int32.of_int (Nx.to_array (Nx.bitcast Nx.uint8 y))
 
-let dtyped =
-  Gen.with_pp
-    (fun ppf (c, Nx.Dtype.Any dt) ->
-      Format.fprintf ppf "%a, %s" pp_case c (Nx.Dtype.name dt))
-    (Gen.pair case_gen (Gen.of_list Nx.Dtype.all))
+(* A case whose second run reads positions 0 to 3 of an axis of 6 only modulo
+   2^64, from a start of int64's greatest less one after an end of its least. *)
+let wrapping =
+  {
+    (forms.(0)) with
+    starts = [| 0L; Int64.pred Int64.max_int |];
+    ends = [| Int64.min_int; 6L |];
+  }
 
-(* Every dtype at a case whose second run reads positions 0 to 3 of an axis
-   of 6 only modulo 2^64, from a start of int64's greatest less one after
-   an end of its least: each run reaches every dtype, and the covered
-   dtypes at a wrapping case, without drawing them. *)
-let every_dtype =
-  let wrapping =
-    {
-      lead = [||];
-      n = 6;
-      cells = [||];
-      size = 6;
-      k = 2;
-      starts = [| 0L; Int64.pred Int64.max_int |];
-      ends = [| Int64.min_int; 6L |];
-    }
-  in
-  List.map (fun dt -> (wrapping, dt)) Nx.Dtype.all
+(* Every dtype at the wrapping case, its runs constants of the call: each run
+   reaches every dtype, and the covered dtypes at a wrapping case, without
+   drawing them. They compile seven to a program ({!Batch}). *)
+let every_dtype = List.map (fun dt -> (wrapping, dt)) Nx.Dtype.all
 
-(* A compiled call has eager's bits, computed by the compiler: a program
-   holds the range gather as a gather at its positions, which it lowers. *)
-let law_jit (c, Nx.Dtype.Any dt) =
+let every_dtype_call (c, Nx.Dtype.Any dt) =
+  Batch.call T.tensor (any_of dt (source c)) T.tensor (ranges c) bits_of
+
+let every_dtype_kept = Batch.table ~per:7 every_dtype_call every_dtype
+
+(* Drawn cases: float32, int4 and complex64 at each form. *)
+let jit_programs =
+  Array.concat
+    (List.map
+       (fun (Nx.Dtype.Any dt) -> Array.map (fun g -> program g dt) forms)
+       Nx.Dtype.[ Any Nx.float32; Any Nx.int4; Any Nx.complex64 ])
+
+type jit_case = Every of (case * Nx.Dtype.any) | Drawn of (int * case)
+
+let pp_jit_case ppf = function
+  | Every (c, Nx.Dtype.Any dt) ->
+      Format.fprintf ppf "%a, %s" pp_case c (Nx.Dtype.name dt)
+  | Drawn d -> pp_drawn jit_programs ppf d
+
+let jit_cases =
+  Gen.with_pp pp_jit_case (Gen.map (fun d -> Drawn d) (drawn jit_programs))
+
+(* Every dtype at the wrapping case, and each form's fixed runs at float32. *)
+let jit_examples =
+  List.map (fun e -> Every e) every_dtype
+  @ List.filter_map
+      (fun p ->
+        let (Program { form; dt; _ }) = jit_programs.(p) in
+        if Nx.Dtype.equal dt Nx.float32 then Some (Drawn (p, fixed form))
+        else None)
+      (List.init (Array.length jit_programs) Fun.id)
+
+let cover_dtype c dt =
   let float = Nx.Dtype.is Nx.Dtype.Float dt in
+  cover_form c;
   cover "a position inside the axis only modulo 2^64" (wraps c);
   cover "int4" (Nx.Dtype.equal dt Nx.int4);
   cover "a boolean" (Nx.Dtype.equal dt Nx.bool);
   cover "bfloat16" (Nx.Dtype.equal dt Nx.bfloat16);
-  cover "a float's -0 and NaN payloads" (float && numel (source c) >= 4);
-  let x = any_of dt (source c) in
-  let before = Rune.evaluations () in
-  let y = Rune.jit' (ranges c) x in
-  Rune_support.Compiled.here ();
-  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
-  equal (array int32) (bits_of (ranges c x)) (bits_of y)
+  cover "a float's -0 and NaN payloads" (float && numel (source c) >= 4)
 
-(* A compiled gradient, which runs the range gather's transpose, is
-   eager's, at each float dtype it takes: small integers, whose sums each
-   holds exactly. *)
-let grad_dtypes =
-  Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ]
-
-let law_jit_grad (c, Nx.Dtype.Any dt) =
-  match Nx.Dtype.kind dt with
-  | Float ->
-      cover "a position inside the axis only modulo 2^64" (wraps c);
-      cover "a 16-bit float" (Nx.Dtype.bits dt = 16);
-      let x = ints dt (source c) 1 and w = ints dt (result c) 2 in
-      let loss x = Nx.sum (Nx.mul w (ranges c x)) in
+(* A compiled call has eager's bits, computed by the compiler: a program holds
+   the range gather as a gather at its positions, which it lowers. *)
+let law_jit = function
+  | Every ((c, Nx.Dtype.Any dt) as e) ->
+      cover_dtype c dt;
+      let x = any_of dt (source c) in
+      let compiled = List.assq e every_dtype_kept in
+      equal (array int32) (bits_of (ranges c x)) (compiled ())
+  | Drawn (p, c) ->
+      let (Program { dt; f; _ }) = jit_programs.(p) in
+      cover_dtype c dt;
+      let x = any_of dt (source c) in
       let before = Rune.evaluations () in
-      let g = Rune.jit' (Rune.grad' loss) x in
+      let y = Lazy.force f (runs c c.starts) (runs c c.ends) x in
       Rune_support.Compiled.here ();
       equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
-      equal (array int32) (bits_of (Rune.grad' loss x)) (bits_of g)
-  | _ -> fail "a gradient's dtype that is not a float"
+      equal (array int32) (bits_of (ranges c x)) (bits_of y)
 
-let float_typed =
-  Gen.with_pp
-    (fun ppf (c, Nx.Dtype.Any dt) ->
-      Format.fprintf ppf "%a, %s" pp_case c (Nx.Dtype.name dt))
-    (Gen.pair case_gen (Gen.of_list grad_dtypes))
+(* A compiled gradient, which runs the range gather's transpose, is eager's, at
+   each float dtype it takes: small integers, whose sums each holds exactly.
+   Each dtype compiles at each form. *)
+type grad_program =
+  | Grad : {
+      form : case;
+      dt : (float, 's) Nx.dtype;
+      w : (float, 's, Nx.host) Nx.t;
+      f :
+        (Nx.host Nx.int64_t ->
+        Nx.host Nx.int64_t ->
+        (float, 's, Nx.host) Nx.t ->
+        (float, 's, Nx.host) Nx.t)
+        Lazy.t;
+    }
+      -> grad_program
+
+let grad_program (type s) (dt : (float, s) Nx.dtype) form =
+  let w = ints dt (result form) 2 in
+  let loss starts ends x =
+    Nx.sum (Nx.mul w (gathered form.size starts ends x))
+  in
+  let f = lazy (Rune.jit (three ()) (fun s e x -> Rune.grad' (loss s e) x)) in
+  Grad { form; dt; w; f }
+
+let grad_programs =
+  let at dt = Array.to_list (Array.map (grad_program dt) forms) in
+  Array.of_list (at Nx.float16 @ at Nx.bfloat16 @ at Nx.float32 @ at Nx.float64)
+
+let grad_cases =
+  let open Gen in
+  let* p = int_range 0 (Array.length grad_programs - 1) in
+  let (Grad { form = g; _ }) = grad_programs.(p) in
+  let+ c = case_at ~lead:g.lead ~n:g.n ~cells:g.cells ~size:g.size ~k:g.k in
+  (p, c)
+
+let pp_grad_case ppf (p, c) =
+  let (Grad { dt; _ }) = grad_programs.(p) in
+  Format.fprintf ppf "%a, %s" pp_case c (Nx.Dtype.name dt)
+
+(* The wrapping case at each dtype's program of its form, and each form's fixed
+   runs at float32. *)
+let grad_examples =
+  List.filter_map
+    (fun p ->
+      let (Grad { form; dt; _ }) = grad_programs.(p) in
+      if form == forms.(0) then Some (p, wrapping)
+      else if Nx.Dtype.equal dt Nx.float32 then Some (p, fixed form)
+      else None)
+    (List.init (Array.length grad_programs) Fun.id)
+
+let law_jit_grad (p, c) =
+  let (Grad { dt; w; f; _ }) = grad_programs.(p) in
+  cover_form c;
+  cover "a position inside the axis only modulo 2^64" (wraps c);
+  cover "a 16-bit float" (Nx.Dtype.bits dt = 16);
+  let x = ints dt (source c) 1 in
+  let loss x = Nx.sum (Nx.mul w (ranges c x)) in
+  let before = Rune.evaluations () in
+  let g = Lazy.force f (runs c c.starts) (runs c c.ends) x in
+  Rune_support.Compiled.here ();
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+  equal (array int32) (bits_of (Rune.grad' loss x)) (bits_of g)
 
 let flags = Gen.(triple bool bool bool)
 
@@ -336,19 +490,36 @@ let () =
   exit
     (run "rune ranges"
        [
-         prop ~count:300 "a transpose satisfies the adjoint law" cases
-           law_adjoint;
-         prop ~count:300 "the gradient is its finite differences" cases
-           law_grad;
-         prop "the tangent is the range gather of the tangent" cases law_jvp;
-         prop "a map is its lanes one by one"
-           (Gen.with_pp
-              (fun ppf (c, (a, b, d)) ->
-                Format.fprintf ppf "%a, lanes %b %b %b" pp_case c a b d)
-              (Gen.pair case_gen flags))
-           law_vmap;
-         prop ~examples:every_dtype
-           "a compiled call has eager's bits, every dtype" dtyped law_jit;
-         prop "a compiled gradient has eager's bits, every float dtype"
-           float_typed law_jit_grad;
+         group "jvp"
+           [
+             prop "the tangent is the range gather of the tangent" cases law_jvp;
+           ];
+         group "grad"
+           [
+             prop ~count:300 "the gradient is its finite differences" cases
+               law_grad;
+           ];
+         group "linear_transpose"
+           [
+             prop ~count:300 "a transpose satisfies the adjoint law" cases
+               law_adjoint;
+           ];
+         group "vmap"
+           [
+             prop "a map is its lanes one by one"
+               (Gen.with_pp
+                  (fun ppf (c, (a, b, d)) ->
+                    Format.fprintf ppf "%a, lanes %b %b %b" pp_case c a b d)
+                  (Gen.pair case_gen flags))
+               law_vmap;
+           ];
+         group "jit"
+           [
+             prop ~examples:jit_examples
+               "a compiled call has eager's bits, every dtype" jit_cases law_jit;
+             prop ~examples:grad_examples
+               "a compiled gradient has eager's bits, every float dtype"
+               (Gen.with_pp pp_grad_case grad_cases)
+               law_jit_grad;
+           ];
        ])
