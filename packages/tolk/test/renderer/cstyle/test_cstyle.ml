@@ -2189,6 +2189,107 @@ let converted_name
     (Dtype.name loaded) (Dtype.name compared) (Dtype.name selected)
     (Dtype.name stored) z cmp arms
 
+(* The unsigned integer type of [dt]'s width, which holds its bits. *)
+let bits_of dt =
+  match Dtype.itemsize dt with
+  | 2 -> Dtype.Uint16
+  | 4 -> Dtype.Uint32
+  | _ -> Dtype.Uint64
+
+(* [out[i] = x[i] < c ? x[i] : c], or [c < x[i] ? x[i] : c] where [max], over
+   rows of four elements of [dt], [i] the row's [r] and the lane's [l], through
+   the whole lowering: [c] is the weak literal 80, or [80 + l] where [lanes].
+   Where [split], each thread computes a row as one vector, and [80 + l] is a
+   vector of four constants. *)
+let clamp_kernel dt ~max ~lanes ~split rows =
+  let n = 4 * rows in
+  let out = Shape.param ~shape:[ Int n ] 0 dt
+  and x = Shape.param ~shape:[ Int n ] 1 dt in
+  let r = Ops.range ~axis_type:Weak (Int rows) [ 0 ]
+  and l = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
+  let i = Ops.O.((r * Ops.int 4) + l) in
+  let v = Ops.index x [ i ] in
+  let c =
+    if lanes then Ops.O.(Ops.cast l dt + Ops.float 80.) else Ops.float 80.
+  in
+  let s = Ops.where (if max then Ops.lt c v else Ops.lt v c) v c in
+  (* a kernel that reads no lane but in [i] has one axis of [n] *)
+  let axis = if lanes then 1 else 0 in
+  let opts_to_apply =
+    if split then
+      [ Opt.Split { axis; amount = 4; target = Upcast; top = false } ]
+    else []
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) s) [ r; l ] ]
+
+(* The bits of a signalling and a quiet NaN of [dt], of either sign. *)
+let nans = function
+  | Dtype.Float16 -> [ 0x7d00L; 0x7e00L; 0xfd00L; 0xfe00L ]
+  | Float32 -> [ 0x7fa0_0000L; 0x7fc0_0000L; 0xffa0_0000L; 0xffc0_0000L ]
+  | Float64 ->
+      [
+        0x7ff4_0000_0000_0000L;
+        0x7ff8_0000_0000_0000L;
+        0xfff4_0000_0000_0000L;
+        0xfff8_0000_0000_0000L;
+      ]
+  | dt -> invalid_arg ("no NaNs of " ^ Dtype.name dt)
+
+let clamp_cases =
+  let bools = [ false; true ] in
+  List.concat_map
+    (fun dt ->
+      List.concat_map
+        (fun max ->
+          List.concat_map
+            (fun lanes -> List.map (fun split -> (dt, max, lanes, split)) bools)
+            bools)
+        bools)
+    Dtype.[ Float16; Float32; Float64 ]
+
+let clamp_name (dt, max, lanes, split) =
+  Printf.sprintf "%s, %s, c %s%s" (Dtype.name dt)
+    (if max then "c < x ? x : c" else "x < c ? x : c")
+    (if lanes then "80 + its lane" else "a literal")
+    (if split then ", a vector a row" else "")
+
+(* A comparison with a NaN, signalling or quiet, is false, so the select is [c]
+   there; elsewhere it picks by the comparison. Values pass as their bits, which
+   {!Dtype.bitcast} keeps, a signalling NaN's included. *)
+let clamps_as_selected (dt, max, lanes, split) =
+  let bits = bits_of dt in
+  let as_bits = function
+    | `Float f -> (
+        match Dtype.bitcast dt bits (`Float f) with
+        | `Int z -> z
+        | _ -> invalid_arg "bits are an integer")
+    | _ -> invalid_arg "a float"
+  in
+  let as_float z = Dtype.bitcast bits dt (`Int z) in
+  let nans =
+    List.map (fun n -> as_float (Bigint.of_int64_unsigned n)) (nans dt)
+  in
+  let xs =
+    Array.of_list (nans @ [ `Float 1.; `Float 100.; `Float 81.; List.hd nans ])
+  in
+  let selected i x =
+    let c = 80. +. if lanes then Float.of_int (i mod 4) else 0. in
+    match x with
+    | `Float f when if max then c < f else f < c -> x
+    | _ -> `Float c
+  in
+  let hex v =
+    Printf.sprintf "0x%Lx"
+      (Bigint.to_int64 (Bigint.signed_extract (as_bits v) 0 64))
+  in
+  let k = clamp_kernel dt ~max ~lanes ~split (Array.length xs / 4) in
+  let out = Run.on_host (Codegen.to_program k (Lazy.force !host)) [ (1, xs) ] in
+  equal (list string)
+    (Array.to_list (Array.mapi (fun i x -> hex (selected i x)) xs))
+    (List.map hex (Array.to_list (List.assoc 0 out)))
+
 let zeros_compared =
   group "zeros a comparison reads"
     [
@@ -2205,7 +2306,10 @@ let zeros_compared =
           says "0" zeros (const_select dt 0.);
           says "-0" zeros (const_select dt (-0.));
           says "1.5" constants (const_select dt 1.5);
-          says "a mask" false (zero_masked dt));
+          says "a mask" false (zero_masked dt);
+          let k = clamp_kernel dt ~max:false ~lanes:true ~split:true 2 in
+          says "a vector of constants" constants
+            (Ops.src (Ops.nth (Codegen.linearize k r) 1)));
       test
         "a select of a value and a constant picks the constant at a signalling \
          NaN, on the host" (fun () ->
@@ -2214,6 +2318,10 @@ let zeros_compared =
           match List.assoc 0 (Run.on_host k [ (1, [| `Float snan |]) ]) with
           | [| `Float c |] -> equal float_exact 1.5 c
           | _ -> failf "one float");
+      cases
+        "a select of a value and a constant by their comparison picks the \
+         constant at every NaN, lowered whole, on the host"
+        ~id:clamp_name clamp_cases clamps_as_selected;
       cases "a select of a value and a zero picks the zero at -0., on the host"
         ~id:Dtype.name
         Dtype.[ Float16; Float32; Float64 ]

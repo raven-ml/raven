@@ -1961,9 +1961,22 @@ let clang_lang =
    the types [dts] that a comparison reads, every one where [hidden] is
    [Constants] and its zeros where it is [Zeros], is rendered as a value the
    backend cannot see through, an empty asm statement over a register of class
-   [reg] holding it, a narrow float held in a float. A select of a constant by
-   any other condition, [c ? v : 0.0f], stays one the backend makes a mask
-   of. *)
+   [reg] holding it, a narrow float held in a float. A vector of constants,
+   which Apple clang 17 lowers so to fminnm.4s, is built from its lanes, each
+   hidden so: one register of class [w] holds no vector of 32 bytes. A select of
+   a constant by any other condition, [c ? v : 0.0f], stays one the backend
+   makes a mask of.
+
+   The backend forms the minimum only against an operand it knows to be a
+   constant: Apple clang 17 keeps the comparison and select of [x < y ? x : y]
+   for a parameter [y], [(float)i] and [(float)i + 80.0f]. A float constant
+   reaches the renderer in one of two forms: a cast of a literal ({!Ops.const}),
+   or a stack of them. {!Uop_weak.pm_cast_const} casts every literal still bare
+   before linearizing, and {!Spec.program} rejects a bare literal outside a
+   cast, so hiding those two forms hides every constant a comparison reads. A
+   rule keyed on the select, one whose arm is its comparison's operand, would
+   hide less, but would have to follow which arms, predicates and casts LLVM's
+   matcher reads, which change between Clang releases. *)
 type hidden = Zeros | Constants
 
 let float_constant hidden dts u =
@@ -1977,6 +1990,12 @@ let float_constant hidden dts u =
       | `Float v, Zeros -> v = 0.
       | _ -> false)
   | _ -> false
+
+(* A vector of constants. A comparison reads a splat as its scalar
+   ([pm_vector_constants]). *)
+let constant_lanes u =
+  is Op.Stack u
+  && List.for_all (fun c -> is Op.Cast c && is Op.Const (nth c 0)) (src u)
 
 let opaque ctx ~reg u =
   let wide = Dtype.equal (dtype u) Dtype.Float64 in
@@ -1996,8 +2015,19 @@ let opaque_constants ~reg hidden dts =
           (fun ctx m ->
             let x = m "x" in
             let hidden = float_constant hidden dts in
-            let operand u = if hidden u then opaque ctx ~reg u else ctx.%{u} in
-            if not (List.exists hidden (src x)) then None
+            let lane u = if hidden u then opaque ctx ~reg u else ctx.%{u} in
+            let vector u = constant_lanes u && List.exists hidden (src u) in
+            let operand u =
+              if not (vector u) then lane u
+              else
+                let first, last = ctx.lang.float4_style in
+                ctx.lang.float4 (render_type ctx.lang u)
+                ^ first
+                ^ String.concat "," (List.map lane (src u))
+                ^ last
+            in
+            let hides u = hidden u || vector u in
+            if not (List.exists hides (src x)) then None
             else
               Option.map
                 (fun f -> f (List.map operand (src x)) (dtype x))

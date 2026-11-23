@@ -2126,8 +2126,14 @@ Withdrawn: multi-device is out of scope, see README.
   zero and a conversion of its compared value selects at that value's type
   and converts after, and one between a zero and the float16 or float32 its
   compared value widens compares that float16 or float32. The register class is the target's for
-  a float: `w` on arm64, `x` on x86_64, `f` on riscv64. Every other use of
-  the constant, and every other constant, keeps the literal.
+  a float: `w` on arm64, `x` on x86_64, `f` on riscv64. A vector of
+  constants that a comparison reads is built from its lanes, each hidden so
+  where a scalar would be: `w` holds no vector of 32 bytes. Every other use
+  of the constant, and every other constant, keeps the literal. These two
+  forms are every float constant that reaches the renderer: `Ops.const`
+  makes a cast of a literal, `Uop_weak.pm_cast_const` casts every literal
+  still bare before linearizing, and `Spec.program` rejects a bare literal
+  outside a cast.
 - **Reason:** (b): backends lower a select of a value and a zero, by a
   comparison of the two, to a minimum or maximum that may keep the value's
   zero (`fminnm`/`fmaxnm` on AArch64, `fmin`/`fmax` on RISC-V, `fminf`/`fmaxf`
@@ -2140,7 +2146,16 @@ Withdrawn: multi-device is out of scope, see README.
   x86's `minss` and RISC-V's `fmin` return what the select does. Under
   `Rune.jit` on arm64 under Apple clang 17, a clamp to [-80, 80] by two
   such selects gave a NaN, then -80, at a signalling NaN, where eager gives
-  80. Under `Rune.jit`,
+  80. Apple clang 17 lowers a select of a vector and a vector of constants
+  so to `fminnm.4s`: a kernel whose upcast lanes compare against `80 + l`,
+  as the host heuristics upcast a small one, gave a quiet NaN at a
+  signalling one where the select gives the lane's constant. The backend
+  forms the minimum only against an operand it knows to be a constant: Apple
+  clang 17 keeps the comparison and select of `x < y ? x : y` for a
+  parameter `y`, `(float)i` and `(float)i + 80.0f`. A rule keyed on the
+  select, one whose arm is its comparison's operand, was not taken: it would
+  hide less, but would have to follow which arms, predicates and casts
+  LLVM's matcher reads, which change between Clang releases. Under `Rune.jit`,
   `Nx.where (Nx.less x z) x z` gave `-0.` on arm64 where eager gives `0.`,
   and on x86_64 `Nx.where (Nx.less z x) z x` gave `0.` at a float16 `-0.`.
   Converting after the selection, or comparing before the widening, keeps
@@ -2158,7 +2173,8 @@ Withdrawn: multi-device is out of scope, see README.
   comparison reads › a float constant a comparison reads is opaque to a
   backend that lowers it to an extreme, and a literal elsewhere › *`, `› a
   select of a value and a constant picks the constant at a signalling NaN,
-  on the host`, `› a select of a value and a zero picks the zero at -0., on
+  on the host`, `› a select of a value and a constant by their comparison
+  picks the constant at every NaN, lowered whole, on the host › *`, `› a select of a value and a zero picks the zero at -0., on
   the host › *` and `› a
   select of a value and a zero, compared and selected at two types, picks as
   the select does, on the host › *`; rune's `rune jit` suite: `classes › a

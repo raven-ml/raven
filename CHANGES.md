@@ -1700,10 +1700,10 @@ its lock and from samples the dashboard saw arrive.
 - tolk builds on musl, as on Alpine Linux, which declares the signal mask
   functions of its worker only where a C file asks for them.
 - On arm64, a select of a value and any float constant by their comparison,
-  as a clamp, picks the constant at a signalling NaN, as eager does: clang
-  made it `fminnm` or `fmaxnm`, which return a quiet NaN. On arm64
-  `Cstyle.clang` hides from the backend every float constant a comparison
-  reads.
+  as a clamp, picks the constant at a signalling NaN, as eager does, a
+  vector of constants included: clang made it `fminnm` or `fmaxnm`, which
+  return a quiet NaN. On arm64 `Cstyle.clang` hides from the backend every
+  float constant a comparison reads, a vector's lane by lane.
 - On a GPU, a value that runs a transcendental and that its readers
   broadcast is computed where it is read when each point reads it once, as
   tinygrad computes it: gpt-oss-20b's attention sinks, `sigmoid (lse − σ)` for
