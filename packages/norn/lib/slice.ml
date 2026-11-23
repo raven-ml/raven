@@ -105,6 +105,27 @@ let walk_ptree (type u f a) (u : (u, 'd) P.t) (a : (a, 'd) P.t) : ((u, f, a, 'd)
   in
   P.v walk
 
+(* [bit_length v] is the bit length of each element of [v], integers in [[0;
+   2^bits)], which [v]'s dtype holds exactly: the exponent field of [v]'s bits
+   less the bias, plus one, and [0] at [0]. *)
+let bit_length (type f) (v : (float, f, 'd) Nx.t) =
+  let format = Nx.Dtype.float_format (Nx.dtype v) in
+  let field (type i s) (int : (i, s) Nx.dtype) =
+    Nx.cast Nx.int32 (Nx.rshift (Nx.bitcast int v) format.fraction_bits)
+  in
+  let exponent =
+    match 1 + format.exponent_bits + format.fraction_bits with
+    | 64 -> field Nx.int64
+    | 32 -> field Nx.int32
+    | 16 -> field Nx.int16
+    | 8 -> field Nx.int8
+    | n -> invalid_arg (Printf.sprintf "Norn.Slice: a %d-bit float" n)
+  in
+  let bias = (1 lsl (format.exponent_bits - 1)) - 1 in
+  Nx.maximum
+    (Nx.add_s exponent (Int32.of_int (1 - bias)))
+    (Nx.scalar_like exponent 0l)
+
 (* [per_row keys f] is [f k] for each row's key [k]. *)
 let per_row keys f = Rune.vmap P.(Nx.Rng.ptree @-> returns tensor) f keys
 
@@ -144,10 +165,6 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
   let lo = Nx.mul_s (uniform 0) (-.width) in
   let level = Nx.add lp0 (Nx.log (uniform 2)) in
   let resolution = f (width *. Prec.eps dt) in
-  let powers =
-    Nx.unsqueeze ~axes:[ 0 ]
-      (Nx.pow (f 2.) (Nx.arange_f_at on dt 0. (float_of_int b) 1.))
-  in
   let column = Nx.unsqueeze ~axes:[ 0 ] (Nx.arange_at on Nx.int32 0 b 1) in
   let trip_keys =
     Rune.vmap
@@ -219,13 +236,11 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
            (Nx.floor (Nx.div_s (Nx.sub t w.left) width))
            (Nx.sub_s (pow2 w.doublings) 1.))
     in
+    (* [parted] is one past the highest bit where the two cells' indices differ,
+       the bit length of their xor, or 0 in the walker's cell. *)
     let parted =
-      Nx.cast Nx.int32
-        (Nx.sum ~axes:[ 1 ]
-           (Nx.cast dt
-              (Nx.not_equal
-                 (Nx.floor (Nx.div (Nx.unsqueeze ~axes:[ 1 ] w.home) powers))
-                 (Nx.floor (Nx.div (Nx.unsqueeze ~axes:[ 1 ] cell) powers)))))
+      let index v = Nx.cast Nx.int64 v in
+      bit_length (Nx.cast dt (Nx.bitwise_xor (index w.home) (index cell)))
     in
     let h = Nx.maximum (Nx.sub parted one) (i32 0l) in
     let right = Nx.greater cell w.home in
