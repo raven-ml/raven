@@ -1512,7 +1512,7 @@ let scan_rows =
    4 rows of a key, ascending 64 apart, have no NumPy counterpart: they are
    a join's keys from a table sorted by them, too sparse for a direct
    table, each thread's keys its own. Nor has a search of each row in a key
-   set of its own. *)
+   set of its own, nor the float keys of 1000 values. *)
 let u1m () = on_host (Nx.Rng.uniform ~key:(Nx.Rng.key 7) D.Float32 [| n1m |])
 let u1m64 () = on_host (Nx.cast D.Float64 (u1m ()))
 
@@ -1547,6 +1547,15 @@ let counts1m () =
   let c = ints 18 4 [| n1m |] in
   on_host (Nx.cast D.Int64 c)
 
+(* 1M float keys of 1000 values: the integers below 1000 as float32 and as
+   float16, and the 1000 float32s from 1. up, adjacent. The float16 and the
+   adjacent keys span few enough key values for unique's direct table. *)
+let f32_groups1m () = on_host (Nx.cast D.Float32 (groups1m ()))
+let f16_groups1m () = on_host (Nx.cast D.Float16 (groups1m ()))
+
+let adjacent1m () =
+  on_host (Nx.bitcast D.Float32 (Nx.add_s (groups1m ()) 0x3f800000l))
+
 let order_rows =
   Thumper.group "order"
     [
@@ -1571,6 +1580,12 @@ let order_rows =
         Nx.unique;
       Thumper.bench_with_setup "unique-i64-1M-runs-of-4" ~setup:runs1m
         (Nx.unique ~size:0);
+      Thumper.bench_with_setup "unique-f32-1M-1000" ~setup:f32_groups1m
+        Nx.unique;
+      Thumper.bench_with_setup "unique-f16-1M-1000" ~setup:f16_groups1m
+        Nx.unique;
+      Thumper.bench_with_setup "unique-f32-1M-1000-adjacent" ~setup:adjacent1m
+        Nx.unique;
       Thumper.bench_with_setup "positions-bool-1M" ~setup:b1m Nx.positions;
       Thumper.bench_with_setup "positions-i64-1M-counts" ~setup:counts1m
         Nx.positions;
