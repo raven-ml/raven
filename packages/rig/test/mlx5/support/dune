@@ -1,0 +1,5 @@
+; What the suites on this machine's NIC share: the NIC they drive.
+
+(library
+ (name rig_mlx5_support)
+ (libraries rig_mlx5 unix windtrap))
