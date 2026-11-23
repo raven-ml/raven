@@ -600,6 +600,27 @@ let copy_rows =
         (fun (ends, _, _) -> copy ends);
       row "staged-4K" (staged ~closed:0 (4 * kib)) copy;
       row "staged-4K/after-1024-closed" (staged ~closed:1024 (4 * kib)) copy;
+      (* Another domain copying through the host's staging memory until the row
+         ends, to its own buffer on the same device: both take halves at
+         once. *)
+      Thumper.bench_with_setup
+        ~setup:(fun () ->
+          let d = unaddressed () in
+          let stop = Atomic.make false in
+          let rival =
+            Domain.spawn (fun () ->
+                let src = host_written (4 * kib)
+                and dst = B.create d (4 * kib) in
+                while not (Atomic.get stop) do
+                  B.copy ~src ~dst
+                done)
+          in
+          ((host_written (4 * kib), B.create d (4 * kib)), stop, rival))
+        ~teardown:(fun (_, stop, rival) ->
+          Atomic.set stop true;
+          Domain.join rival)
+        "staged-4K-two-domains"
+        (fun (ends, _, _) -> copy ends);
       (* Eight small copies from the host through its staging memory to one
          device, queued one after the other and waited for once: the host
          writes each piece without waiting for the device. *)
