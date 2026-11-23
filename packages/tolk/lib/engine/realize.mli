@@ -100,8 +100,11 @@ val lower_and_compile :
 
     Raises as {!Codegen.to_program} does, [Invalid_argument] if a kernel's
     first storage argument names no device or {!Device.renderer} finds no
-    renderer for a target, and [Failure] if the renderer's compiler's library
-    is missing. *)
+    renderer for a target, {!Device.Uncomputable} if a kernel holds a value of
+    a data type its renderer's target neither has nor emulates
+    ({!Decomp_dtype.computes}), as float64 on Metal, before any kernel
+    compiles, and [Failure] if the renderer's compiler's library is
+    missing. *)
 
 type kernel = {
   name : string;  (** Its name, as optimisation named it. *)

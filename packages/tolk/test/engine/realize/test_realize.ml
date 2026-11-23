@@ -350,9 +350,57 @@ let recorded_compilation =
 
 let compiled_bodies l = List.map (fun c -> Ops.op (body_of c)) (calls_of l)
 
+(* The kernel that stores twice each float64 element of slot 1 into slot 0. *)
+let doubled =
+  let out = buffer ~dtype:Float64 0 4 and inp = buffer ~dtype:Float64 1 4 in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+  let x = Ops.index inp [ i ] in
+  let store = Ops.store (Ops.index out [ i ]) (Ops.add x x) in
+  Ops.sink ~kernel:(Ops.kernel_info ~name:"doubled" ()) [ Ops.end_ store [ i ] ]
+
+let doubled_on d =
+  let f64 () = storage ~device:d ~dtype:Float64 4 in
+  linear [ Ops.call doubled [ f64 (); f64 () ] ]
+
+(* [s] holds [sub]. *)
+let holds sub s =
+  let n = String.length sub in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = sub || at (i + 1))
+  in
+  at 0
+
 let compiling =
   group "lower_and_compile"
     [
+      test
+        "refuses a float64 kernel where the target lacks float64, before any \
+         kernel compiles"
+        (fun () ->
+          (* Without 64-bit integers no renderer has float64. *)
+          let no_long f =
+            Setting.context [ B (Setting.emulated_dtypes, [ "long" ]) ] f
+          in
+          let fresh = float_of_int (Ops.unique_num ()) in
+          let first =
+            Ops.call
+              (map_kernel (fun x -> Ops.mul x (Ops.float ~dtype:Float32 fresh)))
+              [ storage 4; storage 4 ]
+          in
+          let l = linear (first :: Ops.src (doubled_on "CPU")) in
+          let before = Codegen.programs () in
+          raises_match
+            (function
+              | Device.Uncomputable { device; reason } ->
+                  device = "CPU" && holds "CPU" reason && holds "f64" reason
+              | _ -> false)
+            (fun () -> no_long (fun () -> Realize.lower_and_compile ~targets l));
+          equal int ~msg:"programs made" 0 (Codegen.programs () - before);
+          equal
+            (list (Testable.make ~pp:Op.pp ~equal:Op.equal))
+            ~msg:"with 64-bit integers" [ Program ]
+            (compiled_bodies
+               (Realize.lower_and_compile ~targets (doubled_on "CPU"))));
       test "leaves a linear of no kernel as it is" (fun () ->
           let l = linear [ Shape.store_call (storage 4) (storage 4) ] in
           is_true (Realize.lower_and_compile ~targets l == l));

@@ -10136,3 +10136,23 @@ D466.
   heuristic suite's `heads_projection`, `heads_projection_biased`,
   `rows_m12` and `mxfp4_m12` goldens on `cpu` and `avx2`; the bench rows
   of D188's padded rows.
+
+## D504. A kernel in a data type its target lacks is refused before compiling
+
+- **tinygrad:** `engine/realize.py` `get_runner` (a kernel compiles for its
+  device's renderer whatever its data types; `METAL` writes a float64 as
+  `double`, which Metal's compiler rejects).
+- **tolk:** `Realize.get_call_to_compile`'s `computable`.
+- **Differs:** a kernel with a node of a data type outside its renderer's
+  `Decomp_dtype.computes`, in a launch's members too, raises
+  `Device.Uncomputable`, naming the type and the device, before any kernel
+  of the schedule compiles. tinygrad compiles it, and the target's compiler
+  fails on the source.
+- **Reason:** (b): `Rune.jit` declines and evaluates a program its devices
+  cannot compute (`Compile`'s `tolk`). A float64 or complex128 call on Metal
+  raised `Compile_error` at the call, as test_jit_gpu's float64 scatter,
+  cast and attention cases did.
+- **Pinned by:** the Realize suite's `lower_and_compile › refuses a float64
+  kernel where the target lacks float64, before any kernel compiles`, and
+  test_jit_gpu's `declines › a call in float64 where the GPU's kernels lack
+  it raises at the call, naming float64`.

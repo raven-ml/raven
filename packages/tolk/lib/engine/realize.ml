@@ -108,6 +108,27 @@ let estimate_uop call =
 
 (* Parallel lowering and compilation *)
 
+(* [computable d r ast] raises {!Device.Uncomputable} where a node of the kernel
+   [ast], a launch's members and the functions it calls included, has a data
+   type that the kernels of [r], the renderer for [d], neither have nor emulate
+   ({!Decomp_dtype.computes}): float64 on Metal, whose compiler rejects the
+   [double] the renderer would write. *)
+let computable d r ast =
+  let has = Decomp_dtype.computes r in
+  let lacks u =
+    let dt = dtype u in
+    Dtype.mem dt Dtype.all && not (Dtype.mem dt has)
+  in
+  match List.find_opt lacks (toposort ~calls:Enter ast) with
+  | None -> ()
+  | Some u ->
+      let dt = Dtype.name (dtype u) in
+      let reason =
+        Printf.sprintf "a kernel of %s values on %s, whose kernels have no %s"
+          dt d dt
+      in
+      raise (Device.Uncomputable { device = d; reason })
+
 let get_call_to_compile targets c =
   let ast = body c in
   match (op ast, arg ast) with
@@ -120,7 +141,9 @@ let get_call_to_compile targets c =
         | None -> invalid_arg "a kernel's first storage needs a device"
       in
       let t = targets d in
-      Some (ast, Result.fold ~ok:Fun.id ~error:invalid_arg (Device.renderer t))
+      let r = Result.fold ~ok:Fun.id ~error:invalid_arg (Device.renderer t) in
+      computable d r ast;
+      Some (ast, r)
   | _ -> None
 
 type kernel = {

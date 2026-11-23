@@ -1967,6 +1967,12 @@ val jit :
     - the tangents of a {!custom_vjp}'s results, which a {!jvp} of it makes and
       which then raise as eagerly;
     - an operation the compiler does not lower;
+    - a kernel its device cannot compute ({!Tolk.Device.Uncomputable}): one
+      of values in a data type the device's kernels lack
+      ({!Tolk.Decomp_dtype.computes}), as float64 and complex128 on Metal, or
+      one on a host or software device where rig links no host code
+      ({!Rig.Image.links}), as on ppc64le and riscv64, such as an operation
+      computed there or a copy into a result's memory;
     - a check whose flags lie on another set than the program's first argument,
       or else its first result, which raises at a wait on that set;
     - no value, or an argument or a result with an element on a device other
@@ -1985,12 +1991,9 @@ val jit :
     function a construct runs, or at another placement than its {!Total}'s
     running value. An emission compiles as on one device
     ({!section-emissions}). It also declines a
-    program with a value on a device that computes nothing ({!Rig.computes}),
-    and one with a kernel on a host or software device where rig links no
-    host code ({!Rig.Image.links}), as on ppc64le and riscv64, such as an
-    operation computed there or a copy into a result's memory: such a program
-    evaluates at eager speed. A program whose values such a device only holds
-    or views, its kernels on others, compiles.
+    program with a value on a device that computes nothing ({!Rig.computes}).
+    A program whose values a host without linked code only holds or views,
+    its kernels on others, compiles.
     On a set without kernels ({!Nx.val-devices}), nothing evaluates a declined
     program: it raises [Invalid_argument] at the call, naming what the compiler
     declines, as does each stretch of a program split around a callback.

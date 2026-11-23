@@ -33,7 +33,9 @@
    rounded result on one that flushes subnormals, a range gather and its
    gradient compile to eager's bits, and an argmax or argmin over a length
    16 does not divide gives nx's position, a sum and a product their exact values, and a first k of a sort
-   gives eager's values and positions bit for bit. It skips without a GPU, or
+   gives eager's values and positions bit for bit. A call in float64 on a GPU
+   whose kernels lack it, of a set without kernels, raises at the call. It
+   skips without a GPU, or
    without the compiler the GPU's kernels need. *)
 
 open Windtrap
@@ -91,6 +93,37 @@ let on_gpu () =
 let has_float64 d =
   List.exists (Tolk.Dtype.equal Tolk.Dtype.Float64)
     (Tolk.Renderer.supported_dtypes (Tolk_engine.renderer d))
+
+(* rune.mli, Evaluated programs: the compiler declines a kernel in a data type
+   its device's kernels lack, and on a set without kernels the call raises
+   [Invalid_argument] naming the type and the device. On a GPU whose kernels
+   lack float64, a float64 map, a float64 sum, maps of float32 values through
+   float64 and float32 attention accumulated in float64 so raise. The laws below discard their float64
+   cases there. *)
+let declines_float64 () =
+  let d, (module S : Nx.Devices) = on_gpu () in
+  if has_float64 d then skip ~reason:"the GPU's kernels have float64" ();
+  if Nx.Devices.has_kernels S.v then
+    skip ~reason:"the GPU's set has kernels, which evaluate a declined call" ();
+  let sub = Printf.sprintf "on %s, whose kernels have no f64" (Rig.name d) in
+  let declined msg f = raises_match ~msg (Exn.invalid_arg ~sub) f in
+  let x = Nx.place S.on (Nx.ones Nx.float64 [| 4 |]) in
+  declined "a map" (fun () -> Rune.jit' (fun x -> Nx.mul x x) x);
+  declined "a sum" (fun () -> Rune.jit' (fun x -> Nx.sum x) x);
+  let x32 = Nx.place S.on (Nx.ones Nx.float32 [| 4 |]) in
+  let through_f64 x =
+    let w = Nx.cast Nx.float64 x in
+    let wide = Nx.broadcast_to [| 3; 4 |] w in
+    (Nx.cast Nx.float32 (Nx.sin w), Nx.cast Nx.float32 (Nx.exp wide))
+  in
+  let two = Nx.Ptree.(tensor @-> returns (pair tensor tensor)) in
+  declined "maps through float64 of float32 values" (fun () ->
+      Rune.jit two through_f64 x32);
+  let q = Nx.place S.on (Nx.ones Nx.float32 [| 1; 2; 8; 4 |]) in
+  let attend q =
+    fst (Nx.attention ~acc:Nx.float64 ~kv:(Dense { k = q; v = q }) q)
+  in
+  declined "attention accumulated in float64" (fun () -> Rune.jit' attend q)
 
 (* Whether [d] flushes float32's subnormals to zero, as rune.mli's Numerics
    says Metal does. *)
@@ -3612,6 +3645,13 @@ let () =
   exit
     (run "Rune.jit on a GPU"
        [
+         group "declines"
+           [
+             test
+               "a call in float64 where the GPU's kernels lack it raises at \
+                the call, naming float64"
+               declines_float64;
+           ];
          group "scatters"
            [
              prop ~count:4 ~examples:Scatters.examples
@@ -3878,7 +3918,9 @@ let () =
                  head_id c ^ if wide then " in float64" else " in float32")
                one_chunk
                (fun (c, wide) ->
-                 Attentions.law ~composed:true ~wide (snd (on_gpu ())) c);
+                 let d, s = on_gpu () in
+                 if wide then assume (has_float64 d);
+                 Attentions.law ~composed:true ~wide s c);
              Windtrap.cases
                "their gradient holds rune's bound against the composition's"
                ~id:head_id heads

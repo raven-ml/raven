@@ -591,6 +591,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` declines a program with a kernel in a data type its device's
+  kernels lack, as float64 on Metal: nx evaluates it, or on a set without
+  kernels the call raises `Invalid_argument` naming the data type, where
+  Metal's compiler rejected the kernel's `double`.
 - `Rune.jit` computes a function of constants built inside the traced
   function, such as `Nx.lgamma (Nx.scalar_like x 3.5)`, while it lowers:
   the program links its value, not the function's thousand operations.
