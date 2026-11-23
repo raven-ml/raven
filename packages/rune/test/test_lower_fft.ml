@@ -168,6 +168,12 @@ let points c =
       match c.kind with C2r n when a = last c -> n | _ -> c.shape.(a))
     c.axes
 
+(* Whether [c]'s operand has an axis of no element that it does not
+   transform. *)
+let empty_batch c =
+  let untransformed a n = n = 0 && not (List.mem a c.axes) in
+  Array.exists Fun.id (Array.mapi untransformed c.shape)
+
 let norm a = sqrt (Array.fold_left (fun s x -> s +. (x *. x)) 0. a)
 
 (* [‖ŷ - y‖₂ <= ε u √N ‖x‖₂] on each side, [‖x‖₂] [√2] times larger for a
@@ -192,14 +198,6 @@ let check c =
 
 let among xs = Gen.one_of (List.map Gen.constant xs)
 
-let extent =
-  Gen.frequency
-    [
-      (1, Gen.constant 0);
-      (1, Gen.constant 1);
-      (8, among [ 2; 3; 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 16; 49 ]);
-    ]
-
 let part wide =
   let open Gen in
   frequency
@@ -210,52 +208,30 @@ let part wide =
       (1, constant (-0.));
     ]
 
-(* [case kind] draws a transform of [kind]: an operand of rank 1 to 3, a
-   nonempty set of its axes, and for a [C2r] along one axis the unread
+(* [data c] draws a transform of the form of [c]: its kind, parts' width, shape,
+   axes and view, its parts drawn, and for a [C2r] along one axis the unread
    imaginary parts NaN, infinite or huge half the time. *)
-let case kind =
+let data c =
   let open Gen in
-  let* kind = kind in
-  let* wide = bool in
-  let* r = int_range 1 3 in
-  let* s = map Array.of_list (list ~size:(constant r) extent) in
-  let* keep = list ~size:(constant r) bool in
-  let* first = int_range 0 (r - 1) in
-  let axes =
-    List.filter (fun a -> a = first || List.nth keep a) (List.init r Fun.id)
-  in
-  let* kind =
-    match kind with
-    | C2r _ ->
-        let+ n = extent in
-        C2r n
-    | k -> constant k
-  in
-  let c =
-    { kind; wide; shape = s; axes; transposed = false; re = [||]; im = [||] }
-  in
-  let shape =
-    match kind with
-    | C2r n -> Array.mapi (fun i e -> if i = last c then (n / 2) + 1 else e) s
-    | _ -> s
-  in
-  let* transposed = if r > 1 then bool else constant false in
-  let k = numel shape in
-  let* re = array ~size:(constant k) (part wide) in
+  let k = numel c.shape in
+  let* re = array ~size:(constant k) (part c.wide) in
   let* im =
-    match kind with
+    match c.kind with
     | R2c -> constant [||]
-    | _ -> array ~size:(constant k) (part wide)
+    | _ -> array ~size:(constant k) (part c.wide)
   in
-  let c = { c with shape; transposed; re; im } in
+  let c = { c with re; im } in
   let* wild =
-    match (kind, axes) with C2r _, [ _ ] -> bool | _ -> constant false
+    match (c.kind, c.axes) with C2r _, [ _ ] -> bool | _ -> constant false
   in
   let+ odd = among [ Float.nan; Float.infinity; 1e30 ] in
   let im = Array.mapi (fun i v -> if wild && unread c i then odd else v) im in
   { c with im }
 
-let case kind = Gen.with_pp pp_case (case kind)
+(* [case examples] draws a transform of the form of one of [examples], each as
+   likely: a run lowers and compiles each form once and draws its cases' parts
+   anew. *)
+let case examples = Gen.with_pp pp_case (Gen.bind (among examples) data)
 
 (* Covers *)
 
@@ -278,6 +254,14 @@ let example kind shape axes re im =
 
 let ramp n = Array.init n (fun i -> Float.of_int (i mod 7) -. 3.)
 
+(* A transform of [shape] of ramps along [axes], of float64 parts where [wide],
+   transposed where [transposed]: with the other examples, the transforms of
+   each kind reach every number of points from 0 to 14, 16 and 49. *)
+let ramped ?(wide = false) ?(transposed = false) kind shape axes =
+  let k = numel shape in
+  let im = match kind with R2c -> [||] | _ -> Array.map Float.neg (ramp k) in
+  { (example kind shape axes (ramp k) im) with wide; transposed }
+
 (* A transform of float64 parts along both axes of a transposed operand,
    which reaches the covers each run needs. *)
 let both kind shape =
@@ -298,34 +282,48 @@ let c2cs =
   let examples =
     [
       example (C2c Forward) [| 0; 3 |] [ 0; 1 ] [||] [||];
+      example (C2c Inverse) [| 0; 4 |] [ 1 ] [||] [||];
       example (C2c Inverse) [| 1; 3 |] [ 0 ] [| 1.; 2.; 3. |]
         [| 0.; -0.; 1. |];
       both (C2c Forward) [| 8; 6 |];
       { (both (C2c Inverse) [| 8; 6 |]) with wide = false };
       { (blue (C2c Inverse) [| 2; 502 |]) with wide = false };
+      ramped (C2c Forward) [| 49 |] [ 0 ];
+      ramped ~wide:true (C2c Inverse) [| 4; 11; 2 |] [ 0; 1; 2 ];
+      ramped ~transposed:true (C2c Forward) [| 9; 13 |] [ 0; 1 ];
+      ramped (C2c Inverse) [| 5; 7 |] [ 0; 1 ];
+      ramped ~wide:true ~transposed:true (C2c Forward) [| 10; 12 |] [ 0; 1 ];
+      ramped (C2c Inverse) [| 14; 16 |] [ 0; 1 ];
     ]
   in
-  prop ~count:20 ~examples "complex transforms hold their bound"
-    (case (among [ C2c Forward; C2c Inverse ]))
+  prop ~count:20 ~examples "complex transforms hold their bound" (case examples)
     (fun c ->
       covers c;
       cover "a transform of no point" (List.mem 0 (points c));
+      cover "an empty axis it does not transform" (empty_batch c);
       check c)
 
 let r2cs =
   let examples =
     [
       example R2c [| 2; 0 |] [ 1 ] [||] [||];
+      example R2c [| 0; 6 |] [ 1 ] [||] [||];
       example R2c [| 1 |] [ 0 ] [| -3. |] [||];
       both R2c [| 8; 6 |];
       { (both R2c [| 8; 6 |]) with wide = false };
       blue R2c [| 251 |];
+      ramped ~wide:true R2c [| 16; 5 |] [ 0; 1 ];
+      ramped R2c [| 2; 49 |] [ 1 ];
+      ramped ~transposed:true R2c [| 12; 7; 2 |] [ 0; 1; 2 ];
+      ramped R2c [| 3; 9; 4 |] [ 0; 1; 2 ];
+      ramped ~wide:true ~transposed:true R2c [| 10; 11 |] [ 0; 1 ];
+      ramped R2c [| 13; 14 |] [ 0; 1 ];
     ]
   in
-  prop ~count:20 ~examples "real transforms hold their bound"
-    (case (Gen.constant R2c))
+  prop ~count:20 ~examples "real transforms hold their bound" (case examples)
     (fun c ->
       covers c;
+      cover "an empty axis it does not transform" (empty_batch c);
       cover "a last axis of no point"
         (List.nth (points c) (List.length c.axes - 1) = 0);
       check c)
@@ -335,6 +333,7 @@ let c2rs =
   let examples =
     [
       example (C2r 0) [| 2; 1 |] [ 1 ] [| 1.; 2. |] [| 3.; 4. |];
+      example (C2r 6) [| 0; 4 |] [ 1 ] [||] [||];
       example (C2r 4) [| 3 |] [ 0 ] [| 1.; 2.; 3. |]
         [| nan; 1.; Float.infinity |];
       example (C2r 5) [| 2; 3 |] [ 1 ] [| 1.; 2.; 3.; 4.; 5.; 6. |]
@@ -342,12 +341,18 @@ let c2rs =
       both (C2r 6) [| 8; 4 |];
       { (both (C2r 6) [| 8; 4 |]) with wide = false };
       blue (C2r 251) [| 126 |];
+      ramped (C2r 9) [| 2; 5 |] [ 0; 1 ];
+      ramped ~wide:true (C2r 16) [| 3; 9 |] [ 0; 1 ];
+      ramped ~transposed:true (C2r 13) [| 7; 7 |] [ 0; 1 ];
+      ramped (C2r 1) [| 10; 1 |] [ 0; 1 ];
+      ramped ~wide:true ~transposed:true (C2r 12) [| 11; 7 |] [ 0; 1 ];
+      ramped (C2r 49) [| 14; 2; 25 |] [ 0; 2 ];
     ]
   in
   prop ~count:20 ~examples "real inverse transforms hold their bound"
-    (case (Gen.constant (C2r 0)))
-    (fun c ->
+    (case examples) (fun c ->
       covers c;
+      cover "an empty axis it does not transform" (empty_batch c);
       cover "an odd number of points"
         (match c.kind with C2r n -> n mod 2 = 1 | _ -> false);
       cover "an unread NaN imaginary part" (Array.exists Float.is_nan c.im);
