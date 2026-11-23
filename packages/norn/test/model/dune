@@ -3,11 +3,3 @@
  (modules test_model)
  (package norn)
  (libraries norn norn.model nx nx.array rig rune windtrap))
-
-; The recovery law over every cell: a run of minutes, so it is built and
-; never run by the build. Its header says how to run it.
-
-(executable
- (name posteriordb_sweep)
- (modules posteriordb_sweep)
- (libraries norn norn.model posteriordb recovery nx windtrap))

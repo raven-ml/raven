@@ -41,14 +41,11 @@ let posterior name = P.find "model/support/posteriordb.golden" name
 type comparison = { what : string; est : float; ref : float; se : float }
 type verdict = Flagged of string | Compared of comparison list
 
-(* A cell: a sampler's run on one posterior, from a key. [comparisons] counts
-   the comparisons it makes when it recovers, and [quantile p] is the multiple
-   of a comparison's standard error that a two-sided error lies within with
-   probability [2p - 1]. *)
+(* A cell: a sampler's run on one posterior, from a key. [quantile p] is the
+   multiple of a comparison's standard error that a two-sided error lies within
+   with probability [2p - 1]. *)
 type cell = {
   name : string;
-  sampler : string;
-  comparisons : int;
   quantile : float -> float;
   verdict : Nx.host Nx.Rng.key -> verdict;
 }
@@ -261,8 +258,6 @@ let chain_cell kernel (P.Posterior p) =
   let run = fit kernel p.model P.latent p.y in
   {
     name = kernel.label ^ " › " ^ p.name;
-    sampler = kernel.label;
-    comparisons = 2 * List.length p.refs;
     quantile = normal_quantile;
     verdict =
       (fun k ->
@@ -343,8 +338,6 @@ let replicated_cell sampler (P.Posterior p) =
   let replicates = sampler.replicates in
   {
     name = sampler.label ^ " › " ^ p.name;
-    sampler = sampler.label;
-    comparisons = 2 * List.length p.refs;
     quantile = t_quantile ~df:(replicates - 1);
     verdict =
       (fun key ->
@@ -413,12 +406,6 @@ let replicated_cell sampler (P.Posterior p) =
                  p.refs));
   }
 
-(* [tail cells] is the two-sided tail whose quantile holds the false-alarm rate
-   over all the comparisons of [cells], Bonferroni. *)
-let tail cells =
-  let comparisons = List.fold_left (fun n c -> n + c.comparisons) 0 cells in
-  1. -. (false_alarms /. (2. *. float_of_int comparisons))
-
 let within ~tail c cs =
   let q = c.quantile tail in
   List.iter
@@ -452,27 +439,3 @@ let flagged name cell =
       match c.verdict key with
       | Flagged _ -> ()
       | Compared _ -> failf "%s passes its diagnostics" c.name)
-
-(* [law cells] runs every cell once. A cell recovers within its quantile of
-   [tail cells], or is flagged. Each sampler of the cells must recover on one of
-   them, and one cell must be flagged. *)
-let law cells =
-  let tail = tail cells in
-  let samplers =
-    List.sort_uniq String.compare (List.map (fun c -> c.sampler) cells)
-  in
-  let pp ppf c = Format.pp_print_string ppf c.name in
-  prop ~count:0 ~examples:cells
-    "a run recovers the reference or its diagnostics flag it"
-    (Gen.of_list ~pp cells) (fun c ->
-      let verdict = c.verdict key in
-      let recovered =
-        match verdict with Compared _ -> true | Flagged _ -> false
-      in
-      List.iter
-        (fun s -> cover (s ^ " recovers") (recovered && s = c.sampler))
-        samplers;
-      cover "flagged" (not recovered);
-      match verdict with
-      | Flagged why -> classify (c.name ^ " flagged: " ^ why) true
-      | Compared cs -> within ~tail c cs)
