@@ -18,4 +18,5 @@
   support/firmware_test.exe
   support/sig.exe
   support/gap.exe
-  support/high.exe))
+  support/high.exe
+  support/version))

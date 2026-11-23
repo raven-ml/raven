@@ -31,3 +31,10 @@
  (enabled_if
   (<> %{os_type} Win32))
  (libraries rig_support unix))
+
+; The version the package states, which rig --version prints.
+
+(rule
+ (with-stdout-to
+  version
+  (echo "%{version:rig}\n")))
