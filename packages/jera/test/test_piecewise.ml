@@ -166,7 +166,6 @@ let law_tests =
         let i =
           Piecewise.extend `Polynomial (Piecewise.integral (of_series s))
         in
-        let c = Piecewise.coefficients i in
         let n = Array.length breaks - 1 in
         (* Piece k − 1 at u = 1 against piece k at u = −1. *)
         let left =
@@ -178,7 +177,6 @@ let law_tests =
           Piecewise.eval_at i (Nx.arange Nx.int64 1 n 1)
             (Nx.full f64 [| n - 1 |] (-1.))
         in
-        ignore c;
         equal (Oracle.tensor ~abs:(bound s ~order:0) ()) left right);
     prop "interpolants pass through their samples"
       Gen.(
@@ -313,8 +311,7 @@ let adapt_tests =
         less (Windtrap.float 1.) ~than:1e-3 !narrow);
     test "the budget ends a fit" (fun () ->
         let s = adapt ~budget:3 (fun x -> Nx.abs (Nx.sub_s x 0.3)) 0. 1. in
-        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
-          (Solution.is Budget_spent s));
+        equal Oracle.status_t Budget_spent (Oracle.status s));
     test "a structure fits each leaf" (fun () ->
         let s2 = Nx.Ptree.(pair tensor tensor) in
         let p =
@@ -536,6 +533,47 @@ let error_tests =
             Piecewise.cubic
               (`Clamped (vec [| 1.; 1. |], scalar 0.))
               knots samples));
+    test "hermite slopes of another shape raise" (fun () ->
+        raises_with "the slopes have shape [2] and the values [3]" (fun () ->
+            Piecewise.hermite
+              (vec [| 0.; 1.; 2. |])
+              ~values:(vec [| 0.; 1.; 4. |])
+              ~slopes:(vec [| 0.; 1. |])));
+    cases "a fit rejects its arguments"
+      ~id:(fun (name, _) -> name)
+      (let one = Nx.Ptree.tensor and a = scalar 0. and b = scalar 1. in
+       let cheb ?(degree = 3) ?(pieces = 2) ?(a = a) f () =
+         ignore (Piecewise.chebyshev one ~degree ~pieces f a b)
+       and adapt ?(degree = 3) ?(budget = 8) ?(a = a) f () =
+         ignore (Piecewise.adapt one ~degree ~tol:(Tol.rel 1e-6) ~budget f a b)
+       in
+       [
+         ( "chebyshev, degree -1",
+           ("degree = -1 is negative", cheb ~degree:(-1) Nx.exp) );
+         ( "chebyshev, no piece",
+           ("pieces = 0 is not positive", cheb ~pieces:0 Nx.exp) );
+         ( "chebyshev, an end not a scalar",
+           ( "the ends must be scalars, got shapes [1] and []",
+             cheb ~a:(vec [| 0. |]) Nx.exp ) );
+         ( "chebyshev, a leaf without the points' shape",
+           ("shape [] for points of shape [2,4]", cheb (fun x -> Nx.sum x)) );
+         ("adapt, degree 1", ("degree = 1 is below 2", adapt ~degree:1 Nx.exp));
+         ( "adapt, a budget of 0",
+           ("budget = 0 is below 1", adapt ~budget:0 Nx.exp) );
+         ( "adapt, an end not a scalar",
+           ( "the ends must be scalars, got shapes [1] and []",
+             adapt ~a:(vec [| 0. |]) Nx.exp ) );
+         ( "adapt, a leaf without the points' shape",
+           ("shape [] for points of shape", adapt (fun x -> Nx.sum x)) );
+       ])
+      (fun (_, (sub, f)) -> raises_with sub f);
+    test "eval_at with indices and coordinates of two shapes raises" (fun () ->
+        raises_with "the indices have shape [2] and the coordinates [3]"
+          (fun () ->
+            Piecewise.eval_at
+              (Piecewise.linear knots samples)
+              (Nx.zeros Nx.int64 [| 2 |])
+              (Nx.zeros f64 [| 3 |])));
     test "v takes empty pieces and rejects decreasing breaks" (fun () ->
         let c = Nx.create f64 [| 3; 1 |] [| 1.; 2.; 3. |] in
         let p =
