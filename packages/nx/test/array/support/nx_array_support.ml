@@ -111,10 +111,9 @@ let mapped_region n =
   in
   (b, r)
 
-(* The region starts on a page, so that a driver's device borrows it: a
-   host buffer of at least 64 KiB and four pages does ({!Rig.Buffer.create}),
-   which [page_aligned] bytes are on every page size up to 64 KiB. *)
-let page_aligned = 4 * 64 * 1024
+(* The region starts on a page, so that a driver's device borrows it, as a host
+   buffer of {!Rig.Buffer.paged_from} bytes does. *)
+let page_aligned = Rig.Buffer.paged_from
 
 let mapped_read_only (type v s) (a : (v, s) Nx_array.t) =
   let src = Nx_array.buffer a in

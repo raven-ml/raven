@@ -48,7 +48,7 @@ let gpu () =
   | None ->
       let device = device () in
       let c = Option.get (Rig.capability device Rig_amd_abi.key) in
-      let host = Rig.Buffer.create Rig.host 65536 in
+      let host = Rig.Buffer.create Rig.host Rig.Buffer.paged_from in
       let mapped =
         match Rig.Buffer.borrow device host with
         | Some m -> m

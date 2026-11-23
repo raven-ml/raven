@@ -74,7 +74,7 @@ let gpu () =
       let arch = Rig.arch device in
       if not (Nx_cuda.computes_on device) then
         failwith (strf "nx.cuda does not compute on %s" arch);
-      let host = Rig.Buffer.create Rig.host 65536 in
+      let host = Rig.Buffer.create Rig.host Rig.Buffer.paged_from in
       let mapped = Option.get (Rig.Buffer.borrow device host) in
       let page = Rig.Buffer.export host Bigarray.int64 in
       let harness = lazy (image device (cubin ()) (kernels ())) in
