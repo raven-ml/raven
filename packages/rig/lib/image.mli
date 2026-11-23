@@ -33,6 +33,9 @@ val load : Def.device -> string -> (t, string) result
 (** [load d binary] is {!Rig.Image.load}. It records a [Load] event in the
     profiles being taken. *)
 
+val links : Def.device -> bool
+(** [links d] is {!Rig.Image.links}. *)
+
 val device : t -> Def.device
 (** [device i] is the device [i] is loaded on. *)
 

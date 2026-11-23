@@ -74,6 +74,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- New `Rig.Image.links`: whether code compiled for a device's host processor
+  runs on it, true on a host or software device of x86_64 or arm64.
 - rig builds with MSYS2's mingw-w64 headers, which declare `FILE_ID_INFO`
   and `PrefetchVirtualMemory` only for Windows 8 and later.
 - rig is not available on s390x: its PCI drivers store values little-endian.

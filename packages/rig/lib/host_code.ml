@@ -11,6 +11,7 @@ external error_message : int -> string = "caml_rig_host_error_message"
 
 let em_x86_64 = 62
 let em_aarch64 = 183
+let links_for isa = isa = "x86_64" || isa = "arm64"
 
 (* The host's ELF machine, 0 for an instruction set rig links no code for. *)
 let host =

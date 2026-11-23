@@ -969,9 +969,22 @@ let test_software_refused () =
           launch ~device:d ~shared ~grid empty "empty" [||]))
     grid_refusals
 
+(* The host and a software device link where rig's linker, built for the
+   process's machine, does. *)
+let test_links () =
+  let isa = Rig.instruction_set Rig.host in
+  let links = Rig.Image.links Rig.host in
+  equal ~msg:isa bool (isa = "x86_64" || isa = "arm64") links;
+  equal ~msg:"the machine the fixtures are built for" bool
+    (S.machine <> "unknown") links;
+  equal ~msg:"a software device" bool links
+    (Rig.Image.links (Lazy.force software))
+
 let software_tests =
   group ~timeout "software devices"
     [
+      test "the host and a software device link where rig links host code"
+        test_links;
       prop
         "a software device's launch runs its function over every thread, \
          done when its submit returns"

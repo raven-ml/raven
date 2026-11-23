@@ -22,7 +22,7 @@ external empty_job : threads:int -> total:int -> chunks:int -> unit
 external workers : unit -> int = "rig_host_test_workers"
 
 let machine = host_machine ()
-let links = machine = "x86_64" || machine = "aarch64"
+let links = Rig.Image.links Rig.host
 
 let fixture ~dir f =
   if not links then

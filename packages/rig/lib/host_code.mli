@@ -9,6 +9,10 @@
     links (the host's and the software device's [submit] in
     [rig_host_code.c]). *)
 
+val links_for : string -> bool
+(** [links_for isa] is [true] iff rig links code for hosts of the instruction
+    set [isa] ({!Rig.instruction_set}): ["x86_64"] and ["arm64"]. *)
+
 val link : string -> (Def.linked, string) result
 (** [link obj] is the link of [obj]: the one an earlier call made, while it
     is reachable, or else [obj] linked into new executable memory. It is

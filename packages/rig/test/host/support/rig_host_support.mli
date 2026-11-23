@@ -19,8 +19,8 @@ val machine : string
     ["aarch64"], or ["unknown"] on a host rig links no code for. *)
 
 val links : bool
-(** [links] is [true] iff rig links host code on this machine, x86_64 or
-    aarch64, for which the fixtures exist. *)
+(** [links] is {!Rig.Image.links}[ Rig.host]: [true] iff rig links host code on
+    this machine. *)
 
 val fixture : dir:string -> string -> string
 (** [fixture ~dir f] is the object of the program [f] for the host, read from

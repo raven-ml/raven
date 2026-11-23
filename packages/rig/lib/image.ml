@@ -131,6 +131,10 @@ let load d binary =
         Profile.record (Load { image; binary; time = Profile.now () });
       Ok image
 
+let links d =
+  let h = Dev.host_of d in
+  (d == h || d.software) && Host_code.links_for (Cpu.instruction_set h.arch)
+
 let device image = image.idev
 
 let resolve image f =

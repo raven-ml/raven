@@ -1952,6 +1952,13 @@ module Image : sig
       not address that memory; and {!Lost} if [d] is lost or its driver
       faults during the load. *)
 
+  val links : device -> bool
+  (** [links d] is [true] iff code compiled for [d]'s host processor runs on
+      [d]: [d] is a host or a {!software} device, and rig links host code for
+      its host's {!instruction_set}, ["x86_64"] or ["arm64"]
+      ({!section-host_platforms}). Where it is [false] on a host or a software
+      device, a {!load} of host code is [Error] naming the instruction set. *)
+
   val device : t -> device
   (** [device i] is the device [i] is loaded on. *)
 
@@ -2195,9 +2202,9 @@ end
 (** {3:host_platforms Platform support}
 
     The host links code on x86_64 and arm64 hosts running Linux, macOS or
-    Windows. On arm64 macOS the code's memory is mapped with [MAP_JIT],
-    whose write protection only the linking thread lifts while it writes.
-    Elsewhere the memory is mapped writable, then made executable and
+    Windows ({!Image.links}). On arm64 macOS the code's memory is mapped with
+    [MAP_JIT], whose write protection only the linking thread lifts while it
+    writes. Elsewhere the memory is mapped writable, then made executable and
     read-only once written. *)
 
 (** {3:host_macos Executable memory on macOS}
