@@ -30,10 +30,15 @@ val map : (Tolk.Ops.t -> Tolk.Ops.t) -> (float, 's, 'd) Nx.t -> float array
     [x]'s elements, a [float32] or [float64] array, compiled and run on the
     host. [f] keeps the node's shape and type. *)
 
-val work : (unit -> ('v, 's, 'd) Nx.t) -> int * int
-(** [work f] is the arithmetic operations, and the bytes loaded and stored,
-    that the kernels of {!run}'s schedule for [f] are estimated to perform
-    ({!Tolk.Realize.estimate_uop}), summed over its calls.
+val work :
+  ?target:Tolk.Helpers.Target.t -> (unit -> ('v, 's, 'd) Nx.t) -> int * int
+(** [work ~target f] is the arithmetic operations, and the bytes loaded and
+    stored, that the kernels of {!run}'s schedule for [f] are estimated to
+    perform ({!Tolk.Realize.estimate_uop}), summed over its calls, each member
+    of a launch one. Where [target] is given, [f] is lowered and its kernels
+    made for a host of [target]'s processor, by [target]'s renderer without its
+    toolchain ({!Tolk.Cstyle.without_compiler}), so that the estimates do not
+    depend on this host's processor.
 
     Raises [Invalid_argument] if the schedule runs calls in a loop. *)
 

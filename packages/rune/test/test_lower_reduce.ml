@@ -2857,11 +2857,14 @@ let moments_overflow () =
 
 (* Work
 
-   The estimated work and bytes loaded and stored of float32 contractions
-   whose [n] indices are spread evenly over [g] groups, unsorted: [Rows] of
-   x[n; k] by W[g; j; k], [Contracting] of x[n; k] by y[n; j] into [g; k; j],
-   and the unsegmented contraction of x[n; k] by W[j; k] that both take as
-   their unit. *)
+   The estimated work and bytes loaded and stored of float32 contractions whose
+   [n] indices are spread evenly over [g] groups, unsorted: [Rows] of x[n; k] by
+   W[g; j; k], [Contracting] of x[n; k] by y[n; j] into [g; k; j], and the
+   unsegmented contraction of x[n; k] by W[j; k] that both take as their unit,
+   on an AVX2 host. The unit loads what its tile (Tolk.Heuristic.tile_rows)
+   loads, and the processor's registers size the tile: with arm64's 32 registers
+   or AVX-512's, the unit loads less than with AVX2's 16, while the segmented
+   forms, whose rows share no tile, load the same. *)
 
 type form = Plain | Rows_of | Contracting_of
 
@@ -2897,7 +2900,7 @@ let work ?(scaled = false) form ~n ~k ~j g =
     Nx.create D.Int64 [| n |] (Array.init n (fun r -> Int64.of_int (r mod g)))
   in
   let run (type v s) (b : (v, s, Nx.host) Nx.t) contracting b_scale segments =
-    Lowered.work (fun () ->
+    Lowered.work ~target:(Lazy.force avx2) (fun () ->
         P.eval ~by:"t"
           (P.Contract
              {
@@ -2974,8 +2977,8 @@ let work_bounds =
     at_most int ~msg:"bytes at 256 groups" ~than:(l128 + (l128 / 4)) l256
   in
   let blocked ~k g () =
-    (* The host's block of rows: 4 below 5 rows a group on average, 8 from
-       5. *)
+    (* An AVX2 host's block of rows: 4 below 5 rows a group on average, 8, its
+       tile's rows, from 5. *)
     let c = if n < 5 * g then 4 else 8 in
     let slots = (g + ((n - g) / c)) * c in
     let unit = fst (work Plain ~n:slots ~k ~j 1) in

@@ -240,19 +240,6 @@ let map (type s d) (f : Ops.t -> Ops.t) (x : (float, s, d) Nx.t) : float array =
   let u = f (bind ~direct:true ~device:cpu bound x) in
   execute bound u dt shape (numel shape)
 
-let work (type v s d) (f : unit -> (v, s, d) Nx.t) =
-  let _, u, dt, _, n = lowered ~direct:true f in
-  let o = Ops.new_buffer cpu (max 1 n) (L.dtype (D.Any dt)) in
-  let compiled, vars = compiled u o (max 1 n) in
-  let count x = Shape.sym_infer x vars in
-  List.fold_left
-    (fun (ops, lds) call ->
-      if not (Op.equal (Ops.op call) Op.Call) then
-        invalid_arg "Lowered.work: a schedule with loops";
-      let e = Realize.estimate_uop call in
-      (ops + count e.ops, lds + count e.lds))
-    (0, 0) (Ops.src compiled)
-
 (* The calls among [us], each launch's members in its place. *)
 let calls us =
   List.concat_map
@@ -261,6 +248,39 @@ let calls us =
       else if Shape.is_launch (Ops.body c) then Shape.launch_members c
       else [ c ])
     us
+
+(* The estimates of [call]: its kernel's for [renderer], made up to its
+   instructions as its program would be, or a copy's bytes. *)
+let estimates renderer call =
+  let ast = Ops.body call in
+  match (Ops.op ast, Ops.arg ast) with
+  | Op.Sink, Kernel _ -> (
+      match Ops.arg (Ops.nth (Codegen.linearize ast renderer) 0) with
+      | Kernel { estimates = Some e; _ } -> e
+      | _ -> Renderer.Estimates.zero)
+  | _ -> Realize.estimate_uop call
+
+let work (type v s d) ?target (f : unit -> (v, s, d) Nx.t) =
+  let place =
+    match target with
+    | None -> on_host
+    | Some t ->
+        { on_host with renderer = Lazy.from_val (Cstyle.without_compiler t) }
+  in
+  let renderer = Lazy.force place.renderer in
+  let _, u, dt, _, n = lowered ~direct:true ~place f in
+  let o = Ops.new_buffer cpu (max 1 n) (L.dtype (D.Any dt)) in
+  let cores = [ (cpu, Heuristic.cores renderer) ] in
+  let linear, vars = schedule ~cores u o (max 1 n) in
+  if not (List.for_all (fun c -> Op.equal (Ops.op c) Op.Call) (Ops.src linear))
+  then invalid_arg "Lowered.work: a schedule with loops";
+  let count x = Shape.sym_infer x vars in
+  List.fold_left
+    (fun (ops, lds) call ->
+      let e = estimates renderer call in
+      (ops + count e.ops, lds + count e.lds))
+    (0, 0)
+    (calls (Ops.src linear))
 
 let kernels (type v s d) ?cores (f : unit -> (v, s, d) Nx.t) =
   let _, u, dt, _, n = lowered ~direct:true f in
