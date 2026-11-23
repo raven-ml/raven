@@ -220,13 +220,10 @@ type rdev = {
   mutable made : rmem list;  (** Memories the device allocated. *)
   mutable followers : rdev list;
       (** Devices whose queue may wait on this device's work. *)
-  mutable halves : int;
-      (** The halves of its own staging memory known made ({!own_stage}). *)
-  mutable stagers : rdev list;
-      (** Devices whose work may have used its own staging memory. *)
-  mutable queued : bool;
-      (** Whether a queued copy went through its own staging memory: a leg
-          still queued may use a half, so a later copy may make one. *)
+  mutable kept : int;
+      (** The bytes of the largest staged fill or read through its own staging
+          memory that ended on one domain since that memory last may have
+          returned ({!staged}). *)
 }
 
 (* A memory's stamps as the reference knows them: the device of its last write
@@ -303,9 +300,7 @@ let new_dev w kind =
       seen = 0;
       made = [];
       followers = [];
-      halves = 0;
-      stagers = [];
-      queued = false;
+      kept = 0;
     }
   in
   w.next_dev <- w.next_dev + 1;
@@ -457,9 +452,17 @@ let lose w k = List.iter (fun r -> if r.id = k then lost_dev r) w.devs
    reaches it is the scheduler's. *)
 let seen w label c = if not (w.two || w.forks) then cover label c
 
+(* Staging memory that no copy holds may have returned ({!staged}): [r]'s, or
+   every device's, as reclamation's second round returns it. *)
+let returned r = r.kept <- 0
+let all_returned w = List.iter returned w.devs
+
 (* Judges the system's [outcome] by [v], applying [ok] to a result. A loss the
-   call may report runs [lost]: the call's work may have run in part. *)
+   call may report runs [lost]: the call's work may have run in part. A call
+   whose allocation the budget may refuse may reclaim, which returns staging
+   memory. *)
 let judge ?(lost = ignore) w v outcome ok =
+  if v.oom <> `No then all_returned w;
   let losable k =
     List.exists (fun r -> r.id = k && r.state <> Fine) (v.must @ v.may)
   in
@@ -603,11 +606,11 @@ let made_bytes d =
 (* Staging memory *)
 
 (* A copy that no device runs in one transfer goes through staging memory:
-   slots of two halves of 32 MiB, a slot for each copy running, each half an
-   allocation made at the first piece that needs it, and a give drops the
-   halves of slots no recent claim took, as reclamation and free_cache drop
-   those of free slots (copy.mli). The model's sizes are
-   under a piece, so a copy needs the first half of its slot alone. *)
+   allocations of at most 32 MiB, each made at the first copy whose bytes need
+   it, and kept until free_cache, set_budget, reclamation or a mapping without
+   room returns it (rig.mli, Buffer copying). A copy takes an allocation large
+   enough whose work is done before it makes one. The model's sizes are under a
+   piece, so a copy needs one allocation, of at most [half_bytes]. *)
 let half_bytes = 32 * 1024 * 1024
 
 (* How a copy meets a buffer: as its source, or as its destination from memory
@@ -645,28 +648,22 @@ let own_stage side b =
 let copy_stages a b =
   List.filter_map Fun.id [ own_stage Out_of a; own_stage (Into a.local) b ]
 
-(* The halves of [r]'s own staging memory known made: none once a device whose
-   work may name them may be lost, as rig replaces a half whose stamps name a
-   lost device's unfinished work. *)
-let known_halves r =
-  if r.queued || List.exists (fun d -> d.state <> Fine) (r :: r.stagers) then 0
-  else r.halves
+(* A copy of [n] bytes through [r]'s own staging memory: the budget may refuse
+   the allocation it makes, unless an allocation of [n] bytes or more is known
+   kept with its work done. A loss replaces an allocation whose stamps name the
+   lost device's unfinished work, so none is known kept while a device may be
+   lost. *)
+let stages w v r n =
+  let kept =
+    if List.exists (fun d -> d.state <> Fine) w.devs then 0 else r.kept
+  in
+  if v.oom = `No && n > kept && may_refuse w r (made_bytes r) half_bytes then
+    v.oom <- `May
 
-(* A copy through [r]'s own staging memory, whose legs may run on [users]: the
-   budget may refuse the first half of the slot it takes while it is not
-   made. *)
-let stages w v r users =
-  r.stagers <- List.fold_left (fun l d -> add d l) r.stagers users;
-  let missing = 1 - known_halves r in
-  if
-    missing > 0 && v.oom = `No
-    && may_refuse w r (made_bytes r) (missing * half_bytes)
-  then v.oom <- `May
-
-(* A copy through [r]'s own staging memory returned: on one domain it took the
-   one slot, which keeps its first half, made then. On two, a copy may have
-   taken a new slot, whose halves another give may drop once idle. *)
-let staged w r = if not w.two then r.halves <- 1
+(* A staged fill or read of [n] bytes through [r]'s own staging memory ended: on
+   one domain, its allocation is kept, its work done, until that memory may
+   return. On two, the other domain's copies may hold it. *)
+let staged w n r = if not w.two then r.kept <- Int.max r.kept n
 
 (* The system *)
 
@@ -1347,13 +1344,13 @@ let fill_ref seed last c outcome =
     if b.on.kind = Host then waits_all vd b.mem
     else if b.length > 0 then waits_all vd b.mem;
     let stage = if b.length > 0 then own_stage (Into Local) b else None in
-    Option.iter (fun r -> stages c.w vd r []) stage;
+    Option.iter (fun r -> stages c.w vd r b.length) stage;
     let lost () =
       unknown b;
       if device_work b.on then maybe_write b.mem.stamps b.on
     in
     judge ~lost c.w vd outcome (fun () ->
-        Option.iter (staged c.w) stage;
+        Option.iter (staged c.w b.length) stage;
         seen c.w "a fill whose buffer is unreachable during it" last;
         if b.on.kind <> Host && b.local = Remote && b.length > 0 then begin
           follows b.on vd;
@@ -1414,10 +1411,10 @@ let read_ref last c outcome =
   owned vd b;
   if b.on.kind = Host || b.length > 0 then reads vd b.mem;
   let stage = if b.length > 0 then own_stage Out_of b else None in
-  Option.iter (fun r -> stages c.w vd r []) stage;
+  Option.iter (fun r -> stages c.w vd r b.length) stage;
   let lost () = if device_work b.on then maybe_use b.mem.stamps b.on in
   judge ~lost c.w vd outcome (fun s ->
-      Option.iter (staged c.w) stage;
+      Option.iter (staged c.w b.length) stage;
       if
         b.on.kind <> Host
         && (b.local = Remote || b.local = Window)
@@ -1458,9 +1455,7 @@ let copy_judge ~invalid last src a b outcome =
     waits_all vd b.mem;
     (* Whether the copy stages depends on what the runner maps of the other
        side: the allowance holds whichever route it takes. *)
-    List.iter
-      (fun r -> stages w vd r [ a.on; a.mem.owner; b.on; b.mem.owner ])
-      (copy_stages a b)
+    List.iter (fun r -> stages w vd r a.length) (copy_stages a b)
   end;
   let lost () =
     unknown b;
@@ -1498,15 +1493,14 @@ let copy_ref last src dst outcome =
       (dead a || dead b || a.length <> b.length || overlaps a b || own_pages a b)
     last src a b outcome
 
-(* A queued copy of the first bytes of [src]'s buffer into the first of
-   [dst]'s, as many in each: one box of one row, refused as a copy of the
-   whole buffers is. Its legs through a device's own staging memory may still
-   run once it returns. *)
+(* A queued copy of the first bytes of [src]'s buffer into the first of [dst]'s,
+   as many in each: one box of one row, refused as a copy of the whole buffers
+   is. *)
 let queued_copy_ref last src dst outcome =
   with_buf src outcome @@ fun a ->
   with_buf dst outcome @@ fun b ->
   let invalid = dead a || dead b || overlaps a b || own_pages a b in
-  List.iter (fun r -> r.queued <- true) (copy_stages a b);
+  List.iter returned (copy_stages a b);
   if invalid then copy_judge ~invalid last src a b outcome
   else
     let a', b' = prefixes a b in
@@ -2082,7 +2076,10 @@ let run_sys ((s : sdev), _) =
 
 let budget_ref n (v : rdevv) outcome =
   judge v.dw (verdict ()) outcome (fun () ->
-      if is_polled v.r then v.r.budget <- n)
+      if is_polled v.r then begin
+        v.r.budget <- n;
+        returned v.r
+      end)
 
 let budget_sys n ((s : sdev), _) =
   match s.p with Some _ -> Rig.set_budget s.d n | None -> ()
@@ -2090,6 +2087,7 @@ let budget_sys n ((s : sdev), _) =
 let free_cache_ref (v : rdevv) outcome =
   let vd = verdict () in
   uses ~maybe:true vd [ v.r ];
+  returned v.r;
   judge v.dw vd outcome Fun.id
 
 let free_cache_sys ((s : sdev), w) = guard w @@ fun () -> Rig.free_cache s.d

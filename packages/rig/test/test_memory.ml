@@ -25,6 +25,12 @@ let out_of_memory d n = function
   | Rig.Out_of_memory (d', n') -> Rig.equal d d' && n = n'
   | _ -> false
 
+(* [Out_of_memory] for [d] of an allocation of staging memory, of at most 32 MiB
+   (rig.mli, Buffer copying). *)
+let staging_refused d = function
+  | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n > 0 && n <= 32 * kib * kib
+  | _ -> false
+
 (* A buffer of [n] bytes on [d] that is unreachable once this returns: its
    address. *)
 let[@inline never] dropped ?memory d n = Support.at (B.create ?memory d n)
@@ -748,43 +754,48 @@ let test_free_cache () =
   equal ~msg:"after free_cache" bool true (freed p at)
 
 (* A copy between devices that map none of each other's memory goes through the
-   host's staging memory: a host whose budget cannot hold a half of a slot
-   refuses at once, and the refused copy gives its slot back, so a copy after
-   more refusals than slots still finds one. The staging memory is made at the
-   first copy that needs it, and no earlier test of this suite copies through
-   it. *)
+   host's staging memory: a host whose budget holds nothing refuses at once, and
+   the refused copy gives its staging memory back, so a copy after several
+   refusals still finds it. The staging memory is made at the first copy that
+   needs it, and no earlier test of this suite copies through it. *)
 let test_staging_refused () =
   let open_ name = P.open_ ~host_visible:false ~peers:false name in
   let d, _ = open_ "memory:staging-src" and e, _ = open_ "memory:staging-dst" in
   let src = B.create d 64 and dst = B.create e 64 in
   let budget = Rig.budget Rig.host in
-  Rig.set_budget Rig.host (64 * kib);
+  Rig.set_budget Rig.host 0;
   Fun.protect
     ~finally:(fun () -> Rig.set_budget Rig.host budget)
     (fun () ->
       for _ = 1 to 3 do
-        raises_match
-          (out_of_memory Rig.host (32 * kib * kib))
-          (fun () -> B.copy ~src ~dst)
+        raises_match (staging_refused Rig.host) (fun () -> B.copy ~src ~dst)
       done);
   B.copy ~src ~dst
 
-(* A device that maps no host memory stages through halves of its own [Pinned]
-   memory, each made at the first piece that needs it: a blit of one byte makes
-   one half, and one of two pieces the other. *)
+(* A device that maps no host memory stages through allocations of its own
+   [Pinned] memory, of at most 32 MiB each, made at the first piece that needs
+   them: a blit of one byte makes one, a second blit of one byte reuses it, and
+   a blit of two pieces, which holds two at once, makes at most two more. *)
 let test_staging_halves () =
   let d, p =
     P.open_ ~host_visible:false ~maps_host:false "memory:staging-halves"
   in
   let half = 32 * kib * kib in
-  let pinned () = List.filter (fun (k, _, _) -> k = B.Pinned) (P.allocs p) in
+  let pinned () =
+    List.filter_map
+      (fun (k, n, ok) -> if k = B.Pinned && ok then Some n else None)
+      (P.allocs p)
+  in
   B.blit_from_string "x" 0 (B.create d 1) 0 1;
-  equal ~msg:"one piece" allocs [ (B.Pinned, half, true) ] (pinned ());
+  equal ~msg:"one piece" int 1 (List.length (pinned ()));
+  B.blit_from_string "z" 0 (B.create d 1) 0 1;
+  equal ~msg:"one piece again" int 1 (List.length (pinned ()));
   let n = half + 1 in
   B.blit_from_string (String.make n 'y') 0 (B.create d n) 0 n;
-  equal ~msg:"two pieces" allocs
-    [ (B.Pinned, half, true); (B.Pinned, half, true) ]
-    (pinned ())
+  let made = List.length (pinned ()) in
+  greater ~msg:"two pieces" int ~than:1 made;
+  less ~msg:"two pieces" int ~than:4 made;
+  List.iter (fun n -> less ~msg:"bytes" int ~than:(half + 1) n) (pinned ())
 
 (* A device that maps no host memory, and whose own memory the host addresses,
    stages through that memory, in its budget. A copy between host memory and
@@ -823,7 +834,7 @@ let test_staged_borrow (row, kind, way) =
       B.copy ~src:on_d ~dst:back;
       equal string "w"
         (B.read back Bigarray.char (fun a -> String.make 1 a.{0}))
-  | _ -> raises_match (out_of_memory d (32 * kib * kib)) copy
+  | _ -> raises_match (staging_refused d) copy
 
 let test_host_budget () = equal int max_int (Rig.budget Rig.host)
 

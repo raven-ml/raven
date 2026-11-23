@@ -221,7 +221,7 @@ module Driver = struct
     mutable sleeps : int;
     frees : (int * int) list Atomic.t;
     mutable allocs : (kind * int * bool) list;
-    mutable maps : int list;
+    mutable maps : (int * int) list;
     never_maps : bool Atomic.t;
     mutable held : (kind * int) list;
     mutable mapped : int list;
@@ -476,7 +476,7 @@ module Driver = struct
   let map_host d p n =
     if counted d "map_host" || Atomic.get d.never_maps then refused d
     else begin
-      protect d.lock (fun () -> d.maps <- n :: d.maps);
+      protect d.lock (fun () -> d.maps <- (p, n) :: d.maps);
       mapping d
         {
           at = p;
@@ -849,7 +849,8 @@ module Polled = struct
   let word_frees d =
     List.length (List.filter (fun (a, _) -> a = d.word_at) (frees d))
   let allocs d = protect d.lock (fun () -> List.rev d.allocs)
-  let host_maps d = protect d.lock (fun () -> List.rev d.maps)
+  let host_maps d = protect d.lock (fun () -> List.rev_map snd d.maps)
+  let host_mapped_at d = protect d.lock (fun () -> List.rev_map fst d.maps)
   let allocated d kind = protect d.lock (fun () -> holding d kind)
   let mapped d = protect d.lock (fun () -> List.length d.mapped)
   let images d = protect d.lock (fun () -> d.images)

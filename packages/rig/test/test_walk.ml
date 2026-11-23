@@ -78,12 +78,16 @@ let census () =
   collect ();
   (S.heap_bytes (), S.descriptors (), blocked ())
 
-(* The regions [p] still holds of the sizes the operations use: the staging
-   memory, which the host keeps, has its own. *)
-let left p =
-  List.filter
-    (fun n -> n = 64 || n = page || n = staged_bytes)
-    (P.outstanding p)
+(* The regions [p] holds that it did not hold in [before], the sizes of the
+   regions it held then: a failure leaves none, of any size. Staging memory that
+   no copy holds returns at [settle], with its mappings, so a half a failure
+   kept held shows here. *)
+let left p ~before =
+  let rec without n = function
+    | [] -> []
+    | m :: l -> if m = n then l else m :: without n l
+  in
+  List.fold_left (fun l n -> without n l) (P.outstanding p) before
 
 (* Runs [op] on a device it ran on once, which made what the device keeps for
    good, with [failure]; checks what the failure left, runs [op] again and
@@ -94,6 +98,7 @@ let attempt op failure =
   let d, p = op.opener name in
   op.prepare d None;
   settle d;
+  let before = P.outstanding p in
   let heap, fds, signals = census () in
   let run = ref (Some (op.prepare d)) in
   inject p failure;
@@ -106,7 +111,9 @@ let attempt op failure =
   (* A lost device's stop runs at its next call of its own, its close here. *)
   if lost <> None then Rig.close d;
   settle d;
-  equal ~msg:("regions left with the driver" ^ at) (list int) [] (left p);
+  equal
+    ~msg:("regions left with the driver" ^ at)
+    (list int) [] (left p ~before);
   equal ~msg:("stops" ^ at) int (if lost = None then 0 else 1) (count "stop" p);
   let heap', fds', signals' = census () in
   equal ~msg:("descriptors" ^ at) (option int) fds fds';
@@ -274,15 +281,7 @@ let exhausted op =
     (op.name ^ ", every mapping refused")
     (walk ~kinds:[ (fun n -> Exhaust n) ] op)
 
-(* Halves with room for the pieces of every copy a walk makes, which pack as
-   they do in halves of 32 MiB, and of a size apart from those [left] counts.
-   Each attempt opens a device and makes its halves again, and the suite's C
-   library writes each in full (MALLOC_PERTURB_ and MallocScribble in the dune
-   file). *)
-let half_bytes = 32 * staged_bytes
-
 let () =
-  Rig.set_half_bytes half_bytes;
   exit
   @@ run "rig.walk"
        [

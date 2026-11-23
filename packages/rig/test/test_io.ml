@@ -701,8 +701,8 @@ let test_borrow_copies () =
     (calls_of (fun () -> B.copy ~src:hb ~dst:on_d));
   equal ~msg:"from the device into the borrow" reads_writes (0, 1)
     (calls_of (fun () -> B.copy ~src:on_d ~dst:hb));
-  equal ~msg:"the device's maps of the pages" bool false
-    (List.mem page_bytes (P.host_maps p));
+  equal ~msg:"the device's maps of the pages" (list int) []
+    (List.filter (( = ) (Support.at hb)) (P.host_mapped_at p));
   let into = Bytes.create page_bytes in
   equal ~msg:"a blit out of the borrow" reads_writes (1, 0)
     (calls_of (fun () -> B.blit_to_bytes hb 0 into 0 page_bytes));

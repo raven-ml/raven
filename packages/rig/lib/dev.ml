@@ -195,7 +195,6 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
       word_maps = [];
       mapped = Cache.create 4;
       halves = [||];
-      takes = 0;
       laps = 0;
     }
   in

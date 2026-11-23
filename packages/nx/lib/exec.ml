@@ -584,9 +584,9 @@ let placed_one (type v s d e) (at : d Devices.placement) (a : (v, s) A.t)
 (* Creations *)
 
 (* The bytes of host memory a creation off the host computes at once: rig's
-   staging allocation, through which its copy to the device passes
-   ([half_bytes], rig's copy.ml, which rig does not export; rig.mli states
-   staging "in allocations of 32 MiB"). A copy of at most that holds one
+   largest staging allocation, through which its copy to the device passes
+   ([piece_bytes], rig's copy.ml, which rig does not export; rig.mli states
+   staging "in allocations of at most 32 MiB"). A copy of at most that holds one
    allocation, so the host holds a slab and one allocation. *)
 let slab = 32 * 1024 * 1024
 

@@ -33,48 +33,51 @@
 
     Where no route runs in one transfer, the copy goes through staging memory,
     in pieces of at most 32 MiB: whole rows of the boxes, packed one after the
-    other, where a row fits, and a range of one row's bytes otherwise. The
-    side away from staging keeps its geometry. Staging memory is halves, each
-    an allocation of 32 MiB of its own, since stamps order the uses of a whole
-    allocation, made at the first copy that needs it, outside every lock. A
-    copy holds one half for one piece and two for more, which alternate, so
-    one fills while the other drains, and the host waits for a half's last
-    drain before it fills it again. Such a copy commits each leg a device
-    runs as it queues it ({!Dev.commit}), so that the host's wait for one
-    leg waits for no later leg. A copy gives its halves back once the
-    transfers the host makes are done, with legs through them still queued:
-    a half's stamps order every later use after them.
+    other, where a row fits, and a range of one row's bytes otherwise. The side
+    away from staging keeps its geometry. Staging memory is halves, each an
+    allocation of its own, since stamps order the uses of a whole allocation,
+    made at the first copy that needs it, outside every lock, of a power of two
+    of bytes from [Memory.aligned_from], so a host half starts on a page. A copy
+    holds one half for one piece and two for more, which alternate, so one fills
+    while the other drains, and the host waits for a half's last drain before it
+    fills it again. Such a copy commits each leg a device runs as it queues it
+    ({!Dev.commit}), so that the host's wait for one leg waits for no later leg.
+    A copy gives its halves back once the transfers the host makes are done,
+    with legs through them still queued: a half's stamps order every later use
+    after them.
 
     A half's {e cursor} is the byte from which no unfinished work uses it, and
     pieces start at multiples of 256 bytes. A copy of one piece that the host
     writes takes the free half with room after its cursor whose lap started
     last, where a half's lap starts when its cursor is set to its start, and
     writes there without waiting; where rig has seen the half's uses done
-    ([Memory.uses_done]), no work uses any of it, and the copy restarts its
-    lap, writing where the last copy left bytes in the caches. A piece a
-    device writes is never packed, since its write would follow every use of
-    the half, and no piece is packed after it: the host's write adds no point
-    to the stamps, so the next piece's drain would follow the device's write.
-    Otherwise a copy takes a free half whose uses are done, its cursor at its
-    start; for a piece the host writes, else the free half whose lap started
-    first, and waits for its uses; else, every half being held, a new half,
-    so no copy waits for a hold.
+    ([Memory.uses_done]), no work uses any of it, and the copy restarts its lap,
+    writing where the last copy left bytes in the caches. A piece a device
+    writes is never packed, since its write would follow every use of the half,
+    and no piece is packed after it: the host's write adds no point to the
+    stamps, so the next piece's drain would follow the device's write. Otherwise
+    a copy takes a free half with a buffer that holds its pieces and whose uses
+    are done, its cursor at its start; for a piece the host writes, else, once a
+    free half has 32 MiB, the free half that holds its pieces whose lap started
+    first, and waits for its uses; else a new half, so no copy waits for a hold.
+    A new half is a free one without a buffer where there is one, which a
+    release or a raising creation left, and has the least power of two of bytes
+    from [Memory.aligned_from] that holds the copy's pieces; where the host
+    writes, twice the bytes of the largest free half with a buffer if that is
+    more, up to 32 MiB. Copies the host writes ahead of their legs so grow the
+    halves to 32 MiB before any waits, under 64 MiB in all.
 
-    A device's halves are part of its state ([halves] in {!Def.live}), taken
-    and given under its lock. The host's halves serve every device that maps
-    host memory, and a device of this machine that maps none has halves of
-    its own ({!Rig.Buffer.section-copying}). A copy between two such devices
-    holds halves of each. After a give, the buffers of every free half that
-    none of the last takes took, as many takes as there are halves, return as
-    memory returns free halves ([Memory.return_half]), so they return once the
-    work that used them is done. Copies that keep halves busy so keep them,
-    and the extra halves of a burst go once that many later takes passed them
-    by. Memory returns free halves' buffers where it returns the cache
-    ([Memory.release_staging]). A forked child keeps the host's halves as the
-    parent left them: a half that a thread of the parent held at the fork
-    stays held, and its buffer stays, for good. A half whose stamps name
-    unfinished work of a lost device is replaced, so a loss reaches no later
-    copy.
+    A device's halves are part of its state ([halves] in {!Def.live}), taken and
+    given under its lock. The host's halves serve every device that maps host
+    memory, and a device of this machine that maps none has halves of its own
+    ({!Rig.Buffer.section-copying}). A copy between two such devices holds
+    halves of each. A half keeps its buffer for the copies after it, until
+    memory returns free halves' buffers where it returns the cache
+    ([Memory.release_staging]), once the work that used them is done. A forked
+    child keeps the host's halves as the parent left them: a half that a thread
+    of the parent held at the fork stays held, and its buffer stays, for good. A
+    half whose stamps name unfinished work of a lost device is replaced, so a
+    loss reaches no later copy.
 
     The host's values reach memory the host addresses, and the window of
     [Mapped] memory, by its own copy, and other memory through staging
@@ -92,9 +95,6 @@
     orders, so a take meanwhile would write them, or kill the buffer the
     next leg names. A queued copy or fill returns a point of {!Dev.host}
     ({!Submission.mark}) where the host made its last transfer. *)
-
-val set_half_bytes : int -> unit
-(** [set_half_bytes n] is {!Rig.set_half_bytes}[ n]. *)
 
 val row : ?src_offset:int -> ?dst_offset:int -> int -> Def.box
 (** [row ~src_offset ~dst_offset n] is {!Rig.Buffer.row}[ ~src_offset

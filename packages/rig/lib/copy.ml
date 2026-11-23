@@ -453,31 +453,17 @@ let leg_run fn ~waits ~into_half src s dst t n =
 
 let piece_align = 256
 
-(* A half's bytes. The first read fixes them, so that every copy sizes its
-   pieces and its halves alike: [set_half_bytes] changes them only before. *)
-type half_size = Unread of int | Read of int
-
-let half_size = Atomic.make (Unread (32 * 1024 * 1024))
-
-let rec half_bytes () =
-  match Atomic.get half_size with
-  | Read n -> n
-  | Unread n as v ->
-      if Atomic.compare_and_set half_size v (Read n) then n else half_bytes ()
-
-let set_half_bytes n =
-  if n <= 0 || n mod piece_align <> 0 then
-    invalid_argf "Rig.set_half_bytes: %d is not a positive multiple of %d" n
-      piece_align;
-  let rec set () =
-    match Atomic.get half_size with
-    | Read _ -> invalid_arg "Rig.set_half_bytes: a copy fixed the size"
-    | Unread _ as v ->
-        if not (Atomic.compare_and_set half_size v (Unread n)) then set ()
-  in
-  set ()
+(* The most bytes of a piece, and of a half. *)
+let piece_bytes = 32 * 1024 * 1024
 
 let round n = (n + piece_align - 1) land lnot (piece_align - 1)
+
+(* The bytes of a half made for pieces of at most [size] bytes: the least power
+   of two that holds them, from [Memory.aligned_from], so that a half of the
+   host's starts on a page and each device maps it whole. [size] is at most
+   [piece_bytes], a power of two. *)
+let rec fitted size n = if n >= size then n else fitted size (2 * n)
+let sized size = fitted size Memory.aligned_from
 
 (* Who writes the pieces of a staged copy into its halves: the host, or a
    device's leg. *)
@@ -488,29 +474,61 @@ let names_lost b =
   | () -> false
   | exception Dev.Lost _ -> true
 
-(* Under [l]'s lock: the index of the free half that [ok] takes, the one
+(* Under [l]'s lock: the index of the free half that [ok size] takes, the one
    [better] prefers among them, from [i], or [-1]. *)
-let rec find l ok better i found =
+let rec find l ok better size i found =
   if i = Array.length l.halves then found
   else
     let h = l.halves.(i) in
     let found =
-      if (not h.held) && ok h && (found < 0 || better h l.halves.(found)) then
-        i
+      if (not h.held) && ok size h && (found < 0 || better h l.halves.(found))
+      then i
       else found
     in
-    find l ok better (i + 1) found
+    find l ok better size (i + 1) found
 
-let has_room need h =
-  h.buffer <> None && h.cursor + need <= half_bytes ()
+let has_room need h = h.buffer <> None && h.cursor + need <= h.bytes
 
 let uses_done h =
   match h.buffer with None -> true | Some b -> Memory.uses_done b.mem
 
+(* Whether [h] has a buffer that holds pieces of [size] bytes. *)
+let big_enough size h = h.buffer <> None && h.bytes >= size
+
+(* Whether [h] holds pieces of [size] bytes from its start, its uses done. Only
+   an allocation is one whose work is done: a half without a buffer, which a
+   release or a raising creation left, is a new half to its take. *)
+let done_fitting size h = big_enough size h && uses_done h
+
+(* Whether [h] has no buffer, whatever [size]. *)
+let bare _ h = h.buffer = None
 let later a b = a.lap > b.lap
 let earlier a b = a.lap < b.lap
-let buffered a b = a.buffer <> None && b.buffer = None
-let some_buffer h = h.buffer <> None
+
+(* Prefers none: [find] keeps the first half it finds. *)
+let first_found _ _ = false
+
+(* Under [l]'s lock: the most bytes of a free half with a buffer, from [i], or
+   [big]. *)
+let rec largest l i big =
+  if i = Array.length l.halves then big
+  else
+    let h = l.halves.(i) in
+    let big =
+      if (not h.held) && h.buffer <> None then Int.max big h.bytes else big
+    in
+    largest l (i + 1) big
+
+(* The bytes of a half [writer] makes for pieces of at most [size] bytes, where
+   the free halves with a buffer hold at most [big]: those [size] needs, and for
+   the host twice [big] where that is more, up to [piece_bytes]. The host then
+   makes a half where it would wait for a smaller one's work, so a run of copies
+   the host writes ahead of their legs grows staging memory up to halves of
+   [piece_bytes] before any waits. *)
+let grown writer size big =
+  match writer with
+  | Host -> Int.min piece_bytes (Int.max (sized size) (2 * big))
+  | Device -> sized size
 
 (* [find] of the free half with room for [need] bytes after its cursor whose
    lap started last, a loop of its own so that a take makes no closure. *)
@@ -531,7 +549,6 @@ let rec find_room l need i found =
    [restart], its holder waiting for its uses first if [waits]; is [h]. *)
 let[@poll error] hold l ~restart ~waits h =
   h.held <- true;
-  h.last <- l.takes;
   h.waits <- waits;
   if restart then begin
     l.laps <- l.laps + 1;
@@ -546,50 +563,64 @@ let[@poll error] publish l halves h =
   l.halves <- halves;
   h
 
-(* Under [d]'s lock: a half of [d]'s staging memory for the pieces [writer]
-   writes, held now. A piece of [need] bytes that the host writes, [need]
-   positive, takes the free half with room after its cursor whose lap started
-   last, from its start if its uses are seen done: no work uses any of it, and
-   the last copy left those bytes in the caches, where past the cursor each of a
-   run of copies would write bytes that no copy touched for a lap of the half.
-   Otherwise a half is taken at its start: a free one whose uses are done, one
-   with a buffer first; for the host, else the free half whose lap started
-   first, whose uses its holder waits for; else a new half, so no copy waits for
-   a hold. The half is held, and a new half published, by the step that
-   returns it, and its holder stores it in its cell with nothing between that
-   polls ([holding]). It makes no buffer, whose creation can run the
-   out-of-memory ladder, which takes every device's lock. *)
-let take_locked d writer need =
+(* Under [d]'s lock: a half of [d]'s staging memory for pieces of at most [size]
+   bytes that [writer] writes, held now. A piece of [pack] bytes that the host
+   writes, [pack] positive, takes the free half with room after its cursor whose
+   lap started last, from its start if its uses are seen done: no work uses any
+   of it, and the last copy left those bytes in the caches, where past the
+   cursor each of a run of copies would write bytes that no copy touched for a
+   lap of the half. Otherwise a half of [size] bytes or more is taken at its
+   start: a free one whose uses are done; for the host, once a free half has
+   [piece_bytes], else the free half whose lap started first, whose uses its
+   holder waits for; else a new half of [grown] bytes, a free one without a
+   buffer where there is one, so no copy waits for a hold. The half is held, and
+   a new half published, by the step that returns it, and its holder stores it
+   in its cell with nothing between that polls ([holding]). It makes no buffer,
+   whose creation can run the out-of-memory ladder, which takes every device's
+   lock. *)
+let take_locked d writer ~pack ~size =
   let l = d.live in
-  l.takes <- l.takes + 1;
   let packed =
-    if writer = Host && need > 0 then find_room l need 0 (-1) else -1
+    if writer = Host && pack > 0 then find_room l pack 0 (-1) else -1
   in
   if packed >= 0 then
     let h = l.halves.(packed) in
     hold l ~restart:(uses_done h) ~waits:false h
   else
-    let i = find l uses_done buffered 0 (-1) in
+    let i = find l done_fitting first_found size 0 (-1) in
     if i >= 0 then hold l ~restart:true ~waits:false l.halves.(i)
     else
-      let i = if writer = Host then find l some_buffer earlier 0 (-1) else -1 in
+      let big = largest l 0 0 in
+      let i =
+        if writer = Host && big >= piece_bytes then
+          find l big_enough earlier size 0 (-1)
+        else -1
+      in
       if i >= 0 then hold l ~restart:true ~waits:true l.halves.(i)
-      else begin
-        l.laps <- l.laps + 1;
-        let h =
-          {
-            buffer = None;
-            held = true;
-            names = [];
-            cursor = 0;
-            lap = l.laps;
-            last = l.takes;
-            waits = false;
-            stage = d;
-          }
-        in
-        publish l (Array.append l.halves [| h |]) h
-      end
+      else
+        let bytes = grown writer size big in
+        let i = find l bare first_found size 0 (-1) in
+        if i >= 0 then begin
+          let h = l.halves.(i) in
+          h.bytes <- bytes;
+          hold l ~restart:true ~waits:false h
+        end
+        else begin
+          l.laps <- l.laps + 1;
+          let h =
+            {
+              buffer = None;
+              held = true;
+              names = [];
+              bytes;
+              cursor = 0;
+              lap = l.laps;
+              waits = false;
+              stage = d;
+            }
+          in
+          publish l (Array.append l.halves [| h |]) h
+        end
 
 (* The half that a holder's cell names until a take stores the half it
    took there. No take takes it. *)
@@ -598,9 +629,9 @@ let no_half =
     buffer = None;
     held = false;
     names = [];
+    bytes = 0;
     cursor = max_int;
     lap = 0;
-    last = 0;
     waits = false;
     stage = Dev.host;
   }
@@ -611,25 +642,6 @@ let no_half =
 let[@poll error] give_halves h0 h1 =
   if h0 != no_half then h0.held <- false;
   if h1 != no_half then h1.held <- false
-
-(* Under [d]'s lock: takes out the buffers of [d]'s free halves that no take
-   took within the last takes, as many as [d] has halves, each list cell
-   made before the stores. *)
-let idle_buffers d =
-  let l = d.live in
-  let n = Array.length l.halves in
-  let bs = ref [] in
-  for i = 0 to n - 1 do
-    let h = l.halves.(i) in
-    match h.buffer with
-    | Some b when (not h.held) && l.takes - h.last >= n ->
-        bs := b :: !bs;
-        h.buffer <- None;
-        h.names <- [];
-        h.cursor <- 0
-    | Some _ | None -> ()
-  done;
-  !bs
 
 (* The buffer of [h], made where it is missing or names a lost device's work,
    outside every lock. A half whose take did not see its uses done ([waits])
@@ -642,8 +654,8 @@ let ready h =
     (* A device's staging memory is memory both it and the host address:
        its Pinned memory, or its own where the host addresses that. *)
     let b =
-      if Buffer.host_addresses d then Buffer.create d (half_bytes ())
-      else Buffer.create ~memory:Pinned d (half_bytes ())
+      if Buffer.host_addresses d then Buffer.create d h.bytes
+      else Buffer.create ~memory:Pinned d h.bytes
     in
     h.names <- [];
     h.buffer <- Some b;
@@ -667,7 +679,7 @@ let ready h =
 let half_on fn stage d b =
   match Memory.staging d b.mem with
   | Some m -> { b with mem = m }
-  | None when Dev.is_host stage -> raise (Dev.Out_of_memory (d, half_bytes ()))
+  | None when Dev.is_host stage -> raise (Dev.Out_of_memory (d, b.length))
   | None ->
       invalid_argf "Rig.%s: no device copies between %s and %s" fn d.name
         stage.name
@@ -727,12 +739,12 @@ let two_stages src dst =
 
 (* Pieces
 
-   A staged copy's boxes go through staging memory in pieces of at most a
-   half. A piece holds whole rows, of one box or of several, packed one after
-   the other, where a row fits a half, and a range of one row's bytes
-   otherwise, so each leg of a piece is one box per part of a box it holds.
-   Each part [boxes.(i)] is a box of the copy's geometry, whose rows start at
-   byte [ats.(i)] of the piece. *)
+   A staged copy's boxes go through staging memory in pieces of at most
+   [piece_bytes]. A piece holds whole rows, of one box or of several, packed one
+   after the other, where a row fits a piece, and a range of one row's bytes
+   otherwise, so each leg of a piece is one box per part of a box it holds. Each
+   part [boxes.(i)] is a box of the copy's geometry, whose rows start at byte
+   [ats.(i)] of the piece. *)
 type piece = { bytes : int; boxes : box array; ats : int array }
 
 (* The byte at which each of [boxes] starts, packed one after the other. *)
@@ -744,7 +756,6 @@ let starts boxes =
   ats
 
 let split boxes =
-  let half = half_bytes () in
   let out = ref [] and parts = ref [] and fill = ref 0 in
   let close () =
     if !parts <> [] then begin
@@ -765,7 +776,7 @@ let split boxes =
     for i = 0 to x.rows - 1 do
       let c = ref 0 in
       while !c < x.width do
-        let w = Int.min half (x.width - !c) in
+        let w = Int.min piece_bytes (x.width - !c) in
         add
           {
             src_offset = x.src_offset + (i * x.src_pitch) + !c;
@@ -783,7 +794,7 @@ let split boxes =
   let rows x =
     let r = ref 0 in
     while !r < x.rows do
-      let fit = (half - !fill) / x.width in
+      let fit = (piece_bytes - !fill) / x.width in
       if fit = 0 then close ()
       else begin
         let k = Int.min fit (x.rows - !r) in
@@ -798,34 +809,33 @@ let split boxes =
       end
     done
   in
-  Array.iter (fun x -> if x.width > half then wide x else rows x) boxes;
+  Array.iter (fun x -> if x.width > piece_bytes then wide x else rows x) boxes;
   close ();
   Array.of_list (List.rev !out)
 
 (* The parts of a piece of one box. *)
 let at_start = [| 0 |]
 
-(* A row of [n] bytes past a half, from [src_offset] and [dst_offset], in
-   pieces of a half of it each, as [split] would make them. *)
+(* A row of [n] bytes past [piece_bytes], from [src_offset] and [dst_offset], in
+   pieces of [piece_bytes] of it each, as [split] would make them. *)
 let wide_row ~src_offset ~dst_offset n =
-  let half = half_bytes () in
   Array.init
-    ((n + half - 1) / half)
+    ((n + piece_bytes - 1) / piece_bytes)
     (fun k ->
-      let at = k * half in
+      let at = k * piece_bytes in
       let x =
         row ~src_offset:(src_offset + at) ~dst_offset:(dst_offset + at)
-          (Int.min half (n - at))
+          (Int.min piece_bytes (n - at))
       in
       { bytes = x.width; boxes = [| x |]; ats = at_start })
 
-(* Boxes that fit a half are one piece of them whole, over the copy's own
-   array, and a single row past a half, as a copy of a buffer makes it, is
-   its pieces, each as [split] would make it. *)
+(* Boxes of at most [piece_bytes] are one piece of them whole, over the copy's
+   own array, and a single row past it, as a copy of a buffer makes it, is its
+   pieces, each as [split] would make it. *)
 let pieces boxes =
   let n = total boxes in
   match boxes with
-  | _ when n <= half_bytes () ->
+  | _ when n <= piece_bytes ->
       let ats = if Array.length boxes = 1 then at_start else starts boxes in
       [| { bytes = n; boxes; ats } |]
   | [| { rows = 1; src_offset; dst_offset; width; _ } |] ->
@@ -865,13 +875,23 @@ let leg_out_of fn ~waits h base dst p =
       leg_run fn ~waits ~into_half:false h base dst x.dst_offset p.bytes
   | _ -> leg fn ~waits ~into_half:false h dst (out_of_half base p)
 
-(* The bytes of a half from its piece's start past which [writer]'s pieces
+(* The bytes of the half [h] from its piece's start past which [writer]'s pieces
    [ps] leave nothing to pack behind: those of one piece the host writes, and
-   the whole half for more pieces or a device's. With a half's base, its
-   cursor once the copy gives it back. *)
-let extent writer ps =
-  if writer = Host && Array.length ps = 1 then round ps.(0).bytes
-  else half_bytes ()
+   the whole half for more pieces or a device's. With a half's base, its cursor
+   once the copy gives it back. *)
+let extent writer ps (h : half) =
+  if writer = Host && Array.length ps = 1 then round ps.(0).bytes else h.bytes
+
+(* The bytes of [writer]'s pieces [ps] that a take packs behind others' in a
+   half: those of one piece the host writes, and [0] otherwise. *)
+let packs writer ps =
+  if writer = Host && Array.length ps = 1 then round ps.(0).bytes else 0
+
+(* The most bytes of [ps] from [i], or [w]: the least a half that holds each of
+   them has. *)
+let rec widest ps i w =
+  if i = Array.length ps then w
+  else widest ps (i + 1) (Int.max w (round ps.(i).bytes))
 
 (* The half of piece [k] of a copy through the halves [h0] and [h1], which
    take the pieces in turn, and the byte of its half where the piece goes:
@@ -879,19 +899,14 @@ let extent writer ps =
 let alternate h0 h1 k = if k land 1 = 0 then h0 else h1
 let piece_base base0 k = if k = 0 then base0 else 0
 
-(* [f h0 h1] on two halves of [d]'s staging memory that [writer] writes, or
-   one, [h0] and [h1] the same, unless [two]; the halves given back once it
-   returns or raises. A half [f] returns normally has its cursor set by [f];
-   one it raises from goes back with its uses unknown, so no piece is packed
-   into it until its lap restarts. The buffers of [d]'s idle halves go back
-   as memory returns free halves ([Memory.return_half]), outside the lock.
-   Copies that keep a half busy, one after another or in lockstep on several
-   threads, take it within every window and keep its buffer; the extra
-   halves of a burst go idle once as many later takes as there are halves
-   have passed them by. An exception after the give leaves the buffers it
-   took to their collection. *)
-let holding d writer need ~two f =
-  let lock = d.live.lock and half = half_bytes () in
+(* [f h0 h1] on two halves of [d]'s staging memory for pieces of at most [size]
+   bytes that [writer] writes, the first packing [pack] bytes, or one, [h0] and
+   [h1] the same, unless [two]; the halves given back once it returns or raises,
+   their buffers kept for the copies after. A half [f] returns normally has its
+   cursor set by [f]; one it raises from goes back with its uses unknown, so no
+   piece is packed into it until its lap restarts. *)
+let holding d writer ~pack ~size ~two f =
+  let lock = d.live.lock in
   let c0 = ref no_half and c1 = ref no_half and locked = ref false in
   match
     (* The sections under [d]'s lock end in this handler, which reads
@@ -901,8 +916,8 @@ let holding d writer need ~two f =
        cells are local, so in native code they allocate nothing. *)
     Lock.hold lock;
     locked := true;
-    c0 := take_locked d writer need;
-    if two then c1 := take_locked d writer 0;
+    c0 := take_locked d writer ~pack ~size;
+    if two then c1 := take_locked d writer ~pack:0 ~size;
     locked := false;
     Lock.release lock;
     let p = f !c0 (if two then !c1 else !c0) in
@@ -911,10 +926,8 @@ let holding d writer need ~two f =
     give_halves !c0 !c1;
     c0 := no_half;
     c1 := no_half;
-    let bs = idle_buffers d in
     locked := false;
     Lock.release lock;
-    List.iter Memory.return_half bs;
     p
   with
   | p -> p
@@ -924,11 +937,11 @@ let holding d writer need ~two f =
       if not !locked then Lock.hold lock;
       let h0 = !c0 and h1 = !c1 in
       if h0 != no_half then begin
-        h0.cursor <- half;
+        h0.cursor <- h0.bytes;
         h0.held <- false
       end;
       if h1 != no_half then begin
-        h1.cursor <- half;
+        h1.cursor <- h1.bytes;
         h1.held <- false
       end;
       Lock.release lock;
@@ -966,8 +979,8 @@ let fill_piece ~writer ~into b0 b1 base0 ps k =
    last leg out. *)
 let through fn d ps ~writer ~src_side ~dst_side ~ahead ~into ~out_of =
   let n = Array.length ps in
-  let need = if n = 1 && writer = Host then extent Host ps else 0 in
-  holding d writer need ~two:(n > 1) (fun h0 h1 ->
+  let pack = packs writer ps and size = widest ps 0 0 in
+  holding d writer ~pack ~size ~two:(n > 1) (fun h0 h1 ->
       let b0 = ready h0 in
       let b1 = if n > 1 then ready h1 else b0 in
       let base0 = h0.cursor in
@@ -983,8 +996,8 @@ let through fn d ps ~writer ~src_side ~dst_side ~ahead ~into ~out_of =
         last :=
           pipelined n (out_of (alternate o0 o1 k) (piece_base base0 k) ps.(k))
       done;
-      h0.cursor <- base0 + extent writer ps;
-      h1.cursor <- base0 + extent writer ps;
+      h0.cursor <- base0 + extent writer ps h0;
+      h1.cursor <- base0 + extent writer ps h1;
       !last)
 
 (* Copies *)
@@ -1007,9 +1020,9 @@ let rec staged fn ~waits src dst boxes =
    next half runs while the host moves the last. *)
 and between fn ~waits src dst ps =
   let n = Array.length ps in
-  let need = if n = 1 then extent Host ps else 0 in
-  holding (runner src) Device 0 ~two:(n > 1) (fun a0 a1 ->
-      holding (runner dst) Host need ~two:(n > 1) (fun b0 b1 ->
+  let pack = packs Host ps and size = widest ps 0 0 in
+  holding (runner src) Device ~pack:0 ~size ~two:(n > 1) (fun a0 a1 ->
+      holding (runner dst) Host ~pack ~size ~two:(n > 1) (fun b0 b1 ->
           let ha0 = ready a0 and hb0 = ready b0 in
           let ha1 = if n > 1 then ready a1 else ha0 in
           let hb1 = if n > 1 then ready b1 else hb0 in
@@ -1032,10 +1045,10 @@ and between fn ~waits src dst ps =
                 : int);
             last := pipelined n (leg_out_of fn ~waits hb base dst ps.(k))
           done;
-          a0.cursor <- half_bytes ();
-          a1.cursor <- half_bytes ();
-          b0.cursor <- base0 + extent Host ps;
-          b1.cursor <- base0 + extent Host ps;
+          a0.cursor <- a0.bytes;
+          a1.cursor <- a1.bytes;
+          b0.cursor <- base0 + extent Host ps b0;
+          b1.cursor <- base0 + extent Host ps b1;
           !last))
 
 (* Copies [boxes] from [src] to [dst] through the staging memory, where no

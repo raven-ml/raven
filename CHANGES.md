@@ -74,6 +74,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- Staging memory that no copy holds stays until `Rig.free_cache`, an
+  over-budget `Rig.set_budget`, reclamation or a mapping short of room
+  returns it, so copies on several domains no longer map it anew each
+  round. Its allocations hold `Rig.Buffer.paged_from` to 32 MiB.
 - New `Rig.Image.links`: whether code compiled for a device's host processor
   runs on it, true on a host or software device of x86_64 or arm64.
 - rig builds with MSYS2's mingw-w64 headers, which declare `FILE_ID_INFO`

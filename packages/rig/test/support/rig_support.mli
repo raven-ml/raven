@@ -284,6 +284,10 @@ module Polled : sig
   (** [host_maps d] is the bytes of each host memory [d] mapped, oldest first.
   *)
 
+  val host_mapped_at : t -> int list
+  (** [host_mapped_at d] is the host address of each host memory [d] mapped,
+      oldest first, as [at] gives a buffer's. *)
+
   val allocated : t -> Rig_edge.memory -> int
   (** [allocated d kind] is the bytes of [kind] [d] holds allocated. *)
 

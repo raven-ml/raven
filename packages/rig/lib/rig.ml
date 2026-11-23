@@ -173,7 +173,6 @@ let software = Software.open_
 module Timer = Submission.Timer
 
 let time_pairs = Submission.time_pairs
-let set_half_bytes = Copy.set_half_bytes
 let on_host_exchange = Host_code.on_exchange
 let x86_levels = Cpu.x86_levels
 

@@ -1303,35 +1303,21 @@ let roundtrip ~src ~dst =
   B.copy ~src:dst ~dst:back;
   equal string (String.make (B.length src) 'r') (bytes back)
 
-(* The bytes of staging memory's allocations (rig.mli, Copying). *)
-let half_bytes = 32 lsl 20
-
 (* Between host memory and memory the host does not address, the device copies
    through staging memory, which it maps: a copy maps no memory of the host's
-   that it does not name, even memory that starts on a page. *)
+   that it does not name, even memory that starts on a page. Both ways go
+   through one allocation of staging memory, which the device maps once. The
+   host's staging memory starts empty. *)
 let test_copy_host_staged () =
+  Rig.free_cache Rig.host;
   let d, p = P.open_ ~host_visible:false "buffer:direct" in
   let src = B.create Rig.host B.paged_from in
   let dst = B.create d B.paged_from in
   roundtrip ~src ~dst;
   equal ~msg:"copies the device ran" int 2 (P.submits p);
-  equal ~msg:"host memory mapped: staging memory alone" (list int)
-    [ half_bytes ] (P.host_maps p)
-
-(* The first copy through staging memory fixes the size of its allocations: a
-   change after it is refused and changes nothing, and a size that is no
-   positive multiple of 256 is refused whenever. *)
-let test_half_bytes_fixed () =
-  let d, _ = P.open_ ~host_visible:false "buffer:half-fixed" in
-  roundtrip ~src:(B.create Rig.host 64) ~dst:(B.create d 64);
-  raises_match (Exn.invalid_arg ~sub:"a copy fixed the size") (fun () ->
-      Rig.set_half_bytes (64 * 1024));
-  raises_match (Exn.invalid_arg ~sub:"multiple of 256") (fun () ->
-      Rig.set_half_bytes 100);
-  let d, p = P.open_ ~host_visible:false "buffer:half-fixed-after" in
-  roundtrip ~src:(B.create Rig.host 64) ~dst:(B.create d 64);
-  equal ~msg:"host memory mapped: a half of the fixed size" (list int)
-    [ half_bytes ] (P.host_maps p)
+  equal ~msg:"host memory mapped" int 1 (List.length (P.host_maps p));
+  not_equal ~msg:"the mapping is the source's" int (Support.at src)
+    (List.hd (P.host_mapped_at p))
 
 (* A copy from a borrow of host memory on the device that copies runs directly
    through the borrow's mapping, made at the borrow: the copy maps nothing.
@@ -1353,8 +1339,10 @@ let test_copy_borrowed_direct () =
   equal ~msg:"the bytes back through a borrow" string (String.make n 'b')
     (bytes back);
   B.copy ~src:h ~dst;
-  equal ~msg:"a copy from the host buffer, through staging memory"
-    (list int) [ n; n; half_bytes ] (P.host_maps p);
+  equal ~msg:"a copy from the host buffer, through staging memory" int 3
+    (List.length (P.host_maps p));
+  not_equal ~msg:"its mapping is the buffer's" int (Support.at h)
+    (List.nth (P.host_mapped_at p) 2);
   equal ~msg:"its leg on the device" int 3 (P.submits p);
   ignore (Sys.opaque_identity on_d)
 
@@ -1550,17 +1538,28 @@ let test_mapless_pair_slots () =
    buffer under [Rig.Buffer.paged_from] bytes may start on a page, and a device
    then borrows it for a copy, staging nothing. *)
 let off_page n c =
-  let paged = B.export (filled B.paged_from c) Bigarray.char in
+  let paged =
+    B.export (filled (Int.max B.paged_from (64 + n)) c) Bigarray.char
+  in
   B.of_bigarray (Bigarray.Array1.sub paged 64 n)
+
+(* The bytes of [b] that are not [c]. *)
+let differ c b =
+  let back = B.create Rig.host (B.length b) in
+  B.copy ~src:b ~dst:back;
+  B.read back Bigarray.char (fun got ->
+      let wrong = ref 0 in
+      for i = 0 to Bigarray.Array1.dim got - 1 do
+        if Bigarray.Array1.unsafe_get got i <> c then incr wrong
+      done;
+      !wrong)
 
 (* Three copies at once from [d], whose memory the host does not address, to
    host memory off a page, held at [p]'s gate until all three wait there for
-   [d]'s legs into staging memory: each makes a half of 32 MiB, since a device
-   writes only a half whose work is done. [burst_from p srcs] copies from
-   [srcs], made by [sources], and is the copies' destinations. *)
-let sources d = List.map (on d) [ 'a'; 'b'; 'c' ]
-
-let burst_from p srcs =
+   [d]'s legs into staging memory: each makes a half, since a device writes only
+   a half whose work is done. Is the copies' destinations. *)
+let staging_burst d p =
+  let srcs = List.map (on d) [ 'a'; 'b'; 'c' ] in
   let dsts = List.map (fun _ -> off_page 64 '\000') srcs in
   P.gate p;
   let copier src dst = Thread.create (fun () -> B.copy ~src ~dst) () in
@@ -1570,42 +1569,52 @@ let burst_from p srcs =
   List.iter Thread.join copiers;
   dsts
 
-let staging_burst d p = burst_from p (sources d)
-
 let burst_landed dsts =
   equal ~msg:"the copies' bytes" (list string)
     (List.map (String.make 64) [ 'a'; 'b'; 'c' ])
     (List.map bytes dsts)
 
 (* Staging memory keeps what concurrent copies made for later copies, through
-   collections, and returns it at [Rig.free_cache]. *)
+   collections, and returns it at [Rig.free_cache]: three copies at once hold
+   three allocations, of at most 64 MiB for each copy. *)
 let test_staging_kept () =
   let d, p = staging_device "buffer:staging-kept" in
   let dsts = staging_burst d p in
+  let made = P.allocated p B.Pinned in
+  equal ~msg:"staging allocations" int 3
+    (List.length
+       (List.filter (fun (k, _, ok) -> k = B.Pinned && ok) (P.allocs p)));
+  at_most ~msg:"staging bytes" int ~than:(3 * (64 lsl 20)) made;
   Gc.full_major ();
   Gc.full_major ();
   ignore (B.create d 0);
-  equal ~msg:"pinned bytes once they returned" int
-    (3 * (32 lsl 20))
-    (P.allocated p B.Pinned);
+  equal ~msg:"pinned bytes once they returned" int made (P.allocated p B.Pinned);
   Rig.free_cache d;
   equal ~msg:"pinned bytes after free_cache" int 0 (P.allocated p B.Pinned);
   burst_landed dsts
 
-(* Under pressure, staging memory's free halves return: after a burst of
-   three copies through a device whose [Pinned] memory counts in the host's
-   budget, a [Pinned] buffer of 64 MiB on it, which a budget of 32 MiB over
-   what the host holds admits only once a half of the burst is gone, is
-   made. *)
+(* Under pressure, staging memory's free halves return: after a burst of three
+   copies through a device whose [Pinned] memory counts in the host's budget, a
+   [Pinned] buffer of 64 MiB on it, which a budget short of it by the burst's
+   staging memory over what the host holds admits once that is gone, is made,
+   and is all the [Pinned] memory left. The host's own cache is empty first. *)
 let test_staging_pressure () =
   let d, p = staging_device "buffer:staging-pressure" in
   let dsts = staging_burst d p in
+  let staged = P.allocated p B.Pinned in
+  let n = 64 lsl 20 in
   let budget = Rig.budget Rig.host in
-  Rig.set_budget Rig.host (Support.host_held () + (32 lsl 20));
-  Fun.protect
-    ~finally:(fun () -> Rig.set_budget Rig.host budget)
-    (fun () ->
-      ignore (Sys.opaque_identity (B.create ~memory:Pinned d (64 lsl 20))));
+  Gc.full_major ();
+  Rig.free_cache Rig.host;
+  Rig.set_budget Rig.host
+    (Support.host_held () + Rig.allocation ~memory:Pinned d n - staged);
+  let b =
+    Fun.protect
+      ~finally:(fun () -> Rig.set_budget Rig.host budget)
+      (fun () -> B.create ~memory:Pinned d n)
+  in
+  equal ~msg:"pinned bytes" int n (P.allocated p B.Pinned);
+  ignore (Sys.opaque_identity b);
   burst_landed dsts
 
 (* Copies several at a time over and over keep their staging memory. Two domains
@@ -1647,12 +1656,81 @@ let test_staging_pairs () =
   done;
   equal ~msg:"halves mapped after the first round" int first (maps ())
 
-(* Copies from host memory off a page that the host writes into staging
-   memory put their pieces one after the other in one half, and wait for no
-   work there: a copy gives its half back once the host wrote its piece, and
-   while it waits for the device's leg, a second copy writes after it in the
-   same half, which the device maps once. *)
+(* A copy the host writes waits for the work of a free half of 32 MiB, rather
+   than make another, where no free half's work is done. Copies made halves and
+   [Rig.free_cache] returned them; then one copy of 32 MiB from host memory off
+   a page into [d], whose legs [d] runs only once the host sleeps at its gate,
+   makes a half, and a second copy on another domain waits there for that half's
+   work, mapping nothing more. The first copy's bytes land before the second
+   writes the half. *)
+let test_staging_waits () =
+  let n = 32 lsl 20 in
+  let d, p = P.open_ ~host_visible:false "buffer:staging-waits" in
+  Rig.free_cache Rig.host;
+  burst_landed (staging_burst d p);
+  Rig.free_cache Rig.host;
+  let maps () = List.length (P.host_maps p) in
+  let before = maps () in
+  let first = B.create d n and second = B.create d n in
+  P.gate p;
+  let pt = B.submit_copy ~src:(off_page n 'f') ~dst:first [| B.row n |] in
+  let returned = Atomic.make false in
+  let copier =
+    Domain.spawn (fun () ->
+        let src = off_page n 's' in
+        let pt = B.submit_copy ~src ~dst:second [| B.row n |] in
+        Atomic.set returned true;
+        pt)
+  in
+  Support.await "the second copy waiting or returned" (fun () ->
+      P.sleepers p = 1 || Atomic.get returned);
+  let waiting = P.sleepers p and mapped = maps () - before in
+  P.open_gate p;
+  let pt' = Domain.join copier in
+  Rig.Point.wait pt;
+  Rig.Point.wait pt';
+  equal ~msg:"copies waiting at the gate" int 1 waiting;
+  equal ~msg:"halves mapped" int 1 mapped;
+  equal ~msg:"the first copy's bytes that differ" int 0 (differ 'f' first);
+  equal ~msg:"the second copy's bytes that differ" int 0 (differ 's' second)
+
+(* Copies the host writes ahead of their legs make halves until one waits, and
+   the staging memory then holds an allocation of 32 MiB and at most 64 MiB in
+   all: copies of 256 KiB from host memory off a page into [d], whose legs [d]
+   runs only once the host sleeps at its gate, go on until one sleeps there. The
+   host's staging memory starts empty. *)
+let test_staging_grows () =
+  let n = 256 lsl 10 in
+  let d, p = P.open_ ~host_visible:false "buffer:staging-grows" in
+  Rig.free_cache Rig.host;
+  let src = off_page n 'g' and dst = B.create d n in
+  let stop = Atomic.make false in
+  P.gate p;
+  let writer =
+    Domain.spawn (fun () ->
+        let last = ref None in
+        while not (Atomic.get stop) do
+          last := Some (B.submit_copy ~src ~dst [| B.row n |])
+        done;
+        !last)
+  in
+  Support.await "a copy waiting" (fun () -> P.sleepers p = 1);
+  let mapped = P.host_maps p in
+  Atomic.set stop true;
+  P.open_gate p;
+  Option.iter Rig.Point.wait (Domain.join writer);
+  mem ~msg:"halves mapped" int (32 lsl 20) mapped;
+  at_most ~msg:"bytes mapped" int ~than:(64 lsl 20)
+    (List.fold_left ( + ) 0 mapped);
+  equal ~msg:"bytes that differ" int 0 (differ 'g' dst)
+
+(* Copies from host memory off a page that the host writes into staging memory
+   put their pieces one after the other in one half, and wait for no work there:
+   a copy gives its half back once the host wrote its piece, and while it waits
+   for the device's leg, a second copy writes after it in the same half, which
+   the device maps once. The host's staging memory starts empty. *)
 let test_staging_packed () =
+  Rig.free_cache Rig.host;
   let d, p = P.open_ ~host_visible:false "buffer:staging-packed" in
   let dsts = [ B.create d 64; B.create d 64 ] in
   P.gate p;
@@ -1666,8 +1744,7 @@ let test_staging_packed () =
   P.open_gate p;
   Thread.join first;
   Thread.join second;
-  equal ~msg:"halves mapped" int 1
-    (List.length (List.filter (( = ) (32 lsl 20)) (P.host_maps p)));
+  equal ~msg:"halves mapped" int 1 (List.length (P.host_maps p));
   equal ~msg:"the copies' bytes" (list string)
     [ String.make 64 'a'; String.make 64 'b' ]
     (List.map contents dsts)
@@ -1739,10 +1816,7 @@ let breaks f =
 let test_staging_gives_back () =
   let d, p = staging_device "buffer:staging-gives-back" in
   let halves () =
-    List.length
-      (List.filter
-         (fun (k, n, _) -> k = B.Pinned && n = 32 lsl 20)
-         (P.allocs p))
+    List.length (List.filter (fun (k, _, _) -> k = B.Pinned) (P.allocs p))
   in
   let n = (2 * 32 * 1024 * 1024) + 8 in
   let copy reads dst = B.copy ~src:(cut reads n) ~dst in
@@ -1856,16 +1930,6 @@ let take_during p b transfer taker =
    leg of the third reads the source after the device ran the first's leg out
    of the same half. *)
 let three_pieces = (2 * (32 lsl 20)) + 4096
-
-let differ c b =
-  let back = B.create Rig.host (B.length b) in
-  B.copy ~src:b ~dst:back;
-  B.read back Bigarray.char (fun got ->
-      let wrong = ref 0 in
-      for i = 0 to Bigarray.Array1.dim got - 1 do
-        if Bigarray.Array1.unsafe_get got i <> c then incr wrong
-      done;
-      !wrong)
 
 (* The host's leg reads the source, which a taker would write. *)
 let test_staged_source_claimed () =
@@ -2586,8 +2650,6 @@ let tests =
       [
         test "a device copies host memory through staging memory, mapping none"
           test_copy_host_staged;
-        test "a change of staging memory's size after a copy is refused"
-          test_half_bytes_fixed;
         test "a copy names a borrow to run directly" test_copy_borrowed_direct;
         test "a copy into a host buffer returns once its bytes are there"
           test_copy_into_host_waits;
@@ -2622,6 +2684,10 @@ let tests =
           test_staging_pressure;
         test "copies several at a time over and over keep their halves"
           test_staging_pairs;
+        test "a copy the host writes waits for a free half of 32 MiB"
+          test_staging_waits;
+        test "copies the host writes ahead grow the halves to 32 MiB"
+          test_staging_grows;
         test "a loss with the staging memory leaves other copies working"
           test_staging_after_loss;
         test "a staged copy gives its halves back on every exit"

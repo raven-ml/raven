@@ -1192,6 +1192,11 @@ let take_free_halves l =
 (* Whether a half of [l] has a buffer, which keeps [l]'s device's slot. *)
 let has_halves l = Array.exists (fun (h : half) -> h.buffer <> None) l.halves
 
+(* Returns [b], a staging half's buffer that its half no longer holds, as
+   [Rig.Buffer.free] returns memory: [b] is dead, and its memory goes back once
+   the work that uses it is done, through its device's retiring memory, so a leg
+   still queued on it finishes first. A half that a claim holds is left to its
+   collection. The caller holds no lock. *)
 let return_half b =
   if buffer_free b "freed" = 1 then begin
     release_early b.mem.alloc;

@@ -12,6 +12,8 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let timeout = 60.
+
+(* The most bytes of an allocation of staging memory (rig.mli, Copying). *)
 let half = 32 lsl 20
 
 let bytes b =
@@ -38,8 +40,9 @@ let holding d s =
 (* The sleeps of every device of [ps]. *)
 let sleeps ps = List.fold_left (fun n p -> n + P.sleeps p) 0 ps
 
-(* The 32 MiB host halves [p]'s device mapped. *)
-let halves_mapped p = List.length (List.filter (( = ) half) (P.host_maps p))
+(* The host memory [p]'s device mapped: staging memory alone, where the copies
+   name no borrow. *)
+let halves_mapped p = List.length (P.host_maps p)
 
 (* A device whose memory the host does not address. *)
 let hidden ?peers name = P.open_ ~host_visible:false ?peers name
@@ -123,10 +126,11 @@ let test_fill_queued () =
 
 (* Staging memory under queued copies *)
 
-(* Small copies from host memory to several devices through the host's
-   staging memory return with no sleep, their pieces one after the other in
-   one half, which each device maps once. *)
+(* Small copies from host memory to several devices through the host's staging
+   memory return with no sleep, their pieces one after the other in one half,
+   which each device maps once. The host's staging memory starts empty. *)
 let test_small_uploads () =
+  Rig.free_cache Rig.host;
   let devices = List.init 4 (fun i -> hidden (Printf.sprintf "copy:up-%d" i)) in
   let ps = List.map snd devices in
   let before = sleeps ps in
@@ -205,7 +209,7 @@ let test_large_halves () =
   let d, p = P.open_ ~maps_host:false ~host_visible:false "copy:large" in
   let pinned () =
     List.length
-      (List.filter (fun (k, n, _) -> k = B.Pinned && n = half) (P.allocs p))
+      (List.filter (fun (k, _, ok) -> k = B.Pinned && ok) (P.allocs p))
   in
   let n = (2 * half) + 4096 in
   let dst = B.create d n in

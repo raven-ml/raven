@@ -256,7 +256,6 @@ and live = {
   mutable halves : half array;
       (** Its staging memory ({!Copy}): every half made, held or not, under
           the lock. The host's serves every device that maps host memory. *)
-  mutable takes : int;  (** The takes of its halves so far, under the lock. *)
   mutable laps : int;
       (** The laps its halves started so far, under the lock. *)
 }
@@ -472,17 +471,19 @@ and buffer = { mem : memory; offset : int; length : int; generation : int }
     outside it while a copy holds it, which the give's lock publishes. *)
 and half = {
   mutable buffer : buffer option;
-      (** Its allocation of 32 MiB, made at the first copy that needs it, and
-          dropped as a give or a release returns it. *)
+      (** Its allocation of [bytes], made at the first copy that needs it, and
+          dropped as a release returns it. *)
   mutable held : bool;  (** Whether a copy holds it. *)
   mutable names : buffer list;
       (** [buffer] as each device that ran legs through it names it, made at
           its first such leg and dropped with [buffer]. *)
+  mutable bytes : int;
+      (** The bytes of [buffer], or of the next one made where it has none,
+          which the take that finds it so sets. *)
   mutable cursor : int;
       (** The byte from which no unfinished work uses [buffer]. *)
   mutable lap : int;
       (** Its device's [laps] when [cursor] was last set to [0]. *)
-  mutable last : int;  (** Its device's [takes] at its last take. *)
   mutable waits : bool;
       (** Whether its holder waits for its uses before it writes it: its
           last take restarted it with uses it did not see done. *)
