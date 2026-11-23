@@ -49,11 +49,12 @@
   (glob_files support/*)
   (glob_files cut/*))
  ; A stack of 8 MiB, a common system default, so that a parser that recurses
- ; once per nesting level of a file overflows here.
+ ; once per nesting level of a file overflows here. The profile's parameters,
+ ; the sanitize profile's collector among them (../../dune), follow it.
  (action
   (setenv
    OCAMLRUNPARAM
-   l=1M
+   "l=1M,%{env:OCAMLRUNPARAM=}"
    (run %{test}))))
 
 ; Opens this machine's first GPU in a child, so it holds the lock GPU tests
