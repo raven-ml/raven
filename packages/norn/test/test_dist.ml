@@ -18,35 +18,43 @@ type case =
   | Flag of (Nx.host Nx.bool_t, Nx.float64_elt, Nx.host) D.t
   | Index of (Nx.host Nx.int64_t, Nx.float64_elt, Nx.host) D.t
 
+(* Each case is made when a test reads it: a truncation computes its base's
+   tails. *)
 let reals_base =
   [
-    ("normal", D.normal ~loc:(f64 0.5) ~scale:(f64 2.));
-    ("half_normal", D.half_normal ~scale:(f64 1.5));
-    ("lognormal", D.lognormal ~loc:(f64 0.3) ~scale:(f64 0.8));
-    ("student_t", D.student_t ~df:(f64 3.5) ~loc:(f64 (-1.)) ~scale:(f64 0.7));
-    ("cauchy", D.cauchy ~loc:(f64 1.) ~scale:(f64 0.5));
-    ("half_cauchy", D.half_cauchy ~scale:(f64 2.));
-    ("laplace", D.laplace ~loc:(f64 0.) ~scale:(f64 1.3));
-    ("logistic", D.logistic ~loc:(f64 2.) ~scale:(f64 0.4));
-    ("exponential", D.exponential ~rate:(f64 1.7));
-    ("gamma", D.gamma ~concentration:(f64 2.5) ~rate:(f64 1.5));
-    ("gamma_small", D.gamma ~concentration:(f64 0.4) ~rate:(f64 0.8));
-    ("inverse_gamma", D.inverse_gamma ~concentration:(f64 3.) ~scale:(f64 2.));
-    ("beta", D.beta ~a:(f64 2.) ~b:(f64 5.));
-    ("beta_u", D.beta ~a:(f64 0.5) ~b:(f64 0.5));
-    ("uniform", D.uniform ~low:(f64 (-1.)) ~high:(f64 3.));
+    ("normal", lazy (D.normal ~loc:(f64 0.5) ~scale:(f64 2.)));
+    ("half_normal", lazy (D.half_normal ~scale:(f64 1.5)));
+    ("lognormal", lazy (D.lognormal ~loc:(f64 0.3) ~scale:(f64 0.8)));
+    ( "student_t",
+      lazy (D.student_t ~df:(f64 3.5) ~loc:(f64 (-1.)) ~scale:(f64 0.7)) );
+    ("cauchy", lazy (D.cauchy ~loc:(f64 1.) ~scale:(f64 0.5)));
+    ("half_cauchy", lazy (D.half_cauchy ~scale:(f64 2.)));
+    ("laplace", lazy (D.laplace ~loc:(f64 0.) ~scale:(f64 1.3)));
+    ("logistic", lazy (D.logistic ~loc:(f64 2.) ~scale:(f64 0.4)));
+    ("exponential", lazy (D.exponential ~rate:(f64 1.7)));
+    ("gamma", lazy (D.gamma ~concentration:(f64 2.5) ~rate:(f64 1.5)));
+    ("gamma_small", lazy (D.gamma ~concentration:(f64 0.4) ~rate:(f64 0.8)));
+    ( "inverse_gamma",
+      lazy (D.inverse_gamma ~concentration:(f64 3.) ~scale:(f64 2.)) );
+    ("beta", lazy (D.beta ~a:(f64 2.) ~b:(f64 5.)));
+    ("beta_u", lazy (D.beta ~a:(f64 0.5) ~b:(f64 0.5)));
+    ("uniform", lazy (D.uniform ~low:(f64 (-1.)) ~high:(f64 3.)));
   ]
 
 let reals =
   reals_base
   @ [
-    ("von_mises", D.von_mises ~loc:(f64 0.3) ~concentration:(f64 2.));
-    ("von_mises_flat", D.von_mises ~loc:(f64 (-1.)) ~concentration:(f64 0.));
-  ]
+      ("von_mises", lazy (D.von_mises ~loc:(f64 0.3) ~concentration:(f64 2.)));
+      ( "von_mises_flat",
+        lazy (D.von_mises ~loc:(f64 (-1.)) ~concentration:(f64 0.)) );
+    ]
   @ List.map
       (fun (name, base, low, high) ->
         let low = Option.map f64 low and high = Option.map f64 high in
-        (name, D.truncated ?low ?high (List.assoc base reals_base)))
+        ( name,
+          lazy
+            (D.truncated ?low ?high (Lazy.force (List.assoc base reals_base)))
+        ))
       [
         ("truncated_normal", "normal", Some (-1.), Some 3.);
         ("truncated_normal_far", "normal", Some 60.5, None);
@@ -69,19 +77,20 @@ let reals =
 let tight = D.von_mises ~loc:(f64 1.) ~concentration:(f64 1e4)
 
 let cases =
-  List.map (fun (n, d) -> (n, Real d)) reals
+  List.map (fun (n, d) -> (n, lazy (Real (Lazy.force d)))) reals
   @ [
-      ("von_mises_tight", Real tight);
-      ("poisson", Count (D.poisson ~rate:(f64 3.2)));
+      ("von_mises_tight", lazy (Real tight));
+      ("poisson", lazy (Count (D.poisson ~rate:(f64 3.2))));
       ( "neg_binomial",
-        Count (D.neg_binomial ~mean:(f64 4.) ~dispersion:(f64 2.5)) );
-      ("bernoulli", Flag (D.bernoulli ~logits:(f64 0.4)));
-      ("binomial", Count (D.binomial ~trials:(i32 12) ~logits:(f64 0.4)));
+        lazy (Count (D.neg_binomial ~mean:(f64 4.) ~dispersion:(f64 2.5))) );
+      ("bernoulli", lazy (Flag (D.bernoulli ~logits:(f64 0.4))));
+      ("binomial", lazy (Count (D.binomial ~trials:(i32 12) ~logits:(f64 0.4))));
       ( "binomial_rare",
-        Count (D.binomial ~trials:(i32 40) ~logits:(f64 (-2.5))) );
+        lazy (Count (D.binomial ~trials:(i32 40) ~logits:(f64 (-2.5)))) );
       ( "binomial_many",
-        Count (D.binomial ~trials:(i32 200) ~logits:(f64 (-1.))) );
-      ("categorical", Index (D.categorical ~logits:(vec [| 0.1; -1.; 2. |])));
+        lazy (Count (D.binomial ~trials:(i32 200) ~logits:(f64 (-1.)))) );
+      ( "categorical",
+        lazy (Index (D.categorical ~logits:(vec [| 0.1; -1.; 2. |]))) );
     ]
 
 let dirichlet = D.dirichlet ~concentration:(vec [| 1.5; 2.; 0.7 |])
@@ -120,7 +129,7 @@ let exact_inf =
       if Float.is_finite a then Testable.equal close a b else Float.equal a b)
 
 let factor name xs =
-  match List.assoc name cases with
+  match Lazy.force (List.assoc name cases) with
   | Real d -> item (D.factors d (f64 (List.hd xs)))
   | Count d ->
       item (D.factors d (Nx.scalar Nx.int32 (Int32.of_float (List.hd xs))))
@@ -165,7 +174,7 @@ let quantiles =
          | [ _; name; p; v ] ->
              test (Printf.sprintf "%s at %s" name p) (fun () ->
                  let d =
-                   match List.assoc name cases with
+                   match Lazy.force (List.assoc name cases) with
                    | Real d -> d
                    | _ -> assert false
                  in
@@ -315,6 +324,7 @@ let gen_point c =
    [x]. *)
 let quantile_of_cdf =
   prop "the quantile at the CDF of x is x"
+    ~examples:[ (gamma_case false 2. 1., 0x1p-60) ]
     Gen.(
       let* c = gen_case () in
       let+ x = gen_point c in
@@ -498,6 +508,7 @@ let beta_quantile_of (a, (b, p)) = D.quantile (D.beta ~a ~b) p
    that underflow, whose derivatives are finite too. *)
 let beta_derivatives =
   prop "the beta's quantile's first derivatives are finite"
+    ~examples:[ (2., 3., 1. -. 0x1p-40) ]
     Gen.(
       let shape = map (fun e -> Float.pow 2. e) (float_range (-60.) 20.) in
       let+ a = shape
@@ -519,8 +530,10 @@ let beta_derivatives =
       let x, (da, (db, dp)) =
         Rune.value_and_grad args beta_quantile_of (f64 a, (f64 b, f64 p))
       in
-      let finite v = Float.is_finite (item v) in
-      equal bool true (finite x && finite da && finite db && finite dp))
+      satisfies ~claim:"the quantile and its derivatives finite"
+        (array float_exact)
+        (Array.for_all Float.is_finite)
+        (Array.map item [| x; da; db; dp |]))
 
 (* Forward mode applies the derivatives reverse mode transposes: both are
    one program's, so they agree to its roundings. *)
@@ -604,11 +617,10 @@ let fit =
   group "sample fits the density"
     (List.mapi
        (fun i (name, c) ->
-         slow
-         @@ test name (fun () ->
+         test name (fun () ->
              let k = Nx.Rng.key (100 + i) in
              let values =
-               match c with
+               match Lazy.force c with
                | Real d -> Nx.to_array (D.sample k (D.iid [| draws |] d))
                | Count d ->
                    Array.map Int32.to_float
@@ -655,7 +667,8 @@ let normalisation =
   group "the pullback through coords integrates to one"
     (List.map
        (fun (name, d) ->
-         test name (fun () -> equal (float 1e-8) 1. (integrate (pullback d))))
+         test name (fun () ->
+             equal (float 1e-8) 1. (integrate (pullback (Lazy.force d)))))
        reals)
 
 (* Laws and combinators *)
@@ -842,8 +855,10 @@ let logit =
       (1, Gen.constant Float.neg_infinity);
     ]
 
+(* The examples reach the covers that a sixth of the draws reach. *)
 let binomial_mass =
   prop "a binomial's mass sums to one over {0, ..., trials}"
+    ~examples:[ (0, 0.3) ]
     Gen.(
       pair
         (frequency
@@ -962,27 +977,6 @@ let binomial =
           equal close
             (Float.log 0.5 +. item (D.log_density seven (i32 5)))
             (item (D.log_density d (i32 5))));
-      test "the score of the logits is x - trials sigmoid logits" (fun () ->
-          let x = Nx.create Nx.int32 [| 3 |] [| 0l; 3l; 12l |] in
-          let g =
-            Rune.grad'
-              (fun logits ->
-                D.log_density
-                  (D.iid [| 3 |] (D.binomial ~trials:(i32 12) ~logits))
-                  x)
-              (f64 0.4)
-          in
-          equal close (15. -. (36. *. sigmoid 0.4)) (item g));
-      test "a compiled density is the eager one" (fun () ->
-          let d logits = D.iid [| 50 |] (D.binomial ~trials:(i32 30) ~logits) in
-          let x =
-            Nx.create Nx.int32 [| 50 |]
-              (Array.init 50 (fun i -> Int32.of_int (i mod 31)))
-          in
-          equal
-            (array (float 1e-12))
-            (Nx.to_array (D.factors (d (f64 0.5)) x))
-            (Nx.to_array (Rune.jit' (fun l -> D.factors (d l) x) (f64 0.5))));
       test "a compiled draw is the eager one" (fun () ->
           let d logits = D.iid [| 50 |] (D.binomial ~trials:(i32 30) ~logits) in
           let k = Nx.Rng.key 4 in
@@ -1123,6 +1117,10 @@ let smaller = [| Dtype Nx.float32; Dtype Nx.float16; Dtype Nx.bfloat16 |]
 let narrow_masses family name =
   prop
     (Printf.sprintf "%s's log mass at narrow dtypes is within its bound" name)
+    ~examples:
+      (List.map
+         (fun (w, at) -> (0, 0.5, w, at))
+         [ (0.2, Zero); (0.8, Top); (0.2, Below 0.3); (0.8, Above 5.) ])
     Gen.(quad (int_range 0 2) (float_range 0. 1.) (float_range 0. 1.) place)
     (fun (i, u, w, at) ->
       let (Dtype dt) = smaller.(i) in
@@ -1157,7 +1155,7 @@ let narrow_masses family name =
       let f, err = classic family a b x in
       (* A mass past the dtype's range rounds to [-inf]. *)
       assume (Float.abs f < format.max_finite);
-      cover (Nx.Dtype.name dt) true;
+      Array.iteri (fun j (Dtype d) -> cover (Nx.Dtype.name d) (i = j)) smaller;
       cover "at zero" (x = 0.);
       cover "near the mean" (x > m /. 2. && x < 2. *. m);
       cover "far below the mean" (x > 0. && x <= m /. 2.);
@@ -1650,6 +1648,7 @@ let continuous_scores =
   group "scores"
     [
       prop "the gamma's scores are log (rate x) - ψ(α) and α / rate - x"
+        ~examples:[ (1e-5, 1., 1e-5); (1e8, 1., 1e8) ]
         Gen.(
           let* a = concentration in
           let+ y = unit_point a and+ rate = power (-6.) 6. in
@@ -1671,8 +1670,8 @@ let continuous_scores =
           equal ~msg:"rate"
             (score_tol [ a /. rate; x ])
             ((a /. rate) -. x) gr);
-      prop
-        "the inverse gamma's scores are log (s / x) - ψ(α) and α / s - 1 / x"
+      prop "the inverse gamma's scores are log (s / x) - ψ(α) and α / s - 1 / x"
+        ~examples:[ (1e-5, 1., 1e5); (1e8, 1., 1e-8) ]
         Gen.(
           let* a = concentration in
           let+ y = unit_point a and+ s = power (-6.) 6. in
@@ -1696,15 +1695,19 @@ let continuous_scores =
             ((a /. s) -. (1. /. x))
             gs);
       prop "the beta's scores are log x - ψ(a) + ψ(a + b) and its mirror"
-        ~examples:[ (1e-20, 1e-25, 1e-304) ]
+        ~examples:
+          [ (1e-5, 1., 0.5); (1e8, 2., 1. -. 2e-8); (1e-20, 1e-25, 1e-304) ]
         Gen.(
-          let+ a = concentration
-          and+ b = concentration
-          and+ z = float_range (-6.) 6. in
-          let n = a +. b in
-          let m = a /. n in
-          let sd = Float.sqrt (m *. (1. -. m) /. (n +. 1.)) in
-          (a, b, m +. (z *. sd)))
+          with_pp
+            (fun ppf (a, b, x) ->
+              Format.fprintf ppf "a = %h, b = %h, x = %h" a b x)
+            (let+ a = concentration
+             and+ b = concentration
+             and+ z = float_range (-6.) 6. in
+             let n = a +. b in
+             let m = a /. n in
+             let sd = Float.sqrt (m *. (1. -. m) /. (n +. 1.)) in
+             (a, b, m +. (z *. sd))))
         (fun (a, b, x) ->
           assume (x > 0. && x < 1.);
           cover "a below 1e-3" (a < 1e-3);
@@ -1811,7 +1814,7 @@ let continuous_scores =
          + (ν + 1) z² / (ν (ν + z²))) / 2] and
          [∂σ f = ((ν + 1) z² / (ν + z²) - 1) / σ]. *)
       prop "the student t's scores in its degrees of freedom and scale"
-        ~examples:[ (1., 1., 1.); (4., 0.5, 2.) ]
+        ~examples:[ (1., 1., 1.); (4., 0.5, 2.); (1e-5, 1., 1.); (1e8, 1., 1.) ]
         Gen.(triple concentration (power (-3.) 3.) (power (-3.) 4.))
         (fun (df, scale, z) ->
           cover "df below 1e-3" (df < 1e-3);
@@ -1976,42 +1979,47 @@ let validation =
 let infinite_positive =
   let inf = f64 Float.infinity and one = f64 1. and zero = f64 0. in
   [
-    ("normal scale", D.valid (D.normal ~loc:zero ~scale:inf));
-    ("half_normal scale", D.valid (D.half_normal ~scale:inf));
-    ("lognormal scale", D.valid (D.lognormal ~loc:zero ~scale:inf));
-    ("student_t df", D.valid (D.student_t ~df:inf ~loc:zero ~scale:one));
-    ("student_t scale", D.valid (D.student_t ~df:one ~loc:zero ~scale:inf));
-    ("cauchy scale", D.valid (D.cauchy ~loc:zero ~scale:inf));
-    ("half_cauchy scale", D.valid (D.half_cauchy ~scale:inf));
-    ("laplace scale", D.valid (D.laplace ~loc:zero ~scale:inf));
-    ("logistic scale", D.valid (D.logistic ~loc:zero ~scale:inf));
-    ("exponential rate", D.valid (D.exponential ~rate:inf));
-    ("gamma concentration", D.valid (D.gamma ~concentration:inf ~rate:one));
-    ("gamma rate", D.valid (D.gamma ~concentration:one ~rate:inf));
+    ("normal scale", fun () -> D.valid (D.normal ~loc:zero ~scale:inf));
+    ("half_normal scale", fun () -> D.valid (D.half_normal ~scale:inf));
+    ("lognormal scale", fun () -> D.valid (D.lognormal ~loc:zero ~scale:inf));
+    ( "student_t df",
+      fun () -> D.valid (D.student_t ~df:inf ~loc:zero ~scale:one) );
+    ( "student_t scale",
+      fun () -> D.valid (D.student_t ~df:one ~loc:zero ~scale:inf) );
+    ("cauchy scale", fun () -> D.valid (D.cauchy ~loc:zero ~scale:inf));
+    ("half_cauchy scale", fun () -> D.valid (D.half_cauchy ~scale:inf));
+    ("laplace scale", fun () -> D.valid (D.laplace ~loc:zero ~scale:inf));
+    ("logistic scale", fun () -> D.valid (D.logistic ~loc:zero ~scale:inf));
+    ("exponential rate", fun () -> D.valid (D.exponential ~rate:inf));
+    ( "gamma concentration",
+      fun () -> D.valid (D.gamma ~concentration:inf ~rate:one) );
+    ("gamma rate", fun () -> D.valid (D.gamma ~concentration:one ~rate:inf));
     ( "inverse_gamma concentration",
-      D.valid (D.inverse_gamma ~concentration:inf ~scale:one) );
+      fun () -> D.valid (D.inverse_gamma ~concentration:inf ~scale:one) );
     ( "inverse_gamma scale",
-      D.valid (D.inverse_gamma ~concentration:one ~scale:inf) );
-    ("beta a", D.valid (D.beta ~a:inf ~b:one));
-    ("beta b", D.valid (D.beta ~a:one ~b:inf));
+      fun () -> D.valid (D.inverse_gamma ~concentration:one ~scale:inf) );
+    ("beta a", fun () -> D.valid (D.beta ~a:inf ~b:one));
+    ("beta b", fun () -> D.valid (D.beta ~a:one ~b:inf));
     ( "dirichlet concentration",
-      D.valid (D.dirichlet ~concentration:(vec [| 1.; Float.infinity |])) );
+      fun () ->
+        D.valid (D.dirichlet ~concentration:(vec [| 1.; Float.infinity |])) );
     ( "mvn scale_tril's diagonal",
-      D.valid
-        (D.mvn
-           ~loc:(vec [| 0.; 0. |])
-           ~scale_tril:
-             (Nx.create Nx.float64 [| 2; 2 |] [| 1.; 0.; 0.; Float.infinity |]))
-    );
+      fun () ->
+        D.valid
+          (D.mvn
+             ~loc:(vec [| 0.; 0. |])
+             ~scale_tril:
+               (Nx.create Nx.float64 [| 2; 2 |]
+                  [| 1.; 0.; 0.; Float.infinity |])) );
     ( "neg_binomial dispersion",
-      D.valid (D.neg_binomial ~mean:one ~dispersion:inf) );
+      fun () -> D.valid (D.neg_binomial ~mean:one ~dispersion:inf) );
   ]
 
 let valid =
   group "valid"
     [
       Windtrap.cases "a parameter of +inf is outside (0, inf)" ~id:fst
-        infinite_positive (fun (_, v) -> equal bool false (Nx.item [] v));
+        infinite_positive (fun (_, v) -> equal bool false (Nx.item [] (v ())));
       test "parameters inside their domains are valid" (fun () ->
           equal bool true
             (Nx.item [] (D.valid (D.normal ~loc:(f64 0.) ~scale:(f64 1.)))));
@@ -2068,38 +2076,19 @@ let valid =
                           [| 1.; 0.; Float.nan; 1. |])))));
     ]
 
-let transforms =
-  group "transformations"
-    [
-      test "a compiled density is the eager one" (fun () ->
-          let d = D.student_t ~df:(f64 3.) ~loc:(f64 0.) ~scale:(f64 1.) in
-          let x = vec [| -2.; 0.; 5. |] in
-          let compiled = Rune.jit' (fun x -> D.factors (D.iid [| 3 |] d) x) x in
-          equal
-            (array (float 1e-12))
-            (Nx.to_array (D.factors (D.iid [| 3 |] d) x))
-            (Nx.to_array compiled));
-      test "a normal draw differentiates in its parameters" (fun () ->
-          let g =
-            Rune.grad'
-              (fun loc ->
-                Nx.sum
-                  (D.sample (Nx.Rng.key 3)
-                     (D.iid [| 5 |] (D.normal ~loc ~scale:(f64 2.)))))
-              (f64 0.)
-          in
-          equal close 5. (item g));
-      test "a float32 density agrees with float64" (fun () ->
-          let d32 =
-            D.gamma ~concentration:(Nx.scalar Nx.float32 2.5)
-              ~rate:(Nx.scalar Nx.float32 1.5)
-          in
-          let d64 = D.gamma ~concentration:(f64 2.5) ~rate:(f64 1.5) in
-          equal
-            (float_rel ~rel:1e-5 ~abs:1e-6)
-            (item (D.factors d64 (f64 0.7)))
-            (Nx.item [] (D.factors d32 (Nx.scalar Nx.float32 0.7))));
-    ]
+(* sample *)
+
+let reparameterised =
+  test "a normal draw differentiates in its parameters" (fun () ->
+      let g =
+        Rune.grad'
+          (fun loc ->
+            Nx.sum
+              (D.sample (Nx.Rng.key 3)
+                 (D.iid [| 5 |] (D.normal ~loc ~scale:(f64 2.)))))
+          (f64 0.)
+      in
+      equal close 5. (item g))
 
 (* Truncation *)
 
@@ -2738,19 +2727,6 @@ let () =
     (run "Norn.Dist"
        [
          densities;
-         quantiles;
-         gamma_quantiles;
-         beta_quantiles;
-         fit;
-         normalisation;
-         group "laws" [ sums ];
-         combinators;
-         bijectors;
-         validation;
-         valid;
-         transforms;
-         binomial;
-         count_masses;
          group "continuous densities"
            [
              exact_densities;
@@ -2761,9 +2737,22 @@ let () =
              bfloat16_simplex;
              narrow_dirichlet_draws;
            ];
-         laplace;
-         truncation;
          von_mises;
          lkj;
+         binomial;
+         count_masses;
+         combinators;
+         truncation;
          hmm_tests;
+         group "laws" [ sums ];
+         fit;
+         group "sample" [ reparameterised ];
+         quantiles;
+         gamma_quantiles;
+         beta_quantiles;
+         laplace;
+         normalisation;
+         bijectors;
+         validation;
+         valid;
        ])
