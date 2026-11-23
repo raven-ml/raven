@@ -382,6 +382,32 @@ let normal dt () =
   let draw k = Nx.Rng.normal ~key:(Nx.Rng.of_tensor k) dt [| 1024 |] in
   compile draw (Nx.Rng.to_tensor (Nx.Rng.key 0))
 
+(* The float16 upper-tail gamma quantile of 1024 values: the guess and the
+   Halley steps, each an incomplete gamma whose regions every value computes. *)
+let gammainccinv_f16 () =
+  let f16 lo hi = Nx.cast Nx.float16 (input lo hi) in
+  ignore
+    (Sys.opaque_identity
+       (Rune.jit
+          Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+          Nx.gammainccinv (f16 0.5 10.) (f16 0.01 0.99)))
+
+(* 1024 float32 binomial counts of 100 trials from a key argument: inversion
+   below a mean of 10 and transformed rejection above, both in one program. *)
+let binomial () =
+  let draw (k, p) =
+    Nx.Rng.binomial ~key:(Nx.Rng.of_tensor k)
+      (Nx.full_like (Nx.cast Nx.int32 p) 100l)
+      p
+  in
+  let p = Nx.cast Nx.float32 (input 0. 1.) in
+  ignore
+    (Sys.opaque_identity
+       (Rune.jit
+          Nx.Ptree.(pair tensor tensor @-> returns tensor)
+          draw
+          (Nx.Rng.to_tensor (Nx.Rng.key 0), p)))
+
 (* A double-word sum of 10^6 float64 numbers, both words returned: a tree of
    20 levels of double-word additions, which nx.wide cuts into programs of a
    few levels each. *)
@@ -620,6 +646,7 @@ let cases =
     ("parallel/checks-48", checked_scan);
     ("rng/normal-f64", normal f64);
     ("rng/normal-f32", normal Nx.float32);
+    ("rng/binomial-f32", binomial);
     ( "shaped-4k",
       fun () -> compile (shaped 4096 (Nx.scalar f64 0.5)) (input 0. 1.) );
     ("shaped-4k-3-lanes", shaped_padded);
@@ -628,6 +655,7 @@ let cases =
     ("special/betainccinv-grad-f32", betainccinv_grad);
     ("special/betaincinv-grad-f64", betaincinv_grad);
     ("special/gammaincinv-grad-f64", gammaincinv_grad);
+    ("special/gammainccinv-f16", gammainccinv_f16);
     ("wide/sum-1e6", wide_sum);
     (* A pendulum of 200 fixed steps written as an OCaml loop: one elementwise
        kernel of 3.6 MB of C, which the host writes as several functions, since

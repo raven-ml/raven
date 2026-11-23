@@ -681,6 +681,10 @@ let jit_rows () =
   let angles = between f32 41 (-30.) 30. [| 65536 |] in
   let bases = between f32 43 0.01 30. [| 65536 |] in
   let exponents = between f32 47 (-3.) 3. [| 65536 |] in
+  let shapes16 = between Nx.float16 65 0.5 10. [| 65536 |]
+  and tails16 = between Nx.float16 66 0.01 0.99 [| 65536 |] in
+  let trials = host (Nx.full Nx.int32 [| 65536 |] 100l)
+  and chances = between f32 67 0. 1. [| 65536 |] in
   let scaled = between f32 49 (-1.) 1. [| 100; 400 |] in
   let long_rows = between f64 53 (-1.) 1. [| 100; 50500 |] in
   let short_rows = between f32 57 (-1.) 1. [| 4096; 32 |] in
@@ -920,6 +924,21 @@ let jit_rows () =
             (fun key -> Nx.Rng.normal ~key f32 [| 1 lsl 20 |]),
           Nx.Rng.key 53 ))
       (fun (f, key) -> synced (f key));
+    (* 2^16 float16 upper-tail gamma quantiles, shapes in [0.5, 10): the guess
+       and the Halley steps, each an incomplete gamma whose regions every
+       element computes. *)
+    warm "gammainccinv-float16-64K"
+      (fun () -> Rune.jit (pair_fn ()) Nx.gammainccinv)
+      (fun f -> synced (f shapes16 tails16));
+    (* 2^16 binomial counts of 100 trials from a key argument, probabilities in
+       [0, 1): a fifth by inversion, the rest by transformed rejection. *)
+    warm "binomial-float32-64K"
+      (fun () ->
+        ( Rune.jit
+            Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> tensor @-> returns tensor)
+            (fun key n p -> Nx.Rng.binomial ~key n p),
+          Nx.Rng.key 54 ))
+      (fun (f, key) -> synced (f key trials chances));
     (* The gradient in its radius [r] of a sum over a 104 x 104 grid of [w / (1
        + w^2)], [w] the sum of 14 terms of multiples of [r], which 28 operations
        broadcast: reverse mode sums a cotangent over the grid for each, and each
