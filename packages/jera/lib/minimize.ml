@@ -1593,13 +1593,15 @@ let reflect ?(project = Fun.id) values n (v, fv) =
         v,
       Nx.where last (Nx.broadcast_to (Nx.shape fv) fpoint) fv )
   in
-  let shrunk = project (Nx.add best (Nx.mul_s (Nx.sub v best) shrinkage)) in
   let (v, fv), _ =
     Rune.iterate
       Nx.Ptree.(pair (pair tensor tensor) tensor)
       ~max:1
       ~until:(fun (_, settled) -> settled)
       (fun _ ->
+        let shrunk =
+          project (Nx.add best (Nx.mul_s (Nx.sub v best) shrinkage))
+        in
         ((shrunk, values shrunk), Nx.scalar_at (Nx.beside shrunk) Nx.bool true))
       (replaced, Nx.logical_not shrink)
   in
@@ -1651,82 +1653,87 @@ let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
        test's step. Where both are 0, as a relative tolerance's scale is at 0
        under a collapsed simplex, [σ] is the first simplex's largest step
        there, since every probe at [σ = 0] is the best vertex. *)
-    let sigma =
-      Nx.mul_s (Nx.maximum (Nx.max diameter) (Nx.max (Tol.scale tol best))) 2.
+    let restart_test (st, (v, fv)) =
+      let sigma =
+        Nx.mul_s (Nx.maximum (Nx.max diameter) (Nx.max (Tol.scale tol best))) 2.
+      in
+      let sigma =
+        Nx.where (Nx.equal_s sigma 0.)
+          (Nx.max (Nx.abs (first_steps best)))
+          sigma
+      in
+      let best_row = Nx.reshape [| 1; -1 |] best in
+      let steps = Nx.mul (Nx.eye_at (Nx.beside sigma) p.dtype n) sigma in
+      let probes =
+        project
+          (Nx.concatenate ~axis:0
+             [ Nx.add best_row steps; Nx.sub best_row steps ])
+      in
+      let fbest = Nx.min fv in
+      let fprobes = p.values probes in
+      (* A probe lower than the best by [10⁻⁴] of the decrease the probes
+         predict over [σ], the norm of each pair's lower difference from the
+         best, restarts the search from a simplex oriented along descent, as
+         Kelley's (1999) restart orients it: each edge from the best vertex is
+         the lower probe of its pair, the one along [−eᵢ] only when strictly
+         lower, or the one that moved where the box clipped the other to the
+         best vertex, so the simplex spans every coordinate the box leaves room
+         in. Otherwise the lane converges. *)
+      let forward x = Nx.slice [ Nx.R (0, n) ] x
+      and backward x = Nx.slice [ Nx.R (n, 2 * n) ] x in
+      let moved x = Nx.any ~axes:[ 1 ] (Nx.not_equal x best_row) in
+      let back =
+        Nx.logical_or
+          (Nx.logical_not (moved (forward probes)))
+          (Nx.logical_and
+             (moved (backward probes))
+             (Nx.less (backward fprobes) (forward fprobes)))
+      in
+      let edges =
+        Nx.where (Nx.reshape [| n; 1 |] back) (backward probes) (forward probes)
+      and fedges = Nx.where back (backward fprobes) (forward fprobes) in
+      (* A probe outside f's domain, whose value counts as [+∞], differs from
+         the best by 0, as a probe the box clipped onto the best vertex does: at
+         [+∞] it would make the norm [+∞] and the margin unmeetable, and beside
+         a probe uphill it would let that probe's rise loosen the margin along
+         every other axis. The norm is taken over the largest difference, so one
+         past the square root of the floats' range does not square to [+∞]
+         either. *)
+      let difference fx =
+        Nx.where (Nx.isfinite fx) (Nx.sub fx fbest) (Nx.zeros_like fx)
+      in
+      let decrease =
+        Nx.minimum
+          (difference (backward fprobes))
+          (difference (forward fprobes))
+      in
+      let largest = Nx.max (Nx.abs decrease) in
+      let unit =
+        Nx.where (Nx.equal_s largest 0.) (Nx.ones_like largest) largest
+      in
+      let predicted =
+        Nx.mul largest
+          (Nx.sqrt
+             (Nx.reshape [||]
+                (Num.sum_rows
+                   (Nx.reshape [| 1; -1 |] (Nx.square (Nx.div decrease unit))))))
+      in
+      let lower = Nx.less (Nx.min decrease) (Nx.mul_s predicted (-1e-4)) in
+      ( settle st (Nx.logical_not lower) Converged,
+        ( Nx.where lower (Nx.concatenate ~axis:0 [ best_row; edges ]) v,
+          Nx.where lower
+            (Nx.concatenate ~axis:0 [ Nx.reshape [| 1 |] fbest; fedges ])
+            fv ) )
     in
-    let sigma =
-      Nx.where (Nx.equal_s sigma 0.) (Nx.max (Nx.abs (first_steps best))) sigma
-    in
-    let best_row = Nx.reshape [| 1; -1 |] best in
-    let steps = Nx.mul (Nx.eye_at (Nx.beside sigma) p.dtype n) sigma in
-    let probes =
-      project
-        (Nx.concatenate ~axis:0
-           [ Nx.add best_row steps; Nx.sub best_row steps ])
-    in
-    let fbest = Nx.min fv in
-    let fprobes, _ =
-      Rune.iterate
-        Nx.Ptree.(pair tensor tensor)
-        ~max:1
-        ~until:(fun (_, settled) -> settled)
-        (fun _ ->
-          (p.values probes, Nx.scalar_at (Nx.beside probes) Nx.bool true))
-        (Nx.broadcast_to [| 2 * n |] fbest, Nx.logical_not met)
-    in
-    (* A probe lower than the best by [10⁻⁴] of the decrease the probes predict
-       over [σ], the norm of each pair's lower difference from the best,
-       restarts the search from a simplex oriented along descent, as Kelley's
-       (1999) restart orients it: each edge from the best vertex is the lower
-       probe of its pair, the one along [−eᵢ] only when strictly lower, or the
-       one that moved where the box clipped the other to the best vertex, so
-       the simplex spans every coordinate the box leaves room in. Otherwise the
-       lane converges. *)
-    let forward x = Nx.slice [ Nx.R (0, n) ] x
-    and backward x = Nx.slice [ Nx.R (n, 2 * n) ] x in
-    let moved x = Nx.any ~axes:[ 1 ] (Nx.not_equal x best_row) in
-    let back =
-      Nx.logical_or
-        (Nx.logical_not (moved (forward probes)))
-        (Nx.logical_and
-           (moved (backward probes))
-           (Nx.less (backward fprobes) (forward fprobes)))
-    in
-    let edges =
-      Nx.where (Nx.reshape [| n; 1 |] back) (backward probes) (forward probes)
-    and fedges = Nx.where back (backward fprobes) (forward fprobes) in
-    (* A probe outside f's domain, whose value counts as [+∞], differs from the
-       best by 0, as a probe the box clipped onto the best vertex does: at
-       [+∞] it would make the norm [+∞] and the margin unmeetable, and
-       beside a probe uphill it would let that probe's rise loosen the margin
-       along every other axis. The norm is taken over the largest difference,
-       so one past the square root of the floats' range does not square to
-       [+∞] either. *)
-    let difference fx =
-      Nx.where (Nx.isfinite fx) (Nx.sub fx fbest) (Nx.zeros_like fx)
-    in
-    let decrease =
-      Nx.minimum (difference (backward fprobes)) (difference (forward fprobes))
-    in
-    let largest = Nx.max (Nx.abs decrease) in
-    let unit =
-      Nx.where (Nx.equal_s largest 0.) (Nx.ones_like largest) largest
-    in
-    let predicted =
-      Nx.mul largest
-        (Nx.sqrt
-           (Nx.reshape [||]
-              (Num.sum_rows
-                 (Nx.reshape [| 1; -1 |] (Nx.square (Nx.div decrease unit))))))
-    in
-    let lower = Nx.less (Nx.min decrease) (Nx.mul_s predicted (-1e-4)) in
-    let st = settle st (Nx.logical_and met (Nx.logical_not lower)) Converged in
-    let restart = Nx.logical_and met lower in
-    let v = Nx.where restart (Nx.concatenate ~axis:0 [ best_row; edges ]) v
-    and fv =
-      Nx.where restart
-        (Nx.concatenate ~axis:0 [ Nx.reshape [| 1 |] fbest; fedges ])
-        fv
+    (* The restart test, run only where the simplex met [tol]: elsewhere it
+       changes nothing, and its [2n] values of [f] are a step's costliest
+       work. *)
+    let st, (v, fv) =
+      Rune.cond
+        Nx.Ptree.(pair tensor (pair tensor tensor))
+        met
+        (fun () -> restart_test (st, (v, fv)))
+        (fun () -> (st, (v, fv)))
     in
     let evaluations =
       Nx.add evaluations

@@ -1332,6 +1332,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- An eager `Minimize.nelder_mead` solve takes about half the time: a step
+  runs the restart test only once the simplex meets `tol`. Results are
+  unchanged.
 - `Minimize.lbfgs` and `Minimize.bfgs` stage 6 to 9% fewer operations per
   step and allocate less, taking each kept pair's `1 / yᵀs` and the gradient's
   bound once: an eager L-BFGS solve runs about 7% faster. Results are unchanged.

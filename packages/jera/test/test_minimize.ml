@@ -438,6 +438,34 @@ let bowl_search =
         (fun x -> Nx.sum (bowl c x))
         (Nx.zeros_like c))
 
+(* Three lanes of bowls from 0 under [Tol.abs 0.01], each centred at 0 or with
+   every coordinate at least 0.1 from it. The first trip moves the best vertex
+   by a few of the first simplex's steps of [2.5 · 10⁻⁴], so the diameter meets
+   [tol] and the restart test probes at [σ = 0.02]. A lane centred at 0 keeps
+   its best vertex there and converges after that trip, within [3] evaluations
+   of the simplex, [5] of the trip and [4] of the probes. Any other lane finds a
+   probe lower, restarts, and meets [tol] again before it converges: at least
+   [13]. *)
+let restart_lanes =
+  let coordinate =
+    Gen.(
+      map
+        (fun (up, m) -> if up then m else -.m)
+        (pair bool (float_range 0.1 2.)))
+  in
+  let center =
+    Gen.one_of
+      [
+        Gen.constant [| 0.; 0. |];
+        Gen.map (fun (a, b) -> [| a; b |]) (Gen.pair coordinate coordinate);
+      ]
+  in
+  Gen.(
+    map
+      (fun l -> Nx.create f64 [| 3; 2 |] (Array.concat l))
+      (list ~size:(constant 3) center))
+  |> Gen.with_pp Nx.pp
+
 let nelder_mead_tests =
   [
     prop "it finds a bowl's center"
@@ -537,6 +565,40 @@ let nelder_mead_tests =
         in
         let c = vec [| 1.; -0.5 |] in
         equal (Oracle.tensor ()) (f c) (Rune.jit' f c));
+    prop ~count:20 "vmap is each lane's search, restarted or not (law 3)"
+      ~examples:[ Nx.create f64 [| 3; 2 |] [| 0.; 0.; 1.5; -0.25; -0.1; 2. |] ]
+      restart_lanes
+      (fun cs ->
+        let centred i = Nx.item [] (Nx.max (Nx.abs (Nx.get [ i ] cs))) = 0. in
+        let lanes = [ 0; 1; 2 ] in
+        cover "a lane restarts beside one that does not"
+          (List.exists centred lanes
+          && List.exists (fun i -> not (centred i)) lanes);
+        let f c =
+          let s =
+            simplex ~tol:(Tol.abs 0.01)
+              (fun x -> Nx.sum (bowl c x))
+              (Nx.zeros_like c)
+          in
+          let scalar x = Nx.reshape [| 1 |] (Nx.cast f64 x) in
+          Nx.concatenate ~axis:0
+            [
+              Solution.best s;
+              Solution.error s;
+              scalar (Solution.evaluations s);
+              scalar (Solution.is Converged s);
+            ]
+        in
+        let mapped = Rune.vmap' f cs in
+        equal (Oracle.tensor ())
+          (Nx.stack (List.init 3 (fun i -> f (Nx.get [ i ] cs))))
+          mapped;
+        List.iter
+          (fun i ->
+            let evaluations = Nx.item [ i; 4 ] mapped in
+            if centred i then at_most float_exact evaluations ~than:12.
+            else at_least float_exact evaluations ~than:13.)
+          lanes);
     test "its iterates start at the start" (fun () ->
         let xs =
           Minimize.iterates one Minimize.nelder_mead ~steps:5 rosenbrock
