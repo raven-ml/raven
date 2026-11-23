@@ -811,9 +811,11 @@ let tests =
           test_ocaml_door_lost;
         test "the OCaml door runs before work pending on its arrays"
           test_ocaml_door_pending;
-        (* Each case runs its program 50 times on two domains: 100 cases
-           whatever --prop-count asks. *)
-        stateful ~domains:2 ~count:100
+        (* Each case runs its program 50 times on two domains, and --prop-count
+           raises the 100 cases as it does a property's. Every command but make
+           runs in the branches, and make needs one call, so the prefix and the
+           suffix make at most five. *)
+        stateful ~domains:2 ~count:100 ~steps:5
           "kernels against submits and donations on another domain"
           door_commands;
       ];
