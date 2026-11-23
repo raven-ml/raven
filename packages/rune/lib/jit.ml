@@ -396,15 +396,6 @@ let offered name (body : Program.t) forms =
     | lifted -> Some lifted
     | exception Kept -> None
 
-(* The placement of [body]'s first argument or else first result, as text,
-   where its set has no kernels to evaluate [body]. *)
-let bare (body : Program.t) forms =
-  match first_form body forms with
-  | Some (Program.F f)
-    when not (Nx.Devices.has_kernels (Nx.Placement.devices f.placement)) ->
-      Some (Format.asprintf "%a" Nx.Placement.pp f.placement)
-  | Some _ | None -> None
-
 (* [out] of [body]'s outputs and then [ems]' arrays before its running values
    out, each emission performed: [body]'s outputs. *)
 let delivered (body : Program.t) ems out =
@@ -458,17 +449,10 @@ let rec compiled ~beam ~parallel name body forms =
     let out =
       match c with
       | Ok c -> Compile.run c args
-      | Error why -> (
-          match if fresh then None else bare p forms with
-          | Some set ->
-              invalid_arg
-                (Printf.sprintf
-                   "%s: the compiler declines this program over %s (%s), and \
-                    its set has no kernels to evaluate it"
-                   name set why)
-          | None ->
-              Compile.evaluated_call ();
-              Compile.evaluate ~fresh ~name p args)
+      | Error why ->
+          if not fresh then Compile.unevaluable ~name p forms why;
+          Compile.evaluated_call ();
+          Compile.evaluate ~fresh ~name p args
     in
     delivered body ems out
 

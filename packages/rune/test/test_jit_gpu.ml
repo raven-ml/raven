@@ -1186,6 +1186,29 @@ let host_view () =
   let x = Nx.reshape [| 3; 2 |] x in
   equal bits_t (bits (Nx.add (Nx.mul x x) x)) (bits y)
 
+(* A sum on a software device beside the GPU compiles where rig links host code
+   for it. Where it links none, as on ppc64le, the compiler declines the program
+   and its set has no kernels to evaluate it, so the call raises naming the
+   decline. *)
+let software_sum () =
+  let gpu, _ = on_gpu () in
+  let mem = Result.get_ok (Rig.software "rune-jit-gpu-sum") in
+  let (module S) = Nx.devices [ gpu; mem ] in
+  let x =
+    Nx.place
+      (Nx.Placement.device S.v mem)
+      (Nx.create Nx.float32 [| 3 |] [| 1.5; -2.; 3.25 |])
+  in
+  let f x = Nx.add x x in
+  if Rig.Image.links mem then begin
+    let before = Rune.evaluations () in
+    ignore (Rune.jit' f x);
+    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before)
+  end
+  else
+    raises_match (Exn.invalid_arg ~sub:"the compiler declines this program")
+      (fun () -> Rune.jit' f x)
+
 (* Several targets
 
    A program over the GPU beside a software device compiles, each device running
@@ -3963,6 +3986,7 @@ let () =
              test "onto the GPU's set and back" detour;
              test "an addition on the host" host_step;
              test "a reshape on the host" host_view;
+             test "a sum on a software device" software_sum;
            ];
          group "switches"
            [

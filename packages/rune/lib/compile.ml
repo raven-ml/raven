@@ -3362,6 +3362,26 @@ let link ~beam ~parallel ~storage rigs l =
 
 (* Programs *)
 
+(* Raises where [p]'s set, its first argument's or else its first result's, has
+   no kernels to evaluate [p], which the compiler declines for [why]. *)
+let unevaluable ~name (p : Program.t) forms why =
+  let first =
+    if Array.length forms > 0 then Some forms.(0)
+    else if Array.length p.outputs > 0 then Some (form p.outputs.(0))
+    else None
+  in
+  match first with
+  | Some (F f)
+    when not (Nx.Devices.has_kernels (Nx.Placement.devices f.placement)) ->
+      invalid_arg
+        (Printf.sprintf
+           "%s: the compiler declines this program over %s (%s), and its set \
+            has no kernels to evaluate it"
+           name
+           (Format.asprintf "%a" Nx.Placement.pp f.placement)
+           why)
+  | Some _ | None -> ()
+
 (* An output's form, and for a placed one the layout and bytes of the memory
    its result takes and its device, the program's where it lies whole on
    none. *)
@@ -3381,6 +3401,7 @@ type t = {
   rig : Rig.t;
   rigs : Rig.t list;  (** The devices of the program's values, [rig] first. *)
   source : Program.t;  (** The program as traced, which evaluates. *)
+  source_forms : form array;  (** The forms [source] was traced at. *)
   split : Pieces.t option;
       (** Where the program is split, how its pieces make its arguments and
           results ({!Pieces}). *)
@@ -3595,7 +3616,7 @@ let make ~name ?beam ?parallel ?first p forms =
     let split =
       Option.map (fun home -> Pieces.split ~name ~home p forms) home
     in
-    let source = p in
+    let source = p and source_forms = forms in
     let p, forms, rigs =
       match (split, home) with
       | Some s, Some home ->
@@ -3640,6 +3661,7 @@ let make ~name ?beam ?parallel ?first p forms =
       rig;
       rigs;
       source;
+      source_forms;
       split;
       program = p;
       forms;
@@ -4000,7 +4022,8 @@ let rec run t args =
   let layouts = Array.map layout_of leaves in
   let phases = Array.map phase_of leaves in
   match (variant t layouts phases donated (settings t.shaping)).linked with
-  | Error _ ->
+  | Error why ->
+      unevaluable ~name:t.name t.source t.source_forms why;
       evaluated_call ();
       evaluated ~fresh:false t.source args c
   | Ok v -> linked t v leaves c owners

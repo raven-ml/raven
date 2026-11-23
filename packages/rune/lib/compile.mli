@@ -132,9 +132,9 @@ val run : t -> Program.value array -> Program.value array
     placement, and lends none of them.
 
     Raises [Invalid_argument] if [args] lie on several device sets
-    ({!Nx.Placement.devices}) or if {!Nx.Prim.Consumer.with_} raises it, and
-    what linking a new variant raises other than to decline, such as an
-    interrupted search. *)
+    ({!Nx.Placement.devices}) or if {!Nx.Prim.Consumer.with_} raises it, as
+    {!unevaluable} does at a declined variant, and what linking a new variant
+    raises other than to decline, such as an interrupted search. *)
 
 val variants : unit -> int
 (** [variants ()] is the number of variants that calls on the calling domain
@@ -153,6 +153,13 @@ val evaluations : unit -> int
 val evaluated_call : unit -> unit
 (** [evaluated_call ()] counts one call in {!evaluations}, for a caller that
     evaluates a program {!make} declined. *)
+
+val unevaluable :
+  name:string -> Program.t -> Program.form array -> string -> unit
+(** [unevaluable ~name p forms why] raises [Invalid_argument], naming [name],
+    [p]'s placement and [why], where [p]'s set, its first argument's at [forms]
+    or else its first result's, has no kernels to evaluate it, the compiler
+    having declined it for [why]. It returns otherwise. *)
 
 val evaluate :
   fresh:bool ->
