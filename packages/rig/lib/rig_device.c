@@ -380,8 +380,14 @@ static _Atomic(char *) failed;
 
 /* The counted calls the calling thread is inside: entered, its turn
    included, and not yet ended ([rig_counted] in rig.h). A close there would
-   wait for its own thread's count, so [Dev.close] refuses. */
+   wait for its own thread's count, so [Dev.check_close] refuses. */
 static _Thread_local int counted_here;
+
+/* The stops the calling thread claimed and has not recorded or given back
+   ([caml_rig_claim_own] to [caml_rig_stopped] or [caml_rig_unclaim]). A
+   close there would wait for that stop, so [Dev.check_close] refuses. A
+   fork keeps it: a child forked inside a stop runs that stop's end too. */
+static _Thread_local int stopping_here;
 
 /* The counted calls the calling thread was inside when it forked this
    process, which the child's fork forgot ([forked_child]). A thread ends
@@ -1152,6 +1158,7 @@ value caml_rig_claim_own(value v_d) {
   int released = take(d);
   int claimed = claim_locked(d);
   give(d, released);
+  if (claimed) stopping_here++;
   return Val_bool(claimed);
 }
 
@@ -1159,6 +1166,7 @@ value caml_rig_claim_own(value v_d) {
    driver's stop. */
 value caml_rig_unclaim(value v_d) {
   struct rig_device *d = Device_val(v_d);
+  stopping_here--;
   int released = take(d);
   atomic_store(&d->line->state, RIG_OWED);
   give(d, released);
@@ -1170,6 +1178,7 @@ value caml_rig_unclaim(value v_d) {
 value caml_rig_stopped(value v_d) {
   CAMLparam1(v_d);
   struct rig_device *d = Device_val(v_d);
+  stopping_here--;
   int released = take(d);
   atomic_store(&d->line->state, RIG_ENDED);
   set_running(d->index, 0);
@@ -1219,6 +1228,13 @@ int rig_counted(void) { return counted_here; }
 value caml_rig_counted(value unit) {
   (void)unit;
   return Val_int(counted_here);
+}
+
+/* Whether the calling thread is inside a counted call or a claimed stop,
+   either of which a close would wait for. */
+value caml_rig_in_driver_call(value unit) {
+  (void)unit;
+  return Val_bool(counted_here + stopping_here > 0);
 }
 
 /* Ends a counted call on [d]. */

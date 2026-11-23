@@ -253,9 +253,8 @@ val stores : device -> ('h -> unit) -> 'h -> ('a -> 'b) -> 'a -> 'b
     does, with scope [Any], after [f] returns or raises. [f] runs with the
     thread's mask as it stands, and its exceptions lose nothing: one passes
     through after the flush, also where the flush raised. A signal pending
-    as [f] ends lands after the count. While the thread runs [f], {!close}
-    raises [Invalid_argument], as it would wait for this count. In a child
-    forked inside [f], [d] is Orphaned and [f]'s end calls no flush. Raises
+    as [f] ends lands after the count. In a child forked inside [f], [d] is
+    Orphaned and [f]'s end calls no flush. Raises
     {!Lost} without calling [f] if [d] is lost. *)
 
 val masked : (unit -> 'a) -> 'a
@@ -290,8 +289,13 @@ val give : device -> scope -> ('a -> 'b -> unit) -> 'a -> 'b -> given
     On [Later] the caller puts the object back where the drain after [d]'s
     stop finds it, ahead of what waits behind it. *)
 
+val check_close : device -> unit
+(** [check_close d] raises the [Invalid_argument] that {!Rig.close}[ d]
+    raises as it starts, having changed nothing, and returns otherwise. *)
+
 val close : device -> unit
-(** [close d] is {!Rig.close}[ d]. *)
+(** [close d] is {!Rig.close}[ d] once {!check_close}[ d] returned and the
+    profiles' entries of [d] are read ({!Profile.read_closing}). *)
 
 val fail : string -> unit
 (** [fail why] is {!Rig.fail}[ why]. *)

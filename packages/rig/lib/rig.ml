@@ -106,6 +106,7 @@ exception Lost = Dev.Lost
 
 let lost = Dev.lost
 let close d =
+  Dev.check_close d;
   Profile.read_closing d;
   Dev.close d
 let lose = Dev.lose

@@ -120,8 +120,9 @@ val read_closing : device -> unit
     time as [take] does, so an exception, such as [Sys.Break] in a wait,
     leaves the rest in the profile. An entry whose device is lost meanwhile
     stays for its [take] to raise. An entry a [take] of another domain has
-    begun to read is that [take]'s, which raises the close's [Lost]. Raises
-    [Invalid_argument] inside a lock, as {!Rig.close} does. *)
+    begun to read is that [take]'s, which raises the close's [Lost]. Its
+    caller checks the close first ({!Dev.check_close}), so a refused close
+    reads nothing. *)
 
 val enabled : unit -> bool
 (** [enabled ()] is {!Rig.Profile.enabled}[ ()]: whether a profile is

@@ -614,11 +614,12 @@ val word : int
     A call is made {e inside a lock} when such a callback makes it while its
     thread holds a lock of rig's, of a driver's or of an io library's. It is
     made {e inside a driver call} when its thread is inside a counted call
-    of a device's driver ({!Rig_edge.section-drivers}), such as a wait's
-    sleep in the driver, or inside a write of [Mapped] memory by the host
-    ({!Buffer.write}, a blit, a fill or a copy into it) up to the end of its
-    flush: from a callback that lands there, or from {!Buffer.write}'s
-    function.
+    of a device's driver ({!Rig_edge.section-drivers}) or of an io library
+    ({!Rig_edge.Io}), such as a wait's sleep in a driver or a read of a
+    file, inside a driver's stop ({!Rig_edge.Driver.val-stop}), or inside a
+    write of [Mapped] memory by the host ({!Buffer.write}, a blit, a fill or
+    a copy into it) up to the end of its flush: from a callback that lands
+    there, or from {!Buffer.write}'s function.
 
     A call to rig that may take a lock, made inside a lock, raises
     [Invalid_argument] as it starts, having done nothing. It raises even
@@ -641,9 +642,7 @@ val word : int
     device. Nor do
     {!signaled}, {!fail} and {!lose}.
     Outside a lock, a call from a callback runs as any call does, but for a
-    {!close} made inside a driver call. That close raises [Invalid_argument]
-    as it starts, having done nothing, whatever its device, since the
-    thread's count of its driver calls does not say whose they are.
+    {!close} made inside a driver call ({!close}).
     If the callback lets the exception escape, it ends the interrupted call as
     an asynchronous exception ({!section-errors}). The callback must not block
     either, in a wait of rig's or for another thread: other calls, and every

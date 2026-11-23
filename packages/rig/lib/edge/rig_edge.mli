@@ -779,10 +779,13 @@ end
     file, in {e regions} of its own making. It gives each to rig as a buffer
     of an io device ([Rig.open_io], [Rig.Buffer.of_io]), a device that runs
     no work and makes no memory. rig calls the library's functions on the
-    region, synchronously, in the caller. An exception they raise reaches
-    the caller and loses nothing, since no work of the device can see a
-    change it left half done. The library must leave each region readable,
-    writable and freeable after an exception escapes any of its calls.
+    region, synchronously, in the caller. It counts its calls of {!Io.read},
+    {!Io.write} and {!Io.pages}, and of {!Io.free} on a device not lost, as
+    a driver's ({!section-drivers}): a close of the io device waits for
+    them. An exception they raise reaches the caller and loses nothing,
+    since no work of the device can see a change it left half done. The
+    library must leave each region readable, writable and freeable after an
+    exception escapes any of its calls.
 
     The library must count its locks, check its own functions and give back
     its locks as a driver does ({!section-drivers}). *)

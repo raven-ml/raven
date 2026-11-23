@@ -415,7 +415,7 @@ let watch j = ignore (Agent.spawn watching j)
 external reraise : exn -> 'a = "%reraise"
 
 (* Closes [m]'s host, if it has one, unless rig refuses, from a callback
-   inside a lock. *)
+   inside a lock or a driver call. *)
 let close_host m =
   match m.host with
   | Some h -> ( try Rig.close h with Invalid_argument _ -> ())

@@ -276,10 +276,8 @@ let closed_by d e =
   || match d.machine with Hosts _ -> Dev.same_machine e.device d | _ -> false
 
 let read_closing d =
-  if enabled () && not (Dev.is_host d) then begin
-    Dev.check_held "close";
+  if enabled () && not (Dev.is_host d) then
     List.iter (fun p -> read_mine p (closed_by d)) (active ())
-  end
 
 let take f =
   Dev.check_held "Profile.take";

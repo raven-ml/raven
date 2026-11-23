@@ -85,7 +85,8 @@ external c_fail : string -> bool = "caml_rig_fail"
 external c_failed : unit -> string option = "caml_rig_failed"
 external c_first : unit -> int = "caml_rig_first" [@@noalloc]
 external c_enter : c -> int = "caml_rig_enter"
-external c_counted : unit -> int = "caml_rig_counted" [@@noalloc]
+external c_in_driver_call : unit -> bool = "caml_rig_in_driver_call"
+[@@noalloc]
 external c_exit : c -> unit = "caml_rig_exit"
 external c_spin : c -> int -> int -> int = "caml_rig_spin"
 external c_producers : c -> int array = "caml_rig_producers"
@@ -572,7 +573,9 @@ let free_slot d =
    whatever else the stop did, the device's values and names dropped or not,
    since the device must count as stopped or not. The move follows the
    handler's end with nothing between that polls, so no exception leaves
-   the stop claimed. The values and the names go before the move, so a
+   the stop claimed. From the claim to that move or the give-back, the
+   thread counts the stop in C, so a close from a callback inside it
+   refuses ([check_close]). The values and the names go before the move, so a
    close, which waits for the state, returns after them. A stop that raised
    may have left the device's work running, which asks nothing more of rig:
    its memory returns once it is Stopped, as its word shows its last value,
@@ -658,13 +661,13 @@ let counted d scope f x =
   | _ -> raise_lost d
 
 (* [f] runs unmasked inside the count, as the caller's code, so a close from
-   it refuses as any close inside a count does ([close]); the flush runs
-   masked as [counted]'s call does. Nothing polls between [f]'s end and the
-   mask, so a signal pending as [f] returns or raises lands after the count
-   ended. A flush that raises after [f] raised loses [d] as [counted] loses
-   it, and [f]'s exception passes. In a child forked inside [f], [d] is the
-   parent's, Orphaned: the child calls no driver on it, and the end of the
-   count, which the fork forgot, ends nothing. *)
+   it refuses as any close inside a count does ([check_close]); the flush
+   runs masked as [counted]'s call does. Nothing polls between [f]'s end and
+   the mask, so a signal pending as [f] returns or raises lands after the
+   count ended. A flush that raises after [f] raised loses [d] as [counted]
+   loses it, and [f]'s exception passes. In a child forked inside [f], [d] is
+   the parent's, Orphaned: the child calls no driver on it, and the end of
+   the count, which the fork forgot, ends nothing. *)
 let stores d flush h f x =
   if c_enter d.live.c <> 0 then raise_lost d;
   match f x with
@@ -1458,14 +1461,16 @@ let devices_of m h =
 
 (* Whether an open on machine [m] is in flight. Raises [Invalid_argument]
    for one the calling thread runs: a close of [m]'s host from its opener
-   or from a callback inside it would wait for good. *)
+   or from a callback inside it would wait for good. An open an exception
+   ended is no longer run by its thread, which may close [m]'s host before
+   that open's slot is ended. *)
 let opening_on m =
   let self = c_thread () in
   Names.fold
     (fun (m', _) slot acc ->
       match slot with
       | Opening r when m' = Some m ->
-          if r.thread = self then
+          if r.thread = self && not r.ended then
             invalid_argf "Rig.close: %s is opening on the calling thread"
               r.full;
           true
@@ -1493,21 +1498,27 @@ let start_close (d : device) m =
       ignore (Atomic.Loc.fetch_and_add [%atomic.loc d.closing] (-1));
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
+(* A close inside a counted call or a claimed stop of its thread, such as
+   from a signal's handler in a wait, from [stores]'s function or from a
+   finaliser in a stop, would wait for that call or stop to end, which comes
+   only after the close returns: it refuses instead, whatever [d], since the
+   thread's counts do not say whose they are. A host's close from an open on
+   its machine, on the same thread, would wait for that open. *)
+let check_close d =
+  check_held "close";
+  if c_in_driver_call () then
+    invalid_arg
+      "Rig.close: called inside a driver call, which the close would wait \
+       for; Rig.lose ends a device from there";
+  if is_host d then invalid_arg "Rig.close: the host is never closed";
+  match d.machine with
+  | Hosts m -> ignore (Lock.protect table_lock opening_on m : bool)
+  | Here | On _ -> ()
+
 (* A machine's devices end before its host, so [host_of] of an open device is
    never closed: the machine stops taking opens, the opens in flight finish,
-   then its devices close.
-
-   A close inside a counted call of its thread, such as from a signal's
-   handler in a wait or from [stores]'s function, would wait for that count
-   to end, which comes only after the close returns: it refuses instead,
-   whatever [d], since the thread's count does not say whose its calls are. *)
-let close d =
-  check_held "close";
-  if c_counted () > 0 then
-    invalid_arg
-      "Rig.close: called inside a driver call or a write of Mapped memory, \
-       which the close would wait for; Rig.lose ends a device from there";
-  if is_host d then invalid_arg "Rig.close: the host is never closed";
+   then its devices close. *)
+let close (d : device) =
   match d.machine with
   | Here | On _ -> close_one d
   | Hosts m -> (

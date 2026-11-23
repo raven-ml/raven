@@ -477,6 +477,23 @@ let test_signal_in_wait () =
   greater ~msg:"sleeps" int ~than:1 (P.sleeps p);
   still_works d p ~last:first
 
+(* What a close of [d] answers: ["refused"] for the [Invalid_argument] of
+   [Rig.close]. *)
+let close_answer d =
+  match Rig.close d with
+  | () -> "returned"
+  | exception Invalid_argument why
+    when String.starts_with ~prefix:"Rig.close: " why ->
+      "refused"
+
+(* Waits for [pt], whose device's next sleep raises SIGINT inside its wait,
+   with [handle] as SIGINT's handler. *)
+let wait_handling handle pt =
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+  Fun.protect
+    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+    (fun () -> Rig.Point.wait pt)
+
 (* A close from a signal's handler that lands inside a wait on the closed
    device, on the waiting thread, as a test runner's release of its fixtures
    on SIGTERM does, raises Invalid_argument and leaves the device as it was:
@@ -487,20 +504,8 @@ let test_close_in_wait () =
   let d, p = P.open_ "turn:close-in-wait" in
   let first = point (no_part d) in
   let closed = ref None in
-  let handle _ =
-    closed :=
-      Some
-        (match Rig.close d with
-        | () -> "returned"
-        | exception Invalid_argument why
-          when String.starts_with ~prefix:"Rig.close: " why ->
-            "refused")
-  in
   P.interrupt p;
-  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
-  Fun.protect
-    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
-    (fun () -> Rig.Point.wait first);
+  wait_handling (fun _ -> closed := Some (close_answer d)) first;
   equal ~msg:"the close in the handler" (option string) (Some "refused")
     !closed;
   equal ~msg:"the loss before the last close" (option string) None
@@ -508,6 +513,50 @@ let test_close_in_wait () =
   Rig.close d;
   equal ~msg:"the loss" (option string) (Some "closed") (Rig.lost d);
   equal ~msg:"stops" int 1 (count "stop" p)
+
+(* The same close while a profile is open, with the device's work recorded in
+   it, refuses before it reads the profile: it waits for nothing, so the work
+   its handler interrupted is still unreached once it refused. *)
+let test_close_in_profiled_wait () =
+  let d, p = P.open_ "turn:close-in-profiled-wait" in
+  let reached = ref [] and closed = ref None in
+  let (), _ =
+    Rig.Profile.take (fun () ->
+        let pt = point (one_part d) in
+        let handle _ =
+          let before = Rig.Point.reached pt in
+          closed := Some (close_answer d);
+          reached := [ before; Rig.Point.reached pt ]
+        in
+        P.interrupt p;
+        wait_handling handle pt)
+  in
+  equal ~msg:"the close in the handler" (option string) (Some "refused")
+    !closed;
+  equal ~msg:"the work reached before and after the close" (list bool)
+    [ false; false ] !reached;
+  equal ~msg:"the loss before the last close" (option string) None
+    (Rig.lost d);
+  Rig.close d;
+  equal ~msg:"stops" int 1 (count "stop" p)
+
+(* A close from a callback inside a device's stop, as a finaliser that lands
+   there may make, raises Invalid_argument whatever the device: a close of
+   the stopping device would wait for that stop. The close that runs the stop
+   returns, the device stopped once, and the other device stays open. *)
+let test_close_in_stop () =
+  let d, p = P.open_ "turn:close-in-stop" in
+  let other = Result.get_ok (Rig.software "turn:close-in-stop-other") in
+  let answers = ref [] in
+  P.before p "stop" (fun () ->
+      answers := [ close_answer other; close_answer d ]);
+  Rig.close d;
+  equal ~msg:"closes in the stop" (list string) [ "refused"; "refused" ]
+    !answers;
+  equal ~msg:"the loss" (option string) (Some "closed") (Rig.lost d);
+  equal ~msg:"stops" int 1 (count "stop" p);
+  equal ~msg:"the other device's loss" (option string) None (Rig.lost other);
+  Rig.close other
 
 (* A thread waiting for room is interrupted: nothing is assigned to it. *)
 let test_break_waiting_for_room () =
@@ -712,6 +761,12 @@ let tests =
         test ~timeout:10.
           "a close from a handler inside a wait on its device raises"
           test_close_in_wait;
+        test ~timeout:10.
+          "a close from a handler inside a profiled wait raises before it \
+           reads the profile"
+          test_close_in_profiled_wait;
+        test ~timeout:10. "a close from a callback inside a stop raises"
+          test_close_in_stop;
         test "Sys.Break while waiting for room assigns no value"
           test_break_waiting_for_room;
         test
