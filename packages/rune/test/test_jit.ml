@@ -1323,6 +1323,27 @@ let law_permute (n, first) =
         (compiled (fun () -> Nx.to_array (g k p))))
     [ ("epochs", example); ("one key", one) ]
 
+(* A window of 4 elements from [first] of an int64 arange of [n] elements,
+   created in the program, compiles to [first + i]: past int32 and uint32, the
+   window's start, its indices and its values are computed in 64 bits. The
+   program holds the window alone, the arange taking no memory, which the
+   footprint states before the call runs. *)
+let law_long_window (n, first) =
+  let f x =
+    Nx.add x (Nx.slice [ Nx.R (first, first + 4) ] (Nx.arange Nx.int64 0 n 1))
+  in
+  let x = Nx.zeros Nx.int64 [| 4 |] in
+  let on_host (r, _) = Rig.equal r Rig.host in
+  let bytes =
+    snd (List.find on_host (Rune.footprint T.(tensor @-> returns tensor) f x))
+  in
+  at_most ~msg:"the bytes the first call allocates" int
+    ~than:(Rig.allocation Rig.host 32)
+    bytes;
+  equal (array int64)
+    (Array.init 4 (fun i -> Int64.of_int (first + i)))
+    (Nx.to_array (Rune.jit' f x))
+
 (* Captured values are read as they are when the program is traced: a later call
    of the same key does not see what the closure would read now. *)
 let test_captures () =
@@ -6537,6 +6558,15 @@ let () =
                ~id:(fun (n, first) -> Printf.sprintf "n = %d from %d" n first)
                [ (1, 0); (2, 0); (10, 7); (10, (1 lsl 31) - 3) ]
                law_permute;
+             Windtrap.cases
+               "a window of an arange past 2^31 elements compiles to its values"
+               ~id:(fun (n, first) ->
+                 Printf.sprintf "%d elements from %d" n first)
+               [
+                 ((1 lsl 31) + 5, (1 lsl 31) - 2);
+                 ((1 lsl 32) + 3, (1 lsl 32) - 2);
+               ]
+               law_long_window;
              test "captures are read as they were traced" test_captures;
              test "a stack compiles to eager's bits at any number of rows"
                test_stack;
