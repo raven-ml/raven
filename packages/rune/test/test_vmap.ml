@@ -886,14 +886,52 @@ let law_lane_count (_, ask, want) = equal (option int) want (ask ())
 
 (* Errors *)
 
-let test_errors () =
-  let s = T.(tensor @-> tensor @-> returns tensor) in
-  invalid ~sub:"Rune.vmap: 1: 3 rows along axis 0, 0: 2" (fun () ->
-      Rune.vmap s Nx.add (v [| 1.; 2. |]) (v [| 1.; 2.; 3. |]));
-  invalid ~sub:"Rune.vmap': 0 is 0-d" (fun () ->
-      Rune.vmap' Nx.sin (Nx.scalar f64 1.));
+let test_signature () =
+  invalid ~sub:"Rune.vmap: the signature has no argument" (fun () ->
+      Rune.vmap (T.returns (T.v (fun _ f -> f))) Fun.id)
+
+let test_no_array () =
   invalid ~sub:"Rune.vmap: the arguments hold no array" (fun () ->
       Rune.vmap T.(unit @-> returns tensor) (fun () -> v [| 1. |]) ())
+
+let test_scalar () =
+  invalid ~sub:"Rune.vmap': 0 is 0-d" (fun () ->
+      Rune.vmap' Nx.sin (Nx.scalar f64 1.))
+
+let test_lengths () =
+  let s = T.(tensor @-> tensor @-> returns tensor) in
+  invalid ~sub:"Rune.vmap: 1: 3 rows along axis 0, 0: 2" (fun () ->
+      Rune.vmap s Nx.add (v [| 1.; 2. |]) (v [| 1.; 2.; 3. |]))
+
+(* Held lanes: an iterate whose lanes stop after 1, 2 and 3 steps holds lane 0
+   from the second step at its donor, lane 1, and lanes 0 and 1 from the third
+   at lane 2. A callback's [~lanes] function reads each lane's index as the lane
+   computes it, a held lane's its donor's; the index joins a value of the carry,
+   so that the callback runs at each step. *)
+let test_held_index () =
+  let a = Rune.axis () and seen = ref [] in
+  let g i =
+    seen := Array.to_list (Nx.to_array i) :: !seen;
+    i
+  in
+  let step c =
+    let i = Nx.add (Nx.cast f64 (Rune.lane_index a c)) (Nx.mul_s c 0.) in
+    let i =
+      Rune.callback ~lanes:g T.(tensor @-> returns tensor) ~like:i Fun.id i
+    in
+    Nx.add_s (Nx.add c (Nx.mul_s i 0.)) 1.
+  in
+  let loop k =
+    Rune.iterate T.tensor ~max:3
+      ~until:(fun c -> Nx.greater_equal c k)
+      step (Nx.zeros_like k)
+  in
+  let r = Rune.vmap' ~axis:a loop (v [| 1.; 2.; 3. |]) in
+  equal ~msg:"results" floats [| 1.; 2.; 3. |] (Nx.to_array r);
+  equal ~msg:"indices"
+    (list (list float_exact))
+    [ [ 0.; 1.; 2. ]; [ 1.; 1.; 2. ]; [ 2.; 2.; 2. ] ]
+    (List.rev !seen)
 
 (* Totals *)
 
@@ -973,8 +1011,8 @@ let test_jvp () =
   in
   equal ~msg:"lanes under jvp" floats [| moved; moved; moved |] (Nx.to_array y)
 
-(* A loop's output that reads no lane is shared: forward mode under a map of
-   tangents computes its primal once, and reads of it read. *)
+(* Forward mode under a map of tangents shares its primal, which reads no lane:
+   it computes once, at one lane's positions, and a read of it reads. *)
 let test_shared_primal () =
   let x = Nx.place Count.on (v [| 1.; 2.; 3. |]) in
   let ts = Nx.place Count.on (Nx.ones f64 [| 4; 3 |]) in
@@ -992,14 +1030,14 @@ let test_shared_primal () =
     [| Float.cos 1.; 0.; 0.; Float.cos 2. |]
     (Nx.to_array (Rune.jacfwd' f (v [| 1.; 2. |])))
 
-(* A scan of two loads whose output reads the constant one alone: shared,
-   computed once at one lane's positions. *)
+(* A scan of two loads whose output reads the constant one alone: every lane
+   holds its sums. *)
 let test_shared_scan () =
   let ins = Iarray.of_list [ any; any ] in
   let prog =
     P.v ~ins (Iarray.of_list [ P.In 0; In 1 ]) ~outs:(Iarray.of_list [ 1 ])
   in
-  let k = Nx.place Count.on (v [| 1.; -2.; 0.5 |]) in
+  let k = v [| 1.; -2.; 0.5 |] in
   let scan x =
     Nx.Prim.eval ~by:"test"
       (Scan
@@ -1013,14 +1051,11 @@ let test_shared_scan () =
            at = None;
          })
   in
-  let xs = Nx.place Count.on (Nx.ones f64 [| 4; 3 |]) in
-  C.reset ();
+  let xs = Nx.ones f64 [| 4; 3 |] in
   let y = Rune.vmap' scan xs in
-  equal ~msg:"one lane's positions" (pair int int) (1, 3)
-    (C.calls (), C.positions ());
-  equal ~msg:"every lane's sums" floats
+  equal floats
     (Array.concat (List.init 4 (fun _ -> [| 1.; -1.; -0.5 |])))
-    (Nx.to_array (Nx.place Nx.Host.on y))
+    (Nx.to_array y)
 
 (* detach in a map, inside and around forward mode. *)
 let test_detach () =
@@ -1036,16 +1071,6 @@ let test_detach () =
           xs ts));
   equal ~msg:"jvp of the map" floats expected
     (Nx.to_array (snd (Rune.jvp' (Rune.vmap' f) xs ts)))
-
-(* jacfwd' is one map of jvp: its kernels do not grow with [x]'s elements. *)
-let test_jacfwd_one_pass () =
-  let calls n =
-    let x = Nx.place Count.on (Nx.linspace f64 0.1 1. n) in
-    C.reset ();
-    ignore (Rune.jacfwd' (fun x -> Nx.mul (Nx.sin x) x) x);
-    C.calls ()
-  in
-  equal ~msg:"3 against 7 elements" int (calls 3) (calls 7)
 
 (* Reverse mode *)
 
@@ -1145,30 +1170,154 @@ let test_grad_lanes () =
   let g = Rune.grad' (fun xs -> Nx.sum (Rune.vmap' ~axis:a f xs)) xs in
   equal ~msg:"grad of the map" floats expected (Nx.to_array g)
 
-(* jacrev' is one map of the pullback: its kernels do not grow with the result's
-   elements. *)
+(* Jacobians *)
+
+(* The kernels [jac] runs for [f x] at [n] elements of [x]. *)
+let jacobian_calls jac n =
+  let x = Nx.place Count.on (Nx.linspace f64 0.1 1. n) in
+  C.reset ();
+  ignore (jac (fun x -> Nx.mul (Nx.sin x) x) x);
+  C.calls ()
+
+(* jacfwd' computes every column in one forward pass, a map of jvp: its kernels
+   do not grow with [x]'s elements. *)
+let test_jacfwd_one_pass () =
+  let calls = jacobian_calls Rune.jacfwd' in
+  equal ~msg:"3 against 7 elements" int (calls 3) (calls 7)
+
+(* jacrev' computes every row in one backward pass, a map of the pullback: its
+   kernels do not grow with the result's elements. *)
 let test_jacrev_one_pass () =
-  let calls n =
-    let x = Nx.place Count.on (Nx.linspace f64 0.1 1. n) in
-    C.reset ();
-    ignore (Rune.jacrev' (fun x -> Nx.mul (Nx.sin x) x) x);
-    C.calls ()
-  in
+  let calls = jacobian_calls Rune.jacrev' in
   equal ~msg:"3 against 7 elements" int (calls 3) (calls 7)
 
 (* Compiled functions *)
 
-(* A compiled call is eager's within rune.mli's classes: bit for bit where
-   each function is exact at the dtype, as test_jit's laws state it. *)
-let law_jit (Pair (dt, s, xo, _, _, e)) =
-  let e = exact_any dt e in
-  let x = make_any dt s xo in
-  let f x = eval_any x x e in
-  let mapped = outcome (fun () -> codes (Rune.vmap' f x)) in
-  equal ~msg:"vmap of jit" (outcome_t codes_t) mapped
-    (outcome (fun () -> codes (Rune.vmap' (Rune.jit' f) x)));
-  equal ~msg:"jit of vmap" (outcome_t codes_t) mapped
-    (outcome (fun () -> codes (Rune.jit' (Rune.vmap' f) x)))
+(* A compiled call is eager's within rune.mli's classes: bit for bit where each
+   function is exact at the dtype, as test_jit's laws state it. A case draws the
+   values of one of a few programs, one per dtype, each of its own lanes' shape,
+   view and expression and compiled once, vmap of jit and jit of vmap; each
+   program is an example, so that every run compiles them all. The shapes hold
+   no lane, one lane, zero-size lanes and lanes of rank 0 to 3; the views take
+   each kind in turn. *)
+type compiled = { dt : D.any; s : int array; view : view; e : expr }
+
+let compiled_shapes =
+  [|
+    [| 3 |];
+    [| 2; 3 |];
+    [| 0; 2 |];
+    [| 3; 2; 2 |];
+    [| 1; 4 |];
+    [| 2; 0 |];
+    [| 2; 1; 2; 2 |];
+  |]
+
+let compiled_views = [| Plain; Flipped; Strided; Broadcast |]
+
+(* One expression per program, together every constructor, [X] and [Y], and
+   depths up to 5, each axis below its program's lanes' rank: programs 0, 7 and
+   14 map lanes of rank 0. [generic] and [exact_any] then replace the functions
+   the program's dtype does not compute exactly, as the drawn laws do. *)
+let compiled_exprs =
+  [|
+    Bin (Maximum, Un (Square, X), Un (Neg, Y));
+    Un (Cumsum 0, Bin (Mul, X, K (-3.)));
+    Bin (Where_less, X, Un (Flip 0, Y));
+    Bin (Sub, Un (Max 1, Bin (Add, X, Y)), Un (Abs, Un (Flip 0, X)));
+    Un (Sum 0, Bin (Add, Un (Sin, X), K 0.5));
+    Bin (Minimum, Un (Cumsum 0, Y), Un (Exp, X));
+    Un (Flip 2, Bin (Mul, Un (Sum 1, Bin (Sub, X, Y)), Un (Neg, Un (Max 2, X))));
+    Bin
+      ( Add,
+        Bin (Div, X, Y),
+        Bin (Minimum, K Float.infinity, Un (Abs, Bin (Sub, X, K 2.))) );
+    Un
+      ( Neg,
+        Bin
+          (Maximum, Un (Cumsum 0, Un (Flip 0, X)), Bin (Where_less, Y, K (-0.)))
+      );
+    Bin (Sub, Un (Mean 0, Un (Square, X)), Un (Max 0, Bin (Minimum, X, Y)));
+    Bin (Where_less, Un (Cumsum 1, X), Bin (Add, Un (Flip 1, Y), K 0.));
+    Un (Max 0, Bin (Pow, Un (Neg, X), Un (Sum 0, Y)));
+    Un (Abs, Un (Cumsum 0, Bin (Sub, Un (Flip 0, X), Bin (Mul, Y, K 2.))));
+    Bin (Maximum, Un (Sum 1, Un (Cumsum 2, X)), Un (Flip 1, Un (Max 0, Y)));
+    Un
+      ( Square,
+        Un (Tanh, Bin (Where_less, Bin (Add, X, K 0.5), Un (Sqrt, Un (Abs, Y))))
+      );
+    Bin (Minimum, Un (Max 0, Bin (Add, X, Y)), Un (Sum 0, Un (Log, X)));
+    Bin (Mul, Un (Flip 0, Un (Cumsum 0, Y)), Bin (Maximum, X, K (-3.)));
+    Un (Sum 1, Bin (Sub, Bin (Where_less, X, Y), Un (Flip 0, Un (Sigmoid, X))));
+    Bin (Add, Un (Cumsum 0, X), Un (Max 0, Un (Abs, Y)));
+    Un (Neg, Un (Flip 0, Bin (Minimum, Y, Un (Sum 0, Un (Cumsum 0, X)))));
+    Bin
+      ( Where_less,
+        Un (Max 2, Bin (Sub, X, Y)),
+        Un (Cumsum 1, Bin (Mul, X, K 0.5)) );
+  |]
+
+let compiled_programs =
+  Array.of_list
+    (List.mapi
+       (fun i (D.Any dt as any) ->
+         let s = compiled_shapes.(i mod Array.length compiled_shapes) in
+         let view = compiled_views.(i mod Array.length compiled_views) in
+         {
+           dt = any;
+           s;
+           view;
+           e =
+             exact_any dt
+               (generic compiled_exprs.(i mod Array.length compiled_exprs));
+         })
+       D.all)
+
+let size_of view s =
+  match view with
+  | Plain | Flipped -> numel s
+  | Strided -> numel s * 2
+  | Broadcast -> if Array.length s = 0 then 1 else numel s / Int.max 1 s.(0)
+
+(* Each program's map, vmap of jit and jit of vmap, the two compiled once, over
+   the values of a case. *)
+let compiled_runs =
+  Array.map
+    (fun { dt = D.Any dt; s; view; e } ->
+      lazy
+        (let f x = eval_any x x e in
+         let map_of_jit = Rune.vmap' (Rune.jit' f)
+         and jit_of_map = Rune.jit' (Rune.vmap' f) in
+         fun values ->
+           let x = make_any dt s ({ view; values } : operand) in
+           let run g = outcome (fun () -> codes (g x)) in
+           (run (Rune.vmap' f), run map_of_jit, run jit_of_map)))
+    compiled_programs
+
+let compiled_case =
+  let open Gen in
+  (let* i = int_range 0 (Array.length compiled_programs - 1) in
+   let c = compiled_programs.(i) in
+   let+ values = array ~size:(constant (size_of c.view c.s)) any_value in
+   (i, values))
+  |> with_pp (fun ppf (i, values) ->
+      let c = compiled_programs.(i) in
+      match c.dt with
+      | D.Any dt ->
+          Format.fprintf ppf "%a %a %a: %a, %a" Nx.pp_dtype dt pp_shape c.s
+            pp_view c.view pp c.e
+            (Format.pp_print_list Format.pp_print_float)
+            (Array.to_list values))
+
+let compiled_examples =
+  List.init (Array.length compiled_programs) (fun i ->
+      let c = compiled_programs.(i) and m = Array.length pool in
+      (i, Array.init (size_of c.view c.s) (fun k -> pool.(((k * 5) + i) mod m))))
+
+let law_jit (i, values) =
+  let mapped, map_of_jit, jit_of_map = Lazy.force compiled_runs.(i) values in
+  equal ~msg:"vmap of jit" (outcome_t codes_t) mapped map_of_jit;
+  equal ~msg:"jit of vmap" (outcome_t codes_t) mapped jit_of_map
 
 (* Loops *)
 
@@ -1222,21 +1371,21 @@ let test_scan () =
 let test_place () =
   let host = Nx.create f64 [| 4; 3 |] (Array.init 12 Float.of_int) in
   let cut = Nx.place (Two.split ~axis:0) host in
-  let placement y = Nx.placement y in
+  let placement y = Nx.placement y and at = Nx_support.placement () in
   (* A lane of a batch cut along axis 0 lies whole on each device. *)
   let seen = ref None in
   let y =
     Rune.vmap'
       (fun x ->
-        seen := Some (Nx.Placement.equal (placement x) Two.on);
+        seen := Some (placement x);
         Nx.place (placement x) (Nx.sin x))
       cut
   in
-  equal ~msg:"a lane's placement" (option bool) (Some true) !seen;
-  equal ~msg:"each lane computes on its device" bool true
-    (Nx.Placement.equal (placement (Rune.vmap' Nx.exp cut)) (Two.split ~axis:0));
-  equal ~msg:"placed at its own placement, the cut stays" bool true
-    (Nx.Placement.equal (placement y) (Two.split ~axis:0));
+  equal ~msg:"a lane's placement" (option at) (Some Two.on) !seen;
+  equal ~msg:"each lane computes on its device" at (Two.split ~axis:0)
+    (placement (Rune.vmap' Nx.exp cut));
+  equal ~msg:"placed at its own placement, the cut stays" at (Two.split ~axis:0)
+    (placement y);
   equal ~msg:"values" codes_t
     (codes (Nx.sin host))
     (codes (Nx.place Nx.Host.on y));
@@ -1244,8 +1393,7 @@ let test_place () =
   let y =
     Rune.vmap' (fun x -> Nx.place (Two.split ~axis:0) x) (Nx.place Two.on host)
   in
-  equal ~msg:"each lane cut" bool true
-    (Nx.Placement.equal (placement y) (Two.split ~axis:1));
+  equal ~msg:"each lane cut" at (Two.split ~axis:1) (placement y);
   equal ~msg:"its values" codes_t (codes host) (codes (Nx.place Nx.Host.on y))
 
 (* A batch of one cut across the devices maps as a batch of two: each lane
@@ -1470,65 +1618,85 @@ let () =
   exit
   @@ run "rune vmap"
        [
-         group "operations" operation_props;
-         group "contractions"
+         group "a map stacks its lanes' operations" operation_props;
+         group "a map stacks its lanes' contractions"
            [
-             prop "segments and scales, any operand's lanes" contractions
+             prop "of segments and scales, any operand's lanes" contractions
                law_contract;
-             prop "rows past nx.cpu's lane order, within the bound" wide
+             prop "of rows past nx.cpu's lane order, within the bound" wide
                law_wide;
-             test "a Q8_0 product" (test_quantised Quants.Q8_0);
-             test "a Q6_K product" (test_quantised Quants.Q6_K);
-             test "an MXFP4 product" (test_quantised Quants.Mxfp4);
+             test "of a Q8_0 product" (test_quantised Quants.Q8_0);
+             test "of a Q6_K product" (test_quantised Quants.Q6_K);
+             test "of an MXFP4 product" (test_quantised Quants.Mxfp4);
            ];
-         group "compositions"
+         group "a map stacks its lanes' compositions"
            [
-             prop "float compositions" float_compositions
-               (law_compose ~kinds:false);
-             prop "every dtype" every_dtype (law_compose ~kinds:true);
-             prop "under jit" every_dtype law_jit;
+             prop "of floats" float_compositions (law_compose ~kinds:false);
+             prop "of every dtype" every_dtype (law_compose ~kinds:true);
+             prop ~examples:compiled_examples "compiled, of every dtype"
+               compiled_case law_jit;
            ];
-         group "reverse mode"
+         group "a map's gradient is its lanes'"
            (grad_props
            @ [
-               prop "compositions" float_compositions law_grad_compose;
-               test "lanes" test_grad_lanes;
-               test "jacrev' in one pass" test_jacrev_one_pass;
+               prop "of compositions" float_compositions law_grad_compose;
+               test "of lanes gathered" test_grad_lanes;
              ]);
-         group "names"
+         group "draws"
            [
-             test "nested maps" test_named;
-             test "reads raise" test_reads;
-             Windtrap.cases
-               ~id:(fun (name, _, _) -> name)
-               "lane counts" lane_counts law_lane_count;
-             test "errors" test_errors;
-           ];
-         group "constructs"
-           [
-             test "totals" test_totals;
-             test "forward mode" test_jvp;
-             test "jacfwd' in one pass" test_jacfwd_one_pass;
-             test "a shared primal" test_shared_primal;
-             test "a shared scan" test_shared_scan;
-             test "detach" test_detach;
-             test "loops" test_scan;
-             test "placements" test_place;
-             prop "a batch of one cut across devices" batch_of_one
-               law_batch_of_one;
-             test "creations on a set without kernels" test_bare;
-             test "checks" test_check;
-             test "draws" test_draws;
-             prop "a batch of keys, one per lane"
+             test
+               "one without a key is every lane's, one of a lane's key its own"
+               test_draws;
+             prop "a row of split_batch is a lane's key"
                (Gen.pair Gen.int (Gen.of_list [ 1; 3 ]))
                law_key_lanes;
-             prop
-               "a batch of keys cut along axis 0, drawn at each lane's \
-                placement"
+             prop "keys cut along axis 0 draw at each lane's placement"
                (Gen.pair Gen.int (Gen.int_range 1 5))
                law_cut_keys;
              prop "a scope at each lane's key draws as that key's scope"
                (Gen.pair Gen.int (Gen.int_range 1 4))
                law_scoped;
+           ];
+         group "held lanes"
+           [ test "a held lane's lane_index is its donor's" test_held_index ];
+         group "names"
+           [
+             test "nested maps read the lanes of the map each names" test_named;
+             test "a lane's reads raise, and so do lanes outside their map"
+               test_reads;
+           ];
+         group "vmap"
+           [
+             test "a signature of no argument raises" test_signature;
+             test "arguments that hold no array raise" test_no_array;
+             test "a 0-d argument raises" test_scalar;
+             test "arguments of different leading lengths raise" test_lengths;
+             test "a lane's additions reach a total" test_totals;
+             test "forward mode inside the map is forward mode of it" test_jvp;
+             test "a primal no lane changes reads under jacfwd'"
+               test_shared_primal;
+             test "a scan reading a capture alone gives each lane its sums"
+               test_shared_scan;
+             test "detach inside and around forward mode" test_detach;
+             test "a loop's lanes are its rows'" test_scan;
+             test "a lane lies where its rows lie" test_place;
+             prop "a batch of one cut across devices maps as a batch of two"
+               batch_of_one law_batch_of_one;
+             test "a creation, reading no lane, is computed once" test_bare;
+             test "a check raises its first failing lane's exception" test_check;
+           ];
+         group "lane_count"
+           [
+             Windtrap.cases
+               ~id:(fun (name, _, _) -> name)
+               "is Some n inside the map of n lanes, None outside" lane_counts
+               law_lane_count;
+           ];
+         group "jacobians"
+           [
+             test "jacfwd' computes every column in one forward pass"
+               test_jacfwd_one_pass;
+             test "jacrev' computes every row in one backward pass"
+               test_jacrev_one_pass;
            ];
        ]
