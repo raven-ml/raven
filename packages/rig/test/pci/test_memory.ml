@@ -1257,9 +1257,11 @@ let test_released_peer () =
    An exception may land at any allocation of a request, as an asynchronous
    one does. The request's GPU [a] then stops as its driver stops it, and its
    peer [b], which shares [a]'s memory, goes on: [b]'s system memory lies in
-   the 2 MiB block of [a]'s, and [b] maps [a]'s system memory. Each walk
-   lands at every allocation of the request, one landing a round, on a new
-   pair of takes of one tree. *)
+   the 2 MiB block of [a]'s, which holds the memory [a] borrows too, and [b]
+   maps [a]'s system memory. Each walk lands at every allocation of the
+   request, one landing a round, on a new pair of takes of one tree. A round
+   makes that one block: the tree's file system holds a huge page as small
+   pages, which the kernel allocates, zeroes and maps anew each round. *)
 
 type request = Alloc of Memory.kind | Map_host | Map_peer of Memory.kind
 
@@ -1295,7 +1297,7 @@ let make request a ~lent ~theirs =
   | Map_peer _ -> Memory.map_peer a.t_memory theirs
 
 (* After [a]'s stop, [b] still reads what it wrote to its memory in [a]'s
-   block and to [a]'s memory it maps, and frees and allocates as before. Once
+   block and to [a]'s memory it maps, and allocates and frees as before. Once
    [b] stops too, the machine holds none of their system memory and the space
    none of their addresses, whatever the request took. *)
 let test_cut_request request =
@@ -1303,7 +1305,8 @@ let test_cut_request request =
   let root, m, buses = tree_machine ~space:base 2 in
   let rec walk n =
     let at what = strf "%s, landing at %d" what n in
-    let space = Space.create ~base space_length in
+    (* The space starts past the page [a] borrows, in its block. *)
+    let space = Space.create ~base:(base + page) (space_length - page) in
     let a = take_gpu ~space m (List.nth buses 0) in
     let b = take_gpu ~space m (List.nth buses 1) in
     (* A failing round stops both, as it would have. *)
@@ -1317,7 +1320,7 @@ let test_cut_request request =
         let seen = mapped (Memory.map_peer b.t_memory shared) in
         Window.write (window own) 0 "b's own";
         Window.write (window shared) 0 "a's, b maps";
-        let lent = fst (lend ~at:(base + space_length) a page) in
+        let lent = fst (lend ~at:base a page) in
         let theirs =
           match request with
           | Map_peer k -> given (Memory.alloc b.t_memory k (64 * kib))
@@ -1332,10 +1335,10 @@ let test_cut_request request =
           (Window.read (window own) 0 7);
         equal ~msg:(at "a's memory through b's mapping") string "a's, b maps"
           (Window.read (window seen) 0 11);
+        Memory.free b.t_memory (given (Memory.alloc b.t_memory Host page));
         Memory.free b.t_memory seen;
         if theirs != own then Memory.free b.t_memory theirs;
         Memory.free b.t_memory own;
-        Memory.free b.t_memory (given (Memory.alloc b.t_memory Host page));
         stop b;
         equal ~msg:(at "system memory held") int 0 (held_bytes root);
         equal ~msg:(at "addresses taken") int 0 (Space.taken space);
