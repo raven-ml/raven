@@ -476,11 +476,16 @@ let rec compiled ~beam ~parallel name body forms =
    {!compiled} would make it at its first call. *)
 let footprint ~name body forms args =
   let p = match offered name body forms with Some (p, _) -> p | None -> body in
+  let declined why =
+    invalid_arg
+      (Printf.sprintf "%s: the compiler declines the program: %s" name why)
+  in
   match Compile.make ~name ~first:args p forms with
-  | Ok c -> Compile.footprint c args
-  | Error why ->
-      invalid_arg
-        (Printf.sprintf "%s: the compiler declines the program: %s" name why)
+  | Ok c -> (
+      match Compile.footprint c args with
+      | bytes -> bytes
+      | exception Pieces.Declined why -> declined why)
+  | Error why -> declined why
 
 let find ?(totals = [||]) t leaves skeleton ~paths trace =
   let key =

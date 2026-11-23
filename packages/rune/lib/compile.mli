@@ -93,9 +93,11 @@ val make :
     the program's first argument or else its first result, a program with no
     value, and a value with an element on a device other than the program's
     device. It declines what {!Pieces.split} declines. It also declines a
-    program with a value on a device that computes nothing. A split program's
-    values may lie on devices of several targets: each device's kernels compile
-    for its own. *)
+    program with a value on a device that computes nothing, and one with an
+    operation that computes on a host or software device where rig links no host
+    code ({!Rig.Image.links}); linking declines a variant with a kernel there,
+    such as a copy into a result's memory. A split program's values may lie on
+    devices of several targets: each device's kernels compile for its own. *)
 
 val footprint : t -> Program.value array -> (Rig.t * int) list
 (** [footprint t args] is, for each device of [t]'s program and the host, the
@@ -108,7 +110,8 @@ val footprint : t -> Program.value array -> (Rig.t * int) list
     {!Rig.allocation} counts it. It compiles the schedule as a link does, from
     tolk's caches where they hold it, and links nothing.
 
-    Raises [Invalid_argument] if a call already ran [t]. *)
+    Raises [Invalid_argument] if a call already ran [t], and {!Pieces.Declined}
+    where linking declines the variant. *)
 
 val run : t -> Program.value array -> Program.value array
 (** [run t args] is the outputs of [t]'s program applied to [args], which must

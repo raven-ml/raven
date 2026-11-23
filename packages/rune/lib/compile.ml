@@ -865,11 +865,37 @@ let raises cs ok failure =
       rig = None;
     }
 
+(* Whether [rig]'s kernels would be host code that rig links nowhere: [rig] is a
+   host or a software device, and rig links no host code for its host's
+   instruction set, as on ppc64le ({!Rig.Image.links}). *)
+let unlinked rig =
+  (Rig.equal (Rig.host_of rig) rig || Rig.runs_on_host rig)
+  && not (Rig.Image.links rig)
+
+(* Declines a program with a kernel on [rig], a device rig links no host code
+   for ({!unlinked}): nothing compiled runs there, so the program evaluates. *)
+let no_code rig =
+  let isa =
+    match Rig.instruction_set (Rig.host_of rig) with
+    | "" -> "an instruction set it does not know"
+    | isa -> isa
+  in
+  decline "an operation on %s, where rig links no host code for %s"
+    (Rig.name rig) isa
+
+(* Declines, before lowering, a program with an operation that computes on [rig]
+   where rig links no host code for it. A placement only copies, so a program
+   whose values such a device only holds compiles. A program's checks and loops
+   compute on its device ({!check}, {!repeat}); a copy into a result's memory is
+   a kernel that {!scheduled} declines. *)
+let linked rig = if unlinked rig then no_code rig
+
 let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
     (data : (d, e) Nx.Prim.data) (fail : int array -> e -> exn) =
   (* The call's check raises at a wait on the set it is issued on, and an
      eager check at a wait on its flags' set. *)
   let (F at) = st.issued in
+  linked st.rig;
   if Option.is_none (Nx.Placement.same (Nx.Prim.form ok).placement at.placement)
   then decline "a check on another set than the program's";
   let shape = Nx.shape ok in
@@ -1583,6 +1609,8 @@ let placed st env q x ys =
 
 (* Whether [rig]'s kernels compile for the host's processors. *)
 let on_host rig =
+  unlinked rig
+  ||
   match Engine.target rig with
   | t -> String.equal t.device "CPU"
   | exception Invalid_argument _ -> false
@@ -1590,6 +1618,7 @@ let on_host rig =
 let issue st cs env (type r) base (op : r Nx.Prim.t) =
   (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
   let rig = op_rig st op in
+  (match op with Place _ -> () | _ -> linked rig);
   let device = Rig.name rig in
   match op with
   | Check { ok; data; fail } -> check st cs env ok data fail
@@ -2442,6 +2471,7 @@ and outputs st cs ~reach env args =
    reads. *)
 and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
     =
+  linked st.rig;
   (* The places the trip records are its own, substituted in its sink. *)
   let outer = st.places in
   st.places <- [];
@@ -3191,6 +3221,8 @@ let search rigs ~parallel width k =
   report "searched a kernel at width %d" width;
   let target = (Tolk.Postrange.Scheduler.ren k).target in
   let compiles r =
+    (not (unlinked r))
+    &&
     match Engine.target r with
     | t -> t = target
     | exception Invalid_argument _ -> false
@@ -3316,8 +3348,12 @@ let slots l sink =
 
 (* The schedule of a lowering's [sink] that a link takes. *)
 let scheduled ~beam ~parallel rigs (l : lowered) sink inputs =
-  Engine.compile ?beam ~search:(search rigs ~parallel) ~devices:(named rigs)
-    ~held_bufs:(List.map fst l.bound) ~inputs sink
+  match
+    Engine.compile ?beam ~search:(search rigs ~parallel) ~devices:(named rigs)
+      ~held_bufs:(List.map fst l.bound) ~inputs sink
+  with
+  | schedule -> schedule
+  | exception Engine.Unlinked rig -> no_code rig
 
 let link ~beam ~parallel ~storage rigs l =
   match l.sink with
@@ -3388,23 +3424,6 @@ type t = {
           lowers it once. *)
 }
 
-(* Declines a program with a value on [r] where [r] computes nothing, or where
-   its kernels are host code and rig links no host code for its host's
-   instruction set, as on ppc64le: nothing compiled runs there, so the program
-   evaluates. *)
-let computing r =
-  if not (Rig.computes r) then
-    decline "a value on %s, which computes nothing" (Rig.name r);
-  let host_code = Rig.equal (Rig.host_of r) r || Rig.runs_on_host r in
-  if host_code && not (Rig.Image.links r) then
-    let isa =
-      match Rig.instruction_set (Rig.host_of r) with
-      | "" -> "an instruction set it does not know"
-      | isa -> isa
-    in
-    decline "a value on %s, where rig links no host code for %s" (Rig.name r)
-      isa
-
 (* The program's device: the one its first argument, or else its first result,
    lies whole on. *)
 let device (p : Program.t) forms =
@@ -3422,9 +3441,8 @@ let device (p : Program.t) forms =
   Array.iter consider forms;
   Array.iter (fun v -> consider (form v)) p.outputs;
   match !first with
-  | Some r ->
-      computing r;
-      r
+  | Some r when Rig.computes r -> r
+  | Some r -> decline "a value on %s, which computes nothing" (Rig.name r)
   | None -> decline "no value"
 
 (* The device a program over several devices computes on, where its checks
@@ -3467,7 +3485,8 @@ let rigs (p : Program.t) forms =
   let note placement =
     let r = Pieces.rig_of placement in
     if not (List.exists (Rig.equal r) !seen) then begin
-      computing r;
+      if not (Rig.computes r) then
+        decline "a value on %s, which computes nothing" (Rig.name r);
       seen := r :: !seen
     end
   in

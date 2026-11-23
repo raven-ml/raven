@@ -592,8 +592,10 @@ All notable changes to this project will be documented in this file.
 ### Rune
 
 - On a processor where rig links no host code, such as ppc64le or riscv64,
-  `Rune.jit` declines a program on the host and evaluates it eagerly, where
-  ppc64le said `unsupported arch` and riscv64 failed at the load.
+  `Rune.jit` declines a program with an operation that computes on a host or
+  software device and evaluates it eagerly, where ppc64le said
+  `unsupported arch` and riscv64 failed at the load. A program that only
+  holds values on the host, its kernels on a GPU, still compiles.
 - A compiled `Nx.attention` and its derivatives drop the weights its
   `?keep` drops in attention's own kernels, past each row's sum.
 - A compiled `Nx.attention` on a GPU asks whether a tile of keys holds a
