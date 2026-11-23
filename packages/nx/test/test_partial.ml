@@ -1415,6 +1415,49 @@ let scattered_case =
      let+ u = array ~size:(constant n) value in
      Scase (k, s, data, w, a, c, at, us, p, u))
 
+(* Whether an update lands on each element of a target of shape [s], of updates
+   of shape [us] at positions [p] along [a]. *)
+let landed s us a p =
+  let rank = Array.length s in
+  let hit = Array.make (Array.fold_left ( * ) 1 s) false in
+  let idx = Array.make rank 0 in
+  Array.iteri
+    (fun j q ->
+      if q >= 0L && q < Int64.of_int s.(a) then begin
+        let r = ref j in
+        for i = rank - 1 downto 0 do
+          idx.(i) <- !r mod us.(i);
+          r := !r / us.(i)
+        done;
+        idx.(a) <- Int64.to_int q;
+        let at = ref 0 in
+        for i = 0 to rank - 1 do
+          at := (!at * s.(i)) + idx.(i)
+        done;
+        hit.(!at) <- true
+      end)
+    p;
+  hit
+
+(* A sum's elements: those an update lands on with any NaN part for a NaN part,
+   the others as their bits. *)
+let added (type v s d) (k : (v, s) reduced) landed (y : (v, s, d) Nx.t) =
+  let parts c = nan_bits c.Complex.re ^ "," ^ nan_bits c.im in
+  let show : v -> string =
+    match k.rdtype with
+    | D.Complex64 -> parts
+    | D.Complex128 -> parts
+    | _ -> k.rshow
+  in
+  let raw = shown_bits k y and e = elements y in
+  let n = Array.length e in
+  let w = if n = 0 then 0 else Array.length raw / n in
+  Array.mapi
+    (fun i v ->
+      if landed.(i) then show v
+      else String.concat " " (Array.to_list (Array.sub raw (i * w) w)))
+    e
+
 (* A scatter into a target at any placement, of positions and updates whole
    on each of its devices or cut alike along axes off the scattered one,
    gives its bits on one device. *)
@@ -1463,14 +1506,18 @@ let law_scattered (Scase (k, s, data, w, a, c, at, us, p, u)) =
   cover "a signalling NaN" (signals k.rdtype data || signals k.rdtype u);
   cover "a sub-byte dtype" (D.bits k.rdtype < 8);
   let x = signalling k.rdtype s data and u = signalling k.rdtype us u in
+  let landed = landed s us a p in
   let p =
     Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 (Iarray.of_array us) p)
   in
   let scatter p u x = Nx.scatter ~combine:c ~axis:a p u x in
-  (* A maximum's or a minimum's NaN is a NaN, its bits unpromised. *)
+  (* A maximum's or a minimum's NaN is a NaN, its bits unpromised, and so is a
+     sum's (the NaN rule, {!Nx_array.Dtype.section-stores}); an element no
+     update lands on keeps its bits. *)
   let bits y =
     match c with
-    | Nx.Set | Add -> shown_bits k y
+    | Nx.Set -> shown_bits k y
+    | Add -> added k landed y
     | Max | Min -> Array.map k.rshow (elements y)
   in
   let expected = bits (scatter p u x) in
