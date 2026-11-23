@@ -6,8 +6,9 @@
 (* Rune.jit on this machine's first GPU: a scatter and an assembly of any
    pieces give the host's eager values, a scatter keeps the bits of each
    element no update lands on, a Set scatter of rows gives eager's bits and a
-   numbering of repeated keys eager's counts, a cast between float32 and a
-   16-bit float gives eager's bits at every code and tie, as does a cast of
+   numbering of repeated keys eager's counts, as do searches and a numbering
+   of keys under 64 bits, a cast between float32 and a 16-bit float gives eager's
+   bits at every code and tie, as does a cast of
    an integer to a float at the ties of every exponent and to bfloat16 at
    every integer of 16 bits and every int32's low 24 bits, a product of narrow
    floats or of MXFP4 weights holds its bound, a Q8_0 product takes a tensor
@@ -127,6 +128,60 @@ let repeated_keys () =
   in
   let y = Nx.place Nx.Host.on (Rune.jit' f (Nx.place S.on x)) in
   equal codes_t (codes (f x)) (codes y)
+
+(* Dtypes of keys narrower than 64 bits. *)
+let short_keys =
+  Nx.Dtype.
+    [
+      Any Nx.float32;
+      Any Nx.float16;
+      Any Nx.bfloat16;
+      Any Nx.float8_e4m3fn;
+      Any Nx.float8_e5m2;
+      Any Nx.float4_e2m1fn;
+      Any Nx.int32;
+      Any Nx.uint32;
+      Any Nx.int16;
+      Any Nx.uint16;
+      Any Nx.int8;
+      Any Nx.uint8;
+      Any Nx.bool;
+    ]
+
+(* Searches and a numbering of keys of [dt], compiled on the GPU, give eager's
+   counts: keys cast from NaN, zeros of either sign, infinities and ones for a
+   float, from small integers of either sign otherwise. A float's keys compute
+   in no wider float, so on a GPU whose kernels lack float64 too. *)
+let short_key (Nx.Dtype.Any dt) =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let made fs is =
+    if Nx.Dtype.is Float dt then Nx.cast dt (Nx.create Nx.float32 [| 8 |] fs)
+    else Nx.cast dt (Nx.create Nx.int32 [| 8 |] is)
+  in
+  let s =
+    made
+      [| neg_infinity; -1.; -0.; 0.; 1.; 1.; infinity; nan |]
+      [| -2l; -1l; 0l; 0l; 1l; 1l; 3l; 5l |]
+  and v =
+    made
+      [| nan; -0.; 0.; 1.; infinity; neg_infinity; -1.; -.nan |]
+      [| 5l; 0l; -1l; 1l; 4l; -2l; 0l; 3l |]
+  in
+  let f s v =
+    let g = Nx.unique ~size:8 v in
+    Nx.concatenate ~axis:0
+      [
+        Nx.searchsorted ~side:`Left s v;
+        Nx.searchsorted ~side:`Right s v;
+        Nx.searchsorted_along_axis ~axis:0 ~side:`Left s v;
+        g.ids;
+        g.counts;
+      ]
+  in
+  let fn = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
+  let on x = Nx.place S.on x in
+  let y = Nx.place Nx.Host.on (Rune.jit fn f (on s) (on v)) in
+  equal codes_t (codes (f s v)) (codes y)
 
 (* The law of Set scatters of rows on the GPU, a float64 case discarded where
    its kernels lack float64. *)
@@ -3568,6 +3623,11 @@ let () =
                Unreached.cases unreached;
              test "a numbering of repeated keys compiles to eager's counts"
                repeated_keys;
+             Windtrap.cases
+               ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
+               "searches and a numbering of keys under 64 bits compile to \
+                eager's"
+               short_keys short_key;
              prop ~count:8 ~examples:Row_sets.examples
                "a Set scatter of rows compiles to eager's bits"
                (Gen.with_pp Row_sets.pp Row_sets.gen)

@@ -264,13 +264,21 @@ order/positions-bool-1M	alloc_words	exact	1322
 order/positions-i64-1M-counts	alloc_words	exact	1312
 order/quantile-f64-1M-3	alloc_words	exact	1160
 order/quantile-f64-1M-3	wall_time	batch=1	n=20	7.077e-03	6.963e-03 6.972e-03 6.992e-03 6.996e-03 7.005e-03 7.025e-03 7.036e-03 7.043e-03 7.044e-03 7.058e-03 7.096e-03 7.113e-03 7.126e-03 7.167e-03 7.234e-03 7.265e-03 7.323e-03 7.613e-03 8.776e-03 8.809e-03
-order/searchsorted-along-f32-64x4K-in-64x1K	alloc_words	exact	13797
-order/searchsorted-f32-1M-in-64K	alloc_words	exact	16526
+order/searchsorted-along-f32-64x4K-in-64x1K	alloc_words	exact	13753
+order/searchsorted-along-f32-64x4K-in-64x1K	wall_time	batch=16	n=20	3.864e-04	3.793e-04 3.794e-04 3.814e-04 3.815e-04 3.832e-04 3.834e-04 3.840e-04 3.846e-04 3.852e-04 3.863e-04 3.864e-04 3.865e-04 3.868e-04 3.873e-04 3.876e-04 3.888e-04 3.892e-04 3.915e-04 3.920e-04 3.939e-04
+order/searchsorted-f32-1M-in-64K	alloc_words	exact	16466
+order/searchsorted-f32-1M-in-64K	wall_time	batch=1	n=20	1.114e-02	1.034e-02 1.035e-02 1.040e-02 1.041e-02 1.047e-02 1.050e-02 1.062e-02 1.063e-02 1.063e-02 1.081e-02 1.147e-02 1.150e-02 1.157e-02 1.160e-02 1.162e-02 1.167e-02 1.180e-02 1.180e-02 1.181e-02 1.457e-02
 order/sort-f32-1024x1024-rows	alloc_words	exact	142
 order/sort-f32-1M	alloc_words	exact	139
 order/top_k-8-f32-64x16384	alloc_words	exact	147
-order/unique-i32-1M-1000	alloc_words	exact	893
-order/unique-i32-1M-1000	wall_time	batch=1	n=20	5.187e-03	2.606e-03 3.030e-03 3.220e-03 3.221e-03 3.513e-03 3.803e-03 3.832e-03 4.088e-03 4.243e-03 5.138e-03 5.235e-03 5.530e-03 5.743e-03 6.272e-03 6.480e-03 7.730e-03 8.132e-03 9.024e-03 9.334e-03 1.098e-02
+order/unique-f16-1M-1000	alloc_words	exact	1008
+order/unique-f16-1M-1000	wall_time	batch=16	n=20	8.054e-04	7.589e-04 7.656e-04 7.727e-04 7.776e-04 7.780e-04 7.852e-04 7.986e-04 8.008e-04 8.018e-04 8.034e-04 8.075e-04 8.092e-04 8.132e-04 8.179e-04 8.189e-04 8.325e-04 8.395e-04 8.579e-04 8.856e-04 9.882e-04
+order/unique-f32-1M-1000	alloc_words	exact	1020
+order/unique-f32-1M-1000	wall_time	batch=4	n=20	1.714e-03	1.556e-03 1.612e-03 1.626e-03 1.630e-03 1.665e-03 1.679e-03 1.686e-03 1.687e-03 1.690e-03 1.709e-03 1.720e-03 1.722e-03 1.727e-03 1.727e-03 1.733e-03 1.745e-03 1.751e-03 1.797e-03 2.346e-03 3.052e-03
+order/unique-f32-1M-1000-adjacent	alloc_words	exact	1020
+order/unique-f32-1M-1000-adjacent	wall_time	batch=8	n=20	8.282e-04	7.950e-04 8.062e-04 8.070e-04 8.070e-04 8.086e-04 8.101e-04 8.149e-04 8.219e-04 8.240e-04 8.281e-04 8.283e-04 8.353e-04 8.375e-04 8.387e-04 8.488e-04 8.638e-04 8.641e-04 8.704e-04 8.934e-04 8.959e-04
+order/unique-i32-1M-1000	alloc_words	exact	884
+order/unique-i32-1M-1000	wall_time	batch=16	n=20	6.870e-04	6.604e-04 6.619e-04 6.648e-04 6.650e-04 6.678e-04 6.713e-04 6.717e-04 6.753e-04 6.787e-04 6.867e-04 6.873e-04 7.129e-04 7.600e-04 7.681e-04 7.866e-04 7.894e-04 7.939e-04 8.017e-04 8.017e-04 8.205e-04
 order/unique-i64-1M-runs-of-4	alloc_words	exact	297
 order/unique-i64-1M-runs-of-4	wall_time	batch=1	n=20	6.431e-03	4.327e-03 4.479e-03 4.796e-03 5.139e-03 5.211e-03 5.564e-03 5.585e-03 5.585e-03 5.725e-03 6.173e-03 6.688e-03 6.988e-03 7.284e-03 7.381e-03 7.763e-03 8.233e-03 8.264e-03 9.124e-03 1.051e-02 1.873e-02
 order/unique-i64-1M-wide	alloc_words	exact	1228

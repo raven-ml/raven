@@ -4809,11 +4809,16 @@ let top_k ~k ?axis:(a = -1) x =
   sorted ~by ~descending:true ~k a x
 
 
+(* The signed integer of a key's width, with its constants: each made in its
+   own dtype, where a cast of an int64 constant would be a node of the key's
+   program. *)
+type signed = Signed : ('v, 'r) D.t * (int64 -> ('v, 'r) E.t) -> signed
+
 let signed_of_width = function
-  | 8 -> D.Any D.Int8
-  | 16 -> D.Any D.Int16
-  | 32 -> D.Any D.Int32
-  | _ -> D.Any D.Int64
+  | 8 -> Signed (D.Int8, fun v -> E.const D.Int8 (Int64.to_int v))
+  | 16 -> Signed (D.Int16, fun v -> E.const D.Int16 (Int64.to_int v))
+  | 32 -> Signed (D.Int32, fun v -> E.const D.Int32 (Int64.to_int32 v))
+  | _ -> Signed (D.Int64, fun v -> E.const D.Int64 v)
 
 (* The float a key of [w] bits reads [dt]'s values in: [dt] itself at its own
    width, bfloat16 at 16 bits for bfloat16, then float16, float32 and float64.
@@ -4833,8 +4838,7 @@ let float_of_width (type s) (dt : (float, s) D.t) w =
    as [less] compares numbers. *)
 let key_node (type v s k r) ~merge (dt : (v, s) D.t) (kd : (k, r) D.t) w
     (x : (v, s) E.t) : (k, r) E.t =
-  let (D.Any s) = signed_of_width w in
-  let int v = wrapped s v in
+  let (Signed (s, int)) = signed_of_width w in
   let sign_bit = Int64.shift_left (-1L) (w - 1) in
   match D.kind dt with
   | D.Unsigned | D.Boolean -> E.cast kd x
@@ -4871,10 +4875,24 @@ let order_key (type k r v s d) (kd : (k, r) D.t) (x : (v, s, d) t) : (k, r, d) t
     invalid_argf "%s: %s keys are narrower than %s" by (D.name kd) (D.name dt);
   elementwise ~by kd [ Any x ] (key_node ~merge:false dt kd w (operand 0 x))
 
-(* [x]'s uint64 keys, [-0.]'s merged into [+0.]'s where [merge]. *)
+(* [x]'s uint64 keys, [-0.]'s merged into [+0.]'s where [merge]: its order keys
+   at the least of 8, 16, 32 and 64 bits that holds its elements, widened as
+   unsigned integers, which keeps their order and equalities among keys of one
+   dtype. A float's key so needs no float wider than its own: Metal has no
+   float64. *)
 let keys64 ~by ~merge x =
   let dt = dtype x in
-  elementwise ~by D.Uint64 [ Any x ] (key_node ~merge dt D.Uint64 64 (operand 0 x))
+  let widened (type k r) (kd : (k, r) D.t) w =
+    elementwise ~by D.Uint64 [ Any x ]
+      (E.cast D.Uint64 (key_node ~merge dt kd w (operand 0 x)))
+  in
+  match D.bits dt with
+  | b when b <= 8 -> widened D.Uint8 8
+  | b when b <= 16 -> widened D.Uint16 16
+  | b when b <= 32 -> widened D.Uint32 32
+  | _ ->
+      elementwise ~by D.Uint64 [ Any x ]
+        (key_node ~merge dt D.Uint64 64 (operand 0 x))
 
 (* Refuses what is not 1-d or 2-d keys. *)
 let keyed ~by x =

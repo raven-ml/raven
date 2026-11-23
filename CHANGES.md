@@ -3638,6 +3638,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.searchsorted`, `Nx.searchsorted_along_axis` and `Nx.unique` of float
+  keys narrower than float64 compile on Metal. They keyed each float as a
+  float64, which Metal lacks, and now key it at its own width.
 - `Nx_ragged.unique` tells apart rows that share a long prefix in rounds that
   double in width, so a prefix of `p` bytes takes about `log2 (p / 64)` rounds
   instead of `p / 64`: 64 texts of 64 KiB differing in their last byte took
