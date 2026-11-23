@@ -8,130 +8,9 @@
 
 open Windtrap
 open Remote_job
+open Remote_program
 module G = Rig_program
 module P = Rig_support.Polled
-
-let le64 v =
-  let b = Bytes.create 8 in
-  Bytes.set_int64_le b 0 (Int64.of_int v);
-  Bytes.to_string b
-
-let words n f = String.concat "" (List.init n (fun i -> le64 (f i)))
-let size = 64
-let archs ds = Iarray.of_array (Array.map Rig.arch ds)
-
-(* [ds] and their machine's host. *)
-let with_host ds = Array.append ds [| Rig.host_of ds.(0) |]
-
-let polled h =
-  match Rig_remote.devices h "POLLED" with
-  | Ok ds -> ds
-  | Error why -> failf "devices: %s" why
-
-(* test/fixtures' host code [f], an image on device [device]. *)
-let host_image device f =
-  { G.device; binary = Rig_host_support.fixture ~dir:"../fixtures" f }
-
-(* The value [n], and the value of word [w] of the run's ints. *)
-let fixed n = { G.add = n; terms = [||] }
-let int_at w = { G.add = 0; terms = [| (w, 1) |] }
-
-let launch ?(scalars : _ iarray = [||]) ~image ~groups name params refs =
-  G.Launch
-    {
-      image;
-      name;
-      label = name;
-      params;
-      scalars;
-      refs;
-      groups = (groups, fixed 1, fixed 1);
-      threads = (fixed 1, fixed 1, fixed 1);
-      shared = fixed 0;
-    }
-
-let ref_ use at slot = { G.slot; at; use }
-
-(* Device 0 fills int 0 words of memory 0, which starts as zeros, from
-   [100 + 10 * int 1]; device 1 copies all of it into input 0 through its
-   borrow; the host, device 2, adds one to input 1's first word int 1 times
-   with test/fixtures' [affine]. *)
-let description archs =
-  {
-    G.devices = archs;
-    memory =
-      [|
-        G.Alloc
-          {
-            device = 0;
-            kind = Rig.Buffer.Device;
-            bytes = size;
-            init = String.make size '\000';
-          };
-      |];
-    images =
-      [|
-        { G.device = 0; binary = "functions" };
-        { G.device = 1; binary = "functions" };
-        host_image 2 "affine";
-      |];
-    inputs = [| { G.device = 1; bytes = size }; { G.device = 0; bytes = 8 } |];
-    ints = 2;
-    steps =
-      [|
-        G.Submit
-          {
-            device = 0;
-            slots = [| G.Memory { memory = 0; offset = 0; length = size } |];
-            parts =
-              [|
-                launch ~image:0 ~groups:(int_at 0) "fill"
-                  ~scalars:
-                    [|
-                      {
-                        G.at = 8;
-                        width = W64;
-                        value = { add = 100; terms = [| (1, 10) |] };
-                      };
-                    |]
-                  (le64 0 ^ le64 0)
-                  [| ref_ Write 0 0 |];
-              |];
-          };
-        G.Submit
-          {
-            device = 1;
-            slots =
-              [| G.Memory { memory = 0; offset = 0; length = size }; G.Input 0 |];
-            parts =
-              [|
-                launch ~image:1 ~groups:(fixed 1) "copy"
-                  (le64 0 ^ le64 0 ^ le64 size)
-                  [| ref_ Read 0 0; ref_ Write 8 1 |];
-              |];
-          };
-        G.Loop
-          {
-            trips = int_at 1;
-            trip = None;
-            flag = None;
-            body =
-              [|
-                G.Submit
-                  {
-                    device = 2;
-                    slots = [| G.Input 1 |];
-                    parts =
-                      [|
-                        launch ~image:2 ~groups:(fixed 1) "affine"
-                          (le64 0 ^ le64 0 ^ le64 1 ^ le64 1 ^ le64 1)
-                          [| ref_ Write 0 0; ref_ Read 8 0 |];
-                      |];
-                  };
-              |];
-          };
-      |];
-  }
 
 (* Four runs' ints [(groups, trips)]. The last's trips are negative: no
    trip. *)
@@ -211,39 +90,6 @@ let host_point () =
 
 (* Times *)
 
-(* The most groups of a time's fill, and the most groups a core runs in a
-   nanosecond: Polled calls its [fill] once per group, and no core makes more
-   than one call a cycle at 8 GHz. A fill of [large] groups thus takes at least
-   [large / per_ns] ns. *)
-let large = 1 lsl 14
-let per_ns = 8
-
-(* [description] without its loop, whose body is a step of its own, then a
-   submission of no parts on device 0: a program [time] times. Its memory 0
-   holds [large] words, all of which its fill may write. *)
-let unlooped archs =
-  let t = description archs in
-  let words = G.Memory { memory = 0; offset = 0; length = 8 * large } in
-  let memory =
-    Iarray.map
-      (function G.Alloc a -> G.Alloc { a with bytes = 8 * large } | m -> m)
-      t.memory
-  in
-  let fill =
-    match Iarray.get t.steps 0 with
-    | G.Submit s -> G.Submit { s with slots = [| words |] }
-    | step -> step
-  in
-  let body =
-    match Iarray.get t.steps 2 with
-    | G.Loop { body; _ } -> Iarray.get body 0
-    | step -> step
-  in
-  let none =
-    G.Submit { device = 0; slots = [||]; parts = [||] }
-  in
-  { t with memory; steps = [| fill; Iarray.get t.steps 1; body; none |] }
-
 (* [unlooped] on [h]'s Polled devices and [h], and a frame of it whose run
    leaves [expected] in its inputs. *)
 let timed_on h =
@@ -259,22 +105,7 @@ let timed_on h =
   in
   (p, frame)
 
-let expected = (words 8 (fun i -> 100 + i), le64 1)
 let inputs_of (f : G.frame) = (read f.inputs.(0), read f.inputs.(1))
-
-(* A time's durations against the host's time [window] around its call: at
-   least 0 for each of the three steps of parts, each on a device of its own,
-   and at most [window], at least [least] for the fill, and 0 for the
-   submission of no parts. *)
-let window_law ?(least = 0) times window =
-  equal ~msg:"one per step" int 4 (Array.length times);
-  for i = 0 to 2 do
-    let msg = Printf.sprintf "step %d's time" i in
-    at_least ~msg int ~than:0 times.(i);
-    at_most ~msg int ~than:window times.(i)
-  done;
-  at_least ~msg:"the fill's time" int ~than:least times.(0);
-  equal ~msg:"the submission of no parts" int 0 times.(3)
 
 (* A time on an agent has each step's duration there, and its run leaves the
    bytes a run leaves. A program with a loop raises before any work. *)
@@ -383,112 +214,6 @@ let no_submit () =
   let _, bytes = made [| move; none |] in
   equal ~msg:"memory made at load, with a Submit step" int
     (Rig.allocation h 16) bytes
-
-(* Times of one program on an agent from two domains each answer their own
-   run's durations, within the host's window around their call, and leave
-   their run's bytes. A large time's fill is timed, at least [large / per_ns]
-   ns: one that answered another run's times, or left its fill untimed (0),
-   falls short of it, as a fill of 8 groups does unless the machine stalls
-   it. A program makes at most one call before its branches, a load, and
-   none after: each call is round trips to the agent, and calls on one
-   domain are [times]'s. Each run loads its own program, so no program
-   carries state from one run to the next. About half the cases load
-   nothing and make no call, so 60 cases time about 30 programs.
-
-   Under load each round trip waits for the agent's threads and this
-   process's to be scheduled, so a program makes few of them one after the
-   other. The programs share the job's Polled devices, which the agent opens
-   once, and a pool of inputs: a time zeroes its pair with fills that rig
-   orders before the run by their memory, and reads the pair back with two
-   copies that it waits for together. *)
-
-(* The job's Polled devices and host, and the pairs of inputs that no time
-   holds. A time makes a pair only when none is idle, so there are at most
-   two, one per domain. *)
-type pool = {
-  ds : Rig.t array;
-  lock : Mutex.t;
-  mutable idle : (B.t * B.t) list;
-}
-
-let remote =
-  fixture
-    ~teardown:(fun (j, a, _) ->
-      Rig_remote.close j;
-      kill a)
-    (fun () ->
-      let a = with_key_file start in
-      let j = connect [ a ] in
-      let h = List.hd (Rig_remote.hosts j) in
-      let ds = with_host (Array.of_list (polled h)) in
-      (j, a, { ds; lock = Mutex.create (); idle = [] }))
-
-let timed = abstract "p"
-
-let load_timed () =
-  let _, _, pool = remote () in
-  let p =
-    require_ok ~pp:Format.pp_print_string
-      (G.load (unlooped (archs pool.ds)) (Iarray.of_array pool.ds))
-  in
-  (p, pool)
-
-let take pool =
-  Mutex.protect pool.lock @@ fun () ->
-  match pool.idle with
-  | io :: rest ->
-      pool.idle <- rest;
-      Some io
-  | [] -> None
-
-let give pool io =
-  Mutex.protect pool.lock (fun () -> pool.idle <- io :: pool.idle)
-
-(* The bytes of [x] and [c], through two copies to this process. *)
-let read_pair x c =
-  let hx = B.create Rig.host (B.length x) in
-  let hc = B.create Rig.host (B.length c) in
-  let px = B.submit_copy ~src:x ~dst:hx [| B.row (B.length x) |] in
-  let pc = B.submit_copy ~src:c ~dst:hc [| B.row (B.length c) |] in
-  Rig.Point.wait px;
-  Rig.Point.wait pc;
-  (read_host hx, read_host hc)
-
-let time_law ~least = function
-  | Error e -> failf "raised %s" (Printexc.to_string e)
-  | Ok (times, window, inputs) ->
-      window_law ~least times window;
-      equal ~msg:"the inputs" (pair string string) expected inputs
-
-(* A time of [p] whose fill runs [groups] groups, on a pair of inputs from
-   [pool] that it zeroes first. *)
-let time_with groups (p, pool) =
-  let x, c =
-    match take pool with
-    | Some io -> io
-    | None -> (B.create pool.ds.(1) size, B.create pool.ds.(0) 8)
-  in
-  Fun.protect ~finally:(fun () -> give pool (x, c)) @@ fun () ->
-  ignore (B.submit_fill x '\000' : Rig.Point.t);
-  ignore (B.submit_fill c '\000' : Rig.Point.t);
-  let f = { G.inputs = [| x; c |]; ints = [| groups; 0 |] } in
-  let t0 = Rig.Profile.now () in
-  let times = G.time p f in
-  let window = Rig.Profile.now () - t0 in
-  (times, window, read_pair x c)
-
-let timed_commands =
-  [
-    command "load" (Gen.unit @-> makes timed) (fun () -> ()) load_timed;
-    command "time"
-      (timed ^-> judges (triple (array int) int (pair string string)))
-      (fun () -> time_law ~least:0)
-      (time_with 8);
-    command "time large"
-      (timed ^-> judges (triple (array int) int (pair string string)))
-      (fun () -> time_law ~least:(large / per_ns))
-      (time_with large);
-  ]
 
 (* A binary that is no program is the agent's refusal. *)
 let refused_binary () =
@@ -1037,9 +762,6 @@ let () =
            "a time of no Submit step on an agent has 0s, its load no memory \
             for them"
            no_submit;
-         (* A hang fails by name, with room left in the watchdog's 100 s. *)
-         stateful ~timeout:60. ~count:60 ~steps:1 ~domains:2
-           "times of one program on an agent from two domains" timed_commands;
          test ~timeout:60. "an agent refuses a binary that is no program"
            refused_binary;
          test ~timeout:60.

@@ -8,6 +8,14 @@
  (libraries rig rig_remote rig_remote_proxy rig_support threads.posix unix
   windtrap))
 
+; The program that the suites of rig.program run, and the laws of its times.
+
+(library
+ (name rig_remote_programs)
+ (wrapped false)
+ (modules remote_program)
+ (libraries rig rig_program rig_remote rig_host_support windtrap))
+
 (tests
  (package rig)
  (names
@@ -18,6 +26,7 @@
   test_rig_remote_killed
   test_rig_remote_join
   test_rig_remote_program
+  test_rig_remote_times
   test_rig_remote_interrupt
   test_rig_remote_domains)
  (modules
@@ -25,6 +34,7 @@
   \
   remote_job
   watchdog
+  remote_program
   test_rig_remote_rail
   test_rig_remote_dial
   test_rig_remote_metal)
@@ -40,6 +50,7 @@
   rig_remote_proxy
   rig_remote_abi
   rig_remote_job
+  rig_remote_programs
   rig_program
   rig_support
   rig_host_support
