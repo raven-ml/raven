@@ -3,17 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A program of nested loops compiled first in its process, so a process of
-   its own: the storage it makes is numbered from the process's start, below
-   its loops' argument counts, and a compiled call does not depend on those
-   numbers. *)
+(* A compiled call gives the same bits whatever the process compiled before it
+   (rune.mli, Numerics), so a program compiled first in its process, in a
+   process of its own, compiles to eager's bits too. Four nested scans meet
+   there storage numbered below the innermost call's argument count, which once
+   ran such a call evaluated or out of bounds. *)
 
 open Windtrap
 open Rune_support
 open Witness
 
 let f64 = Nx.float64
-let rows = Nx.zeros f64 [| 2; 1 |]
 
 (* Three scans deep under a fourth. The innermost step reads the outermost
    carry [w] through [parts] values, each a loop invariant passed to the step's
@@ -21,7 +21,7 @@ let rows = Nx.zeros f64 [| 2; 1 |]
    and sums of halves keep every value exact. *)
 let parts = 24
 
-let nested x =
+let nested rows x =
   let inner w z g _ =
     let acc = ref (Nx.add g z) in
     for i = 0 to parts - 1 do
@@ -50,11 +50,13 @@ let () =
   exit
     (run "rune first compile"
        [
-         test "nested loops compile first in a process" (fun () ->
+         test "nested scans compiled first in a process give eager's bits"
+           (fun () ->
+             let rows = Nx.zeros f64 [| 2; 1 |] in
              let x = Nx.create f64 [| 1 |] [| 0.25 |] in
-             let expected = bits (nested x) in
+             let expected = bits (nested rows x) in
              let calls = Rune.evaluations () in
-             let got = bits (Rune.jit' nested x) in
+             let got = bits (Rune.jit' (nested rows) x) in
              Compiled.here ();
              equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls);
              equal bits_t expected got);
