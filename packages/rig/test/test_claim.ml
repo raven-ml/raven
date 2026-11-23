@@ -704,6 +704,7 @@ let test_signal_raised () =
 (* A signal pending as the function of a write of Mapped memory returns or
    raises lands once the write's flush ran and its count and claim ended. *)
 let interrupted_window name f =
+  if Sys.win32 then skip ~reason:"Windows has no signal masks" ();
   let d, p = P.open_ ~host_visible:false ("claim:signal-" ^ name) in
   let m = B.create ~memory:Mapped d 8 in
   let before =
