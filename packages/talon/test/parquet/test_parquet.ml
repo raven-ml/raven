@@ -2050,6 +2050,17 @@ let scan_format file =
 
 let scan_source file = P.source (scan_format file) (buffer file)
 
+(* [whole file] is every row of [file], read once. *)
+let whole =
+  let memo = Hashtbl.create 4 in
+  fun file ->
+    match Hashtbl.find_opt memo file with
+    | Some t -> t
+    | None ->
+        let t = Error.get_ok (Query.run (Query.of_source (scan_source file))) in
+        Hashtbl.replace memo file t;
+        t
+
 (* [texts file c] is the texts of the column [c] of [file], as read. *)
 let texts =
   let memo = Hashtbl.create 8 in
@@ -2142,8 +2153,7 @@ let in_scan_filters =
         else filter_of (Col.string c) Fun.id p
       in
       let f = if positive then Expr.(f && Col.float "f64" > float 0.) else f in
-      let src = scan_source file in
-      let whole = Error.get_ok (Query.run (Query.of_source src)) in
+      let whole = whole file in
       let expected = kept ~shown:true c f (Query.of_table whole) in
       let rows = Talon.rows whole in
       cover "dictionary pages" (file = "types.parquet");
@@ -2156,8 +2166,11 @@ let in_scan_filters =
       cover "a null row passes"
         (Array.exists (String.starts_with ~prefix:"null ") expected);
       cover "the filtered column not read back" (not shown);
-      let expected = kept ~shown c f (Query.of_table whole) in
-      equal (array string) expected (kept ~shown c f (Query.of_source src)))
+      let expected =
+        if shown then expected else kept ~shown c f (Query.of_table whole)
+      in
+      equal (array string) expected
+        (kept ~shown c f (Query.of_source (scan_source file))))
 
 (* Columns of a valid and an invalid UTF-8 word, read as text: a filter in
    the scan fails where a read fails, at the row, and not on a word no row
@@ -2420,6 +2433,17 @@ let prefix_files =
     "nested_v2_dict.parquet";
   ]
 
+(* [cells file c] is the rows of the column [c] of [file], read once. *)
+let cells =
+  let memo = Hashtbl.create 64 in
+  fun file c ->
+    match Hashtbl.find_opt memo (file, c) with
+    | Some cs -> cs
+    | None ->
+        let cs = nested_cells (read_nested file c) in
+        Hashtbl.replace memo (file, c) cs;
+        cs
+
 let prefixes =
   group "Prefixes"
     [
@@ -2520,7 +2544,7 @@ let prefixes =
           let source = P.source f (buffer file) in
           let columns = Schema.columns (Query.schema (Query.of_source source)) in
           let c = fst (List.nth columns (column mod List.length columns)) in
-          let all = nested_cells (read_nested file c) in
+          let all = cells file c in
           let want = Array.sub all 0 (min k (Array.length all)) in
           match head f (buffer file) c k with
           | Ok got -> equal (array string) want (nested_cells got)
