@@ -774,14 +774,17 @@ let impulse_line (type s) (b : Support.backend) (dt : (Complex.t, s) D.t) n at =
     let y = c2c () and alone = Nx_cpu.one_thread c2c in
     let sign = match direction with Nx_kernel.Forward -> -1. | Inverse -> 1. in
     let err = ref 0. and differs = ref None in
+    A.read y @@ fun y ->
+    A.read alone @@ fun alone ->
+    let y = Bigarray.reshape_1 y n and alone = Bigarray.reshape_1 alone n in
     for k = n - 1 downto 0 do
-      let (z : Complex.t) = A.get y [| k |] in
+      let (z : Complex.t) = y.{k} in
       let phi =
         sign *. 2. *. Float.pi *. float_of_int (at * k mod n) /. float_of_int n
       in
       let dre = z.re -. cos phi and dim = z.im -. sin phi in
       err := !err +. (dre *. dre) +. (dim *. dim);
-      let (w : Complex.t) = A.get alone [| k |] in
+      let (w : Complex.t) = alone.{k} in
       if
         Int64.bits_of_float z.re <> Int64.bits_of_float w.re
         || Int64.bits_of_float z.im <> Int64.bits_of_float w.im
