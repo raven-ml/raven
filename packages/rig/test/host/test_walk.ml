@@ -26,7 +26,10 @@ let exe =
   if Filename.is_relative e then Filename.concat (Sys.getcwd ()) e else e
 
 let obj =
-  S.fixture ~dir:Filename.(concat (dirname (dirname exe)) "fixtures") "affine"
+  lazy
+    (S.fixture
+       ~dir:Filename.(concat (dirname (dirname exe)) "fixtures")
+       "affine")
 
 let lines path = In_channel.with_open_text path In_channel.input_lines
 
@@ -51,7 +54,7 @@ let checked = function 0 -> () | e -> failwith (strf "setrlimit: errno %d" e)
 
 (* [linked ()] is what a load of the fixture on the host answers. *)
 let linked () =
-  match Rig.Image.load Rig.host obj with
+  match Rig.Image.load Rig.host (Lazy.force obj) with
   | Ok p ->
       ignore (Sys.opaque_identity p);
       "linked"
@@ -76,6 +79,7 @@ let child room =
 let walked room () =
   if not (Sys.file_exists "/proc/self/maps") then
     skip ~reason:"the limit bounds no mapping off Linux" ();
+  ignore (Lazy.force obj);
   let args = [| exe; "walk"; string_of_int room |] in
   let ic = Unix.open_process_args_in exe args in
   let out = In_channel.input_all ic in

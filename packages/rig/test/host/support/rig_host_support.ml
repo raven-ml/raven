@@ -22,8 +22,16 @@ external empty_job : threads:int -> total:int -> chunks:int -> unit
 external workers : unit -> int = "rig_host_test_workers"
 
 let machine = host_machine ()
+let links = machine = "x86_64" || machine = "aarch64"
 
 let fixture ~dir f =
+  if not links then
+    Windtrap.skip
+      ~reason:
+        ("rig links no host code on "
+        ^ Rig.instruction_set Rig.host
+        ^ ", which has no fixtures")
+      ();
   let file m = Filename.concat dir (f ^ "_" ^ m ^ ".o") in
   let windows = file "x86_64_windows" in
   let path =

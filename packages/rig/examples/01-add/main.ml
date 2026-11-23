@@ -91,9 +91,11 @@ let () =
     let first (g : Rig_gpus.gpu) = load g.open_ in
     match Seq.find_map first (gpus refused) with
     | Some image -> image
-    | None ->
+    | None -> (
         List.iter prerr_endline (List.rev !refused);
-        Option.get (load (fun () -> Ok host))
+        match load (fun () -> Ok host) with
+        | Some image -> image
+        | None -> failwith "no device here runs add")
   in
   let d = Image.device image in
 

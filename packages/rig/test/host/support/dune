@@ -3,7 +3,7 @@
 
 (library
  (name rig_host_support)
- (libraries rig_pool)
+ (libraries rig rig_pool windtrap)
  (foreign_stubs
   (language c)
   (names rig_host_support_stubs)))

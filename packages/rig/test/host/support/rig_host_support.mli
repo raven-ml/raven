@@ -16,12 +16,17 @@ val address : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> int
 
 val machine : string
 (** [machine] is the host's machine as the fixtures name it: ["x86_64"] or
-    ["aarch64"]. *)
+    ["aarch64"], or ["unknown"] on a host rig links no code for. *)
+
+val links : bool
+(** [links] is [true] iff rig links host code on this machine, x86_64 or
+    aarch64, for which the fixtures exist. *)
 
 val fixture : dir:string -> string -> string
 (** [fixture ~dir f] is the object of the program [f] for the host, read from
     the directory [dir]: [<f>_<machine>.o], or [<f>_x86_64_windows.o] on x86_64
-    Windows when it exists. *)
+    Windows when it exists. Skips the running test ({!Windtrap.skip}) where rig
+    links no host code ({!links}), as a GPU test skips without its GPU. *)
 
 val fresh : string -> string
 (** [fresh o] is the object [o] made an object of its own, whose link no

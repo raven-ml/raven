@@ -1509,8 +1509,9 @@ let broken = Exn.invalid_arg ~sub:"Rig_program.load: "
 
 let test_break (_, t, ds) =
   let d = fst (polled "broken") in
+  let t = t d in
   raises_match ~msg:"load raises" broken (fun () ->
-      G.load (t d) (Iarray.of_list (ds d)))
+      G.load t (Iarray.of_list (ds d)))
 
 (* A device runs code of its own arch, and a device of an x86-64 level the
    code of each level below it: "the levels are cumulative" (x86-64 psABI,

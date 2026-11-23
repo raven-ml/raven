@@ -204,6 +204,9 @@ let run_add d binary ~n a b =
 let same_bytes (n, seed) =
   match Lazy.force gpus with
   | [] -> skip ~reason:"no GPU here whose add examples/01-add has" ()
+  | _ when not (List.mem (Rig.instruction_set Rig.host) [ "arm64"; "x86_64" ])
+    ->
+      skip ~reason:"rig links host code on x86_64 and arm64 alone" ()
   | gpus ->
       let st = Random.State.make [| seed |] in
       let floats () =

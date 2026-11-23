@@ -2,11 +2,17 @@
  (name main)
  (libraries rig rig.gpus))
 
-; The program uses the first GPU here, so it takes the GPU suites' lock.
+; The program uses the first GPU here, so it takes the GPU suites' lock. Its
+; check runs where the host, its last resort, has a binary of add: rig links
+; host code on x86_64 and arm64.
 
 (rule
  (package rig)
  (alias runtest)
+ (enabled_if
+  (or
+   (= %{architecture} amd64)
+   (= %{architecture} arm64)))
  (deps
   (glob_files kernels/add*))
  (locks %{workspace_root}/gpu)

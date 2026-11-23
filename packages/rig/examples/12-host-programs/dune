@@ -2,9 +2,15 @@
  (name main)
  (libraries rig))
 
+; rig links host code on x86_64 and arm64, for which the objects are.
+
 (rule
  (package rig)
  (alias runtest)
+ (enabled_if
+  (or
+   (= %{architecture} amd64)
+   (= %{architecture} arm64)))
  (deps affine_x86_64.o affine_aarch64.o)
  (action
   (progn

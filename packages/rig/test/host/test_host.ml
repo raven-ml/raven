@@ -348,19 +348,23 @@ let domain_commands =
     command "launch" (small_grid @-> returns bool) (fun _ -> true) launch_once;
   ]
 
-(* waiting.c's launch over [w] and [b], spinning until w[0] is set. *)
-let waiting w ~rounds =
-  launch (load "waiting") "waiting" ~refs:Sub.[| write 0 ~at:0 |] ~params:16
+(* waiting.c's launch of [image] over [w], spinning until w[0] is set. A test
+   loads the image before it spawns the domain that launches it, so that a skip
+   of the load ends the test. *)
+let waiting image w ~rounds =
+  launch image "waiting"
+    ~refs:Sub.[| write 0 ~at:0 |]
+    ~params:16
     ~set:(fun b -> Bytes.set_int64_le b 8 (Int64.of_int rounds))
     [| w |]
 
 (* Sets w[0] once w[1] is set, then whether the launch had returned. *)
 let test_released () =
-  let w = S.words 2 in
+  let w = S.words 2 and image = load "waiting" in
   let returned = Atomic.make false in
   let d =
     Domain.spawn (fun () ->
-        ignore (waiting (B.of_bigarray w) ~rounds:20_000_000_000);
+        ignore (waiting image (B.of_bigarray w) ~rounds:20_000_000_000);
         Atomic.set returned true)
   in
   Rig_support.await "the launch running" (fun () -> w.{1} = 1L);
@@ -374,7 +378,7 @@ let test_released () =
    the submit reaches while another domain collects, and a buffer made
    meanwhile gets other memory. *)
 let test_keeps_buffers () =
-  let n = 1 lsl 16 in
+  let n = 1 lsl 16 and image = load "waiting" in
   let at = Atomic.make 0 in
   let d =
     Domain.spawn (fun () ->
@@ -383,7 +387,7 @@ let test_keeps_buffers () =
         Rig_support.store a 0;
         Rig_support.store (a + 8) 0;
         Atomic.set at a;
-        ignore (waiting b ~rounds:20_000_000_000))
+        ignore (waiting image b ~rounds:20_000_000_000))
   in
   Rig_support.await "the launch running" (fun () ->
       Atomic.get at <> 0 && Rig_support.load (Atomic.get at + 8) = 1);
@@ -396,7 +400,7 @@ let test_keeps_buffers () =
   equal ~msg:"its memory reused while the launch ran" bool false reused
 
 (* The bytes of host memory a Polled device borrows. *)
-let shared_bytes = 65536
+let shared_bytes = B.paged_from
 
 (* [f ()] while waiting.c, on its own domain, also reads [m]: the host's
    submit has read [m]'s stamps, and returns once [f] returns or raises. *)
@@ -455,9 +459,10 @@ let test_host_after_closed () =
 (* [f w] while waiting.c's launch over [w] runs on a domain of its own: [f]'s
    result and the launch's point. *)
 let while_held f =
-  let w = S.words 2 in
+  let w = S.words 2 and image = load "waiting" in
   let holder =
-    Domain.spawn (fun () -> waiting (B.of_bigarray w) ~rounds:20_000_000_000)
+    Domain.spawn (fun () ->
+        waiting image (B.of_bigarray w) ~rounds:20_000_000_000)
   in
   let release () =
     w.{0} <- 1L;
@@ -587,10 +592,9 @@ let test_survives () =
    domain collects. *)
 let test_running () =
   let w = S.words 2 in
-  let address = Atomic.make 0 in
+  let address = Atomic.make 0 and image = load "waiting" in
   let d =
     Domain.spawn (fun () ->
-        let image = load "waiting" in
         let waiting = require_some (Rig.Image.resolve image "waiting") in
         Atomic.set address (Rig.Image.entry waiting);
         let s =
@@ -701,24 +705,28 @@ let other_machine =
 let read f = In_channel.with_open_bin f In_channel.input_all
 let refused why = "CPU: " ^ why
 
+(* Each row's object is read as its test runs, which skips where rig links no
+   host code ([S.fixture]). *)
 let refusals =
   [
     ( "an object of another machine",
-      read (strf "../fixtures/affine_%s.o" other),
+      (fun () ->
+        ignore (obj "affine");
+        read (strf "../fixtures/affine_%s.o" other)),
       strf "the object is for %s, expected %s" other_machine host_name );
     ( "writable data",
-      obj "writable",
+      (fun () -> obj "writable"),
       "section \".bss\" is writable and not empty; pass variables through the \
        parameters" );
     ( "an undefined symbol",
-      obj "undefined",
+      (fun () -> obj "undefined"),
       "symbol \"rig_host_test_nowhere\" is defined by no library of the process"
     );
     (* far's jump is R_X86_64_PLT32 at 0x9 or R_AARCH64_JUMP26 at 0x4, to
        S + A: 2^61 - 4 on x86_64, whose addend counts from the field's end,
        and 2^61 on arm64. *)
     ( "a jump out of its field's reach",
-      obj "far",
+      (fun () -> obj "far"),
       if S.machine = "x86_64" then
         "relocation at 0x9 reaches 0x1ffffffffffffffc, which does not fit its \
          32-bit field"
@@ -828,7 +836,20 @@ let test_unmappable () =
   starts_with ~prefix:"CPU: mapping " why;
   contains ~sub:(strf "at a multiple of %d bytes" align) why
 
-let test_refusal (_, o, msg) = equal string (refused msg) (load_error o)
+let test_refusal (_, o, msg) = equal string (refused msg) (load_error (o ()))
+
+(* On an instruction set rig links no code for, a load on the host is refused,
+   naming the set where rig knows it. *)
+let test_unlinked () =
+  if S.links then skip ~reason:"rig links host code on this machine" ();
+  let set =
+    match Rig.instruction_set Rig.host with
+    | "" -> "an instruction set it does not know"
+    | isa -> isa
+  in
+  equal string
+    (refused ("rig links host code on x86_64 and arm64, not on " ^ set))
+    (load_error (read "../fixtures/affine_x86_64.o"))
 
 let refusal_tests =
   group ~timeout "loads"
@@ -836,6 +857,8 @@ let refusal_tests =
       test "an image's functions are the symbols of its code" test_functions;
       test "a load of what is not ELF is refused" (fun () ->
           ignore (load_error "not an object"));
+      test "a load on an instruction set rig links no code for is refused"
+        test_unlinked;
       cases "a load is refused for"
         ~id:(fun (n, _, _) -> n)
         refusals test_refusal;
