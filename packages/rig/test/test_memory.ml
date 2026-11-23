@@ -1483,6 +1483,14 @@ let pace_bound live =
   Float.max (Float.of_int floor)
     (bytes *. Float.of_int (Gc.get ()).custom_major_ratio /. 150.)
 
+(* Buffers of a MiB whose bytes are 8 [bound]s, and at least 256: a test that
+   asks for a cycle per bound counts the cycles that end, so its drops span
+   several bounds. The floor of a host whose last-level cache is large is large:
+   half of the 480 MiB that a CI runner's processor states. *)
+let mibs_over bound =
+  Int.max 256
+    (Float.to_int (Float.ceil (8. *. bound /. Float.of_int (kib * kib))))
+
 (* A large dropped host buffer the minor heap still holds returns at a minor
    collection and brings an eighth of a major cycle's work: beside 64 MiB live,
    256 dropped buffers of a MiB bring cycles at about an eighth of their bytes
@@ -1512,7 +1520,8 @@ let test_paced_host_young () =
     (Float.of_int !peak)
 
 (* A [custom_minor_max_size] of 0 keeps every buffer out of the minor heap: a
-   buffer of a MiB then brings its whole bytes to the major pace at birth. *)
+   buffer of a MiB then brings its whole bytes to the major pace at birth, a
+   cycle per bound's bytes at least, give or take a factor of two. *)
 let test_paced_host_major () =
   let heap = Array.make (8 * kib * kib) 0. in
   let was = (Gc.get ()).custom_minor_max_size in
@@ -1524,17 +1533,20 @@ let test_paced_host_major () =
       (fun () ->
         Gc.full_major ();
         let bound = pace_bound 0 in
+        let k = mibs_over bound in
         let before = (Gc.quick_stat ()).major_collections in
-        for _ = 1 to 256 do
+        for _ = 1 to k do
           ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)))
         done;
-        (Float.of_int ((Gc.quick_stat ()).major_collections - before), bound))
+        (Float.of_int ((Gc.quick_stat ()).major_collections - before), k, bound))
   in
   ignore (Sys.opaque_identity heap);
-  let cycles, bound = cycles in
-  at_least ~msg:"major cycles over 256 MiB in the major heap from birth"
+  let cycles, k, bound = cycles in
+  at_least
+    ~msg:
+      (Printf.sprintf "major cycles over %d MiB in the major heap from birth" k)
     float_exact
-    ~than:(Float.of_int (256 * kib * kib) /. bound /. 2.)
+    ~than:(Float.of_int (k * kib * kib) /. bound /. 2.)
     cycles
 
 (* A host buffer found live by a cycle and dropped afterwards returns although
@@ -1561,18 +1573,21 @@ let test_paced_host_returns () =
     (Rig.allocated Rig.host)
 
 (* A large host buffer that the minor heap promotes still counts in full:
-   beside 64 MiB live, 256 promoted dropped buffers of a MiB, at a bound of
-   about 19 MiB, bring at least one cycle per bound's bytes, give or take a
-   factor of two. Counting less of them than their bytes would bring cycles
-   later or never, and hold more memory unreturned. *)
+   beside 64 MiB live, promoted dropped buffers of a MiB bring at least one
+   cycle per bound's bytes, give or take a factor of two. Counting less of them
+   than their bytes would bring cycles later or never, and hold more memory
+   unreturned. *)
 let test_paced_host_promoted () =
   let heap = Array.make (8 * kib * kib) 0. in
   Gc.full_major ();
   let bound = pace_bound 0 in
-  let cycles = promoted_cycles 256 in
+  let k = mibs_over bound in
+  let cycles = promoted_cycles k in
   ignore (Sys.opaque_identity heap);
-  at_least ~msg:"major cycles over 256 MiB promoted and dropped" float_exact
-    ~than:(Float.of_int (256 * kib * kib) /. bound /. 2.)
+  at_least
+    ~msg:(Printf.sprintf "major cycles over %d MiB promoted and dropped" k)
+    float_exact
+    ~than:(Float.of_int (k * kib * kib) /. bound /. 2.)
     cycles
 
 (* Memory another device used enters its owner's cache once that use is
