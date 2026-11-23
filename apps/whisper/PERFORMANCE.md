@@ -1,9 +1,9 @@
 # Whisper's performance
 
 On an NVIDIA RTX 5000 Ada at float32, raven transcribes speech faster than
-openai-whisper, faster-whisper and transformers with each model: 408 times
-real time with tiny, 124 with small and 89 with large-v3-turbo, against
-faster-whisper's 341, 107 and 73 and openai-whisper's 202, 68 and 71.
+openai-whisper, faster-whisper and transformers with each model: 424 times
+real time with tiny, 131 with small and 89 with large-v3-turbo, against
+faster-whisper's 339, 107 and 73 and openai-whisper's 202, 63 and 71.
 
 ## Transcribing on the GPU
 
@@ -14,20 +14,20 @@ to higher temperatures, timestamps on.
 
 | | Precision | tiny | small | large-v3-turbo |
 |---|---|---|---|---|
-| raven | float32 | 408 (405–410) | 124 (124–124) | 89 (89–90) |
-| openai-whisper | float32 | 202 (200–202) | 68 (68–68) | 71 (70–71) |
-| faster-whisper | float32 | 341 (340–341) | 107 (107–107) | 73 (73–73) |
-| transformers | float32 | 146 (145–147) | 57 (57–57) | 47 (47–47) |
-| openai-whisper | float16 | 177 (177–178) | 60 (60–60) | 92 (91–92) |
-| faster-whisper | float16 | 441 (395–444) | 163 (163–163) | 147 (147–149) |
-| transformers | float16 | 164 (163–164) | 87 (86–87) | 112 (112–112) |
-| whisper.cpp | float16 | 205 (205–206) | 113 (113–113) | 123 (122–123) |
+| raven | float32 | 424 (409–428) | 131 (131–131) | 89 (89–89) |
+| openai-whisper | float32 | 202 (198–203) | 63 (58–68) | 71 (71–71) |
+| faster-whisper | float32 | 339 (309–341) | 107 (102–108) | 73 (72–73) |
+| transformers | float32 | 147 (140–147) | 57 (55–57) | 47 (26–47) |
+| openai-whisper | float16 | 178 (175–178) | 60 (60–61) | 92 (92–92) |
+| faster-whisper | float16 | 439 (426–455) | 163 (163–163) | 147 (146–148) |
+| transformers | float16 | 158 (154–164) | 86 (85–86) | 112 (109–112) |
+| whisper.cpp | float16 | 205 (203–207) | 113 (108–113) | 120 (116–122) |
 | raven | float16 | not measured: `main.exe` loads float32 | | |
 
 float16 is each reference's default on a GPU, and whisper.cpp's files hold
 float16 weights; the float32 rows compare like with like. The whole 8-minute
-chapter transcribes within 15% of the minute's rate at float32 on every
-system (raven: 469, 133 and 90 times real time), and within 26% at float16.
+chapter transcribes within 16% of the minute's rate at float32 on every
+system (raven: 492, 137 and 90 times real time), and within 25% at float16.
 
 ## Transcribing on the CPU
 
@@ -54,16 +54,16 @@ kernel running.
 
 | | Encoder | Decoder | Host | Minute |
 |---|---|---|---|---|
-| raven | 327 | 365 | none | 672 |
-| openai-whisper | 325 | 427 | 93 | 845 |
+| raven | 327 | 368 | none | 673 |
+| openai-whisper | 328 | 426 | 89 | 843 |
 
-raven's encoder is level with PyTorch's: 109 against 110 ms a window (5
-against 2 with tiny, 19 against 18 with small). PyTorch's convolution stem
+raven's encoder is level with PyTorch's: 110 against 110 ms a window (3
+against 2 with tiny, 20 against 18 with small). PyTorch's convolution stem
 runs on TF32 tensor cores, cuDNN's default, so that part of its encoder is
-not IEEE float32. raven's decoder kernels take 0.85 times PyTorch's, and
+not IEEE float32. raven's decoder kernels take 0.86 times PyTorch's, and
 its decoding loop is one compiled program (`Rune.iterate`), so the GPU
-never waits on the host; upstream's Python loop leaves it idle 93 ms a
-minute. raven's kernel sum is 20 ms above the minute's wall time: `DEBUG=2`
+never waits on the host; upstream's Python loop leaves it idle 89 ms a
+minute. raven's kernel sum is 22 ms above the minute's wall time: `DEBUG=2`
 submits each kernel on its own.
 
 ## Starting and memory
@@ -74,15 +74,15 @@ in use after the minute rows, the CUDA context included.
 
 | | First transcript | Cold kernel cache | Device memory |
 |---|---|---|---|
-| raven | 2.76 s (2.72–2.79) | 7.09 s (7.03–7.20) | 4.11 GB |
-| openai-whisper | 5.16 s (4.98–5.21) | | 5.58 GB |
-| faster-whisper | 3.30 s (3.25–3.34) | | 6.06 GB |
-| transformers | 4.99 s (4.93–4.99) | | 4.11 GB |
-| whisper.cpp, float16 | 1.11 s (1.09–1.11) | | 1.86 GB of buffers stated, without the context |
+| raven | 2.73 s (2.72–3.04) | 7.61 s (7.33–8.47) | 4.11 GB |
+| openai-whisper | 4.98 s (4.82–5.16) | | 5.58 GB |
+| faster-whisper | 3.13 s (2.89–3.21) | | 6.06 GB |
+| transformers | 5.09 s (4.83–5.32) | | 4.11 GB |
+| whisper.cpp, float16 | 1.08 s (1.07–1.08) | | 1.86 GB of buffers stated, without the context |
 
 The minute itself takes 0.67 s of raven's first transcript. With tiny,
-raven's first transcript takes 1.03 s warm and 4.65 s cold, with small 1.95
-and 10.4 s. The references ship their kernels compiled; raven compiles its
+raven's first transcript takes 1.05 s warm and 4.84 s cold, with small 2.26
+and 11.1 s. The references ship their kernels compiled; raven compiles its
 own on first use and caches them on disk, so the cold column is raven's
 alone.
 
@@ -96,7 +96,7 @@ alone.
 - **Recording.** Chapter 122797 of LibriSpeech's test-clean (speaker 672,
   8 min 16 s, CC BY 4.0), its utterances in order; the minute rows read its
   first minute, three windows, the third of 2 s.
-- **Versions.** raven at main 50116b53ea, and at d7fd1f4ba0 for the CPU's
+- **Versions.** raven at main 76fdde9051, and at d7fd1f4ba0 for the CPU's
   rows. openai-whisper at 86098128 and
   transformers 5.23.0 on torch 2.15.0+cu132; faster-whisper 1.2.1 on
   CTranslate2 4.8.5; whisper.cpp v1.9.5, built with CUDA 13.4 for sm_89, on
@@ -106,9 +106,14 @@ alone.
   Whisper's temperature fallback, its thresholds and timestamps, and without
   voice activity detection. torch's float32 products run at full precision,
   its default.
-- **Statistic.** On the GPU, three rounds, 2026-11-19 and 20, each running
-  every system in turn; raven's and openai-whisper's float32 rows come from
-  three later rounds at raven's commit. On the CPU, three rounds on
+- **Statistic.** On the GPU, three rounds on 2026-11-23, each in a hold of
+  the timing, heavy and GPU locks of its own, each running every system in
+  turn, at a load of 1.2 to 14. Other users' jobs ran on the two cores at
+  times: in the first round as raven's rows started, and in the third, at
+  a load of 6 to 9, whose raven tiny row ran 8% slower than the second's;
+  a fourth round took the third's place. Some of transformers' float32
+  calls with large-v3-turbo fall back to sampling and take twice as long,
+  four of five in the first round. On the CPU, three rounds on
   2026-11-22, each in a hold of the timing lock of its own, at a load of
   0.2 to 4.3: every system in turn, the references in alternate orders and
   raven last, each run started once both cores had been under 5% busy for
