@@ -348,56 +348,57 @@ let quota =
               at_most int ~msg:"the rest is at most the quota" ~than:q last)
         formats)
 
-(* Two streams for one encoder and the levels at which the law holds them.
-   Half the time, at every level, a stream of 64 bytes to 1 KiB after a
-   prefix of 2 to 8 KiB of the same corpus. The short stream empties only the
-   heads it hashes. The prefix, too long for that, empties every head, then
-   leaves a position in each head the short stream reads and in heads past its
-   reach. Otherwise two drawn recipes at one drawn level. *)
+(* Two streams for one encoder and the level at which the law holds them. Half
+   the time, a stream of 64 bytes to 1 KiB after a prefix of 2 to 8 KiB of the
+   same corpus. The short stream empties only the heads it hashes. The prefix,
+   too long for that, empties every head, then leaves a position in each head
+   the short stream reads and in heads past its reach. Otherwise two drawn
+   recipes. *)
 let stream_pair =
   let kind = Gen.of_list Lz_support.[ Text; Columns; Random ] in
   let short =
     Gen.map
       (fun ((k, na), nb) ->
-        (Lz_support.Corpus (k, na), Lz_support.Corpus (k, nb), levels))
+        (Lz_support.Corpus (k, na), Lz_support.Corpus (k, nb)))
       (Gen.pair
          (Gen.pair kind (Gen.int_range (2 * kib) (8 * kib)))
          (Gen.int_range 64 kib))
   in
-  let drawn =
-    Gen.map
-      (fun ((a, b), level) -> (a, b, [ level ]))
-      (Gen.pair (Gen.pair Lz_support.recipe Lz_support.recipe) level)
-  in
-  let pp_levels =
-    Format.pp_print_list
-      ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
-      Format.pp_print_int
-  in
+  let drawn = Gen.pair Lz_support.recipe Lz_support.recipe in
   Gen.with_pp
-    (fun ppf (a, b, levels) ->
-      Format.fprintf ppf "%a then %a at levels %a" Lz_support.pp_recipe a
-        Lz_support.pp_recipe b pp_levels levels)
-    (Gen.frequency [ (1, short); (1, drawn) ])
+    (fun ppf ((a, b), level) ->
+      Format.fprintf ppf "%a then %a at level %d" Lz_support.pp_recipe a
+        Lz_support.pp_recipe b level)
+    (Gen.pair (Gen.frequency [ (1, short); (1, drawn) ]) level)
+
+(* A short stream after a prefix at every level, the formats in turn, so that
+   every run covers each level, which drawn cases reach one in 18. *)
+let after_prefix =
+  List.map
+    (fun level ->
+      ( ( (Lz_support.Corpus (Text, 4 * kib), Lz_support.Corpus (Text, 512)),
+          level ),
+        List.nth formats (level mod 3) ))
+    levels
 
 let streams =
-  prop "after Done, the next step begins a new stream"
-    (Gen.pair stream_pair format)
-    (fun ((ra, rb, levels), f) ->
+  prop "after Done, the next step begins a new stream" ~examples:after_prefix
+    (Gen.pair stream_pair format) (fun (((ra, rb), level), f) ->
       let a = Lz_support.build ra and b = Lz_support.build rb in
       let nb = String.length b in
-      cover "a stream of 64 bytes to 1 KiB after a longer one, at every level"
-        (nb >= 64 && nb <= kib && String.length a > nb
-        && List.length levels = 9);
+      let short = nb >= 64 && nb <= kib && String.length a > nb in
       List.iter
-        (fun level ->
-          let e = f.encoder ~level () in
-          ignore (steps ~e f ~level ~cuts:[] a);
-          equal string
-            ~msg:(Printf.sprintf "level %d, as a fresh encoder writes it" level)
-            (steps f ~level ~cuts:[] b)
-            (steps ~e f ~level ~cuts:[] b))
-        levels)
+        (fun l ->
+          cover
+            (Printf.sprintf
+               "a stream of 64 bytes to 1 KiB after a longer one, at level %d" l)
+            (short && level = l))
+        levels;
+      let e = f.encoder ~level () in
+      ignore (steps ~e f ~level ~cuts:[] a);
+      equal string ~msg:"as a fresh encoder writes it"
+        (steps f ~level ~cuts:[] b)
+        (steps ~e f ~level ~cuts:[] b))
 
 (* The bytes do not depend on the instruction set. *)
 
