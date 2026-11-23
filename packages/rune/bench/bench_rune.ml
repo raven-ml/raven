@@ -436,6 +436,43 @@ let donated_scatter ?(flat = false) k =
       table := g (Nx.donate !table) u i;
       synced !table)
 
+(* The keys of 8 tokens of 8 heads of 64, a rotation's two halves concatenated,
+   their heads and token axes swapped, written into a donated cache of 4096
+   slots, each call taking the last one's result: the scatter reads the updates
+   where the concatenation stores them, with no copy. *)
+let rotated_scatter () =
+  let slots = 4096 and heads = 8 and dim = 64 and tokens = 8 in
+  Thumper.bench_with_setup "scatter-rotated-keys-into-donated-4096x8x64"
+    ~setup:(fun () ->
+      let write cache k i =
+        let half j =
+          Nx.slice [ Nx.A; Nx.A; Nx.A; Nx.R (j * dim / 2, (j + 1) * dim / 2) ] k
+        in
+        let k = Nx.concatenate ~axis:3 [ Nx.neg (half 1); half 0 ] in
+        let u = Nx.reshape [| tokens; heads; dim |] (Nx.swapaxes 1 2 k) in
+        let p =
+          Nx.broadcast_to [| tokens; heads; dim |]
+            (Nx.reshape [| tokens; 1; 1 |] i)
+        in
+        Nx.scatter ~axis:0 p u cache
+      in
+      let g =
+        Rune.jit
+          Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+          write
+      in
+      let k = between f32 34 (-1.) 1. [| 1; heads; tokens; dim |] in
+      let i =
+        host
+          (Nx.create Nx.int64 [| tokens |]
+             (Array.init tokens (fun r -> Int64.of_int (r * 7))))
+      in
+      let cache = host (Nx.zeros f32 [| slots; heads; dim |]) in
+      (g, ref (g (Nx.donate cache) k i), k, i))
+    (fun (g, cache, k, i) ->
+      cache := g (Nx.donate !cache) k i;
+      synced !cache)
+
 (* The log density of 8 Gaussian processes at 11 points and its gradient in
    each process's values and log length scale and amplitude, in float64: a
    Cholesky factor of each covariance, a triangular solve and the log of the
@@ -703,6 +740,20 @@ let jit_rows () =
   let prompt_x = between f32 53 (-1.) 1. [| 512; 1; 256 |] in
   let linear_x = between f32 63 (-1.) 1. [| 3328; 440 |]
   and linear_w = between f32 64 (-1.) 1. [| 1792; 440 |] in
+  let exp_x = between f32 65 (-1.) 1. [| 8; 4096 |]
+  and exp_m = between f32 66 (-1.) 1. [| 4096; 512 |] in
+  let narrow dt x = host (Nx.cast dt x) in
+  let exp_x16 = narrow Nx.bfloat16 exp_x
+  and exp_m16 = narrow Nx.bfloat16 exp_m
+  and sin_x = narrow Nx.float16 exp_x
+  and sin_m = narrow Nx.float16 exp_m in
+  let log_x = between f64 68 0.5 2. [| 1; 4096 |]
+  and log_m = between f64 69 (-1.) 1. [| 4096; 512 |] in
+  let sigmoid_x = between f32 70 (-1.) 1. [| 1; 4096 |] in
+  let square_x = between f32 71 (-1.) 1. [| 2048; 4096 |]
+  and square_m = between f32 72 (-1.) 1. [| 4096; 2 |] in
+  let dropout_key = Nx.Rng.key 4
+  and dropout_x = between f32 67 (-1.) 1. [| 1024; 1024 |] in
   let x1m = between f64 13 (-1.) 1. [| 1_000_000 |] in
   let dirichlet_key = Nx.Rng.key 3 in
   let concentrations = host (Nx.full f32 [| 4096; 8 |] 2.) in
@@ -809,6 +860,7 @@ let jit_rows () =
       (fun f -> synced (f tokens table));
     donated_scatter 1024;
     donated_scatter ~flat:true 1024;
+    rotated_scatter ();
     (* A sort keeping its positions: keys and positions sorted together. *)
     warm "sort-with-positions-4096"
       (fun () -> Rune.jit (split_fn ()) (fun x -> Nx.sort x))
@@ -854,6 +906,74 @@ let jit_rows () =
         let w = mxfp4 [| 32; 256; 256 |] in
         Rune.jit (pair_fn ()) (fun ids x -> Nx_quant.apply_experts ~ids w x))
       (fun f -> synced (f prompt_ids prompt_x));
+    (* A SwiGLU between two experts' products, as gpt-oss's feed-forward block
+       runs it, for the 16 tokens: its sigmoid stored once per element of the
+       first product, which each output of the second reads. *)
+    warm "experts-swiglu-mxfp4-16x4of32-256"
+      (fun () ->
+        let up = mxfp4 [| 32; 512; 256 |] and down = mxfp4 [| 32; 256; 256 |] in
+        Rune.jit (pair_fn ()) (fun ids x ->
+            let h = Nx_quant.apply_experts ~ids up x in
+            let half i =
+              Nx.slice [ Nx.A; Nx.A; Nx.R (i * 256, (i + 1) * 256) ] h
+            in
+            let g = half 0 and l = half 1 in
+            Nx_quant.apply_experts ~ids down
+              (Nx.mul (Nx.mul g (Nx.sigmoid g)) (Nx.add_s l 1.))))
+      (fun f -> synced (f experts_ids experts_x));
+    (* An exponential of 8 rows of 4096 that every output of their product by a
+       4096 by 512 matrix reads: stored, it costs 8 x 4096 exponentials, where
+       each output computing it would cost 512 times that. *)
+    warm "exp-then-matmul-float32-8x4096-by-512"
+      (fun () -> Rune.jit (pair_fn ()) (fun x m -> Nx.matmul (Nx.exp x) m))
+      (fun f -> synced (f exp_x exp_m));
+    (* The same at bfloat16 and, for a sine, float16, which compute through
+       float32; a logarithm of one float64 row and a sigmoid of one float32 row,
+       a vector by a matrix, where inlined each of the 512 outputs computes the
+       row's 4096 again. *)
+    warm "exp-then-matmul-bfloat16-8x4096-by-512"
+      (fun () -> Rune.jit (pair_fn ()) (fun x m -> Nx.matmul (Nx.exp x) m))
+      (fun f -> synced (f exp_x16 exp_m16));
+    warm "sin-then-matmul-float16-8x4096-by-512"
+      (fun () -> Rune.jit (pair_fn ()) (fun x m -> Nx.matmul (Nx.sin x) m))
+      (fun f -> synced (f sin_x sin_m));
+    warm "log-then-matmul-float64-1x4096-by-512"
+      (fun () -> Rune.jit (pair_fn ()) (fun x m -> Nx.matmul (Nx.log x) m))
+      (fun f -> synced (f log_x log_m));
+    warm "sigmoid-then-matmul-float32-1x4096-by-512"
+      (fun () -> Rune.jit (pair_fn ()) (fun x m -> Nx.matmul (Nx.sigmoid x) m))
+      (fun f -> synced (f sigmoid_x exp_m));
+    (* A square of 2048 rows of 4096, by a 4096 by 2 matrix: computed in the
+       product, the 32 MB rows are read once; stored, they are also written and
+       read again. *)
+    warm "square-then-matmul-float32-2048x4096-by-2"
+      (fun () -> Rune.jit (pair_fn ()) (fun x m -> Nx.matmul (Nx.mul x x) m))
+      (fun f -> synced (f square_x square_m));
+    (* A dropout mask of 1024 by 1024 that two operations read, a product and a
+       column sum: on the host it is stored at float32, the type both read. *)
+    warm "dropout-mask-float32-1024x1024"
+      (fun () ->
+        Rune.jit
+          Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+          (fun key x ->
+            let p = Nx.full_like x 0.9 in
+            let m = Nx.cast Nx.float32 (Nx.Rng.bernoulli ~key p) in
+            Nx.add (Nx.mul x m) (Nx.sum ~axes:[ 0 ] ~keepdims:true m)))
+      (fun f -> synced (f dropout_key dropout_x));
+    (* Sixteen slices of a 64 by 64 value, each shifted, concatenated along the
+       columns: their stores write strided regions of one result, which run as
+       one launch. *)
+    warm "concatenate-16-column-slices-64x64"
+      (fun () ->
+        Rune.jit
+          Nx.Ptree.(tensor @-> returns tensor)
+          (fun x ->
+            Nx.concatenate ~axis:1
+              (List.init 16 (fun i ->
+                   Nx.add_s
+                     (Nx.slice [ Nx.A; Nx.R (4 * i, (4 * i) + 4) ] x)
+                     (Float.of_int i)))))
+      (fun f -> synced (f pm));
     (* The gradient of 8 sines through a remat, compiled: the backward pass
        stores the remat's computed argument and computes the sines again. A
        longer chain takes too long to compile. *)
