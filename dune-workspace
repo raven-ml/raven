@@ -8,8 +8,14 @@
 ; executables with their path, and they failed once that tree was removed.
 ; Every link passes the path the linker would record as an argument, which the
 ; cache key holds. dune-workspace.tsan repeats it.
+;
+; The release profile, which opam's builds select, leaves the flag out: there
+; the compiler lives outside _build, and compilers before 5.5 lack the flag.
+; A test of %{ocaml_version} would have to live in a rule, whose file each
+; project, contrib's included, reads from its own root.
 
 (env
+ (release)
  (_
   (link_flags
    (:standard

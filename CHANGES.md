@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- brot, munin and quill build on OCaml 5.2 to 5.4: release builds, which
+  opam's are, no longer pass OCaml 5.5's `-set-runtime-default` flag.
 - **Breaking:** aion's `Roar` draws each object's order with
   `Nx.Rng.permutation_at`, where it sorted `float64` uniforms, and holds the
   temperature at `float32`, so `Roar.start` and `Roar.step` compile for a
