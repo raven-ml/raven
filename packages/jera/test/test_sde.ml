@@ -110,8 +110,16 @@ let brownian_tests =
               ~t1:(1. +. 1e-9) ~depth:3));
     test "v rejects an interval longer than the dtype holds" (fun () ->
         raises_with "t1 - t0 is not finite in float64" (fun () ->
-            Sde.Brownian.v (Nx.Rng.key 0) f64 ~shape:[||] ~t0:(-1e308)
-              ~t1:1e308 ~depth:3));
+            Sde.Brownian.v (Nx.Rng.key 0) f64 ~shape:[||] ~t0:(-1e308) ~t1:1e308
+              ~depth:3));
+    test "v rejects an infinite end" (fun () ->
+        raises_with "t0 and t1 must be finite" (fun () ->
+            Sde.Brownian.v (Nx.Rng.key 0) f64 ~shape:[||] ~t0:0.
+              ~t1:Float.infinity ~depth:3));
+    test "v rejects a negative dimension" (fun () ->
+        raises_with "shape [2,-1] has a negative dimension" (fun () ->
+            Sde.Brownian.v (Nx.Rng.key 0) f64 ~shape:[| 2; -1 |] ~t0:0. ~t1:1.
+              ~depth:3));
   ]
 
 (* Strong orders *)
@@ -181,21 +189,19 @@ let steps = [ 4; 8; 16; 32 ]
 
 let order_tests =
   [
-    slow
-    @@ test "euler_maruyama has strong order 1/2 on Itô's geometric motion"
-         (fun () ->
-           let w = path 21 in
-           let exact = gbm_exact ~ito:true w in
-           let e =
-             List.map
-               (strong Sde.euler_maruyama ~drift:gbm_drift
-                  ~diffusion:gbm_diffusion ~exact w)
-               steps
-           in
-           at_least (float 1e-9) ~than:0.35 (order e);
-           at_most (float 1e-9) ~than:0.75 (order e));
-    slow
-    @@ test "milstein has strong order 1 on Itô's geometric motion" (fun () ->
+    test "euler_maruyama has strong order 1/2 on Itô's geometric motion"
+      (fun () ->
+        let w = path 21 in
+        let exact = gbm_exact ~ito:true w in
+        let e =
+          List.map
+            (strong Sde.euler_maruyama ~drift:gbm_drift ~diffusion:gbm_diffusion
+               ~exact w)
+            steps
+        in
+        at_least (float 1e-9) ~than:0.35 (order e);
+        at_most (float 1e-9) ~than:0.75 (order e));
+    test "milstein has strong order 1 on Itô's geometric motion" (fun () ->
         let w = path 22 in
         let exact = gbm_exact ~ito:true w in
         let e =
@@ -205,8 +211,7 @@ let order_tests =
             steps
         in
         at_least (float 1e-9) ~than:0.85 (order e));
-    slow
-    @@ test "sra1 has strong order 3/2 on additive noise" (fun () ->
+    test "sra1 has strong order 3/2 on additive noise" (fun () ->
         let w = path ~depth:9 23 in
         let exact = ou_exact w ~depth:9 in
         let e =
@@ -215,8 +220,7 @@ let order_tests =
             steps
         in
         at_least (float 1e-9) ~than:1.3 (order e));
-    slow
-    @@ test "reversible_heun has strong order 1 on additive noise" (fun () ->
+    test "reversible_heun has strong order 1 on additive noise" (fun () ->
         let w = path ~depth:9 24 in
         let exact = ou_exact w ~depth:9 in
         let e =
@@ -226,18 +230,17 @@ let order_tests =
             steps
         in
         at_least (float 1e-9) ~than:0.85 (order e));
-    slow
-    @@ test "reversible_heun converges on Stratonovich's geometric motion"
-         (fun () ->
-           let w = path 25 in
-           let exact = gbm_exact ~ito:false w in
-           let e =
-             List.map
-               (strong Sde.reversible_heun ~drift:gbm_drift
-                  ~diffusion:gbm_diffusion ~exact w)
-               steps
-           in
-           at_least (float 1e-9) ~than:0.4 (order e));
+    test "reversible_heun converges on Stratonovich's geometric motion"
+      (fun () ->
+        let w = path 25 in
+        let exact = gbm_exact ~ito:false w in
+        let e =
+          List.map
+            (strong Sde.reversible_heun ~drift:gbm_drift
+               ~diffusion:gbm_diffusion ~exact w)
+            steps
+        in
+        at_least (float 1e-9) ~than:0.4 (order e));
   ]
 
 (* Marches *)
@@ -319,7 +322,11 @@ let march_tests =
   in
   [
     prop "a march composes its steps over the path's increments" marches
+      ~examples:
+        [ (7, 0, 2, 3, [| 0.; 0.5; 1. |]); (8, 1, 1, 2, [| 0.25; 0.75 |]) ]
       (fun (seed, depth, lanes, steps, ts) ->
+        cover "a path of depth 0" (depth = 0);
+        cover "a path of depth 1" (depth = 1);
         cover "several intervals" (Array.length ts > 2);
         cover "the path's whole interval"
           (ts.(0) = 0. && ts.(Array.length ts - 1) = 1.);
@@ -358,17 +365,22 @@ let march_tests =
           (Oracle.tensor ~rel:1e-7 ())
           (Nx.reshape [||] (Oracle.central ~eps:1e-6 f x v))
           (scalar (Oracle.dot (Rune.grad' f x) v)));
-    cases "a compiled march with the path an argument equals eager" ~id:fst
+    (* Each depth compiles its own program, whose descent grows with the depth:
+       every method at depth 1, and depths 0 and 10 on one. *)
+    cases "a compiled march with the path an argument equals eager"
+      ~id:(fun ((name, _), depth) -> Printf.sprintf "%s, depth %d" name depth)
       [
-        ("euler_maruyama", Sde.euler_maruyama);
-        ("milstein", Sde.milstein);
-        ("sra1", Sde.sra1);
-        ("reversible_heun", Sde.reversible_heun);
+        (("euler_maruyama", Sde.euler_maruyama), 0);
+        (("euler_maruyama", Sde.euler_maruyama), 1);
+        (("euler_maruyama", Sde.euler_maruyama), 10);
+        (("milstein", Sde.milstein), 1);
+        (("sra1", Sde.sra1), 1);
+        (("reversible_heun", Sde.reversible_heun), 1);
       ]
-      (fun (_, m) ->
+      (fun ((_, m), depth) ->
+        let w = path ~depth ~n:3 31 in
         let f w x =
-          Sde.march one m ~steps:4 ~drift:gbm_drift
-            ~diffusion:gbm_diffusion w
+          Sde.march one m ~steps:4 ~drift:gbm_drift ~diffusion:gbm_diffusion w
             ~at:(vec [| 0.; 0.5; 1. |])
             x
         in
@@ -381,7 +393,7 @@ let march_tests =
         let x = vec [| 1.; 0.5; 2. |] in
         equal (Oracle.tensor ~rel:1e-12 ()) (f w x) (compiled w x);
         (* Another key replays the same program on another path. *)
-        let w' = path ~n:3 32 in
+        let w' = path ~depth ~n:3 32 in
         equal (Oracle.tensor ~rel:1e-12 ()) (f w' x) (compiled w' x));
     cases "a march to the path's end takes any number of steps"
       ~id:(fun (t1, steps) -> Printf.sprintf "[0, %g] in %d" t1 steps)
@@ -430,10 +442,17 @@ let march_tests =
         in
         equal (Oracle.tensor ()) (Nx.ones f64 [| 2; 3 |]) y);
     prop "a march restarted at one of its times continues it" restarts
+      ~examples:
+        [
+          (("sra1", Sde.sra1), 5, 0, 2, (0.1, 0.4, 0.9));
+          (("milstein", Sde.milstein), 6, 1, 3, (0., 0.5, 1.));
+        ]
       (fun ((_, m), seed, depth, steps, (a, b, c)) ->
         (* Bit for bit: the interval from b continues from the path's W and I
            carried to b, the restarted march from a query of the path at b. *)
         assume (a < b && b < c);
+        cover "a path of depth 0" (depth = 0);
+        cover "a path of depth 1" (depth = 1);
         let w =
           Sde.Brownian.v (Nx.Rng.key seed) f64 ~shape:[| 3 |] ~t0:0. ~t1:1.
             ~depth
@@ -445,6 +464,12 @@ let march_tests =
         let whole = run [| a; b; c |] (x0 3) in
         let rest = run [| b; c |] (Nx.get [ 1 ] whole) in
         equal (Oracle.tensor ()) (Nx.get [ 2 ] whole) (Nx.get [ 1 ] rest));
+    test "steps below 1 raise" (fun () ->
+        raises_with "steps = 0 is not positive" (fun () ->
+            run ~steps:0 (vec [| 0.; 1. |]) (x0 3)));
+    test "no time raises" (fun () ->
+        raises_with "at must hold at least one time, got shape [0]" (fun () ->
+            run (vec [||]) (x0 3)));
     test "times that are not increasing raise" (fun () ->
         raises_with "the times of at are not strictly increasing" (fun () ->
             run (vec [| 1.; 0.5 |]) (x0 3)));
