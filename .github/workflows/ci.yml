@@ -71,9 +71,13 @@ jobs:
           # packages but jord.safe's xmlm.
           opam install xmlm
 
+      # Each package's steps run when an earlier package's failed, so one run
+      # shows every package's failures.
+      #
       # Every runtest runs under .github/memcap.sh, which caps its memory so
       # that a test that leaks is killed before the runner runs out.
       - name: Build and test lz
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/lz
           bash .github/memcap.sh opam exec -- dune build --release @packages/lz/runtest
@@ -90,7 +94,7 @@ jobs:
       # process cannot load, and a later step that installs the package
       # without rebuilding it, such as quill's preload, would load it.
       - name: Test lz under the sanitizers
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         env:
           DUNE_BUILD_DIR: _build_sanitize
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
@@ -102,11 +106,13 @@ jobs:
 
       # rig's GPU suites skip on runners without the GPU they drive.
       - name: Build and test rig
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/rig
           bash .github/memcap.sh opam exec -- dune build --release @packages/rig/runtest
 
       - name: Build and test nx
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/nx
           bash .github/memcap.sh opam exec -- dune build --release @packages/nx/runtest
@@ -119,7 +125,7 @@ jobs:
       # as its own. The documentation's examples run in the step above: the
       # mdx stanzas are off under the sanitizers.
       - name: Test nx under the sanitizers
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         env:
           DUNE_BUILD_DIR: _build_sanitize
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
@@ -130,6 +136,7 @@ jobs:
           bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/runtest
 
       - name: Build and test brot
+        if: ${{ !cancelled() }}
         env:
           BROT_REQUIRE_FIXTURES: 1
         run: |
@@ -138,6 +145,7 @@ jobs:
           bash .github/memcap.sh opam exec -- dune build --release @packages/brot/runtest
 
       - name: Build and test talon
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/talon
           bash .github/memcap.sh opam exec -- dune build --release @packages/talon/runtest
@@ -146,7 +154,7 @@ jobs:
       # fuzz suites included, run with the C built under AddressSanitizer and
       # UndefinedBehaviorSanitizer, each property over 1000 files.
       - name: Test talon's decoders under the sanitizers
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         env:
           DUNE_BUILD_DIR: _build_sanitize
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
@@ -159,11 +167,11 @@ jobs:
       # suite's uv scripts generate the data; one OS suffices, since the
       # answers depend on talon's semantics, which runtest covers per OS.
       - name: Set-up uv
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         uses: astral-sh/setup-uv@v6
 
       - name: Check talon's benchmark answers
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         env:
           DATA: ${{ runner.temp }}/talon-bench
         run: |
@@ -171,81 +179,97 @@ jobs:
           opam exec -- dune exec --release packages/talon/bench/queries/runner.exe -- check packages/talon/bench/queries/answers "$DATA"
 
       - name: Build and test rune
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/rune
           bash .github/memcap.sh opam exec -- dune build --release @packages/rune/runtest
 
       - name: Build and test ppx_ptree
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/ppx_ptree
           bash .github/memcap.sh opam exec -- dune build --release @packages/ppx_ptree/runtest
 
       - name: Build and test kaun
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/kaun
           bash .github/memcap.sh opam exec -- dune build --release @packages/kaun/runtest
 
       - name: Build and test apps
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release apps
           bash .github/memcap.sh opam exec -- dune build --release @apps/runtest
 
       - name: Build and test vega
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/vega
           bash .github/memcap.sh opam exec -- dune build --release @packages/vega/runtest
 
       - name: Build and test fehu
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release contrib/fehu
           bash .github/memcap.sh opam exec -- dune build --release @contrib/fehu/runtest
 
       - name: Build and test munin
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/munin
           bash .github/memcap.sh opam exec -- dune build --release @packages/munin/runtest
 
       - name: Build and test jera
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/jera
           bash .github/memcap.sh opam exec -- dune build --release @packages/jera/runtest
 
       - name: Build and test norn
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/norn
           bash .github/memcap.sh opam exec -- dune build --release @packages/norn/runtest
 
       - name: Build and test ymir
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release contrib/ymir
           bash .github/memcap.sh opam exec -- dune build --release @contrib/ymir/runtest
 
       - name: Build and test jord
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release contrib/jord
           bash .github/memcap.sh opam exec -- dune build --release @contrib/jord/runtest
 
       - name: Build and test alda
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release contrib/alda
           bash .github/memcap.sh opam exec -- dune build --release @contrib/alda/runtest
 
       - name: Build and test mynd
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release contrib/mynd
           bash .github/memcap.sh opam exec -- dune build --release @contrib/mynd/runtest
 
       - name: Build and test tolk
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/tolk
           bash .github/memcap.sh opam exec -- dune build --release @packages/tolk/runtest
 
       - name: Build and test hugin
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/hugin
           bash .github/memcap.sh opam exec -- dune build --release @packages/hugin/runtest
 
       - name: Build and test quill
+        if: ${{ !cancelled() }}
         run: |
           opam exec -- dune build --release packages/quill
           bash .github/memcap.sh opam exec -- dune build --release @packages/quill/runtest
