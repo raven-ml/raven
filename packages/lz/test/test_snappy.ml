@@ -167,7 +167,7 @@ let malformed ~at msg s = fails ~at (Lz.Malformed msg) s
 let xababab =
   (* Section 2.2's example: "xababab" is a literal "xab" and a copy of 4 bytes
      from 2 back. *)
-  cases "xababab"
+  cases "section 2.2's example decodes to xababab"
     ~id:(fun k -> Printf.sprintf "copy with %d-byte offset" k)
     [ 1; 2; 4 ]
     (fun kind ->
@@ -176,7 +176,7 @@ let xababab =
 
 let preambles =
   (* Section 1: 64 is 0x40, 2097150 is FE FF 7F. *)
-  test "the preamble's examples" (fun () ->
+  test "the preamble's examples, 64 and 2097150, decode" (fun () ->
       let s = block [ Literal (String.make 64 'a') ] in
       equal string "\x40" (String.sub s 0 1);
       equal decoded (Ok (String.make 64 'a')) (decode ~cap:64 s);
@@ -194,7 +194,7 @@ let preambles =
 let literal_lengths =
   (* Section 2.1: lengths up to 60 in the tag, longer ones in 1 to 4 bytes
      after it, at the edge of each count. *)
-  cases "literal lengths" ~id:string_of_int
+  cases "a literal of every length class decodes" ~id:string_of_int
     [ 1; 59; 60; 61; 256; 257; 65536; 65537; 70000 ]
     (fun n ->
       let s = noise n in
@@ -203,7 +203,7 @@ let literal_lengths =
 let far_offsets =
   (* Section 2.2: a 1-byte offset reaches 2047 back, a 2-byte one 65535, a
      4-byte one any distance the output holds. *)
-  cases "far offsets"
+  cases "a copy decodes from its form's farthest offset"
     ~id:(fun (kind, offset) -> Printf.sprintf "%d-byte offset %d" kind offset)
     [ (1, 2047); (2, 2048); (2, 65535); (4, 65536); (4, 70000) ]
     (fun (kind, offset) ->
@@ -278,13 +278,16 @@ let empty =
       equal decoded (Ok "") (decode ~cap:0 "\x00"))
 
 let law_exact =
-  (* A destination of the block's length holds it; one a byte shorter does
-     not, and nothing past it is written. *)
-  prop "a destination of the block's length, and one short" recipe (fun r ->
+  prop "a destination of the block's length holds it" recipe (fun r ->
       let x = build r in
       let z = encode_bound x in
-      let k = String.length z in
-      equal (option string) (Some z) (encode ~cap:k x);
+      equal (option string) (Some z) (encode ~cap:(String.length z) x))
+
+let law_short =
+  prop "a destination one byte short is refused, nothing past it written" recipe
+    (fun r ->
+      let x = build r in
+      let k = String.length (encode_bound x) in
       let buf = create (k + 64) in
       let dst = Bigarray.Array1.sub buf 0 (k - 1) in
       equal (option int) None (Lz.Snappy.encode (of_string x) dst);
@@ -319,7 +322,7 @@ let long_literals =
      adds to it: once the bytes so far take it past the preamble's room, the
      element is Malformed at its tag, at 1, even when the input ends inside its
      length. *)
-  cases "a long literal past the preamble"
+  cases "a long literal past the preamble is Malformed at its tag"
     ~id:(fun (name, _) -> name)
     [
       ("its 1-byte length", "\x03\xf0\x63");
@@ -333,12 +336,12 @@ let long_literals =
 let tag_63 =
   (* Section 2.1: tag 63 holds the length minus one in 4 bytes after it,
      whatever the length. *)
-  test "a literal under tag 63" (fun () ->
+  test "a literal under tag 63 decodes" (fun () ->
       equal decoded (Ok "hello") (decode ~cap:5 "\x05\xfc\x04\x00\x00\x00hello"))
 
 let larger_destination =
   (* The preamble, not the destination, sets the output's length. *)
-  test "a destination larger than the preamble" (fun () ->
+  test "a destination larger than the preamble gets its length" (fun () ->
       let s = block [ Literal "xab"; Copy { kind = 1; offset = 2; length = 4 } ] in
       let dst = create 64 in
       equal (result progress error)
@@ -357,19 +360,19 @@ let after_block =
 let preambles_malformed =
   (* Section 1: a length is at most 2^32 - 1, so its varint at most 5
      bytes, the last holding 4 bits. *)
-  cases "preambles past 32 bits" ~id:String.escaped
+  cases "a preamble past 32 bits is Malformed at 0" ~id:String.escaped
     [ "\x80\x80\x80\x80\x80\x00"; "\xff\xff\xff\xff\x10"; "\x80\x80\x80\x80\x80" ]
     (fun s -> malformed ~at:0 "invalid preamble" s)
 
 let preamble_largest =
-  test "a preamble of 2^32 - 1 is a length" (fun () ->
+  test "a preamble of 2^32 - 1 is a length, Too_long at 0" (fun () ->
       fails ~cap:16 ~at:0 Too_long "\xff\xff\xff\xff\x0f\x00a")
 
 let truncated =
   let copy4 =
     block [ Literal "abcd"; Copy { kind = 4; offset = 4; length = 4 } ]
   in
-  cases "the input ends inside an element"
+  cases "an input that ends inside an element is Truncated at its length"
     ~id:(fun (name, _) -> name)
     [
       ("empty", "");
@@ -382,7 +385,7 @@ let truncated =
     (fun (_, s) -> fails ~cap:1024 ~at:(String.length s) Truncated s)
 
 let offsets =
-  cases "a copy offset of zero"
+  cases "a copy offset of 0 is Malformed at its tag"
     ~id:(fun kind -> Printf.sprintf "zero in the %d-byte form" kind)
     [ 1; 2; 4 ]
     (fun kind ->
@@ -399,7 +402,7 @@ let before_start =
   let far4 =
     block [ Literal "abcd"; Copy { kind = 4; offset = 0x7fffffff; length = 4 } ]
   in
-  cases "a copy offset past the output"
+  cases "a copy offset past the output is Malformed at its tag"
     ~id:(fun (name, _, _) -> name)
     [
       ( "in its 1-byte offset",
@@ -656,7 +659,7 @@ let bombs =
     (r, String.sub (to_string buf) cap 64)
   in
   [
-    test "a bomb whose preamble exceeds the destination is Too_long"
+    test "a bomb whose preamble exceeds the destination is Too_long at 0"
       (fun () ->
         let r, past = decode_into (bomb 0xffff_ffff) in
         equal (result progress error) (Error { Lz.at = 0; why = Too_long }) r;
@@ -705,8 +708,37 @@ let () =
   exit
     (run "Snappy"
        [
-         group "arguments"
+         group "memory" allocation;
+         group "decode"
            [
+             agreement "snappy";
+             xababab;
+             preambles;
+             literal_lengths;
+             tag_63;
+             far_offsets;
+             larger_destination;
+             law_blocks;
+           ];
+         group "refusals"
+           (preamble_lies
+           @ [
+               after_block;
+               long_literals;
+               preambles_malformed;
+               preamble_largest;
+               truncated;
+               offsets;
+               before_start;
+             ]
+           @ bombs);
+         group "encode"
+           [
+             law_round_trip;
+             law_strings;
+             empty;
+             law_exact;
+             law_short;
              test "a negative size has no bound" (fun () ->
                  raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
                      Lz.Snappy.bound (-1)));
@@ -717,20 +749,5 @@ let () =
                  raises_match (Exn.invalid_arg ~sub:"exceed") (fun () ->
                      Lz.Snappy.bound (1 lsl 32)));
            ];
-         group "format"
-           [
-             xababab; preambles; literal_lengths; tag_63; far_offsets;
-             larger_destination; after_block; law_blocks;
-           ];
          group "reference" (law_reference :: boundaries);
-         group "round trips" [ law_round_trip; law_strings; empty; law_exact ];
-         group "vendor" [ agreement "snappy" ];
-         group "refusals"
-           (preamble_lies
-           @ [
-               long_literals; preambles_malformed; preamble_largest; truncated;
-               offsets;
-             ]
-           @ [ before_start ] @ bombs);
-         group "memory" allocation;
        ])
