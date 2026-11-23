@@ -77,6 +77,10 @@ columns/encode-zstd-3	alloc_words	exact	2
 columns/encode-zstd-3	wall_time	batch=1	n=20	2.104e-02	2.096e-02 2.097e-02 2.100e-02 2.100e-02 2.100e-02 2.101e-02 2.101e-02 2.101e-02 2.102e-02 2.102e-02 2.106e-02 2.106e-02 2.107e-02 2.109e-02 2.112e-02 2.113e-02 2.116e-02 2.119e-02 2.122e-02 2.139e-02
 columns/encode-zstd-3-in-1-MiB-steps	alloc_words	exact	1373
 columns/encode-zstd-3-in-1-MiB-steps	wall_time	batch=1	n=20	2.196e-02	2.174e-02 2.177e-02 2.187e-02 2.188e-02 2.190e-02 2.191e-02 2.195e-02 2.196e-02 2.196e-02 2.196e-02 2.196e-02 2.197e-02 2.198e-02 2.198e-02 2.199e-02 2.200e-02 2.200e-02 2.206e-02 2.211e-02 2.225e-02
+fresh-encoders/encode-zstd-12-of-64-KiB-with-a-fresh-encoder	alloc_words	exact	41
+fresh-encoders/encode-zstd-12-of-64-KiB-with-a-fresh-encoder	wall_time	batch=4	n=20	1.673e-03	1.621e-03 1.625e-03 1.627e-03 1.627e-03 1.629e-03 1.632e-03 1.632e-03 1.650e-03 1.659e-03 1.667e-03 1.679e-03 1.680e-03 1.683e-03 1.685e-03 1.691e-03 1.695e-03 1.703e-03 1.710e-03 1.721e-03 1.768e-03
+fresh-encoders/encode-zstd-3-of-64-KiB-with-a-fresh-encoder	alloc_words	exact	41
+fresh-encoders/encode-zstd-3-of-64-KiB-with-a-fresh-encoder	wall_time	batch=16	n=20	3.555e-04	2.286e-04 2.507e-04 2.819e-04 2.917e-04 3.029e-04 3.035e-04 3.520e-04 3.530e-04 3.536e-04 3.537e-04 3.574e-04 3.797e-04 3.952e-04 4.210e-04 4.491e-04 4.612e-04 4.635e-04 4.679e-04 4.699e-04 4.700e-04
 random/decode-deflate6	alloc_words	exact	5
 random/decode-deflate6	wall_time	batch=16	n=20	3.660e-04	3.653e-04 3.654e-04 3.656e-04 3.656e-04 3.656e-04 3.657e-04 3.657e-04 3.657e-04 3.659e-04 3.660e-04 3.660e-04 3.661e-04 3.661e-04 3.661e-04 3.663e-04 3.665e-04 3.665e-04 3.668e-04 3.672e-04 3.672e-04
 random/decode-gz9	alloc_words	exact	5

@@ -3594,6 +3594,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Lz (new)
 
+- A Zstandard encoder (`Lz.Zstd.encoder`) tells the collector of the memory
+  it holds as it allocates it: about 1.5 MiB for a 64 KiB stream, where it
+  told of its level's largest, up to 49 MiB, when made. A program that makes
+  an encoder for each short stream runs far fewer major cycles.
 - lz is not available on s390x: its Zstandard decoder reads little-endian
   words natively. `lz.bytesrw` needs bytesrw 0.4.1, for `Bytes.Writer.make'`.
 - Add `Lz.Lzf.decode`, LZF as liblzf's decoder reads it, the compression

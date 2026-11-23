@@ -288,8 +288,29 @@ let zeros =
   Thumper.group "zeros"
     [ row "decode lz4b, exact destination" 0; row "decode lz4b" 64 ]
 
+(* A fresh Zstandard encoder for each 64 KiB stream of text, beside 128 MiB
+   of live OCaml values, as a server that encodes each response with its
+   own encoder holds them: the collector paces its major cycles to the
+   memory an encoder says it holds, and each cycle marks the live heap. *)
+let fresh_encoders =
+  let src =
+    lazy (Lz_support.of_string (Lz_support.corpus Lz_support.Text (64 lsl 10)))
+  in
+  let live = lazy (Array.init (16 lsl 10) (fun i -> Array.make 1023 i)) in
+  let row level =
+    Thumper.bench_with_setup
+      (Printf.sprintf "encode zstd %d of 64 KiB with a fresh encoder" level)
+      ~setup:(fun () -> (Lazy.force src, Lazy.force live))
+      (fun (src, _) ->
+        let e = Lz.Zstd.encoder ~level () in
+        match Lz.Encoder.step e ~last:true src ignore with
+        | Lz.Done _ -> ()
+        | More _ -> failwith "a stream of 64 KiB took two steps")
+  in
+  Thumper.group "fresh encoders" [ row 3; row 12 ]
+
 let () =
   exit
     (Thumper.run "lz"
        ~budgets:[ Thumper.Budget.no_slower_than 0.10 ]
-       (List.map corpus corpora @ [ zeros; checksums ]))
+       (List.map corpus corpora @ [ zeros; checksums; fresh_encoders ]))

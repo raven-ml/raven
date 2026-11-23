@@ -21,6 +21,7 @@
    rooted by CAMLparam. */
 
 #define CAML_NAME_SPACE
+#include <caml/address_class.h>
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
 #include <caml/custom.h>
@@ -289,6 +290,11 @@ struct codec {
                            struct lz_error *err);
   void (*reset)(void *st);
   void (*free)(void *st);
+  /* The bytes the state holds outside the heap, for an encoder whose
+     state allocates as its streams need, which each step tells the
+     collector of; NULL for a codec the collector is told of only at its
+     creation. */
+  size_t (*held)(const void *st);
   bool members;
   size_t run;
   size_t quota;
@@ -373,7 +379,9 @@ static value encode_whole(const struct codec *c, void *st, value src,
 /* A streaming state: the kernel's state, its codec, the input taken since
    creation or the last Done (to which an error's offset is relative),
    whether a member has ended with no byte of another taken, and for a
-   decoder where its next byte goes in its buffer. lz.ml keeps the buffer,
+   decoder where its next byte goes in its buffer, and the bytes outside
+   the heap the collector has been told of, and of those the major
+   collector. lz.ml keeps the buffer,
    who holds the state and whether it is dead. A step copies the box
    before its kernel runs, since compaction may move the custom block
    while the kernel has the lock released, and writes it back after. */
@@ -383,6 +391,8 @@ struct box {
   int64_t base;
   bool boundary;
   size_t pos;
+  size_t told;
+  size_t major;
 };
 
 #define Box_val(v) ((struct box *)Data_custom_val(v))
@@ -413,7 +423,32 @@ static value box(const struct codec *c, void *st, size_t mem) {
   b->base = 0;
   b->boundary = false;
   b->pos = 0;
+  b->told = 0;
+  b->major = 0;
   return v;
+}
+
+/* [told v held] tells the collector of the bytes [v]'s state allocated
+   outside the heap since it was last told, as [caml_alloc_custom_mem]
+   tells it of those a block holds when made: while [v] is young, the
+   minor collector, which frees it with the state if it dies young, and
+   once [v] is old the major collector, of all it holds past what that
+   was told, at its first step once old: a block promoted and never
+   stepped again is never counted there. So a state that grows with its
+   streams counts what it holds, never the most it could. The minor collector is told against its
+   heap's size, the runtime's default custom_minor_ratio of 100: the
+   ratio itself is not exported. */
+static void told(value v, size_t held) {
+  struct box *b = Box_val(v);
+  if (Is_young(v)) {
+    if (held > b->told)
+      caml_adjust_minor_gc_speed(held - b->told,
+                                 Bsize_wsize(Caml_state->minor_heap_wsz));
+  } else if (held > b->major) {
+    caml_adjust_gc_speed(held - b->major, 0);
+    b->major = held;
+  }
+  if (held > b->told) b->told = held;
 }
 
 CAMLprim value lz_run_size(value v) {
@@ -543,6 +578,7 @@ CAMLprim value lz_enc_step(value v, value last, value src, value buf) {
   }
   enum lz_status s = k.codec->encode(k.st, &io, l, &err);
   reacquire(&c);
+  if (k.codec->held) told(v, k.codec->held(k.st));
   if (s == LZ_ERROR) caml_raise_out_of_memory();
   CAMLreturn(outcome(io.consumed, 0, io.produced, s == LZ_DONE));
 }
@@ -645,6 +681,8 @@ static void zstd_enc_reset(void *st) { lz_zstd_enc_reset(st); }
 
 static void zstd_enc_free(void *st) { lz_zstd_enc_free(st); }
 
+static size_t zstd_enc_held(const void *st) { return lz_zstd_enc_held(st); }
+
 static const struct codec zstd_dec = {
     .decode = zstd_decode,
     .reset = zstd_dec_reset,
@@ -657,6 +695,7 @@ static const struct codec zstd_enc = {
     .encode = zstd_encode,
     .reset = zstd_enc_reset,
     .free = zstd_enc_free,
+    .held = zstd_enc_held,
     .run = LZ_ZSTD_ENC_RUN,
     .quota = LZ_ZSTD_ENC_QUOTA,
     .release = RELEASE_ZSTD_ENCODE,
@@ -692,7 +731,7 @@ CAMLprim value lz_zstd_decoder(value window) {
 CAMLprim value lz_zstd_encoder(value level) {
   struct lz_zstd_enc *st = caml_stat_alloc(sizeof *st);
   lz_zstd_enc_init(st, Int_val(level), true);
-  return box(&zstd_enc, st, sizeof *st + lz_zstd_enc_mem(Int_val(level)));
+  return box(&zstd_enc, st, sizeof *st);
 }
 
 /* LZ4 and Snappy: whole-buffer only, each entry keeping its state on its
@@ -1046,5 +1085,5 @@ CAMLprim value lz_zstd_encoder_limit(value limit, value level) {
   struct lz_zstd_enc *st = caml_stat_alloc(sizeof *st);
   lz_zstd_enc_init(st, Int_val(level), true);
   lz_zstd_enc_limit(st, (uint32_t)Long_val(limit));
-  return box(&zstd_enc, st, sizeof *st + lz_zstd_enc_mem(Int_val(level)));
+  return box(&zstd_enc, st, sizeof *st);
 }

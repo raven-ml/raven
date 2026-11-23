@@ -33,9 +33,11 @@ struct lz_zstd_enc {
   struct ze_work *w;
 };
 
-/* [lz_zstd_enc_mem level] is the most a stream encoder at [level]
-   allocates over its life, for the collector's accounting. */
-size_t lz_zstd_enc_mem(int level);
+/* [lz_zstd_enc_held st] is the bytes [st] holds outside the OCaml heap,
+   for the collector's accounting: none before its first step, then its
+   window and tables, which grow with the streams it encodes, up to about
+   49 MiB at level 12, and never shrink. */
+size_t lz_zstd_enc_held(const struct lz_zstd_enc *st);
 void lz_zstd_enc_init(struct lz_zstd_enc *st, int level, bool stream);
 void lz_zstd_enc_reset(struct lz_zstd_enc *st);
 void lz_zstd_enc_free(struct lz_zstd_enc *st);

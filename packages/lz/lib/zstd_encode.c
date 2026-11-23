@@ -211,12 +211,13 @@ static bool grow(uint8_t **p, size_t *cap, size_t need) {
   return *p != NULL;
 }
 
-size_t lz_zstd_enc_mem(int level) {
-  struct ze_params p;
-  params_of(&p, level, false, 0);
-  size_t wsize = (size_t)1 << p.wlog;
-  return sizeof(struct ze_work) + ze_match_bytes(&p) + 64 +
-         arrays_bytes(ZE_BLOCK) + 64 + 2 * wsize + 2 * ZE_BLOCK;
+size_t lz_zstd_enc_held(const struct lz_zstd_enc *st) {
+  const struct ze_work *w = st->w;
+  if (!w) return 0;
+  size_t n = sizeof *w + w->cap;
+  if (w->tables_cap) n += w->tables_cap + 64;
+  if (w->arrays_cap) n += w->arrays_cap + 64;
+  return n;
 }
 
 /* [prepare w bmax] allocates the tables of [w->p] and the buffers for
