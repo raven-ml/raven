@@ -140,18 +140,26 @@ let law c =
   if Nx.Dtype.equal dt Nx.float64 then assume (has_float64 d);
   Scatters.law ~flushes:(flushes d) s c
 
-(* The integer cast law on the GPU, a case into float64 or complex128
-   discarded where its kernels lack float64. *)
-let int_casts c =
+(* [law ~batched s] on the GPU, made at the first case: the cases of [batched]
+   compile several to a program. *)
+let batched (law : ?batched:'a list -> (module Nx.Devices) -> 'a -> unit)
+    batched =
+  let law = lazy (law ~batched (snd (on_gpu ()))) in
+  fun c -> Lazy.force law c
+
+(* The integer cast law on the GPU over cases compiled as one program, a case
+   into float64 or complex128 left out where its kernels lack float64. *)
+let int_casts cs =
   let d, s = on_gpu () in
-  if Int_casts.dst64 c then assume (has_float64 d);
-  Int_casts.law s c
+  Int_casts.laws s
+    (List.filter (fun c -> has_float64 d || not (Int_casts.dst64 c)) cs)
 
-let unreached c = Unreached.law (snd (on_gpu ())) c
+(* The integer arithmetic law on the GPU over cases compiled as one program. *)
+let wraps cs = Wraps.laws (snd (on_gpu ())) cs
+let unreached = batched Unreached.law Unreached.cases
 
-(* A numbering of 4096 keys of 5 values, compiled on the GPU, gives eager's
-   ids, first rows, counts and count: each count adds about 800 ones at one
-   entry. *)
+(* A numbering of 4096 keys of 5 values, compiled on the GPU, gives eager's ids,
+   first rows, counts and count: each count adds about 800 ones at one entry. *)
 let repeated_keys () =
   let _, (module S : Nx.Devices) = on_gpu () in
   let key i = Int32.of_int (i.(0) * 7 mod 5) in
@@ -486,14 +494,16 @@ let prefixes (Prefixes.Case { dt; _ } as c) =
   if Nx.Dtype.equal dt Nx.float64 then assume (has_float64 d);
   Prefixes.law s c
 
-(* The assembly law on the GPU, a float64 or complex128 case discarded where
-   its kernels lack float64. *)
-let assembly c =
+(* The assembly law on the GPU over cases compiled as one program, a float64 or
+   complex128 case left out where its kernels lack float64. *)
+let assembly cs =
+  let wide c =
+    let (Nx.Dtype.Any dt) = Assemblies.dtype c in
+    (Nx.Dtype.bits dt = 64 && Nx.Dtype.is Float dt)
+    || Nx.Dtype.equal dt Nx.complex128
+  in
   let d, s = on_gpu () in
-  let (Nx.Dtype.Any dt) = Assemblies.dtype c in
-  if Nx.Dtype.bits dt = 64 && Nx.Dtype.is Float dt then assume (has_float64 d);
-  if Nx.Dtype.equal dt Nx.complex128 then assume (has_float64 d);
-  Assemblies.law s c
+  Assemblies.laws s (List.filter (fun c -> has_float64 d || not (wide c)) cs)
 
 (* The position of a vector's greatest element, compiled, at lengths 16 does
    not divide: under 32768 one reduction, above it one that scheduling splits
@@ -3473,13 +3483,15 @@ let () =
            ];
          group "integers"
            [
-             prop ~count:20 ~examples:Wraps.examples
+             prop ~count:3
+               ~examples:(Batch.chunks 45 Wraps.examples)
                "integer arithmetic at its type's edges gives eager's values"
-               (Gen.with_pp Wraps.pp Wraps.gen)
-               (fun c -> Wraps.law (snd (on_gpu ())) c);
-             prop ~count:20 ~examples:Int_casts.examples
+               (Batch.drawn 8 (Gen.with_pp Wraps.pp Wraps.gen))
+               wraps;
+             prop ~count:3
+               ~examples:(Batch.chunks 16 Int_casts.examples)
                "an integer cast to a float gives eager's bits"
-               (Gen.with_pp Int_casts.pp Int_casts.gen)
+               (Batch.drawn 8 (Gen.with_pp Int_casts.pp Int_casts.gen))
                int_casts;
              Windtrap.cases
                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
@@ -3523,9 +3535,10 @@ let () =
                test_stack;
              test "a range gather and its gradient compile to eager's bits"
                test_ranges;
-             prop ~count:8 ~examples:Assemblies.examples
+             prop ~count:1
+               ~examples:(Batch.chunks 8 Assemblies.examples)
                "an assembly compiles to eager's bits"
-               (Gen.with_pp Assemblies.pp Assemblies.gen)
+               (Batch.drawn 8 (Gen.with_pp Assemblies.pp Assemblies.gen))
                assembly;
              test "a stack of loops' four-bit rows of sixteen gives eager's"
                (fun () -> Assemblies.packed_rows (snd (on_gpu ())));
@@ -3634,9 +3647,13 @@ let () =
                "an MXFP4 product is within its bound of the exact one"
                ~id:(Format.asprintf "%a" Mxfp4_products.pp)
                Mxfp4_products.cases
-               (fun c ->
-                 let d, s = on_gpu () in
-                 Mxfp4_products.law ~flushes:(flushes d) s c);
+               (let law =
+                  lazy
+                    (let d, s = on_gpu () in
+                     Mxfp4_products.law ~flushes:(flushes d)
+                       ~batched:Mxfp4_products.cases s)
+                in
+                fun c -> Lazy.force law c);
              Windtrap.cases
                "an MXFP4 product of bfloat16 rows decodes each code at each \
                 scale exactly"
