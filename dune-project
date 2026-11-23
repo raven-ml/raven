@@ -19,23 +19,13 @@
 
 (using directory-targets 0.1)
 
-(version 1.0.0~alpha3)
+(version 1.0.0~beta1)
 
 (implicit_transitive_deps false)
 
 (generate_opam_files true)
 
 (opam_file_location inside_opam_directory)
-
-(pin
- (url
-  "git+https://github.com/invariant-hq/mosaic.git#75f374107e7bae09b8e6c9fd87e2b6279c237535")
- (package
-  (name mosaic))
- (package
-  (name matrix))
- (package
-  (name toffee)))
 
 (package
  (name lz)
@@ -398,9 +388,9 @@
   bytesrw
   cmdliner
   (mosaic
-   (>= 0.2.0))
+   (>= 0.3.0))
   (matrix
-   (>= 0.2.0))
+   (>= 0.3.0))
   (windtrap
    (and
     :with-test
@@ -474,11 +464,11 @@
   bytesrw
   jsont
   (mosaic
-   (>= 0.2.0))
+   (>= 0.3.0))
   (matrix
-   (>= 0.2.0))
+   (>= 0.3.0))
   (toffee
-   (>= 0.2.0))
+   (>= 0.3.0))
   tree-sitter
   (windtrap
    (and

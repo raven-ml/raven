@@ -66,9 +66,6 @@ jobs:
 
       - name: Install dependencies
         run: |
-          opam pin add matrix git+https://github.com/invariant-hq/mosaic.git#75f374107e7bae09b8e6c9fd87e2b6279c237535 --no-action
-          opam pin add toffee git+https://github.com/invariant-hq/mosaic.git#75f374107e7bae09b8e6c9fd87e2b6279c237535 --no-action
-          opam pin add mosaic git+https://github.com/invariant-hq/mosaic.git#75f374107e7bae09b8e6c9fd87e2b6279c237535 --no-action
           opam install . --deps-only --with-test
           # The root's opam files hold every dependency of the contrib
           # packages but jord.safe's xmlm.
