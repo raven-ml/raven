@@ -21,6 +21,9 @@ depends: [
   "odoc" {with-doc}
 ]
 depopts: ["bytesrw"]
+conflicts: [
+  "bytesrw" {< "0.4.1"}
+]
 build: [
   ["dune" "subst"] {dev}
   [

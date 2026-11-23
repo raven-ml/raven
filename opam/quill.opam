@@ -20,8 +20,9 @@ bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21"}
-  "cmarkit"
-  "cmdliner"
+  "cmarkit" {>= "0.4.0"}
+  "cmdliner" {>= "1.1.0"}
+  "ocamlfind"
   "bytesrw"
   "jsont"
   "mosaic" {>= "0.3.0"}

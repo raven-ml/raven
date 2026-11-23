@@ -16,11 +16,11 @@ bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21"}
-  "re"
+  "re" {>= "1.14.0"}
   "jsont"
   "bytesrw"
   "uunf" {>= "15.1.0"}
-  "uucp"
+  "uucp" {>= "18.0.0"}
   "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
   "thumper" {with-test & >= "0.1.0"}

@@ -16,7 +16,7 @@ depends: [
   "dune" {>= "3.21"}
   "nx" {= version}
   "lz" {= version}
-  "bytesrw"
+  "bytesrw" {>= "0.3.0"}
   "rune" {with-test & = version}
   "windtrap" {with-test & >= "0.3.1"}
   "ppx_windtrap" {with-test & >= "0.3.1"}

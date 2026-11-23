@@ -3567,7 +3567,7 @@ its lock and from samples the dashboard saw arrive.
 ### Lz (new)
 
 - lz is not available on s390x: its Zstandard decoder reads little-endian
-  words natively.
+  words natively. `lz.bytesrw` needs bytesrw 0.4.1, for `Bytes.Writer.make'`.
 - Add `Lz.Lzf.decode`, LZF as liblzf's decoder reads it, the compression
   of h5py's HDF5 filter 32000. A match before the block's start is
   `Malformed`.
@@ -5152,6 +5152,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- brot needs re 1.14.0, from which a compiled regex is safe to share
+  between domains, as a tokenizer's are, and uucp 18.0.0, the Unicode
+  version of the general categories `Brot` states.
 - **Breaking:** `Brot.export_tiktoken` is removed. It wrote the `vocab.json`
   and `merges.txt` that `save_model_files` writes, not a tiktoken rank file,
   and raised `Invalid_argument` where its doc said `Failure`.
@@ -6112,6 +6115,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Quill
 
+- quill depends on ocamlfind, whose `findlib` its toplevel links, and on
+  cmarkit 0.4.0, which parses a notebook ending in a list where older
+  versions raised.
 - **Breaking:** `Cell.clear_outputs` is removed: write `Cell.set_outputs []`.
 - **Breaking:** `Quill_top.load_package` returns `Not_installed` or `Failed`
   instead of raising or printing. A raven package that does not load is

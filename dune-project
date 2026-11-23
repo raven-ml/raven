@@ -52,6 +52,10 @@
     :with-test
     (>= 0.1.0))))
  (depopts bytesrw)
+ ; lz.bytesrw writes through Bytes.Writer.make'
+ (conflicts
+  (bytesrw
+   (< 0.4.1)))
  (tags
   (compression deflate gzip zlib zstd lz4 snappy crc32)))
 
@@ -98,12 +102,16 @@
   (ocaml
    (>= 5.2.0))
   dune
-  re
+  ; a compiled regex is shared between domains since re 1.14.0
+  (re
+   (>= 1.14.0))
   jsont
   bytesrw
   (uunf
    (>= 15.1.0))
-  uucp
+  ; brot.mli states uucp's Unicode version
+  (uucp
+   (>= 18.0.0))
   (windtrap
    (and
     :with-test
@@ -135,7 +143,8 @@
    (= :version))
   (lz
    (= :version))
-  bytesrw
+  (bytesrw
+   (>= 0.3.0))
   (rune
    (and
     :with-test
@@ -384,9 +393,9 @@
   (ocaml
    (>= 5.2.0))
   dune
-  jsont
-  bytesrw
-  cmdliner
+  ; the CLI's tests state cmdliner 2's error output
+  (cmdliner
+   (>= 2.0.0))
   (mosaic
    (>= 0.3.0))
   (matrix
@@ -459,8 +468,12 @@
   (ocaml
    (>= 5.2.0))
   dune
-  cmarkit
-  cmdliner
+  ; cmarkit 0.4.0 parses a list that ends the file
+  (cmarkit
+   (>= 0.4.0))
+  (cmdliner
+   (>= 1.1.0))
+  ocamlfind
   bytesrw
   jsont
   (mosaic
