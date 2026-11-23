@@ -141,6 +141,16 @@ let march_tests =
           Split.march state Split.yoshida4 ~steps:5 ~kick ~drift ~at s0
         in
         equal (close ()) stepped (Nx.get [ 1 ] q, Nx.get [ 1 ] p));
+    test "a leapfrog interval makes steps + 1 kicks" (fun () ->
+        (* A kick counts itself in the second leaf. *)
+        let kick _ (q, n) = (q, Nx.add_s n 1.)
+        and drift h (q, n) = (Nx.add q h, n) in
+        let _, n =
+          Split.march state Split.leapfrog ~steps:4 ~kick ~drift
+            ~at:(vec [| 0.; 1. |])
+            (scalar 0., scalar 0.)
+        in
+        equal (Oracle.tensor ()) (vec [| 0.; 5. |]) n);
     test "one time is the start alone" (fun () ->
         let q, _ =
           Split.march state Split.leapfrog ~steps:2 ~kick ~drift
@@ -279,8 +289,19 @@ let error_tests =
     test "v rejects a non-finite coefficient" (fun () ->
         raises_with "not finite" (fun () ->
             Split.v ~kick:[| nan; nan |] ~drift:[| 1. |]));
-    test "v accepts the leapfrog's coefficients" (fun () ->
-        ignore (Split.v ~kick:[| 0.5; 0.5 |] ~drift:[| 1. |]));
+    test "v rejects an empty drift" (fun () ->
+        raises_with "drift is empty" (fun () ->
+            Split.v ~kick:[| 1. |] ~drift:[||]));
+    test "v rejects drifts that do not sum to one" (fun () ->
+        raises_with "drift does not sum to 1" (fun () ->
+            Split.v ~kick:[| 0.25; 0.5; 0.25 |] ~drift:[| 0.4; 0.4 |]));
+    test "v of the leapfrog's coefficients steps as leapfrog" (fun () ->
+        let s0 = (vec [| 1.; -0.4 |], vec [| 0.2; 0.9 |]) and h = scalar 0.3 in
+        equal (Oracle.structure state)
+          (Split.step Split.leapfrog ~kick ~drift h s0)
+          (Split.step
+             (Split.v ~kick:[| 0.5; 0.5 |] ~drift:[| 1. |])
+             ~kick ~drift h s0));
     test "march rejects zero steps" (fun () ->
         raises_with "steps = 0" (march ~steps:0 (vec [| 0.; 1. |])));
     test "march rejects no time" (fun () ->
@@ -299,8 +320,8 @@ let () =
     (run "Jera.Split"
        [
          group "order" order_tests;
-         group "march" march_tests;
          group "chains" chain_tests;
+         group "march" march_tests;
          group "transformations" transformation_tests;
          group "errors" error_tests;
        ])
