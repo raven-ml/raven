@@ -108,8 +108,7 @@ let dispatch_rows =
   Thumper.group "dispatch"
     [
       Thumper.bench_with_setup "shape" ~setup:one Nx.shape;
-      (* A read of a value's array, which keeps its memory for the call: a
-         value the collector finalises and a record in the C heap. *)
+      (* A read of a value's array, which claims its memory for the call. *)
       Thumper.bench_with_setup "repr-read-1" ~setup:one (fun x ->
           Nx.Repr.read ~by:"bench" x A.layout);
       Thumper.bench_with_setup "add-1" ~setup:one (fun x -> Nx.add x x);

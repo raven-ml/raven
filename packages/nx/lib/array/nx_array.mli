@@ -381,6 +381,20 @@ val door :
     memory is a lost device's or must follow work a lost device did not
     finish, and as [f]'s exception for a device lost while [f] runs. *)
 
+(**/**)
+
+val reading : string -> ('v, 's) t -> (unit -> 'a) -> 'a
+(** [reading fn a f] is [f ()] under a read claim on [a]'s memory, which ends
+    when [f] returns or raises: no donation takes the memory meanwhile
+    ({!Rig.section-claims}). It waits for no device work: [f] must read [a]'s
+    elements only through calls that wait for the work a read must follow, as
+    {!read} and {!Rig.Buffer.read} do.
+
+    Raises [Invalid_argument] naming [fn], as {!refused} does, if [a]'s buffer
+    is dead, and {!Rig.Lost} as {!door} does. *)
+
+(**/**)
+
 val refused : string -> answer -> any list -> 'a
 (** [refused name r operands] raises [Invalid_argument] for the refusal [r]
     that a kernel answered for [operands], naming [name], the reason [r] gives,

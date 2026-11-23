@@ -349,7 +349,7 @@ module Host : sig
     'a
   (** [read x f] is [f b], [b] [x]'s elements in C order: over [x]'s memory
       where [x] is C-contiguous, and over a copy otherwise. It is a
-      {{!section-reads}read}, and keeps [x]'s memory as {!Repr.read} does.
+      {{!section-reads}read}, and claims [x]'s memory as {!Repr.read} does.
       [f] must not write through [b], and must not keep [b] after it
       returns.
 
@@ -5929,11 +5929,10 @@ module Repr : sig
 
       Unlike {!array}, it leaves [x]'s memory unshared, so a donation of [x]
       after [f] returns may write its result there ({!donate}). [a]'s memory
-      is kept for the extent of [f] ({!Rig.Buffer.val-keep}): a donation of [x]
-      meanwhile computes into fresh memory. Each call's keep costs a value
-      the collector finalises. [f] must not write through [a], and must not
-      keep [a], or a bigarray over it, after it returns. [x] stays reachable
-      until [f] returns.
+      is claimed for reading for the extent of [f] ({!Rig.section-claims}): a
+      donation of [x] meanwhile computes into fresh memory. [f] must not write
+      through [a], and must not keep [a], or a bigarray over it, after it
+      returns. [x] stays reachable until [f] returns.
 
       Raises [Invalid_argument] naming [by] for a dead or a traced [x], and a
       failed check as a wait does. What [f] raises passes on as raised. *)

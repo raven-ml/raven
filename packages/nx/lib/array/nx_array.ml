@@ -105,10 +105,19 @@ let door ~written ~read f x =
 
 (* Holds a read claim on [a]'s memory while [f ()] runs: no donation writes
    it meanwhile. A copy under it orders itself after [a]'s work, and a load
-   waits for that work first. *)
+   waits for that work first. The claim is taken as [door] takes it, inline,
+   so that [f]'s result needs no cell. *)
 let reading fn a f =
-  match door ~written:[||] ~read:[| Any a |] f () with
-  | Done -> ()
+  let operands : any iarray = [| Any a |] in
+  match admit [||] operands with
+  | Done -> (
+      match f () with
+      | r ->
+          release [||] operands;
+          r
+      | exception e ->
+          release [||] operands;
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
   | refusal -> refused fn refusal [ Any a ]
 
 (* Making arrays *)
@@ -317,12 +326,10 @@ let checked fn dt x =
 let get a idx =
   let fn = "Nx_array.get" in
   let p = position fn a idx in
-  let x = ref None in
   reading fn a (fun () ->
       if host_address a.buffer < 0 then refused fn Off_host [ Any a ];
       Buffer.wait a.buffer Rig.Read;
-      x := Some (load a p));
-  Option.get !x
+      load a p)
 
 let set a idx x =
   let fn = "Nx_array.set" in
