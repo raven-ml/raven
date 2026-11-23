@@ -61,15 +61,24 @@ let addresses host =
   |> List.map (fun a -> a.Unix.ai_addr)
 
 (* Whether [a] is an address of this machine: whether a socket binds to it. A
-   system without the address's family has none. *)
+   system without the address's family has none. [Error why] where the system
+   refuses the process the bind, as a sandbox does: the agent here could not
+   listen either. *)
 let binds a =
   match Unix.socket (Unix.domain_of_sockaddr a) Unix.SOCK_STREAM 0 with
-  | exception Unix.Unix_error _ -> false
+  | exception Unix.Unix_error _ -> Ok false
   | fd -> (
       Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
       match Unix.bind fd a with
-      | () -> true
-      | exception Unix.Unix_error _ -> false)
+      | () -> Ok true
+      | exception Unix.Unix_error (((Unix.EPERM | Unix.EACCES) as e), _, _) ->
+          let address =
+            match a with
+            | Unix.ADDR_INET (i, _) -> Unix.string_of_inet_addr i
+            | Unix.ADDR_UNIX p -> p
+          in
+          Error (strf "binding %s: %s" address (Unix.error_message e))
+      | exception Unix.Unix_error _ -> Ok false)
 
 (* Sessions: [ssh M exec "$SHELL" -lc 'exec RIG agent --firmware DIR...
    ADDRESS:0'], a machine's half, started by the user's login shell so that the
@@ -98,9 +107,18 @@ let machines ~misuse ~rig ~firmware names =
   in
   let named = List.map found names in
   let first, _, h = List.hd named in
-  if not (List.exists binds (addresses h)) then
-    misuse
-      (strf "--on: '%s' is not this machine; name this machine first" first);
+  let bound = List.map binds (addresses h) in
+  let refused =
+    List.find_map (function Error why -> Some why | Ok _ -> None) bound
+  in
+  (match (List.mem (Ok true) bound, refused) with
+  | true, _ -> ()
+  | false, Some why ->
+      sayf "%s: the agent cannot listen here: %s" first why;
+      exit 123
+  | false, None ->
+      misuse
+        (strf "--on: '%s' is not this machine; name this machine first" first));
   let machine (name, host, h) =
     match addresses h with
     | Unix.ADDR_INET (a, _) :: _ ->

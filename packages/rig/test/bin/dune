@@ -20,3 +20,12 @@
   support/gap.exe
   support/high.exe
   support/version))
+
+; sandbox-exec is macOS's, and cannot run inside opam's sandbox there.
+
+(cram
+ (applies_to refused)
+ (enabled_if
+  (and
+   (= %{system} macosx)
+   (<> %{profile} release))))
