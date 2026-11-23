@@ -486,11 +486,14 @@ module R = Recovery
 (* The recovery law on posteriordb's dogs and eight_schools_noncentered, whose
    scale and effects reach the reference through [M.constrain] and a bijector's
    Jacobian, and on a run too short for its diagnostics. *)
+(* The dogs cells share one warmup. *)
+let dogs = R.nuts_warmed (fun () -> R.posterior "dogs-dogs")
+
 let recovery =
   [
     (* R-hat up to 1.020 on keys 1 to 40 at 100 draws. *)
     R.recovers "draws recover the dogs posterior" (fun () ->
-        R.chain_cell (R.nuts ~draws:300 ()) (R.posterior "dogs-dogs"));
+        R.warmed_cell dogs ~draws:300);
     (* At the default acceptance a transition or two diverges on 17 of keys 1 to
        40, and at 0.9 on 3. *)
     R.recovers "draws recover the eight schools posterior" (fun () ->
@@ -500,7 +503,7 @@ let recovery =
     (* 160 draws: every element's effective size is below the 400 the summary
        asks, on each of keys 1 to 40. *)
     R.flagged "a run too short for its diagnostics is flagged" (fun () ->
-        R.chain_cell (R.nuts ~draws:20 ()) (R.posterior "dogs-dogs"));
+        R.warmed_cell dogs ~draws:20);
   ]
 
 (* Simulation-based calibration of a conjugate normal model: the ranks of

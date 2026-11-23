@@ -41,13 +41,13 @@ let posterior name = P.find "model/support/posteriordb.golden" name
 type comparison = { what : string; est : float; ref : float; se : float }
 type verdict = Flagged of string | Compared of comparison list
 
-(* A cell: a sampler's run on one posterior, from a key. [quantile p] is the
+(* A cell: a sampler's run on one posterior, from [key]. [quantile p] is the
    multiple of a comparison's standard error that a two-sided error lies within
    with probability [2p - 1]. *)
 type cell = {
   name : string;
   quantile : float -> float;
-  verdict : Nx.host Nx.Rng.key -> verdict;
+  verdict : unit -> verdict;
 }
 
 let normal_quantile p =
@@ -110,11 +110,14 @@ type kernel = {
     'u Norn.Draws.t * (Nx.float64_elt, Nx.host) Norn.Stats.t Norn.Draws.t option;
 }
 
+(* NUTS's chains, in superchains of two. *)
+let nuts_chains = 8
+
 let nuts ?accept ~draws () =
   {
     label = "NUTS";
-    chains = 8;
-    superchains = 4;
+    chains = nuts_chains;
+    superchains = nuts_chains / 2;
     run =
       (fun u lp k start ->
         let s = Norn.Nuts.init u ?accept lp start in
@@ -260,9 +263,40 @@ let chain_cell kernel (P.Posterior p) =
     name = kernel.label ^ " › " ^ p.name;
     quantile = normal_quantile;
     verdict =
-      (fun k ->
-        let d, stats = run k in
+      (fun () ->
+        let d, stats = run key in
         judge_chains P.latent ~superchains:kernel.superchains p.refs
+          (param p.params) stats d);
+  }
+
+(* [nuts_warmed ?accept post] is an accessor for NUTS's chains on [post ()]
+   after warmup from [key], acquired by the first test of a worker that calls
+   it, with their sampler. The cells [warmed_cell] makes of one accessor share
+   its warmup, which is the [nuts] kernel's: their verdicts are that kernel's
+   cells'. *)
+let nuts_warmed ?accept post =
+  fixture (fun () ->
+      let (P.Posterior p as posterior) = post () in
+      let m = p.model in
+      let u = M.coords m and lp = M.log_density m p.y in
+      let start = M.init m p.y ~chains:nuts_chains key in
+      let s = Norn.Nuts.init u ?accept lp start in
+      let s = Norn.Nuts.warmup u lp key ~steps:warmup s in
+      let sample ~draws =
+        let _, d, st = Norn.Nuts.sample u lp key ~draws s in
+        (Norn.Draws.map u P.latent (M.constrain m) d, Some st)
+      in
+      (posterior, sample))
+
+let warmed_cell warmed ~draws =
+  let P.Posterior p, sample = warmed () in
+  {
+    name = "NUTS › " ^ p.name;
+    quantile = normal_quantile;
+    verdict =
+      (fun () ->
+        let d, stats = sample ~draws in
+        judge_chains P.latent ~superchains:(nuts_chains / 2) p.refs
           (param p.params) stats d);
   }
 
@@ -340,7 +374,7 @@ let replicated_cell sampler (P.Posterior p) =
     name = sampler.label ^ " › " ^ p.name;
     quantile = t_quantile ~df:(replicates - 1);
     verdict =
-      (fun key ->
+      (fun () ->
         let zs, e = run (Nx.Rng.split_batch ~n:replicates key) in
         let spent =
           List.filter_map
@@ -428,7 +462,7 @@ let recovers name cell =
   let tail = 1. -. (false_alarms /. (2. *. float_of_int family)) in
   test name (fun () ->
       let c = cell () in
-      match c.verdict key with
+      match c.verdict () with
       | Flagged why -> failf "%s is flagged: %s" c.name why
       | Compared cs -> within ~tail c cs)
 
@@ -436,6 +470,6 @@ let recovers name cell =
 let flagged name cell =
   test name (fun () ->
       let c = cell () in
-      match c.verdict key with
+      match c.verdict () with
       | Flagged _ -> ()
       | Compared _ -> failf "%s passes its diagnostics" c.name)
