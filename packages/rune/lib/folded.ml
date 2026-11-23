@@ -115,13 +115,6 @@ let kept u =
   match Ops.op u with
   | Op.Exp2 | Op.Log2 | Op.Sin | Op.Pow | Op.Threefry -> true
   | Op.Mulacc -> not (Dtype.equal dt Float32 || Dtype.equal dt Float64)
-  | Op.Shl | Op.Shr -> (
-      match source_value u 1 with
-      | Some (`Int n) ->
-          not
-            (Dtype.mem dt Dtype.ints && Bigint.geq n Bigint.zero
-            && Bigint.lt n (Bigint.of_int (Dtype.bitsize dt)))
-      | _ -> true)
   | Op.Truncdiv | Op.Truncmod | Op.Div | Op.Mod -> (
       match source_value u 1 with Some (`Int _) -> false | _ -> true)
   | Op.Cast when Dtype.mem dt Dtype.ints -> (
@@ -159,7 +152,9 @@ let common = function
   | [] -> None
   | a :: rest ->
       let s = Shape.shape a in
-      if List.for_all (fun b -> Shape.shape b = s) rest then Some s else None
+      if List.for_all (fun b -> Ops.equal_shape (Shape.shape b) s) rest then
+        Some s
+      else None
 
 (* [fold build args] is [build args], or where every operand is a constant its
    value moved to its shape: [build] of the operands' scalar literals, a graph

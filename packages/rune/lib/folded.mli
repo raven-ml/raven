@@ -30,10 +30,9 @@
       decomposition, and [Threefry];
     - a [Mulacc] of floats narrower than [float32], which a target that emulates
       them may round twice;
-    - a shift by a count outside the width of a committed integer type, which
-      tolk's rules do not compute, and a conversion of a float to an integer
-      type that does not hold its truncation, NaN and infinities included, which
-      C leaves undefined and tolk's code generation decides;
+    - a conversion of a float to an integer type that does not hold its
+      truncation, NaN and infinities included, which C leaves undefined and
+      tolk's code generation decides;
     - an operation that builds a node of neither a literal nor arithmetic, such
       as a movement;
     - an operation with an [`Invalid] operand. *)
