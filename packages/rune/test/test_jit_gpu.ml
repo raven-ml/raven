@@ -1090,6 +1090,7 @@ let chain_n = 2048
 let test_split_memory () =
   let gpu, _ = on_gpu () in
   let mem = Result.get_ok (Rig.software "rune-jit-gpu-chain") in
+  Compiled.here ~on:mem ();
   let (module S) = Nx.devices [ gpu; mem ] in
   let on_gpu = Nx.Placement.device S.v gpu
   and on_mem = Nx.Placement.device S.v mem in
@@ -1148,6 +1149,26 @@ let detour () =
   let y = Rune.jit' f x in
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal bits_t (bits (Nx.add (Nx.mul x x) x)) (bits y)
+
+(* A detour that adds on the host compiles where rig links host code, and the
+   compiler declines it where rig links none, as on ppc64le; {!detour}, whose
+   host only holds values, compiles on each. *)
+let host_step () =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let x = Nx.create Nx.float32 [| 3 |] [| 1.5; -2.; 3.25 |] in
+  let f x =
+    let y = Nx.place S.on x in
+    Nx.add (Nx.place Nx.Host.on (Nx.mul y y)) x
+  in
+  if Rig.Image.links Rig.host then begin
+    let before = Rune.evaluations () in
+    let y = Rune.jit' f x in
+    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+    equal bits_t (bits (Nx.add (Nx.mul x x) x)) (bits y)
+  end
+  else
+    raises_match (Exn.invalid_arg ~sub:"where rig links no host code")
+      (fun () -> Rune.footprint Nx.Ptree.(tensor @-> returns tensor) f x)
 
 (* Several targets
 
@@ -1456,7 +1477,13 @@ let check (type d e) (mixed : d set) (memory : e set) c =
       | _ -> ())
     ps
 
-let memory k = Result.get_ok (Rig.software ("rune-jit-gpu-" ^ k))
+(* A software device, skipping the running test where rig links no host code for
+   it: a program that computes there declines, and the GPU's set has no kernels
+   to evaluate it. *)
+let memory k =
+  let m = Result.get_ok (Rig.software ("rune-jit-gpu-" ^ k)) in
+  Compiled.here ~on:m ();
+  m
 
 (* The sets the laws run over: the GPU and software devices, in an order that
    puts the GPU at [first], and as many software devices. *)
@@ -3915,7 +3942,11 @@ let () =
                 its plan"
                test_split_memory;
            ];
-         group "a detour" [ test "onto the GPU's set and back" detour ];
+         group "a detour"
+           [
+             test "onto the GPU's set and back" detour;
+             test "an addition on the host" host_step;
+           ];
          group "switches"
            [
              test "over a cut value, the index whole on each"
