@@ -13,6 +13,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
+          - ubuntu-24.04-arm
           - macos-latest
           - windows-2025
 
@@ -167,11 +168,11 @@ jobs:
       # suite's uv scripts generate the data; one OS suffices, since the
       # answers depend on talon's semantics, which runtest covers per OS.
       - name: Set-up uv
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
         uses: astral-sh/setup-uv@v6
 
       - name: Check talon's benchmark answers
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
         env:
           DATA: ${{ runner.temp }}/talon-bench
         run: |
