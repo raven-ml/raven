@@ -197,8 +197,9 @@ val barrier : file -> unit
     unspecified. On Linux it ends the process ([SIGBUS]). On macOS it ends
     the process for a file {!create_file} made, and reads the bytes the page
     held for a file {!of_file} opened, whose pages are the process's own copy.
-    Windows refuses to truncate, delete or replace a file whose pages are
-    mapped, until the mapping's allocation is collected. Another change may
+    Windows refuses to truncate a file whose pages are mapped, and to delete
+    it or rename another over it without POSIX semantics, until the mapping's
+    allocation is collected. Another change may
     show through the pages of a file {!of_file} opened that the process has
     not written.
 
