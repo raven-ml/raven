@@ -340,6 +340,22 @@ let sample_batches_law ((t, split), seed) =
     (fun s -> equal table (sampled s t) (sampled s split))
     [ `Rows (Talon.rows t / 2); `Fraction 0.3 ]
 
+(* A refused fraction is named as talon writes a float literal, alike on every
+   system. *)
+let sample_refused () =
+  let q = Query.of_table (table_int [ 1 ]) in
+  List.iter
+    (fun (f, text) ->
+      let sub = "the fraction " ^ text ^ " is not in [0, 1]" in
+      raises_match (Exn.invalid_arg ~sub) (fun () -> Kit.sample (`Fraction f) q))
+    [
+      (-1e-8, "-1e-08");
+      (2., "2.");
+      (1e21, "1e+21");
+      (Float.nan, "nan");
+      (Float.neg_infinity, "neg_infinity");
+    ]
+
 let fraction_law (n, seed) =
   let xs = List.init n Fun.id in
   let t = table_int xs in
@@ -518,6 +534,7 @@ let () =
              prop "fractions nest"
                (Gen.pair (Gen.int_range 0 200) (Gen.int_range 0 1000))
                fraction_law;
+             test "a refused fraction" sample_refused;
            ];
          group "folds"
            [

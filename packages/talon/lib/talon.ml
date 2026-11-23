@@ -619,7 +619,8 @@ module Kit = struct
         |> drop (Sel.names [ key ])
     | `Fraction f ->
         if not (f >= 0. && f <= 1.) then
-          err "Kit.sample: the fraction %g is not in [0, 1]" f;
+          err "Kit.sample: the fraction %a is not in [0, 1]" (Type.pp_lit Float)
+            f;
         if f >= 1. then q
         else
           let cutoff = Int.of_float (f *. hash_range) in
