@@ -114,6 +114,7 @@ let run (type s) (module S : Nx.Devices) (dt : (float, s) Nx.dtype) c =
   let put y = Nx.place S.on y in
   let before = Rune.evaluations () in
   let y = to_bits dt (Nx.place Nx.Host.on (g (put i) (put u) (put x))) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   (* Rows past the first, which no update reaches. *)
   let shown f =

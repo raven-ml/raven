@@ -534,6 +534,7 @@ let test_compiled () =
           let msg = Printf.sprintf "%s at %g" msg p in
           let before = Rune.evaluations () in
           let y = Rune.jit' f x in
+          Rune_support.Compiled.here ();
           equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before);
           equal ~msg close (f x) y)
         points)
@@ -546,6 +547,7 @@ let test_compiled () =
       List.iter
         (fun f ->
           let y, n = collected (Rune.jit' f) x in
+          Rune_support.Compiled.here ();
           equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before);
           let y', n' = collected f x in
           equal ~msg close y' y;
@@ -585,12 +587,14 @@ let test_compiled () =
   let max3 = "until is still false after max = 3 steps" in
   invalid ~sub:max3 (fun () -> unread (scalar 5.));
   invalid ~sub:max3 (fun () -> Rune.jit' unread (scalar 5.));
+  Rune_support.Compiled.here ();
   equal ~msg:"checks: compiled" int 0 (Rune.evaluations () - before);
   let before = Rune.evaluations () in
   invalid ~sub:"Rune.switch: index 3 outside 0 .. 2" (fun () ->
       Rune.jit' (fun x -> three x (index x)) (scalar 2.));
   invalid ~sub:"Rune.switch: index -1 outside 0 .. 2" (fun () ->
       Rune.jit' (fun x -> three x (index x)) (scalar (-2.)));
+  Rune_support.Compiled.here ();
   equal ~msg:"out of range: compiled" int 0 (Rune.evaluations () - before);
   (* An untaken branch runs none of its work under jit: here a loop of [trips]
      steps, each over the [4096] elements of a capture, which takes hundreds

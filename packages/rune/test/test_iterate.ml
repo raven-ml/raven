@@ -60,6 +60,7 @@ let lenient ~nan =
 (* [f ()], covering that a call of a loop compiled: no call it made was
    evaluated. *)
 let compiled f =
+  Compiled.here ();
   let before = Rune.evaluations () in
   let r = f () in
   cover "compiled"
@@ -306,6 +307,7 @@ let test_staged () =
   C.reset ();
   let y = g x in
   equal ~msg:"no retrace" int 0 !traces;
+  Compiled.here ();
   equal ~msg:"no eager kernel" int 0 (C.calls ());
   equal bits_t (bits (Rune.iterate' ~max:50 ~until halve x)) (bits y);
   let y = Rune.jit' (fun x -> Rune.iterate' ~max:3 ~until halve x) x in
@@ -359,6 +361,7 @@ let law_call (Call c) =
   let step f (x, k) = (Nx.add (f x) (f (Nx.maximum w x)), tick k) in
   let until (_, k) = Nx.greater_equal_s k (Int32.of_int c.trips) in
   let written f = fst (looped ~max:3 ~until (step f) (init, k0 ())) in
+  Compiled.here ();
   cover "a step the call computes apart from eager"
     (bits (written c.jitted) <> bits (written c.plain));
   equal bits_t
@@ -500,6 +503,7 @@ let law_derivatives (Case c, compiled_too) =
                    xw
                in
                (bits gx, bits gw))));
+    Compiled.here ();
     equal ~msg:"grad compiled" int 0 (Rune.evaluations () - calls);
     (* A linearization's record compiles as forward mode's steps. *)
     let tangent = function Value (_, t) -> Value t | Raised m -> Raised m in
@@ -513,6 +517,7 @@ let law_derivatives (Case c, compiled_too) =
                in
                bits
                  (Rune.jit T.(p2 () @-> p2 () @-> returns tensor) at xw txw))));
+    Compiled.here ();
     equal ~msg:"linearization compiled" int 0 (Rune.evaluations () - calls);
     (* Forward mode compiles, where the step's functions are exact and sum no
        terms along an axis. *)
@@ -874,6 +879,7 @@ let law_lanes (Lanes c, compiled_too) =
                grad_at c.dt (fun x -> Rune.vmap s (iterated ~g ~y w) (x, t))
              in
              bits (Rune.jit' f x)));
+      Compiled.here ();
       equal ~msg:"grad compiled" int 0 (Rune.evaluations () - calls)
     end;
     (* Forward mode, inside and around the map. *)
@@ -902,6 +908,7 @@ let law_lanes (Lanes c, compiled_too) =
              let f x = Rune.vmap s (iterated ~g ~y w) (x, t) in
              bits
                (Rune.jit' (fun x -> snd (Rune.jvp' f x (Nx.ones_like x))) x)));
+      Compiled.here ();
       equal ~msg:"jvp compiled" int 0 (Rune.evaluations () - calls)
     end;
     (* A captured parameter's gradient sums each step's of every lane, in an
@@ -1106,6 +1113,7 @@ let law_apart (Apart (dt, s, lanes, trips, max, g, co)) =
   let calls = Rune.evaluations () in
   equal ~msg:"compiled" (outcome_t codes_t) expected
     (outcome (fun () -> codes (Rune.jit sg mapped (x, t))));
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls)
 
 (* A key in the carry, folded with the step count at each step: eagerly,
@@ -1378,6 +1386,7 @@ let test_nested () =
   let calls = Rune.evaluations () in
   equal ~msg:"compiled" codes_t expected
     (codes (Rune.jit' (Rune.vmap' outer) x));
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls)
 
 (* A map of the derivative of an iterate in a loop's step: the step's tape
@@ -1513,6 +1522,7 @@ let test_complex_carry () =
     (codes (Rune.jit' grad (Nx.get [ 0 ] c)));
   equal ~msg:"jit of vmap of grad" codes_t (codes per_lane)
     (codes (Rune.jit' (Rune.vmap' grad) c));
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - calls)
 
 (* A map of one lane is the loop, and lanes of lanes are each lane's loop. *)
@@ -1738,6 +1748,7 @@ let law_rows (Rows_case c) =
   let calls = Rune.evaluations () in
   equal ~msg:"compiled" quad expected
     (compiled (fun () -> outcome (fun () -> codes4 (jitted table init))));
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls)
 
 (* The gradient through rows written into a carry: each step writes [x] scaled
@@ -1783,6 +1794,7 @@ let test_rows_grad () =
   let calls = Rune.evaluations () in
   equal ~msg:"compiled" bits_t (bits expected)
     (bits (Rune.jit' (Rune.grad' (loss iterated)) x));
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls);
   let xs = Nx.stack [ x; Nx.neg x ] in
   let per_lane = Nx.stack [ written x; written (Nx.neg x) ] in
@@ -1805,10 +1817,12 @@ let test_rows_read_carry () =
   equal ~msg:"eagerly" bits_t (bits expected) (bits (swapped a));
   let calls = Rune.evaluations () in
   equal ~msg:"compiled" bits_t (bits expected) (bits (Rune.jit' swapped a));
+  Compiled.here ();
   equal ~msg:"swap compiled" int 0 (Rune.evaluations () - calls);
   let calls = Rune.evaluations () in
   equal ~msg:"a donated swap" bits_t (bits expected)
     (bits (Rune.jit' (fun a -> fst (swap a ())) (Nx.donate (Nx.copy a))));
+  Compiled.here ();
   equal ~msg:"a donated swap compiled" int 0 (Rune.evaluations () - calls);
   let c = T.(pair tensor (pair tensor tensor)) in
   let step (x, (table, i)) =
@@ -1835,6 +1849,7 @@ let test_rows_read_carry () =
   let calls = Rune.evaluations () in
   equal ~msg:"compiled" three expected
     (codes3 (Rune.jit T.(c @-> returns c) loop init));
+  Compiled.here ();
   equal ~msg:"carries that read each other compiled" int 0
     (Rune.evaluations () - calls)
 

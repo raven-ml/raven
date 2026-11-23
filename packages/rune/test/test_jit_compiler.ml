@@ -56,6 +56,7 @@ let evaluated (Unlowered (_, f, x)) =
 let compiled f =
   let before = Rune.evaluations () in
   ignore (f ());
+  Compiled.here ();
   equal ~msg:"evaluated" int 0 (Rune.evaluations () - before)
 
 (* A compiled call that adds to a total, under reverse mode: its known part
@@ -103,6 +104,7 @@ let host_x () = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |]
 let missing_clang = "/nonexistent/clang"
 
 let without_clang () =
+  Compiled.here ();
   raises_match
     (function
       | Tolk.Renderer.Compiler.Compile_error m ->

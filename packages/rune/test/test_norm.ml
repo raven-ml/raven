@@ -319,6 +319,7 @@ let test_passes () =
   let m = Nx.Rng.uniform ~key:(Nx.Rng.key 2) Nx.float32 [| 256; 128 |] in
   let jit1 f = Rune.jit Nx.Ptree.(tensor @-> returns tensor) f in
   let jit2 f = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f in
+  Rune_support.Compiled.here ();
   equal ~msg:"rms_norm" int 2 (kernels (jit1 (fun x -> Nx.rms_norm x)) x);
   let product = jit2 Nx.matmul in
   let normed = jit2 (fun x m -> Nx.matmul (Nx.rms_norm x) m) in

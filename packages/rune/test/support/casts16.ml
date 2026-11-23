@@ -79,6 +79,7 @@ let law (type s) (module S : Nx.Devices) (dt : (float, s) Nx.dtype) =
   let compiled g x =
     let before = Rune.evaluations () in
     let y = Rune.jit Nx.Ptree.(tensor @-> returns tensor) g (Nx.place S.on x) in
+    Compiled.here ();
     equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
     y
   in

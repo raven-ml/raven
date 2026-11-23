@@ -35,6 +35,7 @@ let offset (o : Operand.t) = match o.view with Offset _ -> true | _ -> false
 let compiled f =
   let before = Rune.evaluations () in
   let r = outcome f in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   r
 
@@ -188,6 +189,7 @@ let law_bitcast (Bitcast_case (src, dt, view, offset, seed)) =
     views;
   let before = Rune.evaluations () in
   let y = Rune.jit' (Nx.bitcast dt) x in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal codes_t (raw (Nx.bitcast dt x)) (raw y)
 
@@ -316,6 +318,7 @@ let law_rshift (Shift_case (dt, n, seed)) =
   equal ~msg:"eager" int64s expected (ints (Nx.rshift x n));
   let before = Rune.evaluations () in
   let y = Rune.jit' (fun x -> Nx.rshift x n) x in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal ~msg:"jit" int64s expected (ints y)
 
@@ -342,6 +345,7 @@ let test_stack () =
       let rows = List.init p row in
       let before = Rune.evaluations () in
       let y = f rows in
+      Compiled.here ();
       equal ~msg:(Printf.sprintf "%d rows compiled" p) int 0
         (Rune.evaluations () - before);
       equal
@@ -372,6 +376,7 @@ let test_concatenate_launch () =
   let launches =
     List.filter (fun (k : Tolk.Realize.kernel) -> k.name = "launch") ks
   in
+  Compiled.here ();
   equal ~msg:"launches" int 1 (List.length launches)
 
 (* An exponential, a sigmoid, a sine or a logarithm that every output of a
@@ -380,6 +385,7 @@ let test_concatenate_launch () =
    output would compute it again. A square is computed in the product. *)
 let test_broadcast_exponential () =
   let kernels f a b =
+    Compiled.here ();
     let jit = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f in
     List.length (snd (Tolk.Realize.kernels (fun () -> ignore (jit a b))))
   in
@@ -435,6 +441,7 @@ let test_routed_activation () =
   in
   let cheap g l = Nx.mul (Nx.clamp ~min:0. g) (Nx.add_s l 1.) in
   let swiglu g l = Nx.mul (Nx.mul g (Nx.sigmoid g)) (Nx.add_s l 1.) in
+  Compiled.here ();
   equal int (kernels cheap + 1) (kernels swiglu)
 
 (* On the host, a draw two operations read is stored at its own type, a
@@ -444,6 +451,7 @@ let test_routed_activation () =
 let test_draw_stored_whole () =
   let stores, eager = Draws.mask_stores (module Nx.Host) in
   equal ~msg:"eager's bits" bool true eager;
+  Compiled.here ();
   equal ~msg:"what the draw stores" (list string) [ "f32" ] stores
 
 (* A scatter reads its updates where they lie in storage, as a model writes
@@ -467,6 +475,7 @@ let test_scatter_in_place () =
       Nx.scatter ~axis:0 indices (value k) pool
     in
     let kernels value k =
+      Compiled.here ();
       let jit =
         Rune.jit T.(tensor @-> tensor @-> returns tensor) (write value)
       in
@@ -501,6 +510,7 @@ let test_doubled_rows () =
       in
       let before = Rune.evaluations () in
       let y = Rune.jit' f x in
+      Compiled.here ();
       equal ~msg:(Printf.sprintf "%d rows compiled" k) int 0
         (Rune.evaluations () - before);
       equal ~msg:(Printf.sprintf "%d rows" k) codes_t (raw (f x)) (raw y))
@@ -517,6 +527,7 @@ let test_crossed () =
   in
   let before = Rune.evaluations () in
   let y = Rune.jit' f x in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal codes_t (raw (f x)) (raw y)
 
@@ -552,6 +563,7 @@ let test_loop_assembly () =
     let before = Rune.evaluations () in
     let y = Rune.jit (pair_fn ()) scanned x xs in
     let z = Rune.jit' iterated x in
+    Compiled.here ();
     equal ~msg:(name ^ " compiled") int 0 (Rune.evaluations () - before);
     equal ~msg:(name ^ " scan") codes_t (raw (scanned x xs)) (raw y);
     equal ~msg:(name ^ " iterate") codes_t (raw (iterated x)) (raw z)
@@ -596,6 +608,7 @@ let test_alike_assemblies () =
   let top = Rune.jit three both x y z in
   let looped = Rune.jit (pair_fn ()) scanned x rows in
   let called = Rune.jit' twice x in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal ~msg:"top level" codes_t (raw (both x y z)) (raw top);
   equal ~msg:"loop" codes_t (raw (scanned x rows)) (raw looped);
@@ -608,6 +621,7 @@ let test_alike_assemblies () =
    Summed, the stack is a value the program holds from its first call on, so
    a call fits half the stack's bytes. *)
 let test_stack_memory () =
+  Compiled.here ();
   let n = 256 and rows = 64 in
   let bytes = 4 * n * rows in
   let xs =
@@ -627,6 +641,7 @@ let test_stack_memory () =
       (fun () ->
         let calls = Rune.evaluations () in
         call ();
+        Compiled.here ();
         equal ~msg:"compiled" int 0 (Rune.evaluations () - calls));
     let held = Memory.settled () - before in
     kept := [];
@@ -646,6 +661,7 @@ let test_stack_memory () =
    assembly, so a first call fits a budget of less than
    the argument's bytes above what the device held before it. *)
 let test_selection_memory () =
+  Compiled.here ();
   let n = 1024 in
   let x = Nx.place Memory.On.on (Nx.full f32 [| n |] 0.5) in
   let m = Nx.place Memory.On.on (Nx.full f32 [| 32; 32 |] 0.25) in
@@ -658,6 +674,7 @@ let test_selection_memory () =
       (fun () ->
         let calls = Rune.evaluations () in
         ignore (Sys.opaque_identity (Nx.to_array (f ())));
+        Compiled.here ();
         equal ~msg:"compiled" int 0 (Rune.evaluations () - calls))
   in
   first ((4 * n) - 1) (fun () ->
@@ -727,6 +744,7 @@ let test_quant_decodes () =
   let compiled name f =
     let before = Rune.evaluations () in
     let y = f () in
+    Compiled.here ();
     equal ~msg:(name ^ ": compiled") int 0 (Rune.evaluations () - before);
     y
   in
@@ -1324,6 +1342,7 @@ let law_permute (n, first) =
    program holds the window alone, the arange taking no memory, which the
    footprint states before the call runs. *)
 let law_long_window (n, first) =
+  Compiled.here ();
   let f x =
     Nx.add x (Nx.slice [ Nx.R (first, first + 4) ] (Nx.arange Nx.int64 0 n 1))
   in
@@ -1471,6 +1490,7 @@ let law_sliced (Sliced c) =
     let s, o = f () in
     let calls = Rune.evaluations () in
     let s', o' = Rune.jit T.(unit @-> returns (pair tensor tensor)) f () in
+    Compiled.here ();
     equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
     equal ~msg:"the scatter" bits_t (bits s) (bits s');
     equal ~msg:"the other slice" codes_t (codes o) (codes o')
@@ -1501,6 +1521,7 @@ let test_sliced_grad () =
   let expected = Rune.grad' loss logits in
   let calls = Rune.evaluations () in
   let got, _ = g logits in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
   equal
     (array (float_rel ~rel:1e-5 ~abs:1e-6))
@@ -1672,6 +1693,7 @@ let law_placed (Placed_case (dt, s, o, skip)) =
   let x = Nx.ones f32 [| 2 |] in
   let calls = Rune.evaluations () in
   let _, y = Rune.jit T.(tensor @-> returns (pair tensor tensor)) f x in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
   equal codes_t (codes (snd (f x))) (codes y)
 
@@ -1731,6 +1753,7 @@ let test_placed_calls () =
           g (Nx.donate !pool) w (Nx.place Away.on host_at)
             (Nx.place Away.on host_token))
     in
+    Compiled.here ();
     equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - calls);
     if i > 0 then begin
       equal ~msg:(msg ^ ": bytes copied onto the device") int 0 bytes;
@@ -1760,6 +1783,7 @@ let test_constant_result () =
       (fun x -> (Nx.neg x, c))
       x
   in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
   equal bits_t (bits (v [| -1.; -2. |])) (bits y);
   equal ~msg:"on its device" bool true
@@ -1777,6 +1801,7 @@ module Bare = (val Nx.devices [ Nx_support.memory 3; off ])
    in fresh memory where the constant lies, and the computed result lies on its
    device. *)
 let test_sibling_constant () =
+  Compiled.here ();
   let on r x = Nx.place (Nx.Placement.device Bare.v r) x in
   let c = on off (v [| 0.5; -2. |]) in
   let x = on (Nx_support.memory 3) (v [| 1.; 2. |]) in
@@ -1792,6 +1817,7 @@ let test_sibling_constant () =
   let calls = Rune.evaluations () in
   let y, (d, d') = f x in
   let _, (e, _) = f x in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
   equal ~msg:"on its device" bool true
     (Nx.Placement.equal (Nx.placement d) (Nx.placement c));
@@ -1815,6 +1841,7 @@ let test_sibling_constant () =
         (fun x -> (Nx.neg x, c))
         x
     in
+    Compiled.here ();
     equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - calls);
     equal ~msg:(msg ^ ": on its device") bool true
       (Nx.Placement.equal (Nx.placement d) (Nx.placement c));
@@ -1919,6 +1946,7 @@ let test_evaluated_memory () =
    holds at most one temporary of a share beside the state. A compiled step
    given the results of the step before writes over them too. *)
 let test_in_place ~checked () =
+  if not checked then Compiled.here ();
   let rigs =
     List.init 2 (fun k ->
         Result.get_ok
@@ -2104,6 +2132,7 @@ let law_donating c =
   cover "a repeated output" (c.repeats <> []);
   let before = Rune.evaluations () in
   let ys = g given in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal ~msg:"donated or not, the bits" (list bits_t) reference
     (List.map bits ys);
@@ -2156,6 +2185,7 @@ let test_fresh () =
   let xs = Nx.place (on Cut) (v [| 1.; -0.; 3.; 4. |]) in
   let before = Rune.evaluations () in
   let r = Rune.jit' (fun x -> x) xs in
+  Compiled.here ();
   equal ~msg:"compiled over two devices" int 0 (Rune.evaluations () - before);
   ignore (Nx.to_array (Nx.neg (Nx.donate xs)));
   equal ~msg:"a cut argument result is a copy" bits_t
@@ -2385,6 +2415,7 @@ let law_first_lowering c =
   in
   let once = if c.split then not c.donates else first_phase c = 0 in
   equal bits_t expected got;
+  Compiled.here ();
   equal ~msg:"lowerings" int (if once then 1 else 2) lowered
 
 (* A software device that counts the eager kernels it runs. *)
@@ -2432,6 +2463,7 @@ let test_constructs () =
     ignore (g x);
     C.reset ();
     let y = g x in
+    Compiled.here ();
     equal ~msg:(name ^ ": no eager kernel") int 0 (C.calls ());
     equal ~msg:name bits_t (bits expected) (bits y)
   in
@@ -2457,6 +2489,7 @@ let fresh xs = Nx.create f32 [| Array.length xs |] xs
 
 (* [g (Nx.donate x)] and whether it wrote its result into [x]'s memory. *)
 let in_place g x =
+  Compiled.here ();
   let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let y = g (Nx.donate x) in
   let a = Option.get (Nx.Repr.array ~by:"test" y) in
@@ -2475,7 +2508,9 @@ let dead x =
     (fun () -> ignore (Nx.to_array x))
 
 (* [h] a handle whose memory a call took or freed. *)
-let spent h = invalid ~sub:"was donated to Rune.jit" (fun () -> Nx.to_array h)
+let spent h =
+  Compiled.here ();
+  invalid ~sub:"was donated to Rune.jit" (fun () -> Nx.to_array h)
 
 let test_consumed () =
   let g = Rune.jit (pair_fn ()) Nx.add in
@@ -2820,6 +2855,7 @@ let test_evaluated_donation () =
   let d = at Cut () in
   let before = Rune.evaluations () in
   let y = Rune.jit' g (Nx.donate d) in
+  Compiled.here ();
   equal ~msg:"donated over two devices, compiled" int 0
     (Rune.evaluations () - before);
   equal bits_t expected (bits y);
@@ -2828,6 +2864,7 @@ let test_evaluated_donation () =
   dead d;
   let before = Rune.evaluations () in
   let y = Rune.jit' g (at Cut ()) in
+  Compiled.here ();
   equal ~msg:"undonated over two devices, compiled" int 0
     (Rune.evaluations () - before);
   equal bits_t expected (bits y)
@@ -3143,7 +3180,9 @@ let law_states (State_case c as case) =
   in
   (* The stores have an order: the call compiles. *)
   (match jitted with
-  | Value _ -> equal ~msg:"compiled" int 0 (Rune.evaluations () - calls)
+  | Value _ ->
+      Compiled.here ();
+      equal ~msg:"compiled" int 0 (Rune.evaluations () - calls)
   | Raised _ -> ());
   let lent x =
     match Nx.Repr.array ~by:"test" x with
@@ -3264,6 +3303,7 @@ let test_readers () =
   let bw = address w and ba = address a in
   let calls = Rune.evaluations () in
   let w', (a', c) = g (Nx.donate w, Nx.donate a) in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
   equal ~msg:"in place" (Testable.pair bool bool) (true, true)
     (Rig.Buffer.overlaps bw (address w'), Rig.Buffer.overlaps ba (address a'));
@@ -3302,6 +3342,7 @@ let test_readers () =
   let bw = address w and bv = address v in
   let calls = Rune.evaluations () in
   let w', v' = k (Nx.donate w, Nx.donate v) in
+  Compiled.here ();
   equal ~msg:"a loop's stop: compiled" int 0 (Rune.evaluations () - calls);
   equal ~msg:"a loop's stop: in place" (Testable.pair bool bool) (true, false)
     (Rig.Buffer.overlaps bw (address w'), Rig.Buffer.overlaps bv (address v'));
@@ -3321,6 +3362,7 @@ let test_remat_lends () =
   let x = fresh xs in
   let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let y, d = g (Nx.donate x) in
+  Compiled.here ();
   equal ~msg:"in place" bool true
     (Rig.Buffer.overlaps b (Nx.Repr.read ~by:"test" y Nx_array.buffer));
   equal bits_t (bits ey) (bits y);
@@ -3379,6 +3421,7 @@ let test_pools () =
     let before = (address keys, address values) in
     let calls = Rune.evaluations () in
     let pools, scores = g (Nx.donate keys, Nx.donate values) at in
+    Compiled.here ();
     equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - calls);
     equal
       ~msg:(msg ^ ": each pool in its own memory")
@@ -3439,6 +3482,7 @@ let test_long_donated () =
   let g = Rune.jit T.(tensor @-> returns (pair tensor tensor)) f in
   let before = Rune.evaluations () in
   let y, z = g (Nx.donate x) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal ~msg:"the scatter" bits_t (bits s) (bits y);
   equal ~msg:"the target read as it was" bits_t (bits sq) (bits z);
@@ -3468,6 +3512,7 @@ let test_long_flat () =
   let expected = bits (f (x ())) in
   let before = Rune.evaluations () in
   let took, y = in_place (Rune.jit' f) (x ()) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal bits_t expected (bits y);
   equal ~msg:"in the cache's memory" bool true took
@@ -3484,6 +3529,7 @@ let test_long_twice () =
   let g = Rune.jit T.(tensor @-> returns (pair tensor tensor)) f in
   let before = Rune.evaluations () in
   let y, z = g (Nx.donate x) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal ~msg:"the first" bits_t (bits s) (bits y);
   equal ~msg:"the second" bits_t (bits s) (bits z);
@@ -3502,6 +3548,7 @@ let test_scatter_held () =
   let s = T.(pair tensor tensor @-> returns tensor) in
   let f (p, u) = Nx.scatter ~axis:0 p u (Nx.zeros f32 [| n |]) in
   let on_host (r, _) = Rig.equal r Rig.host in
+  Compiled.here ();
   equal ~msg:"the bytes the first call allocates" int
     (Rig.allocation Rig.host (4 * n))
     (snd (List.find on_host (Rune.footprint s f (p, u))))
@@ -3691,6 +3738,7 @@ let law_deferred c =
     let eager = settled f x in
     let before = Rune.evaluations () in
     let jitted = settled g x in
+    Compiled.here ();
     equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
     (eager, jitted)
   in
@@ -3809,6 +3857,7 @@ let test_deferred_failures () =
   let compiled msg f =
     let before = Rune.evaluations () in
     let y = f () in
+    Compiled.here ();
     equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before);
     y
   in
@@ -3902,6 +3951,7 @@ let test_loop_checks () =
           ignore (loop w);
           Nx.mul_s w 4.)
     in
+    Compiled.here ();
     let w = rows [| 1.; 2.; 0.; 2.5; 1.; 1. |] in
     let b = Nx.Repr.read ~by:"test" w Nx_array.buffer in
     let a = Option.get (Nx.Repr.array ~by:"test" (g (Nx.donate w))) in
@@ -4004,7 +4054,10 @@ let law_checked_loop c =
   let compiled ~compiles f x =
     let before = Rune.evaluations () in
     let r = raised (fun () -> Rune.jit' f x) in
-    if compiles then equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+    if compiles then begin
+      Compiled.here ();
+      equal ~msg:"compiled" int 0 (Rune.evaluations () - before)
+    end;
     r
   in
   cover "no row" (n = 0);
@@ -4148,7 +4201,10 @@ let call_t = Testable.triple bool bool (Testable.array float_exact)
 
 let cache_commands ~variants =
   let start () = { keys = []; variants = [] } in
-  let system () = { at32 = Rune.jit' negated; at64 = Rune.jit' negated } in
+  let system () =
+    if variants then Compiled.here ();
+    { at32 = Rune.jit' negated; at64 = Rune.jit' negated }
+  in
   [
     command "start" (Gen.unit @-> makes jit_t) start system;
     command "call"
@@ -4770,6 +4826,7 @@ let test_forwarded () =
   let plain, pullback = both f in
   equal ~msg:"the result" int result plain;
   equal ~msg:"the result and the pullback" int plain pullback;
+  Compiled.here ();
   equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
   ignore (Sys.opaque_identity (x, w))
 
@@ -4904,6 +4961,7 @@ let test_calls_stay () =
   let x = host (Nx.linspace f64 (-3.) 3. 1024) in
   let c = host (Nx.linspace f64 0. 7. 1024) in
   let f x = Nx.add (g x) (g c) in
+  Compiled.here ();
   equal ~msg:"the compiled running sum differs from eager's here" bool false
     (bits (g x) = bits (s x));
   let expected = bits (f x) in
@@ -4965,8 +5023,10 @@ let test_loop_totals () =
   let same ?(compiles = true) msg f x =
     let before = Rune.evaluations () in
     let compiled = collected (Rune.jit' f) x in
-    if compiles then
-      equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before);
+    if compiles then begin
+      Compiled.here ();
+      equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before)
+    end;
     equal ~msg (Testable.triple bits_t bits_t bits_t) (collected f x) compiled
   in
   same "scan" scan (rows 4);
@@ -4992,6 +5052,7 @@ let test_nested_iterate () =
   in
   let before = Rune.evaluations () in
   let y = Rune.jit' scan xs in
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal bits_t (bits (scan xs)) (bits y);
   let big = Nx.mul_s xs 1e6 in
@@ -5010,6 +5071,7 @@ let test_derived_iterates () =
   let compiled msg f x =
     let before = Rune.evaluations () in
     let y = f x in
+    Compiled.here ();
     equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before);
     y
   in
@@ -5050,6 +5112,7 @@ let test_derived_iterates () =
   raises Exit (fun () -> Rune.jit' jvp_checked x);
   invalid ~sub:"until is still false after max = 6 steps" (fun () ->
       Rune.jit' jvp_checked (Nx.mul_s x 1e-3));
+  Compiled.here ();
   equal ~msg:"checked: compiled" int 0 (Rune.evaluations () - before)
 
 (* A call under jvp derives apart for which totals' running values carry a
@@ -5142,6 +5205,7 @@ let test_errors () =
       (fun () -> Rune.grad' (fun y -> Nx.sum (jit (fun z -> Nx.add z y) x)) x);
     let d = Nx.donate (v [| 1.; 2. |]) in
     ignore (jit Nx.neg d);
+    Compiled.here ();
     raises_match ~msg:(name ^ ": a consumed argument") (names name) (fun () ->
         ignore (Nx.to_array d));
     raises_match ~msg:(name ^ ": a read")
@@ -6100,6 +6164,7 @@ let sharded ~n ~d ~layers ~batch =
   let compiled name f =
     let before = Rune.evaluations () in
     let r = f () in
+    Compiled.here ();
     equal ~msg:(name ^ " compiled") int 0 (Rune.evaluations () - before);
     r
   in
@@ -6289,6 +6354,7 @@ let law_update_scan u =
    beside the rows. Unoptimised, a kernel is named by its outputs' sizes, then
    its reduce's. *)
 let batch_axes (pattern, sa, sb, expected) =
+  Compiled.here ();
   let module D = (val Nx.devices [ Nx_support.memory 1 ]) in
   let a = Nx.place D.on (Nx.ones f32 sa)
   and b = Nx.place D.on (Nx.ones f32 sb) in
@@ -6348,6 +6414,7 @@ let law_narrow_fma (Narrow dt, seed) =
   in
   let before = Rune.evaluations () in
   let y = fma (v a) (v b) (v c) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal ~msg:"compiled" (list string) [] (misses y)
 

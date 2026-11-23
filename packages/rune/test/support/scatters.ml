@@ -369,5 +369,6 @@ let law ?(flushes = false) (module S : Nx.Devices) c =
   let before = Rune.evaluations () in
   let call () = codes (Nx.place Nx.Host.on (g (put i) (put u) x)) in
   let y = outcome call in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal (outcome_t codes_t) (settled eager) (settled y)

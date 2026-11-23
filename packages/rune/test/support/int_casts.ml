@@ -188,6 +188,7 @@ let law (module S : Nx.Devices) (Case { src; dst = Nx.Dtype.Any dt as d; xs }) =
   let y =
     Rune.jit Nx.Ptree.(tensor @-> returns tensor) cast (Nx.place S.on x)
   in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal ~msg:"cast" codes_t (codes (cast x)) (codes (Nx.place Nx.Host.on y))
 
@@ -253,6 +254,7 @@ let to_bf16 (module S : Nx.Devices) (Nx.Dtype.Any src as s) =
     let y =
       Rune.jit Nx.Ptree.(tensor @-> returns tensor) cast (Nx.place S.on x)
     in
+    Compiled.here ();
     equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
     let want = bits (cast x) and got = bits y in
     let misses = ref [] in

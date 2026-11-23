@@ -10,6 +10,7 @@ module R = Nx_rng_support
 let compiled f =
   let before = Rune.evaluations () in
   let y = f () in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   Nx.place Nx.Host.on y
 

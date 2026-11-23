@@ -323,6 +323,7 @@ let law (module S : Nx.Devices) c =
     in
     let before = Rune.evaluations () in
     let o, lse = g (place q) (place k) (place v) in
+    Compiled.here ();
     equal ~msg:"compiled, not evaluated" Testable.int 0 (Rune.evaluations () - before);
     let bits x =
       Array.map Int64.bits_of_float

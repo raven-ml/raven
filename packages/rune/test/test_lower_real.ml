@@ -26,6 +26,7 @@ let n = 256
 let counted f =
   let before = Rune.evaluations () in
   let y = f () in
+  Rune_support.Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   y
 

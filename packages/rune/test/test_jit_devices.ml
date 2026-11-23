@@ -74,6 +74,7 @@ let compiled f x y =
   let r =
     outcome (fun () -> Rune.jit T.(tensor @-> tensor @-> returns tensor) f x y)
   in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   r
 
@@ -309,6 +310,7 @@ let expert_product set c =
   let eager = f (fst args) (snd args) in
   let before = Rune.evaluations () in
   let jit = step (fst args) (snd args) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   (* Each row's magnitudes: the codes without their sign bits by [|x|],
      summed at float64, whose values are exact. *)
@@ -668,6 +670,7 @@ let eigh_batch set =
   let eager = Nx.eigvalsh f32 x in
   let before = Rune.evaluations () in
   let jit = Rune.jit T.(tensor @-> returns tensor) (Nx.eigvalsh f32) x in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   let norm k =
     let s = ref 0. in
@@ -690,6 +693,7 @@ let eigh_batch set =
   let eager = Nx.svdvals f32 x in
   let before = Rune.evaluations () in
   let jit = Rune.jit T.(tensor @-> returns tensor) (Nx.svdvals f32) x in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   let g = gamma (8 * n * ((n * (n + 6)) + (8 * 50))) in
   let tol k = ((3. *. g) +. gamma ((16 * n) + 100)) *. norm k in
@@ -727,8 +731,10 @@ let jit_pair ~compiles f x y =
   let before = Rune.evaluations () in
   let s = T.(tensor @-> tensor @-> returns (pair tensor tensor)) in
   let r = outcome (fun () -> Rune.jit s f x y) in
-  if compiles then
-    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  if compiles then begin
+    Compiled.here ();
+    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before)
+  end;
   r
 
 let same_pair eager jit =
@@ -1259,6 +1265,7 @@ let assembly (type v s) set (dt : (v, s) Nx.dtype) of_real (fill : v) shape
   let before = Rune.evaluations () in
   let s = T.(tensor @-> tensor @-> returns tensor) in
   let jit = outcome (fun () -> Rune.jit s f x x) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal (outcome_t codes_t) (omap codes eager) (omap codes jit)
 
@@ -1639,6 +1646,7 @@ let held set =
     holds "after the first call";
     run ();
     holds "after the second";
+    Compiled.here ();
     equal ~msg:(name ^ ": no call evaluated") int 0
       (Rune.evaluations () - calls);
     (* A last call keeps the program reachable through every count. *)
@@ -1674,6 +1682,7 @@ let kernels set n rows =
   let holding =
     List.filteri (fun k _ -> k < min n rows) (Nx.Devices.to_list set.s)
   in
+  Compiled.here ();
   equal ~msg:"the devices of the kernels" (list string)
     (List.sort compare (List.map Rig.name holding))
     (List.sort compare ran)
@@ -1693,6 +1702,7 @@ let searched set c =
       [ B (Tolk.Setting.ignore_beam_cache, true) ]
       (fun () -> Rune.jit' ~beam:1 f x)
   in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal bits_t (bits (f x)) (bits y)
 
@@ -1723,6 +1733,7 @@ let moves set =
         | _ -> n)
       0 events
   in
+  Compiled.here ();
   equal ~msg:"bytes copied" int (3 * 8) copied
 
 (* A value whole on each device placed onto a mesh moves a window along each
@@ -1768,6 +1779,7 @@ let placed_constants set =
     (fun i expected ->
       let step = Nx.place (at set On) (Nx.scalar Nx.int32 (Int32.of_int i)) in
       let y, bytes = onto (fun () -> g step) in
+      Compiled.here ();
       equal ~msg:(Printf.sprintf "bytes copied, call %d" i) int expected bytes;
       equal ~msg:"bits" bits_t (bits (f step)) (bits y))
     [ 6 * 4 * List.length devices; 0; 0; 0 ];
@@ -1889,6 +1901,7 @@ let programs ?(inner = 32) ?hidden n =
   in
   let evaluated = Rune.evaluations () in
   let programs = keys (fun () -> ignore (f x (w1, w2))) in
+  Compiled.here ();
   equal ~msg:"calls evaluated" int evaluated (Rune.evaluations ());
   programs
 
@@ -1990,6 +2003,7 @@ let partials set =
   let step = Rune.jit T.(tensor @-> tensor @-> returns tensor) stacked in
   let before = Rune.evaluations () in
   let p = step x w in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal ~msg:"partials' placement" (placement ()) (at set (Split 0))
     (Nx.placement p);
@@ -2068,6 +2082,7 @@ let mapped_programs n =
         f
     in
     let programs = keys (fun () -> ignore (step x (w1, w2))) in
+    Compiled.here ();
     equal ~msg:"calls evaluated" int evaluated (Rune.evaluations ());
     programs
   in
@@ -2125,6 +2140,7 @@ let partial_programs n =
       let evaluated = Rune.evaluations () in
       let y = ref None in
       let made = keys (fun () -> y := Some (Rune.jit' f x)) in
+      Compiled.here ();
       equal
         ~msg:(name ^ ": calls evaluated")
         int evaluated (Rune.evaluations ());
@@ -2184,6 +2200,7 @@ let emitted set c =
   let eager = offers p (fun () -> f x) in
   let before = Rune.evaluations () in
   let jit = offers p (fun () -> Rune.jit' f x) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   same_offers eager jit
 
@@ -2206,6 +2223,7 @@ let emitted_scan set (c : loop_case) =
   let before = Rune.evaluations () in
   let s = T.(tensor @-> returns (pair tensor tensor)) in
   let jit = offers p (fun () -> Rune.jit s f xs) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   same_offers eager jit
 
@@ -2406,6 +2424,7 @@ let checked_case set c =
     waited (fun () ->
         Rune.jit T.(tensor @-> tensor @-> returns tensor) f ok data)
   in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal check_outcome_t eager jit
 
@@ -2571,8 +2590,10 @@ let totals set c =
   let jit =
     outcome (fun () -> Rune.Total.collect t ~init (fun () -> Rune.jit' f x))
   in
-  if Nx.Placement.equal (Nx.placement init) (Nx.placement x) then
-    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  if Nx.Placement.equal (Nx.placement init) (Nx.placement x) then begin
+    Compiled.here ();
+    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before)
+  end;
   match (eager, jit) with
   | Value (a, e), Value (b, j) ->
       equal ~msg:"result" bits_t (bits a) (bits b);
@@ -2689,6 +2710,7 @@ let same_switch eager jit =
 let compile_read f =
   let before = Rune.evaluations () in
   let r = outcome f in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   r
 
@@ -2734,6 +2756,7 @@ let untaken (type d) (set : d set) =
         ignore (Nx.to_array (Nx.place Nx.Host.on (step (index k) x))))
   in
   equal ~msg:"the branch not taken moves nothing" int 0 (moved 0l);
+  Compiled.here ();
   greater ~msg:"the taken branch moves its window" int ~than:0 (moved 1l)
 
 (* A map whose lanes take a switch's branches apart, its lanes cut across
@@ -2786,6 +2809,7 @@ let nested_switch set =
   let eager = f x xs in
   let before = Rune.evaluations () in
   let jit = Rune.jit s f x xs in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal ~msg:"carry" bits_t (bits (fst eager)) (bits (fst jit));
   equal ~msg:"rows" bits_t (bits (snd eager)) (bits (snd jit))
@@ -2813,6 +2837,7 @@ let io_ys = Array.init 8 (fun i -> Float.of_int i -. 2.5)
 (* A set with a device that computes nothing has no kernels, so the call
    raises as eager computation does. *)
 let io_argument () =
+  Compiled.here ();
   let at = Nx.Placement.device Io.v (m 3) in
   let f x y = Nx.add x (Nx.place at y) in
   let x = Nx.place at (Nx.create f32 [| 8 |] io_xs) in
@@ -2881,6 +2906,7 @@ let nested_upload () =
   let c = value [| n |] and x = Nx.place at (value ~seed:1 [| n |]) in
   let s = T.(tensor @-> returns tensor) in
   let on_device (r, _) = Rig.equal r (m 0) in
+  Compiled.here ();
   let bytes f = snd (List.find on_device (Rune.footprint s f x)) in
   let expected =
     bytes (fun x -> Nx.add (Nx.mul x (Nx.place at c)) (Nx.place at c))

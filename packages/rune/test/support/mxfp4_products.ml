@@ -114,6 +114,7 @@ let law ?(flushes = false) (module S : Nx.Devices) c =
         Rune.jit Nx.Ptree.(tensor @-> returns tensor) (Nx_quant.apply ws)
           (Nx.place S.on x)
       in
+      Compiled.here ();
       equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
       let values y = Nx.to_array (wide (Nx.place Nx.Host.on y)) in
       let check ~kept label y =

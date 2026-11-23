@@ -1346,6 +1346,7 @@ let pair_to_pair =
 let compiled f =
   let calls = Rune.evaluations () in
   let check () =
+    Rune_support.Compiled.here ();
     equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls)
   in
   match f () with

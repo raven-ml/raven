@@ -156,5 +156,6 @@ let law (module S : Nx.Devices) (Case { dt; op; n; p; axis; values }) =
   let of_prefix =
     outcome (fun () -> on_host (Rune.jit' f (Nx.place S.on (first x))))
   in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal (outcome_t codes_t) of_whole of_prefix

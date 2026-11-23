@@ -252,6 +252,7 @@ let held ?(ws = ws) loss remat =
     let before = host_settled () and calls = Rune.evaluations () in
     let r = g ws a in
     let held = host_settled () - before in
+    Rune_support.Compiled.here ();
     equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
     equal ~msg:"the gradient"
       (array (float_rel ~rel:1e-5 ~abs:1e-6))
@@ -386,6 +387,7 @@ let test_step_gradient () =
         let before = host_settled () and calls = Rune.evaluations () in
         let r = g ws a in
         let held = host_settled () - before in
+        Rune_support.Compiled.here ();
         equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
         equal ~msg:"the gradient"
           (array (float_rel ~rel:1e-5 ~abs:1e-6))
@@ -452,11 +454,13 @@ let test_summed_step () =
     let before = host_settled () and calls = Rune.evaluations () in
     let r = g (apart, a) in
     let held = host_settled () - before in
+    Rune_support.Compiled.here ();
     equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
     equal ~msg:"the loss and the sums"
       (array (float_rel ~rel:1e-4 ~abs:1e-4))
       expected (flat r);
     ignore (Sys.opaque_identity (g, r));
+    Rune_support.Compiled.here ();
     equal
       ~msg:(Printf.sprintf "%d chunks: the footprint" k)
       int held
@@ -514,6 +518,7 @@ let test_deep_scan () =
          xs)
   in
   let on_host (r, _) = Rig.equal r Rig.host in
+  Rune_support.Compiled.here ();
   let bytes ?(remat = true) g =
     let xs = Nx.Rng.normal ~key:(Nx.Rng.key 99) f32 [| g; n; dim |] in
     snd
@@ -558,6 +563,7 @@ let test_stacked_step () =
   in
   let rows ws = List.init layers (layer ws) in
   let on_host (r, _) = Rig.equal r Rig.host in
+  Rune_support.Compiled.here ();
   let bytes s f x = snd (List.find on_host (Rune.footprint s f x)) in
   (* The results hold the same bytes, in two stacks or in a pair of arrays a
      row, but a stack's allocation may count more than its bytes
@@ -723,6 +729,7 @@ let test_donated () =
     let before = address donated in
     let calls = Rune.evaluations () in
     let r = plus_b (x ()) (Nx.donate donated) in
+    Rune_support.Compiled.here ();
     equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - calls);
     equal ~msg:(msg ^ ": in b's memory") memory_t before (address r);
     equal ~msg:(msg ^ ": plus b")
@@ -840,6 +847,7 @@ let first_call s f x =
 (* The law: on one device, what [footprint] counts is what the first call
    allocates and holds; stand-ins of a C-ordered argument give the same. *)
 let law_footprint (program, kind) =
+  Rune_support.Compiled.here ();
   let f = small_f program in
   let x = argument kind in
   let want = on_host (Rune.footprint one f (x ())) in
@@ -885,6 +893,7 @@ let footprint_cases =
 
 (* A result that takes a donated argument's memory counts none. *)
 let test_footprint_donated () =
+  Rune_support.Compiled.here ();
   let x () = Nx.full f32 [| 64 |] 2. in
   let f x = Nx.mul_s x 3. in
   equal ~msg:"undonated" int (Rig.allocation Rig.host 256)
@@ -946,6 +955,7 @@ let test_footprint_devices () =
             true
         | exception Rig.Out_of_memory _ -> false)
   in
+  Rune_support.Compiled.here ();
   let footprint remat =
     List.filter
       (fun (r, _) -> List.exists (Rig.equal r) ds)

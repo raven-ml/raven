@@ -154,6 +154,7 @@ let test_outlined () =
   let pair = Testable.(pair int int) in
   let before = calls () in
   let y1 = g (scalar 0.5) in
+  Rune_support.Compiled.here ();
   equal ~msg:"first: evaluated, stretches compiled" pair (1, 2) (delta before);
   let before = calls () in
   let y2 = g (scalar 1.) in
@@ -204,6 +205,7 @@ let test_outlined () =
 let split f =
   let v = Rune.variants () in
   let r = f () in
+  Rune_support.Compiled.here ();
   at_least ~msg:"stretches compiled" Testable.int ~than:1 (Rune.variants () - v);
   r
 
@@ -248,6 +250,7 @@ module Bare =
 (* On such a set the stretches compile, and the function receives its operands
    where they lie and places them itself. *)
 let test_outlined_bare () =
+  Rune_support.Compiled.here ();
   let at = Nx.Placement.device Bare.v (Nx_support.memory 3) in
   let x = Nx.place at (vec [| 0.5; 1. |]) in
   let seen = ref [] in

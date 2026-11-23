@@ -3,7 +3,7 @@
 (library
  (name lowered)
  (modules lowered)
- (libraries nx nx_array nx_kernel rune rig tolk tolk.engine))
+ (libraries nx nx_array nx_kernel rune rig tolk tolk.engine windtrap))
 
 ; The generators, references and witnesses rune's suites share.
 
@@ -31,7 +31,8 @@
   assemblies
   unreached
   row_sets
-  donations)
+  donations
+  compiled)
  (libraries
   nx
   nx_array

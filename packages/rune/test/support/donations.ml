@@ -46,6 +46,7 @@ let carry (module S : Nx.Devices) =
     owned (place (Nx.Rng.normal ~key:(Nx.Rng.key 5) Nx.float32 [| 64; 64 |]))
   in
   let on_rig (r, b) = if Rig.equal r rig then b else 0 in
+  Compiled.here ();
   let footprint x =
     List.fold_left (fun n p -> n + on_rig p) 0 (Rune.footprint s f x)
   in

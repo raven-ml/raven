@@ -166,6 +166,7 @@ let run (type v s) (module S : Nx.Devices) (dt : (v, s) Nx.dtype) op xs ys =
   check (name op) r r;
   check "greater than the first operand" above above;
   check "below zero" below below;
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before)
 
 let law s (Case { dt; op; xs; ys }) =

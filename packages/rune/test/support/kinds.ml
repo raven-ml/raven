@@ -2204,6 +2204,7 @@ let compiled (type s d) (module S : Nx.Devices with type d = d) k
           f3 (on x) (on y) (on z)
     | _ -> invalid_arg "Kinds: operands of another arity"
   in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   Nx.place Nx.Host.on y
 
@@ -2273,6 +2274,7 @@ let ccompiled (type c d) (module S : Nx.Devices with type d = d) k
           c2 (on x) (on y)
     | _ -> invalid_arg "Kinds: operands of another arity"
   in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   Nx.place Nx.Host.on y
 
@@ -2547,6 +2549,7 @@ let folded_at (type s d) (module S : Nx.Devices with type d = d) k
   let e = Nx.to_array (f x) in
   let before = Rune.evaluations () in
   let c = Nx.to_array (Nx.place Nx.Host.on (Rune.jit' f (Nx.place S.on x))) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   let code v = code wide v in
   List.concat
@@ -2600,6 +2603,7 @@ let cfolded_at (type c d) (module S : Nx.Devices with type d = d) k
   let e = Nx.to_array (f x) in
   let before = Rune.evaluations () in
   let c = Nx.to_array (Nx.place Nx.Host.on (Rune.jit' f (Nx.place S.on x))) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   let code v = code wide v in
   let show (z : Complex.t) = Printf.sprintf "(%h, %h)" z.re z.im in

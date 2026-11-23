@@ -3,7 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Operations lowered to tolk, compiled and run on the host. *)
+(** Operations lowered to tolk, compiled and run on the host.
+
+    What compiles for the host skips the running test where rig links no host
+    code ({!Rig.Image.links}). *)
 
 val run :
   ?local:bool ->

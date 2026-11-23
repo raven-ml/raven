@@ -133,6 +133,7 @@ let nan_parts (name, f) =
             Nx.Ptree.(tensor @-> tensor @-> returns tensor)
             f2 (col 0) (col 1)
     in
+    Rune_support.Compiled.here ();
     equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
     let show (z : Complex.t) = Printf.sprintf "(%h, %h)" z.re z.im in
     List.concat

@@ -656,7 +656,11 @@ let distinct n t axis pos =
 type kind = Drawn | Long | Few
 
 let few_targets = 20
-let host_renderer = lazy (Tolk_engine.renderer Rig.host)
+
+let host_renderer =
+  lazy
+    (Rune_support.Compiled.here ();
+     Tolk_engine.renderer Rig.host)
 
 (* [scatter_case dts combines] draws a scatter of [dts] by [combines], of each
    kind. *)

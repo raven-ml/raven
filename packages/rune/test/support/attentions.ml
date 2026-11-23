@@ -644,6 +644,7 @@ let law ?(composed = false) ?wide (module S : Nx.Devices) c =
     in
     let before = Rune.evaluations () in
     let o, lse = g (place q) (place (poisoned k)) (place (poisoned v)) in
+    Compiled.here ();
     equal ~msg:"compiled, not evaluated" Testable.int 0 (Rune.evaluations () - before);
     let host x = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
     (host o, host lse)
@@ -758,6 +759,7 @@ let zero_sums (module S : Nx.Devices) dtype =
   let place x = Nx.place S.on x in
   let before = Rune.evaluations () in
   let o = g (place q) (place k) (place v) in
+  Compiled.here ();
   equal ~msg:"compiled, not evaluated" Testable.int 0 (Rune.evaluations () - before);
   let o = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on o)) in
   let bits =
@@ -888,6 +890,7 @@ let grad_law ?(composed = false) ?wide (module S : Nx.Devices) ~vmap c =
     let g = Rune.jit Nx.Ptree.(list tensor @-> returns (list tensor)) f in
     let before = Rune.evaluations () in
     let gs = g [ place q; place (poisoned k); place (poisoned v); place wo; place wl ] in
+    Compiled.here ();
     equal ~msg:"compiled, not evaluated" Testable.int 0 (Rune.evaluations () - before);
     List.map (fun x -> Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x))) gs
   in
@@ -1360,6 +1363,7 @@ let donated (module S : Nx.Devices) dtype =
   in
   let memory y = Nx.Repr.read ~by:"test" y Nx_array.buffer in
   let bytes = Nx.Dtype.bytes dt (Nx.numel w) in
+  Compiled.here ();
   let footprint x =
     List.map (fun (r, b) -> (Rig.name r, b)) (Rune.footprint s f x)
   in

@@ -304,6 +304,7 @@ let test_iterate_raise () =
     collected p (fun () ->
         Nx.sync (Rune.jit' (iterate_emits p) (Nx.place Away.on x)))
   in
+  Rune_support.Compiled.here ();
   equal ~msg:"off the host: compiled" int 0 (Rune.evaluations () - before);
   equal ~msg:"off the host" (outcome_t pass) (Raised message) r;
   equal ~msg:"off the host" offers_t
@@ -334,8 +335,10 @@ let test_scan_raise_off_host () =
     (fun (mode, run) ->
       let before = Rune.evaluations () in
       let r, got = collected p (fun () -> synced run xs) in
-      if mode = "jit" then
-        equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+      if mode = "jit" then begin
+        Rune_support.Compiled.here ();
+        equal ~msg:"compiled" int 0 (Rune.evaluations () - before)
+      end;
       equal ~msg:mode (outcome_t pass) (Raised "Stdlib.Exit") r;
       equal ~msg:mode offers_t [ offer 0 rows; offer 1 rows ] got)
     [ ("eager", scan); ("jit", Rune.jit' scan) ]
@@ -363,6 +366,7 @@ let test_nested_scan () =
   equal ~msg:"eager" offers_t expected (offers p (fun () -> scan xs));
   let before = Rune.evaluations () in
   equal ~msg:"jit" offers_t expected (offers p (fun () -> Rune.jit' scan xs));
+  Rune_support.Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before)
 
 (* A scan in a scan's step that reads no value of the step, only a capture:
@@ -391,6 +395,7 @@ let test_invariant_scan () =
   equal ~msg:"eager" offers_t expected (offers p (fun () -> scan xs));
   let before = Rune.evaluations () in
   equal ~msg:"jit" offers_t expected (offers p (fun () -> Rune.jit' scan xs));
+  Rune_support.Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before)
 
 (* Maps *)
@@ -898,6 +903,7 @@ let test_compiled () =
   let before = Rune.evaluations () in
   let got = offers p (fun () -> f xs) in
   equal ~msg:"offers" offers_t (scan_offers xs) got;
+  Rune_support.Compiled.here ();
   equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - before)
 
 let () =

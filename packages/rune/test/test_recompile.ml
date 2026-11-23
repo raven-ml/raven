@@ -189,6 +189,7 @@ let same_sources h ~fresh ks =
     fresh ks
 
 let test_same_sources () =
+  Rune_support.Compiled.here ();
   let fresh = run_history "fresh" in
   let on t ks = List.filter (fun k -> k.target = t) ks in
   let targets = "host" :: List.map label gpus in

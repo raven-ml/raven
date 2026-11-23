@@ -227,6 +227,7 @@ let law ren (module S : Nx.Devices) c =
   let x = if c.donated then Nx.donate (put (Nx.copy x)) else put x in
   let before = Rune.evaluations () in
   let y = raw (Nx.place Nx.Host.on (g (put i) (put u) x)) in
+  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal codes_t eager y;
   if added then begin

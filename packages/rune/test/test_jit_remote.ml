@@ -20,7 +20,13 @@ let remote =
       let a = Remote_job.with_key_file Remote_job.start in
       (Remote_job.connect [ a ], a))
 
-let host () = List.hd (Rig_remote.hosts (fst (remote ())))
+(* The job's host, or skips the test where rig links no host code for it: no
+   program compiles there. *)
+let host () =
+  let h = List.hd (Rig_remote.hosts (fst (remote ()))) in
+  if not (Rig.Image.links h) then
+    skip ~reason:("rig links no host code for " ^ Rig.instruction_set h) ();
+  h
 
 (* An exact function of float32 arrays, on any set. *)
 type fn = {

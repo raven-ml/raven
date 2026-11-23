@@ -75,6 +75,7 @@ let wild (type s) (dt : (float, s) Nx.dtype) n seed =
 let compiled f x =
   let before = Rune.evaluations () in
   let y = Rune.jit' f x in
+  Rune_support.Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   y
 

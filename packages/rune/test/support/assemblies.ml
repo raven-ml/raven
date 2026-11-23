@@ -371,6 +371,7 @@ let law (module S : Nx.Devices)
     Rune.jit Nx.Ptree.(list tensor @-> returns tensor) f (List.map snd args)
   in
   let y = Nx.place Nx.Host.on y in
+  Compiled.here ();
   equal ~msg:"compiled" Testable.int 0 (Rune.evaluations () - before);
   equal codes_t eager (raw y)
 

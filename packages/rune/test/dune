@@ -73,7 +73,7 @@
  (package rune)
  (name test_recompile)
  (modules test_recompile)
- (libraries lowered nx rune tolk unix windtrap))
+ (libraries lowered nx rune rune_support tolk unix windtrap))
 
 ; Programs on another machine's host, served by rig's test agent over the
 ; loopback.
@@ -266,7 +266,8 @@
   tolk.engine
   windtrap))
 
-; search.t pins the searches a function given a width reports.
+; search.t pins the searches a function given a width reports. It compiles,
+; so it runs where rig links host code: on x86_64 and arm64.
 
 (executable
  (name search)
@@ -276,9 +277,14 @@
 (cram
  (package rune)
  (applies_to search)
+ (enabled_if
+  (or
+   (= %{architecture} amd64)
+   (= %{architecture} arm64)))
  (deps search.exe))
 
-; declines.t pins why programs over several devices evaluate.
+; declines.t pins why programs over several devices evaluate. It compiles,
+; so it runs where rig links host code: on x86_64 and arm64.
 
 (executable
  (name declines)
@@ -288,6 +294,10 @@
 (cram
  (package rune)
  (applies_to declines)
+ (enabled_if
+  (or
+   (= %{architecture} amd64)
+   (= %{architecture} arm64)))
  (deps declines.exe))
 
 ; A later process's first call over a warm disk cache: each part is a process
@@ -297,4 +307,4 @@
  (package rune)
  (name test_first_call)
  (modules test_first_call)
- (libraries nx rune tolk tolk.engine tolk_test windtrap))
+ (libraries nx rune rune_support tolk tolk.engine tolk_test windtrap))

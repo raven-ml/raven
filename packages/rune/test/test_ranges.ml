@@ -300,6 +300,7 @@ let law_jit (c, Nx.Dtype.Any dt) =
   let x = any_of dt (source c) in
   let before = Rune.evaluations () in
   let y = Rune.jit' (ranges c) x in
+  Rune_support.Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal (array int32) (bits_of (ranges c x)) (bits_of y)
 
@@ -318,6 +319,7 @@ let law_jit_grad (c, Nx.Dtype.Any dt) =
       let loss x = Nx.sum (Nx.mul w (ranges c x)) in
       let before = Rune.evaluations () in
       let g = Rune.jit' (Rune.grad' loss) x in
+      Rune_support.Compiled.here ();
       equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
       equal (array int32) (bits_of (Rune.grad' loss x)) (bits_of g)
   | _ -> fail "a gradient's dtype that is not a float"

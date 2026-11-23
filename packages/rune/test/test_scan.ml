@@ -124,6 +124,7 @@ let law (Case (dt, s, n, o, g, h) as case) =
 (* [f ()], covering that a call of a loop of [rows] rows compiled: no call it
    made was evaluated. *)
 let compiled ~rows f =
+  Compiled.here ();
   let before = Rune.evaluations () in
   let r = f () in
   cover "compiled"
@@ -1407,6 +1408,7 @@ let compiles ~msg f x =
   let expected = bits (f x) in
   let before = Rune.evaluations () in
   let got = bits (Rune.jit' f x) in
+  Compiled.here ();
   equal ~msg:(msg ^ ": no call evaluated") int before (Rune.evaluations ());
   equal ~msg bits_t expected got
 
@@ -1633,6 +1635,7 @@ let test_staged () =
   C.reset ();
   let c, ys = g init xs in
   equal ~msg:"no retrace" int 0 !traces;
+  Compiled.here ();
   equal ~msg:"no eager kernel" int 0 (C.calls ());
   let c', ys' = f init xs in
   equal ~msg:"carry" bits_t (bits c') (bits c);
@@ -1689,6 +1692,7 @@ let law_call (Call c) =
     (y, Nx.add y (c.jitted (Nx.maximum w r)))
   in
   let rows = List.init c.n (fun i -> Nx.get [ i ] xs) in
+  Compiled.here ();
   cover "a row the call computes apart from eager"
     (List.exists (fun r -> bits (c.jitted r) <> bits (c.plain r)) rows);
   let init = Nx.zeros c.dt c.s in
@@ -2319,6 +2323,7 @@ let test_strided_rows () =
     let before = settled () and calls = Rune.evaluations () in
     let r = g ws a in
     let held = settled () - before in
+    Compiled.here ();
     equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
     equal ~msg:"the result"
       (array (float_rel ~rel:1e-5 ~abs:1e-6))
@@ -2385,6 +2390,7 @@ let test_summed_gradients () =
         (Nx.to_array (Nx.flatten (snd r)));
       ignore (Sys.opaque_identity (g, r));
       let on_host (r, _) = Rig.equal r Rig.host in
+      Compiled.here ();
       equal
         ~msg:(Printf.sprintf "%d rows: the footprint" k)
         int held
@@ -2412,6 +2418,7 @@ let test_stacked_rows () =
   let c = Nx.zeros f32 [| rows; dim |] in
   let xs = Nx.Rng.normal ~key:(Nx.Rng.key 3) f32 [| trips; dim |] in
   let on_host (r, _) = Rig.equal r Rig.host in
+  Compiled.here ();
   let held = snd (List.find on_host (Rune.footprint s f (c, xs))) in
   let carry = 4 * rows * dim in
   less

@@ -1,4 +1,6 @@
-; Off under sanitize and tsan, as the root dune says.
+; Off under sanitize and tsan, as the root dune says. The compilation page
+; shows what a compiled call reports, so the pages run where rig links host
+; code: on x86_64 and arm64.
 
 (mdx
  (package rune)
@@ -15,5 +17,8 @@
  (enabled_if
   (and
    (<> %{profile} sanitize)
-   (<> %{profile} tsan)))
+   (<> %{profile} tsan)
+   (or
+    (= %{architecture} amd64)
+    (= %{architecture} arm64))))
  (libraries nx rune))

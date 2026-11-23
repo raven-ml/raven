@@ -355,6 +355,7 @@ let test_jit_scope () =
         let y = g x in
         (y, g x))
   in
+  Rune_support.Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
   equal ~msg:"one trace" int 1 !traces;
   equal ~msg:"the first call" bits_t (bits (Nx.neg x)) (bits y);
@@ -623,6 +624,7 @@ let law_chained c =
       in
       equal pair (both (map written lanes)) (both map_run));
   (* A jit around a transformation compiles its derived programs. *)
+  Rune_support.Compiled.here ();
   let compiled = Rune.evaluations () = before in
   List.iter
     (fun m ->
@@ -1078,6 +1080,7 @@ let law_in_turn c =
     (collected (fun () -> from_identity t c) <> expected);
   let before = Rune.evaluations () in
   equal bits_t expected (collected mapped);
+  Rune_support.Compiled.here ();
   let compiled = Rune.evaluations () = before in
   cover "jit of vmap compiled" (c.lmode = Jit_of_map && compiled);
   if n = 1 then
@@ -1526,6 +1529,7 @@ let test_alike_footprint () =
   let ds = directions ~n:k ~k in
   let s = Nx.Ptree.(tensor @-> returns tensor) in
   let on_host (r, _) = Rig.equal r Rig.host in
+  Rune_support.Compiled.here ();
   let bytes site kept =
     snd (List.find on_host (Rune.footprint s (alike site kept ~k ~steps) ds))
   in
@@ -1590,6 +1594,7 @@ let test_alike_nested () =
   let ds = directions ~n:outer ~k in
   let s = Nx.Ptree.(tensor @-> returns tensor) in
   let on_host (r, _) = Rig.equal r Rig.host in
+  Rune_support.Compiled.here ();
   let bytes kept =
     snd (List.find on_host (Rune.footprint s (nested kept ~k ~inner) ds))
   in

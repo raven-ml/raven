@@ -17,8 +17,21 @@ let cpu = "CPU"
    whether they compile for the host's processors. *)
 type place = { device : string; renderer : Renderer.t Lazy.t; host : bool }
 
+(* The host's target, or skips the running test where rig links no host code,
+   for which nothing compiles ({!Tolk_engine.target}). *)
+let host_target () =
+  match Tolk_engine.target Rig.host with
+  | t -> t
+  | exception Failure why when not (Rig.Image.links Rig.host) ->
+      Windtrap.skip ~reason:why ()
+
 let on_host =
-  { device = cpu; renderer = lazy (Tolk_engine.renderer Rig.host); host = true }
+  let renderer =
+    lazy
+      (ignore (host_target ());
+       Tolk_engine.renderer Rig.host)
+  in
+  { device = cpu; renderer; host = true }
 let numel s = Array.fold_left ( * ) 1 s
 
 (* The elements' bytes as a node holds them: one element of [L.dtype] per
@@ -207,7 +220,7 @@ let schedule ?(cores = host_cores ()) u o n =
 
 let compiled ?cores u o n =
   let linear, vars = schedule ?cores u o n in
-  let targets _ = Tolk_engine.target Rig.host in
+  let targets _ = host_target () in
   (Realize.compile_linear ~targets linear, vars)
 
 (* The elements of the graph [u] of [dt] and [shape], [n] nodes' elements,

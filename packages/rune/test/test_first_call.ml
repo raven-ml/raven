@@ -106,6 +106,7 @@ let reads_back ?expected part () =
   let db = Disk_cache.fresh () in
   let first = output part db in
   Option.iter (equal string ~msg:"expected values" (values first)) expected;
+  Rune_support.Compiled.here ();
   greater ~than:0 int (programs first);
   equal bool ~msg:"an entry was kept" true
     (Disk_cache.entries ~table:compiled db <> []);
@@ -172,6 +173,7 @@ let recovers damage () =
   Disk_cache.damage ~table:compiled db damage;
   let healed = output "arithmetic" db in
   equal string ~msg:"values" (values first) (values healed);
+  Rune_support.Compiled.here ();
   greater ~than:0 int ~msg:"made anew" (programs healed);
   let later = output "arithmetic" db in
   equal int ~msg:"rewritten, read back" 0 (programs later)
@@ -202,6 +204,7 @@ let collects () =
     | [ _; _; kernels ] -> Scanf.sscanf kernels "kernels %d" Fun.id
     | _ -> failf "unexpected output %S" out
   in
+  Rune_support.Compiled.here ();
   greater ~than:0 int ~msg:"reported" (reported (output "collected" db));
   let fresh = Disk_cache.fresh () in
   ignore (output "collected" fresh);

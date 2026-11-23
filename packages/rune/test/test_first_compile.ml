@@ -55,6 +55,7 @@ let () =
              let expected = bits (nested x) in
              let calls = Rune.evaluations () in
              let got = bits (Rune.jit' nested x) in
+             Compiled.here ();
              equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls);
              equal bits_t expected got);
        ])
