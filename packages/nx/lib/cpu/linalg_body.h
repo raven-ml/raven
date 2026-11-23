@@ -66,13 +66,10 @@ static int F(scan)(const T *x, int64_t n, R *big) {
   return finite;
 }
 
-/* The complex number [re] + i [im] of R's precision, whatever its parts. */
-static inline C F(cplx)(R re, R im) {
-  C z;
-  ((R *)&z)[0] = re;
-  ((R *)&z)[1] = im;
-  return z;
-}
+/* The complex number [re] + i [im] of R's precision, whatever its parts:
+   __builtin_complex makes it from its parts, as C11's CMPLX does, with no
+   arithmetic that an infinite or NaN part would change. */
+static inline C F(cplx)(R re, R im) { return __builtin_complex(re, im); }
 
 /* a b and a / b as nx_kinds.h's Mul and Fdiv, nx.cpu's elementwise
    ones: the textbook product, each part one fma over the other product,
