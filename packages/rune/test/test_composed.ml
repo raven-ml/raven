@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Functions nx composes from kinds and exact operations, compiled by Rune.jit
-   on the host, give eager's bits over drawn operands (Kinds), and a function of
-   one or two operands at the narrow floats' codes (Kinds.narrow). *)
+   on the host, give eager's bits, in rune.mli's order: a function of one or two
+   operands at the narrow floats' codes (Kinds.narrow), and every one over drawn
+   operands (Kinds), one program per dtype for every case. *)
 
 open Windtrap
 open Rune_support
@@ -69,6 +70,6 @@ let () =
   exit
     (run "Rune.jit composed functions"
        [
-         group "composed" (List.map law (unary @ binary @ ternary));
          group "narrow floats" (List.map narrow (unary @ binary));
+         group "composed" (List.map law (unary @ binary @ ternary));
        ])

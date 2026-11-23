@@ -328,7 +328,9 @@ let same (type s) (dt : (float, s) D.t) k =
 
 let law k =
   let single = same D.Float32 k and double = same D.Float64 k in
-  prop ~count:20 k.name (case k)
+  prop ~count:20
+    (k.name ^ " gives eager's bits")
+    (case k)
     ~examples:[ example k false; example k true ]
     (fun (wide, es) ->
       let cover_some label f = cover label (Array.exists (f wide) es) in

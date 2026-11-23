@@ -140,7 +140,10 @@ val law :
     the host, a NaN equal to any NaN, part by part for a complex kind. The
     [float32] elements are checked only with [f32] (default [true]), the
     [float64] ones only with [f64]. It covers each class of operand [k]'s
-    switches tell apart and each special value. *)
+    switches tell apart and each special value.
+
+    [law s ~f64 k] is one compiled function of [k]: every case it checks runs
+    the one program per dtype that its first case compiles. *)
 
 val narrow : (module Nx.Devices) -> kind -> unit
 (** [narrow s k] checks the law of {!law} for [k] at [float16], [bfloat16],

@@ -2185,35 +2185,47 @@ let show wide c =
     (if wide then c else Int64.logand c low32)
 
 let same wide a b = Int64.equal a b || (is_nan wide a && is_nan wide b)
+let arity_error () = invalid_arg "Kinds: operands of another arity"
 
-let compiled (type s d) (module S : Nx.Devices with type d = d) k
-    (xs : (float, s, Nx.host) Nx.t list) =
+(* [result call] is [call ()] read back on the host; [call] must evaluate no
+   call. *)
+let result call =
   let before = Rune.evaluations () in
-  let on x = Nx.place S.on x in
-  let y =
-    match (k.fn, xs) with
-    | One { f1 }, [ x ] ->
-        Rune.jit Nx.Ptree.(tensor @-> returns tensor) f1 (on x)
-    | Two ({ f2 }, _), [ x; y ] ->
-        Rune.jit
-          Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-          f2 (on x) (on y)
-    | Three ({ f3 }, _), [ x; y; z ] ->
-        Rune.jit
-          Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
-          f3 (on x) (on y) (on z)
-    | _ -> invalid_arg "Kinds: operands of another arity"
-  in
+  let y = call () in
   Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   Nx.place Nx.Host.on y
+
+(* [compiler s k] is [k] compiled on [s]'s first device, a function of host
+   operands. Its one compiled function holds a program per dtype and shape: the
+   first call compiles it, and every later call of those operands' dtype and
+   shape runs it. *)
+let compiler (type s d) (module S : Nx.Devices with type d = d) k :
+    (float, s, Nx.host) Nx.t list -> (float, s, Nx.host) Nx.t =
+  let on x = Nx.place S.on x in
+  let call : (float, s, Nx.host) Nx.t list -> (float, s, d) Nx.t =
+    match k.fn with
+    | One { f1 } -> (
+        let g = Rune.jit Nx.Ptree.(tensor @-> returns tensor) f1 in
+        function [ x ] -> g (on x) | _ -> arity_error ())
+    | Two ({ f2 }, _) -> (
+        let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f2 in
+        function [ x; y ] -> g (on x) (on y) | _ -> arity_error ())
+    | Three ({ f3 }, _) -> (
+        let g =
+          Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) f3
+        in
+        function [ x; y; z ] -> g (on x) (on y) (on z) | _ -> arity_error ())
+    | Cone _ | Ctwo _ -> fun _ -> arity_error ()
+  in
+  fun xs -> result (fun () -> call xs)
 
 let eager k xs =
   match (k.fn, xs) with
   | One { f1 }, [ x ] -> f1 x
   | Two ({ f2 }, _), [ x; y ] -> f2 x y
   | Three ({ f3 }, _), [ x; y; z ] -> f3 x y z
-  | _ -> invalid_arg "Kinds: operands of another arity"
+  | _ -> arity_error ()
 
 (* A block's operands as host tensors and a result's codes. *)
 let tensor32 cs =
@@ -2258,76 +2270,86 @@ let misses k wide es ~eager ~compiled =
 
 let ones cs = Array.map (fun c -> [| c |]) cs
 
-(* A complex kind's operands, each of two columns of parts, and its result's
-   parts. *)
-let ccompiled (type c d) (module S : Nx.Devices with type d = d) k
-    (xs : (Complex.t, c, Nx.host) Nx.t list) =
-  let before = Rune.evaluations () in
+(* [ccompiler s k] is {!compiler} for a complex kind. *)
+let ccompiler (type c d) (module S : Nx.Devices with type d = d) k :
+    (Complex.t, c, Nx.host) Nx.t list -> (Complex.t, c, Nx.host) Nx.t =
   let on x = Nx.place S.on x in
-  let y =
-    match (k.fn, xs) with
-    | Cone ({ c1 }, _), [ x ] ->
-        Rune.jit Nx.Ptree.(tensor @-> returns tensor) c1 (on x)
-    | Ctwo ({ c2 }, _), [ x; y ] ->
-        Rune.jit
-          Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-          c2 (on x) (on y)
-    | _ -> invalid_arg "Kinds: operands of another arity"
+  let call : (Complex.t, c, Nx.host) Nx.t list -> (Complex.t, c, d) Nx.t =
+    match k.fn with
+    | Cone ({ c1 }, _) -> (
+        let g = Rune.jit Nx.Ptree.(tensor @-> returns tensor) c1 in
+        function [ x ] -> g (on x) | _ -> arity_error ())
+    | Ctwo ({ c2 }, _) -> (
+        let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) c2 in
+        function [ x; y ] -> g (on x) (on y) | _ -> arity_error ())
+    | One _ | Two _ | Three _ -> fun _ -> arity_error ()
   in
-  Compiled.here ();
-  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
-  Nx.place Nx.Host.on y
+  fun xs -> result (fun () -> call xs)
 
 let ceager k xs =
   match (k.fn, xs) with
   | Cone ({ c1 }, _), [ x ] -> c1 x
   | Ctwo ({ c2 }, _), [ x; y ] -> c2 x y
-  | _ -> invalid_arg "Kinds: operands of another arity"
+  | _ -> arity_error ()
 
-let crun (type d) (module S : Nx.Devices with type d = d) k wide es =
-  let col = column es in
+(* [crun s k wide] checks a complex kind's elements at complex128 if [wide],
+   else complex64: each element holds its operands' parts, a complex operand two
+   columns of them. *)
+let crun (type d) (module S : Nx.Devices with type d = d) k wide =
   let ops = arity k / 2 in
   let pair a b = Array.map2 (fun r i -> [| r; i |]) a b in
   if wide then
-    let xs =
-      List.init ops (fun j ->
-          Nx.complex Nx.complex128
-            ~re:(tensor64 (col (2 * j)))
-            ~im:(tensor64 (col ((2 * j) + 1))))
-    in
-    let parts y =
-      pair (codes64 (Nx.real Nx.float64 y)) (codes64 (Nx.imag Nx.float64 y))
-    in
-    misses k wide es
-      ~eager:(parts (ceager k xs))
-      ~compiled:(parts (ccompiled (module S) k xs))
+    let compiled = ccompiler (module S) k in
+    fun es ->
+      let col = column es in
+      let xs =
+        List.init ops (fun j ->
+            Nx.complex Nx.complex128
+              ~re:(tensor64 (col (2 * j)))
+              ~im:(tensor64 (col ((2 * j) + 1))))
+      in
+      let parts y =
+        pair (codes64 (Nx.real Nx.float64 y)) (codes64 (Nx.imag Nx.float64 y))
+      in
+      misses k wide es
+        ~eager:(parts (ceager k xs))
+        ~compiled:(parts (compiled xs))
   else
-    let xs =
-      List.init ops (fun j ->
-          Nx.complex Nx.complex64
-            ~re:(tensor32 (col (2 * j)))
-            ~im:(tensor32 (col ((2 * j) + 1))))
-    in
-    let parts y =
-      pair (codes32 (Nx.real Nx.float32 y)) (codes32 (Nx.imag Nx.float32 y))
-    in
-    misses k wide es
-      ~eager:(parts (ceager k xs))
-      ~compiled:(parts (ccompiled (module S) k xs))
+    let compiled = ccompiler (module S) k in
+    fun es ->
+      let col = column es in
+      let xs =
+        List.init ops (fun j ->
+            Nx.complex Nx.complex64
+              ~re:(tensor32 (col (2 * j)))
+              ~im:(tensor32 (col ((2 * j) + 1))))
+      in
+      let parts y =
+        pair (codes32 (Nx.real Nx.float32 y)) (codes32 (Nx.imag Nx.float32 y))
+      in
+      misses k wide es
+        ~eager:(parts (ceager k xs))
+        ~compiled:(parts (compiled xs))
 
-let run (type d) (module S : Nx.Devices with type d = d) k wide es =
-  let cols = List.init (arity k) (column es) in
-  if is_complex k then crun (module S) k wide es
+(* [run s k wide] checks [k]'s elements at float64 if [wide], else float32,
+   every case through one compiled function. *)
+let run (type d) (module S : Nx.Devices with type d = d) k wide =
+  let cols es = List.init (arity k) (column es) in
+  if is_complex k then crun (module S) k wide
   else if wide then
-    let xs = List.map tensor64 cols in
-    misses k wide es
-      ~eager:(ones (codes64 (eager k xs)))
-      ~compiled:(ones (codes64 (compiled (module S) k xs)))
+    let compiled = compiler (module S) k in
+    fun es ->
+      let xs = List.map tensor64 (cols es) in
+      misses k wide es
+        ~eager:(ones (codes64 (eager k xs)))
+        ~compiled:(ones (codes64 (compiled xs)))
   else
-    let xs = List.map tensor32 cols in
-    misses k wide es
-      ~eager:(ones (codes32 (eager k xs)))
-      ~compiled:(ones (codes32 (compiled (module S) k xs)))
+    let compiled = compiler (module S) k in
+    fun es ->
+      let xs = List.map tensor32 (cols es) in
+      misses k wide es
+        ~eager:(ones (codes32 (eager k xs)))
+        ~compiled:(ones (codes32 (compiled xs)))
 
 (* Classes of an operand every kind's law covers. *)
 let generic =
@@ -2386,15 +2408,15 @@ let covers k wide es =
     (fun (label, f) -> cover (dt ^ label) (Array.exists (f wide) vs))
     (generic @ k.covers)
 
-let law (type d) ?(f32 = true) (module S : Nx.Devices with type d = d) ~f64 k
-    c =
-  if f32 then covers k false c.f32;
-  if f64 then covers k true c.f64;
-  let bad =
-    (if f32 then run (module S) k false c.f32 else [])
-    @ if f64 then run (module S) k true c.f64 else []
-  in
-  equal (list string) [] bad
+let law (type d) ?(f32 = true) (module S : Nx.Devices with type d = d) ~f64 k =
+  let single = run (module S) k false and double = run (module S) k true in
+  fun c ->
+    if f32 then covers k false c.f32;
+    if f64 then covers k true c.f64;
+    let bad =
+      (if f32 then single c.f32 else []) @ if f64 then double c.f64 else []
+    in
+    equal (list string) [] bad
 
 let law ?f32 (module S : Nx.Devices) = law ?f32 (module S)
 
@@ -2454,7 +2476,7 @@ let narrow (type d) (module S : Nx.Devices with type d = d) k =
   let check (Narrow (label, dt, bits)) =
     let xs = List.map (narrow_codes dt bits) (numbers k bits) in
     let floats y = Nx.to_array (Nx.cast Nx.float64 y) in
-    let e = floats (eager k xs) and c = floats (compiled (module S) k xs) in
+    let e = floats (eager k xs) and c = floats (compiler (module S) k xs) in
     let ins = List.map floats xs in
     let out = ref [] and count = ref 0 in
     Array.iteri
