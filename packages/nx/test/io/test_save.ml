@@ -467,4 +467,20 @@ let errors =
            raises failed (fun () -> save (temp_file ()) x)));
     ]
 
-let () = exit (run "nx.io saving" [ saving; loaded; errors ])
+(* A save syncs its file and its directory, which takes milliseconds on a drive:
+   the syncs took 18 of the 22 s of 1000 cases of the loaded values' law on an
+   NVMe drive, and more on a CI runner's disk. Where /dev/shm, a tmpfs, exists
+   and is writable, as on Linux, the suite's directories live there and their
+   syncs return at once, as on a host whose temporary directory is a tmpfs
+   already: the laws are of values, names and mapped pages, not of durability.
+   Elsewhere they live in the default temporary directory. *)
+let shm = "/dev/shm"
+
+let writable dir =
+  match Unix.access dir [ Unix.W_OK ] with
+  | () -> true
+  | exception Unix.Unix_error _ -> false
+
+let () =
+  if writable shm then Filename.set_temp_dir_name shm;
+  exit (run "nx.io saving" [ saving; loaded; errors ])
