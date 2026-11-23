@@ -1606,6 +1606,27 @@ let through_iterate _ b a =
        (fun (d, i) -> (Nx.add d a, Nx.add_s i 1l))
        (b, Nx.scalar Nx.int32 0l))
 
+(* A cond whose untaken branch scans 1M trips over a capture of 4096 floats: the
+   call computes the taken branch's negation alone. *)
+let untaken_loop =
+  let w = Nx.linspace Nx.float64 0. 1. 4096 in
+  fun x ->
+    Rune.cond' (Nx.greater_s x 0.)
+      (fun () ->
+        fst
+          (Rune.scan' ~init:x
+             (fun c _ -> (Nx.sum (Nx.mul w c), c))
+             (Nx.zeros Nx.float64 [| 1_000_000; 0 |])))
+      (fun () -> Nx.neg x)
+
+(* A switch of 4 branches, each returning a pair of 1M floats, one elementwise
+   kernel each: a branch carries its results in the previous branch's storage,
+   with no copy of its own. *)
+let four_branches (i, (a, b)) =
+  Rune.switch two i
+    (List.init 4 (fun j () ->
+         (Nx.add_s a (Float.of_int j), Nx.mul_s b (Float.of_int (j + 2)))))
+
 let jit_loop_rows () =
   let carried = (normal 19 [| 1024; 1024 |], normal 20 [| 1024; 1024 |]) in
   let state k = normal k [| 64 |] in
@@ -1659,6 +1680,13 @@ let jit_loop_rows () =
       (fun () ->
         Rune.jit Nx.Ptree.(two @-> returns two) (cycle_through through_iterate))
       (fun g -> synced_all two (g carried));
+    warm "cond-untaken-scan-1m-trips"
+      (fun () -> Rune.jit' untaken_loop)
+      (fun g -> synced (g (host (Nx.scalar Nx.float64 (-2.)))));
+    warm "switch-4-branches-pairs-1024x1024"
+      (fun () ->
+        Rune.jit Nx.Ptree.(pair tensor two @-> returns two) four_branches)
+      (fun g -> synced_all two (g (host (Nx.scalar Nx.int32 3l), carried)));
   ]
 
 (* TrainStep: one compiled training step of a perceptron 784 -> 256 -> 128 ->
