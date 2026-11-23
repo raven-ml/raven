@@ -18,6 +18,14 @@
 
 #define _GNU_SOURCE
 
+/* FILE_ID_INFO and PrefetchVirtualMemory are Windows 8's, which mingw-w64's
+   headers declare from _WIN32_WINNT 0x0602 on. Before any header:
+   <stdint.h> fixes _WIN32_WINNT. */
+#if defined(_WIN32) && (!defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0602)
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0602
+#endif
+
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
 #include <caml/fail.h>

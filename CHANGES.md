@@ -74,6 +74,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- rig builds with MSYS2's mingw-w64 headers, which declare `FILE_ID_INFO`
+  and `PrefetchVirtualMemory` only for Windows 8 and later.
 - rig is not available on s390x: its PCI drivers store values little-endian.
   On Linux it depends on `conf-linux-libc-dev`, which installs the kernel
   headers its drivers include on every distribution, where only Alpine got
