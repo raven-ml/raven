@@ -561,9 +561,17 @@ let pieces_md5 =
 (* Domains *)
 
 (* One file's [Audio.t] and passes of its blocks from row 0 shared between
-   domains, against its samples: a pass's reference is the blocks it has left to
-   give. The file states its MD5, so each node's digest is in play wherever it
-   is forced. *)
+   domains, against its samples: a pass's reference is its blocks. A force drops
+   the first blocks of a pass, which forces them, and gives the rest, so two
+   domains forcing one pass from different blocks force its nodes in any order.
+   The file states its MD5, so each node's digest is in play wherever it is
+   forced.
+
+   Each program runs 50 times, and the sanitizers' step runs 1000 programs. The
+   branches share a load and a pass, which two calls make, so the prefix and the
+   suffix make at most four. A pass's blocks hold 4 rows or more: a pass of the
+   file's 128 rows has at most 32 nodes, and its blocks still end inside the
+   16-row frames. Blocks of 1 row are the single-domain laws'. *)
 let shared = fixture "flac_seek.flac"
 let audio = abstract "a"
 let pass = abstract "p"
@@ -575,24 +583,26 @@ let slices rows =
     ((n + rows - 1) / rows)
     (fun i -> slice p ~row:(i * rows) ~rows:(Int.min rows (n - (i * rows))))
 
+let pass_rows = Gen.with_pp Format.pp_print_int (Gen.int_range 4 50)
 let block_rows = Gen.with_pp Format.pp_print_int (Gen.int_range 1 50)
+let dropped = Gen.with_pp Format.pp_print_int (Gen.int_range 0 4)
 
 let shared_domains =
-  stateful ~domains:2 ~count:20 "a file and its passes shared between domains"
+  stateful ~domains:2 ~count:20 ~steps:4
+    "a file and its passes shared between domains"
     [
       command "load"
         (Gen.unit @-> makes audio)
         (fun () -> ())
         (fun () -> Nx_io.load_audio shared);
       command "blocks"
-        (block_rows @-> audio ^-> makes pass)
+        (pass_rows @-> audio ^-> makes pass)
         (fun rows () -> slices rows)
         (fun rows a -> Audio.blocks a ~rows);
-      command "tail"
-        (pass ^-> makes pass)
-        (function [] -> [] | _ :: t -> t)
-        (fun s -> match s () with Seq.Nil -> Seq.empty | Seq.Cons (_, t) -> t);
-      command "force" (pass ^-> returns (list packed)) Fun.id List.of_seq;
+      command "force"
+        (dropped @-> pass ^-> returns (list packed))
+        (fun k bs -> List.filteri (fun i _ -> i >= k) bs)
+        (fun k s -> List.of_seq (Seq.drop k s));
       command "window"
         (block_rows @-> block_rows @-> audio ^-> returns packed)
         (fun row rows () -> slice (whole shared) ~row ~rows)
