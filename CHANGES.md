@@ -3637,6 +3637,10 @@ its lock and from samples the dashboard saw arrive.
 - `Nx.Repr.read` and `Nx.Host.read` hold a read claim on the array instead of a
   `Rig.Buffer.keep`: a read allocates no finalised value or global root, 46 ns
   for a one-element value on fudge where it took 372.
+- Small calls on nx.cpu take less time: on fudge, `Nx.any` of 16 elements 1095
+  ns where it took 1290 (as `Nx.all`, `Nx.std` and `Nx.softmax`), a concatenation
+  of two 16-element pieces 695 where it took 743, and `Nx.add` of one element 229
+  where it took 240.
 - On nx.cpu, complex64 arrays at a 4-byte offset, as views and slices make,
   are moved at their own alignment by `Nx.where`, `Nx.take`, `Nx.scatter`,
   fills, `Nx.sort` and arm64's copies. Their 8-byte accesses were undefined

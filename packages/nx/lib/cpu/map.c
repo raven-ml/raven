@@ -62,6 +62,8 @@
 
    Every load is plain: nx_cpu.ml realises a padded one first. */
 
+#include <pthread.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1214,9 +1216,72 @@ static step *steps_of(int nn) {
   return nn > NX_CPU_ITEMS ? nx_cpu_alloc_released(bytes) : malloc(bytes);
 }
 
+/* The calling thread's spare copy, which its next copy takes: a copy is
+   18 KiB, which calloc cleared and freed at each call, and under ASan
+   poisoned each time. A copy taken leaves no spare, so a copy made while
+   it is held, as by OCaml code the door runs, is a new one; a copy freed
+   on another thread, as by a finaliser, becomes that thread's. The spare
+   lies in a box that a key holds, whose destructor frees it with its
+   thread: it frees through the key's value, since the thread's own
+   storage may be gone by then, as macOS frees it in a destructor of its
+   own. */
+typedef struct {
+  nx_cpu_prog *g;
+} spare_box;
+
+static _Thread_local spare_box *spare_here;
+static pthread_key_t spare_key;
+static pthread_once_t spare_once = PTHREAD_ONCE_INIT;
+static int spare_keyed;
+
+static void spare_drop(void *v) {
+  spare_box *b = v;
+  free(b->g);
+  free(b);
+  spare_here = NULL;
+}
+
+static void spare_init(void) {
+  spare_keyed = pthread_key_create(&spare_key, spare_drop) == 0;
+}
+
+/* The calling thread's box, made at its first spare; NULL if it cannot
+   be. */
+static spare_box *box(void) {
+  if (spare_here != NULL) return spare_here;
+  pthread_once(&spare_once, spare_init);
+  if (!spare_keyed) return NULL;
+  spare_box *b = calloc(1, sizeof *b);
+  if (b != NULL && pthread_setspecific(spare_key, b) == 0)
+    return spare_here = b;
+  free(b);
+  return NULL;
+}
+
+/* Keeps [g], its tables freed, as the thread's spare where it has none,
+   else frees it. */
+static void keep_spare(nx_cpu_prog *g) {
+  spare_box *b = box();
+  if (b != NULL && b->g == NULL) b->g = g;
+  else free(g);
+}
+
+/* A copy to fill: the spare, or a new one. Every field before [owned] is
+   written before it is read, as a copy's steps past STEPS are, so only
+   those from [owned] on are cleared, as calloc cleared them. */
+static nx_cpu_prog *prog_new(void) {
+  spare_box *b = spare_here;
+  nx_cpu_prog *g = b != NULL ? b->g : NULL;
+  if (g == NULL) return calloc(1, sizeof *g);
+  b->g = NULL;
+  size_t at = offsetof(nx_cpu_prog, owned);
+  memset((uint8_t *)g + at, 0, sizeof *g - at);
+  return g;
+}
+
 nx_cpu_prog *nx_cpu_prog_copy(const value *vp) {
   int nn = (int)Wosize_val(Field(*vp, NX_PROG_NODES));
-  nx_cpu_prog *g = calloc(1, sizeof *g);
+  nx_cpu_prog *g = prog_new();
   if (g == NULL) return NULL;
   g->s = g->local;
   if (nn > STEPS && (g->s = steps_of(nn)) == NULL) {
@@ -1254,7 +1319,7 @@ void nx_cpu_prog_free(nx_cpu_prog *g) {
   heap_end(&g->tabs);
   if (g->s != g->local) free(g->s);
   free(g->owned);
-  free(g);
+  keep_spare(g);
 }
 
 int nx_cpu_prog_released(const nx_cpu_prog *g) {
