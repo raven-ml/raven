@@ -2758,6 +2758,67 @@ let gpu_rows g =
               in
               fun () -> ignore (synced (f x)));
         };
+      (* A weighted sum of a [256 x 256 x 32] value's sums along its last
+         axis: 32 terms an element, which a sum run inside the loop of the
+         one reading it computes faster than one that stores them. *)
+      on_gpu g "sum-of-last-axis-sums-256x256x32"
+        {
+          at =
+            (fun at ->
+              let draw i s = Nx.place at (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s) in
+              let z = draw 97 [| 256; 256; 32 |] and x = draw 98 [| 256; 256 |] in
+              let f =
+                Rune.jit
+                  Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                  (fun x z -> Nx.sum (Nx.mul x (Nx.sum ~axes:[ 2 ] z)))
+              in
+              fun () -> ignore (synced (f x z)));
+        };
+      (* A dropout mask: a Bernoulli draw over 4096 x 4096 cast to float32,
+         which a product and a sum read, stored at its booleans' width and
+         widened where each reads it. *)
+      on_gpu g "bernoulli-mask-read-by-two-4096x4096"
+        {
+          at =
+            (fun at ->
+              let x =
+                Nx.place at
+                  (Nx.Rng.normal ~key:(Nx.Rng.key 96) f32 [| 4096; 4096 |])
+              in
+              let k = Nx.Rng.place at (Nx.Rng.key 5) in
+              let f k x =
+                let p = Nx.full_like x 0.9 in
+                let m = Nx.cast f32 (Nx.Rng.bernoulli ~key:k p) in
+                Nx.add (Nx.mul x m) (Nx.sum ~axes:[ 0 ] ~keepdims:true m)
+              in
+              let g =
+                Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor) f
+              in
+              fun () -> ignore (synced (g k x)));
+        };
+      (* A Q8_0 projection of 512 bfloat16 rows of 2880 to 4096 outputs,
+         whose blocks' partial sums a tensor core computes and their scales
+         multiply. *)
+      on_gpu g "q8_0-projection-bfloat16-512x2880-to-4096"
+        {
+          at =
+            (fun at ->
+              let k = 2880 in
+              let w =
+                Nx_quant.place at
+                  (Nx_quant.q8_0
+                     (Nx.full Nx.uint8 [| 4096; k / 32 * 34 |] 0x11))
+              in
+              let x =
+                Nx.place at
+                  (Nx.cast Nx.bfloat16
+                     (Nx.Rng.normal ~key:(Nx.Rng.key 99) f32 [| 512; k |]))
+              in
+              let f =
+                Rune.jit Nx.Ptree.(tensor @-> returns tensor) (Nx_quant.apply w)
+              in
+              fun () -> ignore (synced (f x)));
+        };
       (* A model's logits and their loss: a contraction of [2048 x 1024 x
          8192] products, returned, and the mean of its rows' log-sum-exp,
          which reads it stored. Stored once, into the result, the logits cost
@@ -2849,6 +2910,34 @@ let gpu_rows g =
         (attention_grad_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
       on_gpu g "attention/jit-grad-bf16-8x2048x64-causal"
         (attention_grad_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Causal);
+      (* An lse-only call's gradient: attention over values of no column,
+         its loss reading [lse] alone, at 176 batches of 4 heads of 256 keys
+         of 160 dimensions, which compiles attention's kernels and no launch
+         for the values. *)
+      on_gpu g "attention/jit-grad-lse-only-bf16-176x4x256x160"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at
+                  (Nx.cast Nx.bfloat16 (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s))
+              in
+              let shape = [| 176; 4; 256; 160 |] in
+              let q = draw 80 shape and k = draw 81 shape in
+              let v = Nx.place at (Nx.zeros Nx.bfloat16 [| 176; 4; 256; 0 |]) in
+              let w = draw 83 [| 176; 4; 256 |] in
+              let loss = function
+                | [ q; k; v ] ->
+                    let _, lse =
+                      Nx.attention ~acc:f32 ~kv:(Nx.Dense { k; v }) q
+                    in
+                    Nx.sum (Nx.mul (Nx.cast f32 w) (Nx.cast f32 lse))
+                | _ -> invalid_arg "an lse-only call"
+              in
+              let s = Nx.Ptree.(list tensor) in
+              let f = Rune.jit Nx.Ptree.(s @-> returns s) (Rune.grad s loss) in
+              fun () -> ignore (synced_all s (f [ q; k; v ])));
+        };
       on_gpu g "attention/jit-grad-bf16-8x2048x128-full"
         (attention_grad_call ~d:128 Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
       (* Heads past 64 dimensions: 110, one block of values in tiles of 64
