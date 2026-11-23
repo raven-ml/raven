@@ -1745,7 +1745,7 @@ let law_several (b : Support.backend) c =
       (Nx_kernel.Shape.reduce ~axes:(Iarray.of_array c.axes) (Array.map fst rs)
          c.shape)
   in
-  let reduce rs =
+  let reduce p rs loads =
     let dsts = programmed_dsts b p rs ys in
     programmed_done "the call"
       (K.reduce p ~shape:(Iarray.of_array c.shape)
@@ -1753,9 +1753,34 @@ let law_several (b : Support.backend) c =
          ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads));
     dsts
   in
-  let got = if n = 0 then [||] else reduce rs in
+  let got = if n = 0 then [||] else reduce p rs loads in
+  (* Each reduction alone, over the program's outputs mapped once: a reduction
+     of an output has the bits of the output mapped, then reduced
+     (law_programmed), and a case runs its program twice, not once a reduction
+     more. *)
   let want =
-    Array.concat (List.map (fun r -> reduce [| r |]) (Array.to_list rs))
+    if n = 0 then [||]
+    else
+      let outs = Iarray.to_array p.outs in
+      let types = Array.map (P.dtype p) outs in
+      let mapped =
+        Array.map
+          (fun (D.Any dt) ->
+            A.Any (A.create b.device dt (Iarray.of_array c.shape)))
+          types
+      in
+      programmed_done "the map"
+        (K.map p ~dsts:(Iarray.of_array mapped) (Iarray.of_array loads));
+      let identities =
+        P.v ~ins:(Iarray.of_array types)
+          (Iarray.init (Array.length outs) (fun k -> P.In k))
+          ~outs:(Iarray.init (Array.length outs) Fun.id)
+      in
+      let mapped = Array.map plain_of mapped in
+      Array.concat
+        (List.map
+           (fun r -> reduce identities [| r |] mapped)
+           (Array.to_list rs))
   in
   let outs = Array.map snd rs in
   let one_pass (r, _) =
