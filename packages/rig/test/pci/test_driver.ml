@@ -66,6 +66,9 @@ let part_way r =
 let gpu_buses = [ "0000:03:00.0"; "0000:43:00.0"; "0000:c3:00.0" ]
 let gpu_bus = "0000:03:00.0"
 
+(* The walks' [from]s read no call stack. *)
+let interrupted = Rig_support.interrupted ~stacks:false
+
 (* Takes lock a function's file, which needs flock. *)
 let needs_flock () =
   if not flocks then skip ~reason:"locking a function's file needs flock" ()
@@ -406,7 +409,7 @@ let walk_open ~after =
     let opened = ref (Error "not reached") in
     started := false;
     let reached =
-      Rig_support.interrupted ~from n (fun () ->
+      interrupted ~from n (fun () ->
           opened :=
             Driver.open_ g m 0 (fun h _ ->
                 started := true;
@@ -469,7 +472,7 @@ let test_stop_cut (_, landing, next) =
       Ok h
     in
     let h = require_ok (Driver.open_ g m 0 start) in
-    let reached = Rig_support.interrupted ~landing n (fun () -> stop h) in
+    let reached = interrupted ~landing n (fun () -> stop h) in
     if n = 1 then equal ~msg:"the walk lands" bool true reached;
     next g m h;
     let at what = strf "%s, from allocation %d" what n in
@@ -529,7 +532,7 @@ let test_cut_stop_raises () =
       failwith "the driver failed"
     in
     let reached =
-      Rig_support.interrupted ~from:(fun _ -> !started) n (fun () ->
+      interrupted ~from:(fun _ -> !started) n (fun () ->
           match Driver.open_ g m 0 start with
           | _ -> ()
           | exception (Not_found | Failure _) -> ())
@@ -601,9 +604,7 @@ let test_lend_interrupted () =
       let f = require_some !fn in
       equal ~msg:"the lend" bool true (Function.lend f);
       stop h;
-      let reached =
-        Rig_support.interrupted n (fun () -> ignore (Function.lend f : bool))
-      in
+      let reached = interrupted n (fun () -> ignore (Function.lend f : bool)) in
       Function.unlend f;
       equal
         ~msg:(strf "held after the lend, from allocation %d" n)
@@ -728,8 +729,7 @@ let walk_cut root m f landing next =
   let rec walk n =
     began := false;
     let reached =
-      Rig_support.interrupted ~from:(fun _ -> !began) ~landing n (fun () ->
-          f g m)
+      interrupted ~from:(fun _ -> !began) ~landing n (fun () -> f g m)
     in
     if n = 1 then equal ~msg:"the walk lands" bool true reached;
     next g m;
@@ -805,7 +805,7 @@ let test_reset_cut_lost () =
     taking := false;
     resetting := false;
     let reached =
-      Rig_support.interrupted ~from:(fun _ -> !from) n (fun () ->
+      interrupted ~from:(fun _ -> !from) n (fun () ->
           ignore (Driver.reset g m 0))
     in
     let ran = !resetting in
@@ -2442,9 +2442,7 @@ let test_stop_in_stop () =
         when String.starts_with ~prefix:"Rig_pci: a lock taken again" why ->
           ()
     in
-    let reached =
-      Rig_support.interrupted ~landing:(Call call) n (fun () -> stop h0)
-    in
+    let reached = interrupted ~landing:(Call call) n (fun () -> stop h0) in
     stop h1;
     let at what = strf "%s, called at %d" what n in
     equal ~msg:(at "the vendor's stops") (array int) [| 1; 1 |] stops;

@@ -642,6 +642,7 @@ type landing =
           ({!interrupt}) under a handler of the caller's. *)
 
 val interrupted :
+  ?stacks:bool ->
   ?from:(Gc.Memprof.allocation -> bool) ->
   ?landing:landing ->
   int ->
@@ -656,7 +657,9 @@ val interrupted :
     other exception passes through. Under {!Signal}, SIGINT's handler raises
     [Sys.Break] until [f] returns and a signal still pending has landed.
     Walking [n] from [1] until it is [false] lands at every
-    allocation [f] makes. *)
+    allocation [f] makes. Where [stacks] is [false] (default [true]), the
+    profile records no call stacks, which [from] then sees empty: a walk whose
+    [from] reads only state runs in about half the time. *)
 
 val counted : unit -> int
 (** [counted ()] is the number of counted calls the calling thread is inside

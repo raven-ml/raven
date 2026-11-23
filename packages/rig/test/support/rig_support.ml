@@ -956,7 +956,8 @@ type landing = Raise | Signal | Call of (unit -> unit)
    the profile's start deferred run in a [Gc.minor] before. Once [f] ends, a
    [Gc.minor] lands a signal still pending, before the profile stops, so
    nothing of the walk's own meets the landing. *)
-let interrupted ?(from = fun _ -> true) ?(landing = Raise) n f =
+let interrupted ?(stacks = true) ?(from = fun _ -> true) ?(landing = Raise) n f
+    =
   let me = Thread.id (Thread.self ()) in
   let left = ref n and armed = ref false in
   let alloc a =
@@ -984,7 +985,8 @@ let interrupted ?(from = fun _ -> true) ?(landing = Raise) n f =
     Gc.Memprof.discard profile;
     if breaks then Sys.set_signal Sys.sigint previous
   in
-  let profile = Gc.Memprof.start ~sampling_rate:1. tracker in
+  let callstack_size = if stacks then max_int else 0 in
+  let profile = Gc.Memprof.start ~sampling_rate:1. ~callstack_size tracker in
   Gc.minor ();
   armed := true;
   match f () with
