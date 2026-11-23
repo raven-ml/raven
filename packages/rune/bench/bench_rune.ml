@@ -407,6 +407,24 @@ let between dt k lo hi shape =
        (Nx.mul_s (Nx.Rng.uniform ~key:(Nx.Rng.key k) dt shape) (hi -. lo))
        lo)
 
+(* [projection ~rows ~outputs ~normed] calls a compiled bfloat16 product of
+   [rows] rows of 2880, normed by RMS where [normed], by weights of [outputs]
+   rows. *)
+let projection ~rows ~outputs ~normed =
+  let k = 2880 in
+  let pattern = Nx.Pattern.v "x i, o i -> x o | i" in
+  let x = host (Nx.full Nx.bfloat16 [| rows; k |] 0.5)
+  and scale = host (Nx.full Nx.bfloat16 [| k |] 1.5)
+  and w = host (Nx.full Nx.bfloat16 [| outputs; k |] 0.25) in
+  let f =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun x scale w ->
+        let x = if normed then Nx.rms_norm ~eps:1e-5 ~scale x else x in
+        Nx.contract Nx.bfloat16 pattern x w)
+  in
+  fun () -> f x scale w
+
 (* An MXFP4 weight of [shape], its last axis the inputs: codes drawn
    uniformly, every block's scale 1. *)
 let mxfp4 shape =
@@ -915,6 +933,14 @@ let jit_rows () =
     warm "top-k-4-of-512x32"
       (fun () -> Rune.jit (split_fn ()) (fun x -> Nx.top_k ~k:4 x))
       (fun f -> synced2 (f logits));
+    (* The same router at 4096 tokens, past the comparisons a first k ranks in
+       one kernel: it takes a round a key kept. *)
+    warm "top-k-4-of-4096x32"
+      (fun () ->
+        let logits = between f32 65 (-4.) 4. [| 4096; 32 |] in
+        let f = Rune.jit (split_fn ()) (fun x -> Nx.top_k ~k:4 x) in
+        fun () -> f logits)
+      (fun f -> synced2 (f ()));
     (* A compiled variance and root, which scale every lane. *)
     warm "var-float64-1M"
       (fun () -> Rune.jit' Nx.var)
@@ -1019,6 +1045,35 @@ let jit_rows () =
                      (Nx.slice [ Nx.A; Nx.R (4 * i, (4 * i) + 4) ] x)
                      (Float.of_int i)))))
       (fun f -> synced (f pm));
+    (* gpt-oss's projections on the host, bfloat16, compiled. A prompt's 512
+       rows of 2880 by a query's weights [4096; 2880], whose rows each output
+       reads again; one row of a decode step by the key, query and value weights
+       [5120; 2880], which stream; that row as an RMS norm computes it, by those
+       weights and by Q8_0 weights [4096; 2880]. *)
+    warm "projection-bfloat16-512x2880-to-4096"
+      (fun () -> projection ~rows:512 ~outputs:4096 ~normed:false)
+      (fun f -> synced (f ()));
+    warm "projection-bfloat16-1x2880-to-5120"
+      (fun () -> projection ~rows:1 ~outputs:5120 ~normed:false)
+      (fun f -> synced (f ()));
+    warm "normed-projection-bfloat16-1x2880-to-5120"
+      (fun () -> projection ~rows:1 ~outputs:5120 ~normed:true)
+      (fun f -> synced (f ()));
+    warm "normed-q8_0-projection-1x2880-to-4096"
+      (fun () ->
+        let k = 2880 in
+        let x = host (Nx.full Nx.bfloat16 [| 1; k |] 0.5)
+        and scale = host (Nx.full Nx.bfloat16 [| k |] 1.5) in
+        let w =
+          Nx_quant.place Nx.Host.on
+            (Nx_quant.q8_0 (Nx.full Nx.uint8 [| 4096; k / 32 * 34 |] 0x11))
+        in
+        let f =
+          Rune.jit (pair_fn ()) (fun x scale ->
+              Nx_quant.apply w (Nx.rms_norm ~eps:1e-5 ~scale x))
+        in
+        fun () -> f x scale)
+      (fun f -> synced (f ()));
     (* The gradient of 8 sines through a remat, compiled: the backward pass
        stores the remat's computed argument and computes the sines again. A
        longer chain takes too long to compile. *)
