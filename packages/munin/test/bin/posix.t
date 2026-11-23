@@ -21,7 +21,13 @@ A run being written cannot be removed or ended.
   $ mkfifo input
   $ ./make_store.exe hold store < input > held &
   $ exec 3> input
-  $ until [ -s held ]; do sleep 0.1; done
+
+The wait for the writer's run id gives up after 60 s, so a writer that
+never starts fails the test.
+
+  $ i=0
+  $ until [ -s held ] || [ $i -ge 600 ]; do i=$((i + 1)); sleep 0.1; done
+  $ [ -s held ] || echo "no run id after 60 s"
   $ held=$(cat held)
   $ munin runs --root store --status running | sed "s/$held/HELD/" | ids
   HELD	running	TIME	held	-	-
