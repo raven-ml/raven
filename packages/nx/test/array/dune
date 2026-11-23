@@ -23,7 +23,14 @@
   rig
   rig_support
   windtrap)
- (deps golden/float_text.txt golden/float_digits.txt))
+ ; windtrap selects tests and raises counts by the environment, so a run
+ ; under other settings, as CI's sanitizer step makes, runs the suites again.
+ (deps
+  golden/float_text.txt
+  golden/float_digits.txt
+  (env_var WINDTRAP_TAG)
+  (env_var WINDTRAP_EXCLUDE_TAG)
+  (env_var WINDTRAP_PROP_COUNT)))
 
 ; Opens this machine's first GPU, so it holds the lock GPU tests share.
 

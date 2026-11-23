@@ -124,10 +124,13 @@ jobs:
       # Every nx suite runs with the C of nx built under AddressSanitizer and
       # UndefinedBehaviorSanitizer. The codecs parse untrusted bytes, and the
       # array layer reads and writes views at any bit: their properties run
-      # first, over 1000 cases each. A domain's thread exits on the signal
-      # stack the OCaml runtime allocated, which AddressSanitizer would unmap
-      # as its own. The documentation's examples run in the step above: the
-      # mdx stanzas are off under the sanitizers.
+      # first, over 1000 cases each, but for the laws on two domains, which
+      # windtrap tags parallel and which run 50 programs a case. The last
+      # runtest runs every nx suite at its own counts, io's and array's again,
+      # those laws among them. A domain's thread exits on the signal stack the
+      # OCaml runtime allocated, which AddressSanitizer would unmap as its
+      # own. The documentation's examples run in the step above: the mdx
+      # stanzas are off under the sanitizers.
       - name: Test nx under the sanitizers
         if: ${{ !cancelled() && runner.os != 'Windows' && matrix.os != 'ubuntu-22.04' }}
         env:
@@ -135,8 +138,8 @@ jobs:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          WINDTRAP_PROP_COUNT=1000 bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
-          WINDTRAP_PROP_COUNT=1000 bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/array/runtest
+          WINDTRAP_PROP_COUNT=1000 WINDTRAP_EXCLUDE_TAG=parallel bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
+          WINDTRAP_PROP_COUNT=1000 WINDTRAP_EXCLUDE_TAG=parallel bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/array/runtest
           bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/runtest
 
       - name: Build and test brot
