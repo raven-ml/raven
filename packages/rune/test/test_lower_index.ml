@@ -196,16 +196,10 @@ let raws d n =
     let* pool = list ~size:(constant 3) (raw d) in
     array ~size:(constant n) (among pool)
 
-let extent =
-  Gen.frequency
-    [ (1, Gen.constant 0); (2, Gen.constant 1); (6, Gen.int_range 2 4) ]
-
-let shape =
-  let open Gen in
-  let* r = int_range 1 3 in
-  map Array.of_list (list ~size:(constant r) extent)
-
-let all_dtypes = Gen.one_of (List.map Gen.constant D.all)
+(* [redrawn examples data] draws a case of the form of one of [examples], each
+   as likely, its elements drawn by [data]: a run lowers and compiles each form
+   once and draws its cases' elements anew. *)
+let redrawn examples data = Gen.bind (among examples) data
 
 (* Views *)
 
@@ -288,18 +282,71 @@ let bits_of it f =
    an integer of its width: reading it as an OCaml float quiets a signalling
    NaN. The bitcast is in the lowered graph, so it ends in an integer store:
    a lowering that quieted a NaN only when it stores a float would pass. *)
-let exact (type v s) (dt : (v, s) D.t) (op : unit -> (v, s, Nx.host) Nx.t) =
-  let as_ it = bits_of it (fun () -> Nx.bitcast it (op ())) in
+type read = Read : ('w, 'r) D.t * (unit -> ('w, 'r, Nx.host) Nx.t) -> read
+
+(* [read dt op] is the dtype [exact] reads [op]'s elements as, and the graph
+   that reads them. *)
+let read (type v s) (dt : (v, s) D.t) (op : unit -> (v, s, Nx.host) Nx.t) =
+  let as_ it = Read (it, fun () -> Nx.bitcast it (op ())) in
   match dt with
   | D.Float32 -> as_ D.Int32
   | D.Complex64 -> as_ D.Int64
   | D.Float16 | D.Bfloat16 -> as_ D.Uint16
   | D.Float8_e4m3fn | D.Float8_e5m2 -> as_ D.Uint8
-  | _ -> bits_of dt op
+  | _ -> Read (dt, op)
+
+let exact dt op =
+  let (Read (it, f)) = read dt op in
+  bits_of it f
+
+(* The graph [exact dt op] computes. *)
+let exact_graph dt op =
+  let (Read (_, f)) = read dt op in
+  Lowered.One f
 
 let same_bits dt op =
   let e, l = exact dt op in
   equal (array string) e l
+
+(* [exact_pair dt op] is [exact] of [op]'s first result, eager's then the
+   lowered graph's, and its second result, eager's then the lowered graph's,
+   computed by one graph. *)
+type ('b, 't) pair =
+  | Pair :
+      ('w, 'r) D.t * (unit -> ('w, 'r, Nx.host) Nx.t * ('b, 't, Nx.host) Nx.t)
+      -> ('b, 't) pair
+
+(* [pair dt op] is the dtype [exact_pair] reads [op]'s first result as, and the
+   graph that reads both. *)
+let pair (type v s b t) (dt : (v, s) D.t)
+    (op : unit -> (v, s, Nx.host) Nx.t * (b, t, Nx.host) Nx.t) =
+  let as_ (type w r) (it : (w, r) D.t)
+      (cast : (v, s, Nx.host) Nx.t -> (w, r, Nx.host) Nx.t) =
+    Pair
+      ( it,
+        fun () ->
+          let y, z = op () in
+          (cast y, z) )
+  in
+  match dt with
+  | D.Float32 -> as_ D.Int32 (Nx.bitcast D.Int32)
+  | D.Complex64 -> as_ D.Int64 (Nx.bitcast D.Int64)
+  | D.Float16 | D.Bfloat16 -> as_ D.Uint16 (Nx.bitcast D.Uint16)
+  | D.Float8_e4m3fn | D.Float8_e5m2 -> as_ D.Uint8 (Nx.bitcast D.Uint8)
+  | _ -> as_ dt Fun.id
+
+let exact_pair dt op =
+  let (Pair (it, both)) = pair dt op in
+  let bits = Lowered.run (fun () -> fst (both ()))
+  and second = Lowered.run (fun () -> snd (both ())) in
+  let y, z = both () in
+  let shown xs = Array.map (hex it) xs in
+  ((shown (Nx.to_array y), shown bits), (Nx.to_array z, second))
+
+(* The graphs [exact_pair dt op] computes, one a result. *)
+let pair_graphs dt op =
+  let (Pair (_, both)) = pair dt op in
+  Lowered.[ One (fun () -> fst (both ())); One (fun () -> snd (both ())) ]
 
 (* [nan_of dt h] is whether the bits [h] of a float of [dt], as [exact] shows
    them, are a NaN, and whether a signalling one: its fraction's top bit
@@ -538,27 +585,12 @@ let pp_gather ppf c =
     c.g_axis
     (ints c.g_idx) (raws_text c.g_pos) (raws_text c.g_raws)
 
-let gather_case =
+(* A gather of the form of [c], its positions and elements drawn. *)
+let gather_data c =
   let open Gen in
-  let* d = all_dtypes in
-  let* s = shape in
-  let* view = among views in
-  let* axis = int_range 0 (Array.length s - 1) in
-  let* m = extent in
-  let t = Array.mapi (fun i n -> if i = axis then m else n) s in
-  let* pos = positions s.(axis) (numel t) in
-  let* computed = bool in
-  let+ raws = operand_gen d view s in
-  {
-    g_computed = computed;
-    g_dt = d;
-    g_shape = s;
-    g_view = view;
-    g_axis = axis;
-    g_idx = t;
-    g_pos = pos;
-    g_raws = raws;
-  }
+  let* pos = positions c.g_shape.(c.g_axis) (numel c.g_idx) in
+  let+ raws = operand_gen c.g_dt c.g_view c.g_shape in
+  { c with g_pos = pos; g_raws = raws }
 
 let gather_example i d s axis m =
   let t = Array.mapi (fun j n -> if j = axis then m else n) s in
@@ -577,28 +609,37 @@ let gather_example i d s axis m =
 let gather_examples =
   gather_example 0 (D.Any D.Float32) [| 3; 4 |] 1 0
   :: gather_example 0 (D.Any D.Float32) [| 1 |] 0 1
+  :: gather_example 2 (D.Any D.Int16) [| 2; 3; 2 |] 1 3
+  :: gather_example 3 (D.Any D.Float16) [| 0; 3 |] 1 2
+  :: gather_example 1 (D.Any D.Uint8) [| 5 |] 0 4
   :: List.mapi (fun i d -> gather_example i d [| 3; 4 |] (i mod 2) 5) D.all
 
+(* The gather of [c]. *)
+let gather_op (type v s) (dt : (v, s) D.t) c =
+  let x = operand dt c.g_view c.g_shape c.g_raws in
+  let idx = Nx.create D.Int64 c.g_idx c.g_pos in
+  fun () ->
+    let x = if c.g_computed then computed x else x in
+    P.eval ~by:"t" (P.Gather { axis = c.g_axis; idx; x })
+
 let gathers =
+  let graphs c =
+    let (D.Any dt) = c.g_dt in
+    [ exact_graph dt (gather_op dt c) ]
+  in
   prop ~count:40 ~examples:gather_examples "gathers give eager's bits"
-    (Gen.with_pp pp_gather gather_case)
-    (fun c ->
-      let (D.Any dt) = c.g_dt in
-      dtype_covers c.g_dt;
-      cover_floats c.g_dt c.g_raws;
-      cover "a strided or broadcast view" (c.g_view <> Plain);
-      cover "a computed operand" c.g_computed;
-      cover "a position outside the axis"
-        (Array.exists (outside c.g_shape.(c.g_axis)) c.g_pos);
-      cover "an empty result" (numel c.g_idx = 0);
-      cover "a one-element result" (numel c.g_idx = 1);
-      let x = operand dt c.g_view c.g_shape c.g_raws in
-      let idx = Nx.create D.Int64 c.g_idx c.g_pos in
-      let op () =
-        let x = if c.g_computed then computed x else x in
-        P.eval ~by:"t" (P.Gather { axis = c.g_axis; idx; x })
-      in
-      same_bits dt op)
+    (Gen.with_pp pp_gather (redrawn gather_examples gather_data))
+    (Lowered.primed graphs gather_examples (fun c ->
+         let (D.Any dt) = c.g_dt in
+         dtype_covers c.g_dt;
+         cover_floats c.g_dt c.g_raws;
+         cover "a strided or broadcast view" (c.g_view <> Plain);
+         cover "a computed operand" c.g_computed;
+         cover "a position outside the axis"
+           (Array.exists (outside c.g_shape.(c.g_axis)) c.g_pos);
+         cover "an empty result" (numel c.g_idx = 0);
+         cover "a one-element result" (numel c.g_idx = 1);
+         same_bits dt (gather_op dt c)))
 
 (* Scatters *)
 
@@ -649,12 +690,6 @@ let distinct n t axis pos =
   done;
   pos
 
-(* The kinds of scatters drawn: of shapes as drawn; of 33 to 40 positions
-   under 33 to 48 updates, along an axis between two others; of 1, 2 or 17 to
-   20 positions under 1800 to 2400 updates, enough that the host's threads
-   take the updates in chunks ({!Rune.Lower_index.scatter}). *)
-type kind = Drawn | Long | Few
-
 let few_targets = 20
 
 let host_renderer =
@@ -662,57 +697,16 @@ let host_renderer =
     (Rune_support.Compiled.here ();
      Tolk_engine.renderer Rig.host)
 
-(* [scatter_case dts combines] draws a scatter of [dts] by [combines], of each
-   kind. *)
-let scatter_case dts combines =
+(* A scatter of the form of [c], its positions, target and updates drawn; a
+   unique scatter's positions made distinct. *)
+let scatter_data c =
   let open Gen in
-  let* d = among dts in
-  let* combine = among combines in
-  let* unique = bool in
-  let* kind =
-    frequency [ (3, constant Drawn); (1, constant Long); (2, constant Few) ]
-  in
-  let* s =
-    match kind with
-    | Drawn -> shape
-    | Long -> map Array.of_list (list ~size:(constant 3) extent)
-    | Few -> map (Array.map (min 2)) shape
-  in
-  let* view = among views in
-  let* axis =
-    if kind = Long then constant 1 else int_range 0 (Array.length s - 1)
-  in
-  let* n =
-    match kind with
-    | Drawn -> constant s.(axis)
-    | Long -> int_range 33 40
-    | Few -> frequency [ (1, int_range 1 2); (1, int_range 17 few_targets) ]
-  in
-  let* m =
-    match kind with
-    | Drawn -> extent
-    | Long -> int_range 33 48
-    | Few -> int_range 1800 2400
-  in
-  let s = Array.mapi (fun i e -> if i = axis then n else e) s in
-  let t = Array.mapi (fun i n -> if i = axis then m else n) s in
-  let n = s.(axis) in
-  let* pos = positions n (numel t) in
-  let pos = if unique then distinct n t axis pos else pos in
-  let* into = operand_gen d view s in
-  let+ updates = raws d (numel t) in
-  {
-    s_dt = d;
-    s_combine = combine;
-    s_unique = unique;
-    s_shape = s;
-    s_view = view;
-    s_axis = axis;
-    s_idx = t;
-    s_pos = pos;
-    s_into = into;
-    s_updates = updates;
-  }
+  let n = c.s_shape.(c.s_axis) in
+  let* pos = positions n (numel c.s_idx) in
+  let pos = if c.s_unique then distinct n c.s_idx c.s_axis pos else pos in
+  let* into = operand_gen c.s_dt c.s_view c.s_shape in
+  let+ updates = raws c.s_dt (numel c.s_idx) in
+  { c with s_pos = pos; s_into = into; s_updates = updates }
 
 (* [landings c f] applies [f j o] to each update [j] of [c] that lands, [o] the
    element of the result it lands on. *)
@@ -799,9 +793,9 @@ let cover_scatter ?booleans c =
     && c.s_axis < Array.length c.s_shape - 1
     && n > 32 && k > 32 && some)
 
-let scatter_example i d combine =
-  let s = [| 3; 4 |] and axis = i mod 2 in
-  let t = Array.mapi (fun j n -> if j = axis then 6 else n) s in
+let scatter_example ?(s = [| 3; 4 |]) ?axis ?(m = 6) i d combine =
+  let axis = Option.value axis ~default:(i mod 2) in
+  let t = Array.mapi (fun j n -> if j = axis then m else n) s in
   let unique = i mod 4 = 1 in
   let pos = example_positions s.(axis) (numel t) in
   let view = List.nth views (i mod 4) in
@@ -834,16 +828,28 @@ let zero_example combine =
     s_updates = Array.make 4 0x80000000L;
   }
 
-(* Each dtype, the combines in turn, an example without updates and one of
-   zeros for each combine. *)
+(* Each dtype, the combines in turn, an example without updates, one of zeros
+   for each combine, and two along the axis of a shape of three and of one. *)
 let scatter_examples dts combines =
   let none = scatter_example 1 (List.hd dts) (List.hd combines) in
+  let last = List.nth dts (List.length dts - 1) in
   { none with s_idx = [| 3; 0 |]; s_pos = [||]; s_updates = [||] }
+  :: scatter_example ~s:[| 2; 3; 2 |] ~axis:2 ~m:4 2 last (List.hd combines)
+  :: scatter_example ~s:[| 5 |] ~axis:0 ~m:3 1 (List.nth dts 2)
+       (List.nth combines (1 mod List.length combines))
   :: List.map zero_example combines
   @ List.mapi
       (fun i d ->
         scatter_example i d (List.nth combines (i mod List.length combines)))
       dts
+
+(* The graph [exact] computes of [c]'s scatter, and where [own] and the scatter
+   is a float's or a complex number's, the scatter's own. *)
+let scatter_graphs ~own c =
+  let (D.Any dt) = c.s_dt in
+  let _, _, op = scattered dt c in
+  let floats = is_float c.s_dt || is_complex c.s_dt in
+  exact_graph dt op :: (if own && floats then [ Lowered.One op ] else [])
 
 let moved combines c =
   let (D.Any dt) = c.s_dt in
@@ -860,11 +866,12 @@ let moved combines c =
   in
   equal (array string) (Array.mapi shown e) (Array.mapi shown l)
 
-(* Each dtype along an axis between two others of 33 positions under 40
-   updates, and into 2 positions under 1900, the combines in turn; a float32
-   target of both zeros and a signalling NaN under [-0] updates, all on its
-   first two elements, 40 of them and 1900, for each combine; and a target
-   without elements. *)
+(* Each dtype along an axis between two others of 33 positions under 40 updates,
+   and into 2 positions under 1900, the combines in turn; a float32 target of
+   both zeros and a signalling NaN under [-0] updates, all on its first two
+   elements, 40 of them and 1900, and of 20 positions under 1900, for each
+   combine; a target of one element, a signalling NaN, under 6 updates and under
+   1900; and a target without elements. *)
 let kind_examples dts combines =
   let example ~n ~k i d =
     let s = [| 2; n; 3 |] and t = [| 2; k; 3 |] in
@@ -909,19 +916,41 @@ let kind_examples dts combines =
       s_updates = [||];
     }
   in
-  (none :: List.map (zeros ~n:33 ~k:40) combines)
+  let one =
+    {
+      (zero_example (List.hd combines)) with
+      s_shape = [| 1 |];
+      s_idx = [| 6 |];
+      s_pos = example_positions 1 6;
+      s_into = [| 0x7f800001L |];
+      s_updates = Array.make 6 0x80000000L;
+    }
+  in
+  let many =
+    {
+      one with
+      s_idx = [| 1900 |];
+      s_pos = example_positions 1 1900;
+      s_updates = Array.make 1900 0x80000000L;
+    }
+  in
+  (none :: one :: many :: List.map (zeros ~n:33 ~k:40) combines)
   @ List.map (zeros ~n:3 ~k:1900) combines
+  @ List.map (zeros ~n:few_targets ~k:1900) combines
   @ List.mapi (example ~n:33 ~k:40) dts
   @ List.mapi (example ~n:2 ~k:1900) dts
 
 let scatters_moved =
-  prop ~count:60
-    ~examples:
-      (scatter_examples D.all [ Set; Max; Min ]
-      @ kind_examples D.all [ Set; Max; Min ])
-    "a scatter by Set, Max or Min gives eager's bits"
-    (Gen.with_pp pp_scatter (scatter_case D.all [ Set; Max; Min ]))
-    (moved [ Set; Max; Min ])
+  let examples =
+    scatter_examples D.all [ Set; Max; Min ]
+    @ kind_examples D.all [ Set; Max; Min ]
+  in
+  prop ~count:60 ~examples "a scatter by Set, Max or Min gives eager's bits"
+    (Gen.with_pp pp_scatter (redrawn examples scatter_data))
+    (Lowered.primed
+       (scatter_graphs ~own:false)
+       examples
+       (moved [ Set; Max; Min ]))
 
 let addable = List.filter (fun d -> not (is_bool d)) D.all
 
@@ -977,11 +1006,13 @@ let added c =
   end
 
 let scatter_adds =
-  prop ~count:60
-    ~examples:(scatter_examples addable [ Add ] @ kind_examples addable [ Add ])
+  let examples =
+    scatter_examples addable [ Add ] @ kind_examples addable [ Add ]
+  in
+  prop ~count:60 ~examples
     "a scatter by Add wraps integers and holds its float bound"
-    (Gen.with_pp pp_scatter (scatter_case addable [ Add ]))
-    added
+    (Gen.with_pp pp_scatter (redrawn examples scatter_data))
+    (Lowered.primed (scatter_graphs ~own:true) examples added)
 
 (* Elements no update lands on
 
@@ -1025,9 +1056,8 @@ let eager_bits (type v s) (dt : (v, s) D.t) (x : (v, s, Nx.host) Nx.t) =
   | D.Float8_e4m3fn | D.Float8_e5m2 -> as_ D.Uint8
   | _ -> Array.map (hex dt) (Nx.to_array x)
 
-(* The dtypes that hold signalling NaNs, drawn five times as often as the
-   others, so that every run meets one where no update lands. A [complex64]
-   made from [float64] parts holds none. *)
+(* The dtypes that hold signalling NaNs. A [complex64] made from [float64] parts
+   holds none. *)
 let signalling =
   D.
     [
@@ -1039,15 +1069,11 @@ let signalling =
       Any Complex128;
     ]
 
-(* A scatter of each kind ({!scatter_case}) by any combine. *)
-let unreached_case =
+(* A scatter of the form of [c], its target's elements three times in four
+   delicate. *)
+let unreached_data c =
   let open Gen in
-  let dts = D.all @ List.concat (List.init 4 (fun _ -> signalling)) in
-  let* c = scatter_case dts [ Set; Add; Max; Min ] in
-  let c =
-    if is_bool c.s_dt && c.s_combine = Add then { c with s_combine = Set }
-    else c
-  in
+  let* c = scatter_data c in
   let n = raws_of c.s_dt (numel (base c.s_view c.s_shape)) in
   let+ into = array ~size:(constant n) (marked c.s_dt) in
   { c with s_into = into }
@@ -1096,24 +1122,43 @@ let negative_zero (type v s) (dt : (v, s) D.t) h =
       String.sub h 0 w = z || String.sub h w w = z
   | _ -> false
 
+(* Beside them, each dtype that holds signalling NaNs along an axis between two
+   others ({!kind_examples}), and each dtype's {!scatter_examples}, the combines
+   in turn, a boolean's [Add] a [Set]. *)
+let unreached_kinds =
+  let combines = [ K.Set; Add; Max; Min ] in
+  let settled c =
+    if is_bool c.s_dt && c.s_combine = Add then { c with s_combine = Set }
+    else c
+  in
+  List.filter
+    (fun c -> Array.length c.s_shape = 3)
+    (kind_examples signalling combines)
+  @ List.map settled (scatter_examples D.all combines)
+
 let unreached =
-  prop ~count:60 ~examples:unreached_examples
+  let examples = unreached_examples @ unreached_kinds in
+  prop ~count:60 ~examples
     "a scatter keeps the bits of each element no update lands on"
-    (Gen.with_pp pp_scatter unreached_case) (fun c ->
-      let (D.Any dt) = c.s_dt in
-      List.iter
-        (fun k -> cover (combine_name k) (c.s_combine = k))
-        [ K.Set; Add; Max; Min ];
-      cover "updates taken in chunks" (chunked c);
-      cover "a strided or broadcast view" (c.s_view <> Plain);
-      let into, _, op = scattered dt c in
-      let count = landed c in
-      let alone a = List.filteri (fun o _ -> count.(o) = 0) (Array.to_list a) in
-      let kept = alone (eager_bits dt into) and _, l = exact dt op in
-      cover "a signalling NaN where no update lands"
-        (List.exists (fun h -> List.mem `Signalling (nans dt h)) kept);
-      cover "a -0 where no update lands" (List.exists (negative_zero dt) kept);
-      equal (list string) kept (alone l))
+    (Gen.with_pp pp_scatter (redrawn examples unreached_data))
+    (Lowered.primed (scatter_graphs ~own:false) examples (fun c ->
+         let (D.Any dt) = c.s_dt in
+         List.iter
+           (fun k -> cover (combine_name k) (c.s_combine = k))
+           [ K.Set; Add; Max; Min ];
+         cover "updates taken in chunks" (chunked c);
+         cover "a strided or broadcast view" (c.s_view <> Plain);
+         let into, _, op = scattered dt c in
+         let count = landed c in
+         let alone a =
+           List.filteri (fun o _ -> count.(o) = 0) (Array.to_list a)
+         in
+         let kept = alone (eager_bits dt into) and _, l = exact dt op in
+         cover "a signalling NaN where no update lands"
+           (List.exists (fun h -> List.mem `Signalling (nans dt h)) kept);
+         cover "a -0 where no update lands"
+           (List.exists (negative_zero dt) kept);
+         equal (list string) kept (alone l)))
 
 (* Folds *)
 
@@ -1139,55 +1184,15 @@ let pp_fold ppf c =
     (String.concat ";" (List.map w (Iarray.to_list c.f_pad.windows)))
     (raws_text c.f_raws)
 
-(* A padding of a shape of rank [r]: ends that pad or crop, interior padding,
-   and windows on some axes half the time. *)
-let pad_gen r =
-  let open Gen in
-  let ends = map Iarray.of_list (list ~size:(constant r) (int_range (-2) 2)) in
-  let* lo = ends in
-  let* hi = ends in
-  let* interior =
-    map Iarray.of_list (list ~size:(constant r) (int_range 0 2))
-  in
-  let* windowed = list ~size:(constant r) bool in
-  let* sizes = list ~size:(constant r) (int_range 1 3) in
-  let* steps = list ~size:(constant r) (int_range 1 2) in
-  let+ dilations = list ~size:(constant r) (int_range 1 2) in
-  let windows =
-    List.filteri (fun i _ -> List.nth windowed i) (List.init r Fun.id)
-    |> List.map (fun axis ->
-        {
-          M.axis;
-          size = List.nth sizes axis;
-          step = List.nth steps axis;
-          dilation = List.nth dilations axis;
-        })
-  in
-  { K.lo; hi; interior; windows = Iarray.of_list windows }
-
 (* A float dtype's fraction bits. *)
 let fraction (D.Any dt) =
   match D.kind dt with D.Float -> Some (snd (format dt)) | _ -> None
 
-(* A fold's shape. A third of them have an empty axis, which [shape] draws too
-   rarely for every run to reach an empty result. *)
-let fold_shape =
-  let open Gen in
-  let* s = shape in
-  let* empty = frequency [ (1, constant true); (2, constant false) ] in
-  let+ axis = int_range 0 (Array.length s - 1) in
-  if empty then Array.mapi (fun i n -> if i = axis then 0 else n) s else s
-
-let fold_case dts =
-  let open Gen in
-  let* d = among dts in
-  let* s = fold_shape in
-  let* pad = pad_gen (Array.length s) in
-  match K.Shape.padded pad s with
-  | Error _ -> reject ()
-  | Ok out ->
-      let+ raws = raws d (numel out) in
-      { f_dt = d; f_shape = s; f_pad = pad; f_padded = out; f_raws = raws }
+(* A fold of the form of [c], its elements drawn. *)
+let fold_data c =
+  Gen.map
+    (fun raws -> { c with f_raws = raws })
+    (raws c.f_dt (numel c.f_padded))
 
 let folded (type v s) (x : (v, s, Nx.host) Nx.t) c =
   P.eval ~by:"t"
@@ -1211,7 +1216,8 @@ let cover_fold c =
 let foldable = List.filter (fun d -> not (is_bool d)) D.all
 
 (* Each dtype with ends that pad and crop, interior padding and overlapping
-   windows. *)
+   windows; folds of no element; windows of steps and dilations of 2 over one
+   axis and three. *)
 let fold_examples =
   let a = Iarray.of_list in
   let pad =
@@ -1274,10 +1280,62 @@ let fold_examples =
       f_raws = [| 0xbfb0000000000000L; 0x3fb0000000000000L |];
     }
   in
+  (* A fold of no element, of an operand of none. *)
+  let empty =
+    let pad =
+      {
+        K.lo = a [ 0; 0 ];
+        hi = a [ 0; 0 ];
+        interior = a [ 0; 0 ];
+        windows = a [];
+      }
+    in
+    let s = [| 2; 0 |] in
+    {
+      f_dt = D.Any D.Int32;
+      f_shape = s;
+      f_pad = pad;
+      f_padded = Result.get_ok (K.Shape.padded pad s);
+      f_raws = [||];
+    }
+  in
+  (* Windows of a step and a dilation of 2, of one axis and of three. *)
+  let spaced d s pad =
+    let out = Result.get_ok (K.Shape.padded pad s) in
+    {
+      f_dt = d;
+      f_shape = s;
+      f_pad = pad;
+      f_padded = out;
+      f_raws = cycled ~i:2 d (numel out);
+    }
+  in
+  let line =
+    spaced (D.Any D.Bfloat16) [| 4 |]
+      {
+        K.lo = a [ -2 ];
+        hi = a [ 2 ];
+        interior = a [ 2 ];
+        windows = a [ { M.axis = 0; size = 3; step = 1; dilation = 2 } ];
+      }
+  in
+  let cube =
+    spaced (D.Any D.Uint16) [| 2; 3; 5 |]
+      {
+        K.lo = a [ 0; 2; -1 ];
+        hi = a [ 1; -2; 2 ];
+        interior = a [ 2; 0; 1 ];
+        windows =
+          a
+            [
+              { M.axis = 0; size = 2; step = 2; dilation = 1 };
+              { M.axis = 2; size = 3; step = 2; dilation = 2 };
+            ];
+      }
+  in
   unreached (D.Any D.Int64)
   :: unreached (D.Any D.Float32)
-  :: negative
-  :: beside
+  :: negative :: beside :: empty :: line :: cube
   :: List.mapi
        (fun i d ->
          {
@@ -1289,67 +1347,76 @@ let fold_examples =
          })
        foldable
 
+(* The fold of [c]. *)
+let fold_op (type v s) (dt : (v, s) D.t) c =
+  let x = value dt c.f_padded c.f_raws in
+  (x, fun () -> folded x c)
+
 let folds =
+  let graphs c =
+    let (D.Any dt) = c.f_dt in
+    let _, op = fold_op dt c in
+    match D.kind dt with
+    | D.Float | D.Complex -> [ Lowered.One op ]
+    | _ -> [ exact_graph dt op ]
+  in
   prop ~count:40 ~examples:fold_examples
     "a fold wraps integers and holds its float bound"
-    (Gen.with_pp pp_fold (fold_case foldable))
-    (fun c ->
-      let (D.Any dt) = c.f_dt in
-      cover_fold c;
-      let x = value dt c.f_padded c.f_raws in
-      let op () = folded x c in
-      let floats = is_float c.f_dt || is_complex c.f_dt in
-      (* Each element's terms and, each part's, its terms other than [-0], by
-         eager folds of ones and of marks. *)
-      let count marks =
-        Array.map Float.to_int
-          (Nx.to_array (folded (Nx.create D.Float64 c.f_padded marks) c))
-      in
-      let terms = count (Array.make (numel c.f_padded) 1.) in
-      let elements = List.init (Array.length terms) Fun.id in
-      let all_neg0 p =
-        let other v = if v = 0. && Float.sign_bit v then 0. else 1. in
-        let others = count (Array.map other p) in
-        List.exists (fun o -> terms.(o) > 0 && others.(o) = 0) elements
-      in
-      cover "an element whose terms are all -0"
-        (floats && List.exists all_neg0 (parts64 x));
-      cover "a float element no term reaches"
-        (floats && List.exists (fun o -> terms.(o) = 0) elements);
-      match D.kind dt with
-      | D.Float | D.Complex ->
-          let e = Nx.to_array (op ()) and l = Lowered.run op in
-          let mags =
-            List.map
-              (fun p ->
-                Nx.to_array
-                  (folded
-                     (Nx.abs (Nx.create D.Float64 c.f_padded p))
-                     c))
-              (parts64 x)
-          in
-          (* Eager rounds a narrow float's sum at each addition: its
-             [terms - 1] roundings of the dtype add to the bound. *)
-          let narrow o =
-            match fraction c.f_dt with
-            | Some f when is_narrow c.f_dt ->
-                Float.ldexp 1. (-f) *. Float.of_int terms.(o)
-            | _ -> 0.
-          in
-          List.iter2
-            (fun (e, l) mags ->
-              Array.iteri
-                (fun o e ->
-                  let n = max 0 (terms.(o) - 1) in
-                  let bound =
-                    ((2. *. gamma c.f_dt n) +. narrow o) *. mags.(o)
-                    +. rounding_of dt e l.(o)
-                  in
-                  near ~bound e l.(o))
-                e)
-            (List.combine (parts dt e) (parts dt l))
-            mags
-      | _ -> same_bits dt op)
+    (Gen.with_pp pp_fold (redrawn fold_examples fold_data))
+    (Lowered.primed graphs fold_examples (fun c ->
+         let (D.Any dt) = c.f_dt in
+         cover_fold c;
+         let x, op = fold_op dt c in
+         let floats = is_float c.f_dt || is_complex c.f_dt in
+         (* Each element's terms and, each part's, its terms other than [-0], by
+            eager folds of ones and of marks. *)
+         let count marks =
+           Array.map Float.to_int
+             (Nx.to_array (folded (Nx.create D.Float64 c.f_padded marks) c))
+         in
+         let terms = count (Array.make (numel c.f_padded) 1.) in
+         let elements = List.init (Array.length terms) Fun.id in
+         let all_neg0 p =
+           let other v = if v = 0. && Float.sign_bit v then 0. else 1. in
+           let others = count (Array.map other p) in
+           List.exists (fun o -> terms.(o) > 0 && others.(o) = 0) elements
+         in
+         cover "an element whose terms are all -0"
+           (floats && List.exists all_neg0 (parts64 x));
+         cover "a float element no term reaches"
+           (floats && List.exists (fun o -> terms.(o) = 0) elements);
+         match D.kind dt with
+         | D.Float | D.Complex ->
+             let e = Nx.to_array (op ()) and l = Lowered.run op in
+             let mags =
+               List.map
+                 (fun p ->
+                   Nx.to_array
+                     (folded (Nx.abs (Nx.create D.Float64 c.f_padded p)) c))
+                 (parts64 x)
+             in
+             (* Eager rounds a narrow float's sum at each addition: its [terms -
+                1] roundings of the dtype add to the bound. *)
+             let narrow o =
+               match fraction c.f_dt with
+               | Some f when is_narrow c.f_dt ->
+                   Float.ldexp 1. (-f) *. Float.of_int terms.(o)
+               | _ -> 0.
+             in
+             List.iter2
+               (fun (e, l) mags ->
+                 Array.iteri
+                   (fun o e ->
+                     let n = max 0 (terms.(o) - 1) in
+                     let bound =
+                       (((2. *. gamma c.f_dt n) +. narrow o) *. mags.(o))
+                       +. rounding_of dt e l.(o)
+                     in
+                     near ~bound e l.(o))
+                   e)
+               (List.combine (parts dt e) (parts dt l))
+               mags
+         | _ -> same_bits dt op))
 
 (* Assemblies *)
 
@@ -1373,46 +1440,24 @@ let pp_assembly ppf c =
               (view_name v) (raws_text raws))
           c.a_pieces))
 
-let rec all = function
-  | [] -> Gen.constant []
-  | g :: gs ->
-      let open Gen in
-      let* x = g in
-      let+ xs = all gs in
-      x :: xs
-
-let range d =
-  let open Gen in
-  let* up = bool in
-  let* m = int_range 1 3 in
-  let step = if up then m else -m in
-  if d = 0 then constant { M.start = 0; count = 0; step }
-  else
-    let* start = int_range 0 (d - 1) in
-    let most =
-      if step > 0 then ((d - 1 - start) / step) + 1 else (start / -step) + 1
-    in
-    let+ count =
-      frequency [ (1, constant 0); (6, int_range 1 most) ]
-    in
-    { M.start; count; step }
-
 let region_shape rs = Array.map (fun (r : M.range) -> r.count) rs
 
-let assembly_case =
+(* An assembly of the form of [c], its fill and pieces' elements drawn. *)
+let assembly_data c =
   let open Gen in
-  let* d = all_dtypes in
-  let* s = shape in
-  let* fill = raws d 1 in
-  let piece =
-    let* rs = map Array.of_list (all (List.map range (Array.to_list s))) in
-    let* v = among views in
-    let+ raws = operand_gen d v (region_shape rs) in
-    (rs, v, raws)
+  let piece (rs, v, _) =
+    map (fun raws -> (rs, v, raws)) (operand_gen c.a_dt v (region_shape rs))
   in
-  let* k = int_range 0 3 in
-  let+ pieces = list ~size:(constant k) piece in
-  { a_dt = d; a_shape = s; a_fill = fill; a_pieces = pieces }
+  let rec each = function
+    | [] -> constant []
+    | p :: ps ->
+        let* p = piece p in
+        let+ ps = each ps in
+        p :: ps
+  in
+  let* fill = raws c.a_dt 1 in
+  let+ pieces = each c.a_pieces in
+  { c with a_fill = fill; a_pieces = pieces }
 
 (* Whether two pieces of [c] share an element. *)
 let overlap c =
@@ -1439,8 +1484,9 @@ let overlap c =
       > 1)
     (List.init n Fun.id)
 
-(* Each dtype with a reversed and a strided piece that overlap, an example
-   with an empty piece and one without pieces. *)
+(* Each dtype with a reversed and a strided piece that overlap, an example with
+   an empty piece and one without pieces, and three pieces into one axis and
+   into three. *)
 let assembly_examples =
   let r start count step = { M.start; count; step } in
   let s = [| 3; 4 |] in
@@ -1489,14 +1535,43 @@ let assembly_examples =
       a_pieces = List.init 22 (fun i -> piece i f32 Plain [| r (2 * i) 1 1 |]);
     }
   in
-  snan :: snan64 :: spots
+  (* Three pieces of strides of 2 and 3, into one axis and three. *)
+  let line =
+    let d = D.Any D.Int8 in
+    {
+      a_dt = d;
+      a_shape = [| 7 |];
+      a_fill = cycled ~i:2 d 1;
+      a_pieces =
+        [
+          piece 2 d Flipped [| r 0 3 3 |];
+          piece 3 d Plain [| r 6 3 (-2) |];
+          piece 4 d Broadcast [| r 1 2 1 |];
+        ];
+    }
+  in
+  let cube =
+    let d = D.Any D.Uint32 in
+    {
+      a_dt = d;
+      a_shape = [| 2; 3; 4 |];
+      a_fill = cycled ~i:3 d 1;
+      a_pieces =
+        [
+          piece 5 d Transposed [| r 1 1 1; r 2 3 (-1); r 0 2 3 |];
+          piece 6 d Broadcast [| r 0 2 1; r 0 2 2; r 3 2 (-3) |];
+          piece 7 d Flipped [| r 0 2 1; r 1 0 1; r 0 4 1 |];
+        ];
+    }
+  in
+  snan :: snan64 :: spots :: line :: cube
   :: { (each 0 f32) with a_pieces = empty }
   :: { (each 0 f32) with a_pieces = [] }
   :: List.mapi each D.all
 
 let assemblies =
   prop ~count:40 ~examples:assembly_examples "an assembly gives eager's bits"
-    (Gen.with_pp pp_assembly assembly_case)
+    (Gen.with_pp pp_assembly (redrawn assembly_examples assembly_data))
     (fun c ->
       let (D.Any dt) = c.a_dt in
       dtype_covers c.a_dt;
@@ -1553,50 +1628,11 @@ let pp_sort ppf c =
     (match c.o_k with None -> "" | Some k -> Printf.sprintf " k %d" k)
     (raws_text c.o_raws)
 
-(* A sort's slices are at most 4 elements long, or 9 to 17 a quarter of the
-   time, so that the network has 4 or 5 stages. One sort in five instead has
-   240 to 300 slices of 17 to 33, so that a first k of any of them compares
-   more than [2^16] pairs, past the ranks' budget. *)
-let sort_case =
-  let open Gen in
-  let* d = all_dtypes in
-  let* rows =
-    frequency
-      [
-        (4, constant None);
-        (1, map Option.some (pair (int_range 17 33) (int_range 240 300)));
-      ]
-  in
-  let* s, axis =
-    match rows with
-    | Some (n, r) -> of_list [ ([| r; n |], 1); ([| n; r |], 0) ]
-    | None ->
-        let* s = shape in
-        let* axis = int_range 0 (Array.length s - 1) in
-        let+ long =
-          frequency
-            [ (3, constant None); (1, map Option.some (int_range 9 17)) ]
-        in
-        let s =
-          match long with
-          | None -> s
-          | Some n -> Array.mapi (fun i e -> if i = axis then n else e) s
-        in
-        (s, axis)
-  in
-  let* view = among views in
-  let* descending = bool in
-  let* k = option (int_range 0 s.(axis)) in
-  let+ raws = operand_gen d view s in
-  {
-    o_dt = d;
-    o_shape = s;
-    o_view = view;
-    o_axis = axis;
-    o_descending = descending;
-    o_k = k;
-    o_raws = raws;
-  }
+(* A sort of the form of [c], its elements drawn. *)
+let sort_data c =
+  Gen.map
+    (fun raws -> { c with o_raws = raws })
+    (operand_gen c.o_dt c.o_view c.o_shape)
 
 (* Whether two elements of a slice along [c]'s axis are equal, as the sort
    orders them. *)
@@ -1618,8 +1654,10 @@ let ties c =
   !found
 
 (* Each dtype, whose specials repeat, an empty slice, slices of 17 and 9
-   elements, whose networks have 5 and 4 stages, and a first k by rounds, of 2
-   and of a whole slice. *)
+   elements, whose networks have 5 and 4 stages, a first k by rounds, of 2 and
+   of a whole slice, a first 16 of 17 past both the ranks' budget and the
+   rounds, which keeps the network, a first 0 of one axis, and a first 3 along
+   the middle of three axes. *)
 let sort_examples =
   let each i d =
     let s = [| 3; 4 |] and view = List.nth views (i mod 4) in
@@ -1642,6 +1680,11 @@ let sort_examples =
       o_view = Plain;
     }
   in
+  let shaped i d s axis =
+    let c = each i d in
+    let raws = cycled ~i d (numel (base c.o_view s)) in
+    { c with o_shape = s; o_axis = axis; o_raws = raws }
+  in
   let long d s axis =
     let c = each 1 d in
     let raws = cycled d (numel (base c.o_view s)) in
@@ -1653,6 +1696,9 @@ let sort_examples =
   :: { (long (D.Any D.Float32) [| 2; 17 |] 1) with o_k = Some 17 }
   :: { (long (D.Any D.Int8) [| 400; 10 |] 1) with o_k = Some 10 }
   :: { (long (D.Any D.Int64) [| 9; 2 |] 0) with o_descending = true }
+  :: { (long (D.Any D.Uint32) [| 240; 17 |] 1) with o_k = Some 16 }
+  :: { (shaped 2 (D.Any D.Int32) [| 7 |] 0) with o_k = Some 0 }
+  :: { (shaped 3 (D.Any D.Uint16) [| 2; 9; 2 |] 1) with o_k = Some 3 }
   :: List.mapi each D.all
 
 (* A first k of keys of at most 32 bits ranks the keys where [k] exceeds 2
@@ -1679,74 +1725,46 @@ let first c =
       else None
   | _ -> None
 
+(* The sort of [c]. *)
+let sort_op (type v s) (dt : (v, s) D.t) c =
+  let x = operand dt c.o_view c.o_shape c.o_raws in
+  fun () ->
+    P.eval ~by:"t"
+      (P.Sort { axis = c.o_axis; descending = c.o_descending; k = c.o_k; x })
+
 let sorts =
+  let graphs c =
+    let (D.Any dt) = c.o_dt in
+    pair_graphs dt (sort_op dt c)
+  in
   prop ~count:40 ~examples:sort_examples
     "sorts give eager's values and positions"
-    (Gen.with_pp pp_sort sort_case)
-    (fun c ->
-      let (D.Any dt) = c.o_dt in
-      dtype_covers c.o_dt;
-      cover_floats c.o_dt c.o_raws;
-      cover "descending" c.o_descending;
-      cover "equal elements" (ties c);
-      cover "a first k" (c.o_k <> None);
-      cover "a strided or broadcast view" (c.o_view <> Plain);
-      cover "an empty slice" (c.o_shape.(c.o_axis) = 0);
-      cover "a network of 3 or more stages" (c.o_shape.(c.o_axis) > 4);
-      cover "a 64-bit key"
-        (List.mem c.o_dt
-           D.[ Any Float64; Any Int64; Any Uint64; Any Complex64 ]);
-      cover "complex128" (c.o_dt = D.Any D.Complex128);
-      cover "a first k by ranks" (first c = Some `Selection);
-      cover "a first k by ranks over equal elements"
-        (first c = Some `Selection && ties c);
-      cover "k = n by ranks"
-        (first c = Some `Selection && c.o_k = Some c.o_shape.(c.o_axis));
-      cover "a first k by rounds" (first c = Some `Rounds);
-      cover "k = n by rounds"
-        (first c = Some `Rounds && c.o_k = Some c.o_shape.(c.o_axis));
-      let x = operand dt c.o_view c.o_shape c.o_raws in
-      let op () =
-        P.eval ~by:"t"
-          (P.Sort
-             { axis = c.o_axis; descending = c.o_descending; k = c.o_k; x })
-      in
-      same_bits dt (fun () -> fst (op ()));
-      equal (array int64)
-        (Nx.to_array (snd (op ())))
-        (Lowered.run (fun () -> snd (op ()))))
-
-(* A first k of a few 32-bit keys ranks them in one kernel and finds the
-   first k ranks in a second, each a launch, where a network has one per
-   stage. *)
-let selection_kernels =
-  test "a first k of 32 keys is two kernels" (fun () ->
-      let x = Nx.zeros D.Float32 [| 32 |] in
-      let ids () =
-        snd
-          (P.eval ~by:"t"
-             (P.Sort { axis = 0; descending = true; k = Some 4; x }))
-      in
-      equal int 2 (Lowered.kernels ids))
-
-(* The bound counts the comparisons of the whole array, [n (n + k)] a row:
-   56 rows of 32 keys with a first 4 make 64512, within the host's [2^16], and
-   57 rows pass it. A first 1 or 2 takes as many rounds, as few launches, at
-   any rows. *)
-let selection_bound =
-  let kernels rows k =
-    let x = Nx.broadcast_to [| rows; 32 |] (Nx.scalar D.Float32 0.) in
-    Lowered.kernels (fun () ->
-        snd
-          (P.eval ~by:"t"
-             (P.Sort { axis = 1; descending = true; k = Some k; x })))
-  in
-  test "a first k selects up to its bound of comparisons" (fun () ->
-      equal int 2 (kernels 56 4);
-      equal int 4 (kernels 57 4);
-      equal int 1 (kernels 1 1);
-      equal int 2 (kernels 1 2);
-      equal int 2 (kernels 1 3))
+    (Gen.with_pp pp_sort (redrawn sort_examples sort_data))
+    (Lowered.primed graphs sort_examples (fun c ->
+         let (D.Any dt) = c.o_dt in
+         dtype_covers c.o_dt;
+         cover_floats c.o_dt c.o_raws;
+         cover "descending" c.o_descending;
+         cover "equal elements" (ties c);
+         cover "a first k" (c.o_k <> None);
+         cover "a strided or broadcast view" (c.o_view <> Plain);
+         cover "an empty slice" (c.o_shape.(c.o_axis) = 0);
+         cover "a network of 3 or more stages" (c.o_shape.(c.o_axis) > 4);
+         cover "a 64-bit key"
+           (List.mem c.o_dt
+              D.[ Any Float64; Any Int64; Any Uint64; Any Complex64 ]);
+         cover "complex128" (c.o_dt = D.Any D.Complex128);
+         cover "a first k by ranks" (first c = Some `Selection);
+         cover "a first k by ranks over equal elements"
+           (first c = Some `Selection && ties c);
+         cover "k = n by ranks"
+           (first c = Some `Selection && c.o_k = Some c.o_shape.(c.o_axis));
+         cover "a first k by rounds" (first c = Some `Rounds);
+         cover "k = n by rounds"
+           (first c = Some `Rounds && c.o_k = Some c.o_shape.(c.o_axis));
+         let (e, l), (ep, lp) = exact_pair dt (sort_op dt c) in
+         equal (array string) e l;
+         equal (array int64) ep lp))
 
 (* The ranks' comparisons overflow an OCaml integer past [2^62]: a first k of
    that many keeps the network, whose kernels stay few enough to schedule. *)
@@ -1759,27 +1777,6 @@ let selection_wide =
              (P.Sort { axis = 1; descending = true; k = Some 32; x }))
       in
       at_least int ~than:3 (Lowered.kernels ids))
-
-(* Past the ranks' bound a first k of 32-bit keys takes a round per
-   element kept, each one kernel whatever the number of rows, up to the
-   network's 15 compare steps for 32 keys; past them it keeps the network, a
-   kernel per step. *)
-let rounds_kernels =
-  let kernels rows k =
-    let x = Nx.broadcast_to [| rows; 32 |] (Nx.scalar D.Float32 0.) in
-    Lowered.kernels (fun () ->
-        snd
-          (P.eval ~by:"t"
-             (P.Sort { axis = 1; descending = true; k = Some k; x })))
-  in
-  test "a first k past the ranks' bound is k kernels at any rows"
-    (fun () ->
-      equal int 1 (kernels 512 1);
-      equal int 4 (kernels 57 4);
-      equal int 4 (kernels 512 4);
-      equal int 4 (kernels (1 lsl 47) 4);
-      equal int 15 (kernels 512 15);
-      at_least int ~than:17 (kernels 512 16))
 
 (* Workgroups *)
 
@@ -1845,9 +1842,22 @@ let workgroup_case =
 
 (* A scatter's kernels number their threads in workgroups of at most a
    block's threads, whatever its updates. *)
+(* One example on each target, of 2^21 updates. *)
+let workgroup_examples =
+  List.mapi
+    (fun i w_target ->
+      {
+        w_combine = List.nth [ K.Set; Add; Max ] (i mod 3);
+        w_unique = i mod 2 = 1;
+        w_n = 3 + i;
+        w_k = 1 lsl 21;
+        w_target;
+      })
+    gpu_targets
+
 let scatter_workgroups =
   prop "a scatter's workgroups hold at most a block's threads on every GPU"
-    ~count:60
+    ~count:60 ~examples:workgroup_examples
     (Gen.with_pp pp_workgroup_case workgroup_case)
     (fun c ->
       let idx = Nx.broadcast_to [| c.w_k |] (Nx.scalar D.Int64 0L) in
@@ -1908,13 +1918,6 @@ let () =
            [ gathers; scatters_moved; scatter_adds; unreached ];
          group "workgroups" [ scatter_workgroups ];
          group "folds and assemblies" [ folds; assemblies ];
-         group "sorts"
-           [
-             sorts;
-             selection_kernels;
-             selection_bound;
-             selection_wide;
-             rounds_kernels;
-           ];
+         group "sorts" [ sorts; selection_wide ];
          group "numbering" wide_unique;
        ])
