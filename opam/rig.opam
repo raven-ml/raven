@@ -36,6 +36,8 @@ build: [
 ]
 dev-repo: "git+https://github.com/raven-ml/raven.git"
 x-maintenance-intent: ["(latest)"]
+# rig addresses memory beyond what a 32-bit int holds.
+available: arch != "x86_32" & arch != "arm32" & arch != "ppc32"
 # The drivers include the kernel's headers, which other distributions install
 # with their C library's.
 depexts: [
