@@ -3709,20 +3709,21 @@ values.
   (`test/engine/jit/*_lowered.golden`), which `gen/engine/jit.py` makes
   without batches.
 
-## D147. The x86 host holds bfloat16 as its bits
+## D147. The x86 and arm64 hosts hold bfloat16 as its bits
 
 - **tinygrad:** `renderer/cstyle.py` `ClangRenderer.type_map`, which keeps
   `CStyleLanguage.type_map`'s `__bf16` on every machine.
-- **tolk:** `Cstyle.clang` (on x86, bfloat16 as `unsigned short` and its
-  constants as bits with `pm_bf16_ushort_const`).
-- **Differs:** on x86, a bfloat16 value, pointer or vector is written as
-  `unsigned short`, and a bfloat16 constant as its bits, as OpenCL writes them
-  (`renderer/cstyle.py` `OpenCLRenderer.type_map`,
+- **tolk:** `Cstyle.clang` (on x86 and arm64, bfloat16 as `unsigned short`
+  and its constants as bits with `pm_bf16_ushort_const`).
+- **Differs:** on x86 and arm64, a bfloat16 value, pointer or vector is
+  written as `unsigned short`, and a bfloat16 constant as its bits, as OpenCL
+  writes them (`renderer/cstyle.py` `OpenCLRenderer.type_map`,
   `OpenCLRenderer.string_rewrite`). The kernel's graph is tinygrad's; only its
   C types change. Every bfloat16 operation already computes in float32
   through `create_non_native_float_pats` and `pm_manual_bf16_cast`, so a
   bfloat16 value is only loaded, stored, selected and bitcast, which act on
-  its bits.
+  its bits. On arm64 a bfloat16 is no longer among the types whose compared
+  constants are hidden from the backend: none is compared.
 - **Reason:** (b). LLVM's x86 backend without AVX512-BF16 aborts on a
   selection between bfloat16 vectors ("Cannot select: v8bf16 =
   X86ISD::BLENDV") and truncates a gated load's merge, or a bitcast of stacked
@@ -3732,14 +3733,28 @@ values.
   constant is exact`, `a selection of a value and a zero is exact`, `a
   segmented contraction gives eager's values` and `experts applied give
   eager's values` (`Nx_quant.apply_experts`), each with bfloat16 among its
-  dtypes.
+  dtypes. LLVM 18's arm64 backend, for `generic` and every processor
+  (18.1.3 on GitHub's ubuntu-24.04-arm, 18.1.8 for `neoverse-n2`, `apple-m1`
+  and `apple-m2`), selects no `fneg` or `fabs` of a bfloat16, scalar, of
+  lanes or of SVE lanes, which LLVM folds from a flip or a clear of its sign
+  bit ("Cannot select: bf16 = fneg"), and cannot split a bitcast of two
+  stacked bfloat16 lanes ("Do not know how to split the result of this
+  operator!", or "this operator's operand"). rune's `Rune.iterate`,
+  `Rune.scan`, `jvp`, `jit` and `vmap` suites, `Lower_index › gathers and
+  scatters` and `Lower_reduce › scans › float running sums and products hold
+  their bound` failed so at bfloat16 on GitHub's arm64 runner, and
+  `Lower_index`'s and `Lower_reduce`'s fail so under Clang 18.1.8 on an
+  arm64 Mac; with bfloat16 held as bits each passes under it. LLVM
+  19.1.7 and 21.1.8 compile the flipped and cleared sign bits, writing `eor`
+  for a flip.
 - **Pinned by:** the `Codegen` suite's `a selection between bfloat16 vectors
   takes each lane's arm` and `a gated bfloat16 load takes its alternative
   where its gate is false`, which run on the host and fail on x86 without
-  AVX512-BF16 under `__bf16`. The x86 Clang goldens of
-  bfloat16 kernels (`bf16_clang`, `clang_*_bf16`). On rune: the four tests
-  above, on an x86 host without AVX512-BF16; that each fails without the rule
-  is unconfirmed.
+  AVX512-BF16 under `__bf16`; `Tolk.Compiler_cpu › features › a sign bit of
+  bfloat16s compiles for arm64`, which fails under Clang 18 with `__bf16`.
+  The x86 Clang goldens of bfloat16 kernels (`bf16_clang`, `clang_*_bf16`).
+  On rune: the tests above, on an x86 host without AVX512-BF16 and on arm64
+  under Clang 18.
 
 ## D148. A selection keeps its guard of a conversion
 

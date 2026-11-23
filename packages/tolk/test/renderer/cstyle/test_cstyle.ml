@@ -2108,16 +2108,16 @@ let barrier reg = Printf.sprintf "__asm__(\"\" : \"+%s\"(z))" reg
 (* Each Clang target, its register class for a float, the float types it
    compares in, those whose compared zeros its backend lowers to a minimum or a
    maximum, and whether it lowers so a select against any constant, whose
-   minimum or maximum then quiets a signalling NaN: x86_64 and riscv64 compare a
-   bfloat16 in float32. *)
+   minimum or maximum then quiets a signalling NaN: each compares a bfloat16 in
+   float32. *)
 let clang_targets =
   Dtype.
     [
       ( "arm64",
         arm64,
         "w",
-        [ Float16; Bfloat16; Float32; Float64 ],
-        [ Float16; Bfloat16; Float32; Float64 ],
+        [ Float16; Float32; Float64 ],
+        [ Float16; Float32; Float64 ],
         true );
       ("x86_64", clang, "x", [ Float16; Float32; Float64 ], [ Float16 ], false);
       ( "riscv64",
@@ -2263,11 +2263,11 @@ let selected dt =
        ])
 
 (* Each Clang target and the 16-bit floats it holds as a storage format, a
-   [__fp16] or a [__bf16]: x86_64 holds a bfloat16 as its bits. *)
+   [__fp16] or a [__bf16]: x86_64 and arm64 hold a bfloat16 as its bits. *)
 let held =
   Dtype.
     [
-      ("arm64", arm64, [ Float16; Bfloat16 ]);
+      ("arm64", arm64, [ Float16 ]);
       ("x86_64", clang, [ Float16 ]);
       ("riscv64", riscv64, [ Float16; Bfloat16 ]);
     ]

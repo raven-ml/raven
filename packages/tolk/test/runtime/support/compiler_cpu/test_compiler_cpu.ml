@@ -626,15 +626,15 @@ let source prg =
   | _ -> invalid_arg "a program's third source is its source"
 
 (* The program of out[i] = in[i] with its bits combined by [op] with [mask],
-   over 32 halves as one vector of 32 lanes, for [arch]. *)
-let sign_bits ~arch op mask =
+   over 32 elements of the 16-bit float [dt], a half by default, as one vector
+   of 32 lanes, for [arch]. *)
+let sign_bits ?(dt = Dtype.Float16) ~arch op mask =
   let n = 32 in
   let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-  let at slot = Ops.index (Shape.placeholder ~slot [ n ] Dtype.Float16) [ i ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ n ] dt) [ i ] in
   let bits = Ops.bitcast (at 1) Dtype.Uint16 in
   let value =
-    Ops.bitcast (op bits (Shape.const_like bits (`Int (Bigint.of_int mask))))
-      Dtype.Float16
+    Ops.bitcast (op bits (Shape.const_like bits (`Int (Bigint.of_int mask)))) dt
   in
   let split amount =
     Opt.Split { axis = 0; amount; target = Upcast; top = false }
@@ -831,6 +831,24 @@ let features =
         (fun (arch, (_, (op, mask))) ->
           let prg = sign_bits ~arch op mask in
           is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (compile arch (source prg)));
+      (* LLVM folds flipping or clearing the sign bit of a bfloat16 into a
+         negation or an absolute value, which LLVM 18's arm64 backend selects
+         for no processor. *)
+      cases "a sign bit of bfloat16s compiles for arm64"
+        ~id:(fun (arch, (name, _)) -> arch ^ " " ^ name)
+        (List.concat_map
+           (fun arch ->
+             List.map
+               (fun op -> (arch, op))
+               [
+                 ("flipped", (Ops.bitwise_xor, 0x8000));
+                 ("cleared", (Ops.bitwise_and, 0x7fff));
+               ])
+           [ "arm64,generic"; "arm64,neoverse-n2" ])
+        (fun (arch, (_, (op, mask))) ->
+          let prg = sign_bits ~dt:Dtype.Bfloat16 ~arch op mask in
+          is_relocatable_elf64 ~machine:(elf_machine "arm64")
             (compile arch (source prg)));
       (* LLVM 18's straight-line vectorizer narrowed the four indices into
          invalid IR for these processors, and Clang 18 crashed on it. *)

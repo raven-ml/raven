@@ -1676,6 +1676,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On arm64, `Cstyle.clang` holds bfloat16 as its bits, an `unsigned short`,
+  as on x86: Clang 18 failed to compile a bfloat16 negation, absolute value
+  or bitcast of stacked lanes ("Cannot select: bf16 = fneg").
 - tolk builds on musl, as on Alpine Linux, which declares the signal mask
   functions of its worker only where a C file asks for them.
 - On arm64, a select of a value and any float constant by their comparison,

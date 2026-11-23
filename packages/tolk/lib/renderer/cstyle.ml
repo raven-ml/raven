@@ -2217,9 +2217,13 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
      legalises a bfloat16 value it only moves (a selection, a merge of a gated
      load with its alternative, a bitcast of stacked lanes) through float32:
      it aborts on a selection between vectors and calls compiler-rt's
-     [__truncsfbf2], which no library of the process defines. Every bfloat16
-     operation computes in float32 here, so on x86 a bfloat16 is held as its
-     bits, an [unsigned short], as OpenCL holds it.
+     [__truncsfbf2], which no library of the process defines. LLVM 18's arm64
+     backend, on every processor, selects no negation or absolute value of a
+     bfloat16, scalar or of lanes, which LLVM folds from a flip or a clear of
+     its sign bit, and cannot split a bitcast of stacked bfloat16 lanes. Every
+     bfloat16 operation computes in float32 here, so on x86 and arm64 a bfloat16
+     is held as its bits, an [unsigned short], as OpenCL holds it, and LLVM
+     never sees a bfloat16.
 
      A processor with AVX-512 that prefers 256-bit vectors, as Intel's do,
      makes 512-bit types illegal, so LLVM splits the kernel's wider vectors.
@@ -2230,7 +2234,7 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
 
      A float constant hidden from the backend, any on arm64 and a zero
      elsewhere, is held in a register of the target's float class: [w] on arm64,
-     [x] on x86 and [f] on riscv64. x86 and riscv64 compare a bfloat16 in
+     [x] on x86 and [f] on riscv64. x86, arm64 and riscv64 compare a bfloat16 in
      float32. A selection of a half, and of a bfloat16 where it is a [__bf16],
      chooses between bits. *)
   let arm64 =
@@ -2251,11 +2255,15 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
     if arm64 then
       {
         clang_lang with
+        type_map = (Dtype.Bfloat16, "unsigned short") :: clang_lang.type_map;
         string_rewrite =
-          Pattern_matcher.append
-            (opaque_constants ~reg:"w" Constants
-               Dtype.[ Float16; Bfloat16; Float32; Float64 ])
-            clang_lang.string_rewrite;
+          Pattern_matcher.concat
+            [
+              opaque_constants ~reg:"w" Constants
+                Dtype.[ Float16; Float32; Float64 ];
+              pm_bf16_ushort_const;
+              clang_lang.string_rewrite;
+            ];
       }
     else if String.starts_with ~prefix:"x86" arch then
       {
@@ -2311,7 +2319,7 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
       }
   in
   let held =
-    if String.starts_with ~prefix:"x86" arch then [ Dtype.Float16 ]
+    if arm64 || String.starts_with ~prefix:"x86" arch then [ Dtype.Float16 ]
     else Dtype.[ Float16; Bfloat16 ]
   in
   let lang =
