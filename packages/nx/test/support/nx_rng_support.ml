@@ -302,7 +302,7 @@ type sampler = {
   covers : (string * (case -> bool)) list;
   rows : bool;
   dtypes : dtype list;
-  pairs : runner -> at -> case -> pair list;
+  pairs : runner -> at -> (case -> pair) list;
 }
 
 let name s = s.name
@@ -310,17 +310,25 @@ let dtypes s = s.dtypes
 let floats = [ Float16; Bfloat16; Float32; Float64 ]
 let key c = Nx.Rng.key c.seed
 
-let p0 r label f c =
-  let k = key c in
-  { label; eager = codes (f.f0 k); subject = codes (r.run0 f k) }
+(* A draw at one dtype and shape: [r] is applied to [f] once, and each case runs
+   what it gives, so that a compiled draw compiles once for every case. *)
+let p0 r label f =
+  let subject = r.run0 f in
+  fun c ->
+    let k = key c in
+    { label; eager = codes (f.f0 k); subject = codes (subject k) }
 
-let p1 r label f c x =
-  let k = key c in
-  { label; eager = codes (f.f1 k x); subject = codes (r.run1 f k x) }
+let p1 r label f =
+  let subject = r.run1 f in
+  fun c x ->
+    let k = key c in
+    { label; eager = codes (f.f1 k x); subject = codes (subject k x) }
 
-let p2 r label f c x y =
-  let k = key c in
-  { label; eager = codes (f.f2 k x y); subject = codes (r.run2 f k x y) }
+let p2 r label f =
+  let subject = r.run2 f in
+  fun c x y ->
+    let k = key c in
+    { label; eager = codes (f.f2 k x y); subject = codes (subject k x y) }
 
 let label (F dt) shape =
   Printf.sprintf "%s at %s" (Nx.Dtype.name dt) (shape_name shape)
@@ -354,11 +362,11 @@ type shaped = {
 }
 
 let shaped name g =
-  let pairs r at c =
+  let pairs r at =
     each at (fun (F dt as d) shape ->
         let sh = [| elements shape |] in
         let f0 k = g.at (Nx.Rng.placement k) ~key:k dt sh in
-        p0 r (label d shape) { f0 } c)
+        p0 r (label d shape) { f0 })
   in
   let gen = Gen.map (fun seed -> { seed; cols = [||]; ints = [||] }) Gen.int in
   { name; gen; covers = []; rows = false; dtypes = floats; pairs }
@@ -369,11 +377,11 @@ let exponential = shaped "exponential" { at = Nx.Rng.exponential_at }
 let gumbel = shaped "gumbel" { at = Nx.Rng.gumbel_at }
 
 let bits =
-  let pairs r at c =
+  let pairs r at =
     integer at Float32 (fun shape ->
         let sh = [| elements shape |] in
         let f0 k = Nx.Rng.bits_at (Nx.Rng.placement k) ~key:k sh in
-        p0 r (shape_name shape) { f0 } c)
+        p0 r (shape_name shape) { f0 })
   in
   {
     name = "bits";
@@ -385,11 +393,11 @@ let bits =
   }
 
 let permutation =
-  let pairs r at c =
+  let pairs r at =
     integer at Float64 (fun shape ->
         let m = elements shape in
         let f0 k = Nx.Rng.permutation_at (Nx.Rng.placement k) ~key:k m in
-        p0 r (shape_name shape) { f0 } c)
+        p0 r (shape_name shape) { f0 })
   in
   {
     name = "permutation";
@@ -403,11 +411,11 @@ let permutation =
 (* A key split into one key at the zero-size shape, two at one element and a
    block's at the block, its words int32. *)
 let split_batch =
-  let pairs r at c =
+  let pairs r at =
     integer at Float32 (fun shape ->
         let m = match shape with Zero -> 1 | One -> 2 | Block | Row -> n in
         let f0 k = Nx.Rng.to_tensor (Nx.Rng.split_batch ~n:m k) in
-        p0 r (Printf.sprintf "%d keys" m) { f0 } c)
+        p0 r (Printf.sprintf "%d keys" m) { f0 })
   in
   {
     name = "split_batch";
@@ -430,14 +438,18 @@ let permute =
       in
       { seed; cols = [||]; ints = [| i |] })
   in
-  let pairs r at c =
+  let pairs r at =
     integer at Float64 (fun shape ->
         let m = elements shape in
-        let i = Nx.create Nx.int64 [| m |] (Array.sub c.ints.(0) 0 m) in
         let size = if shape = Block then n else 1 in
-        let i = if shape = One then Nx.zeros Nx.int64 [| 1 |] else i in
         let f1 k i = Nx.Rng.permute ~key:k ~n:size i in
-        p1 r (shape_name shape) { f1 } c i)
+        let draw = p1 r (shape_name shape) { f1 } in
+        fun c ->
+          let i =
+            if shape = One then Nx.zeros Nx.int64 [| 1 |]
+            else Nx.create Nx.int64 [| m |] (Array.sub c.ints.(0) 0 m)
+          in
+          draw c i)
   in
   {
     name = "permute";
@@ -457,12 +469,12 @@ let fold_in_tensor =
       let i = Array.append [| Int64.min_int; Int64.max_int; 0L; -1L |] i in
       { seed; cols = [||]; ints = [| i |] })
   in
-  let pairs r at c =
+  let pairs r at =
     integer at Float32 (fun shape ->
         let m = elements shape in
-        let i = Nx.create Nx.int64 [| m |] (Array.sub c.ints.(0) 0 m) in
         let f1 k i = Nx.Rng.to_tensor (Nx.Rng.fold_in_tensor k i) in
-        p1 r (shape_name shape) { f1 } c i)
+        let draw = p1 r (shape_name shape) { f1 } in
+        fun c -> draw c (Nx.create Nx.int64 [| m |] (Array.sub c.ints.(0) 0 m)))
   in
   {
     name = "fold_in_tensor";
@@ -514,14 +526,18 @@ let randint =
     in
     (col 0, col 1)
   in
-  let pairs r at c =
+  let pairs r at =
     let f2 k low high = Nx.Rng.randint ~key:k ~low high in
     integer at Float32 (fun shape ->
-        let l, h = bounds Nx.int32 Int64.to_int32 c shape in
-        p2 r ("int32 at " ^ shape_name shape) { f2 } c l h)
+        let draw = p2 r ("int32 at " ^ shape_name shape) { f2 } in
+        fun c ->
+          let l, h = bounds Nx.int32 Int64.to_int32 c shape in
+          draw c l h)
     @ integer at Float64 (fun shape ->
-        let l, h = bounds Nx.int64 Fun.id c shape in
-        p2 r ("int64 at " ^ shape_name shape) { f2 } c l h)
+        let draw = p2 r ("int64 at " ^ shape_name shape) { f2 } in
+        fun c ->
+          let l, h = bounds Nx.int64 Fun.id c shape in
+          draw c l h)
   in
   {
     name = "randint";
@@ -535,11 +551,11 @@ let randint =
 (* Samplers of float parameters *)
 
 let bernoulli =
-  let pairs r at c =
+  let pairs r at =
     each at (fun (F dt as d) shape ->
-        let p = column probability dt c 0 (elements shape) in
         let f1 k p = Nx.Rng.bernoulli ~key:k p in
-        p1 r (label d shape) { f1 } c p)
+        let draw = p1 r (label d shape) { f1 } in
+        fun c -> draw c (column probability dt c 0 (elements shape)))
   in
   {
     name = "bernoulli";
@@ -551,11 +567,11 @@ let bernoulli =
   }
 
 let gamma =
-  let pairs r at c =
+  let pairs r at =
     each at (fun (F dt as d) shape ->
-        let a = column positive dt c 0 (elements shape) in
         let f1 k a = Nx.Rng.gamma ~key:k a in
-        p1 r (label d shape) { f1 } c a)
+        let draw = p1 r (label d shape) { f1 } in
+        fun c -> draw c (column positive dt c 0 (elements shape)))
   in
   {
     name = "gamma";
@@ -572,12 +588,12 @@ let gamma =
   }
 
 let beta =
-  let pairs r at c =
+  let pairs r at =
     each at (fun (F dt as d) shape ->
         let m = elements shape in
-        let a = column positive dt c 0 m and b = column positive dt c 1 m in
         let f2 k a b = Nx.Rng.beta ~key:k a b in
-        p2 r (label d shape) { f2 } c a b)
+        let draw = p2 r (label d shape) { f2 } in
+        fun c -> draw c (column positive dt c 0 m) (column positive dt c 1 m))
   in
   {
     name = "beta";
@@ -594,11 +610,11 @@ let beta =
   }
 
 let von_mises =
-  let pairs r at c =
+  let pairs r at =
     each at (fun (F dt as d) shape ->
-        let k = column non_negative dt c 0 (elements shape) in
         let f1 key k = Nx.Rng.von_mises ~key k in
-        p1 r (label d shape) { f1 } c k)
+        let draw = p1 r (label d shape) { f1 } in
+        fun c -> draw c (column non_negative dt c 0 (elements shape)))
   in
   {
     name = "von_mises";
@@ -615,12 +631,12 @@ let von_mises =
   }
 
 let truncated_normal =
-  let pairs r at c =
+  let pairs r at =
     each at (fun (F dt as d) shape ->
         let m = elements shape in
-        let lo = column lower dt c 0 m and hi = column upper dt c 1 m in
         let f2 k lo hi = Nx.Rng.truncated_normal ~key:k lo hi in
-        p2 r (label d shape) { f2 } c lo hi)
+        let draw = p2 r (label d shape) { f2 } in
+        fun c -> draw c (column lower dt c 0 m) (column upper dt c 1 m))
   in
   {
     name = "truncated_normal";
@@ -642,11 +658,11 @@ let truncated_normal =
   }
 
 let poisson =
-  let pairs r at c =
+  let pairs r at =
     each at (fun (F dt as d) shape ->
-        let x = column rate dt c 0 (elements shape) in
         let f1 k x = Nx.Rng.poisson ~key:k x in
-        p1 r (label d shape) { f1 } c x)
+        let draw = p1 r (label d shape) { f1 } in
+        fun c -> draw c (column rate dt c 0 (elements shape)))
   in
   {
     name = "poisson";
@@ -696,16 +712,17 @@ let binomial =
       ps;
     !k
   in
-  let pairs r at c =
+  let pairs r at =
     each at (fun (F dt as d) shape ->
         let m = elements shape in
-        let p = column probability dt c 0 m in
-        let t =
-          Nx.create Nx.int32 [| m |]
-            (Array.map Int64.to_int32 (Array.sub c.ints.(0) 0 m))
-        in
         let f2 k t p = Nx.Rng.binomial ~key:k t p in
-        p2 r (label d shape) { f2 } c t p)
+        let draw = p2 r (label d shape) { f2 } in
+        fun c ->
+          let t =
+            Nx.create Nx.int32 [| m |]
+              (Array.map Int64.to_int32 (Array.sub c.ints.(0) 0 m))
+          in
+          draw c t (column probability dt c 0 m))
   in
   {
     name = "binomial";
@@ -740,12 +757,12 @@ let each_row at f =
     at.dtypes
 
 let dirichlet =
-  let pairs r at c =
+  let pairs r at =
     each_row at (fun (F dt as d) shape ->
         let s = row_shape shape in
-        let a = Nx.reshape s (column positive dt c 0 (numel s)) in
         let f1 k a = Nx.Rng.dirichlet ~key:k a in
-        p1 r (label d shape) { f1 } c a)
+        let draw = p1 r (label d shape) { f1 } in
+        fun c -> draw c (Nx.reshape s (column positive dt c 0 (numel s))))
   in
   {
     name = "dirichlet";
@@ -773,13 +790,16 @@ let finite_rows len xs =
   xs
 
 let categorical =
-  let pairs r at c =
+  let pairs r at =
     each_row at (fun (F dt as d) shape ->
         let s = row_shape shape in
-        let xs = Array.init (numel s) (fun i -> resolve logit d c.cols.(0).(i)) in
-        let l = Nx.reshape s (tensor dt (finite_rows s.(1) xs)) in
         let f1 k l = Nx.Rng.categorical ~key:k l in
-        p1 r (label d shape) { f1 } c l)
+        let draw = p1 r (label d shape) { f1 } in
+        fun c ->
+          let xs =
+            Array.init (numel s) (fun i -> resolve logit d c.cols.(0).(i))
+          in
+          draw c (Nx.reshape s (tensor dt (finite_rows s.(1) xs))))
   in
   {
     name = "categorical";
@@ -846,11 +866,13 @@ let misses p =
 
 let dtype_name d = match fdt d with F dt -> Nx.Dtype.name dt
 
-let law r ~dtypes ~shapes s c =
+let law r ~dtypes ~shapes s =
   let at = { dtypes; shapes } in
-  List.iter (fun d -> cover (dtype_name d) true) dtypes;
-  List.iter
-    (fun shape -> cover (shape_name shape) true)
-    (if s.rows then shapes else flat at);
-  List.iter (fun (label, f) -> cover label (f c)) s.covers;
-  equal (list string) [] (List.concat_map misses (s.pairs r at c))
+  let draws = s.pairs r at in
+  fun c ->
+    List.iter (fun d -> cover (dtype_name d) true) dtypes;
+    List.iter
+      (fun shape -> cover (shape_name shape) true)
+      (if s.rows then shapes else flat at);
+    List.iter (fun (label, f) -> cover label (f c)) s.covers;
+    equal (list string) [] (List.concat_map (fun d -> misses (d c)) draws)

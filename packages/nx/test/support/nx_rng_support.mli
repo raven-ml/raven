@@ -68,8 +68,10 @@ type runner = {
     ('u, 't, Nx.host) Nx.t ->
     ('w, 'r, Nx.host) Nx.t;
 }
-(** The type for ways to compute a draw from a host key and host arguments,
-    its result read back on the host. *)
+(** The type for ways to compute a draw from a host key and host arguments, its
+    result read back on the host. {!law} applies a runner's field to each draw
+    once and calls what it gives on every case, so a runner that compiles a draw
+    compiles it there, once. *)
 
 val placed : (module Nx.Devices) -> runner
 (** [placed set] draws eagerly on [set], its key and arguments placed whole
@@ -102,17 +104,14 @@ type shape =
   | Row  (** A row sampler's block as one row; a flat sampler skips it. *)
 
 val law :
-  runner ->
-  dtypes:dtype list ->
-  shapes:shape list ->
-  sampler ->
-  case ->
-  unit
-(** [law r ~dtypes ~shapes s c] asserts that each draw of [c] at [dtypes]
-    and [shapes], computed by [r], has the bits of the draw computed eagerly
-    on the host from the same key and arguments, any two NaNs equal.
+  runner -> dtypes:dtype list -> shapes:shape list -> sampler -> case -> unit
+(** [law r ~dtypes ~shapes s c] asserts that each draw of [c] at [dtypes] and
+    [shapes], computed by [r], has the bits of the draw computed eagerly on the
+    host from the same key and arguments, any two NaNs equal.
 
-    It covers each dtype and shape it draws, each parameter's bounds and, for
-    a rejection sampler, enough parameters where a round rejects that some
-    element of the block takes a second round with probability above
-    [1 - 10{^-9}]. *)
+    It covers each dtype and shape it draws, each parameter's bounds and, for a
+    rejection sampler, enough parameters where a round rejects that some element
+    of the block takes a second round with probability above [1 - 10{^-9}].
+
+    [law r ~dtypes ~shapes s] applies [r] to each of [s]'s draws at [dtypes] and
+    [shapes], and the function it gives checks a case. *)

@@ -12,8 +12,9 @@
 
 val at :
   'd Nx.Placement.t -> (int -> 'd Nx.Placement.t) -> Nx_rng_support.runner
-(** [at whole cut] compiles a draw with its key at [whole] and each argument
-    of rank [r] at [cut r], with no call evaluated. *)
+(** [at whole cut] compiles a draw with its key at [whole] and each argument of
+    rank [r] at [cut r], with no call evaluated. A draw is one compiled function
+    for every case of {!Nx_rng_support.law}. *)
 
 val law :
   (module Nx.Devices) ->
