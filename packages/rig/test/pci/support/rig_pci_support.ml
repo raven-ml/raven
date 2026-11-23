@@ -398,16 +398,25 @@ module Tree = struct
     mkdir_p (Filename.dirname file);
     Out_channel.with_open_bin file (fun oc -> output_string oc s)
 
-  (* The process's trees are under a new temporary directory of its own, so
-     that no two runs, of one suite or of two, share a tree. The process that
-     made it removes it at its exit; a child of [fork] leaves it. It is under
-     /dev/shm, a memory file system, where the system has one: a suite makes
-     thousands of trees, which took ten times as long on a CI runner whose
-     temporary directory is on disk. *)
+  external free_files : string -> int = "rig_pci_test_free_files"
+
+  (* The files the trees of rig's pci suites hold at once, at most, when the
+     suites run together: about 265 000, and the bound leaves them room to grow.
+     A memory file system takes a page and an inode for each. *)
+  let tree_files = 300_000
+
+  (* The process's trees are under a new temporary directory of its own, so that
+     no two runs, of one suite or of two, share a tree. The process that made it
+     removes it at its exit; a child of [fork] leaves it. It is under /dev/shm,
+     a memory file system, where the system has one with room for the files the
+     trees may hold: a suite makes thousands of trees, which took ten times as
+     long on a CI runner whose temporary directory is on disk. On 64 KiB pages,
+     as ppc64le's, that room is 18 GiB. *)
   let trees =
     lazy
       (let temp_dir =
-         if Sys.file_exists "/dev/shm" then "/dev/shm"
+         if Sys.file_exists "/dev/shm" && free_files "/dev/shm" >= tree_files
+         then "/dev/shm"
          else Filename.get_temp_dir_name ()
        in
        let d = Filename.temp_dir ~temp_dir "rig-pci-trees" "" in

@@ -436,6 +436,27 @@ value rig_pci_test_clone(value v_src, value v_dst) {
 #endif
 }
 
+/* The files of a page each that the file system at [v_path] has room for,
+   for this user: the fewer of its free pages, of the host's size, and its
+   free inodes. -1 where the system does not say. */
+#ifndef _WIN32
+#include <sys/statvfs.h>
+#endif
+
+value rig_pci_test_free_files(value v_path) {
+#ifdef _WIN32
+  (void)v_path;
+  return Val_long(-1);
+#else
+  struct statvfs s;
+  long page = sysconf(_SC_PAGESIZE);
+  if (statvfs(String_val(v_path), &s) != 0 || page <= 0) return Val_long(-1);
+  uint64_t pages = (uint64_t)s.f_bavail * s.f_frsize / (uint64_t)page;
+  uint64_t files = s.f_favail < pages ? s.f_favail : pages;
+  return Val_long((intnat)files);
+#endif
+}
+
 /* A file in memory whose writes can be refused, a memfd that takes seals,
    on Linux alone: its descriptor and the path that opens it. Raises
    Unix_error elsewhere, or if the system refuses. */
