@@ -1,4 +1,6 @@
 ; rig's test agent, beside the suite that starts it through Remote_job.
 
-(rule
- (copy ../../../../../rig/test/remote/support/agent.exe agent.exe))
+(executable
+ (name agent)
+ (modules agent)
+ (libraries rig_agent))

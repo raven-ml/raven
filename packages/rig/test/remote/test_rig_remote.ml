@@ -606,7 +606,7 @@ let handle_alignment () =
       equal ~msg:(Rig.name owner ^ " borrowed") bool true (borrows <> []))
     ds
 
-(* BOUNDED's bytes, as support/agent.ml makes it. *)
+(* BOUNDED's bytes, as support/rig_agent.ml makes it. *)
 let bounded_bytes = 1 lsl 20
 
 let reported d =
