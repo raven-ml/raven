@@ -358,25 +358,45 @@ let join = function
       let dt = Nx.dtype x in
       Nx.P (Nx.concatenate ~axis:0 (List.map (fun b -> Nx.unpack dt b) bs))
 
-(* A file, and a row and a count of rows in it. *)
+(* A file, and a row and a count of rows in it. An eighth of the pieces start
+   past [flac_seek.flac]'s first seek point, row 32, and an eighth read more
+   than 1024 rows past row 16384 of a file that long, so that every run reaches
+   both. *)
 let piece =
   let open Gen in
-  let* path, n =
-    of_list ~pp:(fun ppf (p, _) -> Format.pp_print_string ppf p) lengths
+  let file files =
+    of_list ~pp:(fun ppf (p, _) -> Format.pp_print_string ppf p) files
   in
-  let* row =
-    frequency [ (2, constant 0); (1, constant n); (5, int_range 0 n) ]
+  let any =
+    let* path, n = file lengths in
+    let* row =
+      frequency [ (2, constant 0); (1, constant n); (5, int_range 0 n) ]
+    in
+    let+ rows =
+      frequency
+        [
+          (1, constant 0);
+          (1, constant (n - row));
+          (1, int_range (Int.min 1 (n - row)) (Int.min 3 (n - row)));
+          (5, int_range 0 (n - row));
+        ]
+    in
+    (path, n, row, rows)
   in
-  let+ rows =
-    frequency
-      [
-        (1, constant 0);
-        (1, constant (n - row));
-        (1, int_range (Int.min 1 (n - row)) (Int.min 3 (n - row)));
-        (5, int_range 0 (n - row));
-      ]
+  let seeked =
+    let path = fixture "flac_seek.flac" in
+    let n = List.assoc path lengths in
+    let* row = int_range 33 n in
+    let+ rows = int_range 0 (n - row) in
+    (path, n, row, rows)
   in
-  (path, n, row, rows)
+  let dense =
+    let* path, n = file (List.filter (fun (_, n) -> n > 17409) lengths) in
+    let* row = int_range 16385 (n - 1025) in
+    let+ rows = int_range 1025 (n - row) in
+    (path, n, row, rows)
+  in
+  frequency [ (6, any); (1, seeked); (1, dense) ]
 
 let piece =
   Gen.with_pp
