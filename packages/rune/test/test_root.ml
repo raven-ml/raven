@@ -587,16 +587,16 @@ let by_jacfwd op b = solve_dense (Rune.jacfwd' op b) b
 let by_jacrev op b = solve_dense (Rune.jacrev' op b) b
 
 let contract_tests =
-  let expected = per_lane (Rune.grad' system_closed) (vec [| 0.3; -1.1 |]) in
+  let expected () = per_lane (Rune.grad' system_closed) (vec [| 0.3; -1.1 |]) in
   List.concat_map
     (fun (context, run) ->
       [
         test
           (context ^ ": a linear solve may differentiate its operator forward")
-          (fun () -> equal (close ()) expected (run by_jacfwd));
+          (fun () -> equal (close ()) (expected ()) (run by_jacfwd));
         test
           (context ^ ": a linear solve may differentiate its operator backward")
-          (fun () -> equal (close ()) expected (run by_jacrev));
+          (fun () -> equal (close ()) (expected ()) (run by_jacrev));
       ])
     contexts
 
@@ -605,14 +605,13 @@ let contract_tests =
 let escaped =
   "Rune.root: linear_solve's operator was applied after linear_solve returned"
 
-let stash = ref None
-
 let refusal_cases =
   List.concat_map
     (fun (context, run) ->
       [
         ( context ^ ": the operator called after linear_solve returned",
           fun () ->
+            let stash = ref None in
             ignore
               (run (fun op b ->
                    stash := Some op;
@@ -670,9 +669,7 @@ let refusal_tests =
 
 (* Totals *)
 
-let total = Rune.Total.make ()
-
-let counted a =
+let counted total a =
   Rune.root one
     ~residual:(fun x ->
       Rune.Total.add total (scalar 100.);
@@ -685,38 +682,41 @@ let total_tests =
   [
     test "solve's additions count once, the residual's none, under grad"
       (fun () ->
+        let total = Rune.Total.make () in
         let _, n =
           Rune.Total.collect total ~init:(scalar 0.) (fun () ->
-              Rune.grad' (fun a -> Nx.sum (counted a)) (vec [| 2.; 3. |]))
+              Rune.grad' (fun a -> Nx.sum (counted total a)) (vec [| 2.; 3. |]))
         in
         equal (exact ()) (scalar 1.) n);
     test "a scope inside grad counts solve's additions once" (fun () ->
         (* With [n] one, the gradient is that of the sum of the roots. *)
-        let a = vec [| 2.; 3. |] in
+        let a = vec [| 2.; 3. |] and total = Rune.Total.make () in
         let g =
           Rune.grad'
             (fun a ->
               let x, n =
-                Rune.Total.collect total ~init:(scalar 0.) (fun () -> counted a)
+                Rune.Total.collect total ~init:(scalar 0.) (fun () ->
+                    counted total a)
               in
               Nx.mul n (Nx.sum x))
             a
         in
         equal (close ()) (Nx.recip (Nx.mul_s (Nx.sqrt a) 2.)) g);
     test "vmap's lanes each count solve's additions" (fun () ->
+        let total = Rune.Total.make () in
         let _, n =
           Rune.Total.collect total ~init:(scalar 0.) (fun () ->
-              Rune.vmap' counted (vec [| 2.; 3.; 5. |]))
+              Rune.vmap' (counted total) (vec [| 2.; 3.; 5. |]))
         in
         equal (exact ()) (scalar 3.) n);
   ]
   @
-  let counted_solve op b =
+  let counted_solve total op b =
     Rune.Total.add total (scalar 10000.);
     Nx.div b (op (Nx.ones_like b))
   in
-  let solved a =
-    Rune.root ~linear_solve:counted_solve one
+  let solved total a =
+    Rune.root ~linear_solve:(counted_solve total) one
       ~residual:(fun x ->
         Rune.Total.add total (scalar 100.);
         Nx.sub (Nx.mul x x) a)
@@ -730,24 +730,28 @@ let total_tests =
     (fun (name, n, f) ->
       test (name ^ ": solve's additions count once, linear_solve's none")
         (fun () ->
+          let total = Rune.Total.make () in
           let _, got =
-            Rune.Total.collect total ~init:(scalar 0.) (fun () -> f ())
+            Rune.Total.collect total ~init:(scalar 0.) (fun () ->
+                f (solved total))
           in
           equal (exact ()) (scalar n) got))
     [
-      ("grad", 1., fun () -> ignore (Rune.grad' (fun a -> Nx.sum (solved a)) a));
-      ("jvp", 1., fun () -> ignore (Rune.jvp' solved a a));
+      ( "grad",
+        1.,
+        fun solved -> ignore (Rune.grad' (fun a -> Nx.sum (solved a)) a) );
+      ("jvp", 1., fun solved -> ignore (Rune.jvp' solved a a));
       ( "vmap of grad",
         3.,
-        fun () ->
+        fun solved ->
           ignore (Rune.vmap' (Rune.grad' (fun a -> Nx.sum (solved a))) lanes) );
       ( "grad of vmap",
         3.,
-        fun () ->
+        fun solved ->
           ignore (Rune.grad' (fun a -> Nx.sum (Rune.vmap' solved a)) lanes) );
       ( "grad of grad",
         1.,
-        fun () ->
+        fun solved ->
           ignore
             (Rune.grad'
                (fun a -> Nx.sum (Rune.grad' (fun a -> Nx.sum (solved a)) a))
@@ -1124,7 +1128,11 @@ let loop_tests =
           go 0 x
         in
         let ks = List.init 5 (fun i -> trips (lane i xs)) in
-        equal int 0 (List.fold_left min max_int ks);
+        let shown = String.concat ", " (List.map string_of_int ks) in
+        equal
+          ~msg:("the fewest of the trips " ^ shown)
+          int 0
+          (List.fold_left min max_int ks);
         at_least int ~than:3 (List.length (List.sort_uniq compare ks)));
     test "vmap of a root in an iterate's step" (fun () ->
         equal (close ())
@@ -1403,7 +1411,7 @@ let iterated_tests =
     starts
 
 (* A linear solve that adds to a total, its additions dropped. *)
-let adding_root a =
+let adding_root total a =
   Rune.root one
     ~linear_solve:(fun op b ->
       Rune.Total.add total (scalar 10.);
@@ -1436,7 +1444,8 @@ let compiled_tests =
           (Rune.vmap' minimum rows)
           (compiled (fun () -> Rune.jit' (Rune.vmap' minimum) rows)));
     test "jit of grad drops a linear solve's additions, as eagerly" (fun () ->
-        let f a = Nx.sum (Nx.sin (adding_root a)) in
+        let total = Rune.Total.make () in
+        let f a = Nx.sum (Nx.sin (adding_root total a)) in
         let a = vec [| 0.5; 2.; 3. |] in
         let collect g =
           Rune.Total.collect total ~init:(scalar 0.) (fun () -> g a)
@@ -1538,13 +1547,13 @@ let () =
          group "derivatives" (derivative_tests @ second_order_tests);
          group "where the derivative is stated" stated_tests;
          group "complex residuals" complex_tests;
-         group "roots in loops" loop_tests;
          group "reading" reading_tests;
-         group "structures" structure_tests;
          group "mapped linear solves"
            (mapped_props @ second_order_props @ mapped_tests);
          group "the operator's contract" contract_tests;
-         group "refusals" refusal_tests;
          group "totals" total_tests;
+         group "structures" structure_tests;
+         group "refusals" refusal_tests;
+         group "roots in loops" loop_tests;
          group "compiled" (compiled_tests @ iterated_tests);
        ])
