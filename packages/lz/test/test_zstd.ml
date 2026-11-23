@@ -326,6 +326,21 @@ let window =
           (* Frame_Content_Size, bytes 5 and 6, is the window. *)
           equal string "unsupported at 5" (go 1999);
           equal string "2000" (go 2000));
+      (* Window_Descriptor at 5: exponent 17, 2^27 bytes, then mantissa 1, 2^27
+         + 2^24. Frame_Content_Size, at 6 and 7, of 300 bytes. *)
+      cases "the default decoder takes a window of 128 MiB and refuses 144 MiB"
+        ~id:fst
+        [ ("128 MiB", (0x88, "300")); ("144 MiB", (0x89, "unsupported at 5")) ]
+        (fun (_, (wd, expected)) ->
+          let s =
+            magic ^ "\x40" ^ byte wd
+            ^ le 2 (300 - 256)
+            ^ raw (String.make 300 'w')
+          in
+          equal string expected
+            (match Lz_support.stepped (Lz.Zstd.decoder ()) s with
+            | Ok (out, _) -> string_of_int (String.length out)
+            | Error e -> seen (Error e)));
       test "the whole-buffer decode takes any window" (fun () ->
           equal string "consumed 9, \"\"" (decode (magic ^ "\x00\xF8" ^ raw "")));
     ]
@@ -391,13 +406,45 @@ let literals =
           equal string
             (Printf.sprintf "consumed 25, %S" (String.sub "\x02\x00\x01\x02" 0 n))
             (decode (frame lits)));
-      test "four streams of 5 literals are Malformed at Regenerated_Size"
-        (fun () ->
-          (* The first three streams take 2 each, the last none left. *)
+      (* Each of the first three streams decodes (n + 3) / 4 literals (RFC 8878,
+         3.1.1.3.1.6), and the fourth the rest: 1, 2 and 5 literals leave it
+         fewer than none. *)
+      cases
+        "four streams of 1, 2 or 5 literals are Malformed at Regenerated_Size"
+        ~id:string_of_int [ 1; 2; 5 ] (fun n ->
           equal string "malformed at 9"
             (decode
                (frame
-                  (huffman ~four:true 5 (direct [ 1; 1 ]) (String.make 10 '\x01')))));
+                  (huffman ~four:true n
+                     (direct [ 1; 1 ])
+                     (String.make 10 '\x01')))));
+      (* Compressed_Size, from bit 14 of the header, in byte 10: 4 bytes, the
+         tree's 2 and 2 of streams, short of the 6-byte jump table. *)
+      test "a Compressed_Size too small for four streams is Malformed at it"
+        (fun () ->
+          equal string "malformed at 10"
+            (decode (frame (huffman ~four:true 4 (direct [ 1; 1 ]) "\x01\x01"))));
+      test "a direct tree past its block is Malformed at its first byte"
+        (fun () ->
+          (* 128 weights in 64 bytes, of which the section holds none. *)
+          equal string "malformed at 12" (decode (frame (huffman 4 "\xFF" ""))));
+      test "a Huffman stream whose last byte is 0 is Malformed at that byte"
+        (fun () ->
+          (* The stream "\x1B\x01" of the weights 2, 2, 2 above, its end mark
+             cleared: the stream is at 15 and 16. *)
+          equal string "malformed at 16"
+            (decode (frame (huffman 4 (direct [ 2; 2; 2 ]) "\x1B\x00"))));
+      (* RLE literals, Size_Format 01: Regenerated_Size in 12 bits. The frame's
+         window, so its Block_Maximum_Size, is 1 KiB. *)
+      cases "a Regenerated_Size above Block_Maximum_Size is Malformed at it"
+        ~id:fst
+        [
+          ("1024", (1024, "consumed 13, produced 1024"));
+          ("1025", (1025, "malformed at 9"));
+        ]
+        (fun (_, (n, expected)) ->
+          equal string expected
+            (decode (frame (le 2 (1 lor 4 lor (n lsl 4)) ^ "x"))));
       test "a jump table past its streams is Malformed at its first byte"
         (fun () ->
           (* The jump table, at 14, states 9 bytes of streams of 4. *)
@@ -462,6 +509,46 @@ let sequences =
           (* The first sequence writes 102 bytes. *)
           equal string "too long at 6"
             (decode ~cap:50 (frame ("\x02\x54\x03\x02\x2B\x00\x00\x04"))));
+      test "a sequences bitstream whose last byte is 0 is Malformed at it"
+        (fun () ->
+          equal string "malformed at 19"
+            (decode (frame (one_sequence ~ll:4 ~of_:2 ~ml:0 "\x00"))));
+      cases "an RLE_Mode symbol above its code's maximum is Malformed at it"
+        ~id:(fun (n, _, _) -> n)
+        [
+          ("literals length 36", one_sequence ~ll:36 ~of_:2 ~ml:0 "\x04", 16);
+          ("offset 32", one_sequence ~ll:4 ~of_:32 ~ml:0 "\x04", 17);
+          ("match length 53", one_sequence ~ll:4 ~of_:2 ~ml:53 "\x04", 18);
+        ]
+        (fun (_, seqs, at) ->
+          equal string
+            (Printf.sprintf "malformed at %d" at)
+            (decode (frame seqs)));
+      test "a byte after a Number_of_Sequences of 0 is Malformed at it"
+        (fun () -> equal string "malformed at 15" (decode (frame "\x00x")));
+      (* A 1 KiB window after 2000 bytes of output, in two RLE blocks of 1000,
+         the most a block holds being the window. The third block's one sequence
+         has no literals and a match of 3; Offset_Value is the offset plus 3,
+         its code the value's highest bit, its extra bits the rest, under an end
+         mark in the 2-byte bitstream at 23 and 24. *)
+      cases "an offset above Window_Size is Malformed at the sequence"
+        ~id:(fun (o, _) -> string_of_int o)
+        [
+          (1000, "consumed 25, produced 2003");
+          (1024, "consumed 25, produced 2003");
+          (1025, "malformed at 24");
+        ]
+        (fun (offset, expected) ->
+          let v = offset + 3 in
+          let rec high x k = if x <= 1 then k else high (x lsr 1) (k + 1) in
+          let code = high v 0 in
+          let bits = le 2 ((1 lsl code) lor (v - (1 lsl code))) in
+          let s =
+            windowed 0 ^ rle ~last:false 'a' 1000 ^ rle ~last:false 'a' 1000
+            ^ compressed
+                (raw_literals "" ^ one_sequence ~ll:0 ~of_:code ~ml:0 bits)
+          in
+          equal string expected (decode ~cap:4096 s));
       test "a bitstream not read to its start is Malformed" (fun () ->
           equal string "malformed at 19"
             (decode (frame (one_sequence ~ll:4 ~of_:2 ~ml:0 "\x08"))));
