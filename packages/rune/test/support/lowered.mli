@@ -25,8 +25,29 @@ val run :
     ({!Tolk.Schedule.create_linear_with_vars}), by default the host's own
     ({!Tolk.Heuristic.val-cores} of its renderer): given others for ["CPU"], the
     host's schedule keeps apart the products their tensor cores take, and
-    computes where they are read the values it would where points run at
-    once, though its kernels run without them. *)
+    computes where they are read the values it would where points run at once,
+    though its kernels run without them.
+
+    The graph is compiled once: a graph equal to one {!run} compiled before,
+    under the same settings ({!Tolk.Setting.shaping}), but for its storage, runs
+    that one's program over its own storage's bytes, as a compiled call runs one
+    variant over each call's arguments. Given [cores], it is compiled anew. *)
+
+(** A graph {!run} computes. *)
+type graph = One : (unit -> ('v, 's, 'd) Nx.t) -> graph
+
+val prime : ?local:bool -> graph list -> unit
+(** [prime gs] makes the kernels of each graph of [gs], scheduled as {!run} with
+    [local] schedules it alone, in one compile of them all
+    ({!Tolk.Codegen.to_programs}), which renders them on the host's workers and
+    gives the host's compiler their sources in few runs: a later run of a graph
+    of [gs] finds its kernels made. It computes no result. *)
+
+val primed :
+  ?local:bool -> ('c -> graph list) -> 'c list -> ('c -> 'a) -> 'c -> 'a
+(** [primed graphs examples f] is [f], whose first call primes the graphs of
+    each of [examples] with [local] ({!prime}): a law whose cases take its
+    examples' forms finds their kernels made. *)
 
 val nodes : (unit -> ('v, 's, 'd) Nx.t) -> int
 (** [nodes f] is the number of nodes of the graph {!run} compiles for [f]: the
@@ -34,9 +55,9 @@ val nodes : (unit -> ('v, 's, 'd) Nx.t) -> int
     node each. *)
 
 val map : (Tolk.Ops.t -> Tolk.Ops.t) -> (float, 's, 'd) Nx.t -> float array
-(** [map f x] is the elements, in C order, of [f] applied to the node of
-    [x]'s elements, a [float32] or [float64] array, compiled and run on the
-    host. [f] keeps the node's shape and type. *)
+(** [map f x] is the elements, in C order, of [f] applied to the node of [x]'s
+    elements, a [float32] or [float64] array, compiled as {!run} compiles and
+    run on the host. [f] keeps the node's shape and type. *)
 
 val work :
   ?target:Tolk.Helpers.Target.t -> (unit -> ('v, 's, 'd) Nx.t) -> int * int

@@ -91,7 +91,7 @@ let bind (type v s d) ~direct ~device bound (x : (v, s, d) Nx.t) =
   let tdt = L.dtype (D.Any dt) and k = parts dt in
   let leaf bytes n =
     let u = Ops.new_buffer device (max 1 n) tdt in
-    bound := (u, host_buffer bytes) :: !bound;
+    bound := (u, bytes) :: !bound;
     u
   in
   match Nx.Repr.array ~by:"test" x with
@@ -189,73 +189,246 @@ let rule ~direct ~local ~place ?transposed bound seen i ~by (type r)
   in
   Nx.Prim.results ~by (fun k f -> Nx.Prim.traced i f (Node ys.(k))) op
 
-(* [f ()]'s graph, the storage it binds and its result's elements. *)
-let lowered (type v s d) ?(direct = false) ?(local = true) ?(place = on_host)
-    ?transposed (f : unit -> (v, s, d) Nx.t) =
+(* A result of [f ()] lowered: its node, dtype and shape, and the count of its
+   node's elements. *)
+type ('v, 's) out = {
+  node : Ops.t;
+  dt : ('v, 's) D.t;
+  shape : int array;
+  n : int;
+}
+
+let out (type v s d) i (y : (v, s, d) Nx.t) : (v, s) out =
+  match Nx.Prim.payload i y with
+  | Some (Node node) ->
+      let dt = (Nx.Prim.form y).dtype and shape = Nx.shape y in
+      { node; dt; shape; n = numel shape * parts dt }
+  | _ -> invalid_arg "Lowered: the result is not lowered"
+
+(* [f i]'s graph, whose results [f] reads with [out i], and the storage it
+   binds. *)
+let lowered ?(direct = false) ?(local = true) ?(place = on_host) ?transposed f =
   let bound = ref [] and seen = ref [] in
-  let y, u =
+  let r =
     Nx.Prim.interpret ~name:"Lowered" Nx.Prim.Extent
       (fun i ~by op ->
         rule ~direct ~local ~place ?transposed bound seen i ~by op)
-      (fun i ->
-        let y = f () in
-        match Nx.Prim.payload i y with
-        | Some (Node u) -> (y, u)
-        | _ -> invalid_arg "Lowered: the result is not lowered")
+      f
   in
-  let dt = (Nx.Prim.form y).dtype and shape = Nx.shape y in
-  (bound, u, dt, shape, numel shape * parts dt)
+  (!bound, r)
+
+let one f i = out i (f ())
 
 (* The host's tensor cores, as its renderer's kernels take them. *)
 let host_cores () = [ (cpu, Heuristic.cores (Lazy.force on_host.renderer)) ]
 
-(* The schedule storing [u], of [n] elements, into [o], each device taking
-   the tensor cores [cores] gives it ({!Schedule}), the host's own by
-   default, and {!compiled} it compiled. *)
-let schedule ?(cores = host_cores ()) u o n =
-  let sink =
-    Ops.sink [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int n ]) ] ]
-  in
+(* The sink of the stores of each graph [u] of [stores], of [n] elements, into
+   its buffer [o]. *)
+let sink stores =
+  Ops.sink
+    (List.map
+       (fun (o, u, _, n) ->
+         Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int n ]) ])
+       stores)
+
+(* The store of [o]'s graph, of at least one element, into a buffer of its own
+   on [device]. *)
+let stored (type v s) ?(device = cpu) (o : (v, s) out) =
+  let n = max 1 o.n and tdt = L.dtype (D.Any o.dt) in
+  sink [ (Ops.new_buffer device n tdt, o.node, tdt, n) ]
+
+(* The schedule of [sink], each device taking the tensor cores [cores] gives it
+   ({!Schedule}), the host's own by default, and {!compiled} it compiled. *)
+let schedule ?(cores = host_cores ()) sink =
   Schedule.create_linear_with_vars ~cores sink
 
-let compiled ?cores u o n =
-  let linear, vars = schedule ?cores u o n in
+let compiled ?cores sink =
+  let linear, vars = schedule ?cores sink in
   let targets _ = host_target () in
   (Realize.compile_linear ~targets linear, vars)
 
-(* The elements of the graph [u] of [dt] and [shape], [n] nodes' elements,
-   compiled and run on the host over the storage [bound]. *)
-let execute (type v s) ?cores bound u (dt : (v, s) D.t) shape n : v array =
-  let tdt = L.dtype (D.Any dt) in
-  if n = 0 then [||]
-  else
-    let o = Ops.new_buffer cpu n tdt in
-    let compiled, vars = compiled ?cores u o n in
-    let len = n * Dtype.itemsize tdt in
-    let out = Rig.Buffer.create Rig.host len in
-    let s =
-      Tolk_engine.link
-        ~devices:(fun _ -> Rig.host)
-        ~bound:((o, out) :: !bound) compiled
-    in
-    Tolk_engine.run ~vars s [||];
-    let bytes = Bytes.create len in
-    Rig.Buffer.blit_to_bytes out 0 bytes 0 len;
-    decode dt shape bytes
+(* Programs
+
+   A graph is compiled once: a graph equal to one compiled before but for the
+   slots of its storage runs that one's program, its storage's bytes copied into
+   the program's, as a compiled call runs one variant over each call's
+   arguments. Storage nodes are numbered in the order a walk of the graph
+   reaches them, which two such graphs share, and a program keeps each buffer it
+   binds by its node's number. The key holds the settings the kernels compile
+   under. *)
+
+type program = {
+  linked : Tolk_engine.t;
+  vars : (string * int) list;
+  storage : Rig.Buffer.t option array;
+  results : Rig.Buffer.t list;
+}
+
+let programs : (string, program) Hashtbl.t = Hashtbl.create 64
+
+let numbered sink =
+  let numbers = Ops.Tbl.create 16 in
+  List.iter
+    (fun u ->
+      if Op.equal (Ops.op u) Op.Buffer && not (Ops.Tbl.mem numbers u) then
+        Ops.Tbl.add numbers u (Ops.Tbl.length numbers))
+    (Ops.toposort ~calls:Enter sink);
+  numbers
+
+let program_key numbers sink =
+  let arg u =
+    Option.map
+      (fun slot -> Ops.Param { (Ops.param_arg_of u) with slot })
+      (Ops.Tbl.find_opt numbers u)
+  in
+  let setting (name, value) = name ^ "=" ^ value in
+  String.concat "\n"
+    (Ops.key_with ~arg sink :: List.map setting (Setting.shaping ()))
+
+(* [sink] compiled, its stores' buffers made and [bound]'s storage bound. *)
+let link ?cores numbers sink bound stores =
+  let compiled, vars = compiled ?cores sink in
+  let storage = Array.make (Ops.Tbl.length numbers) None in
+  let inputs =
+    List.map
+      (fun (u, bytes) ->
+        let b = host_buffer bytes in
+        Option.iter
+          (fun i -> storage.(i) <- Some b)
+          (Ops.Tbl.find_opt numbers u);
+        (u, b))
+      bound
+  in
+  let results =
+    List.map
+      (fun (o, _, tdt, n) ->
+        (o, Rig.Buffer.create Rig.host (n * Dtype.itemsize tdt)))
+      stores
+  in
+  let linked =
+    Tolk_engine.link
+      ~devices:(fun _ -> Rig.host)
+      ~bound:(results @ inputs) compiled
+  in
+  { linked; vars; storage; results = List.map snd results }
+
+(* [bound]'s bytes copied into [p]'s storage. *)
+let refill p numbers bound =
+  List.iter
+    (fun (u, bytes) ->
+      match Ops.Tbl.find_opt numbers u with
+      | None -> ()
+      | Some i ->
+          Option.iter
+            (fun b ->
+              Rig.Buffer.blit_from_string bytes 0 b 0 (String.length bytes))
+            p.storage.(i))
+    bound
+
+(* The program of [sink], compiled once unless [cores] is given. *)
+let program ?cores numbers sink bound stores =
+  match cores with
+  | Some _ -> link ?cores numbers sink bound stores
+  | None -> (
+      let key = program_key numbers sink in
+      match Hashtbl.find_opt programs key with
+      | Some p ->
+          refill p numbers bound;
+          p
+      | None ->
+          let p = link numbers sink bound stores in
+          Hashtbl.add programs key p;
+          p)
+
+let contents b =
+  let len = Rig.Buffer.length b in
+  let bytes = Bytes.create len in
+  Rig.Buffer.blit_to_bytes b 0 bytes 0 len;
+  bytes
+
+(* The bytes of each result [(u, tdt, n)] of [outs], the graph [u] of [n]
+   elements of [tdt], computed on the host over the storage [bound]: empty where
+   [n] is [0]. Given [cores], the graphs are compiled anew. *)
+let execute ?cores bound outs =
+  let stores =
+    List.filter_map
+      (fun (u, tdt, n) ->
+        if n = 0 then None else Some (Ops.new_buffer cpu n tdt, u, tdt, n))
+      outs
+  in
+  let read =
+    if stores = [] then ref []
+    else
+      let sink = sink stores in
+      let numbers = numbered sink in
+      let p = program ?cores numbers sink bound stores in
+      Tolk_engine.run ~vars:p.vars p.linked [||];
+      ref (List.map contents p.results)
+  in
+  let next (_, _, n) =
+    match !read with
+    | b :: rest when n > 0 ->
+        read := rest;
+        b
+    | _ -> Bytes.empty
+  in
+  List.map next outs
+
+let result (type v s) (o : (v, s) out) = (o.node, L.dtype (D.Any o.dt), o.n)
+
+let elements (type v s) (o : (v, s) out) bytes : v array =
+  if o.n = 0 then [||] else decode o.dt o.shape bytes
 
 let run (type v s d) ?local ?cores (f : unit -> (v, s, d) Nx.t) : v array =
-  let bound, u, dt, shape, n = lowered ?local f in
-  execute ?cores bound u dt shape n
+  let bound, o = lowered ?local (one f) in
+  match execute ?cores bound [ result o ] with
+  | [ b ] -> elements o b
+  | _ -> invalid_arg "Lowered.run: one result"
+
+type graph = One : (unit -> ('v, 's, 'd) Nx.t) -> graph
+
+(* The schedule of each graph is {!execute}'s, made alone; their calls are then
+   compiled as one schedule's, whose kernels {!Tolk.Codegen.to_programs} makes
+   together. *)
+let prime ?local graphs =
+  let scheduled outs =
+    let stores =
+      List.filter_map
+        (fun (u, tdt, n) ->
+          if n = 0 then None else Some (Ops.new_buffer cpu n tdt, u, tdt, n))
+        outs
+    in
+    if stores = [] then None else Some (fst (schedule (sink stores)))
+  in
+  let linear (One f) =
+    let _, o = lowered ?local (one f) in
+    scheduled [ result o ]
+  in
+  match List.filter_map linear graphs with
+  | [] -> ()
+  | first :: _ as linears ->
+      let calls = List.concat_map Ops.src linears in
+      let targets _ = host_target () in
+      ignore (Realize.compile_linear ~targets (Ops.replace first ~src:calls))
+
+let primed ?local graphs examples f =
+  let made = lazy (prime ?local (List.concat_map graphs examples)) in
+  fun c ->
+    Lazy.force made;
+    f c
 
 let nodes f =
-  let _, u, _, _, _ = lowered f in
-  List.length (Ops.toposort ~calls:Skip u)
+  let _, o = lowered (one f) in
+  List.length (Ops.toposort ~calls:Skip o.node)
 
 let map (type s d) (f : Ops.t -> Ops.t) (x : (float, s, d) Nx.t) : float array =
   let bound = ref [] in
   let dt = Nx.dtype x and shape = Nx.shape x in
-  let u = f (bind ~direct:true ~device:cpu bound x) in
-  execute bound u dt shape (numel shape)
+  let node = f (bind ~direct:true ~device:cpu bound x) in
+  let o = { node; dt; shape; n = numel shape } in
+  match execute !bound [ result o ] with
+  | [ b ] -> elements o b
+  | _ -> invalid_arg "Lowered.map: one result"
 
 (* The calls among [us], each launch's members in its place. *)
 let calls us =
@@ -285,10 +458,9 @@ let work (type v s d) ?target (f : unit -> (v, s, d) Nx.t) =
         { on_host with renderer = Lazy.from_val (Cstyle.without_compiler t) }
   in
   let renderer = Lazy.force place.renderer in
-  let _, u, dt, _, n = lowered ~direct:true ~place f in
-  let o = Ops.new_buffer cpu (max 1 n) (L.dtype (D.Any dt)) in
+  let _, o = lowered ~direct:true ~place (one f) in
   let cores = [ (cpu, Heuristic.cores renderer) ] in
-  let linear, vars = schedule ~cores u o (max 1 n) in
+  let linear, vars = schedule ~cores (stored o) in
   if not (List.for_all (fun c -> Op.equal (Ops.op c) Op.Call) (Ops.src linear))
   then invalid_arg "Lowered.work: a schedule with loops";
   let count x = Shape.sym_infer x vars in
@@ -300,9 +472,8 @@ let work (type v s d) ?target (f : unit -> (v, s, d) Nx.t) =
     (calls (Ops.src linear))
 
 let kernels (type v s d) ?cores (f : unit -> (v, s, d) Nx.t) =
-  let _, u, dt, _, n = lowered ~direct:true f in
-  let o = Ops.new_buffer cpu (max 1 n) (L.dtype (D.Any dt)) in
-  List.length (calls (Ops.src (fst (schedule ?cores u o (max 1 n)))))
+  let _, o = lowered ~direct:true (one f) in
+  List.length (calls (Ops.src (fst (schedule ?cores (stored o)))))
 
 (* The sink of each kernel of the schedule of the stores [sink] makes on
    [device], whose tensor cores are [renderer]'s, in the order the schedule
@@ -353,23 +524,20 @@ let off_host (target : Helpers.Target.t) =
 let sources (type v s d) ~(target : Helpers.Target.t)
     (f : unit -> (v, s, d) Nx.t) =
   let renderer, place = off_host target in
-  let _, u, dt, _, n = lowered ~direct:true ~local:false ~place f in
-  let o = Ops.new_buffer place.device (max 1 n) (L.dtype (D.Any dt)) in
-  rendered ~device:place.device renderer
-    (Ops.sink
-       [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int (max 1 n) ]) ] ])
+  let _, o = lowered ~direct:true ~local:false ~place (one f) in
+  rendered ~device:place.device renderer (stored ~device:place.device o)
 
 let own_kernels (type v s d) ~(target : Helpers.Target.t)
     (f : unit -> (v, s, d) Nx.t) =
   let _, place = off_host target in
-  let _, u, _, _, _ = lowered ~direct:true ~local:false ~place f in
-  own_kernels_of u
+  let _, o = lowered ~direct:true ~local:false ~place (one f) in
+  own_kernels_of o.node
 
 let derivative_kernels (type v s d) ~(target : Helpers.Target.t)
     (f : unit -> (v, s, d) Nx.t) =
   let _, place = off_host target in
   let found = ref [] in
-  let _ = lowered ~direct:true ~local:false ~place ~transposed:found f in
+  let _ = lowered ~direct:true ~local:false ~place ~transposed:found (one f) in
   List.map
     (Option.map (fun us -> own_kernels_of (Ops.sink (Array.to_list us))))
     !found
