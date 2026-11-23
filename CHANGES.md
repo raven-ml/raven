@@ -591,6 +591,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` computes a function of constants built inside the traced
+  function, such as `Nx.lgamma (Nx.scalar_like x 3.5)`, while it lowers:
+  the program links its value, not the function's thousand operations.
 - On a processor where rig links no host code, such as ppc64le or riscv64,
   `Rune.jit` declines a program with a kernel on a host or software device
   and evaluates it eagerly, where ppc64le said `unsupported arch` and riscv64

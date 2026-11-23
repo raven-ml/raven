@@ -392,6 +392,12 @@ let gammainccinv_f16 () =
           Nx.Ptree.(tensor @-> tensor @-> returns tensor)
           Nx.gammainccinv (f16 0.5 10.) (f16 0.01 0.99)))
 
+(* 1024 float64 values offset by [lgamma] of a fixed shape, as a log-density
+   with fixed parameters reads it: a special function of a constant built inside
+   the traced function. *)
+let lgamma_constant () =
+  compile (fun x -> Nx.sub x (Nx.lgamma (Nx.scalar_like x 3.5))) (input 0. 1.)
+
 (* 1024 float32 binomial counts of 100 trials from a key argument: inversion
    below a mean of 10 and transformed rejection above, both in one program. *)
 let binomial () =
@@ -656,6 +662,7 @@ let cases =
     ("special/betaincinv-grad-f64", betaincinv_grad);
     ("special/gammaincinv-grad-f64", gammaincinv_grad);
     ("special/gammainccinv-f16", gammainccinv_f16);
+    ("special/lgamma-constant", lgamma_constant);
     ("wide/sum-1e6", wide_sum);
     (* A pendulum of 200 fixed steps written as an OCaml loop: one elementwise
        kernel of 3.6 MB of C, which the host writes as several functions, since

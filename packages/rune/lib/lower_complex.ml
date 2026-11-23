@@ -14,17 +14,17 @@ module R = Lower_real
 
 (* Operations *)
 
-let ( +: ) = Ops.add
-let ( -: ) = Ops.sub
-let ( *: ) = Ops.mul
-let ( /: ) x y = Ops.alu x Op.Fdiv [ y ]
-let ( ||: ) = Ops.bitwise_or
-let ( &&: ) = Ops.bitwise_and
-let where = Ops.where
-let not_ = Ops.logical_not
-let lt = Ops.lt
-let gt x y = Ops.lt y x
-let eq = Ops.eq
+let ( +: ) = Folded.add
+let ( -: ) = Folded.sub
+let ( *: ) = Folded.mul
+let ( /: ) x y = Folded.alu x Op.Fdiv [ y ]
+let ( ||: ) = Folded.bitwise_or
+let ( &&: ) = Folded.bitwise_and
+let where = Folded.where
+let not_ = Folded.logical_not
+let lt = Folded.lt
+let gt x y = Folded.lt y x
+let eq = Folded.eq
 
 (* [x <= y] and [x >= y], false where an operand is NaN. *)
 let le x y = lt x y ||: eq x y
@@ -75,7 +75,7 @@ let atan2 = R.binary Atan2
 
 let larger a b = where (gt a b) a b
 let smaller a b = where (gt a b) b a
-let neg_int k = Ops.sub (int k 0) k
+let neg_int k = Folded.sub (int k 0) k
 
 (* nx_finite: [|x|] below infinity, false at a NaN. *)
 let finite x = lt (magnitude x) (inf x)
@@ -101,13 +101,13 @@ let unsignalled x =
   let q = Int64.shift_left 1L (R.pick x R.mbits - 1) in
   let qb = R.of_word x (q, q) in
   where (is_nan x)
-    (Ops.bitcast (Ops.bitwise_or (bits x) (bits qb)) (Ops.dtype x))
+    (Folded.bitcast (Folded.bitwise_or (bits x) (bits qb)) (Ops.dtype x))
     x
 
 (* y 2^k rounded once, for k up to twice the span R.scale takes. *)
 let ldexp y k =
-  let k1 = Ops.shr k (int k 1) in
-  R.scale (R.scale y k1) (Ops.sub k k1)
+  let k1 = Folded.shr k (int k 1) in
+  R.scale (R.scale y k1) (Folded.sub k k1)
 
 (* a b - c d within 1.5 ulps: c d's rounding error, which an fma gives exactly,
    is added back (Kahan's algorithm). *)
@@ -123,7 +123,7 @@ let hypot x y =
   let a = larger ax ay and b = smaller ax ay in
   let k = R.ilogb a in
   let sa = R.scale a (neg_int k) and sb = R.scale b (neg_int k) in
-  let h = R.scale (Ops.sqrt (mulacc sa sa (sb *: sb))) k in
+  let h = R.scale (Folded.sqrt (mulacc sa sa (sb *: sb))) k in
   where (eq a (zero a)) a h
 
 (* nx_log_abs: log |x + iy|. Of the larger part a and the smaller b, half
@@ -157,7 +157,7 @@ let log_abs x y =
 let asinh_part t =
   let a = magnitude t in
   let a2 = a *: a in
-  let near = log1p (a +: (a2 /: (one a +: Ops.sqrt (one a +: a2)))) in
+  let near = log1p (a +: (a2 /: (one a +: Folded.sqrt (one a +: a2)))) in
   let far = log a +: R.con a R.ln2_hi +: R.con a R.ln2_lo in
   R.copysign (where (lt a (R.con a asin_big)) near far) t
 
@@ -170,7 +170,7 @@ let exp_times x c shift =
   let h = where (lt x (R.con x cexp_hi)) x (R.con x cexp_hi) *: half x in
   let r, _, k = R.exp_reduce h in
   let m = one x +: mulacc (r *: r) (R.exp_q r) r in
-  ldexp (m *: c *: m) (Ops.sub (Ops.mul k (int k 2)) (int k shift))
+  ldexp (m *: c *: m) (Folded.sub (Folded.mul k (int k 2)) (int k shift))
 
 (* Exponentials and logarithms *)
 
@@ -255,13 +255,13 @@ let sqrt_raw x y =
   let ax = magnitude x and ay = magnitude y in
   let a = larger ax ay in
   let e = R.ilogb a in
-  let j = Ops.shr e (int e 1) in
-  let m2j = Ops.mul j (int j (-2)) in
+  let j = Folded.shr e (int e 1) in
+  let m2j = Folded.mul j (int j (-2)) in
   let xs = R.scale ax m2j and ys = R.scale ay m2j in
-  let t = R.scale (Ops.sqrt ((xs +: hypot xs ys) *: half x)) j in
+  let t = R.scale (Folded.sqrt ((xs +: hypot xs ys) *: half x)) j in
   let u = ay /: (t +: t) in
   let pos = ge x (zero x) in
-  let root = Ops.sqrt ax in
+  let root = Folded.sqrt ax in
   let y_nan = is_nan y in
   cases
     [
@@ -443,7 +443,7 @@ let atanh_raw x y =
   let xs = ax /: m and ys = ay /: m in
   let far = xs /: mulacc xs xs (ys *: ys) /: m in
   let unit_re =
-    log (Ops.sqrt (Ops.sqrt (mulacc ay ay (num x 4.))) /: Ops.sqrt ay)
+    log (Folded.sqrt (Folded.sqrt (mulacc ay ay (num x 4.))) /: Folded.sqrt ay)
   in
   let unit_im = half x *: (pio2 +: atan (half x *: ay) +: R.con x R.pio2_lo) in
   let u = one x -: ax in

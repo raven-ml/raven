@@ -66,22 +66,22 @@ let int n = `Int (Bigint.of_int n)
    narrower ones to [int], whose sums carry past their width. *)
 
 let num ?dtype u n = Shape.const_like ?dtype u (int n)
-let where = Ops.where
-let not_ = Ops.logical_not
-let ( && ) = Ops.bitwise_and
-let ( || ) = Ops.bitwise_or
-let ( + ) = Ops.add
-let ( - ) = Ops.sub
-let ( * ) = Ops.mul
-let ( land ) x n = Ops.bitwise_and x (num x n)
-let ( lor ) = Ops.bitwise_or
-let ( lxor ) = Ops.bitwise_xor
-let ( lsl ) x n = Ops.shl x (num x n)
-let ( lsr ) x n = Ops.shr x (num x n)
-let ( < ) = Ops.lt
-let ( = ) = Ops.eq
-let ( <> ) = Ops.ne
-let of_bits t u = Ops.bitcast u t
+let where = Folded.where
+let not_ = Folded.logical_not
+let ( && ) = Folded.bitwise_and
+let ( || ) = Folded.bitwise_or
+let ( + ) = Folded.add
+let ( - ) = Folded.sub
+let ( * ) = Folded.mul
+let ( land ) x n = Folded.bitwise_and x (num x n)
+let ( lor ) = Folded.bitwise_or
+let ( lxor ) = Folded.bitwise_xor
+let ( lsl ) x n = Folded.shl x (num x n)
+let ( lsr ) x n = Folded.shr x (num x n)
+let ( < ) = Folded.lt
+let ( = ) = Folded.eq
+let ( <> ) = Folded.ne
+let of_bits t u = Folded.bitcast u t
 let one_if c u = where c (num u 1) (num u 0)
 
 (* Narrow floats
@@ -110,7 +110,7 @@ let pow2 u e = Shape.const_like ~dtype:Float32 u (`Float (Float.ldexp 1. e))
    moved into float32's. Both are exact. *)
 let mini_value q m bias =
   let e = q lsr m and frac = q land Stdlib.((1 lsl m) - 1) in
-  let sub = Ops.cast frac Float32 * pow2 q Stdlib.(1 - bias - m) in
+  let sub = Folded.cast frac Float32 * pow2 q Stdlib.(1 - bias - m) in
   let normal =
     f32 (((e + num q Stdlib.(127 - bias)) lsl 23) lor (frac lsl Stdlib.(23 - m)))
   in
@@ -130,7 +130,7 @@ let with_sign v s = f32 (bits v lor (s lsl 31))
 let e2m1 c =
   let b = (c land 7) lsl 22 in
   let normal = f32 (b + num c Stdlib.(126 lsl 23)) in
-  let sub = Ops.sub (f32 (b + num c Stdlib.(127 lsl 23))) (pow2 c 0) in
+  let sub = Folded.sub (f32 (b + num c Stdlib.(127 lsl 23))) (pow2 c 0) in
   f32 (bits (where (c land 6 = num c 0) sub normal) lor ((c land 8) lsl 28))
 
 (* A byte float's code [c], as a [Uint32], decoded. *)
@@ -155,8 +155,8 @@ let of_byte (D.Any dt) c =
 
 let decode (D.Any dt as d) x =
   match dt with
-  | D.Float16 | D.Bfloat16 -> Ops.cast x Float32
-  | _ -> of_byte d (Ops.cast x Uint32)
+  | D.Float16 | D.Bfloat16 -> Folded.cast x Float32
+  | _ -> of_byte d (Folded.cast x Uint32)
 
 (* The magnitude code of [f], not NaN, rounded to nearest, ties to even; one
    past the format's largest finite code means [f] overflows. Below the least
@@ -202,9 +202,9 @@ let to_byte (D.Any dt) f =
 (* [f], a float32, stored into the narrow float [d]. *)
 let encode (D.Any dt as d) f =
   match dt with
-  | D.Float16 -> Ops.cast f Float16
-  | D.Bfloat16 -> Ops.cast f Bfloat16
-  | _ -> Ops.cast (to_byte d f) Uint8
+  | D.Float16 -> Folded.cast f Float16
+  | D.Bfloat16 -> Folded.cast f Bfloat16
+  | _ -> Folded.cast (to_byte d f) Uint8
 
 (* Integers
 
@@ -218,31 +218,33 @@ let is_wide (D.Any dt) = Stdlib.( = ) (D.bits dt) 64
    signed. *)
 let lift d x =
   if is_wide d then bits x
-  else if is_signed d then Ops.bitcast (Ops.cast x Int32) Uint32
-  else Ops.cast x Uint32
+  else if is_signed d then Folded.bitcast (Folded.cast x Int32) Uint32
+  else Folded.cast x Uint32
 
 (* [x] as the signed or unsigned value of its compute type. *)
 let value d x =
-  if is_wide d then x else Ops.cast x (if is_signed d then Int32 else Uint32)
+  if is_wide d then x else Folded.cast x (if is_signed d then Int32 else Uint32)
 
 (* [r], unsigned bits of 32 or 64, stored into the integer dtype [d] modulo its
    width. *)
 let store (D.Any dt as d) r =
   match dt with
   | D.Int4 ->
-      let r = Ops.cast r Uint32 in
-      Ops.bitcast (Ops.cast ((r land 15 lxor num r 8) - num r 8) Uint8) Int8
-  | D.Uint4 -> Ops.cast (r land 15) Uint8
+      let r = Folded.cast r Uint32 in
+      Folded.bitcast
+        (Folded.cast ((r land 15 lxor num r 8) - num r 8) Uint8)
+        Int8
+  | D.Uint4 -> Folded.cast (r land 15) Uint8
   | _ ->
       let t = dtype d in
-      Ops.bitcast (Ops.cast r (unsigned t)) t
+      Folded.bitcast (Folded.cast r (unsigned t)) t
 
 (* [x], an integer of [s], stored into the integer dtype [d] modulo its width:
    sign- or zero-extended to 64 bits first. *)
 let wrap s d x =
   let w =
-    if is_signed s then Ops.bitcast (Ops.cast x Int64) Uint64
-    else Ops.cast x Uint64
+    if is_signed s then Folded.bitcast (Folded.cast x Int64) Uint64
+    else Folded.cast x Uint64
   in
   store d w
 
@@ -266,7 +268,7 @@ let int_unary d (k : P.unary) x =
    whose products wrap. A negative exponent gives 0 but for a base of 1 or -1,
    selected on the signed values. *)
 let int_pow d x e =
-  let power = store d (Ops.alu (lift d x) Op.Pow [ lift d e ]) in
+  let power = store d (Folded.alu (lift d x) Op.Pow [ lift d e ]) in
   if not (is_signed d) then power
   else
     let one = num x 1 and minus = num x (-1) in
@@ -281,8 +283,8 @@ let int_pow d x e =
    nx's are. *)
 let int_div d ~rem x y =
   let op = if rem then Op.Truncmod else Op.Truncdiv in
-  let q = Ops.alu (value d x) op [ value d y ] in
-  store d (if is_wide d then bits q else Ops.bitcast q Uint32)
+  let q = Folded.alu (value d x) op [ value d y ] in
+  store d (if is_wide d then bits q else Folded.bitcast q Uint32)
 
 (* Threefry-2x32 with 20 rounds: the counter and the key are word pairs, the low
    word first, and so is the result. Each group of four rounds gives its
@@ -297,7 +299,7 @@ let schedule =
   ]
 
 let threefry counter key =
-  let low w = Ops.cast w Uint32 and high w = Ops.cast (w lsr 32) Uint32 in
+  let low w = Folded.cast w Uint32 and high w = Folded.cast (w lsr 32) Uint32 in
   let k0 = low key and k1 = high key in
   let ks = [| k0; k1; num k0 0x1BD11BDA lxor k0 lxor k1 |] in
   let round (x0, x1) r =
@@ -311,7 +313,7 @@ let threefry counter key =
   let x0, x1 =
     List.fold_left four (low counter + k0, high counter + k1) schedule
   in
-  (Ops.cast x1 Uint64 lsl 32) lor Ops.cast x0 Uint64
+  (Folded.cast x1 Uint64 lsl 32) lor Folded.cast x0 Uint64
 
 let int_binary d (k : P.binary) x y =
   let arith f = store d (f (lift d x) (lift d y)) in
@@ -324,7 +326,7 @@ let int_binary d (k : P.binary) x y =
   | Pow -> int_pow d x y
   | Maximum -> where (x < y) y x
   | Minimum -> where (y < x) y x
-  | And -> Ops.bitwise_and x y
+  | And -> Folded.bitwise_and x y
   | Or -> x lor y
   | Xor -> x lxor y
   | Threefry -> threefry x y
@@ -341,7 +343,7 @@ let one = function
   | [ x ] -> x
   | _ -> invalid_arg "Lower_arith: a value of parts"
 
-let byte b = Ops.cast b Uint8
+let byte b = Folded.cast b Uint8
 
 let bool_binary (k : P.binary) x y =
   byte
@@ -415,16 +417,16 @@ let truncate d x =
   and high = not_ (x < bound past) in
   let safe = where (nan || low || high) (Shape.const_like x (`Float 0.)) x in
   let edge v = Shape.const_like ~dtype:t x (`Int v) in
-  let in_range = Ops.cast safe t in
+  let in_range = Folded.cast safe t in
   where nan (edge Bigint.zero)
     (where low (edge least) (where high (edge (Bigint.pred past)) in_range))
 
 let to_float32 = function
   | Single x -> x
-  | Double x | Integer (_, x) -> Ops.cast x Float32
+  | Double x | Integer (_, x) -> Folded.cast x Float32
 
 let to_float64 = function
-  | Single x | Integer (_, x) -> Ops.cast x Float64
+  | Single x | Integer (_, x) -> Folded.cast x Float64
   | Double x -> x
 
 (* [s] stored into [d], neither complex nor boolean. *)
@@ -453,7 +455,8 @@ let cast_parts ~src:(D.Any s as src) (D.Any dt as d) xs =
       [ byte (not_ (is_zero re && is_zero im)) ]
   | Boolean when D.is D.Boolean s -> [ byte (truth (one xs)) ]
   | Boolean -> [ byte (not_ (is_zero (node_of (source src xs)))) ]
-  | Complex when D.is D.Complex s -> List.map (fun x -> Ops.cast x (dtype d)) xs
+  | Complex when D.is D.Complex s ->
+      List.map (fun x -> Folded.cast x (dtype d)) xs
   | Complex ->
       let part =
         if D.equal dt D.Complex128 then D.Any D.Float64 else D.Any D.Float32
@@ -471,14 +474,15 @@ let cast_parts ~src:(D.Any s as src) (D.Any dt as d) xs =
 let raw (D.Any dt) xs =
   match (dt, xs) with
   | D.Complex64, [ re; im ] ->
-      (Ops.cast (bits im) Uint64 lsl 32) lor Ops.cast (bits re) Uint64
+      (Folded.cast (bits im) Uint64 lsl 32) lor Folded.cast (bits re) Uint64
   | D.Int4, [ x ] -> bits x land 15
   | _, [ x ] -> bits x
   | _ -> invalid_arg "Lower_arith: parts of another dtype"
 
 let of_raw (D.Any dt as d) r =
   match dt with
-  | D.Complex64 -> [ f32 (Ops.cast r Uint32); f32 (Ops.cast (r lsr 32) Uint32) ]
+  | D.Complex64 ->
+      [ f32 (Folded.cast r Uint32); f32 (Folded.cast (r lsr 32) Uint32) ]
   | D.Int4 -> [ store d r ]
   | _ -> [ of_bits (dtype d) r ]
 
@@ -711,7 +715,7 @@ let shifts b u =
 let split b k c =
   let s = Shape.shape c in
   let wide = Shape.expand (Shape.unsqueeze c (-1)) (s @ [ Ops.Int k ]) in
-  Ops.shr wide (shifts b wide) land Stdlib.((1 lsl b) - 1)
+  Folded.shr wide (shifts b wide) land Stdlib.((1 lsl b) - 1)
 
 (* [join b c] is [split]'s inverse: the codes of [b] bits along [c]'s last axis
    as one code, the first in the low bits, of [c]'s shape without that axis. *)
@@ -719,7 +723,7 @@ let join b c =
   let s = Shape.shape c in
   let r = List.length s in
   Shape.reshape
-    (Shape.rop (Ops.shl c (shifts b c)) Op.Add [ Stdlib.(r - 1) ])
+    (Shape.rop (Folded.shl c (shifts b c)) Op.Add [ Stdlib.(r - 1) ])
     (List.filteri (fun i _ -> Stdlib.(i < r - 1)) s)
 
 let bitcast ~src:(D.Any s as src) (D.Any t as d) shape x =
@@ -745,15 +749,15 @@ let bitcast ~src:(D.Any s as src) (D.Any t as d) shape x =
         if bs > bt then code (split bt (bs / bt) c) else code (join bs c)
       else
         let words () = Shape.reshape x (ints (front @ [ per / size src ])) in
-        if bs >= 8 && bt >= 8 then Ops.bitcast (words ()) (dtype d)
+        if bs >= 8 && bt >= 8 then Folded.bitcast (words ()) (dtype d)
         else
           let bytes =
-            if bs >= 8 then Ops.bitcast (words ()) Uint8
+            if bs >= 8 then Folded.bitcast (words ()) Uint8
             else
               let c = raw src [ x ] in
               join bs (Shape.reshape c (ints (front @ [ per / 8; 8 / bs ])))
           in
-          if bt >= 8 then Ops.bitcast bytes (dtype d)
+          if bt >= 8 then Folded.bitcast bytes (dtype d)
           else code (split bt (8 / bt) bytes)
     in
     Shape.reshape node (dims d (Array.of_list out))

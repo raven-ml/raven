@@ -34,31 +34,32 @@ let u64 u n =
 let con x p = num x (pick x p)
 
 let of_bits u =
-  Ops.bitcast u (if Dtype.equal (Ops.dtype u) Uint64 then Float64 else Float32)
+  Folded.bitcast u
+    (if Dtype.equal (Ops.dtype u) Uint64 then Float64 else Float32)
 
 let of_word x p = of_bits (word (bits x) (pick x p))
 
 (* Operations *)
 
-let ( +: ) = Ops.add
-let ( -: ) = Ops.sub
-let ( *: ) = Ops.mul
-let ( /: ) x y = Ops.alu x Op.Fdiv [ y ]
-let where = Ops.where
-let lt = Ops.lt
-let gt x y = Ops.lt y x
-let eq = Ops.eq
-let ne = Ops.ne
-let ( ||: ) = Ops.bitwise_or
-let ( &&: ) = Ops.bitwise_and
+let ( +: ) = Folded.add
+let ( -: ) = Folded.sub
+let ( *: ) = Folded.mul
+let ( /: ) x y = Folded.alu x Op.Fdiv [ y ]
+let where = Folded.where
+let lt = Folded.lt
+let gt x y = Folded.lt y x
+let eq = Folded.eq
+let ne = Folded.ne
+let ( ||: ) = Folded.bitwise_or
+let ( &&: ) = Folded.bitwise_and
 
 (* [x <= y] and [x >= y], false where an operand is NaN. *)
 let le x y = lt x y ||: eq x y
 let ge x y = le y x
-let band = Ops.bitwise_and
-let bor = Ops.bitwise_or
-let shl u n = Ops.shl u (int u n)
-let shr u n = Ops.shr u (int u n)
+let band = Folded.bitwise_and
+let bor = Folded.bitwise_or
+let shl u n = Folded.shl u (int u n)
+let shr u n = Folded.shr u (int u n)
 let set u = ne u (int u 0)
 
 (* Constants *)
@@ -102,13 +103,15 @@ let flip m s = where (negative s) (negated m) m
 
 (* 2^k for a normal power, [k] an int32 node. *)
 let pow2 x k =
-  let e = Ops.cast (Ops.add k (int k (pick x bias))) (unsigned (Ops.dtype x)) in
+  let e =
+    Folded.cast (Folded.add k (int k (pick x bias))) (unsigned (Ops.dtype x))
+  in
   of_bits (shl e (pick x mbits))
 
 (* y 2^k rounded once: the first product is exact. *)
 let scale y k =
   let k1 = shr k 1 in
-  y *: pow2 y k1 *: pow2 y (Ops.sub k k1)
+  y *: pow2 y k1 *: pow2 y (Folded.sub k k1)
 
 let two_sum a b =
   let hi = a +: b in
@@ -119,9 +122,9 @@ let two_sum a b =
 let ilogb x =
   let sub = lt (bits x) (word (bits x) (pick x min_normal_bits)) in
   let s = where sub (x *: con x sub_scale) x in
-  let e = Ops.cast (shr (bits s) (pick x mbits)) Int32 in
-  let e = Ops.sub e (int e (pick x bias)) in
-  Ops.sub e (where sub (int e (pick x mbits)) (int e 0))
+  let e = Folded.cast (shr (bits s) (pick x mbits)) Int32 in
+  let e = Folded.sub e (int e (pick x bias)) in
+  Folded.sub e (where sub (int e (pick x mbits)) (int e 0))
 
 (* Exact kinds *)
 
@@ -173,35 +176,37 @@ let fmod x y =
   let ux = band (bits x) (mag_word x) and uy = band (bits y) (mag_word y) in
   let ib = word ux (pick x inf_bits) in
   let special =
-    eq uy (word uy 0L) ||: Ops.logical_not (lt ux ib) ||: gt uy ib
+    eq uy (word uy 0L) ||: Folded.logical_not (lt ux ib) ||: gt uy ib
   in
   let mb = pick x mbits and b = pick x bias in
-  let field u = Ops.cast (shr u mb) Int32 in
+  let field u = Folded.cast (shr u mb) Int32 in
   let normal e = where (lt e (int e 1)) (int e 1) e in
   let sig_ u =
     let f = band u (word u (pick x mmask)) in
     let lead = word u (Int64.shift_left 1L mb) in
-    Ops.cast (where (eq (field u) (int (field u) 0)) f (bor f lead)) Uint64
+    Folded.cast (where (eq (field u) (int (field u) 0)) f (bor f lead)) Uint64
   in
   let ex = normal (field ux) and ey = normal (field uy) in
   let mx = sig_ ux and my = sig_ uy in
   let my = where (eq my (u64 my 0L)) (u64 my 1L) my in
-  let d = Ops.sub ex ey in
+  let d = Folded.sub ex ey in
   let chunk = 63 - mb in
   let steps = ((2 * b) + chunk - 1) / chunk in
-  let modu r = Ops.alu r Op.Truncmod [ my ] in
+  let modu r = Folded.alu r Op.Truncmod [ my ] in
   let r = ref (modu mx) in
   for k = 0 to steps - 1 do
-    let left = Ops.sub d (int d (k * chunk)) in
+    let left = Folded.sub d (int d (k * chunk)) in
     let left = where (lt left (int d 0)) (int d 0) left in
     let left = where (gt left (int d chunk)) (int d chunk) left in
-    r := modu (Ops.shl !r (Ops.cast left Uint64))
+    r := modu (Folded.shl !r (Folded.cast left Uint64))
   done;
   (* r 2^(ey - bias - mbits), in two exact products when the scale is below the
      normal range *)
-  let e = Ops.sub ey (int ey (b + mb)) in
+  let e = Folded.sub ey (int ey (b + mb)) in
   let e1 = where (lt e (int e (1 - b))) (int e (1 - b)) e in
-  let m = Ops.cast !r (Ops.dtype x) *: pow2 x e1 *: pow2 x (Ops.sub e e1) in
+  let m =
+    Folded.cast !r (Ops.dtype x) *: pow2 x e1 *: pow2 x (Folded.sub e e1)
+  in
   let sx = band (bits x) (sign_word x) in
   let r = where (lt ux uy) x (of_bits (bor (bits m) sx)) in
   where special (nan x) r
@@ -243,12 +248,12 @@ let log_reduce u =
   let sub = lt b (word b (pick u min_normal_bits)) in
   let u = where sub (u *: con u sub_scale) u in
   let half = pick u sqrt_half_bits in
-  let ix = Ops.add (bits u) (word b (Int64.sub (one_bits u) half)) in
-  let e = Ops.cast (shr ix (pick u mbits)) Int32 in
-  let e = Ops.sub e (int e (pick u bias)) in
-  let k = Ops.sub e (where sub (int e (pick u mbits)) (int e 0)) in
-  let m = Ops.add (band ix (word b (pick u mmask))) (word b half) in
-  (of_bits m -: one u, Ops.cast k (Ops.dtype u))
+  let ix = Folded.add (bits u) (word b (Int64.sub (one_bits u) half)) in
+  let e = Folded.cast (shr ix (pick u mbits)) Int32 in
+  let e = Folded.sub e (int e (pick u bias)) in
+  let k = Folded.sub e (where sub (int e (pick u mbits)) (int e 0)) in
+  let m = Folded.add (band ix (word b (pick u mmask))) (word b half) in
+  (of_bits m -: one u, Folded.cast k (Ops.dtype u))
 
 (* nx_log_core: k ln2 + log(1 + f) + c. *)
 let log_core (f, k) c =
@@ -327,7 +332,7 @@ let div_pair (nh, nl) (dh, dl) =
    as an int32, the low word of the difference of the bits. *)
 let nearest t =
   let s = shifter t in
-  (t -: s, Ops.cast (Ops.sub (bits t) (bits s)) Int32)
+  (t -: s, Folded.cast (Folded.sub (bits t) (bits s)) Int32)
 
 (* nx_nan1: r, or a where a is a NaN. *)
 let nan1 a r = where (is_nan a) a r
@@ -450,8 +455,8 @@ let exp x =
 let exp_near x =
   let r, _, k = exp_reduce x in
   let b = bits (one x +: poly_q r r) in
-  let k = Ops.cast k (unsigned (Ops.dtype x)) in
-  of_bits (Ops.add b (shl k (pick x mbits)))
+  let k = Folded.cast k (unsigned (Ops.dtype x)) in
+  of_bits (Folded.add b (shl k (pick x mbits)))
 
 (* nx_exp2: x = k + r, |r| <= 1/2, 2^r = 1 + r P(r). *)
 let exp2 x =
@@ -468,7 +473,7 @@ let expm1 x =
   let r, rc, k = exp_reduce c in
   let h = poly_q r (mulacc rc r rc) in
   let cap = int k (pick x expm1_kcap) in
-  let m = pow2 x (Ops.sub (int k 0) (where (gt k cap) cap k)) in
+  let m = pow2 x (Folded.sub (int k 0) (where (gt k cap) cap k)) in
   let uh, ul = two_sum (one x) (negated m) in
   let sh, sl = two_sum uh r in
   let y = scale (sh +: (sl +: (ul +: h))) k in
@@ -482,7 +487,7 @@ let hyp_reduce a =
   let em_lo = poly_q r (mulacc rc r rc) in
   let wh, wl = two_sum (one a) r in
   let cap = int k (pick a hyp_kcap) in
-  let m = pow2 a (Ops.mul (where (gt k cap) cap k) (int k (-2))) in
+  let m = pow2 a (Folded.mul (where (gt k cap) cap k) (int k (-2))) in
   ((r, em_lo), (wh, wl +: em_lo), m, k)
 
 (* nx_sinh: 2^(k-1) (em + (em + 1 - 2^-2k) / w) *)
@@ -492,7 +497,7 @@ let sinh x =
   let qh, ql = div_pair (nh, nl +: el) w in
   let vh, vl = two_sum eh qh in
   let y = vh +: (vl +: (el +: ql)) in
-  nan1 x (copysign (scale y (Ops.sub k (int k 1))) x)
+  nan1 x (copysign (scale y (Folded.sub k (int k 1))) x)
 
 (* nx_cosh: 2^(k-1) (w + 2^-2k / w) *)
 let cosh x =
@@ -500,7 +505,7 @@ let cosh x =
   let qh, ql = div_pair (m, zero x) (wh, wl) in
   let vh, vl = two_sum wh qh in
   let y = vh +: (vl +: (wl +: ql)) in
-  nan1 x (scale y (Ops.sub k (int k 1)))
+  nan1 x (scale y (Folded.sub k (int k 1)))
 
 (* nx_tanh: below the split a + a^3 T(a^2); above, 1 - 2 / (w + 1) with
    w = e^2a, the quotient and the subtraction's roundings kept as tails; x's
@@ -561,7 +566,7 @@ let cos_c =
    int. *)
 let rem_cw x =
   let qf, q = nearest (mulacc x (con x two_over_pi) (shifter x)) in
-  let q = Ops.cast q Uint32 in
+  let q = Folded.cast q Uint32 in
   let mq = negated qf in
   let a = mulacc mq (con x pio2_hi) x in
   if not (wide x) then
@@ -611,7 +616,7 @@ let two_ln2_over_pi_words =
    shifter does, since a node cannot index a table. *)
 let window t g n nb =
   let w = shr g 5 in
-  let sh = Ops.cast (band g (int g 31)) Uint64 in
+  let sh = Folded.cast (band g (int g 31)) Uint64 in
   let at m = u64 g (if m < Array.length t then t.(m) else 0L) in
   let words = ref (Array.init (n + (1 lsl nb)) at) in
   for b = nb - 1 downto 0 do
@@ -625,14 +630,14 @@ let window t g n nb =
   let ws = !words in
   Array.init n (fun j ->
       let pair = bor (shl ws.(j) 32) ws.(j + 1) in
-      band (shr (Ops.shl pair sh) 32) (u64 g 0xFFFFFFFFL))
+      band (shr (Folded.shl pair sh) 32) (u64 g 0xFFFFFFFFL))
 
 (* x's reduction negated where x's sign bit is set, q as a uint32. *)
 let signed_rem x (hi, lo) q =
   let n = negative x in
   ( where n (negated hi) hi,
     where n (negated lo) lo,
-    where n (Ops.sub (u32 q 0) q) q )
+    where n (Folded.sub (u32 q 0) q) q )
 
 (* |x|'s bits, held at the switch's on the lanes below it, where the
    reduction past the switch is computed but not taken: its exponent then
@@ -645,21 +650,25 @@ let big_bits x =
 (* nx_rem_pio2_big_f32 of table [t] *)
 let rem_big32 t x =
   let ix = big_bits x in
-  let e = Ops.cast (shr ix 23) Int32 in
-  let e = Ops.sub e (int e 150) in
+  let e = Folded.cast (shr ix 23) Int32 in
+  let e = Folded.sub e (int e 150) in
   let m =
-    Ops.cast (bor (band ix (word ix 0x007FFFFFL)) (word ix 0x00800000L)) Uint64
+    Folded.cast
+      (bor (band ix (word ix 0x007FFFFFL)) (word ix 0x00800000L))
+      Uint64
   in
-  let w = window t (Ops.add e (int e 30)) 3 3 in
+  let w = window t (Folded.add e (int e 30)) 3 3 in
   let a0 = m *: w.(2) and a1 = m *: w.(1) and a2 = m *: w.(0) in
   let low u = band u (u64 u 0xFFFFFFFFL) in
-  let t1 = Ops.add (shr a0 32) a1 in
-  let t2 = Ops.add (shr t1 32) a2 in
+  let t1 = Folded.add (shr a0 32) a1 in
+  let t2 = Folded.add (shr t1 32) a2 in
   let f = bor (bor (shl t2 34) (shl (low t1) 2)) (shr (low a0) 30) in
   let top = shr f 63 in
-  let q = Ops.add (Ops.cast (shr t2 30) Uint32) (Ops.cast top Uint32) in
+  let q =
+    Folded.add (Folded.cast (shr t2 30) Uint32) (Folded.cast top Uint32)
+  in
   (* the signed fraction in three exact pieces, its value f 2^-64 *)
-  let part u s = Ops.cast u Float32 *: num x s in
+  let part u s = Folded.cast u Float32 *: num x s in
   let c2 = part (shr f 40) 0x1p-24 in
   let c1 = part (band (shr f 16) (u64 f 0xFFFFFFL)) 0x1p-48 in
   let c0 = part (band f (u64 f 0xFFFFL)) 0x1p-64 in
@@ -676,26 +685,26 @@ let rem_big32 t x =
 (* nx_rem_pio2_big_f64 of table [t] *)
 let rem_big64 t x =
   let ix = big_bits x in
-  let e = Ops.cast (shr ix 52) Int32 in
-  let e = Ops.sub e (int e 1075) in
+  let e = Folded.cast (shr ix 52) Int32 in
+  let e = Folded.sub e (int e 1075) in
   let m =
     bor (band ix (word ix 0x000FFFFFFFFFFFFFL)) (word ix 0x0010000000000000L)
   in
-  let win = window t (Ops.add e (int e 30)) 6 5 in
+  let win = window t (Folded.add e (int e 30)) 6 5 in
   let w = Array.init 6 (fun j -> win.(5 - j)) in
   let low u = band u (u64 u 0xFFFFFFFFL) in
   let ml = low m and mh = shr m 32 in
   let p = Array.make 8 (u64 m 0L) in
   let c = ref (u64 m 0L) in
   for j = 0 to 5 do
-    let t = Ops.add (ml *: w.(j)) !c in
+    let t = Folded.add (ml *: w.(j)) !c in
     p.(j) <- low t;
     c := shr t 32
   done;
   p.(6) <- !c;
   c := u64 m 0L;
   for j = 0 to 5 do
-    let t = Ops.add (Ops.add (mh *: w.(j)) p.(j + 1)) !c in
+    let t = Folded.add (Folded.add (mh *: w.(j)) p.(j + 1)) !c in
     p.(j + 1) <- low t;
     c := shr t 32
   done;
@@ -704,12 +713,16 @@ let rem_big64 t x =
   let fh = bor (bor (shl (mask30 p.(5)) 34) (shl p.(4) 2)) (shr p.(3) 30) in
   let fl = bor (bor (shl (mask30 p.(3)) 34) (shl p.(2) 2)) (shr p.(1) 30) in
   let q =
-    Ops.add (Ops.cast (shr p.(5) 30) Uint32) (Ops.cast (shr fh 63) Uint32)
+    Folded.add
+      (Folded.cast (shr p.(5) 30) Uint32)
+      (Folded.cast (shr fh 63) Uint32)
   in
   (* the signed fraction (fh, fl) 2^-128 in three exact pieces *)
-  let c2 = Ops.cast (Ops.cast (shr fh 32) Int32) Float64 *: num x 0x1p-32 in
-  let c1 = Ops.cast (low fh) Float64 *: num x 0x1p-64 in
-  let c0 = Ops.cast (shr fl 11) Float64 *: num x 0x1p-117 in
+  let c2 =
+    Folded.cast (Folded.cast (shr fh 32) Int32) Float64 *: num x 0x1p-32
+  in
+  let c1 = Folded.cast (low fh) Float64 *: num x 0x1p-64 in
+  let c0 = Folded.cast (shr fl 11) Float64 *: num x 0x1p-117 in
   let sh, sl = two_sum c2 c1 in
   let vh, vl = fast_two_sum sh (sl +: c0) in
   let ph = vh *: con x pio2_hi in
@@ -720,7 +733,7 @@ let rem_big64 t x =
 (* nx_trig_big: |x| finite and at or past the switch. *)
 let trig_big x =
   let a = band (bits x) (mag_word x) in
-  Ops.logical_not (lt a (bits_of x (pick x pio2_big)))
+  Folded.logical_not (lt a (bits_of x (pick x pio2_big)))
   &&: lt a (word a (pick x inf_bits))
 
 let rem_big t x = if wide x then rem_big64 t x else rem_big32 t x
@@ -756,13 +769,13 @@ let cos_kernel hi lo =
 
 (* nx_flip2: y with its sign flipped where bit 1 of k is set. *)
 let flip2 y k =
-  let b = Ops.cast (band k (u32 k 2)) (unsigned (Ops.dtype y)) in
-  of_bits (Ops.bitwise_xor (bits y) (shl b (width y - 2)))
+  let b = Folded.cast (band k (u32 k 2)) (unsigned (Ops.dtype y)) in
+  of_bits (Folded.bitwise_xor (bits y) (shl b (width y - 2)))
 
 let odd q = set (band q (u32 q 1))
 
 (* Where x is a NaN or below the cutoff, as !(|x| >= tiny). *)
-let tiny x = Ops.logical_not (ge (magnitude x) (con x trig_tiny))
+let tiny x = Folded.logical_not (ge (magnitude x) (con x trig_tiny))
 
 (* nx_sin_at *)
 let sin_at x (hi, lo, q) =
@@ -779,7 +792,9 @@ let sin_near x = sin_at x (rem_cw x)
 (* nx_cos_at *)
 let cos_at x (hi, lo, q) =
   let sh, sl = sin_kernel hi lo and ch, cl = cos_kernel hi lo in
-  let y = flip2 (where (odd q) (sh +: sl) (ch +: cl)) (Ops.add q (u32 q 1)) in
+  let y =
+    flip2 (where (odd q) (sh +: sl) (ch +: cl)) (Folded.add q (u32 q 1))
+  in
   where (is_nan x) x y
 
 let cos x = cos_at x (rem x)
@@ -870,7 +885,7 @@ let nan2 a b r = where (is_nan a) a (nan1 b r)
 let asin_reduce a =
   let big = gt a (half a) in
   let z = where big ((one a -: a) *: half a) (a *: a) in
-  let s = where big (Ops.sqrt z) a in
+  let s = where big (Folded.sqrt z) a in
   let c = mulacc (negated s) s z /: (s +: s) in
   let c = where (big &&: gt z (zero a)) c (zero a) in
   (s, mulacc (s *: z) (horner z (pick a asin_b)) c, big)
@@ -1080,7 +1095,7 @@ let pow x y =
   let n = negative x in
   let v = where (n &&: odd) (negated v) v in
   let finite = ne ax (zero x) &&: lt ax (inf x) in
-  let v = where (n &&: Ops.logical_not integer &&: finite) (nan x) v in
+  let v = where (n &&: Folded.logical_not integer &&: finite) (nan x) v in
   let v = where (eq ax (one x) &&: eq ay (inf x)) (one x) v in
   let v = nan2 x y v in
   where (eq x (one x) ||: eq y (zero x)) (one x) v
@@ -1232,7 +1247,7 @@ let unary (k : Nx_kernel.Prog.unary) x =
   | Recip -> one x /: x
   | Abs -> magnitude x
   | Sign -> sign x
-  | Sqrt -> Ops.sqrt x
+  | Sqrt -> Folded.sqrt x
   | Exp -> exp x
   | Exp2 -> exp2 x
   | Log -> log x

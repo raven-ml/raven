@@ -30,23 +30,26 @@ let extent u i =
 
 (* Bits *)
 
-let bits x = Ops.bitcast x (unsigned (Ops.dtype x))
+let bits x = Folded.bitcast x (unsigned (Ops.dtype x))
 let width x = 8 * Dtype.itemsize (Ops.dtype x)
 let word x n = Shape.const_like (bits x) (`Int n)
 let bit x k = word x (Bigint.shift_left Bigint.one k)
 let sign x = bit x (width x - 1)
-let of_bits x u = Ops.bitcast u (Ops.dtype x)
-let negative x = Ops.ne (Ops.bitwise_and (bits x) (sign x)) (word x Bigint.zero)
-let negated x = of_bits x (Ops.bitwise_xor (bits x) (sign x))
+let of_bits x u = Folded.bitcast u (Ops.dtype x)
+
+let negative x =
+  Folded.ne (Folded.bitwise_and (bits x) (sign x)) (word x Bigint.zero)
+
+let negated x = of_bits x (Folded.bitwise_xor (bits x) (sign x))
 
 let magnitude x =
   of_bits x
-    (Ops.bitwise_and (bits x)
+    (Folded.bitwise_and (bits x)
        (word x (Bigint.pred (Bigint.shift_left Bigint.one (width x - 1)))))
 
 (* NaN *)
 
-let is_nan x = Ops.ne x x
+let is_nan x = Folded.ne x x
 
 (* Sets the [e] exponent bits and the quiet bit, the fraction's top bit. These
    are [e + 1] ones shifted left past the [m - 1] fraction bits below. *)
@@ -57,7 +60,7 @@ let nan x =
 
 (* Fused multiply-add *)
 
-let mulacc a b c = Ops.alu a Op.Mulacc [ b; c ]
+let mulacc a b c = Folded.alu a Op.Mulacc [ b; c ]
 
 (* Indexed loads
 

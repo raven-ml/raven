@@ -28,6 +28,11 @@ val run :
     computes where they are read the values it would where points run at
     once, though its kernels run without them. *)
 
+val nodes : (unit -> ('v, 's, 'd) Nx.t) -> int
+(** [nodes f] is the number of nodes of the graph {!run} compiles for [f]: the
+    nodes its result reaches ({!Tolk.Ops.toposort}), the calls among them one
+    node each. *)
+
 val map : (Tolk.Ops.t -> Tolk.Ops.t) -> (float, 's, 'd) Nx.t -> float array
 (** [map f x] is the elements, in C order, of [f] applied to the node of
     [x]'s elements, a [float32] or [float64] array, compiled and run on the

@@ -247,6 +247,10 @@ let run (type v s d) ?local ?cores (f : unit -> (v, s, d) Nx.t) : v array =
   let bound, u, dt, shape, n = lowered ?local f in
   execute ?cores bound u dt shape n
 
+let nodes f =
+  let _, u, _, _, _ = lowered f in
+  List.length (Ops.toposort ~calls:Skip u)
+
 let map (type s d) (f : Ops.t -> Ops.t) (x : (float, s, d) Nx.t) : float array =
   let bound = ref [] in
   let dt = Nx.dtype x and shape = Nx.shape x in

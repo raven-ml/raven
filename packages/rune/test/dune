@@ -203,6 +203,15 @@
  (modules test_lower_complex)
  (libraries nx rune rune_support windtrap))
 
+; Kinds of constants lowered by Rune.Lower.op, against the constant of their
+; result's shape.
+
+(test
+ (package rune)
+ (name test_folded)
+ (modules test_folded)
+ (libraries nx rune lowered windtrap))
+
 ; Functions nx composes from kinds, compiled by Rune.jit on the host, against
 ; nx's eager kernels.
 
