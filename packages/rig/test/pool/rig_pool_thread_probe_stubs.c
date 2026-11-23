@@ -238,9 +238,11 @@ static void child_threads(int64_t *v) {
 
 /* The process's threads before any job, after a job of two threads, after
    another of two, after one of three, and after one of the cores and four
-   more. */
+   more, cut into as many chunks: a job runs on no more threads than it has
+   chunks. */
 static void child_grown(int64_t *v) {
   int cores = rig_pool_cores();
+  int64_t many = cores + 4;
   v[0] = thread_count();
   run_job(2, 1000, 10, nothing, NULL);
   v[1] = thread_count();
@@ -248,7 +250,7 @@ static void child_grown(int64_t *v) {
   v[2] = thread_count();
   run_job(3, 1000, 10, nothing, NULL);
   v[3] = thread_count();
-  run_job(cores + 4, 1000, 100, nothing, NULL);
+  run_job(cores + 4, 10 * many, many, nothing, NULL);
   v[4] = thread_count();
 }
 

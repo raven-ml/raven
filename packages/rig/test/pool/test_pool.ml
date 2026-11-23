@@ -578,12 +578,15 @@ let max_drawn_chunks = 16_384L
 let assume_recordable (_, total, chunks) =
   assume (chunk_count ~total ~chunks <= max_drawn_chunks)
 
+(* The fifth, a job of more threads and chunks than cores, is one the generators
+   seldom draw where the cores are many. *)
 let job_examples =
   [
     (4, 0L, 3L);
     (3, -5L, 2L);
     (0, 10L, 0L);
     (cores + 3, 5L, 8L);
+    (cores + 3, Int64.of_int (4 * (cores + 1)), Int64.of_int (cores + 1));
     (2, Int64.max_int, 3L);
     (2, 32L, 32L);
     (2, 33L, 33L);
