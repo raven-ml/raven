@@ -39,8 +39,62 @@ let pp_cut ppf = function
   | Device k -> Format.fprintf ppf "device %d" k
   | Mesh (a, b) -> Format.fprintf ppf "mesh axis %d over x, %d over y" a b
 
-(* A set, and the mesh over it where it has four devices. *)
-type 'd set = { s : 'd Nx.Devices.t; mesh : 'd Nx.Mesh.t option }
+(* A set, the mesh over it where it has four devices, and its compiled functions
+   by name: a law that draws its cases from a few forms compiles one function
+   per form and set, and calls it at each case, so that a form's program traces
+   and compiles once. *)
+type 'd set = {
+  s : 'd Nx.Devices.t;
+  mesh : 'd Nx.Mesh.t option;
+  calls :
+    (string, 'd Nx.float32_t -> 'd Nx.float32_t -> 'd Nx.float32_t) Hashtbl.t;
+  pairs :
+    ( string,
+      'd Nx.float32_t -> 'd Nx.float32_t -> 'd Nx.float32_t * 'd Nx.float32_t
+    )
+    Hashtbl.t;
+  switches :
+    (string, 'd Nx.int32_t -> 'd Nx.float32_t -> 'd Nx.float32_t) Hashtbl.t;
+  checks :
+    (string, 'd Nx.bool_t -> 'd Nx.float32_t -> 'd Nx.float32_t) Hashtbl.t;
+  lists : (string, 'd Nx.float32_t list -> 'd Nx.float32_t list) Hashtbl.t;
+  keys :
+    ( string,
+      'd Nx.Placement.t option ref * ('d Nx.Rng.key -> 'd Nx.float32_t) )
+    Hashtbl.t;
+  emits :
+    ( string,
+      'd Nx.float32_t Rune.Probe.t * ('d Nx.float32_t -> 'd Nx.float32_t) )
+    Hashtbl.t;
+  scan_emits :
+    ( string,
+      'd Nx.float32_t Rune.Probe.t
+      * ('d Nx.float32_t -> 'd Nx.float32_t * 'd Nx.float32_t) )
+    Hashtbl.t;
+}
+
+let set ?mesh s =
+  {
+    s;
+    mesh;
+    calls = Hashtbl.create 64;
+    pairs = Hashtbl.create 16;
+    switches = Hashtbl.create 8;
+    checks = Hashtbl.create 16;
+    lists = Hashtbl.create 64;
+    keys = Hashtbl.create 4;
+    emits = Hashtbl.create 16;
+    scan_emits = Hashtbl.create 16;
+  }
+
+(* [table]'s function named [key], made by [make] if it has none. *)
+let kept table key make =
+  match Hashtbl.find_opt table key with
+  | Some f -> f
+  | None ->
+      let f = make () in
+      Hashtbl.add table key f;
+      f
 
 let at (type d) (set : d set) c : d Nx.Placement.t =
   match (c, set.mesh) with
@@ -54,12 +108,24 @@ let at (type d) (set : d set) c : d Nx.Placement.t =
 (* A law over the set of [n] devices. *)
 type law = { law : 'd. 'd set -> unit }
 
+(* A function over the set of [n] devices, as a law is. *)
+type 'r of_set = { at_set : 'd. 'd set -> 'r }
+
+let one = set One.v
+let two = set Two.v
+let three = set Three.v
+let four = set ~mesh Four.v
+let host = set Nx.Host.v
+
 let over n { law } =
+  match n with 1 -> law one | 2 -> law two | 3 -> law three | _ -> law four
+
+let over_set n { at_set } =
   match n with
-  | 1 -> law { s = One.v; mesh = None }
-  | 2 -> law { s = Two.v; mesh = None }
-  | 3 -> law { s = Three.v; mesh = None }
-  | _ -> law { s = Four.v; mesh = Some mesh }
+  | 1 -> at_set one
+  | 2 -> at_set two
+  | 3 -> at_set three
+  | _ -> at_set four
 
 (* A value of [shape] on the host, of elements in [-1, 1] that depend on [seed]
    and their index. *)
@@ -78,26 +144,77 @@ let compiled f x y =
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   r
 
+(* [compiled] of the function [set] keeps under [key], [f] compiled at its first
+   call. *)
+let compiled_as set key f x y =
+  let sig2 = T.(tensor @-> tensor @-> returns tensor) in
+  let g = kept set.calls key (fun () -> Rune.jit sig2 f) in
+  let before = Rune.evaluations () in
+  let r = outcome (fun () -> g x y) in
+  Compiled.here ();
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  r
+
+(* Functions of the same arguments whose results share no intermediate value
+   compile in one program, which [set] keeps under [key]: [Some rs], each
+   function's result at [xs], where the program computes, and [None] where it
+   raises, so that each function's outcome is then taken alone. *)
+let compiled_all set key fs xs =
+  let s = T.(list tensor @-> returns (list tensor)) in
+  let all xs = List.map (fun f -> f xs) fs in
+  let g = kept set.lists key (fun () -> Rune.jit s all) in
+  let before = Rune.evaluations () in
+  match g xs with
+  | rs ->
+      Compiled.here ();
+      equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+      Some rs
+  | exception Invalid_argument _ -> None
+
+(* Each of [named]'s functions of [x], with its outcome eagerly and compiled:
+   all in one program ({!compiled_all}) where it computes, else each alone. *)
+let each_compiled set key named x =
+  let one f = function [ x ] -> f x | _ -> invalid_arg "one argument" in
+  let jits =
+    match compiled_all set key (List.map (fun (_, f) -> one f) named) [ x ] with
+    | Some rs -> List.map (fun r -> Value r) rs
+    | None ->
+        List.map
+          (fun (name, f) ->
+            compiled_as set (key ^ ", " ^ name) (fun x _ -> f x) x x)
+          named
+  in
+  List.map2
+    (fun (name, f) jit -> (name, outcome (fun () -> f x), jit))
+    named jits
+
 let omap f = function Value v -> Value (f v) | Raised m -> Raised m
 let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
+(* A value as a check reads it: its placement, printed, and its elements at
+   float64. *)
+let read x =
+  ( Format.asprintf "%a" Nx.Placement.pp (Nx.placement x),
+    Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) )
+
 (* [jit] lies where [eager] does, within [bound] of it elementwise, NaN where it
-   is NaN. *)
-let within ~bound eager jit =
-  equal ~msg:"placement" (placement ()) (Nx.placement eager) (Nx.placement jit);
-  let e = Nx.to_array (Nx.cast Nx.float64 eager) in
-  let j = Nx.to_array (Nx.cast Nx.float64 jit) in
-  let b = Nx.to_array bound in
+   is NaN, both as {!read} reads them. *)
+let within_read ~bound (ep, e) (jp, j) =
+  equal ~msg:"placement" string ep jp;
   Array.iteri
     (fun i ei ->
-      if Float.is_nan ei then equal ~msg:"NaN" bool true (Float.is_nan j.(i))
+      if Float.is_nan ei then equal ~msg:"NaN" float_exact Float.nan j.(i)
       else
         less
           ~msg:(Printf.sprintf "distance at %d" i)
           float_exact
-          ~than:(b.(i) +. Float.min_float)
+          ~than:(bound.(i) +. Float.min_float)
           (Float.abs (j.(i) -. ei)))
     e
+
+(* [within_read] of [eager] and [jit]. *)
+let within ~bound eager jit =
+  within_read ~bound:(Nx.to_array bound) (read eager) (read jit)
 
 (* [γ(k)] at [float32]. *)
 let gamma k =
@@ -113,38 +230,50 @@ let product k =
 
 (* Cases
 
-   A set of [n] devices, a shape whose cut axis has [0] to [2n + 1] elements, so
-   that windows come uneven and empty, and placements of the operands. *)
+   A form, a set of [n] devices, a shape and placements of the operands, and a
+   seed of their elements. A program compiles once per form, so a law draws its
+   forms from a few, each of whose cut axes holds no element, fewer than the
+   devices, or an even or uneven number of them, and draws its elements from the
+   seed. *)
 
-type case = { n : int; shape : int array; x : cut; y : cut }
+type case = { n : int; shape : int array; x : cut; y : cut; seed : int }
 
 let pp_case ppf c =
-  Format.fprintf ppf "%d devices, shape %a, x %a, y %a" c.n Operand.pp_shape
-    c.shape pp_cut c.x pp_cut c.y
+  Format.fprintf ppf "%d devices, shape %a, x %a, y %a, seed %d" c.n
+    Operand.pp_shape c.shape pp_cut c.x pp_cut c.y c.seed
 
-let cut_of ~n ~rank =
-  let open Gen in
-  let mesh =
-    if n = 4 && rank = 2 then
-      [ (1, constant (Mesh (0, 1))); (1, constant (Mesh (1, 0))) ]
-    else []
-  in
-  frequency
-    ([
-       (1, constant On);
-       (4, map (fun a -> Split a) (int_range 0 (rank - 1)));
-       (1, map (fun k -> Device k) (int_range 0 (n - 1)));
-     ]
-    @ mesh)
+(* The name of [name]'s function at [c]'s form. *)
+let form_key name c = Format.asprintf "%s, %a" name pp_case { c with seed = 0 }
 
-let cases =
+(* One of [forms], with a drawn seed: [seeded] sets a form's seed. *)
+let drawn ~pp seeded forms =
   let open Gen in
-  (let* n = int_range 2 4 in
-   let* rank = int_range 1 2 in
-   let* shape = array ~size:(constant rank) (int_range 0 ((2 * n) + 1)) in
-   let* x = cut_of ~n ~rank and+ y = cut_of ~n ~rank in
-   constant { n; shape; x; y })
-  |> with_pp pp_case
+  with_pp pp
+    (let* form = of_list forms in
+     let+ seed = int_range 0 999 in
+     seeded form seed)
+
+let form n shape x y = { n; shape; x; y; seed = 0 }
+
+(* Windows of each kind, and [x] whole, over each set: [x] whole beside [y] cut
+   inside a row, even, uneven over three, an empty window over four, the mesh,
+   no element, and two vectors. *)
+let forms =
+  [
+    form 3 [| 3; 2 |] On (Split 1);
+    form 2 [| 4; 3 |] (Split 0) On;
+    form 3 [| 5; 2 |] (Split 0) (Split 0);
+    form 4 [| 2; 3 |] (Split 0) (Device 1);
+    form 4 [| 4; 4 |] (Mesh (0, 1)) On;
+    form 4 [| 4; 2 |] (Mesh (1, 0)) (Mesh (0, 1));
+    form 2 [| 0; 3 |] (Split 0) On;
+    form 3 [| 7 |] (Split 0) (Device 2);
+    form 2 [| 3 |] (Device 1) (Split 0);
+  ]
+
+let cases = drawn ~pp:pp_case (fun c seed -> { c with seed }) forms
+let matrices = List.filter (fun c -> Array.length c.shape = 2) forms
+let matrix_cases = drawn ~pp:pp_case (fun c seed -> { c with seed }) matrices
 
 let cover_windows c =
   let cut_axis = function
@@ -166,11 +295,11 @@ let elementwise set c =
   cover_windows c;
   cover "a mesh" (match c.x with Mesh _ -> true | _ -> false);
   cover "three devices" (c.n = 3);
-  let x = Nx.place (at set c.x) (value c.shape) in
-  let y = Nx.place (at set c.y) (value ~seed:1 c.shape) in
+  let x = Nx.place (at set c.x) (value ~seed:c.seed c.shape) in
+  let y = Nx.place (at set c.y) (value ~seed:(c.seed + 1) c.shape) in
   let f x y = Nx.maximum (Nx.mul x y) (Nx.sub x (Nx.neg y)) in
   let eager = outcome (fun () -> f x y) in
-  let jit = compiled f x y in
+  let jit = compiled_as set (form_key "elementwise" c) f x y in
   match (eager, jit) with
   | Value e, Value j ->
       equal ~msg:"placement" (placement ()) (Nx.placement e) (Nx.placement j);
@@ -181,22 +310,28 @@ let elementwise set c =
    bound of each. *)
 let folds set c =
   cover_windows c;
-  let x = Nx.place (at set c.x) (value c.shape) in
+  let x = Nx.place (at set c.x) (value ~seed:c.seed c.shape) in
   let rank = Array.length c.shape in
-  let check axes =
-    let f x _ = Nx.sum ~axes x in
-    let eager = f x x in
-    match compiled f x x with
-    | Value jit ->
+  let all = List.init rank Fun.id in
+  let axes = List.map (fun a -> [ a ]) all @ [ all ] in
+  let named =
+    List.map
+      (fun axes ->
+        ( String.concat "," (List.map string_of_int axes),
+          fun x -> Nx.sum ~axes x ))
+      axes
+  in
+  let check axes (_, eager, jit) =
+    match (eager, jit) with
+    | Value eager, Value jit ->
         let n = List.fold_left (fun k a -> k * c.shape.(a)) 1 axes in
         let mass =
           Nx.sum ~axes (Nx.abs (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)))
         in
         within ~bound:(Nx.mul_s mass (2. *. gamma n)) eager jit
-    | r -> equal (outcome_t bits_t) (Value (bits eager)) (omap bits r)
+    | e, j -> equal (outcome_t bits_t) (omap bits e) (omap bits j)
   in
-  List.iter (fun a -> check [ a ]) (List.init rank Fun.id);
-  check (List.init rank Fun.id)
+  List.iter2 check axes (each_compiled set (form_key "sums" c) named x)
 
 (* A matrix product with each operand cut along either axis or whole, within
    twice the bound of each. *)
@@ -204,19 +339,21 @@ let matmul set c =
   match c.shape with
   | [| rows; inner |] -> (
       let cols = 3 in
-      let a = Nx.place (at set c.x) (value [| rows; inner |]) in
-      let b = Nx.place (at set c.y) (value ~seed:1 [| inner; cols |]) in
+      let a = Nx.place (at set c.x) (value ~seed:c.seed [| rows; inner |]) in
+      let b =
+        Nx.place (at set c.y) (value ~seed:(c.seed + 1) [| inner; cols |])
+      in
       cover "a cut along k" (c.x = Split 1 || c.y = Split 0);
       cover "a cut along rows" (c.x = Split 0);
       let f a b = Nx.matmul a b in
       let eager = outcome (fun () -> f a b) in
-      match (eager, compiled f a b) with
+      match (eager, compiled_as set (form_key "matmul" c) f a b) with
       | Value e, Value j ->
           let host x = Nx.abs (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
           let mass = Nx.matmul (host a) (host b) in
           within ~bound:(Nx.mul_s mass (2. *. product (inner + 1))) e j
       | e, j -> equal (outcome_t bits_t) (omap bits e) (omap bits j))
-  | _ -> assume false
+  | _ -> invalid_arg "a matrix product of a vector"
 
 (* An expert product of an MXFP4 weight cut along [k], its scales cut with
    its codes where the devices divide its blocks and whole on each device
@@ -237,18 +374,6 @@ let pp_experts ppf c =
     c.devices c.e c.outs c.blocks
     (String.concat "; " (Array.to_list (Array.map string_of_int c.ids)))
     (if c.x_cut then ", x cut alike" else "")
-
-let experts_cases =
-  let open Gen in
-  (let* devices = int_range 2 4 in
-   let* e = int_range 1 4 and+ outs = int_range 1 3 in
-   (* Three devices divide the [16 b] bytes of codes only where they divide
-      the blocks. *)
-   let* blocks = if devices = 3 then constant 3 else int_range 1 4 in
-   let* ids = array ~size:(int_range 0 5) (int_range (-1) e) in
-   let+ x_cut = bool in
-   { devices; e; outs; blocks; ids; x_cut })
-  |> with_pp pp_experts
 
 (* Three devices over three blocks, an input cut alike and an id below the
    range; scales whole over four devices with no position; scales cut over
@@ -273,6 +398,17 @@ let expert_examples =
       x_cut = false;
     };
   ]
+
+(* An example's form, with drawn ids, in range and out of it: the ids are an
+   argument, so each form compiles once. *)
+let experts_cases =
+  let open Gen in
+  with_pp pp_experts
+    (let* c = of_list expert_examples in
+     let+ ids =
+       array ~size:(constant (Array.length c.ids)) (int_range (-1) c.e)
+     in
+     { c with ids })
 
 let expert_product set c =
   let k = 32 * c.blocks and p = Array.length c.ids in
@@ -351,6 +487,7 @@ type quant_case = {
   blocks : int;
   m : int option;
   lies : lies;
+  qseed : int;
 }
 
 let pp_quant_case ppf c =
@@ -360,25 +497,26 @@ let pp_quant_case ppf c =
     (match c.lies with
     | One -> ", the weight on one device"
     | Whole -> ", the weight whole on each device"
-    | Rows -> ", the weight cut along its rows")
+    | Rows -> ", the weight cut along its rows");
+  Format.fprintf ppf ", seed %d" c.qseed
 
-let quant_cases =
-  let open Gen in
-  (let* qn = int_range 2 4 in
-   let+ format = of_list ~pp:(fun ppf f -> Format.pp_print_string ppf
-         (Quants.name f)) Quants.formats
-   and+ input = of_list ~pp:(fun ppf i -> Format.pp_print_string ppf
-         (input_name i)) inputs
-   and+ rows = int_range 1 (qn + 1)
-   and+ blocks = int_range 1 2
-   and+ m = option (int_range 0 3)
-   and+ lies = of_list [ One; Whole; Rows ] in
-   { qn; format; input; rows; blocks; m; lies })
-  |> with_pp pp_quant_case
+(* An edge of the shapes, one for each format in turn: an x of no row, of one
+   row, of three rows, and a weight of fewer rows than devices, cut along them,
+   a vector or two rows by it. *)
+let quant_edge i format =
+  let at qn input rows m lies =
+    { qn; format; input; rows; blocks = 1; m; lies; qseed = 5 }
+  in
+  match i mod 5 with
+  | 0 -> at 2 (X Nx.float32) 3 (Some 0) Rows
+  | 1 -> at 3 (X Nx.bfloat16) 3 (Some 1) Rows
+  | 2 -> at 4 (X Nx.float16) 3 (Some 3) Whole
+  | 3 -> at 4 (X Nx.float64) 1 None Rows
+  | _ -> at 3 (X Nx.float32) 2 (Some 2) Rows
 
-(* Every format at every input dtype, each once, and each format's vector by
-   its weight cut along its rows and whole on each of two devices. *)
-let quant_examples =
+(* Every format at every input dtype, each once, and each format's vector by its
+   weight cut along its rows and whole on each of two devices. *)
+let quant_shapes =
   List.concat_map
     (fun format ->
       let vector lies =
@@ -390,6 +528,7 @@ let quant_examples =
           blocks = 1;
           m = None;
           lies;
+          qseed = 3;
         }
       in
       vector Rows :: vector Whole
@@ -403,12 +542,20 @@ let quant_examples =
                blocks = 2;
                m = (if i = 0 then None else Some 2);
                lies = List.nth [ One; Rows; Whole; Rows ] i;
+               qseed = 3;
              })
            inputs)
     Quants.formats
 
-let quant_product set c =
-  let (X dt) = c.input in
+(* The shapes and an edge of them for each format ({!quant_edge}). *)
+let quant_examples = List.mapi quant_edge Quants.formats @ quant_shapes
+
+(* An example's form, its format, input dtype, shapes and placements, with drawn
+   elements of [x]. *)
+let quant_cases =
+  drawn ~pp:pp_quant_case (fun c qseed -> { c with qseed }) quant_examples
+
+let quant_covers c =
   cover
     (Printf.sprintf "%s by %s" (Quants.name c.format) (input_name c.input))
     true;
@@ -416,14 +563,21 @@ let quant_product set c =
   cover "a weight on one device" (c.lies = One);
   cover "a weight whole on each device" (c.lies = Whole);
   cover "a weight cut along its rows" (c.lies = Rows);
-  cover "one row of x by a weight cut along its rows"
-    (one_row && c.lies = Rows);
+  cover "an x of no row" (c.m = Some 0);
+  cover "a weight of fewer rows than devices, cut along them"
+    (c.rows < c.qn && c.lies = Rows);
+  cover "one row of x by a weight cut along its rows" (one_row && c.lies = Rows);
   cover "one row of x by a weight whole on each device"
-    (one_row && c.lies = Whole);
+    (one_row && c.lies = Whole)
+
+(* [c]'s product on [set]: its eager result read ({!read}), the call of the
+   compiled one, and the float64 reference and its distance. *)
+let quant_call set c =
+  let (X dt) = c.input in
   let k = c.blocks * Quants.block_values c.format in
   let w = Quants.weight c.format ~rows:c.rows ~blocks:c.blocks in
   let shape = match c.m with None -> [| k |] | Some m -> [| m; k |] in
-  let x = Nx.cast dt (value ~seed:3 shape) in
+  let x = Nx.cast dt (value ~seed:c.qseed shape) in
   let w_at, x_at =
     match c.lies with
     | One -> (Device 1, Device 1)
@@ -432,48 +586,89 @@ let quant_product set c =
   in
   let wp = Nx_quant.place (at set w_at) w in
   let xp = Nx.place (at set x_at) x in
-  let f x _ = Nx_quant.apply wp x in
-  match compiled f xp xp with
-  | Raised m -> fail m
-  | Value jit ->
-      let eager = f xp xp in
-      let exact, side = Quants.reference x w in
-      let host t = Nx.cast Nx.float64 (Nx.place Nx.Host.on t) in
-      let near msg v =
-        let e = Nx.to_array exact and v = Nx.to_array (host v) in
-        let b = Nx.to_array side in
-        Array.iteri
-          (fun i e ->
-            less
-              ~msg:(Printf.sprintf "%s at %d" msg i)
-              float_exact
-              ~than:(b.(i) +. Float.min_float)
-              (Float.abs (v.(i) -. e)))
-          e
+  let f x = Nx_quant.apply wp x in
+  let exact, side = Quants.reference x w in
+  ( read (f xp),
+    Batch.call T.tensor xp T.tensor f read,
+    (Nx.to_array exact, Nx.to_array side) )
+
+(* Eager and compiled are each within the reference's distance of it, and within
+   twice that of each other. *)
+let quant_check (eager, jit, (exact, side)) =
+  let near msg (_, v) =
+    Array.iteri
+      (fun i e ->
+        less
+          ~msg:(Printf.sprintf "%s at %d" msg i)
+          float_exact
+          ~than:(side.(i) +. Float.min_float)
+          (Float.abs (v.(i) -. e)))
+      exact
+  in
+  near "eager" eager;
+  near "compiled" jit;
+  within_read ~bound:(Array.map (fun b -> 2. *. b) side) eager jit
+
+(* The examples over each set compile eight to a program ({!Batch}), the checks'
+   data kept by example. *)
+let quant_data = ref []
+
+let quant_tables =
+  List.map
+    (fun n ->
+      let rows = List.filter (fun c -> c.qn = n) quant_examples in
+      let table =
+        lazy
+          (over_set n
+             {
+               at_set =
+                 (fun set ->
+                   Batch.table ~per:8
+                     (fun c ->
+                       let eager, call, reference = quant_call set c in
+                       quant_data := (c, (eager, reference)) :: !quant_data;
+                       call)
+                     rows);
+             })
       in
-      near "eager" eager;
-      near "compiled" jit;
-      within ~bound:(Nx.mul_s side 2.) eager jit
+      (n, table))
+    [ 2; 3; 4 ]
+
+let quant_product c =
+  quant_covers c;
+  match List.assq_opt c (Lazy.force (List.assoc c.qn quant_tables)) with
+  | Some jit ->
+      let jit = jit () in
+      let eager, reference = List.assq c !quant_data in
+      quant_check (eager, jit, reference)
+  | None ->
+      over_set c.qn
+        {
+          at_set =
+            (fun set ->
+              let eager, call, reference = quant_call set c in
+              let jit = List.hd (Batch.run [ call ]) in
+              quant_check (eager, jit, reference));
+        }
 
 (* A broadcast of a vector against a batch cut across the devices, and its sum,
    as a bias and a loss read them. *)
 let biased set c =
-  let x = Nx.place (at set c.x) (value c.shape) in
+  let x = Nx.place (at set c.x) (value ~seed:c.seed c.shape) in
   let last = c.shape.(Array.length c.shape - 1) in
-  let b = Nx.place (at set On) (value ~seed:2 [| last |]) in
+  let b = Nx.place (at set On) (value ~seed:(c.seed + 2) [| last |]) in
   let f x b = Nx.add x b in
   let eager = outcome (fun () -> f x b) in
-  equal (outcome_t bits_t) (omap bits eager) (omap bits (compiled f x b))
+  let jit = compiled_as set (form_key "biased" c) f x b in
+  equal (outcome_t bits_t) (omap bits eager) (omap bits jit)
 
 (* Functions that read their coordinates over cut values, exact, so that a
    compiled call gives eager's bits: each device's loop reads its window's
    start, which its call passes. *)
 let coordinates set c =
   cover_windows c;
-  let x = Nx.place (at set c.x) (value c.shape) in
-  let same name f =
-    let eager = outcome (fun () -> f x x) in
-    let jit = compiled f x x in
+  let x = Nx.place (at set c.x) (value ~seed:c.seed c.shape) in
+  let same (name, eager, jit) =
     match (eager, jit) with
     | Value e, Value j ->
         equal ~msg:(name ^ " placement") (placement ()) (Nx.placement e)
@@ -482,18 +677,18 @@ let coordinates set c =
     | _ -> equal ~msg:name (outcome_t bits_t) (omap bits eager) (omap bits jit)
   in
   let rank = Array.length c.shape in
-  List.iter
-    (fun a ->
-      same
-        (Printf.sprintf "argmax along %d" a)
-        (fun x _ -> Nx.cast f32 (Nx.argmax ~axis:a x)))
-    (List.init rank Fun.id);
-  if rank = 2 then begin
-    same "tril" (fun x _ -> Nx.tril x);
-    same "eye" (fun x _ ->
-        Nx.add x
-          (Nx.eye_at ~m:c.shape.(1) (Nx.placement x) f32 c.shape.(0)))
-  end
+  let argmax a =
+    ( Printf.sprintf "argmax along %d" a,
+      fun x -> Nx.cast f32 (Nx.argmax ~axis:a x) )
+  in
+  let eye x =
+    Nx.add x (Nx.eye_at ~m:c.shape.(1) (Nx.placement x) f32 c.shape.(0))
+  in
+  let named =
+    List.map argmax (List.init rank Fun.id)
+    @ if rank = 2 then [ ("tril", fun x -> Nx.tril x); ("eye", eye) ] else []
+  in
+  List.iter same (each_compiled set (form_key "coordinates" c) named x)
 
 (* Values computed from constants
 
@@ -533,31 +728,52 @@ let decoded set ~packing ~whole =
   let k = Nx.dim 1 (decode packing bytes) in
   let x =
     Nx.place (at set On)
-      (Nx.create f32 [| k |] (Array.init k (fun i -> float_of_int ((i mod 7) - 3))))
+      (Nx.create f32 [| k |]
+         (Array.init k (fun i -> float_of_int ((i mod 7) - 3))))
+  in
+  let read y =
+    (Format.asprintf "%a" Nx.Placement.pp (Nx.placement y), bits y)
   in
   let same name f =
     let name =
       Format.asprintf "%s of %a, %s" name pp_packing packing
         (if whole then "whole" else "cut")
     in
-    let eager = f w x in
-    match compiled f w x with
-    | Value jit ->
-        equal ~msg:(name ^ " placement") (placement ()) (Nx.placement eager)
-          (Nx.placement jit);
-        equal ~msg:name bits_t (bits eager) (bits jit)
-    | Raised m -> fail (name ^ ": " ^ m)
+    let call =
+      Batch.call
+        T.(pair tensor tensor)
+        (w, x) T.tensor
+        (fun (w, x) -> f w x)
+        read
+    in
+    (name, read (f w x), call)
   in
-  same "a sum" (fun w _ -> Nx.sum ~axes:[ 1 ] (decode packing w));
-  same "a product" (fun w x -> Nx.matmul (decode packing w) x)
+  [
+    same "a sum" (fun w _ -> Nx.sum ~axes:[ 1 ] (decode packing w));
+    same "a product" (fun w x -> Nx.matmul (decode packing w) x);
+  ]
 
+(* Every packing, whole and cut, compiled as one program ({!Batch}): each gives
+   eager's placement and bits. *)
 let decodes n =
-  List.iter
-    (fun packing ->
-      List.iter
-        (fun whole -> over n { law = (fun set -> decoded set ~packing ~whole) })
-        [ true; false ])
-    [ U4; I4; I8 ]
+  over n
+    {
+      law =
+        (fun set ->
+          let rows =
+            List.concat_map
+              (fun packing ->
+                List.concat_map
+                  (fun whole -> decoded set ~packing ~whole)
+                  [ true; false ])
+              [ U4; I4; I8 ]
+          in
+          let got = Batch.run (List.map (fun (_, _, c) -> c) rows) in
+          List.iter2
+            (fun (name, eager, _) jit ->
+              equal ~msg:name (pair string bits_t) eager jit)
+            rows got);
+    }
 
 (* A table of [f j] along each row of [x], summed against it, for [f] [exp2]
    or [sin]: each side is within [f]'s 2 ulps of the exact table, nx's bound,
@@ -710,20 +926,38 @@ let eigh_batch set =
    their steps are exact. Rows cut along axis 0 raise as eagerly. A step that
    gives the carry another placement evaluates. *)
 
-type loop_case = { ln : int; lshape : int array; carry : cut; rows : cut }
+type loop_case = {
+  ln : int;
+  lshape : int array;
+  carry : cut;
+  rows : cut;
+  lseed : int;
+}
 
 let pp_loop_case ppf c =
-  Format.fprintf ppf "%d devices, shape %a, carry %a, rows %a" c.ln
-    Operand.pp_shape c.lshape pp_cut c.carry pp_cut c.rows
+  Format.fprintf ppf "%d devices, shape %a, carry %a, rows %a, seed %d" c.ln
+    Operand.pp_shape c.lshape pp_cut c.carry pp_cut c.rows c.lseed
 
-let loop_cases =
-  let open Gen in
-  (let* ln = int_range 2 4 in
-   let* rank = int_range 1 2 in
-   let* lshape = array ~size:(constant rank) (int_range 0 ((2 * ln) + 1)) in
-   let* carry = cut_of ~n:ln ~rank and+ rows = cut_of ~n:ln ~rank:(rank + 1) in
-   constant { ln; lshape; carry; rows })
-  |> with_pp pp_loop_case
+let loop_form ln lshape carry rows = { ln; lshape; carry; rows; lseed = 0 }
+
+(* A carry cut along each of its axes beside rows cut inside a row, alike or
+   not; rows cut along the rows; the mesh; a carry on one device or whole; a
+   carry of no element and of one. *)
+let loop_forms =
+  [
+    loop_form 2 [| 4 |] (Split 0) (Split 1);
+    loop_form 3 [| 5; 2 |] (Split 1) (Split 2);
+    loop_form 3 [| 5; 2 |] (Split 0) (Split 2);
+    loop_form 3 [| 5; 2 |] (Split 1) (Split 0);
+    loop_form 4 [| 2; 3 |] (Mesh (0, 1)) (Split 1);
+    loop_form 4 [| 3 |] (Split 0) (Mesh (0, 1));
+    loop_form 2 [| 3 |] (Device 1) (Device 1);
+    loop_form 3 [| 0 |] (Split 0) (Split 1);
+    loop_form 2 [| 1 |] On (Split 1);
+  ]
+
+let seeded_loop c lseed = { c with lseed }
+let loop_cases = drawn ~pp:pp_loop_case seeded_loop loop_forms
 
 (* [f] under jit over [x] and [y], compiled, computing no call evaluated,
    where [compiles]. *)
@@ -731,6 +965,18 @@ let jit_pair ~compiles f x y =
   let before = Rune.evaluations () in
   let s = T.(tensor @-> tensor @-> returns (pair tensor tensor)) in
   let r = outcome (fun () -> Rune.jit s f x y) in
+  if compiles then begin
+    Compiled.here ();
+    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before)
+  end;
+  r
+
+(* [jit_pair] of the function [set] keeps under [key]. *)
+let jit_pair_as set key ~compiles f x y =
+  let s = T.(tensor @-> tensor @-> returns (pair tensor tensor)) in
+  let g = kept set.pairs key (fun () -> Rune.jit s f) in
+  let before = Rune.evaluations () in
+  let r = outcome (fun () -> g x y) in
   if compiles then begin
     Compiled.here ();
     equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before)
@@ -765,10 +1011,10 @@ let scanned set c =
   cover "rows cut along the rows" (along_rows c);
   cover "rows cut inside a row"
     (match c.rows with Split a -> a > 0 | _ -> false);
-  let x = Nx.place (at set c.carry) (value c.lshape) in
+  let x = Nx.place (at set c.carry) (value ~seed:c.lseed c.lshape) in
   let xs =
     Nx.place (at set c.rows)
-      (value ~seed:1 (Array.append [| row_count |] c.lshape))
+      (value ~seed:(c.lseed + 1) (Array.append [| row_count |] c.lshape))
   in
   let step carry row =
     let carry =
@@ -786,7 +1032,8 @@ let scanned set c =
   cover "the step keeps the carry's placement" kept;
   let compiles = kept in
   cover "compiled over a cut carry" (compiles && carry_cut c);
-  same_pair eager (jit_pair ~compiles f x xs)
+  let key = Format.asprintf "scan, %a" pp_loop_case { c with lseed = 0 } in
+  same_pair eager (jit_pair_as set key ~compiles f x xs)
 
 (* A scan whose step reads the coordinates of its carry, cut along either
    axis over three devices, one window uneven, gives eager's bits: each
@@ -836,6 +1083,23 @@ let batched op x w =
   | Product -> Nx.matmul x w
   | Mean -> Nx.mean ~axes:[ 0 ] x
 
+(* Every operation, and each's result among the arguments of {!batched_all}:
+   rows [3; n; f], a batch [n; 1; f], a batch [n; f], a vector [f] and a matrix
+   [f; 3]. *)
+let every_batched =
+  [
+    Rows_at 0; Rows_at 1; Rows_at 2; Squeezed; Unsqueezed; Added; Product; Mean;
+  ]
+
+let batched_all op = function
+  | [ rows; batch1; batch; w; m ] -> (
+      match op with
+      | Rows_at _ -> batched op rows w
+      | Squeezed -> batched op batch1 w
+      | Product -> batched op batch m
+      | Unsqueezed | Added | Mean -> batched op batch w)
+  | _ -> invalid_arg "the operations' five arguments"
+
 (* The host value of [s] counting from [0] in C order: sums and products of
    its elements are exact. *)
 let iota s =
@@ -843,6 +1107,14 @@ let iota s =
 
 let batch_of_one (type d) (set : d set) (op, f) =
   let lies = ref None in
+  let index =
+    let rec go i = function
+      | o :: _ when o = op -> i
+      | _ :: os -> go (i + 1) os
+      | [] -> invalid_arg "an operation"
+    in
+    go 0 every_batched
+  in
   List.iter
     (fun n ->
       let xh, axis =
@@ -867,7 +1139,28 @@ let batch_of_one (type d) (set : d set) (op, f) =
           equal ~msg:"the mean lies on every device" (placement ()) (at set On)
             (Nx.placement eager)
       | Rows_at _ | Squeezed | Unsqueezed | Added | Product -> ());
-      match compiled (batched op) x w with
+      (* Every operation's program at [f] and [n] is one: their results share no
+         intermediate value. *)
+      let split axis s = Nx.place (at set (Split axis)) (iota s) in
+      let every =
+        [
+          split 1 [| 3; n; f |];
+          split 0 [| n; 1; f |];
+          split 0 [| n; f |];
+          Nx.place (at set On) (iota [| f |]);
+          Nx.place (at set On) (iota [| f; 3 |]);
+        ]
+      in
+      let key = Printf.sprintf "every operation, f %d, n %d" f n in
+      let fs = List.map batched_all every_batched in
+      let jit =
+        match compiled_all set key fs every with
+        | Some rs -> Value (List.nth rs index)
+        | None ->
+            let key = Format.asprintf "%a, f %d, n %d" pp_batched op f n in
+            compiled_as set key (batched op) x w
+      in
+      match jit with
       | Value jit ->
           equal ~msg:"compiled placement" (placement ()) (Nx.placement eager)
             (Nx.placement jit);
@@ -884,13 +1177,15 @@ let batched_cases =
         of_list [ Squeezed; Unsqueezed; Added; Product; Mean ];
       ]
   in
-  pair op (int_range 1 4)
+  (* Features of one element, and of several: each width and batch compiles one
+     program, of every operation. *)
+  pair op (of_list [ 1; 3 ])
   |> with_pp (fun ppf (op, f) ->
-         Format.fprintf ppf "%a, f = %d" pp_batched op f)
+      Format.fprintf ppf "%a, f = %d" pp_batched op f)
 
-(* A scan over rows [3; n; f], or [3; n; f; 1], cut along the batch, beside
-   a carry [n; f] or [n; f; 1] cut along it: each row lies where the carry
-   does, at a batch of one, beside features of one element too, as at two. *)
+(* A scan over rows [3; n; f], or [3; n; f; 1], cut along the batch, beside a
+   carry [n; f] or [n; f; 1] cut along it: each row lies where the carry does,
+   at a batch of one, beside features of one element too, as at two. *)
 let scan_batch_of_one set =
   List.iter
     (fun (n, f, trailing) ->
@@ -959,41 +1254,21 @@ type made_case = {
   rows : cut;
   arg : int;
   first : first;
+  mseed : int;
 }
 
 let pp_made_case ppf c =
-  Format.fprintf ppf "%d devices, row %a, %d trips, rows %a, argument on %d, %s"
-    c.mn Operand.pp_shape c.row c.trips pp_cut c.rows c.arg
+  Format.fprintf ppf
+    "%d devices, row %a, %d trips, rows %a, argument on %d, %s, seed %d" c.mn
+    Operand.pp_shape c.row c.trips pp_cut c.rows c.arg
     (match c.first with Zeros_like -> "zeros_like" | Placed -> "placed")
+    c.mseed
 
 (* Rows whole, on one device or cut inside a row. *)
-let made_cases =
-  let open Gen in
-  (let* mn = int_range 2 4 in
-   let* rank = int_range 1 2 in
-   let* row = array ~size:(constant rank) (int_range 0 ((2 * mn) + 1)) in
-   let mesh =
-     if mn = 4 && rank = 2 then
-       [ (1, constant (Mesh (1, 2))); (1, constant (Mesh (2, 1))) ]
-     else []
-   in
-   let* rows =
-     frequency
-       ([
-          (1, constant On);
-          (2, map (fun k -> Device k) (int_range 0 (mn - 1)));
-          (3, map (fun a -> Split a) (int_range 1 rank));
-        ]
-       @ mesh)
-   in
-   let* trips = frequency [ (1, constant 0); (3, int_range 1 3) ] in
-   let* arg = int_range 0 (mn - 1) in
-   let+ first = one_of [ constant Zeros_like; constant Placed ] in
-   { mn; row; trips; rows; arg; first })
-  |> with_pp pp_made_case
-
-let made_examples =
-  let c mn row trips rows arg first = { mn; row; trips; rows; arg; first } in
+let made_forms =
+  let c mn row trips rows arg first =
+    { mn; row; trips; rows; arg; first; mseed = 0 }
+  in
   [
     (* A cut carry, an empty one, no trips. *)
     c 2 [| 4 |] 3 (Split 1) 0 Placed;
@@ -1008,6 +1283,9 @@ let made_examples =
     c 4 [| 2; 3 |] 2 (Mesh (1, 2)) 3 Placed;
     c 4 [| 2; 3 |] 1 (Mesh (2, 1)) 0 Zeros_like;
   ]
+
+let made_cases =
+  drawn ~pp:pp_made_case (fun c mseed -> { c with mseed }) made_forms
 
 (* A row's placement, where a value of rows lies at [c]. *)
 let row_cut = function
@@ -1034,13 +1312,16 @@ let cover_made c =
 let scan_made set c =
   cover_made c;
   let arg = Nx.place (at set (Device c.arg)) (value [||]) in
-  let rows = value (Array.append [| c.trips |] c.row) in
+  let rows = value ~seed:c.mseed (Array.append [| c.trips |] c.row) in
   let xs = Nx.place (at set c.rows) rows in
   let f _ xs =
     let init = first_of set c (fun () -> Nx.get [ 0 ] xs) in
     Rune.scan' (fun carry x -> (Nx.add carry x, Nx.zeros_like x)) ~init xs
   in
-  same_pair (outcome (fun () -> f arg xs)) (jit_pair ~compiles:true f arg xs)
+  let key = Format.asprintf "scan, %a" pp_made_case { c with mseed = 0 } in
+  same_pair
+    (outcome (fun () -> f arg xs))
+    (jit_pair_as set key ~compiles:true f arg xs)
 
 (* An iterate's first value made in the program, its stop a fold of a carry
    that may hold no element, compiled, gives eager's bits and placements. *)
@@ -1060,7 +1341,10 @@ let iterate_made set c =
     let until carry = Nx.greater_equal_s (Nx.sum carry) limit in
     (Nx.neg a, Rune.iterate' ~max:(c.trips + 1) ~until (Nx.add x) init)
   in
-  same_pair (outcome (fun () -> f arg x)) (jit_pair ~compiles:true f arg x)
+  let key = Format.asprintf "iterate, %a" pp_made_case { c with mseed = 0 } in
+  same_pair
+    (outcome (fun () -> f arg x))
+    (jit_pair_as set key ~compiles:true f arg x)
 
 (* A scan over rows the program makes, cut inside a row or on one device that
    is not the program's, compiled, gives eager's bits. *)
@@ -1109,14 +1393,17 @@ let stop_home set =
 
 let iterated set c =
   cover "carry cut" (carry_cut c);
-  let x = Nx.place (at set c.carry) (value c.lshape) in
+  let x = Nx.place (at set c.carry) (value ~seed:c.lseed c.lshape) in
   let f x y =
     let halve x = Nx.mul_s x 0.5 in
     let small x = Nx.less_s (Nx.max (Nx.abs x)) 0.01 in
     let x = Rune.iterate' ~max:20 ~until:small halve x in
     (x, Nx.add x y)
   in
-  same_pair (outcome (fun () -> f x x)) (jit_pair ~compiles:true f x x)
+  let key = Format.asprintf "iterate, %a" pp_loop_case { c with lseed = 0 } in
+  same_pair
+    (outcome (fun () -> f x x))
+    (jit_pair_as set key ~compiles:true f x x)
 
 (* The gradient in its input of an expert product's sum, its MXFP4 weight
    cut along [n]: the transposed product contracts each row with its
@@ -1236,38 +1523,81 @@ let assemblies =
       [ [ range 0 3 1; range 0 4 1 ]; [ range 2 2 1; range 3 3 1 ] ] );
   ]
 
-(* The assembly of pieces at [regions] into a value of [shape], [dt] and
-   [fill] on the first device of [set], each piece made from a value cut
-   across the set. *)
-let assembly (type v s) set (dt : (v, s) Nx.dtype) of_real (fill : v) shape
-    regions =
-  let x = Nx.place (at set (Split 0)) (value [| 24 |]) in
-  let f x _ =
-    let p = Nx.place (at set (Device 0)) x in
-    let piece i rs =
-      let counts =
-        Array.of_list (List.map (fun (r : Nx_array.Move.range) -> r.count) rs)
-      in
-      let n = Array.fold_left ( * ) 1 counts in
-      let y = Nx.reshape counts (Nx.slice [ R (i, i + n) ] p) in
-      (Iarray.of_list rs, of_real (Nx.mul_s y (float_of_int (i + 2))))
+(* The assembly of pieces at [regions] into a value of [shape], [dt] and [fill]
+   on the first device of [set], each piece made from a value cut across the
+   set. *)
+let assembly (type v s d) (set : d set) (dt : (v, s) Nx.dtype) of_real
+    (fill : v) shape regions x =
+  let p = Nx.place (at set (Device 0)) x in
+  let piece i rs =
+    let counts =
+      Array.of_list (List.map (fun (r : Nx_array.Move.range) -> r.count) rs)
     in
-    Nx.Prim.eval ~by:"assembly"
-      (Assemble
-         {
-           dtype = dt;
-           shape = Iarray.of_array shape;
-           fill;
-           pieces = List.mapi piece regions;
-         })
+    let n = Array.fold_left ( * ) 1 counts in
+    let y = Nx.reshape counts (Nx.slice [ R (i, i + n) ] p) in
+    (Iarray.of_list rs, of_real (Nx.mul_s y (float_of_int (i + 2))))
   in
-  let eager = outcome (fun () -> f x x) in
-  let before = Rune.evaluations () in
-  let s = T.(tensor @-> tensor @-> returns tensor) in
-  let jit = outcome (fun () -> Rune.jit s f x x) in
-  Compiled.here ();
-  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
-  equal (outcome_t codes_t) (omap codes eager) (omap codes jit)
+  Nx.Prim.eval ~by:"assembly"
+    (Assemble
+       {
+         dtype = dt;
+         shape = Iarray.of_array shape;
+         fill;
+         pieces = List.mapi piece regions;
+       })
+
+(* Each assembly at float32, complex64 and int4, over two devices: the call of
+   the program that assembles it from a value cut across them, and the codes
+   eager computation gives. *)
+type assembled_dtype = Real | Complex | Sub_byte
+
+let dtype_name = function
+  | Real -> "float32"
+  | Complex -> "complex64"
+  | Sub_byte -> "int4"
+
+let assembly_call (shape, regions, dt) =
+  let set = two in
+  let x = Nx.place (at set (Split 0)) (value [| 24 |]) in
+  let call f =
+    (Batch.call T.tensor x T.tensor f codes, outcome (fun () -> codes (f x)))
+  in
+  match dt with
+  | Real -> call (assembly set f32 Fun.id (-0.) shape regions)
+  | Complex ->
+      let c64 y = Nx.complex Nx.complex64 ~re:y ~im:(Nx.neg y) in
+      call
+        (assembly set Nx.complex64 c64
+           { Complex.re = 7.; im = -0. }
+           shape regions)
+  | Sub_byte ->
+      let int4 y = Nx.cast Nx.int4 (Nx.mul_s y 3.) in
+      call (assembly set Nx.int4 int4 (-5) shape regions)
+
+let assembly_rows =
+  List.concat_map
+    (fun (name, shape, regions) ->
+      List.map
+        (fun dt -> (name ^ ", " ^ dtype_name dt, (shape, regions, dt)))
+        [ Real; Complex; Sub_byte ])
+    assemblies
+
+(* The rows' eager codes, made with their calls, by row. *)
+let assembly_eager = Hashtbl.create 40
+
+(* The rows compile twelve to a program ({!Batch}). *)
+let assembly_results =
+  Batch.table ~per:12
+    (fun (id, row) ->
+      let call, eager = assembly_call row in
+      Hashtbl.replace assembly_eager id eager;
+      call)
+    assembly_rows
+
+let assembled ((id, _) as row) =
+  let compiled = List.assq row assembly_results in
+  let jit = outcome compiled in
+  equal (outcome_t codes_t) (Hashtbl.find assembly_eager id) jit
 
 (* The bytes [run] copies between devices. *)
 let copied run =
@@ -1308,13 +1638,6 @@ let own_window set =
   equal ~msg:"bytes copied" int
     (48 * (n - 1))
     (copied (fun () -> ignore (Nx.to_array (step w w))))
-
-let assembled set shape regions =
-  assembly set f32 Fun.id (-0.) shape regions;
-  let c64 y = Nx.complex Nx.complex64 ~re:y ~im:(Nx.neg y) in
-  assembly set Nx.complex64 c64 { Complex.re = 7.; im = -0. } shape regions;
-  let int4 y = Nx.cast Nx.int4 (Nx.mul_s y 3.) in
-  assembly set Nx.int4 int4 (-5) shape regions
 
 (* Two assemblies of the same computed pieces, crossed, as [[a; b]] and
    [[b; a]], on each device of a cut argument, give eager's bits, each piece
@@ -1369,29 +1692,38 @@ let gather_kinds set =
    quantile at them gives eager's placement and bits, on the host and over
    two devices, the value whole on each or cut along either axis. *)
 
-type written_case = { rows : int; ps : int list; qs : float array; cut : cut }
+type written_case = {
+  rows : int;
+  ps : int list;
+  qs : float array;
+  cut : cut;
+  wseed : int;
+}
 
 let pp_written ppf c =
-  Format.fprintf ppf "%d rows, %a, positions %a, probabilities %a" c.rows
-    pp_cut c.cut Operand.pp_shape (Array.of_list c.ps)
+  Format.fprintf ppf "%d rows, %a, positions %a, probabilities %a, seed %d"
+    c.rows pp_cut c.cut Operand.pp_shape (Array.of_list c.ps)
     (Format.pp_print_list ~pp_sep:Format.pp_print_space Format.pp_print_float)
-    (Array.to_list c.qs)
+    (Array.to_list c.qs) c.wseed
 
-(* No value, one, or several, each in a third of the cases, so that every run
-   draws each. *)
-let few g =
-  let open Gen in
-  let* n = one_of [ constant 0; constant 1; int_range 2 9 ] in
-  list ~size:(constant n) g
+(* Positions and probabilities, constants of the call, so that each compiles a
+   program of its own at each cut: none, one and several of each, a negative
+   position and a repeated one, at the ends and between them. *)
+let written_forms ~cuts =
+  let w rows ps qs = (rows, ps, qs) in
+  List.concat_map
+    (fun (rows, ps, qs) ->
+      List.map (fun cut -> { rows; ps; qs; cut; wseed = 0 }) cuts)
+    [
+      w 3 [] [| 0.5 |];
+      w 1 [ 0 ] [||];
+      w 5 [ -1; 2; 2 ] [| 0.; 0.3; 1. |];
+      w 4 [ 3; -4; 0; 1 ] [| 0.75; 0.5 |];
+      w 2 [ -2 ] [| 1. |];
+    ]
 
-let written_cases ~cuts =
-  let open Gen in
-  (let* rows = int_range 1 5 in
-   let* ps = few (int_range (-rows) (rows - 1)) in
-   let* qs = few (one_of [ float_range 0. 1.; of_list [ 0.; 0.5; 1. ] ]) in
-   let+ cut = of_list cuts in
-   { rows; ps; qs = Array.of_list qs; cut })
-  |> with_pp pp_written
+let written_cases forms =
+  drawn ~pp:pp_written (fun c wseed -> { c with wseed }) forms
 
 let written set c =
   let count l = List.length l in
@@ -1404,10 +1736,8 @@ let written set c =
   cover "no probability" (c.qs = [||]);
   cover "one probability" (Array.length c.qs = 1);
   cover "several probabilities" (Array.length c.qs > 1);
-  let x = Nx.place (at set c.cut) (value [| c.rows; 3 |]) in
-  let same name f =
-    let eager = outcome (fun () -> f x x) in
-    let jit = compiled f x x in
+  let x = Nx.place (at set c.cut) (value ~seed:c.wseed [| c.rows; 3 |]) in
+  let same (name, eager, jit) =
     cover (name ^ " computes") (match eager with Value _ -> true | _ -> false);
     match (eager, jit) with
     | Value e, Value j ->
@@ -1417,9 +1747,15 @@ let written set c =
     | _ ->
         equal ~msg:name (outcome_t bits_t) (omap bits eager) (omap bits jit)
   in
-  same "slice" (fun x _ -> Nx.slice Nx.[ L c.ps ] x);
-  same "set" (fun x _ -> Nx.set Nx.[ L c.ps ] (Nx.scalar_like x 9.) x);
-  same "quantile" (fun x _ -> Nx.quantile ~axis:0 c.qs x)
+  let named =
+    [
+      ("slice", fun x -> Nx.slice Nx.[ L c.ps ] x);
+      ("set", fun x -> Nx.set Nx.[ L c.ps ] (Nx.scalar_like x 9.) x);
+      ("quantile", fun x -> Nx.quantile ~axis:0 c.qs x);
+    ]
+  in
+  let key = Format.asprintf "%a" pp_written { c with wseed = 0 } in
+  List.iter same (each_compiled set key named x)
 
 (* Small integers, so that every sum is exact in any order. *)
 let integers ?(seed = 0) shape =
@@ -1446,21 +1782,30 @@ module Bare = (val Nx.devices [ m 3; Nx_array_support.off_host () ])
 
 (* An offload: weights on one device placed whole on each device of the other
    set; and a value cut across it. *)
-let elsewhere_examples =
+let elsewhere_forms =
   [
-    { n = 2; shape = [| 4; 3 |]; x = Device 0; y = On };
-    { n = 4; shape = [| 3; 2 |]; x = Device 2; y = On };
-    { n = 2; shape = [| 4; 3 |]; x = Split 0; y = Split 1 };
-    { n = 3; shape = [| 6 |]; x = Split 0; y = Split 0 };
+    form 2 [| 4; 3 |] (Device 0) On;
+    form 4 [| 3; 2 |] (Device 2) On;
+    form 2 [| 4; 3 |] (Split 0) (Split 1);
+    form 3 [| 6 |] (Split 0) (Split 0);
   ]
 
-(* Eager's bits and placement of [f x y], from a compiled call. *)
-let same_compiled f x y =
-  let eager = outcome (fun () -> f x y) and got = compiled f x y in
+let elsewhere_cases =
+  drawn ~pp:pp_case (fun c seed -> { c with seed }) elsewhere_forms
+
+(* Eager's bits and placement of [f x y], from [got], its compiled call. *)
+let same_outcome f x y got =
+  let eager = outcome (fun () -> f x y) in
   equal (outcome_t bits_t) (omap bits eager) (omap bits got);
   equal
     (outcome_t (placement ()))
     (omap Nx.placement eager) (omap Nx.placement got)
+
+let same_compiled f x y = same_outcome f x y (compiled f x y)
+
+(* [same_compiled] of the function [set] keeps under [key]. *)
+let same_compiled_as set key f x y =
+  same_outcome f x y (compiled_as set key f x y)
 
 (* A reduction along each axis and a running sum along each of a ramp of the
    coordinates of [x]'s shape, of no loads at [x]'s placement, beside [x]:
@@ -1510,7 +1855,7 @@ let elsewhere set c =
     (match c.y with Split _ -> true | _ -> false);
   cover "an offload"
     (match (c.x, c.y) with Device _, (On | Mesh _) -> true | _ -> false);
-  let x = Nx.place (at set c.x) (value c.shape) in
+  let x = Nx.place (at set c.x) (value ~seed:c.seed c.shape) in
   let there =
     match c.y with
     | On | Mesh _ -> Other.on
@@ -1523,27 +1868,29 @@ let elsewhere set c =
     Nx.place back (Nx.sub (Nx.mul_s z 2.) z)
   in
   let argument x _ = Nx.place back (Nx.place there x) in
-  same_compiled computed x x;
-  same_compiled argument x x
+  same_compiled_as set (form_key "computed there" c) computed x x;
+  same_compiled_as set (form_key "placed there" c) argument x x
 
-(* A partial sum placed onto another set closes there. *)
+(* A partial sum placed onto another set closes there: [(n, k, seed)], a width
+   [k] cut across [n] devices, evenly, unevenly, or fewer than the devices. *)
+let closing_forms = [ (2, 3, 0); (4, 2, 0); (2, 4, 0); (3, 0, 0) ]
+
 let closing_cases =
-  let open Gen in
-  (let* n = int_range 2 4 and+ k = int_range 0 9 in
-   constant (n, k))
-  |> with_pp (fun ppf (n, k) -> Format.fprintf ppf "%d devices, width %d" n k)
+  drawn
+    ~pp:(fun ppf (n, k, seed) ->
+      Format.fprintf ppf "%d devices, width %d, seed %d" n k seed)
+    (fun (n, k, _) seed -> (n, k, seed))
+    closing_forms
 
-let closing_examples = [ (2, 3); (4, 2); (2, 4); (3, 0) ]
-
-let closing set n k =
+let closing set n k seed =
   cover "windows of unequal extents" (k mod n <> 0);
   cover "an empty window" (k < n);
-  let x = Nx.place (at set (Split 1)) (integers [| 3; k |]) in
-  let w = Nx.place (at set (Split 0)) (integers ~seed:1 [| k; 2 |]) in
+  let x = Nx.place (at set (Split 1)) (integers ~seed [| 3; k |]) in
+  let w = Nx.place (at set (Split 0)) (integers ~seed:(seed + 1) [| k; 2 |]) in
   let f x w =
     Nx.place (at set On) (Nx.place Other.on (Nx.matmul ~sum:true x w))
   in
-  same_compiled f x w
+  same_compiled_as set (Printf.sprintf "closing %d %d" n k) f x w
 
 (* A detour through a set without kernels: eagerly the operation raises, under
    jit it compiles and gives the arithmetic computed on the host. *)
@@ -1803,15 +2150,20 @@ let key_placement seed set =
   List.iter
     (fun (name, c, key) ->
       let k = Nx.Rng.place (at set c) key in
-      let inside = ref None in
-      let jit =
-        Rune.jit
-          T.(Nx.Rng.ptree @-> returns tensor)
-          (fun k ->
-            inside := Some (Nx.Rng.placement k);
-            draw k)
-          k
+      (* One program a placement, its key's placement read where it traces. *)
+      let inside, g =
+        kept set.keys name (fun () ->
+            let inside = ref None in
+            let g =
+              Rune.jit
+                T.(Nx.Rng.ptree @-> returns tensor)
+                (fun k ->
+                  inside := Some (Nx.Rng.placement k);
+                  draw k)
+            in
+            (inside, g))
       in
+      let jit = g k in
       let eager = draw k in
       equal ~msg:(name ^ ": inside the program")
         (option (placement ()))
@@ -1925,29 +2277,33 @@ let per_device x w =
       Nx.add (Nx.mul r total) (Nx.mul index w))
     x
 
-type mapped = { devices : int; rows : int; cols : int }
+type mapped = { devices : int; rows : int; cols : int; seed : int }
 
 let pp_mapped ppf c =
-  Format.fprintf ppf "%d devices, %d rows of %d" c.devices c.rows c.cols
+  Format.fprintf ppf "%d devices, %d rows of %d, seed %d" c.devices c.rows
+    c.cols c.seed
+
+(* One row per device over each set, uneven rows, an empty window, no row. *)
+let mapped_forms =
+  List.map
+    (fun (devices, rows, cols) -> { devices; rows; cols; seed = 0 })
+    [ (2, 2, 3); (3, 3, 1); (4, 4, 2); (3, 5, 2); (4, 2, 3); (2, 0, 4) ]
 
 let mapped =
-  let open Gen in
-  (let* devices = int_range 2 4 in
-   let* rows =
-     frequency [ (1, constant devices); (1, int_range 0 ((2 * devices) + 1)) ]
-   and+ cols = int_range 1 5 in
-   constant { devices; rows; cols })
-  |> with_pp pp_mapped
+  drawn ~pp:pp_mapped (fun (c : mapped) seed -> { c with seed }) mapped_forms
 
 let shard_map set c =
   cover "one row per device" (c.rows = c.devices);
   cover "uneven rows" (c.rows mod c.devices <> 0);
   cover "an empty window" (c.rows < c.devices);
   cover "three devices" (c.devices = 3);
-  let x = Nx.place (at set (Split 0)) (integers [| c.rows; c.cols |]) in
-  let w = Nx.place (at set On) (integers ~seed:1 [| c.cols |]) in
+  let x =
+    Nx.place (at set (Split 0)) (integers ~seed:c.seed [| c.rows; c.cols |])
+  in
+  let w = Nx.place (at set On) (integers ~seed:(c.seed + 1) [| c.cols |]) in
   let eager = outcome (fun () -> per_device x w) in
-  let jit = compiled per_device x w in
+  let key = Printf.sprintf "per-device %d %d %d" c.devices c.rows c.cols in
+  let jit = compiled_as set key per_device x w in
   match (eager, jit) with
   | Value e, Value j ->
       equal ~msg:"placement" (placement ()) (Nx.placement e) (Nx.placement j);
@@ -2151,18 +2507,6 @@ let partial_programs n =
       (name, made))
     ops
 
-(* Windows of each kind, and [x] whole, which ten generated cases miss in one
-   run in 50. *)
-let examples =
-  [
-    { n = 3; shape = [| 3; 2 |]; x = On; y = Split 1 };
-    { n = 2; shape = [| 4; 3 |]; x = Split 0; y = On };
-    { n = 3; shape = [| 5; 2 |]; x = Split 0; y = Split 0 };
-    { n = 4; shape = [| 2; 3 |]; x = Split 0; y = Device 1 };
-    { n = 4; shape = [| 4; 4 |]; x = Mesh (0, 1); y = On };
-    { n = 2; shape = [| 0; 3 |]; x = Split 0; y = On };
-  ]
-
 (* Values on an io device
 
    An io device computes nothing: a program with a value on it evaluates, and
@@ -2191,38 +2535,59 @@ let same_offers eager jit =
 
 let emitted set c =
   cover_windows c;
-  let x = Nx.place (at set c.x) (value c.shape) in
-  let p = Rune.Probe.make T.tensor in
-  let f x =
-    Rune.Probe.emit p (Nx.mul x x);
-    Nx.add x x
+  let x = Nx.place (at set c.x) (value ~seed:c.seed c.shape) in
+  let p, g =
+    kept set.emits (form_key "emitted" c) (fun () ->
+        let p = Rune.Probe.make T.tensor in
+        let f x =
+          Rune.Probe.emit p (Nx.mul x x);
+          Nx.add x x
+        in
+        (p, f))
   in
-  let eager = offers p (fun () -> f x) in
+  let jitted =
+    kept set.calls (form_key "emitted" c) (fun () ->
+        let j = Rune.jit T.(tensor @-> returns tensor) g in
+        fun x _ -> j x)
+  in
+  let eager = offers p (fun () -> g x) in
   let before = Rune.evaluations () in
-  let jit = offers p (fun () -> Rune.jit' f x) in
+  let jit = offers p (fun () -> jitted x x) in
   Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   same_offers eager jit
 
+(* Rows cut inside a row, whole on each device or on one, of the loops' forms,
+   whose steps' emissions each device makes of its own piece. *)
+let emitted_forms = List.filter (fun c -> not (along_rows c)) loop_forms
+let emitted_cases = drawn ~pp:pp_loop_case seeded_loop emitted_forms
+
 let emitted_scan set (c : loop_case) =
   cover "rows cut inside a row"
     (match c.rows with Split a -> a > 0 | _ -> false);
-  assume (c.rows <> Split 0);
-  assume (match c.rows with Mesh (a, b) -> a > 0 && b > 0 | _ -> true);
   let xs =
     Nx.place (at set c.rows)
-      (value ~seed:1 (Array.append [| row_count |] c.lshape))
+      (value ~seed:(c.lseed + 1) (Array.append [| row_count |] c.lshape))
   in
-  let p = Rune.Probe.make T.tensor in
-  let step carry row =
-    Rune.Probe.emit p (Nx.mul row row);
-    (Nx.add carry row, row)
+  let key = Format.asprintf "%a" pp_loop_case { c with lseed = 0 } in
+  let p, f =
+    kept set.scan_emits key (fun () ->
+        let p = Rune.Probe.make T.tensor in
+        let step carry row =
+          Rune.Probe.emit p (Nx.mul row row);
+          (Nx.add carry row, row)
+        in
+        (p, fun xs -> Rune.scan' step ~init:(Nx.get [ 0 ] xs) xs))
   in
-  let f xs = Rune.scan' step ~init:(Nx.get [ 0 ] xs) xs in
   let eager = offers p (fun () -> f xs) in
   let before = Rune.evaluations () in
   let s = T.(tensor @-> returns (pair tensor tensor)) in
-  let jit = offers p (fun () -> Rune.jit s f xs) in
+  let jitted =
+    kept set.pairs ("emitted scan, " ^ key) (fun () ->
+        let j = Rune.jit s f in
+        fun xs _ -> j xs)
+  in
+  let jit = offers p (fun () -> jitted xs xs) in
   Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   same_offers eager jit
@@ -2296,29 +2661,6 @@ let pp_check_case ppf c =
     c.cn Operand.pp_shape c.cshape pp_cut c.flags pp_cut c.cdata
     (String.concat "; " (List.map string_of_int c.falses))
 
-let check_cases =
-  let open Gen in
-  (let* cn = int_range 1 4 in
-   let* rank = int_range 0 2 in
-   let* cshape = array ~size:(constant rank) (int_range 0 ((2 * cn) + 1)) in
-   let cut =
-     if rank = 0 then
-       frequency
-         [
-           (1, constant On);
-           (1, map (fun k -> Device k) (int_range 0 (cn - 1)));
-         ]
-     else cut_of ~n:cn ~rank
-   in
-   let* flags = cut and+ cdata = cut in
-   let n = Array.fold_left ( * ) 1 cshape in
-   let* falses =
-     if n = 0 then constant []
-     else list ~size:(int_range 0 3) (int_range 0 (n - 1))
-   in
-   constant { cn; cshape; flags; cdata; falses })
-  |> with_pp pp_check_case
-
 let check_examples =
   let mesh_xy = Mesh (0, 1) and mesh_yx = Mesh (1, 0) in
   let c cn cshape flags cdata falses = { cn; cshape; flags; cdata; falses } in
@@ -2348,6 +2690,19 @@ let check_examples =
     (* A set of one device. *)
     c 1 [| 3; 2 |] (Split 1) On [ 4 ];
   ]
+
+(* An example's form, its shape and placements, with flags false at up to three
+   drawn positions: the flags are an argument, so each form compiles once. *)
+let check_cases =
+  let open Gen in
+  with_pp pp_check_case
+    (let* c = of_list check_examples in
+     let n = Array.fold_left ( * ) 1 c.cshape in
+     let+ falses =
+       if n = 0 then constant []
+       else list ~size:(int_range 0 3) (int_range 0 (n - 1))
+     in
+     { c with falses })
 
 let index_text i =
   String.concat "," (Array.to_list (Array.map string_of_int i))
@@ -2420,10 +2775,12 @@ let checked_case set c =
   in
   let eager = waited (fun () -> f ok data) in
   let before = Rune.evaluations () in
-  let jit =
-    waited (fun () ->
-        Rune.jit T.(tensor @-> tensor @-> returns tensor) f ok data)
+  let key = Format.asprintf "%a" pp_check_case { c with falses = [] } in
+  let g =
+    kept set.checks key (fun () ->
+        Rune.jit T.(tensor @-> tensor @-> returns tensor) f)
   in
+  let jit = waited (fun () -> g ok data) in
   Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal check_outcome_t eager jit
@@ -2470,7 +2827,7 @@ let exact_compare eager jit =
    over several devices their values and derivatives are eager's bits. *)
 let customs set c =
   cover_windows c;
-  let x = Nx.place (at set c.x) (value c.shape) in
+  let x = Nx.place (at set c.x) (value ~seed:c.seed c.shape) in
   let square =
     Rune.custom_vjp T.tensor T.tensor (fun x ->
         (Nx.mul x x, fun ct -> Nx.mul_s ct 3.))
@@ -2480,28 +2837,39 @@ let customs set c =
         (Nx.mul x x, fun t -> Nx.mul_s t 3.))
   in
   let f x _ = Nx.add (square x) (forward x) in
-  exact_compare (outcome (fun () -> f x x)) (compiled f x x);
+  let key name = form_key name c in
+  exact_compare
+    (outcome (fun () -> f x x))
+    (compiled_as set (key "custom rules") f x x);
   let d x _ = Rune.grad' (fun x -> Nx.sum (square x)) x in
-  exact_compare (outcome (fun () -> d x x)) (compiled d x x);
+  exact_compare
+    (outcome (fun () -> d x x))
+    (compiled_as set (key "custom_vjp's gradient") d x x);
   let t = Nx.ones_like x in
   let jv x t = snd (Rune.jvp' forward x t) in
-  exact_compare (outcome (fun () -> jv x t)) (compiled jv x t)
+  exact_compare
+    (outcome (fun () -> jv x t))
+    (compiled_as set (key "custom_jvp's tangent") jv x t)
 
 (* A remat's value and gradient compiled over several devices are eager's. *)
 let remats set c =
   cover_windows c;
-  let x = Nx.place (at set c.x) (value c.shape) in
+  let x = Nx.place (at set c.x) (value ~seed:c.seed c.shape) in
   let g = Rune.remat T.(tensor @-> returns tensor) (fun x -> Nx.mul x x) in
   let f x _ = Nx.add (g x) x in
-  exact_compare (outcome (fun () -> f x x)) (compiled f x x);
+  exact_compare
+    (outcome (fun () -> f x x))
+    (compiled_as set (form_key "remat" c) f x x);
   let d x _ = Rune.grad' (fun x -> Nx.sum (g x)) x in
-  exact_compare (outcome (fun () -> d x x)) (compiled d x x)
+  exact_compare
+    (outcome (fun () -> d x x))
+    (compiled_as set (form_key "remat's gradient" c) d x x)
 
 (* A call of a compiled function and a custom transpose's application inside
    a compiled function run as eagerly. *)
 let calls set c =
   cover_windows c;
-  let x = Nx.place (at set c.x) (value c.shape) in
+  let x = Nx.place (at set c.x) (value ~seed:c.seed c.shape) in
   let g = Rune.jit' (fun x -> Nx.mul x x) in
   let linear =
     Rune.custom_transpose T.tensor T.tensor
@@ -2509,7 +2877,9 @@ let calls set c =
       ~transpose:(fun w -> Nx.mul_s w 2.)
   in
   let f x _ = Nx.add (g x) (linear x) in
-  exact_compare (outcome (fun () -> f x x)) (compiled f x x)
+  exact_compare
+    (outcome (fun () -> f x x))
+    (compiled_as set (form_key "calls" c) f x x)
 
 (* A check inside a remat or a custom rule, compiled over several devices,
    raises as eagerly: first false in C order of the whole value and eager's
@@ -2577,7 +2947,7 @@ let check_moves set =
 let totals set c =
   cover_windows c;
   cover "the running value elsewhere" (c.x <> c.y);
-  let x = Nx.place (at set c.x) (value c.shape) in
+  let x = Nx.place (at set c.x) (value ~seed:c.seed c.shape) in
   let t = Rune.Total.make () in
   let init = Nx.place (at set c.y) (Nx.zeros f32 c.shape) in
   let f x =
@@ -2655,24 +3025,6 @@ let pp_switch_case ppf c =
   Format.fprintf ppf "%d devices, shape %a, x %a, index %a, branch %d" c.sn
     Operand.pp_shape c.sshape pp_cut c.scut pp_cut c.index_at c.taken
 
-let switch_cases =
-  let open Gen in
-  (let* sn = int_range 2 4 in
-   let* rank = int_range 1 2 in
-   let* sshape = array ~size:(constant rank) (int_range 0 ((2 * sn) + 1)) in
-   let* scut = cut_of ~n:sn ~rank in
-   let* index_at =
-     frequency
-       [
-         (1, constant On); (2, map (fun k -> Device k) (int_range 0 (sn - 1)));
-       ]
-   in
-   let* taken =
-     frequency [ (4, int_range 0 2); (1, constant 7); (1, constant (-1)) ]
-   in
-   constant { sn; sshape; scut; index_at; taken })
-  |> with_pp pp_switch_case
-
 let switch_examples =
   let c sn sshape scut index_at taken =
     { sn; sshape; scut; index_at; taken }
@@ -2690,6 +3042,17 @@ let switch_examples =
     c 2 [| 4 |] (Split 0) On 7;
     c 2 [| 4 |] (Split 0) On (-1);
   ]
+
+(* An example's form, its shape and placements, with a drawn branch inside or
+   outside the three: the index is an argument, so each form compiles once. *)
+let switch_cases =
+  let open Gen in
+  with_pp pp_switch_case
+    (let* c = of_list switch_examples in
+     let+ taken =
+       frequency [ (4, int_range 0 2); (1, constant 7); (1, constant (-1)) ]
+     in
+     { c with taken })
 
 let switch_branches (x : (float, Nx.float32_elt, 'd) Nx.t) =
   [
@@ -2727,9 +3090,14 @@ let switched set c =
   in
   let f i x = Rune.switch T.tensor i (switch_branches x) in
   let eager = outcome (fun () -> f i x) in
+  let key = Format.asprintf "%a" pp_switch_case { c with taken = 0 } in
+  let g =
+    kept set.switches key (fun () ->
+        Rune.jit T.(tensor @-> tensor @-> returns tensor) f)
+  in
   let jit =
     compile_read (fun () ->
-        let y = Rune.jit T.(tensor @-> tensor @-> returns tensor) f i x in
+        let y = g i x in
         ignore (Nx.to_array (Nx.place Nx.Host.on y));
         y)
   in
@@ -2933,134 +3301,193 @@ let () =
   exit
     (run "Rune.jit over several devices"
        [
-         group "a compiled call gives eager's placement and values"
+         group "compiled programs"
            [
-             prop ~count:30 ~examples "elementwise, bit for bit" cases (fun c ->
-                 over c.n { law = (fun set -> elementwise set c) });
-             prop ~count:20 ~examples "sums over cut and whole axes" cases
-               (fun c -> over c.n { law = (fun set -> folds set c) });
-             prop ~count:20 ~examples "a matrix product" cases (fun c ->
-                 over c.n { law = (fun set -> matmul set c) });
-             prop ~count:10 ~examples:expert_examples
-               "an expert product cut along its inputs" experts_cases (fun c ->
-                 over c.devices { law = (fun set -> expert_product set c) });
-             prop ~count:30 ~examples "coordinates over cut values" cases
-               (fun c -> over c.n { law = (fun set -> coordinates set c) });
-             prop ~count:20 ~examples "a vector broadcast to a cut batch" cases
-               (fun c -> over c.n { law = (fun set -> biased set c) });
-             prop ~count:10 ~examples:quant_examples
-               "a quantised product at every format and input dtype"
-               quant_cases (fun c ->
-                 over c.qn { law = (fun set -> quant_product set c) });
+             test "a capture is copied once across nested programs"
+               nested_upload;
+             test "constants placed whole on each device copy once" (fun () ->
+                 over 2 { law = placed_constants });
+             Windtrap.cases ~id:fst
+               "an assembly on one device gives eager's bits" assembly_rows
+               assembled;
+             test "crossed assemblies of computed pieces give eager's bits"
+               (fun () -> over 2 { law = crossed });
            ];
-         group "gradients"
+         group "several devices"
            [
-             test "over two devices" (fun () ->
-                 over 2 { law = (fun s -> grads s 6) });
-             test "over three, uneven" (fun () ->
-                 over 3 { law = (fun s -> grads s 7) });
-             test "over four, one window empty" (fun () ->
-                 over 4 { law = (fun s -> grads s 3) });
+             group "a compiled call gives eager's placement and values"
+               [
+                 prop ~count:30 ~examples:forms "elementwise, bit for bit" cases
+                   (fun c -> over c.n { law = (fun set -> elementwise set c) });
+                 prop ~count:20 ~examples:forms "sums over cut and whole axes"
+                   cases (fun c -> over c.n { law = (fun set -> folds set c) });
+                 prop ~count:20 ~examples:matrices "a matrix product"
+                   matrix_cases (fun c ->
+                     over c.n { law = (fun set -> matmul set c) });
+                 prop ~count:20 ~examples:forms
+                   "a vector broadcast to a cut batch" cases (fun c ->
+                     over c.n { law = (fun set -> biased set c) });
+               ];
+             group "gathers give eager's bits"
+               [
+                 test "over two devices" (fun () ->
+                     over 2 { law = gather_kinds });
+                 test "over four and their mesh" (fun () ->
+                     over 4 { law = gather_kinds });
+                 test "a window of a gathered value reads its own pieces"
+                   (fun () ->
+                     over 2 { law = own_window };
+                     over 4 { law = own_window });
+               ];
+             group "moves"
+               [
+                 test
+                   "positions repeated along an axis move one element along it"
+                   (fun () -> over 2 { law = moves });
+                 test "a whole value placed onto a mesh gives eager's bits"
+                   (fun () -> over 4 { law = onto_mesh });
+               ];
+             group "a batch of one"
+               [
+                 prop "computes where a batch of two does, compiled as eagerly"
+                   batched_cases (fun c ->
+                     over 2 { law = (fun set -> batch_of_one set c) };
+                     over 4 { law = (fun set -> batch_of_one set c) });
+               ];
+             group "each device runs its own kernels"
+               [
+                 test "over two devices" (fun () ->
+                     over 2 { law = (fun s -> kernels s 2 4) });
+                 test "over four, one window empty" (fun () ->
+                     over 4 { law = (fun s -> kernels s 4 3) });
+               ];
+             group "programs"
+               [
+                 test "a data-parallel step's programs do not grow over 2 to 16"
+                   (fun () ->
+                     flat "programs" (List.map programs [ 2; 4; 8; 16 ]));
+                 test "nor over 3, 5 and 6, every cut even" (fun () ->
+                     let ns = [ 2; 3; 4; 5; 6; 8 ] in
+                     flat ~ns "programs"
+                       (List.map (programs ~inner:120 ~hidden:120) ns));
+               ];
+             group "loops"
+               [
+                 prop ~count:30 ~examples:loop_forms
+                   "a scan over a cut carry, bit for bit" loop_cases (fun c ->
+                     over c.ln { law = (fun set -> scanned set c) });
+                 prop ~count:20 ~examples:loop_forms
+                   "an iterate stopped by a fold over a cut axis" loop_cases
+                   (fun c -> over c.ln { law = (fun set -> iterated set c) });
+                 prop ~count:15 ~examples:made_forms
+                   "a scan's first value and outputs made in the program"
+                   made_cases (fun c ->
+                     over c.mn { law = (fun set -> scan_made set c) });
+                 prop ~count:15 ~examples:made_forms
+                   "an iterate's first value made in the program" made_cases
+                   (fun c ->
+                     over c.mn { law = (fun set -> iterate_made set c) });
+                 test "a scan over rows made in the program" (fun () ->
+                     over 2 { law = rows_made };
+                     over 3 { law = rows_made });
+                 test "a scan's constant outputs stay on their devices"
+                   (fun () ->
+                     over 2 { law = made_local };
+                     over 3 { law = made_local });
+                 test "a scan cut alike copies nothing between devices"
+                   (fun () -> over 3 { law = local_scan });
+                 test "an iterate reads its stop on the program's device"
+                   (fun () -> over 2 { law = stop_home });
+                 test "a scan over a batch of one cut across devices" (fun () ->
+                     over 2 { law = scan_batch_of_one };
+                     over 4 { law = scan_batch_of_one });
+               ];
+             group "other sets"
+               [
+                 test "the other set holds nothing between calls" (fun () ->
+                     over 2 { law = held });
+                 prop ~count:20 ~examples:elsewhere_forms
+                   "a value placed onto another set and back compiles"
+                   elsewhere_cases (fun c ->
+                     over c.n { law = (fun set -> elsewhere set c) });
+                 prop ~count:20 ~examples:closing_forms
+                   "a partial placed onto another set closes there"
+                   closing_cases (fun (n, k, seed) ->
+                     over n { law = (fun set -> closing set n k seed) });
+                 test "a detour through a set without kernels" bare_detour;
+                 test "a device in both sets holds its piece" shared_device;
+                 test "a detour inside a scan's step" (fun () ->
+                     over 3 { law = scan_detour });
+               ];
+             group "replicas"
+               [
+                 test "a result shorter than the devices" (fun () ->
+                     over 4 { law = (fun s -> replicas s 3) });
+                 test "a share on each device, uneven" (fun () ->
+                     over 4 { law = (fun s -> replicas s 9) });
+                 test "a share on each of three devices" (fun () ->
+                     over 3 { law = (fun s -> replicas s 6) });
+               ];
+             group "maps over a cut axis"
+               [
+                 prop ~count:60 ~examples:mapped_forms
+                   "lanes, lane_index and a sum over the lanes" mapped (fun c ->
+                     over c.devices { law = (fun set -> shard_map set c) });
+                 test "the lanes' indices lie where their rows lie" (fun () ->
+                     over 4 { law = indices });
+                 test "stacked partials stay on their devices, then close"
+                   (fun () -> over 4 { law = partials });
+                 test "per-device code's programs do not grow over 2 to 16"
+                   (fun () ->
+                     let counts = List.map mapped_programs [ 2; 4; 8; 16 ] in
+                     flat "per-device" (List.map fst counts);
+                     flat "accumulated" (List.map snd counts));
+               ];
+             group "coordinates"
+               [
+                 prop ~count:30 ~examples:forms
+                   "functions of coordinates over cut values give eager's bits"
+                   cases (fun c ->
+                     over c.n { law = (fun set -> coordinates set c) });
+                 test "a step that reads its coordinates gives eager's bits"
+                   (fun () -> over 3 { law = coordinate_scan });
+                 test "loops of no loads, split along either axis" (fun () ->
+                     over 3
+                       {
+                         law =
+                           (fun set ->
+                             unloaded set (Split 0);
+                             unloaded set (Split 1));
+                       });
+                 test "loops of no loads over a mesh" (fun () ->
+                     over 4 { law = (fun set -> unloaded set (Mesh (0, 1))) });
+               ];
+             group "partials"
+               [
+                 test
+                   "a fold, scan, gather or scatter over a cut axis gives \
+                    eager's bits in programs that do not grow" (fun () ->
+                     let counts = List.map partial_programs [ 2; 4; 8 ] in
+                     List.iter
+                       (fun (name, _) ->
+                         flat ~ns:[ 2; 4; 8 ] name
+                           (List.map (List.assoc name) counts))
+                       (List.hd counts));
+               ];
            ];
-         group "gathers"
+         group "searches give eager's bits"
            [
-             test "over two devices" (fun () -> over 2 { law = gather_kinds });
-             test "over four and their mesh" (fun () ->
-                 over 4 { law = gather_kinds });
-             test "a window of a gathered value reads its own pieces"
-               (fun () ->
-                 over 2 { law = own_window };
-                 over 4 { law = own_window });
+             test "a value whole on one software device" (fun () ->
+                 over 2 { law = (fun s -> searched s (Device 0)) });
+             test "a value cut across two" (fun () ->
+                 over 2 { law = (fun s -> searched s (Split 0)) });
            ];
-         group "written positions"
+         group "dead values"
            [
-             prop ~count:30 "on the host"
-               (written_cases ~cuts:[ On ])
-               (written { s = Nx.Host.v; mesh = None });
-             prop ~count:30 "over two devices"
-               (written_cases ~cuts:[ On; Split 0; Split 1 ])
-               (fun c -> over 2 { law = (fun set -> written set c) });
-           ];
-         group "assemblies give eager's bits"
-           (List.map
-              (fun (name, shape, regions) ->
-                test name (fun () ->
-                    over 2 { law = (fun s -> assembled s shape regions) }))
-              assemblies
-           @ [
-               test "crossed assemblies of computed pieces" (fun () ->
-                   over 2 { law = crossed });
-             ]);
-         group "values on an io device"
-           [
-             test "an argument on the disk raises, named, as eagerly"
-               io_argument;
-             test "a capture on the disk of a cut program gives eager's values"
-               io_capture;
-           ];
-         group "other sets"
-           [
-             prop ~count:20 ~examples:elsewhere_examples
-               "a value placed onto another set and back compiles" cases
-               (fun c -> over c.n { law = (fun set -> elsewhere set c) });
-             prop ~count:20 ~examples:closing_examples
-               "a partial placed onto another set closes there" closing_cases
-               (fun (n, k) -> over n { law = (fun set -> closing set n k) });
-             test "a detour through a set without kernels" bare_detour;
-             test "a device in both sets holds its piece" shared_device;
-             test "a detour inside a scan's step" (fun () ->
-                 over 3 { law = scan_detour });
-             test "the other set holds nothing between calls" (fun () ->
-                 over 2 { law = held });
-           ];
-         group "loops"
-           [
-             prop ~count:30 "a scan over a cut carry, bit for bit" loop_cases
-               (fun c -> over c.ln { law = (fun set -> scanned set c) });
-             prop ~count:20 "an iterate stopped by a fold over a cut axis"
-               loop_cases (fun c ->
-                 over c.ln { law = (fun set -> iterated set c) });
-             prop ~count:15 ~examples:made_examples
-               "a scan's first value and outputs made in the program"
-               made_cases (fun c ->
-                 over c.mn { law = (fun set -> scan_made set c) });
-             prop ~count:15 ~examples:made_examples
-               "an iterate's first value made in the program" made_cases
-               (fun c -> over c.mn { law = (fun set -> iterate_made set c) });
-             test "a scan over rows made in the program" (fun () ->
-                 over 2 { law = rows_made };
-                 over 3 { law = rows_made });
-             test "a scan's constant outputs stay on their devices" (fun () ->
-                 over 2 { law = made_local };
-                 over 3 { law = made_local });
-             test "a scan cut alike copies nothing between devices" (fun () ->
-                 over 3 { law = local_scan });
-             test "a step that reads its coordinates gives eager's bits"
-               (fun () -> over 3 { law = coordinate_scan });
-             test "an iterate reads its stop on the program's device"
-               (fun () -> over 2 { law = stop_home });
-             test "a scan over a batch of one cut across devices" (fun () ->
-                 over 2 { law = scan_batch_of_one };
-                 over 4 { law = scan_batch_of_one });
-             test "eigenvalues and singular values of matrices that stop apart"
-               (fun () ->
-                 over 2 { law = eigh_batch };
-                 over 3 { law = eigh_batch });
-           ];
-         group "switches"
-           [
-             prop ~count:20 ~examples:switch_examples
-               "a branch's value and placement, its index anywhere"
-               switch_cases (fun c ->
-                 over c.sn { law = (fun set -> switched set c) });
-             test "a branch not taken computes nothing" (fun () ->
-                 over 2 { law = untaken });
-             test "lanes cut across devices that take branches apart" (fun () ->
-                 over 2 { law = lane_switch };
-                 over 4 { law = lane_switch });
-             test "inside a scan's step and nested" (fun () ->
-                 over 2 { law = nested_switch };
-                 over 4 { law = nested_switch });
+             test "a dead constant it returns raises, named" dead_constant;
+             test "a constant is read at the trace and kept" kept_constant;
+             test "a constant donated after a call is the one it read"
+               kept_after_call;
            ];
          group "checks"
            [
@@ -3070,178 +3497,145 @@ let () =
                  over c.cn { law = (fun set -> checked_case set c) });
              test "two checks in order, the first made fails" (fun () ->
                  over 2 { law = two_checks });
-             test "a check inside a remat or a custom rule" (fun () ->
-                 over 2 { law = nested_check });
+             test "a check inside a remat or a custom rule fails as eagerly"
+               (fun () -> over 2 { law = nested_check });
              test "a passing check moves partials and one element" (fun () ->
                  over 2 { law = check_moves };
                  over 3 { law = check_moves });
+           ];
+         group "numerics"
+           [
+             prop ~count:10 ~examples:quant_examples
+               "a quantised product at every format and input dtype" quant_cases
+               quant_product;
+             prop ~count:10 ~examples:expert_examples
+               "an expert product cut along its inputs" experts_cases (fun c ->
+                 over c.devices { law = (fun set -> expert_product set c) });
+             group "values computed from constants"
+               [
+                 test "decoded bytes over two devices" (fun () -> decodes 2);
+                 test "decoded bytes over four" (fun () -> decodes 4);
+                 test "a table of exp2 or sin over two and four devices"
+                   (fun () ->
+                     List.iter
+                       (fun n ->
+                         List.iter
+                           (fun whole ->
+                             over n { law = (fun s -> table s ~whole) })
+                           [ true; false ])
+                       [ 2; 4 ]);
+                 test "Q4_K and Q6_K by a vector over two and four devices"
+                   (fun () ->
+                     List.iter
+                       (fun n ->
+                         List.iter
+                           (fun (q6, whole) ->
+                             over n
+                               { law = (fun s -> quant_vector s ~q6 ~whole) })
+                           [
+                             (false, true);
+                             (false, false);
+                             (true, true);
+                             (true, false);
+                           ])
+                       [ 2; 4 ]);
+               ];
+             test
+               "eigenvalues and singular values of matrices that stop apart \
+                hold their bounds" (fun () ->
+                 over 2 { law = eigh_batch };
+                 over 3 { law = eigh_batch });
+             group "written positions give eager's bits"
+               [
+                 prop ~count:30
+                   ~examples:(written_forms ~cuts:[ On ])
+                   "on the host"
+                   (written_cases (written_forms ~cuts:[ On ]))
+                   (written host);
+                 prop ~count:30
+                   ~examples:(written_forms ~cuts:[ On; Split 0; Split 1 ])
+                   "over two devices"
+                   (written_cases
+                      (written_forms ~cuts:[ On; Split 0; Split 1 ]))
+                   (fun c -> over 2 { law = (fun set -> written set c) });
+               ];
+             group "keys"
+               [
+                 prop ~count:8 "a key's placement in a program, and draws there"
+                   Gen.int (fun seed ->
+                     over 2 { law = (fun s -> key_placement seed s) });
+               ];
+           ];
+         group "derivatives"
+           [
+             group
+               "a gradient under jit lies where eager's does, within its error"
+               [
+                 test "over two devices" (fun () ->
+                     over 2 { law = (fun s -> grads s 6) });
+                 test "over three, uneven" (fun () ->
+                     over 3 { law = (fun s -> grads s 7) });
+                 test "over four, one window empty" (fun () ->
+                     over 4 { law = (fun s -> grads s 3) });
+               ];
+             group "an expert product's gradient in its input"
+               [
+                 test "its weight cut along n over two devices" (fun () ->
+                     over 2 { law = expert_grad });
+                 test "over three, uneven" (fun () ->
+                     over 3 { law = expert_grad });
+               ];
+             prop ~count:10 ~examples:forms
+               "a call and a custom transpose inside a call run as eagerly"
+               cases (fun c -> over c.n { law = (fun set -> calls set c) });
+           ];
+         group "constructs"
+           [
+             group "switches"
+               [
+                 prop ~count:20 ~examples:switch_examples
+                   "a branch's value and placement, its index anywhere"
+                   switch_cases (fun c ->
+                     over c.sn { law = (fun set -> switched set c) });
+                 test "a branch not taken computes nothing" (fun () ->
+                     over 2 { law = untaken });
+                 test "inside a scan's step and nested" (fun () ->
+                     over 2 { law = nested_switch };
+                     over 4 { law = nested_switch });
+               ];
+             prop ~count:10 ~examples:forms
+               "custom rules' values and derivatives are eager's bits" cases
+               (fun c -> over c.n { law = (fun set -> customs set c) });
+             prop ~count:10 ~examples:forms
+               "a remat's value and gradient are eager's bits" cases (fun c ->
+                 over c.n { law = (fun set -> remats set c) });
+             prop ~count:10 ~examples:forms "additions to a total" cases
+               (fun c -> over c.n { law = (fun set -> totals set c) });
+           ];
+         group "emissions"
+           [
+             prop ~count:10 ~examples:forms
+               "made at the top level, as eagerly, compiled" cases (fun c ->
+                 over c.n { law = (fun set -> emitted set c) });
+             prop ~count:10 ~examples:emitted_forms
+               "made in a scan's step, stacked, compiled" emitted_cases
+               (fun c -> over c.ln { law = (fun set -> emitted_scan set c) });
+           ];
+         group "evaluated programs"
+           [
+             test "raises at the call on a set without kernels, named" declined;
+             test "a check in a branch is evaluated, and an emission"
+               declined_branches;
              test "a check of no value evaluates" (fun () ->
                  over 2 { law = no_value });
              test "a check in a loop is evaluated" (fun () ->
                  over 2 { law = in_loops });
-           ];
-         group "custom rules, remats and totals"
-           [
-             prop ~count:10 ~examples "custom rules, values and derivatives"
-               cases (fun c ->
-                 over c.n { law = (fun set -> customs set c) });
-             prop ~count:10 ~examples "a remat, value and gradient" cases
-               (fun c -> over c.n { law = (fun set -> remats set c) });
-             prop ~count:10 ~examples "a call and a custom transpose" cases
-               (fun c -> over c.n { law = (fun set -> calls set c) });
-             prop ~count:10 ~examples "additions to a total" cases (fun c ->
-                 over c.n { law = (fun set -> totals set c) });
-           ];
-         group "emissions"
-           [
-             prop ~count:10 ~examples
-               "made at the top level, as eagerly, compiled" cases (fun c ->
-                 over c.n { law = (fun set -> emitted set c) });
-             prop ~count:10
-               ~examples:
-                 [
-                   {
-                     ln = 2;
-                     lshape = [| 1 |];
-                     carry = On;
-                     rows = Split 1;
-                   };
-                 ]
-               "made in a scan's step, stacked, compiled" loop_cases (fun c ->
-                 over c.ln { law = (fun set -> emitted_scan set c) });
-           ];
-         group "what stays declined"
-           [
-             test "raises at the call on a set without kernels, named" declined;
-             test "a check or an emission in a branch is evaluated"
-               declined_branches;
-           ];
-         group "dead values"
-           [
-             test "a dead constant it returns raises, named" dead_constant;
-             test "a constant is read at the trace and kept" kept_constant;
-             test "a constant donated after a call is the one it read"
-               kept_after_call;
-             test "a capture is copied once across nested programs"
-               nested_upload;
-           ];
-         group "a batch of one"
-           [
-             prop "computes where a batch of two does, compiled as eagerly"
-               batched_cases (fun c ->
-                 over 2 { law = (fun set -> batch_of_one set c) };
-                 over 4 { law = (fun set -> batch_of_one set c) });
-           ];
-         group "an expert product's gradient in its input"
-           [
-             test "its weight cut along n over two devices" (fun () ->
-                 over 2 { law = expert_grad });
-             test "over three, uneven" (fun () -> over 3 { law = expert_grad });
-           ];
-         group "values computed from constants"
-           [
-             test "decoded bytes over two devices" (fun () -> decodes 2);
-             test "decoded bytes over four" (fun () -> decodes 4);
-             test "a table of exp2 or sin over two and four devices" (fun () ->
-                 List.iter
-                   (fun n ->
-                     List.iter
-                       (fun whole -> over n { law = (fun s -> table s ~whole) })
-                       [ true; false ])
-                   [ 2; 4 ]);
-             test "Q4_K and Q6_K by a vector over two and four devices"
-               (fun () ->
-                 List.iter
-                   (fun n ->
-                     List.iter
-                       (fun (q6, whole) ->
-                         over n
-                           { law = (fun s -> quant_vector s ~q6 ~whole) })
-                       [ (false, true); (false, false); (true, true); (true, false) ])
-                   [ 2; 4 ]);
-           ];
-         group "replicas"
-           [
-             test "a result shorter than the devices" (fun () ->
-                 over 4 { law = (fun s -> replicas s 3) });
-             test "a share on each device, uneven" (fun () ->
-                 over 4 { law = (fun s -> replicas s 9) });
-             test "a share on each of three devices" (fun () ->
-                 over 3 { law = (fun s -> replicas s 6) });
-           ];
-         group "moves"
-           [
-             test "positions repeated along an axis move one element along it"
-               (fun () -> over 2 { law = moves });
-             test "a whole value placed onto a mesh" (fun () ->
-                 over 4 { law = onto_mesh });
-             test "constants placed whole on each device copy once" (fun () ->
-                 over 2 { law = placed_constants });
-           ];
-         group "keys"
-           [
-             prop ~count:8 "a key's placement in a program, and draws there"
-               Gen.int
-               (fun seed -> over 2 { law = (fun s -> key_placement seed s) });
-           ];
-         group "programs"
-           [
-             test "a data-parallel step's programs do not grow over 2 to 16"
-               (fun () ->
-                 flat "programs" (List.map programs [ 2; 4; 8; 16 ]));
-             test "nor over 3, 5 and 6, every cut even" (fun () ->
-                 let ns = [ 2; 3; 4; 5; 6; 8 ] in
-                 flat ~ns "programs"
-                   (List.map (programs ~inner:120 ~hidden:120) ns));
-           ];
-         group "maps over a cut axis"
-           [
-             prop ~count:60 "lanes, lane_index and a sum over the lanes"
-               mapped (fun c ->
-                 over c.devices { law = (fun set -> shard_map set c) });
-             test "the lanes' indices lie where their rows lie" (fun () ->
-                 over 4 { law = indices });
-             test "stacked partials stay on their devices, then close"
-               (fun () -> over 4 { law = partials });
-             test "per-device code's programs do not grow over 2 to 16"
-               (fun () ->
-                 let counts = List.map mapped_programs [ 2; 4; 8; 16 ] in
-                 flat "per-device" (List.map fst counts);
-                 flat "accumulated" (List.map snd counts));
-             test "partials give eager's bits, their programs do not grow"
-               (fun () ->
-                 let counts = List.map partial_programs [ 2; 4; 8 ] in
-                 List.iter
-                   (fun (name, _) ->
-                     flat ~ns:[ 2; 4; 8 ] name
-                       (List.map (List.assoc name) counts))
-                   (List.hd counts));
-           ];
-         group "loops of no loads"
-           [
-             test "split along either axis, over three devices" (fun () ->
-                 over 3
-                   {
-                     law =
-                       (fun set ->
-                         unloaded set (Split 0);
-                         unloaded set (Split 1));
-                   });
-             test "over a mesh" (fun () ->
-                 over 4 { law = (fun set -> unloaded set (Mesh (0, 1))) });
-           ];
-         group "each device runs its own kernels"
-           [
-             test "over two devices" (fun () ->
-                 over 2 { law = (fun s -> kernels s 2 4) });
-             test "over four, one window empty" (fun () ->
-                 over 4 { law = (fun s -> kernels s 4 3) });
-           ];
-         group "searches"
-           [
-             test "a value whole on one software device" (fun () ->
-                 over 2 { law = (fun s -> searched s (Device 0)) });
-             test "a value cut across two" (fun () ->
-                 over 2 { law = (fun s -> searched s (Split 0)) });
+             test "lanes cut across devices that take branches apart" (fun () ->
+                 over 2 { law = lane_switch };
+                 over 4 { law = lane_switch });
+             test "an argument on the disk raises, named, as eagerly"
+               io_argument;
+             test "a capture on the disk of a cut program gives eager's values"
+               io_capture;
            ];
        ])
