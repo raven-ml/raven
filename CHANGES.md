@@ -1645,6 +1645,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On arm64, a select of a value and any float constant by their comparison,
+  as a clamp, picks the constant at a signalling NaN, as eager does: clang
+  made it `fminnm` or `fmaxnm`, which return a quiet NaN. On arm64
+  `Cstyle.clang` hides from the backend every float constant a comparison
+  reads.
 - On a GPU, a value that runs a transcendental and that its readers
   broadcast is computed where it is read when each point reads it once, as
   tinygrad computes it: gpt-oss-20b's attention sinks, `sigmoid (lse − σ)` for

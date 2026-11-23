@@ -1942,27 +1942,40 @@ let clang_lang =
     string_rewrite = Pattern_matcher.append clang_vectors base_rewrite;
   }
 
-(* Backends lower a select of a value and a float zero by their comparison to
-   an instruction or a call that may return the zero of the value's sign
-   where the select returns the constant's: [(v < 0.0f) ? v : 0.0f] is -0.0
-   at v = -0.0. clang's AArch64 backend makes it fminnm or fmaxnm, in clang
-   19, Homebrew clang 22.1.7 and Apple clang 17, and its RISC-V backend fmin
-   or fmax, in clang 19; its x86 backend, for a half, calls fminf or fmaxf,
-   whose zero at a tie is the C library's. A maximum against a zero, rendered
-   as such a select, meets it too, and an add of +0.0 after it is then folded
-   away. The lowering needs the select's operands to be the comparison's: a
-   zero of the types [zeros] that a comparison reads is rendered as a value
-   the backend cannot see through, an empty asm statement over a register of
-   class [reg] holding it, a narrow float held in a float. A select of a zero
-   by any other condition, [c ? v : 0.0f], stays one the backend makes a mask
+(* Backends lower a select of a value and a float constant by their comparison
+   to an instruction or a call that may not return what the select does. At a
+   zero, it may return the zero of the value's sign where the select returns the
+   constant's: [(v < 0.0f) ? v : 0.0f] is -0.0 at v = -0.0. clang's AArch64
+   backend makes it fminnm or fmaxnm, in clang 19, Homebrew clang 22.1.7 and
+   Apple clang 17, and its RISC-V backend fmin or fmax, in clang 19; its x86
+   backend, for a half, calls fminf or fmaxf, whose zero at a tie is the C
+   library's. A maximum against a zero, rendered as such a select, meets it too,
+   and an add of +0.0 after it is then folded away. At any other constant only
+   AArch64's instructions differ: fminnm and fmaxnm, IEEE 754-2008's minNum and
+   maxNum, return a quiet NaN for a signalling one, where the select returns the
+   constant, since a comparison with a NaN is false: [(v < 80.0f) ? v : 80.0f]
+   is a NaN at a signalling v, in Apple clang 17, where Homebrew clang 23.1.5
+   keeps the select. x86's minss and maxss return their second operand, and
+   RISC-V's fmin and fmax the number, beside any NaN, as the select does. The
+   lowering needs the select's operands to be the comparison's: a constant of
+   the types [dts] that a comparison reads, every one where [hidden] is
+   [Constants] and its zeros where it is [Zeros], is rendered as a value the
+   backend cannot see through, an empty asm statement over a register of class
+   [reg] holding it, a narrow float held in a float. A select of a constant by
+   any other condition, [c ? v : 0.0f], stays one the backend makes a mask
    of. *)
-let float_zero zeros u =
+type hidden = Zeros | Constants
+
+let float_constant hidden dts u =
   is Op.Cast u
-  && Dtype.mem (dtype u) zeros
+  && Dtype.mem (dtype u) dts
   &&
   match src u with
   | [ c ] when is Op.Const c -> (
-      match value c with `Float v -> v = 0. | _ -> false)
+      match (value c, hidden) with
+      | `Float _, Constants -> true
+      | `Float v, Zeros -> v = 0.
+      | _ -> false)
   | _ -> false
 
 let opaque ctx ~reg u =
@@ -1975,14 +1988,14 @@ let opaque ctx ~reg u =
   if wide || Dtype.equal (dtype u) Dtype.Float32 then v
   else strf "(%s)" (render_cast ctx u v)
 
-let opaque_zeros ~reg zeros =
+let opaque_constants ~reg hidden dts =
   Pattern_matcher.fold (fun () ->
       [
         rule_ctx
           (Upat.v ~op:Op.Set.comparison ~name:"x" ())
           (fun ctx m ->
             let x = m "x" in
-            let hidden = float_zero zeros in
+            let hidden = float_constant hidden dts in
             let operand u = if hidden u then opaque ctx ~reg u else ctx.%{u} in
             if not (List.exists hidden (src x)) then None
             else
@@ -1992,16 +2005,16 @@ let opaque_zeros ~reg zeros =
       ])
 
 (* LLVM's InstCombine, on every target, reads a select whose arm converts its
-   compared value as a minimum or maximum, and rebuilds it to pick the zero at
-   a tie. In clang 19, [(0.0f < x) ? 0.0 : (double)x] becomes [(x >= 0.0f) ?
-   0.0f : x], widened: +0.0 at x = -0.0. rune compares a half in float32 and
-   selects between the halves, so its selections of a half meet it. Selects of
-   the compared value itself, and of vectors, keep their order. So a scalar
-   select between a zero and a conversion of its compared value [v] selects at
-   [v]'s type and converts after; one between a zero and the half or float32
-   [h] that [v] widens compares [h], where x86 hides a half's zero
-   ([opaque_zeros]). Both keep every value: converting either arm is exact,
-   and so is comparing before a widening. *)
+   compared value as a minimum or maximum, and rebuilds it to pick the zero at a
+   tie. In clang 19, [(0.0f < x) ? 0.0 : (double)x] becomes [(x >= 0.0f) ? 0.0f
+   : x], widened: +0.0 at x = -0.0. rune compares a half in float32 and selects
+   between the halves, so its selections of a half meet it. Selects of the
+   compared value itself, and of vectors, keep their order. So a scalar select
+   between a zero and a conversion of its compared value [v] selects at [v]'s
+   type and converts after; one between a zero and the half or float32 [h] that
+   [v] widens compares [h], where x86 hides a half's zero ([opaque_constants]).
+   Both keep every value: converting either arm is exact, and so is comparing
+   before a widening. *)
 let pm_converted_selects =
   let rec uncast u =
     if is Op.Cast u && Dtype.is_float (dtype (nth u 0)) then uncast (nth u 0)
@@ -2215,10 +2228,11 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
      [min_vector_width(512)], which makes those types legal where the
      processor has them; code that uses none is unchanged.
 
-     A float zero hidden from the backend is held in a register of the
-     target's float class: [w] on arm64, [x] on x86 and [f] on riscv64. x86 and
-     riscv64 compare a bfloat16 in float32. A selection of a half, and of a
-     bfloat16 where it is a [__bf16], chooses between bits. *)
+     A float constant hidden from the backend, any on arm64 and a zero
+     elsewhere, is held in a register of the target's float class: [w] on arm64,
+     [x] on x86 and [f] on riscv64. x86 and riscv64 compare a bfloat16 in
+     float32. A selection of a half, and of a bfloat16 where it is a [__bf16],
+     chooses between bits. *)
   let arm64 =
     String.starts_with ~prefix:"arm64" arch
     || String.starts_with ~prefix:"aarch64" arch
@@ -2239,7 +2253,7 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
         clang_lang with
         string_rewrite =
           Pattern_matcher.append
-            (opaque_zeros ~reg:"w"
+            (opaque_constants ~reg:"w" Constants
                Dtype.[ Float16; Bfloat16; Float32; Float64 ])
             clang_lang.string_rewrite;
       }
@@ -2252,7 +2266,7 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
         string_rewrite =
           Pattern_matcher.concat
             [
-              opaque_zeros ~reg:"x" [ Dtype.Float16 ];
+              opaque_constants ~reg:"x" Zeros [ Dtype.Float16 ];
               pm_bf16_ushort_const;
               clang_lang.string_rewrite;
             ];
@@ -2262,7 +2276,8 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
         clang_lang with
         string_rewrite =
           Pattern_matcher.append
-            (opaque_zeros ~reg:"f" Dtype.[ Float16; Float32; Float64 ])
+            (opaque_constants ~reg:"f" Zeros
+               Dtype.[ Float16; Float32; Float64 ])
             clang_lang.string_rewrite;
       }
   in

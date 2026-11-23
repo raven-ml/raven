@@ -2110,31 +2110,37 @@ constant. No consumer depended on it; `Spec.program` accepts it, as
 A store through a gather of a sharded value stored each shard's rows.
 Withdrawn: multi-device is out of scope, see README.
 
-## D88. A float zero a host comparison reads reaches C as a value the backend cannot see
+## D88. A float constant a host comparison reads reaches C as a value the backend cannot see
 
 - **tinygrad:** `renderer/cstyle.py` (`ClangRenderer`, whose
   `string_rewrite` writes a float zero as a literal, `0.0f`).
-- **tolk:** `Cstyle.float_zero`, `Cstyle.opaque`, `Cstyle.opaque_zeros`,
-  `Cstyle.pm_converted_selects` and `Cstyle.clang` (which adds them for
-  each host target with its types).
-- **Differs:** a float zero constant that a comparison reads renders in the
+- **tolk:** `Cstyle.float_constant`, `Cstyle.opaque`,
+  `Cstyle.opaque_constants`, `Cstyle.pm_converted_selects` and
+  `Cstyle.clang` (which adds them for each host target with its types).
+- **Differs:** a float constant that a comparison reads renders in the
   comparison as an empty `asm` statement over a register holding it,
   `({float z = 0.0f; __asm__("" : "+w"(z)); z;})`, in a float for a narrow
-  type and cast back to it: on arm64 at float16, bfloat16, float32 and
-  float64, on riscv64 at float16, float32 and float64, and on x86_64 at
-  float16. On x86_64 a scalar selection between a zero and a conversion of
-  its compared value selects at that value's type and converts after, and
-  one between a zero and the float16 or float32 its compared value widens
-  compares that float16 or float32. The register class is the target's for
+  type and cast back to it: on arm64 any constant at float16, bfloat16,
+  float32 and float64, on riscv64 a zero at float16, float32 and float64,
+  and on x86_64 a zero at float16. On x86_64 a scalar selection between a
+  zero and a conversion of its compared value selects at that value's type
+  and converts after, and one between a zero and the float16 or float32 its
+  compared value widens compares that float16 or float32. The register class is the target's for
   a float: `w` on arm64, `x` on x86_64, `f` on riscv64. Every other use of
-  the zero, and every other zero, keeps the literal.
+  the constant, and every other constant, keeps the literal.
 - **Reason:** (b): backends lower a select of a value and a zero, by a
   comparison of the two, to a minimum or maximum that may keep the value's
   zero (`fminnm`/`fmaxnm` on AArch64, `fmin`/`fmax` on RISC-V, `fminf`/`fmaxf`
   at x86 float16); at float32 and float64 the x86 backend's `minss` and
   `maxss` pick as the select does. InstCombine rebuilds a select whose arm
   converts its compared value to pick the zero at a tie. Selects of the
-  compared value itself, and of vectors, keep their order. Under `Rune.jit`,
+  compared value itself, and of vectors, keep their order. AArch64's
+  `fminnm` and `fmaxnm` also return a quiet NaN for a signalling one, where
+  the select returns the constant, a comparison with a NaN being false;
+  x86's `minss` and RISC-V's `fmin` return what the select does. Under
+  `Rune.jit` on arm64 under Apple clang 17, a clamp to [-80, 80] by two
+  such selects gave a NaN, then -80, at a signalling NaN, where eager gives
+  80. Under `Rune.jit`,
   `Nx.where (Nx.less x z) x z` gave `-0.` on arm64 where eager gives `0.`,
   and on x86_64 `Nx.where (Nx.less z x) z x` gave `0.` at a float16 `-0.`.
   Converting after the selection, or comparing before the widening, keeps
@@ -2149,15 +2155,19 @@ Withdrawn: multi-device is out of scope, see README.
   HIP and Metal are untested, as is a GPU's selection of a float16 against
   a zero, which InstCombine may make pick `+0.` at `-0.`.
 - **Pinned by:** the Cstyle suite (`test/renderer/cstyle`): `zeros a
-  comparison reads › a float zero a comparison reads is opaque to a backend
-  that lowers it to an extreme, and a literal elsewhere › *`, `› a select
-  of a value and a zero picks the zero at -0., on the host › *` and `› a
+  comparison reads › a float constant a comparison reads is opaque to a
+  backend that lowers it to an extreme, and a literal elsewhere › *`, `› a
+  select of a value and a constant picks the constant at a signalling NaN,
+  on the host`, `› a select of a value and a zero picks the zero at -0., on
+  the host › *` and `› a
   select of a value and a zero, compared and selected at two types, picks as
   the select does, on the host › *`; rune's `rune jit` suite: `classes › a
   selection of a minimum against its constant is exact`, a selection on
   `minimum c x < c` at `c = 0.` over inputs holding `-0.`, in float16,
   float32 and float64, and `classes › a
-  selection of a value and a zero is exact › *`.
+  selection of a value and a zero is exact › *`; rune's `Lower_real` suite:
+  `clamped operands › exp of an operand clamped to [-80, 80] gives eager's
+  bits`.
 
 ## D89. A contraction of little reuse streams its operand of least reuse
 

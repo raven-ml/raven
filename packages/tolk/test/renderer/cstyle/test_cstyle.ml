@@ -2106,8 +2106,10 @@ let riscv64 = Cstyle.clang (target "CPU" "CLANG" "riscv64,rv64g")
 let barrier reg = Printf.sprintf "__asm__(\"\" : \"+%s\"(z))" reg
 
 (* Each Clang target, its register class for a float, the float types it
-   compares in, and those whose compared zeros its backend lowers to a minimum
-   or a maximum: x86_64 and riscv64 compare a bfloat16 in float32. *)
+   compares in, those whose compared zeros its backend lowers to a minimum or a
+   maximum, and whether it lowers so a select against any constant, whose
+   minimum or maximum then quiets a signalling NaN: x86_64 and riscv64 compare a
+   bfloat16 in float32. *)
 let clang_targets =
   Dtype.
     [
@@ -2115,22 +2117,24 @@ let clang_targets =
         arm64,
         "w",
         [ Float16; Bfloat16; Float32; Float64 ],
-        [ Float16; Bfloat16; Float32; Float64 ] );
-      ("x86_64", clang, "x", [ Float16; Float32; Float64 ], [ Float16 ]);
+        [ Float16; Bfloat16; Float32; Float64 ],
+        true );
+      ("x86_64", clang, "x", [ Float16; Float32; Float64 ], [ Float16 ], false);
       ( "riscv64",
         riscv64,
         "f",
         [ Float16; Float32; Float64 ],
-        [ Float16; Float32; Float64 ] );
+        [ Float16; Float32; Float64 ],
+        false );
     ]
 
 let per_target =
   List.concat_map
-    (fun (name, r, reg, dts, zeros) ->
-      List.map (fun dt -> (name, r, reg, dt, List.mem dt zeros)) dts)
+    (fun (name, r, reg, dts, zeros, constants) ->
+      List.map (fun dt -> (name, r, reg, dt, List.mem dt zeros, constants)) dts)
     clang_targets
 
-let target_name (name, _, _, dt, _) = name ^ ", " ^ Dtype.name dt
+let target_name (name, _, _, dt, _, _) = name ^ ", " ^ Dtype.name dt
 
 (* [data0[0] = c ? x : z], or [c ? z : x], stored at [stored]: [x] the value
    [data1[0]], loaded at [loaded] and converted to [selected], [c] a
@@ -2189,9 +2193,9 @@ let zeros_compared =
   group "zeros a comparison reads"
     [
       cases
-        "a float zero a comparison reads is opaque to a backend that lowers it \
-         to an extreme, and a literal elsewhere"
-        ~id:target_name per_target (fun (_, r, reg, dt, zeros) ->
+        "a float constant a comparison reads is opaque to a backend that \
+         lowers it to an extreme, and a literal elsewhere"
+        ~id:target_name per_target (fun (_, r, reg, dt, zeros, constants) ->
           (* a failure prints the source *)
           let says msg want uops =
             let src = render r uops in
@@ -2200,8 +2204,16 @@ let zeros_compared =
           in
           says "0" zeros (const_select dt 0.);
           says "-0" zeros (const_select dt (-0.));
-          says "1.5" false (const_select dt 1.5);
+          says "1.5" constants (const_select dt 1.5);
           says "a mask" false (zero_masked dt));
+      test
+        "a select of a value and a constant picks the constant at a signalling \
+         NaN, on the host" (fun () ->
+          let k = Run.program (Lazy.force !host) (const_select Float64 1.5) in
+          let snan = Int64.float_of_bits 0x7ff4_0000_0000_0000L in
+          match List.assoc 0 (Run.on_host k [ (1, [| `Float snan |]) ]) with
+          | [| `Float c |] -> equal float_exact 1.5 c
+          | _ -> failf "one float");
       cases "a select of a value and a zero picks the zero at -0., on the host"
         ~id:Dtype.name
         Dtype.[ Float16; Float32; Float64 ]
