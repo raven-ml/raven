@@ -145,19 +145,20 @@ let screens =
         [ char '/'; char 'q'; Key Enter ];
       screen_test "dashboard-120x40-16-colours" ~cols:120 ~rows:40 ~crashed:true
         ~profile:sixteen [];
-      screen_test "strips-120x40" ~cols:120 ~rows:40
+      screen_test "strips-120x40" ~cols:120 ~rows:40 ~crashed:true
         (overlay_two @ [ Key Enter ]);
       (* Without colour the cursor's strip is reverse video, its plot too. *)
-      screen_test "strips-120x40-no-colour" ~cols:120 ~rows:40 ~profile:no_colour
+      screen_test "strips-120x40-no-colour" ~cols:120 ~rows:40 ~crashed:true
+        ~profile:no_colour
         (overlay_two @ [ Key Enter ]);
       (* The last strips: a live run's machine, each filled to its floor. *)
-      screen_test "strips-machine-120x40" ~cols:120 ~rows:40
+      screen_test "strips-machine-120x40" ~cols:120 ~rows:40 ~crashed:true
         (overlay_two @ [ Key Enter ] @ times 20 (Key Down));
       (* Zoom's step cursor starts on the latest val/loss sample, and each
          move left goes back one sample. *)
-      screen_test "zoom-120x40" ~cols:120 ~rows:40
+      screen_test "zoom-120x40" ~cols:120 ~rows:40 ~crashed:true
         (overlay_two @ [ Key Enter; Key Enter ] @ times 8 (Key Left));
-      screen_test "info-120x40" ~cols:120 ~rows:40 [ char 'i' ];
+      screen_test "info-120x40" ~cols:120 ~rows:40 ~crashed:true [ char 'i' ];
       screen_test "help-120x40" ~cols:120 ~rows:40 ~crashed:true [ char '?' ];
       screen_test "help-80x24" ~cols:80 ~rows:24 ~crashed:true [ char '?' ];
       screen_test "dashboard-100x30" ~cols:100 ~rows:30 ~crashed:true [];
