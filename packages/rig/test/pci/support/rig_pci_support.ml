@@ -39,7 +39,10 @@ let largest_gap lo hi live =
 let fits ~gap n a = n <= gap / 2 && a <= (gap / 2) - n
 let on_linux = Sys.file_exists "/sys/bus/pci/devices"
 let flocks = not Sys.win32
-let ofd_locks = not Sys.win32
+
+external ofd_locks : unit -> bool = "rig_pci_test_ofd_locks"
+
+let ofd_locks = ofd_locks ()
 
 external now_ns : unit -> int = "rig_pci_test_now_ns"
 

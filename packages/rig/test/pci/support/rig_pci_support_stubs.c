@@ -356,15 +356,25 @@ value rig_pci_test_close_number(value v_n) {
 #endif
 }
 
+/* Whether the system has open file description locks. */
+value rig_pci_test_ofd_locks(value unit) {
+  (void)unit;
+#ifdef F_OFD_SETLK
+  return Val_true;
+#else
+  return Val_false;
+#endif
+}
+
 /* Takes a read lock of a new open file description over the file at
    [v_path], without waiting, as a memory file's process holds one, and
    returns the descriptor, whose close gives the lock back. Raises Unix_error
    if it cannot be opened or locked. */
 value rig_pci_test_ofd_hold(value v_path) {
-#ifdef _WIN32
+#ifndef F_OFD_SETLK
   (void)v_path;
-  caml_failwith("rig_pci_test_ofd_hold: Windows has no open file description "
-                "locks");
+  caml_failwith("rig_pci_test_ofd_hold: the system has no open file "
+                "description locks");
 #else
   CAMLparam1(v_path);
   int fd = open(String_val(v_path), O_RDONLY | O_CLOEXEC);
@@ -383,10 +393,10 @@ value rig_pci_test_ofd_hold(value v_path) {
    a write lock would meet, tested through a new descriptor, which places
    none. Raises Unix_error if the file cannot be opened. */
 value rig_pci_test_ofd_held(value v_path) {
-#ifdef _WIN32
+#ifndef F_OFD_GETLK
   (void)v_path;
-  caml_failwith("rig_pci_test_ofd_held: Windows has no open file description "
-                "locks");
+  caml_failwith("rig_pci_test_ofd_held: the system has no open file "
+                "description locks");
 #else
   CAMLparam1(v_path);
   int fd = open(String_val(v_path), O_RDONLY | O_CLOEXEC);

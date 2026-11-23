@@ -107,11 +107,15 @@ value caml_rig_pci_flock(value fd) {
    (fcntl(2): "If the lock could be placed, fcntl() does not actually place
    it"), so [fd]'s own description, and a forked child's copy of it, hold
    nothing. Holds the runtime: nothing waits. */
+#ifdef F_OFD_GETLK
 value caml_rig_pci_sysmem_held(value fd) {
   struct flock l = {.l_type = F_WRLCK, .l_whence = SEEK_SET};
   if (fcntl(Int_val(fd), F_OFD_GETLK, &l) != 0) caml_uerror("fcntl", Nothing);
   return Val_bool(l.l_type != F_UNLCK);
 }
+#else
+FAILS1(caml_rig_pci_sysmem_held, "fcntl")
+#endif
 
 /* Maps [n] bytes of [fd] from [off], on a page, shared, not inherited by
    children. Nothing is populated, so it holds the runtime. madvise is

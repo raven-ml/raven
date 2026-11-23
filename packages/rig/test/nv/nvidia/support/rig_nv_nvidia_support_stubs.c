@@ -24,6 +24,12 @@
 #include <unistd.h>
 #endif
 
+/* FreeBSD has no MAP_NORESERVE: an inaccessible mapping reserves no swap
+   there. */
+#if !defined(_WIN32) && !defined(MAP_NORESERVE)
+#define MAP_NORESERVE 0
+#endif
+
 #if !defined(_WIN32)
 /* The file numbers the suites look at: past the limits they set. */
 #define FILES 4096

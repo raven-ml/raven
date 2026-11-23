@@ -213,10 +213,12 @@ static void advise_file(intnat h, char *pages, int64_t pos, int64_t n) {
 
 /* POSIX */
 
+#if defined(__linux__) || defined(__APPLE__)
 static void append(unsigned char *id, size_t *len, const void *p, size_t n) {
   memcpy(id + *len, p, n);
   *len += n;
 }
+#endif
 
 #if defined(__linux__)
 
