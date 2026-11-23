@@ -11,9 +11,13 @@ type case
 
 val gen : case Windtrap.Gen.t
 (** [gen] generates cases at [float64], [float32], [float16] and [bfloat16]:
-    lanes of one element to a few thousand, of values within a few units to
-    past [exp]'s range, about [0.] or far from it; [-inf] elements, or a NaN
-    or a [+inf] in every other lane; scales of [1.] and others. *)
+    lanes of one element to a few thousand, of values within a few units to past
+    [exp]'s range, about [0.] or far from it; [-inf] elements, or a NaN or a
+    [+inf] in every other lane; scales of [1.] and others. *)
+
+val examples : case list
+(** [examples] is a case of each program [gen] draws from: every dtype at every
+    lane length {!gen} draws. *)
 
 val law :
   (module Nx.Devices) ->
@@ -23,16 +27,20 @@ val law :
   ?log_ulps:int ->
   case ->
   unit
-(** [law s ~f64 ~chain ~exp_ulps ~log_ulps c] checks that [Nx.softmax] of
-    [c], compiled on [s]'s first device, is within rune.mli's row for it of
-    the reference, as {!Nx_softmax_support.check} checks it, [E] being
-    [exp_ulps], [β] being [β(n)], or the larger of [β(n)] and [n - 1] with
-    [chain], for a device where a sum may keep one running sum, and a
-    narrow dtype's rounding adding its unit roundoff. With [log_ulps], [L]
-    in [Nx.log_softmax]'s row, it checks [Nx.log_softmax] of [c] so too, as
-    {!Nx_softmax_support.check_log} checks it. An element whose [scale x] is
-    [-inf] in a lane of finite greatest is [+0.] ([-inf]), and a lane
-    holding a NaN or of an infinite greatest is NaN. Without [f64] it
-    discards a [float64] case, for a device whose kernels lack [float64].
-    It covers lanes of one element, lanes far from [0.], [-inf] elements,
-    NaN lanes and {!Nx_softmax_support.covers}' cases. *)
+(** [law s ~f64 ~chain ~exp_ulps ~log_ulps c] checks that [Nx.softmax] of [c],
+    compiled on [s]'s first device, is within rune.mli's row for it of the
+    reference, as {!Nx_softmax_support.check} checks it, [E] being [exp_ulps],
+    [β] being [β(n)], or the larger of [β(n)] and [n - 1] with [chain], for a
+    device where a sum may keep one running sum, and a narrow dtype's rounding
+    adding its unit roundoff. With [log_ulps], [L] in [Nx.log_softmax]'s row, it
+    checks [Nx.log_softmax] of [c] so too, as {!Nx_softmax_support.check_log}
+    checks it. An element whose [scale x] is [-inf] in a lane of finite greatest
+    is [+0.] ([-inf]), and a lane holding a NaN or of an infinite greatest is
+    NaN. Without [f64] it discards a [float64] case, for a device whose kernels
+    lack [float64]. It covers lanes of one element, lanes far from [0.], [-inf]
+    elements, NaN lanes and {!Nx_softmax_support.covers}' cases.
+
+    A case draws one of a fixed set of programs, a dtype, a shape and a scale,
+    and its elements. [law s] compiles each program's functions once, at the
+    first case that draws it, so [law s] is bound once and applied to every
+    case. *)

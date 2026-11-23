@@ -3396,13 +3396,15 @@ let exp16 dt () = Exps.law16 (flushing ()) ~flushes:true dt
    Log_softmax too on an NVIDIA GPU, [L] {!Nx.log}'s 2 ulps: rune.mli states
    no [log] bound where float32's subnormals flush. rune.mli states no [exp]
    bound on AMD's, so the law skips them. *)
+let softmax_on = lazy (Softmaxes.law (snd (on_gpu ())))
+
 let softmax_law c =
-  let d, s = on_gpu () in
+  let d, _ = on_gpu () in
   let device = (Tolk_engine.target d).Tolk.Helpers.Target.device in
-  let f64 = has_float64 d in
-  if flushes d then Softmaxes.law s ~f64 ~chain:true ~exp_ulps:9 c
+  let f64 = has_float64 d and law = Lazy.force softmax_on in
+  if flushes d then law ~f64 ~chain:true ~exp_ulps:9 c
   else if String.equal device "CUDA" || String.equal device "NV" then
-    Softmaxes.law s ~f64 ~chain:true ~exp_ulps:2 ~log_ulps:2 c
+    law ~f64 ~chain:true ~exp_ulps:2 ~log_ulps:2 c
   else skip ~reason:("rune.mli states no exp bound on " ^ device) ()
 
 (* Kinds compiled to nx's own sequence give eager's bits on an NVIDIA GPU
@@ -3762,8 +3764,9 @@ let () =
            ];
          group "softmax"
            [
-             prop "softmax and log_softmax within rune.mli's bounds"
-               Softmaxes.gen softmax_law;
+             prop ~examples:Softmaxes.examples
+               "softmax and log_softmax within rune.mli's bounds" Softmaxes.gen
+               softmax_law;
            ];
          group "multiply-adds"
            [

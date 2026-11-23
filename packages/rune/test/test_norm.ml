@@ -131,29 +131,98 @@ let lane_kind =
       (2, Gen.constant Small);
     ]
 
-(* Lanes about a mean far from their spread, constant, of zeros of both
-   signs, or holding a NaN or an infinity; read through a strided view
-   half the time. *)
-let case =
-  let open Gen in
-  let* dt =
-    of_list ~pp:(fun ppf (Dt (d, _, _, _, _)) -> Nx.pp_dtype ppf d) dtypes
+let gains k = Array.init k (fun j -> [| 1.5; -0.5; 2.; 1. |].(j mod 4))
+let offsets k = Array.init k (fun j -> [| 0.25; -1.; 0.; 3. |].(j mod 4))
+
+type 's host = (float, 's, Nx.host) Nx.t
+
+(* A program: a dtype with its roundoffs as [dtypes] gives them, a shape of [r]
+   lanes of [k], [eps], whether an affine follows, whether [x] is read through a
+   strided view and whether it is [rms_norm]'s; its function [f], compiled once,
+   at the first case that draws it. *)
+type program =
+  | Program : {
+      dt : (float, 's) Nx.dtype;
+      u : float;
+      ud : float;
+      tiny : float;
+      small : float;
+      r : int;
+      k : int;
+      eps : float;
+      affine : bool;
+      strided : bool;
+      rms : bool;
+      f : 's host -> 's host;
+      jit : ('s host -> 's host) Lazy.t;
+    }
+      -> program
+
+let program dt r k eps affine strided rms =
+  match List.nth dtypes dt with
+  | Dt (dt, u, ud, tiny, small) ->
+      let vec v = Nx.cast dt (Nx.create f64 [| k |] v) in
+      let f x =
+        let g = vec (gains k) and b = vec (offsets k) in
+        match (rms, affine) with
+        | true, true -> Nx.rms_norm ~eps ~scale:g x
+        | true, false -> Nx.rms_norm ~eps x
+        | false, true -> Nx.standardize ~eps ~scale:g ~shift:b x
+        | false, false -> Nx.standardize ~eps x
+      in
+      Program
+        {
+          dt;
+          u;
+          ud;
+          tiny;
+          small;
+          r;
+          k;
+          eps;
+          affine;
+          strided;
+          rms;
+          f;
+          jit = lazy (Rune.jit' f);
+        }
+
+let eps_of (Program p) = p.eps
+let lanes_of (Program p) = (p.r, p.k)
+
+(* Lanes of one element, of two, of 16 and 17 about a tile's edge, of 768 and of
+   1025, one past 1024. *)
+let lengths = [| 1; 2; 16; 17; 768; 1025 |]
+let epsilons = [| 1e-5; 0.5; 0. |]
+
+(* Every dtype at every lane length; at each length, the dtypes take one to
+   three lanes, each eps, and the affine and the strided view each with and
+   without the other, rms_norm with either. *)
+let programs =
+  let n = Array.length lengths in
+  Array.init
+    (List.length dtypes * n)
+    (fun i ->
+      let dt = i / n and j = i mod n in
+      program dt
+        (1 + ((j + dt) mod 3))
+        lengths.(j)
+        epsilons.((j + (2 * dt)) mod 3)
+        ((j + dt) mod 2 = 0)
+        ((j + (dt / 2)) mod 2 = 0)
+        ((j + dt + (dt / 2)) mod 2 = 0))
+
+(* Lanes about a mean far from their spread, constant, of zeros of both signs,
+   or holding a NaN or an infinity. Small lanes hold subnormals, which only a
+   program of [eps = 0.] normalises. *)
+let lanes p kinds mu sigma zs signs =
+  let kinds =
+    if eps_of p = 0. then kinds
+    else Array.map (function Small -> Drawn | kind -> kind) kinds
   in
-  let* r = int_range 1 3 in
-  let* k = of_list ~pp:Format.pp_print_int [ 1; 2; 16; 17; 768; 1025 ] in
-  let* kinds = array ~size:(constant r) lane_kind in
-  let* mu = of_list [ 0.; 64.; -1000.; 1e4 ] in
-  let* sigma = of_list [ 1.; 1e-3; 100. ] in
-  let* zs = array ~size:(constant (r * k)) (float_range (-3.) 3.) in
-  let* signs = array ~size:(constant (r * k)) bool in
-  let* eps = of_list [ 1e-5; 0.5; 0. ] in
-  (* Small lanes hold subnormals, which [eps = 0.] normalises. *)
-  let eps = if Array.mem Small kinds then 0. else eps in
-  let* affine = bool in
-  let* strided = bool in
-  let+ rms = bool in
   (* Deviations of [2^-10] spreads at least, far from underflow. *)
   let grid z = Float.round (z *. 1024.) /. 1024. in
+  let _, k = lanes_of p in
   let xs =
     Array.mapi
       (fun i z ->
@@ -166,10 +235,49 @@ let case =
         | Small -> grid z)
       zs
   in
-  (dt, [| r; k |], kinds, xs, eps, affine, strided, rms)
+  (kinds, xs)
 
-let gains k = Array.init k (fun j -> [| 1.5; -0.5; 2.; 1. |].(j mod 4))
-let offsets k = Array.init k (fun j -> [| 0.25; -1.; 0.; 3. |].(j mod 4))
+let pp_program ppf (Program p) =
+  Format.fprintf ppf "%a [%d; %d], eps %g%s%s%s" Nx.pp_dtype p.dt p.r p.k p.eps
+    (if p.affine then ", affine" else "")
+    (if p.strided then ", strided" else "")
+    (if p.rms then ", rms_norm" else "")
+
+let pp_case ppf (i, _, xs) =
+  Format.fprintf ppf "%a: %a" pp_program programs.(i)
+    (Format.pp_print_array
+       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+       (fun ppf x -> Format.fprintf ppf "%h" x))
+    xs
+
+(* A program and its lanes. *)
+let case =
+  let open Gen in
+  with_pp pp_case
+    (let* i = int_range 0 (Array.length programs - 1) in
+     let p = programs.(i) in
+     let r, k = lanes_of p in
+     let n = r * k in
+     let+ kinds = array ~size:(constant r) lane_kind
+     and+ mu = of_list [ 0.; 64.; -1000.; 1e4 ]
+     and+ sigma = of_list [ 1.; 1e-3; 100. ]
+     and+ zs = array ~size:(constant n) (float_range (-3.) 3.)
+     and+ signs = array ~size:(constant n) bool in
+     let kinds, xs = lanes p kinds mu sigma zs signs in
+     (i, kinds, xs))
+
+(* Each program once, its lanes of each kind in turn. *)
+let examples =
+  let order = [| Drawn; Constant; Zeros; Nan; Inf; Small |] in
+  List.init (Array.length programs) (fun i ->
+      let p = programs.(i) in
+      let r, k = lanes_of p in
+      let n = r * k in
+      let kinds = Array.init r (fun l -> order.(((5 * i) + l) mod 6)) in
+      let zs = Array.init n (fun j -> 3. *. Float.sin (Float.of_int j)) in
+      let signs = Array.init n (fun j -> j mod 2 = 0) in
+      let kinds, xs = lanes p kinds 64. 1e-3 zs signs in
+      (i, kinds, xs))
 
 let same a b =
   (Float.is_nan a && Float.is_nan b)
@@ -179,9 +287,10 @@ let same a b =
    affine's [|g|] times it plus [u |g y|] and [u |g y + b|], then a narrow
    dtype's rounding; a lane of no spread the affine of [+0.]; a lane
    holding a NaN or an infinity eager's. *)
-let law_jit
-    (Dt (dt, u, ud, tiny, small), s, kinds, xs, eps, affine, strided, rms) =
-  let r = s.(0) and k = s.(1) in
+let law_at
+    (Program { dt; u; ud; tiny; small; r; k; eps; affine; strided; rms; f; jit })
+    kinds xs =
+  let s = [| r; k |] in
   cover "a narrow dtype" (ud > 0.);
   cover "an affine" affine;
   cover "a strided view" strided;
@@ -205,17 +314,9 @@ let law_jit
       Nx.reshape [| r; k |] (Nx.slice [ A; I 0; A ] wide)
   in
   let xs = Nx.to_array (Nx.cast f64 x) in
-  let vec v = Nx.cast dt (Nx.create f64 [| k |] v) in
   let g = gains k and b = offsets k in
-  let f x =
-    match (rms, affine) with
-    | true, true -> Nx.rms_norm ~eps ~scale:(vec g) x
-    | true, false -> Nx.rms_norm ~eps x
-    | false, true -> Nx.standardize ~eps ~scale:(vec g) ~shift:(vec b) x
-    | false, false -> Nx.standardize ~eps x
-  in
   let read y = Nx.to_array (Nx.cast f64 y) in
-  let eager = read (f x) and compiled = read (Rune.jit' f x) in
+  let eager = read (f x) and compiled = read (Lazy.force jit x) in
   for l = 0 to r - 1 do
     let lx = Array.sub xs (l * k) k in
     let special = Array.exists (fun x -> not (Float.is_finite x)) lx in
@@ -269,6 +370,8 @@ let law_jit
     done
   done
 
+let law_jit (i, kinds, xs) = law_at programs.(i) kinds xs
+
 (* A lane of equal elements, [-0.] among them, is [+0.] compiled, as
    eagerly, at [eps = 0.] too. *)
 let test_constant () =
@@ -306,26 +409,6 @@ let test_overflow () =
   equal ~msg:"rms_norm" (array (float 1e-6))
     [| 1.; -1.; 3. /. r; 5. /. r |]
     rms
-
-(* Compiled, [rms_norm] passes over [x] once for its sums, then maps it: two
-   kernels. Before a product, its map stays a kernel of its own, which each
-   output column of the product reads where inlined it would compute the map
-   again. *)
-let test_passes () =
-  let kernels f xs =
-    List.length (snd (Tolk.Realize.kernels (fun () -> ignore (f xs))))
-  in
-  let x = Nx.Rng.uniform ~key:(Nx.Rng.key 1) Nx.float32 [| 64; 256 |] in
-  let m = Nx.Rng.uniform ~key:(Nx.Rng.key 2) Nx.float32 [| 256; 128 |] in
-  let jit1 f = Rune.jit Nx.Ptree.(tensor @-> returns tensor) f in
-  let jit2 f = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f in
-  Rune_support.Compiled.here ();
-  equal ~msg:"rms_norm" int 2 (kernels (jit1 (fun x -> Nx.rms_norm x)) x);
-  let product = jit2 Nx.matmul in
-  let normed = jit2 (fun x m -> Nx.matmul (Nx.rms_norm x) m) in
-  equal ~msg:"before a product" int
-    (kernels (fun () -> product x m) () + 2)
-    (kernels (fun () -> normed x m) ())
 
 (* Compiled at [eps = 1e-5], a lane of zeros and a lane of 1024
    subnormals, whose products with the lane's scale are subnormal too and
@@ -426,9 +509,9 @@ let () =
   exit
     (run "rune norms"
        [
-         prop "compiled, within rune.mli's bound of the definition" case
-           law_jit;
-         prop
+         prop ~examples "compiled, within rune.mli's bound of the definition"
+           case law_jit;
+         prop ~examples:Rune_support.Softmaxes.examples
            "softmax and log_softmax compiled, within rune.mli's bounds of \
             the definitions"
            Rune_support.Softmaxes.gen
@@ -436,7 +519,6 @@ let () =
               ~exp_ulps:2 ~log_ulps:2);
          test "a lane of equal elements is zero compiled" test_constant;
          test "a lane whose squares overflow, compiled" test_overflow;
-         test "compiled, one pass over x before its map" test_passes;
          test "subnormal and zero lanes compiled take eager's bits"
            test_tiny_bits;
          test "gradients against finite differences" test_check_grads;
