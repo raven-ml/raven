@@ -16,7 +16,11 @@ let fail fmt = Printf.ksprintf failwith fmt
 
 (* Options *)
 
-let usage = "main.exe [OPTION...] AUDIO...\nOptions:"
+(* The program's name in its messages, the same wherever it runs: [Arg] would
+   take [Sys.argv.(0)], which names it by the path it was run from, in full on
+   Windows. *)
+let name = "main.exe"
+let usage = name ^ " [OPTION...] AUDIO...\nOptions:"
 
 (* "None" or a value, as upstream's optional_int and optional_float. *)
 let optional of_string = function "None" -> None | s -> Some (of_string s)
@@ -141,7 +145,9 @@ let specs =
 
 let parse () =
   let anon a = audio := a :: !audio in
-  (try Arg.parse_argv Sys.argv (Arg.align specs) anon usage with
+  let argv = Array.copy Sys.argv in
+  argv.(0) <- name;
+  (try Arg.parse_argv argv (Arg.align specs) anon usage with
   | Arg.Help m ->
       print_string m;
       exit 0
@@ -149,7 +155,7 @@ let parse () =
       prerr_string m;
       exit 2);
   let missing what =
-    prerr_string ("main.exe: " ^ what ^ " is required\n");
+    prerr_string (name ^ ": " ^ what ^ " is required\n");
     exit 2
   in
   if !model = "" then missing "--model";

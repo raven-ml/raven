@@ -55,7 +55,7 @@ Options it refuses:
   main.exe: --model is required
   [2]
   $ ../../bin/main.exe $M -f doc talk.flac
-  ../../bin/main.exe: wrong argument 'doc'; option '-f' expects one of: all txt vtt srt tsv json.
+  main.exe: wrong argument 'doc'; option '-f' expects one of: all txt vtt srt tsv json.
   main.exe [OPTION...] AUDIO...
   Options:
     --model FILE                          a checkpoint, as tiny.en.pt
@@ -93,9 +93,10 @@ Options it refuses:
   Skipping talk.flac due to Whisper.Transcript: clip (500, 100) after a clip ending at 0
   [1]
 
-A rank file that does not fit the model:
+A rank file that does not fit the model. The directory ends in /, so that the
+file's name, joined to it, reads the same on Windows:
 
   $ mkdir short; head -n 500 ranks/gpt2.tiktoken > short/gpt2.tiktoken
-  $ ../../bin/main.exe --model ../upstream/transcript.pt --tokenizer short talk.flac
+  $ ../../bin/main.exe --model ../upstream/transcript.pt --tokenizer short/ talk.flac
   Fatal error: exception Failure("short/gpt2.tiktoken: its ranks leave 599 languages in the model's 2608 tokens, not 99")
   [2]
