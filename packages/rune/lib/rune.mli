@@ -1991,12 +1991,14 @@ val jit :
     Over several devices a program's {!Nx.check}s, additions to a {!Total},
     {!switch}es, {!val-remat}s, custom rules and calls compile, each as on one
     device, over its values' pieces. It declines a program that holds another
-    construct than {!detach}, a {!scan} or an {!iterate}; a scan over rows
-    cut along axis 0, an iterate that stacks its steps, and a loop whose step
-    gives a carry another placement; a check inside a loop's step or a
-    switch's branch; and an addition inside a loop's step, a branch or a
-    function a construct runs, or at another placement than its {!Total}'s
-    running value. An emission compiles as on one device
+    construct than {!detach}, a {!scan} or an {!iterate}; a scan over rows cut
+    along axis 0, an iterate that stacks its steps, an iterate inside a {!vmap}
+    whose lanes' stops lie in pieces on several devices, a loop whose step gives
+    a carry another placement, and a switch whose branches give their results
+    other placements, as a map's untaken lanes do; a check inside a loop's step,
+    an iterate's stop or a switch's branch; and an addition inside a loop's
+    step, a branch or a function a construct runs, or at another placement than
+    its {!Total}'s running value. An emission compiles as on one device
     ({!section-emissions}). It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}).
     A program whose values a host without linked code only holds or views,

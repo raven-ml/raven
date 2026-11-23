@@ -53,6 +53,81 @@ let () =
       Rune.jit
         Nx.Ptree.(tensor @-> tensor @-> returns tensor)
         checked (index ()) (x ()));
+  let trips = Nx.place S.on (Nx.zeros Nx.float32 [| 3 |]) in
+  let scanned x =
+    fst
+      (Rune.scan' ~init:x
+         (fun c _ ->
+           Nx.check Nx.Ptree.tensor (Nx.less_s c 100.) c (fun _ _ -> Exit);
+           (Nx.mul_s c 2., c))
+         trips)
+  in
+  report "a check inside a scan's step"
+    ~eager:(fun () -> scanned (x ()))
+    (fun () -> Rune.jit' scanned (x ()));
+  let remat_checked i x =
+    Rune.switch Nx.Ptree.tensor i
+      [
+        (fun () ->
+          Rune.remat
+            Nx.Ptree.(tensor @-> returns tensor)
+            (fun x ->
+              Nx.check Nx.Ptree.tensor (Nx.less_s x 10.) x (fun _ _ -> Exit);
+              x)
+            x);
+        (fun () -> x);
+      ]
+  in
+  report "a check inside a remat inside a switch's branch"
+    ~eager:(fun () -> remat_checked (index ()) (x ()))
+    (fun () ->
+      Rune.jit
+        Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+        remat_checked (index ()) (x ()));
+  (* Additions to a total inside a construct the compiler declines with them,
+     collected on the argument's placement. *)
+  let t = Rune.Total.make () in
+  let total f =
+    let init = Nx.place (S.split ~axis:0) (Nx.zeros Nx.float32 [| 4 |]) in
+    snd (Rune.Total.collect t ~init f)
+  in
+  let added i x =
+    Rune.switch Nx.Ptree.tensor i
+      [
+        (fun () ->
+          Rune.Total.add t x;
+          x);
+        (fun () -> x);
+      ]
+  in
+  report "a total inside a switch's branch"
+    ~eager:(fun () -> total (fun () -> added (index ()) (x ())))
+    (fun () ->
+      total (fun () ->
+          Rune.jit
+            Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+            added (index ()) (x ())));
+  let rematted x =
+    Rune.remat
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x ->
+        Rune.Total.add t x;
+        Nx.mul_s x 2.)
+      x
+  in
+  report "a total inside a remat's function"
+    ~eager:(fun () -> total (fun () -> rematted (x ())))
+    (fun () -> total (fun () -> Rune.jit' rematted (x ())));
+  let checked_stop x =
+    Nx.check Nx.Ptree.tensor (Nx.less_s x 100.) x (fun _ _ -> Exit);
+    Nx.greater_s (Nx.max x) 10.
+  in
+  let doubled x =
+    Rune.iterate' ~max:5 ~until:checked_stop (fun x -> Nx.mul_s x 2.) x
+  in
+  report "a check inside an iterate's stop"
+    ~eager:(fun () -> doubled (x ()))
+    (fun () -> Rune.jit' doubled (x ()));
   let on k = Nx.Placement.device S.v (List.nth ds k) in
   let s () = Nx.place (on 1) (Nx.ones Nx.float32 [||]) in
   let x () = Nx.place (on 0) (Nx.ones Nx.float32 [| 4 |]) in

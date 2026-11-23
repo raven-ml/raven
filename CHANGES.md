@@ -600,6 +600,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled program over several devices that declines a check names the
+  construct around it, as "a scan's step", "an iterate's stop" or
+  "Rune.switch's branch", where it named a loop's step, and one that declines
+  an addition to a total names its construct, as "a total in Rune.switch",
+  where a switch or a remat read as unsupported. The reason is the one
+  `RUNE_JIT_DEBUG` prints and a set without kernels raises.
 - `Rune.jit` declines a program with a kernel in a data type its device's
   kernels lack, as float64 on Metal: nx evaluates it, or on a set without
   kernels the call raises `Invalid_argument` naming the data type, where

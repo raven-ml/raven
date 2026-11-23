@@ -459,13 +459,17 @@ let kept (p : Program.t) noted =
       | None -> Some m)
     noted
 
-(* [cut ~kind ~home ~name p forms] is [p] split, as {!split}, by a tracer of
-   [kind], its captures, and its moves, each with the value it makes, in
-   order. [home] is the device the split program computes on, where an
-   iterate's stop and a switch's index lie. *)
-let rec cut ~kind ~in_loop ~(home : Rig.t) ~name (p : Program.t) forms =
+(* [cut ~kind ~checked ~home ~name p forms] is [p] split, as {!split}, by a
+   tracer of [kind], its captures, and its moves, each with the value it makes,
+   in order. [home] is the device the split program computes on, where an
+   iterate's stop and a switch's index lie. [checked] names the innermost loop's
+   step or stop, or switch's branch, that holds [p], where a check declines,
+   [None] outside every one. A construct threads the totals its programs add to
+   through its seeds, which {!looped} declines: a staged program that adds
+   without them declines too. *)
+let rec cut ~kind ~checked ~(home : Rig.t) ~name (p : Program.t) forms =
   if kind <> Trace.Jit && Array.length p.adds > 0 then
-    decline "a total in a loop over several devices";
+    decline "a total over several devices";
   if p.emits then decline "an emission over several devices";
   let leaves = Array.map piece_forms forms in
   let moves = ref [] and outputs = ref [||] in
@@ -504,9 +508,9 @@ let rec cut ~kind ~in_loop ~(home : Rig.t) ~name (p : Program.t) forms =
           | Op { by; op = traced; base } -> (
               let op = Nx.Prim.map lookup traced in
               let e = engine ri ~gathered ~name ~by moves in
-              match op with
-              | Check _ when in_loop ->
-                  decline "a check in a loop's step over several devices"
+              match (op, checked) with
+              | Check _, Some part ->
+                  decline "a check in %s over several devices" part
               | _ ->
                   let r = Nx.Prim.partition e ~by op in
                   bind := base;
@@ -516,7 +520,7 @@ let rec cut ~kind ~in_loop ~(home : Rig.t) ~name (p : Program.t) forms =
               let c = Program.map_operands { f = lookup } c in
               Array.iteri
                 (fun k v -> env.(base + k) <- Some v)
-                (looped ~in_loop ~home ~name ri moves c)
+                (looped ~checked ~home ~name ri moves c)
           (* Attention's derivative is its default's operations, each
              partitioned. *)
           | Do { c = Attention_linear a as c; base } ->
@@ -642,12 +646,14 @@ let rec cut ~kind ~in_loop ~(home : Rig.t) ~name (p : Program.t) forms =
    along axis 0, which eager computation does not read where they lie, and
    rows cut along an axis of one element, whose rows [Nx.get], which reads
    them eagerly, may route elsewhere than the step's rows lie. *)
-and looped ~in_loop ~home ~name ri moves c =
+and looped ~checked ~home ~name ri moves c =
   (* The moves a loop's programs keep, each trip's, noted with the loop's first
      result once it is made. *)
   let inner = ref [] in
-  let split ?(in_loop = true) q forms =
-    let s, captures, _ = cut ~kind:Staged ~in_loop ~home ~name q forms in
+  (* [c]'s [part], where a check declines. *)
+  let enter part = Some (Printf.sprintf "%s's %s" (construct_name c) part) in
+  let split checked q forms =
+    let s, captures, _ = cut ~kind:Staged ~checked ~home ~name q forms in
     inner := !inner @ s.moves;
     (s, captures)
   in
@@ -706,7 +712,7 @@ and looped ~in_loop ~home ~name ri moves c =
       in
       let xs = Array.map rows xs in
       let s, more =
-        split step
+        split (enter "step") step
           (Array.concat [ forms init; Array.map Loops.row xs; forms captures ])
       in
       carries s (Array.length init);
@@ -739,10 +745,10 @@ and looped ~in_loop ~home ~name ri moves c =
       } ->
       let carry = forms init in
       let s, step_more =
-        split step (Array.append carry (forms step_captures))
+        split (enter "step") step (Array.append carry (forms step_captures))
       in
       let u, until_more, noted =
-        cut ~kind:Staged ~in_loop:true ~home ~name until
+        cut ~kind:Staged ~checked:(enter "stop") ~home ~name until
           (Array.append carry (forms until_captures))
       in
       carries s (Array.length init);
@@ -810,7 +816,7 @@ and looped ~in_loop ~home ~name ri moves c =
   | Remat { body; args; seeds = [||]; differentiated } ->
       (* The barrier stays the compiler's: each piece of an operand is stored
          apart there, and read where it lies. *)
-      let s, more = split ~in_loop body (forms args) in
+      let s, more = split checked body (forms args) in
       results s
         (note ~each:"" @@ Program.perform
            (Remat
@@ -824,7 +830,9 @@ and looped ~in_loop ~home ~name ri moves c =
       (* Each branch split over the captures' pieces, their captures as one.
          The index, a 0-d value, is read on [home]: its copy there, or else
          the first device's, which the compiler then moves. *)
-      let cuts = Array.map (fun b -> split b (forms captures)) branches in
+      let cuts =
+        Array.map (fun b -> split (enter "branch") b (forms captures)) branches
+      in
       let s = fst cuts.(0) in
       (* A switch's results are one storage per piece: a branch whose results
          lie elsewhere than the first's, as a map's untaken lanes do, has none
@@ -871,9 +879,9 @@ and looped ~in_loop ~home ~name ri moves c =
               }))
   | Iterate { rows = Some _; _ } ->
       decline "an iterate that stacks its steps over several devices"
-  | Scan _ | Iterate _ -> decline "a total over several devices"
-  | c -> decline "%s over several devices" (construct_name c)
+  (* Each construct left threads totals through its seeds. *)
+  | c -> decline "a total in %s over several devices" (construct_name c)
 
 let split ~name ~home p forms =
-  let s, _, _ = cut ~kind:Jit ~in_loop:false ~home ~name p forms in
+  let s, _, _ = cut ~kind:Jit ~checked:None ~home ~name p forms in
   s
