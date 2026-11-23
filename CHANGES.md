@@ -3558,6 +3558,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- nx builds on ppc64le, riscv64 and loongarch64: `nx_kinds.h` stopped with an
+  error there, finding no fused multiply-add.
 - `Nx.conv` of one channel a group over few channels last, such as a blur's
   pass over an RGB image, reads the image in place on nx.cpu: a 1080p
   image's 1 x 5 pass takes about a third of the time. Results keep their bits.

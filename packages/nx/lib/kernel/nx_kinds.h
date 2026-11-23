@@ -33,10 +33,13 @@
    same on every target that rounds as this header assumes:
 
    - C: -ffp-contract=off, no -ffast-math, subnormals kept, and a fused
-     multiply-add instruction: x86-64's -mfma, which defines __FMA__, or
-     arm64's, which defines __ARM_FEATURE_FMA. Without either the header
-     stops with an error: a C library's fma may round twice, as
-     mingw-w64's does at subnormal results.
+     multiply-add instruction that the compiler gives fma: x86-64's -mfma,
+     which defines __FMA__, or one that the compiler or the C library
+     states as fast (__FP_FAST_FMA, or C99's FP_FAST_FMA), or one of the
+     instruction sets whose floating point has it: arm64, 64-bit POWER,
+     z/Architecture, RISC-V's D extension and LoongArch's double
+     precision. Without one the header stops with an error: a C library's
+     fma may round twice, as mingw-w64's does at subnormal results.
    - CUDA: --fmad=false -prec-div=true -prec-sqrt=true -ftz=false.
    - Metal: -fno-fast-math -ffp-contract=off. Metal has no f64, and this
      header defines no f64 function there. Apple GPUs flush f32
@@ -81,9 +84,16 @@
 #endif
 
 /* fma rounding once: the instruction, which CUDA, HIP and Metal have on
-   their devices and a host C unit is compiled with. */
+   their devices and a host C unit is compiled with. gcc states it for every
+   target as __FP_FAST_FMA, and glibc for POWER as FP_FAST_FMA; clang states
+   it on arm64 alone, so the other instruction sets are named. */
 #if !defined(__METAL_VERSION__) && !defined(__CUDACC__) && !defined(__HIP__) && \
-    !defined(__FMA__) && !defined(__ARM_FEATURE_FMA)
+    !defined(__FMA__) && !defined(__ARM_FEATURE_FMA) &&                       \
+    !(defined(__FP_FAST_FMA) && defined(__FP_FAST_FMAF)) &&                   \
+    !(defined(FP_FAST_FMA) && defined(FP_FAST_FMAF)) &&                       \
+    !defined(__powerpc64__) && !defined(__s390x__) &&                         \
+    !(defined(__riscv_flen) && __riscv_flen >= 64) &&                         \
+    !defined(__loongarch_double_float)
 #error "nx_kinds.h needs a fused multiply-add instruction: -mfma on x86-64"
 #endif
 
