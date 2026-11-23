@@ -8,6 +8,12 @@
    stretch it holds the lock, the process's for the whole watch. And a job
    on the pool that lasts until a watched thread releases the lock. */
 
+/* clock_gettime, its CPU clocks and nanosleep are POSIX's, which -std=c11
+   hides: glibc shows them through the _REENTRANT of OCaml's -pthread, musl
+   does not. Before any header, since the first one fixes what all of them
+   declare. */
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>

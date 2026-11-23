@@ -3,6 +3,11 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
+/* MAP_ANON is BSD's, which -std=c11 hides: _DEFAULT_SOURCE asks glibc and
+   musl for it. Before any header, since the first one fixes what all of
+   them declare. */
+#define _DEFAULT_SOURCE
+
 #include <caml/alloc.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
