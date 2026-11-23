@@ -2588,6 +2588,8 @@ let pp ppf t =
 
 (* Testing *)
 
+let kernels = Kernel.available
+
 let hold_cache t f =
   match t.algorithm with
   | Alg_bpe m -> Bpe.with_state m (fun _ -> f ())

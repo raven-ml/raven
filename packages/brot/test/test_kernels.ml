@@ -295,9 +295,13 @@ let pre_spans pre text =
 (* A long pretoken planted at every span index from 600 to 1400, across the
    1024-span buffer of the recording path and the stage's seams, after three
    shapes of short ones: the spans must be the pre-tokenizer's. A stage that
-   starts with no span room left harvests nothing. *)
+   starts with no span room left harvests nothing. Only the kernels hand the
+   long pretoken back. The OCaml walk, which runs without them, cuts it as any
+   other span, so there every sixteenth place suffices, and the longer texts
+   still cross its 1024-span seam. *)
 let test_long_pretoken_at_buffer_seams () =
   let tok = Brot.bpe ~vocab:base_vocab ~merges:[] ~pre:(pre ()) () in
+  let step = if Brot.kernels then 1 else 16 in
   let long = " " ^ String.make 20 'q' in
   let shapes =
     [
@@ -314,7 +318,8 @@ let test_long_pretoken_at_buffer_seams () =
   in
   List.iter
     (fun (name, shape) ->
-      for k = 600 to 1400 do
+      for i = 0 to 800 / step do
+        let k = 600 + (i * step) in
         let text = shape k ^ long ^ shape 300 in
         equal
           ~msg:(Printf.sprintf "%s, long pretoken after %d" name k)

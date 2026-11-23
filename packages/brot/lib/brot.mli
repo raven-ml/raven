@@ -1840,6 +1840,10 @@ val pp : Format.formatter -> t -> unit
 
 (**/**)
 
+val kernels : bool
+(** [kernels] is [true] iff encoding can run the C kernels: native code on a
+    little-endian machine. For tests. *)
+
 val hold_cache : t -> (unit -> 'a) -> 'a
 (** [hold_cache t f] is [f ()] while one of the encoder states of [t]'s BPE,
     WordPiece or Unigram model is held, so that what is encoded with [t]
