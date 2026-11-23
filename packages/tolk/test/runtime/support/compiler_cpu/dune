@@ -1,8 +1,8 @@
 ; Settings are read when the program starts, so CACHEDB is set here, to a
 ; directory of the sandbox, the tests tagged no-clang run in a second
 ; process, where CC names a program that does not exist, and those tagged
-; slp-clang in a third, where CC names a script that runs Clang with its
-; straight-line vectorizer on.
+; slp-clang in a third, where CC names a script that runs the Clang CC named,
+; SLP_CLANG, with its straight-line vectorizer on.
 
 (test
  (name test_compiler_cpu)
@@ -27,9 +27,12 @@
      /nonexistent/clang
      (run %{test} --tag no-clang))
     (setenv
-     CC
-     ./clang_slp
-     (run %{test} --tag slp-clang))))))
+     SLP_CLANG
+     %{env:CC=clang}
+     (setenv
+      CC
+      ./clang_slp
+      (run %{test} --tag slp-clang)))))))
 
 ; The system and machine the suite runs on, whose processor it compiles for.
 

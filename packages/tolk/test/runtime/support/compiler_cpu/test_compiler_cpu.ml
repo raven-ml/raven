@@ -1293,15 +1293,19 @@ let named ~prefix table =
 let cache =
   group "cache"
     [
-      cases "objects are cached in the table of the architecture and a digest"
+      cases
+        "objects are cached in the table of the Clang run, the architecture \
+         and a digest"
         ~id:fst
         [
-          ("x86_64,znver2", "compile_clang_obj_x86_64_znver2_");
-          ( "x86_64,znver2,avx,-avx512f",
-            "compile_clang_obj_x86_64_znver2_avx_-avx512f_" );
-          ("arm64,native", "compile_clang_obj_arm64_native_");
+          ("x86_64,znver2", "x86_64_znver2_");
+          ("x86_64,znver2,avx,-avx512f", "x86_64_znver2_avx_-avx512f_");
+          ("arm64,native", "arm64_native_");
         ]
-        (fun (arch, prefix) ->
+        (fun (arch, named_arch) ->
+          let prefix =
+            "compile_" ^ Setting.value Setting.cc ^ "_obj_" ^ named_arch
+          in
           named ~prefix
             (Option.get (Compiler.cachekey (Compiler_cpu.clang arch))));
       test "the table does not depend on the working directory" (fun () ->

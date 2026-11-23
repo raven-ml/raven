@@ -1,3 +1,4 @@
 #!/bin/sh
-# Clang with its straight-line vectorizer on, after whatever turns it off.
-exec clang "$@" -fslp-vectorize
+# The Clang SLP_CLANG names with its straight-line vectorizer on, after
+# whatever turns it off.
+exec "${SLP_CLANG:?names the Clang to run}" "$@" -fslp-vectorize
