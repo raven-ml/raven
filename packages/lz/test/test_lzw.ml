@@ -65,7 +65,7 @@ let model ~cap s =
     end
   in
   let out = Buffer.create 64 in
-  let table = Hashtbl.create 4096 in
+  let table = Array.make 4096 "" in
   let next = ref 258 and old = ref None in
   let fail at why = Error { Lz.at; why } in
   let width () =
@@ -76,7 +76,8 @@ let model ~cap s =
   in
   let string_of c =
     if c < 256 then Some (String.make 1 (Char.chr c))
-    else Hashtbl.find_opt table c
+    else if c >= 258 && c < !next then Some table.(c)
+    else None
   in
   let rec loop ~started =
     let at = !bit / 8 in
@@ -85,7 +86,6 @@ let model ~cap s =
     | Some c when (not started) && c <> clear ->
         fail at (Lz.Malformed "the first code is not ClearCode")
     | Some c when c = clear ->
-        Hashtbl.reset table;
         next := 258;
         old := None;
         loop ~started:true
@@ -108,7 +108,7 @@ let model ~cap s =
               | Some _ when !next = 4096 ->
                   fail at (Lz.Malformed "the table is full")
               | Some o ->
-                  Hashtbl.replace table !next (o ^ String.sub str 0 1);
+                  table.(!next) <- o ^ String.sub str 0 1;
                   incr next;
                   old := Some str;
                   loop ~started
@@ -234,11 +234,13 @@ let encoding =
   Gen.of_list ~pp:(fun ppf (name, _, _) -> Format.pp_print_string ppf name)
     encodings
 
-(* Whether reading [codes] meets a code equal to the next entry. *)
-let has_next_code codes =
-  let next = ref 258 and first = ref true and found = ref false in
-  List.iter
-    (fun (c, _) ->
+(* Whether the codes [iter] gives, read in order, hold a code 12 bits wide and a
+   code equal to the next entry. *)
+let traits iter =
+  let next = ref 258 and first = ref true in
+  let twelve = ref false and found = ref false in
+  iter (fun c w ->
+      if w = 12 then twelve := true;
       if c = clear then (
         next := 258;
         first := true)
@@ -246,9 +248,8 @@ let has_next_code codes =
         if (not !first) && c = !next then found := true;
         if not !first then incr next;
         first := false
-      end)
-    codes;
-  !found
+      end);
+  (!twelve, !found)
 
 let round_trips =
   group "round trips"
@@ -257,11 +258,11 @@ let round_trips =
         (Gen.pair recipe encoding)
         (fun (r, (_, last, flush)) ->
           let s = build r in
-          let coded = lzw_codes ~last ~flush s in
+          let twelve, next_code = traits (lzw_iter ~last ~flush s) in
           cover "empty" (s = "");
-          cover "12-bit codes" (List.exists (fun (_, w) -> w = 12) coded);
-          cover "a code equal to the next entry" (has_next_code coded);
-          let z = lzw_pack coded in
+          cover "12-bit codes" twelve;
+          cover "a code equal to the next entry" next_code;
+          let z = lzw ~last ~flush s in
           equal outcome
             (Ok (s, String.length z))
             (decode ~cap:(String.length s) z);
@@ -353,12 +354,12 @@ let changed =
       prop "a stream with a byte changed decodes as the model decodes it"
         (Gen.quad recipe encoding Gen.small_int (Gen.int_range 1 255))
         (fun (r, (_, last, flush), i, mask) ->
-          let z = lzw_pack (lzw_codes ~last ~flush (build r)) in
-          let z = Bytes.of_string z in
+          let s = build r in
+          let z = Bytes.of_string (lzw ~last ~flush s) in
           let i = (i land max_int) mod Bytes.length z in
           Bytes.set z i (Char.chr (Char.code (Bytes.get z i) lxor mask));
           let z = Bytes.to_string z in
-          let cap = 2 * String.length (build r) + 16 in
+          let cap = (2 * String.length s) + 16 in
           let m = model ~cap z in
           cover "decodes" (Result.is_ok m);
           cover "an invalid code"

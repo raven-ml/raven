@@ -244,65 +244,117 @@ let lzw_width next =
   if next < 512 then 9 else if next < 1024 then 10 else if next < 2048 then 11
   else 12
 
-(* The section's encoder: [w] is the code of the string held, or -1 for
-   the empty string; [table] maps a string's code and a byte to the code
-   of the string they make. *)
-let lzw_codes ?(last = 4094) ?(flush = false) s =
+(* The encoders allocate nothing per byte: under the sanitize profile the
+   collector checks the whole heap at every cycle, and a hashed tuple or list
+   cell per byte made a suite's inputs of a MiB take seconds each. *)
+
+(* Fibonacci hashing's multiplier, 2^32 over the golden ratio. *)
+let fibonacci = 0x9E3779B1
+
+(* The table maps a string's code [w] and a byte [k] to the code of the string
+   they make, keyed by [w lsl 8 lor k] in open addressing: at most 3838 entries
+   in twice as many slots. A slot holds an entry of the current table when its
+   stamp is the table's, so ClearCode empties the table in one step, even after
+   every entry. *)
+type lzw_table = {
+  keys : int array;
+  codes : int array;
+  stamps : int array;
+  mutable stamp : int;
+}
+
+let lzw_slots = 8192
+
+(* The slot of [key]: the one holding it, or the empty one where it goes. *)
+let lzw_slot t key =
+  let i = ref (((key * fibonacci) lsr 13) land (lzw_slots - 1)) in
+  while t.stamps.(!i) = t.stamp && t.keys.(!i) <> key do
+    i := (!i + 1) land (lzw_slots - 1)
+  done;
+  !i
+
+(* The section's encoder: [w] is the code of the string held, or -1 for the
+   empty string. *)
+let lzw_iter ?(last = 4094) ?(flush = false) s write =
   if last < first || last > 4095 then
     invalid_arg (Printf.sprintf "Lz_support.lzw_codes: last %d" last);
-  let table = Hashtbl.create 4096 in
-  let codes = ref [ (clear, 9) ] in
-  let next = ref first in
-  let write c = codes := (c, lzw_width !next) :: !codes in
-  let w = ref (-1) in
-  String.iter
-    (fun ch ->
-      let k = Char.code ch in
-      if !w < 0 then w := k
-      else
-        match Hashtbl.find_opt table (!w, k) with
-        | Some c -> w := c
-        | None ->
-            write !w;
-            Hashtbl.replace table (!w, k) !next;
+  let t =
+    {
+      keys = Array.make lzw_slots 0;
+      codes = Array.make lzw_slots 0;
+      stamps = Array.make lzw_slots 0;
+      stamp = 1;
+    }
+  in
+  let next = ref first and w = ref (-1) in
+  write clear (lzw_width first);
+  for i = 0 to String.length s - 1 do
+    let k = Char.code (String.unsafe_get s i) in
+    if !w < 0 then w := k
+    else begin
+      let key = (!w lsl 8) lor k in
+      let j = lzw_slot t key in
+      if t.stamps.(j) = t.stamp then w := t.codes.(j)
+      else begin
+        write !w (lzw_width !next);
+        t.keys.(j) <- key;
+        t.codes.(j) <- !next;
+        t.stamps.(j) <- t.stamp;
+        incr next;
+        w := k;
+        if !next > last then begin
+          if flush then begin
+            write !w (lzw_width !next);
             incr next;
-            w := k;
-            if !next > last then begin
-              if flush then begin
-                write !w;
-                incr next;
-                w := -1
-              end;
-              write clear;
-              Hashtbl.reset table;
-              next := first
-            end)
-    s;
+            w := -1
+          end;
+          write clear (lzw_width !next);
+          t.stamp <- t.stamp + 1;
+          next := first
+        end
+      end
+    end
+  done;
   if !w >= 0 then begin
-    write !w;
+    write !w (lzw_width !next);
     incr next
   end;
-  write eoi;
+  write eoi (lzw_width !next)
+
+let lzw_codes ?last ?flush s =
+  let codes = ref [] in
+  lzw_iter ?last ?flush s (fun c w -> codes := (c, w) :: !codes);
   List.rev !codes
 
-let lzw_pack codes =
-  let b = Buffer.create 64 in
-  let acc = ref 0 and bits = ref 0 in
-  List.iter
-    (fun (c, n) ->
-      acc := (!acc lsl n) lor c;
-      bits := !bits + n;
-      while !bits >= 8 do
-        bits := !bits - 8;
-        Buffer.add_char b (Char.chr ((!acc lsr !bits) land 0xff))
-      done;
-      acc := !acc land ((1 lsl !bits) - 1))
-    codes;
-  if !bits > 0 then
-    Buffer.add_char b (Char.chr ((!acc lsl (8 - !bits)) land 0xff));
-  Buffer.contents b
+(* Codes packed most significant bit first: [acc] holds the [bits] bits not yet
+   written. *)
+type packer = { out : Buffer.t; mutable acc : int; mutable bits : int }
 
-let lzw s = lzw_pack (lzw_codes s)
+let packer n = { out = Buffer.create n; acc = 0; bits = 0 }
+
+let put p c n =
+  p.acc <- (p.acc lsl n) lor c;
+  p.bits <- p.bits + n;
+  while p.bits >= 8 do
+    p.bits <- p.bits - 8;
+    Buffer.add_char p.out (Char.unsafe_chr ((p.acc lsr p.bits) land 0xff))
+  done;
+  p.acc <- p.acc land ((1 lsl p.bits) - 1)
+
+let packed p =
+  if p.bits > 0 then
+    Buffer.add_char p.out (Char.unsafe_chr ((p.acc lsl (8 - p.bits)) land 0xff));
+  Buffer.contents p.out
+
+let lzw_pack codes =
+  let p = packer 64 in
+  List.iter (fun (c, n) -> put p c n) codes;
+  packed p
+
+let lzw ?last ?flush s =
+  let p = packer (String.length s + 16) in
+  lzw_iter ?last ?flush s (put p);
+  packed p
 
 (* LZF *)
 
@@ -310,6 +362,19 @@ type lzf = Literal of string | Copy of { distance : int; length : int }
 
 let lzf_window = 8192
 let lzf_longest = 264
+
+let add_literal b s pos n =
+  Buffer.add_char b (Char.chr (n - 1));
+  Buffer.add_substring b s pos n
+
+let add_copy b ~distance ~length =
+  let d = distance - 1 and l = length - 2 in
+  if l < 7 then Buffer.add_char b (Char.chr ((l lsl 5) lor (d lsr 8)))
+  else begin
+    Buffer.add_char b (Char.chr ((7 lsl 5) lor (d lsr 8)));
+    Buffer.add_char b (Char.chr (l - 7))
+  end;
+  Buffer.add_char b (Char.chr (d land 0xff))
 
 let lzf_pack es =
   let b = Buffer.create 64 in
@@ -319,8 +384,7 @@ let lzf_pack es =
           let n = String.length l in
           if n < 1 || n > 32 then
             invalid_arg (Printf.sprintf "Lz_support.lzf_pack: literal %d" n);
-          Buffer.add_char b (Char.chr (n - 1));
-          Buffer.add_string b l
+          add_literal b l 0 n
       | Copy { distance; length } ->
           if distance < 1 || distance > lzf_window || length < 3
              || length > lzf_longest
@@ -328,58 +392,91 @@ let lzf_pack es =
             invalid_arg
               (Printf.sprintf "Lz_support.lzf_pack: copy %d, %d" distance
                  length);
-          let d = distance - 1 and l = length - 2 in
-          if l < 7 then Buffer.add_char b (Char.chr ((l lsl 5) lor (d lsr 8)))
-          else begin
-            Buffer.add_char b (Char.chr ((7 lsl 5) lor (d lsr 8)));
-            Buffer.add_char b (Char.chr (l - 7))
-          end;
-          Buffer.add_char b (Char.chr (d land 0xff)))
+          add_copy b ~distance ~length)
     es;
   Buffer.contents b
 
-let lzf_elements s =
+let lzf_hashes = 1 lsl 16
+
+let trigram s i =
+  (Char.code (String.unsafe_get s i) lsl 16)
+  lor (Char.code (String.unsafe_get s (i + 1)) lsl 8)
+  lor Char.code (String.unsafe_get s (i + 2))
+
+let lzf_hash t = ((t * fibonacci) lsr 16) land (lzf_hashes - 1)
+
+(* [s] parsed as lzf_elements states, each literal run given as its position and
+   length. The positions passed are chained by the hash of their three bytes,
+   latest first: [head] holds each hash's latest, [prev] the one before each of
+   the window's last 8192 positions. A walk stops at the first position with the
+   same three bytes, or past the window, which also ends every link [prev] has
+   overwritten. *)
+let lzf_scan s ~literal ~copy =
   let n = String.length s in
-  let last = Hashtbl.create 1024 in
-  let out = ref [] and lit = Buffer.create 32 in
-  let flush () =
-    if Buffer.length lit > 0 then begin
-      out := Literal (Buffer.contents lit) :: !out;
-      Buffer.clear lit
+  let head = Array.make lzf_hashes (-1) in
+  let prev = Array.make lzf_window (-1) in
+  let insert k =
+    if k + 3 <= n then begin
+      let h = lzf_hash (trigram s k) in
+      prev.(k land (lzf_window - 1)) <- head.(h);
+      head.(h) <- k
     end
   in
-  let key i = String.sub s i 3 in
+  let rec latest t i j =
+    if j < 0 || i - j > lzf_window then -1
+    else if trigram s j = t then j
+    else latest t i prev.(j land (lzf_window - 1))
+  in
+  let start = ref 0 and run = ref 0 in
+  let flush () =
+    if !run > 0 then literal !start !run;
+    run := 0
+  in
   let i = ref 0 in
   while !i < n do
-    let candidate =
-      if !i + 3 > n then None
+    let j =
+      if !i + 3 > n then -1
       else
-        match Hashtbl.find_opt last (key !i) with
-        | Some j when !i - j <= lzf_window -> Some j
-        | _ -> None
+        let t = trigram s !i in
+        latest t !i head.(lzf_hash t)
     in
-    match candidate with
-    | Some j ->
-        let l = ref 0 in
-        while !i + !l < n && !l < lzf_longest && s.[j + !l] = s.[!i + !l] do
-          incr l
-        done;
-        flush ();
-        out := Copy { distance = !i - j; length = !l } :: !out;
-        for k = !i to Int.min (n - 3) (!i + !l - 1) do
-          Hashtbl.replace last (key k) k
-        done;
-        i := !i + !l
-    | None ->
-        if !i + 3 <= n then Hashtbl.replace last (key !i) !i;
-        Buffer.add_char lit s.[!i];
-        if Buffer.length lit = 32 then flush ();
-        incr i
+    if j >= 0 then begin
+      let l = ref 0 in
+      while
+        !i + !l < n
+        && !l < lzf_longest
+        && String.unsafe_get s (j + !l) = String.unsafe_get s (!i + !l)
+      do
+        incr l
+      done;
+      flush ();
+      copy ~distance:(!i - j) ~length:!l;
+      for k = !i to !i + !l - 1 do
+        insert k
+      done;
+      i := !i + !l
+    end
+    else begin
+      insert !i;
+      if !run = 0 then start := !i;
+      incr run;
+      if !run = 32 then flush ();
+      incr i
+    end
   done;
-  flush ();
+  flush ()
+
+let lzf_elements s =
+  let out = ref [] in
+  lzf_scan s
+    ~literal:(fun pos n -> out := Literal (String.sub s pos n) :: !out)
+    ~copy:(fun ~distance ~length -> out := Copy { distance; length } :: !out);
   List.rev !out
 
-let lzf s = lzf_pack (lzf_elements s)
+let lzf s =
+  let b = Buffer.create (String.length s + (String.length s / 32) + 1) in
+  lzf_scan s ~literal:(add_literal b s) ~copy:(add_copy b);
+  Buffer.contents b
 
 (* Bounds *)
 

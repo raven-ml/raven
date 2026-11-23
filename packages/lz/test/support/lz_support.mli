@@ -217,12 +217,21 @@ val lzw_codes : ?last:int -> ?flush:bool -> string -> (int * int) list
 
     Raises [Invalid_argument] unless [last] is in \[258, 4095\]. *)
 
+val lzw_iter :
+  ?last:int -> ?flush:bool -> string -> (int -> int -> unit) -> unit
+(** [lzw_iter ~last ~flush s f] calls [f c w] on each code [c] of
+    [lzw_codes ~last ~flush s] and its width [w], in order, without building the
+    list.
+
+    Raises [Invalid_argument] as {!lzw_codes} does. *)
+
 val lzw_pack : (int * int) list -> string
 (** [lzw_pack codes] is [codes] packed most significant bit first, the
     last byte padded with zero bits. *)
 
-val lzw : string -> string
-(** [lzw s] is [lzw_pack (lzw_codes s)]. *)
+val lzw : ?last:int -> ?flush:bool -> string -> string
+(** [lzw ~last ~flush s] is [lzw_pack (lzw_codes ~last ~flush s)], without
+    building the list. *)
 
 (** {1 LZF}
 
