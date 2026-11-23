@@ -615,20 +615,28 @@ static void fill(int64_t lo, int64_t hi, int worker, void *ctx) {
   int r = c->rank;
   _Alignas(64) uint8_t v[STAGED * KEYS * 8];
   for (int64_t e = lo; e < hi; e++) {
-    int64_t from[NX_MAX_RANK], n[NX_MAX_RANK], rest = e, at = x->offset;
-    for (int a = r - 1; a >= 0; a--) {
-      from[a] = 0;
-      n[a] = 1;
+    /* The box's heads, rows and keys along the last three axes, one of
+       each where the load does not step or has one element, then its
+       lead index, one along each lead axis. */
+    int64_t n[3], rest = e, at = x->offset;
+    for (int k = 2; k >= 0; k--) {
+      int a = r - 3 + k;
+      int64_t from = 0;
+      n[k] = 1;
       if (step(x, a) != 0 && x->dim[a] > 1)
-        box_along(c, a, rest % t->ext[a], &from[a], &n[a]);
+        box_along(c, a, rest % t->ext[a], &from, &n[k]);
       rest /= t->ext[a];
-      at += from[a] * step(x, a);
+      at += from * step(x, a);
     }
-    int64_t nk = n[r - 1];
+    for (int a = r - 4; a >= 0; a--) {
+      at += rest % t->ext[a] * step(x, a);
+      rest /= t->ext[a];
+    }
+    int64_t nk = n[2];
     int first = 1;
-    for (int64_t h = 0; h < n[r - 3]; h++)
-      for (int64_t i = 0; i < n[r - 2]; i += STAGED, first = 0) {
-        int64_t m = n[r - 2] - i < STAGED ? n[r - 2] - i : STAGED;
+    for (int64_t h = 0; h < n[0]; h++)
+      for (int64_t i = 0; i < n[1]; i += STAGED, first = 0) {
+        int64_t m = n[1] - i < STAGED ? n[1] - i : STAGED;
         nx_cpu_stage_as(x, at + h * step(x, r - 3) + i * step(x, r - 2),
                         step(x, r - 1), step(x, r - 2), nk, m, x->dtype, v,
                         nk);
