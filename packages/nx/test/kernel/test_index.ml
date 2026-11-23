@@ -375,6 +375,30 @@ let partial_overflows xs =
   in
   go 1 0. 0. 0. xs
 
+(* Whether a float32 sum [x + S] of [x] and updates [us] at increasing positions
+   [js] along the axis may pass float32's largest finite value, [S] summed by
+   the complete binary tree over the positions, nx.cuda's and nx.amd's order: a
+   subtree's sum of [k] terms [P] with [|P| + γ(k) Σ |ui|] past it, or the
+   whole's. An aligned subtree of [size] positions from [lo] with more than one
+   update adds its halves. *)
+let tree_overflows x js us =
+  let passes xs =
+    let s, mag = exact xs in
+    Float.abs s +. ((gamma 0x1p-24 (List.length xs) +. 0x1p-100) *. mag)
+    > most_float32
+  in
+  let rec node lo size = function
+    | [] | [ _ ] -> false
+    | jus ->
+        let h = size / 2 in
+        let l, r = List.partition (fun (j, _) -> j < lo + h) jus in
+        passes (List.map snd jus) || node lo h l || node (lo + h) h r
+  in
+  let rec span size =
+    if List.exists (fun j -> j >= size) js then span (2 * size) else size
+  in
+  node 0 (span 1) (List.combine js us) || passes (x :: us)
+
 (* The largest finite value of a narrow float. *)
 let most_finite (D.Any dt) =
   match dt with
@@ -414,23 +438,29 @@ let parts (D.Any dt as d) e =
   else if w = 4 then [ get32 e 0 ]
   else [ get64 e 0 ]
 
-(* Whether a narrow float's sum of [xs], [x] and its updates in C order,
-   cannot overflow: no partial float32 sum passes float32's largest finite
-   value, nor the sum and its bound the dtype's. *)
-let narrow_checked d xs =
+(* Whether a narrow float's sum of [x] and its updates [us] at positions [js],
+   in C order, cannot overflow: no partial float32 sum passes float32's largest
+   finite value, left to right (nx.cpu's order) nor by the position tree, nor
+   the sum and its bound the dtype's. The contract's bound holds barring overflow in the
+   library's order, and the libraries state these two. *)
+let narrow_checked d x js us =
+  let xs = x :: us in
   let want, mag = exact xs in
   let bound = (gamma 0x1p-24 (List.length xs) +. 0x1p-100) *. mag in
-  not (partial_overflows xs || Float.abs want +. bound > most_finite d)
+  not
+    (partial_overflows xs || tree_overflows x js us
+    || Float.abs want +. bound > most_finite d)
 
-(* Why a target's Add [got] of [x] and [us] is past
-   [γ(n + 1) (|x| + Σ |ui|)] of the exact sum, part by part, [u] the unit
-   roundoff of float32 for float32, narrow floats and complex64 and of
-   float64 otherwise; a narrow float's sum is rounded once from a float32
-   within it, so [got] lies between the roundings of its ends. Each part's
-   magnitudes bound the complex number's moduli. A narrow sum that may
-   overflow, a partial float32 sum past float32's largest finite value or
-   the sum rounding past the dtype's, is not checked: [None]. *)
-let past (D.Any dt as d) x us got =
+(* Why a target's Add [got] of [x] and its updates [lands], each at its position
+   along the axis, is past [γ(n + 1) (|x| + Σ |ui|)] of the exact sum, part by
+   part, [u] the unit roundoff of float32 for float32, narrow floats and
+   complex64 and of float64 otherwise; a narrow float's sum is rounded once from
+   a float32 within it, so [got] lies between the roundings of its ends. Each
+   part's magnitudes bound the complex number's moduli. A narrow sum that may
+   overflow, a partial float32 sum past float32's largest finite value or the
+   sum rounding past the dtype's, is not checked: [None]. *)
+let past (D.Any dt as d) x lands got =
+  let js = List.map fst lands and us = List.map snd lands in
   let part = if D.is D.Complex dt then D.bits dt / 2 else D.bits dt in
   let u = if part = 64 then 0x1p-53 else 0x1p-24 in
   let g = gamma u (List.length us + 1) in
@@ -443,7 +473,7 @@ let past (D.Any dt as d) x us got =
            let want, mag = exact xs in
            let bound = (g *. mag) +. (0x1p-100 *. mag) in
            if is_narrow d then
-             if not (narrow_checked d xs) then []
+             if not (narrow_checked d (List.hd xs) js (List.tl xs)) then []
              else
                let lo = decode d (encode d (want -. bound))
                and hi = decode d (encode d (want +. bound)) in
@@ -468,7 +498,7 @@ let rounds d x us got =
    update reaches. *)
 let law_add_bound (b : Support.backend) c =
   let d = dtype_of c.into in
-  let ls = lands c in
+  let ls = landings c in
   let reached = Array.exists (fun l -> l <> []) ls in
   cover "a target several updates reach" (Array.exists (fun l -> List.length l > 1) ls);
   cover "a narrow float" (is_narrow d);
@@ -477,9 +507,13 @@ let law_add_bound (b : Support.backend) c =
      (d = D.Any D.Bfloat16
      && Array.exists Fun.id
           (Array.mapi
-             (fun t us ->
-               let ts = List.map (decode d) (xs.(t) :: us) in
-               us <> [] && snd (exact ts) > most_float32 && narrow_checked d ts)
+             (fun t lands ->
+               let x = decode d xs.(t) in
+               let js = List.map fst lands
+               and us = List.map (fun (_, u) -> decode d u) lands in
+               lands <> []
+               && snd (exact (x :: us)) > most_float32
+               && narrow_checked d x js us)
              ls)));
   match scatter_on b c with
   | None -> ()
@@ -490,17 +524,18 @@ let law_add_bound (b : Support.backend) c =
         (not (is_narrow d)
         && Array.exists Fun.id
              (Array.mapi
-                (fun t us -> us <> [] && rounds d xs.(t) us got.(t))
+                (fun t lands ->
+                  lands <> [] && rounds d xs.(t) (List.map snd lands) got.(t))
                 ls));
       let wrong =
         List.filter_map Fun.id
           (Array.to_list
              (Array.mapi
-                (fun t us ->
-                  if us = [] then None
+                (fun t lands ->
+                  if lands = [] then None
                   else
                     Option.map (Printf.sprintf "%d: %s" t)
-                      (past d xs.(t) us got.(t)))
+                      (past d xs.(t) lands got.(t)))
                 ls))
       in
       equal (list string) [] (List.filteri (fun i _ -> i < 5) wrong)
@@ -520,8 +555,9 @@ let set_examples =
   ]
 
 (* A bfloat16 Add into +0 of 40 updates alternating 1.5 · 2^127 and its
-   negation: their magnitudes sum past float32's largest finite value, and
-   their partial sums stay at or below 1.5 · 2^127. *)
+   negation: their magnitudes sum past float32's largest finite value, and their
+   partial sums stay at or below 1.5 · 2^127, left to right and by the position
+   tree. *)
 let wide_sum =
   let d = D.Any D.Bfloat16 and m = 40 in
   {

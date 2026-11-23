@@ -279,8 +279,9 @@ let combined (D.Any dt as d) combine x us =
           in
           Value (List.fold_left pick x us))
 
-(* The updates that land on each target of [c], in C order. *)
-let lands c =
+(* The updates that land on each target of [c], in C order, so in increasing
+   position along the scattered axis, each with that position. *)
+let landings c =
   let ts = shape_of c.into and us = shape_of c.updates in
   let ues = elements c.updates in
   let lands = Array.make (total ts) [] in
@@ -288,12 +289,16 @@ let lands c =
     (fun k p ->
       if p >= 0L && p < Int64.of_int ts.(c.saxis) then begin
         let i = index_of us k in
+        let j = i.(c.saxis) in
         i.(c.saxis) <- Int64.to_int p;
         let t = flat ts i in
-        lands.(t) <- ues.(k) :: lands.(t)
+        lands.(t) <- (j, ues.(k)) :: lands.(t)
       end)
     (positions c.sidx);
   Array.map List.rev lands
+
+(* The updates that land on each target of [c], in C order. *)
+let lands c = Array.map (List.map snd) (landings c)
 
 let scatter_expected c =
   let d = dtype_of c.into in
