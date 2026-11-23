@@ -116,10 +116,14 @@ conv/depthwise-f32-1x1080x1920x3-1x5	alloc_words	exact	1574
 conv/depthwise-f32-8x56x56x64-3x3	alloc_words	exact	1574
 conv/max-pool-f32-8x64x56x56-3x3s2	alloc_words	exact	577
 conv/max-pool-grad-f32-8x64x56x56-3x3s2	alloc_words	exact	1807
-dispatch/add-1	alloc_words	exact	50
-dispatch/add-1-direct	alloc_words	exact	63
-dispatch/add-1-twice	alloc_words	exact	100
-dispatch/add-1-twice-donated	alloc_words	exact	487
+dispatch/add-1	alloc_words	exact	52
+dispatch/add-1	wall_time	batch=1	n=20	2.330e-07	2.250e-07 2.250e-07 2.260e-07 2.260e-07 2.280e-07 2.280e-07 2.290e-07 2.310e-07 2.320e-07 2.330e-07 2.330e-07 2.380e-07 2.420e-07 2.440e-07 2.470e-07 2.520e-07 2.550e-07 2.570e-07 2.940e-07 7.060e-07
+dispatch/add-1-direct	alloc_words	exact	65
+dispatch/add-1-direct	wall_time	batch=32768	n=20	2.015e-07	2.009e-07 2.009e-07 2.012e-07 2.013e-07 2.014e-07 2.014e-07 2.014e-07 2.014e-07 2.015e-07 2.015e-07 2.015e-07 2.017e-07 2.018e-07 2.018e-07 2.019e-07 2.022e-07 2.026e-07 2.029e-07 2.030e-07 2.032e-07
+dispatch/add-1-twice	alloc_words	exact	104
+dispatch/add-1-twice	wall_time	batch=16384	n=20	4.508e-07	4.472e-07 4.476e-07 4.477e-07 4.479e-07 4.481e-07 4.485e-07 4.494e-07 4.500e-07 4.500e-07 4.508e-07 4.509e-07 4.513e-07 4.515e-07 4.515e-07 4.518e-07 4.520e-07 4.521e-07 4.524e-07 4.525e-07 4.525e-07
+dispatch/add-1-twice-donated	alloc_words	exact	448
+dispatch/add-1-twice-donated	wall_time	batch=4096	n=20	9.931e-07	9.884e-07 9.891e-07 9.893e-07 9.903e-07 9.905e-07 9.905e-07 9.911e-07 9.917e-07 9.922e-07 9.927e-07 9.934e-07 9.937e-07 9.943e-07 9.957e-07 9.990e-07 9.990e-07 1.000e-06 1.001e-06 1.002e-06 1.003e-06
 dispatch/add-held-scalar-1	alloc_words	exact	94
 dispatch/add-scalar-1	alloc_words	exact	213
 dispatch/add_s-1	alloc_words	exact	70
@@ -131,6 +135,8 @@ dispatch/kv-append-4096-copied	alloc_words	exact	578
 dispatch/less-1	alloc_words	exact	56
 dispatch/prim-eval-sin-1	alloc_words	exact	54
 dispatch/prim-eval-sin-1	wall_time	batch=1	n=20	2.620e-07	2.520e-07 2.520e-07 2.520e-07 2.540e-07 2.540e-07 2.550e-07 2.550e-07 2.560e-07 2.570e-07 2.590e-07 2.650e-07 2.670e-07 2.720e-07 2.740e-07 2.790e-07 2.820e-07 2.840e-07 3.130e-07 3.580e-07 9.810e-07
+dispatch/repr-read-1	alloc_words	exact	15
+dispatch/repr-read-1	wall_time	batch=131072	n=20	4.419e-08	4.383e-08 4.383e-08 4.388e-08 4.394e-08 4.394e-08 4.396e-08 4.404e-08 4.410e-08 4.412e-08 4.419e-08 4.420e-08 4.420e-08 4.420e-08 4.423e-08 4.424e-08 4.426e-08 4.434e-08 4.436e-08 4.453e-08 4.531e-08
 dispatch/reshape-1	alloc_words	exact	30
 dispatch/shape	alloc_words	exact	2
 dispatch/sin-1	alloc_words	exact	49
@@ -347,16 +353,34 @@ scan/host-argmax-f32-1M	alloc_words	exact	202
 scan/host-logsumexp-f32-1024x1024-cols	alloc_words	exact	120
 scan/host-logsumexp-f32-1024x1024-rows	alloc_words	exact	120
 scan/host-logsumexp-f32-1M	alloc_words	exact	116
-small/add-f32-16	alloc_words	exact	50
-small/cumsum-f32-16	alloc_words	exact	117
-small/exp-f32-16	alloc_words	exact	49
+small/add-f32-16	alloc_words	exact	52
+small/add-f32-16	wall_time	batch=32768	n=20	2.255e-07	2.233e-07 2.234e-07 2.238e-07 2.239e-07 2.239e-07 2.248e-07 2.248e-07 2.251e-07 2.252e-07 2.254e-07 2.256e-07 2.256e-07 2.256e-07 2.257e-07 2.257e-07 2.257e-07 2.258e-07 2.260e-07 2.260e-07 2.264e-07
+small/add-f32-16-8-domains	alloc_words	exact	52
+small/add-f32-16-8-domains	wall_time	batch=1024	n=20	1.120e-06	8.657e-07 8.701e-07 8.781e-07 8.806e-07 8.838e-07 8.856e-07 8.919e-07 8.979e-07 9.040e-07 1.110e-06 1.129e-06 1.142e-06 1.235e-06 1.249e-06 1.296e-06 2.243e-06 2.316e-06 2.375e-06 2.750e-06 2.809e-06
+small/any-f32-16	alloc_words	exact	247
+small/any-f32-16	wall_time	batch=1	n=20	1.167e-06	1.114e-06 1.123e-06 1.144e-06 1.146e-06 1.147e-06 1.153e-06 1.153e-06 1.156e-06 1.160e-06 1.165e-06 1.168e-06 1.205e-06 1.206e-06 1.219e-06 1.220e-06 1.235e-06 1.243e-06 1.266e-06 1.502e-06 3.501e-06
+small/concatenate-f32-2x16	alloc_words	exact	290
+small/concatenate-f32-2x16	wall_time	batch=1	n=20	7.690e-07	7.070e-07 7.310e-07 7.310e-07 7.330e-07 7.340e-07 7.450e-07 7.540e-07 7.550e-07 7.570e-07 7.610e-07 7.770e-07 7.830e-07 8.300e-07 8.320e-07 8.500e-07 8.570e-07 8.680e-07 9.450e-07 9.700e-07 2.168e-06
+small/cumsum-f32-16	alloc_words	exact	116
+small/cumsum-f32-16	wall_time	batch=8192	n=20	5.743e-07	5.705e-07 5.709e-07 5.717e-07 5.717e-07 5.719e-07 5.724e-07 5.738e-07 5.740e-07 5.740e-07 5.743e-07 5.743e-07 5.745e-07 5.747e-07 5.747e-07 5.750e-07 5.750e-07 5.764e-07 5.767e-07 5.781e-07 5.804e-07
+small/exp-f32-16	alloc_words	exact	51
+small/exp-f32-16	wall_time	batch=1	n=20	2.055e-07	1.940e-07 1.940e-07 1.990e-07 1.990e-07 1.990e-07 2.000e-07 2.000e-07 2.020e-07 2.030e-07 2.040e-07 2.070e-07 2.080e-07 2.090e-07 2.130e-07 2.140e-07 2.200e-07 2.310e-07 2.490e-07 6.980e-07 1.057e-06
 small/leapfrog-step-f32-16	alloc_words	exact	244
+small/leapfrog-step-f32-16	wall_time	batch=4096	n=20	1.182e-06	1.170e-06 1.170e-06 1.170e-06 1.178e-06 1.179e-06 1.179e-06 1.181e-06 1.181e-06 1.181e-06 1.182e-06 1.182e-06 1.183e-06 1.183e-06 1.183e-06 1.184e-06 1.185e-06 1.185e-06 1.186e-06 1.193e-06 1.197e-06
 small/mul_s-f32-1	alloc_words	exact	70
+small/mul_s-f32-1	wall_time	batch=1	n=20	3.495e-07	3.430e-07 3.440e-07 3.450e-07 3.450e-07 3.470e-07 3.480e-07 3.480e-07 3.480e-07 3.490e-07 3.490e-07 3.500e-07 3.510e-07 3.610e-07 3.670e-07 3.750e-07 3.800e-07 3.830e-07 3.870e-07 4.080e-07 7.220e-07
 small/mul_s-f32-16	alloc_words	exact	70
+small/mul_s-f32-16	wall_time	batch=16384	n=20	3.442e-07	3.414e-07 3.415e-07 3.415e-07 3.415e-07 3.422e-07 3.422e-07 3.423e-07 3.424e-07 3.433e-07 3.439e-07 3.444e-07 3.451e-07 3.453e-07 3.455e-07 3.455e-07 3.456e-07 3.456e-07 3.458e-07 3.466e-07 3.527e-07
 small/mul_s-f64-16	alloc_words	exact	71
-small/sum-f32-16	alloc_words	exact	130
-small/sum-f64-16	alloc_words	exact	130
-small/where-f32-16	alloc_words	exact	53
+small/mul_s-f64-16	wall_time	batch=16384	n=20	3.521e-07	3.499e-07 3.501e-07 3.502e-07 3.503e-07 3.505e-07 3.511e-07 3.512e-07 3.515e-07 3.516e-07 3.519e-07 3.523e-07 3.536e-07 3.539e-07 3.543e-07 3.544e-07 3.544e-07 3.547e-07 3.548e-07 3.555e-07 3.557e-07
+small/repr-read-f32-16	alloc_words	exact	24
+small/repr-read-f32-16	wall_time	batch=65536	n=20	1.042e-07	1.039e-07 1.039e-07 1.039e-07 1.040e-07 1.040e-07 1.040e-07 1.041e-07 1.041e-07 1.041e-07 1.041e-07 1.042e-07 1.043e-07 1.044e-07 1.045e-07 1.046e-07 1.047e-07 1.047e-07 1.052e-07 1.054e-07 1.072e-07
+small/sum-f32-16	alloc_words	exact	129
+small/sum-f32-16	wall_time	batch=1	n=20	7.925e-07	7.520e-07 7.630e-07 7.670e-07 7.750e-07 7.770e-07 7.840e-07 7.860e-07 7.870e-07 7.900e-07 7.900e-07 7.950e-07 7.980e-07 8.000e-07 8.010e-07 8.060e-07 8.200e-07 8.310e-07 8.690e-07 9.530e-07 1.714e-06
+small/sum-f64-16	alloc_words	exact	129
+small/sum-f64-16	wall_time	batch=8192	n=20	7.532e-07	7.516e-07 7.520e-07 7.522e-07 7.523e-07 7.523e-07 7.525e-07 7.528e-07 7.529e-07 7.530e-07 7.531e-07 7.533e-07 7.533e-07 7.534e-07 7.536e-07 7.537e-07 7.538e-07 7.601e-07 7.641e-07 7.651e-07 7.656e-07
+small/where-f32-16	alloc_words	exact	55
+small/where-f32-16	wall_time	batch=1	n=20	2.825e-07	2.680e-07 2.690e-07 2.690e-07 2.710e-07 2.710e-07 2.740e-07 2.780e-07 2.800e-07 2.810e-07 2.820e-07 2.830e-07 2.870e-07 2.910e-07 2.960e-07 3.010e-07 3.040e-07 3.150e-07 3.160e-07 3.670e-07 1.107e-06
 statistics/all-bool-1M	alloc_words	exact	137
 statistics/argmax-bf16-1M	alloc_words	exact	222
 statistics/argmax-bf16-1M	wall_time	batch=64	n=20	1.286e-04	1.282e-04 1.283e-04 1.283e-04 1.283e-04 1.284e-04 1.284e-04 1.284e-04 1.285e-04 1.285e-04 1.286e-04 1.286e-04 1.286e-04 1.287e-04 1.291e-04 1.293e-04 1.298e-04 1.313e-04 1.313e-04 1.318e-04 1.342e-04
