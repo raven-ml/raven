@@ -1257,6 +1257,10 @@ void nx_cpu_prog_free(nx_cpu_prog *g) {
   free(g);
 }
 
+int nx_cpu_prog_released(const nx_cpu_prog *g) {
+  return g->nn > NX_CPU_ITEMS || g->nouts + g->nins + 1 > NX_CPU_ITEMS;
+}
+
 int nx_cpu_prog_nodes(const nx_cpu_prog *g) { return g->nn; }
 int nx_cpu_prog_ins(const nx_cpu_prog *g) { return g->nins; }
 int nx_cpu_prog_in(const nx_cpu_prog *g, int k) { return g->ins[k]; }

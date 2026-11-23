@@ -975,6 +975,11 @@ typedef struct nx_cpu_prog nx_cpu_prog;
 nx_cpu_prog *nx_cpu_prog_copy(const value *vp);
 void nx_cpu_prog_free(nx_cpu_prog *j);
 
+/* Whether [j]'s copy holds tables that its count of nodes or operands
+   sized past NX_CPU_ITEMS: they were allocated with the domain lock
+   released, and are freed so, nx_cpu_prog_free called released. */
+int nx_cpu_prog_released(const nx_cpu_prog *j);
+
 /* [j]'s nodes, its loads and outputs, and their dtypes. */
 int nx_cpu_prog_nodes(const nx_cpu_prog *j);
 int nx_cpu_prog_ins(const nx_cpu_prog *j);
