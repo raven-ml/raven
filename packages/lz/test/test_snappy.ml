@@ -277,6 +277,15 @@ let empty =
       equal string "\x00" (Lz.Snappy.encode_string "");
       equal decoded (Ok "") (decode ~cap:0 "\x00"))
 
+let encode_strings =
+  test "encode_string writes encode's block" (fun () ->
+      List.iteri
+        (fun i r ->
+          let s = build r in
+          equal string ~msg:(string_of_int i) (encode_bound s)
+            (Lz.Snappy.encode_string s))
+        Lz_support.every_kind)
+
 let law_exact =
   prop "a destination of the block's length holds it" recipe (fun r ->
       let x = build r in
@@ -737,6 +746,7 @@ let () =
              law_round_trip;
              law_strings;
              empty;
+             encode_strings;
              law_exact;
              law_short;
              test "a negative size has no bound" (fun () ->

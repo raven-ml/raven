@@ -311,6 +311,26 @@ let quota_steps e s =
   in
   go 0 []
 
+let string_streams =
+  cases "encode_string writes encode's stream"
+    ~id:(fun f -> f.name)
+    formats
+    (fun f ->
+      List.iteri
+        (fun i r ->
+          let s = Lz_support.build r and level = (i mod 9) + 1 in
+          equal string ~msg:(string_of_int i) (encode f ~level s)
+            (f.encode_string ~level s))
+        Lz_support.every_kind)
+
+let default_level =
+  cases "the default level is 6"
+    ~id:(fun f -> f.name)
+    formats
+    (fun f ->
+      let s = Lz_support.corpus Text (64 * kib) in
+      equal string (f.encode_string ~level:6 s) (f.encode_string s))
+
 let quota =
   test "every step takes the quota until the rest fits in one" (fun () ->
       let s = Lz_support.corpus Text mib in
@@ -319,7 +339,7 @@ let quota =
           match quota_steps (f.encoder ()) s with
           | [], _ -> failf "%s: Done before the last byte was taken" f.name
           | (q :: _ as ks), last ->
-              less int ~msg:(f.name ^ ": short of the slice") ~than:mib q;
+              equal int ~msg:(f.name ^ ": the quota") 65_536 q;
               List.iteri
                 (fun i k -> equal int ~msg:(Printf.sprintf "step %d" i) q k)
                 ks;
@@ -460,8 +480,9 @@ let () =
   exit
     (run "Deflate_enc"
        [
-         levels_outside;
-         group "round trip" [ round_trip; strings; stepped_round_trip; empty ];
+         group "levels" [ levels_outside; default_level ];
+         group "round trip" [ round_trip; stepped_round_trip; empty ];
+         group "encode_string" [ strings; string_streams ];
          group "bound" ([ bound; short; noise_bound; negative ] @ largest);
          group "steps" [ cut_free; quota; streams ];
          group "wrappers" [ gzip_member; zlib_stream ];

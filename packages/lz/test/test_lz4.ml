@@ -149,8 +149,17 @@ let negative c =
   test "a negative size has no bound" (fun () ->
       raises_match (Exn.invalid_arg ~sub:"negative") (fun () -> c.bound (-1)))
 
+let encode_strings c =
+  test "encode_string writes encode's bytes" (fun () ->
+      List.iteri
+        (fun i r ->
+          let s = Lz_support.build r in
+          equal string ~msg:(string_of_int i) (encode c s) (c.encode_string s))
+        Lz_support.every_kind)
+
 let laws c =
   [
+    encode_strings c;
     round_trip c;
     bound c;
     short c;

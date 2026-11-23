@@ -428,13 +428,55 @@ let quota_steps e s =
   in
   go 0 []
 
+let encode_strings =
+  test "encode_string writes encode's frame" (fun () ->
+      List.iter
+        (fun (r, level) ->
+          let s = Lz_support.build r in
+          equal string ~msg:(string_of_int level) (encode ~level s)
+            (Lz.Zstd.encode_string ~level s))
+        kinds)
+
+let default_level =
+  test "the default level is 3" (fun () ->
+      let s = Lz_support.corpus Text (64 * kib) in
+      let z = Lz.Zstd.encode_string s in
+      equal string (Lz.Zstd.encode_string ~level:3 s) z;
+      List.iter
+        (fun level ->
+          if level <> 3 then
+            not_equal string
+              ~msg:(Printf.sprintf "level %d" level)
+              (Lz.Zstd.encode_string ~level s)
+              z)
+        levels)
+
+(* A frame's window size is its Window_Descriptor's, or its content size in a
+   single segment. A run of 4 MiB + 1, past every level's window. *)
+let declared_windows =
+  cases "every frame declares a window of at most 4 MiB"
+    ~id:(fun level -> Printf.sprintf "level %d" level)
+    levels
+    (fun level ->
+      let s = String.make ((4 * mib) + 1) 'r' in
+      List.iter
+        (fun (name, z) ->
+          let declared = if single z then content_size z else window_size z in
+          match declared with
+          | None -> failf "%s declares no window" name
+          | Some w -> at_most int ~msg:name ~than:(4 * mib) w)
+        [
+          ("encode's frame", encode ~level s);
+          ("a stream's", steps ~level ~cuts:[] s);
+        ])
+
 let quota =
   test "every step takes the quota until the rest fits in one" (fun () ->
       let s = Lz_support.corpus Text mib in
       match quota_steps (Lz.Zstd.encoder ()) s with
       | [], _ -> fail "Done before the last byte was taken"
       | (q :: _ as ks), last ->
-          less int ~msg:"short of the slice" ~than:mib q;
+          equal int ~msg:"the quota" 131_072 q;
           List.iteri
             (fun i k -> equal int ~msg:(Printf.sprintf "step %d" i) q k)
             ks;
@@ -502,11 +544,13 @@ let () =
   exit
     (run "Zstd_enc"
        [
-         levels_outside;
-         group "round trip" ([ round_trip; strings; stepped_round_trip ] @ empty);
+         group "levels" [ levels_outside; default_level ];
+         group "round trip"
+           ([ round_trip; stepped_round_trip ] @ empty);
+         group "encode_string" [ strings; encode_strings ];
          group "bound"
            [ bound; short; negative; Lz_support.largest_bound Lz.Zstd.bound ];
          group "steps" [ cut_free; wide; edges; quota; frames ];
-         group "frames" [ headers ];
+         group "frames" [ headers; declared_windows ];
          group "paths" [ paths; rebased ];
        ])
