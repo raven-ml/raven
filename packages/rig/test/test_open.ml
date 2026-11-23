@@ -54,12 +54,21 @@ let test_host () =
   equal bool true (Rig.reaches Rig.host Rig.host);
   equal device Rig.host (Rig.host_of Rig.host);
   (* macOS states the caches, and Linux in sysfs where the firmware describes
-     them. *)
+     them: a cache's size file that holds a positive size. *)
   let sysfs = "/sys/devices/system/cpu" in
+  let sized i =
+    let file = Printf.sprintf "%s/cpu0/cache/index%d/size" sysfs i in
+    match In_channel.with_open_text file In_channel.input_all with
+    | s -> Scanf.sscanf_opt s "%d" Fun.id
+    | exception Sys_error _ -> None
+  in
+  let rec stated i =
+    Sys.file_exists (Printf.sprintf "%s/cpu0/cache/index%d" sysfs i)
+    && (Option.fold ~none:false ~some:(fun n -> n > 0) (sized i)
+       || stated (i + 1))
+  in
   let states =
-    Sys.os_type = "Unix"
-    && ((not (Sys.file_exists sysfs))
-       || Sys.file_exists (sysfs ^ "/cpu0/cache/index0/size"))
+    Sys.os_type = "Unix" && ((not (Sys.file_exists sysfs)) || stated 0)
   in
   match Rig.cache_bytes Rig.host with
   | Some n -> greater int ~msg:"the host's cache" ~than:0 n
