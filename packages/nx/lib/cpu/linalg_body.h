@@ -4409,7 +4409,10 @@ static void F(bsweep)(F(bchase) *ch, int64_t s) {
       T *x = b + c * cs + r0, f = MUL(CONJ(th), F(dot)(vh, x, kd));
       for (int64_t r = 0; r < kd; r++) x[r] -= MUL(vh[r], f);
     }
-    for (int64_t c = 0; c < len; c++) vg[c] = CONJ(b[(c0 + c) * cs + r0]);
+    /* G_j's α is row r0's element at column c0, which every task has:
+       c0 < n since j < tasks. */
+    vg[0] = CONJ(b[c0 * cs + r0]);
+    for (int64_t c = 1; c < len; c++) vg[c] = CONJ(b[(c0 + c) * cs + r0]);
     T tg = F(reflector)(vg, vg + 1, len - 1, 1);
     b[c0 * cs + r0] = vg[0];
     vg[0] = 1;
