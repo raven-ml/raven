@@ -493,20 +493,27 @@ let drawn c offset shape =
 let u32 = 0x1p-24
 let gamma n u = Float.of_int n *. u /. (1. -. (Float.of_int n *. u))
 
+(* nx_cpu.mli's float32 [ε] for a row of [t] keys in [n = ⌈t / 64⌉] blocks:
+   [e^λu (11n + 11 + ln t) u' + (e^λu - 1) ln t + u' |lse|], [u' = u / (1 - u)]
+   and [λ = 3], its log's error in float32. *)
+let cpu_epsilon t lse =
+  let u' = u32 /. (1. -. u32) and ln = Float.log (Float.of_int t) in
+  let grow = Float.exp (3. *. u32) in
+  let n = (t + 63) / 64 in
+  (grow *. (Float.of_int ((11 * n) + 11) +. ln) *. u')
+  +. ((grow -. 1.) *. ln)
+  +. (u' *. Float.abs lse)
+
 (* nx.mli's bound for a row of [tk] keys, [a] its greatest [|scale| Σ |q k|]
-   over its visible keys: [lse]'s, [η + ε], and the factor
-   [e^w - 1 + γ(tk + 1, 2u) e^w] of [M] in [o]'s. [ε] is nx.cpu's float32
-   one (Nx_kernels_support.cpu). *)
+   over its visible keys, [ε] being nx.cpu's: [lse]'s, [η + ε], and the factor
+   of [M] in [o]'s, [e^w - 1 + γ(tk + 1, 2u) e^w]. *)
 let row_bound ~dk ~tk ~a ~lse =
   let u = u32 in
   let eta =
     ((((1. +. u) ** 2.) *. (1. +. gamma (dk + 1) (2. *. u))) -. 1.) *. a
   in
   let ln = Float.log (Float.of_int (max 1 tk)) in
-  let eps =
-    (Option.get Nx_kernels_support.cpu.attention).epsilon
-      (Nx_array.Dtype.Any Nx_array.Dtype.Float32) (max 1 tk) lse
-  in
+  let eps = cpu_epsilon (max 1 tk) lse in
   let w =
     ((1. +. u) *. ((2. *. eta) +. eps)) +. (((2. *. a) +. ln +. 5.) *. u)
   in
