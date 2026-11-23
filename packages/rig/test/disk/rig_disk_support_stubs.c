@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*/
 
 /* What the disk's suites ask of the system that OCaml's Unix does not give:
-   limits on this process's open files and file sizes, and dropping a file's
-   cached pages; and a compute job of the host's pool that runs until
-   released. */
+   limits on this process's open files and file sizes, dropping a file's
+   cached pages and whether a file has an identity; and a compute job of the
+   host's pool that runs until released. */
 
 #define _GNU_SOURCE
 
@@ -24,6 +24,10 @@
 #include <signal.h>
 #include <sys/resource.h>
 #include <unistd.h>
+#endif
+#if defined(__APPLE__)
+#include <string.h>
+#include <sys/mount.h>
 #endif
 
 /* rig.disk's hook for its suite (rig_disk_stubs.c), outside Windows. */
@@ -91,6 +95,34 @@ value rig_disk_test_drop_pages(value v_path) {
 #else
   (void)v_path;
   return Val_int(-1);
+#endif
+}
+
+/* [identified path] is whether the system gives the file at [path] the
+   identity rig_disk.mli names: a file handle (name_to_handle_at(2)) on
+   Linux, an APFS or HFS+ volume on macOS, a file ID on Windows; none
+   elsewhere. Keeps the runtime: a test calls it alone. */
+value rig_disk_test_identified(value v_path) {
+#if defined(__linux__)
+  struct {
+    struct file_handle fh;
+    unsigned char bytes[MAX_HANDLE_SZ];
+  } handle;
+  int mount;
+  handle.fh.handle_bytes = MAX_HANDLE_SZ;
+  return Val_bool(name_to_handle_at(AT_FDCWD, String_val(v_path), &handle.fh,
+                                    &mount, 0) == 0);
+#elif defined(__APPLE__)
+  struct statfs fs;
+  if (statfs(String_val(v_path), &fs) != 0) return Val_false;
+  return Val_bool(strcmp(fs.f_fstypename, "apfs") == 0 ||
+                  strcmp(fs.f_fstypename, "hfs") == 0);
+#elif defined(_WIN32)
+  (void)v_path;
+  return Val_true;
+#else
+  (void)v_path;
+  return Val_false;
 #endif
 }
 

@@ -6,6 +6,7 @@
 external set_open_files : int -> int = "rig_disk_test_set_open_files"
 external set_file_size : int -> int = "rig_disk_test_set_file_size"
 external drop_pages : string -> int = "rig_disk_test_drop_pages"
+external identified : string -> bool = "rig_disk_test_identified"
 
 external fault_reads : int -> float -> unit = "rig_disk_test_fault_reads"
 

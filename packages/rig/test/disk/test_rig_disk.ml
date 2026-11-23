@@ -151,6 +151,10 @@ let exe =
 let root = Filename.dirname exe
 let dir = Filename.concat root (strf "files-%d" (Unix.getpid ()))
 
+(* Whether the system gives the suite's files an identity. Where it gives none,
+   the disk keeps each file's descriptor until the file is collected, beyond its
+   bound, and never reopens a file. *)
+let identified = lazy (Support.identified root)
 let names = Atomic.make 0
 
 let clear dir =
@@ -906,7 +910,11 @@ let test_borrow_retried () =
   let file = of_file path in
   use_all_others ();
   Sys.rename path aside;
-  raises_match (Exn.sys_error ~sub:path) (fun () -> B.borrow host file);
+  if Lazy.force identified then
+    raises_match (Exn.sys_error ~sub:path) (fun () -> B.borrow host file)
+  else
+    equal (option octets) ~msg:"through its descriptor" (Some s)
+      (borrowed host file);
   Sys.rename aside path;
   equal (option octets) (Some s) (borrowed host file)
 
@@ -1243,10 +1251,15 @@ let test_bound () =
     List.concat
       (List.mapi (fun i (b, s) -> if read b = s then [] else [ i ]) files)
   in
+  let kept msg =
+    if Lazy.force identified then
+      at_most int ~msg ~than:max_descriptors (open_on_made ())
+    else at_least int ~msg ~than:(List.length files) (open_on_made ())
+  in
   equal (list int) ~msg:"files that read wrong" [] (wrong ());
-  at_most int ~msg:"descriptors" ~than:max_descriptors (open_on_made ());
+  kept "descriptors";
   equal (list int) ~msg:"files that read wrong, again" [] (wrong ());
-  at_most int ~msg:"descriptors, again" ~than:max_descriptors (open_on_made ())
+  kept "descriptors, again"
 
 let test_inherited () =
   needs_dev_fd ();
@@ -1336,7 +1349,10 @@ let test_release_words (_, use) =
 
 let test_too_many () =
   if Sys.win32 then skip ~reason:"no limit of open files" ();
-  equal text "ninth: f8\nfirst: f0" (child [ "open-files" ])
+  let ninth =
+    if Lazy.force identified then "f8" else "refused naming its path"
+  in
+  equal text ("ninth: " ^ ninth ^ "\nfirst: f0") (child [ "open-files" ])
 
 let test_truncated kind =
   let s = pattern 2 10 in
@@ -1830,11 +1846,14 @@ let model_commands =
         if k >= max_descriptors then m.after_others <- true;
         [])
       (fun _ k -> use_others k);
+    (* Without an identity the disk keeps each file's descriptor until the file
+       is collected, which the model does not follow. *)
     command "count descriptors"
       (Gen.unit @-> judges int)
       (fun () outcome ->
         match outcome with
-        | Ok n -> at_most int ~than:max_descriptors n
+        | Ok n when Lazy.force identified -> at_most int ~than:max_descriptors n
+        | Ok _ -> ()
         | Error e -> raise e)
       (fun () -> if Sys.win32 then 0 else open_on_made ());
   ]
@@ -2014,15 +2033,17 @@ let open_files_child () =
   own_dir ();
   let paths = Array.init 9 (fun i -> make_file (strf "f%d" i)) in
   limit_open_files ();
-  let said = function
+  let said i = function
     | Ok f -> read (Rig_disk.buffer f)
+    | Error why when String.starts_with ~prefix:paths.(i) why ->
+        "refused naming its path"
     | Error why -> "Error " ^ why
   in
   let opened = Array.init 8 (fun i -> Rig_disk.of_file paths.(i)) in
-  Array.iter (fun b -> ignore (said b)) opened;
+  Array.iteri (fun i b -> ignore (said i b)) opened;
   without_descriptors (fun () ->
-      Printf.printf "ninth: %s\n" (said (Rig_disk.of_file paths.(8)));
-      Printf.printf "first: %s\n" (said opened.(0)))
+      Printf.printf "ninth: %s\n" (said 8 (Rig_disk.of_file paths.(8)));
+      Printf.printf "first: %s\n" (said 0 opened.(0)))
 
 (* The threads of this process, from Linux's /proc/self/status. *)
 let threads () =

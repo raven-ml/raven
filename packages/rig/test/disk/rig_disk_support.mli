@@ -19,6 +19,13 @@ val drop_pages : string -> int
     and drops its cached pages, so that the next read reaches storage: [0], or
     the errno. On Linux only; [-1] elsewhere. *)
 
+val identified : string -> bool
+(** [identified path] is whether the system gives the file at [path] the
+    identity by which the disk reopens a file, as [rig_disk.mli] names it: a
+    file handle on Linux, an APFS or HFS+ volume on macOS, a file ID on Windows.
+    Where it gives none, the disk keeps the file's descriptor until its buffers
+    are collected. *)
+
 val fault_reads : fail:int -> wait:float -> unit
 (** [fault_reads ~fail ~wait] makes each run of every later read of runs of the
     disk wait [wait] seconds before it reads, and the run of index [fail] of

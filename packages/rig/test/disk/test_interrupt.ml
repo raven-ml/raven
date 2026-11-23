@@ -91,6 +91,11 @@ let paths =
          Out_channel.with_open_bin path (fun oc -> output_string oc (bytes i));
          path))
 
+(* Whether the system gives the files an identity. Where it gives none, the disk
+   keeps every file's descriptor, beyond its bound, until the file is
+   collected. *)
+let identified = lazy (Support.identified root)
+
 let read b =
   let h = B.create Rig.host (B.length b) in
   B.copy ~src:b ~dst:h;
@@ -154,7 +159,8 @@ let interrupt ?landing n =
       in
       List.iter (fun b -> ignore (read b)) files;
       let full = descriptors () in
-      equal ~msg:"descriptors kept" int (base + max_descriptors) full;
+      let kept = if Lazy.force identified then max_descriptors else count in
+      equal ~msg:"descriptors kept" int (base + kept) full;
       let first = List.hd files in
       let h = B.create Rig.host (B.length first) in
       let reached =
@@ -329,8 +335,11 @@ let called n =
           (List.map expected calls) !answers;
         equal ~msg:"the callback's write" bool (not !held) !rewritten
       end;
-      at_most ~msg:"descriptors after" int ~than:(base + max_descriptors)
-        (descriptors ());
+      (* Without an identity, every file opened here may still hold its
+         descriptor: the [count] files, "written", "opened" and the two opens
+         of "dropped", whose buffers a drain may not have closed yet. *)
+      let kept = if Lazy.force identified then max_descriptors else count + 4 in
+      at_most ~msg:"descriptors after" int ~than:(base + kept) (descriptors ());
       List.iteri
         (fun i b -> equal ~msg:(strf "file %d" i) string (bytes i) (read b))
         files;
