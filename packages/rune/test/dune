@@ -159,7 +159,7 @@
  (package rune)
  (name test_program)
  (modules test_program)
- (libraries nx rig rune windtrap))
+ (libraries nx nx_array nx_support rig rune rune_support windtrap))
 
 ; nx's special functions' derivatives, against goldens gen/special_grad.py
 ; writes from correctly rounded references. Their time is compiling long

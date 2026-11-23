@@ -105,6 +105,26 @@ let pp_view ppf = function
 
 type t = { view : view; values : value array }
 
+(* The elements an operand's storage holds in [view] at shape [s]. *)
+let storage view s =
+  match view with
+  | Plain | Flipped | Permuted -> numel s
+  | Strided -> numel s * 2
+  | Broadcast -> if Array.length s = 0 then 1 else numel s / Int.max 1 s.(0)
+  | Offset k -> numel s + k
+
+let draw_as view s =
+  let open Gen in
+  let element =
+    frequency
+      [
+        (3, of_list (Array.to_list pool));
+        (2, map (fun x -> F x) (float_range (-4.) 4.));
+      ]
+  in
+  let+ values = array ~size:(constant (storage view s)) element in
+  { view; values }
+
 let draw s =
   let open Gen in
   let* view =
@@ -114,22 +134,11 @@ let draw s =
         (1, map (fun k -> Offset k) (int_range 1 3));
       ]
   in
-  let n =
-    match view with
-    | Plain | Flipped | Permuted -> numel s
-    | Strided -> numel s * 2
-    | Broadcast -> if Array.length s = 0 then 1 else numel s / Int.max 1 s.(0)
-    | Offset k -> numel s + k
-  in
-  let element =
-    frequency
-      [
-        (3, of_list (Array.to_list pool));
-        (2, map (fun x -> F x) (float_range (-4.) 4.));
-      ]
-  in
-  let+ values = array ~size:(constant n) element in
-  { view; values }
+  draw_as view s
+
+let of_pool view s k =
+  let n = Array.length pool in
+  { view; values = Array.init (storage view s) (fun j -> pool.((k + j) mod n)) }
 
 let make (type v s) (dt : (v, s) D.t) s o : (v, s, Nx.host) Nx.t =
   let r = Array.length s in

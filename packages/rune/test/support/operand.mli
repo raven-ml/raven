@@ -69,6 +69,14 @@ val draw : int array -> t Windtrap.Gen.t
 (** [draw s] is an operand of shape [s]: a view, then its elements, 3 in 5 from
     {!pool} and 2 in 5 uniform in [[-4, 4]]. *)
 
+val draw_as : view -> int array -> t Windtrap.Gen.t
+(** [draw_as v s] is an operand of shape [s] in view [v], its elements drawn as
+    {!draw} draws them. *)
+
+val of_pool : view -> int array -> int -> t
+(** [of_pool v s k] is an operand of shape [s] in view [v] whose elements are
+    {!pool}'s from position [k] on, in turn. *)
+
 val make : ('v, 's) Nx.dtype -> int array -> t -> ('v, 's, Nx.host) Nx.t
 (** [make dt s o] is [o] at [dt] and shape [s], each element made by {!value}. A
     0-d operand is plain but for {!Offset}. *)
