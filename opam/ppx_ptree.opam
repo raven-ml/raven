@@ -20,6 +20,7 @@ depends: [
   "vega" {= version & with-test}
   "kaun" {= version & with-test}
   "windtrap" {with-test & >= "0.3.1"}
+  "dune" {with-test & >= "3.22"}
   "odoc" {with-doc}
 ]
 build: [

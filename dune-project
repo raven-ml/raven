@@ -47,7 +47,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -89,7 +90,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -127,7 +129,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -173,7 +176,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -212,7 +216,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -257,7 +262,12 @@
   (windtrap
    (and
     :with-test
-    (>= 0.3.1))))
+    (>= 0.3.1)))
+  ; a test run needs dune 3.22 to leave other packages' cram tests out
+  (dune
+   (and
+    :with-test
+    (>= 3.22))))
  (tags
   (ppx parameter-tree automatic-differentiation machine-learning)))
 
@@ -293,7 +303,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -333,7 +344,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -368,7 +380,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -401,7 +414,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -436,7 +450,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -472,7 +487,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -523,7 +539,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -565,7 +582,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
@@ -594,7 +612,8 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2
+  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
+  ; needs dune 3.22 to leave other packages' cram tests out
   (dune
    (and
     :with-test
