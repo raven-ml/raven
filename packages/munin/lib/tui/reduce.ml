@@ -32,27 +32,27 @@ let[@inline] mean_of sum shift n = clamp (Float.ldexp (sum /. Float.of_int n) sh
    how many are at or below 0, which have no logarithm. *)
 type sums = {
   count : int array;
-  sum : float array;
+  sum : Float.Array.t;
   shift : int array;
-  logs : float array;
+  logs : Float.Array.t;
   nonpos : int array;
 }
 
 let sums dots =
   {
     count = Array.make dots 0;
-    sum = Array.make dots 0.;
+    sum = Float.Array.make dots 0.;
     shift = Array.make dots 0;
-    logs = Array.make dots 0.;
+    logs = Float.Array.make dots 0.;
     nonpos = Array.make dots 0;
   }
 
 let copy_sums s =
   {
     count = Array.copy s.count;
-    sum = Array.copy s.sum;
+    sum = Float.Array.copy s.sum;
     shift = Array.copy s.shift;
-    logs = Array.copy s.logs;
+    logs = Float.Array.copy s.logs;
     nonpos = Array.copy s.nonpos;
   }
 
@@ -60,19 +60,20 @@ let copy_sums s =
    unboxed: a call boxes each float it is given and returns. *)
 
 let rec scale_sum s k y =
-  s.sum.(k) <- Float.ldexp s.sum.(k) (-scale_step);
+  Float.Array.set s.sum k (Float.ldexp (Float.Array.get s.sum k) (-scale_step));
   s.shift.(k) <- s.shift.(k) + scale_step;
-  let t = s.sum.(k) +. Float.ldexp y (-s.shift.(k)) in
-  if Float.is_finite t then s.sum.(k) <- t else scale_sum s k y
+  let t = Float.Array.get s.sum k +. Float.ldexp y (-s.shift.(k)) in
+  if Float.is_finite t then Float.Array.set s.sum k t else scale_sum s k y
 
 let[@inline] add_sum s k y =
-  let t = s.sum.(k) +. Float.ldexp y (-s.shift.(k)) in
-  if Float.is_finite t then s.sum.(k) <- t else scale_sum s k y
+  let t = Float.Array.get s.sum k +. Float.ldexp y (-s.shift.(k)) in
+  if Float.is_finite t then Float.Array.set s.sum k t else scale_sum s k y
 
 let[@inline] add s k y =
   s.count.(k) <- s.count.(k) + 1;
   add_sum s k y;
-  if y > 0. then s.logs.(k) <- s.logs.(k) +. Float.log y
+  if y > 0. then
+    Float.Array.set s.logs k (Float.Array.get s.logs k +. Float.log y)
   else s.nonpos.(k) <- s.nonpos.(k) + 1
 
 (* The mean of column [k], with [extra] counted in it. *)
@@ -82,16 +83,17 @@ let column_mean s ~log k extra =
   else if log then
     let logs, nonpos =
       match extra with
-      | Some y when y > 0. -> (s.logs.(k) +. Float.log y, s.nonpos.(k))
-      | Some _ -> (s.logs.(k), s.nonpos.(k) + 1)
-      | None -> (s.logs.(k), s.nonpos.(k))
+      | Some y when y > 0. ->
+          (Float.Array.get s.logs k +. Float.log y, s.nonpos.(k))
+      | Some _ -> (Float.Array.get s.logs k, s.nonpos.(k) + 1)
+      | None -> (Float.Array.get s.logs k, s.nonpos.(k))
     in
     if nonpos > 0 then Float.nan else Float.exp (logs /. Float.of_int n)
   else
     let sum, shift =
       match extra with
-      | Some y -> plus s.sum.(k) s.shift.(k) y
-      | None -> (s.sum.(k), s.shift.(k))
+      | Some y -> plus (Float.Array.get s.sum k) s.shift.(k) y
+      | None -> (Float.Array.get s.sum k, s.shift.(k))
     in
     mean_of sum shift n
 
@@ -258,8 +260,8 @@ type t = {
   smooth : bool;
   n : int;
   raw : sums;
-  lo : float array;
-  hi : float array;
+  lo : Float.Array.t;
+  hi : Float.Array.t;
   events : event option array;
   before : side;
   after : side;
@@ -306,9 +308,10 @@ let read r ~x s i =
       else begin
         add r.raw k y;
         (* As [Float.min] and [Float.max], [-0.] below [0.]. *)
-        let lo = r.lo.(k) and hi = r.hi.(k) in
-        if y < lo || (y = lo && Float.sign_bit y) then r.lo.(k) <- y;
-        if y > hi || (y = hi && not (Float.sign_bit y)) then r.hi.(k) <- y
+        let lo = Float.Array.get r.lo k and hi = Float.Array.get r.hi k in
+        if y < lo || (y = lo && Float.sign_bit y) then Float.Array.set r.lo k y;
+        if y > hi || (y = hi && not (Float.sign_bit y)) then
+          Float.Array.set r.hi k y
       end;
       if r.smooth && feed r.ema xi y then smooth_point r
     end
@@ -326,8 +329,8 @@ let extend r ~x s =
     {
       r with
       raw = copy_sums r.raw;
-      lo = Array.copy r.lo;
-      hi = Array.copy r.hi;
+      lo = Float.Array.copy r.lo;
+      hi = Float.Array.copy r.hi;
       events = Array.copy r.events;
       before = copy_side r.before;
       after = copy_side r.after;
@@ -347,8 +350,8 @@ let make ?tau grid ~x s =
       smooth;
       n = 0;
       raw = sums dots;
-      lo = Array.make dots Float.infinity;
-      hi = Array.make dots Float.neg_infinity;
+      lo = Float.Array.make dots Float.infinity;
+      hi = Float.Array.make dots Float.neg_infinity;
       events = Array.make dots None;
       before = no_side ();
       after = no_side ();
@@ -371,7 +374,10 @@ let mean r ~smooth ~log k =
     in
     column_mean r.smoothed ~log k extra
 
-let extent r k = if r.raw.count.(k) = 0 then None else Some (r.lo.(k), r.hi.(k))
+let extent r k =
+  if r.raw.count.(k) = 0 then None
+  else Some (Float.Array.get r.lo k, Float.Array.get r.hi k)
+
 let event r k = r.events.(k)
 
 let edges r ~smooth =
