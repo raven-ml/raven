@@ -55,13 +55,43 @@ let sentinel2 =
           done);
     ]
 
+(* [Sentinel1.code] floors [(20 log10 g + 50) 200] in the C library's log10,
+   which C leaves inexact. The fixture's codes come from numpy's log10 on
+   glibc, which states it within [log10_ulps] ulps; any other C library is
+   allowed as much. An error of [k] ulps in log10 is [4000 k] ulps of log10 in
+   the value, and each of its three roundings is at most an ulp of a value
+   below [2{^15}]. Two libraries then floor to different codes only where the
+   value is within the sum of their errors of an integer, and there to
+   neighbours. *)
+let log10_ulps = 2.
+let roundings = 3.
+let ulp x = Float.succ (Float.abs x) -. Float.abs x
+
+let edge g =
+  let log10 = 4000. *. log10_ulps *. ulp (Float.log10 g) in
+  2. *. (log10 +. (roundings *. ulp 32768.))
+
 let sentinel1 =
   group "Sentinel1 against TESSERA's functions"
     [
-      test "code is amplitude_to_db, bit for bit" (fun () ->
-          equal (array int32)
-            (ints (get Nx.int16 "s1_code"))
-            (ints (Sentinel1.code (get Nx.float64 "s1_gamma"))));
+      test "code is amplitude_to_db, but next to an integer" (fun () ->
+          let gamma = get Nx.float64 "s1_gamma" in
+          let want = ints (get Nx.int16 "s1_code") in
+          let got = ints (Sentinel1.code gamma) in
+          let gamma = Nx.to_array gamma in
+          equal int (Array.length want) (Array.length got);
+          Array.iteri
+            (fun i w ->
+              let g = got.(i) in
+              if g <> w then begin
+                let msg = Printf.sprintf "gamma %h" gamma.(i) in
+                equal ~msg int32 1l (Int32.abs (Int32.sub g w));
+                let value = (4000. *. Float.log10 gamma.(i)) +. 10000. in
+                let integer = Int32.to_float (Int32.max g w) in
+                less ~msg float_exact ~than:(edge gamma.(i))
+                  (Float.abs (value -. integer))
+              end)
+            want);
       test "covered decides as analyze_coverage at 0.01 %" (fun () ->
           for i = 0 to 4 do
             let case = Printf.sprintf "s1cov%d_" i in
