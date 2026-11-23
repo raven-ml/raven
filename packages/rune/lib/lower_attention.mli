@@ -55,37 +55,37 @@
     at a hidden or dropped key within a row's length reaches [o] only through a
     tile that runs.
 
-    {!linear} computes the derivative's transpose as three kernels: [δ] by
-    rows, then [q̄] by query rows over their keys and [k̄] and [v̄] by keys
-    over their group's rows, each pair's weight recomputed from [lse] and
-    no sum split across workgroups. Past 64 dimensions of keys or values,
-    [k̄] and [v̄] take a kernel each, four kernels in all, which compute
-    eight products a tile of pairs: [S], [dP] and [q̄] for [q̄], [S], [dP] and
-    [k̄] for [k̄], and [S] and [v̄] for [v̄]. A call over values of no column,
-    whose output is its [lse], takes no [v̄] kernel and no [dP]. Its [lse],
-    [q̄] and [k̄] are the bits of the same call over values with [ō = 0]
-    where both calls' tiles hold as many keys, in as many runs, and their
-    derivatives' tiles as many keys and rows. A tile's keys share workgroup
-    memory with their values' block, so values of more columns may take
-    fewer keys a tile, and then the bits may differ; both calls hold the
-    bound rune's Numerics section states. Each product runs on {!lower}'s unit.
-    On a tensor core the weights and the scores' cotangents round once to the
-    operands' dtype. On an FFMA micro-tile they stay in the accumulator and each
-    sum adds its terms in [K]'s order; the query rows' or keys' operands are
-    copied into workgroup memory at most 128 bytes of a row at a time, and the
-    pairs go in tiles of 32, 16 or 8 keys or rows, 16 first past 64 dimensions,
-    the first whose workgroup memory and accumulators fit. Each sum adds in a
-    fixed order of the shapes and the target. To 160 dimensions each operand's
-    dimensions are one block; past 160 of keys or values the derivative's
-    default computes it, as products over the stored weights. On an idle RTX
-    5000 Ada the tensor core's kernels take 0.19 to 0.94 of the default's time
-    at 129 and 160 dimensions, and their footprint is 1.4 to 17 times smaller,
-    but at 256 one block or blocks of 128 take 1.5 to 1.6 times the default's
-    time unmasked. Past 64 dimensions on an FFMA micro-tile, where the
-    kernels compute eight products a pair against the default's five, a
-    call of whole vectors of 4 dimensions whose heads hold at least 256 rows
-    and 256 keys takes the default while the weights it stores, rows by keys
-    of each head in the accumulator, hold at most 2 GiB. *)
+    {!linear} computes the derivative's transpose as three kernels: [δ] by rows,
+    then [q̄] by query rows over their keys and [k̄] and [v̄] by keys over their
+    group's rows, each pair's weight recomputed from [lse] and no sum split
+    across workgroups. Past 64 dimensions of keys or values, [k̄] and [v̄] take a
+    kernel each, four kernels in all, which compute eight products a tile of
+    pairs: [S], [dP] and [q̄] for [q̄], [S], [dP] and [k̄] for [k̄], and [S] and [v̄]
+    for [v̄]. A call over values of no column, whose output is its [lse], takes
+    no [v̄] kernel and no [dP]. Its [lse], [q̄] and [k̄] are the bits of the same
+    call over values with [ō = 0] where both calls' tiles hold as many keys, in
+    as many runs, and their derivatives' tiles as many keys and rows. A tile's
+    keys share workgroup memory with their values' block, so values of more
+    columns may take fewer keys a tile, and then the bits may differ; both calls
+    hold the bound rune's Numerics section states. Each product runs on
+    {!lower}'s unit. On a tensor core the weights and the scores' cotangents
+    round once to the operands' dtype. On an FFMA micro-tile they stay in the
+    accumulator and each sum adds its terms in [K]'s order; the query rows' or
+    keys' operands are copied into workgroup memory at most 128 bytes of a row
+    at a time, and the pairs go in tiles of 32, 16 or 8 keys or rows, 16 first
+    past 64 dimensions, the first whose workgroup memory and accumulators fit.
+    Each sum adds in a fixed order of the shapes and the target. To 160
+    dimensions each operand's dimensions are one block; past 160 of keys or
+    values the derivative's default computes it, as products over the stored
+    weights. On an idle RTX 5000 Ada the tensor core's kernels take 0.19 to 0.94
+    of the default's time at 129 and 160 dimensions, and their footprint is 1.4
+    to 17 times smaller, but at 256 one block or blocks of 128 take 1.5 to 1.6
+    times the default's time unmasked. Past 64 dimensions on an FFMA micro-tile,
+    where the kernels compute eight products a pair against the default's five,
+    a call of whole vectors of 4 dimensions, of at least 256 keys and at least
+    256 query rows over the heads that share a key head, takes the default while
+    the weights it stores, rows by keys over every lead index and head in the
+    accumulator, hold at most 2 GiB. *)
 
 open Tolk
 

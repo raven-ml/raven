@@ -1812,14 +1812,17 @@ val jit :
     score's cotangent rounds once to the operands' dtype before its product,
     which adds that dtype's unit roundoff times the product's magnitude, and for
     float16 at most [2{^-25}] times the other factor's for a value below
-    [2{^-14}]. On an FFMA micro-tile (float32 and float64, and a 16-bit
-    query that no tensor core takes) they stay in the accumulator, and each
-    sum adds its terms in a fixed order. Past 160 dimensions the
-    contractions compute it, and store the weights. A tile
-    of keys that the mask hides from every row a workgroup computes is
-    skipped, so a NaN or an infinity in a value at a key hidden from a row
-    within its length may make that row's [o] a NaN, where nx.cpu's eager
-    result is finite; the derivatives make it one.
+    [2{^-14}]. On an FFMA micro-tile (float32 and float64, and a 16-bit query
+    that no tensor core takes) they stay in the accumulator, and each sum adds
+    its terms in a fixed order. There, past 64 dimensions of keys or values, a
+    call whose dimensions are multiples of 4, of at least 256 keys and at least
+    256 query rows over the heads that share a key head, and whose weights, rows
+    by keys over every lead index and head in the accumulator, hold at most 2
+    GiB takes the contractions instead. Past 160 dimensions the contractions
+    compute it, and store the weights. A tile of keys that the mask hides from
+    every row a workgroup computes is skipped, so a NaN or an infinity in a
+    value at a key hidden from a row within its length may make that row's [o] a
+    NaN, where nx.cpu's eager result is finite; the derivatives make it one.
 
     {b Matrices.} A routine computes each matrix of a [float32] or [float64]
     operand, of [m] rows, [n] columns and [k = min m n], to first order in [u]
