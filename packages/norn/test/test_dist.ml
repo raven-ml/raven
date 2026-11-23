@@ -1334,6 +1334,13 @@ let small_dispersions =
 (* [rune]'s gradient of [f] at [p], against [score]. *)
 let grad_of f p = item (Rune.grad' (fun p -> f p) (f64 p))
 
+(* The masses' scores against their closed forms, within [16 ε] of the
+   magnitudes [T] they sum. Rune's derivative of Loader's form sums the
+   derivatives of [D(x, m)] and of the mean in the parameter, as [1 - x / m]
+   times [m]'s: the ratios [x / m] and [1] and the mean's derivative, each
+   within [2 u] of itself, [u = ε / 2], and the sum's rounding within [2 u] of
+   their magnitudes, which are [T]: [4 ε T], and the closed form's own ratio and
+   sums [2 ε T]. *)
 let scores =
   let count = Gen.(pair (float_range 0. 1.) place) in
   let x_of m sd = function
@@ -1429,6 +1436,48 @@ let scores =
             slope (grad_of f r));
     ]
 
+(* Compiled, the golden lines of each family in one program of their parameters:
+   each mass within its bound of mpmath's, as eager. *)
+let compiled_masses =
+  Windtrap.cases "a compiled log mass is within its bound"
+    ~id:(fun (name, _) -> name)
+    [
+      ("poisson", Poisson);
+      ("binomial", Binomial);
+      ("neg_binomial", Neg_binomial);
+    ]
+    (fun (name, family) ->
+      let rows =
+        List.filter_map
+          (function
+            | [ _; n; a; b; x; v ] when n = name -> Some (floats [ a; b; x; v ])
+            | _ -> None)
+          (lines "mass")
+      in
+      let col i = Array.of_list (List.map (fun r -> List.nth r i) rows) in
+      let a = col 0 and b = col 1 and x = col 2 and v = col 3 in
+      let ints xs =
+        Nx.create Nx.int32 [| Array.length xs |] (Array.map Int32.of_float xs)
+      in
+      let counts = ints x in
+      let mass p =
+        match family with
+        | Poisson -> D.factors (D.poisson ~rate:p) counts
+        | Binomial -> D.factors (D.binomial ~trials:(ints a) ~logits:p) counts
+        | Neg_binomial ->
+            D.factors (D.neg_binomial ~mean:p ~dispersion:(vec b)) counts
+      in
+      let p = vec (match family with Binomial -> b | _ -> a) in
+      let compiled = Nx.to_array (Rune.jit' mass p) in
+      Array.iteri
+        (fun i f ->
+          let m = count_mean family a.(i) b.(i) in
+          equal
+            ~msg:(Printf.sprintf "%h %h at %.0f" a.(i) b.(i) x.(i))
+            (float (mass_bound family (eps_of Nx.float64) v.(i) x.(i) m))
+            v.(i) f)
+        compiled)
+
 let count_masses =
   group "count masses"
     [
@@ -1460,22 +1509,7 @@ let count_masses =
           equal (array exact_inf)
             [| Float.neg_infinity; 0.; Float.neg_infinity; Float.neg_infinity |]
             (Nx.to_array (D.factors d counts)));
-      Windtrap.cases "a compiled log mass is the eager one"
-        ~id:(fun (name, _) -> name)
-        [
-          ("poisson", fun p -> D.poisson ~rate:(Nx.mul_s p 3e5));
-          ("binomial", fun p -> D.binomial ~trials:(i32 1_000_000) ~logits:p);
-          ( "neg_binomial",
-            fun p -> D.neg_binomial ~mean:(Nx.mul_s p 3e5) ~dispersion:p );
-        ]
-        (fun (_, d) ->
-          let xs = [| 0l; 1l; 3l; 100_000l; 268_000l; 300_000l; 1_000_000l |] in
-          let counts = Nx.create Nx.int32 [| 7 |] xs in
-          let p = f64 1.5 in
-          equal
-            (array (float_rel ~rel:1e-14 ~abs:1e-14))
-            (Nx.to_array (D.factors (d p) counts))
-            (Nx.to_array (Rune.jit' (fun p -> D.factors (d p) counts) p)));
+      compiled_masses;
     ]
 
 (* Continuous densities *)
@@ -1585,11 +1619,26 @@ let exact_densities =
          | _ -> failwith "dist.golden: a malformed density line")
        (lines "density"))
 
-(* Scores of the continuous densities against their closed forms, from
-   nx's digamma, within [64 ε] of the magnitudes they sum: the closed form
-   itself cancels where the score nears [0]. Concentrations reach from
+(* Scores of the continuous densities against their closed forms, from nx's
+   digamma, within [64 ε T] for [T] one plus the magnitudes the closed form
+   sums: it cancels where the score nears [0]. Concentrations reach from
    [1e-300], where the score is near [1 / α], to [1e30]; points lie near the
-   mode and far into both tails. *)
+   mode and far into both tails.
+
+   The bound, with [u = ε / 2]. The derivative Rune takes sums those of Loader's
+   terms, at most eight: of [δ_h], within [30 u] absolutely and [4 u |log α|]
+   (each step's derivative within [4 u] of its [1 / m], and below 1 the first
+   step's [log α]); of [log α], [1 / α] within [u]; of [D], [log (α / m)] within
+   [2 u] plus [u] of itself ([ratio_log]); the logs of the point and parameters
+   within [4 u]; ratios of the parameters and the point within [u]. From [ψ(α) =
+   log α - 1 / (2 α) - δ'(α)], [|log α|] and [1 / α] are within [2 |ψ(α)| + 2],
+   and [|log (α / m)|] within [|log α| + |log (rate x)|], so the terms'
+   magnitudes are within [3 T]. Their errors and the sum's rounding of [8 u] of
+   [3 T] give [63 u T]; the closed form's digamma, within 16 ulps or [16 ε] near
+   its root, its log and its sums give [18 ε T]: [50 ε T] in all. Where
+   [ratio_log] takes the logs' difference, its error is [4 u (|log α| + |log
+   m|)] instead, within [16 u T], [|log α|] and [|log m|] each within [2 T]: [58
+   ε T]. *)
 let digamma v = item (Nx.digamma (f64 v))
 
 (* [log10] of a concentration: mostly moderate, often extreme. *)
@@ -1867,32 +1916,62 @@ let continuous_scores =
             ((v -. 1.) /. scale) gs);
     ]
 
-(* Each family at large parameters, at points near its mode and in its
-   tails. *)
+(* Compiled, the golden lines of each family in one program of their parameters:
+   each density within its bound of mpmath's, as eager. *)
 let compiled_densities =
-  let pos = vec [| 1e-7; 0.25; 0.9; 1.; 1.1; 3.; 1e6 |] in
-  let unit = vec [| 1e-7; 0.1; 0.249; 0.25; 0.2501; 0.5; 0.999 |] in
-  let real = vec [| -1e6; -3.; -0.5; 0.; 1e-3; 2.; 1e20 |] in
-  Windtrap.cases "a compiled density is the eager one"
-    ~id:(fun (name, _, _) -> name)
-    [
-      ("gamma", pos, fun p -> D.gamma ~concentration:(Nx.mul_s p 1e6) ~rate:p);
-      ( "inverse_gamma",
-        pos,
-        fun p -> D.inverse_gamma ~concentration:(Nx.mul_s p 1e6) ~scale:p );
-      ("beta", unit, fun p -> D.beta ~a:(Nx.mul_s p 1e6) ~b:(Nx.mul_s p 3e6));
-      ( "student_t",
-        real,
-        fun p -> D.student_t ~df:(Nx.mul_s p 1e7) ~loc:(f64 0.) ~scale:p );
-    ]
-    (fun (_, xs, d) ->
-      let p = f64 1.5 in
-      let f p = D.factors (D.iid [| 7 |] (d p)) xs in
-      (* Each within its bound, a few hundred ulps of [|f|] and the logs. *)
-      equal
-        (array (float_rel ~rel:1e-12 ~abs:1e-11))
-        (Nx.to_array (f p))
-        (Nx.to_array (Rune.jit' f p)))
+  Windtrap.cases "a compiled density is within its bound"
+    ~id:(fun family -> family)
+    [ "gamma"; "inverse_gamma"; "beta"; "student_t"; "dirichlet" ]
+    (fun family ->
+      let rows =
+        List.filter_map
+          (function
+            | _ :: f :: rest when f = family -> Some (floats rest) | _ -> None)
+          (lines "density" @ lines "density64")
+      in
+      let n = List.length rows in
+      let k = List.length (List.hd rows) - 1 in
+      let args = List.map (List.filteri (fun i _ -> i < k)) rows in
+      let v = Array.of_list (List.map (fun r -> List.nth r k) rows) in
+      let col i = vec (Array.of_list (List.map (fun r -> List.nth r i) args)) in
+      let simplex first =
+        Nx.create Nx.float64 [| n; 3 |]
+          (Array.concat
+             (List.map
+                (fun r ->
+                  Array.of_list
+                    (List.filteri (fun i _ -> i >= first && i < first + 3) r))
+                args))
+      in
+      let density p =
+        match family with
+        | "gamma" -> D.factors (D.gamma ~concentration:p ~rate:(col 1)) (col 2)
+        | "inverse_gamma" ->
+            D.factors (D.inverse_gamma ~concentration:p ~scale:(col 1)) (col 2)
+        | "beta" -> D.factors (D.beta ~a:p ~b:(col 1)) (col 2)
+        | "student_t" ->
+            D.factors
+              (D.student_t ~df:p
+                 ~loc:(Nx.zeros Nx.float64 [| n |])
+                 ~scale:(col 1))
+              (col 2)
+        | _ ->
+            (* Points back on the simplex, as [density_at] puts them. *)
+            let x = simplex 3 in
+            D.factors
+              (D.dirichlet ~concentration:p)
+              (Nx.div x (Nx.sum ~axes:[ 1 ] ~keepdims:true x))
+      in
+      let p = if family = "dirichlet" then simplex 0 else col 0 in
+      let compiled = Nx.to_array (Rune.jit' density p) in
+      List.iteri
+        (fun i a ->
+          let logs, off = density_terms family a in
+          equal
+            ~msg:(String.concat " " (List.map (Printf.sprintf "%h") a))
+            (float (density_bound epsilon_float v.(i) ~logs ~off))
+            v.(i) compiled.(i))
+        args)
 
 let bfloat16_simplex =
   test "at bfloat16 a dirichlet's tolerance is the point's rounding"
@@ -1918,18 +1997,6 @@ let narrow_dirichlet_draws =
       let f = Nx.to_array (Nx.cast Nx.float64 (D.factors (D.iid [| 2000 |] d) x)) in
       satisfies ~claim:"every density finite" (array float_exact)
         (Array.for_all Float.is_finite) f)
-
-let compiled_dirichlet =
-  test "a compiled dirichlet density is the eager one" (fun () ->
-      let x =
-        Nx.create Nx.float64 [| 2; 3 |] [| 0.2; 0.3; 0.5; 0.6; 0.39; 0.01 |]
-      in
-      let f a = D.factors (D.iid [| 2 |] (D.dirichlet ~concentration:a)) x in
-      let a = vec [| 1.5; 2e6; 0.7 |] in
-      equal
-        (array (float_rel ~rel:1e-14 ~abs:1e-14))
-        (Nx.to_array (f a))
-        (Nx.to_array (Rune.jit' f a)))
 
 let laplace =
   group "laplace"
@@ -2854,7 +2921,6 @@ let () =
              far_densities;
              continuous_scores;
              compiled_densities;
-             compiled_dirichlet;
              bfloat16_simplex;
              narrow_dirichlet_draws;
            ];
