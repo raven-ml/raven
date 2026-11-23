@@ -3,10 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Rune.jit on another machine's host: its programs compile for that machine
-   and run there, giving eager computation's bits on this process's host. The
-   other machine is rig's test agent, a real process on the loopback
-   (Remote_job). *)
+(* Rune.jit on another machine's host: its programs run there and give eager
+   computation's bits on this process's host; a program runs on one machine, and
+   one over several raises at the call; a search times its candidates there;
+   half casts give eager's bits. The other machine is rig's test agent, a real
+   process on the loopback (Remote_job). *)
 
 open Windtrap
 
@@ -79,23 +80,6 @@ let agrees name { f } =
   let x = Nx.create Nx.float32 [| n |] xs in
   let far = Rune.jit' f (placed (module R) h k xs) in
   equal (array int32) (bits (f x)) (bits (Nx.place Nx.Host.on far))
-
-(* Another machine's host compiles for its arch: on x86-64 its level, which
-   Clang takes as its processor, on arm64 the base architecture with the
-   features its arch names, untuned. *)
-let compiles_for_its_arch () =
-  let h = host () in
-  let t = Tolk_engine.target h in
-  let cpu =
-    match Rig.arch h with
-    | "arm64" -> "generic"
-    | "arm64+fp16" -> "generic,fp16"
-    | level when Rig.instruction_set h = "x86_64" -> level
-    | arch -> fail ("an arch this test has no target for: " ^ arch)
-  in
-  equal string (Rig.instruction_set h ^ "," ^ cpu) t.arch;
-  equal string "CPU" t.device;
-  equal string "CLANG" t.renderer
 
 (* A search times its candidates where they run, on another machine's host
    too: the kernel it picks gives eager computation's bits. *)
@@ -242,17 +226,18 @@ let () =
   exit
     (run "Rune.jit on another machine's host"
        [
-         test "another machine's host compiles for its arch"
-           compiles_for_its_arch;
-         test "a set spanning machines raises at the call, naming it"
-           spanning;
-         test "a place onto another machine's set raises at the call"
-           place_elsewhere;
-         test "values on one machine of a set spanning machines compile"
-           on_one_machine;
-         test "a search on another machine's host gives eager's bits" searches;
          group "gives eager's bits"
            [ agrees "neg" { f = Nx.neg }; agrees "floor" { f = Nx.floor } ];
+         group "machines"
+           [
+             test "a set spanning machines raises at the call, naming it"
+               spanning;
+             test "a place onto another machine's set raises at the call"
+               place_elsewhere;
+             test "values on one machine of a set spanning machines compile"
+               on_one_machine;
+           ];
+         test "a search on another machine's host gives eager's bits" searches;
          group "half casts give eager's bits"
            [
              test "every half widens to float32" widens_to_float32;

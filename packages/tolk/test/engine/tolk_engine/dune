@@ -43,8 +43,8 @@
    1
    (run %{exe:test_tolk_engine.exe} -f Metal))))
 
-; Timing on another machine's host, served by rig's test agent over the
-; loopback.
+; Targets and timing on another machine's host, served by rig's test agent
+; over the loopback.
 
 (test
  (name test_tolk_engine_remote)

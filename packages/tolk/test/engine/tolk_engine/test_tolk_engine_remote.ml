@@ -17,6 +17,23 @@ let remote =
 
 let host () = List.hd (Rig_remote.hosts (fst (remote ())))
 
+(* Another machine's host compiles for its arch: on x86-64 its level, which
+   Clang takes as its processor, on arm64 the base architecture with the
+   features its arch names, untuned. *)
+let compiles_for_its_arch () =
+  let h = host () in
+  let t = Run.target h in
+  let cpu =
+    match Rig.arch h with
+    | "arm64" -> "generic"
+    | "arm64+fp16" -> "generic,fp16"
+    | level when Rig.instruction_set h = "x86_64" -> level
+    | arch -> fail ("an arch this test has no target for: " ^ arch)
+  in
+  equal string (Rig.instruction_set h ^ "," ^ cpu) t.arch;
+  equal string "CPU" t.device;
+  equal string "CLANG" t.renderer
+
 (* out[i] = a[i] * n + b[i] for [size] elements, where out, a and b are the
    parameters 0, 1 and 2 and n a variable. *)
 let axpy size =
@@ -59,4 +76,8 @@ let () =
   Watchdog.start ();
   exit
     (run "Tolk_engine on another machine's host"
-       [ test "a time is its kernel's time there, within the call" timed ])
+       [
+         test "another machine's host compiles for its arch"
+           compiles_for_its_arch;
+         test "a time is its kernel's time there, within the call" timed;
+       ])
