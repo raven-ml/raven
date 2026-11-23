@@ -7,113 +7,331 @@ open Windtrap
 open Evidence_models
 
 let t = Nx.Ptree.tensor
+let ez = Norn.Evidence.ptree t
 
 let stop_name = function
   | Norn.Evidence.Converged -> "converged"
   | Remaining r -> Printf.sprintf "Remaining %g" r
   | Temperature b -> Printf.sprintf "Temperature %g" b
 
-(* Law 13: evidence. On models whose evidence is known, a run's [ln Z] is within
-   three of its errors of the truth, and over [runs] runs the spread of [ln Z]
-   is within a factor of two of the mean error. Over 20 runs the spread of a
-   correct error falls in [0.5, 2] with probability 0.995, over 200 with
-   probability 1 - 1e-20. The Gaussian in ten dimensions is held to the first
-   claim.
-
-   Both claims are on multiples of the errors, which grow as the live points
-   fall, so their odds of a miss hold at any count whose errors stay
-   calibrated. The conjugate model shares Law 14's 200 runs at 50 live points.
-   The mixture takes 100 live points, at two thirds of 200's time: over 40
-   runs at 100 its [ln Z] lay 0.00 errors from the truth on average and spread
-   1.10 of the mean error (-0.03 and 1.03 at 200). The Gaussian keeps 200:
-   over 10 runs at 100 its [ln Z] lay 0.32 ± 0.25 errors above the truth (0.12
-   at 200), and a shift of 0.32 would raise the first claim's odds of a miss
-   from 0.27% to 0.41%. *)
-
-let live = 200
+let lnz z = Nx.item [] (Norn.Evidence.log_evidence z)
+let err z = Nx.item [] (Norn.Evidence.error z)
 
 (* Every run here converges within 40 steps; the dead buffer's size sets the
    cost of the errors. *)
 let budget = 60
-let ez = Norn.Evidence.ptree t
 
-(* [runs_of ?live m n] is [n] runs on [m] from [live] prior draws, the [i]-th
-   from row [i] of [Nx.Rng.split_batch ~n (Nx.Rng.key 70)], each a call of one
-   compiled run: eager, a run of the ten-dimensional Gaussian takes twenty
-   times as long, and mapped over all the keys at once, 200 runs of the banana
-   take twice the processor time, since every lane waits for the slowest. *)
-let runs = Hashtbl.create 8
+(* [nest ?budget m live k] is a run on [m] from [live] prior draws: the run's
+   key is [Nx.Rng.fold_in k 0] and the draws' [Nx.Rng.fold_in k 1]. *)
+let nest ?(budget = budget) m live k =
+  Norn.Nested.run t ~budget ~prior:m.prior ~likelihood:m.likelihood
+    (Nx.Rng.fold_in k 0)
+    (m.draw (Nx.Rng.fold_in k 1) live)
 
-let runs_of ?(live = live) m n =
-  match Hashtbl.find_opt runs (m.name, live, n) with
-  | Some zs -> zs
-  | None ->
-      let one =
-        Rune.jit
-          Nx.Ptree.(Nx.Rng.ptree @-> returns ez)
-          (fun k ->
-            Norn.Nested.run t ~budget ~prior:m.prior ~likelihood:m.likelihood
-              (Nx.Rng.fold_in k 0)
-              (m.draw (Nx.Rng.fold_in k 1) live))
+let init ?batch ?tolerance ?(budget = budget) m live =
+  Norn.Nested.init t ?batch ?tolerance ~budget ~prior:m.prior
+    ~likelihood:m.likelihood
+    (m.draw (Nx.Rng.key 2) live)
+
+let step m = Norn.Nested.step t ~prior:m.prior ~likelihood:m.likelihood
+
+(* The first and second moments of a point's first element. *)
+let first_moments x =
+  let x1 = Nx.slice [ Nx.I 0 ] x in
+  Nx.stack ~axis:0 [ x1; Nx.square x1 ]
+
+(* [compiled m live] is one compiled run on [m] from [live] prior draws, with
+   the expectation of [first_moments] under it. Eager, a run of these models
+   takes five to twenty times as long. Every test that runs the conjugate model
+   at 50 live points makes this same program, so after the first its compilation
+   reads tolk's cache. *)
+let compiled m live =
+  Rune.jit
+    Nx.Ptree.(Nx.Rng.ptree @-> returns (pair ez (pair tensor tensor)))
+    (fun k ->
+      let z = nest m live k in
+      (z, Norn.Evidence.expectation t first_moments z))
+
+(* [runs ?live m n] is [n] runs of [compiled m live], the [i]-th from row [i] of
+   [Nx.Rng.split_batch ~n (Nx.Rng.key 70)]. A call per run: mapped over all the
+   keys at once, every lane waits for the slowest walker of every slice move,
+   and 200 runs of the banana take twice the processor time. *)
+let runs ~live m n =
+  let one = compiled m live in
+  let keys = Nx.Rng.split_batch ~n (Nx.Rng.key 70) in
+  let row i = Nx.Ptree.map Nx.Rng.ptree (fun _ k -> Nx.slice [ I i ] k) in
+  List.init n (fun i -> one (row i keys))
+
+(* init *)
+
+let refused =
+  cases "refuses a batch, budget or tolerance out of range"
+    ~id:(fun (name, _, _) -> name)
+    [
+      ( "a batch of every live point",
+        (fun () -> init ~batch:20 conjugate 20),
+        "Norn.Nested.init: batch = 20" );
+      ( "a batch of none",
+        (fun () -> init ~batch:0 conjugate 20),
+        "Norn.Nested.init: batch = 0" );
+      ( "a budget of none",
+        (fun () -> init ~budget:0 conjugate 20),
+        "Norn.Nested.init: budget = 0" );
+      ( "a tolerance of zero",
+        (fun () -> init ~tolerance:0. conjugate 20),
+        "Norn.Nested.init: tolerance = 0" );
+    ]
+    (fun (_, f, sub) -> raises_match (Exn.invalid_arg ~sub) f)
+
+let defaults =
+  test "a batch defaults to half the live points, the tolerance to 1e-3"
+    (fun () ->
+      let s = init conjugate 21 in
+      equal int 10 s.batch;
+      equal float_exact 1e-3 (Nx.item [] s.tolerance))
+
+let init_tests = group "init" [ refused; defaults ]
+
+(* step *)
+
+(* Births: a dead point's shrinkage is one over the points live when it died, [1
+   / (n - j + 1)] for the [j]-th of a step's deletions. A point drawn after [b]
+   deaths is live at death [i] when [b <= i] and it has not died before [i], so
+   counting them recovers each dead point's live count. *)
+let born =
+  cases "every dead point's live count is the points born before it"
+    ~id:(fun (n, batch, steps) ->
+      Printf.sprintf "%d live, batch %d, %d steps" n batch steps)
+    [ (10, 5, 4); (10, 3, 5); (7, 1, 9); (12, 11, 2) ]
+    (fun (n, batch, steps) ->
+      let s =
+        List.fold_left
+          (fun s i -> step conjugate (Nx.Rng.key i) s)
+          (Norn.Nested.init t ~batch ~budget:steps ~prior:conjugate.prior
+             ~likelihood:conjugate.likelihood
+             (conjugate.draw (Nx.Rng.key 0) n))
+          (List.init steps (fun i -> i + 1))
       in
-      let keys = Nx.Rng.split_batch ~n (Nx.Rng.key 70) in
-      let row i = Nx.Ptree.map Nx.Rng.ptree (fun _ k -> Nx.slice [ I i ] k) in
-      let zs = List.init n (fun i -> one (row i keys)) in
-      Hashtbl.replace runs (m.name, live, n) zs;
-      zs
+      let deaths = Int32.to_int (Nx.item [] s.deaths) in
+      let dead_born = Nx.to_array s.dead_born and born = Nx.to_array s.born in
+      let shrinkage = Nx.to_array s.shrinkage in
+      for i = 0 to deaths - 1 do
+        let live = ref 0 in
+        for j = 0 to deaths - 1 do
+          if Int32.to_int dead_born.(j) <= i && i <= j then incr live
+        done;
+        Array.iter (fun b -> if Int32.to_int b <= i then incr live) born;
+        equal (float 1e-12)
+          ~msg:(Printf.sprintf "dead point %d" i)
+          (1. /. float_of_int !live)
+          shrinkage.(i)
+      done)
 
-let nest m = List.hd (runs_of m 1)
+let past_budget =
+  test "a step past the budget leaves the state" (fun () ->
+      let s = init ~budget:1 conjugate 20 in
+      let s = step conjugate (Nx.Rng.key 3) s in
+      let s' = step conjugate (Nx.Rng.key 4) s in
+      equal int32 1l (Nx.item [] s'.steps);
+      equal (array float_exact) (Nx.to_array s.live) (Nx.to_array s'.live);
+      equal float_exact (Nx.item [] s.log_evidence) (Nx.item [] s'.log_evidence))
 
-let law_13 m zs =
-  slow
-  @@ test m.name (fun () ->
-      let zs = zs () in
-      let runs = List.length zs in
+(* Live points drawn at or below 0 under a likelihood that is NaN above 0: the
+   first step's slice moves, from those points along both directions, reach past
+   0. *)
+let nan_likelihood =
+  test "a NaN likelihood at a point raises" (fun () ->
+      let likelihood x =
+        let l = conjugate.likelihood x in
+        Nx.where
+          (Nx.greater_s (Nx.reshape [| -1 |] x) 0.)
+          (Nx.full_like l Float.nan) l
+      in
+      let live = Nx.neg (Nx.abs (conjugate.draw (Nx.Rng.key 2) 20)) in
+      let s =
+        Norn.Nested.init t ~budget ~prior:conjugate.prior ~likelihood live
+      in
+      raises_match (Exn.invalid_arg ~sub:"Norn.Nested.step: the density is nan")
+        (fun () ->
+          Norn.Nested.step t ~prior:conjugate.prior ~likelihood (Nx.Rng.key 3) s))
+
+let step_tests = group "step" [ born; past_budget; nan_likelihood ]
+
+(* evidence *)
+
+let normalised =
+  test "its sample's log weights are normalised" (fun () ->
+      let w = Norn.Evidence.sample (nest conjugate 50 (Nx.Rng.key 4)) in
+      (* The 1550 dead points' log-sum-exp rounds by at most their count's ulps
+         of 1, 3.4e-13. *)
+      equal (float 1e-12) 0. (Nx.item [] (Nx.logsumexp w.log_weights)))
+
+let expectation_of_sample =
+  test "an expectation is the weighted mean of its sample" (fun () ->
+      let z = nest conjugate 50 (Nx.Rng.key 4) in
+      let w = Norn.Evidence.sample z in
+      let p = Nx.exp w.log_weights and x = Nx.reshape [| -1 |] w.values in
+      let mean, _ = Norn.Evidence.expectation t (fun x -> x) z in
+      equal (float 1e-12)
+        (Nx.item [] (Nx.sum (Nx.mul p x)))
+        (Nx.item [ 0 ] mean))
+
+let evidence_tests = group "evidence" [ normalised; expectation_of_sample ]
+
+(* run *)
+
+let converges =
+  test "a run within its budget converges" (fun () ->
+      equal string "converged"
+        (stop_name (Norn.Evidence.stop (nest conjugate 50 (Nx.Rng.key 4)))))
+
+let spent =
+  test
+    "a spent budget stops with the ln Z the live points could add, the \
+     tolerance or more" (fun () ->
+      match Norn.Evidence.stop (nest ~budget:2 conjugate 50 (Nx.Rng.key 4)) with
+      | Remaining r -> at_least float_exact ~than:1e-3 r
+      | stop -> failf "stopped as %s" (stop_name stop))
+
+let pp_spent =
+  test "pp states the ln Z a spent budget leaves" (fun () ->
+      let z = nest ~budget:2 conjugate 50 (Nx.Rng.key 4) in
+      match Norn.Evidence.stop z with
+      | Remaining r ->
+          let f x = Nx.item [] x in
+          equal string
+            (Printf.sprintf
+               "ln Z = %.2f ± %.2f, H = %.2f nats, budget spent with %.2f nats \
+                left"
+               (lnz z) (err z)
+               (f (Norn.Evidence.information z))
+               r)
+            (Format.asprintf "%a" Norn.Evidence.pp z)
+      | stop -> failf "stopped as %s" (stop_name stop))
+
+(* The module's keys: step [s] has the key [fold_in (fold_in k 0) s] and the
+   evidence [fold_in k 1]. A run from the conjugate model's 20 prior draws stops
+   after a step that leaves the live points' contribution below the tolerance,
+   which the stop of the state's evidence reads. *)
+let keyed =
+  test "a run is init, then steps keyed by their count, then the evidence"
+    (fun () ->
+      let k = Nx.Rng.key 5 and live = conjugate.draw (Nx.Rng.key 6) 20 in
+      let ran =
+        Norn.Nested.run t ~budget ~prior:conjugate.prior
+          ~likelihood:conjugate.likelihood k live
+      in
+      let converged s =
+        Norn.Evidence.stop (Norn.Nested.evidence t k s) = Converged
+      in
+      let rec steps s =
+        let n = Int32.to_int (Nx.item [] s.Norn.Nested.steps) in
+        if converged s || n >= budget then s
+        else steps (step conjugate (Nx.Rng.fold_in (Nx.Rng.fold_in k 0) n) s)
+      in
+      let s =
+        steps
+          (Norn.Nested.init t ~budget ~prior:conjugate.prior
+             ~likelihood:conjugate.likelihood live)
+      in
+      let stepped = Norn.Nested.evidence t (Nx.Rng.fold_in k 1) s in
       List.iter
-        (fun z ->
-          equal string "converged" (stop_name (Norn.Evidence.stop z)))
-        zs;
-      let ln z = Nx.item [] (Norn.Evidence.log_evidence z) in
-      let err z = Nx.item [] (Norn.Evidence.error z) in
-      let z0 = List.hd zs in
-      at_most (float 1e-12)
-        ~than:(3. *. err z0)
-        ~msg:(Printf.sprintf "ln Z = %g, the truth %g" (ln z0) m.log_z)
-        (Float.abs (ln z0 -. m.log_z));
-      if runs > 1 then begin
-        let n = float_of_int runs in
-        let values = List.map ln zs in
-        let mean = List.fold_left ( +. ) 0. values /. n in
-        let spread =
-          Float.sqrt
-            (List.fold_left (fun s v -> s +. ((v -. mean) ** 2.)) 0. values
-            /. (n -. 1.))
-        in
-        let error = List.fold_left (fun s z -> s +. err z) 0. zs /. n in
-        let msg = "the spread of ln Z over the mean error" in
-        greater (float 1e-12) ~than:0.5 ~msg (spread /. error);
-        less (float 1e-12) ~than:2. ~msg (spread /. error)
-      end)
+        (fun (name, f) ->
+          equal float_exact ~msg:name
+            (Nx.item [] (f ran))
+            (Nx.item [] (f stepped)))
+        [
+          ("ln Z", Norn.Evidence.log_evidence);
+          ("its error", Norn.Evidence.error);
+          ("the effective groups", Norn.Evidence.effective_groups);
+        ])
 
-(* The weighted sample is the posterior: under the conjugate model x's posterior
-   is N(Σ y / (m + 1), 1 / (m + 1)). *)
-let posterior =
-  test "the weighted sample has the posterior's moments" (fun () ->
-      let w = Norn.Evidence.sample (nest conjugate) in
-      let p = Nx.exp w.log_weights in
-      let x = Nx.reshape [| -1 |] w.values in
-      let mean = Nx.item [] (Nx.sum (Nx.mul p x)) in
-      let var = Nx.item [] (Nx.sum (Nx.mul p (Nx.square (Nx.sub_s x mean)))) in
-      equal (float 0.05) (5.7 /. 6.) mean;
-      equal (float 0.03) (1. /. 6.) var)
+(* A compiled function leaves the order of a sum's terms free: over the 1550
+   dead points a reordered sum moves [ln Z], near -7, by at most 1550 of its
+   ulps, 2.4e-12; the error and the effective groups are spreads and ratios of
+   such sums. 1e-9 holds them all. *)
+let compiled_run =
+  test "a compiled run is the eager one" (fun () ->
+      let k = Nx.Rng.split_batch ~n:200 (Nx.Rng.key 70) in
+      let k = Nx.Ptree.map Nx.Rng.ptree (fun _ k -> Nx.slice [ I 0 ] k) k in
+      let z, (moments, _) = compiled conjugate 50 k in
+      let eager = nest conjugate 50 k in
+      List.iter
+        (fun (name, f) ->
+          equal (float 1e-9) ~msg:name (Nx.item [] (f eager)) (Nx.item [] (f z)))
+        [
+          ("ln Z", Norn.Evidence.log_evidence);
+          ("its error", Norn.Evidence.error);
+          ("the effective groups", Norn.Evidence.effective_groups);
+        ];
+      equal
+        (array (float 1e-9))
+        (Nx.to_array (fst (Norn.Evidence.expectation t first_moments eager)))
+        (Nx.to_array moments))
 
-(* Law 14: expectations. Of [calibration] = 200 independent runs, the number
-   whose interval of [± 1.96] errors holds the truth is [Bin (200, p)], [p]
-   the coverage, 0.95 when the errors are right. Each model's count is at
-   least 175: at [p = 0.95] a moment falls short with probability 9e-6, at
-   the lowest coverage seen, 0.935, with 6e-4, and an error that covers 68%
-   passes with probability 1e-10. Over six key sets the conjugate model's
-   runs covered 0.945 to 0.975 of each moment, the banana's 0.97 to 0.99.
+let run_tests = group "run" [ converges; spent; pp_spent; keyed; compiled_run ]
+
+(* ln Z and its error. On models whose evidence is known, a run's [ln Z] is
+   within three of its errors of the truth, and over several runs the spread of
+   [ln Z] is within a factor of two of the mean error. A calibrated error misses
+   the first claim with probability 0.27%. Over 20 runs the spread of a correct
+   error falls in [0.5, 2] with probability 0.995, over 200 with probability 1 -
+   1e-20. The Gaussian in ten dimensions is held to the first claim.
+
+   Both claims are on multiples of the errors, which grow as the live points
+   fall, so their odds of a miss hold at any count whose errors stay calibrated.
+   The conjugate model runs the expectation law's 200 runs at 50 live points.
+   The mixture takes 100 live points, at two thirds of 200's time: over 40 runs
+   at 100 its [ln Z] lay 0.00 errors from the truth on average and spread 1.10
+   of the mean error (-0.03 and 1.03 at 200). The Gaussian keeps 200: over 10
+   runs at 100 its [ln Z] lay 0.32 ± 0.25 errors above the truth (0.12 at 200),
+   and a shift of 0.32 would raise the first claim's odds of a miss from 0.27%
+   to 0.41%. *)
+let within_errors m zs =
+  List.iter
+    (fun z -> equal string "converged" (stop_name (Norn.Evidence.stop z)))
+    zs;
+  let z0 = List.hd zs in
+  at_most (float 1e-12)
+    ~than:(3. *. err z0)
+    ~msg:(Printf.sprintf "ln Z = %g, the truth %g" (lnz z0) m.log_z)
+    (Float.abs (lnz z0 -. m.log_z));
+  let n = float_of_int (List.length zs) in
+  if n > 1. then begin
+    let values = List.map lnz zs in
+    let mean = List.fold_left ( +. ) 0. values /. n in
+    let spread =
+      Float.sqrt
+        (List.fold_left (fun s v -> s +. ((v -. mean) ** 2.)) 0. values
+        /. (n -. 1.))
+    in
+    let error = List.fold_left (fun s z -> s +. err z) 0. zs /. n in
+    let msg = "the spread of ln Z over the mean error" in
+    greater (float 1e-12) ~than:0.5 ~msg (spread /. error);
+    less (float 1e-12) ~than:2. ~msg (spread /. error)
+  end
+
+let log_evidence_tests =
+  group "ln Z"
+    [
+      test conjugate.name (fun () ->
+          within_errors conjugate (List.map fst (runs ~live:50 conjugate 200)));
+      test gaussian.name (fun () ->
+          (* Eager: compiling this run costs more than running it. *)
+          let k = Nx.Rng.split_batch ~n:1 (Nx.Rng.key 70) in
+          let k = Nx.Ptree.map Nx.Rng.ptree (fun _ k -> Nx.slice [ I 0 ] k) k in
+          within_errors gaussian [ nest gaussian 200 k ]);
+      test mixture.name (fun () ->
+          within_errors mixture (List.map fst (runs ~live:100 mixture 20)));
+    ]
+
+(* Expectations. Of [calibration] = 200 independent runs, the number whose
+   interval of [± 1.96] errors holds the truth is [Bin (200, p)], [p] the
+   coverage, 0.95 when the errors are right. Each model's count is at least 175:
+   at [p = 0.95] a moment falls short with probability 9e-6, at the lowest
+   coverage seen, 0.935, with 6e-4, and an error that covers 68% passes with
+   probability 1e-10. Over six key sets the conjugate model's runs covered 0.945
+   to 0.975 of each moment, the banana's 0.97 to 0.99.
 
    The errors widen by Student's t, so a run's error over [t / 1.96], [t] the
    0.975 quantile at [K - 1] degrees of freedom, [K] the run's
@@ -127,34 +345,26 @@ let posterior =
    where few lineages make the multiples a mixture: its count lay in 123 to 141,
    so it is held to the first claim only.
 
-   Under the conjugate model x's posterior has mean [5.7 / 6] and second
-   moment [1 / 6 + (5.7 / 6)²]. On the banana x1's posterior is the standard
-   normal cut to [-4, 4], of mean 0 and second moment
-   [1 - 8 φ(4) / P(|x1| <= 4)], and slice moves leave the draws of a lineage
-   correlated: an error that takes the draws of different starts as
-   independent covered 59% to 68%. *)
+   Under the conjugate model x's posterior has mean [5.7 / 6] and second moment
+   [1 / 6 + (5.7 / 6)²]. On the banana x1's posterior is the standard normal cut
+   to [-4, 4], of mean 0 and second moment [1 - 8 φ(4) / P(|x1| <= 4)], and
+   slice moves leave the draws of a lineage correlated: an error that takes the
+   draws of different starts as independent covered 59% to 68%. *)
 
 let calibration = 200
-
-(* Law 14's runs, from 50 live points. *)
-let small_runs m = runs_of ~live:50 m calibration
 
 let cut =
   let inside = 1. -. Float.erfc (4. /. Float.sqrt 2.) in
   let phi4 = Float.exp (-8.) /. Float.sqrt (2. *. Float.pi) in
   1. -. (8. *. phi4 /. inside)
 
-let first_moments x =
-  let x1 = Nx.slice [ Nx.I 0 ] x in
-  Nx.stack ~axis:0 [ x1; Nx.square x1 ]
-
 (* The normal's 0.975 quantile. *)
 let z975 = 1.959963984540054
 
 (* [t_quantile p df] is Student's t's [p] quantile, [p > 1/2], at each of the
-   degrees of freedom [df]: its two tails beyond [t] hold
-   [I_x (df / 2, 1 / 2)], [x = df / (df + t²)], which bisection on [x] over
-   64 halvings solves for [2 (1 - p)]. *)
+   degrees of freedom [df]: its two tails beyond [t] hold [I_x (df / 2, 1 / 2)],
+   [x = df / (df + t²)], which bisection on [x] over 64 halvings solves for [2
+   (1 - p)]. *)
 let t_quantile p df =
   let df = Nx.create Nx.float64 [| Array.length df |] df in
   let a = Nx.mul_s df 0.5 and half = Nx.full_like df 0.5 in
@@ -169,25 +379,19 @@ let t_quantile p df =
   let x = Nx.mul_s (Nx.add !lo !hi) 0.5 in
   Nx.to_array (Nx.sqrt (Nx.div (Nx.mul df (Nx.rsub_s 1. x)) x))
 
-let law_14 ~centre m truth =
-  slow
-  @@ test m.name (fun () ->
-      let zs = small_runs m in
+let covers ~centre m truth =
+  test m.name (fun () ->
+      let rs = runs ~live:50 m calibration in
       List.iter
-        (fun z ->
+        (fun (z, _) ->
           equal string "converged" (stop_name (Norn.Evidence.stop z)))
-        zs;
-      let expectation =
-        Rune.jit
-          Nx.Ptree.(ez @-> returns (pair tensor tensor))
-          (Norn.Evidence.expectation t first_moments)
-      in
-      let estimates = Array.of_list (List.map expectation zs) in
+        rs;
+      let estimates = Array.of_list (List.map snd rs) in
       let df =
         Array.of_list
           (List.map
-             (fun z -> Nx.item [] (Norn.Evidence.effective_groups z) -. 1.)
-             zs)
+             (fun (z, _) -> Nx.item [] (Norn.Evidence.effective_groups z) -. 1.)
+             rs)
       in
       let t975 = t_quantile 0.975 df and t75 = t_quantile 0.75 df in
       Array.iteri
@@ -219,176 +423,22 @@ let law_14 ~centre m truth =
           end)
         truth)
 
-let law_14s =
-  group "expectations"
+let expectation_tests =
+  group "expectation"
     [
-      law_14 ~centre:true conjugate
+      covers ~centre:true conjugate
         [| 5.7 /. 6.; (1. /. 6.) +. ((5.7 /. 6.) ** 2.) |];
-      law_14 ~centre:false banana [| 0.; cut |];
-    ]
-
-(* A run on the conjugate model from 20 prior draws. *)
-let small_run k =
-  Norn.Nested.run t ~budget ~prior:conjugate.prior
-    ~likelihood:conjugate.likelihood (Nx.Rng.fold_in k 0)
-    (conjugate.draw (Nx.Rng.fold_in k 1) 20)
-
-let small i = small_run (Nx.Rng.key i)
-
-(* Births: a dead point's shrinkage is one over the points live when it died,
-   [1 / (n - j + 1)] for the [j]-th of a step's deletions. A point drawn after
-   [b] deaths is live at death [i] when [b <= i] and it has not died before
-   [i], so counting them recovers each dead point's live count. *)
-let born =
-  cases "every dead point's live count is the points born before it"
-    ~id:(fun (n, batch, steps) ->
-      Printf.sprintf "%d live, batch %d, %d steps" n batch steps)
-    [ (10, 5, 4); (10, 3, 5); (7, 1, 9); (12, 11, 2) ]
-    (fun (n, batch, steps) ->
-      let step =
-        Norn.Nested.step t ~prior:gaussian.prior ~likelihood:gaussian.likelihood
-      in
-      let s =
-        List.fold_left
-          (fun s i -> step (Nx.Rng.key i) s)
-          (Norn.Nested.init t ~batch ~budget:steps ~prior:gaussian.prior
-             ~likelihood:gaussian.likelihood
-             (gaussian.draw (Nx.Rng.key 0) n))
-          (List.init steps (fun i -> i + 1))
-      in
-      let deaths = Int32.to_int (Nx.item [] s.deaths) in
-      let dead_born = Nx.to_array s.dead_born and born = Nx.to_array s.born in
-      let shrinkage = Nx.to_array s.shrinkage in
-      for i = 0 to deaths - 1 do
-        let live = ref 0 in
-        for j = 0 to deaths - 1 do
-          if Int32.to_int dead_born.(j) <= i && i <= j then incr live
-        done;
-        Array.iter (fun b -> if Int32.to_int b <= i then incr live) born;
-        equal (float 1e-12)
-          ~msg:(Printf.sprintf "dead point %d" i)
-          (1. /. float_of_int !live) shrinkage.(i)
-      done)
-
-(* Two steps of the ten-dimensional Gaussian, far from its tolerance. *)
-let spent () =
-  Norn.Nested.run t ~budget:2 ~prior:gaussian.prior
-    ~likelihood:gaussian.likelihood (Nx.Rng.key 1)
-    (gaussian.draw (Nx.Rng.key 2) live)
-
-let runs_and_refusals =
-  group "runs"
-    [
-      test "a spent budget stops with the ln Z the live points could add"
-        (fun () ->
-          match Norn.Evidence.stop (spent ()) with
-          | Remaining r -> at_least float_exact ~than:1e-3 r
-          | stop -> failf "stopped as %s" (stop_name stop));
-      test "pp states the ln Z a spent budget leaves" (fun () ->
-          let z = spent () in
-          match Norn.Evidence.stop z with
-          | Remaining r ->
-              let f x = Nx.item [] x in
-              equal string
-                (Printf.sprintf
-                   "ln Z = %.2f ± %.2f, H = %.2f nats, budget spent with %.2f \
-                    nats left"
-                   (f (Norn.Evidence.log_evidence z))
-                   (f (Norn.Evidence.error z))
-                   (f (Norn.Evidence.information z))
-                   r)
-                (Format.asprintf "%a" Norn.Evidence.pp z)
-          | stop -> failf "stopped as %s" (stop_name stop));
-      test "a run within its budget converges" (fun () ->
-          equal string "converged"
-            (stop_name
-               (Norn.Evidence.stop
-                  (nest conjugate))));
-      test "a step past the budget leaves the state" (fun () ->
-          let s =
-            Norn.Nested.init t ~budget:1 ~prior:conjugate.prior
-              ~likelihood:conjugate.likelihood
-              (conjugate.draw (Nx.Rng.key 2) 20)
-          in
-          let step =
-            Norn.Nested.step t ~prior:conjugate.prior
-              ~likelihood:conjugate.likelihood
-          in
-          let s = step (Nx.Rng.key 3) s in
-          let s' = step (Nx.Rng.key 4) s in
-          equal int32 1l (Nx.item [] s'.steps);
-          equal (array float_exact) (Nx.to_array s.live) (Nx.to_array s'.live);
-          equal float_exact
-            (Nx.item [] s.log_evidence)
-            (Nx.item [] s'.log_evidence));
-      test "a batch of every live point is refused" (fun () ->
-          raises
-            (Invalid_argument "Norn.Nested.init: batch = 20 is not in [1, 20)")
-            (fun () ->
-              Norn.Nested.init t ~batch:20 ~budget:1 ~prior:conjugate.prior
-                ~likelihood:conjugate.likelihood
-                (conjugate.draw (Nx.Rng.key 2) 20)));
-      test "a run repeated with one key gives the same evidence" (fun () ->
-          equal float_exact
-            (Nx.item [] (Norn.Evidence.log_evidence (small 3)))
-            (Nx.item [] (Norn.Evidence.log_evidence (small 3))));
-      test "a compiled step is the eager one" (fun () ->
-          let s =
-            Norn.Nested.init t ~budget:2 ~prior:gaussian.prior
-              ~likelihood:gaussian.likelihood
-              (gaussian.draw (Nx.Rng.key 2) 50)
-          in
-          let sp = Norn.Nested.ptree t in
-          let step =
-            Norn.Nested.step t ~prior:gaussian.prior
-              ~likelihood:gaussian.likelihood
-          in
-          let compiled =
-            Rune.jit
-              Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
-              step (Nx.Rng.key 3) s
-          in
-          let eager = step (Nx.Rng.key 3) s in
-          equal (float 1e-9)
-            (Nx.item [] eager.log_evidence)
-            (Nx.item [] compiled.log_evidence);
-          equal
-            (array (float 1e-9))
-            (Nx.to_array eager.live)
-            (Nx.to_array compiled.live));
-      test "a compiled run is the eager one" (fun () ->
-          let compiled =
-            Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns ez) small_run
-              (Nx.Rng.key 5)
-          in
-          let eager = small_run (Nx.Rng.key 5) in
-          let field f z = Nx.item [] (f z) in
-          List.iter
-            (fun (name, f) ->
-              equal (float 1e-9) ~msg:name (field f eager) (field f compiled))
-            [
-              ("ln Z", Norn.Evidence.log_evidence);
-              ("its error", Norn.Evidence.error);
-              ("the effective groups", Norn.Evidence.effective_groups);
-            ];
-          let moments z =
-            Nx.to_array (snd (Norn.Evidence.expectation t first_moments z))
-          in
-          equal (array (float 1e-9)) (moments eager) (moments compiled));
-      born;
-      posterior;
+      covers ~centre:false banana [| 0.; cut |];
     ]
 
 let () =
   exit
     (run "Norn.Nested"
        [
-         runs_and_refusals;
-         group "evidence"
-           [
-             law_13 conjugate (fun () -> small_runs conjugate);
-             law_13 gaussian (fun () -> runs_of gaussian 1);
-             law_13 mixture (fun () -> runs_of ~live:100 mixture 20);
-           ];
-         law_14s;
+         init_tests;
+         step_tests;
+         evidence_tests;
+         run_tests;
+         log_evidence_tests;
+         expectation_tests;
        ])
