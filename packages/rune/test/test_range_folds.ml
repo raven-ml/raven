@@ -3,10 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Folds over ranges ({!Nx.reduce_ranges}, {!Nx.moments_ranges}) through
-   rune: a compiled call has eager's bits, a map over lanes is its lanes one
-   by one, bit for bit, and the gradient over finite rows is its finite
-   differences. *)
+(* Folds over ranges ({!Nx.reduce_ranges}, {!Nx.moments_ranges}) through rune:
+   the gradient over finite rows is its finite differences, a map over lanes is
+   its lanes one by one, bit for bit, and a compiled call has eager's bits. *)
 
 open Windtrap
 module T = Nx.Ptree
@@ -71,43 +70,6 @@ let wild (type s) (dt : (float, s) Nx.dtype) n seed =
   Nx.cast dt (Nx.create Nx.float64 [| n |] (Array.init n row))
 
 (* Laws *)
-
-let compiled f x =
-  let before = Rune.evaluations () in
-  let y = Rune.jit' f x in
-  Rune_support.Compiled.here ();
-  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
-  y
-
-(* The mean and variance compiled are eager's, bit for bit, at float64,
-   float32 and the 16-bit floats, which compute in float32. *)
-let law_jit_moments c =
-  let check (type s) (dt : (float, s) Nx.dtype) =
-    List.iter
-      (fun x ->
-        equal ~msg:(Nx.Dtype.name dt) (array float_exact)
-          (values (moments c x))
-          (values (compiled (moments c) x)))
-      [ rows dt c.n c.seed; wild dt c.n c.seed ]
-  in
-  check Nx.float64;
-  check Nx.float32;
-  check Nx.float16;
-  check Nx.bfloat16
-
-(* Each combine compiled is eager's, bit for bit, over float32 rows and
-   wrapping int32 ones. *)
-let law_jit_reduce c =
-  List.iter
-    (fun k ->
-      let fold x = Nx.reduce_ranges k ~lo:(bounds c.lo) ~hi:(bounds c.hi) x in
-      let x = rows Nx.float32 c.n c.seed in
-      equal ~msg:"float32" (array float_exact) (values (fold x))
-        (values (compiled fold x));
-      let i = Nx.cast Nx.int32 (Nx.mul_s (rows Nx.float64 c.n c.seed) 3e6) in
-      equal ~msg:"int32" (array int32) (Nx.to_array (fold i))
-        (Nx.to_array (compiled fold i)))
-    Nx.[ Add; Max; Min; Set ]
 
 (* A map over three lanes of rows and of bounds is the lanes one by one. *)
 let law_vmap (c, shared) =
@@ -206,28 +168,45 @@ let grad_err ~count ts x =
   e +. (Float.of_int count *. u *. s)
 
 (* [loss]'s central differences along the rows that [live] selects, 0 at the
-   others, against its gradient, within the rounding of both. A bound of [0.]
-   is a loss without rounding, and {!float} needs a positive one. *)
-let check_differences ~count ~live ts loss x =
+   others, against its gradient, within the rounding of both. [losses] is [loss]
+   of each column of a matrix whose rows are the rows', as nx folds a range of
+   rows element by element: every shifted vector is a column of one matrix, read
+   by one call. A bound of [0.] is a loss without rounding, and {!float} needs a
+   positive one. *)
+let check_differences ~count ~live ts loss losses x =
   let n = Array.length x in
   let at r = Nx.create Nx.float64 [| n |] r in
-  let value r = Nx.item [] (loss (at r)) in
-  let bound = ref 0. in
-  let difference i =
-    if not (live i) then 0.
-    else begin
-      let shift d = Array.mapi (fun j v -> if j = i then v +. d else v) x in
-      let up = shift step and down = shift (-.step) in
-      let d = (value up -. value down) /. (2. *. step) in
-      let err =
-        ((loss_err ~count ts up +. loss_err ~count ts down) /. (2. *. step))
-        +. (u *. Float.abs d)
-      in
-      bound := Float.max !bound err;
-      d
-    end
+  let shift i d = Array.mapi (fun j v -> if j = i then v +. d else v) x in
+  let shifts =
+    Array.of_list
+      (List.concat_map
+         (fun i -> if live i then [ (i, step); (i, -.step) ] else [])
+         (List.init n Fun.id))
   in
-  let fd = Array.init n difference in
+  let m = Array.length shifts in
+  let values =
+    if m = 0 then [||]
+    else
+      losses
+        (Nx.init Nx.float64 [| n; m |] (fun ix ->
+             let i, d = shifts.(ix.(1)) in
+             let v = x.(ix.(0)) in
+             if ix.(0) = i then v +. d else v))
+  in
+  let bound = ref 0. and fd = Array.make n 0. in
+  Array.iteri
+    (fun s (i, d) ->
+      if d > 0. then begin
+        let up = shift i step and down = shift i (-.step) in
+        let diff = (values.(s) -. values.(s + 1)) /. (2. *. step) in
+        let err =
+          ((loss_err ~count ts up +. loss_err ~count ts down) /. (2. *. step))
+          +. (u *. Float.abs diff)
+        in
+        bound := Float.max !bound err;
+        fd.(i) <- diff
+      end)
+    shifts;
   let g = Nx.to_array (Rune.grad' loss (at x)) in
   let tol = !bound +. grad_err ~count ts x +. Float.min_float in
   equal (array (float tol)) fd g
@@ -242,16 +221,20 @@ let law_grad c =
   let w = Nx.create Nx.float64 [| count |] (Array.init count weight) in
   (* An empty range's NaN would make every difference NaN: its weight is
      dropped. *)
-  let loss x =
-    let y = moments c x in
-    Nx.sum (Nx.where (Nx.isnan y) (Nx.zeros_like y) (Nx.mul w y))
+  let weighted y =
+    let w =
+      Nx.reshape (Array.append [| count |] (Array.make (Nx.ndim y - 1) 1)) w
+    in
+    Nx.sum ~axes:[ 0 ] (Nx.where (Nx.isnan y) (Nx.zeros_like y) (Nx.mul w y))
   in
+  let loss x = weighted (moments c x) in
+  let losses xs = Nx.to_array (weighted (moments c xs)) in
   let clip v = max 0 (min c.n v) in
   let term j =
     { l = clip c.lo.(j); r = clip c.hi.(j); wm = weight j; wv = weight (k + j) }
   in
   let ts = List.filter (fun t -> t.l < t.r) (List.init k term) in
-  check_differences ~count ~live:(fun _ -> true) ts loss x
+  check_differences ~count ~live:(fun _ -> true) ts loss losses x
 
 (* A range of finite rows has its finite differences' gradient whatever the
    rows outside it hold: the table's runs through a NaN or an infinity carry
@@ -266,41 +249,171 @@ let law_grad_local (c, fill) =
   let x = Array.mapi (fun i v -> if inside i then v else fill) at in
   let loss x =
     let m, v = Nx.moments_ranges ~lo:(bounds [| l |]) ~hi:(bounds [| h |]) x in
-    Nx.sum (Nx.add m v)
+    Nx.sum ~axes:[ 0 ] (Nx.add m v)
   in
+  let losses xs = Nx.to_array (loss xs) in
   let ts = [ { l; r = h; wm = 1.; wv = 1. } ] in
-  check_differences ~count:1 ~live:inside ts loss x
+  check_differences ~count:1 ~live:inside ts loss losses x
 
 (* The gradient of a sum of range sums counts each row's ranges, exactly. *)
 let law_grad_sums c =
   let x = rows Nx.float64 c.n c.seed in
-  let loss x = Nx.sum (Nx.reduce_ranges Add ~lo:(bounds c.lo) ~hi:(bounds c.hi) x) in
+  let loss x =
+    Nx.sum (Nx.reduce_ranges Add ~lo:(bounds c.lo) ~hi:(bounds c.hi) x)
+  in
   let clip v = max 0 (min c.n v) in
   let want =
     Array.init c.n (fun i ->
         let k = ref 0 in
-        Array.iteri (fun j l -> if clip l <= i && i < clip c.hi.(j) then incr k) c.lo;
+        Array.iteri
+          (fun j l -> if clip l <= i && i < clip c.hi.(j) then incr k)
+          c.lo;
         Float.of_int !k)
   in
   equal (array float_exact) want (Nx.to_array (Rune.grad' loss x))
+
+(* Compiled calls
+
+   A compiled call takes its bounds as arguments, so that one program, compiled
+   once at its first case, serves every case of its form: 33 rows and six
+   ranges, whose ranges cross every level of the table, one row and three
+   ranges, or no row and two ranges. *)
+
+let case_at n k =
+  let open Gen in
+  let bound = int_range (-2) (n + 2) in
+  let* lo = array ~size:(constant k) bound in
+  let* hi = array ~size:(constant k) bound in
+  let+ seed = int_range 0 1000 in
+  { n; lo; hi; seed }
+
+let compiled_cases =
+  Gen.with_pp pp_case
+    (Gen.bind
+       (Gen.of_list [ (33, 6); (1, 3); (0, 2) ])
+       (fun (n, k) -> case_at n k))
+
+(* At each form: a range of one row after a bound before the rows, every row, an
+   empty range, one past the rows, one reversed and one after the last row; at
+   no row, ranges past both ends and an empty one. *)
+let compiled_examples =
+  [
+    {
+      n = 33;
+      lo = [| -2; 0; 5; 30; 10; 33 |];
+      hi = [| 1; 33; 5; 35; 4; 34 |];
+      seed = 7;
+    };
+    { n = 1; lo = [| -1; 0; 1 |]; hi = [| 2; 1; 1 |]; seed = 3 };
+    { n = 0; lo = [| -1; 0 |]; hi = [| 1; 0 |]; seed = 5 };
+  ]
+
+let clip c v = max 0 (min c.n v)
+
+let cover_ranges c =
+  let length j = clip c c.hi.(j) - clip c c.lo.(j) in
+  let some p = List.exists p (List.init (Array.length c.lo) Fun.id) in
+  cover "an empty range" (some (fun j -> length j <= 0));
+  cover "a range of one row" (some (fun j -> length j = 1));
+  cover "a range over several levels of the table"
+    (some (fun j -> length j > 8));
+  cover "a bound outside the rows"
+    (some (fun j -> c.lo.(j) < 0 || c.hi.(j) > c.n));
+  cover "one row" (c.n = 1);
+  cover "no row" (c.n = 0)
+
+(* The signature of a function of bounds or runs and a source. *)
+let three () = T.(tensor @-> tensor @-> tensor @-> returns tensor)
+
+let jit_reduce k =
+  (k, lazy (Rune.jit (three ()) (fun lo hi x -> Nx.reduce_ranges k ~lo ~hi x)))
+
+let combines = Nx.[ Add; Max; Min; Set ]
+let reduces_f32 = List.map jit_reduce combines
+let reduces_i32 = List.map jit_reduce combines
+
+(* [f] compiled, of [c]'s bounds and [x], with no call evaluated. *)
+let compiled c f x =
+  let before = Rune.evaluations () in
+  let y = Lazy.force f (bounds c.lo) (bounds c.hi) x in
+  Rune_support.Compiled.here ();
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+  y
+
+(* Each combine compiled is eager's, bit for bit, over float32 rows and wrapping
+   int32 ones. *)
+let law_jit_reduce c =
+  cover_ranges c;
+  let lo = bounds c.lo and hi = bounds c.hi in
+  let x = rows Nx.float32 c.n c.seed in
+  List.iter
+    (fun (k, f) ->
+      equal ~msg:"float32" (array float_exact)
+        (values (Nx.reduce_ranges k ~lo ~hi x))
+        (values (compiled c f x)))
+    reduces_f32;
+  let i = Nx.cast Nx.int32 (Nx.mul_s (rows Nx.float64 c.n c.seed) 3e6) in
+  List.iter
+    (fun (k, f) ->
+      equal ~msg:"int32" (array int32)
+        (Nx.to_array (Nx.reduce_ranges k ~lo ~hi i))
+        (Nx.to_array (compiled c f i)))
+    reduces_i32
+
+let moments_of lo hi x =
+  let m, v = Nx.moments_ranges ~lo ~hi x in
+  Nx.concatenate ~axis:0 [ m; v ]
+
+let moments_f64 = lazy (Rune.jit (three ()) moments_of)
+let moments_f32 = lazy (Rune.jit (three ()) moments_of)
+let moments_f16 = lazy (Rune.jit (three ()) moments_of)
+let moments_bf16 = lazy (Rune.jit (three ()) moments_of)
+
+(* The mean and variance compiled are eager's, bit for bit, at float64, float32
+   and the 16-bit floats, which compute in float32. *)
+let law_jit_moments c =
+  cover_ranges c;
+  let check (type s) (dt : (float, s) Nx.dtype) f =
+    List.iter
+      (fun x ->
+        equal ~msg:(Nx.Dtype.name dt) (array float_exact)
+          (values (moments c x))
+          (values (compiled c f x)))
+      [ rows dt c.n c.seed; wild dt c.n c.seed ]
+  in
+  check Nx.float64 moments_f64;
+  check Nx.float32 moments_f32;
+  check Nx.float16 moments_f16;
+  check Nx.bfloat16 moments_bf16
 
 let () =
   exit
     (run "rune range folds"
        [
-         prop ~count:6
-           "compiled moments have eager's bits, at every float carrier" cases
-           law_jit_moments;
-         prop ~count:8 "compiled range folds have eager's bits, every combine"
-           cases law_jit_reduce;
-         prop "a map over lanes of rows and bounds is its lanes one by one"
-           (Gen.pair cases Gen.bool) law_vmap;
-         prop "the moments' gradient is their finite differences" cases law_grad;
-         prop "a finite range's gradient ignores the rows outside it"
-           (Gen.pair cases
-              (Gen.of_list ~pp:Format.pp_print_float
-                 [ Float.nan; Float.infinity; Float.neg_infinity; 1e308 ]))
-           law_grad_local;
-         prop "a sum of range sums' gradient counts each row's ranges" cases
-           law_grad_sums;
+         group "grad"
+           [
+             prop "a sum of range sums' gradient counts each row's ranges" cases
+               law_grad_sums;
+             prop "the moments' gradient is their finite differences" cases
+               law_grad;
+             prop "a finite range's gradient ignores the rows outside it"
+               (Gen.pair cases
+                  (Gen.of_list ~pp:Format.pp_print_float
+                     [ Float.nan; Float.infinity; Float.neg_infinity; 1e308 ]))
+               law_grad_local;
+           ];
+         group "vmap"
+           [
+             prop "a map over lanes of rows and bounds is its lanes one by one"
+               (Gen.pair cases Gen.bool) law_vmap;
+           ];
+         group "jit"
+           [
+             prop ~count:8 ~examples:compiled_examples
+               "compiled range folds have eager's bits, every combine"
+               compiled_cases law_jit_reduce;
+             prop ~count:6 ~examples:compiled_examples
+               "compiled moments have eager's bits, at every float carrier"
+               compiled_cases law_jit_moments;
+           ];
        ])
