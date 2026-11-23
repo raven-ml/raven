@@ -47,6 +47,11 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
   (thumper
    (and
     :with-test
@@ -84,6 +89,11 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
   (thumper
    (and
     :with-test
@@ -117,6 +127,11 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
   (thumper
    (and
     :with-test
@@ -158,6 +173,13 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
+  ; the tests compile for the CPU with clang
+  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -190,6 +212,13 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
+  ; the tests compile for the CPU with clang
+  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -264,6 +293,13 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
+  ; the tests compile for the CPU with clang
+  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -297,6 +333,13 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
+  ; the tests compile for the CPU with clang
+  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -325,6 +368,13 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
+  ; the tests compile for the CPU with clang
+  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -351,6 +401,13 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
+  ; the tests compile for the CPU with clang
+  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -379,6 +436,13 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
+  ; the tests compile for the CPU with clang
+  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -408,6 +472,11 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
   (thumper
    (and
     :with-test
@@ -454,6 +523,11 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
   (thumper
    (and
     :with-test
@@ -490,7 +564,12 @@
    (and
     :with-test
     (>= 0.3.1)))
-  (mdx :with-test))
+  (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2))))
  (tags
   (repl toplevel notebooks interactive-computing literate-programming)))
 
@@ -515,6 +594,11 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
+  ; mdx 2.6 and later need the generator of dune 3.24.2
+  (dune
+   (and
+    :with-test
+    (>= 3.24.2)))
   (thumper
    (and
     :with-test

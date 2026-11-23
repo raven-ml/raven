@@ -66,6 +66,8 @@ Raven builds and installs with no system dependencies beyond OCaml.
 
 Compiling kernels at run time, with `Rune.jit`, uses the platform's compiler: `clang` on the CPU, NVRTC (from the CUDA toolkit) on NVIDIA, and comgr (from ROCm) on AMD; macOS includes Metal's. Kernels already in the on-disk cache need none of them, and eager code on the host needs nothing.
 
+On the CPU, `Rune.jit` runs the `clang` on `PATH`, or the program the `CC` environment variable names. Without one, the call that compiles raises `Tolk.Renderer.Compiler.Compile_error` naming the failure. Raven's packages need `clang` only to run their tests, which opam installs with `--with-test` through `conf-clang`.
+
 ## Using Raven in your project
 
 Add libraries to your `dune-project`:
