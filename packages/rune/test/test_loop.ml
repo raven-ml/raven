@@ -52,4 +52,4 @@ let widenings =
     (fun (host, called, dtypes) ->
       equal (list string) dtypes (passed ~host ~called))
 
-let () = exit (Windtrap.run "Rune.Loop" [ widenings ])
+let () = exit (run "Rune.Loop" [ widenings ])

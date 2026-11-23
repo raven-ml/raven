@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* What every construct promises of the functions it traces: when they run, what
-   they read, what they raise and where their extents end. Beside it, detach,
-   lanes and lane_index with no map. *)
+   they read, what they raise and where their extents end. And detach, and lanes
+   and lane_index with no map. *)
 
 open Windtrap
 open Compose
@@ -16,6 +16,7 @@ let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let f32 = Nx.float32
 let v xs = Nx.create f32 [| Array.length xs |] xs
 
+(* detach is its operand itself, and computes as its operand under jit. *)
 let test_detach () =
   let x = v [| 1.; -0. |] in
   let one_value = Testable.make ~pp:Nx.pp ~equal:( == ) in
@@ -362,7 +363,8 @@ let () =
        [
          test "detach is its operand" test_detach;
          test "lanes and lane_index raise with no map" test_no_map;
-         cases "traced once per trace" ~id:construct_name constructs test_traces;
+         cases "traces at each call, a jit once per key" ~id:construct_name
+           constructs test_traces;
          cases "a read of a traced value raises" ~id:construct_name constructs
            test_reads;
          cases "a read of captures alone raises if staged" ~id:construct_name
