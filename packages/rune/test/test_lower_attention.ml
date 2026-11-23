@@ -3,11 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Attention lowered for each GPU target and linearized on the host,
-   without a device or its toolchain: every dtype a target has takes a
-   kernel of a product unit, an FFMA micro-tile's products sum in K's order
-   (lower_attention.mli), and the forward's kernels and the derivative's on
-   a tensor core use workgroup memory soundly. *)
+(* Attention lowered for a CPU and for each GPU target and linearized on the
+   host, without a device or its toolchain (lower_attention.mli): a kernel's
+   code is bounded by its tiles, every dtype a GPU target has takes a kernel of
+   a product unit, an FFMA micro-tile's products sum in K's order, and the
+   forward's kernels and the derivative's on a tensor core use workgroup memory
+   soundly. *)
 
 open Windtrap
 module O = Tolk.Ops
@@ -96,19 +97,80 @@ let params ast =
 (* The linearized kernel [ast] for [target]'s renderer. *)
 let linearized =
   by_kernel (fun target ast ->
-      O.src (O.nth (Tolk.Codegen.linearize ast (Tolk.Cstyle.without_compiler target)) 1))
+      O.src
+        (O.nth
+           (Tolk.Codegen.linearize ast (Tolk.Cstyle.without_compiler target))
+           1))
+
+(* A kernel's code is bounded by its tiles, whatever [dk] and [dv]: the
+   forward's kernels under a causal mask and lengths list at most as many loads,
+   stores and matrix products each with keys or values of 1024 dimensions, or
+   both, as with 256, on the host and on GPU targets in float16 and float32,
+   whose products run on a tensor core or an FFMA micro-tile. The instructions
+   of index arithmetic are left out: how many a product of indices takes depends
+   on the range of its values. Its columns unrolled, the host's kernel listed
+   475 at 256 dimensions and 763 at 1024. Fewer is within the bound: on Apple9
+   in float32, the kernel that folds a row's runs of keys lists fewer at values
+   of 1024 columns than of 256. *)
+let bounded =
+  let f16 = D (Nx.float16, Nx.float32) and f32 = D (Nx.float32, Nx.float32) in
+  let on t ds =
+    let target = Result.get_ok (Tolk.Helpers.Target.of_string t) in
+    List.filter_map
+      (fun d -> if supported target d then Some (target, d) else None)
+      ds
+  in
+  on "CPU:CLANG:x86_64,haswell" [ f32 ]
+  @ on "CUDA:CUDA:sm_89" [ f16; f32 ]
+  @ on "AMD:HIP:gfx942" [ f16; f32 ]
+  @ on "METAL:METAL:Apple9" [ f16; f32 ]
+
+let bounded_id (t, ds) = target_id t ^ " " ^ dtypes_id ds
+
+let bounded_code (target, D (dt, acc)) =
+  let counted u = List.mem (O.op u) Tolk.Op.[ Load; Store; Wmma ] in
+  let at (dk, dv) =
+    let f () =
+      let z s = Nx.full dt s 0.5 in
+      let q = z [| 2; 4; 40; dk |]
+      and k = z [| 2; 2; 40; dk |]
+      and v = z [| 2; 2; 40; dv |] in
+      let lengths = Nx.create Nx.int64 [| 2 |] [| 40L; 25L |] in
+      fst (Nx.attention ~lengths ~mask:Nx.causal ~acc ~kv:(Dense { k; v }) q)
+    in
+    List.sort compare
+      (List.map
+         (fun (n, ast) ->
+           (n, List.length (List.filter counted (linearized target ast))))
+         (Lowered.own_kernels ~target f))
+  in
+  let first = at (256, 256) in
+  at_least ~msg:"attention's kernels" Testable.int ~than:1 (List.length first);
+  List.iter
+    (fun (dk, dv) ->
+      let ks = at (dk, dv) in
+      let at = Printf.sprintf "at dk %d dv %d" dk dv in
+      equal ~msg:("kernels " ^ at)
+        Testable.(list string)
+        (List.map fst first) (List.map fst ks);
+      List.iter2
+        (fun (n, bound) (_, count) ->
+          at_most
+            ~msg:(Printf.sprintf "%s's loads, stores and products %s" n at)
+            Testable.int ~than:bound count)
+        first ks)
+    [ (1024, 256); (256, 1024); (1024, 1024) ]
 
 (* Every pair of a query's dtype and an accumulator's that a GPU target has
-   takes a kernel of a product unit, at every head dimension: its products
-   run on a tensor core or as fused multiply-adds ({!Tolk.Op.Wmma},
-   {!Tolk.Op.Mulacc}), which the SIMT kernel's do not, and it reads [q], [k]
-   and [v] and writes its two results, with none of the SIMT kernel's
-   scratch. Its linearized program keeps those products. The lowering
-   chooses the unit by the target, the dtypes and the head dimension, and
-   the renderer keeps or decomposes the products by the target and the
-   dtypes, so each pair is linearized at one head dimension, the pairs
-   taking the dimensions in turn: the 174 kernels, each scheduled,
-   linearized and rendered, took 18 to 32 s. *)
+   takes a kernel of a product unit, at every head dimension: its products run
+   on a tensor core or as fused multiply-adds ({!Tolk.Op.Wmma},
+   {!Tolk.Op.Mulacc}), which the SIMT kernel's do not, and it reads [q], [k] and
+   [v] and writes its two results, with none of the SIMT kernel's scratch. Its
+   linearized program keeps those products. The lowering chooses the unit by the
+   target, the dtypes and the head dimension, and the renderer keeps or
+   decomposes the products by the target and the dtypes, so each pair is
+   linearized at one head dimension, the pairs taking the dimensions in turn:
+   the 174 kernels, each scheduled, linearized and rendered, took 18 to 32 s. *)
 let totality () =
   let dims = [ 1; 36; 110; 160; 1024; 2048 ] in
   let pairs =
@@ -169,18 +231,22 @@ let key_order (target, ds, causal, d) =
         let at, j =
           match O.op i with
           | Tolk.Op.Add -> (
-              match const (O.nth i 1) with Some j -> (O.nth i 0, j) | None -> (i, 0))
+              match const (O.nth i 1) with
+              | Some j -> (O.nth i 0, j)
+              | None -> (i, 0))
           | _ -> (i, 0)
         in
         Some ([ O.nth ix 0; at ], j)
     | _ -> None
   in
-  is_true ~msg:"chains of multiply-adds" (heads <> []);
+  at_least ~msg:"chains of multiply-adds" Testable.int ~than:1
+    (List.length heads);
   List.iter
     (fun h ->
       let base, terms = terms h [] in
-      equal ~msg:"onto a carried accumulator" Testable.bool true
-        (O.op base = Tolk.Op.Load);
+      equal ~msg:"onto a carried accumulator" Testable.string
+        (Tolk.Op.name Tolk.Op.Load)
+        (Tolk.Op.name (O.op base));
       match List.map place terms with
       | Some (at0, j0) :: _ as places ->
           List.iteri
@@ -188,30 +254,35 @@ let key_order (target, ds, causal, d) =
               match p with
               | Some (at, j) ->
                   equal ~msg:"place" Testable.int i (j - j0);
-                  is_true ~msg:"of one operand" (List.for_all2 ( == ) at at0)
+                  satisfies ~msg:"of one operand"
+                    ~claim:"the first term's operand"
+                    Testable.(list int)
+                    (fun _ -> List.for_all2 ( == ) at at0)
+                    (List.map O.hash at)
               | None -> failf "a term not a vector's lane or an offset's scalar")
             places;
-          if List.length at0 = 1 then equal ~msg:"from the first lane" Testable.int 0 j0
+          if List.length at0 = 1 then
+            equal ~msg:"from the first lane" Testable.int 0 j0
       | _ -> failf "a term not a vector's lane or an offset's scalar")
     heads
 
-(* The batches of an FFMA forward the workgroup-memory laws render: 128,
-   which run each row's tiles of keys in one workgroup, a loop of tiles. *)
+(* The batches of an FFMA forward the workgroup-memory laws render: 128, which
+   run each row's tiles of keys in one workgroup, a loop of tiles. *)
 let batches = 128
 
 (* The workgroup memory of a kernel of attention's own
 
-   Workgroup 0's threads run its linearized program with every loop at its
-   first trip: [stores target ast] is each store into workgroup memory, by
-   the barriers before it, its buffer and, at a thread [t], the addresses it
-   writes: none where it does not run, one for an index, and a vector's
-   for a shrink [(buffer, start, length)]. *)
+   Workgroup 0's threads run its linearized program with every loop at its first
+   trip: [stores target ast] is each store into workgroup memory, by the
+   barriers before it, its buffer and, at a thread [t], the addresses it writes:
+   none where it does not run, one for an index, and a vector's for a shrink
+   [(buffer, start, length)]. *)
 
-(* An access of workgroup memory: by the barriers before it, a store or a
-   load, its buffer and, at every loop's first trip or every loop of a
-   constant bound at its last ([~last]) and at a thread [t], the addresses
-   it touches: none where it does not run, one for an index, and a
-   vector's for a shrink [(buffer, start, length)]. *)
+(* An access of workgroup memory: by the barriers before it, a store or a load,
+   its buffer and, at every loop's first trip or every loop of a constant bound
+   at its last ([~last]) and at a thread [t], the addresses it touches: none
+   where it does not run, one for an index, and a vector's for a shrink
+   [(buffer, start, length)]. *)
 type access = {
   span : int;
   store : bool;
@@ -221,77 +292,100 @@ type access = {
 
 let value u =
   match (O.vmin u, O.vmax u) with
-  | `Int lo, `Int hi when Tolk.Bigint.equal lo hi -> Some (Tolk.Bigint.to_int lo)
+  | `Int lo, `Int hi when Tolk.Bigint.equal lo hi ->
+      Some (Tolk.Bigint.to_int lo)
   | `Bool lo, `Bool hi when lo = hi -> Some (Bool.to_int lo)
   | _ -> None
+
+(* [at_thread ranges specials (last, t)] is the value at thread [t] of a node of
+   the kernel, every loop at its first trip or, where [last], at its last where
+   its bound is constant; [None] where it is not an integer or a boolean. Index
+   arithmetic runs by tolk's own ({!O.exec_alu}), each node once a thread, so
+   that the accesses' indices and gates share their terms; what is not index
+   arithmetic substitutes and simplifies. *)
+let at_thread ranges specials (last, t) =
+  let int r n = O.const ~dtype:(O.dtype r) (`Int (Tolk.Bigint.of_int n)) in
+  let trip r =
+    match (last, value (O.nth r 0)) with
+    | true, Some n when n > 0 -> int r (n - 1)
+    | _ -> int r 0
+  in
+  let lane s =
+    match O.arg s with
+    | String n -> int s (Option.value (List.assoc_opt n t) ~default:0)
+    | _ -> int s 0
+  in
+  let seen = Kernels.create 256 in
+  let rec eval u =
+    match Kernels.find_opt seen ("", u) with
+    | Some v -> v
+    | None ->
+        let v =
+          match O.op u with
+          | Tolk.Op.Const -> Some (O.value u)
+          | Tolk.Op.Range -> Some (O.value (trip u))
+          | Tolk.Op.Special -> Some (O.value (lane u))
+          | Tolk.Op.Cast when not (Tolk.Dtype.is_float (O.dtype u)) -> (
+              match eval (O.nth u 0) with
+              | Some (`Bool b) ->
+                  Some
+                    (Tolk.Dtype.truncate (O.dtype u)
+                       (`Int (Tolk.Bigint.of_int (Bool.to_int b)))
+                      :> Tolk.Dtype.const)
+              | Some (`Int _ as v) ->
+                  Some (Tolk.Dtype.truncate (O.dtype u) v :> Tolk.Dtype.const)
+              | _ -> None)
+          | op when Tolk.Op.Set.mem op Tolk.Op.Set.alu ->
+              let rec all acc = function
+                | [] -> Some (List.rev acc)
+                | x :: xs -> (
+                    match eval x with
+                    | Some v -> all (v :: acc) xs
+                    | None -> None)
+              in
+              Option.map (O.exec_alu op (O.dtype u)) (all [] (O.src u))
+          | _ -> None
+        in
+        Kernels.add seen ("", u) v;
+        v
+  in
+  let subs =
+    lazy
+      (List.map (fun r -> (r, trip r)) ranges
+      @ List.map (fun s -> (s, lane s)) specials)
+  in
+  let known = Kernels.create 64 in
+  fun u ->
+    match Kernels.find_opt known ("", u) with
+    | Some v -> v
+    | None ->
+        let v =
+          match eval u with
+          | Some (`Int z) -> Some (Tolk.Bigint.to_int z)
+          | Some (`Bool b) -> Some (Bool.to_int b)
+          | _ ->
+              value
+                (Tolk.Shape.simplify
+                   (O.substitute ~calls:Skip ~pass:Fixed_point u
+                      (Lazy.force subs)))
+        in
+        Kernels.add known ("", u) v;
+        v
 
 let accesses =
   by_kernel @@ fun target ast ->
   let uops = linearized target ast in
   let ranges = List.filter (fun u -> O.op u = Tolk.Op.Range) uops in
   let specials = List.filter (fun u -> O.op u = Tolk.Op.Special) uops in
-  let at_thread ~last t u =
-    let int r n = O.const ~dtype:(O.dtype r) (`Int (Tolk.Bigint.of_int n)) in
-    let trip r =
-      match (last, value (O.nth r 0)) with
-      | true, Some n when n > 0 -> int r (n - 1)
-      | _ -> int r 0
-    in
-    let lane s =
-      match O.arg s with
-      | String n -> int s (Option.value (List.assoc_opt n t) ~default:0)
-      | _ -> int s 0
-    in
-    (* Index arithmetic by tolk's own ({!O.exec_alu}), each node once; what
-       is not index arithmetic substitutes and simplifies. *)
-    let seen = Kernels.create 64 in
-    let rec eval u =
-      match Kernels.find_opt seen ("", u) with
-      | Some v -> v
-      | None ->
-          let v =
-            match O.op u with
-            | Tolk.Op.Const -> Some (O.value u)
-            | Tolk.Op.Range -> Some (O.value (trip u))
-            | Tolk.Op.Special -> Some (O.value (lane u))
-            | Tolk.Op.Cast when not (Tolk.Dtype.is_float (O.dtype u)) -> (
-                match eval (O.nth u 0) with
-                | Some (`Bool b) -> Some (Tolk.Dtype.truncate (O.dtype u) (`Int (Tolk.Bigint.of_int (Bool.to_int b))) :> Tolk.Dtype.const)
-                | Some (`Int _ as v) -> Some (Tolk.Dtype.truncate (O.dtype u) v :> Tolk.Dtype.const)
-                | _ -> None)
-            | op when Tolk.Op.Set.mem op Tolk.Op.Set.alu ->
-                let rec all acc = function
-                  | [] -> Some (List.rev acc)
-                  | x :: xs -> ( match eval x with Some v -> all (v :: acc) xs | None -> None)
-                in
-                Option.map (O.exec_alu op (O.dtype u)) (all [] (O.src u))
-            | _ -> None
-          in
-          Kernels.add seen ("", u) v;
-          v
-    in
-    match eval u with
-    | Some (`Int z) -> Some (Tolk.Bigint.to_int z)
-    | Some (`Bool b) -> Some (Bool.to_int b)
-    | _ ->
-        let subs = List.map (fun r -> (r, trip r)) ranges @ List.map (fun s -> (s, lane s)) specials in
-        value (Tolk.Shape.simplify (O.substitute ~calls:Skip ~pass:Fixed_point u subs))
-  in
   let local u = O.addrspace u = Some Tolk.Dtype.Local in
+  (* Each access's index, its addresses' count and the gates it runs under, in
+     the program's order. *)
   let access span gates ~store ix =
     let n, gated =
-      if O.op ix = Tolk.Op.Shrink then (Option.get (value (O.nth ix 2)), 3) else (1, 2)
+      if O.op ix = Tolk.Op.Shrink then (Option.get (value (O.nth ix 2)), 3)
+      else (1, 2)
     in
-    let all = gates @ List.filteri (fun i _ -> i >= gated) (O.src ix) in
-    let at =
-      memo Fun.id (fun (last, t) ->
-          match at_thread ~last t (O.nth ix 1) with
-          | Some a when List.for_all (fun g -> at_thread ~last t g = Some 1) all ->
-              List.init n (( + ) a)
-          | _ -> [])
-    in
-    let at ~last t = at (last, t) in
-    { span; store; buf = O.buf_uop ix; at }
+    (span, store, ix, n, gates @ List.filteri (fun i _ -> i >= gated) (O.src ix))
   in
   let rec walk span gates acc = function
     | [] -> List.rev acc
@@ -301,12 +395,39 @@ let accesses =
         | Tolk.Op.If -> walk span (O.nth u 0 :: gates) acc rest
         | Tolk.Op.Endif -> walk span (List.tl gates) acc rest
         | Tolk.Op.Store when local (O.nth u 0) ->
-            walk span gates (access span gates ~store:true (O.nth u 0) :: acc) rest
+            walk span gates
+              (access span gates ~store:true (O.nth u 0) :: acc)
+              rest
         | Tolk.Op.Load when local (O.nth u 0) ->
-            walk span gates (access span gates ~store:false (O.nth u 0) :: acc) rest
+            walk span gates
+              (access span gates ~store:false (O.nth u 0) :: acc)
+              rest
         | _ -> walk span gates acc rest)
   in
-  (walk 0 [] [] uops, specials)
+  let found = Array.of_list (walk 0 [] [] uops) in
+  (* Every access's addresses at a thread, computed together. *)
+  let addresses =
+    memo Fun.id (fun thread ->
+        let at = at_thread ranges specials thread in
+        Array.map
+          (fun (_, _, ix, n, gates) ->
+            match at (O.nth ix 1) with
+            | Some a when List.for_all (fun g -> at g = Some 1) gates ->
+                List.init n (( + ) a)
+            | _ -> [])
+          found)
+  in
+  ( Array.to_list
+      (Array.mapi
+         (fun i (span, store, ix, _, _) ->
+           {
+             span;
+             store;
+             buf = O.buf_uop ix;
+             at = (fun ~last t -> (addresses (last, t)).(i));
+           })
+         found),
+    specials )
 
 (* The threads of workgroup 0: each of its lanes' and warps' values. *)
 let threads specials =
@@ -320,17 +441,19 @@ let threads specials =
       specials
   in
   List.fold_left
-    (fun ts (n, k) -> List.concat_map (fun t -> List.init k (fun i -> (n, i) :: t)) ts)
+    (fun ts (n, k) ->
+      List.concat_map (fun t -> List.init k (fun i -> (n, i) :: t)) ts)
     [ [] ] locals
 
-(* A kernel's threads store into distinct addresses of workgroup memory
-   between two barriers: a copy of a row into workgroup memory stays within
-   its row and the row's padding, whatever the padding the unit takes, and
-   no two threads copy one element. *)
+(* A kernel's threads store into distinct addresses of workgroup memory between
+   two barriers: a copy of a row into workgroup memory stays within its row and
+   the row's padding, whatever the padding the unit takes, and no two threads
+   copy one element. *)
 let no_races target ast =
   let ss, specials = accesses target ast in
   let ss = List.filter (fun a -> a.store) ss in
-  is_true ~msg:"stores into workgroup memory" (ss <> []);
+  at_least ~msg:"stores into workgroup memory" Testable.int ~than:1
+    (List.length ss);
   let seen = Hashtbl.create 4096 in
   List.iter
     (fun t ->
@@ -341,21 +464,25 @@ let no_races target ast =
               let key = (s.span, O.hash s.buf, a) in
               match Hashtbl.find_opt seen key with
               | Some t' when t' <> t ->
-                  failf "two threads store into address %d of a buffer between barriers %d" a s.span
+                  failf
+                    "two threads store into address %d of a buffer between \
+                     barriers %d"
+                    a s.span
               | _ -> Hashtbl.replace seen key t)
             (s.at ~last:false t))
         ss)
     (threads specials)
 
-(* A kernel's threads load from workgroup memory only what its threads
-   stored there before a barrier before the load, within the buffer: every
-   loop at its first trip, and at its last where its bound is constant, as
-   a chunk's last copy and product run. A product that read a staged tile
-   past the columns its copy wrote would read a value no store wrote, a NaN
-   where those bits are one, times its operand's zeros. *)
+(* A kernel's threads load from workgroup memory only what its threads stored
+   there before a barrier before the load, within the buffer: every loop at its
+   first trip, and at its last where its bound is constant, as a chunk's last
+   copy and product run. A product that read a staged tile past the columns its
+   copy wrote would read a value no store wrote, a NaN where those bits are one,
+   times its operand's zeros. *)
 let reads_written target ast =
   let accs, specials = accesses target ast in
-  is_true ~msg:"loads of workgroup memory" (List.exists (fun a -> not a.store) accs);
+  at_least ~msg:"loads of workgroup memory" Testable.int ~than:1
+    (List.length (List.filter (fun a -> not a.store) accs));
   let size buf = Option.get (value (O.nth buf 0)) in
   List.iter
     (fun last ->
@@ -392,8 +519,8 @@ let in_the_tiles_loop target ast =
   let uops = linearized target ast in
   let local u = O.addrspace u = Some Tolk.Dtype.Local in
   let tile = List.find (fun u -> O.op u = Tolk.Op.Range) uops in
-  is_true ~msg:"a loop of tiles"
-    (match O.vmax (O.nth tile 0) with `Int z -> Tolk.Bigint.to_int z > 1 | _ -> false);
+  greater ~msg:"a loop of tiles' trips" Testable.int ~than:1
+    (match O.vmax (O.nth tile 0) with `Int z -> Tolk.Bigint.to_int z | _ -> 0);
   let inside = ref false and read = Hashtbl.create 8 and written = ref [] in
   List.iter
     (fun u ->
@@ -407,12 +534,15 @@ let in_the_tiles_loop target ast =
             written := (O.hash (O.buf_uop (O.nth u 0)), !inside) :: !written
         | _ -> ())
     uops;
-  is_true ~msg:"buffers the tiles' loop reads" (Hashtbl.length read > 0);
-  List.iter
-    (fun (b, inside) ->
-      if Hashtbl.mem read b then
-        is_true ~msg:"a store of a buffer the tiles' loop reads is in that loop" inside)
-    !written
+  at_least ~msg:"buffers the tiles' loop reads" Testable.int ~than:1
+    (Hashtbl.length read);
+  equal ~msg:"stores before or after the tiles' loop of buffers it reads"
+    Testable.(list int)
+    []
+    (List.filter_map
+       (fun (b, inside) ->
+         if Hashtbl.mem read b && not inside then Some b else None)
+       !written)
 
 (* FFMA's pairs and shapes: one chunk and several, chunks of 1, 20 and 28
    float64 columns, under no mask and a causal one. *)
@@ -491,71 +621,103 @@ let ffma_derivative_cases =
     List.map (fun (ds, causal, d) -> (target, ds, causal, d)) rows
   in
   let f32 = D (Nx.float32, Nx.float32) and f64 = D (Nx.float64, Nx.float64) in
-  let bf16 = D (Nx.bfloat16, Nx.float64) and bf16_32 = D (Nx.bfloat16, Nx.float32) in
+  let bf16 = D (Nx.bfloat16, Nx.float64)
+  and bf16_32 = D (Nx.bfloat16, Nx.float32) in
   on "CUDA:CUDA:sm_89"
     [
-      (f32, false, 1); (f32, true, 110); (f64, false, 36); (f64, true, 160);
-      (bf16, false, 160); (bf16, true, 64); (f64, false, 24);
+      (f32, false, 1);
+      (f32, true, 110);
+      (f64, false, 36);
+      (f64, true, 160);
+      (bf16, false, 160);
+      (bf16, true, 64);
+      (f64, false, 24);
     ]
   @ on "AMD:HIP:gfx942"
       [
-        (f32, false, 36); (f32, true, 160); (f64, false, 110); (f64, true, 64);
-        (bf16, false, 1); (bf16, true, 110); (f64, true, 24);
+        (f32, false, 36);
+        (f32, true, 160);
+        (f64, false, 110);
+        (f64, true, 64);
+        (bf16, false, 1);
+        (bf16, true, 110);
+        (f64, true, 24);
       ]
   @ on "METAL:METAL:Apple9" [ (f32, false, 64); (f32, true, 110) ]
   @ on "CUDA:CUDA:sm_75" [ (bf16_32, false, 36); (bf16_32, true, 1) ]
 
 let derivative_id = ffma_id
 
-(* [on_derivative ~must law] holds [law] on each of a case's derivative
-   kernels, [q̄]'s and [k̄]'s and [v̄]'s, which a target [must t] takes. *)
+(* [on_derivative ~must law] holds [law] on each of a case's derivative kernels,
+   [q̄]'s and [k̄]'s and [v̄]'s, which a target [must t] takes. *)
 let on_derivative ~must law (t, ds, causal, d) =
   match derivative t ds ~causal d with
-  | [] -> is_true ~msg:"the target takes the derivative's kernels" (not (must t))
+  | [] -> if must t then failf "%s takes the derivative's default" (target_id t)
   | ks ->
-      is_true ~msg:"q̄'s kernel" (List.exists (fun (n, _) -> n = "attention_dq") ks);
-      is_true ~msg:"k̄'s and v̄'s kernels"
-        (List.exists (fun (n, _) -> String.starts_with ~prefix:"attention_dkdv" n) ks);
+      let names = List.map fst ks in
+      satisfies ~claim:"q̄'s kernel among them"
+        Testable.(list string)
+        (List.mem "attention_dq") names;
+      satisfies ~claim:"k̄'s and v̄'s kernels among them"
+        Testable.(list string)
+        (List.exists (String.starts_with ~prefix:"attention_dkdv"))
+        names;
       List.iter (fun (_, ast) -> law t ast) ks
 
-(* Whether float32's derivative over [shape] takes attention's own kernels
-   on CUDA sm_89, plain. *)
-let own_kernels shape =
+(* Whether float32's derivative of a query of [q]'s shape over keys and values
+   of [kv]'s takes attention's own kernels on CUDA sm_89, plain. *)
+let own_kernels q kv =
   let f () =
-    let z () = Nx.full Nx.float32 shape 0.5 in
-    let q = z () and k = z () and v = z () in
-    fst (Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q)
+    let z s = Nx.full Nx.float32 s 0.5 in
+    let k = z kv and v = z kv in
+    fst (Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) (z q))
   in
   match Lowered.derivative_kernels ~target:cuda f with
   | [ Some _ ] -> true
   | [ None ] -> false
   | l -> failf "%d calls of attention" (List.length l)
 
-(* Past 64 dimensions on FFMA, heads of 256 rows and keys or more whose
-   weights fit 2 GiB take the default ({!Lower_attention}'s
-   [default_keys]); shorter heads, fewer dimensions, dimensions of no whole
-   vectors of 4 and weights past the bound take the kernels. *)
+(* Past 64 dimensions on FFMA, calls of whole vectors of 4 dimensions of at
+   least 256 keys and 256 query rows over the heads that share a key head, whose
+   weights, rows by keys over every lead index and head in float32, hold at most
+   2 GiB, take the default ({!Lower_attention}'s [default_keys] and
+   [default_weights]); others take the kernels. Each bound is held at its two
+   sides: 128 rows of two query heads a key head against one, 127 rows of two,
+   and two lead indices of 4 heads of 8192 rows and keys (2 GiB) against 8193
+   rows (2 GiB and 256 KiB), each lead index alone 1 GiB. *)
 let long_heads () =
   let at shape =
     String.concat "; " (Array.to_list (Array.map string_of_int shape))
   in
   List.iter
-    (fun (shape, own) ->
-      equal ~msg:(at shape) Testable.bool own (own_kernels shape))
+    (fun (q, kv, own) ->
+      equal
+        ~msg:(Printf.sprintf "q %s, k and v %s" (at q) (at kv))
+        Testable.bool own (own_kernels q kv))
     [
-      ([| 1; 8; 2048; 160 |], false);
-      ([| 8; 4; 256; 144 |], false);
-      ([| 1; 8; 2048; 110 |], true);
-      ([| 1; 8; 2048; 64 |], true);
-      ([| 64; 4; 128; 160 |], true);
-      ([| 1; 8; 8192; 160 |], false);
-      ([| 1; 8; 16384; 160 |], true);
+      ([| 1; 8; 2048; 160 |], [| 1; 8; 2048; 160 |], false);
+      ([| 8; 4; 256; 144 |], [| 8; 4; 256; 144 |], false);
+      ([| 1; 8; 2048; 110 |], [| 1; 8; 2048; 110 |], true);
+      ([| 1; 8; 2048; 64 |], [| 1; 8; 2048; 64 |], true);
+      ([| 64; 4; 128; 160 |], [| 64; 4; 128; 160 |], true);
+      ([| 1; 8; 8192; 160 |], [| 1; 8; 8192; 160 |], false);
+      ([| 1; 8; 16384; 160 |], [| 1; 8; 16384; 160 |], true);
+      ([| 1; 8; 128; 160 |], [| 1; 4; 256; 160 |], false);
+      ([| 1; 8; 128; 160 |], [| 1; 8; 256; 160 |], true);
+      ([| 1; 8; 127; 160 |], [| 1; 4; 256; 160 |], true);
+      ([| 2; 4; 8192; 160 |], [| 2; 4; 8192; 160 |], false);
+      ([| 2; 4; 8193; 160 |], [| 2; 4; 8192; 160 |], true);
     ]
 
 let () =
   exit
     (run "Lower_attention"
        [
+         group "a kernel's code"
+           [
+             cases "is bounded by its tiles, whatever its head" ~id:bounded_id
+               bounded bounded_code;
+           ];
          group "a GPU's dtypes"
            [ test "each take a kernel of a product unit" totality ];
          group "an FFMA micro-tile"
