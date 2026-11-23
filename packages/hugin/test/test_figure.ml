@@ -544,10 +544,17 @@ let pairs =
       fun () ->
         let b = rule ~x:(num v) () in
         (layer [ layer [ a; b ]; a ], layer [ a; b; a ]) );
-    ( "map_range of two fresh closures",
+    (* [equal] compares functions physically. A closure over constants may be
+       one value that the compiler builds once, as flambda builds
+       [Color.with_alpha 0.5]; a closure over a value known only at run time is
+       a new one per call. *)
+    ( "map_range of two closures made at run time",
       false,
       fun () ->
-        let f () = on_fill (map_range (Color.with_alpha 0.5) (num v)) in
+        let f () =
+          let alpha = Sys.opaque_identity 0.5 in
+          on_fill (map_range (Color.with_alpha alpha) (num v))
+        in
         (f (), f ()) );
     ( "a tensor and its copy",
       false,
