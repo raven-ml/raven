@@ -88,6 +88,7 @@ void lz_zstd_dec_init(struct lz_zstd_dec *st, uint64_t window_max,
   st->defaults = false;
   st->in = NULL;
   st->lits = NULL;
+  st->cap = 0;
   lz_zstd_dec_reset(st);
 }
 
@@ -106,6 +107,11 @@ void lz_zstd_dec_free(struct lz_zstd_dec *st) {
   lz_free(st->lits);
   st->in = NULL;
   st->lits = NULL;
+  st->cap = 0;
+}
+
+size_t lz_zstd_dec_held(const struct lz_zstd_dec *st) {
+  return st->lits ? 2 * st->cap + LZ_ZSTD_SLACK : 0;
 }
 
 /* Errors and positions */
@@ -215,10 +221,22 @@ static enum lz_status frame(struct lz_zstd_dec *st, uint8_t d,
   if (st->checked) lz_xxh64_init(&st->hash, 0);
   if (!st->stream) return LZ_DONE;
 
-  if (st->in == NULL) st->in = lz_alloc(LZ_ZSTD_BLOCK_MAX);
-  if (st->lits == NULL) st->lits = lz_alloc(LZ_ZSTD_BLOCK_MAX + LZ_ZSTD_SLACK);
-  if (st->in == NULL || st->lits == NULL)
+  /* A block's bytes and its literals are at most Block_Maximum_Size
+     (section 3.1.1.2.4), so the gathered block and the literals are
+     sized to the frame's, and grow for a later frame that allows more: a
+     frame with a 64 KiB window holds 64 KiB of each. The block a frame
+     allows none of is never gathered; the literals keep their slack for
+     the wide copies. */
+  size_t cap = st->block_max;
+  if (st->lits != NULL && cap <= st->cap) return LZ_DONE;
+  lz_zstd_dec_free(st);
+  st->in = cap > 0 ? lz_alloc(cap) : NULL;
+  st->lits = lz_alloc(cap + LZ_ZSTD_SLACK);
+  if ((cap > 0 && st->in == NULL) || st->lits == NULL) {
+    lz_zstd_dec_free(st);
     return lz_fail(err, LZ_NOMEM, 0, NULL);
+  }
+  st->cap = cap;
   return LZ_DONE;
 }
 

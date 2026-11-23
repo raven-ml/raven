@@ -238,8 +238,10 @@ type step =
     header, before any output, with room for the frame's window size, or
     its declared content size when smaller ({!Zstd}), and a run capacity
     of 256 KiB. At the first frame whose header it accepts, it also
-    allocates about 256 KiB outside the OCaml heap. It replaces its buffer
-    when a frame needs a larger one. A view of a run kept after [f]
+    allocates outside the OCaml heap twice the frame's Block_Maximum_Size
+    ({!Zstd}), at most about 256 KiB, and again at a later frame whose
+    Block_Maximum_Size is larger. It replaces its buffer when a frame
+    needs a larger one. A view of a run kept after [f]
     returns keeps its buffer alive, and may read bytes a later step wrote.
     Each member begins with an empty window, and a run may hold the end of
     one member and the start of the next.

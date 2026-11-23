@@ -290,10 +290,9 @@ struct codec {
                            struct lz_error *err);
   void (*reset)(void *st);
   void (*free)(void *st);
-  /* The bytes the state holds outside the heap, for an encoder whose
-     state allocates as its streams need, which each step tells the
-     collector of; NULL for a codec the collector is told of only at its
-     creation. */
+  /* The bytes the state holds outside the heap, for a codec whose state
+     allocates as its streams need, which each step tells the collector
+     of; NULL for a codec the collector is told of only at its creation. */
   size_t (*held)(const void *st);
   bool members;
   size_t run;
@@ -435,9 +434,9 @@ static value box(const struct codec *c, void *st, size_t mem) {
    once [v] is old the major collector, of all it holds past what that
    was told, at its first step once old: a block promoted and never
    stepped again is never counted there. So a state that grows with its
-   streams counts what it holds, never the most it could. The minor collector is told against its
-   heap's size, the runtime's default custom_minor_ratio of 100: the
-   ratio itself is not exported. */
+   streams counts what it holds, never the most it could. The minor
+   collector is told against its heap's size, the runtime's default
+   custom_minor_ratio of 100: the ratio itself is not exported. */
 static void told(value v, size_t held) {
   struct box *b = Box_val(v);
   if (Is_young(v)) {
@@ -549,6 +548,7 @@ CAMLprim value lz_dec_step(value v, value last, value src, value buf) {
     s = dec_run(&k, &io, l, &fin, &err);
     bool released = c.released;
     reacquire(&c);
+    if (k.codec->held) told(v, k.codec->held(k.st));
     if (s != LZ_NEED_BUFFER) break;
     buf = grow(&io, buf);
     if (released) release(&c);
@@ -557,9 +557,11 @@ CAMLprim value lz_dec_step(value v, value last, value src, value buf) {
     if (err.kind == LZ_NOMEM) caml_raise_out_of_memory();
     CAMLreturn(error_result(&err, k.base));
   }
-  k.base = fin ? 0 : k.base + (int64_t)io.consumed;
-  k.pos = io.produced;
-  *Box_val(v) = k;
+  /* The step owns the stream's place; [told] owns what was told. */
+  struct box *b = Box_val(v);
+  b->base = fin ? 0 : k.base + (int64_t)io.consumed;
+  b->pos = io.produced;
+  b->boundary = k.boundary;
   CAMLreturn(
       ok(lent(io.consumed, io.run, io.produced - io.run, fin, buf)));
 }
@@ -672,6 +674,8 @@ static void zstd_dec_reset(void *st) { lz_zstd_dec_reset(st); }
 
 static void zstd_dec_free(void *st) { lz_zstd_dec_free(st); }
 
+static size_t zstd_dec_held(const void *st) { return lz_zstd_dec_held(st); }
+
 static enum lz_status zstd_encode(void *st, struct lz_io *io, bool last,
                                   struct lz_error *err) {
   return lz_zstd_encode(st, io, last, err);
@@ -687,6 +691,7 @@ static const struct codec zstd_dec = {
     .decode = zstd_decode,
     .reset = zstd_dec_reset,
     .free = zstd_dec_free,
+    .held = zstd_dec_held,
     .members = true,
     .release = RELEASE_ZSTD_DECODE,
 };
@@ -719,9 +724,9 @@ CAMLprim value lz_zstd_bound_stub(value n) {
   return bound_val(lz_zstd_bound(Long_val(n)));
 }
 
-/* The buffer is allocated when a frame header fixes the window; the
-   gathered block and the literals, at the first frame, outside what the
-   collector is told here. */
+/* The buffer is allocated when a frame header fixes the window, and the
+   gathered block and the literals at the first frame and at a later one
+   whose blocks may be larger, which each step tells the collector of. */
 CAMLprim value lz_zstd_decoder(value window) {
   struct lz_zstd_dec *st = caml_stat_alloc(sizeof *st);
   lz_zstd_dec_init(st, (uint64_t)Long_val(window), true);

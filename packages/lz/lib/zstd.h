@@ -91,13 +91,14 @@ struct lz_zstd_dec {
   /* Where the frame's output in this segment of the buffer begins, set
      at its first block ([fresh] until then); the end of the window's
      earlier segment and the frame's bytes before it; and, streaming only,
-     the gathered block and the literals. */
+     the gathered block and the literals, and the block size they hold. */
   bool fresh;
   size_t seg;
   size_t ext_end;
   size_t ext;
   uint8_t *in;
   uint8_t *lits;
+  size_t cap;
 };
 
 /* [window_max] bounds the window a frame may declare; a frame above it is
@@ -106,6 +107,12 @@ void lz_zstd_dec_init(struct lz_zstd_dec *st, uint64_t window_max,
                       bool stream);
 void lz_zstd_dec_reset(struct lz_zstd_dec *st);
 void lz_zstd_dec_free(struct lz_zstd_dec *st);
+
+/* [lz_zstd_dec_held st] is the bytes [st] holds outside the OCaml heap,
+   for the collector's accounting: none before a stream's first frame
+   header, then twice the largest block its frames allow and the literals'
+   slack, at most 256 KiB and 32 bytes. */
+size_t lz_zstd_dec_held(const struct lz_zstd_dec *st);
 enum lz_status lz_zstd_decode(struct lz_zstd_dec *st, struct lz_io *io,
                               bool final, struct lz_error *err);
 

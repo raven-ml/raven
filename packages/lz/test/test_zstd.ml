@@ -849,11 +849,67 @@ let grow_then_shrink =
           ~than:!first 4096
       end)
 
+(* Frames whose Block_Maximum_Size is each block they hold: a compressed block
+   of that size, of raw literals; then compressed blocks that regenerate that
+   many literals, RLE and Huffman. Their windows grow from 1 KiB to 256 KiB,
+   past the 128 KiB a block may hold, then shrink to 1 KiB again. A decoder that
+   steps them gathers each block, whole or in pieces, and puts its literals in
+   buffers each frame sizes. *)
+let largest =
+  lazy
+    (let text = Lz_support.corpus Text (128 * kib) in
+     (* Section 3.1.1.3.1.1, Size_Format 11: a 20-bit size in 3 bytes. *)
+     let lits typ n = le 3 (typ lor (3 lsl 2) lor (n lsl 4)) in
+     (* Section 3.1.1.3.1.6: four streams of [n / 4] literals each. Weights 1
+        and 1 complete with a 2, whose code is the 1 bit 1: every literal is
+        symbol 2. Each stream ends with its end mark. *)
+     let huffman n =
+       let stream = String.make (n / 32) '\xFF' ^ "\x01" in
+       let len = String.length stream in
+       let tree = byte 129 ^ byte 0x11 in
+       let csize = String.length tree + 6 + (4 * len) in
+       le 5 (2 lor (3 lsl 2) lor (n lsl 4) lor (csize lsl 22))
+       ^ tree ^ le 2 len ^ le 2 len ^ le 2 len
+       ^ String.concat "" (List.init 4 (fun _ -> stream))
+     in
+     let frame exponent =
+       let b = min (128 * kib) (1 lsl (10 + exponent)) in
+       let r = String.sub text 0 (b - 4) in
+       ( windowed exponent
+         ^ compressed ~last:false (lits 0 (b - 4) ^ r ^ "\x00")
+         ^ compressed ~last:false (lits 1 b ^ "a" ^ "\x00")
+         ^ compressed (huffman b ^ "\x00"),
+         r ^ String.make b 'a' ^ String.make b '\x02' )
+     in
+     let frames = List.map frame [ 0; 3; 6; 7; 8; 0 ] in
+     ( String.concat "" (List.map fst frames),
+       String.concat "" (List.map snd frames) ))
+
+let at_block_max =
+  cases "blocks of their frame's Block_Maximum_Size decode as windows grow"
+    ~id:string_of_int [ max_int; 4099; 997 ] (fun slice ->
+      let data, expected = Lazy.force largest in
+      let dst = Lz_support.create (String.length expected) in
+      equal decode_result ~msg:"decode"
+        (Ok
+           {
+             Lz.consumed = String.length data;
+             produced = String.length expected;
+           })
+        (Lz.Zstd.decode (Lz_support.of_string data) dst);
+      equal string ~msg:"decode" expected (Lz_support.to_string dst);
+      equal
+        (result string Lz_support.error)
+        ~msg:"steps" (Ok expected)
+        (Result.map fst
+           (Lz_support.stepped (Lz.Zstd.decoder ()) data ~cut:(fun _ -> slice))))
+
 let stream =
   group "decoder"
     [
       small_blocks;
       grow_then_shrink;
+      at_block_max;
       test "matches across the decoder's window wraps decode" (fun () ->
           let frame, expected = Lazy.force far_matches in
           let dst = Lz_support.create (String.length expected) in

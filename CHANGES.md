@@ -3605,6 +3605,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Lz (new)
 
+- A Zstandard decoder (`Lz.Zstd.decoder`) sizes the block and literals it
+  holds outside the OCaml heap to the frame's Block_Maximum_Size, 128 KiB for
+  a 64 KiB frame where it took 256 KiB, and tells the collector of them.
 - A Zstandard encoder (`Lz.Zstd.encoder`) tells the collector of the memory
   it holds as it allocates it: about 1.5 MiB for a 64 KiB stream, where it
   told of its level's largest, up to 49 MiB, when made. A program that makes
