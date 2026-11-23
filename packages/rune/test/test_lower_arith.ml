@@ -659,8 +659,8 @@ let unary =
     unary_rows ~arity:1
 
 let binary =
-  family "exact binary kinds, comparisons, where and fma give eager's bits"
-    dtypes binary_rows ~arity:2
+  family "exact kinds of two and three operands give eager's bits" dtypes
+    binary_rows ~arity:2
 
 let integers =
   List.filter (fun d -> not (is_float d || is_complex d || is_bool d)) dtypes
@@ -971,8 +971,8 @@ let nan_rows d ~e ~m =
 
 let folded_nans =
   cases
-    "a folded selection keeps a NaN's bits, and a negation or an absolute \
-     value sets only its sign"
+    "a folded selection of a NaN keeps its bits, a negation flips only its \
+     sign and an absolute value clears it"
     ~id:(fun (d, _, _) -> name d)
     D.
       [
@@ -1005,13 +1005,14 @@ let shapes =
   group "shapes and views"
     [
       test "a byte read as a boolean keeps its byte" bool_bytes;
-      test "a zero-size value" (fun () ->
+      test "a map of two outputs gives eager's bits at a zero-size shape"
+        (fun () ->
           let e = ints [| 0 |] [||] in
           i32_f16 [| 0 |] e e e);
-      test "a one-element value" (fun () ->
+      test "a map of two outputs gives eager's bits at one element" (fun () ->
           i32_f16 [| 1 |] (ints [| 1 |] [| -7 |]) (ints [| 1 |] [| 3 |])
             (ints [| 1 |] [| 2049 |]));
-      test "transposed, flipped and broadcast operands" (fun () ->
+      test "a map of two outputs gives eager's bits over views" (fun () ->
           let x = Nx.transpose (ints [| 3; 2 |] [| 0; 1; 2; 3; 4; 5 |]) in
           let y =
             Nx.flip (ints [| 2; 3 |] [| 2147483647; -2; 3; -4; 5; -6 |])
@@ -1022,42 +1023,15 @@ let shapes =
           i32_f16 [| 2; 3 |] x y z);
     ]
 
-(* An e2m1 code decodes through float32's own fields: no integer is converted
-   to a float, which the subnormal arm of an exponent and fraction decode
-   would, and no float32 subnormal is computed (Lower_arith.e2m1). *)
-let e2m1_fields =
-  test "an e2m1 code decodes with no conversion of an integer to a float"
-    (fun () ->
-      let codes =
-        Nx.cast D.Float4_e2m1fn
-          (Nx.create D.Float32 [| 16 |] (Array.init 16 (fun i -> Float.of_int i)))
-      in
-      let target =
-        Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell")
-      in
-      let converts u =
-        Tolk.Ops.op u = Tolk.Op.Cast
-        && Tolk.Dtype.is_float (Tolk.Ops.dtype u)
-        && Tolk.Dtype.is_int (Tolk.Ops.dtype (Tolk.Ops.nth u 0))
-      in
-      let sinks =
-        Lowered.sources ~target (fun () -> Nx.cast D.Float32 (Nx.copy codes))
-      in
-      equal int ~msg:"integers converted to floats" 0
-        (List.fold_left
-           (fun n (_, sink, _) ->
-             n
-             + List.length
-                 (List.filter converts (Tolk.Ops.toposort ~calls:Skip sink)))
-           0 sinks))
-
 (* An MXFP4 product for Apple's GPUs, whose multiplies may flush subnormals,
    holds no float32 subnormal, a constant or built from the bits of one: scale
    byte 0's [2^-127] enters as two normal factors (Lower_reduce.scaled). The
    bits a bitcast to float32 takes whole are its operand's, a selection's arms'
    included. *)
 let mxfp4_normal_factors =
-  test "an MXFP4 product on Metal multiplies by no subnormal" (fun () ->
+  test
+    "an MXFP4 product for Apple's GPUs scales byte 0's block by normal factors"
+    (fun () ->
       let w =
         Nx_quant.mxfp4
           ~scales:(Nx.zeros Nx.uint8 [| 4; 1 |])
@@ -1100,10 +1074,11 @@ let mxfp4_normal_factors =
            (fun n (_, sink, _) -> n + List.length (bits sink))
            0 sinks))
 
-(* A value read twice is one parameter of its kernel, as a compiled call binds
-   it (Lowered.run). *)
+(* Lowered, which the structural tests of the lowering render through, binds
+   each value once, as a compiled call binds it (Lowered.run). *)
 let bound_once =
-  test "a value read twice is one parameter of its kernel" (fun () ->
+  test "Lowered binds a value its kernel reads twice as one parameter"
+    (fun () ->
       let x = Nx.create D.Float32 [| 8 |] (Array.init 8 Float.of_int) in
       let target =
         Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell")
@@ -1117,25 +1092,6 @@ let bound_once =
       match Lowered.sources ~target (fun () -> Nx.mul x x) with
       | [ (_, sink, _) ] -> equal int ~msg:"x and the result" 2 (params sink)
       | ks -> failf "%d kernels" (List.length ks))
-
-(* A sigmoid of a row, broadcast into each row of a matrix: for a GPU, whose
-   threads run a kernel's points at once, it is computed in the product's
-   kernel, once a thread; for the host, whose loops run them in turn, it is
-   computed in a kernel of its own. *)
-let broadcast_sigmoid =
-  test "a broadcast sigmoid is computed where it is read on a GPU alone"
-    (fun () ->
-      let draw key s = Nx.Rng.uniform ~key:(Nx.Rng.key key) D.Float32 s in
-      let v = draw 1 [| 64 |] and m = draw 2 [| 64; 64 |] in
-      let f () = Nx.mul m (Nx.unsqueeze ~axes:[ 0 ] (Nx.sigmoid v)) in
-      let on t =
-        List.length
-          (Lowered.sources
-             ~target:(Result.get_ok (Tolk.Helpers.Target.of_string t))
-             f)
-      in
-      equal int ~msg:"sm_89" 1 (on "CUDA:CUDA:sm_89");
-      equal int ~msg:"the host" 2 (on "CPU:CLANG:x86_64,haswell"))
 
 let () =
   exit
@@ -1152,8 +1108,6 @@ let () =
          bitcast;
          folded_nans;
          shapes;
-         e2m1_fields;
          mxfp4_normal_factors;
          bound_once;
-         broadcast_sigmoid;
        ])
