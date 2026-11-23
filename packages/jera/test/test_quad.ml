@@ -80,6 +80,12 @@ let rule_tests =
     test "kronrod rejects a size it has no table for" (fun () ->
         raises_match (Exn.invalid_arg ~sub:"n = 8 is neither 7 nor 10")
           (fun () -> Quad.Rule.kronrod 8));
+    test "nodes_at the host are the nodes" (fun () ->
+        let rule = Quad.Rule.kronrod 7 in
+        let x, w = Quad.Rule.nodes rule f64 in
+        let xa, wa = Quad.Rule.nodes_at Nx.Host.on rule f64 in
+        equal ~msg:"nodes" (exact ()) x xa;
+        equal ~msg:"weights" (exact ()) w wa);
   ]
 
 (* Exactness *)
@@ -195,6 +201,19 @@ let range_tests =
           i);
   ]
 
+(* Boxes *)
+
+let box_tests =
+  [
+    test "box corners that do not broadcast raise" (fun () ->
+        raises_match
+          (Exn.invalid_arg ~sub:"the corners have shapes [2] and [3]")
+          (fun () -> Quad.Box.v (Nx.zeros f64 [| 2 |]) (Nx.ones f64 [| 3 |])));
+    test "scalar box corners raise" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"the corners have shapes [] and []")
+          (fun () -> Quad.Box.v (scalar 0.) (scalar 1.)));
+  ]
+
 (* Cumulative *)
 
 let cumulative_tests =
@@ -222,7 +241,7 @@ let cumulative_tests =
             Quad.cumulative r Nx.exp (vec [||])));
   ]
 
-(* Transformations *)
+(* Fixed rules *)
 
 (* ∫₀¹ e^(θ x) dx, whose θ-derivative the rule's sum states. *)
 let integral theta =
@@ -236,7 +255,7 @@ let upper b =
   Nx.sum
     (Quad.fixed (Quad.Rule.gauss 4) Nx.sin (Quad.Range.v (Nx.zeros_like b) b))
 
-let transformation_tests =
+let fixed_tests =
   let theta = vec [| -1.; 0.5; 2. |] in
   [
     test "grad in a parameter is the finite difference of the sum" (fun () ->
@@ -328,20 +347,21 @@ let adaptive_tests =
         equal (Oracle.tensor ~rel:1e-9 ()) (Nx.ones_like a) (Solution.get s));
     test "the budget ends a solve" (fun () ->
         let s = adaptive ~budget:2 Nx.log (unit_range (vec [| 0. |])) in
-        equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 1 |])
-          (Solution.is Budget_spent s);
+        equal Oracle.status_t Budget_spent (Oracle.status s);
         let report = Format.asprintf "%a" Solution.pp s in
         contains ~sub:"rule kronrod 7, tol rel 1e-10 abs 1e-12, budget 2" report;
         contains ~sub:"a 0, b 1, estimate" report;
         contains ~sub:"2 of 2 pieces, 45 evaluations." report;
         contains ~sub:"Raise the budget or loosen tol" report);
-    test "a pole is not finite or stalls" (fun () ->
+    test "a pole at a node is a non-finite sum" (fun () ->
+        (* The 15-point rule's middle node on [0, 1] is 0.5, where 1 / (x − 0.5)
+           is infinite. *)
         let s =
           adaptive
             (fun x -> Nx.recip (Nx.sub_s x 0.5))
             (unit_range (vec [| 0. |]))
         in
-        equal (Oracle.tensor ()) (Nx.zeros Nx.bool [| 1 |]) (Solution.ok s));
+        equal Oracle.status_t Not_finite (Oracle.status s));
     test "grad in a parameter is the exact integral's" (fun () ->
         let theta = vec [| -2.; 0.5; 3. |] in
         let integral t =
@@ -592,6 +612,12 @@ let cubature_tests =
     test "eleven dimensions raise" (fun () ->
         raises_match (Exn.invalid_arg ~sub:"d = 11 is not in [2, 10]")
           (fun () -> cube (fun x -> product x) (unit_box [||] 11)));
+    test "a budget below 1 raises" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"budget = 0 is below 1") (fun () ->
+            cube ~budget:0 product (unit_box [||] 2)));
+    test "an integrand that keeps the points' last axis raises" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"the integrand returned shape")
+          (fun () -> cube Fun.id (unit_box [||] 2)));
   ]
 
 (* Quasi-Monte Carlo *)
@@ -669,19 +695,26 @@ let qmc_tests =
         raises_match (Exn.invalid_arg ~sub:"d = 1112 is above 1111") (fun () ->
             Quad.qmc key ~tol:(Tol.rel 1e-3) ~budget:1 product
               (unit_box [||] 1112)));
+    test "a budget below 1 raises" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"budget = 0 is below 1") (fun () ->
+            Quad.qmc key ~tol:(Tol.rel 1e-3) ~budget:0 product (unit_box [||] 2)));
+    test "an integrand that keeps the points' last axis raises" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"the integrand returned shape")
+          (fun () ->
+            Quad.qmc key ~tol:(Tol.rel 1e-3) ~budget:1 Fun.id (unit_box [||] 2)));
   ]
 
 let () =
   exit
     (run "Jera.Quad"
        [
-         group "qmc" qmc_tests;
-         group "cubature" cubature_tests;
-         group "double-exponential" de_tests;
-         group "adaptive" adaptive_tests;
-         group "rules" rule_tests;
-         group "exactness" exactness_tests;
-         group "ranges" range_tests;
+         group "Rule" (rule_tests @ exactness_tests);
+         group "Range" range_tests;
+         group "Box" box_tests;
+         group "fixed" fixed_tests;
          group "cumulative" cumulative_tests;
-         group "transformations" transformation_tests;
+         group "adaptive" adaptive_tests;
+         group "tanh_sinh" de_tests;
+         group "cubature" cubature_tests;
+         group "qmc" qmc_tests;
        ])
