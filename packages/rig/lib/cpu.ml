@@ -21,7 +21,10 @@
    system states, after a "+" and in lexicographic order, with the names of
    ACLE's "Function Multi Versioning" ("Mapping"), whose mangling says
    "feature names are appended in lexicographic order": "arm64+fp16" on an
-   M1. *)
+   M1.
+
+   Another host's arch is its instruction set's name (rig_heap.c), as
+   "ppc64le". *)
 
 external instruction_set_here : unit -> string = "caml_rig_instruction_set"
 external arm64_fp16 : unit -> bool = "caml_rig_arm64_fp16"

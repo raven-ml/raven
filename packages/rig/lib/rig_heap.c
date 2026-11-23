@@ -57,13 +57,26 @@ value caml_rig_page_size(value unit) {
   return Val_long((intnat)rig_page_bytes());
 }
 
-/* The host's instruction set: the one this code is compiled for. */
+/* The host's instruction set: the one this code is compiled for, named as
+   Linux's uname names it, but arm64, which macOS's name is; "" for one this
+   file does not list. The compiler names it: the system's uname names the
+   kernel's, which a 32-bit process on a 64-bit kernel does not run. */
 value caml_rig_instruction_set(value unit) {
   (void)unit;
 #if defined(__x86_64__) || defined(_M_X64)
   return caml_copy_string("x86_64");
 #elif defined(__aarch64__) || defined(_M_ARM64)
   return caml_copy_string("arm64");
+#elif defined(__powerpc64__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  return caml_copy_string("ppc64le");
+#elif defined(__powerpc64__)
+  return caml_copy_string("ppc64");
+#elif defined(__s390x__)
+  return caml_copy_string("s390x");
+#elif defined(__riscv) && __riscv_xlen == 64
+  return caml_copy_string("riscv64");
+#elif defined(__loongarch64)
+  return caml_copy_string("loongarch64");
 #else
   return caml_copy_string("");
 #endif

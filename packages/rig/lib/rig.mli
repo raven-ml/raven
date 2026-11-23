@@ -231,19 +231,21 @@ val arch : t -> string
 (** [arch d] names the code [d]'s processor runs. For a driver's device it is
     the processor as its driver names it, such as ["gfx1100"], ["sm_89"] or
     ["Apple7"]. For a host it is a level of its instruction set: on x86-64 the
-    highest level of the x86-64 psABI whose features the processor has and
-    whose registers the system enables (XCR0), ["x86-64"], ["x86-64-v2"],
-    ["x86-64-v3"] or ["x86-64-v4"], each level running the code of those
-    below it; on arm64 ["arm64"], the base architecture with floating point
-    and Advanced SIMD, followed by each feature rig reads that the system
-    states the processor has, after a [+] and in lexicographic order. rig
-    reads one, [fp16], half-precision arithmetic in floating point and
-    Advanced SIMD (FEAT_FP16), from macOS's [hw.optional.arm.FEAT_FP16]
-    alone: ["arm64+fp16"] on an M1, and an arm64 host on another system is
-    ["arm64"], with no features. An arm64 arch runs the code of each arm64
-    arch whose features are among its own. It is the host's for a
-    {!software} device, whose code is the host's, [""] for an io device,
-    and for a device of another machine that machine's.
+    highest level of the x86-64 psABI whose features the processor has and whose
+    registers the system enables (XCR0), ["x86-64"], ["x86-64-v2"],
+    ["x86-64-v3"] or ["x86-64-v4"], each level running the code of those below
+    it; on arm64 ["arm64"], the base architecture with floating point and
+    Advanced SIMD, followed by each feature rig reads that the system states the
+    processor has, after a [+] and in lexicographic order. rig reads one,
+    [fp16], half-precision arithmetic in floating point and Advanced SIMD
+    (FEAT_FP16), from macOS's [hw.optional.arm.FEAT_FP16] alone: ["arm64+fp16"]
+    on an M1, and an arm64 host on another system is ["arm64"], with no
+    features. An arm64 arch runs the code of each arm64 arch whose features are
+    among its own. On another instruction set rig knows it is the set's name as
+    Linux's [uname] gives it, with no level or features: ["ppc64le"], ["ppc64"],
+    ["s390x"], ["riscv64"] or ["loongarch64"], and [""] on one it does not know.
+    It is the host's for a {!software} device, whose code is the host's, [""]
+    for an io device, and for a device of another machine that machine's.
 
     The x86-64 psABI,
     {{:https://gitlab.com/x86-psABIs/x86-64-ABI}System V Application Binary

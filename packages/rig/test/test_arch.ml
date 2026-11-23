@@ -164,6 +164,17 @@ let law =
 
 (* This machine *)
 
+(* What [uname -m] prints, without its newline: [None] where the system has no
+   uname. *)
+let uname_machine () =
+  match Unix.open_process_args_in "/usr/bin/uname" [| "uname"; "-m" |] with
+  | exception Unix.Unix_error _ -> None
+  | ic -> (
+      let out = In_channel.input_all ic in
+      match Unix.close_process_in ic with
+      | Unix.WEXITED 0 -> Some (String.trim out)
+      | _ -> None)
+
 let x86_host () =
   if Rig.instruction_set Rig.host <> "x86_64" then
     skip ~reason:"not an x86-64 host" ()
@@ -179,7 +190,11 @@ let host_names () =
             (List.sort_uniq String.compare features)
             features
       | _ -> fail ("another arch: " ^ Rig.arch Rig.host))
-  | isa -> fail ("another instruction set: " ^ isa)
+  | isa -> (
+      equal ~msg:"no level or features" string isa (Rig.arch Rig.host);
+      match uname_machine () with
+      | Some m when isa <> "" -> equal ~msg:"uname's name" string m isa
+      | _ -> ())
 
 let arm64_host () =
   if Rig.instruction_set Rig.host <> "arm64" then

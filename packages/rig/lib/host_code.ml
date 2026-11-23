@@ -208,7 +208,10 @@ let check (o : Rig_elf.t) =
     s.size > 0 && s.flags land shf_write <> 0 && s.flags land shf_alloc <> 0
   in
   if host <> em_x86_64 && host <> em_aarch64 then
-    refusef "the host's machine is neither x86_64 nor arm64";
+    refusef "rig links host code on x86_64 and arm64, not on %s"
+      (match Cpu.instruction_set Cpu.host_arch with
+      | "" -> "an instruction set it does not know"
+      | isa -> isa);
   if o.bits <> 64 then refusef "the object is 32-bit, expected 64-bit";
   if o.kind <> et_rel then
     refusef "the object is of type %d, expected ET_REL (1)" o.kind;

@@ -37,7 +37,18 @@ let test_facts () =
 
 let test_host () =
   equal string "CPU" (Rig.name Rig.host);
-  mem string (Rig.instruction_set Rig.host) [ "arm64"; "x86_64" ];
+  mem string
+    (Rig.instruction_set Rig.host)
+    [
+      "arm64";
+      "x86_64";
+      "ppc64le";
+      "ppc64";
+      "s390x";
+      "riscv64";
+      "loongarch64";
+      "";
+    ];
   equal bool true (Rig.computes Rig.host);
   equal bool true (Rig.runs_on_host Rig.host);
   equal bool true (Rig.reaches Rig.host Rig.host);
