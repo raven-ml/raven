@@ -51,13 +51,22 @@ external sync : Unix.file_descr -> unit = "caml_nx_io_sync"
    changes to the file system. On Windows it does nothing. *)
 external sync_dir : string -> unit = "caml_nx_io_sync_dir"
 
+(* [rename src dst] puts the file [src] at [dst] in one step, replacing the file
+   there and leaving its readers the old one, as POSIX's rename does, on Windows
+   too where the file system admits it. *)
+external rename : string -> string -> unit = "caml_nx_io_rename"
+
 let replace temp path =
-  try Unix.rename temp path
+  try rename temp path
   with Unix.Unix_error _ when Sys.win32 ->
-    (* Windows refuses to replace a file while a view of its pages is mapped: a
-       value loaded from [path] may hold one until it is collected. *)
+    (* A Windows file system without POSIX renames refuses to replace a file
+       held open. A value loaded from [path] may hold it after its collection:
+       rig closes the file and drops its pages at its next call that moves
+       collected memory, and the pages unmap at the collection after it. *)
     Gc.full_major ();
-    Unix.rename temp path
+    Rig.free_cache Rig_disk.device;
+    Gc.full_major ();
+    rename temp path
 
 (* [written fd f] is [f fd] then a sync of [fd], and closes [fd] whatever
    happens; the first failure among the three raises. *)
@@ -83,7 +92,12 @@ let write path f =
   | () -> ()
   | exception Unix.Unix_error (e, _, _) ->
       Fail.failf "cannot be replaced (%s); the new file is %s"
-        (Unix.error_message e) temp);
+        (Unix.error_message e) temp
+  | exception exn ->
+      (* Raised by the retry before its rename, such as rig's refusal of a call
+         from inside one of its locks: the path is as it was. *)
+      remove_if_exists temp;
+      raise exn);
   sync_dir (Filename.dirname path)
 
 let string fd s = ignore (Unix.write_substring fd s 0 (String.length s))

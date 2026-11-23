@@ -2,14 +2,16 @@
   Copyright (c) 2026 The Raven authors. All rights reserved.
   SPDX-License-Identifier: ISC
 
-  The syncs that order a file's bytes before its rename, and the rename
-  before later changes to the file system.
+  The syncs that order a file's bytes before its rename, the rename, and the
+  syncs that order the rename before later changes to the file system.
   --------------------------------------------------------------------------*/
 
 #define _GNU_SOURCE
 
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/osdeps.h>
 #include <caml/signals.h>
 #include <caml/threads.h>
 #include <caml/unixsupport.h>
@@ -32,8 +34,11 @@ CAMLextern void caml_win32_maperr(DWORD errcode);
    caml/unixsupport.h. */
 #include <winsock2.h>
 #include <windows.h>
+#include <stddef.h>
+#include <stdlib.h>
 #else
 #include <fcntl.h>
+#include <stdio.h>
 #include <unistd.h>
 #endif
 
@@ -101,6 +106,125 @@ CAMLprim value caml_nx_io_sync(value vfd) {
     unix_error(error, "fsync", Nothing);
   }
   return Val_unit;
+}
+
+/* Renames
+
+   A rename puts a file at a path, replacing the file there in one step, as
+   POSIX's rename does. On Windows, a rename of POSIX semantics
+   (FileRenameInfoEx), which NTFS takes on Windows 10 and later, unlinks the
+   old file as POSIX's rename does: its handles and views keep reading it.
+   Where it fails, such as on a file system without such renames or an older
+   Windows, MoveFileExW renames, and its error is the rename's: it refuses to
+   replace a file that a handle holds open, even one shared for deletion, or
+   that a view maps. */
+
+#if defined(_WIN32)
+/* FILE_RENAME_INFO with the flags that older headers lack in place of its
+   ReplaceIfExists, and the values winbase.h gives FileRenameInfoEx and
+   FILE_RENAME_FLAG_REPLACE_IF_EXISTS and _POSIX_SEMANTICS. */
+struct rename_info {
+  DWORD flags;
+  HANDLE root;
+  DWORD length;
+  WCHAR name[1];
+};
+
+#define RENAME_INFO_EX ((FILE_INFO_BY_HANDLE_CLASS)22)
+#define REPLACE_IF_EXISTS 0x1
+#define POSIX_SEMANTICS 0x2
+
+/* Renames [src] to [dst] with POSIX semantics: [0], or the system's error.
+   The name is [dst]'s full path, which SetFileInformationByHandle takes. A
+   directory at [dst] is left to MoveFileExW, which refuses it as POSIX's
+   rename of a file does, and which such a rename might replace if empty. */
+static DWORD rename_posix(const wchar_t *src, const wchar_t *dst) {
+  DWORD attributes = GetFileAttributesW(dst);
+  if (attributes != INVALID_FILE_ATTRIBUTES &&
+      (attributes & FILE_ATTRIBUTE_DIRECTORY))
+    return ERROR_ACCESS_DENIED;
+  DWORD n = GetFullPathNameW(dst, 0, NULL, NULL);
+  if (n == 0)
+    return GetLastError();
+  DWORD size = (DWORD)(offsetof(struct rename_info, name) + n * sizeof(WCHAR));
+  struct rename_info *info = malloc(size);
+  if (info == NULL)
+    return ERROR_NOT_ENOUGH_MEMORY;
+  /* The length without the NUL, or the room needed if the current directory
+     changed since the first call. */
+  DWORD len = GetFullPathNameW(dst, n, info->name, NULL);
+  DWORD code = len == 0 ? GetLastError() : 0;
+  if (len >= n)
+    code = ERROR_FILENAME_EXCED_RANGE;
+  if (code == 0) {
+    info->flags = REPLACE_IF_EXISTS | POSIX_SEMANTICS;
+    info->root = NULL;
+    info->length = len * sizeof(WCHAR);
+    HANDLE h = CreateFileW(src, DELETE | SYNCHRONIZE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE |
+                               FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE)
+      code = GetLastError();
+    else {
+      if (!SetFileInformationByHandle(h, RENAME_INFO_EX, info, size))
+        code = GetLastError();
+      CloseHandle(h);
+    }
+  }
+  free(info);
+  return code;
+}
+#endif
+
+CAMLprim value caml_nx_io_rename(value vsrc, value vdst) {
+  CAMLparam2(vsrc, vdst);
+  caml_unix_check_path(vsrc, "rename");
+  caml_unix_check_path(vdst, "rename");
+  /* Signal handlers run here, before the paths are held. The release below
+     does not run them, so nothing raises while the paths are held. */
+  caml_process_pending_actions();
+#if defined(_WIN32)
+  /* A conversion raises only for a path that is not UTF-8, and [vsrc] is
+     [vdst] with an ASCII suffix: either both convert or the first raises,
+     holding nothing. */
+  wchar_t *src = caml_stat_strdup_noexc_to_utf16(String_val(vsrc));
+  wchar_t *dst = caml_stat_strdup_noexc_to_utf16(String_val(vdst));
+  if (src == NULL || dst == NULL) {
+    caml_stat_free(src);
+    caml_stat_free(dst);
+    caml_raise_out_of_memory();
+  }
+  caml_enter_blocking_section_no_pending();
+  DWORD code = 0;
+  if (rename_posix(src, dst) != 0 &&
+      !MoveFileExW(src, dst,
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    code = GetLastError();
+  caml_leave_blocking_section();
+  caml_stat_free(src);
+  caml_stat_free(dst);
+  if (code != 0) {
+    caml_win32_maperr(code);
+    unix_error(errno, "rename", vsrc);
+  }
+#else
+  char *src = caml_stat_strdup_noexc(String_val(vsrc));
+  char *dst = caml_stat_strdup_noexc(String_val(vdst));
+  if (src == NULL || dst == NULL) {
+    caml_stat_free(src);
+    caml_stat_free(dst);
+    caml_raise_out_of_memory();
+  }
+  caml_enter_blocking_section_no_pending();
+  int error = rename(src, dst) == 0 ? 0 : errno;
+  caml_leave_blocking_section();
+  caml_stat_free(src);
+  caml_stat_free(dst);
+  if (error != 0)
+    unix_error(error, "rename", vsrc);
+#endif
+  CAMLreturn(Val_unit);
 }
 
 /* The directory's sync orders the names a rename or link put in it before

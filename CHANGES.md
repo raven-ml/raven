@@ -3563,6 +3563,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On Windows, an `Nx_io` save over a file a load read replaces it, as on Linux
+  and macOS, and the loaded values keep their elements: it was refused, even
+  once they were collected. A file system without POSIX renames, such as FAT,
+  still refuses while they live.
 - `Nx.wait_checks ()` is a wait on every set: it waits for the checks issued
   before the call, oldest first in issue order, and raises the first failure.
   Where it returns, each of their failures has raised at some wait.

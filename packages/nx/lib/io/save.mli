@@ -16,8 +16,9 @@ val write : string -> (Unix.file_descr -> unit) -> unit
     A [Failure], [Sys_error] or [Unix.Unix_error] from [f] or from the file's
     sync raises [Failure] naming [path], and an [Invalid_argument] from [f]
     passes unchanged. Both leave no new file. A refused rename raises [Failure]
-    naming [path] and keeps the new file, which it names. A failed sync of the
-    directory raises [Failure] naming [path], with the new file at [path]. *)
+    naming [path] and keeps the new file, which it names; another exception of
+    the rename's passes and leaves none. A failed sync of the directory raises
+    [Failure] naming [path], with the new file at [path]. *)
 
 val string : Unix.file_descr -> string -> unit
 (** [string fd s] writes [s] to [fd]. *)

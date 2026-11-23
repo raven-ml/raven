@@ -271,22 +271,16 @@ let held = abstract "held"
 let path d = Filename.concat d "x"
 let holds (d : dir_model) = Option.is_some d.file
 
-(* Windows can neither delete nor replace a file whose pages are mapped until
-   its values are collected, so there the program never does. *)
-let replaceable d = not (Sys.win32 && holds d)
-
 (* [ends d e] records that [d]'s file ended by [e]. *)
 let ends (d : dir_model) e =
   Option.iter (fun (_, file) -> Hashtbl.replace d.ended file e) d.file
 
-(* How a held value's file ended, when the value is read or saved. Neither
-   ending happens on Windows. *)
+(* How a held value's file ended, when the value is read or saved. No file is
+   removed on Windows ([commands]). *)
 let fate (h : held_model) =
-  if not Sys.win32 then begin
-    let ending = Hashtbl.find_opt h.dir.ended h.file in
-    cover "its file saved over" (ending = Some Saved_over);
-    cover "its file removed" (ending = Some Removed)
-  end
+  let ending = Hashtbl.find_opt h.dir.ended h.file in
+  cover "its file saved over" (ending = Some Saved_over);
+  if not Sys.win32 then cover "its file removed" (ending = Some Removed)
 
 (* A save syncs its file and its directory, milliseconds where every other
    call takes microseconds, so the cheap calls are drawn more often: a
@@ -309,7 +303,6 @@ let commands =
            (fun () -> temp_dir ()) );
        ( 1,
          command "save"
-           ~pre:(fun d _ -> replaceable d)
            (dir ^-> contents @-> returns unit)
            save
            (fun d c -> Nx_io.save_npy (path d) (value_of c)) );
@@ -325,15 +318,13 @@ let commands =
              Nx.unpack Nx.int32 x) );
        ( 2,
          command "save_held"
-           ~pre:(fun _ d -> replaceable d)
            (held ^-> dir ^-> returns unit)
            (fun h d ->
              fate h;
-             if not Sys.win32 then
-               cover "to its own file"
-                 (match d.file with
-                 | Some (_, file) -> h.dir == d && file = h.file
-                 | None -> false);
+             cover "to its own file"
+               (match d.file with
+               | Some (_, file) -> h.dir == d && file = h.file
+               | None -> false);
              save d h.loaded)
            (fun x d -> Nx_io.save_npy (path d) x) );
        ( 3,
@@ -348,6 +339,8 @@ let commands =
            Gc.full_major );
      ]
     @
+    (* Sys.remove may delete without POSIX semantics, which rig.disk states
+       Windows refuses for a file whose pages are mapped. *)
     if Sys.win32 then []
     else
       [

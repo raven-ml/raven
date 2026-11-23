@@ -66,10 +66,12 @@
     drive's cache, such as some network file systems on macOS, where the order
     is the file system's own. A save that fails before the rename leaves the
     path as it was and nothing beside it. A refused rename keeps the new file,
-    which the [Failure] names. Windows refuses it while a mapped value from the
-    old file is reachable ({!Rig_disk.section-borrows}). A failed sync of the
-    directory after the rename raises [Failure] with the new file at the path.
-    On POSIX systems the new file has the permissions [0o666] less the umask.
+    which the [Failure] names. On Windows, a file system without POSIX renames,
+    such as FAT, refuses it while the old file is open: while a mapped value
+    from it is reachable, or a value of a format's own type that reads it later,
+    such as a {!Tiff.t}. A failed sync of the directory after the rename raises
+    [Failure] with the new file at the path. On POSIX systems the new file has
+    the permissions [0o666] less the umask.
 
     {b Defaults.} A load blocks until it has read the file's header and the
     elements of each value it returns that is not mapped. {!Tiff.samples}
