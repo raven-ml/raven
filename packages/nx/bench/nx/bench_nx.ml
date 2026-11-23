@@ -1838,6 +1838,13 @@ let floats () =
     (Nx.ones D.Int64 [| 1_000_000 |])
     (Nx.create D.Float64 [| 1_000_000 |] v)
 
+(* 64 texts of 64 KiB that differ only in their last byte, of 8 values, as long
+   values with a common header do: a dictionary encoder groups them. *)
+let shared_prefix () =
+  let prefix = String.make (65536 - 1) 'x' in
+  Nx_ragged.of_strings
+    (Array.init 64 (fun i -> prefix ^ String.make 1 (Char.chr (97 + (i mod 8)))))
+
 (* The rows' numbers alone, as a key's code is. *)
 let ids r = (Nx_ragged.unique ~size:0 r).ids
 
@@ -1861,6 +1868,8 @@ let ragged_rows =
         ~setup:(codes (Printf.sprintf "id%010d") 10_000)
         ids;
       Thumper.bench_with_setup "ids-f64-1M-rows-of-1" ~setup:floats ids;
+      Thumper.bench_with_setup "groups-text-64-of-64KiB-one-prefix"
+        ~setup:shared_prefix (fun r -> Nx_ragged.unique r);
     ]
 
 (* Nx.attention as a model calls it: a causal prefill of 8 heads of 1024

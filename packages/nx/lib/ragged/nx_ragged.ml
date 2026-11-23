@@ -472,18 +472,22 @@ let rank r =
   in
   Nx.sub_s (Nx.take code (Nx.cumsum marks)) 1L
 
-(* Rows are told apart by words: a row's keys read as uint64 words, [8 / w]
-   keys of [w] bytes to a word, the keys past its end zero. A row of at most
-   7 bytes of keys is one word, its length in its last key, which its keys
-   leave free: ["a"] and ["a\000"] differ there. Longer rows are their
-   length followed by words, in rounds of up to [round_words] words. Rows of
-   one length need no length, as their words alone tell them apart. A round
-   numbers its rows' words with {!Nx.unique}, and its rows that are not alone
-   in their group and have keys left go on to the next round, keyed by their
-   group's first row in place of their length: each row's code is the first
-   row of its group so far, so a group is numbered by its first row and the
-   codes rank groups by first appearance. Where one numbering tells every row
-   apart, it gives the groups. *)
+(* Rows are told apart by words: a row's keys read as uint64 words, [8 / w] keys
+   of [w] bytes to a word, the keys past its end zero. A row of at most 7 bytes
+   of keys is one word, its length in its last key, which its keys leave free:
+   ["a"] and ["a\000"] differ there. Longer rows are their length followed by
+   words, in rounds of [round_words] words that double from one round to the
+   next, so that rows sharing a prefix of [p] keys take about log2 of [p /
+   (round_words * q)] rounds. A row in a later round has more keys than the
+   rounds before it read, which are at least half its round's width, so a round
+   after the first holds less than twice its rows' keys. Rows of one length need
+   no length, as their words alone tell them apart. A round numbers its rows'
+   words with {!Nx.unique}, and its rows that are not alone in their group and
+   have keys left go on to the next round, keyed by their group's first row in
+   place of their length: each row's code is the first row of its group so far,
+   so a group is numbered by its first row and the codes rank groups by first
+   appearance. Where one numbering tells every row apart, it gives the
+   groups. *)
 let round_words = 8
 
 (* The groups of the rows [rows] by their [code], the first row of each row's
@@ -531,8 +535,10 @@ let unique ?size r =
   else
     let read = ints "Nx_ragged.unique" [ Nx.max len; Nx.min len ] in
     let longest = Int64.to_int read.(0) and shortest = Int64.to_int read.(1) in
-    (* Every window of a round from an element of a row lies in [keys]. *)
-    let keys = Nx.pad [| (0, round_words * q) |] (Nx.Dtype.zero dt) keys in
+    (* Every window of a round from an element of a row lies in [keys]: a round
+       is as wide as the longest row, in whole words, at most. *)
+    let widest = q * Int.max round_words ((longest + q - 1) / q) in
+    let keys = Nx.pad [| (0, widest) |] (Nx.Dtype.zero dt) keys in
     (* [b] words of keys as one row of [b] words. *)
     let packed x =
       let m = Nx.dim 0 x and b = Nx.dim 1 x / q in
@@ -551,12 +557,19 @@ let unique ?size r =
       packed (Nx.where (Nx.less p c) (Nx.bitwise_not none) none)
     in
     (* The [b] words of keys from [at], each row's keys past its [rem] zero:
-       where the [least] of [rem] fills the words, none is past, and where
-       it is the [most] too, one row of masks clears every row's. *)
+       where the [least] of [rem] fills the words, none is past, and where it is
+       the [most] too, one row of masks clears every row's. A round wider than
+       [masks] compares each key's position with its row's [rem]. *)
     let words ~at ~rem ~least ~most b =
       let e = b * q in
       let chunk = Nx.take ~axis:0 at (Nx.sliding_window ~window:e keys) in
       if least >= e then packed chunk
+      else if b > round_words then
+        let m = Nx.dim 0 rem in
+        let inside =
+          Nx.less (Nx.reshape [| 1; e |] (arange e)) (Nx.reshape [| m; 1 |] rem)
+        in
+        packed (Nx.where inside chunk (Nx.zeros_like chunk))
       else if least = most then
         Nx.bitwise_and (packed chunk)
           (Nx.slice [ R (least, least + 1); R (0, b) ] masks)
@@ -585,12 +598,12 @@ let unique ?size r =
         let tag = Nx.take ~axis:0 len (packed tags) in
         Nx.unique ?size (Nx.bitwise_or word (Nx.reshape [| n |] tag))
     else
-      (* The key of the rows [active] from their key [seen] on: [head], if
-         any, then as many words as the [longest] row left needs, up to
-         [round_words]; with the rows' keys left and the keys the round
-         covers. A round sizes its numbering, so that it reads nothing. *)
-      let key ~seen ~active ~longest ~least head =
-        let b = Int.min round_words ((longest + q - 1) / q) in
+      (* The key of the rows [active] from their key [seen] on: [head], if any,
+         then as many words as the [longest] row left needs, up to [width]; with
+         the rows' keys left and the keys the round covers. A round sizes its
+         numbering, so that it reads nothing. *)
+      let key ~width ~seen ~active ~longest ~least head =
+        let b = Int.min width ((longest + q - 1) / q) in
         let rem = Nx.sub_s (Nx.take active len) (Int64.of_int seen) in
         let at = Nx.add_s (Nx.take active start) (Int64.of_int seen) in
         let words = words ~at ~rem ~least ~most:longest b in
@@ -607,16 +620,17 @@ let unique ?size r =
       let first_head = if shortest = longest then None else Some len in
       if longest <= round_words * q then
         let _, _, key =
-          key ~seen:0 ~active:rows ~longest ~least:shortest first_head
+          key ~width:round_words ~seen:0 ~active:rows ~longest ~least:shortest
+            first_head
         in
         Nx.unique ?size key
       else
-        let rec round ~seen ~active ~longest ~least code =
+        let rec round ~width ~seen ~active ~longest ~least code =
           let m = Nx.dim 0 active in
           let head =
             if seen = 0 then first_head else Some (Nx.take active code)
           in
-          let rem, e, key = key ~seen ~active ~longest ~least head in
+          let rem, e, key = key ~width ~seen ~active ~longest ~least head in
           let g = Nx.unique ~size:m key in
           let first = Nx.take (Nx.take g.ids g.first) active in
           let code = Nx.scatter ~axis:0 active first code in
@@ -635,11 +649,12 @@ let unique ?size r =
             let m = Int64.to_int read.(0) in
             if m = 0 then code
             else
-              round ~seen:(seen + e)
+              round ~width:(2 * width) ~seen:(seen + e)
                 ~active:(Nx.take (Nx.positions ~size:m keep) active)
                 ~longest:(Int64.to_int read.(1))
                 ~least:(Int64.to_int read.(2))
                 code
         in
         opened ?size rows
-          (round ~seen:0 ~active:rows ~longest ~least:shortest rows)
+          (round ~width:round_words ~seen:0 ~active:rows ~longest
+             ~least:shortest rows)

@@ -993,15 +993,13 @@ let identifying (E e) =
   ]
 
 (* Texts packed into words, drawn three ways over bytes that hold NUL and
-   invalid UTF-8, then with copies of some of them:
-   - short texts alone, of at most 7 bytes, which take one word each, of one
-     length or several;
-   - families of texts of one length that share a prefix of three bases of 150
-     bytes and differ in their last byte, cut around the words a text fills
-     (7, 8 and 9 bytes, multiples of 8) and around the rounds of 64 bytes,
-     so that rows split within the first, second and third round;
-   - texts of at most 64 bytes with one of exactly 64, the most one round
-     covers. *)
+   invalid UTF-8, then with copies of some of them. Short texts alone, of at
+   most 7 bytes, take one word each, of one length or several. Families of texts
+   of one length share a prefix of three bases of 460 bytes and differ in their
+   last byte, cut around the words a text fills (7, 8 and 9 bytes, multiples of
+   8) and around the ends of rounds (64, 192 and 448 bytes), so that rows split
+   within each of the first four rounds. Texts of at most 64 bytes hold one of
+   exactly 64, the most one round covers. *)
 let packed_texts =
   let open Gen in
   let byte = of_list [ '\000'; 'a'; 'b'; '\x80'; '\xff' ] in
@@ -1012,13 +1010,16 @@ let packed_texts =
     array ~size:(int_range 2 8) (string_of ~size byte)
   in
   let families =
-    let* bases = list ~size:(constant 3) (string_of ~size:(constant 150) byte) in
+    let* bases =
+      list ~size:(constant 3) (string_of ~size:(constant 460) byte)
+    in
     let bases = Array.of_list bases in
     let family =
       let* base = map (Array.get bases) (int_range 0 2) in
       let* cut =
         of_list ~pp:Format.pp_print_int
-          [ 0; 1; 6; 7; 8; 15; 16; 23; 31; 32; 47; 63; 64; 65; 80; 127; 128; 140 ]
+          ([ 0; 1; 6; 7; 8; 15; 16; 23; 31; 32; 47; 63; 64; 65; 80; 127; 128 ]
+          @ [ 140; 191; 192; 193; 447; 448; 449 ])
       in
       let+ tails =
         list ~size:(int_range 1 3) (string_of ~size:(constant 1) byte)
@@ -1052,8 +1053,8 @@ let first_appearance (type a) (xs : a array) =
           id)
     xs
 
-(* 300 cases: each of the 18 cuts a family draws then reaches its covers in
-   about 23 cases a run, where 100 cases left about 8 and some seeds none. *)
+(* 300 cases: each of the 24 cuts a family draws then reaches its covers in
+   about 17 cases a run, where 100 cases left about 8 and some seeds none. *)
 let text_ids =
   prop ~count:300
     "texts group in order of first appearance, numbered as their ranks"
@@ -1102,12 +1103,55 @@ let text_ids =
             && not (String.equal a b))
       in
       cover "rows split past 64 bytes" (split 64);
-      cover "rows split in the third round" (split 128);
+      cover "rows split past 128 bytes" (split 128);
+      cover "rows split past 192 bytes" (split 192);
+      cover "rows split past 448 bytes" (split 448);
       let r = Nx_ragged.of_strings ss in
       same_groups (first_appearance ss) r;
       equal ~msg:"ranks numbered in order of first appearance" (array int64)
         (first_appearance (Nx.to_array (Nx_ragged.rank r)))
         (first_appearance ss))
+
+(* Rows of [p] equal elements followed by element 0, 1 or nothing: tails 0, 1,
+   0, none, 1 are the groups 0, 1, 0, 2, 1. The lengths straddle the ends of the
+   rounds that tell such rows apart: 64, 192, 448 and 960 bytes of keys, which
+   are 16, 48 and 112 keys of 4 bytes. Others end inside a round past the first,
+   which clears each row's keys past its end. *)
+let tails = [ Some 0; Some 1; Some 0; None; Some 1 ]
+
+let texts_after p =
+  let text t =
+    String.make p 'x'
+    ^ Option.fold ~none:"" ~some:(fun t -> String.make 1 "ab".[t]) t
+  in
+  Nx_ragged.of_strings (Array.of_list (List.map text tails))
+
+let int32s_after p =
+  let row t =
+    Array.append (Array.make p 7l)
+      (Option.fold ~none:[||] ~some:(fun t -> [| Int32.of_int t |]) t)
+  in
+  let rows = List.map row tails in
+  let lengths = List.map (fun r -> Int64.of_int (Array.length r)) rows in
+  let values = Array.concat rows in
+  Nx_ragged.of_lengths
+    (int64s (Array.of_list lengths))
+    (Nx.create Nx.int32 [| Array.length values |] values)
+
+let shared_prefix =
+  let groups r = same_groups [| 0L; 1L; 0L; 2L; 1L |] r in
+  cases "rows that share a long prefix group by the elements after it" ~id:fst
+    (List.map
+       (fun p ->
+         (Printf.sprintf "%d bytes" p, fun () -> groups (texts_after p)))
+       [
+         63; 64; 65; 150; 191; 192; 193; 300; 447; 448; 449; 700; 959; 960; 961;
+       ]
+    @ List.map
+        (fun p ->
+          (Printf.sprintf "%d int32s" p, fun () -> groups (int32s_after p)))
+        [ 15; 16; 17; 40; 47; 48; 49; 80; 111; 112; 113 ])
+    (fun (_, check) -> check ())
 
 (* NaNs of each payload and sign, as order keys make them one key. *)
 let nan_ids =
@@ -1148,6 +1192,7 @@ let identities =
     (List.concat_map identifying elements
     @ [
         text_ids;
+        shared_prefix;
         nan_ids;
         test "cells of several elements compare element by element" (fun () ->
             let r =

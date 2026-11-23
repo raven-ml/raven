@@ -150,12 +150,14 @@ val unique : ?size:int -> ('v, 's, 'd) t -> 'd Nx.groups
 
     Cost: rows are told apart by their elements' keys ({!Nx.order_key}, the
     narrowest as wide as the element) packed into 64-bit words, in rounds of
-    up to 64 bytes of keys. One round that covers every row is one
-    {!Nx.unique} with [size]. Otherwise each round numbers its rows with a
-    sized {!Nx.unique}, and a row goes on while it has keys left and its
-    group so far holds another row. Reads: the longest and shortest rows
-    first, the rows left after each round that a row outlasts, and without
-    [size] the number of groups.
+    keys that start at 64 bytes and double, so that rows sharing a prefix of [p]
+    bytes of keys take about [log2 (p / 64)] rounds, each after the first
+    holding less than twice its rows' keys. One round that covers every row is
+    one {!Nx.unique} with [size]. Otherwise each round numbers its rows with a
+    sized {!Nx.unique}, and a row goes on while it has keys left and its group
+    so far holds another row. Reads: the longest and shortest rows first, the
+    rows left after each round that a row outlasts, and without [size] the
+    number of groups.
 
     Raises [Invalid_argument] if [size] is negative or [r]'s values are
     complex. *)

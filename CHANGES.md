@@ -3638,6 +3638,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_ragged.unique` tells apart rows that share a long prefix in rounds that
+  double in width, so a prefix of `p` bytes takes about `log2 (p / 64)` rounds
+  instead of `p / 64`: 64 texts of 64 KiB differing in their last byte took
+  1024 rounds of a dozen operations each.
 - `Nx.Repr.read` and `Nx.Host.read` hold a read claim on the array instead of a
   `Rig.Buffer.keep`: a read allocates no finalised value or global root, 46 ns
   for a one-element value on fudge where it took 372.

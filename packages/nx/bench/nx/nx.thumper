@@ -315,6 +315,8 @@ quant/q8_0-gemv-4096	wall_time	batch=1	n=20	6.183e-03	6.137e-03 6.156e-03 6.156e
 quant/q8_0-gemv-4096-f64	alloc_words	exact	861
 quant/q8_0-gemv-4096-f64	wall_time	batch=1	n=20	6.913e-03	6.839e-03 6.866e-03 6.874e-03 6.887e-03 6.887e-03 6.890e-03 6.900e-03 6.907e-03 6.908e-03 6.910e-03 6.915e-03 6.916e-03 6.922e-03 6.922e-03 6.930e-03 6.932e-03 6.932e-03 6.937e-03 6.963e-03 6.964e-03
 ragged/groups-text-1M-of-5B-100-values	alloc_words	exact	3690
+ragged/groups-text-64-of-64KiB-one-prefix	alloc_words	exact	55683
+ragged/groups-text-64-of-64KiB-one-prefix	wall_time	batch=1	n=20	8.868e-04	7.072e-04 7.078e-04 7.129e-04 7.140e-04 7.252e-04 7.346e-04 7.464e-04 7.562e-04 8.719e-04 8.845e-04 8.891e-04 8.895e-04 8.922e-04 8.923e-04 9.026e-04 9.052e-04 9.119e-04 9.457e-04 1.169e-03 1.382e-03
 ragged/ids-f64-1M-rows-of-1	alloc_words	exact	3980
 ragged/ids-f64-1M-rows-of-1	wall_time	batch=1	n=20	1.043e-02	7.468e-03 7.762e-03 8.622e-03 8.786e-03 8.926e-03 8.926e-03 9.269e-03 9.526e-03 1.003e-02 1.026e-02 1.059e-02 1.148e-02 1.152e-02 1.156e-02 1.249e-02 1.300e-02 1.407e-02 1.487e-02 1.488e-02 2.195e-02
 ragged/ids-text-1M-of-12B-10K-values	alloc_words	exact	3894
