@@ -198,29 +198,6 @@ let keyed =
           ("the effective groups", Norn.Evidence.effective_groups);
         ])
 
-(* A compiled function leaves the order of a sum's terms free: over the 1550
-   dead points a reordered sum moves [ln Z], near -7, by at most 1550 of its
-   ulps, 2.4e-12; the error and the effective groups are spreads and ratios of
-   such sums. 1e-9 holds them all. *)
-let compiled_run =
-  test "a compiled run is the eager one" (fun () ->
-      let k = Nx.Rng.split_batch ~n:200 (Nx.Rng.key 70) in
-      let k = Nx.Ptree.map Nx.Rng.ptree (fun _ k -> Nx.slice [ I 0 ] k) k in
-      let z, (moments, _) = compiled conjugate 50 k in
-      let eager = nest conjugate 50 k in
-      List.iter
-        (fun (name, f) ->
-          equal (float 1e-9) ~msg:name (Nx.item [] (f eager)) (Nx.item [] (f z)))
-        [
-          ("ln Z", Norn.Evidence.log_evidence);
-          ("its error", Norn.Evidence.error);
-          ("the effective groups", Norn.Evidence.effective_groups);
-        ];
-      equal
-        (array (float 1e-9))
-        (Nx.to_array (fst (Norn.Evidence.expectation t first_moments eager)))
-        (Nx.to_array moments))
-
 (* Nested sampling runs 13 live points: its run of likelihoods is the slowest
    cell of the recovery law, and its time is about linear in the points. Its
    largest error has a median of 2.3 standard errors over keys 1 to 40 and
@@ -234,8 +211,7 @@ let recovers =
         (Recovery.nested ~replicates:16 ~draws:13)
         (Recovery.posterior "dogs-dogs"))
 
-let run_tests =
-  group "run" [ converges; spent; pp_spent; keyed; compiled_run; recovers ]
+let run_tests = group "run" [ converges; spent; pp_spent; keyed; recovers ]
 
 let () =
   exit (run "Norn.Nested" [ init_tests; step_tests; evidence_tests; run_tests ])

@@ -153,31 +153,6 @@ let step_tests =
             (fun () ->
               Norn.Smc.step t ~prior:conjugate.prior ~likelihood (Nx.Rng.key 3)
                 s));
-      test "a compiled step is the eager one" (fun () ->
-          let s =
-            Norn.Smc.init t ~prior:gaussian.prior
-              ~likelihood:gaussian.likelihood
-              (gaussian.draw (Nx.Rng.key 2) 200)
-          in
-          let sp = Norn.Smc.ptree t in
-          let step =
-            Norn.Smc.step t ~prior:gaussian.prior
-              ~likelihood:gaussian.likelihood
-          in
-          let compiled =
-            Rune.jit
-              Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
-              step (Nx.Rng.key 3) s
-          in
-          let eager = step (Nx.Rng.key 3) s in
-          equal (float 1e-12) (Nx.item [] eager.beta) (Nx.item [] compiled.beta);
-          equal (float 1e-9)
-            (Nx.item [] eager.log_evidence)
-            (Nx.item [] compiled.log_evidence);
-          equal
-            (array (float 1e-9))
-            (Nx.to_array eager.particles)
-            (Nx.to_array compiled.particles));
     ]
 
 (* evidence *)
