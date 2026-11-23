@@ -258,6 +258,38 @@ let jacobian_rows () =
     Thumper.bench "jacrev-64" (fun () -> synced (Rune.jacrev' chain x));
   ]
 
+(* A map's scan whose output reads no lane computes once, whatever the number of
+   lanes: a prefix sum over loads of a lane's 16384 elements and of a capture,
+   its output the capture's sum alone, beside 64 lanes. Computed per lane, it
+   would take 64 times as long. *)
+let shared_rows () =
+  let n = 16384 in
+  let k = floats n and xs = Nx.reshape [| 64; n |] (floats (64 * n)) in
+  let any = Nx.Dtype.Any f32 in
+  let prog =
+    Nx_kernel.Prog.v
+      ~ins:(Iarray.of_list [ any; any ])
+      (Iarray.of_list [ Nx_kernel.Prog.In 0; In 1 ])
+      ~outs:(Iarray.of_list [ 1 ])
+  in
+  let scan x =
+    Nx.Prim.eval ~by:"bench"
+      (Scan
+         {
+           layout = Nx_array.Layout.contiguous (Iarray.of_list [ n ]);
+           axis = 0;
+           prog;
+           reduction = Monoid (Sum, 0, f32);
+           loads = [| Plain x; Plain k |];
+           carry = None;
+           at = None;
+         })
+  in
+  [
+    Thumper.bench "vmap-scan-capture-64-lanes" (fun () ->
+        synced (Rune.vmap' scan xs));
+  ]
+
 (* Attention's backward pieces: the gradient of a softmax over 8 × 256 rows
    of 256 scores, and of products over the first 256, 512, 768 and 1024 of
    8 × 1024 keys, whose slices' transposes are summed. *)
@@ -3080,6 +3112,7 @@ let () =
          Thumper.group "ConvGrad" (conv_rows ());
          Thumper.group "PerSampleGrads" (per_sample_rows ());
          Thumper.group "Jacobians" (jacobian_rows ());
+         Thumper.group "Maps" (shared_rows ());
          Thumper.group "Attention"
            (attention_rows () @ lengths_rows () @ host_attention_rows ());
          Thumper.group "Hmc" (hmc_rows ());

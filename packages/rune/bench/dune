@@ -5,6 +5,8 @@
  (name bench_rune)
  (libraries
   nx
+  nx.array
+  nx.kernel
   nx.quant
   nx.wide
   rig
