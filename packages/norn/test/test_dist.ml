@@ -1975,6 +1975,100 @@ let validation =
               D.log_density (D.uniform ~low:(f64 1.) ~high:(f64 1.)) (f64 1.)));
     ]
 
+(* The refusals the interface states, each named by its function. *)
+let refusals =
+  let zero = f64 0. and one = f64 1. and inf = f64 Float.infinity in
+  let normal = D.normal ~loc:(vec [| 0.; 1. |]) ~scale:one in
+  let eye n = Nx.eye Nx.float64 n in
+  let refused name msg f = (name, msg, fun () -> ignore (f ())) in
+  Windtrap.cases "a refused argument raises naming its function"
+    ~id:(fun (name, _, _) -> name)
+    [
+      refused "an infinite normal loc"
+        "Norn.Dist.log_density: normal: loc is inf, not in (-inf, inf)"
+        (fun () -> D.log_density (D.normal ~loc:inf ~scale:one) zero);
+      refused "a negative von_mises concentration"
+        "Norn.Dist.log_density: von_mises: concentration is -1, not in [0, inf)"
+        (fun () ->
+          D.log_density (D.von_mises ~loc:zero ~concentration:(f64 (-1.))) zero);
+      refused "an lkj concentration of 0"
+        "Norn.Dist.log_density: lkj_cholesky: concentration is 0, not in (0, \
+         inf)" (fun () ->
+          D.log_density (D.lkj_cholesky 2 ~concentration:zero) (eye 2));
+      refused "an lkj of one row"
+        "Norn.Dist.lkj_cholesky: n = 1 is fewer than two" (fun () ->
+          D.lkj_cholesky 1 ~concentration:one);
+      refused "an infinite poisson rate"
+        "Norn.Dist.log_density: poisson: rate is inf, not in [0, inf)"
+        (fun () -> D.log_density (D.poisson ~rate:inf) (i32 0));
+      refused "a negative neg_binomial mean"
+        "Norn.Dist.log_density: neg_binomial: mean is -1, not in [0, inf)"
+        (fun () ->
+          D.log_density
+            (D.neg_binomial ~mean:(f64 (-1.)) ~dispersion:one)
+            (i32 0));
+      refused "an mvn scale_tril of another length"
+        "Norn.Dist.mvn: loc of shape [2] and scale_tril of shape [3; 3] do not \
+         describe vectors of one length" (fun () ->
+          D.mvn ~loc:(vec [| 0.; 0. |]) ~scale_tril:(eye 3));
+      refused "an mvn scale_tril not square"
+        "Norn.Dist.mvn: loc of shape [2] and scale_tril of shape [2; 3] do not \
+         describe vectors of one length" (fun () ->
+          D.mvn
+            ~loc:(vec [| 0.; 0. |])
+            ~scale_tril:(Nx.zeros Nx.float64 [| 2; 3 |]));
+      refused "a categorical of scalar logits"
+        "Norn.Dist.categorical: logits of shape [] have no category" (fun () ->
+          D.categorical ~logits:zero);
+      refused "a categorical of no category"
+        "Norn.Dist.categorical: logits of shape [0] have no category" (fun () ->
+          D.categorical ~logits:(Nx.zeros Nx.float64 [| 0 |]));
+      refused "sorted of no element" "Norn.Dist.sorted: n = 0 is not positive"
+        (fun () -> D.sorted 0 (D.normal ~loc:zero ~scale:one));
+      refused "mixture logits of another length"
+        "Norn.Dist.mixture: logits of shape [3] do not match" (fun () ->
+          D.mixture ~logits:(Nx.zeros Nx.float64 [| 3 |]) normal);
+      refused "mixture logits not a vector"
+        "Norn.Dist.mixture: logits of shape [] do not match" (fun () ->
+          D.mixture ~logits:zero normal);
+      refused "an hmm initial of another length"
+        "Norn.Dist.hmm: initial of shape [3] and transition of shape [2; 2] do \
+         not match" (fun () ->
+          D.hmm
+            ~initial:(Nx.zeros Nx.float64 [| 3 |])
+            ~transition:(Nx.zeros Nx.float64 [| 2; 2 |])
+            4 normal);
+      refused "an hmm of other components"
+        "Norn.Dist.hmm: initial of shape [3] and transition of shape [3; 3] do \
+         not match" (fun () ->
+          D.hmm
+            ~initial:(Nx.zeros Nx.float64 [| 3 |])
+            ~transition:(Nx.zeros Nx.float64 [| 3; 3 |])
+            4 normal);
+      refused "an hmm of no step" "Norn.Dist.hmm: n = 0 is not positive"
+        (fun () ->
+          D.hmm
+            ~initial:(vec [| 0.; 0. |])
+            ~transition:(Nx.zeros Nx.float64 [| 2; 2 |])
+            0 normal);
+      refused "a student_t quantile"
+        "Norn.Dist.quantile: student_t has no quantile" (fun () ->
+          D.quantile (D.student_t ~df:one ~loc:zero ~scale:one) (f64 0.5));
+      refused "a von_mises quantile"
+        "Norn.Dist.quantile: von_mises has no quantile" (fun () ->
+          D.quantile (D.von_mises ~loc:zero ~concentration:one) (f64 0.5));
+      refused "a dirichlet quantile"
+        "Norn.Dist.quantile: dirichlet has no quantile" (fun () ->
+          D.quantile (D.dirichlet ~concentration:(vec [| 1.; 1. |])) (f64 0.5));
+      refused "a mixture quantile" "Norn.Dist.quantile: mixture has no quantile"
+        (fun () ->
+          D.quantile (D.mixture ~logits:(vec [| 0.; 0. |]) normal) (f64 0.5));
+      refused "membership of a normal"
+        "Norn.Dist.membership: normal is not a mixture or an hmm" (fun () ->
+          D.membership (D.normal ~loc:zero ~scale:one) zero);
+    ]
+    (fun (_, msg, f) -> raises_match (Exn.invalid_arg ~sub:msg) f)
+
 (* Every positive parameter at [+inf], the others at a value inside. *)
 let infinite_positive =
   let inf = f64 Float.infinity and one = f64 1. and zero = f64 0. in
@@ -2754,5 +2848,6 @@ let () =
          normalisation;
          bijectors;
          validation;
+         refusals;
          valid;
        ])
