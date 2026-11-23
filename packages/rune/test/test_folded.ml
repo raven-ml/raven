@@ -9,8 +9,8 @@
    the shape. That graph is each part's literal moved to the shape, so its size
    depends on the shape's rank alone, never on its elements. Unfolded, a
    [lgamma] of a constant links over a thousand nodes, and a complex [asinh] as
-   many. Eager's bits for these constants are the suites' "of a constant"
-   tests. *)
+   many. Compiled, a kind of constants gives the values it gives eagerly, at
+   every dtype. *)
 
 open Windtrap
 
@@ -204,8 +204,8 @@ let complex (name, k) =
 
    A kind of constants compiled by Rune.jit gives the values it gives eagerly.
    One compile per dtype holds every kind at every tuple, the results read
-   through the argument [x], a one, so that the function reads it. A NaN equals
-   any NaN. *)
+   exactly in a wide dtype and through the argument [x], a one, so that the
+   function reads it. A NaN equals any NaN. *)
 
 let tuples arity =
   let vs = specials @ [ 2.5; -3.75; 0x1p-10; 1e30 ] in
@@ -251,18 +251,19 @@ let real_values (type s) (dt : (float, s) Nx.dtype) () =
       reals
   in
   let f x =
-    let c = Nx.full_like x in
-    Nx.mul x
-      (assembled x
+    let c = Nx.full_like x and wide = Nx.cast Nx.float64 x in
+    Nx.mul wide
+      (assembled wide
          (List.concat_map
             (fun (_, k) ->
               List.map
                 (fun vs ->
-                  match (k, vs) with
-                  | One { f1 }, [ a ] -> f1 (c a)
-                  | Two { f2 }, [ a; b ] -> f2 (c a) (c b)
-                  | Three { f3 }, [ a; b; d ] -> f3 (c a) (c b) (c d)
-                  | _ -> assert false)
+                  Nx.cast Nx.float64
+                    (match (k, vs) with
+                    | One { f1 }, [ a ] -> f1 (c a)
+                    | Two { f2 }, [ a; b ] -> f2 (c a) (c b)
+                    | Three { f3 }, [ a; b; d ] -> f3 (c a) (c b) (c d)
+                    | _ -> assert false))
                 (tuples (arity k)))
             reals))
   in
@@ -318,9 +319,17 @@ type int_op = {
   op : 'v 's 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t;
 }
 
-(* Each operation, and whether it reads one operand alone. *)
-let int_ops =
-  [
+(* Each operation on integers of [w] bits, and whether it reads one operand
+   alone: shifts reach the width and pass it. *)
+let int_ops w =
+  List.concat_map
+    (fun n ->
+      [
+        (Printf.sprintf "lshift %d" n, true, { op = (fun a _ -> Nx.lshift a n) });
+        (Printf.sprintf "rshift %d" n, true, { op = (fun a _ -> Nx.rshift a n) });
+      ])
+    [ w - 1; w; w + 5 ]
+  @ [
     ("add", false, { op = Nx.add });
     ("sub", false, { op = Nx.sub });
     ("mul", false, { op = Nx.mul });
@@ -380,23 +389,47 @@ let int_pairs unary =
     List.map (fun a -> (a, 0L)) int_specials
     @ List.map (fun a -> (a, -1L)) int_specials
 
-let int_values (type v s) (dt : (v, s) Nx.dtype) () =
+(* Each integer dtype: its name, its range and its width. *)
+type int_dtype =
+  | Int_dtype : string * ('v, 's) Nx.dtype * float * float * int -> int_dtype
+
+let int_dtypes =
+  [
+    Int_dtype ("int4", Nx.int4, -8., 7., 4);
+    Int_dtype ("uint4", Nx.uint4, 0., 15., 4);
+    Int_dtype ("int8", Nx.int8, -128., 127., 8);
+    Int_dtype ("uint8", Nx.uint8, 0., 255., 8);
+    Int_dtype ("int16", Nx.int16, -32768., 32767., 16);
+    Int_dtype ("uint16", Nx.uint16, 0., 65535., 16);
+    Int_dtype ("int32", Nx.int32, -2147483648., 2147483647., 32);
+    Int_dtype ("uint32", Nx.uint32, 0., 4294967295., 32);
+    Int_dtype ("int64", Nx.int64, -0x1p63, 0x1.fffffffffffffp62, 64);
+    Int_dtype ("uint64", Nx.uint64, 0., 0x1.fffffffffffffp63, 64);
+  ]
+
+let int_values () =
   let rows =
     List.concat_map
-      (fun (name, unary, _) ->
-        List.map (fun ab -> (name, ab)) (int_pairs unary))
-      int_ops
+      (fun (Int_dtype (dname, _, _, _, w)) ->
+        List.concat_map
+          (fun (name, unary, _) ->
+            List.map (fun ab -> (dname ^ " " ^ name, ab)) (int_pairs unary))
+          (int_ops w))
+      int_dtypes
   in
   let f x =
-    let c v = Nx.cast dt (Nx.full_like x v) in
     Nx.mul x
       (assembled x
          (List.concat_map
-            (fun (_, unary, { op }) ->
-              List.map
-                (fun (a, b) -> Nx.cast Nx.int64 (op (c a) (c b)))
-                (int_pairs unary))
-            int_ops))
+            (fun (Int_dtype (_, dt, _, _, w)) ->
+              let c v = Nx.cast dt (Nx.full_like x v) in
+              List.concat_map
+                (fun (_, unary, { op }) ->
+                  List.map
+                    (fun (a, b) -> Nx.cast Nx.int64 (op (c a) (c b)))
+                    (int_pairs unary))
+                (int_ops w))
+            int_dtypes))
   in
   let x = Nx.full Nx.int64 [| 1 |] 1L in
   let eager = Nx.to_array (f x) and compiled = Nx.to_array (Rune.jit' f x) in
@@ -427,26 +460,11 @@ let float_casts =
     -9.2e18;
   ]
 
-type int_dtype =
-  | Int_dtype : string * ('v, 's) Nx.dtype * float * float -> int_dtype
-
-let int_dtypes =
-  [
-    Int_dtype ("int8", Nx.int8, -128., 127.);
-    Int_dtype ("uint8", Nx.uint8, 0., 255.);
-    Int_dtype ("int16", Nx.int16, -32768., 32767.);
-    Int_dtype ("uint16", Nx.uint16, 0., 65535.);
-    Int_dtype ("int32", Nx.int32, -2147483648., 2147483647.);
-    Int_dtype ("uint32", Nx.uint32, 0., 4294967295.);
-    Int_dtype ("int64", Nx.int64, -0x1p63, 0x1.fffffffffffffp62);
-    Int_dtype ("uint64", Nx.uint64, 0., 0x1.fffffffffffffp63);
-  ]
-
 let conversions () =
   let held lo hi v = lo <= Float.trunc v && Float.trunc v <= hi in
   let to_ints =
     List.concat_map
-      (fun (Int_dtype (name, dt, lo, hi)) ->
+      (fun (Int_dtype (name, dt, lo, hi, _)) ->
         List.filter_map
           (fun v ->
             if held lo hi v then
@@ -489,6 +507,133 @@ let conversions () =
   equal (list string) []
     (List.map fst (differing rows ~eq:Int64.equal compiled eager))
 
+(* Float conversions: each value of [float_casts], the specials and values at
+   the formats' bounds, rounded into each float dtype from float64 and from
+   float32, read back exactly in float64. *)
+type float_dtype = Float_dtype : string * (float, 's) Nx.dtype -> float_dtype
+
+let float_dtypes =
+  [
+    Float_dtype ("float64", Nx.float64);
+    Float_dtype ("float32", Nx.float32);
+    Float_dtype ("float16", Nx.float16);
+    Float_dtype ("bfloat16", Nx.bfloat16);
+    Float_dtype ("float8_e4m3fn", Nx.float8_e4m3fn);
+    Float_dtype ("float8_e5m2", Nx.float8_e5m2);
+    Float_dtype ("float4_e2m1fn", Nx.float4_e2m1fn);
+  ]
+
+let float_conversions () =
+  let vs =
+    specials @ float_casts
+    @ [
+        1e39; 0x1p-150; 0x1.000001p0; 65504.; 65520.; 448.; 464.; 57344.; 6.; 7.;
+      ]
+  in
+  let rows =
+    List.concat_map
+      (fun (Float_dtype (name, _)) ->
+        List.concat_map
+          (fun v ->
+            [
+              Printf.sprintf "%h to %s" v name;
+              Printf.sprintf "%h to float32 to %s" v name;
+            ])
+          vs)
+      float_dtypes
+  in
+  let f x =
+    let c v = Nx.full_like x v in
+    Nx.mul x
+      (assembled x
+         (List.concat_map
+            (fun (Float_dtype (_, dt)) ->
+              List.concat_map
+                (fun v ->
+                  [
+                    Nx.cast Nx.float64 (Nx.cast dt (c v));
+                    Nx.cast Nx.float64 (Nx.cast dt (Nx.cast Nx.float32 (c v)));
+                  ])
+                vs)
+            float_dtypes))
+  in
+  let x = Nx.full Nx.float64 [| 1 |] 1. in
+  let eager = Nx.to_array (f x) and compiled = Nx.to_array (Rune.jit' f x) in
+  equal (list string) [] (differing rows ~eq:same compiled eager)
+
+(* Booleans: each operation on each pair of truths, in [bool] and in [bit], and
+   conversions to and from them. *)
+type bool_dtype = Bool_dtype : string * (bool, 's) Nx.dtype -> bool_dtype
+
+type bool_op = {
+  bop : 's 'd. (bool, 's, 'd) Nx.t -> (bool, 's, 'd) Nx.t -> (bool, 's, 'd) Nx.t;
+}
+
+let bool_values () =
+  let truths = [ (false, false); (false, true); (true, false); (true, true) ] in
+  let ops =
+    [
+      ("and", { bop = Nx.bitwise_and });
+      ("or", { bop = Nx.bitwise_or });
+      ("xor", { bop = Nx.bitwise_xor });
+      ("not", { bop = (fun a _ -> Nx.bitwise_not a) });
+      ("maximum", { bop = Nx.maximum });
+      ("minimum", { bop = Nx.minimum });
+      ( "where",
+        { bop = (fun a b -> Nx.where (Nx.cast Nx.bool a) b (Nx.bitwise_not b)) }
+      );
+    ]
+  in
+  let dtypes = [ Bool_dtype ("bool", Nx.bool); Bool_dtype ("bit", Nx.bit) ] in
+  let of_truth x dt t = Nx.cast dt (Nx.full_like x (if t then 1L else 0L)) in
+  let operations =
+    List.concat_map
+      (fun (Bool_dtype (dname, dt)) ->
+        List.concat_map
+          (fun (name, { bop }) ->
+            List.map
+              (fun (a, b) ->
+                ( Printf.sprintf "%s %s %b %b" dname name a b,
+                  fun x ->
+                    Nx.cast Nx.int64 (bop (of_truth x dt a) (of_truth x dt b))
+                ))
+              truths)
+          ops
+        @ List.map
+            (fun v ->
+              ( Printf.sprintf "%Ld to %s" v dname,
+                fun x -> Nx.cast Nx.int64 (Nx.cast dt (Nx.full_like x v)) ))
+            int_specials
+        @ List.map
+            (fun v ->
+              ( Printf.sprintf "%h to %s" v dname,
+                fun x ->
+                  Nx.cast Nx.int64
+                    (Nx.cast dt (Nx.full_like (Nx.cast Nx.float64 x) v)) ))
+            (specials @ [ 0x1p-1074 ])
+        @ List.map
+            (fun t ->
+              ( Printf.sprintf "%s %b to float32" dname t,
+                fun x ->
+                  Nx.cast Nx.int64
+                    (Nx.bitcast Nx.int32 (Nx.cast Nx.float32 (of_truth x dt t)))
+              ))
+            [ false; true ]
+        @ [
+            ( dname ^ " compare",
+              fun x ->
+                Nx.cast Nx.int64
+                  (Nx.cast dt (Nx.less (Nx.full_like x 2L) (Nx.full_like x 3L)))
+            );
+          ])
+      dtypes
+  in
+  let f x = Nx.mul x (assembled x (List.map (fun (_, g) -> g x) operations)) in
+  let x = Nx.full Nx.int64 [| 1 |] 1L in
+  let eager = Nx.to_array (f x) and compiled = Nx.to_array (Rune.jit' f x) in
+  equal (list string) []
+    (List.map fst (differing operations ~eq:Int64.equal compiled eager))
+
 let () =
   exit
     (run "Folded"
@@ -501,16 +646,15 @@ let () =
              test "float32" (real_values Nx.float32);
              test "float64" (real_values Nx.float64);
              test "float16" (real_values Nx.float16);
+             test "bfloat16" (real_values Nx.bfloat16);
+             test "float8_e4m3fn" (real_values Nx.float8_e4m3fn);
+             test "float8_e5m2" (real_values Nx.float8_e5m2);
+             test "float4_e2m1fn" (real_values Nx.float4_e2m1fn);
              test "complex64" (complex_values Nx.complex64);
              test "complex128" (complex_values Nx.complex128);
-             test "int8" (int_values Nx.int8);
-             test "uint8" (int_values Nx.uint8);
-             test "int16" (int_values Nx.int16);
-             test "uint16" (int_values Nx.uint16);
-             test "int32" (int_values Nx.int32);
-             test "uint32" (int_values Nx.uint32);
-             test "int64" (int_values Nx.int64);
-             test "uint64" (int_values Nx.uint64);
+             test "integers" int_values;
+             test "booleans" bool_values;
+             test "float conversions" float_conversions;
              test "conversions" conversions;
            ];
        ])
