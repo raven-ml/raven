@@ -211,12 +211,14 @@ A supervisor that blocks SIGCHLD does not keep rig run from seeing its
 children end. One session closes its output, then waits before exiting.
 The other writes two lines in separate polls: once rig has forwarded the
 second, it has read the first session's EOFs. Only that session's exit can
-then wake rig.
+then wake rig. Each step has its own FIFO: a FIFO opened again for the
+second step could be opened before the first step's writer closed it, and
+read as ended.
 
   $ host closed 127.0.0.1
   $ host held 127.0.0.1
   $ mkdir machines/closed/bin machines/held/bin
-  $ mkfifo closed_exit held_step
+  $ mkfifo closed_exit held_first held_second
   $ cat >machines/closed/bin/rig <<'EOS'
   > #!/bin/sh
   > read key
@@ -228,9 +230,9 @@ then wake rig.
   $ cat >machines/held/bin/rig <<'EOS'
   > #!/bin/sh
   > read key
-  > read step <held_step
+  > read step <held_first
   > echo first >&2
-  > read step <held_step
+  > read step <held_second
   > echo second >&2
   > read finish
   > EOS
@@ -238,9 +240,9 @@ then wake rig.
   $ ./support/sig.exe block CHLD rig run --on a,closed,held -- true >out 2>err &
   $ run=$!
   $ ./support/await closed_ready ready
-  $ echo step >held_step
+  $ echo step >held_first
   $ ./support/await err 'held: first'
-  $ echo step >held_step
+  $ echo step >held_second
   $ ./support/await err 'held: second'
   $ echo exit >closed_exit
   $ wait $run
