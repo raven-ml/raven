@@ -292,6 +292,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Stats.histogram` makes each bin at least `min_float` wide. A narrow span
+  within about `2^-974` of zero, such as `[2^-1000; succ 2^-1000]`, gave
+  infinite densities, and a subnormal one bins of width `0.`.
 - A y axis sets its title beyond its tick labels, centred along the axis,
   where a legend stands on its side, in place of above it, where it read as
   one heading with the legend's title.

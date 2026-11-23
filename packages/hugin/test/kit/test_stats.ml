@@ -112,14 +112,18 @@ let gen_value =
       (1, Gen.of_list [ nan; infinity; neg_infinity ]);
     ]
 
-(* [size] floats at most three spacings above a base at [1.], at [2^60] or
-   [-2^60], or at either end of the finite floats. *)
+(* [size] floats at most three spacings above a base at [0.], among the
+   subnormals, at [2^-1000], where four spacings a bin are narrower than
+   [min_float], at [1.], at [2^60] or [-2^60], or at either end of the finite
+   floats. *)
 let gen_cluster size =
   let open Gen in
   let rec succ k a = if k = 0 then a else succ (k - 1) (Float.succ a) in
   let* base =
     of_list
       [
+        0.;
+        Float.ldexp 1. (-1000);
         1.;
         Float.ldexp 1. 60;
         -.Float.ldexp 1. 60;
@@ -230,7 +234,7 @@ let law_edges c =
   cover "all equal"
     (fs <> [] && List.for_all (fun v -> v = List.hd fs) fs && List.length fs > 1);
   let m = Float.max (Float.abs lo) (Float.abs hi) in
-  let w = 4. *. Float.of_int n *. m *. epsilon_float in
+  let w = Float.of_int n *. Float.max (m *. (4. *. epsilon_float)) min_float in
   let w = if lo = hi then Float.max w 1. else w in
   let first = x.(0) and last = x2.(n - 1) in
   if hi -. lo >= w then (
@@ -247,8 +251,10 @@ let law_edges c =
     if first > -.max_float && last < max_float then
       equal (float eps) ~msg:"widened equally" (lo -. first) (last -. hi));
   let width = (last -. first) /. Float.of_int n in
+  (* Spacings are [min_float *. epsilon_float] apart below [min_float]. *)
   let eps =
-    4. *. epsilon_float *. Float.max (Float.abs first) (Float.abs last)
+    4. *. epsilon_float
+    *. Float.max min_float (Float.max (Float.abs first) (Float.abs last))
   in
   Array.iteri
     (fun j a ->
@@ -436,6 +442,16 @@ let narrow =
         (Nx.create Nx.int64 [| 3 |] (Array.make 3 Int64.max_int));
       widths "adjacent large floats fill many bins" ~bins:12
         (f64 [| 2 |] [| big; Float.succ big |]);
+      (* Each bin is at least [min_float] wide: bins a few spacings wide near
+         zero would have edges that round together, or densities that
+         overflow. *)
+      widths "a subnormal span fills its bins"
+        (f64 [| 3 |] [| Float.ldexp 1. (-1024); 0.; 0. |]);
+      widths "the least subnormal fills its bins"
+        (f64 [| 3 |] [| Float.ldexp 1. (-1074); 0.; 0. |]);
+      widths "adjacent tiny normal floats fill their bins" ~bins:2
+        (let tiny = Float.ldexp 1. (-1000) in
+         f64 [| 2 |] [| tiny; Float.succ tiny |]);
     ]
 
 let sturges =

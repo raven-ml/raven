@@ -25,12 +25,18 @@ let sturges n =
 let bin_spacings = 4.
 
 (* [lo] and [hi] moved apart by the same amount on either side to the width [w]
-   of [n] bins, and shifted to stay within the finite floats. Equal ends widen
-   to at least [1.]. *)
+   of [n] bins, and shifted to stay within the finite floats. A bin is at least
+   [Float.min_float] wide, the least normal float: near zero the spacings are
+   subnormal, a bin of a few of them has edges that round together, and a
+   density of one over its width overflows. Equal ends widen to at least
+   [1.]. *)
 let widen n lo hi =
   let c = Nx.scalar_like lo in
   let m = Nx.maximum (Nx.abs lo) (Nx.abs hi) in
-  let w = Nx.mul_s m (bin_spacings *. Float.of_int n *. Float.epsilon) in
+  let bin =
+    Nx.maximum (Nx.mul_s m (bin_spacings *. Float.epsilon)) (c Float.min_float)
+  in
+  let w = Nx.mul_s bin (Float.of_int n) in
   let w = Nx.where (Nx.equal lo hi) (Nx.maximum w (c 1.)) w in
   let d = Nx.div_s (Nx.maximum (c 0.) (Nx.sub w (Nx.sub hi lo))) 2. in
   let past room = Nx.maximum (c 0.) (Nx.sub d room) in
