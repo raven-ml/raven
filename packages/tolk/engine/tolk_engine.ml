@@ -30,21 +30,29 @@ let of_kind ?(renderer = "") ?(arch = "") device =
    features its arch names, which Clang names alike: "arm64+fp16" compiles as
    "arm64,generic,fp16". This machine's host tunes for its own processor,
    which allows no instruction its arch lacks. *)
+exception Unlinked of Rig.t
+
+let () =
+  Printexc.register_printer (function
+    | Unlinked d ->
+        let isa =
+          match Rig.instruction_set (Rig.host_of d) with
+          | "" -> "an instruction set it does not know"
+          | isa -> isa
+        in
+        Some
+          (strf
+             "Tolk_engine.Unlinked: %s runs no compiled program: rig links no \
+              host code for %s"
+             (Rig.name d) isa)
+    | _ -> None)
+
 let target d =
   let host_code = Rig.equal (Rig.host_of d) d || Rig.runs_on_host d in
   match vendor d with
   | Some kind -> of_kind ~arch:(Rig.arch d) kind
   | None when Rig.computes d && host_code && not (Rig.Image.links d) ->
-      let isa =
-        match Rig.instruction_set (Rig.host_of d) with
-        | "" -> "an instruction set it does not know"
-        | isa -> isa
-      in
-      failwith
-        (strf
-           "Tolk_engine.target: %s runs no compiled program: rig links no host \
-            code for %s"
-           (Rig.name d) isa)
+      raise (Unlinked d)
   | None when Rig.computes d && host_code ->
       let host = Rig.host_of d in
       let here = Rig.equal host Rig.host in
@@ -1852,7 +1860,8 @@ let cores ~targets sink =
     (fun d ->
       match Device.renderer (targets d) with
       | Ok ren -> Some (d, Heuristic.cores ren)
-      | Error _ | (exception (Invalid_argument _ | Failure _)) -> None)
+      | Error _ | (exception (Invalid_argument _ | Failure _ | Unlinked _)) ->
+          None)
     (devices_of sink)
 
 (* What a target-independent numbering cannot name: each device's renderer,
@@ -1873,7 +1882,7 @@ let device_keys ~targets sink =
   in
   match List.map one devices with
   | keys -> Some keys
-  | exception (Exit | Invalid_argument _ | Failure _) -> None
+  | exception (Exit | Invalid_argument _ | Failure _ | Unlinked _) -> None
 
 let kept ?beam () =
   Jit.width ?beam () = 0

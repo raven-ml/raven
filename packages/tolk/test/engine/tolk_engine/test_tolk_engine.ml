@@ -69,13 +69,11 @@ let targets =
           equal target
             (host_target (isa ^ system) (cpu ^ ",tune=native"))
             (Engine.target host));
-      test
-        "where rig links no host code, the host runs no program, naming its \
-         instruction set" (fun () ->
+      test "where rig links no host code, the host runs no program" (fun () ->
           if Rig.Image.links host then
             skip ~reason:"rig links host code here" ();
           raises_match
-            (Exn.failure ~sub:(Rig.instruction_set host))
+            (function Engine.Unlinked d -> Rig.equal d host | _ -> false)
             (fun () -> Engine.target host));
       test "a software device compiles as the host" (fun () ->
           equal target (Run.target host) (Run.target (device "CPU:1")));

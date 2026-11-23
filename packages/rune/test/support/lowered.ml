@@ -22,8 +22,8 @@ type place = { device : string; renderer : Renderer.t Lazy.t; host : bool }
 let host_target () =
   match Tolk_engine.target Rig.host with
   | t -> t
-  | exception Failure why when not (Rig.Image.links Rig.host) ->
-      Windtrap.skip ~reason:why ()
+  | exception (Tolk_engine.Unlinked _ as e) ->
+      Windtrap.skip ~reason:(Printexc.to_string e) ()
 
 let on_host =
   let renderer =

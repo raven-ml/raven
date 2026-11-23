@@ -156,10 +156,8 @@ let buffer_params prg =
 let target d =
   match Tolk_engine.target d with
   | t -> t
-  | exception Failure why
-    when (Rig.equal (Rig.host_of d) d || Rig.runs_on_host d)
-         && not (Rig.Image.links d) ->
-      Windtrap.skip ~reason:why ()
+  | exception (Tolk_engine.Unlinked _ as e) ->
+      Windtrap.skip ~reason:(Printexc.to_string e) ()
 
 let renderer d =
   ignore (target d);

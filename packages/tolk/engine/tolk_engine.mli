@@ -22,6 +22,11 @@ open Tolk
 
 (** {1:devices Devices} *)
 
+exception Unlinked of Rig.t
+(** [Unlinked d] is raised for a host or software device [d] on which rig links
+    no host code ({!Rig.Image.links}), as on ppc64le: no compiled program runs
+    there. *)
+
 val target : Rig.t -> Helpers.Target.t
 (** [target d] is what [d]'s programs are compiled for, a function of [d] alone.
     A Metal, CUDA, AMD or NV device, as its driver declares it
@@ -44,17 +49,15 @@ val target : Rig.t -> Helpers.Target.t
     architecture names no system.
 
     Raises [Invalid_argument] if [d] runs no program: an io device, or another
-    device that no vendor claims; and [Failure] naming its host's instruction
-    set if [d] is a host or software device on which rig links no host code
-    ({!Rig.Image.links}). *)
+    device that no vendor claims; and {!Unlinked} if [d] is a host or software
+    device on which rig links no host code. *)
 
 val renderer : Rig.t -> Renderer.t
 (** [renderer d] is the renderer of [d]'s {!target}, which writes the source of
     its programs, made once per target ({!Tolk.Device.renderer}).
 
-    Raises [Invalid_argument] and [Failure] as {!target} does, and [Failure]
-    with the reason when the target's renderer is not available, such as a
-    compiler the machine lacks. *)
+    Raises as {!target} does, and [Failure] with the reason when the target's
+    renderer is not available, such as a compiler the machine lacks. *)
 
 val part : Rig.t -> string
 (** [part d] names [d]'s physical part as rig states it: its {!Rig.arch}, the
@@ -340,6 +343,7 @@ val compile :
     device without a renderer or a compiler that names itself. An entry that
     does not read back is made anew and replaced.
 
-    Raises as {!Tolk.Schedule.create_linear_with_vars} and
-    {!Tolk.Jit.jit_lower} do, and [Sys_error] if the entry cannot be
-    written. *)
+    Raises {!Unlinked} if a kernel lies on a device that {!target} raises it
+    for, a device that only holds storage being no such device; as
+    {!Tolk.Schedule.create_linear_with_vars} and {!Tolk.Jit.jit_lower} do; and
+    [Sys_error] if the entry cannot be written. *)
