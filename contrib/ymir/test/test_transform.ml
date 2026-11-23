@@ -350,10 +350,20 @@ let about_law =
          length r: its norm moves by at most 26√2 u ≤ 37u and its bearing by
          at most 37u / r. [separation] and [position_angle] work on [b' − a],
          exact where it cancels, and are within 4u·r and 4u; the final
-         [hypot] and [atan2] add u each. *)
+         [hypot] and [atan2] add u each. The separation, from 1e-9 to 2, is
+         drawn half the time by its exponent, so that a sixth of the cases
+         lie closer than 1e-6. *)
       prop "the norm is the separation and the bearing the position angle"
         Gen.(
-          pair directions (pair (float_range (-1.) 1.) (float_range 1e-9 2.)))
+          pair directions
+            (pair (float_range (-1.) 1.)
+               (frequency
+                  [
+                    (1, float_range 1e-9 2.);
+                    ( 1,
+                      map (Float.pow 10.)
+                        (float_range (-9.) (Float.log10 2.)) );
+                  ])))
         (fun ((l, b), (pa, r)) ->
           let u = Float.epsilon /. 2. in
           let a = at (l, b) in
