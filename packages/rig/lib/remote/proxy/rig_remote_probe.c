@@ -7,6 +7,8 @@
    and counts its release entrants through the hook the link calls at each
    point of its protocol. */
 
+#define _GNU_SOURCE
+
 #include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
