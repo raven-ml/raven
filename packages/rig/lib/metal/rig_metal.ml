@@ -33,6 +33,7 @@ external load : int -> string -> int -> string * nativeint * string array
   = "caml_rig_metal_image"
 
 external start : nativeint -> string -> string -> int = "caml_rig_metal_start"
+[@@noalloc]
 external wait_build : int -> int -> bool = "caml_rig_metal_wait"
 external take_build : int -> int = "caml_rig_metal_take"
 external entry_code : nativeint -> int = "caml_rig_metal_entry_code" [@@noalloc]
@@ -72,12 +73,12 @@ let split = split ()
    section takes any other. An [icb] and an opener's [make], which callers
    outside rig make, run inside [guarded].
 
-   An image's lock is held while Metal takes the request of a function's
-   build, so that calls for one function from several domains start one
-   build, and no call waits for a build holding it. A device's lock is held
-   while an icb records its dispatches, so that no unload, free or stop
-   releases what it records. Both run OCaml code and Metal's synchronous
-   work. A call of rig's from a callback during one raises. *)
+   An image's lock is held while a function's build is queued, so that
+   calls for one function from several domains start one build, and no call
+   waits for Metal holding it. A device's lock is held while an icb records
+   its dispatches, so that no unload, free or stop releases what it records.
+   Both run OCaml code and Metal's synchronous work. A call of rig's from a
+   callback during one raises. *)
 
 external reraise : exn -> 'a = "%reraise"
 
@@ -656,8 +657,8 @@ let entry (i : image) f =
       reraise x
 
 (* Takes [i]'s pipelines out of the ones an icb records, then releases them,
-   its builds and its library; a build Metal has not answered is freed by its
-   handler, so the unload waits for none. rig unloads an image once, so from
+   its builds and its library; a build not answered yet is freed by its
+   answer, so the unload waits for none. rig unloads an image once, so from
    the take of the guard to its give the unload allocates nothing and polls
    nowhere: an exception cannot end it with pipelines held, or with one an icb
    still records. One that ends the take ends it before it changed anything.

@@ -329,16 +329,24 @@ val capability : t -> Rig_metal_abi.t
     milliseconds for Metal's answer, with the thread's signals unblocked as
     in {!sleep}. Metal compiles in its own processes, several pipelines at
     once. It is [true] once Metal answered, with a pipeline or a refusal, and
-    for a function that has an entry or is none of the image's. The start
-    asks Metal for the function constants the function declares, a call
-    that waits. A function that declares some is first specialised by
-    Metal's asynchronous call, at the image's values, and its compile starts
-    once Metal answers, so the start waits for neither. A start the host has
-    no memory for raises [Out_of_memory] at a positive [still_ms], and is
-    [true] at [0], having started nothing. A prepare or an entry
+    for a function that has an entry or is none of the image's. A start the
+    host has no memory for raises [Out_of_memory] at a positive [still_ms],
+    and is [true] at [0], having started nothing. A prepare or an entry
     waits while another domain's prepare starts a compile of the same image.
     Calls for one function from several domains concurrently make one
     pipeline.
+
+    The start queues the compile on a serial queue of this library's, and
+    calls Metal for none of it. The queue's thread asks Metal for the
+    function and the function constants it declares, then for the compile.
+    A function that declares constants is first specialised by Metal's
+    asynchronous call, at the image's values, and its compile goes on the
+    queue once Metal answers. Metal may block any of these calls without
+    bound: its first look into the process's shader cache waits while
+    another process holds a lock on the cache's files. Such a call keeps the
+    queue's thread, and every compile started later waits behind it. The
+    prepares wait for their answers as for slow compiles, at most
+    [still_ms] each, with the thread's signals unblocked.
 
     {!entry} takes the pipeline of the compile a prepare found answered, and
     waits for nothing. Every later call returns the same entry, which is
@@ -511,12 +519,14 @@ val pipelines : unit -> int
    returns. *)
 val settle : unit -> unit
 
-(* [hold_builds true] makes Metal's answers to specialisations and
-   compiles wait, unstored, until [hold_builds false]: {!pipelines} counts
-   none of them meanwhile, and {!prepare} waits for them and answers
-   [false]. An answer waits without holding the thread Metal gives it on,
-   which may be the one that starts the build. rig_metal's own refusals do
-   not wait. *)
+(* [hold_builds true] holds the queue that compiles start on until
+   [hold_builds false]: a start reaches Metal only then, and so does the
+   compile of a specialised function, which goes on the queue once Metal
+   specialised it. {!pipelines} counts none of them meanwhile, and
+   {!prepare} waits for them and answers [false]. rig_metal's own refusals
+   come from the start, so they wait too. A call of Metal's made before
+   [hold_builds true] is not held, and its answer arrives; after {!settle}
+   none is in flight. *)
 val hold_builds : bool -> unit
 
 (* [held i] is the number of [i]'s functions with an entry or a started

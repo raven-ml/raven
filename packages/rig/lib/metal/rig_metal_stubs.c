@@ -343,14 +343,15 @@ static int64_t params_of(MTLComputePipelineReflection *reflection) {
 }
 
 /* A pipeline Metal builds while its caller goes on. The image's slot holds
-   a reference, and Metal's handlers another, which a specialisation's
-   handler passes to the pipeline's; the last to drop one frees the build,
+   a reference, and the start another, which goes with the build's steps to
+   its answer: the start's own refusal, or Metal's handler of the
+   specialisation or the pipeline. The last to drop one frees the build,
    with its pipeline. The answer stores the pipeline, retained and counted,
-   or the reason, then sets [answered] under [mutex] and wakes every waiter:
-   the answer is a level, which no wait consumes. Nothing writes the fields
-   after it, so a reader that saw [answered] under [mutex] reads them
-   without it. An entry retains the pipeline in an entry of its own, which
-   the build's last drop never frees. */
+   or the reason, then sets [answered] under [mutex] and wakes every
+   waiter: the answer is a level, which no wait consumes. Nothing writes
+   the fields after it, so a reader that saw [answered] under [mutex] reads
+   them without it. An entry retains the pipeline in an entry of its own,
+   which the build's last drop never frees. */
 struct build {
   _Atomic int refs;
   pthread_mutex_t mutex;
@@ -369,37 +370,33 @@ static dispatch_group_t answering(void) {
   return group;
 }
 
-/* The gate, for rig's tests ([caml_rig_metal_hold]): while it is closed, a
-   handler queues what it answers on [held], which the gate keeps suspended,
-   and returns. No handler blocks, so one that Metal calls on the thread
-   that starts a build holds that thread no longer than an open gate would.
-   [held] is serial: once the gate opens, the answers run in the order the
-   handlers queued them. [gate_closed] changes only under [gate_mutex], and
-   a handler that reads it open runs its answer without the lock. */
-static pthread_mutex_t gate_mutex = PTHREAD_MUTEX_INITIALIZER;
-static _Atomic int gate_closed;
-
-static dispatch_queue_t held(void) {
+/* The queue that every call of Metal's a build makes runs on, serial as
+   the starts on their callers' threads were: the start's calls for the
+   function, its constants and its specialisation or pipeline, and a
+   specialised function's call for its pipeline, which the specialisation's
+   handler queues. Metal may block such a call without bound: its first
+   look into the process's shader cache waits while another process holds
+   a lock on the cache's files. On this queue a blocked call holds neither
+   the build's caller, which waits for the answer in [caml_rig_metal_wait]
+   and so returns to OCaml, nor the image's guard, nor a thread of Metal's.
+   It keeps the queue's thread, and every call queued later waits behind
+   it. A start runs at its caller's QoS, which dispatch carries to the
+   block. */
+static dispatch_queue_t starts(void) {
   static dispatch_queue_t queue;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
-    queue = dispatch_queue_create("rig_metal.held", DISPATCH_QUEUE_SERIAL);
+    queue = dispatch_queue_create("rig_metal.starts", DISPATCH_QUEUE_SERIAL);
   });
   return queue;
 }
 
-/* Runs [k] now, or once the gate opens if it is closed. */
-static void gated(dispatch_block_t k) {
-  if (!atomic_load(&gate_closed)) {
-    k();
-    return;
-  }
-  pthread_mutex_lock(&gate_mutex);
-  int closed = atomic_load(&gate_closed);
-  if (closed) dispatch_async(held(), k);
-  pthread_mutex_unlock(&gate_mutex);
-  if (!closed) k();
-}
+/* The gate, for rig's tests ([caml_rig_metal_hold]): while it is closed,
+   [starts] is suspended, so no step of a build that runs on it reaches
+   Metal. A call of Metal's made before the gate closed is not held, and
+   its answer arrives. [gate_closed] changes only under [gate_mutex]. */
+static pthread_mutex_t gate_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int gate_closed;
 
 static void drop(struct build *b) {
   if (atomic_fetch_sub(&b->refs, 1) != 1) return;
@@ -414,8 +411,7 @@ static void drop(struct build *b) {
 
 /* Stores [b]'s answer, the pipeline [p], retained and counted, with
    [params] bytes of parameters, or for nil the refusal [why], and wakes every
-   waiter; then drops the reference of Metal's handlers and leaves
-   [answering]. */
+   waiter; then drops the start's reference and leaves [answering]. */
 static void answer(struct build *b, id<MTLComputePipelineState> p,
                    int64_t params, const char *why) {
   pthread_mutex_lock(&b->mutex);
@@ -454,15 +450,12 @@ static void build(id<MTLFunction> fn, id<MTLDevice> device, struct build *b) {
                                   id<MTLComputePipelineState> p,
                                   MTLComputePipelineReflection *reflection,
                                   NSError *error) {
-                                int64_t params = params_of(reflection);
-                                gated(^{
-                                  @autoreleasepool {
-                                    if (p != nil)
-                                      answer(b, p, params, "");
-                                    else
-                                      answer(b, nil, 0, reason(error));
-                                  }
-                                });
+                                @autoreleasepool {
+                                  if (p != nil)
+                                    answer(b, p, params_of(reflection), "");
+                                  else
+                                    answer(b, nil, 0, reason(error));
+                                }
                               }];
 }
 
@@ -535,15 +528,60 @@ static int specialise(id<MTLFunction> fn, const uint32_t *v, uint32_t n,
   return 1;
 }
 
-/* Starts the build of the pipeline of the function [v_f] of the library
-   [v_lib], specialised by the little-endian 32-bit words of [v_values]. A
-   function that declares constants is specialised by Metal's asynchronous
-   call, whose handler starts the pipeline's build, so the start waits for
-   neither; one the words refuse, or of which Metal makes no function, is
-   answered with the refusal at once. The result is the build as an int, or
-   0, having started nothing, if the host has no memory for it. It allocates
-   nothing on the OCaml heap and releases the runtime while Metal takes the
-   request. */
+/* Starts [b], the build of the pipeline of the function [f] of [library],
+   specialised by the [n] words [v]: on [starts], since each step is a
+   call of Metal's that may wait. A function that declares constants is
+   specialised by Metal's asynchronous call, whose handler queues the
+   pipeline's build on [starts]; one the words refuse, or of which Metal
+   makes no function, is answered with the refusal. It runs inside an
+   autorelease pool. */
+static void start_build(id<MTLLibrary> library, const char *f,
+                        const uint32_t *v, uint32_t n, struct build *b) {
+  NSString *name = [NSString stringWithUTF8String:f];
+  id<MTLFunction> fn = [[library newFunctionWithName:name] autorelease];
+  MTLFunctionConstantValues *values = nil;
+  char why[sizeof b->why] = "";
+  int k = -1;
+  if (fn == nil)
+    snprintf(why, sizeof why, "Metal made no function of the name");
+  else
+    k = specialise(fn, v, n, &values, why, sizeof why);
+  if (k < 0)
+    answer(b, nil, 0, why);
+  else if (k == 0)
+    build(fn, library.device, b);
+  else
+    [library newFunctionWithName:name
+                  constantValues:values
+               completionHandler:^(id<MTLFunction> g, NSError *error) {
+                 if (g == nil) {
+                   @autoreleasepool {
+                     answer(b, nil, 0, reason(error));
+                   }
+                   return;
+                 }
+                 /* The pipeline's build is a call of Metal's that may
+                    block, so it goes back on [starts], whatever thread
+                    Metal answers on. The blocks retain [library], which
+                    an unload may release while Metal specialises or the
+                    build waits on [starts], and the queued one retains
+                    [g]. */
+                 dispatch_async(starts(), ^{
+                   @autoreleasepool {
+                     build(g, library.device, b);
+                   }
+                 });
+               }];
+}
+
+/* Queues the start of the build of the pipeline of the function [v_f] of
+   the library [v_lib], specialised by the little-endian 32-bit words of
+   [v_values], on [starts], and returns: the caller makes none of Metal's
+   calls, and waits for the answer only in [caml_rig_metal_wait]. The block
+   retains [library], which an unload may release before the start runs.
+   The result is the build as an int, or 0, having queued nothing, if the
+   host has no memory for it. It allocates nothing on the OCaml heap and
+   waits for nothing, so it holds the runtime. */
 value caml_rig_metal_start(value v_lib, value v_f, value v_values) {
   id<MTLLibrary> library = Object_val(v_lib);
   uint32_t n = (uint32_t)(caml_string_length(v_values) / 4);
@@ -559,40 +597,12 @@ value caml_rig_metal_start(value v_lib, value v_f, value v_values) {
   pthread_mutex_init(&b->mutex, NULL);
   pthread_cond_init(&b->answer, NULL);
   dispatch_group_enter(answering());
-  caml_enter_blocking_section_no_pending();
-  @autoreleasepool {
-    NSString *name = [NSString stringWithUTF8String:f];
-    id<MTLFunction> fn = [[library newFunctionWithName:name] autorelease];
-    MTLFunctionConstantValues *values = nil;
-    char why[sizeof b->why] = "";
-    int k = -1;
-    if (fn == nil)
-      snprintf(why, sizeof why, "Metal made no function of the name");
-    else
-      k = specialise(fn, v, n, &values, why, sizeof why);
-    if (k < 0)
-      answer(b, nil, 0, why);
-    else if (k == 0)
-      build(fn, library.device, b);
-    else
-      [library newFunctionWithName:name
-                    constantValues:values
-                 completionHandler:^(id<MTLFunction> g, NSError *error) {
-                   /* The blocks retain [library], which an unload may
-                      release while Metal specialises or the gate holds
-                      the answer. */
-                   gated(^{
-                     @autoreleasepool {
-                       if (g != nil)
-                         build(g, library.device, b);
-                       else
-                         answer(b, nil, 0, reason(error));
-                     }
-                   });
-                 }];
-  }
-  caml_leave_blocking_section();
-  free(f), free(v);
+  dispatch_async(starts(), ^{
+    @autoreleasepool {
+      start_build(library, f, v, n, b);
+    }
+    free(f), free(v);
+  });
   return Val_long((intnat)b);
 }
 
@@ -664,15 +674,14 @@ value caml_rig_metal_settle(value unit) {
 }
 
 /* Closes the gate if [v_held], else opens it, for rig's tests. Closing
-   suspends [held] and opening resumes it, each only on a change, so the
+   suspends [starts] and opening resumes it, only on a change, so the
    suspensions stay balanced. */
 value caml_rig_metal_hold(value v_held) {
   int closing = Bool_val(v_held);
   pthread_mutex_lock(&gate_mutex);
-  int closed = atomic_load(&gate_closed);
-  if (closing && !closed) dispatch_suspend(held());
-  if (!closing && closed) dispatch_resume(held());
-  atomic_store(&gate_closed, closing);
+  if (closing && !gate_closed) dispatch_suspend(starts());
+  if (!closing && gate_closed) dispatch_resume(starts());
+  gate_closed = closing;
   pthread_mutex_unlock(&gate_mutex);
   return Val_unit;
 }
@@ -710,7 +719,8 @@ value caml_rig_metal_release(value v_e) {
    [entry] made, drops each build of the array [v_builds] that is not 0,
    those a [prepare] started, then releases the library [v_library]: an
    image's unload, in one call that allocates nothing and waits for nothing.
-   A build Metal has not answered yet is freed by its handler. */
+   A build not answered yet is freed by its answer, which its start's
+   refusal or Metal's handler gives. */
 value caml_rig_metal_unload(value v_entries, value v_builds,
                             value v_library) {
   for (mlsize_t k = 0; k < Wosize_val(v_entries); k++) {

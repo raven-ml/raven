@@ -2100,12 +2100,12 @@ let small_commands =
         before - Rig_metal.pipelines ());
   ]
 
-(* An unload while Metal's answer to a prepare is held, unstored, returns at
-   once, and the pipeline, once answered, is released: the process holds as
-   many pipelines as before the load. The gate holds the answer, after Metal
-   compiled; a library released while Metal still compiles is reached only
-   by timing, by the stateful test's unload at once and by test_interrupt's
-   prepares. *)
+(* An unload while the gate holds a prepare's start returns at once, and the
+   pipeline, built once the gate opens, is released: the process holds as
+   many pipelines as before the load. Metal compiles from the library the
+   unload released and the start keeps; a library released while Metal
+   compiles is reached only by timing, by the stateful test's unload at once
+   and by test_interrupt's prepares. *)
 let unload_unstored () =
   let t = dev () in
   Rig_metal.settle ();
@@ -2161,15 +2161,17 @@ let entry_params () =
     (found (S.entry i "small")).params;
   Rig_metal.unload t.g i
 
-(* A resolve waiting for Metal's compile returns to OCaml at least every
-   200 ms, where a signal's handler runs: a Ctrl-C's Sys.Break ends it, the
-   device stays, and the next resolve takes the pipeline of the same compile.
-   The gate holds Metal's answer, after Metal compiled, for as long as the test
-   needs. A watchdog parked outside OCaml opens it once unparked or after 5 s,
-   so a resolve that no signal ends returns rather than hangs. The prepare
-   starts the compile before the interrupter watches, so the resolve's only
-   timed wait is the compile's. The handler raises Sys.Break on the resolving
-   thread alone. *)
+(* A resolve whose build has not started, as when Metal blocks a build's
+   start, returns to OCaml at least every 200 ms, where a signal's handler
+   runs: a Ctrl-C's Sys.Break ends it, the device stays, and the next resolve
+   takes the pipeline of the same build. The gate holds the build's start,
+   before Metal sees the function, for as long as the test needs. A watchdog
+   parked outside OCaml opens it once unparked or after 5 s, so a prepare or
+   resolve that blocks returns rather than hangs; the watchdog, still parked
+   as the resolve returns, shows that the gate held the start throughout. The
+   prepare queues the start before the interrupter watches, so the resolve's
+   only timed wait is the build's. The handler raises Sys.Break on the
+   resolving thread alone. *)
 let break_resolve () =
   if not Rig_support.sees_waits then
     skip ~reason:"the system shows no thread's blocking call" ();
@@ -2193,7 +2195,7 @@ let break_resolve () =
   in
   Rig_metal.hold_builds true;
   let watchdog = ref None and handler = ref None in
-  let got, raised, held =
+  let got, raised, gated, held =
     Fun.protect
       ~finally:(fun () ->
         Option.iter (Sys.set_signal Sys.sigint) !handler;
@@ -2210,11 +2212,12 @@ let break_resolve () =
         handler := Some (Sys.signal Sys.sigint (Sys.Signal_handle handle));
         Rig.Image.prepare image "small";
         let got, raised = Rig_support.interrupt_in_wait ~timed:true resolve in
-        (got, raised, Rig_metal.pipelines ()))
+        (got, raised, Rig_support.parked (), Rig_metal.pipelines ()))
   in
   equal ~msg:"the resolve waited" bool true raised;
   equal ~msg:"the waiting resolve" string "Sys.Break" got;
-  equal ~msg:"pipelines while Metal's answer is held" int before held;
+  equal ~msg:"the start held as the resolve returned" bool true gated;
+  equal ~msg:"pipelines while the start is held" int before held;
   equal ~msg:"the loss" (option string) None (Rig.lost t.d);
   Rig_metal.settle ();
   is_some ~msg:"the next resolve" (Rig.Image.resolve image "small");
@@ -2224,8 +2227,8 @@ let images =
   group ~timeout:60. "images"
     [
       test
-        "a resolve waiting for Metal's compile ends at a signal, keeping the \
-         device and the compile"
+        "a resolve whose build's start is held ends at a signal, keeping the \
+         device and the build"
         break_resolve;
       test "a function that is no compute kernel is an error" no_kernel;
       test "an entry beyond the GPU's limits raises, each time" beyond_limits;
@@ -2238,8 +2241,8 @@ let images =
          it"
         small_commands;
       test
-        "an unload before Metal's answer is stored releases the pipeline \
-         once answered"
+        "an unload before a compile's start releases the pipeline once \
+         built"
         unload_unstored;
       test "unloaded images release their pipelines" unloaded_releases;
       test "an entry's parameters are its buffer 0's struct" entry_params;
@@ -2456,11 +2459,39 @@ let drain d =
   Gc.full_major ();
   ignore (B.create d 0 : B.t)
 
-(* Metal's answer to a specialisation waits behind the gate, and the build
-   it starts with it: a prepare finds the function unanswered while the gate
-   holds it, an unload before the specialisation answers returns at once,
-   and the pipeline, built once the gate opens, is released; settling waits
-   for it. *)
+(* rig_metal's refusal of an image's values comes from the start, which asks
+   Metal for the function's constants on the queue the gate holds: a prepare
+   that waits for nothing finds it unanswered while the gate is closed, and
+   answered once it opens, with the refusal the entry raises. The image
+   [specialised [ 5 ]] gives [pair] no value for its required constant b. *)
+let refusal_held () =
+  let t = dev () in
+  let i =
+    match require_ok (Rig_metal.image t.g (specialised [ 5 ])) with
+    | Rig_edge.Loaded i -> i
+    | Place _ -> failf "Metal asked to place its code"
+  in
+  Rig_metal.settle ();
+  Rig_metal.hold_builds true;
+  Fun.protect ~finally:(fun () -> Rig_metal.hold_builds false) (fun () ->
+      equal bool ~msg:"answered while held" false
+        (Rig_metal.prepare i "pair" ~still_ms:0));
+  Rig_metal.settle ();
+  equal bool ~msg:"answered once open" true
+    (Rig_metal.prepare i "pair" ~still_ms:0);
+  raises
+    (Invalid_argument
+       (refusal_prefix "pair"
+       ^ "its required constant b (1) is past the image's 1 value"))
+    (fun () -> Rig_metal.entry i "pair");
+  Rig_metal.unload t.g i
+
+(* A specialised function's start waits behind the gate: a prepare finds the
+   function unanswered while the gate holds it, and an unload before the
+   start returns at once. Once the gate opens, the start specialises the
+   function from the library the unload released, the compile follows on
+   the queue, and the pipeline it builds is released; settling waits for
+   both. *)
 let chained_unstored () =
   let t = dev () in
   let loaded () =
@@ -2547,8 +2578,12 @@ let specialised_images =
         required_missing;
       test "a header that breaks the format is an error" malformed;
       test
-        "a specialisation answers behind the gate, and an unload before it \
-         answers releases the pipeline once built"
+        "a refusal of the image's values waits behind the gate with its \
+         start"
+        refusal_held;
+      test
+        "a specialised function's start waits behind the gate, and an \
+         unload before it releases the pipeline once built"
         chained_unstored;
       test
         "each key's image computes with its constants and releases its \
