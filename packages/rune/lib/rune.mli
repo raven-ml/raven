@@ -1986,11 +1986,11 @@ val jit :
     running value. An emission compiles as on one device
     ({!section-emissions}). It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}),
-    and one with an operation that computes on a host or software device where
-    rig links no host code ({!Rig.Image.links}), as on ppc64le and riscv64,
-    its checks, its loops and the copies into its results' memory on their
-    devices among them: such a program evaluates at eager speed. A program
-    whose values such a device only holds, its kernels on others, compiles.
+    and one with a kernel on a host or software device where rig links no
+    host code ({!Rig.Image.links}), as on ppc64le and riscv64, such as an
+    operation computed there or a copy into a result's memory: such a program
+    evaluates at eager speed. A program whose values such a device only holds
+    or views, its kernels on others, compiles.
     On a set without kernels ({!Nx.val-devices}), nothing evaluates a declined
     program: it raises [Invalid_argument] at the call, naming what the compiler
     declines, as does each stretch of a program split around a callback.

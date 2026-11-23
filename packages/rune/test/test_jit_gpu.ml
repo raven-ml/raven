@@ -1170,6 +1170,22 @@ let host_step () =
     raises_match (Exn.invalid_arg ~sub:"where rig links no host code")
       (fun () -> Rune.footprint Nx.Ptree.(tensor @-> returns tensor) f x)
 
+(* A reshape on the host of the value the GPU computes on compiles on every
+   host, as {!detour} does: a view makes no kernel, so nothing runs on the host
+   where rig links no host code for it. *)
+let host_view () =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let x = Nx.create Nx.float32 [| 2; 3 |] [| 1.5; -2.; 3.25; 0.5; 4.; -1. |] in
+  let f x =
+    let y = Nx.place S.on (Nx.reshape [| 3; 2 |] x) in
+    Nx.place Nx.Host.on (Nx.add (Nx.mul y y) y)
+  in
+  let before = Rune.evaluations () in
+  let y = Rune.jit' f x in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  let x = Nx.reshape [| 3; 2 |] x in
+  equal bits_t (bits (Nx.add (Nx.mul x x) x)) (bits y)
+
 (* Several targets
 
    A program over the GPU beside a software device compiles, each device running
@@ -3946,6 +3962,7 @@ let () =
            [
              test "onto the GPU's set and back" detour;
              test "an addition on the host" host_step;
+             test "a reshape on the host" host_view;
            ];
          group "switches"
            [

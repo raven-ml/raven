@@ -865,37 +865,26 @@ let raises cs ok failure =
       rig = None;
     }
 
-(* Whether [rig]'s kernels would be host code that rig links nowhere: [rig] is a
-   host or a software device, and rig links no host code for its host's
-   instruction set, as on ppc64le ({!Rig.Image.links}). *)
-let unlinked rig =
-  (Rig.equal (Rig.host_of rig) rig || Rig.runs_on_host rig)
-  && not (Rig.Image.links rig)
-
-(* Declines a program with a kernel on [rig], a device rig links no host code
-   for ({!unlinked}): nothing compiled runs there, so the program evaluates. *)
-let no_code rig =
-  let isa =
-    match Rig.instruction_set (Rig.host_of rig) with
-    | "" -> "an instruction set it does not know"
-    | isa -> isa
-  in
-  decline "an operation on %s, where rig links no host code for %s"
-    (Rig.name rig) isa
-
-(* Declines, before lowering, a program with an operation that computes on [rig]
-   where rig links no host code for it. A placement only copies, so a program
-   whose values such a device only holds compiles. A program's checks and loops
-   compute on its device ({!check}, {!repeat}); a copy into a result's memory is
-   a kernel that {!scheduled} declines. *)
-let linked rig = if unlinked rig then no_code rig
+(* [f ()], a call into tolk, declining where tolk refuses a kernel on a host or
+   software device that rig links no host code for ([Engine.Unlinked]), as on
+   ppc64le: nothing compiled runs there, so the program evaluates. *)
+let tolk f =
+  match f () with
+  | v -> v
+  | exception Engine.Unlinked rig ->
+      let isa =
+        match Rig.instruction_set (Rig.host_of rig) with
+        | "" -> "an instruction set it does not know"
+        | isa -> isa
+      in
+      decline "a kernel on %s, where rig links no host code for %s"
+        (Rig.name rig) isa
 
 let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
     (data : (d, e) Nx.Prim.data) (fail : int array -> e -> exn) =
   (* The call's check raises at a wait on the set it is issued on, and an
      eager check at a wait on its flags' set. *)
   let (F at) = st.issued in
-  linked st.rig;
   if Option.is_none (Nx.Placement.same (Nx.Prim.form ok).placement at.placement)
   then decline "a check on another set than the program's";
   let shape = Nx.shape ok in
@@ -1607,18 +1596,18 @@ let placed st env q x ys =
   in
   Array.map (fun u -> if own u then Ops.contiguous u else moved u d) ys
 
-(* Whether [rig]'s kernels compile for the host's processors. *)
+(* Whether [rig]'s kernels compile for the host's processors. A device rig links
+   no host code for would run host programs, and only declines once a kernel
+   lands on it ({!tolk}). *)
 let on_host rig =
-  unlinked rig
-  ||
   match Engine.target rig with
   | t -> String.equal t.device "CPU"
+  | exception Engine.Unlinked _ -> true
   | exception Invalid_argument _ -> false
 
 let issue st cs env (type r) base (op : r Nx.Prim.t) =
   (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
   let rig = op_rig st op in
-  (match op with Place _ -> () | _ -> linked rig);
   let device = Rig.name rig in
   match op with
   | Check { ok; data; fail } -> check st cs env ok data fail
@@ -2471,7 +2460,6 @@ and outputs st cs ~reach env args =
    reads. *)
 and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
     =
-  linked st.rig;
   (* The places the trip records are its own, substituted in its sink. *)
   let outer = st.places in
   st.places <- [];
@@ -2923,6 +2911,7 @@ let lowerings () = !(Domain.DLS.get lowerings_made)
    [name]. *)
 let lower ~name ~rigs ~split ~uploads (p : Program.t) (forms : form array)
     ~layouts ~phases ~donated =
+  tolk @@ fun () ->
   let rig = List.hd rigs in
   incr (Domain.DLS.get lowerings_made);
   let st =
@@ -3221,11 +3210,9 @@ let search rigs ~parallel width k =
   report "searched a kernel at width %d" width;
   let target = (Tolk.Postrange.Scheduler.ren k).target in
   let compiles r =
-    (not (unlinked r))
-    &&
     match Engine.target r with
     | t -> t = target
-    | exception Invalid_argument _ -> false
+    | exception (Invalid_argument _ | Engine.Unlinked _) -> false
   in
   let rig =
     match List.find_opt compiles rigs with
@@ -3348,12 +3335,9 @@ let slots l sink =
 
 (* The schedule of a lowering's [sink] that a link takes. *)
 let scheduled ~beam ~parallel rigs (l : lowered) sink inputs =
-  match
-    Engine.compile ?beam ~search:(search rigs ~parallel) ~devices:(named rigs)
-      ~held_bufs:(List.map fst l.bound) ~inputs sink
-  with
-  | schedule -> schedule
-  | exception Engine.Unlinked rig -> no_code rig
+  tolk @@ fun () ->
+  Engine.compile ?beam ~search:(search rigs ~parallel) ~devices:(named rigs)
+    ~held_bufs:(List.map fst l.bound) ~inputs sink
 
 let link ~beam ~parallel ~storage rigs l =
   match l.sink with

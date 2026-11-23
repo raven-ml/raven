@@ -93,11 +93,11 @@ val make :
     the program's first argument or else its first result, a program with no
     value, and a value with an element on a device other than the program's
     device. It declines what {!Pieces.split} declines. It also declines a
-    program with a value on a device that computes nothing, and one with an
-    operation that computes on a host or software device where rig links no host
-    code ({!Rig.Image.links}); linking declines a variant with a kernel there,
-    such as a copy into a result's memory. A split program's values may lie on
-    devices of several targets: each device's kernels compile for its own. *)
+    program with a value on a device that computes nothing, and lowering or
+    linking declines one with a kernel on a host or software device where rig
+    links no host code ({!Rig.Image.links}), such as a copy into a result's
+    memory. A split program's values may lie on devices of several targets: each
+    device's kernels compile for its own. *)
 
 val footprint : t -> Program.value array -> (Rig.t * int) list
 (** [footprint t args] is, for each device of [t]'s program and the host, the
