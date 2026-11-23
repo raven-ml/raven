@@ -863,7 +863,8 @@ static int64_t results_at(int k) { return states_at(k) + k; }
    suffix [L], [U] the unsigned integer of its width: [BEAT] is [>] or [<],
    [F] without its order of NaNs and zeros, which the plain compare
    vectorises; [NANQ] tests a term, or a vector of them, for a NaN; [FIND]
-   the pragma, if any, of the loop over 16 terms' bits. */
+   the macro that gives the pragma, if any, of the loop over 16 terms'
+   bits. */
 #define ARG(NAME, L, T, U, W, F, BEAT, NANQ, FIND)                           \
   /* beats_ steps the lanes: a lane takes the term where it beats the        \
      lane by BEAT or is a NaN. */                                            \
@@ -896,7 +897,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
     int64_t i = 0;                                                           \
     for (; i + 16 <= n; i += 16) {                                           \
       U hit = 0;                                                             \
-      FIND for (int k = 0; k < 16; k++)                                      \
+      FIND() for (int k = 0; k < 16; k++)                                    \
         hit |= bits_##NAME(&x[i + k]) == b;                                  \
       if (hit) break;                                                        \
     }                                                                        \
@@ -1027,23 +1028,28 @@ static inline int same_c128(const void *a, const void *b) {
 
 /* Arg's search for the extreme's bits unrolls by 8, which keeps gcc at
    -O3 from unrolling it whole and leaving it scalar, but not for 64-bit
-   integers, which at every count run slower at -O3 on arm64. */
+   integers, which at every count run slower at -O3 on arm64. ARGS takes
+   the name of the macro that gives the pragma and ARG calls it: gcc before
+   12 emits a _Pragma met in a macro's argument ahead of the whole
+   expansion, here before the functions it would unroll. */
+#define FIND_8() UNROLL(8)
+#define FIND_NONE()
 #define ARGS(D, T, U, W, F_MAX, F_MIN, NANQ, FIND)                           \
   ARG(max_##D, D, T, U, W, F_MAX, >, NANQ, FIND)                             \
   ARG(min_##D, D, T, U, W, F_MIN, <, NANQ, FIND)
 
-ARGS(i8, int8_t, uint8_t, 1, max_i8, min_i8, NO_NAN, UNROLL(8))
-ARGS(u8, uint8_t, uint8_t, 1, max_u8, min_u8, NO_NAN, UNROLL(8))
-ARGS(i16, int16_t, uint16_t, 2, max_i16, min_i16, NO_NAN, UNROLL(8))
-ARGS(u16, uint16_t, uint16_t, 2, max_u16, min_u16, NO_NAN, UNROLL(8))
-ARGS(i32, int32_t, uint32_t, 4, max_i32, min_i32, NO_NAN, UNROLL(8))
-ARGS(u32, uint32_t, uint32_t, 4, max_u32, min_u32, NO_NAN, UNROLL(8))
-ARGS(i64, int64_t, uint64_t, 8, max_i64, min_i64, NO_NAN, )
-ARGS(u64, uint64_t, uint64_t, 8, max_u64, min_u64, NO_NAN, )
+ARGS(i8, int8_t, uint8_t, 1, max_i8, min_i8, NO_NAN, FIND_8)
+ARGS(u8, uint8_t, uint8_t, 1, max_u8, min_u8, NO_NAN, FIND_8)
+ARGS(i16, int16_t, uint16_t, 2, max_i16, min_i16, NO_NAN, FIND_8)
+ARGS(u16, uint16_t, uint16_t, 2, max_u16, min_u16, NO_NAN, FIND_8)
+ARGS(i32, int32_t, uint32_t, 4, max_i32, min_i32, NO_NAN, FIND_8)
+ARGS(u32, uint32_t, uint32_t, 4, max_u32, min_u32, NO_NAN, FIND_8)
+ARGS(i64, int64_t, uint64_t, 8, max_i64, min_i64, NO_NAN, FIND_NONE)
+ARGS(u64, uint64_t, uint64_t, 8, max_u64, min_u64, NO_NAN, FIND_NONE)
 ARGS(f32, float, uint32_t, 4, nx_maximum_f32, nx_minimum_f32,
-     IS_NAN, UNROLL(8))
+     IS_NAN, FIND_8)
 ARGS(f64, double, uint64_t, 8, nx_maximum_f64, nx_minimum_f64,
-     IS_NAN, UNROLL(8))
+     IS_NAN, FIND_8)
 
 /* Arg over complex terms of [C] by [F]: the lanes' extreme by F, a NaN
    where a term is one, then its first term of the extreme's bits, or the

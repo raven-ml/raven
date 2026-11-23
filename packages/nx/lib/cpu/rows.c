@@ -411,8 +411,8 @@ static inline void tf_load(const uint64_t *p, int s, tf_words *lo,
   tf_words a, b;
   memcpy(&a, p, sizeof a);
   memcpy(&b, p + TF_LANES / 2, sizeof b);
-  *lo = __builtin_shufflevector(a, b, TF_LOW);
-  *hi = __builtin_shufflevector(a, b, TF_HIGH);
+  *lo = NX_SHUFFLE(tf_words, a, b, TF_LOW);
+  *hi = NX_SHUFFLE(tf_words, a, b, TF_HIGH);
 }
 
 /* The key's three words of the elements at [p], as tf_load reads them. */
@@ -423,8 +423,8 @@ static inline void tf_key(const uint64_t *p, int s, tf_words *k) {
 
 /* Stores TF_LANES elements of low words [lo] and high words [hi] at [p]. */
 static inline void tf_store(uint64_t *p, tf_words lo, tf_words hi) {
-  tf_words a = __builtin_shufflevector(lo, hi, TF_ZIP0);
-  tf_words b = __builtin_shufflevector(lo, hi, TF_ZIP1);
+  tf_words a = NX_SHUFFLE(tf_words, lo, hi, TF_ZIP0);
+  tf_words b = NX_SHUFFLE(tf_words, lo, hi, TF_ZIP1);
   memcpy(p, &a, sizeof a);
   memcpy(p + TF_LANES / 2, &b, sizeof b);
 }

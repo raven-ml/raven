@@ -3601,6 +3601,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- nx builds with GCC 11, as on Ubuntu 22.04 and CentOS Stream 9. nx.cpu
+  called `__builtin_shufflevector`, which GCC gained in 12, and passed an
+  unroll pragma through a macro argument, which GCC 11 emits ahead of the
+  whole expansion.
 - nx builds on compilers without flat float arrays
   (`ocaml-option-no-flat-float-array`), where it stopped with `#error`:
   `Nx_array.of_array` reads a boxed `float array` and `to_array` returns

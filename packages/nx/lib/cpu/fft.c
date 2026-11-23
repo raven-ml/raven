@@ -519,21 +519,25 @@ static void plan_put(void *p, int rdt);
 #endif
 
 #define T float
+#define IT int32_t
 #define L (VEC_BYTES / 4)
 #define SFX f32
 #define RDT NX_FLOAT32
 #include "fft_body.h"
 #undef T
+#undef IT
 #undef L
 #undef SFX
 #undef RDT
 
 #define T double
+#define IT int64_t
 #define L (VEC_BYTES / 8)
 #define SFX f64
 #define RDT NX_FLOAT64
 #include "fft_body.h"
 #undef T
+#undef IT
 #undef L
 #undef SFX
 #undef RDT

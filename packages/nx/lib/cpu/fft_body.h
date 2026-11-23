@@ -7,11 +7,12 @@
   ---------------------------------------------------------------------------*/
 
 /* fft.c's transforms in one precision: T float or double, its complex
-   numbers' parts. Included once per precision, with T, L (the lanes of a
-   vector), SFX, RDT (the real dtype's code) and the shuffles of fft.c for
-   L lanes defined. */
+   numbers' parts. Included once per precision, with T, IT (the integer of
+   T's width), L (the lanes of a vector), SFX, RDT (the real dtype's code)
+   and the shuffles of fft.c for L lanes defined. */
 
 #define VEC CAT(vec, SFX)
+#define IDX CAT(idx, SFX)
 #define CV CAT(cv, SFX)
 #define PLAN CAT(plan, SFX)
 
@@ -21,6 +22,7 @@
    x86-64 that passing it by value changed ABI in gcc 4.6, an ABI only AVX
    uses and no call here crosses. */
 typedef T VEC __attribute__((vector_size(L * sizeof(T)), aligned(16)));
+typedef IT IDX __attribute__((vector_size(L * sizeof(T))));
 typedef struct {
   VEC re, im;
 } CV;
@@ -28,7 +30,7 @@ typedef struct {
 /* Shuffles: the real and imaginary parts of 2L interleaved values, the
    inverse, the lanes reversed, and the transpose of L vectors as an L × L
    tile. */
-#define SH __builtin_shufflevector
+#define SH(...) NX_SHUFFLE(IDX, __VA_ARGS__)
 
 /* Unrolls the small loop that follows over vectors of an array: gcc -O2
    left such loops rolled and their arrays in memory, and the rows of 8 of
@@ -1502,5 +1504,6 @@ static int F(c2r)(const nx_array *x, const nx_array *y, const int *axes,
 #undef TRANSPOSE
 #undef G8
 #undef VEC
+#undef IDX
 #undef CV
 #undef PLAN

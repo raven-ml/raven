@@ -68,6 +68,17 @@ _Static_assert(NX_LOAD_COUNT == 2 && NX_MONOID_COUNT == 4 &&
 #define NX_VECTOR_BYTES 16
 #endif
 
+/* [NX_SHUFFLE(m, a, b, i...)] is the vector of [a] and [b]'s lanes at the
+   constant indices [i], [a]'s numbered from 0 and [b]'s after them, one
+   index per lane of [a]; [m] is a vector type of integers as many and as
+   wide as [a]'s lanes. gcc before 12 has no __builtin_shufflevector: its
+   __builtin_shuffle takes the indices as an [m]. */
+#if defined(__clang__) || __GNUC__ >= 12
+#define NX_SHUFFLE(m, ...) __builtin_shufflevector(__VA_ARGS__)
+#else
+#define NX_SHUFFLE(m, a, b, ...) __builtin_shuffle(a, b, (m){__VA_ARGS__})
+#endif
+
 /* Whether a kernel that reads operand rows several times at a step other
    than one copies them into unit steps first: on x86-64, where strided
    loads cost more than the copy. In cache, adding rows 9 elements apart
