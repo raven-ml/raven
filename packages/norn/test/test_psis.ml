@@ -121,14 +121,16 @@ let reference =
 
 (* Laws *)
 
-(* Log ratios that break the smoothing: few draws and many, a scale from
-   nearly equal ratios to a tail that spans hundreds of nats, ties from a coarse
-   grid, and zero weights. *)
+(* Log ratios that break the smoothing: few draws and many, a scale from nearly
+   equal ratios to a tail that spans hundreds of nats, ties from a coarse grid,
+   a bounded tail of equal largest ratios in one draw of four, and zero
+   weights. *)
 let ratios_gen =
   Gen.(
     let* s = one_of [ int_range 0 30; int_range 25 400 ] in
     let* scale = of_list [ 1e-6; 0.3; 1.; 4.; 60. ] in
     let* coarse = bool in
+    let* bounded = frequency [ (1, constant true); (3, constant false) ] in
     let* zeros = int_range 0 (s / 10) in
     let+ xs = array ~size:(constant s) (float_range (-3.) 3.) in
     let xs =
@@ -138,6 +140,13 @@ let ratios_gen =
           if coarse then Float.round (x *. 2.) /. 2. else x)
         xs
     in
+    (* The tail's ratios, the last [tail_length s], all one above the rest. *)
+    if bounded then begin
+      let top = Array.fold_left Float.max 0. xs +. 1. in
+      for i = s - tail_length s to s - 1 do
+        xs.(i) <- top
+      done
+    end;
     for i = 0 to zeros - 1 do
       xs.(i) <- Float.neg_infinity
     done;
