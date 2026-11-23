@@ -4268,7 +4268,9 @@ let unit_code st f =
   code st f ~zero:0.1 ~sub:0.05 (Int.max lo (-6), Int.min hi 6)
 
 (* Extents of a units call: rows and columns of the 16-row tile or past it,
-   batches of one to 64 or 907, and contracted extents short or long. *)
+   batches of one to 64 or 907, and contracted extents short or long. About one
+   draw in 16 takes the 128 x 128 tile, which 100 cases miss once in 600 runs,
+   so the law's examples hold one, [[32; 200; 200] k 8192]. *)
 let uextents =
   let open Gen in
   let extent top = frequency [ (1, int_range 1 16); (2, int_range 17 top) ] in
@@ -4752,7 +4754,12 @@ let () =
                "an output of normal factors is within its error factor"
                chain_case law_chain;
              prop
-               ~examples:[ (64, 17, 17, 8192); (907, 17, 17, 32_768) ]
+               ~examples:
+                 [
+                   (64, 17, 17, 8192);
+                   (907, 17, 17, 32_768);
+                   (32, 200, 200, 8192);
+                 ]
                "a call on the units takes the stated tile and ranges"
                (Gen.with_pp pp_uextents uextents)
                law_unit_plan;
