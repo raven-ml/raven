@@ -30,10 +30,11 @@ let positions s d =
   let n = Array.fold_left ( * ) 1 s in
   Nx.create Nx.int64 s (Array.init n (fun k -> Int64.of_int (k * 37 mod d)))
 
-let x = floats [| 64; 32 |] 1
-let w = floats [| 32; 16 |] 2
-let p = positions [| 200; 16 |] 64
-let u = floats [| 200; 16 |] 3
+let x = lazy (floats [| 64; 32 |] 1)
+let w = lazy (floats [| 32; 16 |] 2)
+let p = lazy (positions [| 200; 16 |] 64)
+let u = lazy (floats [| 200; 16 |] 3)
+let ( !! ) = Lazy.force
 
 (* Programs *)
 
@@ -42,15 +43,15 @@ let u = floats [| 200; 16 |] 3
    operands and some of its operations, so that a process that compiled
    them first holds some of its nodes already. *)
 let target a =
-  let y = Nx.softmax ~axes:[ 1 ] (Nx.matmul a w) in
-  let z = Nx.scatter ~combine:Add ~axis:0 p u y in
+  let y = Nx.softmax ~axes:[ 1 ] (Nx.matmul a !!w) in
+  let z = Nx.scatter ~combine:Add ~axis:0 !!p !!u y in
   Nx.add z (Nx.sum ~axes:[ 0 ] ~keepdims:true z)
 
 let others =
   [
-    (fun a -> Nx.softmax ~axes:[ 1 ] (Nx.matmul a w));
-    (fun a -> Nx.scatter ~combine:Add ~axis:0 p u (Nx.matmul a w));
-    (fun a -> Nx.sum ~axes:[ 0 ] (Nx.exp (Nx.matmul a w)));
+    (fun a -> Nx.softmax ~axes:[ 1 ] (Nx.matmul a !!w));
+    (fun a -> Nx.scatter ~combine:Add ~axis:0 !!p !!u (Nx.matmul a !!w));
+    (fun a -> Nx.sum ~axes:[ 0 ] (Nx.exp (Nx.matmul a !!w)));
   ]
 
 (* The GPU targets, whose kernels are lowered and rendered without a
@@ -66,9 +67,9 @@ let label (t : Tolk.Helpers.Target.t) = t.device ^ " " ^ t.arch
 (* [f] compiled on the host by Rune.jit, and lowered and rendered for each
    GPU target. *)
 let compile f =
-  ignore (Rune.jit' f x);
+  ignore (Rune.jit' f !!x);
   List.iter
-    (fun target -> ignore (Lowered.sources ~target (fun () -> f x)))
+    (fun target -> ignore (Lowered.sources ~target (fun () -> f !!x)))
     gpus
 
 (* A kernel as a process reports it: its target, its name, the order of
@@ -106,8 +107,8 @@ let gpu_kernels t f =
     (Lowered.sources ~target:t f)
 
 let target_kernels () =
-  host_kernels (fun () -> ignore (Rune.jit' target x))
-  @ List.concat_map (fun t -> gpu_kernels t (fun () -> target x)) gpus
+  host_kernels (fun () -> ignore (Rune.jit' target !!x))
+  @ List.concat_map (fun t -> gpu_kernels t (fun () -> target !!x)) gpus
 
 (* The histories *)
 
@@ -141,9 +142,10 @@ let child h =
   output_value stdout (ks : kernel list);
   exit 0
 
-(* The kernels of a new process that runs history [h]. *)
-let run_history h =
-  let out = Filename.temp_file "recompile" ".bin" in
+(* A new process that runs history [h], and the file it writes its kernels
+   to. *)
+let start h =
+  let out = Windtrap.temp_file ~suffix:".bin" () in
   let fd = Unix.openfile out [ Unix.O_WRONLY; O_TRUNC ] 0o600 in
   let env =
     Array.append
@@ -155,17 +157,16 @@ let run_history h =
     Unix.create_process_env exe [| exe |] env Unix.stdin fd Unix.stderr
   in
   Unix.close fd;
-  let status = snd (Unix.waitpid [] pid) in
-  let ks =
-    match status with
-    | Unix.WEXITED 0 ->
-        In_channel.with_open_bin out (fun ic -> (input_value ic : kernel list))
-    | Unix.WEXITED n -> failf "history %S exited %d" h n
-    | Unix.WSIGNALED n | Unix.WSTOPPED n ->
-        failf "history %S ended by signal %d" h n
-  in
-  Sys.remove out;
-  ks
+  (h, pid, out)
+
+(* The kernels the process [start] made wrote, once it ends. *)
+let finish (h, pid, out) =
+  match snd (Unix.waitpid [] pid) with
+  | Unix.WEXITED 0 ->
+      In_channel.with_open_bin out (fun ic -> (input_value ic : kernel list))
+  | Unix.WEXITED n -> failf "history %S exited %d" h n
+  | Unix.WSIGNALED n | Unix.WSTOPPED n ->
+      failf "history %S ended by signal %d" h n
 
 (* The first line of [a] that differs from [b]'s, and [b]'s. *)
 let first_difference a b =
@@ -188,9 +189,12 @@ let same_sources h ~fresh ks =
           k.name k.target b a)
     fresh ks
 
+(* The processes run at once: each is a history of its own. *)
 let test_same_sources () =
   Rune_support.Compiled.here ();
-  let fresh = run_history "fresh" in
+  let started = List.map (fun (h, _) -> start h) histories in
+  let kernels = List.map (fun ((h, _, _) as c) -> (h, finish c)) started in
+  let fresh = List.assoc "fresh" kernels in
   let on t ks = List.filter (fun k -> k.target = t) ks in
   let targets = "host" :: List.map label gpus in
   List.iter
@@ -200,13 +204,12 @@ let test_same_sources () =
     targets;
   let others =
     List.filter_map
-      (fun (h, _) ->
+      (fun (h, ks) ->
         if h = "fresh" then None
-        else
-          let ks = run_history h in
+        else (
           same_sources h ~fresh ks;
-          Some ks)
-      histories
+          Some ks))
+      kernels
   in
   (* Each target's kernels are built in another order by some history. *)
   let orders t ks = List.map (fun k -> k.order) (on t ks) in
