@@ -1535,7 +1535,9 @@ val jit :
     which decide otherwise: a change of [BEAM] or [JITBEAM] around a call of a
     function given [beam] compiles nothing, and functions given different widths
     share no program. A call inlined in an enclosing [jit] compiles as that
-    one's program does. *)
+    one's program does. With [RUNE_JIT_DEBUG] set ({!section-keys}), each
+    kernel a search optimises prints [rune.jit: searched a kernel at width n]
+    on standard error, where [n] is the width it searches at. *)
 
 (** {2:donation Donation}
 
