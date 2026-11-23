@@ -1299,12 +1299,14 @@ let serialized =
       flocking model_name
         (stateful model_name ~count:60 ~steps:40
            (commands ~starts:model_starts ~changes_twice:true gpu_numbers));
-      (* 120 programs of 50 runs each, each run a new tree, with a limit of
-         three patiences: a run hands off between domains, which waits for a
-         time slice when the processors are busy. Its rarest cover, a lost GPU
-         reset, marks about 12% of programs, which 120 miss with odds near
-         2 10^-7. On the Mac the hand-offs, in windtrap's workers, take most of
-         the run and pass the limit, so it runs on Linux. *)
+      (* 80 programs of 50 runs each, each run a new tree, with a limit of three
+         patiences: a run hands off between domains, which waits for a time
+         slice when the processors are busy. The calls that change a GPU's state
+         are drawn twice as often, as the model's are: its rarest cover, a lost
+         GPU reset, then marks about 19% of programs, which 80 miss with odds
+         near 5 10^-8; drawn once, it marked 12% and took 120. On the Mac the
+         hand-offs, in windtrap's workers, take most of the run and pass the
+         limit, so it runs on Linux. *)
       (if on_linux then Fun.id
        else fun _ ->
          test two_domains_name (fun () ->
@@ -1312,8 +1314,9 @@ let serialized =
                ()))
       @@ flocking two_domains_name
       @@ stateful two_domains_name ~timeout:(3. *. patience) ~domains:2
-           ~count:120
-           (commands ~starts:holding ~concurrent:true (indices [ 0 ]));
+           ~count:80
+           (commands ~starts:holding ~changes_twice:true ~concurrent:true
+              (indices [ 0 ]));
       cases "opens and resets run their drivers one at a time (sampled)" ~id:fst
         others test_one_at_a_time;
       cases "a stop waits for no driver's start"
