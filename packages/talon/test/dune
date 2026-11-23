@@ -64,17 +64,31 @@
  (deps
   (source_tree golden/tz)))
 
-; shape.t compiles against the installed talon and nx. It depends on the
-; workspace's install alias: a dependency on the package nx would name a
-; package that dune build -p talon does not define, and dune refuses it there,
-; while the alias then holds talon alone and nx comes from the installed
-; packages.
+; shape.t compiles against the installed talon and nx. It looks for each
+; library's interface on OCAMLPATH, then where dune resolved it, which
+; includes lists, one line per library: the interface's path in an install
+; tree, then its resolved path. The dependency on the package talon puts
+; talon and the workspace packages it requires, nx among them, on the test's
+; OCAMLPATH. In a build of talon alone (dune build -p talon), nx is installed
+; outside the workspace, and only its resolved path finds it.
+
+(rule
+ (package talon)
+ (action
+  (with-stdout-to
+   includes
+   (progn
+    (echo "talon/talon.cmi %{lib:talon:talon.cmi}\n")
+    (echo "nx/nx.cmi %{lib:nx:nx.cmi}\n")
+    (echo "nx/array/nx_array.cmi %{lib:nx.array:nx_array.cmi}\n")
+    (echo "nx/kernel/nx_kernel.cmi %{lib:nx.kernel:nx_kernel.cmi}\n")))))
 
 (cram
  (applies_to shape)
  (package talon)
  (deps
-  (alias_rec %{workspace_root}/install)))
+  includes
+  (package talon)))
 
 (test
  (name test_column)

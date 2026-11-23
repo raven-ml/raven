@@ -1,16 +1,14 @@
-; quill run loads each raven package installed beside quill, so its output
-; depends on the install tree: a package missing from it is skipped, and one
-; built in another profile, such as a sanitizer's, may not load. The tests
-; depend on the workspace's whole install tree, which builds every package in
-; the current profile. A dependency on each preloaded package would name
-; packages that a build of quill alone (dune build -p quill) does not define,
-; and dune refuses it there. The tree also holds quill's stub libraries, which
-; the bytecode executable loads at startup.
+; The tests run quill as a command. A dependency on the package quill puts its
+; executable on the test's PATH, its libraries on OCAMLPATH and its stub
+; libraries, which the bytecode executable loads at startup, on
+; CAML_LD_LIBRARY_PATH; a dependency on the install alias does none of this.
+; quill run loads each raven package it finds, and the tests use none, so a
+; build of quill alone (dune build -p quill) runs them as the workspace does.
 
 (cram
  (package quill)
  (deps
-  (alias_rec %{workspace_root}/install)))
+  (package quill)))
 
 ; preload.t puts packages first on OCAMLPATH, whose separator and paths
 ; differ on Windows.

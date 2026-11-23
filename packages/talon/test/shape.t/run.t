@@ -1,13 +1,17 @@
 An expression's shape is in its type: each mistake below fails to compile
-with the message the RFC promises, and the forms that should compile do.
+with a type error that names the shapes that clash, and the forms that should
+compile do.
 
-  $ for d in $(echo "$OCAMLPATH" | tr ':' ' '); do
-  >   if [ -f "$d/nx/META" ]; then nx=$d/nx; fi
-  >   if [ -f "$d/talon/META" ]; then talon=$d/talon; fi
-  > done
-  $ ocamlc_talon () {
-  >   ocamlc -I $talon -I $nx -I $nx/array -I $nx/kernel -c "$1"
+  $ lookup () {
+  >   for d in $(echo "$OCAMLPATH" | tr ':' ' '); do
+  >     if [ -f "$d/$1" ]; then dirname "$d/$1"; return; fi
+  >   done
+  >   (cd .. && cd "$(dirname "$2")" && pwd)
   > }
+  $ includes=$(while read cmi at; do
+  >   echo "-I $(lookup "$cmi" "$at")"
+  > done < ../includes)
+  $ ocamlc_talon () { ocamlc $includes -c "$1"; }
   $ compile () { ocamlc_talon "$1" 2>&1 | grep -A3 Error; }
 
 A row expression where a reduction belongs:
