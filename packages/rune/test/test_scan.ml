@@ -133,22 +133,8 @@ let compiled ~rows f =
     && Rune.evaluations () = before);
   r
 
-(* Compiled, a scan whose step's functions are exact gives the fold's bits,
-   whatever its rows' layout. *)
-let law_compiled (Case (dt, s, n, o, g, h) as case) =
-  covers case;
-  let (c, xs), _ = leaves dt s n o in
-  let folded, scanned = loops dt s n (exact g) (exact h) in
-  let f = Rune.jit T.(tensor @-> tensor @-> returns (pair tensor tensor)) in
-  let staged = f (fun c xs -> scanned (c, xs)) in
-  equal (outcome_t pp2)
-    (outcome (fun () -> pair_bits (folded (c, xs))))
-    (compiled ~rows:n (fun () -> outcome (fun () -> pair_bits (staged c xs))))
-
 (* Derivatives and a map of a scan over host leaves in every view: forward mode,
-   reverse mode and two lanes of the carry, against the fold's, eagerly; forward
-   mode compiled too, where the step's functions are exact and sum no terms
-   along an axis. *)
+   reverse mode and two lanes of the carry, against the fold's, eagerly. *)
 let law_derived (Case (dt, s, n, o, g, h) as case) =
   covers case;
   let x, tx = leaves dt s n o in
@@ -182,19 +168,161 @@ let law_derived (Case (dt, s, n, o, g, h) as case) =
   in
   equal ~msg:"vmap" (outcome_t bits_t) per_lane
     (outcome (fun () ->
-         bits (Rune.vmap' (flat scanned) (Nx.stack [ init; Nx.neg init ]))));
-  let folded, scanned =
-    loops dt s n (unsummed (exact g)) (unsummed (exact h))
+         bits (Rune.vmap' (flat scanned) (Nx.stack [ init; Nx.neg init ]))))
+
+(* Compiled over host leaves
+
+   The compiled laws draw one of a few programs, each compiled once, at the
+   first case that draws it, and the elements of its leaves: a program is a
+   dtype, a row shape, a number of rows, each leaf's view and the step's
+   expressions. Each program runs first as an example, so every run compiles
+   each and reaches the covers its forms hold. *)
+
+type 's ft = (float, 's, Nx.host) Nx.t
+
+(* Each of [gens], in order. *)
+let rec all = function
+  | [] -> Gen.constant []
+  | g :: gens ->
+      let open Gen in
+      let* x = g in
+      let+ xs = all gens in
+      x :: xs
+
+type form =
+  | Form : {
+      dt : (float, 's) Nx.dtype;
+      s : int array;
+      n : int;
+      views : Operand.view array;
+          (** Of the carry, the rows and their tangents. *)
+      g : Expr.t;
+      h : Expr.t;
+      scan : ('s ft -> 's ft -> 's ft * 's ft) Lazy.t;
+          (** The scan of the step's functions made exact. *)
+      jvp :
+        ('s ft -> 's ft -> 's ft -> 's ft -> ('s ft * 's ft) * ('s ft * 's ft))
+        Lazy.t;
+          (** jvp of the scan, its functions made exact and unsummed. *)
+    }
+      -> form
+
+let form (type s) (dt : (float, s) Nx.dtype) s n views g h =
+  let p = T.(pair tensor tensor) in
+  let scan =
+    lazy
+      (let _, scanned = loops dt s n (exact g) (exact h) in
+       Rune.jit
+         T.(tensor @-> tensor @-> returns (pair tensor tensor))
+         (fun c xs -> scanned (c, xs)))
   in
-  let staged =
-    Rune.jit
-      T.(tensor @-> tensor @-> tensor @-> tensor @-> returns (pair p p))
-      (fun c xs tc txs -> Rune.jvp p p scanned (c, xs) (tc, txs))
+  let jvp =
+    lazy
+      (let _, scanned =
+         loops dt s n (unsummed (exact g)) (unsummed (exact h))
+       in
+       Rune.jit
+         T.(tensor @-> tensor @-> tensor @-> tensor @-> returns (pair p p))
+         (fun c xs tc txs -> Rune.jvp p p scanned (c, xs) (tc, txs)))
   in
-  let (c, xs), (tc, txs) = (x, tx) in
-  equal ~msg:"jit of jvp" tj (jvp folded)
-    (compiled ~rows:n (fun () ->
-         outcome (fun () -> pair_bits' (staged c xs tc txs))))
+  Form { dt; s; n; views = Array.of_list views; g; h; scan; jvp }
+
+let forms =
+  let f32 = Nx.float32 and f64 = Nx.float64 in
+  let open Operand in
+  [|
+    form f32 [| 2 |] 0
+      [ Plain; Plain; Plain; Plain ]
+      (Bin (Add, X, Un (Sqrt, Un (Abs, Y))))
+      (Bin (Mul, X, Un (Recip, Y)));
+    form f64 [||] 1
+      [ Offset 2; Plain; Plain; Flipped ]
+      (Bin (Maximum, X, Un (Neg, Y)))
+      (Un (Abs, Un (Sin, X)));
+    form f32 [| 2; 3 |] 2
+      [ Permuted; Flipped; Plain; Strided ]
+      (Bin (Sub, Y, Un (Square, X)))
+      (Un (Flip 1, Bin (Minimum, X, Un (Exp, Un (Mean 0, Y)))));
+    form f64 [| 0; 2 |] 5
+      [ Plain; Broadcast; Plain; Plain ]
+      (Bin (Add, X, Un (Log, Y)))
+      (Un (Neg, Un (Tanh, Y)));
+    form f32 [| 3 |] 5
+      [ Strided; Offset 1; Flipped; Plain ]
+      (Bin (Where_less, X, Bin (Div, Y, K (F 2.))))
+      (Un (Cumsum 0, Bin (Add, X, Un (Sigmoid, Y))));
+    (* Past one kernel block. *)
+    form f64 [| 2; 300 |] 2
+      [ Plain; Plain; Plain; Plain ]
+      (Bin (Mul, X, Bin (Pow, Y, K (F 2.))))
+      (Un (Max 1, Un (Sum 1, Bin (Add, X, Y))));
+    (* A carry whose step reads nothing. *)
+    form f32 [| 2 |] 2
+      [ Plain; Permuted; Plain; Plain ]
+      (K (F 0.5))
+      (Bin (Add, X, Y));
+  |]
+
+let form_shapes (Form f) =
+  let rows = Array.append [| f.n |] f.s in
+  [| f.s; rows; f.s; rows |]
+
+let pp_form_case ppf (i, (o : Operand.t array)) =
+  let (Form f) = forms.(i) in
+  Format.fprintf ppf "%a %a, %d rows, carry %a, xs %a: carry %a, output %a"
+    Nx.pp_dtype f.dt Operand.pp_shape f.s f.n Operand.pp_view o.(0).view
+    Operand.pp_view o.(1).view pp f.g pp f.h
+
+let form_cases =
+  let open Gen in
+  (let* i = int_range 0 (Array.length forms - 1) in
+   let (Form f) = forms.(i) in
+   let shapes = form_shapes forms.(i) in
+   let+ o =
+     map Array.of_list
+       (all (List.init 4 (fun k -> Operand.draw_as f.views.(k) shapes.(k))))
+   in
+   (i, o))
+  |> with_pp pp_form_case
+
+(* Each program at the pool's elements in turn. *)
+let form_examples =
+  List.init (Array.length forms) (fun i ->
+      let (Form f) = forms.(i) in
+      let shapes = form_shapes forms.(i) in
+      ( i,
+        Array.init 4 (fun k ->
+            Operand.of_pool f.views.(k) shapes.(k) (i + (5 * k))) ))
+
+(* Compiled, a scan whose step's functions are exact gives the fold's bits,
+   whatever its rows' layout. *)
+let law_compiled (i, o) =
+  let (Form f) = forms.(i) in
+  covers (Case (f.dt, f.s, f.n, o, f.g, f.h));
+  let (c, xs), _ = leaves f.dt f.s f.n o in
+  let folded, _ = loops f.dt f.s f.n (exact f.g) (exact f.h) in
+  equal (outcome_t pp2)
+    (outcome (fun () -> pair_bits (folded (c, xs))))
+    (compiled ~rows:f.n (fun () ->
+         outcome (fun () -> pair_bits (Lazy.force f.scan c xs))))
+
+(* Compiled, forward mode gives the fold's bits where the step's functions are
+   exact and sum no terms along an axis. *)
+let law_derived_compiled (i, o) =
+  let (Form f) = forms.(i) in
+  covers (Case (f.dt, f.s, f.n, o, f.g, f.h));
+  let (c, xs), (tc, txs) = leaves f.dt f.s f.n o in
+  let p = T.(pair tensor tensor) in
+  let folded, _ =
+    loops f.dt f.s f.n (unsummed (exact f.g)) (unsummed (exact f.h))
+  in
+  let pair_bits' (y, t) = (pair_bits y, pair_bits t) in
+  let l = if constant f.g then lenient ~nan:true else bits_t in
+  let tj = outcome_t (Testable.pair pp2 (Testable.pair l l)) in
+  equal tj
+    (outcome (fun () -> pair_bits' (Rune.jvp p p folded (c, xs) (tc, txs))))
+    (compiled ~rows:f.n (fun () ->
+         outcome (fun () -> pair_bits' (Lazy.force f.jvp c xs tc txs))))
 
 (* Every dtype, through the functions every dtype has. *)
 type any_case =
@@ -397,39 +525,84 @@ let scoped_fold k draws c0 n =
   in
   go 0 c0 []
 
-let scope_cases = Gen.quad Gen.int step_draws (Gen.int_range 0 3) Gen.bool
+let scope_cases = Gen.triple Gen.int step_draws (Gen.int_range 0 3)
 
-let law_scoped (seed, draws, n, jit) =
+(* The scan of [draws] over [n] steps of the key [k], against its fold: its
+   carry, outputs and gradient, through [scan] and [grad]. *)
+let scoped_agree ~scan ~grad k draws c0 n =
   cover "no step" (n = 0);
   cover "several steps" (n > 1);
   cover "several draws a step" (List.length draws > 1);
-  cover "compiled" jit;
-  let k = Nx.Rng.key seed and c0 = v [| 0.5; -2. |] in
-  let c, ys =
-    if jit then
-      Rune.jit
-        T.(Nx.Rng.ptree @-> tensor @-> returns (pair tensor tensor))
-        (fun k c0 -> scoped_scan k draws c0 n)
-        k c0
-    else scoped_scan k draws c0 n
-  in
+  let c, ys = scan k c0 in
   let c', ys' = scoped_fold k draws c0 n in
   equal ~msg:"carry" bits_t (bits c') (bits c);
   equal ~msg:"outputs" (list bits_t) (List.map bits ys')
     (List.init n (fun i -> bits (Nx.get [ i ] ys)));
-  let loss run c0 = Nx.sum (fst (run k draws c0 n)) in
-  let g =
-    if jit then
-      Rune.jit
-        T.(Nx.Rng.ptree @-> tensor @-> returns tensor)
-        (fun k c0 ->
-          Rune.grad' (fun c0 -> Nx.sum (fst (scoped_scan k draws c0 n))) c0)
-        k c0
-    else Rune.grad' (loss scoped_scan) c0
-  in
+  let loss c0 = Nx.sum (fst (scoped_fold k draws c0 n)) in
   equal ~msg:"gradient" (lenient ~nan:false)
-    (bits (Rune.grad' (loss scoped_fold) c0))
-    (bits g)
+    (bits (Rune.grad' loss c0))
+    (bits (grad k c0))
+
+let scoped_grad draws n k c0 =
+  Rune.grad' (fun c0 -> Nx.sum (fst (scoped_scan k draws c0 n))) c0
+
+let law_scoped (seed, draws, n) =
+  let k = Nx.Rng.key seed and c0 = v [| 0.5; -2. |] in
+  scoped_agree
+    ~scan:(fun k c0 -> scoped_scan k draws c0 n)
+    ~grad:(scoped_grad draws n) k draws c0 n
+
+(* Compiled, the law draws a seed for one of a few steps' draws and numbers of
+   steps, each compiled once. *)
+type f32 = (float, Nx.float32_elt, Nx.host) Nx.t
+
+type scoped_form = {
+  draws : step_draw list;
+  steps : int;
+  scan : (Nx.host Nx.Rng.key -> f32 -> f32 * f32) Lazy.t;
+  grad : (Nx.host Nx.Rng.key -> f32 -> f32) Lazy.t;
+}
+
+let scoped_form draws steps =
+  let scan =
+    lazy
+      (Rune.jit
+         T.(Nx.Rng.ptree @-> tensor @-> returns (pair tensor tensor))
+         (fun k c0 -> scoped_scan k draws c0 steps))
+  and grad =
+    lazy
+      (Rune.jit
+         T.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+         (scoped_grad draws steps))
+  in
+  { draws; steps; scan; grad }
+
+let scoped_forms =
+  [|
+    scoped_form [] 0;
+    scoped_form [ Scaled ] 1;
+    scoped_form [ Counted; Scaled ] 3;
+    scoped_form [ Scaled; Counted; Scaled ] 2;
+    scoped_form [ Counted ] 3;
+  |]
+
+let scoped_form_cases =
+  Gen.(pair (int_range 0 (Array.length scoped_forms - 1)) int)
+  |> Gen.with_pp (fun ppf (i, seed) ->
+      let f = scoped_forms.(i) in
+      Format.fprintf ppf "seed %d, %d steps of [%s]" seed f.steps
+        (String.concat "; "
+           (List.map
+              (function Scaled -> "scaled" | Counted -> "counted")
+              f.draws)))
+
+let law_scoped_compiled (i, seed) =
+  let f = scoped_forms.(i) in
+  let k = Nx.Rng.key seed and c0 = v [| 0.5; -2. |] in
+  scoped_agree
+    ~scan:(fun k c0 -> Lazy.force f.scan k c0)
+    ~grad:(fun k c0 -> Lazy.force f.grad k c0)
+    k f.draws c0 f.steps
 
 let test_carry_refused () =
   invalid
@@ -876,27 +1049,242 @@ let tangents (type s) (dt : (float, s) Nx.dtype) s n (tans : Operand.t array)
   let tan k j sh = put at.(j) dt sh tans.(k) in
   (tan 0 0 s, (tan 1 2 rows, tan 2 3 s))
 
-(* A compiled loop gives the fold's bits where its step's functions are exact
-   (Rune.jit's classes): the laws compare compiled calls on the case's functions
-   made exact, in one case of three. A compiled case builds and compiles two
-   programs, most of a law's time without a warm cache. About two thirds of
-   them compile whole, so at 100 cases a law reaches "compiled" in about 23 of
-   them, and misses it with odds of (1 - 2/9)^100, below 1e-10. *)
-let compiled_too =
-  Gen.frequency [ (2, Gen.constant false); (1, Gen.constant true) ]
+(* The laws' compiled calls *)
 
-let exactly (Case c) =
-  let x e = unsummed (exact e) in
-  Case { c with g = x c.g; k = x c.k; h = x c.h; at = Array.make 4 (Dev 0) }
+(* A compiled law's leaves lie on device 0, and its programs, each compiled
+   once, are fixed: it covers their rows. *)
+let covers_at ~compiled (Case c as case) =
+  if not compiled then rule_covers case
+  else begin
+    cover "no row" (c.n = 0);
+    cover "several rows" (c.n > 1)
+  end
 
-let law_jvp' ~jit (Case c as case) =
-  rule_covers case;
-  let o = operands c.dt c.s c.n c.ops c.at in
-  let c0 = o.(0) and c1 = o.(1) and xs = o.(2) and w = o.(3) in
-  let t = tangents c.dt c.s c.n c.tans c.at in
-  let scanned, folded, from =
-    functions ~free:c.free c.dt c.s c.n c.g c.k c.h c1
+let refused ~compiled expected =
+  if not compiled then
+    cover "a refused step" (match expected with Raised _ -> true | _ -> false)
+
+type 's dt = (float, 's, Two.d) Nx.t
+type 's three = 's dt * ('s dt * 's dt)
+
+(* A rule case's compiled calls of [c0], [xs], [w] and [c1], and the tangents of
+   the first three: jit of jvp and of grad, and the scan compiled, made from its
+   dtype, shape, rows, expressions and [free] alone. *)
+type 's calls = {
+  jit_jvp :
+    's dt ->
+    's dt ->
+    's dt ->
+    's dt ->
+    's dt ->
+    's dt ->
+    's dt ->
+    's three * 's three;
+  jit_grad : 's dt -> 's dt -> 's dt -> 's dt -> 's three;
+  jitted : 's dt -> 's dt -> 's dt -> 's dt -> 's three;
+}
+
+let fst3 (a, _, _) = a
+
+let rule_calls (type s) ~free (dt : (float, s) Nx.dtype) s n g k h : s calls =
+  let scanned c1 = fst3 (functions ~free dt s n g k h c1) in
+  let objective f p =
+    let a, (b, y) = f p in
+    Nx.add (Nx.add (Nx.sum a) (Nx.sum b)) (Nx.sum y)
   in
+  let a7 =
+    T.(
+      tensor @-> tensor @-> tensor @-> tensor @-> tensor @-> tensor @-> tensor
+      @-> returns
+            (pair
+               (pair tensor (pair tensor tensor))
+               (pair tensor (pair tensor tensor))))
+  and a4 =
+    T.(
+      tensor @-> tensor @-> tensor @-> tensor
+      @-> returns (pair tensor (pair tensor tensor)))
+  in
+  {
+    jit_jvp =
+      Rune.jit a7 (fun c0 xs w c1 t0 tx tw ->
+          Rune.jvp (triple ()) (triple ()) (scanned c1)
+            (c0, (xs, w))
+            (t0, (tx, tw)));
+    jit_grad =
+      Rune.jit a4 (fun c0 xs w c1 ->
+          Rune.grad (triple ()) (objective (scanned c1)) (c0, (xs, w)));
+    jitted = Rune.jit a4 (fun c0 xs w c1 -> scanned c1 (c0, (xs, w)));
+  }
+
+(* A compiled loop gives the fold's bits where its step's functions are exact
+   (Rune.jit's classes) and sum no terms along an axis. The compiled laws draw
+   one of a few rule programs, each compiled once, and the elements of its
+   operands and tangents, all on device 0. *)
+type rule_form =
+  | Rule_form : {
+      dt : (float, 's) Nx.dtype;
+      s : int array;
+      n : int;
+      g : Expr.t;
+      k : Expr.t;
+      h : Expr.t;
+      free : bool;
+      views : Operand.view array;  (** Of [c0], [c1], [xs], [w]. *)
+      tviews : Operand.view array;  (** Of the tangents. *)
+      calls : 's calls Lazy.t;
+      example : (Operand.t array * Operand.t array) option;
+          (** Its example's operands and tangents; the pool's if none. *)
+    }
+      -> rule_form
+
+let rule_form ?example (type s) (dt : (float, s) Nx.dtype) s n ~free g k h views
+    tviews =
+  let x e = unsummed (exact e) in
+  let g = x g and k = x k and h = x h in
+  let calls = lazy (rule_calls ~free dt s n g k h) in
+  Rule_form
+    {
+      dt;
+      s;
+      n;
+      g;
+      k;
+      h;
+      free;
+      views = Array.of_list views;
+      tviews = Array.of_list tviews;
+      calls;
+      example;
+    }
+
+let rule_forms =
+  let f32 = Nx.float32 and f64 = Nx.float64 in
+  let open Operand in
+  let plain values =
+    { view = Plain; values = Array.map (fun v -> F v) values }
+  in
+  [|
+    rule_form f32 [| 2 |] 2 ~free:false
+      (Bin (Add, X, Un (Sqrt, Un (Abs, Y))))
+      (Bin (Mul, X, Un (Recip, Y)))
+      (Bin (Sub, X, Un (Square, Y)))
+      [ Plain; Flipped; Plain; Strided ]
+      [ Plain; Plain; Plain ];
+    rule_form f64 [||] 0 ~free:true
+      (Un (Neg, Un (Sin, X)))
+      Y
+      (Bin (Minimum, X, Un (Exp, X)))
+      [ Plain; Plain; Plain; Plain ]
+      [ Plain; Plain; Plain ];
+    (* [c1]'s step reads no [c0]: it gains no tangent. *)
+    rule_form f32 [| 2; 3 |] 5 ~free:true
+      (Bin (Maximum, X, Un (Abs, Y)))
+      (Un (Neg, Un (Tanh, X)))
+      (Bin (Mul, X, Un (Log, X)))
+      [ Permuted; Plain; Broadcast; Plain ]
+      [ Plain; Flipped; Plain ];
+    rule_form f64 [| 3 |] 1 ~free:false
+      (Bin (Where_less, X, Y))
+      (Bin (Div, X, K (F 2.)))
+      (Un (Flip 0, Un (Sigmoid, X)))
+      [ Offset 1; Plain; Plain; Flipped ]
+      [ Plain; Plain; Offset 2 ];
+    rule_form f32 [| 0; 2 |] 2 ~free:false
+      (Un (Sum 1, X))
+      (Bin (Pow, Y, K (F 2.)))
+      (Un (Max 1, Y))
+      [ Plain; Plain; Plain; Plain ]
+      [ Plain; Plain; Plain ];
+    (* A step whose [c0] reads nothing. *)
+    rule_form f64 [| 2; 2 |] 2 ~free:true (K (F 0.5))
+      (Bin (Add, X, Un (Mean 1, Y)))
+      Y
+      [ Plain; Strided; Plain; Plain ]
+      [ Plain; Plain; Plain ];
+    (* A case whose compiled transpose tolk declines to link, so that the call
+       evaluates over its arguments, a cotangent of every set among them. *)
+    rule_form f32 [| 2 |] 1 ~free:false Y
+      (Un (Neg, Y))
+      (Un
+         ( Cumsum 0,
+           Bin
+             ( Add,
+               Bin
+                 ( Add,
+                   Y,
+                   Bin (Add, Bin (Mul, X, K (F 0.)), Bin (Add, Y, K (F 0.))) ),
+               Un (Cumsum 0, Un (Neg, Bin (Add, Y, X))) ) ))
+      [ Plain; Plain; Plain; Plain ]
+      [ Plain; Plain; Plain ]
+      ~example:
+        ( [|
+            plain [| 0.5; -1. |];
+            plain [| 2.; 1. |];
+            plain [| 0.25; 3. |];
+            plain [| 1.5; -2. |];
+          |],
+          [| plain [| 1.; 1. |]; plain [| 1.; 1. |]; plain [| 1.; 1. |] |] );
+  |]
+
+let rule_shapes (Rule_form f) =
+  let rows = Array.append [| f.n |] f.s in
+  ([| f.s; f.s; rows; f.s |], [| f.s; rows; f.s |])
+
+(* The rule case of a form and its operands and tangents, all on device 0. *)
+let rule_case (Rule_form f) ops tans =
+  Case
+    {
+      dt = f.dt;
+      s = f.s;
+      n = f.n;
+      g = f.g;
+      k = f.k;
+      h = f.h;
+      ops;
+      tans;
+      at = Array.make 4 (Dev 0);
+      free = f.free;
+    }
+
+let pp_rule_form_case ppf (i, ops, tans) =
+  pp_case ppf (rule_case rule_forms.(i) ops tans)
+
+let rule_form_cases =
+  let open Gen in
+  (let* i = int_range 0 (Array.length rule_forms - 1) in
+   let (Rule_form f) = rule_forms.(i) in
+   let os, ts = rule_shapes rule_forms.(i) in
+   let draw views shapes =
+     map Array.of_list
+       (all
+          (List.init (Array.length views) (fun k ->
+               Operand.draw_as views.(k) shapes.(k))))
+   in
+   let+ ops = draw f.views os and+ tans = draw f.tviews ts in
+   (i, ops, tans))
+  |> with_pp pp_rule_form_case
+
+let rule_form_examples =
+  List.init (Array.length rule_forms) (fun i ->
+      let (Rule_form f) = rule_forms.(i) in
+      match f.example with
+      | Some (ops, tans) -> (i, ops, tans)
+      | None ->
+          let os, ts = rule_shapes rule_forms.(i) in
+          let of_pool views shapes start =
+            Array.init (Array.length views) (fun k ->
+                Operand.of_pool views.(k) shapes.(k) (start + (5 * k)))
+          in
+          (i, of_pool f.views os i, of_pool f.tviews ts (i + 3)))
+
+let law_jvp_at (type s) ?(calls : s calls option) (dt : (float, s) Nx.dtype) s n
+    g k h ~free ops tans at =
+  let case = Case { dt; s; n; g; k; h; ops; tans; at; free } in
+  covers_at ~compiled:(Option.is_some calls) case;
+  let o = operands dt s n ops at in
+  let c0 = o.(0) and c1 = o.(1) and xs = o.(2) and w = o.(3) in
+  let t = tangents dt s n tans at in
+  let scanned, folded, from = functions ~free dt s n g k h c1 in
   let jvp f = Rune.jvp (triple ()) (triple ()) f (c0, (xs, w)) t in
   let both (y, t) = (bits3 y, bits3 t) in
   (* Where [c1] gains a tangent at the first step, the scan's starts from a
@@ -911,60 +1299,47 @@ let law_jvp' ~jit (Case c as case) =
             Rune.jvp p p
               (fun (c1, x) -> (c1, from c1 x))
               (c1, (c0, (xs, w)))
-              (Nx.full_at (Nx.placement c1) c.dt c.s (-0.), t)
+              (Nx.full_at (Nx.placement c1) dt s (-0.), t)
           in
           both (snd y, t))
   in
-  cover "a refused step" (match expected with Raised _ -> true | _ -> false);
+  refused ~compiled:(Option.is_some calls) expected;
   (* A carry whose step reads nothing keeps a zero tangent where the fold's has
      none. *)
-  let l = lenient ~nan:(constant c.g) in
-  let l = if constant c.g then l else bits_t in
+  let l = if constant g then lenient ~nan:true else bits_t in
   let tt = outcome_t' (Testable.pair t3 (Testable.triple l l l)) in
   equal ~msg:"eager" tt expected (outcome (fun () -> both (jvp scanned)));
-  if jit then begin
-    let a3 =
-      T.(
-        tensor @-> tensor @-> tensor @-> tensor @-> tensor @-> tensor
-        @-> returns
-              (pair
-                 (pair tensor (pair tensor tensor))
-                 (pair tensor (pair tensor tensor))))
-    in
-    let staged =
-      Rune.jit a3 (fun c0 xs w t0 tx tw ->
-          Rune.jvp (triple ()) (triple ()) scanned (c0, (xs, w)) (t0, (tx, tw)))
-    in
-    let t0, (tx, tw) = t in
-    equal ~msg:"jit of jvp" tt expected
-      (compiled ~rows:c.n (fun () ->
-           outcome (fun () -> both (staged c0 xs w t0 tx tw))));
-    let jitted =
-      Rune.jit
-        T.(
-          tensor @-> tensor @-> tensor
-          @-> returns (pair tensor (pair tensor tensor)))
-        (fun c0 xs w -> scanned (c0, (xs, w)))
-    in
-    equal ~msg:"jvp of jit" tt expected
-      (compiled ~rows:c.n (fun () ->
-           outcome (fun () ->
-               both
-                 (Rune.jvp (triple ()) (triple ())
-                    (fun (a, (b, c)) -> jitted a b c)
-                    (c0, (xs, w))
-                    t))))
-  end
+  match calls with
+  | None -> ()
+  | Some calls ->
+      let t0, (tx, tw) = t in
+      equal ~msg:"jit of jvp" tt expected
+        (compiled ~rows:n (fun () ->
+             outcome (fun () -> both (calls.jit_jvp c0 xs w c1 t0 tx tw))));
+      equal ~msg:"jvp of jit" tt expected
+        (compiled ~rows:n (fun () ->
+             outcome (fun () ->
+                 both
+                   (Rune.jvp (triple ()) (triple ())
+                      (fun (a, (b, c)) -> calls.jitted a b c c1)
+                      (c0, (xs, w))
+                      t))))
 
-let law_jvp (case, compiled) =
-  law_jvp' ~jit:false case;
-  if compiled then law_jvp' ~jit:true (exactly case)
+let law_jvp (Case c) =
+  law_jvp_at c.dt c.s c.n c.g c.k c.h ~free:c.free c.ops c.tans c.at
 
-let law_grad' ~jit (Case c as case) =
-  rule_covers case;
-  let o = operands c.dt c.s c.n c.ops c.at in
+let law_jvp_compiled (i, ops, tans) =
+  let (Rule_form f) = rule_forms.(i) in
+  law_jvp_at ~calls:(Lazy.force f.calls) f.dt f.s f.n f.g f.k f.h ~free:f.free
+    ops tans (Array.make 4 (Dev 0))
+
+let law_grad_at (type s) ?(calls : s calls option) (dt : (float, s) Nx.dtype) s
+    n g k h ~free ops tans at =
+  let case = Case { dt; s; n; g; k; h; ops; tans; at; free } in
+  covers_at ~compiled:(Option.is_some calls) case;
+  let o = operands dt s n ops at in
   let c0 = o.(0) and c1 = o.(1) and xs = o.(2) and w = o.(3) in
-  let scanned, folded, _ = functions ~free:c.free c.dt c.s c.n c.g c.k c.h c1 in
+  let scanned, folded, _ = functions ~free dt s n g k h c1 in
   let objective f p =
     let a, (b, y) = f p in
     Nx.add (Nx.add (Nx.sum a) (Nx.sum b)) (Nx.sum y)
@@ -974,99 +1349,131 @@ let law_grad' ~jit (Case c as case) =
         bits3 (Rune.grad (triple ()) (objective f) (c0, (xs, w))))
   in
   let expected = grad folded in
-  cover "a refused step" (match expected with Raised _ -> true | _ -> false);
+  refused ~compiled:(Option.is_some calls) expected;
   (* [c1]'s cotangent is a zero where the step reads no [c1]. *)
-  let unread = unread case in
-  let l = lenient ~nan:unread in
+  let l = lenient ~nan:(unread case) in
   let tt = outcome_t' (Testable.triple l l l) in
   equal ~msg:"eager" tt expected (grad scanned);
-  if jit then begin
-    let staged =
-      Rune.jit
-        T.(
-          tensor @-> tensor @-> tensor
-          @-> returns (pair tensor (pair tensor tensor)))
-        (fun c0 xs w -> Rune.grad (triple ()) (objective scanned) (c0, (xs, w)))
-    in
-    equal ~msg:"jit of grad" tt expected
-      (compiled ~rows:c.n (fun () -> outcome (fun () -> bits3 (staged c0 xs w))));
-    let jitted =
-      Rune.jit
-        T.(
-          tensor @-> tensor @-> tensor
-          @-> returns (pair tensor (pair tensor tensor)))
-        (fun c0 xs w -> scanned (c0, (xs, w)))
-    in
-    equal ~msg:"grad of jit" tt expected
-      (compiled ~rows:c.n (fun () -> grad (fun (a, (b, c)) -> jitted a b c)))
-  end
+  match calls with
+  | None -> ()
+  | Some calls ->
+      equal ~msg:"jit of grad" tt expected
+        (compiled ~rows:n (fun () ->
+             outcome (fun () -> bits3 (calls.jit_grad c0 xs w c1))));
+      equal ~msg:"grad of jit" tt expected
+        (compiled ~rows:n (fun () ->
+             grad (fun (a, (b, c)) -> calls.jitted a b c c1)))
 
-let law_grad (case, compiled) =
-  law_grad' ~jit:false case;
-  if compiled then law_grad' ~jit:true (exactly case)
+let law_grad (Case c) =
+  law_grad_at c.dt c.s c.n c.g c.k c.h ~free:c.free c.ops c.tans c.at
 
-(* A case whose compiled transpose tolk declines to link, so that the call
-   evaluates over its arguments, a cotangent of every set among them. *)
-let grad_examples =
-  let plain values =
-    { Operand.view = Plain; values = Array.map (fun v -> Operand.F v) values }
-  in
-  [
-    Case
-      {
-        dt = Nx.float32;
-        s = [| 2 |];
-        n = 1;
-        g = Y;
-        k = Un (Neg, Y);
-        h =
-          Un
-            ( Cumsum 0,
-              Bin
-                ( Add,
-                  Bin
-                    ( Add,
-                      Y,
-                      Bin (Add, Bin (Mul, X, K (F 0.)), Bin (Add, Y, K (F 0.)))
-                    ),
-                  Un (Cumsum 0, Un (Neg, Bin (Add, Y, X))) ) );
-        ops =
-          [|
-            plain [| 0.5; -1. |];
-            plain [| 2.; 1. |];
-            plain [| 0.25; 3. |];
-            plain [| 1.5; -2. |];
-          |];
-        tans = [| plain [| 1.; 1. |]; plain [| 1.; 1. |]; plain [| 1.; 1. |] |];
-        at = Array.make 4 (Dev 0);
-        free = false;
-      };
-  ]
+let law_grad_compiled (i, ops, tans) =
+  let (Rule_form f) = rule_forms.(i) in
+  law_grad_at ~calls:(Lazy.force f.calls) f.dt f.s f.n f.g f.k f.h ~free:f.free
+    ops tans (Array.make 4 (Dev 0))
 
 (* Maps: one of [c0], [xs] and [w] has lanes, the others are captured. *)
 type mapped = Carry | Rows | Capture
+
+let pp_mapped ppf m =
+  Format.pp_print_string ppf
+    (match m with Carry -> "carry" | Rows -> "rows" | Capture -> "capture")
 
 let map_cases =
   Gen.(
     pair rule_cases (pair (of_list [ Carry; Rows; Capture ]) (of_list [ 1; 3 ])))
   |> Gen.with_pp (fun ppf (c, (m, l)) ->
-      Format.fprintf ppf "%a, %d lanes of the %s" pp_case c l
-        (match m with
-        | Carry -> "carry"
-        | Rows -> "rows"
-        | Capture -> "capture"))
+      Format.fprintf ppf "%a, %d lanes of the %a" pp_case c l pp_mapped m)
 
-let law_vmap' ~jit ((Case c as case), (m, lanes)) =
-  rule_covers case;
-  cover "lanes in the carry" (m = Carry);
-  let o = operands c.dt c.s c.n c.ops c.at in
-  let c0 = o.(0) and c1 = o.(1) and xs = o.(2) and w = o.(3) in
-  let scanned, folded, _ = functions ~free:c.free c.dt c.s c.n c.g c.k c.h c1 in
-  let flat f p =
-    let a, (b, y) = f p in
+(* The function of the mapped operand [v] a map applies: the scan's outputs,
+   flattened, of [v] in [m]'s place. *)
+let mapped_at scanned m (c0, xs, w) v =
+  let flat p =
+    let a, (b, y) = scanned p in
     Nx.concatenate ~axis:0
       [ Nx.reshape [| -1 |] a; Nx.reshape [| -1 |] b; Nx.reshape [| -1 |] y ]
   in
+  match m with
+  | Carry -> flat (v, (xs, w))
+  | Rows -> flat (c0, (v, w))
+  | Capture -> flat (c0, (xs, v))
+
+(* A map form's compiled calls of the lanes [batch], [c0], [xs], [w] and [c1]:
+   jit of vmap, and the function a map applies, compiled. *)
+type 's map_calls = {
+  jit_vmap : 's dt -> 's dt -> 's dt -> 's dt -> 's dt -> 's dt;
+  at_jitted : 's dt -> 's dt -> 's dt -> 's dt -> 's dt -> 's dt;
+}
+
+type map_form =
+  | Map_form : {
+      rule : int;  (** Its rule form's position. *)
+      m : mapped;
+      lanes : int;
+      dt : (float, 's) Nx.dtype;
+      s : int array;
+      n : int;
+      g : Expr.t;
+      k : Expr.t;
+      h : Expr.t;
+      free : bool;
+      calls : 's map_calls Lazy.t;
+    }
+      -> map_form
+
+let map_form rule m lanes =
+  let (Rule_form f) = rule_forms.(rule) in
+  let s5 =
+    T.(tensor @-> tensor @-> tensor @-> tensor @-> tensor @-> returns tensor)
+  in
+  let calls =
+    lazy
+      (let at v c0 xs w c1 =
+         let scanned, _, _ =
+           functions ~free:f.free f.dt f.s f.n f.g f.k f.h c1
+         in
+         mapped_at scanned m (c0, xs, w) v
+       in
+       {
+         jit_vmap =
+           Rune.jit s5 (fun batch c0 xs w c1 ->
+               Rune.vmap' (fun v -> at v c0 xs w c1) batch);
+         at_jitted = Rune.jit s5 at;
+       })
+  in
+  Map_form
+    {
+      rule;
+      m;
+      lanes;
+      dt = f.dt;
+      s = f.s;
+      n = f.n;
+      g = f.g;
+      k = f.k;
+      h = f.h;
+      free = f.free;
+      calls;
+    }
+
+let map_forms =
+  [|
+    map_form 0 Carry 3;
+    map_form 1 Rows 1;
+    map_form 2 Capture 3;
+    map_form 3 Carry 1;
+    map_form 4 Rows 3;
+    map_form 5 Capture 1;
+  |]
+
+let law_vmap_at (type s) ?(calls : s map_calls option)
+    (dt : (float, s) Nx.dtype) s n g k h ~free ops tans at (m, lanes) =
+  let case = Case { dt; s; n; g; k; h; ops; tans; at; free } in
+  covers_at ~compiled:(Option.is_some calls) case;
+  cover "lanes in the carry" (m = Carry);
+  let o = operands dt s n ops at in
+  let c0 = o.(0) and c1 = o.(1) and xs = o.(2) and w = o.(3) in
+  let scanned, folded, _ = functions ~free dt s n g k h c1 in
   (* Lane [l] scales the mapped operand by [l + 1]. *)
   let pick = function Carry -> c0 | Rows -> xs | Capture -> w in
   let x = pick m in
@@ -1074,32 +1481,59 @@ let law_vmap' ~jit ((Case c as case), (m, lanes)) =
     Nx.stack ~axis:0
       (List.init lanes (fun l -> Nx.mul_s x (Float.of_int (l + 1))))
   in
-  let at f v =
-    match m with
-    | Carry -> flat f (v, (xs, w))
-    | Rows -> flat f (c0, (v, w))
-    | Capture -> flat f (c0, (xs, v))
-  in
   let one_by_one f =
-    Nx.stack ~axis:0 (List.init lanes (fun l -> at f (Nx.get [ l ] batch)))
+    Nx.stack ~axis:0
+      (List.init lanes (fun l -> mapped_at f m (c0, xs, w) (Nx.get [ l ] batch)))
   in
   let expected = outcome (fun () -> bits (one_by_one folded)) in
-  cover "a refused step" (match expected with Raised _ -> true | _ -> false);
+  refused ~compiled:(Option.is_some calls) expected;
   let tt = outcome_t' bits_t in
   equal ~msg:"eager" tt expected
-    (outcome (fun () -> bits (Rune.vmap' (at scanned) batch)));
-  if jit then begin
-    equal ~msg:"jit of vmap" tt expected
-      (compiled ~rows:c.n (fun () ->
-           outcome (fun () -> bits (Rune.jit' (Rune.vmap' (at scanned)) batch))));
-    equal ~msg:"vmap of jit" tt expected
-      (compiled ~rows:c.n (fun () ->
-           outcome (fun () -> bits (Rune.vmap' (Rune.jit' (at scanned)) batch))))
-  end
+    (outcome (fun () ->
+         bits (Rune.vmap' (mapped_at scanned m (c0, xs, w)) batch)));
+  match calls with
+  | None -> ()
+  | Some calls ->
+      equal ~msg:"jit of vmap" tt expected
+        (compiled ~rows:n (fun () ->
+             outcome (fun () -> bits (calls.jit_vmap batch c0 xs w c1))));
+      equal ~msg:"vmap of jit" tt expected
+        (compiled ~rows:n (fun () ->
+             outcome (fun () ->
+                 bits (Rune.vmap' (fun v -> calls.at_jitted v c0 xs w c1) batch))))
 
-let law_vmap ((case, m), compiled) =
-  law_vmap' ~jit:false (case, m);
-  if compiled then law_vmap' ~jit:true (exactly case, m)
+let law_vmap (Case c, m) =
+  law_vmap_at c.dt c.s c.n c.g c.k c.h ~free:c.free c.ops c.tans c.at m
+
+let map_form_cases =
+  let open Gen in
+  (let* j = int_range 0 (Array.length map_forms - 1) in
+   let (Map_form mf) = map_forms.(j) in
+   let (Rule_form f) = rule_forms.(mf.rule) in
+   let os, ts = rule_shapes rule_forms.(mf.rule) in
+   let draw views shapes =
+     map Array.of_list
+       (all
+          (List.init (Array.length views) (fun k ->
+               Operand.draw_as views.(k) shapes.(k))))
+   in
+   let+ ops = draw f.views os and+ tans = draw f.tviews ts in
+   (j, ops, tans))
+  |> with_pp (fun ppf (j, ops, tans) ->
+      let (Map_form mf) = map_forms.(j) in
+      Format.fprintf ppf "%a, %d lanes of the %a" pp_rule_form_case
+        (mf.rule, ops, tans) mf.lanes pp_mapped mf.m)
+
+let map_form_examples =
+  List.init (Array.length map_forms) (fun j ->
+      let (Map_form mf) = map_forms.(j) in
+      let _, ops, tans = List.nth rule_form_examples mf.rule in
+      (j, ops, tans))
+
+let law_vmap_compiled (j, ops, tans) =
+  let (Map_form f) = map_forms.(j) in
+  law_vmap_at ~calls:(Lazy.force f.calls) f.dt f.s f.n f.g f.k f.h ~free:f.free
+    ops tans (Array.make 4 (Dev 0)) (f.m, f.lanes)
 
 (* Compositions: a scan whose step scans, under jvp, grad and a map, and second
    orders through a scan. Their zeros are a loop's wherever a step reads no
@@ -1588,8 +2022,10 @@ let test_empty_carry () =
 
 (* Interface *)
 
-(* Compiled, the step is traced once and the scan is one loop of the program,
-   which runs no eager kernel, whatever its number of rows. *)
+(* The scan is one loop of the program, its step's program once whatever the
+   number of rows. Compiled, the step is traced once, at the jit's trace, and a
+   second call traces nothing, is not evaluated, the compiler declining nothing
+   the program holds, and runs no eager kernel. *)
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
 
@@ -1632,10 +2068,12 @@ let test_staged () =
   ignore (g init xs);
   equal ~msg:"one trace" int 1 !traces;
   traces := 0;
+  let calls = Rune.evaluations () in
   C.reset ();
   let c, ys = g init xs in
   equal ~msg:"no retrace" int 0 !traces;
   Compiled.here ();
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls);
   equal ~msg:"no eager kernel" int 0 (C.calls ());
   let c', ys' = f init xs in
   equal ~msg:"carry" bits_t (bits c') (bits c);
@@ -1667,19 +2105,45 @@ let spread64 = spread Nx.float64
 let jitted32 = Rune.jit' spread32
 let jitted64 = Rune.jit' spread64
 
+(* The law's programs: float64 or float32, a row shape, a number of rows, and
+   the views of the rows and the capture, each compiled once; the cases draw the
+   elements. Each program runs first as an example. *)
+let call_forms =
+  let open Operand in
+  [|
+    (false, [| 2 |], 2, Plain, Plain);
+    (true, [| 3; 2 |], 1, Flipped, Strided);
+    (false, [| 0; 2 |], 5, Plain, Plain);
+    (true, [||], 5, Strided, Plain);
+    (* Past one kernel block. *)
+    (true, [| 2; 200 |], 2, Broadcast, Flipped);
+    (false, [| 2; 3; 2 |], 1, Permuted, Offset 1);
+  |]
+
+(* Float64's call where [wide], float32's otherwise. *)
+let call_of ~wide s n xs c : call =
+  if wide then
+    Call { dt = Nx.float64; plain = spread64; jitted = jitted64; s; n; xs; c }
+  else
+    Call { dt = Nx.float32; plain = spread32; jitted = jitted32; s; n; xs; c }
+
 let call_cases =
   let open Gen in
-  (let* s = Operand.shape in
-   let* n = of_list [ 1; 2; 5 ] in
-   let* xs = Operand.draw (Array.append [| n |] s) and+ c = Operand.draw s in
-   let+ wide = bool in
-   if wide then
-     Call { dt = Nx.float64; plain = spread64; jitted = jitted64; s; n; xs; c }
-   else
-     Call { dt = Nx.float32; plain = spread32; jitted = jitted32; s; n; xs; c })
+  (let* i = int_range 0 (Array.length call_forms - 1) in
+   let wide, s, n, xv, cv = call_forms.(i) in
+   let+ xs = Operand.draw_as xv (Array.append [| n |] s)
+   and+ c = Operand.draw_as cv s in
+   call_of ~wide s n xs c)
   |> with_pp (fun ppf (Call c) ->
       Format.fprintf ppf "%a %a, %d rows in %a" Nx.pp_dtype c.dt
         Operand.pp_shape c.s c.n Operand.pp_view c.xs.view)
+
+let call_examples =
+  List.init (Array.length call_forms) (fun i ->
+      let wide, s, n, xv, cv = call_forms.(i) in
+      call_of ~wide s n
+        (Operand.of_pool xv (Array.append [| n |] s) (2 * i))
+        (Operand.of_pool cv s (i + 11)))
 
 let law_call (Call c) =
   cover "a view" (c.xs.view <> Operand.Plain);
@@ -1955,37 +2419,6 @@ type pair =
     }
       -> pair
 
-let pair_gen =
-  let open Gen in
-  let* s = of_list [ [| 1 |]; [| 3 |]; [| 2; 3 |]; [| 0 |]; [| 5; 1 |] ] in
-  (* Weighted so that each cover of [law_carries] marks about a quarter of the
-     cases or more: see [carries_count]. *)
-  let next =
-    frequency
-      [
-        (1, constant Partner);
-        (1, constant Flipped);
-        (1, constant Flipped_partner);
-        (1, constant (Scanned 0));
-        (2, constant (Scanned 2));
-        (1, constant (Iterated 0));
-        (2, constant (Iterated 2));
-        (4, constant Branched);
-        (3, constant Scattered);
-      ]
-  in
-  (* A scatter whose carry is read nowhere else takes the carry's storage. *)
-  let* nexts =
-    frequency [ (3, pair next next); (1, constant (Scattered, Flipped)) ]
-  in
-  (* A scatter needs a row to set. *)
-  let rowed n = if n = Scattered && s.(0) = 0 then Flipped_partner else n in
-  let nexts = (rowed (fst nexts), rowed (snd nexts)) in
-  let lanes = Array.append [| 2 |] s in
-  let* firsts = pair (Operand.draw lanes) (Operand.draw lanes) in
-  let+ (D.Any dt) = of_list D.all in
-  Pair { dt; s; nexts; firsts }
-
 let pp_pair ppf (Pair c) =
   let a, b = c.nexts in
   Format.fprintf ppf "%a %a: %a, %a" Nx.pp_dtype c.dt Operand.pp_shape c.s
@@ -2001,24 +2434,11 @@ type carries = {
   ps : bool array;  (** Each step's boolean, a lane's after the other's. *)
 }
 
-(* Each case compiles kernels of its own, about 50 ms of Clang on a cold cache,
-   so the law checks 50 cases. Each cover marks about a quarter of them or
-   more, so a run misses one with a chance of about 10^-6. *)
-let carries_count = 50
-
-let carries_gen =
-  let open Gen in
-  (let* pairs = pair pair_gen pair_gen in
-   let* n = frequency [ (1, constant 0); (1, constant 1); (4, constant 3) ] in
-   let* iterate = bool
-   and+ lanes = frequency [ (1, constant false); (3, constant true) ] in
-   let+ ps = array ~size:(constant (2 * n)) bool in
-   { pairs; n; iterate; lanes; ps })
-  |> with_pp (fun ppf c ->
-      Format.fprintf ppf "%d steps of a%s%s, %a; %a" c.n
-        (if c.iterate then "n iterate" else " scan")
-        (if c.lanes then " over two lanes" else "")
-        pp_pair (fst c.pairs) pp_pair (snd c.pairs))
+let pp_carries ppf c =
+  Format.fprintf ppf "%d steps of a%s%s, %a; %a" c.n
+    (if c.iterate then "n iterate" else " scan")
+    (if c.lanes then " over two lanes" else "")
+    pp_pair (fst c.pairs) pp_pair (snd c.pairs)
 
 let mask s = Nx.init Nx.bool s (fun i -> Array.fold_left ( + ) 0 i mod 2 = 0)
 
@@ -2068,17 +2488,18 @@ let covers_pair (Pair c) =
   cover "a carry read elsewhere" (a = Flipped || b = Flipped);
   cover "a zero-size carry" (Operand.numel c.s = 0)
 
-(* The loop of [c] over two pairs, compiled against eager. *)
-let agree (type v s w r) c
-    ((dx : (v, s) Nx.dtype), sx, x_nexts, fx)
-    ((dy : (w, r) Nx.dtype), sy, y_nexts, fy) =
+(* The loop of [n] steps over two pairs of these dtypes, shapes and nexts: a
+   check of the compiled loop against eager at the pairs' first values and the
+   steps' booleans, compiled at its first call. *)
+let agree (type v s w r) ~n ~iterate ~lanes
+    ((dx : (v, s) Nx.dtype), sx, x_nexts) ((dy : (w, r) Nx.dtype), sy, y_nexts)
+    =
   let na, nb = x_nexts and nc, ne = y_nexts in
   let step p ((a, b), (d, e)) =
     ((next_of na p a b, next_of nb p b a), (next_of nc p d e, next_of ne p e d))
   in
-  let n = c.n in
   let run (init, (ps, q)) =
-    if not c.iterate then
+    if not iterate then
       Rune.scan (two_pairs ()) T.tensor T.tensor
         (fun cr p ->
           let cr = step p cr in
@@ -2102,40 +2523,149 @@ let agree (type v s w r) c
       pair (two_pairs ()) (pair tensor tensor)
       @-> returns (pair (two_pairs ()) tensor))
   in
-  let made dt s k = Operand.make dt (Array.append [| 2 |] s) k in
-  let ab = (made dx sx (fst fx), made dx sx (snd fx)) in
-  let de = (made dy sy (fst fy), made dy sy (snd fy)) in
-  let lanes = Nx.create Nx.bool [| 2; n |] c.ps in
-  let qs = Nx.create Nx.bool [| 2 |] [| false; true |] in
-  let lane l =
-    let g x = Nx.get [ l ] x in
-    let (a, b), (d, e) = (ab, de) in
-    (((g a, g b), (g d, g e)), (g lanes, g qs))
+  let jitted =
+    lazy (if lanes then Rune.jit sg (Rune.vmap sg run) else Rune.jit sg run)
   in
-  let all (((a, b), (d, e)), ys) =
-    [ codes a; codes b; codes d; codes e; codes ys ]
+  fun (fx : Operand.t * Operand.t) (fy : Operand.t * Operand.t) ps ->
+    let made dt s k = Operand.make dt (Array.append [| 2 |] s) k in
+    let ab = (made dx sx (fst fx), made dx sx (snd fx)) in
+    let de = (made dy sy (fst fy), made dy sy (snd fy)) in
+    let lanes_ps = Nx.create Nx.bool [| 2; n |] ps in
+    let qs = Nx.create Nx.bool [| 2 |] [| false; true |] in
+    let lane l =
+      let g x = Nx.get [ l ] x in
+      let (a, b), (d, e) = (ab, de) in
+      (((g a, g b), (g d, g e)), (g lanes_ps, g qs))
+    in
+    let all (((a, b), (d, e)), ys) =
+      [ codes a; codes b; codes d; codes e; codes ys ]
+    in
+    let stacked (((a, b), (d, e)), ys) (((a', b'), (d', e')), ys') =
+      let s u v = Nx.stack [ u; v ] in
+      (((s a a', s b b'), (s d d', s e e')), s ys ys')
+    in
+    let expected, got =
+      if not lanes then
+        ( outcome (fun () -> all (run (lane 0))),
+          compiled ~rows:n (fun () ->
+              outcome (fun () -> all (Lazy.force jitted (lane 0)))) )
+      else
+        ( outcome (fun () -> all (stacked (run (lane 0)) (run (lane 1)))),
+          compiled ~rows:n (fun () ->
+              outcome (fun () ->
+                  all (Lazy.force jitted ((ab, de), (lanes_ps, qs))))) )
+    in
+    equal (outcome_t (Testable.list codes_t)) expected got
+
+(* The law's programs: two pairs of carries, a loop and its steps, and the views
+   the first values are made in. Each program is compiled once, at the first
+   case that draws it; the cases draw a program, the first values and the steps'
+   booleans. Between them the programs hold every dtype and reach each cover of
+   the law, and each runs first as an example. *)
+type carries_form = {
+  spec : carries;  (** Its first values and booleans unused. *)
+  views : Operand.view array;  (** Of each pair's first values. *)
+  check : Operand.t * Operand.t -> Operand.t * Operand.t -> bool array -> unit;
+}
+
+let carries_form ~n ~iterate ~lanes (D.Any dx, sx, x_nexts, vx)
+    (D.Any dy, sy, y_nexts, vy) =
+  let none = { Operand.view = Plain; values = [||] } in
+  let pair dt s nexts = Pair { dt; s; nexts; firsts = (none, none) } in
+  let spec =
+    {
+      pairs = (pair dx sx x_nexts, pair dy sy y_nexts);
+      n;
+      iterate;
+      lanes;
+      ps = [||];
+    }
   in
-  let stacked (((a, b), (d, e)), ys) (((a', b'), (d', e')), ys') =
-    let s u v = Nx.stack [ u; v ] in
-    (((s a a', s b b'), (s d d', s e e')), s ys ys')
-  in
-  let expected, got =
-    if not c.lanes then
-      ( outcome (fun () -> all (run (lane 0))),
-        compiled ~rows:n (fun () ->
-            outcome (fun () -> all (Rune.jit sg run (lane 0)))) )
-    else
-      ( outcome (fun () -> all (stacked (run (lane 0)) (run (lane 1)))),
-        compiled ~rows:n (fun () ->
-            outcome (fun () ->
-                all (Rune.jit sg (Rune.vmap sg run) ((ab, de), (lanes, qs))))) )
-  in
-  equal (outcome_t (Testable.list codes_t)) expected got
+  let check = agree ~n ~iterate ~lanes (dx, sx, x_nexts) (dy, sy, y_nexts) in
+  { spec; views = [| fst vx; snd vx; fst vy; snd vy |]; check }
+
+let carries_forms =
+  let open Operand in
+  let form = carries_form in
+  [|
+    form ~n:3 ~iterate:false ~lanes:true
+      (D.Any Nx.float64, [| 3 |], (Scanned 2, Partner), (Plain, Flipped))
+      (D.Any Nx.int32, [| 2; 3 |], (Branched, Flipped), (Strided, Plain));
+    form ~n:3 ~iterate:true ~lanes:true
+      (D.Any Nx.float32, [| 1 |], (Iterated 2, Flipped_partner), (Plain, Plain))
+      (D.Any Nx.uint8, [| 5; 1 |], (Scattered, Flipped), (Broadcast, Plain));
+    form ~n:1 ~iterate:false ~lanes:false
+      (D.Any Nx.float16, [| 0 |], (Flipped, Partner), (Plain, Plain))
+      (D.Any Nx.int64, [| 3 |], (Branched, Scattered), (Plain, Offset 1));
+    form ~n:3 ~iterate:true ~lanes:false
+      (D.Any Nx.bfloat16, [| 2; 3 |], (Scattered, Branched), (Permuted, Plain))
+      (D.Any Nx.complex64, [| 1 |], (Partner, Iterated 0), (Plain, Flipped));
+    form ~n:0 ~iterate:false ~lanes:true
+      (D.Any Nx.float8_e4m3fn, [| 3 |], (Branched, Branched), (Plain, Plain))
+      (D.Any Nx.bool, [| 2; 3 |], (Scanned 0, Flipped_partner), (Plain, Strided));
+    form ~n:3 ~iterate:false ~lanes:true
+      (D.Any Nx.float8_e5m2, [| 5; 1 |], (Partner, Partner), (Flipped, Plain))
+      (D.Any Nx.uint64, [| 0 |], (Flipped, Iterated 2), (Plain, Plain));
+    form ~n:3 ~iterate:true ~lanes:true
+      (D.Any Nx.float4_e2m1fn, [| 2; 3 |], (Scanned 2, Flipped), (Plain, Plain))
+      (D.Any Nx.int16, [| 1 |], (Branched, Partner), (Plain, Plain));
+    form ~n:1 ~iterate:true ~lanes:true
+      (D.Any Nx.uint32, [| 3 |], (Iterated 0, Scattered), (Plain, Permuted))
+      (D.Any Nx.uint16, [| 2; 3 |], (Flipped_partner, Branched), (Plain, Plain));
+    form ~n:3 ~iterate:false ~lanes:false
+      (D.Any Nx.int8, [| 1 |], (Scanned 2, Scanned 2), (Plain, Plain))
+      (D.Any Nx.int4, [| 5; 1 |], (Scattered, Flipped), (Plain, Flipped));
+    form ~n:3 ~iterate:false ~lanes:true
+      (D.Any Nx.uint4, [| 0 |], (Branched, Flipped), (Plain, Plain))
+      (D.Any Nx.complex128, [| 3 |], (Iterated 2, Partner), (Offset 2, Plain));
+    form ~n:0 ~iterate:true ~lanes:true
+      (D.Any Nx.bit, [| 2; 3 |], (Partner, Branched), (Plain, Plain))
+      (D.Any Nx.float64, [| 5; 1 |], (Scattered, Iterated 2), (Plain, Strided));
+  |]
+
+(* Each case runs its loop eagerly, through nested loops of every dtype, which
+   costs most of the law's time once the programs are compiled. *)
+let carries_count = 50
+
+(* A case: a program, its pairs' first values, two lanes each, and the steps'
+   booleans, a lane's after the other's. *)
+let carries_case i (f1, f2, f3, f4) ps =
+  let f = carries_forms.(i) in
+  let with_firsts (Pair p) firsts = Pair { p with firsts } in
+  let x, y = f.spec.pairs in
+  { f.spec with pairs = (with_firsts x (f1, f2), with_firsts y (f3, f4)); ps }
+
+let lanes_of (Pair p) = Array.append [| 2 |] p.s
+
+let carries_gen =
+  let open Gen in
+  (let* i = int_range 0 (Array.length carries_forms - 1) in
+   let f = carries_forms.(i) in
+   let x, y = f.spec.pairs in
+   let* f1 = Operand.draw_as f.views.(0) (lanes_of x)
+   and+ f2 = Operand.draw_as f.views.(1) (lanes_of x)
+   and+ f3 = Operand.draw_as f.views.(2) (lanes_of y)
+   and+ f4 = Operand.draw_as f.views.(3) (lanes_of y) in
+   let+ ps = array ~size:(constant (2 * f.spec.n)) bool in
+   (i, carries_case i (f1, f2, f3, f4) ps))
+  |> with_pp (fun ppf (_, c) -> pp_carries ppf c)
+
+(* Each program at the pool's elements in turn, its lanes' booleans alternating
+   from opposite starts, so that both branches are taken and the lanes take
+   different ones. *)
+let carries_examples =
+  List.init (Array.length carries_forms) (fun i ->
+      let f = carries_forms.(i) in
+      let x, y = f.spec.pairs in
+      let at k p = Operand.of_pool f.views.(k) (lanes_of p) (i + (7 * k)) in
+      let n = f.spec.n in
+      let ps = Array.init (2 * n) (fun j -> j mod n mod 2 = j / n) in
+      (i, carries_case i (at 0 x, at 1 x, at 2 y, at 3 y) ps))
 
 (* Compiled, two pairs of carries whose next values read each other, through
-   nested loops, branches and scatters, give eager's bits at every dtype,
-   under a map too, whose lanes take different branches. *)
-let law_carries c =
+   nested loops, branches and scatters, give eager's bits at every dtype, under
+   a map too, whose lanes take different branches. *)
+let law_carries (i, c) =
   let (Pair x) = fst c.pairs in
   let (Pair y) = snd c.pairs in
   covers_pair (fst c.pairs);
@@ -2152,105 +2682,7 @@ let law_carries c =
     (Format.asprintf "%a" Nx.pp_dtype x.dt
     <> Format.asprintf "%a" Nx.pp_dtype y.dt);
   cover "an iterate" c.iterate;
-  agree c (x.dt, x.s, x.nexts, x.firsts) (y.dt, y.s, y.nexts, y.firsts)
-
-
-
-(* The kernels a call of [f] compiles. *)
-let kernels f = List.length (snd (Tolk.Realize.kernels f))
-
-(* The stores of the kernels a call of [f] compiles: a copy is one more, whether
-   or not its kernel runs as one with another. *)
-let stores f =
-  let in_body u =
-    List.length
-      (List.filter
-         (fun x -> Tolk.Ops.op x = Tolk.Op.Store)
-         (Tolk.Ops.toposort ~calls:Skip u))
-  in
-  (* A launch's stores lie in its members' bodies, each counted as it runs. *)
-  let count (k : Tolk.Realize.kernel) =
-    if Tolk.Shape.is_launch k.ast then
-      List.fold_left
-        (fun n m -> n + in_body (Tolk.Ops.nth m 0))
-        0 (Tolk.Ops.src k.ast)
-    else in_body k.ast
-  in
-  List.fold_left (fun n k -> n + count k) 0 (snd (Tolk.Realize.kernels f))
-
-let sig3 r = T.(tensor @-> tensor @-> tensor @-> returns r)
-
-(* A carry whose next value is a nested loop's or a branch's result is stored
-   from that result's storage, so a cycle through the result, the nested
-   construct reading the carry [b] whose next value reads [a], costs no copy:
-   the call's kernels store as many values as when the construct reads a
-   capture [z] instead. *)
-let test_cycle_storage () =
-  let a = v [| 1.; 2.; 3.; 4. |] and b = v [| 5.; 6.; 7.; 8. |] in
-  let z = v [| -1.; -2.; -3.; -4. |] in
-  let ps = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
-  let mask = Nx.create Nx.bool [| 4 |] [| true; false; false; true |] in
-  let flip x = Nx.flip x in
-  let nested =
-    [
-      ( "a scan",
-        fun _ c o ->
-          fst
-            (Rune.scan T.tensor T.tensor T.unit
-               (fun d m -> (Nx.where m o (flip d), ()))
-               ~init:c
-               (Nx.stack [ mask; Nx.logical_not mask ])) );
-      ( "an iterate",
-        fun _ c o ->
-          fst
-            (Rune.iterate
-               T.(pair tensor tensor)
-               ~max:3
-               ~until:(fun (_, i) -> Nx.greater_equal_s i 2l)
-               (fun (d, i) -> (Nx.add d o, Nx.add_s i 1l))
-               (c, Nx.scalar Nx.int32 0l)) );
-      ( "a cond",
-        fun p c o ->
-          Rune.cond T.tensor p (fun () -> Nx.add c o) (fun () -> flip c) );
-    ]
-  in
-  List.iter
-    (fun (what, inner) ->
-      let compiled reads =
-        let f a b z =
-          fst
-            (Rune.scan
-               T.(pair tensor tensor)
-               T.tensor T.unit
-               (fun (a, b) p -> ((inner p a (reads b z), a), ()))
-               ~init:(a, b) ps)
-        in
-        stores (fun () ->
-            ignore (Rune.jit (sig3 T.(pair tensor tensor)) f a b z))
-      in
-      equal ~msg:what int (compiled (fun _ z -> z)) (compiled (fun b _ -> b)))
-    nested
-
-(* A next carry that reads the carry elsewhere than its own index, a key
-   split from the carried key, is stored from the split, which the step's draw
-   reads too: its trip computes the split, the draw's output row and the
-   carry's store, and the call adds the carry's first store, the copy of rows
-   that lie 4 bytes apart and the outputs' copy out of rows 16 bytes apart. *)
-let test_split_key () =
-  let step k x =
-    let ks = Nx.Rng.split k in
-    Nx.Rng.with_key ks.(1) (fun () ->
-        (ks.(0), Nx.add x (Nx.Rng.uniform f32 [||])))
-  in
-  let f k xs = snd (Rune.scan Nx.Rng.ptree T.tensor T.tensor step ~init:k xs) in
-  let xs = v [| 1.; -1.; 1. |] in
-  let n =
-    kernels (fun () ->
-        ignore
-          (Rune.jit T.(Nx.Rng.ptree @-> tensor @-> returns tensor) f
-             (Nx.Rng.key 3) xs))
-  in
-  at_most int ~than:6 n
+  carries_forms.(i).check x.firsts y.firsts c.ps
 
 (* Memory *)
 
@@ -2467,45 +2899,21 @@ let () =
   exit
     (run "rune scan"
        [
-         group "eagerly"
+         group "a step"
            [
-             prop "a scan is its fold" cases law;
-             prop "a scan is its fold at every dtype" any_cases law_any;
              test "the step runs once per call" test_runs_once;
+             test "a step traces once under a jit" test_staged;
              test "a read raises naming the loop" test_read;
              test "a keyless draw raises naming the loop" test_keyless;
-             test "a keyed draw is the fold's" test_keyed;
-             prop
-               "a step's scope at fold_in_tensor k i is the fold with with_key \
-                (fold_in k i)"
-               scope_cases law_scoped;
              test "a carry that changes raises" test_carry_refused;
-             test "rows without a leading axis raise" test_xs_refused;
-             test "captures and nested scans" test_nested;
-           ];
-         group "constructs in steps"
-           [
-             test "detach in a step" test_detach;
-             test "lanes and lane_index raise with no map" test_no_map;
-             test "a loop counts each step's additions" test_in_loops;
-             prop "a scan adds what its fold adds" total_cases law_totals;
-             test "a scope inside a step" test_scopes_inside;
            ];
          group "transformations"
            [
              prop "derivatives and maps over views are the fold's" cases
                law_derived;
-             prop "jvp of scan is jvp of its fold"
-               (Gen.pair rule_cases compiled_too)
-               law_jvp;
-             prop
-               ~examples:(List.map (fun c -> (c, true)) grad_examples)
-               "grad of scan is grad of its fold"
-               (Gen.pair rule_cases compiled_too)
-               law_grad;
-             prop "vmap of scan is the fold per lane"
-               (Gen.pair map_cases compiled_too)
-               law_vmap;
+             prop "jvp of scan is jvp of its fold" rule_cases law_jvp;
+             prop "grad of scan is grad of its fold" rule_cases law_grad;
+             prop "vmap of scan is the fold per lane" map_cases law_vmap;
              prop "compositions are the fold's" rule_cases law_compose;
              test "a carry that gains a tangent and lanes" test_gains;
              test "additions under transformations" test_totals;
@@ -2513,26 +2921,71 @@ let () =
              test "a step that runs an iterate" test_iterate_in_step;
              test "two negative zeros sum to a negative zero" test_signs;
            ];
+         group "what reverse mode keeps"
+           [
+             test "a step's carry, but no row or capture" test_residuals;
+             test "a strided stack is read in place" test_strided_rows;
+             test "a strided row read in a nested scan" test_strided_row_nested;
+             test "a carry that sums gradients holds one gradient"
+               test_summed_gradients;
+             test "a carry that sums a stack of rows holds no other"
+               test_stacked_rows;
+           ];
+         group "draws"
+           [
+             test "a keyed draw is the fold's" test_keyed;
+             prop
+               "a step's scope at fold_in_tensor k i is the fold with with_key \
+                (fold_in k i)"
+               scope_cases law_scoped;
+             prop
+               ~examples:
+                 (List.init (Array.length scoped_forms) (fun i -> (i, i)))
+               "compiled, a step's scope at fold_in_tensor k i is the fold \
+                with with_key (fold_in k i)"
+               scoped_form_cases law_scoped_compiled;
+           ];
+         group "scan"
+           [
+             prop "a scan is its fold" cases law;
+             prop "a scan is its fold at every dtype" any_cases law_any;
+             test "rows without a leading axis raise" test_xs_refused;
+             test "captures and nested scans" test_nested;
+             test "detach in a step" test_detach;
+             test "lanes and lane_index raise with no map" test_no_map;
+             test "a loop counts each step's additions" test_in_loops;
+             prop "a scan adds what its fold adds" total_cases law_totals;
+             test "a scope inside a step" test_scopes_inside;
+           ];
          group "compiled"
            [
-             prop "a scan of exact functions is its fold" cases law_compiled;
+             prop ~examples:form_examples
+               "a scan of exact functions is its fold" form_cases law_compiled;
+             prop ~examples:form_examples
+               "jit of jvp over views is the fold's, of exact functions"
+               form_cases law_derived_compiled;
+             prop ~examples:rule_form_examples
+               "jvp is the fold's, jit of jvp and jvp of jit" rule_form_cases
+               law_jvp_compiled;
+             prop ~examples:rule_form_examples
+               "grad is the fold's, jit of grad and grad of jit" rule_form_cases
+               law_grad_compiled;
+             prop ~examples:map_form_examples
+               "vmap is the fold per lane, jit of vmap and vmap of jit"
+               map_form_cases law_vmap_compiled;
              test "nested scans of one row or more" test_nested_compiled;
-             test ~timeout:60. "scans in a chain each run once" test_chained;
+             test "scans in a chain each run once" test_chained;
              test "carries in a cycle" test_cycle;
-             prop ~count:carries_count
+             prop ~count:carries_count ~examples:carries_examples
                "carries through nested loops, branches and scatters" carries_gen
                law_carries;
-             test "a cycle through a nested result costs no copy"
-               test_cycle_storage;
-             test "a next key split from the carry is stored once"
-               test_split_key;
              test "rows computed from constants" test_constant_rows;
              test "constant and empty outputs" test_constant_outputs;
              test "a take at constant indices" test_constant_take;
              test "an empty carry beside rows" test_empty_carry;
              test "a carry summing a stack's gradient" test_stacked_carry;
-             test "a step traces once and compiles one loop" test_staged;
-             prop "a compiled call in a step computes its own bits" call_cases
+             prop ~examples:call_examples
+               "a compiled call in a step computes its own bits" call_cases
                law_call;
            ];
          group "constants and placements"
@@ -2541,15 +2994,5 @@ let () =
              test "a constant addition before a placed one"
                test_constant_addition;
              test "leaves that swap devices of one set" test_swap;
-           ];
-         group "memory"
-           [
-             test "what reverse mode keeps" test_residuals;
-             test "a strided stack is read in place" test_strided_rows;
-             test "a strided row read in a nested scan" test_strided_row_nested;
-             test "a carry that sums gradients holds one gradient"
-               test_summed_gradients;
-             test "a carry that sums a stack of rows holds no other"
-               test_stacked_rows;
            ];
        ])
