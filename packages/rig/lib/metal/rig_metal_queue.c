@@ -141,9 +141,13 @@ static const char *begin(struct rig_metal_queue *q) {
     if (b.status < MTLCommandBufferStatusCommitted) return;
     int failed = b.status == MTLCommandBufferStatusError;
     char why[512];
+    /* In MTLCommandBufferErrorDomain the code is the error's
+       MTLCommandBufferError, which the description, at times the GPU
+       driver's own text, may not name. */
     if (failed)
-      snprintf(why, sizeof why, "the GPU's work failed: %s",
-               b.error.localizedDescription.UTF8String ?: "no reason given");
+      snprintf(why, sizeof why, "the GPU's work failed: %s (%s, code %ld)",
+               b.error.localizedDescription.UTF8String ?: "no reason given",
+               b.error.domain.UTF8String ?: "no domain", (long)b.error.code);
     rig_metal_ring_complete(&run->ring, slot, failed ? why : NULL,
                                host_ns(b.GPUStartTime), host_ns(b.GPUEndTime));
     if (atomic_load_explicit(&run->open_values, memory_order_relaxed) > 0) {

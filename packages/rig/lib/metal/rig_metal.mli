@@ -416,7 +416,11 @@ val capability : t -> Rig_metal_abi.t
     command buffer holding its work failed, such as one Metal ended because
     it ran too long ([MTLCommandBufferErrorTimeout]) or kept the GPU from the
     display. The reason is then ["the GPU's work failed: "] followed by
-    Metal's description of the error. Either way no handler stores into the
+    Metal's description of the error and, in parentheses, its domain and
+    code, such as ["(MTLCommandBufferErrorDomain, code 2)"]. In that domain
+    the code is an [MTLCommandBufferError], here
+    [MTLCommandBufferErrorTimeout], which the description, at times the GPU
+    driver's own text, may not name. Either way no handler stores into the
     word again ({!section-work}), and the word stays below every value the
     failed command buffer held until {!stop}.
 
@@ -456,7 +460,8 @@ val capability : t -> Rig_metal_abi.t
     - Apple's Metal framework headers (macOS 26 SDK): [MTLCommandQueue.h]
       ([newCommandQueueWithMaxCommandBufferCount:], [addResidencySet:]),
       [MTLCommandBuffer.h] ([addCompletedHandler:], [status], [error],
-      [MTLCommandBufferErrorTimeout], [GPUStartTime], [GPUEndTime],
+      [MTLCommandBufferErrorDomain], [MTLCommandBufferErrorTimeout],
+      [GPUStartTime], [GPUEndTime],
       [computeCommandEncoderWithDispatchType:]), [MTLFence.h],
       [MTLResidencySet.h] ([addAllocation:], [commit]), [MTLDevice.h]
       ([newBufferWithLength:options:],
