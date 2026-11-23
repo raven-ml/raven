@@ -617,7 +617,8 @@ static size_t sysctl_bytes(const char *name) {
    macOS, the L3 (hw.l3cachesize) where there is one, as on Intel Macs, else
    the performance cores' L2 (hw.perflevel0.l2cachesize): 12 MiB on the M1
    Max, whose 48 MB system cache macOS does not report. [Rig.cache_bytes]
-   of the host and of a software device is this value. */
+   of the host and of a software device is this value. On other systems, such
+   as FreeBSD, 0. */
 static size_t host_cache_bytes(void) {
   size_t most = 0;
 #if defined(__APPLE__)
@@ -626,10 +627,14 @@ static size_t host_cache_bytes(void) {
 #elif defined(__linux__)
   for (int i = 0;; i++) {
     char name[64];
-    snprintf(name, sizeof name,
-             "/sys/devices/system/cpu/cpu0/cache/index%d/size", i);
+    int at = snprintf(name, sizeof name,
+                      "/sys/devices/system/cpu/cpu0/cache/index%d", i);
+    if (access(name, F_OK) != 0) break;
+    /* An index whose size the firmware does not describe, as on some arm64
+       machines, has no size file: the next may have one. */
+    snprintf(name + at, sizeof name - at, "/size");
     FILE *f = fopen(name, "r");
-    if (f == NULL) break;
+    if (f == NULL) continue;
     unsigned long n = 0;
     char unit = 'K';
     int read = fscanf(f, "%lu%c", &n, &unit);
