@@ -3613,6 +3613,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On nx.cpu, complex64 arrays at a 4-byte offset, as views and slices make,
+  are moved at their own alignment by `Nx.where`, `Nx.take`, `Nx.scatter`,
+  fills, `Nx.sort` and arm64's copies. Their 8-byte accesses were undefined
+  C, and trap where a misaligned load does, as on riscv64.
 - On nx.cpu, `Nx.concatenate` and `Nx.stack` of over 17 pieces, maps of over 18
   operands or of 18 reading a coordinate, and `Nx.attention` of long programs or
   many loads no longer leak a table or free it twice when other domains collect.
