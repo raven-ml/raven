@@ -274,13 +274,15 @@ let mutations fmt =
     Gen.(
       quad
         (of_list ~pp:pp_golden files)
-        (option (pair nat (int_range 0 255)))
+        (option (pair Lz_support.anywhere (int_range 0 255)))
         length length)
   in
   (* Slices and slice lengths of one byte, which drawn cases reach one time in
-     eight or nine. *)
+     eight or nine, and the first and last bytes changed. *)
+  let g = text_100 fmt.name in
   prop fmt.name
-    ~examples:[ (text_100 fmt.name, None, 1, 1) ]
+    ~examples:
+      [ (g, None, 1, 1); (g, Some (0, 7), 7, 7); (g, Some (-1, 7), 7, 7) ]
     gen
     (fun (g, mutation, cut, most) ->
       let data =
@@ -289,7 +291,7 @@ let mutations fmt =
         | Some (i, c) ->
             let b = Bytes.of_string (data g) in
             if Bytes.length b > 0 then
-              Bytes.set b (i mod Bytes.length b) (Char.chr c);
+              Bytes.set b (Lz_support.position i (Bytes.length b)) (Char.chr c);
             Bytes.to_string b
       in
       let room = (2 * String.length (raw g)) + (64 * kib) in

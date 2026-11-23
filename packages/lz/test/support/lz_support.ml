@@ -542,6 +542,11 @@ let short =
 let short_edges = [ Short 1; Part 0 ]
 let capacity k = function Short d -> max 0 (k - d) | Part p -> k * p / 1000
 
+(* Changed bytes *)
+
+let anywhere = Windtrap.Gen.int_range 0 ((1 lsl 30) - 1)
+let position i n = ((i mod n) + n) mod n
+
 (* Checksum paths *)
 
 type path = { name : string; run : int32 -> Lz.bigbytes -> int32 }
@@ -782,16 +787,21 @@ let mutations codec =
         done)
   in
   let pool = Array.of_list (files 65536) in
+  let edges =
+    match pool with [||] -> [] | _ -> [ (0, 0, '\x07'); (0, -1, '\x07') ]
+  in
   let replaced =
     Windtrap.prop "a byte replaced decodes or fails inside the input"
-      Windtrap.Gen.(triple (int_range 0 (max 0 (Array.length pool - 1))) nat char)
+      ~examples:edges
+      Windtrap.Gen.(
+        triple (int_range 0 (max 0 (Array.length pool - 1))) anywhere char)
       (fun (k, at, c) ->
         if Array.length pool = 0 then Windtrap.skip ();
         let g = pool.(k) in
         let data = Lazy.force g.data in
         Windtrap.assume (String.length data > 0);
         let b = Bytes.of_string data in
-        Bytes.set b (at mod String.length data) c;
+        Bytes.set b (position at (String.length data)) c;
         let m = Bytes.to_string b in
         within m (decode g m))
   in

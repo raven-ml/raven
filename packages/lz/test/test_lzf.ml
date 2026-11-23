@@ -200,16 +200,22 @@ let refusals =
 
 (* Changed bytes *)
 
+(* The first and last bytes of a block of 1000 bytes of text, changed. *)
+let edges =
+  let r = Corpus (Text, 1000) in
+  [ (r, 0, 0x80); (r, -1, 1) ]
+
 let changed =
   group "changed bytes"
     [
       prop "a block with a byte changed decodes as the model decodes it"
-        (Gen.triple recipe Gen.small_int (Gen.int_range 1 255))
+        ~examples:edges
+        (Gen.triple recipe anywhere (Gen.int_range 1 255))
         (fun (r, i, mask) ->
           let s = build r in
           assume (s <> "");
           let z = Bytes.of_string (lzf s) in
-          let i = (i land max_int) mod Bytes.length z in
+          let i = Lz_support.position i (Bytes.length z) in
           Bytes.set z i (Char.chr (Char.code (Bytes.get z i) lxor mask));
           let z = Bytes.to_string z in
           let cap = 2 * String.length s + 16 in

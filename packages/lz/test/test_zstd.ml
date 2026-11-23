@@ -589,16 +589,19 @@ let change =
     frequency
       [
         (1, constant Same);
-        (2, map (fun (i, c) -> Replace (i, c)) (pair nat char));
-        (1, map (fun i -> Cut_at i) nat);
+        (2, map (fun (i, c) -> Replace (i, c)) (pair Lz_support.anywhere char));
+        (1, map (fun i -> Cut_at i) Lz_support.anywhere);
       ])
 
 let pp_change ppf (k, change) =
-  Format.fprintf ppf "%s, %s" (Lazy.force goldens).(k).Lz_support.file
+  let g = (Lazy.force goldens).(k) in
+  let n = String.length (Lazy.force g.Lz_support.data) in
+  Format.fprintf ppf "%s, %s" g.file
     (match change with
     | Same -> "unchanged"
-    | Replace (i, c) -> Printf.sprintf "byte %d replaced by %C" i c
-    | Cut_at i -> Printf.sprintf "cut at %d" i)
+    | Replace (i, c) ->
+        Printf.sprintf "byte %d replaced by %C" (Lz_support.position i n) c
+    | Cut_at i -> Printf.sprintf "cut at %d" (Lz_support.position i n))
 
 let changed k change =
   let data = Lazy.force (Lazy.force goldens).(k).Lz_support.data in
@@ -606,9 +609,9 @@ let changed k change =
   match change with
   | Replace (i, c) ->
       let b = Bytes.of_string data in
-      Bytes.set b (i mod n) c;
+      Bytes.set b (Lz_support.position i n) c;
       Bytes.to_string b
-  | Cut_at i -> String.sub data 0 (i mod n)
+  | Cut_at i -> String.sub data 0 (Lz_support.position i n)
   | Same -> data
 
 let golden_index = Gen.int_range 0 (List.length (Lz_support.goldens_of "zstd") - 1)
@@ -809,6 +812,15 @@ let paths =
     Format.fprintf ppf "%a, %s" pp_change (k, change)
       (if exact then "exact" else "roomy")
   in
+  (* The first and last bytes of a frame of 100 bytes, replaced. *)
+  let edges () =
+    let gs = Lazy.force goldens in
+    let k = ref 0 in
+    Array.iteri
+      (fun i g -> if g.Lz_support.file = "text_100.zst3" then k := i)
+      gs;
+    [ (!k, Replace (0, '\x07'), true); (!k, Replace (-1, '\x07'), true) ]
+  in
   group "paths"
     [
       test "the generic path is first" (fun () ->
@@ -816,7 +828,7 @@ let paths =
             (match Lz_support.zstd_paths with
             | (p : Lz_support.zstd_path) :: _ -> Some p.label
             | [] -> None));
-      prop "every path decodes as Lz.Zstd.decode"
+      prop "every path decodes as Lz.Zstd.decode" ~examples:(edges ())
         Gen.(with_pp pp (triple golden_index change bool))
         (fun (k, change, exact) ->
           let data = changed k change in

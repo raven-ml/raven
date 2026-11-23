@@ -161,8 +161,8 @@ let room = 512 * kib
 
 type change =
   | Same
-  | Flip of int * int  (* Byte, bit. *)
-  | Replace of int * char
+  | Flip of int * int (* Byte, from the end when negative; bit. *)
+  | Replace of int * char (* Byte, as [Flip]'s; its new value. *)
   | Cut of int  (* The first bytes kept. *)
   | Append of string
   | Then of Lz_support.golden  (* Another golden of the format after it. *)
@@ -192,11 +192,12 @@ let pp_case ppf { golden; change; sizes; ends } =
 
 let apply { golden; change; _ } =
   let d = data golden in
+  let at i = Lz_support.position i (String.length d) in
   let set i c = String.mapi (fun j x -> if j = i then c else x) d in
   match change with
   | Same -> d
-  | Flip (i, b) -> set i (Char.chr (Char.code d.[i] lxor (1 lsl b)))
-  | Replace (i, c) -> set i c
+  | Flip (i, b) -> set (at i) (Char.chr (Char.code d.[at i] lxor (1 lsl b)))
+  | Replace (i, c) -> set (at i) c
   | Cut i -> String.sub d 0 i
   | Append s -> d ^ s
   | Then g -> d ^ data g
@@ -339,9 +340,12 @@ let case fmt =
     frequency
       [
         (2, constant `Same);
-        (2, map (fun (i, b) -> `Flip (i, b)) (pair nat (int_range 0 7)));
-        (1, map (fun (i, c) -> `Replace (i, c)) (pair nat char));
-        (2, map (fun i -> `Cut i) nat);
+        ( 2,
+          map
+            (fun (i, b) -> `Flip (i, b))
+            (pair Lz_support.anywhere (int_range 0 7)) );
+        (1, map (fun (i, c) -> `Replace (i, c)) (pair Lz_support.anywhere char));
+        (2, map (fun i -> `Cut i) Lz_support.anywhere);
         (1, map (fun s -> `Append s) (string_of ~size:(int_range 1 16) char));
         (1, map (fun i -> `Then i) (int_range 0 (Array.length others - 1)));
       ]
@@ -351,9 +355,9 @@ let case fmt =
     let change =
       match change with
       | `Same -> Same
-      | `Flip (i, b) -> Flip (i mod n, b)
-      | `Replace (i, c) -> Replace (i mod n, c)
-      | `Cut i -> Cut (i mod n)
+      | `Flip (i, b) -> Flip (Lz_support.position i n, b)
+      | `Replace (i, c) -> Replace (Lz_support.position i n, c)
+      | `Cut i -> Cut (Lz_support.position i n)
       | `Append s -> Append s
       | `Then i -> Then others.(i)
     in
@@ -387,6 +391,7 @@ let examples fmt =
     at Same [ 0; 7 ] After;
     at (Cut 40) [ 7 ] Within;
     at (Replace (0, '\x07')) [ 7 ] Within;
+    at (Flip (-1, 0)) [ 7 ] Within;
   ]
 
 let whole_equals_steps fmt =

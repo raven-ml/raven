@@ -349,15 +349,21 @@ let refusals =
 
 (* Changed bytes *)
 
+(* The first and last bytes of a stream of 1000 bytes of text, changed. *)
+let edges =
+  let r = Corpus (Text, 1000) and e = List.hd encodings in
+  [ (r, e, 0, 0x80); (r, e, -1, 1) ]
+
 let changed =
   group "changed bytes"
     [
       prop "a stream with a byte changed decodes as the model decodes it"
-        (Gen.quad recipe encoding Gen.small_int (Gen.int_range 1 255))
+        ~examples:edges
+        (Gen.quad recipe encoding anywhere (Gen.int_range 1 255))
         (fun (r, (_, last, flush), i, mask) ->
           let s = build r in
           let z = Bytes.of_string (lzw ~last ~flush s) in
-          let i = (i land max_int) mod Bytes.length z in
+          let i = Lz_support.position i (Bytes.length z) in
           Bytes.set z i (Char.chr (Char.code (Bytes.get z i) lxor mask));
           let z = Bytes.to_string z in
           let cap = (2 * String.length s) + 16 in

@@ -132,6 +132,19 @@ val capacity : int -> short -> int
 (** [capacity k s] is the size of the destination [s] describes for an
     output of [k] bytes, in \[0, [k]) when [k] is positive. *)
 
+(** {1 Changed bytes} *)
+
+val anywhere : int Windtrap.Gen.t
+(** [anywhere] draws an integer in \[0, 2{^ 30}) uniformly, a position in an
+    input of [n] bytes as [anywhere mod n]: each byte of an input of a few MiB
+    is drawn about as often as any other, its end as often as its header. A law
+    that changes bytes passes the first and last as [~examples]. *)
+
+val position : int -> int -> int
+(** [position i n] is the byte [i] names in an input of [n] bytes, [n] positive:
+    [i mod n], counted from the end when [i] is negative. An example names the
+    last byte as [-1], without building the input. *)
+
 (** {1 Checksum paths}
 
     The CRC-32 and Adler-32 paths this host can run, each with the
