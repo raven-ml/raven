@@ -440,7 +440,8 @@ let severed_mid_frame () =
 
 (* The second message waits behind the frame. Once the failed sender released
    the link, and while it is held there, its peer reads the stream to its end:
-   the frame's bytes, cut, and no message or abort after them. *)
+   the frame's bytes, cut, and no message or abort after them. The other link's
+   peer reads its abort meanwhile, within the bound, as in [stalled_rail]. *)
 let stalled_mid_frame () =
   with_scene ~role:Wire.Controller @@ fun s ->
   let stop = beating s.p in
@@ -450,12 +451,13 @@ let stalled_mid_frame () =
   Probe.arm Cut;
   let returned = mid_frame s in
   equal ~msg:"the failed sender is held" bool true (Probe.held ());
+  let received = spawn (fun () -> frames ~wait:patience s.q) in
   let rest = read_all s.p in
   Probe.resume ();
   equal ~msg:"the bytes after the copy's" (option string) None (stray 'x' rest);
   less ~msg:"the frame's bytes the peer read" int ~than:(large - 4096)
     (String.length rest);
-  woke stalled_cause;
+  woke ~received:(received ()) stalled_cause;
   after_bound t0;
   returned stalled_cause
 
@@ -483,7 +485,11 @@ let severed_rail () =
 (* A drop waits behind the transfer. While the failed sender is held once it
    released the link, its peer reads what the stream holds, and the rest once
    the job has failed: the transfer's bytes, cut, and no message or abort after
-   them. *)
+   them. The job failed before the hold, so the other link's peer reads its
+   abort meanwhile, within the bound: a peer that reads nothing for the bound
+   may miss it ([Rig_remote]'s failure section), since a connection closed over
+   the peer's beats resets, and Windows then drops what the peer had not
+   read. *)
 let stalled_rail () =
   with_scene @@ fun s ->
   let stop = beating s.p in
@@ -495,13 +501,14 @@ let stalled_rail () =
   e.ready 1;
   let dropped = spawn (fun () -> Link.drop s.l 7) in
   equal ~msg:"the failed sender is held" bool true (Probe.held ());
+  let received = spawn (fun () -> frames ~wait:patience s.q) in
   let n, held =
     match header s.p with
     | Some (k, n) when k = k_rail -> (n, read_all s.p)
     | _ -> fail "the peer was sent no rail frame"
   in
   Probe.resume ();
-  woke stalled_cause;
+  woke ~received:(received ()) stalled_cause;
   after_bound t0;
   let rest = held ^ read_all s.p in
   equal ~msg:"the bytes after the transfer's" (option string) None
