@@ -15,7 +15,7 @@
     The C stubs read some fields by position, so their order is fixed.
     [rig_memory.c] reads, for the readers and claims [rig.h] declares, the
     fields of {!buffer} and {!memory}, those of {!alloc} up to [entry], those
-    of {!entry} up to [pages], and those of {!device} up to [opened], and
+    of {!entry} up to [pages], and those of {!device} up to [machine], and
     takes [Here] to be {!machine}'s first constant constructor.
     [rig.h]'s [enum rig_access] lists {!access}'s constructors in order. A
     change of either changes the C too. *)
@@ -121,20 +121,23 @@ type local = Local : 'a Type.Id.t * 'a -> local
     and its {!live} state. The table of devices holds it at its index until
     a later device takes its slot. C reads its first four fields by position
     ([rig_memory.c]'s [DEVICE_] constants), so they stay first and in this
-    order. [live] comes next: its first field is a custom block that polymorphic
-    equality cannot compare, so [(=)] raises there, as {!Rig.Buffer.t} states,
+    order. Polymorphic equality walks them first, as {!Rig.Buffer.t} states:
+    [index] and [opened] tell any two devices apart, so it finds two devices
+    unequal before it walks a [machine] that names another device, which it
+    would refuse. [live] comes next: its first field is a custom block that
+    polymorphic equality cannot compare, so [(=)] raises there on one device,
     before it walks a value the device keeps that leads back to the device, such
     as a submission among its [locals], round which it would run until its stack
     ran out. A new field goes anywhere after [live]. *)
 type device = {
   index : int;
       (** Its slot, its index in the table of devices, [0] for the host. *)
-  name : string;
-      (** The opener's name, followed by ["@machine"] on another machine. *)
-  machine : machine;  (** The machine it belongs to. *)
   opened : int;
       (** The open that made it, unique for the process. The open takes it
           after its slot, so a later device of the slot has a larger one. *)
+  name : string;
+      (** The opener's name, followed by ["@machine"] on another machine. *)
+  machine : machine;  (** The machine it belongs to. *)
   live : live;  (** Its state. *)
   kind : kind;  (** What it is, with the module and handle that run it. *)
   arch : string;  (** Its architecture, as its driver names it. *)

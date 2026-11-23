@@ -177,6 +177,29 @@ let distinct =
     let h = B.create Rig.host 16 in
     (h, require_some (B.borrow (memory "buffer:compare-borrow") h))
   in
+  (* An empty buffer, which holds no memory, of a device of another machine,
+     closed, and one of the device opened again under its name, which took its
+     slot. *)
+  let slot_again () =
+    let far =
+      Result.get_ok
+        (Rig.open_host ~machine:"buffer-compare-far"
+           (P.opener "buffer:compare-far-host" (P.make ())))
+    in
+    let beside () =
+      Result.get_ok
+        (Rig.open_ ~machine:far (P.opener "buffer:compare-far" (P.make ())))
+    in
+    let d = beside () in
+    let a = B.create d 0 in
+    let reached = submit (Sub.make d [||]) in
+    Rig.Point.wait reached;
+    Rig.close d;
+    Gc.full_major ();
+    let b = B.create (beside ()) 0 in
+    is_none ~msg:"the closed device's slot passed on" (Rig.Point.device reached);
+    (a, b)
+  in
   let bigarray () =
     let a = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 4 in
     Bigarray.Array1.fill a 'b';
@@ -201,6 +224,8 @@ let distinct =
     ("buffers of two devices", Two_devices, fun () ->
         (B.create Rig.host 64, B.create (memory "buffer:compare-other") 64));
     ("a buffer and its borrow", Two_devices, borrowed);
+    ("buffers of two devices of one slot of another machine", Two_devices,
+     slot_again);
     ("two strings' buffers", One_device, fun () ->
         two (fun () -> B.of_string "abc"));
     ("two bigarrays' buffers", One_device, fun () -> two bigarray);

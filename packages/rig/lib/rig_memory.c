@@ -68,10 +68,10 @@ value caml_rig_set_bytes(value v_b, value v_j, value v_n, value v_c) {
    immediate [Unleased] or a borrow's block [Lease { count; why; ... }], its
    allocation { owner; host; count; generation; why; entry; token; keep;
    ... }, the allocation's entry { owner; backing; bytes; access; stamps;
-   ... } and a device { index; name; machine; opened; ... }, as rig's Def
+   ... } and a device { index; opened; name; machine; ... }, as rig's Def
    module lays them out. */
 
-enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_OPENED };
+enum { DEVICE_INDEX, DEVICE_OPENED, DEVICE_NAME, DEVICE_MACHINE };
 enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
 enum { MEMORY_DEV, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE, MEMORY_ALLOC,
        MEMORY_LEASE };
