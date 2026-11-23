@@ -1,9 +1,10 @@
 embed, posterior and generate read objects from the Multimodal Universe's
 files and run the transformer of --model, here the narrow one cache.exe stores as
-aion-base's weights, over Flux_g, Xp_bp, Xp_rp and Z.
+aion-base's weights, over Flux_g, Xp_bp, Xp_rp and Z. The cache's root is
+relative: a native Windows program reads no /cygdrive path.
 
   $ ./cache.exe ../upstream/transformer.safetensors hub/huggingface
-  $ export RAVEN_CACHE_ROOT=$PWD/hub
+  $ export RAVEN_CACHE_ROOT=hub
   $ aion () { ../../bin/main.exe "$@"; }
   $ ls=../mmu/legacysurvey.h5 gaia=../mmu/gaia.h5
 
@@ -238,10 +239,14 @@ tells from p.
   $ ./npz.exe chi2 z5.npz p.npz 1
   the draws' frequencies differ from p: chi2 above its 0.999 quantile
 
-A path to an existing file is the file, even where it holds :/.
+A path to an existing file is the file, even where it holds :/, as an
+absolute path does on Windows, where no file name holds a colon.
 
-  $ mkdir x: && cp $gaia x:/gaia.h5
-  $ aion embed --gaia x:/gaia.h5 --out x.npz
+  $ case $(uname -s) in
+  >   CYGWIN* | MINGW* | MSYS*) cp $gaia g.h5 && p=$(cygpath -m "$PWD")/g.h5 ;;
+  >   *) mkdir x: && cp $gaia x:/gaia.h5 && p=x:/gaia.h5 ;;
+  > esac
+  $ aion embed --gaia "$p" --out x.npz
   embed: 4 objects in 1 batches; of rows 0:4, 0 without a partner in every source, 0 without a present input
 
 Refusals.
