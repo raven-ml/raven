@@ -224,6 +224,7 @@ let raise_in_devices () =
    connect at once only on Linux and macOS: Windows tries it again for about
    2 s, which over every allocation of a connect passed 1000 s. *)
 let with_closing_address f =
+  Rig_support.needs_loopback ();
   let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
   Unix.bind fd (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
@@ -375,6 +376,7 @@ let no_agent : (Rig_remote.agent, string) result = Error "not returned"
 (* A listen cut at each of its allocations by an exception there and at each
    one after it: a listen that raised holds no descriptor. *)
 let raise_in_listen () =
+  Rig_support.needs_loopback ();
   let held () =
     match Rig_support.descriptors () with
     | Some n -> n

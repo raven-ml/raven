@@ -188,6 +188,7 @@ let tests =
     (fun ((module G : Gpu), held) ->
       let check cut () =
         if not (G.present ()) then skip ~reason:("no " ^ G.class_ ^ " GPU") ();
+        Rig_support.needs_loopback ();
         equal (list string)
           [
             "arrived 0, done false";

@@ -53,6 +53,7 @@ let str s =
   Bytes.to_string n ^ s
 
 let connected () =
+  Rig_support.needs_loopback ();
   let listener = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.bind listener (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
   Unix.listen listener 1;

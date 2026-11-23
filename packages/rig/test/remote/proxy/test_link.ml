@@ -96,6 +96,7 @@ let pp_bytes ppf s =
 (* Sockets and threads *)
 
 let loopback () =
+  Rig_support.needs_loopback ();
   let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
   Unix.listen l 1;
@@ -1683,6 +1684,7 @@ let ready_after_release () =
 
 let ready_receive_only () =
   Rig_support.needs_fork ();
+  Rig_support.needs_loopback ();
   match Unix.fork () with
   | 0 -> (
       try

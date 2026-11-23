@@ -528,6 +528,13 @@ val needs_fork : unit -> unit
     child can inherit one that another thread held, and hang. A test calls it
     before it forks. *)
 
+val needs_loopback : unit -> unit
+(** [needs_loopback ()] skips the running test where the system refuses this
+    process a TCP socket bound to [127.0.0.1], as opam's sandbox on macOS does:
+    rig's remote machines, here played by local processes, reach each other
+    through such sockets. A test calls it before it binds or starts an
+    agent. *)
+
 val resident : unit -> int
 (** [resident ()] is this process's resident memory in bytes: its working set
     on Windows. *)

@@ -98,6 +98,7 @@ let child_text fd =
 (* Starts an agent of the key in [file], with the variables [vars] added to its
    environment, as its process and the pipe of its output. *)
 let spawn ?(mode = "") ?(vars = []) ?(input = Unix.stdin) file =
+  Rig_support.needs_loopback ();
   let r, w = Unix.pipe ~cloexec:true () in
   let args = [| agent_exe; file; mode |] in
   let pid =
@@ -443,9 +444,12 @@ let copy_on_host ~value ~bytes (src, src_at) (dst, dst_at) =
 
 (* [in_child what f] is [f ()], run in a forked child, so that what one
    attempt leaves, a failed job of the process among it, never changes the
-   next one. It fails with the child's failure. *)
+   next one. It fails with the child's failure. Every job reaches its agents
+   through the loopback: it skips where the system refuses it, before the
+   fork, since a skip in the child would be its failure. *)
 let in_child what f =
   Rig_support.needs_fork ();
+  Rig_support.needs_loopback ();
   let r, w = Unix.pipe ~cloexec:true () in
   match Unix.fork () with
   | 0 ->

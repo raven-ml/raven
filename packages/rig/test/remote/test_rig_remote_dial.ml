@@ -31,6 +31,7 @@ external await_socket : int -> int -> seen = "rig_dial_probe_await_socket"
 (* A loopback listener whose backlog is full, with the connections that fill
    it: a connection to it waits. *)
 let full () =
+  Rig_support.needs_loopback ();
   let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
   Unix.listen l 0;

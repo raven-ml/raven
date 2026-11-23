@@ -48,6 +48,7 @@ let wrong_key () =
 
 (* A port nothing listens at: one the system gave and took back. *)
 let unreachable () =
+  Rig_support.needs_loopback ();
   let s = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.bind s (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
   let port =
@@ -1185,6 +1186,7 @@ let agent_killed () =
 
 (* A port nothing listens at. *)
 let dead_port () =
+  Rig_support.needs_loopback ();
   let s = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.bind s (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
   let port =
@@ -1195,8 +1197,9 @@ let dead_port () =
   Unix.close s;
   port
 
+(* [vars] makes the variables as the test runs, which binds a dead port. *)
 let failed_start (vars, affix) =
-  let code, report, said = ended (launch vars "close") in
+  let code, report, said = ended (launch (vars ()) "close") in
   equal ~msg:"exit code" int 1 code;
   (match report with
   | [ l ] -> starts_with ~msg:"the report" ~prefix:("failed " ^ affix) l
@@ -1206,14 +1209,16 @@ let failed_start (vars, affix) =
   | ls -> failf "said [%s]" (String.concat "; " ls)
 
 let bad_starts =
-  let vars ?(agents = "m1=127.0.0.1:1") ?(key = hex_key) () =
+  let vars ?(agents = "m1=127.0.0.1:1") ?(key = hex_key) () () =
     [
       ("RIG_REMOTE_REPORT", "3");
       ("RIG_REMOTE_AGENTS", agents);
       ("RIG_REMOTE_KEY", key);
     ]
   in
-  let dead host = Printf.sprintf "m1=%s:%d" host (dead_port ()) in
+  let dead host () =
+    vars ~agents:(Printf.sprintf "m1=%s:%d" host (dead_port ())) () ()
+  in
   let unbracketed s =
     Printf.sprintf
       "RIG_REMOTE_AGENTS: %S: write an IPv6 address in brackets, as \
@@ -1221,11 +1226,9 @@ let bad_starts =
       s
   in
   [
-    ("nothing listens", (vars ~agents:(dead "127.0.0.1") (), "m1: "));
-    ( "nothing listens at an IPv6 address",
-      (vars ~agents:(dead "[::1]") (), "m1: ") );
-    ( "nothing listens at a host name",
-      (vars ~agents:(dead "localhost") (), "m1: ") );
+    ("nothing listens", (dead "127.0.0.1", "m1: "));
+    ("nothing listens at an IPv6 address", (dead "[::1]", "m1: "));
+    ("nothing listens at a host name", (dead "localhost", "m1: "));
     ("no name", (vars ~agents:"127.0.0.1:1" (), "RIG_REMOTE_AGENTS"));
     ("no port", (vars ~agents:"m1=127.0.0.1" (), "RIG_REMOTE_AGENTS"));
     ( "an IPv6 address, no port",
@@ -1240,7 +1243,8 @@ let bad_starts =
     ( "a key not hexadecimal",
       (vars ~key:(String.make 64 'x') (), "RIG_REMOTE_KEY") );
     ( "no key",
-      ( [ ("RIG_REMOTE_REPORT", "3"); ("RIG_REMOTE_AGENTS", "m1=127.0.0.1:1") ],
+      ( (fun () ->
+          [ ("RIG_REMOTE_REPORT", "3"); ("RIG_REMOTE_AGENTS", "m1=127.0.0.1:1") ]),
         "RIG_REMOTE_KEY" ) );
   ]
 
@@ -1521,6 +1525,7 @@ let served_together () =
 (* A kind named twice raises before serve waits for a controller; a serve that
    waited instead fails the test after 5 s. *)
 let kind_twice () =
+  Rig_support.needs_loopback ();
   match Rig_remote.listen ~key:(as_key key) "127.0.0.1" 0 with
   | Error why -> fail why
   | Ok a ->
@@ -1542,6 +1547,7 @@ let kind_twice () =
 (* With RIG_REMOTE_REPORT naming no descriptor, serve answers Error at once and
    listens no more: a connection to its port is refused. *)
 let bad_report () =
+  Rig_support.needs_loopback ();
   match Rig_remote.listen ~key:(as_key key) "127.0.0.1" 0 with
   | Error why -> fail why
   | Ok a -> (

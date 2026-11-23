@@ -55,6 +55,7 @@ let why = "the test fails the job"
    which Windows' loopback otherwise grows to megabytes its peer has not
    read. *)
 let connected () =
+  Rig_support.needs_loopback ();
   let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.setsockopt_int l Unix.SO_RCVBUF 4096;
   Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));

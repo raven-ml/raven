@@ -920,6 +920,24 @@ let needs_fork () =
     Windtrap.skip
       ~reason:"GCC's AddressSanitizer holds no allocator lock across fork" ()
 
+(* The system's refusal of a socket bound to the loopback, if it refuses one:
+   EPERM or EACCES, where any other answer leaves the test to fail. *)
+let refused () =
+  let s = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Fun.protect ~finally:(fun () -> Unix.close s) @@ fun () ->
+  match Unix.bind s (Unix.ADDR_INET (Unix.inet_addr_loopback, 0)) with
+  | () -> None
+  | exception Unix.Unix_error (((Unix.EPERM | Unix.EACCES) as e), _, _) ->
+      Some (Unix.error_message e)
+
+let needs_loopback () =
+  match refused () with
+  | None -> ()
+  | Some why ->
+      Windtrap.skip
+        ~reason:("the system refuses a socket on the loopback: " ^ why)
+        ()
+
 external recv_timeout : Unix.file_descr -> float -> unit
   = "rig_test_recv_timeout"
 

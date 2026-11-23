@@ -459,6 +459,7 @@ let raised_break = "raised " ^ Printexc.to_string Sys.Break
 let in_child_break f =
   if not Rig_support.sees_waits then
     skip ~reason:"the system does not show a thread's waits" ();
+  Rig_support.needs_loopback ();
   in_child @@ fun () ->
   Sys.catch_break true;
   let fd, peer = connected () in

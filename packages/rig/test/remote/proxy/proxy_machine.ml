@@ -24,6 +24,7 @@ let patience = 5.
    listener's small receive buffer, which Windows' loopback otherwise grows to
    megabytes its peer has not read. *)
 let connected () =
+  Rig_support.needs_loopback ();
   let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Fun.protect
     ~finally:(fun () -> Unix.close l)

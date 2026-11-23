@@ -67,7 +67,8 @@
  (foreign_stubs
   (language c)
   (names dial_probe_stubs))
- (libraries rig_remote rig_remote_job threads.posix unix windtrap))
+ (libraries rig_remote rig_remote_job rig_support threads.posix unix
+  windtrap))
 
 ; test_rig_remote_rail holds a queue of this machine's AMD or NV GPU.
 

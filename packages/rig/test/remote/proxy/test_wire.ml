@@ -47,6 +47,7 @@ let pp_bytes ppf s =
 
 (* A connected pair of loopback TCP sockets. *)
 let connected () =
+  Rig_support.needs_loopback ();
   let l = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
   Fun.protect
     ~finally:(fun () -> Unix.close l)
