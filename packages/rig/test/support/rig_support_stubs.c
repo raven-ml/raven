@@ -48,6 +48,10 @@
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <sys/syscall.h>
+#elif defined(__FreeBSD__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
 #elif defined(__linux__)
 #include <errno.h>
 #include <sys/resource.h>
@@ -2181,6 +2185,13 @@ value rig_test_resident(value unit) {
   fclose(f);
   if (read != 2) caml_failwith("reading /proc/self/statm failed");
   return Val_long((intnat)resident * sysconf(_SC_PAGESIZE));
+#elif defined(__FreeBSD__)
+  struct kinfo_proc p;
+  size_t len = sizeof p;
+  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, (int)getpid()};
+  if (sysctl(mib, 4, &p, &len, NULL, 0) != 0)
+    caml_failwith("sysctl kern.proc.pid failed");
+  return Val_long((intnat)p.ki_rssize * sysconf(_SC_PAGESIZE));
 #else
   caml_failwith("no resident memory on this system");
 #endif

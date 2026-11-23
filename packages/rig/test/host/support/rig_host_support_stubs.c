@@ -23,6 +23,12 @@
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#elif defined(__FreeBSD__)
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
+#include <unistd.h>
 #else
 #include <inttypes.h>
 #include <stdio.h>
@@ -68,6 +74,34 @@ value rig_host_test_executable(value v_a) {
   return Val_bool(r == KERN_SUCCESS &&
                   at <= (mach_vm_address_t)Long_val(v_a) &&
                   (info.protection & VM_PROT_EXECUTE) != 0);
+#elif defined(__FreeBSD__)
+  /* The process's mappings (kern.proc.vmmap), records of their own sizes. The
+     table may grow between the sizing call and the read: a third more room,
+     as libutil's kinfo_getvmmap gives it. */
+  uintptr_t a = (uintptr_t)Long_val(v_a);
+  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_VMMAP, (int)getpid()};
+  size_t len = 0;
+  if (sysctl(mib, 4, NULL, &len, NULL, 0) != 0)
+    caml_failwith("rig_host_test_executable: sysctl kern.proc.vmmap failed");
+  len = len * 4 / 3;
+  char *table = malloc(len);
+  if (table == NULL) caml_raise_out_of_memory();
+  if (sysctl(mib, 4, table, &len, NULL, 0) != 0) {
+    free(table);
+    caml_failwith("rig_host_test_executable: sysctl kern.proc.vmmap failed");
+  }
+  int x = 0;
+  for (size_t at = 0; at < len;) {
+    struct kinfo_vmentry *e = (struct kinfo_vmentry *)(table + at);
+    if (e->kve_structsize == 0) break;
+    if (e->kve_start <= a && a < e->kve_end) {
+      x = (e->kve_protection & KVME_PROT_EXEC) != 0;
+      break;
+    }
+    at += e->kve_structsize;
+  }
+  free(table);
+  return Val_bool(x);
 #else
   uintptr_t a = (uintptr_t)Long_val(v_a), lo, hi;
   char perms[5];

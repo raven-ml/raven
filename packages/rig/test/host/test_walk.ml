@@ -25,11 +25,7 @@ let exe =
   let e = Sys.executable_name in
   if Filename.is_relative e then Filename.concat (Sys.getcwd ()) e else e
 
-let obj =
-  lazy
-    (S.fixture
-       ~dir:Filename.(concat (dirname (dirname exe)) "fixtures")
-       "affine")
+let obj = lazy (S.fixture ~dir:"../fixtures" "affine")
 
 let lines path = In_channel.with_open_text path In_channel.input_lines
 
