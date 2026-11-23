@@ -1608,31 +1608,44 @@ let test_staging_pressure () =
       ignore (Sys.opaque_identity (B.create ~memory:Pinned d (64 lsl 20))));
   burst_landed dsts
 
-(* Staging memory keeps the halves that later copies use, and returns those
-   that as many later takes as it has halves did not take, without waiting
-   for a collection. Copies between host memory off a page and [d], whose
-   memory the host does not address, stage through the host's halves, each
-   mapped on [d] at its first use. After a burst of three, three copies in
-   turn put their bytes one after the other in one half, the two halves they
-   passed by go back with their mappings at the next drain, and a second
-   burst maps two new halves. *)
-let test_staging_window () =
-  let d, p = P.open_ ~host_visible:false "buffer:staging-window" in
+(* Copies several at a time over and over keep their staging memory. Two domains
+   copy at once from [d], whose memory the host does not address, to host memory
+   off a page, each held at [p]'s gate until both wait there for [d]'s leg into
+   a half of the host's: each takes a half, since a device writes only a half
+   whose work is done. Eight copies in turn then put their bytes in one half,
+   passing the other by, and the next pair takes both again. [d] maps each half
+   once, at its first use: after the first round, no round maps a new one. The
+   host's staging memory starts empty. *)
+let test_staging_pairs () =
+  Rig.free_cache Rig.host;
+  let d, p = P.open_ ~host_visible:false "buffer:staging-pairs" in
   let maps () = List.length (P.host_maps p) in
-  let srcs = sources d and later = sources d in
-  let first = burst_from p srcs in
-  let after_burst = maps () in
-  List.iter
-    (fun c -> B.copy ~src:(off_page 64 c) ~dst:(B.create d 64))
-    [ 'x'; 'y'; 'z' ];
-  equal ~msg:"maps of copies in turn" int after_burst (maps ());
-  ignore (B.create Rig.host 0);
-  equal ~msg:"halves mapped once the copies in turn return" int 1
-    (List.length (List.filter (( = ) (32 lsl 20)) (P.outstanding p)));
-  let second = burst_from p later in
-  equal ~msg:"maps of the second burst" int (after_burst + 2) (maps ());
-  burst_landed first;
-  burst_landed second
+  let pair () =
+    let srcs = [ on d 'a'; on d 'b' ] in
+    let dsts = List.map (fun _ -> off_page 64 '\000') srcs in
+    P.gate p;
+    let copier src dst = Domain.spawn (fun () -> B.copy ~src ~dst) in
+    let copiers = List.map2 copier srcs dsts in
+    Support.await "two copies waiting" (fun () -> P.sleepers p = 2);
+    P.open_gate p;
+    List.iter Domain.join copiers;
+    equal ~msg:"the pair's bytes" (list string)
+      [ String.make 64 'a'; String.make 64 'b' ]
+      (List.map bytes dsts)
+  in
+  let round () =
+    pair ();
+    String.iter
+      (fun c -> B.copy ~src:(off_page 64 c) ~dst:(B.create d 64))
+      "stuvwxyz";
+    ignore (B.create Rig.host 0)
+  in
+  round ();
+  let first = maps () in
+  for _ = 1 to 3 do
+    round ()
+  done;
+  equal ~msg:"halves mapped after the first round" int first (maps ())
 
 (* Copies from host memory off a page that the host writes into staging
    memory put their pieces one after the other in one half, and wait for no
@@ -2607,8 +2620,8 @@ let tests =
           test_staging_kept;
         test "staging memory's free halves return under pressure"
           test_staging_pressure;
-        test "staging memory returns the halves later copies pass by"
-          test_staging_window;
+        test "copies several at a time over and over keep their halves"
+          test_staging_pairs;
         test "a loss with the staging memory leaves other copies working"
           test_staging_after_loss;
         test "a staged copy gives its halves back on every exit"
