@@ -41,6 +41,14 @@ module Tiny_elf : sig
       Raises [Invalid_argument] if an element of [params] is no parameter. *)
 end
 
+(** {1:uncomputable Kernels a device cannot compute} *)
+
+exception Uncomputable of { device : string; reason : string }
+(** [Uncomputable { device; reason }] is raised where the device named [device]
+    ({!Ops.type-device}) cannot compute a kernel the compiler would give it.
+    [reason] says why and names the device, as in
+    ["a kernel on CPU, where rig links no host code for ppc64le"]. *)
+
 (** {1:renderers Renderers} *)
 
 val renderer : Helpers.Target.t -> (Renderer.t, string) result

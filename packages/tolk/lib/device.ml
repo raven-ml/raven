@@ -7,6 +7,13 @@
 
 let strf = Printf.sprintf
 
+exception Uncomputable of { device : string; reason : string }
+
+let () =
+  Printexc.register_printer (function
+    | Uncomputable { reason; _ } -> Some ("Tolk.Device.Uncomputable: " ^ reason)
+    | _ -> None)
+
 (* A compiled program's parameters *)
 
 module Tiny_elf = struct

@@ -22,11 +22,6 @@ open Tolk
 
 (** {1:devices Devices} *)
 
-exception Unlinked of Rig.t
-(** [Unlinked d] is raised for a host or software device [d] on which rig links
-    no host code ({!Rig.Image.links}), as on ppc64le: no compiled program runs
-    there. *)
-
 val target : Rig.t -> Helpers.Target.t
 (** [target d] is what [d]'s programs are compiled for, a function of [d] alone.
     A Metal, CUDA, AMD or NV device, as its driver declares it
@@ -49,8 +44,9 @@ val target : Rig.t -> Helpers.Target.t
     architecture names no system.
 
     Raises [Invalid_argument] if [d] runs no program: an io device, or another
-    device that no vendor claims; and {!Unlinked} if [d] is a host or software
-    device on which rig links no host code. *)
+    device that no vendor claims; and {!Tolk.Device.Uncomputable} if [d] is a
+    host or software device on which rig links no host code
+    ({!Rig.Image.links}), as on ppc64le. *)
 
 val renderer : Rig.t -> Renderer.t
 (** [renderer d] is the renderer of [d]'s {!target}, which writes the source of
@@ -343,7 +339,7 @@ val compile :
     device without a renderer or a compiler that names itself. An entry that
     does not read back is made anew and replaced.
 
-    Raises {!Unlinked} if a kernel lies on a device that {!target} raises it
-    for, a device that only holds storage being no such device; as
-    {!Tolk.Schedule.create_linear_with_vars} and {!Tolk.Jit.jit_lower} do; and
-    [Sys_error] if the entry cannot be written. *)
+    Raises {!Tolk.Device.Uncomputable} if a kernel lies on a device that
+    {!target} raises it for, a device that only holds storage being no such
+    device; as {!Tolk.Schedule.create_linear_with_vars} and
+    {!Tolk.Jit.jit_lower} do; and [Sys_error] if the entry cannot be written. *)

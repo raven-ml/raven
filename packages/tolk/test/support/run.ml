@@ -156,7 +156,7 @@ let buffer_params prg =
 let target d =
   match Tolk_engine.target d with
   | t -> t
-  | exception (Tolk_engine.Unlinked _ as e) ->
+  | exception (Device.Uncomputable _ as e) ->
       Windtrap.skip ~reason:(Printexc.to_string e) ()
 
 let renderer d =

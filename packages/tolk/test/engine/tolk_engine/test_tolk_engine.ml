@@ -73,7 +73,9 @@ let targets =
           if Rig.Image.links host then
             skip ~reason:"rig links host code here" ();
           raises_match
-            (function Engine.Unlinked d -> Rig.equal d host | _ -> false)
+            (function
+              | Device.Uncomputable { device; _ } -> device = Rig.name host
+              | _ -> false)
             (fun () -> Engine.target host));
       test "a software device compiles as the host" (fun () ->
           equal target (Run.target host) (Run.target (device "CPU:1")));

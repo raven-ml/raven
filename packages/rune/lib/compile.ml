@@ -865,20 +865,13 @@ let raises cs ok failure =
       rig = None;
     }
 
-(* [f ()], a call into tolk, declining where tolk refuses a kernel on a host or
-   software device that rig links no host code for ([Engine.Unlinked]), as on
-   ppc64le: nothing compiled runs there, so the program evaluates. *)
+(* [f ()], a call into tolk, declining where tolk finds a kernel its device
+   cannot compute ({!Tolk.Device.Uncomputable}), as on a host that rig links no
+   host code for: nothing compiled runs there, so the program evaluates. *)
 let tolk f =
   match f () with
   | v -> v
-  | exception Engine.Unlinked rig ->
-      let isa =
-        match Rig.instruction_set (Rig.host_of rig) with
-        | "" -> "an instruction set it does not know"
-        | isa -> isa
-      in
-      decline "a kernel on %s, where rig links no host code for %s"
-        (Rig.name rig) isa
+  | exception Tolk.Device.Uncomputable { reason; _ } -> decline "%s" reason
 
 let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
     (data : (d, e) Nx.Prim.data) (fail : int array -> e -> exn) =
@@ -1596,13 +1589,13 @@ let placed st env q x ys =
   in
   Array.map (fun u -> if own u then Ops.contiguous u else moved u d) ys
 
-(* Whether [rig]'s kernels compile for the host's processors. A device rig links
+(* Whether [rig]'s kernels compile for the host's processors. A host rig links
    no host code for would run host programs, and only declines once a kernel
    lands on it ({!tolk}). *)
 let on_host rig =
   match Engine.target rig with
   | t -> String.equal t.device "CPU"
-  | exception Engine.Unlinked _ -> true
+  | exception Tolk.Device.Uncomputable _ -> true
   | exception Invalid_argument _ -> false
 
 let issue st cs env (type r) base (op : r Nx.Prim.t) =
@@ -3212,7 +3205,7 @@ let search rigs ~parallel width k =
   let compiles r =
     match Engine.target r with
     | t -> t = target
-    | exception (Invalid_argument _ | Engine.Unlinked _) -> false
+    | exception (Invalid_argument _ | Tolk.Device.Uncomputable _) -> false
   in
   let rig =
     match List.find_opt compiles rigs with

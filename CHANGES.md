@@ -1683,10 +1683,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
-- `Tolk_engine.target` raises the new `Tolk_engine.Unlinked` for a host or
-  software device where rig links no host code (`Rig.Image.links`), and
-  `Tolk_engine.compile` for a kernel there; a device that only holds storage
-  compiles.
+- New `Tolk.Device.Uncomputable`, raised for a kernel its device cannot
+  compute. `Tolk_engine.target` raises it for a host or software device where
+  rig links no host code (`Rig.Image.links`), and `Tolk_engine.compile` for a
+  kernel there; a device that only holds storage compiles.
 - Under a Clang before LLVM 23, or one that names no release,
   `Compiler_cpu.clang` compiles x86_64 kernels without AVX-512
   (`-mno-avx512f`): these Clangs write the wrong truth table for some masked
