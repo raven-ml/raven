@@ -112,18 +112,23 @@ let pp_case ppf c =
     (String.concat ";" (Array.to_list (Array.map string_of_int c.batch)))
     c.seed
 
-let cases_of shapes =
+(* A seed's step that keeps its variant and flags ({!variant}, {!flag}) and its
+   factors' choice. *)
+let seed_step = 24
+
+(* [cases_of examples] draws a case of the dtype, layout, batch and shape of one
+   of [examples], each as likely, of a seed of the example's variant and flags:
+   a run lowers and compiles each example's routine once and draws its cases'
+   elements anew. *)
+let cases_of examples =
   Gen.with_pp
     (fun ppf (c, s) ->
       Format.fprintf ppf "%a %s" pp_case c
         (String.concat "x" (List.map string_of_int s)))
     (Gen.map
-       (fun (((dt, layout), batch), (shape, seed)) ->
-         ({ dt; layout; batch; seed }, shape))
-       (Gen.pair
-          (Gen.pair (Gen.pair (Gen.of_list reals) (Gen.of_list layouts))
-             (Gen.of_list [ [||]; [| 2 |] ]))
-          (Gen.pair (Gen.of_list shapes) (Gen.int_range 0 1_000_000))))
+       (fun ((c, shape), k) ->
+         ({ c with seed = c.seed + (seed_step * k) }, shape))
+       (Gen.pair (Gen.of_list examples) (Gen.int_range 1 40_000)))
 
 (* Every dtype, layout and shape, in turn. *)
 let examples shapes =
@@ -151,6 +156,15 @@ let cover_case c shape =
 
 let state c = Random.State.make [| c.seed |]
 
+(* An operand of the form of [c]'s, of [m] rows and [n] columns: its dtype,
+   layout and batch, its elements zeros. *)
+let shaped (type s) (dt : (float, s) D.t) c m n =
+  operand dt c.layout c.batch m n (fun _ _ _ -> 0.)
+
+(* Factors complete or reduced, chosen by [c]'s seed. *)
+let factors_of c =
+  if c.seed / 3 mod 2 = 1 then Nx_kernel.Complete else Nx_kernel.Reduced
+
 (* A case's variant, of three, and its flags: chosen by its seed, so that the
    examples reach each. *)
 let variant c = c.seed mod 3 = 0
@@ -173,6 +187,14 @@ let spd st n =
       done;
       !s)
 
+let cholesky_op a triangle () = linalg (Cholesky { triangle; a })
+
+let cholesky_graphs (c, shape) =
+  let (R (_, dt, _)) = c.dt in
+  let n = List.hd shape in
+  let a = shaped dt c n n in
+  [ Lowered.One (cholesky_op a Lower); Lowered.One (cholesky_op a Upper) ]
+
 let cholesky_law (c, shape) =
   let (R (_, dt, u)) = c.dt in
   let n = List.hd shape in
@@ -187,9 +209,7 @@ let cholesky_law (c, shape) =
   in
   cover "an upper triangle of NaN" (Array.exists Float.is_nan (Nx.to_array a));
   let am = of_nx a in
-  let run triangle =
-    Lowered.run (fun () -> linalg (Cholesky { triangle; a }))
-  in
+  let run triangle = Lowered.run (cholesky_op a triangle) in
   let l = { am with x = run Lower } and uf = run Upper in
   equal ~msg:"Upper is Lower's transpose" (array int64)
     (bits (transpose l).x) (bits uf);
@@ -239,6 +259,33 @@ let cholesky_zero_pivot () =
 
 (* LU *)
 
+(* The graphs of the factors, the pivots and the row order of the LU of [a],
+   each alone, as a user who reads only one computes it. *)
+let lu_factors a () =
+  let x, _, _ = linalg (Lu a) in
+  x
+
+let lu_pivots a () =
+  let _, p, _ = linalg (Lu a) in
+  p
+
+let lu_order a () =
+  let _, _, p = linalg (Lu a) in
+  p
+
+(* [factors a] is the elements of the lowered LU of [a], its pivots and its row
+   order. *)
+let factors a =
+  ( Lowered.run (lu_factors a),
+    Lowered.run (lu_pivots a),
+    Lowered.run (lu_order a) )
+
+let lu_graphs (c, shape) =
+  let (R (_, dt, _)) = c.dt in
+  let m, n = match shape with [ m; n ] -> (m, n) | _ -> assert false in
+  let a = shaped dt c m n in
+  Lowered.[ One (lu_factors a); One (lu_pivots a); One (lu_order a) ]
+
 let lu_law (c, shape) =
   let (R (_, dt, u)) = c.dt in
   let m, n = match shape with [ m; n ] -> (m, n) | _ -> assert false in
@@ -252,17 +299,7 @@ let lu_law (c, shape) =
         if zero_column && j = 0 then 0. else uniform st)
   in
   let am = of_nx a in
-  let lu, pivots, perm =
-    ( Lowered.run (fun () ->
-          let x, _, _ = linalg (Lu a) in
-          x),
-      Lowered.run (fun () ->
-          let _, p, _ = linalg (Lu a) in
-          p),
-      Lowered.run (fun () ->
-          let _, _, p = linalg (Lu a) in
-          p) )
-  in
+  let lu, pivots, perm = factors a in
   let lu = { am with x = lu } in
   for b = 0 to am.b - 1 do
     let rows = Array.init m Fun.id in
@@ -295,12 +332,7 @@ let lu_law (c, shape) =
 (* [pivots a] is the pivots and the row order of the lowered LU of [a]. *)
 let pivots rows a =
   let a = Nx.create D.Float64 [| rows; Array.length a / rows |] a in
-  ( Lowered.run (fun () ->
-        let _, p, _ = linalg (Lu a) in
-        p),
-    Lowered.run (fun () ->
-        let _, _, p = linalg (Lu a) in
-        p) )
+  (Lowered.run (lu_pivots a), Lowered.run (lu_order a))
 
 let pivot_rule () =
   (* A NaN below the diagonal is never the pivot; a tie keeps the first. *)
@@ -314,13 +346,31 @@ let pivot_rule () =
 
 (* Triangular solves *)
 
+(* The triangle, whether adjoint and whether of a unit diagonal, chosen by [c]'s
+   seed. *)
+let solve_flags c =
+  ((if flag c 0 then Nx_kernel.Upper else Lower), flag c 1, flag c 2)
+
+let solve_op (triangle, adjoint, unit_diagonal) a b () =
+  linalg (Solve_triangular { triangle; adjoint; unit_diagonal; a; b })
+
+(* The right-hand side of [a]'s batch, of [n] rows and [r] columns. *)
+let rhs (type s) (dt : (float, s) D.t) a n r f =
+  let batch = Array.sub (Nx.shape a) 0 (Array.length (Nx.shape a) - 2) in
+  operand dt Rows batch n r f
+
+let solve_graphs (c, shape) =
+  let (R (_, dt, _)) = c.dt in
+  let n, r = match shape with [ n; r ] -> (n, r) | _ -> assert false in
+  let a = shaped dt c n n in
+  [ Lowered.One (solve_op (solve_flags c) a (rhs dt a n r (fun _ _ _ -> 0.))) ]
+
 let solve_law (c, shape) =
   let (R (_, dt, u)) = c.dt in
   let n, r = match shape with [ n; r ] -> (n, r) | _ -> assert false in
   cover_case c shape;
   let st = state c in
-  let triangle = if flag c 0 then Nx_kernel.Upper else Lower in
-  let adjoint = flag c 1 and unit_diagonal = flag c 2 in
+  let ((triangle, adjoint, unit_diagonal) as flags) = solve_flags c in
   cover "upper" (triangle = Upper);
   cover "adjoint" adjoint;
   cover "unit diagonal" unit_diagonal;
@@ -334,12 +384,8 @@ let solve_law (c, shape) =
         else garbage st)
   in
   let am = of_nx a in
-  let batch = Array.sub (Nx.shape a) 0 (Array.length (Nx.shape a) - 2) in
-  let b = operand dt Rows batch n r (fun _ _ _ -> uniform st) in
-  let x =
-    Lowered.run (fun () ->
-        linalg (Solve_triangular { triangle; adjoint; unit_diagonal; a; b }))
-  in
+  let b = rhs dt a n r (fun _ _ _ -> uniform st) in
+  let x = Lowered.run (solve_op flags a b) in
   let x = mat am.b n r x in
   let t =
     init am.b n n (fun k i j ->
@@ -394,13 +440,21 @@ let columns_near ~msg ~g a q r =
     done
   done
 
+let qr_op factors a () = linalg (Qr { factors; a })
+
+let qr_graphs (c, shape) =
+  let (R (_, dt, _)) = c.dt in
+  let m, n = match shape with [ m; n ] -> (m, n) | _ -> assert false in
+  let f = qr_op (factors_of c) (shaped dt c m n) in
+  Lowered.[ One (fun () -> fst (f ())); One (fun () -> snd (f ())) ]
+
 let qr_law (c, shape) =
   let (R (_, dt, u)) = c.dt in
   let m, n = match shape with [ m; n ] -> (m, n) | _ -> assert false in
   let k = Int.min m n in
   cover_case c shape;
   let st = state c in
-  let factors = if c.seed / 3 mod 2 = 1 then Nx_kernel.Complete else Reduced in
+  let factors = factors_of c in
   cover "complete" (factors = Complete && m > n);
   let zero_column = variant c in
   cover "a zero column" (zero_column && m > 1 && n > 1);
@@ -410,14 +464,10 @@ let qr_law (c, shape) =
   in
   let am = of_nx a in
   let qc = if factors = Complete then m else k in
-  let q =
-    mat am.b m qc
-      (Lowered.run (fun () -> fst (linalg (Qr { factors; a }))))
-  in
-  let r =
-    mat am.b qc n
-      (Lowered.run (fun () -> snd (linalg (Qr { factors; a }))))
-  in
+  let qr = qr_op factors a in
+  let q = Lowered.run (fun () -> fst (qr ()))
+  and r = Lowered.run (fun () -> snd (qr ())) in
+  let q = mat am.b m qc q and r = mat am.b qc n r in
   for b = 0 to am.b - 1 do
     for i = 0 to qc - 1 do
       for j = 0 to Int.min i n - 1 do
@@ -496,12 +546,14 @@ let svd_bound u m n =
   in
   (g, near)
 
+let svd_values_op dt a () = linalg (Svd_values { dtype = dt; a })
+
 (* Matrices whose squares overflow or underflow their dtype: their values are
    eager's within the bound. *)
 let svd_extremes () =
   let check (type s) name (dt : (float, s) D.t) u m n x =
     let a = Nx.create dt [| m; n |] x in
-    let s = Lowered.run (fun () -> linalg (Svd_values { dtype = dt; a })) in
+    let s = Lowered.run (svd_values_op dt a) in
     let eager = Nx.to_array (linalg (Svd_values { dtype = dt; a })) in
     let _, near = svd_bound u m n in
     let norm = frobenius (of_nx a) 0 in
@@ -509,6 +561,17 @@ let svd_extremes () =
   in
   let st = Random.State.make [| 7 |] in
   let big scale = Array.init 12 (fun _ -> scale *. uniform st) in
+  let values dt m n =
+    Lowered.One
+      (svd_values_op dt (Nx.create dt [| m; n |] (Array.make (m * n) 0.)))
+  in
+  Lowered.prime
+    [
+      values D.Float32 1 1;
+      values D.Float32 4 3;
+      values D.Float64 1 1;
+      values D.Float64 3 4;
+    ];
   check "float32 1e-25" D.Float32 0x1p-24 1 1 [| 1e-25 |];
   check "float32 1e20" D.Float32 0x1p-24 1 1 [| 1e20 |];
   check "float32 entries near 3e19" D.Float32 0x1p-24 4 3 (big 3e19);
@@ -516,13 +579,24 @@ let svd_extremes () =
   check "float64 1e160" D.Float64 0x1p-53 1 1 [| 1e160 |];
   check "float64 entries near 1e155" D.Float64 0x1p-53 3 4 (big 1e155)
 
+(* One program computes all three results, as a caller of [Svd] would. *)
+let svd_op factors dt a () =
+  let s, u, v = linalg (Svd { factors; dtype = dt; a }) in
+  Nx.concatenate ~axis:0 [ Nx.flatten s; Nx.flatten u; Nx.flatten v ]
+
+let svd_graphs (c, shape) =
+  let (R (_, dt, _)) = c.dt in
+  let m, n = match shape with [ m; n ] -> (m, n) | _ -> assert false in
+  let a = shaped dt c m n in
+  [ Lowered.One (svd_op (factors_of c) dt a); Lowered.One (svd_values_op dt a) ]
+
 let svd_law (c, shape) =
   let (R (_, dt, u)) = c.dt in
   let m, n = match shape with [ m; n ] -> (m, n) | _ -> assert false in
   let k = Int.min m n and p = Int.max m n in
   cover_case c shape;
   let st = state c in
-  let factors = if c.seed / 3 mod 2 = 1 then Nx_kernel.Complete else Reduced in
+  let factors = factors_of c in
   cover "complete" (factors = Complete && m <> n);
   cover "wide" (m < n);
   let rank_one = variant c in
@@ -536,17 +610,12 @@ let svd_law (c, shape) =
   let am = of_nx a in
   let uc = if factors = Complete then m else k
   and vr = if factors = Complete then n else k in
-  (* One program computes all three results, as a caller of [Svd] would. *)
-  let all =
-    Lowered.run (fun () ->
-        let s, u, v = linalg (Svd { factors; dtype = dt; a }) in
-        Nx.concatenate ~axis:0 [ Nx.flatten s; Nx.flatten u; Nx.flatten v ])
-  in
+  let all = Lowered.run (svd_op factors dt a) in
   let ns = am.b * k and nu = am.b * m * uc in
   let s = Array.sub all 0 ns in
   let uu = mat am.b m uc (Array.sub all ns nu) in
   let vh = mat am.b vr n (Array.sub all (ns + nu) (am.b * vr * n)) in
-  let values = Lowered.run (fun () -> linalg (Svd_values { dtype = dt; a })) in
+  let values = Lowered.run (svd_values_op dt a) in
   equal ~msg:"values alone are Svd's" (array int64) (bits s) (bits values);
   let eager = Nx.to_array (linalg (Svd_values { dtype = dt; a })) in
   for b = 0 to am.b - 1 do
@@ -619,7 +688,7 @@ let spectrum_law (R (name, dt, u), (kind, seed)) =
         !acc)
   in
   let a = Nx.create dt [| k; k |] x in
-  let ours = Lowered.run (fun () -> linalg (Svd_values { dtype = dt; a })) in
+  let ours = Lowered.run (svd_values_op dt a) in
   let eager = Nx.to_array (linalg (Svd_values { dtype = dt; a })) in
   let _, near = svd_bound u k k in
   let norm = frobenius (of_nx a) 0 in
@@ -638,6 +707,15 @@ let spectrum_examples =
   List.concat_map
     (fun dt -> [ (dt, ("graded", 1)); (dt, ("repeated", 2)) ])
     reals
+
+(* A zero matrix of [dt] of [n] rows and columns, [b] of them where [b]. *)
+let zeros ?b dt n =
+  let batch = Option.to_list b in
+  let count = List.fold_left ( * ) (n * n) batch in
+  Nx.create dt (Array.of_list (batch @ [ n; n ])) (Array.make count 0.)
+
+let spectrum_graphs (R (_, dt, _), _) =
+  [ Lowered.One (svd_values_op dt (zeros dt 16)) ]
 
 (* A zero singular value is +0, of a zero matrix and of a zero column. *)
 let svd_zero () =
@@ -662,15 +740,31 @@ let eigh_near u n norm =
    matrices of [a], of [n] rows, read from their lower triangle, against the
    bounds: ascending values within [eigh_near] of eager's, [vᵀ v = I] and [a =
    v diag w vᵀ] within [g]. *)
+let eigh_op dt a () = linalg (Eigh { dtype = dt; a })
+let eigh_values_op dt a () = linalg (Eigh_values { dtype = dt; a })
+
+(* The eigenvalues and eigenvectors of the lowered [Eigh] of [a], each its own
+   graph. *)
+let eigh_results dt a =
+  let f = eigh_op dt a in
+  (Lowered.run (fun () -> fst (f ())), Lowered.run (fun () -> snd (f ())))
+
+(* The graphs {!eigh_holds} computes of [a]. *)
+let eigh_graphs dt a =
+  let f = eigh_op dt a in
+  Lowered.
+    [
+      One (fun () -> fst (f ()));
+      One (fun () -> snd (f ()));
+      One (eigh_values_op dt a);
+    ]
+
 let eigh_holds (type s) (dt : (float, s) D.t) u n a =
   let am = of_nx a in
   let sym = init am.b n n (fun k i j -> get am k (max i j) (min i j)) in
-  let w = Lowered.run (fun () -> fst (linalg (Eigh { dtype = dt; a }))) in
-  let v =
-    mat am.b n n
-      (Lowered.run (fun () -> snd (linalg (Eigh { dtype = dt; a }))))
-  in
-  let values = Lowered.run (fun () -> linalg (Eigh_values { dtype = dt; a })) in
+  let w, v = eigh_results dt a in
+  let v = mat am.b n n v in
+  let values = Lowered.run (eigh_values_op dt a) in
   let eager = Nx.to_array (linalg (Eigh_values { dtype = dt; a })) in
   for b = 0 to am.b - 1 do
     for i = 1 to n - 1 do
@@ -689,6 +783,11 @@ let eigh_holds (type s) (dt : (float, s) D.t) u n a =
   frobenius_near ~msg:"a = v diag w vᵀ"
     ~tol:(fun b -> (g +. (check *. nf)) *. norm b)
     (diff sym vwv)
+
+let eigh_law_graphs (c, shape) =
+  let (R (_, dt, _)) = c.dt in
+  let n = List.hd shape in
+  eigh_graphs dt (shaped dt c n n)
 
 let eigh_law (c, shape) =
   let (R (_, dt, u)) = c.dt in
@@ -811,6 +910,9 @@ let eigh_spectrum (R (name, dt, u), (kind, (n, seed))) =
   let a = Nx.create dt [| n; n |] (symmetric st kind n) in
   eigh_holds dt u n a
 
+let eigh_spectrum_graphs (R (_, dt, _), (_, (n, _))) =
+  eigh_graphs dt (zeros dt n)
+
 let slow = [ Graded; Clustered; Dominant; Gram ]
 let sizes = [ 1; 2; 3; 7; 16 ]
 
@@ -831,6 +933,9 @@ let eigh_spectrum_examples =
 (* A matrix's results are its own, bit for bit: beside a matrix that needs more
    sweeps or fails, they are those it has beside itself, in a batch of the same
    shape. *)
+let eigh_alone_graphs (R (_, dt, _), (_, (n, _))) =
+  eigh_graphs dt (zeros ~b:2 dt n)
+
 let eigh_alone (R (name, dt, _), ((ka, kb), (n, seed))) =
   cover name true;
   cover "a settled matrix beside one that rotates"
@@ -841,11 +946,10 @@ let eigh_alone (R (name, dt, _), ((ka, kb), (n, seed))) =
   let st = Random.State.make [| seed |] in
   let x = symmetric st ka n and y = symmetric st kb n in
   let pair x y = Nx.create dt [| 2; n; n |] (Array.append x y) in
-  let first k f a = Array.sub (Lowered.run (fun () -> f (linalg a))) 0 k in
   let results a =
-    ( first n fst (Eigh { dtype = dt; a }),
-      first (n * n) snd (Eigh { dtype = dt; a }),
-      first n Fun.id (Eigh_values { dtype = dt; a }) )
+    let w, v = eigh_results dt a in
+    let values = Lowered.run (eigh_values_op dt a) in
+    (Array.sub w 0 n, Array.sub v 0 (n * n), Array.sub values 0 n)
   in
   let w, v, values = results (pair x x) in
   let w', v', values' = results (pair x y) in
@@ -855,18 +959,8 @@ let eigh_alone (R (name, dt, _), ((ka, kb), (n, seed))) =
 
 let kinds = [ Graded; Clustered; Dominant; Gram; Diagonal; Nan; Infinite ]
 
-let eigh_pairs =
-  Gen.with_pp
-    (fun ppf (R (name, _, _), ((ka, kb), (n, seed))) ->
-      Format.fprintf ppf "(%s, %s beside %s, %d, %d)" name (spectrum_name ka)
-        (spectrum_name kb) n seed)
-    (Gen.pair (Gen.of_list reals)
-       (Gen.pair
-          (Gen.pair (Gen.of_list kinds) (Gen.of_list kinds))
-          (Gen.pair
-             (Gen.of_list [ 2; 3; 4; 5; 8 ])
-             (Gen.int_range 0 1_000_000))))
-
+(* Pairs of kinds of the dtype and size of one of the examples below, each as
+   likely: a run lowers and compiles each example's routines once. *)
 let eigh_pair_examples =
   let f32 = List.nth reals 0 and f64 = List.nth reals 1 in
   [
@@ -876,6 +970,19 @@ let eigh_pair_examples =
     (f32, ((Infinite, Gram), (8, 4)));
     (f64, ((Diagonal, Infinite), (2, 5)));
   ]
+
+let eigh_pairs =
+  Gen.with_pp
+    (fun ppf (R (name, _, _), ((ka, kb), (n, seed))) ->
+      Format.fprintf ppf "(%s, %s beside %s, %d, %d)" name (spectrum_name ka)
+        (spectrum_name kb) n seed)
+    (Gen.map
+       (fun ((dt, (_, (n, _))), (pair, seed)) -> (dt, (pair, (n, seed))))
+       (Gen.pair
+          (Gen.of_list eigh_pair_examples)
+          (Gen.pair
+             (Gen.pair (Gen.of_list kinds) (Gen.of_list kinds))
+             (Gen.int_range 0 1_000_000))))
 
 (* NaN in the lower triangle makes its matrix NaN in both results. *)
 let eigh_fails () =
@@ -913,18 +1020,23 @@ let eigh_extremes () =
       (gamma u (16. *. (rf +. 2.)) *. l.(b) *. Float.sqrt 2.) +. eta u
     in
     let g = gamma u (16. *. (rf +. 2.) *. (1. +. Float.sqrt 2.)) in
-    let values () = linalg (Eigh_values { dtype = dt; a = m }) in
-    values_near ~msg:name ~tol 2 (Lowered.run values) exact;
-    let eigh () = linalg (Eigh { dtype = dt; a = m }) in
-    let w = Lowered.run (fun () -> fst (eigh ())) in
+    values_near ~msg:name ~tol 2 (Lowered.run (eigh_values_op dt m)) exact;
+    let w, v = eigh_results dt m in
     values_near ~msg:(name ^ ", with vectors") ~tol 2 w exact;
-    let v = mat k 2 2 (Lowered.run (fun () -> snd (eigh ()))) in
+    let v = mat k 2 2 v in
     frobenius_near ~msg:(name ^ ": vᵀ v = I")
       ~tol:(fun _ -> g +. gamma u64 4.)
       (gram v)
   in
   let big32 = (2.5e38, 1e38) and small32 = (1e-39, 4e-40) in
   let big64 = (1.2e308, 5e307) and small64 = (1e-309, 4e-310) in
+  Lowered.prime
+    (List.concat_map
+       (fun b -> eigh_graphs D.Float32 (zeros ~b D.Float32 2))
+       [ 1; 2 ]
+    @ List.concat_map
+        (fun b -> eigh_graphs D.Float64 (zeros ~b D.Float64 2))
+        [ 1; 2 ]);
   check "float32 norm past 3.4e38" D.Float32 0x1p-24 [ big32 ];
   check "float32 subnormal" D.Float32 0x1p-24 [ small32 ];
   check "float32 both in one batch" D.Float32 0x1p-24 [ big32; small32 ];
@@ -958,6 +1070,28 @@ let eigh_32 () =
    of the same shape. A matrix is the symmetric one of {!symmetric}'s kind,
    both triangles stored, whose singular values are its eigenvalues'
    magnitudes. *)
+let svd_s dt a () =
+  let s, _, _ = linalg (Svd { dtype = dt; factors = Reduced; a }) in
+  s
+
+let svd_u dt a () =
+  let _, u, _ = linalg (Svd { dtype = dt; factors = Reduced; a }) in
+  u
+
+let svd_vh dt a () =
+  let _, _, vh = linalg (Svd { dtype = dt; factors = Reduced; a }) in
+  vh
+
+let svd_alone_graphs (R (_, dt, _), (_, (n, _))) =
+  let a = zeros ~b:2 dt n in
+  Lowered.
+    [
+      One (svd_u dt a);
+      One (svd_s dt a);
+      One (svd_vh dt a);
+      One (svd_values_op dt a);
+    ]
+
 let svd_alone (R (name, dt, _), ((ka, kb), (n, seed))) =
   cover name true;
   cover "a settled matrix beside one that rotates"
@@ -974,14 +1108,14 @@ let svd_alone (R (name, dt, _), ((ka, kb), (n, seed))) =
   in
   let x = full ka and y = full kb in
   let pair x y = Nx.create dt [| 2; n; n |] (Array.append x y) in
-  let first k f a = Array.sub (Lowered.run (fun () -> f (linalg a))) 0 k in
+  (* The first matrix's [u], [s] and [vh], each read alone as a user who reads
+     one computes it, and its values alone. *)
   let results a =
-    let s (s, _, _) = s and u (_, u, _) = u and vh (_, _, vh) = vh in
-    let svd () = P.Svd { dtype = dt; factors = Reduced; a } in
-    ( first (n * n) u (svd ()),
-      first n s (svd ()),
-      first (n * n) vh (svd ()),
-      first n Fun.id (Svd_values { dtype = dt; a }) )
+    let first k f = Array.sub (Lowered.run (f dt a)) 0 k in
+    ( first (n * n) svd_u,
+      first n svd_s,
+      first (n * n) svd_vh,
+      first n svd_values_op )
   in
   let u, s, vh, values = results (pair x x) in
   let u', s', vh', values' = results (pair x y) in
@@ -994,6 +1128,29 @@ let svd_alone (R (name, dt, _), ((ka, kb), (n, seed))) =
    settle, and its values, [-0] equal to [+0], are those of the full count of
    sweeps a device whose work is not this process's code runs. Of a batch of
    two matrices of {!symmetric}'s kinds, each read whole for the SVD. *)
+(* The results in two graphs, flattened in turn: those of the factors, and the
+   values alone. Each graph's results read [a] and [b], which share no
+   intermediate value, and none reads another's result. *)
+let stop_ops dt a b =
+  let factors () =
+    let w, v = linalg (Eigh { dtype = dt; a }) in
+    let s, u, vh = linalg (Svd { dtype = dt; factors = Reduced; a = b }) in
+    Nx.concatenate ~axis:0 (List.map Nx.flatten [ w; v; s; u; vh ])
+  in
+  let values () =
+    Nx.concatenate ~axis:0
+      (List.map Nx.flatten
+         [
+           linalg (Eigh_values { dtype = dt; a });
+           linalg (Svd_values { dtype = dt; a = b });
+         ])
+  in
+  (factors, values)
+
+let stop_graphs (R (_, dt, _), (_, (n, _))) =
+  let factors, values = stop_ops dt (zeros ~b:2 dt n) (zeros ~b:2 dt n) in
+  [ Lowered.One factors; Lowered.One values ]
+
 let stop_law (R (name, dt, _), ((ka, kb), (n, seed))) =
   cover name true;
   cover "a settled matrix beside one that rotates"
@@ -1012,25 +1169,28 @@ let stop_law (R (name, dt, _), ((ka, kb), (n, seed))) =
   let value v =
     Int64.bits_of_float (if Float.is_nan v then Float.nan else v +. 0.)
   in
-  let same msg f =
-    let fixed = Lowered.run ~local:false f and stopped = Lowered.run f in
-    equal ~msg (array int64) (Array.map value fixed) (Array.map value stopped)
+  let factors, values = stop_ops dt a b in
+  let parts lens x =
+    let at = ref 0 in
+    List.map
+      (fun len ->
+        let p = Array.sub x !at len in
+        at := !at + len;
+        Array.map value p)
+      lens
   in
-  same "w" (fun () -> fst (linalg (Eigh { dtype = dt; a })));
-  same "v" (fun () -> snd (linalg (Eigh { dtype = dt; a })));
-  same "eigenvalues alone" (fun () -> linalg (Eigh_values { dtype = dt; a }));
-  let svd () = linalg (Svd { dtype = dt; factors = Reduced; a = b }) in
-  same "s" (fun () ->
-      let s, _, _ = svd () in
-      s);
-  same "u" (fun () ->
-      let _, u, _ = svd () in
-      u);
-  same "vh" (fun () ->
-      let _, _, vh = svd () in
-      vh);
-  same "singular values alone" (fun () ->
-      linalg (Svd_values { dtype = dt; a = b }))
+  let same msgs lens f =
+    let fixed = Lowered.run ~local:false f and stopped = Lowered.run f in
+    List.iter2
+      (fun msg (f, s) -> equal ~msg (array int64) f s)
+      msgs
+      (List.combine (parts lens fixed) (parts lens stopped))
+  in
+  same
+    [ "w"; "v"; "s"; "u"; "vh" ]
+    [ 2 * n; 2 * n * n; 2 * n; 2 * n * n; 2 * n * n ]
+    factors;
+  same [ "eigenvalues alone"; "singular values alone" ] [ 2 * n; 2 * n ] values
 
 (* A compiled [Nx.eigvalsh] in a scan's step, its loop of sweeps inside the
    scan's loop of steps: each step's values are eager's within the bound, for
@@ -1102,8 +1262,10 @@ let refused () =
 
 (* Suites *)
 
-let law name ~count ?(extra = []) shapes f =
-  prop name ~count ~examples:(examples shapes @ extra) (cases_of shapes) f
+let law name ~count ?(extra = []) ~graphs shapes f =
+  let examples = examples shapes @ extra in
+  prop name ~count ~examples (cases_of examples)
+    (Lowered.primed graphs examples f)
 
 (* Complete factors of a tall and a wide matrix: q's and u's columns past [n],
    and vh's rows past [m], which no reduced factor holds. Seeds [3] and [4]
@@ -1126,58 +1288,68 @@ let () =
        [
          group "cholesky"
            [
-             law "L Lᵀ reconstructs a" ~count:4 square cholesky_law;
+             law "L Lᵀ reconstructs a" ~count:4 ~graphs:cholesky_graphs square
+               cholesky_law;
              test "a matrix that is not positive definite is NaN"
                cholesky_fails;
              test "a zero pivot of either sign is NaN" cholesky_zero_pivot;
            ];
          group "lu"
            [
-             law "L U reconstructs P a" ~count:4 general lu_law;
+             law "L U reconstructs P a" ~count:4 ~graphs:lu_graphs general
+               lu_law;
              test "pivots follow the rule" pivot_rule;
            ];
          group "solve_triangular"
            [
-             law "x solves op(a) x = b" ~count:6
+             law "x solves op(a) x = b" ~count:6 ~graphs:solve_graphs
                [ [ 0; 1 ]; [ 1; 1 ]; [ 3; 2 ]; [ 4; 0 ]; [ 5; 1 ] ]
                solve_law;
              test "a zero diagonal is NaN" solve_singular;
            ];
          group "qr"
            [
-             law "q r reconstructs a" ~count:4 ~extra:complete_examples general
-               qr_law;
+             law "q r reconstructs a" ~count:4 ~extra:complete_examples
+               ~graphs:qr_graphs general qr_law;
            ];
          group "svd"
            [
              law "u diag s vh reconstructs a" ~count:4 ~extra:complete_examples
-               general svd_law;
+               ~graphs:svd_graphs general svd_law;
              test "a matrix with an infinity is NaN" svd_fails;
              prop "graded and repeated spectra converge" ~count:2
-               ~examples:spectrum_examples spectra spectrum_law;
+               ~examples:spectrum_examples spectra
+               (Lowered.primed spectrum_graphs spectrum_examples spectrum_law);
              test "squares past the dtype's range" svd_extremes;
              test "a zero singular value is +0" svd_zero;
              prop "each matrix's results are its own, bit for bit" ~count:6
-               ~examples:eigh_pair_examples eigh_pairs svd_alone;
+               ~examples:eigh_pair_examples eigh_pairs
+               (Lowered.primed svd_alone_graphs eigh_pair_examples svd_alone);
            ];
          group "eigh"
            [
-             law "v diag w vᵀ reconstructs a" ~count:4 square eigh_law;
+             law "v diag w vᵀ reconstructs a" ~count:4 ~graphs:eigh_law_graphs
+               square eigh_law;
              test "NaN in the lower triangle is NaN" eigh_fails;
              test "norms past the dtype's range, and subnormals" eigh_extremes;
              prop "graded, clustered, dominant and Gram spectra converge"
                ~count:4 ~examples:eigh_spectrum_examples eigh_spectra
-               eigh_spectrum;
+               (Lowered.primed eigh_spectrum_graphs eigh_spectrum_examples
+                  eigh_spectrum);
              prop "each matrix's results are its own, bit for bit" ~count:6
-               ~examples:eigh_pair_examples eigh_pairs eigh_alone;
+               ~examples:eigh_pair_examples eigh_pairs
+               (Lowered.primed eigh_alone_graphs eigh_pair_examples eigh_alone);
              test "compiled in a scan's step" eigh_in_scan;
              test ~timeout:60.
                "compiled for 32 rows of float64 gives eager's eigenvalues"
                eigh_32;
            ];
          prop "stopping early gives the full count's values" ~count:6
-           ~examples:eigh_pair_examples eigh_pairs stop_law;
+           ~examples:eigh_pair_examples eigh_pairs
+           (Lowered.primed ~local:false stop_graphs eigh_pair_examples
+              (Lowered.primed stop_graphs eigh_pair_examples stop_law));
          law "Nx's values alone compiled are eager's" ~count:6
+           ~graphs:(fun _ -> [])
            (square @ general) values_law;
          test "complex operands and eig are refused" refused;
        ])
