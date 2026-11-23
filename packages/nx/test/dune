@@ -116,21 +116,20 @@
   golden/ceil_padding.golden))
 
 ; Widths past what an array holds, for a function that allocates by its
-; widths before its result exists, under an address space of 2 GB, which
-; holds the suite: a missing check then fails within the limit instead of
-; allocating the machine's memory. Only a shell's [ulimit -v] sets the limit
-; on the child, and Windows has no [sh] and macOS no dependable [ulimit -v],
-; so the suite runs on Linux alone.
+; widths before its result exists, under a limit of its address space (see
+; test_widths.ml). macOS's and Windows' limits do not bound allocations, so
+; the suite runs on Linux alone.
 
 (test
  (package nx)
  (name test_widths)
  (modules test_widths)
+ (foreign_stubs
+  (language c)
+  (names test_widths_stubs))
  (libraries nx windtrap)
  (enabled_if
-  (= %{system} linux))
- (action
-  (run sh -c "ulimit -v 2000000 && exec ./%{dep:test_widths.exe}")))
+  (= %{system} linux)))
 
 ; Checks on a device of another machine, served by rig's test agent over the
 ; loopback.
