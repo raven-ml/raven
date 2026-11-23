@@ -267,13 +267,14 @@ let bytes_of_seed seed n =
   String.init n (fun _ -> Char.chr (Random.State.int st 256))
 
 (* Every path agrees with the reference at every length to 300 and every
-   alignment to 15: the lengths cross each block and each tail of the
-   paths, whose widest step is 256 bytes. *)
+   alignment to 15: the lengths cross each block and each tail of the paths,
+   whose widest step is 256 bytes. A test sweeps them all over fixed bytes, and
+   a property draws the bytes, a length and an alignment. *)
 let short_lengths = 300
 let alignments = 16
 
 (* The views, one for each length at each alignment, are made once and take each
-   case's bytes. Each prefix's reference value is made once a case and read by
+   sweep's bytes. Each prefix's reference value is made once a case and read by
    every run: the paths of a checksum share its reference, found by its
    function. A running value's prefix extends the one before it by a byte. Made
    per run, they cost more than the runs. *)
@@ -283,12 +284,14 @@ let buffers =
          let v = Lz_support.room ~offset short_lengths in
          (v, Array.init (short_lengths + 1) (fun n -> Array1.sub v 0 n))))
 
+let fill v s = String.iteri (fun i b -> Array1.unsafe_set v i (Char.code b)) s
+
 let every_length (seed, c) =
   let s = bytes_of_seed seed short_lengths in
   let views =
     Array.map
       (fun (v, prefixes) ->
-        String.iteri (fun i b -> Array1.unsafe_set v i (Char.code b)) s;
+        fill v s;
         prefixes)
       (Lazy.force buffers)
   in
@@ -320,6 +323,22 @@ let every_length (seed, c) =
                 r.label n a got expected.(n))
           views
       done)
+    runs
+
+let sweep () = every_length (0, 0x0123_4567_89ab_cdefL)
+
+let drawn_length =
+  Gen.(
+    quad int int64 (int_range 0 short_lengths) (int_range 0 (alignments - 1)))
+
+let at_length (seed, c, n, a) =
+  let v, prefixes = (Lazy.force buffers).(a) in
+  let s = bytes_of_seed seed n in
+  fill v s;
+  List.iter
+    (fun r ->
+      let c = r.draw c in
+      equal ~msg:r.label hex (r.expect c s) (r.run c prefixes.(n)))
     runs
 
 (* Lengths to 70000 at any alignment: across Adler-32's block of 5552 bytes
@@ -425,9 +444,10 @@ let () =
                (List.hd (path_names Lz_support.crc32_paths));
              equal string "generic"
                (List.hd (path_names Lz_support.adler32_paths)));
-         prop "every length to 300 at every alignment agrees with the reference"
-           Gen.(pair int int64)
-           every_length;
+         test "every length to 300 at every alignment agrees with the reference"
+           sweep;
+         prop "the reference holds for drawn bytes, lengths and alignments"
+           drawn_length at_length;
          prop "long inputs agree with the reference" long_input long_agrees;
          cases "bytes of 255 agree with the reference"
            ~id:(Printf.sprintf "%d bytes of 255")
