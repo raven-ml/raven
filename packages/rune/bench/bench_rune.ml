@@ -2406,6 +2406,25 @@ let gpu_rows g =
               in
               fun () -> ignore (synced2 (f x)));
         };
+      (* A sigmoid of a row of 64 broadcast into each row of a 64 by 64
+         product: each thread computes the sigmoid it reads in the product's
+         kernel, where storing it first would cost a launch. *)
+      on_gpu g "sigmoid-broadcast-float32-64x64"
+        {
+          at =
+            (fun at ->
+              let v =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key 61) f32 [| 64 |])
+              and m =
+                Nx.place at
+                  (Nx.Rng.uniform ~key:(Nx.Rng.key 62) f32 [| 64; 64 |])
+              in
+              let f =
+                Rune.jit (pair_fn ()) (fun m v ->
+                    Nx.mul m (Nx.unsqueeze ~axes:[ 0 ] (Nx.sigmoid v)))
+              in
+              fun () -> ignore (synced (f m v)));
+        };
       (* Sums of 2048 rows of 8192 and of 2048 columns of 16384 float32: few
          outputs, each summed by a workgroup's threads together, which read
          consecutive addresses where they take consecutive elements of a row,
