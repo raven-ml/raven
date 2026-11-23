@@ -1578,6 +1578,34 @@ let two_carries ab =
   in
   fst (Rune.scan two t Nx.Ptree.unit step ~init:ab (Nx.zeros f32 [| 8; 1 |]))
 
+(* Scans of two carries of 1M floats over 8 trips whose next [a] is a nested
+   construct's result over the carry [b], whose next value is [a]: a cycle
+   through a cond's, a nested scan's or a nested iterate's result, which the
+   loop stores from that result's storage with no copy of its own. *)
+let cycle_through inner (a, b) =
+  let ps = Nx.create Nx.bool [| 8 |] (Array.init 8 (fun i -> i mod 2 = 0)) in
+  let step (a, b) p = ((inner p b a, a), ()) in
+  fst (Rune.scan two t Nx.Ptree.unit step ~init:(a, b) ps)
+
+let through_cond p b a =
+  Rune.cond t p (fun () -> Nx.add b a) (fun () -> Nx.flip b)
+
+let through_scan _ b a =
+  let mask = Nx.create Nx.bool [| 2; 1 |] [| true; false |] in
+  fst
+    (Rune.scan t t Nx.Ptree.unit
+       (fun d m -> (Nx.where m a (Nx.flip d), ()))
+       ~init:b mask)
+
+let through_iterate _ b a =
+  fst
+    (Rune.iterate
+       Nx.Ptree.(pair tensor tensor)
+       ~max:3
+       ~until:(fun (_, i) -> Nx.greater_equal_s i 2l)
+       (fun (d, i) -> (Nx.add d a, Nx.add_s i 1l))
+       (b, Nx.scalar Nx.int32 0l))
+
 let jit_loop_rows () =
   let carried = (normal 19 [| 1024; 1024 |], normal 20 [| 1024; 1024 |]) in
   let state k = normal k [| 64 |] in
@@ -1618,6 +1646,18 @@ let jit_loop_rows () =
        the loop's body runs them as one, under one set of lanes for both. *)
     warm "scan-two-carries-1024x1024-8-trips"
       (fun () -> Rune.jit Nx.Ptree.(two @-> returns two) two_carries)
+      (fun g -> synced_all two (g carried));
+    warm "scan-cycle-through-cond-1024x1024-8-trips"
+      (fun () ->
+        Rune.jit Nx.Ptree.(two @-> returns two) (cycle_through through_cond))
+      (fun g -> synced_all two (g carried));
+    warm "scan-cycle-through-scan-1024x1024-8-trips"
+      (fun () ->
+        Rune.jit Nx.Ptree.(two @-> returns two) (cycle_through through_scan))
+      (fun g -> synced_all two (g carried));
+    warm "scan-cycle-through-iterate-1024x1024-8-trips"
+      (fun () ->
+        Rune.jit Nx.Ptree.(two @-> returns two) (cycle_through through_iterate))
       (fun g -> synced_all two (g carried));
   ]
 
