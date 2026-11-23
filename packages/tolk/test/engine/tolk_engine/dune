@@ -51,4 +51,4 @@
  (modules test_tolk_engine_remote)
  (package tolk)
  (deps support/agent.exe)
- (libraries windtrap tolk tolk.engine rig rig_remote rig_remote_job))
+ (libraries windtrap tolk tolk.engine tolk_run rig rig_remote rig_remote_job))

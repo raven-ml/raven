@@ -2,7 +2,7 @@ open Windtrap
 open Tolk
 
 (* The host's target, as the engine gives it. *)
-let host_target = Tolk_engine.target Rig.host
+let host_target () = Run.target Rig.host
 let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 let tensor_core = Testable.make ~pp:Tc.pp ~equal:Tc.equal
 
@@ -1061,7 +1061,7 @@ let bfloat16_on_cuda =
 (* Execution *)
 
 (* The host's renderer, which [in_pieces] replaces for its test. *)
-let host = ref (lazy (Cstyle.clang host_target))
+let host = ref (lazy (Cstyle.clang (host_target ())))
 let loaded name = Run.program (Lazy.force !host) (kernel (find_case name))
 let floats xs = Array.map (fun x -> `Float x) xs
 let ints xs = Array.map (fun n -> `Int (Bigint.of_int n)) xs
@@ -1188,7 +1188,7 @@ let looped_chain n =
    that every value crosses to the statements that read it. *)
 let in_pieces f () =
   let whole = !host in
-  host := lazy (Cstyle.clang_in_pieces ~piece:1 host_target);
+  host := lazy (Cstyle.clang_in_pieces ~piece:1 (host_target ()));
   Fun.protect ~finally:(fun () -> host := whole) f
 
 (* What [looped_chain n] writes for [x] and [c]. *)

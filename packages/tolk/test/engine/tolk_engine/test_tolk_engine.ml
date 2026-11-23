@@ -35,11 +35,11 @@ let device name =
 
 let devices = device
 
-let clang = lazy (Cstyle.clang (Engine.target host))
+let clang = lazy (Cstyle.clang (Run.target host))
 
 (* [linear] compiled for the targets of [devices]. *)
 let compile ?(devices = devices) linear =
-  Realize.compile_linear ~targets:(fun n -> Engine.target (devices n)) linear
+  Realize.compile_linear ~targets:(fun n -> Run.target (devices n)) linear
 
 (* Devices *)
 
@@ -55,6 +55,8 @@ let targets =
         "the host compiles C for Clang at its arch, tuned for its own \
          processor, naming its system under Windows, whose functions follow \
          a convention of their own" (fun () ->
+          if not (Rig.Image.links host) then
+            skip ~reason:"rig links no host code here" ();
           let system = if Sys.win32 then "-windows" else "" in
           let isa = Rig.instruction_set host in
           let cpu =
@@ -67,8 +69,16 @@ let targets =
           equal target
             (host_target (isa ^ system) (cpu ^ ",tune=native"))
             (Engine.target host));
+      test
+        "where rig links no host code, the host runs no program, naming its \
+         instruction set" (fun () ->
+          if Rig.Image.links host then
+            skip ~reason:"rig links host code here" ();
+          raises_match
+            (Exn.failure ~sub:(Rig.instruction_set host))
+            (fun () -> Engine.target host));
       test "a software device compiles as the host" (fun () ->
-          equal target (Engine.target host) (Engine.target (device "CPU:1")));
+          equal target (Run.target host) (Run.target (device "CPU:1")));
       test "a software device is the host's part" (fun () ->
           equal string (Engine.part host) (Engine.part (device "CPU:1")));
       test "the disk runs no program" (fun () ->
@@ -76,6 +86,7 @@ let targets =
       test
         "a target's renderer is made once, and shared by the devices that \
          compile for it" (fun () ->
+          ignore (Run.target host);
           is_true (Engine.renderer host == Engine.renderer host);
           is_true (Engine.renderer host == Engine.renderer (device "CPU:1"));
           raises_match Exn.invalid_arg (fun () ->
@@ -353,7 +364,7 @@ let wraps_on d dt op =
   let sum x y = exec dt Add [ x; y ]
   and shifted x _ = exec dt Shr [ exec dt Shl [ x; one ]; one ] in
   let zeros dt = Array.make n (Dtype.truncate dt (`Int Bigint.zero)) in
-  let prg = Codegen.to_program (signed_kernel dt op n) (Engine.renderer d) in
+  let prg = Codegen.to_program (signed_kernel dt op n) (Run.renderer d) in
   let out =
     Run.on d prg
       [
@@ -428,12 +439,12 @@ let extreme_kernel ~opts dt =
 let extreme_program =
   let compiled = Hashtbl.create 16 in
   fun d ~opts dt ->
-    let key = (Engine.target d, opts, dt) in
+    let key = (Run.target d, opts, dt) in
     match Hashtbl.find_opt compiled key with
     | Some prg -> prg
     | None ->
         let k = extreme_kernel ~opts dt in
-        let prg = Codegen.to_program k (Engine.renderer d) in
+        let prg = Codegen.to_program k (Run.renderer d) in
         Hashtbl.replace compiled key prg;
         prg
 
@@ -573,7 +584,7 @@ let wide_count_kernel dt =
 
 let shifts_by_wide_counts d dt =
   let a = Array.of_list (edges dt) in
-  let prg = Codegen.to_program (wide_count_kernel dt) (Engine.renderer d) in
+  let prg = Codegen.to_program (wide_count_kernel dt) (Run.renderer d) in
   let out = Run.on d prg [ (0, a) ] in
   List.iteri
     (fun j c ->
@@ -672,12 +683,12 @@ let shift_counts_references dt ~wide =
 let shift_counts_program =
   let compiled = Hashtbl.create 16 in
   fun d dt ->
-    let key = (Engine.target d, dt) in
+    let key = (Run.target d, dt) in
     match Hashtbl.find_opt compiled key with
     | Some prg -> prg
     | None ->
         let prg =
-          Codegen.to_program (shift_counts_kernel dt) (Engine.renderer d)
+          Codegen.to_program (shift_counts_kernel dt) (Run.renderer d)
         in
         Hashtbl.replace compiled key prg;
         prg
@@ -837,11 +848,11 @@ let pow_kernel dt =
 let pow_program =
   let compiled = Hashtbl.create 16 in
   fun d dt ->
-    let key = (Engine.target d, dt) in
+    let key = (Run.target d, dt) in
     match Hashtbl.find_opt compiled key with
     | Some prg -> prg
     | None ->
-        let prg = Codegen.to_program (pow_kernel dt) (Engine.renderer d) in
+        let prg = Codegen.to_program (pow_kernel dt) (Run.renderer d) in
         Hashtbl.replace compiled key prg;
         prg
 
@@ -1031,7 +1042,7 @@ let long_shift_program =
     | None ->
         let prg =
           emulate_long (fun () ->
-              Codegen.to_program (long_shift_kernel dt cdt) (Engine.renderer host))
+              Codegen.to_program (long_shift_kernel dt cdt) (Run.renderer host))
         in
         Hashtbl.replace compiled (dt, cdt) prg;
         prg
@@ -3315,7 +3326,7 @@ let moves_a_grid ?(devices = devices) d () =
       (Ops.sink
          ~kernel:(Ops.kernel_info ~name:"prefix" ())
          [ Ops.end_ (Ops.store (Ops.index y [ i ]) n) [ i ] ])
-      (Engine.renderer on)
+      (Run.renderer on)
   in
   let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
   let ys = Shape.param ~shape:[ Ops.Int 4 ] ~device:d 0 Int32 in
@@ -3415,8 +3426,9 @@ let replays_a_scan =
     [ (xs, Ops.replace ~op:Param xs); (ys, Ops.replace ~op:Param ys) ]
   in
   let compiled =
-    compile ~devices
-      (Ops.substitute ~calls:Skip ~pass:Fixed_point linear parameters)
+    lazy
+      (compile ~devices
+         (Ops.substitute ~calls:Skip ~pass:Fixed_point linear parameters))
   in
   let runs =
     Gen.list ~size:(Gen.int_range 1 4)
@@ -3432,7 +3444,7 @@ let replays_a_scan =
       let s =
         Engine.link ~devices
           ~bound:[ (c, c_buffer); (zs, zs_buffer) ]
-          compiled
+          (Lazy.force compiled)
       in
       let carry = Array.copy c0 in
       List.iteri
@@ -6368,7 +6380,7 @@ let long_arange_id (n, start, step, dtype, first) =
 let arange_window ?(devices = devices) device (n, start, step, dtype, first) =
   let u = Shape.arange ~start ~step ?dtype (start + (n * step)) in
   let dtype' = Ops.dtype u in
-  let renderer = Engine.renderer (devices device) in
+  let renderer = Run.renderer (devices device) in
   if not (List.mem dtype' (Renderer.supported_dtypes renderer)) then
     skip ~reason:(Dtype.name dtype' ^ " is not supported") ();
   let out = Ops.new_buffer device 3 dtype' in
@@ -7351,7 +7363,7 @@ let timing_on name =
   match List.assoc_opt name gpu_kind with
   | Some kind ->
       let m = Gpus.gpu kind in
-      ((fun _ -> m), Engine.renderer m)
+      ((fun _ -> m), Run.renderer m)
   | None -> (devices, Lazy.force clang)
 
 (* The program of [long_axpy ()] linked on [name], and its slots. *)

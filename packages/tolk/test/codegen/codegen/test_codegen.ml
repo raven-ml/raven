@@ -2,7 +2,7 @@ open Windtrap
 open Tolk
 
 (* The host's target, as the engine gives it. *)
-let host_target = Tolk_engine.target Rig.host
+let host_target () = Run.target Rig.host
 let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* Two graphs are the same when their texts are, and a failure is the diff of
@@ -674,8 +674,8 @@ let clang_rows_lowered_to_stores =
 
 (* The host's program is linearized for the host, then compiled by
    [Run.program]. *)
-let host = lazy (Cstyle.clang host_target)
-let host_uncompiled = lazy (renderer_for host_target)
+let host = lazy (Cstyle.clang (host_target ()))
+let host_uncompiled = lazy (renderer_for (host_target ()))
 
 (* The elements of each buffer that the run wrote: those it changed, and those
    the kernel writes ([expected]), whose values may equal what they held. *)

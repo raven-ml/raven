@@ -2271,8 +2271,8 @@ let decoded_kinds =
     decoded_operands
     (fun (_, o, decoded) -> equal bool decoded (Stage.decoded o))
 
-let host_target = Tolk_engine.target Rig.host
-let host = lazy (Cstyle.clang host_target)
+let host_target () = Run.target Rig.host
+let host = lazy (Cstyle.clang (host_target ()))
 
 (* The host's renderer with a register file of [count] registers of [bytes]
    bytes, which compiles nothing. *)

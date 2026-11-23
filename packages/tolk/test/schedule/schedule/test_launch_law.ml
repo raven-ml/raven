@@ -974,7 +974,7 @@ let runs_on kind seed =
   cover "a store from a bound start"
     (through (function Bound _ -> true | _ -> false));
   let compiled =
-    Realize.compile_linear ~targets:(fun _ -> Tolk_engine.target d) linear
+    Realize.compile_linear ~targets:(fun _ -> Run.target d) linear
   in
   let buffers =
     Array.mapi

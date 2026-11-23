@@ -12,7 +12,7 @@
  (name tolk_run)
  (modules run)
  (wrapped false)
- (libraries tolk tolk.engine tolk_test rig unix))
+ (libraries tolk tolk.engine tolk_test rig unix windtrap))
 
 ; The GPUs the suites run on, apart so that only the suites that open them
 ; link their drivers.

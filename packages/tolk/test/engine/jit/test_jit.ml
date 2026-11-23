@@ -153,7 +153,7 @@ let unplanned ~devices ~held ~inputs captured =
       ~bound:bufs
       (plain (fun () ->
            Realize.compile_linear
-             ~targets:(fun n -> Engine.target (devices n))
+             ~targets:(fun n -> Run.target (devices n))
              captured))
   in
   replay ~inputs bufs (fun vars -> Engine.run ~vars s [||])
@@ -374,9 +374,7 @@ let replays_what_its_capture_leaves case =
   let replays =
     lazy
       (let held = held case and inputs = inputs case and c = captured case in
-       let lowered =
-         lower ~targets:(fun n -> Engine.target (on_memory n)) case
-       in
+       let lowered = lower ~targets:(fun n -> Run.target (on_memory n)) case in
        ( unplanned ~devices:on_memory ~held ~inputs c,
          replayed ~devices:on_memory ~held ~inputs c lowered ))
   in
@@ -509,7 +507,7 @@ let drawn =
 
 (* The kernels, compiled for the host, of each size. *)
 
-let clang = lazy (Cstyle.clang (Engine.target Rig.host))
+let clang = lazy (Cstyle.clang (Run.target Rig.host))
 
 let compiled name f =
   let kernel n =
@@ -596,7 +594,7 @@ let runs_a_phased_input () =
   in
   let lowered =
     Jit.jit_lower
-      ~targets:(fun n -> Engine.target (devices n))
+      ~targets:(fun n -> Run.target (devices n))
       ~held_bufs:[ out ] ~inputs:[ input ] ~input_vars:[] linear
   in
   binds_inputs ~inputs:[ input ] linear lowered;
@@ -670,7 +668,7 @@ let unbinds_capture_variables () =
   let linear, out, src = capture_with_variables () in
   let lowered =
     Jit.jit_lower
-      ~targets:(fun n -> Engine.target (devices n))
+      ~targets:(fun n -> Run.target (devices n))
       ~held_bufs:[ Ops.buf_uop out; src ] ~inputs:[] ~input_vars:[ ("n", 5) ]
       linear
   in
@@ -720,7 +718,7 @@ let merged_custom_kernels (k1, k2) () =
   equal int ~msg:"kernels" 1 (List.length (Ops.src linear));
   let lowered =
     Jit.jit_lower
-      ~targets:(fun n -> Engine.target (devices n))
+      ~targets:(fun n -> Run.target (devices n))
       ~held_bufs:[ out1; out2; src ] ~inputs:[] ~input_vars:vars linear
   in
   let ints xs = Array.map (fun x -> `Int (Bigint.of_int x)) xs in
@@ -748,7 +746,7 @@ let storage_of_lowered () =
   let linear, out, src = capture_with_variables () in
   let lowered =
     Jit.jit_lower
-      ~targets:(fun n -> Engine.target (devices n))
+      ~targets:(fun n -> Run.target (devices n))
       ~held_bufs:[ Ops.buf_uop out; src ] ~inputs:[] ~input_vars:[] linear
   in
   List.filter_map
@@ -778,7 +776,7 @@ let arenas_lowered () =
   in
   let lowered =
     Jit.jit_lower
-      ~targets:(fun n -> Engine.target (devices n))
+      ~targets:(fun n -> Run.target (devices n))
       ~held_bufs:[ input; out ] ~inputs:[] ~input_vars:[] linear
   in
   List.filter_map
@@ -813,7 +811,7 @@ let captured_variables =
 
 let lower_drawn (linear, held, inputs) =
   Jit.jit_lower
-    ~targets:(fun n -> Engine.target (devices n))
+    ~targets:(fun n -> Run.target (devices n))
     ~held_bufs:held ~inputs ~input_vars:[] linear
 
 let replays_drawn d =

@@ -41,7 +41,7 @@ let searched_in ?beam width x (entries, outs) =
     (fun () ->
       ignore
         (Jit.jit_lower ?beam ~search
-           ~targets:(fun n -> Tolk_engine.target (devices n))
+           ~targets:(fun n -> Run.target (devices n))
            ~held_bufs:outs ~inputs:[ x ] ~input_vars:[]
            (Ops.v Op.Linear ~src:entries)));
   !widths

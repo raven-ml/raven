@@ -6,6 +6,15 @@
 
 open Tolk
 
+val target : Rig.t -> Helpers.Target.t
+(** [target d] is {!Tolk_engine.target}[ d]. Skips the running test
+    ({!Windtrap.skip}) where [d] is a host or a software device on which rig
+    links no host code ({!Rig.Image.links}), with the refusal as its reason, as
+    a GPU test skips without its GPU. *)
+
+val renderer : Rig.t -> Renderer.t
+(** [renderer d] is {!Tolk_engine.renderer}[ d], skipping as {!target} does. *)
+
 val program : Renderer.t -> Ops.t list -> Ops.t
 (** [program r uops] is the linearized kernel [uops] rendered with [r] and
     compiled with [r]'s compiler ({!Codegen.compile}).

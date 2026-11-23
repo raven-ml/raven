@@ -18,7 +18,7 @@ let device name = if name = "CPU" then Rig.host else Gpus.gpu name
 
 (* A program of a type [name]'s device lacks makes no statement there. *)
 let reject_unsupported name dt =
-  if not (List.mem dt (Renderer.supported_dtypes (Engine.renderer (device name))))
+  if not (List.mem dt (Renderer.supported_dtypes (Run.renderer (device name))))
   then reject ()
 
 (* Programs *)
@@ -185,7 +185,7 @@ let bits : Dtype.value -> string = function
    slot 0. *)
 let compiled name linear =
   let d = device name in
-  Realize.compile_linear ~targets:(fun _ -> Engine.target d) linear
+  Realize.compile_linear ~targets:(fun _ -> Run.target d) linear
 
 let written name big (linear, vars) =
   let d = device name in
@@ -242,7 +242,7 @@ let writes_as_apart name p =
     at_least int ~msg ~than:1 (List.length ls);
   (* A member that reduces shares a launch of its target only with members
      of its kernel. *)
-  let ren = Engine.renderer (device name) in
+  let ren = Run.renderer (device name) in
   List.iter
     (fun l ->
       let bodies = List.map (fun m -> Ops.nth m 0) (Shape.launch_members l) in
@@ -551,7 +551,7 @@ let split ?launch_members ?launch_args ?launch_locals kind =
   let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host big in
   match launches linear with
   | [ e ] ->
-      let target = Engine.target Rig.host in
+      let target = Run.target Rig.host in
       let ren = Renderer.v ?launch_members ?launch_args ?launch_locals target in
       List.map
         (fun l ->
@@ -583,7 +583,7 @@ let fits_target () =
    apart write. *)
 let past_the_cap () =
   let d = device "CUDA" in
-  let cap = (Engine.renderer d).launch_members in
+  let cap = (Run.renderer d).launch_members in
   let n = cap + (cap / 2) in
   let p = { (pieces Float32 (List.init n (fun _ -> 1))) with width = 64 } in
   let big = sink "CUDA" p in
@@ -1073,7 +1073,7 @@ let on_a_gpu kind =
         "sixteen products run as one launch, on tensor cores on CUDA, or \
          apart where a launch's members hold no workgroup memory"
         (fun () ->
-          if (Engine.renderer (device kind)).launch_locals then products kind ()
+          if (Run.renderer (device kind)).launch_locals then products kind ()
           else products_apart kind ());
       prop ~count:30
         "the stores of one state run as one launch and write what their \

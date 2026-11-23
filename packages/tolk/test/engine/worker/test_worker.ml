@@ -2,7 +2,7 @@ open Windtrap
 open Tolk
 
 (* The host's target, as the engine gives it. *)
-let host_target = Tolk_engine.target Rig.host
+let host_target () = Run.target Rig.host
 
 exception Failed of int
 
@@ -761,6 +761,7 @@ let binaries =
     (list string)
 
 let compiles_as_serial () =
+  let host_target = host_target () in
   let renderer = Cstyle.clang host_target in
   let clang = Compiler_cpu.clang host_target.arch in
   let sources =

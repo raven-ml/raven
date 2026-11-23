@@ -4,7 +4,7 @@
 open Windtrap
 open Tolk
 
-let host = Cstyle.clang (Tolk_engine.target Rig.host)
+let host = lazy (Cstyle.clang (Run.target Rig.host))
 let devices _ = Rig.host
 let part = Tolk_engine.part Rig.host
 
@@ -39,7 +39,7 @@ let searched name =
   let unoptimised =
     Codegen.to_program
       (with_info (fun i -> { i with opts_to_apply = Some [] }) k)
-      host
+      (Lazy.force host)
   in
   (* A search times anew: a result kept by an earlier run would hide what this
      one finds. *)
@@ -52,7 +52,7 @@ let searched name =
           ~beam:
             (Search.beam_search ~part ~link ~time)
           (with_info (fun i -> { i with beam = 2 }) k)
-          host)
+          (Lazy.force host))
   in
   is_true ~msg:"optimised" (applied_opts prg <> []);
   equal values (run k unoptimised) (run k prg)
@@ -90,7 +90,7 @@ let scalar_arguments =
           (fun () ->
             Codegen.to_program
               ~beam:(Search.beam_search ~part ~link ~time)
-              ast host)
+              ast (Lazy.force host))
       in
       greater int ~than:0 !measured;
       (* The chosen program still reads its argument on every call. *)
@@ -179,7 +179,7 @@ let timed_programs kernel =
       (fun () ->
         Codegen.to_program
           ~beam:(Search.beam_search ~part ~link ~time)
-          (kernel ~beam:2 ()) host)
+          (kernel ~beam:2 ()) (Lazy.force host))
   in
   (!measured, opt_names searched)
 
@@ -193,7 +193,9 @@ let gated_by_memory =
             timed_programs (fun ~beam () -> routed ~beam ())
           in
           equal int ~msg:"programs timed" 0 measured;
-          let hand = opt_names (Codegen.to_program (routed ()) host) in
+          let hand =
+            opt_names (Codegen.to_program (routed ()) (Lazy.force host))
+          in
           greater int ~msg:"the heuristic's optimisations" ~than:0
             (List.length hand);
           equal (list string) hand searched);
@@ -224,10 +226,13 @@ let memory_bound =
           (fun () ->
             Codegen.to_program
               ~beam:(Search.beam_search ~part ~link ~time)
-              (loaded_trips ~beam:2 ~read ()) host)
+              (loaded_trips ~beam:2 ~read ())
+              (Lazy.force host))
       in
       equal int ~msg:"programs timed" 0 !measured;
-      let hand = opt_names (Codegen.to_program (loaded_trips ~read ()) host) in
+      let hand =
+        opt_names (Codegen.to_program (loaded_trips ~read ()) (Lazy.force host))
+      in
       greater int ~msg:"the heuristic's optimisations" ~than:0
         (List.length hand);
       equal (list string) hand (opt_names searched))

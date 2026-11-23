@@ -37,7 +37,7 @@ let axpy size =
 let timed () =
   let h = host () in
   let size = 1024 in
-  let prg = Codegen.to_program (axpy size) (Engine.renderer h) in
+  let prg = Codegen.to_program (axpy size) (Run.renderer h) in
   let s =
     Engine.link_call
       ~devices:(fun _ -> h)

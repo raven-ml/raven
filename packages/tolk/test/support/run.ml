@@ -153,6 +153,18 @@ let buffer_params prg =
       | _ -> None)
     (Shape.kernel_params prg)
 
+let target d =
+  match Tolk_engine.target d with
+  | t -> t
+  | exception Failure why
+    when (Rig.equal (Rig.host_of d) d || Rig.runs_on_host d)
+         && not (Rig.Image.links d) ->
+      Windtrap.skip ~reason:why ()
+
+let renderer d =
+  ignore (target d);
+  Tolk_engine.renderer d
+
 let on ?vars d prg buffers =
   let info =
     match Ops.arg prg with
@@ -181,7 +193,7 @@ let on ?vars d prg buffers =
       info.params
   in
   let slots = List.length info.globals + List.length positional in
-  let device = (Tolk_engine.target d).device in
+  let device = (target d).device in
   let arg slot =
     match
       List.find_opt (fun ((p : Ops.param_arg), _) -> p.slot = slot) params

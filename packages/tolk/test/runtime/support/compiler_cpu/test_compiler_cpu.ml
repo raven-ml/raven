@@ -3,7 +3,7 @@ open Tolk
 module Compiler = Renderer.Compiler
 
 (* The host's target, as the engine gives it. *)
-let host_target = Tolk_engine.target Rig.host
+let host_target () = Run.target Rig.host
 
 (* Sources *)
 
@@ -149,6 +149,21 @@ let host_machine =
   | "riscv" -> "riscv64"
   | machine -> machine
 
+(* The host's machine at its own processor, or skips the test where rig links no
+   host code, whose machine Clang's flags may not know. *)
+let native () =
+  let arch = host_machine ^ ",native" in
+  match Compiler_cpu.clang arch with
+  | _ -> arch
+  | exception Invalid_argument why when not (Rig.Image.links Rig.host) ->
+      skip ~reason:why ()
+
+(* A process of the suite's own that runs [part], which compiles for the host's
+   machine: where Clang compiles nothing for it, the test skips. *)
+let child ?env ~cachedb part =
+  ignore (native ());
+  Disk_cache.child ?env ~cachedb part
+
 let has_infix ~affix s =
   let n = String.length affix in
   let rec at i =
@@ -235,14 +250,15 @@ let objects =
           is_relocatable_elf64 ~machine:(elf_machine machine)
             (compile arch increment));
       test "native is the host's processor" (fun () ->
+          let arch = native () in
           is_relocatable_elf64 ~machine:(elf_machine host_machine)
-            (compile (host_machine ^ ",native") increment));
+            (compile arch increment));
       test "native on riscv64 is rv64g" (fun () ->
           equal string
             (compile "riscv64,rv64g" increment)
             (compile "riscv64,native" increment));
       test "one source compiles to the same bytes" (fun () ->
-          let arch = host_machine ^ ",native" in
+          let arch = native () in
           equal string (compile arch add) (compile arch add));
       cases "a square root is one instruction on" ~id:fst
         [ ("x86_64,x86-64", "sqrtss"); ("arm64,generic", "fsqrt") ]
@@ -271,7 +287,7 @@ let pool =
 
 let alone =
   lazy
-    (let clang = Compiler_cpu.clang (host_machine ^ ",native") in
+    (let clang = Compiler_cpu.clang (native ()) in
      List.map (fun (name, src) -> (name, ccache_off (fun () -> Compiler.compile clang src))) pool)
 
 let batches =
@@ -285,7 +301,7 @@ let batches =
           cover "a source twice" (List.length (List.sort_uniq compare names) < List.length names);
           cover "a long source among short ones"
             (List.mem "long" names && List.exists (( <> ) "long") names);
-          let clang = Compiler_cpu.clang (host_machine ^ ",native") in
+          let clang = Compiler_cpu.clang (native ()) in
           let objs =
             ccache_off (fun () ->
                 Compiler.compile_all clang
@@ -295,7 +311,7 @@ let batches =
             (List.map (fun n -> List.assoc n (Lazy.force alone)) names)
             objs);
       test "a source that names its own file compiles to one object" (fun () ->
-          let clang = Compiler_cpu.clang (host_machine ^ ",native") in
+          let clang = Compiler_cpu.clang (native ()) in
           let named = "const char *file(void) { return __FILE__; }" in
           let objs () =
             ccache_off (fun () -> Compiler.compile_all clang [ add; named ])
@@ -306,7 +322,7 @@ let batches =
             (ccache_off (fun () -> Compiler.compile clang named)));
       test "a rejected source among others raises its own diagnostics"
         (fun () ->
-          let clang = Compiler_cpu.clang (host_machine ^ ",native") in
+          let clang = Compiler_cpu.clang (native ()) in
           raises_match
             (function
               | Compiler.Compile_error msg ->
@@ -404,7 +420,7 @@ let tinygrad =
 
 let floats xs = Array.map (fun x -> `Float x) xs
 let values = array Dtypes.value
-let host = lazy (Cstyle.clang host_target)
+let host = lazy (Cstyle.clang (host_target ()))
 let loaded name = Run.program (Lazy.force host) (kernel name)
 
 let execution =
@@ -1042,7 +1058,7 @@ let errors =
         (fun () ->
           match
             Compiler.compile
-              (Compiler_cpu.clang (host_machine ^ ",native"))
+              (Compiler_cpu.clang (native ()))
               "int f(void) { return undeclared_name; }"
           with
           | _ -> fail "Clang accepted an undeclared name"
@@ -1206,9 +1222,7 @@ let without_clang =
                      has_infix ~affix:missing_clang msg
                  | _ -> false)
                (fun () ->
-                 Compiler.compile
-                   (Compiler_cpu.clang (host_machine ^ ",native"))
-                   increment));
+                 Compiler.compile (Compiler_cpu.clang (native ())) increment));
          test "an x86_64 processor has SSE's 16 registers of 16 bytes"
            (fun () ->
              equal
@@ -1218,7 +1232,7 @@ let without_clang =
                   (fun (r : Renderer.registers) -> (r.count, r.bytes))
                   (Compiler_cpu.registers "x86_64,x86-64-v3")));
          test "a cached object is served without a Clang that runs" (fun () ->
-             let clang = Compiler_cpu.clang (host_machine ^ ",native") in
+             let clang = Compiler_cpu.clang (native ()) in
              let table = Option.get (Compiler.cachekey clang) in
              Helpers.Diskcache.put ~table increment "cached object";
              equal string "cached object"
@@ -1227,9 +1241,7 @@ let without_clang =
            (fun () ->
              let cachedb = Helpers.cachedb in
              let table =
-               match
-                 Disk_cache.child ~env:[ ("CC", "clang") ] ~cachedb "table"
-               with
+               match child ~env:[ ("CC", "clang") ] ~cachedb "table" with
                | Ok table -> table
                | Error err ->
                    failf "the default compiler named no table: %s" err
@@ -1239,9 +1251,7 @@ let without_clang =
              raises_match
                (function Compiler.Compile_error _ -> true | _ -> false)
                (fun () ->
-                 Compiler.compile_cached
-                   (Compiler_cpu.clang (host_machine ^ ",native"))
-                   src));
+                 Compiler.compile_cached (Compiler_cpu.clang (native ())) src));
        ]
 
 (* Disassembly *)
@@ -1258,9 +1268,7 @@ let disassembly_ =
 
 (* The table of the host's compiler, as a process of its own names it. *)
 let host_table () =
-  print_string
-    (Option.get
-       (Compiler.cachekey (Compiler_cpu.clang (host_machine ^ ",native"))))
+  print_string (Option.get (Compiler.cachekey (Compiler_cpu.clang (native ()))))
 
 (* Hints the release of LLVM that [TOLK_TEST_HINT] names for the Clang [CC]
    runs, as a process that found it would. On Windows a variable set to the
@@ -1277,7 +1285,7 @@ let parts = [ ("table", host_table); ("hint", hint) ]
 let table_in () =
   let cachedb = Filename.concat (Sys.getcwd ()) "unused_cache" in
   chdir (temp_dir ());
-  Disk_cache.child ~cachedb "table"
+  child ~cachedb "table"
 
 let is_hex c = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
 
@@ -1314,23 +1322,20 @@ let cache =
       test "the table does not depend on the release a process is hinted"
         (fun () ->
           let cachedb = Disk_cache.fresh () in
-          let first = Disk_cache.child ~cachedb "table" in
+          let first = child ~cachedb "table" in
           List.iter
             (fun release ->
               (match
-                 Disk_cache.child ~env:[ ("TOLK_TEST_HINT", release) ] ~cachedb
-                   "hint"
+                 child ~env:[ ("TOLK_TEST_HINT", release) ] ~cachedb "hint"
                with
               | Ok _ -> ()
               | Error err -> failf "the hint was not kept: %s" err);
               equal Disk_cache.outcome ~msg:release first
-                (Disk_cache.child ~cachedb "table"))
+                (child ~cachedb "table"))
             [ "17"; "18"; "19"; "20"; ""; "not a release" ]);
       test "with ccache off, no release is hinted" (fun () ->
           let cachedb = Disk_cache.fresh () in
-          (match
-             Disk_cache.child ~env:[ ("CCACHE", "0") ] ~cachedb "table"
-           with
+          (match child ~env:[ ("CCACHE", "0") ] ~cachedb "table" with
           | Ok _ -> ()
           | Error err -> failf "the table was not named: %s" err);
           equal (list string) []
