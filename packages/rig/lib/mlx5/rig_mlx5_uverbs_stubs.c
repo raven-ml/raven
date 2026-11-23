@@ -158,11 +158,12 @@ static long nl_u32(const struct nlattr *a) {
   return v;
 }
 
-/* Sends [req] on [s] and calls [each] with the attributes of every message
-   of the answer: 0 once it ends, or -errno. */
-static int nl_ask(int s, struct nlmsghdr *req,
+/* Sends the [len] bytes of the request at [req], its header and the
+   attributes after it, on [s] and calls [each] with the attributes of
+   every message of the answer: 0 once it ends, or -errno. */
+static int nl_ask(int s, const void *req, size_t len,
                   void (*each)(const struct nlattr **, void *), void *data) {
-  if (send(s, req, req->nlmsg_len, 0) < 0) return -errno;
+  if (send(s, req, len, 0) < 0) return -errno;
   char buf[1 << 14];
   const struct nlattr *tb[RDMA_NLDEV_ATTR_MAX];
   for (;;) {
@@ -220,7 +221,7 @@ value caml_rig_mlx5_uverbs_driver(value v_name) {
       .nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP,
       .nlmsg_seq = 1};
   device_t d = {.name = name, .index = -1};
-  int e = nl_ask(s, &list, index_of, &d);
+  int e = nl_ask(s, &list, sizeof list, index_of, &d);
   long id = -1;
   if (e == 0 && d.index >= 0) {
     struct {
@@ -240,7 +241,7 @@ value caml_rig_mlx5_uverbs_driver(value v_name) {
                .type_attr = {.nla_len = NLA_HDRLEN + sizeof "uverbs",
                              .nla_type = RDMA_NLDEV_ATTR_CHARDEV_TYPE},
                .type = "uverbs"};
-    e = nl_ask(s, &verbs.h, driver_of, &id);
+    e = nl_ask(s, &verbs, sizeof verbs, driver_of, &id);
   }
   close(s);
   check(e < 0 ? e : id < 0 ? -ENODEV : 0, "netlink");
