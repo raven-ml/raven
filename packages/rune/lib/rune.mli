@@ -1259,9 +1259,11 @@ val root :
     the solution, naming the first path where they differ, as in
     ["Rune.root: 0: shape [3] in the residual's result, [4] in the solution"];
     without [linear_solve], if [x]'s arrays differ in dtype; if [residual] reads
-    the {!lanes} of a map, which joins the lanes' systems; if [linear_solve]
-    applies [op] after it returned; and, naming the {!val-jit}'s entry point, if it
-    applies [op] inside a {!val-jit}. *)
+    the {!lanes} of a map from a value it computes from its argument, which
+    joins the lanes' systems (the lanes of a value it captures compute at the
+    call, so each lane's system stays its own); if [linear_solve] applies [op]
+    after it returned; and, naming the {!val-jit}'s entry point, if it applies
+    [op] inside a {!val-jit}. *)
 
 (** {1:callbacks Callbacks}
 
