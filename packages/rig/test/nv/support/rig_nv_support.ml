@@ -42,15 +42,17 @@ let firmware () =
 type path = Kernel | Pci
 
 (* The path that opens GPU [i], from the driver bound to it: NVIDIA's kernel
-   driver for one it holds, and PCI for one unbound or on vfio-pci with the
-   GSP's firmware there. Behind an IOMMU that translates, Function.take
-   refuses an unbound GPU, so its open fails, naming why. *)
+   driver for one it holds, where the process reaches that driver through its
+   files, and PCI for one unbound or on vfio-pci with the GSP's firmware there.
+   Behind an IOMMU that translates, Function.take refuses an unbound GPU, so its
+   open fails, naming why. *)
 let path_of i =
   match List.nth_opt (Result.value (Rig_nv_pci.buses ()) ~default:[]) i with
   | None -> None
   | Some bus -> (
       match driver bus with
-      | Some "nvidia" -> Some Kernel
+      | Some "nvidia" ->
+          if Rig_gpu_support.nvidia_files () then Some Kernel else None
       | None | Some "vfio-pci" ->
           if Option.is_some (firmware ()) then Some Pci else None
       | Some _ -> None)

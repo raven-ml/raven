@@ -217,14 +217,10 @@ let check op lim r =
     (if succeeded r.again then "succeeded" else r.again);
   equal ~msg:(at ^ ": opens again") bool true r.reopened
 
-let need_gpu () =
-  if Result.value (P.count ()) ~default:0 = 0 then
-    skip ~reason:"the machine has no NVIDIA GPU" ()
-
 (* Walks [op] through 0, 1, … more files, up to the first that lets it
    succeed. *)
 let walk_files op () =
-  need_gpu ();
+  S.needs_gpu ();
   let rec go k =
     if k > most_files then failf "%s takes more than %d files" (op_name op) k;
     let lim = Files k in
@@ -239,7 +235,7 @@ let walk_files op () =
 
 (* A process's first open, with too little address space for the GPU. *)
 let walk_space () =
-  need_gpu ();
+  S.needs_gpu ();
   let lim = Space runtime_headroom in
   let r =
     require_ok ~pp:Format.pp_print_string
@@ -251,7 +247,7 @@ let walk_space () =
 
 (* An allocation of twice the GPU's memory is refused, filling nothing. *)
 let too_large () =
-  need_gpu ();
+  S.needs_gpu ();
   let got =
     require_ok ~pp:Format.pp_print_string
       (in_child (fun () ->
@@ -269,13 +265,13 @@ let starved op =
     (in_child (fun () -> (attempt op (Files 0)).got))
 
 let open_starved () =
-  need_gpu ();
+  S.needs_gpu ();
   let got = starved Open in
   equal ~msg:got bool false
     (String.ends_with ~suffix:"the machine has 0 NVIDIA GPUs" got)
 
 let alloc_starved op () =
-  need_gpu ();
+  S.needs_gpu ();
   equal string "None" (starved op)
 
 (* Exceptions *)
@@ -324,7 +320,7 @@ let first_open n =
    usage makes the client and a GPU's base, which a first open makes first,
    so this walk covers each allocation a usage keeps. *)
 let interrupted_first () =
-  need_gpu ();
+  S.needs_gpu ();
   let rec walk n =
     let reached, again =
       require_ok ~pp:Format.pp_print_string (in_child (fun () -> first_open n))

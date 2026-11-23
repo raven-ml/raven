@@ -51,11 +51,23 @@ let bind g =
 
 module D = Rig_cuda
 
+(* Whether CUDA_VISIBLE_DEVICES leaves CUDA a GPU: unset, or a list whose first
+   entry is an index or a GPU's UUID. CUDA ignores the entries from the first it
+   cannot read on, so an empty list, or one of -1, hides every GPU. *)
+let visible () =
+  match Sys.getenv_opt "CUDA_VISIBLE_DEVICES" with
+  | None -> true
+  | Some list -> (
+      let first = String.trim (List.hd (String.split_on_char ',' list)) in
+      String.starts_with ~prefix:"GPU-" first
+      || String.starts_with ~prefix:"MIG-" first
+      || match int_of_string_opt first with Some i -> i >= 0 | None -> false)
+
 include Rig_gpu_support.Make (struct
   module D = Rig_cuda
 
   let class_ = "CUDA"
-  let present () = Sys.file_exists "/dev/nvidiactl"
+  let present () = Rig_gpu_support.nvidia_files () && visible ()
 
   let open_ ~word =
     let g = (Rig_cuda.gpu 0).make ~word in

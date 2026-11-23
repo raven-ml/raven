@@ -5,6 +5,11 @@
 
 (** What the NVIDIA path's suites share. *)
 
+val needs_gpu : unit -> unit
+(** [needs_gpu ()] skips the test unless the machine has an NVIDIA GPU
+    ({!Rig_nv_nvidia.count}) and the process reaches NVIDIA's kernel driver
+    through its files ({!Rig_gpu_support.nvidia_files}). *)
+
 val files : unit -> int
 (** [files ()] is the number of files the process has open. *)
 

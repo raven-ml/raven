@@ -113,6 +113,32 @@ let bar_bytes bus ~bar runs n =
     runs;
   Buffer.contents out
 
+(* The major of a Linux device number, as glibc's gnu_dev_major splits it. *)
+let major rdev = (rdev lsr 8) land 0xfff lor ((rdev lsr 32) land lnot 0xfff)
+
+(* The major /proc/devices gives the character device [name]. *)
+let char_major name =
+  match In_channel.with_open_text "/proc/devices" In_channel.input_lines with
+  | exception Sys_error _ -> None
+  | lines ->
+      let entry line =
+        try Scanf.sscanf line " %d %s" (fun n s -> Some (n, s))
+        with Scanf.Scan_failure _ | Failure _ | End_of_file -> None
+      in
+      let rec find = function
+        | "Block devices:" :: _ | [] -> None
+        | line :: rest -> (
+            match entry line with
+            | Some (n, s) when s = name -> Some n
+            | _ -> find rest)
+      in
+      find lines
+
+let nvidia_files () =
+  match Unix.stat "/dev/nvidiactl" with
+  | exception Unix.Unix_error _ -> false
+  | st -> st.st_kind = S_CHR && char_major "nvidiactl" = Some (major st.st_rdev)
+
 let has ~sub s =
   let n = String.length sub in
   let rec at i =

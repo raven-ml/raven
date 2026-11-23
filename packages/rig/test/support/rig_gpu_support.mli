@@ -47,6 +47,12 @@ val bar_bytes : string -> bar:int -> (int * int) list -> int -> string
 
     Raises [Unix.Unix_error] if the file cannot be mapped. *)
 
+val nvidia_files : unit -> bool
+(** [nvidia_files ()] is [true] iff the process reaches NVIDIA's kernel driver
+    through its files: [/dev/nvidiactl] is a character device of the major that
+    Linux's [/proc/devices] gives [nvidiactl]. A container that hides the GPU
+    leaves no such file, or binds another device there. *)
+
 val has : sub:string -> string -> bool
 (** [has ~sub s] is [true] iff [sub] occurs in [s]. *)
 

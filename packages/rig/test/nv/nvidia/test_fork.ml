@@ -14,6 +14,7 @@
 
 open Windtrap
 module P = Rig_nv_nvidia
+module S = Rig_nv_nvidia_support
 
 let n = 1 lsl 20
 
@@ -102,8 +103,7 @@ let held () =
 let usage () = Result.map ignore (P.usage ~window:0.1 0)
 
 let forked_with case () =
-  if Result.value (P.count ()) ~default:0 = 0 then
-    skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.needs_gpu ();
   Rig_support.needs_fork ();
   match require_ok ~msg:"the case's process" (in_child case) with
   | Unforkable reason -> skip ~reason ()

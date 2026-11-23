@@ -108,7 +108,7 @@ let kernel_list () =
 (* A device's objects are the GPU's for the process: a stopped device's GPU
    opens again. *)
 let once () =
-  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.needs_gpu ();
   let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
   let e =
     require_error ~msg:"a second open" (Rig_gpu_support.opened (N.gpu 0))
@@ -122,7 +122,7 @@ let once () =
 
 (* Nothing bounds a GPU's work in time, display or none. *)
 let no_hang_bound () =
-  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.needs_gpu ();
   let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
   let hang_ms = (Rig_nv.facts g).hang_ms in
   Rig_nv.stop g ~fault:None;
@@ -134,7 +134,7 @@ let no_hang_bound () =
    directory, so nothing walks it: one left in a source tree, from which a
    cached test is run again, has dune walk the whole filesystem. *)
 let other_root () =
-  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.needs_gpu ();
   let mirror = Filename.concat (temp_dir ()) "mirror" in
   Unix.symlink "/" mirror;
   Fun.protect ~finally:(fun () -> Unix.unlink mirror) @@ fun () ->
@@ -186,7 +186,7 @@ let cycles cycle =
 (* Opening and stopping a GPU again and again keeps at most one device's
    mappings per open. *)
 let reopen () =
-  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.needs_gpu ();
   cycles (fun () ->
       let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
       Rig_nv.stop g ~fault:None)
@@ -194,7 +194,7 @@ let reopen () =
 (* Opening and closing a GPU through rig again and again keeps at most one
    device's mappings per open, once its memory returned. *)
 let reclose () =
-  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.needs_gpu ();
   cycles (fun () ->
       let d = require_ok ~pp:Format.pp_print_string (Rig.open_ (N.gpu 0)) in
       Rig.close d;
@@ -208,7 +208,7 @@ let gib = 1 lsl 30
 let maps = 40
 
 let many_maps () =
-  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.needs_gpu ();
   if not (Sys.file_exists "/dev/shm") then skip ~reason:"no /dev/shm" ();
   let file = Filename.temp_file ~temp_dir:"/dev/shm" "rig-nv" ".map" in
   let fd = Unix.openfile file [ O_RDWR ] 0o600 in
@@ -250,7 +250,7 @@ let inside_lock () =
             "refused")
   in
   equal ~msg:"the open inside the lock" string "refused" refused;
-  if counted () > 0 then
+  if counted () > 0 && Rig_gpu_support.nvidia_files () then
     let opened = Rig_gpu_support.opened (N.gpu 0) in
     Rig_nv.stop (require_ok ~pp:Format.pp_print_string opened) ~fault:None
 
@@ -261,7 +261,7 @@ let usage () =
 
 (* A GPU's engine is busy from 0 to 100 percent of the time. *)
 let usage_bounds () =
-  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.needs_gpu ();
   let u = usage () in
   Option.iter
     (fun b ->
@@ -274,7 +274,7 @@ let usage_bounds () =
    no other process's work while the GPU lock is held, so nothing else frees
    memory in between. *)
 let capacity_counts_device () =
-  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.needs_gpu ();
   let d = require_ok ~pp:Format.pp_print_string (Rig.open_ (N.gpu 0)) in
   Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
   let c = require_some ~msg:"capacity" (Rig.capacity d) in
@@ -294,7 +294,7 @@ let capacity_counts_device () =
    capacity's free falls by as much. The GPU runs no other process's work
    while the GPU lock is held. *)
 let counts_rm_pages () =
-  if counted () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.needs_gpu ();
   let d = require_ok ~pp:Format.pp_print_string (Rig.open_ (N.gpu 0)) in
   Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
   let kib = 1024 and mib = 1 lsl 20 in

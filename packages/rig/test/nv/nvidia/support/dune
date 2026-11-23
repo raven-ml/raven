@@ -3,7 +3,7 @@
 
 (library
  (name rig_nv_nvidia_support)
- (libraries windtrap)
+ (libraries rig_gpu_support rig_nv_nvidia windtrap)
  (foreign_stubs
   (language c)
   (names rig_nv_nvidia_support_stubs)))

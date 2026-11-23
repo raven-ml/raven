@@ -3,6 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* The GPU *)
+
+let needs_gpu () =
+  if Result.value (Rig_nv_nvidia.count ()) ~default:0 = 0 then
+    Windtrap.skip ~reason:"the machine has no NVIDIA GPU" ();
+  if not (Rig_gpu_support.nvidia_files ()) then
+    Windtrap.skip ~reason:"the process does not reach NVIDIA's kernel driver" ()
+
 (* The process's files *)
 
 external files : unit -> int = "rig_nv_nvidia_test_files"
