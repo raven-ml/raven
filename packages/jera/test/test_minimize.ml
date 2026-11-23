@@ -59,8 +59,7 @@ let bracket_tests =
           Minimize.bracket ~tol:tight Nx.log ~lo:(vec [| -2. |])
             ~hi:(vec [| -1. |])
         in
-        equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 1 |])
-          (Solution.is Not_finite s));
+        equal Oracle.status_t Not_finite (Oracle.status s));
   ]
 
 let derivative_tests =
@@ -165,7 +164,10 @@ let rosenbrock v =
 
 let gradient_tests =
   [
-    prop "the minimum is the zero of the gradient" convex (fun (a, b) ->
+    prop "the minimum is the zero of the gradient"
+      ~examples:[ (Nx.zeros f64 [| 0; 0 |], vec [||]) ]
+      convex
+      (fun (a, b) ->
         cover "an empty problem" (Nx.dim 0 b = 0);
         cover "several unknowns" (Nx.dim 0 b > 2);
         List.iter
@@ -225,10 +227,10 @@ let gradient_tests =
             ~tol:tight ~budget:3 rosenbrock
             (vec [| -1.2; 1. |])
         in
-        equal bool true (is Budget_spent s);
+        equal Oracle.status_t Budget_spent (Oracle.status s);
         raises_match (Exn.failure ~sub:"Jera.Minimize.solve") (fun () ->
             Solution.get s));
-    test "an unbounded objective stalls or spends its budget" (fun () ->
+    test "an unbounded objective does not converge" (fun () ->
         let s =
           Minimize.solve one
             (Minimize.bfgs ~linear:Linear.dense)
@@ -236,10 +238,10 @@ let gradient_tests =
             (fun x -> Nx.sum (Nx.neg (Nx.exp x)))
             (vec [| 0. |])
         in
-        equal bool false (Nx.item [] (Solution.ok s)));
+        not_equal Oracle.status_t Converged (Oracle.status s));
     test "a start where f is not finite ends Not_finite" (fun () ->
-        equal bool true
-          (is Not_finite
+        equal Oracle.status_t Not_finite
+          (Oracle.status
              (minimum
                 (Minimize.bfgs ~linear:Linear.dense)
                 (fun x -> Nx.sum (Nx.sqrt x))
@@ -336,7 +338,7 @@ let lm_tests =
         equal (Oracle.tensor ())
           (Nx.mul_s (Solution.best plain) s)
           (Solution.best small);
-        equal bool (is Converged plain) (is Converged small));
+        equal Oracle.status_t (Oracle.status plain) (Oracle.status small));
     test "with residuals left, Jᵀ r vanishes at the fit" (fun () ->
         let y =
           Nx.add
@@ -422,18 +424,33 @@ let around ~rel ~abs c =
   let k = Float.sqrt (Float.of_int (Nx.dim 0 c)) in
   k *. (abs +. (rel *. Nx.item [] (Nx.max (Nx.abs c)))) /. (1. -. (k *. rel))
 
+let bowl_tol = (1e-8, 1e-9)
+
+(* nelder_mead's answer for the bowl centred at [c] from 0, compiled, since an
+   eager search takes up to a sixth of a second: one program per number of
+   unknowns, whose coefficients depend on it. *)
+let bowl_search =
+  let rel, abs = bowl_tol in
+  Rune.jit
+    Nx.Ptree.(tensor @-> returns (Solution.ptree tensor))
+    (fun c ->
+      simplex ~budget:5000 ~tol:(Tol.v ~rel ~abs)
+        (fun x -> Nx.sum (bowl c x))
+        (Nx.zeros_like c))
+
 let nelder_mead_tests =
   [
-    prop "it finds a bowl's center" centers (fun c ->
-        cover "several unknowns" (Nx.dim 0 c > 2);
-        let rel = 1e-8 and abs = 1e-9 in
+    prop "it finds a bowl's center"
+      ~examples:[ vec [| 2.5 |]; vec [| -3.; 1.; 0.; 2.75; -0.5; 3. |] ]
+      centers
+      (fun c ->
+        cover "one unknown" (Nx.dim 0 c = 1);
+        cover "six unknowns" (Nx.dim 0 c = 6);
+        let rel, abs = bowl_tol in
         equal
           (Oracle.tensor ~abs:(around ~rel ~abs c) ())
           c
-          (Solution.get
-             (simplex ~budget:5000 ~tol:(Tol.v ~rel ~abs)
-                (fun x -> Nx.sum (bowl c x))
-                (Nx.zeros_like c))));
+          (Solution.get (bowl_search c)));
     test "it finds Rosenbrock's minimum" (fun () ->
         equal
           (Oracle.tensor ~rel:1e-5 ())
@@ -480,13 +497,14 @@ let nelder_mead_tests =
               Nx.mul_s (Nx.sum squares) (0.5 *. c))
             (vec [| 0. |])
         in
-        equal bool true (Nx.item [] (Solution.is Converged s));
+        equal Oracle.status_t Converged (Oracle.status s);
         equal (Oracle.tensor ~abs:1e-5 ()) (vec [| -0.5 |]) (Solution.get s));
-    test "a probe outside f's domain leaves the others to decide" (fun () ->
-        (* (y − 3)² defined only where x = 0, NaN elsewhere: every probe along
-           x is outside the domain, and the probes along y descend until y =
-           3. The simplex cannot leave the line x = 0 but by restarts, so it
-           creeps along y and spends its budget; it converges only at (0, 3). *)
+    test "a non-finite value past the start counts as +∞" (fun () ->
+        (* (y − 3)² defined only where x = 0, NaN elsewhere: every vertex off
+           the line x = 0 is worse than any on it, so the best vertex stays on
+           it, and only a NaN at the start ends the lane Not_finite. A probe off
+           the line differs from the best by 0, so the probes along y decide,
+           and the lane converges only at (0, 3). *)
         let f v =
           let x = Nx.get [ 0 ] v and y = Nx.get [ 1 ] v in
           Nx.where (Nx.equal_s x 0.)
@@ -494,9 +512,12 @@ let nelder_mead_tests =
             (Nx.scalar f64 Float.nan)
         in
         let s = simplex f (vec [| 0.; 0. |]) in
-        if Nx.item [] (Solution.is Converged s) then
-          equal (Oracle.tensor ~abs:1e-5 ()) (vec [| 0.; 3. |]) (Solution.get s)
-        else equal bool true (Nx.item [] (Solution.is Budget_spent s)));
+        let status = Oracle.status s in
+        not_equal Oracle.status_t Not_finite status;
+        not_equal Oracle.status_t Stalled status;
+        equal (Oracle.tensor ()) (scalar_of 0.) (Nx.get [ 0 ] (Solution.best s));
+        if status = Converged then
+          equal (Oracle.tensor ~abs:1e-5 ()) (vec [| 0.; 3. |]) (Solution.get s));
     test "its answer carries no derivative" (fun () ->
         let g =
           Rune.grad'
@@ -509,7 +530,7 @@ let nelder_mead_tests =
         equal (Oracle.tensor ~abs:0. ()) (vec [| 0.; 0. |]) g);
     test "a spent budget of evaluations is reported" (fun () ->
         let s = simplex ~budget:10 rosenbrock (vec [| -1.2; 1. |]) in
-        equal bool true (is Budget_spent s));
+        equal Oracle.status_t Budget_spent (Oracle.status s));
     test "compiled equals eager (law 3)" (fun () ->
         let f c =
           Solution.get (simplex (fun x -> Nx.sum (bowl c x)) (Nx.zeros_like c))
@@ -550,7 +571,7 @@ let normal_centers =
    interval. A number below [10⁻³⁰⁰] is zero: in [a] or a bound it puts the
    minimum, or the decrease toward it, among subnormals, where the search stalls
    as it states, as in [convex]. *)
-let least_squares =
+let least_squares_of sizes =
   let open Gen in
   let number lo hi =
     map (fun v -> if Float.abs v < 1e-300 then 0. else v) (float_range lo hi)
@@ -566,7 +587,7 @@ let least_squares =
     | 3 -> (lo, lo)
     | _ -> (lo, lo +. width)
   in
-  (let* n = int_range 1 5 in
+  (let* n = sizes in
    let+ rows = list ~size:(constant (2 * n)) (number (-2.) 2.)
    and+ b = list ~size:(constant (n + 2)) (number (-5.) 5.)
    and+ sides = list ~size:(constant n) side in
@@ -581,6 +602,8 @@ let least_squares =
   |> with_pp (fun ppf (a, b, (lo, hi)) ->
       Format.fprintf ppf "a = %a@ b = %a@ lo = %a@ hi = %a" Nx.pp a Nx.pp b
         Nx.pp lo Nx.pp hi)
+
+let least_squares = least_squares_of (Gen.int_range 1 5)
 
 let squares_gradient a b x =
   Nx.matmul (Nx.transpose a) (Nx.sub (Nx.matmul a x) b)
@@ -600,10 +623,9 @@ let simplex_tols =
 let first_step = 2.5e-4
 
 (* nelder_mead's answer for [c ½ |a x − b|²] in [box] from 0, to the tolerance
-   [simplex_tols.(k)], and whether it converged. The objective is [bad] where a
-   coordinate is below its wall [below] or above its wall [above]. Compiled,
-   one program per tolerance and number of unknowns, since an eager search
-   takes most of a second. *)
+   [simplex_tols.(k)]. The objective is [bad] where a coordinate is below its
+   wall [below] or above its wall [above]. Compiled, since an eager search takes
+   most of a second: one program per tolerance and number of unknowns. *)
 let simplex_programs =
   Array.map
     (fun (_, _, _, tol) ->
@@ -611,7 +633,7 @@ let simplex_programs =
         Nx.Ptree.(
           tensor @-> tensor @-> pair tensor tensor
           @-> pair (pair tensor tensor) (pair tensor tensor)
-          @-> returns (pair tensor tensor))
+          @-> returns (Solution.ptree tensor))
         (fun a b (lo, hi) ((below, above), (c, bad)) ->
           let f x =
             let r = Nx.sub (Nx.matmul a x) b in
@@ -619,11 +641,8 @@ let simplex_programs =
             Nx.where (Nx.any out) bad
               (Nx.mul c (Nx.mul_s (Nx.sum (Nx.square r)) 0.5))
           in
-          let s =
-            Minimize.solve one Minimize.nelder_mead ~lo ~hi ~tol ~budget:5000 f
-              (Nx.zeros_like lo)
-          in
-          (Solution.best s, Solution.is Converged s)))
+          Minimize.solve one Minimize.nelder_mead ~lo ~hi ~tol ~budget:5000 f
+            (Nx.zeros_like lo)))
     simplex_tols
 
 (* No wall, no scale. *)
@@ -638,13 +657,13 @@ let simplex_in ?domain k a b box =
   in
   simplex_programs.(k) a b box domain
 
-(* [least_squares] with the tolerance [k] of [simplex_tols], walls past which f
-   is [bad], NaN, +∞ or −∞, and a scale [c] of f. Of each coordinate's four
-   cases, three have a wall: up to 1 above the start, 0 projected on the box,
-   up to 1 below it, or both. So the start lies in f's domain and a wall often
-   holds the answer. A scale of 1e170 squares the restart's differences past
-   the floats' range, 1e-170 below it; f's decisions are those of [c = 1]
-   otherwise. *)
+(* [least_squares] of one to five unknowns, one program per tolerance and number
+   of unknowns, with the tolerance [k] of [simplex_tols], walls past which f is
+   [bad], NaN, +∞ or −∞, and a scale [c] of f. Of each coordinate's four cases,
+   three have a wall: up to 1 above the start, 0 projected on the box, up to 1
+   below it, or both. So the start lies in f's domain and a wall often holds the
+   answer. A scale of 1e170 squares the restart's differences past the floats'
+   range, 1e-170 below it; f's decisions are those of [c = 1] otherwise. *)
 let walled =
   let open Gen in
   (let* k = int_range 0 (Array.length simplex_tols - 1) in
@@ -875,14 +894,44 @@ let box_tests =
                 ~budget:2000
                 (fun x -> Nx.sum (bowl c x))
                 (Nx.zeros f64 [| 2 |]))));
-    prop "nelder_mead converges only at a minimum in the box" walled
+    prop "nelder_mead converges only at a minimum in the box"
+      ~examples:
+        [
+          (* One unknown, whose minimum 10/9 lies past its bound 1 and its wall
+             0.5, where f is NaN. *)
+          ( 0,
+            ( Nx.create f64 [| 3; 1 |] [| 1.; 0.5; -1. |],
+              vec [| 2.; 1.; 0. |],
+              (vec [| Float.neg_infinity |], vec [| 1. |]) ),
+            ((vec [| Float.neg_infinity |], vec [| 0.5 |]), (1., Float.nan)) );
+          (* Three unknowns, whose minimum (2, 0.3, −2) lies past a wall of +∞
+             at 1 above the first unknown here, and past a wall of −∞ at −1
+             below the third in the next. *)
+          ( 1,
+            ( Nx.concatenate ~axis:0 [ Nx.eye f64 3; Nx.eye f64 3 ],
+              vec [| 2.; 0.3; -2.; 2.; 0.3; -2. |],
+              ( Nx.full f64 [| 3 |] Float.neg_infinity,
+                Nx.full f64 [| 3 |] Float.infinity ) ),
+            ( ( Nx.full f64 [| 3 |] Float.neg_infinity,
+                vec [| 1.; Float.infinity; Float.infinity |] ),
+              (1., Float.infinity) ) );
+          ( 2,
+            ( Nx.concatenate ~axis:0 [ Nx.eye f64 3; Nx.eye f64 3 ],
+              vec [| 2.; 0.3; -2.; 2.; 0.3; -2. |],
+              ( Nx.full f64 [| 3 |] Float.neg_infinity,
+                Nx.full f64 [| 3 |] Float.infinity ) ),
+            ( ( vec [| Float.neg_infinity; Float.neg_infinity; -1. |],
+                Nx.full f64 [| 3 |] Float.infinity ),
+              (1., Float.neg_infinity) ) );
+        ]
+      walled
       (fun (k, (a, b, (lo, hi)), ((below, above), (c, bad))) ->
         (* f is non-finite past the walls, so its minimum is in the box whose
            sides are the nearer of each bound and its wall. *)
         let n = Nx.dim 0 lo in
         let domain = ((below, above), (Nx.scalar f64 c, Nx.scalar f64 bad)) in
-        let x, converged = simplex_in ~domain k a b (lo, hi) in
-        let converged = Nx.item [] converged in
+        let s = simplex_in ~domain k a b (lo, hi) in
+        let x = Solution.best s and converged = Oracle.status s = Converged in
         let bottom = Nx.maximum lo below and top = Nx.minimum hi above in
         let step = Nx.sub x (squares_gradient a b x) in
         let clipped = Nx.minimum top (Nx.maximum bottom step) in
@@ -932,10 +981,9 @@ let box_tests =
            tolerance's scale is 0 there. *)
         let a = Nx.create f64 [| 2; 1 |] [| 1.; 1. |]
         and b = vec [| 0.; -1. |] in
-        let x, converged =
-          simplex_in k a b (vec [| Float.neg_infinity |], vec [| 0. |])
-        in
-        equal bool true (Nx.item [] converged);
+        let s = simplex_in k a b (vec [| Float.neg_infinity |], vec [| 0. |]) in
+        equal Oracle.status_t Converged (Oracle.status s);
+        let x = Solution.best s in
         equal (Oracle.tensor ~abs:(stationary k a b x) ()) (vec [| -0.5 |]) x);
     test "a side of the box not of the start's shapes raises" (fun () ->
         (* Swapped shapes keep the size: without the check they bound other
@@ -981,7 +1029,7 @@ let box_tests =
             ~tol:tight ~budget:20 rosenbrock
             (vec [| 0.; 0. |])
         in
-        equal bool true (is Stalled s));
+        equal Oracle.status_t Stalled (Oracle.status s));
     test "a bound no float meets is an empty box" (fun () ->
         (* lo = +∞, hi = −∞ or a NaN side admits no float, as lo > hi does:
            every comparison with NaN is false. *)
@@ -1298,25 +1346,9 @@ let resolution_ulps p =
   let mean = (s11 +. s22) /. 2. in
   let gap = sqrt ((((s11 -. s22) /. 2.) ** 2.) +. (s12 *. s12)) in
   let kappa = sqrt ((mean +. gap) /. (mean -. gap)) in
-  kappa *. Float.max (Float.abs a) (Float.abs b)
+  kappa
+  *. Float.max (Float.abs a) (Float.abs b)
   /. Float.min (Float.abs a) (Float.abs b)
-
-let status s =
-  List.find
-    (fun st -> Nx.item [] (Solution.is st s))
-    Solution.[ Converged; Budget_spent; Not_finite; Stalled ]
-
-let status_t =
-  Testable.make
-    ~pp:(fun ppf st ->
-      Format.pp_print_string ppf
-        (match st with
-        | Solution.Converged -> "Converged"
-        | Budget_spent -> "Budget_spent"
-        | Not_bracketed -> "Not_bracketed"
-        | Not_finite -> "Not_finite"
-        | Stalled -> "Stalled"))
-    ~equal:( = )
 
 (* [½ (x₁ − c₁)² + ½ 10⁶ (x₂ − c₂)²] from [x0] under [Tol.rel 1e-8]: each
    quasi-Newton method converges, its answer within [tol] and its last step's
@@ -1328,11 +1360,9 @@ let stiff_soft ~c ~x0 =
   List.iter
     (fun (name, m) ->
       let s = Minimize.solve one m ~tol:(Tol.rel 1e-8) ~budget:200 f (vec x0) in
-      equal ~msg:name status_t Converged (status s);
+      equal ~msg:name Oracle.status_t Converged (Oracle.status s);
       let x = Solution.best s in
-      let e =
-        Oracle.floats (Nx.div (Nx.sub x c) (Nx.mul_s (Nx.abs x) 1e-8))
-      in
+      let e = Oracle.floats (Nx.div (Nx.sub x c) (Nx.mul_s (Nx.abs x) 1e-8)) in
       let rms =
         sqrt (Array.fold_left (fun acc v -> acc +. (v *. v)) 0. e /. 2.)
       in
@@ -1378,6 +1408,25 @@ let warm_starts =
 let law_tests =
   [
     prop ~count:60 "a quasi-Newton answer on a quadratic is within its bound"
+      ~examples:
+        [
+          (* Squares of [tol]'s scale at this minimum are below the floats'
+             range, as are the gradient's products with it. *)
+          ( vec [| 8.417159381161952; 0.5884126868560854 |],
+            ( vec [| -5.1306710016229703e-290; -1.0261342003245941e-289 |],
+              (vec [| 1.; 0.021989514425253542 |], 4.) ) );
+          (* A zero at 0 and a subnormal one, each started within a thousand
+             subnormal spacings, beside a normal one. *)
+          ( Nx.exp (vec [| 0.5; -1.; 2. |]),
+            ( vec [| 1.3; 0.; Float.ldexp (-1.1) (-1040) |],
+              ( vec
+                  [|
+                    1.7;
+                    500. *. spacing;
+                    Float.ldexp (-1.1) (-1040) -. (700. *. spacing);
+                  |],
+                16. ) ) );
+        ]
       quadratics
       (fun ((_, (c, _)) as q) ->
         kinds c;
@@ -1432,21 +1481,12 @@ let law_tests =
             ("bfgs", Minimize.bfgs ~linear:Linear.dense);
           ]);
     test "a soft component left last converges within tol" (fun () ->
-        (* The steps measure the stiff curvature 10⁶ while the stiff
-           component converges; the soft one, 10⁻⁴ from its minimum, is then
-           the error, along a curvature of 1. *)
+        (* The steps measure the stiff curvature 10⁶ while the stiff component
+           converges; the soft one, 10⁻⁴ from its minimum, is then the error,
+           along a curvature of 1. *)
         stiff_soft ~c:[| 1.; 1. |] ~x0:[| 1.0001; 2. |]);
     test "a stiff component near 0 converges within tol" (fun () ->
         stiff_soft ~c:[| 1.; 1e-3 |] ~x0:[| 1.00002; 1.001 |]);
-    test "a quasi-Newton answer whose scale's square underflows is within its \
-          bound" (fun () ->
-        (* Squares of [tol]'s scale at this minimum are below the floats'
-           range, as are the gradient's products with it. *)
-        ignore
-          (within_its_bound
-             ( vec [| 8.417159381161952; 0.5884126868560854 |],
-               ( vec [| -5.1306710016229703e-290; -1.0261342003245941e-289 |],
-                 (vec [| 1.; 0.021989514425253542 |], 4.) ) )));
     prop "a converged solve's error meets tol at its estimate" limited
       (fun ((a, b), (k, ((p, noise), amp))) ->
         (* Under a tolerance below an ulp, a search whose last steps contract
@@ -1685,8 +1725,26 @@ let rotated =
   |> Gen.with_pp (fun ppf (h, a) ->
       Format.fprintf ppf "h = %a@ a = %a" Nx.pp h Nx.pp a)
 
-(* The condition of a symmetric positive-definite [a]: the ratio of its
-   largest eigenvalue to its least. *)
+(* Each method's solve of [c + ½ (x − a)ᵀ h (x − a)] from 0, compiled, since an
+   eager one on {!rotated}'s ten unknowns takes about a tenth of a second: one
+   program per method, which [c] does not change. *)
+let rotated_solves =
+  List.map
+    (fun (name, m) ->
+      ( name,
+        Rune.jit
+          Nx.Ptree.(
+            tensor @-> tensor @-> tensor @-> returns (Solution.ptree tensor))
+          (fun h a c ->
+            let f x =
+              let d = Nx.sub x a in
+              Nx.add (Nx.mul_s (Nx.sum (Nx.mul d (Nx.matmul h d))) 0.5) c
+            in
+            Minimize.solve one m ~tol:tight ~budget:2000 f (Nx.zeros_like a)) ))
+    methods
+
+(* The condition of a symmetric positive-definite [a]: the ratio of its largest
+   eigenvalue to its least. *)
 let condition a =
   let l = Oracle.floats (Nx.eigvalsh f64 a) in
   Array.fold_left Float.max 0. l /. Array.fold_left Float.min infinity l
@@ -1713,9 +1771,10 @@ let termination_tests =
         List.iter
           (fun (name, m) ->
             if String.starts_with ~prefix:"newton" name then
-              equal ~msg:name status_t Stalled
-                (status
-                   (Minimize.solve one m ~tol:(Tol.ulps 0x1.116ff1e7a3881p-2)
+              equal ~msg:name Oracle.status_t Stalled
+                (Oracle.status
+                   (Minimize.solve one m
+                      ~tol:(Tol.ulps 0x1.116ff1e7a3881p-2)
                       ~budget:200 (objective a b) (Nx.zeros_like b))))
           methods);
     prop "below an ulp a search ends at the floats' limit, near the minimum"
@@ -1742,12 +1801,12 @@ let termination_tests =
         List.iter
           (fun (name, solve) ->
             let s = solve () in
-            let st = status s in
+            let st = Oracle.status s in
             (* Newton meets a quadratic in one step; the reproduction above
                stalls it. *)
             if not (String.starts_with ~prefix:"newton" name) then
               cover (name ^ " stalls") (st = Stalled);
-            not_equal ~msg:name status_t Budget_spent st;
+            not_equal ~msg:name Oracle.status_t Budget_spent st;
             (* The answer is fixed to about ε |x*|∞ times the condition: the
                gradient's rounding is ε times its largest terms. *)
             let x = Solution.best s in
@@ -1798,8 +1857,8 @@ let termination_tests =
              (Oracle.floats xstar));
         List.iter
           (fun (name, m) ->
-            equal ~msg:name status_t Converged
-              (status
+            equal ~msg:name Oracle.status_t Converged
+              (Oracle.status
                  (Minimize.solve one m ~tol ~budget:200
                     (exact_objective a xstar ~boxed:false 0.)
                     (Nx.full_like xstar 0.5))))
@@ -1821,10 +1880,9 @@ let termination_tests =
         in
         List.iter
           (fun (name, m) ->
-            equal ~msg:name status_t Converged
-              (status
-                 (Minimize.solve one m ~tol:(Tol.v ~rel:1e-10 ~abs)
-                    ~budget:200
+            equal ~msg:name Oracle.status_t Converged
+              (Oracle.status
+                 (Minimize.solve one m ~tol:(Tol.v ~rel:1e-10 ~abs) ~budget:200
                     (exact_objective a xstar ~boxed:false 0.)
                     (Nx.full_like xstar 0.5))))
           methods);
@@ -1852,8 +1910,8 @@ let termination_tests =
         in
         List.iter
           (fun (name, m) ->
-            equal ~msg:name status_t Converged
-              (status
+            equal ~msg:name Oracle.status_t Converged
+              (Oracle.status
                  (Minimize.solve one m ~tol:(Tol.v ~rel:r ~abs) ~budget:200
                     (exact_objective a xstar ~boxed:false 0.)
                     (Nx.full_like xstar 0.5))))
@@ -1926,7 +1984,7 @@ let termination_tests =
                 ~tol:(Tol.abs 1e-6) ~budget:200 f
                 (vec [| top +. 1.; 6. |])
             in
-            equal ~msg:name bool false (is Converged s))
+            not_equal ~msg:name Oracle.status_t Converged (Oracle.status s))
           [
             ("bfgs", Minimize.bfgs ~linear:Linear.dense);
             ("lbfgs", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
@@ -1946,7 +2004,7 @@ let termination_tests =
               Minimize.solve one m ~tol:(Tol.abs 1e-8) ~budget:200 f
                 (vec [| 0.5; 0.5 |])
             in
-            equal ~msg:name bool false (is Converged s))
+            not_equal ~msg:name Oracle.status_t Converged (Oracle.status s))
           [
             ("bfgs", Minimize.bfgs ~linear:Linear.dense);
             ("lbfgs", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
@@ -1991,30 +2049,22 @@ let termination_tests =
           && (r *. top) +. abs >= 1e3 *. abs);
         List.iter
           (fun (name, m) ->
-            equal ~msg:name status_t Converged
-              (status
+            equal ~msg:name Oracle.status_t Converged
+              (Oracle.status
                  (Minimize.solve one m ~tol:(Tol.v ~rel:r ~abs) ~budget:200
                     (exact_objective a xstar ~boxed:false 0.)
                     (Nx.full_like xstar 0.5))))
           methods);
     prop ~count:2 "a constant added to f leaves a solve's status (law)" rotated
       (fun (h, a) ->
-        let f c x =
-          let d = Nx.sub x a in
-          Nx.add_s (Nx.mul_s (Nx.sum (Nx.mul d (Nx.matmul h d))) 0.5) c
-        in
         List.iter
-          (fun (name, m) ->
-            let solve c =
-              status
-                (Minimize.solve one m ~tol:tight ~budget:2000 (f c)
-                   (Nx.zeros_like a))
-            in
+          (fun (name, solve) ->
+            let solve c = Oracle.status (solve h a (scalar_of c)) in
             let base = solve 0. in
             List.iter
-              (fun c -> equal ~msg:name status_t base (solve c))
+              (fun c -> equal ~msg:name Oracle.status_t base (solve c))
               [ 1e4; 1e8 ])
-          methods);
+          rotated_solves);
     prop ~count:10
       "a NaN at the trial points ends every search within its bound" centers
       (fun c ->
@@ -2067,14 +2117,14 @@ let () =
   exit
     (run "Jera.Minimize"
        [
-         group "bracket" bracket_tests;
-         group "derivatives" derivative_tests;
+         group "laws" law_tests;
+         (* A search that does not end is a failure, not a hang. *)
+         group ~timeout:60. "termination" termination_tests;
          group "gradient methods" gradient_tests;
          group "levenberg_marquardt" lm_tests;
          group "nelder_mead" nelder_mead_tests;
          group "boxes" box_tests;
          group "iterates" iterate_tests;
-         group "laws" law_tests;
-         (* A search that does not end is a failure, not a hang. *)
-         group ~timeout:60. "termination" termination_tests;
+         group "bracket" bracket_tests;
+         group "derivatives" derivative_tests;
        ])
