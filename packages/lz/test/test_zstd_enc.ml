@@ -146,9 +146,11 @@ let cover_input r s level =
 let level = Gen.int_range 1 12
 let placed = Gen.triple Lz_support.recipe level (Gen.int_range 0 7)
 
-(* Lengths at a block's edges, each with its neighbours: 128 KiB, the
-   largest block, and multiples of 8 KiB, the shortest block a cut leaves
-   but the last. Noise makes raw blocks, the bound's worst case. *)
+(* Lengths at a block's edges, each with its neighbours: 128 KiB, the largest
+   block, and multiples of 8 KiB, the shortest block a cut leaves but the last.
+   Noise makes raw blocks, the bound's worst case. The bound grows at each
+   multiple of 8 KiB alike, so multiples to 136 KiB, past one block, reach every
+   edge: longer ones cost their length in every encode and reach no other. *)
 let block_edge =
   let open Gen in
   let length =
@@ -158,7 +160,7 @@ let block_edge =
         ( 1,
           map
             (fun (k, d) -> (k * 8 * kib) + d)
-            (pair (int_range 1 40) (int_range (-1) 1)) );
+            (pair (int_range 1 17) (int_range (-1) 1)) );
       ]
   in
   let fill = of_list [ `Noise; `Text; `Columns ] in
