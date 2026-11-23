@@ -20,7 +20,7 @@
     + The claim {e ends} when the consumer returns or raises, which frees the
       memory no other value reads and no result holds.
 
-    A handle lives while its memory does ({!Prim.death}): once a consumer has
+    A handle lives while its memory does ({!Prim.dead}): once a consumer has
     taken or freed it, every handle over it is dead, naming that consumer.
     [Nx] promises no more than that a later use of a handle reads the donated
     elements or raises: whether the memory is still there is this module's
@@ -39,7 +39,7 @@
 (** {1:handles Handles} *)
 
 val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [donate ~by x] ends [x], whose word it sets to [Died "donated"], and is a
+(** [donate ~by x] ends [x], whose word it sets to [Some "donated"], and is a
     handle over [x]'s memory that one consumer reads ({!Value.Handle}). An
     operation may write its first result into the memory ({!reuse}). A
     movement passes a new handle over [x]'s memory on instead. For a traced

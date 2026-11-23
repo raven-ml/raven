@@ -81,11 +81,10 @@ let alloc (type v s d e) ?(into : e Value.any option) k
   let p = f.placement in
   match into with
   | Some (Value.Any x) when k = 0 ->
-      Value.Array
-        { at = p; a = A.expect f.dtype (A.Any (one x)); dead = Value.Live }
+      Value.Array { at = p; a = A.expect f.dtype (A.Any (one x)); dead = None }
   | Some _ | None ->
       let a = fresh_over f.dtype f.layout (rig_of p) in
-      Value.Array { at = p; a; dead = Value.Live }
+      Value.Array { at = p; a; dead = None }
 
 (* Programs on one device *)
 
@@ -300,14 +299,13 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
 (* The kernels of [x]'s set where [x] is a live array. *)
 let live_kernels (type v s d) (x : (v, s, d) Value.t) =
   match x with
-  | Value.Array r when r.dead == Value.Live ->
-      Devices.kernels (Devices.set r.at)
+  | Value.Array r when r.dead == None -> Devices.kernels (Devices.set r.at)
   | _ -> None
 
 (* Whether [y] is a live array at [x]'s placement, [x] an array. *)
 let beside (type v s w r d) (x : (v, s, d) Value.t) (y : (w, r, d) Value.t) =
   match (x, y) with
-  | Value.Array rx, Value.Array ry -> rx.at == ry.at && ry.dead == Value.Live
+  | Value.Array rx, Value.Array ry -> rx.at == ry.at && ry.dead == None
   | _ -> false
 
 (* The array [load] reads. *)
@@ -320,7 +318,7 @@ let any (load : Nx_kernel.load) =
 let mapped (type w r d) ~by (module K : Nx_kernel.S) (at : d Devices.placement)
     p (dst : (w, r) A.t) loads : (w, r, d) Value.t =
   match K.map p ~dsts:[| A.Any dst |] loads with
-  | Done -> Value.Array { at; a = dst; dead = Value.Live }
+  | Done -> Value.Array { at; a = dst; dead = None }
   | Declined -> (
       let ins = Iarray.to_list p.ins in
       match P.single p with
@@ -339,13 +337,13 @@ let beside_first (type d) (loads : d Value.load iarray) =
   n > 0
   &&
   match Iarray.get loads 0 with
-  | Value.Plain (Value.Array f) when f.dead == Value.Live ->
+  | Value.Plain (Value.Array f) when f.dead == None ->
       let at = f.at and i = ref 1 in
       while
         !i < n
         &&
         match Iarray.get loads !i with
-        | Value.Plain (Value.Array r) -> r.at == at && r.dead == Value.Live
+        | Value.Plain (Value.Array r) -> r.at == at && r.dead == None
         | Value.Plain _ | Value.Padded _ -> false
       do
         incr i
@@ -449,7 +447,7 @@ let piece (type v s d) (x : (v, s, d) Value.t) j at : (v, s, d) Value.t =
   match x with
   | Value.Array _ -> x
   | Value.Shards { arrays; _ } ->
-      Value.Array { at; a = Iarray.get arrays j; dead = Value.Live }
+      Value.Array { at; a = Iarray.get arrays j; dead = None }
   | Value.Traced _ -> invalid_arg "Exec: a traced value has no arrays"
   | Value.Handle _ ->
       invalid_arg "Exec: a donated value is read as its consumer"
@@ -467,7 +465,7 @@ let view (type v s d) mv (x : (v, s, d) Value.t) : (v, s, d) Value.t =
         | Some v -> v
         | None -> invalid_arg "Exec: a piece's layout expresses its view")
   in
-  if v == a then x else Value.Array { at; a = v; dead = Value.Live }
+  if v == a then x else Value.Array { at; a = v; dead = None }
 
 (* The window [w] of the piece [x]. *)
 let view_of_piece (x, w) = slice (one x) (Iarray.of_array w)
@@ -499,7 +497,7 @@ let bring_one (type v s d e) at (ps : ((v, s, d) Value.t * M.range array) list)
         | Some a -> a
         | None -> A.to_device d (view_of_piece (List.hd ps)))
   in
-  Value.Array { at; a; dead = Value.Live }
+  Value.Array { at; a; dead = None }
 
 (* The boxes gathered into a fresh C-contiguous array on [at]'s device. A dtype
    narrower than a byte gathers on the host where the host does not address
@@ -518,7 +516,7 @@ let gather (type v s d e) at (dt : (v, s) D.t) shape
       let src = slice (one x) (Iarray.of_array b) in
       A.transfer ~src ~dst:(slice dst (Iarray.of_array w)))
     boxes;
-  Value.Array { at; a = bring d dst; dead = Value.Live }
+  Value.Array { at; a = bring d dst; dead = None }
 
 (* An array whose writer is done, as an [iarray], without a copy. *)
 external freeze : 'a array -> 'a iarray = "%opaque"
@@ -539,13 +537,13 @@ let assemble (type v s d e) (p : e Devices.placement) shape (dt : (v, s) D.t)
     (ps : (v, s, d) Value.t option array) : (v, s, e) Value.t =
   let first = piece_array p shape dt ps 0 in
   let n = Array.length ps in
-  if n = 1 then Value.Array { at = p; a = first; dead = Value.Live }
+  if n = 1 then Value.Array { at = p; a = first; dead = None }
   else begin
     let arrays = Array.make n first in
     for j = 1 to n - 1 do
       arrays.(j) <- piece_array p shape dt ps j
     done;
-    Value.Shards { at = p; shape; arrays = freeze arrays; dead = Value.Live }
+    Value.Shards { at = p; shape; arrays = freeze arrays; dead = None }
   end
 
 (* Placing one array *)
@@ -562,7 +560,7 @@ let one_array at a p =
 
 let to_one (type v s d e) (at : d Devices.placement) (a : (v, s) A.t)
     (p : e Devices.placement) : (v, s, e) Value.t =
-  Value.Array { at = p; a = one_array at a p; dead = Value.Live }
+  Value.Array { at = p; a = one_array at a p; dead = None }
 
 (* Whether [b] lies over [a]'s memory: kept, [a]'s own buffer, or borrowed,
    sharing its bytes. A kept buffer of no bytes overlaps nothing
@@ -581,7 +579,7 @@ let placed_one (type v s d e) (at : d Devices.placement) (a : (v, s) A.t)
     (p : e Devices.placement) : (v, s, e) Value.t =
   let b = one_array at a p in
   if over a b then Rig.Buffer.share (A.buffer b);
-  Value.Array { at = p; a = b; dead = Value.Live }
+  Value.Array { at = p; a = b; dead = None }
 
 (* Creations *)
 
@@ -670,7 +668,7 @@ let slabs ~by kernels set op (dsts : A.any iarray) =
               {
                 at = f.placement;
                 a = A.expect f.dtype (Iarray.get hosts j);
-                dead = Value.Live;
+                dead = None;
               }
           in
           let r = Prim.results_at host [| layout |] into op in
@@ -685,7 +683,7 @@ let slabs ~by kernels set op (dsts : A.any iarray) =
             let (A.Any h) = Iarray.get hosts j in
             let a = Option.get (A.move (M.Reshape extents) (slice h w)) in
             let a = A.expect f.dtype (A.Any a) in
-            Value.Array { at = f.placement; a; dead = Value.Live }
+            Value.Array { at = f.placement; a; dead = None }
           in
           let r = Prim.results_at host [| L.contiguous extents |] into op in
           on_device ~by kernels set r 0 op);
@@ -761,7 +759,7 @@ let created : type r.
       let into k (f : _ Value.form) =
         let a = A.expect f.dtype (Iarray.get dsts k) in
         let a = Option.get (A.borrow Rig.host a) in
-        Value.Array { at = f.placement; a; dead = Value.Live }
+        Value.Array { at = f.placement; a; dead = None }
       in
       on_device ~by kernels set (Prim.results_at host layouts into op) 0 op
   | None -> if L.numel layouts.(0) > 0 then slabs ~by kernels set op dsts);
@@ -778,12 +776,11 @@ let windows : type r d.
   match op with
   | Value.Move (mv, x) ->
       let set = Devices.set p in
-      Value.Array
-        { at = p; a = as_view ~by set A.move mv (one x); dead = Value.Live }
+      Value.Array { at = p; a = as_view ~by set A.move mv (one x); dead = None }
   | Value.Bitcast (dt, x) ->
       let set = Devices.set p in
       Value.Array
-        { at = p; a = as_view ~by set A.bitcast dt (one x); dead = Value.Live }
+        { at = p; a = as_view ~by set A.bitcast dt (one x); dead = None }
   | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.windows: a placement or a check"
   | Value.Map { at = Some _; loads; _ }
@@ -874,13 +871,13 @@ let contract (type v s a b c e d) ~by ~batch ~contracting ~acc
     (init : (v, s, d) Value.t option) : (v, s, d) Value.t option =
   match (x, y) with
   | Value.Array rx, Value.Array ry
-    when rx.at == ry.at && rx.dead == Value.Live && ry.dead == Value.Live -> (
+    when rx.at == ry.at && rx.dead == None && ry.dead == None -> (
       let at = rx.at in
       let set = Devices.set at in
       let array =
         match init with
         | None -> Some None
-        | Some (Value.Array ri) when ri.at == at && ri.dead == Value.Live ->
+        | Some (Value.Array ri) when ri.at == at && ri.dead == None ->
             Some (Some ri.a)
         | Some _ -> None
       in
@@ -898,7 +895,7 @@ let contract (type v s a b c e d) ~by ~batch ~contracting ~acc
               { array = A.Any rx.a; scale = None }
               { array = A.Any ry.a; scale = None }
           with
-          | Done -> Some (Value.Array { at; a = dst; dead = Value.Live })
+          | Done -> Some (Value.Array { at; a = dst; dead = None })
           | Declined ->
               let dtype i = D.Any (A.dtype i) in
               let init = Option.to_list (Option.map dtype array) in

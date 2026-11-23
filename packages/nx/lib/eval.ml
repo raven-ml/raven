@@ -82,8 +82,7 @@ let taken ~by c (r : Prim.routed) op =
 let unusable (type v s d) (x : (v, s, d) t) =
   match x with
   | Traced _ -> true
-  | Array _ | Shards _ | Handle _ -> (
-      match Prim.death x with Live -> false | Died _ -> true)
+  | Array _ | Shards _ | Handle _ -> Option.is_some (Prim.dead x)
 
 (* Partitions *)
 
@@ -542,7 +541,7 @@ and donated : type r. by:string -> r prim -> r =
         | Array r -> (
             ignore (Prim.layouts ~by op);
             match A.move mv r.a with
-            | Some a -> Array { r with a; dead = Live }
+            | Some a -> Array { r with a; dead = None }
             | None -> moved ())
         | Shards _ | Handle _ | Traced _ -> moved ()
       in
@@ -618,7 +617,7 @@ and routed : type r.
       | Some (A.Any a), _ ->
           (* A value on the route's one device, over the donated memory. *)
           let at = (Option.get r.Prim.route).result in
-          let into = Value.Any (Array { at; a; dead = Live }) in
+          let into = Value.Any (Array { at; a; dead = None }) in
           partitioned Exec.eager ~by ~into r op
       | None, Some arrays ->
           (* A value at the route's result, each device's window over its
@@ -760,7 +759,7 @@ let interpret ~name reach
 
 let traced i form payload =
   Traced
-    { form; owner = i; payload; held = Some payload; twin = None; dead = Live }
+    { form; owner = i; payload; held = Some payload; twin = None; dead = None }
 
 let twinned i c payload =
   Traced
@@ -770,7 +769,7 @@ let twinned i c payload =
       payload;
       held = Some payload;
       twin = Some c;
-      dead = Live;
+      dead = None;
     }
 
 (* Whether [o]'s handler is around the caller with no [Extent] handler
@@ -1034,10 +1033,10 @@ let contract ~by ?(sum = false) ~batch ~contracting ~acc dt a b init =
 
 let place ~by p x =
   match x with
-  | Array r when r.at == p && r.dead == Live && quiet () ->
+  | Array r when r.at == p && r.dead == None && quiet () ->
       (* A second value over the memory shares it. *)
       Rig.Buffer.share (Nx_array.buffer r.a);
-      Array { at = p; a = r.a; dead = Live }
+      Array { at = p; a = r.a; dead = None }
   | Array _ | Shards _ | Handle _ | Traced _ ->
       eval ~by (Place (p, x))
 
@@ -1051,11 +1050,11 @@ let place ~by p x =
 let move ~by mv x =
   match x with
   | Array ({ at; a; _ } as r)
-    when r.dead == Live && quiet () && not (Grid.is_cut (Devices.grid at)) -> (
+    when r.dead == None && quiet () && not (Grid.is_cut (Devices.grid at)) -> (
       match A.move mv a with
       | Some v ->
           Exec.view_of a;
-          let y = Array { at; a = v; dead = Live } in
+          let y = Array { at; a = v; dead = None } in
           if not (Composite.idle ()) then note (Move (mv, x)) y;
           y
       | None | (exception Invalid_argument _) -> eval ~by (Move (mv, x)))
@@ -1065,11 +1064,11 @@ let move ~by mv x =
 let bitcast ~by dt x =
   match x with
   | Array ({ at; a; _ } as r)
-    when r.dead == Live && quiet () && not (Grid.is_cut (Devices.grid at)) -> (
+    when r.dead == None && quiet () && not (Grid.is_cut (Devices.grid at)) -> (
       match A.bitcast dt a with
       | Some v ->
           Exec.view_of a;
-          let y = Array { at; a = v; dead = Live } in
+          let y = Array { at; a = v; dead = None } in
           if not (Composite.idle ()) then note (Bitcast (dt, x)) y;
           y
       | None | (exception Invalid_argument _) -> eval ~by (Bitcast (dt, x)))

@@ -33,26 +33,23 @@ let rec own_layout : type v s d. (v, s, d) t -> L.t = function
 
 let rank x = L.rank (own_layout x)
 
-(* Whether [a]'s memory was taken or freed, and why. *)
-let buffer_death a =
-  match Rig.Buffer.dead (Nx_array.buffer a) with
-  | Some why -> Died why
-  | None -> Live
+(* Why [a]'s memory was taken or freed, if it was. *)
+let buffer_dead a = Rig.Buffer.dead (Nx_array.buffer a)
 
-let rec shards_death arrays i =
-  if i = Iarray.length arrays then Live
+let rec shards_dead arrays i =
+  if i = Iarray.length arrays then None
   else
-    match buffer_death (Iarray.get arrays i) with
-    | Live -> shards_death arrays (i + 1)
-    | Died _ as d -> d
+    match buffer_dead (Iarray.get arrays i) with
+    | None -> shards_dead arrays (i + 1)
+    | Some _ as d -> d
 
 (* A handle lives while its memory does. *)
-let rec death : type v s d. (v, s, d) t -> death = function
+let rec dead : type v s d. (v, s, d) t -> string option = function
   | Array r -> r.dead
   | Shards r -> r.dead
-  | Handle { over = Array { a; _ } } -> buffer_death a
-  | Handle { over = Shards { arrays; _ } } -> shards_death arrays 0
-  | Handle { over } -> death over
+  | Handle { over = Array { a; _ } } -> buffer_dead a
+  | Handle { over = Shards { arrays; _ } } -> shards_dead arrays 0
+  | Handle { over } -> dead over
   | Traced r -> r.dead
 
 let rec arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray =
@@ -65,8 +62,8 @@ let rec arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray =
 let of_arrays (type v s d) (p : d Devices.placement) ~shape
     (arrays : (v, s) Nx_array.t iarray) : (v, s, d) t =
   if Iarray.length arrays = 1 then
-    Array { at = p; a = Iarray.get arrays 0; dead = Live }
-  else Shards { at = p; shape; arrays; dead = Live }
+    Array { at = p; a = Iarray.get arrays 0; dead = None }
+  else Shards { at = p; shape; arrays; dead = None }
 
 let rec dim : type v s d. (v, s, d) t -> int -> int =
  fun x i ->
@@ -144,9 +141,9 @@ let pp_value ppf x =
   Format.fprintf ppf "%s %a" (D.name (dtype x)) pp_shape (shape x)
 
 let alive ~by x =
-  match death x with
-  | Live -> ()
-  | Died why -> invalid_argf "%s: %a was %s" by pp_value x why
+  match dead x with
+  | None -> ()
+  | Some why -> invalid_argf "%s: %a was %s" by pp_value x why
 
 (* Each refusal of [Layout.fits] in its own words: they are rare, so the cheap
    predicate runs first. *)

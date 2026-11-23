@@ -13,7 +13,7 @@ let pp_shape = Prim.pp_shape
 
 let unsafe_of_array ~by s a =
   match Devices.position s (A.device a) with
-  | Some k -> Value.Array { at = Devices.one s k; a; dead = Value.Live }
+  | Some k -> Value.Array { at = Devices.one s k; a; dead = None }
   | None ->
       invalid_argf "%s: the array lies on %s, which is not a device of %a" by
         (Rig.name (A.device a))

@@ -3563,6 +3563,13 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.wait_checks ()` is a wait on every set: it waits for the checks issued
+  before the call, oldest first in issue order, and raises the first failure.
+  Where it returns, each of their failures has raised at some wait.
+- `Nx.Prim.dead x` is why `x` has ended, if it has: `Some "donated"` after
+  `Nx.donate x`, and for a handle, the consumer that took or freed its memory,
+  as `Some "donated to Nx.mul"`. A use of `x` then refuses it, while its
+  shape, dtype and placement still answer.
 - nx builds on ppc64le, riscv64 and loongarch64: `nx_kinds.h` stopped with an
   error there, finding no fused multiply-add.
 - `Nx.conv` of one channel a group over few channels last, such as a blur's

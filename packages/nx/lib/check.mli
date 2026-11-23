@@ -23,23 +23,24 @@
     ends once the check is read, since a copy there would make the host wait
     for the work that writes them.
 
-    The pending checks and failures are the process's, by set: every domain
-    and systhread reaches them, and a set with none has no entry. Each set
-    has a {e claim}, which one reader at a time holds while it reads the
+    The pending checks and failures are the process's, by set: every domain and
+    systhread reaches them, and a set with none has no entry. Each check has a
+    {e stamp}, which rises in the order checks are added, across every set. Each
+    set has a {e claim}, which one reader at a time holds while it reads the
     set's checks and takes them off; adding needs no claim. A check is read
     once: whether its flags hold, and for a failing one its position and
     elements, after which it holds nothing of a device's and its keep ends.
     A read that raises, such as {!Rig.Lost}, takes its check off before the
     exception passes on.
 
-    A {!wait} on the set takes its claim, waiting for another reader to let
-    it go, reads its checks oldest first, waiting for each, takes off the
-    passing ones up to the first failure, and takes off that failure: one
-    failure per wait, the oldest first, the later ones left for later waits.
-    It lets the claim go, then [fail] builds the exception, on the waiting
-    domain, and may read the values it receives, which waits on a set. A wait
-    inside that build raises no failure, which would replace the one being
-    built.
+    A {!wait} on the set takes its claim, waiting for another reader to let it
+    go, reads its checks oldest first, waiting for each, takes off the passing
+    ones up to the first failure, and takes off that failure: one failure per
+    wait, the oldest first, the later ones left for later waits. It lets the
+    claim go, then [fail] builds the exception, on the waiting domain, and may
+    read the values it receives, which waits on a set. A wait inside that build
+    raises no failure, which would replace the one being built. {!wait_all}
+    reads the checks of every set in stamp order.
 
     Once a pending check's reduction, and its copy, are submitted, it records
     the value its device has submitted ({!Rig.submitted}). Adding a check to a
@@ -110,6 +111,19 @@ val wait : by:string -> ('v, 's, 'd) Value.t -> unit
     Raises that failure: what its [fail] returns or raises, or what reading
     it raises, such as {!Rig.Lost}; and [Invalid_argument] naming [by] for a
     traced [x]. *)
+
+val wait_all : unit -> unit
+(** [wait_all ()] is {!wait} on every set, for the checks stamped before the
+    call: it reads them in stamp order, taking each set's claim in turn, waiting
+    for each check, and takes off the passing ones up to the first failure,
+    which it takes off and raises, unless it runs inside the build of a
+    failure's exception. It returns once each of them has passed or been taken
+    off by another reader, which raises it if it fails. Checks added meanwhile
+    are left, so it returns while other domains go on issuing and raising
+    checks.
+
+    Raises that failure: what its [fail] returns or raises, or what reading a
+    check raises, such as {!Rig.Lost}. *)
 
 val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
 (** [on_host ~by x] is an array on the host holding [x]'s elements, [x]

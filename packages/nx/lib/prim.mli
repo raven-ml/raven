@@ -39,10 +39,11 @@ val of_arrays :
     per device of [p], each its window of [shape]: [Array] for one, [Shards]
     otherwise. Nothing checks the windows. *)
 
-val death : ('v, 's, 'd) t -> death
-(** [death x] is whether [x] lives: for a handle, whether its memory does,
-    [Died why] once a consumer has taken or freed it, [why] the reason rig
-    gives ({!Rig.Buffer.dead}). It allocates nothing for a live value. *)
+val dead : ('v, 's, 'd) t -> string option
+(** [dead x] is [Some why] once [x] has ended, [why] what it was, and [None]
+    while it lives: [x]'s word, or for a handle, [Some why] once a consumer has
+    taken or freed its memory, [why] the reason rig gives ({!Rig.Buffer.dead}).
+    It allocates nothing for a live value. *)
 
 val alive : by:string -> ('v, 's, 'd) t -> unit
 (** [alive ~by x] raises [Invalid_argument] naming [by], [x] as {!pp_value}

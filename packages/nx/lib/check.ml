@@ -41,7 +41,11 @@ type pending = {
 
 (* A pending check, unread, or a failure read as the builder of its exception,
    which holds nothing of a device's. *)
-type entry = Unread of pending | Fails of (unit -> exn)
+type state = Unread of pending | Fails of (unit -> exn)
+
+(* A check's state and its stamp, which orders the checks of every set by their
+   entry into the table. *)
+type entry = { stamp : int; state : state }
 
 (* A set's entries, newest first, and its claim: the mutex that whoever reads
    or takes off its entries holds, so that one reader at a time decides each
@@ -55,6 +59,9 @@ module Sets = Map.Make (Int)
    no entry has no binding. *)
 let table : set Sets.t Atomic.t = Atomic.make Sets.empty
 
+(* The next stamp. *)
+let stamps = Atomic.make 0
+
 (* [f] of the table, which it replaces, atomically against every other update.
    [f] may run more than once. *)
 let rec update f =
@@ -67,27 +74,35 @@ let oldest n =
   | None -> []
   | Some s -> List.rev s.entries
 
-let push n e =
+(* Adds a check of [state] to set [n], and is its entry. The update that adds it
+   draws its stamp after reading the table, so every entry the table holds has
+   an older one: stamps rise in the order entries enter, within a set and across
+   sets. *)
+let push n state =
   update (fun sets ->
+      let e = { stamp = Atomic.fetch_and_add stamps 1; state } in
       let s =
         match Sets.find_opt n sets with
         | Some s -> { s with entries = e :: s.entries }
         | None -> { claim = Mutex.create (); entries = [ e ] }
       in
-      (Sets.add n s sets, ()))
+      (Sets.add n s sets, e))
 
-(* Replaces the entry [e] of set [n] by [by], or takes it off for [None], and
-   ends its keep. Only the holder of [n]'s claim calls it. *)
+(* Gives the entry [e] of set [n] the state [by], or takes it off for [None],
+   and ends its keep. Only the holder of [n]'s claim calls it. *)
 let replace n e by =
   update (fun sets ->
       match Sets.find_opt n sets with
       | None -> (sets, ())
       | Some s -> (
-          let at e' = if e' == e then Option.to_list by else [ e' ] in
+          let at e' =
+            if e' != e then [ e' ]
+            else Option.to_list (Option.map (fun state -> { e with state }) by)
+          in
           match List.concat_map at s.entries with
           | [] -> (Sets.remove n sets, ())
           | entries -> (Sets.add n { s with entries } sets, ())));
-  match e with
+  match e.state with
   | Unread { kept = Some (k, _); _ } -> Rig.Buffer.release k
   | Unread { kept = None; _ } | Fails _ -> ()
 
@@ -164,8 +179,8 @@ let settle ?mine n ds =
   let rec go = function
     | [] -> ()
     | e :: _ when Option.exists (( == ) e) mine -> ()
-    | Fails _ :: rest -> go rest
-    | (Unread c as e) :: rest ->
+    | { state = Fails _; _ } :: rest -> go rest
+    | ({ state = Unread c; _ } as e) :: rest ->
         if reached n e ds c then begin
           (match read n e c with
           | Holds -> replace n e None
@@ -175,18 +190,12 @@ let settle ?mine n ds =
   in
   ignore (claimed ~wait:false n (fun () -> go (oldest n)))
 
-let add ~devices n c =
-  let mine = Unread c in
-  push n mine;
-  settle ~mine n devices
+let add ~devices n c = settle ~mine:(push n (Unread c)) n devices
 
 let add_read ~devices n failure =
   match failure with
   | None -> settle n devices
-  | Some b ->
-      let mine = Fails b in
-      push n mine;
-      settle ~mine n devices
+  | Some b -> settle ~mine:(push n (Fails b)) n devices
 
 (* Building a failure's exception
 
@@ -220,15 +229,17 @@ let built build =
   in
   Effect.Deep.match_with build () { retc = Fun.id; exnc = reraise; effc }
 
-(* The oldest failure of set [n], taken off holding [n]'s claim: its entries
-   are read oldest first, waiting for each, and the passing ones go. *)
-let oldest_failure n =
+(* The oldest failure of set [n] among its entries stamped before [before],
+   taken off holding [n]'s claim: those entries are read oldest first, waiting
+   for each, and the passing ones go. *)
+let oldest_failure ?(before = max_int) n =
   let rec go = function
     | [] -> None
-    | (Fails b as e) :: _ ->
+    | e :: _ when e.stamp >= before -> None
+    | ({ state = Fails b; _ } as e) :: _ ->
         replace n e None;
         Some b
-    | (Unread c as e) :: rest -> (
+    | ({ state = Unread c; _ } as e) :: rest -> (
         match read n e c with
         | Holds ->
             replace n e None;
@@ -248,3 +259,44 @@ let wait : type v s d. by:string -> (v, s, d) Value.t -> unit =
       let n = Devices.number (Devices.set (Prim.placement x)) in
       if Sets.mem n (Atomic.get table) && not (building ()) then
         match oldest_failure n with Some b -> raise (built b) | None -> ())
+
+(* The set whose oldest entry is the oldest of the table's, where that entry is
+   stamped before [before], with the stamp before which each of the set's
+   entries is older than every other set's: the other sets' oldest stamps and
+   [before]. *)
+let next before =
+  let visit n s ((first, bound) as acc) =
+    let stamp = List.fold_left (fun _ e -> e.stamp) before s.entries in
+    match first with
+    | Some (_, oldest) when oldest < stamp -> (first, min bound stamp)
+    | Some (_, oldest) -> (Some (n, stamp), min bound oldest)
+    | None when stamp < before -> (Some (n, stamp), bound)
+    | None -> acc
+  in
+  match Sets.fold visit (Atomic.get table) (None, before) with
+  | Some (n, _), bound -> Some (n, bound)
+  | None, _ -> None
+
+(* Each turn reads, from the set {!next} gives, the entries older than every
+   other set's, so the table's entries stamped before [before] are read in stamp
+   order, and the turns end: each takes off one of them at least, unless another
+   reader did, and no later entry has such a stamp. Entries enter the table in
+   stamp order, so one stamped before a failure it raises is there by then.
+
+   Another reader takes an entry off holding its set's claim, so where the turns
+   end, every entry stamped before [before] has left the table, each failing one
+   taken off by a wait that raises it. [before] never moves, so the wait returns
+   however long other domains go on issuing and raising checks. *)
+let wait_all () =
+  if not (building ()) then begin
+    let before = Atomic.get stamps in
+    let rec go () =
+      match next before with
+      | Some (n, bound) -> (
+          match oldest_failure ~before:bound n with
+          | Some b -> raise (built b)
+          | None -> go ())
+      | None -> ()
+    in
+    go ()
+  end

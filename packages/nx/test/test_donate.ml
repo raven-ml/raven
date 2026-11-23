@@ -587,6 +587,35 @@ let test_is_handle () =
   ignore (Nx.copy d);
   equal ~msg:"a consumed handle" bool true (Nx.Prim.donated d)
 
+(* A value cut across devices ends as one, at its donation, and its handle once
+   a consumer takes or frees its shards' memory. A traced value ends by its
+   donation alone: its interpretation's return leaves it live. *)
+let test_dead () =
+  let dead = option string in
+  let x = Nx.place (Two.split ~axis:0) (fresh [| 1.; 2.; 3.; 4. |]) in
+  let x = Nx.add x (Nx.zeros_like x) in
+  equal ~msg:"a cut value" dead None (Nx.Prim.dead x);
+  let h = Nx.donate x in
+  equal ~msg:"its donor" dead (Some "donated") (Nx.Prim.dead x);
+  equal ~msg:"its handle" dead None (Nx.Prim.dead h);
+  ignore (Nx.neg h);
+  equal ~msg:"its handle consumed" dead (Some "donated to Nx.neg")
+    (Nx.Prim.dead h);
+  let kept = ref None in
+  Nx.Prim.interpret ~name:"test.tracer" Values
+    (fun i ~by op ->
+      Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Tag) op)
+    (fun i ->
+      let form = Nx.Prim.form (fresh [| 1.; 2. |]) in
+      let t = Nx.Prim.traced i form Tag in
+      equal ~msg:"a traced value" dead None (Nx.Prim.dead t);
+      let h = Nx.donate t in
+      equal ~msg:"a donated traced value" dead (Some "donated") (Nx.Prim.dead t);
+      equal ~msg:"its traced handle" dead None (Nx.Prim.dead h);
+      kept := Some (Nx.Prim.traced i form Tag));
+  equal ~msg:"a traced value after its interpretation returned" dead None
+    (Nx.Prim.dead (Option.get !kept))
+
 (* A call may give back what it read of a handle: an array outside the
    vector, which Ptree.scale and axpy keep, or one Ptree.cast keeps at its
    dtype. Given one handle twice, or beside one a movement passed on, it
@@ -1705,9 +1734,43 @@ let split_s x =
   told (fun () ->
       Array.concat (List.map elements (Nx.split ~axis:(-1) 2 x)))
 
+(* [Nx.Prim.dead x], then a read of [x]. A value of its own is dead once
+   donated, and a handle at most once a call that read it took or freed its
+   memory, naming that call. The read refuses [x], saying it was what [dead]
+   says, exactly when [dead] is [Some]. *)
+let ended r dead =
+  match (r.handle, dead) with
+  | false, _ ->
+      equal ~msg:"a value of its own" (option string)
+        (if !(r.word) then Some "donated" else None)
+        dead
+  | true, None -> ()
+  | true, Some why ->
+      let named f = why = "donated to " ^ f in
+      if not (List.exists named r.mem.read_by) then
+        fail ("a handle no call read was " ^ why)
+
+let dead_r r = function
+  | Error e -> raise e
+  | Ok (dead, read) -> (
+      ended r dead;
+      match (dead, read) with
+      | None, Ok ys ->
+          equal ~msg:"a live value reads" (array float_exact) r.xs ys
+      | Some why, Error m ->
+          equal ~msg:"the read's refusal" string
+            (Printf.sprintf "Nx.to_array: float32 [%s] was %s" (dims_text r) why)
+            m
+      | None, Error m -> fail ("a live value was refused: " ^ m)
+      | Some why, Ok _ -> fail ("a value that was " ^ why ^ " was read"))
+
+let dead_s x = (Nx.Prim.dead x, told (fun () -> Nx.to_array x))
+let dead_read = Windtrap.pair (option string) taken
+
 let lives =
   [
     command "make" (pair @-> makes held) made fresh;
+    command "dead" (held ^-> judges dead_read) dead_r dead_s;
     command "donate" ~pre:known (held ^-> makes held) donate_r Nx.donate;
     command "reshape" ~pre:known (held ^-> makes held) reshape_r reshape_s;
     command "neg" (held ^-> judges taken) neg_r neg_s;
@@ -3267,6 +3330,7 @@ let () =
              stateful ~domains:2 ~count:300
                "reads, consumers and handles taken on two domains" commands;
              test "donated tells a handle, live or not" test_is_handle;
+             test "dead tells a cut or traced value's end" test_dead;
              test "a consumer frees its handles' memory, naming itself"
                test_consumer_frees;
              test "a consumer checks every operand before it reads"

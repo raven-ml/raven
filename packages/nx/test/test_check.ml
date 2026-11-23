@@ -6,9 +6,9 @@
 (* Checks and waits: the first false flag in C order raises the caller's
    exception with its index and the data's elements there, each array broadcast
    to the flags' shape; at the call on the host, and on another set at a wait on
-   that set, on any domain, one failure per wait, oldest first, each once. A
-   pending check holds none of its data, and checks no wait follows hold a
-   bounded window. *)
+   that set or on every set, on any domain, one failure per wait, oldest first,
+   each once. A pending check holds none of its data, and checks no wait follows
+   hold a bounded window. *)
 
 open Windtrap
 open Nx_support
@@ -276,6 +276,183 @@ let elsewhere =
           Nx.sync (ok true));
     ]
 
+(* A wait on every set. Later is minted after S, so a wait that went through the
+   sets in their order would raise S's failures before Later's. *)
+
+module Later = (val Nx.devices [ m 1 ])
+
+let every_set =
+  let flags (type d) (module D : Nx.Devices with type d = d) b =
+    Nx.place D.on (Nx.create Nx.bool [| 2 |] [| true; b |])
+  in
+  let issue d b id = check (flags d b) [] (fun _ () -> Failed id) in
+  let s = (module S : Nx.Devices with type d = S.d)
+  and later = (module Later : Nx.Devices with type d = Later.d) in
+  group "a wait on every set"
+    [
+      test "raises every set's failures, oldest first, one per wait" (fun () ->
+          issue later false 1;
+          issue s false 2;
+          issue s true 3;
+          issue later false 4;
+          raises (Failed 1) Nx.wait_checks;
+          raises (Failed 2) Nx.wait_checks;
+          raises (Failed 4) Nx.wait_checks;
+          Nx.wait_checks ());
+      test "leaves a set's wait its own set's oldest failure" (fun () ->
+          issue later false 1;
+          issue s false 2;
+          raises (Failed 2) (fun () -> Nx.sync (flags s true));
+          raises (Failed 1) Nx.wait_checks;
+          Nx.wait_checks ());
+      test "inside a failure's build raises nothing and drops nothing"
+        (fun () ->
+          let inner = ref None in
+          check (flags s false) [] (fun _ () ->
+              inner :=
+                Some
+                  (match Nx.wait_checks () with
+                  | () -> false
+                  | exception _ -> true);
+              Failed 1);
+          issue later false 2;
+          raises (Failed 1) Nx.wait_checks;
+          equal ~msg:"the wait inside the build raised" (option bool)
+            (Some false) !inner;
+          raises (Failed 2) Nx.wait_checks;
+          Nx.wait_checks ());
+      test "finds nothing of the host's, whose checks raise at the call"
+        (fun () ->
+          let ok = Nx.create Nx.bool [| 1 |] [| false |] in
+          raises (Failed 1) (fun () -> check ok [] (fun _ () -> Failed 1));
+          Nx.wait_checks ());
+      test "raises what reading a check raises in its turn, taking it off"
+        (fun () ->
+          (* A Polled device runs its queue only when the test runs it, so its
+             copy of the flag is still queued when it is lost. *)
+          let lost, _ =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+              ~waits_on:[ `Host ] "nx-check-lost-every"
+          in
+          let module L = (val Nx.devices [ lost ]) in
+          let ok = Nx.place L.on (Nx.create Nx.bool [| 1 |] [| false |]) in
+          check ok [] (fun _ () -> Failed 1);
+          issue s false 2;
+          Rig.lose lost "lost by the test";
+          raises_match
+            (function Rig.Lost _ -> true | _ -> false)
+            Nx.wait_checks;
+          raises (Failed 2) Nx.wait_checks;
+          Nx.wait_checks ());
+      test "waits for no work that a check does not read" (fun () ->
+          (* The value's copy to a gated Polled device stays queued, and a wait
+             on it would sleep at the gate. The check's copy to a second Polled
+             device stays queued too, until the wait reads it. Only a failure
+             waits for the bound, then opens the gate. *)
+          let polled, pq =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+              ~waits_on:[ `Host ] "nx-check-unread-every"
+          in
+          let read, rq =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+              ~waits_on:[ `Host ] "nx-check-read-every"
+          in
+          let module P = (val Nx.devices [ polled ]) in
+          let module R = (val Nx.devices [ read ]) in
+          Rig_support.Polled.gate pq;
+          let x = Nx.place P.on (Nx.create Nx.float32 [| 1 |] [| 1. |]) in
+          check
+            (Nx.place R.on (Nx.create Nx.bool [| 1 |] [| true |]))
+            []
+            (fun _ () -> Failed 1);
+          let pending = Rig_support.Polled.queued rq in
+          let returned = Atomic.make false in
+          let waiter =
+            Thread.create
+              (fun () ->
+                Nx.wait_checks ();
+                Atomic.set returned true)
+              ()
+          in
+          let bound = Unix.gettimeofday () +. 5. in
+          while (not (Atomic.get returned)) && Unix.gettimeofday () < bound do
+            Thread.delay 0.001
+          done;
+          let queued = Rig_support.Polled.queued pq in
+          let gated = Atomic.get returned in
+          Rig_support.Polled.open_gate pq;
+          Thread.join waiter;
+          equal ~msg:"the copy was queued" bool true (queued > 0);
+          equal ~msg:"the check was pending" bool true (pending > 0);
+          equal ~msg:"the wait read the check" int 0
+            (Rig_support.Polled.queued rq);
+          equal ~msg:"the wait returned before the gate opened" bool true gated;
+          Nx.sync x);
+      test "returns while another domain issues and raises checks" (fun () ->
+          (* The wait sleeps at a gated Polled device, reading a check issued
+             before it, while the other domain issues failing checks on S and
+             raises each with a wait on S, all issued after the call. The gate
+             opens once the other domain has raised one, and the wait returns
+             while that domain goes on, raising none of its checks. Only a
+             failure waits for the bound. *)
+          let polled, pq =
+            Rig_support.Polled.open_ ~capacity:(1 lsl 16) ~host_visible:false
+              ~waits_on:[ `Host ] "nx-check-every-busy"
+          in
+          let module P = (val Nx.devices [ polled ]) in
+          check
+            (Nx.place P.on (Nx.create Nx.bool [| 1 |] [| true |]))
+            []
+            (fun _ () -> Failed 0);
+          Rig_support.Polled.gate pq;
+          let raised = ref (Some (Failed (-1)))
+          and waited = Atomic.make false in
+          let waiter =
+            Thread.create
+              (fun () ->
+                (raised :=
+                   match Nx.wait_checks () with
+                   | () -> None
+                   | exception e -> Some e);
+                Atomic.set waited true)
+              ()
+          in
+          let bound = Unix.gettimeofday () +. 5. in
+          let before_bound () = Unix.gettimeofday () < bound in
+          let asleep () = Rig_support.Polled.sleepers pq > 0 in
+          while
+            (not (asleep ())) && (not (Atomic.get waited)) && before_bound ()
+          do
+            Thread.yield ()
+          done;
+          let stop = Atomic.make false and rounds = Atomic.make 0 in
+          let other =
+            Domain.spawn (fun () ->
+                while (not (Atomic.get stop)) && before_bound () do
+                  issue s false 1;
+                  (try Nx.sync (flags s true) with Failed _ -> ());
+                  Atomic.incr rounds
+                done;
+                Atomic.get stop)
+          in
+          while Atomic.get rounds = 0 && before_bound () do
+            Thread.yield ()
+          done;
+          Rig_support.Polled.open_gate pq;
+          while (not (Atomic.get waited)) && before_bound () do
+            Thread.yield ()
+          done;
+          Atomic.set stop true;
+          let ran = Domain.join other in
+          Thread.join waiter;
+          equal ~msg:"the other domain raised during the wait" bool true
+            (Atomic.get rounds > 0);
+          equal ~msg:"the wait returned while the other domain ran" bool true
+            ran;
+          (match !raised with None -> () | Some e -> raise e);
+          Nx.wait_checks ());
+    ]
+
 (* Pending over several devices
 
    Two devices whose memory the host addresses, with nx.cpu's kernels, and a
@@ -478,13 +655,9 @@ module Held = (val Nx.devices [ pending_device ])
 let s_side = side (module S) 3
 let t_side = side (module Held) 1
 
-(* The checks pending on each set, as [(id, fails)] in issue order. *)
-type model = {
-  mutable on_s : (int * bool) list;
-  mutable on_t : (int * bool) list;
-}
-
+(* The checks pending on either set, as [(set, id, fails)] in issue order. *)
 type set = On_s | On_t
+type model = { mutable checks : (set * int * bool) list }
 
 let sets =
   Gen.of_list
@@ -493,24 +666,26 @@ let sets =
     [ On_s; On_t ]
 
 let side_of = function On_s -> s_side | On_t -> t_side
-let pending md = function On_s -> md.on_s | On_t -> md.on_t
+let fails_on md s = List.exists (fun (s', _, f) -> s' = s && f) md.checks
 
-let set_pending md s l =
-  match s with On_s -> md.on_s <- l | On_t -> md.on_t <- l
-
-(* A wait raises its set's oldest failure and leaves the later ones pending. *)
-let settle md s =
+(* A wait on the sets [on] accepts raises the oldest failure among their checks
+   and leaves the later ones pending. *)
+let settle md on =
   let rec go = function
     | [] -> ([], None)
-    | (_, false) :: rest -> go rest
-    | (id, true) :: rest -> (rest, Some id)
+    | ((s, _, _) as c) :: rest when not (on s) ->
+        let rest, raised = go rest in
+        (c :: rest, raised)
+    | (_, _, false) :: rest -> go rest
+    | (_, id, true) :: rest -> (rest, Some id)
   in
-  let checks = pending md s in
+  let mine = List.filter (fun (s, _, _) -> on s) md.checks in
   cover "a wait passes a check before a failing one"
-    (match checks with (_, false) :: _ :: _ -> true | _ -> false);
-  let left, raised = go checks in
-  cover "a wait leaves a later failure pending" (List.exists snd left);
-  set_pending md s left;
+    (match mine with (_, _, false) :: _ :: _ -> true | _ -> false);
+  let left, raised = go md.checks in
+  cover "a wait leaves a later failure pending"
+    (List.exists (fun (s, _, f) -> on s && f) left);
+  md.checks <- left;
   raised
 
 (* Raises every failure pending on a set, so that no test sees another's. *)
@@ -519,44 +694,75 @@ let rec drain side =
 
 (* The checks are the process's, so every session shares one model, which a
    start empties. A program's end drains what it left. *)
-let model = { on_s = []; on_t = [] }
+let model = { checks = [] }
 
 let session =
   abstract "w" ~release:(fun () ->
       drain s_side;
       drain t_side)
 
-(* On two domains each wait and issue is explained by some order of the calls:
-   a wait raises a failure whichever domain issued it. *)
-let pending_checks ?count ?domains name =
+(* A wait on every set raises the oldest failure of either, in issue order.
+   Listed twice, so that it often meets failures on both sets. *)
+let every =
+  command "wait on every set"
+    (session ^-> returns (option int))
+    (fun md ->
+      (* Held was minted after S: its failure is the oldest here, so a wait that
+         went through the sets in their order would raise S's. *)
+      cover "a wait on every set raises Held's failure before S's"
+        (match List.find_opt (fun (_, _, f) -> f) md.checks with
+        | Some (On_t, _, _) -> fails_on md On_s
+        | Some (On_s, _, _) | None -> false);
+      settle md (fun _ -> true))
+    (fun () ->
+      match Nx.wait_checks () with () -> None | exception Failed id -> Some id)
+
+(* On two domains a wait on every set may leave a check issued while it runs, so
+   a [None] leaves the model as it was, and a later wait raises what it left. A
+   failure it raises is the oldest. *)
+let every_judged =
+  command "wait on every set, judged"
+    (session ^-> judges (option int))
+    (fun md -> function
+      | Ok None -> ()
+      | Ok (Some id) ->
+          equal ~msg:"the oldest failure" (option int)
+            (settle md (fun _ -> true))
+            (Some id)
+      | Error e -> raise e)
+    (fun () ->
+      match Nx.wait_checks () with () -> None | exception Failed id -> Some id)
+
+(* On two domains each wait and issue is explained by some order of the calls: a
+   wait raises a failure whichever domain issued it. *)
+let pending_checks ?count ?domains ~across name =
   stateful ?count ?domains ~steps:30 name
-    [
-      command "start"
-        (Gen.unit @-> makes session)
-        (fun () ->
-          model.on_s <- [];
-          model.on_t <- [];
-          model)
-        (fun () ->
-          drain s_side;
-          drain t_side);
-      command "issue"
-        (session ^-> sets @-> Gen.bool @-> Gen.int_range 0 99 @-> returns unit)
-        (fun md s fails id -> set_pending md s (pending md s @ [ (id, fails) ]))
-        (fun () s fails id -> (side_of s).issue fails id);
-      command "wait"
-        (session ^-> sets @-> waits @-> returns (option int))
-        (fun md s _ ->
-          let raised = settle md s in
-          cover "a wait on a set with a failure on the other"
-            (raised = None
-            && List.exists snd (pending md (if s = On_s then On_t else On_s)));
-          raised)
-        (fun () s w ->
-          match (side_of s).wait w with
-          | () -> None
-          | exception Failed id -> Some id);
-    ]
+    ([
+       command "start"
+         (Gen.unit @-> makes session)
+         (fun () ->
+           model.checks <- [];
+           model)
+         (fun () ->
+           drain s_side;
+           drain t_side);
+       command "issue"
+         (session ^-> sets @-> Gen.bool @-> Gen.int_range 0 99 @-> returns unit)
+         (fun md s fails id -> md.checks <- md.checks @ [ (s, id, fails) ])
+         (fun () s fails id -> (side_of s).issue fails id);
+       command "wait"
+         (session ^-> sets @-> waits @-> returns (option int))
+         (fun md s _ ->
+           let raised = settle md (( = ) s) in
+           cover "a wait on a set with a failure on the other"
+             (raised = None && fails_on md (if s = On_s then On_t else On_s));
+           raised)
+         (fun () s w ->
+           match (side_of s).wait w with
+           | () -> None
+           | exception Failed id -> Some id);
+     ]
+    @ across)
 
 (* At the call *)
 
@@ -1050,15 +1256,17 @@ let () =
          host;
          dtypes_elsewhere;
          elsewhere;
+         every_set;
          pending_over_devices;
          test "a datum that is a sum gives its closed element" summed_datum;
          test "a check of one flag off host memory copies before its mark"
            apart_off_host;
          (* A program leaves a later failure pending about one time in ten on
             one domain and four in ten on two. *)
-         pending_checks ~count:300
+         pending_checks ~count:300 ~across:[ every; every ]
            "a wait raises its set's oldest failure, once";
          pending_checks ~count:60 ~domains:2
+           ~across:[ every_judged; every_judged ]
            "on two domains, a wait raises its set's oldest failure, once";
          at_call;
          threads;

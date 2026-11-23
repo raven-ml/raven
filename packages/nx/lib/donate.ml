@@ -10,17 +10,15 @@ module L = Nx_array.Layout
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 (* What a donated value's word says: a use of it raises "was donated". *)
-let donated = Value.Died "donated"
+let donated = Some "donated"
 
-(* Sets the word [w] of [x] from [Live] to [donated], or raises naming [by]
+(* Sets the word [w] of [x] from [None] to [donated], or raises naming [by]
    where [x] is dead, on any domain: a compare-and-set, so that of two
    donations of one value on two domains one raises. *)
 let rec kill ~by x w =
   match Atomic.Loc.get w with
-  | Value.Died _ -> Prim.alive ~by x
-  | Value.Live ->
-      if not (Atomic.Loc.compare_and_set w Value.Live donated) then
-        kill ~by x w
+  | Some _ -> Prim.alive ~by x
+  | None -> if not (Atomic.Loc.compare_and_set w None donated) then kill ~by x w
 
 let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   match x with
@@ -32,7 +30,7 @@ let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
       Value.Handle { over = x }
   | Value.Traced r ->
       kill ~by x [%atomic.loc r.dead];
-      Value.Traced { r with dead = Value.Live }
+      Value.Traced { r with dead = None }
   | Value.Handle _ ->
       Prim.alive ~by x;
       x

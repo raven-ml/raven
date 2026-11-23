@@ -920,8 +920,8 @@ val to_bigarray :
 
     A set's devices may compute while the caller goes on: an operation returns
     once its work is submitted. The host waits for a set only at a wait:
-    {!sync}, a {{!section-reads}read}, or {!place} onto {!Host}. A {!place}
-    elsewhere returns as nx.array's placement does
+    {!sync}, {!wait_checks}, a {{!section-reads}read}, or {!place} onto {!Host}.
+    A {!place} elsewhere returns as nx.array's placement does
     ({!Nx_array.section-placement}): where a device copies, as
     {!Rig.Buffer.submit_copy} returns.
 
@@ -932,17 +932,19 @@ val to_bigarray :
     a loop that never waits holds the values of the steps its devices' queues
     hold, and a submit waits for room once a queue is full.
 
-    A check is a condition on data whose failure raises the caller's
-    exception: one stated with {!check}, a sampler's parameter outside its
-    domain ({!Rng}), or a {!Prim.Check}. On the host it raises at the call. On
-    another set it is computed where its data lies, and its failure is
-    {e pending} on that set until a wait on the set raises it, so that no
-    check makes the host wait. A wait raises the oldest failure pending on
-    its set, whichever domain or systhread issued the check, and only that
-    one: each failure raises at one wait, oldest first, and none is dropped.
-    The failure's [fail] builds its exception at that wait, and a wait that
-    [fail] makes on any set raises no failure. A wait on one set raises
-    nothing of another's checks; a check no wait follows never raises.
+    A check is a condition on data whose failure raises the caller's exception:
+    one stated with {!check}, a sampler's parameter outside its domain ({!Rng}),
+    or a {!Prim.Check}. On the host it raises at the call. On another set it is
+    computed where its data lies, and its failure is {e pending} on that set
+    until a wait on the set raises it, so that no check makes the host wait. A
+    wait raises the oldest failure pending on its set, whichever domain or
+    systhread issued the check, and only that one: each failure raises at one
+    wait, oldest first, and none is dropped. {!wait_checks} waits on every set,
+    and raises the oldest failure pending on any of them, in the order the
+    checks were issued. The failure's [fail] builds its exception at that wait,
+    and a wait that [fail] makes raises no failure. A wait on one value's set
+    raises nothing of another set's checks; a check no wait follows never
+    raises.
 
     One failure per wait means that a program that catches a failure and goes
     on, failing more than one check between its waits, gathers failures: each
@@ -976,6 +978,15 @@ val sync : ('v, 's, 'd) t -> unit
     traced one, as {!item} does: [Nx.sync: the value is traced by Rune.jit], or
     [Nx.sync: a value of Rune.grad, used after Rune.grad returned] once its
     interpretation has returned. *)
+
+val wait_checks : unit -> unit
+(** [wait_checks ()] is a wait on every set for the checks issued before the
+    call. It waits for them oldest first across the sets, up to the first
+    failure, and raises that failure, as stated above. Where it returns, each
+    failure of those checks has raised at some wait. Checks issued while it runs
+    may be left to later waits. It waits for no work that a check does not read.
+
+    Raises the failure, or what reading a check raises, such as {!Rig.Lost}. *)
 
 (** {1:shapes Shapes, broadcasting and movements}
 
@@ -6558,6 +6569,18 @@ module Prim : sig
   val donated : ('v, 's, 'd) nx -> bool
   (** [donated x] is [true] iff [x] is a handle {!Nx.donate} made, live or
       not. It allocates nothing. *)
+
+  val dead : ('v, 's, 'd) nx -> string option
+  (** [dead x] is [Some why] once [x] has ended, and [None] while it lives. A
+      value ends at its donation ({!Nx.donate}), [why] then ["donated"], and a
+      handle once a consumer has taken or freed its memory, [why] then naming
+      the consumer, as ["donated to Nx.mul"]. While [dead x] is [Some why],
+      every use of [x] raises [Invalid_argument] saying [x] was [why], while
+      [x]'s shape, dtype and placement still answer; while it is [None], no use
+      refuses [x] as dead. Once [Some], it stays so. A consumer on another
+      domain may end a handle between [dead h] and a use of [h]. A traced value
+      ends only at its donation: its interpretation's return leaves it live. It
+      allocates nothing for a live value. *)
 
   val eval : by:string -> 'r t -> 'r
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's

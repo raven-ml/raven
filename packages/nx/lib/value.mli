@@ -24,23 +24,21 @@ type ('v, 's, +'d) payload = ..
 
 (** {1:values Values} *)
 
-type death = Live | Died of string  (** What the value was, as ["donated"]. *)
-(** Whether a value lives. Values are made [Live]. {!Donate.donate} sets the
-    word of the value it donates to [Died], for good, by one compare-and-set
-    from [Live]. *)
-
 type ('v, 's, 'd) t =
   | Array of {
       at : 'd Devices.placement;
       a : ('v, 's) Nx_array.t;
-      mutable dead : death; [@atomic]
-    }
-      (** On [at]'s one device. *)
+      mutable dead : string option; [@atomic]
+          (** The value's {e word}: [Some why] once it has ended, [why] what it
+              was, as ["donated"]. Values are made [None]. {!Donate.donate} sets
+              the word of the value it donates, for good, by one compare-and-set
+              from [None]. *)
+    }  (** On [at]'s one device. *)
   | Shards of {
       at : 'd Devices.placement;
       shape : int array;  (** The whole's. *)
       arrays : ('v, 's) Nx_array.t iarray;
-      mutable dead : death; [@atomic]
+      mutable dead : string option; [@atomic]  (** Its word. *)
     }
       (** On [at]'s devices, two or more: per device, in
           [Grid.devices (Devices.grid at)]'s order, its window of the value
@@ -66,7 +64,7 @@ type ('v, 's, 'd) t =
       twin : ('v, 's, 'd) t option;
           (** A value of [form] that a read reads while [owner] is around
               it. *)
-      mutable dead : death; [@atomic]
+      mutable dead : string option; [@atomic]  (** Its word. *)
     }  (** An interpretation's stand-in: its form, and what [owner] keeps. *)
 
 and ('v, 's, 'd) form = {

@@ -402,7 +402,7 @@ let unpack (type v s d) (dt : (v, s) D.t) (P x : d packed) : (v, s, d) t =
 (* The host value over [a], an array nx made: the value's alone, so a donation
    may write into it. *)
 let owned a : (_, _, host) t =
-  Value.Array { at = Devices.one Host_set.v 0; a; dead = Value.Live }
+  Value.Array { at = Devices.one Host_set.v 0; a; dead = None }
 
 (* The host value of [dt] and shape [s] holding [vs], naming [by] where
    {!create} refuses them. Only integers can lie outside their dtype, and
@@ -459,6 +459,7 @@ let readable ~by x =
   live
 
 let sync x = ignore (readable ~by:"Nx.sync" x)
+let wait_checks = Check.wait_all
 
 let read ~by x = Check.on_host ~by (readable ~by x)
 
@@ -7875,9 +7876,9 @@ let pp ppf x =
     | Value.Traced { owner; _ } ->
         note (fun ppf -> Format.fprintf ppf " traced by %s" owner.name)
     | Value.Array _ | Value.Shards _ | Value.Handle _ -> (
-        match Prim.death x with
-        | Value.Died why -> note (fun ppf -> Format.fprintf ppf ", %s" why)
-        | Value.Live -> (
+        match Prim.dead x with
+        | Some why -> note (fun ppf -> Format.fprintf ppf ", %s" why)
+        | None -> (
             let lost d why =
               note (fun ppf ->
                   Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why)
@@ -7926,12 +7927,12 @@ module Ptree = struct
   let donate (type d) s x =
     let given = ref [] in
     let at p a =
-      match Prim.death a with
-      | Value.Live ->
+      match Prim.dead a with
+      | None ->
           let h = donate a in
           given := (Obj.repr a, Value.Any h) :: !given;
           h
-      | Value.Died _ -> (
+      | Some _ -> (
           match List.assq_opt (Obj.repr a) !given with
           | Some h -> Prim.expect (dtype a) (h : d Value.any)
           | None ->
@@ -8086,10 +8087,8 @@ module Ptree = struct
   let placed ~by (walk : 'a 'b. ('a, 'b, 'd, 'e) Walk.cursor -> 's -> 't)
       (p : 'e Placement.t) x =
     let tensor path a =
-      (match Prim.death a with
-      | Value.Live -> ()
-      | Value.Died _ ->
-          Prim.alive ~by:(Format.asprintf "%s: %a" by pp_path path) a);
+      if Option.is_some (Prim.dead a) then
+        Prim.alive ~by:(Format.asprintf "%s: %a" by pp_path path) a;
       Eval.place ~by p (Donate.lent a)
     in
     walk_fixed walk { tensor; report = (fun _ _ -> ()) } x
@@ -8561,6 +8560,7 @@ module Prim = struct
   let payload = Eval.payload
   let owner = Eval.owner
   let donated = Donate.is_handle
+  let dead = Prim.dead
   let eval = Eval.eval
   module Consumer = struct
     type 'd t = 'd Donate.claim
