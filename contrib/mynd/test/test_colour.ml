@@ -403,7 +403,10 @@ let near_ties =
       let toward = around (home larger -. e) in
       let rgb = (c.(0), c.(1), c.(2)) in
       let h = Nx.item [ 0 ] (V.Colour.to_hsv (one rgb)) in
-      let off = around ((6. *. h) -. e) in
+      (* [6 h] rounded, as [of_hsv] reads it: on arm64 ocamlopt would fuse the
+         product into the difference, which then sees [h] off an edge that
+         its rounding lies on. *)
+      let off = around (Sys.opaque_identity (6. *. h) -. e) in
       let kept = off <> 0. && Float.sign_bit off = Float.sign_bit toward in
       cover ~share:0.2 "kept its side" kept;
       if kept then
