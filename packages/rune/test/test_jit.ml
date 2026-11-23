@@ -1301,12 +1301,13 @@ let law_key_argument (s, s') =
   equal ~msg:"a batch's own program" int 2 !traces
 
 (* [Nx.Rng.permute]'s epoch order, a key per position, compiled from a key
-   argument and positions that cross an epoch, gives eager's images; so does
-   one key over positions inside one epoch, below int32, where the program is
-   smaller and compiles faster. *)
-let law_permute n =
+   argument and 16 positions from [first] that cross an epoch, gives eager's
+   images, and so does one key. A program has [6 ⌈log2 n⌉] rounds and compiles
+   in time linear in them, about 9 s at the 192 an [n] past int32 takes:
+   positions past int32 cross epochs of 10 instead, whose program is the one
+   [first = 7] compiled. *)
+let law_permute (n, first) =
   let k = Nx.Rng.key n and n' = Int64.of_int n in
-  let first = max 0 (n - 3) in
   let p = Nx.arange Nx.int64 first (first + 16) 1 in
   let example key p =
     let epoch = Nx.Rng.fold_in_tensor key (Nx.div_s p n') in
@@ -1320,8 +1321,7 @@ let law_permute n =
       equal ~msg (outcome_t (array int64))
         (outcome (fun () -> Nx.to_array (f k p)))
         (compiled (fun () -> Nx.to_array (g k p))))
-    (("epochs", example)
-    :: (if n < 1 lsl 31 then [ ("one key", one) ] else []))
+    [ ("epochs", example); ("one key", one) ]
 
 (* Captured values are read as they are when the program is traced: a later call
    of the same key does not see what the closure would read now. *)
@@ -6533,8 +6533,9 @@ let () =
              test "a constant key draws the same each call" test_constant_key;
              prop "a key argument draws eager's values, one program per shape"
                (Gen.pair Gen.int Gen.int) law_key_argument;
-             Windtrap.cases "permute compiles to eager's images" ~id:string_of_int
-               [ 1; 2; 10; (1 lsl 31) + 11 ]
+             Windtrap.cases "permute compiles to eager's images"
+               ~id:(fun (n, first) -> Printf.sprintf "n = %d from %d" n first)
+               [ (1, 0); (2, 0); (10, 7); (10, (1 lsl 31) - 3) ]
                law_permute;
              test "captures are read as they were traced" test_captures;
              test "a stack compiles to eager's bits at any number of rows"
