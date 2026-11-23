@@ -599,17 +599,24 @@ let binomial_mass logits trials x rest =
    [ν / 2] and [ν / 2 + 1/2] apart by [1/2]: the same bound with
    [Λ = 1 + |log ν| + |log σ|] and no mean. *)
 
-(* [ratio_log (x, (lx, (m, log_m)))] is [log (x / m)] for [x > 0] and
-   [m >= 0], [lx] and [log_m] being their logs: [log1p t],
-   [t = (x - m) / m], where [x / m] lies between [ε] and the floats' largest
-   over [e], and [lx - log_m] elsewhere, the arm read from [lx - log_m]
-   itself. Below [ε] the logs' error, [4 u (|lx| + |log_m|)], times [x] is
-   below [u m <= u D]; above, [|log (x / m)| > 708] and the error is within
-   [16 u] of it at float64. Its derivative is stated, that of
-   [lx - log_m]: taken through the quotient it would form [x / m²], and
-   [dm / m] overflows where [m] underflows, while the logs' derivatives,
-   formed by the caller from the parameters and the point, stay finite.
-   No arm needs a guard and none is differentiated. *)
+(* [ratio_log (x, (lx, (m, log_m)))] is [log (x / m)] for [x > 0] and [m >= 0],
+   [lx] and [log_m] being their logs: [log1p t], [t = (x - m) / m], where [x /
+   m] lies between [ε] and the floats' largest over [e] and [m] is normal, and
+   [lx - log_m] elsewhere, the arm read from [lx - log_m] and [m]. Below [ε] the
+   logs' error, [4 u (|lx| + |log_m|)], times [x] is below [u m <= u D]; above,
+   [|log (x / m)| > 708] and the error is within [16 u] of it at float64. Where
+   [m] is subnormal it has lost digits, or rounded to [0] while [x / m] is
+   finite, as at a count of [1e-20] and a mean of [1e-324]. There [lx - log_m]
+   serves every [x], and its error times [x], [4 u x (|lx| + |log_m|)], is
+   within [4 u (D + x + 0.74)]: [x (|lx| + |log_m|)] is [x log (x / m) = D + x -
+   m], plus [2 x |log x| <= 0.74] below [x = 1]. Either [x / m < e^708], and [x]
+   is below [e^708] times the least normal, [0.67], or [D >= 707 x]; so the
+   error is within [4.01 u D + 6 u], which [D <= |f| + Λ] puts inside the
+   density's bound. Its derivative is stated, that of [lx - log_m]: taken
+   through the quotient it would form [x / m²], and [dm / m] overflows where [m]
+   underflows, while the logs' derivatives, formed by the caller from the
+   parameters and the point, stay finite. No arm needs a guard and none is
+   differentiated. *)
 let ratio_log args =
   Rune.custom_jvp
     Nx.Ptree.(pair tensor (pair tensor (pair tensor tensor)))
@@ -619,8 +626,10 @@ let ratio_log args =
       let dt = Nx.dtype logs in
       let near =
         Nx.logical_and
-          (Nx.greater_equal logs (const logs (Float.log (Prec.eps dt))))
-          (Nx.less_equal logs (const logs (Float.log (Prec.huge dt) -. 1.)))
+          (Nx.greater_equal m (const m (Prec.tiny dt)))
+          (Nx.logical_and
+             (Nx.greater_equal logs (const logs (Float.log (Prec.eps dt))))
+             (Nx.less_equal logs (const logs (Float.log (Prec.huge dt) -. 1.))))
       in
       let l = Nx.where near (Nx.log1p (Nx.div (Nx.sub x m) m)) logs in
       (l, fun (_, (dlx, (_, dlog_m))) -> Nx.sub dlx dlog_m))

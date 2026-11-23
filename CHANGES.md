@@ -200,6 +200,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.gamma`, `Dist.inverse_gamma`, `Dist.beta` and `Dist.dirichlet` no
+  longer give a log density of `-inf`, and infinite scores, where a
+  concentration below about `1e-16` meets a mean count that rounds to zero,
+  as `Dist.gamma ~concentration:1e-20 ~rate:1e-19` does at `1e-305`.
 - Norn's messages and `Support.pp` write each float as the shortest decimal
   that reads back; `Summary.pp`, `Summary.pp_finding` and `Evidence.pp` keep
   their digits, rounded once, ties to even. The text is the same on every

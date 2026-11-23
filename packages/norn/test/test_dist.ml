@@ -1696,6 +1696,7 @@ let continuous_scores =
             ((a /. s) -. (1. /. x))
             gs);
       prop "the beta's scores are log x - ψ(a) + ψ(a + b) and its mirror"
+        ~examples:[ (1e-20, 1e-25, 1e-304) ]
         Gen.(
           let+ a = concentration
           and+ b = concentration
@@ -1729,6 +1730,11 @@ let continuous_scores =
           ("gamma, rate x subnormal", false, 1., 1., 1e-310);
           ("inverse gamma, scale / x subnormal", true, 2., 1e-10, 1e300);
           ("inverse gamma, scale / x of 0", true, 2., 1e-30, 1e300);
+          ( "gamma of concentration 1e-20, rate x of 0",
+            false,
+            1e-20,
+            1e-19,
+            1e-305 );
         ]
         (fun (_, inverse, a, s, x) ->
           let f a s =
@@ -1753,6 +1759,33 @@ let continuous_scores =
           equal ~msg:"scale"
             (float_rel ~rel:(64. *. epsilon_float) ~abs:0.)
             gs_exact gs);
+      (* A mean count [n x] that rounds to 0 while [x / (n x)] is finite: a
+         count below about [1e-16] at a point near the least normal. The
+         closed forms are within the bound of the interface from their terms,
+         each within a few ulps of itself. *)
+      Windtrap.cases "a density whose mean count underflows is its closed form"
+        ~id:(fun (family, _) -> family)
+        [
+          ("gamma", [ 1e-20; 1e-19; 1e-305 ]); ("beta", [ 1e-20; 1e-25; 1e-304 ]);
+        ]
+        (fun (family, args) ->
+          let exact =
+            match args with
+            | [ a; s; x ] when family = "gamma" ->
+                (a *. Float.log s)
+                +. ((a -. 1.) *. Float.log x)
+                -. (s *. x) -. lgamma a
+            | [ a; b; x ] ->
+                ((a -. 1.) *. Float.log x)
+                +. ((b -. 1.) *. Float.log1p (-.x))
+                -. (lgamma a +. lgamma b -. lgamma (a +. b))
+            | _ -> assert false
+          in
+          let logs, off = density_terms family args in
+          equal
+            (float (density_bound epsilon_float exact ~logs ~off))
+            exact
+            (density_at Nx.float64 family args));
       prop "a dirichlet's scores are ψ(A) - ψ(α_k) + log x_k"
         Gen.(triple concentration concentration concentration)
         (fun (a1, a2, a3) ->
