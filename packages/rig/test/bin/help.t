@@ -26,4 +26,5 @@ Each command has a page on standard output, and rig exits 0.
 --version prints the version the package states, which every machine's
 rig shares.
 
-  $ rig --version | diff - support/version
+  $ rig --version > version
+  $ diff version support/version
