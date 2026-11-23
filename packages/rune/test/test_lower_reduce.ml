@@ -1004,7 +1004,8 @@ let long_scans =
    OCaml's [Float] functions on the terms, the special values from
    {!Nx_kernel.type-reduction}. The reference is in error by the reduction's
    bounds at float64's unit roundoff, with glibc's [exp] and [log] within an
-   ulp; for float64 the two errors add. *)
+   ulp, and by its rounding into the destination; for float64 the two errors
+   add. *)
 
 (* [E] and [L], the bounds in ulps of the compiled [Exp] and [Log] at float32
    and float64: nx's, since both compile to nx's bits. *)
@@ -1175,12 +1176,16 @@ let float_law (type s) ~scan which c (dt : (float, s) D.t) =
     (not (List.mem c.dt D.[ Any Float32; Any Float64 ]));
   let u = carrier_roundoff c.dt in
   let eta = match cd with D.Float64 -> 0x1p-1074 | _ -> 0x1p-149 in
-  (* The references rounded into [dt], as the results are. *)
+  (* The references rounded into [dt], as the results are. Into float32 that
+     rounding errs by up to [u|e|], which [rounding] counts only for a
+     narrower [dt]. *)
   let rounded es =
     let es = Nx.create D.Float64 [| Array.length es |] es in
     Nx.to_array (Nx.cast D.Float64 (Nx.cast dt es))
   in
+  let into = match dt with D.Float32 -> u | _ -> 0. in
   let close n e l ~ours ~reference =
+    let reference = reference +. (into *. Float.abs e) in
     close dt ~eta n e l ~ours:(ours +. rounding dt e l) ~reference
   in
   match which with
@@ -1264,6 +1269,16 @@ let sine_row dt n =
   in
   { spread_example with dt; shape = [| 1; n |]; raws }
 
+(* The terms [16 + 2^-18] and [0x1.27428cp+4], whose logsumexp lies within
+   [0.006] ulp of the midpoint of two float32s: a result within its bound may
+   round to either, and the reference to the other. *)
+let midpoint_row =
+  {
+    spread_example with
+    shape = [| 1; 2 |];
+    raws = [| 0x41800002L; 0x4193a146L |];
+  }
+
 (* A row of hundreds to thousands of finite terms within [2^±spread], which
    reaches the bounds' growth with the number of terms. *)
 let long_row =
@@ -1277,7 +1292,7 @@ let long_row =
   { spread_example with dt; shape = [| 1; n |]; raws }
 
 let float_examples ~scan =
-  spread_example
+  spread_example :: midpoint_row
   :: sine_row (D.Any D.Float32) 1500
   :: sine_row (D.Any D.Float16) 300
   :: List.map
