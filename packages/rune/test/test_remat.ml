@@ -479,11 +479,14 @@ let test_summed_step () =
         int ~than:(whole + 1) recomputed)
     [ 1; 2; 4 ]
 
-(* A scan over chunks of 2048 rows whose carry sums the loss and the
-   weights' gradients of four remat'd residual layers, 256 to 1024 to 256:
-   each trip holds its own storage, which a launch in the trip's body makes
-   no earlier than the trip's peak allows, so at 2 and 4 trips the scan holds
-   what it holds at 2, within the bound tolk's DIVERGENCES D404 states. *)
+(* A scan over chunks of 2048 rows whose carry sums the loss and the weights'
+   gradients of four remat'd residual layers, 256 to 1024 to 256: each trip
+   holds its own storage, which a launch in the trip's body makes no earlier
+   than the trip's peak allows, so at 2 and 4 trips the scan holds what it holds
+   at one trip and its trip's index, an int a run keeps twice
+   ({!Rig_program.footprint}), and less than without remats, as tolk's
+   DIVERGENCES D404 states. Both sides of each bound count the same allocations
+   ({!Rig.allocation}). *)
 let test_deep_scan () =
   let layers = 4 and dim = 256 and hidden = 1024 and n = 2048 in
   let w k r c =
@@ -494,12 +497,13 @@ let test_deep_scan () =
         (w (2 * i) dim hidden, w ((2 * i) + 1) hidden dim))
   in
   let pd = T.(list (pair tensor tensor)) in
-  let loss ws x =
-    Nx.sum (List.fold_left (fun a w -> rm (block w) a) x ws)
+  let loss remat ws x =
+    let layer a w = if remat then rm (block w) a else block w a in
+    Nx.sum (List.fold_left layer x ws)
   in
-  let f (ws, xs) =
+  let f remat (ws, xs) =
     let step (l, sums) x =
-      let v, gs = Rune.value_and_grad pd (fun ws -> loss ws x) ws in
+      let v, gs = Rune.value_and_grad pd (fun ws -> loss remat ws x) ws in
       let add (s1, s2) (g1, g2) = (Nx.add s1 g1, Nx.add s2 g2) in
       ((Nx.add l v, List.map2 add sums gs), ())
     in
@@ -510,16 +514,23 @@ let test_deep_scan () =
          xs)
   in
   let on_host (r, _) = Rig.equal r Rig.host in
-  let bytes g =
+  let bytes ?(remat = true) g =
     let xs = Nx.Rng.normal ~key:(Nx.Rng.key 99) f32 [| g; n; dim |] in
     snd
       (List.find on_host
-         (Rune.footprint T.(pair pd tensor @-> returns (pair tensor pd)) f
-            (ws, xs)))
+         (Rune.footprint
+            T.(pair pd tensor @-> returns (pair tensor pd))
+            (f remat) (ws, xs)))
   in
-  let two = bytes 2 in
-  less ~msg:(Printf.sprintf "2 trips: %d bytes" two) int ~than:39_845_909 two;
-  equal ~msg:"4 trips, as 2" int two (bytes 4)
+  let one = bytes 1 and two = bytes 2 in
+  let index = 2 * Rig.allocation Rig.host 8 in
+  less
+    ~msg:(Printf.sprintf "2 trips: %d bytes, 1 trip %d" two one)
+    int
+    ~than:(one + index + 1)
+    two;
+  equal ~msg:"4 trips, as 2" int two (bytes 4);
+  less ~msg:"without remats" int ~than:(bytes ~remat:false 2) two
 
 (* The stacks read by rows against separate arrays: each row's gradient is
    its region of the stack's, so the gradient alone holds no more over the
@@ -548,9 +559,21 @@ let test_stacked_step () =
   let rows ws = List.init layers (layer ws) in
   let on_host (r, _) = Rig.equal r Rig.host in
   let bytes s f x = snd (List.find on_host (Rune.footprint s f x)) in
+  (* The results hold the same bytes, in two stacks or in a pair of arrays a
+     row, but a stack's allocation may count more than its bytes
+     ({!Rig.allocation}): on Windows, the slack of its start on a page. *)
+  let slack =
+    List.fold_left
+      (fun acc w -> acc + Rig.allocation Rig.host (Nx.nbytes w) - Nx.nbytes w)
+      0
+      [ fst ws; snd ws ]
+  in
   let no_more msg ~apart:x ~stacked:y =
-    less ~msg:(Printf.sprintf "%s: %d bytes stacked, %d apart" msg y x) int
-      ~than:(x + 1) y
+    less
+      ~msg:(Printf.sprintf "%s: %d bytes stacked, %d apart" msg y x)
+      int
+      ~than:(x + slack + 1)
+      y
   in
   List.iter
     (fun remat ->

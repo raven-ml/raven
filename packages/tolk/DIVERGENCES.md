@@ -8041,9 +8041,10 @@ reason and its pins.
   pass's live, and the remat saves nothing in a loop of two trips or more.
   A scan over chunks of 2048 rows whose carry sums the loss and the
   weights' gradients of four remat'd residual layers, 256 to 1024 to 256,
-  holds 39,845,908 bytes at 2 and 4 trips on the host, against 58,721,300
-  without remats (`rune remat › memory › a scan of a remat'd chain holds a
-  trip's storage at any number of trips`). The first use as the bound in
+  holds at 2 and 4 trips what it holds at one and its trip's index,
+  39,845,908 bytes on a Linux host, against 58,721,300 without remats
+  (`rune remat › memory › a scan of a remat'd chain holds a trip's storage
+  at any number of trips`). The first use as the bound in
   loops too ran NUTS's loop bodies as 105 dispatches a transition against
   31, counted out of the schedule's launches before the order of D183's
   loop clause, 1.6 ms a step against 1.03 on fudge's RTX 5000 Ada.
