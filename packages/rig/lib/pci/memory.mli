@@ -209,7 +209,7 @@ val host : region -> Window.t option
     function ({!bus}), to the process's exit. *)
 
 val granules : (int * int) list
-(** [granules] is the units in which {!alloc} rounds the GPU's memory, as
+(** [granules] is the units in which {!val-alloc} rounds the GPU's memory, as
     {!Rig_edge.type-facts} states them: 4 KiB below 8 MiB and 2 MiB from
     there. *)
 
