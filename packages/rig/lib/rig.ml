@@ -121,6 +121,7 @@ type access = Def.access = Read | Read_write
 module Buffer = struct
   include Buffer
 
+  let paged_from = Memory.aligned_from
   let read = Claim.read_bytes
   let write = Claim.write_bytes
 

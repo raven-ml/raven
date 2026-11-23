@@ -64,6 +64,10 @@ open Def
 val page : int
 (** [page] is the host's page size, in bytes. *)
 
+val aligned_from : int
+(** [aligned_from] is the least size of a host buffer that starts on a page
+    ([Rig.Buffer.paged_from]): 64 KiB, or four pages where those are more. *)
+
 (** {1:stamps Stamps}
 
     Stamps are the address of a C record ([struct rig_stamps] in

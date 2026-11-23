@@ -380,11 +380,11 @@ val reaches : t -> t -> bool
     rules hold for it there.
 
     A borrow on [d] can map the memory of every device that [d] reaches. A
-    device that reaches {!host}'s memory also maps other memory of its
-    machine that the host addresses and that starts on a page, including an
-    io device's memory through its pages ({!Rig_edge.Io.pages}). {!host} and
-    software devices also map host memory that starts elsewhere, such as a
-    host buffer under 64 KiB. *)
+    device that reaches {!host}'s memory also maps other memory of its machine
+    that the host addresses and that starts on a page, including an io device's
+    memory through its pages ({!Rig_edge.Io.pages}). {!host} and software
+    devices also map host memory that starts elsewhere, such as a host buffer
+    under {!Buffer.paged_from} bytes. *)
 
 (** {1:timeline Timelines}
 
@@ -1017,12 +1017,12 @@ val failure : unit -> string option
        at that share of its room alone. Either amount is at least a page,
        and for a buffer of at most [custom_minor_max_size] bytes at least
        the minor heap's bytes.}
-    {- The host keeps collected buffers of 64 KiB or more for reuse. It keeps
-       up to 32 MiB of them, and beyond that only while the bytes of its kept
-       and live buffers together stay within the peak of its live buffers
-       over the collector's current and previous major cycles. Pages of a
-       host buffer that reuses none fault in at their first write, in the
-       call that writes them.}
+    {- The host keeps collected buffers of {!Buffer.paged_from} bytes or
+       more for reuse. It keeps up to 32 MiB of them, and beyond that only
+       while the bytes of its kept and live buffers together stay within the
+       peak of its live buffers over the collector's current and previous
+       major cycles. Pages of a host buffer that reuses none fault in at
+       their first write, in the call that writes them.}
     {- On a driver's device, an allocation larger than the budget it counts
        in raises {!Out_of_memory} immediately, without freeing the cache.}
     {- An allocation that its budget or its driver refuses first reclaims.
@@ -1237,16 +1237,21 @@ module Buffer : sig
             or the budget has no room for it once reclamation ran
             ({!Rig.section-reclaim}). *)
 
+  val paged_from : int
+  (** [paged_from] is the least size from which {!create} starts a buffer of
+      {!Rig.host} on a page, so that devices can {!borrow} it: 64 KiB, or four
+      of the host's pages where those are more, as on 64 KiB pages. Starting on
+      a page costs up to a page of slack, at most a quarter of the buffer. *)
+
   val create : ?memory:kind -> device -> int -> t
-  (** [create d n] is a buffer of [n] new bytes of [d]'s memory of kind
-      [memory] (defaults to [Device]), with unspecified contents. An empty
-      buffer allocates nothing. A non-empty one starts on [d]'s {!alignment},
-      and its memory runs on to whole words ({!Rig.section-words}). A host
-      buffer of at least 64 KiB and at least four pages starts on a page, so
-      devices can {!borrow} it; a smaller one of at least 128 bytes starts on
-      128 bytes, so threads that write it in pieces of whole 128-byte blocks
-      share no cache line, on Apple silicon's 128-byte lines or x86's 64-byte
-      ones.
+  (** [create d n] is a buffer of [n] new bytes of [d]'s memory of kind [memory]
+      (defaults to [Device]), with unspecified contents. An empty buffer
+      allocates nothing. A non-empty one starts on [d]'s {!alignment}, and its
+      memory runs on to whole words ({!Rig.section-words}). A host buffer of at
+      least {!paged_from} bytes starts on a page, so devices can {!borrow} it; a
+      smaller one of at least 128 bytes starts on 128 bytes, so threads that
+      write it in pieces of whole 128-byte blocks share no cache line, on Apple
+      silicon's 128-byte lines or x86's 64-byte ones.
 
       Raises [Invalid_argument] if [n < 0], if [memory] is [Pinned] and the
       host addresses [d]'s memory, if [memory] is [Mapped] and [d] has none
@@ -1293,13 +1298,13 @@ module Buffer : sig
 
   val borrow : device -> t -> t option
   (** [borrow d b] is a buffer on [d] over [b]'s bytes, without a copy, or
-      [None] if [d] cannot map [b]'s memory ({!Rig.reaches}) or its driver
-      never maps it, such as pages mapped read-only. A host buffer under
-      64 KiB may not start on a page ({!create}), and host memory off a page
-      does not borrow on a driver's device. It is [Some b] for [b] on [d].
-      The borrow keeps [b] reachable and shares its memory, so
-      work through it is ordered as work on [b], and a borrow of a borrow
-      maps the memory the first one maps.
+      [None] if [d] cannot map [b]'s memory ({!Rig.reaches}) or its driver never
+      maps it, such as pages mapped read-only. A host buffer under {!paged_from}
+      bytes may not start on a page ({!create}), and host memory off a page does
+      not borrow on a driver's device. It is [Some b] for [b] on [d]. The borrow
+      keeps [b] reachable and shares its memory, so work through it is ordered
+      as work on [b], and a borrow of a borrow maps the memory the first one
+      maps.
 
       Raises [Invalid_argument] if [b] is dead; {!Lost} if [d] is
       lost or its driver faults during the borrow; {!Rig.Out_of_memory} if

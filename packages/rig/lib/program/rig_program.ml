@@ -1358,9 +1358,9 @@ let rec lstep p i = function
   | Send { rail; count } ->
       Lsend { end_ = rail_end p.rails rail; outbound = outbound p rail; count }
 
-(* A device borrows host memory that starts on a page, as a host buffer of 64
-   KiB or more does (rig.mli, [Buffer.create]). *)
-let page_bytes = 65536
+(* A device borrows host memory that starts on a page, as a host buffer of
+   [Rig.Buffer.paged_from] bytes or more does. *)
+let page_bytes = Rig.Buffer.paged_from
 
 let rec names_ints = function
   | Submit s -> Iarray.exists is_ints s.slots

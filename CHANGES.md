@@ -68,6 +68,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- On instruction sets other than x86_64 and arm64, such as ppc64le, `Rig.arch`
+  names the set, where it was `""`, and a load of host code is refused naming
+  it. New `Rig.Buffer.paged_from`, the size from which a host buffer starts on
+  a page; `Rig_program` sizes host memory by it, where 64 KiB pages left it
+  unborrowable.
 - **Breaking:** `Rig.allocated` and the budget count a buffer in the units its
   driver takes memory in, `Rig.granules`, where they counted the requested
   words: an NVIDIA GPU through its kernel driver counts 64 KiB below 2 MiB

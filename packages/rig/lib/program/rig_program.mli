@@ -265,12 +265,12 @@ val of_string : string -> (t, string) result
 
 val footprint : t -> Rig.t iarray -> (Rig.t * int) list
 (** [footprint t devices] is, for each of [devices] and the host, the bytes
-    {!load}[ t devices] on this machine makes there and counts in each
-    device's budget, as {!Rig.allocation} counts them, making nothing: each
-    [Alloc] memory, host memory a move names taking 64 KiB at least so that a
-    device can borrow it, and the run's ints, kept twice on the host, 64 KiB
-    each at least where a step names them, each in the budget {!Rig.charged}
-    names for its kind. [Mapped] memory that falls back at load
+    {!load}[ t devices] on this machine makes there and counts in each device's
+    budget, as {!Rig.allocation} counts them, making nothing: each [Alloc]
+    memory, host memory a move names taking {!Rig.Buffer.paged_from} bytes at
+    least so that a device can borrow it, and the run's ints, kept twice on the
+    host, as much each at least where a step names them, each in the budget
+    {!Rig.charged} names for its kind. [Mapped] memory that falls back at load
     ({!Rig.charged}) is counted as [Mapped]. Loaded images' code and a rail's
     memory are not counted. *)
 

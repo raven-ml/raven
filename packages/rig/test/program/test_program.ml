@@ -2168,9 +2168,9 @@ let test_cut_version () =
 (* Rails *)
 
 (* [n] bytes of 0 that start on a page, which Polled maps: a host buffer of
-   64 KiB starts on one. *)
+   [Rig.Buffer.paged_from] bytes starts on one. *)
 let area n =
-  let a = B.export (B.create Rig.host (1 lsl 16)) Bigarray.char in
+  let a = B.export (B.create Rig.host B.paged_from) Bigarray.char in
   let a = Bigarray.Array1.sub a 0 n in
   Bigarray.Array1.fill a '\000';
   a
