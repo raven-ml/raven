@@ -1,10 +1,10 @@
-(* The laws of Lz.Decoder.step over every streaming format, against the
-   vendors' goldens and their mutated and cut copies: steps equal the
-   whole-buffer decode for any cut of the input, a step ends as its doc
-   states, Truncated comes only with ~last:true, an error or a raise in [f]
-   kills the decoder, a lent run outlives its decoder, and a decoder takes
-   one step at a time. Lz.Encoder.step shares the last two laws: a raise in
-   [f] kills the encoder, and an encoder takes one step at a time. *)
+(* The laws of Lz.Decoder.step over every streaming format, against the vendors'
+   goldens and their mutated and cut copies, in lz.mli's order: a decoder takes
+   one step at a time, an error or a raise in [f] kills it, a lent run outlives
+   its decoder, a step ends as its doc states, Truncated comes only with
+   ~last:true, and steps equal the whole-buffer decode for any cut of the input.
+   Lz.Encoder.step shares the first two laws: an encoder takes one step at a
+   time, and a raise in [f] kills it. *)
 
 open Windtrap
 
@@ -417,10 +417,10 @@ let whole_equals_steps fmt =
       | _ -> ());
       (* A prefix of a valid input fails only once its end is said. *)
       (match t.ended with
-      | Error f when valid_prefix fmt c.change ->
-          equal bool
-            ~msg:(Printf.sprintf "a valid prefix failed at step %d without ~last" f.at_step)
-            true f.last
+      | Error f when valid_prefix fmt c.change && not f.last ->
+          failf "a valid prefix failed at step %d without ~last: %a" f.at_step
+            (Testable.pp Lz_support.error)
+            f.error
       | _ -> ());
       let failed why =
         match got with Error { why = w; _ } -> why w | Ok _ -> false
@@ -633,21 +633,18 @@ let kept_runs fmt =
   prop fmt.name gen (fun (g, sizes, ends) ->
       let gone = Weak.create 1 in
       let kept = keep_runs fmt (data g) ~sizes ~ends gone in
-      (* Its contents are a later step's: reading every byte is the law,
-         which the sanitizers check. *)
-      let read when_ =
-        List.iteri
-          (fun i (run, copy) ->
-            equal int
-              ~msg:(Printf.sprintf "run %d %s" i when_)
-              (String.length copy)
-              (String.length (Lz_support.to_string run)))
+      (* Its contents are a later step's, which lz.mli leaves unspecified: that
+         every byte reads is the law, which the sanitizers check. *)
+      let read () =
+        List.iter
+          (fun (run, _) ->
+            ignore (Sys.opaque_identity (Lz_support.to_string run)))
           kept
       in
-      read "after later steps";
+      read ();
       Gc.full_major ();
       is_none ~msg:"the decoder was collected" (Weak.get gone 0);
-      read "after the decoder was collected";
+      read ();
       equal Lz_support.decoded (Ok (raw g)) (Ok (String.concat "" (List.map snd kept)));
       cover "several runs" (List.length kept > 2))
 
@@ -1013,18 +1010,19 @@ let () =
   exit
     (run "Step"
        [
-         no_input;
-         each "steps equal the whole decode" whole_equals_steps;
-         each "steps equal the whole decode where the buffer moves" across_buffer;
-         each "a stream ends as the step's doc states" ends_of;
-         each "a decoder whose f raised is dead" raising;
-         each "a run kept past f stays readable" kept_runs;
          each "a step from f raises" reentry;
          each "a step from another domain while one runs raises" other_domain;
          each "a decoder shared by two domains" one_user;
-         each_encoder "an encoder whose f raised is dead" encoder_raising;
+         each "a decoder whose f raised is dead" raising;
+         each "a run kept past f stays readable" kept_runs;
+         each "a stream ends as the step's doc states" ends_of;
+         no_input;
+         each "steps equal the whole decode" whole_equals_steps;
+         each "steps equal the whole decode where the buffer moves"
+           across_buffer;
          each_encoder "an encoder step from f raises" encoder_reentry;
          each_encoder
            "an encoder step from another domain while one runs raises"
            encoder_other_domain;
+         each_encoder "an encoder whose f raised is dead" encoder_raising;
        ])
