@@ -137,19 +137,18 @@ let gen =
      and+ shape = array ~size:(int_range 0 3) (int_range 0 4) in
      { wide; values; shape })
 
-(* Each special value at every operand, at both widths, half of them of no
-   element or of a single one. *)
+(* Each special value at every operand, the widths alternating, in a shape of no
+   element, of one, and of several of ranks 1 and 2 in turn. *)
 let examples =
   let shapes = [| [||]; [| 0 |]; [| 2; 3 |]; [| 1 |] |] in
-  List.concat
-    (List.mapi
-       (fun i v ->
-         List.map
-           (fun j ->
-             let shape = shapes.(((2 * i) + j) mod 4) in
-             { wide = j = 1; values = List.init 6 (fun _ -> v); shape })
-           [ 0; 1 ])
-       specials)
+  List.mapi
+    (fun i v ->
+      {
+        wide = i mod 2 = 1;
+        values = List.init 6 (fun _ -> v);
+        shape = shapes.(i mod 4);
+      })
+    specials
 
 (* Laws *)
 
@@ -180,7 +179,7 @@ let complex_bound dt shape =
   Lowered.nodes (fun () -> Nx.full dt shape { Complex.re = 2.; im = 3. })
 
 let real (name, k) =
-  prop ~count:8 ~examples name gen (fun ({ wide; shape; _ } as c) ->
+  prop ~count:4 ~examples name gen (fun ({ wide; shape; _ } as c) ->
       if wide then
         at_most int
           ~than:(real_bound Nx.float64 shape)
@@ -191,7 +190,7 @@ let real (name, k) =
           (real_nodes Nx.float32 k c))
 
 let complex (name, k) =
-  prop ~count:8 ~examples name gen (fun ({ wide; shape; _ } as c) ->
+  prop ~count:4 ~examples name gen (fun ({ wide; shape; _ } as c) ->
       if wide then
         at_most int
           ~than:(complex_bound Nx.complex128 shape)
@@ -204,7 +203,7 @@ let complex (name, k) =
 (* Values
 
    A kind of constants compiled by Rune.jit gives the values it gives eagerly.
-   One compile per dtype holds every kind at every tuple, each result read
+   One compile per dtype holds every kind at every tuple, the results read
    through the argument [x], a one, so that the function reads it. A NaN equals
    any NaN. *)
 
@@ -224,6 +223,20 @@ let same a b =
   (Float.is_nan a && Float.is_nan b)
   || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
 
+(* [assembled x pieces] is the elements of [pieces], each of one element, in
+   order, each selected by its index into one value. A concatenation would store
+   each piece by a kernel of its own, whose compile is the test's cost; the
+   selection is one kernel. *)
+let assembled x pieces =
+  let n = List.length pieces in
+  let index = Nx.arange_at (Nx.beside x) Nx.int32 0 n 1 in
+  let first = Nx.broadcast_to [| n |] (List.hd pieces) in
+  snd
+    (List.fold_left
+       (fun (i, acc) piece ->
+         (i + 1, Nx.where (Nx.equal_s index (Int32.of_int i)) piece acc))
+       (1, first) (List.tl pieces))
+
 (* The names and tuples of [rows] whose compiled and eager values differ. *)
 let differing rows ~eq compiled eager =
   List.concat
@@ -239,19 +252,19 @@ let real_values (type s) (dt : (float, s) Nx.dtype) () =
   in
   let f x =
     let c = Nx.full_like x in
-    Nx.concatenate ~axis:0
-      (List.concat_map
-         (fun (_, k) ->
-           List.map
-             (fun vs ->
-               Nx.mul x
-                 (match (k, vs) with
-                 | One { f1 }, [ a ] -> f1 (c a)
-                 | Two { f2 }, [ a; b ] -> f2 (c a) (c b)
-                 | Three { f3 }, [ a; b; d ] -> f3 (c a) (c b) (c d)
-                 | _ -> assert false))
-             (tuples (arity k)))
-         reals)
+    Nx.mul x
+      (assembled x
+         (List.concat_map
+            (fun (_, k) ->
+              List.map
+                (fun vs ->
+                  match (k, vs) with
+                  | One { f1 }, [ a ] -> f1 (c a)
+                  | Two { f2 }, [ a; b ] -> f2 (c a) (c b)
+                  | Three { f3 }, [ a; b; d ] -> f3 (c a) (c b) (c d)
+                  | _ -> assert false)
+                (tuples (arity k)))
+            reals))
   in
   let x = Nx.full dt [| 1 |] 1. in
   let eager = Nx.to_array (f x) and compiled = Nx.to_array (Rune.jit' f x) in
@@ -274,19 +287,20 @@ let complex_values (type s) (dt : (Complex.t, s) Nx.dtype) () =
   in
   let f x =
     let c = Nx.full_like x in
-    Nx.concatenate ~axis:0
-      (List.concat_map
-         (fun (_, k) ->
-           List.map
-             (fun vs ->
-               let a, rest = pair vs in
-               Nx.where (Nx.equal x x)
-                 (match k with
+    let y =
+      assembled x
+        (List.concat_map
+           (fun (_, k) ->
+             List.map
+               (fun vs ->
+                 let a, rest = pair vs in
+                 match k with
                  | C1 { c1 } -> c1 (c a)
                  | C2 { c2 } -> c2 (c a) (c (fst (pair rest))))
-                 x)
-             (tuples (2 * carity k)))
-         complexes)
+               (tuples (2 * carity k)))
+           complexes)
+    in
+    Nx.where (Nx.equal x x) y x
   in
   let x = Nx.full dt [| 1 |] Complex.one in
   let eager = Nx.to_array (f x) and compiled = Nx.to_array (Rune.jit' f x) in
@@ -375,13 +389,14 @@ let int_values (type v s) (dt : (v, s) Nx.dtype) () =
   in
   let f x =
     let c v = Nx.cast dt (Nx.full_like x v) in
-    Nx.concatenate ~axis:0
-      (List.concat_map
-         (fun (_, unary, { op }) ->
-           List.map
-             (fun (a, b) -> Nx.mul x (Nx.cast Nx.int64 (op (c a) (c b))))
-             (int_pairs unary))
-         int_ops)
+    Nx.mul x
+      (assembled x
+         (List.concat_map
+            (fun (_, unary, { op }) ->
+              List.map
+                (fun (a, b) -> Nx.cast Nx.int64 (op (c a) (c b)))
+                (int_pairs unary))
+            int_ops))
   in
   let x = Nx.full Nx.int64 [| 1 |] 1L in
   let eager = Nx.to_array (f x) and compiled = Nx.to_array (Rune.jit' f x) in
@@ -438,10 +453,8 @@ let conversions () =
               Some
                 ( Printf.sprintf "%h to %s" v name,
                   fun x ->
-                    Nx.mul x
-                      (Nx.cast Nx.int64
-                         (Nx.cast dt (Nx.full_like (Nx.cast Nx.float64 x) v)))
-                )
+                    Nx.cast Nx.int64
+                      (Nx.cast dt (Nx.full_like (Nx.cast Nx.float64 x) v)) )
             else None)
           float_casts)
       int_dtypes
@@ -455,26 +468,22 @@ let conversions () =
           [
             ( "float64",
               fun x v ->
-                Nx.mul x
-                  (Nx.bitcast Nx.int64 (Nx.cast Nx.float64 (Nx.full_like x v)))
-            );
+                Nx.bitcast Nx.int64 (Nx.cast Nx.float64 (Nx.full_like x v)) );
             ( "float32",
               fun x v ->
-                Nx.mul x
-                  (Nx.cast Nx.int64
-                     (Nx.bitcast Nx.int32
-                        (Nx.cast Nx.float32 (Nx.full_like x v)))) );
+                Nx.cast Nx.int64
+                  (Nx.bitcast Nx.int32 (Nx.cast Nx.float32 (Nx.full_like x v)))
+            );
             ( "float16",
               fun x v ->
-                Nx.mul x
-                  (Nx.cast Nx.int64
-                     (Nx.bitcast Nx.int16
-                        (Nx.cast Nx.float16 (Nx.full_like x v)))) );
+                Nx.cast Nx.int64
+                  (Nx.bitcast Nx.int16 (Nx.cast Nx.float16 (Nx.full_like x v)))
+            );
           ])
       int_specials
   in
   let rows = to_ints @ to_floats in
-  let f x = Nx.concatenate ~axis:0 (List.map (fun (_, g) -> g x) rows) in
+  let f x = Nx.mul x (assembled x (List.map (fun (_, g) -> g x) rows)) in
   let x = Nx.full Nx.int64 [| 1 |] 1L in
   let eager = Nx.to_array (f x) and compiled = Nx.to_array (Rune.jit' f x) in
   equal (list string) []

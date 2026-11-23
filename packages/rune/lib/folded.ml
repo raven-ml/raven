@@ -137,58 +137,65 @@ let kept u =
   | Op.Cast | Op.Bitcast -> false
   | op -> not (Ops.is_literal u || Op.Set.mem op Op.Set.alu)
 
-let rec keeps s = (not (scalar s)) && (kept s || List.exists keeps (Ops.src s))
-
 (* Folding *)
 
 (* [rewritten s] is the graph of scalars [s] rewritten by tolk's rules to a
-   fixed point, sources first, as {!Ops.graph_rewrite} would: a graph of an Ops
-   function is a few nodes, too few for that walk's tables to pay. *)
+   fixed point, sources first, as {!Ops.graph_rewrite} would, or [None] where it
+   holds a node left to code generation, judged on its rewritten sources. A
+   graph of an Ops function is a few nodes, too few for that walk's tables to
+   pay. *)
 let rec rewritten s =
-  if scalar s then s
+  if scalar s then Some s
   else
-    let u = Ops.replace s ~src:(List.map rewritten (Ops.src s)) in
-    match Ops.Pattern_matcher.rewrite Shape.symbolic_simple () u with
-    | Some v when v != u -> rewritten v
-    | _ -> u
-
-(* [fold build args r] is [r], which [build] built over [args], as its value
-   moved to its shape where every operand is a constant: [build] of the
-   operands' scalar literals, a graph of scalars that tolk's own rules fold to
-   the value its code generation would give [r]. *)
-let fold build args r =
-  if List.memq r args then r
-  else
-    let ls = List.filter_map uniform args in
-    if List.compare_lengths ls args <> 0 then r
+    let srcs = List.filter_map rewritten (Ops.src s) in
+    if List.compare_lengths srcs (Ops.src s) <> 0 then None
     else
-      let s = build ls in
-      if keeps s then r
+      let u = Ops.replace s ~src:srcs in
+      if kept u then None
       else
-        let v = rewritten s in
-        if not (scalar v && Dtype.equal (Ops.dtype v) (Ops.dtype r)) then r
-        else
-          let dims = Shape.shape r in
-          Shape.expand
-            (Shape.reshape v (List.map (fun _ -> Ops.Int 1) dims))
-            dims
+        match Ops.Pattern_matcher.rewrite Shape.symbolic_simple () u with
+        | Some v when v != u -> rewritten v
+        | _ -> Some u
 
-let unary f x = fold (function [ x ] -> f x | _ -> assert false) [ x ] (f x)
+(* The shape of operands of one shape. *)
+let common = function
+  | [] -> None
+  | a :: rest ->
+      let s = Shape.shape a in
+      if List.for_all (fun b -> Shape.shape b = s) rest then Some s else None
+
+(* [fold build args] is [build args], or where every operand is a constant its
+   value moved to its shape: [build] of the operands' scalar literals, a graph
+   of scalars that tolk's own rules fold to the value its code generation would
+   give [build args]. *)
+let fold build args =
+  let ls = List.filter_map uniform args in
+  let folded =
+    if List.compare_lengths ls args <> 0 then None
+    else
+      match (common args, rewritten (build ls)) with
+      | Some dims, Some v when scalar v -> Some (dims, v)
+      | _ -> None
+  in
+  match folded with
+  | None -> build args
+  | Some (dims, v) ->
+      Shape.expand (Shape.reshape v (List.map (fun _ -> Ops.Int 1) dims)) dims
+
+let unary f x = fold (function [ x ] -> f x | _ -> assert false) [ x ]
 
 let binary f x y =
-  fold (function [ x; y ] -> f x y | _ -> assert false) [ x; y ] (f x y)
+  fold (function [ x; y ] -> f x y | _ -> assert false) [ x; y ]
 
 let ternary f x y z =
-  fold
-    (function [ x; y; z ] -> f x y z | _ -> assert false)
-    [ x; y; z ] (f x y z)
+  fold (function [ x; y; z ] -> f x y z | _ -> assert false) [ x; y; z ]
 
 (* Elementwise *)
 
 let alu x op rest =
   fold
     (function x :: rest -> Ops.alu x op rest | [] -> assert false)
-    (x :: rest) (Ops.alu x op rest)
+    (x :: rest)
 
 let cast x dt = unary (fun x -> Ops.cast x dt) x
 let bitcast x dt = unary (fun x -> Ops.bitcast x dt) x
