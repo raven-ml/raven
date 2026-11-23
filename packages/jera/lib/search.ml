@@ -54,8 +54,7 @@ let descends g d =
 
 let hold m next last =
   let ones = Array.make (Nx.ndim next - Nx.ndim m) 1 in
-  let m = Nx.reshape (Array.append (Nx.shape m) ones) m in
-  Nx.where (Nx.broadcast_to (Nx.shape next) m) next last
+  Nx.where (Nx.reshape (Array.append (Nx.shape m) ones) m) next last
 
 (* Whether each lane's error [e], over its scale, has a root mean square of
    at most 1. *)
@@ -596,14 +595,18 @@ let judge tol s ~map ~mu ~resolution ~f delta =
      the zero and [δ] moves the answer from [x], so a map whose readings do
      not contract, as one whose curvature estimate overshoots a component,
      still converges once both are small. *)
+  let bound =
+    match (mu, f) with
+    | None, _ -> None
+    | Some (mu, _), (Paired g | Solved g) ->
+        let floor = Nx.clamp ~min:(Num.tiny (Nx.dtype g)) scale in
+        Some (gradient_bound ~scale:floor ~mu g)
+  in
   let bounded e =
     let e =
-      match (mu, f) with
-      | None, _ -> e
-      | Some (mu, _), (Paired g | Solved g) ->
-          let floor = Nx.clamp ~min:(Num.tiny (Nx.dtype g)) scale in
-          let b = gradient_bound ~scale:floor ~mu g in
-          Nx.minimum (Nx.maximum e b) (Nx.add step b)
+      match bound with
+      | None -> e
+      | Some b -> Nx.minimum (Nx.maximum e b) (Nx.add step b)
     in
     match resolution with None -> e | Some r -> Nx.maximum e r
   in

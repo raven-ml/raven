@@ -430,17 +430,8 @@ let bfgs_method at dtype n ~trials evaluate =
    its reduced systems are solved by Sherman, Morrison and Woodbury's formula on
    the [2m × 2m] matrix. *)
 let lbfgs_method at dtype n m ~trials evaluate =
-  let direction (s : _ Search.state) (ss, ys) =
-    let pair i =
-      let s = Nx.get [ i ] ss and y = Nx.get [ i ] ys in
-      let curvature = Search.dot y s in
-      let curved = Nx.greater_s curvature 0. in
-      ( s,
-        y,
-        Nx.where curved
-          (Nx.recip (Nx.where curved curvature (Nx.ones_like curvature)))
-          (Nx.zeros_like curvature) )
-    in
+  let direction (s : _ Search.state) (ss, (ys, rhos)) =
+    let pair i = (Nx.get [ i ] ss, Nx.get [ i ] ys, Nx.get [ i ] rhos) in
     let pairs = Array.init m pair in
     let alphas = Array.make m (Nx.scalar_at at dtype 0.) in
     let q = ref s.fx in
@@ -463,7 +454,7 @@ let lbfgs_method at dtype n m ~trials evaluate =
     done;
     (Nx.neg !r, Nx.scalar_at at Nx.bool false)
   in
-  let model (ss, ys) =
+  let model (ss, (ys, _)) =
     let sy = Num.gram ss ys in
     let curvature = Nx.diagonal sy in
     let valid = Nx.greater_s curvature 0. in
@@ -566,15 +557,21 @@ let lbfgs_method at dtype n m ~trials evaluate =
     Nx.concatenate ~axis:0
       [ Nx.unsqueeze ~axes:[ 0 ] v; Nx.slice [ Nx.R (0, m - 1) ] memory ]
   in
-  (* A pair of non-positive curvature is not kept. *)
-  let update step y (ss, ys) =
-    let keep = Nx.greater_s (Search.dot step y) 0. in
-    (Nx.where keep (push step ss) ss, Nx.where keep (push y ys) ys)
+  (* A pair of non-positive curvature is not kept. A kept pair's [ρ = 1 / yᵀs]
+     is kept beside it, so that a direction does not take it again. *)
+  let update step y (ss, (ys, rhos)) =
+    let curvature = Search.dot y step in
+    let keep = Nx.greater_s curvature 0. in
+    let rho = Nx.recip (Nx.where keep curvature (Nx.ones_like curvature)) in
+    ( Nx.where keep (push step ss) ss,
+      (Nx.where keep (push y ys) ys, Nx.where keep (push rho rhos) rhos) )
   in
   Method
     {
-      memory = Nx.Ptree.(pair tensor tensor);
-      init = (Nx.zeros_at at dtype [| m; n |], Nx.zeros_at at dtype [| m; n |]);
+      memory = Nx.Ptree.(pair tensor (pair tensor tensor));
+      init =
+        ( Nx.zeros_at at dtype [| m; n |],
+          (Nx.zeros_at at dtype [| m; n |], Nx.zeros_at at dtype [| m |]) );
       direction;
       search = wolfe dtype ~trials evaluate;
       update;

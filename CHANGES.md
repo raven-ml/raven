@@ -1332,6 +1332,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.lbfgs` and `Minimize.bfgs` stage 6 to 9% fewer operations per
+  step and allocate less, taking each kept pair's `1 / yᵀs` and the gradient's
+  bound once: an eager L-BFGS solve runs about 7% faster. Results are unchanged.
 - `Minimize.nelder_mead` counts a value of `f` of −∞ as +∞, as it states for
   every non-finite value: it took −∞ for a minimum and reported `Converged`
   past `f`'s domain.
