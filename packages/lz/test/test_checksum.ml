@@ -123,6 +123,9 @@ type sum = {
   reference : int64 -> string -> int64;
   valid : int64 -> int64;
       (** A running value or seed of the checksum's width drawn from any. *)
+  running : bool;
+      (** Whether [c] is a running value: the sum of [a ^ b] from [c] is the sum
+          of [b] from [a]'s. *)
 }
 
 let u32 x = Int64.logand (Int64.of_int32 x) 0xFFFFFFFFL
@@ -146,6 +149,7 @@ let sums =
           Int64.of_int (Lz.Crc32.string ~crc:(Int64.to_int c) ?first ?length s));
       reference = (fun c s -> u32 (ref_crc32 (i32 c) s));
       valid = width32;
+      running = true;
     };
     {
       sum = "Adler-32";
@@ -155,6 +159,7 @@ let sums =
           u32 (Lz.Adler32.string ~adler:(i32 c) ?first ?length s));
       reference = (fun c s -> u32 (ref_adler32 (i32 c) s));
       valid = adler_valid;
+      running = true;
     };
     {
       sum = "XXH32";
@@ -164,6 +169,7 @@ let sums =
           u32 (Lz.Xxh32.string ~seed:(i32 c) ?first ?length s));
       reference = (fun c s -> u32 (ref_xxh32 (i32 c) s));
       valid = width32;
+      running = false;
     };
     {
       sum = "XXH64";
@@ -171,6 +177,7 @@ let sums =
       str = (fun c ?first ?length s -> Lz.Xxh64.string ~seed:c ?first ?length s);
       reference = ref_xxh64;
       valid = Fun.id;
+      running = false;
     };
   ]
 
@@ -185,9 +192,17 @@ type run = {
   run : int64 -> Lz.bigbytes -> int64;
   expect : int64 -> string -> int64;
   draw : int64 -> int64;
+  running : bool;
 }
 
-let of_sum s = { label = s.sum; run = s.big; expect = s.reference; draw = s.valid }
+let of_sum s =
+  {
+    label = s.sum;
+    run = s.big;
+    expect = s.reference;
+    draw = s.valid;
+    running = s.running;
+  }
 
 let of_path name (p : Lz_support.path) =
   let s = sum_named name in
@@ -196,6 +211,7 @@ let of_path name (p : Lz_support.path) =
     run = (fun c b -> u32 (p.run (i32 c) b));
     expect = s.reference;
     draw = s.valid;
+    running = s.running;
   }
 
 let runs =
@@ -256,32 +272,45 @@ let bytes_of_seed seed n =
 let short_lengths = 300
 let alignments = 16
 
-(* Each view, and each prefix's reference value, is made once a case and
-   read by every run: the paths of a checksum share its reference, found
-   by its function. Made per run, they cost more than the runs. *)
+(* The views, one for each length at each alignment, are made once and take each
+   case's bytes. Each prefix's reference value is made once a case and read by
+   every run: the paths of a checksum share its reference, found by its
+   function. A running value's prefix extends the one before it by a byte. Made
+   per run, they cost more than the runs. *)
+let buffers =
+  lazy
+    (Array.init alignments (fun offset ->
+         let v = Lz_support.room ~offset short_lengths in
+         (v, Array.init (short_lengths + 1) (fun n -> Array1.sub v 0 n))))
+
 let every_length (seed, c) =
   let s = bytes_of_seed seed short_lengths in
   let views =
-    Array.init alignments (fun offset ->
-        let v = Lz_support.placed ~offset s in
-        Array.init (short_lengths + 1) (fun n -> Array1.sub v 0 n))
+    Array.map
+      (fun (v, prefixes) ->
+        String.iteri (fun i b -> Array1.unsafe_set v i (Char.code b)) s;
+        prefixes)
+      (Lazy.force buffers)
   in
   let made = ref [] in
-  let references expect c =
-    let same (e, c', _) = e == expect && Int64.equal c c' in
+  let references r c =
+    let same (e, c', _) = e == r.expect && Int64.equal c c' in
     match List.find_opt same !made with
     | Some (_, _, values) -> values
     | None ->
-        let values =
-          Array.init (short_lengths + 1) (fun n -> expect c (String.sub s 0 n))
-        in
-        made := (expect, c, values) :: !made;
+        let values = Array.make (short_lengths + 1) (r.expect c "") in
+        for n = 1 to short_lengths do
+          values.(n) <-
+            (if r.running then r.expect values.(n - 1) (String.make 1 s.[n - 1])
+             else r.expect c (String.sub s 0 n))
+        done;
+        made := (r.expect, c, values) :: !made;
         values
   in
   List.iter
     (fun r ->
       let c = r.draw c in
-      let expected = references r.expect c in
+      let expected = references r c in
       for n = 0 to short_lengths do
         Array.iteri
           (fun a v ->
