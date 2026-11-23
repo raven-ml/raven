@@ -1676,6 +1676,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- tolk builds on musl, as on Alpine Linux, which declares the signal mask
+  functions of its worker only where a C file asks for them.
 - On arm64, a select of a value and any float constant by their comparison,
   as a clamp, picks the constant at a signalling NaN, as eager does: clang
   made it `fminnm` or `fmaxnm`, which return a quiet NaN. On arm64

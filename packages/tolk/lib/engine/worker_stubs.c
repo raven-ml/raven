@@ -11,6 +11,14 @@
    signals 1 to 64, every signal of Linux and macOS. Windows has no signal
    masks: there the mask is 0 and nothing changes. */
 
+/* sigfillset and pthread_sigmask are POSIX's, and SIGTRAP and SIGSYS
+   XSI's, which -std=c11 hides: glibc shows the first through the _REENTRANT
+   of OCaml's -pthread, musl none, and FreeBSD hides the XSI signals under
+   any _POSIX_C_SOURCE. _XOPEN_SOURCE 700 asks for XSI and POSIX.1-2008
+   together. Before any header, since the first one fixes what all of them
+   declare. */
+#define _XOPEN_SOURCE 700
+
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
 #include <caml/mlvalues.h>
