@@ -17,10 +17,6 @@
 #include "nx_array.h"
 #include "rig.h"
 
-#ifndef FLAT_FLOAT_ARRAY
-#error "nx_array writes float arrays as flat arrays of doubles"
-#endif
-
 /* An array is the record { dtype; layout; buffer }, in this order: the
    dtype an immediate whose value is its code, the layout a record. This
    file is the only C that reads either. */
@@ -1227,11 +1223,23 @@ static void to_run(void *ctx, const int64_t *at, int64_t len) {
    throughout. */
 static int to_array_releases(const nx_array *a) { return a->borrowed; }
 
+/* flat_floats: whether the compiler lays a float array out as flat doubles,
+   as to_array writes them. One built without flat float arrays boxes each
+   float, and to_array then writes into a floatarray, which is always flat. */
+value nx_array_flat_floats(value unit) {
+  (void)unit;
+#ifdef FLAT_FLOAT_ARRAY
+  return Val_true;
+#else
+  return Val_false;
+#endif
+}
+
 /* to_array: reads [v]'s elements, in C order of indices, into [out], an
-   OCaml array of their number, flat floats or immediates. Over borrowed
-   memory it reads them with the domain lock released, into a buffer. It
-   allocates no OCaml value past the door's wait. Elements that box go
-   through nx_array_to_bigarray. */
+   OCaml array or a floatarray of their number, flat floats or immediates.
+   Over borrowed memory it reads them with the domain lock released, into a
+   buffer. It allocates no OCaml value past the door's wait. Elements that
+   box go through nx_array_to_bigarray. */
 value nx_array_to_array(value v, value out) {
   CAMLparam1(out);
   nx_operand in = {v, nx_array_dtype(v), 0};
@@ -1264,6 +1272,7 @@ typedef struct {
   const nx_loop *l;
   value values;
   int64_t k;
+  int boxed; /* [values]'s floats, if it holds floats, are boxed */
 } of_ctx;
 
 static void of_run(void *ctx, const int64_t *at, int64_t len) {
@@ -1273,6 +1282,11 @@ static void of_run(void *ctx, const int64_t *at, int64_t len) {
   int64_t step = c->l->step[0][c->l->rank - 1];
   int64_t p = at[0], k = c->k;
   c->k += len;
+  if (representation(dt) == TO_FLAT && c->boxed) {
+    for (int64_t j = 0; j < len; j++, p += step)
+      store_float(a->base, dt, p, 0, Double_val(Field(c->values, k + j)));
+    return;
+  }
   switch (representation(dt)) {
     case TO_FLAT: {
       const double *src = (const double *)Op_val(c->values) + k;
@@ -1330,7 +1344,9 @@ value nx_array_of_array(value v, value values) {
   int e = nx_read(1, &in, &a);
   if (e) CAMLreturn(Val_int(e));
   if (!(e = nx_coalesce(1, &a, &l))) {
-    of_ctx c = {&a, &l, values, 0};
+    /* A compiler built without flat float arrays boxes each float of a
+       float array, which then has the tag of any other array. */
+    of_ctx c = {&a, &l, values, 0, Tag_val(values) != Double_array_tag};
     walk(1, &l, &c, of_run);
   }
   nx_done(1, &a);

@@ -21,6 +21,38 @@
 #include "nx_kinds.h"
 #include "nx_kinds_support.h"
 
+/* A float array's length and elements: flat doubles, or boxes where the
+   compiler was built without flat float arrays. */
+static int floats_length(value a) {
+  if (Tag_val(a) == Double_array_tag)
+    return (int)(Wosize_val(a) / Double_wosize);
+  return (int)Wosize_val(a);
+}
+
+static double floats_get(value a, int i) {
+  if (Tag_val(a) == Double_array_tag) return Double_flat_field(a, i);
+  return Double_val(Field(a, i));
+}
+
+/* The float array [re; im]. */
+static value floats_pair(double re, double im) {
+#ifdef FLAT_FLOAT_ARRAY
+  value r = caml_alloc_float_array(2);
+  Store_double_flat_field(r, 0, re);
+  Store_double_flat_field(r, 1, im);
+  return r;
+#else
+  CAMLparam0();
+  CAMLlocal3(r, x, y);
+  x = caml_copy_double(re);
+  y = caml_copy_double(im);
+  r = caml_alloc_tuple(2);
+  Store_field(r, 0, x);
+  Store_field(r, 1, y);
+  CAMLreturn(r);
+#endif
+}
+
 /* The loops nx.cpu would run on this CPU. */
 static const nx_kinds_loops *const loops = &nx_kinds_support_loops;
 
@@ -67,10 +99,9 @@ value nx_kinds_support_f32(value name, value args) {
 value nx_kinds_support_f64(value name, value args) {
   CAMLparam2(name, args);
   const nx_real_loop *k = real_loop(loops, name);
-  if ((int)(Wosize_val(args) / Double_wosize) != k->arity)
-    refuse(name);
+  if (floats_length(args) != k->arity) refuse(name);
   double x[3] = {0, 0, 0}, y;
-  for (int i = 0; i < k->arity; i++) x[i] = Double_flat_field(args, i);
+  for (int i = 0; i < k->arity; i++) x[i] = floats_get(args, i);
   k->f64(&x[0], &x[1], &x[2], &y, 1);
   CAMLreturn(caml_copy_double(y));
 }
@@ -163,17 +194,13 @@ value nx_kinds_support_c64(value name, value args) {
 value nx_kinds_support_c128(value name, value args) {
   CAMLparam2(name, args);
   CAMLlocal1(r);
-  int n = (int)(Wosize_val(args) / Double_wosize) / 2;
+  int n = floats_length(args) / 2;
   nx_c128 x[2] = {{0, 0}, {0, 0}}, y;
-  if (n < 1 || n > 2 || (int)(Wosize_val(args) / Double_wosize) != 2 * n)
-    refuse(name);
+  if (n < 1 || n > 2 || floats_length(args) != 2 * n) refuse(name);
   for (int i = 0; i < n; i++)
-    x[i] = nx_c128_of(Double_flat_field(args, 2 * i),
-                      Double_flat_field(args, 2 * i + 1));
+    x[i] = nx_c128_of(floats_get(args, 2 * i), floats_get(args, 2 * i + 1));
   if (!call_c128(String_val(name), n, x, &y)) refuse(name);
-  r = caml_alloc_float_array(2);
-  Store_double_flat_field(r, 0, y.re);
-  Store_double_flat_field(r, 1, y.im);
+  r = floats_pair(y.re, y.im);
   CAMLreturn(r);
 }
 

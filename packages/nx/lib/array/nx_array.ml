@@ -335,6 +335,11 @@ let set a idx x =
 external to_array_into : ('v, 's) t -> 'v array -> answer
   = "nx_array_to_array"
 
+external to_floatarray_into : ('v, 's) t -> floatarray -> answer
+  = "nx_array_to_array"
+
+external flat_floats : unit -> bool = "nx_array_flat_floats" [@@noalloc]
+
 external to_bigarray :
   ('v, 's) t -> ('v, 'b, Bigarray.c_layout) Bigarray.Array1.t -> answer
   = "nx_array_to_bigarray"
@@ -369,6 +374,23 @@ let complex64s fn a n =
   let b = unboxed fn a Bigarray.complex64 n in
   Array.init n (fun i -> Bigarray.Array1.unsafe_get b i)
 
+(* A compiler built without flat float arrays boxes each element of a float
+   array. Its floats are written into a floatarray, which is always flat, and
+   boxed once the claim is released, as other boxed elements are. *)
+let flat_floats = flat_floats ()
+
+let floats fn a n =
+  if flat_floats then
+    let out = Array.create_float n in
+    match to_array_into a out with
+    | Done -> out
+    | refusal -> refused fn refusal [ Any a ]
+  else
+    let out = Float.Array.create n in
+    match to_floatarray_into a out with
+    | Done -> Array.init n (Float.Array.unsafe_get out)
+    | refusal -> refused fn refusal [ Any a ]
+
 let to_array (type v s) (a : (v, s) t) : v array =
   let fn = "Nx_array.to_array" in
   let n = Layout.numel a.layout in
@@ -378,13 +400,13 @@ let to_array (type v s) (a : (v, s) t) : v array =
     | refusal -> refused fn refusal [ Any a ]
   in
   match a.dtype with
-  | Float64 -> into (Array.create_float n)
-  | Float32 -> into (Array.create_float n)
-  | Float16 -> into (Array.create_float n)
-  | Bfloat16 -> into (Array.create_float n)
-  | Float8_e4m3fn -> into (Array.create_float n)
-  | Float8_e5m2 -> into (Array.create_float n)
-  | Float4_e2m1fn -> into (Array.create_float n)
+  | Float64 -> floats fn a n
+  | Float32 -> floats fn a n
+  | Float16 -> floats fn a n
+  | Bfloat16 -> floats fn a n
+  | Float8_e4m3fn -> floats fn a n
+  | Float8_e5m2 -> floats fn a n
+  | Float4_e2m1fn -> floats fn a n
   | Int16 -> into (Array.make n 0)
   | Uint16 -> into (Array.make n 0)
   | Int8 -> into (Array.make n 0)

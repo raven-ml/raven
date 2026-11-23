@@ -166,8 +166,8 @@ val set : ('v, 's) t -> int iarray -> 'v -> unit
 
 val to_array : ('v, 's) t -> 'v array
 (** [to_array a] is [a]'s elements in C order of indices. [float] elements fill
-    a flat [float array]; [int32], [int64] and [Complex.t] elements are boxed.
-*)
+    a flat [float array], unless the compiler was built without flat float
+    arrays; [int32], [int64] and [Complex.t] elements are boxed. *)
 
 val of_array : ('v, 's) Dtype.t -> int iarray -> 'v array -> ('v, 's) t
 (** [of_array dt s xs] is a fresh C-contiguous array of shape [s] on {!Rig.host}
