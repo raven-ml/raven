@@ -866,10 +866,13 @@ static int extents(att *c, const nx_array *a, int paged) {
 }
 
 /* Answers [e] after the door's claims end, raising Out_of_memory where
-   [failed]. */
-static value finish(value owner, int n, nx_array *a, int e, int failed) {
+   [failed], and frees what the custom block at the root [*owner] holds.
+   Past NX_MAX_OPERANDS operands nx_done lets other domains collect, which
+   moves the block, so it is found through its root after. */
+static value finish(const value *owner, int n, nx_array *a, int e,
+                    int failed) {
   nx_done(n, a);
-  release(owner);
+  release(*owner);
   if (failed) caml_raise_out_of_memory();
   return Val_int(e);
 }
@@ -903,12 +906,14 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
   int n = 5 + paged + lengths + nl;
   owner = caml_alloc_custom(&held_ops, sizeof(held), 0, 1);
   *(held *)Data_custom_val(owner) = (held){NULL, NULL, NULL};
-  held *h = Data_custom_val(owner);
+  /* Each copy and table below may be allocated with the domain lock
+     released, and a collection within the release moves the custom block:
+     each is stored through the root after it. */
   nx_cpu_prog *g = NULL;
   if (c.mask || c.score || c.keep) {
     g = nx_cpu_prog_copy(&vp);
     if (g == NULL) caml_raise_out_of_memory();
-    h->g = g;
+    ((held *)Data_custom_val(owner))->g = g;
   }
   /* The mask's ranges, where it has them. */
   nx_cpu_prog *rg = NULL;
@@ -931,7 +936,7 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
     release(owner);
     caml_raise_out_of_memory();
   }
-  h->tables = mem;
+  ((held *)Data_custom_val(owner))->tables = mem;
   nx_array *a = (nx_array *)mem, *ins = a + n;
   int64_t(*st)[NX_MAX_RANK] = (int64_t(*)[NX_MAX_RANK])(ins + nl + 1);
   int64_t *first = (int64_t *)(st + nl + 3);
@@ -948,7 +953,7 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
   c.lengths = lengths ? &a[at] : NULL;
   const nx_array *loads = &a[at + lengths];
   if ((e = extents(&c, a, paged)))
-    CAMLreturn(finish(owner, n, a, e, 0));
+    CAMLreturn(finish(&owner, n, a, e, 0));
   {
     int64_t s[NX_MAX_RANK];
     memcpy(s, c.ext, sizeof(int64_t) * (size_t)c.lead);
@@ -957,14 +962,14 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
     s[c.rank - 1] = c.tk;
     for (int i = 0; i < nl; i++)
       if (!same_shape(&loads[i], c.rank, s))
-        CAMLreturn(finish(owner, n, a, NX_SHAPE, 0));
+        CAMLreturn(finish(&owner, n, a, NX_SHAPE, 0));
   }
   int64_t leads = 1;
   for (int i = 0; i < c.lead; i++) leads *= c.ext[i];
   int64_t rows = leads * c.hq * c.tq;
-  if (rows == 0) CAMLreturn(finish(owner, n, a, NX_OK, 0));
+  if (rows == 0) CAMLreturn(finish(&owner, n, a, NX_OK, 0));
   if (g != NULL && (e = bind(&c, g, loads, nl, ins, st, first)))
-    CAMLreturn(finish(owner, n, a, e < 0 ? NX_OK : e, e < 0));
+    CAMLreturn(finish(&owner, n, a, e < 0 ? NX_OK : e, e < 0));
   c.prog = g;
   int r = c.rank;
   c.k_in = dt == acc && step(&a[K], paged ? 3 : r - 1) == 1;
@@ -1018,7 +1023,7 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
   free(classes);
   free(c.cls);
   int failed = atomic_load(&c.failed) || (g != NULL && nx_cpu_prog_failed(g));
-  CAMLreturn(finish(owner, n, a, NX_OK, failed));
+  CAMLreturn(finish(&owner, n, a, NX_OK, failed));
 }
 
 value nx_cpu_attention_byte(value *argv, int argn) {

@@ -254,17 +254,16 @@ value nx_release_support_copy(value unit) {
 
 /* A compaction within a release
 
-   An armed thread's next release waits, released, until another domain
-   has compacted the heap or [disarm] ends the wait: a compaction empties
-   every minor heap first, which moves every young block.
-   The other domain's [await_release] answers whether the release came. */
+   A thread armed with n waits, released, at its nth release until another
+   domain has compacted the heap or [disarm] ends the wait: a compaction
+   empties every minor heap first, which moves every young block. The
+   other domain's [await_release] answers whether the release came. */
 
 static _Thread_local int armed;
 static atomic_int released_armed, compacted, disarmed;
 
 static void await_compaction(void) {
-  if (!armed) return;
-  armed = 0;
+  if (armed == 0 || --armed > 0) return;
   int64_t deadline = clock_ns(CLOCK_MONOTONIC) + PATIENCE_NS;
   atomic_store(&released_armed, 1);
   struct timespec pause = {0, 10000};
@@ -283,9 +282,8 @@ value nx_release_support_reset(value unit) {
   return Val_unit;
 }
 
-value nx_release_support_arm(value unit) {
-  (void)unit;
-  armed = 1;
+value nx_release_support_arm(value v_n) {
+  armed = Int_val(v_n);
   return Val_unit;
 }
 

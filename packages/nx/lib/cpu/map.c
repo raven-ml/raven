@@ -1462,11 +1462,13 @@ static struct custom_operations map_ops = {
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
-/* Allocates a wide map's tables into the custom block [owner]: [a],
-   [rows] and [first] of n + 2 entries, and where [ins] is not NULL the
-   [nins] loads' and [nouts] outputs' too. Raises Out_of_memory, having
-   freed what [owner] holds, if host memory runs out. */
-static void wide_tables(value owner, int n, int nins, int nouts,
+/* Allocates a wide map's tables into the custom block at the root
+   [*owner]: [a], [rows] and [first] of n + 2 entries, and where [ins] is
+   not NULL the [nins] loads' and [nouts] outputs' too. The allocation
+   releases the domain lock, and a collection within it moves the block,
+   so it is found through its root after. Raises Out_of_memory, having
+   freed what the block holds, if host memory runs out. */
+static void wide_tables(const value *owner, int n, int nins, int nouts,
                         nx_array **a, int64_t (**rows)[NX_MAX_RANK],
                         int64_t **first, int **ins, int32_t **outs) {
   size_t m = (size_t)n + 2;
@@ -1474,10 +1476,10 @@ static void wide_tables(value owner, int n, int nins, int nouts,
                  (size_t)nins * sizeof(int) + (size_t)nouts * sizeof(int32_t);
   uint8_t *b = nx_alloc_released(bytes);
   if (b == NULL) {
-    map_drop(owner, 1);
+    map_drop(*owner, 1);
     caml_raise_out_of_memory();
   }
-  ((map_held *)Data_custom_val(owner))->tables = b;
+  ((map_held *)Data_custom_val(*owner))->tables = b;
   *a = (nx_array *)b;
   *rows = (int64_t (*)[NX_MAX_RANK])(*a + m);
   *first = (int64_t *)(*rows + m);
@@ -1545,11 +1547,11 @@ value nx_cpu_map(value vp, value vdsts, value vloads) {
      tables hold its loads and outputs. */
   int names = n > NX_MAX_OPERANDS;
   if (names)
-    wide_tables(owner, n, nins, nouts, &a, &rows, &first, &ins, &outs);
+    wide_tables(&owner, n, nins, nouts, &a, &rows, &first, &ins, &outs);
   copy_prog(&vp, s, ins, outs);
   int wide = names || (n == NX_MAX_OPERANDS && reads_index(s, nn));
   if (wide && !names)
-    wide_tables(owner, n, 0, 0, &a, &rows, &first, NULL, NULL);
+    wide_tables(&owner, n, 0, 0, &a, &rows, &first, NULL, NULL);
   int many = nn > NX_CPU_ITEMS || wide;
   map_operands o = {&vdsts, &vloads, s, ins, outs, nouts};
   if (wide) e = nx_read_each(n, map_operand, &o, a);

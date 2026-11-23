@@ -46,12 +46,13 @@ let held ~runs f =
   Array.fold_left max 0 least
 
 external reset : unit -> unit = "nx_release_support_reset" [@@noalloc]
-external arm : unit -> unit = "nx_release_support_arm" [@@noalloc]
+external arm : int -> unit = "nx_release_support_arm" [@@noalloc]
 external disarm : unit -> unit = "nx_release_support_disarm" [@@noalloc]
 external await_release : unit -> bool = "nx_release_support_await_release"
 external compacted : unit -> unit = "nx_release_support_compacted" [@@noalloc]
 
-let compacting f =
+let compacting ?(release = 1) f =
+  if release < 1 then invalid_arg "Nx_release_support.compacting";
   reset ();
   let other =
     Domain.spawn (fun () ->
@@ -60,7 +61,7 @@ let compacting f =
         compacted ();
         released)
   in
-  arm ();
+  arm release;
   match f () with
   | r ->
       disarm ();

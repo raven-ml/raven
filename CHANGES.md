@@ -3603,6 +3603,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On nx.cpu, `Nx.concatenate` and `Nx.stack` of over 17 pieces, maps of over 18
+  operands and `Nx.attention` over long programs or many loads no longer leak a
+  table, or free one twice, when another domain collects during the call.
 - nx builds with GCC 11, as on Ubuntu 22.04 and CentOS Stream 9. nx.cpu
   called `__builtin_shufflevector`, which GCC gained in 12, and passed an
   unroll pragma through a macro argument, which GCC 11 emits ahead of the

@@ -317,9 +317,123 @@ let law_concurrent (s1, s2) =
     (fun want d -> equal (list (array int)) want (Domain.join d))
     want ds
 
+(* Allocations through C over every word of the calling domain's minor heap,
+   from where its next allocation starts. The debug runtime, which the sanitize
+   profile links, checks that each word such an allocation takes, but its
+   header, still holds the mark a collection leaves in free words, and aborts on
+   one that a stub wrote after the block there moved. *)
+let sweep () =
+  let words = (Gc.get ()).minor_heap_size in
+  for _ = 0 to words / 256 do
+    ignore (Sys.opaque_identity (Array.make 255 0))
+  done
+
+(* [call ()] run once for each of its releases of the domain lock, another
+   domain compacting the heap at that release, which moves every young block,
+   the custom block that owns the call's tables among them. After each run the
+   heap is collected, so that the block's finaliser frees what it still owns,
+   and swept ({!sweep}), and [check ()] holds. *)
+let at_each_release call check =
+  call ();
+  let ~releases, ~held:_, ~cpu:_ = Nx_release_support.watch call in
+  greater int ~msg:"releases" ~than:0 releases;
+  for release = 1 to releases do
+    let (), released = Nx_release_support.compacting ~release call in
+    equal ~msg:(Printf.sprintf "release %d came" release) bool true released;
+    Gc.full_major ();
+    sweep ();
+    check ()
+  done
+
+(* The program of [loads] float32 loads' sum, as an add of each into the sum of
+   those before it. *)
+let total loads =
+  P.v
+    ~ins:(Iarray.init loads (fun _ -> D.Any D.Float32))
+    (Iarray.init
+       ((2 * loads) - 1)
+       (fun i ->
+         if i < loads then P.In i
+         else P.Op2 (Binary Add, (if i = loads then 0 else i - 1), i - loads + 1)))
+    ~outs:[| (2 * loads) - 2 |]
+
+(* Attention's program over [loads] float32 loads, which it does not read: its
+   score plus a zero [adds] times over, true its mask and its keep. *)
+let long_score ~loads adds =
+  let zero = P.Const (D.Any D.Float32, P.bits D.Float32 0.) in
+  let truth = P.Const (D.Any D.Bool, P.bits D.Bool true) in
+  P.v
+    ~ins:(Iarray.init (1 + loads) (fun _ -> D.Any D.Float32))
+    (Iarray.init (adds + 3) (fun i ->
+         if i = 0 then P.In 0
+         else if i = 1 then zero
+         else if i = adds + 2 then truth
+         else P.Op2 (Binary Add, (if i = 2 then 0 else i - 1), 1)))
+    ~outs:[| adds + 2; adds + 1; adds + 2 |]
+
+(* Calls whose tables a count of their operands or nodes sizes, which they
+   allocate with the domain lock released: the custom block that owns the tables
+   is young then, and another domain's collection at any release of the call
+   moves it. Each count lies past the stack's tables. *)
+let tables_moved =
+  group "a call's tables survive a collection at each of its releases"
+    [
+      test "an assembly of many pieces" (fun () ->
+          let np = 64 in
+          let dst = f32 [| np |] in
+          let piece i =
+            let range = { Nx_array.Move.start = i; count = 1; step = 1 } in
+            ( ([| range |] : _ iarray),
+              A.of_array D.Float32 [| 1 |] [| float_of_int i |] )
+          in
+          let pieces = Iarray.init np piece in
+          at_each_release
+            (fun () -> done_ (Nx_cpu.assemble ~fill:0. ~dst pieces))
+            (fun () ->
+              equal (array float_exact)
+                (Array.init np float_of_int)
+                (A.to_array dst)));
+      test "a map of many loads" (fun () ->
+          let loads = 24 and m = 8 in
+          let x i =
+            A.of_array D.Float32 [| m |] (Array.make m (float_of_int i))
+          in
+          let ins = Iarray.init loads (fun i -> Nx_kernel.Plain (x i)) in
+          let dst = f32 [| m |] in
+          at_each_release
+            (fun () ->
+              done_ (Nx_cpu.map (total loads) ~dsts:[| A.Any dst |] ins))
+            (fun () ->
+              equal (array float_exact)
+                (Array.make m (float_of_int (loads * (loads - 1) / 2)))
+                (A.to_array dst)));
+      test "an attention of a long program over many loads" (fun () ->
+          (* Zero queries and keys score each of the two keys 0, so each weighs
+             1/2: [o] is the values' mean and [lse] is log 2. *)
+          let nl = 32 in
+          let q = A.of_array D.Float32 [| 1; 1; 1 |] [| 0. |] in
+          let k = A.of_array D.Float32 [| 1; 2; 1 |] [| 0.; 0. |] in
+          let v = A.of_array D.Float32 [| 1; 2; 1 |] [| 1.; 3. |] in
+          let loads = Iarray.init nl (fun _ -> A.Any (f32 [| 1; 1; 2 |])) in
+          let o = f32 [| 1; 1; 1 |] and lse = f32 [| 1; 1 |] in
+          at_each_release
+            (fun () ->
+              done_
+                (Nx_cpu.attention (long_score ~loads:nl 200) ~scale:1. ~o ~lse q
+                   (Nx_kernel.Dense { k; v })
+                   loads))
+            (fun () ->
+              equal ~msg:"o" (array float_exact) [| 2. |] (A.to_array o);
+              equal ~msg:"lse"
+                (array (float 1e-6))
+                [| Float.log 2. |]
+                (A.to_array lse)));
+    ]
+
 let domains =
   group "domains"
     [
+      tables_moved;
       prop ~count:20 "several domains may call concurrently"
         Gen.(pair (int_range 0 1_000_000) (int_range 0 1_000_000))
         law_concurrent;
