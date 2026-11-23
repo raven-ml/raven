@@ -274,7 +274,15 @@ let exhausted op =
     (op.name ^ ", every mapping refused")
     (walk ~kinds:[ (fun n -> Exhaust n) ] op)
 
+(* Halves with room for the pieces of every copy a walk makes, which pack as
+   they do in halves of 32 MiB, and of a size apart from those [left] counts.
+   Each attempt opens a device and makes its halves again, and the suite's C
+   library writes each in full (MALLOC_PERTURB_ and MallocScribble in the dune
+   file). *)
+let half_bytes = 32 * staged_bytes
+
 let () =
+  Rig.set_half_bytes half_bytes;
   exit
   @@ run "rig.walk"
        [
