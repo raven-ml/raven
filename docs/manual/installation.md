@@ -19,9 +19,9 @@ eval $(opam env)
 | 2 | Other 64-bit little-endian systems: Linux with musl, FreeBSD, Linux on ppc64le and riscv64 | Raven builds and passes its tests here. Bugs are fixed, but they don't hold back a release. |
 | Unsupported | Big-endian and 32-bit systems | Raven's file formats and kernels assume little-endian bytes, and its arrays and devices address memory beyond what a 32-bit `int` holds. |
 
-On a tier 2 processor other than x86_64 or arm64, `Rune.jit` can't load the
-kernels it compiles for the CPU and raises an error saying so. Eager code
-runs on every tier.
+On a tier 2 processor other than x86_64 or arm64, rig can't load code
+compiled for the CPU, so `Rune.jit` evaluates its function eagerly there:
+results are the same, at eager speed.
 
 GPU backends are tier 1 on the hardware they target: Metal on Apple
 silicon, CUDA on NVIDIA GPUs of compute capability 8.9, and AMD GPUs of

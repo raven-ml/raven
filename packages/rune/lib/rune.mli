@@ -1985,7 +1985,10 @@ val jit :
     function a construct runs, or at another placement than its {!Total}'s
     running value. An emission compiles as on one device
     ({!section-emissions}). It also declines a
-    program with a value on a device that computes nothing ({!Rig.computes}).
+    program with a value on a device that computes nothing ({!Rig.computes}),
+    and one with a value on a host or software device where rig links no host
+    code ({!Rig.Image.links}), as on ppc64le and riscv64: such a program
+    evaluates at eager speed.
     On a set without kernels ({!Nx.val-devices}), nothing evaluates a declined
     program: it raises [Invalid_argument] at the call, naming what the compiler
     declines, as does each stretch of a program split around a callback.

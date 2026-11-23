@@ -3388,6 +3388,23 @@ type t = {
           lowers it once. *)
 }
 
+(* Declines a program with a value on [r] where [r] computes nothing, or where
+   its kernels are host code and rig links no host code for its host's
+   instruction set, as on ppc64le: nothing compiled runs there, so the program
+   evaluates. *)
+let computing r =
+  if not (Rig.computes r) then
+    decline "a value on %s, which computes nothing" (Rig.name r);
+  let host_code = Rig.equal (Rig.host_of r) r || Rig.runs_on_host r in
+  if host_code && not (Rig.Image.links r) then
+    let isa =
+      match Rig.instruction_set (Rig.host_of r) with
+      | "" -> "an instruction set it does not know"
+      | isa -> isa
+    in
+    decline "a value on %s, where rig links no host code for %s" (Rig.name r)
+      isa
+
 (* The program's device: the one its first argument, or else its first result,
    lies whole on. *)
 let device (p : Program.t) forms =
@@ -3405,8 +3422,9 @@ let device (p : Program.t) forms =
   Array.iter consider forms;
   Array.iter (fun v -> consider (form v)) p.outputs;
   match !first with
-  | Some r when Rig.computes r -> r
-  | Some r -> decline "a value on %s, which computes nothing" (Rig.name r)
+  | Some r ->
+      computing r;
+      r
   | None -> decline "no value"
 
 (* The device a program over several devices computes on, where its checks
@@ -3449,8 +3467,7 @@ let rigs (p : Program.t) forms =
   let note placement =
     let r = Pieces.rig_of placement in
     if not (List.exists (Rig.equal r) !seen) then begin
-      if not (Rig.computes r) then
-        decline "a value on %s, which computes nothing" (Rig.name r);
+      computing r;
       seen := r :: !seen
     end
   in
