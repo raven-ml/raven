@@ -253,8 +253,9 @@ static double covers_bound(int np, int r) {
 }
 
 /* The pieces' descriptors, boxes and ranges, and nx_covers's scratch:
-   one C-heap block of their count. A custom block owns it, so that an
-   exception the door raises leaves it to the finalizer. */
+   one block of their count, on the stack where it fits LOCAL_BYTES. In
+   the C heap a custom block owns it, so that an exception the door
+   raises leaves it to the finalizer. */
 typedef struct {
   nx_array *a;
   int64_t (*lo)[NX_MAX_RANK], (*hi)[NX_MAX_RANK];
@@ -282,26 +283,46 @@ static struct custom_operations scratch_ops = {
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
-/* Carves [p] for [np] pieces of rank [r] out of a block that the root
-   [*owner] then owns, allocated with the domain lock released for [many]
-   pieces (nx_cpu_alloc_released); 0 if host memory runs out. A collection
-   within the release moves the custom block, so it is found through its
-   root after. Each part but the last is a multiple of 8 bytes, so each
-   starts aligned. */
-static int pieces_of(const value *owner, int np, int r, int many,
-                     pieces *p) {
+/* The most scratch an assembly carves out of its own stack, as one of up
+   to seven pieces of any rank takes: there it needs no custom block and no
+   allocation. From the C heap, a concatenation of two 4-element pieces
+   spent a tenth of its instructions on its scratch. */
+#define LOCAL_BYTES (16 * 1024)
+
+/* The parts' sizes for [np] pieces of rank [r]: descriptors, boxes,
+   ranges; nx_covers's scratch follows them. Each is a multiple of 8
+   bytes, so each part starts aligned. */
+typedef struct {
+  size_t a, box, ranges, total;
+} sizes;
+
+static sizes sizes_of(int np, int r) {
   size_t n = (size_t)np + 1;
-  size_t sa = n * sizeof *p->a, sb = n * sizeof *p->lo,
-         sr = (3 * (size_t)r * (size_t)np + 1) * sizeof *p->ranges;
-  size_t bytes = sa + 2 * sb + sr + nx_covers_bytes(np);
-  uint8_t *b = many ? nx_cpu_alloc_released(bytes) : malloc(bytes);
+  sizes z = {n * sizeof(nx_array), n * sizeof(int64_t[NX_MAX_RANK]),
+             (3 * (size_t)r * (size_t)np + 1) * sizeof(int64_t), 0};
+  z.total = z.a + 2 * z.box + z.ranges + nx_covers_bytes(np);
+  return z;
+}
+
+/* Carves [p] out of the block [b] of the sizes [z]. */
+static void carve(uint8_t *b, sizes z, pieces *p) {
+  p->a = (nx_array *)b;
+  p->lo = (int64_t(*)[NX_MAX_RANK])(b + z.a);
+  p->hi = (int64_t(*)[NX_MAX_RANK])(b + z.a + z.box);
+  p->ranges = (int64_t *)(b + z.a + 2 * z.box);
+  p->covering = b + z.a + 2 * z.box + z.ranges;
+}
+
+/* Carves [p] of the sizes [z] out of a block that the root [*owner] then
+   owns, allocated with the domain lock released for [many] pieces
+   (nx_cpu_alloc_released); 0 if host memory runs out. A collection within
+   the release moves the custom block, so it is found through its root
+   after. */
+static int pieces_of(const value *owner, sizes z, int many, pieces *p) {
+  uint8_t *b = many ? nx_cpu_alloc_released(z.total) : malloc(z.total);
   if (b == NULL) return 0;
   *(void **)Data_custom_val(*owner) = b;
-  p->a = (nx_array *)b;
-  p->lo = (int64_t(*)[NX_MAX_RANK])(b + sa);
-  p->hi = (int64_t(*)[NX_MAX_RANK])(b + sa + sb);
-  p->ranges = (int64_t *)(b + sa + 2 * sb);
-  p->covering = b + sa + 2 * sb + sr;
+  carve(b, z, p);
   return 1;
 }
 
@@ -359,11 +380,18 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   int np = (int)Wosize_val(vpieces);
   int64_t shape[2 * NX_MAX_RANK], off;
   int r = nx_array_layout(vd, shape, &off);
-  owner = caml_alloc_custom(&scratch_ops, sizeof(void *), 0, 1);
-  *(void **)Data_custom_val(owner) = NULL;
   int n = 1 + np, many = n > NX_MAX_OPERANDS;
+  sizes z = sizes_of(np, r);
+  int local = !many && z.total <= LOCAL_BYTES;
+  _Alignas(16) uint8_t stack[LOCAL_BYTES];
   pieces p;
-  if (!pieces_of(&owner, np, r, many, &p)) caml_raise_out_of_memory();
+  if (local)
+    carve(stack, z, &p);
+  else {
+    owner = caml_alloc_custom(&scratch_ops, sizeof(void *), 0, 1);
+    *(void **)Data_custom_val(owner) = NULL;
+    if (!pieces_of(&owner, z, many, &p)) caml_raise_out_of_memory();
+  }
   uint8_t fill[16] = {0};
   size_t nfill = caml_string_length(vfill);
   memcpy(fill, String_val(vfill), nfill < sizeof fill ? nfill : sizeof fill);
@@ -373,7 +401,7 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   reading c = {&vd, &vpieces, r, dt, shape, ranges, 0};
   e = nx_read_each(n, operand, &c, a);
   if (e) {
-    drop_scratch(owner, many);
+    if (!local) drop_scratch(owner, many);
     CAMLreturn(Val_int(e));
   }
   int in_place = np > 0 && a[1].alias;
@@ -445,7 +473,7 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   }
   nx_cpu_reacquire(released);
   nx_done(n, a);
-  drop_scratch(owner, many);
+  if (!local) drop_scratch(owner, many);
   CAMLreturn(Val_int(e));
 }
 

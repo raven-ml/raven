@@ -1580,7 +1580,7 @@ let allocation =
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let v = on_host Plain D.Float32 [| 4 |] (Array.make 4 2.) in
           expect (allocated (fun () -> Nx.set Nx.[ I 1 ] v a))
-          @@ __POS_OF__ {| 344 words |});
+          @@ __POS_OF__ {| 341 words |});
     ]
 
 (* A scatter's results lie at the union of its operands' cuts, as any
