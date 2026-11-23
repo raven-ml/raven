@@ -156,6 +156,25 @@ let cuts =
          (2, Gen.int_range 100_000 300_000);
        ])
 
+(* Levels *)
+
+let levels_outside =
+  cases "a level outside 1 to 9 raises" ~id:string_of_int [ -1; 0; 10 ]
+    (fun level ->
+      let src = Lz_support.of_string "abc" and dst = Lz_support.create 64 in
+      List.iter
+        (fun f ->
+          let raises what g =
+            raises_match
+              ~msg:(f.name ^ " " ^ what)
+              (Exn.invalid_arg ~sub:"level")
+              g
+          in
+          raises "encode" (fun () -> f.encode ~level src dst);
+          raises "encode_string" (fun () -> f.encode_string ~level "abc");
+          raises "encoder" (fun () -> f.encoder ~level ()))
+        formats)
+
 (* Round trips *)
 
 let round_trip =
@@ -238,6 +257,16 @@ let noise_bound =
           equal Lz_support.decoded ~msg:f.name (Ok s)
             (decode f (Lz_support.to_string ~length:k (snd g)) n))
         formats)
+
+let negative =
+  cases "a negative size has no bound"
+    ~id:(fun f -> f.name)
+    formats
+    (fun f ->
+      raises_match (Exn.invalid_arg ~sub:"negative") (fun () -> f.bound (-1)))
+
+let largest =
+  List.map (fun f -> group f.name [ Lz_support.largest_bound f.bound ]) formats
 
 (* Cuts into steps *)
 
@@ -431,16 +460,10 @@ let () =
   exit
     (run "Deflate_enc"
        [
-         cases "a level outside 1 to 9 raises" ~id:string_of_int [ 0; 10 ]
-           (fun level ->
-             List.iter
-               (fun f ->
-                 raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
-                     f.encode_string ~level "abc"))
-               formats);
-         group "round trip" [ round_trip; strings; stepped_round_trip ];
-         group "bound" [ bound; short; noise_bound ];
+         levels_outside;
+         group "round trip" [ round_trip; strings; stepped_round_trip; empty ];
+         group "bound" ([ bound; short; noise_bound; negative ] @ largest);
          group "steps" [ cut_free; quota; streams ];
+         group "wrappers" [ gzip_member; zlib_stream ];
          group "paths" [ paths ];
-         group "wrappers" [ gzip_member; zlib_stream; empty ];
        ])

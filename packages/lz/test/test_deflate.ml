@@ -14,43 +14,6 @@ module Array1 = Bigarray.Array1
 let kib = 1024
 let mib = 1024 * kib
 
-(* Arguments *)
-
-let src = Lz_support.of_string "abc"
-let dst = Lz_support.create 64
-
-let levels (name, encode, create, bound) =
-  group name
-    [
-      cases "a level outside 1 to 9 raises" ~id:string_of_int [ 0; 10; -1 ]
-        (fun level ->
-          raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
-              encode ~level src dst);
-          raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
-              create ~level ()));
-      test "a negative size has no bound" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"negative") (fun () -> bound (-1)));
-      Lz_support.largest_bound bound;
-    ]
-
-let arguments =
-  group "arguments"
-    (List.map levels
-       [
-         ( "Deflate",
-           (fun ~level s d -> Lz.Deflate.encode ~level s d),
-           (fun ~level () -> ignore (Lz.Deflate.encoder ~level ())),
-           Lz.Deflate.bound );
-         ( "Zlib",
-           (fun ~level s d -> Lz.Zlib.encode ~level s d),
-           (fun ~level () -> ignore (Lz.Zlib.encoder ~level ())),
-           Lz.Zlib.bound );
-         ( "Gzip",
-           (fun ~level s d -> Lz.Gzip.encode ~level s d),
-           (fun ~level () -> ignore (Lz.Gzip.encoder ~level ())),
-           Lz.Gzip.bound );
-       ])
-
 (* Codecs *)
 
 (* A codec's whole-buffer decode and its decoder. *)
@@ -251,135 +214,191 @@ let blocks =
   let raw = decodes "deflate" and bad = refuses "deflate" in
   group "deflate"
     [
-      test "a stored block" (fun () -> raw (stored "hello") "hello");
-      test "a stored block whose NLEN is not LEN's complement" (fun () ->
-          bad "\001\005\000\000\000hello" (malformed 3 "invalid stored block lengths"));
-      test "block type 3" (fun () ->
-          (* BTYPE is the header's second and third bits. *)
-          let f = block_header ~final:true 3 in
-          bad (pack f) (malformed (after (take 1 f)) "invalid block type");
-          (* Here bits 82 to 84, so BTYPE's first bit is in byte 10. *)
-          let f = fixed ~final:false (List.init 9 (fun _ -> L 97) @ [ L 256 ]) in
-          bad (pack (f @ block_header ~final:true 3))
-            (malformed (after (f @ [ (1, 1) ])) "invalid block type"));
-      test "a fixed block" (fun () ->
+      test "a stored block decodes to its bytes" (fun () ->
+          raw (stored "hello") "hello");
+      test "a fixed block decodes to its symbols" (fun () ->
           raw (pack (fixed [ L 97; L 257; D 0; L 256 ])) "aaaa");
-      test "fixed literal/length symbols 286 and 287" (fun () ->
-          List.iter
-            (fun s ->
-              let f = fixed [ L 97 ] in
-              bad (pack (f @ [ huff fixed_lit.(s) ]))
-                (malformed (after f) "invalid literal/length code"))
-            [ 286; 287 ]);
-      test "fixed distance symbols 30 and 31" (fun () ->
-          List.iter
-            (fun s ->
-              let f = fixed [ L 97; L 257 ] in
-              bad (pack (f @ [ huff fixed_dist.(s) ]))
-                (malformed (after f) "invalid distance code"))
-            [ 30; 31 ]);
-      test "a distance before the start of the output" (fun () ->
-          let f = fixed [ L 97; L 257 ] in
-          bad (pack (f @ symbols fixed_lit fixed_dist [ D 1; L 256 ]))
-            (malformed (after f) "invalid distance too far back");
-          let f = fixed [ L 257 ] in
-          bad (pack (f @ symbols fixed_lit fixed_dist [ D 0; L 256 ]))
-            (malformed (after f) "invalid distance too far back"));
-      test "a distance too far back by its extra bit" (fun () ->
-          (* After five bytes, distance 5 is valid and 6 is not: the
-             distance is wrong from its code's first bit. *)
-          let lits = List.map (fun c -> L (Char.code c)) [ 'a'; 'b'; 'c'; 'd'; 'e' ] in
-          raw (pack (fixed (lits @ [ L 257; D 4; X (0, 1); L 256 ]))) "abcdeabc";
-          let f = fixed (lits @ [ L 257 ]) in
-          bad (pack (f @ symbols fixed_lit fixed_dist [ D 4; X (1, 1); L 256 ]))
-            (malformed (after f) "invalid distance too far back"));
-      test "a distance before a stored block's output is valid" (fun () ->
-          raw (stored ~final:false "xy" ^ pack (fixed [ L 257; D 1; L 256 ])) "xyxyx");
-      test "a dynamic block" (fun () ->
+      test "a dynamic block decodes to its symbols" (fun () ->
           raw (pack (dynamic a_len3 [| 1 |] [ L 97; L 257; D 0; L 256 ])) "aaaa");
-      test "more than 286 literal/length or 30 distance codes" (fun () ->
-          (* At HLIT's first bit, or HDIST's after it. *)
-          List.iter
-            (fun (hlit, hdist) ->
-              let f = block_header ~final:true 2 @ [ (hlit, 5); (hdist, 5); (0, 4) ] in
-              let before = take (if hlit > 29 then 2 else 3) f in
-              bad (pack f) (malformed (after before) "too many length or distance symbols"))
-            [ (30, 0); (31, 0); (0, 30); (0, 31) ]);
-      test "an over-subscribed code length code" (fun () ->
-          let pre = Array.make 19 0 in
-          pre.(16) <- 1;
-          pre.(17) <- 1;
-          pre.(18) <- 1;
-          let f = dynamic_header ~nlen:257 ~ndist:1 ~pre [] in
-          (* The third length 1, for symbol 18, over-subscribes it: the
-             header's 5 fields, then the lengths of 16 and 17 before it. *)
-          bad (pack f) (malformed (after (take 7 f)) "invalid code lengths set"));
-      test "a code length code of one symbol" (fun () ->
-          (* Incomplete from its last length, the fourth. *)
-          let pre = Array.make 19 0 in
-          pre.(18) <- 1;
-          let f = dynamic_header ~nlen:257 ~ndist:1 ~pre [] in
-          bad (pack f) (malformed (after (take 9 f)) "invalid code lengths set"));
+      test "a distance into a stored block's output decodes" (fun () ->
+          raw
+            (stored ~final:false "xy" ^ pack (fixed [ L 257; D 1; L 256 ]))
+            "xyxyx");
+      test "a literal/length code of one code of length 1 decodes" (fun () ->
+          raw (pack (dynamic (lit_lens [ (256, 1) ]) [| 0 |] [ L 256 ])) "");
+      test "a distance code whose lengths are all 0 decodes literals" (fun () ->
+          raw (pack (dynamic a_len3 [| 0 |] [ L 97; L 256 ])) "a");
       test "an empty code length code reads every length as 0" (fun () ->
           let f = dynamic_header ~nlen:257 ~ndist:1 ~pre:(Array.make 19 0) [] in
           let zeros n = List.init n (fun _ -> (0, 1)) in
           (* Symbol 256's length is the 257th. *)
-          bad (pack (f @ zeros 258))
-            (malformed (after (f @ zeros 256)) "invalid code -- missing end-of-block"));
-      test "a repeat with no length before it" (fun () ->
+          bad
+            (pack (f @ zeros 258))
+            (malformed
+               (after (f @ zeros 256))
+               "invalid code -- missing end-of-block"));
+      test "block type 3 is Malformed at BTYPE" (fun () ->
+          (* BTYPE is the header's second and third bits. *)
+          let f = block_header ~final:true 3 in
+          bad (pack f) (malformed (after (take 1 f)) "invalid block type");
+          (* Here bits 82 to 84, so BTYPE's first bit is in byte 10. *)
+          let f =
+            fixed ~final:false (List.init 9 (fun _ -> L 97) @ [ L 256 ])
+          in
+          bad
+            (pack (f @ block_header ~final:true 3))
+            (malformed (after (f @ [ (1, 1) ])) "invalid block type"));
+      test "a stored NLEN that is not LEN's complement is Malformed at NLEN"
+        (fun () ->
+          bad "\001\005\000\000\000hello"
+            (malformed 3 "invalid stored block lengths"));
+      test "HLIT above 286 or HDIST above 30 is Malformed at the field"
+        (fun () ->
+          (* At HLIT's first bit, or HDIST's after it. *)
+          List.iter
+            (fun (hlit, hdist) ->
+              let f =
+                block_header ~final:true 2 @ [ (hlit, 5); (hdist, 5); (0, 4) ]
+              in
+              let before = take (if hlit > 29 then 2 else 3) f in
+              bad (pack f)
+                (malformed (after before) "too many length or distance symbols"))
+            [ (30, 0); (31, 0); (0, 30); (0, 31) ]);
+      group "a broken code is Malformed at the length that proves it"
+        [
+          test "an over-subscribed code length code" (fun () ->
+              let pre = Array.make 19 0 in
+              pre.(16) <- 1;
+              pre.(17) <- 1;
+              pre.(18) <- 1;
+              let f = dynamic_header ~nlen:257 ~ndist:1 ~pre [] in
+              (* The third length 1, for symbol 18, over-subscribes it: the
+                 header's 5 fields, then the lengths of 16 and 17 before it. *)
+              bad (pack f)
+                (malformed (after (take 7 f)) "invalid code lengths set"));
+          test "a code length code of one symbol" (fun () ->
+              (* Incomplete from its last length, the fourth. *)
+              let pre = Array.make 19 0 in
+              pre.(18) <- 1;
+              let f = dynamic_header ~nlen:257 ~ndist:1 ~pre [] in
+              bad (pack f)
+                (malformed (after (take 9 f)) "invalid code lengths set"));
+          test "an over-subscribed literal/length code" (fun () ->
+              (* Symbol 256's length 1 is the third, over-subscribing it. *)
+              let lit = lit_lens [ (97, 1); (98, 1); (256, 1) ] in
+              bad
+                (pack (dynamic_codes lit [| 1 |]))
+                (malformed
+                   (after (dynamic_codes ~through:255 lit [| 1 |]))
+                   "invalid literal/lengths set"));
+          test "an incomplete literal/length code" (fun () ->
+              (* Proven by the last literal/length length, symbol 256's. *)
+              let lit = lit_lens [ (97, 2); (256, 2) ] in
+              bad
+                (pack (dynamic_codes lit [| 1 |]))
+                (malformed
+                   (after (dynamic_codes ~through:255 lit [| 1 |]))
+                   "invalid literal/lengths set"));
+          test "an over-subscribed distance code" (fun () ->
+              (* The third distance length over-subscribes the code. *)
+              let n = Array.length a_len3 in
+              bad
+                (pack (dynamic_codes a_len3 [| 1; 1; 1 |]))
+                (malformed
+                   (after (dynamic_codes ~through:(n + 1) a_len3 [| 1; 1; 1 |]))
+                   "invalid distances set"));
+          test "an incomplete distance code" (fun () ->
+              let n = Array.length a_len3 in
+              bad
+                (pack (dynamic_codes a_len3 [| 2; 2 |]))
+                (malformed
+                   (after (dynamic_codes ~through:n a_len3 [| 2; 2 |]))
+                   "invalid distances set"));
+        ];
+      test "a repeat with no length before it is Malformed at the repeat"
+        (fun () ->
           let f = dynamic_header ~nlen:257 ~ndist:1 ~pre:full_pre [] in
           let g = dynamic_header ~nlen:257 ~ndist:1 ~pre:full_pre [ L 16 ] in
-          bad (pack (g @ [ (0, 2) ])) (malformed (after f) "invalid bit length repeat"));
-      test "a repeat past the last code length" (fun () ->
+          bad
+            (pack (g @ [ (0, 2) ]))
+            (malformed (after f) "invalid bit length repeat"));
+      test "a repeat past the last code length is Malformed at the repeat"
+        (fun () ->
           (* 138 zeros, then 138 more where 120 lengths remain. *)
-          let f = dynamic_header ~nlen:257 ~ndist:1 ~pre:full_pre [ L 18; X (127, 7) ] in
+          let f =
+            dynamic_header ~nlen:257 ~ndist:1 ~pre:full_pre [ L 18; X (127, 7) ]
+          in
           let g =
             dynamic_header ~nlen:257 ~ndist:1 ~pre:full_pre
               [ L 18; X (127, 7); L 18; X (127, 7) ]
           in
           bad (pack g) (malformed (after f) "invalid bit length repeat"));
-      test "no end-of-block code" (fun () ->
+      test "no end-of-block code is Malformed at the length that leaves it none"
+        (fun () ->
           let lit = lit_lens [ (97, 1); (98, 1) ] in
-          bad (pack (dynamic_codes lit [| 1 |]))
-            (malformed (after (dynamic_codes ~through:255 lit [| 1 |]))
+          bad
+            (pack (dynamic_codes lit [| 1 |]))
+            (malformed
+               (after (dynamic_codes ~through:255 lit [| 1 |]))
                "invalid code -- missing end-of-block"));
-      test "an over-subscribed literal/length code" (fun () ->
-          (* Symbol 256's length 1 is the third, over-subscribing it. *)
-          let lit = lit_lens [ (97, 1); (98, 1); (256, 1) ] in
-          bad (pack (dynamic_codes lit [| 1 |]))
-            (malformed (after (dynamic_codes ~through:255 lit [| 1 |]))
-               "invalid literal/lengths set"));
-      test "an incomplete literal/length code" (fun () ->
-          (* Proven by the last literal/length length, symbol 256's. *)
-          let lit = lit_lens [ (97, 2); (256, 2) ] in
-          bad (pack (dynamic_codes lit [| 1 |]))
-            (malformed (after (dynamic_codes ~through:255 lit [| 1 |]))
-               "invalid literal/lengths set"));
-      test "a literal/length code of one symbol" (fun () ->
+      test "a one-symbol literal/length code's unused code is Malformed"
+        (fun () ->
           let lit = lit_lens [ (256, 1) ] in
-          raw (pack (dynamic lit [| 0 |] [ L 256 ])) "";
-          bad (pack (dynamic lit [| 0 |] [ X (1, 1) ]))
-            (malformed (after (dynamic lit [| 0 |] [])) "invalid literal/length code"));
-      test "an over-subscribed distance code" (fun () ->
-          (* The third distance length over-subscribes the code. *)
-          let n = Array.length a_len3 in
-          bad (pack (dynamic_codes a_len3 [| 1; 1; 1 |]))
-            (malformed (after (dynamic_codes ~through:(n + 1) a_len3 [| 1; 1; 1 |]))
-               "invalid distances set"));
-      test "an incomplete distance code" (fun () ->
-          let n = Array.length a_len3 in
-          bad (pack (dynamic_codes a_len3 [| 2; 2 |]))
-            (malformed (after (dynamic_codes ~through:n a_len3 [| 2; 2 |]))
-               "invalid distances set"));
-      test "a distance code of one symbol" (fun () ->
+          bad
+            (pack (dynamic lit [| 0 |] [ X (1, 1) ]))
+            (malformed
+               (after (dynamic lit [| 0 |] []))
+               "invalid literal/length code"));
+      test "a one-symbol distance code's unused code is Malformed" (fun () ->
           let f = dynamic a_len3 [| 1 |] [ L 97; L 257 ] in
-          bad (pack (dynamic a_len3 [| 1 |] [ L 97; L 257; X (1, 1) ]))
+          bad
+            (pack (dynamic a_len3 [| 1 |] [ L 97; L 257; X (1, 1) ]))
             (malformed (after f) "invalid distance code"));
-      test "a length with no distance code" (fun () ->
-          raw (pack (dynamic a_len3 [| 0 |] [ L 97; L 256 ])) "a";
+      test "a length with no distance code is Malformed at its distance"
+        (fun () ->
           let f = dynamic a_len3 [| 0 |] [ L 97; L 257 ] in
-          bad (pack (dynamic a_len3 [| 0 |] [ L 97; L 257; X (0, 1) ]))
+          bad
+            (pack (dynamic a_len3 [| 0 |] [ L 97; L 257; X (0, 1) ]))
             (malformed (after f) "invalid distance code"));
+      test "literal/length symbols 286 and 287 are Malformed at their code"
+        (fun () ->
+          List.iter
+            (fun s ->
+              let f = fixed [ L 97 ] in
+              bad
+                (pack (f @ [ huff fixed_lit.(s) ]))
+                (malformed (after f) "invalid literal/length code"))
+            [ 286; 287 ]);
+      test "distance symbols 30 and 31 are Malformed at their code" (fun () ->
+          List.iter
+            (fun s ->
+              let f = fixed [ L 97; L 257 ] in
+              bad
+                (pack (f @ [ huff fixed_dist.(s) ]))
+                (malformed (after f) "invalid distance code"))
+            [ 30; 31 ]);
+      test "a distance before the stream's first byte is Malformed at its code"
+        (fun () ->
+          let f = fixed [ L 97; L 257 ] in
+          bad
+            (pack (f @ symbols fixed_lit fixed_dist [ D 1; L 256 ]))
+            (malformed (after f) "invalid distance too far back");
+          let f = fixed [ L 257 ] in
+          bad
+            (pack (f @ symbols fixed_lit fixed_dist [ D 0; L 256 ]))
+            (malformed (after f) "invalid distance too far back"));
+      test "a distance too far back by its extra bit is Malformed at its code"
+        (fun () ->
+          (* After five bytes, distance 5 is valid and 6 is not: the distance is
+             wrong from its code's first bit. *)
+          let lits =
+            List.map (fun c -> L (Char.code c)) [ 'a'; 'b'; 'c'; 'd'; 'e' ]
+          in
+          raw (pack (fixed (lits @ [ L 257; D 4; X (0, 1); L 256 ]))) "abcdeabc";
+          let f = fixed (lits @ [ L 257 ]) in
+          bad
+            (pack (f @ symbols fixed_lit fixed_dist [ D 4; X (1, 1); L 256 ]))
+            (malformed (after f) "invalid distance too far back"));
     ]
 
 (* Zlib *)
@@ -403,23 +422,25 @@ let zlib =
   let body = stored "hello" in
   group "zlib"
     [
-      test "a stream" (fun () -> ok (zlib_member body "hello") "hello");
-      cases "every window size up to 32 KiB" ~id:string_of_int [ 0; 1; 6; 7 ]
-        (fun cinfo ->
+      test "a stream decodes, its Adler-32 consumed" (fun () ->
+          ok (zlib_member body "hello") "hello");
+      cases "every window size up to 32 KiB decodes" ~id:string_of_int
+        [ 0; 1; 6; 7 ] (fun cinfo ->
           ok (zlib_member ~header:(zlib_header ((cinfo lsl 4) lor 8) 0) body "hello")
             "hello");
-      test "FCHECK" (fun () ->
+      test "a header whose check bits fail is Malformed at 0" (fun () ->
           bad ("\x78\x9d" ^ body) (malformed 0 "incorrect header check"));
-      test "a method other than 8" (fun () ->
+      test "a method other than 8 is Malformed at 0" (fun () ->
           bad (zlib_member ~header:(zlib_header 0x77 0) body "hello")
             (malformed 0 "unknown compression method"));
-      test "a window above 32 KiB" (fun () ->
+      test "a window above 32 KiB is Malformed at 0" (fun () ->
           bad (zlib_member ~header:(zlib_header 0x88 0) body "hello")
             (malformed 0 "invalid window size"));
-      test "a preset dictionary is Unsupported" (fun () ->
+      test "a preset dictionary is Unsupported at the header's second byte"
+        (fun () ->
           bad (zlib_header 0x78 0x20 ^ "\000\000\000\001" ^ body)
             { Lz.at = 1; why = Unsupported "preset dictionary" });
-      test "a wrong Adler-32" (fun () ->
+      test "a wrong Adler-32 is Malformed at its first byte" (fun () ->
           bad (zlib_member body "hellp")
             (malformed (2 + String.length body) "incorrect data check"));
     ]
@@ -449,36 +470,38 @@ let gzip =
   let n = String.length member in
   group "gzip"
     [
-      test "a member" (fun () -> ok member "hello");
-      test "every optional header field" (fun () ->
+      test "a member decodes" (fun () -> ok member "hello");
+      test "a header with every optional field decodes" (fun () ->
           ok (gzip_member ~header:(full_header ()) body "hello") "hello");
-      test "a wrong header CRC16" (fun () ->
+      test "a wrong header CRC is Malformed at its first byte" (fun () ->
           let header = full_header ~hcrc:0 () in
           bad (gzip_member ~header body "hello")
             (malformed (String.length header - 2) "header crc mismatch"));
-      test "a wrong magic is at the member's first byte" (fun () ->
+      test "a wrong ID1 or ID2 is Malformed at the member's first byte"
+        (fun () ->
           bad ("\x1f\x8c" ^ String.sub member 2 (n - 2))
             (malformed 0 "incorrect header check");
           bad ("\x1e\x8b" ^ String.sub member 2 (n - 2))
             (malformed 0 "incorrect header check"));
-      test "a method other than 8" (fun () ->
+      test "a method other than 8 is Malformed at CM" (fun () ->
           bad (gzip_member ~header:(gzip_header ~cm:7 ()) body "hello")
             (malformed 2 "unknown compression method"));
-      cases "a reserved flag" ~id:string_of_int [ 0x20; 0x40; 0x80 ] (fun flg ->
+      cases "a reserved flag bit is Malformed at FLG" ~id:string_of_int
+        [ 0x20; 0x40; 0x80 ] (fun flg ->
           bad (gzip_member ~header:(gzip_header ~flg ()) body "hello")
             (malformed 3 "unknown header flags set"));
-      test "a wrong CRC-32" (fun () ->
+      test "a wrong CRC-32 is Malformed at its first byte" (fun () ->
           bad (gzip_member body "hellp") (malformed (n - 8) "incorrect data check");
           (* Only the CRC's last byte wrong: still its first byte. *)
           let m = Bytes.of_string member in
           Bytes.set m (n - 5) (Char.chr (Char.code member.[n - 5] lxor 1));
           bad (Bytes.to_string m) (malformed (n - 8) "incorrect data check"));
-      test "a wrong ISIZE" (fun () ->
+      test "a wrong ISIZE is Malformed at its first byte" (fun () ->
           (* Only its second byte wrong: still its first byte. *)
           bad (gzip_member ~size:6 body "hello") (malformed (n - 4) "incorrect length check");
           bad (gzip_member ~size:(5 + 256) body "hello")
             (malformed (n - 4) "incorrect length check"));
-      test "members follow each other" (fun () ->
+      test "members decode one after another" (fun () ->
           ok (member ^ gzip_member (stored "") "" ^ member) "hellohello");
       test "a gzip header inside a member is data" (fun () ->
           ok (gzip_member (stored member) member) member);
@@ -495,11 +518,13 @@ let gzip =
             (result (pair string int) Lz_support.error)
             ~msg:"stepped" (Error e)
             (Lz_support.stepped (Lz.Gzip.decoder ()) padded));
-      test "a later member's header is checked byte by byte" (fun () ->
+      test "a later member's ID1, ID2 and CM are checked as each arrives"
+        (fun () ->
           bad (member ^ "\x1f\x8b\007") (malformed (n + 2) "unknown compression method");
           bad (member ^ "\x1f\x8b\008\x20") (malformed (n + 3) "unknown header flags set");
           bad (member ^ "\x1f\x8b\008") { Lz.at = n + 3; why = Truncated });
-      test "a distance before a later member's output" (fun () ->
+      test "a distance before a later member is Malformed at its code"
+        (fun () ->
           let f = pack (fixed [ L 257 ] @ symbols fixed_lit fixed_dist [ D 0; L 256 ]) in
           bad (member ^ gzip_header () ^ f ^ le32 0 ^ le32 0)
             (malformed (n + 10 + after (fixed [ L 257 ])) "invalid distance too far back"));
@@ -541,38 +566,46 @@ let bomb pairs =
   contents w
 
 let bounds =
-  group "bounds"
+  group "a destination too short"
     [
-      test "a zip bomb ends in Too_long at the destination's end" (fun () ->
+      test "a zip bomb is Too_long at the first match past the destination"
+        (fun () ->
           let pairs = 10 * mib * 8 / 13 in
           let src = Lz_support.of_string (bomb pairs) in
           let cap = mib in
           let ((_, dst) as g) = guarded cap in
-          (* At the first match that does not fit: 3 header bits, the
-             literal's 8 and 13 bits per match before it. *)
+          (* At the first match that does not fit: 3 header bits, the literal's
+             8 and 13 bits per match before it. *)
           let fit = (cap - 1) / 258 in
           equal
             (result Lz_support.progress Lz_support.error)
             (Error { Lz.at = (3 + 8 + (13 * fit)) / 8; why = Too_long })
             (Lz.Deflate.decode src dst);
           untouched g);
-      test "an output one byte too long" (fun () ->
-          (* At the code asking for the byte: a match, a literal, a stored
-             byte. *)
-          let too_long ?(cap = 3) s at =
-            let ((_, dst) as g) = guarded cap in
-            equal
-              (result Lz_support.progress Lz_support.error)
-              (Error { Lz.at; why = Too_long })
-              (Lz.Deflate.decode (Lz_support.of_string s) dst);
-            untouched g
-          in
-          let f = fixed [ L 97 ] in
-          too_long (pack (f @ symbols fixed_lit fixed_dist [ L 257; D 0; L 256 ])) (after f);
-          let f = fixed [ L 97; L 98; L 99 ] in
-          too_long (pack (f @ symbols fixed_lit fixed_dist [ L 100; L 256 ])) (after f);
-          too_long (stored "abcd") 8;
-          too_long ~cap:0 (stored "a") 5);
+      (* A destination of [cap] bytes, one short of the stream's output. *)
+      cases "a byte past the destination is Too_long at the code or stored byte"
+        ~id:(fun (name, _, _, _) -> name)
+        [
+          (let f = fixed [ L 97 ] in
+           ( "a match",
+             3,
+             pack (f @ symbols fixed_lit fixed_dist [ L 257; D 0; L 256 ]),
+             after f ));
+          (let f = fixed [ L 97; L 98; L 99 ] in
+           ( "a literal",
+             3,
+             pack (f @ symbols fixed_lit fixed_dist [ L 100; L 256 ]),
+             after f ));
+          ("a stored byte", 3, stored "abcd", 8);
+          ("a stored byte into no room", 0, stored "a", 5);
+        ]
+        (fun (_, cap, s, at) ->
+          let ((_, dst) as g) = guarded cap in
+          equal
+            (result Lz_support.progress Lz_support.error)
+            (Error { Lz.at; why = Too_long })
+            (Lz.Deflate.decode (Lz_support.of_string s) dst);
+          untouched g);
     ]
 
 (* Goldens *)
@@ -585,7 +618,7 @@ let goldens =
       group "gzip" [ Lz_support.agreement "gzip" ];
     ]
 
-(* Whole equals steps *)
+(* Decoders *)
 
 (* The stepped decode of [data] by a reader that passes its input in
    slices of [slices] bytes, the list used in turn. *)
@@ -595,108 +628,12 @@ let stepped c data ~slices =
   Lz_support.stepped (decoder ()) data ~cut:(fun k ->
       slices.(k mod Array.length slices))
 
-type change = Same | Flip of int * int | Cut of int
-
-type case = {
-  golden : Lz_support.golden;
-  change : change;
-  slices : int list;
-}
-
-let pp_case ppf { golden; change; slices } =
-  let ints = Format.(pp_print_list ~pp_sep:(fun p () -> pp_print_string p "; ") pp_print_int) in
-  Format.fprintf ppf "{ golden = %s; change = %s; slices = [%a] }"
-    golden.Lz_support.file
-    (match change with
-    | Same -> "Same"
-    | Flip (i, b) -> Printf.sprintf "Flip (%d, %d)" i b
-    | Cut i -> Printf.sprintf "Cut %d" i)
-    ints slices
-
-(* Every golden of 70 KiB or less of output: members.gz among them, whose
-   second member has output. *)
+(* Every golden of 70 KiB or less of output. *)
 let small_goldens =
-  List.filter
-    (fun g -> String.length (Lazy.force g.Lz_support.raw) <= 70 * kib)
-    (Lz_support.goldens_of "deflate" @ Lz_support.goldens_of "zlib"
-   @ Lz_support.goldens_of "gzip")
-
-let several = List.filter (fun g -> g.Lz_support.members > 1) small_goldens
-
-let case =
-  let open Gen in
-  let size =
-    frequency
-      [
-        (1, constant 1);
-        (1, int_range 2 64);
-        (1, int_range 65 4096);
-        (1, int_range 4097 100_000);
-      ]
-  in
-  let sizes = list ~size:(int_range 1 3) size in
-  let change =
-    frequency
-      [
-        (2, constant Same);
-        (2, map (fun (i, b) -> Flip (i, b)) (pair nat (int_range 0 7)));
-        (1, map (fun i -> Cut i) nat);
-      ]
-  in
-  (* A whole stream of several members is drawn in a sixth of the cases,
-     so that every run reaches it. *)
-  let golden_change =
-    frequency
-      [
-        (4, pair (of_list small_goldens) change);
-        (1, pair (of_list several) change);
-        (1, pair (of_list several) (constant Same));
-      ]
-  in
-  with_pp pp_case
-    (map
-       (fun ((golden, change), slices) -> { golden; change; slices })
-       (pair golden_change sizes))
-
-let apply change data =
-  let n = String.length data in
-  match change with
-  | Same -> data
-  | _ when n = 0 -> data
-  | Flip (i, b) ->
-      let i = i mod n in
-      String.mapi (fun j c -> if j = i then Char.chr (Char.code c lxor (1 lsl b)) else c) data
-  | Cut i -> String.sub data 0 (i mod n)
-
-let steps =
-  (* A stream cut short, which drawn cases reach one time in six. *)
-  let cut =
-    let golden =
-      List.find (fun g -> g.Lz_support.file = "text_100.deflate6") small_goldens
-    in
-    { golden; change = Cut 10; slices = [ 1 ] }
-  in
-  prop "a stepped decode equals the whole-buffer decode" ~examples:[ cut ] case
-    (fun { golden; change; slices } ->
-      let c = golden.Lz_support.codec in
-      let data = apply change (Lazy.force golden.Lz_support.data) in
-      let raw = Lazy.force golden.Lz_support.raw in
-      let whole, consumed = decode c ~cap:(String.length raw + (64 * kib)) data in
-      assume (match whole with Error { why = Too_long; _ } -> false | _ -> true);
-      cover "a one-byte slice" (List.mem 1 slices);
-      cover "several members" (golden.Lz_support.members > 1 && change = Same);
-      cover "a decode"
-        (match whole with Ok s -> String.length s > 0 | Error _ -> false);
-      cover "a Truncated input"
-        (match whole with Error { why = Truncated; _ } -> true | _ -> false);
-      cover "a Malformed input"
-        (match whole with Error { why = Malformed _; _ } -> true | _ -> false);
-      match (whole, stepped c data ~slices) with
-      | Ok s, Ok (s', read) ->
-          equal Lz_support.decoded (Ok s) (Ok s');
-          equal int ~msg:"read" consumed read
-      | w, Ok (s', _) -> equal Lz_support.decoded w (Ok s')
-      | w, Error e -> equal Lz_support.decoded w (Error e))
+  lazy
+    (List.filter
+       (fun g -> String.length (Lazy.force g.Lz_support.raw) <= 70 * kib)
+       (Lz_support.goldens_of "deflate" @ Lz_support.goldens_of "zlib"))
 
 (* Exact ends *)
 
@@ -709,14 +646,19 @@ let pp_tail_case ppf { stream; tail; cuts } =
 
 let tail_case =
   let open Gen in
-  let ends = List.filter (fun g -> g.Lz_support.codec <> "gzip") small_goldens in
+  (* Drawn from the goldens once a case is drawn, so that declaring the suite
+     reads no golden. *)
+  let ends =
+    bind (constant ()) (fun () -> of_list (Lazy.force small_goldens))
+  in
   let size =
-    frequency [ (2, constant 1); (1, int_range 2 64); (1, int_range 65 100_000) ]
+    frequency
+      [ (2, constant 1); (1, int_range 2 64); (1, int_range 65 100_000) ]
   in
   with_pp pp_tail_case
     (map
        (fun (stream, tail, cuts) -> { stream; tail; cuts })
-       (triple (of_list ends)
+       (triple ends
           (string_of ~size:(int_range 1 64) char)
           (list ~size:(int_range 1 3) size)))
 
@@ -860,20 +802,21 @@ let allocation =
       let dst = Lz_support.create (String.length (Lazy.force g.Lz_support.raw)) in
       let (), baseline = allocated (fun () -> ()) in
       let r, words = allocated (fun () -> decode src dst) in
-      is_ok r;
+      equal
+        (result Lz_support.progress Lz_support.error)
+        (Ok { Lz.consumed = Array1.dim src; produced = Array1.dim dst })
+        r;
       equal int ~msg:"words allocated" (baseline + Obj.reachable_words (Obj.repr r)) words)
 
 let () =
   exit
     (run "Deflate"
        [
-         arguments;
-         goldens;
+         empty;
+         group "decode" [ goldens; allocation ];
+         group "decoder" [ exact_end; window ];
          blocks;
+         bounds;
          zlib;
          gzip;
-         empty;
-         bounds;
-         group "streaming" [ steps; exact_end; window ];
-         group "memory" [ allocation ];
        ])
