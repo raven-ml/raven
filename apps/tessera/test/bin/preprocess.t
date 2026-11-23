@@ -1,11 +1,14 @@
 preprocess records its request and the items it finds in the tile's
 directory, and a run in that directory reads them again: here curl is a
 stand-in that answers each STAC search with no item, and no other request.
+It is on the PATH as curl, and by its own directory for Windows, which looks
+for curl.exe. Its directory of answers is relative: a native Windows program
+reads no /cygdrive path.
 
   $ ./make_labelled.exe tile
   $ mkdir bin fake fake/script
   $ ln -s "$(pwd)/../http/curl.exe" bin/curl
-  $ export PATH="$(pwd)/bin:$PATH" FAKE_CURL_DIR="$(pwd)/fake"
+  $ export PATH="$(pwd)/bin:$(pwd)/../http:$PATH" FAKE_CURL_DIR=fake
   $ none='{"type":"FeatureCollection","features":[]}'
   $ for i in 0 1; do printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s' ${#none} "$none" > fake/script/00$i; done
   $ pre () { ../../bin/main.exe preprocess --landmask tile/landmask.tiff --out d "$@"; }

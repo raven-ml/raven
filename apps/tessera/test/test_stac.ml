@@ -7,9 +7,9 @@ open Windtrap
 open Jord
 open Tessera
 
-(* Requests go to http/curl.exe, put on the PATH as curl. It answers from the
-   directory [served] makes: recorded or written answers in order, and files
-   served by byte ranges. *)
+(* Requests go to http/curl.exe, put on the PATH as curl, or on Windows as
+   itself: its directory. It answers from the directory [served] makes:
+   recorded or written answers in order, and files served by byte ranges. *)
 
 let rec rm path =
   if Sys.is_directory path then (
@@ -18,11 +18,17 @@ let rec rm path =
   else Sys.remove path
 
 let () =
-  let bin = Filename.temp_dir "tessera" "bin" in
-  at_exit (fun () -> rm bin);
   let exe = Filename.concat (Sys.getcwd ()) "http/curl.exe" in
-  Unix.symlink exe (Filename.concat bin "curl");
-  Unix.putenv "PATH" (bin ^ ":" ^ Sys.getenv "PATH")
+  let bin =
+    if Sys.win32 then Filename.dirname exe
+    else
+      let bin = Filename.temp_dir "tessera" "bin" in
+      at_exit (fun () -> rm bin);
+      Unix.symlink exe (Filename.concat bin "curl");
+      bin
+  in
+  let sep = if Sys.win32 then ";" else ":" in
+  Unix.putenv "PATH" (bin ^ sep ^ Sys.getenv "PATH")
 
 let read file = In_channel.with_open_bin file In_channel.input_all
 let write file s =

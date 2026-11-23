@@ -5,8 +5,8 @@
 
 (** HTTPS through curl: JSON requests, and files read by byte ranges.
 
-    A request runs the [curl] program on the [PATH], without a shell, and
-    holds its answer in memory; nothing here speaks TLS or HTTP. Only
+    A request runs the first [curl] of the [PATH]'s directories ([curl.exe]
+    on Windows), without a shell, and holds its answer in memory; nothing here speaks TLS or HTTP. Only
     [https://] URLs are requested, curl is told to speak HTTPS alone, and it
     takes the URL as the value of [--url], so no URL is read as an option.
 

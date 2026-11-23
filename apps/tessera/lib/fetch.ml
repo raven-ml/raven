@@ -61,6 +61,36 @@ type answer = {
   body : string;
 }
 
+(* The curl of the PATH: the first of its directories that holds [curl], or
+   [curl.exe] on Windows, as an absolute path. [Unix.create_process] would
+   look on Windows in the system's directories first, which hold a curl.exe of
+   their own, and would do so again for a relative path. An empty directory
+   is the current one, as for a shell; an unset PATH has none. *)
+let program = if Sys.win32 then "curl.exe" else "curl"
+let path_sep = if Sys.win32 then ';' else ':'
+
+let executable f =
+  match Unix.access f [ Unix.X_OK ] with
+  | () -> not (Sys.is_directory f)
+  | exception Unix.Unix_error _ -> false
+
+let find_curl () =
+  let dirs =
+    match Sys.getenv_opt "PATH" with
+    | None -> []
+    | Some path -> String.split_on_char path_sep path
+  in
+  let in_dir d =
+    let d =
+      if Filename.is_relative d then Filename.concat (Sys.getcwd ()) d else d
+    in
+    let f = Filename.concat d program in
+    if executable f then Some f else None
+  in
+  match List.find_map in_dir dirs with
+  | Some f -> f
+  | None -> failwith err_no_curl
+
 let rec wait pid =
   try snd (Unix.waitpid [] pid)
   with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
@@ -68,10 +98,11 @@ let rec wait pid =
 (* [curl] runs without a shell, so no argument needs quoting, and its output
    comes back through a pipe, read whole before the process is reaped. *)
 let curl args =
+  let exe = find_curl () in
   let r, w = Unix.pipe ~cloexec:true () in
   let pid =
     match
-      Unix.create_process "curl"
+      Unix.create_process exe
         (Array.of_list ("curl" :: args))
         Unix.stdin w Unix.stderr
     with
