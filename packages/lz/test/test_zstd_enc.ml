@@ -184,17 +184,27 @@ let edged =
     level (Gen.int_range 0 7)
 
 (* The large inputs, so that each run reaches every level past its window
-   (lib/zstd_encode.c): 128 KiB + 1, a block and a byte, and 4 MiB + 1,
-   past every window and by one byte past the 4 MiB of levels 9 to 12, at
-   every level; the longest, 6 MiB with a match 1 MiB back, at levels 9 to
-   12, whose windows it passes by most. Every input at every level cost 30 %
-   more under the sanitizers. *)
-let large =
+   (lib/zstd_encode.c): 128 KiB + 1, a block and a byte, and 4 MiB + 1, past
+   every window and by one byte past the 4 MiB of levels 9 to 12, at every
+   level; the longest, 6 MiB with a match 1 MiB back, at levels 9 to 12, whose
+   windows it passes by most. Every input at every level cost 30 % more under
+   the sanitizers. A law over them is a test a level, so that no test runs them
+   all. *)
+let large_at level =
   match Lz_support.large with
   | [ block; frame; longest ] ->
-      let at r levels = List.map (fun l -> (r, l, 1)) levels in
-      at block levels @ at frame levels @ at longest [ 9; 10; 11; 12 ]
+      if level >= 9 then [ block; frame; longest ] else [ block; frame ]
   | _ -> invalid_arg "test_zstd_enc: Lz_support.large"
+
+let at_levels name f =
+  group name
+    (List.map
+       (fun level ->
+         test (Printf.sprintf "level %d" level) (fun () ->
+             List.iter
+               (fun r -> f ~level ~offset:1 (Lz_support.build r))
+               (large_at level)))
+       levels)
 
 (* One input of each kind [cover_input] covers, the [i]th at level [i + 1], so
    that each kind and the levels below 8, whose classes are drawn least, hold on
@@ -228,22 +238,27 @@ let levels_outside =
 
 (* Round trips *)
 
+let round_trips ~level ~offset s =
+  let n = String.length s in
+  let src = Lz_support.placed ~offset s in
+  let dst = Lz_support.room ~offset (Lz.Zstd.bound n) in
+  let k = require_some ~msg:"fits its bound" (Lz.Zstd.encode ~level src dst) in
+  let z = Lz_support.to_string ~length:k dst in
+  equal Lz_support.decoded (Ok s) (decode z n);
+  equal Lz_support.decoded (Ok s) (decode_stepped z)
+
 let round_trip =
   prop
-    ~examples:(List.map (fun (r, l) -> (r, l, 0)) kinds @ large)
+    ~examples:(List.map (fun (r, l) -> (r, l, 0)) kinds)
     "decode (encode x) = x, whole and stepped" placed
     (fun (r, level, offset) ->
       let s = Lz_support.build r in
       cover_input r s level;
-      let n = String.length s in
-      let src = Lz_support.placed ~offset s in
-      let dst = Lz_support.room ~offset (Lz.Zstd.bound n) in
-      let k =
-        require_some ~msg:"fits its bound" (Lz.Zstd.encode ~level src dst)
-      in
-      let z = Lz_support.to_string ~length:k dst in
-      equal Lz_support.decoded (Ok s) (decode z n);
-      equal Lz_support.decoded (Ok s) (decode_stepped z))
+      round_trips ~level ~offset s)
+
+let large_round_trip =
+  at_levels "decode (encode x) = x, whole and stepped, past the window"
+    round_trips
 
 let strings =
   prop ~examples:kinds "decode (encode_string x) = x"
@@ -266,19 +281,24 @@ let stepped_round_trip =
 
 (* The bound *)
 
+let fits ~level ~offset s =
+  let g = guarded (Lz.Zstd.bound (String.length s)) in
+  ignore
+    (require_some (Lz.Zstd.encode ~level (Lz_support.placed ~offset s) (snd g)));
+  untouched g
+
 let bound =
   prop
-    ~examples:(List.map (fun (r, l) -> (r, l, 0)) kinds @ large)
+    ~examples:(List.map (fun (r, l) -> (r, l, 0)) kinds)
     "a destination of bound n holds the frame" edged
     (fun (r, level, offset) ->
       let s = Lz_support.build r in
       cover_input r s level;
       cover_edge s;
-      let g = guarded (Lz.Zstd.bound (String.length s)) in
-      ignore
-        (require_some
-           (Lz.Zstd.encode ~level (Lz_support.placed ~offset s) (snd g)));
-      untouched g)
+      fits ~level ~offset s)
+
+let large_bound =
+  at_levels "a destination of bound n holds the frame past the window" fits
 
 let short =
   prop "a destination short of the frame is refused"
@@ -343,10 +363,14 @@ let wide_frames =
         (let s = Lazy.force wide_input in
          (encode ~level:(i + 1) s, steps ~level:(i + 1) ~cuts:[] s)))
 
+let at_level name f =
+  group name
+    (List.map
+       (fun level -> test (Printf.sprintf "level %d" level) (fun () -> f level))
+       levels)
+
 let wide =
-  cases "past the window, encode's frame is a stream's but for its header"
-    ~id:(fun level -> Printf.sprintf "level %d" level)
-    levels
+  at_level "past the window, encode's frame is a stream's but for its header"
     (fun level ->
       let z, zs = Lazy.force wide_frames.(level - 1) in
       equal string ~msg:"the blocks and the checksum" (body z) (body zs))
@@ -364,18 +388,21 @@ let window_edges =
   @ List.map (fun level -> (level, (128 * kib) + 1)) levels
 
 let edges =
-  cases "from the window on, encode's frame is a stream's but for its header"
-    ~id:(fun (level, n) -> Printf.sprintf "level %d, %d bytes" level n)
-    window_edges
-    (fun (level, n) ->
-      let s = String.sub (Lazy.force wide_input) 0 n in
-      let z = encode ~level s and zs = steps ~level ~cuts:[] s in
-      equal Lz_support.decoded ~msg:"encode's frame" (Ok s) (decode z n);
-      equal Lz_support.decoded ~msg:"the stream's" (Ok s) (decode zs n);
-      equal (option int) ~msg:"the stream's Window_Descriptor"
-        (Some (window level)) (window_size zs);
-      if n >= window level then
-        equal string ~msg:"the blocks and the checksum" (body z) (body zs))
+  group "from the window on, encode's frame is a stream's but for its header"
+    (List.map
+       (fun (level, n) ->
+         test (Printf.sprintf "level %d, %d bytes" level n) (fun () ->
+             let s = String.sub (Lazy.force wide_input) 0 n in
+             let z = encode ~level s and zs = steps ~level ~cuts:[] s in
+             equal Lz_support.decoded ~msg:"encode's frame" (Ok s) (decode z n);
+             equal Lz_support.decoded ~msg:"the stream's" (Ok s) (decode zs n);
+             equal (option int) ~msg:"the stream's Window_Descriptor"
+               (Some (window level))
+               (window_size zs);
+             if n >= window level then
+               equal string ~msg:"the blocks and the checksum" (body z)
+                 (body zs)))
+       window_edges)
 
 (* What the writer writes *)
 
@@ -521,15 +548,11 @@ let paths =
    rebases every few blocks at levels 1 and 2, whose windows of 512 KiB
    and 1 MiB are below it, and at the other levels acts as 0. *)
 let rebased =
-  cases "the index limit changes no byte"
-    ~id:(fun (level, limit) -> Printf.sprintf "level %d, limit %d" level limit)
-    (List.map (fun level -> (level, 0)) levels
-    @ [ (1, 3 * mib / 2); (2, 3 * mib / 2) ])
-    (fun (level, limit) ->
+  at_level "the index limit changes no byte" (fun level ->
       let s = Lazy.force wide_input in
       let z, zs = Lazy.force wide_frames.(level - 1) in
       let src = Lz_support.of_string s in
-      let limited ?step () =
+      let limited ~limit ?step () =
         let dst = Lz_support.create (Lz.Zstd.bound (String.length s)) in
         let k =
           require_some ~msg:"fits its bound"
@@ -537,8 +560,14 @@ let rebased =
         in
         Lz_support.to_string ~length:k dst
       in
-      equal string ~msg:"encode's" z (limited ());
-      equal string ~msg:"a stream's" zs (limited ~step:100_000 ()))
+      let limits = if level <= 2 then [ 0; 3 * mib / 2 ] else [ 0 ] in
+      List.iter
+        (fun limit ->
+          let msg what = Printf.sprintf "limit %d, %s" limit what in
+          equal string ~msg:(msg "encode's") z (limited ~limit ());
+          equal string ~msg:(msg "a stream's") zs
+            (limited ~limit ~step:100_000 ()))
+        limits)
 
 let () =
   exit
@@ -546,10 +575,16 @@ let () =
        [
          group "levels" [ levels_outside; default_level ];
          group "round trip"
-           ([ round_trip; stepped_round_trip ] @ empty);
+           ([ round_trip; large_round_trip; stepped_round_trip ] @ empty);
          group "encode_string" [ strings; encode_strings ];
          group "bound"
-           [ bound; short; negative; Lz_support.largest_bound Lz.Zstd.bound ];
+           [
+             bound;
+             large_bound;
+             short;
+             negative;
+             Lz_support.largest_bound Lz.Zstd.bound;
+           ];
          group "steps" [ cut_free; wide; edges; quota; frames ];
          group "frames" [ headers; declared_windows ];
          group "paths" [ paths; rebased ];
