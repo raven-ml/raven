@@ -229,18 +229,29 @@ let gp_pois_regr data =
   in
   (model, Nx.cast Nx.int32 (List.assoc "k" data), [ "rho"; "alpha"; "f" ])
 
+(* [posterior name build blocks] is the posterior [name] of [blocks], its model
+   made by [build]. *)
+let posterior name build blocks =
+  let b = Hashtbl.find blocks name in
+  let model, y, params = build b.data in
+  Posterior { name; params; model; y; refs = b.rows }
+
+let posteriors =
+  [
+    ( "eight_schools-eight_schools_noncentered",
+      posterior "eight_schools-eight_schools_noncentered" eight_schools );
+    ("arK-arK", posterior "arK-arK" ar_k);
+    ("dogs-dogs", posterior "dogs-dogs" dogs);
+    ( "low_dim_gauss_mix-low_dim_gauss_mix",
+      posterior "low_dim_gauss_mix-low_dim_gauss_mix" gauss_mix );
+    ("sblrc-blr", posterior "sblrc-blr" blr);
+    ( "gp_pois_regr-gp_pois_regr",
+      posterior "gp_pois_regr-gp_pois_regr" gp_pois_regr );
+  ]
+
 let all path =
   let blocks = read path in
-  let posterior name build =
-    let b = Hashtbl.find blocks name in
-    let model, y, params = build b.data in
-    Posterior { name; params; model; y; refs = b.rows }
-  in
-  [
-    posterior "eight_schools-eight_schools_noncentered" eight_schools;
-    posterior "arK-arK" ar_k;
-    posterior "dogs-dogs" dogs;
-    posterior "low_dim_gauss_mix-low_dim_gauss_mix" gauss_mix;
-    posterior "sblrc-blr" blr;
-    posterior "gp_pois_regr-gp_pois_regr" gp_pois_regr;
-  ]
+  List.map (fun (_, p) -> p blocks) posteriors
+
+(* [find path name] is the posterior [name] of the golden at [path]. *)
+let find path name = (List.assoc name posteriors) (read path)

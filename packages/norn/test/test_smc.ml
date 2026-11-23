@@ -244,4 +244,12 @@ let () =
          group "init" [ chains ];
          group "evidence" (List.map law_13 [ conjugate; gaussian; mixture ]);
          group "expectations" [ between_chains ];
+         group "run"
+           [
+             Recovery.recovers "replicates recover the dogs posterior"
+               (fun () ->
+                 Recovery.replicated_cell
+                   (Recovery.smc ~replicates:16 ~draws:100)
+                   (Recovery.posterior "dogs-dogs"));
+           ];
        ])

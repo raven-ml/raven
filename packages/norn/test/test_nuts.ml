@@ -11,27 +11,6 @@ let t = Nx.Ptree.tensor
 (* A standard normal in 3 dimensions, over a batch of chains. *)
 let normal x = Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.square x)) (-0.5)
 
-let smoke =
-  test "draws of a standard normal have its moments" (fun () ->
-      let start = Nx.zeros Nx.float64 [| 4; 3 |] in
-      let g =
-        Norn.Gaussian.diagonal t Nx.float64
-          ~mean:(Nx.zeros Nx.float64 [| 3 |])
-          ~scale:(Nx.ones Nx.float64 [| 3 |])
-      in
-      let s = N.init t ~geometry:g normal start in
-      let t0 = Unix.gettimeofday () in
-      let _, d, st = N.sample t normal (Nx.Rng.key 1) ~draws:500 s in
-      Printf.printf "time %.2fs\n" (Unix.gettimeofday () -. t0);
-      let d = (d :> Nx.host Nx.float64_t) in
-      let st = (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t) in
-      Printf.printf "mean %s var %s steps %s acc %s\n"
-        (Nx.to_string (Nx.mean ~axes:[ 0; 1 ] d))
-        (Nx.to_string (Nx.var ~axes:[ 0; 1 ] d))
-        (Nx.to_string (Nx.mean (Nx.cast Nx.float64 st.n_steps)))
-        (Nx.to_string (Nx.mean st.acceptance));
-      equal bool true true)
-
 (* Law 12: the iterative tree is Stan's recursive one
 
    Stan's builder (base_nuts.hpp), written recursively over one chain in
@@ -506,9 +485,75 @@ let law_11 =
   group "invariance"
     [ invariance "a narrow" narrow.g; invariance "a wide" wide.g ]
 
+(* sample *)
+
+module M = Norn_model
+module R = Recovery
+
+(* The recovery law on posteriordb's dogs and eight_schools_noncentered, whose
+   scale and effects reach the reference through [M.constrain] and a bijector's
+   Jacobian, and on a run too short for its diagnostics. *)
+let recovery =
+  [
+    (* R-hat up to 1.020 on keys 1 to 40 at 100 draws. *)
+    R.recovers "draws recover the dogs posterior" (fun () ->
+        R.chain_cell (R.nuts ~draws:300 ()) (R.posterior "dogs-dogs"));
+    (* At the default acceptance a transition or two diverges on 17 of keys 1 to
+       40, and at 0.9 on 3. *)
+    R.recovers "draws recover the eight schools posterior" (fun () ->
+        R.chain_cell
+          (R.nuts ~accept:0.95 ~draws:300 ())
+          (R.posterior "eight_schools-eight_schools_noncentered"));
+    (* 160 draws: every element's effective size is below the 400 the summary
+       asks, on each of keys 1 to 40. *)
+    R.flagged "a run too short for its diagnostics is flagged" (fun () ->
+        R.chain_cell (R.nuts ~draws:20 ()) (R.posterior "dogs-dogs"));
+  ]
+
+(* Simulation-based calibration of a conjugate normal model: the ranks of
+   simulated truths among NUTS draws of their posterior are uniform. mu ~ N(0,
+   1), y_i ~ N(mu, 1) for 5 points. The uniformity test rejects below a p-value
+   of 0.005, its false-alarm rate. *)
+let calibrated =
+  test "ranks of simulated truths among its draws are uniform" (fun () ->
+      let f64 = Nx.scalar Nx.float64 and draws = 99 in
+      let model =
+        M.v Nx.float64 t t (fun () ->
+            let mu =
+              M.sample (Norn.Dist.normal ~loc:(f64 0.) ~scale:(f64 1.))
+            in
+            ( mu,
+              M.sample
+                (Norn.Dist.iid [| 5 |]
+                   (Norn.Dist.normal ~loc:mu ~scale:(f64 1.))) ))
+      in
+      let u = M.coords model in
+      let fit =
+        Rune.jit
+          Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns (Norn.Draws.ptree u))
+          (fun k y ->
+            let lp = M.log_density model y in
+            let start = M.init model y ~chains:1 (Nx.Rng.fold_in k 0) in
+            let s = N.init u lp start in
+            let s = N.warmup u lp (Nx.Rng.fold_in k 1) ~steps:200 s in
+            let _, d, _ =
+              N.sample u lp (Nx.Rng.fold_in k 2) ~draws:(draws * 3) s
+            in
+            Norn.Draws.thin u ~every:3 d)
+      in
+      let rank r =
+        let k = Nx.Rng.fold_in (Nx.Rng.key 52) r in
+        let truth, y = M.simulate model (Nx.Rng.fold_in k 0) in
+        let d = fit (Nx.Rng.fold_in k 1) y in
+        Norn.Diag.rank t
+          ~truth:(M.unconstrain model truth :> Nx.host Nx.float64_t)
+          (Norn.Draws.v t (d :> Nx.host Nx.float64_t))
+      in
+      let p = Norn.Diag.rank_uniformity t ~draws (List.init 100 rank) in
+      at_least (float 1e-12) ~than:0.005 (Nx.item [] p))
+
+let sample = group "sample" (recovery @ [ calibrated ])
+
 let () =
   exit
-    (run "Norn.Nuts"
-       [
-         group "smoke" [ smoke ]; warmup; law_12; reproducible; refusals; law_11;
-       ])
+    (run "Norn.Nuts" [ refusals; law_12; reproducible; law_11; warmup; sample ])

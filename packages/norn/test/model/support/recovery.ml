@@ -3,15 +3,24 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Law 10: reference posteriors, as a careful user relies on them. A run of
-   NUTS, HMC or ensemble sampling whose diagnostics pass, nested R-hat and the
-   summary's findings, recovers every element's mean and standard deviation
-   within z sqrt (mcse² + mcse_ref²); a run that does not recover is flagged by
-   them. SMC and nested sampling run r independent replicates and recover within
-   t sqrt (se² + mcse_ref²), se the standard error of the replicates' mean and t
-   of Student's t with r - 1 degrees of freedom, or are flagged by a replicate
-   that spent its budget. z and t hold the family-wise false-alarm rate over
-   every comparison of the cells a law is held on at 1%. *)
+(* The recovery law: reference posteriors, as a careful user relies on them. A
+   run of NUTS, HMC or ensemble sampling whose diagnostics pass, nested R-hat
+   and the summary's findings, recovers every element's mean and standard
+   deviation within z sqrt (mcse² + mcse_ref²); a run that does not recover is
+   flagged by them. SMC and nested sampling run r independent replicates and
+   recover within t sqrt (se² + mcse_ref²), se the standard error of the
+   replicates' mean and t of Student's t with r - 1 degrees of freedom, or are
+   flagged by a replicate that spent its budget. z and t hold the family-wise
+   false-alarm rate over every comparison of the cells a law is held on at 1%: z
+   = 3.72, and t = 4.88 at 16 replicates, over the suites' 50 comparisons.
+
+   Each cell runs from one key. The suites' cells are sized so that their
+   diagnostics pass, or for a short run flag them, on every key from 1 to 40, so
+   that a change to the random stream or to rounding does not fail a correct
+   sampler. A false flag fails a cell as a false alarm does: none of keys 1 to
+   40 flagged a recovering cell, which bounds each cell's rate of false flags
+   below 7.2% at 95% confidence, a bound beside the comparisons' 1% and far
+   looser. *)
 
 open Windtrap
 module M = Norn_model
@@ -22,6 +31,10 @@ let false_alarms = 0.01
 
 (* Every run starts from this key. *)
 let key = Nx.Rng.key 1
+
+(* [posterior name] is the posteriordb posterior [name], read from norn's test
+   directory. *)
+let posterior name = P.find "model/support/posteriordb.golden" name
 
 (* A comparison: an estimate, its reference and their combined standard error. A
    cell's verdict: flagged by its diagnostics, or the comparisons it makes. *)
@@ -417,22 +430,25 @@ let within ~tail c cs =
         (Float.abs (k.est -. k.ref)))
     cs
 
-(* [recovers cells] is the law on [cells], one test each: each must recover
-   within its quantile of [tail cells]. *)
-let recovers cells =
-  let tail = tail cells in
-  List.map
-    (fun c ->
-      test (c.name ^ " recovers the reference") (fun () ->
-          match c.verdict key with
-          | Flagged why -> failf "%s is flagged: %s" c.name why
-          | Compared cs -> within ~tail c cs))
-    cells
+(* The comparisons of the cells norn's suites hold the law on, one family: NUTS
+   on dogs (6) and on eight_schools (20), and HMC, ensemble sampling, SMC and
+   nested sampling on dogs (6 each). *)
+let family = 50
 
-(* [flagged c] is the law on the one cell [c], which its diagnostics must
-   flag. *)
-let flagged c =
-  test (c.name ^ " is flagged") (fun () ->
+(* [recovers name cell] is the law on [cell ()], made when the test runs: it
+   must recover within its quantile of the family's tail. *)
+let recovers name cell =
+  let tail = 1. -. (false_alarms /. (2. *. float_of_int family)) in
+  test name (fun () ->
+      let c = cell () in
+      match c.verdict key with
+      | Flagged why -> failf "%s is flagged: %s" c.name why
+      | Compared cs -> within ~tail c cs)
+
+(* [flagged name cell] is the test that the diagnostics flag [cell ()]. *)
+let flagged name cell =
+  test name (fun () ->
+      let c = cell () in
       match c.verdict key with
       | Flagged _ -> ()
       | Compared _ -> failf "%s passes its diagnostics" c.name)

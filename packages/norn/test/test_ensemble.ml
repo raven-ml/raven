@@ -196,7 +196,27 @@ let law_11 =
       at_most (float 1e-12) ~than:band
         (max_deviation (normal_cdf 0.5) (floats b')))
 
+(* sample *)
+
+module R = Recovery
+
+let sample =
+  group "sample"
+    [
+      (* R-hat 1.011 on one of keys 1 to 40 at 500 draws. *)
+      R.recovers "draws recover the dogs posterior" (fun () ->
+          R.chain_cell
+            (R.ensemble ~ensembles:2 ~draws:800)
+            (R.posterior "dogs-dogs"));
+    ]
+
 let () =
   exit
     (run "Norn.Ensemble"
-       [ reproducible; transitions; refusals; group "invariance" [ law_11 ] ])
+       [
+         reproducible;
+         transitions;
+         refusals;
+         group "invariance" [ law_11 ];
+         sample;
+       ])

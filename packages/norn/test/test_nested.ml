@@ -269,7 +269,21 @@ let compiled_run =
         (Nx.to_array (fst (Norn.Evidence.expectation t first_moments eager)))
         (Nx.to_array moments))
 
-let run_tests = group "run" [ converges; spent; pp_spent; keyed; compiled_run ]
+(* Nested sampling runs 13 live points: its run of likelihoods is the slowest
+   cell of the recovery law, and its time is about linear in the points. Its
+   largest error has a median of 2.3 standard errors over keys 1 to 40 and
+   reaches 4.1, against the bound of 4.88. It is not held to the shrinkage of ln
+   X: one that shrinks it by 1 / (n - j + 2) at the j-th deleted point, one past
+   the true 1 / (n - j + 1), fails this test on 6 of keys 1 to 40, its largest
+   error of median 3.6. *)
+let recovers =
+  Recovery.recovers "replicates recover the dogs posterior" (fun () ->
+      Recovery.replicated_cell
+        (Recovery.nested ~replicates:16 ~draws:13)
+        (Recovery.posterior "dogs-dogs"))
+
+let run_tests =
+  group "run" [ converges; spent; pp_spent; keyed; compiled_run; recovers ]
 
 (* ln Z and its error. On models whose evidence is known, a run's [ln Z] is
    within three of its errors of the truth, and over several runs the spread of

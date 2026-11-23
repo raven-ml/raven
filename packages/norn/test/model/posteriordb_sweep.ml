@@ -1,10 +1,10 @@
-(* Law 10 over every sampler and the six posteriordb posteriors, and HMC on
-   Neal's funnel, non-centred, at 1024 chains. The law is Recovery's; the test
-   suite holds it on a few cells, this sweep on all 31.
+(* The recovery law over every sampler and the six posteriordb posteriors, and
+   HMC on Neal's funnel, non-centred, at 1024 chains. The law is Recovery's; the
+   test suite holds it on a few cells, this sweep on all 31.
 
    It is outside runtest because its 31 inference runs take seven to twelve
-   minutes, beyond the minute a test has: runtest holds a small calibrated
-   law, test_posteriordb, and this executable the full sweep. Run it after a
+   minutes, beyond the minute a test has: runtest holds a small calibrated law,
+   in each sampler's suite, and this executable the full sweep. Run it after a
    change to a sampler or a diagnostic, from the repository root:
 
    cd packages/norn/test/model && dune exec ./posteriordb_sweep.exe *)

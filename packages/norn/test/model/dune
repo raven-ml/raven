@@ -1,12 +1,11 @@
 (tests
- (names test_model test_loo test_calibration test_posteriordb)
- (modules test_model test_loo test_calibration test_posteriordb)
+ (names test_model)
+ (modules test_model)
  (package norn)
- (deps support/posteriordb.golden)
- (libraries norn norn.model posteriordb recovery nx nx.array rig rune windtrap))
+ (libraries norn norn.model nx nx.array rig rune windtrap))
 
-; Law 10 over every cell: a run of minutes, so it is built and never run by
-; the build. Its header says how to run it.
+; The recovery law over every cell: a run of minutes, so it is built and
+; never run by the build. Its header says how to run it.
 
 (executable
  (name posteriordb_sweep)

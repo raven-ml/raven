@@ -821,9 +821,81 @@ let sets =
       test "a factor on another set is refused" (fun () ->
           raises
             (Invalid_argument
-               "Norn_model.simulate: a factor lies on another device set \
-                than the model") (fun () ->
+               "Norn_model.simulate: a factor lies on another device set than \
+                the model") (fun () ->
               straying `Factor (fun () -> M.simulate m (Nx.Rng.key 0))));
+    ]
+
+(* simulate *)
+
+(* Simulation-based calibration of a conjugate normal model, whose posterior is
+   known: the ranks of simulated truths among exact posterior draws are uniform
+   when [simulate] draws the truth from the prior and the data from the
+   likelihood. mu ~ N(0, 1), y_i ~ N(mu, 1) for 5 points: the posterior of mu is
+   N(Σ y / 6, 1 / 6). The uniformity test rejects below a p-value of 0.005, its
+   false-alarm rate. *)
+module Sbc = struct
+  let points = 5
+  let n = float_of_int points
+  let replications = 200
+  let draws = 99
+  let alpha = 0.005
+
+  let model () =
+    M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
+        let mu = M.sample (D.normal ~loc:(f64 0.) ~scale:(f64 1.)) in
+        (mu, M.sample (D.iid [| points |] (D.normal ~loc:mu ~scale:(f64 1.)))))
+
+  let exact_posterior k y =
+    let mean = Nx.div_s (Nx.sum y) (n +. 1.) in
+    let sd = 1. /. Float.sqrt (n +. 1.) in
+    let z = Nx.Rng.normal ~key:k Nx.float64 [| 1; draws |] in
+    Nx.add mean (Nx.mul_s z sd)
+
+  (* [p_value ~key widen] is the uniformity p-value of the replications' ranks
+     among exact posterior draws spread [widen] times about their mean. *)
+  let p_value ~key widen =
+    let m = model () in
+    let rank r =
+      let k = Nx.Rng.fold_in (Nx.Rng.key key) r in
+      let truth, y = M.simulate m (Nx.Rng.fold_in k 0) in
+      let d = exact_posterior (Nx.Rng.fold_in k 1) y in
+      let mean = Nx.div_s (Nx.sum y) (n +. 1.) in
+      let d = Nx.add mean (Nx.mul_s (Nx.sub d mean) widen) in
+      Norn.Diag.rank Nx.Ptree.tensor ~truth (Norn.Draws.v Nx.Ptree.tensor d)
+    in
+    Nx.item []
+      (Norn.Diag.rank_uniformity Nx.Ptree.tensor ~draws
+         (List.init replications rank))
+end
+
+(* pointwise *)
+
+let pointwise_draws =
+  test "pointwise over draws has a point axis after the draws" (fun () ->
+      let m = Sbc.model () in
+      let y = Nx.zeros Nx.float64 [| Sbc.points |] in
+      let draws =
+        Norn.Draws.v Nx.Ptree.tensor (Nx.zeros Nx.float64 [| 2; 3 |])
+      in
+      let ll =
+        Norn.Draws.map Nx.Ptree.tensor Nx.Ptree.tensor
+          (fun mu -> M.pointwise m y mu)
+          draws
+      in
+      equal (array int) [| 2; 3; Sbc.points |]
+        (Nx.shape (ll :> Nx.host Nx.float64_t)))
+
+let simulations =
+  group "simulate"
+    [
+      test "ranks of its truths among exact posterior draws are uniform"
+        (fun () ->
+          at_least (float 1e-12) ~than:Sbc.alpha (Sbc.p_value ~key:50 1.));
+      (* The same test catches a posterior whose variance is four times the
+         truth's. *)
+      test "ranks of its truths among overdispersed draws are not uniform"
+        (fun () -> less (float 1e-12) ~than:Sbc.alpha (Sbc.p_value ~key:51 2.));
     ]
 
 let () =
@@ -844,4 +916,6 @@ let () =
          refusals;
          domains;
          group "pp" [ printing ];
+         group "pointwise" [ pointwise_draws ];
+         simulations;
        ])

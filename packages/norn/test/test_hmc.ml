@@ -268,5 +268,18 @@ let invariance name geometry =
 let law_11 =
   group "invariance" [ invariance "a narrow" narrow; invariance "a wide" wide ]
 
+(* sample *)
+
+module R = Recovery
+
+let sample =
+  group "sample"
+    [
+      R.recovers "draws recover the dogs posterior" (fun () ->
+          R.chain_cell (R.hmc ~draws:50) (R.posterior "dogs-dogs"));
+    ]
+
 let () =
-  exit (run "Norn.Hmc" [ reproducible; transitions; warmup; refusals; law_11 ])
+  exit
+    (run "Norn.Hmc"
+       [ reproducible; transitions; warmup; refusals; law_11; sample ])
