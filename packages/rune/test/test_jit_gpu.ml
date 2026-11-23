@@ -74,17 +74,22 @@ let compiles (module S : Nx.Devices) =
           | None -> raise e))
     Nx.Dtype.[ Any Nx.float32; Any Nx.float16; Any Nx.bfloat16 ]
 
+(* Whether the first GPU's kernels compile, checked once a process: a skip it
+   raises is raised again at each force. *)
+let compiled =
+  lazy
+    (match Lazy.force gpu with
+    | None -> skip ~reason:"no GPU" ()
+    | Some (d, s) -> (
+        match Tolk_engine.renderer d with
+        | exception Failure why -> skip ~reason:why ()
+        | _ -> compiles s))
+
 (* The first GPU, skipping where its renderer cannot be made: without its
    compiler's library, each compiled call raises. *)
 let on_gpu () =
-  match Lazy.force gpu with
-  | None -> skip ~reason:"no GPU" ()
-  | Some (d, s) -> (
-      match Tolk_engine.renderer d with
-      | exception Failure why -> skip ~reason:why ()
-      | _ ->
-          compiles s;
-          (d, s))
+  Lazy.force compiled;
+  Option.get (Lazy.force gpu)
 
 (* Whether the kernels of [d] have float64, which Metal's lack. *)
 let has_float64 d =
@@ -3194,16 +3199,24 @@ let keeps () =
     skip ~reason:("rune.mli states no exact kind on " ^ device) ();
   (has_float64 d, s)
 
+(* [k]'s law on an NVIDIA GPU, its float32 elements checked unless [f32] is
+   [false] and its float64 ones unless [f64] is, where the kernels have float64:
+   one compiled function per dtype for every case of a test. *)
+let kind_law ?f32 ?(f64 = true) k =
+  let law =
+    lazy
+      (let has, s = keeps () in
+       Kinds.law ?f32 s ~f64:(f64 && has) k)
+  in
+  fun c -> Lazy.force law c
+
 let ported k =
   let name = Kinds.name k in
   [
     prop ~count:12
       ~examples:[ Kinds.example k ]
       (name ^ " gives eager's bits")
-      (Kinds.gen k)
-      (fun c ->
-        let f64, s = keeps () in
-        Kinds.law s ~f64 k c);
+      (Kinds.gen k) (kind_law k);
     test (name ^ " of every narrow float gives eager's bits") (fun () ->
         Kinds.narrow (snd (keeps ())) k);
     test (name ^ " of a constant gives eager's bits") (fun () ->
@@ -3218,10 +3231,7 @@ let clamped_law k =
   prop ~count:12
     ~examples:[ Kinds.example k ]
     (Kinds.name k ^ " gives eager's bits")
-    (Kinds.gen k)
-    (fun c ->
-      let f64, s = keeps () in
-      Kinds.law s ~f64 k c)
+    (Kinds.gen k) (kind_law k)
 
 let clamped = Kinds.[ clamped_exp; clamped_log ]
 
@@ -3234,10 +3244,7 @@ let complex_ported k =
     prop ~count:12
       ~examples:[ Kinds.example k ]
       (name ^ " gives eager's bits")
-      (Kinds.gen k)
-      (fun c ->
-        let f64, s = keeps () in
-        Kinds.law s ~f64 k c);
+      (Kinds.gen k) (kind_law k);
     test (name ^ " of a constant gives eager's bits") (fun () ->
         let f64, s = keeps () in
         Kinds.folded s ~f64 k);
@@ -3264,8 +3271,7 @@ let composed_law k =
     prop ~timeout:cold ~count:12
       ~examples:[ Kinds.example k ]
       (name ^ " at float32 gives eager's bits")
-      (Kinds.gen k)
-      (fun c -> Kinds.law (snd (keeps ())) ~f64:false k c);
+      (Kinds.gen k) (kind_law ~f64:false k);
   ]
   @
   if List.mem name float32_only then []
@@ -3275,10 +3281,11 @@ let composed_law k =
         ~examples:[ Kinds.example k ]
         (name ^ " at float64 gives eager's bits")
         (Kinds.gen k)
-        (fun c ->
-          let f64, s = keeps () in
-          if not f64 then skip ~reason:"the GPU's kernels have no float64" ();
-          Kinds.law ~f32:false s ~f64 k c);
+        (let law = kind_law ~f32:false k in
+         fun c ->
+           if not (fst (keeps ())) then
+             skip ~reason:"the GPU's kernels have no float64" ();
+           law c);
     ]
 
 let composed =
@@ -3299,14 +3306,17 @@ let draws k =
   let module R = Nx_rng_support in
   let shapes = R.[ Zero; Block ] in
   let at d = List.mem d (R.dtypes k) in
+  (* The draws at [dtype], compiled once for every case of a test. *)
+  let law dtype =
+    let law = lazy (Draws.law (snd (keeps ())) ~dtypes:[ dtype ] ~shapes k) in
+    fun c -> Lazy.force law c
+  in
   (if not (at R.Float32) then []
    else
      [
        prop ~timeout:cold ~count:4
          (R.name k ^ " at float32 compiles to eager's draws")
-         (R.gen k)
-         (fun c ->
-           Draws.law (snd (keeps ())) ~dtypes:R.[ Float32 ] ~shapes k c);
+         (R.gen k) (law R.Float32);
      ])
   @
   if (not (at R.Float64)) || List.mem (R.name k) float32_only then []
@@ -3315,10 +3325,11 @@ let draws k =
       prop ~timeout:cold ~count:4
         (R.name k ^ " at float64 compiles to eager's draws")
         (R.gen k)
-        (fun c ->
-          let f64, s = keeps () in
-          if not f64 then skip ~reason:"the GPU's kernels have no float64" ();
-          Draws.law s ~dtypes:R.[ Float64 ] ~shapes k c);
+        (let law = law R.Float64 in
+         fun c ->
+           if not (fst (keeps ())) then
+             skip ~reason:"the GPU's kernels have no float64" ();
+           law c);
     ]
 
 (* Off the host, a Bernoulli draw cast to float32 that two operations read, as a
@@ -3330,45 +3341,59 @@ let mask_read_twice () =
 (* dirichlet's rows above take one limb, so its carries and reassembly compile
    on the GPU through Nx.Rng.dirichlet_width: rows of 8 and one row of 1025 at
    limbs of 9 and 21 bits take 2 to 8 limbs, float32 4 and 2, 5 and 2, float64 7
-   and 3, 8 and 4. Each gives the host's eager draw at its width, bit for
-   bit. *)
-let limbs_at (module S : Nx.Devices) (type s) (dt : (float, s) Nx.dtype) seed =
-  List.iter
-    (fun (shape, w) ->
-      let st = Random.State.make [| seed; w |] in
-      let n = Array.fold_left ( * ) 1 shape in
-      let a =
-        Nx.create dt shape
-          (Array.init n (fun _ -> Float.exp (Random.State.float st 8. -. 6.)))
-      in
-      let key = Nx.Rng.key seed in
-      let host = Nx.Rng.dirichlet_width w ~key a in
-      let gpu =
-        Rune.jit
-          Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
-          (fun key a -> Nx.Rng.dirichlet_width w ~key a)
-          (Nx.Rng.place S.on key) (Nx.place S.on a)
-      in
-      let bits x =
-        Array.map Int64.bits_of_float
-          (Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)))
-      in
-      equal
-        ~msg:(Printf.sprintf "%s %d bits" (Nx.Dtype.name dt) w)
-        (array int64) (bits host) (bits gpu))
-    [ ([| 4; 8 |], 9); ([| 4; 8 |], 21); ([| 1; 1025 |], 9); ([| 1; 1025 |], 21) ]
+   and 3, 8 and 4. Each gives the host's eager draw at its width, bit for bit,
+   each width one compiled function for every case. *)
+let limbs_at (module S : Nx.Devices) (type s) (dt : (float, s) Nx.dtype) =
+  let compiled =
+    List.map
+      (fun w ->
+        ( w,
+          Rune.jit
+            Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+            (fun key a -> Nx.Rng.dirichlet_width w ~key a) ))
+      [ 9; 21 ]
+  in
+  fun seed ->
+    List.iter
+      (fun (shape, w) ->
+        let st = Random.State.make [| seed; w |] in
+        let n = Array.fold_left ( * ) 1 shape in
+        let a =
+          Nx.create dt shape
+            (Array.init n (fun _ -> Float.exp (Random.State.float st 8. -. 6.)))
+        in
+        let key = Nx.Rng.key seed in
+        let host = Nx.Rng.dirichlet_width w ~key a in
+        let gpu =
+          (List.assoc w compiled) (Nx.Rng.place S.on key) (Nx.place S.on a)
+        in
+        let bits x =
+          Array.map Int64.bits_of_float
+            (Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)))
+        in
+        equal
+          ~msg:(Printf.sprintf "%s %d bits" (Nx.Dtype.name dt) w)
+          (array int64) (bits host) (bits gpu))
+      [
+        ([| 4; 8 |], 9);
+        ([| 4; 8 |], 21);
+        ([| 1; 1025 |], 9);
+        ([| 1; 1025 |], 21);
+      ]
 
 let narrow_limbs =
+  let f32 = lazy (limbs_at (snd (keeps ())) Nx.float32)
+  and f64 = lazy (limbs_at (snd (keeps ())) Nx.float64) in
   [
     prop ~timeout:cold ~count:3
-      "dirichlet at float32 with 2 to 5 limbs compiles to eager's draws"
-      Gen.int (fun seed -> limbs_at (snd (keeps ())) Nx.float32 seed);
+      "dirichlet at float32 with 2 to 5 limbs compiles to eager's draws" Gen.int
+      (fun seed -> Lazy.force f32 seed);
     prop ~timeout:cold ~count:3
       "dirichlet at float64 with 3 to 8 limbs compiles to eager's draws"
       Gen.int (fun seed ->
-        let f64, s = keeps () in
-        if not f64 then skip ~reason:"the GPU's kernels have no float64" ();
-        limbs_at s Nx.float64 seed);
+        if not (fst (keeps ())) then
+          skip ~reason:"the GPU's kernels have no float64" ();
+        Lazy.force f64 seed);
   ]
 
 let complex_kinds =
