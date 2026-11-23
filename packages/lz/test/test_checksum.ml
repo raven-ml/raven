@@ -389,7 +389,8 @@ let () =
   exit
     (run "Checksum"
        [
-         cases "check values" ~id:check_name checks check;
+         cases "a sum of a check input is its check value" ~id:check_name checks
+           check;
          test "the generic paths come first" (fun () ->
              equal string "generic"
                (List.hd (path_names Lz_support.crc32_paths));
@@ -404,6 +405,12 @@ let () =
            saturated saturating;
          test "8 MiB agrees with the reference" large;
          prop "a running value continues the checksum" pair running;
+         cases "a CRC-32 outside [0, 2^32) raises" ~id:string_of_int
+           [ -1; 1 lsl 32; min_int; max_int ]
+           (fun crc ->
+             let bad f = raises_match (Exn.invalid_arg ~sub:"crc") f in
+             bad (fun () -> Lz.Crc32.string ~crc "abc");
+             bad (fun () -> Lz.Crc32.bigbytes ~crc (Lz_support.of_string "abc")));
          prop "string ~first ~length is bigbytes of the substring" range_input
            substring;
          cases "a range outside the string raises" ~id:name ranges
@@ -414,10 +421,4 @@ let () =
              bad (fun () -> Lz.Adler32.string ~first ?length s);
              bad (fun () -> Lz.Xxh32.string ~first ?length s);
              bad (fun () -> Lz.Xxh64.string ~first ?length s));
-         cases "a CRC-32 outside [0, 2^32) raises" ~id:string_of_int
-           [ -1; 1 lsl 32; min_int; max_int ]
-           (fun crc ->
-             let bad f = raises_match (Exn.invalid_arg ~sub:"crc") f in
-             bad (fun () -> Lz.Crc32.string ~crc "abc");
-             bad (fun () -> Lz.Crc32.bigbytes ~crc (Lz_support.of_string "abc")));
        ])

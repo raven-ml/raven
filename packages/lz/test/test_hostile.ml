@@ -66,11 +66,11 @@ let views () =
     ] )
 
 let overlap =
-  cases "decode and encode refuse overlapping buffers"
+  cases "decode and encode raise on overlapping buffers"
     ~id:(fun w -> w.name)
     wholes
     (fun w ->
-      let shared, apart = views () in
+      let shared, _ = views () in
       List.iter
         (fun (name, src, dst) ->
           let raise_on call f =
@@ -80,7 +80,14 @@ let overlap =
           in
           raise_on "decode" w.decode;
           raise_on "encode" w.encode)
-        shared;
+        shared)
+
+let apart =
+  cases "decode and encode take buffers side by side or empty"
+    ~id:(fun w -> w.name)
+    wholes
+    (fun w ->
+      let _, apart = views () in
       List.iter
         (fun (_, src, dst) ->
           w.decode src dst;
@@ -88,4 +95,5 @@ let overlap =
         apart)
 
 let () =
-  exit (run "Hostile" ((manifest :: List.map suite codecs) @ [ overlap ]))
+  exit
+    (run "Hostile" ((manifest :: List.map suite codecs) @ [ overlap; apart ]))
