@@ -178,15 +178,6 @@ let raw ?special ~spread ~subnormal (D.Any dt) =
   | D.Complex -> float_raw ?special ~spread ~subnormal D.Float64
   | _ -> int_raw dt
 
-let extent =
-  Gen.frequency
-    [ (1, Gen.constant 0); (2, Gen.constant 1); (6, Gen.int_range 2 4) ]
-
-let shape =
-  let open Gen in
-  let* r = int_range 1 3 in
-  map Array.of_list (list ~size:(constant r) extent)
-
 (* Cases *)
 
 type view = Plain | Transposed | Flipped | Broadcast
@@ -241,99 +232,83 @@ let pp_case ppf c =
     (ints c.axes) (raws c.raws)
     (match c.carry with None -> "" | Some a -> " carry [" ^ raws a ^ "]")
 
-(* A long scan axis: past 16 terms a running monoid scans chunks of 16 and
-   then their last terms, which past 256 terms are chunked again. *)
-let long_extent =
-  Gen.frequency [ (1, Gen.int_range 33 96); (1, Gen.int_range 513 640) ]
+(* Forms
 
-(* [case ~spread ~carry ~long dts ms] draws a case of a dtype of the weighted
-   [dts] and a monoid of [ms], over one axis where [scan], of {!long_extent}
-   where [long], whose float terms are then zeros, infinities and NaNs about
-   once in 1600, so that most rows stay numbers through several chunks. *)
-let case ?(spread = 4) ?(subnormal = 1) ?(scan = false) ?(long = false) dts ms
-    =
+   A case's form is all of it but its elements: its dtype, monoid, shape, view
+   and axes, and whether a scan has a carry. A law draws its cases' forms from a
+   few, which its examples take too, so that a run lowers and compiles each form
+   once and draws the elements of each case anew. *)
+
+module T = struct
+  let f64 = D.Any D.Float64
+  let f32 = D.Any D.Float32
+  let f16 = D.Any D.Float16
+  let bf16 = D.Any D.Bfloat16
+  let f8e4 = D.Any D.Float8_e4m3fn
+  let f8e5 = D.Any D.Float8_e5m2
+  let f4 = D.Any D.Float4_e2m1fn
+  let i64 = D.Any D.Int64
+  let u64 = D.Any D.Uint64
+  let i32 = D.Any D.Int32
+  let u32 = D.Any D.Uint32
+  let i16 = D.Any D.Int16
+  let u16 = D.Any D.Uint16
+  let i8 = D.Any D.Int8
+  let u8 = D.Any D.Uint8
+  let i4 = D.Any D.Int4
+  let u4 = D.Any D.Uint4
+  let bool = D.Any D.Bool
+  let bit = D.Any D.Bit
+  let c64 = D.Any D.Complex64
+  let c128 = D.Any D.Complex128
+end
+
+let form ?(view = Plain) ?(carry = false) dt (m : K.monoid) shape axes =
+  {
+    dt;
+    m;
+    shape;
+    view;
+    axes;
+    raws = [||];
+    carry = (if carry then Some [||] else None);
+  }
+
+(* [elements ~special ~spread ~subnormal ~long f] draws the elements of a case
+   of the form [f], as {!float_raw} draws a float, and its carry's where [f] has
+   one. Where [long], float terms are zeros, infinities and NaNs about once in
+   1600, so that most rows stay numbers through several chunks. *)
+let elements ?special ?(spread = 4) ?(subnormal = 1) ?(long = false) f =
   let open Gen in
-  let* dt = frequency (List.map (fun (w, d) -> (w, constant d)) dts) in
-  let* m = among ms in
-  let* s = shape in
-  let* view = among [ Plain; Transposed; Flipped; Broadcast ] in
-  let r = Array.length s in
-  let* keep = list ~size:(constant r) bool in
-  let* first = int_range 0 (r - 1) in
-  let* s =
-    if not long then constant s
-    else
-      map
-        (fun n -> Array.mapi (fun a e -> if a = first then n else e) s)
-        long_extent
-  in
-  let axes =
-    if scan then [ first ]
-    else
-      List.filter (fun a -> a = first || List.nth keep a) (List.init r Fun.id)
-  in
   let term =
-    if not long then raw ~spread ~subnormal dt
+    if not long then raw ?special ~spread ~subnormal f.dt
     else
       frequency
         [
-          (512, raw ~special:0 ~spread ~subnormal dt);
-          (1, raw ~spread ~subnormal dt);
+          (512, raw ~special:0 ~spread ~subnormal f.dt);
+          (1, raw ~spread ~subnormal f.dt);
         ]
   in
   let* raws =
-    array ~size:(constant (raws_of dt (numel (base view s)))) term
+    array ~size:(constant (raws_of f.dt (numel (base f.view f.shape)))) term
   in
   let+ carry =
-    if not scan then constant None
-    else
-      let c = K.carrier dt in
-      let n = raws_of c (numel (carried s first)) in
-      frequency
-        [
-          (1, constant None);
-          ( 1,
-            map Option.some
-              (array ~size:(constant n) (raw ~spread ~subnormal c)) );
-        ]
+    match f.carry with
+    | None -> constant None
+    | Some _ ->
+        let c = K.carrier f.dt in
+        let n = raws_of c (numel (carried f.shape (List.hd f.axes))) in
+        map Option.some (array ~size:(constant n) (raw ~spread ~subnormal c))
   in
-  { dt; m; shape = s; view; axes; raws; carry }
+  { f with raws; carry }
 
-let case ?spread ?subnormal ?scan ?long dts ms =
-  Gen.with_pp pp_case (case ?spread ?subnormal ?scan ?long dts ms)
+(* [case forms] draws a case of a form of [forms], each as likely. *)
+let case ?spread ?subnormal ?long forms =
+  Gen.with_pp pp_case
+    (Gen.bind (among forms) (elements ?spread ?subnormal ?long))
 
 let operand (type v s) (dt : (v, s) D.t) c : (v, s, Nx.host) Nx.t =
   viewed c.view c.shape (value dt (base c.view c.shape) c.raws)
-
-let floats =
-  D.
-    [
-      Any Float64;
-      Any Float32;
-      Any Float16;
-      Any Bfloat16;
-      Any Float8_e4m3fn;
-      Any Float8_e5m2;
-      Any Float4_e2m1fn;
-    ]
-
-let ints =
-  D.
-    [
-      Any Int64;
-      Any Uint64;
-      Any Int32;
-      Any Uint32;
-      Any Int16;
-      Any Uint16;
-      Any Int8;
-      Any Uint8;
-      Any Int4;
-      Any Uint4;
-    ]
-
-let complexes = D.[ Any Complex64; Any Complex128 ]
-let weigh w ds = List.map (fun d -> (w, d)) ds
 
 (* Covers *)
 
@@ -394,9 +369,8 @@ let scan_op m axis x carry =
       at = None;
     }
 
-(* [results c] is the eager and the lowered elements of [c]'s reduction or
-   scan. *)
-let results (type v s) (dt : (v, s) D.t) ~scan c : v array * v array =
+(* [monoid_op dt ~scan c] is [c]'s reduction, or scan where [scan]. *)
+let monoid_op (type v s) (dt : (v, s) D.t) ~scan c () : (v, s, Nx.host) Nx.t =
   let x = operand dt c in
   if scan then
     let axis = List.hd c.axes in
@@ -407,11 +381,14 @@ let results (type v s) (dt : (v, s) D.t) ~scan c : v array * v array =
           P.Any (value cd (carried c.shape axis) raws))
         c.carry
     in
-    let op () = P.eval ~by:"t" (scan_op c.m axis x carry) in
-    (Nx.to_array (op ()), Lowered.run op)
-  else
-    let op () = fst (P.eval ~by:"t" (reduce_op c.m c.axes x)) in
-    (Nx.to_array (op ()), Lowered.run op)
+    P.eval ~by:"t" (scan_op c.m axis x carry)
+  else fst (P.eval ~by:"t" (reduce_op c.m c.axes x))
+
+(* [results c] is the eager and the lowered elements of [c]'s reduction or
+   scan. *)
+let results (type v s) (dt : (v, s) D.t) ~scan c : v array * v array =
+  let op = monoid_op dt ~scan c in
+  (Nx.to_array (op ()), Lowered.run op)
 
 (* Comparisons *)
 
@@ -600,13 +577,13 @@ let is_complex (D.Any dt) = D.is D.Complex dt
 let reduced_empty c = List.exists (fun a -> c.shape.(a) = 0) c.axes
 let cover_monoids c ms = List.iter (fun m -> cover (monoid_name m) (c.m = m)) ms
 
-(* Examples every run takes: a one-element and a zero-size operand, a
-   reduction's transposed operand over both its axes, and for float32 and
-   float16 five rows: NaNs of both signs and kinds; infinities of both signs
-   before a signalling NaN; zeros of both signs; all [-0]; and infinities of
-   both signs, a NaN made from numbers by a sum or a product. A scan's
-   one-element operand has a carry, and its five rows the carries [1], a
-   signalling NaN, [+0], [-0] and [-∞]. *)
+(* Examples every run takes, one on each form a law draws. A form of five rows
+   of four of float32 or float16, along its rows, takes five rows: NaNs of both
+   signs and kinds; infinities of both signs before a signalling NaN; zeros of
+   both signs; all [-0]; and infinities of both signs, a NaN made from numbers
+   by a sum or a product. A scan's carries are then [1], a signalling NaN, [+0],
+   [-0] and [-∞]. Another form takes the raws [0], [1], [2], ..., and a carry of
+   ones. *)
 
 (* Complex numbers as raws: each part's float64 bits. *)
 let complex_raws zs =
@@ -705,7 +682,35 @@ let specials (D.Any d) =
   | D.Complex64 -> Some complex_specials
   | _ -> None
 
-let examples ?(scan = false) dts ms =
+let examples fs =
+  let example f =
+    let n = raws_of f.dt (numel (base f.view f.shape)) in
+    let ones () =
+      let axis = List.hd f.axes in
+      Array.make (raws_of (K.carrier f.dt) (numel (carried f.shape axis))) 1L
+    in
+    match specials f.dt with
+    | Some (raws, carry)
+      when f.shape = [| 5; 4 |] && f.axes = [ 1 ] && f.view = Plain ->
+        { f with raws; carry = Option.map (fun _ -> carry) f.carry }
+    | _ ->
+        {
+          f with
+          raws = Array.init n Int64.of_int;
+          carry = Option.map (fun _ -> ones ()) f.carry;
+        }
+  in
+  List.map example fs
+
+(* The shape of the special rows. *)
+let rows = [| 5; 4 |]
+
+(* [samples ~scan dts ms] is the examples every run takes on each dtype of [dts]
+   by each monoid of [ms]: one element of ones, from a carry of ones where
+   [scan]; a zero-size operand; where it reduces, the raws [0], [1], ... of a
+   transposed operand along both its axes; and for float32, float16 and
+   complex64 the special rows above. *)
+let samples ?(scan = false) dts ms =
   let ex dt m shape axes raws carry =
     { dt; m; shape; view = Plain; axes; raws; carry }
   in
@@ -717,7 +722,7 @@ let examples ?(scan = false) dts ms =
       match specials dt with
       | None -> []
       | Some (raws, carry) ->
-          [ ex dt m [| 5; 4 |] [ 1 ] raws (if scan then Some carry else None) ]
+          [ ex dt m rows [ 1 ] raws (if scan then Some carry else None) ]
     in
     let carry =
       if scan then Some (Array.make (raws_of (K.carrier dt) 1) 1L) else None
@@ -734,21 +739,57 @@ let examples ?(scan = false) dts ms =
   in
   List.concat_map (fun dt -> List.concat_map (each dt) ms) dts
 
-(* Reductions *)
+(* The form of the case [c]. *)
+let blank c = { c with raws = [||]; carry = Option.map (fun _ -> [||]) c.carry }
+
+(* [law ~on ~graph ~count forms name f] holds [f] on the examples [on], on an
+   example of each of [forms], and on [count] cases of the forms of both, the
+   kernels of each example's [graph] made together first. *)
+let law ?spread ?subnormal ?long ?(on = []) ~graph ~count forms name f =
+  let examples = on @ examples forms in
+  prop ~count ~examples name
+    (case ?spread ?subnormal ?long (List.map blank on @ forms))
+    (Lowered.primed graph examples f)
+
+(* The graph of [c]'s reduction or scan, but a refused reduction's. *)
+let monoid_graph ~scan c =
+  if (not scan) && refused c then []
+  else
+    let (D.Any dt) = c.dt in
+    [ Lowered.One (monoid_op dt ~scan c) ]
+
+(* Reductions
+
+   Each law takes its samples, and forms that reach each dtype the law draws,
+   each view, a zero-size and a one-element operand, several axes and an empty
+   reduced extent. *)
 
 let extremes =
-  let dts =
-    weigh 3 floats @ weigh 2 ints
-    @ weigh 6 D.[ Any Bool; Any Bit ]
-    @ weigh 4 complexes
-  in
-  prop ~count:30
-    ~examples:
-      (examples
-         D.[ Any Float32; Any Float16; Any Bool; Any Int8; Any Complex64 ]
-         [ Max; Min ])
+  law ~graph:(monoid_graph ~scan:false)
+    ~on:(samples T.[ f32; f16; bool; i8; c64 ] [ Max; Min ])
+    ~count:12
+    T.
+      [
+        form ~view:Broadcast i8 Min [| 2; 3; 4 |] [ 0; 2 ];
+        form bit Min [| 1 |] [ 0 ];
+        form ~view:Broadcast bit Max [| 2; 3 |] [ 1 ];
+        form f64 Max [| 0; 2 |] [ 1 ];
+        form ~view:Flipped bf16 Min [| 3; 4 |] [ 0 ];
+        form c128 Max [| 2; 3 |] [ 0; 1 ];
+        form ~view:Transposed f4 Max [| 2; 3 |] [ 0 ];
+        form u64 Min [| 4 |] [ 0 ];
+        form ~view:Flipped f8e4 Max [| 2; 4 |] [ 1 ];
+        form f8e5 Min [| 3; 1; 2 |] [ 0; 2 ];
+        form ~view:Transposed i64 Max [| 4; 2 |] [ 1 ];
+        form i32 Min [| 2; 3 |] [ 0 ];
+        form ~view:Broadcast u32 Max [| 3; 4 |] [ 0; 1 ];
+        form i16 Min [| 0; 3 |] [ 1 ];
+        form ~view:Flipped u16 Max [| 3; 2; 2 |] [ 2 ];
+        form u8 Min [| 1; 4 |] [ 0; 1 ];
+        form ~view:Transposed i4 Max [| 4; 3 |] [ 0; 1 ];
+        form u4 Min [| 2; 2; 2 |] [ 1 ];
+      ]
     "extremes give eager's values"
-    (case dts [ Max; Min ])
     (fun c ->
       assume (not (refused c));
       cover_monoids c [ Max; Min ];
@@ -760,10 +801,22 @@ let extremes =
       exact ~scan:false c)
 
 let int_folds =
-  prop ~count:15
-    ~examples:(examples D.[ Any Int8 ] [ Sum; Prod ])
+  law ~graph:(monoid_graph ~scan:false)
+    ~on:(samples T.[ i8 ] [ Sum; Prod ])
+    ~count:6
+    T.
+      [
+        form ~view:Broadcast i64 Sum [| 2; 3; 4 |] [ 0; 2 ];
+        form u32 Prod [| 2; 0 |] [ 1 ];
+        form u4 Sum [| 1 |] [ 0 ];
+        form ~view:Flipped i16 Prod [| 4; 3 |] [ 0 ];
+        form u64 Sum [| 3 |] [ 0 ];
+        form i4 Prod [| 2; 3 |] [ 1 ];
+        form ~view:Transposed i32 Sum [| 2; 4 |] [ 0 ];
+        form ~view:Broadcast u8 Prod [| 3; 3 |] [ 0; 1 ];
+        form u16 Sum [| 2; 3; 2 |] [ 0; 2 ];
+      ]
     "integer sums and products wrap as eager's"
-    (case (weigh 1 ints) [ Sum; Prod ])
     (fun c ->
       cover_monoids c [ Sum; Prod ];
       cover "an empty reduced extent" (reduced_empty c);
@@ -771,10 +824,18 @@ let int_folds =
       exact ~scan:false c)
 
 let float_sums =
-  prop ~count:15
-    ~examples:(examples D.[ Any Float32; Any Float16 ] [ Sum ])
+  law ~graph:(monoid_graph ~scan:false)
+    ~on:(samples T.[ f32; f16 ] [ Sum ])
+    ~count:10
+    T.
+      [
+        form ~view:Transposed f64 Sum [| 3; 2 |] [ 0; 1 ];
+        form ~view:Broadcast bf16 Sum [| 2; 3; 4 |] [ 0; 2 ];
+        form f8e4 Sum [| 2; 0 |] [ 1 ];
+        form f4 Sum [| 1 |] [ 0 ];
+        form ~view:Flipped f8e5 Sum [| 4; 3 |] [ 0 ];
+      ]
     "float sums hold their bound"
-    (case (weigh 1 floats) [ Sum ])
     (fun c ->
       cover_floats c;
       cover "an empty reduced extent" (reduced_empty c);
@@ -784,10 +845,19 @@ let float_sums =
 
 (* Products of numbers of one binade: no overflow or underflow. *)
 let float_products =
-  prop ~count:12
-    ~examples:(examples D.[ Any Float32 ] [ Prod ])
+  law ~graph:(monoid_graph ~scan:false) ~spread:0 ~subnormal:0
+    ~on:(samples T.[ f32 ] [ Prod ])
+    ~count:6
+    T.
+      [
+        form ~view:Transposed f64 Prod [| 3; 2 |] [ 0; 1 ];
+        form f16 Prod [| 2; 0 |] [ 1 ];
+        form ~view:Broadcast bf16 Prod [| 2; 3; 4 |] [ 0; 2 ];
+        form f8e5 Prod [| 3 |] [ 0 ];
+        form ~view:Flipped f8e4 Prod [| 3; 2 |] [ 1 ];
+        form f4 Prod [| 2; 2 |] [ 0; 1 ];
+      ]
     "float products hold their bound"
-    (case ~spread:0 ~subnormal:0 (weigh 1 floats) [ Prod ])
     (fun c ->
       cover "a NaN term"
         (float_raws c (fun dt r -> float_class dt r = Nan) <> []);
@@ -795,10 +865,17 @@ let float_products =
       bounded ~scan:false c)
 
 let complex_sums =
-  prop ~count:8
-    ~examples:(examples D.[ Any Complex64 ] [ Sum ])
+  law ~graph:(monoid_graph ~scan:false)
+    ~on:(samples T.[ c64 ] [ Sum ])
+    ~count:4
+    T.
+      [
+        form ~view:Transposed c128 Sum [| 3; 2 |] [ 0; 1 ];
+        form c128 Sum [| 1 |] [ 0 ];
+        form ~view:Broadcast c64 Sum [| 2; 3 |] [ 0 ];
+        form ~view:Flipped c128 Sum [| 2; 3; 2 |] [ 1; 2 ];
+      ]
     "complex sums add their parts"
-    (case (weigh 1 complexes) [ Sum ])
     (fun c ->
       cover "complex64" (c.dt = D.Any D.Complex64);
       bounded ~scan:false c)
@@ -806,18 +883,31 @@ let complex_sums =
 (* Scans *)
 
 let extreme_scans =
-  let dts =
-    weigh 3 floats @ weigh 2 ints
-    @ weigh 6 D.[ Any Bool; Any Bit ]
-    @ weigh 4 D.[ Any Complex64 ]
-  in
-  prop ~count:24
-    ~examples:
-      (examples ~scan:true
-         D.[ Any Float32; Any Float16; Any Bool; Any Complex64 ]
-         [ Max; Min ])
+  law ~graph:(monoid_graph ~scan:true)
+    ~on:(samples ~scan:true T.[ f32; f16; bool; c64 ] [ Max; Min ])
+    ~count:6
+    T.
+      [
+        form ~view:Transposed bool Max [| 3; 2 |] [ 0 ];
+        form ~view:Broadcast ~carry:true i8 Min [| 2; 3; 4 |] [ 2 ];
+        form ~carry:true bit Max [| 1 |] [ 0 ];
+        form ~view:Flipped bit Min [| 3; 2 |] [ 0 ];
+        form f64 Min [| 2; 0 |] [ 1 ];
+        form ~view:Flipped u16 Max [| 4; 3 |] [ 0 ];
+        form ~view:Flipped ~carry:true bf16 Max [| 3; 3 |] [ 1 ];
+        form ~carry:true f8e4 Min [| 2; 4 |] [ 1 ];
+        form ~view:Transposed f8e5 Max [| 3; 2 |] [ 1 ];
+        form ~view:Broadcast ~carry:true f4 Min [| 2; 4 |] [ 1 ];
+        form ~carry:true i64 Max [| 5 |] [ 0 ];
+        form ~view:Transposed u64 Min [| 2; 3 |] [ 0 ];
+        form ~view:Flipped i32 Max [| 3; 2 |] [ 1 ];
+        form ~carry:true u32 Min [| 4; 2 |] [ 0 ];
+        form ~view:Broadcast ~carry:true i16 Max [| 3; 2; 2 |] [ 1 ];
+        form u8 Min [| 3; 3 |] [ 1 ];
+        form ~carry:true i4 Max [| 1; 5 |] [ 1 ];
+        form ~view:Transposed u4 Min [| 2; 2; 3 |] [ 2 ];
+      ]
     "extreme scans give eager's values"
-    (case ~scan:true dts [ Max; Min ])
     (fun c ->
       cover_monoids c [ Max; Min ];
       cover "a carry" (c.carry <> None);
@@ -828,43 +918,71 @@ let extreme_scans =
       exact ~scan:true c)
 
 let int_scans =
-  prop ~count:12
-    ~examples:(examples ~scan:true D.[ Any Int8 ] [ Sum; Prod ])
+  law ~graph:(monoid_graph ~scan:true)
+    ~on:(samples ~scan:true T.[ i8 ] [ Sum; Prod ])
+    ~count:2
+    T.
+      [
+        form ~carry:true i8 Sum [| 2; 3 |] [ 1 ];
+        form ~view:Transposed i8 Prod [| 3; 2 |] [ 0 ];
+        form ~view:Broadcast ~carry:true u64 Sum [| 4; 3 |] [ 1 ];
+        form ~carry:true i4 Prod [| 1 |] [ 0 ];
+        form i32 Sum [| 2; 0 |] [ 1 ];
+        form ~view:Flipped ~carry:true u16 Prod [| 3; 4 |] [ 1 ];
+        form ~view:Transposed ~carry:true i64 Prod [| 3; 3 |] [ 1 ];
+        form u32 Sum [| 5 |] [ 0 ];
+        form ~view:Flipped ~carry:true i16 Prod [| 2; 2; 3 |] [ 2 ];
+        form ~view:Broadcast u8 Sum [| 2; 4 |] [ 0 ];
+        form ~carry:true u4 Sum [| 3; 2 |] [ 0 ];
+      ]
     "integer running sums and products wrap as eager's"
-    (case ~scan:true (weigh 1 ints) [ Sum; Prod ])
     (fun c ->
       cover_monoids c [ Sum; Prod ];
       cover "a carry" (c.carry <> None);
       exact ~scan:true c)
 
 let float_scans =
-  prop ~count:12
-    ~examples:(examples ~scan:true D.[ Any Float32; Any Float16 ] [ Sum; Prod ])
+  law ~graph:(monoid_graph ~scan:true) ~spread:0 ~subnormal:0
+    ~on:(samples ~scan:true T.[ f32; f16 ] [ Sum; Prod ])
+    ~count:7
+    T.
+      [
+        form ~view:Transposed f64 Sum [| 3; 2 |] [ 0 ];
+        form ~view:Broadcast ~carry:true bf16 Prod [| 2; 3; 4 |] [ 2 ];
+        form ~carry:true f8e4 Sum [| 1 |] [ 0 ];
+        form ~view:Flipped f4 Prod [| 4; 3 |] [ 0 ];
+        form ~carry:true f8e5 Sum [| 3; 3 |] [ 1 ];
+      ]
     "float running sums and products hold their bound"
-    (case ~scan:true ~spread:0 ~subnormal:0 (weigh 1 floats) [ Sum; Prod ])
     (fun c ->
       cover_monoids c [ Sum; Prod ];
       cover "a carry" (c.carry <> None);
       bounded ~scan:true c)
 
 let complex_scans =
-  prop ~count:5
-    ~examples:(examples ~scan:true D.[ Any Complex64 ] [ Sum ])
+  law ~graph:(monoid_graph ~scan:true)
+    ~on:(samples ~scan:true T.[ c64 ] [ Sum ])
+    ~count:2
+    T.
+      [
+        form ~view:Transposed c128 Sum [| 3; 2 |] [ 0 ];
+        form ~view:Flipped ~carry:true c128 Sum [| 2; 3 |] [ 1 ];
+        form ~view:Broadcast c64 Sum [| 2; 3 |] [ 0 ];
+      ]
     "complex running sums add their parts"
-    (case ~scan:true (weigh 1 complexes) [ Sum ])
     (fun c ->
       cover "a carry" (c.carry <> None);
       bounded ~scan:true c)
 
 (* Long axes. Examples every run takes, one for each monoid the law draws:
-   float64 sums of 600 terms, one row of numbers, one with a NaN, one with
-   both infinities; an int8 sum of 40 extremes from a carry at an extreme; an
-   int32 product of 40 terms that wraps; a float64 product of 600 terms near
-   1; a float32 maximum of 600 terms with a NaN late in the row, flipped; a
-   float64 minimum of 600 terms with a [-∞]; a complex128 sum of 600
-   numbers; float4_e2m1fn and float8_e4m3fn sums from a carry of [-2⁻³⁰] of
-   16 zeros, then [x], [-x], ..., whose zero results round a carrier sum of
-   either sign, as [x] absorbs the carry or not. *)
+   float64 sums of 600 terms, one row of numbers, one with a NaN, one with both
+   infinities; an int8 sum of 40 extremes from a carry at an extreme; an int32
+   product of 40 terms that wraps; a float64 product of 600 terms near 1; a
+   float32 maximum of 600 terms with a NaN late in the row, flipped; a float64
+   minimum of 600 terms with a [-∞]; a complex128 sum of 600 numbers;
+   float4_e2m1fn and float8_e4m3fn sums from a carry of [-2⁻³⁰] of 16 zeros,
+   then [x], [-x], ..., whose zero results round a carrier sum of either sign,
+   as [x] absorbs the carry or not. *)
 let long_examples =
   let cancelling dt x neg_x =
     {
@@ -963,38 +1081,77 @@ let long_examples =
     cancelling (D.Any D.Float8_e4m3fn) 0x78L 0xf8L;
   ]
 
-let long_scans =
-  let draw w ?spread ?subnormal dts ms =
-    (w, case ~scan:true ~long:true ?spread ?subnormal dts ms)
+(* Beside the examples' forms, a form of each other dtype the law draws, of axes
+   of 33 to 96 and 513 to 640 terms at several residues of the chunks' 16: sums
+   and products, a maximum or a minimum of every float, integer and boolean, and
+   complex64's sum. *)
+let long_forms =
+  T.
+    [
+      form ~view:Transposed ~carry:true f32 Sum [| 3; 75 |] [ 1 ];
+      form ~carry:true f16 Sum [| 513 |] [ 0 ];
+      form ~view:Flipped bf16 Sum [| 2; 58 |] [ 1 ];
+      form ~view:Broadcast f8e5 Sum [| 2; 567 |] [ 1 ];
+      form ~carry:true i64 Sum [| 640 |] [ 0 ];
+      form ~view:Flipped u64 Prod [| 47 |] [ 0 ];
+      form ~view:Transposed u32 Sum [| 96; 2 |] [ 0 ];
+      form ~carry:true i16 Prod [| 2; 33 |] [ 1 ];
+      form ~view:Broadcast u16 Sum [| 2; 631; 2 |] [ 1 ];
+      form u8 Prod [| 64 |] [ 0 ];
+      form ~view:Flipped ~carry:true i4 Sum [| 545 |] [ 0 ];
+      form ~view:Transposed u4 Prod [| 2; 81 |] [ 1 ];
+      form ~carry:true i64 Max [| 2; 89 |] [ 1 ];
+      form ~view:Broadcast u8 Min [| 2; 522 |] [ 1 ];
+      form ~view:Transposed bool Max [| 71; 2 |] [ 0 ];
+      form ~carry:true bool Min [| 614 |] [ 0 ];
+      form ~view:Flipped f16 Max [| 2; 37 |] [ 1 ];
+      form ~carry:true bf16 Min [| 530 |] [ 0 ];
+      form ~view:Transposed f8e4 Max [| 66; 2 |] [ 0 ];
+      form ~view:Broadcast f8e5 Min [| 2; 601 |] [ 1 ];
+      form ~carry:true f4 Max [| 2; 50 |] [ 1 ];
+      form ~view:Flipped u64 Min [| 517 |] [ 0 ];
+      form ~carry:true i32 Max [| 2; 79 |] [ 1 ];
+      form ~view:Transposed u32 Min [| 548; 2 |] [ 0 ];
+      form i16 Max [| 2; 35 |] [ 1 ];
+      form ~view:Broadcast ~carry:true u16 Min [| 2; 92 |] [ 1 ];
+      form ~view:Flipped i8 Min [| 625 |] [ 0 ];
+      form ~carry:true i4 Max [| 2; 41 |] [ 1 ];
+      form ~view:Transposed u4 Min [| 587; 2 |] [ 0 ];
+      form ~view:Flipped ~carry:true c64 Sum [| 2; 52 |] [ 1 ];
+    ]
+
+(* A case of a form of [forms], each as likely: a float sum's or product's terms
+   of one binade, as the bound of a long sum or product needs. *)
+let long_case forms =
+  let elements f =
+    let (D.Any dt) = f.dt in
+    match (D.kind dt, f.m) with
+    | D.Float, (Sum | Prod) -> elements ~spread:0 ~subnormal:0 ~long:true f
+    | _ -> elements ~long:true f
   in
-  prop ~count:16 ~examples:long_examples
-    "running scans along long axes give eager's values"
-    (Gen.with_pp pp_case
-       (Gen.frequency
-          [
-            draw 3 ~spread:0 ~subnormal:0 (weigh 1 floats) [ Sum ];
-            draw 3 (weigh 1 ints) [ Sum; Prod ];
-            draw 2
-              (weigh 2 floats @ weigh 2 ints @ weigh 1 D.[ Any Bool ])
-              [ Max; Min ];
-            draw 1 (weigh 1 complexes) [ Sum ];
-          ]))
-    (fun c ->
-      let n = c.shape.(List.hd c.axes) in
-      cover_monoids c [ Sum; Prod; Max; Min ];
-      cover "an axis in chunks" (n > 32 && n <= 512);
-      cover "an axis in chunks of chunks" (n > 512);
-      cover "a carry" (c.carry <> None);
-      cover "a strided or broadcast view" (c.view <> Plain);
-      cover "a NaN term"
-        (float_raws c (fun dt r -> float_class dt r = Nan) <> []);
-      cover "an infinity"
-        (float_raws c (fun dt r -> float_class dt r = Inf) <> []);
-      cover "a complex number" (is_complex c.dt);
-      let (D.Any dt) = c.dt in
-      match (D.kind dt, c.m) with
-      | (D.Float | D.Complex), (Sum | Prod) -> bounded ~scan:true c
-      | _ -> exact ~scan:true c)
+  Gen.with_pp pp_case (Gen.bind (among forms) elements)
+
+let long_scans =
+  let forms = List.map blank long_examples @ long_forms in
+  let examples = long_examples @ examples long_forms in
+  prop ~count:16 ~examples "running scans along long axes give eager's values"
+    (long_case forms)
+    (Lowered.primed (monoid_graph ~scan:true) examples (fun c ->
+         let n = c.shape.(List.hd c.axes) in
+         cover_monoids c [ Sum; Prod; Max; Min ];
+         cover "an axis in chunks" (n > 32 && n <= 512);
+         cover "an axis in chunks of chunks" (n > 512);
+         cover "a carry" (c.carry <> None);
+         cover "a strided or broadcast view" (c.view <> Plain);
+         cover "a NaN term"
+           (float_raws c (fun dt r -> float_class dt r = Nan) <> []);
+         cover "an infinity"
+           (float_raws c (fun dt r -> float_class dt r = Inf) <> []);
+         cover "a complex number" (is_complex c.dt);
+         let (D.Any dt) = c.dt in
+         match (D.kind dt, c.m) with
+         | (D.Float | D.Complex), (Sum | Prod) -> bounded ~scan:true c
+         | _ -> exact ~scan:true c))
 
 (* Logsumexp, Moments and Arg
 
@@ -1042,6 +1199,11 @@ let by (type a) ~scan (r : (Nx.host, a) P.reduction) c x () : a =
               loads;
               at = None;
             }))
+
+(* The graphs of an operation's two results, each its own: a user who reads one
+   computes that one alone. *)
+let each_result op =
+  Lowered.[ One (fun () -> fst (op ())); One (fun () -> snd (op ())) ]
 
 let extreme c : K.extreme = if c.m = Max then Max else Min
 
@@ -1230,6 +1392,17 @@ let float_law (type s) ~scan which c (dt : (float, s) D.t) =
             (var.(i) < 0.))
         tss
 
+(* The graph of [c]'s logsumexp, or its moments. *)
+let float_graph ~scan which c =
+  let (D.Any dt) = c.dt in
+  match D.kind dt with
+  | D.Float -> (
+      let x = operand dt c in
+      match which with
+      | `Logsumexp -> [ Lowered.One (by ~scan (Logsumexp (0, dt)) c x) ]
+      | `Moments -> each_result (by ~scan (Moments (0, dt)) c x))
+  | _ -> []
+
 let floating ~scan which c =
   let (D.Any dt) = c.dt in
   match D.kind dt with
@@ -1255,6 +1428,16 @@ let spread_example =
     carry = None;
   }
 
+(* The terms [16 + 2^-18] and [0x1.27428cp+4], whose logsumexp lies within
+   [0.006] ulp of the midpoint of two float32s: a result within its bound may
+   round to either, and the reference to the other. *)
+let midpoint_row =
+  {
+    spread_example with
+    shape = [| 1; 2 |];
+    raws = [| 0x41800002L; 0x4193a146L |];
+  }
+
 (* A row of the [n] terms [sin i] of [dt], [float32] or [float16]. *)
 let sine_row dt n =
   let ts = Array.init n (fun i -> Float.sin (Float.of_int i)) in
@@ -1269,44 +1452,48 @@ let sine_row dt n =
   in
   { spread_example with dt; shape = [| 1; n |]; raws }
 
-(* The terms [16 + 2^-18] and [0x1.27428cp+4], whose logsumexp lies within
-   [0.006] ulp of the midpoint of two float32s: a result within its bound may
-   round to either, and the reference to the other. *)
-let midpoint_row =
-  {
-    spread_example with
-    shape = [| 1; 2 |];
-    raws = [| 0x41800002L; 0x4193a146L |];
-  }
-
-(* A row of hundreds to thousands of finite terms within [2^±spread], which
-   reaches the bounds' growth with the number of terms. *)
-let long_row =
-  let open Gen in
-  let* dt = among floats in
-  let* n = int_range 100 2000 in
-  let* spread = among [ 0; 2; 30 ] in
-  let+ raws =
-    array ~size:(constant n) (raw ~special:0 ~spread ~subnormal:0 dt)
-  in
-  { spread_example with dt; shape = [| 1; n |]; raws }
-
+(* The examples of a law of floats: those above, and float32's, float16's and
+   float64's samples, without a carry. *)
 let float_examples ~scan =
-  spread_example :: midpoint_row
-  :: sine_row (D.Any D.Float32) 1500
-  :: sine_row (D.Any D.Float16) 300
+  spread_example :: midpoint_row :: sine_row T.f32 1500 :: sine_row T.f16 300
   :: List.map
        (fun c -> { c with carry = None })
-       (examples ~scan D.[ Any Float32; Any Float16; Any Float64 ] [ Sum ])
+       (samples ~scan T.[ f32; f16; f64 ] [ Sum ])
+
+(* The other floats' forms, of each view, and a row of hundreds to thousands of
+   terms of each float the examples' rows are not of. *)
+let float_forms ~scan =
+  T.
+    [
+      form ~view:Broadcast bf16 Sum [| 2; 3 |] [ 1 ];
+      form ~view:Flipped f8e4 Sum [| 3; 4 |] (if scan then [ 1 ] else [ 0; 1 ]);
+      form f8e5 Sum [| 2; 2; 3 |] [ 2 ];
+      form ~view:Transposed f4 Sum [| 4; 2 |] [ 0 ];
+      form f64 Sum [| 1; 1800 |] [ 1 ];
+      form bf16 Sum [| 1; 700 |] [ 1 ];
+      form f8e4 Sum [| 1; 130 |] [ 1 ];
+      form f8e5 Sum [| 1; 450 |] [ 1 ];
+      form f4 Sum [| 1; 1000 |] [ 1 ];
+    ]
 
 let float_prop ~scan which name =
-  let short = case ~spread:30 ~scan (weigh 1 floats) [ Sum ] in
-  prop ~count:10 ~examples:(float_examples ~scan) name
-    (Gen.frequency [ (3, short); (1, Gen.with_pp pp_case long_row) ])
-    (fun c ->
-      let c = { c with carry = None } in
-      cover "an empty axis" (List.exists (fun a -> c.shape.(a) = 0) c.axes);
-      floating ~scan which c)
+  let extra = float_forms ~scan in
+  let examples = float_examples ~scan @ examples extra in
+  let forms = List.map blank (float_examples ~scan) @ extra in
+  (* A row of hundreds to thousands of finite terms within [2^±spread] reaches
+     the bounds' growth with the number of terms. *)
+  let long_row =
+    let open Gen in
+    let* f = among (List.filter (fun f -> numel f.shape > 100) forms) in
+    let* spread = among [ 0; 2; 30 ] in
+    elements ~special:0 ~spread ~subnormal:0 f
+  in
+  prop ~count:10 ~examples name
+    (Gen.frequency
+       [ (3, case ~spread:30 forms); (1, Gen.with_pp pp_case long_row) ])
+    (Lowered.primed (float_graph ~scan which) examples (fun c ->
+         cover "an empty axis" (List.exists (fun a -> c.shape.(a) = 0) c.axes);
+         floating ~scan which c))
 
 let logsumexps =
   float_prop ~scan:false `Logsumexp "a logsumexp holds its bound"
@@ -1320,17 +1507,20 @@ let moment_reductions =
 let moment_scans =
   float_prop ~scan:true `Moments "running moments hold their bounds"
 
-let arg_prop ~scan dts name =
-  prop ~count:20
-    ~examples:
-      (List.map
-         (fun c -> { c with carry = None })
-         (examples ~scan
-            D.[ Any Float32; Any Float16; Any Bool; Any Int8; Any Complex64 ]
-            [ Max; Min ]))
-    name (case ~scan dts [ Max; Min ])
-    (fun c ->
-      let c = { c with carry = None } in
+(* [arg_prop ~scan ~count forms name] is an arg's law on its samples, without a
+   carry, and on [forms]. *)
+let arg_prop ~scan ~count forms name =
+  let on =
+    List.map
+      (fun c -> { c with carry = None })
+      (samples ~scan T.[ f32; f16; bool; i8; c64 ] [ Max; Min ])
+  in
+  let graph c =
+    let (D.Any dt) = c.dt in
+    if (not scan) && refused c then []
+    else each_result (by ~scan (Arg (extreme c, 0, dt)) c (operand dt c))
+  in
+  law ~on ~graph ~count forms name (fun c ->
       assume (scan || not (refused c));
       cover_monoids c [ Max; Min ];
       cover_floats c;
@@ -1341,17 +1531,54 @@ let arg_prop ~scan dts name =
         (not (is_float c.dt || is_bool c.dt || is_complex c.dt));
       arg_law ~scan c)
 
-let arg_dts =
-  weigh 3 floats @ weigh 2 ints
-  @ weigh 4 D.[ Any Bool; Any Bit ]
-  @ weigh 3 complexes
-
 let args =
-  arg_prop ~scan:false arg_dts "an arg gives eager's values and positions"
+  arg_prop ~scan:false ~count:2
+    T.
+      [
+        form ~view:Broadcast i8 Max [| 2; 3; 4 |] [ 0; 2 ];
+        form bit Max [| 1 |] [ 0 ];
+        form ~view:Flipped bit Min [| 2; 3 |] [ 1 ];
+        form f64 Min [| 0; 2 |] [ 1 ];
+        form c128 Min [| 2; 3 |] [ 0; 1 ];
+        form ~view:Flipped u8 Max [| 4; 3 |] [ 0 ];
+        form ~view:Transposed bf16 Max [| 3; 2 |] [ 1 ];
+        form f8e4 Min [| 2; 3 |] [ 0; 1 ];
+        form ~view:Broadcast f8e5 Max [| 2; 4 |] [ 1 ];
+        form ~view:Flipped f4 Min [| 3; 3 |] [ 0 ];
+        form i64 Max [| 4 |] [ 0 ];
+        form ~view:Transposed u64 Min [| 2; 3 |] [ 0 ];
+        form ~view:Broadcast i32 Max [| 3; 2; 2 |] [ 0; 2 ];
+        form u32 Min [| 1; 3 |] [ 1 ];
+        form ~view:Flipped i16 Max [| 2; 4 |] [ 0; 1 ];
+        form u16 Min [| 3; 0 |] [ 0 ];
+        form ~view:Transposed i4 Max [| 2; 2; 2 |] [ 1 ];
+        form u4 Min [| 5 |] [ 0 ];
+      ]
+    "an arg gives eager's values and positions"
 
 let arg_scans =
-  arg_prop ~scan:true
-    (List.filter (fun (_, d) -> d <> D.Any D.Complex128) arg_dts)
+  arg_prop ~scan:true ~count:2
+    T.
+      [
+        form ~view:Transposed bool Min [| 3; 2 |] [ 0 ];
+        form ~view:Broadcast i8 Max [| 2; 3; 4 |] [ 2 ];
+        form bit Max [| 1 |] [ 0 ];
+        form ~view:Flipped bit Min [| 3; 2 |] [ 1 ];
+        form f64 Min [| 2; 0 |] [ 1 ];
+        form ~view:Flipped u8 Min [| 4; 3 |] [ 0 ];
+        form ~view:Transposed bf16 Max [| 3; 2 |] [ 1 ];
+        form f8e4 Min [| 2; 3 |] [ 1 ];
+        form ~view:Broadcast f8e5 Max [| 2; 4 |] [ 1 ];
+        form ~view:Flipped f4 Min [| 3; 3 |] [ 0 ];
+        form i64 Max [| 4 |] [ 0 ];
+        form ~view:Transposed u64 Min [| 2; 3 |] [ 0 ];
+        form ~view:Broadcast i32 Max [| 3; 2; 2 |] [ 2 ];
+        form u32 Min [| 1; 3 |] [ 1 ];
+        form ~view:Flipped i16 Max [| 2; 4 |] [ 1 ];
+        form u16 Min [| 3; 2 |] [ 0 ];
+        form ~view:Transposed i4 Max [| 2; 2; 2 |] [ 1 ];
+        form u4 Min [| 5 |] [ 0 ];
+      ]
     "a running arg gives eager's values and positions"
 
 (* Contractions
@@ -1471,138 +1698,101 @@ let pp_contraction ppf c =
   | Some (Contracting (p, g, o)) ->
       Format.fprintf ppf " pair %d groups %d [%s]" p g (raws o)
 
-(* [Long] segments a contracting pair of 24 to 40 indices into 3 or 4 groups,
-   which the lowering cuts into blocks, the first of up to two pairs.
-   [Long_rows] segments [a]'s first free axis, of 48 to 140 rows or 260 to
-   300 in a third of the draws, by [b]'s first, of 1 or 2 groups, which the
-   lowering routes into blocks (of 64 rows off the host, of 8 on it) by
-   comparisons or, past the host's budget of them, as the longer always
-   are, by a search. [Few_rows] segments it by 2 to 6 groups, with fewer
-   rows than groups, 1 to 5 rows a group or 5 to 16 in a third of the draws
-   each. Both contract a first pair of 6 to 12, so that a slice holds as
-   many elements as there are groups, which routing needs. *)
-type extras =
-  | Plain_contraction
-  | Scaled
-  | Segmented
-  | Long
-  | Long_rows
-  | Few_rows
+(* Contraction forms
 
-let contraction ?(extras = Plain_contraction) dts accs =
+   A contraction's form is all of it but its elements: dtypes, extents, roles,
+   views, whether it has an init, its scales' kinds and blocks, and its
+   segments' axes and groups. A law draws its cases' forms from a few, which its
+   examples take too. *)
+
+let cform ?acc ?(eb = [||]) ?(ta = false) ?(tb = false) ?(init = false) ?sa ?sb
+    ?seg cdt ~ek ~fa ~fb ra rb =
+  {
+    cdt;
+    acc = Option.value acc ~default:cdt;
+    eb;
+    ek;
+    fa;
+    fb;
+    ra;
+    rb;
+    ta;
+    tb;
+    araws = [||];
+    braws = [||];
+    init = (if init then Some [||] else None);
+    sa;
+    sb;
+    seg;
+  }
+
+(* The form of the contraction [c]. *)
+let shape_of c =
+  let scale = function
+    | Codes (b, _) -> Codes (b, [||])
+    | Values (d, b, _) -> Values (d, b, [||])
+  in
+  let seg = function
+    | Rows (i, j, _) -> Rows (i, j, [||])
+    | Contracting (p, g, _) -> Contracting (p, g, [||])
+  in
+  {
+    c with
+    araws = [||];
+    braws = [||];
+    init = Option.map (fun _ -> [||]) c.init;
+    sa = Option.map scale c.sa;
+    sb = Option.map scale c.sb;
+    seg = Option.map seg c.seg;
+  }
+
+(* [contraction_data ~crowd ~drop c] draws the elements of a case of the form
+   [c]: its operands', its init's, its scales' codes or values and its segments'
+   ids. Codes stay below [151] or are [255], so that no partial sum overflows.
+   Ids are drawn around the groups, int64's extremes included. Where [crowd],
+   they crowd their rows into group 0 in three draws of four, so that a group
+   passes a block's rows; where [drop], the last group is left empty in half the
+   draws. *)
+let contraction_data ?(crowd = false) ?(drop = false) c =
   let open Gen in
-  let small =
-    frequency [ (1, constant 0); (1, constant 1); (4, int_range 2 3) ]
-  in
-  let extents n = map Array.of_list (list ~size:(constant n) small) in
-  let roles nf eb ek =
-    List.init (Array.length eb) (fun i -> B i)
-    @ List.init nf (fun i -> F i)
-    @ List.init (Array.length ek) (fun i -> C i)
-  in
-  (* Free axes numbered in axis order, the result's. *)
-  let ordered roles =
-    let number k = function F _ -> (k + 1, F k) | r -> (k, r) in
-    Array.of_list (snd (List.fold_left_map number 0 roles))
-  in
-  let* cdt = frequency (List.map (fun (w, d) -> (w, constant d)) dts) in
-  let* acc = among (accs cdt) in
-  let* rows =
-    match extras with
-    | Segmented -> bool
-    | Long_rows | Few_rows -> constant true
-    | Plain_contraction | Scaled | Long -> constant false
-  in
-  let long = extras = Long and long_rows = extras = Long_rows in
-  let few_rows = extras = Few_rows in
-  let segmented = extras = Segmented || long || long_rows || few_rows in
-  let count lo hi =
-    let* n = int_range lo hi in
-    extents n
-  in
-  (* [Long_rows] draws a batch axis of two in two draws of three, so that
-     each run holds blocks at each of two batch indices. *)
-  let* eb =
-    if long_rows then frequency [ (1, count 0 1); (2, constant [| 2 |]) ]
-    else count 0 1
-  in
-  let* ek =
-    let first lo hi =
-      let* n = int_range lo hi in
-      let+ rest = count 0 1 in
-      Array.append [| n |] rest
-    in
-    if long then first 24 40
-    else if long_rows || few_rows then first 6 12
-    else count (if segmented && not rows then 1 else 0) 2
-  in
-  (* [Rows] draws up to two free axes on each side beyond the segmented one. *)
-  let lo, hi = if rows then (1, 3) else (0, 1) in
-  let leading lo hi =
-    let* n = int_range lo hi in
-    let+ rest = count 0 1 in
-    Array.append [| n |] rest
-  in
-  (* [Long_rows] crowds its rows into group 0 in three draws of four, over
-     at least 72 rows, so that each run holds a group past a block's rows. *)
-  let* crowded =
-    if long_rows then frequency [ (1, constant false); (3, constant true) ]
-    else constant false
-  in
-  let* fb =
-    if long_rows then leading 1 2
-    else if few_rows then leading 2 6
-    else count lo hi
-  in
-  let* fa =
-    if long_rows then
-      let* lo, hi =
-        frequency
-          [
-            (2, constant ((if crowded then 72 else 48), 140));
-            (1, constant (260, 300));
-          ]
-      in
-      leading lo hi
-    else if few_rows then
-      let g = fb.(0) in
-      let* lo, hi =
-        among [ (1, g - 1); (g, (5 * g) - 1); (5 * g, (16 * g) - 1) ]
-      in
-      leading lo hi
-    else count lo hi
-  in
-  let* ra = map ordered (permutation (roles (Array.length fa) eb ek)) in
-  let* rb = map ordered (permutation (roles (Array.length fb) eb ek)) in
-  let* ta = bool in
-  let* tb = bool in
-  let c =
-    {
-      cdt;
-      acc;
-      eb;
-      ek;
-      fa;
-      fb;
-      ra;
-      rb;
-      ta;
-      tb;
-      araws = [||];
-      braws = [||];
-      init = None;
-      sa = None;
-      sb = None;
-      seg = None;
-    }
-  in
   let raws s =
     array
-      ~size:(constant (raws_of cdt (numel s)))
-      (raw ~spread:2 ~subnormal:1 cdt)
+      ~size:(constant (raws_of c.cdt (numel s)))
+      (raw ~spread:2 ~subnormal:1 c.cdt)
   in
-  let* araws = raws (ashape c fa ra) in
-  let* braws = raws (ashape c fb rb) in
+  let* araws = raws (ashape c c.fa c.ra) in
+  let* braws = raws (ashape c c.fb c.rb) in
+  let* init =
+    match c.init with
+    | None -> constant None
+    | Some _ -> map Option.some (raws (out_shape c))
+  in
+  let code =
+    frequency
+      [
+        (1, constant 0L);
+        (1, constant 255L);
+        (6, map Int64.of_int (int_range 100 150));
+      ]
+  in
+  let scale = function
+    | None -> constant None
+    | Some (Codes (b, _)) ->
+        map
+          (fun r -> Some (Codes (b, r)))
+          (array ~size:(constant (numel b)) code)
+    | Some (Values (d, b, _)) ->
+        map
+          (fun r -> Some (Values (d, b, r)))
+          (array ~size:(constant (numel b)) (raw ~spread:2 ~subnormal:1 d))
+  in
+  let* sa = scale c.sa in
+  let* sb = scale c.sb in
+  let* crowded =
+    if crowd then frequency [ (1, constant false); (3, constant true) ]
+    else constant false
+  in
+  let* empty = if drop then bool else constant false in
   let ids g n =
     let held =
       if g = 0 then [] else [ (6, map Int64.of_int (int_range 0 (g - 1))) ]
@@ -1618,79 +1808,72 @@ let contraction ?(extras = Plain_contraction) dts accs =
     let entry =
       if crowded then frequency [ (19, constant 0L); (1, entry) ] else entry
     in
-    array ~size:(constant (numel eb * n)) entry
+    array ~size:(constant (numel c.eb * n)) entry
   in
-  let* seg =
-    if not segmented then constant None
-    else if rows then
-      let first n =
-        if long_rows || few_rows then constant 0 else int_range 0 (n - 1)
-      in
-      let* i = first (Array.length fa) in
-      let* j = first (Array.length fb) in
-      (* Long and few rows leave their last group empty in half the draws. *)
-      let* empty = if long_rows || few_rows then bool else constant false in
-      let last = Int64.of_int (fb.(j) - 1) in
-      let drop o =
-        if empty then Array.map (fun x -> if x = last then -1L else x) o else o
-      in
-      map (fun o -> Some (Rows (i, j, drop o))) (ids fb.(j) fa.(i))
-    else
-      let* p =
-        if long then constant 0 else int_range 0 (Array.length ek - 1)
-      in
-      let* g = if long then int_range 3 4 else int_range 0 3 in
-      map (fun o -> Some (Contracting (p, g, o))) (ids g ek.(p))
+  let+ seg =
+    match c.seg with
+    | None -> constant None
+    | Some (Rows (i, j, _)) ->
+        let last = Int64.of_int (c.fb.(j) - 1) in
+        let drop o =
+          if empty then Array.map (fun x -> if x = last then -1L else x) o
+          else o
+        in
+        map (fun o -> Some (Rows (i, j, drop o))) (ids c.fb.(j) c.fa.(i))
+    | Some (Contracting (p, g, _)) ->
+        map (fun o -> Some (Contracting (p, g, o))) (ids g c.ek.(p))
   in
-  let scale s =
-    let divisors n =
-      if n = 0 then [ 0 ] else List.filter (fun k -> n mod k = 0) [ 1; 2; 3 ]
-    in
-    let rec each = function
-      | [] -> constant []
-      | n :: ns ->
-          let* k = among (divisors n) in
-          let+ ks = each ns in
-          k :: ks
-    in
-    let* blocks = map Array.of_list (each (Array.to_list s)) in
-    let k = numel blocks in
-    let code =
-      frequency
-        [
-          (1, constant 0L);
-          (1, constant 255L);
-          (6, map Int64.of_int (int_range 100 150));
-        ]
-    in
-    let codes =
-      map (fun r -> Codes (blocks, r)) (array ~size:(constant k) code)
-    in
-    let values =
-      let* d = among D.[ Any Float32; Any Float64; Any Float16 ] in
-      map
-        (fun r -> Values (d, blocks, r))
-        (array ~size:(constant k) (raw ~spread:2 ~subnormal:1 d))
-    in
-    frequency
-      [
-        (1, constant None);
-        (1, map Option.some codes);
-        (1, map Option.some values);
-      ]
-  in
-  let scaled s = if extras = Scaled then scale s else constant None in
-  let* sa = scaled (ashape c fa ra) in
-  let* sb = scaled (ashape c fb rb) in
-  let c = { c with araws; braws; sa; sb; seg } in
-  let+ init =
-    frequency [ (1, constant None); (1, map Option.some (raws (out_shape c))) ]
-  in
-  { c with init }
+  { c with araws; braws; init; sa; sb; seg }
 
-let contraction ?extras dts accs =
-  Gen.with_pp pp_contraction (contraction ?extras dts accs)
+(* The raws of [n] ones of the dtype [d]. *)
+let ones (D.Any dt as d) n =
+  let one =
+    match dt with
+    | D.Float64 | D.Complex128 | D.Complex64 -> Int64.bits_of_float 1.
+    | D.Float32 -> 0x3f800000L
+    | D.Float16 -> 0x3c00L
+    | D.Bfloat16 -> 0x3f80L
+    | D.Float8_e4m3fn -> 0x38L
+    | D.Float8_e5m2 -> 0x3cL
+    | D.Float4_e2m1fn -> 0x2L
+    | _ -> 1L
+  in
+  if D.is D.Complex dt then
+    Array.init (raws_of d n) (fun i -> if i mod 2 = 0 then one else 0L)
+  else Array.make n one
 
+(* The example of the form [c] of ones, of scales of one, and of the ids [id b
+   r] of row or index [r] at batch index [b]. *)
+let ones_on ?(id = fun _ _ -> 0L) c =
+  let n s = numel s in
+  let segment n = Array.init (numel c.eb * n) (fun e -> id (e / n) (e mod n)) in
+  let scale = function
+    | Codes (b, _) -> Codes (b, Array.make (n b) 127L)
+    | Values (d, b, _) -> Values (d, b, ones d (n b))
+  in
+  {
+    c with
+    araws = ones c.cdt (n (ashape c c.fa c.ra));
+    braws = ones c.cdt (n (ashape c c.fb c.rb));
+    init = Option.map (fun _ -> ones c.cdt (n (out_shape c))) c.init;
+    sa = Option.map scale c.sa;
+    sb = Option.map scale c.sb;
+    seg =
+      Option.map
+        (function
+          | Rows (i, j, _) -> Rows (i, j, segment c.fa.(i))
+          | Contracting (p, g, _) -> Contracting (p, g, segment c.ek.(p)))
+        c.seg;
+  }
+
+(* [contraction forms] draws a case of a form of [forms], each as likely. *)
+let contraction ?crowd ?drop forms =
+  Gen.with_pp pp_contraction
+    (Gen.bind (among forms) (contraction_data ?crowd ?drop))
+
+(* [contractions ~count ~examples ~forms name f] holds [f] on [examples], on an
+   example of ones on each of [forms], and on [count] cases of [forms] and the
+   examples' forms. *)
 (* An operand of shape [s], read through a transposed view where [t]. *)
 let contracted (type v s) (dt : (v, s) D.t) s t raws : (v, s, Nx.host) Nx.t =
   if not t then value dt s raws
@@ -1736,12 +1919,29 @@ let contraction_op ?(abs = false) c ~acc dt a b init =
       sum = false;
     }
 
-let contract_results (type v s) (dt : (v, s) D.t) c =
+(* [c]'s operands, its init, and its contraction of them. *)
+let contraction_of (type v s) (dt : (v, s) D.t) c =
   let a = contracted dt (ashape c c.fa c.ra) c.ta c.araws in
   let b = contracted dt (ashape c c.fb c.rb) c.tb c.braws in
   let init = Option.map (value dt (out_shape c)) c.init in
   let op () = P.eval ~by:"t" (contraction_op c ~acc:c.acc dt a b init) in
+  (a, b, init, op)
+
+let contract_results (type v s) (dt : (v, s) D.t) c =
+  let a, b, init, op = contraction_of dt c in
   (a, b, init, Nx.to_array (op ()), Lowered.run op)
+
+let contraction_graph c =
+  let (D.Any dt) = c.cdt in
+  let _, _, _, op = contraction_of dt c in
+  [ Lowered.One op ]
+
+let contractions ?crowd ?drop ~count ~examples ?(forms = []) name f =
+  let drawn = List.sort_uniq compare (List.map shape_of examples) @ forms in
+  let examples = examples @ List.map (fun f -> ones_on f) forms in
+  prop ~count ~examples name
+    (contraction ?crowd ?drop drawn)
+    (Lowered.primed contraction_graph examples f)
 
 (* Each part's [|init| + Σ|x||y|] over its products of parts, by eager float64
    contractions: [ar·br] and [ai·bi] in the real part, [ar·bi] and [ai·br] in
@@ -1894,40 +2094,78 @@ let outer dt ones =
   }
 
 let int_contractions =
-  let accs d = [ d; D.Any D.Int64 ] in
   let wide = { (outer (D.Any D.Int32) 1L) with acc = D.Any D.Int64 } in
-  prop ~count:12
+  contractions ~count:12
     ~examples:(two_axes (D.Any D.Int32) 1L :: wide :: empty (D.Any D.Int32))
+    ~forms:
+      T.
+        [
+          cform i8 ~eb:[| 2 |] ~ek:[| 3 |] ~fa:[| 2 |] ~fb:[| 2 |] ~ta:true
+            ~tb:true ~init:true [| B 0; C 0; F 0 |] [| F 0; B 0; C 0 |];
+          cform u64 ~ek:[| 2; 3 |] ~fa:[||] ~fb:[| 3 |] ~tb:true [| C 1; C 0 |]
+            [| C 0; F 0; C 1 |];
+          cform i64 ~ek:[| 2 |] ~fa:[| 3 |] ~fb:[| 2 |] [| F 0; C 0 |]
+            [| C 0; F 0 |];
+          cform u32 ~acc:i64 ~eb:[| 2 |] ~ek:[| 3 |] ~fa:[||] ~fb:[| 2 |]
+            ~ta:true [| B 0; C 0 |] [| B 0; F 0; C 0 |];
+          cform i16 ~ek:[| 4 |] ~fa:[| 1 |] ~fb:[| 3 |] ~init:true
+            [| C 0; F 0 |] [| F 0; C 0 |];
+          cform u16 ~acc:i64 ~ek:[| 2; 2 |] ~fa:[| 2 |] ~fb:[||] ~tb:true
+            [| F 0; C 0; C 1 |] [| C 1; C 0 |];
+          cform u8 ~ek:[| 3 |] ~fa:[| 2 |] ~fb:[| 2 |] ~ta:true [| C 0; F 0 |]
+            [| C 0; F 0 |];
+          cform i4 ~eb:[| 2 |] ~ek:[| 2 |] ~fa:[| 1 |] ~fb:[| 2 |] ~init:true
+            [| B 0; F 0; C 0 |] [| B 0; C 0; F 0 |];
+          cform u4 ~acc:i64 ~ek:[| 5 |] ~fa:[| 2 |] ~fb:[| 1 |] [| F 0; C 0 |]
+            [| C 0; F 0 |];
+        ]
     "integer contractions wrap as eager's"
-    (contraction (weigh 1 ints) accs)
     (fun c ->
       cover_contraction c;
       cover "a wider accumulator" (c.acc <> c.cdt);
       contract_check c)
 
 let float_contractions =
-  let accs (D.Any d as dt) =
-    match d with
-    | D.Float64 -> [ dt ]
-    | D.Float32 -> [ dt; D.Any D.Float64 ]
-    | _ -> [ D.Any D.Float32 ]
-  in
-  prop ~count:12
+  contractions ~count:12
     ~examples:
       (two_axes (D.Any D.Float32) 0x3f800000L
       :: outer (D.Any D.Float32) 0x3f800000L
       :: empty (D.Any D.Float32))
+    ~forms:
+      T.
+        [
+          cform f64 ~eb:[| 1 |] ~ek:[| 3 |] ~fa:[| 2 |] ~fb:[| 1 |] ~ta:true
+            [| F 0; B 0; C 0 |] [| B 0; C 0; F 0 |];
+          cform f16 ~acc:f32 ~ek:[| 3; 2 |] ~fa:[| 2 |] ~fb:[| 2 |] ~init:true
+            [| C 0; F 0; C 1 |] [| C 1; F 0; C 0 |];
+          cform bf16 ~acc:f32 ~ek:[| 2 |] ~fa:[| 3 |] ~fb:[||] ~ta:true
+            [| F 0; C 0 |] [| C 0 |];
+          cform f32 ~acc:f64 ~ek:[| 4 |] ~fa:[| 2 |] ~fb:[| 3 |] ~tb:true
+            ~init:true [| C 0; F 0 |] [| F 0; C 0 |];
+          cform f8e5 ~acc:f32 ~ek:[| 3 |] ~fa:[| 1 |] ~fb:[| 2 |] [| F 0; C 0 |]
+            [| C 0; F 0 |];
+          cform f4 ~acc:f32 ~eb:[| 2 |] ~ek:[| 2 |] ~fa:[| 2 |] ~fb:[| 2 |]
+            [| B 0; F 0; C 0 |] [| C 0; B 0; F 0 |];
+          cform f8e4 ~acc:f32 ~ek:[| 2 |] ~fa:[| 2 |] ~fb:[| 3 |] ~tb:true
+            ~init:true [| F 0; C 0 |] [| F 0; C 0 |];
+        ]
     "float contractions hold their bound"
-    (contraction (weigh 1 floats) accs)
     (fun c ->
       cover_contraction c;
       contract_check c)
 
 let complex_contractions =
-  prop ~count:6
+  contractions ~count:6
     ~examples:(empty (D.Any D.Complex64))
+    ~forms:
+      T.
+        [
+          cform c64 ~ek:[| 3 |] ~fa:[| 2 |] ~fb:[| 2 |] ~tb:true ~init:true
+            [| F 0; C 0 |] [| C 0; F 0 |];
+          cform c128 ~eb:[| 2 |] ~ek:[| 2 |] ~fa:[| 2 |] ~fb:[| 1 |] ~ta:true
+            [| B 0; F 0; C 0 |] [| B 0; C 0; F 0 |];
+        ]
     "complex contractions hold their bound"
-    (contraction (weigh 1 complexes) (fun d -> [ d ]))
     (fun c ->
       cover "an init" (c.init <> None);
       contract_check c)
@@ -1955,36 +2193,33 @@ let coded dt ones =
   }
 
 let scaled_contractions =
-  let accs (D.Any d as dt) =
-    match d with
-    | D.Float64 -> [ dt ]
-    | _ -> [ D.Any D.Float32; D.Any D.Float64 ]
-  in
   let codes = function Some (Codes (_, r)) -> Array.to_list r | _ -> [] in
   let several = function
     | Some (Codes (b, _) | Values (_, b, _)) -> Array.exists (( < ) 1) b
     | None -> false
   in
-  prop ~count:12
+  contractions ~count:12
     ~examples:
       [
         scaled_example;
         coded (D.Any D.Float8_e4m3fn) 0x38L;
         coded (D.Any D.Float4_e2m1fn) 0x2L;
       ]
+    ~forms:
+      T.
+        [
+          cform f64 ~ek:[| 4 |] ~fa:[| 3 |] ~fb:[| 2 |]
+            ~sa:(Values (f32, [| 3; 2 |], [||]))
+            ~sb:(Codes ([| 2; 1 |], [||]))
+            [| F 0; C 0 |] [| C 0; F 0 |];
+          cform bf16 ~acc:f32 ~ek:[| 2 |] ~fa:[| 2 |] ~fb:[| 3 |]
+            ~sb:(Codes ([| 1; 3 |], [||]))
+            [| F 0; C 0 |] [| C 0; F 0 |];
+          cform f16 ~acc:f64 ~eb:[| 2 |] ~ek:[| 2 |] ~fa:[| 1 |] ~fb:[||]
+            ~sa:(Values (f64, [| 2; 1; 1 |], [||]))
+            [| B 0; C 0; F 0 |] [| B 0; C 0 |];
+        ]
     "scaled float contractions hold their bound"
-    (contraction ~extras:Scaled
-       (weigh 1
-          D.
-            [
-              Any Float64;
-              Any Float32;
-              Any Float16;
-              Any Bfloat16;
-              Any Float8_e4m3fn;
-              Any Float4_e2m1fn;
-            ])
-       accs)
     (fun c ->
       cover "a float8_e4m3fn operand" (c.cdt = D.Any D.Float8_e4m3fn);
       cover "a float4_e2m1fn operand" (c.cdt = D.Any D.Float4_e2m1fn);
@@ -1998,359 +2233,9 @@ let scaled_contractions =
       cover "a float64 accumulator" (c.acc = D.Any D.Float64);
       contract_check c)
 
-(* GGUF's MXFP4 blocks of a 4096 by 4096 matrix by one float32 row, rendered
-   for an AVX2 host: the product's tile sums in runs of 4 rows, half of a
-   register of float32, and its 64 codes fill whole registers, so they
-   decode whole and no run decodes its own 4 lanes (tolk's D141). *)
-let blocks_decode_whole () =
-  let n = 4096 in
-  let w = Nx_quant.mxfp4_blocks (Nx.copy (Nx.zeros Nx.uint8 [| n; n / 32 * 17 |])) in
-  let x = Nx.copy (Nx.zeros Nx.float32 [| 1; n |]) in
-  let target =
-    Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell")
-  in
-  let count sub s =
-    let rec go i n =
-      match String.index_from_opt s i sub.[0] with
-      | None -> n
-      | Some j ->
-          if j + String.length sub <= String.length s
-             && String.sub s j (String.length sub) = sub
-          then go (j + 1) (n + 1)
-          else go (j + 1) n
-    in
-    go 0 0
-  in
-  let sources = Lowered.sources ~target (fun () -> Nx_quant.apply w x) in
-  let total sub =
-    List.fold_left (fun n (_, _, src) -> n + count sub src) 0 sources
-  in
-  equal int ~msg:"4-lane vectors of decoded codes" 0 (total "unsigned_int4 ");
-  is_true ~msg:"a 64-lane decode" (total "unsigned_int64 " > 0)
-
-(* The nodes of each kernel [f] lowers to for [target], and of a kernel's
-   nodes, the element counts of its parameters of [dt] and whether it sums. *)
-let kernel_nodes target f =
-  List.map
-    (fun (_, sink, _) -> Tolk.Ops.toposort ~calls:Skip sink)
-    (Lowered.sources ~target f)
-
-let param_sizes dt nodes =
-  let size u =
-    match Tolk.Ops.value (Tolk.Ops.nth u 0) with
-    | `Int n -> Tolk.Bigint.to_int n
-    | _ -> 0
-  in
-  let param u =
-    Tolk.Ops.op u = Tolk.Op.Param && Tolk.Dtype.equal (Tolk.Ops.dtype u) dt
-  in
-  List.map size (List.filter param nodes)
-
-let sums nodes = List.exists (fun u -> Tolk.Ops.op u = Tolk.Op.Reduce) nodes
-
-(* Routed rows of 4 MXFP4 experts of 16 by 64, 4 ids a token, rendered for an
-   AVX2 host, whose product's tile holds 8 rows (Tolk.Heuristic.tile_rows): 2
-   tokens, 2 rows a group, route into blocks of 4 rows, which decode their
-   expert's codes in the product; 64 tokens, 64 rows a group, into blocks of
-   8 rows that read their expert's slice, decoded once into storage. A kernel
-   that reads the codes and sums nothing stores slices: at 64 tokens, 4 of
-   1024 values, one an expert. The product stores its slots' outputs, 16 a
-   slot: at 64 tokens 35 blocks of 8 rows, 280 slots. *)
-let routed_slices () =
-  let target =
-    Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell")
-  in
-  let lowered tokens =
-    let w =
-      Nx_quant.mxfp4
-        ~scales:(Nx.full Nx.uint8 [| 4; 16; 2 |] 127)
-        (Nx.full Nx.uint8 [| 4; 16; 32 |] 0x35)
-    in
-    let ids =
-      Nx.create Nx.int64 [| tokens; 4 |]
-        (Array.init (4 * tokens) (fun i -> Int64.of_int (i mod 4)))
-    in
-    let x = Nx.full Nx.bfloat16 [| tokens; 1; 64 |] 0.5 in
-    kernel_nodes target (fun () -> Nx_quant.apply_experts ~ids w x)
-  in
-  let stored tokens =
-    List.fold_left
-      (fun total nodes ->
-        if param_sizes Tolk.Dtype.Uint8 nodes <> [] && not (sums nodes) then
-          List.fold_left ( + ) total (param_sizes Tolk.Dtype.Float32 nodes)
-        else total)
-      0 (lowered tokens)
-  in
-  let slots tokens =
-    List.fold_left
-      (fun most nodes ->
-        if sums nodes then
-          List.fold_left max most (param_sizes Tolk.Dtype.Bfloat16 nodes)
-        else most)
-      0 (lowered tokens)
-    / 16
-  in
-  equal int ~msg:"values stored at 2 rows a group" 0 (stored 2);
-  equal int ~msg:"values stored at 64 rows a group" (4 * 16 * 64) (stored 64);
-  equal int ~msg:"slots at 64 rows a group" 280 (slots 64)
-
-(* Products rendered for an AVX2 host, whose tile holds 64 float32 outputs
-   (Tolk.Heuristic.tile_outputs), and whether a kernel's parameters hold [e]
-   elements of [dt]. *)
-let avx2 =
-  lazy
-    (Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell"))
-
-let holds dt e nodes = List.mem e (param_sizes dt nodes)
-let projection = Nx.Pattern.v "x i, o i -> x o | i"
-
-(* gpt-oss's query projection over a prompt of 512 tokens, bfloat16 rows
-   [512; 2880] by bfloat16 weights [4096; 2880]. A row's element enters 4096
-   outputs, past the 8 entries a copy costs (Tolk.Heuristic.copy_entries)
-   times 64, and more than a weight's 512: the rows, an argument, are stored
-   once at float32 by a kernel of their own that sums nothing, and the
-   product reads them there, where it would convert them in each tile. *)
-let rows_entered_once () =
-  let m, k, n = (512, 2880, 4096) in
-  let x = Nx.full Nx.bfloat16 [| m; k |] 0.5 in
-  let w = Nx.full Nx.bfloat16 [| n; k |] 0.25 in
-  let kernels =
-    kernel_nodes (Lazy.force avx2) (fun () ->
-        Nx.contract Nx.bfloat16 projection x w)
-  in
-  let rows dt = holds dt (m * k) in
-  let copies =
-    List.filter
-      (fun nodes ->
-        (not (sums nodes))
-        && rows Tolk.Dtype.Bfloat16 nodes
-        && rows Tolk.Dtype.Float32 nodes)
-      kernels
-  in
-  match List.filter sums kernels with
-  | [ product ] ->
-      equal int ~msg:"kernels storing the rows at float32" 1
-        (List.length copies);
-      is_true ~msg:"the product reads float32 rows"
-        (rows Tolk.Dtype.Float32 product);
-      is_false ~msg:"the product reads bfloat16 rows"
-        (rows Tolk.Dtype.Bfloat16 product)
-  | ps -> failf "%d products" (List.length ps)
-
-(* A decode step's key, query and value projection of one row of an
-   argument, bfloat16 [1; 2880] by bfloat16 weights [5120; 2880]. A row's
-   element enters 5120 outputs, past 512, but the weights enter each output
-   once, unscaled, so the product streams them: it converts the row in its
-   tile, in one kernel. *)
-let argument_row_in_tile () =
-  let x = Nx.full Nx.bfloat16 [| 1; 2880 |] 0.5 in
-  let w = Nx.full Nx.bfloat16 [| 5120; 2880 |] 0.25 in
-  match
-    kernel_nodes (Lazy.force avx2) (fun () ->
-        Nx.contract Nx.bfloat16 projection x w)
-  with
-  | [ product ] ->
-      is_true ~msg:"the product reads bfloat16 rows"
-        (holds Tolk.Dtype.Bfloat16 2880 product);
-      is_false ~msg:"the product reads float32 rows"
-        (holds Tolk.Dtype.Float32 2880 product)
-  | ks -> failf "%d kernels" (List.length ks)
-
-(* 64 rows of an argument, bfloat16 [64; 1024], by MXFP4 weights [1024;
-   1024], kaun's dense product of a prompt: a row's element enters 1024
-   outputs, past 512, and the weights, decoded in the tile, are not
-   streamed. The rows are stored once at float32 by a kernel of their own,
-   and the product reads them there. *)
-let argument_rows_decoded () =
-  let m, n = (64, 1024) in
-  let x = Nx.full Nx.bfloat16 [| m; n |] 0.5 in
-  let w =
-    Nx_quant.mxfp4
-      ~scales:(Nx.full Nx.uint8 [| n; n / 32 |] 127)
-      (Nx.full Nx.uint8 [| n; n / 2 |] 0x35)
-  in
-  let kernels =
-    kernel_nodes (Lazy.force avx2) (fun () -> Nx_quant.apply w x)
-  in
-  let rows dt = holds dt (m * n) in
-  is_true ~msg:"a kernel stores the rows at float32"
-    (List.exists
-       (fun nodes ->
-         (not (sums nodes))
-         && rows Tolk.Dtype.Bfloat16 nodes
-         && rows Tolk.Dtype.Float32 nodes)
-       kernels);
-  let codes nodes = param_sizes Tolk.Dtype.Uint8 nodes <> [] && sums nodes in
-  match List.filter codes kernels with
-  | [ product ] ->
-      is_true ~msg:"the product reads float32 rows"
-        (rows Tolk.Dtype.Float32 product)
-  | ps -> failf "%d products" (List.length ps)
-
-(* A decode step's key, query and value projection of a row that an RMS norm
-   computes, [1; 2880] by bfloat16 weights [5120; 2880]. The weights enter
-   each output once, unscaled, so the product streams them: the row stays
-   bfloat16, which no kernel stores at float32, and the product converts it
-   in its tile. *)
-let normed_row_streamed () =
-  let k = 2880 in
-  let x = Nx.full Nx.bfloat16 [| 1; k |] 0.5 in
-  let scale = Nx.full Nx.bfloat16 [| k |] 1.5 in
-  let w = Nx.full Nx.bfloat16 [| 5120; k |] 0.25 in
-  let kernels =
-    kernel_nodes (Lazy.force avx2) (fun () ->
-        Nx.contract Nx.bfloat16 projection (Nx.rms_norm ~eps:1e-5 ~scale x) w)
-  in
-  is_false ~msg:"a kernel stores the row at float32"
-    (List.exists (holds Tolk.Dtype.Float32 k) kernels);
-  let weights nodes =
-    sums nodes && holds Tolk.Dtype.Bfloat16 (5120 * k) nodes
-  in
-  match List.filter weights kernels with
-  | [ product ] ->
-      is_true ~msg:"the product reads the bfloat16 row"
-        (holds Tolk.Dtype.Bfloat16 k product)
-  | ps -> failf "%d products" (List.length ps)
-
-(* A decode step's Q8_0 projection of a row that an RMS norm computes,
-   [1; 2880] by Q8_0 codes of [4096; 2880]. The norm's kernel, which runs
-   anyway, stores the row at float32 in place of bfloat16, reading the row
-   and its scale, and the product reads the float32 row. *)
-let normed_row_stored () =
-  let k = 2880 in
-  let x = Nx.full Nx.bfloat16 [| 1; k |] 0.5 in
-  let scale = Nx.full Nx.bfloat16 [| k |] 1.5 in
-  let w = Nx_quant.q8_0 (Nx.full Nx.uint8 [| 4096; k / 32 * 34 |] 0x11) in
-  let kernels =
-    kernel_nodes (Lazy.force avx2) (fun () ->
-        Nx_quant.apply w (Nx.rms_norm ~eps:1e-5 ~scale x))
-  in
-  let narrow nodes =
-    List.length
-      (List.filter (Int.equal k) (param_sizes Tolk.Dtype.Bfloat16 nodes))
-  in
-  let codes nodes = param_sizes Tolk.Dtype.Uint8 nodes <> [] in
-  match List.filter codes kernels with
-  | [ product ] ->
-      is_true ~msg:"the product reads float32 rows"
-        (holds Tolk.Dtype.Float32 k product);
-      equal int ~msg:"bfloat16 rows the product reads" 0 (narrow product);
-      is_true ~msg:"the norm's kernel stores the float32 row"
-        (List.exists
-           (fun nodes ->
-             (not (sums nodes)) && holds Tolk.Dtype.Float32 k nodes
-             && narrow nodes = 2)
-           kernels)
-  | ps -> failf "%d products" (List.length ps)
-
-(* A routed bfloat16 product whose slices, which an RMS norm computes, have
-   more reuse than its rows: 32 rows of 80 by 64 in 4 groups route into
-   blocks of 8 rows, so a slice's element, of 4 by 64, enters 8 rows' 80
-   outputs, 640, past 8 times the tile's 64, where a row's element enters 4.
-   The slices are stored once, whole, at float32, and the product reads them
-   there. *)
-let slices_entered_once () =
-  let n = 32 and h = 80 and k = 64 and g = 4 and j = 4 in
-  let ramp s =
-    let v i = Float.of_int ((i * 5) mod 7 - 3) in
-    Nx.cast D.Bfloat16 (Nx.create D.Float32 s (Array.init (numel s) v))
-  in
-  let ids =
-    Nx.create D.Int64 [| n |] (Array.init n (fun r -> Int64.of_int (r mod g)))
-  in
-  let a = ramp [| n; h; k |] and b = ramp [| g; j; k |] in
-  let scale = Nx.full D.Bfloat16 [| k |] 1.5 in
-  let op () =
-    P.eval ~by:"t"
-      (P.Contract
-         {
-           batch = Iarray.of_list [];
-           contracting = Iarray.of_list [ (2, 2) ];
-           acc = D.Any D.Float32;
-           out = D.Float32;
-           a;
-           b = Nx.rms_norm ~eps:1e-5 ~scale b;
-           init = None;
-           a_scale = None;
-           b_scale = None;
-           segments = Some (K.Rows { ids; a_axis = 0; b_axis = 0 });
-           sum = false;
-         })
-  in
-  let kernels = kernel_nodes (Lazy.force avx2) op in
-  let slices dt = holds dt (g * j * k) in
-  is_true ~msg:"a kernel stores the slices at float32"
-    (List.exists
-       (fun nodes ->
-         (not (sums nodes))
-         && slices Tolk.Dtype.Bfloat16 nodes
-         && slices Tolk.Dtype.Float32 nodes)
-       kernels);
-  match
-    List.filter
-      (fun nodes -> sums nodes && holds Tolk.Dtype.Bfloat16 (n * h * k) nodes)
-      kernels
-  with
-  | [ product ] ->
-      is_true ~msg:"the product reads float32 slices"
-        (slices Tolk.Dtype.Float32 product)
-  | ps -> failf "%d products" (List.length ps)
-
-(* An MXFP4 product against bfloat16 rows rounds each scaled code to
-   bfloat16, the same value, only where a tensor core takes bfloat16, so that
-   the core takes both operands: Metal's family 9 does; the host has no core,
-   where the round trip would cost a cast per element for nothing. *)
-let scaled_codes_rounded =
-  let product () =
-    let codes =
-      Nx.cast D.Float4_e2m1fn
-        (Nx.create D.Float32 [| 4; 64 |]
-           (Array.init 256 (fun i -> Float.of_int (i mod 7) /. 2.)))
-    in
-    P.eval ~by:"t"
-      (P.Contract
-         {
-           batch = Iarray.of_list [];
-           contracting = Iarray.of_list [ (1, 1) ];
-           acc = D.Any D.Float32;
-           out = D.Bfloat16;
-           a =
-             Nx.cast D.Bfloat16
-               (Nx.create D.Float32 [| 2; 64 |]
-                  (Array.init 128 (fun i -> Float.of_int (i mod 5))));
-           b = codes;
-           init = None;
-           a_scale = None;
-           b_scale =
-             Some
-               (P.Exponent (Nx.create D.Uint8 [| 4; 2 |] (Array.make 8 127)));
-           segments = None;
-           sum = false;
-         })
-  in
-  let rounded target =
-    let target = Result.get_ok (Tolk.Helpers.Target.of_string target) in
-    let rounds v =
-      Tolk.Ops.op v = Tolk.Op.Cast
-      && Tolk.Dtype.equal (Tolk.Ops.dtype v) Tolk.Dtype.Bfloat16
-      && Tolk.Ops.op (Tolk.Ops.nth v 0) = Tolk.Op.Mul
-    in
-    List.exists
-      (fun (_, sink, _) ->
-        List.exists rounds (Tolk.Ops.toposort ~calls:Skip sink))
-      (Lowered.sources ~target product)
-  in
-  group "a bfloat16 product of scaled e2m1 codes"
-    [
-      test "rounds each code on a target whose core takes bfloat16" (fun () ->
-          is_true (rounded "METAL:METAL:Apple9"));
-      test "rounds no code on the host" (fun () ->
-          is_false (rounded "CPU:CLANG:x86_64,haswell"));
-    ]
-
-(* Segmented contractions: rows whose group [1] is empty and one of which is
-   in no group; rows by groups of matrices, one in none; a pair of one group
-   and an int64 extreme; unsorted ids and an int64 extreme. *)
+(* Segmented contractions: rows whose group [1] is empty and one of which is in
+   no group; rows by groups of matrices, one in none; a pair of one group and an
+   int64 extreme; unsorted ids and an int64 extreme. *)
 let segmented_examples =
   let c = List.hd (empty (D.Any D.Float32)) in
   let ones n = Array.make n 0x3f800000L in
@@ -2403,21 +2288,28 @@ let segmented_examples =
     pair [| 1L; 0L; Int64.min_int; 0L |];
   ]
 
-let segmented_accs (D.Any d as dt) =
-  match D.kind d with
-  | D.Float when not (D.equal d D.Float64) -> [ D.Any D.Float32 ]
-  | D.Signed | D.Unsigned -> [ dt; D.Any D.Int64 ]
-  | _ -> [ dt ]
-
-let segmented_dts =
-  weigh 2 D.[ Any Float32; Any Float64 ]
-  @ weigh 1 D.[ Any Int32; Any Uint8; Any Complex64; Any Float16 ]
-
 let segmented_contractions =
-  let accs = segmented_accs in
-  prop ~count:16 ~examples:segmented_examples
+  contractions ~count:16 ~examples:segmented_examples
+    ~forms:
+      T.
+        [
+          cform f64 ~ek:[| 2 |] ~fa:[| 2; 3 |] ~fb:[| 3 |]
+            ~seg:(Rows (1, 0, [||]))
+            [| F 0; F 1; C 0 |] [| C 0; F 0 |];
+          cform i32 ~acc:i64 ~ek:[| 5 |] ~fa:[| 2 |] ~fb:[||]
+            ~seg:(Contracting (0, 3, [||]))
+            [| F 0; C 0 |] [| C 0 |];
+          cform c64 ~ek:[| 2 |] ~fa:[| 4 |] ~fb:[| 2 |] ~ta:true ~init:true
+            ~seg:(Rows (0, 0, [||]))
+            [| C 0; F 0 |] [| F 0; C 0 |];
+          cform u8 ~ek:[| 3; 2 |] ~fa:[||] ~fb:[| 2 |]
+            ~seg:(Contracting (1, 2, [||]))
+            [| C 0; C 1 |] [| C 1; F 0; C 0 |];
+          cform f16 ~acc:f32 ~eb:[| 2 |] ~ek:[| 3 |] ~fa:[| 3 |] ~fb:[| 2 |]
+            ~seg:(Rows (0, 0, [||]))
+            [| B 0; F 0; C 0 |] [| B 0; F 0; C 0 |];
+        ]
     "segmented contractions give eager's integers and hold their bound"
-    (contraction ~extras:Segmented segmented_dts accs)
     (fun c ->
       let g, n = groups c in
       let os = batches c in
@@ -2515,9 +2407,27 @@ let blocked_examples =
   [ one; two; none; long ]
 
 let blocked_contractions =
-  prop ~count:16 ~examples:blocked_examples
+  contractions ~count:16 ~examples:blocked_examples
+    ~forms:
+      T.
+        [
+          cform f64 ~ek:[| 36 |] ~fa:[| 2 |] ~fb:[||]
+            ~seg:(Contracting (0, 4, [||]))
+            [| F 0; C 0 |] [| C 0 |];
+          cform i32 ~acc:i64 ~ek:[| 24; 1 |] ~fa:[| 1 |] ~fb:[| 2 |] ~init:true
+            ~seg:(Contracting (0, 3, [||]))
+            [| C 1; F 0; C 0 |] [| C 0; C 1; F 0 |];
+          cform u8 ~acc:i64 ~ek:[| 30 |] ~fa:[| 1 |] ~fb:[| 2 |]
+            ~seg:(Contracting (0, 5, [||]))
+            [| C 0; F 0 |] [| C 0; F 0 |];
+          cform c64 ~ek:[| 28 |] ~fa:[| 2 |] ~fb:[| 1 |] ~tb:true
+            ~seg:(Contracting (0, 2, [||]))
+            [| F 0; C 0 |] [| F 0; C 0 |];
+          cform f16 ~acc:f32 ~ek:[| 40 |] ~fa:[||] ~fb:[| 2 |] ~init:true
+            ~seg:(Contracting (0, 4, [||]))
+            [| C 0 |] [| C 0; F 0 |];
+        ]
     "contracting pairs in blocks give eager's integers and hold their bound"
-    (contraction ~extras:Long segmented_dts segmented_accs)
     (fun c ->
       let g, n = groups c in
       let os = batches c in
@@ -2599,14 +2509,51 @@ let many_groups =
                  if r mod 7 = 0 then -1L else Int64.of_int (r * 31 mod 200)) ));
   }
 
+(* Forms of [Rows] past 16 rows a group, routed by comparisons at two batch
+   indices and alone, and by the search; their examples' ids crowd a group past
+   64 rows, leave one empty, which takes a block of padding alone, and leave
+   rows in no group, with a part-full block at each batch index. *)
+let blocked_rows_examples =
+  let rows = Rows (0, 0, [||]) in
+  T.
+    [
+      ones_on
+        ~id:(fun b r ->
+          if b = 0 then if r mod 10 = 9 then -1L else 0L
+          else if r < 50 then 0L
+          else -1L)
+        (cform f32 ~eb:[| 2 |] ~ek:[| 8 |] ~fa:[| 100 |] ~fb:[| 1 |] ~seg:rows
+           [| B 0; F 0; C 0 |] [| B 0; C 0; F 0 |]);
+      ones_on
+        ~id:(fun _ r -> if r mod 7 = 0 then -1L else 0L)
+        (cform f64 ~ek:[| 6 |] ~fa:[| 280 |] ~fb:[| 2 |] ~seg:rows
+           [| F 0; C 0 |] [| F 0; C 0 |]);
+      ones_on
+        ~id:(fun _ r -> Int64.of_int (r mod 3))
+        (cform i32 ~acc:i64 ~eb:[| 2 |] ~ek:[| 10; 2 |] ~fa:[| 72; 2 |]
+           ~fb:[| 2 |] ~seg:rows
+           [| B 0; F 0; C 0; F 1; C 1 |]
+           [| C 1; B 0; F 0; C 0 |]);
+      ones_on
+        ~id:(fun _ r -> Int64.of_int (r mod 2))
+        (cform f16 ~acc:f32 ~ek:[| 9 |] ~fa:[| 60 |] ~fb:[| 2 |] ~ta:true
+           ~init:true ~seg:rows [| F 0; C 0 |] [| C 0; F 0 |]);
+      ones_on
+        ~id:(fun _ r -> if r mod 5 = 4 then -1L else Int64.of_int (r mod 2))
+        (cform u8 ~acc:i64 ~ek:[| 4 |] ~fa:[| 70 |] ~fb:[| 2 |] ~seg:rows
+           [| F 0; C 0 |] [| F 0; C 0 |]);
+      ones_on
+        ~id:(fun _ r -> Int64.of_int (r mod 2))
+        (cform c64 ~ek:[| 3 |] ~fa:[| 50 |] ~fb:[| 2 |] ~ta:true ~seg:rows
+           [| F 0; C 0 |] [| C 0; F 0 |]);
+    ]
+
 (* Rows of 24 a group or more, which the lowering routes into blocks of 64,
    of 8 on the host: groups past 64 rows, empty groups and rows in no
    group. *)
 let blocked_rows =
-  prop ~count:24
-    "rows in blocks give eager's integers and hold their bound"
-    (contraction ~extras:Long_rows segmented_dts segmented_accs)
-    (fun c ->
+  contractions ~crowd:true ~drop:true ~count:20 ~examples:blocked_rows_examples
+    "rows in blocks give eager's integers and hold their bound" (fun c ->
       let g, n = groups c in
       let os = batches c in
       let count o e =
@@ -2642,13 +2589,44 @@ let blocked_rows =
              os);
       contract_check c)
 
+(* Forms of [Rows] below 16 rows a group: fewer rows than groups, and 1 to 5 and
+   5 to 16 a group, routed; their examples' ids leave a group empty and rows in
+   no group. *)
+let few_rows_examples =
+  let rows = Rows (0, 0, [||]) in
+  T.
+    [
+      ones_on
+        ~id:(fun _ r -> [| 0L; 4L; -1L |].(r))
+        (cform f32 ~ek:[| 6 |] ~fa:[| 3 |] ~fb:[| 5 |] ~seg:rows [| F 0; C 0 |]
+           [| F 0; C 0 |]);
+      ones_on
+        ~id:(fun _ r -> Int64.of_int (r mod 5))
+        (cform f64 ~ek:[| 8 |] ~fa:[| 9 |] ~fb:[| 4 |] ~seg:rows [| F 0; C 0 |]
+           [| C 0; F 0 |]);
+      ones_on
+        ~id:(fun _ r -> Int64.of_int (r mod 2))
+        (cform i32 ~acc:i64 ~ek:[| 7; 2 |] ~fa:[| 40 |] ~fb:[| 3 |] ~seg:rows
+           [| F 0; C 0; C 1 |] [| C 1; F 0; C 0 |]);
+      ones_on
+        ~id:(fun _ r -> if r = 0 then 1L else 0L)
+        (cform c64 ~ek:[| 6 |] ~fa:[| 2; 2 |] ~fb:[| 2; 3 |] ~seg:rows
+           [| F 0; C 0; F 1 |] [| F 0; F 1; C 0 |]);
+      ones_on
+        ~id:(fun _ r -> Int64.of_int (r mod 7))
+        (cform f16 ~acc:f32 ~ek:[| 10 |] ~fa:[| 70 |] ~fb:[| 6 |] ~tb:true
+           ~seg:rows [| F 0; C 0 |] [| F 0; C 0 |]);
+      ones_on
+        ~id:(fun _ r -> Int64.of_int (r mod 3))
+        (cform u8 ~acc:i64 ~ek:[| 5 |] ~fa:[| 20 |] ~fb:[| 3 |] ~seg:rows
+           [| F 0; C 0 |] [| C 0; F 0 |]);
+    ]
+
 (* Rows of fewer than 16 a group: below one a group each reads its own
    slice, above it the lowering routes them into blocks of 4 or 8 rows. *)
 let few_rows =
-  prop ~count:32
-    "rows in small blocks give eager's integers and hold their bound"
-    (contraction ~extras:Few_rows segmented_dts segmented_accs)
-    (fun c ->
+  contractions ~drop:true ~count:27 ~examples:few_rows_examples
+    "rows in small blocks give eager's integers and hold their bound" (fun c ->
       let g, n = groups c in
       let os = batches c in
       let count o e =
@@ -2881,6 +2859,10 @@ let moments_overflow () =
    or AVX-512's, the unit loads less than with AVX2's 16, while the segmented
    forms, whose rows share no tile, load the same. *)
 
+let avx2 =
+  lazy
+    (Result.get_ok (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,haswell"))
+
 type form = Plain | Rows_of | Contracting_of
 
 (* Where [scaled], [W] is float4_e2m1fn with a code scale per row of [k], as
@@ -3097,16 +3079,12 @@ let cases =
 
    A cotangent read by several products sums them, as the input of three
    projections takes [dY_q·W_qᵀ + dY_k·W_kᵀ + dY_v·W_vᵀ]: bfloat16 [T × d]
-   cotangents by bfloat16 [d × d] weights, each product rounded to bfloat16
-   and the three added in bfloat16. sm_89's tensor core takes bfloat16
-   products, one a kernel, so there each product runs in a kernel of its own
-   and takes the core; the host has no core, and the three share one kernel
-   there as they did. Kept apart on the host, as cores the host does not have
-   would keep them, they compute the one kernel's bits, from initial values
-   too. Products of sums of different lengths keep apart too; a product of
-   a product, products of 8 rows, which stream without a core, and float32
-   products, which sm_89's cores take only under TF32, are scheduled as
-   without cores. *)
+   cotangents by bfloat16 [d × d] weights, each product rounded to bfloat16 and
+   the three added in bfloat16. sm_89's tensor core takes bfloat16 products, one
+   a kernel, so there each product runs in a kernel of its own; the host has no
+   core, and the three share one kernel there. Kept apart on the host, as
+   sm_89's cores would keep them, they compute the one kernel's bits, from
+   initial values too. *)
 
 let draw dt i s = Nx.cast dt (Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s)
 let pat = Nx.Pattern.v "t i, o i -> t o | i"
@@ -3135,124 +3113,30 @@ let sum_of_products_from dt t d () =
     | [ q; k; v ] -> Nx.add (Nx.add q k) v
     | _ -> assert false
 
-(* [x·W₁ᵀ + y·W₂ᵀ], sums of 440 and of 256 terms. *)
-let unequal_sums () =
-  let bf = Nx.bfloat16 in
-  let x = draw bf 1 [| 256; 440 |] and y = draw bf 2 [| 256; 256 |]
-  and w1 = draw bf 3 [| 128; 440 |] and w2 = draw bf 4 [| 128; 256 |] in
-  fun () -> Nx.add (Nx.contract bf pat x w1) (Nx.contract bf pat y w2)
-
-(* [(x·W₁ᵀ)·W₂ᵀ]: the second product reads the first. *)
-let product_of_product () =
-  let bf = Nx.bfloat16 in
-  let x = draw bf 1 [| 64; 40 |]
-  and w1 = draw bf 3 [| 40; 40 |] and w2 = draw bf 4 [| 40; 40 |] in
-  fun () -> Nx.contract bf pat (Nx.contract bf pat x w1) w2
-
-let sm_89 =
-  Result.get_ok (Tolk.Helpers.Target.of_string "CUDA:CUDA:sm_89")
-
+let sm_89 = Result.get_ok (Tolk.Helpers.Target.of_string "CUDA:CUDA:sm_89")
 let sm_89_cores = Tolk.Heuristic.cores (Tolk.Cstyle.without_compiler sm_89)
 
-let reduces ast =
-  List.length
-    (List.filter
-       (fun u -> Tolk.Op.equal (Tolk.Ops.op u) Tolk.Op.Reduce)
-       (Tolk.Ops.toposort ~calls:Skip ast))
-
-let mentions sub s =
-  let n = String.length sub in
-  let rec go i =
-    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
-  in
-  go 0
+(* [apart f] checks that [f] kept apart as sm_89's cores keep it computes the
+   bits of [f] in one kernel, both unoptimized: three kernels and one, so the
+   two schedules compared differ. *)
+let apart f () =
+  let cores = [ ("CPU", sm_89_cores) ] in
+  equal ~msg:"kernels apart" int 3 (Lowered.kernels ~cores f);
+  equal ~msg:"kernels together" int 1 (Lowered.kernels f);
+  Tolk.Setting.context
+    [ Tolk.Setting.B (Tolk.Setting.noopt, true) ]
+    (fun () ->
+      let bits x = Array.map Int64.bits_of_float x in
+      equal (array int64) (bits (Lowered.run f)) (bits (Lowered.run ~cores f)))
 
 let sums_of_products =
   group "sums of products"
     [
-      test "on sm_89 each product of a sum of three takes a core of its own"
-        (fun () ->
-          let ks =
-            Lowered.sources ~target:sm_89
-              (sum_of_products Nx.bfloat16 4096 440 ())
-          in
-          equal ~msg:"kernels" int 3 (List.length ks);
-          List.iter
-            (fun (name, ast, src) ->
-              equal ~msg:(name ^ " reductions") int 1 (reduces ast);
-              is_true ~msg:(name ^ " takes a core") (mentions "__WMMA_" src))
-            ks);
-      test "on sm_89 products of sums of 440 and 256 terms keep apart"
-        (fun () ->
-          let ks = Lowered.sources ~target:sm_89 (unequal_sums ()) in
-          equal ~msg:"kernels" int 2 (List.length ks);
-          List.iter
-            (fun (name, _, src) ->
-              is_true ~msg:(name ^ " takes a core") (mentions "__WMMA_" src))
-            ks);
-      test "on sm_89 a product of a product keeps the kernels of no core"
-        (fun () ->
-          let f = product_of_product () in
-          let kernels () = List.length (Lowered.sources ~target:sm_89 f) in
-          equal int
-            (Tolk.Setting.context
-               [ Tolk.Setting.B (Tolk.Setting.use_tc, 0) ]
-               kernels)
-            (kernels ()));
-      test "on sm_89 products of 8 rows, which take no core, share one kernel"
-        (fun () ->
-          match
-            Lowered.sources ~target:sm_89
-              (sum_of_products Nx.bfloat16 8 440 ())
-          with
-          | [ (_, ast, _) ] -> equal ~msg:"reductions" int 3 (reduces ast)
-          | ks -> failf "%d kernels" (List.length ks));
-      test "on sm_89 float32 products, which no core takes, share one kernel"
-        (fun () ->
-          match
-            Lowered.sources ~target:sm_89
-              (sum_of_products Nx.float32 64 40 ())
-          with
-          | [ (_, ast, _) ] -> equal ~msg:"reductions" int 3 (reduces ast)
-          | ks -> failf "%d kernels" (List.length ks));
-      test "on the host the products of a sum of three share one kernel"
-        (fun () ->
-          let host =
-            Result.get_ok
-              (Tolk.Helpers.Target.of_string "CPU:CLANG:x86_64,x86-64")
-          in
-          match
-            Lowered.sources ~target:host (sum_of_products Nx.bfloat16 64 40 ())
-          with
-          | [ (_, ast, _) ] -> equal ~msg:"reductions" int 3 (reduces ast)
-          | ks -> failf "%d kernels" (List.length ks));
       test "products kept apart on the host compute the one kernel's bits"
-        (fun () ->
-          let f = sum_of_products Nx.bfloat16 64 40 () in
-          let cores = [ ("CPU", sm_89_cores) ] in
-          equal ~msg:"kernels apart" int 3 (Lowered.kernels ~cores f);
-          equal ~msg:"kernels together" int 1 (Lowered.kernels f);
-          Tolk.Setting.context
-            [ Tolk.Setting.B (Tolk.Setting.noopt, true) ]
-            (fun () ->
-              let bits x = Array.map Int64.bits_of_float x in
-              equal (array int64)
-                (bits (Lowered.run f))
-                (bits (Lowered.run ~cores f))));
+        (apart (sum_of_products Nx.bfloat16 64 40 ()));
       test
-        "products from initial values kept apart compute the one kernel's \
-         bits" (fun () ->
-          let f = sum_of_products_from Nx.bfloat16 64 40 () in
-          let cores = [ ("CPU", sm_89_cores) ] in
-          equal ~msg:"kernels apart" int 3 (Lowered.kernels ~cores f);
-          equal ~msg:"kernels together" int 1 (Lowered.kernels f);
-          Tolk.Setting.context
-            [ Tolk.Setting.B (Tolk.Setting.noopt, true) ]
-            (fun () ->
-              let bits x = Array.map Int64.bits_of_float x in
-              equal (array int64)
-                (bits (Lowered.run f))
-                (bits (Lowered.run ~cores f))));
+        "products from initial values kept apart compute the one kernel's bits"
+        (apart (sum_of_products_from Nx.bfloat16 64 40 ()));
     ]
 
 let () =
@@ -3278,45 +3162,6 @@ let () =
              float_contractions;
              complex_contractions;
              scaled_contractions;
-             scaled_codes_rounded;
-             group "GGUF's MXFP4 blocks"
-               [
-                 test
-                   "by one row, in runs of 4 rows on an AVX2 host, decode \
-                    their codes whole"
-                   blocks_decode_whole;
-               ];
-             test
-               "routed MXFP4 rows on an AVX2 host decode their slices in the \
-                tile below 3 rows an expert, else once an expert"
-               routed_slices;
-             group "on an AVX2 host"
-               [
-                 test
-                   "a 512-row bfloat16 product stores its rows once, at \
-                    float32"
-                   rows_entered_once;
-                 test
-                   "a bfloat16 product of one row of an argument converts it \
-                    in the tile"
-                   argument_row_in_tile;
-                 test
-                   "a bfloat16 product of one normed row converts it in the \
-                    tile, the weights streamed"
-                   normed_row_streamed;
-                 test
-                   "64 rows of an argument by MXFP4 weights are stored once \
-                    at float32"
-                   argument_rows_decoded;
-                 test
-                   "a Q8_0 product of one normed row has the norm store it \
-                    at float32"
-                   normed_row_stored;
-                 test
-                   "a routed bfloat16 product stores its normed slices once, \
-                    at float32, where they have more reuse than its rows"
-                   slices_entered_once;
-               ];
              segmented_contractions;
              blocked_contractions;
              blocked_rows;
