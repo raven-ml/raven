@@ -255,6 +255,7 @@ let round_trips =
   group "round trips"
     [
       prop "the section's encoder's stream decodes to its input"
+        ~examples:(List.map (fun r -> (r, List.hd encodings)) every_kind)
         (Gen.pair recipe encoding)
         (fun (r, (_, last, flush)) ->
           let s = build r in

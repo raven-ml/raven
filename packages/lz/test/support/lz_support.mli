@@ -83,12 +83,18 @@ val lengths : int list
     16, 19, 258, 259, 273, 65535 and 65536. *)
 
 val recipe : recipe Windtrap.Gen.t
-(** [recipe] draws every recipe up to a few hundred KiB: empty, one byte,
-    runs, noise, corpus prefixes, a match at each of {!distances} with
-    each of {!lengths}, and concatenations of these. It draws each
-    constructor with probability at least 0.05, so a [cover] of one holds
-    over 100 cases from any seed with probability above 0.99. Inputs above
-    4 MiB are too slow to draw: pass them as [~examples]. *)
+(** [recipe] draws every recipe up to a few hundred KiB: empty, one byte, runs,
+    noise, corpus prefixes, a match at each of {!distances} with each of
+    {!lengths}, and concatenations of these. It draws each constructor with
+    probability about 1/7, so a [cover] of one misses about one run in 5 million
+    at 100 cases: a law that covers them takes {!every_kind} as [~examples].
+    Inputs above 4 MiB are too slow to draw: pass them as [~examples]. *)
+
+val every_kind : recipe list
+(** [every_kind] is one recipe of each constructor {!recipe} draws, the corpus
+    prefix past 128 KiB + 1 (above Zstandard's block and two of deflate's
+    windows), for [~examples]: a law's covers of a constructor, of the empty
+    input or of an input past a block hold on every run. *)
 
 val large : recipe list
 (** Inputs past the formats' size limits, for [~examples]: 128 KiB + 1
@@ -116,8 +122,11 @@ type short =
 val short : short Windtrap.Gen.t
 (** [short] draws [Short 1] and [Part 0], an empty destination, each with
     probability 1/6, then [Short] of 2 to 16 bytes and [Part] of 1 to 999
-    thousandths: a [cover] of either edge holds over 100 cases from any
-    seed. *)
+    thousandths. A [cover] of either edge misses about one run in 10{^ 8} at 100
+    cases: a law that covers them takes {!short_edges} in its [~examples]. *)
+
+val short_edges : short list
+(** [short_edges] is [[Short 1; Part 0]]. *)
 
 val capacity : int -> short -> int
 (** [capacity k s] is the size of the destination [s] describes for an

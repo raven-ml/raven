@@ -224,6 +224,20 @@ let recipe =
     (frequency
        [ (6, leaf); (1, map (fun rs -> Concat rs) (list ~size:(int_range 2 4) leaf)) ])
 
+let every_kind =
+  [
+    Empty;
+    Byte 'a';
+    Run ('r', 1000);
+    Noise (7, 3000);
+    Corpus (Columns, (128 * kib) + 1);
+    Match { distance = 1024; length = 258; seed = 3 };
+    Concat
+      [
+        Byte 'b'; Match { distance = 8; length = 19; seed = 5 }; Noise (9, 100);
+      ];
+  ]
+
 let large =
   [
     Corpus (Text, (128 * kib) + 1);
@@ -525,6 +539,7 @@ let short =
          (2, map (fun p -> Part p) (int_range 1 999));
        ])
 
+let short_edges = [ Short 1; Part 0 ]
 let capacity k = function Short d -> max 0 (k - d) | Part p -> k * p / 1000
 
 (* Checksum paths *)

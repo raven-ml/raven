@@ -137,6 +137,14 @@ let large =
            [ 1; 6; 9 ])
        Lz_support.large)
 
+(* One input of each kind [cover_input] covers, the [i]th in format [i mod 3] at
+   level [i + 1], so that each kind, each format and each class of levels holds
+   on every run. *)
+let kinds =
+  List.mapi
+    (fun i r -> (r, List.nth formats (i mod 3), i + 1))
+    Lz_support.every_kind
+
 (* Step sizes: no bytes, short, and around the lookahead and the quota. *)
 let cuts =
   Gen.list ~size:(Gen.int_range 0 8)
@@ -151,7 +159,9 @@ let cuts =
 (* Round trips *)
 
 let round_trip =
-  prop ~examples:large "decode (encode x) = x, whole and stepped" placed
+  prop
+    ~examples:(List.map (fun k -> (k, 0)) kinds @ large)
+    "decode (encode x) = x, whole and stepped" placed
     (fun ((r, f, level), offset) ->
       let s = Lz_support.build r in
       cover_input r s f level;
@@ -164,7 +174,7 @@ let round_trip =
       equal Lz_support.decoded (Ok s) (decode_stepped f z))
 
 let strings =
-  prop "decode (encode_string x) = x"
+  prop ~examples:kinds "decode (encode_string x) = x"
     (Gen.triple Lz_support.recipe format level) (fun (r, f, level) ->
       let s = Lz_support.build r in
       cover_input r s f level;
@@ -174,7 +184,9 @@ let strings =
 (* The bound *)
 
 let bound =
-  prop ~examples:large "a destination of bound n holds the stream" placed
+  prop
+    ~examples:(List.map (fun k -> (k, 0)) kinds @ large)
+    "a destination of bound n holds the stream" placed
     (fun ((r, f, level), offset) ->
       let s = Lz_support.build r in
       cover_input r s f level;
@@ -185,6 +197,10 @@ let bound =
 
 let short =
   prop "a destination short of the stream is refused"
+    ~examples:
+      (List.concat_map
+         (fun e -> List.map (fun k -> ((k, 0), e)) kinds)
+         Lz_support.short_edges)
     (Gen.pair placed Lz_support.short)
     (fun (((r, f, level), offset), short) ->
       let s = Lz_support.build r in
@@ -227,7 +243,10 @@ let noise_bound =
 
 let cut_free =
   prop
-    ~examples:(List.map (fun ((r, f, l), _) -> ((r, f, l, [ 777 ]), [])) large)
+    ~examples:
+      (List.map
+         (fun (r, f, l) -> ((r, f, l, [ 777 ]), []))
+         (kinds @ List.map fst large))
     "any cut into steps writes encode's bytes"
     (Gen.pair (Gen.quad Lz_support.recipe format level cuts) cuts)
     (fun ((r, f, level, a), b) ->
@@ -241,7 +260,9 @@ let cut_free =
 
 let stepped_round_trip =
   prop "a stepped encoder's stream decodes"
-    (Gen.quad Lz_support.recipe format level cuts) (fun (r, f, level, cuts) ->
+    ~examples:(List.map (fun (r, f, l) -> (r, f, l, [])) kinds)
+    (Gen.quad Lz_support.recipe format level cuts)
+    (fun (r, f, level, cuts) ->
       let s = Lz_support.build r in
       cover_input r s f level;
       equal Lz_support.decoded (Ok s)
@@ -333,7 +354,9 @@ let streams =
 
 let paths =
   prop "every path writes the bytes of Lz.Deflate.encode"
-    (Gen.pair Lz_support.recipe level) (fun (r, level) ->
+    ~examples:(List.map (fun (r, _, l) -> (r, l)) kinds)
+    (Gen.pair Lz_support.recipe level)
+    (fun (r, level) ->
       let s = Lz_support.build r in
       cover "the hash table, level 1" (level = 1);
       cover "hash chains, levels 2 to 9" (level >= 2);

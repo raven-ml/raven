@@ -211,8 +211,15 @@ let far_offsets =
       let raw = meaning es in
       equal decoded (Ok raw) (decode ~cap:(String.length raw) (block es)))
 
+(* A copy over its own output from each distance under 16, which the drawn
+   blocks reach one case in six or seven. *)
+let overlapping =
+  Literal (noise 70)
+  :: List.init 15 (fun i -> Copy { kind = 2; offset = i + 1; length = i + 2 })
+
 let law_blocks =
-  prop "a block decodes to what its elements mean" elements (fun es ->
+  prop "a block decodes to what its elements mean" ~examples:[ overlapping ]
+    elements (fun es ->
       List.iter
         (function
           | Literal s ->
@@ -239,7 +246,8 @@ let law_blocks =
 (* Round trips *)
 
 let law_round_trip =
-  prop "decode (encode x) = x" ~examples:large recipe (fun r ->
+  prop "decode (encode x) = x" ~examples:(Lz_support.every_kind @ large) recipe
+    (fun r ->
       let x = build r in
       let n = String.length x in
       cover "empty" (n = 0);
@@ -256,7 +264,8 @@ let law_round_trip =
         x)
 
 let law_strings =
-  prop "decode (encode_string x) = x" recipe (fun r ->
+  prop "decode (encode_string x) = x" ~examples:Lz_support.every_kind recipe
+    (fun r ->
       let x = build r in
       cover "empty" (x = "");
       let z = Lz.Snappy.encode_string x in
@@ -572,7 +581,12 @@ let law_reference =
     let+ s, how = mutate (block ~n es) es in
     (s, max n total, how)
   in
-  prop "any bytes decode as the reference decodes them"
+  (* A literal byte changed, which a drawn case is one time in seven. *)
+  let changed =
+    let s = block [ Literal "abcd" ] in
+    (set_byte s (String.length s - 1) (Char.code 'e'), 4, `Any)
+  in
+  prop "any bytes decode as the reference decodes them" ~examples:[ changed ]
     (Gen.with_pp
        (fun ppf (s, _, _) -> Format.fprintf ppf "<%d bytes>" (String.length s))
        gen)

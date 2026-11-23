@@ -77,6 +77,10 @@ let decode_seen c ?cap s =
 let placed = Gen.pair Lz_support.recipe (Gen.int_range 0 7)
 let large = List.map (fun r -> (r, 1)) Lz_support.large
 
+(* One input of each kind [cover_recipe] covers, so that each holds on every
+   run. *)
+let kinds = List.map (fun r -> (r, 0)) Lz_support.every_kind
+
 let cover_recipe r s =
   let open Lz_support in
   cover "empty" (s = "");
@@ -89,7 +93,8 @@ let cover_recipe r s =
 (* Laws *)
 
 let round_trip c =
-  prop ~examples:large "decode (encode x) = x" placed (fun (r, offset) ->
+  prop ~examples:(kinds @ large) "decode (encode x) = x" placed
+    (fun (r, offset) ->
       let s = Lz_support.build r in
       cover_recipe r s;
       let n = String.length s in
@@ -104,8 +109,8 @@ let round_trip c =
           equal Lz_support.decoded (Ok s) (Ok (Lz_support.to_string out)))
 
 let bound c =
-  prop ~examples:large "a destination of bound n holds the encoding" placed
-    (fun (r, offset) ->
+  prop ~examples:(kinds @ large) "a destination of bound n holds the encoding"
+    placed (fun (r, offset) ->
       let s = Lz_support.build r in
       cover_recipe r s;
       let g = guarded (c.bound (String.length s)) in
@@ -113,8 +118,8 @@ let bound c =
       untouched g)
 
 let short c =
-  prop "a destination one byte short of the encoding is refused" placed
-    (fun (r, offset) ->
+  prop ~examples:kinds "a destination one byte short of the encoding is refused"
+    placed (fun (r, offset) ->
       let s = Lz_support.build r in
       cover_recipe r s;
       let k = String.length (encode c s) in
@@ -126,7 +131,8 @@ let short c =
         (c.encode src (Lz_support.create k)))
 
 let strings c =
-  prop "decode (encode_string x) = x" Lz_support.recipe (fun r ->
+  prop ~examples:Lz_support.every_kind "decode (encode_string x) = x"
+    Lz_support.recipe (fun r ->
       let s = Lz_support.build r in
       cover_recipe r s;
       let z = c.encode_string s in
@@ -507,7 +513,9 @@ let vendor =
 
 let frames =
   prop "decode (encode a ^ skippable ^ encode b) = a ^ b"
-    (Gen.pair Lz_support.recipe Lz_support.recipe) (fun (a, b) ->
+    ~examples:[ (Lz_support.Empty, Lz_support.Byte 'a') ]
+    (Gen.pair Lz_support.recipe Lz_support.recipe)
+    (fun (a, b) ->
       let a = Lz_support.build a and b = Lz_support.build b in
       cover "an empty first frame" (a = "");
       let f = encode frame a ^ skippable "between" ^ encode frame b in

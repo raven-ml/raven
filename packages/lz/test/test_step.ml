@@ -237,14 +237,14 @@ let most_steps = 1000
 let spread n sizes =
   List.map (fun s -> if s = 0 then 0 else s + (n / most_steps)) sizes
 
-(* [long fmt] is a stream in the format's wrapper (RFC 1950, RFC 1952)
-   of 40,000 bytes of text in a stored block (RFC 1951, 3.2.4), then a
-   block of fixed codes (3.2.6) of 1100 matches of 258 bytes at 32 KiB,
-   whose sources follow each other: 323,800 bytes from about 44 KB, for
-   the deflate family, whose goldens decode to at most 200,000 bytes,
-   short of a run. A slice of a few KiB fills a run, and wherever a step
-   goes back to its buffer's start a match reads across the point. *)
-let long fmt =
+(* [long_stream fmt] is the decoded bytes and a stream, in the format's wrapper
+   (RFC 1950, RFC 1952), of 40,000 bytes of text in a stored block (RFC 1951,
+   3.2.4), then a block of fixed codes (3.2.6) of 1100 matches of 258 bytes at
+   32 KiB, whose sources follow each other: 323,800 bytes from about 44 KB, for
+   the deflate family, whose goldens decode to at most 200,000 bytes, short of a
+   run. A slice of a few KiB fills a run, and wherever a step goes back to its
+   buffer's start a match reads across the point. *)
+let long_stream fmt =
   let text = Lz_support.corpus Text 40_000 in
   let out = Buffer.create 330_000 and b = Buffer.create 48_000 in
   Buffer.add_string out text;
@@ -292,13 +292,18 @@ let long fmt =
       Buffer.add_int32_le b (Int32.of_int (Lz.Crc32.string raw));
       Buffer.add_int32_le b (Int32.of_int (String.length raw))
   | _ -> ());
+  (raw, Buffer.contents b)
+
+(* [long fmt] is [long_stream fmt] as a golden, made when a case reads it. *)
+let long fmt =
+  let made = lazy (long_stream fmt) in
   {
     Lz_support.file = "long." ^ fmt.name;
     codec = fmt.name;
     vendor = "test_step";
     members = 1;
-    raw = Lazy.from_val raw;
-    data = Lazy.from_val (Buffer.contents b);
+    raw = lazy (fst (Lazy.force made));
+    data = lazy (snd (Lazy.force made));
   }
 
 (* For Zstandard, four goldens' frames in one stream, 800,000 bytes: its
@@ -360,8 +365,32 @@ let case fmt =
 (* Steps equal the whole-buffer decode, and on the way Truncated, errors
    and a stream's end come as a step's doc states *)
 
+(* A case for each cover of [whole_equals_steps] that drawn cases reach less
+   than one time in five: a run filled before its slice ends, a second stream,
+   bytes after the stream, an empty slice, a failure after a step that took
+   bytes, a malformed first byte. *)
+let examples fmt =
+  let ext =
+    match fmt.name with
+    | "deflate" -> "deflate6"
+    | "zlib" -> "zlib6"
+    | "gzip" -> "gz9"
+    | _ -> "zst3"
+  in
+  let text = golden ("text_100." ^ ext) in
+  let longer = if fmt.name = "zstd" then Lazy.force long_zstd else long fmt in
+  let at change sizes ends = { golden = text; change; sizes; ends } in
+  [
+    { golden = longer; change = Same; sizes = [ 1 lsl 20 ]; ends = Within };
+    at (Then (golden ("columns_100." ^ ext))) [ 7 ] Within;
+    at (Append "tail") [ 7 ] Within;
+    at Same [ 0; 7 ] After;
+    at (Cut 40) [ 7 ] Within;
+    at (Replace (0, '\x07')) [ 7 ] Within;
+  ]
+
 let whole_equals_steps fmt =
-  prop fmt.name (case fmt) (fun c ->
+  prop fmt.name ~examples:(examples fmt) (case fmt) (fun c ->
       let input = apply c in
       let t = walk fmt (fmt.make ()) input ~sizes:c.sizes ~ends:c.ends in
       let got =

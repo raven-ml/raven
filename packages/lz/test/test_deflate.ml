@@ -669,7 +669,14 @@ let apply change data =
   | Cut i -> String.sub data 0 (i mod n)
 
 let steps =
-  prop "a stepped decode equals the whole-buffer decode" case
+  (* A stream cut short, which drawn cases reach one time in six. *)
+  let cut =
+    let golden =
+      List.find (fun g -> g.Lz_support.file = "text_100.deflate6") small_goldens
+    in
+    { golden; change = Cut 10; slices = [ 1 ] }
+  in
+  prop "a stepped decode equals the whole-buffer decode" ~examples:[ cut ] case
     (fun { golden; change; slices } ->
       let c = golden.Lz_support.codec in
       let data = apply change (Lazy.force golden.Lz_support.data) in

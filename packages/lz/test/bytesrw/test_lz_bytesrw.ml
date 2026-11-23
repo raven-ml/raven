@@ -84,6 +84,13 @@ let golden name =
 
 let pp_golden ppf g = Format.pp_print_string ppf g.Lz_support.file
 
+(* A golden of 100 bytes of text in each format. *)
+let text_100 = function
+  | "deflate" -> golden "text_100.deflate6"
+  | "zlib" -> golden "text_100.zlib6"
+  | "gzip" -> golden "text_100.gz9"
+  | _ -> golden "text_100.zst3"
+
 (* Slice lengths: one byte, a few, odd, and up to past every golden. *)
 let lengths = [ 1; 2; 3; 7; 64; 4 * kib; 64 * kib; 1024 * kib ]
 
@@ -270,7 +277,12 @@ let mutations fmt =
         (option (pair nat (int_range 0 255)))
         length length)
   in
-  prop fmt.name gen (fun (g, mutation, cut, most) ->
+  (* Slices and slice lengths of one byte, which drawn cases reach one time in
+     eight or nine. *)
+  prop fmt.name
+    ~examples:[ (text_100 fmt.name, None, 1, 1) ]
+    gen
+    (fun (g, mutation, cut, most) ->
       let data =
         match mutation with
         | None -> data g
@@ -322,13 +334,6 @@ let raised f =
   match f () with
   | _ -> failf "no error"
   | exception Bytes.Stream.Error err -> Bytes.Stream.error_message err
-
-(* A golden of 100 bytes of text in each format. *)
-let text_100 = function
-  | "deflate" -> golden "text_100.deflate6"
-  | "zlib" -> golden "text_100.zlib6"
-  | "gzip" -> golden "text_100.gz9"
-  | _ -> golden "text_100.zst3"
 
 (* An error's position is its byte's, in the reader's positions or the filtering
    writer's, and every later read or write raises it again. *)
@@ -503,7 +508,16 @@ let round_trip fmt =
              (recipe, level, spread n cut, spread n most))
            (quad Lz_support.recipe (int_range lo hi) cut_length length)))
   in
-  prop fmt.name gen (fun (recipe, level, cut, most) ->
+  (* Each kind of input once, the empty one and one past 64 KiB among them, in
+     slices of one byte where that stays below [most_slices]. *)
+  let kinds =
+    List.map
+      (fun r ->
+        let n = Lz_support.length r in
+        (r, lo, spread n 1, spread n 1))
+      Lz_support.every_kind
+  in
+  prop fmt.name ~examples:kinds gen (fun (recipe, level, cut, most) ->
       let s = Lz_support.build recipe in
       let stream = encoded fmt ~level s in
       let got, _ = read_through (fmt.compress_reads ~level ()) ~cut ~most s in

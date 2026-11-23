@@ -196,6 +196,12 @@ let large =
       at block levels @ at frame levels @ at longest [ 9; 10; 11; 12 ]
   | _ -> invalid_arg "test_zstd_enc: Lz_support.large"
 
+(* One input of each kind [cover_input] covers, the [i]th at level [i + 1], so
+   that each kind and the levels below 8, whose classes are drawn least, hold on
+   every run. The corpus is past a block, 128 KiB + 1, so the edges [cover_edge]
+   covers hold too. *)
+let kinds = List.mapi (fun i r -> (r, i + 1)) Lz_support.every_kind
+
 (* Step sizes: below a byte's worth, short, and around the block and the
    quota. *)
 let cuts =
@@ -210,7 +216,9 @@ let cuts =
 (* Round trips *)
 
 let round_trip =
-  prop ~examples:large "decode (encode x) = x, whole and stepped" placed
+  prop
+    ~examples:(List.map (fun (r, l) -> (r, l, 0)) kinds @ large)
+    "decode (encode x) = x, whole and stepped" placed
     (fun (r, level, offset) ->
       let s = Lz_support.build r in
       cover_input r s level;
@@ -225,8 +233,8 @@ let round_trip =
       equal Lz_support.decoded (Ok s) (decode_stepped z))
 
 let strings =
-  prop "decode (encode_string x) = x" (Gen.pair Lz_support.recipe level)
-    (fun (r, level) ->
+  prop ~examples:kinds "decode (encode_string x) = x"
+    (Gen.pair Lz_support.recipe level) (fun (r, level) ->
       let s = Lz_support.build r in
       cover_input r s level;
       equal Lz_support.decoded (Ok s)
@@ -234,7 +242,9 @@ let strings =
 
 let stepped_round_trip =
   prop "a stepped encoder's frame decodes, whole and stepped"
-    (Gen.triple Lz_support.recipe level cuts) (fun (r, level, cuts) ->
+    ~examples:(List.map (fun (r, l) -> (r, l, [])) kinds)
+    (Gen.triple Lz_support.recipe level cuts)
+    (fun (r, level, cuts) ->
       let s = Lz_support.build r in
       cover_input r s level;
       let z = steps ~level ~cuts s in
@@ -244,7 +254,9 @@ let stepped_round_trip =
 (* The bound *)
 
 let bound =
-  prop ~examples:large "a destination of bound n holds the frame" edged
+  prop
+    ~examples:(List.map (fun (r, l) -> (r, l, 0)) kinds @ large)
+    "a destination of bound n holds the frame" edged
     (fun (r, level, offset) ->
       let s = Lz_support.build r in
       cover_input r s level;
@@ -257,6 +269,10 @@ let bound =
 
 let short =
   prop "a destination short of the frame is refused"
+    ~examples:
+      (List.concat_map
+         (fun e -> List.map (fun (r, l) -> ((r, l, 0), e)) kinds)
+         Lz_support.short_edges)
     (Gen.pair edged Lz_support.short)
     (fun ((r, level, offset), short) ->
       let s = Lz_support.build r in
@@ -278,6 +294,7 @@ let short =
 
 let cut_free =
   prop "any cut into steps writes one frame"
+    ~examples:(List.map (fun (r, l) -> ((r, l, []), [])) kinds)
     (Gen.pair (Gen.triple Lz_support.recipe level cuts) cuts)
     (fun ((r, level, a), b) ->
       let s = Lz_support.build r in
@@ -346,7 +363,7 @@ let edges =
 
 let headers =
   prop "encode states the content size, a stream never, both the checksum"
-    (Gen.pair Lz_support.recipe level) (fun (r, level) ->
+    ~examples:kinds (Gen.pair Lz_support.recipe level) (fun (r, level) ->
       let s = Lz_support.build r in
       let n = String.length s in
       let z = encode ~level s and zs = steps ~level ~cuts:[] s in
@@ -422,7 +439,7 @@ let frames =
 (* The bytes do not depend on the instruction set. *)
 
 let paths =
-  prop "every path writes the bytes of Lz.Zstd.encode"
+  prop "every path writes the bytes of Lz.Zstd.encode" ~examples:kinds
     (Gen.pair Lz_support.recipe level) (fun (r, level) ->
       let s = Lz_support.build r in
       cover_input r s level;
