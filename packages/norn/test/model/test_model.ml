@@ -55,14 +55,15 @@ let positions c =
 (* The density's arguments are coordinates; positions built here are taken as
    coordinates through the round trip of a model whose coordinates are its own
    structure. *)
-let as_coords m (x : Nx.host Nx.float64_t schools) : Nx.host Nx.float64_t schools M.coords =
+let as_coords m (x : Nx.host Nx.float64_t schools) :
+    Nx.host Nx.float64_t schools M.coords =
   Nx.Ptree.rebuild (M.coords m)
     ~like:(M.from_prior m ~n:1 (Nx.Rng.key 0))
     (fst (Nx.Ptree.flatten schools x))
 
 let close = float_rel ~rel:1e-10 ~abs:1e-10
 
-(* Law 1: one posterior *)
+(* One posterior *)
 
 let one_posterior m name =
   test (name ^ ": the density is the prior plus the likelihood") (fun () ->
@@ -81,7 +82,7 @@ let pointwise_sums m name =
       equal (array int) [| 8 |] (Nx.shape pw);
       equal close l (item (Nx.sum pw)))
 
-let laws_1 =
+let one_posterior_tests =
   group "one posterior"
     [
       one_posterior eight_schools "centred";
@@ -113,7 +114,7 @@ let flatten u x =
           (fun _ t acc -> Nx.reshape [| -1 |] (Nx.cast Nx.float64 t) :: acc)
           x []))
 
-(* Law 6: a reparameterisation keeps the density of the values. *)
+(* A reparameterisation keeps the density of the values. *)
 let change_of_variables m name =
   test (name ^ ": the density is the values' joint density times the Jacobian")
     (fun () ->
@@ -134,7 +135,7 @@ let partially_centred =
     (fun _ -> Norn.Bij.affine ~loc:(f64 1.) ~scale:(f64 2.))
     eight_schools
 
-let laws_6 =
+let reparameterisation =
   group "change of variables"
     [
       change_of_variables eight_schools "centred";
@@ -163,7 +164,7 @@ let round_trip =
           done);
     ]
 
-(* Law 2: rows *)
+(* Rows *)
 
 let rows =
   test "each chain's density reads only its row" (fun () ->
@@ -903,8 +904,8 @@ let () =
     (run "Norn_model"
        [
          sets;
-         laws_1;
-         laws_6;
+         one_posterior_tests;
+         reparameterisation;
          round_trip;
          group "rows" [ rows; compiled; gradient ];
          result_rule;

@@ -11,7 +11,7 @@ let t = Nx.Ptree.tensor
 (* A standard normal in 3 dimensions, over a batch of chains. *)
 let normal x = Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.square x)) (-0.5)
 
-(* Law 12: the iterative tree is Stan's recursive one
+(* The iterative tree is Stan's recursive one
 
    Stan's builder (base_nuts.hpp), written recursively over one chain in
    whitened coordinates, draws its directions and uniforms from the keys the
@@ -208,11 +208,11 @@ let stan geometry ~max_depth ~eps key (z0 : float array) =
     turned = !turned;
   }
 
-(* Four chains move in lock step, each building its own tree and stopping on
-   its own, the others' bookkeeping beside it. *)
+(* Four chains move in lock step, each building its own tree and stopping on its
+   own, the others' bookkeeping beside it. *)
 let batch = 4
 
-let law_12 =
+let stan_tree =
   (* The 80 seeds are checked whole, each case its own transition. *)
   prop ~count:80 "Stan's recursive builder" (Gen.int_range 0 79) @@ fun seed ->
   let key = Nx.Rng.key (1000 + seed) in
@@ -268,8 +268,7 @@ let warmed =
 let warmup =
   group "warmup"
     [
-      slow
-      @@ test "the geometry's scale reaches the target's" (fun () ->
+      test "the geometry's scale reaches the target's" (fun () ->
           let s = Lazy.force warmed in
           let sd =
             Rune.vmap
@@ -287,41 +286,36 @@ let warmup =
                 (fun r -> r > 0.5 && r < 2.)
                 r)
             ratio);
-      slow
-      @@ test "the step size gives about the target acceptance" (fun () ->
+      test "the step size gives about the target acceptance" (fun () ->
           let s = Lazy.force warmed in
           let _, _, st = N.sample t scaled (Nx.Rng.key 5) ~draws:200 s in
           let acc =
-            Nx.item [] (Nx.mean (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t).acceptance)
+            Nx.item []
+              (Nx.mean (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t).acceptance)
           in
           satisfies ~claim:"in (0.65, 0.95)" (float 1e-12)
             (fun a -> a > 0.65 && a < 0.95)
             acc);
-      slow
-      @@ test "a low-rank warmup keeps its rank and finite step sizes"
-           (fun () ->
-             let start =
-               Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 2; 2 |]
-             in
-             let s =
-               N.warmup t scaled (Nx.Rng.key 4) ~steps:150
-                 (N.init t ~rank:1 scaled start)
-             in
-             let rank =
-               Nx.Ptree.fold (Norn.Gaussian.ptree t)
-                 (fun p x r ->
-                   if Nx.Ptree.Path.to_string p = "variances" then
-                     (Nx.shape x).(1)
-                   else r)
-                 s.geometry (-1)
-             in
-             equal int 1 rank;
-             Array.iter
-               (fun e ->
-                 satisfies ~claim:"finite and positive" (float 1e-12)
-                   (fun e -> Float.is_finite e && e > 0.)
-                   e)
-               (Nx.to_array s.step_size));
+      test "a low-rank warmup keeps its rank and finite step sizes" (fun () ->
+          let start = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 2; 2 |] in
+          let s =
+            N.warmup t scaled (Nx.Rng.key 4) ~steps:150
+              (N.init t ~rank:1 scaled start)
+          in
+          let rank =
+            Nx.Ptree.fold (Norn.Gaussian.ptree t)
+              (fun p x r ->
+                if Nx.Ptree.Path.to_string p = "variances" then (Nx.shape x).(1)
+                else r)
+              s.geometry (-1)
+          in
+          equal int 1 rank;
+          Array.iter
+            (fun e ->
+              satisfies ~claim:"finite and positive" (float 1e-12)
+                (fun e -> Float.is_finite e && e > 0.)
+                e)
+            (Nx.to_array s.step_size));
       test "a warmup fits more directions than the dimension has" (fun () ->
           let s = N.init t ~rank:2 normal (Nx.zeros Nx.float64 [| 2; 1 |]) in
           let s = N.warmup t normal (Nx.Rng.key 3) ~steps:30 s in
@@ -348,7 +342,7 @@ let warmup =
             (Nx.to_array (d :> Nx.host Nx.float64_t)));
     ]
 
-(* Law 9: reproducibility *)
+(* Reproducibility *)
 
 let start c = Nx.Rng.normal ~key:(Nx.Rng.key 21) Nx.float64 [| c; dim |]
 let row0 x = Nx.to_array (Nx.slice [ Nx.I 0 ] x)
@@ -434,12 +428,12 @@ let refusals =
                 position") (fun () -> N.init t nan_at_two (start 4)));
     ]
 
-(* Law 11: invariance. The banana's exact draws are [a] standard normal and [b =
-   0.3 a² + z / 2]; after five transitions of every chain, [a] and [b - 0.3 a²]
-   keep their normal CDFs within the Dvoretzky-Kiefer-Wolfowitz band of level
-   [0.01 / 4], four tests holding the false alarms of these at 1%. At 4096
-   chains the band is 0.032 wide: a kernel whose stationary CDF strays further
-   is caught. *)
+(* Invariance. The banana's exact draws are [a] standard normal and [b = 0.3 a²
+   + z / 2]; after five transitions of every chain, [a] and [b - 0.3 a²] keep
+   their normal CDFs within the Dvoretzky-Kiefer-Wolfowitz band of level [0.01 /
+   4], four tests holding the false alarms of these at 1%. At 4096 chains the
+   band is 0.032 wide: a kernel whose stationary CDF strays further is
+   caught. *)
 
 let chains = 4096
 let tests = 4.
@@ -464,8 +458,7 @@ let max_deviation xs sd =
   !worst
 
 let invariance name geometry =
-  slow
-  @@ test (name ^ " geometry leaves the banana invariant") (fun () ->
+  test (name ^ " geometry leaves the banana invariant") (fun () ->
       let k = Nx.Rng.key 31 in
       let a = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 0) Nx.float64 [| chains |] in
       let z = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in
@@ -481,7 +474,7 @@ let invariance name geometry =
       at_most (float 1e-12) ~than:band (max_deviation (Nx.to_array a) 1.);
       at_most (float 1e-12) ~than:band (max_deviation (Nx.to_array b') 0.5))
 
-let law_11 =
+let invariant =
   group "invariance"
     [ invariance "a narrow" narrow.g; invariance "a wide" wide.g ]
 
@@ -556,4 +549,5 @@ let sample = group "sample" (recovery @ [ calibrated ])
 
 let () =
   exit
-    (run "Norn.Nuts" [ refusals; law_12; reproducible; law_11; warmup; sample ])
+    (run "Norn.Nuts"
+       [ refusals; stan_tree; reproducible; invariant; warmup; sample ])

@@ -259,34 +259,33 @@ let uniformity =
               [ Nx.scalar Nx.float64 0.; Nx.scalar Nx.float64 1. ]
           in
           equal close 1. (item r));
-      slow
-      @@ test "uniform ranks have a p-value below 5% at most 5% of the time"
-           (fun () ->
-             (* 10000 replications as 2000 elements of 40 ranks each, out of 30
-                draws, at each of five keys. Rejections are binomial with
-                probability at most 5%; 557 is its 99.5% quantile at 5%. *)
-             let rejected =
-               List.fold_left
-                 (fun n key ->
-                   let k = Nx.Rng.key key in
-                   let ranks =
-                     List.init 40 (fun i ->
-                         Nx.cast Nx.float64
-                           (Nx.Rng.randint ~key:(Nx.Rng.fold_in k i)
-                              (Nx.full Nx.int32 [| 2000 |] 31l)))
-                   in
-                   let stat =
-                     Nx.to_array (Diag.rank_uniformity t ~draws:30 ranks)
-                   in
-                   Array.fold_left
-                     (fun n p -> if p < 0.05 then n + 1 else n)
-                     n stat)
-                 0 [ 11; 12; 13; 14; 15 ]
-             in
-             at_most int ~than:557 rejected;
-             (* Not so conservative it never rejects: 340 is below the 0.5%
-                quantile at a rate of 4%. *)
-             at_least int ~than:340 rejected);
+      test "uniform ranks have a p-value below 5% at most 5% of the time"
+        (fun () ->
+          (* 10000 replications as 2000 elements of 40 ranks each, out of 30
+             draws, at each of five keys. Rejections are binomial with
+             probability at most 5%; 557 is its 99.5% quantile at 5%. *)
+          let rejected =
+            List.fold_left
+              (fun n key ->
+                let k = Nx.Rng.key key in
+                let ranks =
+                  List.init 40 (fun i ->
+                      Nx.cast Nx.float64
+                        (Nx.Rng.randint ~key:(Nx.Rng.fold_in k i)
+                           (Nx.full Nx.int32 [| 2000 |] 31l)))
+                in
+                let stat =
+                  Nx.to_array (Diag.rank_uniformity t ~draws:30 ranks)
+                in
+                Array.fold_left
+                  (fun n p -> if p < 0.05 then n + 1 else n)
+                  n stat)
+              0 [ 11; 12; 13; 14; 15 ]
+          in
+          at_most int ~than:557 rejected;
+          (* Not so conservative it never rejects: 340 is below the 0.5%
+             quantile at a rate of 4%. *)
+          at_least int ~than:340 rejected);
       test "ranks piled at zero are rejected" (fun () ->
           let ranks = List.init 20 (fun _ -> Nx.scalar Nx.float64 0.) in
           less float_exact ~than:1e-6

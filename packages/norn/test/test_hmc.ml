@@ -27,7 +27,7 @@ let wide = diagonal [| 3.; 1.5 |]
 let start c = Nx.Rng.normal ~key:(Nx.Rng.key 21) Nx.float64 [| c; dim |]
 let row0 x = Nx.to_array (Nx.slice [ Nx.I 0 ] x)
 
-(* Law 9: reproducibility *)
+(* Reproducibility *)
 
 let reproducible =
   group "reproducibility"
@@ -134,8 +134,7 @@ let warmed =
 let warmup =
   group "warmup"
     [
-      slow
-      @@ test "the geometry's scale reaches the target's" (fun () ->
+      test "the geometry's scale reaches the target's" (fun () ->
           let s = Lazy.force warmed in
           let sd = Nx.sqrt (Norn.Gaussian.variance t s.geometry) in
           let ratio =
@@ -148,12 +147,12 @@ let warmup =
                 (fun r -> r > 0.5 && r < 2.)
                 r)
             ratio);
-      slow
-      @@ test "the step size gives about the target acceptance" (fun () ->
+      test "the step size gives about the target acceptance" (fun () ->
           let s = Lazy.force warmed in
           let _, _, st = H.sample t scaled (Nx.Rng.key 5) ~draws:100 s in
           let acc =
-            Nx.item [] (Nx.mean (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t).acceptance)
+            Nx.item []
+              (Nx.mean (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t).acceptance)
           in
           satisfies ~claim:"in (0.65, 0.95)" (float 1e-12)
             (fun a -> a > 0.65 && a < 0.95)
@@ -164,11 +163,12 @@ let warmup =
          [4T = tan 4T], [T = 1.1234]. Rounding the step count up lengthens a
          trajectory by half a step on average, so the length plus half a step is
          near the optimum when the step is small. *)
-      slow
-      @@ test "the length reaches the expected jump's optimum" (fun () ->
+      test "the length reaches the expected jump's optimum" (fun () ->
           let d = 10 in
           let normal x = Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.square x)) (-0.5) in
-          let start = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 64; d |] in
+          let start =
+            Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 64; d |]
+          in
           let s =
             H.warmup t normal (Nx.Rng.key 4) ~steps:300
               (H.init t ~accept:0.95 normal start)
@@ -208,23 +208,22 @@ let refusals =
       test "an acceptance outside (0, 1) is refused" (fun () ->
           raises (Invalid_argument "Norn.Hmc.init: accept = 1 is not in (0, 1)")
             (fun () -> H.init t ~accept:1. banana (start 2));
-          (* The shortest decimal that reads back, the same on every system:
-             the C library's [%g] wrote 1e+06, 1e+006 under mingw-w64. *)
+          (* The shortest decimal that reads back, the same on every system: the
+             C library's [%g] wrote 1e+06, 1e+006 under mingw-w64. *)
+          raises
+            (Invalid_argument "Norn.Hmc.init: accept = 1000000 is not in (0, 1)")
+            (fun () -> H.init t ~accept:1e6 banana (start 2));
           raises
             (Invalid_argument
-               "Norn.Hmc.init: accept = 1000000 is not in (0, 1)") (fun () ->
-              H.init t ~accept:1e6 banana (start 2));
-          raises
-            (Invalid_argument
-               "Norn.Hmc.init: accept = -4.58e-72 is not in (0, 1)")
-            (fun () -> H.init t ~accept:(-4.58e-72) banana (start 2)));
+               "Norn.Hmc.init: accept = -4.58e-72 is not in (0, 1)") (fun () ->
+              H.init t ~accept:(-4.58e-72) banana (start 2)));
     ]
 
-(* Law 11: invariance. The banana's exact draws are [a] standard normal and [b =
-   0.3 a² + z / 2]; after five transitions of every chain with fixed tuning, [a]
-   and [b - 0.3 a²] keep their normal CDFs within the Dvoretzky-Kiefer-Wolfowitz
-   band of level [0.01 / 4], four tests holding the false alarms of these at 1%.
-   At 4096 chains the band is 0.032 wide. *)
+(* Invariance. The banana's exact draws are [a] standard normal and [b = 0.3 a²
+   + z / 2]; after five transitions of every chain with fixed tuning, [a] and [b
+   - 0.3 a²] keep their normal CDFs within the Dvoretzky-Kiefer-Wolfowitz band
+   of level [0.01 / 4], four tests holding the false alarms of these at 1%. At
+   4096 chains the band is 0.032 wide. *)
 
 let chains = 4096
 let tests = 4.
@@ -249,8 +248,7 @@ let max_deviation xs sd =
   !worst
 
 let invariance name geometry =
-  slow
-  @@ test (name ^ " geometry leaves the banana invariant") (fun () ->
+  test (name ^ " geometry leaves the banana invariant") (fun () ->
       let k = Nx.Rng.key 31 in
       let a = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 0) Nx.float64 [| chains |] in
       let z = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in
@@ -265,7 +263,7 @@ let invariance name geometry =
       at_most (float 1e-12) ~than:band (max_deviation (Nx.to_array a) 1.);
       at_most (float 1e-12) ~than:band (max_deviation (Nx.to_array b') 0.5))
 
-let law_11 =
+let invariant =
   group "invariance" [ invariance "a narrow" narrow; invariance "a wide" wide ]
 
 (* sample *)
@@ -282,4 +280,4 @@ let sample =
 let () =
   exit
     (run "Norn.Hmc"
-       [ reproducible; transitions; warmup; refusals; law_11; sample ])
+       [ reproducible; transitions; warmup; refusals; invariant; sample ])

@@ -121,8 +121,7 @@ let laws =
           equal (array close)
             (floats (Nx.diagonal cov))
             (floats (to_vec (G.variance pos g))));
-      slow
-      @@ test "draws have the Gaussian's moments" (fun () ->
+      test "draws have the Gaussian's moments" (fun () ->
           let n = 200000 in
           let x = G.sample pos (Nx.Rng.key 4) ~n g in
           let x = Nx.concatenate ~axis:1 [ x.a; x.b ] in

@@ -18,7 +18,7 @@ let banana x =
 let start c = Nx.Rng.normal ~key:(Nx.Rng.key 21) Nx.float64 [| c; dim |]
 let floats x = Nx.to_array x
 
-(* Law 9: reproducibility *)
+(* Reproducibility *)
 
 let reproducible =
   group "reproducibility"
@@ -147,9 +147,9 @@ let refusals =
               E.init t (fun x -> Nx.neg (Nx.square x)) (start 8)));
     ]
 
-(* Law 11: invariance. From exact draws of a target, five transitions keep each
-   tested coordinate within the Dvoretzky-Kiefer-Wolfowitz band of level [0.01 /
-   2] of its CDF, two comparisons holding the false alarms at 1%. *)
+(* Invariance. From exact draws of a target, five transitions keep each tested
+   coordinate within the Dvoretzky-Kiefer-Wolfowitz band of level [0.01 / 2] of
+   its CDF, two comparisons holding the false alarms at 1%. *)
 
 let chains = 4096
 
@@ -177,9 +177,8 @@ let max_deviation cdf xs =
 let normal_cdf sd x = Nx.item [] (Nx.ndtr (Nx.scalar Nx.float64 (x /. sd)))
 
 (* The banana's exact draws: [a] standard normal and [b = 0.3 a² + z / 2]. *)
-let law_11 =
-  slow
-  @@ test "five transitions leave the banana invariant" (fun () ->
+let invariant =
+  test "five transitions leave the banana invariant" (fun () ->
       let k = Nx.Rng.key 31 in
       let a = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 0) Nx.float64 [| chains |] in
       let z = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in
@@ -217,6 +216,6 @@ let () =
          reproducible;
          transitions;
          refusals;
-         group "invariance" [ law_11 ];
+         group "invariance" [ invariant ];
          sample;
        ])
