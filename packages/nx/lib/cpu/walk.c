@@ -160,6 +160,9 @@ static int64_t loop_bytes(int n, const nx_array *a, const nx_loop *l) {
 
 int nx_cpu_walk_threads(int n, const nx_array *a, const nx_loop *l,
                         double per) {
+  /* A held call, as every small call is, runs on its own thread whatever
+     its cost (nx_cpu_threads): its entry priced the loop already. */
+  if (nx_cpu_held || nx_cpu_one) return 1;
   return nx_cpu_threads(loop_bytes(n, a, l), nx_cpu_loop_cost(n, a, l, per));
 }
 
