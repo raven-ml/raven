@@ -1734,17 +1734,24 @@ let heap_bytes () =
   | None -> skip ~reason:"the C library does not count its heap" ()
 
 (* free_cache on the host gives back the memory it keeps of collected buffers:
-   the C heap shrinks by a dropped buffer's bytes. *)
+   the C heap shrinks by a dropped buffer's bytes. The count has 16 bytes to
+   spare, the buffer's header, so both counts follow two full cycles, which free
+   what the runtime allocated for the cycles before them. The cycles give back
+   none of the buffer, which the host keeps across cycles in its cache of up to
+   32 MiB. *)
 let test_host_free_cache () =
   let n = 4 * 1024 * kib in
+  let settled () =
+    Gc.full_major ();
+    Gc.full_major ();
+    heap_bytes ()
+  in
   Gc.full_major ();
   Rig.free_cache Rig.host;
   ignore (dropped Rig.host n);
-  Gc.full_major ();
-  Gc.full_major ();
-  let kept = heap_bytes () in
+  let kept = settled () in
   Rig.free_cache Rig.host;
-  at_least ~msg:"bytes given back" int ~than:n (kept - heap_bytes ())
+  at_least ~msg:"bytes given back" int ~than:n (kept - settled ())
 
 (* set_budget on the host gives back the memory it keeps until it holds at most
    the new budget: of four dropped buffers of 1 MiB, under a budget 2.5 MiB above
