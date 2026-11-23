@@ -28,6 +28,19 @@ let logged g =
   in
   (cb, fun () -> List.rev !log)
 
+(* Two arrays' memories share no byte. *)
+let apart ~msg a b =
+  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)) in
+  let buffer =
+    Testable.make
+      ~pp:(fun ppf b -> Format.fprintf ppf "%d bytes" (Rig.Buffer.length b))
+      ~equal:( == )
+  in
+  satisfies ~msg ~claim:"memories that share no byte"
+    (Testable.pair buffer buffer)
+    (fun (a, b) -> not (Rig.Buffer.overlaps a b))
+    (memory a, memory b)
+
 let values = Gen.(list ~size:(int_range 0 5) (float_range (-4.) 4.))
 let fl = Testable.(list (list float_exact))
 
@@ -70,7 +83,6 @@ let law_scan xs =
 
 (* An iterate: once per trip in the step and once per test in [until]. *)
 let law_iterate k =
-  cover "no trip" (k = 0);
   let steps, slog = logged (fun v -> Nx.add_s v 1.) in
   let tests, ulog = logged Fun.id in
   let until c = Nx.greater_equal (tests c) (scalar (float_of_int k)) in
@@ -82,25 +94,28 @@ let law_iterate k =
 
 (* A switch: the taken branch only. *)
 let law_switch k =
-  let cbs = List.init 3 (fun j -> logged (fun v -> Nx.add_s v (float_of_int j))) in
+  let cbs =
+    List.init 3 (fun j -> logged (fun v -> Nx.add_s v (float_of_int j)))
+  in
   let x = scalar 1. in
   let y =
-    Rune.switch T.tensor (Nx.scalar Nx.int32 (Int32.of_int k))
+    Rune.switch T.tensor
+      (Nx.scalar Nx.int32 (Int32.of_int k))
       (List.map (fun (cb, _) () -> cb x) cbs)
   in
   equal ~msg:"result" Testable.float_exact (1. +. float_of_int k) (Nx.item [] y);
   List.iteri
     (fun j (_, log) ->
-      equal ~msg:(Printf.sprintf "branch %d" j) Testable.int
-        (if j = k then 1 else 0)
-        (List.length (log ())))
+      equal
+        ~msg:(Printf.sprintf "branch %d" j)
+        fl
+        (if j = k then [ [ 1. ] ] else [])
+        (log ()))
     cbs
 
-
-(* Under jit: once per execution, never at the trace. *)
 (* A scan in a scan's step over a capture alone, its step calling one on its
-   carry: once per inner row of each outer row, eagerly and compiled, whether
-   or not a collect of a probe the step emits to is open. *)
+   carry: once per inner row of each outer row, eagerly and compiled, whether or
+   not a collect of a probe the step emits to is open. *)
 let test_inner_scan () =
   let p = Rune.Probe.make T.tensor in
   let w = Nx.reshape [| 2; 3 |] (Nx.arange_f f64 1. 7. 1.) in
@@ -141,16 +156,41 @@ let test_jit () =
   equal ~msg:"first" (Testable.float 1e-12) (exp 1. +. 1.) (Nx.item [] y1);
   equal ~msg:"second" (Testable.float 1e-12) (exp 2. +. 1.) (Nx.item [] y2)
 
+(* The evaluated calls and variants so far, and their growth since [before]. *)
+let calls () = (Rune.evaluations (), Rune.variants ())
+
+let delta (e, v) =
+  let e', v' = calls () in
+  (e' - e, v' - v)
+
+(* [split f] is [f ()], whose first call of a compiled function holding a
+   callback compiles a stretch of its own. *)
+let split f =
+  let v = Rune.variants () in
+  let r = f () in
+  Rune_support.Compiled.here ();
+  at_least ~msg:"stretches compiled" Testable.int ~than:1 (Rune.variants () - v);
+  r
+
+(* [compiled_once first f] is [f ()], a call of a compiled function holding a
+   callback: it is evaluated, split around the callback, and compiles its
+   stretches at its first call alone, [!first] until then. *)
+let compiled_once first f =
+  let before = calls () in
+  let r = f () in
+  let e, v = delta before in
+  equal ~msg:"evaluated once" Testable.int 1 e;
+  Rune_support.Compiled.here ();
+  if !first then at_least ~msg:"stretches compiled" Testable.int ~than:1 v
+  else equal ~msg:"nothing compiled again" Testable.int 0 v;
+  first := false;
+  r
+
 (* Compiled: a call evaluates its program around the callback, each stretch
    without one a compiled call, which compiles once. *)
 let test_outlined () =
   let cb, log = logged (fun v -> Nx.exp v) in
   let g = Rune.jit tt (fun x -> Nx.add_s (cb (Nx.sin (Nx.mul_s x 2.))) 1.) in
-  let calls () = (Rune.evaluations (), Rune.variants ()) in
-  let delta (e, v) =
-    let e', v' = calls () in
-    (e' - e, v' - v)
-  in
   let pair = Testable.(pair int int) in
   let before = calls () in
   let y1 = g (scalar 0.5) in
@@ -200,15 +240,6 @@ let test_outlined () =
     [ sum 0; sum 1 ]
     (floats c)
 
-(* [split f] is [f ()], whose first call of a compiled function holding a
-   callback compiles a stretch of its own. *)
-let split f =
-  let v = Rune.variants () in
-  let r = f () in
-  Rune_support.Compiled.here ();
-  at_least ~msg:"stretches compiled" Testable.int ~than:1 (Rune.variants () - v);
-  r
-
 exception Big of float
 
 (* Compiled: a custom rule whose primal calls one between two stretches, its
@@ -255,7 +286,7 @@ let test_outlined_bare () =
   let x = Nx.place at (vec [| 0.5; 1. |]) in
   let seen = ref [] in
   let host v =
-    seen := Nx.Placement.equal (Nx.placement v) at :: !seen;
+    seen := Nx.placement v :: !seen;
     Nx.place (Nx.placement v) (Nx.exp (Nx.place Nx.Host.on v))
   in
   let s = T.(tensor @-> returns tensor) in
@@ -266,19 +297,17 @@ let test_outlined_bare () =
   let before = Rune.evaluations () in
   let y = g x in
   equal ~msg:"evaluated once" Testable.int 1 (Rune.evaluations () - before);
-  equal ~msg:"operands where they lie" Testable.(list bool) [ true ] !seen;
-  equal ~msg:"placement" Testable.bool true
-    (Nx.Placement.equal (Nx.placement y) at);
+  let placement = Nx_support.placement () in
+  equal ~msg:"operands where they lie" (Testable.list placement) [ at ] !seen;
+  equal ~msg:"placement" placement at (Nx.placement y);
   equal ~msg:"values"
     Testable.(list (float 1e-12))
     [ exp 1. +. 1.; exp 2. +. 1. ]
     (floats (Nx.place Nx.Host.on y));
   (* A result the function returns unchanged is the call's own memory. *)
-  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)) in
   let g = Rune.jit s (fun x -> Rune.callback s ~like:x Fun.id x) in
   let y = g x in
-  equal ~msg:"own memory" Testable.bool false
-    (Rig.Buffer.overlaps (memory x) (memory y));
+  apart ~msg:"own memory" x y;
   equal ~msg:"its values"
     Testable.(list float_exact)
     [ 0.5; 1. ]
@@ -324,45 +353,77 @@ let test_outlined_bare () =
     (fun () -> ignore (Rune.jit s rows xs))
 
 (* Compiled, a switch's taken branch, an iterate's steps and tests and a remat's
-   body call it as eager code does, each with stretches before and after it. *)
+   body call it as eager code does. Each compiled function is made once, the
+   branch index or the trip count its argument, so that every row runs one
+   program; each row clears the logs before its call. *)
+let logs () =
+  let log = ref [] in
+  let cb g x =
+    Rune.callback tt ~like:x
+      (fun v ->
+        log := floats v :: !log;
+        g v)
+      x
+  in
+  (cb, log)
+
+let outlined_switch =
+  lazy
+    (let cbs =
+       List.init 3 (fun j ->
+           let cb, log = logs () in
+           (cb (fun v -> Nx.add_s v (float_of_int j)), log))
+     in
+     let g =
+       Rune.jit tt (fun x ->
+           Rune.switch T.tensor (Nx.cast Nx.int32 x)
+             (List.map (fun (cb, _) () -> Nx.mul_s (cb (Nx.mul_s x 2.)) 3.) cbs))
+     in
+     (g, List.map snd cbs, Array.init 3 (fun _ -> ref true)))
+
 let law_outlined_switch k =
-  let cbs =
-    List.init 3 (fun j -> logged (fun v -> Nx.add_s v (float_of_int j)))
-  in
-  let g =
-    Rune.jit tt (fun x ->
-        Rune.switch T.tensor (Nx.cast Nx.int32 x)
-          (List.map (fun (cb, _) () -> Nx.mul_s (cb (Nx.mul_s x 2.)) 3.) cbs))
-  in
+  let g, logs, firsts = Lazy.force outlined_switch in
+  List.iter (fun log -> log := []) logs;
   let x = float_of_int k in
-  let y = split (fun () -> g (scalar x)) in
+  (* Each branch's stretches compile when it is first taken. *)
+  let y = compiled_once firsts.(k) (fun () -> g (scalar x)) in
   equal ~msg:"result" Testable.float_exact
     (3. *. ((2. *. x) +. x))
     (Nx.item [] y);
   List.iteri
-    (fun j (_, log) ->
+    (fun j log ->
       equal
         ~msg:(Printf.sprintf "branch %d" j)
         fl
         (if j = k then [ [ 2. *. x ] ] else [])
-        (log ()))
-    cbs
+        (List.rev !log))
+    logs
+
+let outlined_iterate =
+  lazy
+    (let steps, slog = logs () and tests, ulog = logs () in
+     let g =
+       Rune.jit tt (fun n ->
+           let until c = Nx.greater_equal (tests Fun.id (Nx.mul_s c 1.)) n in
+           let f c =
+             Nx.sub_s (steps (fun v -> Nx.add_s v 1.) (Nx.add_s c 1.)) 1.
+           in
+           Nx.mul_s (Rune.iterate T.tensor ~max:10 ~until f (scalar 0.)) 2.)
+     in
+     (g, slog, ulog, [| ref true; ref true |]))
 
 let law_outlined_iterate k =
-  cover "no trip" (k = 0);
-  let steps, slog = logged (fun v -> Nx.add_s v 1.) in
-  let tests, ulog = logged Fun.id in
-  let g =
-    Rune.jit tt (fun n ->
-        let until c = Nx.greater_equal (tests (Nx.mul_s c 1.)) n in
-        let f c = Nx.sub_s (steps (Nx.add_s c 1.)) 1. in
-        Nx.mul_s (Rune.iterate T.tensor ~max:10 ~until f (scalar 0.)) 2.)
+  let g, slog, ulog, firsts = Lazy.force outlined_iterate in
+  slog := [];
+  ulog := [];
+  (* The step's stretches compile when a step first runs. *)
+  let r =
+    compiled_once firsts.(Int.min k 1) (fun () -> g (scalar (float_of_int k)))
   in
-  let r = split (fun () -> g (scalar (float_of_int k))) in
   equal ~msg:"result" Testable.float_exact (2. *. float_of_int k) (Nx.item [] r);
   let upto a b = List.init (b - a) (fun i -> [ float_of_int (a + i) ]) in
-  equal ~msg:"steps" fl (upto 1 (k + 1)) (slog ());
-  equal ~msg:"tests" fl (upto 0 (k + 1)) (ulog ())
+  equal ~msg:"steps" fl (upto 1 (k + 1)) (List.rev !slog);
+  equal ~msg:"tests" fl (upto 0 (k + 1)) (List.rev !ulog)
 
 let test_outlined_remat () =
   let cb, log = logged Nx.exp in
@@ -434,9 +495,7 @@ let test_outlined_kept () =
         (a, Rune.callback tt ~like:a keep a))
   in
   let a, b = g (vec [| 1.; 2. |]) in
-  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)) in
-  equal ~msg:"own memory" Testable.bool false
-    (Rig.Buffer.overlaps (memory a) (memory (Option.get !kept)));
+  apart ~msg:"own memory" a (Option.get !kept);
   equal ~msg:"values"
     Testable.(pair (list float_exact) (list float_exact))
     ([ 2.; 4. ], [ 3.; 5. ])
@@ -449,8 +508,7 @@ let test_outlined_kept () =
         (a, (Rune.callback tt ~like:a Fun.id x, a)))
   in
   let a, (_, a') = g (vec [| 1.; 2. |]) in
-  equal ~msg:"a repeated result, own memory" Testable.bool false
-    (Rig.Buffer.overlaps (memory a) (memory a'));
+  apart ~msg:"a repeated result, own memory" a a';
   equal ~msg:"a repeated result's values"
     Testable.(list float_exact)
     [ 2.; 4. ] (floats a')
@@ -784,14 +842,22 @@ let test_remat_jit () =
 (* Under vmap, and compiled around it: once per lane. Each form shares one rule,
    so that the compiled function compiles once per shape. *)
 let mapped =
-  List.map
-    (fun (how, wrap) ->
-      let f, flog, adj = cube () in
-      let g =
-        wrap (Rune.vmap tt (Rune.grad' (Rune.remat tt (fun x -> Nx.sin (f x)))))
-      in
-      (how, g, flog, adj))
-    [ ("vmap", Fun.id); ("jit", Rune.jit tt) ]
+  lazy
+    (List.map
+       (fun (how, wrap) ->
+         let f, flog, adj = cube () in
+         let g =
+           wrap
+             (Rune.vmap tt (Rune.grad' (Rune.remat tt (fun x -> Nx.sin (f x)))))
+         in
+         (how, g, flog, adj))
+       [ ("vmap", Fun.id); ("jit", Rune.jit tt) ])
+
+(* Lanes of three counts, each a shape the compiled form compiles once. *)
+let lane_values =
+  Gen.(
+    let* n = of_list [ 0; 1; 3 ] in
+    list ~size:(constant n) (float_range (-4.) 4.))
 
 let law_remat_vmap xs =
   let n = List.length xs in
@@ -808,7 +874,7 @@ let law_remat_vmap xs =
         (List.map (fun x -> [ x ]) xs)
         (List.filteri (fun i _ -> i >= seen) (flog ()));
       equal ~msg:(how ^ ": adjoint calls") Testable.int n (!adj - adjoints))
-    mapped
+    (Lazy.force mapped)
 
 (* Memory *)
 
@@ -941,10 +1007,31 @@ let test_outside () =
   in
   equal ~msg:"offers" Testable.(list float_exact) [ 1.; 1. ] (floats ys)
 
+(* A call executes in neither, whose traces compute nothing. *)
+let test_shapes () =
+  let cb, log = logged Nx.exp in
+  let f x = Nx.add_s (cb (Nx.mul_s x 2.)) 1. in
+  let x = vec [| 0.5; 1. |] in
+  ignore (Rune.eval_shape T.tensor T.tensor f x);
+  ignore (Rune.program T.tensor T.tensor f x);
+  equal fl [] (log ())
+
+(* A signature of no argument, or of several, raises at the call. *)
+let test_signatures () =
+  let x = scalar 1. in
+  let none = T.returns (T.v (fun _ f -> f)) in
+  raises_match
+    (Exn.invalid_arg ~sub:"Rune.callback: the signature has no argument")
+    (fun () -> Rune.callback none ~like:() Fun.id ());
+  let two = T.(tensor @-> tensor @-> returns tensor) in
+  raises_match
+    (Exn.invalid_arg
+       ~sub:"Rune.callback: the signature has more than one argument")
+    (fun () -> Rune.callback two ~like:(Nx.add x) Nx.add x)
+
 exception Mine of int
 
-(* Exceptions pass through unchanged; additions, emissions and draws without a
-   key raise. *)
+(* An exception the function raises passes through unchanged. *)
 let test_raise () =
   let x = scalar 1. in
   let boom _ = raise (Mine 3) in
@@ -954,9 +1041,16 @@ let test_raise () =
         (Rune.scan T.tensor T.tensor T.tensor
            (fun c r -> (c, Rune.callback tt ~like:r boom r))
            ~init:x
-           (vec [| 1.; 2. |])));
+           (vec [| 1.; 2. |])))
+
+(* An addition to a total or an emission to a probe collected around the call,
+   and a draw without a key, raise; a collect the function opens is its own. *)
+let test_effects () =
+  let x = scalar 1. in
   let t = Rune.Total.make () in
-  raises (Invalid_argument "Rune.callback: the function adds to a total collected around the call")
+  raises
+    (Invalid_argument
+       "Rune.callback: the function adds to a total collected around the call")
     (fun () ->
       ignore
         (Rune.Total.collect t ~init:x (fun () ->
@@ -996,53 +1090,64 @@ let () =
   exit
     (run "rune callback"
        [
-         group "runs"
+         group "differentiation"
            [
-             prop "eager, once at the call" values law_eager;
-             prop "a scan, once per row" values law_scan;
-             prop "an iterate, once per trip and test" Gen.(int_range 0 4)
-               law_iterate;
-             prop "a switch, its taken branch" Gen.(int_range 0 2) law_switch;
-             test "a scan in a step over a capture, once per inner row"
+             test "a differentiation tracking an argument raises" test_refusals;
+             test "a custom rule around the call gives the derivative" test_rule;
+           ];
+         group "executions"
+           [
+             prop "eagerly, once where it is made" values law_eager;
+             prop "in a scan, once per row" values law_scan;
+             cases ~id:string_of_int "in an iterate, once per step and test"
+               [ 0; 1; 2; 3; 4 ] law_iterate;
+             cases ~id:string_of_int "in a switch, the taken branch alone"
+               [ 0; 1; 2 ] law_switch;
+             test "in a scan in a step over a capture, once per inner row"
                test_inner_scan;
-             test "a jit, once per execution" test_jit;
-             test "a jit, its stretches compiled" test_outlined;
-             test "a jit, a custom rule's stretches" test_outlined_rule;
-             prop "a jit, a switch's taken branch"
-               Gen.(int_range 0 2)
-               law_outlined_switch;
-             prop "a jit, an iterate's trips and tests"
-               Gen.(int_range 0 4)
-               law_outlined_iterate;
-             test "a jit, a remat's body" test_outlined_remat;
-             test "a jit, checks, emissions and donations" test_outlined_effects;
-             test "a jit, a result the function received" test_outlined_kept;
-             test "a jit on a set without kernels" test_outlined_bare;
+             prop "under vmap, once per lane, and with lanes once" values
+               law_vmap;
+             test "under nested maps, outer lanes major" test_nested;
+             test "under a map, each lane's loops" test_map_loops;
+             prop "under a map, a held lane never"
+               Gen.(list ~size:(int_range 1 4) (int_range 0 3))
+               law_held;
+             prop "in a custom rule in a scan, once per row each way" values
+               law_rule_scan;
+             test "in a root's solve once, its linear solve once per run"
+               test_root;
+             test "in a remat, once: its results are kept" test_remat;
+             test "in a remat under jit, once per call" test_remat_jit;
+             prop "in a remat under a map, once per lane" lane_values
+               law_remat_vmap;
+             test "in a remat, its results kept alone" test_remat_memory;
+             test "under jit, once per call" test_jit;
+             test "under jit, around the operations it computes between"
+               test_outlined;
+             test "under jit, in a custom rule's primal" test_outlined_rule;
+             cases ~id:string_of_int "under jit, in a switch's taken branch"
+               [ 0; 1; 2 ] law_outlined_switch;
+             cases ~id:string_of_int "under jit, once per step and test"
+               [ 0; 1; 2; 3; 4 ] law_outlined_iterate;
+             test "under jit, in a remat's body" test_outlined_remat;
+             test "under jit, after the checks before it pass"
+               test_outlined_effects;
+             test "under jit, a result it received is the call's own"
+               test_outlined_kept;
+             test "under jit on a set without kernels, where its arguments lie"
+               test_outlined_bare;
+             test "in eval_shape and program, never" test_shapes;
            ];
-         group "maps"
+         group "lanes"
+           [ test "a held lane receives its donor's rows" test_lanes_more ];
+         group "callback"
            [
-             prop "per lane, and with lanes" values law_vmap;
-             test "nested maps" test_nested;
-             test "lanes held, broadcast and paired" test_lanes_more;
-             test "loops inside a map" test_map_loops;
-             prop "held lanes call nothing" Gen.(list ~size:(int_range 1 4) (int_range 0 3)) law_held;
-           ];
-         group "derivatives"
-           [
-             test "refusals" test_refusals;
-             test "a custom rule around it" test_rule;
-             prop "a custom rule in a scan, under grad" values law_rule_scan;
-             test "a remat keeps the results" test_remat;
-             test "a root's solves" test_root;
-             test "a remat's gradient, compiled" test_remat_jit;
-             prop "a remat's gradient, mapped" values law_remat_vmap;
-             test "a remat keeps the results alone" test_remat_memory;
-           ];
-         group "interface"
-           [
-             test "results like like" test_like;
-             test "raises" test_raise;
-             test "results nothing reads" test_unread;
-             test "outside every transformation" test_outside;
+             test "results take like's forms, like unread" test_like;
+             test "a signature of no argument or several raises" test_signatures;
+             test "an exception passes through unchanged" test_raise;
+             test "an addition, emission or draw that reaches around raises"
+               test_effects;
+             test "a call whose results nothing reads runs" test_unread;
+             test "a collect the function opens is its own" test_outside;
            ];
        ])
