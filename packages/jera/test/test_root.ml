@@ -92,16 +92,14 @@ let bracket_tests =
             (fun x -> Nx.add_s (Nx.square x) 1.)
             ~lo:(vec [| -1. |]) ~hi:(vec [| 2. |])
         in
-        equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 1 |])
-          (Solution.is Not_bracketed s));
+        equal Oracle.status_t Not_bracketed (Oracle.status s));
     test "a pole stalls" (fun () ->
         let s =
           Root.bracket ~tol:tight
             (fun x -> Nx.recip (Nx.sub_s x 0.3))
             ~lo:(vec [| -1. |]) ~hi:(vec [| 2. |])
         in
-        equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 1 |])
-          (Solution.is Stalled s));
+        equal Oracle.status_t Stalled (Oracle.status s));
     test "a jump converges at the jump" (fun () ->
         let s =
           Root.bracket ~tol:tight Nx.sign ~lo:(vec [| -1. |]) ~hi:(vec [| 2. |])
@@ -113,8 +111,7 @@ let bracket_tests =
             (fun x -> Nx.sub (Nx.sqrt x) (Nx.full_like x 0.5))
             ~lo:(vec [| -1. |]) ~hi:(vec [| 2. |])
         in
-        equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 1 |])
-          (Solution.is Not_finite s));
+        equal Oracle.status_t Not_finite (Oracle.status s));
     test "a zero at an end converges there" (fun () ->
         let s =
           Root.bracket ~tol:tight
@@ -122,6 +119,15 @@ let bracket_tests =
             ~lo:(vec [| 2. |]) ~hi:(vec [| 5. |])
         in
         equal (Oracle.tensor ()) (vec [| 2. |]) (Solution.get s));
+    test "the ends broadcast together" (fun () ->
+        equal
+          (Oracle.tensor ~rel:2e-13 ())
+          (Nx.full f64 [| 3 |] (Float.sqrt 2.))
+          (Solution.get
+             (Root.bracket ~tol:tight
+                (fun x -> Nx.sub_s (Nx.square x) 2.)
+                ~lo:(Nx.scalar f64 0.)
+                ~hi:(vec [| 2.; 3.; 4. |]))));
     test "the ends come in either order" (fun () ->
         equal
           (Oracle.tensor ~rel:2e-13 ())
@@ -144,17 +150,13 @@ let bracket_tests =
     test "changing one element changes no other" (fun () ->
         let a = vec [| 2.; 5.; 7. |] and b = vec [| 2.; 500.; 7. |] in
         let sa = sqrt_bracket a and sb = sqrt_bracket b in
-        let pick i t =
-          Nx.slice [ Nx.L [ 0; 2 ] ] t |> fun t ->
-          ignore i;
-          t
-        in
+        let others t = Nx.slice [ Nx.L [ 0; 2 ] ] t in
         equal ~msg:"values" (Oracle.tensor ())
-          (pick 0 (Solution.best sa))
-          (pick 0 (Solution.best sb));
+          (others (Solution.best sa))
+          (others (Solution.best sb));
         equal ~msg:"evaluations" (Oracle.tensor ())
-          (pick 0 (Solution.evaluations sa))
-          (pick 0 (Solution.evaluations sb)));
+          (others (Solution.evaluations sa))
+          (others (Solution.evaluations sb)));
   ]
 
 (* Derivatives *)
@@ -181,6 +183,22 @@ let derivative_tests =
           Rune.grad' (fun a -> Nx.sum (Solution.best (sqrt_bracket a))) a
         in
         equal (Oracle.tensor ~rel:1e-9 ()) (vec [| 0.25; 0.; 1. /. 6. |]) g);
+    test "a zero where f' is 0 has no finite derivative" (fun () ->
+        (* x³ − a at a = 0 on [−1, 1], whose first interpolation lands on the
+           zero 0 exactly: its implicit derivative is 1 / 3x². *)
+        let g =
+          Rune.grad'
+            (fun a ->
+              Nx.sum
+                (Solution.get
+                   (Root.bracket ~tol:tight
+                      (fun x -> Nx.sub (Nx.pow_s x 3.) a)
+                      ~lo:(Nx.sub_s a 1.) ~hi:(Nx.add_s a 1.))))
+            (vec [| 0. |])
+        in
+        satisfies ~claim:"is not finite" float_exact
+          (fun g -> not (Float.is_finite g))
+          (Nx.item [ 0 ] g));
     test "a function that mixes elements raises in the derivative" (fun () ->
         let a = vec [| 4.; 9. |] in
         (* Each element also reads the sum of all, slightly. *)
@@ -277,7 +295,7 @@ let newton_tests =
             (fun x -> Nx.sub_s (Nx.square x) 2.)
             (vec [| z +. 1e-8 |])
         in
-        equal bool true (Nx.item [ 0 ] (Solution.is Stalled s));
+        equal Oracle.status_t Stalled (Oracle.status s);
         let x = Nx.item [ 0 ] (Solution.best s) in
         at_least float_exact
           ~than:(Float.abs (x -. z))
@@ -315,8 +333,7 @@ let newton_tests =
             (fun x -> Nx.sub_s (Nx.square x) 2.)
             (vec [| 10. |])
         in
-        equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 1 |])
-          (Solution.is Budget_spent s));
+        equal Oracle.status_t Budget_spent (Oracle.status s));
     test "a zero slope stalls" (fun () ->
         let s =
           Root.newton ~tol:tight ~budget:10
@@ -324,15 +341,13 @@ let newton_tests =
             (fun x -> Nx.add_s (Nx.square x) 1.)
             (vec [| 0. |])
         in
-        equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 1 |])
-          (Solution.is Stalled s));
+        equal Oracle.status_t Stalled (Oracle.status s));
     test "a NaN value is not finite" (fun () ->
         let s =
           Root.newton ~tol:tight ~budget:10 ~slope:Nx.recip Nx.log
             (vec [| -1. |])
         in
-        equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 1 |])
-          (Solution.is Not_finite s));
+        equal Oracle.status_t Not_finite (Oracle.status s));
     test "a step at the zero is zero, which is the zero" (fun () ->
         let s =
           Root.newton ~tol:tight ~budget:3 ~slope:Nx.ones_like
@@ -408,8 +423,8 @@ let () =
     (run "Jera.Root"
        [
          group "tol" tol_tests;
-         group "bracket" bracket_tests;
-         group "derivatives" derivative_tests;
-         group "newton" newton_tests;
          group "solution" solution_tests;
+         group "derivatives" derivative_tests;
+         group "bracket" bracket_tests;
+         group "newton" newton_tests;
        ])
