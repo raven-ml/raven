@@ -2,9 +2,17 @@
  (name main)
  (libraries rig rig.remote unix))
 
+; The agent listens on the loopback, which opam's sandbox on macOS refuses.
+; The example skips the release profile on macOS, which opam builds in;
+; macOS dev builds, raven's CI included, still run it.
+
 (rule
  (package rig)
  (alias runtest)
+ (enabled_if
+  (or
+   (<> %{system} macosx)
+   (<> %{profile} release)))
  (action
   (progn
    (with-stdout-to

@@ -21,6 +21,18 @@
   support/high.exe
   support/version))
 
+; rig run's agents listen on the loopback, which opam's sandbox on macOS
+; refuses, and dune runs a cram file whole or not at all. These files skip
+; the release profile on macOS, which opam builds in; macOS dev builds,
+; raven's CI included, still run them.
+
+(cram
+ (applies_to agent descriptors hung interrupt machines restart run start)
+ (enabled_if
+  (or
+   (<> %{system} macosx)
+   (<> %{profile} release))))
+
 ; sandbox-exec is macOS's, and cannot run inside opam's sandbox there.
 
 (cram
