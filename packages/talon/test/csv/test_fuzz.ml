@@ -58,8 +58,8 @@ let formats =
 
 (* [decode ?batch ?rows ?slice f s] decodes [s] in slices of [slice] bytes, in
    batches of [batch] bytes, sniffed from its first [rows] records, then as [f],
-   and labels the case with how far each read went. A property fails when no
-   case of it fails to read as [f]. *)
+   and labels the case with how far each read went; it is the decode as [f]. A
+   property fails when no case of it fails to read as [f]. *)
 let decode ?batch ?rows ?slice f s =
   let reader () = Reader.of_string ?slice_length:slice s in
   let decode f r = Csv.decode_in_batches ?batch f r in
@@ -67,9 +67,10 @@ let decode ?batch ?rows ?slice f s =
   (match Csv.sniff ?rows ~nulls (reader ()) with
   | Error _ -> collect "sniff fails"
   | Ok sniffed -> collect ("sniffed, " ^ outcome (decode sniffed (reader ()))));
-  let original = outcome (decode f (reader ())) in
-  collect ("as the original, " ^ original);
-  cover "as the original, fails" (original = "fails")
+  let original = decode f (reader ()) in
+  collect ("as the original, " ^ outcome original);
+  cover "as the original, fails" (Result.is_error original);
+  original
 
 let rows = Gen.(option (int_range 1 4))
 let slice = Gen.(option (int_range 1 16))
@@ -136,7 +137,7 @@ let syntax =
 
 let mutated name mutate (rows, slice) =
   let s = text name in
-  decode ?rows ?slice (List.assoc name formats) (mutate s)
+  ignore (decode ?rows ?slice (List.assoc name formats) (mutate s))
 
 let bits = Gen.(list ~size:(int_range 1 8) (pair nat (int_range 0 7)))
 
@@ -236,10 +237,7 @@ let boundary =
         Gen.(triple (int_range (-64) 64) syntax (option (int_range 1 batch)))
         (fun (k, piece, slice) ->
           let s = insert (batch + k) piece (records (batch + 2048)) in
-          decode ~batch ?slice big_format s;
-          equal decoded (one_batch s)
-            (Csv.decode_in_batches ~batch big_format
-               (Reader.of_string ?slice_length:slice s)));
+          equal decoded (one_batch s) (decode ~batch ?slice big_format s));
       test "a quote before the 1 MiB mark" (fun () ->
           let s = insert (mib - 1) "\"" (records (mib + 2048)) in
           equal decoded (one_batch s)
