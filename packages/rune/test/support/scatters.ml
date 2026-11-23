@@ -306,7 +306,7 @@ let flushed ((s, c) : codes) : codes =
   let part p = if Float.abs (value_of p) < 0x1p-126 then "0" else p in
   (s, Array.map (fun e -> String.concat "," (List.map part (parts e))) c)
 
-let law ?(flushes = false) (module S : Nx.Devices) c =
+let check ~flushes (module S : Nx.Devices) c =
   let (Nx.Dtype.Any dt) = c.dtype in
   List.iter
     (fun k -> cover (combine_name k) (c.combine = k))
@@ -361,14 +361,19 @@ let law ?(flushes = false) (module S : Nx.Devices) c =
     | Value k when relaxed -> Value (flushed k)
     | o -> o
   in
-  let g =
-    Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) f
-  in
   let put y = Nx.place S.on y in
   let x = if c.donated then Nx.donate (put (Nx.copy x)) else put x in
-  let before = Rune.evaluations () in
-  let call () = codes (Nx.place Nx.Host.on (g (put i) (put u) x)) in
-  let y = outcome call in
-  Compiled.here ();
-  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
-  equal (outcome_t codes_t) (settled eager) (settled y)
+  let refused = match eager with Raised _ -> true | Value _ -> false in
+  Batch.check ~alone:refused
+    (Batch.call
+       Nx.Ptree.(triple tensor tensor tensor)
+       (put i, put u, x)
+       Nx.Ptree.tensor
+       (fun (i, u, x) -> f i u x)
+       (fun y -> codes (Nx.place Nx.Host.on y)))
+    (fun y -> equal (outcome_t codes_t) (settled eager) (settled (outcome y)))
+
+let laws ?(flushes = false) (module S : Nx.Devices) cs =
+  Batch.checks (List.map (check ~flushes (module S)) cs)
+
+let law ?flushes s c = laws ?flushes s [ c ]

@@ -131,45 +131,58 @@ let exact op x y =
   | Div -> if y = 0. then 0. else Float.trunc (x /. y)
   | Mod -> if y = 0. then x else Float.rem x y
 
-(* [op] and its comparisons, at every device brand. *)
-let run (type v s) (module S : Nx.Devices) (dt : (v, s) Nx.dtype) op xs ys =
-  let r : type d. (v, s, d) Nx.t -> (v, s, d) Nx.t -> (v, s, d) Nx.t =
-   fun x y ->
-    match op with
-    | Add -> Nx.add x y
-    | Sub -> Nx.sub x y
-    | Mul -> Nx.mul x y
-    | Neg -> Nx.neg x
-    | Abs -> Nx.abs x
-    | Lshift n -> Nx.lshift x n
-    | Div -> Nx.div x y
-    | Mod -> Nx.mod_ x y
-  in
-  let above : type d. (v, s, d) Nx.t -> (v, s, d) Nx.t -> d Nx.bool_t =
-   fun x y -> Nx.greater (r x y) x
-  and below : type d. (v, s, d) Nx.t -> (v, s, d) Nx.t -> d Nx.bool_t =
-   fun x y -> Nx.less (r x y) (Nx.zeros_like x)
-  in
-  let n = Array.length xs in
-  let x = Nx.cast dt (Nx.create Nx.int64 [| n |] xs)
-  and y = Nx.cast dt (Nx.create Nx.int64 [| n |] ys) in
-  let jit f =
-    Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f
-      (Nx.place S.on x) (Nx.place S.on y)
-  in
-  let check what eager compiled =
-    equal ~msg:what (outcome_t codes_t)
-      (outcome (fun () -> codes (eager x y)))
-      (outcome (fun () -> codes (Nx.place Nx.Host.on (jit compiled))))
-  in
-  let before = Rune.evaluations () in
-  check (name op) r r;
-  check "greater than the first operand" above above;
-  check "below zero" below below;
-  Compiled.here ();
-  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before)
+let apply : type v s d. op -> (v, s, d) Nx.t -> (v, s, d) Nx.t -> (v, s, d) Nx.t
+    =
+ fun op x y ->
+  match op with
+  | Add -> Nx.add x y
+  | Sub -> Nx.sub x y
+  | Mul -> Nx.mul x y
+  | Neg -> Nx.neg x
+  | Abs -> Nx.abs x
+  | Lshift n -> Nx.lshift x n
+  | Div -> Nx.div x y
+  | Mod -> Nx.mod_ x y
 
-let law s (Case { dt; op; xs; ys }) =
+(* [op x y], and its comparisons that a compiler taking overflow for impossible
+   would fold. *)
+let above op x y = Nx.greater (apply op x y) x
+let below op x y = Nx.less (apply op x y) (Nx.zeros_like x)
+
+let operands dt xs ys =
+  let n = Array.length xs in
+  ( Nx.cast dt (Nx.create Nx.int64 [| n |] xs),
+    Nx.cast dt (Nx.create Nx.int64 [| n |] ys) )
+
+(* The operation and each of its comparisons, in calls of their own on [S]'s
+   first device, read on the host: compiled with the operation, a comparison
+   could read its stored result, and its own lowering would go unchecked. *)
+type part = Result | Above | Below
+
+let what op = function
+  | Result -> name op
+  | Above -> "greater than the first operand"
+  | Below -> "below zero"
+
+let part p op x y =
+  match p with
+  | Result -> codes (apply op x y)
+  | Above -> codes (above op x y)
+  | Below -> codes (below op x y)
+
+let call (module S : Nx.Devices) p (Case { dt; op; xs; ys }) =
+  let x, y = operands dt xs ys in
+  let host t = codes (Nx.place Nx.Host.on t) in
+  let xy = (Nx.place S.on x, Nx.place S.on y) in
+  let call f =
+    Batch.call Nx.Ptree.(pair tensor tensor) xy Nx.Ptree.tensor f host
+  in
+  match p with
+  | Result -> call (fun (x, y) -> apply op x y)
+  | Above -> call (fun (x, y) -> above op x y)
+  | Below -> call (fun (x, y) -> below op x y)
+
+let covers (Case { dt; op; xs; ys }) =
   let d = Nx.Dtype.Any dt in
   List.iter (fun o -> cover (name o) (name op = name o)) (ops d);
   List.iter
@@ -188,6 +201,18 @@ let law s (Case { dt; op; xs; ys }) =
   in
   cover "a result past the range" past;
   let divides = match op with Div | Mod -> true | _ -> false in
-  cover "a division by 0"
-    (divides && Array.exists (fun y -> value d y = 0.) ys);
-  run s dt op xs ys
+  cover "a division by 0" (divides && Array.exists (fun y -> value d y = 0.) ys)
+
+let check p (Case { dt; op; xs; ys }) compiled =
+  let x, y = operands dt xs ys in
+  equal ~msg:(what op p) (outcome_t codes_t)
+    (outcome (fun () -> part p op x y))
+    (outcome compiled)
+
+let laws (module S : Nx.Devices) cs =
+  List.iter covers cs;
+  List.iter
+    (fun p -> Batch.each (call (module S) p) (check p) cs)
+    [ Result; Above; Below ]
+
+let law s c = laws s [ c ]

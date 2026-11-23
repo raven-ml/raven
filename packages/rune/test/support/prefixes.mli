@@ -45,3 +45,8 @@ val law : (module Nx.Devices) -> t -> unit
     no call evaluated. It covers each length class, the empty prefix, a prefix
     of 32 or fewer of an axis past 32, a prefix past 32 of a longer axis, each
     running operation and each axis. *)
+
+val laws : (module Nx.Devices) -> t list -> unit
+(** [laws s cs] is [law s] of each case, the running operations over the cases'
+    whole axes compiled as one program and those over their prefixes as another
+    ({!Batch.results}). *)

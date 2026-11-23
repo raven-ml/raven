@@ -29,13 +29,18 @@ let carry (module S : Nx.Devices) =
     Rig.Buffer.device (Nx_array.buffer a)
   in
   let memory y = Nx.Repr.read ~by:"test" y Nx_array.buffer in
-  (* [g] over [w] donated, and whether its result lies in [w]'s memory where
-     the host computes on the device. *)
-  let in_place g w =
+  let buffer_t =
+    Testable.make
+      ~pp:(fun ppf b -> Format.fprintf ppf "at %d" (Rig.Buffer.offset b))
+      ~equal:Rig.Buffer.overlaps
+  in
+  (* [g] over [w] donated, checked to lie in [w]'s memory where the host
+     computes on the device. *)
+  let in_place ~msg g w =
     let before = if Rig.runs_on_host rig then Some (memory w) else None in
     let y = g (Nx.donate w) in
-    let within b = Rig.Buffer.overlaps b (memory y) in
-    (Option.fold ~none:true ~some:within before, y)
+    Option.iter (fun b -> equal ~msg buffer_t b (memory y)) before;
+    y
   in
   let host x = Nx.to_array (Nx.place Nx.Host.on x) in
   let f (xs, _) =
@@ -56,9 +61,10 @@ let carry (module S : Nx.Devices) =
     (footprint (xs, Nx.donate (w ())));
   let g = Rune.jit s f in
   let expected = host (g (xs, w ())) in
-  let took, y = in_place (fun w -> g (xs, w)) (w ()) in
+  let y =
+    in_place ~msg:"the float carry: in place" (fun w -> g (xs, w)) (w ())
+  in
   equal ~msg:"the float carry" Testable.(array float_exact) expected (host y);
-  equal ~msg:"the float carry: in place" Testable.bool true took;
   let i4 = Nx.int4 in
   let ys = Nx.cast i4 (Nx.mul_s (Nx.ones Nx.int32 [| 4; 64; 64 |]) 3l) in
   let ys = place ys in
@@ -68,6 +74,7 @@ let carry (module S : Nx.Devices) =
   let w () = owned (place (Nx.cast i4 (Nx.ones Nx.int32 [| 64; 64 |]))) in
   let g = Rune.jit T.(pair tensor tensor @-> returns tensor) f in
   let expected = host (g (ys, w ())) in
-  let took, y = in_place (fun w -> g (ys, w)) (w ()) in
-  equal ~msg:"the four-bit carry" Testable.(array int) expected (host y);
-  equal ~msg:"the four-bit carry: in place" Testable.bool true took
+  let y =
+    in_place ~msg:"the four-bit carry: in place" (fun w -> g (ys, w)) (w ())
+  in
+  equal ~msg:"the four-bit carry" Testable.(array int) expected (host y)

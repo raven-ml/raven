@@ -42,6 +42,10 @@ val law : (module Nx.Devices) -> t -> unit
     a destination's tie with a bit below [float32]'s precision, which a cast
     that rounds twice gets wrong. *)
 
+val laws : (module Nx.Devices) -> t list -> unit
+(** [laws s cs] is [law s] of each case, the casts compiled as one program
+    ({!Batch.each}). *)
+
 (** {1:bf16 Every integer to bfloat16} *)
 
 val to_bf16_sources : Nx.Dtype.any list

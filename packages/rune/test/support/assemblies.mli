@@ -43,6 +43,10 @@ val law : (module Nx.Devices) -> t -> unit
     elements no piece holds, the value read flipped, and complex and sub-byte
     dtypes. *)
 
+val laws : (module Nx.Devices) -> t list -> unit
+(** [laws s cs] is [law s] of each case, the assemblies compiled as one program
+    ({!Batch.each}). *)
+
 val packed_rows : (module Nx.Devices) -> unit
 (** [packed_rows s] checks that a compiled call on [s]'s devices stacking two
     loops' rows of sixteen four-bit integers, which each loop writes in place

@@ -89,6 +89,8 @@ let to_bits (type s) (dt : (float, s) Nx.dtype) (x : (float, s, Nx.host) Nx.t)
 (* The extent of the target's other two axes. *)
 let width = 4
 
+(* [c]'s scatter as a call, read as the bits that rows past the first, which no
+   update reaches, hold before and after it. *)
 let run (type s) (module S : Nx.Devices) (dt : (float, s) Nx.dtype) c =
   let pool = target dt in
   let n = c.n and w = width in
@@ -104,31 +106,38 @@ let run (type s) (module S : Nx.Devices) (dt : (float, s) Nx.dtype) c =
   let t = [| n; w; w |] in
   let u = of_bits dt t (Array.make (n * row) (update dt)) in
   let i = Nx.create Nx.int64 t (Array.make (n * row) 0L) in
-  let f i u x =
+  let f (i, u, x) =
     let x = if c.transposed then Nx.transpose x else x in
     Nx.scatter ~combine:c.combine ~axis:0 i u x
   in
-  let g =
-    Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) f
-  in
-  let put y = Nx.place S.on y in
-  let before = Rune.evaluations () in
-  let y = to_bits dt (Nx.place Nx.Host.on (g (put i) (put u) (put x))) in
-  Compiled.here ();
-  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
-  (* Rows past the first, which no update reaches. *)
   let shown f =
-    List.init ((n - 1) * row) (fun j ->
+    List.init
+      ((n - 1) * row)
+      (fun j ->
         let r = 1 + (j / row) and a = j / w mod w and b = j mod w in
         Printf.sprintf "%d,%d,%d: %x" r a b (f r a b))
   in
-  let got r a b = y.((r * row) + (a * w) + b) in
-  equal (list string) (shown at) (shown got)
+  let put y = Nx.place S.on y in
+  Batch.call
+    Nx.Ptree.(triple tensor tensor tensor)
+    (put i, put u, put x)
+    Nx.Ptree.tensor f
+    (fun y ->
+      let y = to_bits dt (Nx.place Nx.Host.on y) in
+      (shown at, shown (fun r a b -> y.((r * row) + (a * w) + b))))
 
-let law s c =
+let call (module S : Nx.Devices) c =
   let (Nx.Dtype.Any dt) = c.dtype in
   match dt with
-  | Nx.Dtype.Float16 -> run s dt c
-  | Nx.Dtype.Bfloat16 -> run s dt c
-  | Nx.Dtype.Float32 -> run s dt c
+  | Nx.Dtype.Float16 -> run (module S) dt c
+  | Nx.Dtype.Bfloat16 -> run (module S) dt c
+  | Nx.Dtype.Float32 -> run (module S) dt c
   | _ -> invalid_arg "Unreached.law: not float16, bfloat16 or float32"
+
+let law ?(batched = []) (module S : Nx.Devices) =
+  Batch.law ~per:8
+    (call (module S))
+    batched
+    (fun _ compiled ->
+      let before, after = compiled () in
+      equal (list string) before after)

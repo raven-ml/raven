@@ -124,7 +124,9 @@ let examples =
       zeros (Any Nx.float32) Cummin 17 1 0 signs;
     ]
 
-let law (module S : Nx.Devices) (Case { dt; op; n; p; axis; values }) =
+(* A case's running operation over the whole axis and over the prefix, read on
+   the host as the prefix. *)
+let calls (module S : Nx.Devices) (Case { dt; op; n; p; axis; values }) =
   cover "about 16 elements" (n <= 17);
   cover "about 32 elements" (n >= 31 && n <= 33);
   cover "about 256 elements" (n >= 255);
@@ -149,13 +151,17 @@ let law (module S : Nx.Devices) (Case { dt; op; n; p; axis; values }) =
     Nx.slice (if axis = 0 then [ R (0, p) ] else [ A; R (0, p) ]) t
   in
   let on_host t = codes (Nx.place Nx.Host.on t) in
-  let before = Rune.evaluations () in
-  let of_whole =
-    outcome (fun () -> on_host (first (Rune.jit' f (Nx.place S.on x))))
+  let call x read =
+    Batch.call Nx.Ptree.tensor (Nx.place S.on x) Nx.Ptree.tensor f read
   in
-  let of_prefix =
-    outcome (fun () -> on_host (Rune.jit' f (Nx.place S.on (first x))))
-  in
-  Compiled.here ();
-  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
-  equal (outcome_t codes_t) of_whole of_prefix
+  (call x (fun y -> on_host (first y)), call (first x) on_host)
+
+(* The cases' wholes compile as one program, their prefixes as another. *)
+let laws (module S : Nx.Devices) cs =
+  let wholes, prefixes = List.split (List.map (calls (module S)) cs) in
+  List.iter2
+    (fun whole prefix ->
+      equal (outcome_t codes_t) (outcome whole) (outcome prefix))
+    (Batch.results wholes) (Batch.results prefixes)
+
+let law s c = laws s [ c ]

@@ -160,7 +160,15 @@ let doubly_rounded p m =
   && clear (h - p + 1)
   && List.for_all clear (List.init (24 - p) (( + ) (h - 24)))
 
-let law (module S : Nx.Devices) (Case { src; dst = Nx.Dtype.Any dt as d; xs }) =
+let operand src xs = Nx.cast src (Nx.create Nx.int64 [| Array.length xs |] xs)
+
+let call (module S : Nx.Devices) (Case { src; dst = Nx.Dtype.Any dt; xs }) =
+  Batch.call Nx.Ptree.tensor
+    (Nx.place S.on (operand src xs))
+    Nx.Ptree.tensor (Nx.cast dt)
+    (fun y -> codes (Nx.place Nx.Host.on y))
+
+let check (Case { src; dst = Nx.Dtype.Any dt as d; xs }) compiled =
   let s = Nx.Dtype.Any src in
   let values = Array.map (wrap s) xs in
   let mags =
@@ -181,16 +189,10 @@ let law (module S : Nx.Devices) (Case { src; dst = Nx.Dtype.Any dt as d; xs }) =
     (Array.exists (fun m -> not (held 53 m)) mags);
   cover "a tie past which float32 drops bits"
     (Array.exists (doubly_rounded (precision d)) mags);
-  let n = Array.length xs in
-  let x = Nx.cast src (Nx.create Nx.int64 [| n |] xs) in
-  let cast x = Nx.cast dt x in
-  let before = Rune.evaluations () in
-  let y =
-    Rune.jit Nx.Ptree.(tensor @-> returns tensor) cast (Nx.place S.on x)
-  in
-  Compiled.here ();
-  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
-  equal ~msg:"cast" codes_t (codes (cast x)) (codes (Nx.place Nx.Host.on y))
+  equal ~msg:"cast" codes_t (codes (Nx.cast dt (operand src xs))) (compiled ())
+
+let laws (module S : Nx.Devices) cs = Batch.each (call (module S)) check cs
+let law s c = laws s [ c ]
 
 (* Every integer to bfloat16 *)
 

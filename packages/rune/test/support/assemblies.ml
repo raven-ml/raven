@@ -257,9 +257,7 @@ let mixed (type v s d) (dt : (v, s) Nx.dtype) (a : (v, s, d) Nx.t)
   match unsigned with
   | Any u -> Nx.bitcast dt (Nx.bitwise_xor (Nx.bitcast u a) (Nx.bitcast u b))
 
-let law (module S : Nx.Devices)
-    (Case { dtype = dt; shape = s; pieces; flipped; seed }) =
-  let st = Random.State.make [| seed |] in
+let check (Case { dtype = dt; shape = s; pieces; flipped; _ }) compiled =
   let regions = List.map (fun p -> p.region) pieces in
   let held = List.filter (fun r -> numel (counts r) > 0) regions in
   let h = hits s regions in
@@ -326,6 +324,13 @@ let law (module S : Nx.Devices)
   cover "the value read flipped" flipped;
   cover "a sub-byte dtype" (Nx.Dtype.bits dt < 8);
   cover "a complex dtype" (Nx.Dtype.is Complex dt);
+  let eager, compiled = compiled () in
+  equal codes_t eager compiled
+
+(* A case's assembly as a call, read as eager's bits and the call's. *)
+let call (module S : Nx.Devices)
+    (Case { dtype = dt; shape = s; pieces; flipped; seed }) =
+  let st = Random.State.make [| seed |] in
   let fill = (Nx.to_array (random_bits dt [| 1 |] st)).(0) in
   (* Each piece's arguments, at the host and on the device, of one storage. *)
   let args =
@@ -366,14 +371,13 @@ let law (module S : Nx.Devices)
   in
   let args = List.concat args in
   let eager = raw (f (List.map fst args)) in
-  let before = Rune.evaluations () in
-  let y =
-    Rune.jit Nx.Ptree.(list tensor @-> returns tensor) f (List.map snd args)
-  in
-  let y = Nx.place Nx.Host.on y in
-  Compiled.here ();
-  equal ~msg:"compiled" Testable.int 0 (Rune.evaluations () - before);
-  equal codes_t eager (raw y)
+  Batch.call
+    Nx.Ptree.(list tensor)
+    (List.map snd args) Nx.Ptree.tensor f
+    (fun y -> (eager, raw (Nx.place Nx.Host.on y)))
+
+let laws (module S : Nx.Devices) cs = Batch.each (call (module S)) check cs
+let law s c = laws s [ c ]
 
 (* A stack of two loops' rows of sixteen four-bit integers: each loop writes
    its rows of the stack, the loop's rows and the stack both the unpacked

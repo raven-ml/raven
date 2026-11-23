@@ -91,39 +91,49 @@ let broken (type b) ~label ~kept (dt : (float, b) Nx.dtype) ~k exact mass y =
    least [2{^-34}]. *)
 let normal ~n i = scale_bytes.(i mod n mod Array.length scale_bytes) >= 126
 
-let law ?(flushes = false) (module S : Nx.Devices) c =
+(* [c]'s operands at its dtype [dt]. *)
+let operands (type b) (dt : (float, b) Nx.dtype) c =
+  let w = weight ~n:c.n ~k:c.k in
+  let key = Nx.Rng.key c.seed in
+  let u = Nx.Rng.uniform ~key Nx.float32 [| c.m; c.k |] in
+  (w, Nx.cast dt (Nx.mul_s u 0x1p-8))
+
+let values y = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on y))
+
+let call (module S : Nx.Devices) c =
   let (Nx.Dtype.Any dt) = c.dtype in
   match Nx.Dtype.kind dt with
   | Float ->
-      let w = weight ~n:c.n ~k:c.k in
-      let x =
-        let key = Nx.Rng.key c.seed in
-        let u = Nx.Rng.uniform ~key Nx.float32 [| c.m; c.k |] in
-        Nx.cast dt (Nx.mul_s u 0x1p-8)
-      in
+      let w, x = operands dt c in
+      Batch.call Nx.Ptree.tensor (Nx.place S.on x) Nx.Ptree.tensor
+        (Nx_quant.apply (Nx_quant.place S.on w))
+        values
+  | _ -> invalid_arg "Mxfp4_products.law: not a float dtype"
+
+let check ~flushes c compiled =
+  let (Nx.Dtype.Any dt) = c.dtype in
+  match Nx.Dtype.kind dt with
+  | Float ->
+      let w, x = operands dt c in
       let wide v = Nx.cast Nx.float64 v in
       let wf = Nx.matrix_transpose (wide (Nx_quant.dequant Nx.float32 w)) in
       let exact = Nx.to_array (Nx.matmul (wide x) wf) in
       let mass = Nx.to_array (Nx.matmul (Nx.abs (wide x)) (Nx.abs wf)) in
       let infinite z = Float.abs z = Float.infinity in
-      equal ~msg:"an output is infinite" bool true
-        (Array.exists infinite exact);
-      let ws = Nx_quant.place S.on w in
-      let before = Rune.evaluations () in
-      let y =
-        Rune.jit Nx.Ptree.(tensor @-> returns tensor) (Nx_quant.apply ws)
-          (Nx.place S.on x)
-      in
-      Compiled.here ();
-      equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
-      let values y = Nx.to_array (wide (Nx.place Nx.Host.on y)) in
+      greater ~msg:"infinite outputs" int ~than:0
+        (Array.fold_left (fun n z -> if infinite z then n + 1 else n) 0 exact);
       let check ~kept label y =
         equal ~msg:label (list string) []
-          (broken ~label ~kept dt ~k:c.k exact mass (values y))
+          (broken ~label ~kept dt ~k:c.k exact mass y)
       in
-      check ~kept:(Fun.const true) "eager" (Nx_quant.apply w x);
-      check ~kept:(fun i -> (not flushes) || normal ~n:c.n i) "compiled" y
+      check ~kept:(Fun.const true) "eager" (values (Nx_quant.apply w x));
+      check
+        ~kept:(fun i -> (not flushes) || normal ~n:c.n i)
+        "compiled" (compiled ())
   | _ -> invalid_arg "Mxfp4_products.law: not a float dtype"
+
+let law ?(flushes = false) ?(batched = []) (module S : Nx.Devices) =
+  Batch.law ~per:8 (call (module S)) batched (check ~flushes)
 
 (* Decodes
 

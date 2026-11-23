@@ -11,6 +11,7 @@
  (name rune_support)
  (modules
   operand
+  batch
   expr
   witness
   cases

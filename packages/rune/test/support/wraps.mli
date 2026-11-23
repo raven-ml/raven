@@ -42,7 +42,13 @@ val examples : t list
     of half the greatest. *)
 
 val law : (module Nx.Devices) -> t -> unit
-(** [law s c] checks that on [s]'s first device the compiled [op x y], [op x y
-    > x] and [op x y < 0] have eager's values, with no call evaluated. It
-    covers each operation and each signed dtype, a case whose exact result
-    leaves the dtype's range, and a division by [0]. *)
+(** [law s c] checks that on [s]'s first device three compiled calls give
+    eager's values, with no call evaluated: [op x y], [op x y > x] and
+    [op x y < 0], each a call of its own, so that a comparison never reads the
+    operation's stored result. It covers each operation and each signed dtype, a
+    case whose exact result leaves the dtype's range, and a division by [0]. *)
+
+val laws : (module Nx.Devices) -> t list -> unit
+(** [laws s cs] is [law s] of each case, the cases' operations compiled as one
+    program, their comparisons above [x] as another and those below [0] as a
+    third ({!Batch.each}). *)

@@ -62,3 +62,8 @@ val law : ?flushes:bool -> (module Nx.Devices) -> t -> unit
     a narrow float's [Add], an offset view of the updates, each complex
     combine, many updates into few targets, and an integer extreme of
     updates of one sign into one target. *)
+
+val laws : ?flushes:bool -> (module Nx.Devices) -> t list -> unit
+(** [laws ~flushes s cs] is [law ~flushes s] of each case, the cases' calls
+    compiled as one program, but for one eager refuses, which compiles alone
+    ({!Batch.checks}). *)
