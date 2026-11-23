@@ -9,8 +9,12 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
-- brot, munin and quill build on OCaml 5.2 to 5.4: release builds, which
+- brot, lz, munin and quill build on OCaml before 5.5: release builds, which
   opam's are, no longer pass OCaml 5.5's `-set-runtime-default` flag.
+- Each package declares the oldest OCaml it builds with: brot and lz 5.2,
+  munin and quill 5.4, which matrix needs, and the others 5.5, which the
+  polymorphic parameters of rig, nx, rune and vega need. talon, tolk, hugin,
+  norn and jera declared 5.2, and lz 5.5.
 - **Breaking:** aion's `Roar` draws each object's order with
   `Nx.Rng.permutation_at`, where it sorted `float64` uniforms, and holds the
   temperature at `float32`, so `Roar.start` and `Roar.step` compile for a

@@ -293,7 +293,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # brot admits 5.2; munin and quill 5.4, through matrix; the others 5.5.
+        # brot and lz admit 5.2; munin and quill 5.4, through matrix; the
+        # others 5.5.
         ocaml-compiler:
           - '5.5'
           - '5.4'
@@ -332,7 +333,7 @@ jobs:
       # would not be tested. A step after a failed one installs the failed
       # package without its tests.
       - name: Build and test lz
-        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.5' }}
+        if: ${{ !cancelled() && matrix.ocaml-compiler == '5.2' }}
         run: bash .github/memcap.sh opam install -y --with-test lz
 
       - name: Build and test rig

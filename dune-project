@@ -35,7 +35,7 @@
   "Compression codecs with no dependencies, written in C and held to the reference implementations' speed: whole-buffer decode and encode between bigarrays, streaming steps that lend their output from the codec's own memory, errors as values with an offset, and CRC-32. lz.bytesrw adds bytesrw filters when bytesrw is installed.")
  (depends
   (ocaml
-   (>= 5.5.0))
+   (>= 5.2.0))
   dune
   ; tests
   (windtrap
@@ -137,7 +137,7 @@
   "Typed columns and expressions whose shape is in their type, queries that fail on their schema before reading data, and CSV and Parquet files read and written in batches, built on Nx.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.5.0))
   dune
   (nx
    (= :version))
@@ -284,7 +284,7 @@
   "Tolk is a minimal, readable ML compiler for GPU tensor computation in the Raven ecosystem.")
  (depends
   (ocaml
-   (>= 5.2))
+   (>= 5.5.0))
   dune
   (rig
    (= :version))
@@ -339,6 +339,9 @@
  (description
   "Numerical methods over Nx tensors: linear and nonlinear systems, minimisation with bounds, quadrature, splines and Chebyshev fits, ordinary, stiff, differential-algebraic, delay and stochastic differential equations, and symplectic splittings. Every solve meets a stated tolerance and reports a status per lane, and Rune differentiates each answer through its own equation.")
  (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
   (nx
    (= :version))
   (rune
@@ -363,7 +366,7 @@
   "Bayesian inference over the user's own structures: distributions, bijectors, a model language of generative functions, NUTS, HMC and ensemble samplers batched over chains, nested sampling and tempered SMC for the evidence, Gaussian approximations, draws and diagnostics. Built on Nx, Rune and Jera.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.5.0))
   dune
   (nx
    (= :version))
@@ -391,7 +394,7 @@
   "Local-first experiment tracking with append-only event logs, versioned artifacts, a terminal dashboard, and a CLI. The core library (munin) provides Session, Run, Store, and Artifact modules. The TUI library (munin.tui) provides a Mosaic-based dashboard.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.4.0))
   dune
   ; the CLI's tests state cmdliner 2's error output
   (cmdliner
@@ -436,7 +439,7 @@
  (description "Composable, beautiful-by-default plotting built on Nx.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.5.0))
   dune
   (nx
    (= :version))
@@ -466,7 +469,7 @@
   "Quill is a REPL and notebook environment for OCaml. Interactive toplevel with syntax highlighting, completion, and history. Markdown notebooks with a terminal UI, web frontend, batch evaluation, and watch mode.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.4.0))
   dune
   ; cmarkit 0.4.0 parses a list that ends the file
   (cmarkit

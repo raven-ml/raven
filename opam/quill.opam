@@ -18,7 +18,7 @@ homepage: "https://github.com/raven-ml/raven"
 doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
-  "ocaml" {>= "5.2.0"}
+  "ocaml" {>= "5.4.0"}
   "dune" {>= "3.21"}
   "cmarkit" {>= "0.4.0"}
   "cmdliner" {>= "1.1.0"}
