@@ -228,3 +228,15 @@ val encode :
 
     Raises [Invalid_argument] if [q]'s columns are not [f]'s, names and types,
     in order. *)
+
+(**/**)
+
+val decode_in_batches :
+  ?batch:int ->
+  format ->
+  Bytesrw.Bytes.Reader.t ->
+  (Talon.t, Talon.Error.t) result
+(** [decode_in_batches ~batch f r] is {!decode}[ f r] with batches whose input
+    ends at the first line feed outside quotes at or past [batch] bytes, 1 MiB
+    by default, so that a test reaches a batch's end with a small input. [batch]
+    is positive. *)

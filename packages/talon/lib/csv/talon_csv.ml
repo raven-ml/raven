@@ -552,8 +552,8 @@ type reading = {
   mutable left : int;
 }
 
-let reading f ~read ~limit r =
-  let s = Scan.make ~sep:f.sep ~quote:f.quote r in
+let reading ?batch f ~read ~limit r =
+  let s = Scan.make ?batch ~sep:f.sep ~quote:f.quote r in
   { f; s; read; header = f.header; left = Option.value ~default:max_int limit }
 
 (* A batch's failure is at its earliest row, then its leftmost column. *)
@@ -604,10 +604,12 @@ let rec next r =
 let schema f =
   Schema.v (Array.to_list (Array.map (fun c -> (c.name, c.ty)) f.columns))
 
-let decode f r =
+let decode_in_batches ?batch f r =
   protect @@ fun () ->
   let r =
-    reading f ~read:(List.init (Array.length f.columns) Fun.id) ~limit:None r
+    reading ?batch f
+      ~read:(List.init (Array.length f.columns) Fun.id)
+      ~limit:None r
   in
   let rec batches acc =
     match next r with Some b -> batches (b :: acc) | None -> List.rev acc
@@ -617,6 +619,8 @@ let decode f r =
       let empty c = (c.name, Result.get_ok (Column.parse c.ty no_texts)) in
       Ok (Talon.v (Array.to_list (Array.map empty f.columns)))
   | bs -> Ok (Talon.of_batches bs)
+
+let decode f r = decode_in_batches f r
 
 (* [open_ ()] is a reader and the function that closes it. *)
 let source_of ~name ?file f open_ =

@@ -12,6 +12,7 @@ let batch_bytes = 1 lsl 20
 
 type t = {
   reader : Reader.t;
+  batch : int; (* A batch's input ends at a record's end at or past this. *)
   sep : char;
   quote : char;
   mutable buf : Bytes.t;
@@ -30,9 +31,10 @@ type t = {
   mutable pending : exn option; (* The syntax error that ended the batch. *)
 }
 
-let make ~sep ~quote reader =
+let make ?(batch = batch_bytes) ~sep ~quote reader =
   {
     reader;
+    batch;
     sep;
     quote;
     buf = Bytes.empty;
@@ -86,7 +88,7 @@ let skip_bom s =
   end
 
 let rec batch_end s =
-  let b = s.buf and q = s.quote and last = s.start + batch_bytes - 1 in
+  let b = s.buf and q = s.quote and last = s.start + s.batch - 1 in
   let i = ref s.scanned and in_quotes = ref s.in_quotes and found = ref (-1) in
   while !found < 0 && !i < s.len do
     let c = Bytes.unsafe_get b !i in

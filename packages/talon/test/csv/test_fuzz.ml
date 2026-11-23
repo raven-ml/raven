@@ -56,17 +56,18 @@ let formats =
 
 (* Decoding *)
 
-(* [decode ?rows ?slice f s] decodes [s] in slices of [slice] bytes, sniffed
-   from its first [rows] records, then as [f], and labels the case with how far
-   each read went. A property fails when no case of it fails to read as [f]. *)
-let decode ?rows ?slice f s =
+(* [decode ?batch ?rows ?slice f s] decodes [s] in slices of [slice] bytes, in
+   batches of [batch] bytes, sniffed from its first [rows] records, then as [f],
+   and labels the case with how far each read went. A property fails when no
+   case of it fails to read as [f]. *)
+let decode ?batch ?rows ?slice f s =
   let reader () = Reader.of_string ?slice_length:slice s in
+  let decode f r = Csv.decode_in_batches ?batch f r in
   let outcome = function Ok _ -> "reads" | Error _ -> "fails" in
   (match Csv.sniff ?rows ~nulls (reader ()) with
   | Error _ -> collect "sniff fails"
-  | Ok sniffed ->
-      collect ("sniffed, " ^ outcome (Csv.decode sniffed (reader ()))));
-  let original = outcome (Csv.decode f (reader ())) in
+  | Ok sniffed -> collect ("sniffed, " ^ outcome (decode sniffed (reader ()))));
+  let original = outcome (decode f (reader ())) in
   collect ("as the original, " ^ original);
   cover "as the original, fails" (original = "fails")
 
@@ -140,7 +141,7 @@ let mutated name mutate (rows, slice) =
 let bits = Gen.(list ~size:(int_range 1 8) (pair nat (int_range 0 7)))
 
 let mutations =
-  group ~timeout:600. "Mutated files decode to a table or an error"
+  group "Mutated files decode to a table or an error"
     [
       prop "with bits flipped"
         Gen.(triple pick bits (pair rows slice))
@@ -181,17 +182,22 @@ let mutations =
 
 (* Batches *)
 
-(* A scanner finds a batch's end by counting quotes past 1 MiB of input, so a
-   quote or a line break near that mark moves the boundary. The file has records
-   of quoted line breaks, which put a line feed inside quotes on every other
-   line. *)
+(* A scanner finds a batch's end by counting quotes past its batch's size, so a
+   quote or a line break near that mark moves the boundary. Batches are not
+   visible in a decode's result: decoded in batches, a file gives the table or
+   the error it gives in one batch, no record split, lost or repeated at a
+   boundary. The cases decode in batches of 256 bytes, whose boundary a file of
+   2 KiB crosses, read in slices up to a batch long; one file of 1 MiB, the size
+   {!Csv.decode} uses, crosses it once. The files have records of quoted line
+   breaks, which put a line feed inside quotes on every other line. *)
+let batch = 256
 let mib = 1 lsl 20
 
-let big =
-  let b = Buffer.create (mib + 4096) in
+let records n =
+  let b = Buffer.create (n + 64) in
   Buffer.add_string b "a,b\n";
   let i = ref 0 in
-  while Buffer.length b < mib + 2048 do
+  while Buffer.length b < n do
     Printf.bprintf b "\"r\n%d\",%d\n" !i !i;
     incr i
   done;
@@ -200,11 +206,44 @@ let big =
 let big_format =
   Csv.format [ ("a", Type.Any Type.string); ("b", Type.Any Type.int64) ]
 
+(* A decode's result: tables compare by {!Talon.equal}, errors by their text. *)
+let decoded =
+  let pp ppf = function
+    | Ok t -> Talon.pp ppf t
+    | Error e -> Format.fprintf ppf "Error %a" Error.pp e
+  in
+  let equal a b =
+    match (a, b) with
+    | Ok a, Ok b -> Talon.equal a b
+    | Error a, Error b ->
+        String.equal
+          (Format.asprintf "%a" Error.pp a)
+          (Format.asprintf "%a" Error.pp b)
+    | Ok _, Error _ | Error _, Ok _ -> false
+  in
+  Testable.make ~pp ~equal
+
+(* [one_batch s] is the decode of [s] in a single batch. *)
+let one_batch s =
+  Csv.decode_in_batches
+    ~batch:(String.length s + 1)
+    big_format (Reader.of_string s)
+
 let boundary =
-  prop ~count:50 ~timeout:600. "Mutations near a batch boundary"
-    Gen.(triple (int_range (-64) 64) syntax (option (int_range 1 4096)))
-    (fun (k, piece, slice) ->
-      let s = insert (mib + k) piece big in
-      decode ?slice big_format s)
+  group "Mutations near a batch boundary"
+    [
+      prop ~count:50 "in batches of 256 bytes"
+        Gen.(triple (int_range (-64) 64) syntax (option (int_range 1 batch)))
+        (fun (k, piece, slice) ->
+          let s = insert (batch + k) piece (records (batch + 2048)) in
+          decode ~batch ?slice big_format s;
+          equal decoded (one_batch s)
+            (Csv.decode_in_batches ~batch big_format
+               (Reader.of_string ?slice_length:slice s)));
+      test "a quote before the 1 MiB mark" (fun () ->
+          let s = insert (mib - 1) "\"" (records (mib + 2048)) in
+          equal decoded (one_batch s)
+            (Csv.decode big_format (Reader.of_string s)));
+    ]
 
 let () = exit (run "talon.csv fuzz" [ mutations; boundary ])

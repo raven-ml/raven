@@ -32,10 +32,13 @@ type t
 (** The type for scanners: a reader, a separator and a quote, and the batch the
     scanner is at. *)
 
-val make : sep:char -> quote:char -> Bytesrw.Bytes.Reader.t -> t
-(** [make ~sep ~quote r] scans the input that [r] reads from its current
+val make : ?batch:int -> sep:char -> quote:char -> Bytesrw.Bytes.Reader.t -> t
+(** [make ?batch ~sep ~quote r] scans the input that [r] reads from its current
     position. [sep] and [quote] are distinct bytes other than a line feed and a
-    carriage return. Nothing else reads [r] while the scanner does. *)
+    carriage return. Nothing else reads [r] while the scanner does.
+
+    [batch] is the bytes of input at or past which a batch ends, 1 MiB by
+    default. It is positive. *)
 
 val next : t -> bool
 (** [next s] moves [s] to its next batch of records, and is [false] when no
