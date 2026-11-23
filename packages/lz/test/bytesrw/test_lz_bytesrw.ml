@@ -555,18 +555,17 @@ let () =
   exit
     (run "Lz_bytesrw"
        [
-         each "decompressing filters read the goldens" goldens;
-         each "bytes after the stream" after;
-         each "a cut stream is Truncated at its length" cut;
-         each "filters agree with decode" mutations;
-         each "an error's position, raised again" positions;
-         each "a raise from the writer, raised again" raised_again;
          each "a writer with ~eod:false leaves its writer open" open_writer;
+         each "a level out of range raises when applied" levels;
+         each "filters agree with decode" mutations;
+         each "an error is at its byte's position, then raised again" positions;
+         each "a raise from the writer propagates, then is raised again"
+           raised_again;
+         each "decompressing filters read the goldens" goldens;
+         each "bytes after the stream are left or Malformed as its format says"
+           after;
+         each "a cut stream is Truncated at its length" cut;
+         each "a compressed stream is the encoder's, and decodes to its input"
+           round_trip;
          window;
-         tag "compress"
-         @@ group "compression"
-              [
-                each "a stream decodes to its input" round_trip;
-                each "a level out of range raises when applied" levels;
-              ];
        ])
