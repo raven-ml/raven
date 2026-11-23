@@ -6,19 +6,27 @@
 open Talon
 open Windtrap
 
-(* A file larger than the address space this test runs in, so mapping it fails
-   as a mapping does at [vm.max_map_count]. *)
-let sparse_file () =
-  let path = Filename.temp_file "talon-map-failure" ".parquet" in
-  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
-  Unix.ftruncate fd (8 * 1024 * 1024 * 1024);
-  Unix.close fd;
-  path
+(* [with_sparse_file f] is [f path] for a sparse file of 2 EiB at [path], larger
+   than any process's address space, so mapping it fails with ENOMEM, as a
+   mapping does at [vm.max_map_count]. It lives on /dev/shm, a tmpfs, which
+   holds files that large; ext4 holds 16 TiB at most. A sparse file holds no
+   page, and it is removed on every path. *)
+let with_sparse_file f =
+  let path =
+    Filename.temp_file ~temp_dir:"/dev/shm" "talon-map-failure" ".parquet"
+  in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      let fd = Unix.openfile path [ Unix.O_WRONLY ] 0o600 in
+      Fun.protect
+        ~finally:(fun () -> Unix.close fd)
+        (fun () -> Unix.ftruncate fd (1 lsl 61));
+      f path)
 
 let names_the_file_once () =
-  let path = sparse_file () in
+  with_sparse_file @@ fun path ->
   let result = Talon_parquet.file path in
-  Sys.remove path;
   match result with
   | Ok _ -> fail "a file beyond the address space must not map"
   | Error e ->
