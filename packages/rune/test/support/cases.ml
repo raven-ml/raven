@@ -56,8 +56,12 @@ type case = {
           where [f] is it on the parts. *)
 }
 
+(* A vector of no element in a quarter of the cases, so that a law's cover of
+   one misses in 100 cases with probability [(3/4)^100], below [10^-12]. *)
+let vector_length = Gen.(frequency [ (1, constant 0); (3, int_range 1 5) ])
+
 let case ?(empty = true) ?(values = Uniform [ (-2., 2.) ])
-    ?(shape = Gen.(map (fun n -> [| n |]) (int_range 0 5)))
+    ?(shape = Gen.map (fun n -> [| n |]) vector_length)
     ?(smooth = Fun.const true) ?z name f =
   { name; empty; shape; values; f; smooth; z }
 
