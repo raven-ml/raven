@@ -52,3 +52,12 @@
  (package tolk)
  (deps support/agent.exe)
  (libraries windtrap tolk tolk.engine tolk_run rig rig_remote rig_remote_job))
+
+; A later process's compile over a warm disk cache: each part is a process of
+; its own, over a cache directory of its own.
+
+(test
+ (name test_tolk_engine_disk)
+ (modules test_tolk_engine_disk)
+ (package tolk)
+ (libraries windtrap tolk tolk.engine tolk_test tolk_run rig))

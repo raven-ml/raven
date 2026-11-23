@@ -8508,14 +8508,13 @@ a view names its storage again (D426).
   on every process start. On fudge, over the 24-block graph, the process's
   CPU time for the first call falls from 84.5 ms to 45.7 ms, and its
   allocated words from 12.40 M to 7.93 M.
-- **Pinned by:** rune's `test_first_call` (`Rune.jit across processes`): `a
-  later process's first call › compiles nothing, computes the same:
-  arithmetic`, `a reduction` and `a scan`, `tells apart arguments in another
-  order`, `reads this process's captured constants`, `a damaged entry is made
-  anew, and replaced ›` truncated, holding no graph and of another value, `an
-  entry of other sources is made anew, and replaced ›` the engine's digest is
-  its own, of another engine and of another tolk, and `nothing is kept ›` with
-  `DEBUG` on, without the binary cache and with `SCACHE` at 1.
+- **Pinned by:** the `Tolk_engine.compile on disk` suite
+  (`test/engine/tolk_engine/test_tolk_engine_disk.ml`): `a later process
+  compiling an equal sink ›` each of its tests, `an entry of other sources is
+  made anew, and replaced ›` the engine's digest is its own, of another engine
+  and of another tolk, `nothing is kept ›` each of its tests, and `a damaged
+  entry is made anew, and replaced ›` truncated, holding no graph, of another
+  value and whose lengths wrap.
 
 ## D465. A stage a call reads is no destination of a store
 

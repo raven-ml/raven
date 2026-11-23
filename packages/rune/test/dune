@@ -299,12 +299,3 @@
    (= %{architecture} amd64)
    (= %{architecture} arm64)))
  (deps declines.exe))
-
-; A later process's first call over a warm disk cache: each part is a process
-; of its own.
-
-(test
- (package rune)
- (name test_first_call)
- (modules test_first_call)
- (libraries nx rune rune_support tolk tolk.engine tolk_test windtrap))
