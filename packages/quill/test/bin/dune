@@ -16,6 +16,7 @@
 ; differ on Windows.
 
 (cram
+ (package quill)
  (applies_to preload)
  (enabled_if
   (<> %{os_type} Win32)))

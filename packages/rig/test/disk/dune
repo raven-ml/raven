@@ -1,4 +1,5 @@
 (tests
+ (package rig)
  (names test_rig_disk test_interrupt)
  (libraries rig_disk rig rig_edge_primitive rig_pool rig_support unix windtrap)
  (foreign_stubs

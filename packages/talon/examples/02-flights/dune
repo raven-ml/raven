@@ -3,6 +3,7 @@
  (libraries talon talon.csv talon.parquet))
 
 (rule
+ (package talon)
  (alias runtest)
  (deps flights.csv carriers.parquet)
  (action

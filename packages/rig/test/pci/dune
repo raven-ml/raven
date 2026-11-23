@@ -1,4 +1,5 @@
 (tests
+ (package rig)
  (names
   test_window
   test_memory
@@ -14,6 +15,7 @@
 ; test_function and test_driver take GPUs of machines they make of files.
 
 (tests
+ (package rig)
  (names test_function test_driver)
  (modules test_function test_driver)
  (libraries rig_edge_primitive rig_pci rig_pci_support rig_support
@@ -22,6 +24,7 @@
 ; test_function_here takes this machine's GPUs and huge pages.
 
 (test
+ (package rig)
  (name test_function_here)
  (modules test_function_here)
  (locks %{workspace_root}/gpu)

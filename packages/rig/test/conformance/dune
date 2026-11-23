@@ -2,6 +2,7 @@
 ; driver's test support makes its work from its suite's fixtures.
 
 (test
+ (package rig)
  (name test_conformance)
  (locks %{workspace_root}/gpu)
  (libraries

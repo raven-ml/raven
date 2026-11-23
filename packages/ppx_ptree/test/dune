@@ -37,6 +37,7 @@
 ; The expansions a reader can check by eye.
 
 (rule
+ (package ppx_ptree)
  (alias runtest)
  (targets record.actual variant.actual group.actual)
  (deps
@@ -60,6 +61,7 @@
 ; suggests, which compiles without a word. Not on Windows, as below.
 
 (rule
+ (package ppx_ptree)
  (alias runtest)
  (enabled_if
   (and
@@ -89,6 +91,7 @@
 ; so these cases do not run on Windows.
 
 (rule
+ (package ppx_ptree)
  (alias runtest)
  (enabled_if
   (and

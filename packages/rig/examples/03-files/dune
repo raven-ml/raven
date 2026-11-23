@@ -3,6 +3,7 @@
  (libraries rig rig.disk))
 
 (rule
+ (package rig)
  (alias runtest)
  (action
   (progn

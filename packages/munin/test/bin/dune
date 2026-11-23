@@ -10,6 +10,7 @@
 ; paths, which Windows spells with \.
 
 (cram
+ (package munin)
  (applies_to posix)
  (enabled_if
   (<> %{os_type} Win32)))

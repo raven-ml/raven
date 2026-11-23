@@ -3,6 +3,7 @@
  (libraries lz))
 
 (rule
+ (package lz)
  (alias runtest)
  (action
   (progn

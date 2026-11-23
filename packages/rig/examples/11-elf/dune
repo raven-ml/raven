@@ -3,6 +3,7 @@
  (libraries rig.elf))
 
 (rule
+ (package rig)
  (alias runtest)
  (deps poly_x86_64.o)
  (action

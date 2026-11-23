@@ -1,6 +1,7 @@
 ; rune's suites, through its interface.
 
 (tests
+ (package rune)
  (names
   test_jit
   test_jit_devices
@@ -75,6 +76,7 @@
 ; itself once for each.
 
 (test
+ (package rune)
  (name test_recompile)
  (modules test_recompile)
  (libraries lowered nx rune tolk unix windtrap))
@@ -83,6 +85,7 @@
 ; loopback.
 
 (test
+ (package rune)
  (name test_jit_remote)
  (modules test_jit_remote)
  (deps support/agent.exe)
@@ -100,6 +103,7 @@
 ; Opens this machine's first GPU, so it holds the lock GPU tests share.
 
 (test
+ (package rune)
  (name test_jit_gpu)
  (modules test_jit_gpu)
  (locks %{workspace_root}/gpu)
@@ -124,6 +128,7 @@
 ; machine's first GPU, so it holds the lock GPU tests share.
 
 (test
+ (package rune)
  (name test_jit_compiler)
  (modules test_jit_compiler)
  (locks %{workspace_root}/gpu)
@@ -166,6 +171,7 @@
   (write-file %{target} "This file is no library.\n")))
 
 (test
+ (package rune)
  (name test_program)
  (modules test_program)
  (libraries nx rig rune windtrap))
@@ -179,6 +185,7 @@
 ; each worker that reads it, and run in one process on Windows.
 
 (tests
+ (package rune)
  (names test_special test_special_gamma test_special_beta_inverse)
  (modules special test_special test_special_gamma test_special_beta_inverse)
  (libraries nx rune windtrap)
@@ -189,6 +196,7 @@
 ; near sine and cosine against the full ones, lowered and run on the host.
 
 (test
+ (package rune)
  (name test_lower_real)
  (modules test_lower_real)
  (libraries nx nx_array nx_kernel rune rune_support lowered windtrap))
@@ -196,6 +204,7 @@
 ; The complex kinds compiled by Rune.jit, against nx's eager kernels.
 
 (test
+ (package rune)
  (name test_lower_complex)
  (modules test_lower_complex)
  (libraries nx rune rune_support windtrap))
@@ -204,6 +213,7 @@
 ; nx's eager kernels.
 
 (test
+ (package rune)
  (name test_composed)
  (modules test_composed)
  (libraries nx rune rune_support windtrap))
@@ -212,6 +222,7 @@
 ; devices, against nx's eager draws.
 
 (test
+ (package rune)
  (name test_draws)
  (modules test_draws)
  (libraries nx nx_rng_support nx_support rune rune_support windtrap))
@@ -220,6 +231,7 @@
 ; storage its lowering makes is numbered from the process's start.
 
 (test
+ (package rune)
  (name test_first_compile)
  (modules test_first_compile)
  (libraries nx rune rune_support windtrap))
@@ -228,6 +240,7 @@
 ; against nx's eager result.
 
 (tests
+ (package rune)
  (names
   test_loop
   test_lower
@@ -267,6 +280,7 @@
  (libraries nx rune tolk))
 
 (cram
+ (package rune)
  (applies_to search)
  (deps search.exe))
 
@@ -278,6 +292,7 @@
  (libraries nx rig rune))
 
 (cram
+ (package rune)
  (applies_to declines)
  (deps declines.exe))
 
@@ -285,6 +300,7 @@
 ; of its own.
 
 (test
+ (package rune)
  (name test_first_call)
  (modules test_first_call)
  (libraries nx rune tolk tolk.engine tolk_test windtrap))

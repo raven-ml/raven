@@ -1,3 +1,4 @@
 (test
+ (package rig)
  (name test_metal_abi)
  (libraries rig rig_metal_abi rig_edge rig_support windtrap))

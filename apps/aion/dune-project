@@ -1,0 +1,30 @@
+(lang dune 3.21)
+
+; An app is a program, never released: its package holds the stanzas of its
+; directory so that a release build of raven's packages (dune build -p)
+; leaves them out.
+
+(name aion)
+
+(version 1.0.0~beta1)
+
+(implicit_transitive_deps false)
+
+(package
+ (name aion)
+ (synopsis "AION-1, a multimodal foundation model for astronomy, on raven")
+ (allow_empty)
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  kaun
+  nx
+  ppx_ptree
+  rig
+  rune
+  tolk
+  ymir
+  ; tests
+  (windtrap :with-test)
+  (thumper :with-test)))

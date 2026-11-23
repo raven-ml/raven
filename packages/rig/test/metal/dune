@@ -1,4 +1,5 @@
 (test
+ (package rig)
  (name test_metal)
  (modules test_metal)
  (locks %{workspace_root}/gpu)
@@ -20,6 +21,7 @@
 ; device of its own: a suite of its own, which runs no other test.
 
 (test
+ (package rig)
  (name test_interrupt)
  (modules test_interrupt)
  (locks %{workspace_root}/gpu)
@@ -38,6 +40,7 @@
 ; process runs no domain and opens no device.
 
 (test
+ (package rig)
  (name test_fork)
  (modules test_fork)
  (locks %{workspace_root}/gpu)

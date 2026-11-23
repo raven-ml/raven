@@ -30,11 +30,13 @@
  (libraries rig_pool_probe unix windtrap))
 
 (rule
+ (package rig)
  (alias runtest)
  (action
   (run %{dep:test_pool.exe})))
 
 (test
+ (package rig)
  (name test_interleavings)
  (modules test_interleavings)
  (build_if
@@ -42,6 +44,7 @@
  (libraries rig_pool_hooked_probe rig_pool_probe windtrap))
 
 (test
+ (package rig)
  (name test_threads)
  (modules test_threads)
  (build_if
@@ -55,6 +58,7 @@
 ; of it, as ../dune does for test_readers, whose windtrap workers inherit it.
 
 (rule
+ (package rig)
  (alias runtest)
  (enabled_if
   (and

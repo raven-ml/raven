@@ -3,6 +3,7 @@
  (libraries rig rig.remote unix))
 
 (rule
+ (package rig)
  (alias runtest)
  (action
   (progn

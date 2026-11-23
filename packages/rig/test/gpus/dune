@@ -1,4 +1,5 @@
 (test
+ (package rig)
  (name test_gpus)
  (modules test_gpus)
  (locks %{workspace_root}/gpu)
@@ -20,6 +21,7 @@
 ; is its own executable, since a process that spawned a domain cannot fork.
 
 (tests
+ (package rig)
  (names test_names test_opens_domain)
  (modules test_names test_opens_domain)
  (libraries rig rig_gpus windtrap))

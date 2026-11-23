@@ -25,6 +25,7 @@
 ; runtest.
 
 (tests
+ (package aion)
  (names
   test_hub
   test_modality
@@ -48,6 +49,7 @@
 ; one. It holds the lock GPU tests share.
 
 (test
+ (package aion)
  (name test_gpu)
  (modules test_gpu)
  (locks %{workspace_root}/gpu)

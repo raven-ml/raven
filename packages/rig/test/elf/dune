@@ -1,4 +1,5 @@
 (test
+ (package rig)
  (name test_elf)
  (libraries rig_elf windtrap)
  (deps

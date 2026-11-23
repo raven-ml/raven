@@ -7,6 +7,7 @@
 ; never lands in _build/default.
 
 (rule
+ (package mynd)
  (alias runtest)
  (deps
   (sandbox always)

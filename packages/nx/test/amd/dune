@@ -85,6 +85,7 @@
   windtrap))
 
 (rule
+ (package nx)
  (alias runtest)
  (locks %{workspace_root}/gpu)
  (action

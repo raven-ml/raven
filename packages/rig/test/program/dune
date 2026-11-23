@@ -1,4 +1,5 @@
 (test
+ (package rig)
  (name test_program)
  (modules test_program)
  (libraries
@@ -17,6 +18,7 @@
 ; the kernels of each driver's conformance fixtures.
 
 (test
+ (package rig)
  (name test_program_gpu)
  (modules test_program_gpu)
  (locks %{workspace_root}/gpu)

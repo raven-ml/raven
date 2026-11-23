@@ -2,6 +2,7 @@
 ; firmware are at hand; elsewhere it skips.
 
 (test
+ (package rig)
  (name test_root)
  (modules test_root)
  (locks %{workspace_root}/gpu)
@@ -11,6 +12,7 @@
 ; test_firmware reads images through rig.pci's firmware cache.
 
 (tests
+ (package rig)
  (names
   test_amd_pci
   test_discovery

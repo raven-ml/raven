@@ -1,3 +1,4 @@
 (test
+ (package rig)
  (name test_cuda_abi)
  (libraries rig rig_cuda_abi rig_edge rig_support windtrap))

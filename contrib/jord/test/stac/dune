@@ -25,6 +25,7 @@
 ;   {"collections":["modis-09A1-061"],"ids":["MOD09A1.A2023241.h18v04.061.2023251221325"],"limit":1}
 
 (test
+ (package jord)
  (name test_stac)
  (libraries jord jord.stac nx jsont jsont.bytesrw windtrap)
  (deps

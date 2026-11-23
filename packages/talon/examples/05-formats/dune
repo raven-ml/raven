@@ -3,6 +3,7 @@
  (libraries talon talon.csv talon.parquet bytesrw rig.disk))
 
 (rule
+ (package talon)
  (alias runtest)
  (deps carriers.parquet)
  (action

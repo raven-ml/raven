@@ -9,6 +9,7 @@
   windtrap))
 
 (tests
+ (package rig)
  (names
   test_rig_remote
   test_rig_remote_lost
@@ -49,6 +50,7 @@
 ; test_rig_remote_dial reads, in C, whether its connect waits for its socket.
 
 (test
+ (package rig)
  (name test_rig_remote_dial)
  (modules test_rig_remote_dial)
  (foreign_stubs
@@ -59,6 +61,7 @@
 ; test_rig_remote_rail holds a queue of this machine's AMD or NV GPU.
 
 (test
+ (package rig)
  (name test_rig_remote_rail)
  (modules test_rig_remote_rail)
  (locks %{workspace_root}/gpu)
@@ -81,6 +84,7 @@
 ; test_rig_remote_metal loads specialised metallibs on an agent's Metal GPU.
 
 (test
+ (package rig)
  (name test_rig_remote_metal)
  (modules test_rig_remote_metal)
  (locks %{workspace_root}/gpu)

@@ -1,4 +1,5 @@
 (tests
+ (package rig)
  (names
   test_open
   test_buffer
@@ -44,6 +45,7 @@
 ; are linked in: the tests stanza runs the native one alone.
 
 (tests
+ (package rig)
  (names test_walk test_interrupt)
  (modules test_walk test_interrupt ops)
  (modes exe byte_complete)
@@ -59,6 +61,7 @@
     (run %{test} -j 4)))))
 
 (rule
+ (package rig)
  (alias runtest)
  (action
   (setenv
@@ -73,6 +76,7 @@
 ; the test runs macOS's sysctl through unix.
 
 (test
+ (package rig)
  (name test_arch)
  (modules test_arch)
  (libraries rig unix windtrap)
@@ -81,6 +85,7 @@
   (names test_arch_stubs)))
 
 (test
+ (package rig)
  (name test_profile)
  (modules test_profile)
  (libraries rig rig_support windtrap)
@@ -96,6 +101,7 @@
  (libraries rig rig_support windtrap))
 
 (rule
+ (package rig)
  (alias runtest)
  (action
   (run %{dep:test_readers.exe})))
@@ -109,6 +115,7 @@
 ; expands to the value without the directories of (package rig).
 
 (rule
+ (package rig)
  (alias runtest)
  (enabled_if
   (and
@@ -123,6 +130,7 @@
    "CAML_LD_LIBRARY_PATH=\"support:$CAML_LD_LIBRARY_PATH\" %{bin:ocamlrun} %{dep:test_readers.bc}")))
 
 (tests
+ (package rig)
  (names test_model test_model_fork)
  (modules test_model test_model_fork rig_model)
  (locks %{workspace_root}/gpu)
@@ -150,6 +158,7 @@
 ; spins, as a second load once did, ends at the timeout.
 
 (cram
+ (package rig)
  (applies_to toplevel)
  (enabled_if
   (and

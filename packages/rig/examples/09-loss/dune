@@ -6,6 +6,7 @@
   (names fail)))
 
 (rule
+ (package rig)
  (alias runtest)
  (action
   (progn

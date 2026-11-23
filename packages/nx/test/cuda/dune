@@ -82,6 +82,7 @@
  (libraries nx nx_array nx_cuda_support rig rig.cuda windtrap))
 
 (rule
+ (package nx)
  (alias runtest)
  (locks %{workspace_root}/gpu)
  (action

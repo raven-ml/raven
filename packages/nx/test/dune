@@ -1,6 +1,7 @@
 ; nx's suites, through its interface.
 
 (tests
+ (package nx)
  (names
   test_devices
   test_values
@@ -122,6 +123,7 @@
 ; so the suite runs on Linux alone.
 
 (test
+ (package nx)
  (name test_widths)
  (modules test_widths)
  (libraries nx windtrap)
@@ -134,6 +136,7 @@
 ; loopback.
 
 (test
+ (package nx)
  (name test_check_remote)
  (modules test_check_remote)
  (deps support/agent.exe)
@@ -142,6 +145,7 @@
 ; Opens this machine's first GPU, so it holds the lock GPU tests share.
 
 (test
+ (package nx)
  (name test_place_gpu)
  (modules test_place_gpu)
  (locks %{workspace_root}/gpu)

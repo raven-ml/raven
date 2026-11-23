@@ -3,5 +3,6 @@
 ; test_region holds a real mlx5 path's deregistration at handle reuse.
 
 (tests
+ (package rig)
  (names test_nic test_uverbs test_rxe test_region)
  (libraries rig_mlx5 rig_mlx5_abi rig_support unix windtrap))

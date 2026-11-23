@@ -1,3 +1,4 @@
 (test
+ (package jord)
  (name test_shapefile)
  (libraries jord jord.shapefile nx windtrap))

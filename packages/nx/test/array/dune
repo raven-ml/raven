@@ -1,4 +1,5 @@
 (tests
+ (package nx)
  (names
   test_dtype
   test_float_text
@@ -27,6 +28,7 @@
 ; Opens this machine's first GPU, so it holds the lock GPU tests share.
 
 (test
+ (package nx)
  (name test_array_gpu)
  (modules test_array_gpu)
  (locks %{workspace_root}/gpu)

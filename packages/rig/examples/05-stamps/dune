@@ -3,6 +3,7 @@
  (libraries rig))
 
 (rule
+ (package rig)
  (alias runtest)
  (action
   (progn

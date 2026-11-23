@@ -4,6 +4,7 @@
 ; its own.
 
 (tests
+ (package rig)
  (names test_amd test_fault test_fork)
  (modules test_amd test_fault test_fork)
  (locks %{workspace_root}/gpu)
@@ -27,6 +28,7 @@
 ; its own, which runs no other test.
 
 (test
+ (package rig)
  (name test_interrupt)
  (modules test_interrupt)
  (locks %{workspace_root}/gpu)

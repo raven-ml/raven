@@ -3,6 +3,7 @@
 ; format.
 
 (cram
+ (package whisper)
  (deps
   ../../bin/main.exe
   ../upstream/transcript.pt

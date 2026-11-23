@@ -1,4 +1,5 @@
 (test
+ (package rig)
  (name test_nv_pci)
  (modules test_nv_pci)
  (libraries rig_gpu_support rig_nv rig_nv_pci rig_nv_support rig_pci
@@ -7,6 +8,7 @@
   (source_tree fixtures)))
 
 (tests
+ (package rig)
  (names test_rpc test_fb_layout test_page_entry)
  (modules test_rpc test_fb_layout test_page_entry)
  (libraries rig_nv_pci windtrap))

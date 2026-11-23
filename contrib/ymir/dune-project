@@ -15,7 +15,7 @@
 
 (bug_reports "https://github.com/raven-ml/raven/issues")
 
-(version 1.0.0~alpha3)
+(version 1.0.0~beta1)
 
 (implicit_transitive_deps false)
 
@@ -31,13 +31,13 @@
    (>= 5.2.0))
   dune
   (nx
-   (>= 1.0.0~alpha3))
+   (>= 1.0.0~beta1))
   (lz
-   (>= 1.0.0~alpha3))
+   (>= 1.0.0~beta1))
   (rune
-   (>= 1.0.0~alpha3))
+   (>= 1.0.0~beta1))
   (jera
-   (>= 1.0.0~alpha3))
+   (>= 1.0.0~beta1))
   (windtrap
    (and
     :with-test

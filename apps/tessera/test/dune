@@ -1,4 +1,5 @@
 (tests
+ (package tessera)
  (names
   test_pixels
   test_batch
@@ -47,6 +48,7 @@
 ; answers and generated files.
 
 (test
+ (package tessera)
  (name test_stac)
  (modules test_stac)
  (libraries
@@ -71,6 +73,7 @@
 ; on GDAL 3.12.2, numpy 2.5.4.
 
 (test
+ (package tessera)
  (name test_recipe)
  (modules test_recipe)
  (libraries tessera jord.stac nx nx.io jsont jsont.bytesrw windtrap)
@@ -84,6 +87,7 @@
 ; from the days in upstream/l2/days.npz.
 
 (test
+ (package tessera)
  (name test_tile)
  (modules test_tile)
  (libraries tessera jord jord.geotiff nx nx.io windtrap)

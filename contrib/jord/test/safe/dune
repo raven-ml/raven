@@ -28,6 +28,7 @@
 ;     -e '/<Viewing_Incidence_Angles_Grids /,/<\/Viewing_Incidence_Angles_Grids>/d' MTD_TL.xml
 
 (test
+ (package jord)
  (name test_safe)
  (libraries jord jord.safe nx windtrap)
  (deps

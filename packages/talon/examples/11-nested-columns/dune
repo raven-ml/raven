@@ -3,6 +3,7 @@
  (libraries talon nx nx.ragged))
 
 (rule
+ (package talon)
  (alias runtest)
  (action
   (progn

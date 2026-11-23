@@ -3,6 +3,7 @@
  (libraries talon talon.csv nx))
 
 (rule
+ (package talon)
  (alias runtest)
  (deps flights.csv)
  (action

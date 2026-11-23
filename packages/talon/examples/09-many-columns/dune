@@ -3,6 +3,7 @@
  (libraries talon))
 
 (rule
+ (package talon)
  (alias runtest)
  (action
   (progn

@@ -7,6 +7,7 @@
 ; with its band (arange(51 * 75) % 251).
 
 (test
+ (package jord)
  (name test_geotiff)
  (libraries jord jord.geotiff nx nx.io windtrap)
  (deps cog_overviews.tif))

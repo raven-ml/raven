@@ -3,6 +3,7 @@
 ; which runs no other test.
 
 (tests
+ (package rig)
  (names test_nvidia test_files test_fork)
  (modules test_nvidia test_files test_fork)
  (locks %{workspace_root}/gpu)
@@ -21,6 +22,7 @@
 ; executable of its own, which runs no other test.
 
 (test
+ (package rig)
  (name test_walk)
  (modules test_walk)
  (locks %{workspace_root}/gpu)

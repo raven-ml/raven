@@ -1,3 +1,4 @@
 (test
+ (package jord)
  (name test_geojson)
  (libraries jord jord.geojson nx jsont jsont.bytesrw windtrap))

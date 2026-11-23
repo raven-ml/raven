@@ -2,6 +2,7 @@
 ; nx.cpu's interface.
 
 (tests
+ (package nx)
  (names
   test_kernels
   test_reduce

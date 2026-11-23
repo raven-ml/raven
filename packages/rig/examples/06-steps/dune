@@ -6,6 +6,7 @@
   (names scale)))
 
 (rule
+ (package rig)
  (alias runtest)
  (action
   (progn

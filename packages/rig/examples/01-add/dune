@@ -5,6 +5,7 @@
 ; The program uses the first GPU here, so it takes the GPU suites' lock.
 
 (rule
+ (package rig)
  (alias runtest)
  (deps
   (glob_files kernels/add*))

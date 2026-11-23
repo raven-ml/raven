@@ -9,6 +9,7 @@
  (libraries aion aion_support kaun.hf nx nx.io))
 
 (cram
+ (package aion)
  (deps
   cache.exe
   npz.exe

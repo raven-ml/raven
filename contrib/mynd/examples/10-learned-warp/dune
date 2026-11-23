@@ -3,6 +3,7 @@
  (libraries mynd nx nx.io rune))
 
 (rule
+ (package mynd)
  (alias runtest)
  (deps ../chelsea.png)
  (action

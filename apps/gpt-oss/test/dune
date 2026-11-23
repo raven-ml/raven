@@ -3,6 +3,7 @@
 ; gen/ wrote beside them.
 
 (tests
+ (package gpt-oss)
  (names
   test_structures
   test_loading

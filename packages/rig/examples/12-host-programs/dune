@@ -3,6 +3,7 @@
  (libraries rig))
 
 (rule
+ (package rig)
  (alias runtest)
  (deps affine_x86_64.o affine_aarch64.o)
  (action

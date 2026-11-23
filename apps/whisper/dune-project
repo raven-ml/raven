@@ -1,0 +1,32 @@
+(lang dune 3.21)
+
+; An app is a program, never released: its package holds the stanzas of its
+; directory so that a release build of raven's packages (dune build -p)
+; leaves them out.
+
+(name whisper)
+
+(version 1.0.0~beta1)
+
+(implicit_transitive_deps false)
+
+(package
+ (name whisper)
+ (synopsis "OpenAI's Whisper speech recognition on raven")
+ (allow_empty)
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  alda
+  brot
+  bytesrw
+  jsont
+  kaun
+  lz
+  nx
+  rig
+  rune
+  ; tests
+  (windtrap :with-test)
+  (thumper :with-test)))

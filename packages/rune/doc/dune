@@ -1,6 +1,7 @@
 ; Off under sanitize and tsan, as the root dune says.
 
 (mdx
+ (package rune)
  (files
   index.md
   01-tracing.md

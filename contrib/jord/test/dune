@@ -1,4 +1,5 @@
 (tests
+ (package jord)
  (names
   test_crs
   test_grid

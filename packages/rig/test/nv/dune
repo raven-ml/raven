@@ -1,4 +1,5 @@
 (test
+ (package rig)
  (name test_nv)
  (modules test_nv)
  (locks %{workspace_root}/gpu)
@@ -23,6 +24,7 @@
 ; own, which runs no other test.
 
 (test
+ (package rig)
  (name test_interrupt)
  (modules test_interrupt)
  (locks %{workspace_root}/gpu)
@@ -43,6 +45,7 @@
 ; its own, which runs no other test.
 
 (test
+ (package rig)
  (name test_fault)
  (modules test_fault)
  (locks %{workspace_root}/gpu)

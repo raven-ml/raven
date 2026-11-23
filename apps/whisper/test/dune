@@ -9,6 +9,7 @@
 ; apps/whisper/test/gen/tokenizer.py.
 
 (test
+ (package whisper)
  (name test_tokenizer)
  (modules test_tokenizer)
  (libraries whisper whisper_support windtrap)
@@ -25,6 +26,7 @@
 ; apps/whisper/test/gen/heads.py.
 
 (test
+ (package whisper)
  (name test_model)
  (modules test_model)
  (libraries whisper whisper_support nx nx.io kaun rune windtrap)
@@ -42,6 +44,7 @@
 ; apps/whisper/test/gen/languages.py.
 
 (test
+ (package whisper)
  (name test_decoding)
  (modules test_decoding)
  (libraries whisper whisper_support nx nx.io kaun rune lz windtrap)
@@ -67,6 +70,7 @@
 ; (apps/whisper/test/gen/subset.py and greedy.py).
 
 (tests
+ (package whisper)
  (names test_english test_wer)
  (modules test_english test_wer)
  (libraries whisper whisper_support windtrap)
@@ -81,6 +85,7 @@
 ; apps/whisper/test/gen/resample.py.
 
 (test
+ (package whisper)
  (name test_audio)
  (modules test_audio)
  (libraries whisper nx nx.io windtrap)
@@ -107,6 +112,7 @@
 ; apps/whisper/test/gen/transcript.py.
 
 (test
+ (package whisper)
  (name test_transcript)
  (modules test_transcript)
  (libraries whisper whisper_support nx rune windtrap)
@@ -120,6 +126,7 @@
 ; apps/whisper/test/gen/writer.py.
 
 (test
+ (package whisper)
  (name test_writer)
  (modules test_writer)
  (libraries whisper whisper_support windtrap)
