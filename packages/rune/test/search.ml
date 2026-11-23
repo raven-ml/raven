@@ -5,7 +5,6 @@
 
 (* Calls whose search reports the cram test reads. *)
 
-
 let x () = Nx.ones Nx.float32 [| 4 |]
 
 (* A function compiled with a search reports each kernel it searches; another
@@ -41,8 +40,8 @@ let () =
   let inner = Rune.jit' ~beam:1 (fun a -> Nx.add_s (Nx.mul a a) 0.25) in
   ignore (Rune.jit' (fun a -> Nx.neg (inner a)) (x ()))
 
-(* A concatenation along a later axis runs its four pieces as one launch:
-   each piece is a kernel, searched. *)
+(* A concatenation along a later axis: a kernel a piece, four searched. The
+   pieces run as one launch, whose kernels a search once skipped. *)
 let () =
   let f a =
     Nx.concatenate ~axis:1 [ Nx.sin a; Nx.cos a; Nx.exp a; Nx.sqrt a ]
