@@ -170,7 +170,7 @@ let escapes =
         returning d );
     ( "map_host",
       fun d ->
-        let h = B.create Rig.host (1 lsl 16) in
+        let h = B.create Rig.host B.paged_from in
         fun () -> ignore (B.borrow d h) );
     ( "map_peer",
       fun d ->

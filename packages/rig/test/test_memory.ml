@@ -1602,7 +1602,7 @@ let test_foreign_use () =
    done: until then no host buffer reuses it. *)
 let test_borrowed_host () =
   let d, p = P.open_ "memory:borrowed-host" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let[@inline never] written () =
     let h = B.create Rig.host n in
     let src = B.create d n in
@@ -1629,7 +1629,7 @@ let test_borrowed_host () =
    creation on this one, which first moves the host's collected memory. *)
 let test_borrowed_host_elsewhere () =
   let d, p = P.open_ "memory:borrowed-host-elsewhere" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let written () =
     let h = B.create Rig.host n in
     let src = B.create d n in
@@ -1665,7 +1665,7 @@ let test_keep_elsewhere () =
    device's queued work on it ran. *)
 let test_borrowed_bigarray () =
   let d, p = P.open_ "memory:borrowed-bigarray" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let collected = Atomic.make false in
   let[@inline never] written () =
     let ba = B.export (B.create Rig.host n) Bigarray.char in
@@ -1788,7 +1788,7 @@ let test_host_keeps_size () =
    of 128 bytes, on a line, and on a page from 64 KiB and four pages, which
    the host keeps for reuse; and the bounds between them. *)
 let line = 128
-let kept = Int.max (64 * kib) (4 * Rig_gpu_support.Host.page)
+let kept = B.paged_from
 
 let export_sizes =
   Gen.with_pp
@@ -1832,16 +1832,16 @@ let export_law n =
     (B.read again Bigarray.char chars);
   ignore (Sys.opaque_identity other)
 
-(* The host keeps a collected buffer of 64 KiB or more for the next buffer of
-   its size, unless a bigarray of it lives, which keeps its bytes. The test
-   starts from an empty cache, with the buffers of earlier tests collected:
-   one collected during it would enter the cache after its buffer, and at a
-   cycle's end could push it out as the least recently kept. *)
+(* The host keeps a collected buffer of [Rig.Buffer.paged_from] bytes or more
+   for the next buffer of its size, unless a bigarray of it lives, which keeps
+   its bytes. The test starts from an empty cache, with the buffers of earlier
+   tests collected: one collected during it would enter the cache after its
+   buffer, and at a cycle's end could push it out as the least recently kept. *)
 let test_host_cache () =
   Gc.full_major ();
   Gc.full_major ();
   Rig.free_cache Rig.host;
-  let n = (64 * kib) + 4093 in
+  let n = B.paged_from + 4093 in
   let first = dropped Rig.host n in
   Gc.full_major ();
   Gc.full_major ();

@@ -231,7 +231,7 @@ let test_handle_only () =
 
 let test_address () =
   let d, _ = P.open_ "args:address" in
-  let host = B.create Rig.host (1 lsl 16) in
+  let host = B.create Rig.host B.paged_from in
   let mapped = require_some (B.borrow d host) in
   let fixed = B.view mapped ~first:16 ~length:32 in
   let s = Sub.make ~fixed:[ (fixed, Rig.Read) ] d [||] in

@@ -71,13 +71,13 @@ let test_after_stop () =
    memory, which does not raise Lost for that device. *)
 let test_unrun_names () =
   let d, p = P.open_ "loss:unrun" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let s = Sub.make d [| Support.touching [| Sub.read |] |] in
   let buffers = [| require_some (B.borrow d h) |] in
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   raises_match (lost d) (fun () -> submit ~args:one s ~buffers);
-  equal int (1 lsl 16) (B.read h Bigarray.char Bigarray.Array1.dim)
+  equal int B.paged_from (B.read h Bigarray.char Bigarray.Array1.dim)
 
 (* A wait looks at every producer its device's queue waits on, however many
    waits name one: a queue of 64 waits on a stalled producer and one on a
@@ -130,7 +130,7 @@ let test_free_after_stop () =
    them raise nothing. *)
 let test_faulted_frees () =
   let d, p = P.open_ "loss:faulted-frees" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let kept = ref [ B.create d 64; B.create d 128 ] in
   let mapped = ref (Some (require_some (B.borrow d h))) in
   P.fault p "the device fell off the bus";
@@ -150,9 +150,9 @@ let test_faulted_frees () =
    still unmapped through its driver. *)
 let test_unmap_after_stop () =
   let d, p = P.open_ "loss:unmap-after-stop" in
-  let h = ref (Some (B.create Rig.host (1 lsl 16))) in
+  let h = ref (Some (B.create Rig.host B.paged_from)) in
   ignore (require_some (B.borrow d (Option.get !h)));
-  equal ~msg:"mapped" (list int) [ 1 lsl 16 ] (P.host_maps p);
+  equal ~msg:"mapped" (list int) [ B.paged_from ] (P.host_maps p);
   lose d p;
   Rig.close d;
   h := None;
@@ -336,13 +336,14 @@ let test_others_go_on () =
    alone. *)
 let test_unreached () =
   let d, p = P.open_ "loss:unreached" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let reads = Sub.make d [| Support.touching [| Sub.read |] |] in
   ignore (submit ~args:one reads ~buffers:[| require_some (B.borrow d h) |]);
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   B.wait h Rig.Read;
-  equal ~msg:"a read" int (1 lsl 16) (B.read h Bigarray.char Bigarray.Array1.dim);
+  equal ~msg:"a read" int B.paged_from
+    (B.read h Bigarray.char Bigarray.Array1.dim);
   raises_match ~msg:"a write's wait" (lost d) (fun () ->
       B.wait h Rig.Read_write);
   raises_match ~msg:"a write" (lost d) (fun () ->
@@ -354,7 +355,7 @@ let test_unreached () =
    and end, take nothing of it. *)
 let test_unreached_kept () =
   let d, p = P.open_ "loss:unreached-kept" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let readers =
     List.init 8 (fun i ->
         let e, _ = P.open_ (Printf.sprintf "loss:unreached-kept-%d" i) in
@@ -380,8 +381,8 @@ let test_unreached_kept () =
 let test_read_after_stop () =
   let d, p = P.open_ "loss:read-after-stop" in
   let e, _ = P.open_ "loss:read-after-stop-other" in
-  let read = B.create Rig.host (1 lsl 16)
-  and written = B.create Rig.host (1 lsl 16) in
+  let read = B.create Rig.host B.paged_from
+  and written = B.create Rig.host B.paged_from in
   let s = Sub.make d [| Support.touching [| Sub.read; Sub.write |] |] in
   let borrow d b = require_some (B.borrow d b) in
   let pt = submit ~args:one s ~buffers:[| borrow d read; borrow d written |] in
@@ -467,7 +468,7 @@ let test_own_memory () =
    which the device's work never used, is ordinary. *)
 let test_lost_borrow () =
   let d, p = P.open_ "loss:borrow" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let b = require_some (B.borrow d h) in
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
@@ -588,7 +589,7 @@ let test_create_frees () =
 let outlived name ends =
   let d, p = P.open_ name in
   let e, pe = P.open_ (name ^ "-other") in
-  let h = ref (Some (B.create Rig.host (1 lsl 16))) in
+  let h = ref (Some (B.create Rig.host B.paged_from)) in
   let peer = ref (Some (B.create e 64)) in
   ignore (require_some (B.borrow d (Option.get !h)));
   ignore (require_some (B.borrow d (Option.get !peer)));
@@ -598,7 +599,7 @@ let outlived name ends =
   equal ~msg:"unmapped once stopped" int 2 (count "unmap" p);
   equal ~msg:"held by the device" (list int) [] (P.outstanding p);
   equal ~msg:"the other device's mapping" (slist int compare)
-    [ 64; 1 lsl 16 ] (P.outstanding pe);
+    [ 64; B.paged_from ] (P.outstanding pe);
   raises_match (lost d) (fun () -> B.borrow d (Option.get !h));
   ignore (Sys.opaque_identity (!h, !peer, !other));
   h := None;
@@ -619,7 +620,7 @@ let test_lost_unmaps () =
    the memory. *)
 let test_memory_first () =
   let d, p = P.open_ "loss:memory-first" in
-  let h = ref (Some (B.create Rig.host (1 lsl 16))) in
+  let h = ref (Some (B.create Rig.host B.paged_from)) in
   ignore (require_some (B.borrow d (Option.get !h)));
   ignore (Sys.opaque_identity !h);
   h := None;
@@ -635,7 +636,7 @@ let test_memory_first () =
    other runs on another domain. The mapping is released once. *)
 let test_unmap_race_device_first () =
   let d, p = P.open_ "loss:race-device-first" in
-  let h = ref (Some (B.create Rig.host (1 lsl 16))) in
+  let h = ref (Some (B.create Rig.host B.paged_from)) in
   ignore (require_some (B.borrow d (Option.get !h)));
   P.gate_frees p;
   let closer = Domain.spawn (fun () -> Rig.close d) in
@@ -657,7 +658,7 @@ let test_unmap_race_memory_first () =
   P.gate_frees p;
   let dropper =
     Domain.spawn (fun () ->
-        let h = ref (Some (B.create Rig.host (1 lsl 16))) in
+        let h = ref (Some (B.create Rig.host B.paged_from)) in
         ignore (require_some (B.borrow d (Option.get !h)));
         ignore (Sys.opaque_identity !h);
         h := None;
@@ -758,7 +759,7 @@ let stopped_made = Atomic.make 0
 let[@inline never] make_stopped () =
   let n = Atomic.fetch_and_add stopped_made 1 in
   let d, p = P.open_ ~answer:`Unknown (Printf.sprintf "loss:stopped-%d" n) in
-  let h = ref (Some (B.create Rig.host (1 lsl 16))) in
+  let h = ref (Some (B.create Rig.host B.paged_from)) in
   ignore (require_some (B.borrow d (Option.get !h)));
   ignore (submit (empty d));
   lose d p;

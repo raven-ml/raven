@@ -350,7 +350,7 @@ let test_take_reading () =
    span it. *)
 let test_take_overlap () =
   let d = Result.get_ok (Rig.software "claim:take-overlap") in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let c = filled 8 'c' and b = B.create Rig.host n in
   List.iter
     (fun (msg, b') ->
@@ -441,7 +441,7 @@ let test_taken_writes () =
    borrow refuses a take of the memory until it ends. *)
 let test_borrow_counts () =
   let d = Result.get_ok (Rig.software "claim:borrow") in
-  let b = B.create Rig.host (1 lsl 16) in
+  let b = B.create Rig.host B.paged_from in
   let borrowed = require_some (B.borrow d b) in
   claim_read borrowed;
   is_none ~msg:"under the claim" (B.take ~why:"taken" [ b ]);
@@ -452,7 +452,7 @@ let test_borrow_counts () =
    of the buffer it gave maps the memory. *)
 let test_borrow_taken () =
   let d = Result.get_ok (Rig.software "claim:borrow-taken") in
-  let b = B.create Rig.host (1 lsl 16) in
+  let b = B.create Rig.host B.paged_from in
   let b' = taken b in
   raises_match (dead "donated") (fun () -> B.borrow d b);
   is_some ~msg:"the taken buffer" (B.borrow d b')
@@ -470,7 +470,7 @@ let test_of_bigarray () =
 let test_share_covers () =
   let d = Result.get_ok (Rig.software "claim:share") in
   let fresh () =
-    let b = B.create Rig.host (1 lsl 16) in
+    let b = B.create Rig.host B.paged_from in
     (b, B.view b ~first:0 ~length:8, require_some (B.borrow d b))
   in
   let b, view, borrowed = fresh () in
@@ -589,7 +589,7 @@ let taken_law (place, n) =
 (* Memory taken twice lives while the last buffer over it is reachable, and
    every earlier buffer is dead. *)
 let test_take_twice () =
-  let b = B.create Rig.host (1 lsl 16) in
+  let b = B.create Rig.host B.paged_from in
   let view = B.view b ~first:0 ~length:8 in
   let b' = taken ~why:"first" b in
   let b'' = taken ~why:"second" b' in
@@ -599,8 +599,8 @@ let test_take_twice () =
   B.write b'' Bigarray.char (fun a -> Bigarray.Array1.fill a 'c');
   Gc.full_major ();
   Gc.full_major ();
-  ignore (Sys.opaque_identity (B.create Rig.host (1 lsl 16)));
-  equal char 'c' (B.read b'' Bigarray.char (fun a -> a.{(1 lsl 16) - 1}))
+  ignore (Sys.opaque_identity (B.create Rig.host B.paged_from));
+  equal char 'c' (B.read b'' Bigarray.char (fun a -> a.{B.paged_from - 1}))
 
 (* A taken memory's dead buffers refuse claims from C and raise for a read
    and a keep. The buffer the take gave is claimed. *)
@@ -1222,8 +1222,8 @@ let test_wait_raises () =
    nothing. *)
 let test_c_lost_points () =
   let d, p = P.open_ "claim:c-lost-points" in
-  let reached = B.create Rig.host (1 lsl 16) in
-  let unreached = B.create Rig.host (1 lsl 16) in
+  let reached = B.create Rig.host B.paged_from in
+  let unreached = B.create Rig.host B.paged_from in
   write d (require_some (B.borrow d reached));
   ignore (P.run p);
   write d (require_some (B.borrow d unreached));
@@ -1237,7 +1237,7 @@ let test_c_lost_points () =
 (* A lost device's unreached read is followed by a write, not a read. *)
 let test_c_lost_reads () =
   let d, p = P.open_ "claim:c-lost-reads" in
-  let m = B.create Rig.host (1 lsl 16) in
+  let m = B.create Rig.host B.paged_from in
   read d (require_some (B.borrow d m));
   lose d p;
   equal ~msg:"for reading" answer R.Claimed (R.claim m Rig.Read);
@@ -1254,7 +1254,7 @@ let test_c_lost_behind_live () =
     let name = if lost_first then "claim:c-behind-1" else "claim:c-behind-2" in
     let live, lp = P.open_ (name ^ "-live") in
     let d, p = P.open_ (name ^ "-lost") in
-    let m = B.create Rig.host (1 lsl 16) in
+    let m = B.create Rig.host B.paged_from in
     let read_on d = read d (require_some (B.borrow d m)) in
     if lost_first then (read_on d; read_on live) else (read_on live; read_on d);
     lose d p;
@@ -1272,7 +1272,7 @@ let test_c_lost_behind_live () =
 (* A borrow on a lost device answers Lost; the memory it maps lives on. *)
 let test_c_lost_borrow () =
   let d, p = P.open_ "claim:c-lost-borrow" in
-  let m = B.create Rig.host (1 lsl 16) in
+  let m = B.create Rig.host B.paged_from in
   let b = require_some (B.borrow d m) in
   lose d p;
   equal ~msg:"the borrow" answer R.Lost (R.claim b Rig.Read);
@@ -1543,7 +1543,7 @@ let take_commands =
    AddressSanitizer, a walk of freed stamps reads garbage. *)
 let test_free_beside_wait () =
   let d, p = P.open_ "claim:free-wait" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   write d (require_some (B.borrow d h));
   P.gate p;
   let waited =
@@ -1568,7 +1568,7 @@ let test_free_beside_wait () =
    then, and succeeds once the borrow returned. *)
 let test_free_beside_borrow () =
   let d, p = P.open_ "claim:free-borrow" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   P.gate_locates p;
   let borrowed =
     Domain.spawn (fun () ->

@@ -19,7 +19,7 @@ let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
 let one = Support.zeros 1
 
 let timeout = 60.
-let page_bytes = 1 lsl 16
+let page_bytes = B.paged_from
 
 module Pages = struct
   (* The log of a region's calls: [during] runs as a read or a write starts;

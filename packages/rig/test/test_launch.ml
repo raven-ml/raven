@@ -130,8 +130,8 @@ let gen_case = Gen.with_pp pp_case gen_case
 (* One device for every case: a case's memory returns as it is collected. *)
 let patch_device = lazy (polled "patch")
 
-(* The 64 KiB that host memory a Polled device maps starts a page from. *)
-let page = 1 lsl 16
+(* The size from which host memory a Polled device maps starts on a page. *)
+let page = B.paged_from
 
 let make_slot d s =
   let mem =

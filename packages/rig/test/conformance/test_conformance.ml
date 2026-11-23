@@ -70,7 +70,9 @@ let filled ?memory d s =
 (* [n] bytes of host memory that starts on a page, borrowed by [d], where [d]
    maps host memory. *)
 let borrowed d n =
-  let h = B.view (B.create Rig.host (Int.max n 65536)) ~first:0 ~length:n in
+  let h =
+    B.view (B.create Rig.host (Int.max n B.paged_from)) ~first:0 ~length:n
+  in
   B.borrow d h
 
 (* [n] zeroed bytes of [d]'s memory both address ([both]),
@@ -128,7 +130,7 @@ let beside (f : _ Rig_edge.facts) q =
 
 (* A fill that fails: rig_support's countdown over a word holding 1. *)
 let failing_fill d =
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   B.blit_from_string ("\001" ^ String.make 7 '\000') 0 arg 0 8;
   let fixed = [ (Option.get (B.borrow d arg), Rig.Read_write) ] in
   let part = Sub.fill Rig_support.countdown ~params:8 in

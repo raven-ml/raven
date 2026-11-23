@@ -94,7 +94,7 @@ let test_child () =
   Rig.Point.wait pt;
   ignore (Sys.opaque_identity !b)
 
-let page_bytes = 1 lsl 16
+let page_bytes = B.paged_from
 
 (* An io library whose regions are host bytes on a page, and which counts the
    regions it holds. Its reads wait while [parked] is set. Each application is a
@@ -396,7 +396,7 @@ let test_staging () =
     b
   in
   ignore (B.submit_copy ~src:(filled 'q') ~dst:(B.create d 64) [| B.row 64 |]);
-  let paged = B.create Rig.host (1 lsl 16) in
+  let paged = B.create Rig.host B.paged_from in
   let on_d = require_some (B.borrow d paged) in
   ignore (B.submit_copy ~src ~dst:on_d [| B.row 64 |]);
   P.gate p;

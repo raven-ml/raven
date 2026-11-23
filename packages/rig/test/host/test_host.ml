@@ -132,7 +132,7 @@ let test_linked () =
    memory a Polled device's unrun launch writes waits for that work. *)
 let test_follows () =
   let d, pd = P.open_ "host:follows" in
-  let shared = B.create Rig.host 65536 in
+  let shared = B.create Rig.host B.paged_from in
   let functions = require_ok (Rig.Image.load d "functions") in
   let main = require_some (Rig.Image.resolve functions "main") in
   let refs = Sub.[| write 0 ~at:0 |] in

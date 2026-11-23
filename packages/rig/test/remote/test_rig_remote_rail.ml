@@ -108,7 +108,7 @@ let case (module G : Gpu) held cut () =
   let rail = require_ok (r.rail None ~send:[| t |] ~receive:[||]) in
   let e = require_some rail.local in
   let borrow b = require_some (B.borrow d b) in
-  let page () = B.view (B.create Rig.host 65536) ~first:0 ~length:4096 in
+  let page () = B.view (B.create Rig.host B.paged_from) ~first:0 ~length:4096 in
   let counts = B.of_bigarray e.counts and mark = page () and cmds = page () in
   (* The host reads [mark] while the queue's work writes it. *)
   let mark_bytes = B.export mark Bigarray.char in

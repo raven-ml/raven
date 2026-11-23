@@ -72,9 +72,10 @@ let test_spans_freed () =
       equal ~msg bool false (B.spans part))
     [ Rig.host; d ]
 
-(* A host buffer of 64 KiB or more starts on a page: an address [at] bytes
-   past a view into it, inside the view or outside it, lies at a multiple of a
-   power of two up to the page iff its offset from the page is one. *)
+(* A host buffer of [Rig.Buffer.paged_from] bytes or more starts on a page: an
+   address [at] bytes past a view into it, inside the view or outside it, lies
+   at a multiple of a power of two up to the page iff its offset from the page
+   is one. *)
 let aligned_case =
   let open Gen in
   let+ first = int_range 0 4096
@@ -89,19 +90,19 @@ let aligned_case =
     aligned_case
 
 let aligned_law (first, at, k) =
-  let b = B.view (B.create Rig.host (1 lsl 16)) ~first ~length:8192 in
+  let b = B.view (B.create Rig.host B.paged_from) ~first ~length:8192 in
   let n = 1 lsl k in
   cover "aligned" ((first + at) mod n = 0);
   cover "not aligned" ((first + at) mod n <> 0);
   cover "outside the view" (at < 0 || at >= 8192);
   equal bool ((first + at) mod n = 0) (B.aligned b ~at n)
 
-(* A host buffer of at least 128 bytes and fewer than 64 KiB starts on 128
-   bytes. *)
+(* A host buffer of at least 128 bytes and fewer than [Rig.Buffer.paged_from]
+   starts on 128 bytes. *)
 let line_case =
   Gen.with_pp
     (fun ppf n -> Format.fprintf ppf "%d bytes" n)
-    (Gen.int_range 128 ((64 * 1024) - 1))
+    (Gen.int_range 128 (B.paged_from - 1))
 
 let line_law n = equal bool true (B.aligned (B.create Rig.host n) ~at:0 128)
 
@@ -157,7 +158,7 @@ let test_borrow () =
 (* A host buffer a device maps is mapped once, whatever its borrows. *)
 let test_borrow_maps_once () =
   let d, p = P.open_ "buffer:map-once" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   for _ = 1 to 3 do
     ignore (Sys.opaque_identity (B.borrow d h))
   done;
@@ -246,7 +247,7 @@ let test_polymorphic (_, devices, make) =
 
 let test_borrow_small () =
   let d, _ = P.open_ "buffer:small" in
-  let paged = B.create Rig.host (1 lsl 16) in
+  let paged = B.create Rig.host B.paged_from in
   let off_page = Bigarray.Array1.sub (B.export paged Bigarray.char) 8 16 in
   is_none (B.borrow d (B.of_bigarray off_page))
 
@@ -254,7 +255,7 @@ let test_borrow_small () =
 
 let test_wait () =
   let d, p = P.open_ "buffer:wait" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let h = filled n 'a' and on = B.create d n in
   let part =
     let src = require_some (B.borrow d h) in
@@ -270,7 +271,7 @@ let test_wait () =
    copy that reads it. *)
 let test_access_orders () =
   let d, p = P.open_ "buffer:access-orders" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let h = filled n 'a' and src = B.create d n and dst = B.create d n in
   B.write src Bigarray.char (fun a -> Bigarray.Array1.fill a 'x');
   let on_d = require_some (B.borrow d h) in
@@ -291,7 +292,7 @@ let test_access_orders () =
    never taken again. Only host memory exports. *)
 let test_export () =
   let d, p = P.open_ "buffer:export" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let h = filled n 'a' and src = B.create d n in
   B.write src Bigarray.char (fun a -> Bigarray.Array1.fill a 'x');
   let dst = require_some (B.borrow d h) in
@@ -321,11 +322,11 @@ let test_dead () =
 let test_dead_refused () =
   let d, _ = P.open_ "buffer:dead" in
   let taken b = ignore (require_some (Support.donated b)) in
-  let h = B.create Rig.host (1 lsl 16) and m = B.create d 64 in
+  let h = B.create Rig.host B.paged_from and m = B.create d 64 in
   taken h;
   taken m;
   let dead = Exn.invalid_arg ~sub:"donated" in
-  let other = B.create Rig.host (1 lsl 16) in
+  let other = B.create Rig.host B.paged_from in
   cases_of dead
     [
       ("copy from", fun () -> B.copy ~src:h ~dst:other);
@@ -362,7 +363,7 @@ let test_offset () =
    submitted before, and a borrow made again maps again. *)
 let test_borrow_remade () =
   let d, p = P.open_ "buffer:remade" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   ignore (Sys.opaque_identity (B.borrow d h));
   Gc.full_major ();
   Gc.full_major ();
@@ -379,7 +380,7 @@ let test_borrow_remade () =
    Only a borrow ends, whole. *)
 let test_unborrow () =
   let d, p = P.open_ "buffer:unborrow" in
-  let h = filled (1 lsl 16) 'f' in
+  let h = filled B.paged_from 'f' in
   let b = require_some (B.borrow d h) in
   let v = B.view b ~first:8 ~length:8 in
   raises_match ~msg:"a view of the borrow" Exn.invalid_arg (fun () ->
@@ -408,7 +409,7 @@ let test_unborrow () =
    ran; a keep of the memory through another buffer does not. *)
 let test_unborrow_keeps () =
   let d, _ = P.open_ "buffer:unborrow-keeps" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let b = require_some (B.borrow d h) in
   let k = B.keep [ b ] in
   equal ~msg:"under a keep through it" bool false (B.unborrow b);
@@ -438,7 +439,7 @@ let test_unborrow_keeps () =
    other buffers neither keep it nor see its end. *)
 let test_unborrow_claims () =
   let d, _ = P.open_ "buffer:unborrow-claims" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let b = require_some (B.borrow d h) in
   Support.Reader.read b;
   equal ~msg:"under a claim through it" bool false (B.unborrow b);
@@ -454,7 +455,7 @@ let test_unborrow_claims () =
    does, its bigarray living on. *)
 let test_unborrow_outside () =
   let d, p = P.open_ "buffer:unborrow-outside" in
-  let paged = B.export (B.create Rig.host (1 lsl 16)) Bigarray.char in
+  let paged = B.export (B.create Rig.host B.paged_from) Bigarray.char in
   let h = B.of_bigarray paged in
   let b = require_some (B.borrow d h) in
   equal ~msg:"ended" bool true (B.unborrow b);
@@ -650,7 +651,7 @@ let end_commands =
    the memory is then dead, and its mappings go once its work is done. *)
 let test_borrow_free () =
   let d, p = P.open_ "buffer:borrow-free" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let b = require_some (B.borrow d h) in
   let b' = require_some (Support.donated b) in
   equal ~msg:"freed" bool true (B.free b');
@@ -665,7 +666,7 @@ let test_borrow_free () =
    return waits for that work. *)
 let test_borrow_room_staging () =
   let d, p = P.open_ ~host_visible:false "buffer:borrow-room-staging" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   B.copy ~src:(B.create Rig.host n) ~dst:(B.create d n);
   let s = Sub.make d [| Support.touching [| Sub.read |] |] in
   ignore (submit ~args:one s ~buffers:[| B.create d 64 |]);
@@ -684,7 +685,7 @@ let test_borrow_room_staging () =
    borrow of the bytes it was made over. *)
 let test_borrows_share () =
   let d, p = P.open_ "buffer:borrows-share" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let b = require_some (B.borrow d h) in
   let part = require_some (B.borrow d (B.view h ~first:4096 ~length:4096)) in
   equal ~msg:"one mapping" (pair int int) (1, 1)
@@ -706,7 +707,7 @@ let test_borrows_share () =
 let test_borrow_room () =
   let d, p = P.open_ "buffer:borrow-room" in
   let e, pe = P.open_ ~host_visible:false "buffer:borrow-room-other" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let maps () =
     List.filter (fun c -> c = "map_host" || c = "unmap") (P.log p)
   in
@@ -778,7 +779,7 @@ let test_reached () =
    for a write, which depends on every point, and is reached for a read. *)
 let test_reached_lost () =
   let d, p = P.open_ "buffer:reached-lost" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let written = B.create Rig.host n and read = B.create Rig.host n in
   let w = require_some (B.borrow d written)
   and r = require_some (B.borrow d read) in
@@ -1015,7 +1016,7 @@ let test_map_host_paged () =
    that starts on a page is [None], with no mapping asked of its driver. *)
 let test_maps_no_host () =
   let d, p = P.open_ ~maps_host:false "buffer:no-host-maps" in
-  let h = B.create Rig.host (64 * 1024) in
+  let h = B.create Rig.host B.paged_from in
   equal ~msg:"reaches" bool false (Rig.reaches d Rig.host);
   equal ~msg:"borrow" bool true (Option.is_none (B.borrow d h));
   equal ~msg:"maps" (list int) [] (P.host_maps p);
@@ -1028,7 +1029,7 @@ let test_maps_no_host () =
 let test_mapless_software () =
   let d, _ = P.open_ ~maps_host:false "buffer:mapless-memory" in
   let m = memory "buffer:mapless-memory-cpu" in
-  let b = B.create m (64 * 1024) in
+  let b = B.create m B.paged_from in
   equal ~msg:"reaches as borrows" bool
     (Option.is_some (B.borrow d b))
     (Rig.reaches d m)
@@ -1052,7 +1053,7 @@ let test_staged_no_host () =
    mapping: the borrow names no memory. *)
 let test_empty_borrow () =
   let d, p = P.open_ "buffer:empty-borrow" in
-  let paged = B.export (B.create Rig.host (64 * 1024)) Bigarray.char in
+  let paged = B.export (B.create Rig.host B.paged_from) Bigarray.char in
   let empty = B.of_bigarray (Bigarray.Array1.sub paged 0 0) in
   let b = require_some (B.borrow d empty) in
   let s = Sub.make ~fixed:[ (b, Rig.Read) ] d [||] in
@@ -1133,7 +1134,7 @@ let coordinates b =
 let owners =
   let hidden name = fst (P.open_ ~host_visible:false name) in
   let peer () = hidden "buffer:back-peer" in
-  let paged () = B.export (B.create Rig.host (1 lsl 16)) Bigarray.char in
+  let paged () = B.export (B.create Rig.host B.paged_from) Bigarray.char in
   [
     ("device memory", fun () -> (B.create (hidden "buffer:back") 64, peer ()));
     ( "memory named by handle",
@@ -1146,7 +1147,7 @@ let owners =
       fun () ->
         (B.create ~memory:Pinned (hidden "buffer:back-pinned") 64, peer ()) );
     ("no bytes", fun () -> (B.create (hidden "buffer:back-empty") 0, peer ()));
-    ("host memory", fun () -> (B.create Rig.host (1 lsl 16), peer ()));
+    ("host memory", fun () -> (B.create Rig.host B.paged_from, peer ()));
     ("a bigarray", fun () -> (B.of_bigarray (paged ()), peer ()));
   ]
 
@@ -1167,7 +1168,7 @@ let test_borrow_back (_, owner) =
 let test_mapping_released () =
   let d, p = P.open_ "buffer:released" in
   let read_borrow () =
-    let h = B.create Rig.host (1 lsl 16) in
+    let h = B.create Rig.host B.paged_from in
     let s = Sub.make d [| Support.touching [| Sub.read |] |] in
     ignore (submit ~args:one s ~buffers:[| require_some (B.borrow d h) |])
   in
@@ -1192,8 +1193,8 @@ let test_bytes_after_unmap () =
   let d, p = P.open_ "buffer:bytes-after-unmap" in
   let collected = ref false in
   (fun () ->
-    let paged = B.export (B.create Rig.host (1 lsl 16)) Bigarray.char in
-    let ba = Bigarray.Array1.sub paged 0 (1 lsl 16) in
+    let paged = B.export (B.create Rig.host B.paged_from) Bigarray.char in
+    let ba = Bigarray.Array1.sub paged 0 B.paged_from in
     Gc.finalise (fun _ -> collected := true) ba;
     let h = B.of_bigarray ba in
     let s = Sub.make d [| Support.touching [| Sub.read |] |] in
@@ -1222,9 +1223,9 @@ let test_bytes_after_unmap () =
 let test_borrow_of_borrow () =
   let d, _ = P.open_ "buffer:first" in
   let e, pe = P.open_ "buffer:second" in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let b = require_some (B.borrow e (require_some (B.borrow d h))) in
-  equal (list int) [ 1 lsl 16 ] (P.host_maps pe);
+  equal (list int) [ B.paged_from ] (P.host_maps pe);
   equal int (Support.Reader.host h) (Support.Reader.host b);
   equal bool true (B.overlaps b h)
 
@@ -1239,9 +1240,9 @@ let test_borrow_peer () =
 
 let test_borrow_spans () =
   let d, _ = P.open_ "buffer:spans" in
-  let h = B.create Rig.host (1 lsl 17) in
+  let h = B.create Rig.host (2 * B.paged_from) in
   equal bool true (B.spans (require_some (B.borrow d h)));
-  let part = B.view h ~first:0 ~length:(1 lsl 16) in
+  let part = B.view h ~first:0 ~length:B.paged_from in
   equal bool false (B.spans (require_some (B.borrow d part)))
 
 let test_overlaps () =
@@ -1281,7 +1282,7 @@ let test_overlaps_words () =
     ignore (Rig.Submission.copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   List.iter check [ B.create Rig.host 16; B.create d 16 ];
-  let h = B.create Rig.host 65536 in
+  let h = B.create Rig.host B.paged_from in
   let back = require_some (B.borrow d (B.view h ~first:0 ~length:5)) in
   equal ~msg:"a borrow and the next bytes of its word" bool true
     (B.overlaps back (B.view h ~first:5 ~length:3));
@@ -1310,8 +1311,8 @@ let half_bytes = 32 lsl 20
    that it does not name, even memory that starts on a page. *)
 let test_copy_host_staged () =
   let d, p = P.open_ ~host_visible:false "buffer:direct" in
-  let src = B.create Rig.host (1 lsl 16) in
-  let dst = B.create d (1 lsl 16) in
+  let src = B.create Rig.host B.paged_from in
+  let dst = B.create d B.paged_from in
   roundtrip ~src ~dst;
   equal ~msg:"copies the device ran" int 2 (P.submits p);
   equal ~msg:"host memory mapped: staging memory alone" (list int)
@@ -1323,7 +1324,7 @@ let test_copy_host_staged () =
    borrow lives: a copy runs directly only on what it names. *)
 let test_copy_borrowed_direct () =
   let d, p = P.open_ ~host_visible:false "buffer:borrowed-direct" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let h = filled n 'b' in
   let on_d = require_some (B.borrow d h) in
   let dst = B.create d n in
@@ -1347,7 +1348,7 @@ let test_copy_borrowed_direct () =
    borrow of the buffer it returns once the copy is queued. *)
 let test_copy_into_host_waits () =
   let d, p = P.open_ ~host_visible:false "buffer:into-host" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let src = B.create d n in
   B.copy ~src:(filled n 'w') ~dst:src;
   let h = filled n '0' in
@@ -1366,11 +1367,11 @@ let test_copy_into_host_waits () =
    host memory the device maps. *)
 let on d c =
   let b = B.create d 64 in
-  B.copy ~src:(B.view (filled (1 lsl 16) c) ~first:0 ~length:64) ~dst:b;
+  B.copy ~src:(B.view (filled B.paged_from c) ~first:0 ~length:64) ~dst:b;
   b
 
 let contents b =
-  let back = B.create Rig.host (1 lsl 16) in
+  let back = B.create Rig.host B.paged_from in
   let back = B.view back ~first:0 ~length:(B.length b) in
   B.copy ~src:b ~dst:back;
   bytes back
@@ -1379,7 +1380,7 @@ let contents b =
    device maps once: a second copy maps nothing. *)
 let test_copy_staged () =
   let d, p = P.open_ ~host_visible:false "buffer:staged" in
-  let paged = B.create Rig.host (1 lsl 16) in
+  let paged = B.create Rig.host B.paged_from in
   let off_page = Bigarray.Array1.sub (B.export paged Bigarray.char) 8 64 in
   Bigarray.Array1.fill off_page 's';
   let dst = B.create d 64 in
@@ -1426,13 +1427,15 @@ let test_copy_no_queue () =
    into and out of it, on a device that runs no copy too. *)
 let test_copy_borrowed_host () =
   let d, _ = P.open_ ~copies:false "buffer:borrowed-host" in
-  let h = filled (1 lsl 16) 'h' in
+  let h = filled B.paged_from 'h' in
   let b = require_some (B.borrow d h) in
-  let out = B.create Rig.host (1 lsl 16) in
+  let out = B.create Rig.host B.paged_from in
   B.copy ~src:b ~dst:out;
-  equal ~msg:"out of the borrow" string (String.make (1 lsl 16) 'h') (bytes out);
-  B.copy ~src:(filled (1 lsl 16) 'i') ~dst:b;
-  equal ~msg:"into the borrow" string (String.make (1 lsl 16) 'i') (bytes h)
+  equal ~msg:"out of the borrow" string
+    (String.make B.paged_from 'h')
+    (bytes out);
+  B.copy ~src:(filled B.paged_from 'i') ~dst:b;
+  equal ~msg:"into the borrow" string (String.make B.paged_from 'i') (bytes h)
 
 (* A copy larger than the staging memory goes through it in pieces: every byte
    lands where it belongs. Two halves of 32 MiB and 4 KiB more make three
@@ -1527,12 +1530,12 @@ let test_mapless_pair_slots () =
     (List.init 4 (fun k -> String.make 64 (Char.chr (Char.code 'a' + k))))
     (List.map (fun (_, dst) -> contents dst) copies)
 
-(* [off_page n c] is [n] bytes [c] of host memory that starts off a page,
-   which a device that maps host memory maps only through staging memory. A
-   host buffer under 64 KiB may start on a page, and a device then borrows it
-   for a copy, staging nothing. *)
+(* [off_page n c] is [n] bytes [c] of host memory that starts off a page, which
+   a device that maps host memory maps only through staging memory. A host
+   buffer under [Rig.Buffer.paged_from] bytes may start on a page, and a device
+   then borrows it for a copy, staging nothing. *)
 let off_page n c =
-  let paged = B.export (filled (1 lsl 16) c) Bigarray.char in
+  let paged = B.export (filled B.paged_from c) Bigarray.char in
   B.of_bigarray (Bigarray.Array1.sub paged 64 n)
 
 (* Three copies at once from [d], whose memory the host does not address, to
@@ -2226,7 +2229,7 @@ let test_blits_unaddressed () =
    included; a blit to bytes for its last write only. *)
 let test_blit_waits () =
   let d, p = P.open_ "buffer:blit-waits" in
-  let h = B.of_string (String.make (1 lsl 16) 'a') in
+  let h = B.of_string (String.make B.paged_from 'a') in
   let on_d = require_some (B.borrow d h) in
   let touch access = Sub.make d [| Support.touching [| access |] |] in
   ignore (submit ~args:one (touch Sub.read) ~buffers:[| on_d |]);
@@ -2459,8 +2462,8 @@ let tests =
         test "a freed buffer spans its memory as it did" test_spans_freed;
         prop "an address is aligned to a power of two, in or out of the buffer"
           aligned_case aligned_law;
-        prop "a host buffer of 128 bytes to 64 KiB starts on 128 bytes" line_case
-          line_law;
+        prop "a host buffer of 128 bytes to its paged size starts on 128 bytes"
+          line_case line_law;
         test "aligned refuses what is no power of two, and io memory"
           test_aligned_refusals;
       ];

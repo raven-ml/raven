@@ -200,7 +200,7 @@ let open_as (module D : Rig_edge.Driver with type t = P.t) name p =
 (* Bytes into memory of [d] the host does not address and back, which [d]'s
    copy queue runs: the copies [p] ran and the bytes back. *)
 let round_trip d p =
-  let n = 1 lsl 16 in
+  let n = Rig.Buffer.paged_from in
   let src = Rig.Buffer.create Rig.host n in
   Rig.Buffer.write src Bigarray.char (fun a -> Bigarray.Array1.fill a 'q');
   let dst = Rig.Buffer.create d n in
@@ -413,7 +413,8 @@ let test_tail () =
     let last = [ (n - 1, 1, false) ] in
     let inner = if n < 7 then [] else [ (1, n - 6, false) ] in
     let first =
-      if Rig.Buffer.device b == Rig.host && n >= 65536 then [ (0, 5, true) ]
+      if Rig.Buffer.device b == Rig.host && n >= Rig.Buffer.paged_from then
+        [ (0, 5, true) ]
       else []
     in
     last @ inner @ first
@@ -1447,7 +1448,9 @@ let words v = Obj.reachable_words (Obj.repr v) * (Sys.word_size / 8)
 let logged p = words (P.log p, P.frees p, P.allocs p, P.host_maps p)
 
 let test_open_close () =
-  let hs = List.init kept (fun _ -> Rig.Buffer.create Rig.host (1 lsl 16)) in
+  let hs =
+    List.init kept (fun _ -> Rig.Buffer.create Rig.host Rig.Buffer.paged_from)
+  in
   let reads = Support.touching (Array.make kept Rig.Submission.read) in
   let cycle kind i =
     let p, pp = P.open_ (Printf.sprintf "open:producer%d" (i mod 2)) in

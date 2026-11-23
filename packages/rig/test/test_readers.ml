@@ -71,7 +71,7 @@ let test_span_host () =
 let test_span_device () =
   let d = Lazy.force opaque in
   let m = B.create d 64 and m' = B.create d 64 in
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let space, first = R.span m in
   not_equal ~msg:"not the host's" int 0 space;
   equal ~msg:"its first byte" int 0 first;
@@ -85,7 +85,7 @@ let test_span_device () =
    over shared bytes, a borrow of the first, two memories the host does not
    address, and one of another machine. *)
 let world () =
-  let h = B.create Rig.host (1 lsl 16) in
+  let h = B.create Rig.host B.paged_from in
   let ba = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 32 in
   let d = Lazy.force opaque in
   [|

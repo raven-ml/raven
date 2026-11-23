@@ -288,7 +288,7 @@ end
 
 (* A buffer of [io] over [n] bytes of a new region of [Store]. *)
 let stored io n =
-  let r = B.create Rig.host (Int.max n (1 lsl 16)) in
+  let r = B.create Rig.host (Int.max n B.paged_from) in
   B.of_io io (module Store) r ~access:Read_write n
 
 (* The routes a copy takes, each with how it makes its two buffers. *)

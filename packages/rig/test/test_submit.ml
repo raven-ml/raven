@@ -29,7 +29,7 @@ let one = Support.zeros 1
 let touch ?waits uses d buffers =
   submit ?waits (empty ~uses d) ~buffers ~args:one
 
-let page_bytes = 1 lsl 16
+let page_bytes = B.paged_from
 
 (* A part that adds 1 to the 64-bit word in a submit's slot 0. *)
 let bump =
@@ -1883,8 +1883,9 @@ let order_examples =
    order orders them. *)
 let test_device_order () =
   let d, p = P.open_ "submit:device-order" in
-  (* Host buffers of 64 KiB start on a page, so the device borrows them. *)
-  let n = 64 * 1024 in
+  (* Host buffers of [Rig.Buffer.paged_from] bytes start on a page, so the
+     device borrows them. *)
+  let n = B.paged_from in
   let filled c =
     let b = B.create Rig.host n in
     B.write b Bigarray.char (fun a -> Bigarray.Array1.fill a c);

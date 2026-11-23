@@ -154,7 +154,9 @@ let () =
   let borrow b = Option.get (B.borrow d b) in
   let counts = borrow (B.of_bigarray e.counts) in
   let inbound = borrow (B.of_bigarray e.inbound) in
-  let commands = B.view (B.create Rig.host 65536) ~first:0 ~length:4096 in
+  let commands =
+    B.view (B.create Rig.host B.paged_from) ~first:0 ~length:4096
+  in
   let cmds = borrow commands in
   let ring_bytes =
     String.length (fst (held d ~arrived:0L ~commands:0L 1L))

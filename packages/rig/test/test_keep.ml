@@ -226,7 +226,7 @@ let fixed_value d m access = Rig.Point.value (fixing d m access)
    reader. *)
 let test_fixed_read () =
   let d, _ = P.open_ "keep:fixed-read" and e, pe = P.open_ "keep:fixed-read-e" in
-  let m = B.create Rig.host (1 lsl 16) in
+  let m = B.create Rig.host B.paged_from in
   let on_d = require_some (B.borrow d m) and on_e = require_some (B.borrow e m) in
   let v = fixed_value e on_e Rig.Read in
   equal ~msg:"a host read" answer Support.Reader.Claimed (host_read m);
@@ -239,7 +239,7 @@ let test_fixed_read () =
    it. *)
 let test_fixed_write () =
   let d, _ = P.open_ "keep:fixed-write" and e, pe = P.open_ "keep:fixed-write-e" in
-  let m = B.create Rig.host (1 lsl 16) in
+  let m = B.create Rig.host B.paged_from in
   let on_d = require_some (B.borrow d m) and on_e = require_some (B.borrow e m) in
   let v = fixed_value e on_e Rig.Read_write in
   equal ~msg:"a host read" answer Support.Reader.Wait (host_read m);
@@ -328,7 +328,7 @@ let readers_t =
    case before any domain runs. A case then maps and frees nothing, so the
    devices' logs stay short, and allocates no buffer a device can borrow,
    each of which can bring a major cycle. *)
-let reader_memory = B.create Rig.host (1 lsl 16)
+let reader_memory = B.create Rig.host B.paged_from
 
 let reader_devices =
   let device name =

@@ -123,9 +123,10 @@ let words ws =
 
 let copy ~dst src = Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 
-(* Host buffers of 64 KiB or more start on a page, which a device borrows. *)
+(* Host buffers of [Rig.Buffer.paged_from] bytes or more start on a page, which
+   a device borrows. *)
 let shared t n =
-  let h = B.view (B.create Rig.host (max n 65536)) ~first:0 ~length:n in
+  let h = B.view (B.create Rig.host (max n B.paged_from)) ~first:0 ~length:n in
   match B.borrow t.d h with
   | Some b -> (b, H.at h)
   | None -> fail "the device does not borrow host memory"

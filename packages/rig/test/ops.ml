@@ -36,7 +36,7 @@ let fresh =
     incr k;
     Printf.sprintf "walk:%s:%d" what !k
 
-let page = 1 lsl 16
+let page = B.paged_from
 let staged_bytes = 1 lsl 12
 
 (* The byte loops apply no closure, which bytecode's walks would pay for

@@ -185,7 +185,7 @@ let work_points d events =
    launches' functions in the order of its parts, with its submit's point. *)
 let test_device_span () =
   let d, _ = P.open_ "profile:device" in
-  let image = functions d and arg = B.create Rig.host (1 lsl 16) in
+  let image = functions d and arg = B.create Rig.host B.paged_from in
   let copy =
     launch ~refs:[| Sub.write 0 ~at:0; Sub.read 0 ~at:8 |] image "copy" ~params:24
   in
@@ -214,7 +214,7 @@ let test_device_span () =
 (* A submission with no launch is named after its first part's kind. *)
 let test_kind_span () =
   let d, _ = P.open_ "profile:kind" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   let (), events =
     Prof.take (fun () ->
         Rig.Point.wait (submit_parts ~buffers:[| arg |] d [| bump |]))
@@ -264,7 +264,7 @@ let test_empty_queue_name () =
 let test_no_span () =
   let d, _ = P.open_ "profile:none"
   and u, _ = P.open_ ~timed:false "profile:none-untimed" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   let earlier = submit_parts ~buffers:[| arg |] d [| bump |] in
   let (), events =
     Prof.take (fun () ->
@@ -278,7 +278,7 @@ let test_no_span () =
 (* A software device times its work. *)
 let test_software_span () =
   let d = software "profile:software" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   let (), events =
     Prof.take (fun () ->
         Rig.Point.wait (submit_parts ~buffers:[| arg |] d [| bump |]))
@@ -291,7 +291,7 @@ let test_software_span () =
 (* A submission's span goes to every profile taken when it was submitted. *)
 let test_span_profiles () =
   let d, _ = P.open_ "profile:device-profiles" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   let (), outer =
     Prof.take (fun () ->
         let (), inner =
@@ -306,7 +306,7 @@ let test_span_profiles () =
    leaves no profile open. *)
 let test_span_lost () =
   let d, p = P.open_ "profile:device-lost" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   raises_match (lost_of d) (fun () ->
       Prof.take (fun () ->
           ignore (submit_parts ~buffers:[| arg |] d [| bump |]);
@@ -319,7 +319,7 @@ let test_span_lost () =
    and raises nothing. *)
 let test_span_closed () =
   let d, _ = P.open_ "profile:device-closed" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   let (), events =
     Prof.take (fun () ->
         Rig.Point.wait (submit_parts ~buffers:[| arg |] d [| bump |]);
@@ -336,7 +336,7 @@ let test_span_closed () =
    open. *)
 let test_close_interrupted () =
   let d, p = P.open_ "profile:close-interrupted" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   let broke = ref false in
   let (), events =
     Prof.take (fun () ->
@@ -356,7 +356,7 @@ let test_close_interrupted () =
    take raises the loss. *)
 let test_settle_fails () =
   let d, p = P.open_ "profile:settle-fails" in
-  let host () = B.create Rig.host (1 lsl 16) in
+  let host () = B.create Rig.host B.paged_from in
   let copy = (Sub.copy ~src:(Slot 1) ~dst:(Slot 2), None) in
   P.fail_settle p;
   raises_match (lost_of d) (fun () ->
@@ -396,7 +396,7 @@ let test_failed_history failure =
            make = (fun ~word -> Ok (P.bind p ~word));
          })
   in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   Rig.Point.wait (submit_parts ~buffers:[| arg |] d [| bump |]);
   let weak = Weak.create 1 and point = ref None in
   raises Exit (fun () ->
@@ -424,7 +424,7 @@ let test_failed_history failure =
 (* The failed inner profile's callback still records to its outer recipient. *)
 let test_failed_recipient () =
   let d, _ = P.open_ "profile:failed-recipient" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   let (), events =
     Prof.take (fun () ->
         raises Exit (fun () ->
@@ -445,7 +445,7 @@ let test_failed_recipient () =
    there as [take] returns. *)
 let test_span_reached_elsewhere () =
   let d, p = P.open_ ~may_block:true "profile:reached-elsewhere" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   P.gate_settle p;
   let waited = Atomic.make false and taken = Atomic.make false in
   let take () =
@@ -479,7 +479,7 @@ let test_span_reached_elsewhere () =
    holds its fills. *)
 let test_break_in_take () =
   let d, p = P.open_ "profile:break-take" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   let seen = List.length (P.violations ()) in
   P.interrupt p;
   Sys.catch_break true;
@@ -509,7 +509,7 @@ let test_break_in_take () =
    profile. *)
 let test_stopped_keeps_pair () =
   let d, p = P.open_ "profile:stopped-pair" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   let timed () = submit_parts ~buffers:[| arg |] d [| bump |] in
   raises Exit (fun () ->
       Prof.take (fun () ->
@@ -538,7 +538,7 @@ let test_stopped_keeps_pair () =
    that pair for one value at a time. *)
 let test_settled_before_reuse () =
   let d, p = P.open_ "profile:settled-reuse" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   let timed () = submit_parts ~buffers:[| arg |] d [| bump |] in
   let seen = List.length (P.violations ()) in
   raises Exit (fun () ->
@@ -555,7 +555,7 @@ let test_settled_before_reuse () =
    profile, and [take] does not wait for it. *)
 let test_take_reads_its_own () =
   let d, p = P.open_ "profile:its-own" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let arg = B.create Rig.host B.paged_from in
   P.gate p;
   let taker =
     Domain.spawn (fun () ->
@@ -656,7 +656,7 @@ let test_copy () =
    the profile around the copy, and not in the later one. *)
 let test_copy_asked () =
   let d, p = P.open_ "profile:copy-asked" in
-  let n = 1 lsl 16 in
+  let n = B.paged_from in
   let src = B.create Rig.host n and dst = B.create Rig.host n in
   P.gate p;
   ignore (submit_parts ~buffers:[| src |] d [| bump |]);
@@ -732,7 +732,7 @@ let test_staged_span () =
 (* [n] bytes of a host buffer borrowed by [d]. *)
 let borrowed d n =
   require_some
-    (B.borrow d (B.view (B.create Rig.host (1 lsl 16)) ~first:0 ~length:n))
+    (B.borrow d (B.view (B.create Rig.host B.paged_from) ~first:0 ~length:n))
 
 let copy_parts =
   Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1); copy ~src:(Slot 2) ~dst:(Slot 3) |]

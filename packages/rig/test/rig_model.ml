@@ -882,13 +882,25 @@ let within_sys at a b =
 (* Generators *)
 
 (* Sizes at the edges rig.mli names: none, a page, a host buffer that starts on
-   a page from 64 KiB; a megabyte now and then, whose bytes cost every call that
-   touches them. A copy larger than a staging slot is test_buffer.ml's. *)
+   a page from [Rig.Buffer.paged_from] bytes; a megabyte now and then, whose
+   bytes cost every call that touches them. A copy larger than a staging slot is
+   test_buffer.ml's. *)
 let size =
   let pp = Format.pp_print_int in
   Gen.frequency
     [
-      (8, Gen.of_list ~pp [ 0; 1; 8; 24; 4096; 65535; 65536; 69632 ]);
+      ( 8,
+        Gen.of_list ~pp
+          [
+            0;
+            1;
+            8;
+            24;
+            4096;
+            B.paged_from - 1;
+            B.paged_from;
+            B.paged_from + 4096;
+          ] );
       (1, Gen.of_list ~pp [ 1 lsl 20 ]);
     ]
 
@@ -1215,7 +1227,7 @@ type borrowed = [ `Some | `None | `Either ]
 (* Whether [d] maps [b]'s memory (rig.mli, Buffer.borrow). *)
 let maps d b : borrowed =
   let m = b.mem in
-  let heap_page = m.mkind = Heap && Bytes.length m.data >= 65536 in
+  let heap_page = m.mkind = Heap && Bytes.length m.data >= B.paged_from in
   if b.on == d || m.owner == d then `Some
   else
     match (d.kind, m.mkind) with
@@ -1229,7 +1241,8 @@ let maps d b : borrowed =
        no file held for writing (rig.mli, Io.pages). *)
     | Gpu _, File _ -> `Either
     | (Host | Memory | Polled _), File _ -> `Some
-    (* A host buffer of fewer than 64 KiB may start on a page. *)
+    (* A host buffer of fewer than [Rig.Buffer.paged_from] bytes may start on a
+       page. *)
     | Polled _, Heap -> if heap_page then `Some else `Either
     | Polled cfg, Owned _ when is_polled m.owner ->
         if cfg.peers then `Some else `Either
@@ -2308,11 +2321,11 @@ let exercise ~fork =
     | Polled { visible = false; itself = false; _ }, Gpu _ -> ()
     | _ -> ignore (transfer_sys v v' 4096 j)
   in
-  let cells = Array.init 4 (fun i -> new_cell_sys 65536 i w) in
+  let cells = Array.init 4 (fun i -> new_cell_sys B.paged_from i w) in
   let c i = cells.(i mod 4) in
   List.iteri
     (fun i v ->
-      step (fun () -> create_sys v B.Device 65536 (c i));
+      step (fun () -> create_sys v B.Device B.paged_from (c i));
       step (fun () -> fill_sys i false (c i));
       step (fun () -> ignore (read_sys false (c i)));
       List.iteri (fun j v' -> step (fun () -> transfer v v' j)) devs;

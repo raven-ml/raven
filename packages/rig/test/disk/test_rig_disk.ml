@@ -2113,7 +2113,8 @@ let fork_child path out =
    bytes of its third page out of the borrow, or reads them through the
    borrow's pages, and prints how it ended. *)
 let truncated_borrow_child op kind path =
-  let s = pattern 3 (3 * 16384) in
+  let page = Rig_gpu_support.Host.page in
+  let s = pattern 3 (3 * page) in
   let file =
     match kind with
     | "opened" -> of_file (make_file ~path s)
@@ -2126,7 +2127,7 @@ let truncated_borrow_child op kind path =
   let fd = Unix.openfile path [ Unix.O_WRONLY ] 0 in
   Unix.ftruncate fd 4;
   Unix.close fd;
-  let third = B.view borrow ~first:(2 * 16384) ~length:5 in
+  let third = B.view borrow ~first:(2 * page) ~length:5 in
   match op with
   | "copy" ->
       print_string
@@ -2137,7 +2138,7 @@ let truncated_borrow_child op kind path =
         | exception e -> Printexc.to_string e)
   | _ ->
       let got = string_of_host third in
-      if got = String.sub s (2 * 16384) 5 then
+      if got = String.sub s (2 * page) 5 then
         print_string "read the bytes it held"
       else Printf.printf "read %S" got
 
