@@ -879,9 +879,14 @@ let gen_output =
        image mime raw);
     ]
 
+(* A notebook of at most six cells of at most four outputs. Saving one writes
+   and syncs a file per image, so the unbounded lists' rare hundreds of images
+   would cost a second a case on a slow disk; the covers need a few. *)
 let gen_doc =
   let open Gen in
-  let+ outputs = list (list gen_output) in
+  let+ outputs =
+    list ~size:(int_range 0 6) (list ~size:(int_range 0 4) gen_output)
+  in
   Doc.of_cells
     (List.mapi
        (fun i os ->
@@ -1024,6 +1029,10 @@ let file_tests =
           (files_in (Filename.concat dir "figures/nb")));
     prop "notebooks in one directory keep each other's figures"
       (Gen.triple gen_doc gen_doc gen_doc) (fun (a, b, a') ->
+        let figures d = List.length (raws d) in
+        cover "both notebooks store figures" (figures a > 0 && figures b > 0);
+        cover "the second save of a stores fewer figures"
+          (figures a' < figures a);
         let dir = temp_dir () in
         let a_md = Filename.concat dir "a.md"
         and b_md = Filename.concat dir "b.md" in
