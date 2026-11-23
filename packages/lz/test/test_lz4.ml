@@ -145,7 +145,19 @@ let strings c =
             p;
           equal string s (Lz_support.to_string dst))
 
-let laws c = group c.name [ round_trip c; bound c; short c; strings c ]
+let negative c =
+  test "a negative size has no bound" (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"negative") (fun () -> c.bound (-1)))
+
+let laws c =
+  [
+    round_trip c;
+    bound c;
+    short c;
+    strings c;
+    negative c;
+    Lz_support.largest_bound c.bound;
+  ]
 
 (* Frames and blocks by hand *)
 
@@ -326,7 +338,7 @@ let bad_offsets =
       pair sequences
         (triple bool (string_of ~size:(int_range 0 14) char) (int_range 0 63)))
   in
-  prop "a bad offset is malformed at its offset field" gen
+  prop "a bad offset is Malformed at its offset field" gen
     (fun ((seqs, _), (zero, lits, filler)) ->
       let prefix = String.concat "" (List.map sequence_bytes seqs) in
       let reach = output seqs + String.length lits in
@@ -364,90 +376,111 @@ let after_block =
         (Ok ("hello" ^ "oooo" ^ "abcdefgh"))
         (decode block more))
 
-let formats =
-  group "the format documents"
-    [
-      after_block;
-      test "an empty block is a zero token" (fun () ->
-          equal string "\x00" (encode block "");
-          equal string "\x00" (Lz.Lz4.Block.encode_string "");
-          equal Lz_support.decoded (Ok "") (decode block "\x00"));
-      test "15 literals take a zero byte after the token" (fun () ->
-          let s = "abcdefghijklmno" in
-          equal Lz_support.decoded (Ok s) (decode block ("\xf0\x00" ^ s)));
-      test "280 literals take 15, then 255 and 10" (fun () ->
-          let s = String.init 280 (fun i -> Char.chr (i land 0xff)) in
-          equal Lz_support.decoded (Ok s) (decode block ("\xf0\xff\x0a" ^ s)));
-      test "an offset of 1 repeats the last byte" (fun () ->
-          equal Lz_support.decoded
-            (Ok ("a" ^ String.make 8 'a' ^ "bcdef"))
-            (decode block (sequence "a" ~offset:1 ~length:8 ^ last "bcdef")));
-      test "an offset reaches 65535 bytes back" (fun () ->
-          let lits = String.init 65535 (fun i -> Char.chr ((i * 7) land 0xff)) in
-          let b = "\xf4" ^ length_bytes 65535 ^ lits ^ le16 65535 ^ last "vwxyz" in
-          equal Lz_support.decoded
-            (Ok (lits ^ String.sub lits 0 8 ^ "vwxyz"))
-            (decode block b));
-      test "a match of 4 MiB" (fun () ->
-          equal Lz_support.decoded
-            (Ok ("a" ^ String.make (4 * mib) 'a' ^ "bcdef"))
-            (decode block ~cap:((4 * mib) + 6) (run_block (4 * mib))));
-      test "a frame is magic, descriptor, blocks and end mark" (fun () ->
-          let f = header () ^ stored "hello" ^ end_mark in
-          equal string "consumed 20, produced 5" (decode_seen frame f);
-          equal Lz_support.decoded (Ok "hello") (decode frame f));
-      test "a frame's block holds up to 4 MiB" (fun () ->
-          let s = Lz_support.corpus Random (4 * mib) in
-          let b = run_block ((4 * mib) - 6) in
-          equal Lz_support.decoded
-            (Ok (s ^ "a" ^ String.make ((4 * mib) - 6) 'a' ^ "bcdef"))
-            (decode frame ~cap:(8 * mib)
-               (header ~bd:max4m () ^ stored s ^ compressed b ^ end_mark)));
-      test "a stored block of 0 bytes is a block" (fun () ->
-          equal Lz_support.decoded (Ok "ab")
-            (decode frame
-               (header () ^ stored "a" ^ stored "" ^ stored "b" ^ end_mark)));
-      test "the content checksum is the content's XXH32" (fun () ->
-          let f =
-            header ~flg:(version lor content_checksum) ()
-            ^ stored "hello" ^ end_mark ^ le32 (xxh32 "hello")
-          in
-          equal Lz_support.decoded (Ok "hello") (decode frame f));
-      test "a block checksum is the XXH32 of the block's bytes" (fun () ->
-          let b = last "hello" in
-          let f =
-            header ~flg:(version lor block_checksum) ()
-            ^ compressed b ^ le32 (xxh32 b) ^ end_mark
-          in
-          equal Lz_support.decoded (Ok "hello") (decode frame f));
-      test "a frame of no blocks is empty" (fun () ->
-          equal string "consumed 11, produced 0"
-            (decode_seen frame (header () ^ end_mark)));
-      test "the empty string is a frame of no blocks" (fun () ->
-          (* The header's 15 bytes, then the end mark and the content's
-             checksum. *)
-          let f = Lz.Lz4.Frame.encode_string "" in
-          equal int ~msg:"length" 23 (String.length f);
-          equal string ~msg:"after the header" (end_mark ^ le32 (xxh32 ""))
-            (String.sub f 15 8);
-          equal string "consumed 23, produced 0" (decode_seen frame f));
-      test "skippable frames produce nothing" (fun () ->
-          let f =
-            skippable "xyz" ^ header () ^ stored "ab" ^ end_mark
-            ^ skippable ~nibble:15 ""
-          in
-          equal string
-            (Printf.sprintf "consumed %d, produced 2" (String.length f))
-            (decode_seen frame f);
-          equal string "consumed 8, produced 0" (decode_seen frame (skippable "")));
-      test "frames are read to the input's end" (fun () ->
-          let f = header () ^ stored "ab" ^ end_mark in
-          equal string
-            (Printf.sprintf "consumed %d, produced 4" (2 * String.length f))
-            (decode_seen frame (f ^ f));
-          equal string (malformed_at (String.length f))
-            (decode_seen frame (f ^ "trailing")));
-    ]
+let block_documents =
+  [
+    after_block;
+    test "an empty block is a zero token" (fun () ->
+        equal string "\x00" (encode block "");
+        equal string "\x00" (Lz.Lz4.Block.encode_string "");
+        equal Lz_support.decoded (Ok "") (decode block "\x00"));
+    test "15 literals take a zero byte after the token" (fun () ->
+        let s = "abcdefghijklmno" in
+        equal Lz_support.decoded (Ok s) (decode block ("\xf0\x00" ^ s)));
+    test "280 literals take 15, then 255 and 10" (fun () ->
+        let s = String.init 280 (fun i -> Char.chr (i land 0xff)) in
+        equal Lz_support.decoded (Ok s) (decode block ("\xf0\xff\x0a" ^ s)));
+    test "an offset of 1 repeats the last byte" (fun () ->
+        equal Lz_support.decoded
+          (Ok ("a" ^ String.make 8 'a' ^ "bcdef"))
+          (decode block (sequence "a" ~offset:1 ~length:8 ^ last "bcdef")));
+    test "an offset reaches 65535 bytes back" (fun () ->
+        let lits = String.init 65535 (fun i -> Char.chr (i * 7 land 0xff)) in
+        let b =
+          "\xf4" ^ length_bytes 65535 ^ lits ^ le16 65535 ^ last "vwxyz"
+        in
+        equal Lz_support.decoded
+          (Ok (lits ^ String.sub lits 0 8 ^ "vwxyz"))
+          (decode block b));
+    test "a match of 4 MiB decodes" (fun () ->
+        equal Lz_support.decoded
+          (Ok ("a" ^ String.make (4 * mib) 'a' ^ "bcdef"))
+          (decode block ~cap:((4 * mib) + 6) (run_block (4 * mib))));
+    (* 1 literal, a match of 7, 5 literals: the match starts 12 bytes before the
+       end. *)
+    test "a last match 12 bytes before the end decodes" (fun () ->
+        equal Lz_support.decoded
+          (Ok ("a" ^ String.make 7 'a' ^ "bcdef"))
+          (decode block (sequence "a" ~offset:1 ~length:7 ^ last "bcdef")));
+  ]
+
+let frame_documents =
+  [
+    test "a frame is magic, descriptor, blocks and end mark" (fun () ->
+        let f = header () ^ stored "hello" ^ end_mark in
+        equal string "consumed 20, produced 5" (decode_seen frame f);
+        equal Lz_support.decoded (Ok "hello") (decode frame f));
+    test "a frame's block holds up to 4 MiB" (fun () ->
+        let s = Lz_support.corpus Random (4 * mib) in
+        let b = run_block ((4 * mib) - 6) in
+        equal Lz_support.decoded
+          (Ok (s ^ "a" ^ String.make ((4 * mib) - 6) 'a' ^ "bcdef"))
+          (decode frame ~cap:(8 * mib)
+             (header ~bd:max4m () ^ stored s ^ compressed b ^ end_mark)));
+    test "a stored block of 0 bytes does not end the frame" (fun () ->
+        equal Lz_support.decoded (Ok "ab")
+          (decode frame
+             (header () ^ stored "a" ^ stored "" ^ stored "b" ^ end_mark)));
+    test "the content checksum is the content's XXH32" (fun () ->
+        let f =
+          header ~flg:(version lor content_checksum) ()
+          ^ stored "hello" ^ end_mark
+          ^ le32 (xxh32 "hello")
+        in
+        equal Lz_support.decoded (Ok "hello") (decode frame f));
+    test "a block checksum is the XXH32 of the block's bytes" (fun () ->
+        let b = last "hello" in
+        let f =
+          header ~flg:(version lor block_checksum) ()
+          ^ compressed b
+          ^ le32 (xxh32 b)
+          ^ end_mark
+        in
+        equal Lz_support.decoded (Ok "hello") (decode frame f));
+    test "a frame of no blocks is empty" (fun () ->
+        equal string "consumed 11, produced 0"
+          (decode_seen frame (header () ^ end_mark)));
+    test "the empty string is a frame of no blocks" (fun () ->
+        (* The header's 15 bytes, then the end mark and the content's
+           checksum. *)
+        let f = Lz.Lz4.Frame.encode_string "" in
+        equal int ~msg:"length" 23 (String.length f);
+        equal string ~msg:"after the header"
+          (end_mark ^ le32 (xxh32 ""))
+          (String.sub f 15 8);
+        equal string "consumed 23, produced 0" (decode_seen frame f));
+    test "skippable frames produce nothing" (fun () ->
+        let f =
+          skippable "xyz" ^ header () ^ stored "ab" ^ end_mark
+          ^ skippable ~nibble:15 ""
+        in
+        equal string
+          (Printf.sprintf "consumed %d, produced 2" (String.length f))
+          (decode_seen frame f);
+        equal string "consumed 8, produced 0" (decode_seen frame (skippable "")));
+    test "frames are read to the input's end" (fun () ->
+        let f = header () ^ stored "ab" ^ end_mark in
+        equal string
+          (Printf.sprintf "consumed %d, produced 4" (2 * String.length f))
+          (decode_seen frame (f ^ f));
+        equal string
+          (malformed_at (String.length f))
+          (decode_seen frame (f ^ "trailing")));
+    test "a block of the maximum size decodes" (fun () ->
+        equal Lz_support.decoded
+          (Ok (String.make (64 * kib) 'x'))
+          (decode frame
+             (header () ^ stored (String.make (64 * kib) 'x') ^ end_mark)));
+  ]
 
 (* The frame encoder's promises, as Lz.Lz4.Frame states them. *)
 let choices =
@@ -485,29 +518,26 @@ let decodes g =
   equal Lz_support.decoded (Ok raw) (decode frame ~cap:(String.length raw) data)
 
 let vendor =
-  group "vendor"
-    [
-      group "blocks" [ Lz_support.agreement "lz4b" ];
-      group "frames" [ Lz_support.agreement "lz4f" ];
-      test "frames.lz4: two frames around a skippable frame" (fun () ->
-          let g = golden "frames.lz4" in
-          equal int ~msg:"members" 3 g.members;
-          decodes g);
-      test "linked64k.lz4: linked blocks of 64 KiB" (fun () ->
-          let g = golden "linked64k.lz4" in
-          let data = Lazy.force g.data in
-          equal int ~msg:"B.Indep" 0 (Char.code data.[4] land independent);
-          equal int ~msg:"BD" max64k (Char.code data.[5]);
-          decodes g);
-      test "block4m.lz4: block checksums" (fun () ->
-          (* Asked for blocks of 4 MiB, lz4 declares the smallest size
-             that holds the content. *)
-          let g = golden "block4m.lz4" in
-          let data = Lazy.force g.data in
-          equal int ~msg:"B.Checksum" block_checksum
-            (Char.code data.[4] land block_checksum);
-          decodes g);
-    ]
+  [
+    test "frames.lz4 decodes two frames around a skippable frame" (fun () ->
+        let g = golden "frames.lz4" in
+        equal int ~msg:"members" 3 g.members;
+        decodes g);
+    test "linked64k.lz4 decodes linked blocks of 64 KiB" (fun () ->
+        let g = golden "linked64k.lz4" in
+        let data = Lazy.force g.data in
+        equal int ~msg:"B.Indep" 0 (Char.code data.[4] land independent);
+        equal int ~msg:"BD" max64k (Char.code data.[5]);
+        decodes g);
+    test "block4m.lz4 decodes its block checksums" (fun () ->
+        (* Asked for blocks of 4 MiB, lz4 declares the smallest size that holds
+           the content. *)
+        let g = golden "block4m.lz4" in
+        let data = Lazy.force g.data in
+        equal int ~msg:"B.Checksum" block_checksum
+          (Char.code data.[4] land block_checksum);
+        decodes g);
+  ]
 
 (* Several frames *)
 
@@ -527,77 +557,85 @@ let frames =
 
 (* Refusals *)
 
-let hostile_blocks =
-  group "hostile blocks"
+let block_refusals =
+  group "refusals"
     [
-      test "an empty block is truncated" (fun () ->
+      test "an empty block is Truncated" (fun () ->
           equal string "truncated at 0" (decode_seen block ""));
-      test "a block ending after a match is truncated" (fun () ->
+      test "a block ending after a match is Truncated" (fun () ->
           let b = sequence "abcd" ~offset:4 ~length:8 in
           equal string
             (Printf.sprintf "truncated at %d" (String.length b))
             (decode_seen block b));
-      test "a block cut inside its last literals is truncated" (fun () ->
+      test "a block cut inside its last literals is Truncated" (fun () ->
           let b = sequence "abcd" ~offset:4 ~length:8 ^ "\x50" in
           equal string
             (Printf.sprintf "truncated at %d" (String.length b))
             (decode_seen block b));
-      test "an offset of 0 is malformed at the offset" (fun () ->
+      test "an offset of 0 is Malformed at the offset" (fun () ->
           equal string (malformed_at 2)
-            (decode_seen block (sequence "a" ~offset:0 ~length:8 ^ last "bcdefgh")));
-      test "an offset before the output is malformed at the offset" (fun () ->
+            (decode_seen block
+               (sequence "a" ~offset:0 ~length:8 ^ last "bcdefgh")));
+      test "an offset before the output is Malformed at the offset" (fun () ->
           equal string (malformed_at 2)
-            (decode_seen block (sequence "a" ~offset:2 ~length:8 ^ last "bcdefgh")));
-      test "a bad offset is malformed before its match length ends" (fun () ->
-          (* The match length's 255s go on past the input's end, but no
-             byte after them makes the offset valid. *)
-          equal string (malformed_at 2) (decode_seen block "\x1fa\x00\x00\xff\xff");
-          equal string (malformed_at 2) (decode_seen block "\x1fa\x05\x00\xff\xff"));
-      test "the last match starts at least 12 bytes before the end" (fun () ->
-          (* 1 literal, a match of 7, 5 literals: the match starts 12
-             bytes before the end; with a match of 6, 11 bytes, and the
-             last sequence, at 4, breaks the rule. *)
-          equal Lz_support.decoded
-            (Ok ("a" ^ String.make 7 'a' ^ "bcdef"))
-            (decode block (sequence "a" ~offset:1 ~length:7 ^ last "bcdef"));
+            (decode_seen block
+               (sequence "a" ~offset:2 ~length:8 ^ last "bcdefgh")));
+      test "a bad offset is Malformed before its match length ends" (fun () ->
+          (* The match length's 255s go on past the input's end, but no byte
+             after them makes the offset valid. *)
+          equal string (malformed_at 2)
+            (decode_seen block "\x1fa\x00\x00\xff\xff");
+          equal string (malformed_at 2)
+            (decode_seen block "\x1fa\x05\x00\xff\xff"));
+      (* 1 literal, a match of 6, 5 literals: the match starts 11 bytes before
+         the end, and the last sequence, at 4, breaks the rule. *)
+      test "a last match 11 bytes before the end is Malformed at the last token"
+        (fun () ->
           equal string (malformed_at 4)
-            (decode_seen block (sequence "a" ~offset:1 ~length:6 ^ last "bcdef")));
-      test "the last 5 bytes are literals" (fun () ->
+            (decode_seen block
+               (sequence "a" ~offset:1 ~length:6 ^ last "bcdef")));
+      test "last literals fewer than 5 are Malformed at their token" (fun () ->
           equal string (malformed_at 4)
-            (decode_seen block (sequence "a" ~offset:1 ~length:18 ^ last "bcde")));
-      test "literals past the destination are too long at their token" (fun () ->
-          equal string "too long at 0" (decode_seen block ~cap:3 (last "abcdefg"));
+            (decode_seen block
+               (sequence "a" ~offset:1 ~length:18 ^ last "bcde")));
+      test "literals past the destination are Too_long at their token"
+        (fun () ->
+          equal string "too long at 0"
+            (decode_seen block ~cap:3 (last "abcdefg"));
           equal string "too long at 4"
             (decode_seen block ~cap:10
                (sequence "a" ~offset:1 ~length:5 ^ last "bcdefgh")));
-      test "literals past the destination are too long before the input ends"
+      test "literals past the destination are Too_long before the input ends"
         (fun () ->
           (* 100 literals stated, 50 present, room for 10. *)
           equal string "too long at 0"
             (decode_seen block ~cap:10 ("\xf0\x55" ^ String.make 50 'x')));
-      test "a match past the destination is too long at its offset" (fun () ->
+      test "a match past the destination is Too_long at its offset" (fun () ->
           equal string "too long at 2"
-            (decode_seen block ~cap:8 (sequence "a" ~offset:1 ~length:8 ^ last "bcdef")));
-      test "a zip bomb ends at the destination" (fun () ->
+            (decode_seen block ~cap:8
+               (sequence "a" ~offset:1 ~length:8 ^ last "bcdef")));
+      test "a zip bomb is Too_long at its match's offset" (fun () ->
           (* 10 MiB of length bytes state a match of 2.5 GiB. *)
           let b = run_block ((10 * mib * 255) + 19) in
           let g = guarded mib in
           equal string "too long at 2"
             (seen (Lz.Lz4.Block.decode (Lz_support.of_string b) (snd g)));
           untouched g);
-      cases "a length is too long once it passes the destination" ~id:fst
-        (* 16 MiB of length bytes into 100 bytes of room: the length passes
-           the room at the first, and no byte after makes it fit, even if
-           the input ends inside the length. The decode stops there, so
-           its work stays under the threshold and it holds the lock. *)
-        (let ff = String.make (16 * mib) '\xff' in
-         [
-           ("literals, cut", ("too long at 0", "\xf0" ^ ff));
-           ("literals", ("too long at 0", "\xf0" ^ ff ^ "\x00"));
-           ("a match, cut", ("too long at 2", "\x1fa" ^ le16 1 ^ ff));
-           ("a match", ("too long at 2", "\x1fa" ^ le16 1 ^ ff ^ "\x00"));
-         ])
+      cases "a length is Too_long once it passes the destination" ~id:fst
+        (* 64 KiB of length bytes, 4 times the decode's threshold, into 100
+           bytes of room: the length passes the room at the first, and no byte
+           after makes it fit, even if the input ends inside the length. The
+           decode refuses it before its first check, so it holds the lock
+           whatever the size of its input. *)
+        [
+          ("literals, cut", ("too long at 0", fun ff -> "\xf0" ^ ff));
+          ("literals", ("too long at 0", fun ff -> "\xf0" ^ ff ^ "\x00"));
+          ("a match, cut", ("too long at 2", fun ff -> "\x1fa" ^ le16 1 ^ ff));
+          ( "a match",
+            ("too long at 2", fun ff -> "\x1fa" ^ le16 1 ^ ff ^ "\x00") );
+        ]
         (fun (_, (expected, b)) ->
+          let b = b (String.make (64 * kib) '\xff') in
           let src = Lz_support.of_string b and dst = Lz_support.create 100 in
           let before = Lz.releases () in
           let r = Lz.Lz4.Block.decode src dst in
@@ -606,34 +644,39 @@ let hostile_blocks =
           equal int ~msg:"releases" 0 k);
     ]
 
-let hostile_frames =
-  group "hostile frames"
+let frame_refusals =
+  group "refusals"
     [
-      test "an empty input is truncated" (fun () ->
+      test "an empty input is Truncated" (fun () ->
           equal string "truncated at 0" (decode_seen frame ""));
-      test "a byte that begins no frame is malformed at its offset" (fun () ->
-          equal string (malformed_at 0) (decode_seen frame "\x04\x22\x4d\x19abc");
-          equal string (malformed_at 0) (decode_seen frame "\x00\x22\x4d\x18abc");
+      test "a byte that begins no frame is Malformed at its offset" (fun () ->
+          equal string (malformed_at 0)
+            (decode_seen frame "\x04\x22\x4d\x19abc");
+          equal string (malformed_at 0)
+            (decode_seen frame "\x00\x22\x4d\x18abc");
           equal string (malformed_at 0) (decode_seen frame "\x5f\x2b");
-          equal string (malformed_at 11) (decode_seen frame (header () ^ end_mark ^ "\x00"));
+          equal string (malformed_at 11)
+            (decode_seen frame (header () ^ end_mark ^ "\x00"));
           equal string (malformed_at 19)
-            (decode_seen frame (skippable "" ^ header () ^ end_mark ^ "\x04\x22\x4d\x19")));
-      test "a legacy frame is unsupported at its magic number" (fun () ->
+            (decode_seen frame
+               (skippable "" ^ header () ^ end_mark ^ "\x04\x22\x4d\x19")));
+      test "a legacy frame is Unsupported at its magic number" (fun () ->
           equal string "unsupported at 0"
             (decode_seen frame (le32 0x184C2102 ^ le32 0));
           equal string "unsupported at 11"
-            (decode_seen frame (header () ^ end_mark ^ le32 0x184C2102 ^ le32 0)));
-      test "a cut magic number is truncated" (fun () ->
+            (decode_seen frame
+               (header () ^ end_mark ^ le32 0x184C2102 ^ le32 0)));
+      test "a cut magic number is Truncated" (fun () ->
           equal string "truncated at 2" (decode_seen frame "\x04\x22");
           equal string "truncated at 1" (decode_seen frame "\x5a");
           equal string "truncated at 13"
             (decode_seen frame (header () ^ end_mark ^ "\x04\x22")));
-      cases "the version is 01" ~id:fst
+      cases "a version other than 01 is Malformed at FLG" ~id:fst
         [ ("00", 0x00); ("10", 0x80); ("11", 0xc0) ]
         (fun (_, flg) ->
           equal string (malformed_at 4)
             (decode_seen frame (header ~flg () ^ end_mark)));
-      cases "reserved bits are 0"
+      cases "a set reserved bit is Malformed at its byte"
         ~id:(fun (n, _, _, _) -> n)
         [
           ("FLG bit 1", version lor 0x02, max64k, 4);
@@ -644,98 +687,132 @@ let hostile_frames =
         (fun (_, flg, bd, at) ->
           equal string (malformed_at at)
             (decode_seen frame (header ~flg ~bd () ^ end_mark)));
-      cases "block maximum sizes 0 to 3 are undefined" ~id:string_of_int
-        [ 0; 1; 2; 3 ]
-        (fun id ->
+      cases "a block maximum size below 4 is Malformed at BD" ~id:string_of_int
+        [ 0; 1; 2; 3 ] (fun id ->
           equal string (malformed_at 5)
             (decode_seen frame (header ~bd:(id lsl 4) () ^ end_mark)));
-      test "a wrong header checksum is malformed at HC" (fun () ->
+      test "a wrong header checksum is Malformed at HC" (fun () ->
           let h = header () in
           let h = String.sub h 0 6 ^ byte (Char.code h.[6] lxor 1) in
           equal string (malformed_at 6) (decode_seen frame (h ^ end_mark)));
-      test "a dictionary is unsupported at its identifier" (fun () ->
+      test "a dictionary is Unsupported at its identifier" (fun () ->
           equal string "unsupported at 6"
             (decode_seen frame
                (header ~flg:(version lor dict_id) ~dict:7 () ^ end_mark)));
-      test "a block above the maximum size is malformed at its size" (fun () ->
+      test "a block above the maximum size is Malformed at its size" (fun () ->
           equal string (malformed_at 7)
             (decode_seen frame
-               (header () ^ stored (String.make ((64 * kib) + 1) 'x') ^ end_mark));
-          equal Lz_support.decoded
-            (Ok (String.make (64 * kib) 'x'))
-            (decode frame (header () ^ stored (String.make (64 * kib) 'x') ^ end_mark)));
-      test "a block decoding past the maximum size is malformed at the code"
+               (header () ^ stored (String.make ((64 * kib) + 1) 'x') ^ end_mark)));
+      test "a block decoding past the maximum size is Malformed at the code"
         (fun () ->
-          (* A match, whose offset is at 13, of 64 KiB after a literal;
-             and literals at 11 that state 64 KiB + 1. *)
+          (* A match, whose offset is at 13, of 64 KiB after a literal; and
+             literals at 11 that state 64 KiB + 1. *)
           equal string (malformed_at 13)
             (decode_seen frame ~cap:mib
                (header () ^ compressed (run_block (64 * kib)) ^ end_mark));
           equal string (malformed_at 11)
             (decode_seen frame ~cap:mib
-               (header () ^ compressed ("\xf0" ^ length_bytes ((64 * kib) + 1) ^ "xyz")
+               (header ()
+               ^ compressed ("\xf0" ^ length_bytes ((64 * kib) + 1) ^ "xyz")
                ^ end_mark)));
-      cases "a content size that differs is malformed at the size field"
+      cases "a content size that differs is Malformed at the size field"
         ~id:(fun (n, _, _) -> n)
         [
           ("above, in a stored block", 6, stored "hello");
           ("below, in a stored block", 4, stored "hello");
           ("below, in literals", 3, compressed (last "hello"));
           ("below, in a match", 12, compressed (run_block 20));
-          ("above, by a block", 5, stored "he" ^ compressed (last "llo") ^ stored "ab");
+          ( "above, by a block",
+            5,
+            stored "he" ^ compressed (last "llo") ^ stored "ab" );
         ]
         (fun (_, size, blocks) ->
           let h = header ~flg:(version lor content_size) ~size () in
-          equal string (malformed_at 6) (decode_seen frame ~cap:64 (h ^ blocks ^ end_mark)));
-      test "a wrong block checksum is malformed at the checksum" (fun () ->
+          equal string (malformed_at 6)
+            (decode_seen frame ~cap:64 (h ^ blocks ^ end_mark)));
+      test "a wrong block checksum is Malformed at the checksum" (fun () ->
           let b = last "hello" in
           let h = header ~flg:(version lor block_checksum) () in
           equal string
             (malformed_at (String.length h + 4 + String.length b))
-            (decode_seen frame (h ^ compressed b ^ le32 (xxh32 b lxor 1) ^ end_mark)));
-      test "a wrong content checksum is malformed at the checksum" (fun () ->
+            (decode_seen frame
+               (h ^ compressed b ^ le32 (xxh32 b lxor 1) ^ end_mark)));
+      test "a wrong content checksum is Malformed at the checksum" (fun () ->
           let f =
-            header ~flg:(version lor content_checksum) () ^ stored "hello" ^ end_mark
+            header ~flg:(version lor content_checksum) ()
+            ^ stored "hello" ^ end_mark
           in
-          equal string (malformed_at (String.length f))
+          equal string
+            (malformed_at (String.length f))
             (decode_seen frame (f ^ le32 (xxh32 "hello" lxor 1))));
-      test "a block ending inside a sequence is malformed at its token" (fun () ->
+      test "a block ending inside a sequence is Malformed at its token"
+        (fun () ->
           (* The block's token is at 11. *)
-          let ends ?cap b = decode_seen frame ?cap (header () ^ compressed b ^ end_mark) in
+          let ends ?cap b =
+            decode_seen frame ?cap (header () ^ compressed b ^ end_mark)
+          in
           equal string (malformed_at 11) (ends "\x50ab");
           equal string (malformed_at 11) (ends "\x40abcd\x04");
           (* A match of 274 bytes or more, given room for it. *)
           equal string (malformed_at 11) (ends ~cap:kib "\x4fabcd\x04\x00\xff");
-          equal string (malformed_at 18) (ends (sequence "abcd" ~offset:4 ~length:8 ^ "\x50a")));
-      test "a block ending after a match is malformed at its last token" (fun () ->
-          let ends ?cap b = decode_seen frame ?cap (header () ^ compressed b ^ end_mark) in
-          equal string (malformed_at 11) (ends (sequence "abcd" ~offset:4 ~length:8));
-          (* 32 bytes whose match length runs to the block's end: the fast
-             loop decodes it. *)
-          let long = "\xef" ^ String.make 14 'a' ^ le16 1 ^ length_bytes (15 + (14 * 255)) in
+          equal string (malformed_at 18)
+            (ends (sequence "abcd" ~offset:4 ~length:8 ^ "\x50a")));
+      test "a block ending after a match is Malformed at its last token"
+        (fun () ->
+          let ends ?cap b =
+            decode_seen frame ?cap (header () ^ compressed b ^ end_mark)
+          in
+          equal string (malformed_at 11)
+            (ends (sequence "abcd" ~offset:4 ~length:8));
+          (* 32 bytes whose match length runs to the block's end: the fast loop
+             decodes it. *)
+          let long =
+            "\xef" ^ String.make 14 'a' ^ le16 1 ^ length_bytes (15 + (14 * 255))
+          in
           equal int ~msg:"the long sequence's length" 32 (String.length long);
           equal string (malformed_at 11) (ends ~cap:mib long);
           equal string (malformed_at 18)
             (ends ~cap:mib (sequence "abcd" ~offset:4 ~length:8 ^ long)));
-      test "a bad offset is malformed at the offset in a frame" (fun () ->
+      test "a bad offset is Malformed at the offset in a frame" (fun () ->
           equal string (malformed_at 13)
-            (decode_seen frame (header () ^ compressed "\x1fa\x00\x00\xff\xff" ^ end_mark)));
-      test "a cut block is decoded as far as the input goes" (fun () ->
-          (* A block of 100 bytes cut after 6: malformed if a byte before
-             the cut proves it, truncated otherwise. *)
-          let cut ?cap b = decode_seen frame ?cap (header () ^ le32 100 ^ b) in
-          equal string (malformed_at 13) (cut "\x1fa\x00\x00\xff\xff");
-          equal string "too long at 11" (cut ~cap:3 "\x50ab");
-          (* A match of 529 bytes or more: truncated given room for it, too
-             long at its offset without. *)
-          equal string "truncated at 17" (cut ~cap:kib "\x1fa\x01\x00\xff\xff");
-          equal string "too long at 13" (cut ~cap:100 "\x1fa\x01\x00\xff\xff");
-          equal string "truncated at 13" (cut "\x50a");
-          equal string "truncated at 14"
-            (decode_seen frame (header () ^ le32 (5 lor 0x80000000) ^ "hel")));
+            (decode_seen frame
+               (header () ^ compressed "\x1fa\x00\x00\xff\xff" ^ end_mark)));
+      (* A block of 100 bytes cut short: Malformed if a byte before the cut
+         proves it, Too_long if a byte before it asks for output past the
+         destination, Truncated otherwise. A match of 529 bytes or more is
+         Truncated given room for it, Too_long at its offset without. *)
+      cases "a cut block is decoded as far as the input goes"
+        ~id:(fun (name, _, _, _) -> name)
+        [
+          ( "a bad offset",
+            "malformed at 13",
+            4096,
+            le32 100 ^ "\x1fa\x00\x00\xff\xff" );
+          ( "literals past the destination",
+            "too long at 11",
+            3,
+            le32 100 ^ "\x50ab" );
+          ( "a long match, given room",
+            "truncated at 17",
+            kib,
+            le32 100 ^ "\x1fa\x01\x00\xff\xff" );
+          ( "a long match past the destination",
+            "too long at 13",
+            100,
+            le32 100 ^ "\x1fa\x01\x00\xff\xff" );
+          ("literals", "truncated at 13", 4096, le32 100 ^ "\x50a");
+          ( "a stored block",
+            "truncated at 14",
+            4096,
+            le32 (5 lor 0x80000000) ^ "hel" );
+        ]
+        (fun (_, expected, cap, b) ->
+          equal string expected (decode_seen frame ~cap (header () ^ b)));
       test "only linked blocks reach into earlier blocks" (fun () ->
           let b = sequence "" ~offset:8 ~length:8 ^ last "ijklm" in
-          let f flg = header ~flg () ^ stored "abcdefgh" ^ compressed b ^ end_mark in
+          let f flg =
+            header ~flg () ^ stored "abcdefgh" ^ compressed b ^ end_mark
+          in
           equal Lz_support.decoded (Ok "abcdefghabcdefghijklm")
             (decode frame (f version));
           equal string
@@ -747,16 +824,18 @@ let hostile_frames =
           equal string
             (malformed_at (String.length first + 7 + 4 + 1))
             (decode_seen frame (first ^ header () ^ compressed b ^ end_mark)));
-      test "a stored block past the destination is too long at its size" (fun () ->
+      test "a stored block past the destination is Too_long at its size"
+        (fun () ->
           equal string "too long at 7"
             (decode_seen frame ~cap:3 (header () ^ stored "hello" ^ end_mark)));
-      test "a zip bomb ends at the destination" (fun () ->
-          (* Blocks of 4 MiB from 16 KiB each: 10 MiB of input state
-             2.5 GiB. *)
+      test "a zip bomb is Too_long at the first block past the destination"
+        (fun () ->
+          (* Blocks of 4 MiB from 16 KiB each: 10 MiB of input state 2.5 GiB. *)
           let b = compressed (run_block ((4 * mib) - 6)) in
           let f =
             header ~bd:max4m ()
-            ^ String.concat "" (List.init (10 * mib / String.length b) (fun _ -> b))
+            ^ String.concat ""
+                (List.init (10 * mib / String.length b) (fun _ -> b))
             ^ end_mark
           in
           let g = guarded mib in
@@ -788,24 +867,13 @@ let () =
   exit
     (run "Lz4"
        [
-         group "arguments"
-           [
-             test "a negative size has no bound" (fun () ->
-                 raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
-                     Lz.Lz4.Block.bound (-1));
-                 raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
-                     Lz.Lz4.Frame.bound (-1)));
-             group "block" [ Lz_support.largest_bound Lz.Lz4.Block.bound ];
-             group "frame" [ Lz_support.largest_bound Lz.Lz4.Frame.bound ];
-           ];
-         laws block;
-         laws frame;
-         group "frames" [ frames ];
-         group "drawn blocks" [ drawn; bad_offsets ];
-         formats;
-         choices;
-         vendor;
-         hostile_blocks;
-         hostile_frames;
          allocation;
+         group "block"
+           ((Lz_support.agreement "lz4b" :: block_documents)
+           @ [ drawn; bad_offsets; block_refusals ]
+           @ laws block);
+         group "frame"
+           ((Lz_support.agreement "lz4f" :: vendor)
+           @ frame_documents @ [ frames; frame_refusals ] @ laws frame
+           @ [ choices ]);
        ])
