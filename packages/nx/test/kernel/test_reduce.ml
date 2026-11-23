@@ -1363,15 +1363,21 @@ let pp_programmed ppf c =
     (if c.long then ", long" else "")
     c.seed
 
+(* The floats narrower than float32. *)
+let narrow_floats =
+  D.
+    [
+      Any Float16;
+      Any Bfloat16;
+      Any Float8_e4m3fn;
+      Any Float8_e5m2;
+      Any Float4_e2m1fn;
+    ]
+
 (* Every dtype a program reads: the narrow floats and integers and [bit]
    among them. *)
 let narrows =
-  base @ complexes
-  @ D.
-      [
-        Any Float16; Any Bfloat16; Any Float8_e4m3fn; Any Float8_e5m2;
-        Any Float4_e2m1fn; Any Int4; Any Uint4; Any Bit;
-      ]
+  base @ complexes @ narrow_floats @ D.[ Any Int4; Any Uint4; Any Bit ]
 
 (* Loops of small extents, rows, and one or two rows past 64 blocks of
    terms, the long axis reduced or scanned. *)
@@ -1667,28 +1673,30 @@ let several =
     in
     (shape, axes)
   in
-  (* Columns of complex loads half the time, whose products start their
-     lanes from their first terms. *)
-  let plain g =
+  (* Columns of complex loads half the time, whose products start their lanes
+     from their first terms; columns of narrow float loads, whose programs'
+     outputs are narrow floats often enough that every run reduces one across
+     rows. *)
+  let loads dtypes g =
     let+ x = g in
-    (x, false)
+    (x, dtypes)
   in
   let complex_columns =
     let* x = columns in
     let+ c = bool in
-    (x, c)
+    (x, if c then complexes else narrows)
   in
-  let* (shape, axes), complex =
+  let* (shape, axes), dtypes =
     frequency
       [
-        (7, plain drawn);
-        (1, plain parted);
+        (7, loads narrows drawn);
+        (1, loads narrows parted);
         (1, complex_columns);
-        (1, plain paired);
-        (3, plain grouped);
+        (1, loads narrows paired);
+        (3, loads narrows grouped);
+        (2, loads narrow_floats (one_of [ columns; paired ]));
       ]
   in
-  let dtypes = if complex then complexes else narrows in
   let* dts = array ~size:(int_range 1 3) (of_list ~pp:pp_dtype dtypes) in
   let* padded = bool in
   let* long = frequency [ (2, constant false); (1, constant true) ] in
@@ -1938,12 +1946,7 @@ let associated ~scans =
     (case_of
        ~scan:(if scans then Gen.bool else Gen.constant false)
        ~monoids:[ Sum; Prod ]
-       (D.
-          [
-            Any Float16; Any Bfloat16; Any Float8_e4m3fn; Any Float8_e5m2;
-            Any Float4_e2m1fn;
-          ]
-       @ floats @ complexes))
+       (narrow_floats @ floats @ complexes))
 
 (* A library that keeps nx.cpu's lane order and chunks gives nx.cpu's
    bits: a float or complex sum's or product's results, reduced or scanned,
