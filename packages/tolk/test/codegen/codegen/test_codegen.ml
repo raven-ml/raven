@@ -6696,27 +6696,45 @@ let runs_widest () =
   equal (array Dtypes.value) (Array.init 16 out)
     (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats w) ]))
 
-(* Each step's vectors of [w] along [j] are the columns of the 8 rows of 4
-   lanes it loads along the sum: they are computed by a transpose, in pieces
-   of 2 doubles, whose every vector takes lanes of at most two others, one
-   shuffle each, and every output adds its products in order, each rounded
-   once with its sum. *)
+(* Each step's vectors of [w] along [j] are the columns of the 8 rows of 4 lanes
+   it loads along the sum: they are computed by a transpose, in pieces of 2
+   doubles, whose every vector takes lanes of at most two others, one shuffle
+   each, and every output adds its products in order, each rounded once with its
+   sum. A vector that is other vectors' lanes in order, as the loads of a piece
+   of 16 bytes each that make arm64's 8 lanes, takes no shuffle. *)
 let transposes n () =
   let prg = Codegen.to_program (transposed_kernel n) (Lazy.force host) in
   let uops = Ops.src (Ops.nth prg 1) in
+  let lane l =
+    if Ops.op l <> Op.Index then None
+    else Some (Ops.nth l 0, Dtype.Value.to_int (Ops.vmax (Ops.nth l 1)))
+  in
+  (* Whether [lanes] are each of their vectors' lanes in turn. *)
+  let rec in_order = function
+    | [] -> true
+    | Some (v, 0) :: _ as lanes ->
+        let rec run t = function
+          | Some (v', t') :: rest when v' == v && t' = t -> run (t + 1) rest
+          | rest -> t = lanes_of v && in_order rest
+        in
+        run 0 lanes
+    | _ -> false
+  in
   let gathered u =
     let vectors =
       List.fold_left
         (fun vs l ->
-          if Ops.op l <> Op.Index then vs
-          else
-            let v = Ops.nth l 0 in
-            if List.memq v vs then vs else v :: vs)
+          match lane l with
+          | Some (v, _) when not (List.memq v vs) -> v :: vs
+          | _ -> vs)
         [] (Ops.src u)
     in
-    Ops.op u = Op.Stack && List.compare_length_with vectors 2 > 0
+    Ops.op u = Op.Stack
+    && List.compare_length_with vectors 2 > 0
+    && not (in_order (List.map lane (Ops.src u)))
   in
-  equal int ~msg:"stacks of lanes of more than two vectors" 0
+  equal int ~msg:"stacks of lanes of more than two vectors, out of their order"
+    0
     (List.length (List.filter gathered uops));
   let f = Float.of_int in
   let x = Array.init (8 * n) (fun k -> Float.sin (f (k + 1)) *. f (k + 1))
