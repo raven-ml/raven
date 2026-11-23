@@ -284,7 +284,7 @@ static struct custom_operations scratch_ops = {
 
 /* Carves [p] for [np] pieces of rank [r] out of a block that the root
    [*owner] then owns, allocated with the domain lock released for [many]
-   pieces (nx_alloc_released); 0 if host memory runs out. A collection
+   pieces (nx_cpu_alloc_released); 0 if host memory runs out. A collection
    within the release moves the custom block, so it is found through its
    root after. Each part but the last is a multiple of 8 bytes, so each
    starts aligned. */
@@ -294,7 +294,7 @@ static int pieces_of(const value *owner, int np, int r, int many,
   size_t sa = n * sizeof *p->a, sb = n * sizeof *p->lo,
          sr = (3 * (size_t)r * (size_t)np + 1) * sizeof *p->ranges;
   size_t bytes = sa + 2 * sb + sr + nx_covers_bytes(np);
-  uint8_t *b = many ? nx_alloc_released(bytes) : malloc(bytes);
+  uint8_t *b = many ? nx_cpu_alloc_released(bytes) : malloc(bytes);
   if (b == NULL) return 0;
   *(void **)Data_custom_val(*owner) = b;
   p->a = (nx_array *)b;

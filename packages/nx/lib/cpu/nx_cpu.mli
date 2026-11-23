@@ -542,6 +542,12 @@ val one_thread : (unit -> 'a) -> 'a
     work on that thread alone while [f] runs, nested calls included. The
     bits are those of any threads. For tests. *)
 
+val released_tables : unit -> int
+(** [released_tables ()] is the count of tables the calling thread's calls have
+    allocated with the domain lock released: those that a count of a call's
+    operands, pieces or nodes sizes past what the call keeps on its stack. For
+    tests. *)
+
 val targets : string list
 (** [targets] is the names of the target tables the host runs, each one's
     instructions a superset of the one's before: ["base"] first, and last

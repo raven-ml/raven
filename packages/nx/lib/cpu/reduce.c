@@ -3069,7 +3069,7 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
   nx_array a_stack[NX_MAX_OPERANDS], *a = a_stack;
   int tables[4 * NX_MAX_OPERANDS], *dts = tables;
   if (heap) {
-    uint8_t *b = nx_alloc_released((size_t)no * (sizeof *a + sizeof *dts) +
+    uint8_t *b = nx_cpu_alloc_released((size_t)no * (sizeof *a + sizeof *dts) +
                                    3 * (size_t)nt * sizeof *dts);
     if (b == NULL) {
       release(owner);

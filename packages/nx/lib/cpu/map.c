@@ -1208,10 +1208,10 @@ struct nx_cpu_prog {
 
 /* The steps of a program of [nn] nodes, past STEPS, on the heap: a long
    program's allocated with the domain lock released, as they are freed
-   (nx_alloc_released); NULL if host memory runs out. */
+   (nx_cpu_alloc_released); NULL if host memory runs out. */
 static step *steps_of(int nn) {
   size_t bytes = sizeof(step) * (size_t)nn;
-  return nn > NX_CPU_ITEMS ? nx_alloc_released(bytes) : malloc(bytes);
+  return nn > NX_CPU_ITEMS ? nx_cpu_alloc_released(bytes) : malloc(bytes);
 }
 
 nx_cpu_prog *nx_cpu_prog_copy(const value *vp) {
@@ -1235,7 +1235,7 @@ nx_cpu_prog *nx_cpu_prog_copy(const value *vp) {
     size_t bytes = (size_t)n * sizeof(nx_array) +
                    (size_t)g->nins * sizeof(int) +
                    (size_t)g->nouts * sizeof(int32_t);
-    g->owned = n > NX_CPU_ITEMS ? nx_alloc_released(bytes) : malloc(bytes);
+    g->owned = n > NX_CPU_ITEMS ? nx_cpu_alloc_released(bytes) : malloc(bytes);
     if (g->owned == NULL) {
       nx_cpu_prog_free(g);
       return NULL;
@@ -1474,7 +1474,7 @@ static void wide_tables(const value *owner, int n, int nins, int nouts,
   size_t m = (size_t)n + 2;
   size_t bytes = m * (sizeof **a + sizeof **rows + sizeof **first) +
                  (size_t)nins * sizeof(int) + (size_t)nouts * sizeof(int32_t);
-  uint8_t *b = nx_alloc_released(bytes);
+  uint8_t *b = nx_cpu_alloc_released(bytes);
   if (b == NULL) {
     map_drop(*owner, 1);
     caml_raise_out_of_memory();

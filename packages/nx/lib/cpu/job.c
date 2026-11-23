@@ -43,6 +43,20 @@
 _Thread_local int nx_cpu_held;
 _Thread_local int nx_cpu_one;
 
+/* The calling thread's count of tables nx_cpu_alloc_released allocated. */
+static _Thread_local long released_tables;
+
+void *nx_cpu_alloc_released(size_t n) {
+  void *p = nx_alloc_released(n);
+  if (p != NULL) released_tables++;
+  return p;
+}
+
+value nx_cpu_released_tables(value unit) {
+  (void)unit;
+  return Val_long(released_tables);
+}
+
 /* Sets nx_cpu_one to [v] and answers its value before: one_thread's
    scope. */
 value nx_cpu_one_thread(value v) {

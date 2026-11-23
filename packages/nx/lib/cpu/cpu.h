@@ -543,6 +543,12 @@ extern _Thread_local int nx_cpu_held;
    nx_cpu.ml's one_thread asks: the bits are those of any threads. */
 extern _Thread_local int nx_cpu_one;
 
+/* nx_alloc_released for a table that a count of a call's operands, pieces
+   or nodes sizes past what the call keeps on its stack, counted for the
+   calling thread, whose count a test reads (nx_cpu.ml's released_tables)
+   to know that a call took that path. */
+void *nx_cpu_alloc_released(size_t n);
+
 /* Whether one of the [n] operands [a] lies over memory that something
    other than its device holds (nx_array's borrowed). */
 static inline int nx_cpu_borrows(int n, const nx_array *a) {

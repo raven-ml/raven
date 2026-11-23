@@ -931,7 +931,8 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
                   (size_t)(nl + 1) * sizeof(nx_array) +
                   (size_t)(nl + 3) * NX_MAX_RANK * sizeof(int64_t) +
                   (size_t)(nl + 2) * sizeof(int64_t);
-  uint8_t *mem = n + nl > 64 ? nx_alloc_released(tables) : malloc(tables);
+  uint8_t *mem =
+      n + nl > 64 ? nx_cpu_alloc_released(tables) : malloc(tables);
   if (mem == NULL) {
     release(owner);
     caml_raise_out_of_memory();

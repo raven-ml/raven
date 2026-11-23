@@ -564,6 +564,8 @@ let one_thread f =
   let was = swap_one true in
   Fun.protect ~finally:(fun () -> ignore (swap_one was : bool)) f
 
+external released_tables : unit -> int = "nx_cpu_released_tables" [@@noalloc]
+
 (* Target tables (target.c) *)
 
 external targets_c : unit -> string list = "nx_cpu_targets"

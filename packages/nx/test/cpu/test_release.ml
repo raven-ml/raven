@@ -328,20 +328,28 @@ let sweep () =
     ignore (Sys.opaque_identity (Array.make 255 0))
   done
 
-(* [call ()] run once for each of its releases of the domain lock, another
-   domain compacting the heap at that release, which moves every young block,
-   the custom block that owns the call's tables among them. After each run the
-   heap is collected, so that the block's finaliser frees what it still owns,
-   and swept ({!sweep}), and [check ()] holds. *)
+(* [call ()], which allocates tables with the domain lock released, run once for
+   each of its releases of the lock, another domain compacting the heap at that
+   release, which moves every young block, the custom block that owns the call's
+   tables among them. Each run is swept ({!sweep}) as it returns, before
+   anything else allocates over a word the call wrote after the block moved;
+   then the heap is collected, so that the block's finaliser frees what it still
+   owns, and [check ()] holds. *)
 let at_each_release call check =
+  let tables = Nx_cpu.released_tables () in
   call ();
+  greater int ~msg:"tables allocated released" ~than:tables
+    (Nx_cpu.released_tables ());
   let ~releases, ~held:_, ~cpu:_ = Nx_release_support.watch call in
   greater int ~msg:"releases" ~than:0 releases;
   for release = 1 to releases do
-    let (), released = Nx_release_support.compacting ~release call in
+    let run () =
+      call ();
+      sweep ()
+    in
+    let (), released = Nx_release_support.compacting ~release run in
     equal ~msg:(Printf.sprintf "release %d came" release) bool true released;
     Gc.full_major ();
-    sweep ();
     check ()
   done
 
@@ -374,7 +382,8 @@ let long_score ~loads adds =
 (* Calls whose tables a count of their operands or nodes sizes, which they
    allocate with the domain lock released: the custom block that owns the tables
    is young then, and another domain's collection at any release of the call
-   moves it. Each count lies past the stack's tables. *)
+   moves it. Each count lies past the stack's tables, which {!at_each_release}
+   checks. *)
 let tables_moved =
   group "a call's tables survive a collection at each of its releases"
     [
