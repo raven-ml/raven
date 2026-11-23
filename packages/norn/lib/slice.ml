@@ -48,8 +48,8 @@ type ('u, 'f, 'a, 'd) walk = {
   doublings : 'd Nx.int32_t;
   in_lo : 'd Nx.bool_t; (* whether the doubled or checked interval's ends lie *)
   in_hi : 'd Nx.bool_t; (* in the slice *)
-  inner : 'd Nx.bool_t; (* [[walker; bits]]: per doubling, whether the inner and *)
-  outer : 'd Nx.bool_t; (* outer ends of the half it added lie in the slice *)
+  inner : 'd Nx.int64_t; (* bit sets: per doubling, whether the inner and *)
+  outer : 'd Nx.int64_t; (* outer ends of the half it added lie in the slice *)
   candidate : (float, 'f, 'd) Nx.t; (* the point under check *)
   check_lo : (float, 'f, 'd) Nx.t; (* its checked interval's lower end *)
   levels : 'd Nx.int32_t; (* the halvings left of its check *)
@@ -129,16 +129,18 @@ let bit_length (type f) (v : (float, f, 'd) Nx.t) =
 (* [per_row keys f] is [f k] for each row's key [k]. *)
 let per_row keys f = Rune.vmap P.(Nx.Rng.ptree @-> returns tensor) f keys
 
-(* Per-walker flags, [[walker; bits]]: [at flags column i] is row [r]'s flag
-   [i.(r)], and [put flags column i mask v] sets it to [v.(r)] where [mask];
-   [column] is [[0; bits)] as a row. *)
-let at flags column i =
-  Nx.any ~axes:[ 1 ]
-    (Nx.logical_and flags (Nx.equal column (Nx.unsqueeze ~axes:[ 1 ] i)))
+(* Per-walker flags as bit sets, [bits] at most 53: [at flags bit] is each
+   walker's flag at [bit = 2^i], and [put flags bit mask v] sets it where [mask]
+   and [v]. [bit] is a power of two the dtype holds exactly. *)
+let at flags bit =
+  Nx.not_equal
+    (Nx.bitwise_and flags (Nx.cast Nx.int64 bit))
+    (Nx.scalar_like flags 0L)
 
-let put flags column i mask v =
-  let col t = Nx.unsqueeze ~axes:[ 1 ] t in
-  Nx.where (Nx.logical_and (col mask) (Nx.equal column (col i))) (col v) flags
+let put flags bit mask v =
+  Nx.where (Nx.logical_and mask v)
+    (Nx.bitwise_or flags (Nx.cast Nx.int64 bit))
+    flags
 
 (* Neal's doubling (2003, figs. 4 to 6). The bracket, [width] placed at random
    around the walker, doubles toward a random side while an end lies in the
@@ -165,7 +167,6 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
   let lo = Nx.mul_s (uniform 0) (-.width) in
   let level = Nx.add lp0 (Nx.log (uniform 2)) in
   let resolution = f (width *. Prec.eps dt) in
-  let column = Nx.unsqueeze ~axes:[ 0 ] (Nx.arange_at on Nx.int32 0 b 1) in
   let trip_keys =
     Rune.vmap
       P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
@@ -211,12 +212,12 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
     (* The first bracket's ends, then doublings. *)
     let to_lo = Nx.logical_and doubling leftward in
     let to_hi = Nx.logical_and doubling (Nx.logical_not leftward) in
+    let added = pow2 w.doublings in
     let inner =
-      put w.inner column w.doublings doubling
-        (Nx.where leftward w.in_lo w.in_hi)
+      put w.inner added doubling (Nx.where leftward w.in_lo w.in_hi)
     in
-    let outer = put w.outer column w.doublings doubling inside in
-    let home = Nx.where to_lo (Nx.add w.home (pow2 w.doublings)) w.home in
+    let outer = put w.outer added doubling inside in
+    let home = Nx.where to_lo (Nx.add w.home added) w.home in
     let doublings = Nx.add w.doublings (Nx.cast Nx.int32 doubling) in
     let in_lo = Nx.where (Nx.logical_or is_lower to_lo) inside w.in_lo in
     let in_hi = Nx.where (Nx.logical_or is_upper to_hi) inside w.in_hi in
@@ -244,7 +245,7 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
     in
     let h = Nx.maximum (Nx.sub parted one) (i32 0l) in
     let right = Nx.greater cell w.home in
-    let near = at w.inner column h and far = at w.outer column h in
+    let near = at w.inner (pow2 h) and far = at w.outer (pow2 h) in
     let half_lo = Nx.where right near far
     and half_hi = Nx.where right far near in
     let separated = Nx.greater parted (i32 0l) in
@@ -341,8 +342,8 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
         doublings = Nx.zeros_at on Nx.int32 [| c |];
         in_lo = no;
         in_hi = no;
-        inner = Nx.zeros_at on Nx.bool [| c; b |];
-        outer = Nx.zeros_at on Nx.bool [| c; b |];
+        inner = Nx.zeros_at on Nx.int64 [| c |];
+        outer = Nx.zeros_at on Nx.int64 [| c |];
         candidate = zero;
         check_lo = zero;
         levels = Nx.zeros_at on Nx.int32 [| c |];

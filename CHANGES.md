@@ -200,6 +200,8 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Nested` and `Smc`'s slice moves compute each trip elementwise, with the same
+  results bit for bit: a compiled `Smc` slice step takes about half the time.
 - The scores of `Dist.gamma`, `Dist.inverse_gamma`, `Dist.beta` and
   `Dist.dirichlet` keep their digits where a concentration lies far below its
   mean count: `Dist.beta ~a:1e8 ~b:1.`'s score in `b` at `0.5` was off by
