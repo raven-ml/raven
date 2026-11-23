@@ -37,3 +37,5 @@ build: [
 ]
 dev-repo: "git+https://github.com/raven-ml/raven.git"
 x-maintenance-intent: ["(latest)"]
+# lz's Zstandard decoder reads the format's little-endian words natively.
+available: arch != "s390x"

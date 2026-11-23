@@ -15,6 +15,7 @@ bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.5.0"}
   "dune" {>= "3.21"}
+  "conf-linux-libc-dev" {os = "linux"}
   "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
   "thumper" {with-test & >= "0.1.0"}
@@ -36,10 +37,6 @@ build: [
 ]
 dev-repo: "git+https://github.com/raven-ml/raven.git"
 x-maintenance-intent: ["(latest)"]
-# rig addresses memory beyond what a 32-bit int holds.
-available: arch != "x86_32" & arch != "arm32" & arch != "ppc32"
-# The drivers include the kernel's headers, which other distributions install
-# with their C library's.
-depexts: [
-  ["linux-headers"] {os-distribution = "alpine"}
-]
+# rig addresses memory beyond what a 32-bit int holds, and its PCI drivers
+# store values little-endian.
+available: arch != "x86_32" & arch != "arm32" & arch != "ppc32" & arch != "s390x"

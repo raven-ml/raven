@@ -490,6 +490,9 @@
   (ocaml
    (>= 5.5.0))
   dune
+  ; the drivers include the kernel's headers
+  (conf-linux-libc-dev
+   (= :os linux))
   ; tests
   (windtrap
    (and

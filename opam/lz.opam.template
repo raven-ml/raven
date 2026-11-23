@@ -1,0 +1,2 @@
+# lz's Zstandard decoder reads the format's little-endian words natively.
+available: arch != "s390x"

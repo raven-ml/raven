@@ -1,7 +1,3 @@
-# rig addresses memory beyond what a 32-bit int holds.
-available: arch != "x86_32" & arch != "arm32" & arch != "ppc32"
-# The drivers include the kernel's headers, which other distributions install
-# with their C library's.
-depexts: [
-  ["linux-headers"] {os-distribution = "alpine"}
-]
+# rig addresses memory beyond what a 32-bit int holds, and its PCI drivers
+# store values little-endian.
+available: arch != "x86_32" & arch != "arm32" & arch != "ppc32" & arch != "s390x"

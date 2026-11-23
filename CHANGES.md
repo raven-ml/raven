@@ -70,6 +70,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- rig is not available on s390x: its PCI drivers store values little-endian.
+  On Linux it depends on `conf-linux-libc-dev`, which installs the kernel
+  headers its drivers include on every distribution, where only Alpine got
+  them.
 - On instruction sets other than x86_64 and arm64, such as ppc64le, `Rig.arch`
   names the set, where it was `""`, and a load of host code is refused naming
   it. New `Rig.Buffer.paged_from`, the size from which a host buffer starts on
@@ -3562,6 +3566,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Lz (new)
 
+- lz is not available on s390x: its Zstandard decoder reads little-endian
+  words natively.
 - Add `Lz.Lzf.decode`, LZF as liblzf's decoder reads it, the compression
   of h5py's HDF5 filter 32000. A match before the block's start is
   `Malformed`.
