@@ -166,12 +166,66 @@ let examples =
     };
   ]
 
+let redrawn cases =
+  let open Gen in
+  let* c = of_list cases in
+  let* seed = int_range 0 1000 in
+  let tk = tk c in
+  let+ lengths =
+    match c.lengths with
+    | None -> constant None
+    | Some l ->
+        map Option.some
+          (array
+             ~size:(constant (Array.length l))
+             (frequency
+                [ (1, constant 0); (1, constant tk); (2, int_range 0 tk) ]))
+  in
+  { c with seed; lengths }
+
 let host_examples =
+  let f32 = Nx.Dtype.Any Nx.float32 in
+  let b = { base with dtype = f32 } in
   List.filter_map
-    (fun c ->
-      if c.hq >= 128 then None
-      else Some { c with dtype = Nx.Dtype.Any Nx.float32 })
+    (fun c -> if c.hq >= 128 then None else Some { c with dtype = f32 })
     examples
+  @ [
+      { b with hk = 8; tq = 7; max_pages = 16; dk = 16; dv = 8; mask = Window };
+      {
+        b with
+        hk = 1;
+        lead = 2;
+        tq = 64;
+        page = 16;
+        max_pages = 4;
+        dk = 72;
+        dv = 8;
+        lengths = Some [| 0; 64 |];
+        holes = Scattered;
+        nans = true;
+      };
+      {
+        b with
+        hk = 8;
+        max_pages = 100;
+        dk = 16;
+        lengths = Some [| 57 |];
+        mask = Reach;
+        holes = Tile;
+      };
+      {
+        b with
+        hk = 1;
+        tq = 1;
+        page = 16;
+        max_pages = 1;
+        dk = 72;
+        dv = 8;
+        lengths = Some [| 16 |];
+        mask = Window;
+        holes = Tile;
+      };
+    ]
 
 (* Inputs *)
 
@@ -244,26 +298,30 @@ let call (type s d) c ~lengths ~table ~hidden (q : (float, s, d) Nx.t) k v =
   in
   Nx.attention ?lengths:(Option.map place lengths) ~mask ~acc:Nx.float32 ~kv q
 
-let law (module S : Nx.Devices) c =
+(* The case's pools, table, lengths and dense rows, made from its seed. *)
+type inputs = {
+  pages : int;
+  table : int array;
+  pk : float array;
+  pv : float array;
+  dk : float array;
+  dv : float array;
+  q : Nx.host Nx.float32_t;
+  lengths : Nx.host Nx.int64_t option;
+  hidden : Nx.host Nx.bool_t option;
+}
+
+let out ~pages e = e < 0 || e >= pages
+
+let inputs c =
   let (F dt) = float_dtype c.dtype in
   let tk = tk c in
   let pages = (c.lead * c.max_pages) + spare in
   let table = entries c ~pages in
-  let out e = e < 0 || e >= pages in
+  let out = out ~pages in
   let len b = match c.lengths with Some ls -> ls.(b) | None -> tk in
-  cover "decode" (c.tq = 1);
-  cover "prefill" (c.tq > 1);
-  cover "pages of one key" (c.page = 1);
-  cover "pages of 16 keys" (c.page = 16);
-  cover (mask_name c.mask) true;
-  cover (Nx.Dtype.name dt) true;
-  cover "entries out of range" (Array.exists out table);
-  cover "keys the table alone hides"
-    (c.holes = Tile && c.mask = Full
-    && List.for_all (fun b -> len b >= tile_hi) (List.init c.lead Fun.id));
-  cover "NaN where no row reads" c.nans;
-  (* Each pool slot some row reads: its entry's in range, its key before
-     the row's length. *)
+  (* Each pool slot some row reads: its entry's in range, its key before the
+     row's length. *)
   let read = Array.make (pages * c.page) false in
   Array.iteri
     (fun j e ->
@@ -293,10 +351,7 @@ let law (module S : Nx.Devices) c =
         if out e then 0.
         else p.((((((e * c.hk) + h) * c.page) + (t mod c.page)) * d) + col))
   in
-  let dk = dense pk c.dk and dv = dense pv c.dv in
-  let host shape a = Nx.create Nx.float32 shape a in
   let qs = [| c.lead; c.hq; c.tq; c.dk |] in
-  let q = host qs (draw dt c 1 qs) in
   let lengths =
     Option.map
       (fun l -> Nx.create Nx.int64 [| c.lead |] (Array.map Int64.of_int l))
@@ -311,36 +366,71 @@ let law (module S : Nx.Devices) c =
       Some (Nx.create Nx.bool [| c.lead; 1; 1; tk |] holes)
     else None
   in
+  {
+    pages;
+    table;
+    pk;
+    pv;
+    dk = dense pk c.dk;
+    dv = dense pv c.dv;
+    q = Nx.create Nx.float32 qs (draw dt c 1 qs);
+    lengths;
+    hidden;
+  }
+
+let law_call (type d) ~paged (module S : Nx.Devices with type d = d) c :
+    (int64 array * int64 array, d) Batch.call =
+  let (F dt) = float_dtype c.dtype in
+  let tk = tk c in
+  let i = inputs c in
+  let host shape a = Nx.create Nx.float32 shape a in
+  let place x = Nx.place S.on (Nx.cast dt x) in
   let table =
-    Nx.create Nx.int64 [| c.lead; c.max_pages |] (Array.map Int64.of_int table)
+    Nx.create Nx.int64 [| c.lead; c.max_pages |]
+      (Array.map Int64.of_int i.table)
   in
-  let compiled ~table ~hidden k v =
-    let place x = Nx.place S.on (Nx.cast dt x) in
-    let g =
-      Rune.jit
-        Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor))
-        (fun q k v -> call c ~lengths ~table ~hidden q k v)
-    in
-    let before = Rune.evaluations () in
-    let o, lse = g (place q) (place k) (place v) in
-    Compiled.here ();
-    equal ~msg:"compiled, not evaluated" Testable.int 0 (Rune.evaluations () - before);
-    let bits x =
-      Array.map Int64.bits_of_float
-        (Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)))
-    in
-    (bits o, bits lse)
+  let x, f =
+    if paged then
+      ( ( place i.q,
+          place (host [| i.pages; c.hk; c.page; c.dk |] i.pk),
+          place (host [| i.pages; c.hk; c.page; c.dv |] i.pv) ),
+        call c ~lengths:i.lengths ~table:(Some table) ~hidden:None )
+    else
+      ( ( place i.q,
+          place (host [| c.lead; c.hk; tk; c.dk |] i.dk),
+          place (host [| c.lead; c.hk; tk; c.dv |] i.dv) ),
+        call c ~lengths:i.lengths ~table:None ~hidden:i.hidden )
   in
-  let po, plse =
-    compiled ~table:(Some table) ~hidden:None
-      (host [| pages; c.hk; c.page; c.dk |] pk)
-      (host [| pages; c.hk; c.page; c.dv |] pv)
+  let bits x =
+    Array.map Int64.bits_of_float
+      (Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)))
   in
-  let o, lse =
-    compiled ~table:None ~hidden
-      (host [| c.lead; c.hk; tk; c.dk |] dk)
-      (host [| c.lead; c.hk; tk; c.dv |] dv)
-  in
+  Batch.call
+    Nx.Ptree.(triple tensor tensor tensor)
+    x
+    Nx.Ptree.(pair tensor tensor)
+    (fun (q, k, v) -> f q k v)
+    (fun (o, lse) -> (bits o, bits lse))
+
+let law_check c compiled =
+  let (F dt) = float_dtype c.dtype in
+  let tk = tk c in
+  let pages = (c.lead * c.max_pages) + spare in
+  let table = entries c ~pages in
+  let out = out ~pages in
+  let len b = match c.lengths with Some ls -> ls.(b) | None -> tk in
+  cover "decode" (c.tq = 1);
+  cover "prefill" (c.tq > 1);
+  cover "pages of one key" (c.page = 1);
+  cover "pages of 16 keys" (c.page = 16);
+  cover (mask_name c.mask) true;
+  cover (Nx.Dtype.name dt) true;
+  cover "entries out of range" (Array.exists out table);
+  cover "keys the table alone hides"
+    (c.holes = Tile && c.mask = Full
+    && List.for_all (fun b -> len b >= tile_hi) (List.init c.lead Fun.id));
+  cover "NaN where no row reads" c.nans;
+  let (po, plse), (o, lse) = compiled () in
   let same name dense paged =
     equal ~msg:(name ^ "'s elements") Testable.int (Array.length dense)
       (Array.length paged);
@@ -359,3 +449,7 @@ let law (module S : Nx.Devices) c =
   in
   same "o" o po;
   same "lse" lse plse
+
+let law (module S : Nx.Devices) c =
+  let alone paged = List.hd (Batch.run [ law_call ~paged (module S) c ]) in
+  law_check c (fun () -> (alone true, alone false))

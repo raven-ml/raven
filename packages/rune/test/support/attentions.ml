@@ -207,43 +207,151 @@ let examples dtypes =
         tq = 16;
         tk = 1000;
       };
-      (* A causal window of 100 keys, whose tiles a tensor core's mask
-         shows whole. *)
+      (* A causal window of 100 keys, whose tiles a tensor core's mask shows
+         whole. *)
       { b with dtype = named "bfloat16"; mask = Reach };
       (* Dropout over packed documents, TESSERA's training call: a keep that
          drops weights past the softmax. *)
       { b with dtype = named "bfloat16"; mask = Documents; keep = true };
     ]
-  @ List.map (fun dt -> { (base dt) with zeros = true; tq = 128; tk = 128 }) dtypes
+  @ List.map
+      (fun dt -> { (base dt) with zeros = true; tq = 128; tk = 128 })
+      dtypes
+
+(* Pairs [tq] and [tk] of [edges] reversed, so each edge is a row count and a
+   key count once, and cycles every other choice of [gen] across them. Keys
+   whose count a page divides are paged, so that each count stays an edge. Each
+   head of 24 dimensions or more is taken once, by a case of other dimensions of
+   at most 16, since a wide head's kernels cost most to compile. *)
+let edge_examples dtypes =
+  let nth l i = List.nth l (i mod List.length l) in
+  let heads = [ (1, 1); (8, 8); (8, 2); (8, 1) ] in
+  let masks =
+    [
+      Unmasked;
+      Causal;
+      Window;
+      Documents;
+      Positions;
+      Blocks;
+      Opaque;
+      Spans;
+      Reach;
+    ]
+  in
+  List.mapi
+    (fun i tq ->
+      let hq, hk = nth heads i in
+      let tk = List.nth edges (List.length edges - 1 - i) in
+      let page =
+        match tk with 16 | 32 | 64 -> Some 16 | 15 | 65 -> Some 5 | _ -> None
+      in
+      let lead = 1 + (i / 2 mod 3) in
+      let lengths =
+        match i mod 5 with
+        | 0 -> None
+        | 1 -> Some (Array.make lead 0)
+        | 2 -> Some (Array.make lead 1)
+        | 3 -> Some (Array.make lead tk)
+        | _ -> Some (Array.init lead (fun b -> (b + 1) * tk / (lead + 1)))
+      in
+      {
+        dtype = nth dtypes i;
+        lead;
+        hq;
+        hk;
+        tq;
+        tk;
+        dk = (if i < 5 then nth [ 1; 8; 16; 24; 64 ] i else nth [ 1; 8; 16 ] i);
+        dv =
+          (if i < 5 then nth [ 1; 8; 16; 64; 72 ] (i + 2)
+           else nth [ 1; 8; 16 ] i);
+        page;
+        holes = i mod 2 = 1;
+        lengths;
+        mask = nth masks i;
+        alibi = i mod 2 = 0;
+        rising = i mod 5 = 1;
+        positive = i mod 5 = 2;
+        nans = page = None && i mod 2 = 0;
+        zeros = i = 3;
+        faint = i = 9;
+        keep = i mod 4 = 3;
+        seed = 67 * i;
+      })
+    edges
 
 let kernel_examples dtypes =
   let b = base (List.hd dtypes) and named = named dtypes in
   [
-    (* Keys padded to a step of a tensor core's K, values past one chunk
-       of columns. *)
+    (* Keys padded to a step of a tensor core's K, values past one chunk of
+       columns. *)
     { b with dtype = named "float16"; dk = 24; dv = 72; tq = 40; tk = 100 };
     (* Keys and values past 64 dimensions, one side and then both: the
        derivative's kernels of wider heads. *)
     { b with dtype = named "bfloat16"; dk = 128; dv = 128; tq = 40; tk = 64 };
     { b with dtype = named "float16"; dk = 96; dv = 64; tq = 20; tk = 33 };
-    { b with dtype = named "bfloat16"; dk = 64; dv = 128; tq = 20; tk = 33; mask = Unmasked };
-    (* Rows and keys either side of Metal's tiles of 8: a key head a
-       query head, so a tile's rows are one head's. *)
+    {
+      b with
+      dtype = named "bfloat16";
+      dk = 64;
+      dv = 128;
+      tq = 20;
+      tk = 33;
+      mask = Unmasked;
+    };
+    (* Rows and keys either side of Metal's tiles of 8: a key head a query head,
+       so a tile's rows are one head's. *)
     { b with dtype = named "float16"; hk = b.hq; tq = 7; tk = 9 };
     { b with dtype = named "float16"; hk = b.hq; tq = 9; tk = 7 };
     { b with dtype = named "bfloat16"; hk = b.hq; tq = 7; tk = 9 };
     { b with dtype = named "bfloat16"; hk = b.hq; tq = 9; tk = 7 };
-    (* Tiles the mask shows whole, on a tensor core: their pairs hidden by
-       the row's length alone, and by their page's entry alone. *)
-    { b with dtype = named "bfloat16"; mask = Reach; seed = 4; lengths = Some [| 290 |] };
-    { b with dtype = named "float16"; mask = Reach; seed = 4; page = Some 16; holes = true; tk = 320 };
+    (* Tiles the mask shows whole, on a tensor core: their pairs hidden by the
+       row's length alone, and by their page's entry alone. *)
+    {
+      b with
+      dtype = named "bfloat16";
+      mask = Reach;
+      seed = 4;
+      lengths = Some [| 290 |];
+    };
+    {
+      b with
+      dtype = named "float16";
+      mask = Reach;
+      seed = 4;
+      page = Some 16;
+      holes = true;
+      tk = 320;
+    };
   ]
+
+let redrawn cases =
+  let open Gen in
+  let* c = of_list cases in
+  let* half = int_range 0 500 in
+  let+ lengths =
+    match c.lengths with
+    | None -> constant None
+    | Some l ->
+        map Option.some
+          (array
+             ~size:(constant (Array.length l))
+             (frequency
+                [
+                  (1, constant 0);
+                  (1, constant 1);
+                  (1, constant c.tk);
+                  (2, int_range 0 c.tk);
+                ]))
+  in
+  { c with seed = (2 * half) + (c.seed land 1); lengths }
 
 (* Inputs *)
 
 (* A sum of zeros: scores [zeros_under] lower before key [zeros_from], whose
-   weights underflow to zero in float64 beside a score of the later keys,
-   and values [-0] from it on. *)
+   weights underflow to zero in float64 beside a score of the later keys, and
+   values [-0] from it on. *)
 let zeros_from = 64L
 
 (* A [Spans] query's keys: [span] of them, ending past its centre. *)
@@ -609,14 +717,12 @@ let reference ~composed c ~table ~lengths ~docs ~positions ~spans ~blocks
    do not meet. *)
 let demand ~composed label cond = if not composed then cover label cond
 
-let law ?(composed = false) ?wide (module S : Nx.Devices) c =
-  let cover = demand ~composed in
-  cover "paged" (c.page <> None);
-  cover "lengths" (c.lengths <> None);
-  cover (mask_name c.mask) true;
-  cover "a keep" c.keep;
+let wide_of ?wide c =
   let (F dt) = float_dtype c.dtype in
-  let wide = Option.value wide ~default:(Nx.Dtype.name dt = "float64") in
+  Option.value wide ~default:(Nx.Dtype.name dt = "float64")
+
+let law_call (type d) ?wide (module S : Nx.Devices with type d = d) c =
+  let (F dt) = float_dtype c.dtype in
   let {
     q;
     k;
@@ -633,21 +739,42 @@ let law ?(composed = false) ?wide (module S : Nx.Devices) c =
   } =
     inputs c
   in
-  let compiled (type a) (acc : (float, a) Nx.dtype) =
-    let place x = Nx.place S.on (Nx.cast dt x) in
-    let f q k v =
+  let place x = Nx.place S.on (Nx.cast dt x) in
+  let host x = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
+  let read (o, lse) = (host o, host lse) in
+  let qkv = Nx.Ptree.(triple tensor tensor tensor) in
+  let x = (place q, place (poisoned k), place (poisoned v)) in
+  let compiled (type a) (acc : (float, a) Nx.dtype) : (_, d) Batch.call =
+    let f (q, k, v) =
       call acc c ~table ~lengths ~docs ~positions ~spans ~blocks ~slopes ~kept q
         k v
     in
-    let g =
-      Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor)) f
-    in
-    let before = Rune.evaluations () in
-    let o, lse = g (place q) (place (poisoned k)) (place (poisoned v)) in
-    Compiled.here ~on:(List.hd (Nx.Devices.to_list S.v)) ();
-    equal ~msg:"compiled, not evaluated" Testable.int 0 (Rune.evaluations () - before);
-    let host x = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
-    (host o, host lse)
+    Batch.call qkv x Nx.Ptree.(pair tensor tensor) f read
+  in
+  if wide_of ?wide c then compiled Nx.float64 else compiled Nx.float32
+
+let law_check ?(composed = false) ?wide c compiled =
+  let cover = demand ~composed in
+  cover "paged" (c.page <> None);
+  cover "lengths" (c.lengths <> None);
+  cover (mask_name c.mask) true;
+  cover "a keep" c.keep;
+  let wide = wide_of ?wide c in
+  let {
+    q;
+    k;
+    v;
+    table;
+    lengths;
+    docs;
+    spans;
+    positions;
+    blocks;
+    slopes;
+    kept;
+    _;
+  } =
+    inputs c
   in
   let f64 x = Nx.cast Nx.float64 x in
   let reference v =
@@ -659,9 +786,9 @@ let law ?(composed = false) ?wide (module S : Nx.Devices) c =
   in
   let o_ref, lse_ref = reference v in
   let m, _ = reference (Nx.abs v) in
-  let o, lse = if wide then compiled Nx.float64 else compiled Nx.float32 in
-  (* The bound, nx.mli's: u the accumulator's, u_q the dtype's, values and
-     keys within [-1, 1], [a] the greatest |scale Σ q k|, [b] the greatest
+  let o, lse = compiled () in
+  (* The bound, nx.mli's: u the accumulator's, u_q the dtype's, values and keys
+     within [-1, 1], [a] the greatest |scale Σ q k|, [b] the greatest
      |score|. *)
   let u = if wide then 0x1p-53 else 0x1p-24 in
   let uq = unit_roundoff c.dtype in
@@ -739,7 +866,12 @@ let law ?(composed = false) ?wide (module S : Nx.Devices) c =
           Testable.int64 0L (Int64.bits_of_float o))
     o
 
-let zero_sums (module S : Nx.Devices) dtype =
+let law ?composed ?wide (module S : Nx.Devices) c =
+  law_check ?composed ?wide c (fun () ->
+      List.hd (Batch.run [ law_call ?wide (module S) c ]))
+
+let zero_sums_call (type d) (module S : Nx.Devices with type d = d) dtype :
+    (int64 list, d) Batch.call =
   let (F dt) = float_dtype dtype in
   let tq = 32768 and tk = 128 and first = 64 in
   let of_keys f =
@@ -748,24 +880,29 @@ let zero_sums (module S : Nx.Devices) dtype =
   let q = Nx.cast dt (Nx.zeros Nx.float32 [| 1; tq; 1 |]) in
   let k = of_keys (fun _ -> 0.) in
   let v = of_keys (fun j -> if j < first then -1. else -0.) in
-  let f q k v =
+  let f (q, k, v) =
     let under (p : _ Nx.pair) s =
       let before = Nx.less p.k (Nx.scalar_like p.k (Int64.of_int first)) in
       Nx.where before (Nx.sub_s s 200.) s
     in
     fst (Nx.attention ~score:under ~acc:Nx.float32 ~kv:(Dense { k; v }) q)
   in
-  let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) f in
   let place x = Nx.place S.on x in
-  let before = Rune.evaluations () in
-  let o = g (place q) (place k) (place v) in
-  Compiled.here ~on:(List.hd (Nx.Devices.to_list S.v)) ();
-  equal ~msg:"compiled, not evaluated" Testable.int 0 (Rune.evaluations () - before);
-  let o = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on o)) in
-  let bits =
-    List.sort_uniq Int64.compare (Array.to_list (Array.map Int64.bits_of_float o))
+  let bits o =
+    let o = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on o)) in
+    List.sort_uniq Int64.compare
+      (Array.to_list (Array.map Int64.bits_of_float o))
   in
+  Batch.call
+    Nx.Ptree.(triple tensor tensor tensor)
+    (place q, place k, place v)
+    Nx.Ptree.tensor f bits
+
+let zero_sums_check bits =
   equal ~msg:"o's bits, each row's" (Testable.list Testable.int64) [ 0L ] bits
+
+let zero_sums (module S : Nx.Devices) dtype =
+  zero_sums_check (List.hd (Batch.run [ zero_sums_call (module S) dtype ]))
 
 (* Gradients
 

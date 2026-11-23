@@ -3,31 +3,52 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Nx.attention under rune's transformations, drawn over dense and paged
-   keys, lengths, grouped heads, and masks and scores that capture arrays:
-   - Rune.jit against the eager kernel, each within nx.mli's bound of the
-     exact result, rune.mli's constants for the compiled one, and against a
-     float64 reference at every dtype, a sum of zeros +0 (Attentions);
-   - Rune.vmap against each lane eagerly, bit for bit: a vmapped axis is a
-     lead axis of the one operation, and nx.cpu's rows are their own;
-   - Rune.jvp against central differences, and Rune.grad against them;
-   - Rune.grad compiled against eager, and forward mode against reverse
-     mode, through the derivative's construct and its transpose;
-   - Rune.jit over keys cut across two devices against one device.
-   Each in float32 and in float64, accumulating in the query's dtype, and
-   for a float32 query accumulating in float64.
-   Values are finite: a NaN or an infinity at a hidden key gives the
-   compiled and differentiated results NaN where eager's is finite, as
-   nx.mli and rune.mli state. *)
+(* Nx.attention under rune's transformations, drawn over dense and paged keys,
+   lengths, grouped heads, and masks and scores that capture arrays: - the eager
+   derivative past a row's length, against the mask that hides the same pairs; -
+   Rune.jvp against central differences, and Rune.grad against them; - Rune.vmap
+   against each lane eagerly, bit for bit: a vmapped axis is a lead axis of the
+   one operation, and nx.cpu's rows are their own; - Rune.jit's results, as
+   storage its kernels write; - Rune.jit against the eager kernel, each within
+   nx.mli's bound of the exact result, rune.mli's constants for the compiled
+   one, against a float64 reference at every dtype, a sum of zeros +0, paged
+   against dense (Attentions, Paged_attentions), and over keys cut across two
+   devices against one device; - Rune.grad compiled against eager, and forward
+   mode against reverse mode, through the derivative's construct and its
+   transpose. Each law draws float32, float64, and a float32 query accumulating
+   in float64. A compiled law draws its cases on its examples' forms, which
+   compile together, a form's program once a run. Values are finite: a NaN or an
+   infinity at a hidden key gives the compiled and differentiated results NaN
+   where eager's is finite, as nx.mli and rune.mli state. *)
 
 open Windtrap
 module T = Nx.Ptree
+module Batch = Rune_support.Batch
+module Attentions = Rune_support.Attentions
+module Paged = Rune_support.Paged_attentions
 
 let numel = Array.fold_left ( * ) 1
 
 (* A dtype's unit roundoff, [u] in the bounds below. *)
 let unit_roundoff (type s) (dt : (float, s) Nx.dtype) =
   match dt with Float64 -> 0x1p-53 | _ -> 0x1p-24
+
+(* A query's dtype and its accumulator's. *)
+type dtypes = D : (float, 'a) Nx.dtype * (float, 'b) Nx.dtype -> dtypes
+
+let dtypes_name (D (dt, acc)) =
+  if Nx.Dtype.name dt = Nx.Dtype.name acc then Nx.Dtype.name dt
+  else Nx.Dtype.name dt ^ " in " ^ Nx.Dtype.name acc
+
+(* float32, float64, and a float32 query in a float64 accumulator. *)
+let pairs =
+  [
+    D (Nx.float32, Nx.float32);
+    D (Nx.float64, Nx.float64);
+    D (Nx.float32, Nx.float64);
+  ]
+
+let is_float64 (D (dt, _)) = Nx.Dtype.name dt = "float64"
 
 type mask = Unmasked | Causal | Captured
 
@@ -48,10 +69,11 @@ type case = {
 
 let pp_case ppf c =
   Format.fprintf ppf
-    "hk %d groups %d tq %d tk %d dk %d dv %d page %s lengths %s mask %s \
-     alibi %b seed %g"
+    "hk %d groups %d tq %d tk %d dk %d dv %d page %s table %s lengths %s mask \
+     %s alibi %b seed %g"
     c.hk c.groups c.tq c.tk c.dk c.dv
     (match c.page with Some p -> string_of_int p | None -> "none")
+    (String.concat "," (Array.to_list (Array.map string_of_int c.table)))
     (match c.lengths with
     | Some l -> String.concat "," (Array.to_list (Array.map string_of_int l))
     | None -> "none")
@@ -210,7 +232,214 @@ let examples =
     };
   ]
 
-let law_jit dt acc c =
+(* The forms a law draws its cases on: [examples], then each mask, with ALiBi
+   and without, over dense keys and over pages of one, two and three keys,
+   decode rows and prefills of up to five, more rows than keys under a causal
+   mask and a captured one, one and two key heads of one and two query heads
+   each, one to four blocks of keys of one to four dimensions, values of one to
+   three, lengths of no key, of every key and past them. *)
+let forms =
+  examples
+  @ [
+      {
+        hk = 2;
+        groups = 1;
+        tq = 4;
+        tk = 12;
+        dk = 4;
+        dv = 3;
+        page = None;
+        table = [| 0; 0 |];
+        lengths = Some [| 12; 5 |];
+        mask = Causal;
+        alibi = false;
+        seed = 3.;
+      };
+      {
+        hk = 2;
+        groups = 2;
+        tq = 1;
+        tk = 9;
+        dk = 1;
+        dv = 1;
+        page = Some 3;
+        table = [| 2; -1; 0; 3; 1; 2 |];
+        lengths = None;
+        mask = Unmasked;
+        alibi = true;
+        seed = 6.;
+      };
+      {
+        hk = 1;
+        groups = 2;
+        tq = 3;
+        tk = 9;
+        dk = 2;
+        dv = 1;
+        page = None;
+        table = [| 0; 0 |];
+        lengths = Some [| 0; 10 |];
+        mask = Unmasked;
+        alibi = false;
+        seed = 4.;
+      };
+      {
+        hk = 2;
+        groups = 2;
+        tq = 1;
+        tk = 6;
+        dk = 4;
+        dv = 3;
+        page = None;
+        table = [| 0; 0 |];
+        lengths = None;
+        mask = Unmasked;
+        alibi = true;
+        seed = 5.;
+      };
+      {
+        hk = 1;
+        groups = 1;
+        tq = 4;
+        tk = 4;
+        dk = 3;
+        dv = 2;
+        page = Some 1;
+        table = [| 3; 0; -1; 1; 2; 1; 0; 3 |];
+        lengths = Some [| 4; 2 |];
+        mask = Unmasked;
+        alibi = false;
+        seed = 7.;
+      };
+      {
+        hk = 2;
+        groups = 1;
+        tq = 3;
+        tk = 6;
+        dk = 1;
+        dv = 3;
+        page = None;
+        table = [| 0; 0 |];
+        lengths = Some [| 6; 0 |];
+        mask = Causal;
+        alibi = true;
+        seed = 8.;
+      };
+      {
+        hk = 1;
+        groups = 2;
+        tq = 1;
+        tk = 2;
+        dk = 2;
+        dv = 1;
+        page = Some 2;
+        table = [| -1; 1 |];
+        lengths = None;
+        mask = Causal;
+        alibi = false;
+        seed = 9.;
+      };
+      {
+        hk = 2;
+        groups = 2;
+        tq = 4;
+        tk = 12;
+        dk = 3;
+        dv = 2;
+        page = Some 3;
+        table = [| 1; 3; -1; 0; 2; 2; 3; 0 |];
+        lengths = Some [| 13; 7 |];
+        mask = Causal;
+        alibi = true;
+        seed = 2.;
+      };
+      {
+        hk = 2;
+        groups = 2;
+        tq = 2;
+        tk = 12;
+        dk = 4;
+        dv = 1;
+        page = None;
+        table = [| 0; 0 |];
+        lengths = Some [| 1; 12 |];
+        mask = Captured;
+        alibi = false;
+        seed = 4.5;
+      };
+      {
+        hk = 1;
+        groups = 1;
+        tq = 3;
+        tk = 2;
+        dk = 1;
+        dv = 3;
+        page = Some 1;
+        table = [| 3; -1; 0; 2 |];
+        lengths = Some [| 0; 2 |];
+        mask = Captured;
+        alibi = false;
+        seed = 8.5;
+      };
+      {
+        hk = 1;
+        groups = 2;
+        tq = 5;
+        tk = 3;
+        dk = 2;
+        dv = 2;
+        page = None;
+        table = [| 0; 0 |];
+        lengths = Some [| 3; 1 |];
+        mask = Causal;
+        alibi = false;
+        seed = 9.5;
+      };
+    ]
+
+(* [forms] in each of [dts]. *)
+let typed dts forms =
+  List.concat_map (fun d -> List.map (fun c -> (d, c)) forms) dts
+
+let pp_typed ppf (d, c) = Format.fprintf ppf "%s %a" (dtypes_name d) pp_case c
+
+(* A case of [c]'s generator, in one of [dts]. *)
+let any_of dts c = Gen.with_pp pp_typed (Gen.pair (Gen.of_list dts) c)
+
+(* A case of the form, dtypes included, of one of [cases]: its values, table
+   entries and lengths drawn anew. *)
+let redrawn cases =
+  let open Gen in
+  let* d, c = of_list cases in
+  let* seed = float_range 0. 10. in
+  let* table =
+    array ~size:(constant (Array.length c.table)) (int_range (-1) 3)
+  in
+  let+ lengths =
+    match c.lengths with
+    | None -> constant None
+    | Some l ->
+        map Option.some
+          (array ~size:(constant (Array.length l)) (int_range 0 (c.tk + 1)))
+  in
+  (d, { c with seed; table; lengths })
+
+type out = O | Lse
+
+(* [c]'s call compiled over its query, the program holding its keys, values and
+   captures, returning [o] or [lse] as [out] says: the program of a user who
+   reads only that one. Rune.jit within the sum of eager's bound and the
+   compiled call's ([tolerances]) of eager. *)
+let law_jit_call out (D (dt, acc), c) =
+  let lead = [| 2 |] in
+  let k, v = keys dt c lead in
+  let q = draw dt c 1. [| 2; hq c; c.tq; c.dk |] in
+  let f q = call acc c ~lead q k v in
+  match out with
+  | O -> Batch.call T.tensor q T.tensor (fun q -> fst (f q)) Nx.to_array
+  | Lse -> Batch.call T.tensor q T.tensor (fun q -> snd (f q)) Nx.to_array
+
+let law_jit (D (dt, acc), c) compiled =
   cover "paged" (c.page <> None);
   cover "lengths" (c.lengths <> None);
   cover "a captured mask" (c.mask = Captured);
@@ -218,10 +447,8 @@ let law_jit dt acc c =
   let k, v = keys dt c lead in
   let q = draw dt c 1. [| 2; hq c; c.tq; c.dk |] in
   let o, lse = call acc c ~lead q k v in
-  let o' = Rune.jit' (fun q -> fst (call acc c ~lead q k v)) q in
-  let lse' = Rune.jit' (fun q -> snd (call acc c ~lead q k v)) q in
-  let o = Nx.to_array o and o' = Nx.to_array o' in
-  let lse = Nx.to_array lse and lse' = Nx.to_array lse' in
+  let o = Nx.to_array o and lse = Nx.to_array lse in
+  let o', lse' = compiled () in
   Array.iteri
     (fun i l ->
       if l = Float.neg_infinity then
@@ -238,49 +465,88 @@ let law_jit dt acc c =
 
 let bits a = Array.map Int64.bits_of_float (Nx.to_array a)
 
-(* Keys and values cut across two devices along their keys, Rune.jit
-   against the eager call on one device, and the gradient of [Σ o] within
-   1e-3 relative of eager's: each part's coordinates are the whole's, so a
-   causal or captured mask hides the same pairs. nx.mli's bound
-   over parts doubles [η] and takes [ε] three times the parts' plus a
-   Logsumexp of two: within four times the one-device sum of bounds. *)
+(* Keys and values cut across two devices along their keys, Rune.jit against the
+   eager call on one device, and the gradient of [Σ o] within 1e-3 relative of
+   eager's: each part's coordinates are the whole's, so a causal or captured
+   mask hides the same pairs. nx.mli's bound over parts doubles [η] and takes
+   [ε] three times the parts' plus a Logsumexp of two: within four times the
+   one-device sum of bounds. *)
 module Two = (val Nx.devices [ Nx_support.memory 0; Nx_support.memory 1 ])
 
-let law_cut dt acc c =
-  cover "lengths" (c.lengths <> None);
+(* [c] cut: dense keys of twice its length, without ALiBi, a captured mask made
+   causal. *)
+let cut c =
   let c = { c with page = None; tk = 2 * c.tk; alibi = false } in
-  let c = if c.mask = Captured then { c with mask = Causal } else c in
-  cover "causal" (c.mask = Causal);
-  let lead = [| 2 |] in
-  let k, v = keys dt c lead in
-  let q = draw dt c 1. [| 2; hq c; c.tq; c.dk |] in
-  let o, lse = call acc c ~lead q k v in
+  if c.mask = Captured then { c with mask = Causal } else c
+
+(* [c]'s call of [q], dense keys and values [k] and [v] of one lead axis of two
+   indices, on any devices, and the loss [Σ o] of the query, keys and values. *)
+let cut_call (type a) (acc : (float, a) Nx.dtype) c =
   let f (type d) (q : (float, _, d) Nx.t) k v =
     let lengths =
       Option.map
         (fun l ->
           Nx.place (Nx.beside q)
-            (Nx.create Nx.int64 lead (Array.map Int64.of_int (Array.sub l 0 2))))
+            (Nx.create Nx.int64 [| 2 |]
+               (Array.map Int64.of_int (Array.sub l 0 2))))
         c.lengths
     in
     let mask = if c.mask = Causal then Some Nx.causal else None in
     Nx.attention ?lengths ?mask ~acc ~kv:(Nx.Dense { k; v }) q
   in
+  let loss = function
+    | [ q; k; v ] -> Nx.sum (fst (f q k v))
+    | _ -> invalid_arg "loss"
+  in
+  (f, loss)
+
+(* [c] cut: its query, keys and values placed over [Two], its keys and values
+   split along the keys, and its call and loss. *)
+let cut_parts dt acc c =
+  let c = cut c in
+  let k, v = keys dt c [| 2 |] in
+  let q = draw dt c 1. [| 2; hq c; c.tq; c.dk |] in
   let split x = Nx.place (Nx.Placement.split ~axis:2 Two.v) x in
-  let o', lse' =
-    Rune.jit T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor)) f
-      (Nx.place Two.on q) (split k) (split v)
-  in
-  (* The gradient of [Σ o], compiled over the parts, against eager's. *)
-  let loss = function [ q; k; v ] -> Nx.sum (fst (f q k v)) | _ -> invalid_arg "loss" in
+  let f, loss = cut_call acc c in
+  ((Nx.place Two.on q, split k, split v), f, loss)
+
+let host x = Nx.to_array (Nx.place Nx.Host.on x)
+
+(* [c] cut, compiled over its parts: [o] and [lse]. *)
+let law_cut_call (D (dt, acc), c) =
+  let x, f, _ = cut_parts dt acc c in
+  Batch.call
+    T.(triple tensor tensor tensor)
+    x
+    T.(pair tensor tensor)
+    (fun (q, k, v) -> f q k v)
+    (fun (o, lse) -> (host o, host lse))
+
+(* [c] cut, compiled over its parts: the gradient of [Σ o]. *)
+let law_cut_grad_call (D (dt, acc), c) =
+  let x, _, loss = cut_parts dt acc c in
+  Batch.call
+    T.(triple tensor tensor tensor)
+    x
+    T.(list tensor)
+    (fun (q, k, v) -> Rune.grad T.(list tensor) loss [ q; k; v ])
+    (List.map host)
+
+let law_cut (D (dt, acc), c) compiled =
+  cover "lengths" (c.lengths <> None);
+  let c = cut c in
+  cover "causal" (c.mask = Causal);
+  cover "a key on each device" (c.tk = 2);
+  cover "causal rows past the keys" (c.mask = Causal && c.tq > c.tk);
+  let k, v = keys dt c [| 2 |] in
+  let q = draw dt c 1. [| 2; hq c; c.tq; c.dk |] in
+  let f, loss = cut_call acc c in
+  let o, lse = f q k v in
   let g = Rune.grad T.(list tensor) loss [ q; k; v ] in
-  let g' =
-    Rune.jit T.(list tensor @-> returns (list tensor)) (Rune.grad T.(list tensor) loss)
-      [ Nx.place Two.on q; split k; split v ]
-  in
+  let (o', lse'), g' = compiled () in
+  (* The gradient of [Σ o], compiled over the parts, against eager's. *)
   List.iter2
     (fun g g' ->
-      let g' = Nx.to_array (Nx.place Nx.Host.on g') in
       Array.iteri
         (fun i x ->
           at_most ~msg:"gradient" float_exact
@@ -288,44 +554,76 @@ let law_cut dt acc c =
             (Float.abs (x -. g'.(i))))
         (Nx.to_array g))
     g g';
-  let host x = Nx.to_array (Nx.place Nx.Host.on x) in
-  let o = Nx.to_array o and o' = host o' in
-  let lse = Nx.to_array lse and lse' = host lse' in
+  let o = Nx.to_array o and lse = Nx.to_array lse in
   Array.iteri
     (fun i l ->
       if l = Float.neg_infinity then
         equal ~msg:"an empty row's lse" float_exact l lse'.(i)
       else begin
         let tl, to_ = tolerances dt acc c l in
-        at_most ~msg:"lse" float_exact ~than:(4. *. tl) (Float.abs (l -. lse'.(i)));
+        at_most ~msg:"lse" float_exact ~than:(4. *. tl)
+          (Float.abs (l -. lse'.(i)));
         for d = 0 to c.dv - 1 do
           let j = (i * c.dv) + d in
-          at_most ~msg:"o" float_exact ~than:(4. *. to_) (Float.abs (o.(j) -. o'.(j)))
+          at_most ~msg:"o" float_exact ~than:(4. *. to_)
+            (Float.abs (o.(j) -. o'.(j)))
         done
       end)
     lse
 
+(* The forms the cut law draws its cases on: [examples], their captured masks
+   made causal, then dense keys of two key heads under lengths and no mask,
+   [forms]' unmasked prefill under lengths, unmasked decode row and causal
+   decode row of two pages, and a causal prefill of four rows over one key, a
+   key on each device once cut: keys of 2 to 24 cut in two, decode rows and
+   prefills of up to four, causal rows past the keys, each mask with lengths and
+   without, each pair of one and two key and query heads. *)
+let cut_forms =
+  examples
+  @ [ { (List.nth forms 2) with mask = Unmasked } ]
+  @ List.map (List.nth forms) [ 4; 5; 8 ]
+  @ [
+      {
+        hk = 1;
+        groups = 2;
+        tq = 4;
+        tk = 1;
+        dk = 2;
+        dv = 1;
+        page = None;
+        table = [| 0; 0 |];
+        lengths = Some [| 2; 1 |];
+        mask = Causal;
+        alibi = false;
+        seed = 10.5;
+      };
+    ]
+
 (* Lanes of query rows over keys and values the lanes share. *)
-let law_vmap dt acc c =
+let law_vmap (D (dt, acc), c) =
   cover "paged" (c.page <> None);
   cover "lengths" (c.lengths <> None);
   cover "a captured mask" (c.mask = Captured);
   let k, v = keys dt c [||] in
   let q = draw dt c 1. [| 2; hq c; c.tq; c.dk |] in
   let lane q = fst (call acc c ~lead:[||] q k v) in
-  let each = Nx.stack ~axis:0 [ lane (Nx.get [ 0 ] q); lane (Nx.get [ 1 ] q) ] in
+  let each =
+    Nx.stack ~axis:0 [ lane (Nx.get [ 0 ] q); lane (Nx.get [ 1 ] q) ]
+  in
   equal ~msg:"o" (array int64) (bits each) (bits (Rune.vmap' lane q))
 
-(* Lanes of pools of their own over one query: vmap reads them as one pool
-   of every lane's pages, each lane's table entries renumbered into it and
-   one out of range, -1 or past the pages, kept out of range. *)
-let law_vmap_pools dt acc c =
+(* Lanes of pools of their own over one query: vmap reads them as one pool of
+   every lane's pages, each lane's table entries renumbered into it and one out
+   of range, -1 or past the pages, kept out of range. *)
+let law_vmap_pools (D (dt, acc), c) =
   let page = Option.value c.page ~default:2 in
   let blocks = Array.length c.table / 2 in
   let table = Array.copy c.table in
   table.(0) <- -1;
   table.(blocks - 1) <- 3;
-  let c = { c with page = Some page; tk = page * blocks; table; lengths = None } in
+  let c =
+    { c with page = Some page; tk = page * blocks; table; lengths = None }
+  in
   cover "an entry out of range in a lane's table"
     (Array.exists (fun e -> e < 0 || e >= 3) (Array.sub c.table 0 blocks));
   let pools = draw dt c 2. [| 2; 3; c.hk; page; c.dk + c.dv |] in
@@ -340,28 +638,28 @@ let law_vmap_pools dt acc c =
   in
   equal ~msg:"o" (array int64) (bits each) (bits (Rune.vmap' lane pools))
 
-(* [<w, f'(q) t>] against central differences of step [h], within
-   [tol (1 + |d|)]. A float32 [f], whose rounding over [h] dominates, takes
-   [h = 1e-2] and [tol = 1e-2]. In float64, to first order in [u = 2{^-53}],
-   the difference is within [e / h + h² F / 6] of the derivative, [e]
-   bounding [f]'s computed error and [F] its third derivative:
-   - [e]. Values lie in [[-1, 1]], [dk <= 4], [tk <= 12], [tq <= 4] and
-     ALiBi's slopes are at most 1, so [a = √dk <= 2] and [b <= a + 11].
-     nx.mli's bound has [η <= 12u a + 2u b <= 50u],
-     [ε <= (22 + 7 ln 12) u + u (b + ln 12) <= 55u] and
-     [(2b + ln tk + 5) u <= 34u]: [w <= 189u], and with [γ(13, 2u)] and
-     [o]'s rounding each element of [o] is within [216u]. [f] sums at most
-     96 products by [|w| <= 1], each rounded, within [γ(95)]: with the
-     rounding of [q + h t], [e <= 32000u <= 3.6e-12].
-   - [F]. Along [t] each score moves by [g = scale t·k], [|g| <= √dk <= 2].
-     For a complex step [|σ| <= ρ = π / 8] the weights' terms turn by at
-     most [π / 4], so their sum is at least [cos (π / 4)] of their moduli'
-     and [|o| <= √2]; Cauchy's estimate gives [|o'''| <= 3! √2 / ρ³ <= 140],
-     and [F <= 96 · 140].
-   At [h = 1e-5] that is [3.6e-7 + 2.3e-7]; [d]'s own error is of [e]'s
-   order times the derivative's, far below: [tol = 1e-6], where float32's
-   rounding of [o] alone, [2{^-24}] each, would give [0.6]. *)
-let law_jvp dt acc ~h ~tol c =
+(* [<w, f'(q) t>] against central differences of step [h], within [tol (1 +
+   |d|)]. A float32 [f], whose rounding over [h] dominates, takes [h = 1e-2] and
+   [tol = 1e-2]. In float64, to first order in [u = 2{^-53}], the difference is
+   within [e / h + h² F / 6] of the derivative, [e] bounding [f]'s computed
+   error and [F] its third derivative: - [e]. Values lie in [[-1, 1]], [dk <=
+   4], [tk <= 12], [tq <= 4] and ALiBi's slopes are at most 1, so [a = √dk <= 2]
+   and [b <= a + 11]. nx.mli's bound has [η <= 12u a + 2u b <= 50u], [ε <= (22 +
+   7 ln 12) u + u (b + ln 12) <= 55u] and [(2b + ln tk + 5) u <= 34u]: [w <=
+   189u], and with [γ(13, 2u)] and [o]'s rounding each element of [o] is within
+   [216u]. [f] sums at most 96 products by [|w| <= 1], each rounded, within
+   [γ(95)]: with the rounding of [q + h t], [e <= 32000u <= 3.6e-12]. - [F].
+   Along [t] each score moves by [g = scale t·k], [|g| <= √dk <= 2]. For a
+   complex step [|σ| <= ρ = π / 8] the weights' terms turn by at most [π / 4],
+   so their sum is at least [cos (π / 4)] of their moduli' and [|o| <= √2];
+   Cauchy's estimate gives [|o'''| <= 3! √2 / ρ³ <= 140], and [F <= 96 · 140].
+   At [h = 1e-5] that is [3.6e-7 + 2.3e-7]; [d]'s own error is of [e]'s order
+   times the derivative's, far below: [tol = 1e-6], where float32's rounding of
+   [o] alone, [2{^-24}] each, would give [0.6]. *)
+let law_jvp (D (dt, acc), c) =
+  let h, tol =
+    if is_float64 (D (dt, acc)) then (1e-5, 1e-6) else (1e-2, 1e-2)
+  in
   cover "paged" (c.page <> None);
   cover "lengths" (c.lengths <> None);
   let lead = [| 2 |] in
@@ -483,20 +781,15 @@ let paged_grads () =
         Nx.add (Nx.sum (Nx.mul w o)) (Nx.sum (Nx.mul wl lse))
     | _ -> invalid_arg "loss"
   in
-  let params = [ f [| 2; 4; 5; 3 |] 1.; f [| 3; 2; 2; 3 |] 2.; f [| 3; 2; 2; 2 |] 3. ] in
+  let params =
+    [ f [| 2; 4; 5; 3 |] 1.; f [| 3; 2; 2; 3 |] 2.; f [| 3; 2; 2; 2 |] 3. ]
+  in
   equal ~msg:"gradient" (result unit string) (Ok ())
     (Rune.check_grads ~eps:2e-6 ~tol:3e-6 T.(list tensor) loss params)
 
-(* The gradient of a loss over [o] and [lse], [lse]'s cotangent non-zero, in
-   the query, keys, values and the slopes the score captures, by
-   [Attention_linear] transposed: compiled against eager, and reverse mode
-   against forward mode along a direction. Each computes the same sums of
-   products of the pair loop in another order: in float64 within 1e-9
-   relative, in float32 within 1e-3, set by hand. *)
-let law_grad (type a) (acc : (float, a) Nx.dtype) ~tol c =
-  cover "paged" (c.page <> None);
-  cover "lengths" (c.lengths <> None);
-  let c = { c with alibi = true } in
+(* [c]'s query, keys, values and the slopes its score captures, in [acc], and a
+   loss over its [o] and [lse] of them, [lse]'s cotangent non-zero. *)
+let grad_loss (type a) (acc : (float, a) Nx.dtype) c =
   let lead = [| 2 |] in
   let k, v = keys acc c lead in
   let q = draw acc c 1. [| 2; hq c; c.tq; c.dk |] in
@@ -536,37 +829,62 @@ let law_grad (type a) (acc : (float, a) Nx.dtype) ~tol c =
         Nx.add (Nx.sum (Nx.mul w o)) (Nx.sum (Nx.mul w2 (finite lse)))
     | _ -> invalid_arg "loss"
   in
-  let xs = [ q; k; v; slopes ] in
+  ([ q; k; v; slopes ], loss)
+
+let law_grad_call (D (_, acc), c) =
+  let c = { c with alibi = true } in
+  let xs, loss = grad_loss acc c in
+  Batch.call
+    T.(list tensor)
+    xs
+    T.(list tensor)
+    (Rune.grad T.(list tensor) loss)
+    (List.map Nx.to_array)
+
+(* The gradient of [grad_loss] in the query, keys, values and slopes, by
+   [Attention_linear] transposed: compiled against eager, and reverse mode
+   against forward mode along a direction. Each computes the same sums of
+   products of the pair loop in another order: in float64 within 1e-9 relative,
+   in float32 within 1e-3, set by hand. *)
+let law_grad ((D (_, acc) as d), c) compiled =
+  cover "paged" (c.page <> None);
+  cover "lengths" (c.lengths <> None);
+  let tol = if is_float64 d then 1e-9 else 1e-3 in
+  let c = { c with alibi = true } in
+  let xs, loss = grad_loss acc c in
   let g = Rune.grad T.(list tensor) loss xs in
-  let g' = Rune.jit T.(list tensor @-> returns (list tensor)) (Rune.grad T.(list tensor) loss) xs in
-  List.iter2
-    (fun g g' ->
-      let g = Nx.to_array g and g' = Nx.to_array g' in
-      Array.iteri
-        (fun i x ->
-          at_most ~msg:"compiled gradient" float_exact
-            ~than:(tol *. (1. +. Float.abs x))
-            (Float.abs (x -. g'.(i))))
-        g)
-    g g';
-  let ts = List.mapi (fun i x -> draw acc c (20. +. Float.of_int i) (Nx.shape x)) xs in
+  (* Eager forward against eager reverse first, so that a failure of the
+     compiled comparison below lies on the compiled side. *)
+  let ts =
+    List.mapi (fun i x -> draw acc c (20. +. Float.of_int i) (Nx.shape x)) xs
+  in
   let _, d = Rune.jvp T.(list tensor) T.tensor loss xs ts in
   let d = Nx.item [] d in
   let dot =
-    List.fold_left2
-      (fun a g t -> a +. Nx.item [] (Nx.sum (Nx.mul g t)))
-      0. g ts
+    List.fold_left2 (fun a g t -> a +. Nx.item [] (Nx.sum (Nx.mul g t))) 0. g ts
   in
   at_most ~msg:"forward against reverse" float_exact
     ~than:(tol *. (1. +. Float.abs dot))
-    (Float.abs (d -. dot))
+    (Float.abs (d -. dot));
+  List.iter2
+    (fun (name, g) g' ->
+      Array.iteri
+        (fun i x ->
+          at_most
+            ~msg:(Printf.sprintf "compiled gradient in %s at %d" name i)
+            float_exact
+            ~than:(tol *. (1. +. Float.abs x))
+            (Float.abs (x -. g'.(i))))
+        (Nx.to_array g))
+    (List.combine [ "q"; "k"; "v"; "slopes" ] g)
+    (compiled ())
 
 (* The eager derivative under lengths computes over groups of lead indices,
-   those whose lengths round up to one power of two of keys, at most [tk],
-   and puts their results back in the lead's order. Covered: groups that
-   interleave, a group of one row among others, and a run of several rows
-   of a group after its first row, whose results lie inside the group's
-   rather than at their start. [lens] are clamped into [[0, tk]]. *)
+   those whose lengths round up to one power of two of keys, at most [tk], and
+   puts their results back in the lead's order. Covered: groups that interleave,
+   a group of one row among others, and a run of several rows of a group after
+   its first row, whose results lie inside the group's rather than at their
+   start. [lens] are clamped into [[0, tk]]. *)
 let arrangements tk lens =
   let group l =
     let rec up c = if c >= l then c else up (2 * c) in
@@ -595,15 +913,15 @@ let arrangements tk lens =
   cover "a run of several rows after its group's first"
     (List.exists (fun (i, k) -> k > 1 && first g.(i) < i) runs)
 
-(* Lengths hide the keys past each lead index's length as a mask of the
-   same pairs does: the gradient in the query, keys, values and slopes and
-   the tangent along a direction, with lengths, whose eager derivative
-   computes over each lead index's keys, against the mask's, whose
-   derivative computes the whole pair loop, over two lead axes. The same
-   sums of products, without some zero terms and in another order: in
-   float64 within 1e-9 relative, in float32 within 1e-3, set by hand as in
-   [law_grad]. *)
-let law_lengths (type a) (acc : (float, a) Nx.dtype) ~tol c =
+(* Lengths hide the keys past each lead index's length as a mask of the same
+   pairs does: the gradient in the query, keys, values and slopes and the
+   tangent along a direction, with lengths, whose eager derivative computes over
+   each lead index's keys, against the mask's, whose derivative computes the
+   whole pair loop, over two lead axes. The same sums of products, without some
+   zero terms and in another order: in float64 within 1e-9 relative, in float32
+   within 1e-3, set by hand as in [law_grad]. *)
+let law_lengths ((D (_, acc) as d), c) =
+  let tol = if is_float64 d then 1e-9 else 1e-3 in
   let c = { c with page = None; alibi = true } in
   let lens = Option.value c.lengths ~default:[| 0; c.tk |] in
   let clamped = Array.map (fun l -> max 0 (min c.tk l)) lens in
@@ -888,83 +1206,101 @@ let tile_steps () =
     cores
 
 (* Heads of every size, in float32 and bfloat16. *)
-let heads =
-  Rune_support.Attentions.heads Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
+let heads = Attentions.heads Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16 ]
 
-let head_id (c : Rune_support.Attentions.t) =
+let head_id (c : Attentions.t) =
   let (Nx.Dtype.Any dt) = c.dtype in
   Printf.sprintf "%s dk %d dv %d" (Nx.Dtype.name dt) c.dk c.dv
 
+let wide = [ D (Nx.float32, Nx.float32); D (Nx.float64, Nx.float64) ]
+
+(* Each compiled law's examples, its forms in each pair of dtypes, compile
+   together, and its drawn cases on their forms. A law whose examples make a few
+   dozen kernels in all compiles them as one program, which keeps every worker
+   compiling to its end: on fudge 36 examples of 57 kernels took 2.3 s as one
+   program and 2.8 s as three. *)
+let pair_forms = typed pairs forms
+
+(* [Batch.law] of two calls of a case, each call's examples in programs of their
+   own: the two may share intermediates, which one program would compute once. A
+   case not of [examples] compiles each call alone. *)
+let apart ~per call call' examples check =
+  let t = Batch.table ~per call examples in
+  let t' = Batch.table ~per call' examples in
+  let alone call c () = List.hd (Batch.run [ call c ]) in
+  fun c ->
+    let r = Option.value (List.assq_opt c t) ~default:(alone call c) in
+    let r' = Option.value (List.assq_opt c t') ~default:(alone call' c) in
+    check c (fun () -> (r (), r' ()))
+
+let law_jit =
+  let per = List.length pair_forms in
+  apart ~per (law_jit_call O) (law_jit_call Lse) pair_forms law_jit
+
+let cut_examples = typed pairs cut_forms
+let law_cut = apart ~per:9 law_cut_call law_cut_grad_call cut_examples law_cut
+let grad_examples = typed wide forms
+let law_grad = Batch.law ~per:8 law_grad_call grad_examples law_grad
+
+(* Every target's examples: those of a GPU kernel's shapes are
+   test_jit_gpu's. *)
+let float64_examples =
+  let dts =
+    Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ]
+  in
+  Attentions.examples dts @ Attentions.edge_examples dts
+
+let float64_law =
+  Batch.law
+    ~per:(List.length float64_examples)
+    (Attentions.law_call (module Nx.Host))
+    float64_examples
+    (Attentions.law_check ?composed:None ?wide:None)
+
+let composed_law =
+  Batch.law ~per:16
+    (Attentions.law_call (module Nx.Host))
+    heads
+    (Attentions.law_check ~composed:true ?wide:None)
+
+let zero_dtypes = Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
+
+let zero_sums =
+  Batch.law ~per:3
+    (Attentions.zero_sums_call (module Nx.Host))
+    zero_dtypes
+    (fun _ bits -> Attentions.zero_sums_check (bits ()))
+
+(* float32 alone: the host's kernel computes every dtype in its accumulator
+   alike. *)
+let paged_law =
+  let host paged = Paged.law_call ~paged (module Nx.Host) in
+  apart
+    ~per:(List.length Paged.host_examples)
+    (host true) (host false) Paged.host_examples Paged.law_check
+
+(* Each dtype's gradient against central differences, under lengths that hold a
+   row of no key or none. *)
+let central =
+  [
+    (D (Nx.float32, Nx.float32), [| 6L; 7L |]);
+    (D (Nx.float64, Nx.float64), [| 6L; 7L |]);
+    (D (Nx.float32, Nx.float32), [| 0L; 3L |]);
+    (D (Nx.float64, Nx.float64), [| 0L; 3L |]);
+  ]
+
+let central_id (d, lens) =
+  if lens.(0) = 0L then dtypes_name d ^ ", a row of no key" else dtypes_name d
+
+let central_grads ((D (dt, _) as d), lens) =
+  if is_float64 d then grads dt ~eps:2e-6 ~tol:2e-6 lens ()
+  else grads dt ~eps:1e-2 ~tol:2e-3 lens ()
+
 let () =
   let case = Gen.with_pp pp_case case in
-  (* Each law in float32, in float64, and for a float32 query in a float64
-     accumulator. *)
-  let three ?examples count f32 f64 wide =
-    [
-      prop ?examples ~count "float32" case f32;
-      prop ?examples ~count "float64" case f64;
-      prop ?examples ~count "float32 in float64" case wide;
-    ]
-  in
-  let f32 = Nx.float32 and f64 = Nx.float64 in
   exit
     (run "rune attention"
        [
-         group "jit within the bounds of eager"
-           (three ~examples 12 (law_jit f32 f32) (law_jit f64 f64)
-              (law_jit f32 f64));
-         group "jit within nx's bound of a float64 reference"
-           (let dts = Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ] in
-            [
-              (* Every target's examples: those of a GPU kernel's shapes
-                 are test_jit_gpu's. *)
-              prop
-                ~examples:(Rune_support.Attentions.examples dts)
-                ~count:6 "every dtype"
-                (Gen.with_pp Rune_support.Attentions.pp (Rune_support.Attentions.gen dts))
-                (Rune_support.Attentions.law (module Nx.Host));
-              Windtrap.cases "a sum of zeros is +0 at rows of one run of keys"
-                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
-                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
-                (Rune_support.Attentions.zero_sums (module Nx.Host));
-              Windtrap.cases
-                "heads of 36 to 1024 dimensions, against the composition"
-                ~id:head_id heads
-                (Rune_support.Attentions.law ~composed:true (module Nx.Host));
-              test "a kernel's instructions do not grow with its head"
-                (fun () ->
-                  Rune_support.Attentions.sizes
-                    (module Nx.Host)
-                    (Nx.Dtype.Any Nx.float32));
-              (* float32 alone: the host's kernel computes every dtype in
-                 its accumulator alike. *)
-              prop ~examples:Rune_support.Paged_attentions.host_examples
-                ~count:4 "paged keys and values give dense ones' bits"
-                (Gen.with_pp Rune_support.Paged_attentions.pp
-                   (Gen.map
-                      (fun c ->
-                        { c with Rune_support.Paged_attentions.dtype = Nx.Dtype.Any Nx.float32 })
-                      Rune_support.Paged_attentions.gen))
-                (Rune_support.Paged_attentions.law (module Nx.Host));
-            ]);
-         group "jit over keys cut across two devices"
-           (three ~examples 12 (law_cut f32 f32) (law_cut f64 f64)
-              (law_cut f32 f64));
-         group "vmap is each lane, bit for bit"
-           (three 60 (law_vmap f32 f32) (law_vmap f64 f64) (law_vmap f32 f64));
-         group "vmap over lanes' own pools is each lane, bit for bit"
-           (three 60 (law_vmap_pools f32 f32) (law_vmap_pools f64 f64)
-              (law_vmap_pools f32 f64));
-         group "jvp by central differences"
-           (three 60
-              (law_jvp f32 f32 ~h:1e-2 ~tol:1e-2)
-              (law_jvp f64 f64 ~h:1e-5 ~tol:1e-6)
-              (law_jvp f32 f64 ~h:1e-2 ~tol:1e-2));
-         group "the gradient compiled and in forward mode"
-           [
-             prop ~examples ~count:12 "float32" case (law_grad f32 ~tol:1e-3);
-             prop ~examples ~count:12 "float64" case (law_grad f64 ~tol:1e-9);
-           ];
          group "past a row's length"
            [
              test "the derivative reads no key or value there" test_past_length;
@@ -972,12 +1308,30 @@ let () =
              test "lengths of no key keep the gradient where it lies"
                test_no_key_placement;
              test "a length acts as its clamp" test_length_extremes;
-             prop ~examples:length_examples ~count:30
-               "lengths hide what a mask of their pairs hides, float32"
-               length_case (law_lengths f32 ~tol:1e-3);
-             prop ~examples:length_examples ~count:30
-               "lengths hide what a mask of their pairs hides, float64"
-               length_case (law_lengths f64 ~tol:1e-9);
+             prop
+               ~examples:(typed wide length_examples)
+               ~count:60 "lengths hide what a mask of their pairs hides"
+               (any_of wide length_case) law_lengths;
+           ];
+         group "jvp by central differences"
+           [
+             prop ~examples:pair_forms ~count:180 "of a weighted sum of o"
+               (any_of pairs case) law_jvp;
+           ];
+         group "gradients by central differences"
+           [
+             cases "of the query, keys and values" ~id:central_id central
+               central_grads;
+             test "of a float capture" capture_grads;
+             test "through a page table" paged_grads;
+           ];
+         group "vmap is each lane, bit for bit"
+           [
+             prop ~examples:pair_forms ~count:180
+               "over keys and values the lanes share" (any_of pairs case)
+               law_vmap;
+             prop ~examples:pair_forms ~count:180 "over lanes' own pools"
+               (any_of pairs case) law_vmap_pools;
            ];
          group "results"
            [
@@ -985,40 +1339,62 @@ let () =
                 number of value columns. *)
              test
                "of values of no column are the full call's lse and gradient \
-                bits"
-               (fun () ->
+                bits" (fun () ->
                  ignore
-                   (Rune_support.Attentions.lse_only (module Nx.Host)
+                   (Attentions.lse_only
+                      (module Nx.Host)
                       ~bits:true ~rows:2 ~dims:110 (Nx.Dtype.Any Nx.float32)));
              test "are the storage the kernels wrote" (fun () ->
-                 Rune_support.Attentions.uncopied (module Nx.Host) ~grad:false
-                   (Nx.Dtype.Any Nx.float32));
+                 Attentions.uncopied
+                   (module Nx.Host)
+                   ~grad:false (Nx.Dtype.Any Nx.float32));
              test "returned twice are apart" (fun () ->
-                 Rune_support.Attentions.apart (module Nx.Host)
-                   (Nx.Dtype.Any Nx.float32));
+                 Attentions.apart (module Nx.Host) (Nx.Dtype.Any Nx.float32));
              test "stacked are written by their kernels" (fun () ->
-                 Rune_support.Attentions.stacked (module Nx.Host)
-                   (Nx.Dtype.Any Nx.float32));
+                 Attentions.stacked (module Nx.Host) (Nx.Dtype.Any Nx.float32));
              test "returned twice into two donated arguments are apart"
                (fun () ->
-                 Rune_support.Attentions.donated_twice (module Nx.Host)
+                 Attentions.donated_twice
+                   (module Nx.Host)
                    (Nx.Dtype.Any Nx.float32));
              test "are written into a donated argument they do not read"
                (fun () ->
-                 Rune_support.Attentions.donated (module Nx.Host)
-                   (Nx.Dtype.Any Nx.float32));
+                 Attentions.donated (module Nx.Host) (Nx.Dtype.Any Nx.float32));
+           ];
+         group "jit within the bounds of eager"
+           [
+             prop ~examples:pair_forms ~count:36 "over dense and paged keys"
+               (Gen.with_pp pp_typed (redrawn pair_forms))
+               law_jit;
+           ];
+         group "jit within nx's bound of a float64 reference"
+           [
+             prop ~examples:float64_examples ~count:6 "every dtype"
+               (Gen.with_pp Attentions.pp (Attentions.redrawn float64_examples))
+               float64_law;
+             cases "a sum of zeros is +0 at rows of one run of keys"
+               ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
+               zero_dtypes zero_sums;
+             cases "heads of 36 to 1024 dimensions, against the composition"
+               ~id:head_id heads composed_law;
+             prop ~examples:Paged.host_examples ~count:4
+               "paged keys and values give dense ones' bits"
+               (Gen.with_pp Paged.pp (Paged.redrawn Paged.host_examples))
+               paged_law;
+           ];
+         group "jit over keys cut across two devices"
+           [
+             prop ~examples:cut_examples ~count:36
+               "is within four times one device's bounds"
+               (Gen.with_pp pp_typed (redrawn cut_examples))
+               law_cut;
+           ];
+         group "the gradient compiled and in forward mode"
+           [
+             prop ~examples:grad_examples ~count:24 "is eager reverse mode's"
+               (Gen.with_pp pp_typed (redrawn grad_examples))
+               law_grad;
            ];
          group "the derivative's tiles"
            [ test "hold whole steps of each tensor core" tile_steps ];
-         group "gradients by central differences"
-           [
-             test "float32" (grads Nx.float32 ~eps:1e-2 ~tol:2e-3 [| 6L; 7L |]);
-             test "float64" (grads Nx.float64 ~eps:2e-6 ~tol:2e-6 [| 6L; 7L |]);
-             test "float32, a row of no key"
-               (grads Nx.float32 ~eps:1e-2 ~tol:2e-3 [| 0L; 3L |]);
-             test "float64, a row of no key"
-               (grads Nx.float64 ~eps:2e-6 ~tol:2e-6 [| 0L; 3L |]);
-             test "against a float capture" capture_grads;
-             test "through a page table" paged_grads;
-           ];
        ])

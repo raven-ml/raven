@@ -76,38 +76,51 @@ type t = {
 val pp : Format.formatter -> t -> unit
 
 val gen : Nx.Dtype.any list -> t Windtrap.Gen.t
-(** [gen dtypes] draws cases of [dtypes]: one to three lead indices, heads
-    of [1/1], [8/8], [8/2] and [8/1], [tq] and [tk] around the tiles' edges
-    ([0] to [2], [7] to [9], [15] to [17], [31] to [33], [63] to [65]), each
-    mask, pages of 16 keys and of fewer with entries out of range, lengths of
-    [0], [1] and [tk], and the adversarial rows: positive values, rising
-    scores, sums of zeros, faint weights. *)
+(** [gen dtypes] draws cases of [dtypes]: one to three lead indices, heads of
+    [1/1], [8/8], [8/2] and [8/1], [tq] and [tk] around the tiles' edges ([0] to
+    [2], [7] to [9], [15] to [17], [31] to [33], [63] to [65]), each mask, pages
+    of 16 keys and of fewer with entries out of range, lengths of [0], [1] and
+    [tk], and the adversarial rows: positive values, rising scores, sums of
+    zeros, faint weights. *)
 
 val examples : Nx.Dtype.any list -> t list
-(** [examples dts] is cases each draw may miss, of [dts] in turn: a decode
-    step of 64 query heads over 8 key heads and 1000 keys, which splits its
-    keys; prefills of 300 rows with no mask and rising scores, under
-    [Window] with positive values, [Documents], [Blocks] with ALiBi, [Opaque]
-    with lengths and NaN past them, and [Spans] at an odd and an even seed;
-    zero-size shapes, values of no column, 40 rows over paged keys with
-    entries out of range, and keys of 768 dimensions. Then, of [dts]'s
-    float32, bfloat16 and float16 where it has them: a float32 prefill of 300
-    rows under [Blocks] with ALiBi, whose gradients underflow; gpt-oss's
-    decode step under captured positions over 200 keys; 1000 faint weights on
-    positive values, which fails the bound where a product drops float16's
-    subnormal weights; and a prefill of 300 rows under [Reach]'s causal
-    window of 100 keys. Last, of each dtype, a prefill of 128 rows of sums of
-    zeros. *)
+(** [examples dts] is cases each draw may miss, of [dts] in turn: a decode step
+    of 64 query heads over 8 key heads and 1000 keys, which splits its keys;
+    prefills of 300 rows with no mask and rising scores, under [Window] with
+    positive values, [Documents], [Blocks] with ALiBi, [Opaque] with lengths and
+    NaN past them, and [Spans] at an odd and an even seed; zero-size shapes,
+    values of no column, 40 rows over paged keys with entries out of range, and
+    keys of 768 dimensions. Then, of [dts]'s float32, bfloat16 and float16 where
+    it has them: a float32 prefill of 300 rows under [Blocks] with ALiBi, whose
+    gradients underflow; gpt-oss's decode step under captured positions over 200
+    keys; 1000 faint weights on positive values, which fails the bound where a
+    product drops float16's subnormal weights; and a prefill of 300 rows under
+    [Reach]'s causal window of 100 keys. Last, of each dtype, a prefill of 128
+    rows of sums of zeros. *)
+
+val edge_examples : Nx.Dtype.any list -> t list
+(** [edge_examples dts] is cases of each of {!gen}'s [tq] and each of its [tk],
+    [0] to [65] and either side of the tiles' edges of 16 and 32 keys, over
+    which every other choice {!gen} draws is made at least once: each of [dts],
+    one to three lead indices, each pair of heads, each mask, pages of 16 and of
+    5 keys, holes, lengths of [0], [1], [tk] and between, ALiBi, the adversarial
+    rows and keeps, and each of its [dk] and [dv]. *)
 
 val kernel_examples : Nx.Dtype.any list -> t list
-(** [kernel_examples dts] is cases of a GPU kernel's shapes, of [dts]'s
-    bfloat16 and float16 where it has them: keys of 24 dimensions and values
-    of 72, a tensor core's step of K; keys and values of 96 and 128
-    dimensions, the derivative's kernels of wider heads; rows and keys of 7
-    and 9 with a key head a query head, either side of Metal's tiles of 8;
-    and prefills of 300 rows under [Reach], whose tiles a tensor core's mask
-    shows whole hide pairs by a row's length, or by page entries out of
-    range over 320 keys. *)
+(** [kernel_examples dts] is cases of a GPU kernel's shapes, of [dts]'s bfloat16
+    and float16 where it has them: keys of 24 dimensions and values of 72, a
+    tensor core's step of K; keys and values of 96 and 128 dimensions, the
+    derivative's kernels of wider heads; rows and keys of 7 and 9 with a key
+    head a query head, either side of Metal's tiles of 8; and prefills of 300
+    rows under [Reach], whose tiles a tensor core's mask shows whole hide pairs
+    by a row's length, or by page entries out of range over 320 keys. *)
+
+val redrawn : t list -> t Windtrap.Gen.t
+(** [redrawn cases] draws a case of the form of one of [cases]: its dtype,
+    shapes, mask, pages and options, with a seed of the same parity, which
+    [Spans] and [Reach] read, and lengths drawn anew where it has them, [0],
+    [1], [tk] and between. A compiled call of a drawn case reads its values from
+    the arguments and captures of that form's program. *)
 
 val heads : Nx.Dtype.any list -> t list
 (** [heads dts] is cases of each of [dts] whose keys and values have [36], [64],
@@ -117,36 +130,63 @@ val heads : Nx.Dtype.any list -> t list
 
 val law : ?composed:bool -> ?wide:bool -> (module Nx.Devices) -> t -> unit
 (** [law s c] checks [c] compiled on [s]'s devices, and that the call is
-    compiled, not evaluated. Where an element of [o] is a sum of zeros,
-    every [p |v|] of the reference zero, it is [+0]. Where [composed]
-    (default [false]), the reference is the softmax of [c]'s dense scores,
-    masked and rewritten, times [v], in float64, of dense keys only, and
-    the law makes no demand of {!Windtrap.cover}. Where [wide] (default
-    where [c]'s dtype is float64), the call accumulates in float64, else in
-    float32. *)
+    compiled, not evaluated. Where an element of [o] is a sum of zeros, every
+    [p |v|] of the reference zero, it is [+0]. Where [composed] (default
+    [false]), the reference is the softmax of [c]'s dense scores, masked and
+    rewritten, times [v], in float64, of dense keys only, and the law makes no
+    demand of {!Windtrap.cover}. Where [wide] (default where [c]'s dtype is
+    float64), the call accumulates in float64, else in float32. *)
+
+val law_call :
+  ?wide:bool ->
+  (module Nx.Devices with type d = 'd) ->
+  t ->
+  (float array * float array, 'd) Batch.call
+(** [law_call ~wide s c] is {!law}'s compiled call of [c] on [s]'s devices, its
+    [o] and [lse] read as float64. *)
+
+val law_check :
+  ?composed:bool ->
+  ?wide:bool ->
+  t ->
+  (unit -> float array * float array) ->
+  unit
+(** [law_check ~composed ~wide c compiled] is {!law} of [c], [compiled ()] being
+    what {!law_call} reads. *)
 
 val zero_sums : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [zero_sums s dt] checks that each of 32768 rows of [dt], float32 or
-    narrower, compiled on [s]'s devices in a float32 accumulator, is [+0]
-    where its keys [0] to [63] score 200 below its keys [64] to [127]: the
-    first keys' weights underflow to zero, their values are [-1] and the
-    others' [-0]. With so many rows, every target runs each row's keys in
-    one kernel, which no combine of key splits follows. *)
+    narrower, compiled on [s]'s devices in a float32 accumulator, is [+0] where
+    its keys [0] to [63] score 200 below its keys [64] to [127]: the first keys'
+    weights underflow to zero, their values are [-1] and the others' [-0]. With
+    so many rows, every target runs each row's keys in one kernel, which no
+    combine of key splits follows. *)
+
+val zero_sums_call :
+  (module Nx.Devices with type d = 'd) ->
+  Nx.Dtype.any ->
+  (int64 list, 'd) Batch.call
+(** [zero_sums_call s dt] is {!zero_sums}'s compiled call, read as the distinct
+    bits of its [o]. *)
+
+val zero_sums_check : int64 list -> unit
+(** [zero_sums_check bits] is {!zero_sums}'s check of what {!zero_sums_call}
+    reads. *)
 
 val grad_law :
   ?composed:bool -> ?wide:bool -> (module Nx.Devices) -> vmap:bool -> t -> unit
-(** [grad_law s ~vmap c] checks the gradient in the query, keys and values of
-    a loss over [c]'s [o] and [lse], compiled on [s]'s devices, against the
-    host's eager float64 gradient within the bound rune.mli's numerics
-    compose, and that the call is compiled. Where [vmap], the compiled
-    gradient is that of each lead index, mapped by {!Rune.vmap}.
+(** [grad_law s ~vmap c] checks the gradient in the query, keys and values of a
+    loss over [c]'s [o] and [lse], compiled on [s]'s devices, against the host's
+    eager float64 gradient within the bound rune.mli's numerics compose, and
+    that the call is compiled. Where [vmap], the compiled gradient is that of
+    each lead index, mapped by {!Rune.vmap}.
 
     Where [composed], the reference is {!law}'s composition's. Where [wide]
-    (default where [c]'s dtype is float64), the call accumulates in
-    float64, else in float32.
+    (default where [c]'s dtype is float64), the call accumulates in float64,
+    else in float32.
 
-    Raises [Invalid_argument] if [vmap] and [c] has pages, lengths or a
-    [Spans] mask, whose arrays vary along the lead axes. *)
+    Raises [Invalid_argument] if [vmap] and [c] has pages, lengths or a [Spans]
+    mask, whose arrays vary along the lead axes. *)
 
 val sizes : (module Nx.Devices) -> Nx.Dtype.any -> unit
 (** [sizes s dt] checks that the kernels of attention's own that {!grad_law}

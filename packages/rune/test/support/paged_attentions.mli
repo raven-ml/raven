@@ -54,22 +54,46 @@ val pp : Format.formatter -> t -> unit
 
 val gen : t Windtrap.Gen.t
 (** [gen] draws bfloat16, float16 and float32, one or two lead indices, heads of
-    [8/8], [8/2] and [8/1], a decode step or a prefill of up to 100 rows,
-    pages of 1 and 16 keys over up to 320 keys, each mask and each kind of
-    holes, lengths of [0], [tk] and between, and NaN where no row reads. *)
+    [8/8], [8/2] and [8/1], a decode step or a prefill of up to 100 rows, pages
+    of 1 and 16 keys over up to 320 keys, each mask and each kind of holes,
+    lengths of [0], [tk] and between, and NaN where no row reads. *)
 
 val examples : t list
-(** [examples] reaches every cover of {!law}: decode steps and prefills of
-    each mask and kind of holes, at pages of 1 and 16 keys, in bfloat16 and
-    float32; and bfloat16 prefills of 256 rows of 128 query heads over one
-    key head, keys of 272 dimensions and values of 64 and of 56, whose
-    tiles' copies are within bytes of a workgroup's memory on CUDA. *)
+(** [examples] reaches every cover of {!law}: decode steps and prefills of each
+    mask and kind of holes, at pages of 1 and 16 keys, in bfloat16 and float32;
+    and bfloat16 prefills of 256 rows of 128 query heads over one key head, keys
+    of 272 dimensions and values of 64 and of 56, whose tiles' copies are within
+    bytes of a workgroup's memory on CUDA. *)
 
 val host_examples : t list
-(** [host_examples] is {!examples} of fewer than 128 query heads, in
-    float32: every cover but bfloat16's. *)
+(** [host_examples] is {!examples} of fewer than 128 query heads, in float32,
+    every cover but bfloat16's, then float32 cases over which {!gen}'s other
+    choices are each made: heads of [8/8] and [8/1], [tq] of [7] and [64], [16],
+    [64] and [100] keys, [dk] of [16] and [72], and [dv] of [8]. *)
+
+val redrawn : t list -> t Windtrap.Gen.t
+(** [redrawn cases] draws a case of the form of one of [cases], its seed and,
+    where it has them, its lengths drawn anew: [0], [tk] and between. A compiled
+    call of a drawn case reads its values from the arguments and captures of
+    that form's program. *)
+
+val law_call :
+  paged:bool ->
+  (module Nx.Devices with type d = 'd) ->
+  t ->
+  (int64 array * int64 array, 'd) Batch.call
+(** [law_call ~paged s c] is {!law}'s paged call of [c] if [paged] and its dense
+    call otherwise, compiled on [s]'s devices: the bits of its [o] and [lse]. *)
+
+val law_check :
+  t ->
+  (unit -> (int64 array * int64 array) * (int64 array * int64 array)) ->
+  unit
+(** [law_check c compiled] is {!law} of [c], [compiled ()] being what
+    {!law_call} reads of the paged call, then of the dense call, each compiled
+    in a program without the other. *)
 
 val law : (module Nx.Devices) -> t -> unit
-(** [law s c] checks that [c]'s paged call compiled on [s]'s devices gives
-    the dense call's [o] and [lse] bit for bit, both compiled, not
-    evaluated. *)
+(** [law s c] checks that [c]'s paged call compiled on [s]'s devices gives the
+    dense call's [o] and [lse] bit for bit, each compiled in a program of its
+    own, not evaluated. *)
