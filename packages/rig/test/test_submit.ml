@@ -2406,4 +2406,15 @@ let tests =
       ];
   ]
 
-let () = exit (run "rig.submit" tests)
+(* Halves of 64 KiB, or of a paged buffer's bytes where those are more (the page
+   of 64 KiB of some machines makes them 256 KiB): room for any copy of the
+   suite. Two domains copying at once make a half and free it again at most of
+   their copies, as the staging memory's window returns a half that the last two
+   takes passed by, and the suite's C library writes each in full
+   (MALLOC_PERTURB_ and MallocScribble in the dune file). The bench row
+   copy/staged-4K-two-domains times that cost. *)
+let half_bytes = Int.max (64 * 1024) B.paged_from
+
+let () =
+  Rig.set_half_bytes half_bytes;
+  exit (run "rig.submit" tests)
