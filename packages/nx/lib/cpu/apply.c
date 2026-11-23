@@ -78,16 +78,23 @@ static inline uint8_t *at(const nx_array *a, int k, int64_t p) {
   return a[k].base + p * (a[k].bits / 8);
 }
 
+/* A block's functions take the kind's count of operands [n] as a
+   constant: each is inlined into an instance for two, three and four
+   operands, so that every loop over the operands has a known bound and
+   the compiler sees each one's entries written before a row reads them. */
+#define BY_COUNT static inline __attribute__((always_inline))
+
 /* The rows of a plane: operand k's row r at in[k] + r·s1[k] bytes, stepping
    s0[k] elements along it. */
-static void each_row(const op *j, int64_t n0, int64_t n1, uint8_t *const *in,
-                     const int64_t *s0, const int64_t *s1) {
+BY_COUNT void each_row(const op *j, int n, int64_t n0, int64_t n1,
+                       uint8_t *const *in, const int64_t *s0,
+                       const int64_t *s1) {
   for (int64_t r = 0; r < n1; r++) {
     uint8_t *p[OPERANDS];
-    for (int k = 0; k < j->n; k++) p[k] = in[k] + r * s1[k];
-    if (j->n == 2)
+    for (int k = 0; k < n; k++) p[k] = in[k] + r * s1[k];
+    if (n == 2)
       j->f1(n0, p[0], s0[0], p[1], s0[1]);
-    else if (j->n == 3)
+    else if (n == 3)
       j->f2(n0, p[0], s0[0], p[1], s0[1], p[2], s0[2]);
     else
       j->f3(n0, p[0], s0[0], p[1], s0[1], p[2], s0[2], p[3], s0[3]);
@@ -123,7 +130,7 @@ static void stage(const op *j, const nx_cpu_block *p, int k, uint8_t *dst,
 /* A block of an operand not read or written in place goes through a slot,
    plane by plane, the slots in the thread's kept scratch: a slot an
    operand, 64 KiB in all, is more than a thread's stack should hold. */
-static void staged(const nx_cpu_block *b, op *j) {
+BY_COUNT void staged(const nx_cpu_block *b, op *j, int n) {
   uint8_t(*slot)[NX_CPU_SLOT] = nx_cpu_take(OPERANDS * NX_CPU_SLOT);
   if (slot == NULL) {
     atomic_store(&j->failed, 1);
@@ -135,7 +142,7 @@ static void staged(const nx_cpu_block *b, op *j) {
   for (int64_t q = 0; q < b->n2; q++) {
     uint8_t *in[OPERANDS];
     int64_t s0[OPERANDS], s1[OPERANDS];
-    for (int k = 0; k < j->n; k++) {
+    for (int k = 0; k < n; k++) {
       p.at[k] = b->at[k] + q * b->s2[k];
       if (direct(j, b, k)) {
         in[k] = at(a, k, p.at[k]);
@@ -148,27 +155,33 @@ static void staged(const nx_cpu_block *b, op *j) {
       s1[k] = b->n0 * nx_cpu_width(j->as[k]);
       if (k > 0) stage(j, &p, k, slot[k], s1[k]);
     }
-    each_row(j, b->n0, b->n1, in, s0, s1);
+    each_row(j, n, b->n0, b->n1, in, s0, s1);
     if (!direct(j, b, 0)) nx_cpu_unstage(&a[0], &p, 0, slot[0], s1[0], j->as[0]);
   }
   nx_cpu_give(slot);
 }
 
-static void block(const nx_cpu_block *b, void *ctx) {
-  op *j = ctx;
+BY_COUNT void block_of(const nx_cpu_block *b, op *j, int n) {
   const nx_array *a = j->a;
-  for (int k = 0; k < j->n; k++)
+  for (int k = 0; k < n; k++)
     if (!direct(j, b, k)) {
-      staged(b, j);
+      staged(b, j, n);
       return;
     }
   int64_t s1[OPERANDS];
-  for (int k = 0; k < j->n; k++) s1[k] = b->s1[k] * (a[k].bits / 8);
+  for (int k = 0; k < n; k++) s1[k] = b->s1[k] * (a[k].bits / 8);
   for (int64_t q = 0; q < b->n2; q++) {
     uint8_t *in[OPERANDS];
-    for (int k = 0; k < j->n; k++) in[k] = at(a, k, b->at[k] + q * b->s2[k]);
-    each_row(j, b->n0, b->n1, in, b->s0, s1);
+    for (int k = 0; k < n; k++) in[k] = at(a, k, b->at[k] + q * b->s2[k]);
+    each_row(j, n, b->n0, b->n1, in, b->s0, s1);
   }
+}
+
+static void block(const nx_cpu_block *b, void *ctx) {
+  op *j = ctx;
+  if (j->n == 2) block_of(b, j, 2);
+  else if (j->n == 3) block_of(b, j, 3);
+  else block_of(b, j, 4);
 }
 
 void nx_cpu_fill_block(const nx_array *d, const nx_cpu_block *b,
@@ -200,9 +213,9 @@ static void fill_block(const nx_cpu_block *b, void *ctx) {
    one row block would run on the walk's one block, on the calling thread,
    without the block: on the M1 Max an
    add of one float32 element spent 35 of its 93 ns between the loop and
-   the row. */
-static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
-                           op *j, double per) {
+   the row. Each entry's instance has its own constant [n]. */
+BY_COUNT value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
+                             op *j, double per) {
   atomic_init(&j->failed, 0);
   nx_array a[OPERANDS];
   nx_loop l;
@@ -230,7 +243,7 @@ static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
       p[k] = at(a, k, l.first[k]);
       s0[k] = l.step[k][0];
     }
-    each_row(j, l.extent[0], 1, p, s0, s1);
+    each_row(j, n, l.extent[0], 1, p, s0, s1);
   }
   nx_cpu_reacquire(released);
   nx_done(n, a);
