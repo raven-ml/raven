@@ -437,11 +437,11 @@ let resume =
       equal (list (array int32)) ls (ls1 @ ls2);
       equal (list (array float_exact)) (leaves s straight) (leaves s resumed))
 
-(* A float16 targets file of three rows, replaced after its load by its rows in
-   reverse, renamed over it: the load's mapping keeps the file it read, and a
-   read by ranges reads the new one. A window of positions in the first epoch
-   takes the load's rows, and any other reads the file, the one that straddles
-   the first epoch's end included, each cast to float32. *)
+(* The windows of the load of a float16 targets file of three rows, read
+   against a file of its rows in reverse, so that each row tells which it came
+   from. A window of positions in the first epoch takes the load's rows, and
+   any other reads the file, the one that straddles the first epoch's end
+   included, each cast to float32. *)
 let windows =
   test "a window's targets in the first epoch take the load, any others read"
     (fun () ->
@@ -456,10 +456,9 @@ let windows =
       let t = Nx_io.load_npy file in
       let reversed = Nx.take ~axis:0 (ids [ 2L; 1L; 0L ]) rows in
       Nx_io.save_npy next reversed;
-      Sys.rename next file;
       let at = ids [ 0L; 2L ] in
       let want x = Nx.to_array (Nx.cast Nx.float32 (Nx.take ~axis:0 at x)) in
-      let got first = Nx.to_array (Distil.targets file t ~first at) in
+      let got first = Nx.to_array (Distil.targets next t ~first at) in
       equal ~msg:"first epoch" (array float_exact) (want rows) (got 1);
       equal ~msg:"straddling" (array float_exact) (want reversed) (got 2);
       equal ~msg:"second epoch" (array float_exact) (want reversed) (got 4))

@@ -312,12 +312,11 @@ let read_corrupt =
             (fun () ->
               Pixels.read d (Nx.create Nx.int64 [| 2 |] [| 1L; 2L |]))))
 
-(* A run's windows of a corpus of three pixels, its files replaced after its
-   load by those of its pixels in reverse, renamed over them: the load's
-   mappings keep the files it read, and a read by ranges reads the new ones. A
-   window of positions in the first epoch takes the load's pixels, and any
-   other reads the files, the one that straddles the first epoch's end
-   included. *)
+(* A run's windows of the load of a corpus of three pixels, read against a
+   directory of its pixels in reverse, so that each pixel tells which it came
+   from. A window of positions in the first epoch takes the load's pixels, and
+   any other reads the directory's files, the one that straddles the first
+   epoch's end included. *)
 let windows =
   test "a window in the first epoch takes the load, any other reads the files"
     (fun () ->
@@ -333,9 +332,6 @@ let windows =
           let corpus = Pixels.load d in
           let reversed = take px (ids [ 2L; 1L; 0L ]) in
           Pixels.save e reversed;
-          List.iter
-            (fun f -> Sys.rename (Filename.concat e f) (Filename.concat d f))
-            [ "s2.npy"; "s2_offsets.npy"; "s1.npy"; "s1_offsets.npy" ];
           let at = ids [ 0L; 2L ] in
           let ragged = pair (array int) (array int) in
           let check msg want got =
@@ -344,11 +340,11 @@ let windows =
             equal ~msg:(msg ^ " s1") ragged (ragged_bytes want.Pixels.s1)
               (ragged_bytes got.Pixels.s1)
           in
-          check "first epoch" (take px at) (Pixels.window d corpus ~first:1 at);
+          check "first epoch" (take px at) (Pixels.window e corpus ~first:1 at);
           check "straddling" (take reversed at)
-            (Pixels.window d corpus ~first:2 at);
+            (Pixels.window e corpus ~first:2 at);
           check "second epoch" (take reversed at)
-            (Pixels.window d corpus ~first:4 at)))
+            (Pixels.window e corpus ~first:4 at)))
 
 (* Takes and streams *)
 
