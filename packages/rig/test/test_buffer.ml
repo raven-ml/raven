@@ -187,6 +187,10 @@ let distinct =
         two (fun () -> B.create Rig.host 16));
     ("two empty host buffers", One_device, fun () ->
         two (fun () -> B.create Rig.host 0));
+    ("two host buffers once the host filled one", One_device, fun () ->
+        let b = B.create Rig.host 16 in
+        Rig.Point.wait (B.submit_fill b 'f');
+        (b, B.create Rig.host 16));
     ("a buffer and its view", One_device, fun () ->
         let b = B.create Rig.host 16 in
         (b, B.view b ~first:0 ~length:16));

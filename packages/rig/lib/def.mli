@@ -121,7 +121,11 @@ type local = Local : 'a Type.Id.t * 'a -> local
     and its {!live} state. The table of devices holds it at its index until
     a later device takes its slot. C reads its first four fields by position
     ([rig_memory.c]'s [DEVICE_] constants), so they stay first and in this
-    order, and a new field goes anywhere after them. *)
+    order. [live] comes next: its first field is a custom block that polymorphic
+    equality cannot compare, so [(=)] raises there, as {!Rig.Buffer.t} states,
+    before it walks a value the device keeps that leads back to the device, such
+    as a submission among its [locals], round which it would run until its stack
+    ran out. A new field goes anywhere after [live]. *)
 type device = {
   index : int;
       (** Its slot, its index in the table of devices, [0] for the host. *)
@@ -131,6 +135,7 @@ type device = {
   opened : int;
       (** The open that made it, unique for the process. The open takes it
           after its slot, so a later device of the slot has a larger one. *)
+  live : live;  (** Its state. *)
   kind : kind;  (** What it is, with the module and handle that run it. *)
   arch : string;  (** Its architecture, as its driver names it. *)
   bus : string option;  (** {!Rig.bus}. *)
@@ -156,7 +161,6 @@ type device = {
   mutable locals : local list; [@atomic]
       (** Its values of {!Rig.Local} keys, replaced whole under {!Dev}'s
           lock of values and read without it. *)
-  live : live;  (** Its state. *)
   base : int;
       (** The value its timeline started after, which its slot's word held
           when it opened: its points' values lie above it, and those of the
@@ -164,7 +168,8 @@ type device = {
 }
 
 (** The type for a device's state: its C record, its lock, its memory and
-    the facts only its work needs. *)
+    the facts only its work needs. [c] stays first, where polymorphic equality
+    raises before it reaches a later field ({!device}). *)
 and live = {
   c : c;  (** Its C record. *)
   queues : Rig_edge.queue array;  (** Its queues, as its driver lists them. *)
