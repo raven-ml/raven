@@ -1167,9 +1167,9 @@ let stand_in_for version ~float16 =
         "";
       ])
 
-(* The stand-in's path and the Compile_error of a compile for x86_64 under the
-   Clang that states [version], with or without _Float16. *)
-let stand_in_error version ~float16 =
+(* [f clang] under the Clang that [script], written as the file [clang], stands
+   in for. *)
+let under_stand_in script f =
   if Sys.win32 then skip ~reason:"a POSIX shell stands in for Clang" ();
   let dir = Filename.temp_dir "stand_in" "" in
   let clang = Filename.concat dir "clang" in
@@ -1178,13 +1178,16 @@ let stand_in_error version ~float16 =
       Sys.rmdir dir)
   @@ fun () ->
   Out_channel.with_open_gen [ Open_wronly; Open_creat ] 0o755 clang (fun oc ->
-      output_string oc (stand_in_for version ~float16));
-  match
-    Setting.context
-      [ B (Setting.cc, clang); B (Setting.ccache, false) ]
-      (fun () ->
-        Compiler.compile (Compiler_cpu.clang "x86_64,x86-64") increment)
-  with
+      output_string oc script);
+  Setting.context
+    [ B (Setting.cc, clang); B (Setting.ccache, false) ]
+    (fun () -> f clang)
+
+(* The stand-in's path and the Compile_error of a compile for x86_64 under the
+   Clang that states [version], with or without _Float16. *)
+let stand_in_error version ~float16 =
+  under_stand_in (stand_in_for version ~float16) @@ fun clang ->
+  match Compiler.compile (Compiler_cpu.clang "x86_64,x86-64") increment with
   | _ -> fail "a stand-in that compiles nothing compiled"
   | exception Compiler.Compile_error msg -> (clang, msg)
 
@@ -1258,6 +1261,62 @@ let registers =
    for is refused for no such reason; a Clang that rejects a feature's name
    keeps none on. Under LLVM 21 each that names AVX10.1 is refused, whatever the
    registers say. *)
+(* LLVM 21 on a processor that states AVX10.1: a script stands in for it, whose
+   preprocessor defines AVX-512F's macro where [native] or AVX10.1 is named,
+   whatever follows, whose statement names Granite Rapids as the processor,
+   and whose compiler proper fails at every source. *)
+let llvm21_avx10 =
+  String.concat "\n"
+    [
+      "#!/bin/sh";
+      {|if [ "$1" = "-cc1" ]; then echo 'error: no compiler proper' >&2; exit 1; fi|};
+      {|case " $* " in *" -dM "*)|};
+      "echo '#define __x86_64__ 1'";
+      "echo '#define __FLT16_MAX__ 6.5504e+4F16'";
+      "echo '#define __AVX__ 1'";
+      {|case " $* " in *" -march=native "*|*" -mavx10.1 "*)|};
+      "echo '#define __AVX512F__ 1';;";
+      "esac";
+      "exit 0;;";
+      "esac";
+      "echo 'clang version 21.1.8' >&2";
+      "echo 'Target: x86_64-unknown-linux-gnu' >&2";
+      {|printf ' "%s" "-cc1" "-target-cpu" "graniterapids" "-o" "-" "-"\n' "$0" >&2|};
+      "";
+    ]
+
+let refusal = "keeps AVX-512 on"
+
+let native_avx10 =
+  group "a Clang that keeps AVX-512 on for native"
+    [
+      test "native compiles for its processor by name, without AVX-512"
+        (fun () ->
+          under_stand_in llvm21_avx10 @@ fun _ ->
+          equal
+            (option (pair int int))
+            (Some (16, 32))
+            (Option.map
+               (fun (r : Renderer.registers) -> (r.count, r.bytes))
+               (Compiler_cpu.registers "x86_64,native"));
+          match
+            Compiler.compile (Compiler_cpu.clang "x86_64,native") increment
+          with
+          | _ -> fail "a stand-in that compiles nothing compiled"
+          | exception Compiler.Compile_error msg ->
+              contains ~sub:"no compiler proper" msg);
+      test "an arch that names AVX10.1 compiles nothing, saying so" (fun () ->
+          under_stand_in llvm21_avx10 @@ fun _ ->
+          raises_match
+            (function
+              | Compiler.Compile_error msg -> has_infix ~affix:refusal msg
+              | _ -> false)
+            (fun () ->
+              Compiler.compile
+                (Compiler_cpu.clang "x86_64,x86-64-v3,avx10.1")
+                increment));
+    ]
+
 let kept_avx512 =
   let refused = "keeps AVX-512 on" in
   let refuses arch =
@@ -1444,6 +1503,7 @@ let () =
          flags;
          registers;
          kept_avx512;
+         native_avx10;
          architectures;
          errors;
          without_float16;

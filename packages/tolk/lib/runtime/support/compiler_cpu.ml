@@ -313,9 +313,10 @@ let win64 arch =
    before avx10.1-256, since disabling avx10.1-256 leaves it on. LLVM 21's
    driver has no option that disables an AVX10.1 that [arch] or [native] names:
    its feature map applies AVX10.1 after every other feature, and AVX10.1
-   enables AVX-512F again ([keeps_avx512]). LLVM 22's disables it with AVX-512F.
-   A Clang that states no release, such as a compiler built on Clang that names
-   itself, is taken as one before LLVM 23.
+   enables AVX-512F again ([keeps_avx512]); [native] then compiles for its
+   processor by name ([settled]). LLVM 22's disables it with AVX-512F. A Clang
+   that states no release, such as a compiler built on Clang that names itself,
+   is taken as one before LLVM 23.
 
    It also keeps LLVM 18 off AVX-512's half arithmetic, with which it crashes in
    machine loop-invariant code motion on rune's casts from float16. *)
@@ -509,17 +510,51 @@ let x86_macros =
     fun m ->
       List.exists (String.starts_with ~prefix:("#define " ^ m ^ " ")) macros
 
-(* [f cc arch] for each Clang and [arch], asked once per process. *)
+(* Whether [cc] keeps AVX-512 on for an x86_64 [selected] that [avx512_off]
+   turns it off for, as LLVM 21 does for an AVX10.1 that [arch] or [native]
+   names. *)
+let keeps cc selected =
+  fst selected = "x86_64"
+  && avx512_off (stated_release (own_statement cc (compile_args selected)))
+     <> []
+  && x86_macros cc selected "__AVX512F__"
+
+(* The processor a statement's compiler proper compiles for. *)
+let target_cpu stated =
+  let rec after = function
+    | "-target-cpu" :: cpu :: _ -> Some cpu
+    | _ :: args -> after args
+    | [] -> None
+  in
+  match cc1 stated with Ok (_, args) -> after args | Error _ -> None
+
+(* What [cc] compiles [arch] for: [arch]'s {!selection}, or, where [cc] keeps
+   AVX-512 on for [native], that of the processor [native] resolves to, by name.
+   [native] names each feature of a processor that states AVX10.1, and LLVM 21
+   applies a named AVX10.1 after every other feature, so that [-mno-avx512f]
+   leaves AVX-512 on; for a processor named, it turns AVX-512 off, AVX10.1 with
+   it. The code is that processor's, without AVX-512 and the features [native]
+   names beyond the processor's. *)
+let settled cc arch =
+  let selected = selection arch in
+  match String.split_on_char ',' arch with
+  | machine :: "native" :: rest when keeps cc selected -> (
+      match target_cpu (own_statement cc (compile_args selected)) with
+      | Some cpu -> selection (String.concat "," (machine :: cpu :: rest))
+      | None -> selected)
+  | _ -> selected
+
+(* [f cc selected] for each Clang and [arch], where [selected] is what that
+   Clang compiles [arch] for, asked once per process. *)
 let per_clang f =
   let lock = Mutex.create () and known = Hashtbl.create 4 in
   fun arch ->
     let cc = Setting.value Setting.cc in
-    let selected = selection arch in
     Mutex.protect lock @@ fun () ->
     match Hashtbl.find_opt known (cc, arch) with
     | Some r -> r
     | None ->
-        let r = f cc selected in
+        let r = f cc (settled cc arch) in
         Hashtbl.replace known (cc, arch) r;
         r
 
@@ -608,21 +643,20 @@ let lacks_float16 =
   && defines "__x86_64__"
   && not (defines "__FLT16_MAX__")
 
-(* Whether Clang keeps AVX-512 on for an x86_64 [arch] that [avx512_off] turns
-   it off for, as LLVM 21 does for an AVX10.1 that [arch] or [native] names: its
-   masked ternary logic would compile into wrong values, so nothing compiles. *)
-let keeps_avx512 =
-  per_clang @@ fun cc selected ->
-  fst selected = "x86_64"
-  && avx512_off (stated_release (own_statement cc (compile_args selected)))
-     <> []
-  && x86_macros cc selected "__AVX512F__"
+(* Whether Clang keeps AVX-512 on for what it compiles an x86_64 [arch] for,
+   where [avx512_off] turns it off, as LLVM 21 does for an AVX10.1 that [arch]
+   names: its masked ternary logic would compile into wrong values, so nothing
+   compiles. *)
+let keeps_avx512 = per_clang keeps
 
 let clang arch =
   let cc = Setting.value Setting.cc in
-  let selected = selection arch in
+  (* A malformed [arch] raises now; what Clang compiles it for is asked when the
+     table or a compile first needs it. *)
+  let (_ : string * string list) = selection arch in
+  let selected = lazy (settled cc arch) in
   (* What Clang states it runs for a source, asked once per process. *)
-  let stated () = own_statement cc (compile_args selected) in
+  let stated () = own_statement cc (compile_args (Lazy.force selected)) in
   let command ~long =
     let short = cc1 (stated ()) in
     if lacks_float16 arch then
@@ -639,8 +673,8 @@ let clang arch =
         (Printf.sprintf
            "%s keeps AVX-512 on for %s after -mno-avx512f, and its masked \
             ternary logic computes wrong values before LLVM 23 (LLVM issue \
-            157929): name a processor or level without the avx10.1 feature or \
-            native, or use LLVM 22 or later"
+            157929): name a processor or level without the avx10.1 feature, or \
+            use LLVM 22 or later"
            cc arch)
     else if long then Result.map without_loop_vectorizer short
     else short

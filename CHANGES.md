@@ -1711,6 +1711,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Under LLVM 21, on a processor with AVX10.1 such as Granite Rapids,
+  `Compiler_cpu.clang` compiles `native` for the processor Clang resolves it
+  to, by name and without AVX-512, where every compile raised `Compile_error`.
 - `Compiler_cpu.clang` raises `Renderer.Compiler.Compile_error` before it
   compiles for x86_64 under a Clang without `_Float16` there, as before
   Clang 15, naming the Clang it found and the oldest that compiles tolk's

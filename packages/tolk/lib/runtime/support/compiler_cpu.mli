@@ -58,14 +58,17 @@ val clang : string -> Renderer.Compiler.t
     which packs independent scalar operations into vectors, is off, since it
     writes invalid code or wrong values for some packed integer lanes. Under a
     Clang before LLVM 23, under Apple's and under one that states no release,
-    AVX-512 is off for [x86_64] ({!flags}); where Clang keeps it on all the
-    same, as LLVM 21 does for an AVX10.1 that [arch] or [native] names, a
-    compile raises {!Renderer.Compiler.Compile_error} saying so. On x86_64
-    Windows the stack is not probed, since rig commits a thread's stack before
-    it runs linked code, and nothing is kept below the stack pointer, which
-    Windows may write. A source of more than 400 000 bytes compiles without the
-    loop vectorizer, which packs a loop's iterations into vectors, so that a
-    long source compiles in a fraction of the time.
+    AVX-512 is off for [x86_64] ({!flags}). Where Clang keeps it on all the same
+    for [native], as LLVM 21 does on a processor that states AVX10.1, [native]
+    is the processor Clang resolves it to, by name, without AVX-512 and without
+    the features the host has beyond that processor's; where it keeps it on for
+    an AVX10.1 that [arch] names, a compile raises
+    {!Renderer.Compiler.Compile_error} saying so. On x86_64 Windows the stack is
+    not probed, since rig commits a thread's stack before it runs linked code,
+    and nothing is kept below the stack pointer, which Windows may write. A
+    source of more than 400 000 bytes compiles without the loop vectorizer,
+    which packs a loop's iterations into vectors, so that a long source compiles
+    in a fraction of the time.
 
     Clang's compiler proper runs as Clang states it runs for these options
     ([clang -###]), its [-cc1] command, with LLVM's IR verifier on, which a
@@ -117,10 +120,11 @@ val flags : version:string -> string -> string list
     ([-mno-avx10.1-512], [-mno-avx10.1-256]), which implies AVX-512 and which
     [native] enables by name. The code is then AVX2's, of the same values. LLVM
     21 keeps an AVX10.1 that [arch] or [native] names, and AVX-512 with it,
-    whatever follows; {!clang} then compiles nothing for [arch], and its
+    whatever follows: {!clang} then compiles [native] for the processor it
+    resolves to, by name, and nothing for an [arch] that names AVX10.1, whose
     {!Renderer.Compiler.Compile_error} says to name a processor or level without
-    the [avx10.1] feature or [native], or to use LLVM 22 or later. LLVM 23 and
-    later and any other machine take [arch]'s arguments alone.
+    the [avx10.1] feature, or to use LLVM 22 or later. LLVM 23 and later and any
+    other machine take [arch]'s arguments alone.
 
     Raises [Invalid_argument] as {!clang} does. *)
 
