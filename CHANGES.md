@@ -603,6 +603,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` on the CPU needs Clang 15 or later: on x86_64, under an older
+  one, the call that compiles raises `Tolk.Renderer.Compiler.Compile_error`
+  naming the Clang found and Clang 15.
 - A compiled program over several devices that declines a check names the
   construct around it, as "a scan's step", "an iterate's stop" or
   "Rune.switch's branch", where it named a loop's step, and one that declines
@@ -1708,6 +1711,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Compiler_cpu.clang` raises `Renderer.Compiler.Compile_error` before it
+  compiles for x86_64 under a Clang without `_Float16` there, as before
+  Clang 15, naming the Clang it found and the oldest that compiles tolk's
+  kernels, instead of failing on the kernel's source.
 - `Cstyle.clang` renders a vector's square root and multiply-add lane by lane
   under a Clang without `__builtin_elementwise_sqrt` (before 18) or
   `__builtin_elementwise_fma` (before 17), so Clang 15 to 17 compile them.

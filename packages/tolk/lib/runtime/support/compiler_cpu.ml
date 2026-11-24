@@ -204,6 +204,14 @@ let stated_release stated =
       Option.map (fun r -> Apple r) (major (i + n))
   | Some i -> Option.map (fun r -> Llvm r) (major (i + n))
 
+(* The line of a statement that names its Clang's version, as "Ubuntu clang
+   version 14.0.0-1ubuntu1.1", or the statement if none does. *)
+let version_line stated =
+  let named l = String.length l > 0 && Option.is_some (stated_release l) in
+  match List.find_opt named (String.split_on_char '\n' stated) with
+  | Some l -> String.trim l
+  | None -> stated
+
 (* A release as the hint table keeps it: LLVM's as its number, Apple's after
    "apple". *)
 let release_to_string = function
@@ -587,6 +595,19 @@ let converts_halves =
   per_clang @@ fun cc selected ->
   fst selected = "x86_64" && not (x86_macros cc selected "__F16C__")
 
+(* Whether Clang has no [_Float16] for an x86_64 [arch], as before LLVM 15,
+   which defines it for every x86_64 processor, where LLVM 14 defines it only
+   with AVX-512 FP16: a kernel converts its halves with it, and an object for a
+   processor without F16C defines the conversions with it ({!half_conversions}).
+   A Clang that does not run defines not even [__x86_64__]: its compile fails
+   saying why. *)
+let lacks_float16 =
+  per_clang @@ fun cc selected ->
+  let defines = x86_macros cc selected in
+  fst selected = "x86_64"
+  && defines "__x86_64__"
+  && not (defines "__FLT16_MAX__")
+
 (* Whether Clang keeps AVX-512 on for an x86_64 [arch] that [avx512_off] turns
    it off for, as LLVM 21 does for an AVX10.1 that [arch] or [native] names: its
    masked ternary logic would compile into wrong values, so nothing compiles. *)
@@ -604,7 +625,16 @@ let clang arch =
   let stated () = own_statement cc (compile_args selected) in
   let command ~long =
     let short = cc1 (stated ()) in
-    if keeps_avx512 arch then
+    if lacks_float16 arch then
+      Error
+        (Printf.sprintf
+           "%s: %s has no _Float16 for %s, with which tolk's kernels convert \
+            halves; Clang 15 is the oldest that has it: install a newer Clang \
+            and name it in CC"
+           cc
+           (version_line (stated ()))
+           arch)
+    else if keeps_avx512 arch then
       Error
         (Printf.sprintf
            "%s keeps AVX-512 on for %s after -mno-avx512f, and its masked \

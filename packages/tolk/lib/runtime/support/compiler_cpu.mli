@@ -96,7 +96,9 @@ val clang : string -> Renderer.Compiler.t
     {!Helpers.Diskcache} keeps in the table [clang_llvm] while
     {!Setting.ccache} holds, and asked again if it states another release.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
-    Clang's diagnostics if Clang rejects the source or does not run, and
+    Clang's diagnostics if Clang rejects the source or does not run, and, naming
+    the Clang and its version, before it compiles anything if Clang has no
+    [_Float16] for an x86_64 [arch], as before Clang 15.
     {!Renderer.Compiler.disassemble} prints what [objdump -d] prints
     ({!Helpers.cpu_objdump}).
 

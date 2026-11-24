@@ -183,6 +183,17 @@ let compile arch src =
            [ "No available targets"; "unable to create target" ] ->
       skip ~reason:("Clang has no backend for " ^ arch) ()
 
+(* Skips the row if the installed Clang says, compiling an empty source, that it
+   does not know [arch]'s processor: Clang 15 knows no [znver4]. Any other
+   failure, such as a missing backend, is the row's to judge. *)
+let knows_cpu arch =
+  match Compiler.compile (Compiler_cpu.clang arch) "" with
+  | _ -> ()
+  | exception Compiler.Compile_error msg
+    when has_infix ~affix:"unknown target CPU" msg ->
+      skip ~reason:("Clang does not know the processor of " ^ arch) ()
+  | exception Compiler.Compile_error _ -> ()
+
 (* [disassembly arch src] is what disassembling [src]'s object prints, or skips
    the test if the installed objdump cannot read [arch]'s machine. *)
 let disassembly arch src =
@@ -871,6 +882,7 @@ let features =
       cases "four clamped gathers compile for AVX-512 on" ~id:Fun.id
         [ "x86_64,x86-64-v4"; "x86_64,skylake-avx512"; "x86_64,znver4" ]
         (fun arch ->
+          knows_cpu arch;
           is_relocatable_elf64 ~machine:(elf_machine "x86_64")
             (compile arch clamped_gathers));
       (* The straight-line vectorizer of LLVM 19 and of Apple's Clang 17
@@ -880,6 +892,7 @@ let features =
         ~id:Fun.id
         [ "x86_64,x86-64-v3"; "x86_64,x86-64-v4"; "x86_64,znver4" ]
         (fun arch ->
+          knows_cpu arch;
           let src =
             In_channel.with_open_bin "vectorized_search.c" In_channel.input_all
           in
@@ -1133,6 +1146,72 @@ let compile_time =
           is_relocatable_elf64 ~machine:(elf_machine machine) lib);
     ]
 
+(* A Clang without x86_64's _Float16: a script stands in for it, which states
+   the version it is given and no compiler proper, and whose preprocessor
+   defines [__x86_64__] and, if it is given them, the macros of _Float16. *)
+
+let stand_in_for version ~float16 =
+  let float16 =
+    if float16 then [ "echo '#define __FLT16_MAX__ 6.5504e+4F16'" ] else []
+  in
+  String.concat "\n"
+    ([
+       "#!/bin/sh"; {|case " $* " in *" -dM "*)|}; "echo '#define __x86_64__ 1'";
+     ]
+    @ float16
+    @ [
+        "exit 0;;";
+        "esac";
+        "echo " ^ Filename.quote version ^ " >&2";
+        "echo 'Target: x86_64-unknown-linux-gnu' >&2";
+        "";
+      ])
+
+(* The stand-in's path and the Compile_error of a compile for x86_64 under the
+   Clang that states [version], with or without _Float16. *)
+let stand_in_error version ~float16 =
+  if Sys.win32 then skip ~reason:"a POSIX shell stands in for Clang" ();
+  let dir = Filename.temp_dir "stand_in" "" in
+  let clang = Filename.concat dir "clang" in
+  Fun.protect ~finally:(fun () ->
+      Sys.remove clang;
+      Sys.rmdir dir)
+  @@ fun () ->
+  Out_channel.with_open_gen [ Open_wronly; Open_creat ] 0o755 clang (fun oc ->
+      output_string oc (stand_in_for version ~float16));
+  match
+    Setting.context
+      [ B (Setting.cc, clang); B (Setting.ccache, false) ]
+      (fun () ->
+        Compiler.compile (Compiler_cpu.clang "x86_64,x86-64") increment)
+  with
+  | _ -> fail "a stand-in that compiles nothing compiled"
+  | exception Compiler.Compile_error msg -> (clang, msg)
+
+(* The feature decides, whatever release the version names: Clang 14 has
+   _Float16 with AVX-512 FP16, and Apple's numbers are not LLVM's. *)
+let without_float16 =
+  group "a Clang without x86_64's _Float16"
+    [
+      cases "a compile raises Compile_error naming the Clang and the oldest:"
+        ~id:Fun.id
+        [
+          "Ubuntu clang version 14.0.0-1ubuntu1.1";
+          "Apple clang version 14.0.0 (clang-1400.0.29.202)";
+          "clang version 19.1.7";
+        ] (fun version ->
+          let clang, msg = stand_in_error version ~float16:false in
+          in_order ~subs:[ clang; version; "_Float16"; "Clang 15"; "CC" ] msg);
+      cases "a compile is not refused under a Clang with it, as" ~id:Fun.id
+        [
+          "Ubuntu clang version 14.0.0-1ubuntu1.1";
+          "Apple clang version 14.0.3 (clang-1403.0.22.14.1)";
+          "Debian clang version 15.0.6";
+        ] (fun version ->
+          not_contains ~sub:"_Float16"
+            (snd (stand_in_error version ~float16:true)));
+    ]
+
 (* Without Clang: CC is read once, when the first compile runs, so these tests
    run in a process of their own, where CC names a program that does not
    exist. *)
@@ -1171,6 +1250,7 @@ let registers =
       ("riscv64,rv64g", fixed None);
     ]
     (fun (arch, expected) ->
+      knows_cpu arch;
       equal (option (pair int int)) (expected ()) (file arch))
 
 (* Processors with AVX-512, three naming AVX10.1, which LLVM 21 keeps on with
@@ -1366,6 +1446,7 @@ let () =
          kept_avx512;
          architectures;
          errors;
+         without_float16;
          invalid_ir;
          compile_time;
          without_clang;

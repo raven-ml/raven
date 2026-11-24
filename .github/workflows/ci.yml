@@ -94,6 +94,15 @@ jobs:
           # packages but jord.safe's xmlm.
           opam install xmlm
 
+      # Ubuntu 22.04's clang is Clang 14, older than the oldest that compiles
+      # tolk's kernels: its clang-15 package compiles them.
+      - name: Use Clang 15
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-15
+          echo "CC=clang-15" >> "$GITHUB_ENV"
+
       # Each package's steps run when an earlier package's failed, so one run
       # shows every package's failures.
       #
