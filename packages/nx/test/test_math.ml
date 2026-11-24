@@ -63,6 +63,10 @@ let law_unary (type s) (dt : (float, s) D.t)
 
 let samples = 64
 
+(* The C library's acosh, NaN below 1 as C states: musl's computes numbers at
+   some x below -2, -0x1.c2c2c2p+13 among them. *)
+let acosh x = if x < 1. then Float.nan else Float.acosh x
+
 let accuracy name (f : 's. (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t) libm =
   group name
     [
@@ -505,7 +509,7 @@ let math =
         prop ~examples:edge_examples "float32 within 2 ulps"
           (float32_values (signed positive_bits)) law_asinh;
       ];
-    accuracy "acosh" (fun x -> Nx.acosh x) Float.acosh;
+    accuracy "acosh" (fun x -> Nx.acosh x) acosh;
     accuracy "atanh" (fun x -> Nx.atanh x) Float.atanh;
     group "rsqrt"
       [
