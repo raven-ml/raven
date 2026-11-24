@@ -1256,11 +1256,6 @@ let registers =
       knows_cpu arch;
       equal (option (pair int int)) (expected ()) (file arch))
 
-(* Processors with AVX-512, three naming AVX10.1, which LLVM 21 keeps on with
-   AVX-512 after -mno-avx512f. A compile for one that Clang keeps AVX-512 off
-   for is refused for no such reason; a Clang that rejects a feature's name
-   keeps none on. Under LLVM 21 each that names AVX10.1 is refused, whatever the
-   registers say. *)
 (* LLVM 21 on a processor that states AVX10.1: a script stands in for it, whose
    preprocessor defines AVX-512F's macro where [native] or AVX10.1 is named,
    whatever follows, whose statement names Granite Rapids as the processor,
@@ -1284,6 +1279,65 @@ let llvm21_avx10 =
       {|printf ' "%s" "-cc1" "-target-cpu" "graniterapids" "-o" "-" "-"\n' "$0" >&2|};
       "";
     ]
+
+(* A Clang whose statement waits for the file [go] beside it, having made the
+   file [asked]: a compile from one domain holds there while another starts its
+   own. Its compiler proper fails at every source. *)
+let held_statement =
+  String.concat "\n"
+    [
+      "#!/bin/sh";
+      {|dir=$(dirname "$0")|};
+      {|if [ "$1" = "-cc1" ]; then echo 'error: no compiler proper' >&2; exit 1; fi|};
+      {|case " $* " in *" -dM "*)|};
+      "echo '#define __x86_64__ 1'";
+      "echo '#define __SSE2__ 1'";
+      "echo '#define __FLT16_MAX__ 6.5504e+4F16'";
+      "exit 0;;";
+      "esac";
+      {|: > "$dir/asked"|};
+      {|n=0; while [ ! -e "$dir/go" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n+1)); done|};
+      "echo 'clang version 23.1.0' >&2";
+      "echo 'Target: x86_64-unknown-linux-gnu' >&2";
+      {|printf ' "%s" "-cc1" "-target-cpu" "x86-64" "-o" "-" "-"\n' "$0" >&2|};
+      "";
+    ]
+
+(* One compiler for [native], made once, compiling from two domains at once
+   before either has learnt what Clang compiles [native] for, which takes
+   Clang's statement: the second asks while the first waits on it. Each compile
+   fails with what the compiler proper says. *)
+let first_compiles =
+  test "two domains' first compiles of one compiler each reach Clang" (fun () ->
+      under_stand_in held_statement @@ fun clang ->
+      let dir = Filename.dirname clang in
+      let compiler = Compiler_cpu.clang "x86_64,native" in
+      let outcome () =
+        match Compiler.compile compiler increment with
+        | _ -> "compiled"
+        | exception Compiler.Compile_error msg ->
+            if has_infix ~affix:"no compiler proper" msg then "refused" else msg
+        | exception e -> Printexc.to_string e
+      in
+      let first = Domain.spawn outcome in
+      let rec wait n =
+        if n = 0 then fail "the first compile never asked Clang"
+        else if not (Sys.file_exists (Filename.concat dir "asked")) then (
+          Unix.sleepf 0.01;
+          wait (n - 1))
+      in
+      wait 3000;
+      let second = Domain.spawn outcome in
+      (* The second's own first steps take far less than this; the first holds
+         until [go] exists. *)
+      Unix.sleepf 0.2;
+      Out_channel.with_open_bin (Filename.concat dir "go") ignore;
+      let second = Domain.join second and first = Domain.join first in
+      List.iter
+        (fun f ->
+          try Sys.remove (Filename.concat dir f) with Sys_error _ -> ())
+        [ "asked"; "go" ];
+      equal (pair string string) ("refused", "refused") (first, second))
 
 let refusal = "keeps AVX-512 on"
 
@@ -1317,6 +1371,11 @@ let native_avx10 =
                 increment));
     ]
 
+(* Processors with AVX-512, three naming AVX10.1, which LLVM 21 keeps on with
+   AVX-512 after -mno-avx512f. A compile for one that Clang keeps AVX-512 off
+   for is refused for no such reason; a Clang that rejects a feature's name
+   keeps none on. Under LLVM 21 each that names AVX10.1 is refused, whatever the
+   registers say. *)
 let kept_avx512 =
   let refused = "keeps AVX-512 on" in
   let refuses arch =
@@ -1504,6 +1563,7 @@ let () =
          registers;
          kept_avx512;
          native_avx10;
+         first_compiles;
          architectures;
          errors;
          without_float16;

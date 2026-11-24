@@ -654,9 +654,21 @@ let clang arch =
   (* A malformed [arch] raises now; what Clang compiles it for is asked when the
      table or a compile first needs it. *)
   let (_ : string * string list) = selection arch in
-  let selected = lazy (settled cc arch) in
+  (* Settled once, by the first of the domains that compile with it; the others
+     wait for it. *)
+  let selected =
+    let lock = Mutex.create () and settled_to = ref None in
+    fun () ->
+      Mutex.protect lock @@ fun () ->
+      match !settled_to with
+      | Some selected -> selected
+      | None ->
+          let selected = settled cc arch in
+          settled_to := Some selected;
+          selected
+  in
   (* What Clang states it runs for a source, asked once per process. *)
-  let stated () = own_statement cc (compile_args (Lazy.force selected)) in
+  let stated () = own_statement cc (compile_args (selected ())) in
   let command ~long =
     let short = cc1 (stated ()) in
     if lacks_float16 arch then
