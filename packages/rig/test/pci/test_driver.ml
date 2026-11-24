@@ -94,6 +94,14 @@ let three () =
   let root = Tree.make functions in
   (gpus (), Machine.at root, root)
 
+(* As [three ()], on a tree of the vendor's first two GPUs alone. A walk runs
+   its operation again at each of its allocations, and each open lists every
+   function of the tree, so a walk takes the tree of the functions it names:
+   another function's listing makes the allocations the GPUs' make. *)
+let two () =
+  let root = Tree.make [ Tree.gpu "0000:03:00.0"; Tree.gpu "0000:43:00.0" ] in
+  (gpus (), Machine.at root, root)
+
 (* [held root bus] is [true] iff a take holds the function at [bus] of the tree
    [root]: its configuration file is locked. *)
 let held root bus =
@@ -402,7 +410,7 @@ let test_per_machine () =
    before: the function opens again after each. *)
 let walk_open ~after =
   needs_flock ();
-  let g, m, _ = three () in
+  let g, m, _ = two () in
   let started = ref false in
   let from _ = !started = after in
   let rec walk n =
@@ -457,7 +465,7 @@ let crossed after =
    ended it. *)
 let test_stop_cut (_, landing, next) =
   needs_flock ();
-  let g, m, root = three () in
+  let g, m, root = two () in
   let rec walk n =
     let calls = ref 0 and releases = ref 0 in
     let start h fn =
@@ -521,7 +529,7 @@ let test_cut_stop_raises () =
   Printexc.record_backtrace true;
   Fun.protect ~finally:(fun () -> Printexc.record_backtrace recorded)
   @@ fun () ->
-  let g, m, root = three () in
+  let g, m, root = two () in
   let rec walk n =
     let calls = ref 0 and started = ref false in
     let start h _ =
@@ -754,7 +762,7 @@ let after_reset =
    next. *)
 let test_reset_cut (_, landing, next) =
   needs_flock ();
-  let _, m, root = three () in
+  let _, m, root = two () in
   walk_cut root m (fun g m -> ignore (Driver.reset g m 0)) landing next
 
 (* A reset the vendor refuses, with an exception at any allocation from its
