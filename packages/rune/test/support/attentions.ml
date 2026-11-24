@@ -1302,13 +1302,18 @@ let same_tiles r dt ~q ~k =
    call adds exact zeros for its values' columns. *)
 let lse_only (module S : Nx.Devices) ~bits:same ~rows ~dims dtype =
   let (F dt) = float_dtype dtype in
-  let c = base dtype in
   let shape = [| rows; 4; 256; dims |] in
-  let place salt s = Nx.place S.on (Nx.cast dt (draw c salt s)) in
+  (* Values in [-1, 1) drawn by Nx.Rng in one call: [draw]'s OCaml draw per
+     element is slow at these 28 million. *)
+  let draw salt s =
+    let u = Nx.Rng.uniform ~key:(Nx.Rng.key salt) Nx.float32 s in
+    Nx.sub_s (Nx.mul_s u 2.) 1.
+  in
+  let place salt s = Nx.place S.on (Nx.cast dt (draw salt s)) in
   let q = place 1 shape and k = place 2 shape and v = place 3 shape in
   let none = Nx.place S.on (Nx.zeros dt [| rows; 4; 256; 0 |]) in
   let none0 = Nx.place S.on (Nx.zeros dt [| rows; 4; 256; 0 |]) in
-  let bl = Nx.place S.on (draw c 5 [| rows; 4; 256 |]) in
+  let bl = Nx.place S.on (draw 5 [| rows; 4; 256 |]) in
   let bo = Nx.place S.on (Nx.zeros dt shape) in
   let qkv = Nx.Ptree.(triple tensor tensor tensor) in
   let two = Nx.Ptree.(pair tensor tensor) in
