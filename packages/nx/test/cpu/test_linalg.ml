@@ -450,6 +450,10 @@ let twice_i =
     scale = Plain;
   }
 
+(* A float64 normal matrix of order 65 whose QR iteration reaches its limit on
+   x86-64; on arm64 its rounding lets the local test split it. *)
+let stalls_x86 = { twice_i with dt = D.Any D.Float64; n = 65; seed = 591249 }
+
 (* The block on which twice_i's iteration stalls, row by row: two rotation
    blocks coupled by a(2, 1) = 2^-43, which xLAHQR's local test leaves whole
    over 300 sweeps. Its eigenvalues lie within 2^-20 of ±i, each twice, so
@@ -571,7 +575,7 @@ let cpu (b : Support.backend) =
             (run (law_svd_spectrum b));
           test "svd's values at large orders" test_svd_large;
           test "svd's values through the two-stage reduction" test_svd_two_stage;
-          prop ~examples:[ twice_i ]
+          prop ~examples:[ twice_i; stalls_x86 ]
             "eig's eigenvalues of a normal matrix within γ(16n) ‖a‖_F" case
             (run (law_eig_spectrum b));
           test "eig's eigenvalues of two rotation blocks coupled by 2^-43"
