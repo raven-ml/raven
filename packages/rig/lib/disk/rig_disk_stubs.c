@@ -111,7 +111,10 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
          rather than create the link's target. */
       FILE_ATTRIBUTE_NORMAL | (create ? FILE_FLAG_OPEN_REPARSE_POINT : 0),
       NULL);
-  int code = 0, unsized = 0;
+  int code = 0;
+  /* A device name such as NUL opens whatever CREATE_NEW says: only a disk
+     file is one this call can have made. */
+  int disk = h != INVALID_HANDLE_VALUE && GetFileType(h) == FILE_TYPE_DISK;
   BY_HANDLE_FILE_INFORMATION info;
   LARGE_INTEGER n;
   if (h == INVALID_HANDLE_VALUE) {
@@ -124,15 +127,13 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
       code = NOT_REGULAR;
     else
       code = (int)e;
-  } else if (GetFileType(h) != FILE_TYPE_DISK ||
-             !GetFileInformationByHandle(h, &info) ||
+  } else if (!disk || !GetFileInformationByHandle(h, &info) ||
              (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
     code = NOT_REGULAR;
   } else if (create) {
     n.QuadPart = size;
     if (!SetFilePointerEx(h, n, NULL, FILE_BEGIN) || !SetEndOfFile(h))
       code = (int)GetLastError();
-    unsized = code != 0;
     *file_size = size;
   } else if (!GetFileSizeEx(h, &n)) {
     code = (int)GetLastError();
@@ -140,9 +141,10 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
     *file_size = n.QuadPart;
   }
   if (code == 0) identify(h, id, len);
+  /* A file this call created is its own, made with CREATE_NEW: it goes
+     when the call fails once it holds the file's handle. */
   if (code != 0 && h != INVALID_HANDLE_VALUE) CloseHandle(h);
-  /* The file this call created and could not size goes. */
-  if (unsized) DeleteFileW(wpath);
+  if (code != 0 && disk && create) DeleteFileW(wpath);
   caml_leave_blocking_section();
   caml_stat_free(wpath);
   *handle = (intnat)h;
@@ -300,7 +302,7 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
   do
     fd = open(p, flags, 0666);
   while (fd < 0 && errno == EINTR);
-  int code = 0, unsized = 0;
+  int code = 0;
   struct stat st;
   if (fd < 0)
     code = errno;
@@ -308,16 +310,16 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
     code = errno;
   else if (!S_ISREG(st.st_mode))
     code = NOT_REGULAR;
-  else if (create && ftruncate(fd, (off_t)size) != 0) {
+  else if (create && ftruncate(fd, (off_t)size) != 0)
     code = errno;
-    unsized = 1;
-  } else {
+  else {
     *file_size = create ? size : (int64_t)st.st_size;
     identify(fd, &st, id, len);
   }
+  /* A file this call created is its own, made with O_EXCL: it goes when the
+     call fails once it holds the file's descriptor. */
   if (code != 0 && fd >= 0) close(fd);
-  /* The file this call created and could not size goes. */
-  if (unsized) unlink(p);
+  if (code != 0 && fd >= 0 && create) unlink(p);
   caml_leave_blocking_section();
   caml_stat_free(p);
   *handle = fd;

@@ -98,10 +98,11 @@ val create_file : string -> int -> (file, string) result
     or if the file cannot be created or sized. [why] starts with [path].
 
     Raises [Invalid_argument] if [n < 0], or from a callback inside a lock
-    ({!descriptors}). A file the call created is removed if it could not be
-    sized or the call raises. A system that creates the file before it gives
-    the call a descriptor, as FreeBSD does, can leave the file at [path] when
-    the result is [Error] for too many open files ({!descriptors}). *)
+    ({!descriptors}). A file the call created is removed if the result is
+    [Error] or the call raises, except that a system that creates the file
+    before it gives the call a descriptor, as FreeBSD does, can leave it at
+    [path] when the result is [Error] for too many open files
+    ({!descriptors}). *)
 
 (** {1:copies Copies}
 
