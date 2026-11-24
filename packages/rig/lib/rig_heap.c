@@ -42,6 +42,20 @@
 #include "rig_pool.h"
 #include "rig_stubs.h"
 
+/* A variable [x.v] on lines of its own. Domains write this file's
+   variables while others make and drop host buffers, and a variable on a
+   line another domain writes misses at each such write: every one written
+   after [caml_rig_heap_init] is LINED, or sits in a struct aligned as one.
+   The alignment rounds the struct's size up to whole lines, so no other
+   variable, of this file or another, shares them. Two counters one step
+   writes, as a reservation's and a buffer's made bytes, are faster apart
+   too: on fudge (Core Ultra 5 235), a 16-byte host buffer created on each
+   of eight domains took 919 ns with the two on one line, 645 ns apart. */
+#define LINED(t)                                                               \
+  struct {                                                                     \
+    _Alignas(RIG_LINE_BYTES) t v;                                              \
+  }
+
 size_t rig_page_bytes(void) {
 #ifdef _WIN32
   SYSTEM_INFO info;
@@ -164,7 +178,7 @@ value caml_rig_release_list(value unit) {
    ([caml_rig_ended_linked]), and sets it again if that drain raises. No
    call on such a device is due, so its collected memory and kept values
    would otherwise wait for the out-of-memory ladder. */
-static _Atomic int ended_linked;
+static LINED(_Atomic int) ended_linked;
 
 /* A link that reads [ended] before it is set is seen by whichever drain
    reads [ended_linked] after this fence: the stop's own, or, if the stop
@@ -174,7 +188,7 @@ static _Atomic int ended_linked;
 void rig_release_ended(struct release_list *l) {
   atomic_store(&l->ended, 1);
   atomic_thread_fence(memory_order_seq_cst);
-  atomic_store(&ended_linked, 1);
+  atomic_store(&ended_linked.v, 1);
 }
 
 /* Links the node of the token [t] onto its list, once: a token its list
@@ -191,22 +205,22 @@ static void token_link(struct token *t) {
     n->next = head;
   while (!atomic_compare_exchange_weak_explicit(
       &l->head, &head, n, memory_order_seq_cst, memory_order_relaxed));
-  if (atomic_load(&l->ended)) atomic_store(&ended_linked, 1);
+  if (atomic_load(&l->ended)) atomic_store(&ended_linked.v, 1);
 }
 
 /* Whether a token linked onto the list of a device whose stop returned, or
    a stop returned, since the last call that answered [true]. */
 value caml_rig_ended_linked(value unit) {
   (void)unit;
-  if (atomic_load_explicit(&ended_linked, memory_order_relaxed) == 0)
+  if (atomic_load_explicit(&ended_linked.v, memory_order_relaxed) == 0)
     return Val_false;
-  return Val_bool(atomic_exchange(&ended_linked, 0));
+  return Val_bool(atomic_exchange(&ended_linked.v, 0));
 }
 
 /* Asks the next drain again, for a drain of those devices that raised. */
 value caml_rig_ended_rearm(value unit) {
   (void)unit;
-  atomic_store(&ended_linked, 1);
+  atomic_store(&ended_linked.v, 1);
   return Val_unit;
 }
 
@@ -366,7 +380,7 @@ value caml_rig_released_any(value v_list) {
    the records and clears [ended_linked]. */
 value caml_rig_lists_due(value v_holds, value v_list) {
   return Val_bool(released_any(v_holds) || released_any(v_list) ||
-                  atomic_load_explicit(&ended_linked, memory_order_relaxed));
+                  atomic_load_explicit(&ended_linked.v, memory_order_relaxed));
 }
 
 /* The host's heap
@@ -375,7 +389,7 @@ value caml_rig_lists_due(value v_holds, value v_list) {
    bytes against the host's budget, and the finaliser of the last bigarray
    over its bytes, its own or an array over it, returns them
    ([heap_finalize]). */
-static _Atomic intnat heap_bytes;
+static LINED(_Atomic intnat) heap_bytes;
 
 /* The bytes of [heap_bytes] whose memory is made: a reservation counts in it
    once its buffer's array or a device's pinned memory is made
@@ -383,20 +397,21 @@ static _Atomic intnat heap_bytes;
    refused reservation holds its bytes through the out-of-memory ladder,
    whose collections end cycles, so what live memory held at a cycle's end
    and at its peak is read here. */
-static _Atomic intnat heap_made;
+static LINED(_Atomic intnat) heap_made;
 
 /* The most bytes buffers held at once in the running major cycle, from what
    they held as it began, and in the cycle before it. */
-static _Atomic intnat heap_peak, heap_peak_before;
+static LINED(_Atomic intnat) heap_peak;
+static LINED(_Atomic intnat) heap_peak_before;
 
 /* Counts [n] reserved bytes as made, and raises the peak to what made
    memory holds with them. */
 static void heap_add_made(intnat n) {
   intnat held =
-      atomic_fetch_add_explicit(&heap_made, n, memory_order_relaxed) + n;
-  intnat peak = atomic_load_explicit(&heap_peak, memory_order_relaxed);
+      atomic_fetch_add_explicit(&heap_made.v, n, memory_order_relaxed) + n;
+  intnat peak = atomic_load_explicit(&heap_peak.v, memory_order_relaxed);
   while (held > peak &&
-         !atomic_compare_exchange_weak_explicit(&heap_peak, &peak, held,
+         !atomic_compare_exchange_weak_explicit(&heap_peak.v, &peak, held,
                                                 memory_order_relaxed,
                                                 memory_order_relaxed)) {
   }
@@ -411,7 +426,7 @@ value caml_rig_heap_made(value v_n) {
 
 /* Gives back [v_n] reserved bytes whose memory was refused. */
 value caml_rig_heap_refuse(value v_n) {
-  atomic_fetch_sub_explicit(&heap_bytes, Long_val(v_n), memory_order_relaxed);
+  atomic_fetch_sub_explicit(&heap_bytes.v, Long_val(v_n), memory_order_relaxed);
   return Val_unit;
 }
 
@@ -422,14 +437,14 @@ static intnat heap_kept(void);
    budget too, and gives them back when they are what stands in its way. */
 value caml_rig_heap_reserve(value v_n, value v_budget) {
   intnat n = Long_val(v_n), budget = Long_val(v_budget);
-  intnat held = atomic_load_explicit(&heap_bytes, memory_order_relaxed);
+  intnat held = atomic_load_explicit(&heap_bytes.v, memory_order_relaxed);
   do {
     if (n > budget - held - heap_kept()) {
       if (heap_kept() == 0 || n > budget - held) return Val_false;
       heap_drop_all();
     }
   } while (!atomic_compare_exchange_weak_explicit(
-      &heap_bytes, &held, held + n, memory_order_relaxed,
+      &heap_bytes.v, &held, held + n, memory_order_relaxed,
       memory_order_relaxed));
   return Val_true;
 }
@@ -438,8 +453,8 @@ value caml_rig_heap_reserve(value v_n, value v_budget) {
    last major cycle ended, and the number of major cycles seen ended (see
    [slice_end]). A buffer's block holds the cycles seen ended when it was
    made: a buffer made and dropped within one cycle was never held live. */
-static _Atomic intnat heap_collected;
-static _Atomic uintnat cycles_seen;
+static LINED(_Atomic intnat) heap_collected;
+static LINED(_Atomic uintnat) cycles_seen;
 
 /* Pacing the collector
 
@@ -492,27 +507,28 @@ static _Atomic uintnat cycles_seen;
    eight bounds of churn, an eighth of the marking of a block that starts in
    the major heap, about what writing a result's bytes costs. */
 
-static _Atomic intnat heap_live;
-static _Atomic intnat held_at_cycle;
-static _Atomic intnat collected_at_cycle;
+static LINED(_Atomic intnat) heap_live;
+static LINED(_Atomic intnat) held_at_cycle;
+static LINED(_Atomic intnat) collected_at_cycle;
 
 static size_t heap_cache_cap(void);
 static void heap_trim(size_t cap);
 
 /* Run once per major cycle, after it ends ([slice_end]). */
 static void cycle_ended(void) {
-  intnat held = atomic_load_explicit(&heap_made, memory_order_relaxed);
+  intnat held = atomic_load_explicit(&heap_made.v, memory_order_relaxed);
   intnat collected =
-      atomic_load_explicit(&heap_collected, memory_order_relaxed);
+      atomic_load_explicit(&heap_collected.v, memory_order_relaxed);
   intnat live =
-      atomic_exchange_explicit(&held_at_cycle, held, memory_order_relaxed) -
-      (collected - atomic_exchange_explicit(&collected_at_cycle, collected,
+      atomic_exchange_explicit(&held_at_cycle.v, held, memory_order_relaxed) -
+      (collected - atomic_exchange_explicit(&collected_at_cycle.v, collected,
                                             memory_order_relaxed));
-  atomic_store_explicit(&heap_live, live > 0 ? live : 0, memory_order_relaxed);
+  atomic_store_explicit(&heap_live.v, live > 0 ? live : 0,
+                        memory_order_relaxed);
   heap_trim(heap_cache_cap());
   atomic_store_explicit(
-      &heap_peak_before,
-      atomic_exchange_explicit(&heap_peak, held, memory_order_relaxed),
+      &heap_peak_before.v,
+      atomic_exchange_explicit(&heap_peak.v, held, memory_order_relaxed),
       memory_order_relaxed);
 }
 
@@ -546,9 +562,9 @@ static void chain(_Atomic caml_timing_hook *hook,
 
 static void slice_end(void) {
   uintnat ended = caml_major_cycles_completed;
-  uintnat seen = atomic_load_explicit(&cycles_seen, memory_order_relaxed);
+  uintnat seen = atomic_load_explicit(&cycles_seen.v, memory_order_relaxed);
   if (ended != seen &&
-      atomic_compare_exchange_strong_explicit(&cycles_seen, &seen, ended,
+      atomic_compare_exchange_strong_explicit(&cycles_seen.v, &seen, ended,
                                               memory_order_relaxed,
                                               memory_order_relaxed))
     cycle_ended();
@@ -562,30 +578,30 @@ static void slice_end(void) {
    count changed. A batch of finalisers counts as it begins and as it ends:
    the end comes after what the batch let go of, and a finaliser that raises
    skips it, which the begin covers. */
-static _Atomic uintnat let_go_count;
+static LINED(_Atomic uintnat) let_go_count;
 
 static _Atomic caml_timing_hook previous_finalise_begin;
 static _Atomic caml_timing_hook previous_finalise_end;
 
 static void finalise_begin(void) {
-  atomic_fetch_add(&let_go_count, 1);
+  atomic_fetch_add(&let_go_count.v, 1);
   call_previous(&previous_finalise_begin);
 }
 
 static void finalise_end(void) {
-  atomic_fetch_add(&let_go_count, 1);
+  atomic_fetch_add(&let_go_count.v, 1);
   call_previous(&previous_finalise_end);
 }
 
 value caml_rig_let_go(value unit) {
   (void)unit;
-  atomic_fetch_add(&let_go_count, 1);
+  atomic_fetch_add(&let_go_count.v, 1);
   return Val_unit;
 }
 
 value caml_rig_let_go_count(value unit) {
   (void)unit;
-  return Val_long(atomic_load(&let_go_count));
+  return Val_long(atomic_load(&let_go_count.v));
 }
 
 /* The bytes of the host's last-level cache for pacing, at least
@@ -679,7 +695,7 @@ value caml_rig_host_cache_bytes(value v_unit) {
    bound over the bytes buffers hold live. */
 static mlsize_t heap_cycle_bytes(void) {
   return program_bound(
-      (mlsize_t)atomic_load_explicit(&heap_live, memory_order_relaxed));
+      (mlsize_t)atomic_load_explicit(&heap_live.v, memory_order_relaxed));
 }
 
 /* Reusing freed buffers
@@ -710,44 +726,51 @@ struct heap_entry {
   size_t n;
 };
 
-static atomic_flag heap_cache_lock = ATOMIC_FLAG_INIT;
-static struct heap_entry *heap_newest, *heap_oldest;
-static struct heap_entry *heap_bucket[HEAP_BUCKETS];
-static _Atomic size_t heap_cached;
+/* The lock and what it guards, on lines of their own, as LINED. */
+static struct {
+  _Alignas(RIG_LINE_BYTES) atomic_flag lock;
+  struct heap_entry *newest, *oldest;
+  struct heap_entry *bucket[HEAP_BUCKETS];
+} heap_cache = {.lock = ATOMIC_FLAG_INIT};
+
+/* The bytes the cache holds, written under its lock and read without it at
+   each reservation ([heap_kept]), apart from the lock that a spin writes. */
+static LINED(_Atomic size_t) heap_cached;
 
 /* The bucket of buffers of [n] bytes: a multiplicative hash of their pages
    (buffers kept are 64 KiB or more). */
 static struct heap_entry **bucket_of(size_t n) {
-  return &heap_bucket[(uint64_t)(n / 4096) * UINT64_C(0x9E3779B97F4A7C15) >>
-                      56];
+  uint64_t h = (uint64_t)(n / 4096) * UINT64_C(0x9E3779B97F4A7C15);
+  return &heap_cache.bucket[h >> 56];
 }
 
 static void heap_cache_acquire(void) {
-  while (atomic_flag_test_and_set_explicit(&heap_cache_lock,
+  while (atomic_flag_test_and_set_explicit(&heap_cache.lock,
                                            memory_order_acquire)) {
   }
 }
 
 static void heap_cache_release(void) {
-  atomic_flag_clear_explicit(&heap_cache_lock, memory_order_release);
+  atomic_flag_clear_explicit(&heap_cache.lock, memory_order_release);
 }
 
 static void heap_unlink(struct heap_entry *e) {
   if (e->newer) e->newer->older = e->older;
-  else heap_newest = e->older;
+  else heap_cache.newest = e->older;
   if (e->older) e->older->newer = e->newer;
-  else heap_oldest = e->newer;
+  else heap_cache.oldest = e->newer;
   if (e->prev) e->prev->next = e->next;
   else *bucket_of(e->n) = e->next;
   if (e->next) e->next->prev = e->prev;
-  heap_cached -= e->n;
+  heap_cached.v -= e->n;
 }
 
 static size_t heap_cache_cap(void) {
-  intnat peak = atomic_load_explicit(&heap_peak, memory_order_relaxed);
-  intnat before = atomic_load_explicit(&heap_peak_before, memory_order_relaxed);
+  intnat peak = atomic_load_explicit(&heap_peak.v, memory_order_relaxed);
+  intnat before =
+      atomic_load_explicit(&heap_peak_before.v, memory_order_relaxed);
   intnat room = (peak > before ? peak : before) -
-                atomic_load_explicit(&heap_bytes, memory_order_relaxed);
+                atomic_load_explicit(&heap_bytes.v, memory_order_relaxed);
   return room < (intnat)HEAP_CACHE_FLOOR ? HEAP_CACHE_FLOOR : (size_t)room;
 }
 
@@ -755,8 +778,8 @@ static size_t heap_cache_cap(void) {
    [cap] bytes, and is them, linked by [older]. The lock is held. */
 static struct heap_entry *heap_over(size_t cap) {
   struct heap_entry *dropped = NULL;
-  while (heap_cached > cap) {
-    struct heap_entry *old = heap_oldest;
+  while (heap_cached.v > cap) {
+    struct heap_entry *old = heap_cache.oldest;
     heap_unlink(old);
     old->older = dropped;
     dropped = old;
@@ -777,17 +800,17 @@ static void heap_keep(void *data, size_t n) {
   struct heap_entry *e = data;
   heap_cache_acquire();
   e->n = n;
-  e->older = heap_newest;
+  e->older = heap_cache.newest;
   e->newer = NULL;
-  if (heap_newest) heap_newest->newer = e;
-  else heap_oldest = e;
-  heap_newest = e;
+  if (heap_cache.newest) heap_cache.newest->newer = e;
+  else heap_cache.oldest = e;
+  heap_cache.newest = e;
   struct heap_entry **b = bucket_of(n);
   e->next = *b;
   e->prev = NULL;
   if (*b) (*b)->prev = e;
   *b = e;
-  heap_cached += n;
+  heap_cached.v += n;
   struct heap_entry *dropped = heap_over(cap);
   heap_cache_release();
   heap_free_list(dropped);
@@ -813,15 +836,15 @@ static void *heap_take(size_t n) {
 }
 
 static intnat heap_kept(void) {
-  return (intnat)atomic_load_explicit(&heap_cached, memory_order_relaxed);
+  return (intnat)atomic_load_explicit(&heap_cached.v, memory_order_relaxed);
 }
 
 static void heap_drop_all(void) {
   heap_cache_acquire();
-  struct heap_entry *e = heap_newest;
-  heap_newest = heap_oldest = NULL;
-  memset(heap_bucket, 0, sizeof heap_bucket);
-  heap_cached = 0;
+  struct heap_entry *e = heap_cache.newest;
+  heap_cache.newest = heap_cache.oldest = NULL;
+  memset(heap_cache.bucket, 0, sizeof heap_cache.bucket);
+  heap_cached.v = 0;
   heap_cache_release();
   heap_free_list(e);
 }
@@ -830,15 +853,15 @@ static void heap_drop_all(void) {
    memory other than a buffer's bigarray, such as a device's pinned memory,
    once that memory is freed. */
 value caml_rig_heap_release(value v_n) {
-  atomic_fetch_sub_explicit(&heap_bytes, Long_val(v_n), memory_order_relaxed);
-  atomic_fetch_sub_explicit(&heap_made, Long_val(v_n), memory_order_relaxed);
+  atomic_fetch_sub_explicit(&heap_bytes.v, Long_val(v_n), memory_order_relaxed);
+  atomic_fetch_sub_explicit(&heap_made.v, Long_val(v_n), memory_order_relaxed);
   return Val_unit;
 }
 
 /* The bytes host buffers hold reserved against the host's budget:
    Rig.allocated of the host. */
 intnat rig_heap_held(void) {
-  return atomic_load_explicit(&heap_bytes, memory_order_relaxed);
+  return atomic_load_explicit(&heap_bytes.v, memory_order_relaxed);
 }
 
 value caml_rig_heap_held(value unit) {
@@ -850,14 +873,14 @@ value caml_rig_heap_held(value unit) {
    buffers pace the collector ([heap_cycle_bytes]). */
 value caml_rig_heap_live(value unit) {
   (void)unit;
-  return Val_long(atomic_load_explicit(&heap_live, memory_order_relaxed));
+  return Val_long(atomic_load_explicit(&heap_live.v, memory_order_relaxed));
 }
 
 /* Gives back kept buffers until they fit in [v_budget] beside the bytes
    host buffers hold. */
 value caml_rig_heap_trim(value v_budget) {
   intnat room = Long_val(v_budget) -
-                atomic_load_explicit(&heap_bytes, memory_order_relaxed);
+                atomic_load_explicit(&heap_bytes.v, memory_order_relaxed);
   heap_trim(room > 0 ? (size_t)room : 0);
   return Val_unit;
 }
@@ -966,10 +989,10 @@ struct heap_proxy {
    cycles were seen ended, and the [size] bytes at [base] allocated for it
    to the cache or the C library. */
 static void heap_return(intnat f, uintnat cycle, void *base, size_t size) {
-  atomic_fetch_sub_explicit(&heap_bytes, f, memory_order_relaxed);
-  atomic_fetch_sub_explicit(&heap_made, f, memory_order_relaxed);
-  if (cycle < atomic_load_explicit(&cycles_seen, memory_order_relaxed))
-    atomic_fetch_add_explicit(&heap_collected, f, memory_order_relaxed);
+  atomic_fetch_sub_explicit(&heap_bytes.v, f, memory_order_relaxed);
+  atomic_fetch_sub_explicit(&heap_made.v, f, memory_order_relaxed);
+  if (cycle < atomic_load_explicit(&cycles_seen.v, memory_order_relaxed))
+    atomic_fetch_add_explicit(&heap_collected.v, f, memory_order_relaxed);
   if (size >= heap_kept_from) heap_keep(base, size);
   else free(base);
 }
@@ -1054,7 +1077,7 @@ static value heap_bigarray(void *base, void *data, size_t n) {
   b->flags = CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MANAGED;
   b->proxy = NULL;
   b->dim[0] = (intnat)n;
-  uintnat cycle = atomic_load_explicit(&cycles_seen, memory_order_relaxed);
+  uintnat cycle = atomic_load_explicit(&cycles_seen.v, memory_order_relaxed);
   *heap_mark(b) =
       (cycle << HEAP_OFFSET_BITS) | (uintnat)((char *)data - (char *)base);
   heap_add_made((intnat)f);

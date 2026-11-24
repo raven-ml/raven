@@ -74,6 +74,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- Host buffers made on several domains at once cost less: each counter of
+  the host's heap sits on cache lines of its own, where the counters shared
+  lines. On fudge (Core Ultra 5 235), a 16-byte `Rig.Buffer.create` of the
+  host while seven other domains create took 702 ns, from 1131, and an
+  `Nx.add` of 16 floats on each of eight domains 687 ns, from 1305.
 - Staging memory that no copy holds stays until `Rig.free_cache`, an
   over-budget `Rig.set_budget`, reclamation or a mapping short of room
   returns it, so copies on several domains no longer map it anew each
