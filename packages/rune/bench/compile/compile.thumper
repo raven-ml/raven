@@ -10,10 +10,11 @@ devices/dp-step-16	wall_time	batch=1	n=3	1.774e+00	1.762e+00 1.774e+00 1.821e+00
 linalg/eigh-8x8	wall_time	batch=1	n=3	5.417e-01	5.364e-01 5.417e-01 5.417e-01
 linalg/solve-32	wall_time	batch=1	n=3	7.805e-01	7.769e-01 7.805e-01 7.834e-01
 model/schools-start	wall_time	batch=1	n=3	1.513e+00	1.502e+00 1.513e+00 1.513e+00
+parallel/checks-48	wall_time	batch=1	n=3	3.921e-01	3.870e-01 3.921e-01 3.958e-01
 rng/binomial-f32	wall_time	batch=1	n=3	1.815e+00	1.733e+00 1.815e+00 1.880e+00
 rng/normal-f32	wall_time	batch=1	n=3	2.820e-01	2.813e-01 2.820e-01 2.825e-01
 rng/normal-f64	wall_time	batch=1	n=3	4.297e-01	4.282e-01 4.297e-01 4.298e-01
-scan/checks-48	wall_time	batch=1	n=3	2.472e+00	2.470e+00 2.472e+00 2.496e+00
+scan/checks-48	wall_time	batch=1	n=3	7.013e-01	7.001e-01 7.013e-01 7.098e-01
 scan/tridiagonal-100	wall_time	batch=1	n=3	2.394e+00	2.392e+00 2.394e+00 2.419e+00
 shaped-4k	wall_time	batch=1	n=3	5.320e-01	5.304e-01 5.320e-01 5.328e-01
 shaped-4k-3-lanes	wall_time	batch=1	n=3	3.889e-01	3.883e-01 3.889e-01 3.891e-01
@@ -22,6 +23,7 @@ special/betaincinv-constant	wall_time	batch=1	n=3	1.656e-01	1.578e-01 1.656e-01 
 special/gammainccinv-f16	wall_time	batch=1	n=3	7.980e-01	7.966e-01 7.980e-01 8.442e-01
 special/lgamma-constant	wall_time	batch=1	n=3	1.080e-01	1.073e-01 1.080e-01 1.090e-01
 trig/sin	wall_time	batch=1	n=3	9.471e-02	9.408e-02 9.471e-02 9.692e-02
+warm/scan/checks-48	wall_time	batch=1	n=3	5.844e-02	5.726e-02 5.844e-02 6.033e-02
 wide/sum-1e6	wall_time	batch=1	n=3	1.768e+00	1.762e+00 1.768e+00 1.777e+00
 
 # machine: baccbeca132e3ae9
