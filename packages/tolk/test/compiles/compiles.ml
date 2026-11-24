@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let () =
   let cc = Tolk.Setting.value Tolk.Setting.cc in
   match Tolk_engine.compiles Rig.host with

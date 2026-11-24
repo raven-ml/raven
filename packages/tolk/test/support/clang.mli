@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Tests that compile with Clang. *)
 
 val here : string -> unit
