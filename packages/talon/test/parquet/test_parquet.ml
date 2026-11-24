@@ -2113,6 +2113,74 @@ let in_scan_case =
   let+ p = pred 2 and+ positive = bool and+ shown = bool in
   (file, c, p, positive, shown)
 
+(* [holds x p] is [p] on a row whose text is [x], in Kleene's logic: [None]
+   where [p] is null. Texts order by their bytes. *)
+let rec holds x = function
+  | Cmp (op, s) ->
+      let holds c =
+        match op with
+        | `Eq -> c = 0
+        | `Ne -> c <> 0
+        | `Lt -> c < 0
+        | `Le -> c <= 0
+        | `Gt -> c > 0
+        | `Ge -> c >= 0
+      in
+      Option.map (fun x -> holds (String.compare x s)) x
+  | In ss -> Some (Option.fold ~none:false ~some:(fun x -> List.mem x ss) x)
+  | Null -> Some (Option.is_none x)
+  | Not p -> Option.map not (holds x p)
+  | And (p, q) -> (
+      match (holds x p, holds x q) with
+      | Some false, _ | _, Some false -> Some false
+      | Some true, Some true -> Some true
+      | _ -> None)
+  | Or (p, q) -> (
+      match (holds x p, holds x q) with
+      | Some true, _ | _, Some true -> Some true
+      | Some false, Some false -> Some false
+      | _ -> None)
+
+let show_text = Option.fold ~none:"null" ~some:quote
+let show_float = Option.fold ~none:"null" ~some:(Printf.sprintf "%h")
+
+(* [cells file c] is each row of [file] as its text in [c] and its float in
+   [f64]. *)
+let cells =
+  let memo = Hashtbl.create 8 in
+  fun file c ->
+    match Hashtbl.find_opt memo (file, c) with
+    | Some rows -> rows
+    | None ->
+        let t = whole file in
+        let texts =
+          if is_binary c then
+            Array.map
+              (Option.map (fun b -> (b : Binary.t :> string)))
+              (Column.options Kind.binary (Talon.column t c))
+          else Column.options Kind.string (Talon.column t c)
+        in
+        let rows =
+          Array.combine texts (Column.options Kind.float (Talon.column t "f64"))
+        in
+        Hashtbl.replace memo (file, c) rows;
+        rows
+
+(* [reference ~shown ~positive file c p] is the rows of [file] on which [p]
+   holds, and if [positive] [f64 > 0] too, as {!kept} shows them. [f64 > 0]
+   holds for NaN, which comes after every float, and not for [-0.]. *)
+let reference ~shown ~positive file c p =
+  let passes (x, y) =
+    let above = Option.map (fun y -> Float.is_nan y || y > 0.) y in
+    match (holds x p, if positive then above else Some true) with
+    | Some true, Some true -> true
+    | _ -> false
+  in
+  cells file c |> Array.to_list |> List.filter passes
+  |> List.map (fun (x, y) ->
+      (if shown then show_text x else "-") ^ " " ^ show_float y)
+  |> Array.of_list
+
 (* [kept ~shown c f q] is the rows that [q] keeps, filtered by [f], read back
    as the floats of [f64] and, if [shown], the texts of [c]. *)
 let kept ~shown c f q =
@@ -2126,19 +2194,12 @@ let kept ~shown c f q =
     if not shown then Array.make (Talon.rows t) "-"
     else if is_binary c then
       Array.map
-        (Option.fold ~none:"null" ~some:(fun b ->
-             quote (b : Binary.t :> string)))
+        (fun b -> show_text (Option.map (fun b -> (b : Binary.t :> string)) b))
         (Column.options Kind.binary (Talon.column t c))
-    else
-      Array.map
-        (Option.fold ~none:"null" ~some:quote)
-        (Column.options Kind.string (Talon.column t c))
+    else Array.map show_text (Column.options Kind.string (Talon.column t c))
   in
   let floats = Column.options Kind.float (Talon.column t "f64") in
-  Array.map2
-    (fun s x ->
-      s ^ " " ^ Option.fold ~none:"null" ~some:(Printf.sprintf "%h") x)
-    text floats
+  Array.map2 (fun s x -> s ^ " " ^ show_float x) text floats
 
 let in_scan_filters =
   let pp ppf (file, c, p, positive, shown) =
@@ -2153,23 +2214,20 @@ let in_scan_filters =
         else filter_of (Col.string c) Fun.id p
       in
       let f = if positive then Expr.(f && Col.float "f64" > float 0.) else f in
-      let whole = whole file in
-      let expected = kept ~shown:true c f (Query.of_table whole) in
-      let rows = Talon.rows whole in
+      let rows = Talon.rows (whole file) in
+      let passing = reference ~shown:true ~positive file c p in
       cover "dictionary pages" (file = "types.parquet");
       cover "dictionary pages falling back to PLAIN"
         (file = "fallback.parquet");
       cover "PLAIN pages" (file = "types_plain.parquet");
       cover "no rows" (rows = 0);
       cover "some rows pass, others not"
-        (Array.length expected > 0 && Array.length expected < rows);
+        (Array.length passing > 0 && Array.length passing < rows);
       cover "a null row passes"
-        (Array.exists (String.starts_with ~prefix:"null ") expected);
+        (Array.exists (String.starts_with ~prefix:"null ") passing);
       cover "the filtered column not read back" (not shown);
-      let expected =
-        if shown then expected else kept ~shown c f (Query.of_table whole)
-      in
-      equal (array string) expected
+      equal (array string)
+        (reference ~shown ~positive file c p)
         (kept ~shown c f (Query.of_source (scan_source file))))
 
 (* Columns of a valid and an invalid UTF-8 word, read as text: a filter in
