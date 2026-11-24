@@ -928,17 +928,19 @@ static double load_float(const uint8_t *base, int dt, int64_t p, int part) {
     case NX_FLOAT32: {
       float x;
       memcpy(&x, base + 4 * p, 4);
-      return x;
+      return nx_float_to_double(x);
     }
     case NX_FLOAT16:
     case NX_BFLOAT16: {
       uint16_t c;
       memcpy(&c, base + 2 * p, 2);
-      return nx_bits_to_float(dt, c);
+      return nx_float_to_double(nx_bits_to_float(dt, c));
     }
     case NX_FLOAT8_E4M3FN:
-    case NX_FLOAT8_E5M2: return nx_bits_to_float(dt, base[p]);
-    case NX_FLOAT4_E2M1FN: return nx_bits_to_float(dt, nx_sub_load(base, 4, p));
+    case NX_FLOAT8_E5M2:
+      return nx_float_to_double(nx_bits_to_float(dt, base[p]));
+    case NX_FLOAT4_E2M1FN:
+      return nx_float_to_double(nx_bits_to_float(dt, nx_sub_load(base, 4, p)));
     case NX_COMPLEX128: return load_float(base, NX_FLOAT64, 2 * p + part, 0);
     default: return load_float(base, NX_FLOAT32, 2 * p + part, 0);
   }
@@ -990,7 +992,7 @@ static void store_float(uint8_t *base, int dt, int64_t p, int part,
       return;
     }
     case NX_FLOAT32: {
-      float f = (float)x;
+      float f = nx_double_to_float(x);
       memcpy(base + 4 * p, &f, 4);
       return;
     }
@@ -1151,7 +1153,8 @@ static void double_to_f16(const double *src, uint16_t *dst, size_t n) {
 }
 #else
 static void f16_to_double(const uint16_t *src, double *dst, size_t n) {
-  for (size_t i = 0; i < n; i++) dst[i] = nx_f16_to_float(src[i]);
+  for (size_t i = 0; i < n; i++)
+    dst[i] = nx_float_to_double(nx_f16_to_float(src[i]));
 }
 
 static void double_to_f16(const double *src, uint16_t *dst, size_t n) {
@@ -1185,11 +1188,16 @@ static void to_run(void *ctx, const int64_t *at, int64_t len) {
 #define DECODE(T, decode)                                                 \
   do {                                                                    \
     const T *src = (const T *)a->base + p;                                \
-    for (int64_t j = 0; j < len; j++) dst[j] = decode(src[j * step]);     \
+    for (int64_t j = 0; j < len; j++)                                     \
+      dst[j] = nx_float_to_double(decode(src[j * step]));                 \
   } while (0)
   switch (dt) {
-    case NX_FLOAT64: DECODE(double, (double)); return;
-    case NX_FLOAT32: DECODE(float, (double)); return;
+    case NX_FLOAT64: {
+      const double *src = (const double *)a->base + p;
+      for (int64_t j = 0; j < len; j++) dst[j] = src[j * step];
+      return;
+    }
+    case NX_FLOAT32: DECODE(float, (float)); return;
     case NX_FLOAT16:
       if (step == 1)
         f16_to_double((const uint16_t *)a->base + p, dst, (size_t)len);
@@ -1298,7 +1306,7 @@ static void of_run(void *ctx, const int64_t *at, int64_t len) {
   } while (0)
       switch (dt) {
         case NX_FLOAT64: ENCODE(double, nx_double_quiet); return;
-        case NX_FLOAT32: ENCODE(float, (float)); return;
+        case NX_FLOAT32: ENCODE(float, nx_double_to_float); return;
         case NX_FLOAT16:
           if (step == 1)
             double_to_f16(src, (uint16_t *)a->base + p, (size_t)len);

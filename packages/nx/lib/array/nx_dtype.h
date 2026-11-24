@@ -153,6 +153,37 @@ NX_INLINE double nx_double_quiet(double d) {
   if (!nx_double_nan(d)) return d;
   return nx_bits_double(nx_double_bits(d) | 0x0008000000000000u);
 }
+
+/* Between binary64 and binary32. A NaN keeps its sign and the top of its
+   payload, as many bits as the narrower fraction holds below its quiet
+   bit, and is quieted (dtype.mli, Stores). x86 and arm64 convert a NaN
+   so, and there the casts stay, which loops of runs vectorise. POWER keeps
+   a signalling NaN signalling as it widens, and RISC-V converts every NaN
+   to its canonical one, positive and of no payload: elsewhere a NaN's bits
+   are built here, both results computed and one selected. A GPU kernel
+   compiles with its host's macros and takes its host's form; the NaN rule
+   allows either of a kernel's casts. */
+#if defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__) || \
+    defined(_M_ARM64)
+NX_INLINE float nx_double_to_float(double d) { return (float)d; }
+NX_INLINE double nx_float_to_double(float f) { return (double)f; }
+#else
+NX_INLINE float nx_double_to_float(double d) {
+  uint64_t b = nx_double_bits(d);
+  uint32_t nan = ((uint32_t)(b >> 32) & 0x80000000u) | 0x7FC00000u |
+                 ((uint32_t)(b >> 29) & 0x003FFFFFu);
+  float f = (float)d;
+  return nx_double_nan(d) ? nx_bits_float(nan) : f;
+}
+
+NX_INLINE double nx_float_to_double(float f) {
+  uint64_t b = nx_float_bits(f);
+  uint64_t nan = ((b & 0x80000000u) << 32) | 0x7FF8000000000000u |
+                 ((b & 0x003FFFFFu) << 29);
+  double d = (double)f;
+  return nx_float_nan(f) ? nx_bits_double(nan) : d;
+}
+#endif
 #endif
 
 /* bfloat16: binary32's top half */
@@ -350,7 +381,7 @@ NX_INLINE float nx_bits_to_float(int dt, uint32_t c) {
 #ifndef __METAL_VERSION__
 
 NX_INLINE float nx_float_odd(double x) {
-  float f = (float)x;
+  float f = nx_double_to_float(x);
   uint32_t i = nx_float_bits(f);
   /* Stepping back from a result that rounded away from zero truncates,
      which also brings an overflow to inf back to FLT_MAX. NaN is neither. */

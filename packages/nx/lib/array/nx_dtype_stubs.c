@@ -12,10 +12,10 @@
 double nx_dtype_round(intnat dt, double x) {
   switch (dt) {
     case NX_FLOAT64: return x;
-    case NX_FLOAT32: return (float)x;
+    case NX_FLOAT32: return nx_float_to_double(nx_double_to_float(x));
     default:
-      return nx_bits_to_float((int)dt,
-                              (uint32_t)nx_double_to_bits((int)dt, x));
+      return nx_float_to_double(
+          nx_bits_to_float((int)dt, (uint32_t)nx_double_to_bits((int)dt, x)));
   }
 }
 
