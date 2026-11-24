@@ -811,6 +811,23 @@ let raw (type v s) (x : (v, s, Nx.host) Nx.t) =
   | 32 -> codes (Nx.bitcast Nx.uint32 x)
   | _ -> codes (Nx.bitcast Nx.uint64 x)
 
+(* Whether [a] and [b] hold the same codes, which {!raw} reads, as one
+   comparison on the host: {!raw}'s text is made only for a failing check. *)
+let same (type v s) (a : (v, s, Nx.host) Nx.t) (b : (v, s, Nx.host) Nx.t) =
+  let width =
+    match Nx.Dtype.kind (Nx.dtype a) with
+    | Complex -> Nx.Dtype.bits (Nx.dtype a) / 2
+    | Float -> Nx.Dtype.bits (Nx.dtype a)
+    | Signed | Unsigned | Boolean -> 0
+  in
+  let equal x y = Nx.to_array (Nx.array_equal x y) = [| true |] in
+  match width with
+  | 0 -> equal a b
+  | 8 -> equal (Nx.bitcast Nx.uint8 a) (Nx.bitcast Nx.uint8 b)
+  | 16 -> equal (Nx.bitcast Nx.uint16 a) (Nx.bitcast Nx.uint16 b)
+  | 32 -> equal (Nx.bitcast Nx.uint32 a) (Nx.bitcast Nx.uint32 b)
+  | _ -> equal (Nx.bitcast Nx.uint64 a) (Nx.bitcast Nx.uint64 b)
+
 (* Whether two elements of a slice of [x] along [axis] are equal in the sort
    order. A complex number's are not looked for. *)
 let ties (type v s) (x : (v, s, Nx.host) Nx.t) axis =
@@ -882,9 +899,12 @@ let top_k c =
       Nx.Ptree.(tensor @-> returns (pair tensor tensor))
       f (Nx.place S.on x)
   in
-  let host x = Nx.place Nx.Host.on x in
-  equal ~msg:"positions" codes_t (codes positions) (codes (host positions'));
-  equal ~msg:"values" codes_t (raw values) (raw (host values'))
+  let positions' = Nx.place Nx.Host.on positions'
+  and values' = Nx.place Nx.Host.on values' in
+  if not (same positions positions') then
+    equal ~msg:"positions" codes_t (codes positions) (codes positions');
+  if not (same values values') then
+    equal ~msg:"values" codes_t (raw values) (raw values')
 
 (* Nx.nan_to_num compiled on the GPU gives the host's eager bits at each float
    dtype the GPU's kernels have and at complex64: NaN to 0, the infinities to
