@@ -427,10 +427,10 @@ let node_hash op src arg =
    [2^bits] slots, each the hash of a node, [-1] if never used, and the node,
    held weakly so that the table keeps no node alive. A lookup compares hashes
    and reads only the nodes whose hash is its own. A slot whose node was
-   collected stays used until the shard is rebuilt, keeping its live nodes,
-   once half its slots are used. A shard starts at the least size, so that a
-   program that builds no node keeps no table in the heap every major
-   collection marks. *)
+   collected stays used: lookups pass over it, and the first addition whose walk
+   passes it takes it. Once half its slots are used, the shard is rebuilt with
+   its live nodes. A shard starts at the least size, so that a program that
+   builds no node keeps no table in the heap every major collection marks. *)
 type shard = {
   mutable hashes : int array;
   mutable nodes : t Weak.t;
@@ -647,30 +647,42 @@ let rebuild sh =
   sh.log_size <- bits;
   sh.used <- !moved
 
-(* The node of [op], [src] and [arg], found in [sh] from slot [i] on or added to
-   it at the first unused slot, its hash and its node set with nothing
-   allocated between. A slot whose node was collected is passed over, and
-   freed once the shard is rebuilt. *)
-let rec intern sh hash op src arg i =
+(* Sets slot [i] of [sh] to a new node of [op], [src] and [arg]: its hash and
+   its node, with nothing allocated between. *)
+let place sh hash op src arg i =
+  let dtype = dtype_of op src arg in
+  let u = node op src arg dtype (Atomic.fetch_and_add next_id 1) in
+  let some = Some u in
+  Array.unsafe_set sh.hashes i hash;
+  Weak.set sh.nodes i some;
+  u
+
+(* The node of [op], [src] and [arg], found in [sh] from slot [i] on, or added
+   at [free], the first slot passed whose node was collected, or else at the
+   first unused slot. The lookup reaches an unused slot before it adds, so it
+   finds an equal live node wherever the chain holds it; no slot becomes unused
+   again, so no other node's chain breaks. *)
+let rec intern sh hash op src arg free i =
   let h = Array.unsafe_get sh.hashes i in
   let next = (i + 1) land ((1 lsl sh.log_size) - 1) in
-  if h = -1 then begin
-    let dtype = dtype_of op src arg in
-    let u = node op src arg dtype (Atomic.fetch_and_add next_id 1) in
-    let some = Some u in
-    Array.unsafe_set sh.hashes i hash;
-    Weak.set sh.nodes i some;
-    sh.used <- sh.used + 1;
-    if 2 * sh.used > 1 lsl sh.log_size then rebuild sh;
-    u
-  end
-  else if h <> hash then intern sh hash op src arg next
+  if h = -1 then
+    if free >= 0 then place sh hash op src arg free
+    else begin
+      let u = place sh hash op src arg i in
+      sh.used <- sh.used + 1;
+      if 2 * sh.used > 1 lsl sh.log_size then rebuild sh;
+      u
+    end
+  else if h <> hash then
+    let free = if free < 0 && not (Weak.check sh.nodes i) then i else free in
+    intern sh hash op src arg free next
   else
     match Weak.get sh.nodes i with
     | Some u
       when u.op = op && List.equal ( == ) u.src src && equal_arg u.arg arg ->
         u
-    | _ -> intern sh hash op src arg next
+    | Some _ -> intern sh hash op src arg free next
+    | None -> intern sh hash op src arg (if free < 0 then i else free) next
 
 (* Whether source [i] of [op] over [src] is a number, read at no type's width: a
    shift's count, or the weak integer exponent of an integer base. *)
@@ -722,7 +734,9 @@ let rec v ?(src = []) ?(arg = No_arg) op =
      whole: a slot takes its hash and its node with no poll between, and a
      rebuilt shard replaces the old one only once whole. *)
   Mutex.lock sh.lock;
-  match intern sh hash op src arg (hash land ((1 lsl sh.log_size) - 1)) with
+  match
+    intern sh hash op src arg (-1) (hash land ((1 lsl sh.log_size) - 1))
+  with
   | u ->
       Mutex.unlock sh.lock;
       u

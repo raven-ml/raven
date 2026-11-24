@@ -398,9 +398,47 @@ let interrupted k f =
           Some !n
       | exception Interrupted -> None)
 
+(* Hash-consing under churn, against keys. A world counts its collections: a
+   node's reference is its key and the collections before it. Nodes dropped
+   before a build can still read live when it walks their slots, and die by the
+   next collection, so a key built again after it walks dead slots before
+   reaching its live node. Few keys, so that comparisons often meet one key
+   built on each side of a collection. *)
+let churn_node k = Ops.v ~arg:(String (Printf.sprintf "churn key %d" k)) Op.Noop
+
+let[@inline never] drop n =
+  for i = 0 to n - 1 do
+    ignore
+      (Sys.opaque_identity
+         (Ops.v ~arg:(String (Printf.sprintf "churn dropped %d" i)) Op.Noop))
+  done
+
+let churn =
+  let world = abstract "w" and node = abstract "u" in
+  let same (ka, ea) (kb, eb) =
+    cover "one key built on each side of a collection" (ka = kb && ea <> eb);
+    cover "two keys" (ka <> kb);
+    ka = kb
+  in
+  stateful "a node is any equal live node, across collections and churn"
+    [
+      command "world" (Gen.unit @-> makes world) (fun () -> ref 0) ignore;
+      command "build"
+        (world ^-> Gen.int_range 0 3 @-> makes node)
+        (fun w k -> (k, !w))
+        (fun () k -> churn_node k);
+      command "same" (node ^-> node ^-> returns bool) same ( == );
+      command "drop" (Gen.int_range 0 2000 @-> returns unit) ignore drop;
+      command "collect"
+        (world ^-> returns unit)
+        (fun w -> incr w)
+        (fun () -> Gc.full_major ());
+    ]
+
 let identity =
   group "identity"
     [
+      churn;
       prop "building a graph twice gives the same node" gen_recipe (fun r ->
           is_true (build (leaves ()) r == build (leaves ()) r));
       prop "structurally different graphs are different nodes"
