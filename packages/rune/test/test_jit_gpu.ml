@@ -3743,7 +3743,8 @@ let () =
                   heads)
                (fun c ->
                  let d, s = on_gpu () in
-                 assume (has_float64 d);
+                 if not (has_float64 d) then
+                   skip ~reason:"the GPU's kernels lack float64" ();
                  Attentions.grad_law ~composed:true ~wide:true s ~vmap:false c);
              Windtrap.cases
                "the gradient of float32 keys of one chunk, unmasked, over \
