@@ -477,9 +477,9 @@ let wide_rows =
 
 (* Parted scratch *)
 
-(* The address space a forked child gives a parted float4_e2m1fn Add past
-   its own: the Add's sort takes 32 bytes for each of its 4Mi updates, and
-   the pool's threads their stacks. *)
+(* The address space a forked child gives a parted float4_e2m1fn Add past its
+   own: the Add's sort takes 32 bytes for each of its 4Mi updates, and 12 KiB on
+   each thread. *)
 let parted_cap = 512 lsl 20
 
 (* A float4_e2m1fn array of shape [s], each element +0. *)
@@ -506,15 +506,16 @@ let test_parted_memory (b : Support.backend) () =
   in
   let into = f4_zeros s and updates = f4_zeros s in
   let dst = A.create Rig.host D.Float4_e2m1fn (Iarray.of_array s) in
+  let add () =
+    K.scatter Nx_kernel.Add ~unique:false ~axis:0 ~dst ~into idx updates
+  in
+  (* A first Add starts the child's pool before the limit: a C library may map
+     its threads' stacks anew in a forked child, 8 MiB a core, which is no
+     scratch of the call's. glibc 2.43 and musl do. *)
   let run () =
+    ignore (add ());
     if not (Support.cap_memory parted_cap) then 3
-    else
-      match
-        K.scatter Nx_kernel.Add ~unique:false ~axis:0 ~dst ~into idx updates
-      with
-      | A.Done -> 0
-      | _ -> 2
-      | exception Out_of_memory -> 1
+    else match add () with A.Done -> 0 | _ -> 2 | exception Out_of_memory -> 1
   in
   match Unix.fork () with
   | 0 -> Unix._exit (try run () with _ -> 4)
