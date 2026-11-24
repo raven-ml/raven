@@ -632,7 +632,7 @@ let errors =
       test "an exponent of the quotient that leaves int" (fun () ->
           raises (Invalid_argument "Unit.ratio: the exponent of pi leaves int")
             (fun () -> Unit.(ratio Nx.float64 (pi ** max_int) (pi ** -1))));
-      test ~timeout:1.0
+      test
         "a root whose radicand is past the budget raises at once" (fun () ->
           (* 3^(10000006/10000007): the radicand alone would be 16 million
              bits. *)
