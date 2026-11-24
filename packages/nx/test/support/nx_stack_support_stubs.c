@@ -13,8 +13,11 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
+/* alloca's header: the BSDs declare it in stdlib.h and have no alloca.h. */
 #if defined(_WIN32)
 #include <malloc.h>
+#elif defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+#include <stdlib.h>
 #else
 #include <alloca.h>
 #endif
