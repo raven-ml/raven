@@ -974,15 +974,15 @@ let test_eigh () =
       let e = (k * n) + i in
       if k = 1 then equal ~msg:"NaN" Testable.bool true (Float.is_nan w.(e))
       else
-        less
-          ~msg:(Printf.sprintf "matrix %d, value %d" k i)
-          error ~than:(tol +. Float.min_float)
+        below
+          ~msg:(fun () -> Printf.sprintf "matrix %d, value %d" k i)
+          ~than:(tol +. Float.min_float)
           (Float.abs (w.(e) -. eager.(e)))
     done;
     if k <> 1 then
-      less
-        ~msg:(Printf.sprintf "matrix %d: vᵀ v = I" k)
-        error ~than:(g +. gamma64 (nf +. 2.))
+      below
+        ~msg:(fun () -> Printf.sprintf "matrix %d: vᵀ v = I" k)
+        ~than:(g +. gamma64 (nf +. 2.))
         (sqrt !orthogonality)
   done
 
@@ -1274,9 +1274,8 @@ let within ~bound eager jit =
     (fun i ei ->
       if Float.is_nan ei then equal ~msg:"NaN" bool true (Float.is_nan j.(i))
       else
-        less
-          ~msg:(Printf.sprintf "distance at %d" i)
-          error
+        below
+          ~msg:(fun () -> Printf.sprintf "distance at %d" i)
           ~than:(b.(i) +. Float.min_float)
           (Float.abs (j.(i) -. ei)))
     e
@@ -1810,10 +1809,10 @@ let unit_case (type b) (dt : (float, b) Nx.dtype) c () =
     (fun i y ->
       let t = ts.(i / cols) in
       let exact = c +. (float_of_int (units_k - 1) *. t) in
-      less
-        ~msg:(Printf.sprintf "row %d, terms %h, column %d" (i / cols) t
-                (i mod cols))
-        error ~than:(g *. exact)
+      below
+        ~msg:(fun () ->
+          Printf.sprintf "row %d, terms %h, column %d" (i / cols) t (i mod cols))
+        ~than:(g *. exact)
         (Float.abs (y -. exact)))
     (Nx.to_array (host jit))
 
@@ -1902,9 +1901,10 @@ let within_bound (Narrow (dt, u, tiny), (m, k, n), seed) =
     (fun i z ->
       let e = product (k + 1) *. mass.(i) in
       let bound = e +. (u *. (Float.abs z +. e)) +. tiny in
-      less
-        ~msg:(Printf.sprintf "[%d; %d], exactly %h" (i / n) (i mod n) z)
-        error ~than:bound
+      below
+        ~msg:(fun () ->
+          Printf.sprintf "[%d; %d], exactly %h" (i / n) (i mod n) z)
+        ~than:bound
         (Float.abs (y.(i) -. z)))
     exact
 
@@ -1951,9 +1951,9 @@ let test_padded_bias () =
   Array.iteri
     (fun i z ->
       let e = product (k + 2) *. mass.(i) in
-      less
-        ~msg:(Printf.sprintf "[%d; %d]" (i / n) (i mod n))
-        error ~than:(e +. (u *. (Float.abs z +. e)))
+      below
+        ~msg:(fun () -> Printf.sprintf "[%d; %d]" (i / n) (i mod n))
+        ~than:(e +. (u *. (Float.abs z +. e)))
         (Float.abs (y.(i) -. z)))
     exact
 
@@ -1985,9 +1985,9 @@ let test_transposed_product () =
   Array.iteri
     (fun i z ->
       let e = product (k + 1) *. mass.(i) in
-      less
-        ~msg:(Printf.sprintf "[%d; %d]" (i / n) (i mod n))
-        error ~than:(e +. (u *. (Float.abs z +. e)))
+      below
+        ~msg:(fun () -> Printf.sprintf "[%d; %d]" (i / n) (i mod n))
+        ~than:(e +. (u *. (Float.abs z +. e)))
         (Float.abs (y.(i) -. z)))
     exact
 
@@ -2015,9 +2015,9 @@ let test_sixteen_terms () =
   let exact = 1. +. (float_of_int (k - 1) *. t) in
   Array.iteri
     (fun i y ->
-      less
-        ~msg:(Printf.sprintf "[%d; %d]" (i / n) (i mod n))
-        error ~than:(product (k + 1) *. exact)
+      below
+        ~msg:(fun () -> Printf.sprintf "[%d; %d]" (i / n) (i mod n))
+        ~than:(product (k + 1) *. exact)
         (Float.abs (y -. exact)))
     (Nx.to_array (host y))
 
@@ -2265,7 +2265,8 @@ let test_narrowed_bound () =
   let c = Nx.to_array (Nx.cast Nx.float64 (host c)) in
   Array.iteri
     (fun i z ->
-      less ~msg:(string_of_int i) error
+      below
+        ~msg:(fun () -> string_of_int i)
         ~than:(product ((s * k) + 1) *. mass.(i))
         (Float.abs (c.(i) -. z)))
     exact
@@ -2299,7 +2300,8 @@ let test_heads_projection () =
   Array.iteri
     (fun i z ->
       let e = product (k + 1) *. mass.(i) in
-      less ~msg:(string_of_int i) error
+      below
+        ~msg:(fun () -> string_of_int i)
         ~than:(e +. (u *. (Float.abs z +. e)))
         (Float.abs (y.(i) -. z)))
     exact
@@ -2339,7 +2341,8 @@ let test_padded_frames () =
   Array.iteri
     (fun i z ->
       let e = product (k + 2) *. mass.(i) in
-      less ~msg:(string_of_int i) error
+      below
+        ~msg:(fun () -> string_of_int i)
         ~than:(e +. (u *. (Float.abs z +. e)))
         (Float.abs (y.(i) -. z)))
     exact
@@ -2378,7 +2381,8 @@ let test_padded_tokens () =
     Array.iteri
       (fun i z ->
         let e = product (k + 2) *. mass.(i) in
-        less ~msg:(string_of_int i) error
+        below
+          ~msg:(fun () -> string_of_int i)
           ~than:(e +. (u *. (Float.abs z +. e)))
           (Float.abs (y.(i) -. z)))
       exact
@@ -2453,7 +2457,8 @@ let test_routed_prompt () =
   less ~msg:"the largest result" float_exact ~than:largest 0.;
   Array.iteri
     (fun i e ->
-      less ~msg:(Printf.sprintf "element %d" i) error
+      below
+        ~msg:(fun () -> Printf.sprintf "element %d" i)
         ~than:(1e-4 *. largest)
         (Float.abs (y.(i) -. e)))
     eager
@@ -2879,9 +2884,9 @@ let computed_law c =
   let exact = Nx.to_array exact and bound = Nx.to_array bound in
   Array.iteri
     (fun i e ->
-      less
-        ~msg:(Printf.sprintf "element %d" i)
-        error ~than:bound.(i)
+      below
+        ~msg:(fun () -> Printf.sprintf "element %d" i)
+        ~than:bound.(i)
         (Float.abs (y.(i) -. e)))
     exact
 
@@ -2934,9 +2939,9 @@ let quant_law c =
     let b = Nx.to_array side in
     Array.iteri
       (fun i e ->
-        less
-          ~msg:(Printf.sprintf "%s at %d" msg i)
-          error ~than:(b.(i) +. Float.min_float)
+        below
+          ~msg:(fun () -> Printf.sprintf "%s at %d" msg i)
+          ~than:(b.(i) +. Float.min_float)
           (Float.abs (y.(i) -. e)))
       e
   in
@@ -2998,7 +3003,8 @@ let partial_side_a () =
   let y = Nx.to_array y and r = Nx.to_array r and sum = Nx.to_array sum in
   Array.iteri
     (fun i e ->
-      less ~msg:(Printf.sprintf "at %d" i) error
+      below
+        ~msg:(fun () -> Printf.sprintf "at %d" i)
         ~than:((2. *. gamma *. sum.(i)) +. Float.min_float)
         (Float.abs (e -. r.(i))))
     y
@@ -3038,7 +3044,8 @@ let core_under_a_reduce () =
   let y = Nx.to_array y and r = Nx.to_array r and sum = Nx.to_array sum in
   Array.iteri
     (fun i e ->
-      less ~msg:(Printf.sprintf "at %d" i) error
+      below
+        ~msg:(fun () -> Printf.sprintf "at %d" i)
         ~than:((2. *. gamma *. sum.(i)) +. Float.min_float)
         (Float.abs (e -. r.(i))))
     y

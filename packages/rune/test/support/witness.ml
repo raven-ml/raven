@@ -96,3 +96,6 @@ let error =
       | 0 -> Float.compare a b
       | c -> c)
     float_exact
+
+let below ?__POS__ ~msg ~than e =
+  if not (e < than) then less ?__POS__ ~msg:(msg ()) error ~than e

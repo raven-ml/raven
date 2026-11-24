@@ -807,9 +807,10 @@ let law_check ?(composed = false) ?wide c compiled =
   let vmax = if c.positive then 1.01 else 1. in
   Array.iteri
     (fun i l ->
-      let at = Printf.sprintf "row %d" i in
       if l = Float.neg_infinity then
-        equal ~msg:("an empty row's lse at " ^ at) float_exact l lse.(i)
+        equal
+          ~msg:(Printf.sprintf "an empty row's lse at row %d" i)
+          float_exact l lse.(i)
       else begin
         let eps =
           (((1.37 *. Float.of_int (c.tk - 1)) +. 19. +. (3. *. ln)) *. u)
@@ -826,7 +827,8 @@ let law_check ?(composed = false) ?wide c compiled =
         in
         let w = ((1. +. u) *. ((2. *. eta) +. eps)) +. (((2. *. b) +. ln +. 19.) *. u) in
         let w_ref = if wide then (2. *. eta) +. eps_ref +. (((2. *. b) +. ln +. 5.) *. u) else 0. in
-        less ~msg:("lse at " ^ at) Witness.error
+        Witness.below
+          ~msg:(fun () -> Printf.sprintf "lse at row %d" i)
           ~than:(eta +. eps +. (if wide then eta +. eps_ref else 0.) +. 1e-300)
           (Float.abs (l -. lse.(i)));
         for d = 0 to c.dv - 1 do
@@ -843,9 +845,9 @@ let law_check ?(composed = false) ?wide c compiled =
             +. (if narrow then uq *. mj else 0.)
             +. (if uq = 0x1p-11 then 0x1p-25 *. vmax *. Float.of_int c.tk else 0.)
           in
-          less
-            ~msg:(Printf.sprintf "o at row %d column %d" i d)
-            Witness.error ~than:(bound +. 1e-300)
+          Witness.below
+            ~msg:(fun () -> Printf.sprintf "o at row %d column %d" i d)
+            ~than:(bound +. 1e-300)
             (Float.abs (o.(j) -. o_ref.(j)))
         done
       end)
@@ -1151,9 +1153,8 @@ let grad_law ?(composed = false) ?wide (module S : Nx.Devices) ~vmap c =
     equal ~msg:(name ^ "'s elements") Testable.int (Array.length refs) (Array.length gs);
     Array.iteri
       (fun j r ->
-        less
-          ~msg:(Printf.sprintf "%s at %d" name j)
-          Witness.error
+        Witness.below
+          ~msg:(fun () -> Printf.sprintf "%s at %d" name j)
           ~than:(twice (bound j +. (uq *. Float.abs r) +. floor +. result_least) +. 1e-300)
           (Float.abs (gs.(j) -. r)))
       refs

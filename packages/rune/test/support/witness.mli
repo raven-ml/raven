@@ -58,3 +58,9 @@ val error : float Windtrap.Testable.t
 (** [error] is {!Windtrap.float_exact} ordered with NaN above every float, as an
     error is: [less error ~than:b e] fails where [e] is NaN, which
     [float_exact]'s order puts below every float. *)
+
+val below :
+  ?__POS__:Windtrap.pos -> msg:(unit -> string) -> than:float -> float -> unit
+(** [below ~msg ~than e] is [less error ~msg:(msg ()) ~than e], [msg] called
+    only where [e] is not below [than]: a check of every element of a large
+    result makes no message for an element that holds. *)
