@@ -208,6 +208,13 @@ let lead_class =
   t
 
 external get64u : string -> int -> int64 = "%caml_string_get64u"
+external swap64 : int64 -> int64 = "%bswap_int64"
+
+(* Eight bytes of [s] from [i], the first lowest, so that [ctz64] of a mask of
+   them finds the first byte flagged on every machine. *)
+let[@inline] get64le s i =
+  let w = get64u s i in
+  if Sys.big_endian then swap64 w else w
 
 let debruijn = 0x03f79d71b4ca8b09L
 
@@ -246,7 +253,7 @@ let letters_swar s i stop =
   let j = ref i in
   let scanning = ref true in
   while !scanning && !j + 8 <= stop do
-    let m = non_letters (get64u s !j) in
+    let m = non_letters (get64le s !j) in
     if Int64.equal m 0L then j := !j + 8
     else begin
       j := !j + (ctz64 m lsr 3);

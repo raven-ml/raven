@@ -5294,6 +5294,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Pre-tokenizers split runs of letters where they end on big-endian machines,
+  such as s390x. The scan of eight bytes at a time took a word's highest byte
+  for its first.
 - brot needs re 1.14.0, from which a compiled regex is safe to share
   between domains, as a tokenizer's are, and uucp 18.0.0, the Unicode
   version of the general categories `Brot` states.
