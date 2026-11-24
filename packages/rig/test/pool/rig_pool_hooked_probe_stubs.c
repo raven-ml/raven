@@ -79,6 +79,7 @@ typedef enum {
   body_done,
   asleep,
   w2_parking,
+  w_asleep,
   events
 } event;
 
@@ -103,6 +104,7 @@ static const char *event_names[events] = {
     "the body's end",
     "workers 1 and 2's sleep",
     "worker 2's parking",
+    "the worker's sleep",
 };
 
 static _Atomic int signalled[events];
@@ -124,12 +126,16 @@ static int await_for(event e, int64_t ns) {
   return 1;
 }
 
+/* Records [e] as the first event a wait gave up on. */
+static void gave_up(event e) {
+  int none = -1;
+  atomic_compare_exchange_strong(&timed_out, &none, (int)e);
+}
+
 /* Waits for [e]; past patience, records it and lets the thread go on, so a
    scenario that cannot hold ends and answers instead of hanging. */
 static void await(event e) {
-  if (await_for(e, patience)) return;
-  int none = -1;
-  atomic_compare_exchange_strong(&timed_out, &none, (int)e);
+  if (!await_for(e, patience)) gave_up(e);
 }
 
 /* Scenarios and their hooks */
@@ -165,6 +171,16 @@ static uint64_t inside_at_close;
 static _Atomic int armed;
 static int take_arm(void) { return atomic_exchange(&armed, 0) == 1; }
 
+/* While [gated], the target waits at its decision to park, where it holds
+   nothing, so its next park comes after the scenario armed it (await_park).
+   Past patience it goes on, as [await] does. */
+static _Atomic int gated;
+
+static void hold_at_gate(void) {
+  int64_t deadline = now_ns() + patience;
+  while (atomic_load(&gated) && now_ns() < deadline) sched_yield();
+}
+
 static _Atomic int once_flags[events];
 static int once(event e) { return atomic_exchange(&once_flags[e], 1) == 0; }
 
@@ -175,6 +191,7 @@ static void hook(rig_pool_point at) {
   int caller = id == 0;
   if (caller && !atomic_load(&go)) return;
   int mine = id == target;
+  if (at == RIG_POOL_AT_PARK && mine) hold_at_gate();
   switch (ph) {
   case stale_first:
     if (at == RIG_POOL_AT_ENTER_OPEN && mine && once(w_loaded)) {
@@ -283,6 +300,7 @@ static void begin(phase ph) {
   atomic_store(&entered, 0);
   atomic_store(&go, 0);
   atomic_store(&armed, 0);
+  atomic_store(&gated, 0);
   atomic_store(&current, ph);
 }
 
@@ -387,15 +405,29 @@ static void settle(void) {
   for (int k = 0; k < 20; k++) kick();
 }
 
-/* Kicks the workers until the target's hook for [e] takes the arm on its way
-   to park, then waits for [e]. */
+/* Waits until the target's parked bit is set, read under the parking mutex
+   (rig_pool_parked): a worker holds that mutex from setting its bit until
+   it waits, so the target is then asleep, unless a job woke it since. Past
+   patience, records [w_asleep] as [await] does. */
+static void await_asleep_target(void) {
+  uint64_t bit = (uint64_t)1 << atomic_load(&target);
+  int64_t deadline = now_ns() + patience;
+  while (!(rig_pool_parked() & bit) && now_ns() <= deadline) sched_yield();
+  if (!(rig_pool_parked() & bit)) gave_up(w_asleep);
+}
+
+/* Makes the target park once more with its hook for [e] armed, then waits
+   for [e]. The target parks a spin window after it leaves a job, which can
+   be before that job returns to its caller: an arm set once the job returned
+   could miss the park, and the target would sleep unarmed. So the target
+   waits at the gate from its decision to park until the arm is set. It is
+   asleep before the kick, so the park the gate holds is the one after it. */
 static void await_park(event e) {
-  for (int tries = 0; tries < 10; tries++) {
-    kick();
-    atomic_store(&armed, 1);
-    if (await_for(e, patience / 20)) return;
-    if (atomic_exchange(&armed, 0) == 0) break; /* the hook took it */
-  }
+  await_asleep_target();
+  atomic_store(&gated, 1);
+  kick();
+  atomic_store(&armed, 1);
+  atomic_store(&gated, 0);
   await(e);
 }
 
@@ -419,8 +451,7 @@ static void await_asleep(void) {
     if (atomic_load(&slept) == both && (rig_pool_parked() & bits) == bits)
       return;
     if (now_ns() > deadline) {
-      int none = -1;
-      atomic_compare_exchange_strong(&timed_out, &none, (int)asleep);
+      gave_up(asleep);
       return;
     }
     sched_yield();
@@ -573,7 +604,7 @@ value rig_pool_test_wake(value v_order) {
   begin(which == 0 ? wake_bit : which == 1 ? wake_decided : wake_slept);
   target = 1;
   await_park(which == 1 ? w_decided : w_bit);
-  if (which == 2) usleep(2000);
+  if (which == 2) await_asleep_target();
   tally j;
   tally_init(&j, 2);
   j.awaited = 1;
