@@ -28,22 +28,39 @@ let seen =
    at once if the system does not show it. *)
 external await_socket : int -> int -> seen = "rig_dial_probe_await_socket"
 
-(* A loopback listener whose backlog is full, with the connections that fill
-   it: a connection to it waits. *)
+(* The most connections [full] makes. A backlog of one holds two on Linux and
+   one on macOS before the next connection waits; macOS takes a backlog of 0 for
+   128. *)
+let max_fill = 16
+
+(* A loopback listener whose backlog is full, with the connections that fill it:
+   a connection to it waits. Skips where the system refuses a connection past
+   the backlog, as FreeBSD resets it, or holds them all. *)
 let full () =
   Rig_support.needs_loopback ();
   let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
-  Unix.listen l 0;
+  Unix.listen l 1;
   let addr = Unix.getsockname l in
+  let give_up held reason =
+    List.iter Unix.close (l :: held);
+    skip ~reason ()
+  in
   let rec fill held =
+    if List.length held = max_fill then
+      give_up held "the backlog of one holds every connection";
     let c = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+    let held = c :: held in
     Unix.set_nonblock c;
-    (try Unix.connect c addr
-     with Unix.Unix_error ((Unix.EINPROGRESS | Unix.EWOULDBLOCK), _, _) -> ());
-    match Unix.select [] [ c ] [] 0.1 with
-    | [], [], [] -> c :: held
-    | _ -> fill (c :: held)
+    match Unix.connect c addr with
+    | (exception Unix.Unix_error ((Unix.EINPROGRESS | Unix.EWOULDBLOCK), _, _))
+    | () -> (
+        match Unix.select [] [ c ] [] 0.1 with
+        | [], [], [] -> held
+        | _ when Unix.getsockopt_error c = None -> fill held
+        | _ -> give_up held "the system refuses a connection past the backlog")
+    | exception Unix.Unix_error _ ->
+        give_up held "the system refuses a connection past the backlog"
   in
   let held = fill [] in
   match addr with
