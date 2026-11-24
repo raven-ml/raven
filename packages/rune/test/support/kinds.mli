@@ -121,8 +121,11 @@ type case
     per operand, or for a complex kind one per part of each operand, the real
     part first: [complex64] and [complex128] elements. *)
 
-val gen : kind -> case Windtrap.Gen.t
-(** [gen k] generates cases of [k]'s operands. *)
+val gen : ?f32:bool -> ?f64:bool -> kind -> case Windtrap.Gen.t
+(** [gen k] generates cases of [k]'s operands, their [float32] elements unless
+    [f32] is [false] and their [float64] ones unless [f64] is (both default
+    [true]). A width left out has no elements, for a {!law} that does not check
+    it. *)
 
 val example : kind -> case
 (** [example k] is a case of [k]'s fixed elements (every window of 2/π that a

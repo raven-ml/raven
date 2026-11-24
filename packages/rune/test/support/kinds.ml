@@ -2078,13 +2078,21 @@ let element wide k =
   | Cone (_, pairs) | Ctwo (_, pairs) ->
       Gen.frequency [ (3, alone); (1, annex_g wide (arity k)); (2, pairs wide) ]
 
-let gen k =
-  let block wide = Gen.array ~size:(Gen.constant n) (element wide k) in
+(* A width the law does not check is not drawn: its draws would cost as much as
+   the checked width's. *)
+let gen ?(f32 = true) ?(f64 = true) k =
+  let block wide drawn =
+    if drawn then Gen.array ~size:(Gen.constant n) (element wide k)
+    else Gen.constant [||]
+  in
+  let widths =
+    String.concat " and "
+      ((if f32 then [ "float32" ] else []) @ if f64 then [ "float64" ] else [])
+  in
   Gen.with_pp
-    (fun ppf _ ->
-      Format.fprintf ppf "%d elements of %s at float32 and float64" n k.name)
+    (fun ppf _ -> Format.fprintf ppf "%d elements of %s at %s" n k.name widths)
     Gen.(
-      let+ f32 = block false and+ f64 = block true in
+      let+ f32 = block false f32 and+ f64 = block true f64 in
       { f32; f64 })
 
 (* The example's operand codes: the edges, then each point and its neighbours up

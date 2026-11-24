@@ -3281,7 +3281,7 @@ let composed_law k =
     prop ~timeout:cold ~count:12
       ~examples:[ Kinds.example k ]
       (name ^ " at float32 gives eager's bits")
-      (Kinds.gen k) (kind_law ~f64:false k);
+      (Kinds.gen ~f64:false k) (kind_law ~f64:false k);
   ]
   @
   if List.mem name float32_only then []
@@ -3290,7 +3290,7 @@ let composed_law k =
       prop ~timeout:cold ~count:12
         ~examples:[ Kinds.example k ]
         (name ^ " at float64 gives eager's bits")
-        (Kinds.gen k)
+        (Kinds.gen ~f32:false k)
         (let law = kind_law ~f32:false k in
          fun c ->
            if not (fst (keeps ())) then
