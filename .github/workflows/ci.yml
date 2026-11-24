@@ -124,13 +124,13 @@ jobs:
       # The steps under the sanitizers build in their own directory. A
       # library built there links AddressSanitizer's runtime, which a plain
       # process cannot load, and a later step that installs the package
-      # without rebuilding it, such as quill's preload, would load it.
+      # without rebuilding it, such as quill's preload, would load it. The
+      # sanitizers' options are the sanitize profile's (dune), whose env-vars
+      # replace the step's environment.
       - name: Test lz under the sanitizers
         if: ${{ !cancelled() && runner.os != 'Windows' && matrix.os != 'ubuntu-22.04' }}
         env:
           DUNE_BUILD_DIR: _build_sanitize
-          ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
         run: |
           opam exec -- dune build --profile sanitize @packages/lz/all
@@ -155,16 +155,12 @@ jobs:
       # first, over 1000 cases each, but for the laws on two domains, which
       # windtrap tags parallel and which run 50 programs a case. The last
       # runtest runs every nx suite at its own counts, io's and array's again,
-      # those laws among them. A domain's thread exits on the signal stack the
-      # OCaml runtime allocated, which AddressSanitizer would unmap as its
-      # own. The documentation's examples run in the step above: the mdx
-      # stanzas are off under the sanitizers.
+      # those laws among them. The documentation's examples run in the step
+      # above: the mdx stanzas are off under the sanitizers.
       - name: Test nx under the sanitizers
         if: ${{ !cancelled() && runner.os != 'Windows' && matrix.os != 'ubuntu-22.04' }}
         env:
           DUNE_BUILD_DIR: _build_sanitize
-          ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           WINDTRAP_PROP_COUNT=1000 WINDTRAP_EXCLUDE_TAG=parallel bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
           WINDTRAP_PROP_COUNT=1000 WINDTRAP_EXCLUDE_TAG=parallel bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/array/runtest
@@ -192,8 +188,6 @@ jobs:
         if: ${{ !cancelled() && runner.os != 'Windows' && matrix.os != 'ubuntu-22.04' }}
         env:
           DUNE_BUILD_DIR: _build_sanitize
-          ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
         run: bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/talon/test/csv/runtest @packages/talon/test/parquet/runtest
 
