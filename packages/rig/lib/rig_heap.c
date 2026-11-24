@@ -933,19 +933,22 @@ static size_t heap_kept_from;
 /* The page, which [caml_rig_heap_init] reads once. */
 static size_t heap_page;
 
-/* The alignment every host's [malloc] gives. */
+/* The alignment every host's [malloc] gives a request of at least as many
+   bytes. A smaller request may start on less: FreeBSD's jemalloc packs those
+   of 8 bytes or fewer in a size class of 8, so they start on 8. */
 #define MALLOC_ALIGN 16
 
 /* The bytes allocated for a buffer of [n] bytes starting on a multiple of
    [align]: [n] rounded up to whole words, which the buffer's memory runs on
    to (rig.mli's Order), and [align - MALLOC_ALIGN] more, to start on one,
-   unless the C library aligns it, as [malloc] does to MALLOC_ALIGN and
-   [posix_memalign] to a page (heap_malloc). Windows aligns nothing that
-   [free] releases. The caller keeps [n] a page below the largest [intnat]
-   (Memory.host_buffer). */
+   unless the C library aligns it: [malloc] to MALLOC_ALIGN, given at least
+   MALLOC_ALIGN bytes, and [posix_memalign] to a page (heap_malloc). Windows
+   aligns nothing that [free] releases. The caller keeps [n] a page below the
+   largest [intnat] (Memory.host_buffer). */
 static size_t heap_size(size_t n, size_t align) {
   size_t whole = (n + RIG_WORD_BYTES - 1) & ~(size_t)(RIG_WORD_BYTES - 1);
-  if (align <= MALLOC_ALIGN) return whole;
+  if (whole == 0) return 0;
+  if (align <= MALLOC_ALIGN) return whole < MALLOC_ALIGN ? MALLOC_ALIGN : whole;
 #ifndef _WIN32
   if (align >= heap_page) return whole;
 #endif

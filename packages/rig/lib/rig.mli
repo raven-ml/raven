@@ -982,8 +982,9 @@ val failure : unit -> string option
     its cache ({!budget}), each allocation by its whole words
     ({!section-words}). [Pinned] memory counts in the host's budget. A host
     buffer counts the bytes it takes of the C library's memory: its whole
-    words, and up to 112 more where it starts on 128 bytes
-    ({!Buffer.create}). On Windows, where [free] releases
+    words, at least 16 bytes for a non-empty one, since the C library may
+    start a smaller allocation on less than {!alignment}, and up to 112 more
+    where it starts on 128 bytes ({!Buffer.create}). On Windows, where [free] releases
     no allocation aligned to a page, one that starts on a page counts a
     page less 16 bytes more. An allocation's bytes also pace the
     OCaml collector, so a device nearing its budget collects unreachable
@@ -1135,9 +1136,10 @@ val allocation : ?memory:Rig_edge.memory -> t -> int -> int
 (** [allocation ~memory d n] is the bytes a buffer of [n] bytes of [d]'s
     memory of kind [memory] (default [Device], {!Buffer.kind}) counts in the
     budget of {!charged}[ ~memory d]: on {!host}, the bytes it takes of the C
-    library's memory, its whole words and those its start takes; in another
-    device's budget, the bytes its driver takes, its whole words in whole
-    units of {!granules}; in the host's budget, its whole words.
+    library's memory, its whole words, at least 16 bytes where [n > 0], and
+    those its start takes; in another device's budget, the bytes its driver
+    takes, its whole words in whole units of {!granules}; in the host's
+    budget, its whole words.
 
     Raises [Invalid_argument] if [n < 0]. *)
 

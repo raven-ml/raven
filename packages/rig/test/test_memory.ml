@@ -85,7 +85,8 @@ let test_host_allocated () =
 
 (* A buffer adds {!Rig.allocation}'s bytes to its device's allocated bytes,
    at sizes around a word, a line and the host's kept size, on the host and
-   on a software device; a negative size raises. *)
+   on a software device; a host buffer takes at least 16 bytes; a negative
+   size raises. *)
 let test_allocation () =
   let memory = Result.get_ok (Rig.software "allocation") in
   let settled d =
@@ -121,6 +122,7 @@ let test_allocation () =
   let added = settled memory - before in
   ignore (Sys.opaque_identity b);
   equal ~msg:"mapped memory's bytes" int (Rig.allocation memory 200) added;
+  equal ~msg:"a host buffer of 1 byte" int 16 (Rig.allocation Rig.host 1);
   equal ~msg:"the host's budget" string (Rig.name Rig.host)
     (Rig.name (Rig.charged ~memory:B.Pinned Rig.host));
   raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
