@@ -1319,8 +1319,9 @@ let held_statement =
 
 (* One compiler for [native], made once, compiling from two domains at once
    before either has learnt what Clang compiles [native] for, which takes
-   Clang's statement: the second asks while the first waits on it. Each compile
-   fails with what the compiler proper says. *)
+   Clang's statement: the second starts once the first waits on it, and the
+   statement comes once the second waits for the first. Each compile fails with
+   what the compiler proper says. *)
 let first_compiles =
   test "two domains' first compiles of one compiler each reach Clang" (fun () ->
       under_stand_in held_statement @@ fun clang ->
@@ -1333,24 +1334,30 @@ let first_compiles =
             if has_infix ~affix:"no compiler proper" msg then "refused" else msg
         | exception e -> Printexc.to_string e
       in
-      let first = Domain.spawn outcome in
-      let rec wait n =
-        if n = 0 then fail "the first compile never asked Clang"
-        else if not (Sys.file_exists (Filename.concat dir "asked")) then (
+      (* Whether [holds] within [n] hundredths of a second. *)
+      let rec within n holds =
+        if holds () then true
+        else if n = 0 then false
+        else (
           Unix.sleepf 0.01;
-          wait (n - 1))
+          within (n - 1) holds)
       in
-      wait 3000;
+      let asked () = Sys.file_exists (Filename.concat dir "asked") in
+      let first = Domain.spawn outcome in
+      if not (within 1000 asked) then fail "the first compile never asked Clang";
+      let waited = Compiler_cpu.settle_waits () in
       let second = Domain.spawn outcome in
-      (* The second's own first steps take far less than this; the first holds
-         until [go] exists. *)
-      Unix.sleepf 0.2;
+      let second_waits =
+        within 1000 (fun () -> Compiler_cpu.settle_waits () > waited)
+      in
       Out_channel.with_open_bin (Filename.concat dir "go") ignore;
       let second = Domain.join second and first = Domain.join first in
       List.iter
         (fun f ->
           try Sys.remove (Filename.concat dir f) with Sys_error _ -> ())
         [ "asked"; "go" ];
+      if not second_waits then
+        fail "the second compile did not wait for the first";
       equal (pair string string) ("refused", "refused") (first, second))
 
 let refusal = "keeps AVX-512 on"

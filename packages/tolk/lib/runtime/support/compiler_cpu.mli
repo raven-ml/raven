@@ -153,3 +153,10 @@ val has_feature : string -> string -> bool
 
     Raises [Invalid_argument] naming [arch] if it has fewer than two
     fields. *)
+
+(**/**)
+
+val settle_waits : unit -> int
+(** [settle_waits ()] is the number of times a compile of a {!clang} compiler
+    has waited, in every domain since the program started, for another domain's
+    compile to settle what Clang compiles that compiler's [arch] for. *)

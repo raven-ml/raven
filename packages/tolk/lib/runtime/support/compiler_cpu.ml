@@ -652,17 +652,23 @@ let no_float16 =
    compiles. *)
 let keeps_avx512 = per_clang keeps
 
+let waits = Atomic.make 0
+let settle_waits () = Atomic.get waits
+
 let clang arch =
   let cc = Setting.value Setting.cc in
   (* A malformed [arch] raises now; what Clang compiles it for is asked when the
      table or a compile first needs it. *)
   let (_ : string * string list) = selection arch in
   (* Settled once, by the first of the domains that compile with it; the others
-     wait for it. *)
+     wait for it, each wait counted ({!settle_waits}). *)
   let selected =
     let lock = Mutex.create () and settled_to = ref None in
     fun () ->
-      Mutex.protect lock @@ fun () ->
+      if not (Mutex.try_lock lock) then (
+        Atomic.incr waits;
+        Mutex.lock lock);
+      Fun.protect ~finally:(fun () -> Mutex.unlock lock) @@ fun () ->
       match !settled_to with
       | Some selected -> selected
       | None ->
