@@ -1339,7 +1339,7 @@ let registers =
   let file arch =
     Option.map
       (fun (r : Renderer.registers) -> (r.count, r.bytes))
-      (Compiler_cpu.registers arch)
+      (Compiler_cpu.registers arch ())
   in
   (* The registers of a processor with AVX-512, as the Clang run compiles for
      it: 32, or SSE's 16 where {!Compiler_cpu.flags} turns AVX-512 off. *)
@@ -1470,7 +1470,7 @@ let native_avx10 =
             (Some (16, 32))
             (Option.map
                (fun (r : Renderer.registers) -> (r.count, r.bytes))
-               (Compiler_cpu.registers "x86_64,native"));
+               (Compiler_cpu.registers "x86_64,native" ()));
           match
             Compiler.compile (Compiler_cpu.clang "x86_64,native") increment
           with
@@ -1496,6 +1496,16 @@ let native_avx10 =
               | Compiler.Compile_error msg -> has_infix ~affix:refusal msg
               | _ -> false)
             (fun () -> Compiler.compile clang increment));
+      test "registers made under it answer under another CC" (fun () ->
+          under_stand_in llvm21_avx10 @@ fun _ ->
+          let registers = Compiler_cpu.registers "x86_64,native" in
+          Setting.context [ B (Setting.cc, missing_clang) ] @@ fun () ->
+          equal
+            (option (pair int int))
+            (Some (16, 32))
+            (Option.map
+               (fun (r : Renderer.registers) -> (r.count, r.bytes))
+               (registers ())));
     ]
 
 (* Processors with AVX-512, three naming AVX10.1, which LLVM 21 keeps on with
@@ -1528,7 +1538,7 @@ let kept_avx512 =
       let llvm21 = has_infix ~affix:"clang version 21." version in
       if llvm21 && has_infix ~affix:"avx10.1" arch then refuses arch
       else
-        match Compiler_cpu.registers arch with
+        match Compiler_cpu.registers arch () with
         | Some { count = 32; _ } when off -> refuses arch
       | Some _ | None -> (
           match Compiler.compile (Compiler_cpu.clang arch) "int x;" with
@@ -1556,7 +1566,7 @@ let without_clang =
                (Some (16, 16))
                (Option.map
                   (fun (r : Renderer.registers) -> (r.count, r.bytes))
-                  (Compiler_cpu.registers "x86_64,x86-64-v3")));
+                  (Compiler_cpu.registers "x86_64,x86-64-v3" ())));
          test "a cached object is served without a Clang that runs" (fun () ->
              let clang = Compiler_cpu.clang (native ()) in
              let table = Option.get (Compiler.cachekey clang) in

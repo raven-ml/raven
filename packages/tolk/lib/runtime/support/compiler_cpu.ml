@@ -648,7 +648,11 @@ let registers_of =
   | "arm64" -> Some { count = 32; bytes = 16 }
   | _ -> None
 
-let registers arch = registers_of (Setting.value Setting.cc) arch
+let registers arch =
+  let cc = Setting.value Setting.cc in
+  (* A malformed [arch] raises now, as {!clang}'s does. *)
+  let (_ : string * string list) = selection arch in
+  fun () -> registers_of cc arch
 
 (* The conversions between halves and floats that Clang calls where an x86_64
    processor has no F16C, which compiler-rt defines and no library of the

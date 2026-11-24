@@ -2411,7 +2411,7 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
     }
   in
   Renderer.v ~name:"ClangRenderer"
-    ~registers:(fun () -> Compiler_cpu.registers arch)
+    ~registers:(Compiler_cpu.registers arch)
     ~vector_lanes:clang_lanes ~has_local:false ~local_threads_max:1
     ~simd_threads:1
     ~global_max:[ 1; 0; 0 ]

@@ -335,8 +335,9 @@ val beam_debug : int t
     failed and the result; from [2], every candidate timed. Defaults to [0]. *)
 
 val cc : string t
-(** [cc] is the program {!Compiler_cpu.clang} runs, from [CC], read when the
-    compiler is made. Defaults to ["clang"]. *)
+(** [cc] is the program {!Compiler_cpu.clang} and {!Compiler_cpu.registers} run,
+    from [CC], read when the compiler or the register file is made. Defaults to
+    ["clang"]. *)
 
 val cuda_path : string t
 (** [cuda_path] is the directory of the CUDA toolkit whose headers

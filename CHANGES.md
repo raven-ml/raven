@@ -1716,6 +1716,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Compiler_cpu.registers arch` returns a function that asks the Clang
+  `Setting.cc` named when it was made, so `Cstyle.clang` takes its vector
+  widths from its compiler's Clang, whatever `CC` names later.
 - A compiler from `Compiler_cpu.clang` asks the Clang it was made under whether
   it keeps AVX-512 on and converts halves: a later `CC` changed its refusals
   and the half conversions its objects define.

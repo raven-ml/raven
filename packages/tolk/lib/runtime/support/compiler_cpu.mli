@@ -136,16 +136,16 @@ val flags : version:string -> string -> string list
 
     Raises [Invalid_argument] as {!clang} does. *)
 
-val registers : string -> Renderer.registers option
-(** [registers arch] is the vector register file of the processor
-    {!clang}[ arch] compiles for, as the macros of the Clang run {!Setting.cc}
-    state its features under {!flags}: on [x86_64], [16] registers, [32] with
-    AVX-512, of [32] bytes with AVX and [16] without (a processor with AVX-512
-    is taken at [32] bytes); on [arm64], [32] of [16]; on [riscv64], [None]. On
-    [x86_64] a Clang that does not run gives [16] of [16]. Each Clang and [arch]
-    is asked once per process.
+val registers : string -> unit -> Renderer.registers option
+(** [registers arch ()] is the vector register file of the processor
+    {!clang}[ arch] compiles for, as the macros of the Clang {!Setting.cc} names
+    when [registers arch] is made state its features under {!flags}: on
+    [x86_64], [16] registers, [32] with AVX-512, of [32] bytes with AVX and [16]
+    without (a processor with AVX-512 is taken at [32] bytes); on [arm64], [32]
+    of [16]; on [riscv64], [None]. On [x86_64] a Clang that does not run gives
+    [16] of [16]. Each Clang and [arch] is asked once per process.
 
-    Raises [Invalid_argument] as {!clang} does. *)
+    [registers arch] raises [Invalid_argument] as {!clang} does. *)
 
 val win64 : string -> bool
 (** [win64 arch] is [true] iff [arch], as {!clang} reads it, is x86_64's
