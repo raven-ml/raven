@@ -158,8 +158,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; the tests compile for the CPU with clang
-  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -172,7 +170,7 @@
  (dir packages/rune)
  (synopsis "Functional transformations for Nx arrays")
  (description
-  "Transformations of functions over Nx arrays: derivatives in forward and reverse mode, vmap over named axes, traced loops and custom rules, and compilation through tolk. They take any parameter structure described by Nx.Ptree, with mixed dtypes in one pass.")
+  "Transformations of functions over Nx arrays: derivatives in forward and reverse mode, vmap over named axes, traced loops and custom rules, and compilation through tolk. They take any parameter structure described by Nx.Ptree, with mixed dtypes in one pass. Rune.jit compiles for the CPU with the clang on PATH or the program CC names, which must be Clang 16 or later, or Apple's Clang 15 or later.")
  (depends
   (ocaml
    (>= 5.5.0))
@@ -192,8 +190,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; the tests compile for the CPU with clang
-  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -268,8 +264,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; the tests compile for the CPU with clang
-  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -287,7 +281,7 @@
  (dir packages/tolk)
  (synopsis "A minimal ML compiler for GPU tensor computation")
  (description
-  "Tolk is a minimal, readable ML compiler for GPU tensor computation in the Raven ecosystem.")
+  "Tolk is a minimal, readable ML compiler for GPU tensor computation in the Raven ecosystem. It compiles for the CPU with the clang on PATH or the program CC names, which must be Clang 16 or later, or Apple's Clang 15 or later.")
  (depends
   (ocaml
    (>= 5.5.0))
@@ -303,8 +297,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; the tests compile for the CPU with clang
-  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -333,8 +325,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; the tests compile for the CPU with clang
-  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -361,8 +351,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; the tests compile for the CPU with clang
-  (conf-clang :with-test)
   (thumper
    (and
     :with-test
@@ -391,8 +379,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; the tests compile for the CPU with clang
-  (conf-clang :with-test)
   (thumper
    (and
     :with-test

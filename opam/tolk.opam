@@ -3,7 +3,7 @@ opam-version: "2.0"
 version: "1.0.0~beta1"
 synopsis: "A minimal ML compiler for GPU tensor computation"
 description:
-  "Tolk is a minimal, readable ML compiler for GPU tensor computation in the Raven ecosystem."
+  "Tolk is a minimal, readable ML compiler for GPU tensor computation in the Raven ecosystem. It compiles for the CPU with the clang on PATH or the program CC names, which must be Clang 16 or later, or Apple's Clang 15 or later."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
@@ -18,7 +18,6 @@ depends: [
   "windtrap" {with-test & >= "0.3.1"}
   "ppx_windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "conf-clang" {with-test}
   "thumper" {with-test & >= "0.1.0"}
   "odoc" {with-doc}
 ]

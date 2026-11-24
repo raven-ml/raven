@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- No package depends on `conf-clang`, for its tests either, since it fails to
+  install on many systems. Where no Clang compiles, each test that compiles for
+  the CPU skips and names why (`Tolk_engine.compiles`).
 - raven's packages need dune 3.22. Under dune 3.21, `dune build -p <pkg>
   @runtest` also ran other packages' cram tests, which failed.
 - brot, lz, munin and quill build on OCaml before 5.5: release builds, which

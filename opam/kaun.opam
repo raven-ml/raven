@@ -23,7 +23,6 @@ depends: [
   "vega" {= version & with-test}
   "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "conf-clang" {with-test}
   "thumper" {with-test & >= "0.1.0"}
   "brot" {= version & with-dev-setup}
   "odoc" {with-doc}
