@@ -1769,10 +1769,11 @@ let test_bigarray_rank () =
 
 (* [bigarray] waits for the work on its array's memory: a Late device's store
    into a host array it borrowed, pending until a wait sleeps on the device. A
-   host buffer of 64 KiB starts on a page, which the Late device maps. *)
+   host buffer of [paged_from] bytes starts on a page, which the Late device
+   maps: 64 KiB, and 256 KiB on 64 KiB pages. *)
 let test_wait_bigarray () =
   let d, _ = late () in
-  let a = A.create Rig.host f32 [| 16384 |] in
+  let a = A.create Rig.host f32 [| Rig.Buffer.paged_from / 4 |] in
   pending (Option.get (A.borrow d a)) [| 3.; 4. |];
   equal ~msg:"pending" bool true (Rig.signaled d < Rig.submitted d);
   let g = A.bigarray a in
