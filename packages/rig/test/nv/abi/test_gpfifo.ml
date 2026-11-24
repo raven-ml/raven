@@ -37,7 +37,7 @@ let segment =
   (at - offset, offset, words)
 
 let entries =
-  group ~timeout:10. "entry"
+  group "entry"
     [
       prop
         "an entry names its segment's address and words, and waits for nothing"

@@ -129,11 +129,6 @@ val needs_fork : unit -> unit
 
 (** {1:waits Waits} *)
 
-val timeout : float
-(** [timeout] is each test's limit, 30 s, past the 10 s that a probe or a poll
-    waits before it fails with what it waited for. It is multiplied by the
-    factor [RIG_TEST_TIME_SCALE] names, as [Rig_support.time] multiplies. *)
-
 val settle : float -> (unit -> 'a) -> ('a -> bool) -> 'a
 (** [settle seconds read ok] reads [read ()] every millisecond until [ok] holds
     of the value or [seconds] have passed, and is the last value read. *)

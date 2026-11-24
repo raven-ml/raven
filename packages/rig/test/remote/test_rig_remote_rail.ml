@@ -206,4 +206,4 @@ let tests =
 
 let () =
   Watchdog.start ();
-  exit (run "rig_remote.rail" [ group ~timeout:60. "rig_remote" tests ])
+  exit (run "rig_remote.rail" [ group "rig_remote" tests ])

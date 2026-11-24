@@ -9,7 +9,6 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let timeout = 60.
 let empty d = Sub.make d [||]
 
 let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
@@ -965,7 +964,7 @@ let race_commands =
 
 let tests =
   [
-    group ~timeout "lose"
+    group "lose"
       [
         test "a lose gives the reason every later use raises" test_lose;
         test "the host is never lost" test_lose_host;
@@ -979,7 +978,7 @@ let tests =
            reason"
           race_commands;
       ];
-    group ~timeout "loss"
+    group "loss"
       [
         test "a reached point stays done when its device's word read loses it"
           test_reached_at_loss;
@@ -988,7 +987,7 @@ let tests =
         test "a stopped device is only freed" test_after_stop;
         test "memory a refused submit named does not raise Lost"
           test_unrun_names;
-        test ~timeout:10. "a wait finds a fault past 64 waits on one producer"
+        test "a wait finds a fault past 64 waits on one producer"
           test_many_waits;
         test "a stopped device frees memory dropped after its stop"
           test_free_after_stop;
@@ -1033,7 +1032,7 @@ let tests =
         test "memory a lost device used, reused, waits for nothing lost"
           test_reused_after_loss;
       ];
-    group ~timeout "close"
+    group "close"
       [
         test "a close waits for the work, then ends the device" test_close;
         test

@@ -15,7 +15,6 @@ module R = Rig_support.Reader
 module P = Rig_support.Polled
 
 let strf = Printf.sprintf
-let timeout = 60.
 
 (* The code other suites also run lives in test/fixtures. *)
 let obj f =
@@ -212,7 +211,7 @@ let test_run_bound () =
       make ((1 lsl 31) - 31))
 
 let program_tests =
-  group ~timeout "launches"
+  group "launches"
     [
       prop "a launch runs its function on its parameters over every thread"
         affine_case test_affine;
@@ -316,7 +315,7 @@ let test_other_parts () =
     ]
 
 let split_tests =
-  group ~timeout "splits"
+  group "splits"
     [
       prop "a launch runs every thread once, in calls of whole groups" grid_case
         test_split;
@@ -529,7 +528,7 @@ let test_waits_beside_launch () =
   less ~msg:"while held: signaled" int ~than:(Rig.Point.value held) signaled
 
 let domain_tests =
-  group ~timeout "domains"
+  group "domains"
     [
       test
         "a host submit waits for another domain's running launch before its \
@@ -676,7 +675,7 @@ let test_never_writable () =
   equal (option string) (Some "r-xp") perms
 
 let memory_tests =
-  group ~timeout "code memory"
+  group "code memory"
     [
       test "an unreachable image's code is unmapped" test_unmapped;
       test "a reachable image's code survives collections and runs"
@@ -852,7 +851,7 @@ let test_unlinked () =
     (load_error (read "../fixtures/affine_x86_64.o"))
 
 let refusal_tests =
-  group ~timeout "loads"
+  group "loads"
     [
       test "an image's functions are the symbols of its code" test_functions;
       test "a load of what is not ELF is refused" (fun () ->
@@ -981,7 +980,7 @@ let test_links () =
     (Rig.Image.links (Lazy.force software))
 
 let software_tests =
-  group ~timeout "software devices"
+  group "software devices"
     [
       test "the host and a software device link where rig links host code"
         test_links;
@@ -1142,7 +1141,7 @@ let test_lost_exchange () =
   Rig.close d
 
 let sharing_tests =
-  group ~timeout "sharing"
+  group "sharing"
     [
       test "images of one object on the host and two software devices share \
             its link"

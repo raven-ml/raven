@@ -15,8 +15,6 @@ module H = Rig_gpu_support.Host
 module P = Rig_support.Polled
 module E = Rig_gpu_support.Edge (P)
 
-let timeout = Rig_support.time 60.
-
 let pattern n seed =
   String.init n (fun i -> Char.chr ((seed + (i * 7)) land 255))
 
@@ -180,7 +178,7 @@ let () =
   exit
   @@ run "rig.copy_parts"
        [
-         group ~timeout "copy parts"
+         group "copy parts"
            [
              prop ~count:200
                "the software device runs boxes and fills as rig_edge.h states"

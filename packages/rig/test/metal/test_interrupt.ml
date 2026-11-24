@@ -23,7 +23,6 @@ module S = Rig_metal_support
 module M = Rig_metal
 
 let strf = Printf.sprintf
-let timeout = 60.
 
 (* The text of the driver's refusal of a take by a lock's holder. *)
 let retaken = "Rig_metal: a lock taken again by the thread that holds it"
@@ -369,7 +368,7 @@ let () =
   exit
     (run "rig_metal interrupt"
        [
-         group ~timeout "an exception at any allocation"
+         group "an exception at any allocation"
            [
              test
                "of a pipeline leaves every earlier one recordable, and the \
@@ -384,13 +383,13 @@ let () =
                 buffer freed if it raised"
                test_regions;
            ];
-         group ~timeout "a free from a callback at any allocation"
+         group "a free from a callback at any allocation"
            [
              test "of an icb, refused inside the device's guard" (reentry icb);
              test "of an allocation, refused inside the device's guard"
                (reentry region);
            ];
-         group ~timeout
+         group
            "a call to rig from a callback at any allocation keeps the device"
            [
              test "a free of the cache in an icb" free_in_icb;

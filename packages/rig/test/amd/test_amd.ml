@@ -124,7 +124,7 @@ let capacity =
       (A.path_capacity p)
   in
   let r9700 = 34208743424 in
-  group ~timeout:10. "capacity"
+  group "capacity"
     [
       test "a path that reports no free memory gives none" (fun () ->
           equal (option (pair int int)) None
@@ -155,7 +155,7 @@ let counts =
   ]
 
 let gpus =
-  group ~timeout:10. "GPUs"
+  group "GPUs"
     [
       cases "counts"
         ~id:(fun (field, _) -> strf "make refuses a GPU of %s below 1" field)
@@ -268,7 +268,7 @@ let c_room () =
     (E.room g [| E.raw ~queue:(-1) ~work:none () |])
 
 let misuse =
-  group ~timeout:30. "misuse"
+  group "misuse"
     [
       test "each misuse the interface states raises" misuse;
       test "the C room refuses what part refuses" c_room;
@@ -335,7 +335,7 @@ let refusals () =
     (image "\127ELF but not one")
 
 let images =
-  group ~timeout:30. "images"
+  group "images"
     [
       test "an image names its kernels' descriptors in its code" loads;
       test "an image refuses what the GPU cannot run, saying why" refusals;
@@ -405,7 +405,7 @@ let launch_room () =
   A.free g r
 
 let entries =
-  group ~timeout:30. "entries"
+  group "entries"
     [
       test
         "entry makes a launch once, with its scratch, and refuses what a \
@@ -612,7 +612,7 @@ let grows_with_work (ss, s) =
   at_least int ~msg:"with parts before it" ~than:(rank alone) (rank after)
 
 let room =
-  group ~timeout:300. "room"
+  group "room"
     [
       test "room is Later only while a value is unreached" room_from_the_word;
       prop ~count:100
@@ -676,7 +676,7 @@ let held_growth () =
   List.iter (A.free g) [ r; flag; out ]
 
 let growth =
-  group ~timeout:60. "growth"
+  group "growth"
     [
       test "a growth is installed once the device is idle, every room waiting"
         held_growth;
@@ -1555,7 +1555,7 @@ let lap_law schedule =
     x.shared_span
 
 let launching =
-  group ~timeout:60. "launching"
+  group "launching"
     [
       test "launch arguments survive segment reuse with work in flight"
         launch_segments_hw;
@@ -1672,7 +1672,7 @@ let hooks_after_close () =
       A.renumber t.g (1 lsl 32))
 
 let work =
-  group ~timeout:60. "work"
+  group "work"
     [
       test "locate names a region by its GPU address" locates;
       test "map_host refuses pages it cannot map for writing" map_host_refusals;
@@ -1760,7 +1760,7 @@ let around_the_packet () =
     [ max - 1; max; max + 1 ]
 
 let memory =
-  group ~timeout:120. "memory"
+  group "memory"
     [
       test "copies around the copy engine's packet size are the identity"
         around_the_packet;
@@ -1877,7 +1877,7 @@ let exports () =
   else exports_dmabuf ()
 
 let dma =
-  group ~timeout:120. "another function's DMA"
+  group "another function's DMA"
     [
       test
         "dma exports a dma-buf through amdgpu, or bus ranges over PCI that \
@@ -1966,7 +1966,7 @@ let held_sleep () =
   less int ~msg:"ms the held sleep slept" ~than:1_000 (Domain.join worker)
 
 let code =
-  group ~timeout:60. "kernels"
+  group "kernels"
     [
       test "a kernel loaded from its image computes" (fun () ->
           S.with_ @@ fun t ->
@@ -2140,7 +2140,7 @@ module Chain = struct
 end
 
 let queue_order =
-  group ~timeout:120. "in order"
+  group "in order"
     [
       cases
         "compute parts run in array order, each reading its predecessor's \
@@ -2440,7 +2440,7 @@ let many_waits () =
   Rig.Point.wait v
 
 let waits =
-  group ~timeout:120. "waits"
+  group "waits"
     [
       cases
         "a wait holds the work until the word reaches it, across 2^32 (sampled)"
@@ -2712,7 +2712,7 @@ let regrown_beside_held () =
   List.iter (A.free g) ((flag :: out :: Option.to_list ib) @ Option.to_list ib')
 
 let rings =
-  group ~timeout:300. "rings"
+  group "rings"
     [
       test "a second growth before an install replaces the first's queue"
         regrown;
@@ -2734,7 +2734,7 @@ let rings =
     ]
 
 let timeline =
-  group ~timeout:300. "timeline"
+  group "timeline"
     [
       cases "values across 2^32 complete in order, ending on either queue"
         ~id:(fun (q, _) -> "the value at 2^32 ending on " ^ q)
@@ -2980,7 +2980,7 @@ let two_in_array () =
   Rig.close gate
 
 let two =
-  group ~timeout:60. "one GPU"
+  group "one GPU"
     [
       test "two devices of one GPU opened through rig share rig's array"
         two_in_array;
@@ -3041,7 +3041,7 @@ let machine_decides why =
           (Option.value l ~default:"nothing")
 
 let traces =
-  group ~timeout:60. "traces"
+  group "traces"
     [
       test "a device's trace buffers are made once, the host reading them"
         (fun () ->
@@ -3535,7 +3535,7 @@ let traced_launch () =
   done
 
 let counters =
-  group ~timeout:60. "counters"
+  group "counters"
     [
       test
         "a launch between Counter.start and Counter.stop on an idle GPU counts \
@@ -4218,7 +4218,7 @@ let measured_preempted () =
   greater int ~msg:"unmeasured launches" ~than:0 unmeasured
 
 let measures_group =
-  group ~timeout:300. "measures"
+  group "measures"
     [
       prop ~count:40
         "a measured launch on an idle GPU has one Counters event of its own \

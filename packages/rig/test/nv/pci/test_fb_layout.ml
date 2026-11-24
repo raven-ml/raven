@@ -198,12 +198,12 @@ let () =
   exit
   @@ run "rig_nv_pci.fb_layout"
        [
-         group ~timeout:10. "radix-3" [ test_radix3 ];
-         group ~timeout:10. "metadata"
+         group "radix-3" [ test_radix3 ];
+         group "metadata"
            [
              test "the images" test_images;
              test_wpr;
              test "the FMC's sizes" test_fmc;
            ];
-         group ~timeout:10. "region" [ test_top; test_check ];
+         group "region" [ test_top; test_check ];
        ]

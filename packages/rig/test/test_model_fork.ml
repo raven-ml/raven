@@ -9,17 +9,15 @@
 
 open Windtrap
 
-let timeout = 120.
-
 let tests =
   [
-    group ~timeout "model"
+    group "model"
       [
         stateful ~count:40 ~steps:60
           "a forked child sees its devices lost and its host's bytes"
           (Rig_model.commands ~two:false ~fork:true);
       ];
-    group ~timeout "leaks"
+    group "leaks"
       [
         test "forked programs leave the parent no C memory or descriptor"
           (fun () -> Rig_model.leaves_nothing ~fork:true);

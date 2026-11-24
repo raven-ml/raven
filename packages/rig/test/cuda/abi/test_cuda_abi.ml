@@ -37,7 +37,7 @@ let () =
   exit
   @@ run "rig_cuda_abi"
        [
-         group ~timeout:10. "key"
+         group "key"
            [
              test "finds the record the device declared" test_found;
              test "finds none on another device" test_alone;

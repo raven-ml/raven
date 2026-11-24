@@ -64,7 +64,7 @@ let listed name =
     listing
 
 let discovery =
-  group ~timeout:10. "discovery"
+  group "discovery"
     [
       cases "place" ~id:Fun.id [ "offset"; "bytes" ] (function
         | "offset" -> equal int (64 * 1024) Discovery.offset
@@ -113,7 +113,7 @@ let damaged =
     in
     (name, cut, flips)
   in
-  prop ~timeout:30. "a damaged table is refused or read, never raised" gen
+  prop "a damaged table is refused or read, never raised" gen
     (fun (name, cut, flips) ->
       let b = Bytes.of_string (fixture name) in
       List.iter
@@ -220,7 +220,7 @@ let refusals =
       Windtrap.contains ~sub:(strf "at byte %d" (at was)) why)
 
 let dies =
-  group ~timeout:10. "dies"
+  group "dies"
     [
       test "a GPU of one die has die 0" (fun () ->
           equal (list int) [ 0 ] (Discovery.aids (table "r9700.bin")));

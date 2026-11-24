@@ -39,7 +39,7 @@ let local =
     ~equal:( = )
 
 let tests =
-  group ~timeout:10. "make"
+  group "make"
     [
       test "no local memory is none" (fun () ->
           equal local

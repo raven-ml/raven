@@ -6,7 +6,6 @@
 open Rig_amd_abi
 
 let strf = Printf.sprintf
-let timeout = 10.
 
 (* GPUs *)
 

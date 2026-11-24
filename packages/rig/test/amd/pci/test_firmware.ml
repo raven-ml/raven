@@ -394,7 +394,7 @@ let firmware_round_trip =
         (code, if version = 2 then control else ""))
 
 let firmware =
-  group ~timeout:10. "firmware"
+  group "firmware"
     [
       firmware_round_trip;
       test "pieces keep their source after the firmware cache replaces it"

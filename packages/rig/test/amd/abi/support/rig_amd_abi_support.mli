@@ -7,10 +7,6 @@
 
 open Rig_amd_abi
 
-val timeout : float
-(** [timeout] is the hang guard of each suite's top tests, in seconds. Every
-    suite runs in milliseconds. *)
-
 (** {1:gpus GPUs} *)
 
 val gpu :

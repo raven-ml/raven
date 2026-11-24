@@ -10,8 +10,6 @@ open Windtrap
 module B = Rig.Buffer
 module R = Rig_support.Reader
 
-let timeout = 60.
-
 let test_live () =
   let b = B.create Rig.host 40 in
   not_equal int 0 (R.host b);
@@ -147,14 +145,14 @@ let law_spans vs =
 
 let tests =
   [
-    group ~timeout "readers"
+    group "readers"
       [
         test "a live buffer reads as its address and length" test_live;
         test "a view reads as its own first byte and elements" test_view;
         test "a dead buffer reads as its reason" test_dead;
         test "a claim from C claims and its release ends it" test_claim;
       ];
-    group ~timeout "spans"
+    group "spans"
       [
         test "host memory lies at host addresses" test_span_host;
         test "other memory lies in a space of its own, at offsets"

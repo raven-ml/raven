@@ -10,7 +10,6 @@ module Support = Rig_support
 let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
   Rig.submit ?waits s ~buffers ~args
 
-let timeout = 60.
 let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
 let memory name = Result.get_ok (Rig.software name)
 
@@ -1662,7 +1661,7 @@ let test_opener_opens_itself () =
   Rig.close d
 
 let tests =
-  group ~timeout "opening"
+  group "opening"
     [
       test "one name opens one device, until it is lost" test_same_name;
       test "a name open as another driver's device raises" test_other_driver;

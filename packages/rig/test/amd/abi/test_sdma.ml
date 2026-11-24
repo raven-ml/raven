@@ -10,7 +10,6 @@ open Windtrap
 open Rig_amd_abi
 module S = Rig_amd_abi_support
 
-let timeout = S.timeout
 let gpu sdma = S.gpu ~sdma (11, 0, 0)
 let words = S.encode
 let version = S.version
@@ -67,7 +66,7 @@ let rec pieces = function
   | w :: _ -> failf "0x%x starts no linear copy" w
 
 let copy =
-  group ~timeout "copy"
+  group "copy"
     [
       prop "a linear copy is one piece of its bytes, up to the largest"
         linear_copies (fun (v, dst, src, n) ->
@@ -122,7 +121,7 @@ let windows =
       w.rows w.most_width w.most_rows w.most_pitch
   in
   let window_t = Testable.make ~pp ~equal:( = ) in
-  group ~timeout "windows"
+  group "windows"
     [
       cases "a sub-window's layout follows the GC" ~id:version
         [ (9, 4, 2); (9, 5, 0); (11, 0, 0); (11, 5, 0); (12, 0, 0); (12, 0, 1) ]
@@ -136,7 +135,7 @@ let windows =
 (* A fill, word for word against CONSTANT_FILL's fields in the headers:
    fillsize at 31:30, and the count less one. *)
 let fills =
-  group ~timeout "fills"
+  group "fills"
     [
       cases "a fill sets as many bytes as a linear copy moves" ~id:version
         versions (fun v ->
@@ -150,7 +149,7 @@ let fills =
     ]
 
 let others =
-  group ~timeout "others"
+  group "others"
     [
       test "a poll for equality" (fun () ->
           equal (list int)

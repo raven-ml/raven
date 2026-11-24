@@ -10,7 +10,6 @@ module P = Rig_support.Polled
 module G = Rig_program
 open Rig_program
 
-let timeout = Rig_support.time 60.
 let strf = Printf.sprintf
 
 (* Fresh Polled devices: a name opens once. *)
@@ -3379,7 +3378,7 @@ let test_host_input_kept () =
 
 let tests =
   [
-    group ~timeout "steps"
+    group "steps"
       [
         prop
           "a run leaves the bytes of its steps run in order, on any device, \
@@ -3388,7 +3387,7 @@ let tests =
            its window, or refuses a loop before any work"
           gen_case model_law;
       ];
-    group ~timeout "times"
+    group "times"
       [
         test
           "a device that times nothing has -1 for a step of parts, and a move \
@@ -3405,7 +3404,7 @@ let tests =
         stateful ~domains:2 "times of one program from two domains"
           shared_commands;
       ];
-    group ~timeout "scalars"
+    group "scalars"
       [
         prop
           "a scalar writes its value's sum over the run's ints, or the run \
@@ -3421,7 +3420,7 @@ let tests =
           ~id:(fun (v, _) -> string_of_int v)
           w32_values scalar_range;
       ];
-    group ~timeout "bytes"
+    group "bytes"
       [
         prop "of_string reads back what to_string wrote" gen_t round_trip;
         prop "of_string answers a cut or a changed byte without raising"
@@ -3429,7 +3428,7 @@ let tests =
         test "of_string names another version" test_version;
         test "of_string says where a cut version lies" test_cut_version;
       ];
-    group ~timeout "host code"
+    group "host code"
       [
         prop
           "host code computes ints from the frame's, which a launch's geometry \
@@ -3442,7 +3441,7 @@ let tests =
         test "a loop stops at a flag a step cleared" test_flag;
         test "run raises for a loop's flag past its input" test_flag_outside;
       ];
-    group ~timeout "rails"
+    group "rails"
       [
         test
           "a send calls its end's ready function once the outbound area's \
@@ -3452,7 +3451,7 @@ let tests =
         test "a send follows the run's waits" test_send_waits;
         test "load raises for a rail this machine has not" test_no_rail;
       ];
-    group ~timeout "order"
+    group "order"
       [
         test "run n follows run n - 2's work on its copy of the ints"
           test_ints_wait;
@@ -3467,14 +3466,14 @@ let tests =
         stateful ~domains:2 "runs of one program from two domains serialize"
           swap_commands;
       ];
-    group ~timeout "life"
+    group "life"
       [
         test
           "an unreachable program returns its memory and images after its \
            work"
           test_collected;
       ];
-    group ~timeout "refusals"
+    group "refusals"
       [
         cases "load raises for integers whose sums would wrap"
           ~id:(Format.asprintf "%a" pp_extreme)
@@ -3512,7 +3511,7 @@ let tests =
         test "run raises for a read-only input a copy part writes"
           test_read_only_copy;
       ];
-    group ~timeout "re-entry"
+    group "re-entry"
       [
         test
           "a load and a run from a callback inside a lock raise, and a run on \
@@ -3521,7 +3520,7 @@ let tests =
         test "a run ended by an exception at any allocation leaves no lock held"
           test_interrupt_run;
       ];
-    group ~timeout "failures"
+    group "failures"
       [
         cases "load raises Out_of_memory for memory refused by" ~id:fst refusers
           test_load_refused;
@@ -3531,7 +3530,7 @@ let tests =
         test "run raises Lost for a fault its wait for run n - 2 finds"
           test_wait_lost;
       ];
-    group ~timeout "frame"
+    group "frame"
       [
         test "run reads its frame once, before its first step"
           test_frame_read_once;

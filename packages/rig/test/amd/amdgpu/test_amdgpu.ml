@@ -248,7 +248,7 @@ let unreadable file =
   end
 
 let numbering =
-  group ~timeout:10. "numbering"
+  group "numbering"
     [
       test "a machine's AMD GPUs are its display functions, in bus order"
         (fun () ->
@@ -292,7 +292,7 @@ let numbering =
     ]
 
 let facts =
-  group ~timeout:10. "facts"
+  group "facts"
     [
       test "the R9700 is a gfx1201 of 64 compute units" (fun () ->
           let expected =
@@ -358,7 +358,7 @@ let memory =
           "heap_type 0\nsize_in_bytes 68719476736\nflags 0\n" );
       ]
   in
-  group ~timeout:10. "memory"
+  group "memory"
     [
       test "an R9700's memory is its node's private heap" (fun () ->
           equal result_int (Ok 34208743424)
@@ -388,7 +388,7 @@ let memory =
    session leaves it detached: the GPU is looked at again, found once the driver
    holds it, and kept once found. *)
 let held =
-  group ~timeout:10. "held"
+  group "held"
     [
       test
         "a GPU the driver did not hold is looked at again, and kept once found"
@@ -417,7 +417,7 @@ let held =
 (* A call inside a lock of its thread's, as from a callback inside one, raises
    naming it, having changed nothing; outside every lock it answers. *)
 let inside_lock =
-  group ~timeout:10. "inside a lock"
+  group "inside a lock"
     [
       cases "a call raises naming it, changing nothing"
         ~id:(fun (fn, _, _) -> fn)
@@ -467,7 +467,7 @@ let save_area =
       ~equal:( = )
   in
   let at root = P.save_area_at root "0000:c1:00.0" in
-  group ~timeout:10. "save area"
+  group "save area"
     [
       test "an R9700's: 2048 waves of 64 compute units" (fun () ->
           equal result_int
@@ -550,7 +550,7 @@ let pairs c =
     0 (List.init 16 Fun.id)
 
 let processors =
-  group ~timeout:10. "processors"
+  group "processors"
     [
       prop "an MI300X's 32 engines: die 0's from the bitmap, the others all set"
         (bitmap ~bits:10) (fun cus ->
@@ -569,7 +569,7 @@ let processors =
     ]
 
 let names =
-  group ~timeout:10. "names"
+  group "names"
     [
       test "GPUs are named AMD, AMD:1, ..." (fun () ->
           equal (list string)
@@ -600,7 +600,7 @@ let opening =
     | Error why -> why
   in
   let display bus = functions [ (bus, "0x1002", "0x030000") ] in
-  group ~timeout:10. "opening"
+  group "opening"
     [
       test "buses reads the machine's files at each call" (fun () ->
           let root = tree "growing" (display "0000:05:00.0") in

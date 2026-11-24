@@ -8,11 +8,9 @@
 
 open Windtrap
 
-let timeout = Rig_support.time 120.
-
 let tests =
   [
-    group ~timeout "model"
+    group "model"
       [
         stateful ~count:300 ~steps:150
           "every call answers as rig.mli says, on every kind of device"
@@ -21,7 +19,7 @@ let tests =
           "calls on two domains answer as some order of them"
           (Rig_model.commands ~two:true ~fork:false);
       ];
-    group ~timeout "leaks"
+    group "leaks"
       [
         test "programs of every call leave no C memory or descriptor behind"
           (fun () -> Rig_model.leaves_nothing ~fork:false);

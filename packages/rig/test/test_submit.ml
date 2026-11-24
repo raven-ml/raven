@@ -9,7 +9,6 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let timeout = Rig_support.time 60.
 let memory name = Result.get_ok (Rig.software name)
 
 (* [b] borrowed on [d], as a submit on [d] takes it. *)
@@ -2245,7 +2244,7 @@ let copy_commands =
 
 let tests =
   [
-    group ~timeout "copy ends"
+    group "copy ends"
       [
         prop ~count:200
           "a copy between slots and buffers copies as the host does, and \
@@ -2253,7 +2252,7 @@ let tests =
           (Gen.list ~size:(Gen.int_range 1 4) (Gen.with_pp pp_ends gen_ends))
           ends_law;
       ];
-    group ~timeout "copy memory"
+    group "copy memory"
       [
         test "empty allocations name no device memory" (fun () ->
             test_copy_memory (0, 0, 0));
@@ -2270,7 +2269,7 @@ let tests =
         test "copies carry both facts across memory kinds"
           test_copy_memory_sequence;
       ];
-    group ~timeout "values"
+    group "values"
       [
         test "values follow one another from 1" test_values;
         test "a submission's fills run with its value" test_fill;
@@ -2283,7 +2282,7 @@ let tests =
         test "a device's work completes once a wait reaches it" test_polled;
         test "a word still for three intervals loses nothing" test_still;
       ];
-    group ~timeout "hangs"
+    group "hangs"
       [
         test "work still past the hang bound loses the device" test_hang;
         test "a word moving within the bound loses nothing" test_hang_moving;
@@ -2299,7 +2298,7 @@ let tests =
           test_short_wait_bound;
         test "the bound comes no sooner with two waiters" test_hang_two_waiters;
       ];
-    group ~timeout "looks"
+    group "looks"
       [
         cases ~id:string_of_int
           "a loop of short waits surfaces a producer's recorded fault"
@@ -2310,7 +2309,7 @@ let tests =
         test "a lost producer reaches a consumer's wait at once"
           test_lost_producer;
       ];
-    group ~timeout "bounded waits"
+    group "bounded waits"
       [
         prop ~count:20 ~examples:[ 1; 999_999; 1_000_000; 50_000_000 ]
           "false comes no sooner than ns, within a still interval after, and \
@@ -2337,7 +2336,7 @@ let tests =
             ]
           "with no time a bounded wait answers as reached" no_time_gen no_time;
       ];
-    group ~timeout "submitted points"
+    group "submitted points"
       [
         prop ~count:20 ~examples:[ 0; 1 ]
           "a wait on the submitted point reaches every earlier point"
@@ -2345,14 +2344,14 @@ let tests =
         test "the host's submitted point is reached at once"
           test_submitted_host;
       ];
-    group ~timeout "submits of one submission"
+    group "submits of one submission"
       [
         test "a submit beside another's wait completes with its own values"
           test_run_beside_wait;
         test "a submit inside another's wait completes with its own values"
           test_run_reentrant;
       ];
-    group ~timeout "refusals"
+    group "refusals"
       [
         test "a submission refuses what it cannot run" test_refusals;
         test "a submission refuses each misuse its interface states"
@@ -2377,7 +2376,7 @@ let tests =
         test "launches and fills past what a submit holds are refused at make"
           test_blocks_bound;
       ];
-    group ~timeout "order"
+    group "order"
       [
         test "a value's work follows the previous value's, on every queue"
           test_device_order;
@@ -2409,7 +2408,7 @@ let tests =
           test_never_fits;
         test "a full queue's submit waits for room" test_room;
       ];
-    group ~timeout "growth"
+    group "growth"
       [
         cases "a submission runs once its queue grew to hold it"
           ~id:(Printf.sprintf "%d parts on a queue of 4 that grows")
@@ -2429,12 +2428,12 @@ let tests =
         test "a free_cache while a submit grows the queue leaves its growth"
           test_grow_untrimmed;
       ];
-    group ~timeout "lifetime"
+    group "lifetime"
       [
         stateful "memory a submission names returns after its last submit"
           lifetime;
       ];
-    group ~timeout "cost"
+    group "cost"
       [
         test "a submit that does not wait allocates nothing" test_allocation;
         test "make takes no stack per part" test_parts_stack;

@@ -183,7 +183,7 @@ let buses () =
         buses
 
 let opening =
-  group ~timeout:60. "opening"
+  group "opening"
     [
       test "count never raises" (fun () ->
           ignore (C.count () : (int, string) result));
@@ -337,7 +337,7 @@ let counts_blocks () =
     ]
 
 let facts =
-  group ~timeout:60. "facts"
+  group "facts"
     [
       test "states a GPU's facts" facts;
       test "finds the functions a fill calls" symbols;
@@ -428,7 +428,7 @@ let exports_pinned () =
   S.with_ @@ fun { d; _ } -> export_law d ~fn:(gpu_fn d) Pinned (1 lsl 22)
 
 let memory =
-  group ~timeout:120. "memory"
+  group "memory"
     [
       test "an allocation past the GPU's memory is None" past_memory;
       test "write_gpu's bytes are on the GPU when it returns" written_on_return;
@@ -525,7 +525,7 @@ let pinned_paced () =
   ignore (Sys.opaque_identity live)
 
 let host_memory =
-  group ~timeout:120. "host memory"
+  group "host memory"
     [
       test
         "a copy locks no host buffer it does not name; a borrow locks it until \
@@ -595,7 +595,7 @@ let no_bytes () =
   raises "map_host of 0 bytes" (fun () -> C.map_host g (word g) 0)
 
 let work =
-  group ~timeout:60. "work"
+  group "work"
     [
       test "a fill runs with the context current from a fresh domain"
         fills_in_a_fresh_domain;
@@ -640,7 +640,7 @@ let loads_every_function () =
   C.unload g m
 
 let images =
-  group ~timeout:60. "images"
+  group "images"
     [
       test "load, find their kernels and unload" images;
       test "loading places every function's code" loads_every_function;
@@ -776,7 +776,7 @@ let no_allocation count () =
      (p - pieces, l - plain))
 
 let launches =
-  group ~timeout:120. "launches"
+  group "launches"
     [
       test "launches the GPU cannot run are refused" refused_launches;
       test "a launch takes shared memory past 48 KiB, up to the largest"
@@ -1128,7 +1128,7 @@ let own_word_after_running () =
   S.with_ @@ fun t -> Rig.Point.wait (S.submit t [||])
 
 let timeline =
-  group ~timeout:60. "timeline"
+  group "timeline"
     [
       test
         "unload lets other domains run while CUDA waits for the GPU (sampled)"
@@ -1589,7 +1589,7 @@ let without_placeholder () =
   | _ -> failf "the child printed %S" out
 
 let replay =
-  group ~timeout:120. "replay"
+  group "replay"
     [
       test "a chain's node runs the bounds of a launch from the placeholder"
         placeholder_bounds;
@@ -1939,7 +1939,7 @@ let chains_commands ~cover =
   ]
 
 let stateful =
-  group ~timeout:300. "stateful"
+  group "stateful"
     [
       stateful ~count:100 ~steps:20 "map_host shares a host range both ways"
         (registry_commands ~cover);

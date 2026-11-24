@@ -2420,7 +2420,7 @@ end
 let laws (module G : Gpu) =
   let module O = Order (G) in
   let g = (module G : Gpu) in
-  group ~timeout:120. G.class_
+  group G.class_
     [
       test "the facts are well formed" (facts g);
       test "a capacity report starts the budget and counts a buffer"
@@ -2532,7 +2532,7 @@ let laws (module G : Gpu) =
         (views_past_stop g);
       test "reaches between two devices answers the same once they close"
         (reaches_closed g);
-      stateful ~timeout:300. ~count:100 ~steps:20
+      stateful ~count:100 ~steps:20
         "values complete in order and the word never moves backwards (sampled)"
         O.commands;
     ]

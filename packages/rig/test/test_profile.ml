@@ -12,8 +12,6 @@ module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s = Rig.submit ?waits s ~buffers ~args:[||]
 
-let timeout = 60.
-
 (* Whether an exception is [d]'s loss. *)
 let lost_of d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 
@@ -968,7 +966,7 @@ let test_chrome () =
 
 let tests =
   [
-    group ~timeout "taking"
+    group "taking"
       [
         test "a profile holds the spans recorded while it is taken" test_span;
         test "a span is in the profiles taken when it starts" test_span_starts;
@@ -978,7 +976,7 @@ let tests =
         test "a span records a function that raises" test_span_raises;
         test "an allocation is an event of the profiles taken" test_allocation;
       ];
-    group ~timeout "device time"
+    group "device time"
       [
         test
           "a submission's span holds its parts' device time, named after its \
@@ -1020,7 +1018,7 @@ let tests =
         test "take reads only the work timed while its function ran"
           test_take_reads_its_own;
       ];
-    group ~timeout "copies"
+    group "copies"
       [
         test "a copy records the bytes it moved" test_copy;
         test "a copy is in the profiles taken when it is asked"
@@ -1037,14 +1035,14 @@ let tests =
         test "no copy part of a submission made before the profile"
           test_untaken_copy_parts;
       ];
-    group ~timeout "cost"
+    group "cost"
       [ test "a span while no profile is taken allocates nothing" test_untaken ];
-    group ~timeout "recording"
+    group "recording"
       [
         test "a recorded event goes into each profile being taken"
           test_record;
       ];
-    group ~timeout "chrome" [ test "a trace in Chrome's format" test_chrome ];
+    group "chrome" [ test "a trace in Chrome's format" test_chrome ];
   ]
 
 let () = exit (run "rig.profile" tests)

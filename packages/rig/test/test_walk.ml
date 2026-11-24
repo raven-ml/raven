@@ -18,7 +18,6 @@ module P = Rig_support.Polled
 module S = Rig_support
 open Ops
 
-let timeout = 60.
 let reps = 4
 
 (* A failure may leave the C heap grown by what a lost device keeps for good,
@@ -285,7 +284,7 @@ let () =
   exit
   @@ run "rig.walk"
        [
-         group ~timeout "every failing call ends as rig.mli states"
+         group "every failing call ends as rig.mli states"
            (let boxes, through = queued in
             List.map
               (fun op -> test op.name (walk op))
@@ -296,12 +295,12 @@ let () =
                     (walk ~kinds:[ (fun n -> Fault n); (fun n -> Refuse n) ] op))
                 (staged @ through)
             @ List.map exhausted (staged @ through));
-         group ~timeout "opening"
+         group "opening"
            [
              test "every failing fact or opener leaves the name to open"
                test_open;
            ];
-         group ~timeout "software devices"
+         group "software devices"
            [
              test "every failing fill loses the device, which opens again"
                test_memory_fill;

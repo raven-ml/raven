@@ -12,8 +12,6 @@ open Windtrap
 open Rig_amd_abi
 module S = Rig_amd_abi_support
 
-let timeout = S.timeout
-
 (* An R9700's GC: one die of 4 engines and 64 compute units, 8 to an array. *)
 let gfx12 =
   S.gpu ~target:(12, 0, 1) ~shader_engines:4 ~compute_units:64 ~array_units:8
@@ -104,7 +102,7 @@ let overflows g names =
     blocks
 
 let laws =
-  group ~timeout "layout"
+  group "layout"
     [
       prop "a profile is refused exactly when a block lacks registers" profiles
         (fun (g, names) ->
@@ -150,7 +148,7 @@ let laws =
     ]
 
 let cases =
-  group ~timeout "cases"
+  group "cases"
     [
       test "an R9700 counts its engines' work-group processors" (fun () ->
           equal layout
@@ -571,7 +569,7 @@ let programs () =
 let no_gfx12 g = strf "%s is no GFX12 GPU of one die" (Gpu.processor g)
 
 let counting =
-  group ~timeout "counting"
+  group "counting"
     [
       start_law;
       stop_law;

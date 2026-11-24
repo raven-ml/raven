@@ -18,8 +18,6 @@ let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
 
 (* The values of a submission's one fill, which reads none. *)
 let one = Support.zeros 1
-
-let timeout = 60.
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 let empty d = Sub.make d [||]
@@ -710,7 +708,7 @@ let test_wait_runs_no_stop () =
 
 let tests =
   [
-    group ~timeout "room"
+    group "room"
       [
         test "a submit waiting for room lets a submission that fits through"
           test_later_releases;
@@ -718,7 +716,7 @@ let tests =
         test "a fault while a submit waits for room commits nothing"
           test_fault_waiting;
       ];
-    group ~timeout "turns"
+    group "turns"
       [
         test "a submit blocked in its driver holds only its device's turn"
           test_turn_per_device;
@@ -733,7 +731,7 @@ let tests =
         test "waits on a software device go on while its work runs"
           test_memory_waits_beside_run;
       ];
-    group ~timeout "interruptions"
+    group "interruptions"
       [
         test "Sys.Break in a wait loses nothing" test_break_in_wait;
         test "Sys.Break in a bounded wait loses nothing" test_break_in_wait_for;
@@ -758,15 +756,13 @@ let tests =
               its stop to run once"
           test_break_after_escape;
         test "a signal whose handler returns ends no wait" test_signal_in_wait;
-        test ~timeout:10.
-          "a close from a handler inside a wait on its device raises"
+        test "a close from a handler inside a wait on its device raises"
           test_close_in_wait;
-        test ~timeout:10.
+        test
           "a close from a handler inside a profiled wait raises before it \
            reads the profile"
           test_close_in_profiled_wait;
-        test ~timeout:10. "a close from a callback inside a stop raises"
-          test_close_in_stop;
+        test "a close from a callback inside a stop raises" test_close_in_stop;
         test "Sys.Break while waiting for room assigns no value"
           test_break_waiting_for_room;
         test
@@ -777,7 +773,7 @@ let tests =
         test "a close waiting for another thread's stop takes Sys.Break"
           test_break_waiting_stop;
       ];
-    group ~timeout "stops"
+    group "stops"
       [
         test "a wait runs no other device's stop" test_wait_runs_no_stop;
       ];

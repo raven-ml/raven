@@ -42,8 +42,7 @@ shared by two suites in `test/<lib>/support/`, fixtures in
 `test/<lib>/fixtures/` with the `gen.sh` that makes them. A fixture that a
 second suite opens by its own path lives once, in the `fixtures/` of the
 suites' common parent; one read through a driver's support library stays.
-Every top-level group sets `~timeout`; `dune` sets `WINDTRAP_TIMEOUT` for the
-rest.
+Tests set no timeout of their own: `WINDTRAP_TIMEOUT` bounds every test.
 
 ## Polled
 

@@ -1579,7 +1579,7 @@ let () =
   exit
     (run "rig_remote"
        [
-         group ~timeout:60. "rig_remote"
+         group "rig_remote"
            [
              connecting;
              machines;

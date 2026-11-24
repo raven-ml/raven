@@ -279,7 +279,7 @@ let test_name =
       equal string want (Driver.name (gpus ()) i))
 
 let numbering =
-  group ~timeout:patience "numbering"
+  group "numbering"
     [
       test_name;
       prop "a vendor's GPUs are the functions it recognizes, in bus order"
@@ -625,7 +625,7 @@ let test_lend_interrupted () =
   walk 1
 
 let opening =
-  group ~timeout:patience "opening"
+  group "opening"
     [
       test "a stopped GPU whose memory another GPU maps opens after the lend"
         test_lent_open;
@@ -872,7 +872,7 @@ let test_reset_cut_lost () =
   after_reset 1 (fresh ())
 
 let resets =
-  group ~timeout:patience "resets"
+  group "resets"
     [
       test "a reset takes the function, resets it and releases it" test_reset;
       test "a reset of a GPU held is refused" test_reset_held;
@@ -908,7 +908,7 @@ let test_this_none () =
   ignore (require_error (Driver.attach g this 0))
 
 let this_machine =
-  group ~timeout:patience "this machine"
+  group "this machine"
     [
       test "this machine without the vendor's GPUs has none to open or change"
         test_this_none;
@@ -1294,35 +1294,32 @@ let two_domains_name =
    once and answers the same twice"
 
 let serialized =
-  group ~timeout:patience "opens and changes"
+  group "opens and changes"
     [
-      (* A program's vendor is a tree of its own, which the file system
-         clones and removes: with the program's setup, about 7 ms, and its 40
-         calls about 5 ms more, each reading the tree's files. The calls that
-         change a GPU's state are drawn twice as often as the others, so that
-         a program's calls meet on the states they make. Its rarest cover, a
-         lost GPU reset, then marks about 36% of programs, which 60 miss with
-         odds near 10^-12. The test takes 0.8 s alone, within the group's
-         patience on a machine twelve times as slow. *)
+      (* A program's vendor is a tree of its own, which the file system clones
+         and removes: with the program's setup, about 7 ms, and its 40 calls
+         about 5 ms more, each reading the tree's files. The calls that change a
+         GPU's state are drawn twice as often as the others, so that a program's
+         calls meet on the states they make. Its rarest cover, a lost GPU reset,
+         then marks about 36% of programs, which 60 miss with odds near 10^-12.
+         The test takes 0.8 s alone. *)
       flocking model_name
         (stateful model_name ~count:60 ~steps:40
            (commands ~starts:model_starts ~changes_twice:true gpu_numbers));
-      (* 80 programs of 50 runs each, each run a new tree, with a limit of three
-         patiences: a run hands off between domains, which waits for a time
-         slice when the processors are busy. The calls that change a GPU's state
-         are drawn twice as often, as the model's are: its rarest cover, a lost
-         GPU reset, then marks about 19% of programs, which 80 miss with odds
-         near 5 10^-8; drawn once, it marked 12% and took 120. On the Mac the
-         hand-offs, in windtrap's workers, take most of the run and pass the
-         limit, so it runs on Linux. *)
+      (* 80 programs of 50 runs each, each run a new tree: a run hands off
+         between domains, which waits for a time slice when the processors are
+         busy. The calls that change a GPU's state are drawn twice as often, as
+         the model's are: its rarest cover, a lost GPU reset, then marks about
+         19% of programs, which 80 miss with odds near 5 10^-8; drawn once, it
+         marked 12% and took 120. On the Mac the hand-offs, in windtrap's
+         workers, take most of the run and pass 30 s, so it runs on Linux. *)
       (if on_linux then Fun.id
        else fun _ ->
          test two_domains_name (fun () ->
              skip ~reason:"windtrap's hand-offs between domains pass its bound"
                ()))
       @@ flocking two_domains_name
-      @@ stateful two_domains_name ~timeout:(3. *. patience) ~domains:2
-           ~count:80
+      @@ stateful two_domains_name ~domains:2 ~count:80
            (commands ~starts:holding ~changes_twice:true ~concurrent:true
               (indices [ 0 ]));
       cases "opens and resets run their drivers one at a time (sampled)" ~id:fst
@@ -2249,7 +2246,7 @@ let test_refused (_, fns) =
   done
 
 let tree_changes =
-  group ~timeout:patience "changes on a machine's files"
+  group "changes on a machine's files"
     [
       cases "each change writes what it says and answers for what remains"
         ~id:(fun (n, _, _, _, _) -> n)
@@ -2689,7 +2686,7 @@ let test_inside_lock () =
   stop (hold t.g t.m 0)
 
 let tree_holds =
-  group ~timeout:patience "holds on a machine's files"
+  group "holds on a machine's files"
     [
       test "an open, a reset or a change from inside a lock raises"
         test_inside_lock;
@@ -2844,7 +2841,7 @@ let test_exit_inside () =
     (List.filter at_exit (String.split_on_char '\n' err))
 
 let exits =
-  group ~timeout:patience "exit"
+  group "exit"
     [
       test
         "a process that exits stops each GPU it holds once, before its bus \

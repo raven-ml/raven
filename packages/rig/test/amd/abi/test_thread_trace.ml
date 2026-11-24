@@ -12,7 +12,6 @@ open Rig_amd_abi
 module S = Rig_amd_abi_support
 
 let strf = Printf.sprintf
-let timeout = S.timeout
 let gpu = S.gpu
 
 (* Recording *)
@@ -153,7 +152,7 @@ let engine_law name program =
        in
        (g, size, off))
   in
-  prop ~timeout name gen (fun (g, size, off) ->
+  prop name gen (fun (g, size, off) ->
       let n = g.shader_engines * g.xccs in
       cover "a buffer of more than a page" (size > page);
       cover "no engine off" (off = []);
@@ -223,7 +222,7 @@ let selection () =
   String.concat "\n" (List.concat_map lines trace_families)
 
 let recording =
-  group ~timeout "recording"
+  group "recording"
     [
       test "each engine traces one unit, engines 0 and 1 its instructions"
         (fun () -> expect (selection ()) @@ __POS_OF__ {|
@@ -593,7 +592,7 @@ let gfx11_trace () =
   bytes s ^ padding
 
 let decoding =
-  group ~timeout "decoding"
+  group "decoding"
     [
       cases "an instruction packet preserves the following wave end"
         ~id:(fun (name, _, _, _, _) -> name)

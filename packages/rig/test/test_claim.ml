@@ -50,8 +50,6 @@ let lose d p =
   P.fail p;
   try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ()
 
-let timeout = 60.
-
 (* The cases of each law that covers labels. The rarest label marks about one
    case in sixteen: 300 cases miss it with odds under one in a hundred
    million, where 100 missed it in about one run in 600. *)
@@ -1723,7 +1721,7 @@ let copy_commands =
 
 let tests =
   [
-    group ~timeout "takes"
+    group "takes"
       [
         prop ~count:law_cases
           "a take takes the memory of every buffer or of none" case take_law;
@@ -1751,7 +1749,7 @@ let tests =
         cases "the buffer a take gives is used as any other" ~id:taken_name
           taken_cases taken_law;
       ];
-    group ~timeout "taken memory"
+    group "taken memory"
       [
         test "memory taken twice lives while its last buffer does"
           test_take_twice;
@@ -1781,7 +1779,7 @@ let tests =
         test "an exception at any allocation of a take takes all or none"
           test_walk_take;
       ];
-    group ~timeout "keeps"
+    group "keeps"
       [
         test "a keep holds memory from takes until it is collected" test_keep;
         test "a keep of a dead buffer keeps nothing" test_keep_refusals;
@@ -1799,7 +1797,7 @@ let tests =
           "keeps beside takes of one memory are ordered with them"
           keep_commands;
       ];
-    group ~timeout "claims from C"
+    group "claims from C"
       [
         prop ~count:law_cases
           "rig_buffers_claim claims every buffer or none" states claim_all_law;
@@ -1827,7 +1825,7 @@ let tests =
         test "a claim on fixed memory follows its uses by their access"
           test_c_fixed;
       ];
-    group ~timeout "domains"
+    group "domains"
       [
         test "fixed memory refuses a take during submit"
           (test_submit_take ("fixed", `Fixed));

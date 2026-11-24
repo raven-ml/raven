@@ -215,7 +215,7 @@ let simple_add () =
        In_channel.input_all)
 
 let nvrtc =
-  group ~timeout:10. "simple_add_sm89"
+  group "simple_add_sm89"
     [
       test "its one kernel is simple_add" (fun () ->
           equal (list string) [ "simple_add" ] (Cubin.kernels (simple_add ())));
@@ -327,7 +327,7 @@ let relocated relocs =
     @ [ rela ~link:4 ~info:2 ".rela.text.k" relocs ])
 
 let relocations =
-  group ~timeout:10. "relocations"
+  group "relocations"
     [
       test "each type writes its part of the address, modulo 2^64" (fun () ->
           let base = 0x7000_0000_0000 in
@@ -371,7 +371,7 @@ let many () =
   In_channel.with_open_bin "fixtures/many_sm89.cubin" In_channel.input_all
 
 let many_sm89 =
-  group ~timeout:10. "many_sm89"
+  group "many_sm89"
     [
       test "its kernels are its code sections, in order" (fun () ->
           let o = layout (many ()) in
@@ -404,7 +404,7 @@ let globals () =
     (In_channel.with_open_bin "fixtures/globals_sm89.cubin" In_channel.input_all)
 
 let globals_sm89 =
-  group ~timeout:10. "globals_sm89"
+  group "globals_sm89"
     [
       test "an uninitialised global lies in the image, as zeros" (fun () ->
           let o = Cubin.elf (globals ()) in
@@ -439,7 +439,7 @@ let spanning at =
     ]
 
 let image =
-  group ~timeout:10. "image"
+  group "image"
     [
       cases "the image is the ELF image, then zeros to a page and a page more"
         ~id:fst
@@ -576,7 +576,7 @@ let two_kernels () =
         ])
 
 let kernels =
-  group ~timeout:10. "kernels"
+  group "kernels"
     [
       test "a kernel's record is what its sections and attributes say"
         (fun () ->

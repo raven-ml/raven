@@ -11,7 +11,6 @@ open Rig_amd_abi
 module S = Rig_amd_abi_support
 
 let strf = Printf.sprintf
-let timeout = S.timeout
 let gpu gc = S.gpu ~shader_engines:6 ~compute_units:48 gc
 let gfx11 = gpu (11, 0, 0)
 let gfx9 = gpu (9, 4, 3)
@@ -53,7 +52,7 @@ let runs_of_regs =
     (frequency [ (3, around); (1, up_to_end) ])
 
 let memory =
-  group ~timeout "memory and registers"
+  group "memory and registers"
     [
       test "a write to a register, at one address" (fun () ->
           equal (list int)
@@ -123,7 +122,7 @@ let memory =
     ]
 
 let waits =
-  group ~timeout "waits"
+  group "waits"
     [
       test "a wait on a register" (fun () ->
           equal (list int)
@@ -238,7 +237,7 @@ let caches_w =
     ~equal:( = )
 
 let caches =
-  group ~timeout "caches and signals"
+  group "caches and signals"
     [
       test "a release with an interrupt" (fun () ->
           equal (list int)
@@ -330,7 +329,7 @@ let packets =
           ]))
 
 let control =
-  group ~timeout "control"
+  group "control"
     [
       prop "a predicated block is its header, its mask and count, then itself"
         (Gen.pair (Gen.int_range 0 255) packets)
@@ -532,7 +531,7 @@ let lds g group_segment =
   (List.assoc (address g "regCOMPUTE_PGM_RSRC1" + 1) ws lsr 15) land 0x1ff
 
 let runs =
-  group ~timeout "runs"
+  group "runs"
     [
       prop "a dispatch sets the registers of its kernel and arguments" launches
         (fun l ->

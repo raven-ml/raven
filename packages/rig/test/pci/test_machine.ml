@@ -62,8 +62,7 @@ let not_addresses =
       raises_match (Exn.invalid_arg ~sub:"") (fun () ->
           Machine.compare_address ok s))
 
-let addresses =
-  group ~timeout:patience "bus addresses" [ spelled; bus_order; not_addresses ]
+let addresses = group "bus addresses" [ spelled; bus_order; not_addresses ]
 
 (* Machines *)
 
@@ -77,7 +76,7 @@ let test_page () =
   equal ~msg:"a power of two" int 0 (p land (p - 1))
 
 let machines =
-  group ~timeout:patience "machines"
+  group "machines"
     [
       test "this machine has no name and has not failed" test_this;
       test "this machine's page size is a power of two" test_page;
@@ -203,7 +202,7 @@ let test_sysfs () =
     (List.map (fun (d : Machine.id) -> d.bus) (listed Machine.this))
 
 let functions =
-  group ~timeout:patience "functions"
+  group "functions"
     [
       listed_in_bus_order;
       test "this machine without /sys/bus/pci has none" test_no_sysfs;
@@ -255,7 +254,7 @@ let test_reserve_cut () =
   walk 1
 
 let reservations =
-  group ~timeout:patience "reservations"
+  group "reservations"
     [
       test
         "this machine reserves a range once and refuses one in use, on Linux \
@@ -531,7 +530,7 @@ let test_far_halted (_, quiet) =
   equal ~msg:"halted after the stop" bool quiet (Driver.halted h)
 
 let transports =
-  group ~timeout:patience "transports"
+  group "transports"
     [
       test
         "a transport's machine has its name and page, lists its functions in \
@@ -676,7 +675,7 @@ let test_unread (_, make) =
   equal ~msg:"distance" (option distance) None (Machine.distance m gpu_bus bus)
 
 let routes =
-  group ~timeout:patience "routes"
+  group "routes"
     [
       cases "forwards and distance follow Linux's p2pdma and the bridges"
         ~id:(fun (n, _, _, _, _) -> n)

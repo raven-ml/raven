@@ -103,7 +103,7 @@ let temp_dir () =
   d
 
 let reports =
-  group ~timeout:10. "boot reports"
+  group "boot reports"
     [
       cases "the R9700's report names its blocks and images" ~id:Fun.id
         [ "r9700.bin"; "r9700_wide.bin" ] (fun name ->
@@ -207,7 +207,7 @@ let report_of blocks =
     (patched (List.map (fun (b, v) -> (b, Some v)) blocks))
 
 let refused =
-  group ~timeout:10. "refusals"
+  group "refusals"
     [
       cases
         "a block of a version this library does not boot is refused, naming it"

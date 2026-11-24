@@ -15,7 +15,6 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let timeout = 60.
 let lag = 4
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let empty d = Sub.make d [||]
@@ -271,7 +270,7 @@ let test_commit_fails () =
 
 let tests =
   [
-    group ~timeout "order"
+    group "order"
       [
         stateful "every wait commits what it waits for"
           (scratch :: commands ~note:cover);
@@ -281,7 +280,7 @@ let tests =
           "every wait commits what it waits for, on two domains"
           (commands ~note:(fun _ _ -> ()));
       ];
-    group ~timeout "lag"
+    group "lag"
       [
         test "a driver commits within its bound" test_lag_bounded;
         test "signaled commits nothing" test_signaled_reads;
@@ -290,7 +289,7 @@ let tests =
           (Gen.int_range 1 1_000_000) bounded_commits;
         test "a loop of the shortest bounded waits ends" test_short_waits_end;
       ];
-    group ~timeout "loss"
+    group "loss"
       [
         test "a device lost with uncommitted values raises Lost"
           test_lost_uncommitted;

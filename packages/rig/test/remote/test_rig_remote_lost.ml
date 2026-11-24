@@ -74,7 +74,7 @@ let () =
   exit
     (run "rig_remote.lost"
        [
-         group ~timeout:60. "rig_remote"
+         group "rig_remote"
            [
              test "a device lost in an agent fails the job with its loss"
                agent_device_lost;

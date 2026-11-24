@@ -746,50 +746,40 @@ let () =
   exit
     (run "rig_remote.program"
        [
-         test ~timeout:60.
-           "a program leaves the same bytes on an agent's devices as here"
+         test "a program leaves the same bytes on an agent's devices as here"
            same_bytes;
-         test ~timeout:60. "a run on an agent is a point of its machine's host"
-           host_point;
-         test ~timeout:60.
+         test "a run on an agent is a point of its machine's host" host_point;
+         test
            "a time on an agent has each step's duration there, and refuses a \
             loop"
            times;
-         test ~timeout:60.
-           "a time on an agent's device that times nothing has -1 for a step"
+         test "a time on an agent's device that times nothing has -1 for a step"
            untimed;
-         test ~timeout:60.
+         test
            "a time of no Submit step on an agent has 0s, its load no memory \
             for them"
            no_submit;
-         test ~timeout:60. "an agent refuses a binary that is no program"
-           refused_binary;
-         test ~timeout:60.
-           "an agent answers a program its devices cannot hold, and goes on"
+         test "an agent refuses a binary that is no program" refused_binary;
+         test "an agent answers a program its devices cannot hold, and goes on"
            too_large;
-         test ~timeout:60.
+         test
            "a program's send carries a word on a rail, which a program reads \
             at its other end"
            rail_end_to_end;
-         test ~timeout:60. "an agent checks a rail view against its area"
-           rail_view;
-         test ~timeout:60. "a reachable rail keeps both agent ends"
-           retained_rail;
-         test ~timeout:60. "a reachable local end keeps the agent end"
-           retained_local_end;
-         test ~timeout:60.
+         test "an agent checks a rail view against its area" rail_view;
+         test "a reachable rail keeps both agent ends" retained_rail;
+         test "a reachable local end keeps the agent end" retained_local_end;
+         test
            "loaded programs keep their ends after the controller drops a rail"
            loaded_rail_ends;
-         test ~timeout:60.
-           "a transfer to a collected end is discarded, and the job goes on"
+         test "a transfer to a collected end is discarded, and the job goes on"
            collected_end;
-         test ~timeout:60.
-           "a run raises at the call on a frame the agent would refuse"
+         test "a run raises at the call on a frame the agent would refuse"
            refused_frame;
-         test ~timeout:60.
+         test
            "a run raises at the call on an input its host step cannot address"
            unaddressed_input;
-         test ~timeout:60.
+         test
            "a run raises at the call on more threads than a launch's function \
             has"
            too_many_threads;

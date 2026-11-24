@@ -7,7 +7,6 @@
 
 open Windtrap
 open Rig_pci
-open Rig_pci_support
 
 let image = "raven firmware image\n"
 let pinned = "ce1c62cec35ab52e7ceef75a48b8cf0743b671f581f066288ec274636805997a"
@@ -231,8 +230,8 @@ let () =
   exit
   @@ run "rig_pci.firmware"
        [
-         group ~timeout:patience "digest" [ test_digest ];
-         group ~timeout:patience "find"
+         group "digest" [ test_digest ];
+         group "find"
            [
              test "the first directory holding the image gives it" test_first;
              test "a file with another digest is skipped" test_other_digest;
@@ -245,12 +244,12 @@ let () =
              test "a lookup writes nothing" test_writes_nothing;
              test "a compressed file is not the image" test_compressed;
            ];
-         group ~timeout:patience "reads"
+         group "reads"
            [
              test "an unchanged file is read once" test_read_once;
              test "a changed file is verified again" test_changed;
              test "an image found under one digest is no image of another"
                test_other_pin;
            ];
-         group ~timeout:patience "directory" [ test_directory ];
+         group "directory" [ test_directory ];
        ]

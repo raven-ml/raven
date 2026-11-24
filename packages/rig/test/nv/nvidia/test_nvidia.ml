@@ -322,7 +322,7 @@ let () =
   exit
   @@ run "rig_nv_nvidia"
        [
-         group ~timeout:10. "numbering"
+         group "numbering"
            [
              test "the GPUs are NVIDIA's display functions in bus order"
                numbering;
@@ -344,7 +344,7 @@ let () =
                  equal (list string) [ "NV"; "NV:1"; "NV:7" ]
                    (List.map (fun i -> (N.gpu i).name) [ 0; 1; 7 ]));
            ];
-         group ~timeout:60. "opening"
+         group "opening"
            [
              test "count answers on a machine whose /sys reads" (fun () ->
                  at_least int ~than:0 (counted ()));
@@ -367,9 +367,8 @@ let () =
                 mappings each"
                reclose;
            ];
-         group ~timeout:60. "memory"
-           [ test "40 GiB of host memory maps at once" many_maps ];
-         group ~timeout:60. "usage"
+         group "memory" [ test "40 GiB of host memory maps at once" many_maps ];
+         group "usage"
            [
              test "a GPU's load is within its bounds" usage_bounds;
              test "a device's capacity is the RM's heap, less what it holds"

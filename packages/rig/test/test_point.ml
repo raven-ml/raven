@@ -11,7 +11,6 @@ module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
 
-let timeout = 60.
 let empty d = Sub.make d [||]
 
 let submit ?waits s = Rig.submit ?waits s ~buffers:[||] ~args:[||]
@@ -60,7 +59,7 @@ let test_own_wait () =
 
 let tests =
   [
-    group ~timeout "high device indices"
+    group "high device indices"
       [
         test "a lost device's unreached point is not done" test_lost_unreached;
         test "a host read waits for the last write" test_read_waits_write;

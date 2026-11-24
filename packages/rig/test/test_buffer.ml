@@ -14,8 +14,6 @@ let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
 
 (* The values of a submission's one fill, which reads none. *)
 let one = Support.zeros 1
-
-let timeout = 60.
 let memory name = Result.get_ok (Rig.software name)
 let lost = function Rig.Lost _ -> true | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
@@ -2546,7 +2544,7 @@ let test_bus () =
 
 let tests =
   [
-    group ~timeout "host buffers"
+    group "host buffers"
       [
         test "a buffer holds its elements' bytes" test_create;
         test "a buffer refuses bounds it cannot hold" test_refusals;
@@ -2559,14 +2557,14 @@ let tests =
         test "aligned refuses what is no power of two, and io memory"
           test_aligned_refusals;
       ];
-    group ~timeout "copies"
+    group "copies"
       [
         test "a copy between host buffers moves their bytes" test_copy_host;
         test "a copy to and from a software device moves the bytes"
           test_copy_device;
         test "a copy returns once the device's work ran" test_copy_waits;
       ];
-    group ~timeout "borrows"
+    group "borrows"
       [
         test "a borrow is the memory it maps" test_borrow;
         test "a memory a device borrows is mapped once" test_borrow_maps_once;
@@ -2646,7 +2644,7 @@ let tests =
         test "buffers that hold bytes of one word overlap, of two words do not"
           test_overlaps_words;
       ];
-    group ~timeout "copy routes"
+    group "copy routes"
       [
         test "a device copies host memory through staging memory, mapping none"
           test_copy_host_staged;
@@ -2704,17 +2702,16 @@ let tests =
         test "a staged blit holds its buffer against a take"
           test_staged_blit_claimed;
       ];
-    cases ~timeout
-      "a borrow back on its memory's device lies where that memory does" ~id:fst
-      owners test_borrow_back;
-    cases ~timeout
+    cases "a borrow back on its memory's device lies where that memory does"
+      ~id:fst owners test_borrow_back;
+    cases
       "polymorphic comparison ends, and equality refuses one device's buffers"
       ~id:(fun (n, _, _) -> n)
       distinct test_polymorphic;
-    cases ~timeout "a bigarray's buffer is its bytes"
+    cases "a bigarray's buffer is its bytes"
       ~id:(fun (Kind (n, _, _)) -> n)
       kinds test_kind;
-    group ~timeout "strings"
+    group "strings"
       [
         prop "a blit from a string writes its range of the buffer and no other"
           blit (law_from_string Host_memory);
@@ -2739,7 +2736,7 @@ let tests =
           test_fill_on_engine;
         test "a blit waits as a host access of its kind does" test_blit_waits;
       ];
-    group ~timeout "host access"
+    group "host access"
       [
         test "the host accesses the device memory it addresses directly"
           test_host_addressed;
@@ -2750,7 +2747,7 @@ let tests =
         test "the blits and a fill reach memory the host does not address"
           test_blits_unaddressed;
       ];
-    group ~timeout "bigarrays"
+    group "bigarrays"
       [
         test "a bigarray refuses kinds, sizes and alignments it cannot read"
           test_bigarray_refusals;
@@ -2760,7 +2757,7 @@ let tests =
           test_bigarray_keeps_borrowed;
         test "a bigarray's storage keeps rig's share" test_bigarray_shares;
       ];
-    group ~timeout "waits"
+    group "waits"
       [
         test "a wait returns once the work that wrote the memory ran" test_wait;
         test "a read and a write follow the memory's work" test_access_orders;
@@ -2774,7 +2771,7 @@ let tests =
         cases "a host access keeps its buffer through its wait" ~id:fst
           host_accesses test_wait_keeps;
       ];
-    group ~timeout "another function's DMA"
+    group "another function's DMA"
       [
         test
           "dma describes the whole allocation as its driver does and shares \
@@ -2791,7 +2788,7 @@ let tests =
   ]
 
 let words =
-  group ~timeout "words"
+  group "words"
     [
       test "a wait whose points are reached allocates nothing" test_wait_words;
       test "reached allocates nothing" test_reached_words;

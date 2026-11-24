@@ -460,7 +460,7 @@ let test_prefetchable () =
     ]
 
 let tree_files =
-  group ~timeout:patience "a machine's files"
+  group "a machine's files"
     [
       cases "a take is refused, naming the function and the cause"
         ~id:(fun (n, _, _, _, _) -> n)
@@ -1148,7 +1148,7 @@ let test_block_reserved () =
       Function.alloc_dma ~va:base f page)
 
 let system_memory =
-  group ~timeout:patience "system memory"
+  group "system memory"
     [
       test "DMA memory, zeroed, at the frames of the huge pages that hold it"
         test_dma;
@@ -1360,7 +1360,7 @@ let test_reset_no_file () =
   contains ~sub:(fn.bus ^ "/reset") (require_error (Function.reset f))
 
 let resets =
-  group ~timeout:patience "resets"
+  group "resets"
     [
       test "a reset waits for the function to answer" test_reset_waits;
       test "a function that does not answer after its reset fails"
@@ -1555,7 +1555,7 @@ let dma_commands =
   ]
 
 (* 25 programs of 50 runs each, a hand-off between domains each, which waits for
-   a time slice when the processors are busy: its limit is three patiences. *)
+   a time slice when the processors are busy. *)
 let dma_law = "pins and DMA memory are counted the same from two domains"
 
 (* Releases and finishes of the releases from two domains at once. A program
@@ -1699,24 +1699,22 @@ let release_commands =
       open_file;
   ]
 
-(* 25 programs, as the DMA law's, within the same limit on one processor.
-   About two cases in five start with a cut release that a finish gives back,
-   so 25 reach the cover in every run. *)
+(* 25 programs, as the DMA law's. About two cases in five start with a cut
+   release that a finish gives back, so 25 reach the cover in every run. *)
 let release_law =
   "releases and finishes from two domains give a function back once"
 
 let dma_domains =
-  group ~timeout:patience "two domains"
+  group "two domains"
     [
       (if on_linux then
-         stateful dma_law ~timeout:(3. *. patience) ~domains:2 ~count:25
-           ~steps:dma_steps dma_commands
+         stateful dma_law ~domains:2 ~count:25 ~steps:dma_steps dma_commands
        else
          test dma_law (fun () ->
              skip ~reason:"system memory for a function needs Linux" ()));
       (if on_linux then
-         stateful release_law ~timeout:(3. *. patience) ~domains:2 ~count:25
-           ~steps:release_steps release_commands
+         stateful release_law ~domains:2 ~count:25 ~steps:release_steps
+           release_commands
        else
          test release_law (fun () ->
              skip ~reason:"finding a descriptor needs Linux" ()));
@@ -1800,7 +1798,7 @@ let test_finish_inside_lock () =
     (Tree.flocked (config_file root (Function.bus f)))
 
 let uses =
-  group ~timeout:patience "uses"
+  group "uses"
     [
       test "a string that is no bus address is refused" test_take_no_bus;
       test "a released function refuses all but free_dma, unpin and wait"
@@ -1831,7 +1829,7 @@ let misuse name use =
           use f (Machine.page Machine.this)))
 
 let misuse_refused =
-  group ~timeout:patience "misuse"
+  group "misuse"
     [
       misuse "a BAR index below zero" (fun f _ -> Function.bar f (-1));
       misuse "the least BAR index" (fun f _ -> Function.bar f min_int);
@@ -1962,7 +1960,7 @@ let test_wait_released () =
   not_contains ~msg:"reads no configuration space" ~sub:"left the bus" why
 
 let waits =
-  group ~timeout:patience "waits"
+  group "waits"
     [
       test "a wait whose condition holds at once is Ok after one call"
         test_at_once;
@@ -2409,7 +2407,7 @@ let test_interrupted_take () =
   walk 1
 
 let interrupts =
-  group ~timeout:patience "interrupts"
+  group "interrupts"
     [
       test
         "a finish of the releases that an exception cuts finishes the others \

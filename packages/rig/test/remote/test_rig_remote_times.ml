@@ -123,6 +123,6 @@ let () =
     (run "rig_remote.times"
        [
          (* A hang fails by name, with room left in the watchdog's 100 s. *)
-         stateful ~timeout:60. ~count:60 ~steps:1 ~domains:2
+         stateful ~count:60 ~steps:1 ~domains:2
            "times of one program on an agent from two domains" timed_commands;
        ])

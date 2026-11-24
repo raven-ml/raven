@@ -59,10 +59,9 @@ val ofd_locks : bool
     which tell a memory file's process alive, as Linux and macOS do. *)
 
 val patience : float
-(** [patience] is 10 s, how long a test waits for what must happen: the
-    [~timeout] of each suite's top groups, and {!poll}'s bound. It is
-    multiplied by the factor [RIG_TEST_TIME_SCALE] names, as
-    [Rig_support.time] multiplies. *)
+(** [patience] is 10 s, how long a test waits for what must happen: {!poll}'s
+    bound. It is multiplied by the factor [RIG_TEST_TIME_SCALE] names, which a
+    profile whose build slows every test sets, as the tsan profile does. *)
 
 val poll : (unit -> bool) -> bool
 (** [poll f] calls [f] until it is [true] or {!patience} passed, and is [true]

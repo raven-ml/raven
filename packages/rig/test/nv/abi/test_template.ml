@@ -33,7 +33,7 @@ let word =
 let value = Gen.int_range 0 max_int
 
 let words =
-  group ~timeout:10. "words"
+  group "words"
     [
       prop "a word's slot, filled, is the word of its value"
         (Gen.pair word value) (fun (w, v) ->
@@ -90,7 +90,7 @@ let templates =
       (w, v, slot))
 
 let concat =
-  group ~timeout:10. "concat"
+  group "concat"
     [
       prop "templates one after another fill as their fills one after another"
         templates (fun ts ->
@@ -169,7 +169,7 @@ let descriptor cls =
     }
 
 let patches =
-  group ~timeout:10. "patches"
+  group "patches"
     [
       cases
         "patches are by increasing offset, their words in the bytes and apart"

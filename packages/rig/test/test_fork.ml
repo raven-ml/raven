@@ -15,7 +15,6 @@ module Support = Rig_support
 let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
   Rig.submit ?waits s ~buffers ~args
 
-let timeout = 60.
 let empty d = Sub.make d [||]
 let raises_lost f = match f () with _ -> false | exception Rig.Lost _ -> true
 
@@ -643,7 +642,7 @@ let test_counted_call () =
 
 let tests =
   [
-    group ~timeout "fork"
+    group "fork"
       [
         test "a forked child's devices are lost for good" test_child;
         test "a forked child's io devices stay usable" test_io_child;

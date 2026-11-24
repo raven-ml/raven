@@ -17,8 +17,6 @@ let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
 
 (* The values of a submission's one fill, which reads none. *)
 let one = Support.zeros 1
-
-let timeout = Rig_support.time 60.
 let kib = 1024
 
 let out_of_memory d n = function
@@ -2062,7 +2060,7 @@ let test_free_refused () =
 
 let tests =
   [
-    group ~timeout "early release"
+    group "early release"
       [
         test "a freed buffer's memory returns once its work is done" test_free;
         test "a free given a reason kills with it" test_free_why;
@@ -2071,7 +2069,7 @@ let tests =
         test "a free where a take would be refused changes nothing"
           test_free_refused;
       ];
-    group ~timeout "budget"
+    group "budget"
       [
         test "the host's allocated bytes count its buffers"
           test_host_allocated;
@@ -2148,7 +2146,7 @@ let tests =
         test "a host allocation its budget refuses raises for its own bytes"
           test_host_budget_refused;
       ];
-    group ~timeout "kinds"
+    group "kinds"
       [
         test "pinned memory of hidden device memory counts in the host's budget"
           test_pinned;
@@ -2162,8 +2160,7 @@ let tests =
            and read through its device"
           test_mapped_window;
         test "a close inside a write of mapped memory raises" test_mapped_close;
-        test ~timeout:10. "a close inside the flush of a write raises"
-          test_flush_close;
+        test "a close inside the flush of a write raises" test_flush_close;
         test "mapped memory counts in its device's budget" test_mapped_budget;
         test "mapped memory the window cannot hold raises once reclaimed"
           test_mapped_room;
@@ -2180,7 +2177,7 @@ let tests =
            allocation"
           test_borrowed_reclaimed;
       ];
-    group ~timeout "reclamation"
+    group "reclamation"
       [
         test "a Ctrl-C in a reclamation round's wait loses none of the cache"
           test_break_in_round;

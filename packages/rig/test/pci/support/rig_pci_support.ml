@@ -50,8 +50,8 @@ let ofd_locks = ofd_locks ()
 
 external now_ns : unit -> int = "rig_pci_test_now_ns"
 
-(* The factor RIG_TEST_TIME_SCALE names, which a profile whose build slows
-   every test sets, as Rig_support.time reads it. *)
+(* The factor RIG_TEST_TIME_SCALE names, which a profile whose build slows every
+   test sets. *)
 let time_scale =
   match Sys.getenv_opt "RIG_TEST_TIME_SCALE" with
   | None -> 1.

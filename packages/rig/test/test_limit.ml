@@ -101,7 +101,7 @@ let test_open_close () =
 
 let tests =
   [
-    test ~timeout:(Rig_support.time 60.)
+    test
       "71,000 opens and closes, some lost with work queued, succeed with \
        the heaps bounded"
       test_open_close;

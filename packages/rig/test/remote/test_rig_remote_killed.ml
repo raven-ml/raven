@@ -93,7 +93,7 @@ let () =
   exit
     (run "rig_remote.killed"
        [
-         group ~timeout:60. "rig_remote"
+         group "rig_remote"
            [
              test "an agent's death, seen first by another agent" agent_first;
              test "an agent's death, seen first by the controller"

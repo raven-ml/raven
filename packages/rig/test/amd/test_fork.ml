@@ -62,7 +62,7 @@ let () =
   exit
     (run "rig_amd fork"
        [
-         group ~timeout:60. "fork"
+         group "fork"
            [
              test
                "a child forked after an open opens the GPU and runs work, \

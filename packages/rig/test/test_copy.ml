@@ -11,8 +11,6 @@ module B = Rig.Buffer
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let timeout = 60.
-
 (* The most bytes of an allocation of staging memory (rig.mli, Copying). *)
 let half = 32 lsl 20
 
@@ -534,7 +532,7 @@ let () =
   exit
   @@ run "rig.copy"
        [
-         group ~timeout "returning once queued"
+         group "returning once queued"
            [
              test "a copy a device runs returns before it runs"
                test_direct_queued;
@@ -548,7 +546,7 @@ let () =
              test "a fill a copy engine runs returns before it runs"
                test_fill_queued;
            ];
-         group ~timeout "staging memory"
+         group "staging memory"
            [
              test "small uploads to several devices share a half and never sleep"
                test_small_uploads;
@@ -558,7 +556,7 @@ let () =
              test "an upload packs behind no device's queued write"
                test_no_chain;
            ];
-         group ~timeout "boxes"
+         group "boxes"
            [
              prop ~count:300
                "a queued copy of boxes lands as the host's copy, on every route"
@@ -573,7 +571,7 @@ let () =
              test "a box that does not fit is refused, queueing nothing"
                test_refusals;
            ];
-         group ~timeout "domains"
+         group "domains"
            [
              stateful ~count:20 ~steps:8 ~domains:2
                "copies of their own through one staging memory on two \

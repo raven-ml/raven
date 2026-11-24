@@ -26,7 +26,6 @@ module H = Rig_gpu_support.Host
 let maps = Rig_gpu_support.mapped
 
 let strf = Printf.sprintf
-let timeout = 120.
 
 (* The text of the driver's refusal of a take by a lock's holder. *)
 let retaken = "Rig_cuda: a lock taken again by the thread that holds it"
@@ -236,7 +235,7 @@ let () =
   exit
     (run "rig_cuda interrupt"
        [
-         group ~timeout "an exception at any allocation"
+         group "an exception at any allocation"
            [
              test "an open leaves the GPU to the next open" open_cut;
              test "a mapping of host memory leaves it unlocked"
@@ -246,13 +245,13 @@ let () =
              test "a free of page-locked memory reaches no allocation"
                free_uncut;
            ];
-         group ~timeout "a call from a callback at any allocation"
+         group "a call from a callback at any allocation"
            [
              test "an entry in an entry of its image, refused inside its lock"
                entry_in_entry;
              test "a free in a mapping of host memory returns" free_in_map_host;
            ];
-         group ~timeout
+         group
            "a call to rig from a callback at any allocation keeps the device"
            [
              test "a function asked for while another is" entry_in_entry_rig;

@@ -34,8 +34,9 @@ module P = Rig_support.Polled
 module Sub = Rig.Submission
 module S = Rig_support
 
-(* The limit of each test, and of each child within 1/6 of it: a test run
-   with a larger limit, as under a sanitizer, gives each child more time. *)
+(* The limit of each test, WINDTRAP_TIMEOUT's, and of each child within 1/6 of
+   it: a test run with a larger limit, as under a sanitizer, gives each child
+   more time. *)
 let timeout =
   match Option.map float_of_string_opt (Sys.getenv_opt "WINDTRAP_TIMEOUT") with
   | Some (Some t) -> t
@@ -1835,7 +1836,7 @@ let poll_walks starts =
     | Used -> op.name ^ ", on a device it ran on"
     | Settled -> op.name ^ ", on a device it ran on, settled"
   in
-  group ~timeout "a SIGINT at any poll point leaves rig consistent"
+  group "a SIGINT at any poll point leaves rig consistent"
     (List.concat_map
        (fun (call, op) ->
          List.map (fun s -> test (name op s) (polls ~call s op)) starts)
@@ -1859,7 +1860,7 @@ let () =
   @@ run "rig.interrupt"
        [
          poll_walks [ Fresh; Used; Settled ];
-         group ~timeout "an exception at any allocation leaves rig consistent"
+         group "an exception at any allocation leaves rig consistent"
            (List.concat_map
               (fun (walk, op) ->
                 [
@@ -1896,7 +1897,7 @@ let () =
                   it"
                  test_close_in_open;
              ]);
-         group ~timeout
+         group
            "an exception once a driver's call returned leaves what it made \
             to rig"
            making_tests;

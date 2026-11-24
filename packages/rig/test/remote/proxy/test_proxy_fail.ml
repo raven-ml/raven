@@ -49,7 +49,7 @@ let () =
   exit
     (run "rig_remote_proxy.proxy_fail"
        [
-         group ~timeout:60. "proxy"
+         group "proxy"
            [
              test "a proxy lost with work in flight stops after the work"
                stopped_in_flight;

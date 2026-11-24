@@ -17,8 +17,6 @@ let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
 
 (* The values of a submission's one fill, which reads none. *)
 let one = Support.zeros 1
-
-let timeout = 60.
 let page_bytes = B.paged_from
 
 module Pages = struct
@@ -952,7 +950,7 @@ let test_read_memory () =
 
 let tests =
   [
-    group ~timeout "io memory"
+    group "io memory"
       [
         test "a device borrows io memory through its pages, mapped once"
           test_borrow;

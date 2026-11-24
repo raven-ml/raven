@@ -343,7 +343,7 @@ let start j mode ~name =
       in
       Unix.close w;
       let h = { pid; out = r } in
-      (* A peer that never connects dies when the group's timeout raises. *)
+      (* A peer that never connects dies when the test's timeout raises. *)
       (match guard h (fun () -> connects l pid) with
       | None -> ()
       | Some status ->
@@ -2189,7 +2189,7 @@ let () =
   exit
     (run "rig_remote_proxy.link"
        [
-         group ~timeout:60. "link"
+         group "link"
            [
              jobs;
              causes;

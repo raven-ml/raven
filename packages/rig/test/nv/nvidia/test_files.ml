@@ -128,7 +128,7 @@ let () =
   exit
     (run "rig_nv_nvidia files"
        [
-         group ~timeout:60. "files"
+         group "files"
            [
              test
                "a failed open under a file limit takes no file, and the open \

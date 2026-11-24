@@ -43,7 +43,7 @@ let report =
 let decoded = option report
 
 let interrupts =
-  group ~timeout:10. "interrupts"
+  group "interrupts"
     [
       cases "a release reports nothing" ~id:fst
         [

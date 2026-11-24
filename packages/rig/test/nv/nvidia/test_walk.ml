@@ -23,7 +23,6 @@ module H = Rig_gpu_support.Host
 external set_space : int -> int = "rig_nv_nvidia_test_set_space"
 
 let strf = Printf.sprintf
-let timeout = 60.
 let page = 4096
 
 (* OCaml can enumerate sysfs and collect within 64 MiB; the first GPU
@@ -337,7 +336,7 @@ let () =
   exit
     (run "rig_nv_nvidia walk"
        [
-         group ~timeout
+         group
            "an operation under a limit answers as its .mli states and leaves \
             nothing"
            (List.map
@@ -348,12 +347,12 @@ let () =
                test "an allocation of twice the GPU's memory is refused"
                  too_large;
              ]);
-         group ~timeout "an exception at any allocation"
+         group "an exception at any allocation"
            [
              test "of a process's first open leaves the next to open"
                interrupted_first;
            ];
-         group ~timeout "a process out of files"
+         group "a process out of files"
            (test "fails an open naming the cause, not the machine's GPUs"
               open_starved
            :: List.map

@@ -49,7 +49,7 @@ let test_faults kind =
     (List.mapi (fun k s -> (s, v.(1) land (1 lsl k) <> 0)) T.faults)
 
 let worker_tests =
-  group ~timeout:P.timeout "workers"
+  group "workers"
     [
       cases
         "a body on a compute worker has 8 MiB of stack, on a blocking worker \
@@ -185,7 +185,7 @@ let test_unmade () =
   equal ~msg:"threads after both jobs" int 1 v.(3)
 
 let thread_tests =
-  group ~timeout:P.timeout "threads"
+  group "threads"
     [
       test
         "the compute workers are made at its first job of more than one \

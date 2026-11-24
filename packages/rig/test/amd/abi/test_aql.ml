@@ -9,7 +9,6 @@
 open Windtrap
 open Rig_amd_abi
 
-let timeout = Rig_amd_abi_support.timeout
 let words = Rig_amd_abi_support.encode
 
 let kernel : Code_object.kernel =
@@ -56,7 +55,7 @@ let dispatches =
        args ))
 
 let dispatch =
-  group ~timeout "dispatch"
+  group "dispatch"
     [
       prop "a dispatch packet lays out hsa.h's fields" dispatches
         (fun (k, (x, y, z), (gx, gy, gz), descriptor, args) ->
@@ -100,7 +99,7 @@ let dispatch =
     ]
 
 let indirect =
-  group ~timeout "indirect_buffer"
+  group "indirect_buffer"
     [
       test "PM4 words in a vendor packet of 16 words" (fun () ->
           equal (list int)
@@ -115,7 +114,7 @@ let indirect =
    7) and a group segment of 0x12345 bytes holds them there, 16 and 32 bits
    little-endian. *)
 let fields =
-  group ~timeout "fields"
+  group "fields"
     [
       test "each field lies at its offset" (fun () ->
           let p =

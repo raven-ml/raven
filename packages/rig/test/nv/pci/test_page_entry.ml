@@ -100,6 +100,6 @@ let () =
   exit
   @@ run "rig_nv_pci.page_entry"
        [
-         group ~timeout:10. "entries" [ test_pte; test_pde; test_dual ];
-         group ~timeout:10. "levels" [ test_levels ];
+         group "entries" [ test_pte; test_pde; test_dual ];
+         group "levels" [ test_levels ];
        ]

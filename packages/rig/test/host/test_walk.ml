@@ -15,7 +15,6 @@ open Windtrap
 module S = Rig_host_support
 
 let strf = Printf.sprintf
-let timeout = 60.
 let page = 4096
 
 (* The room walked, in bytes: none, up to more than the fixture's image. *)
@@ -132,8 +131,7 @@ let () =
       exit
         (run "rig_host.walk"
            [
-             group ~timeout
-               "a link whose mapping fails answers Error and leaves nothing"
+             group "a link whose mapping fails answers Error and leaves nothing"
                (List.map
                   (fun room ->
                     test (strf "%d bytes of room" room) (walked room))

@@ -1034,7 +1034,7 @@ let () =
   exit
     (run "rig_remote interrupt"
        [
-         group ~timeout:60. "a call from a callback at any allocation"
+         group "a call from a callback at any allocation"
            [
              test "a devices in a devices answers" devices_in_devices;
              test "a first devices in a first devices of its kind answers"
@@ -1047,7 +1047,7 @@ let () =
              test "an exception in a close reports the close at the exit"
                raise_in_close;
            ];
-         group ~timeout:60. "a cut at any allocation"
+         group "a cut at any allocation"
            [
              test "a devices after a devices cut by an exception answers"
                raise_in_devices;
@@ -1068,7 +1068,7 @@ let () =
              test "a serve cut by an exception stops listening" serve_cut;
              test "a serve cut by a Ctrl-C stops listening" serve_break;
            ];
-         group ~timeout:60. "a Ctrl-C in serve"
+         group "a Ctrl-C in serve"
            [
              test "in the wait for a controller raises Sys.Break" break_idle;
              test "in a command raises Sys.Break" break_in_command;

@@ -8,7 +8,6 @@ module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
 
-let timeout = Rig_support.time 60.
 let strf = Printf.sprintf
 
 let functions d =
@@ -1025,7 +1024,7 @@ let test_allocation () =
 
 let tests =
   [
-    group ~timeout "patching"
+    group "patching"
       [
         prop
           "a launch reads each ref's word as its buffer's address plus the \
@@ -1038,14 +1037,14 @@ let tests =
         test "an entry ref's bytes hold its function's value"
           test_entry_overwrites;
       ];
-    group ~timeout "order"
+    group "order"
       [
         test "a read of a buffer waits for the launch that writes it"
           test_write_seen;
         test "a launch and a copy on another queue follow each other"
           test_device_order;
       ];
-    group ~timeout "lifetime"
+    group "lifetime"
       [
         test "a submission keeps its launches' images after their array changed"
           test_parts_changed;
@@ -1054,7 +1053,7 @@ let tests =
         test "values rewritten during their submit give it some bytes of each"
           test_rewritten_values;
       ];
-    group ~timeout "refusals"
+    group "refusals"
       [
         test "each constructor refuses what its arguments show"
           test_constructor_refusals;
@@ -1072,7 +1071,7 @@ let tests =
         test "a submit whose blocks the host has no memory for raises"
           test_grow_refused;
       ];
-    group ~timeout "domains"
+    group "domains"
       [
         stateful ~domains:2
           "two domains' submits of one submission each read their own values"
@@ -1082,7 +1081,7 @@ let tests =
            it"
           passing_commands;
       ];
-    group ~timeout "state"
+    group "state"
       [
         test "a free_cache of the host frees the state kept for submits"
           test_state_freed;
@@ -1095,7 +1094,7 @@ let tests =
            is freed"
           freeing_commands;
       ];
-    group ~timeout "cost"
+    group "cost"
       [
         test "a launch's submit and a rewrite of its values allocate nothing"
           test_allocation;

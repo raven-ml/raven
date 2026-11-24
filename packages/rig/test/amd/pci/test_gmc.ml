@@ -124,7 +124,7 @@ let unit_bytes = 16 lsl 20
 let units = 2039
 
 let apertures =
-  group ~timeout:10. "apertures"
+  group "apertures"
     [
       cases "a window holds the GPU's memory, or is refused" ~id:fst
         [
@@ -145,7 +145,7 @@ let apertures =
     ]
 
 let page_tables =
-  group ~timeout:10. "page tables"
+  group "page tables"
     [
       cases "an entry holds the bits amdgpu_vm.h states"
         ~id:(fun (n, _, _, _, _, _, _, _, _) -> n)

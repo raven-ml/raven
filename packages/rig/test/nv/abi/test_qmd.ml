@@ -56,7 +56,7 @@ let program_v3 = ((1567, 1536), (1584, 1568), 0)
 let program_v5 = ((1055, 1024), (1076, 1056), 4)
 
 let descriptors =
-  group ~timeout:10. "descriptors"
+  group "descriptors"
     [
       test "64 KiB of local memory a thread fills its field" (fun () ->
           let local = Template.Int 0x10000 in
@@ -133,7 +133,7 @@ let descriptors =
 (* Limits *)
 
 let limits =
-  group ~timeout:10. "limits"
+  group "limits"
     [
       test "a grid takes 2^31-1 blocks along X, 65535 along Y and Z" (fun () ->
           equal (list int)
@@ -244,7 +244,7 @@ let dump cls =
         s.patches)
 
 let slots =
-  group ~timeout:10. "slots"
+  group "slots"
     [
       cases "a value left to its slot, filled, is the value known"
         ~id:S.class_name S.classes (fun cls ->
@@ -255,7 +255,7 @@ let slots =
     ]
 
 let words =
-  group ~timeout:10. "words"
+  group "words"
     [
       test "an Ada descriptor" (fun () ->
           expect (dump S.ada)

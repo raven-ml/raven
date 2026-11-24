@@ -100,6 +100,6 @@ let () =
   exit
     (run "rig_remote.dial"
        [
-         group ~timeout:60. "rig_remote"
+         group "rig_remote"
            [ test "a signal while connect dials leaves it to answer" interrupted ];
        ])

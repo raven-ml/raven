@@ -40,7 +40,7 @@ let () =
   exit
     (run "rig_remote domains"
        [
-         group ~timeout:60. "two domains"
+         group "two domains"
            [
              test "two first devices of a kind are the same devices"
                devices_racing;

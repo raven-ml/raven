@@ -398,7 +398,7 @@ let () =
   exit
   @@ run "rig_pci.space"
        [
-         group ~timeout:patience "ranges"
+         group "ranges"
            [
              stateful "allocations stay apart and within the fit bound"
                ~count:300

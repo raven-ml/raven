@@ -195,6 +195,6 @@ let () =
   exit
     (run "rig_amd fault"
        [
-         group ~timeout:60. "fault"
+         group "fault"
            [ test "a fault of the work is the kernel driver's report" faults ];
        ])

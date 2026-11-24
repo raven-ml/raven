@@ -84,7 +84,4 @@ let faults () =
 let () =
   exit
     (run "rig_cuda fault"
-       [
-         group ~timeout:60. "fault"
-           [ test "a fault of the work is CUDA's report" faults ];
-       ])
+       [ group "fault" [ test "a fault of the work is CUDA's report" faults ] ])

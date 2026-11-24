@@ -15,8 +15,6 @@ open Windtrap
 module N = Rig_nv
 module S = Rig_nv_support
 
-let timeout = 60.
-
 (* The work: [double_index] over [n] 32-bit words at [out]. *)
 let n = 1000
 let open_files () = Array.length (Sys.readdir "/proc/self/fd")
@@ -213,7 +211,7 @@ let () =
   exit
     (run "rig_nv fault"
        [
-         group ~timeout "a kernel storing to address 0"
+         group "a kernel storing to address 0"
            [
              test
                "loses the device with the RM's report, which every later use \

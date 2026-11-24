@@ -13,7 +13,6 @@ open Rig_amd_abi
 module S = Rig_amd_abi_support
 
 let strf = Printf.sprintf
-let timeout = S.timeout
 let gfx11 = S.gpu ~shader_engines:6 ~compute_units:48 (11, 0, 0)
 
 let gfx9 =
@@ -84,7 +83,7 @@ let granule (g : Gpu.t) = match g.gc with 9, _, _ -> 16 | _ -> 4
 let round_up n m = (n + m - 1) / m * m
 
 let laws =
-  group ~timeout "laws"
+  group "laws"
     [
       prop "a buffer holds a wave's lanes for every slot, unit and die"
         (Gen.pair gpus lanes) (fun ((g : Gpu.t), n) ->
@@ -163,7 +162,7 @@ let wavesize g w =
   (w lsr lo) land ((1 lsl (hi - lo + 1)) - 1)
 
 let sizes =
-  group ~timeout "sizes"
+  group "sizes"
     [
       test "a GC with no scratch ring register is refused" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Scratch.tmpring") (fun () ->
@@ -188,7 +187,7 @@ let sizes =
 let selects = 4 lor (5 lsl 3) lor (6 lsl 6) lor (7 lsl 9) lor (1 lsl 23)
 
 let descriptor =
-  group ~timeout "descriptor"
+  group "descriptor"
     [
       test "a GFX11 descriptor" (fun () ->
           equal (list int)

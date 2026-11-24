@@ -17,7 +17,6 @@ module Support = Rig_support
 let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
   Rig.submit ?waits s ~buffers ~args
 
-let timeout = 60.
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 
 let load d binary =
@@ -387,7 +386,7 @@ let test_profiled () =
 
 let tests =
   [
-    group ~timeout "images"
+    group "images"
       [
         cases "code placement" ~id:placement_name
           [ (true, true); (true, false); (false, true); (false, false) ]

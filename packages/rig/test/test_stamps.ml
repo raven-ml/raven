@@ -21,8 +21,6 @@ let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
 (* The values of a submission's one fill, which reads none. *)
 let one = Support.zeros 1
 
-let timeout = 120.
-
 let pp_access ppf = function
   | Rig.Read -> Format.pp_print_string ppf "Read"
   | Rig.Read_write -> Format.pp_print_string ppf "Read_write"
@@ -337,7 +335,7 @@ let replay_commands =
 
 let tests =
   [
-    group ~timeout "stamps"
+    group "stamps"
       [
         stateful "submits and waits follow the memory's stamps" commands;
         stateful ~count:30 ~domains:2
@@ -345,13 +343,13 @@ let tests =
         stateful ~count:30 ~domains:2
           "accesses after two racing writes follow both" racing_commands;
       ];
-    group ~timeout "two writers"
+    group "two writers"
       [
         test "a host read after both follows both" test_racing_host_read;
         test "a submitted read after both follows both" test_racing_submit_read;
         test "a read claim after both waits for both" test_racing_claim;
       ];
-    group ~timeout "replay"
+    group "replay"
       [
         stateful ~steps:12 "a run copy is rewritten only after its last run ran"
           replay_commands;

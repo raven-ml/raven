@@ -1685,7 +1685,7 @@ let () =
   exit
   @@ run "rig_pci.page_table"
        [
-         group ~timeout:patience "create"
+         group "create"
            [
              test "names its space, base, span and root" test_create;
              test_main_pool;
@@ -1694,7 +1694,7 @@ let () =
              test_base_refusals;
              test_pa_bits_create;
            ];
-         group ~timeout:patience "map"
+         group "map"
            [
              test_map;
              test "1 GiB pages, and 2 MiB ones where memory is aligned to 2 MiB"
@@ -1712,7 +1712,7 @@ let () =
              test_tables_path;
              test "a page over a kept table maps into it" test_tables_under_page;
            ];
-         group ~timeout:patience "table memory"
+         group "table memory"
            [
              test "a full tables' pool answers None and keeps what it had"
                test_out_of_tables;
@@ -1727,7 +1727,7 @@ let () =
              test "booting takes tables and memory from the boot pool"
                test_booting;
            ];
-         group ~timeout:patience "host copy"
+         group "host copy"
            [
              stateful
                "the GPU's entries are the live pages', each call stores then \
@@ -1736,13 +1736,13 @@ let () =
              test "a failed machine leaves the host copy whole"
                test_failed_machine;
            ];
-         group ~timeout:patience "real formats" [ test_real_formats ];
-         group ~timeout:patience "physical memory"
+         group "real formats" [ test_real_formats ];
+         group "physical memory"
            [
              stateful "blocks stay apart, zeroed and within the fit bound"
                ~count:300 palloc_commands;
            ];
-         group ~timeout:patience "alloc"
+         group "alloc"
            [
              test_contiguous;
              test "large blocks map as large pages" test_blocks;

@@ -750,6 +750,6 @@ let () =
   exit
     (run "rig_remote_proxy.wire"
        [
-         group ~timeout:60. "handshake"
+         group "handshake"
            [ keys_group; admission; refusals; greetings; proofs; silence ];
        ])

@@ -10,7 +10,6 @@ open Windtrap
 open Rig_amd_abi
 module S = Rig_amd_abi_support
 
-let timeout = S.timeout
 let id (v : int64) = v
 let words = S.words
 
@@ -115,7 +114,7 @@ let hole : v Packet.word -> bool = function
   | W32 t | W64 t -> later t
 
 let encode =
-  group ~timeout "encode"
+  group "encode"
     [
       prop "a packet is four bytes a word of its size" packet (fun p ->
           equal int (4 * Packet.size p) (String.length (Packet.encode value p)));
@@ -157,7 +156,7 @@ let holes p =
   List.rev hs
 
 let template =
-  group ~timeout "template"
+  group "template"
     [
       prop "a template's holes, filled, are the encoding" packet (fun p ->
           let b, hs = Packet.template known p in

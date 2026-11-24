@@ -1077,16 +1077,6 @@ let covered seen =
   Windtrap.greater ~msg:"landings between locks" Windtrap.int ~than:0
     seen.between
 
-let time_scale =
-  match Sys.getenv_opt "RIG_TEST_TIME_SCALE" with
-  | None -> 1.
-  | Some s -> (
-      match float_of_string_opt s with
-      | Some k when k >= 1. -> k
-      | _ -> invalid_arg ("RIG_TEST_TIME_SCALE=" ^ s ^ ": not a factor >= 1"))
-
-let time s = s *. time_scale
-
 let await what f =
   let until = Unix.gettimeofday () +. watchdog_s in
   while not (f ()) do

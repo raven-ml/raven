@@ -42,7 +42,7 @@ let () =
   exit
     (run "rig_remote.failed"
        [
-         group ~timeout:60. "rig_remote"
+         group "rig_remote"
            [
              test "the controller's own failure fails its job, and connect's"
                process_failed;

@@ -147,7 +147,7 @@ let () =
       exit
         (run "rig_amd_pci_root"
            [
-             group ~timeout:120. "a detached GPU, as root"
+             group "a detached GPU, as root"
                [
                  test "a device two domains close at once opens again"
                    test_stop_twice;

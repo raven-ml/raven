@@ -84,7 +84,7 @@ let () =
   exit
     (run "rig_remote.own"
        [
-         group ~timeout:60. "rig_remote"
+         group "rig_remote"
            [
              test "a loss of a device of the controller leaves the job going"
                own_device_lost;

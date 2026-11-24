@@ -17,7 +17,7 @@ let words b offs = List.map (u32 b) offs
    its response at 864 (status at +0, TMR size at +16); a frame is 64 bytes, the
    command's address at 0 and 4, the fence's at 12 and 16, its value at 20. *)
 let security =
-  group ~timeout:10. "security processor"
+  group "security processor"
     [
       test "a firmware load names its address, size and type" (fun () ->
           let b = Psp.load_ip_fw ~at:0x12_3456_7000 ~bytes:0x800 ~fw_type:89 in

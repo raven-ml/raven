@@ -84,11 +84,11 @@ let () =
   exit
     (run "rig_remote.metal"
        [
-         test ~timeout:60.
+         test
            "a program over a specialised metallib runs with its values on an \
             agent's GPU"
            runs;
-         test ~timeout:60.
+         test
            "an agent's load refuses a specialised metallib that lacks a \
             required value"
            refused;

@@ -197,7 +197,7 @@ let commands ~is_mapped make =
   ]
 
 let same_bytes =
-  group ~timeout:patience "accesses"
+  group "accesses"
     [
       stateful ~count:300 "a mapped window behaves as its bytes"
         (commands ~is_mapped:true mapped);
@@ -263,7 +263,7 @@ let test_combines () =
     ]
 
 let windows =
-  group ~timeout:patience "windows"
+  group "windows"
     [
       test "v is the bytes at the address it is given" test_v;
       test "through is the bytes at the address it is given" test_through;
@@ -384,7 +384,7 @@ let test_blocks (skew, n, off, fill) =
     (Window.read all 0 (n + 128))
 
 let long =
-  group ~timeout:patience "long copies"
+  group "long copies"
     [
       prop
         "read, write, blit_string and fill agree with the bytes while the heap \
@@ -537,7 +537,7 @@ let broken () =
   (f, w)
 
 let transports =
-  group ~timeout:patience "transports"
+  group "transports"
     ([
        test "a 32- or 64-bit access is one access of its width" test_one_access;
        test "each domain's accesses arrive in the order it makes them"
@@ -589,7 +589,7 @@ let test_c_failed () =
     (Some "far: the link broke") (c_failed w)
 
 let c_view =
-  group ~timeout:patience "rig_pci.h"
+  group "rig_pci.h"
     [
       test "rig_pci_window_of reads a window's place and side" test_window_of;
       test

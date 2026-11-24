@@ -8,9 +8,6 @@
 open Windtrap
 open Rig_amd_abi
 module S = Rig_amd_abi_support
-
-let timeout = S.timeout
-
 module P = Rig_support.Polled
 
 (* A device whose facts declare [capability], open in rig until [f] returns. *)
@@ -32,7 +29,7 @@ let record =
   }
 
 let key =
-  group ~timeout "key"
+  group "key"
     [
       test "finds the record the device declared" (fun () ->
           with_device (Rig_amd_abi.declare record) @@ fun d ->

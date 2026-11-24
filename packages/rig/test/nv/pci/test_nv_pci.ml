@@ -683,7 +683,7 @@ let test_failed_boot () =
   equal ~msg:"the next open's reset" string "1" (resets root)
 
 let booted =
-  group ~timeout:Rig_pci_support.patience "booted GPUs"
+  group "booted GPUs"
     [
       test
         "a GPU whose holder died before allocating memory is reset by the next \
@@ -710,7 +710,7 @@ let booted =
 
 (* The falcon's poll waits 30 s before the boot fails. *)
 let failed_boot =
-  group ~timeout:60. "a failed boot"
+  group "a failed boot"
     [
       test
         "a boot that fails stops the GPU: FWSEC was set up for its memory, its \
@@ -757,7 +757,7 @@ let test_interrupted_sleep () =
   from 1
 
 let this_machine =
-  group ~timeout:60. "this machine's GPU"
+  group "this machine's GPU"
     [
       test
         "an exception at any allocation of a sleep leaves the GSP's lock free \

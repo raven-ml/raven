@@ -170,7 +170,7 @@ let () =
   exit
     (run "rig_remote.join"
        [
-         group ~timeout:60. "rig_remote"
+         group "rig_remote"
            [
              test "a join dials its later agents at once" held;
              test "an agent's dial during the controller's reply is admitted"

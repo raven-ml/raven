@@ -13,7 +13,6 @@ module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
 
-let timeout = 60.
 let empty d = Sub.make d [||]
 
 let submit ?waits s = Rig.submit ?waits s ~buffers:[||] ~args:[||]
@@ -314,14 +313,14 @@ let test_fail_beside_opens () =
 
 let tests =
   [
-    group ~timeout "an exception escaping a driver"
+    group "an exception escaping a driver"
       (List.map
          (fun (call, prepare) ->
            test
              (call ^ ": loses the device with its text, and is the failure")
              (escaping call prepare))
          escapes);
-    group ~timeout "fail"
+    group "fail"
       [
         test "a close is no failure, a loss is" test_close_no_failure;
         test "the first loss stays the failure" test_first_loss;

@@ -234,7 +234,7 @@ let () =
   @@ run "rig_gpus"
        [
          (* Before the launches, which hold every GPU they open. *)
-         group ~timeout:60. "paths"
+         group "paths"
            [
              test
                "each path in preference order, with its GPUs' names and buses \
@@ -245,7 +245,7 @@ let () =
              test "the devices of one GPU state its last-level cache"
                same_cache;
            ];
-         group ~timeout:120. "launches"
+         group "launches"
            [
              prop ~count:20
                "one launch leaves the same bytes on the host and on each GPU"

@@ -14,7 +14,6 @@ open Rig_amd_abi
 module S = Rig_amd_abi_support
 
 let strf = Printf.sprintf
-let timeout = S.timeout
 
 let fixture name =
   In_channel.with_open_bin ("fixtures/" ^ name) In_channel.input_all
@@ -179,7 +178,7 @@ let kernel =
     ~equal:( = )
 
 let reading =
-  group ~timeout "reading"
+  group "reading"
     [
       cases "an object keeps the bytes it was read from" ~id:fst both
         (fun (_, obj) ->
@@ -504,7 +503,7 @@ let with_max_flat obj v =
       Bytes.set_uint16_be b (at + 1) v)
 
 let refusals =
-  group ~timeout "refusals"
+  group "refusals"
     [
       test "bytes that are no ELF object" (fun () -> refused "not an object");
       test "an object for another machine" (fun () ->

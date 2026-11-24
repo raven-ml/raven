@@ -14,7 +14,7 @@ let strf = Printf.sprintf
 let pp_error = Format.pp_print_string
 
 let classes =
-  group ~timeout:10. "classes"
+  group "classes"
     [
       cases "a class the GPU names takes a launch" ~id:S.class_name S.classes
         (fun cls ->
@@ -73,7 +73,7 @@ let fits (k : Cubin.kernel) =
        k.banks
 
 let memory =
-  group ~timeout:10. "memory"
+  group "memory"
     [
       prop ~count:500
         "a launch takes a kernel within its limits and refuses one past any"
@@ -118,7 +118,7 @@ let banks_gen =
     (List.combine indices sizes)
 
 let banks =
-  group ~timeout:10. "banks"
+  group "banks"
     [
       prop
         "a launch addresses the kernel's banks, after a bank 0 of 352 bytes if \
@@ -207,7 +207,7 @@ let window =
   List.fold_left (fun w b -> (w lsl 8) lor b) top bytes
 
 let driver =
-  group ~timeout:10. "driver parameters"
+  group "driver parameters"
     [
       prop "the parameters reach the kernel's, padded with zeros"
         (Gen.pair S.compute_class (Gen.int_range 0 0x1000))
@@ -343,7 +343,7 @@ let driver =
    allocation granularities for compute capability 8.x). *)
 
 let threads =
-  group ~timeout:10. "threads"
+  group "threads"
     [
       cases "a block takes 1024 threads, fewer for many registers"
         ~id:(fun (r, _) -> strf "%d registers" r)
@@ -372,7 +372,7 @@ let threads =
 (* Dynamic shared memory: what the block's own leaves of 100 KiB, its own the
    kernel's and the driver's 1 KiB rounded up to 128 bytes. *)
 let dynamic =
-  group ~timeout:10. "dynamic shared memory"
+  group "dynamic shared memory"
     [
       cases "a block takes what its own leaves of 100 KiB"
         ~id:(fun (n, _) -> strf "%d bytes of the kernel's" n)

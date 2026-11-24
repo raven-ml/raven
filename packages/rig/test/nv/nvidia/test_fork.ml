@@ -119,7 +119,7 @@ let () =
   exit
     (run "rig_nv_nvidia fork"
        [
-         group ~timeout:60. "fork"
+         group "fork"
            [
              test "a child of a parent that never called the driver opens GPU 0"
                (forked (fun () -> Ok ()));

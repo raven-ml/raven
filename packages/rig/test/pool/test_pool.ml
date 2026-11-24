@@ -480,7 +480,7 @@ let test_cpu_tree tree =
     (with_files files (fun root -> P.performance_cpus root tree.cpus))
 
 let cores_tests =
-  group ~timeout:P.timeout "cores"
+  group "cores"
     [
       test "the cores and the performance cores are within their bounds"
         test_core_bounds;
@@ -673,7 +673,7 @@ let test_wide_job kind (total, chunks, expected) =
     (cut (0L :: List.map snd expected) ran)
 
 let chunk_tests =
-  group ~timeout:P.timeout "chunks"
+  group "chunks"
     (for_kinds (fun kind name ->
          prop ~count:300 ~examples:job_examples
            (name
@@ -731,7 +731,7 @@ let test_visibility kind =
   equal ~msg:"values the caller read stale" int 0 caller
 
 let worker_tests =
-  group ~timeout:P.timeout "workers"
+  group "workers"
     (for_kinds (fun kind name ->
          prop ~examples:job_examples
            (name
@@ -837,7 +837,7 @@ let job_commands =
     kinds
 
 let scheduling_tests =
-  group ~timeout:P.timeout "scheduling"
+  group "scheduling"
     [
       cases
         "a job of one thread runs at once while another thread's job of its \

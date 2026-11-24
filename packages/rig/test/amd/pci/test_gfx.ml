@@ -34,7 +34,7 @@ let gfx12_queue =
 (* v12_structs.h and v9_structs.h give each field's word; gc_12_0_0_sh_mask.h
    each register field's first bit. *)
 let queues =
-  group ~timeout:10. "compute queues"
+  group "compute queues"
     [
       cases
         "a shader array selection and a broadcast hold the bits GRBM_GFX_INDEX \

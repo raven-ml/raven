@@ -23,7 +23,6 @@ open Windtrap
 module N = Rig_nv
 
 let strf = Printf.sprintf
-let timeout = 60.
 let functions = List.init 40 (fun k -> strf "local%d" k)
 let made = List.filteri (fun k _ -> k < 32) functions
 let last = List.nth functions 32
@@ -739,7 +738,7 @@ let () =
   exit
     (run "rig_nv interrupt"
        [
-         group ~timeout "an exception at any allocation"
+         group "an exception at any allocation"
            [
              test
                "of an image's entry leaves its unload to free every launch"
@@ -771,7 +770,7 @@ let () =
              test "of a free of Mapped memory leaves no range after the close"
                (guarded "the Mapped free walk" (test_free Rig.Buffer.Mapped));
            ];
-         group ~timeout
+         group
            "a call from a callback at any allocation raises inside the lock \
             it takes, and answers outside it"
            [
@@ -780,10 +779,10 @@ let () =
              test "a free in a free" test_free_in_free;
              test "an allocation in an allocation answers" test_alloc_in_alloc;
            ];
-         group ~timeout
+         group
            "a call to rig from a callback at any allocation raises inside a \
             lock, answers outside it, and keeps the device"
            [ test "a function asked for while another is" test_entry_in_entry_rig ];
-         group ~timeout "a call inside a lock of its thread's raises"
+         group "a call inside a lock of its thread's raises"
            [ test "the capability's growth of local memory" test_local_inside ];
        ])

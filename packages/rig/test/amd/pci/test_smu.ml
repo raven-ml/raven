@@ -27,7 +27,7 @@ let messages =
   ]
 
 let power =
-  group ~timeout:10. "power manager"
+  group "power manager"
     [
       cases "a message has its header's ID"
         ~id:(fun ((a, b, c), n, _) -> strf "%s of MP1 %d.%d.%d" n a b c)

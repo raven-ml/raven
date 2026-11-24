@@ -324,7 +324,7 @@ let test_death_hugetlbfs () =
       Fun.protect ~finally:clear (fun () -> death root fn)
 
 let this_machine =
-  group ~timeout:patience "this machine"
+  group "this machine"
     [
       test "this machine without /sys/bus/pci refuses a take, naming the bus"
         test_refused_here;

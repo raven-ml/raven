@@ -703,7 +703,7 @@ let () =
   exit
     (run "rig_remote_proxy.link_fail"
        [
-         group ~timeout:30. "before a frame"
+         group "before a frame"
            [
              test "a severed link fails the job, and the others abort"
                severed_idle;
@@ -720,7 +720,7 @@ let () =
                    outside every lock"
                   handled_in_next;
            ];
-         group ~timeout:30. "mid-frame"
+         group "mid-frame"
            [
              test "a severed link fails the job, and every writer returns"
                severed_mid_frame;
@@ -728,7 +728,7 @@ let () =
              @@ test "a peer that reads nothing fails the job, cut"
                   stalled_mid_frame;
            ];
-         group ~timeout:30. "rail transfer"
+         group "rail transfer"
            [
              test "a severed link fails the job, and every waiter wakes"
                severed_rail;
@@ -738,7 +738,7 @@ let () =
              @@ test "a release of the cut rail waits for its transfer alone"
                   stalled_release;
            ];
-         group ~timeout:30. "abort"
+         group "abort"
            [
              test "a severed link keeps the root cause, and fail returns"
                severed_abort;

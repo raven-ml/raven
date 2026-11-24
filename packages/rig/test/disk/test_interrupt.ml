@@ -15,7 +15,6 @@ module B = Rig.Buffer
 module Support = Rig_disk_support
 
 let strf = Printf.sprintf
-let timeout = 60.
 
 (* The disk keeps at most this many descriptors open while no copy uses
    them. *)
@@ -382,7 +381,7 @@ let () =
   let code =
     run "rig_disk.interrupt"
       [
-        group ~timeout "an exception at any allocation"
+        group "an exception at any allocation"
           [
             test
               "a read that reopens a descriptor and closes another keeps the \
@@ -398,7 +397,7 @@ let () =
               test_interrupt_barrier;
             test "a create that raises leaves no file at its path" test_create;
           ];
-        group ~timeout "a call from a callback at any allocation"
+        group "a call from a callback at any allocation"
           [
             test
               "a read, a write, a barrier, an open and a free in an open \

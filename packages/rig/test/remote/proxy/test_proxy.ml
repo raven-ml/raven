@@ -758,7 +758,4 @@ let () =
   Watchdog.start ();
   exit
     (run "rig_remote_proxy.proxy"
-       [
-         group ~timeout:60. "proxy"
-           [ facts; memory; copies; work; code; failures ];
-       ])
+       [ group "proxy" [ facts; memory; copies; work; code; failures ] ])

@@ -9,7 +9,6 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let timeout = Rig_support.time 60.
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 let empty d = Sub.make d [||]
@@ -372,7 +371,7 @@ let reader_commands =
 
 let tests =
   [
-    group ~timeout "releases"
+    group "releases"
       [
         test "a value kept on two devices is let go once both are done"
           test_two_devices;
@@ -382,7 +381,7 @@ let tests =
           test_release_unsubmitted;
         test "a kept value waits for a lost device's word and answer"
           test_release_lost;
-        test ~timeout:10. "a drain that finds a transport's fault returns"
+        test "a drain that finds a transport's fault returns"
           test_release_transport_fault;
         test "a kept value orders no work" test_keep_orders_nothing;
         test "a value submitted twice waits for both submits' work"
@@ -394,7 +393,7 @@ let tests =
         test "a closed device's kept value is let go by a call on another"
           test_release_closed;
       ];
-    group ~timeout "fixed memory"
+    group "fixed memory"
       [
         test "fixed memory read waits for no other reader" test_fixed_read;
         test "fixed memory written orders as a written run buffer"

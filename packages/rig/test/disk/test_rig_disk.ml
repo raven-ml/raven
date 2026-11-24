@@ -14,7 +14,6 @@ module Sub = Rig.Submission
 module Support = Rig_disk_support
 
 let strf = Printf.sprintf
-let timeout = 60.
 let disk = Rig_disk.device
 let host = Rig.host
 
@@ -446,7 +445,7 @@ let test_swept () =
   equal bool ~msg:"removed by the next start" false (Sys.file_exists left)
 
 let the_disk =
-  group ~timeout "the disk"
+  group "the disk"
     [
       test "a killed process's files are removed as another process starts"
         test_swept;
@@ -813,7 +812,7 @@ let test_depth () =
   equal string "9 127" (child [ "depth"; path ])
 
 let copies =
-  group ~timeout "copies"
+  group "copies"
     [
       prop
         "a copy into a file and back moves every byte, at any offset and \
@@ -947,7 +946,7 @@ let test_empty_borrows () =
     (borrowed host created, borrowed host opened)
 
 let borrows =
-  group ~timeout "borrows"
+  group "borrows"
     [
       prop
         "a borrow of a file's bytes, by the host or a device that maps host \
@@ -1107,7 +1106,7 @@ let test_limited (_, op, expected) =
   equal string expected (child [ "limited"; op; path ])
 
 let opening =
-  group ~timeout "opening and creating"
+  group "opening and creating"
     [
       test
         "an opened file's length is the file's size when opened, whatever it \
@@ -1433,7 +1432,7 @@ let test_truncated_pages kind =
     (ended [ "truncated-borrow"; "read"; kind_arg kind; path ])
 
 let descriptors =
-  group ~timeout "descriptors"
+  group "descriptors"
     [
       prop
         "a file whose path names another file since reads its own bytes or \
@@ -1701,7 +1700,7 @@ let test_failed_close () =
   barrier_fails ~msg:"the barrier after the close" path file
 
 let barriers =
-  group ~timeout "barriers"
+  group "barriers"
     [
       test "barrier returns on a file opened for reading" (fun () ->
           let path = make_file "abc" in
@@ -1867,7 +1866,7 @@ let model_commands =
   ]
 
 let models =
-  group ~timeout "a model"
+  group "a model"
     [
       stateful ~count:200
         "a file's copies, borrows and barriers follow its bytes and pages, \
@@ -1997,7 +1996,7 @@ let test_beside_compute () =
   same ~msg:"the bytes read" s (Option.get got)
 
 let domains =
-  group ~timeout "domains"
+  group "domains"
     [
       test
         "a long copy ends while another domain's compute job holds the host \

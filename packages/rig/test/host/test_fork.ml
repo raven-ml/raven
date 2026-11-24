@@ -12,8 +12,6 @@ module B = Rig.Buffer
 module Sub = Rig.Submission
 module S = Rig_host_support
 
-let timeout = 60.
-
 let status = function
   | Unix.WEXITED n -> Printf.sprintf "exited %d" n
   | Unix.WSIGNALED n -> "killed by " ^ Sys.signal_to_string n
@@ -103,7 +101,7 @@ let () =
   exit
     (run "rig_host.fork"
        [
-         group ~timeout "fork"
+         group "fork"
            [
              test "a forked child runs host code, its parent's and its own"
                test_child;

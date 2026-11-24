@@ -13,14 +13,13 @@ open Rig_amd_abi
 module S = Rig_amd_abi_support
 
 let strf = Printf.sprintf
-let timeout = S.timeout
 let gpu = S.gpu
 let version = S.version
 
 let names g = List.map (fun (r : Register.t) -> r.name) (Register.registers g)
 
 let registers =
-  group ~timeout "registers"
+  group "registers"
     [
       cases
         "a GC takes the registers of the latest version of its major before it"
@@ -50,7 +49,7 @@ let no_base v segment =
       Register.address (gpu v) r)
 
 let address =
-  group ~timeout "address"
+  group "address"
     [
       cases "a register's address"
         ~id:(fun ((v, n), _) -> strf "%s of %s" n (version v))
@@ -88,7 +87,7 @@ let gfx11 name = require_some (Register.find (gpu (11, 0, 0)) name)
 
 let encode =
   let r = lazy (gfx11 "regGRBM_GFX_INDEX") in
-  group ~timeout "encode"
+  group "encode"
     [
       cases "a field's value is cut to its width, other bits zero" ~id:Fun.id
         encoded (fun name ->

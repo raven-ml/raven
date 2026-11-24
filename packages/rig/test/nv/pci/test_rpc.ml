@@ -706,13 +706,13 @@ let () =
   exit
   @@ run "rig_nv_pci.rpc"
        [
-         group ~timeout:20. "records"
+         group "records"
            [
              test_records;
              test_message;
              test "a GSP message is checked" test_not_a_message;
            ];
-         group ~timeout:10. "faults"
+         group "faults"
            [
              test "a stopped channel is a fault naming it" test_rc;
              test "a stopped channel of an unknown error is a fault"
@@ -720,9 +720,8 @@ let () =
              test "a queued MMU fault is a fault" test_mmu;
              test_no_fault;
            ];
-         group ~timeout:10. "reports"
-           [ test_reports; test_short_reports; test_no_report ];
-         group ~timeout:10. "calls"
+         group "reports" [ test_reports; test_short_reports; test_no_report ];
+         group "calls"
            [
              test "an allocation" test_alloc;
              test "a control" test_control;
@@ -740,7 +739,7 @@ let () =
              test "unloading" test_unloading;
              test_registry;
            ];
-         group ~timeout:10. "channels"
+         group "channels"
            [
              test_channel_flags;
              test_channel_id;
@@ -753,7 +752,7 @@ let () =
              test_perf_boost;
              test "CUDA's boost" test_cuda_boost;
            ];
-         group ~timeout:10. "sequences"
+         group "sequences"
            [
              test_sequence;
              test "a resumption restarts the GSP with its arguments" test_resume;

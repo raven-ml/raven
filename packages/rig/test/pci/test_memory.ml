@@ -1956,7 +1956,7 @@ let test_reopened () =
   Memory.free o.t_memory shared
 
 let placement =
-  group ~timeout:patience "placement and refusals"
+  group "placement and refusals"
     [
       cases "each kind is placed by its rule"
         ~id:(Format.asprintf "%a" pp_kind)
@@ -3047,7 +3047,7 @@ let test_failed_open_region () =
   equal ~msg:"the failed open's release" (list string) [ "release" ] (asked ())
 
 let on_files =
-  group ~timeout:patience "on a machine's files"
+  group "on a machine's files"
     [
       test
         "a release while a free writes the GPU's tables returns, and the \
@@ -3470,7 +3470,7 @@ let test_refused_stop (_, stop) =
   equal ~msg:"its addresses kept" int addresses (snd (tree_capacity x))
 
 let others =
-  group ~timeout:patience "memory given to another function"
+  group "memory given to another function"
     [
       cases "bus gives the memory's bus addresses"
         ~id:(Format.asprintf "%a" pp_kind)

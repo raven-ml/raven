@@ -139,7 +139,7 @@ let ring_commands =
   ]
 
 let ring_tests =
-  group ~timeout:60. "ring"
+  group "ring"
     [
       stateful ~count:500 ~steps:40
         "releases in commit order whatever order slots complete in"
@@ -479,7 +479,7 @@ let no_capacity () =
   greater int ~msg:"budget" ~than:0 (Rig.budget d)
 
 let work =
-  group ~timeout:60. "work"
+  group "work"
     [
       test "reports no capacity" no_capacity;
       prop ~count:50
@@ -686,7 +686,7 @@ let lost_open () =
   await_word t.d last
 
 let commits =
-  group ~timeout:60. "commits"
+  group "commits"
     [
       cases "uncommitted"
         ~id:
@@ -979,7 +979,7 @@ let icb_inside_lock () =
   Rig_metal.free t.g args
 
 let icbs =
-  group ~timeout:60. "indirect command buffers"
+  group "indirect command buffers"
     [
       cases "chain"
         ~id:(strf "a chain of %d dispatches runs each after the one before")
@@ -1707,7 +1707,7 @@ let no_allocation () =
   equal int 0 bytes
 
 let launches =
-  group ~timeout:60. "launches"
+  group "launches"
     [
       prop ~count:50 "a launch's threadgroup memory holds a word per thread"
         gen_grid shared_law;
@@ -1845,7 +1845,7 @@ let paced_beside_cache () =
     ~than:(usual /. 1.5) beside
 
 let memory =
-  group ~timeout:60. "memory"
+  group "memory"
     [
       prop "an allocation starts at a multiple of 256 bytes"
         ~examples:[ 1; 2; 255; 256; 257; 4095; 4096; page; page + 1 ]
@@ -1993,7 +1993,7 @@ let created_file_borrow () =
   equal octets ~msg:"the file" (bumped s) (read_file path)
 
 let file_tests =
-  group ~timeout:60. "files"
+  group "files"
     [
       prop
         ~examples:[ ((3 lsl 20) + 12345, 5, 16) ]
@@ -2333,7 +2333,7 @@ let break_resolve () =
   equal ~msg:"pipelines once answered" int (before + 1) (Rig_metal.pipelines ())
 
 let images =
-  group ~timeout:60. "images"
+  group "images"
     [
       test
         "a resolve whose build's start is held ends at a signal, keeping the \
@@ -2679,7 +2679,7 @@ let kept_submission () =
   equal int ~msg:"pipelines once collected" before (Rig_metal.pipelines ())
 
 let specialised_images =
-  group ~timeout:60. "specialised images"
+  group "specialised images"
     [
       cases ~id:spec_id "a function computes with the values its header gives"
         specs specialises;
@@ -2742,7 +2742,7 @@ let unload_after_stop () =
     weaks
 
 let timeline =
-  group ~timeout:60. "timeline"
+  group "timeline"
     [
       test
         "a loss while work runs: the work runs to its end, and its indirect \
@@ -2775,7 +2775,7 @@ let interrupted_calls () =
   from 1
 
 let interrupts =
-  group ~timeout:60. "interrupts"
+  group "interrupts"
     [
       test "an exception at any allocation of a call leaves the guard free"
         interrupted_calls;
@@ -2812,7 +2812,7 @@ let apple_align () =
   equal int 4 (Rig_metal.capability t.g).align
 
 let opening =
-  group ~timeout:60. "opening"
+  group "opening"
     [
       test "a device other than 0 is an error" (fun () ->
           is_error (Rig_gpu_support.opened (Rig_metal.gpu 1)));

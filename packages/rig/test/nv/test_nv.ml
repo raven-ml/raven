@@ -64,7 +64,7 @@ let handed =
 (* GPUs *)
 
 let gpus =
-  group ~timeout:10. "GPUs"
+  group "GPUs"
     [
       test "an NVIDIA display controller is a GPU" (fun () ->
           equal (list bool)
@@ -144,7 +144,7 @@ let test_try_held () =
   equal ~msg:"a try after" bool true (N.Lock.try_protect l ignore)
 
 let locks =
-  group ~timeout:10. "a path's locks"
+  group "a path's locks"
     [
       test "count while held, refuse their holder's take, and go back"
         test_lock;
@@ -182,7 +182,7 @@ let field_law (size, (at, n), x) =
 let refused msg f = raises_match ~msg Exn.invalid_arg f
 
 let parameters =
-  group ~timeout:10. "parameters"
+  group "parameters"
     [
       cases "params n is n zero bytes" ~id:string_of_int [ 0; 1; 17 ] (fun n ->
           equal (list int) (List.init n (fun _ -> 0)) (bytes_of (N.params n)));
@@ -309,7 +309,7 @@ let kinds_of_memory () =
   end
 
 let facts =
-  group ~timeout:60. "facts"
+  group "facts"
     [
       test "states a GPU's facts" facts;
       test "declares the GPU to compiled code" capability;
@@ -455,7 +455,7 @@ let pci_capacity () =
   equal ~msg:"returned" int before (free ())
 
 let memory =
-  group ~timeout:120. "memory"
+  group "memory"
     [
       test "over PCI, a buffer's pages leave the free memory until it goes"
         pci_capacity;
@@ -586,7 +586,7 @@ let exports () =
   | Some Kernel | None -> exports_dmabuf ()
 
 let dma =
-  group ~timeout:120. "another function's DMA"
+  group "another function's DMA"
     [
       test
         "dma exports a dma-buf through the kernel driver, or over PCI bus \
@@ -671,7 +671,7 @@ let refused () =
   equal int ~msg:"values assigned" base (Rig.submitted t.d)
 
 let work =
-  group ~timeout:60. "work"
+  group "work"
     [
       test "a kernel scheduled from a ring entry computes" launch;
       test "an allocation or mapping of no bytes raises" misuse;
@@ -1195,7 +1195,7 @@ let chain_release () =
   List.iter (N.free t.g) (src :: word :: dsts)
 
 let launches =
-  group ~timeout:120. "launches"
+  group "launches"
     [
       test "a chain's last release follows the chain's launches" chain_release;
       test "launches past NV's limits are refused" refused_launches;
@@ -1428,7 +1428,7 @@ let joined_parts () =
   equal (array int) (Array.init n Fun.id) (words out ~at:0 n)
 
 let room =
-  group ~timeout:300. "room"
+  group "room"
     [
       test "20,000 Words parts of no words run as one value" empty_words;
       test "40,000 submissions wrap both channels and every copy arrives" wraps;
@@ -1734,7 +1734,7 @@ let no_local_memory () =
     (words out ~at:0 n)
 
 let local =
-  group ~timeout:60. "local memory"
+  group "local memory"
     [
       test "local memory serves kernels that keep 2 KiB a thread" local;
       test "a growth leaves a running kernel's local memory intact" growth;
@@ -1788,7 +1788,7 @@ let refused_channel (_, fill) =
     (Rig_nv_pci.taken ())
 
 let channels =
-  group ~timeout:120. "channels"
+  group "channels"
     [
       test "300,000 ring entries run, and kernels and joins run after"
         channels_grown;
@@ -1878,7 +1878,7 @@ let reloaded () =
   N.free t.g out
 
 let images =
-  group ~timeout:60. "images"
+  group "images"
     [
       test "load, find their kernels and unload" images;
       test "code loaded where other code ran runs as loaded" reloaded;
@@ -1958,7 +1958,6 @@ let edge_chunk = 96
 let runtime_slack = 1024
 let warm_opens = 4
 let opens = 16
-let opens_timeout = 120.
 
 let opens_keep_edges () =
   let heap () =
@@ -1988,12 +1987,11 @@ let opens_keep_edges () =
     (heap () - c)
 
 let timeline =
-  group ~timeout:60. "timeline"
+  group "timeline"
     [
       test "a close of an idle device leaves the word at the last value"
         stop_idle;
-      test ~timeout:opens_timeout
-        "opens and closes keep each device's edge alone of the C heap"
+      test "opens and closes keep each device's edge alone of the C heap"
         opens_keep_edges;
       test
         "stop of a device waiting on a word that never moves leaves the word \
@@ -2147,7 +2145,7 @@ let registry_commands =
   ]
 
 let stateful =
-  group ~timeout:300. "stateful"
+  group "stateful"
     [
       stateful ~count:100 ~steps:20 "map_host shares a host range both ways"
         registry_commands;
@@ -2521,7 +2519,7 @@ let late_rm_hang () =
   equal (option string) ~msg:"the loss" (Some why) (Rig.lost d)
 
 let faults =
-  group ~timeout:60. "a path's faults"
+  group "a path's faults"
     [
       test "a free the path fails loses the device through rig"
         free_faulted_rig;
@@ -2582,7 +2580,7 @@ let refused_promote () =
   equal (option string) ~msg:"the loss" None (Rig.lost d)
 
 let fetches =
-  group ~timeout:60. "fetches from video memory"
+  group "fetches from video memory"
     [
       test "a channel group fetches 128 bytes a miss" fetches_128_bytes;
       test "a refused promotion leaves the open as it was" refused_promote;
@@ -2605,8 +2603,7 @@ let busy_after_work () =
   | None -> fail "no sample of the work's seconds"
 
 let usage =
-  group ~timeout:60. "usage"
-    [ test "a GPU that ran work was busy" busy_after_work ]
+  group "usage" [ test "a GPU that ran work was busy" busy_after_work ]
 
 let () =
   if Array.length Sys.argv = 2 && Sys.argv.(1) = dma_child then

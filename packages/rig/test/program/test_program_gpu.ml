@@ -185,12 +185,12 @@ let () =
        (List.concat_map
           (fun (module Gpu : Gpu) ->
             [
-              test ~timeout:120.
+              test
                 (Gpu.class_
                ^ ": a description leaves the bytes of its submission made by \
                   hand")
                 (same_bytes (module Gpu));
-              test ~timeout:120.
+              test
                 (Gpu.class_
                ^ ": a time has its step's duration, within the host's times \
                   around it")

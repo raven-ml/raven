@@ -79,7 +79,7 @@ let () =
   exit
     (run "rig_metal_fork"
        [
-         test ~timeout:60.
+         test
            "a child forked before Metal opened prepares and enters a function"
            forked;
        ])

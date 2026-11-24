@@ -27,7 +27,6 @@ module A = Rig_amd
 module S = Rig_amd_support
 
 let strf = Printf.sprintf
-let timeout = 120.
 
 (* many.cl's kernels, k1000 to k2333, numbered in base 4. *)
 let functions =
@@ -653,7 +652,7 @@ let () =
   exit
     (run "rig_amd interrupt"
        [
-         group ~timeout "a path's lock"
+         group "a path's lock"
            [
              test
                "a callback's take inside it raises Invalid_argument, having \
@@ -666,7 +665,7 @@ let () =
                 Invalid_argument as they start"
                test_capability_held;
            ];
-         group ~timeout "an exception at any allocation"
+         group "an exception at any allocation"
            [
              test
                "of the process's first open leaves the next open to take the \

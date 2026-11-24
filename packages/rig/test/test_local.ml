@@ -6,7 +6,6 @@
 open Windtrap
 module L = Rig.Local
 
-let timeout = Rig_support.time 60.
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 
 (* A name no other case opened. *)
@@ -239,7 +238,7 @@ let test_lost () =
 
 let tests =
   [
-    group ~timeout "values"
+    group "values"
       [
         test "an init that gets its own key answers the nested value"
           test_nested;
@@ -252,7 +251,7 @@ let tests =
         stateful ~domains:2 "racing first gets answer one value"
           racing_commands;
       ];
-    group ~timeout "lifetime"
+    group "lifetime"
       [
         test "a closed device's value is collected" test_closed_collected;
         test "a value whose init raced the stop is collected"

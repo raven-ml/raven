@@ -57,7 +57,7 @@ let test_late_entry_other =
   scenario late_entry_names [ 1; 0; 0; 0; 0 ] (fun () -> H.late_entry 2)
 
 let entering_tests =
-  group ~timeout:P.timeout "entering and closing"
+  group "entering and closing"
     [
       test
         "an add that finds the job closed counts in the next job, which waits \
@@ -109,7 +109,7 @@ let test_narrow_wake =
     [ 1; 0; 0 ] H.narrow_wake
 
 let waiting_tests =
-  group ~timeout:P.timeout "waiting and waking"
+  group "waiting and waking"
     [
       test
         "a caller that outlasts its spin sleeps, and the last worker out wakes \
@@ -142,7 +142,7 @@ let forked ?(cores = 3) names expected run () =
   held cores names expected run ()
 
 let fork_tests =
-  group ~timeout:P.timeout "fork"
+  group "fork"
     [
       test
         "a child forked while a worker holds the parking mutex runs a job on \

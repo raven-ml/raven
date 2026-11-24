@@ -21,8 +21,6 @@ let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
 (* The values of a submission's one fill, which reads none. *)
 let one = Support.zeros 1
 
-let timeout = 120.
-
 (* A device lost, stopped and opened again under its name, beside another
    domain's uses *)
 
@@ -837,13 +835,13 @@ let test_submitted_after_reopen () =
 
 let tests =
   [
-    group ~timeout "reuse"
+    group "reuse"
       [
         test "a closed device answers its value while a make raises its slot"
           test_raised_by_make;
         test "a submit past the last value loses the device, whose slot retires"
           test_last_value;
-        test ~timeout:10.
+        test
           "a queue's wait for a producer's point reads the slot's current \
            device"
           test_pair_per_occupant;

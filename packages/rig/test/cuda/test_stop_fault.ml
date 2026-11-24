@@ -72,7 +72,7 @@ let () =
   exit
     (run "rig_cuda stop fault"
        [
-         group ~timeout:60. "stop"
+         group "stop"
            [
              test "work that faults after its device's stop ends the stop"
                fault_after_stop;

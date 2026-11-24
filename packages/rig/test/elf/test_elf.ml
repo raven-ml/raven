@@ -1733,15 +1733,12 @@ let test_unwind () =
   equal ~msg:"its relocations, one per function" int 8
     (List.length (List.filter into_eh o.relocations))
 
-(* Each test's limit, in seconds. *)
-let timeout = 30.
-
 let () =
   exit
   @@ run "rig_elf"
        [
-         test ~timeout "an object's header fields" test_header;
-         group ~timeout "layout"
+         test "an object's header fields" test_header;
+         group "layout"
            [
              test "sections without addresses follow the image's end in order"
                test_appended;
@@ -1758,7 +1755,7 @@ let () =
              prop ~count:300 "reading allocates as much at any address"
                gen_address law_address;
            ];
-         group ~timeout "symbols"
+         group "symbols"
            [
              test "each kind of place" test_places;
              test "an addressed object's symbol values are addresses"
@@ -1768,7 +1765,7 @@ let () =
              test "the dynamic symbols when there is no symbol table"
                test_dynamic_symbols;
            ];
-         group ~timeout "relocations"
+         group "relocations"
            [
              test "kinds, addends and symbols, in order" test_relocations;
              test "each resolves through its own section's table" test_own_table;
@@ -1781,7 +1778,7 @@ let () =
              test "one at a thread-local section's addresses"
                test_tbss_addresses;
            ];
-         group ~timeout "extended numbering"
+         group "extended numbering"
            [
              test "the section count in the null section" test_extended_header;
              test "a symbol's section in the extended index table" test_xindex;
@@ -1791,7 +1788,7 @@ let () =
              test "40,000 relocation sections, in linear time"
                test_many_relocation_sections;
            ];
-         group ~timeout "refusals"
+         group "refusals"
            [
              cases "a malformed object is an error" ~id:fst refusals
                (fun (_, obj) ->
@@ -1809,12 +1806,12 @@ let () =
                     prop ~count name gen_corruption (law_total seed))
                   corruptible);
            ];
-         group ~timeout "32-bit objects"
+         group "32-bit objects"
            [
              test "sections, symbols and relocations" test_elf32;
              test "firmware read by section name" test_firmware32;
            ];
-         group ~timeout "real objects"
+         group "real objects"
            [
              test "an NVIDIA cubin" test_cubin;
              test "an NVIDIA cubin with an uninitialised global" test_global;

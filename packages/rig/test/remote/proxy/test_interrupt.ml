@@ -19,7 +19,6 @@ module Proxy = Rig_remote_proxy
 module Probe = Rig_remote_proxy.Probe
 
 let strf = Printf.sprintf
-let timeout = 120.
 
 (* [walk attempt] runs [attempt n] from [n = 1] until an attempt no longer
    reaches its [n]-th allocation. *)
@@ -565,7 +564,7 @@ let () =
   exit
     (run "rig_remote_proxy interrupt"
        [
-         group ~timeout "a call from a callback at any allocation"
+         group "a call from a callback at any allocation"
            [
              test "an unload in a load answers" unload_in_load;
              test
@@ -577,7 +576,7 @@ let () =
                 and outside"
                answer_in_answer;
            ];
-         group ~timeout "an exception at any allocation"
+         group "an exception at any allocation"
            [
              test "a next and an answer leave no lock held"
                next_and_answer_raise;
@@ -588,10 +587,9 @@ let () =
              test "a make cut by an exception leaves its account a proxy"
                make_raise;
            ];
-         group ~timeout
-           "a call to rig from a callback at any allocation keeps the host"
+         group "a call to rig from a callback at any allocation keeps the host"
            [ test "a load in a load" load_in_load_rig ];
-         group ~timeout "a Ctrl-C in a link's wait raises Sys.Break"
+         group "a Ctrl-C in a link's wait raises Sys.Break"
            [
              test "in a drop's wait for the send claim" break_in_post;
              test "in a close's wait for the peer's close" break_in_close;

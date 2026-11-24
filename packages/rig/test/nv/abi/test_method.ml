@@ -208,7 +208,7 @@ let calls =
   ]
 
 let operations =
-  group ~timeout:10. "operations"
+  group "operations"
     [
       cases "an operation's slots, filled, are its words with its operands"
         ~id:(Format.asprintf "%a" pp_call) calls (fun c ->
@@ -229,7 +229,7 @@ let listing () =
   String.concat "\n" (List.map show calls)
 
 let words =
-  group ~timeout:10. "words"
+  group "words"
     [
       test "each operation's words" (fun () ->
           expect (listing ())
