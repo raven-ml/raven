@@ -31,10 +31,11 @@
 ; An odoc warning is an error in every profile, except in rig_amd_pci,
 ; rig_nv_pci and rig_mlx5, whose dune files say why.
 ;
-; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout, so a hung test
-; cannot block a shared watch server. Under tsan it is 15 times longer,
-; ThreadSanitizer's slowdown at most, and RIG_TEST_TIME_SCALE makes rig's
-; suites scale their own timeouts as much.
+; WINDTRAP_TIMEOUT bounds every test, so a hung test fails by name and
+; cannot block a shared watch server. Tests set no timeout of their own: the
+; speed bar, not a limit, keeps them fast. Under tsan the bound is 15 times
+; longer, ThreadSanitizer's slowdown at most, and RIG_TEST_TIME_SCALE makes
+; rig's PCI suites wait as much longer.
 ;
 ; CACHEDB and XDG_CACHE_HOME put tolk's disk cache, and the files tolk caches
 ; beside it, in a directory cache of each action's working directory, inside

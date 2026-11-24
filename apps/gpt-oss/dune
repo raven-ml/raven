@@ -4,7 +4,7 @@
 ; profile.
 ;
 ; gpt-oss is a project of its own, so the workspace root's env does not reach it.
-; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout, so a hung test
+; WINDTRAP_TIMEOUT bounds every test, so a hung test fails by name and
 ; cannot block a shared watch server. CACHEDB and XDG_CACHE_HOME put tolk's
 ; disk cache, and the files tolk caches beside it, in a directory cache of
 ; each action's working directory, inside _build: a test run reads no entry a

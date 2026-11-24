@@ -181,6 +181,8 @@ code's recent diffs, never by bisecting.
   never moved behind a tag, an opt-in alias or a scheduled job. Only a test
   that needs what a test run cannot hold, such as a real model's weights,
   lives outside `runtest`, and it says why.
+- Tests set no timeout of their own: `WINDTRAP_TIMEOUT` bounds every test,
+  so a hang fails by name, and the speed bar, not a limit, keeps them fast.
 - Use the strongest tool the claim allows: `prop` for a law (agreement with
   a simpler reference, a round trip, an identity, `jit` equal to eager,
   `grad` against finite differences), with a `Law` verb when one names it;
