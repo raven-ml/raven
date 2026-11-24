@@ -829,23 +829,18 @@ let same (type v s) (a : (v, s, Nx.host) Nx.t) (b : (v, s, Nx.host) Nx.t) =
   | _ -> equal (Nx.bitcast Nx.uint64 a) (Nx.bitcast Nx.uint64 b)
 
 (* Whether two elements of a slice of [x] along [axis] are equal in the sort
-   order. A complex number's are not looked for. *)
+   order: two neighbours of its sorted keys. A complex number's are not looked
+   for. *)
 let ties (type v s) (x : (v, s, Nx.host) Nx.t) axis =
-  let s = Nx.shape x in
-  let n = s.(axis) in
-  let inner = Operand.numel (Array.sub s (axis + 1) (Array.length s - axis - 1)) in
+  let n = (Nx.shape x).(axis) in
   match Nx.Dtype.kind (Nx.dtype x) with
   | Complex -> false
+  | (Float | Signed | Unsigned | Boolean) when n < 2 -> false
   | Float | Signed | Unsigned | Boolean ->
-      let keys = Nx.to_array (Nx.order_key Nx.uint64 x) in
-      let seen = Hashtbl.create 64 in
-      let tie = ref false in
-      Array.iteri
-        (fun j key ->
-          let at = (j / (n * inner), j mod inner, key) in
-          if Hashtbl.mem seen at then tie := true else Hashtbl.add seen at ())
-        keys;
-      !tie
+      let keys, _ = Nx.sort ~axis (Nx.order_key Nx.uint64 x) in
+      let along r = Nx.slice (List.init axis (fun _ -> Nx.A) @ [ r ]) keys in
+      let next = along (R (1, n)) and key = along (R (0, n - 1)) in
+      Nx.to_array (Nx.any (Nx.equal next key)) = [| true |]
 
 (* [specials x] is whether [x] holds a NaN, both zeros, an infinity, and an
    integer's least or greatest value. *)
