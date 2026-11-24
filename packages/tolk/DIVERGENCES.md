@@ -10155,11 +10155,11 @@ D466.
   it runs in and in as many more as the split makes where it runs inside
   the split axis, hold at most 255 32-bit registers at once in the order
   the linearizer lists them. The layouts that fix their own lanes keep
-  their rules, unbounded: the blocked product, which the count overcharges
-  (its 8 by 8 outputs a thread count 341 to 343 and compile to 128
-  registers without spilling; a product by a polynomial of degree 17 of one
-  operand, `wide 16` in the heuristic suite, upcast by 4 by 4 and unrolled by
-  4, counts 313 and compiles to 80); staged
+  their rules, unbounded: the contraction rule, blocked or short, which the
+  count overcharges (blocked, its 8 by 8 outputs a thread count 341 to 343
+  and compile to 128 registers without spilling; short, a product by a
+  polynomial of degree 17 of one operand, `wide 16` in the heuristic suite,
+  upcast by 4 by 4 and unrolled by 4, counts 313 and compiles to 80); staged
   products, which hold at most 64 outputs a thread; tensor cores, whose
   fragments the hardware fixes; and streams, whose layout fixes a thread's
   rows. Metal, AMD and the host state no budget and split as tinygrad
@@ -10173,7 +10173,7 @@ D466.
   255 is a threshold measured on elementwise and reduce kernels: on sm_89
   every spill-free one counted at most 261 and every spilling one 416 or
   more. It holds no further. The count overcharges contractions 2.5 to 4
-  times, which is why the blocked product is exempt, and index arithmetic,
+  times, which is why the contraction rule is exempt, and index arithmetic,
   which it counts in every lane where the compiler folds it to literals:
   tinygrad's 49 lanes of `pad_7x7` count 265 and compile to 42 registers
   without spilling, and are declined. Counting costs a

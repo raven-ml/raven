@@ -3811,8 +3811,9 @@ let masked n =
     [ Ops.end_ (Ops.store (Ops.index out [ at ]) v) [ i; j ] ]
 
 (* [out[i, j] = sum_k wide n (a[i, k]) b[k, j]] over 1024 by 1024 by 1024
-   float32 values: a contraction the upcast loop takes by 4 by 4 and the blocked
-   layout then unrolls by 4, its lanes not counted. *)
+   float32 values: a contraction the upcast loop takes by 4 by 4 and the
+   contraction rule, blocked or short, then unrolls by 4, its lanes not
+   counted. *)
 let product n =
   let side = 1024 in
   let param slot =
@@ -3835,13 +3836,14 @@ let product n =
    renderer's thread registers, about [n + 1] values of [wide n] in each lane:
    on CUDA's 255, 4 lanes of [map wide 62] weigh 252 and of [wide 63] 256. The
    upcast loop takes [outer 62]'s [j] by 4, its [y] and products in 4 lanes, and
-   not its [i], which [wide 62] runs in. [summed n]'s index [8 i + k] runs
-   inside [i] and so weighs 5 more in 4 lanes: [summed 62] weighs 257 and takes
-   no upcast by 4. [summed 30] takes it, and not the unroll of its 8 terms
-   whole, 32 lanes, which [summed 2] takes. The masked upcast takes [masked
-   20]'s [j] whole, and nothing takes [masked 70]'s. [product 16]'s blocked
-   layout is not counted: it takes the unroll by 4 at 313. Metal states none,
-   and takes every split. *)
+   not its [i], which [wide 62] runs in. [summed n] weighs 5 more: its index [8
+   i + k], which runs inside [i], in 4 lanes, and the reduce range [k] in one.
+   [summed 61] weighs 253 and takes the upcast by 4, [summed 62] 257 and takes
+   none. [summed 30] takes it, and not the unroll of its 8 terms whole, 32
+   lanes, which [summed 2] takes. The masked upcast takes [masked 20]'s [j]
+   whole, and nothing takes [masked 70]'s. [product 16], short of sm_89's units,
+   takes the contraction rule's unroll by 4 at 313, uncounted. Metal states
+   none, and takes every split. *)
 let lanes_within_registers =
   let cuda = "CUDA:CUDA:sm_89" and metal = "METAL:METAL:Apple9" in
   cases "a split makes lanes only while they fit the thread registers"

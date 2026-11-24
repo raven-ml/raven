@@ -188,10 +188,10 @@
     only where the kernel's {!live_registers}, each value that runs inside the
     split axis counted in as many more lanes as the split makes, stay at most
     that: a map of 20000 operations takes no lanes on CUDA. The layouts that fix
-    their own lanes are not counted: a blocked contraction, whose operands the
-    count overstates; a staged product, which holds at most 64 outputs a thread;
-    a core, whose fragments the hardware fixes; and a stream, whose layout fixes
-    a thread's rows.
+    their own lanes are not counted: the contraction rule, blocked or short,
+    whose operands the count overstates; a staged product, which holds at most
+    64 outputs a thread; a core, whose fragments the hardware fixes; and a
+    stream, whose layout fixes a thread's rows.
 
     - {b Grouping}: when the upcastable axes hold at most 2048 elements, or,
       in a kernel that is not a contraction and each of whose reduces sums
