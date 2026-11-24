@@ -13,6 +13,8 @@ buffer/borrow-software	alloc_words	exact	23
 buffer/borrow-software	wall_time	batch=262144	n=20	2.232e-08	2.154e-08 2.158e-08 2.190e-08 2.199e-08 2.210e-08 2.212e-08 2.213e-08 2.218e-08 2.222e-08 2.230e-08 2.234e-08 2.244e-08 2.246e-08 2.264e-08 2.269e-08 2.276e-08 2.280e-08 2.283e-08 2.287e-08 2.309e-08
 buffer/host-create-16	alloc_words	exact	32
 buffer/host-create-16	wall_time	batch=131072	n=20	4.367e-08	4.312e-08 4.328e-08 4.347e-08 4.350e-08 4.351e-08 4.356e-08 4.359e-08 4.360e-08 4.366e-08 4.366e-08 4.367e-08 4.368e-08 4.373e-08 4.374e-08 4.374e-08 4.375e-08 4.375e-08 4.383e-08 4.389e-08 4.462e-08
+buffer/host-create-16-x8192-8-domains	alloc_words	exact	262144
+buffer/host-create-16-x8192-8-domains	wall_time	batch=1	n=20	5.746e-03	4.851e-03 4.924e-03 4.992e-03 5.063e-03 5.079e-03 5.124e-03 5.174e-03 5.178e-03 5.249e-03 5.746e-03 5.747e-03 5.756e-03 5.756e-03 5.769e-03 5.787e-03 5.803e-03 5.825e-03 6.567e-03 7.774e-03 7.819e-03
 buffer/host-create-1M	alloc_words	exact	32
 buffer/host-create-1M	wall_time	batch=16384	n=20	3.291e-07	3.256e-07 3.258e-07 3.272e-07 3.272e-07 3.278e-07 3.279e-07 3.281e-07 3.281e-07 3.287e-07 3.288e-07 3.295e-07 3.295e-07 3.296e-07 3.306e-07 3.308e-07 3.329e-07 3.375e-07 3.377e-07 3.387e-07 3.457e-07
 buffer/memory-create-cached-4K	alloc_words	exact	42
