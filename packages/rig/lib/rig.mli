@@ -1155,12 +1155,14 @@ val free_cache : t -> unit
     ({!Buffer.section-copying}), then moves [d]'s collected memory
     ({!section-reclaim}), then returns [d]'s cached memory to its driver once
     the work using it is done. On a lost [d] that has stopped
-    ({!section-stops}), that is all of its memory that is collected. Last, where
-    [d]'s driver's interface says so, it gives back the memory [d]'s queues grew
-    into to hold submissions ({!submit}), also once the work using it is done,
-    unless a submit is growing them. On {!host}, it frees the collected buffers
-    the host keeps for reuse, and the blocks rig keeps for later submits that no
-    submit holds. *)
+    ({!section-stops}), that is all of its memory that is collected. Last,
+    unless a submit is growing [d]'s queues, it gives back what they grew into
+    to hold submissions ({!submit}): the room rig keeps for the queue waits of
+    [d]'s work on other devices' values ({!section-loss}), but for the waits of
+    work not yet done, and, where [d]'s driver's interface says so, the driver's
+    memory, also once the work using it is done. On {!host}, it frees the
+    collected buffers the host keeps for reuse, and the blocks rig keeps for
+    later submits that no submit holds. *)
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes,

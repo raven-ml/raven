@@ -453,9 +453,11 @@ val forget_measures : device -> int -> bool
     later {!measures} names. It waits and fails as {!measures} does. *)
 
 val trim : device -> unit
-(** [trim d] has [d]'s driver give back what its queues grew into ([trim] of
-    {!Rig_edge.section-calls}), unless a submit is growing them. It waits as
-    {!settle} does; on a lost device it does nothing. *)
+(** [trim d] gives back what [d]'s queues grew into, unless a submit is growing
+    them: the room of [d]'s record of queue waits past those of its unreached
+    work, then its driver's growth ([trim] of {!Rig_edge.section-calls}). It
+    waits as {!settle} does; on a lost device, and on one whose record has no
+    room and whose driver has no trim, it does nothing. *)
 
 val wait_room : device -> int
 (** [wait_room d] is {!Rig.wait_room}[ d]. *)

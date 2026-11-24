@@ -1299,14 +1299,16 @@ value caml_rig_waits_in_queue(value v_d) {
   CAMLreturn(Val_bool(waits));
 }
 
-/* The entries [v_d]'s record of waits has room for, read under its
-   mutex. */
-value caml_rig_wait_room(value v_d) {
-  struct rig_device *d = Device_val(v_d);
+/* The entries [d]'s record of waits has room for, read under its mutex. */
+static int record_room(struct rig_device *d) {
   int released = take(d);
   int n = d->crecord;
   give(d, released);
-  return Val_int(n);
+  return n;
+}
+
+value caml_rig_wait_room(value v_d) {
+  return Val_int(record_room(Device_val(v_d)));
 }
 
 /* The turn
@@ -1390,24 +1392,32 @@ static int give_turn(struct rig_device *d, int released, int r) {
 
 /* Submitting */
 
-/* Records the call [r]'s in-queue waits in [d]'s record, for spread, after
-   dropping the entries [d]'s word shows reached, and refuses a wait for a
-   point a lost device did not reach, of the slot's device or an earlier
-   one: [r]'s [producer] is then that point. A call whose waits read words
-   through mappings [d] may give back drops a wait for a point already done,
-   so the driver never reads its word: that word, or [d]'s mapping of it,
-   may be given back once [d] passed its next value
-   ([caml_rig_next_value]). The record grows here: SUBMIT_NO_MEMORY if the
-   host has no memory for it. The mutex is held. */
-static int record_waits(struct rig_device *d, struct rig_call *r) {
-  /* Nothing to drop or record reads no word: the device writes its line,
-     so a read is a cache miss on every submit. */
-  if (d->nrecord == 0 && r->nwaits == 0) return SUBMIT_OK;
+/* Drops the entries of [d]'s record whose work [d]'s word shows reached,
+   along which no loss spreads. The mutex is held. */
+static void drop_reached(struct rig_device *d) {
   uint64_t w = device_word(d);
   int k = 0;
   for (int j = 0; j < d->nrecord; j++)
     if (d->record[j].u > w) d->record[k++] = d->record[j];
   d->nrecord = k;
+}
+
+/* Records the call [r]'s in-queue waits in [d]'s record, for spread, after
+   dropping the entries [d]'s word shows reached ([drop_reached]), and
+   refuses a wait for a point a lost device did not reach, of the slot's
+   device or an earlier one: [r]'s [producer] is then that point. A call
+   whose waits read words through mappings [d] may give back drops a wait
+   for a point already done, so the driver never reads its word: that word,
+   or [d]'s mapping of it, may be given back once [d] passed its next value
+   ([caml_rig_next_value]). The record grows here, to twice its entries,
+   and shrinks at a trim ([trim_record]): SUBMIT_NO_MEMORY if the host has
+   no memory for it. The mutex is held. */
+static int record_waits(struct rig_device *d, struct rig_call *r) {
+  /* Nothing to drop or record reads no word: the device writes its line,
+     so a read is a cache miss on every submit. */
+  if (d->nrecord == 0 && r->nwaits == 0) return SUBMIT_OK;
+  drop_reached(d);
+  int k = d->nrecord;
   int n = 0;
   for (int j = 0; j < r->nwaits; j++) {
     uint64_t p = RIG_POINT(r->producers[j], r->waits[j].value);
@@ -1664,22 +1674,56 @@ value caml_rig_commit(value v_d) {
 
 /* Trimming */
 
-/* Has [d]'s driver give back what its queues grew into ([rig_trim_fn]),
-   unless a submit grows them: between that submit's RIG_GROW and its next
-   room, a trim would undo the growth the driver answered Grown for.
-   Answers SUBMIT_OK, SUBMIT_BUSY (the turn stayed held past the still
-   interval) or SUBMIT_LOST, and releases the runtime as caml_rig_settle
-   does. */
+/* Shrinks [d]'s record to the entries of its unreached work
+   ([drop_reached]), or frees it at none. A shrink the host refuses keeps
+   the record as it was, so a trim allocates nothing that can fail. The
+   mutex is held and the turn free, so no submit is between recording its
+   waits and taking them back from the record's end after a room that
+   refused ([caml_rig_submit]). */
+static void trim_record(struct rig_device *d) {
+  if (d->crecord == 0) return;
+  drop_reached(d);
+  int k = d->nrecord;
+  if (k == d->crecord) return;
+  if (k == 0) {
+    free(d->record);
+    d->record = NULL;
+    d->crecord = 0;
+    return;
+  }
+  struct rig_entry *shrunk = realloc(d->record, (size_t)k * sizeof *shrunk);
+  if (shrunk == NULL) return;
+  d->record = shrunk;
+  d->crecord = k;
+}
+
+/* Gives back what [d]'s queues grew into, unless a submit grows them: its
+   record of waits past their live entries ([trim_record]), then its
+   driver's growth ([rig_trim_fn]). Between a submit's RIG_GROW and its
+   next room, a trim would undo the growth the driver answered Grown for.
+   Nor may it shrink the record. The submit gave its waits back at the
+   RIG_GROW and records them again at its retry, into the room they took,
+   without allocating; after a shrink the retry allocates, and a host that
+   refuses ends the grown submit in SUBMIT_NO_MEMORY. A device whose record
+   has no room and whose driver has no trim takes no turn. A lost device
+   keeps its record: [lock_turn] returns for it even while a submit holds
+   the turn. Answers SUBMIT_OK, SUBMIT_BUSY (the turn stayed held past the
+   still interval) or SUBMIT_LOST, and releases the runtime as
+   caml_rig_settle does. */
 value caml_rig_trim(value v_d) {
   struct rig_device *d = Device_val(v_d);
   int released;
-  if (d->driver.trim == NULL) return Val_int(SUBMIT_OK);
+  if (d->driver.trim == NULL && record_room(d) == 0)
+    return Val_int(SUBMIT_OK);
   if (!lock_turn(d, &released)) return Val_int(SUBMIT_BUSY);
   int r = is_lost(d) ? SUBMIT_LOST : SUBMIT_OK;
   if (r == SUBMIT_OK && !rig_growing(d)) {
-    begin_turn(d);
-    d->driver.trim(d->self);
-    end_turn(d);
+    trim_record(d);
+    if (d->driver.trim != NULL) {
+      begin_turn(d);
+      d->driver.trim(d->self);
+      end_turn(d);
+    }
   }
   return Val_int(give_turn(d, released, r));
 }

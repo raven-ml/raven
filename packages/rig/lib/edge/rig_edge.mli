@@ -321,9 +321,9 @@ type 'region facts = {
        device. It never calls it once the device is lost, nor while a
        submission is between a [room] that answered [RIG_GROW] and the end
        of its submit, so a growth that answered [Grown] stays for its
-       [room]. [trim] may be [NULL]: rig then gives nothing back at a
-       {!Rig.free_cache}, and the driver's interface states how long its
-       growth stays.}}
+       [room]. [trim] may be [NULL]: rig then gives back none of the
+       driver's growth at a {!Rig.free_cache}, and the driver's interface
+       states how long its growth stays.}}
 
     rig calls the six one at a time for each device, with [room] before
     each [submit]. They must call no function of the OCaml runtime and read

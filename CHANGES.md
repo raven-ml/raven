@@ -85,9 +85,9 @@ All notable changes to this project will be documented in this file.
 - A process's first Metal compile no longer waits until another process
   exits: `Rig_metal` gives each live process a shader cache directory of its
   own, beside Metal's, where macOS allows it.
-- `Rig.free_cache` gives back a Metal device's parameter arena, and on
-  `Rig.host` the blocks kept for later submits. Both grow with the largest
-  submission, and neither returned before.
+- `Rig.free_cache` gives back a Metal device's parameter arena, any device's
+  memory for its queue waits on other devices, and `Rig.host`'s blocks kept
+  for later submits. Each stayed at its largest for the device's life.
 - Host buffers made on several domains at once cost less: each counter of
   the host's heap sits on cache lines of its own, where the counters shared
   lines. On fudge (Core Ultra 5 235), a 16-byte `Rig.Buffer.create` of the
