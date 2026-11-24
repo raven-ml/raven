@@ -71,7 +71,7 @@ val room :
 
 val virtual_mac : bool
 (** [virtual_mac] is [true] iff this Mac is a virtual machine
-    ([kern.hv_vmm_present]), whose paravirtual GPU makes no residency set: the
+    ([kern.hv_vmm_present]), whose paravirtual GPU has no residency sets: the
     GPU suites count no GPU there. *)
 
 val fixture : dir:string -> string -> string

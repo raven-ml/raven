@@ -2811,6 +2811,14 @@ let apple_align () =
     skip ~reason:"the GPU is of a Mac family" ();
   equal int 4 (Rig_metal.capability t.g).align
 
+(* The reasons a GPU without residency sets opens no device: an Apple family
+   below Apple6, or a set Metal does not make. *)
+let no_residency =
+  [
+    "the GPU's Apple family is below Apple6, which residency sets need";
+    "Metal made no residency set";
+  ]
+
 let opening =
   group "opening"
     [
@@ -2846,11 +2854,12 @@ let opening =
           equal (result int string) (Ok 0) (Rig_metal.count ());
           equal (result pass string) (Error "Metal exists on macOS only")
             (Rig_gpu_support.opened (Rig_metal.gpu 0)));
-      test "a virtual Mac's GPU opens no device, for want of a residency set"
+      test "a virtual Mac's GPU opens no device, for want of residency sets"
         (fun () ->
           if not S.virtual_mac then skip ~reason:"no virtual Mac" ();
-          equal (result pass string) (Error "Metal made no residency set")
-            (Rig_gpu_support.opened (Rig_metal.gpu 0)));
+          mem (result pass string)
+            (Rig_gpu_support.opened (Rig_metal.gpu 0))
+            (List.map Result.error no_residency));
     ]
 
 let () =

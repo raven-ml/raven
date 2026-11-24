@@ -22,7 +22,7 @@ include Rig_gpu_support.Make (struct
 
   let class_ = "METAL"
 
-  (* A virtual Mac's paravirtual GPU makes no residency set, which a device
+  (* A virtual Mac's paravirtual GPU has no residency sets, which a device
      needs. *)
   let present () =
     Sys.file_exists "/System/Library/Frameworks/Metal.framework"

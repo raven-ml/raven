@@ -12,13 +12,20 @@ open Kaun
 let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 
-(* A virtual Mac's paravirtual GPU makes no residency set, so Metal opens no
-   device there. *)
+(* A virtual Mac's paravirtual GPU has no residency sets, so Metal opens no
+   device there: rig refuses a GPU below Apple6, or one whose set Metal does not
+   make. *)
+let no_residency =
+  [
+    "the GPU's Apple family is below Apple6, which residency sets need";
+    "Metal made no residency set";
+  ]
+
 let metal =
   lazy
     (match Rig.open_ (Rig_metal.gpu 0) with
     | Ok d -> Nx.devices [ d ]
-    | Error ("Metal made no residency set" as why) -> skip ~reason:why ()
+    | Error why when List.mem why no_residency -> skip ~reason:why ()
     | Error why -> fail why)
 
 (* A toy compressed stream, as in test_attention.ml: each token stores its value
