@@ -597,6 +597,13 @@ let with_two_stage n f =
   let was = swap_two_stage n in
   Fun.protect ~finally:(fun () -> ignore (swap_two_stage was : int)) f
 
+type two_stage = Band | Chase | Back
+
+external two_stage_splits : two_stage -> int = "nx_cpu_two_stage_splits"
+[@@noalloc]
+
+external most_threads : unit -> int = "nx_cpu_most_threads" [@@noalloc]
+
 (* Attention *)
 
 external attention_c :

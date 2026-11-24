@@ -781,19 +781,47 @@ let check_orders (b : Support.backend) r orders =
       check_spectrum b ~vectors ~alone ?bits dt ~k:(n / 3) ~u l)
     orders
 
+(* [f ()], and where the calling thread's jobs run on several threads, its
+   two-stage reductions handed a step of each of [stages] to several. *)
+let split_stages ~what stages f =
+  let before = List.map Nx_cpu.two_stage_splits stages in
+  f ();
+  if Nx_cpu.most_threads () > 1 then
+    List.iter2
+      (fun stage was ->
+        let name =
+          match stage with
+          | Nx_cpu.Band -> "band"
+          | Chase -> "chase"
+          | Back -> "back-transform"
+        in
+        greater int
+          ~msg:
+            (Printf.sprintf "%s: a %s step handed to several threads" what name)
+          ~than:was
+          (Nx_cpu.two_stage_splits stage))
+      stages before
+
+(* The stages a call with or without vectors runs. *)
+let stages vectors =
+  if vectors = Unchecked then Nx_cpu.[ Band; Chase ]
+  else Nx_cpu.[ Band; Chase; Back ]
+
 (* One order past each crossover to x86-64's nx.cpu's two-stage reduction, from
    128 for values alone of either kind and for real vectors, where the bounds
    hold as below it; on arm64 the order 129 takes the one-stage reduction. The
    relations are checked whole, and the bits agree whatever the threads and
    layout, in a batch. *)
+let eigh_large r =
+  D.
+    [
+      (129, Any Float64, graded r, Checked, true, Some Batch);
+      (513, Any Complex128, repeating r, Unchecked, true, Some Batch);
+    ]
+
 let test_eigh_large (b : Support.backend) () =
   let r = Random.State.make [| 7 |] in
-  check_orders b r
-    D.
-      [
-        (129, Any Float64, graded r, Checked, true, Some Batch);
-        (513, Any Complex128, repeating r, Unchecked, true, Some Batch);
-      ]
+  check_orders b r (eigh_large r)
 
 (* Under Nx_cpu.with_two_stage 128, the orders above, and the cases that arm64's
    crossovers reach only at larger orders: float64 values alone that repeat,
@@ -801,12 +829,21 @@ let test_eigh_large (b : Support.backend) () =
    default; and real vectors, from 2048, at an order whose n − 1 sweeps leave
    Q2's last block of sweeps short. Past 129 the relations are checked on
    sampled elements. The bits agree whatever the threads and layout: of one
-   matrix of complex64, and in a batch otherwise. *)
+   matrix of complex64, and in a batch otherwise. Each order's stages run on
+   several threads, as the large orders' do. *)
 let test_eigh_two_stage (b : Support.backend) () =
+  let split r orders =
+    List.iter
+      (fun ((n, _, _, vectors, _, _) as order) ->
+        split_stages ~what:(Printf.sprintf "order %d" n) (stages vectors)
+          (fun () -> check_orders b r [ order ]))
+      orders
+  in
   Nx_cpu.with_two_stage 128 (fun () ->
-      test_eigh_large b ();
+      let r = Random.State.make [| 7 |] in
+      split r (eigh_large r);
       let r = Random.State.make [| 8 |] in
-      check_orders b r
+      split r
         D.
           [
             (257, Any Float64, repeating r, Unchecked, true, Some Batch);
@@ -1251,26 +1288,37 @@ let check_shapes (b : Support.backend) r shapes =
    one-stage reduction, as real vectors do on arm64. The relations are checked
    whole at 129 and on sampled elements past it, and the bits agree whatever the
    threads and layout, in a batch. *)
+let svd_large r =
+  D.
+    [
+      (129, 140, Any Complex128, graded r, Checked, Some Batch);
+      (257, 260, Any Float64, clustered r, Sampled 256, Some Batch);
+    ]
+
 let test_svd_large (b : Support.backend) () =
   let r = Random.State.make [| 11 |] in
-  check_shapes b r
-    D.
-      [
-        (129, 140, Any Complex128, graded r, Checked, Some Batch);
-        (257, 260, Any Float64, clustered r, Sampled 256, Some Batch);
-      ]
+  check_shapes b r (svd_large r)
 
 (* Under Nx_cpu.with_two_stage 128, the shapes above, and the cases that arm64's
    crossovers reach only at larger extents: complex vectors of values that
    repeat, from 512 there, which x86-64 never takes by default; and real vectors
    of graded values, from 1024, by a lesser extent whose sweeps leave Q2's and
    P2's last block of sweeps short. The relations are checked on sampled
-   elements, and the bits agree whatever the threads and layout, in a batch. *)
+   elements, and the bits agree whatever the threads and layout, in a batch.
+   Each shape's stages run on several threads, as the large shapes' do. *)
 let test_svd_two_stage (b : Support.backend) () =
+  let split r shapes =
+    List.iter
+      (fun ((m, n, _, _, vectors, _) as shape) ->
+        split_stages ~what:(Printf.sprintf "%d x %d" m n) (stages vectors)
+          (fun () -> check_shapes b r [ shape ]))
+      shapes
+  in
   Nx_cpu.with_two_stage 128 (fun () ->
-      test_svd_large b ();
+      let r = Random.State.make [| 11 |] in
+      split r (svd_large r);
       let r = Random.State.make [| 12 |] in
-      check_shapes b r
+      split r
         D.
           [
             (257, 264, Any Complex128, repeating r, Sampled 256, Some Batch);

@@ -566,12 +566,32 @@ val with_cache : int -> (unit -> 'a) -> 'a
     the same. For tests, while no other domain calls nx.cpu. *)
 
 val with_two_stage : int -> (unit -> 'a) -> 'a
-(** [with_two_stage n f] is [f ()], every [eigh] and [svd] while [f] runs taking
-    the two-stage reduction from order [n], an [svd] by the lesser extent, with
-    or without vectors and at every dtype, and the one-stage reduction below it.
-    The bits are those of the reduction taken. [with_two_stage 0 f] runs [f] at
-    the default crossovers. Raises [Invalid_argument] where [n] is negative or
-    below 128 but not 0. For tests, while no other domain calls nx.cpu. *)
+(** [with_two_stage n f] is [f ()], every [eigh] and [svd] of the calling thread
+    while [f] runs taking the two-stage reduction from order [n], an [svd] by
+    the lesser extent, with or without vectors and at every dtype, and the
+    one-stage reduction below it, except inside a nested [with_two_stage], whose
+    order holds until it returns. A call takes the order its thread had when it
+    started. Other threads, on this domain or another, keep theirs. The bits are
+    those of the reduction taken. [with_two_stage 0 f] runs [f] at the default
+    crossovers. Raises [Invalid_argument] where [n] is negative or below 128 but
+    not 0. For tests. *)
+
+(** The stages of the two-stage reduction: to a band, the bulge chase from the
+    band to a tridiagonal or bidiagonal matrix, and the back-transform of the
+    vectors by the chase's reflectors. *)
+type two_stage = Band | Chase | Back
+
+val two_stage_splits : two_stage -> int
+(** [two_stage_splits s] is the count of stage [s]'s steps that the calling
+    thread's two-stage reductions handed to several threads since it started. A
+    step of [Band] updates the trailing matrix of one panel, one of [Chase] is
+    the whole chase, and one of [Back] applies one side's reflectors: an [svd]
+    with vectors takes two, for [u] and [vh]. For tests. *)
+
+val most_threads : unit -> int
+(** [most_threads ()] is the most threads a job of the calling thread on at most
+    32 MiB runs on: the host's performance cores, and 1 under {!one_thread}. For
+    tests. *)
 
 val floor_holds : ecx1:int -> ebx7:int -> xcr0:int -> bool
 (** [floor_holds ~ecx1 ~ebx7 ~xcr0] is [true] iff a processor whose

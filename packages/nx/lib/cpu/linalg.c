@@ -239,19 +239,34 @@ static int64_t hemv_bound(int64_t h, int64_t blocks, int64_t b) {
 #define KD_VALUES 16
 #define KD 32
 
-/* The least order from which eigh and svd take the two stages, with or
-   without vectors and of any dtype, while with_two_stage's function runs;
-   0 outside it. Scratch sizes hold from TWO_STAGE_LEAST on, the least
+/* The least order from which the calling thread's eigh and svd take the
+   two stages, with or without vectors and of any dtype, while its
+   with_two_stage's function runs; 0 outside it. A call reads it once, at
+   its start (run), into its [two_from], which its workers' functions below
+   take as [from]. Scratch sizes hold from TWO_STAGE_LEAST on, the least
    crossover of either. */
 #define TWO_STAGE_LEAST 128
 #define STRING_(x) #x
 #define STRING(x) STRING_(x)
-static int64_t two_stage_from;
+static _Thread_local int64_t two_stage_from;
+
+/* The calling thread's count of each stage's steps that its two-stage
+   reductions handed to several threads: the band reduction's trailing
+   updates (he2hb, ge2gb), the bulge chase (hb2st, gb2bd) and the
+   back-transform (q2), in nx_cpu.ml's two_stage order. A stage takes the
+   threads only in a call whose batch is one unit (threaded), which runs on
+   the calling thread. A test reads it (two_stage_splits) to know that an
+   order reached the paths of several threads. */
+enum { SPLIT_BAND, SPLIT_CHASE, SPLIT_BACK, SPLIT_STAGES };
+static _Thread_local long two_stage_splits[SPLIT_STAGES];
+
+static void count_split(int stage) { two_stage_splits[stage]++; }
 
 /* Whether eigh of order [n] takes the two stages, with or without
-   [vectors], of a complex dtype under [cplx]. */
-static int eigh_two(int64_t n, int vectors, int cplx) {
-  if (two_stage_from > 0) return n >= two_stage_from;
+   [vectors], of a complex dtype under [cplx], from order [from] where it is
+   not 0. */
+static int eigh_two(int64_t n, int vectors, int cplx, int64_t from) {
+  if (from > 0) return n >= from;
   if (!vectors) return n >= EIGH_VALUES;
   return n >= (cplx ? EIGH_COMPLEX : EIGH_VECTORS);
 }
@@ -283,16 +298,16 @@ static int64_t chased(int64_t n, int64_t s) {
    back-transform's V, T and products; or the first stage's V, T, leaf
    copy, products and U, which outnumber the band and its sweeps' counts,
    from the values' crossover, the least. */
-static int64_t eigh_work(int64_t n) {
+static int64_t eigh_work(int64_t n, int64_t from) {
   int64_t one = (3 * n + NB) * NB + hemv_blocks(n) * n;
   int64_t first = 4 * KD * n + 2 * LEAF * (n + 1) + 5 * KD * KD;
-  return !eigh_two(n, 0, 0) || one > first ? one : first;
+  return !eigh_two(n, 0, 0, from) || one > first ? one : first;
 }
 
 /* The elements of the bulge chase's reflectors, KD a reflector, kept for
    the vectors of a complex dtype under [cplx]. */
-static int64_t eigh_slots(int64_t n, int vectors, int cplx) {
-  return vectors && eigh_two(n, 1, cplx) ? chased(n, n - 1) * KD : 0;
+static int64_t eigh_slots(int64_t n, int vectors, int cplx, int64_t from) {
+  return vectors && eigh_two(n, 1, cplx, from) ? chased(n, n - 1) * KD : 0;
 }
 
 /* svd's two-stage reduction (linalg_body.h): to a band of kd
@@ -330,9 +345,10 @@ static int64_t eigh_slots(int64_t n, int vectors, int cplx) {
 #endif
 
 /* Whether svd of order [k] takes the two stages, with or without
-   [vectors], of a complex dtype under [cplx]. */
-static int svd_two(int64_t k, int vectors, int cplx) {
-  if (two_stage_from > 0) return k >= two_stage_from;
+   [vectors], of a complex dtype under [cplx], from order [from] where it is
+   not 0. */
+static int svd_two(int64_t k, int vectors, int cplx, int64_t from) {
+  if (from > 0) return k >= from;
   if (!vectors) return k >= (cplx ? SVD_COMPLEX_VALUES : SVD_VALUES);
   return k >= (cplx ? SVD_COMPLEX : SVD_VECTORS);
 }
@@ -342,17 +358,18 @@ static int svd_two(int64_t k, int vectors, int cplx) {
    LQ's V, T and copy, B, its products and leaf copy, which outnumber the
    band and its sweeps' counts, from the values' crossover of a complex
    dtype under [cplx], its least. */
-static int64_t svd_scratch(int64_t mm, int64_t k, int cplx) {
+static int64_t svd_scratch(int64_t mm, int64_t k, int cplx, int64_t from) {
   int64_t qr = qr_scratch(mm, k), block = (3 * mm + NB + 1) * NB;
   int64_t one = qr > block ? qr : block;
   int64_t first = (4 * mm + 5 * k + 5 * KD) * KD + 2 * LEAF * (mm + 1);
-  return !svd_two(k, 0, cplx) || one > first ? one : first;
+  return !svd_two(k, 0, cplx, from) || one > first ? one : first;
 }
 
 /* The elements of the bulge chase's left and right reflectors, KD a
    reflector, kept for the vectors of a complex dtype under [cplx]. */
-static int64_t svd_slots(int64_t k, int vectors, int cplx) {
-  return vectors && svd_two(k, 1, cplx) ? 2 * chased(k, k - 1) * KD : 0;
+static int64_t svd_slots(int64_t k, int vectors, int cplx, int64_t from) {
+  return vectors && svd_two(k, 1, cplx, from) ? 2 * chased(k, k - 1) * KD
+                                               : 0;
 }
 
 /* The columns a recursive routine on [n] computes first: half, a
@@ -415,10 +432,12 @@ typedef enum { AS_COLUMNS, AS_ROWS } holding;
    vh's shapes state, [adjoint] and [unit] for a solve's, [vectors] where
    eigh or eig computes v or svd u and vh; its operand's [m] rows and [n]
    columns and, for a solve, the right-hand sides' count [r]; its arrays,
-   the operands then the results, whose first [batch] axes are the batch. */
+   the operands then the results, whose first [batch] axes are the batch;
+   [two_from], two_stage_from at its start. */
 typedef struct {
   int routine, dt, w, upper, complete, adjoint, unit, vectors;
   int64_t m, n, r, matrices, per; /* per unit of the job */
+  int64_t two_from;
   int nops, nres, batch;
   const nx_array *a;
   int64_t scratch; /* elements per worker, from its kept buffers */
@@ -898,14 +917,16 @@ static int64_t scratch(const call *c) {
     case SOLVE_TRIANGULAR: return n * n;
     case QR: return m * (n + PAD) + k + qr_scratch(m, n);
     case EIGH:
-      return 4 * n * n + 16 * n + 2 + eigh_work(n) +
+      return 4 * n * n + 16 * n + 2 + eigh_work(n, c->two_from) +
              eigh_slots(n, c->vectors,
-                        c->dt == NX_COMPLEX64 || c->dt == NX_COMPLEX128);
+                        c->dt == NX_COMPLEX64 || c->dt == NX_COMPLEX128,
+                        c->two_from);
     case SVD: {
       int cplx = c->dt == NX_COMPLEX64 || c->dt == NX_COMPLEX128;
       int64_t tmp = m >= n ? k * k : big * (c->complete ? big : k);
       return big * k + 3 * k * k + 3 * (k + 1) * (k + 1) + 19 * k + 2 +
-             svd_scratch(big, k, cplx) + tmp + svd_slots(k, c->vectors, cplx);
+             svd_scratch(big, k, cplx, c->two_from) + tmp +
+             svd_slots(k, c->vectors, cplx, c->two_from);
     }
     case EIG: return 5 * n * n + 7 * n + (3 * n + NB) * NB;
     default: return 0;
@@ -1047,6 +1068,7 @@ static value run(call c, const value *arrays) {
   if (e) return Val_int(e);
   c.a = a;
   c.w = nx_cpu_width(c.dt);
+  c.two_from = two_stage_from;
   c.scratch = scratch(&c);
   int cplx = c.dt == NX_COMPLEX64 || c.dt == NX_COMPLEX128;
   int64_t bytes = c.matrices * c.m * (c.n + c.r) * c.w;
@@ -1136,6 +1158,17 @@ value nx_cpu_swap_two_stage(value n) {
   value was = Val_long(two_stage_from);
   two_stage_from = from;
   return was;
+}
+
+value nx_cpu_two_stage_splits(value stage) {
+  return Val_long(two_stage_splits[Int_val(stage)]);
+}
+
+/* The most threads a job on at most CACHE_BYTES (job.c) runs on:
+   most_threads' answer. */
+value nx_cpu_most_threads(value unit) {
+  (void)unit;
+  return Val_long(nx_cpu_threads(1, INFINITY));
 }
 
 value nx_cpu_eigh(value w, value v, value a) {

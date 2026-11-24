@@ -1577,7 +1577,10 @@ static int F(he2hb)(T *a, int64_t n, int64_t ld, T *tau, T *w, int64_t kd,
     double cost =
         threaded(s, units, bytes, 2.0 * m * m * 2 * kb, CPLX);
     if (cost == 0) F(band_units)(&j, 0, units, s);
-    else nx_cpu_job(units, bytes, cost, F(band_unit), &j);
+    else {
+      count_split(SPLIT_BAND);
+      nx_cpu_job(units, bytes, cost, F(band_unit), &j);
+    }
     if (j.failed) return 0;
   }
   return 1;
@@ -1707,6 +1710,7 @@ static void F(hb2st)(const T *a, int64_t n, int64_t ld, T *b, T *slots,
   if (cost == 0 || !waiters_init(&w)) F(chase_unit)(0, 1, 0, &ch);
   else {
     ch.w = &w;
+    count_split(SPLIT_CHASE);
     nx_cpu_job(n - 1, bytes, cost, F(chase_unit), &ch);
     waiters_free(&w);
   }
@@ -1789,6 +1793,7 @@ static int F(q2)(const T *slots, int64_t n, T *c, int64_t ldc, arena *s) {
   F(q2_job) j = {.slots = slots, .c = c, .n = n, .ldc = ldc,
                  .workers = s->workers,
                  .units = units < threads ? units : threads};
+  count_split(SPLIT_BACK);
   nx_cpu_job(j.units, bytes, cost, F(q2_unit), &j);
   return !j.failed;
 }
@@ -2784,10 +2789,12 @@ static void F(from_columns)(const R *x, int64_t lx, int64_t r, int64_t c,
 static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
   int64_t n = c->n;
   T *v = c->vectors ? (T *)matrix_at(c, c->nops + 1, b) : NULL;
-  int two = eigh_two(n, v != NULL, CPLX);
+  int two = eigh_two(n, v != NULL, CPLX, c->two_from);
   int64_t kd = v ? KD : KD_VALUES;
-  T *a = x, *tau = a + n * n, *w = tau + n, *slots = w + eigh_work(n);
-  R *d = (R *)(slots + eigh_slots(n, c->vectors, CPLX)), *e = d + n,
+  T *a = x, *tau = a + n * n, *w = tau + n,
+    *slots = w + eigh_work(n, c->two_from);
+  R *d = (R *)(slots + eigh_slots(n, c->vectors, CPLX, c->two_from)),
+    *e = d + n,
     *z = e + n, *work = z + n * n;
   int64_t *iwork = (int64_t *)(((uintptr_t)(work + 3 * n + 2 * n * n) + 7) &
                                ~(uintptr_t)7);
@@ -4362,7 +4369,10 @@ static int F(ge2gb)(T *a, int64_t m, int64_t k, int64_t ld, T *tauq,
     int64_t units = (wn + kd - 1) / kd, bytes = m2 * wn * (int64_t)sizeof(T);
     double cost = threaded(s, units, bytes, 2.0 * m2 * wn * kb, CPLX);
     if (cost == 0) F(gb_units)(&j, 0, units, s);
-    else nx_cpu_job(units, bytes, cost, F(gb_unit), &j);
+    else {
+      count_split(SPLIT_BAND);
+      nx_cpu_job(units, bytes, cost, F(gb_unit), &j);
+    }
     if (j.failed) return 0;
   }
   return 1;
@@ -4479,6 +4489,7 @@ static void F(gb2bd)(const T *a, int64_t n, int64_t ld, T *b, T *q, T *p,
   if (cost == 0 || !waiters_init(&w)) F(bchase_unit)(0, 1, 0, &ch);
   else {
     ch.w = &w;
+    count_split(SPLIT_CHASE);
     nx_cpu_job(n - 1, bytes, cost, F(bchase_unit), &ch);
     waiters_free(&w);
   }
@@ -4512,11 +4523,12 @@ static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
      vhᴴ, or vhᴴ and u where a is wide; [qs] and [ps] hold the chase's
      left and right reflectors for Q2 and P2. */
   int qrf = mm >= (CPLX ? k * 17 / 9 : k * 11 / 6);
-  int two = svd_two(k, uo != NULL, CPLX), by_rows = qrf || two;
+  int two = svd_two(k, uo != NULL, CPLX, c->two_from), by_rows = qrf || two;
   int64_t xc = wide ? vr : uc, ld = by_rows ? k : mm, kd = uo ? KD : KD_VALUES;
   T *a = x, *r = a + mm * k, *tau = r + k * k, *tauq = tau + k,
-    *taup = tauq + k, *ws = taup + k, *tmp = ws + svd_scratch(mm, k, CPLX);
-  int64_t slots = svd_slots(k, c->vectors, CPLX);
+    *taup = tauq + k, *ws = taup + k,
+    *tmp = ws + svd_scratch(mm, k, CPLX, c->two_from);
+  int64_t slots = svd_slots(k, c->vectors, CPLX, c->two_from);
   T *qs = tmp + (wide ? mm * xc : k * k), *ps = qs + slots / 2;
   R *d = (R *)(qs + slots), *e = d + k, *ub = e + k,
     *vb = ub + k * k, *work = vb + k * k;
