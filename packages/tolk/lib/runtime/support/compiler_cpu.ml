@@ -615,12 +615,11 @@ let settled cc arch =
       | None -> selected)
   | _ -> selected
 
-(* [f cc selected] for each Clang and [arch], where [selected] is what that
+(* [f cc selected] for the Clang [cc] and [arch], where [selected] is what that
    Clang compiles [arch] for, asked once per process. *)
 let per_clang f =
   let lock = Mutex.create () and known = Hashtbl.create 4 in
-  fun arch ->
-    let cc = Setting.value Setting.cc in
+  fun cc arch ->
     Mutex.protect lock @@ fun () ->
     match Hashtbl.find_opt known (cc, arch) with
     | Some r -> r
@@ -636,7 +635,7 @@ let per_clang f =
    such processors does not choose for it. On arm64, NEON's 32 registers of 16
    bytes. On riscv64, none known. A Clang that does not run gives SSE's 16 of
    16 bytes, which every x86_64 processor has. *)
-let registers =
+let registers_of =
   per_clang @@ fun cc selected : Renderer.registers option ->
   match fst selected with
   | "x86_64" ->
@@ -648,6 +647,8 @@ let registers =
         }
   | "arm64" -> Some { count = 32; bytes = 16 }
   | _ -> None
+
+let registers arch = registers_of (Setting.value Setting.cc) arch
 
 (* The conversions between halves and floats that Clang calls where an x86_64
    processor has no F16C, which compiler-rt defines and no library of the
@@ -748,6 +749,8 @@ let waits = Atomic.make 0
 let settle_waits () = Atomic.get waits
 
 let clang arch =
+  (* Every question of Clang goes to [cc], whatever {!Setting.cc} names
+     later. *)
   let cc = Setting.value Setting.cc in
   (* A malformed [arch] raises now; what Clang compiles it for is asked when the
      table or a compile first needs it. *)
@@ -792,7 +795,7 @@ let clang arch =
         Error
           (Printf.sprintf "%s: its release is unknown, as its macros are: %s" cc
              why)
-    | _ when keeps_avx512 arch ->
+    | _ when keeps_avx512 cc arch ->
         Error
           (Printf.sprintf
              "%s keeps AVX-512 on for %s after -mno-avx512f, and its masked \
@@ -818,7 +821,7 @@ let clang arch =
           named (command ~long:false);
           named (command ~long:true);
           string_of_int long_source;
-          (if converts_halves arch then half_conversions else "");
+          (if converts_halves cc arch then half_conversions else "");
         ]
     in
     Printf.sprintf "compile_%s_obj_%s_%s" cc
@@ -830,7 +833,7 @@ let clang arch =
   let compile srcs =
     let long src = String.length src > long_source in
     let whole src =
-      if converts_halves arch then src ^ half_conversions else src
+      if converts_halves cc arch then src ^ half_conversions else src
     in
     let run longer =
       match List.filter (fun src -> long src = longer) srcs with

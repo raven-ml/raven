@@ -1716,6 +1716,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A compiler from `Compiler_cpu.clang` asks the Clang it was made under whether
+  it keeps AVX-512 on and converts halves: a later `CC` changed its refusals
+  and the half conversions its objects define.
 - A process's first compile with `Compiler_cpu.clang` and no release hinted
   runs Clang twice before compiling, where it ran it three times under LLVM 18
   to 20 and Apple's Clang 17 for x86_64, unless AVX10.1 is on.

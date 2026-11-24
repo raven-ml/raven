@@ -1487,6 +1487,15 @@ let native_avx10 =
               Compiler.compile
                 (Compiler_cpu.clang "x86_64,x86-64-v3,avx10.1")
                 increment));
+      test "a compiler made under it refuses under another CC" (fun () ->
+          under_stand_in llvm21_avx10 @@ fun _ ->
+          let clang = Compiler_cpu.clang "x86_64,x86-64-v3,avx10.1" in
+          Setting.context [ B (Setting.cc, missing_clang) ] @@ fun () ->
+          raises_match
+            (function
+              | Compiler.Compile_error msg -> has_infix ~affix:refusal msg
+              | _ -> false)
+            (fun () -> Compiler.compile clang increment));
     ]
 
 (* Processors with AVX-512, three naming AVX10.1, which LLVM 21 keeps on with
