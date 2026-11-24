@@ -705,16 +705,22 @@ static int call_fit(struct rig_call *c, const struct rig_sub *s) {
   return 1;
 }
 
+/* Takes the call [c] if no one holds it: whether it did. */
+static int call_try(struct rig_call *c) {
+  int seen = 0;
+  return atomic_load_explicit(&c->taken, memory_order_relaxed) == 0 &&
+         atomic_compare_exchange_strong(&c->taken, &seen, 1);
+}
+
+static void call_give(struct rig_call *c) {
+  atomic_store_explicit(&c->taken, 0, memory_order_release);
+}
+
 /* A free call, taken and fitted to [s], made if none is free; NULL if the
    host has no memory for it. */
 static struct rig_call *call_take(const struct rig_sub *s) {
   struct rig_call *c = atomic_load_explicit(&calls, memory_order_acquire);
-  for (; c != NULL; c = c->next) {
-    int seen = 0;
-    if (atomic_load_explicit(&c->taken, memory_order_relaxed) == 0 &&
-        atomic_compare_exchange_strong(&c->taken, &seen, 1))
-      break;
-  }
+  while (c != NULL && !call_try(c)) c = c->next;
   if (c == NULL) {
     if ((c = calloc(1, sizeof *c)) == NULL) return NULL;
     atomic_init(&c->taken, 1);
@@ -728,7 +734,7 @@ static struct rig_call *call_take(const struct rig_sub *s) {
     return c;
   }
   if (call_fit(c, s)) return c;
-  atomic_store_explicit(&c->taken, 0, memory_order_release);
+  call_give(c);
   return NULL;
 }
 
@@ -746,8 +752,33 @@ value caml_rig_submit_end(value v_c) {
   struct rig_call *c = Call_val(v_c);
   for (int k = 0; k < c->nslots; k++) c->slots[k].stamps = NULL;
   c->npoints = c->nwaits = c->checks = 0;
-  atomic_store_explicit(&c->taken, 0, memory_order_release);
+  call_give(c);
   return Val_unit;
+}
+
+/* The bytes of the call [c]'s arrays. The addresses and the sides hold as
+   many elements as the slots. */
+static size_t call_bytes(const struct rig_call *c) {
+  size_t slot = sizeof *c->slots + sizeof *c->addresses + sizeof *c->sides;
+  return (size_t)c->cfixed * sizeof *c->fixed + (size_t)c->cslots * slot +
+         (size_t)c->cparts * sizeof *c->parts +
+         (size_t)c->cpoints * sizeof *c->points +
+         (size_t)c->cwaits * (sizeof *c->waits + sizeof *c->producers) +
+         c->cargs + (size_t)(c->cmarks + c->cspare) * sizeof *c->marks;
+}
+
+/* The bytes of the arrays of the calls no submit holds, each taken as a
+   submit takes one while it is counted, for rig's tests. */
+value caml_rig_submit_state(value unit) {
+  (void)unit;
+  size_t n = 0;
+  struct rig_call *c = atomic_load_explicit(&calls, memory_order_acquire);
+  for (; c != NULL; c = c->next) {
+    if (!call_try(c)) continue;
+    n += call_bytes(c);
+    call_give(c);
+  }
+  return Val_long((intnat)n);
 }
 
 /* What [caml_rig_call_args] refuses in a submit's values. */

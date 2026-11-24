@@ -884,6 +884,13 @@ value caml_rig_metal_runs(value unit) {
   return Val_long((intnat)atomic_load(&rig_metal_runs));
 }
 
+/* The device's parameter arena, nil for none or once it stopped, for rig's
+   tests, which read it while no submit runs. */
+value caml_rig_metal_arena(value v_d) {
+  struct rig_metal_run *r = Run_val(v_d);
+  return object(r == NULL ? nil : r->arena);
+}
+
 #else
 
 value caml_rig_metal_count(value unit) {
@@ -927,6 +934,7 @@ NO_METAL3(caml_rig_metal_sleep)
 NO_METAL1(caml_rig_metal_failure)
 NO_METAL1(caml_rig_metal_stop)
 NO_METAL1(caml_rig_metal_grow)
+NO_METAL1(caml_rig_metal_arena)
 
 value caml_rig_metal_icb(value a, value b, value c, value d) {
   (void)a, (void)b, (void)c, (void)d, no_metal();

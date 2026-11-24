@@ -548,6 +548,10 @@ val buffers : unit -> int
    command buffer it made. *)
 val runs : unit -> int
 
+(* [arena d] is the handle of [d]'s parameter arena ({!section-launches}), or
+   [0n] while [d] holds none. It reads the arena while no submit runs on [d]. *)
+val arena : t -> nativeint
+
 (* A device's ring of command buffers, driven by hand without Metal: a test
    plays the submitter, which commits command buffers, and Metal's handler,
    which completes them in any order. Commit [k] (from [0]) takes the value

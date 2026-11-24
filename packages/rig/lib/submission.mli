@@ -171,6 +171,9 @@ end
 val time_pairs : device -> int
 (** [time_pairs d] is {!Rig.time_pairs}[ d]. *)
 
+val submit_state : unit -> int
+(** [submit_state ()] is {!Rig.submit_state}[ ()]. *)
+
 val run_copy : device -> waits:int array -> src:buffer -> dst:buffer -> int
 (** [run_copy d ~waits ~src ~dst] submits a copy of [src] into [dst] on [d]'s
     copy engine, after the points of [waits], and is its point. It submits

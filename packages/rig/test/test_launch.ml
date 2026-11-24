@@ -855,6 +855,83 @@ let passing_commands =
       (fun t -> fill_with t.sub t.args);
   ]
 
+(* Submit state *)
+
+(* A submission of [n] launches of [fill] on the domain tests' device. *)
+let fills_on n =
+  let d, image = Lazy.force pool_device in
+  let fill = launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] in
+  Sub.make d (Array.make n fill)
+
+(* Submits [s], [n] launches of [fills_on], launch [i] storing [v + i] at word
+   [i], and reads the words back. *)
+let fills_with s n v =
+  let d, _ = Lazy.force pool_device in
+  let out = B.create d (8 * n) in
+  let args = Array.init n (fun i -> one ~params:(words [ 8 * i; v + i ]) ()) in
+  Rig.Point.wait (submit ~buffers:[| out |] s args);
+  let b = host_bytes out (8 * n) in
+  List.init n (fun i -> Int64.to_int (String.get_int64_le b (8 * i)))
+
+(* A free_cache of the host frees the state rig keeps for later submits, and a
+   submit after it runs. *)
+let test_state_freed () =
+  let n = 256 in
+  let s = fills_on n in
+  let from v = List.init n (( + ) v) in
+  equal (list int) ~msg:"a submit before" (from 1) (fills_with s n 1);
+  greater int ~msg:"the state kept after it" ~than:0 (Rig.submit_state ());
+  Rig.free_cache Rig.host;
+  equal int ~msg:"the state kept after free_cache" 0 (Rig.submit_state ());
+  equal (list int) ~msg:"a submit after it" (from 7) (fills_with s n 7)
+
+(* A free_cache of the host while a submit of another domain waits in its
+   device's room, its values copied into its state, leaves that state: the
+   driver reads the values the submit was given. *)
+let test_state_held () =
+  let name = strf "launch:state-held-%d" (Atomic.fetch_and_add opened 1) in
+  let d, p = P.open_ ~may_block:true name in
+  let s = Sub.make d [| launch (functions d) "main" ~params:64 |] in
+  let params = words (List.init 8 (( + ) 100)) in
+  ignore (P.launches p);
+  P.gate_room p;
+  let held = Domain.spawn (fun () -> submit s [| one ~params () |]) in
+  Rig_support.await "a submit in its room" (fun () -> P.in_room p = 1);
+  Rig.free_cache Rig.host;
+  P.open_room p;
+  Rig.Point.wait (Domain.join held);
+  let given =
+    {
+      P.groups = (1, 1, 1);
+      threads = (1, 1, 1);
+      shared = 0;
+      params = Bytes.to_string params;
+    }
+  in
+  equal (list launch_t) ~msg:"the launch its driver read" [ given ]
+    (P.launches p)
+
+(* Two domains submit submissions of 1 to 64 launches while either frees the
+   host's cache, which may take a set of state as a submit would: each submit
+   reads back its own values. *)
+let fills_t = abstract ~pp:Format.pp_print_int "s"
+
+let freeing_commands =
+  [
+    command "make"
+      (Gen.int_range 1 64 @-> makes fills_t)
+      Fun.id
+      (fun n -> (fills_on n, n));
+    command "submit"
+      (fills_t ^-> Gen.int_range 1 1000 @-> returns (list int))
+      (fun n v -> List.init n (( + ) v))
+      (fun (s, n) v -> fills_with s n v);
+    command "free_cache"
+      (Gen.unit @-> returns unit)
+      Fun.id
+      (fun () -> Rig.free_cache Rig.host);
+  ]
+
 (* Blocks the host refuses *)
 
 (* A child process limits its address space to [room] bytes above what it
@@ -1004,6 +1081,19 @@ let tests =
           "a submit reads the element a store left in its values, or refuses \
            it"
           passing_commands;
+      ];
+    group ~timeout "state"
+      [
+        test "a free_cache of the host frees the state kept for submits"
+          test_state_freed;
+        test
+          "a free_cache of the host while a submit is in its room leaves its \
+           values"
+          test_state_held;
+        stateful ~count:30 ~domains:2
+          "submits on two domains read their own values while the host's cache \
+           is freed"
+          freeing_commands;
       ];
     group ~timeout "cost"
       [

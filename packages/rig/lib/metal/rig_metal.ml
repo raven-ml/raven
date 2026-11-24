@@ -776,6 +776,9 @@ let held (i : image) =
   !n
 external buffers : unit -> int = "caml_rig_metal_buffers"
 external runs : unit -> int = "caml_rig_metal_runs"
+external arena_of : int -> nativeint = "caml_rig_metal_arena"
+
+let arena d = arena_of d.self
 
 module Ring = struct
   type t

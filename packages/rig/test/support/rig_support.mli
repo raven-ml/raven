@@ -251,6 +251,11 @@ module Polled : sig
       stop allocates: also a call that an exception at its first allocation
       ended, which {!log} misses. *)
 
+  val trims : t -> int
+  (** [trims d] is the number of calls of [d]'s [trim]
+      ({!Rig_edge.section-calls}), which rig makes from C, so {!log} misses
+      them. *)
+
   val word_at : t -> int
   (** [word_at d] is the host address of [d]'s word. *)
 

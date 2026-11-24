@@ -2854,6 +2854,10 @@ val time_pairs : t -> int
 (** [time_pairs d] is the number of [d]'s pairs of times that are taken: given
     to a value its driver times and not given back. *)
 
+val submit_state : unit -> int
+(** [submit_state ()] is the bytes of the state, blocks included, that rig keeps
+    for later submits ({!submit}) in the sets no submit holds at the call. *)
+
 val on_host_exchange : (int -> unit) -> unit
 (** [on_host_exchange f] makes the next load that links host code call [f a]
     once, [a] being the new link's first address, after the load found no link

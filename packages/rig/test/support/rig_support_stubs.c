@@ -307,6 +307,7 @@ struct polled {
   int itself;        /* a thread of the driver runs the queue */
   _Atomic int submits;
   _Atomic int stops; /* calls of its stop */
+  _Atomic int trims; /* calls of its trim */
   intnat steps;     /* fallible calls made */
   intnat fail_from; /* the step from which every call fails, or 0 */
   intnat refuse_from, refuse_to; /* the steps from one below the other refuse */
@@ -617,6 +618,10 @@ value rig_test_polled_stopping(value v_p) {
 
 value rig_test_polled_stops(value v_p) {
   return Val_int(atomic_load(&Polled_val(v_p)->stops));
+}
+
+value rig_test_polled_trims(value v_p) {
+  return Val_int(atomic_load(&Polled_val(v_p)->trims));
 }
 
 value rig_test_polled_blocked(value v_p) {

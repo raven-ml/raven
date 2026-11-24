@@ -1504,6 +1504,110 @@ let growths_keep_larger () =
   equal ~msg:"the large launch after both growths" string "fits" (room large);
   Rig_metal.unload g image
 
+(* The values of a launch of [wide] that stores the words [i] and [1000 + i] at
+   the 8 bytes [at] of its buffer. *)
+let wide_args ~at i =
+  let v = launch_args 8192 in
+  Bytes.set_int64_le v.Sub.params 0 (Int64.of_int (8 * at));
+  Bytes.set_int32_le v.Sub.params 4096 (Int32.of_int i);
+  Bytes.set_int32_le v.Sub.params 8188 (Int32.of_int (1000 + i));
+  v
+
+(* The words that launches [first] to [first + n - 1] of [wide] store, each at
+   its own 8 bytes of a buffer from the first. *)
+let wide_words first n =
+  Array.init (2 * n) (fun w ->
+      if w mod 2 = 0 then first + (w / 2) else 1000 + first + (w / 2))
+
+(* 160 launches of 8 KiB of parameters, more than the first arena of 1 MiB
+   holds, so their submission grows it. *)
+let widest_run = 160
+
+(* After a submission that grew the arena, free_cache gives the arena back: the
+   device holds none, and Metal releases the buffer once its command buffers are
+   released. A submission after it grows a new arena, and each of its launches
+   reads its own parameters. *)
+let arena_freed () =
+  S.with_ @@ fun s ->
+  let t = dev_of s in
+  let image = launch_image t.d in
+  let n = widest_run in
+  let wide = launch image "wide" ~params:8192 [ Sub.write 0 ~at:0 ] in
+  let s = Sub.make t.d (Array.make n wide) in
+  let run first =
+    let out = zeroed t.d (8 * n) in
+    run_wait s (Array.init n (fun j -> wide_args ~at:j (first + j))) [| out |];
+    words out
+  in
+  equal (array int) ~msg:"the first submission" (wide_words 0 n) (run 0);
+  let a = Rig_metal.arena t.g in
+  not_equal nativeint ~msg:"the arena it grew" 0n a;
+  let w = S.weak a in
+  Rig.free_cache t.d;
+  equal nativeint ~msg:"the arena after free_cache" 0n (Rig_metal.arena t.g);
+  await_release t.d w;
+  equal (array int) ~msg:"a submission after it" (wide_words n n) (run n)
+
+(* A free_cache while launches that read the arena wait behind a gate on the GPU
+   leaves the arena to them: the device holds none after it, the launches'
+   command buffers keep the buffer alive, and each launch reads its own
+   parameters once the gate opens. A submission between the free_cache and the
+   gate's opening grows a new arena and writes its own parameters there. A
+   device beside opens the gate. *)
+let arena_freed_queued () =
+  S.with_ @@ fun s ->
+  let t = dev_of s and o = beside () in
+  let image = launch_image t.d in
+  let n = widest_run in
+  let page = H.pages H.page in
+  H.set32 page 0;
+  let flag = require_some (maps (Rig_metal.map_host t.g page H.page)) in
+  let flag' = require_some (maps (Rig_metal.map_host o.g page H.page)) in
+  let args = alloc t args_bytes and args' = alloc o args_bytes in
+  set_args args ~at:0 ~out:(gpu flag) ~c:gate_rounds;
+  set_args args' ~at:0 ~out:(gpu flag') ~c:1;
+  let gate =
+    S.dispatch ~pipeline:(pipeline t "gate") args ~groups:1 ~threads:1
+  in
+  let opened = ref false in
+  let open_gate () =
+    if not !opened then begin
+      opened := true;
+      let unlock =
+        S.dispatch ~pipeline:(pipeline o "unlock") args' ~groups:1 ~threads:1
+      in
+      wait o (submit o [| unlock |])
+    end
+  in
+  Fun.protect ~finally:(fun () ->
+      open_gate ();
+      List.iter (Rig_metal.free o.g) [ flag'; args' ];
+      Rig.close o.d)
+  @@ fun () ->
+  let out = zeroed t.d (8 * 2 * n) in
+  let wide = launch image "wide" ~params:8192 [ Sub.write 0 ~at:0 ] in
+  let s = Sub.make t.d (Array.make n wide) in
+  let launches first =
+    let vs = Array.init n (fun j -> wide_args ~at:(first + j) (first + j)) in
+    Rig.submit s ~buffers:[| out |] ~args:vs
+  in
+  ignore (submit t [| gate |]);
+  let queued = launches 0 in
+  let w = S.weak (Rig_metal.arena t.g) in
+  Rig.free_cache t.d;
+  equal nativeint ~msg:"the arena after free_cache" 0n (Rig_metal.arena t.g);
+  equal bool ~msg:"the launches, still behind the gate" false
+    (Rig.Point.reached queued);
+  equal bool ~msg:"the queued launches' arena, alive" true (S.alive w);
+  ignore (launches n);
+  open_gate ();
+  B.wait out Read;
+  equal ~msg:"the gate's write: it saw its gate open" int 1 (H.get32 page);
+  let all = wide_words 0 (2 * n) in
+  equal (array int) ~msg:"each launch's own words" all (words out);
+  await_release t.d w;
+  List.iter (Rig_metal.free t.g) [ flag; args ]
+
 (* Geometry beyond a function's limits is refused at submit, before any
    hand-over, and the device runs on: an empty axis of groups or threads,
    more threads in a threadgroup than its pipeline holds along one axis or
@@ -1629,6 +1733,11 @@ let launches =
         arena_crossing;
       test "two growths of the parameter arena keep the larger"
         growths_keep_larger;
+      test "free_cache gives back the arena a submission grew" arena_freed;
+      test
+        "free_cache leaves the arena to the launches queued on it, which read \
+         their own parameters"
+        arena_freed_queued;
       test
         "geometry beyond a function's limits is refused, and the device runs on"
         refused_geometry;

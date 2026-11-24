@@ -1760,6 +1760,8 @@ end
 
 let time_pairs (d : device) = times_taken d.live.c
 
+external submit_state : unit -> int = "caml_rig_submit_state" [@@noalloc]
+
 (* Each device's submission of one copy from slot 0 into slot 1, which
    [make] places on its copy engine. *)
 let copiers =

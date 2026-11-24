@@ -1257,6 +1257,38 @@ let test_grow_interleaved () =
   equal ~msg:"the parts that ran" int 14 (word arg);
   equal ~msg:"growths" int 2 (count "grow" p)
 
+(* A free_cache of the device gives back what its queue grew into: the next
+   submission the queue held only once grown grows it again. *)
+let test_grow_trimmed () =
+  let d, p = growing "submit:grow-trimmed" in
+  let arg = B.create Rig.host page_bytes in
+  Support.store (Support.Reader.host arg) 0;
+  let s, args, buffers = bumps d arg 5 in
+  Rig.Point.wait (submit ~args ~buffers s);
+  Rig.free_cache d;
+  equal ~msg:"trims" int 1 (P.trims p);
+  Rig.Point.wait (submit ~args ~buffers s);
+  equal ~msg:"growths" int 2 (count "grow" p);
+  equal ~msg:"the parts that ran" int 10 (word arg)
+
+(* A free_cache of another domain while a submit grows the queue trims nothing,
+   so the growth stays for that submit's room; one after the submit trims. *)
+let test_grow_untrimmed () =
+  let d, p = growing "submit:grow-untrimmed" in
+  let arg = B.create Rig.host page_bytes in
+  Support.store (Support.Reader.host arg) 0;
+  let s, args, buffers = bumps d arg 5 in
+  let during = ref (-1) in
+  P.before p "grow" (fun () ->
+      Domain.join (Domain.spawn (fun () -> Rig.free_cache d));
+      during := P.trims p);
+  Rig.Point.wait (submit ~args ~buffers s);
+  equal ~msg:"trims while it grew" int 0 !during;
+  equal ~msg:"growths" int 1 (count "grow" p);
+  Rig.free_cache d;
+  equal ~msg:"trims after" int 1 (P.trims p);
+  equal ~msg:"the parts that ran" int 5 (word arg)
+
 (* A growth that faults loses the device, and the submission assigns no
    value. *)
 let test_grow_fault () =
@@ -2393,6 +2425,9 @@ let tests =
         test "a growth short for one submission fails no other"
           test_grow_short_other;
         test "a growth that faults loses the device" test_grow_fault;
+        test "free_cache gives back what the queue grew into" test_grow_trimmed;
+        test "a free_cache while a submit grows the queue leaves its growth"
+          test_grow_untrimmed;
       ];
     group ~timeout "lifetime"
       [

@@ -24,6 +24,7 @@ external polled_submits : polled -> int = "rig_test_polled_submits"
 external polled_stopping : polled -> unit = "rig_test_polled_stopping"
 [@@noalloc]
 external polled_stops : polled -> int = "rig_test_polled_stops" [@@noalloc]
+external polled_trims : polled -> int = "rig_test_polled_trims" [@@noalloc]
 external polled_blocked : polled -> int = "rig_test_polled_blocked"
 external polled_step : polled -> int = "rig_test_polled_step" [@@noalloc]
 external polled_steps : polled -> int = "rig_test_polled_steps"
@@ -771,6 +772,7 @@ module Polled = struct
   let word_at d = d.word_at
   let stop_fault d = protect d.lock (fun () -> d.stop_fault)
   let stops d = polled_stops d.c
+  let trims d = polled_trims d.c
   let blocked d = polled_blocked d.c
 
   let last_times d = polled_last_times d.c
