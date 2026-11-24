@@ -36,6 +36,64 @@
  (deps
   (source_tree fixtures)))
 
+; test_cache holds files of Metal's shader cache while processes of its own
+; executable build pipelines: a suite of its own. Its executable links
+; rig-metal-cache-tests.plist into __TEXT,__info_plist on macOS, which names
+; it a bundle, so the cache whose files it holds is its own. A test stanza
+; takes no link_deps, so a rule runs it.
+
+(executable
+ (name test_cache)
+ (modules test_cache)
+ (foreign_stubs
+  (language c)
+  (names test_cache_stubs)
+  (flags
+   (:standard
+    (:include objc_flags.sexp))))
+ (link_deps rig-metal-cache-tests.plist)
+ (link_flags
+  (:include plist_flags.sexp))
+ (libraries rig_edge rig_metal rig_metal_support threads.posix unix windtrap))
+
+(rule
+ (package rig)
+ (alias runtest)
+ (locks %{workspace_root}/gpu)
+ (deps
+  (source_tree fixtures))
+ (action
+  (run %{exe:test_cache.exe})))
+
+(rule
+ (targets objc_flags.sexp plist_flags.sexp)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (progn
+   (with-stdout-to
+    objc_flags.sexp
+    (echo "(-x objective-c -fblocks)"))
+   (with-stdout-to
+    plist_flags.sexp
+    (chdir
+     %{workspace_root}
+     (echo
+      "(-ccopt -Wl,-sectcreate,__TEXT,__info_plist,%{dep:rig-metal-cache-tests.plist})"))))))
+
+(rule
+ (targets objc_flags.sexp plist_flags.sexp)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (progn
+   (with-stdout-to
+    objc_flags.sexp
+    (echo "()"))
+   (with-stdout-to
+    plist_flags.sexp
+    (echo "()")))))
+
 ; test_fork forks before the process opens Metal: a suite of its own, whose
 ; process runs no domain and opens no device.
 
