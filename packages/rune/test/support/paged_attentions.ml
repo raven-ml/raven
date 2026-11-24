@@ -382,7 +382,7 @@ let inputs c =
   }
 
 let law_call (type d) ~paged (module S : Nx.Devices with type d = d) c :
-    (int64 array * int64 array, d) Batch.call =
+    (float array * float array, d) Batch.call =
   let (F dt) = float_dtype c.dtype in
   let tk = tk c in
   let i = inputs c in
@@ -404,16 +404,13 @@ let law_call (type d) ~paged (module S : Nx.Devices with type d = d) c :
           place (host [| c.lead; c.hk; tk; c.dv |] i.dv) ),
         call c ~lengths:i.lengths ~table:None ~hidden:i.hidden )
   in
-  let bits x =
-    Array.map Int64.bits_of_float
-      (Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)))
-  in
+  let host x = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
   Batch.call
     Nx.Ptree.(triple tensor tensor tensor)
     x
     Nx.Ptree.(pair tensor tensor)
     (fun (q, k, v) -> f q k v)
-    (fun (o, lse) -> (bits o, bits lse))
+    (fun (o, lse) -> (host o, host lse))
 
 let law_check c compiled =
   let (F dt) = float_dtype c.dtype in
@@ -437,16 +434,18 @@ let law_check c compiled =
   let same name dense paged =
     equal ~msg:(name ^ "'s elements") Testable.int (Array.length dense)
       (Array.length paged);
+    let bits = Int64.bits_of_float in
     let rec first i =
       if i = Array.length dense then ()
-      else if Int64.equal dense.(i) paged.(i) then first (i + 1)
+      else if Int64.equal (bits dense.(i)) (bits paged.(i)) then first (i + 1)
       else
         equal
           ~msg:
             (Printf.sprintf "%s's bits at element %d, dense %h and paged %h"
-               name i (Int64.float_of_bits dense.(i))
-               (Int64.float_of_bits paged.(i)))
-          Testable.int64 dense.(i) paged.(i)
+               name i dense.(i) paged.(i))
+          Testable.int64
+          (bits dense.(i))
+          (bits paged.(i))
     in
     first 0
   in

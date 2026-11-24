@@ -84,13 +84,14 @@ val law_call :
   paged:bool ->
   (module Nx.Devices with type d = 'd) ->
   t ->
-  (int64 array * int64 array, 'd) Batch.call
+  (float array * float array, 'd) Batch.call
 (** [law_call ~paged s c] is {!law}'s paged call of [c] if [paged] and its dense
-    call otherwise, compiled on [s]'s devices: the bits of its [o] and [lse]. *)
+    call otherwise, compiled on [s]'s devices: its [o] and [lse] read as
+    float64, which holds each of their values' bits. *)
 
 val law_check :
   t ->
-  (unit -> (int64 array * int64 array) * (int64 array * int64 array)) ->
+  (unit -> (float array * float array) * (float array * float array)) ->
   unit
 (** [law_check c compiled] is {!law} of [c], [compiled ()] being what
     {!law_call} reads of the paged call, then of the dense call, each compiled
