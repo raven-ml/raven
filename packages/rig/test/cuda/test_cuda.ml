@@ -1546,6 +1546,108 @@ let one_growth () =
   equal (array int) ~msg:"b's words" (Array.init n (fun j -> 101 + j))
     (words out_b n)
 
+(* A run of [n] launches of [ids] that store [first + j] into word [j] of their
+   buffer. *)
+let stores d ~first n =
+  run_of d (List.init n (fun j -> store_id d j (first + j)))
+
+(* After a submission that made chains, free_cache gives them back: the same
+   submission then makes them again and plays each launch's own values through
+   them. Its 37 launches play as pieces of 19 and 18, two lengths. *)
+let chains_freed () =
+  S.with_ @@ fun { d; g } ->
+  let n = 37 in
+  let out = B.create ~memory:Pinned d (4 * n) in
+  let play first =
+    let run = stores d ~first n in
+    let made = C.made g in
+    let (), counts =
+      replaying g (fun () -> Rig.Point.wait (submitted run [| out |]))
+    in
+    equal (pair int int) ~msg:"pieces and plain launches" (2, 0) counts;
+    equal (array int) ~msg:"the launches' words"
+      (Array.init n (fun j -> first + j))
+      (words out n);
+    C.made g - made
+  in
+  equal int ~msg:"the chains it made" 2 (play 1);
+  Rig.free_cache d;
+  equal int ~msg:"the chains it made after free_cache" 2 (play 101)
+
+(* A free_cache while a chain's launches wait on COMPUTE:0 behind a kernel that
+   spins gives the chain back all the same: a submission between the free_cache
+   and the kernel's end makes the chain again, and each launch, queued or later,
+   runs its own values once the kernel ends. The image loads before the kernel,
+   since a load waits for the context's queued work. *)
+let chains_freed_queued () =
+  S.with_ @@ fun ({ d; g } as t) ->
+  if S.attribute watchdog <> 0 then
+    skip ~reason:"a display watchdog ends long kernels" ();
+  let n = 5 in
+  let out = B.create ~memory:Pinned d (4 * 2 * n) in
+  let run first =
+    run_of d (List.init n (fun j -> store_id d (first + j) (first + j + 1)))
+  in
+  let first = run 0 and second = run n in
+  let flag = require_some (C.alloc g Pinned 8) in
+  let made, counts =
+    Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
+    let spun = spin t flag in
+    replaying g @@ fun () ->
+    ignore (submitted first [| out |] : Rig.Point.t);
+    let made = C.made g in
+    Rig.free_cache d;
+    equal bool ~msg:"the kernel, still spinning" false (Rig.Point.reached spun);
+    let later = submitted second [| out |] in
+    H.set64 (host flag) 1;
+    Rig.Point.wait later;
+    C.made g - made
+  in
+  C.free g flag;
+  equal int ~msg:"the chains made after free_cache" 1 made;
+  equal (pair int int) ~msg:"pieces and plain launches" (2, 0) counts;
+  equal (array int) ~msg:"each launch's own words"
+    (Array.init (2 * n) (fun j -> j + 1))
+    (words out (2 * n))
+
+(* A free_cache of another domain while a submit grows its chain gives back
+   nothing: the submit's room installs the chain its grow made, with no second
+   grow, and its piece plays through it. A free_cache after the submit gives the
+   chain back: the next submission makes it again. *)
+let chains_kept_growing () =
+  let device = ref None and grows = Atomic.make 0 in
+  let module Driver = struct
+    include C
+
+    let grow g =
+      let grown = C.grow g in
+      if Atomic.fetch_and_add grows 1 = 0 then begin
+        let d = Option.get !device in
+        Domain.join (Domain.spawn (fun () -> Rig.free_cache d))
+      end;
+      grown
+  end in
+  let ({ S.d; g } as t) = S.open_as (module Driver) in
+  Fun.protect ~finally:(fun () -> S.close t) @@ fun () ->
+  device := Some d;
+  let n = 5 in
+  let out = B.create ~memory:Pinned d (4 * n) in
+  let made = C.made g in
+  let (), counts =
+    replaying g (fun () ->
+        Rig.Point.wait (submitted (stores d ~first:1 n) [| out |]))
+  in
+  equal int ~msg:"grows" 1 (Atomic.get grows);
+  equal int ~msg:"chains made" 1 (C.made g - made);
+  equal (pair int int) ~msg:"pieces and plain launches" (1, 0) counts;
+  equal (array int) ~msg:"the launches' words"
+    (Array.init n (fun j -> 1 + j))
+    (words out n);
+  Rig.free_cache d;
+  let made = C.made g in
+  Rig.Point.wait (submitted (stores d ~first:101 n) [| out |]);
+  equal int ~msg:"chains made after the submit's free_cache" 1 (C.made g - made)
+
 (* The test's executable, run with [jitless] where CUDA compiles no PTX,
    prints what loading fixtures/kernels.ptx on GPU 0 answers, then the
    counter of two [step]s of fixtures/kernels.cubin in one submit, and the
@@ -1600,6 +1702,13 @@ let replay =
       test "an image unloads while a chain holds its function" unload_chained;
       test "two submits that need one new length make its chain once"
         one_growth;
+      test "free_cache gives back the chains a submission made" chains_freed;
+      test
+        "free_cache gives back a chain whose launches are queued, which run \
+         their own values"
+        chains_freed_queued;
+      test "free_cache leaves a submit the chain it is growing"
+        chains_kept_growing;
       test "a GPU whose driver compiles no PTX loads a cubin and plays plain"
         without_placeholder;
     ]
@@ -1870,9 +1979,11 @@ module Chains = struct
 
   let read m = (m.(0), m.(1))
 
-  (* The system: submits never wait, so a submit updates chains whose
-     earlier launches are still queued. A lock orders each value's calls,
-     and two values' calls run concurrently. *)
+  (* The system: submits never wait, so a submit updates chains whose earlier
+     launches are still queued, and a free_cache gives back chains whose
+     launches may still be queued. A lock orders each value's calls, and two
+     values' calls run concurrently; a free_cache takes no lock, so on two
+     domains it runs beside a submit. *)
   type sys = {
     t : S.t;
     counters : B.t array;
@@ -1912,6 +2023,7 @@ module Chains = struct
     Mutex.protect s.lock (fun () ->
         s.last <- Some (S.submit_work s.t (List.map (work s) ls)))
 
+  let free_cache s = Rig.free_cache s.t.d
   let wait s = Option.iter Rig.Point.wait s.last
 
   let read_sys s =
@@ -1933,6 +2045,7 @@ let chains_commands ~cover =
     command "submit"
       (chains ^-> Chains.launches @-> returns unit)
       (Chains.submit ~cover) Chains.submit_sys;
+    command "free_cache" (chains ^-> returns unit) ignore Chains.free_cache;
     command "read"
       (chains ^-> returns (pair int int))
       Chains.read Chains.read_sys;
@@ -1947,10 +2060,12 @@ let stateful =
         "map_host from two domains shares a host range both ways"
         (registry_commands ~cover:(fun _ _ -> ()));
       stateful ~count:30 ~steps:20
-        "chains play each launch's own values with launches queued"
+        "chains play each launch's own values with launches queued, across \
+         free_caches"
         (chains_commands ~cover);
       stateful ~count:5 ~domains:2
-        "chains from two domains play each launch's own values"
+        "chains from two domains play each launch's own values, across \
+         free_caches"
         (chains_commands ~cover:(fun _ _ -> ()));
     ]
 
