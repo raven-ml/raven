@@ -10136,7 +10136,7 @@ D466.
   `rows_m12` and `mxfp4_m12` goldens on `cpu` and `avx2`; the bench rows
   of D188's padded rows.
 
-## D503. A GPU kernel takes no lanes whose values would pass a thread's registers
+## D503. A GPU kernel's upcasts and reduce unroll take no lanes past a thread's registers
 
 - **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (the
   upcast of masked axes of at most 7, the upcast loop, `while
@@ -10147,24 +10147,36 @@ D466.
   3000, bounds only BEAM's candidates; tinygrad has no register limit; the
   same at `79af1ca`).
 - **tolk:** `Renderer.t.thread_registers` and `Heuristic.live_registers`,
-  which `Heuristic_host.fits` and `Heuristic_host.within_thread` ask.
+  which `Heuristic_host.fits` and `Heuristic_host.within_thread` ask of the
+  count `Heuristic_host.thread` makes once a decision.
 - **Differs:** on CUDA and NV, which state a thread's 255 registers, the
   masked upcasts, the upcast loop, the unroll of a reduce and the upcast by
   4 take a split only while the kernel's values, each counted in the lanes
   it runs in and in as many more as the split makes where it runs inside
   the split axis, hold at most 255 32-bit registers at once in the order
-  the linearizer lists them. Tensor cores, streamed contractions, blocked
-  and staged products, a workgroup's locals and grouped reduces keep their
-  own rules, unbounded. Metal, AMD and the host state no budget and split
-  as tinygrad does; the host keeps its own vector budget. The count is not
-  an allocation: a compiler reschedules a long scalar chain into fewer
+  the linearizer lists them. The layouts that fix their own lanes keep
+  their rules, unbounded: the blocked product, which the count overcharges
+  (its 8 by 8 outputs a thread count 341 to 343 and compile to 128
+  registers without spilling; a product by a polynomial of degree 17 of one
+  operand, `wide 16` in the heuristic suite, upcast by 4 by 4 and unrolled by
+  4, counts 313 and compiles to 80); staged
+  products, which hold at most 64 outputs a thread; tensor cores, whose
+  fragments the hardware fixes; and streams, whose layout fixes a thread's
+  rows. Metal, AMD and the host state no budget and split as tinygrad
+  does; the host keeps its own vector budget. The count is not an
+  allocation: a compiler reschedules a long scalar chain into fewer
   registers (a map of 3905 operations counts 258 where ptxas allocates
   28), and a transcendental, one operation until it is decomposed, counts
   fewer than it takes.
 - **Reason:** (d): past 255 registers ptxas spills to local memory, and a
   spilling kernel compiles and runs many times slower. Against the count,
-  255 is a measured threshold: on sm_89 every spill-free kernel counted at
-  most 261 and every spilling one 416 or more. Counting costs a
+  255 is a threshold measured on elementwise and reduce kernels: on sm_89
+  every spill-free one counted at most 261 and every spilling one 416 or
+  more. It holds no further. The count overcharges contractions 2.5 to 4
+  times, which is why the blocked product is exempt, and index arithmetic,
+  which it counts in every lane where the compiler folds it to literals:
+  tinygrad's 49 lanes of `pad_7x7` count 265 and compile to 42 registers
+  without spilling, and are declined. Counting costs a
   linearization only where a budget is stated: on a map of 40040 nodes the
   heuristic takes 21 ms on CUDA against 34 before, as the declined lanes
   leave its later rules less to do, and 31 ms on Metal and 11 on the host

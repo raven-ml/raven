@@ -210,9 +210,15 @@ type t = private {
       (** The 32-bit registers the heuristic lets a kernel's values hold at
           once, counted by {!Heuristic.live_registers}, where it has been
           measured against the target's compiler: 255 on CUDA and NV, a thread's
-          most registers, past which ptxas spills. A kernel takes no upcast or
-          unroll that would pass it ({!Heuristic}). [None], which bounds
-          nothing, elsewhere. *)
+          most registers, past which ptxas spills. The masked upcasts, the
+          upcast loop, the reduce unroll and the upcast by 4 take no lanes that
+          would pass it ({!Heuristic}). The layouts that fix their own lanes are
+          not bounded: the blocked product, which the count overcharges (counted
+          341 to 343, its layouts take 128 registers without spilling, and a
+          product by a polynomial of degree 17 of one operand counted 313 takes
+          80); staged products, which hold at most 64 outputs a thread; tensor
+          cores, whose fragments the hardware fixes; and streams, whose layout
+          fixes a thread's rows. [None], which bounds nothing, elsewhere. *)
   vector_lanes : int;
       (** The most lanes of a vector that arithmetic, logic, comparisons,
           selections and conversions compute at once: an operation of more

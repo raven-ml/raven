@@ -20,19 +20,33 @@ val budgeted : Postrange.Scheduler.t -> bool
 (** [budgeted k] is [true] iff [k] renders for the [CPU] device of a renderer
     that knows its vector registers. *)
 
-val fits : ?upcast:int * int -> ?unroll:int * int -> Postrange.Scheduler.t -> bool
-(** [fits ?upcast ?unroll k] is whether [k] stays within the host's budget and
+type thread
+(** The count of a kernel's values against its renderer's thread registers
+    ({!Renderer.t.thread_registers}): the values in the order the linearizer
+    lists them, made once for the splits one decision weighs. *)
+
+val thread : Postrange.Scheduler.t -> thread option
+(** [thread k] is the count of [k]'s values as they stand, [None], which
+    linearizes nothing, where [k]'s renderer states no thread registers. *)
+
+val within_thread :
+  thread option -> (int * int) list -> Postrange.Scheduler.t -> bool
+(** [within_thread t splits k] is whether [k]'s {!live_registers}, counted by
+    [t], stay within its renderer's thread registers once each [(axis, n)] of
+    [splits] splits [n] lanes off [axis] ([0] for the axis whole), each value
+    that runs inside the axis counted in [n] times its lanes. [t] is
+    {!thread}[ k]. It is [true] where [t] is [None]. *)
+
+val fits :
+  thread option ->
+  ?upcast:int * int ->
+  ?unroll:int * int ->
+  Postrange.Scheduler.t ->
+  bool
+(** [fits t ?upcast ?unroll k] is whether [k] stays within the host's budget and
     within its thread's registers ({!within_thread}) once [upcast] splits [n]
     lanes off an axis, given as [(axis, n)], and [unroll] unrolls an axis by [n]
     lanes, [0] for whole. The host's budget holds off the host. *)
-
-val within_thread :
-  ?upcast:int * int -> ?unroll:int * int -> Postrange.Scheduler.t -> bool
-(** [within_thread ?upcast ?unroll k] is whether [k]'s {!live_registers}, each
-    value that runs inside the axis [upcast] or [unroll] splits counted in [n]
-    times its lanes ([0] for the axis whole), stay within its renderer's
-    {!Renderer.t.thread_registers}. It is [true], and counts nothing, where the
-    renderer states none. *)
 
 val live_registers : Ops.t -> int
 (** [live_registers sink] is {!Heuristic.live_registers}. *)

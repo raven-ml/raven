@@ -1147,7 +1147,7 @@ let upcast_masked k =
   in
   List.iter
     (fun axis ->
-      if within_thread ~upcast:(axis, 0) k then
+      if within_thread (thread k) [ (axis, 0) ] k then
         ignore (split k axis 0 Opt.Upcast))
     (List.rev to_upcast)
 
@@ -1217,6 +1217,7 @@ let upcast_more ~waste ~four_first k =
     let upcasted_axis = List.map (fun (axis, _, _) -> axis) upcasted in
     if budgeted k || (enough_work k && holds Sint.(K.upcast_size k < Int 32))
     then begin
+      let held = thread k in
       (* On a GPU, in a kernel that reduces, the loads worth sharing among
          an upcast's lanes are those a reduce repeats: a load whose index
          reads no reduce range, as a bias after a product, is read once an
@@ -1256,7 +1257,7 @@ let upcast_more ~waste ~four_first k =
           List.mem axis upcasted_axis
           || (not (pad || divisible (shape_at k axis) upcast_amount))
           || (not (List.exists reuses sharers))
-          || not (fits ~upcast:(axis, upcast_amount) k)
+          || not (fits held ~upcast:(axis, upcast_amount) k)
         then None
         else
           let stride c =
@@ -1338,22 +1339,23 @@ let unroll k =
   then
     let s = size_at k (last (unrollable ())) in
     let at_most n x = Bigint.(leq x (of_int n)) in
-    let fits axis n = fits ~unroll:(axis, n) k in
-    let axis = last (unrollable ()) in
+    let fits held axis n = fits held ~unroll:(axis, n) k in
+    let axis = last (unrollable ()) and held = thread k in
     if at_most unroll_whole s then
-      begin if fits axis 0 && try_split k axis 0 Opt.Upcast then
+      begin if fits held axis 0 && try_split k axis 0 Opt.Upcast then
         (* if it's small, upcast a second reduce dimension too *)
         match unrollable () with
         | [] -> ()
         | dims ->
-            let next = last dims in
+            let next = last dims and held = thread k in
             if at_most 3 s && at_most 3 (size_at k next) then
-              begin if fits next 0 then ignore (try_split k next 0 Opt.Upcast)
+              begin if fits held next 0 then
+                ignore (try_split k next 0 Opt.Upcast)
               end
             else if at_most 3 s && on_host k then
-              unroll_vector k ~fits:(fits next) (Bigint.to_int s) next
+              unroll_vector k ~fits:(fits held next) (Bigint.to_int s) next
       end
-    else if divisible (shape_at k axis) 4 && fits axis 4 then
+    else if divisible (shape_at k axis) 4 && fits held axis 4 then
       ignore (try_split k axis 4 Opt.Upcast)
 
 (* if nothing at all is upcasted and it's easy to, do an upcast *)
@@ -1365,7 +1367,7 @@ let upcast_one k =
       if
         K.axes_of k [ Upcast ] = []
         && divisible (shape_at k axis) 4
-        && within_thread ~upcast:(axis, 4) k
+        && within_thread (thread k) [ (axis, 4) ] k
       then ignore (split k axis 4 Opt.Upcast)
 
 (* The threads of a workgroup the local splits make at most. *)
@@ -1486,7 +1488,13 @@ let split_reduce k r =
    threads blocked on 100 units, took 11.8 us so and 8.0 at 4 by 4. Short
    of them its reduce is still unrolled by 4, whatever those rules would
    unroll: the units move the kernel's speed alone, and each output adds its
-   terms in the order it takes where they are not stated. *)
+   terms in the order it takes where they are not stated.
+
+   Its lanes are not bounded by a thread's registers ({!within_thread}), whose
+   count overstates a contraction's: on sm_89 a blocked product of 8 by 8
+   outputs a thread counts 341 and takes 128 registers without spilling, and a
+   product by a polynomial of degree 17 of one operand, upcast by 4 by 4 and
+   unrolled by 4, counts 313 and takes 80. *)
 let block ~waste k upcasted =
   let doubles axis = divisible (shape_at k axis) 2 in
   let outputs () = List.map (List.nth (K.rngs k)) (K.upcastable_dims k) in

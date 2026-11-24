@@ -1705,10 +1705,12 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
-- On CUDA and NV, the heuristic takes no upcast or unroll whose values would
-  pass a thread's 255 registers (`Renderer.t.thread_registers`), so large
+- On CUDA and NV, the masked upcasts, the upcast loop, the reduce unroll and
+  the upcast by 4 take no lanes whose values would pass a thread's 255
+  registers (`Renderer.t.thread_registers`), so large elementwise and reduce
   kernels no longer spill: `Nx.Rng.binomial` compiles in 3.7 s, not 32, and
-  runs 2x faster.
+  runs 2x faster. Blocked products (counted 341 for 128 registers allocated),
+  staged products, tensor cores and streams keep their layouts.
 - On Linux, NVRTC's and comgr's worker processes start from a file in the
   cache or the temporary directory where the system refuses to run them from
   memory, as Ubuntu 26.04's opam sandbox does: every compile failed with

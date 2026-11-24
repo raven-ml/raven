@@ -355,31 +355,22 @@ let peak v weight =
 let live_registers sink =
   peak (values sink) (fun u -> words (dtype u) * value_lanes u)
 
-(* The values of the kernel last asked about in this domain: the heuristic asks
-   of one kernel for each candidate, and linearizing it is most of the cost. *)
-let last_values = Domain.DLS.new_key (fun () -> ref None)
+type thread = { budget : int; values : values }
 
-let values_of k =
-  let last = Domain.DLS.get last_values and sink = K.ast k in
-  match !last with
-  | Some (s, v) when s == sink -> v
-  | _ ->
-      let v = values sink in
-      last := Some (sink, v);
-      v
+let thread k =
+  Option.map
+    (fun budget -> { budget; values = values (K.ast k) })
+    (K.ren k).thread_registers
 
-(* Whether [k]'s values stay within its renderer's thread registers once
-   [upcast] or [unroll] splits an axis into lanes, the axis whole where the
-   amount is [0]; always where it states none, which counts nothing. *)
-let within_thread ?upcast ?unroll k =
-  match (K.ren k).thread_registers with
+let within_thread t splits k =
+  match t with
   | None -> true
-  | Some budget ->
+  | Some { budget; values } ->
       let grown (axis, n) =
         let n = if n > 0 then n else Bigint.to_int (size_at k axis) in
         (List.nth (K.rngs k) axis, n)
       in
-      let splits = List.map grown (List.filter_map Fun.id [ upcast; unroll ]) in
+      let splits = List.map grown splits in
       let weight u =
         let inside = ranges u in
         List.fold_left
@@ -387,12 +378,11 @@ let within_thread ?upcast ?unroll k =
           (words (dtype u) * value_lanes u)
           splits
       in
-      peak (values_of k) weight <= budget
+      peak values weight <= budget
 
-(* Whether [k] stays within the host's budget and its thread's registers once
-   [upcast] and [unroll] are applied. *)
-let fits ?upcast ?unroll k =
-  within_file ?upcast ?unroll k && within_thread ?upcast ?unroll k
+let fits t ?upcast ?unroll k =
+  within_file ?upcast ?unroll k
+  && within_thread t (List.filter_map Fun.id [ upcast; unroll ]) k
 
 (* Whether [k] sums products. *)
 let sums_products k =
@@ -568,7 +558,7 @@ let padded ~within k axis m =
   | Some n when Bigint.fits_int n ->
       let n = Bigint.to_int n in
       let up = (n + m - 1) / m * m in
-      if n mod m <> 0 && within n up && fits ~upcast:(axis, m) k then
+      if n mod m <> 0 && within n up && within_file ~upcast:(axis, m) k then
         ignore (K.apply_opt k (Opt.Padto { axis; amount = m }))
   | _ -> ()
 
@@ -628,7 +618,7 @@ let upcast_contiguous k =
              n > quad && (up - n) * den <= n * num));
       tile_split k axis
         (pow2s_within (min lanes split_lanes))
-        ~keep:(fun n -> fits ~upcast:(axis, n) k);
+        ~keep:(fun n -> within_file ~upcast:(axis, n) k);
       match List.rev rows with
       | [] -> ()
       | (r, runs) :: _ -> (
@@ -659,14 +649,14 @@ let upcast_contiguous k =
               (if runs = [] then
                  match
                    List.find_opt
-                     (fun n -> fits ~upcast:(a, n) k)
+                     (fun n -> within_file ~upcast:(a, n) k)
                      (pow2s_within split_lanes)
                  with
                  | Some most ->
                      padded k a most ~within:(fun n _ -> 2 * n > most)
                  | None -> ());
               tile_split k a (pow2s_within split_lanes) ~keep:(fun n ->
-                  divides n && fits ~upcast:(a, n) k))
+                  divides n && within_file ~upcast:(a, n) k))
 
 (* On the host, a reduce whose last axis unrolls [unrolled] lanes of at most 3
    fills the rest of a vector of [host_vector_bytes] of its type with lanes of
@@ -732,7 +722,7 @@ let share_decodes k m =
           List.exists (fun o -> divides (shared axis n o) a) operands
         in
         tile_split k axis (down_from cap)
-          ~keep:(fun a -> shares a && fits ~upcast:(axis, a) k)
+          ~keep:(fun a -> shares a && within_file ~upcast:(axis, a) k)
   in
   (* later axes first, as an upcast of a whole axis removes it *)
   if operands <> [] then

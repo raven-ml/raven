@@ -3810,15 +3810,38 @@ let masked n =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (Ops.index out [ at ]) v) [ i; j ] ]
 
+(* [out[i, j] = sum_k wide n (a[i, k]) b[k, j]] over 1024 by 1024 by 1024
+   float32 values: a contraction the upcast loop takes by 4 by 4 and the blocked
+   layout then unrolls by 4, its lanes not counted. *)
+let product n =
+  let side = 1024 in
+  let param slot =
+    Shape.param ~shape:[ Ops.Int (side * side) ] slot Dtype.Float32
+  in
+  let out = param 0 and a = param 1 and b = param 2 in
+  let i = Ops.range ~axis_type:Weak (Ops.Int side) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Ops.Int side) [ 1 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int side) [ 2 ] in
+  let open Ops.O in
+  let term =
+    wide n (Ops.index a [ (i * int side) + k ])
+    * Ops.index b [ (k * int side) + j ]
+  in
+  let s = Ops.reduce term Op.Add [ k ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ (i * int side) + j ]) s) [ i; j ] ]
+
 (* Each rule that makes lanes takes them only while the kernel's values fit the
    renderer's thread registers, about [n + 1] values of [wide n] in each lane:
-   on CUDA's 255, 4 lanes of [wide 62] fit (252) and of [wide 63] do not (256).
-   The upcast loop takes [outer 62]'s [j] by 4, its [y] and products in 4 lanes,
-   and not its [i], which [wide 62] runs in. It takes [summed n]'s [i] by 4, and
-   the unroll then its 8 terms whole, 32 lanes, for [wide 2] and not for [wide
-   20] or [wide 30]; [summed 62] and [summed 70] take neither. The masked upcast
-   takes [masked 20]'s [j] whole, and nothing takes [masked 70]'s. Metal states
-   none, and takes every split. *)
+   on CUDA's 255, 4 lanes of [map wide 62] weigh 252 and of [wide 63] 256. The
+   upcast loop takes [outer 62]'s [j] by 4, its [y] and products in 4 lanes, and
+   not its [i], which [wide 62] runs in. [summed n]'s index [8 i + k] runs
+   inside [i] and so weighs 5 more in 4 lanes: [summed 62] weighs 257 and takes
+   no upcast by 4. [summed 30] takes it, and not the unroll of its 8 terms
+   whole, 32 lanes, which [summed 2] takes. The masked upcast takes [masked
+   20]'s [j] whole, and nothing takes [masked 70]'s. [product 16]'s blocked
+   layout is not counted: it takes the unroll by 4 at 313. Metal states none,
+   and takes every split. *)
 let lanes_within_registers =
   let cuda = "CUDA:CUDA:sm_89" and metal = "METAL:METAL:Apple9" in
   cases "a split makes lanes only while they fit the thread registers"
@@ -3843,6 +3866,7 @@ let lanes_within_registers =
       ("summed 62", metal, (fun () -> summed 62), [ (0, 4); (2, 0) ]);
       ("summed 70", cuda, (fun () -> summed 70), []);
       ("summed 70", metal, (fun () -> summed 70), [ (0, 4); (2, 0) ]);
+      ("product 16", cuda, (fun () -> product 16), [ (1, 4); (0, 4); (4, 4) ]);
       ("masked 20", cuda, (fun () -> masked 20), [ (1, 0) ]);
       ("masked 70", cuda, (fun () -> masked 70), []);
       ("masked 70", metal, (fun () -> masked 70), [ (1, 0) ]);
