@@ -110,7 +110,7 @@ let name g i =
    caller with nothing that polls between. *)
 let named g i = function
   | Ok _ as r -> r
-  | Error why -> Error (strf "%s: %s" (name g i) why)
+  | Error why -> Error (name g i ^ ": " ^ why)
 
 let buses g m =
   Result.map

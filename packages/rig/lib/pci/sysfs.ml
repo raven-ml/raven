@@ -34,7 +34,19 @@ let v ?(kernel = fun _ _ -> ()) root =
 
 let vfio_pci = "vfio-pci"
 let root m = m.root
-let path m bus file = String.concat "/" [ m.devices; bus; file ]
+
+(* The path of [file] of the function at [bus], built in one string: every read
+   and write of a function's file makes one. *)
+let path m bus file =
+  let d = String.length m.devices and b = String.length bus in
+  let p = Bytes.create (d + b + String.length file + 2) in
+  Bytes.blit_string m.devices 0 p 0 d;
+  Bytes.set p d '/';
+  Bytes.blit_string bus 0 p (d + 1) b;
+  Bytes.set p (d + b + 1) '/';
+  Bytes.blit_string file 0 p (d + b + 2) (String.length file);
+  Bytes.unsafe_to_string p
+
 let exists m bus = Sys.file_exists (Filename.concat m.devices bus)
 let vfio_file m name = Filename.concat m.vfio name
 
@@ -171,12 +183,23 @@ let functions m =
         in
         Ok (List.filter_map id (List.filter is_bus (Array.to_list buses)))
 
-(* The other functions of [bus]'s device, such as its audio function. *)
+(* The other functions of [bus]'s device, such as its audio function: those of
+   the function numbers 0 to 7, the last digit of an address, that the machine
+   lists. Every take and change asks, so each number's path is written over one
+   copy of [bus]'s, which costs a string a number. *)
+let numbers = [ '0'; '1'; '2'; '3'; '4'; '5'; '6'; '7' ]
+
 let siblings m bus =
-  let prefix = String.sub bus 0 (String.length bus - 1) in
-  List.filter
-    (fun s -> s <> bus && exists m s)
-    (List.init 8 (fun fn -> prefix ^ string_of_int fn))
+  let dir = Bytes.of_string (Filename.concat m.devices bus) in
+  let n = String.length bus in
+  let at = Bytes.length dir - n in
+  List.filter_map
+    (fun fn ->
+      Bytes.set dir (at + n - 1) fn;
+      if fn = bus.[n - 1] || not (Sys.file_exists (Bytes.to_string dir)) then
+        None
+      else Some (Bytes.sub_string dir at n))
+    numbers
 
 let enabled m bus = read (path m bus "enable") <> "0"
 

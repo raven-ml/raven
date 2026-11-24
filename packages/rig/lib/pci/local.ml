@@ -153,17 +153,25 @@ let refusal : Unix.error -> bool = function
   | EIO | EFAULT | ENODEV | EPERM | ENOENT | ENOTTY | ENOSPC | ERANGE -> true
   | _ -> false
 
+(* Any other errno raises Failure, as Fail.bug does, its message made only then:
+   every access to configuration space comes here. *)
+let config_failed what t (e : Unix.error) =
+  failwith
+    (what ^ " configuration space of " ^ t.bus ^ ": " ^ Unix.error_message e)
+
 let config_read t off b n =
   let fd, at = t.config in
-  Fail.bug ("reading configuration space of " ^ t.bus) @@ fun () ->
-  try pread fd b n (at + off)
-  with Unix.Unix_error (e, _, _) when refusal e -> 0
+  match pread fd b n (at + off) with
+  | got -> got
+  | exception Unix.Unix_error (e, _, _) when refusal e -> 0
+  | exception Unix.Unix_error (e, _, _) -> config_failed "reading" t e
 
 let config_write t off s n =
   let fd, at = t.config in
-  Fail.bug ("writing configuration space of " ^ t.bus) @@ fun () ->
-  try pwrite fd s n (at + off)
-  with Unix.Unix_error (e, _, _) when refusal e -> 0
+  match pwrite fd s n (at + off) with
+  | put -> put
+  | exception Unix.Unix_error (e, _, _) when refusal e -> 0
+  | exception Unix.Unix_error (e, _, _) -> config_failed "writing" t e
 
 (* Bytes the system does not give, as past the first 64 without CAP_SYS_ADMIN or
    of a function that left the bus, read as all ones, as the bus answers. *)
