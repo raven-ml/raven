@@ -789,10 +789,15 @@ let law_bare_eye ((name, p), (D.Any dt, (n, (m, k)))) =
 
 let mib = 1 lsl 20
 
-(* [f ()] with the host's budget at what it holds now plus [extra] bytes. *)
+(* [f ()] with the host's budget at what it holds plus [extra] bytes, once its
+   collected memory has returned. One round of collection can leave memory that
+   a later cycle collects, which an allocation in [f] then reclaims and fits
+   in. *)
 let under_host_budget extra f =
-  Gc.full_major ();
-  Rig.free_cache Rig.host;
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    Rig.free_cache Rig.host
+  done;
   let budget = Rig.budget Rig.host in
   Rig.set_budget Rig.host (Rig.allocated Rig.host + extra);
   Fun.protect ~finally:(fun () -> Rig.set_budget Rig.host budget) f
