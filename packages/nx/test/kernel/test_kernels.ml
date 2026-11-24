@@ -41,16 +41,30 @@ let declines r =
 (* Bits *)
 
 (* The first elements whose bits differ between [want] and [got], arrays of one
-   dtype and shape, beside the element of [src] each came from; with
-   [any_nan], two NaNs do not differ. *)
-let differ ?src ?(any_nan = false) (want : _ A.t) (got : _ A.t) =
+   dtype and shape, beside the element of [src] each came from; with [any_nan],
+   two NaNs do not differ. With [nan_rule], where [want] has a NaN [got] may
+   hold any NaN, signalling only where [src]'s element is: a cast's NaN keeps
+   neither its sign nor its payload (Dtype's stores). *)
+let differ ?src ?(any_nan = false) ?(nan_rule = false) (want : _ A.t)
+    (got : _ A.t) =
   let d = D.Any (A.dtype want) in
   let per = max 1 (D.bits (A.dtype want) / 8) in
   let w = bits_of want and g = bits_of got in
+  let signals =
+    match src with
+    | None -> fun _ -> false
+    | Some (A.Any s) ->
+        let sd = D.Any (A.dtype s) in
+        let es = elements_of sd (bits_of s) in
+        fun i -> Elements.signalling sd es.(i)
+  in
   let same i =
     let e = elements_of d (Array.sub w (i * per) per)
     and f = elements_of d (Array.sub g (i * per) per) in
-    if any_nan then Testable.equal (Elements.same d) e.(0) f.(0)
+    if nan_rule && Elements.nan_of d e.(0) then
+      Elements.nan_of d f.(0)
+      && ((not (Elements.signalling d f.(0))) || signals i)
+    else if any_nan then Testable.equal (Elements.same d) e.(0) f.(0)
     else e.(0) = f.(0)
   in
   let hex bits per i =
@@ -94,10 +108,27 @@ let test_copy_nan_payloads b () =
 
 (* Casts *)
 
+(* Whether a cast from [s] to [d] keeps a float's bits: into its own dtype, and
+   a float32 or float64 into or out of a complex number's real part. *)
+let keeps_bits (D.Any s as from) (D.Any d as into) =
+  match (from, into) with
+  | D.Any D.Float32, D.Any D.Complex64
+  | D.Any D.Complex64, D.Any D.Float32
+  | D.Any D.Float64, D.Any D.Complex128
+  | D.Any D.Complex128, D.Any D.Float64 ->
+      true
+  | _ -> D.equal s d
+
+(* The elements where [a] cast to [d] is not [dst]: the reference's bits, or for
+   a NaN a NaN by the NaN rule where the cast does not keep bits. *)
+let miscast a d dst =
+  let nan_rule = not (keeps_bits (D.Any (A.dtype a)) (D.Any d)) in
+  differ ~src:(A.Any a) ~nan_rule (reference a d) dst
+
 let law_cast b (Case a, D.Any d) =
   let r = run_op b Cast d a in
   declines r;
-  Option.iter (same ~src:(A.Any a) (reference a d)) r
+  Option.iter (fun dst -> equal (list string) [] (miscast a d dst)) r
 
 (* A case and a destination dtype, the case's own one time in five. *)
 let pair c =
@@ -113,14 +144,13 @@ let casts_are_reference ?(dts = D.all) b a =
   List.iter
     (fun (D.Any d) ->
       Option.iter
-        (fun dst ->
-          equal ~msg:(D.name d) (list string) []
-            (differ ~src:(A.Any a) (reference a d) dst))
+        (fun dst -> equal ~msg:(D.name d) (list string) [] (miscast a d dst))
         (run_op b Cast d a))
     dts
 
 (* The float and complex dtypes, whose casts round. *)
-let rounding = List.filter (fun (D.Any d) -> D.is D.Float d || D.is D.Complex d) D.all
+let rounding =
+  List.filter (fun (D.Any d) -> D.is D.Float d || D.is D.Complex d) D.all
 
 (* Every code of a format of at most 16 bits, cast to every dtype. *)
 let test_every_code b (D.Any s) () =
@@ -226,8 +256,7 @@ let test_integer_ties b () =
             (fun dst ->
               equal
                 ~msg:(strf "%s to %s" (D.name (A.dtype a)) (D.name d))
-                (list string) []
-                (differ ~src:(A.Any a) (reference a d) dst))
+                (list string) [] (miscast a d dst))
             (run_op b Cast d a))
         D.all)
     srcs
@@ -236,14 +265,14 @@ let test_integer_ties b () =
 let test_specials b (D.Any s) () =
   let sp = specials s in
   let a =
-    A.v s (L.contiguous [| List.length sp |]) (B.of_string (String.concat "" sp))
+    A.v s
+      (L.contiguous [| List.length sp |])
+      (B.of_string (String.concat "" sp))
   in
   List.iter
     (fun (D.Any d) ->
       Option.iter
-        (fun dst ->
-          equal ~msg:(D.name d) (list string) []
-            (differ ~src:(A.Any a) (reference a d) dst))
+        (fun dst -> equal ~msg:(D.name d) (list string) [] (miscast a d dst))
         (run_op b Cast d a))
     D.all
 

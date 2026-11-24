@@ -412,9 +412,44 @@ let nan_of (D.Any dt as d) e =
     Float.is_nan (if String.length e = 4 then get32 e 0 else get64 e 0)
   else false
 
-(* Elements of [d] that have the same bits or are both NaN, a complex
-   number's parts each so: a NaN result promises a NaN, never which one,
-   and a NaN part leaves the other part's result to be checked. *)
+(* The fraction's width of [dt]'s floats, a complex dtype's parts', where its
+   NaNs have a quiet bit, the fraction's top: none for float8_e4m3fn, whose one
+   NaN of each sign is neither. *)
+let quiet_fraction (type v s) (dt : (v, s) D.t) =
+  match dt with
+  | D.Float64 | D.Complex128 -> Some 52
+  | D.Float32 | D.Complex64 -> Some 23
+  | D.Float16 -> Some 10
+  | D.Bfloat16 -> Some 7
+  | D.Float8_e5m2 -> Some 2
+  | _ -> None
+
+(* Whether the element [e] of [d] is a signalling NaN, a complex number where a
+   part is: its exponent's bits all set, its fraction not zero and its quiet bit
+   clear. *)
+let signalling (D.Any dt) e =
+  match quiet_fraction dt with
+  | None -> false
+  | Some frac ->
+      let parts = if D.is D.Complex dt then 2 else 1 in
+      let w = String.length e / parts in
+      let part p =
+        let v = ref 0L in
+        for j = w - 1 downto 0 do
+          v :=
+            Int64.(logor (shift_left !v 8) (of_int (Char.code e.[(p * w) + j])))
+        done;
+        let ones = Int64.(sub (shift_left 1L ((8 * w) - 1 - frac)) 1L) in
+        let field = Int64.(logand (shift_right_logical !v frac) ones) in
+        let fraction = Int64.(logand !v (sub (shift_left 1L frac) 1L)) in
+        let quiet = Int64.(logand !v (shift_left 1L (frac - 1))) in
+        field = ones && fraction <> 0L && quiet = 0L
+      in
+      List.exists part (List.init parts Fun.id)
+
+(* Elements of [d] that have the same bits or are both NaN, a complex number's
+   parts each so: a NaN result promises a NaN, never which one, and a NaN part
+   leaves the other part's result to be checked. *)
 let same (D.Any dt as d) =
   let blind d a b = String.equal a b || (nan_of d a && nan_of d b) in
   let parts a b =
