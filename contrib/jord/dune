@@ -36,4 +36,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries jord nx))
+ (libraries jord nx unix))

@@ -10,4 +10,4 @@
    (<> %{profile} sanitize)
    (<> %{profile} tsan)
    %{lib-available:lz.bytesrw}))
- (libraries lz lz.bytesrw bytesrw))
+ (libraries lz lz.bytesrw bytesrw unix))

@@ -20,12 +20,11 @@ doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.5.0"}
-  "dune" {>= "3.21"}
+  "dune" {>= "3.22"}
   "nx" {= version}
   "rune" {= version}
   "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "dune" {with-test & >= "3.24.2"}
   "conf-clang" {with-test}
   "thumper" {with-test & >= "0.1.0"}
   "odoc" {with-doc}

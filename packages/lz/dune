@@ -31,4 +31,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries lz))
+ (libraries lz unix))

@@ -13,14 +13,13 @@ doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.5.0"}
-  "dune" {>= "3.21"}
+  "dune" {>= "3.22"}
   "ppxlib" {>= "0.38.0"}
   "nx" {= version & with-test}
   "rune" {= version & with-test}
   "vega" {= version & with-test}
   "kaun" {= version & with-test}
   "windtrap" {with-test & >= "0.3.1"}
-  "dune" {with-test & >= "3.22"}
   "odoc" {with-doc}
 ]
 build: [

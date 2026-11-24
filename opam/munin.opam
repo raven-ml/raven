@@ -13,13 +13,12 @@ doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.4.0"}
-  "dune" {>= "3.21"}
+  "dune" {>= "3.22"}
   "cmdliner" {>= "2.0.0"}
   "mosaic" {>= "0.3.0"}
   "matrix" {>= "0.3.0"}
   "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "dune" {with-test & >= "3.24.2"}
   "thumper" {with-test & >= "0.1.0"}
   "nx" {= version & with-dev-setup}
   "rune" {= version & with-dev-setup}

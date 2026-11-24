@@ -5,4 +5,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries alda nx rune))
+ (libraries alda nx rune unix))

@@ -47,6 +47,8 @@ opam install talon       # dataframes
 
 ## Building from source
 
+Building from source needs dune 3.22 or later.
+
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven

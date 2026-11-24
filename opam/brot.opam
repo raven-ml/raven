@@ -15,7 +15,7 @@ doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
-  "dune" {>= "3.21"}
+  "dune" {>= "3.22"}
   "re" {>= "1.14.0"}
   "jsont"
   "bytesrw"
@@ -23,7 +23,6 @@ depends: [
   "uucp" {>= "18.0.0"}
   "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "dune" {with-test & >= "3.24.2"}
   "thumper" {with-test & >= "0.1.0"}
   "nx" {= version & with-dev-setup}
   "odoc" {with-doc}

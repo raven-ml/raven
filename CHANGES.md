@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- raven's packages need dune 3.22. Under dune 3.21, `dune build -p <pkg>
+  @runtest` also ran other packages' cram tests, which failed.
 - brot, lz, munin and quill build on OCaml before 5.5: release builds, which
   opam's are, no longer pass OCaml 5.5's `-set-runtime-default` flag.
 - Each package declares the oldest OCaml it builds with: brot and lz 5.2,

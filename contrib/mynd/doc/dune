@@ -12,5 +12,5 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries mynd mynd.coco nx nx.io rune jsont.bytesrw)
+ (libraries mynd mynd.coco nx nx.io rune jsont.bytesrw unix)
  (preludes prelude.ml))

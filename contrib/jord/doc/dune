@@ -24,4 +24,5 @@
   nx
   nx.io
   jsont
-  jsont.bytesrw))
+  jsont.bytesrw
+  unix))

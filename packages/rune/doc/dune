@@ -21,4 +21,4 @@
    (or
     (= %{architecture} amd64)
     (= %{architecture} arm64))))
- (libraries nx rune))
+ (libraries nx rune unix))

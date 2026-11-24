@@ -1,4 +1,4 @@
-(lang dune 3.21)
+(lang dune 3.22)
 
 (name raven)
 
@@ -47,12 +47,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   (thumper
    (and
     :with-test
@@ -90,12 +84,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   (thumper
    (and
     :with-test
@@ -129,12 +117,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   (thumper
    (and
     :with-test
@@ -176,12 +158,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   ; the tests compile for the CPU with clang
   (conf-clang :with-test)
   (thumper
@@ -216,12 +192,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   ; the tests compile for the CPU with clang
   (conf-clang :with-test)
   (thumper
@@ -262,12 +232,7 @@
   (windtrap
    (and
     :with-test
-    (>= 0.3.1)))
-  ; a test run needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.22))))
+    (>= 0.3.1))))
  (tags
   (ppx parameter-tree automatic-differentiation machine-learning)))
 
@@ -303,12 +268,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   ; the tests compile for the CPU with clang
   (conf-clang :with-test)
   (thumper
@@ -344,12 +303,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   ; the tests compile for the CPU with clang
   (conf-clang :with-test)
   (thumper
@@ -380,12 +333,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   ; the tests compile for the CPU with clang
   (conf-clang :with-test)
   (thumper
@@ -414,12 +361,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   ; the tests compile for the CPU with clang
   (conf-clang :with-test)
   (thumper
@@ -450,12 +391,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   ; the tests compile for the CPU with clang
   (conf-clang :with-test)
   (thumper
@@ -487,12 +422,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   (thumper
    (and
     :with-test
@@ -539,12 +468,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   (thumper
    (and
     :with-test
@@ -581,13 +504,7 @@
    (and
     :with-test
     (>= 0.3.1)))
-  (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2))))
+  (mdx :with-test))
  (tags
   (repl toplevel notebooks interactive-computing literate-programming)))
 
@@ -612,12 +529,6 @@
     :with-test
     (>= 0.3.1)))
   (mdx :with-test)
-  ; mdx 2.6 and later need the generator of dune 3.24.2, and a test run
-  ; needs dune 3.22 to leave other packages' cram tests out
-  (dune
-   (and
-    :with-test
-    (>= 3.24.2)))
   (thumper
    (and
     :with-test
