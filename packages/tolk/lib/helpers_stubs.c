@@ -57,7 +57,11 @@ extern char **environ;
    Unix_error ELOOP. It opens without waiting, so that a pipe planted there
    does not hold the open until a writer comes. It runs without the runtime
    lock, on a copy of the path, as Unix.openfile does: a file system can be
-   slow to answer. Windows opens through Unix.openfile. */
+   slow to answer. Windows opens through Unix.openfile.
+
+   POSIX answers such an open with ELOOP. FreeBSD answers it with EMLINK and
+   NetBSD with EFTYPE (their open(2)), which open gives for nothing else
+   without O_REGULAR, so both are ELOOP. */
 #ifndef _WIN32
 CAMLprim value tolk_open_nofollow(value v_path)
 {
@@ -71,6 +75,10 @@ CAMLprim value tolk_open_nofollow(value v_path)
   error = errno;
   caml_leave_blocking_section();
   caml_stat_free(path);
+  if (fd < 0 && error == EMLINK) error = ELOOP;
+#ifdef EFTYPE
+  if (fd < 0 && error == EFTYPE) error = ELOOP;
+#endif
   if (fd < 0) caml_unix_error(error, "open", v_path);
   CAMLreturn(Val_int(fd));
 }

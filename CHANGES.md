@@ -1713,6 +1713,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On FreeBSD and NetBSD, `Helpers.Diskcache.get` reads an entry that is a
+  symbolic link as none, where it raised `Sys_error`: they refuse to open a
+  link with `EMLINK` and `EFTYPE` where POSIX says `ELOOP`.
 - `Compiler_cpu.clang` raises `Renderer.Compiler.Compile_error` before it
   compiles anything under a Clang before LLVM 16, or Apple's before 15, naming
   the Clang and the oldest that compile tolk's kernels. Such a Clang compiles
