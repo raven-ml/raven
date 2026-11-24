@@ -1773,12 +1773,17 @@ let heap_bytes () =
   | Some n -> n
   | None -> skip ~reason:"the C library does not count its heap" ()
 
+(* Bytes the C heap's count may grow by across a call and two full cycles, with
+   what the runtime allocates for itself and does not free by the count: 144
+   once in thirteen runs on Ubuntu 24.04, after the tests before this one. *)
+let heap_slack = 4 * kib
+
 (* free_cache on the host gives back the memory it keeps of collected buffers:
-   the C heap shrinks by a dropped buffer's bytes. The count has 16 bytes to
-   spare, the buffer's header, so both counts follow two full cycles, which free
-   what the runtime allocated for the cycles before them. The cycles give back
-   none of the buffer, which the host keeps across cycles in its cache of up to
-   32 MiB. *)
+   the C heap shrinks by a dropped buffer's bytes, short of [heap_slack] at
+   most, which no buffer kept would give. Both counts follow two full cycles,
+   which free what the runtime allocated for the cycles before them. The cycles
+   give back none of the buffer, which the host keeps across cycles in its cache
+   of up to 32 MiB. *)
 let test_host_free_cache () =
   let n = 4 * 1024 * kib in
   let settled () =
@@ -1791,7 +1796,7 @@ let test_host_free_cache () =
   ignore (dropped Rig.host n);
   let kept = settled () in
   Rig.free_cache Rig.host;
-  at_least ~msg:"bytes given back" int ~than:n (kept - settled ())
+  at_least ~msg:"bytes given back" int ~than:(n - heap_slack) (kept - settled ())
 
 (* set_budget on the host gives back the memory it keeps until it holds at most
    the new budget: of four dropped buffers of 1 MiB, under a budget 2.5 MiB above
