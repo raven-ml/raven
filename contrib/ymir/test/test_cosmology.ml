@@ -512,6 +512,12 @@ let point_of_index i =
   let z = range 0.05 20. in
   ({ planck_like with omega_cb; omega_k; w0; wa; h0; t_cmb; n_eff; m_nu }, z)
 
+(* The radiation's constants the model states: a massless species adds c_ur
+   Omega_g, a massive one c_nu Omega_g F(y a). *)
+let t_ncdm = 0.71611
+let c_ur = 7. /. 8. *. ((4. /. 11.) ** (4. /. 3.))
+let c_nu = 7. /. 8. *. (t_ncdm ** 4.)
+
 let derivatives =
   let point_gen =
     Gen.map
@@ -543,17 +549,43 @@ let derivatives =
   (* Forward and reverse mode add the same terms in two orders, among them the
      quadrature's few dozen nodes: each order is within [n] ulps of the sum of
      the terms' magnitudes, [n] = 64 covering the nodes and the steps around
-     them. A term is of the order of the value per unit of the coordinate's
-     scale, [|f| / max 0.05 |x_i|], the scale [central] steps by, so the two
-     agree within [2 n] ulps of that however much the terms cancel. Relative
-     to the derivative itself they can differ far more: comoving_volume_element
-     along Omega_k differs by 2e-12 of it. Over 400 points the largest
-     difference seen is 24 ulps of the scale. *)
-  let paired fn x e =
+     them. A term is of the order of the value's magnitude per unit of the
+     coordinate's scale, so the two agree within [2 n] ulps of that however much
+     the terms cancel. Relative to the derivative itself they can differ far
+     more: comoving_volume_element along Omega_k differs by 2e-12 of it.
+
+     The value's magnitude is |f|, but the neutrinos' terms cancel in the value
+     itself: Omega_nu = Omega_g(z) (c_ur N_ur + c_nu sum_i F(y_i a)), and N_ur
+     is negative below k c_nu / c_ur, so the magnitudes of the terms add to
+     [Omega_nu + 2 c_ur max(0, -N_ur) Omega_g(z)]. At N_eff = 0 and a mass of
+     1.7e-5 eV the derivatives of Omega_nu along z differ by 1.6e5 ulps of |f|
+     per unit.
+
+     The coordinate's scale is max 0.05 |x_i|, the scale [central] steps by. A
+     mass enters only through y_i a, proportional to it, so a term along the
+     masses is per unit of the smallest |m_i|: at a mass of 7e-5 eV the
+     derivatives of Omega_nu differ by 529 ulps of the value per 0.05 eV.
+
+     Over 1800 points, half of them at N_eff below 0.3 and with masses down to
+     1e-7 eV, the largest difference seen is 12 ulps of this scale. *)
+  let paired fn x (name, e) =
+    let c, _ = x in
+    let masses = Nx.abs (Quantity.value Unit.electronvolt c.Cosmology.m_nu) in
     let f = Float.abs (item (value fn x)) in
-    let scale = f /. Float.max 0.05 (Float.abs (dot e x)) in
+    let magnitude =
+      if fn <> "density_parameter:neutrinos" then f
+      else
+        let k = Float.of_int (Nx.numel masses) in
+        let n_ur = item c.n_eff -. (k *. c_nu /. c_ur) in
+        let photons = item (value "density_parameter:photons" x) in
+        f +. (2. *. c_ur *. Float.max 0. (-.n_ur) *. photons)
+    in
+    let coordinate =
+      if name = "0.m_nu" then item (Nx.min masses)
+      else Float.max 0.05 (Float.abs (dot e x))
+    in
     let ulps = 2. *. 64. *. epsilon_float in
-    float_rel ~rel:0. ~abs:(Float.max (ulps *. scale) 1e-300)
+    float_rel ~rel:0. ~abs:(Float.max (ulps *. magnitude /. coordinate) 1e-300)
   in
   group "derivatives"
     [
@@ -581,7 +613,8 @@ let derivatives =
                   let _, d = Rune.jvp point Nx.Ptree.tensor (value fn) x e in
                   equal
                     ~msg:(Printf.sprintf "%s d/d%s" fn name)
-                    (paired fn x e) (dot g e) (item d))
+                    (paired fn x (name, e))
+                    (dot g e) (item d))
                 (axes x))
             functions);
       test "a compiled gradient equals the eager one" (fun () ->
