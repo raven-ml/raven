@@ -96,7 +96,8 @@ jobs:
 
       # Ubuntu 22.04 has no Clang 16, the oldest that compiles tolk's kernels
       # into right values: the job runs apt.llvm.org's clang-16, so that it
-      # tests that oldest Clang.
+      # tests that oldest Clang. rune's pages run only where a clang is on
+      # PATH, so clang names clang-16 too.
       - name: Use Clang 16
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -107,6 +108,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes clang-16
           echo "CC=clang-16" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/clang-16"
+          ln -s "$(command -v clang-16)" "$RUNNER_TEMP/clang-16/clang"
+          echo "$RUNNER_TEMP/clang-16" >> "$GITHUB_PATH"
 
       # A suite's tests that compile for the CPU skip where the host compiles
       # nothing, as without Clang. Every job here has a Clang, so this fails
