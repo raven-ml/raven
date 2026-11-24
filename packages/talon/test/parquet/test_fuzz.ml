@@ -267,7 +267,7 @@ let overwrite r k bytes s =
 let bits = Gen.(list ~size:(int_range 1 8) (pair nat (int_range 0 7)))
 
 let mutated =
-  group ~timeout:600. "Mutated files decode to a table or an error"
+  group "Mutated files decode to a table or an error"
     [
       prop "with bits flipped"
         Gen.(triple pick region bits)
