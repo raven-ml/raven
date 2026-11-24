@@ -1493,9 +1493,10 @@ let effectless f =
   in
   Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
 
-(* The minor words one call of [f] allocates, to the word: allocation depends on
-   the call, not the machine, so a baseline records it. *)
-let allocated f = Printf.sprintf "%.0f words" (words f)
+(* [budget most f]: one call of [f] allocates at most [most] minor words, the
+   words it allocated when the budget was set. The count depends on the compiler
+   as well as the call: flambda inlines some allocations away. *)
+let budget most f = at_most (float 0.5) ~than:most (words f)
 
 let allocation =
   group "allocation"
@@ -1529,64 +1530,50 @@ let allocation =
           let a = on_host Plain D.Float32 [| 3 |] [| 1.; 2.; 3. |] in
           equal (array bits) [| 2.; 3.; 4. |]
             (elements (effectless (fun () -> Nx.add_s a 1.))));
-      test "a copy of a one-element host value allocates its baseline"
-        (fun () ->
+      test "a copy of a one-element host value allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          expect (allocated (fun () -> Nx.copy a)) @@ __POS_OF__ {| 88 words |});
-      test "a matmul of 4x4 float32 host values allocates its baseline"
-        (fun () ->
+          budget 88. (fun () -> Nx.copy a));
+      test "a matmul of 4x4 float32 host values allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
-          expect (allocated (fun () -> Nx.matmul a a))
-          @@ __POS_OF__ {| 163 words |});
-      test "a contract of 4x4 float32 host values allocates its baseline"
+          budget 163. (fun () -> Nx.matmul a a));
+      test "a contract of 4x4 float32 host values allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let p = Nx.Pattern.v "i k, k j -> i j | k" in
-          expect (allocated (fun () -> Nx.contract Nx.float32 p a a))
-          @@ __POS_OF__ {| 185 words |});
-      test "a vdot of 16 float32 host elements allocates its baseline"
-        (fun () ->
+          budget 185. (fun () -> Nx.contract Nx.float32 p a a));
+      test "a vdot of 16 float32 host elements allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
-          expect (allocated (fun () -> Nx.vdot a a))
-          @@ __POS_OF__ {| 154 words |});
-      test "a slice of a 4x4 host value by ranges allocates its baseline"
+          budget 154. (fun () -> Nx.vdot a a));
+      test "a slice of a 4x4 host value by ranges allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
-          expect (allocated (fun () -> Nx.slice Nx.[ R (1, 3); A ] a))
-          @@ __POS_OF__ {| 91 words |});
-      test "a reshape of a one-element host value allocates its baseline"
+          budget 91. (fun () -> Nx.slice Nx.[ R (1, 3); A ] a));
+      test "a reshape of a one-element host value allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          expect (allocated (fun () -> Nx.reshape [| 1; 1 |] a))
-          @@ __POS_OF__ {| 33 words |});
-      test "a sum of 16 float32 host elements allocates its baseline"
+          budget 33. (fun () -> Nx.reshape [| 1; 1 |] a));
+      test "a sum of 16 float32 host elements allocates its budget" (fun () ->
+          let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
+          budget 129. (fun () -> Nx.sum a));
+      test "a cumsum of 16 float32 host elements allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
-          expect (allocated (fun () -> Nx.sum a))
-          @@ __POS_OF__ {| 129 words |});
-      test "a cumsum of 16 float32 host elements allocates its baseline"
-        (fun () ->
-          let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
-          expect (allocated (fun () -> Nx.cumsum a))
-          @@ __POS_OF__ {| 116 words |});
-      test "a take of 3 rows of a 4x4 host value allocates its baseline"
+          budget 116. (fun () -> Nx.cumsum a));
+      test "a take of 3 rows of a 4x4 host value allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let ids = on_host Plain D.Int64 [| 3 |] [| 0L; 2L; 3L |] in
-          expect (allocated (fun () -> Nx.take ~axis:0 ids a))
-          @@ __POS_OF__ {| 175 words |});
-      test "a set of a row of a 4x4 host value allocates its baseline"
-        (fun () ->
+          budget 175. (fun () -> Nx.take ~axis:0 ids a));
+      test "a set of a row of a 4x4 host value allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let v = on_host Plain D.Float32 [| 4 |] (Array.make 4 2.) in
-          expect (allocated (fun () -> Nx.set Nx.[ I 1 ] v a))
-          @@ __POS_OF__ {| 341 words |});
+          budget 341. (fun () -> Nx.set Nx.[ I 1 ] v a));
     ]
 
 (* A scatter's results lie at the union of its operands' cuts, as any
-   operation's: positions and updates cut along columns beside a target
-   whole on each device put them at that cut, each device scattering its
-   columns, with the bits the host gives. *)
+   operation's: positions and updates cut along columns beside a target whole on
+   each device put them at that cut, each device scattering its columns, with
+   the bits the host gives. *)
 let test_scatter_union () =
   let x = on_host Plain D.Float32 [| 3; 4 |] (Array.init 12 Float.of_int) in
   let p =
