@@ -58,7 +58,8 @@ val exists : t -> string -> bool
 
 val functions : t -> (Ops.id list, string) result
 (** [functions m] is [m]'s functions, [Ok []] without [sys/bus/pci], or
-    [Error why] if its directory cannot be read. *)
+    [Error why] if its directory cannot be read. Only entries named by a bus
+    address are listed, and one whose files cannot be read is left out. *)
 
 val vfio_pci : string
 (** [vfio_pci] is VFIO's driver, ["vfio-pci"]. *)

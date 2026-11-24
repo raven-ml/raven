@@ -147,6 +147,16 @@ let test_tree_unreadable () =
        (fun (d : Machine.id) -> d.bus)
        (listed (Machine.at root)))
 
+(* An entry of the functions' directory that is no bus address is left out, even
+   with a function's files. *)
+let test_tree_stray () =
+  let root = Tree.make [ Tree.gpu "0000:03:00.0" ] in
+  List.iter
+    (fun (file, s) -> Tree.add root ("sys/bus/pci/devices/stray/" ^ file) s)
+    [ ("vendor", "0x1002\n"); ("device", "0x744c\n"); ("class", "0x030000\n") ];
+  equal (list string) [ "0000:03:00.0" ]
+    (List.map (fun (d : Machine.id) -> d.bus) (listed (Machine.at root)))
+
 (* Whatever order the files list them in, with domains of four and five
    digits. *)
 let listed_in_bus_order =
@@ -200,6 +210,7 @@ let functions =
       test "a machine's functions are its files', in bus order" test_tree;
       test "a function whose files cannot be read is left out"
         test_tree_unreadable;
+      test "an entry that is no bus address is left out" test_tree_stray;
       test "a machine without functions lists none" test_tree_empty;
       test "a machine whose functions cannot be listed says why"
         test_tree_unlisted;

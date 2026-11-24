@@ -146,9 +146,11 @@ let link m bus file =
 let driver_of m bus = link m bus "driver"
 let driver l = driver_of l.files l.bus
 let group m bus = link m bus "iommu_group"
+let is_bus s = Option.is_some (Bus_address.numbers s)
 
 (* A function the kernel lists but whose files cannot be read, as while it is
-   being removed, is left out. A system without the directory has none. *)
+   being removed, is left out, as is an entry that is no bus address, which
+   Machine.functions could not sort. A system without the directory has none. *)
 let functions m =
   if not (Sys.file_exists m.devices) then Ok []
   else
@@ -167,7 +169,7 @@ let functions m =
           | id -> Some id
           | exception Fail.Failed _ -> None
         in
-        Ok (List.filter_map id (Array.to_list buses))
+        Ok (List.filter_map id (List.filter is_bus (Array.to_list buses)))
 
 (* The other functions of [bus]'s device, such as its audio function. *)
 let siblings m bus =
@@ -698,8 +700,6 @@ let redirects dir =
   in
   if n < extended then true
   else n >= config_size && walk extended (config_size / 4)
-
-let is_bus s = Option.is_some (Bus_address.numbers s)
 
 (* Whether the device at [dir] is a PCI Express root port: its capability
    list, from the pointer at [caps], holds the PCI Express capability, whose
