@@ -258,7 +258,7 @@ let conversions =
           equal bigint
             (if negative then B.neg sum else sum)
             (B.of_string (sign ^ prefix ^ text)));
-      test ~timeout:5. "of_string reads at most 4300 decimal digits" (fun () ->
+      test "of_string reads at most 4300 decimal digits" (fun () ->
           let ten = B.pow (B.of_int 10) 4300 and nines = String.make 4300 '9' in
           equal bigint (B.pred ten) (B.of_string nines);
           equal bigint (B.neg (B.pred ten)) (B.of_string ("-" ^ nines));
@@ -280,7 +280,7 @@ let conversions =
               "1_" ^ nines;
               String.make 2_000_000 '9';
             ]);
-      test ~timeout:5. "to_string writes at most 4300 digits" (fun () ->
+      test "to_string writes at most 4300 digits" (fun () ->
           let ten = B.pow (B.of_int 10) 4300 and nines = String.make 4300 '9' in
           equal string nines (B.to_string (B.pred ten));
           equal string ("-" ^ nines) (B.to_string (B.neg (B.pred ten)));

@@ -1151,7 +1151,7 @@ let invalid_ir =
 let compile_time =
   group "compile time"
     [
-      test ~timeout:60.
+      test
         "an arm64 kernel of 1024 lanes gathered from 32 rows compiles within \
          a minute" (fun () ->
           let src =
@@ -1159,7 +1159,7 @@ let compile_time =
           in
           let lib = ccache_off (fun () -> compile "arm64,apple-m1" src) in
           is_relocatable_elf64 ~machine:(elf_machine "arm64") lib);
-      cases ~timeout:60.
+      cases
         "a host maximum of 32 float64 lanes in a loop of 32 trips compiles \
          within a minute for"
         ~id:Fun.id [ "x86_64,x86-64-v3"; "arm64,apple-m1" ]

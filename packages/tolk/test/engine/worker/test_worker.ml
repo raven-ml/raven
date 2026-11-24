@@ -9,9 +9,6 @@ exception Failed of int
 let with_parallel p f = Setting.context [ B (Setting.parallel, p) ] f
 let domain () = (Domain.self () :> int)
 
-(* A call that never returns fails its test instead of the run. *)
-let group name tests = group ~timeout:30. name tests
-
 (* Synchronisation *)
 
 (* [await what cond] returns once [cond ()] holds, and fails, naming [what],

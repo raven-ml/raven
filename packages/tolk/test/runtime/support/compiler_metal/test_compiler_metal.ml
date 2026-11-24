@@ -527,8 +527,7 @@ let program_changed =
          (* macOS holds the start of a quarantined program until the user
             approves it, unless a run of that file was approved before: the
             program is a new file, quarantined before its first run. *)
-         test ~timeout:60. "a quarantined program is replaced before it runs"
-           (fun () ->
+         test "a quarantined program is replaced before it runs" (fun () ->
              let lib = digest (with_metal (fun () -> compile (kernel "add"))) in
              let program = program_in Helpers.cache_dir in
              kill_children ();

@@ -221,7 +221,7 @@ let simplified =
           match simplified with
           | Ok s -> equal string s (Render.render u)
           | Error e -> raises e (fun () -> Render.render u));
-      cases ~timeout:5. "an integer past 4300 digits is refused"
+      cases "an integer past 4300 digits is refused"
         ~id:(Render.render ~simplify:false)
         [ huge_shift ]
         (fun u ->

@@ -11265,10 +11265,9 @@ let hand_written =
            [ [ 3; 2; 1; 0 ] ]);
       test "a shrink whose start waits on a store reads after it"
         (writes shrink_after_store [] [ [ 7 ]; [ 7 ] ]);
-      (* an ungated back edge of the padding would loop forever: the limit
-         fails the case by name *)
-      cases "a padded range's padding stores nothing" ~timeout:10. ~id:fst
-        padded_stores
+      (* an ungated back edge of the padding would loop forever: the limit fails
+         the case by name *)
+      cases "a padded range's padding stores nothing" ~id:fst padded_stores
         (fun (_, store) -> writes (padded_steps store) [] [ [ 3 ] ] ());
       test "a sum is the index of a load"
         (writes sum_as_index

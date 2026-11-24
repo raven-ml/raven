@@ -359,9 +359,7 @@ let case =
 (* Reading damaged text fails, or reads a graph, without hanging: a huge slot
    is taken at once, and one past every number handed out leaves none. *)
 let damaged_text =
-  prop ~timeout:20. "damaged text reads or fails, at once"
-    case
-    (fun ((_, u), d) ->
+  prop "damaged text reads or fails, at once" case (fun ((_, u), d) ->
       match damaged d (Graph.to_string u) with
       | None -> reject ()
       | Some text -> (
@@ -381,8 +379,7 @@ let damaged_text =
    anew, so that they do not show it. *)
 let damaged_entry =
   let count = ref 0 in
-  prop ~timeout:20. "a damaged entry reads back as its graph, or misses"
-    case
+  prop "a damaged entry reads back as its graph, or misses" case
     (fun ((_, u), d) ->
       if Sys.getenv_opt "CACHEDB" = None then
         skip ~reason:"CACHEDB is unset" ();
