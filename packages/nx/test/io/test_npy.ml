@@ -466,17 +466,14 @@ let rows =
           equal packed
             (Nx.P (Nx.zeros Nx.int16 [| 0 |]))
             (rows_of path [ (5, 0) ]));
-      (* Scattered pages of a file the system does not hold: the call reads
-         those pages from storage and no other beyond what its header's read
-         takes, which a call of no window measures. The file lies in the
-         working directory, on the build tree's disk, as a temporary
-         directory may be memory, which reads nothing from storage. The count
-         assumes the system reads a 4 KiB read of a file as one page: a file
-         system of larger blocks reads more and fails the test. *)
+      (* Scattered pages of a file the system does not hold: the call brings
+         into memory those pages and no other beyond what its header's read
+         takes, which a call of no window measures. The file lies in the working
+         directory, on the build tree's disk, as a temporary directory may be
+         memory, which keeps every page. A file system of blocks larger than a
+         page reads more and fails the test. *)
       test "windows of a file not in memory read their pages from storage"
         (fun () ->
-          if not (Sys.file_exists "/proc/self/io") then
-            skip ~reason:"the system does not count a process's reads" ();
           let pages = 2048 in
           let path =
             Filename.temp_file ~temp_dir:(Sys.getcwd ()) "nx-io-paged" ".npy"
@@ -489,9 +486,10 @@ let rows =
             | -1 ->
                 skip ~reason:"only Linux drops a file's pages unprivileged" ()
             | code -> failf "drop_pages: errno %d" code);
-            let before = storage_reads () in
+            if resident_pages path <> [] then
+              skip ~reason:"the system keeps the file in memory" ();
             let x = rows_of path ws in
-            (x, storage_reads () - before)
+            (x, resident_pages path)
           in
           let _, header = cold [] in
           (* Rows 29 apart from 1 MiB on, and a window of 3. *)
@@ -500,11 +498,16 @@ let rows =
           in
           let x, read = cold ws in
           equal packed (sliced path ws) x;
-          if read = 0 then
-            skip ~reason:"the file system reads nothing from storage" ();
-          equal ~msg:"bytes read from storage" int
-            (4096 * (60 + 3))
-            (read - header));
+          (* Row r's bytes lie from 4096 (r + 1), past the header's page. *)
+          let page = page_size () in
+          let rows (r, n) =
+            let first = 4096 * (r + 1) / page in
+            let last = ((4096 * (r + 1 + n)) - 1) / page in
+            List.init (last - first + 1) (fun k -> first + k)
+          in
+          equal ~msg:"pages read from storage" (list int)
+            (List.sort_uniq compare (header @ List.concat_map rows ws))
+            read);
     ]
 
 (* npz *)

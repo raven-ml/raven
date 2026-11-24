@@ -71,15 +71,17 @@ let flips_load_or_fail load ?(upto = max_int) whole =
    [-1] off Linux. *)
 external drop_pages : string -> int = "nx_io_test_drop_pages"
 
-(* The bytes this process read from storage, from Linux's /proc/self/io. *)
-let storage_reads () =
-  In_channel.with_open_bin "/proc/self/io" In_channel.input_all
-  |> String.split_on_char '\n'
-  |> List.find_map (fun l ->
-      match String.split_on_char ' ' l with
-      | [ "read_bytes:"; v ] -> Some (int_of_string v)
-      | _ -> None)
-  |> Option.get
+(* [resident path] is, for each page of the file [path], whether the system
+   holds it in memory: Linux only. *)
+external resident : string -> string = "nx_io_test_resident"
+
+(* [page_size ()] is the size of [resident]'s pages: Linux only. *)
+external page_size : unit -> int = "nx_io_test_page_size"
+
+(* The pages of the file [path] the system holds in memory, in order. *)
+let resident_pages path =
+  let r = resident path in
+  List.filter (fun i -> r.[i] <> '\000') (List.init (String.length r) Fun.id)
 
 let saved suffix save x =
   let path = temp_file ~suffix () in
