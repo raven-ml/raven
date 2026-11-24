@@ -116,9 +116,9 @@
   golden/ceil_padding.golden))
 
 ; Widths past what an array holds, for a function that allocates by its
-; widths before its result exists, under a limit of its address space (see
-; test_widths.ml). macOS's and Windows' limits do not bound allocations, so
-; the suite runs on Linux alone.
+; widths before its result exists, under a limit of its memory (see
+; test_widths.ml). macOS's limits do not bound allocations, so the suite runs
+; on Linux and Windows alone.
 
 (test
  (package nx)
@@ -129,7 +129,9 @@
   (names test_widths_stubs))
  (libraries nx windtrap)
  (enabled_if
-  (= %{system} linux)))
+  (or
+   (= %{system} linux)
+   (= %{os_type} Win32))))
 
 ; Checks on a device of another machine, served by rig's test agent over the
 ; loopback.
