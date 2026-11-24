@@ -59,17 +59,41 @@ type case =
       (float, 's) Nx.dtype * int array * Operand.t * Operand.t * Expr.t
       -> case
 
+let case s e =
+  let open Gen in
+  let* x = draw s and+ y = draw s in
+  let+ (Nx.Dtype.Any dt) =
+    of_list [ Nx.Dtype.Any Nx.float32; Any Nx.float64 ]
+  in
+  match Nx.Dtype.kind dt with
+  | Float -> Case (dt, s, x, y, Expr.exact e)
+  | _ -> assert false
+
+let drawn shape =
+  let open Gen in
+  let* s = shape in
+  let* e = Expr.gen ~rank:(Array.length s) in
+  case s e
+
+(* The shapes of a single element, which [shape] draws too rarely for every run
+   of 104 cases to meet one. *)
+let single = Gen.of_list [ [||]; [| 1 |]; [| 1; 1 |]; [| 1; 1; 1 |] ]
+
+(* Eager refuses a maximum over an empty axis whose result has an element: a
+   shape empty along [a] alone, under [max~a]. Drawn on its own, since a drawn
+   shape and function rarely meet so. *)
+let refusing =
+  let open Gen in
+  let* r = int_range 1 3 in
+  let* a = int_range 0 (r - 1)
+  and+ dims = array ~size:(constant r) (int_range 1 4) in
+  let s = Array.mapi (fun i d -> if i = a then 0 else d) dims in
+  let* e = Expr.gen ~rank:r in
+  case s (Un (Max a, e))
+
 let cases =
   let open Gen in
-  (let* s = shape in
-   let* e = Expr.gen ~rank:(Array.length s) in
-   let* x = draw s and+ y = draw s in
-   let+ (Nx.Dtype.Any dt) =
-     of_list [ Nx.Dtype.Any Nx.float32; Any Nx.float64 ]
-   in
-   match Nx.Dtype.kind dt with
-   | Float -> Case (dt, s, x, y, Expr.exact e)
-   | _ -> assert false)
+  frequency [ (3, drawn shape); (1, drawn single); (1, refusing) ]
   |> with_pp (fun ppf (Case (dt, s, x, y, e)) ->
       Format.fprintf ppf "%a %a, x %a, y %a: %a" Nx.pp_dtype dt pp_shape s
         pp_view x.view pp_view y.view Expr.pp e)
