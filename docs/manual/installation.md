@@ -68,7 +68,7 @@ Raven builds and installs with no system dependencies beyond OCaml.
 
 Compiling kernels at run time, with `Rune.jit`, uses the platform's compiler: `clang` on the CPU, NVRTC (from the CUDA toolkit) on NVIDIA, and comgr (from ROCm) on AMD; macOS includes Metal's. Kernels already in the on-disk cache need none of them, and eager code on the host needs nothing.
 
-On the CPU, `Rune.jit` runs the `clang` on `PATH`, or the program the `CC` environment variable names, which must be Clang 15 or later. Without one, the call that compiles raises `Tolk.Renderer.Compiler.Compile_error` naming the failure; on x86_64, an older Clang is named as one. Ubuntu 22.04 and Debian 12 install Clang 14 as `clang`; install their `clang-15` package and set `CC=clang-15`. Raven's packages need `clang` only to run their tests, which opam installs with `--with-test` through `conf-clang`.
+On the CPU, `Rune.jit` runs the `clang` on `PATH`, or the program the `CC` environment variable names, which must be Clang 16 or later, or Apple's Clang 15 or later: an older one compiles some selections between a value and a zero into the zero of the wrong sign. Without one, the call that compiles raises `Tolk.Renderer.Compiler.Compile_error` naming the failure; an older Clang is named as one. Ubuntu 22.04 and Debian 12 install an older Clang as `clang`: on Debian 12, install its `clang-16` package; on Ubuntu 22.04, which has none, install `clang-16` from [apt.llvm.org](https://apt.llvm.org). Then set `CC=clang-16`. Raven's packages need `clang` only to run their tests, which opam installs with `--with-test` through `conf-clang`.
 
 ## Using Raven in your project
 

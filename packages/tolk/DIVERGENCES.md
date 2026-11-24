@@ -10218,3 +10218,39 @@ D466.
   kernel where the target lacks float64, before any kernel compiles`, and
   test_jit_gpu's `declines › a call in float64 where the GPU's kernels lack
   it raises at the call, naming float64`.
+
+## D505. A Clang before LLVM 16 compiles nothing
+
+- **tinygrad:** `runtime/support/compiler_cpu.py` `ClangCompiler` (any Clang
+  compiles).
+- **tolk:** `Compiler_cpu.clang`'s refusal (`wrong_zeros`), with the release
+  `Compiler_cpu.macro_release` reads from the macros Clang's preprocessor
+  defines (`Compiler_cpu.dumped`).
+- **Differs:** under a Clang whose `__clang_major__` is before 16, or before
+  15 where `__apple_build_version__` is defined (Apple's numbering), a compile
+  raises `Compile_error` naming the Clang, its version and the oldest Clangs
+  that compile, before Clang compiles anything, on every machine. Under a
+  Clang that runs but whose preprocessor gives no macros, it raises naming
+  why; a failed run is asked again by the next compile.
+- **Reason:** (e): before LLVM 16, InstCombine reads a selection between a
+  value and a zero, under a strict comparison of the value with a zero of the
+  other sign, as a minimum or a maximum and writes it again with a comparison
+  that holds at zero: `x > 0.0f ? -0.0f : x` becomes `x >= 0.0f ? -0.0f : x`,
+  `-0.0` at `x = +0.0`. rune's `Numerics › a selection of a value and a zero
+  is exact` failed so at bfloat16 under Ubuntu 22.04's Clang 15 (rows 28 and
+  32: `where (c < x) c x` at `c = -0.0` gave `-0.0` at `x = +0.0`), where LLVM
+  moved the kernel's selection of storage bits onto floats. Clang 14.0.0 and
+  15.0.6 write the wrong selection; 16.0.4, 17.0.6, 19.1.7 and Apple's 17.0.0
+  the right one. Which selections meet it depends on the order of LLVM's
+  rewrites, so no source avoids it. No option turns it off:
+  `-ffp-exception-behavior=maytrap` hides the comparison from it, but makes
+  every kernel scalar, and Clang 15 crashes on it for halves. LLVM fixed it
+  (LLVM issue 57357) in August 2022, after LLVM 15 branched. Apple's Clang 15
+  (Xcode 15) is built on LLVM 16, its 14.0.3 on LLVM 15.
+- **Pinned by:** `Tolk.Compiler_cpu › a Clang before LLVM 16 › a compile
+  raises Compile_error naming the Clang and the oldest:` (every row) and `› a
+  compile is not refused for it under` (every row) and `› a compile names a
+  preprocessor's failure, and the next asks again`; `Tolk.Compiler_cpu ›
+  execution on the host › a selection between a value and -0. keeps each
+  zero's sign, at` (every row) and rune's test above, under every Clang that
+  compiles.

@@ -434,9 +434,35 @@ let values = array Dtypes.value
 let host = lazy (Cstyle.clang (host_target ()))
 let loaded name = Run.program (Lazy.force host) (kernel name)
 
+(* The program of out = float64 (where (c < x) c x) for one bfloat16 [x], with
+   [c] the zero [-0.]: rune's selection that LLVM 14 and 15 compiled into [-0.]
+   at [x = +0.] (LLVM issue 57357). *)
+let zero_selection () =
+  let i = Ops.range ~axis_type:Weak (Int 1) [ 0 ] in
+  let at slot dt = Ops.index (Shape.placeholder ~slot [ 1 ] dt) [ i ] in
+  let x = at 1 Dtype.Bfloat16 in
+  let c = Shape.const_like x (`Float (-0.)) in
+  let chosen = Ops.alu (Ops.alu c Op.Cmplt [ x ]) Op.Where [ c; x ] in
+  let sink =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"zero_selection" ())
+      [ Ops.end_ (Ops.store (at 0 Float64) (Ops.cast chosen Float64)) [ i ] ]
+  in
+  Codegen.to_program sink (Lazy.force host)
+
 let execution =
   group "execution on the host"
     [
+      cases "a selection between a value and -0. keeps each zero's sign, at"
+        ~id:(Printf.sprintf "%h") [ 0.; -0.; 1.; -1. ] (fun x ->
+          let expected = if -0. < x then -0. else x in
+          let out = Run.on_host (zero_selection ()) [ (1, floats [| x |]) ] in
+          match List.assoc 0 out with
+          | [| `Float y |] ->
+              equal string
+                (Printf.sprintf "%h" expected)
+                (Printf.sprintf "%h" y)
+          | _ -> fail "not one float");
       test "a compiled kernel adds two buffers" (fun () ->
           let a = Array.init 16 Float.of_int
           and b = Array.init 16 (fun i -> Float.of_int (100 - i)) in
@@ -1146,30 +1172,42 @@ let compile_time =
           is_relocatable_elf64 ~machine:(elf_machine machine) lib);
     ]
 
-(* A Clang without x86_64's _Float16: a script stands in for it, which states
-   the version it is given and no compiler proper, and whose preprocessor
-   defines [__x86_64__], SSE2's macro and, if it is given them, the macros of
-   _Float16. *)
+(* A Clang that a script stands in for: it states [version] and no compiler
+   proper, and its preprocessor defines [__x86_64__], SSE2's and _Float16's
+   macros, [__clang_major__] as [major] and, for Apple's,
+   [__apple_build_version__]. A [gated] preprocessor fails until the file of the
+   stand-in's path with [.ready] after it exists. A [proper] stand-in also
+   states a compiler proper, which does not exist. *)
+type stand_in = { version : string; major : int; apple : bool; arch : string }
 
-let stand_in_for version ~float16 =
-  let float16 =
-    if float16 then [ "echo '#define __FLT16_MAX__ 6.5504e+4F16'" ] else []
+let stand_in_for ?(gated = false) ?(proper = false) c =
+  let gate = if gated then [ {|[ -e "$0.ready" ] || exit 1|} ] else [] in
+  let proper =
+    if proper then
+      [ {|echo '"/stand-in" "-cc1" "-triple" "x86_64-unknown-linux-gnu"' >&2|} ]
+    else []
+  in
+  let apple =
+    if c.apple then [ "echo '#define __apple_build_version__ 15000309'" ]
+    else []
   in
   String.concat "\n"
-    ([
-       "#!/bin/sh";
-       {|case " $* " in *" -dM "*)|};
-       "echo '#define __x86_64__ 1'";
-       "echo '#define __SSE2__ 1'";
-     ]
-    @ float16
+    ([ "#!/bin/sh"; {|case " $* " in *" -dM "*)|} ]
+    @ gate
+    @ [
+        "echo '#define __x86_64__ 1'";
+        "echo '#define __SSE2__ 1'";
+        "echo '#define __FLT16_MAX__ 6.5504e+4F16'";
+        Printf.sprintf "echo '#define __clang_major__ %d'" c.major;
+      ]
+    @ apple
     @ [
         "exit 0;;";
         "esac";
-        "echo " ^ Filename.quote version ^ " >&2";
+        "echo " ^ Filename.quote c.version ^ " >&2";
         "echo 'Target: x86_64-unknown-linux-gnu' >&2";
-        "";
-      ])
+      ]
+    @ proper @ [ "" ])
 
 (* [f clang] under the Clang that [script], written as the file [clang], stands
    in for. *)
@@ -1187,36 +1225,69 @@ let under_stand_in script f =
     [ B (Setting.cc, clang); B (Setting.ccache, false) ]
     (fun () -> f clang)
 
-(* The stand-in's path and the Compile_error of a compile for x86_64 under the
-   Clang that states [version], with or without _Float16. *)
-let stand_in_error version ~float16 =
-  under_stand_in (stand_in_for version ~float16) @@ fun clang ->
-  match Compiler.compile (Compiler_cpu.clang "x86_64,x86-64") increment with
+(* The stand-in's path and the Compile_error of a compile for its arch under the
+   Clang [c] stands in for. *)
+let stand_in_error c =
+  under_stand_in (stand_in_for c) @@ fun clang ->
+  match Compiler.compile (Compiler_cpu.clang c.arch) increment with
   | _ -> fail "a stand-in that compiles nothing compiled"
   | exception Compiler.Compile_error msg -> (clang, msg)
 
-(* The feature decides, whatever release the version names: Clang 14 has
-   _Float16 with AVX-512 FP16, and Apple's numbers are not LLVM's. *)
-let without_float16 =
-  group "a Clang without x86_64's _Float16"
+let llvm version major arch = { version; major; apple = false; arch }
+let apple version major arch = { version; major; apple = true; arch }
+let x86 = "x86_64,x86-64"
+let m1 = "arm64,apple-m1"
+
+(* The release the macros name decides, for every machine: LLVM's before 16 and
+   Apple's before 15, whose 15 is built on LLVM 16, choose the wrong zero for
+   some selections. *)
+let wrong_zeros =
+  group "a Clang before LLVM 16"
     [
       cases "a compile raises Compile_error naming the Clang and the oldest:"
-        ~id:Fun.id
+        ~id:(fun c -> c.version ^ " for " ^ c.arch)
         [
-          "Ubuntu clang version 14.0.0-1ubuntu1.1";
-          "Apple clang version 14.0.0 (clang-1400.0.29.202)";
-          "clang version 19.1.7";
-        ] (fun version ->
-          let clang, msg = stand_in_error version ~float16:false in
-          in_order ~subs:[ clang; version; "_Float16"; "Clang 15"; "CC" ] msg);
-      cases "a compile is not refused under a Clang with it, as" ~id:Fun.id
+          llvm "Ubuntu clang version 15.0.7" 15 x86;
+          llvm "clang version 15.0.6" 15 m1;
+          apple "Apple clang version 14.0.3 (clang-1403.0.22.14.1)" 14 m1;
+          llvm "Debian clang version 14.0.6" 14 "riscv64,rv64g";
+          llvm "a compiler built on Clang 15.0.7" 15 x86;
+        ]
+        (fun c ->
+          let clang, msg = stand_in_error c in
+          in_order
+            ~subs:[ clang; c.version; "wrong zero"; "57357"; "Clang 16"; "CC" ]
+            msg);
+      cases "a compile is not refused for it under"
+        ~id:(fun c -> c.version)
         [
-          "Ubuntu clang version 14.0.0-1ubuntu1.1";
-          "Apple clang version 14.0.3 (clang-1403.0.22.14.1)";
-          "Debian clang version 15.0.6";
-        ] (fun version ->
-          not_contains ~sub:"_Float16"
-            (snd (stand_in_error version ~float16:true)));
+          llvm "clang version 16.0.4" 16 x86;
+          apple "Apple clang version 15.0.0 (clang-1500.3.9.4)" 15 m1;
+          llvm "Ubuntu clang version 18.1.3 (1ubuntu1)" 18 x86;
+        ]
+        (fun c -> not_contains ~sub:"wrong zero" (snd (stand_in_error c)));
+      test "a compile names a preprocessor's failure, and the next asks again"
+        (fun () ->
+          let c = llvm "clang version 15.0.6" 15 x86 in
+          under_stand_in (stand_in_for ~gated:true ~proper:true c)
+          @@ fun clang ->
+          let compiler = Compiler_cpu.clang c.arch in
+          let error () =
+            match Compiler.compile compiler increment with
+            | _ -> fail "a stand-in that compiles nothing compiled"
+            | exception Compiler.Compile_error msg -> msg
+          in
+          let failed = error () in
+          let ready = clang ^ ".ready" in
+          Out_channel.with_open_bin ready ignore;
+          Fun.protect ~finally:(fun () -> Sys.remove ready) @@ fun () ->
+          in_order ~subs:[ clang; "release is unknown"; "exited 1" ] failed;
+          in_order ~subs:[ clang; "wrong zero" ] (error ()));
+    ]
+
+let without_sse2 =
+  group "a Clang without x86_64's _Float16"
+    [
       test "an arch that turns SSE2 off compiles nothing, naming SSE2"
         (fun () ->
           let arch = "x86_64,x86-64,-sse2" in
@@ -1224,7 +1295,6 @@ let without_float16 =
             (function
               | Compiler.Compile_error msg ->
                   has_infix ~affix:"turns SSE2 off" msg
-                  && not (has_infix ~affix:"Clang 15" msg)
               | _ -> false)
             (fun () -> compile arch increment));
     ]
@@ -1587,7 +1657,8 @@ let () =
          first_compiles;
          architectures;
          errors;
-         without_float16;
+         wrong_zeros;
+         without_sse2;
          invalid_ir;
          compile_time;
          without_clang;

@@ -100,10 +100,14 @@ val clang : string -> Renderer.Compiler.t
     {!Setting.ccache} holds, and asked again if it states another release.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
     Clang's diagnostics if Clang rejects the source or does not run, and before
-    it compiles anything if Clang has no [_Float16] for an x86_64 [arch]: naming
-    the Clang and its version before Clang 15, and naming SSE2 for an [arch]
-    that turns it off. {!Renderer.Compiler.disassemble} prints what [objdump -d]
-    prints ({!Helpers.cpu_objdump}).
+    it compiles anything: naming the Clang and its version under a Clang before
+    LLVM 16 or Apple's before 15, as its macros [__clang_major__] and
+    [__apple_build_version__] name it, which compile some selections between a
+    value and a zero into the zero of the wrong sign, as [x > 0.0f ? -0.0f : x]
+    into [-0.0] at [x = +0.0]; naming why under a Clang whose preprocessor gives
+    no macros; and naming SSE2 for an x86_64 [arch] that turns it off, without
+    which Clang has no [_Float16]. {!Renderer.Compiler.disassemble} prints what
+    [objdump -d] prints ({!Helpers.cpu_objdump}).
 
     Raises [Invalid_argument] naming [arch] if it has fewer than two fields, and
     naming its [MACHINE] if that is another. *)

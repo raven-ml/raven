@@ -484,31 +484,57 @@ let compile_args selected ~release =
   ]
   @ fixed ~release selected @ slp @ ldn @ idioms @ [ "-"; "-o"; "-" ]
 
-(* The macros Clang's preprocessor defines for an x86_64 [selected], which name
-   the processor's features for every processor, where Clang's statement names
-   them only for [native]; none where Clang does not run. Clang is run once per
-   process for each Clang and flags, whose macros serve every question asked of
-   them: each run costs about what a small kernel's compile does. *)
-let x86_macros =
+(* The lines of the macros Clang's preprocessor defines for [selected], each
+   [#define NAME VALUE], or why the preprocessor gave none: they name Clang's
+   release, and on x86_64 the processor's features for every processor, where
+   Clang's statement names them only for [native]. Clang is run once per process
+   for each Clang and flags whose macros it gave, which serve every question
+   asked of them: each run costs about what a small kernel's compile does. A run
+   that fails is not kept, so that a failure to start it, which a later run may
+   not meet, does not decide for the process. *)
+let dumped =
   let lock = Mutex.create () and known = Hashtbl.create 4 in
   fun cc selected ->
     let release = stated_release (own_statement cc (compile_args selected)) in
     let flags = fixed ~release selected in
-    let macros =
-      Mutex.protect lock @@ fun () ->
-      match Hashtbl.find_opt known (cc, flags) with
-      | Some macros -> macros
-      | None ->
-          let macros =
-            match run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) "" with
-            | Ok (WEXITED 0, out, _) -> String.split_on_char '\n' out
-            | Ok _ | Error _ -> []
-          in
-          Hashtbl.replace known (cc, flags) macros;
-          macros
-    in
-    fun m ->
-      List.exists (String.starts_with ~prefix:("#define " ^ m ^ " ")) macros
+    Mutex.protect lock @@ fun () ->
+    match Hashtbl.find_opt known (cc, flags) with
+    | Some macros -> Ok macros
+    | None -> (
+        match run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) "" with
+        | Ok (WEXITED 0, out, _) ->
+            let macros = String.split_on_char '\n' out in
+            Hashtbl.replace known (cc, flags) macros;
+            Ok macros
+        | Ok (WEXITED code, _, err) ->
+            Error (Printf.sprintf "%s -dM -E exited %d: %s" cc code err)
+        | Ok ((WSIGNALED n | WSTOPPED n), _, _) ->
+            Error (Printf.sprintf "%s -dM -E stopped by signal %d" cc n)
+        | Error why -> Error why)
+
+(* The macros of {!dumped}, none where the preprocessor gave none. *)
+let macros cc selected = Result.value ~default:[] (dumped cc selected)
+
+(* The value of the macro [m] among [macros], if it is defined. *)
+let value macros m =
+  let prefix = "#define " ^ m ^ " " in
+  let n = String.length prefix in
+  List.find_map
+    (fun l ->
+      if String.starts_with ~prefix l then
+        Some (String.sub l n (String.length l - n))
+      else None)
+    macros
+
+let defines macros m = Option.is_some (value macros m)
+
+(* The release that [macros] name: [__clang_major__], which is Apple's own
+   number where [__apple_build_version__] is defined. *)
+let macro_release macros =
+  match Option.bind (value macros "__clang_major__") int_of_string_opt with
+  | None -> None
+  | Some r when defines macros "__apple_build_version__" -> Some (Apple r)
+  | Some r -> Some (Llvm r)
 
 (* Whether [cc] keeps AVX-512 on for an x86_64 [selected] that [avx512_off]
    turns it off for, as LLVM 21 does for an AVX10.1 that [arch] or [native]
@@ -517,7 +543,7 @@ let keeps cc selected =
   fst selected = "x86_64"
   && avx512_off (stated_release (own_statement cc (compile_args selected)))
      <> []
-  && x86_macros cc selected "__AVX512F__"
+  && defines (macros cc selected) "__AVX512F__"
 
 (* The processor a statement's compiler proper compiles for. *)
 let target_cpu stated =
@@ -569,7 +595,7 @@ let registers =
   per_clang @@ fun cc selected : Renderer.registers option ->
   match fst selected with
   | "x86_64" ->
-      let defines = x86_macros cc selected in
+      let defines = defines (macros cc selected) in
       Some
         {
           count = (if defines "__AVX512F__" then 32 else 16);
@@ -628,29 +654,50 @@ __attribute__((visibility("hidden"))) _Float16 __truncsfhf2(float f) {
    processor without F16C, or a Clang that does not run. *)
 let converts_halves =
   per_clang @@ fun cc selected ->
-  fst selected = "x86_64" && not (x86_macros cc selected "__F16C__")
+  fst selected = "x86_64" && not (defines (macros cc selected) "__F16C__")
 
-(* Why Clang has no [_Float16] for an x86_64 processor: a kernel converts its
-   halves with it, and an object for a processor without F16C defines the
-   conversions with it ({!half_conversions}). LLVM 15 defines it for every
-   x86_64 processor with SSE2, LLVM 14 only with AVX-512 FP16. *)
-type no_float16 = Before_15 | Without_sse2
-
-(* Why Clang has no [_Float16] for an x86_64 [arch], or [None]. A Clang that
-   does not run defines not even [__x86_64__]: its compile fails saying why. *)
-let no_float16 =
-  per_clang @@ fun cc selected ->
-  let defines = x86_macros cc selected in
-  if fst selected <> "x86_64" || not (defines "__x86_64__") then None
-  else if defines "__FLT16_MAX__" then None
-  else if not (defines "__SSE2__") then Some Without_sse2
-  else Some Before_15
+(* Whether [macros], of what Clang compiles an x86_64 [selected] for, have no
+   [_Float16] since they lack SSE2: a kernel converts its halves with it, and an
+   object for a processor without F16C defines the conversions with it
+   ({!half_conversions}). A Clang that does not run defines not even
+   [__x86_64__]: its compile fails saying why. *)
+let without_sse2 macros selected =
+  fst selected = "x86_64"
+  && defines macros "__x86_64__"
+  && (not (defines macros "__FLT16_MAX__"))
+  && not (defines macros "__SSE2__")
 
 (* Whether Clang keeps AVX-512 on for what it compiles an x86_64 [arch] for,
    where [avx512_off] turns it off, as LLVM 21 does for an AVX10.1 that [arch]
    names: its masked ternary logic would compile into wrong values, so nothing
    compiles. *)
 let keeps_avx512 = per_clang keeps
+
+(* Whether a Clang of [release], as its macros name it, chooses the wrong zero.
+   Before LLVM 16, InstCombine reads a selection between a value and a zero,
+   under a strict comparison of that value with a zero of the other sign, as a
+   minimum or a maximum, taking the two zeros for one, and writes it again with
+   a comparison that holds at zero:
+
+   [x > 0.0f ? -0.0f : x] becomes [x >= 0.0f ? -0.0f : x], [-0.0] at [x = +0.0].
+
+   LLVM writes a comparison's [-0.0] as [+0.0], so a selection of [-0.0] can
+   meet it whichever zero the source compares with, and LLVM moves a selection
+   of integers that become floats onto the floats. So under Clang 14 and 15, a
+   kernel's bfloat16 [where (c < x) c x], a selection of storage bits, computed
+   [-0.0] at [c = -0.0] and [x = +0.0]. Which selections meet it depends on the
+   order LLVM rewrites them in, so no source avoids it, and no option turns it
+   off: constrained floating point, which hides the comparison from it, makes
+   every kernel scalar, and Clang 15 crashes on it for halves. Clang 16.0.4,
+   17.0.6 and 19.1.7 and Apple's 17.0.0 choose the right zero. LLVM fixed it
+   (LLVM issue 57357) in August 2022, after LLVM 15 branched. Apple numbers its
+   own releases: its Clang 15 (Xcode 15) is built on LLVM 16, and its 14.0.3 on
+   LLVM 15. A Clang whose preprocessor gives no macros compiles nothing and says
+   why. *)
+let wrong_zeros = function
+  | Some (Llvm r) -> r < 16
+  | Some (Apple r) -> r < 15
+  | None -> false
 
 let waits = Atomic.make 0
 let settle_waits () = Atomic.get waits
@@ -680,33 +727,35 @@ let clang arch =
   let stated () = own_statement cc (compile_args (selected ())) in
   let command ~long =
     let short = cc1 (stated ()) in
-    match no_float16 arch with
-    | Some Before_15 ->
+    match dumped cc (selected ()) with
+    | Ok macros when wrong_zeros (macro_release macros) ->
         Error
           (Printf.sprintf
-             "%s: %s has no _Float16 for %s, with which tolk's kernels convert \
-              halves; Clang 15 is the oldest that has it: install a newer \
-              Clang and name it in CC"
+             "%s: %s chooses the wrong zero for a selection between a value \
+              and a zero (LLVM issue 57357): install Clang 16 or later, or \
+              Apple's 15 or later, and name it in CC"
              cc
-             (version_line (stated ()))
-             arch)
-    | Some Without_sse2 ->
+             (version_line (stated ())))
+    | Ok macros when without_sse2 macros (selected ()) ->
         Error
           (Printf.sprintf
              "%s has no _Float16 for %s, which turns SSE2 off: x86_64's \
               _Float16, with which tolk's kernels convert halves, needs SSE2"
              cc arch)
-    | None ->
-        if keeps_avx512 arch then
-          Error
-            (Printf.sprintf
-               "%s keeps AVX-512 on for %s after -mno-avx512f, and its masked \
-                ternary logic computes wrong values before LLVM 23 (LLVM issue \
-                157929): name a processor or level without the avx10.1 \
-                feature, or use LLVM 22 or later"
-               cc arch)
-        else if long then Result.map without_loop_vectorizer short
-        else short
+    | Error why when Result.is_ok short ->
+        (* A Clang that runs, whose release is unknown, compiles nothing. *)
+        Error
+          (Printf.sprintf "%s: its release is unknown, as its macros are: %s" cc
+             why)
+    | _ when keeps_avx512 arch ->
+        Error
+          (Printf.sprintf
+             "%s keeps AVX-512 on for %s after -mno-avx512f, and its masked \
+              ternary logic computes wrong values before LLVM 23 (LLVM issue \
+              157929): name a processor or level without the avx10.1 feature, \
+              or use LLVM 22 or later"
+             cc arch)
+    | _ -> if long then Result.map without_loop_vectorizer short else short
   in
   (* An object is a function of its source, of the Clang, of the command its
      length selects and of the conversions it defines, so the table names what

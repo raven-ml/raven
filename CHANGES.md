@@ -605,9 +605,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
-- `Rune.jit` on the CPU needs Clang 15 or later: on x86_64, under an older
-  one, the call that compiles raises `Tolk.Renderer.Compiler.Compile_error`
-  naming the Clang found and Clang 15.
+- `Rune.jit` on the CPU needs Clang 16 or later, or Apple's 15 or later: under
+  an older one, the call that compiles raises
+  `Tolk.Renderer.Compiler.Compile_error` naming the Clang found and Clang 16.
 - A compiled program over several devices that declines a check names the
   construct around it, as "a scan's step", "an iterate's stop" or
   "Rune.switch's branch", where it named a loop's step, and one that declines
@@ -1713,16 +1713,18 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Compiler_cpu.clang` raises `Renderer.Compiler.Compile_error` before it
+  compiles anything under a Clang before LLVM 16, or Apple's before 15, naming
+  the Clang and the oldest that compile tolk's kernels. Such a Clang compiles
+  some selections between a value and a zero into the zero of the wrong sign
+  (a bfloat16 `where (c < x) c x` at `c = -0.` gave `-0.` at `x = +0.`), and
+  on x86_64 Clang 14 failed on the kernels' source for want of `_Float16`.
 - Under LLVM 21, on a processor with AVX10.1 such as Granite Rapids,
   `Compiler_cpu.clang` compiles `native` for the processor Clang resolves it
   to, by name and without AVX-512, where every compile raised `Compile_error`.
-- `Compiler_cpu.clang` raises `Renderer.Compiler.Compile_error` before it
-  compiles for x86_64 under a Clang without `_Float16` there, as before
-  Clang 15, naming the Clang it found and the oldest that compiles tolk's
-  kernels, instead of failing on the kernel's source.
 - `Cstyle.clang` renders a vector's square root and multiply-add lane by lane
   under a Clang without `__builtin_elementwise_sqrt` (before 18) or
-  `__builtin_elementwise_fma` (before 17), so Clang 15 to 17 compile them.
+  `__builtin_elementwise_fma` (before 17), so Clang 16 and 17 compile them.
 - On CUDA and NV, the masked upcasts, the upcast loop, the reduce unroll and
   the upcast by 4 take no lanes whose values would pass a thread's 255
   registers (`Renderer.t.thread_registers`), so large elementwise and reduce
