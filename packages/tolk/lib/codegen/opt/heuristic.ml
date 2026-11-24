@@ -1146,7 +1146,9 @@ let upcast_masked k =
       [] (K.upcastable_dims k)
   in
   List.iter
-    (fun axis -> ignore (split k axis 0 Opt.Upcast))
+    (fun axis ->
+      if within_thread ~upcast:(axis, 0) k then
+        ignore (split k axis 0 Opt.Upcast))
     (List.rev to_upcast)
 
 (* A GPU's outputs are its threads: it upcasts while 1024 of them remain. On
@@ -1202,101 +1204,7 @@ let upcast_by_loop k n = holds Sint.(K.upcast_size k <= Int n)
    4 outputs. *)
 let padded_to_four ~waste k axis = pads_to ~waste k axis 4
 
-(* The 32-bit registers a value of [dt] takes in a lane: a boolean one, as a
-   comparison's result held for a selection does, and a weak type, whose width
-   is not committed, one. *)
-let words dt =
-  if Dtype.mem dt Dtype.weaks then 1 else max 1 ((Dtype.itemsize dt + 3) / 4)
-
-(* The lanes of [u]: the product of the upcast ranges it runs inside. *)
-let value_lanes u =
-  let bound r =
-    match vmax r with
-    | `Int n -> Bigint.to_int n + 1
-    | _ -> invalid_arg "Heuristic.live_registers: an upcast range has no bound"
-  in
-  Nodes.fold
-    (fun r n -> if Axis_type.equal (axis_type r) Upcast then n * bound r else n)
-    (ranges u) 1
-
-(* A kernel's nodes in the order the linearizer lists them, where [last.(i)] is
-   the position of the last node that reads node [i] and [holds.(i)] whether
-   node [i] is a value that holds registers. *)
-type values = { order : t array; last : int array; holds : bool array }
-
-let values sink =
-  let order = Array.of_list (Linearizer.linearize sink) in
-  let n = Array.length order in
-  let position = Tbl.create n in
-  Array.iteri (fun i u -> Tbl.replace position u i) order;
-  let last = Array.init n Fun.id and read = Array.make n false in
-  Array.iteri
-    (fun i u ->
-      let elementwise = Op.Set.mem (op u) Op.Set.elementwise in
-      List.iter
-        (fun s ->
-          match Tbl.find_opt position s with
-          | None -> ()
-          | Some j ->
-              last.(j) <- max last.(j) i;
-              if elementwise then read.(j) <- true)
-        (src_without_body u))
-    order;
-  let holds =
-    Array.mapi
-      (fun i u ->
-        match op u with
-        | Op.Const -> false
-        | Op.Load -> true
-        | o -> Op.Set.mem o Op.Set.elementwise || read.(i))
-      order
-  in
-  { order; last; holds }
-
-(* The most registers [v] holds at once, a value taking [weight] of its node
-   from its node to its last reader: a sweep of what each position takes less
-   what it frees. *)
-let peak v weight =
-  let n = Array.length v.order in
-  let change = Array.make (n + 1) 0 in
-  Array.iteri
-    (fun i u ->
-      if v.holds.(i) then begin
-        let w = weight u and free = v.last.(i) + 1 in
-        change.(i) <- change.(i) + w;
-        change.(free) <- change.(free) - w
-      end)
-    v.order;
-  let live = ref 0 and most = ref 0 in
-  for i = 0 to n do
-    live := !live + change.(i);
-    if !live > !most then most := !live
-  done;
-  !most
-
-let live_registers sink =
-  peak (values sink) (fun u -> words (dtype u) * value_lanes u)
-
-(* Whether upcasting [k]'s [axis] by [amount] keeps its values within its
-   renderer's thread registers, where it states them: the count of
-   {!live_registers}, a value that runs inside [axis] taking [amount] times its
-   lanes. The count follows the order the linearizer gives the graph, which a
-   compiler shortens by scheduling: it overstates the registers taken, as a map
-   of 3905 operations counts 258 where ptxas allocates 28, so the bound errs
-   toward fewer lanes. A transcendental is one operation before it is
-   decomposed, which the count understates. *)
-let lanes_fit k =
-  match (K.ren k).thread_registers with
-  | None -> fun _ _ -> true
-  | Some budget ->
-      let v = lazy (values (K.ast k)) in
-      fun axis amount ->
-        let rng = List.nth (K.rngs k) axis in
-        let weight u =
-          let by = if Nodes.mem rng (ranges u) then amount else 1 in
-          words (dtype u) * value_lanes u * by
-        in
-        peak (Lazy.force v) weight <= budget
+let live_registers = live_registers
 
 (* potentially do more upcasts of non reduce axes based on a heuristic; on the
    host, after the contiguous axis, while the accumulators fit. The upcasts
@@ -1309,7 +1217,6 @@ let upcast_more ~waste ~four_first k =
     let upcasted_axis = List.map (fun (axis, _, _) -> axis) upcasted in
     if budgeted k || (enough_work k && holds Sint.(K.upcast_size k < Int 32))
     then begin
-      let lanes_fit = lanes_fit k in
       (* On a GPU, in a kernel that reduces, the loads worth sharing among
          an upcast's lanes are those a reduce repeats: a load whose index
          reads no reduce range, as a bias after a product, is read once an
@@ -1348,9 +1255,8 @@ let upcast_more ~waste ~four_first k =
         if
           List.mem axis upcasted_axis
           || (not (pad || divisible (shape_at k axis) upcast_amount))
-          || (not (fits ~upcast:(axis, upcast_amount) k))
           || (not (List.exists reuses sharers))
-          || not (lanes_fit axis upcast_amount)
+          || not (fits ~upcast:(axis, upcast_amount) k)
         then None
         else
           let stride c =
@@ -1459,7 +1365,7 @@ let upcast_one k =
       if
         K.axes_of k [ Upcast ] = []
         && divisible (shape_at k axis) 4
-        && lanes_fit k axis 4
+        && within_thread ~upcast:(axis, 4) k
       then ignore (split k axis 4 Opt.Upcast)
 
 (* The threads of a workgroup the local splits make at most. *)

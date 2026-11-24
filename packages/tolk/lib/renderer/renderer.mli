@@ -207,11 +207,12 @@ type t = private {
           ({!Coalesce.memory_coalescing}) and, on the [CPU] device, how many
           lanes a kernel's accumulators hold ({!Heuristic}). *)
   thread_registers : int option;
-      (** The 32-bit registers a thread may hold, where the target's
-          specification states it: 255 on CUDA and NV, 256 on RDNA4. A kernel
-          takes no upcast whose lanes would hold more of its values at once
-          ({!Heuristic.live_registers}). [None] where no specification states
-          it, which sets no bound. *)
+      (** The 32-bit registers the heuristic lets a kernel's values hold at
+          once, counted by {!Heuristic.live_registers}, where it has been
+          measured against the target's compiler: 255 on CUDA and NV, a thread's
+          most registers, past which ptxas spills. A kernel takes no upcast or
+          unroll that would pass it ({!Heuristic}). [None], which bounds
+          nothing, elsewhere. *)
   vector_lanes : int;
       (** The most lanes of a vector that arithmetic, logic, comparisons,
           selections and conversions compute at once: an operation of more

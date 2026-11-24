@@ -21,9 +21,21 @@ val budgeted : Postrange.Scheduler.t -> bool
     that knows its vector registers. *)
 
 val fits : ?upcast:int * int -> ?unroll:int * int -> Postrange.Scheduler.t -> bool
-(** [fits ?upcast ?unroll k] is whether [k] stays within the host's budget once
-    [upcast] splits [n] lanes off an axis, given as [(axis, n)], and [unroll]
-    unrolls an axis by [n] lanes, [0] for whole. It is [true] off the host. *)
+(** [fits ?upcast ?unroll k] is whether [k] stays within the host's budget and
+    within its thread's registers ({!within_thread}) once [upcast] splits [n]
+    lanes off an axis, given as [(axis, n)], and [unroll] unrolls an axis by [n]
+    lanes, [0] for whole. The host's budget holds off the host. *)
+
+val within_thread :
+  ?upcast:int * int -> ?unroll:int * int -> Postrange.Scheduler.t -> bool
+(** [within_thread ?upcast ?unroll k] is whether [k]'s {!live_registers}, each
+    value that runs inside the axis [upcast] or [unroll] splits counted in [n]
+    times its lanes ([0] for the axis whole), stay within its renderer's
+    {!Renderer.t.thread_registers}. It is [true], and counts nothing, where the
+    renderer states none. *)
+
+val live_registers : Ops.t -> int
+(** [live_registers sink] is {!Heuristic.live_registers}. *)
 
 val host_elementwise : Postrange.Scheduler.t -> bool
 (** [host_elementwise k] is [true] iff [k] renders for the host and holds no

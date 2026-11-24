@@ -1,4 +1,4 @@
-# tolk D89 D141 D175 D188 D212 D450 D451 D467 D471 D479 D486 D487 D491 D493 D495 D501 golden=21cc96171ae940540502583b017b6879
+# tolk D89 D141 D175 D188 D212 D450 D451 D467 D471 D479 D486 D487 D491 D493 D495 D501 D503 golden=21cc96171ae940540502583b017b6879
 case	kernel	renderer	context	opts
 add_cpu	add	cpu		(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),)
 add_avx2	add	avx2		(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),)
@@ -273,7 +273,7 @@ scores_masked_amd	scores_masked	amd		(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisT
 scores_masked_1536_cpu	scores_masked_1536	cpu		(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(0, AxisType.UPCAST)))
 scores_masked_1536_avx2	scores_masked_1536	avx2		(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(0, AxisType.UPCAST)))
 scores_masked_1536_metal	scores_masked_1536	metal		(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)))
-scores_masked_1536_cuda	scores_masked_1536	cuda		(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(3, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=5, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)))
+scores_masked_1536_cuda	scores_masked_1536	cuda		(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(3, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)))
 scores_masked_1536_amd	scores_masked_1536	amd		(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(3, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=5, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)))
 attention_values_cpu	attention_values	cpu		(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)))
 attention_values_avx2	attention_values	avx2		(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(4, AxisType.UPCAST)))
@@ -508,7 +508,7 @@ stack_8_amd	stack_8	amd		(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST))
 pad_7x7_cpu	pad_7x7	cpu		(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)))
 pad_7x7_avx2	pad_7x7	avx2		(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)))
 pad_7x7_metal	pad_7x7	metal		(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))
-pad_7x7_cuda	pad_7x7	cuda		(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))
+pad_7x7_cuda	pad_7x7	cuda		(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))
 pad_7x7_amd	pad_7x7	amd		(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))
 pad_7x8_cpu	pad_7x8	cpu		(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)))
 pad_7x8_avx2	pad_7x8	avx2		(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)))

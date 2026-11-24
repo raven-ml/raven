@@ -2548,7 +2548,7 @@ let gpu_rows g =
               in
               fun () -> ignore (synced (f cache row)));
         };
-      (* The host's 2^16 binomial counts of 100 trials: one kernel of some
+      (* 2^16 binomial counts of 100 trials on the GPU: one kernel of some
          20000 operations, whose lanes would spill out of a thread's
          registers. *)
       on_gpu g "binomial-float32-64K"

@@ -11,7 +11,7 @@ module K = Postrange.Scheduler
 
    renderers.tolk keeps its own table: it adds the columns [registers],
    [per_byte_first] and [thread_registers], facts of the host's and the GPUs'
-   heuristics (D89, D187, D505) that upstream's renderers do not have. *)
+   heuristics (D89, D187, D503) that upstream's renderers do not have. *)
 
 let renderers =
   List.map
@@ -3700,50 +3700,155 @@ let wide n x =
 (* The registers a kernel's values hold at once, counted by hand. In the map of
    [x (x + 1)], [x], [x + 1] and their product hold them at the product; in
    [wide n], [x] and the [n] products at [t_n], two registers each in float64
-   and four lanes each on an upcast of 4. *)
+   and four lanes each on an upcast of 4. In [where (x < 1) x (x x)] of float64,
+   [x], the boolean, [x x] and the selection hold 2 + 1 + 2 + 2 at the
+   selection. Reading [x[2 i]], the weak range [i] and [2 i] hold one each at
+   the product, and the loaded value, which only the store reads, none. *)
 let live_registers =
-  cases "live registers are the most that values hold at once"
-    ~id:(fun (name, _, _) -> name)
+  group "live registers"
     [
-      ( "x (x + 1) of float32",
-        (fun () -> map Dtype.Float32 64 (fun x -> Ops.O.(x * (x + float 1.)))),
-        3 );
-      ("wide 4 of float32", (fun () -> map Dtype.Float32 64 (wide 4)), 5);
-      ("wide 4 of float64", (fun () -> map Dtype.Float64 64 (wide 4)), 10);
-      ( "wide 4 of float32 upcast by 4",
-        (fun () -> map ~axis:Upcast Dtype.Float32 4 (wide 4)),
-        20 );
+      cases "they are the most that values hold at once"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ( "x (x + 1) of float32",
+            (fun () ->
+              map Dtype.Float32 64 (fun x -> Ops.O.(x * (x + float 1.)))),
+            3 );
+          ("wide 4 of float32", (fun () -> map Dtype.Float32 64 (wide 4)), 5);
+          ("wide 4 of float64", (fun () -> map Dtype.Float64 64 (wide 4)), 10);
+          ( "wide 4 of float32 upcast by 4",
+            (fun () -> map ~axis:Upcast Dtype.Float32 4 (wide 4)),
+            20 );
+          ( "a selection of float64",
+            (fun () ->
+              map Dtype.Float64 64 (fun x ->
+                  Ops.O.(Ops.where (x < float 1.) x (x * x)))),
+            7 );
+          ( "a strided load",
+            (fun () ->
+              let param slot size =
+                Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32
+              in
+              let out = param 0 64 and xs = param 1 128 in
+              let i = Ops.range ~axis_type:Weak (Ops.Int 64) [ 0 ] in
+              let v = Ops.index xs [ Ops.O.(i * int 2) ] in
+              Ops.sink ~kernel:(Ops.kernel_info ())
+                [ Ops.end_ (Ops.store (Ops.index out [ i ]) v) [ i ] ]),
+            2 );
+        ]
+        (fun (_, sink, expected) ->
+          equal int expected (Heuristic.live_registers (sink ())));
+      test "they refuse an upcast range of a variable bound" (fun () ->
+          let n = Ops.variable "n" (`Int Bigint.one) (`Int (Bigint.of_int 8)) in
+          let i = Ops.range ~axis_type:Upcast (Ops.Sym n) [ 0 ] in
+          let param slot =
+            Shape.param ~shape:[ Ops.Int 8 ] slot Dtype.Float32
+          in
+          let out = param 0 and xs = param 1 in
+          let v = Ops.O.(Ops.index xs [ i ] * Ops.index xs [ i ]) in
+          let sink =
+            Ops.sink ~kernel:(Ops.kernel_info ())
+              [ Ops.end_ (Ops.store (Ops.index out [ i ]) v) [ i ] ]
+          in
+          raises
+            (Invalid_argument
+               "Heuristic.live_registers: an upcast range's bound") (fun () ->
+              Heuristic.live_registers sink));
     ]
-    (fun (_, sink, expected) ->
-      equal int expected (Heuristic.live_registers (sink ())))
 
-(* A map upcasts only while its lanes fit the renderer's thread registers: the
-   map [wide 62] holds 63 registers at once, 252 in 4 lanes, within CUDA's 255,
-   and [wide 63] 64, 256 in 4 lanes, past them. Metal states none and upcasts
-   both. *)
+(* The upcasts of [k] once optimised on [t]: each split's axis and amount, [0]
+   for an axis taken whole. *)
+let upcasts_on t k =
+  let ren =
+    Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+  in
+  let k = K.v k ren in
+  K.convert_loop_to_global k;
+  List.filter_map
+    (function
+      | Opt.Split { axis; amount; target = Opt.Upcast; _ } -> Some (axis, amount)
+      | _ -> None)
+    (K.applied_opts (Heuristic.hand_coded_optimizations k))
+
+(* [out[i, j] = wide n (x[i]) y[j]] over 256 by 256 float32 values: [y] does not
+   vary along [i], nor [wide n] along [j]. *)
+let outer n =
+  let open Ops.O in
+  let param slot size =
+    Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32
+  in
+  let out = param 0 65536 and xs = param 1 256 and ys = param 2 256 in
+  let i = Ops.range ~axis_type:Weak (Ops.Int 256) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Ops.Int 256) [ 1 ] in
+  let v = wide n (Ops.index xs [ i ]) * Ops.index ys [ j ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ (i * int 256) + j ]) v) [ i; j ] ]
+
+(* [out[i] = sum_k wide n (x[8 i + k])] over 65536 outputs of float32. *)
+let summed n =
+  let open Ops.O in
+  let param slot size =
+    Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32
+  in
+  let out = param 0 65536 and xs = param 1 524288 in
+  let i = Ops.range ~axis_type:Weak (Ops.Int 65536) [ 0 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int 8) [ 1 ] in
+  let s = Ops.reduce (wide n (Ops.index xs [ (i * int 8) + k ])) Op.Add [ k ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) s) [ i ] ]
+
+(* [out[i, j] = where (j < 3) (wide n (x[4 i + j])) 0] over 16384 by 4 float32
+   values: [j] is masked. *)
+let masked n =
+  let open Ops.O in
+  let param slot = Shape.param ~shape:[ Ops.Int 65536 ] slot Dtype.Float32 in
+  let out = param 0 and xs = param 1 in
+  let i = Ops.range ~axis_type:Weak (Ops.Int 16384) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Ops.Int 4) [ 1 ] in
+  let at = (i * int 4) + j in
+  let v = Ops.where (j < int 3) (wide n (Ops.index xs [ at ])) (float 0.) in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ at ]) v) [ i; j ] ]
+
+(* Each rule that makes lanes takes them only while the kernel's values fit the
+   renderer's thread registers, about [n + 1] values of [wide n] in each lane:
+   on CUDA's 255, 4 lanes of [wide 62] fit (252) and of [wide 63] do not (256).
+   The upcast loop takes [outer 62]'s [j] by 4, its [y] and products in 4 lanes,
+   and not its [i], which [wide 62] runs in. It takes [summed n]'s [i] by 4, and
+   the unroll then its 8 terms whole, 32 lanes, for [wide 2] and not for [wide
+   20] or [wide 30]; [summed 62] and [summed 70] take neither. The masked upcast
+   takes [masked 20]'s [j] whole, and nothing takes [masked 70]'s. Metal states
+   none, and takes every split. *)
 let lanes_within_registers =
-  cases "a map upcasts only while its lanes fit the thread registers"
-    ~id:(fun (t, n, _) -> Printf.sprintf "%d products on %s" n t)
+  let cuda = "CUDA:CUDA:sm_89" and metal = "METAL:METAL:Apple9" in
+  cases "a split makes lanes only while they fit the thread registers"
+    ~id:(fun (name, t, _, _) -> Printf.sprintf "%s on %s" name t)
     [
-      ("CUDA:CUDA:sm_89", 62, [ 4 ]);
-      ("CUDA:CUDA:sm_89", 63, []);
-      ("METAL:METAL:Apple9", 63, [ 4 ]);
+      ( "map wide 62",
+        cuda,
+        (fun () -> map Dtype.Float32 65536 (wide 62)),
+        [ (0, 4) ] );
+      ("map wide 63", cuda, (fun () -> map Dtype.Float32 65536 (wide 63)), []);
+      ( "map wide 63",
+        metal,
+        (fun () -> map Dtype.Float32 65536 (wide 63)),
+        [ (0, 4) ] );
+      ("outer 62", cuda, (fun () -> outer 62), [ (1, 4) ]);
+      ("outer 62", metal, (fun () -> outer 62), [ (1, 4); (0, 4) ]);
+      ("summed 2", cuda, (fun () -> summed 2), [ (0, 4); (2, 0) ]);
+      ("summed 20", cuda, (fun () -> summed 20), [ (0, 4) ]);
+      ("summed 30", cuda, (fun () -> summed 30), [ (0, 4) ]);
+      ("summed 30", metal, (fun () -> summed 30), [ (0, 4); (2, 0) ]);
+      ("summed 62", cuda, (fun () -> summed 62), []);
+      ("summed 62", metal, (fun () -> summed 62), [ (0, 4); (2, 0) ]);
+      ("summed 70", cuda, (fun () -> summed 70), []);
+      ("summed 70", metal, (fun () -> summed 70), [ (0, 4); (2, 0) ]);
+      ("masked 20", cuda, (fun () -> masked 20), [ (1, 0) ]);
+      ("masked 70", cuda, (fun () -> masked 70), []);
+      ("masked 70", metal, (fun () -> masked 70), [ (1, 0) ]);
     ]
-    (fun (t, n, expected) ->
-      let ren =
-        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
-      in
-      let k = K.v (map Dtype.Float32 65536 (wide n)) ren in
-      K.convert_loop_to_global k;
-      let o = Heuristic.hand_coded_optimizations k in
-      let upcasts =
-        List.filter_map
-          (function
-            | Opt.Split { amount; target = Opt.Upcast; _ } -> Some amount
-            | _ -> None)
-          (K.applied_opts o)
-      in
-      equal (list int) expected upcasts)
+    (fun (_, t, k, expected) ->
+      equal (list (pair int int)) expected (upcasts_on t (k ())))
 
 (* A contraction in registers whose operands are both laid out along its
    reduce, as [x @ matrix_transpose w] reads a matrix stored [outputs;

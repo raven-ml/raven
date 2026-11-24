@@ -253,7 +253,7 @@ let lanes_after ?upcast ?unroll k =
    applied: its accumulators take at most half the registers,
    a conversion takes at most [converted_lanes] and an iteration at most
    [iteration_lanes]; always off the host. *)
-let fits ?upcast ?unroll k =
+let within_file ?upcast ?unroll k =
   match registers k with
   | None -> true
   | Some file -> (
@@ -263,6 +263,136 @@ let fits ?upcast ?unroll k =
       match lanes_after ?upcast ?unroll k with
       | Some n -> n <= iteration_lanes
       | None -> false)
+
+(* A thread's registers
+
+   On a target that states a thread's registers
+   ({!Renderer.t.thread_registers}), an upcast or an unroll is taken only where
+   the kernel's values, each in the lanes it then has, hold at most that many
+   32-bit registers at once, counted in the order the linearizer lists the
+   kernel ({!live_registers}). A compiler schedules the values otherwise, so the
+   count is no register count: it overstates where the compiler shortens what is
+   live, as a map of 3905 operations counts 258 where ptxas allocates 28, and
+   understates a transcendental, one operation before it is decomposed. The
+   bound is a threshold measured against ptxas's spills (D503). *)
+
+(* The 32-bit registers a value of [dt] takes in a lane: a boolean one, as a
+   comparison's result held for a selection does, and a weak type, whose width
+   is not committed, one. *)
+let words dt =
+  if Dtype.mem dt Dtype.weaks then 1 else max 1 ((Dtype.itemsize dt + 3) / 4)
+
+(* The lanes of [u]: the product of the bounds of the upcast ranges it runs
+   inside. *)
+let value_lanes u =
+  let bound r =
+    match src r with
+    | b :: _ when is_literal b -> (
+        match value b with
+        | #Dtype.value as v -> Dtype.Value.to_int v
+        | `Invalid -> 1)
+    | _ -> invalid_arg "Heuristic.live_registers: an upcast range's bound"
+  in
+  Nodes.fold
+    (fun r n -> if Axis_type.equal (axis_type r) Upcast then n * bound r else n)
+    (ranges u) 1
+
+(* A kernel's nodes in the order the linearizer lists them, where [last.(i)] is
+   the position of the last node that reads node [i] and [holds.(i)] whether
+   node [i] is a value that holds registers. *)
+type values = { order : t array; last : int array; holds : bool array }
+
+let values sink =
+  let order = Array.of_list (Linearizer.linearize sink) in
+  let n = Array.length order in
+  let position = Tbl.create n in
+  Array.iteri (fun i u -> Tbl.replace position u i) order;
+  let last = Array.init n Fun.id and read = Array.make n false in
+  Array.iteri
+    (fun i u ->
+      let elementwise = Op.Set.mem (op u) Op.Set.elementwise in
+      List.iter
+        (fun s ->
+          match Tbl.find_opt position s with
+          | None -> ()
+          | Some j ->
+              last.(j) <- max last.(j) i;
+              if elementwise then read.(j) <- true)
+        (src_without_body u))
+    order;
+  let holds =
+    Array.mapi
+      (fun i u ->
+        match op u with
+        | Op.Const -> false
+        | Op.Load -> true
+        | o -> Op.Set.mem o Op.Set.elementwise || read.(i))
+      order
+  in
+  { order; last; holds }
+
+(* The most registers [v] holds at once, a value taking [weight] of its node
+   from its node to its last reader: a sweep of what each position takes less
+   what it frees. *)
+let peak v weight =
+  let n = Array.length v.order in
+  let change = Array.make (n + 1) 0 in
+  Array.iteri
+    (fun i u ->
+      if v.holds.(i) then begin
+        let w = weight u and free = v.last.(i) + 1 in
+        change.(i) <- change.(i) + w;
+        change.(free) <- change.(free) - w
+      end)
+    v.order;
+  let live = ref 0 and most = ref 0 in
+  for i = 0 to n do
+    live := !live + change.(i);
+    if !live > !most then most := !live
+  done;
+  !most
+
+let live_registers sink =
+  peak (values sink) (fun u -> words (dtype u) * value_lanes u)
+
+(* The values of the kernel last asked about in this domain: the heuristic asks
+   of one kernel for each candidate, and linearizing it is most of the cost. *)
+let last_values = Domain.DLS.new_key (fun () -> ref None)
+
+let values_of k =
+  let last = Domain.DLS.get last_values and sink = K.ast k in
+  match !last with
+  | Some (s, v) when s == sink -> v
+  | _ ->
+      let v = values sink in
+      last := Some (sink, v);
+      v
+
+(* Whether [k]'s values stay within its renderer's thread registers once
+   [upcast] or [unroll] splits an axis into lanes, the axis whole where the
+   amount is [0]; always where it states none, which counts nothing. *)
+let within_thread ?upcast ?unroll k =
+  match (K.ren k).thread_registers with
+  | None -> true
+  | Some budget ->
+      let grown (axis, n) =
+        let n = if n > 0 then n else Bigint.to_int (size_at k axis) in
+        (List.nth (K.rngs k) axis, n)
+      in
+      let splits = List.map grown (List.filter_map Fun.id [ upcast; unroll ]) in
+      let weight u =
+        let inside = ranges u in
+        List.fold_left
+          (fun w (r, n) -> if Nodes.mem r inside then w * n else w)
+          (words (dtype u) * value_lanes u)
+          splits
+      in
+      peak (values_of k) weight <= budget
+
+(* Whether [k] stays within the host's budget and its thread's registers once
+   [upcast] and [unroll] are applied. *)
+let fits ?upcast ?unroll k =
+  within_file ?upcast ?unroll k && within_thread ?upcast ?unroll k
 
 (* Whether [k] sums products. *)
 let sums_products k =

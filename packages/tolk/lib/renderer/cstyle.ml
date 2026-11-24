@@ -2855,9 +2855,12 @@ let sm89_in_flight = 18304
    hold other caches and take the same programs ({!Renderer.t.l2}). *)
 let sm89_l2 = 64 * 1024 * 1024
 
-(* "Maximum number of 32-bit registers per thread": 255 on every compute
-   capability (the CUDA guide's compute capabilities, technical
-   specifications). *)
+(* The registers the heuristic lets a thread's values hold
+   ({!Renderer.t.thread_registers}): a thread holds at most 255 32-bit registers
+   on every compute capability ("Maximum number of 32-bit registers per thread",
+   the CUDA guide's technical specifications), and past it ptxas spills.
+   Measured on sm_89, every kernel ptxas compiled without spilling counted at
+   most 261, every spilling one 416 or more (D503). *)
 let cuda_thread_registers = 255
 
 let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
@@ -3381,8 +3384,6 @@ let hip_kernel arch tensor_cores ?(prefix = []) l ~name kernel bufs uops =
   (* Its own definitions first, then the functions it calls. *)
   render_kernel l ~prefix:(defines @ prefix) ~name kernel bufs uops
 
-let rdna4_vgprs = 256
-
 let hip_with compiler (target : Helpers.Target.t) =
   (* gfx942 => MI300, gfx1100 => RX 7900, gfx1201 => RX 9700 *)
   let arch = target.arch in
@@ -3400,17 +3401,10 @@ let hip_with compiler (target : Helpers.Target.t) =
   let simd_threads =
     if String.starts_with ~prefix:"gfx9" arch then 64 else 32
   in
-  (* An RDNA4 instruction names a VGPR in an 8-bit field, v0 to v255 (AMD's
-     machine-readable RDNA4 ISA of 2026-02-20, operand type OPR_VGPR), so a lane
-     holds at most 256 registers. Unverified on hardware: no RDNA4 run has shown
-     where its kernels spill. Other AMD parts state none here. *)
-  let thread_registers =
-    if String.starts_with ~prefix:"gfx12" arch then Some rdna4_vgprs else None
-  in
   (* the global limit is only really needed on gfx12, though gfx11 reports the
      same *)
   Renderer.v ~name:"HIPRenderer" ~half8:true ~shared_max:65536
-    ~local_threads_max:1024 ~simd_threads ?thread_registers
+    ~local_threads_max:1024 ~simd_threads
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~global_prod_max:[ 0xFFFFFFFF; 0xFFFFFFFF; 0xFFFFFFFF ]
     ~tensor_cores ~extra_matcher:(hip_extra_matcher arch)

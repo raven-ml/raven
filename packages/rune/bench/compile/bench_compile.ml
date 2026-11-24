@@ -550,9 +550,9 @@ let cuda_sines () =
         (fun x -> List.fold_left (fun x _ -> Nx.sin x) x (List.init 8 Fun.id))
         x
 
-(* The host's 1024 float32 binomial counts on CUDA's first GPU: one kernel of
-   some 20000 operations, whose lanes would spill out of a thread's registers,
-   which NVRTC compiles. *)
+(* 1024 float32 binomial counts on CUDA's first GPU: one kernel of some 20000
+   operations, which NVRTC compiles, whose lanes would spill out of a thread's
+   registers. *)
 let cuda_binomial () =
   match Rig_gpus.open_ "CUDA" with
   | Error e -> failwith e
