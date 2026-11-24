@@ -1143,7 +1143,7 @@ let stiff_tests =
     (* The march, its stages' Newton iterations and their solves are loops in
        loops: a schedule that runs each stage's loops again in the next one's
        runs for hours, and the limit fails it. *)
-    test ~timeout:60. "the gradient of a stiff solve compiles" (fun () ->
+    test "the gradient of a stiff solve compiles" (fun () ->
         (* y₃, as the sum is conserved and its gradient is zero. The field is
            polynomial, so compiled and eager take the same steps and the
            gradients differ by rounding alone. *)

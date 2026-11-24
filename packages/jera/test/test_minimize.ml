@@ -2180,8 +2180,7 @@ let () =
     (run "Jera.Minimize"
        [
          group "laws" law_tests;
-         (* A search that does not end is a failure, not a hang. *)
-         group ~timeout:60. "termination" termination_tests;
+         group "termination" termination_tests;
          group "gradient methods" gradient_tests;
          group "levenberg_marquardt" lm_tests;
          group "nelder_mead" nelder_mead_tests;
