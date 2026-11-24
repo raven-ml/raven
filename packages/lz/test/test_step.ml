@@ -679,7 +679,7 @@ let reentry fmt =
    step changes nothing: the held step and a later one decode their
    streams. *)
 let other_domain fmt =
-  test ~timeout:10. fmt.name (fun () ->
+  test fmt.name (fun () ->
       let g = small fmt in
       let d = fmt.make () in
       let entered = Atomic.make false and tried = Atomic.make false in
@@ -944,7 +944,7 @@ let encoder_reentry enc =
    The refused step changes nothing: the held step writes the stream of its
    input, and a later step writes the same stream again. *)
 let encoder_other_domain enc =
-  test ~timeout:10. enc.label (fun () ->
+  test enc.label (fun () ->
       let input = Lz_support.corpus Text 1000 in
       let n = String.length input in
       let e = enc.encoder () in
