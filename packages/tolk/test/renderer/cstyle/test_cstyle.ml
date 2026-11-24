@@ -231,11 +231,22 @@ let declarations =
       declared "supported" (fun r cell ->
           equal string cell (joined " " Dtype.pp (Renderer.supported_dtypes r)));
       declared "cachekey" (fun r cell ->
-          (* tinygrad's table, then the digest of the toolchain and its
-             options. *)
+          (* tinygrad's table, then the digest of the toolchain and its options.
+             tinygrad's CPU table names Clang, where tolk's names the Clang that
+             CC runs, as clang-15 for CC=clang-15 (D63). *)
           let r = compiling r.target in
           let table = Option.get (Renderer.Compiler.cachekey r.compiler) in
-          let prefix = cell ^ "_" in
+          let named =
+            let clang = "compile_clang_" in
+            if r.target.renderer <> "CLANG" then cell
+            else if not (String.starts_with ~prefix:clang cell) then
+              failwith ("a CPU table not named after Clang: " ^ cell)
+            else
+              let n = String.length clang in
+              "compile_" ^ Setting.value Setting.cc ^ "_"
+              ^ String.sub cell n (String.length cell - n)
+          in
+          let prefix = named ^ "_" in
           let n = Int.min (String.length prefix) (String.length table) in
           equal string ~msg:"the name" prefix (String.sub table 0 n);
           equal int ~msg:"the digest's length" 32 (String.length table - n));
