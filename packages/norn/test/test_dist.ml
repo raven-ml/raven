@@ -795,17 +795,22 @@ let bijectors =
             (fun x -> x.(0) > 0. && x.(0) < x.(1) && x.(1) < x.(2))
             x);
       test "a transform's support is its bijector's image" (fun () ->
-          let pp d = Format.asprintf "%a" Norn.Support.pp (D.support d) in
-          let t =
-            D.transform Norn.Bij.exp (D.uniform ~low:(f64 0.) ~high:(f64 1.))
+          let support =
+            Testable.make ~pp:Norn.Support.pp ~equal:Norn.Support.equal
           in
-          equal string "(1, 2.718281828459045)" (pp t);
-          equal string "(0, inf)"
-            (pp
+          (* The bound is the C library's exp at 1, which FreeBSD's rounds one
+             ulp from glibc's. *)
+          equal support
+            (Norn.Support.Interval (1., Float.exp 1.))
+            (D.support
+               (D.transform Norn.Bij.exp
+                  (D.uniform ~low:(f64 0.) ~high:(f64 1.))));
+          equal support (Norn.Support.Greater 0.)
+            (D.support
                (D.transform Norn.Bij.exp
                   (D.normal ~loc:(f64 0.) ~scale:(f64 1.))));
-          equal string "simplex of 3"
-            (pp
+          equal support (Norn.Support.Simplex 3)
+            (D.support
                (D.transform Norn.Bij.simplex
                   (D.iid [| 2 |] (D.normal ~loc:(f64 0.) ~scale:(f64 1.))))));
       test "a per-element interval's image holds every element's" (fun () ->
