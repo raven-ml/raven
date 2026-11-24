@@ -130,11 +130,6 @@ val same_bytes : Nx_array.any -> Nx_array.any -> bool
 (** [same_bytes x y] is [true] iff [x] and [y], of one dtype and shape,
     have the same {!elements}. *)
 
-val x86_64 : bool
-(** [x86_64] is [true] iff nx.cpu is compiled for x86-64, whose
-    crossovers, as linear algebra's two-stage reductions', differ from
-    arm64's. *)
-
 (** {1:devices Devices} *)
 
 val on : backend -> ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t

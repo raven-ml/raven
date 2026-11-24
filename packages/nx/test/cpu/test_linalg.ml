@@ -470,12 +470,15 @@ let cpu (b : Support.backend) =
           prop "eigh's eigenvalues within γ(16n) ‖a‖₂" case
             (run (law_eigh_spectrum b));
           test "eigh's eigenvalues at large orders" test_eigh_large;
+          test "eigh's eigenvalues through the two-stage reduction"
+            test_eigh_two_stage;
           test "eigh's eigenvalues of a secular equation with a root beside \
                 its pole"
             test_eigh_secular;
           prop "svd's values within γ(16 max (m, n) + 100) ‖a‖₂" case
             (run (law_svd_spectrum b));
           test "svd's values at large orders" test_svd_large;
+          test "svd's values through the two-stage reduction" test_svd_two_stage;
           prop "eig's eigenvalues of a normal matrix within γ(16n) ‖a‖_F" case
             (run (law_eig_spectrum b));
           test "eig's eigenvalues of a graded matrix, balanced"

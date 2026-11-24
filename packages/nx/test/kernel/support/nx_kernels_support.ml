@@ -309,10 +309,6 @@ let same_bytes (Nx_array.Any x) (Nx_array.Any y) =
     Rig.Buffer.read (A.buffer x) Bigarray.char (fun a ->
         Rig.Buffer.read (A.buffer y) Bigarray.char (fun b -> a = b))
 
-external x86_64 : unit -> bool = "nx_kernels_support_x86_64" [@@noalloc]
-
-let x86_64 = x86_64 ()
-
 (* Guard pages *)
 
 type side = Before | After

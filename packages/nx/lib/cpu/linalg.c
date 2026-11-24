@@ -239,9 +239,19 @@ static int64_t hemv_bound(int64_t h, int64_t blocks, int64_t b) {
 #define KD_VALUES 16
 #define KD 32
 
+/* The least order from which eigh and svd take the two stages, with or
+   without vectors and of any dtype, while with_two_stage's function runs;
+   0 outside it. Scratch sizes hold from TWO_STAGE_LEAST on, the least
+   crossover of either. */
+#define TWO_STAGE_LEAST 128
+#define STRING_(x) #x
+#define STRING(x) STRING_(x)
+static int64_t two_stage_from;
+
 /* Whether eigh of order [n] takes the two stages, with or without
    [vectors], of a complex dtype under [cplx]. */
 static int eigh_two(int64_t n, int vectors, int cplx) {
+  if (two_stage_from > 0) return n >= two_stage_from;
   if (!vectors) return n >= EIGH_VALUES;
   return n >= (cplx ? EIGH_COMPLEX : EIGH_VECTORS);
 }
@@ -322,6 +332,7 @@ static int64_t eigh_slots(int64_t n, int vectors, int cplx) {
 /* Whether svd of order [k] takes the two stages, with or without
    [vectors], of a complex dtype under [cplx]. */
 static int svd_two(int64_t k, int vectors, int cplx) {
+  if (two_stage_from > 0) return k >= two_stage_from;
   if (!vectors) return k >= (cplx ? SVD_COMPLEX_VALUES : SVD_VALUES);
   return k >= (cplx ? SVD_COMPLEX : SVD_VECTORS);
 }
@@ -1113,6 +1124,18 @@ value nx_cpu_solve_triangular_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_solve_triangular(argv[0], argv[1], argv[2], argv[3], argv[4],
                                  argv[5]);
+}
+
+/* Sets two_stage_from to [n], 0 or from TWO_STAGE_LEAST on, and answers its
+   value before: with_two_stage's scope. */
+value nx_cpu_swap_two_stage(value n) {
+  int64_t from = Long_val(n);
+  if (from != 0 && from < TWO_STAGE_LEAST)
+    caml_invalid_argument("Nx_cpu.with_two_stage: an order below "
+                          STRING(TWO_STAGE_LEAST));
+  value was = Val_long(two_stage_from);
+  two_stage_from = from;
+  return was;
 }
 
 value nx_cpu_eigh(value w, value v, value a) {

@@ -565,6 +565,14 @@ val with_cache : int -> (unit -> 'a) -> 'a
     [f] runs as if the host's largest cache held [n] bytes. The bits are
     the same. For tests, while no other domain calls nx.cpu. *)
 
+val with_two_stage : int -> (unit -> 'a) -> 'a
+(** [with_two_stage n f] is [f ()], every [eigh] and [svd] while [f] runs taking
+    the two-stage reduction from order [n], an [svd] by the lesser extent, with
+    or without vectors and at every dtype, and the one-stage reduction below it.
+    The bits are those of the reduction taken. [with_two_stage 0 f] runs [f] at
+    the default crossovers. Raises [Invalid_argument] where [n] is negative or
+    below 128 but not 0. For tests, while no other domain calls nx.cpu. *)
+
 val floor_holds : ecx1:int -> ebx7:int -> xcr0:int -> bool
 (** [floor_holds ~ecx1 ~ebx7 ~xcr0] is [true] iff a processor whose
     CPUID.01H:ECX is [ecx1] and CPUID.07H.00H:EBX [ebx7], under XCR0

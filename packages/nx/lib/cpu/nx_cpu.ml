@@ -589,6 +589,14 @@ let with_cache n f =
   let was = swap_llc n in
   Fun.protect ~finally:(fun () -> ignore (swap_llc was : int)) f
 
+(* The two-stage reductions (linalg.c) *)
+
+external swap_two_stage : int -> int = "nx_cpu_swap_two_stage"
+
+let with_two_stage n f =
+  let was = swap_two_stage n in
+  Fun.protect ~finally:(fun () -> ignore (swap_two_stage was : int)) f
+
 (* Attention *)
 
 external attention_c :

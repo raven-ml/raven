@@ -13,15 +13,6 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
-value nx_kernels_support_x86_64(value unit) {
-  (void)unit;
-#if defined(__x86_64__)
-  return Val_true;
-#else
-  return Val_false;
-#endif
-}
-
 /* Guard pages */
 
 #if defined(_WIN32)

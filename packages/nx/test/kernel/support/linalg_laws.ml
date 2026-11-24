@@ -772,37 +772,52 @@ let clustered r j =
 
 let graded r j = Float.copy_sign (Float.ldexp 1. (-(j mod 61))) (uniform r)
 
-(* One order past each crossover to nx.cpu's two-stage reduction, where
-   the bounds hold as below it: on x86-64 from 128, for values alone of
-   either kind and real vectors; on arm64 from 512 for values alone, 1024
-   for complex vectors and 2048 for real ones, which x86-64 is past at
-   129, so they run on arm64 alone. Values alone are checked at 513 and
-   below, the larger orders' vectors alone. The relations are checked
-   whole at 129 and on sampled elements past it. The bits agree whatever
-   the threads and layout up to 1025: in a batch below it, and of one
-   matrix at 1025, where a call on one thread takes most of the test's
-   time. *)
+(* Of each [(n, dt, λ, vectors, alone, bits)] of [orders], spectral's a of order
+   [n] meets check_spectrum, its reflectors drawn from [r]. *)
+let check_orders (b : Support.backend) r orders =
+  List.iter
+    (fun (n, dt, lambda, vectors, alone, bits) ->
+      let l = Array.init n lambda and u = reflector_draws r dt n in
+      check_spectrum b ~vectors ~alone ?bits dt ~k:(n / 3) ~u l)
+    orders
+
+(* One order past each crossover to x86-64's nx.cpu's two-stage reduction, from
+   128 for values alone of either kind and for real vectors, where the bounds
+   hold as below it; on arm64 the order 129 takes the one-stage reduction. The
+   relations are checked whole, and the bits agree whatever the threads and
+   layout, in a batch. *)
 let test_eigh_large (b : Support.backend) () =
   let r = Random.State.make [| 7 |] in
-  let orders =
+  check_orders b r
     D.
       [
         (129, Any Float64, graded r, Checked, true, Some Batch);
         (513, Any Complex128, repeating r, Unchecked, true, Some Batch);
       ]
-  and arm64 =
-    D.
-      [
-        (513, Any Float64, repeating r, Unchecked, true, Some Batch);
-        (1025, Any Complex64, clustered r, Sampled 256, false, Some One_matrix);
-        (2049, Any Float64, repeating r, Sampled 256, false, None);
-      ]
-  in
-  List.iter
-    (fun (n, dt, lambda, vectors, alone, bits) ->
-      let l = Array.init n lambda and u = reflector_draws r dt n in
-      check_spectrum b ~vectors ~alone ?bits dt ~k:(n / 3) ~u l)
-    (if Support.x86_64 then orders else orders @ arm64)
+
+(* Under Nx_cpu.with_two_stage 128, the orders above, and the cases that arm64's
+   crossovers reach only at larger orders: float64 values alone that repeat,
+   from 512 there; complex vectors, from 1024, which x86-64 never takes by
+   default; and real vectors, from 2048, at an order whose n − 1 sweeps leave
+   Q2's last block of sweeps short. Past 129 the relations are checked on
+   sampled elements. The bits agree whatever the threads and layout: of one
+   matrix of complex64, and in a batch otherwise. *)
+let test_eigh_two_stage (b : Support.backend) () =
+  Nx_cpu.with_two_stage 128 (fun () ->
+      test_eigh_large b ();
+      let r = Random.State.make [| 8 |] in
+      check_orders b r
+        D.
+          [
+            (257, Any Float64, repeating r, Unchecked, true, Some Batch);
+            ( 257,
+              Any Complex64,
+              clustered r,
+              Sampled 256,
+              false,
+              Some One_matrix );
+            (200, Any Float64, repeating r, Sampled 256, false, Some Batch);
+          ])
 
 (* svd's bound: γ(16 max (m, n) + 100), the 100 for the bidiagonal
    iteration's test of convergence, which drops an e below
@@ -1220,35 +1235,47 @@ let check_singular (b : Support.backend) ?(vectors = Checked) ?bits dt ~m ~n xa
         agree (Svd (Some Reduced)) y)
       (run b (Svd (Some Reduced)) [| xa |])
 
-(* One shape past each crossover to nx.cpu's two-stage reduction, by the
-   lesser extent, where the bounds hold as below it: on x86-64 from 128
-   for values alone of either kind and 256 for real vectors; on arm64 from
-   128 for complex values alone, 192 for real ones, 512 for complex
-   vectors and 1024 for real ones, which x86-64 is past at 257, so they
-   run on arm64 alone. The relations are checked whole at 129 and on
-   sampled elements past it, and the bits agree whatever the threads and
-   layout up to 257. *)
-let test_svd_large (b : Support.backend) () =
-  let r = Random.State.make [| 11 |] in
-  let shapes =
-    D.
-      [
-        (129, 140, Any Complex128, graded r, Checked, Some Batch);
-        (257, 260, Any Float64, clustered r, Sampled 256, Some Batch);
-      ]
-  and arm64 =
-    D.
-      [
-        (513, 520, Any Complex128, repeating r, Sampled 256, None);
-        (1025, 1030, Any Float64, graded r, Sampled 256, None);
-      ]
-  in
+(* Of each [(m, n, dt, σ, vectors, bits)] of [shapes], singular's a of [m] × [n]
+   meets check_singular, its factors drawn from [r]. *)
+let check_shapes (b : Support.backend) r shapes =
   List.iter
     (fun (m, n, dt, sigma, vectors, bits) ->
       let sigma = Array.init (min m n) sigma in
       let x = singular dt ~m ~n r sigma in
       check_singular b ~vectors ?bits dt ~m ~n x sigma)
-    (if Support.x86_64 then shapes else shapes @ arm64)
+    shapes
+
+(* One shape past each crossover to x86-64's nx.cpu's two-stage reduction, by
+   the lesser extent, where the bounds hold as below it: from 128 for values
+   alone of either kind and 256 for real vectors; complex vectors take the
+   one-stage reduction, as real vectors do on arm64. The relations are checked
+   whole at 129 and on sampled elements past it, and the bits agree whatever the
+   threads and layout, in a batch. *)
+let test_svd_large (b : Support.backend) () =
+  let r = Random.State.make [| 11 |] in
+  check_shapes b r
+    D.
+      [
+        (129, 140, Any Complex128, graded r, Checked, Some Batch);
+        (257, 260, Any Float64, clustered r, Sampled 256, Some Batch);
+      ]
+
+(* Under Nx_cpu.with_two_stage 128, the shapes above, and the cases that arm64's
+   crossovers reach only at larger extents: complex vectors of values that
+   repeat, from 512 there, which x86-64 never takes by default; and real vectors
+   of graded values, from 1024, by a lesser extent whose sweeps leave Q2's and
+   P2's last block of sweeps short. The relations are checked on sampled
+   elements, and the bits agree whatever the threads and layout, in a batch. *)
+let test_svd_two_stage (b : Support.backend) () =
+  Nx_cpu.with_two_stage 128 (fun () ->
+      test_svd_large b ();
+      let r = Random.State.make [| 12 |] in
+      check_shapes b r
+        D.
+          [
+            (257, 264, Any Complex128, repeating r, Sampled 256, Some Batch);
+            (200, 205, Any Float64, graded r, Sampled 256, Some Batch);
+          ])
 
 (* eigh, qr and svd of float64 matrices scaled as a whole by 1e-310, below
    the least normal number, and by 1e300, near the largest: every result a
