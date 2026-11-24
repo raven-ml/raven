@@ -136,6 +136,17 @@ let draw s =
   in
   draw_as view s
 
+let seeded view s =
+  let open Gen in
+  let+ seed = nat in
+  let st = Random.State.make [| seed |] in
+  let n = Array.length pool in
+  let element _ =
+    if Random.State.int st 5 < 3 then pool.(Random.State.int st n)
+    else F (Random.State.float st 8. -. 4.)
+  in
+  { view; values = Array.init (storage view s) element }
+
 let of_pool view s k =
   let n = Array.length pool in
   { view; values = Array.init (storage view s) (fun j -> pool.((k + j) mod n)) }

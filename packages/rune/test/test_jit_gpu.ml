@@ -624,11 +624,11 @@ let folds n =
 
    A first [k] of a sort keeps keys of at most 32 bits by one of three paths:
    ranking every key where [k] exceeds 2 or the rounds' steps and the whole
-   array's [n (n + k)] comparisons are within the GPU's budget, [2^16] times
-   its units, else [k] rounds where [k] is at most the network's [s(s+1)/2]
-   compare steps for [n <= 2^s], else the network, as wider keys always do.
-   The draws reach each path, at slices of 17 to 40 keys and enough rows to
-   pass the budget. *)
+   array's [n (n + k)] comparisons are within the GPU's budget, [2^16] times its
+   units, else [k] rounds where [k] is at most the network's [s(s+1)/2] compare
+   steps for [n <= 2^s], else the network, as wider keys always do. The examples
+   reach each path, at slices of up to 40 keys and enough rows to pass the
+   budget. *)
 
 type top = {
   t_dt : Nx.Dtype.any;
@@ -646,20 +646,6 @@ let pp_top ppf c =
        ~pp_sep:(fun ppf () -> Format.pp_print_char ppf ' ')
        Operand.pp_value)
     (Array.to_seq c.t_operand.values)
-
-let narrow_keys =
-  Nx.Dtype.
-    [
-      Any Nx.float32;
-      Any Nx.float16;
-      Any Nx.bfloat16;
-      Any Nx.float8_e4m3fn;
-      Any Nx.int8;
-      Any Nx.uint16;
-      Any Nx.int32;
-      Any Nx.uint32;
-      Any Nx.bool;
-    ]
 
 let wide_keys = Nx.Dtype.[ Any Nx.float64; Any Nx.int64; Any Nx.complex64 ]
 
@@ -696,82 +682,22 @@ let path c =
     else if rounds then Rounds
     else Past_steps
 
-(* [laid ~rows n] is a shape of at least [rows] slices of [n] and the slices'
-   axis: the last, the first, or the middle of three. *)
-let laid ~rows n =
-  let open Gen in
-  let* rows = int_range rows (rows + 8) in
-  one_of
-    [
-      constant ([| rows; n |], 1);
-      constant ([| n; rows |], 0);
-      map (fun a -> ([| a; n; (rows + a - 1) / a |], 1)) (int_range 2 4);
-    ]
-
-(* The rows that put a first [k] of [n] past the budget. *)
-let past_selection ~k n = (Lazy.force budget / (n * (n + k))) + 1
-
-let top_gen =
-  let open Gen in
-  let small =
-    let* r = int_range 1 3 in
-    let* s =
-      array ~size:(constant r)
-        (frequency [ (1, constant 0); (2, constant 1); (4, int_range 2 4) ])
-    in
-    let* axis = int_range 0 (r - 1) in
-    let* long = option (int_range 9 17) in
-    let s =
-      match long with
-      | None -> s
-      | Some n -> Array.mapi (fun i e -> if i = axis then n else e) s
-    in
-    let* dt = of_list (narrow_keys @ wide_keys) in
-    let+ k = int_range 0 s.(axis) in
-    (dt, s, axis, k)
-  in
-  let rounds =
-    let* n = int_range 17 40 in
-    let* k = int_range 1 (Int.min n (steps n)) in
-    let* dt = of_list narrow_keys in
-    let+ s, axis = laid ~rows:(past_selection ~k n) n in
-    (dt, s, axis, k)
-  in
-  let past_steps =
-    let* n = int_range 17 32 in
-    let* k = int_range (steps n + 1) n in
-    let* dt = of_list narrow_keys in
-    let+ s, axis = laid ~rows:(past_selection ~k n) n in
-    (dt, s, axis, k)
-  in
-  let wide =
-    let* n = int_range 2 17 in
-    let* k = int_range 1 n in
-    let* dt = of_list wide_keys in
-    let+ s, axis = laid ~rows:1 n in
-    (dt, s, axis, k)
-  in
-  let* dt, s, axis, k =
-    frequency [ (2, small); (2, rounds); (1, past_steps); (1, wide) ]
-  in
-  let+ o = Operand.draw s in
-  { t_dt = dt; t_shape = s; t_axis = axis; t_k = k; t_operand = o }
+(* The elements past which a drawn operand's values come from a seed. *)
+let drawn_elements = 4096
 
 (* Plain operands cycling through the pool, whose specials then repeat in a
-   slice: each path, gpt-oss's router at one and 512 rows among them, rounds
-   down to a slice's last key, and the edges of [k] and of the shape. *)
+   slice, and one in each other view: each path, gpt-oss's router at one and 512
+   rows among them, rounds down to a slice's last key, the edges of [k] and of
+   the shape, and each dtype. Past the selection, the rows pass the budget of
+   every target of at most 122 units, sm_89's 100 among them. *)
 let top_examples =
-  let example d s axis k =
-    let values =
-      Array.init (Operand.numel s) (fun i ->
-          Operand.pool.(i mod Array.length Operand.pool))
-    in
+  let example ?(view = Operand.Plain) d s axis k =
     {
       t_dt = d;
       t_shape = s;
       t_axis = axis;
       t_k = k;
-      t_operand = { Operand.view = Plain; values };
+      t_operand = Operand.of_pool view s 0;
     }
   in
   Nx.Dtype.
@@ -780,9 +706,8 @@ let top_examples =
       example (Any Nx.float32) [| 512; 32 |] 1 4;
       example (Any Nx.bfloat16) [| 4; 20; 60 |] 1 3;
       example (Any Nx.int8) [| 70; 10 |] 1 10;
-      (* 40000 rows of a first 10 of 10 make 8·10^6 comparisons, past the
-         budget of every target of at most 122 units, sm_89's 100 among
-         them: k = n by rounds. *)
+      (* 40000 rows of a first 10 of 10 make 8·10^6 comparisons: k = n by
+         rounds. *)
       example (Any Nx.int8) [| 40000; 10 |] 1 10;
       example (Any Nx.int32) [| 8; 32 |] 1 16;
       example (Any Nx.float64) [| 3; 9 |] 1 3;
@@ -792,7 +717,35 @@ let top_examples =
       example (Any Nx.int8) [| 4; 1 |] 1 1;
       example (Any Nx.float32) [| 0; 5 |] 1 2;
       example (Any Nx.uint32) [| 3; 17; 4 |] 1 5;
+      example ~view:Flipped (Any Nx.float8_e4m3fn) [| 3 |] 0 2;
+      example ~view:Strided (Any Nx.uint16) [| 2; 13; 3 |] 1 13;
+      example ~view:Broadcast (Any Nx.bool) [| 4; 2 |] 0 1;
+      example ~view:(Offset 1) (Any Nx.float32) [| 2; 0 |] 1 0;
+      example ~view:Permuted (Any Nx.int64) [| 2; 17; 2 |] 1 9;
+      example ~view:(Offset 3) (Any Nx.complex64) [| 17; 3 |] 0 17;
+      (* A first 21 of 33, the rounds' 21 steps, over 4487 columns: 8.0·10^6
+         comparisons. *)
+      example ~view:Permuted (Any Nx.float16) [| 33; 4487 |] 0 21;
+      (* A first 1 of 40 by rounds over 4876 rows, broadcast from one. *)
+      example ~view:Broadcast (Any Nx.bfloat16) [| 4876; 40 |] 1 1;
+      (* A first 16 of 17, one past the rounds' 15 steps, over 2 by 7127
+         rows. *)
+      example ~view:Flipped (Any Nx.uint16) [| 2; 17; 7127 |] 1 16;
+      (* A first 32 of 32 by the network over 3905 rows. *)
+      example ~view:Strided (Any Nx.int32) [| 3905; 32 |] 1 32;
     ]
+
+(* A case of an example's form, its values drawn anew: it compiles to the
+   example's program. *)
+let top_gen =
+  let open Gen in
+  let* c = of_list top_examples in
+  let view = c.t_operand.view and s = c.t_shape in
+  let+ o =
+    if Operand.numel s > drawn_elements then Operand.seeded view s
+    else Operand.draw_as view s
+  in
+  { c with t_operand = o }
 
 (* [raw x] is [x]'s codes, a float's and a complex number's parts read as
    unsigned integers of their width, so that a NaN's sign and payload count. *)

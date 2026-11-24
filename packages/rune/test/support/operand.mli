@@ -73,6 +73,12 @@ val draw_as : view -> int array -> t Windtrap.Gen.t
 (** [draw_as v s] is an operand of shape [s] in view [v], its elements drawn as
     {!draw} draws them. *)
 
+val seeded : view -> int array -> t Windtrap.Gen.t
+(** [seeded v s] is an operand of shape [s] in view [v] whose elements are made
+    from one drawn seed, 3 in 5 from {!pool} and 2 in 5 uniform in [\[-4, 4)]: a
+    large operand costs one draw, not one an element. A failing case shrinks its
+    seed, not its elements. *)
+
 val of_pool : view -> int array -> int -> t
 (** [of_pool v s k] is an operand of shape [s] in view [v] whose elements are
     {!pool}'s from position [k] on, in turn. *)
