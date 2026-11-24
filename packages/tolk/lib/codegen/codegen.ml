@@ -2644,12 +2644,12 @@ let without_display trades src =
     | _ -> false
   in
   let digit c = c >= '0' && c <= '9' in
-  (* whether [src] holds [s] at [i] *)
-  let at i s =
-    let k = String.length s in
-    let rec same j = j = k || (src.[i + j] = s.[j] && same (j + 1)) in
-    i + k <= n && same 0
+  (* whether [src] holds [s] at [i]: [same] takes [s] and [i] as arguments, so
+     the test, made at each character scanned, allocates no closure *)
+  let rec same s i j =
+    j = String.length s || (src.[i + j] = s.[j] && same s i (j + 1))
   in
+  let at i s = i + String.length s <= n && same s i 0 in
   (* the first [i'] from [i] where [src] holds [s], or [n] *)
   let rec find s i = if i >= n || at i s then min i n else find s (i + 1) in
   (* past a word from [i]; a number's digit separators are within it *)
