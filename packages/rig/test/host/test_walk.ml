@@ -29,12 +29,43 @@ let obj = lazy (S.fixture ~dir:"../fixtures" "affine")
 
 let lines path = In_channel.with_open_text path In_channel.input_lines
 
-(* The bytes the process maps: the [VmSize] of its status. *)
+(* The process's status, read into [status] without a channel. The child
+   reads it right before it sets its limit, and nothing it frees after may
+   return memory to the system, as musl's C library does with a free block:
+   a channel's buffer, the C library's memory, is freed at the channel's
+   close, after its bytes were counted, and so is a block too large for the
+   minor heap, which the collector frees once unreachable. [status], made
+   as the program starts, stays reachable. *)
+let status = Bytes.create 8192
+
+let read_status () =
+  let fd = Unix.openfile "/proc/self/status" [ O_RDONLY; O_CLOEXEC ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  let rec go at =
+    if at = Bytes.length status then failwith "/proc/self/status: too long";
+    match Unix.read fd status at (Bytes.length status - at) with
+    | 0 -> at
+    | n -> go (at + n)
+  in
+  go 0
+
+(* The bytes the process maps: the [VmSize] of its status, ["VmSize: N kB"],
+   parsed in place. *)
 let mapped () =
-  let field l = Scanf.sscanf_opt l "VmSize: %d kB" (fun k -> k * 1024) in
-  match List.find_map field (lines "/proc/self/status") with
-  | Some n -> n
-  | None -> failwith "no VmSize in /proc/self/status"
+  let n = read_status () and key = "VmSize:" in
+  let rec find i =
+    if i + String.length key > n then failwith "no VmSize in /proc/self/status"
+    else if Bytes.sub_string status i (String.length key) = key then
+      i + String.length key
+    else find (i + 1)
+  in
+  let rec kib i k =
+    match Bytes.get status i with
+    | ' ' | '\t' when k = 0 -> kib (i + 1) k
+    | '0' .. '9' as c -> kib (i + 1) ((10 * k) + Char.code c - Char.code '0')
+    | _ -> k
+  in
+  1024 * kib (find 0) 0
 
 let mappings () = List.length (lines "/proc/self/maps")
 
@@ -58,11 +89,14 @@ let linked () =
 
 (* The child: links once uncounted, then under a limit [room] bytes above what
    it maps, and prints what the link answered, whether its mappings came back
-   once collected, and what a link answers with the limit lifted. *)
+   once collected, and what a link answers with the limit lifted. It collects
+   between counting its mappings and reading what it maps, so that no memory
+   of the count returns to the system under the limit ([status]). *)
 let child room =
   ignore (linked ());
   collect ();
   let before = mappings () in
+  collect ();
   checked (Rig_support.set_address_space (mapped () + room));
   let got = linked () in
   checked (Rig_support.set_address_space max_int);
