@@ -721,6 +721,7 @@ static int send_rails(struct rig_remote_link *l) {
     r->users++;
     l->sending = 1;
     pthread_mutex_unlock(&l->mu);
+    hook(RIG_REMOTE_LINK_SENDING, 0);
     int err = send_due(l, r, ready);
     pthread_mutex_lock(&l->mu);
     rail_unused(l, r);
