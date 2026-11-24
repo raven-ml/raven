@@ -94,14 +94,19 @@ jobs:
           # packages but jord.safe's xmlm.
           opam install xmlm
 
-      # Ubuntu 22.04's clang is Clang 14, older than the oldest that compiles
-      # tolk's kernels: its clang-15 package compiles them.
-      - name: Use Clang 15
+      # Ubuntu 22.04 has no Clang 16, the oldest that compiles tolk's kernels
+      # into right values: the job runs apt.llvm.org's clang-16, so that it
+      # tests that oldest Clang.
+      - name: Use Clang 16
         if: matrix.os == 'ubuntu-22.04'
         run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-16.list
           sudo apt-get update
-          sudo apt-get install --yes clang-15
-          echo "CC=clang-15" >> "$GITHUB_ENV"
+          sudo apt-get install --yes clang-16
+          echo "CC=clang-16" >> "$GITHUB_ENV"
 
       # Each package's steps run when an earlier package's failed, so one run
       # shows every package's failures.
