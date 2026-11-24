@@ -848,22 +848,6 @@ let run_on_host =
     "where_fold";
   ]
 
-(* Under a Clang without vector square roots and multiply-adds: these tests run
-   in a process of their own, where CC names a script that runs Clang as one
-   before 17 sees a kernel, [__has_builtin] false for every builtin and each of
-   the two named as a function no object defines. A kernel that computes on
-   vectors with the builtins compiles only through the overloads its source
-   names in their place, and writes what its kernel writes. *)
-let without_elementwise =
-  tag "no-elementwise"
-  @@ group "under a Clang without elementwise builtins"
-       (List.map
-          (fun name ->
-            test name (fun () ->
-                if Sys.win32 then skip ~reason:"CC is a shell script" ();
-                runs_as_interpreted name ()))
-          [ "matmul"; "linearizer_fail_1" ])
-
 let values =
   group "values"
     [
@@ -5082,13 +5066,13 @@ let dot n =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.store (Ops.index out [ Ops.int 0 ]) sum ]
 
-(* [out[i] = sum_k a[i, k] * b[k]] for [i] below [rows] and [k] below [n], with
-   [i] upcast by 4 and [k] unrolled by 4: the reduce sums a view of its
-   products, its unrolled lanes first. *)
-let matvec ~rows n =
-  let out = Shape.param ~shape:[ Int rows ] 0 Float32 in
-  let a = Shape.param ~shape:[ Int (rows * n) ] 1 Float32 in
-  let b = Shape.param ~shape:[ Int n ] 2 Float32 in
+(* [out[i] = finish (sum_k a[i, k] * b[k])] in [dt] for [i] below [rows] and [k]
+   below [n], with [i] upcast by 4 and [k] unrolled by 4: the reduce sums a view
+   of its products, its unrolled lanes first. *)
+let matvec ?(dt = Dtype.Float32) ?(finish = Fun.id) ~rows n =
+  let out = Shape.param ~shape:[ Int rows ] 0 dt in
+  let a = Shape.param ~shape:[ Int (rows * n) ] 1 dt in
+  let b = Shape.param ~shape:[ Int n ] 2 dt in
   let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
   let k = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
   let a_ik = Ops.index a [ Ops.O.((i * Ops.int n) + k) ] in
@@ -5097,7 +5081,7 @@ let matvec ~rows n =
   Ops.sink
     ~kernel:
       (Ops.kernel_info ~opts_to_apply:[ split 0 Upcast; split 2 Upcast ] ())
-    [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) (finish sum)) [ i ] ]
 
 (* [out[i, j] = sum_k a[i, k] * b[k, j]] for [i] below 2, [j] below 4 and [k]
    below [n], both output axes upcast whole and [k] a loop: each trip adds one
@@ -5779,6 +5763,63 @@ let narrow_multiply_adds =
       group "of float8 e4m3s" (on e4m3s);
       group "of float8 e4m3fnuzs" (on e4m3fnuzs);
     ]
+
+(* Under a Clang without vector square roots and multiply-adds: these tests run
+   in a process of their own, where CC names a script that runs Clang as one
+   before 17 sees a kernel, [__has_builtin] false for every builtin and each of
+   the two named as a function no object defines. A kernel that computes on
+   vectors with the builtins compiles only through the overloads its source
+   names in their place, and writes what its kernel writes: of floats (matmul,
+   linearizer_fail_1), of halves (half_math, and multiply-adds of halves at an
+   arm64 with FP16, which computes them as halves; x86_64 emulates them without
+   a multiply-add) and of doubles. *)
+let without_elementwise =
+  let host_shell name f =
+    test name (fun () ->
+        if Sys.win32 then skip ~reason:"CC is a shell script" ();
+        f ())
+  in
+  (* Sums of integers below 2^11 are exact in a double, so the vector and the
+     lanes agree whatever order the lanes add in. *)
+  let rows = 8 and n = 8 in
+  let a = Array.init (rows * n) (fun j -> Float.of_int ((j mod 7) + 1)) in
+  let b = Array.init n (fun k -> Float.of_int (k + 1)) in
+  let roots =
+    Array.init rows (fun i ->
+        let s = ref 0. in
+        for k = 0 to n - 1 do
+          s := !s +. (a.((i * n) + k) *. b.(k))
+        done;
+        `Float (Float.sqrt !s))
+  in
+  let floats = Array.map (fun f -> `Float f) in
+  let shell_only run k =
+    if Sys.win32 then skip ~reason:"CC is a shell script" ();
+    run k
+  in
+  tag "no-elementwise"
+  @@ group "under a Clang without elementwise builtins"
+       (List.map
+          (fun name -> host_shell name (runs_as_interpreted name))
+          [ "matmul"; "linearizer_fail_1"; "half_math" ]
+       @ [
+           group "a multiply-add of halves rounds once, at arm64,generic,fp16"
+             [
+               muladd_rounds_once halves
+                 (shell_only (on_arm64 "arm64,generic,fp16"))
+                 4;
+             ];
+           host_shell "a square root of a sum of products of doubles" (fun () ->
+               let prg =
+                 Codegen.to_program
+                   (matvec ~dt:Float64 ~finish:Ops.sqrt ~rows n)
+                   (Lazy.force host)
+               in
+               contains ~sub:"__builtin_elementwise_fma(" (source prg);
+               contains ~sub:"__builtin_elementwise_sqrt(" (source prg);
+               let out = Run.on_host prg [ (1, floats a); (2, floats b) ] in
+               equal (array Dtypes.value) roots (List.assoc 0 out));
+         ])
 
 (* Gated loads
 

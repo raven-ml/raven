@@ -2,7 +2,8 @@
 ; which the sandbox makes fresh. The suite runs as three shards, which dune
 ; runs in parallel. Its tensor-core tests run on the first CUDA GPU and skip
 ; without one. Those tagged no-elementwise run in a fourth process, where CC
-; names a script that runs Clang without its elementwise builtins.
+; names a script that runs the suite's Clang, which it passes as TOLK_CLANG,
+; without its elementwise builtins.
 
 (executable
  (name test_codegen)
@@ -61,6 +62,9 @@
   clang_no_elementwise)
  (action
   (setenv
-   CC
-   ./clang_no_elementwise
-   (run %{exe:test_codegen.exe} --tag no-elementwise))))
+   TOLK_CLANG
+   %{env:CC=clang}
+   (setenv
+    CC
+    ./clang_no_elementwise
+    (run %{exe:test_codegen.exe} --tag no-elementwise)))))
