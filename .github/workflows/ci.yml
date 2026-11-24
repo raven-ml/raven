@@ -36,6 +36,25 @@ jobs:
         shell: bash
 
     steps:
+      # The runner's processor and its features, which decide the code the
+      # host kernels are compiled to. arm's /proc/cpuinfo names no model.
+      - name: Print the processor
+        if: runner.os == 'Linux'
+        run: |
+          grep -m1 'model name' /proc/cpuinfo || lscpu | grep -m1 'Model name'
+          grep -m1 -E '^(flags|Features)' /proc/cpuinfo
+
+      - name: Print the processor
+        if: runner.os == 'macOS'
+        run: |
+          sysctl -n machdep.cpu.brand_string
+          sysctl hw.optional | grep ': 1$'
+
+      - name: Print the processor
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: (Get-CimInstance Win32_Processor).Name
+
       # The doc and expect tests compare byte-for-byte; a CRLF checkout on
       # Windows would diff every line.
       - name: Keep LF line endings
@@ -315,6 +334,11 @@ jobs:
         shell: bash
 
     steps:
+      - name: Print the processor
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 -E '^flags' /proc/cpuinfo
+
       - name: Checkout tree
         uses: actions/checkout@v4
 
