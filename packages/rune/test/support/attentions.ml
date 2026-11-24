@@ -826,7 +826,7 @@ let law_check ?(composed = false) ?wide c compiled =
         in
         let w = ((1. +. u) *. ((2. *. eta) +. eps)) +. (((2. *. b) +. ln +. 19.) *. u) in
         let w_ref = if wide then (2. *. eta) +. eps_ref +. (((2. *. b) +. ln +. 5.) *. u) else 0. in
-        less ~msg:("lse at " ^ at) float_exact
+        less ~msg:("lse at " ^ at) Witness.error
           ~than:(eta +. eps +. (if wide then eta +. eps_ref else 0.) +. 1e-300)
           (Float.abs (l -. lse.(i)));
         for d = 0 to c.dv - 1 do
@@ -845,7 +845,7 @@ let law_check ?(composed = false) ?wide c compiled =
           in
           less
             ~msg:(Printf.sprintf "o at row %d column %d" i d)
-            float_exact ~than:(bound +. 1e-300)
+            Witness.error ~than:(bound +. 1e-300)
             (Float.abs (o.(j) -. o_ref.(j)))
         done
       end)
@@ -1153,7 +1153,7 @@ let grad_law ?(composed = false) ?wide (module S : Nx.Devices) ~vmap c =
       (fun j r ->
         less
           ~msg:(Printf.sprintf "%s at %d" name j)
-          float_exact
+          Witness.error
           ~than:(twice (bound j +. (uq *. Float.abs r) +. floor +. result_least) +. 1e-300)
           (Float.abs (gs.(j) -. r)))
       refs

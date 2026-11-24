@@ -86,3 +86,13 @@ let ulps dt a b =
   else if Float.sign_bit a = Float.sign_bit b then
     Int64.to_float (Int64.abs (Int64.sub ma mb))
   else Int64.to_float (Int64.add (Int64.add ma mb) 1L)
+
+(* Errors *)
+
+let error =
+  Testable.with_compare
+    (fun a b ->
+      match Bool.compare (Float.is_nan a) (Float.is_nan b) with
+      | 0 -> Float.compare a b
+      | c -> c)
+    float_exact

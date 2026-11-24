@@ -51,3 +51,10 @@ val ulps : (float, 's) Nx.dtype -> float -> float -> float
     is never within a bound of the largest finite float.
 
     Raises [Invalid_argument] unless [dt] is [Float32] or [Float64]. *)
+
+(** {1:errors Errors} *)
+
+val error : float Windtrap.Testable.t
+(** [error] is {!Windtrap.float_exact} ordered with NaN above every float, as an
+    error is: [less error ~than:b e] fails where [e] is NaN, which
+    [float_exact]'s order puts below every float. *)
