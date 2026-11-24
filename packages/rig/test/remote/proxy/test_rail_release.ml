@@ -65,9 +65,14 @@ let connected () =
   Rig_support.recv_timeout peer 5.;
   (fd, peer)
 
+(* The silence bound of a job whose ready function must find the send claim
+   free: a link beats, taking the claim, a tenth of the bound after its last
+   send, and an hour's tenth is past any scene's end. *)
+let unbeaten = 3600.
+
 let joined_release () =
   let fd, peer = connected () in
-  let job = Link.job () in
+  let job = Link.job ~silence:unbeaten () in
   Fun.protect ~finally:(fun () ->
       Probe.resume ();
       Link.fail job "test ended";
@@ -195,14 +200,15 @@ let arrived_after_failure () =
   Link.release_rail link 4;
   failed_counts e
 
-(* The job fails while the sending thread holds the rest of a transfer its
-   ready function began. The rest goes before the abort: the peer reads the
-   whole frame, then the abort. The job's other link aborts once the failure
-   began, which the test awaits before it lets the transfer go on. *)
+(* The job fails while the sending thread holds the rest of a transfer its ready
+   function began, whose header the peer has read. The rest goes before the
+   abort: the peer reads the whole frame, then the abort. The job's other link
+   aborts once the failure began, which the test awaits before it lets the
+   transfer go on. *)
 let partial_before_abort () =
   let fd, peer = connected () in
   let fd2, peer2 = connected () in
-  let job = Link.job () in
+  let job = Link.job ~silence:unbeaten () in
   Fun.protect ~finally:(fun () ->
       Probe.resume ();
       Link.fail job "test ended";
@@ -218,18 +224,21 @@ let partial_before_abort () =
   Probe.arm Sending;
   e.ready 1;
   equal ~msg:"the sender holds the partial transfer" bool true (Probe.held ());
+  let h = read peer 9 in
+  equal ~msg:"the begun frame's kind and length" (pair int int)
+    (7, 16 + size)
+    (Char.code h.[8], Int64.to_int (String.get_int64_le h 0));
   let why = "failed mid-transfer" in
   let failing = Thread.create (fun () -> Link.fail job why) () in
   let other = frame peer2 in
   Probe.resume ();
-  let rail = frame peer in
+  let rail = read peer (16 + size) in
   let last = frame peer in
   Thread.join failing;
   let abort = (9, str why) in
   equal ~msg:"the other link" (pair int string) abort other;
-  equal ~msg:"rail frame" int 7 (fst rail);
   equal ~msg:"transfer bytes" string (String.make size 'r')
-    (String.sub (snd rail) 16 size);
+    (String.sub rail 16 size);
   equal ~msg:"after the frame" (pair int string) abort last
 
 let ready_after_failure () =
