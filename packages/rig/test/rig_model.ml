@@ -2737,15 +2737,19 @@ let commands ~two ~fork =
           ignore (Sys.opaque_identity (B.create Rig.host 0))
         end)
   in
-  (* A command listed [n] times is drawn [n] times as often. *)
+  (* A command listed [n] times is drawn [n] times as often. On two domains
+     values are made in the prefix only, a program's first calls, and nearly
+     every command takes a device, a cell or a submission: the makers weigh
+     twice there, so that every command is called in some case of a run. *)
   let times n c = List.init n (fun _ -> c) in
+  let makes n c = times (if two then 2 * n else n) c in
   List.concat
     [
       [ start ];
-      times 2 new_kept;
-      times 2 new_sub;
-      times 2 open_;
-      times 3 new_cell;
+      makes 2 new_kept;
+      makes 2 new_sub;
+      makes 2 open_;
+      makes 3 new_cell;
       times 8 create;
       times 3 create_host;
       times 4 of_bigarray;

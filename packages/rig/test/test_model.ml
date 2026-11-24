@@ -15,7 +15,7 @@ let tests =
         stateful ~count:300 ~steps:150
           "every call answers as rig.mli says, on every kind of device"
           (Rig_model.commands ~two:false ~fork:false);
-        stateful ~count:60 ~steps:30 ~domains:2
+        stateful ~count:60 ~steps:50 ~domains:2
           "calls on two domains answer as some order of them"
           (Rig_model.commands ~two:true ~fork:false);
       ];
