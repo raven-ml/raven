@@ -234,18 +234,15 @@ let () =
       in
       exit (run "update" [ group "update" [ Golden.text file output ] ])
 
-(* A directory no build tree holds: windtrap reads a path under [_build] as
-   dune's copy of a source file. *)
-let scratch_base () =
-  if Sys.win32 then Filename.get_temp_dir_name () else "/tmp"
-
+(* In the temporary directory, which no build tree holds: windtrap reads a path
+   under [_build] as dune's copy of a source file. dune points TMPDIR at a
+   directory of its own inside the one it was given, which opam's sandbox lets a
+   build write where it makes /tmp read-only. *)
 let rerun_updating ?(sink = false) ?golden ?tolk actual =
-  let dir = Filename.temp_dir ~temp_dir:(scratch_base ()) "tolk_golden" "" in
+  let dir = Filename.temp_dir "tolk_golden" "" in
   Fun.protect
     ~finally:(fun () ->
-      Array.iter
-        (fun f -> Sys.remove (Filename.concat dir f))
-        (Sys.readdir dir);
+      Array.iter (fun f -> Sys.remove (Filename.concat dir f)) (Sys.readdir dir);
       Sys.rmdir dir)
     (fun () ->
       Option.iter
