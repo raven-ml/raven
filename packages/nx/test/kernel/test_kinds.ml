@@ -488,7 +488,7 @@ let test_narrow_pairs b =
 
 (* The narrow floats' laws on [b], a group named for it. *)
 let narrow (b : Support.backend) =
-  group ~timeout:60.
+  group
     (b.name ^ " narrow floats compute in f32 and round once")
     [ test_narrow_zeros b; test_narrow_transcendentals b; test_narrow_pairs b ]
 
@@ -1537,25 +1537,25 @@ let () =
   exit
   @@ run "nx_array.kinds"
        ([
-         group ~timeout:10. "exact kinds give IEEE results"
-           (test_binary32
-           @ [ test_fma32; test_where32 ]
-           @ test_unary32 @ test_f64_exact
-           @ [ test_exact_points ]);
-         group ~timeout:10. "integer kinds are modular" test_ints;
-         group ~timeout:10. "threefry's known answers" [ test_threefry ];
-         group ~timeout:10. "Annex F's special values" [ test_annex_f ];
-         group ~timeout:10. "the header's bits on every target" [ test_digests ];
-         group ~timeout:10. "complex arithmetic within its bounds"
-           (test_complex_bounds @ test_complex_subnormal @ test_complex_parts
+          group "exact kinds give IEEE results"
+            (test_binary32
+            @ [ test_fma32; test_where32 ]
+            @ test_unary32 @ test_f64_exact @ [ test_exact_points ]);
+          group "integer kinds are modular" test_ints;
+          group "threefry's known answers" [ test_threefry ];
+          group "Annex F's special values" [ test_annex_f ];
+          group "the header's bits on every target" [ test_digests ];
+          group "complex arithmetic within its bounds"
+            (test_complex_bounds @ test_complex_subnormal @ test_complex_parts
            @ test_complex_order
-           @ [ test_complex_nan; test_complex_smith ]);
-         group ~timeout:10. "complex kinds at their special values"
-           [ test_complex_special; test_complex_signalling ];
-         group ~timeout:10. "complex kinds by their symmetries"
-           (test_complex_exp2_far @ test_complex_pow_special
-           @ [ test_complex_log_circle ]
-           @ test_complex_conj @ test_complex_parity @ test_complex_real_axis
-           @ test_complex_identities);
-       ]
-       @ List.map narrow (Support.backends () @ Option.to_list (Support.amd ())))
+            @ [ test_complex_nan; test_complex_smith ]);
+          group "complex kinds at their special values"
+            [ test_complex_special; test_complex_signalling ];
+          group "complex kinds by their symmetries"
+            (test_complex_exp2_far @ test_complex_pow_special
+            @ [ test_complex_log_circle ]
+            @ test_complex_conj @ test_complex_parity @ test_complex_real_axis
+            @ test_complex_identities);
+        ]
+       @ List.map narrow (Support.backends () @ Option.to_list (Support.amd ()))
+       )

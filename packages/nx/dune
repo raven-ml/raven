@@ -61,9 +61,7 @@
     -fno-math-errno
     -DWINPTHREADS_USE_DLLIMPORT
     -Wall
-    -Wextra))
-  (env-vars
-   (WINDTRAP_TIMEOUT 60)))
+    -Wextra)))
  (sanitize
   (c_flags
    (:standard
@@ -84,8 +82,7 @@
    (OCAMLRUNPARAM s=32k,o=20,M=1,m=1,v=0)
    (ASAN_OPTIONS
     halt_on_error=1:detect_leaks=0:use_sigaltstack=0:allocator_may_return_null=1)
-   (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
-   (WINDTRAP_TIMEOUT 60)))
+   (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)))
  (dev
   (flags
    (:standard %{dune-warnings}))
@@ -99,9 +96,7 @@
     -DWINPTHREADS_USE_DLLIMPORT
     -Wall
     -Wextra
-    -Werror))
-  (env-vars
-   (WINDTRAP_TIMEOUT 60)))
+    -Werror)))
  (_
   (c_flags
    (:standard
@@ -113,6 +108,4 @@
     -DWINPTHREADS_USE_DLLIMPORT
     -Wall
     -Wextra
-    -Werror))
-  (env-vars
-   (WINDTRAP_TIMEOUT 60))))
+    -Werror))))
