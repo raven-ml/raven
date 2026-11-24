@@ -9,6 +9,7 @@ external polled_new : int -> bool -> int -> polled = "rig_test_polled_new"
 external polled_edge : polled -> nativeint = "rig_test_polled_edge"
 external polled_grows : polled -> int -> unit = "rig_test_polled_grows"
 external polled_untimed : polled -> unit = "rig_test_polled_untimed"
+external polled_untrimmed : polled -> unit = "rig_test_polled_untrimmed"
 
 external polled_limit_rows : polled -> int -> unit
   = "rig_test_polled_limit_rows"
@@ -638,7 +639,7 @@ end
 module Polled = struct
   include Driver
 
-  let make ?(capacity = 1024) ?grows ?(copies = true)
+  let make ?(capacity = 1024) ?grows ?(trim = true) ?(copies = true)
       ?(host_visible = true) ?(mapped = true) ?(addresses = true)
       ?(transport = false) ?(peers = true) ?(maps_host = true)
       ?(alignment = 4096) ?(granules = [ (0, 4) ]) ?cache_bytes
@@ -710,6 +711,7 @@ module Polled = struct
     in
     if runs = `Itself then polled_start d.c;
     Option.iter (polled_grows d.c) grows;
+    if not trim then polled_untrimmed d.c;
     if not timed then polled_untimed d.c;
     d
 
@@ -725,12 +727,12 @@ module Polled = struct
       make = (fun ~word -> Ok (bind ?start d ~word));
     }
 
-  let open_ ?capacity ?grows ?copies ?host_visible ?mapped ?addresses
+  let open_ ?capacity ?grows ?trim ?copies ?host_visible ?mapped ?addresses
       ?transport ?peers ?maps_host ?alignment ?granules ?cache_bytes ?budget
       ?memory ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag
       ?timed ?hang_ms ?bus ?arch name =
     let p =
-      make ?capacity ?grows ?copies ?host_visible ?mapped ?addresses
+      make ?capacity ?grows ?trim ?copies ?host_visible ?mapped ?addresses
         ?transport ?peers ?maps_host ?alignment ?granules ?cache_bytes ?budget
         ?memory ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag
         ?timed ?hang_ms ?bus ?arch ()

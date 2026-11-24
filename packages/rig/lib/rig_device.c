@@ -1299,6 +1299,16 @@ value caml_rig_waits_in_queue(value v_d) {
   CAMLreturn(Val_bool(waits));
 }
 
+/* The entries [v_d]'s record of waits has room for, read under its
+   mutex. */
+value caml_rig_wait_room(value v_d) {
+  struct rig_device *d = Device_val(v_d);
+  int released = take(d);
+  int n = d->crecord;
+  give(d, released);
+  return Val_int(n);
+}
+
 /* The turn
 
    A driver that never blocks is called under [d]'s mutex, which is then

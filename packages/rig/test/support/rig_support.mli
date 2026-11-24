@@ -33,6 +33,7 @@ module Polled : sig
   val make :
     ?capacity:int ->
     ?grows:int ->
+    ?trim:bool ->
     ?copies:bool ->
     ?host_visible:bool ->
     ?mapped:bool ->
@@ -118,6 +119,9 @@ module Polled : sig
       region's own address and bytes, and answers [Error] where it refuses
       ({!fail_at}).
 
+      Without [trim] (defaults to [true]) its driver has no [trim], as one whose
+      queues never grow.
+
       Raises [Invalid_argument] if [lag < 1]. *)
 
   val bind : ?start:int -> t -> word:nativeint -> t
@@ -135,6 +139,7 @@ module Polled : sig
   val open_ :
     ?capacity:int ->
     ?grows:int ->
+    ?trim:bool ->
     ?copies:bool ->
     ?host_visible:bool ->
     ?mapped:bool ->

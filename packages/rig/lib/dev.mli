@@ -457,6 +457,9 @@ val trim : device -> unit
     {!Rig_edge.section-calls}), unless a submit is growing them. It waits as
     {!settle} does; on a lost device it does nothing. *)
 
+val wait_room : device -> int
+(** [wait_room d] is {!Rig.wait_room}[ d]. *)
+
 val settled : int -> bool
 (** [settled p] is [true] iff [p] is settled. A point whose device the read
     of its word loses has not settled. A point of a device that gave its slot

@@ -1288,6 +1288,79 @@ let test_grow_untrimmed () =
   equal ~msg:"trims after" int 1 (P.trims p);
   equal ~msg:"the parts that ran" int 5 (word arg)
 
+(* A free_cache shrinks a device's record of queue waits to the waits of its
+   unreached work, whether or not its driver has a trim: [finished] waits whose
+   work ran, then [live] waits on a producer's unreached value. The record still
+   spreads a loss along what it kept: the producer's loss loses the consumer
+   once a live wait, or one submitted [later], after the free_cache, names that
+   value. *)
+let record_trimmed (trim, finished, live, later) =
+  let name = fresh "record-producer" in
+  let producer, pp = P.open_ name in
+  let consumer, _ =
+    P.open_ ~trim ~waits_on:[ `Host ] (fresh "record-consumer")
+  in
+  let waits n a =
+    List.fold_left
+      (fun _ _ -> Some (submit (empty consumer) ~waits:[| a |]))
+      None (List.init n Fun.id)
+  in
+  let a = submit (empty producer) in
+  Option.iter Rig.Point.wait (waits finished a);
+  let b = submit (empty producer) in
+  ignore (waits live b : Rig.Point.t option);
+  let room = Rig.wait_room consumer in
+  cover "a driver with no trim" (not trim);
+  cover "finished waits alone" (finished > 0 && live = 0);
+  cover "room past the live waits" (live > 0 && room > live);
+  cover "a wait after an empty record" (finished > 0 && live = 0 && later);
+  Rig.free_cache consumer;
+  at_most int ~msg:"the record's room" ~than:live (Rig.wait_room consumer);
+  if later then ignore (waits 1 b : Rig.Point.t option);
+  P.fail pp;
+  raises_match (lost_on producer) (fun () -> submit (empty producer));
+  equal (option string) ~msg:"the consumer's loss"
+    (if live > 0 || later then Some (name ^ " lost") else None)
+    (Rig.lost consumer);
+  Rig.close consumer;
+  Rig.close producer
+
+(* Each covered case of [record_trimmed] draws in a sixth of the cases or
+   more. *)
+let record_cases =
+  let waits ~none =
+    Gen.frequency [ (none, Gen.constant 0); (3, Gen.int_range 1 20) ]
+  in
+  let pp ppf (trim, finished, live, later) =
+    Format.fprintf ppf "trim %b, finished %d, live %d, later %b" trim finished
+      live later
+  in
+  Gen.with_pp pp (Gen.quad Gen.bool (waits ~none:1) (waits ~none:3) Gen.bool)
+
+(* A free_cache of another domain while a submit grows the queue leaves the
+   record of queue waits as it was; one after the submit shrinks it. *)
+let test_record_untrimmed () =
+  let producer, _ = P.open_ "submit:record-untrimmed-producer" in
+  let d, p =
+    P.open_ ~capacity:4 ~grows:max_int ~waits_on:[ `Host ]
+      "submit:record-untrimmed"
+  in
+  Rig.Point.wait (submit (empty d) ~waits:[| submit (empty producer) |]);
+  let room = Rig.wait_room d in
+  greater ~msg:"the record's room before it grew" int ~than:0 room;
+  let during = ref (-1) in
+  P.before p "grow" (fun () ->
+      Domain.join (Domain.spawn (fun () -> Rig.free_cache d));
+      during := Rig.wait_room d);
+  let arg = B.create Rig.host page_bytes in
+  Support.store (Support.Reader.host arg) 0;
+  let s, args, buffers = bumps d arg 5 in
+  Rig.Point.wait (submit ~args ~buffers s);
+  equal ~msg:"the record's room while it grew" int room !during;
+  Rig.free_cache d;
+  equal ~msg:"the record's room after" int 0 (Rig.wait_room d);
+  equal ~msg:"the parts that ran" int 5 (word arg)
+
 (* A growth that faults loses the device, and the submission assigns no
    value. *)
 let test_grow_fault () =
@@ -2427,6 +2500,12 @@ let tests =
         test "free_cache gives back what the queue grew into" test_grow_trimmed;
         test "a free_cache while a submit grows the queue leaves its growth"
           test_grow_untrimmed;
+        prop
+          "free_cache shrinks the record of queue waits to the live ones, \
+           which a loss still spreads along"
+          record_cases record_trimmed;
+        test "a free_cache while a submit grows leaves the record of waits"
+          test_record_untrimmed;
       ];
     group "lifetime"
       [

@@ -31,6 +31,7 @@ external c_committed : c -> int = "caml_rig_committed" [@@noalloc]
 external c_commit : c -> int = "caml_rig_commit"
 external c_settle : c -> int -> int = "caml_rig_settle"
 external c_trim : c -> int = "caml_rig_trim"
+external c_wait_room : c -> int = "caml_rig_wait_room"
 
 external c_measures :
   c -> int -> (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t -> int
@@ -850,6 +851,7 @@ let rec forget_measures d v =
   if r = Answer.busy then forget_measures d v else r = Answer.ok
 
 let rec trim d = if c_trim d.live.c = Answer.busy then trim d
+let wait_room d = c_wait_room d.live.c
 
 (* A lost device's word of its driver's own moves only where rig reads it
    through the driver: its stop raises it, or the work the stop left running

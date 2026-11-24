@@ -2864,6 +2864,11 @@ val submit_state : unit -> int
 (** [submit_state ()] is the bytes of the state, blocks included, that rig keeps
     for later submits ({!submit}) in the sets no submit holds at the call. *)
 
+val wait_room : t -> int
+(** [wait_room d] is the number of waits rig's record of [d]'s queue waits has
+    room for: the waits of [d]'s work on other devices' values, which a loss of
+    one of those devices spreads along ({!section-loss}). *)
+
 val on_host_exchange : (int -> unit) -> unit
 (** [on_host_exchange f] makes the next load that links host code call [f a]
     once, [a] being the new link's first address, after the load found no link

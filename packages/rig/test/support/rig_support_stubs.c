@@ -341,6 +341,10 @@ static const struct rig_driver polled_driver = {
     polled_room, polled_submit, polled_commit, polled_settle, NULL,
     polled_trim};
 
+/* The driver of a device made without a trim. */
+static const struct rig_driver polled_untrimmed = {
+    polled_room, polled_submit, polled_commit, polled_settle, NULL, NULL};
+
 /* What rig must not do, as Polled sees it: read or free twice a word of
    the driver's own after rig freed it, free a word in its array, hand a
    queue a wait whose word rig gave back, or give a time pair to a value
@@ -477,6 +481,13 @@ value rig_test_polled_new(value v_capacity, value v_may_block,
   v = caml_alloc_custom(&polled_ops, sizeof p, 0, 1);
   Polled_val(v) = p;
   CAMLreturn(v);
+}
+
+/* Gives the device a driver with no trim. rig copies a driver at the open,
+   so this comes before it. */
+value rig_test_polled_untrimmed(value v_p) {
+  Polled_val(v_p)->driver = &polled_untrimmed;
+  return Val_unit;
 }
 
 /* Makes the device's [room] answer RIG_GROW for more parts than its queue
