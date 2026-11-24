@@ -1,6 +1,10 @@
 # tolk D141 D151 golden=9b31e462427b6092e184bf9f0dbfd58d
 typedef float float3 __attribute__((aligned(4),ext_vector_type(3)));
 typedef int int3 __attribute__((aligned(4),ext_vector_type(3)));
+#if !__has_builtin(__builtin_elementwise_sqrt)
+#define __builtin_elementwise_sqrt tolk_lanes_sqrt
+static inline __attribute__((overloadable, always_inline)) float3 tolk_lanes_sqrt(float3 a) { return (float3){__builtin_sqrtf(a[0]), __builtin_sqrtf(a[1]), __builtin_sqrtf(a[2])}; }
+#endif
 __attribute__((min_vector_width(512))) void three(float* restrict data0_3, float* restrict data1_3, float* restrict data2_3) {
   float val0 = (*(data1_3+0));
   float val1 = (*(data1_3+1));

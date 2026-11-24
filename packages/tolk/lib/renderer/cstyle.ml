@@ -2200,6 +2200,55 @@ let clang_vector_prefix ~cpu l (dt, count) =
   strf "typedef %s %s __attribute__((aligned(%d),ext_vector_type(%d)));"
     (render_scalar l dt) vec alignment count
 
+(* A Clang before 18 has no [__builtin_elementwise_sqrt], and before 17 no
+   [__builtin_elementwise_fma]. There the preprocessor names in their place
+   overloads for the vector types the kernel computes them on, which compute
+   each lane with the scalar builtin: a square root rounds once in each type,
+   and a half's of its float exactly as a half's own does; a multiply-add of
+   halves, which the renderer writes only where the processor computes halves
+   (arm64 with fp16), is [__builtin_fmaf16]. An overload returns its lanes as
+   one vector, which Clang's vectorizers may pack again. *)
+let lane_builtins l uops =
+  let polyfill (o, name, params) =
+    let types =
+      dedup
+        (List.filter_map
+           (fun u ->
+             if is o u && vector u then Some (dtype u, max_numel u) else None)
+           uops)
+    in
+    let scalar dt =
+      match (o, dt) with
+      | Op.Sqrt, Dtype.Float64 -> "__builtin_sqrt"
+      | Op.Sqrt, _ -> "__builtin_sqrtf"
+      | _, Dtype.Float64 -> "__builtin_fma"
+      | _, Dtype.Float16 -> "__builtin_fmaf16"
+      | _ -> "__builtin_fmaf"
+    in
+    let overload (dt, n) =
+      let vec = render_dtype l dt ~sz:n ~addrspace:(Some Dtype.Reg) in
+      let lane i =
+        strf "%s(%s)" (scalar dt)
+          (String.concat ", " (List.map (fun p -> strf "%s[%d]" p i) params))
+      in
+      strf
+        "static inline __attribute__((overloadable, always_inline)) %s \
+         tolk_lanes_%s(%s) { return (%s){%s}; }"
+        vec name
+        (String.concat ", " (List.map (fun p -> vec ^ " " ^ p) params))
+        vec
+        (String.concat ", " (List.init n lane))
+    in
+    if types = [] then []
+    else
+      strf "#if !__has_builtin(__builtin_elementwise_%s)" name
+      :: strf "#define __builtin_elementwise_%s tolk_lanes_%s" name name
+      :: List.map overload types
+      @ [ "#endif" ]
+  in
+  List.concat_map polyfill
+    Op.[ (Sqrt, "sqrt", [ "a" ]); (Mulacc, "fma", [ "a"; "b"; "c" ]) ]
+
 let clang_kernel ~cpu ?prefix l ~name kernel bufs uops =
   let masks = mask_widths uops in
   (* A selection on vectors reads its condition as a mask of its arms' width. *)
@@ -2219,7 +2268,8 @@ let clang_kernel ~cpu ?prefix l ~name kernel bufs uops =
       (dedup (List.concat_map types uops))
   in
   let defines =
-    String.concat "\n" (List.map (clang_vector_prefix ~cpu l) vectors)
+    String.concat "\n"
+      (List.map (clang_vector_prefix ~cpu l) vectors @ lane_builtins l uops)
   in
   defines ^ "\n" ^ render_kernel ?prefix l ~name kernel bufs uops ^ "\n"
 

@@ -1708,6 +1708,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Cstyle.clang` renders a vector's square root and multiply-add lane by lane
+  under a Clang without `__builtin_elementwise_sqrt` (before 18) or
+  `__builtin_elementwise_fma` (before 17), so Clang 15 to 17 compile them.
 - On CUDA and NV, the masked upcasts, the upcast loop, the reduce unroll and
   the upcast by 4 take no lanes whose values would pass a thread's 255
   registers (`Renderer.t.thread_registers`), so large elementwise and reduce

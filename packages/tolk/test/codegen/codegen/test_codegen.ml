@@ -848,6 +848,22 @@ let run_on_host =
     "where_fold";
   ]
 
+(* Under a Clang without vector square roots and multiply-adds: these tests run
+   in a process of their own, where CC names a script that runs Clang as one
+   before 17 sees a kernel, [__has_builtin] false for every builtin and each of
+   the two named as a function no object defines. A kernel that computes on
+   vectors with the builtins compiles only through the overloads its source
+   names in their place, and writes what its kernel writes. *)
+let without_elementwise =
+  tag "no-elementwise"
+  @@ group "under a Clang without elementwise builtins"
+       (List.map
+          (fun name ->
+            test name (fun () ->
+                if Sys.win32 then skip ~reason:"CC is a shell script" ();
+                runs_as_interpreted name ()))
+          [ "matmul"; "linearizer_fail_1" ])
+
 let values =
   group "values"
     [
@@ -5200,6 +5216,14 @@ let occurrences sub s =
   in
   go 0 0
 
+(* A host program's source without the overloads that compute a vector builtin
+   lane by lane under a Clang without it. *)
+let kernel_source prg =
+  let overload = String.starts_with ~prefix:"static inline __attribute__" in
+  String.split_on_char '\n' (source prg)
+  |> List.filter (fun line -> not (overload line))
+  |> String.concat "\n"
+
 let multiply_adds =
   group "multiply-adds"
     [
@@ -5268,7 +5292,7 @@ let multiply_adds =
           equal int ~msg:"multiply-adds of vectors" 3
             (occurrences "__builtin_elementwise_fma(" (source prg));
           equal int ~msg:"multiply-adds of one lane" 0
-            (occurrences "__builtin_fmaf(" (source prg));
+            (occurrences "__builtin_fmaf(" (kernel_source prg));
           (* row [i] holds the powers [2^(i mod 3)], [b] the integers [k]:
              every sum is exact, [2^(i mod 3)] times 120 *)
           let e =
@@ -11268,6 +11292,7 @@ let () =
        @ [
              stages;
            values;
+           without_elementwise;
            claims;
            lowering_claims;
            whole_graphs;

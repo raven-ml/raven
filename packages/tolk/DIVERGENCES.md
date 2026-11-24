@@ -3566,8 +3566,11 @@ driver signals its own (D146).
 
   Clang writes the vectors as `ext_vector_type` values: a conversion is
   `__builtin_convertvector`, square roots, truncations and multiply-adds are
-  `__builtin_elementwise_*`, a scalar operand of a builtin or a selection is
-  splat, a stack of lanes of one or two vectors of one type is
+  `__builtin_elementwise_*` (where Clang has no `__builtin_elementwise_sqrt`
+  or `__builtin_elementwise_fma`, before 18 and 17, the kernel names in their
+  place overloads for its vector types that compute each lane with the scalar
+  builtin, `Cstyle.lane_builtins`), a scalar operand of a builtin or a
+  selection is splat, a stack of lanes of one or two vectors of one type is
   `__builtin_shufflevector` cast to its type (put together lane by lane, LLVM
   folds a shuffle of shuffles back into a gather from every vector they read),
   and a vector of booleans is a mask of -1 and 0 lanes as wide as the
@@ -3656,7 +3659,8 @@ driver signals its own (D146).
   checkpoint's codes 16 at once on the host` (with D188) and `› a product over
   GGUF's Q6_K blocks converts each scale once`. The Codegen suite's
   `invalid_lanes_clang` and `invalid_lanes_int8_clang`, whose lanes of one
-  constant compute once.
+  constant compute once. The Codegen suite's `under a Clang without elementwise builtins`
+  (every case), whose kernels compile through the overloads.
 
 ## D142. Withdrawn
 

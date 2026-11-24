@@ -92,9 +92,12 @@ val clang : Helpers.Target.t -> Renderer.t
 
     The kernel is one thread with no workgroups. Vectors are Clang's vector
     extension, and an operation computes at most 64 lanes of one at once
-    ({!Renderer.t.vector_lanes}). Half floats are [__fp16], and bfloat16
-    values are converted to and from floats with integer operations. The data
-    types are those of {!Dtype.all} without the 8-bit floats, and without
+    ({!Renderer.t.vector_lanes}). A square root or multiply-add of a vector is
+    Clang's [__builtin_elementwise_sqrt] or [__builtin_elementwise_fma], or,
+    under a Clang without it, one that computes each lane with the scalar
+    builtin, to the same values. Half floats are [__fp16], and bfloat16 values
+    are converted to and from floats with integer operations. The data types are
+    those of {!Dtype.all} without the 8-bit floats, and without
     {!Dtype.Bfloat16} unless the architecture starts with [x86] or [arm]. Its
     vector registers are those of Clang's processor
     ({!Compiler_cpu.registers}). On [arm64] with the [FEATURE] [fp16],

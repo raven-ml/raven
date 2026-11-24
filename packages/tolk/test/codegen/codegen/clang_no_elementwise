@@ -1,0 +1,8 @@
+#!/bin/sh
+# Clang as one before 17 sees a kernel: __has_builtin is false for every
+# builtin, and __builtin_elementwise_sqrt and __builtin_elementwise_fma name
+# functions no object defines, unless the source names others in their place.
+exec clang "$@" -Wno-builtin-macro-redefined -Wno-macro-redefined \
+  '-D__has_builtin(x)=0' \
+  -D__builtin_elementwise_sqrt=no_elementwise_sqrt \
+  -D__builtin_elementwise_fma=no_elementwise_fma

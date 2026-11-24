@@ -5,6 +5,10 @@ typedef float float16 __attribute__((aligned(4),ext_vector_type(16)));
 typedef int int16 __attribute__((aligned(4),ext_vector_type(16)));
 typedef unsigned int unsigned_int16 __attribute__((aligned(4),ext_vector_type(16)));
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+#if !__has_builtin(__builtin_elementwise_sqrt)
+#define __builtin_elementwise_sqrt tolk_lanes_sqrt
+static inline __attribute__((overloadable, always_inline)) __fp1616 tolk_lanes_sqrt(__fp1616 a) { return (__fp1616){__builtin_sqrtf(a[0]), __builtin_sqrtf(a[1]), __builtin_sqrtf(a[2]), __builtin_sqrtf(a[3]), __builtin_sqrtf(a[4]), __builtin_sqrtf(a[5]), __builtin_sqrtf(a[6]), __builtin_sqrtf(a[7]), __builtin_sqrtf(a[8]), __builtin_sqrtf(a[9]), __builtin_sqrtf(a[10]), __builtin_sqrtf(a[11]), __builtin_sqrtf(a[12]), __builtin_sqrtf(a[13]), __builtin_sqrtf(a[14]), __builtin_sqrtf(a[15])}; }
+#endif
 __attribute__((min_vector_width(512))) void E_16(unsigned char* restrict args_24) {
   unsigned long val0 = (*(((unsigned long*)(args_24))+0));
   unsigned long val1 = (*(((unsigned long*)(args_24))+1));
