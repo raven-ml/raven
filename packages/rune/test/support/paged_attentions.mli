@@ -65,11 +65,14 @@ val examples : t list
     of 272 dimensions and values of 64 and of 56, whose tiles' copies are within
     bytes of a workgroup's memory on CUDA. *)
 
+val choices : t list
+(** [choices] is float32 cases over which {!gen}'s choices that {!examples}
+    leaves out are each made: heads of [8/8] and [8/1], [tq] of [7] and [64],
+    [16], [64] and [100] keys, [dk] of [16] and [72], and [dv] of [8]. *)
+
 val host_examples : t list
 (** [host_examples] is {!examples} of fewer than 128 query heads, in float32,
-    every cover but bfloat16's, then float32 cases over which {!gen}'s other
-    choices are each made: heads of [8/8] and [8/1], [tq] of [7] and [64], [16],
-    [64] and [100] keys, [dk] of [16] and [72], and [dv] of [8]. *)
+    every cover but bfloat16's, then {!choices}. *)
 
 val redrawn : t list -> t Windtrap.Gen.t
 (** [redrawn cases] draws a case of the form of one of [cases], its seed and,

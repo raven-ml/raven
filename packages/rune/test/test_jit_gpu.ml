@@ -484,6 +484,29 @@ let mapped_examples =
       else Some (mappable c))
     grad_examples
 
+(* The forms each attention law draws its cases on: its examples, then a case of
+   each [tq] and each [tk] that {!Attentions.gen} draws, over which each of its
+   other choices is made. A drawn case is a form with its data drawn anew, and
+   compiles to the form's program. *)
+let attention_forms =
+  attention_examples @ Attentions.edge_examples attention_dtypes
+
+let grad_forms = grad_examples @ Attentions.edge_examples attention_dtypes
+
+let mapped_forms =
+  mapped_examples
+  @ List.map mappable (Attentions.edge_examples attention_dtypes)
+
+(* The paged law's forms: its examples, then the cases over which
+   {!Paged_attentions.gen}'s other choices are each made, in float16, the dtype
+   the examples leave out. *)
+let paged_forms =
+  Paged_attentions.examples
+  @ List.map
+      (fun (c : Paged_attentions.t) ->
+        { c with dtype = Nx.Dtype.Any Nx.float16 })
+      Paged_attentions.choices
+
 (* The prefix law on the GPU, a float64 case discarded where its kernels lack
    float64. *)
 let prefixes (Prefixes.Case { dt; _ } as c) =
@@ -3685,25 +3708,25 @@ let () =
                (Gen.with_pp pp_routed routed_gen)
                computed_law;
            ];
-         (* Each case compiles programs of its own shapes. The examples reach
-            every cover, each mask and each dtype, on every run; four draws
-            add shapes of their own. *)
+         (* Each form compiles programs of its own shapes. The forms reach every
+            cover, each mask and each dtype, on every run, and each choice of
+            the generators of shapes; four draws a law take the forms'
+            programs. *)
          group "attention"
            [
-             prop ~count:4 ~examples:attention_examples
+             prop ~count:4 ~examples:attention_forms
                "jit holds nx's bound against a float64 reference"
-               (Gen.with_pp Attentions.pp (Attentions.gen attention_dtypes))
+               (Gen.with_pp Attentions.pp (Attentions.redrawn attention_forms))
                attention;
-             prop ~count:4 ~examples:grad_examples
+             prop ~count:4 ~examples:grad_forms
                "its compiled gradient holds rune's bound against a float64 \
                 reference"
-               (Gen.with_pp Attentions.pp (Attentions.gen attention_dtypes))
+               (Gen.with_pp Attentions.pp (Attentions.redrawn grad_forms))
                (attention_grad ~vmap:false);
-             prop ~count:4 ~examples:mapped_examples
+             prop ~count:4 ~examples:mapped_forms
                "its gradient mapped by vmap holds rune's bound against a \
                 float64 reference"
-               (Gen.with_pp Attentions.pp
-                  (Gen.map mappable (Attentions.gen attention_dtypes)))
+               (Gen.with_pp Attentions.pp (Attentions.redrawn mapped_forms))
                (attention_grad ~vmap:true);
              (* float32 on the FFMA micro-tile; the narrow floats on the
                 target's tensor core where it has one that chains, else on
@@ -3847,9 +3870,10 @@ let () =
                  Attentions.donated_twice (snd (on_gpu ()))
                    (Nx.Dtype.Any Nx.bfloat16));
              test "forward mode of a summed loss holds its bound" attention_jvp;
-             prop ~count:4 ~examples:Paged_attentions.examples
+             prop ~count:4 ~examples:paged_forms
                "paged keys and values give dense ones' bits"
-               (Gen.with_pp Paged_attentions.pp Paged_attentions.gen)
+               (Gen.with_pp Paged_attentions.pp
+                  (Paged_attentions.redrawn paged_forms))
                paged_attention;
            ];
          group "a reduction another reads"

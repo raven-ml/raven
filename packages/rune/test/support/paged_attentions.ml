@@ -183,49 +183,52 @@ let redrawn cases =
   in
   { c with seed; lengths }
 
+let choices =
+  let b = { base with dtype = Nx.Dtype.Any Nx.float32 } in
+  [
+    { b with hk = 8; tq = 7; max_pages = 16; dk = 16; dv = 8; mask = Window };
+    {
+      b with
+      hk = 1;
+      lead = 2;
+      tq = 64;
+      page = 16;
+      max_pages = 4;
+      dk = 72;
+      dv = 8;
+      lengths = Some [| 0; 64 |];
+      holes = Scattered;
+      nans = true;
+    };
+    {
+      b with
+      hk = 8;
+      max_pages = 100;
+      dk = 16;
+      lengths = Some [| 57 |];
+      mask = Reach;
+      holes = Tile;
+    };
+    {
+      b with
+      hk = 1;
+      tq = 1;
+      page = 16;
+      max_pages = 1;
+      dk = 72;
+      dv = 8;
+      lengths = Some [| 16 |];
+      mask = Window;
+      holes = Tile;
+    };
+  ]
+
 let host_examples =
   let f32 = Nx.Dtype.Any Nx.float32 in
-  let b = { base with dtype = f32 } in
   List.filter_map
     (fun c -> if c.hq >= 128 then None else Some { c with dtype = f32 })
     examples
-  @ [
-      { b with hk = 8; tq = 7; max_pages = 16; dk = 16; dv = 8; mask = Window };
-      {
-        b with
-        hk = 1;
-        lead = 2;
-        tq = 64;
-        page = 16;
-        max_pages = 4;
-        dk = 72;
-        dv = 8;
-        lengths = Some [| 0; 64 |];
-        holes = Scattered;
-        nans = true;
-      };
-      {
-        b with
-        hk = 8;
-        max_pages = 100;
-        dk = 16;
-        lengths = Some [| 57 |];
-        mask = Reach;
-        holes = Tile;
-      };
-      {
-        b with
-        hk = 1;
-        tq = 1;
-        page = 16;
-        max_pages = 1;
-        dk = 72;
-        dv = 8;
-        lengths = Some [| 16 |];
-        mask = Window;
-        holes = Tile;
-      };
-    ]
+  @ choices
 
 (* Inputs *)
 
