@@ -606,9 +606,22 @@ let from_storage_scalar dt (s : value) : value =
             (Format.asprintf "%a is not a storage of %a" pp_const s pp dt))
   | _ -> s
 
+(* A float32's bits and back, a NaN's moved by hand to keep a signalling one. *)
+let float32_bits x =
+  if Float.is_nan x then
+    (if Float.sign_bit x then 0x8000_0000 else 0)
+    lor 0x7F80_0000 lor nan_payload ~mant:23 x
+  else Int32.to_int (Int32.bits_of_float x) land 0xFFFF_FFFF
+
+let float32_of_bits b =
+  if b land 0x7F80_0000 = 0x7F80_0000 && b land 0x7F_FFFF <> 0 then
+    nan_of_payload ~mant:23 ~negative:(b lsr 31 = 1) (b land 0x7F_FFFF)
+  else Int32.float_of_bits (Int32.of_int b)
+
 (* A conversion to [dt]'s precision. It quiets a signalling NaN and keeps its
-   payload, as IEEE conversions do. The weak float and the doubles keep every
-   other value. *)
+   sign and payload, as IEEE conversions do; a float32 NaN's bits move by hand,
+   since RISC-V converts every NaN to its canonical one, positive and of no
+   payload. The weak float and the doubles keep every other value. *)
 let truncate_float dt x =
   let x =
     if Float.is_nan x then
@@ -618,6 +631,7 @@ let truncate_float dt x =
   match dt with
   | Float16 | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
       round dt x
+  | Float32 when Float.is_nan x -> float32_of_bits (float32_bits x)
   | Float32 -> Int32.float_of_bits (Int32.bits_of_float x)
   | _ -> x
 
@@ -636,18 +650,6 @@ let storage_int dt =
   | Bfloat16 -> Uint16
   | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz -> Uint8
   | dt -> dt
-
-(* A float32's bits and back, a NaN's moved by hand to keep a signalling one. *)
-let float32_bits x =
-  if Float.is_nan x then
-    (if Float.sign_bit x then 0x8000_0000 else 0)
-    lor 0x7F80_0000 lor nan_payload ~mant:23 x
-  else Int32.to_int (Int32.bits_of_float x) land 0xFFFF_FFFF
-
-let float32_of_bits b =
-  if b land 0x7F80_0000 = 0x7F80_0000 && b land 0x7F_FFFF <> 0 then
-    nan_of_payload ~mant:23 ~negative:(b lsr 31 = 1) (b land 0x7F_FFFF)
-  else Int32.float_of_bits (Int32.of_int b)
 
 (* The bits that store [s], a value of [dt]'s storage format. *)
 let pack dt (s : value) =
