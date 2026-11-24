@@ -237,7 +237,7 @@ let prompts ?(skip = fun () -> ()) name =
   let run = lazy (stream fx) in
   List.map
     (fun (prompt, recorded) ->
-      test ~timeout:3600. prompt (fun () ->
+      test prompt (fun () ->
           skip ();
           Lazy.force run recorded ()))
     (members (mem "prompts" fx))
