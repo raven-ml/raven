@@ -6843,7 +6843,7 @@ let () =
                test_inlined_in_step;
              test "a loop's checks raise as the steps written out"
                test_loop_checks;
-             test ~timeout:60. "an iterate stops at the program's first failure"
+             test "an iterate stops at the program's first failure"
                test_loop_stops;
              prop "drawn loops' checks raise as the steps written out"
                checked_loops law_checked_loop;

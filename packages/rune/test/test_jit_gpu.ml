@@ -3255,13 +3255,6 @@ let complex_ported k =
         Kinds.folded s ~f64 k);
   ]
 
-(* Over a cold disk cache NVRTC compiles the largest kernels below, one program
-   a test, since its cases share their shape: on an RTX 5000 Ada at a load of 12
-   to 14, a block's binomial took 57 s to compile at float32 and ran in a
-   millisecond. Fewer or smaller cases save none of it. Warm, each takes
-   seconds. *)
-let cold = 240.
-
 (* At float64 binomial's kernel took 130 s to compile and betaincinv's 76 s, so
    they and betainccinv compile at float32 alone here: test_draws and
    test_composed hold their float64 programs compiled against eager on the host,
@@ -3273,7 +3266,7 @@ let float32_only = [ "binomial"; "betaincinv"; "betainccinv" ]
 let composed_law k =
   let name = Kinds.name k in
   [
-    prop ~timeout:cold ~count:12
+    prop ~count:12
       ~examples:[ Kinds.example k ]
       (name ^ " at float32 gives eager's bits")
       (Kinds.gen ~f64:false k) (kind_law ~f64:false k);
@@ -3282,7 +3275,7 @@ let composed_law k =
   if List.mem name float32_only then []
   else
     [
-      prop ~timeout:cold ~count:12
+      prop ~count:12
         ~examples:[ Kinds.example k ]
         (name ^ " at float64 gives eager's bits")
         (Kinds.gen ~f32:false k)
@@ -3319,7 +3312,7 @@ let draws k =
   (if not (at R.Float32) then []
    else
      [
-       prop ~timeout:cold ~count:4
+       prop ~count:4
          (R.name k ^ " at float32 compiles to eager's draws")
          (R.gen k) (law R.Float32);
      ])
@@ -3327,7 +3320,7 @@ let draws k =
   if (not (at R.Float64)) || List.mem (R.name k) float32_only then []
   else
     [
-      prop ~timeout:cold ~count:4
+      prop ~count:4
         (R.name k ^ " at float64 compiles to eager's draws")
         (R.gen k)
         (let law = law R.Float64 in
@@ -3390,10 +3383,10 @@ let narrow_limbs =
   let f32 = lazy (limbs_at (snd (keeps ())) Nx.float32)
   and f64 = lazy (limbs_at (snd (keeps ())) Nx.float64) in
   [
-    prop ~timeout:cold ~count:3
+    prop ~count:3
       "dirichlet at float32 with 2 to 5 limbs compiles to eager's draws" Gen.int
       (fun seed -> Lazy.force f32 seed);
-    prop ~timeout:cold ~count:3
+    prop ~count:3
       "dirichlet at float64 with 3 to 8 limbs compiles to eager's draws"
       Gen.int (fun seed ->
         if not (fst (keeps ())) then

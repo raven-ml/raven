@@ -1340,8 +1340,7 @@ let () =
                ~examples:eigh_pair_examples eigh_pairs
                (Lowered.primed eigh_alone_graphs eigh_pair_examples eigh_alone);
              test "compiled in a scan's step" eigh_in_scan;
-             test ~timeout:60.
-               "compiled for 32 rows of float64 gives eager's eigenvalues"
+             test "compiled for 32 rows of float64 gives eager's eigenvalues"
                eigh_32;
            ];
          prop "stopping early gives the full count's values" ~count:6
