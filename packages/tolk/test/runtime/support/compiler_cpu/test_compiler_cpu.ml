@@ -1148,7 +1148,8 @@ let compile_time =
 
 (* A Clang without x86_64's _Float16: a script stands in for it, which states
    the version it is given and no compiler proper, and whose preprocessor
-   defines [__x86_64__] and, if it is given them, the macros of _Float16. *)
+   defines [__x86_64__], SSE2's macro and, if it is given them, the macros of
+   _Float16. *)
 
 let stand_in_for version ~float16 =
   let float16 =
@@ -1156,7 +1157,10 @@ let stand_in_for version ~float16 =
   in
   String.concat "\n"
     ([
-       "#!/bin/sh"; {|case " $* " in *" -dM "*)|}; "echo '#define __x86_64__ 1'";
+       "#!/bin/sh";
+       {|case " $* " in *" -dM "*)|};
+       "echo '#define __x86_64__ 1'";
+       "echo '#define __SSE2__ 1'";
      ]
     @ float16
     @ [
@@ -1213,6 +1217,16 @@ let without_float16 =
         ] (fun version ->
           not_contains ~sub:"_Float16"
             (snd (stand_in_error version ~float16:true)));
+      test "an arch that turns SSE2 off compiles nothing, naming SSE2"
+        (fun () ->
+          let arch = "x86_64,x86-64,-sse2" in
+          raises_match
+            (function
+              | Compiler.Compile_error msg ->
+                  has_infix ~affix:"turns SSE2 off" msg
+                  && not (has_infix ~affix:"Clang 15" msg)
+              | _ -> false)
+            (fun () -> compile arch increment));
     ]
 
 (* Without Clang: CC is read once, when the first compile runs, so these tests
@@ -1258,8 +1272,8 @@ let registers =
 
 (* LLVM 21 on a processor that states AVX10.1: a script stands in for it, whose
    preprocessor defines AVX-512F's macro where [native] or AVX10.1 is named,
-   whatever follows, whose statement names Granite Rapids as the processor,
-   and whose compiler proper fails at every source. *)
+   whatever follows, whose statement names Granite Rapids as the processor, and
+   whose compiler proper fails at every source. *)
 let llvm21_avx10 =
   String.concat "\n"
     [

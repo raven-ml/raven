@@ -630,18 +630,21 @@ let converts_halves =
   per_clang @@ fun cc selected ->
   fst selected = "x86_64" && not (x86_macros cc selected "__F16C__")
 
-(* Whether Clang has no [_Float16] for an x86_64 [arch], as before LLVM 15,
-   which defines it for every x86_64 processor, where LLVM 14 defines it only
-   with AVX-512 FP16: a kernel converts its halves with it, and an object for a
-   processor without F16C defines the conversions with it ({!half_conversions}).
-   A Clang that does not run defines not even [__x86_64__]: its compile fails
-   saying why. *)
-let lacks_float16 =
+(* Why Clang has no [_Float16] for an x86_64 processor: a kernel converts its
+   halves with it, and an object for a processor without F16C defines the
+   conversions with it ({!half_conversions}). LLVM 15 defines it for every
+   x86_64 processor with SSE2, LLVM 14 only with AVX-512 FP16. *)
+type no_float16 = Before_15 | Without_sse2
+
+(* Why Clang has no [_Float16] for an x86_64 [arch], or [None]. A Clang that
+   does not run defines not even [__x86_64__]: its compile fails saying why. *)
+let no_float16 =
   per_clang @@ fun cc selected ->
   let defines = x86_macros cc selected in
-  fst selected = "x86_64"
-  && defines "__x86_64__"
-  && not (defines "__FLT16_MAX__")
+  if fst selected <> "x86_64" || not (defines "__x86_64__") then None
+  else if defines "__FLT16_MAX__" then None
+  else if not (defines "__SSE2__") then Some Without_sse2
+  else Some Before_15
 
 (* Whether Clang keeps AVX-512 on for what it compiles an x86_64 [arch] for,
    where [avx512_off] turns it off, as LLVM 21 does for an AVX10.1 that [arch]
@@ -671,25 +674,33 @@ let clang arch =
   let stated () = own_statement cc (compile_args (selected ())) in
   let command ~long =
     let short = cc1 (stated ()) in
-    if lacks_float16 arch then
-      Error
-        (Printf.sprintf
-           "%s: %s has no _Float16 for %s, with which tolk's kernels convert \
-            halves; Clang 15 is the oldest that has it: install a newer Clang \
-            and name it in CC"
-           cc
-           (version_line (stated ()))
-           arch)
-    else if keeps_avx512 arch then
-      Error
-        (Printf.sprintf
-           "%s keeps AVX-512 on for %s after -mno-avx512f, and its masked \
-            ternary logic computes wrong values before LLVM 23 (LLVM issue \
-            157929): name a processor or level without the avx10.1 feature, or \
-            use LLVM 22 or later"
-           cc arch)
-    else if long then Result.map without_loop_vectorizer short
-    else short
+    match no_float16 arch with
+    | Some Before_15 ->
+        Error
+          (Printf.sprintf
+             "%s: %s has no _Float16 for %s, with which tolk's kernels convert \
+              halves; Clang 15 is the oldest that has it: install a newer \
+              Clang and name it in CC"
+             cc
+             (version_line (stated ()))
+             arch)
+    | Some Without_sse2 ->
+        Error
+          (Printf.sprintf
+             "%s has no _Float16 for %s, which turns SSE2 off: x86_64's \
+              _Float16, with which tolk's kernels convert halves, needs SSE2"
+             cc arch)
+    | None ->
+        if keeps_avx512 arch then
+          Error
+            (Printf.sprintf
+               "%s keeps AVX-512 on for %s after -mno-avx512f, and its masked \
+                ternary logic computes wrong values before LLVM 23 (LLVM issue \
+                157929): name a processor or level without the avx10.1 \
+                feature, or use LLVM 22 or later"
+               cc arch)
+        else if long then Result.map without_loop_vectorizer short
+        else short
   in
   (* An object is a function of its source, of the Clang, of the command its
      length selects and of the conversions it defines, so the table names what
