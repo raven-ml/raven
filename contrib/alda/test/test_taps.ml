@@ -422,7 +422,20 @@ let poly roots =
    has each outer zero [r] at [1 / r̄], the gain kept by the factor [|r|], and
    its first tap positive. Zeros at radii within [0.8, 1.25] of the circle leave
    the cepstrum's aliasing on 1024 points below 0.8⁵¹², so the taps are the
-   spec's to rounding. *)
+   spec's to rounding, amplified by the factorisation's conditioning.
+
+   [h] and [g] are rounded, so [g] is the gain of taps whose minimum-phase
+   factor is not [want]. A change [δg] of the gain moves the factor's transform
+   [H] by [H (δl + i 𝓗 δl)], [δl = δg / g] and [𝓗] the Hilbert transform; on the
+   circle the rms of [δl + i 𝓗 δl] is at most [√2] times [δl]'s. A tap thus
+   moves, to first order, by at most [√2 ‖h‖₂ rms (1 / g) max |δg|]. For [k]
+   zeros, [max |δg| ≤ (4k + 5 (log₂ n + 2)) u Π (1 + |r|)]: each of [poly]'s
+   steps rounds a coefficient by at most [4u] times that of [Π (1 + |r| z⁻¹)],
+   whose coefficients sum to [Π (1 + |r|)] and bound [‖h‖₁], and each of the
+   transform's [log₂ n] stages, its real packing and the magnitude rounds by at
+   most [5u ‖h‖₁]. [want]'s rounding and alda's, about [u log₂ n max |log g|] in
+   [log g], lie under that. Zeros on both sides at one angle make [g] dip: radii
+   [0.8] and [1.25] at angle [3], each twice, move taps near [75] by [9e-10]. *)
 let zeros_moved =
   let zeros =
     Gen.(
@@ -455,7 +468,26 @@ let zeros_moved =
           (Nx.rfft Nx.complex128 ~s:[ n ] (Nx.create Nx.float64 [| m |] h))
       in
       let got = Alda.Taps.minimum_phase Nx.float64 ~length:m g in
-      equal (array (float (1e-12 *. peak want))) want (Nx.to_array got))
+      let u = epsilon_float /. 2. and v = Nx.to_array g in
+      let last = Array.length v - 1 in
+      (* Bins strictly between [0] and [n / 2] stand for two points. *)
+      let inverse =
+        Array.fold_left ( +. ) 0.
+          (Array.mapi
+             (fun i x -> (if i = 0 || i = last then 1. else 2.) /. (x *. x))
+             v)
+      in
+      let rms_inverse = Float.sqrt (inverse /. Float.of_int n) in
+      let norm = Float.sqrt (Array.fold_left (fun a x -> a +. (x *. x)) 0. h) in
+      let sum =
+        List.fold_left (fun a r -> a *. (1. +. Complex.norm r)) 1. zeros
+      in
+      let rounds =
+        Float.of_int (4 * List.length zeros)
+        +. (5. *. (Float.log2 (Float.of_int n) +. 2.))
+      in
+      let tol = Float.sqrt 2. *. norm *. rms_inverse *. rounds *. u *. sum in
+      equal (array (float tol)) want (Nx.to_array got))
 
 (* The spectral factor: [h = f ∗ flip f] for a minimum-phase [f] has a
    nonnegative amplitude, and the square root of its gain gives [f] back. *)
