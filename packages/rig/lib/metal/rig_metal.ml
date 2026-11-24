@@ -333,6 +333,7 @@ let open_failures =
     "no GPU of this Mac supports Metal";
     "a device needs macOS 15 or later, for residency sets";
     "the GPU belongs to no Apple or Mac GPU family";
+    "the GPU's Apple family is below Apple6, which residency sets need";
     "Metal made no command queue";
     "Metal made no fence";
     "Metal made no residency set";

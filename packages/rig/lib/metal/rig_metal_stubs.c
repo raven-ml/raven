@@ -36,6 +36,7 @@ enum {
   no_device,
   before_15,
   no_family,
+  no_residency,
   no_queue,
   no_fence,
   no_set,
@@ -85,6 +86,13 @@ static int family(id<MTLDevice> device) {
   return [device supportsFamily:MTLGPUFamilyMac2] ? 0 : -1;
 }
 
+/* The first Apple family with residency sets, by the Metal feature set
+   tables' "Residency sets" row, which lists no Mac family. On a GPU without
+   them newResidencySetWithDescriptor answers nil, but under Metal's API
+   validation it aborts the process instead ("device does not support
+   residency sets"), so open asks the family first. */
+static const int residency_family = 6;
+
 static const struct rig_driver driver = {
     rig_metal_room, rig_metal_submit, rig_metal_commit, NULL, NULL,
     rig_metal_trim};
@@ -95,12 +103,16 @@ static intnat open_device(_Atomic uint64_t *word) API_AVAILABLE(macos(15.0)) {
   id<MTLDevice> device = MTLCreateSystemDefaultDevice();
   if (device == nil) return -no_device;
   int f = family(device);
-  struct rig_metal *d = f >= 0 ? calloc(1, sizeof *d) : NULL;
-  struct rig_metal_run *r = f >= 0 ? calloc(1, sizeof *r) : NULL;
+  if (f < 0 || (f > 0 && f < residency_family)) {
+    [device release];
+    return f < 0 ? -no_family : -no_residency;
+  }
+  struct rig_metal *d = calloc(1, sizeof *d);
+  struct rig_metal_run *r = calloc(1, sizeof *r);
   if (d == NULL || r == NULL) {
     free(d), free(r);
     [device release];
-    return f >= 0 ? -no_memory : -no_family;
+    return -no_memory;
   }
   MTLResidencySetDescriptor *desc = [[MTLResidencySetDescriptor alloc] init];
   d->driver = &driver;

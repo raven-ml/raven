@@ -95,9 +95,10 @@
 
 (** {1:opening Opening}
 
-    A device opens on macOS 15 or later, on a GPU of an Apple or a Mac GPU
-    family. The library builds on every system, and off macOS no device
-    opens. *)
+    A device opens on macOS 15 or later, on a GPU whose highest Apple GPU
+    family is Apple6 or later, which residency sets need, or on one of a Mac
+    GPU family and no Apple family. The library builds on every system, and
+    off macOS no device opens. *)
 
 type t
 (** The type for open devices. *)
