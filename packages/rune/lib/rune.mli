@@ -2007,24 +2007,24 @@ val jit :
     its kernels on others, compiles.
     On a set without kernels ({!Nx.val-devices}), nothing evaluates a declined
     program: it raises [Invalid_argument] at the call, naming what the compiler
-    declines, as does each stretch of a program split around a callback.
-    It declines nothing else: a compiler that fails on a program it takes, as
-    one whose library or program is missing, that rejects its source or that
-    ends before answering, raises its failure at the call that compiles,
-    [Failure] or {!Tolk.Renderer.Compiler.Compile_error} naming that compiler,
-    on every set, as does any other failure to compile. An evaluated call's
-    results are fresh, as a compiled call's are, and a call with donated
-    arguments consumes them. It
-    holds each value of the program from the operation that makes it until
-    the last that reads it, as the function applied eagerly lets each go.
-    With donated arguments, it gives each of them whose memory no other
-    argument shares, and in a program of operations alone each value one of
-    its operations made, to the operation that reads it last as
-    {!Nx.donate} of it, where that operation reads it once and no other
-    value is it, so that its result may take that memory as nx's donation
-    allows ({!Nx.section-moving}). As a compiled call's, a donated
-    argument's memory goes to one result at most, the first that took it,
-    and any other result over it is a copy.
+    declines, as does each stretch of a program split around a callback. It
+    declines nothing else: a compiler that fails on a program it takes, as one
+    whose library or program is missing, that rejects its source or that ends
+    before answering, raises its failure at the call that compiles, [Failure] or
+    {!Tolk.Renderer.Compiler.Compile_error} naming that compiler, on every set,
+    as does any other failure to compile. {!Tolk_engine.compiles} tells
+    beforehand whether a device's compiler runs on this machine. An evaluated
+    call's results are fresh, as a compiled call's are, and a call with donated
+    arguments consumes them. It holds each value of the program from the
+    operation that makes it until the last that reads it, as the function
+    applied eagerly lets each go. With donated arguments, it gives each of them
+    whose memory no other argument shares, and in a program of operations alone
+    each value one of its operations made, to the operation that reads it last
+    as {!Nx.donate} of it, where that operation reads it once and no other value
+    is it, so that its result may take that memory as nx's donation allows
+    ({!Nx.section-moving}). As a compiled call's, a donated argument's memory
+    goes to one result at most, the first that took it, and any other result
+    over it is a copy.
 
     A declined program that runs a {!callback} is {e split} around it. Each
     maximal {e stretch} of its operations that runs no callback and adds to no

@@ -55,6 +55,22 @@ val renderer : Rig.t -> Renderer.t
     Raises as {!target} does, and [Failure] with the reason when the target's
     renderer is not available, such as a compiler the machine lacks. *)
 
+val compiles : Rig.t -> (unit, string) result
+(** [compiles d] is [Ok ()] if the compiler of [d]'s programs, that of
+    {!renderer}[ d], compiles an empty source on this machine, and [Error why]
+    otherwise. [why] is the reason {!target} gives in
+    {!Tolk.Device.Uncomputable}, the message of {!renderer}'s [Failure], as
+    where the compiler's library is missing, or the compiler's message, as where
+    Clang is missing or {!Tolk.Compiler_cpu.clang} refuses it. A program may
+    still raise {!Tolk.Renderer.Compiler.Compile_error} where [compiles d] is
+    [Ok ()]. A compiler's answer is kept for [d]'s target for the process. It
+    neither reads nor keeps a binary in the disk cache, and ignores
+    {!Tolk.Setting.assert_compile}.
+
+    Raises [Invalid_argument] as {!target} does, and [Sys_error] or
+    [Unix.Unix_error] as a compile does when it cannot make its temporary files.
+*)
+
 val part : Rig.t -> string
 (** [part d] names [d]'s physical part as rig states it: its {!Rig.arch}, the
     bytes of its last-level cache ({!Rig.cache_bytes}), and, for an AMD GPU,

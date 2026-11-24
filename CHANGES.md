@@ -1713,6 +1713,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Tolk_engine.compiles d` says whether the compiler of `d`'s programs
+  compiles on this machine and, where it does not, why: rig links no host code,
+  the compiler's library is missing, or Clang is missing or refused.
 - On FreeBSD and NetBSD, `Helpers.Diskcache.get` reads an entry that is a
   symbolic link as none, where it raised `Sys_error`: they refuse to open a
   link with `EMLINK` and `EFTYPE` where POSIX says `ELOOP`.

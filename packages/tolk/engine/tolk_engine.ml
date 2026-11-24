@@ -67,6 +67,31 @@ let target d =
 let renderer d =
   match Device.renderer (target d) with Ok r -> r | Error why -> failwith why
 
+(* Each target's answer. A target's renderer, and so its compiler, is made once
+   (Device), and Clang keeps what its runs told for the process, so an answer of
+   the target holds for the process. *)
+let compiled = Hashtbl.create 4
+let compiled_lock = Mutex.create ()
+
+let compiles d =
+  match renderer d with
+  | exception Device.Uncomputable { reason; _ } -> Error reason
+  | exception Failure why -> Error why
+  | r -> (
+      let kept () = Hashtbl.find_opt compiled r.target in
+      match Mutex.protect compiled_lock kept with
+      | Some answer -> answer
+      | None ->
+          let answer =
+            match Renderer.Compiler.compile r.compiler "" with
+            | (_ : string) -> Ok ()
+            | exception (Renderer.Compiler.Compile_error why | Failure why) ->
+                Error why
+          in
+          Mutex.protect compiled_lock (fun () ->
+              Hashtbl.replace compiled r.target answer);
+          answer)
+
 let part d =
   let cache =
     match Rig.cache_bytes d with Some n -> string_of_int n | None -> "none"

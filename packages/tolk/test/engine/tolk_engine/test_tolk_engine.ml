@@ -125,6 +125,54 @@ let compiled ?name ?size ?bound () =
 
 let axpy = lazy (compiled ())
 
+(* Compiles
+
+   [compiles d] agrees with a compile of a kernel for [d], made anew and kept
+   nowhere ([Codegen.compile]), so that no binary of an earlier run answers for
+   the compiler. *)
+(* Whether a kernel compiles for [d], its renderer included: a renderer that
+   cannot be made, as where its compiler's library is missing, compiles
+   none. *)
+let kernel_compiles d =
+  match Engine.renderer d with
+  | exception (Failure _ | Device.Uncomputable _) -> false
+  | r -> (
+      match Codegen.compile (Codegen.linearize (kernel ()) r) r with
+      | (_ : Ops.t) -> true
+      | exception Renderer.Compiler.Compile_error _ -> false)
+
+let agrees d = equal bool (kernel_compiles d) (Result.is_ok (Engine.compiles d))
+
+(* A child's answer for the host: its reason, or [ok]. *)
+let parts =
+  [
+    ( "compiles",
+      fun () ->
+        match Engine.compiles host with
+        | Ok () -> print_string "ok"
+        | Error why -> print_string why );
+  ]
+
+let compiles =
+  group "compiles"
+    [
+      test "the host is Ok iff a kernel compiles for it" (fun () ->
+          if not (Rig.Image.links host) then
+            skip ~reason:"rig links no host code here" ();
+          agrees host);
+      test "the host is an error naming CC where CC names no program" (fun () ->
+          if not (Rig.Image.links host) then
+            skip ~reason:"rig links no host code here" ();
+          let cc = Filename.concat (temp_dir ()) "clang" in
+          match
+            Disk_cache.child
+              ~env:[ ("CC", cc) ]
+              ~cachedb:(Disk_cache.fresh ()) "compiles"
+          with
+          | Ok why -> contains ~sub:cc why
+          | Error err -> failf "the child failed: %s" err);
+    ]
+
 (* A kernel long enough for the host clock to see it run. *)
 let long_axpy () = kernel ~name:"long_axpy" ~size:(1 lsl 18) ()
 let a = floats [| 1.; 2.; 3.; 4. |]
@@ -8022,6 +8070,8 @@ let on_a_gpu kind =
   let devices = on_gpu kind in
   group kind
     [
+      test "compiles is Ok iff a kernel compiles for the GPU" (fun () ->
+          agrees (Gpus.gpu kind));
       group "custom kernels with variables" (custom_kernel_scalars ~devices ());
       test "signed arithmetic wraps as the interpreter" (fun () ->
           wraps_signed (devices "CPU:1") ());
@@ -8124,9 +8174,11 @@ let on_a_gpu kind =
     ]
 
 let () =
+  Disk_cache.play parts;
   exit
     (run "Tolk_engine"
        [
+         compiles;
          targets;
          on_the_host;
          in_blocks;
