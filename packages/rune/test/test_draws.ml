@@ -60,9 +60,9 @@ let lanes_law l32 l64 seed =
 let compiled_lanes =
   let spec () = Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor) in
   let checked f k a =
+    Compiled.here ();
     let before = Rune.evaluations () in
     let y = f k a in
-    Compiled.here ();
     equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
     y
   in

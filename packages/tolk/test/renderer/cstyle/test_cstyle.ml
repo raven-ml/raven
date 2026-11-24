@@ -2505,7 +2505,10 @@ let lp64_words source =
   in
   go words
 
-let windows_host = lazy (windows "native")
+let windows_host =
+  lazy
+    (Clang.here "x86_64-windows,native";
+     windows "native")
 
 (* A source that compiles only for the Windows triple, without a stack probe:
    [_WIN64] is the triple's, and a frame of 16 KiB would call [___chkstk_ms]
@@ -2558,6 +2561,7 @@ let windows_group =
       test
         "an object is compiled for Windows' triple and calls no stack probe"
         (fun () ->
+          Clang.here "x86_64-windows,x86-64";
           let r = windows "x86-64" in
           equal (list string) []
             (undefined_in (Renderer.Compiler.compile r.compiler windows_only)));

@@ -750,6 +750,7 @@ let law_tests =
         in
         equal (Oracle.tensor ()) (scalar 0.) g);
     test "compiled equals eager (law 3)" (fun () ->
+        Compiled.here ();
         let a = jacobian (Nx.eye f64 3) (Nx.zeros f64 [| 3 |]) in
         List.iter
           (fun solve ->
@@ -762,6 +763,7 @@ let law_tests =
             anderson ?budget:None ~memory:2;
           ]);
     test "compiled newton with a banded solver equals eager" (fun () ->
+        Compiled.here ();
         (* Bratu's problem on 16 nodes, h = 1/17, below its critical λ. The
            band's probe and factors are taken inside the search's loop. *)
         let second u =
@@ -1073,6 +1075,7 @@ let lane_tests =
         in
         equal near z (Nx.div_s (Solution.get st) s));
     test "compiled lanes equal eager" (fun () ->
+        Compiled.here ();
         let a =
           Nx.broadcast_to [| 3; 2; 2 |]
             (Nx.create f64 [| 2; 2 |] [| 4.; 1.; 1.; 3. |])

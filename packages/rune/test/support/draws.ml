@@ -6,11 +6,11 @@
 open Windtrap
 module R = Nx_rng_support
 
-(* [f ()] computed with no call evaluated, read back on the host. *)
-let compiled f =
+(* [f ()], on [set], computed with no call evaluated, read back on the host. *)
+let compiled set f =
+  Compiled.set set;
   let before = Rune.evaluations () in
   let y = f () in
-  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   Nx.place Nx.Host.on y
 
@@ -18,6 +18,7 @@ let compiled f =
    and each argument at [cut] of its rank. A draw given to a field is compiled
    once: its calls run that one compiled function. *)
 let at whole cut =
+  let set = Nx.Placement.devices whole in
   let key k = Nx.Rng.place whole k in
   let on x = Nx.place (cut (Array.length (Nx.shape x))) x in
   R.
@@ -25,13 +26,13 @@ let at whole cut =
       run0 =
         (fun { f0 } ->
           let g = Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) f0 in
-          fun k -> compiled (fun () -> g (key k)));
+          fun k -> compiled set (fun () -> g (key k)));
       run1 =
         (fun { f1 } ->
           let g =
             Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor) f1
           in
-          fun k x -> compiled (fun () -> g (key k) (on x)));
+          fun k x -> compiled set (fun () -> g (key k) (on x)));
       run2 =
         (fun { f2 } ->
           let g =
@@ -39,7 +40,7 @@ let at whole cut =
               Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> tensor @-> returns tensor)
               f2
           in
-          fun k x y -> compiled (fun () -> g (key k) (on x) (on y)));
+          fun k x y -> compiled set (fun () -> g (key k) (on x) (on y)));
     }
 
 let law (module S : Nx.Devices) ~dtypes ~shapes k =

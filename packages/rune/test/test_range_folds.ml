@@ -343,6 +343,7 @@ let compiled c f x =
 (* Each combine compiled is eager's, bit for bit, over float32 rows and wrapping
    int32 ones. *)
 let law_jit_reduce c =
+  Rune_support.Compiled.here ();
   cover_ranges c;
   let lo = bounds c.lo and hi = bounds c.hi in
   let x = rows Nx.float32 c.n c.seed in
@@ -372,6 +373,7 @@ let moments_bf16 = lazy (Rune.jit (three ()) moments_of)
 (* The mean and variance compiled are eager's, bit for bit, at float64, float32
    and the 16-bit floats, which compute in float32. *)
 let law_jit_moments c =
+  Rune_support.Compiled.here ();
   cover_ranges c;
   let check (type s) (dt : (float, s) Nx.dtype) f =
     List.iter

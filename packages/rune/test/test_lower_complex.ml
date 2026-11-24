@@ -20,6 +20,7 @@ let ported k =
       (Kinds.gen k)
       (Kinds.law (module Nx.Host) ~f64:true k);
     test (name ^ " of a constant gives eager's bits") (fun () ->
+        Rune_support.Compiled.here ();
         Kinds.folded (module Nx.Host) ~f64:true k);
   ]
 
@@ -111,6 +112,7 @@ let expected name zs =
   | _ -> `Nan
 
 let nan_parts (name, f) =
+  Rune_support.Compiled.here ();
   let tuples =
     match f with
     | F1 _ -> List.map (fun z -> [ z ]) numbers

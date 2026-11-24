@@ -70,6 +70,7 @@ let placed (type d) (module R : Nx.Devices with type d = d) h k xs =
 
 let agrees name { f } =
   prop ~examples:edges name values @@ fun (xs, k) ->
+  Rune_support.Compiled.here ();
   let n = Array.length xs in
   cover ~share:0.1 "no element" (n = 0);
   cover ~share:0.1 "a NaN or an infinity"
@@ -84,6 +85,7 @@ let agrees name { f } =
 (* A search times its candidates where they run, on another machine's host
    too: the kernel it picks gives eager computation's bits. *)
 let searches () =
+  Rune_support.Compiled.here ();
   let module R = (val Nx.devices [ host () ]) in
   let xs = Array.init 64 (fun i -> Float.of_int (i - 32) *. 0.5) in
   let x = Nx.create Nx.float32 [| 64 |] xs in
@@ -106,6 +108,7 @@ let halves () = Nx.bitcast Nx.float16 (Nx.arange Nx.uint16 0 65536 1)
 (* Widening keeps every bit a NaN has, with its quiet bit set, as hardware
    conversions do: the results' bits are compared, NaNs included. *)
 let widens_to_float32 () =
+  Rune_support.Compiled.here ();
   let module R = (val set ()) in
   let x = halves () in
   let far = Rune.jit' (Nx.cast Nx.float32) (Nx.place R.on x) in
@@ -115,6 +118,7 @@ let widens_to_float32 () =
     (raw (Nx.place Nx.Host.on far))
 
 let widens_to_float64 () =
+  Rune_support.Compiled.here ();
   let module R = (val set ()) in
   let x = halves () in
   let far = Rune.jit' (Nx.cast Nx.float64) (Nx.place R.on x) in
@@ -144,6 +148,7 @@ let half_edges =
   Array.of_list (all @ List.map Float.neg all)
 
 let narrows dt () =
+  Rune_support.Compiled.here ();
   let module R = (val set ()) in
   let x = Nx.create dt [| Array.length half_edges |] half_edges in
   let far = Rune.jit' (Nx.cast Nx.float16) (Nx.place R.on x) in
@@ -160,6 +165,7 @@ let double_ties =
        [ 0x1p-40; 0x1p-50; 0x1p-60 ])
 
 let narrows_from_float64 () =
+  Rune_support.Compiled.here ();
   let module R = (val set ()) in
   let x = Nx.create Nx.float64 [| Array.length double_ties |] double_ties in
   let far = Rune.jit' (Nx.cast Nx.float16) (Nx.place R.on x) in
@@ -173,6 +179,7 @@ let float32s =
 
 let narrows_any =
   prop "any float32 narrows as eager" float32s @@ fun xs ->
+  Rune_support.Compiled.here ();
   cover ~share:0.5 "a half subnormal or zero"
     (Array.exists (fun v -> Float.abs v < 0x1p-14) xs);
   let module R = (val set ()) in
@@ -210,6 +217,7 @@ let place_elsewhere () =
 
 (* Values on one machine's device of such a set compile. *)
 let on_one_machine () =
+  Rune_support.Compiled.here ();
   let h = host () in
   let module R = (val Nx.devices [ Rig.host; h ]) in
   let xs = [| 1.; -2.; 3.; -4. |] in

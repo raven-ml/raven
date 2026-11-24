@@ -3,3 +3,11 @@
  (wrapped false)
  (modules oracle)
  (libraries jera windtrap nx nx.array))
+
+; Compiled.here skips a test where the host's programs cannot compile.
+
+(library
+ (name jera_compiled)
+ (wrapped false)
+ (modules compiled)
+ (libraries rig tolk tolk.engine windtrap))

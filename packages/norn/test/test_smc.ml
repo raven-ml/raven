@@ -46,6 +46,7 @@ let runs_of m =
 
 let within_errors m =
   test m.name (fun () ->
+      Compiled.here ();
       let zs = runs_of m in
       let ln z = Nx.item [] (Norn.Evidence.log_evidence z) in
       let err z = Nx.item [] (Norn.Evidence.error z) in
@@ -320,6 +321,7 @@ let run_tests =
       slice;
       moments;
       Recovery.recovers "replicates recover the dogs posterior" (fun () ->
+          Compiled.here ();
           Recovery.replicated_cell
             (Recovery.smc ~replicates:16 ~draws:100)
             (Recovery.posterior "dogs-dogs"));

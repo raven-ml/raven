@@ -218,6 +218,7 @@ let test_non_positive_fan_rejected () =
    takes, so the weights follow it and equal the eager draw from that key. The
    glorot, he and lecun normal families go through truncated_normal. *)
 let test_init_compiles_under_jit () =
+  Compiled.here ();
   let check name (init : (Nx.float32_elt, Nx.host) Init.t) =
     let draw key = init key ~fan_in:8 ~fan_out:8 Nx.float32 [| 8; 8 |] in
     let f = Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) draw in

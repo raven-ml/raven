@@ -370,11 +370,14 @@ let law_at
     done
   done
 
-let law_jit (i, kinds, xs) = law_at programs.(i) kinds xs
+let law_jit (i, kinds, xs) =
+  Rune_support.Compiled.here ();
+  law_at programs.(i) kinds xs
 
 (* A lane of equal elements, [-0.] among them, is [+0.] compiled, as
    eagerly, at [eps = 0.] too. *)
 let test_constant () =
+  Rune_support.Compiled.here ();
   List.iter
     (fun (v, n) ->
       List.iter
@@ -395,6 +398,7 @@ let test_constant () =
 (* Compiled, a lane whose squares overflow, or underflow at [eps = 0.], is
    normalised at a power of two, beside one that keeps its scale. *)
 let test_overflow () =
+  Rune_support.Compiled.here ();
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 1e20; -1e20; 3.; 5. |] in
   let z = Nx.to_array (Rune.jit' (fun x -> Nx.standardize x) x) in
   let rms = Nx.to_array (Rune.jit' (fun x -> Nx.rms_norm x) x) in
@@ -415,6 +419,7 @@ let test_overflow () =
    round once from their exact values, take eager's bits, at float32 and
    float64. *)
 let test_tiny_bits () =
+  Rune_support.Compiled.here ();
   let check (type b) name (dt : (float, b) Nx.dtype) least =
     let n = 1024 in
     let at i =
@@ -481,6 +486,7 @@ let test_closed_form () =
    is [w scale / sqrt eps], compiled too: within 8 units of float64's
    roundoff, as the reference rounds three times and each gradient four. *)
 let test_zero_grad () =
+  Rune_support.Compiled.here ();
   let zeros = Nx.zeros f64 [| 3; 5 |] in
   let want =
     Nx.to_array (Nx.div_s (Nx.mul w0 (Nx.broadcast_to [| 3; 5 |] g0))
@@ -494,6 +500,7 @@ let test_zero_grad () =
 
 (* Compiled, the gradients are the eager ones. *)
 let test_jit_grads () =
+  Rune_support.Compiled.here ();
   List.iter
     (fun (name, loss) ->
       equal ~msg:name (array (float 1e-12))

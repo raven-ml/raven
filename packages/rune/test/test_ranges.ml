@@ -416,7 +416,7 @@ let law_jit = function
       let x = any_of dt (source c) in
       let before = Rune.evaluations () in
       let y = Lazy.force f (runs c c.starts) (runs c c.ends) x in
-      Rune_support.Compiled.here ();
+      Compiled.here ();
       equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
       equal (array int32) (bits_of (ranges c x)) (bits_of y)
 
@@ -472,6 +472,7 @@ let grad_examples =
     (List.init (Array.length grad_programs) Fun.id)
 
 let law_jit_grad (p, c) =
+  Compiled.here ();
   let (Grad { dt; w; f; _ }) = grad_programs.(p) in
   cover_form c;
   cover "a position inside the axis only modulo 2^64" (wraps c);
@@ -480,7 +481,7 @@ let law_jit_grad (p, c) =
   let loss x = Nx.sum (Nx.mul w (ranges c x)) in
   let before = Rune.evaluations () in
   let g = Lazy.force f (runs c c.starts) (runs c c.ends) x in
-  Rune_support.Compiled.here ();
+  Compiled.here ();
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal (array int32) (bits_of (Rune.grad' loss x)) (bits_of g)
 

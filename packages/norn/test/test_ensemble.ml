@@ -51,6 +51,7 @@ let reproducible =
             (floats (a :> Nx.host Nx.float64_t))
             (floats (b :> Nx.host Nx.float64_t)));
       test "a compiled transition is the eager one" (fun () ->
+          Compiled.here ();
           let s = E.init t banana (start 8) in
           let sp = E.ptree t in
           let step =

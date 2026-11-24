@@ -213,6 +213,7 @@ let jvp_tests =
         exact (Nx.sin (v3 ())) (my_sin_fwd (v3 ())));
     test "a constant a tangent map computes beside a tangent stays constant"
       (fun () ->
+        Rune_support.Compiled.here ();
         (* A loop over [dx] and maybe [x] whose program reads none of them gives
            a constant [k]: the map of 2 everywhere, or the running sum of 1 from
            a carry of 0. The tangent map [k dx] is linear, so the gradient is
@@ -272,6 +273,7 @@ let jvp_tests =
           ]);
     test "a constant a tangent map reduces from tangents alone stays constant"
       (fun () ->
+        Rune_support.Compiled.here ();
         (* A reduction over [dx] alone whose program reads none of it gives a
            constant [k]: the product of 2 over three elements, 8, their
            maximum, 2, or their running product, [2; 4; 8]. The tangent map
@@ -363,6 +365,7 @@ let jvp_tests =
           ]);
     test "the rule runs once per call, its derivative once where applied"
       (fun () ->
+        Rune_support.Compiled.here ();
         let rules = ref 0 and derivatives = ref 0 in
         let counted y d =
           incr rules;
@@ -610,6 +613,7 @@ let order_tests =
           (snd (Rune.jvp' primal (scalar x) (scalar 1.))));
     test "a differentiation of a capture leaves the rule to the argument's"
       (fun () ->
+        Rune_support.Compiled.here ();
         (* s sin x with a tangent map of 100 s along x: the differentiation over
            s differentiates the code, the one over x applies the rule. *)
         let rule s =
@@ -1160,6 +1164,7 @@ let error_tests =
 let compiled_tests =
   [
     test "a custom_jvp under jit" (fun () ->
+        Rune_support.Compiled.here ();
         let x = v3 () in
         exact ~msg:"value" (Nx.sin x) (Rune.jit' fake_jvp_sin x);
         let f =
@@ -1176,6 +1181,7 @@ let compiled_tests =
         exact ~msg:"jit of grad" (Nx.full f64 [| 3 |] 100.)
           (Rune.jit' (Rune.grad' (fun x -> Nx.sum (fake_jvp_sin x))) x));
     test "a custom_vjp under jit" (fun () ->
+        Rune_support.Compiled.here ();
         let f =
           Rune.jit' (Rune.grad' (fun x -> Nx.sum (Nx.mul (fake_grad_sin x) x)))
         in
@@ -1185,6 +1191,7 @@ let compiled_tests =
         exact ~msg:"grad of jit" (Nx.full f64 [| 3 |] 100.)
           (Rune.grad' (fun x -> Nx.sum (Rune.jit' fake_grad_sin x)) (v3 ())));
     test "a custom_vjp whose pullback scatters, under jit" (fun () ->
+        Rune_support.Compiled.here ();
         let indices = Nx.create Nx.int64 [| 3 |] [| 2L; 0L; 2L |] in
         let take =
           Rune.custom_vjp tensor tensor (fun x ->
@@ -1221,6 +1228,7 @@ let compiled_tests =
           (scan xs);
         exact ~msg:"grad" (Nx.full f64 [| 2; 3 |] 100.) (Rune.grad' run xs));
     test "a custom_vjp in a scan's step and a remat" (fun () ->
+        Rune_support.Compiled.here ();
         let xs =
           Nx.reshape [| 2; 3 |] (Nx.concatenate ~axis:0 [ v3 (); along () ])
         in
@@ -1302,6 +1310,7 @@ let nested_tests =
   List.map
     (fun (name, f) ->
       test ("a tangent map that calls a " ^ name) (fun () ->
+          Rune_support.Compiled.here ();
           let g x = Nx.sum (f x) in
           near ~msg:"grad" d1 (Rune.grad' g (scalar x));
           near ~msg:"jit of grad" d1 (Rune.jit' (Rune.grad' g) (scalar x));
@@ -1486,6 +1495,7 @@ let gen_lanes =
    lanes of the others, which do not hold it, and gives what it gives over [p]
    broadcast along their lanes. *)
 let lanes_law (kind, how, depth, ps, vs, dirs) =
+  Rune_support.Compiled.here ();
   List.iter (fun k -> cover (kind_name k) (kind = k)) kinds;
   List.iter
     (fun h -> cover ("under " ^ around_name h) (how = h))
@@ -1647,6 +1657,7 @@ let map_tests =
         exact ~msg:"jvp" none
           (snd (Rune.jvp' (Rune.vmap' fake_jvp_sin) none none)));
     test "jit around the map" (fun () ->
+        Rune_support.Compiled.here ();
         exact
           (Nx.full f64 [| 2; 3 |] 100.)
           (Rune.jit'
@@ -1693,6 +1704,7 @@ let map_tests =
     test
       "a tangent map reads the lanes of the map around the call, under a map \
        around that one" (fun () ->
+        Rune_support.Compiled.here ();
         (* A forward pass along each lane's direction of [dirs], the map named
            [axis]; the rule's tangent is the lanes' mean. Over the rows of [ps],
            an outer map holds the rule's argument. *)
@@ -1731,6 +1743,7 @@ let map_tests =
     test
       "a rule whose tangent map reads the lanes, on a value every lane shares"
       (fun () ->
+        Rune_support.Compiled.here ();
         (* [mark p] is [p], the same in every lane, so the switch on it takes
            one branch for all of them, where the lanes may be read. *)
         let axis = Rune.axis () in
@@ -1796,6 +1809,7 @@ let map_tests =
           rules);
     test "a rule's result the lanes do not change is not a lane value"
       (fun () ->
+        Rune_support.Compiled.here ();
         (* The rule receives a lane value, [t], but its result and tangent are
            [p]'s, the same in every lane, so the switch on it takes one branch
            for all of them, where the lanes may be read. *)
@@ -1828,6 +1842,7 @@ let map_tests =
       gen_lanes lanes_law;
     test "a pullback that reads the lanes receives each lane's cotangent"
       (fun () ->
+        Rune_support.Compiled.here ();
         (* Lane l weighs the lanes' mean of x by w_l, so x_k's gradient is the
            lanes' mean of w. *)
         let axis = Rune.axis () in
@@ -1849,6 +1864,7 @@ let map_tests =
         exact ~msg:"custom_transpose" want (Rune.grad' (loss lin) xs);
         exact ~msg:"compiled" want (Rune.jit' (Rune.grad' (loss vjp)) xs));
     test "a rule's additions under a map inside its differentiation" (fun () ->
+        Rune_support.Compiled.here ();
         (* The primal adds each lane's sum of x, the tangent map each lane's sum
            of its tangent, so the total is their sum over the lanes. *)
         let t = Total.make () in
@@ -2059,6 +2075,7 @@ let transpose_tests =
         near ~tol:1e-10 ~msg:"reverse over forward, a" fa' fa;
         near ~tol:1e-10 ~msg:"reverse over forward, b" fb' fb);
     test "under jit" (fun () ->
+        Rune_support.Compiled.here ();
         exact ~msg:"value" (Nx.solve a b) (Rune.jit' (inverse a) b);
         exact ~msg:"jit of grad" (vec [| 3. |])
           (Rune.jit'

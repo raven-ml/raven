@@ -144,6 +144,7 @@ let bits x = Array.map Int64.bits_of_float (elements x)
    result is one, and agrees with it within rune.mli's classes: a
    contraction's association is its own. *)
 let law_jit c =
+  Rune_support.Compiled.here ();
   let a, b, bias = place c in
   let f a = Nx.add (mm a b) bias in
   let eager = f a and compiled = Rune.jit' f a in
@@ -207,6 +208,7 @@ let step b c x =
   (c, closed c)
 
 let test_scan () =
+  Rune_support.Compiled.here ();
   let (ha, a), (_, b), xs = fixed () in
   let init = mm a b in
   let c, ys = Rune.scan' (step b) ~init xs in
@@ -243,6 +245,7 @@ let test_scan () =
     (Rune.vmap' f stacked)
 
 let test_iterate () =
+  Rune_support.Compiled.here ();
   let (ha, a), (_, b), _ = fixed () in
   let init = mm a b in
   let s0 = Nx.item [] (Nx.sum (Nx.abs (closed init))) in
@@ -258,6 +261,7 @@ let test_iterate () =
     (elements (Rune.grad' loss a))
 
 let test_maps_and_remat () =
+  Rune_support.Compiled.here ();
   let (ha, a), (_, b), _ = fixed () in
   let bias = Nx.place Four.on (Nx.create f64 [| 3 |] [| 0.25; -0.5; 1. |]) in
   let f a = Nx.add (mm a b) bias in
@@ -325,6 +329,7 @@ let test_cotangents () =
    eager within its dtype's class, and a closed float32 gradient with
    float64's. *)
 let test_dtypes () =
+  Rune_support.Compiled.here ();
   let (_, a), (_, b), _ = fixed () in
   let a32 = Nx.cast Nx.float32 a and b32 = Nx.cast Nx.float32 b in
   let f a = Nx.mul_s (Nx.sub (mm a b32) (Nx.scalar_like a 0.5)) 3. in

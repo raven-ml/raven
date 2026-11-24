@@ -13,3 +13,11 @@
  (name talon_held)
  (modules talon_held)
  (libraries windtrap talon nx nx.array rig))
+
+; Compiled.here skips a test where the host's programs cannot compile.
+
+(library
+ (name talon_compiled)
+ (wrapped false)
+ (modules compiled)
+ (libraries rig tolk tolk.engine windtrap))

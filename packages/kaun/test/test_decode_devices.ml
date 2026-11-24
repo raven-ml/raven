@@ -189,6 +189,7 @@ let generations () =
   (List.combine one four, kv)
 
 let test_generation_over_four_devices () =
+  Compiled.here ();
   let tokens, kv = generations () in
   List.iteri
     (fun i ((id, scores), (id', scores')) ->
@@ -244,6 +245,7 @@ let bfloat16 m =
    none of it where nx.cpu computes it, as
    [test_attention_over_heads] shows. *)
 let test_bfloat16 () =
+  Compiled.here ();
   let m = bfloat16 (model ()) in
   let slots = 8 in
   let first ~at ~kv_at m =
@@ -380,6 +382,7 @@ let law_conv (c, seed) =
    eager and compiled: each device reads the slots the table names from the
    devices that hold them. *)
 let test_pools_cut_along_slots () =
+  Compiled.here ();
   let p =
     Attention.make ~key:(Nx.Rng.key 3) ~bias:false ~kv_dim:8 ~embed_dim:dim
       Nx.float32

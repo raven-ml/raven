@@ -177,6 +177,7 @@ let decoded_value s c =
    output is [decode_k] equal terms that sum to the row's value times
    [2^(row + 8)] exactly, [+0] for both zeros. *)
 let decode_law ?(flushes = false) (module S : Nx.Devices) d =
+  Compiled.set S.v;
   let n = 16 * Array.length decode_bytes and k = decode_k in
   let byte r = decode_bytes.(r / 16) in
   let codes =
@@ -233,6 +234,7 @@ let decode_law ?(flushes = false) (module S : Nx.Devices) d =
 (* Row [16 b + c] of one block holds code [c] at scale byte [b]: its first
    value, dequantized, is the code's value at that byte. *)
 let dequant_law ?(flushes = false) (module S : Nx.Devices) () =
+  Compiled.set S.v;
   let n = 16 * 256 in
   let codes =
     Array.init (n * 16) (fun i ->

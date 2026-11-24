@@ -1112,7 +1112,9 @@ let law_at (Jit_program p) vs =
   equal ~msg:"jit of jvp" t expected
     (outcome (fun () -> both (Lazy.force p.staged x y tx ty)))
 
-let law_jit (i, vs) = law_at jit_programs.(i) vs
+let law_jit (i, vs) =
+  Compiled.here ();
+  law_at jit_programs.(i) vs
 
 (* Placement
 

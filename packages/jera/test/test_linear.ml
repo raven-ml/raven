@@ -422,6 +422,7 @@ let transformation_tests =
           (g Linear.dense)
           (g (Linear.banded ~width:1)));
     test "compiled banded equals eager" (fun () ->
+        Compiled.here ();
         let f r = Solution.get (banded 1 a r) in
         equal (Oracle.tensor ~rel:1e-14 ()) (f r) (Rune.jit' f r));
     test "lanes of banded solve their own systems" (fun () ->
@@ -447,6 +448,7 @@ let transformation_tests =
           (g
              (Linear.gmres ~restart:3 ~rel:1e-13 ~budget:30 ~precondition:Fun.id)));
     test "compiled gmres equals eager" (fun () ->
+        Compiled.here ();
         let f r = Solution.get (gmres ~restart:2 a r) in
         equal (Oracle.tensor ~rel:1e-12 ()) (f r) (Rune.jit' f r));
     test "lanes of gmres stop on their own" (fun () ->
@@ -457,6 +459,7 @@ let transformation_tests =
              [ Nx.zeros f64 [| 3 |]; Solution.get (gmres ~restart:2 a r) ])
           (Rune.vmap' (fun r -> Solution.get (gmres ~restart:2 a r)) rs));
     test "compiled cg equals eager" (fun () ->
+        Compiled.here ();
         let spd = Nx.add (Nx.matmul (Nx.transpose a) a) (Nx.eye f64 3) in
         let f r = Solution.get (cg spd r) in
         equal (Oracle.tensor ~rel:1e-12 ()) (f r) (Rune.jit' f r));
@@ -469,6 +472,7 @@ let transformation_tests =
           (Nx.stack [ Nx.zeros f64 [| 3 |]; Solution.get (cg spd r) ])
           (Rune.vmap' (fun r -> Solution.get (cg spd r)) rs));
     test "compiled dense equals eager on 96 unknowns" (fun () ->
+        Compiled.here ();
         let n = 96 in
         let m =
           Nx.add
@@ -481,6 +485,7 @@ let transformation_tests =
         let r = Nx.linspace f64 (-1.) 1. n in
         equal (Oracle.tensor ~rel:1e-12 ~abs:1e-15 ()) (f r) (Rune.jit' f r));
     test "compiled equals eager to rounding" (fun () ->
+        Compiled.here ();
         let f r = Solution.get (dense a r) in
         equal (Oracle.tensor ~rel:1e-14 ()) (f r) (Rune.jit' f r));
     test "lanes solve their own systems" (fun () ->

@@ -69,6 +69,7 @@ let compiles ~eager compiled =
 (* A compiled call that adds to a total, under reverse mode: its known part
    threads the total's running value. *)
 let total_under_grad () =
+  Compiled.here ();
   let t = Rune.Total.make () in
   let x = Nx.create f64 [| 3 |] [| 1.; 2.; 3. |] in
   let g x =
@@ -88,6 +89,7 @@ let total_under_grad () =
 (* The derivative of a scan whose step gives back its carry: the carry and its
    tangent each store a value into themselves. *)
 let scan_carried_back () =
+  Compiled.here ();
   let p = Nx.Ptree.(pair tensor tensor) in
   let step c _ = (Nx.neg (Nx.neg c), c) in
   let scanned (c, xs) = Rune.scan' step ~init:c xs in
@@ -115,7 +117,8 @@ let host_x () = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |]
 let missing_clang = "/nonexistent/clang"
 
 let without_clang () =
-  Compiled.here ();
+  if not (Rig.Image.links Rig.host) then
+    skip ~reason:"rig links no host code here" ();
   raises_match
     (function
       | Tolk.Renderer.Compiler.Compile_error m ->

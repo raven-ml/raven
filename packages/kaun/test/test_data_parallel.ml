@@ -160,6 +160,7 @@ let check_losses (jit, pm) =
     jit
 
 let test_dp_matches_jit () =
+  Compiled.here ();
   let ((jit, pm) as r) = run_both ~momentum:false ~steps:3 in
   check_losses r;
   (* Final weights leafwise within the fp32 allreduce band. *)
@@ -173,6 +174,7 @@ let test_dp_matches_jit () =
     (List.combine m_jit m_pm)
 
 let test_dp_momentum_matches_jit () =
+  Compiled.here ();
   check_losses (run_both ~momentum:true ~steps:5)
 
 (* Constructors and moves state where their values lie. *)

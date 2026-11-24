@@ -306,6 +306,7 @@ let elements (type v s) (dt : (v, s) Nx.dtype) xs : (v, s, Nx.host) Nx.t =
    32 bits or [2^-40] at 64: the rounding of four nested compositions, each of
    at most five-term sums. *)
 let adjoint (Lin (e, dt, vs, ws)) =
+  Compiled.here ();
   let v = elements dt vs and w = elements dt ws in
   let n = length dt vs in
   let has p = holds p e in
@@ -442,6 +443,7 @@ let reduced =
   ]
 
 let test_reduced (_, f, expected) =
+  Compiled.here ();
   let lt w = Rune.linear_transpose T.tensor T.tensor f at w in
   equal ~msg:"eager" bits_t (bits (vec expected)) (bits (lt (direction 1.)));
   equal ~msg:"compiled" bits_t

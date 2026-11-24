@@ -46,6 +46,7 @@
   rig
   rune
   tolk
+  tolk.engine
   windtrap))
 
 ; rig's test agent, beside the suite that starts it through Remote_job.

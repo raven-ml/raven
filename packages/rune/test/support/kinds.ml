@@ -2195,12 +2195,12 @@ let show wide c =
 let same wide a b = Int64.equal a b || (is_nan wide a && is_nan wide b)
 let arity_error () = invalid_arg "Kinds: operands of another arity"
 
-(* [result call] is [call ()] read back on the host; [call] must evaluate no
-   call. *)
-let result call =
+(* [result set call] is [call ()] read back on the host; [call], on [set], must
+   evaluate no call. *)
+let result set call =
+  Compiled.set set;
   let before = Rune.evaluations () in
   let y = call () in
-  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   Nx.place Nx.Host.on y
 
@@ -2226,7 +2226,7 @@ let compiler (type s d) (module S : Nx.Devices with type d = d) k :
         function [ x; y; z ] -> g (on x) (on y) (on z) | _ -> arity_error ())
     | Cone _ | Ctwo _ -> fun _ -> arity_error ()
   in
-  fun xs -> result (fun () -> call xs)
+  fun xs -> result S.v (fun () -> call xs)
 
 let eager k xs =
   match (k.fn, xs) with
@@ -2292,7 +2292,7 @@ let ccompiler (type c d) (module S : Nx.Devices with type d = d) k :
         function [ x; y ] -> g (on x) (on y) | _ -> arity_error ())
     | One _ | Two _ | Three _ -> fun _ -> arity_error ()
   in
-  fun xs -> result (fun () -> call xs)
+  fun xs -> result S.v (fun () -> call xs)
 
 let ceager k xs =
   match (k.fn, xs) with
@@ -2577,9 +2577,9 @@ let folded_at (type s d) (module S : Nx.Devices with type d = d) k
   let f x = Nx.concatenate ~axis:0 (List.map (at x) tuples) in
   let x = Nx.full dt [| 1 |] 1. in
   let e = Nx.to_array (f x) in
+  Compiled.set S.v;
   let before = Rune.evaluations () in
   let c = Nx.to_array (Nx.place Nx.Host.on (Rune.jit' f (Nx.place S.on x))) in
-  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   let code v = code wide v in
   List.concat
@@ -2631,9 +2631,9 @@ let cfolded_at (type c d) (module S : Nx.Devices with type d = d) k
   let f x = Nx.concatenate ~axis:0 (List.map (at x) tuples) in
   let x = Nx.full dt [| 1 |] Complex.one in
   let e = Nx.to_array (f x) in
+  Compiled.set S.v;
   let before = Rune.evaluations () in
   let c = Nx.to_array (Nx.place Nx.Host.on (Rune.jit' f (Nx.place S.on x))) in
-  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   let code v = code wide v in
   let show (z : Complex.t) = Printf.sprintf "(%h, %h)" z.re z.im in

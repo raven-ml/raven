@@ -17,13 +17,12 @@ let cpu = "CPU"
    whether they compile for the host's processors. *)
 type place = { device : string; renderer : Renderer.t Lazy.t; host : bool }
 
-(* The host's target, or skips the running test where rig links no host code,
-   for which nothing compiles ({!Tolk_engine.target}). *)
+(* The host's target, or skips the running test where the host's programs cannot
+   compile ({!Tolk_engine.compiles}). *)
 let host_target () =
-  match Tolk_engine.target Rig.host with
-  | t -> t
-  | exception (Tolk.Device.Uncomputable _ as e) ->
-      Windtrap.skip ~reason:(Printexc.to_string e) ()
+  match Tolk_engine.compiles Rig.host with
+  | Ok () -> Tolk_engine.target Rig.host
+  | Error reason -> Windtrap.skip ~reason ()
 
 let on_host =
   let renderer =

@@ -22,7 +22,13 @@ let host () = List.hd (Rig_remote.hosts (fst (remote ())))
    features its arch names, untuned. *)
 let compiles_for_its_arch () =
   let h = host () in
-  let t = Run.target h in
+  (* The target alone, which needs no Clang. *)
+  let t =
+    match Engine.target h with
+    | t -> t
+    | exception (Device.Uncomputable _ as e) ->
+        skip ~reason:(Printexc.to_string e) ()
+  in
   let cpu =
     match Rig.arch h with
     | "arm64" -> "generic"

@@ -340,6 +340,7 @@ let adapt_tests =
           (scalar (Oracle.dot x (Nx.cos (Nx.mul_s x 1.7))))
           (Rune.grad' at theta));
     test "compiled equals eager within the fit's rounding" (fun () ->
+        Compiled.here ();
         (* The fit is a matrix product, whose sums a compiled call may associate
            otherwise. *)
         let at theta =
@@ -352,6 +353,7 @@ let adapt_tests =
           (Oracle.tensor ~rel:1e-14 ~abs:1e-15 ())
           (at theta) (Rune.jit' at theta));
     test "compiled grad equals eager grad" (fun () ->
+        Compiled.here ();
         let x = vec [| 0.4; 1.3 |] in
         let at theta =
           Nx.sum
@@ -493,8 +495,10 @@ let transformation_tests =
           (Nx.reshape [||] (Oracle.central ~eps:1e-6 f knots v))
           (scalar (Oracle.dot (Rune.grad' f knots) v)));
     test "compiled equals eager, the spline solve included" (fun () ->
+        Compiled.here ();
         equal (close ()) (at_points samples) (Rune.jit' at_points samples));
     test "a series is a compiled function's argument" (fun () ->
+        Compiled.here ();
         let p = Piecewise.cubic `Natural knots samples in
         let s = Piecewise.ptree Nx.Ptree.tensor f64 in
         let f =

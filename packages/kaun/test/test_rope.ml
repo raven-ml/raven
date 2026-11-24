@@ -222,6 +222,7 @@ let test_gradients () =
   | Error m -> fail m
 
 let test_jit_matches_eager () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 23) @@ fun () ->
   let t = Rope.make ~head_dim:4 ~context:10 () in
   let pos = pos_of [| [| 2; 5; 9 |] |] in

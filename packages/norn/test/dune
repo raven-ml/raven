@@ -50,6 +50,7 @@
   evidence_models
   jera
   norn
+  norn_compiled
   norn.model
   posteriordb
   recovery

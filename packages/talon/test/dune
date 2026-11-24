@@ -150,7 +150,7 @@
  (name test_jit)
  (modules test_jit)
  (package talon)
- (libraries windtrap talon nx rune))
+ (libraries windtrap talon talon_compiled nx rune))
 
 (test
  (name test_memory)

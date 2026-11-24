@@ -520,6 +520,7 @@ module Keyed_x = struct
 end
 
 let test_dropout_keyed_jit_matches_eager () =
+  Compiled.here ();
   let x = vec (Array.init 64 (fun i -> float_of_int (i + 1))) in
   let apply { Keyed_x.x; key } =
     Dropout.apply ~rate:0.5 ~training:true ~key x
@@ -536,6 +537,7 @@ let test_dropout_keyed_jit_matches_eager () =
 (* A compiled step that opens a scope at its key: keyless dropout there is
    keyed dropout at [fold_in key 0], the scope's first key. *)
 let test_dropout_scoped_jit_is_keyed () =
+  Compiled.here ();
   let x = vec (Array.init 64 (fun i -> float_of_int (i + 1))) in
   let scoped { Keyed_x.x; key } =
     Nx.Rng.with_key key (fun () -> Dropout.apply ~rate:0.5 ~training:true x)
@@ -559,6 +561,7 @@ module Away =
   (val Nx.devices [ Result.get_ok (Rig.software "kaun-dropout") ])
 
 let test_dropout_jit_off_host () =
+  Compiled.here ();
   let x = vec (Array.init 64 (fun i -> float_of_int (i + 1))) in
   let x = Nx.place Away.on x in
   let key = Nx.Rng.place Away.on (Nx.Rng.key 21) in
@@ -621,6 +624,7 @@ let mlp_update p grads =
   { Mlp.w1 = upd p.Mlp.w1 grads.Mlp.w1; w2 = upd p.Mlp.w2 grads.Mlp.w2 }
 
 let test_dropout_jitted_training_steps () =
+  Compiled.here ();
   let steps = 4 in
   let trajectory seed =
     let root = Nx.Rng.key seed in

@@ -186,6 +186,7 @@ let both name f =
         let m = model () in
         f m (eager m));
     test (name ^ ", compiled, its caches donated") (fun () ->
+        Compiled.here ();
         let m = model () in
         f m (compiled m));
   ]
@@ -388,6 +389,7 @@ let test_empty_lane m call =
    from are results beside the caches. [~in_place] checks the storage alone,
    [~in_place:false] the tokens and logits alone. *)
 let test_generation_matches_recomputation ~in_place () =
+  Compiled.here ();
   let m = model () in
   let steps = 5 in
   let start = [| 3; 14; 1 |] in
@@ -451,6 +453,7 @@ let test_generation_matches_recomputation ~in_place () =
    weights and zero gradients, so nothing poisons the parameters'. *)
 
 let test_gradient_with_a_padded_row grad () =
+  Compiled.here ();
   let m = model () in
   let n = Array.length prompt in
   let tokens = ids [| Array.make n 0; prompt |] in

@@ -197,6 +197,8 @@ let law_at softmax log_softmax ~f64 ~chain ~exp_ulps ?log_ulps c =
   done
 
 let law (module S : Nx.Devices) =
-  law_at
-    (Array.map (compiled S.on ~log:false) programs)
-    (Array.map (compiled S.on ~log:true) programs)
+  let softmax = Array.map (compiled S.on ~log:false) programs
+  and log_softmax = Array.map (compiled S.on ~log:true) programs in
+  fun ~f64 ~chain ~exp_ulps ?log_ulps c ->
+    Compiled.set S.v;
+    law_at softmax log_softmax ~f64 ~chain ~exp_ulps ?log_ulps c

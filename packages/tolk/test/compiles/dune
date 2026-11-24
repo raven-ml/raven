@@ -1,0 +1,7 @@
+; Whether the host compiles, for CI, outside runtest: it exits 1 where the
+; host's programs cannot compile, so that a job with a Clang fails instead of
+; skipping its suites' compiling tests.
+
+(executable
+ (name compiles)
+ (libraries tolk tolk.engine rig))

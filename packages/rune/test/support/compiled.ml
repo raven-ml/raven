@@ -3,12 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Whether Clang compiles [d]'s programs: a host's, a software device's or
+   another machine's host's. *)
+let with_clang d =
+  Rig.runs_on_host d
+  ||
+  match Tolk_engine.target d with
+  | t -> t.Tolk.Helpers.Target.renderer = "CLANG"
+  | exception (Tolk.Device.Uncomputable _ | Invalid_argument _) -> false
+
 let here ?(on = Rig.host) () =
-  let host_code = Rig.equal (Rig.host_of on) on || Rig.runs_on_host on in
-  if host_code && not (Rig.Image.links on) then
-    Windtrap.skip
-      ~reason:
-        ("rig links no host code for "
-        ^ Rig.instruction_set (Rig.host_of on)
-        ^ ": Rune.jit evaluates on " ^ Rig.name on)
-      ()
+  match Tolk_engine.compiles on with
+  | Error reason when with_clang on -> Windtrap.skip ~reason ()
+  | Ok () | Error _ -> ()
+
+let set s = List.iter (fun on -> here ~on ()) (Nx.Devices.to_list s)

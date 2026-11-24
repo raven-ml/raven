@@ -297,7 +297,9 @@ let law_scan_form (Scan c as f) values =
     (fun (name, got) -> equal ~msg:name offers_t expected got)
     (Lazy.force c.runs xs)
 
-let law_scan (i, values) = law_scan_form scan_forms.(i) values
+let law_scan (i, values) =
+  Rune_support.Compiled.here ();
+  law_scan_form scan_forms.(i) values
 
 (* Rows of [s] at [dt], [n] of them, drawn for the modes that compile nothing: a
    row of rank 0, 1 or 2 or a zero-size one. *)
@@ -376,6 +378,7 @@ let iterate_emits p x =
   y
 
 let test_iterate_raise () =
+  Rune_support.Compiled.here ();
   let message =
     "Invalid_argument(\"Rune.iterate': until is still false after max = 2 \
      steps\")"
@@ -404,6 +407,7 @@ let test_iterate_raise () =
 (* Off the host a check raises at the next wait, so every row emits before it
    raises, and a compiled scan offers them all, as eagerly. *)
 let test_scan_raise_off_host () =
+  Rune_support.Compiled.here ();
   let p = Probe.make (tagged ()) in
   let xs = Nx.place Away.on (vec [| 1.; 2.; Float.nan; 4. |]) in
   let f c r =
@@ -435,6 +439,7 @@ let test_scan_raise_off_host () =
 
 (* A scan in a scan's step: the inner rows of each outer row, in turn. *)
 let test_nested_scan () =
+  Rune_support.Compiled.here ();
   let p = Probe.make (tagged ()) in
   let xs = Nx.reshape [| 2; 3 |] (Nx.arange_f f64 0. 6. 1.) in
   let inner c r =
@@ -462,6 +467,7 @@ let test_nested_scan () =
 (* A scan in a scan's step that reads no value of the step, only a capture:
    its emits are each outer row's, in turn, as when it reads the step's. *)
 let test_invariant_scan () =
+  Rune_support.Compiled.here ();
   let p = Probe.make (tagged ()) in
   let w = Nx.reshape [| 2; 3 |] (Nx.arange_f f64 1. 7. 1.) in
   let inner d r =
@@ -689,7 +695,9 @@ let law_lane_form (Lanes c) trips rows x =
   mapped ~compiled:(Lazy.force c.iterates) ~modes:[]
     ~f:(iterated c.s ~max:c.max) z
 
-let law_lanes c = law_lane_form lane_forms.(c.form) c.trips c.rows c.x
+let law_lanes c =
+  Rune_support.Compiled.here ();
+  law_lane_form lane_forms.(c.form) c.trips c.rows c.x
 
 (* Lanes drawn for the modes that compile nothing: any lane's shape, 0 to 3
    lanes of 0 to 3 trips, under a bound their most or 2 past it. *)
@@ -843,7 +851,9 @@ let law_branch_form (Branches c) index x =
       (Lazy.force c.lanes zk)
   done
 
-let law_branches c = law_branch_form branch_forms.(c.form) c.index c.x
+let law_branches c =
+  Rune_support.Compiled.here ();
+  law_branch_form branch_forms.(c.form) c.index c.x
 
 (* Branch indices drawn for the modes that compile nothing: any lane's shape, 0
    to 3 lanes. *)
@@ -914,6 +924,7 @@ let test_map_in_scan () =
 
 (* Maps in maps: the outer lane major. *)
 let test_nested_maps () =
+  Rune_support.Compiled.here ();
   let p = Probe.make (tagged ()) in
   let x = Nx.reshape [| 2; 3 |] (Nx.arange_f f64 0. 6. 1.) in
   let f =
@@ -1124,6 +1135,7 @@ let test_domain () =
 
 (* A total and a probe in one compiled step. *)
 let test_total () =
+  Rune_support.Compiled.here ();
   let p = Probe.make (tagged ()) and total = Rune.Total.make () in
   let xs = Nx.reshape [| 3; 1 |] (Nx.arange_f f64 1. 4. 1.) in
   let f xs =
@@ -1152,6 +1164,7 @@ let test_total () =
 (* Jit *)
 
 let test_jit_keys () =
+  Rune_support.Compiled.here ();
   let p = Probe.make (tagged ()) in
   let f =
     Rune.jit' (fun x ->
@@ -1208,6 +1221,7 @@ let test_jit_keys () =
 (* A compiled program offers its scan's rows as more results: nx evaluates
    nothing. *)
 let test_compiled () =
+  Rune_support.Compiled.here ();
   let p = Probe.make (tagged ()) in
   let xs = Nx.reshape [| 3; 2 |] (Nx.arange_f f64 0. 6. 1.) in
   let f = Rune.jit' (fun xs -> Nx.add_s (scanned p xs) 1.) in

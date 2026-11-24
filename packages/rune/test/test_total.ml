@@ -60,6 +60,7 @@ let test_same_total () =
 
 (* A scope inside a jit sums the function's additions there. *)
 let test_scope_in_jit () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let f x =
     let y, s =
@@ -93,6 +94,7 @@ let test_raising_jit () =
    is open at its trace: called first with none open, then inside one, it adds
    as eager does. *)
 let test_collect_after_none () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let f x =
     Total.add t (Nx.mul_s x 2.);
@@ -129,6 +131,7 @@ let added =
      (t, f, Rune.jit Nx.Ptree.(pair tensor tensor @-> returns tensor) f))
 
 let law_additions (z, cs) =
+  Rune_support.Compiled.here ();
   cover "no addition" (cs = []);
   cover "a -0 zero" (z = 0. && 1. /. z < 0.);
   let t, f, g = Lazy.force added in
@@ -152,6 +155,7 @@ let constant_scales =
   @ [ ("every scale", -0., [ 0.; -0.; 1.; -1.; 3e38 ]) ]
 
 let law_constant_scales (_, z, cs) =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let f x =
     List.iter (fun c -> Total.add t (Nx.mul x (Nx.scalar f32 c))) cs;
@@ -202,6 +206,7 @@ let summed (type d) top (p : d Nx.Placement.t) ~jit =
   (bits sum, placed sum)
 
 let test_sets () =
+  Rune_support.Compiled.here ();
   let top = Total.make () in
   let want =
     bits Nx.(add (add (zero ()) (scalar f32 1.5)) (scalar f32 (-0.25)))
@@ -219,6 +224,7 @@ module M1' = (val Nx.devices [ Nx_support.memory 1 ])
 (* An addition on [M2] under a collect on [M1] raises, wherever it is made, and
    reaches no collect around: the one on [M2] keeps its [init]. *)
 let test_set_refused () =
+  Rune_support.Compiled.here ();
   let sub =
     "Rune.Total.add: a value on [m2], where the total's init lies on [m1]"
   in
@@ -292,6 +298,7 @@ let test_set_refused () =
 (* A construct whose delivery to one total raises delivers to none: the
    additions of a construct that raises reach no total. *)
 let test_delivery_raises () =
+  Rune_support.Compiled.here ();
   let refused
       ?(sub = "Rune.Total.add: shape [3], where the total's init has [2]") f =
     invalid ~sub (fun () -> ignore (f ()))
@@ -382,6 +389,7 @@ let test_raises () =
 
 (* A scope around a jit receives the function's additions once per call. *)
 let test_jit_scope () =
+  Rune_support.Compiled.here ();
   let t = Total.make () and traces = ref 0 in
   let f x =
     incr traces;
@@ -1224,6 +1232,7 @@ let law_in_turn c =
    its first call chains its additions as eagerly: the program takes the running
    value where the call finds it. *)
 let test_jit_running () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let g =
     Rune.jit' (fun x ->
@@ -1249,6 +1258,7 @@ let test_jit_running () =
    its own order, from 1 over [1e8; -1e8] at f32, which gives 0 eagerly and 1
    summed from the identity first. *)
 let test_jit_mapped () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let g =
     Rune.jit' (fun x ->
@@ -1296,6 +1306,7 @@ let test_remat_mapped () =
    lane adds [x] once, so over [[1; 2]; [3; 4]] the totals are 10, and 3 and 7
    for the outer lanes. *)
 let test_jit_between_maps () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let g =
     Rune.jit' (fun x ->
@@ -1322,6 +1333,7 @@ let test_jit_between_maps () =
    additions written out give them: from an init of no tangent, an addition's
    tangent of -0 stays -0. *)
 let test_tangent_sign () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let collected x =
     snd (Total.collect t ~init:(s 0.) (fun () -> Total.add t x))
@@ -1622,6 +1634,7 @@ let alike_call c =
 let alike_rows = Batch.table ~per:8 alike_call alike_cases
 
 let law_alike (c, compiled) =
+  Rune_support.Compiled.here ();
   let ds = directions ~n:c.lanes ~k:3 in
   let f kept = alike c.site kept ~k:3 ~steps:c.steps in
   let want = f Value ds in
@@ -1632,6 +1645,7 @@ let law_alike (c, compiled) =
 (* Under a differentiation around the map, a collect inside it receives its
    additions' tangents too: its derivative is the summed value's. *)
 let test_alike_derivatives () =
+  Rune_support.Compiled.here ();
   let ds = directions ~n:3 ~k:3 in
   List.iter
     (fun site ->
@@ -1920,6 +1934,7 @@ let dep_rows =
     dep_cases
 
 let law_dependent (c, compiled) =
+  Rune_support.Compiled.here ();
   let ds = dep_lanes c in
   let f = dependent c.kind ~steps:c.steps in
   let each = stacked ~width:[| 6 |] f ds in
@@ -1935,6 +1950,7 @@ let differentiated_cases =
 (* Under a differentiation around the map, each lane's tangents and
    gradients, a collect inside it receiving tangents too. *)
 let law_dependent_derivatives c =
+  Rune_support.Compiled.here ();
   let ds = Nx.add_s (directions ~n:c.lanes ~k:2) 0.5 in
   let dds = Nx.add_s (Nx.mul_s ds 0.25) 0.125 in
   let f = dependent c.kind ~steps:c.steps in
@@ -1958,6 +1974,7 @@ let law_dependent_derivatives c =
    collect open, under a map of two lanes: two sums that a laned running value
    and one without lanes would hold at one shape. *)
 let test_colliding_sums () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let xs = rows ~steps:2 ~k:2 in
   let f d =
@@ -1979,6 +1996,7 @@ let test_colliding_sums () =
    [[2; 2]] that an addition gives lanes, beside one at [[2; 2; 2]] every lane
    makes alike, the shape of the first's running value with lanes. *)
 let test_meeting_sums () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let both h =
     Total.add t (outer h);

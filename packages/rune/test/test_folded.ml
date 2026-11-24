@@ -245,6 +245,7 @@ let differing rows ~eq compiled eager =
        rows)
 
 let real_values (type s) (dt : (float, s) Nx.dtype) () =
+  Rune_support.Compiled.here ();
   let rows =
     List.concat_map
       (fun (name, k) -> List.map (fun vs -> (name, vs)) (tuples (arity k)))
@@ -277,6 +278,7 @@ let real_values (type s) (dt : (float, s) Nx.dtype) () =
     (List.map show (differing rows ~eq:same compiled eager))
 
 let complex_values (type s) (dt : (Complex.t, s) Nx.dtype) () =
+  Rune_support.Compiled.here ();
   let pair = function
     | a :: b :: rest -> ({ Complex.re = a; im = b }, rest)
     | _ -> assert false
@@ -408,6 +410,7 @@ let int_dtypes =
   ]
 
 let int_values () =
+  Rune_support.Compiled.here ();
   let rows =
     List.concat_map
       (fun (Int_dtype (dname, _, _, _, w)) ->
@@ -461,6 +464,7 @@ let float_casts =
   ]
 
 let conversions () =
+  Rune_support.Compiled.here ();
   let held lo hi v = lo <= Float.trunc v && Float.trunc v <= hi in
   let to_ints =
     List.concat_map
@@ -524,6 +528,7 @@ let float_dtypes =
   ]
 
 let float_conversions () =
+  Rune_support.Compiled.here ();
   let vs =
     specials @ float_casts
     @ [
@@ -570,6 +575,7 @@ type bool_op = {
 }
 
 let bool_values () =
+  Rune_support.Compiled.here ();
   let truths = [ (false, false); (false, true); (true, false); (true, true) ] in
   let ops =
     [

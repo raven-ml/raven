@@ -117,6 +117,7 @@ let law_switch k =
    carry: once per inner row of each outer row, eagerly and compiled, whether or
    not a collect of a probe the step emits to is open. *)
 let test_inner_scan () =
+  Rune_support.Compiled.here ();
   let p = Rune.Probe.make T.tensor in
   let w = Nx.reshape [| 2; 3 |] (Nx.arange_f f64 1. 7. 1.) in
   let xs = Nx.zeros f64 [| 4; 1 |] in
@@ -149,6 +150,7 @@ let test_inner_scan () =
     [ ("eager", false); ("eager", true); ("jit", false); ("jit", true) ]
 
 let test_jit () =
+  Rune_support.Compiled.here ();
   let cb, log = logged (fun v -> Nx.exp v) in
   let g = Rune.jit tt (fun x -> Nx.add_s (cb (Nx.mul_s x 2.)) 1.) in
   let y1 = g (scalar 0.5) and y2 = g (scalar 1.) in
@@ -189,6 +191,7 @@ let compiled_once first f =
 (* Compiled: a call evaluates its program around the callback, each stretch
    without one a compiled call, which compiles once. *)
 let test_outlined () =
+  Rune_support.Compiled.here ();
   let cb, log = logged (fun v -> Nx.exp v) in
   let g = Rune.jit tt (fun x -> Nx.add_s (cb (Nx.sin (Nx.mul_s x 2.))) 1.) in
   let pair = Testable.(pair int int) in
@@ -246,6 +249,7 @@ exception Big of float
    residual computed by the first, which the callback reads. A stretch that only
    checks still checks where nothing reads it. *)
 let test_outlined_rule () =
+  Rune_support.Compiled.here ();
   let cb, log = logged Nx.exp in
   let f =
     Rune.custom_jvp T.tensor T.tensor (fun x ->
@@ -382,6 +386,7 @@ let outlined_switch =
      (g, List.map snd cbs, Array.init 3 (fun _ -> ref true)))
 
 let law_outlined_switch k =
+  Rune_support.Compiled.here ();
   let g, logs, firsts = Lazy.force outlined_switch in
   List.iter (fun log -> log := []) logs;
   let x = float_of_int k in
@@ -413,6 +418,7 @@ let outlined_iterate =
      (g, slog, ulog, [| ref true; ref true |]))
 
 let law_outlined_iterate k =
+  Rune_support.Compiled.here ();
   let g, slog, ulog, firsts = Lazy.force outlined_iterate in
   slog := [];
   ulog := [];
@@ -426,6 +432,7 @@ let law_outlined_iterate k =
   equal ~msg:"tests" fl (upto 0 (k + 1)) (List.rev !ulog)
 
 let test_outlined_remat () =
+  Rune_support.Compiled.here ();
   let cb, log = logged Nx.exp in
   let g = Rune.jit tt (Rune.remat tt (fun x -> Nx.sin (cb (Nx.mul_s x 2.)))) in
   let y = split (fun () -> g (scalar 0.5)) in
@@ -436,6 +443,7 @@ let test_outlined_remat () =
    between stretches is offered as eager code offers it; a donated argument is
    consumed. *)
 let test_outlined_effects () =
+  Rune_support.Compiled.here ();
   let cb, log = logged Fun.id in
   let g =
     Rune.jit tt (fun x ->
@@ -482,6 +490,7 @@ let test_outlined_effects () =
 (* Compiled, a result that a callback also received is in memory of its own,
    which the callback may keep, and so is a result that repeats another. *)
 let test_outlined_kept () =
+  Rune_support.Compiled.here ();
   let kept = ref None in
   let keep v =
     kept := Some v;
@@ -730,6 +739,7 @@ let cube () =
   (f, flog, adj)
 
 let test_rule () =
+  Rune_support.Compiled.here ();
   let f, flog, adj = cube () in
   let x = scalar 1.5 in
   let g = Rune.grad' f x in
@@ -829,6 +839,7 @@ let test_root () =
 let rgrad x = cos (x *. x *. x) *. 3. *. x *. x
 
 let test_remat_jit () =
+  Rune_support.Compiled.here ();
   let f, flog, adj = cube () in
   let g = Rune.jit' (Rune.grad' (Rune.remat tt (fun x -> Nx.sin (f x)))) in
   let g1 = g (scalar 1.5) and g2 = g (scalar 2.) in
@@ -860,6 +871,7 @@ let lane_values =
     list ~size:(constant n) (float_range (-4.) 4.))
 
 let law_remat_vmap xs =
+  Rune_support.Compiled.here ();
   let n = List.length xs in
   cover "no lane" (n = 0);
   cover "lanes" (n > 1);

@@ -60,6 +60,7 @@ let reproducible =
             (Nx.to_array (a :> Nx.host Nx.float64_t))
             (Nx.to_array (b :> Nx.host Nx.float64_t)));
       test "a compiled transition is the eager one" (fun () ->
+          Compiled.here ();
           let s = H.init t ~geometry:narrow banana (start 4) in
           let sp = H.ptree t in
           let step =

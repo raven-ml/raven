@@ -2681,6 +2681,7 @@ let pooled m fill =
 
 (* Three reductions of one output in one loop. *)
 let several () =
+  Rune_support.Compiled.here ();
   let x = Nx.create D.Int16 [| 2; 3 |] [| 32767; 1; -2; -32768; 0; 5 |] in
   let op k () =
     let s, (mx, (mn, ())) =
@@ -2718,6 +2719,7 @@ let uint16_products ~scan () =
   equal (array int) (Nx.to_array (op ())) (Lowered.run op)
 
 let int16_contraction () =
+  Rune_support.Compiled.here ();
   let a = Nx.create D.Int16 [| 4 |] [| -1; -32768; 32767; -32768 |] in
   let b = Nx.create D.Int16 [| 4 |] [| -1; -32768; -32768; 32767 |] in
   let batch = Iarray.of_list [] and contracting = Iarray.of_list [ (0, 0) ] in
@@ -2743,6 +2745,7 @@ let int16_contraction () =
 (* A [2; 0] by [0; 3] contraction has no products: each output is its init
    as the accumulator holds it, rounded into [dt], bit for bit. *)
 let no_products (type v s) (dt : (v, s) D.t) acc raws () =
+  Rune_support.Compiled.here ();
   let a = value dt [| 2; 0 |] [||] and b = value dt [| 0; 3 |] [||] in
   let init = value dt [| 2; 3 |] raws in
   let batch = Iarray.of_list [] and contracting = Iarray.of_list [ (1, 0) ] in
@@ -2842,6 +2845,7 @@ let bool_bytes ~scan m () =
 (* A float32 running variance of [0, 4e19, 0, 0]: the squared deviations
    overflow from the second term on, which gives eager's [+∞] variances. *)
 let moments_overflow () =
+  Rune_support.Compiled.here ();
   let x = Nx.create D.Float32 [| 4 |] [| 0.; 4e19; 0.; 0. |] in
   let c = { spread_example with shape = [| 4 |]; axes = [ 0 ] } in
   let op () = snd (by ~scan:true (Moments (0, D.Float32)) c x ()) in
@@ -3029,6 +3033,7 @@ let work_bounds =
       test "a Rows contraction in blocks works as its slots' at 64 groups"
         (blocked ~k:256 64);
       test "a Contracting contraction of 8 groups works in blocks" (fun () ->
+          Rune_support.Compiled.here ();
           let k = 16 in
           let ops, lds = work Plain ~n ~k ~j 1 in
           let o, l = work Contracting_of ~n ~k ~j 8 in
@@ -3048,8 +3053,10 @@ let cases =
       test "booleans' running any keeps eager's bytes"
         (bool_bytes ~scan:true Max);
       test "a max-pooling window gives eager's values" (fun () ->
+          Rune_support.Compiled.here ();
           pooled Max Float.neg_infinity);
       test "a min-pooling window gives eager's values" (fun () ->
+          Rune_support.Compiled.here ();
           pooled Min Float.infinity);
       test "several reductions of one loop" several;
       test "a uint16 product wraps past int" (uint16_products ~scan:false);
@@ -3069,9 +3076,13 @@ let cases =
       test "a complex128 running maximum is refused"
         (refused_complex ~scan:true Max);
       test "a running variance that overflows is +∞" moments_overflow;
-      test "rows of one group in a block at each batch index give eager's values"
-        (fun () -> contract_check batched_block);
+      test
+        "rows of one group in a block at each batch index give eager's values"
+        (fun () ->
+          Rune_support.Compiled.here ();
+          contract_check batched_block);
       test "rows over 257 groups give eager's values" (fun () ->
+          Rune_support.Compiled.here ();
           contract_check many_groups);
     ]
 
@@ -3120,6 +3131,7 @@ let sm_89_cores = Tolk.Heuristic.cores (Tolk.Cstyle.without_compiler sm_89)
    bits of [f] in one kernel, both unoptimized: three kernels and one, so the
    two schedules compared differ. *)
 let apart f () =
+  Rune_support.Compiled.here ();
   let cores = [ ("CPU", sm_89_cores) ] in
   equal ~msg:"kernels apart" int 3 (Lowered.kernels ~cores f);
   equal ~msg:"kernels together" int 1 (Lowered.kernels f);

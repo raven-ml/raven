@@ -63,6 +63,7 @@ let t_quantile p df =
 
 let covers ~centre m truth =
   test m.name (fun () ->
+      Compiled.here ();
       let rs = runs ~live:50 m calibration in
       List.iter
         (fun (z, _) ->

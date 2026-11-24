@@ -233,6 +233,7 @@ let cholesky_law (c, shape) =
 (* A batch of a positive definite matrix and one that is not: the second alone
    is NaN. *)
 let cholesky_fails () =
+  Rune_support.Compiled.here ();
   let a =
     Nx.create D.Float64 [| 2; 2; 2 |] [| 4.; 0.; 2.; 5.; 1.; 0.; 2.; 1. |]
   in
@@ -245,6 +246,7 @@ let cholesky_fails () =
    second of [1 - 1 = +0] and of [-0 - 0 = -0]. Each such matrix alone is
    NaN. *)
 let cholesky_zero_pivot () =
+  Rune_support.Compiled.here ();
   let a =
     Nx.create D.Float64 [| 5; 2; 2 |]
       [|
@@ -335,6 +337,7 @@ let pivots rows a =
   (Lowered.run (lu_pivots a), Lowered.run (lu_order a))
 
 let pivot_rule () =
+  Rune_support.Compiled.here ();
   (* A NaN below the diagonal is never the pivot; a tie keeps the first. *)
   equal (pair (array int64) (array int64)) ([| 2L; 1L |], [| 2L; 1L; 0L |])
     (pivots 3 [| 1.; 0.; Float.nan; 0.; 2.; 0. |]);
@@ -400,6 +403,7 @@ let solve_law (c, shape) =
     { bound with x = Array.map (( *. ) tol) bound.x }
 
 let solve_singular () =
+  Rune_support.Compiled.here ();
   let a = Nx.create D.Float64 [| 2; 2 |] [| 1.; 0.; 3.; 0. |] in
   let b = Nx.create D.Float64 [| 2; 1 |] [| 1.; 2. |] in
   let solve unit_diagonal =
@@ -551,6 +555,7 @@ let svd_values_op dt a () = linalg (Svd_values { dtype = dt; a })
 (* Matrices whose squares overflow or underflow their dtype: their values are
    eager's within the bound. *)
 let svd_extremes () =
+  Rune_support.Compiled.here ();
   let check (type s) name (dt : (float, s) D.t) u m n x =
     let a = Nx.create dt [| m; n |] x in
     let s = Lowered.run (svd_values_op dt a) in
@@ -643,6 +648,7 @@ let svd_law (c, shape) =
 (* A batch of a matrix with an infinity and one without: the first alone is NaN
    in every result. *)
 let svd_fails () =
+  Rune_support.Compiled.here ();
   let a =
     Nx.create D.Float64 [| 2; 2; 2 |]
       [| 1.; Float.infinity; 0.; 1.; 3.; 0.; 0.; 2. |]
@@ -719,6 +725,7 @@ let spectrum_graphs (R (_, dt, _), _) =
 
 (* A zero singular value is +0, of a zero matrix and of a zero column. *)
 let svd_zero () =
+  Rune_support.Compiled.here ();
   let a =
     Nx.create D.Float64 [| 2; 2; 2 |] [| 0.; 0.; 0.; 0.; 1.; 0.; 2.; 0. |]
   in
@@ -986,6 +993,7 @@ let eigh_pairs =
 
 (* NaN in the lower triangle makes its matrix NaN in both results. *)
 let eigh_fails () =
+  Rune_support.Compiled.here ();
   let a =
     Nx.create D.Float32 [| 2; 2; 2 |]
       [| 1.; 0.; Float.nan; 1.; 2.; 0.; 0.; 3. |]
@@ -1003,6 +1011,7 @@ let eigh_fails () =
    subnormal's spacing, of the exact one, and [‖vᵀ v - I‖_F] is within the
    stated [g]. *)
 let eigh_extremes () =
+  Rune_support.Compiled.here ();
   let check (type s) name (dt : (float, s) D.t) u pairs =
     let k = List.length pairs in
     let m =
@@ -1049,6 +1058,7 @@ let eigh_extremes () =
    symmetric matrix folds 32 lanes into a chain of maxima in a loop of 32
    trips, which LLVM 22's and 23's loop idiom recognition did not finish. *)
 let eigh_32 () =
+  Rune_support.Compiled.here ();
   let n = 32 in
   let st = Random.State.make [| n |] in
   let x = Array.init (n * n) (fun _ -> uniform st) in
@@ -1196,6 +1206,7 @@ let stop_law (R (name, dt, _), ((ka, kb), (n, seed))) =
    scan's loop of steps: each step's values are eager's within the bound, for
    matrices that need different numbers of sweeps. *)
 let eigh_in_scan () =
+  Rune_support.Compiled.here ();
   let n = 6 in
   let st = Random.State.make [| n |] in
   let kinds = [ Diagonal; Graded; Clustered; Gram ] in
@@ -1217,6 +1228,7 @@ let eigh_in_scan () =
 (* Through Nx: a compiled [Nx.svdvals] and [Nx.eigvalsh] are eager's within
    the bounds above, [eigvalsh] of either triangle. *)
 let values_law (c, shape) =
+  Rune_support.Compiled.here ();
   let (R (_, dt, u)) = c.dt in
   cover_case c shape;
   let st = state c in

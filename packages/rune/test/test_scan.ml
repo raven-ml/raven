@@ -597,6 +597,7 @@ let scoped_form_cases =
               f.draws)))
 
 let law_scoped_compiled (i, seed) =
+  Compiled.here ();
   let f = scoped_forms.(i) in
   let k = Nx.Rng.key seed and c0 = v [| 0.5; -2. |] in
   scoped_agree
@@ -1859,6 +1860,7 @@ let nested xs =
   Nx.concatenate ~axis:0 [ c; Nx.reshape [| -1 |] ys ]
 
 let test_nested_compiled () =
+  Compiled.here ();
   List.iter
     (fun (no, ni) ->
       let msg = Printf.sprintf "%d rows of %d" no ni in
@@ -1891,12 +1893,14 @@ let chained x =
   List.fold_left link x (List.init 8 Fun.id)
 
 let test_chained () =
+  Compiled.here ();
   let x = on0 (Nx.create Nx.float64 [| 4 |] [| 1.; -2.; 0.; 3. |]) in
   compiles ~msg:"chain" chained x;
   compiles ~msg:"chain, grad" (Rune.grad' (fun x -> Nx.sum (chained x))) x
 
 (* Three carries that rotate, each step adding its row to the one that wraps. *)
 let test_cycle () =
+  Compiled.here ();
   let ts = T.(pair tensor (pair tensor tensor)) in
   let f xs =
     let a, (b, c) =
@@ -1914,6 +1918,7 @@ let test_cycle () =
 (* Rows the step's program computes from constants: [8] int32 rows of 1 to 8 sum
    to 36; [8; 5] float32 rows of [0, 40). *)
 let test_constant_rows () =
+  Compiled.here ();
   let sum_rows (type v s) (dt : (v, s) Nx.dtype) shape x =
     let rows =
       Nx.place (Nx.placement x) (Nx.arange dt 1 (Operand.numel shape + 1) 1)
@@ -1932,6 +1937,7 @@ let test_constant_rows () =
 
 (* A step whose output is a constant, or has no element, over 300 rows. *)
 let test_constant_outputs () =
+  Compiled.here ();
   let xs = on0 (Nx.create f32 [| 300; 2 |] (Array.init 600 Float.of_int)) in
   let scan_with out xs =
     let c, ys =
@@ -1948,6 +1954,7 @@ let test_constant_outputs () =
 
 (* A step that takes its carry's elements at constant indices. *)
 let test_constant_take () =
+  Compiled.here ();
   let f xs =
     fst
       (Rune.scan'
@@ -1967,6 +1974,7 @@ let test_constant_take () =
    the regions leave rows of the carry, one of them [-0.], where they
    overlap, and where each row's gradient reads another row of the carry. *)
 let test_stacked_carry () =
+  Compiled.here ();
   let w =
     on0 (Nx.create f32 [| 4; 2 |] [| 0.5; -1.; 2.; 0.25; -0.5; 1.; 3.; -2. |])
   in
@@ -2003,6 +2011,7 @@ let test_stacked_carry () =
 (* A carry with no element beside rows with elements: compiled, and its gradient
    mapped over no lane. *)
 let test_empty_carry () =
+  Compiled.here ();
   let f xs =
     let c, ys =
       Rune.scan'
@@ -2040,6 +2049,7 @@ let occurrences word s =
   !k
 
 let test_staged () =
+  Compiled.here ();
   let traces = ref 0 in
   let step c r =
     incr traces;
@@ -2726,6 +2736,7 @@ let test_residuals () =
    its carry, its result and a step's hidden values, and no copy of the
    stack. *)
 let test_strided_rows () =
+  Compiled.here ();
   let layers = 8 and dim = 32 and batch = 256 in
   let hidden = 8 * dim in
   let stack r c =
@@ -2776,6 +2787,7 @@ let test_strided_rows () =
    takes the carry's memory. Beside it the program holds a step's product and
    its loss. On the host what the first call holds is its footprint. *)
 let test_summed_gradients () =
+  Compiled.here ();
   let dim = 256 and rows = 16 in
   let w = Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key 1) f32 [| dim; dim |]) 0.01 in
   let loss w x =
@@ -2861,6 +2873,7 @@ let test_stacked_rows () =
    the trip's index, in a scan of its own over the row and through a view the
    inner step captures: each inner call is passed the outer trip's index. *)
 let test_strided_row_nested () =
+  Compiled.here ();
   let xs =
     Nx.matrix_transpose (Nx.create f32 [| 3; 2; 4 |] (Array.init 24 Float.of_int))
   in

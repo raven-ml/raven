@@ -647,6 +647,7 @@ let family title ds rows ~arity =
     ~examples:(List.map (fun d -> (d, 7)) ds)
     (by_dtype ds)
     (fun (d, seed) ->
+      Rune_support.Compiled.here ();
       cover_classes ds d;
       let x, y = operands d seed in
       let ops = if arity = 1 then [ x ] else [ x; y ] in
@@ -734,6 +735,7 @@ let conversion title k ~nan ds dsts =
     ~examples:(List.map (fun d -> (d, 11)) ds)
     (by_dtype ds)
     (fun (d, seed) ->
+      Rune_support.Compiled.here ();
       cover_classes ds d;
       let x, _ = operands d seed in
       let dsts = dsts d in
@@ -761,6 +763,7 @@ let into_complex128 =
     ~examples:(List.map (fun d -> (d, 13)) dtypes)
     (by_dtype dtypes)
     (fun ((D.Any dt as d), seed) ->
+      Rune_support.Compiled.here ();
       cover_classes dtypes d;
       let x, _ = operands d seed in
       let into x =
@@ -799,8 +802,10 @@ let casts16 =
   group "16-bit casts"
     [
       test "float16 gives eager's bits" (fun () ->
+          Rune_support.Compiled.here ();
           Rune_support.Casts16.law (module Nx.Host) Nx.float16);
       test "bfloat16 gives eager's bits" (fun () ->
+          Rune_support.Compiled.here ();
           Rune_support.Casts16.law (module Nx.Host) Nx.bfloat16);
     ]
 
@@ -817,6 +822,7 @@ let bounded_casts =
     ~examples:(List.map (fun d -> (d, 17)) wide)
     (by_dtype wide)
     (fun (d, seed) ->
+      Rune_support.Compiled.here ();
       cover (name d) true;
       let x, _ = operands d seed in
       let x = le 8 past :: x in
@@ -895,6 +901,7 @@ let i32_f16 = map2 two_outputs D.Int32 D.Float16
 (* A boolean is its byte: true where it is not zero. Its kinds compute on the
    byte, so a byte read as a boolean keeps it. *)
 let bool_bytes () =
+  Rune_support.Compiled.here ();
   let bytes =
     K.v
       ~ins:(Iarray.of_list [ D.Any D.Bool ])
@@ -982,6 +989,7 @@ let folded_nans =
         (Any Bfloat16, 8, 7);
       ]
     (fun (d, e, m) ->
+      Rune_support.Compiled.here ();
       let rows = nan_rows d ~e ~m in
       let p =
         select ~ins:[| d |]
@@ -1010,9 +1018,11 @@ let shapes =
           let e = ints [| 0 |] [||] in
           i32_f16 [| 0 |] e e e);
       test "a map of two outputs gives eager's bits at one element" (fun () ->
+          Rune_support.Compiled.here ();
           i32_f16 [| 1 |] (ints [| 1 |] [| -7 |]) (ints [| 1 |] [| 3 |])
             (ints [| 1 |] [| 2049 |]));
       test "a map of two outputs gives eager's bits over views" (fun () ->
+          Rune_support.Compiled.here ();
           let x = Nx.transpose (ints [| 3; 2 |] [| 0; 1; 2; 3; 4; 5 |]) in
           let y =
             Nx.flip (ints [| 2; 3 |] [| 2147483647; -2; 3; -4; 5; -6 |])

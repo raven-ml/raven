@@ -203,7 +203,16 @@ let capture_binding case =
         | _ -> invalid_arg ("no binding " ^ w))
       (String.split_on_char ' ' (row "vars"))
 
-let lower ?search ?(targets = fun _ -> recorded_target) case =
+(* [case] lowered for [targets], by default the recorded target, for which the
+   test skips where Clang compiles nothing. *)
+let lower ?search ?targets case =
+  let targets =
+    match targets with
+    | Some targets -> targets
+    | None ->
+        Clang.here recorded_target.arch;
+        fun _ -> recorded_target
+  in
   plain (fun () ->
       Jit.jit_lower ?search ~targets ~held_bufs:(held case)
         ~inputs:(inputs case) ~input_vars:(capture_binding case)

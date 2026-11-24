@@ -1,6 +1,8 @@
-; Off under sanitize and tsan, as the root dune says. The compilation page
-; shows what a compiled call reports, so the pages run where rig links host
-; code: on x86_64 and arm64.
+; Off under sanitize and tsan, as the root dune says. The pages show what
+; compiled calls report, so they run where rig links host code, on x86_64 and
+; arm64, and where a clang is on PATH: a page cannot skip itself where its
+; programs do not compile, as a test does. A clang older than tolk takes fails
+; them, and a Clang that only CC names, as clang-16, leaves them out.
 
 (mdx
  (package rune)
@@ -20,5 +22,6 @@
    (<> %{profile} tsan)
    (or
     (= %{architecture} amd64)
-    (= %{architecture} arm64))))
+    (= %{architecture} arm64))
+   %{bin-available:clang}))
  (libraries nx rune unix))

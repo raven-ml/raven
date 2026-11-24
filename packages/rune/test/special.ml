@@ -318,7 +318,10 @@ let partial name ~bound ~eager compiled =
   group name
     [
       group "eagerly" (check ~bound (grad_golden name) eager);
-      group "compiled" (check_values ~bound (grad_golden name) compiled);
+      group "compiled"
+        (check_values ~bound (grad_golden name) (fun ~f32 rows ->
+             Rune_support.Compiled.here ();
+             compiled ~f32 rows));
     ]
 
 (* In [a], [2^-40 (1 + |log f|)] relative at float64 and [2^-16 (1 + |log f|)]

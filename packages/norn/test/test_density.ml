@@ -74,6 +74,7 @@ let with_gradient =
           in
           equal (array (float 1e-15)) expected (floats dy));
       test "a compiled gradient is the eager one" (fun () ->
+          Compiled.here ();
           let grad x = Rune.grad pos (fun x -> Nx.sum (density x)) x in
           let compiled = Rune.jit Nx.Ptree.(pos @-> returns pos) grad x0 in
           let eager = grad x0 in

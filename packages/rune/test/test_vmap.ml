@@ -760,6 +760,7 @@ let test_named () =
 (* A lane's elements, and lanes and lane_index outside their map *)
 
 let test_reads () =
+  Rune_support.Compiled.here ();
   let xs = v [| 1.; 2. |] in
   invalid ~sub:"Nx.item: the value is traced by Rune.vmap" (fun () ->
       Rune.vmap' (fun x -> if Nx.item [] x > 0. then x else Nx.neg x) xs);
@@ -1139,6 +1140,7 @@ let law_grad_compose (Pair (dt, s, xo, yo, both, e)) =
    over three lanes; one whose weights are complex and linear in [z] has the
    weights' sum, [6 c_k]. *)
 let test_grad_lanes () =
+  Rune_support.Compiled.here ();
   let xs = Nx.create f64 [| 3; 2 |] [| 0.5; -1.; 2.; 0.; 1.5; -0.25 |] in
   let w = Nx.create f64 [| 3; 2 |] [| 1.; -2.; 0.5; 3.; -1.5; 4. |] in
   let a = Rune.axis () in
@@ -1315,6 +1317,7 @@ let compiled_examples =
       (i, Array.init (size_of c.view c.s) (fun k -> pool.(((k * 5) + i) mod m))))
 
 let law_jit (i, values) =
+  Rune_support.Compiled.here ();
   let mapped, map_of_jit, jit_of_map = Lazy.force compiled_runs.(i) values in
   equal ~msg:"vmap of jit" (outcome_t codes_t) mapped map_of_jit;
   equal ~msg:"jit of vmap" (outcome_t codes_t) mapped jit_of_map

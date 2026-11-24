@@ -271,6 +271,7 @@ let fixed_tests =
           (Nx.reshape [||] (Oracle.central ~eps:1e-6 upper b v))
           (scalar (Oracle.dot (Rune.grad' upper b) v)));
     test "compiled equals eager" (fun () ->
+        Compiled.here ();
         equal
           (Oracle.tensor ~rel:1e-14 ())
           (integral theta) (Rune.jit' integral theta));
@@ -393,12 +394,14 @@ let adaptive_tests =
         let g = Rune.grad' integral p in
         equal (Oracle.tensor ()) (scalar 0.) (Nx.get [ 1 ] g));
     test "compiled equals eager" (fun () ->
+        Compiled.here ();
         let theta = vec [| -2.; 0.5; 3. |] in
         let f t =
           Solution.get (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t))
         in
         equal (Oracle.tensor ~rel:1e-14 ()) (f theta) (Rune.jit' f theta));
     test "compiled grad equals eager grad" (fun () ->
+        Compiled.here ();
         let theta = vec [| -2.; 0.5; 3. |] in
         let g =
           Rune.grad' (fun t ->
@@ -476,10 +479,12 @@ let de_tests =
         let s = ts Nx.recip (Quad.Range.v (vec [| 0. |]) (vec [| 1. |])) in
         equal (Oracle.tensor ()) (Nx.zeros Nx.bool [| 1 |]) (Solution.ok s));
     test "compiled equals eager" (fun () ->
+        Compiled.here ();
         let a = vec [| 0.5; 1.; 2.5 |] in
         let f a = Solution.get (log_moment a) in
         equal (Oracle.tensor ~rel:1e-13 ()) (f a) (Rune.jit' f a));
     test "compiled grad equals eager grad" (fun () ->
+        Compiled.here ();
         let a = vec [| 0.5; 1.; 2.5 |] in
         let g = Rune.grad' (fun a -> Nx.sum (Solution.get (log_moment a))) in
         equal (Oracle.tensor ~rel:1e-12 ()) (g a) (Rune.jit' g a));
@@ -572,6 +577,7 @@ let cubature_tests =
           (Nx.map_item d theta)
           (Rune.grad' integral theta));
     test "compiled equals eager" (fun () ->
+        Compiled.here ();
         let theta = vec [| 0.5; -1. |] in
         let integral t =
           Solution.get
@@ -583,6 +589,7 @@ let cubature_tests =
           (Oracle.tensor ~rel:1e-13 ())
           (integral theta) (Rune.jit' integral theta));
     test "compiled grad equals eager grad" (fun () ->
+        Compiled.here ();
         let theta = vec [| 0.5; -1. |] in
         let g =
           Rune.grad' (fun t ->
@@ -682,6 +689,7 @@ let qmc_tests =
           (Nx.map_item d theta)
           (Rune.grad' integral theta));
     test "compiled equals eager with the key an argument" (fun () ->
+        Compiled.here ();
         let f x = Nx.exp (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) in
         let integral k =
           Solution.best

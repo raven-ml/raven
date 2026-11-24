@@ -207,6 +207,7 @@ let keyed =
    error of median 3.6. *)
 let recovers =
   Recovery.recovers "replicates recover the dogs posterior" (fun () ->
+      Compiled.here ();
       Recovery.replicated_cell
         (Recovery.nested ~replicates:16 ~draws:13)
         (Recovery.posterior "dogs-dogs"))

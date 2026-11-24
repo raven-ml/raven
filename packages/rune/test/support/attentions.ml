@@ -1027,11 +1027,16 @@ let grad_law ?(composed = false) ?wide (module S : Nx.Devices) ~vmap c =
       else grad acc ~composed:false ~lengths
     in
     let g = Rune.jit Nx.Ptree.(list tensor @-> returns (list tensor)) f in
+    Compiled.set S.v;
     let before = Rune.evaluations () in
-    let gs = g [ place q; place (poisoned k); place (poisoned v); place wo; place wl ] in
-    Compiled.here ~on:(List.hd (Nx.Devices.to_list S.v)) ();
-    equal ~msg:"compiled, not evaluated" Testable.int 0 (Rune.evaluations () - before);
-    List.map (fun x -> Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x))) gs
+    let gs =
+      g [ place q; place (poisoned k); place (poisoned v); place wo; place wl ]
+    in
+    equal ~msg:"compiled, not evaluated" Testable.int 0
+      (Rune.evaluations () - before);
+    List.map
+      (fun x -> Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)))
+      gs
   in
   let f64 x = Nx.cast Nx.float64 x in
   let reference_grad ?keep wo wl =
@@ -1498,15 +1503,15 @@ let donated (module S : Nx.Devices) dtype =
     fst (Nx.attention ~acc:Nx.float32 ~kv:(Dense { k; v }) q)
   in
   let host x = Nx.to_array (Nx.cast Nx.float32 (Nx.place Nx.Host.on x)) in
-  let expected = host (Rune.jit s f ((q, k, v), place 4)) in
-  let w = Donations.owned (place 4) in
   let rig =
     let a = Option.get (Nx.Repr.array ~by:"test" q) in
     Rig.Buffer.device (Nx_array.buffer a)
   in
+  Compiled.here ~on:rig ();
+  let expected = host (Rune.jit s f ((q, k, v), place 4)) in
+  let w = Donations.owned (place 4) in
   let memory y = Nx.Repr.read ~by:"test" y Nx_array.buffer in
   let bytes = Nx.Dtype.bytes dt (Nx.numel w) in
-  Compiled.here ~on:rig ();
   let footprint x =
     List.map (fun (r, b) -> (Rig.name r, b)) (Rune.footprint s f x)
   in

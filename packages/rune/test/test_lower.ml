@@ -17,15 +17,18 @@ let smoke =
   group "copies"
     [
       test "a transposed view is its elements" (fun () ->
+          Rune_support.Compiled.here ();
           let x =
             Nx.transpose
               (Nx.create D.Int32 [| 2; 3 |] [| 0l; 1l; 2l; 3l; 4l; 5l |])
           in
           equal (array int32) (Nx.to_array x) (copy x));
       test "an int4 value is its elements" (fun () ->
+          Rune_support.Compiled.here ();
           let x = Nx.create D.Int4 [| 4 |] [| -8; -1; 0; 7 |] in
           equal (array int) (Nx.to_array x) (copy x));
       test "a map of coordinates is their values" (fun () ->
+          Rune_support.Compiled.here ();
           let prog = Nx_kernel.Prog.v ~ins:[||] [| Coord 1 |] ~outs:[| 0 |] in
           let map () =
             let y, () =
@@ -196,6 +199,7 @@ let movements =
       (List.mapi (fun i d -> (d, List.nth kinds (i mod 5), i + 30)) D.all)
     gen
     (fun ((D.Any dt as d), k, seed) ->
+      Rune_support.Compiled.here ();
       cover_dtype d;
       List.iter (fun k' -> cover (kind_name k') (k = k')) kinds;
       let st = Random.State.make [| seed |] in
@@ -315,6 +319,7 @@ let loads =
   in
   prop "padded loads give eager's bits" ~count:3 ~examples:pad_examples gen
     (fun ((D.Any dt as d), f, seed) ->
+      Rune_support.Compiled.here ();
       let f = if is_float d then f else Bits in
       cover_dtype d;
       List.iter (fun f' -> cover (fill_name f') (f = f')) fills;

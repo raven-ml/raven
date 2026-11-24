@@ -242,6 +242,7 @@ exception Step
    the test's failure, eagerly and compiled, and an init that satisfies it is
    never stepped. *)
 let test_until_first () =
+  Compiled.here ();
   let checked e x =
     Nx.check T.unit (Nx.less_s x 4.) () (fun _ () -> e);
     x
@@ -320,6 +321,7 @@ let test_chain () =
 (* A step that returns a constant over a placed init: no step or one, under jit
    and inside a scan's step. *)
 let test_placed_init () =
+  Compiled.here ();
   let zero = Nx.scalar f32 0. in
   let loop a =
     Rune.iterate' ~max:5
@@ -339,6 +341,7 @@ let test_placed_init () =
 
 (* A constant carry under jit, whose step captures the jit's argument. *)
 let test_captured_argument () =
+  Compiled.here ();
   let y =
     Rune.jit'
       (fun a ->
@@ -357,6 +360,7 @@ module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
 
 let test_staged () =
+  Compiled.here ();
   let traces = ref 0 in
   let until x =
     incr traces;
@@ -1265,6 +1269,7 @@ let lane_form_examples =
       (i, c.x, c.w))
 
 let law_lanes_compiled (i, x, w) =
+  Compiled.here ();
   let _, _, check = lane_forms.(i) in
   check x w
 
@@ -1411,7 +1416,9 @@ let apart_form_examples =
     (fun i (Apart (_, _, _, trips, _, _, x)) -> (i, trips, x))
     apart_examples
 
-let law_apart (i, trips, x) = (snd apart_forms.(i)) trips x
+let law_apart (i, trips, x) =
+  Compiled.here ();
+  (snd apart_forms.(i)) trips x
 
 (* A key in the carry, folded with the step count at each step: eagerly,
    compiled, per lane with lanes stopping apart, and under reverse mode, the
@@ -1451,6 +1458,7 @@ let keyed_grad f trips (x, key) =
   Rune.grad' (fun x -> Nx.sum (f trips (x, key))) x
 
 let law_keyed (seed, trips) =
+  Compiled.here ();
   let n = Array.length trips in
   cover "no trip" (Array.exists (( = ) 0) trips);
   cover "lanes apart" (Array.exists (( <> ) trips.(0)) trips);
@@ -1514,6 +1522,7 @@ let scoped_iterate =
 let scoped_jit = Rune.jit keyed_s scoped_iterate
 
 let law_scoped (seed, trips) =
+  Compiled.here ();
   let n = Array.length trips in
   cover "lanes together" (Array.for_all (( = ) trips.(0)) trips);
   cover "lanes apart" (Array.exists (( <> ) trips.(0)) trips);
@@ -1593,6 +1602,7 @@ let test_nonfinite () =
 (* Inside a step whose lanes stop apart, the map's lanes raise; a stop every
    lane shares stops them together, and lanes may meet in its step. *)
 let test_lanes_in_step () =
+  Compiled.here ();
   let a = Rune.axis () in
   let x = vec [| 1.; 4. |] in
   invalid ~sub:"Rune.lanes: the lanes of the map are held apart" (fun () ->
@@ -1662,6 +1672,7 @@ let test_lanes_in_step () =
 (* An iterate in a step whose lanes stop apart: an outer lane that has stopped
    starts the inner loop stopped. *)
 let test_nested () =
+  Compiled.here ();
   let inner x =
     Rune.iterate' ~max:10
       ~until:(fun y -> Nx.greater_equal (Nx.max y) (Nx.max x))
@@ -1710,6 +1721,7 @@ let test_nested_derivative () =
 
 (* Totals: each lane adds once per step it takes, and per test of its stop. *)
 let test_totals () =
+  Compiled.here ();
   let u = Total.make () in
   let f x =
     Rune.iterate' ~max:10
@@ -1793,6 +1805,7 @@ let test_integer_carry () =
 
 (* A complex carry's gradient under a map is each lane's. *)
 let test_complex_carry () =
+  Compiled.here ();
   let c =
     Nx.complex Nx.complex128
       ~re:(Nx.create f64 [| 2; 1 |] [| 0.5; 2. |])
@@ -2194,6 +2207,7 @@ let law_rows_compiled (i, table, into) = rows_forms.(i).check table into
    after; reverse mode reads each row's cotangent back, compiled too, and a map
    over [x]'s lanes writes each lane's rows. *)
 let test_rows_grad () =
+  Compiled.here ();
   let n = 6 and trips = 4 in
   let c = T.(pair tensor tensor) in
   let rows ~loop x =
@@ -2245,6 +2259,7 @@ let test_rows_grad () =
    that reads the array in turn: compiled, each gives the loop's values and
    no call is evaluated. *)
 let test_rows_read_carry () =
+  Compiled.here ();
   let perm = Nx.create Nx.int64 [| 2 |] [| 1L; 0L |] in
   let swap a _ = (Nx.scatter ~axis:0 perm a a, ()) in
   let a = v [| 10.; 20. |] in

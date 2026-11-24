@@ -33,8 +33,10 @@ val run : ('r, 'd) call list -> 'r list
     program raises.
 
     Fails, with {!Windtrap.fail}, if the program is evaluated rather than
-    compiled ({!Rune.evaluations}). Where rig links no host code, such a program
-    skips the running test instead ({!Compiled.here}). *)
+    compiled ({!Rune.evaluations}). Where the host's programs cannot compile
+    ({!Tolk_engine.compiles}), a program that is evaluated, or that raises
+    {!Tolk.Renderer.Compiler.Compile_error} with the host compiler's reason,
+    skips the running test instead. *)
 
 val results : ('r, 'd) call list -> (unit -> 'r) list
 (** [results calls] is {!run}'s results as thunks, each raising what the trace

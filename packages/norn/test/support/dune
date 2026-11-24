@@ -1,3 +1,12 @@
 (library
  (name evidence_models)
+ (modules evidence_models)
  (libraries nx))
+
+; Compiled.here skips a test where the host's programs cannot compile.
+
+(library
+ (name norn_compiled)
+ (wrapped false)
+ (modules compiled)
+ (libraries rig tolk tolk.engine windtrap))

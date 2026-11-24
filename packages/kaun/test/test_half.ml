@@ -410,6 +410,7 @@ let fit_out =
       ({ w; loss; ls } : fit_out))
 
 let test_f16_train_loss_scaled () =
+  Compiled.here ();
   let x = mat f32 4 2 [| 1.0; 0.5; -0.5; 1.0; 0.25; -1.0; -1.0; -0.25 |] in
   let y = Nx.matmul x (mat f32 2 1 [| 1.5; -0.5 |]) in
   let step =

@@ -175,6 +175,7 @@ let compiled_examples =
       (i, from i (storage p.xv p.s), from (i + 7) (storage p.yv p.s)))
 
 let law_compiled (i, xs, ys) =
+  Rune_support.Compiled.here ();
   let (Program p) = programs.(i) in
   cover "a view operand" (p.xv <> Plain || p.yv <> Plain);
   cover "a zero-size shape" (numel p.s = 0);
@@ -380,11 +381,14 @@ let at_most ~msg loss blocks =
 
 (* From the sine of the argument: each block's argument is a value the program
    computes. *)
-let test_compiled () = at_most ~msg:"a chain" (chain ~from:Nx.sin) layers
+let test_compiled () =
+  Rune_support.Compiled.here ();
+  at_most ~msg:"a chain" (chain ~from:Nx.sin) layers
 
 (* Its backward pass computes one block again at a time, so it holds one
    block's pre-activation beside the blocks' arguments and four rows. *)
 let test_one_block () =
+  Rune_support.Compiled.here ();
   let one = ((layers + 4) * row) + (4 * batch * hidden) in
   let recomputed = held (chain ~from:Nx.sin) true in
   less
@@ -395,6 +399,7 @@ let test_one_block () =
    one chain before it starts the next, so [k] chains hold what one does and
    a row for each other chain's cotangent. *)
 let test_chains () =
+  Rune_support.Compiled.here ();
   let blocks = 4 in
   let chains k remat ws a =
     List.fold_left
@@ -419,6 +424,7 @@ let test_chains () =
 (* The first block's argument is the program's: it costs nothing to keep, so
    the chain holds no more than the one from its sine. *)
 let test_argument () =
+  Rune_support.Compiled.here ();
   let from_argument = held (chain ~from:Fun.id) true in
   let from_sine = held (chain ~from:Nx.sin) true in
   less
@@ -429,6 +435,7 @@ let test_argument () =
 
 (* Blocks that each read the argument keep nothing they compute. *)
 let test_over_argument () =
+  Rune_support.Compiled.here ();
   let summed remat ws a =
     List.fold_left
       (fun s i ->
@@ -440,6 +447,7 @@ let test_over_argument () =
 
 (* What a block computes from the weights it captures is computed again. *)
 let test_transformed () =
+  Rune_support.Compiled.here ();
   at_most ~msg:"weights transformed in each block"
     (chain ~prep:Nx.tanh ~from:Nx.sin)
     layers
@@ -447,6 +455,7 @@ let test_transformed () =
 (* A scan of the blocks over the stacks, its step under a remat, keeps what
    the chain written out keeps: each step's carry. *)
 let test_scanned () =
+  Rune_support.Compiled.here ();
   let scanned remat (w1s, w2s) a =
     let step c w =
       let b = block w in
@@ -472,6 +481,7 @@ let test_scanned () =
    storage, which the step's values share within a trip: a chunk's part of
    the whole batch's bound. *)
 let test_step_gradient () =
+  Rune_support.Compiled.here ();
   let loss = chain ~from:Nx.sin true in
   let expected = Nx.to_array (Nx.flatten (Rune.grad' (loss ws) a)) in
   List.iter
@@ -518,6 +528,7 @@ let test_step_gradient () =
    no more than one of the whole batch. On the host what the first call
    holds is its footprint. *)
 let test_summed_step () =
+  Rune_support.Compiled.here ();
   let pd = T.(list (pair tensor tensor)) in
   let s = T.(pair pd tensor @-> returns (pair tensor pd)) in
   let apart =
@@ -752,6 +763,7 @@ let test_stacked_step () =
    all copied; a scan whose trip stacks two, written in the trip's place;
    and a stack that takes a donated argument's memory, written there. *)
 let test_placed_pieces () =
+  Rune_support.Compiled.here ();
   let f = rm (fun x -> Nx.mul (Nx.sin x) x) in
   let dg x = Rune.grad' (fun x -> Nx.sum (f x)) x in
   let check msg g x =
@@ -809,6 +821,7 @@ let test_placed_pieces () =
    donated, takes [b]'s memory, and plus [a], donated, which the backward pass
    reads at every element, gives the same values either way. *)
 let test_donated () =
+  Rune_support.Compiled.here ();
   let w = (Nx.get [ 0 ] (fst ws), Nx.get [ 0 ] (snd ws)) in
   let grad a = Rune.grad' (fun a -> Nx.sum (rm (block w) a)) a in
   let address x = Nx.Repr.read ~by:"test" x Nx_array.buffer in

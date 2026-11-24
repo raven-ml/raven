@@ -960,6 +960,7 @@ let magnitudes c into updates =
   let mags = List.map (Array.map Float.abs) (parts64 into) in
   let us = parts64 updates in
   landings c (fun j o ->
+      Rune_support.Compiled.here ();
       List.iter2 (fun m u -> m.(o) <- m.(o) +. Float.abs u.(j)) mags us);
   mags
 
@@ -1573,6 +1574,7 @@ let assemblies =
   prop ~count:40 ~examples:assembly_examples "an assembly gives eager's bits"
     (Gen.with_pp pp_assembly (redrawn assembly_examples assembly_data))
     (fun c ->
+      Rune_support.Compiled.here ();
       let (D.Any dt) = c.a_dt in
       dtype_covers c.a_dt;
       cover_floats c.a_dt

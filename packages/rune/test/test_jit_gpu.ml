@@ -1148,6 +1148,7 @@ let host_step () =
     Nx.add (Nx.place Nx.Host.on (Nx.mul y y)) x
   in
   if Rig.Image.links Rig.host then begin
+    Compiled.here ();
     let before = Rune.evaluations () in
     let y = Rune.jit' f x in
     equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
@@ -1188,6 +1189,7 @@ let software_sum () =
   in
   let f x = Nx.add x x in
   if Rig.Image.links mem then begin
+    Compiled.here ~on:mem ();
     let before = Rune.evaluations () in
     ignore (Rune.jit' f x);
     equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before)
@@ -2938,9 +2940,10 @@ let quant_law c =
   in
   let compiled w x = Rune.jit' (Nx_quant.apply w) x in
   near "eager" (Nx_quant.apply w x);
-  near "compiled on the host" (compiled w x);
   near "compiled on the GPU"
-    (compiled (Nx_quant.place S.on w) (Nx.place S.on x))
+    (compiled (Nx_quant.place S.on w) (Nx.place S.on x));
+  Compiled.here ();
+  near "compiled on the host" (compiled w x)
 
 (* A Value scale on the first operand, batch axes and both of a Prim Contract
    in the partial form, within the contraction's bound of eager's. *)

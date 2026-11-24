@@ -259,6 +259,7 @@ let transformation_tests =
           (Oracle.central ~eps:1e-6 final_at t1 (scalar 1.))
           (Rune.grad' final_at t1));
     test "compiled equals eager" (fun () ->
+        Compiled.here ();
         let q0 = vec [| 0.3; 1.; -0.8 |] in
         equal (Oracle.tensor ~rel:1e-14 ()) (final q0) (Rune.jit' final q0));
     test "vmap is each lane's march" (fun () ->

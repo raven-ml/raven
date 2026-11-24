@@ -77,9 +77,9 @@ let broken ~label ~nan_in ~quiet_in ~nan_out ~quiet_out xs want got =
 let law (type s) (module S : Nx.Devices) (dt : (float, s) Nx.dtype) =
   let f = format dt in
   let compiled g x =
+    Compiled.set S.v;
     let before = Rune.evaluations () in
     let y = Rune.jit Nx.Ptree.(tensor @-> returns tensor) g (Nx.place S.on x) in
-    Compiled.here ~on:(List.hd (Nx.Devices.to_list S.v)) ();
     equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
     y
   in

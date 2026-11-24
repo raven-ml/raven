@@ -635,6 +635,7 @@ let quant_tables =
     [ 2; 3; 4 ]
 
 let quant_product c =
+  Compiled.here ();
   quant_covers c;
   match List.assq_opt c (Lazy.force (List.assoc c.qn quant_tables)) with
   | Some jit ->
@@ -1595,6 +1596,7 @@ let assembly_results =
     assembly_rows
 
 let assembled ((id, _) as row) =
+  Compiled.here ();
   let compiled = List.assq row assembly_results in
   let jit = outcome compiled in
   equal (outcome_t codes_t) (Hashtbl.find assembly_eager id) jit
@@ -1726,6 +1728,7 @@ let written_cases forms =
   drawn ~pp:pp_written (fun c wseed -> { c with wseed }) forms
 
 let written set c =
+  Compiled.here ();
   let count l = List.length l in
   cover "no position" (c.ps = []);
   cover "one position" (count c.ps = 1);
@@ -1895,6 +1898,7 @@ let closing set n k seed =
 (* A detour through a set without kernels: eagerly the operation raises, under
    jit it compiles and gives the arithmetic computed on the host. *)
 let bare_detour () =
+  Compiled.here ();
   let there = Nx.Placement.device Bare.v (m 3) in
   let xs = value [| 4; 3 |] in
   let x = Nx.place Two.on xs in
@@ -1914,6 +1918,7 @@ let bare_detour () =
 module Both = (val Nx.devices [ m 1; others.(0) ])
 
 let shared_device () =
+  Compiled.here ();
   let on_one = Nx.Placement.device Two.v (m 1) in
   let rows = 4 and columns = 3 in
   let x = Nx.place on_one (value [| rows; columns |]) in
@@ -3232,6 +3237,7 @@ let dead_constant () =
 (* A constant cut over two devices is read at the trace and kept: one the
    function reads and then donates computes as eagerly. *)
 let kept_constant () =
+  Compiled.here ();
   let at = Two.split ~axis:0 in
   let c () = Nx.place at (value ~seed:1 [| 4 |]) in
   let late c x =
@@ -3248,6 +3254,7 @@ let kept_constant () =
 (* A constant cut over two devices that its caller donates after a call is
    the one that call read, at a new layout of the key too. *)
 let kept_after_call () =
+  Compiled.here ();
   let at = Two.split ~axis:0 in
   let x () = Nx.place at (value [| 4 |]) in
   let host y = Nx.to_array (Nx.place Nx.Host.on y) in
@@ -3306,36 +3313,48 @@ let () =
              test "a capture is copied once across nested programs"
                nested_upload;
              test "constants placed whole on each device copy once" (fun () ->
+                 Compiled.here ();
                  over 2 { law = placed_constants });
              Windtrap.cases ~id:fst
                "an assembly on one device gives eager's bits" assembly_rows
                assembled;
              test "crossed assemblies of computed pieces give eager's bits"
-               (fun () -> over 2 { law = crossed });
+               (fun () ->
+                 Compiled.here ();
+                 over 2 { law = crossed });
            ];
          group "several devices"
            [
              group "a compiled call gives eager's placement and values"
                [
                  prop ~count:30 ~examples:forms "elementwise, bit for bit" cases
-                   (fun c -> over c.n { law = (fun set -> elementwise set c) });
+                   (fun c ->
+                     Compiled.here ();
+                     over c.n { law = (fun set -> elementwise set c) });
                  prop ~count:20 ~examples:forms "sums over cut and whole axes"
-                   cases (fun c -> over c.n { law = (fun set -> folds set c) });
+                   cases (fun c ->
+                     Compiled.here ();
+                     over c.n { law = (fun set -> folds set c) });
                  prop ~count:20 ~examples:matrices "a matrix product"
                    matrix_cases (fun c ->
+                     Compiled.here ();
                      over c.n { law = (fun set -> matmul set c) });
                  prop ~count:20 ~examples:forms
                    "a vector broadcast to a cut batch" cases (fun c ->
+                     Compiled.here ();
                      over c.n { law = (fun set -> biased set c) });
                ];
              group "gathers give eager's bits"
                [
                  test "over two devices" (fun () ->
+                     Compiled.here ();
                      over 2 { law = gather_kinds });
                  test "over four and their mesh" (fun () ->
+                     Compiled.here ();
                      over 4 { law = gather_kinds });
                  test "a window of a gathered value reads its own pieces"
                    (fun () ->
+                     Compiled.here ();
                      over 2 { law = own_window };
                      over 4 { law = own_window });
                ];
@@ -3343,30 +3362,39 @@ let () =
                [
                  test
                    "positions repeated along an axis move one element along it"
-                   (fun () -> over 2 { law = moves });
+                   (fun () ->
+                     Compiled.here ();
+                     over 2 { law = moves });
                  test "a whole value placed onto a mesh gives eager's bits"
-                   (fun () -> over 4 { law = onto_mesh });
+                   (fun () ->
+                     Compiled.here ();
+                     over 4 { law = onto_mesh });
                ];
              group "a batch of one"
                [
                  prop "computes where a batch of two does, compiled as eagerly"
                    batched_cases (fun c ->
+                     Compiled.here ();
                      over 2 { law = (fun set -> batch_of_one set c) };
                      over 4 { law = (fun set -> batch_of_one set c) });
                ];
              group "each device runs its own kernels"
                [
                  test "over two devices" (fun () ->
+                     Compiled.here ();
                      over 2 { law = (fun s -> kernels s 2 4) });
                  test "over four, one window empty" (fun () ->
+                     Compiled.here ();
                      over 4 { law = (fun s -> kernels s 4 3) });
                ];
              group "programs"
                [
                  test "a data-parallel step's programs do not grow over 2 to 16"
                    (fun () ->
+                     Compiled.here ();
                      flat "programs" (List.map programs [ 2; 4; 8; 16 ]));
                  test "nor over 3, 5 and 6, every cut even" (fun () ->
+                     Compiled.here ();
                      let ns = [ 2; 3; 4; 5; 6; 8 ] in
                      flat ~ns "programs"
                        (List.map (programs ~inner:120 ~hidden:120) ns));
@@ -3375,70 +3403,94 @@ let () =
                [
                  prop ~count:30 ~examples:loop_forms
                    "a scan over a cut carry, bit for bit" loop_cases (fun c ->
+                     Compiled.here ();
                      over c.ln { law = (fun set -> scanned set c) });
                  prop ~count:20 ~examples:loop_forms
                    "an iterate stopped by a fold over a cut axis" loop_cases
-                   (fun c -> over c.ln { law = (fun set -> iterated set c) });
+                   (fun c ->
+                     Compiled.here ();
+                     over c.ln { law = (fun set -> iterated set c) });
                  prop ~count:15 ~examples:made_forms
                    "a scan's first value and outputs made in the program"
                    made_cases (fun c ->
+                     Compiled.here ();
                      over c.mn { law = (fun set -> scan_made set c) });
                  prop ~count:15 ~examples:made_forms
                    "an iterate's first value made in the program" made_cases
                    (fun c ->
+                     Compiled.here ();
                      over c.mn { law = (fun set -> iterate_made set c) });
                  test "a scan over rows made in the program" (fun () ->
+                     Compiled.here ();
                      over 2 { law = rows_made };
                      over 3 { law = rows_made });
                  test "a scan's constant outputs stay on their devices"
                    (fun () ->
+                     Compiled.here ();
                      over 2 { law = made_local };
                      over 3 { law = made_local });
                  test "a scan cut alike copies nothing between devices"
-                   (fun () -> over 3 { law = local_scan });
+                   (fun () ->
+                     Compiled.here ();
+                     over 3 { law = local_scan });
                  test "an iterate reads its stop on the program's device"
-                   (fun () -> over 2 { law = stop_home });
+                   (fun () ->
+                     Compiled.here ();
+                     over 2 { law = stop_home });
                  test "a scan over a batch of one cut across devices" (fun () ->
+                     Compiled.here ();
                      over 2 { law = scan_batch_of_one };
                      over 4 { law = scan_batch_of_one });
                ];
              group "other sets"
                [
                  test "the other set holds nothing between calls" (fun () ->
+                     Compiled.here ();
                      over 2 { law = held });
                  prop ~count:20 ~examples:elsewhere_forms
                    "a value placed onto another set and back compiles"
                    elsewhere_cases (fun c ->
+                     Compiled.here ();
                      over c.n { law = (fun set -> elsewhere set c) });
                  prop ~count:20 ~examples:closing_forms
                    "a partial placed onto another set closes there"
                    closing_cases (fun (n, k, seed) ->
+                     Compiled.here ();
                      over n { law = (fun set -> closing set n k seed) });
                  test "a detour through a set without kernels" bare_detour;
                  test "a device in both sets holds its piece" shared_device;
                  test "a detour inside a scan's step" (fun () ->
+                     Compiled.here ();
                      over 3 { law = scan_detour });
                ];
              group "replicas"
                [
                  test "a result shorter than the devices" (fun () ->
+                     Compiled.here ();
                      over 4 { law = (fun s -> replicas s 3) });
                  test "a share on each device, uneven" (fun () ->
+                     Compiled.here ();
                      over 4 { law = (fun s -> replicas s 9) });
                  test "a share on each of three devices" (fun () ->
+                     Compiled.here ();
                      over 3 { law = (fun s -> replicas s 6) });
                ];
              group "maps over a cut axis"
                [
                  prop ~count:60 ~examples:mapped_forms
                    "lanes, lane_index and a sum over the lanes" mapped (fun c ->
+                     Compiled.here ();
                      over c.devices { law = (fun set -> shard_map set c) });
                  test "the lanes' indices lie where their rows lie" (fun () ->
+                     Compiled.here ();
                      over 4 { law = indices });
                  test "stacked partials stay on their devices, then close"
-                   (fun () -> over 4 { law = partials });
+                   (fun () ->
+                     Compiled.here ();
+                     over 4 { law = partials });
                  test "per-device code's programs do not grow over 2 to 16"
                    (fun () ->
+                     Compiled.here ();
                      let counts = List.map mapped_programs [ 2; 4; 8; 16 ] in
                      flat "per-device" (List.map fst counts);
                      flat "accumulated" (List.map snd counts));
@@ -3448,10 +3500,14 @@ let () =
                  prop ~count:30 ~examples:forms
                    "functions of coordinates over cut values give eager's bits"
                    cases (fun c ->
+                     Compiled.here ();
                      over c.n { law = (fun set -> coordinates set c) });
                  test "a step that reads its coordinates gives eager's bits"
-                   (fun () -> over 3 { law = coordinate_scan });
+                   (fun () ->
+                     Compiled.here ();
+                     over 3 { law = coordinate_scan });
                  test "loops of no loads, split along either axis" (fun () ->
+                     Compiled.here ();
                      over 3
                        {
                          law =
@@ -3460,6 +3516,7 @@ let () =
                              unloaded set (Split 1));
                        });
                  test "loops of no loads over a mesh" (fun () ->
+                     Compiled.here ();
                      over 4 { law = (fun set -> unloaded set (Mesh (0, 1))) });
                ];
              group "partials"
@@ -3467,6 +3524,7 @@ let () =
                  test
                    "a fold, scan, gather or scatter over a cut axis gives \
                     eager's bits in programs that do not grow" (fun () ->
+                     Compiled.here ();
                      let counts = List.map partial_programs [ 2; 4; 8 ] in
                      List.iter
                        (fun (name, _) ->
@@ -3478,8 +3536,10 @@ let () =
          group "searches give eager's bits"
            [
              test "a value whole on one software device" (fun () ->
+                 Compiled.here ();
                  over 2 { law = (fun s -> searched s (Device 0)) });
              test "a value cut across two" (fun () ->
+                 Compiled.here ();
                  over 2 { law = (fun s -> searched s (Split 0)) });
            ];
          group "dead values"
@@ -3494,12 +3554,17 @@ let () =
              prop ~count:25 ~examples:check_examples
                "a check fails as eagerly, wherever flags and data lie"
                check_cases (fun c ->
+                 Compiled.here ();
                  over c.cn { law = (fun set -> checked_case set c) });
              test "two checks in order, the first made fails" (fun () ->
+                 Compiled.here ();
                  over 2 { law = two_checks });
              test "a check inside a remat or a custom rule fails as eagerly"
-               (fun () -> over 2 { law = nested_check });
+               (fun () ->
+                 Compiled.here ();
+                 over 2 { law = nested_check });
              test "a passing check moves partials and one element" (fun () ->
+                 Compiled.here ();
                  over 2 { law = check_moves };
                  over 3 { law = check_moves });
            ];
@@ -3510,13 +3575,19 @@ let () =
                quant_product;
              prop ~count:10 ~examples:expert_examples
                "an expert product cut along its inputs" experts_cases (fun c ->
+                 Compiled.here ();
                  over c.devices { law = (fun set -> expert_product set c) });
              group "values computed from constants"
                [
-                 test "decoded bytes over two devices" (fun () -> decodes 2);
-                 test "decoded bytes over four" (fun () -> decodes 4);
+                 test "decoded bytes over two devices" (fun () ->
+                     Compiled.here ();
+                     decodes 2);
+                 test "decoded bytes over four" (fun () ->
+                     Compiled.here ();
+                     decodes 4);
                  test "a table of exp2 or sin over two and four devices"
                    (fun () ->
+                     Compiled.here ();
                      List.iter
                        (fun n ->
                          List.iter
@@ -3526,6 +3597,7 @@ let () =
                        [ 2; 4 ]);
                  test "Q4_K and Q6_K by a vector over two and four devices"
                    (fun () ->
+                     Compiled.here ();
                      List.iter
                        (fun n ->
                          List.iter
@@ -3543,6 +3615,7 @@ let () =
              test
                "eigenvalues and singular values of matrices that stop apart \
                 hold their bounds" (fun () ->
+                 Compiled.here ();
                  over 2 { law = eigh_batch };
                  over 3 { law = eigh_batch });
              group "written positions give eager's bits"
@@ -3557,12 +3630,15 @@ let () =
                    "over two devices"
                    (written_cases
                       (written_forms ~cuts:[ On; Split 0; Split 1 ]))
-                   (fun c -> over 2 { law = (fun set -> written set c) });
+                   (fun c ->
+                     Compiled.here ();
+                     over 2 { law = (fun set -> written set c) });
                ];
              group "keys"
                [
                  prop ~count:8 "a key's placement in a program, and draws there"
                    Gen.int (fun seed ->
+                     Compiled.here ();
                      over 2 { law = (fun s -> key_placement seed s) });
                ];
            ];
@@ -3572,22 +3648,29 @@ let () =
                "a gradient under jit lies where eager's does, within its error"
                [
                  test "over two devices" (fun () ->
+                     Compiled.here ();
                      over 2 { law = (fun s -> grads s 6) });
                  test "over three, uneven" (fun () ->
+                     Compiled.here ();
                      over 3 { law = (fun s -> grads s 7) });
                  test "over four, one window empty" (fun () ->
+                     Compiled.here ();
                      over 4 { law = (fun s -> grads s 3) });
                ];
              group "an expert product's gradient in its input"
                [
                  test "its weight cut along n over two devices" (fun () ->
+                     Compiled.here ();
                      over 2 { law = expert_grad });
                  test "over three, uneven" (fun () ->
+                     Compiled.here ();
                      over 3 { law = expert_grad });
                ];
              prop ~count:10 ~examples:forms
                "a call and a custom transpose inside a call run as eagerly"
-               cases (fun c -> over c.n { law = (fun set -> calls set c) });
+               cases (fun c ->
+                 Compiled.here ();
+                 over c.n { law = (fun set -> calls set c) });
            ];
          group "constructs"
            [
@@ -3596,30 +3679,41 @@ let () =
                  prop ~count:20 ~examples:switch_examples
                    "a branch's value and placement, its index anywhere"
                    switch_cases (fun c ->
+                     Compiled.here ();
                      over c.sn { law = (fun set -> switched set c) });
                  test "a branch not taken computes nothing" (fun () ->
+                     Compiled.here ();
                      over 2 { law = untaken });
                  test "inside a scan's step and nested" (fun () ->
+                     Compiled.here ();
                      over 2 { law = nested_switch };
                      over 4 { law = nested_switch });
                ];
              prop ~count:10 ~examples:forms
                "custom rules' values and derivatives are eager's bits" cases
-               (fun c -> over c.n { law = (fun set -> customs set c) });
+               (fun c ->
+                 Compiled.here ();
+                 over c.n { law = (fun set -> customs set c) });
              prop ~count:10 ~examples:forms
                "a remat's value and gradient are eager's bits" cases (fun c ->
+                 Compiled.here ();
                  over c.n { law = (fun set -> remats set c) });
              prop ~count:10 ~examples:forms "additions to a total" cases
-               (fun c -> over c.n { law = (fun set -> totals set c) });
+               (fun c ->
+                 Compiled.here ();
+                 over c.n { law = (fun set -> totals set c) });
            ];
          group "emissions"
            [
              prop ~count:10 ~examples:forms
                "made at the top level, as eagerly, compiled" cases (fun c ->
+                 Compiled.here ();
                  over c.n { law = (fun set -> emitted set c) });
              prop ~count:10 ~examples:emitted_forms
                "made in a scan's step, stacked, compiled" emitted_cases
-               (fun c -> over c.ln { law = (fun set -> emitted_scan set c) });
+               (fun c ->
+                 Compiled.here ();
+                 over c.ln { law = (fun set -> emitted_scan set c) });
            ];
          group "evaluated programs"
            [

@@ -481,6 +481,7 @@ let compiled_quantile =
   let ps = [| 1e-200; 1e-10; 0.3; 0.5; 0.9; 1. -. 1e-10 |] in
   let compiled name c =
     Windtrap.test name (fun () ->
+        Compiled.here ();
         let compiled = Nx.to_array (Rune.jit' (D.quantile c.dist) (vec ps)) in
         Array.iteri
           (fun i p ->
@@ -988,6 +989,7 @@ let binomial =
          composes from [exp], a division and exact operations, so compiled a
          draw gives eager's bits. *)
       test "a compiled draw is the eager one" (fun () ->
+          Compiled.here ();
           let d logits = D.iid [| 50 |] (D.binomial ~trials:(i32 30) ~logits) in
           let k = Nx.Rng.key 4 in
           equal (array int32)
@@ -1457,6 +1459,7 @@ let compiled_masses =
       ("neg_binomial", Neg_binomial);
     ]
     (fun (name, family) ->
+      Compiled.here ();
       let rows =
         List.filter_map
           (function
@@ -1933,6 +1936,7 @@ let compiled_densities =
     ~id:(fun family -> family)
     [ "gamma"; "inverse_gamma"; "beta"; "student_t"; "dirichlet" ]
     (fun family ->
+      Compiled.here ();
       let rows =
         List.filter_map
           (function
@@ -2349,6 +2353,7 @@ let truncation =
          each of the quantile's Newton steps, compile to a kernel of 700 KB
          that took a loaded runner past 60 s. *)
       test "a compiled density and quantile are the eager ones" (fun () ->
+          Compiled.here ();
           let d loc =
             D.truncated ~low:(f64 20.) ~high:(f64 25.)
               (D.iid [| 5 |] (D.laplace ~loc ~scale:(f64 2.)))
@@ -2472,6 +2477,7 @@ let von_mises =
             (Array.for_all (fun x -> x >= -.Float.pi && x <= Float.pi))
             xs);
       test "a compiled density is the eager one" (fun () ->
+          Compiled.here ();
           let xs = vec [| -3.; 0.; 1.; 1.0001; 3.1 |] in
           let f k = D.factors (D.iid [| 5 |] (D.von_mises ~loc:(f64 1.) ~concentration:k)) xs in
           equal
@@ -2625,6 +2631,7 @@ let lkj =
               equal (float (1e-12 *. (1. +. Float.abs !logs))) expected g)
             [ 0.3; 1.; 7.; 1e5 ]);
       test "a compiled density is the eager one" (fun () ->
+          Compiled.here ();
           let l, _, _ = correlation 3 2. 34 in
           let f eta = D.factors (D.iid [| draws |] (D.lkj_cholesky 3 ~concentration:eta)) l in
           equal
@@ -2860,6 +2867,7 @@ let hmm_tests =
           within stay.(0) from.(0) (soft 1.2 (-0.3));
           within stay.(1) from.(1) (soft 0. 0.5));
       test "a compiled density and membership are the eager ones" (fun () ->
+          Compiled.here ();
           let ys = vec [| 0.3; -1.; 2.; 2.5; -0.7; 0.1; 1.9; -2. |] in
           let d tr =
             D.hmm

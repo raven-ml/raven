@@ -105,7 +105,9 @@ let exact (Case (dt, s, xo, yo, e)) =
   checking bits_t eager T.(pair tensor tensor) (x, y) bits f
 
 (* A case draws eight functions, which compile to one program. *)
-let law cs = Batch.checks (List.map exact cs)
+let law cs =
+  Compiled.here ();
+  Batch.checks (List.map exact cs)
 
 (* Every dtype, through the functions every dtype has that it computes
    exactly. *)
@@ -146,7 +148,9 @@ let exact_any (Any_case (dt, s, xo, yo, e)) =
   checking codes_t eager T.(pair tensor tensor) (x, y) codes f
 
 (* A case draws eight functions, which compile to one program. *)
-let law_any cs = Batch.checks (List.map exact_any cs)
+let law_any cs =
+  Compiled.here ();
+  Batch.checks (List.map exact_any cs)
 
 (* Bitcasts
 
@@ -281,6 +285,7 @@ let running_bitcasts =
   |> with_pp pp_running_bitcast
 
 let law_running_bitcast (Running_bitcast (src, dt, w, a, seed)) =
+  Compiled.here ();
   let st = Random.State.make [| a; w; seed |] in
   let x = viewed Flipped ~offset:true [| a; 1; w |] (fun s -> random_bits src s st) in
   let f x = Nx.cumsum ~axis:0 (Nx.bitcast dt x) in
@@ -382,6 +387,7 @@ let law_rshift = Batch.each shift_call law_rshift_with
 (* A stack of rows on the host compiles to eager's bits, a [-0.] and a
    signalling NaN among them, at 32, 33 and 256 rows. *)
 let test_stack () =
+  Compiled.here ();
   let row i =
     Nx.bitcast Nx.float32
       (Nx.create Nx.int32 [| 4 |]
@@ -411,6 +417,7 @@ let test_stack () =
    eager's bits, whether the keys are an argument or a rotation's concatenation
    of two halves, at float32 and bfloat16. *)
 let test_scatter_in_place () =
+  Compiled.here ();
   let check (type b) (dt : (float, b) Nx.dtype) =
     let draw key s = Nx.cast dt (Nx.Rng.uniform ~key:(Nx.Rng.key key) f32 s) in
     let at = Nx.create Nx.int64 [| 1; 1; 1 |] [| 2L |] in
@@ -443,6 +450,7 @@ let test_scatter_in_place () =
    on the host to eager's bits at 46, 47 and 100 rows: each piece is a store
    into the result's storage, which the stores share. *)
 let test_doubled_rows () =
+  Compiled.here ();
   List.iter
     (fun k ->
       let x =
@@ -465,6 +473,7 @@ let test_doubled_rows () =
    [[b; a]], compile on the host to eager's bits, each piece correctly
    rounded. *)
 let test_crossed () =
+  Compiled.here ();
   let x = Nx.create f32 [| 3 |] [| 0.3; -1.1; 0.7 |] in
   let f x =
     let a = Nx.mul_s x 0.25 and b = Nx.add_s x 1. in
@@ -482,6 +491,7 @@ let test_crossed () =
    step whose assembly holds a piece no trip changes, the double of a value
    the loop reads, beside one each trip computes. *)
 let test_loop_assembly () =
+  Compiled.here ();
   let x = Nx.create f32 [| 6 |] [| 1.; -0.; 3.; 4.; 5.; 6. |] in
   let xs = Nx.create f32 [| 4 |] [| 0.5; 0.25; -2.; 8. |] in
   let w = Nx.create f32 [| 2 |] [| -0.; 1.5 |] in
@@ -522,6 +532,7 @@ let test_loop_assembly () =
    level, in a loop's step and from two calls of one function: one kernel of
    both pieces would store them at one region. *)
 let test_alike_assemblies () =
+  Compiled.here ();
   let value k =
     Nx.create f32 [| 3; 3 |] (Array.init 9 (fun i -> Float.of_int (i + k)))
   in
@@ -640,6 +651,7 @@ let test_selection_memory () =
    square is 0, the value eager gives, on a first call and on one that finds the
    kernels compiled. *)
 let test_square_wraps () =
+  Compiled.here ();
   let ints x =
     Array.to_list (Array.map Int64.to_int (Nx.to_array (Nx.cast Nx.int64 x)))
   in
@@ -692,6 +704,7 @@ let test_square_wraps () =
 
 (* Each nx.quant format's decode compiles whole and gives eager's values. *)
 let test_quant_decodes () =
+  Compiled.here ();
   let st = Random.State.make [| 7 |] in
   let bytes s =
     Nx.create Nx.uint8 s
@@ -800,12 +813,15 @@ let unary (Unary_case (dt, u, s, xo)) =
       equal (outcome_t (within dt n)) eager (outcome y))
 
 (* A case draws eight functions, which compile to one program. *)
-let law_unary cs = Batch.checks (List.map unary cs)
+let law_unary cs =
+  Compiled.here ();
+  Batch.checks (List.map unary cs)
 
 (* Special values are exact: each function at a zero of either sign, an infinity
    of either sign and NaN gives eager's bits where eager's result is special
    too, a zero, an infinity, NaN or an integer. *)
 let test_specials () =
+  Compiled.here ();
   let specials = [| 0.; -0.; Float.infinity; Float.neg_infinity; Float.nan |] in
   let special y = Float.is_integer y || not (Float.is_finite y) in
   let at (type s) (dt : (float, s) Nx.dtype) u =
@@ -830,6 +846,7 @@ let test_specials () =
    neighbours, at the least float whose neighbours are integers and beside it,
    at the special values and over drawn bits. *)
 let test_roundeven () =
+  Compiled.here ();
   let rng = Random.State.make [| 7 |] in
   let at (type s) (dt : (float, s) Nx.dtype) =
     let wide = Nx.Dtype.equal dt f64 in
@@ -894,13 +911,16 @@ let nan_to_num (Nan_case (dt, s, xo, (nan, posinf, neginf))) =
   checking codes_t eager T.tensor x codes f
 
 (* A case draws eight functions, which compile to one program. *)
-let law_nan_to_num cs = Batch.checks (List.map nan_to_num cs)
+let law_nan_to_num cs =
+  Compiled.here ();
+  Batch.checks (List.map nan_to_num cs)
 
 (* Nx.log10, compiled on the host, gives eager's bits at the points of nx's
    golden (Nx_support.log10_golden) and at each power of ten the dtype holds: nx
    composes it from Nx.log2, which compiles to nx's bits, and exact
    functions. *)
 let test_log10 () =
+  Compiled.here ();
   let lines = String.split_on_char '\n' Nx_support.log10_golden in
   let at (type s) (dt : (float, s) Nx.dtype) short most =
     let xs =
@@ -946,6 +966,7 @@ let float32_edges =
   Array.map Int32.float_of_bits bits
 
 let law_log_asinh xs =
+  Compiled.here ();
   let has p = Array.exists p xs in
   cover "a subnormal" (has (fun x -> x < 0x1p-126));
   cover "near 1" (has (fun x -> Float.abs (x -. 1.) < 0x1p-7));
@@ -963,6 +984,7 @@ let law_log_asinh xs =
    with [c] or is NaN, and [m] elsewhere: [0.] at [x = -0.] and [c = 0.], and
    [1.] at a NaN and [c = 1.]. *)
 let test_nested_minimum () =
+  Compiled.here ();
   let xs = [| -0.; 0.; Float.nan; -1.; 1.; 2. |] in
   let at (type s) (dt : (float, s) Nx.dtype) c =
     let f x =
@@ -1054,6 +1076,7 @@ let zero_selection (Nx.Dtype.Any dt, c, f) =
 let zero_selections = Batch.table ~per:8 zero_selection zero_selections
 
 let test_zero_selection ((_, c, f), compiled) =
+  Compiled.here ();
   let select x =
     let holds = if f.zero_first then c < x else x < c in
     if holds = f.value_first then x else c
@@ -1143,7 +1166,9 @@ let sum_check (Sum_case (dt, s, axis, xo)) =
       equal (outcome_t within) eager (outcome y))
 
 (* A case draws eight sums, which compile to one program. *)
-let law_sum cs = Batch.checks (List.map sum_check cs)
+let law_sum cs =
+  Compiled.here ();
+  Batch.checks (List.map sum_check cs)
 
 (* Sums over an axis of no term, at each width: a draw's axis has none about one
    time in ten, which the law's 104 draws all miss about once in 70 000 runs. *)
@@ -1172,6 +1197,7 @@ let blocked_within ~msg ~n y exact magnitude =
 (* A compiled float32 sum of 16384 terms is within the blocked bound of its
    exact value, float64's sum of the same terms. *)
 let test_long_sum () =
+  Compiled.here ();
   let n = 16384 in
   let t = stagnating n in
   let x = Nx.init f32 [| n; 2 |] (fun i -> t.(i.(0))) in
@@ -1183,6 +1209,7 @@ let test_long_sum () =
    the blocked bound of each output's exact value, and has the same bits on a
    second run. *)
 let test_long_contraction () =
+  Compiled.here ();
   let n = 16384 and c = 64 in
   let t = stagnating n in
   let x = Nx.init f32 [| n; c |] (fun i -> t.(i.(0))) in
@@ -1263,11 +1290,14 @@ let scoped (seed, draws, s) =
   checking bits_t eager T.(pair Nx.Rng.ptree tensor) (k, x) bits f
 
 (* A case draws eight functions, which compile to one program. *)
-let law_scoped cs = Batch.checks (List.map scoped cs)
+let law_scoped cs =
+  Compiled.here ();
+  Batch.checks (List.map scoped cs)
 
 (* A key that depends on no argument draws the same values on every call, the
    eager draw's: a uniform draw is exact. *)
 let test_constant_key () =
+  Compiled.here ();
   let f x = Nx.add x (Nx.Rng.uniform ~key:(Nx.Rng.key 7) f32 [| 3 |]) in
   let x = v [| 0.; 1.; 2. |] in
   let g = Rune.jit' f in
@@ -1279,6 +1309,7 @@ let test_constant_key () =
    one shape share a program whatever their words, and a batch of keys has its
    own. *)
 let law_key_argument (s, s') =
+  Compiled.here ();
   let traces = ref 0 in
   let draw k = Nx.Rng.uniform ~key:k f32 [| 3 |] in
   let g =
@@ -1303,6 +1334,7 @@ let law_key_argument (s, s') =
    positions past int32 cross epochs of 10 instead, whose program is the one
    [first = 7] compiled. *)
 let law_permute (n, first) =
+  Compiled.here ();
   let k = Nx.Rng.key n and n' = Int64.of_int n in
   let p = Nx.arange Nx.int64 first (first + 16) 1 in
   let example key p =
@@ -1344,6 +1376,7 @@ let law_long_window (n, first) =
 (* Captured values are read as they are when the program is traced: a later call
    of the same key does not see what the closure would read now. *)
 let test_captures () =
+  Compiled.here ();
   let r = ref 1. in
   let g = Rune.jit' (fun x -> Nx.add x (Nx.scalar f32 !r)) in
   let x = v [| 1.; -0. |] in
@@ -1447,6 +1480,7 @@ let sliced_cases =
   |> with_pp pp_sliced
 
 let law_sliced (Sliced c) =
+  Compiled.here ();
   let n = Array.length c.pos and k = snd c.scattered - fst c.scattered in
   let overlap =
     max (fst c.scattered) (fst c.other) < min (snd c.scattered) (snd c.other)
@@ -1487,6 +1521,7 @@ let law_sliced (Sliced c) =
 (* A gather's gradient scatters at its positions: positions sliced from a
    capture that the step's second result reads again give eager's gradient. *)
 let test_sliced_grad () =
+  Compiled.here ();
   let sin i = Float.sin (Float.of_int ((i * 7) + 1)) /. 3. in
   let logits = Nx.create f32 [| 6; 4 |] (Array.init 24 sin) in
   let tokens = Nx.create Nx.int32 [| 7 |] [| 0l; 1l; 2l; 3l; 0l; 1l; 2l |] in
@@ -1513,6 +1548,7 @@ let test_sliced_grad () =
 
 (* Arguments rebuild their structure; a result of several arrays. *)
 let test_structures () =
+  Compiled.here ();
   let s =
     Nx.Ptree.(
       pair tensor (list tensor) @-> tensor @-> returns (pair tensor tensor))
@@ -1527,6 +1563,7 @@ let test_structures () =
 (* A result lies where eager computation puts it: on the host, on either device
    of a set, or cut across the set. *)
 let test_placements () =
+  Compiled.here ();
   let x = v [| 1.; 2.; -0.; 4. |] in
   let f x y = Nx.add x (Nx.neg y) in
   let at (type d) (w : d where) =
@@ -1555,6 +1592,7 @@ let walk_scaled c s =
 (* A function that moves a structure from its walk compiles to eager's
    placement and bits, between devices of a set and from whole to cut. *)
 let test_placed_structure () =
+  Compiled.here ();
   let s =
     { values = v [| 1.; 2.; -0.; 4. |]; factors = v [| 0.5; -1.; 3.; nan |] }
   in
@@ -1595,6 +1633,7 @@ let searched_cases =
   pair four four
 
 let law_searched (xs, ys) =
+  Compiled.here ();
   let has p = Array.exists p xs || Array.exists p ys in
   cover "a -0." (has (fun e -> e = 0. && 1. /. e < 0.));
   cover "an infinity" (has (fun e -> Float.abs e = Float.infinity));
@@ -1680,7 +1719,9 @@ let placed (Placed_case (dt, s, o, skip)) =
     (fun y -> equal codes_t eager (y ()))
 
 (* A case draws eight constants, whose calls compile to one program. *)
-let law_placed cs = Batch.checks (List.map placed cs)
+let law_placed cs =
+  Compiled.here ();
+  Batch.checks (List.map placed cs)
 
 (* A step on a software device over a donated pool, a weight placed there, host
    values placed for each call, which share their memory, and a host constant
@@ -1689,6 +1730,7 @@ let law_placed cs = Batch.checks (List.map placed cs)
    its own memory. The first pool is placed host memory, shared, so it lends
    nothing. *)
 let test_placed_calls () =
+  Compiled.here ();
   let device = Nx_support.memory 2 in
   let address x = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let copied f =
@@ -1748,6 +1790,7 @@ let test_placed_calls () =
 let pair_set = lazy (Nx.devices [ Rig.host; Nx_support.memory 3 ])
 
 let test_constant_result () =
+  Compiled.here ();
   let module Pair = (val Lazy.force pair_set : Nx.Devices) in
   let on r x = Nx.place (Nx.Placement.device Pair.v r) x in
   let c = on (Nx_support.memory 3) (v [| 0.5; -2. |]) in
@@ -1830,6 +1873,7 @@ let test_sibling_constant () =
 (* A jit inside a jit is staged into the outer program, a call over constants
    included. *)
 let test_nested () =
+  Compiled.here ();
   let inner = Rune.jit' (fun x -> Nx.mul x x) in
   let c = v [| 3.; -0. |] in
   let outer = Rune.jit' (fun x -> Nx.add (inner x) (inner c)) in
@@ -1839,6 +1883,7 @@ let test_nested () =
 (* An integer running sum wraps at its type: over the greatest value [m] twice,
    it is [m] then [m + m] wrapped, whose maximum is [m]. *)
 let test_wrapped_max () =
+  Compiled.here ();
   let case (Nx.Dtype.Any dt) =
     match Nx.Dtype.kind dt with
     | Signed | Unsigned ->
@@ -2055,6 +2100,7 @@ let donating_examples =
   ]
 
 let law_donating c =
+  Compiled.here ();
   let module Cut2 = (val Lazy.force cut2_set : Nx.Devices) in
   let value i =
     let x =
@@ -2150,6 +2196,7 @@ let law_donating c =
 (* Fresh results: compiled and evaluated, a result has memory of its own, apart
    from the arguments', the captures' and the other results'. *)
 let test_fresh () =
+  Compiled.here ();
   let x = v [| 1.; 2. |] in
   let b = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y)) in
@@ -2252,6 +2299,7 @@ let test_fresh () =
 (* An argument whose memory starts off 16 bytes binds where it lies, through a
    program compiled for that phase. *)
 let test_phase () =
+  Compiled.here ();
   let f = Rune.jit' (fun x -> Nx.add x x) in
   let at first =
     let b = Rig.Buffer.create Rig.host 64 in
@@ -2365,6 +2413,7 @@ let first_lowerings ~donates x =
   (Rune.lowerings () - before, expected, got)
 
 let law_first_lowering c =
+  Compiled.here ();
   cover "a C-contiguous argument"
     ((not c.split) && c.first_layout = Plain_first && c.rows > 0);
   cover "a transposed view" (c.first_layout = Transposed_first && c.rows > 1);
@@ -2409,6 +2458,7 @@ let occurrences word s =
    eager kernel, under reverse mode too. The functions are exact, so the
    compiled values are eager's bits. *)
 let test_constructs () =
+  Compiled.here ();
   let module Count = (val Lazy.force count_set : Nx.Devices) in
   let tensor = T.tensor in
   let square x = Nx.mul x x in
@@ -2489,6 +2539,7 @@ let spent h =
   invalid ~sub:"was donated to Rune.jit" (fun () -> Nx.to_array h)
 
 let test_consumed () =
+  Compiled.here ();
   let g = Rune.jit (pair_fn ()) Nx.add in
   let x = fresh [| 1.; 2. |] and y = fresh [| 3.; 4. |] in
   let h = Nx.donate x in
@@ -2502,6 +2553,7 @@ let test_consumed () =
 (* A value donated inside a transformation dies at the donation: a traced
    argument and a captured value, under [jit], [grad] and [vmap]. *)
 let test_dies_inside () =
+  Compiled.here ();
   let raised ~msg f =
     raises_match ~msg (Exn.invalid_arg ~sub:"Nx.add: float32 [2] was donated") f
   in
@@ -2584,6 +2636,7 @@ let test_dies_inside () =
 (* A construct traces its functions at the call, so a donation in one happens
    there: in a branch not taken, and once for a loop's step. *)
 let test_dies_in_construct () =
+  Compiled.here ();
   let yes = Nx.scalar Nx.bool true in
   let c = fresh [| 1.; 2. |] in
   equal ~msg:"a branch not taken" bits_t (bits (fresh [| 0.; 0. |]))
@@ -2627,6 +2680,7 @@ let test_dies_in_construct () =
    it does eagerly, under each construct and transformation inside the
    function. *)
 let test_read_then_donated () =
+  Compiled.here ();
   let yes = Nx.scalar Nx.bool true in
   let check ~msg f =
     let late c x =
@@ -2666,6 +2720,7 @@ let test_read_then_donated () =
    of the same key at a new layout compiles the program again over it, and a
    new shape retraces, reading the dead constant as eager computation does. *)
 let test_donated_after_call () =
+  Compiled.here ();
   let column () =
     Nx.slice [ Nx.A; Nx.I 0 ] (Nx.create f32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |])
   in
@@ -2813,6 +2868,7 @@ let test_shared () =
    does a compiled program over such values, whose pieces lend their
    devices' memory. *)
 let test_evaluated_donation () =
+  Compiled.here ();
   let at w () = Nx.place (on w) (v [| 1.; 2.; -0.; 4. |]) in
   let f x =
     declining (fun r -> Nx.less_s r 10.) x;
@@ -2945,7 +3001,9 @@ let donation (Donation_case (dt, s, xo, yo, e)) =
       equal (outcome_t bits_t) eager (outcome (fun () -> bits (r ()))))
 
 (* A case draws four calls, which compile to one program. *)
-let law_donation cs = Batch.checks (List.map donation cs)
+let law_donation cs =
+  Compiled.here ();
+  Batch.checks (List.map donation cs)
 
 (* Two donated leaves [(w, v)] and two results: [v' = e1 (w, v)], and [w' = e2
    (w, v')] where [through], reading the leaf [v] through [v']'s memory, or [e2
@@ -3173,7 +3231,9 @@ let states (State_case c as case) =
       equal t eager (outcome (fun () -> both (r ()))))
 
 (* A case draws four steps, which compile to one program. *)
-let law_states cs = Batch.checks (List.map states cs)
+let law_states cs =
+  Compiled.here ();
+  Batch.checks (List.map states cs)
 
 (* A momentum step's results each take a leaf's memory, call after call: the
    parameters' update reads the velocity's from where it was stored, whatever
@@ -3183,6 +3243,7 @@ let law_states cs = Batch.checks (List.map states cs)
    over the donated leaves [start ()] three times against eager, [same] its
    results' equality, and [lends] whether each result took a leaf's memory. *)
 let test_states () =
+  Compiled.here ();
   let address x = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let run ~msg ~start ~same step lends =
     let two = T.(pair tensor tensor) in
@@ -3267,6 +3328,7 @@ let test_states () =
    while another result reads the pool's new value. Each call compiles and gives
    eager's values. *)
 let test_readers () =
+  Compiled.here ();
   let address x = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let rows = Nx.reshape [| 2; 3 |] (fresh [| 0.5; -2.; 1.5; 0.25; 3.; -1. |]) in
   let f (w, a) =
@@ -3336,6 +3398,7 @@ let test_readers () =
    result that reads it at its own index: the backward pass reads it as it was,
    before the store over it. *)
 let test_remat_lends () =
+  Compiled.here ();
   let cube x = Nx.mul x (Nx.mul x x) in
   let r = Rune.remat T.(tensor @-> returns tensor) cube in
   let f x = (Nx.add_s x 1., Rune.grad' (fun x -> Nx.sum (r x)) x) in
@@ -3373,6 +3436,7 @@ let test_contract_init () =
    the table. Each pool is written in its own memory call after call, and the
    values keep eager's bits. *)
 let test_pools () =
+  Compiled.here ();
   let address x = Nx.Repr.read ~by:"test" x Nx_array.buffer in
   let slots = 5 and width = 3 in
   let table = Nx.create Nx.int64 [| 1; slots |] [| 4L; 0L; 3L; 1L; 2L |] in
@@ -3422,6 +3486,7 @@ let test_pools () =
    into 99 positions, and compiles to eager's values, exact in any order since
    each sum is of small integers. *)
 let test_dense_scatter () =
+  Compiled.here ();
   let n = 99 and k = 1000 in
   let at j = Int64.of_int (j * 37 mod n) in
   let at = Nx.create Nx.int64 [| k |] (Array.init k at) in
@@ -3456,6 +3521,7 @@ let long_scatter () =
 let memory y = Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y))
 
 let test_long_donated () =
+  Compiled.here ();
   let p, u, x = long_scatter () in
   let f x = (Nx.scatter ~combine:Add ~axis:0 p u x, Nx.mul x x) in
   let s, sq = f (x ()) in
@@ -3500,6 +3566,7 @@ let test_long_flat () =
   takes ~msg:"in the cache's memory" true took
 
 let test_long_twice () =
+  Compiled.here ();
   let p, u, x = long_scatter () in
   let f x =
     let s = Nx.scatter ~combine:Add ~axis:0 p u x in
@@ -3596,6 +3663,7 @@ let failure =
       | _ -> a = b)
 
 let test_checks () =
+  Compiled.here ();
   let g = Rune.jit' checked in
   let m xs = Nx.create f32 [| 2; 2 |] xs in
   let at xs = raised (fun () -> g (m xs)) in
@@ -3694,6 +3762,7 @@ let deferred_cases =
         (String.concat "; " (Array.to_list (Array.map string_of_float c.xs))))
 
 let law_deferred c =
+  Compiled.here ();
   let n = Array.length c.xs in
   let small x = x < 3. and signed x = x >= 0. in
   let first =
@@ -3774,7 +3843,9 @@ let pending_commands =
     command "start"
       (Gen.unit @-> makes pending_session)
       (fun () -> pending_calls := [])
-      drain_pending;
+      (fun () ->
+        Compiled.here ();
+        drain_pending ());
     command "call"
       (pending_session ^-> Gen.bool @-> Gen.int_range 0 99 @-> returns unit)
       (fun () fails id -> pending_calls := !pending_calls @ [ (id, fails) ])
@@ -3830,6 +3901,7 @@ let test_check_elsewhere () =
    message. *)
 
 let test_deferred_failures () =
+  Compiled.here ();
   let module Sampled = (val Nx.devices [ Nx_support.memory 1 ]) in
   let compiled msg f =
     let before = Rune.evaluations () in
@@ -3879,6 +3951,7 @@ let test_deferred_failures () =
    out raise it. Compiled, a result takes a donated argument's memory, which an
    evaluated program never lends. *)
 let test_loop_checks () =
+  Compiled.here ();
   let scan xs =
     fst
       (Rune.scan'
@@ -3955,6 +4028,7 @@ let test_loop_checks () =
    compiled iterate runs to its max of 10^9 steps, minutes past the test's
    limit. *)
 let test_loop_stops () =
+  Compiled.here ();
   let at xs = Nx.create f32 [| 2 |] xs in
   let long ~f x =
     Rune.iterate' ~max:1_000_000_000
@@ -4004,6 +4078,7 @@ let checked_loops =
         c.max c.stop)
 
 let law_checked_loop c =
+  Compiled.here ();
   let n = Array.length c.rows in
   let xs = Nx.create f32 [| n; 2 |] (Array.concat (Array.to_list c.rows)) in
   let step c r =
@@ -4178,7 +4253,7 @@ let call_t = Testable.triple bool bool (Testable.array float_exact)
 let cache_commands ~variants =
   let start () = { keys = []; variants = [] } in
   let system () =
-    if variants then Compiled.here ();
+    Compiled.here ();
     { at32 = Rune.jit' negated; at64 = Rune.jit' negated }
   in
   [
@@ -4319,7 +4394,11 @@ let system_placed g c =
 let scaled_t = abstract "scaled"
 
 let placed_commands ~demand =
-  let start () = { met = [] } and system () = Rune.jit' scaled in
+  let start () = { met = [] }
+  and system () =
+    Compiled.here ();
+    Rune.jit' scaled
+  in
   let results = Testable.(list (pair bool (array float_exact))) in
   [
     command "start" (Gen.unit @-> makes scaled_t) start system;
@@ -4359,6 +4438,7 @@ let sketched loss p dirs =
 (* A loss compiled and called under reverse mode outside every map, then inside
    the map: its trace outside made no mark, and the call inside makes them. *)
 let test_mark_after_grad () =
+  Compiled.here ();
   let xs = Nx.create f64 [| 1; 2 |] [| 3.; -1. |] in
   let p = v64 [| 1.; 2. |] in
   let dirs = Nx.create f64 [| 3; 2 |] [| 1.; 0.; 0.; 1.; 1.; 1. |] in
@@ -4416,6 +4496,7 @@ let matrix rows =
   Nx.create f64 [| n; m |] (Array.concat (Array.to_list rows))
 
 let law_marks s =
+  Compiled.here ();
   cover "one lane" (Array.length s.dirs = 1);
   cover "several lanes" (Array.length s.dirs > 1);
   cover "several steps" (Array.length s.xs > 1);
@@ -4458,6 +4539,7 @@ let caught_raises =
   [ ("lanes", gathered); ("lane_index", indexed) ]
 
 let law_caught_raise (_, f) =
+  Compiled.here ();
   let x = v64 [| 1.; -2. |] in
   let xs = Nx.create f64 [| 3; 2 |] [| 1.; -2.; 0.5; 4.; -0.; 8. |] in
   let g = Rune.jit' f in
@@ -4590,7 +4672,10 @@ let derivation_commands =
     in
     (traced, made)
   in
-  let system () = Rune.jit T.(tensor @-> tensor @-> returns tensor) product in
+  let system () =
+    Compiled.here ();
+    Rune.jit T.(tensor @-> tensor @-> returns tensor) product
+  in
   let fn = abstract "jit" in
   [
     command "start" (Gen.unit @-> makes fn) start system;
@@ -4608,7 +4693,10 @@ let shared_commands =
     if traced then shapes := d.n :: !shapes;
     traced
   in
-  let system () = Rune.jit T.(tensor @-> tensor @-> returns tensor) product in
+  let system () =
+    Compiled.here ();
+    Rune.jit T.(tensor @-> tensor @-> returns tensor) product
+  in
   let fn = abstract "jit" in
   [
     command "start" (Gen.unit @-> makes fn) start system;
@@ -4622,6 +4710,7 @@ let shared_commands =
    inside that map and under the map itself inside another: equal masks, lanes
    and shapes, so only the name read tells the derivations apart. *)
 let test_named_maps () =
+  Compiled.here ();
   let a = Rune.axis () and b = Rune.axis () in
   let f x = Nx.add x (Nx.cast f64 (Rune.lane_index a x)) in
   let g = Rune.jit' f in
@@ -4645,6 +4734,7 @@ let test_named_maps () =
    change, once per lane count, and each call runs its count's program: one
    repeated, one met again after another, one new. *)
 let test_map_lanes () =
+  Compiled.here ();
   let a = Rune.axis () in
   let traces = ref 0 in
   let f x = Nx.sum ~axes:[ 0 ] (Rune.lanes a x) in
@@ -4670,6 +4760,7 @@ let test_map_lanes () =
    switches threads in the few microseconds before the second's call, which then
    finds the value made. Either order gives one trace. *)
 let test_threads () =
+  Compiled.here ();
   let traces = Atomic.make 0 in
   let m = Mutex.create () and c = Condition.create () and ready = ref false in
   let x = Nx.create f64 [| 2 |] [| 3.; -0. |] in
@@ -4698,6 +4789,7 @@ let test_threads () =
 
 (* The function runs once per key, whatever is derived from it. *)
 let test_once_per_key () =
+  Compiled.here ();
   let traces = ref 0 in
   let g =
     Rune.jit' (fun x ->
@@ -4721,6 +4813,7 @@ let test_once_per_key () =
 (* Under an enclosing jit, a derived call is staged: the printed program calls
    no other. *)
 let test_inlined () =
+  Compiled.here ();
   let g = Rune.jit' (fun x -> Nx.mul x (Nx.sin x)) in
   let f x = Rune.grad' (fun x -> Nx.sum (g x)) x in
   let x = Nx.linspace f64 0. 1. 3 in
@@ -4736,6 +4829,7 @@ let test_inlined () =
    answers the lane index that the call's program reads, as it answers the
    step's own. *)
 let test_inlined_in_step () =
+  Compiled.here ();
   let a = Rune.axis () in
   let lane x = Nx.add x (Nx.cast f64 (Rune.lane_index a x)) in
   let g = Rune.jit' lane in
@@ -4756,6 +4850,7 @@ let test_inlined_in_step () =
    holds, as it is: a pullback over the call holds the bytes the call's result
    does, where it would hold a copy of the argument too. *)
 let test_forwarded () =
+  Compiled.here ();
   let host = Rig.host in
   let settled () =
     for _ = 1 to 4 do
@@ -4808,6 +4903,7 @@ let test_forwarded () =
    by the part computed at the call, which returns it for the pullback, as one
    handle at one argument or at two. *)
 let test_forwarded_donation () =
+  Compiled.here ();
   let g = Rune.jit (pair_fn ()) (fun x w -> Nx.mul x w) in
   let x = fresh [| 1.; 2.; -0.5 |] in
   let w = fresh [| 3.; -0.5; 0.25 |] in
@@ -4842,6 +4938,7 @@ let test_forwarded_donation () =
 (* Compositions of transformations around a compiled call give eager's values,
    the compiled sine and cosine within their bounds. *)
 let test_compositions () =
+  Compiled.here ();
   let close ~msg a b =
     equal ~msg
       (array (float_rel ~rel:1e-13 ~abs:1e-13))
@@ -4913,6 +5010,7 @@ let test_compositions () =
    so a compiled function stages it over a captured operand and gives eager's
    bits. *)
 let test_shortcut_captures () =
+  Compiled.here ();
   let c = Nx.place Nx.Host.on (Nx.full f64 [| 2; 3; 3 |] 2.) in
   let ints = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |] in
   let x = Nx.place Nx.Host.on (Nx.ones f64 [| 3 |]) in
@@ -4954,6 +5052,7 @@ let test_calls_stay () =
    total in turn, as eagerly, bit for bit for exact functions; a loop of no step
    leaves the running total, a negative zero included. *)
 let test_loop_totals () =
+  Compiled.here ();
   let t = Rune.Total.make () and u = Rune.Total.make () in
   let rows n =
     Nx.place Nx.Host.on
@@ -5012,6 +5111,7 @@ let test_loop_totals () =
 (* A loop's step that runs an iterate compiles whole: the inner loop's failure
    after its steps is a check of the outer step's. *)
 let test_nested_iterate () =
+  Compiled.here ();
   let halve x = Nx.mul_s x 0.5 in
   let small x = Nx.less (Nx.sum (Nx.abs x)) (Nx.scalar f64 0.01) in
   let scan xs =
@@ -5038,6 +5138,7 @@ let test_nested_iterate () =
    under a map whose lanes stop together, with eager's values and the first
    failure of the steps written out. *)
 let test_derived_iterates () =
+  Compiled.here ();
   let double x = Nx.mul_s x 2. in
   let large x = Nx.greater_s (Nx.sum x) 50. in
   let iterate x = Rune.iterate' ~max:8 ~until:large double x in
@@ -5094,6 +5195,7 @@ let test_derived_iterates () =
    tangent: two calls of one key, the tangent on the first total's running
    value, then on the second's, each give their own sums' tangents. *)
 let test_seed_tangents () =
+  Compiled.here ();
   let t1 = Rune.Total.make () and t2 = Rune.Total.make () in
   let g =
     Rune.jit' (fun c ->
@@ -5125,6 +5227,7 @@ let test_seed_tangents () =
 (* Integer constants keep every bit of their width and wrap at it: each integer
    dtype's extremes as constants, added to its extremes. *)
 let test_int_constants () =
+  Compiled.here ();
   let case (Nx.Dtype.Any dt) =
     match Nx.Dtype.kind dt with
     | Signed | Unsigned ->
@@ -5178,6 +5281,7 @@ let names name = function
   | _ -> false
 
 let test_errors () =
+  Compiled.here ();
   let x = v [| 1.; 2. |] in
   let named name jit =
     let msg = name ^ ": a captured traced value" in
@@ -5201,6 +5305,7 @@ let test_errors () =
 (* One handle at two leaves: the call reads it at both and consumes it. An
    array beside its own handle raises. *)
 let test_two_leaves () =
+  Compiled.here ();
   let f a b = Nx.sub a (Nx.flip b) in
   let xs = [| 1.; -0.; 2.5 |] in
   let x = fresh xs in
@@ -5218,6 +5323,7 @@ let test_two_leaves () =
 
 (* A donated leaf returned unchanged beside one computed from another. *)
 let test_returned_leaf () =
+  Compiled.here ();
   let state = T.(pair tensor tensor) in
   let g = Rune.jit T.(state @-> returns state) (fun (a, b) -> (a, Nx.neg b)) in
   let a = fresh [| 1.; -0. |] and b = fresh [| 2.; 3. |] in
@@ -5230,6 +5336,7 @@ let test_returned_leaf () =
 (* A value one compiled function captures and another call donates: the first
    program reads it as traced, and the donor lends nothing. *)
 let test_captured_donor () =
+  Compiled.here ();
   let c = fresh [| 1.; 2. |] in
   let g = Rune.jit' (fun x -> Nx.add x c) in
   let x = fresh [| 10.; -0. |] in
@@ -5322,7 +5429,9 @@ let scan (Scan_case (s, axis, xs)) =
     (fun y -> equal (outcome_t (Testable.list codes_t)) eager (outcome y))
 
 (* A case draws four scans, which compile to one program. *)
-let law_scan cs = Batch.checks (List.map scan cs)
+let law_scan cs =
+  Compiled.here ();
+  Batch.checks (List.map scan cs)
 
 (* Values computed again
 
@@ -5388,7 +5497,9 @@ let recomputed (how, k) =
   checking codes_t eager T.tensor x codes f
 
 (* A case draws four values, whose functions compile to one program. *)
-let law_recomputed cs = Batch.checks (List.map recomputed cs)
+let law_recomputed cs =
+  Compiled.here ();
+  Batch.checks (List.map recomputed cs)
 
 (* Numberings
 
@@ -5430,7 +5541,9 @@ let unique (Unique_case (dt, s, vs, m)) =
   checking codes_t (outcome (fun () -> codes (f x))) T.tensor x codes f
 
 (* A case draws four numberings, which compile to one program. *)
-let law_unique cs = Batch.checks (List.map unique cs)
+let law_unique cs =
+  Compiled.here ();
+  Batch.checks (List.map unique cs)
 
 (* Lane searches
 
@@ -5501,7 +5614,9 @@ let lanes_check (Lanes_case (dt, axis, s, vs, t, ws, sorted)) =
     (x, v) codes f
 
 (* A case draws eight searches, which compile to one program. *)
-let law_lanes cs = Batch.checks (List.map lanes_check cs)
+let law_lanes cs =
+  Compiled.here ();
+  Batch.checks (List.map lanes_check cs)
 
 (* Packed views
 
@@ -5519,6 +5634,7 @@ let strided_sorts =
        (Gen.permutation (List.init 16 Fun.id)))
 
 let law_strided_sort xs =
+  Compiled.here ();
   let every_other axis t =
     Nx.squeeze ~axes:[ -1 ] (Nx.sliding_window ~axis ~window:1 ~step:2 t)
   in
@@ -5795,6 +5911,7 @@ let law_segmented = Batch.each segmented_call check_segmented
    each way: the compiled losses are summed, whose gradient by each case's
    operands is that case's loss's. *)
 let law_segmented_grad cs =
+  Compiled.here ();
   let both = T.(pair tensor tensor) in
   let prepare c =
     cover_segmented c;
@@ -5974,6 +6091,7 @@ let group_operands c (start, step, ids) =
   (x, ct, Nx.create Nx.int64 [| c.gn |] ids)
 
 let law_group_grad c =
+  Compiled.here ();
   let (sa, da, ia), (sb, db, ib) = c.layouts in
   let m = c.m in
   let sizes = block_sizes c.gn c.gg in
@@ -6125,7 +6243,9 @@ let experts c =
   | _ -> assert false
 
 (* A case's products compile to one program. *)
-let law_experts cs = Batch.checks (List.map experts cs)
+let law_experts cs =
+  Compiled.here ();
+  Batch.checks (List.map experts cs)
 
 (* Fully sharded training *)
 
@@ -6331,6 +6451,7 @@ let crossed (u : update) =
 let three = T.(pair (pair tensor tensor) tensor)
 
 let law_update u =
+  Compiled.here ();
   cover "an output reads another argument" (crossed u);
   let f ((a, b), c) =
     match apply u [| a; b; c |] with
@@ -6350,6 +6471,7 @@ let law_update u =
   equal (outcome_t (list bits_t)) (Value eager) jitted
 
 let law_update_scan u =
+  Compiled.here ();
   let step c _ =
     let rows = Array.init 3 (fun i -> Nx.get [ i ] c) in
     let c' = Nx.stack (Array.to_list (apply u rows)) in
@@ -6390,6 +6512,7 @@ let narrow_fmas =
     Gen.int
 
 let law_narrow_fma (Narrow dt, seed) =
+  Compiled.here ();
   let f = Exact.format dt in
   let a, b, c = Kernels_cases.Narrow_fma.operands f seed in
   Kernels_cases.Narrow_fma.covers (Nx.Dtype.name dt) f a b c;
@@ -6476,6 +6599,7 @@ let zoom_call (Zoom z) =
 let zooms = Batch.table ~per:4 zoom_call zooms
 
 let law_zoom (Zoom z, compiled) =
+  Compiled.here ();
   let x = Nx.create z.dt [| z.n |] (zoom_parts z.n) in
   let eager = Nx.to_array (Nx.zoom_fft ~start:z.start ~step:z.step z.m x) in
   let jitted = compiled () in
@@ -6587,7 +6711,9 @@ let () =
                (Assemblies.laws (module Nx.Host));
              test
                "a stack of loops' four-bit rows of sixteen gives eager's values"
-               (fun () -> Assemblies.packed_rows (module Nx.Host));
+               (fun () ->
+                 Compiled.here ();
+                 Assemblies.packed_rows (module Nx.Host));
              test "a stack of computing rows holds its result alone"
                test_stack_memory;
              test "one view over its background holds no storage"
@@ -6879,7 +7005,9 @@ let () =
                    ~id:(fun (n, d) ->
                      Printf.sprintf "four layers of %d over %d devices" d n)
                    [ (2, 512); (4, 512); (8, 512); (2, 128); (4, 256) ]
-                   (fun (n, d) -> test_sharded_bound ~n ~d ~layers:4 ());
+                   (fun (n, d) ->
+                     Compiled.here ();
+                     test_sharded_bound ~n ~d ~layers:4 ());
                ];
            ];
        ])

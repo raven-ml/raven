@@ -306,6 +306,7 @@ let test_masks_compose_and_sample () =
   is_true ~msg:"both survivors are drawn" (List.mem 1 draws && List.mem 3 draws)
 
 let test_masks_jit () =
+  Compiled.here ();
   let logits =
     Nx.create Nx.float32 [| 2; 4 |] [| 1.0; 4.0; 2.0; 3.0; 0.5; 0.1; 0.9; 0.3 |]
   in

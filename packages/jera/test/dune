@@ -22,4 +22,4 @@
   test_root
   test_minimize)
  (package jera)
- (libraries jera jera_test jera_golden rune nx windtrap))
+ (libraries jera jera_test jera_compiled jera_golden rune nx windtrap))

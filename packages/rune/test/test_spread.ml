@@ -63,6 +63,7 @@ let close ~msg ~rel a b =
     failf "%s: compiled %h, eager %h" msg b a
 
 let check_jit l =
+  Rune_support.Compiled.here ();
   let run (type s) (x : (float, s, Nx.host) Nx.t) ddof =
     let u = u_of l in
     let var y = Nx.var ~ddof y and std y = Nx.std ~ddof y in
@@ -74,6 +75,7 @@ let check_jit l =
   match l with D64 (_, a, ddof) -> run (f64 a) ddof | D32 (_, a, ddof) -> run (f32 a) ddof
 
 let test_lanes () =
+  Rune_support.Compiled.here ();
   let x =
     Nx.create Nx.float64 [| 7; 2 |]
       [|
@@ -90,6 +92,7 @@ let test_lanes () =
   equal ~msg:"the first lane" (float 1e186) 1e200 compiled.(0)
 
 let test_captured () =
+  Rune_support.Compiled.here ();
   (* A compiled body over a captured constant compiles. *)
   let c = f64 [| 1e200; -1e200 |] in
   let y = Rune.jit' (fun y -> Nx.add (Nx.std c) y) (Nx.scalar Nx.float64 1.) in
@@ -99,6 +102,7 @@ let test_captured () =
   equal ~msg:"captured var" float_exact 2. (number v)
 
 let test_empty () =
+  Rune_support.Compiled.here ();
   let x = Nx.zeros Nx.float32 [| 0 |] in
   let nan v = equal ~msg:"NaN" bool true (Float.is_nan (number v)) in
   nan (Rune.jit' Nx.var x);

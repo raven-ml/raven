@@ -212,10 +212,12 @@ let derivative_tests =
         raises_with "is not elementwise" (fun () ->
             Rune.grad' (fun a -> Nx.sum (solve a)) a));
     test "compiled equals eager" (fun () ->
+        Compiled.here ();
         let a = vec [| 0.5; 2.; 30. |] in
         let f a = Solution.get (sqrt_bracket a) in
         equal (Oracle.tensor ()) (f a) (Rune.jit' f a));
     test "compiled grad equals eager grad" (fun () ->
+        Compiled.here ();
         let a = vec [| 0.5; 2.; 30. |] in
         let g = Rune.grad' (fun a -> Nx.sum (Solution.get (sqrt_bracket a))) in
         equal (Oracle.tensor ~rel:1e-14 ()) (g a) (Rune.jit' g a));
@@ -360,6 +362,7 @@ let newton_tests =
             Root.newton ~tol:tight ~budget:0 ~slope:Nx.ones_like Fun.id
               (vec [| 1. |])));
     test "compiled equals eager" (fun () ->
+        Compiled.here ();
         let f m = Solution.get (kepler ~e m) in
         equal (Oracle.tensor ()) (f m) (Rune.jit' f m));
   ]
@@ -380,6 +383,7 @@ let solution_tests =
         failure_with "2 other elements of this problem converged." (fun () ->
             Solution.get (mixed ())));
     test "a compiled get raises when the call returns" (fun () ->
+        Compiled.here ();
         failure_with "lane [1]" (fun () ->
             Rune.jit'
               (fun a -> Solution.get (sqrt_bracket a))
@@ -395,6 +399,7 @@ let solution_tests =
           (vec [| 2.; 0.; 3. |])
           (Solution.best (mixed ())));
     test "an answer is a compiled function's result" (fun () ->
+        Compiled.here ();
         let f =
           Rune.jit
             Nx.Ptree.(tensor @-> returns (Solution.ptree tensor))

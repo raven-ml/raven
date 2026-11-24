@@ -31,6 +31,13 @@ let rec joined = function
       let right = List.filteri (fun i _ -> i >= half) cs in
       join (joined left) (joined right)
 
+let has_infix ~affix s =
+  let n = String.length affix in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = affix || at (i + 1))
+  in
+  at 0
+
 (* The joined calls' results read, or what their trace or program raised. *)
 let compile calls =
   let (Call (s, x, s', f, read)) = joined calls in
@@ -40,12 +47,18 @@ let compile calls =
     | y -> Ok y
     | exception e -> Error e
   in
-  (* Where rig links no host code, a program that computes on the host is
-     evaluated: the test skips there and fails elsewhere. *)
-  if Rune.evaluations () > before then begin
-    Compiled.here ();
-    Windtrap.fail "the batch's program was evaluated"
-  end;
+  (* The calls' devices are their arguments', which a call does not name. A
+     program that raises the failure of the host's compiler, as a missing
+     Clang's, or that is evaluated where the host's programs cannot compile,
+     skips the test; any other compiler's failure is the test's to judge. *)
+  let evaluated = Rune.evaluations () > before in
+  (match (y, Tolk_engine.compiles Rig.host) with
+  | Error (Tolk.Renderer.Compiler.Compile_error msg), Error reason
+    when has_infix ~affix:reason msg ->
+      Windtrap.skip ~reason ()
+  | _, Error reason when evaluated -> Windtrap.skip ~reason ()
+  | _, (Ok () | Error _) -> ());
+  if evaluated then Windtrap.fail "the batch's program was evaluated";
   Result.map read y
 
 let run = function

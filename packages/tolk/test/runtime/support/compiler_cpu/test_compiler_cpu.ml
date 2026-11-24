@@ -137,6 +137,12 @@ let target arch =
 
 let rendered arch name = (Cstyle.clang (target arch)).render (kernel name)
 
+(* The program of [sink] compiled for [t], or skips the test where the host
+   compiles nothing ([Clang.here]). *)
+let program sink (t : Helpers.Target.t) =
+  Clang.here t.arch;
+  Codegen.to_program sink (Cstyle.clang t)
+
 (* Compiling *)
 
 let on_macos_arm64 () =
@@ -158,6 +164,13 @@ let native () =
   | exception Invalid_argument why when not (Rig.Image.links Rig.host) ->
       skip ~reason:why ()
 
+(* The compiler for [native ()], or skips the test where the host compiles
+   nothing ([Clang.here]). *)
+let native_clang () =
+  let arch = native () in
+  Clang.here arch;
+  Compiler_cpu.clang arch
+
 (* A process of the suite's own that runs [part], which compiles for the host's
    machine: where Clang compiles nothing for it, the test skips. *)
 let child ?env ~cachedb part =
@@ -171,9 +184,11 @@ let has_infix ~affix s =
   in
   at 0
 
-(* [compile arch src] is [src] compiled for [arch], or skips the test if the
-   installed Clang has no backend for [arch]'s machine. *)
+(* [compile arch src] is [src] compiled for [arch], or skips the test where the
+   host compiles nothing ([Clang.here]) or the installed Clang has no backend
+   for [arch]'s machine. *)
 let compile arch src =
+  Clang.here arch;
   let clang = Compiler_cpu.clang arch in
   match Compiler.compile clang src with
   | lib -> lib
@@ -298,7 +313,7 @@ let pool =
 
 let alone =
   lazy
-    (let clang = Compiler_cpu.clang (native ()) in
+    (let clang = native_clang () in
      List.map (fun (name, src) -> (name, ccache_off (fun () -> Compiler.compile clang src))) pool)
 
 let batches =
@@ -312,7 +327,7 @@ let batches =
           cover "a source twice" (List.length (List.sort_uniq compare names) < List.length names);
           cover "a long source among short ones"
             (List.mem "long" names && List.exists (( <> ) "long") names);
-          let clang = Compiler_cpu.clang (native ()) in
+          let clang = native_clang () in
           let objs =
             ccache_off (fun () ->
                 Compiler.compile_all clang
@@ -322,7 +337,7 @@ let batches =
             (List.map (fun n -> List.assoc n (Lazy.force alone)) names)
             objs);
       test "a source that names its own file compiles to one object" (fun () ->
-          let clang = Compiler_cpu.clang (native ()) in
+          let clang = native_clang () in
           let named = "const char *file(void) { return __FILE__; }" in
           let objs () =
             ccache_off (fun () -> Compiler.compile_all clang [ add; named ])
@@ -333,7 +348,7 @@ let batches =
             (ccache_off (fun () -> Compiler.compile clang named)));
       test "a rejected source among others raises its own diagnostics"
         (fun () ->
-          let clang = Compiler_cpu.clang (native ()) in
+          let clang = native_clang () in
           raises_match
             (function
               | Compiler.Compile_error msg ->
@@ -513,7 +528,7 @@ let elementwise ~name ~n src dst f =
     Ops.sink ~kernel:(Ops.kernel_info ~name ())
       [ Ops.end_ (Ops.store (at 0 dst) (f (at 1 src))) [ i ] ]
   in
-  Codegen.to_program sink (Cstyle.clang baseline)
+  program sink baseline
 
 let ints xs = Array.map (fun x -> `Int (Bigint.of_int x)) xs
 
@@ -625,7 +640,7 @@ let half_casts_baseline =
                   [ i ];
               ]
           in
-          let prg = Codegen.to_program sink (Cstyle.clang baseline) in
+          let prg = program sink baseline in
           let out =
             Run.on_host prg
               [
@@ -671,7 +686,7 @@ let halves ~arch ~lanes ~n f =
       ~kernel:(Ops.kernel_info ~name:"halves" ~opts_to_apply:opts ())
       [ Ops.end_ (Ops.store (bits 0) value) [ i ] ]
   in
-  Codegen.to_program sink (Cstyle.clang (target arch))
+  program sink (target arch)
 
 let source prg =
   match Ops.arg (Ops.nth prg 2) with
@@ -698,7 +713,7 @@ let sign_bits ?(dt = Dtype.Float16) ~arch op mask =
       ~kernel:(Ops.kernel_info ~name:"sign_bits" ~opts_to_apply:opts ())
       [ Ops.end_ (Ops.store (at 0) value) [ i ] ]
   in
-  Codegen.to_program sink (Cstyle.clang (target arch))
+  program sink (target arch)
 
 let muladd a b c = Ops.alu a Op.Mulacc [ b; c ]
 
@@ -1096,8 +1111,7 @@ let errors =
       test "a rejected source raises Compile_error with Clang's diagnostics"
         (fun () ->
           match
-            Compiler.compile
-              (Compiler_cpu.clang (native ()))
+            Compiler.compile (native_clang ())
               "int f(void) { return undeclared_name; }"
           with
           | _ -> fail "Clang accepted an undeclared name"
@@ -1119,6 +1133,7 @@ let invalid_ir =
             Clang 17 makes invalid raises Compile_error naming its function"
            (fun () ->
              if Sys.win32 then skip ~reason:"CC is a shell script" ();
+             Clang.here "x86_64,x86-64-v3";
              let stated =
                Helpers.system (Setting.value Setting.cc ^ " --version")
              in
@@ -1290,13 +1305,14 @@ let without_sse2 =
     [
       test "an arch that turns SSE2 off compiles nothing, naming SSE2"
         (fun () ->
+          Clang.here "x86_64,x86-64";
           let arch = "x86_64,x86-64,-sse2" in
           raises_match
             (function
               | Compiler.Compile_error msg ->
                   has_infix ~affix:"turns SSE2 off" msg
               | _ -> false)
-            (fun () -> compile arch increment));
+            (fun () -> Compiler.compile (Compiler_cpu.clang arch) increment));
     ]
 
 (* Without Clang: CC is read once, when the first compile runs, so these tests
@@ -1337,6 +1353,8 @@ let registers =
       ("riscv64,rv64g", fixed None);
     ]
     (fun (arch, expected) ->
+      (* An x86_64 arch's registers are what its Clang defines. *)
+      if String.starts_with ~prefix:"x86_64" arch then Clang.here arch;
       knows_cpu arch;
       equal (option (pair int int)) (expected ()) (file arch))
 
@@ -1486,6 +1504,7 @@ let kept_avx512 =
       "x86_64,x86-64-v3,avx10.1";
       "x86_64,graniterapids,avx10.1-256";
     ] (fun arch ->
+      Clang.here arch;
       let version = cc_version () in
       let off = List.mem "-mno-avx512f" (Compiler_cpu.flags ~version arch) in
       let llvm21 = has_infix ~affix:"clang version 21." version in

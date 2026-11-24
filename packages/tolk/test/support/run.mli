@@ -8,9 +8,10 @@ open Tolk
 
 val target : Rig.t -> Helpers.Target.t
 (** [target d] is {!Tolk_engine.target}[ d]. Skips the running test
-    ({!Windtrap.skip}) where [d] is a host or a software device on which rig
-    links no host code ({!Rig.Image.links}), with the refusal as its reason, as
-    a GPU test skips without its GPU. *)
+    ({!Windtrap.skip}) where [d]'s programs compile with Clang, as a host's, a
+    software device's or another machine's host's do, and cannot compile on this
+    machine ({!Tolk_engine.compiles}), as where Clang is missing or rig links no
+    host code for [d], with the reason, as a GPU test skips without its GPU. *)
 
 val renderer : Rig.t -> Renderer.t
 (** [renderer d] is {!Tolk_engine.renderer}[ d], skipping as {!target} does. *)

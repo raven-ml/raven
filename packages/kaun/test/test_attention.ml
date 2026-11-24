@@ -399,6 +399,7 @@ let test_sink_gradients () =
   grads_ok (Rune.check_grads qkvs64 loss p)
 
 let test_sinks_compiled () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 44) @@ fun () ->
   let q = Nx.Rng.normal Nx.float32 [| 2; 4; 3; 6 |] in
   let k = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 6 |] in
@@ -849,6 +850,7 @@ let test_permutation_equivariance () =
 let causal_within (p : Nx.host Nx.pair) = Nx.less_equal p.k p.q
 
 let test_lengths_hide_padding () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 27) @@ fun () ->
   let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
   let x = Nx.Rng.normal Nx.float32 [| 2; 4; 4 |] in
@@ -878,6 +880,7 @@ let test_lengths_hide_padding () =
 
 (* The core and [attend] read no key past a lane's length. *)
 let test_lengths_bound_the_keys () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 29) @@ fun () ->
   let q = Nx.Rng.normal Nx.float32 [| 2; 2; 3; 4 |] in
   let poison t =
@@ -908,6 +911,7 @@ let test_lengths_bound_the_keys () =
 (* With fewer than two batch axes, or an [x] of one lane, [lengths] is 0-d and
    bounds every row. *)
 let test_lengths_0d () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 30) @@ fun () ->
   let len = Nx.scalar Nx.int64 2L in
   let poison t =
@@ -977,6 +981,7 @@ let test_grouped_equals_repeated () =
    [i / (batch / rows)], and its result is the one it has over a copy of that
    row, with sinks, eagerly and compiled. *)
 let test_shared_rows_equal_copies () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 31) @@ fun () ->
   let case ~batch ~rows ~m =
     let n = 2 and heads = 4 and kv_heads = 2 and d = 3 in
@@ -1385,6 +1390,7 @@ let test_index_select_broadcast () =
    leaves the slot as a token that stores there left it, eagerly and
    compiled. *)
 let test_index_one_slot () =
+  Compiled.here ();
   let stored ~pos ~table =
     let values =
       Nx.create Nx.float32 [| 1; 2; 2; 4 |]
@@ -1461,6 +1467,7 @@ end
 
 (* Compiled, the columns are an input: what is read and stored is eager's. *)
 let test_index_select_compiled () =
+  Compiled.here ();
   let index, pool = selection_fixture () in
   let step { Selected.index; pool; seen = _ } =
     let seen, pool = Cache_index.extend index tokens_2_4 pool in
@@ -1876,6 +1883,7 @@ let test_index_every_stream () =
     (Array.to_list (flat s.y))
 
 let test_index_every_compiled () =
+  Compiled.here ();
   let step = Rune.jit Nx.Ptree.(stream_ptree @-> returns stream_ptree) stream in
   let expected = stream_expected (List.init 12 Fun.id) in
   let ys, stored =
@@ -2133,6 +2141,7 @@ let step_ptree =
    allocated and at or before their positions, and still contributes exactly
    zero whatever its slot holds. *)
 let test_cached_windowed_columns_are_zero () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 36) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.Rng.normal Nx.float32 [| 1; 5; 8 |] in
@@ -2179,6 +2188,7 @@ let test_cached_windowed_columns_are_zero () =
       .x
 
 let test_cached_step_jits_once () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 24) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.Rng.normal Nx.float32 [| 1; 4; 8 |] in
@@ -2227,6 +2237,7 @@ let test_cached_step_jits_once () =
 (* A window's size is a value of the index: a compiled step lowers once, and
    another window replays its program and reads its own size. *)
 let test_another_window_shares_the_program () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 27) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.Rng.normal Nx.float32 [| 1; 1; 8 |] in
@@ -2258,6 +2269,7 @@ let test_another_window_shares_the_program () =
 (* Two cache leaves that hold one tensor, donated to a compiled call: the call
    reads each as the tensor was when called, and the tensor dies once. *)
 let test_one_storage_behind_two_caches () =
+  Compiled.here ();
   let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
   let step =
     Rune.jit
@@ -2280,6 +2292,7 @@ let test_one_storage_behind_two_caches () =
 (* Eager and compiled runs agree on what addresses nothing: neither raises and
    both write no slot. *)
 let test_cached_out_of_range_under_jit () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 33) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.Rng.normal Nx.float32 [| 1; 3; 8 |] in
@@ -2645,6 +2658,7 @@ let test_draft_rejects () =
 (* Compiled, a draft's slots and tree are inputs: one program serves two trees,
    and each reads and stores as eager. *)
 let test_draft_compiled () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 41) @@ fun () ->
   let p_layer = layer Nx.float32 in
   let x = Nx.Rng.normal Nx.float32 [| 1; 4; 8 |] in
@@ -2913,6 +2927,7 @@ let paged_step =
 (* A slot that no entry of [pages] names is never read: NaN there changes no
    output, eager or compiled, and the compiled step gives eager's outputs. *)
 let law_paged_reads s =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 66) @@ fun () ->
   cover "a draft" (s.draft <> None);
   cover "a window" (s.window <> None);
@@ -2993,6 +3008,7 @@ let law_paths_agree s =
 (* A resolved index is the index to every function, eager and compiled,
    under a selection too. *)
 let law_resolved s =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 68) @@ fun () ->
   cover "a draft" (s.draft <> None);
   cover "a window" (s.window <> None);
@@ -3119,6 +3135,7 @@ let launches f =
    [visible] through [pages] launches what it launches over a table given
    as an argument, its kernels alone. *)
 let test_resolved_launches () =
+  Compiled.here ();
   let device = Result.get_ok (Rig.software "kaun-test-resolve") in
   let module D = (val Nx.devices [ device ]) in
   let index_s = Nx.Ptree.v Cache_index.walk in
@@ -3169,6 +3186,7 @@ let test_resolved_launches () =
    token may see is no key: the outputs are attention over the columns the
    token sees, without the hole, from the keys {!Cache_index.extend} reads. *)
 let test_cached_hole_is_hidden () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 61) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.Rng.normal Nx.float32 [| 1; 2; 8 |] in
@@ -3211,6 +3229,7 @@ let test_cached_hole_is_hidden () =
    no token, itself included: the outputs are those of the draft whose [sees]
    hides it from every token, and [extend] reads zero at its column. *)
 let test_draft_storing_nothing () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 62) @@ fun () ->
   let p_layer = layer Nx.float32 in
   let c =
@@ -3429,6 +3448,7 @@ let test_packed_alone =
 
 (* Compiled, one program serves every packing. *)
 let test_packed_compiled () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 43) @@ fun () ->
   let p_layer = layer Nx.float32 in
   let x = Nx.Rng.normal Nx.float32 [| 2; 6; 8 |] in
@@ -3453,6 +3473,7 @@ let test_packed_compiled () =
    bits, over each kind of index without a hole, which [visible] shows. Keys
    and values are drawn over the mask's columns. *)
 let test_visible_is_mask () =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key 48) @@ fun () ->
   let rows = Cache_index.rows ~every:[ 2 ] ~context:6 [| 4; 2 |] in
   let whole = Cache_index.whole ~lens:[| 3; 5 |] ~batch:2 ~seq:5 () in
@@ -3567,6 +3588,7 @@ let widest_extend =
     Cache_index.extend
 
 let test_widest_window (case, past) =
+  Compiled.here ();
   Nx.Rng.with_key (Nx.Rng.key (49 + case)) @@ fun () ->
   let name, index = widest_cases.(case) in
   let largest =
@@ -4141,6 +4163,7 @@ let test_dropout_weights c =
     grad "sinks" (fun f -> d (fun sinks -> f ~bias ~sinks q k v) sinks)
 
 let test_dropout_compiled () =
+  Compiled.here ();
   let q, k, v = drop_inputs () in
   let bias = drop_bias () and sinks = drop_sinks () in
   let c = { masked = true; sinked = true } in

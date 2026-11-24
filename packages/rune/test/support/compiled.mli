@@ -3,11 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Tests of what a compiled call does on the host. *)
+(** Tests of what a compiled call does. *)
 
 val here : ?on:Rig.t -> unit -> unit
-(** [here ~on ()] skips the running test where [on] (defaults to {!Rig.host}) is
-    a host or a software device and rig links no host code for its host's
-    instruction set ({!Rig.Image.links}), saying so. [Rune.jit] declines a
-    program that computes there and evaluates it, so what a test asserts of a
-    compiled call, such as that no call evaluated, does not hold. *)
+(** [here ~on ()] skips the running test where [on]'s programs compile with
+    Clang, as a host's, a software device's or another machine's host's do, and
+    cannot compile on this machine ({!Tolk_engine.compiles}), with the reason,
+    as where Clang is missing or rig links no host code for [on]. A GPU's
+    compiler that fails fails the test. [on] defaults to {!Rig.host}. [Rune.jit]
+    then raises at the call that compiles, or evaluates the program, so what a
+    test asserts of a compiled call does not hold. A test calls it before it
+    compiles. *)
+
+val set : 'd Nx.Devices.t -> unit
+(** [set s] is {!here} on each device of [s]. *)

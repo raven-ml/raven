@@ -1,0 +1,7 @@
+; Compiled.here skips a test where the host's programs cannot compile.
+
+(library
+ (name vega_compiled)
+ (wrapped false)
+ (modules compiled)
+ (libraries rig tolk tolk.engine windtrap))

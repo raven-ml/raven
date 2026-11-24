@@ -108,6 +108,12 @@ jobs:
           sudo apt-get install --yes clang-16
           echo "CC=clang-16" >> "$GITHUB_ENV"
 
+      # A suite's tests that compile for the CPU skip where the host compiles
+      # nothing, as without Clang. Every job here has a Clang, so this fails
+      # where it does not compile, instead of letting the tests skip.
+      - name: Check that the host compiles
+        run: opam exec -- dune exec --release packages/tolk/test/compiles/compiles.exe
+
       # Each package's steps run when an earlier package's failed, so one run
       # shows every package's failures.
       #

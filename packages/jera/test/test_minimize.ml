@@ -94,10 +94,12 @@ let derivative_tests =
           (Nx.full_like theta 0.5)
           (Rune.grad' (fun t -> Nx.sum (solve t)) theta));
     test "compiled equals eager, bit for bit for a polynomial" (fun () ->
+        Compiled.here ();
         let c = vec [| -1.; 0.25; 2. |] in
         let f c = Solution.get (minimum c) in
         equal (Oracle.tensor ()) (f c) (Rune.jit' f c));
     test "compiled grad equals eager grad" (fun () ->
+        Compiled.here ();
         let c = vec [| -1.; 0.25; 2. |] in
         let g = Rune.grad' (fun c -> Nx.sum (Solution.get (minimum c))) in
         equal (Oracle.tensor ~rel:1e-12 ()) (g c) (Rune.jit' g c));
@@ -364,6 +366,7 @@ let lm_tests =
           (Oracle.central ~eps:1e-6 f y v)
           (Nx.sum (Nx.mul (Rune.grad' f y) v)));
     test "a compiled first step equals eager (law 3)" (fun () ->
+        Compiled.here ();
         (* One unknown, [2 e^(b t)] from [b = 0], where the model's values and
            Jacobian are exact: the step sums [JᵀJ] and [Jᵀ r] over the 20
            samples, which a contraction would associate as the compiled
@@ -379,6 +382,7 @@ let lm_tests =
         let y = decay (vec [| -1.3 |]) in
         equal (Oracle.tensor ()) (f y) (Rune.jit' f y));
     test "compiled equals eager on a rational model (law 3)" (fun () ->
+        Compiled.here ();
         (* A model of sums, products and a quotient, which compiled and eager
            evaluate to the same bits: every decision depends on the values of
            the residual only. *)
@@ -472,6 +476,7 @@ let nelder_mead_tests =
       ~examples:[ vec [| 2.5 |]; vec [| -3.; 1.; 0.; 2.75; -0.5; 3. |] ]
       centers
       (fun c ->
+        Compiled.here ();
         cover "one unknown" (Nx.dim 0 c = 1);
         cover "six unknowns" (Nx.dim 0 c = 6);
         let rel, abs = bowl_tol in
@@ -560,6 +565,7 @@ let nelder_mead_tests =
         let s = simplex ~budget:10 rosenbrock (vec [| -1.2; 1. |]) in
         equal Oracle.status_t Budget_spent (Oracle.status s));
     test "compiled equals eager (law 3)" (fun () ->
+        Compiled.here ();
         let f c =
           Solution.get (simplex (fun x -> Nx.sum (bowl c x)) (Nx.zeros_like c))
         in
@@ -988,6 +994,7 @@ let box_tests =
         ]
       walled
       (fun (k, (a, b, (lo, hi)), ((below, above), (c, bad))) ->
+        Compiled.here ();
         (* f is non-finite past the walls, so its minimum is in the box whose
            sides are the nearer of each bound and its wall. *)
         let n = Nx.dim 0 lo in
@@ -1037,6 +1044,7 @@ let box_tests =
         name)
       (List.init (Array.length simplex_tols) Fun.id)
       (fun k ->
+        Compiled.here ();
         (* ½ (x² + (x + 1)²) with x ≤ 0, from 0: the minimum is −1/2. The first
            simplex's step from 0 is clipped back to 0, so every vertex lies on
            the bound and only a probe toward −∞ finds the descent. A relative
@@ -1214,6 +1222,7 @@ let box_tests =
                       (half_square c) (Nx.zeros_like c)))
                derivative_methods));
     test "compiled equals eager in a box (law 3)" (fun () ->
+        Compiled.here ();
         List.iter
           (fun (_, m) ->
             let f c =
@@ -1641,6 +1650,7 @@ let law_tests =
         in
         equal (Oracle.tensor ~abs:0. ()) (vec [| 0.; 0. |]) g);
     test "compiled equals eager (law 3)" (fun () ->
+        Compiled.here ();
         List.iter
           (fun (_, m) ->
             let f c =
@@ -2119,6 +2129,7 @@ let termination_tests =
           methods);
     prop ~count:2 "a constant added to f leaves a solve's status (law)" rotated
       (fun (h, a) ->
+        Compiled.here ();
         List.iter
           (fun (name, solve) ->
             let solve c = Oracle.status (solve h a (scalar_of c)) in

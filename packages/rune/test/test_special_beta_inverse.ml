@@ -106,6 +106,7 @@ let beta_inverse_compiled =
   group "incomplete beta inverse, compiled"
     [
       test "betaincinv keeps its bound at large shapes" (fun () ->
+          Rune_support.Compiled.here ();
           let rows =
             [|
               (62106.55078125, 1048576., 0x1.000002p-1);

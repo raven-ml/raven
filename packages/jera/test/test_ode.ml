@@ -269,11 +269,13 @@ let transformation_tests =
           (Rune.grad' stiffness k)
           (snd (Rune.jvp' stiffness k (scalar 1.))));
     test "compiled equals eager" (fun () ->
+        Compiled.here ();
         let q0 = scalar 0.7 in
         equal
           (Oracle.tensor ~rel:1e-13 ())
           (positions q0) (Rune.jit' positions q0));
     test "compiled grad equals eager grad" (fun () ->
+        Compiled.here ();
         let k = scalar 1.3 in
         equal
           (Oracle.tensor ~rel:1e-12 ())
@@ -528,6 +530,7 @@ let solve_derivative_tests =
           (scalar (-0.8 *. 2. *. Float.exp (-1.2)))
           (Rune.grad' f (scalar 1.5)));
     test "compiled grad equals eager grad" (fun () ->
+        Compiled.here ();
         let f k = Solution.get (solve (decay k) ~t0:0. ~t1:1.5 (scalar 2.)) in
         equal
           (Oracle.tensor ~rel:1e-12 ())
@@ -552,6 +555,7 @@ let solve_derivative_tests =
           (vec [| 1. /. ((1. -. 0.4) ** 2.); 0. |])
           g);
     test "compiled equals eager to rounding for a polynomial field" (fun () ->
+        Compiled.here ();
         (* A Duffing oscillator: the steps' sizes come from powers, which a
            compiled call computes within a few ulps of eager's. *)
         let duffing _ (q, p) =
@@ -571,6 +575,7 @@ let solve_derivative_tests =
           (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) f q0));
     test "a compiled solve of a transcendental field is within its error"
       (fun () ->
+        Compiled.here ();
         (* Compiled tanh is within ulps of eager's, which changes the steps:
            from 0.5 on the host, eager takes 230 evaluations and compiled 236.
            The answers then differ by up to their global errors, which tol does
@@ -708,6 +713,7 @@ let path_tests =
         in
         equal (Oracle.tensor ~abs:1e-8 ()) (scalar 0.) g);
     test "compiled equals eager to rounding for a polynomial field" (fun () ->
+        Compiled.here ();
         let f k =
           Piecewise.eval
             (Solution.get (path (decay k) ~t0:0. ~t1:2. (scalar 1.)))
@@ -898,6 +904,7 @@ let event_tests =
           (vec [| reaches 5. 0.; 1.5 |])
           (Rune.vmap' f (vec [| 5.; 50. |])));
     test "compiled equals eager within the crossing's tolerance" (fun () ->
+        Compiled.here ();
         (* The steps' sizes round differently compiled, so the crossing's search
            takes other points; both times are within the tolerance, rel 1e-12,
            of the crossing. *)
@@ -921,6 +928,7 @@ let event_tests =
         raises_match (Exn.failure ~sub:"The crossing of component [1] near t")
           (fun () -> Solution.get s));
     test "a compiled function returns the answer as a triple" (fun () ->
+        Compiled.here ();
         let s = pair in
         let answer =
           Solution.ptree
@@ -1102,6 +1110,7 @@ let delay_tests =
         equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
           (Solution.ok (delayed ~pieces:needed ~f times)));
     test "compiled equals eager to rounding" (fun () ->
+        Compiled.here ();
         let f c = Solution.get (delayed ~c times) in
         equal
           (Oracle.tensor ~rel:1e-13 ~abs:1e-15 ())
@@ -1144,6 +1153,7 @@ let stiff_tests =
        loops: a schedule that runs each stage's loops again in the next one's
        runs for hours, and the limit fails it. *)
     test "the gradient of a stiff solve compiles" (fun () ->
+        Compiled.here ();
         (* y₃, as the sum is conserved and its gradient is zero. The field is
            polynomial, so compiled and eager take the same steps and the
            gradients differ by rounding alone. *)
@@ -1279,6 +1289,7 @@ let stiff_tests =
           (Oracle.central ~eps:1e-4 final lambda (scalar 1.))
           (Rune.grad' final lambda));
     test "compiled kvaerno5 equals eager to rounding" (fun () ->
+        Compiled.here ();
         let solve lambda =
           let f = prothero lambda in
           Solution.get

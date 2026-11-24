@@ -18,6 +18,7 @@ let v xs = Nx.create f32 [| Array.length xs |] xs
 
 (* detach is its operand itself, and computes as its operand under jit. *)
 let test_detach () =
+  Rune_support.Compiled.here ();
   let x = v [| 1.; -0. |] in
   let one_value = Testable.make ~pp:Nx.pp ~equal:( == ) in
   equal ~msg:"x itself" one_value x (Rune.detach x);
@@ -185,6 +186,7 @@ let read_prefix = "Nx.item: the value is traced by "
 (* A construct traces at each call, a jit once per key, and a traced function
    reads a ref's contents at its trace; a rule on values runs at each call. *)
 let test_traces c =
+  Rune_support.Compiled.here ();
   let runs = ref 0 and r = ref 1. in
   let body y =
     incr runs;
@@ -226,6 +228,7 @@ let test_keyless c =
 (* An exception the function raises reaches the call; a jit whose trace raised
    traces again. *)
 let test_exceptions c =
+  Rune_support.Compiled.here ();
   raises Exit (fun () -> c.make (fun _ -> raise Exit) x0);
   let raised = ref false in
   let body y =
@@ -288,7 +291,9 @@ let outside =
     (fun c -> not (String.ends_with ~suffix:" in a map" c.label))
     constructs
 
-let test_kept c = equal bool false (kept (c.make Nx.neg))
+let test_kept c =
+  Rune_support.Compiled.here ();
+  equal bool false (kept (c.make Nx.neg))
 
 (* Extents *)
 

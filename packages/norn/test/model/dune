@@ -2,4 +2,4 @@
  (names test_model)
  (modules test_model)
  (package norn)
- (libraries norn norn.model nx nx.array rig rune windtrap))
+ (libraries norn norn.model norn_compiled nx nx.array rig rune windtrap))

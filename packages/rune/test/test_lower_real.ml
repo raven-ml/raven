@@ -333,6 +333,7 @@ let law k =
     (case k)
     ~examples:[ example k false; example k true ]
     (fun (wide, es) ->
+      Rune_support.Compiled.here ();
       let cover_some label f = cover label (Array.exists (f wide) es) in
       cover "float32" (not wide);
       cover "float64" wide;
@@ -358,8 +359,10 @@ let ported k =
       (Kinds.gen k)
       (Kinds.law (module Nx.Host) ~f64:true k);
     test (name ^ " of every narrow float gives eager's bits") (fun () ->
+        Rune_support.Compiled.here ();
         Kinds.narrow (module Nx.Host) k);
     test (name ^ " of a constant gives eager's bits") (fun () ->
+        Rune_support.Compiled.here ();
         Kinds.folded (module Nx.Host) ~f64:true k);
   ]
 
@@ -489,6 +492,7 @@ let near_law ((name, _, _) as k) =
          Format.pp_print_string ppf "4096 float32 and float64 codes")
        Gen.(pair (near_block false) (near_block true)))
     (fun (c32, c64) ->
+      Rune_support.Compiled.here ();
       near_covers false c32;
       near_covers true c64;
       equal (list string) [] (near_misses k false c32 @ near_misses k true c64))

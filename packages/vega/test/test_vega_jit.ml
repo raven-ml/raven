@@ -41,6 +41,7 @@ let grads (x : Wb.t) =
 let floats x = Nx.to_array (Nx.cast Nx.float64 x)
 
 let compiles state ~init ~step () =
+  Compiled.here ();
   let both = Nx.Ptree.pair Wb.ptree (state Wb.ptree) in
   let body (params, st) = step st ~params ~grads:(grads params) in
   let run f =
@@ -240,6 +241,7 @@ let muon_compiles =
   in
   prop ~count:50 "muon steps as eager from any leaves" gen
     (fun (params, grads, velocity, zeroed) ->
+      Compiled.here ();
       List.iteri
         (fun i name -> cover ("a zero momentum in " ^ name) zeroed.(i))
         Mats.names;
@@ -278,6 +280,7 @@ let muon_compiles =
    stack axis. Each result lies where its leaf lay. The tolerance is
    [muon_compiles]'. *)
 let test_muon_cut_compiles () =
+  Compiled.here ();
   let device name = Result.get_ok (Rig.software name) in
   let module S = (val Nx.devices [ device "vega-jit-0"; device "vega-jit-1" ])
   in
@@ -323,6 +326,7 @@ let test_muon_cut_compiles () =
    step whose gradients overflow: [poison] is added to every gradient, [0.] but
    at the third step, where it is an infinity. *)
 let test_loss_scaled_compiles () =
+  Compiled.here ();
   let both = Nx.Ptree.pair Wb.ptree (Vega.adam_ptree Wb.ptree) in
   let all = Nx.Ptree.pair both (Nx.Ptree.v Vega.Loss_scale.walk) in
   let body poison ((params, st), ls) =
@@ -368,6 +372,7 @@ let test_loss_scaled_compiles () =
    2e-3; compiled code rounds the rest of the rectification differently ([1 -
    b^t] itself agrees with float64 to 1.5e-7 compiled). *)
 let test_radam_compiled_rectification () =
+  Compiled.here ();
   let target64 = Nx.create Nx.float64 [| 3 |] [| 1.0; -2.0; 0.5 |] in
   let target32 = Nx.cast Nx.float32 target64 in
   let p = Nx.Ptree.tensor in
@@ -396,6 +401,7 @@ let test_radam_compiled_rectification () =
 (* A compiled polynomial decay takes eager's values through the decay and after
    it, where it stays at [end_value]: its base is exactly zero there. *)
 let test_polynomial_decay_compiles () =
+  Compiled.here ();
   List.iter
     (fun power ->
       let s =
@@ -425,6 +431,7 @@ let grid i = 1.0 +. (Float.of_int (i mod 128) /. 128.0)
 let half_leaf f = Nx.create Nx.bfloat16 [| half_n |] (Array.init half_n f)
 
 let half_agrees state ~init ~step () =
+  Compiled.here ();
   let p = Nx.Ptree.tensor in
   let both = Nx.Ptree.pair p (state p) in
   let params = half_leaf grid and grads = half_leaf (fun i -> grid (i * 7)) in
@@ -926,13 +933,17 @@ let schedule_law (name, data) =
 
 let schedule_laws =
   List.map
-    (fun ((name, _) as case) -> test name (fun () -> schedule_law case))
+    (fun ((name, _) as case) ->
+      test name (fun () ->
+          Compiled.here ();
+          schedule_law case))
     Data_sets.all
 
 (* TESSERA's two recipes, compiled on a 0-d counter at every counter of
    --steps 100, 1000 and 3000, and on a vector of every counter of --steps
    100000. *)
 let test_tessera_compiled () =
+  Compiled.here ();
   List.iter
     (fun recipe ->
       List.iter

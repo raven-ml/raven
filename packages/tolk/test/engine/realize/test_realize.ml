@@ -22,7 +22,12 @@ let target ?(arch = "x86_64,x86-64") device renderer =
   { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
 
 let clang = target "CPU" ""
-let targets _ = clang
+
+(* Every device's target, [clang], for which the test skips where Clang compiles
+   nothing. *)
+let targets _ =
+  Clang.here clang.arch;
+  clang
 
 (* A renderer whose binary is its source's bytes, for the calls built here. *)
 let uncompiled =
@@ -610,11 +615,13 @@ let parallel =
     [
       test "reads the programs the disk keeps without spawning a domain"
         (fun () ->
+          Clang.here clang.arch;
           let db = Disk_cache.fresh () in
           greater int ~msg:"compiling" ~than:0 (spawned db);
           equal int ~msg:"reading back" 0 (spawned db));
       test "compiles each kernel into the program it compiles into alone"
         (fun () ->
+          Clang.here clang.arch;
           let calls =
             List.map
               (fun k -> Ops.call k [ storage 4; storage 4 ])

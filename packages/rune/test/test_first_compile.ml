@@ -52,6 +52,7 @@ let () =
        [
          test "nested scans compiled first in a process give eager's bits"
            (fun () ->
+             Compiled.here ();
              let rows = Nx.zeros f64 [| 2; 1 |] in
              let x = Nx.create f64 [| 1 |] [| 0.25 |] in
              let expected = bits (nested rows x) in

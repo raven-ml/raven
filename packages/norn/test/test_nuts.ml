@@ -378,6 +378,7 @@ let reproducible =
             (Nx.to_array (a :> Nx.host Nx.float64_t))
             (Nx.to_array (b :> Nx.host Nx.float64_t)));
       test "a compiled transition is the eager one" (fun () ->
+          Compiled.here ();
           let s = N.init t ~geometry:narrow.g banana (start 4) in
           let sp = N.ptree t in
           let step =
@@ -512,6 +513,7 @@ let recovery =
    of 0.005, its false-alarm rate. *)
 let calibrated =
   test "ranks of simulated truths among its draws are uniform" (fun () ->
+      Compiled.here ();
       let f64 = Nx.scalar Nx.float64 and draws = 99 in
       let model =
         M.v Nx.float64 t t (fun () ->

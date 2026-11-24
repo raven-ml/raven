@@ -275,6 +275,7 @@ let importance =
             (floats (Nx.reshape [| 20 |] a))
             (floats (Nx.reshape [| 20 |] (draw (Nx.Rng.key 12)))));
       test "compiled, it is the eager draws" (fun () ->
+          Compiled.here ();
           let lp = G.log_density pos wide in
           let f k = G.importance pos lp k ~n:5 g in
           let wp = Norn.Weighted.ptree pos in

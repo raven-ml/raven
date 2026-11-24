@@ -476,6 +476,7 @@ let second_order_props =
 let mapped_tests =
   [
     test "jit of grad of vmap is eager" (fun () ->
+        Rune_support.Compiled.here ();
         let ths = vec [| 0.3; -1.1; 0.7 |] in
         let f ths = Nx.sum (Rune.vmap' system_loss ths) in
         equal (close ()) (Rune.grad' f ths) (Rune.jit' (Rune.grad' f) ths));
@@ -1214,6 +1215,7 @@ let loop_tests =
              (fun th -> Nx.sum (Rune.vmap' ~axis:a (f th) (vec [| 0.; 1. |])))
              (scalar 0.5)));
     test "a held lane's linear solve reads its donor's lane index" (fun () ->
+        Rune_support.Compiled.here ();
         (* Lane 0 takes the root of [y - θ], solved as [b / (J 1 (1 - i))], [i]
            the lane's index: its derivative along [θ] is 1. Lane 1 takes [2 θ]
            and is held on lane 0 in the root, where its own index would divide
@@ -1294,6 +1296,7 @@ let loop_tests =
         at_least int ~than:1 alone;
         equal int alone (count (vec [| 0.; 1. |])));
     test "a held lane's linear solve passes its checks" (fun () ->
+        Rune_support.Compiled.here ();
         (* The solve checks its right-hand side is not zero. Lane 0's is its
            cotangent 1; held lane 1's is zero. [θ] read through the lane's [x]
            makes the root a lane's. *)

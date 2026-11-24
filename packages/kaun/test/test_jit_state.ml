@@ -154,10 +154,12 @@ let check_trajectory ~msg eps (a : (float * Nx.host model) array)
     (floats (model ()) last_b)
 
 let test_jit_matches_eager () =
+  Compiled.here ();
   check_trajectory ~msg:"jit adam" 1e-6 (host_traj ~jit:false)
     (host_traj ~jit:true)
 
 let test_state_advances_across_compiled_calls () =
+  Compiled.here ();
   let model = model () in
   let jitted = Rune.jit (step_signature model) (train_step model) in
   let s = ref (init model Nx.Host.on) in
@@ -182,6 +184,7 @@ let test_state_advances_across_compiled_calls () =
     (Nx.item [] (sched opt.step))
 
 let test_split_batch_matches_jit () =
+  Compiled.here ();
   (* The state lies whole on each device, the batch split on axis 0. *)
   let split =
     let model = model () in
@@ -223,6 +226,7 @@ let run_lbfgs ~step0 n s0 =
   (traj, !s)
 
 let test_lbfgs_jit_matches_eager () =
+  Compiled.here ();
   let eager, _ = run_lbfgs ~step0:lbfgs_step steps (lbfgs_init ()) in
   let compiled, st =
     run_lbfgs ~step0:(Rune.jit lbfgs_signature lbfgs_step) steps (lbfgs_init ())

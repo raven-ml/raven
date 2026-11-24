@@ -202,8 +202,10 @@ let transformation_tests =
           (Nx.reshape [||] (Oracle.central ~eps:1e-6 loss values dv))
           (Nx.scalar f64 (Oracle.dot (Rune.grad' loss values) dv)));
     test "compiled equals eager" (fun () ->
+        Compiled.here ();
         equal (close ()) (loss values) (Rune.jit' loss values));
     test "a grid is a compiled function's argument" (fun () ->
+        Compiled.here ();
         let g = Grid.linear ~axes values in
         let f =
           Rune.jit

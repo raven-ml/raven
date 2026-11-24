@@ -298,6 +298,7 @@ let c2cs =
   in
   prop ~count:20 ~examples "complex transforms hold their bound" (case examples)
     (fun c ->
+      Rune_support.Compiled.here ();
       covers c;
       cover "a transform of no point" (List.mem 0 (points c));
       cover "an empty axis it does not transform" (empty_batch c);
@@ -322,6 +323,7 @@ let r2cs =
   in
   prop ~count:20 ~examples "real transforms hold their bound" (case examples)
     (fun c ->
+      Rune_support.Compiled.here ();
       covers c;
       cover "an empty axis it does not transform" (empty_batch c);
       cover "a last axis of no point"
@@ -351,6 +353,7 @@ let c2rs =
   in
   prop ~count:20 ~examples "real inverse transforms hold their bound"
     (case examples) (fun c ->
+      Rune_support.Compiled.here ();
       covers c;
       cover "an empty axis it does not transform" (empty_batch c);
       cover "an odd number of points"

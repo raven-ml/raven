@@ -153,11 +153,24 @@ let buffer_params prg =
       | _ -> None)
     (Shape.kernel_params prg)
 
-let target d =
+(* Whether Clang compiles [d]'s programs: a host's, a software device's or
+   another machine's host's. *)
+let with_clang d =
+  Rig.runs_on_host d
+  ||
   match Tolk_engine.target d with
-  | t -> t
-  | exception (Device.Uncomputable _ as e) ->
-      Windtrap.skip ~reason:(Printexc.to_string e) ()
+  | t -> t.renderer = "CLANG"
+  | exception (Device.Uncomputable _ | Invalid_argument _) -> false
+
+let target d =
+  (* A GPU's compiler that does not compile fails its tests. *)
+  match Tolk_engine.compiles d with
+  | Error reason when with_clang d -> Windtrap.skip ~reason ()
+  | Ok () | Error _ -> (
+      match Tolk_engine.target d with
+      | t -> t
+      | exception (Device.Uncomputable _ as e) ->
+          Windtrap.skip ~reason:(Printexc.to_string e) ())
 
 let renderer d =
   ignore (target d);

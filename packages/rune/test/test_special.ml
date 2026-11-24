@@ -13,7 +13,14 @@ open Special
 (* [d] held eagerly and compiled, at both dtypes. *)
 let derivative name ~bound (d : u) =
   let eager = { f = (fun a -> d.u a.(0)) } in
-  let compiled = { f = (fun a -> Rune.jit' d.u a.(0)) } in
+  let compiled =
+    {
+      f =
+        (fun a ->
+          Rune_support.Compiled.here ();
+          Rune.jit' d.u a.(0));
+    }
+  in
   group name
     [
       group "eagerly" (check ~bound (grad_golden name) eager);
@@ -26,6 +33,7 @@ let derivative2 name ~bound (d : b) =
     {
       f =
         (fun a ->
+          Rune_support.Compiled.here ();
           Rune.jit
             Nx.Ptree.(tensor @-> tensor @-> returns tensor)
             d.b a.(0) a.(1));
@@ -96,6 +104,7 @@ let digamma_near_zero =
       (Nx.to_array (Nx.cast Nx.float64 (Rune.jit' g.u x)))
   in
   test "digamma's derivative is +inf beside 0" (fun () ->
+      Rune_support.Compiled.here ();
       at Nx.float64 [| -1e-300; -1e-160; 1e-300 |];
       at Nx.float32 [| -1e-20; -1e-40; 1e-20 |])
 
@@ -123,6 +132,7 @@ let log_ndtr_far =
       (Nx.to_array (Nx.cast Nx.float64 (Nx.abs (Rune.jit' g.u x))))
   in
   test "log_ndtr's second derivative is 0 at large x" (fun () ->
+      Rune_support.Compiled.here ();
       at Nx.float64 [| 1e100; 1e200; Float.max_float |];
       at Nx.float32 [| 1e10; 1e30; 0x1.fffffep127 |])
 
@@ -146,6 +156,7 @@ let bessel_at_zero =
     check "i1e" (d { u = Nx.i1e })
   in
   test "i0e's and i1e's derivatives at -0 are those at +0" (fun () ->
+      Rune_support.Compiled.here ();
       at Nx.float64;
       at Nx.float32)
 
@@ -229,6 +240,7 @@ let beta_at_zero =
   in
   test "the incomplete beta's derivatives at a = 0 and b = 0 are its slopes"
     (fun () ->
+      Rune_support.Compiled.here ();
       at Nx.float64 0x1p-40 ~f32:false;
       at Nx.float32 0x1p-16 ~f32:true)
 

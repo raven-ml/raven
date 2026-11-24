@@ -102,11 +102,11 @@ let broken f ~ulps xs expects got =
   List.rev !out
 
 let compiled (type s) (module S : Nx.Devices) (x : (float, s, Nx.host) Nx.t) =
+  Compiled.set S.v;
   let before = Rune.evaluations () in
   let y =
     Rune.jit Nx.Ptree.(tensor @-> returns tensor) Nx.exp (Nx.place S.on x)
   in
-  Compiled.here ();
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   Nx.place Nx.Host.on y
 

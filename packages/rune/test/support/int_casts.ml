@@ -252,11 +252,11 @@ let to_bf16 (module S : Nx.Devices) (Nx.Dtype.Any src as s) =
   let bits y = Nx.to_array (Nx.bitcast Nx.uint16 (Nx.place Nx.Host.on y)) in
   let check label { map } =
     let cast x = Nx.cast Nx.bfloat16 (map x) in
+    Compiled.set S.v;
     let before = Rune.evaluations () in
     let y =
       Rune.jit Nx.Ptree.(tensor @-> returns tensor) cast (Nx.place S.on x)
     in
-    Compiled.here ();
     equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
     let want = bits (cast x) and got = bits y in
     let misses = ref [] in

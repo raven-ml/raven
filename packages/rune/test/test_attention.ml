@@ -1140,6 +1140,7 @@ let test_length_extremes () =
    either: NaN there leaves every cotangent and tangent finite, eagerly and
    compiled, and the keys' and values' past each length zero. *)
 let test_past_length () =
+  Rune_support.Compiled.here ();
   let lead = [| 2 |] and tk = 8 and lens = [| 3; 5 |] in
   let f s seed =
     Nx.create Nx.float64 s
@@ -1340,25 +1341,31 @@ let () =
              test
                "of values of no column are the full call's lse and gradient \
                 bits" (fun () ->
+                 Rune_support.Compiled.here ();
                  ignore
                    (Attentions.lse_only
                       (module Nx.Host)
                       ~bits:true ~rows:2 ~dims:110 (Nx.Dtype.Any Nx.float32)));
              test "are the storage the kernels wrote" (fun () ->
+                 Rune_support.Compiled.here ();
                  Attentions.uncopied
                    (module Nx.Host)
                    ~grad:false (Nx.Dtype.Any Nx.float32));
              test "returned twice are apart" (fun () ->
+                 Rune_support.Compiled.here ();
                  Attentions.apart (module Nx.Host) (Nx.Dtype.Any Nx.float32));
              test "stacked are written by their kernels" (fun () ->
+                 Rune_support.Compiled.here ();
                  Attentions.stacked (module Nx.Host) (Nx.Dtype.Any Nx.float32));
              test "returned twice into two donated arguments are apart"
                (fun () ->
+                 Rune_support.Compiled.here ();
                  Attentions.donated_twice
                    (module Nx.Host)
                    (Nx.Dtype.Any Nx.float32));
              test "are written into a donated argument they do not read"
                (fun () ->
+                 Rune_support.Compiled.here ();
                  Attentions.donated (module Nx.Host) (Nx.Dtype.Any Nx.float32));
            ];
          group "jit within the bounds of eager"

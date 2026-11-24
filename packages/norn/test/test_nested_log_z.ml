@@ -51,6 +51,7 @@ let log_evidence_tests =
   group "ln Z"
     [
       test conjugate.name (fun () ->
+          Compiled.here ();
           within_errors conjugate (List.map fst (runs ~live:50 conjugate 200)));
       test gaussian.name (fun () ->
           (* Eager: compiling this run costs more than running it. *)
@@ -58,6 +59,7 @@ let log_evidence_tests =
           let k = Nx.Ptree.map Nx.Rng.ptree (fun _ k -> Nx.slice [ I 0 ] k) k in
           within_errors gaussian [ nest gaussian 200 k ]);
       test mixture.name (fun () ->
+          Compiled.here ();
           within_errors mixture (List.map fst (runs ~live:100 mixture 20)));
     ]
 

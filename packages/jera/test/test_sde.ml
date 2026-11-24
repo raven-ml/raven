@@ -378,6 +378,7 @@ let march_tests =
         (("reversible_heun", Sde.reversible_heun), 1);
       ]
       (fun ((_, m), depth) ->
+        Compiled.here ();
         let w = path ~depth ~n:3 31 in
         let f w x =
           Sde.march one m ~steps:4 ~drift:gbm_drift ~diffusion:gbm_diffusion w

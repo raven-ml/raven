@@ -180,6 +180,7 @@ let rows =
 
 let compiled =
   test "a compiled density is the eager one" (fun () ->
+      Compiled.here ();
       let c = as_coords eight_schools (positions 4) in
       let u = M.coords eight_schools in
       let eager = floats (M.log_density eight_schools y c) in
@@ -405,6 +406,7 @@ let refusals =
                   log-determinant is -inf") (fun () ->
               M.init ~from:(M.Init.near p) m (f64 0.) ~chains:1 (Nx.Rng.key 0)));
       test "a compiled start names the support from its arguments" (fun () ->
+          Compiled.here ();
           let m low high =
             M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
                 let x = M.sample std in
@@ -563,6 +565,7 @@ let domains =
             (Nx.item [ 0 ] lp);
           equal float_exact Float.neg_infinity (Nx.item [ 1 ] lp));
       test "a NaN Cholesky factor gives -inf, eagerly and compiled" (fun () ->
+          Compiled.here ();
           let lp = M.log_density correlated (vec [| 0.5; -0.5 |]) in
           let at = coords correlated [| 0.5; 2. |] in
           List.iter

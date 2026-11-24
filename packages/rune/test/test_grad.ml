@@ -322,6 +322,7 @@ let two () = T.(pair tensor tensor)
    zero too, where the value is NaN: Nx.log's convention, which Nx.log10
    keeps by scaling log2's on both arms of its guard. Eager and compiled. *)
 let test_logarithms () =
+  Compiled.here ();
   let x = v [| -1.; -10.; -0.5; 2.; 1e300 |] in
   let at name f ln_b =
     let want = Array.map (fun x -> 1. /. (x *. ln_b)) (Nx.to_array x) in
@@ -645,6 +646,7 @@ let where_narrow_law (type r) (dt : (float, r) D.t) u
 
 (* Compiled, their gradients are the eager ones. *)
 let test_normalised_jit () =
+  Compiled.here ();
   let x = Nx.create f64 [| 3; 4 |] (spread 0.2 12) in
   let w = Nx.create f64 [| 3; 4 |] (spread 0.7 12) in
   let where =
@@ -947,6 +949,7 @@ let test_zeros () =
    [-0.] keeps its sign, and an element no read reaches is [+0.]. Each
    read's cotangent is [-0.] at every element. *)
 let test_region_zeros () =
+  Compiled.here ();
   let zeroed y = Nx.sum (Nx.mul y (Nx.full_like y (-0.))) in
   let two r s x = Nx.add (zeroed (r x)) (zeroed (s x)) in
   let check msg want f xs =
@@ -1237,11 +1240,13 @@ let regions_constant_rows =
   List.map (fun (n, reads) -> { n; reads }) (Array.to_list region_programs)
 
 let regions_constant r =
+  Compiled.here ();
   regions_law ~covers:false ~how:"compiled, constant scales"
     (Rune.jit T.(tensor @-> returns tensor) (Rune.grad' (regions_f r)))
     r
 
 let regions_jit (i, ks) =
+  Compiled.here ();
   let n, reads = region_programs.(i) in
   let reads = List.map2 (fun (r, _) k -> (r, k)) reads ks in
   let g =
@@ -1452,6 +1457,7 @@ let dirichlet_law_at (type s) (dt : (float, s) Nx.dtype) u compiled c =
 let dirichlet_law =
   let c32 = compiled () and c64 = compiled () in
   fun c ->
+    Compiled.here ();
     cover "float32" (not c.wide);
     cover "float64" c.wide;
     cover "a row of one" (c.len = 1);
@@ -1467,6 +1473,7 @@ let dirichlet_law =
    central differences, eager and compiled. The compiled loss takes the key as
    an argument, so the rows, of one length, share its program. *)
 let test_dirichlet_differences () =
+  Compiled.here ();
   let n = 8 in
   let w = Nx.create f64 [| 1; n |] (spread 0.4 n) in
   let loss key a = Nx.sum (Nx.mul w (Nx.Rng.dirichlet ~key a)) in
@@ -1633,6 +1640,7 @@ let test_quantised format () =
    sum is already in the dtype, it is the compiled product plus the
    init. *)
 let test_quantised_init () =
+  Compiled.here ();
   let n = 6 and m = 2 and lanes = 3 in
   let w = Quants.weight Quants.Q8_0 ~rows:n ~blocks:2 in
   let k = 2 * Quants.block_values Quants.Q8_0 in
@@ -2313,6 +2321,7 @@ let conv_drawn_examples =
   List.init (Array.length conv_programs) (fun i -> (i, 0.))
 
 let conv_jit (i, seed) =
+  Compiled.here ();
   let pull _ x w ct = Lazy.force conv_compiled.(i) x w ct in
   conv_law pull { (conv_programs.(i)) with seed }
 
@@ -2322,6 +2331,7 @@ let conv_jit (i, seed) =
    float64, and reads [x] spread, a zero between its elements, which it selects
    lane by lane at float64's width. *)
 let test_spread_channels () =
+  Compiled.here ();
   let f (x, w) = Nx.conv_transpose ~stride:[| 2 |] x w in
   let pullback x w ct = snd (Rune.vjp (two ()) T.tensor f (x, w)) ct in
   let x = Nx.create f64 [| 1; 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -2398,6 +2408,7 @@ let constant_scan s =
 (* The tangent along [(1, 1)] is [dc], and the pullback of [w] is [(0, Σ w_i
    dc_i)], eager and compiled. *)
 let test_constant_scan s =
+  Compiled.here ();
   let f = constant_scan s in
   let x = v [| 5.; 6.; 7. |] and c = v [| s.c |] in
   let w = v [| 1.; 10.; 100. |] in
@@ -2693,7 +2704,9 @@ let law_at (Jit_program p) xs ys =
   equal ~msg:"jit of grad" t expected
     (outcome (fun () -> pair (Lazy.force p.staged x y)))
 
-let law_jit (i, xs, ys) = law_at jit_programs.(i) xs ys
+let law_jit (i, xs, ys) =
+  Compiled.here ();
+  law_at jit_programs.(i) xs ys
 
 (* Residuals *)
 
@@ -2944,6 +2957,7 @@ let depthwise_examples =
   List.init (Array.length depthwise_programs) (fun i -> (i, 1.5))
 
 let depthwise_jit (i, seed) =
+  Compiled.here ();
   let pull x w ybar = Lazy.force depthwise_compiled.(i) x w ybar in
   depthwise_law ~how:"compiled" pull { (depthwise_programs.(i)) with seed }
 
@@ -2951,6 +2965,7 @@ let depthwise_jit (i, seed) =
    included, and one no window reads [+0.]; a tap that reads padding gives no
    term, even of an infinite weight. *)
 let test_depthwise_zeros () =
+  Compiled.here ();
   let x = Nx.create f64 [| 1; 4; 1 |] [| 1.; 2.; 3.; 4. |] in
   let check msg want ~stride ~padding w =
     let w = Nx.create f64 [| 1; Array.length w; 1 |] w in

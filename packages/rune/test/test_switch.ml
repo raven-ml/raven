@@ -51,6 +51,7 @@ let modes : (string * ((_ -> _) -> _ -> _)) list =
   ]
 
 let test_values () =
+  Rune_support.Compiled.here ();
   List.iter
     (fun (mode, apply) ->
       List.iter
@@ -78,6 +79,7 @@ let test_switch () =
     [ vec [| 2.; 4. |]; vec [| 2.; 3. |]; vec [| -1.; -2. |] ]
 
 let test_derivatives () =
+  Rune_support.Compiled.here ();
   List.iter
     (fun (mode, apply) ->
       List.iter
@@ -96,6 +98,7 @@ let test_derivatives () =
 (* The untaken branch computes nothing: no NaN reaches the derivative, no check
    fails, no addition counts. *)
 let test_untaken () =
+  Rune_support.Compiled.here ();
   let zero = scalar 0. in
   equal ~msg:"where's NaN" close (scalar Float.nan)
     (Rune.grad'
@@ -181,6 +184,7 @@ let per_lane f xs =
   Nx.stack (List.init (Nx.dim 0 xs) (fun i -> f (Nx.get [ i ] xs)))
 
 let test_maps () =
+  Rune_support.Compiled.here ();
   equal ~msg:"vmap" close (per_lane written lanes) (Rune.vmap' piecewise lanes);
   equal ~msg:"vmap of grad" close (per_lane written' lanes)
     (Rune.vmap' (Rune.grad' piecewise) lanes);
@@ -261,6 +265,7 @@ let lane_examples =
   [ (vec [||], [||]); (vec [| 0.5; -1.; 1.5 |], [| 0; 1; 2 |]) ]
 
 let law_lanes (xs, ks) =
+  Rune_support.Compiled.here ();
   let n = Array.length ks in
   cover "no lane" (n = 0);
   cover "lanes taking different branches"
@@ -286,6 +291,7 @@ let law_lanes (xs, ks) =
    multiplies by [-0.], giving [-0.]; lane 1's reads nothing of [x], giving
    [+0.], whatever lane 0's branch gives there. *)
 let test_lane_zeros () =
+  Rune_support.Compiled.here ();
   let f x k =
     Rune.switch T.tensor k
       [ (fun () -> Nx.mul_s x (-0.)); (fun () -> Nx.ones_like x) ]
@@ -304,6 +310,7 @@ let test_lane_zeros () =
 (* The traced per-lane path: under jit and in a scan's step, each lane's branch,
    its additions and its checks. *)
 let test_traced_lanes () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let f x =
     Rune.cond' (Nx.greater_s x 0.)
@@ -334,6 +341,7 @@ let test_traced_lanes () =
         (vec [| 0.; 2.; 1. |]))
 
 let test_out_of_range () =
+  Rune_support.Compiled.here ();
   let pick k =
     Rune.switch T.tensor k [ (fun () -> scalar 0.); (fun () -> scalar 1.) ]
   in
@@ -387,6 +395,7 @@ let test_nested_masks () =
 
 (* An addition in a branch: its tangent is the taken branch's. *)
 let test_total_derivatives () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let f x =
     snd
@@ -458,6 +467,7 @@ let test_examples () =
 (* Under jit a switch compiles with its program, a loop per branch, and
    computes eager's values: a branch's additions, checks and loops included. *)
 let test_compiled () =
+  Rune_support.Compiled.here ();
   let t = Total.make () in
   let counted x =
     Rune.cond' (Nx.greater_s x 0.)

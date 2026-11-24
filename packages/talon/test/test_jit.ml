@@ -191,6 +191,7 @@ let agrees ?(eq = result_t) ?(covers = fun _ -> ()) name f =
   group name
     [
       prop "jit" frame (fun fr ->
+          Compiled.here ();
           cover_frame fr;
           covers [ fr ];
           let a = arrays fr in
@@ -624,12 +625,15 @@ let alike expected f =
 let checks =
   [
     test "Talon.to_tensor of a null" (fun () ->
+        Compiled.here ();
         alike {|Talon.to_tensor: "a" has a null|} (fun args ->
             Talon.to_tensor f64 [ "a" ] (table args)));
     test "Column.to_tensor of a null" (fun () ->
+        Compiled.here ();
         alike "Column.to_tensor: row 1 is null" (fun args ->
             Column.to_tensor f64 (Talon.column (table args) "a")));
     test "Talon.take past the rows" (fun () ->
+        Compiled.here ();
         alike "Talon.take: index 3 of a table of 3 rows" (fun args ->
             let n = Nx.dim 0 args.x in
             let i = Nx.add_s (Nx.arange Nx.int64 0 n 1) 1L in
@@ -702,6 +706,7 @@ let derivatives =
           (Nx.to_array
              (Rune.grad' g (Nx.create f64 [| 4 |] values))));
     test "var of a table a jit captures" (fun () ->
+        Compiled.here ();
         (* Its columns hold values, but what the function computes from them
            is traced, in one batch and in two. *)
         let x = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 4.; 8. |] in

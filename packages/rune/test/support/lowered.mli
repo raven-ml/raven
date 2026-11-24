@@ -5,8 +5,9 @@
 
 (** Operations lowered to tolk, compiled and run on the host.
 
-    What compiles for the host skips the running test where rig links no host
-    code ({!Rig.Image.links}). *)
+    What compiles for the host skips the running test where the host's programs
+    cannot compile ({!Tolk_engine.compiles}), as where Clang is missing or rig
+    links no host code. *)
 
 val run :
   ?local:bool ->

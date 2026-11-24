@@ -83,7 +83,7 @@
  (name test_jit_remote)
  (modules test_jit_remote)
  (deps support/agent.exe)
- (libraries nx nx_array rig rig_remote rig_remote_job rune windtrap))
+ (libraries nx nx_array rig rig_remote rig_remote_job rune rune_support windtrap))
 
 ; Opens this machine's first GPU, so it holds the lock GPU tests share.
 
@@ -117,7 +117,7 @@
  (name test_jit_compiler)
  (modules test_jit_compiler)
  (locks %{workspace_root}/gpu)
- (libraries nx rig.gpus rune rune_support tolk tolk.engine windtrap)
+ (libraries nx rig rig.gpus rune rune_support tolk tolk.engine windtrap)
  (deps
   (sandbox always)
   not_a_library)
@@ -173,7 +173,7 @@
  (package rune)
  (names test_special test_special_gamma test_special_beta_inverse)
  (modules special test_special test_special_gamma test_special_beta_inverse)
- (libraries nx rune windtrap)
+ (libraries nx rune rune_support windtrap)
  (deps
   (glob_files golden/special_grad/*.golden)))
 
@@ -201,7 +201,7 @@
  (package rune)
  (name test_folded)
  (modules test_folded)
- (libraries nx rune lowered windtrap))
+ (libraries nx rune rune_support lowered windtrap))
 
 ; Functions nx composes from kinds, compiled by Rune.jit on the host, against
 ; nx's eager kernels.
@@ -266,37 +266,22 @@
   tolk.engine
   windtrap))
 
-; search.t pins the searches a function given a width reports. It compiles,
-; so it runs where rig links host code: on x86_64 and arm64.
+; What RUNE_JIT_DEBUG prints of the searches and declines of search.exe and
+; declines.exe, each run as a process of its own by test_jit_debug.
 
 (executable
  (name search)
  (modules search)
  (libraries nx rune tolk))
 
-(cram
- (package rune)
- (applies_to search)
- (enabled_if
-  (or
-   (= %{architecture} amd64)
-   (= %{architecture} arm64)))
- (deps search.exe))
-
-; declines.t reads which programs over several devices compile, and what
-; RUNE_JIT_DEBUG prints of their declines and moves. It compiles, so it runs
-; where rig links host code: on x86_64 and arm64.
-
 (executable
  (name declines)
  (modules declines)
  (libraries nx rig rune))
 
-(cram
+(test
  (package rune)
- (applies_to declines)
- (enabled_if
-  (or
-   (= %{architecture} amd64)
-   (= %{architecture} arm64)))
- (deps declines.exe))
+ (name test_jit_debug)
+ (modules test_jit_debug)
+ (deps search.exe declines.exe)
+ (libraries rune_support unix windtrap))
