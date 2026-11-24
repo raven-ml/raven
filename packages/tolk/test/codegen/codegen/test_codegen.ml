@@ -5819,6 +5819,31 @@ let without_elementwise =
                contains ~sub:"__builtin_elementwise_sqrt(" (source prg);
                let out = Run.on_host prg [ (1, floats a); (2, floats b) ] in
                equal (array Dtypes.value) roots (List.assoc 0 out));
+           (* [(1 + e) (1 - e) - 1] for [e = k 2^-30] is [-k^2 2^-60] rounded
+              once; through a double product, whose [1 - k^2 2^-60] rounds to
+              [1], it is [0], and through floats, whose [1 + e] is [1], [0]
+              too. *)
+           host_shell "a multiply-add of doubles rounds once" (fun () ->
+               let e k = Float.ldexp (Float.of_int k) (-30) in
+               let lanes = 8 in
+               let column f = Array.init lanes (fun j -> `Float (f (j + 1))) in
+               let prg =
+                 Codegen.to_program
+                   (narrow_muladd Float64 ~lanes:4 lanes)
+                   (Lazy.force host)
+               in
+               contains ~sub:"__builtin_elementwise_fma(" (source prg);
+               let out =
+                 Run.on_host prg
+                   [
+                     (1, column (fun k -> 1. +. e k));
+                     (2, column (fun k -> 1. -. e k));
+                     (3, column (fun _ -> -1.));
+                   ]
+               in
+               equal (array Dtypes.value)
+                 (column (fun k -> -.Float.ldexp (Float.of_int (k * k)) (-60)))
+                 (List.assoc 0 out));
          ])
 
 (* Gated loads
