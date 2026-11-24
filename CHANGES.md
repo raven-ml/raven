@@ -79,6 +79,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- `Rig.free_cache` gives back a CUDA device's chains, the graphs its runs of
+  launches play through, which stayed until the device stopped. Their host
+  memory returns to CUDA, which may keep their GPU memory for later graphs.
 - A process's first Metal compile no longer waits until another process
   exits: `Rig_metal` gives each live process a shader cache directory of its
   own, beside Metal's, where macOS allows it.

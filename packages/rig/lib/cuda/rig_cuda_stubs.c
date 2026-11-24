@@ -463,7 +463,9 @@ struct stamp {
    [held] is the module of each node's function, NULL where unknown: an
    unload points the nodes of its module, and the unknown ones, back at the
    placeholder before CUDA unloads the module. A chain keeps its graph,
-   whose nodes its updates name, until it is destroyed. */
+   whose nodes its updates name, until it is destroyed: by a trim
+   (rig_cuda_trim), after which the next submit that needs its length makes
+   it again, or by the stop. */
 
 #define CHAIN 32
 
@@ -522,7 +524,7 @@ struct device {
      the pieces played through a chain, the launches sent plain and the
      chains made. [mutex] guards [chains], [handed] and the placeholder,
      holds a chain's nodes for the updates of a submit or an unload, and is
-     held through a grow's makes. */
+     held through a grow's makes and a trim's destroys. */
   pthread_mutex_t mutex;
   struct chain *chains[CHAIN + 1], *handed[CHAIN + 1];
   CUfunction placeholder;
@@ -745,7 +747,7 @@ static CUresult begin(struct device *d, _Atomic uint64_t *slot, int own) {
 
 static const struct rig_driver driver = {rig_cuda_room, rig_cuda_submit,
                                          rig_cuda_commit, rig_cuda_settle,
-                                         NULL, NULL};
+                                         NULL, rig_cuda_trim};
 
 /* Reads the GPU's limits on a launch's groups and threads, and on a 2D
    copy's pitch, into [d]. */
@@ -1855,22 +1857,59 @@ static CUresult make_chain(struct chain *c, int n, const kernel_node *k,
   return s;
 }
 
-/* Destroys [c], made or handed, unless it is [unmade]. CUDA frees a chain
-   whose launches still run once they end. */
-static void drop(struct chain *c) {
-  if (c == NULL || c == &unmade) return;
-  p_cuGraphExecDestroy(c->exec);
-  p_cuGraphDestroy(c->graph);
-  free(c);
+/* Destroys [*c], made or handed, and empties its place, unless it is
+   [unmade], which holds no memory and stays, so that its length's pieces
+   stay plain for the device's life. CUDA's answers are dropped. CUDA frees
+   a chain whose launches are queued or run once they end: "If the
+   executable graph is in-flight, it will not be terminated, but rather
+   freed asynchronously on completion" (CUDA Driver API, Graph Management,
+   cuGraphExecDestroy). */
+static void drop(struct chain **c) {
+  if (*c == NULL || *c == &unmade) return;
+  p_cuGraphExecDestroy((*c)->exec);
+  p_cuGraphDestroy((*c)->graph);
+  free(*c);
+  *c = NULL;
 }
 
-/* Destroys [d]'s chains, made and handed, in its context, made current. */
+/* Destroys [d]'s chains, made and handed ([drop]), in its context, made
+   current, under the mutex. */
 static void unchain(struct device *d) {
+  pthread_mutex_lock(&d->mutex);
   for (int k = 2; k <= CHAIN; k++) {
-    drop(d->chains[k]);
-    drop(d->handed[k]);
-    d->chains[k] = d->handed[k] = NULL;
+    drop(&d->chains[k]);
+    drop(&d->handed[k]);
   }
+  pthread_mutex_unlock(&d->mutex);
+}
+
+/* Whether [d] holds a chain, made or handed, but [unmade], under the
+   mutex. */
+static int holds_chain(struct device *d) {
+  int any = 0;
+  pthread_mutex_lock(&d->mutex);
+  for (int k = 2; k <= CHAIN && !any; k++)
+    any = (d->chains[k] != NULL && d->chains[k] != &unmade) ||
+          (d->handed[k] != NULL && d->handed[k] != &unmade);
+  pthread_mutex_unlock(&d->mutex);
+  return any;
+}
+
+/* Gives back [self]'s chains ([unchain]), in its context, made current.
+   It gives nothing back, and calls no CUDA, if the device holds no chain
+   ([holds_chain]), and nothing if the context cannot be made current: the
+   chains then stay until the next trim or the stop. rig calls it under the
+   turn, so no submit plays a chain meanwhile, and never while a submit is
+   between a room that answered RIG_GROW and its end, so no grow runs, no
+   chain appears between [holds_chain] and [unchain], and no submit's room
+   is owed a chain handed. [holds_chain] gives the mutex back before the
+   context is made current, which every path takes first. */
+void rig_cuda_trim(void *self) {
+  struct device *d = ((struct edge *)self)->d;
+  if (!holds_chain(d)) return;
+  if (push(d->context) != CUDA_SUCCESS) return;
+  unchain(d);
+  pop(CUDA_SUCCESS);
 }
 
 /* Whether [d] holds or was handed the chain of length [n], under the
@@ -1904,10 +1943,11 @@ static CUresult hand(struct device *d, int n, const kernel_node *k) {
    [d] neither holds nor was handed, in [d]'s context, made current. It
    holds the mutex throughout, so that no two grows make one length; a play,
    an install, an unload or a placeholder's gift that meets it waits for
-   its makes. A make that succeeds or hands [unmade] happens once a length
-   in the device's life; one refused for lack of memory hands nothing, so
-   each later grow of its length, at every round and submit while memory
-   stays short, makes it again under the mutex. Answers
+   its makes. A make that succeeds happens once a length until a trim
+   destroys the chain, and one that hands [unmade] once a length in the
+   device's life; one refused for lack of memory hands nothing, so each
+   later grow of its length, at every round and submit while memory stays
+   short, makes it again under the mutex. Answers
    CUDA_ERROR_OUT_OF_MEMORY if the GPU or the host had no memory for one,
    the context's error if it failed, or CUDA_SUCCESS; what it made before
    stays handed.

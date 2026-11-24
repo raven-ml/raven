@@ -224,9 +224,10 @@ val capability : t -> Rig_cuda_abi.t
 (** {1:work Work}
 
     The device's [struct rig_driver] holds [rig_cuda_room], [rig_cuda_submit],
-    [rig_cuda_commit] and [rig_cuda_settle], which [rig_cuda.h] declares. A
-    part on queue [0] runs on ["COMPUTE:0"], one on queue [1] on
-    ["COPY:0"].
+    [rig_cuda_commit], [rig_cuda_settle] and [rig_cuda_trim], which [rig_cuda.h]
+    declares. [rig_cuda_trim] gives back the device's chains
+    ({!section-replay}). A part on queue [0] runs on ["COMPUTE:0"], one on queue
+    [1] on ["COPY:0"].
 
     The device commits a value by enqueueing a write of it into the word
     ([cuStreamWriteValue64]) on the stream the last value ended on. The
@@ -328,40 +329,53 @@ val capability : t -> Rig_cuda_abi.t
     the chain's launch, more for a larger parameter block.
 
     The device makes a chain at the first submit that needs its length, as
-    growth ({!Rig_edge.Driver.val-grow}): [rig_cuda_room] answers
-    [RIG_GROW], and {!grow} makes the chain, outside the device's turn, from
-    a placeholder kernel that does nothing. The GPU's first {!val-image} in
-    the process loads that kernel, PTX in a module of its own that the
-    process keeps. Where CUDA refuses it, for lack of memory or because the
-    driver compiles no PTX, as under [CUDA_DISABLE_PTX_JIT=1], the image
-    loads all the same and the next image tries again: until one succeeds,
-    the device makes no chain and plays every piece plain. A make that CUDA
-    refuses for lack of memory answers [Short] of 2 MiB, the chunk CUDA
-    takes graph memory in, so rig reclaims memory and asks again, then
-    raises {!Rig.Out_of_memory} at the submit; each later grow that needs
-    the length makes it again. One that CUDA refuses for another reason,
-    while the context stands, leaves that length's pieces plain for the
-    device's life.
+    growth ({!Rig_edge.Driver.val-grow}): [rig_cuda_room] answers [RIG_GROW],
+    and {!grow} makes the chain, outside the device's turn, from a placeholder
+    kernel that does nothing. A make waits for none of the device's work, as the
+    615 driver does (CUDA's reference states no synchronization for it). The
+    GPU's first {!val-image} in the process loads that kernel, PTX in a module
+    of its own that the process keeps. Where CUDA refuses it, for lack of memory
+    or because the driver compiles no PTX, as under [CUDA_DISABLE_PTX_JIT=1],
+    the image loads all the same and the next image tries again: until one
+    succeeds, the device makes no chain and plays every piece plain. A make that
+    CUDA refuses for lack of memory answers [Short] of 2 MiB, the chunk CUDA
+    takes graph memory in, so rig reclaims memory and asks again, then raises
+    {!Rig.Out_of_memory} at the submit; each later grow that needs the length
+    makes it again. One that CUDA refuses for another reason, while the context
+    stands, leaves that length's pieces plain for the device's life.
 
     Two submits that need one length make it once, since a grow keeps the
-    device's chains to itself until its makes end. A submit whose room
-    finds a length missing, or that plays a piece, while another thread's
-    grow runs thus waits for that grow's makes, holding the device's turn,
-    so every other submitter of the device waits too; {!val-image} and
-    {!unload} wait as well. Each length is made once in the device's life,
-    unless CUDA refused its make for lack of memory.
+    device's chains to itself until its makes end. A submit whose room finds a
+    length missing, or that plays a piece, while another thread's grow runs thus
+    waits for that grow's makes, holding the device's turn, so every other
+    submitter of the device waits too; {!val-image} and {!unload} wait as well.
+    Each length is made once until a {!Rig.free_cache} of the device gives its
+    chain back, unless CUDA refused its make for lack of memory.
 
-    A chain holds memory of the GPU and of the host for itself and for each
-    of its nodes, 527 nodes for the 31 lengths. A node's host memory grows on
-    its first update to a larger parameter block than it held, to hold that
-    block, and does not shrink while its chain lives. Neither the device's
-    budget nor the host's counts this memory, but [capacity]'s free falls
-    by its GPU part, which [cuMemGetInfo] counts as any allocation of the
-    process. {!stop} destroys the chains, but CUDA keeps a destroyed graph's
-    GPU memory for the process's later graphs and never gives it back to
-    the GPU, so after a close that memory stays the process's, out of the
-    free of the GPU's later devices, and a later device of the GPU reuses
-    it.
+    A chain holds memory of the GPU and of the host for itself and for each of
+    its nodes, 527 nodes for the 31 lengths. A node's host memory grows on its
+    first update to a larger parameter block than it held, to hold that block,
+    and does not shrink while its chain lives. Neither the device's budget nor
+    the host's counts this memory, but [capacity]'s free falls by its GPU part,
+    which [cuMemGetInfo] counts as any allocation of the process.
+    {!Rig.free_cache} and {!stop} destroy the chains. Their host memory, and
+    their nodes', returns to CUDA, and the process's resident memory need not
+    fall. The 615 driver keeps their GPU memory for the process's later graphs,
+    even after [cuDeviceGraphMemTrim], so [capacity]'s free does not rise, and
+    the chains made again, or those of a later device of the GPU, reuse it
+    (CUDA's reference states what it keeps only for memory that graph memory
+    nodes reserve).
+
+    A {!Rig.free_cache} of the device, unless a submit grows its chains, gives
+    back its chains, those a grow made that no submit's room took among them,
+    through [rig_cuda_trim]. CUDA frees a chain whose launches are queued once
+    they complete ([cuGraphExecDestroy]), so they run as they were submitted and
+    [rig_cuda_trim] does not wait for them. The next submit that needs a length
+    makes its chain again, as the first did. A length whose make CUDA refused
+    for another reason than memory holds nothing and stays plain.
+    [rig_cuda_trim] ignores CUDA's errors, as {!stop} does, and gives nothing
+    back where it cannot make the device's context current: the chains then stay
+    until the next {!Rig.free_cache} or the stop.
 
     A function that needs clusters, whose launch must set a cluster size
     ([CU_FUNC_ATTRIBUTE_CLUSTER_SIZE_MUST_BE_SET]) or which has one of its
@@ -565,17 +579,20 @@ val capability : t -> Rig_cuda_abi.t
     modules lie in the GPU's primary context, which the process keeps. *)
 
 (** {1:references References}
-    - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}:
-      Primary Context Management, Stream Management, Event Management, Stream
-      Memory Operations ([cuStreamWaitValue64], [cuStreamWriteValue64],
+    - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}: Primary
+      Context Management, Stream Management, Event Management, Stream Memory
+      Operations ([cuStreamWaitValue64], [cuStreamWriteValue64],
       [cuStreamBatchMemOp], [CUstreamWaitValue_flags]), Memory Management
-      ([cuMemHostAlloc], [cuMemHostRegister]), Unified Addressing, Peer
-      Context Memory Access, Module Management, Graph Management
-      ([cuGraphAddNode], [cuGraphInstantiateWithFlags],
-      [cuGraphExecNodeSetParams], [cuGraphLaunch]), Execution Control
-      ([CU_FUNC_ATTRIBUTE_CLUSTER_SIZE_MUST_BE_SET]), Error
-      Handling ([CUDA_ERROR_ILLEGAL_ADDRESS]), Version Management
-      ([cuDriverGetVersion]).
+      ([cuMemHostAlloc], [cuMemHostRegister]), Unified Addressing, Peer Context
+      Memory Access, Module Management, Graph Management ([cuGraphAddNode],
+      [cuGraphInstantiateWithFlags], [cuGraphExecNodeSetParams],
+      [cuGraphLaunch], [cuGraphExecDestroy], [cuDeviceGraphMemTrim]), Execution
+      Control ([CU_FUNC_ATTRIBUTE_CLUSTER_SIZE_MUST_BE_SET]), Error Handling
+      ([CUDA_ERROR_ILLEGAL_ADDRESS]), Version Management ([cuDriverGetVersion]).
+    - {{:https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html#graph-memory-nodes}
+       CUDA Programming Guide}: Graph Memory Nodes (Physical Memory Footprint),
+      what CUDA keeps of the memory that graph memory nodes reserve, and what
+      [cudaDeviceGraphMemTrim] gives back.
     - {{:https://developer.nvidia.com/blog/cuda-12-1-supports-large-kernel-parameters/}
        CUDA 12.1 Supports Large Kernel Parameters}: a kernel's parameters
       take up to 32,764 bytes on Volta and later under a CUDA 12.1 driver or

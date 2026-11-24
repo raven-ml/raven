@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* A CUDA device's C functions of rig_edge.h. rig_cuda.mli's Work and
-   Failure sections state what they do. */
+/* A CUDA device's C functions of rig_edge.h. rig_cuda.mli's Work, Replay
+   and Failure sections state what they do. */
 
 #ifndef RIG_CUDA_H
 #define RIG_CUDA_H
@@ -23,5 +23,7 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
 int rig_cuda_commit(void *self, uint64_t v, const char **failure);
 
 int rig_cuda_settle(void *self, uint64_t v, const char **failure);
+
+void rig_cuda_trim(void *self);
 
 #endif
