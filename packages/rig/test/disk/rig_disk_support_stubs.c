@@ -32,17 +32,17 @@
 
 /* rig.disk's hook for its suite (rig_disk_stubs.c), outside Windows. */
 #ifndef _WIN32
-extern void rig_disk_fault_runs(intnat run, int64_t wait_ns);
+extern void rig_disk_fault_runs(int armed, int64_t wait_ns);
 #endif
 
-/* [fault_reads run wait] is rig_disk_fault_runs (run, wait in ns); nothing on
-   Windows, which reads the runs of a copy one after the other. Keeps the
-   runtime. */
-value rig_disk_test_fault_reads(value v_run, value v_wait) {
+/* [fault_reads armed wait] is rig_disk_fault_runs (armed, wait in ns);
+   nothing on Windows, which reads the runs of a copy one after the other.
+   Keeps the runtime. */
+value rig_disk_test_fault_reads(value v_armed, value v_wait) {
 #ifndef _WIN32
-  rig_disk_fault_runs(Long_val(v_run), (int64_t)(Double_val(v_wait) * 1e9));
+  rig_disk_fault_runs(Bool_val(v_armed), (int64_t)(Double_val(v_wait) * 1e9));
 #else
-  (void)v_run;
+  (void)v_armed;
   (void)v_wait;
 #endif
   return Val_unit;

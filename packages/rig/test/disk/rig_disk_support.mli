@@ -26,12 +26,17 @@ val identified : string -> bool
     Where it gives none, the disk keeps the file's descriptor until its buffers
     are collected. *)
 
-val fault_reads : fail:int -> wait:float -> unit
-(** [fault_reads ~fail ~wait] makes each run of every later read of runs of the
-    disk wait [wait] seconds before it reads, and the run of index [fail] of
-    each read fail with an I/O error without reading, as storage that fails a
-    read does ([rig_disk_fault_runs] in [rig_disk_stubs.c]). [~fail:(-1)
-    ~wait:0.] restores the disk's reads. Nothing on Windows. *)
+val fault_reads : wait:float -> unit
+(** [fault_reads ~wait] makes the first run of a read of runs of the disk that
+    begins after the call fail with an I/O error without reading, as storage
+    that fails a read does, and each other run of that read that began wait
+    until it failed, then [wait] seconds, before it reads ([rig_disk_fault_runs]
+    in [rig_disk_stubs.c]). So at most one run a thread of the read begins
+    before the failure. Nothing on Windows. *)
+
+val restore_reads : unit -> unit
+(** [restore_reads ()] undoes {!fault_reads}. A read of runs after the failed
+    one reads as without {!fault_reads}. *)
 
 val hold_pool : unit -> unit
 (** [hold_pool ()] runs a compute job of two chunks on two threads of the

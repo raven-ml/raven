@@ -203,7 +203,7 @@ static int fork_count(void) { return 0; }
 
 static void pause_ns(int64_t ns) { Sleep((DWORD)(ns / 1000000)); }
 
-/* The error of a read the suite fails (fault_run). */
+/* The error of a run the suite fails (rig_disk_fault_runs). */
 #define FAULT_CODE ERROR_READ_FAULT
 
 static value handle_descr(intnat h) {
@@ -556,22 +556,39 @@ struct batch {
   _Atomic int error;
 };
 
-/* For the suite (rig_disk_fault_runs below): the run of this index of every
-   read of runs fails with FAULT_CODE without reading, after each run waits
-   [fault_wait] ns. */
-static _Atomic intnat fault_run = -1;
+/* For the suite (rig_disk_fault_runs below): [fault_batch] is NULL, or
+   [&fault_armed] until a run begins, then that run's batch until its read
+   ends. */
+#define FAULT_POLL_NS 50000
+
+static struct batch fault_armed;
+static _Atomic(struct batch *) fault_batch;
 static _Atomic int64_t fault_wait;
+
+/* Whether a run of [b] that began fails: the first run to begin once the
+   suite armed the fault does. Every other run of its batch returns only once
+   that one failed, then [fault_wait] ns later, looking for the failure every
+   [FAULT_POLL_NS] ns. It waits on a body already running, which waits on
+   nothing, so the job ends. */
+static int fault(struct batch *b) {
+  struct batch *p = atomic_load(&fault_batch);
+  if (p == NULL) return 0;
+  if (p == &fault_armed && atomic_compare_exchange_strong(&fault_batch, &p, b))
+    return 1;
+  if (p != b) return 0;
+  while (atomic_load(&b->error) == 0) pause_ns(FAULT_POLL_NS);
+  int64_t wait = atomic_load(&fault_wait);
+  if (wait > 0) pause_ns(wait);
+  return 0;
+}
 
 /* Reads run [i] of [b], unless a run failed or came short. */
 static void read_run(struct batch *b, intnat i) {
   if (atomic_load(&b->error) != 0 || atomic_load(&b->short_run) < b->n)
     return;
   intnat *r = &b->runs[4 * i];
-  int64_t wait = atomic_load(&fault_wait);
-  if (wait > 0) pause_ns(wait);
-  intnat got = i == atomic_load(&fault_run)
-                   ? -(intnat)FAULT_CODE
-                   : transfer(0, b->h, r[0], (char *)r[1], r[2]);
+  intnat got = fault(b) ? -(intnat)FAULT_CODE
+                        : transfer(0, b->h, r[0], (char *)r[1], r[2]);
   if (got < 0) {
     int none = 0;
     atomic_compare_exchange_strong(&b->error, &none, (int)-got);
@@ -715,6 +732,8 @@ value caml_rig_disk_read_runs(value v_h, value v_at, value v_dst,
   struct batch b = {Long_val(v_h), n, runs, n, 0};
   caml_release_runtime_system();
   read_batch(&b);
+  struct batch *faulted = &b;
+  atomic_compare_exchange_strong(&fault_batch, &faulted, NULL);
   caml_acquire_runtime_system();
   int error = atomic_load(&b.error);
   intnat i = atomic_load(&b.short_run), got = i < n ? runs[4 * i + 3] : 0;
@@ -727,12 +746,15 @@ value caml_rig_disk_read_runs(value v_h, value v_at, value v_dst,
   CAMLreturn(caml_alloc_some(found));
 }
 
-/* For rig.disk's suite, whose C stubs call it, outside Windows: each run of
-   every later read of runs waits [wait_ns] ns first, and run [run] of each
-   fails with an I/O error without reading; -1 and 0 restore the reads. */
-void rig_disk_fault_runs(intnat run, int64_t wait_ns) {
-  atomic_store(&fault_run, run);
+/* For rig.disk's suite, whose C stubs call it, outside Windows: with [armed],
+   the first run that begins after the call fails with an I/O error without
+   reading, and each other run of its read that began waits until that run
+   failed, then [wait_ns] ns, before it reads. Every other read of runs reads
+   as without the call, those after the failed one included. [armed] 0
+   restores the reads. */
+void rig_disk_fault_runs(int armed, int64_t wait_ns) {
   atomic_store(&fault_wait, wait_ns);
+  atomic_store(&fault_batch, armed ? &fault_armed : NULL);
 }
 
 /* [write h pos src n] writes [n] bytes of host memory at [src] into the file

@@ -716,15 +716,15 @@ let test_runs () =
   copied [||] 16;
   copied [| B.row 0; { (B.row 8) with rows = 0 } |] 16
 
-(* A read of many runs that storage fails in the middle raises Sys_error
-   naming the file once no read of the copy still writes memory, and begins
-   none after the failure: every run waits 2 ms before it reads, so a read
-   left running would land within the 50 ms after the raise. The first run
-   fails, and the 400 runs are more than three times the reads in flight, so
-   the runs begun 4 ms in or later find the failure. *)
+(* A read of many runs that storage fails raises Sys_error naming the file once
+   no read of the copy still writes memory, and begins none after the failure.
+   The first run to begin fails, and each run begun before the failure waits for
+   it, then 2 ms before it reads, so a read left running would land within the
+   50 ms after the raise. The disk reads at most 128 runs at once, so at least
+   400 - 128 runs are never begun. *)
 let test_failed_runs () =
   if Sys.win32 then skip ~reason:"Windows reads one run after another" ();
-  let n = 400 and w = 4096 in
+  let n = 400 and w = 4096 and depth = 128 in
   let s = pattern 9 (n * w) in
   let path = make_file s in
   removing [ path ] @@ fun () ->
@@ -732,11 +732,9 @@ let test_failed_runs () =
   let boxes =
     Array.init n (fun i -> B.row ~src_offset:(i * w) ~dst_offset:(i * w) w)
   in
-  Support.fault_reads ~fail:0 ~wait:0.002;
+  Support.fault_reads ~wait:0.002;
   let raised =
-    Fun.protect
-      ~finally:(fun () -> Support.fault_reads ~fail:(-1) ~wait:0.)
-      (fun () ->
+    Fun.protect ~finally:Support.restore_reads (fun () ->
         match B.submit_copy ~src ~dst boxes with
         | _ -> None
         | exception Sys_error why -> Some why)
@@ -751,8 +749,7 @@ let test_failed_runs () =
   same ~msg:"the destination 50 ms after the raise" after (string_of_host dst);
   let unread = String.make w '.' in
   let run i = String.sub after (i * w) w in
-  equal ~msg:"the failed run's bytes" octets unread (run 0);
-  greater ~msg:"runs not begun once one failed" int ~than:1
+  at_least ~msg:"runs not begun once one failed" int ~than:(n - depth)
     (List.length (List.filter (fun i -> run i = unread) (List.init n Fun.id)))
 
 (* The bytes this process read from storage, from Linux's /proc/self/io. *)
