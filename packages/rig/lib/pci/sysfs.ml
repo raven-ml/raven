@@ -195,7 +195,7 @@ let memory_flags = 0xf
 let wide_bar = 0b100
 let type_mask = 0b110
 
-let registers m bus =
+let registers { files = m; bus; _ } =
   let file = path m bus "config" in
   let s =
     match
@@ -235,15 +235,14 @@ let address regs i =
 (* The memory BARs whose register marks them prefetchable, by index. *)
 let prefetchable_bar = 0b1000
 
-let prefetchable { files = m; bus; _ } =
-  let regs = registers m bus in
+let prefetchable regs =
   Array.init bars (fun i ->
       address regs i <> None
       && regs.(i) land io_bar = 0
       && regs.(i) land prefetchable_bar <> 0)
 
-let bars { files = m; bus; _ } =
-  let regs = registers m bus and file = path m bus "resource" in
+let bars { files = m; bus; _ } regs =
+  let file = path m bus "resource" in
   let lines = Array.of_list (String.split_on_char '\n' (read file)) in
   Array.init bars (fun i ->
       match address regs i with

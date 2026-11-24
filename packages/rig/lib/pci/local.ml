@@ -594,7 +594,8 @@ let take l =
   let fds = Vfio.fds () and u = undo () in
   match
     let* addressing = Sysfs.access l in
-    let bars = Sysfs.bars l and prefetchable = Sysfs.prefetchable l in
+    let regs = Sysfs.registers l in
+    let bars = Sysfs.bars l regs and prefetchable = Sysfs.prefetchable regs in
     match addressing with
     | Ops.Iommu ->
         Ok

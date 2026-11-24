@@ -75,18 +75,22 @@ val translates : t -> string -> bool
     requests of the function at [bus], outside VFIO's no-IOMMU mode and an
     identity domain. *)
 
-val bars : 's lock -> (int * int) option array
-(** [bars l] is, for each of the six BARs of the function [l] locks, its bus
-    address, from its register, and its size, or [None] where there is no BAR,
-    such as at the upper index of a 64-bit BAR. Raises {!Fail.Failed} if a file
-    cannot be read. *)
+val registers : 's lock -> int array
+(** [registers l] is the six BAR registers of the function [l] locks, from its
+    configuration space. Raises {!Fail.Failed} if it cannot be read. *)
 
-val prefetchable : 's lock -> bool array
-(** [prefetchable l] is, for each of the six BARs of the function [l] locks,
+val bars : 's lock -> int array -> (int * int) option array
+(** [bars l regs] is, for each of the six BARs of the function [l] locks, its
+    bus address, from its register, and its size, or [None] where there is no
+    BAR, such as at the upper index of a 64-bit BAR. [regs] must be
+    [registers l]. Raises {!Fail.Failed} if a file cannot be read. *)
+
+val prefetchable : int array -> bool array
+(** [prefetchable regs] is, for each of the six BARs whose registers are [regs],
     whether it is memory its register marks prefetchable: memory without side
     effects on reads, into which host bridges may merge the processor's writes
-    (PCI Local Bus Specification 2.2, 6.2.5.1). Raises {!Fail.Failed} if its
-    configuration space cannot be read. *)
+    (PCI Local Bus Specification 2.2, 6.2.5.1). [regs] must be a function's
+    {!registers}. *)
 
 val root : t -> string
 (** [root m] is the directory {!v} took. *)
