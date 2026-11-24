@@ -44,10 +44,11 @@ static int rig_amd_commit(void *self, uint64_t v, const char **failure) {
 /* A device's functions, and a measuring device's, whose facts list
    counters (Rig_edge: [measures] is NULL iff they list none). */
 static const struct rig_driver driver = {rig_amd_room, rig_amd_submit,
-                                         rig_amd_commit, rig_amd_settle, NULL};
+                                         rig_amd_commit, rig_amd_settle, NULL,
+                                         NULL};
 static const struct rig_driver measuring = {rig_amd_room, rig_amd_submit,
                                             rig_amd_commit, rig_amd_settle,
-                                            rig_amd_measures};
+                                            rig_amd_measures, NULL};
 
 /* The header's values that Rig_amd and Template read rather than state,
    each by its name: caml_rig_amd_<name> is [v]. */

@@ -8,6 +8,7 @@
 
 #define _GNU_SOURCE
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -573,10 +574,14 @@ value caml_rig_sub_fixed(value v_s, value v_k, value v_stamps, value v_use) {
 
 /* Every call made, the newest first. A call is never freed, so the list only
    grows at its head, and its links are fixed once published: a walk needs
-   no lock. Its length is the most submits that ever ran at once. */
+   no lock. Its length is the most calls ever held at once: each submit, trim
+   (caml_rig_calls_trim) and count for the tests (caml_rig_submit_state)
+   holds one. */
 static struct rig_call *_Atomic calls;
 
-static void call_free(struct rig_call *c) {
+/* Frees the call [c]'s arrays and leaves it, past its links, as [calloc]
+   made it: it fits no submission, whose ids start at 1. */
+static void call_empty(struct rig_call *c) {
   free(c->fixed);
   free(c->slots);
   free(c->addresses);
@@ -588,6 +593,12 @@ static void call_free(struct rig_call *c) {
   free(c->args);
   free(c->marks);
   free(c->spare);
+  size_t links = offsetof(struct rig_call, after) + sizeof c->after;
+  memset((char *)c + links, 0, sizeof *c - links);
+}
+
+static void call_free(struct rig_call *c) {
+  call_empty(c);
   free(c);
 }
 
@@ -747,13 +758,34 @@ value caml_rig_submit_begin(value v_s) {
 }
 
 /* Ends the submit that [caml_rig_submit_begin] began: forgets the call
-   [v_c]'s buffers and waits, and gives it back. */
+   [v_c]'s buffers, waits and growth, and gives it back. */
 value caml_rig_submit_end(value v_c) {
   struct rig_call *c = Call_val(v_c);
   for (int k = 0; k < c->nslots; k++) c->slots[k].stamps = NULL;
   c->npoints = c->nwaits = c->checks = 0;
+  atomic_store_explicit(&c->grows, NULL, memory_order_release);
   call_give(c);
   return Val_unit;
+}
+
+/* Frees the arrays of the calls no submit holds, each taken as a submit
+   takes one: a submit that finds every call taken makes another. */
+value caml_rig_calls_trim(value unit) {
+  (void)unit;
+  struct rig_call *c = atomic_load_explicit(&calls, memory_order_acquire);
+  for (; c != NULL; c = c->next) {
+    if (!call_try(c)) continue;
+    call_empty(c);
+    call_give(c);
+  }
+  return Val_unit;
+}
+
+int rig_growing(const struct rig_device *d) {
+  struct rig_call *c = atomic_load_explicit(&calls, memory_order_acquire);
+  for (; c != NULL; c = c->next)
+    if (atomic_load_explicit(&c->grows, memory_order_acquire) == d) return 1;
+  return 0;
 }
 
 /* The bytes of the call [c]'s arrays. The addresses and the sides hold as

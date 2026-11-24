@@ -452,6 +452,11 @@ val forget_measures : device -> int -> bool
 (** [forget_measures d v] has [d]'s driver free its measures of [v], which no
     later {!measures} names. It waits and fails as {!measures} does. *)
 
+val trim : device -> unit
+(** [trim d] has [d]'s driver give back what its queues grew into ([trim] of
+    {!Rig_edge.section-calls}), unless a submit is growing them. It waits as
+    {!settle} does; on a lost device it does nothing. *)
+
 val settled : int -> bool
 (** [settled p] is [true] iff [p] is settled. A point whose device the read
     of its word loses has not settled. A point of a device that gave its slot

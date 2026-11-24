@@ -1151,10 +1151,14 @@ val set_budget : t -> int -> unit
 val free_cache : t -> unit
 (** [free_cache d] first returns [d]'s staging memory that no copy holds
     ({!Buffer.section-copying}), then moves [d]'s collected memory
-    ({!section-reclaim}), then returns [d]'s cached memory to its driver
-    once the work using it is done. On a lost [d] that has stopped
-    ({!section-stops}), that is all of its memory that is collected. On
-    {!host}, it frees the collected buffers the host keeps for reuse. *)
+    ({!section-reclaim}), then returns [d]'s cached memory to its driver once
+    the work using it is done. On a lost [d] that has stopped
+    ({!section-stops}), that is all of its memory that is collected. Last, where
+    [d]'s driver's interface says so, it gives back the memory [d]'s queues grew
+    into to hold submissions ({!submit}), also once the work using it is done,
+    unless a submit is growing them. On {!host}, it frees the collected buffers
+    the host keeps for reuse, and the blocks rig keeps for later submits that no
+    submit holds. *)
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes,
@@ -2505,12 +2509,12 @@ val submit :
     returns, so a change to them afterwards changes nothing of [v]'s work.
     Any number of domains submit [s] at once, each with its own [args].
 
-    [submit] copies the values into blocks that rig keeps for later submits for
-    the life of the process: as many sets as submits were ever under way at
-    once, each as large as the largest submission it served ({!section-valid}).
-    A [params] shorter than its part costs its own bytes and those an earlier
-    submit of the same blocks may have written past them, which [submit] sets
-    back to [0].
+    [submit] copies the values into blocks that rig keeps for later submits: as
+    many sets as submits and {!free_cache}s of {!host} were ever under way at
+    once, each as large as the largest submission it served ({!section-valid}),
+    until a {!free_cache} of {!host} frees the sets no submit holds. A [params]
+    shorter than its part costs its own bytes and those an earlier submit of the
+    same blocks may have written past them, which [submit] sets back to [0].
 
     [submit] blocks while [d]'s queues have no room for the work, while it
     waits for a point on the host, and where its driver's interface says it

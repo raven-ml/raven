@@ -263,6 +263,7 @@ struct polled_run {
   _Atomic uint64_t committed; /* the last value committed */
   uint64_t lag;               /* the uncommitted values that commit */
   int capacity;      /* parts the queue holds */
+  int made;          /* parts the queue held at the make */
   intnat grows; /* the most parts the queue grows to hold; 0 for none */
   uint64_t most_rows; /* the most copy rows a submission holds; 0 for any */
   int may_block;     /* a full queue's submit waits instead of [room] */
@@ -334,10 +335,11 @@ static rig_room_fn polled_room;
 static rig_submit_fn polled_submit;
 static rig_commit_fn polled_commit;
 static rig_settle_fn polled_settle;
+static rig_trim_fn polled_trim;
 
-static const struct rig_driver polled_driver = {polled_room, polled_submit,
-                                                polled_commit, polled_settle,
-                                                NULL};
+static const struct rig_driver polled_driver = {
+    polled_room, polled_submit, polled_commit, polled_settle, NULL,
+    polled_trim};
 
 /* What rig must not do, as Polled sees it: read or free twice a word of
    the driver's own after rig freed it, free a word in its array, hand a
@@ -466,7 +468,7 @@ value rig_test_polled_new(value v_capacity, value v_may_block,
   lock_init(&p->mu);
   cond_init(&p->cv);
   cond_init(&p->work);
-  r->capacity = Int_val(v_capacity);
+  r->capacity = r->made = Int_val(v_capacity);
   r->may_block = Bool_val(v_may_block);
   r->lag = (uint64_t)Long_val(v_lag);
   p->run = r;
@@ -1014,6 +1016,16 @@ static int polled_room(void *self, int nwaits, const struct rig_part *parts,
   int full = r->held + n > r->capacity;
   unlock(&p->mu);
   return full ? RIG_LATER : RIG_FITS;
+}
+
+/* Makes the queue hold the parts it held at the make, as a driver gives
+   back what its queues grew into. */
+static void polled_trim(void *self) {
+  struct polled *p = self;
+  atomic_fetch_add(&p->trims, 1);
+  lock(&p->mu);
+  p->run->capacity = p->run->made;
+  unlock(&p->mu);
 }
 
 /* The parameters of a launch or a fill, if [p] is either. */

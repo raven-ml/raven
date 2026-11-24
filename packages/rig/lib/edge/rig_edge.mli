@@ -19,12 +19,13 @@
 
     rig reads a device's {!type-facts} once, when the device opens. It then
     calls the driver's OCaml functions to allocate and map memory, to load
-    code and to grow its queues, and five C functions of the driver to run work
-    and read its times ({!section-calls}). [room] returns whether a
-    submission's parts fit the device's queues, [submit] places them on the
-    queues as the work of the next value of the device's timeline, and
-    [commit] lets that work run. [settle] writes the times of work that ran
-    and [measures] its counters, and a driver may leave either [NULL].
+    code and to grow its queues, and six C functions of the driver to run work,
+    read its times and shrink its queues ({!section-calls}). [room] returns
+    whether a submission's parts fit the device's queues, [submit] places them
+    on the queues as the work of the next value of the device's timeline, and
+    [commit] lets that work run. [settle] writes the times of work that ran,
+    [measures] its counters, and [trim] gives back what the queues grew into.
+    A driver may leave any of these three [NULL].
 
     A device reports progress in its {e timeline word}, eight bytes of memory
     that hold a value of the device's timeline. [Rig]'s preamble and Timelines
@@ -239,7 +240,7 @@ type 'region facts = {
 
 (** {1:calls The C functions}
 
-    A driver's [struct rig_driver] holds five C functions, which rig calls
+    A driver's [struct rig_driver] holds six C functions, which rig calls
     with the facts' [edge]. They return the constants of [rig_edge.h].
     {ul
     {- [room] is given the parts and the number of waits the [submit]
@@ -310,9 +311,21 @@ type 'region facts = {
        once the word shows [v], and later calls do not name [v]. rig calls
        it with an [out] at each read of [v]'s measures, and with [NULL]
        once, after the last. It returns [RIG_OK], or [RIG_FAILED], which
-       loses the device.}}
+       loses the device.}
+    {- [trim] gives back what the device's growths made ({!Driver.val-grow}),
+       whether a [room] put it into the queues or not, so that the queues
+       hold what they held at the open, and a later [room] answers
+       [RIG_GROW] for parts that need a growth again. Memory that work on
+       the queues still reads goes once that work completes, and [trim]
+       never waits for it. rig calls it at a {!Rig.free_cache} of the
+       device. It never calls it once the device is lost, nor while a
+       submission is between a [room] that answered [RIG_GROW] and the end
+       of its submit, so a growth that answered [Grown] stays for its
+       [room]. [trim] may be [NULL]: rig then gives nothing back at a
+       {!Rig.free_cache}, and the driver's interface states how long its
+       growth stays.}}
 
-    rig calls the five one at a time for each device, with [room] before
+    rig calls the six one at a time for each device, with [room] before
     each [submit]. They must call no function of the OCaml runtime and read
     no OCaml value, since rig may call them with the runtime released. A
     [submit], [commit], [settle] or [measures] that returns [RIG_FAILED] sets
@@ -694,7 +707,8 @@ module type Driver = sig
       ({!Rig_edge.section-calls}). It changes nothing the C functions read:
       a later [room] puts what it made into the queues. Once it has answered
       [Grown], [room] must not answer [RIG_GROW] for those parts again,
-      whatever other submissions' growths answer.
+      whatever other submissions' growths answer, and rig calls no [trim]
+      of [d] until that submission's submit ends.
 
       It is [Short n] if [d] has no memory for [n] bytes the growth takes.
       What it made stays for a later [room]. rig then runs a round of the

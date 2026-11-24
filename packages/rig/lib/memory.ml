@@ -2700,11 +2700,19 @@ let set_budget d n =
   if Dev.is_host d then heap_trim n else release_cache ~upto:n ~wait:false d;
   if allocated d > n then release_staging d
 
-(* [d]'s free staging halves go first, then its drain returns what was
-   collected since its last call, the halves among it once their legs are
-   done, and a Stopped device's cache with it. *)
+external trim_calls : unit -> unit = "caml_rig_calls_trim" [@@noalloc]
+
+(* [d]'s free staging halves go first, then its drain returns what was collected
+   since its last call, the halves among it once their legs are done, and a
+   Stopped device's cache with it. The host's also frees the arrays of the calls
+   no submit holds, which submits of every device share. *)
 let free_cache d =
   Dev.check_held "free_cache";
   release_staging d;
   drain d;
-  if Dev.is_host d then heap_drop () else release_cache ~wait:false d
+  if Dev.is_host d then begin
+    heap_drop ();
+    trim_calls ()
+  end
+  else release_cache ~wait:false d;
+  Dev.trim d

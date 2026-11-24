@@ -247,7 +247,9 @@ static int fits(const struct rig_part *p, const uint8_t *args) {
    launch. Room answers RIG_GROW for parts the empty arena does not hold,
    and the growth (caml_rig_metal_grow) makes an arena that holds twice
    them, which the next room installs: the command buffers that use the
-   old one keep it until their work completes. */
+   old one keep it until their work completes. A trim gives the arena back
+   in the same way, and the device holds none until a growth, as after its
+   open. */
 
 _Thread_local uint64_t rig_metal_asked;
 
@@ -317,6 +319,20 @@ int rig_metal_room(void *self, int nwaits, const struct rig_part *parts,
   for (int i = 0; i < n; i++)
     if (!fits(&parts[i], args)) return RIG_NEVER;
   return arena_room(((struct rig_metal *)self)->run, parts, n);
+}
+
+/* Gives back the arena and a growth no room installed. */
+void rig_metal_trim(void *self) {
+  struct rig_metal_run *r = ((struct rig_metal *)self)->run;
+  pthread_mutex_lock(&r->grown_mutex);
+  id<MTLBuffer> g = r->grown;
+  r->grown = nil;
+  pthread_mutex_unlock(&r->grown_mutex);
+  [g release];
+  [r->arena release];
+  r->arena = nil;
+  r->arena_host = NULL;
+  r->arena_size = 0;
 }
 
 /* Commits the residency set's additions, so that the work of this

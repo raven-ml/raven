@@ -6,10 +6,10 @@
 /* Handing work to a device from C.
 
    A device's driver keeps its C state for one device, [self], whose first
-   member is a pointer to the driver's struct rig_driver: five functions
-   in the shapes rig_room_fn, rig_submit_fn, rig_commit_fn, rig_settle_fn
-   and rig_measures_fn, which rig calls with [self] and the structures
-   below.
+   member is a pointer to the driver's struct rig_driver: six functions
+   in the shapes rig_room_fn, rig_submit_fn, rig_commit_fn, rig_settle_fn,
+   rig_measures_fn and rig_trim_fn, which rig calls with [self] and the
+   structures below.
    The section "The C functions" of rig_edge.mli states what each must do
    and how rig calls them. This header gives their C shapes and the layout
    of what they are handed. rig calls them without the OCaml runtime: they
@@ -219,6 +219,10 @@ typedef int rig_settle_fn(void *self, uint64_t v, const char **failure);
 typedef int rig_measures_fn(void *self, uint64_t v, uint64_t *out,
                             const char **failure);
 
+/* Gives back what the device's growths made (rig_edge.mli, The C
+   functions: [trim]). With [trim] NULL, rig gives nothing back. */
+typedef void rig_trim_fn(void *self);
+
 /* A driver's functions, which the first member of its state for each
    device points to. */
 struct rig_driver {
@@ -227,6 +231,7 @@ struct rig_driver {
   rig_commit_fn *commit;
   rig_settle_fn *settle;
   rig_measures_fn *measures;
+  rig_trim_fn *trim;
 };
 
 /* The functions of the driver whose C state for one device is [self]. */

@@ -70,9 +70,10 @@ struct rig_metal_run {
   _Atomic int wanted;          /* a handler found the open mutex held */
   _Atomic int holds; /* beside the fields handlers write */
   /* The parameter arena (rig_metal_queue.c): its buffer and host address,
-     nil and NULL until a growth, its bytes, the arena bytes taken since
-     the open, the count its first byte holds, the growth room installs
-     next, under [grown_mutex], and the device's longest buffer. */
+     nil and NULL until a growth and after a trim, its bytes, the arena
+     bytes taken since the open, the count its first byte holds, the growth
+     room installs next, under [grown_mutex], and the device's longest
+     buffer. */
   id<MTLBuffer> arena;
   uint8_t *arena_host;
   uint64_t arena_size, arena_put, arena_base;

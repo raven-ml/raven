@@ -182,9 +182,10 @@ val capability : t -> Rig_metal_abi.t
 (** {1:work Work}
 
     The device's [struct rig_driver] holds [rig_metal_room],
-    [rig_metal_submit] and [rig_metal_commit], which [rig_metal.h] declares,
-    and no [settle]: the command buffers' completion handlers write a
-    value's times before they raise the word.
+    [rig_metal_submit], [rig_metal_commit] and [rig_metal_trim], which
+    [rig_metal.h] declares, and no [settle]: the command buffers' completion
+    handlers write a value's times before they raise the word.
+    [rig_metal_trim] gives back the parameter arena ({!section-launches}).
     [rig_metal_submit] encodes the parts of a value, in order, into the open
     command buffer, and opens one if none is open. A command buffer has one
     compute encoder, which runs its commands one after the other
@@ -263,9 +264,12 @@ val capability : t -> Rig_metal_abi.t
     rig cannot find memory for raises [Rig.Out_of_memory]. Apple documents
     no alignment for a buffer's first byte ({!section-memory}), so a growth
     whose arena Metal places, by its GPU or host address, off a multiple of
-    256 bytes raises [Fault] and makes nothing. The arena never shrinks: it stays until the device stops,
-    and counts in no budget, since a budget counts buffers, images' code and
-    caches ({!Rig.section-reclaim}), as no driver's queues count in one.
+    256 bytes raises [Fault] and makes nothing. The arena stays until a
+    {!Rig.free_cache} of the device or its stop, which give it back once the
+    command buffers that use it complete; the next launch with parameters
+    then grows an arena anew, as the first did. The arena counts in no
+    budget, since a budget counts buffers, images' code and caches
+    ({!Rig.section-reclaim}), as no driver's queues count in one.
 
     [rig_metal_room] refuses a launch if:
     {ul

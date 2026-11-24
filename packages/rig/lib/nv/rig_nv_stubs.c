@@ -65,7 +65,8 @@ static int rig_nv_commit(void *self, uint64_t v, const char **failure) {
 }
 
 static const struct rig_driver driver = {rig_nv_room, rig_nv_submit,
-                                         rig_nv_commit, rig_nv_settle, NULL};
+                                         rig_nv_commit, rig_nv_settle, NULL,
+                                         NULL};
 
 /* A device whose timeline word is the host's 64-bit word at [v_word], the
    GPU's at [v_word_gpu], whose join words follow the GPU's word at

@@ -1612,6 +1612,9 @@ value caml_rig_submit(value v_s, value v_c) {
   end_turn(d);
   if (r == SUBMIT_NO_ROOM || r == SUBMIT_NEVER || r == SUBMIT_GROW)
     d->nrecord -= c->nwaits;
+  /* Set under the mutex, which a trim takes before it reads it. */
+  if (r == SUBMIT_GROW)
+    atomic_store_explicit(&c->grows, d, memory_order_release);
   if (r == SUBMIT_FAILED) r = fail_locked(d, c->why);
   else if (r == SUBMIT_OK && is_lost(d)) r = SUBMIT_LOST_AFTER;
   return Val_int(give_turn(d, released, r));
@@ -1647,6 +1650,28 @@ value caml_rig_commit(value v_d) {
   if (!lock_turn(d, &released)) CAMLreturn(Val_int(SUBMIT_BUSY));
   int r = is_lost(d) ? SUBMIT_LOST : commit(d);
   CAMLreturn(Val_int(give_turn(d, released, r)));
+}
+
+/* Trimming */
+
+/* Has [d]'s driver give back what its queues grew into ([rig_trim_fn]),
+   unless a submit grows them: between that submit's RIG_GROW and its next
+   room, a trim would undo the growth the driver answered Grown for.
+   Answers SUBMIT_OK, SUBMIT_BUSY (the turn stayed held past the still
+   interval) or SUBMIT_LOST, and releases the runtime as caml_rig_settle
+   does. */
+value caml_rig_trim(value v_d) {
+  struct rig_device *d = Device_val(v_d);
+  int released;
+  if (d->driver.trim == NULL) return Val_int(SUBMIT_OK);
+  if (!lock_turn(d, &released)) return Val_int(SUBMIT_BUSY);
+  int r = is_lost(d) ? SUBMIT_LOST : SUBMIT_OK;
+  if (r == SUBMIT_OK && !rig_growing(d)) {
+    begin_turn(d);
+    d->driver.trim(d->self);
+    end_turn(d);
+  }
+  return Val_int(give_turn(d, released, r));
 }
 
 /* Settling */

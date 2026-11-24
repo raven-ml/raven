@@ -384,15 +384,20 @@ struct rig_mark {
 
 /* The state of one submit: what it collects and what it answers. A submit
    takes a free one, which no other submit uses until it gives it back. Its
-   arrays grow to the largest submission it served. */
+   arrays grow to the largest submission it served, until a free_cache of
+   the host frees them. */
 struct rig_call {
   /* [taken] and [next], which every submit's walk reads, lie RIG_APART
      bytes from the fields the call's own submit writes and from the memory
      before the call, so that the submits of two domains share no cache line
-     through them. */
+     through them. [grows], which a trim's walk reads ([rig_growing]), lies
+     with them, since the submit that writes it writes [taken] too. */
   char before[RIG_APART];
   _Atomic int taken;
   struct rig_call *next; /* the next of every call made, fixed once made */
+  /* The device whose queues the submit grows, from its room's RIG_GROW to
+     its end; NULL for none. */
+  _Atomic(const struct rig_device *) grows;
   char after[RIG_APART];
   int cfixed, cslots;
   int nslots; /* the slots of the submission it served last */
@@ -451,5 +456,9 @@ void *rig_host_state(void);
 
 /* Raises the stamps [s]'s work names in the call [c] to [p]. */
 void rig_sub_raise(const struct rig_sub *s, struct rig_call *c, uint64_t p);
+
+/* Whether a submit grows [d]'s queues: its room answered RIG_GROW on [d],
+   and the submit has not ended. */
+int rig_growing(const struct rig_device *d);
 
 #endif

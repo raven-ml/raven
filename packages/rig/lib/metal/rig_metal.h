@@ -22,4 +22,6 @@ int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
 
 int rig_metal_commit(void *self, uint64_t v, const char **failure);
 
+void rig_metal_trim(void *self);
+
 #endif

@@ -30,6 +30,7 @@ external c_publish : c -> int Atomic.t -> unit = "caml_rig_publish"
 external c_committed : c -> int = "caml_rig_committed" [@@noalloc]
 external c_commit : c -> int = "caml_rig_commit"
 external c_settle : c -> int -> int = "caml_rig_settle"
+external c_trim : c -> int = "caml_rig_trim"
 
 external c_measures :
   c -> int -> (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t -> int
@@ -847,6 +848,8 @@ let rec measures d v out =
 let rec forget_measures d v =
   let r = c_measures_free d.live.c v in
   if r = Answer.busy then forget_measures d v else r = Answer.ok
+
+let rec trim d = if c_trim d.live.c = Answer.busy then trim d
 
 (* A lost device's word of its driver's own moves only where rig reads it
    through the driver: its stop raises it, or the work the stop left running

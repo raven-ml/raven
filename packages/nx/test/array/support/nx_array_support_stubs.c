@@ -267,7 +267,7 @@ static rig_commit_fn late_commit;
 /* No settle: the late device writes no times. No measures: it lists no
    counters. */
 static const struct rig_driver late_driver = {late_room, late_submit,
-                                              late_commit, NULL, NULL};
+                                              late_commit, NULL, NULL, NULL};
 
 /* A Late device over the word at [v_word]. */
 value nx_array_support_late_new(value v_word) {

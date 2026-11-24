@@ -67,7 +67,8 @@ module Polled : sig
       for such a submission instead, and its [grow] makes the queue hold the
       parts of the submission whose [room] answered so on the calling
       thread, up to [grows] parts. For more, and where it refuses
-      ({!fail_at}), [grow] answers [Short 4096]. Without [copies] (defaults
+      ({!fail_at}), [grow] answers [Short 4096]. Its [trim] makes the queue
+      hold [capacity] parts again. Without [copies] (defaults
       to [true]) it lists no copy queue. Its compute queue
       takes words, and does nothing for them.
       Without [host_visible] (defaults to [true]) the host does not address

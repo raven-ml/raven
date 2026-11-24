@@ -85,8 +85,9 @@ static int family(id<MTLDevice> device) {
   return [device supportsFamily:MTLGPUFamilyMac2] ? 0 : -1;
 }
 
-static const struct rig_driver driver = {rig_metal_room, rig_metal_submit,
-                                         rig_metal_commit, NULL, NULL};
+static const struct rig_driver driver = {
+    rig_metal_room, rig_metal_submit, rig_metal_commit, NULL, NULL,
+    rig_metal_trim};
 
 /* A device whose word is the 8 bytes at [word], its values starting after
    theirs. */

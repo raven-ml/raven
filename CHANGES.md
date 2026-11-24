@@ -74,6 +74,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- `Rig.free_cache` gives back a Metal device's parameter arena, and on
+  `Rig.host` the blocks kept for later submits. Both grow with the largest
+  submission, and neither returned before.
 - Host buffers made on several domains at once cost less: each counter of
   the host's heap sits on cache lines of its own, where the counters shared
   lines. On fudge (Core Ultra 5 235), a 16-byte `Rig.Buffer.create` of the

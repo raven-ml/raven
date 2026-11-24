@@ -443,7 +443,7 @@ static int ran_commit(void *self, uint64_t v, const char **failure) {
 }
 
 static const struct rig_driver host_driver = {host_room, host_submit,
-                                              ran_commit, NULL, NULL};
+                                              ran_commit, NULL, NULL, NULL};
 
 void *rig_host_state(void) {
   host.driver = &host_driver;
@@ -557,7 +557,7 @@ static int software_submit(void *self, uint64_t v,
 
 static const struct rig_driver software_driver = {software_room,
                                                   software_submit, ran_commit,
-                                                  NULL, NULL};
+                                                  NULL, NULL, NULL};
 
 /* A new software device's state, whose word lies at [v_word]. */
 value caml_rig_software_new(value v_word) {

@@ -30,10 +30,11 @@
     GPU function first, [d] drops the submissions least recently used. A
     call of more than 64 MiB takes a submission of its own, which no later
     call reuses. A call's values, its launches' grids and words, go into
-    memory that rig keeps for the life of the process ({!Rig.submit}):
+    memory that rig keeps for later submits ({!Rig.submit}):
     [32 (2 + ⌈w / 2⌉)] bytes for each launch of a GPU function of [w]
-    words, at most 8,512, in as many sets as submits were ever under way at
-    once, each as large as the largest submission it served. A section
+    words, at most 8,512, in as many sets as submits and
+    {!Rig.free_cache}s of {!Rig.host} were ever under way at once,
+    each as large as the largest submission it served. A section
     states where a call's launches, and so its words, grow with its
     extents. Beside its arrays, a kernel takes {e workspace}, memory on [d]
     for its temporaries, and {e tickets}, zero 32-bit words its groups
