@@ -19,7 +19,9 @@
 ; values in one place, as the special values of log, log2, log1p and pow
 ; do: a bound of 16 vectorises every kind. probe/gcc.ml gives these
 ; settings to gcc under any name, a cross compiler's such as
-; x86_64-w64-mingw32-gcc included, and none to clang.
+; x86_64-w64-mingw32-gcc included, and none to clang. It turns gcc's
+; vectoriser off where it fuses multiplies and adds despite
+; -ffp-contract=off, as gcc 12.2 does on x86-64.
 
 (library
  (name nx_cpu)

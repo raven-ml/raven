@@ -3680,6 +3680,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- nx.cpu built by gcc 12 on x86-64 (Debian 12's) gives every other target's
+  bits: that gcc fused multiplies and adds despite `-ffp-contract=off` (gcc bug
+  107647). Under it nx.cpu builds without the vectoriser, which is slower.
 - `Nx.eig` and `Nx.eigvals` on nx.cpu answered NaN when the QR iteration
   stalled, as on a normal matrix whose pair ±i repeats. A block left whole at
   the iteration limit now splits where a subdiagonal is below u times its norm.
