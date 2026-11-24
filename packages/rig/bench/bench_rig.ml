@@ -466,10 +466,40 @@ let written_twice () =
 let row name setup f = Thumper.bench_with_setup ~setup name f
 let create d n () = ignore (B.create d n)
 
+(* [n] other domains creating host buffers of 16 bytes until [stop_rivals], as a
+   program making small results on [n + 1] domains: each buffer reserves, counts
+   and returns its bytes on the host's own counters. *)
+let rivals n =
+  let stop = Atomic.make false in
+  let rival () =
+    while not (Atomic.get stop) do
+      create Rig.host 16 ()
+    done
+  in
+  (stop, List.init n (fun _ -> Domain.spawn rival))
+
+let stop_rivals (stop, ds) =
+  Atomic.set stop true;
+  List.iter Domain.join ds
+
+(* The creates of one call of the eight-domain row. A minor collection stops
+   every domain and finalises each one's dead buffers, and on eight domains one
+   comes about every thousand creates of each: a call of this many spans
+   several, so each sample holds its share of them, where a sample of a thousand
+   single creates held one or none. *)
+let creates = 8192
+
 let buffer_rows =
   Thumper.group "buffer"
     [
       Thumper.bench "host-create-16" (create Rig.host 16);
+      Thumper.bench_with_setup "host-create-16-x8192-8-domains"
+        ~setup:(fun () -> rivals 7)
+        ~teardown:stop_rivals
+        (fun _ ->
+          for _ = 1 to creates do
+            create Rig.host 16 ()
+          done);
       Thumper.bench "host-create-1M" (create Rig.host mib);
       row "memory-create-cached-4K" memory (fun d -> create d (4 * kib) ());
       (* A software device's borrow of another's memory, dropped: a borrow
