@@ -71,7 +71,8 @@
     -Werror
     -g
     -fno-omit-frame-pointer
-    -fsanitize=address,undefined))
+    -fsanitize=address,undefined
+    (:include sanitize_c_flags.sexp)))
   (link_flags
    (:standard -cclib -fsanitize=address,undefined))
   (env-vars
@@ -111,3 +112,33 @@
    (WINDTRAP_TIMEOUT 60)
    (CACHEDB cache)
    (XDG_CACHE_HOME cache))))
+
+; The sanitize profile's C flags for the host's compiler, which every env's
+; sanitize c_flags inherit through :standard. GCC 13.3 and 14.2 on arm64 never
+; release a frame they move to AddressSanitizer's fake stack, which detects a
+; use after return: the return path writes the frame's retired magic and
+; poisons its shadow but never clears its flag byte, which GCC 14.2 on x86_64
+; does. Once a size class's frames are all taken, each call of a function with
+; an addressed local scans them, 5 to 11 us: nx's suite of saves ran 15 times
+; as long and timed out, and talon's Parquet suites 10 to 14 times. GCC PR
+; 120475 reports the slowdown. With GCC on arm64 the profile passes
+; --param=asan-use-after-return=0: GCC makes no fake frames, and a use after
+; return goes unchecked.
+
+(rule
+ (target sanitize_c_flags.sexp)
+ (enabled_if
+  (and
+   (= %{architecture} arm64)
+   (= %{ocaml-config:c_compiler} gcc)))
+ (action
+  (write-file %{target} "(--param=asan-use-after-return=0)")))
+
+(rule
+ (target sanitize_c_flags.sexp)
+ (enabled_if
+  (or
+   (<> %{architecture} arm64)
+   (<> %{ocaml-config:c_compiler} gcc)))
+ (action
+  (write-file %{target} "()")))
