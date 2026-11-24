@@ -2092,30 +2092,29 @@ let free_cache_ref (v : rdevv) outcome =
 
 let free_cache_sys ((s : sdev), w) = guard w @@ fun () -> Rig.free_cache s.d
 
-(* Whether a cell holds a buffer of a file's memory, or nothing, so that a
-   barrier of its file can be called. *)
-let on_file c =
-  match c.rb with
-  | Some b -> ( match b.mem.mkind with File _ -> true | _ -> false)
-  | None -> true
-
 (* A barrier of the file whose memory the cell holds: a view or a borrow of a
    file's buffer reaches its file. The barrier takes the file and reads its
    buffer, on the disk, so it uses neither the cell's buffer nor a device that
    borrowed it: a lost borrower's loss reaches it only through the file's last
-   write (rig_disk.mli). *)
+   write (rig_disk.mli). A cell of other memory reaches no file, and the call
+   does nothing: a [~pre] that refused it would keep the command to the prefix
+   on two domains, which most programs leave before a file's buffer is made. *)
 let barrier_ref last c outcome =
   with_buf c outcome @@ fun b ->
   let vd = verdict () in
   (* A barrier returns at once on a file opened for reading or of no bytes
      (rig_disk.mli). *)
-  if not (read_only b.mem || Bytes.length b.mem.data = 0) then reads vd b.mem;
+  (match b.mem.mkind with
+  | File true when Bytes.length b.mem.data > 0 -> reads vd b.mem
+  | _ -> ());
   judge c.w vd outcome Fun.id;
   drop_if last c
 
 let barrier_sys last c =
   let sb = take ~last c in
-  guard c.sw @@ fun () -> Rig_disk.barrier (Option.get sb.m.file)
+  match sb.m.file with
+  | Some f -> guard c.sw @@ fun () -> Rig_disk.barrier f
+  | None -> ()
 
 (* The command list *)
 
@@ -2692,7 +2691,6 @@ let commands ~two ~fork =
   in
   let barrier =
     command "barrier"
-      ~pre:(fun _ c -> on_file c)
       (last @-> cell ^-> judges unit)
       barrier_ref
       (fun l c -> one c (fun () -> barrier_sys l c))
