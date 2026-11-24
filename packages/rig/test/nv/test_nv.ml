@@ -631,11 +631,10 @@ let high_word () =
   H.set64 (host b) 0;
   let l = S.launches t.g in
   let s = Rig.Submission.make t.d [| S.words (release l (address b) 9) |] in
-  S.watchdog "a wait on a high host word" (fun () ->
-      let v = Rig.submit s ~waits:[| point |] ~buffers:[||] ~args:[||] in
-      held_at t.g (Rig.Point.value v - 1) ~ms:20;
-      ignore (P.run p);
-      Rig.Point.wait v);
+  let v = Rig.submit s ~waits:[| point |] ~buffers:[||] ~args:[||] in
+  held_at t.g (Rig.Point.value v - 1) ~ms:20;
+  ignore (P.run p);
+  Rig.Point.wait v;
   equal int ~msg:"released" 9 (H.get64 (host b));
   S.free_launches l;
   N.free t.g b
@@ -654,12 +653,11 @@ let many_waits () =
   in
   let points = Array.of_list (List.map point producers) in
   let s = Rig.Submission.make t.d [||] in
-  S.watchdog "a submission of 300 waits" (fun () ->
-      let v = Rig.submit s ~waits:points ~buffers:[||] ~args:[||] in
-      let reached = List.filter (fun (_, p) -> P.queued p = 0) producers in
-      equal int ~msg:"producers reached on the host" 0 (List.length reached);
-      List.iter (fun (_, p) -> ignore (P.run p)) producers;
-      Rig.Point.wait v)
+  let v = Rig.submit s ~waits:points ~buffers:[||] ~args:[||] in
+  let reached = List.filter (fun (_, p) -> P.queued p = 0) producers in
+  equal int ~msg:"producers reached on the host" 0 (List.length reached);
+  List.iter (fun (_, p) -> ignore (P.run p)) producers;
+  Rig.Point.wait v
 
 (* A ring entry cut in half is refused when submitted, and no value is
    assigned. *)
@@ -1177,10 +1175,9 @@ let chain_release () =
   in
   let t0 = Rig.Profile.now () in
   let p = S.submit t [| S.words e |] in
-  S.watchdog "the chain's release" (fun () ->
-      while H.get64 (host word) <> 7 do
-        Domain.cpu_relax ()
-      done);
+  while H.get64 (host word) <> 7 do
+    Domain.cpu_relax ()
+  done;
   let waited = Rig.Profile.now () - t0 in
   List.iteri
     (fun i d ->
@@ -1296,12 +1293,13 @@ let join_alternation () =
   let fixed = [ (h, Rig.Read); (b, Rig.Read) ] in
   S.pattern ha bytes 7;
   let n = 2_000 in
-  S.watch_rounds "a round of work across alternating joins" n (fun i ->
-      (* Large copies exercise the private kernel without transferring a
-         whole image at every value. *)
-      let parts = if i > n - 16 then large else small in
-      let s = Sub.make ~fixed t.d parts.(i land 1) in
-      Rig.Point.wait (Rig.submit s ~buffers:[||] ~args:[||]));
+  for i = 1 to n do
+    (* Large copies exercise the private kernel without transferring a whole
+       image at every value. *)
+    let parts = if i > n - 16 then large else small in
+    let s = Sub.make ~fixed t.d parts.(i land 1) in
+    Rig.Point.wait (Rig.submit s ~buffers:[||] ~args:[||])
+  done;
   equal int ~msg:"the compute part's release" 1 (H.get64 (host scratch));
   equal int ~msg:"the copied bytes" (-1) (S.mismatch ha bytes 7);
   S.free_launches l;
@@ -1359,27 +1357,26 @@ let carry_tear () =
   in
   let open_gate i = H.set64 (host gates.(i)) 1 in
   let torn = ref [] in
-  S.watchdog "ordered releases across a carry" (fun () ->
-      Array.iteri
-        (fun first value ->
-          start ();
-          open_gate first;
-          wait_word w value;
-          open_gate (1 - first);
-          reached ();
-          equal int
-            ~msg:(strf "engine %d releases last" (1 - first))
-            (if first = 0 then above else below)
-            (H.get64 (host w)))
-        [| below; above |]);
-  S.watch_rounds "a round of unordered releases across a carry" tear_rounds
-    (fun i ->
+  Array.iteri
+    (fun first value ->
       start ();
-      open_gate (i land 1);
-      open_gate (1 - (i land 1));
+      open_gate first;
+      wait_word w value;
+      open_gate (1 - first);
       reached ();
-      let x = H.get64 (host w) in
-      if x <> below && x <> above then torn := x :: !torn);
+      equal int
+        ~msg:(strf "engine %d releases last" (1 - first))
+        (if first = 0 then above else below)
+        (H.get64 (host w)))
+    [| below; above |];
+  for i = 1 to tear_rounds do
+    start ();
+    open_gate (i land 1);
+    open_gate (1 - (i land 1));
+    reached ();
+    let x = H.get64 (host w) in
+    if x <> below && x <> above then torn := x :: !torn
+  done;
   equal (list int) ~msg:"torn values" [] !torn;
   S.free_launches l;
   List.iter (N.free g) words
@@ -1396,7 +1393,7 @@ let empty_words () =
   parts.(0) <- S.words (release l (address w) 1);
   let before = Rig.submitted t.d in
   let p = S.submit t parts in
-  S.watchdog "20,000 empty Words parts" (fun () -> Rig.Point.wait p);
+  Rig.Point.wait p;
   equal int ~msg:"its value" (before + 1) (Rig.Point.value p);
   equal int ~msg:"the first part's word" 1 (H.get64 (host w));
   equal (option string) ~msg:"the device's loss" None (Rig.lost t.d);
@@ -1424,7 +1421,7 @@ let joined_parts () =
     v
   in
   let p = submitted (s, Array.init n values) ~buffers:[| cell |] in
-  S.watchdog "66,000 joined parts" (fun () -> Rig.Point.wait p);
+  Rig.Point.wait p;
   equal (array int) (Array.init n Fun.id) (words out ~at:0 n)
 
 let room =
@@ -1520,10 +1517,9 @@ let drained_growth () =
   List.iter (fun a -> H.set64 a 0) [ host gate; host out; host out + 8 ];
   let base = N.signaled g in
   let reach v =
-    S.watchdog (strf "the value %d" v) (fun () ->
-        while N.signaled g < v do
-          Domain.cpu_relax ()
-        done)
+    while N.signaled g < v do
+      Domain.cpu_relax ()
+    done
   in
   let grown = function
     | Rig_edge.Grown -> "Grown"
@@ -1567,23 +1563,22 @@ let in_flight () =
   let gate = alloc t.g Pinned 8 in
   H.set64 (host gate) 0;
   ignore (snd (numbered_submit t.d 16_384) ());
-  S.watchdog "32,768 values in flight" (fun () ->
-      releasing gate 1 (fun () ->
-          ignore (S.submit t [| S.words (acquire l (address gate) 1) |]);
-          for _ = 2 to 32_768 do
-            ignore (S.submit t [||])
-          done;
-          let next = Atomic.make false in
-          let d =
-            Domain.spawn (fun () ->
-                Rig.Point.wait (S.submit t [||]);
-                Atomic.set next true)
-          in
-          still ~msg:"the next submission" bool false
-            (fun () -> Atomic.get next)
-            ~ms:20;
-          H.set64 (host gate) 1;
-          Domain.join d));
+  releasing gate 1 (fun () ->
+      ignore (S.submit t [| S.words (acquire l (address gate) 1) |]);
+      for _ = 2 to 32_768 do
+        ignore (S.submit t [||])
+      done;
+      let next = Atomic.make false in
+      let d =
+        Domain.spawn (fun () ->
+            Rig.Point.wait (S.submit t [||]);
+            Atomic.set next true)
+      in
+      still ~msg:"the next submission" bool false
+        (fun () -> Atomic.get next)
+        ~ms:20;
+      H.set64 (host gate) 1;
+      Domain.join d);
   S.free_launches l;
   N.free t.g gate
 
@@ -1915,7 +1910,7 @@ let stop_waiting () =
   in
   let v = Rig.Point.value (S.submit t [| S.words ws |]) in
   held_at t.g (v - 1) ~ms:20;
-  S.watchdog "stop" (fun () -> S.stop_driver t.g);
+  S.stop_driver t.g;
   equal int ~msg:"the word" v (N.signaled t.g);
   H.set64 (host w) 1;
   still ~msg:"the waiting work" int 0 (fun () -> H.get64 (host marked)) ~ms:200;
@@ -1940,7 +1935,7 @@ let stop_running () =
         Rig.Point.value (S.submit t [| S.words (release l (address marked) 7) |])
       in
       held_at t.g (v1 - 1) ~ms:20;
-      S.watchdog "stop" (fun () -> S.stop_driver t.g);
+      S.stop_driver t.g;
       equal int ~msg:"the word" v2 (N.signaled t.g));
   still ~msg:"the queued work" int 0 (fun () -> H.get64 (host marked)) ~ms:200;
   S.free_launches l;

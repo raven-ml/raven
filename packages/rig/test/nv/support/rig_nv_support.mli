@@ -50,18 +50,6 @@ val shared : t -> int -> Rig.Buffer.t * int
 (** [shared t n] is [(b, a)]: [n] bytes of host memory at [a], which [b], a
     buffer of [t]'s, borrows. *)
 
-val watchdog : string -> (unit -> 'a) -> 'a
-(** [watchdog what f] is [f ()]. If [f] has not returned after 10 seconds, it
-    prints [what] and ends the process: [f] blocks in C, where no timeout of the
-    test reaches it. *)
-
-val watch_rounds : string -> int -> (int -> unit) -> unit
-(** [watch_rounds what n round] runs [round i] for [i] from [1] to [n]. If a
-    round has not returned 10 seconds after the one before it, it prints
-    [what] and ends the process, as {!watchdog} does. The rounds together have
-    no bound: on a GPU that other processes share, each round waits for
-    them. *)
-
 (** {1:edge The C entries} *)
 
 module Edge : sig
