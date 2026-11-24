@@ -227,10 +227,10 @@ let release_of_string l =
       (int_of_string_opt (String.sub l n (String.length l - n)))
   else Option.map (fun r -> Llvm r) (int_of_string_opt l)
 
-(* The release of each Clang, as the last process that asked it found it:
-   a hint, kept on disk while {!Setting.ccache} holds, from which a process
-   picks the arguments it asks Clang to state, so that a Clang of the hinted
-   release is run once. *)
+(* The release of each Clang, as the last process that asked it found it: a
+   hint, kept on disk while {!Setting.ccache} holds, from which a process picks
+   the flags it first runs Clang's preprocessor under ({!dumped}), so that a
+   Clang of the hinted release is run once. *)
 let hint_table = "clang_llvm"
 
 let hinted cc =
@@ -244,36 +244,6 @@ let hint cc release =
   let l = Option.fold ~none:"" ~some:release_to_string release in
   if Setting.value Setting.ccache then
     try Helpers.Diskcache.put ~table:hint_table cc l with Sys_error _ -> ()
-
-(* What [cc] states it runs for [args ~release], where [release] is the release
-   it names in that statement: Clang states its version and installation
-   before its commands. [args] is first asked for the hinted release; a
-   statement that names another, as after an upgrade, is asked again for the
-   one it names, which is then hinted. Clang is asked at most three times: a
-   Clang that starts once and not again names no release the second time. The
-   hint picks arguments only: what Clang states for them is what runs, and
-   what a table digests. *)
-let own_statement =
-  let lock = Mutex.create () and stated = Hashtbl.create 4 in
-  fun cc args ->
-    Mutex.protect lock @@ fun () ->
-    let key = (cc, args ~release:None) in
-    match Hashtbl.find_opt stated key with
-    | Some s -> s
-    | None ->
-        let hinted = hinted cc in
-        let rec settle release tries =
-          let s = statement cc (args ~release) in
-          let named = stated_release s in
-          if named = release then (
-            if release <> hinted then hint cc release;
-            s)
-          else if tries = 0 then s
-          else settle named (tries - 1)
-        in
-        let s = settle hinted 2 in
-        Hashtbl.replace stated key s;
-        s
 
 (* LLVM's loop vectorizer weighs each width it could pack a loop's iterations
    into against the whole body, and its time grows faster than the body: the
@@ -320,9 +290,10 @@ let win64 arch =
 
    It also keeps LLVM 18 off AVX-512's half arithmetic, with which it crashes in
    machine loop-invariant code motion on rune's casts from float16. *)
+let avx10_off = [ "-mno-avx10.1-512"; "-mno-avx10.1-256" ]
+
 let avx512_off = function
-  | Some (Llvm (18 | 19 | 20) | Apple 17) ->
-      [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512f" ]
+  | Some (Llvm (18 | 19 | 20) | Apple 17) -> avx10_off @ [ "-mno-avx512f" ]
   | Some (Llvm r) when r >= 23 -> []
   | Some (Llvm _ | Apple _) | None -> [ "-mno-avx512f" ]
 
@@ -484,36 +455,36 @@ let compile_args selected ~release =
   ]
   @ fixed ~release selected @ slp @ ldn @ idioms @ [ "-"; "-o"; "-" ]
 
-(* The lines of the macros Clang's preprocessor defines for [selected], each
-   [#define NAME VALUE], or why the preprocessor gave none: they name Clang's
-   release, and on x86_64 the processor's features for every processor, where
-   Clang's statement names them only for [native]. Clang is run once per process
-   for each Clang and flags whose macros it gave, which serve every question
-   asked of them: each run costs about what a small kernel's compile does. A run
-   that fails is not kept, so that a failure to start it, which a later run may
-   not meet, does not decide for the process. *)
-let dumped =
+(* What Clang's preprocessor gives under [flags]: the version its driver states
+   ([-v]), which names its release as its statement does, Apple's among them,
+   whose macros name none for an ELF target, and the lines of its macros, each
+   [#define NAME VALUE]; or why it gave none. Clang is run once per process for
+   each Clang and flags whose macros it gave: each run costs about what a small
+   kernel's compile does. A run that fails is not kept, so that a failure to
+   start it, which a later run may not meet, does not decide for the process. *)
+type preprocessed = { version : string; macros : string list }
+
+let preprocessed =
   let lock = Mutex.create () and known = Hashtbl.create 4 in
-  fun cc selected ->
-    let release = stated_release (own_statement cc (compile_args selected)) in
-    let flags = fixed ~release selected in
+  fun cc flags ->
     Mutex.protect lock @@ fun () ->
     match Hashtbl.find_opt known (cc, flags) with
-    | Some macros -> Ok macros
+    | Some given -> Ok given
     | None -> (
-        match run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) "" with
-        | Ok (WEXITED 0, out, _) ->
-            let macros = String.split_on_char '\n' out in
-            Hashtbl.replace known (cc, flags) macros;
-            Ok macros
+        match
+          run cc ([ "-v"; "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) ""
+        with
+        | Ok (WEXITED 0, out, err) ->
+            let given =
+              { version = err; macros = String.split_on_char '\n' out }
+            in
+            Hashtbl.replace known (cc, flags) given;
+            Ok given
         | Ok (WEXITED code, _, err) ->
             Error (Printf.sprintf "%s -dM -E exited %d: %s" cc code err)
         | Ok ((WSIGNALED n | WSTOPPED n), _, _) ->
             Error (Printf.sprintf "%s -dM -E stopped by signal %d" cc n)
         | Error why -> Error why)
-
-(* The macros of {!dumped}, none where the preprocessor gave none. *)
-let macros cc selected = Result.value ~default:[] (dumped cc selected)
 
 (* The value of the macro [m] among [macros], if it is defined. *)
 let value macros m =
@@ -529,20 +500,94 @@ let value macros m =
 let defines macros m = Option.is_some (value macros m)
 
 (* The release that [macros] name: [__clang_major__], which is Apple's own
-   number where [__apple_build_version__] is defined. *)
+   number where [__apple_build_version__] is defined. Apple's Clang defines it
+   for Apple's targets alone, so for an ELF target its macros name LLVM's
+   release of Apple's number. *)
 let macro_release macros =
   match Option.bind (value macros "__clang_major__") int_of_string_opt with
   | None -> None
   | Some r when defines macros "__apple_build_version__" -> Some (Apple r)
   | Some r -> Some (Llvm r)
 
+(* Whether the macros [selected] gave under [asked]'s flags are also those under
+   [release]'s: the flags are the same, or [release]'s only disable AVX10.1
+   first and the macros define none of AVX10's. Then no AVX10 feature is on, nor
+   one that implies it, which would turn one on; a disable turns nothing on, so
+   disabling AVX10.1 changes nothing: with LLVM 19, on a processor without
+   AVX10.1, the macros of the release-less flags serve. *)
+let same_macros selected ~asked ~release macros =
+  fixed ~release selected = fixed ~release:asked selected
+  || fst selected = "x86_64"
+     && avx512_off release = avx10_off @ avx512_off asked
+     && not (List.exists (String.starts_with ~prefix:"#define __AVX10") macros)
+
+(* What the preprocessor gives for what [cc] compiles [selected] for, under the
+   flags of the release it states, or why it gave nothing: the macros name, on
+   x86_64, the processor's features for every processor, where Clang's statement
+   names them only for [native]. The preprocessor runs under the flags of the
+   hinted release, or of none if it rejects those, and again under those of the
+   release it states unless its macros serve ({!same_macros}). What it gave is
+   kept for the process. *)
+let dumped =
+  let lock = Mutex.create () and known = Hashtbl.create 4 in
+  fun cc selected ->
+    match
+      Mutex.protect lock (fun () -> Hashtbl.find_opt known (cc, selected))
+    with
+    | Some given -> Ok given
+    | None -> (
+        let under release = preprocessed cc (fixed ~release selected) in
+        let hinted = hinted cc in
+        let asked, first =
+          match under hinted with
+          | Error _ when hinted <> None -> (None, under None)
+          | first -> (hinted, first)
+        in
+        let given =
+          match first with
+          | Error _ as e -> e
+          | Ok first ->
+              let release = stated_release first.version in
+              if release <> hinted then hint cc release;
+              if same_macros selected ~asked ~release first.macros then Ok first
+              else under release
+        in
+        match given with
+        | Ok g ->
+            Mutex.protect lock (fun () ->
+                Hashtbl.replace known (cc, selected) g);
+            given
+        | Error _ -> given)
+
+(* The release that [g]'s Clang states, or its macros name where it states none,
+   as a compiler built on Clang may. *)
+let given_release g =
+  match stated_release g.version with
+  | Some _ as release -> release
+  | None -> macro_release g.macros
+
+(* The macros of {!dumped}, none where the preprocessor gave none. *)
+let macros cc selected =
+  match dumped cc selected with Ok g -> g.macros | Error _ -> []
+
+(* The release that [cc] states as it preprocesses for [selected], [None] where
+   it states none or the preprocessor gives nothing. *)
+let release cc selected =
+  match dumped cc selected with
+  | Ok g -> stated_release g.version
+  | Error _ -> None
+
+(* What [cc] states it runs to compile [selected], under the flags of its
+   release: Clang states its version and installation before its commands. *)
+let own_statement cc selected =
+  statement cc (compile_args selected ~release:(release cc selected))
+
 (* Whether [cc] keeps AVX-512 on for an x86_64 [selected] that [avx512_off]
    turns it off for, as LLVM 21 does for an AVX10.1 that [arch] or [native]
    names. *)
 let keeps cc selected =
   fst selected = "x86_64"
-  && avx512_off (stated_release (own_statement cc (compile_args selected)))
-     <> []
+  && avx512_off (release cc selected) <> []
   && defines (macros cc selected) "__AVX512F__"
 
 (* The processor a statement's compiler proper compiles for. *)
@@ -565,7 +610,7 @@ let settled cc arch =
   let selected = selection arch in
   match String.split_on_char ',' arch with
   | machine :: "native" :: rest when keeps cc selected -> (
-      match target_cpu (own_statement cc (compile_args selected)) with
+      match target_cpu (own_statement cc selected) with
       | Some cpu -> selection (String.concat "," (machine :: cpu :: rest))
       | None -> selected)
   | _ -> selected
@@ -724,11 +769,11 @@ let clang arch =
           selected
   in
   (* What Clang states it runs for a source, asked once per process. *)
-  let stated () = own_statement cc (compile_args (selected ())) in
+  let stated () = own_statement cc (selected ()) in
   let command ~long =
     let short = cc1 (stated ()) in
     match dumped cc (selected ()) with
-    | Ok macros when wrong_zeros (macro_release macros) ->
+    | Ok g when wrong_zeros (given_release g) ->
         Error
           (Printf.sprintf
              "%s: %s chooses the wrong zero for a selection between a value \
@@ -736,7 +781,7 @@ let clang arch =
               Apple's 15 or later, and name it in CC"
              cc
              (version_line (stated ())))
-    | Ok macros when without_sse2 macros (selected ()) ->
+    | Ok g when without_sse2 g.macros (selected ()) ->
         Error
           (Printf.sprintf
              "%s has no _Float16 for %s, which turns SSE2 off: x86_64's \

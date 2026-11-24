@@ -1716,6 +1716,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A process's first compile with `Compiler_cpu.clang` and no release hinted
+  runs Clang twice before compiling, where it ran it three times under LLVM 18
+  to 20 and Apple's Clang 17 for x86_64, unless AVX10.1 is on.
 - `Tolk_engine.compiles d` says whether the compiler of `d`'s programs
   compiles on this machine and, where it does not, why: rig links no host code,
   the compiler's library is missing, or Clang is missing or refused.

@@ -1187,12 +1187,13 @@ let compile_time =
           is_relocatable_elf64 ~machine:(elf_machine machine) lib);
     ]
 
-(* A Clang that a script stands in for: it states [version] and no compiler
-   proper, and its preprocessor defines [__x86_64__], SSE2's and _Float16's
-   macros, [__clang_major__] as [major] and, for Apple's,
-   [__apple_build_version__]. A [gated] preprocessor fails until the file of the
-   stand-in's path with [.ready] after it exists. A [proper] stand-in also
-   states a compiler proper, which does not exist. *)
+(* A Clang that a script stands in for: it states [version], as its preprocessor
+   does too, and no compiler proper, and its preprocessor defines [__x86_64__],
+   SSE2's and _Float16's macros, [__clang_major__] as [major] and, for Apple's
+   and a target other than ELF, [__apple_build_version__]. A [gated]
+   preprocessor fails until the file of the stand-in's path with [.ready] after
+   it exists. A [proper] stand-in also states a compiler proper, which does not
+   exist. *)
 type stand_in = { version : string; major : int; apple : bool; arch : string }
 
 let stand_in_for ?(gated = false) ?(proper = false) c =
@@ -1203,7 +1204,12 @@ let stand_in_for ?(gated = false) ?(proper = false) c =
     else []
   in
   let apple =
-    if c.apple then [ "echo '#define __apple_build_version__ 15000309'" ]
+    if c.apple then
+      [
+        {|case " $* " in *-elf" "*) ;; *)|};
+        "echo '#define __apple_build_version__ 15000309';;";
+        "esac";
+      ]
     else []
   in
   String.concat "\n"
@@ -1217,6 +1223,7 @@ let stand_in_for ?(gated = false) ?(proper = false) c =
       ]
     @ apple
     @ [
+        "echo " ^ Filename.quote c.version ^ " >&2";
         "exit 0;;";
         "esac";
         "echo " ^ Filename.quote c.version ^ " >&2";
@@ -1371,6 +1378,7 @@ let llvm21_avx10 =
       "echo '#define __x86_64__ 1'";
       "echo '#define __FLT16_MAX__ 6.5504e+4F16'";
       "echo '#define __AVX__ 1'";
+      "echo 'clang version 21.1.8' >&2";
       {|case " $* " in *" -march=native "*|*" -mavx10.1 "*)|};
       "echo '#define __AVX512F__ 1';;";
       "esac";
@@ -1382,23 +1390,24 @@ let llvm21_avx10 =
       "";
     ]
 
-(* A Clang whose statement waits for the file [go] beside it, having made the
+(* A Clang whose preprocessor waits for the file [go] beside it, having made the
    file [asked]: a compile from one domain holds there while another starts its
    own. Its compiler proper fails at every source. *)
-let held_statement =
+let held_macros =
   String.concat "\n"
     [
       "#!/bin/sh";
       {|dir=$(dirname "$0")|};
       {|if [ "$1" = "-cc1" ]; then echo 'error: no compiler proper' >&2; exit 1; fi|};
       {|case " $* " in *" -dM "*)|};
+      {|: > "$dir/asked"|};
+      {|n=0; while [ ! -e "$dir/go" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n+1)); done|};
       "echo '#define __x86_64__ 1'";
       "echo '#define __SSE2__ 1'";
       "echo '#define __FLT16_MAX__ 6.5504e+4F16'";
+      "echo 'clang version 23.1.0' >&2";
       "exit 0;;";
       "esac";
-      {|: > "$dir/asked"|};
-      {|n=0; while [ ! -e "$dir/go" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n+1)); done|};
       "echo 'clang version 23.1.0' >&2";
       "echo 'Target: x86_64-unknown-linux-gnu' >&2";
       {|printf ' "%s" "-cc1" "-target-cpu" "x86-64" "-o" "-" "-"\n' "$0" >&2|};
@@ -1407,12 +1416,12 @@ let held_statement =
 
 (* One compiler for [native], made once, compiling from two domains at once
    before either has learnt what Clang compiles [native] for, which takes
-   Clang's statement: the second starts once the first waits on it, and the
-   statement comes once the second waits for the first. Each compile fails with
-   what the compiler proper says. *)
+   Clang's macros: the second starts once the first waits on them, and the
+   macros come once the second waits for the first. Each compile fails with what
+   the compiler proper says. *)
 let first_compiles =
   test "two domains' first compiles of one compiler each reach Clang" (fun () ->
-      under_stand_in held_statement @@ fun clang ->
+      under_stand_in held_macros @@ fun clang ->
       let dir = Filename.dirname clang in
       let compiler = Compiler_cpu.clang "x86_64,native" in
       let outcome () =
