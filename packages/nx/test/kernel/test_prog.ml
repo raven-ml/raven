@@ -189,23 +189,54 @@ let test_domains () =
 
 (* Bits *)
 
-(* An element's bits as a one-element array holds them: its bytes, or a
-   sub-byte code in one byte. *)
+(* An element's bits as a one-element array holds them: its bytes, or a sub-byte
+   code in one byte. *)
 let array_bits (type v s) (dt : (v, s) D.t) (x : v) =
   let a = A.of_array dt [| 1 |] [| x |] in
   match D.bits dt with
-  | 1 -> String.make 1 (Char.chr (Bool.to_int (A.get (A.expect D.Bit (A.Any a)) [| 0 |])))
-  | 4 -> String.make 1 (Char.chr (A.get (Option.get (A.bitcast D.Uint4 a)) [| 0 |]))
+  | 1 ->
+      String.make 1
+        (Char.chr (Bool.to_int (A.get (A.expect D.Bit (A.Any a)) [| 0 |])))
+  | 4 ->
+      String.make 1
+        (Char.chr (A.get (Option.get (A.bitcast D.Uint4 a)) [| 0 |]))
   | _ ->
       let b = A.to_array (Option.get (A.bitcast D.Uint8 a)) in
       String.init (Array.length b) (fun i -> Char.chr b.(i))
 
 let hex s =
-  String.concat "" (List.init (String.length s) (fun i -> strf "%02x" (Char.code s.[i])))
+  String.concat ""
+    (List.init (String.length s) (fun i -> strf "%02x" (Char.code s.[i])))
 
 let law_bits (D.Any dt, f) =
   let x = D.of_float dt f in
-  equal ~msg:(name (D.Any dt)) string (hex (array_bits dt x)) (hex (P.bits dt x))
+  equal ~msg:(name (D.Any dt)) string
+    (hex (array_bits dt x))
+    (hex (P.bits dt x))
+
+(* A NaN's bits are those a store of it gives (Dtype's stores): quiet, of its
+   sign, with the top of its payload. Each row is a double's bits, then the
+   float64 and float32 bits of the store. *)
+let nan_stores =
+  [
+    (0xFFF4000000000000L, 0xFFFC000000000000L, 0xFFE00000l);
+    (0x7FF0040000000001L, 0x7FF8040000000001L, 0x7FC02000l);
+    (0x7FF8000000000000L, 0x7FF8000000000000L, 0x7FC00000l);
+    (0x7FFFFFFFFFFFFFFFL, 0x7FFFFFFFFFFFFFFFL, 0x7FFFFFFFl);
+  ]
+
+let test_nan_bits (x, f64, f32) =
+  let x = Int64.float_of_bits x in
+  let word64 s at = String.get_int64_ne s at
+  and word32 s at = String.get_int32_ne s at in
+  equal ~msg:"float64" int64 f64 (word64 (P.bits D.Float64 x) 0);
+  equal ~msg:"float32" int32 f32 (word32 (P.bits D.Float32 x) 0);
+  let c = { Complex.re = x; im = x } in
+  let c128 = P.bits D.Complex128 c and c64 = P.bits D.Complex64 c in
+  equal ~msg:"complex128" (pair int64 int64) (f64, f64)
+    (word64 c128 0, word64 c128 8);
+  equal ~msg:"complex64" (pair int32 int32) (f32, f32)
+    (word32 c64 0, word32 c64 4)
 
 let test_bits_refuse () =
   raises_match ~msg:"int8" Exn.invalid_arg (fun () -> P.bits D.Int8 128);
@@ -1921,6 +1952,9 @@ let tests =
         prop "bits are a one-element array's bytes"
           (Gen.pair (Gen.of_list ~pp:pp_dtype D.all) floats)
           law_bits;
+        cases "a NaN's bits are its store's"
+          ~id:(fun (x, _, _) -> strf "%016Lx" x)
+          nan_stores test_nan_bits;
         test "refuses an int outside the dtype's range" test_bits_refuse;
       ];
     group "programs"

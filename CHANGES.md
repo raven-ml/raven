@@ -3687,6 +3687,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_kernel.Prog.bits` stores a float as `Nx.Dtype.of_float` does: a
+  signalling float64 NaN is quiet, and on RISC-V a float32 NaN keeps its sign
+  and payload.
 - On RISC-V and POWER, a NaN stored from OCaml (`Nx.Dtype.of_float`,
   `Nx_array.of_array`, `Nx_array.set`) keeps its sign and the top of its
   payload, and one read back keeps them and is quiet, as on other machines.

@@ -129,12 +129,28 @@ let check_range dt x =
       (Printf.sprintf "Nx_kernel.Prog.bits: %d is outside %s's range" x
          (D.name dt))
 
+(* The bits a store of [x] gives (Dtype's stores): a NaN quiet, of its sign,
+   with the top of its payload. Int32.bits_of_float narrows with the C library,
+   and RISC-V gives its canonical NaN, positive and of no payload, so a float32
+   NaN's bits are taken from its double's. Neither allocates. *)
+let[@inline] float64_bits x =
+  let b = Int64.bits_of_float x in
+  if Float.is_nan x then Int64.logor b 0x0008_0000_0000_0000L else b
+
+let[@inline] float32_bits x =
+  if not (Float.is_nan x) then Int32.bits_of_float x
+  else
+    let b = Int64.bits_of_float x in
+    let sign = Int64.logand (Int64.shift_right_logical b 32) 0x8000_0000L in
+    let payload = Int64.logand (Int64.shift_right_logical b 29) 0x3F_FFFFL in
+    Int64.to_int32 (Int64.logor sign (Int64.logor 0x7FC0_0000L payload))
+
 let bits : type v s. (v, s) D.t -> v -> string =
  fun dt x ->
   let b = Bytes.create (D.bytes dt 1) in
   (match dt with
-  | Float64 -> Bytes.set_int64_ne b 0 (Int64.bits_of_float x)
-  | Float32 -> Bytes.set_int32_ne b 0 (Int32.bits_of_float x)
+  | Float64 -> Bytes.set_int64_ne b 0 (float64_bits x)
+  | Float32 -> Bytes.set_int32_ne b 0 (float32_bits x)
   | Float16 -> Bytes.set_uint16_ne b 0 (narrow_bits (D.code dt) x)
   | Bfloat16 -> Bytes.set_uint16_ne b 0 (narrow_bits (D.code dt) x)
   | Float8_e4m3fn -> Bytes.set_uint8 b 0 (narrow_bits (D.code dt) x)
@@ -163,11 +179,11 @@ let bits : type v s. (v, s) D.t -> v -> string =
       check_range dt x;
       Bytes.set_uint8 b 0 x
   | Complex128 ->
-      Bytes.set_int64_ne b 0 (Int64.bits_of_float x.re);
-      Bytes.set_int64_ne b 8 (Int64.bits_of_float x.im)
+      Bytes.set_int64_ne b 0 (float64_bits x.re);
+      Bytes.set_int64_ne b 8 (float64_bits x.im)
   | Complex64 ->
-      Bytes.set_int32_ne b 0 (Int32.bits_of_float x.re);
-      Bytes.set_int32_ne b 4 (Int32.bits_of_float x.im)
+      Bytes.set_int32_ne b 0 (float32_bits x.re);
+      Bytes.set_int32_ne b 4 (float32_bits x.im)
   | Bool -> Bytes.set_uint8 b 0 (Bool.to_int x)
   | Bit -> Bytes.set_uint8 b 0 (Bool.to_int x));
   Bytes.unsafe_to_string b
