@@ -730,12 +730,13 @@ let gen_length =
   Gen.frequency
     [ (4, Gen.float_range 20. 2000.); (1, Gen.float_range 1e6 1e12) ]
 
+let tick_extent measure (k : Ticks.tick) =
+  match k.context with
+  | None -> measure k.label
+  | Some c -> Float.max (measure k.label) (measure c)
+
 let check_no_overlap ?(measure = measure) length (t : Ticks.t) =
-  let extent (k : Ticks.tick) =
-    match k.context with
-    | None -> measure k.label
-    | Some c -> Float.max (measure k.label) (measure c)
-  in
+  let extent = tick_extent measure in
   let rec loop = function
     | (k : Ticks.tick) :: (k' :: _ as rest) ->
         at_least float_exact
@@ -743,6 +744,18 @@ let check_no_overlap ?(measure = measure) length (t : Ticks.t) =
           ((k'.position -. k.position) *. length);
         loop rest
     | _ -> ()
+  in
+  loop t.major
+
+(* [fits length t] is [true] iff no two adjacent labels of [t] overlap on an
+   axis [length] long. *)
+let fits length (t : Ticks.t) =
+  let extent = tick_extent measure in
+  let rec loop = function
+    | (k : Ticks.tick) :: (k' :: _ as rest) ->
+        (k'.position -. k.position) *. length >= (extent k +. extent k') /. 2.
+        && loop rest
+    | _ -> true
   in
   loop t.major
 
@@ -782,13 +795,22 @@ let choice =
       prop "major ticks are in the domain, minor ticks between, none at a major"
         (Gen.pair gen_scale gen_length) (fun (Axis s, length) ->
           check_shape (Ticks.choose ~length ~measure s));
-      prop "a long axis has at most twice a hundred ticks"
-        (Gen.pair gen_scale (Gen.float_range 1e6 1e12))
-        (fun (Axis s, length) ->
-          (* Beyond [2 m + 1] ticks the density is negative, and a candidate of
-             about [m] ticks scores higher. *)
-          at_most int ~than:201
-            (List.length (Ticks.choose ~length ~measure s).major));
+      prop "past room for a hundred ticks, a longer axis only lifts overlaps"
+        (Gen.pair gen_scale
+           (Gen.pair (Gen.float_range 1e6 1e12) (Gen.float_range 1. 1e6)))
+        (fun (Axis s, (length, factor)) ->
+          (* From [1e6] on, [m] is a hundred for the labels of these scales, so
+             [ρt] and every score are the same at both lengths, and the longer
+             axis only admits candidates whose labels overlap on the shorter:
+             its choice is the shorter axis's if its labels fit there. *)
+          let long = Ticks.choose ~length:(length *. factor) ~measure s in
+          let fit = fits length long in
+          cover ~share:0.5 "the longer axis's ticks fit the shorter" fit;
+          if fit then
+            equal
+              (Testable.make ~pp:Ticks.pp ~equal:Ticks.equal)
+              long
+              (Ticks.choose ~length ~measure s));
       test "an axis of billions of points aims for a hundred ticks" (fun () ->
           (* [m] is [100], so [ρt = 99]: the step [0.01] has [ρ = 100], a
              density of [2 - 100/99], the tick [0] and full coverage, and beats
@@ -797,6 +819,20 @@ let choice =
           equal (list string)
             (List.init 101 (fun i ->
                  Printf.sprintf "%.2f" (Float.of_int i /. 100.)))
+            (labels t));
+      test "a long log axis from 1 to 403 has its odd integers" (fun () ->
+          (* [m] is [100], so [ρt = 99]. The odd integers, the step [1] with the
+             skip [2] from [1], have [1] among them, a simplicity of [0], full
+             coverage and a density of [2 - 201/99], and score [0.18]. Fewer
+             ticks score lower: every other multiple of [2.5] from [2.5], 81
+             ticks, has a simplicity of [-2] and a coverage of [-0.17], and
+             scores [-0.06]; the multiples of [5] leave [1] to [5] uncovered,
+             and every fifth integer from [1] has a simplicity of [-3]. *)
+          let t =
+            Ticks.choose ~length:1e6 ~measure (Scale.log ~domain:(1., 403.) ())
+          in
+          equal (list string)
+            (List.init 202 (fun i -> string_of_int ((2 * i) + 1)))
             (labels t));
       prop "chosen labels never overlap" (Gen.pair gen_scale gen_length)
         (fun (Axis s, length) ->
