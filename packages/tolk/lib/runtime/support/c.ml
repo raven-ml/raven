@@ -19,13 +19,15 @@ let env_dirs var =
 
 let macos = Host_config.system = "macosx"
 
-(* Debian's name of the host, as Python's sysconfig reports it. *)
+(* Debian's name of the host, as Python's sysconfig reports it. OCaml's "power"
+   is little-endian 64-bit POWER, the only one OCaml 5 compiles for. *)
 let multiarch =
   let machine =
     match Host_config.architecture with
     | "amd64" -> "x86_64"
     | "arm64" -> "aarch64"
     | "riscv" -> "riscv64"
+    | "power" -> "powerpc64le"
     | a -> a
   in
   machine ^ "-linux-gnu"
