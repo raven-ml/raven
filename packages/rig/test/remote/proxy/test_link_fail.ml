@@ -27,6 +27,12 @@ let k_abort = 9
    observation's 5, so one observation sees a stalled send's end. *)
 let bound = 0.5
 
+(* The silence bound of a scene whose fault is a severed connection: link.mli's
+   10 seconds. Its faulted link's peer sends nothing, so a process slowed past
+   [bound] before the fault, as a CPU quota slows it, would fail the job of that
+   peer's silence first. *)
+let severed_bound = Link.default_silence
+
 (* The seconds this suite's clock may run apart from the link's. *)
 let skew = 0.01
 
@@ -287,13 +293,14 @@ let sever s =
   s.severed <- true
 
 (* Runs [f] on a new job of the two links, [l] the end of a [role] process's
-   peer. The job is closed once its peers' ends are: [close] returns once each
-   link has settled its abort, so no thread of the job reaches a probe's point
-   during a later test, where the probe would hold it. *)
-let with_scene ?(role = Wire.Agent 1) f =
+   peer, whose silence bound is [silence], [bound] by default. The job is closed
+   once its peers' ends are: [close] returns once each link has settled its
+   abort, so no thread of the job reaches a probe's point during a later test,
+   where the probe would hold it. *)
+let with_scene ?(role = Wire.Agent 1) ?(silence = bound) f =
   let d, p = connected () and e, q = connected () in
   let stop = beating q in
-  let job = Link.job ~silence:bound () in
+  let job = Link.job ~silence () in
   let h = Link.make job e ~name:"other" ~peer:(Wire.Agent 2) in
   let l = Link.make job d ~name:"peer" ~peer:role in
   let s = { job; l; d; p; h; q; severed = false } in
@@ -337,7 +344,7 @@ let waiters s =
    link's sends did not fail. *)
 
 let severed_idle () =
-  with_scene @@ fun s ->
+  with_scene ~silence:severed_bound @@ fun s ->
   let woke = waiters s in
   sever s;
   woke reset_cause
@@ -422,7 +429,9 @@ let mid_frame s =
   let sent = spawn (fun () -> Link.bytes s.l ~device:0 ~value:1 a) in
   (match header s.p with
   | Some (k, n) when k = k_bytes -> equal ~msg:"the frame" int (16 + large) n
-  | _ -> fail "the peer was sent no bytes frame");
+  | Some (k, n) ->
+      failf "the peer was sent %a, no bytes frame" pp_frame (k, read_n s.p n)
+  | None -> fail "the peer's stream ended before a bytes frame");
   ignore (read_n s.p (16 + 4096));
   let next = spawn (fun () -> Link.next s.l) in
   let word = spawn (fun () -> Link.word s.l ~device:0 1) in
@@ -432,7 +441,7 @@ let mid_frame s =
     equal ~msg:"next" (result pass string) (Error cause) (next ())
 
 let severed_mid_frame () =
-  with_scene ~role:Wire.Controller @@ fun s ->
+  with_scene ~role:Wire.Controller ~silence:severed_bound @@ fun s ->
   let woke = waiters s in
   let returned = mid_frame s in
   sever s;
@@ -472,7 +481,7 @@ let rail s =
   e
 
 let severed_rail () =
-  with_scene @@ fun s ->
+  with_scene ~silence:severed_bound @@ fun s ->
   let woke = waiters s in
   let e = rail s in
   Probe.arm Sending;
@@ -544,7 +553,7 @@ let stalled_release () =
    after the bound if the peer reads nothing. *)
 
 let severed_abort () =
-  with_scene @@ fun s ->
+  with_scene ~silence:severed_bound @@ fun s ->
   let woke = waiters s in
   Probe.arm Aborting;
   let failed = spawn (fun () -> Link.fail s.job why) in
