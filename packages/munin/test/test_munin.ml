@@ -497,8 +497,7 @@ let float_text_tests =
         (fun (text, expected) ->
           equal float_exact expected
             (require_some (Munin_float_text.Float_read.of_string text)));
-      cases ~timeout:10.
-        "a decimal beyond the greatest float reads as an infinity" ~id:fst
+      cases "a decimal beyond the greatest float reads as an infinity" ~id:fst
         [
           ("688706.565804865188962e303", Float.infinity);
           ("-688706.565804865188962e303", Float.neg_infinity);
