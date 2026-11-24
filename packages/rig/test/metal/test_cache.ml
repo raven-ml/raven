@@ -9,7 +9,8 @@
    process holds those files in the directory Metal gives this executable's
    bundle, then a process of its own builds a pipeline through rig and reports.
    The helper lets go only after that report, so a build that waits on it hangs
-   until the test's limit ends the test. The executable links
+   until the test's limit ends the test. The suite also reads the directories
+   that live processes of its own take. The executable links
    rig-metal-cache-tests.plist, which gives it a bundle and the directory of its
    own. The suite never locks or writes another program's cache, nor the one
    that processes without a bundle share, and each of its processes checks its
@@ -41,6 +42,9 @@ let bundle_dir () = Filename.concat (user_cache ()) bundle
 
 (* Metal's directory for this executable's bundle. *)
 let metal_dir () = Filename.concat (bundle_dir ()) "com.apple.metal"
+
+(* The directory that holds the numbered directories of rig's processes. *)
+let rig_dir () = Filename.concat (bundle_dir ()) "rig.metal"
 
 (* [alone f] is [f ()] while this process holds the suite's lock, a file of the
    bundle's directory. It waits for the lock while another run of the suite
@@ -93,6 +97,10 @@ let hold paths =
         n))
     0 paths
 
+(* [path] with no empty component, as Metal writes [//] into its own. *)
+let normal path =
+  String.split_on_char '/' path |> List.filter (( <> ) "") |> String.concat "/"
+
 (* Builds a pipeline through rig: [Ok ()] once its entry is made. *)
 let build () =
   let { S.g; _ } = S.open_ () in
@@ -113,20 +121,41 @@ let watch () =
   ignore (In_channel.input_all stdin : string);
   Unix._exit 0
 
+(* Opens a device, starts this executable with [--idle], a program that never
+   touches Metal and lives until its input, this process's, ends, and reports
+   Metal's directory for the process and the program's pid. *)
+let spawn () =
+  ignore (S.open_ () : S.t);
+  let exe = Sys.executable_name in
+  let idle =
+    Unix.create_process exe [| exe; "--idle" |] Unix.stdin Unix.stdout
+      Unix.stderr
+  in
+  Ok (Printf.sprintf "%s\n%d" (Rig_metal.shader_cache ()) idle)
+
 (* A process of the suite, which reports one line on its output. [--hold] locks
-   the data files of Metal's cache, reports how many, and lives until its input
-   ends. [--build] builds a pipeline, reports [built] and exits. [--first] first
-   makes a Metal device, before rig opens one, which leaves the process in
-   Metal's cache for its bundle, then does as [--build]. *)
+   the data files of Metal's cache and reports how many. [--build] builds a
+   pipeline and reports [built]. [--live] opens a device and reports Metal's
+   directory for the process. [--first] and [--first-live] first make a Metal
+   device, before rig opens one, which leaves the process in Metal's cache for
+   its bundle, then do as [--build] and [--live]. [--spawn] does as {!spawn} and
+   reports a second line. A build and a spawner exit once they report; the
+   others live until their input ends. *)
 let child mode =
+  if mode = "--idle" then watch ();
   let watcher = Thread.create watch () in
-  let builds = mode <> "--hold" in
+  let first = mode = "--first" || mode = "--first-live" in
+  let builds = mode = "--build" || mode = "--first" in
+  let stays = not (builds || mode = "--spawn") in
   let report () =
     mine ();
-    if mode = "--first" && not (metal_first ()) then
-      Error "Metal made no device"
+    if first && not (metal_first ()) then Error "Metal made no device"
+    else if mode = "--hold" then Ok (string_of_int (hold (data_files ())))
     else if builds then Result.map (fun () -> "built") (build ())
-    else Ok (string_of_int (hold (data_files ())))
+    else if mode = "--spawn" then spawn ()
+    else (
+      ignore (S.open_ () : S.t);
+      Ok (Rig_metal.shader_cache ()))
   in
   match try report () with e -> Error (Printexc.to_string e) with
   | Error why ->
@@ -134,7 +163,7 @@ let child mode =
       exit 1
   | Ok line ->
       print_endline line;
-      if not builds then Thread.join watcher;
+      if stays then Thread.join watcher;
       exit 0
 
 (* The suite's side *)
@@ -166,12 +195,16 @@ let release p =
     p.open_input <- false;
     Unix.close p.input)
 
-(* Ends [p]'s input and checks that [p] then exits 0. *)
-let finish p =
-  release p;
+(* Checks that [p] exits 0, its input left as it is. *)
+let exits p =
   let st = reap p.pid in
   p.reaped <- true;
   equal ~msg:(p.what ^ ", as it ends") string "exited 0" (status st)
+
+(* Ends [p]'s input and checks that [p] then exits 0. *)
+let finish p =
+  release p;
+  exits p
 
 (* The line [p] reports, however long it takes. *)
 let report p =
@@ -231,10 +264,110 @@ let no_wait () =
     built;
   finish helper
 
+(* The number a directory of the processes' own is named by. *)
+let slot dir =
+  require_some
+    ~msg:(dir ^ ", named by a number")
+    (int_of_string_opt (Filename.basename dir))
+
+(* The numbers of the directories two live processes take, checked to lie in
+   [rig_dir ()]. *)
+let two () =
+  with_process "the first live process" "--live" @@ fun a ->
+  with_process "the second live process" "--live" @@ fun b ->
+  let dir_a = report a in
+  let dir_b = report b in
+  List.iter
+    (fun d ->
+      equal ~msg:(d ^ ", in rig.metal") string
+        (normal (rig_dir ()))
+        (normal (Filename.dirname d)))
+    [ dir_a; dir_b ];
+  finish a;
+  finish b;
+  (slot dir_a, slot dir_b)
+
+let apart () =
+  gpu ();
+  alone @@ fun () ->
+  let a, b = two () in
+  not_equal ~msg:"their directories" int a b
+
+(* Once both have exited, a third process takes the lesser of their numbers: the
+   least that no live process holds. *)
+let reused () =
+  gpu ();
+  alone @@ fun () ->
+  let a, b = two () in
+  with_process "a live process after the two" "--live" @@ fun c ->
+  equal ~msg:"its directory's number" int (min a b) (slot (report c));
+  finish c
+
+(* A program that a process starts after its first open holds the process's
+   directory while it lives, though it never touches Metal, and gives it back as
+   it exits. The program writes nothing, so the spawner's output ends as the
+   program exits. *)
+let pinned () =
+  gpu ();
+  alone @@ fun () ->
+  with_process "a process that starts a program, then exits" "--spawn"
+  @@ fun spawner ->
+  let k = slot (report spawner) in
+  let program =
+    require_some ~msg:"the pid of the program it started"
+      (int_of_string_opt (report spawner))
+  in
+  let ended = ref false in
+  let stop () =
+    if not !ended then
+      try Unix.kill program Sys.sigkill
+      with Unix.Unix_error (ESRCH, _, _) -> ()
+  in
+  Fun.protect ~finally:stop @@ fun () ->
+  exits spawner;
+  with_process "a live process while the program lives" "--live" (fun p ->
+      not_equal ~msg:"its directory's number" int k (slot (report p));
+      finish p);
+  release spawner;
+  equal ~msg:"what the program wrote" string ""
+    (In_channel.input_all spawner.output);
+  ended := true;
+  with_process "a live process once the program exited" "--live" @@ fun p ->
+  equal ~msg:"its directory's number" int k (slot (report p));
+  finish p
+
+let refused () =
+  gpu ();
+  alone @@ fun () ->
+  with_process "a process where Metal made a device first" "--first-live"
+  @@ fun p ->
+  equal ~msg:"its directory" string (normal (metal_dir ())) (normal (report p));
+  finish p
+
+(* The arguments that make this executable a process of the suite. *)
+let modes =
+  [
+    "--hold";
+    "--build";
+    "--first";
+    "--live";
+    "--first-live";
+    "--spawn";
+    "--idle";
+  ]
+
 let () =
   (match Sys.argv with
-  | [| _; ("--hold" | "--build" | "--first") as mode |] -> child mode
+  | [| _; mode |] when List.mem mode modes -> child mode
   | _ -> ());
   exit
     (run "rig_metal_cache"
-       [ test "no compile waits on another live process" no_wait ])
+       [
+         test "no compile waits on another live process" no_wait;
+         test "two live processes take two directories in rig.metal" apart;
+         test "a directory a process held is taken again once it exits" reused;
+         test "a program a process starts holds its directory while it lives"
+           pinned;
+         test "a process where Metal made a device first keeps Metal's cache"
+           refused;
+       ])

@@ -781,6 +781,8 @@ external arena_of : int -> nativeint = "caml_rig_metal_arena"
 
 let arena d = arena_of d.self
 
+external shader_cache : unit -> string = "caml_rig_metal_shader_cache"
+
 module Ring = struct
   type t
 

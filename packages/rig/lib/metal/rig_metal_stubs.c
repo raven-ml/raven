@@ -45,6 +45,13 @@ enum {
 
 #ifdef __APPLE__
 
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+
 #include "rig_metal_stubs.h"
 
 /* Metal reads a constant's value from the first bytes of its word, and the
@@ -70,8 +77,139 @@ static value triple(value a, value b, value c) {
   CAMLreturn(v);
 }
 
+/* The shader cache */
+
+/* Metal keeps the code it compiles in a shader cache on disk, by default
+   <user cache>/<bundle id>/com.apple.metal for a process with a bundle and
+   <user cache>/com.apple.metal for every process without one. A process's
+   first compile opens the cache, hit or miss, and locks files of it with
+   flock until the process exits; a first compile in another process that
+   meets a held data file waits until no process holds it. So that no
+   compile waits on another process, [own_cache] gives the process, at its
+   first count or open, a directory that no other live process uses:
+   <base>/<k>, for the least k whose <base>/<k>.lock it locks without
+   waiting, where <base> is rig.metal beside Metal's own directory, as in
+   <user cache>/<bundle id>/rig.metal/0. It is a sibling of Metal's
+   directory, outside it, since how Metal cleans that directory is
+   unknown.
+
+   The lock's descriptor stays open for the life of the process, and an
+   exec keeps it, as it keeps Metal's: on macOS 26.3.1, lsof of a
+   /bin/sleep that a process started after its first compile, by
+   posix_spawn or by fork and exec, lists the process's descriptors on
+   functions.data and functions.list. Such a program holds Metal's locks
+   on <base>/<k> while it lives, so it holds the directory's lock as long,
+   and no later process takes the directory meanwhile. The lock goes when
+   the last process that holds it ends, a crash included, and a later
+   process takes the directory with what it holds.
+
+   Metal.framework exports MTLGetShaderCachePath and MTLSetShaderCachePath,
+   which no header declares; the signatures are DXMT's
+   (src/winemetal/unix/cache.c). The setter moves the whole cache of the
+   process when called before Metal has made a device in it, and the getter
+   then answers the setter's argument. Called later, the setter changes
+   nothing and the getter answers Metal's directory. The getter's first
+   answer fixes the directory too, so [own_cache] finds <base> from the
+   user cache and the bundle, as Metal does, and asks the getter only after
+   the setter. Where a symbol is missing, a step fails, or the getter
+   answers another directory, the process keeps Metal's cache and the call
+   that asked goes on.
+
+   A child of fork made before [own_cache] ran takes a directory of its own
+   at its first count or open. One made after it inherits the once, Metal's
+   directory and the lock's descriptor. flock's lock belongs to the open
+   file, which both processes then hold, so no third process takes the
+   directory while either lives. A device the child opens is its own (Rig's
+   stops and forks), but Metal moves no cache once it has made a device,
+   which the parent did, so the child compiles in its parent's directory
+   and a first compile of one may wait on another. A program started by
+   exec that opens Metal through rig takes a directory of its own: the lock
+   it inherits is on another open file than the one it opens, so flock
+   refuses it the directory it inherited. */
+
+typedef NSString *(*cache_getter)(void);
+typedef void (*cache_setter)(NSString *);
+
+static cache_getter getter(void) {
+  return (cache_getter)dlsym(RTLD_DEFAULT, "MTLGetShaderCachePath");
+}
+
+/* The descriptor of <base>/<k>.lock, holding its lock, for the least [k]
+   whose lock no other process holds, with [*k] set; or -1 if a lock file
+   cannot be opened or flock refuses it for another reason. */
+static int take_slot(NSString *base, int *k) {
+  for (int i = 0;; i++) {
+    NSString *path = [base stringByAppendingFormat:@"/%d.lock", i];
+    int fd = open(path.fileSystemRepresentation, O_RDWR | O_CREAT, 0644);
+    if (fd < 0) return -1;
+    if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
+      *k = i;
+      return fd;
+    }
+    int held = errno == EWOULDBLOCK;
+    close(fd);
+    if (!held) return -1;
+  }
+}
+
+/* <user cache>/<bundle id>/rig.metal for a process with a bundle, else
+   <user cache>/rig.metal; nil if the system gives no user cache. */
+static NSString *cache_base(void) {
+  char dir[PATH_MAX];
+  size_t n = confstr(_CS_DARWIN_USER_CACHE_DIR, dir, sizeof dir);
+  if (n == 0 || n > sizeof dir) return nil;
+  NSString *base = [NSString stringWithUTF8String:dir];
+  NSString *bundle = NSBundle.mainBundle.bundleIdentifier;
+  if (bundle.length > 0) base = [base stringByAppendingPathComponent:bundle];
+  return [base stringByAppendingPathComponent:@"rig.metal"];
+}
+
+static void own_cache(void) {
+  cache_getter get = getter();
+  cache_setter set = (cache_setter)dlsym(RTLD_DEFAULT, "MTLSetShaderCachePath");
+  NSString *base = cache_base();
+  if (get == NULL || set == NULL || base == nil) return;
+  if (![NSFileManager.defaultManager createDirectoryAtPath:base
+                               withIntermediateDirectories:YES
+                                                attributes:nil
+                                                     error:NULL])
+    return;
+  int k, fd = take_slot(base, &k);
+  if (fd < 0) return;
+  NSString *dir = [base stringByAppendingFormat:@"/%d", k];
+  if (mkdir(dir.fileSystemRepresentation, 0755) != 0 && errno != EEXIST) {
+    close(fd);
+    return;
+  }
+  set(dir);
+  if (![get() isEqualToString:dir]) close(fd);
+}
+
+/* [own_cache], once in the process: the first count or open runs it, and
+   one in another domain meanwhile waits until it has run. */
+static void own_cache_once(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    @autoreleasepool {
+      own_cache();
+    }
+  });
+}
+
+/* The directory Metal keeps the process's code in, as its getter answers,
+   or "" without the getter, for rig's tests. */
+value caml_rig_metal_shader_cache(value unit) {
+  (void)unit;
+  cache_getter get = getter();
+  @autoreleasepool {
+    NSString *dir = get == NULL ? nil : get();
+    return caml_copy_string(dir == nil ? "" : dir.UTF8String);
+  }
+}
+
 value caml_rig_metal_count(value unit) {
   (void)unit;
+  own_cache_once();
   id<MTLDevice> device = MTLCreateSystemDefaultDevice();
   [device release];
   return Val_int(device != nil);
@@ -100,6 +238,7 @@ static const struct rig_driver driver = {
 /* A device whose word is the 8 bytes at [word], its values starting after
    theirs. */
 static intnat open_device(_Atomic uint64_t *word) API_AVAILABLE(macos(15.0)) {
+  own_cache_once();
   id<MTLDevice> device = MTLCreateSystemDefaultDevice();
   if (device == nil) return -no_device;
   int f = family(device);
@@ -387,14 +526,15 @@ static dispatch_group_t answering(void) {
    the starts on their callers' threads were: the start's calls for the
    function, its constants and its specialisation or pipeline, and a
    specialised function's call for its pipeline, which the specialisation's
-   handler queues. Metal may block such a call without bound: its first
-   look into the process's shader cache waits while another process holds
-   a lock on the cache's files. On this queue a blocked call holds neither
-   the build's caller, which waits for the answer in [caml_rig_metal_wait]
-   and so returns to OCaml, nor the image's guard, nor a thread of Metal's.
-   It keeps the queue's thread, and every call queued later waits behind
-   it. A start runs at its caller's QoS, which dispatch carries to the
-   block. */
+   handler queues. Metal may block such a call: the process's first compile
+   waits while another live process holds the files of the shader cache it
+   opens, which [own_cache] rules out unless Metal kept the process in its
+   own cache or the process shares its parent's. On this queue a blocked
+   call holds neither the build's caller, which waits for the answer in
+   [caml_rig_metal_wait] and so returns to OCaml, nor the image's guard, nor
+   a thread of Metal's. It keeps the queue's thread, and every call queued
+   later waits behind it. A start runs at its caller's QoS, which dispatch
+   carries to the block. */
 static dispatch_queue_t starts(void) {
   static dispatch_queue_t queue;
   static dispatch_once_t once;
@@ -909,6 +1049,11 @@ value caml_rig_metal_arena(value v_d) {
 value caml_rig_metal_count(value unit) {
   (void)unit;
   return Val_int(0);
+}
+
+value caml_rig_metal_shader_cache(value unit) {
+  (void)unit;
+  return caml_copy_string("");
 }
 
 value caml_rig_metal_open(value v_word) {

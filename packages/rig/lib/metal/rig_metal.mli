@@ -341,17 +341,41 @@ val capability : t -> Rig_metal_abi.t
     Calls for one function from several domains concurrently make one
     pipeline.
 
-    The start queues the compile on a serial queue of this library's, and
-    calls Metal for none of it. The queue's thread asks Metal for the
-    function and the function constants it declares, then for the compile.
-    A function that declares constants is first specialised by Metal's
-    asynchronous call, at the image's values, and its compile goes on the
-    queue once Metal answers. Metal may block any of these calls without
-    bound: its first look into the process's shader cache waits while
-    another process holds a lock on the cache's files. Such a call keeps the
-    queue's thread, and every compile started later waits behind it. The
-    prepares wait for their answers as for slow compiles, at most
-    [still_ms] each, with the thread's signals unblocked.
+    The start queues the compile on a serial queue of this library's, and calls
+    Metal for none of it. The queue's thread asks Metal for the function and the
+    function constants it declares, then for the compile. A function that
+    declares constants is first specialised by Metal's asynchronous call, at the
+    image's values, and its compile goes on the queue once Metal answers. A
+    compile that waits on Metal's shader cache, as the next paragraph says when,
+    keeps the queue's thread, and every compile started later waits behind it.
+    The prepares wait for their answers as for slow compiles, at most [still_ms]
+    each, with the thread's signals unblocked.
+
+    Metal keeps the code it compiles in a {e shader cache} on disk. A process's
+    first compile opens the cache, whether it finds its function there or not,
+    and locks files of it until the process exits, and a program the process
+    starts after that holds those locks too while it lives. A first compile in
+    another process that meets those files waits until no process holds them. So
+    that no compile waits on another process, the first {!count} or open
+    ({!gpu}) in a process, before Metal has made a device in it, gives the
+    process a cache directory that no other live process uses. The directory is
+    the first of the numbered directories in [rig.metal], beside Metal's own
+    directory for the process's application bundle, whose lock the process can
+    take. The process holds the lock until it exits, and a program it starts
+    after taking it holds the lock too while it lives, so that meanwhile a later
+    process takes another directory. A process finds there what the processes
+    that held the directory before it compiled. This library never removes the
+    directories. The directory serves every Metal compile of the process, those
+    of other libraries included. A child of [fork] made after that keeps its
+    parent's directory, which the parent and every such child share, and a first
+    compile of one may wait on another. Moving the cache uses a call that macOS
+    exports without documenting it. Where macOS lacks or ignores that call,
+    where the process has no user cache directory or cannot make or lock the
+    files of its own, or where Metal has made a device or answered its directory
+    in the process first, the process keeps Metal's own cache, one per
+    application bundle and one that every process without a bundle shares, and
+    its first compile may wait until the processes that hold files of that cache
+    exit.
 
     {!entry} takes the pipeline of the compile a prepare found answered, and
     waits for nothing. Every later call returns the same entry, which is
@@ -556,6 +580,13 @@ val runs : unit -> int
 (* [arena d] is the handle of [d]'s parameter arena ({!section-launches}), or
    [0n] while [d] holds none. It reads the arena while no submit runs on [d]. *)
 val arena : t -> nativeint
+
+(* [shader_cache ()] is the directory in which Metal keeps the code it compiles
+   for the process ({!section-code}), as Metal answers it, or [""] where macOS
+   lacks the call that answers. Metal's first answer fixes the directory, so
+   asked before the process's first {!count} or open, it keeps the process in
+   Metal's own cache. *)
+val shader_cache : unit -> string
 
 (* A device's ring of command buffers, driven by hand without Metal: a test
    plays the submitter, which commits command buffers, and Metal's handler,

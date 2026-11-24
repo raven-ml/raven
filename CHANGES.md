@@ -79,6 +79,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- A process's first Metal compile no longer waits until another process
+  exits: `Rig_metal` gives each live process a shader cache directory of its
+  own, beside Metal's, where macOS allows it.
 - `Rig.free_cache` gives back a Metal device's parameter arena, and on
   `Rig.host` the blocks kept for later submits. Both grow with the largest
   submission, and neither returned before.
