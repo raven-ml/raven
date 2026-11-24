@@ -297,7 +297,8 @@ let after_tick path =
   Fun.protect ~finally:(fun () -> remove probe) (fun () -> wait 10_000)
 
 let needs_dev_fd () =
-  if Sys.win32 then skip ~reason:"no /dev/fd to list descriptors" ()
+  if Support.descriptors () = None then
+    skip ~reason:"/dev/fd does not list this process's descriptors" ()
 
 (* Other files, read after a file to make the disk use more descriptors than it
    keeps. They stay reachable, so none closes by collection. *)
@@ -1082,8 +1083,10 @@ let test_create_empty () =
   equal (pair int string) (0, "") (B.length file, contents path)
 
 (* What rig_disk.mli says each call answers under a limit of the process: the
-   answer, whether the path names a file after, the descriptors the call left
-   open, and the disk's loss. *)
+   answer, whether the path names a file afterwards, where the mli says which,
+   the descriptors the call left open, and the disk's loss. A system that
+   sizes a file past the file size limit, as FreeBSD does, lets create_file
+   make it ([sized]). *)
 let limited =
   [
     ("create_file past the file size limit", "create-sized",
@@ -1093,11 +1096,21 @@ let limited =
     ("of_file with no descriptor left", "open-no-fd",
      "refused naming the path, left, descriptors as before, not lost");
     ("create_file with no descriptor left", "create-no-fd",
-     "refused naming the path, removed, descriptors as before, not lost");
+     "refused naming the path, descriptors as before, not lost");
   ]
+
+let sized = "opened, left, descriptors as before, not lost"
+
+(* Whether the system sizes a file past the file size limit, in a child under
+   the limit. *)
+let sizes_past_limit = lazy (child [ "sizes-past-limit"; new_path () ] = "yes")
 
 let test_limited (_, op, expected) =
   if Sys.win32 then skip ~reason:"no limits of a process" ();
+  let expected =
+    if op = "create-sized" && Lazy.force sizes_past_limit then sized
+    else expected
+  in
   let path = new_path () in
   removing [ path ] @@ fun () ->
   equal string expected (child [ "limited"; op; path ])
@@ -1244,8 +1257,12 @@ let test_recreated () =
   in
   equal (list string) [] (List.concat wrong)
 
-let test_bound () =
-  needs_dev_fd ();
+(* Opens 150 files on the disk and prints, twice, a line of the descriptors open
+   on them and the files that read wrong. A child of its own: a file system that
+   gives no identity keeps all 150 open until their buffers are collected, which
+   would leave the suite's later tests short of descriptors. *)
+let bound_child () =
+  own_dir ();
   let files =
     List.init 150 (fun i ->
         let s = pattern i (1 + i) in
@@ -1255,15 +1272,28 @@ let test_bound () =
     List.concat
       (List.mapi (fun i (b, s) -> if read b = s then [] else [ i ]) files)
   in
-  let kept msg =
-    if Lazy.force identified then
-      at_most int ~msg ~than:max_descriptors (open_on_made ())
-    else at_least int ~msg ~than:(List.length files) (open_on_made ())
+  let line () =
+    let w = wrong () in
+    print_endline
+      (String.concat " " (List.map string_of_int (open_on_made () :: w)))
   in
-  equal (list int) ~msg:"files that read wrong" [] (wrong ());
-  kept "descriptors";
-  equal (list int) ~msg:"files that read wrong, again" [] (wrong ());
-  kept "descriptors, again"
+  line ();
+  line ()
+
+let test_bound () =
+  needs_dev_fd ();
+  let round l = List.map int_of_string (String.split_on_char ' ' l) in
+  let rounds = List.map round (String.split_on_char '\n' (child [ "bound" ])) in
+  equal int ~msg:"rounds" 2 (List.length rounds);
+  List.iteri
+    (fun i r ->
+      let again = if i = 0 then "" else ", again" in
+      equal (list int) ~msg:("files that read wrong" ^ again) [] (List.tl r);
+      if Lazy.force identified then
+        at_most int ~msg:("descriptors" ^ again) ~than:max_descriptors
+          (List.hd r)
+      else at_least int ~msg:("descriptors" ^ again) ~than:150 (List.hd r))
+    rounds
 
 let test_inherited () =
   needs_dev_fd ();
@@ -2188,10 +2218,29 @@ let limited_child op path =
     | Some a, Some b when a <> b -> strf "descriptors %+d" (b - a)
     | _ -> "descriptors as before"
   in
-  Printf.printf "%s, %s, %s, %s" answer
-    (if Sys.file_exists path then "left" else "removed")
-    fds
+  (* Where a create lacks a descriptor, the file may stay or go. *)
+  let file =
+    if op = "create-no-fd" then ""
+    else if Sys.file_exists path then "left, "
+    else "removed, "
+  in
+  Printf.printf "%s, %s%s, %s" answer file fds
     (Option.value ~default:"not lost" (Rig.lost disk))
+
+(* Prints whether a file made under a file size limit of 4096 bytes takes a size
+   of 1 MiB. *)
+let sizes_past_limit_child path =
+  checked (Support.set_file_size 4096);
+  let flags = Unix.[ O_RDWR; O_CREAT; O_EXCL; O_CLOEXEC ] in
+  let fd = Unix.openfile path flags 0o600 in
+  let sized =
+    match Unix.ftruncate fd (1 lsl 20) with
+    | () -> true
+    | exception Unix.Unix_error (EFBIG, _, _) -> false
+  in
+  Unix.close fd;
+  Sys.remove path;
+  print_string (if sized then "yes" else "no")
 
 (* Makes this process's directory and a file in it, says so, and waits to be
    killed. *)
@@ -2207,7 +2256,9 @@ let () =
   | [ _; "hold" ] -> hold_child ()
   | [ _; "open-on"; ino ] -> open_on_child ino
   | [ _; "open-files" ] -> open_files_child ()
+  | [ _; "bound" ] -> bound_child ()
   | [ _; "limited"; op; path ] -> limited_child op path
+  | [ _; "sizes-past-limit"; path ] -> sizes_past_limit_child path
   | [ _; "fork"; path; out ] -> fork_child path out
   | [ _; "depth"; path ] -> depth_child path
   | [ _; "truncated-borrow"; op; kind; path ] ->

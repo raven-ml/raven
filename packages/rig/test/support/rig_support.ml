@@ -906,8 +906,23 @@ end
 
 let heap_bytes () = match heap_bytes () with -1 -> None | n -> Some n
 
+(* Whether /dev/fd lists this process's descriptors: Windows has none, and
+   FreeBSD's lists 0, 1 and 2 alone unless fdescfs is mounted on it. Read once,
+   at start: it is the system's, and a lazy value forced from two domains at
+   once raises. *)
+let lists_descriptors =
+  (not Sys.win32)
+  &&
+  let listed () = Array.length (Sys.readdir "/dev/fd") in
+  let before = listed () in
+  let fd = Unix.openfile "/dev/null" [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close fd)
+    (fun () -> listed () = before + 1)
+
 let descriptors () =
-  if Sys.win32 then None else Some (Array.length (Sys.readdir "/dev/fd"))
+  if lists_descriptors then Some (Array.length (Sys.readdir "/dev/fd"))
+  else None
 
 (* Forks *)
 

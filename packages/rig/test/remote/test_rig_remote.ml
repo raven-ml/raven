@@ -238,15 +238,15 @@ let many_waiting () =
     [ (0, [ "closed" ]); (0, [ "closed" ]) ]
     (List.map finish agents)
 
-(* Whether the system keeps a connection queued when accept finds no
-   descriptor for it: Linux takes the descriptor before it takes the
+(* Whether the system keeps a connection queued when accept finds no descriptor
+   for it: Linux and FreeBSD take the descriptor before they take the
    connection; macOS takes the connection first, then closes it. *)
 let keeps_queued =
   lazy
     (let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
      let os = input_line ic in
      ignore (Unix.close_process_in ic);
-     os = "Linux")
+     os <> "Darwin")
 
 (* How long the test leaves an agent with no descriptor where the system keeps
    the connection queued. Nothing outside the agent shows that its accept ran:

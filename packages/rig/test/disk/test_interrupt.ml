@@ -111,18 +111,23 @@ let collect () =
 
 let descriptors () = Option.get (Support.descriptors ())
 
+let needs_descriptors () =
+  if Support.descriptors () = None then
+    skip ~reason:"/dev/fd does not list this process's descriptors" ()
+
 (* In a child *)
 
-(* [in_child what f] is [f ()], run in a forked child, so that what one
-   attempt leaves never changes the next one. It fails with the child's
-   failure. *)
+(* [in_child what f] is [f ()], run in a forked child, so that what one attempt
+   leaves never changes the next one. It fails with the child's failure. *)
 let in_child what f =
   let r, w = Unix.pipe () in
   match Unix.fork () with
   | 0 ->
       Unix.close r;
       let answer =
-        match f () with v -> Ok v | exception e -> Error (Printexc.to_string e)
+        match f () with
+        | v -> Ok v
+        | exception e -> Error (Printexc.to_string e)
       in
       let oc = Unix.out_channel_of_descr w in
       Marshal.to_channel oc (answer : ('a, string) result) [];
@@ -178,6 +183,7 @@ let interrupt ?landing n =
 let test_interrupt landing () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   Rig_support.needs_fork ();
+  needs_descriptors ();
   ignore (Lazy.force paths);
   let rec from n = if interrupt ~landing n then from (n + 1) in
   from 1
@@ -360,6 +366,7 @@ let called n =
 let test_called () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   Rig_support.needs_fork ();
+  needs_descriptors ();
   ignore (Lazy.force paths);
   List.iter
     (fun name ->
