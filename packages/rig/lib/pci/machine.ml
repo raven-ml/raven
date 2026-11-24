@@ -73,9 +73,7 @@ let window m a n =
   | None -> Window.through m.ops.transport a n
 
 let functions m =
-  Result.map
-    (List.sort (fun a b -> Bus_address.compare a.bus b.bus))
-    (m.ops.functions ())
+  Result.map (Bus_address.sort (fun id -> id.bus)) (m.ops.functions ())
 
 (* Routes *)
 

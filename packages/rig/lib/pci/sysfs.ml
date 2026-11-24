@@ -34,7 +34,7 @@ let v ?(kernel = fun _ _ -> ()) root =
 
 let vfio_pci = "vfio-pci"
 let root m = m.root
-let path m bus file = strf "%s/%s/%s" m.devices bus file
+let path m bus file = String.concat "/" [ m.devices; bus; file ]
 let exists m bus = Sys.file_exists (Filename.concat m.devices bus)
 let vfio_file m name = Filename.concat m.vfio name
 

@@ -38,3 +38,10 @@ let numbers_exn a =
         a
 
 let compare a b = Stdlib.compare (numbers_exn a) (numbers_exn b)
+
+(* A comparison parses both addresses, so the sort compares numbers parsed once
+   for each element. *)
+let sort bus l =
+  List.map (fun x -> (numbers_exn (bus x), x)) l
+  |> List.stable_sort (fun (a, _) (b, _) -> Stdlib.compare a b)
+  |> List.map snd
