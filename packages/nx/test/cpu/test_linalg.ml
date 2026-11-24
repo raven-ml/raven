@@ -433,6 +433,76 @@ let law_guards (b : Support.backend) (c, side) =
                 want))
     routines
 
+(* A normal matrix whose eigenvalues ±i come twice: its QR iteration leaves two
+   rotation blocks coupled by 2^-43, against diagonals of rounding errors, that
+   xLAHQR's local test does not split within its iteration limit. *)
+let twice_i =
+  {
+    dt = D.Any D.Float32;
+    batch = [||];
+    n = 129;
+    r = 0;
+    triangle = Lower;
+    adjoint = false;
+    unit_diagonal = false;
+    seed = 36049;
+    how = Contiguous;
+    scale = Plain;
+  }
+
+(* The block on which twice_i's iteration stalls, row by row: two rotation
+   blocks coupled by a(2, 1) = 2^-43, which xLAHQR's local test leaves whole
+   over 300 sweeps. Its eigenvalues lie within 2^-20 of ±i, each twice, so
+   eig's, alone and with vectors, lie within γ(64) ‖a‖_F + ε(64) + 2^-20 of ±i,
+   and its vectors meet check_eig's relations. *)
+let test_eig_stalled (b : Support.backend) () =
+  let n = 4 and dt = D.Any D.Float32 in
+  let a =
+    Array.map
+      (fun re -> { Complex.re; im = 0. })
+      [|
+        0x1.fffffcp-24;
+        -0x1.00000cp+0;
+        0x1.2296fep-26;
+        -0x1.c9d298p-35;
+        0x1.00000ap+0;
+        -0x1.7ffff4p-22;
+        0x1.8077a4p-26;
+        0x1.5e6b62p-23;
+        0.;
+        0x1p-43;
+        0x1.00006p-23;
+        0x1.000006p+0;
+        0.;
+        0.;
+        -0x1.00001p+0;
+        -0x1.800038p-22;
+      |]
+  in
+  let x = of_values dt [| n; n |] a in
+  let norm = sqrt (Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. a) in
+  let bound = (eig_bound dt n *. norm) +. eig_term ~e:0 dt n in
+  let spectrum ~msg w =
+    let worst = { ratio = 0.; where = "" } in
+    Array.iteri
+      (fun j (z : Complex.t) ->
+        let near =
+          Float.min
+            (Complex.norm (Complex.sub z Complex.i))
+            (Complex.norm (Complex.add z Complex.i))
+        in
+        worse worst ~bound:(bound +. 0x1p-20) ~residual:near (fun () ->
+            Printf.sprintf "%s: eigenvalue %d, %h%+hi" msg j z.re z.im))
+      w;
+    check_worst worst
+  in
+  match (run b (Eig false) [| x |], run b (Eig true) [| x |]) with
+  | Some y, Some y' ->
+      spectrum ~msg:"alone" (values y.(0));
+      spectrum ~msg:"with vectors" (values y'.(0));
+      check_eig dt ~e:0 ~count:1 ~n (values x) (values y'.(0)) (values y'.(1))
+  | _ -> failf "eig declined a float32 matrix of order 4"
+
 (* The suite *)
 
 let dtype_name = Format.asprintf "%a" pp_dtype
@@ -501,8 +571,11 @@ let cpu (b : Support.backend) =
             (run (law_svd_spectrum b));
           test "svd's values at large orders" test_svd_large;
           test "svd's values through the two-stage reduction" test_svd_two_stage;
-          prop "eig's eigenvalues of a normal matrix within γ(16n) ‖a‖_F" case
+          prop ~examples:[ twice_i ]
+            "eig's eigenvalues of a normal matrix within γ(16n) ‖a‖_F" case
             (run (law_eig_spectrum b));
+          test "eig's eigenvalues of two rotation blocks coupled by 2^-43"
+            test_eig_stalled;
           test "eig's eigenvalues of a graded matrix, balanced"
             test_eig_balanced;
           test "eig's eigenvalues of a matrix spanning the exponent range, \

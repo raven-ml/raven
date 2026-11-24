@@ -4804,12 +4804,30 @@ static int F(negligible)(const T *h, int64_t n, int64_t k, int64_t lo,
   return ba * (ab / s) <= (smlnum > t ? smlnum : t);
 }
 
+/* Where xLAHQR's test has not split H's block [l, i] within its
+   iterations: the last k in (l, i] with |H(k, k − 1)| at most u ‖H(l:i,
+   l:i)‖_F, or l if there is none. Setting that element to 0 perturbs H
+   by u ‖H‖_F at most, the test that keeps QR backward stable (Ahues and
+   Tisseur, LAWN 122, (1.1)). The local test can stall: on two copies of
+   a rotation's block, whose diagonals are rounding errors, coupled by an
+   element of order u² that each sweep keeps at that order, it compares
+   the coupling with the diagonals alone. */
+static int64_t F(split)(const T *h, int64_t n, int64_t l, int64_t i) {
+  R norm = 0;
+  for (int64_t j = l; j <= i; j++)
+    norm = F(lapy3)(norm, F(norm)(&M(h, l, j), (j < i ? j + 1 : i) - l + 1, 1),
+                    0);
+  for (int64_t k = i; k > l; k--)
+    if (F(magnitude)(M(h, k, k - 1)) <= EPS * norm) return k;
+  return l;
+}
+
 #if CPLX
 /* H's eigenvalues [lo, hi] into wr and wi by single-shift QR sweeps
    (xLAHQR), H, columns [n] apart, made upper triangular under [wantt],
    and Z's rows [lo, hi] multiplied by the sweeps' rotations where [z] is
-   not NULL. Answers 0 if an eigenvalue takes more than 30 max(10, hi −
-   lo + 1) iterations. */
+   not NULL. A block that 30 max(10, hi − lo + 1) iterations leave whole
+   is split where F(split) finds; answers 0 where it finds nowhere. */
 static int F(lahqr)(int wantt, int64_t n, int64_t lo, int64_t hi, T *h, R *wr,
                     R *wi, T *z) {
   if (n == 0) return 1;
@@ -4929,7 +4947,14 @@ static int F(lahqr)(int wantt, int64_t n, int64_t lo, int64_t hi, T *h, R *wr,
         for (int64_t p = lo; z && p <= hi; p++) M(z, p, i) = MUL(M(z, p, i), x);
       }
     }
-    if (its > itmax) return 0;
+    if (its > itmax) {
+      /* Split by the normwise test, then iterate again on what remains. */
+      int64_t k = F(split)(h, n, l, i);
+      if (k == l) return 0;
+      M(h, k, k - 1) = 0;
+      kdefl = 0;
+      continue;
+    }
     wr[i] = REAL(M(h, i, i));
     wi[i] = IMAG(M(h, i, i));
     kdefl = 0;
@@ -5048,8 +5073,8 @@ static void F(rots)(R *x, R *y, int64_t n, int64_t st, R c, R s) {
    sweeps (xLAHQR), H, columns [n] apart, made quasi-triangular under
    [wantt] with each complex pair a 2 × 2 block in xLANV2's form, and Z's
    rows [lo, hi] multiplied by the sweeps' reflectors where [z] is not
-   NULL. Answers 0 if an eigenvalue takes more than 30 max(10, hi − lo +
-   1) iterations. */
+   NULL. A block that 30 max(10, hi − lo + 1) iterations leave whole is
+   split where F(split) finds; answers 0 where it finds nowhere. */
 static int F(lahqr)(int wantt, int64_t n, int64_t lo, int64_t hi, R *h, R *wr,
                     R *wi, R *z) {
   if (n == 0) return 1;
@@ -5166,7 +5191,14 @@ static int F(lahqr)(int wantt, int64_t n, int64_t lo, int64_t hi, R *h, R *wr,
         }
       }
     }
-    if (its > itmax) return 0;
+    if (its > itmax) {
+      /* Split by the normwise test, then iterate again on what remains. */
+      int64_t k = F(split)(h, n, l, i);
+      if (k == l) return 0;
+      M(h, k, k - 1) = 0;
+      kdefl = 0;
+      continue;
+    }
     if (l == i) {
       wr[i] = M(h, i, i);
       wi[i] = 0;

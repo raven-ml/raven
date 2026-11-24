@@ -3680,6 +3680,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.eig` and `Nx.eigvals` on nx.cpu answered NaN when the QR iteration
+  stalled, as on a normal matrix whose pair ±i repeats. A block left whole at
+  the iteration limit now splits where a subdiagonal is below u times its norm.
 - `Nx.searchsorted`, `Nx.searchsorted_along_axis` and `Nx.unique` of float
   keys narrower than float64 compile on Metal. They keyed each float as a
   float64, which Metal lacks, and now key it at its own width.
