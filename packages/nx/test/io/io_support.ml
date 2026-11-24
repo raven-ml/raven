@@ -52,17 +52,22 @@ let flip_byte s i =
     (fun j c -> if i = j then Char.chr (Char.code c lxor 0xff) else c)
     s
 
-(* Every proper prefix of [whole] fails to load, naming its file. *)
+(* Every proper prefix of [whole] fails to load, naming its file. Each prefix
+   overwrites one file: a file of its own each, a 14 KiB file's prefixes made
+   and unlinked 14780 files, half the test's time. *)
 let prefixes_fail load whole =
+  let path = temp_file () in
   for n = 0 to String.length whole - 1 do
-    let path = file (String.sub whole 0 n) in
+    write path (String.sub whole 0 n);
     fails ~path (fun () -> load path)
   done
 
-(* Every byte of [whole] below [upto], flipped, loads or fails. *)
+(* Every byte of [whole] below [upto], flipped, loads or fails, each flip
+   overwriting one file. *)
 let flips_load_or_fail load ?(upto = max_int) whole =
+  let path = temp_file () in
   for i = 0 to Int.min upto (String.length whole) - 1 do
-    let path = file (flip_byte whole i) in
+    write path (flip_byte whole i);
     loads_or_fails ~path (fun () -> load path)
   done
 

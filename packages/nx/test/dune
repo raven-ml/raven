@@ -143,14 +143,48 @@
  (deps support/agent.exe)
  (libraries nx rig rig_remote rig_remote_job windtrap))
 
-; Opens this machine's first GPU, so it holds the lock GPU tests share.
+; Opens this machine's first GPU: the rule of GPU suites below runs it.
 
-(test
- (package nx)
+(executable
  (name test_place_gpu)
  (modules test_place_gpu)
- (locks %{workspace_root}/gpu)
  (libraries nx nx_array nx_support rig rig.gpus windtrap))
+
+; The suite above, as the rule of GPU suites below runs it.
+
+(rule
+ (target gpu.suites)
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:support/suites.exe} list %{dep:test_place_gpu.exe}))))
+
+; nx's suites that act on a GPU, one after another in one process under the
+; lock GPU tests share: those of each gpu.suites, here and in the
+; directories below, which each directory writes beside the suites it
+; declares. dune holds a rule's locks through its whole action but gives
+; each process its own job slot, in the order asked. A suite in a rule's
+; second process, or in a rule that took the lock from another, asked after
+; every other suite of the runtest and waited, the lock held, until all of
+; them had started. One process asks once, at the start. Each suite runs
+; from its own directory, as in a rule of its own. nx.kernel's suites read
+; its kinds goldens.
+;
+; The rule depends on the lists, not on the programs they name, so it runs
+; unsandboxed, where those programs are. Each list holds its programs'
+; digests, so a relinked suite changes its list and reruns the rule.
+
+(rule
+ (package nx)
+ (alias runtest)
+ (locks %{workspace_root}/gpu)
+ (deps
+  (sandbox none)
+  (:suites
+   (glob_files_rec gpu.suites))
+  (glob_files kernel/golden/kinds/*.golden))
+ (action
+  (run %{exe:support/suites.exe} run %{suites})))
 
 ; place_fixed.t compiles against the installed nx: which walks place_fixed
 ; takes is a matter of types.

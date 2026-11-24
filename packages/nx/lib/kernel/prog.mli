@@ -31,8 +31,10 @@
     does. On one device model it computes each kind to the same bits in all
     its paths, so that a kind gives the same bits run alone by its own
     kernel and as a node of any program. On a device that flushes
-    subnormal numbers to zero, which its library states, the bounds hold
-    where the operands and the result are normal.
+    subnormal numbers to zero, which its library states, a kind's results
+    are as this section states where no operand is subnormal and no
+    nonzero exact result lies below the least normal number in magnitude;
+    its library states what it gives elsewhere.
 
     {!v} makes a program from its nodes, {!of_node} from one kind over its
     operands, and {!of_exprs} from {e expressions} ({!E}), nodes written as

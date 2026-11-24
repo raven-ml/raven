@@ -33,6 +33,9 @@ type attention = {
   rounds_weights : bool;
       (** [rounds_weights] is [true] iff it may apply weights through a
           rounding to [float16] or [bfloat16] values' dtype. *)
+  float64 : bool;
+      (** [float64] is [true] iff it computes attention in a [float64]
+          accumulator. *)
 }
 (** The type for what a kernel library states of its attention's errors. *)
 
@@ -49,15 +52,32 @@ type sums =
       (** In blocks of at most 256: nx_cpu.mli's and nx_cuda.mli's. *)
   | Running  (** Into one running sum a range: nx_amd.mli's. *)
 
+(** The type for what a library gives at float32 and bfloat16 where an
+    operand is subnormal or an exact result is below the least normal
+    number, [2{^-126}] in magnitude. *)
+type underflow =
+  | Gradual  (** Subnormal operands and results, as IEEE 754 states. *)
+  | Flush
+      (** A subnormal operand reads as a zero of its sign, and a nonzero
+          exact result below [2{^-126}] gives a zero of its sign, in every
+          kind that computes a float; the kinds whose result is an integer
+          value, a boolean or an operand's bits are exact. *)
+
 type backend = {
   name : string;  (** The backend's name in the suite, as ["cpu/base"]. *)
   kernels : (module Nx_kernel.S);  (** Its kernels. *)
   device : Rig.t;  (** The device whose memory its laws compute on. *)
   computes : kind -> Nx_array.Dtype.any -> bool;
       (** [computes k dt] is [true] iff it states it computes [k] at [dt]: the
-          result's dtype for [K0], the operand's for [K1] and [K2], and for [K3]
+          result's dtype for [K0], the operand's for [K1] and [K2] (for a
+          [Cast], it states a cast computed where [computes] holds at both
+          dtypes, or the two are one), and for [K3]
           the second operand's, with a [bool] condition. The suite fails when it
           declines one. *)
+  arith : Nx_array.Dtype.any -> bool;
+      (** [arith dt] is [true] iff it states it computes on [dt]'s values;
+          where it does not, it only moves them, and declines every call
+          that computes on one. *)
   around : 'a. (unit -> 'a) -> 'a;
       (** [around f] is [f ()] run as the backend: nx.cpu's under its target
           table. *)
@@ -83,6 +103,9 @@ type backend = {
   contract_sums : sums;
       (** [contract_sums] is how it states it adds a float contraction's
           products. *)
+  underflow : underflow;
+      (** [underflow] is what it states it gives at float32 and bfloat16
+          below the least normal number. *)
 }
 (** The type for kernel libraries in one configuration. *)
 
@@ -120,6 +143,12 @@ val amd : unit -> backend option
     environment variable [NX_KERNELS] is not ["cpu"], opened at the first
     call. Each suite but attention's, whose calls nx.amd declines, runs
     its laws on it. Its reductions and scans associate as nx.cpu's. *)
+
+val metal : unit -> backend option
+(** [metal ()] is nx.metal on the machine's Metal GPU 0, as ["metal"],
+    where rig sees one, nx.metal computes on it and the environment
+    variable [NX_KERNELS] is not ["cpu"], opened at the first call. A
+    suite runs its laws on it for the families nx.metal computes. *)
 
 val elements : Nx_array.any -> string array
 (** [elements x] is [x]'s elements in C order of indices, each as its

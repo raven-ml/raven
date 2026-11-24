@@ -32,11 +32,16 @@
   (env_var WINDTRAP_EXCLUDE_TAG)
   (env_var WINDTRAP_PROP_COUNT)))
 
-; Opens this machine's first GPU, so it holds the lock GPU tests share.
+; Opens this machine's first GPU: ../dune's rule of GPU suites runs it.
 
-(test
- (package nx)
+(executable
  (name test_array_gpu)
  (modules test_array_gpu)
- (locks %{workspace_root}/gpu)
  (libraries nx_array rig rig.gpus windtrap))
+
+(rule
+ (target gpu.suites)
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:../support/suites.exe} list %{dep:test_array_gpu.exe}))))

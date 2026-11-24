@@ -19,10 +19,24 @@ let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = )
 let host = Support.host
 let on = Support.on
 
-(* Fails if [b] declines [k] at [dt], a case it states it computes. *)
-let check_declined (b : Support.backend) k (D.Any dt as d) =
-  if b.computes k d then
-    failf "%s declined a kind it computes at %s" b.name (D.name dt)
+(* Fails if [b] declines [k] at [dt], into [into] for a [Cast], a case it
+   states it computes: a cast where it computes [Cast] at both dtypes, or
+   into the operand's own. *)
+let check_declined ?into (b : Support.backend) k (D.Any dt as d) =
+  let stated =
+    match (k, into) with
+    | Support.K1 Cast, Some (D.Any t as dst) ->
+        D.equal_witness dt t <> None
+        || (b.computes k d && b.computes k dst)
+    | K1 Cast, None -> invalid_arg "check_declined: a Cast without ~into"
+    | _ -> b.computes k d
+  in
+  if stated then
+    match into with
+    | Some (D.Any t) when k = K1 Cast ->
+        failf "%s declined a cast it computes from %s into %s" b.name
+          (D.name dt) (D.name t)
+    | _ -> failf "%s declined a kind it computes at %s" b.name (D.name dt)
 
 let strf = Printf.sprintf
 
@@ -586,6 +600,119 @@ let name2 = function
       | Less -> "less"
       | Less_equal -> "less_equal")
 
+(* Flushed results
+
+   A backend that states [Flush] reads a subnormal float32 or bfloat16
+   operand, or a complex64's subnormal part, as a zero of its sign in
+   each kind that computes a float, and gives a zero of its sign where
+   the exact result is nonzero and below 2^-126; the kinds whose result
+   is an integer value, a boolean or an operand's bits are exact. *)
+
+(* Whether nx_kinds.h's kind [name] gives an integer value, a boolean or
+   an operand's bits. *)
+let exact_kind = function
+  | "neg" | "abs" | "sign" | "floor" | "ceil" | "round" | "trunc" | "maximum"
+  | "minimum" | "equal" | "not_equal" | "less" | "less_equal" | "and" | "or"
+  | "xor" | "threefry" ->
+      true
+  | _ -> false
+
+(* Whether [b] flushes kind [name] at [dt]. *)
+let flushes (b : Support.backend) name (D.Any dt) =
+  b.underflow = Flush
+  && (not (exact_kind name))
+  &&
+  match D.Any dt with
+  | D.Any (D.Float32 | D.Bfloat16 | D.Complex64) -> true
+  | D.Any _ -> false
+
+(* The width in bytes of [dt]'s float parts: 2 for bfloat16, else 4. *)
+let part_bytes (D.Any dt) = if D.bits dt = 16 then 2 else 4
+
+let part_at bits w e =
+  let v = ref 0 in
+  for j = 0 to w - 1 do
+    v := !v lor (bits.((e * w) + j) lsl (8 * j))
+  done;
+  !v
+
+(* Whether the part [v] of [w] bytes is subnormal. *)
+let subnormal w v =
+  let exp = if w = 2 then 0x7f80 else 0x7f80_0000 in
+  v land exp = 0 && v land (exp - 1) <> 0
+
+let sign_bit w = if w = 2 then 0x8000 else 0x8000_0000
+
+(* [bits], as {!bits_of} gives them for [d], with each subnormal part a
+   zero of its sign. *)
+let flush_bits d bits =
+  let w = part_bytes d in
+  let r = Array.copy bits in
+  for e = 0 to (Array.length bits / w) - 1 do
+    let v = part_at bits w e in
+    if subnormal w v then
+      let z = v land sign_bit w in
+      for j = 0 to w - 1 do
+        r.((e * w) + j) <- (z lsr (8 * j)) land 0xff
+      done
+  done;
+  r
+
+(* [a] with its subnormal parts zeros of their signs, C-contiguous. *)
+let flushed (type v s) (a : (v, s) A.t) : (v, s) A.t =
+  let dt = A.dtype a in
+  let r = flush_bits (D.Any dt) (bits_of a) in
+  let s = String.init (Array.length r) (fun i -> Char.chr r.(i)) in
+  let s = if s = "" then "\000" else s in
+  A.v dt (L.contiguous (L.shape (A.layout a))) (B.of_string s)
+
+(* [x] on the host, in its layout, with each subnormal part of its
+   buffer a zero of its sign. *)
+let flushed_view (A.Any x) =
+  let x = Support.host x in
+  let b = A.buffer x in
+  let n = B.length b in
+  let s = Bytes.create n in
+  B.blit_to_bytes b 0 s 0 n;
+  let dt = A.dtype x in
+  let r = flush_bits (D.Any dt) (Array.init n (fun i -> Char.code (Bytes.get s i))) in
+  let s = String.init n (fun i -> Char.chr r.(i)) in
+  A.Any (A.v dt (A.layout x) (B.of_string (if s = "" then "\000" else s)))
+
+(* Bits as {!bits_of} gives them for [d], equal where {!same_values} or,
+   where [any_nan] is false, the bits are, or where a part of [want] is
+   the least normal number, 2^-126, and [got]'s part is a zero of its
+   sign: the result rounds to it, and its exact value may lie below it.
+   For a law that holds no exact result, such as a sum's last combine or
+   a node inside a program; a law over one kind's operands holds it
+   ({!expected_on}). *)
+let flushed_values ~any_nan d =
+  let w = part_bytes d in
+  let least = if w = 2 then 0x0080 else 0x0080_0000 in
+  let near want got =
+    let n = Array.length want in
+    n = Array.length got
+    && List.for_all
+         (fun e ->
+           let a = part_at want w e and b = part_at got w e in
+           a = b
+           || (a land lnot (sign_bit w) = least && b = a land sign_bit w))
+         (List.init (n / w) Fun.id)
+  in
+  let per = max 1 ((fun (D.Any dt) -> D.bits dt) d / 8) in
+  Testable.make ~pp:(Testable.pp (array int)) ~equal:(fun want got ->
+      Array.length want = Array.length got
+      && List.for_all
+           (fun e ->
+             let sub a = Array.sub a (e * per) per in
+             let a = sub want and b = sub got in
+             near a b
+             || any_nan
+                && Testable.equal (Elements.same d)
+                     (String.init per (fun i -> Char.chr a.(i)))
+                     (String.init per (fun i -> Char.chr b.(i))))
+           (List.init (Array.length want / per) Fun.id))
+
 (* [v]'s low [w] bytes, least significant first. *)
 let low_bytes w v =
   List.init w (fun i ->
@@ -725,12 +852,11 @@ let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
   | A.Done ->
       collect "a call Done";
       equal ~msg:"accepted" bool true accepted;
-      equal
-        (if any_nan kind then same_values (D.Any dt) else array int)
-        (want ()) (bits_of (host dst))
+      let values = if any_nan kind then same_values (D.Any dt) else array int in
+      equal values (want ()) (bits_of (host dst))
   | A.Declined ->
       collect "a call Declined";
-      check_declined b kind (D.Any at);
+      check_declined ~into:(D.Any dt) b kind (D.Any at);
       equal ~msg:"declined writes nothing" (array int) before
         (bits_of (host dst))
   | exception Invalid_argument _ when not accepted ->
@@ -740,6 +866,67 @@ let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
       equal ~msg:"refused writes nothing" (array int) before
         (bits_of (host dst))
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+
+(* [r], bits of [d] as {!bits_of} gives them, with each part a zero of
+   its sign where the same part of [exact], bits of float64 parts, is
+   nonzero and below 2^-126, the least normal number, in magnitude. *)
+let below_least d r exact =
+  let w = part_bytes d in
+  let r = Array.copy r in
+  for e = 0 to (Array.length r / w) - 1 do
+    let b = ref 0L in
+    for j = 7 downto 0 do
+      b := Int64.logor (Int64.shift_left !b 8) (Int64.of_int exact.((8 * e) + j))
+    done;
+    let x = Int64.float_of_bits !b in
+    if x <> 0. && Float.abs x < Float.ldexp 1. (-126) then
+      let z = if Float.sign_bit x then sign_bit w else 0 in
+      for j = 0 to w - 1 do
+        r.((e * w) + j) <- (z lsr (8 * j)) land 0xff
+      done
+  done;
+  r
+
+(* [expected name dt ~compare ops] as [b] states it, where {!flushes}:
+   of the operands flushed, a zero of its sign where the result is
+   nonzero and below 2^-126. The kind at float64, or complex128, over the
+   same operands stands for the exact result: it is below 2^-126 where
+   the exact one is, and 2^-126 where the exact one is, but for an fma,
+   whose product may lie past a double's bits of its addend. *)
+let expected_on (type v s) (b : Support.backend) name (dt : (v, s) D.t)
+    ~compare ops =
+  if not (flushes b name (D.Any dt)) then expected name dt ~compare ops
+  else
+    let ops = Array.map flushed ops in
+    let r = expected name dt ~compare ops in
+    if compare then r
+    else
+      let exact =
+        match D.kind dt with
+        | _ when name = "fma" ->
+            (* The f32 product is exact in a double, and the sum of it and
+               the addend is [s + e]: a double one step from [s] toward
+               zero lies below 2^-126 where the sum does. *)
+            let v = Array.map (fun a -> A.to_array (reference a D.Float64)) ops in
+            let sum i a =
+              let s, e = Exact.two_sum (a *. v.(1).(i)) v.(2).(i) in
+              if not (Float.is_finite s && Float.is_finite e) || e = 0. then s
+              else if s = 0. then e
+              else if Float.sign_bit e = Float.sign_bit s then s
+              else if s > 0. then Float.pred s
+              else Float.succ s
+            in
+            bits_of
+              (A.of_array D.Float64 (L.shape (A.layout ops.(0)))
+                 (Array.mapi sum v.(0)))
+        | D.Complex ->
+            expected name D.Complex128 ~compare:false
+              (Array.map (fun a -> reference a D.Complex128) ops)
+        | _ ->
+            expected name D.Float64 ~compare:false
+              (Array.map (fun a -> reference a D.Float64) ops)
+      in
+      below_least (D.Any dt) (flush_bits (D.Any dt) r) exact
 
 let law_map1 ?(kinds = unaries) (b : Support.backend) (Case x) =
   let module K = (val b.kernels) in
@@ -755,7 +942,7 @@ let law_map1 ?(kinds = unaries) (b : Support.backend) (Case x) =
       let k = P.Unary u in
       answers b (K1 k) (D.Any dt) (D.Any dt) shape
         ~accepted:(P.accepts1 k dt dt)
-        ~want:(fun () -> expected name dt ~compare:false [| x |])
+        ~want:(fun () -> expected_on b name dt ~compare:false [| x |])
         (fun dst -> Support.map1 (module K) k ~dst x'))
     kinds
 
@@ -771,8 +958,9 @@ let law_map2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
     (fun k ->
       let compare = match k with P.Compare _ -> true | Binary _ -> false in
       let rd = if compare then D.Any D.Bool else D.Any dt in
-      answers b (K2 k) (D.Any dt) rd shape ~accepted:(P.accepts2 k dt)
-        ~want:(fun () -> expected (name2 k) dt ~compare [| x; y |])
+      answers b (K2 k) (D.Any dt) rd shape
+        ~accepted:(P.accepts2 k dt)
+        ~want:(fun () -> expected_on b (name2 k) dt ~compare [| x; y |])
         (fun dst -> Support.map2 (module K) k ~dst x' y'))
     kinds
 
@@ -957,9 +1145,12 @@ let last_reads (p : P.t) =
    so the run creates about as many arrays as [p] holds values at once.
    With an array for each of thousands of nodes, the sanitize profile's
    collector, which runs a major cycle every few arrays created, marked
-   every live one each time. Raises [Skip] where a kind is declined. *)
-let split (b : Support.backend) (p : P.t) (types : D.any array) shape
-    (ops : A.any array) =
+   every live one each time, each value of a dtype where [flush] holds
+   flushed as {!flushed_view} flushes it. Raises [Skip] where a kind is
+   declined that [b] does not state it computes, and fails where it
+   does. *)
+let split ?(flush = fun _ -> false) (b : Support.backend) (p : P.t)
+    (types : D.any array) shape (ops : A.any array) =
   let module K = (val b.kernels) in
   let values = Array.make (Iarray.length p.nodes) ops.(0) in
   let last = last_reads p in
@@ -972,35 +1163,48 @@ let split (b : Support.backend) (p : P.t) (types : D.any array) shape
         a
     | None -> A.Any (A.create b.device d shape)
   in
-  let run answer = if answer <> A.Done then raise Skip in
+  let run ?into k d = function
+    | A.Done -> ()
+    | A.Declined ->
+        check_declined ?into b k d;
+        raise Skip
+    | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+  in
+  let any (A.Any a) = D.Any (A.dtype a) in
   for i = 0 to Iarray.length p.nodes - 1 do
     values.(i) <-
       (match Iarray.get p.nodes i with
       | In k -> ops.(k)
       | Coord a ->
           let dst = A.create b.device D.Int64 shape in
-          run (Support.map0 (module K) (Iota a) ~dst);
+          run (K0 (Iota a)) (D.Any D.Int64) (Support.map0 (module K) (Iota a) ~dst);
           A.Any dst
       | Const (_, bits) ->
           let (A.Any dst) = fresh i in
-          run (Support.map0 (module K) (Fill bits) ~dst);
+          run (K0 (Fill bits)) types.(i) (Support.map0 (module K) (Fill bits) ~dst);
           A.Any dst
       | Op1 (k, _, j) ->
           let (A.Any dst) = fresh i in
           let (A.Any x) = values.(j) in
-          run (Support.map1 (module K) k ~dst x);
+          run ~into:types.(i) (K1 k) (any values.(j))
+            (Support.map1 (module K) k ~dst x);
           A.Any dst
       | Op2 (k, j, l) ->
           let (A.Any dst) = fresh i in
           let (A.Any x) = values.(j) in
-          run (Support.map2 (module K) k ~dst x (A.expect (A.dtype x) values.(l)));
+          run (K2 k) (any values.(j))
+            (Support.map2 (module K) k ~dst x (A.expect (A.dtype x) values.(l)));
           A.Any dst
       | Op3 (k, c, j, l) ->
           let (A.Any c) = values.(c) in
           let (A.Any x) = values.(j) in
           let dst = A.expect (A.dtype x) (fresh i) in
-          run (Support.map3 (module K) k ~dst c x (A.expect (A.dtype x) values.(l)));
+          run (K3 k) (any values.(j))
+            (Support.map3 (module K) k ~dst c x (A.expect (A.dtype x) values.(l)));
           A.Any dst);
+    (match Iarray.get p.nodes i with
+    | In _ -> ()
+    | _ -> if flush types.(i) then values.(i) <- flushed_view values.(i));
     let drop j =
       if last.(j) = i then begin
         last.(j) <- -1;
@@ -1639,23 +1843,16 @@ let wide_map (b : Support.backend) c =
 
 (* A map too wide for one of nx.cuda's launches gives each output the
    bits of its nodes run one by one, any NaN for a NaN, and a destination
-   identical to a [Plain] load receives what a fresh one would. *)
+   identical to a [Plain] load receives what a fresh one would. Where a
+   node run alone is declined, the map is. *)
 let law_wide_map (b : Support.backend) c =
   let module K = (val b.kernels) in
   let p, n = wide_program c in
   let shape = wide_shape c in
   let loads, xs = wide_loads b c n in
   let types = Array.init (Iarray.length p.nodes) (P.dtype p) in
-  let values = split b p types (Iarray.of_array shape) xs in
-  let want =
-    Array.map
-      (fun o ->
-        let (A.Any v) = values.(o) in
-        (D.Any (A.dtype v), bits_of (host v)))
-      (Iarray.to_array p.outs)
-  in
   let aliased = c.aliased && not c.padded in
-  let dsts =
+  let dsts () =
     Array.mapi
       (fun k o ->
         if aliased && k = 0 then xs.(0)
@@ -1664,21 +1861,34 @@ let law_wide_map (b : Support.backend) c =
           A.Any (A.create b.device d (Iarray.of_array shape)))
       (Iarray.to_array p.outs)
   in
-  cover "past a launch's loads" (c.mode = Loads);
-  cover "past a launch's values held" (c.mode = Held);
-  cover "past a launch's outputs" (c.mode = Outputs);
-  cover "a padded load copied out" (c.mode = Loads && c.padded);
-  cover "a destination identical to a load" aliased;
   let call = Format.asprintf "%a" pp_wide c in
-  equal ~msg:call answer A.Done
-    (K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads));
-  Array.iteri
-    (fun k (A.Any y) ->
-      let d, w = want.(k) in
-      equal
-        ~msg:(strf "%s, output %d" call k)
-        (same_values d) w (bits_of (host y)))
-    dsts
+  let map dsts = K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads) in
+  match split b p types (Iarray.of_array shape) xs with
+  | exception Skip ->
+      cover "a node declined" true;
+      equal ~msg:call answer A.Declined (map (dsts ()))
+  | values ->
+      let want =
+        Array.map
+          (fun o ->
+            let (A.Any v) = values.(o) in
+            (D.Any (A.dtype v), bits_of (host v)))
+          (Iarray.to_array p.outs)
+      in
+      let dsts = dsts () in
+      cover "past a launch's loads" (c.mode = Loads);
+      cover "past a launch's values held" (c.mode = Held);
+      cover "past a launch's outputs" (c.mode = Outputs);
+      cover "a padded load copied out" (c.mode = Loads && c.padded);
+      cover "a destination identical to a load" aliased;
+      equal ~msg:call answer A.Done (map dsts);
+      Array.iteri
+        (fun k (A.Any y) ->
+          let d, w = want.(k) in
+          equal
+            ~msg:(strf "%s, output %d" call k)
+            (same_values d) w (bits_of (host y)))
+        dsts
 
 (* Device memory held in a loop *)
 

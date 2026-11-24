@@ -167,9 +167,46 @@ NX_INLINE NX_T NX_(nx_fma)(NX_T a, NX_T b, NX_T c) { return NX_FMA(a, b, c); }
 /* The sign bit flipped: CUDA's negation quiets a signalling NaN. */
 NX_INLINE NX_T NX_(nx_neg)(NX_T a) { return NX_OF_BITS(NX_BITS(a) ^ NX_SIGN_BIT); }
 NX_INLINE NX_T NX_(nx_abs)(NX_T a) { return NX_(nx_abs_bits)(a); }
+#ifdef __METAL_VERSION__
+/* Metal flushes subnormals in arithmetic and comparisons (nx_kinds.h):
+   the kinds whose result is an integer value, a boolean or an operand's
+   bits compute on bits instead, so that they give their exact results at
+   subnormal operands too. A subnormal reads as zero of its sign in the
+   few kinds that would pass it through unchanged otherwise. */
+
+/* Whether x is subnormal; x as a zero of its sign where it is. */
+NX_INLINE int NX_(nx_subnormal)(NX_T x) {
+  NX_U b = NX_BITS(x) & ~NX_SIGN_BIT;
+  return b != 0 && b < NX_MIN_NORMAL_BITS;
+}
+
+NX_INLINE NX_T NX_(nx_flush)(NX_T x) {
+  return NX_(nx_subnormal)(x) ? NX_OF_BITS(NX_BITS(x) & NX_SIGN_BIT) : x;
+}
+
+/* x's order key: its bits, the sign bit flipped for a positive x and every
+   bit for a negative one, so that unsigned order is the order of values,
+   -0 below +0. */
+NX_INLINE NX_U NX_(nx_key)(NX_T x) {
+  NX_U b = NX_BITS(x);
+  return b ^ (((NX_U)0 - (b >> (8 * sizeof(NX_U) - 1))) | NX_SIGN_BIT);
+}
+
+/* Whether a and b are both zeros, of either sign. */
+NX_INLINE int NX_(nx_zeros)(NX_T a, NX_T b) {
+  return ((NX_BITS(a) | NX_BITS(b)) & ~NX_SIGN_BIT) == 0;
+}
+
+NX_INLINE NX_T NX_(nx_sign)(NX_T a) {
+  NX_U b = NX_BITS(a);
+  NX_T s = (b & NX_SIGN_BIT) ? -NX_ONE : NX_ONE;
+  return NX_ISNAN(a) ? a : (b & ~NX_SIGN_BIT) == 0 ? (NX_T)0 : s;
+}
+#else
 NX_INLINE NX_T NX_(nx_sign)(NX_T a) {
   return NX_ISNAN(a) ? a : (NX_T)((a > 0) - (a < 0));
 }
+#endif
 NX_INLINE NX_T NX_(nx_recip)(NX_T a) { return NX_ONE / a; }
 NX_INLINE NX_T NX_(nx_sqrt)(NX_T a) { return NX_SQRT(a); }
 
@@ -181,13 +218,21 @@ NX_INLINE NX_T NX_(nx_trunc)(NX_T a) {
   return m < NX_INTEGRAL ? r : a;
 }
 
+/* On Metal, a subnormal's floor and ceiling by its sign: the comparison
+   below reads it as zero. */
 NX_INLINE NX_T NX_(nx_floor)(NX_T a) {
   NX_T t = NX_(nx_trunc)(a);
+#ifdef __METAL_VERSION__
+  if (NX_(nx_subnormal)(a)) return (NX_BITS(a) & NX_SIGN_BIT) ? -NX_ONE : (NX_T)0;
+#endif
   return t > a ? t - 1 : t;
 }
 
 NX_INLINE NX_T NX_(nx_ceil)(NX_T a) {
   NX_T t = NX_(nx_trunc)(a);
+#ifdef __METAL_VERSION__
+  if (NX_(nx_subnormal)(a)) return (NX_BITS(a) & NX_SIGN_BIT) ? NX_OF_BITS(NX_SIGN_BIT) : NX_ONE;
+#endif
   return t < a ? t + 1 : t;
 }
 
@@ -202,6 +247,33 @@ NX_INLINE NX_T NX_(nx_round)(NX_T a) {
    Spelled so that gcc and clang compile each select and the mask to one
    vector instruction: gcc makes a mask of equal operands ANDed with bits a
    multiply, which Arm's vector unit lacks at 64 bits. */
+#ifdef __METAL_VERSION__
+/* On order keys: of +0 and -0, the greater key is +0 and the lesser -0,
+   the AND and the OR of their bits. */
+NX_INLINE NX_T NX_(nx_maximum)(NX_T a, NX_T b) {
+  NX_T g = NX_(nx_key)(a) >= NX_(nx_key)(b) ? a : b;
+  return NX_ISNAN(a) ? a : NX_ISNAN(b) ? b : g;
+}
+
+NX_INLINE NX_T NX_(nx_minimum)(NX_T a, NX_T b) {
+  NX_T g = NX_(nx_key)(a) <= NX_(nx_key)(b) ? a : b;
+  return NX_ISNAN(a) ? a : NX_ISNAN(b) ? b : g;
+}
+
+NX_INLINE int NX_(nx_equal)(NX_T a, NX_T b) {
+  int same = NX_BITS(a) == NX_BITS(b) || NX_(nx_zeros)(a, b);
+  return !NX_ISNAN(a) && !NX_ISNAN(b) && same;
+}
+NX_INLINE int NX_(nx_not_equal)(NX_T a, NX_T b) { return !NX_(nx_equal)(a, b); }
+NX_INLINE int NX_(nx_less)(NX_T a, NX_T b) {
+  int below = NX_(nx_key)(a) < NX_(nx_key)(b) && !NX_(nx_zeros)(a, b);
+  return !NX_ISNAN(a) && !NX_ISNAN(b) && below;
+}
+NX_INLINE int NX_(nx_less_equal)(NX_T a, NX_T b) {
+  int below = NX_(nx_key)(a) <= NX_(nx_key)(b) || NX_(nx_zeros)(a, b);
+  return !NX_ISNAN(a) && !NX_ISNAN(b) && below;
+}
+#else
 NX_INLINE NX_T NX_(nx_maximum)(NX_T a, NX_T b) {
   NX_T g = a > b ? a : b;
   g = a != a ? a : g;
@@ -220,6 +292,7 @@ NX_INLINE int NX_(nx_equal)(NX_T a, NX_T b) { return a == b; }
 NX_INLINE int NX_(nx_not_equal)(NX_T a, NX_T b) { return a != b; }
 NX_INLINE int NX_(nx_less)(NX_T a, NX_T b) { return a < b; }
 NX_INLINE int NX_(nx_less_equal)(NX_T a, NX_T b) { return a <= b; }
+#endif
 NX_INLINE NX_T NX_(nx_where)(int c, NX_T a, NX_T b) { return c ? a : b; }
 
 /* c ? a : b by masks of the bits, which gcc keeps branch-free. A loop
@@ -299,6 +372,9 @@ NX_INLINE NX_T NX_(nx_exp2)(NX_T x) {
    the result. Below NX_C(EXPM1_TINY), expm1 x rounds to x, whose zero
    sign the sums lose. */
 NX_INLINE NX_T NX_(nx_expm1)(NX_T x) {
+#ifdef __METAL_VERSION__
+  x = NX_(nx_flush)(x);
+#endif
   NX_T c = x > NX_C(EXP_HI) ? NX_C(EXP_HI) : x;
   c = c < NX_C(EXPM1_LO) ? NX_C(EXPM1_LO) : c;
   NX_(nx_exp_red) e = NX_(nx_exp_reduce)(c);
@@ -370,6 +446,9 @@ NX_INLINE NX_T NX_(nx_log2)(NX_T x) {
 /* log1p: u = 1 + x rounded, c its exact error; log(u + c) = log u + c/u
    to the bound. */
 NX_INLINE NX_T NX_(nx_log1p)(NX_T x) {
+#ifdef __METAL_VERSION__
+  x = NX_(nx_flush)(x);
+#endif
   NX_(nx_pair) u = NX_(nx_two_sum)(NX_ONE, x);
   NX_T y = NX_(nx_log_core)(NX_(nx_log_reduce)(u.hi), u.lo / u.hi);
   y = x == 0 ? x : y;
@@ -451,6 +530,9 @@ NX_INLINE int NX_(nx_trig_big)(NX_T x) {
 
 /* sin, cos and tan below the switch */
 NX_INLINE NX_T NX_(nx_sin_near)(NX_T x) {
+#ifdef __METAL_VERSION__
+  x = NX_(nx_flush)(x);
+#endif
   return NX_(nx_sin_at)(x, NX_(nx_rem_pio2_cw)(x));
 }
 
@@ -459,6 +541,9 @@ NX_INLINE NX_T NX_(nx_cos_near)(NX_T x) {
 }
 
 NX_INLINE NX_T NX_(nx_tan_near)(NX_T x) {
+#ifdef __METAL_VERSION__
+  x = NX_(nx_flush)(x);
+#endif
   return NX_(nx_tan_at)(x, NX_(nx_rem_pio2_cw)(x));
 }
 

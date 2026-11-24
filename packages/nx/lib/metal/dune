@@ -1,0 +1,73 @@
+; nx.metal: nx's kernels for Apple GPUs of the Apple7 family, compiled ahead
+; of time into one metallib (kernels/) and embedded, planned in OCaml and
+; launched as rig's Launch parts, one submission a call. kernels/gen.py
+; writes kernels.ml from kernels/src/kernels.h, which the device code
+; reads. The library has no C: rig makes every Metal call.
+
+(library
+ (name nx_metal)
+ (public_name nx.metal)
+ (libraries nx_array nx_kernel rig))
+
+; The committed metallib as the value Metallib.metallib, once its stamp
+; shows that gen.py built it from today's sources, in every tree,
+; including trees without the toolchain.
+
+(rule
+ (target metallib.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (chdir
+    %{workspace_root}
+    (run
+     %{exe:kernels/fresh.exe}
+     %{dep:kernels/nx_metal.metallib}
+     %{dep:kernels/gen.py}
+     %{dep:kernels/src/kernels.h}
+     %{dep:kernels/src/device.h}
+     %{dep:kernels/src/tape.h}
+     %{dep:kernels/src/fold.h}
+     %{dep:kernels/src/values.h}
+     %{dep:kernels/src/copy.metal}
+     %{dep:kernels/src/loop.metal}
+     %{dep:kernels/src/direct.metal}
+     %{dep:kernels/src/contract.metal}
+     %{dep:kernels/src/fft.h}
+     %{dep:kernels/src/fft.metal}
+     %{dep:kernels/src/sort.metal}
+     %{dep:kernels/src/factor.metal}
+     %{dep:kernels/src/index.metal}
+     %{dep:kernels/src/spectral.metal}
+     %{dep:kernels/src/sp_common.h}
+     %{dep:kernels/src/sp_block.h}
+     %{dep:kernels/src/sp_jacobi.h}
+     %{dep:kernels/src/sp_tridiag.h}
+     %{dep:kernels/src/sp_stedc.h}
+     %{dep:kernels/src/sp_bd.h}
+     %{dep:kernels/src/sp_eig.h}
+     %{dep:kernels/src/attention.metal}
+     %{dep:../kernel/nx_kernel.h}
+     %{dep:../kernel/nx_kinds.h}
+     %{dep:../kernel/nx_kinds_real.h}
+     %{dep:../kernel/nx_kinds_complex.h}
+     %{dep:../array/nx_dtype.h})))))
+
+; The specialised steps' metallib as the value Fft_metallib.metallib, checked
+; as the library's: its functions' pipelines are made a key at a time.
+
+(rule
+ (target fft_metallib.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (chdir
+    %{workspace_root}
+    (run
+     %{exe:kernels/fresh.exe}
+     %{dep:kernels/fft_steps.metallib}
+     %{dep:kernels/gen.py}
+     %{dep:kernels/src/kernels.h}
+     %{dep:kernels/src/device.h}
+     %{dep:kernels/src/fft.h}
+     %{dep:kernels/src/fft_steps.metal})))))

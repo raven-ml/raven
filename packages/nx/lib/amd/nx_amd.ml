@@ -409,6 +409,7 @@ let scan ?carry p ~axis ((r, k) as rk) ~dsts loads =
 let fit want got = match want with Ok s -> s = got | Error _ -> false
 
 let gather ~axis ~dst idx x =
+  Nx_kernel.check_dst "nx.amd gather" "dst" dst;
   let want = Nx_kernel.Shape.gather ~axis (shape_of idx) (shape_of x) in
   if not (fit want (shape_of dst)) then A.Shape_mismatch
   else
@@ -417,6 +418,7 @@ let gather ~axis ~dst idx x =
 
 (* A range gather's [size] is [dst]'s extent along the runs' axis. *)
 let gather_ranges ~dst ~starts ~ends x =
+  Nx_kernel.check_dst "nx.amd gather_ranges" "dst" dst;
   let ys = shape_of dst and a = A.Layout.rank (A.layout starts) - 1 in
   let want =
     if a < 0 || a >= Array.length ys then Error "no runs' axis"
@@ -434,6 +436,7 @@ let gather_ranges ~dst ~starts ~ends x =
 let adds x = Nx_kernel.Prog.accepts2 (Binary Add) (A.dtype x)
 
 let scatter (c : Nx_kernel.combine) ~unique ~axis ~dst ~into idx u =
+  Nx_kernel.check_dst "nx.amd scatter" "dst" dst;
   if c = Add && not (adds u) then A.Wrong_dtype
   else
     let want =
@@ -446,6 +449,7 @@ let scatter (c : Nx_kernel.combine) ~unique ~axis ~dst ~into idx u =
           Moves.scatter c ~unique ~axis ~dst ~into idx u)
 
 let assemble ~fill ~dst pieces =
+  Nx_kernel.check_dst "nx.amd assemble" "dst" dst;
   let n = Iarray.length pieces in
   let regions = Array.init n (fun i -> fst (Iarray.get pieces i)) in
   let want = Nx_kernel.Shape.assemble (shape_of dst) regions in
@@ -458,6 +462,7 @@ let assemble ~fill ~dst pieces =
 
 (* A fold's operand has the shape a [Padded] load of [dst] gives. *)
 let fold p ~dst x =
+  Nx_kernel.check_dst "nx.amd fold" "dst" dst;
   if not (adds x) then A.Wrong_dtype
   else if not (fit (Nx_kernel.Shape.padded p (shape_of dst)) (shape_of x)) then
     A.Shape_mismatch
@@ -474,11 +479,13 @@ let transformed ~dst x plan =
       Ok (plan ()))
 
 let c2c direction ~axes ~dst x =
+  Nx_kernel.check_dst "nx.amd c2c" "dst" dst;
   if not (fit (Nx_kernel.Shape.c2c ~axes (shape_of x)) (shape_of dst)) then
     A.Shape_mismatch
   else transformed ~dst x (fun () -> Fft.c2c direction ~axes ~dst x)
 
 let r2c ~axes ~dst x =
+  Nx_kernel.check_dst "nx.amd r2c" "dst" dst;
   if not (Nx_kernel.same_precision (A.dtype x) (A.dtype dst)) then A.Wrong_dtype
   else if not (fit (Nx_kernel.Shape.r2c ~axes (shape_of x)) (shape_of dst)) then
     A.Shape_mismatch
@@ -486,6 +493,7 @@ let r2c ~axes ~dst x =
 
 (* A c2r's points along the last of [axes] are [dst]'s extent there. *)
 let c2r ~axes ~dst x =
+  Nx_kernel.check_dst "nx.amd c2r" "dst" dst;
   let ys = shape_of dst and last = Iarray.length axes - 1 in
   let a = if last >= 0 then Iarray.get axes last else -1 in
   let want =
@@ -578,6 +586,8 @@ let contract ~batch ~contracting ~segments ~acc ~dst ~init
 (* Sorts and numberings *)
 
 let sort ~axis ~descending ~values ~positions x =
+  Nx_kernel.check_dst "nx.amd sort" "values" values;
+  Nx_kernel.check_dst "nx.amd sort" "positions" positions;
   let vs = shape_of values in
   let k =
     if axis >= 0 && axis < Array.length vs then Some vs.(axis) else None
@@ -593,6 +603,10 @@ let sort ~axis ~descending ~values ~positions x =
 (* A numbering's [size] is [first]'s length, and [counts] has [first]'s
    shape. *)
 let unique ~ids ~first ~counts ~count keys =
+  Nx_kernel.check_dst "nx.amd unique" "ids" ids;
+  Nx_kernel.check_dst "nx.amd unique" "first" first;
+  Nx_kernel.check_dst "nx.amd unique" "counts" counts;
+  Nx_kernel.check_dst "nx.amd unique" "count" count;
   let want =
     match shape_of first with
     | [| size |] -> Nx_kernel.Shape.unique ~size (shape_of keys)
@@ -628,12 +642,16 @@ let routine ~takes want got ~(written : A.any iarray) ~(read : A.any iarray)
     | Ok _ | Error _ -> A.Shape_mismatch
 
 let cholesky t ~dst a =
+  Nx_kernel.check_dst "nx.amd cholesky" "dst" dst;
   routine ~takes:(full a)
     (Nx_kernel.Shape.cholesky (shape_of a))
     (shape_of dst) ~written:[| A.Any dst |] ~read:[| A.Any a |] (fun () ->
       Factor.cholesky t ~dst:(A.Any dst) (A.Any a))
 
 let lu ~lu ~pivots ~perm a =
+  Nx_kernel.check_dst "nx.amd lu" "lu" lu;
+  Nx_kernel.check_dst "nx.amd lu" "pivots" pivots;
+  Nx_kernel.check_dst "nx.amd lu" "perm" perm;
   routine ~takes:(full a)
     (Nx_kernel.Shape.lu (shape_of a))
     (shape_of lu, shape_of pivots, shape_of perm)
@@ -644,6 +662,8 @@ let lu ~lu ~pivots ~perm a =
 
 (* [q] and [r] state the factors: reduced or complete, whichever fits. *)
 let qr ~q ~r a =
+  Nx_kernel.check_dst "nx.amd qr" "q" q;
+  Nx_kernel.check_dst "nx.amd qr" "r" r;
   let got = (shape_of q, shape_of r) in
   let fits f = Nx_kernel.Shape.qr f (shape_of a) = Ok got in
   routine ~takes:(full a)
@@ -652,6 +672,7 @@ let qr ~q ~r a =
       Factor.qr ~q:(A.Any q) ~r:(A.Any r) (A.Any a))
 
 let solve_triangular t ~adjoint ~unit_diagonal ~dst a b =
+  Nx_kernel.check_dst "nx.amd solve_triangular" "dst" dst;
   routine ~takes:(full a)
     (Nx_kernel.Shape.solve_triangular (shape_of a) (shape_of b))
     (shape_of dst) ~written:[| A.Any dst |] ~read:[| A.Any a; A.Any b |]
@@ -662,6 +683,12 @@ let solve_triangular t ~adjoint ~unit_diagonal ~dst a b =
 (* [svd]'s factors are those its destinations' shapes state: reduced or
    complete, whichever fits. *)
 let svd ~s ?vectors a =
+  Nx_kernel.check_dst "nx.amd svd" "s" s;
+  Option.iter
+    (fun (~u, ~vh) ->
+      Nx_kernel.check_dst "nx.amd svd" "u" u;
+      Nx_kernel.check_dst "nx.amd svd" "vh" vh)
+    vectors;
   let shape f = Nx_kernel.Shape.svd f (shape_of a) in
   let takes = full a && paired a s in
   match vectors with
@@ -679,6 +706,8 @@ let svd ~s ?vectors a =
           Spectral.svd ~s:(A.Any s) ~vectors:(A.Any u, A.Any vh) (A.Any a))
 
 let eigh ~w ?v a =
+  Nx_kernel.check_dst "nx.amd eigh" "w" w;
+  Option.iter (Nx_kernel.check_dst "nx.amd eigh" "v") v;
   let want = Nx_kernel.Shape.eigh (shape_of a) in
   let takes = full a && paired a w in
   match v with
@@ -692,6 +721,8 @@ let eigh ~w ?v a =
           Spectral.eigh ~w:(A.Any w) ~v:(A.Any v) (A.Any a))
 
 let eig ~w ?v a =
+  Nx_kernel.check_dst "nx.amd eig" "w" w;
+  Option.iter (Nx_kernel.check_dst "nx.amd eig" "v") v;
   let want = Nx_kernel.Shape.eigh (shape_of a) in
   let takes =
     full a && paired a w && Option.fold ~none:true ~some:(paired a) v
@@ -709,9 +740,13 @@ let eig ~w ?v a =
 (* Families not yet computed here
 
    Each declines every call, which the contract admits of any call, before
-   it reads an array. *)
+   it reads an array, once its destinations are C-contiguous, as
+   Nx_kernel.check_dst checks. *)
 
-let attention _ ~scale:_ ~o:_ ~lse:_ ?lengths:_ _ _ _ = A.Declined
+let attention _ ~scale:_ ~o ~lse ?lengths:_ _ _ _ =
+  Nx_kernel.check_dst "nx.amd attention" "o" o;
+  Nx_kernel.check_dst "nx.amd attention" "lse" lse;
+  A.Declined
 
 module Kernels = Kernels
 module Kept = Kept

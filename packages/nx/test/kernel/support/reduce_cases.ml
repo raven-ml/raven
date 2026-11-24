@@ -97,6 +97,40 @@ let result_shape c =
 let host (A.Any x) = A.Any (Support.host x)
 let on b (A.Any x) = A.Any (Support.on b x)
 
+(* Declines *)
+
+(* Raised where [b] declines a call it states it does not compute. *)
+exception Declined_as_stated
+
+(* Whether a call of [p] reducing or scanning by [rs] computes on a value
+   whose dtype [b] only moves ({!Support.arith}): at a node that does more
+   than move bits, or in a reduction's carrier. *)
+let declinable (b : Support.backend) (p : P.t)
+    (rs : (Nx_kernel.reduction * int) array) =
+  let dt = P.dtype p in
+  let moves i = not (b.arith (dt i)) in
+  let node i =
+    match Iarray.get p.nodes i with
+    | P.In _ | Coord _ | Const _ | Op1 ((Copy | Bitcast), _, _) -> false
+    | Op3 (Where, _, _, _) -> false
+    | Op1 (Cast, y, a) -> y <> dt a && ((not (b.arith y)) || moves a)
+    | Op1 (_, _, a) -> moves i || moves a
+    | Op2 (_, a, c) -> moves i || moves a || moves c
+    | Op3 (_, a, c, d) -> moves i || moves a || moves c || moves d
+  in
+  let carried (_, k) =
+    not (b.arith (Nx_kernel.carrier (dt (Iarray.get p.outs k))))
+  in
+  List.exists node (List.init (Iarray.length p.nodes) Fun.id)
+  || Array.exists carried rs
+
+(* [answer] of [b]'s call [what] of [p] by [rs]: [()] for [Done], and
+   [Declined_as_stated] for a decline {!declinable} admits. *)
+let answered (b : Support.backend) p rs what = function
+  | A.Done -> ()
+  | A.Declined when declinable b p rs -> raise Declined_as_stated
+  | r -> failf "%s answered %a" what Nx_array_support.pp_answer r
+
 (* [c] by [b]'s kernels into [dst], on [b]'s device. *)
 let call (b : Support.backend) c dst =
   let x = on b c.x in
@@ -104,15 +138,15 @@ let call (b : Support.backend) c dst =
     [| plain_of x |]
 
 (* The kernels' result into a fresh destination, read where the host reads
-   it. Every kernel library computes every reduction and scan: a decline
-   fails. *)
+   it. A kernel library computes every reduction and scan but on values it
+   only moves: another decline fails. *)
 let run (b : Support.backend) c =
   let (A.Any x) = c.x in
   let ys = Iarray.of_array (result_shape c) in
   let dst = A.Any (A.create b.device (A.dtype x) ys) in
-  match call b c dst with
-  | A.Done -> host dst
-  | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+  answered b (identity (dtype_of c.x)) [| (Monoid c.monoid, 0) |]
+    "the kernels" (call b c dst);
+  host dst
 
 (* Values *)
 

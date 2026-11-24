@@ -1806,10 +1806,11 @@ end
     [float8_e4m3fn] zero is [-448.].
 
     nx.cpu keeps subnormal numbers ({!Nx_cpu}). A device whose kernel
-    library flushes them to zero reads a subnormal operand as zero and
-    writes a subnormal result as zero; there each bound, of this section and
-    of {!section-special}, holds where the operands and the result are
-    normal.
+    library flushes them to zero reads a subnormal operand as a zero of its
+    sign, and gives a zero of the exact result's sign where that result is
+    nonzero and below the least normal number in magnitude; there each
+    statement of this section and of {!section-special} holds where no
+    operand is subnormal and no such result arises.
 
     On complex numbers each is the principal value C99 defines (ISO/IEC 9899,
     7.3), with its special values at infinities, NaNs and signed zeros (Annex

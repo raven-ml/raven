@@ -1,0 +1,263 @@
+; nx.metal on the machine's Metal GPU 0, skipping without one. ../dune's rule
+; of GPU suites runs these and the suites below that act on the GPU, all but
+; test_pipelines with their tests in 3 processes at once, which together
+; hold at most 5 GB: test_metal's, on an M1 Max. Each suite that acts on the
+; GPU links support/'s property list, which gives it a Metal cache of its
+; own.
+
+(executables
+ (names test_metal test_metal_sorts)
+ (modules test_metal test_metal_sorts)
+ (link_deps support/nx-metal-tests.plist)
+ (link_flags
+  (:include support/plist_flags.sexp))
+ (libraries
+  nx_array
+  nx_array_support
+  nx_cpu
+  nx_kernel
+  nx_metal
+  nx_metal_support
+  nx_kernel_cases
+  nx_kernels_support
+  rig
+  windtrap))
+
+; nx.metal's pipelines, in a process of their own that opens GPU 0 afresh
+; for each test.
+
+(executable
+ (name test_pipelines)
+ (modules test_pipelines)
+ (link_deps support/nx-metal-tests.plist)
+ (link_flags
+  (:include support/plist_flags.sexp))
+ (libraries
+  nx_array
+  nx_array_support
+  nx_kernel
+  nx_metal
+  nx_kernels_support
+  rig
+  rig.metal
+  windtrap))
+
+; nx.metal's Fourier transforms without the GPU: their tables and plans.
+
+(executable
+ (name test_fft)
+ (modules test_fft)
+ (libraries nx_array nx_metal rig windtrap))
+
+(rule
+ (package nx)
+ (alias runtest)
+ (action
+  (run %{exe:test_fft.exe})))
+
+; nx.metal's Fourier transforms' kernels on the machine's Metal GPU 0, skipping
+; without one.
+
+(executable
+ (name test_fft_kernels)
+ (modules test_fft_kernels)
+ (link_deps support/nx-metal-tests.plist)
+ (link_flags
+  (:include support/plist_flags.sexp))
+ (libraries
+  nx_array
+  nx_array_support
+  nx_kernel
+  nx_metal
+  nx_metal_support
+  rig
+  windtrap))
+
+; nx.metal's factorisations, through the laws nx.kernel's suites share.
+
+(executable
+ (name test_metal_factor)
+ (modules test_metal_factor)
+ (link_deps support/nx-metal-tests.plist)
+ (link_flags
+  (:include support/plist_flags.sexp))
+ (libraries
+  nx_array
+  nx_kernel
+  nx_kernel_cases
+  nx_kernels_support
+  nx_metal
+  nx_metal_support
+  rig
+  windtrap))
+
+; The matrix routines' products on the machine's Metal GPU 0, skipping
+; without one.
+
+(executable
+ (name test_metal_product)
+ (modules test_metal_product)
+ (link_deps support/nx-metal-tests.plist)
+ (link_flags
+  (:include support/plist_flags.sexp))
+ (libraries
+  nx_array
+  nx_array_support
+  nx_kernels_support
+  nx_metal
+  nx_metal_support
+  rig
+  windtrap))
+
+; nx.metal's gathers and assemblies on the machine's Metal GPU 0, skipping
+; without one.
+
+(executable
+ (name test_metal_moves)
+ (modules test_metal_moves)
+ (link_deps support/nx-metal-tests.plist)
+ (link_flags
+  (:include support/plist_flags.sexp))
+ (libraries
+  nx_array
+  nx_array_support
+  nx_cpu
+  nx_kernel
+  nx_metal
+  nx_kernel_cases
+  nx_kernels_support
+  nx_metal_support
+  rig
+  windtrap))
+
+; nx.metal's spectral routines, through the laws nx.kernel's suites share,
+; and their splitting, limits and workspace.
+
+(executable
+ (name test_metal_spectral)
+ (modules test_metal_spectral)
+ (libraries
+  nx_array
+  nx_kernel
+  nx_kernel_cases
+  nx_kernels_support
+  nx_metal
+  rig
+  windtrap))
+
+; The suites above that act on the GPU, as ../dune's rule of GPU suites runs
+; them.
+
+(rule
+ (target gpu.suites)
+ (action
+  (with-stdout-to
+   %{target}
+   (run
+    %{exe:../support/suites.exe}
+    list
+    %{dep:test_metal.exe}
+    -j
+    3
+    --
+    %{dep:test_metal_sorts.exe}
+    -j
+    3
+    --
+    %{dep:test_pipelines.exe}
+    --
+    %{dep:test_fft_kernels.exe}
+    -j
+    3
+    --
+    %{dep:test_metal_factor.exe}
+    -j
+    3
+    --
+    %{dep:test_metal_product.exe}
+    -j
+    3
+    --
+    %{dep:test_metal_moves.exe}
+    -j
+    3
+    --
+    %{dep:test_metal_spectral.exe}
+    -j
+    3))))
+
+; The suites above on a machine without Metal, which NX_KERNELS=cpu stands
+; for: each declares its tests without opening a device and skips those that
+; need one.
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (setenv
+   NX_KERNELS
+   cpu
+   (run %{exe:test_metal.exe}))))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (setenv
+   NX_KERNELS
+   cpu
+   (run %{exe:test_metal_sorts.exe}))))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (setenv
+   NX_KERNELS
+   cpu
+   (run %{exe:test_pipelines.exe}))))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (setenv
+   NX_KERNELS
+   cpu
+   (run %{exe:test_fft_kernels.exe}))))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (setenv
+   NX_KERNELS
+   cpu
+   (run %{exe:test_metal_factor.exe}))))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (setenv
+   NX_KERNELS
+   cpu
+   (run %{exe:test_metal_product.exe}))))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (setenv
+   NX_KERNELS
+   cpu
+   (run %{exe:test_metal_moves.exe}))))
+
+(rule
+ (alias runtest)
+ (package nx)
+ (action
+  (setenv
+   NX_KERNELS
+   cpu
+   (run %{exe:test_metal_spectral.exe}))))

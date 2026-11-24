@@ -28,8 +28,8 @@
   (names nx_kinds_support_loops)))
 
 ; The kernel libraries the suite runs its laws through, nx.cuda's on the
-; machine's NVIDIA GPU and nx.amd's on its AMD GPU among them, and nx.cpu's
-; target tables.
+; machine's NVIDIA GPU, nx.amd's on its AMD GPU and nx.metal's on its Metal
+; GPU among them, and nx.cpu's target tables.
 
 (library
  (name nx_kernels_support)
@@ -40,11 +40,13 @@
   nx_cpu
   nx_cuda
   nx_amd
+  nx_metal
   rig
   rig.pool
   rig.cuda
   rig.nv.nvidia
-  rig.amd.amdgpu)
+  rig.amd.amdgpu
+  rig.metal)
  (foreign_stubs
   (language c)
   (names nx_kernels_support_stubs)))

@@ -28,7 +28,7 @@ let bounds =
     cholesky = (fun n -> n + 1);
     lu = (fun k -> 2 * k);
     solve = (fun n -> 2 * n);
-    alone = (fun ~e dt k -> epsilon ~e dt k);
+    alone = (fun ~e dt k -> epsilon ~underflow:Support.Gradual ~e dt k);
     positive = false;
   }
 
@@ -535,4 +535,65 @@ let cpu (b : Support.backend) =
         guard_cases (run (law_guards b));
     ]
 
-let () = exit (Windtrap.run "nx_cpu.linalg" (List.map cpu Support.cpus))
+(* The references' division *)
+
+(* A float32 number: a sign, an exponent from below the least subnormal's
+   to past the largest finite's, a mantissa; under [tiny], below 2^-102,
+   where nx_kinds.h's Fdiv scales a dividend both of whose parts lie. *)
+let float32 ~tiny =
+  let open Gen in
+  let* e = if tiny then int_range (-150) (-103) else int_range (-150) 128 in
+  let* m = int_range 0 0x7FFFFF in
+  let+ negative = bool in
+  let x = Float.ldexp (1. +. Float.ldexp (float_of_int m) (-23)) e in
+  Int32.float_of_bits (Int32.bits_of_float (if negative then -.x else x))
+
+let complex ~tiny =
+  let open Gen in
+  let* re = float32 ~tiny in
+  let+ im = float32 ~tiny in
+  { Complex.re; im }
+
+let quotients =
+  let pp ppf ((x : Complex.t), (d : Complex.t)) =
+    Format.fprintf ppf "(%h, %h) / (%h, %h)" x.re x.im d.re d.im
+  in
+  Gen.with_pp pp
+    (let open Gen in
+     let* tiny = bool in
+     let* x = complex ~tiny in
+     let+ d = complex ~tiny:false in
+     (x, d))
+
+(* The bit references' complex division, at gradual underflow, gives
+   nx.cpu's Fdiv's bits, any NaN as one. A divisor of no imaginary part
+   is left out: there the references divide each part by its real part,
+   as a routine divides by Cholesky's real diagonal. *)
+let law_divd ((x : Complex.t), (d : Complex.t)) =
+  assume (d.im <> 0.);
+  cover "a dividend below 2^-102 in both parts"
+    (Float.abs x.re < 0x1p-102 && Float.abs x.im < 0x1p-102);
+  cover "a divisor whose imaginary part is the larger"
+    (Float.abs d.im > Float.abs d.re);
+  let bits32 f =
+    if Float.is_nan f then 0x7FC00000
+    else Int32.to_int (Int32.bits_of_float f) land 0xFFFFFFFF
+  in
+  let ar = arith ~underflow:Support.Gradual D.(Any Complex64) in
+  let got = (divd ar [| x |] d).(0) in
+  let want =
+    Nx_kinds_support.c64 "fdiv" (Array.map bits32 [| x.re; x.im; d.re; d.im |])
+  in
+  let canonical b = bits32 (Int32.float_of_bits (Int32.of_int b)) in
+  equal (pair int int)
+    (canonical want.(0), canonical want.(1))
+    (bits32 got.re, bits32 got.im)
+
+let () =
+  exit
+    (Windtrap.run "nx_cpu.linalg"
+       (List.map cpu Support.cpus
+       @ [
+           prop "the bit references' complex division is Fdiv's" quotients
+             law_divd;
+         ]))

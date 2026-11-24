@@ -3847,6 +3847,36 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `nx.metal` (`Nx_metal`), kernels of `Nx_kernel.S` for Apple GPUs of the
+  Apple7 family (M1, M1 Pro, M1 Max, M1 Ultra), compiled ahead of time into
+  one metallib: `Nx.devices ~kernels:(module Nx_metal)` computes a set of them
+  eagerly. It computes no `float64` or `complex128` value, and reads and gives
+  subnormal `float32` and `bfloat16` numbers as zeros. Within that, `map`,
+  `reduce` and `scan` compute every program with nx.cpu's bits, `fold` every
+  dtype, and `gather`, `gather_ranges`, `assemble`, `sort` and `unique` move
+  bits at every dtype. `contract` computes into `float32` on the matrix units,
+  scaled MXFP4 and int8 weights (Q8_0, Q6_K) read where they lie, and
+  `complex64` and integer contractions, unsegmented or of `Rows` or
+  `Contracting` segments. `c2c`, `r2c` and `c2r` compute `complex64` and
+  `float32` transforms of lines of any length up to 524,288 points.
+  `cholesky`, `lu`, `solve_triangular`, `qr`, `eigh`, `svd` of up to 32 rows
+  and columns and its values past them, and `eig`'s values compute at
+  `float32` and `complex64`. `attention` computes at a `float32` accumulator
+  of `float16`, `bfloat16` or `float32` operands, dense or paged, and declines
+  a keep other than the constant true. A call estimated past 10 s runs as
+  several submissions. `nx_metal.mli` states each kernel's association,
+  bounds, workspace and declines.
+- On an M1 Max, `nx.metal` runs at under half the speed of the faster of
+  PyTorch and MLX on: windowed reductions and maps over padded views (0.02 to
+  0.16), a chain of four fused maps (0.23 to 0.37), `where` and squared
+  differences of 1M elements (0.26 to 0.30), `uint8` transposed adds of
+  1024^2 (0.48), two-axis and real-output FFTs over 1024^2 (0.48 to 0.50),
+  `svd`'s values (0.23 to 0.44) and vectors (0.49 to 0.50), and attention:
+  0.43 to 0.48 at Whisper's encoder shapes, 0.36 to 0.44 at other unmasked
+  prefills, 0.06 to 0.10 under a causal or windowed mask, and 0.06 to 0.26 on
+  decode steps. A process's first call of a kernel that Metal's shader cache
+  does not hold compiles its pipeline: 11 of the 31 timed loop kernels take
+  over 1.03 s, the wide scan 5.8 s, and attention's family 22.7 s.
 - `Nx.eig` and `Nx.eigvals` on nx.cuda and nx.amd answered NaN when the QR
   iteration stalled, as on two rotation blocks coupled by 2^-43. A block left
   whole at the iteration limit now splits, as on nx.cpu.
@@ -3947,6 +3977,9 @@ its lock and from samples the dashboard saw arrive.
 - `Nx_io.Archive.tensor` and `Nx_io.Archive.float` take `~shape` as optional:
   without it, an entry is read at the shape the file stores, still checked by
   dtype, and a missing entry still raises `Failure` naming it.
+- Fix `Nx_cpu` scans of `bool` and `bit` from a carry: a carry byte other than
+  0 or 1 read as false where `Min` folds it with a true term. A boolean byte
+  is true wherever it is not 0.
 - `Nx_io.save_safetensors ~metadata` writes a SafeTensors file's string
   metadata, such as a model's configuration, and
   `Nx_io.load_safetensors_metadata` reads it back from the header alone.
@@ -4000,6 +4033,16 @@ its lock and from samples the dashboard saw arrive.
 - A `Reduce` of a program over leading axes, as a depthwise convolution's
   kernel gradient, runs about 10x faster on nx.cpu through a padded or
   strided load: its rows follow the loads' steps. The bits are unchanged.
+- `Nx_cuda.reduce` and `Nx_amd.reduce` write a destination that is not
+  C-contiguous at its layout's positions; they wrote their results side
+  by side from the destination's first element.
+- `Nx_kernel.S.map`, `reduce` and `scan` take strided destinations, at any
+  offset and with negative strides, that reach no element twice. Every
+  other kernel raises `Invalid_argument` for a destination that is not
+  C-contiguous, naming its layout (`Nx_kernel.check_dst`), where a strided
+  one could write wrong elements or past its view; nx.cpu's, nx.cuda's,
+  nx.amd's and nx.metal's `contract` still take a destination of any
+  layout.
 - `Nx.standardize` and the mean of integers compute faster on nx.cpu along
   the innermost axes: a `Reduce` runs its program once a term for all its
   monoid and `Arg` reductions there, where each ran it again for its own

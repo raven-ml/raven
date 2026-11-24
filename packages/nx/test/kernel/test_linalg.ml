@@ -176,8 +176,8 @@ let law_eigh_fails (b : Support.backend) c =
           ~spoil [| eigh_operand c |])
       [ Eigh true; Eigh false ]
 
-(* NaN or an infinity anywhere. *)
-let law_eig_fails (b : Support.backend) c =
+(* NaN or an infinity anywhere; unless [vectors], of the values alone. *)
+let law_eig_fails ?(vectors = true) (b : Support.backend) c =
   let c = one c in
   if c.n > 0 then
     let p = c.seed mod (c.n * c.n) in
@@ -191,7 +191,7 @@ let law_eig_fails (b : Support.backend) c =
       (fun r ->
         check_alone b r ~dt:c.dt ~result:(complex_of c.dt) ~rows:c.n ~cols:1
           ~spoil [| eig_operand c |])
-      [ Eig true; Eig false ]
+      (if vectors then [ Eig true; Eig false ] else [ Eig false ])
 
 (* NaN or an infinity anywhere. *)
 let law_svd_fails (b : Support.backend) c =
@@ -469,6 +469,80 @@ let cuda (b : Support.backend) =
         (test_loop_eigh ~n:80 ~transposed:true);
     ]
 
+(* nx.metal declines every routine at float64 and complex128, and eig's
+   vectors at every dtype (nx_metal.mli). *)
+let test_metal_declines (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let sq = Iarray.of_array [| 2; 2 |] and n = Iarray.of_array [| 2 |] in
+  let each (type a s rs cs) (dt : (a, s) D.t) (re : (float, rs) D.t)
+      (cx : (Complex.t, cs) D.t) =
+    let declines name got =
+      equal ~msg:(Format.asprintf "%s of %a" name D.pp dt) answer A.Declined got
+    in
+    let m () = A.create b.device dt sq in
+    let pos () = A.create b.device D.Int64 n in
+    let a = m () and w = A.create b.device re n in
+    if not (b.arith (D.Any dt)) then begin
+      declines "cholesky" (K.cholesky Lower ~dst:(m ()) a);
+      declines "lu" (K.lu ~lu:(m ()) ~pivots:(pos ()) ~perm:(pos ()) a);
+      declines "solve_triangular"
+        (K.solve_triangular Lower ~adjoint:false ~unit_diagonal:false
+           ~dst:(m ()) a (m ()));
+      declines "qr" (K.qr ~q:(m ()) ~r:(m ()) a);
+      declines "eigh" (K.eigh ~w ~v:(m ()) a);
+      declines "svd" (K.svd ~s:w ~vectors:(~u:(m ()), ~vh:(m ())) a)
+    end;
+    declines "eig with vectors"
+      (K.eig ~w:(A.create b.device cx n) ~v:(A.create b.device cx sq) a)
+  in
+  each D.Float32 D.Float32 D.Complex64;
+  each D.Complex64 D.Float32 D.Complex64;
+  each D.Float64 D.Float64 D.Complex128;
+  each D.Complex128 D.Float64 D.Complex128
+
+(* nx.metal computes the calls nx_metal.mli states: cholesky, lu and
+   solve_triangular of any order; eigh of any order, svd by Jacobi up to
+   32 rows and columns, svd's values and eig's past them. *)
+let metal (b : Support.backend) =
+  let on held f c =
+    assume (held c);
+    b.around (fun () -> f c)
+  in
+  let any = on (fun _ -> true) in
+  let svd_jacobi =
+    on (fun c ->
+        let m, n, _ = svd_operand (one c) in
+        m <= 32 && n <= 32)
+  in
+  group ("nx.metal " ^ b.name)
+    [
+      test
+        "every routine declines at float64 and complex128, eig's vectors \
+         at every dtype"
+        (fun () -> b.around (test_metal_declines b));
+      prop "a matrix eigh fails on is NaN alone" case
+        (any (law_eigh_fails b));
+      prop "a matrix svd fails on is NaN alone" case
+        (svd_jacobi (law_svd_fails b));
+      prop "a matrix eig's values fail on is NaN alone" case
+        (any (law_eig_fails ~vectors:false b));
+      prop "eigh reads the lower triangle and the diagonal's real parts" case
+        (any (law_eigh_reads b));
+      prop "a matrix that is not definite is NaN alone" case
+        (any (law_cholesky_fails b));
+      prop "a singular triangle is NaN alone" case (any (law_solve_fails b));
+      prop "Cholesky reads the lower triangle and the diagonal's real parts"
+        case
+        (any (law_cholesky_reads b));
+      prop "a solve reads its triangle, and its diagonal unless unit" case
+        (any (law_solve_reads b));
+      test "LU's pivot is the scan's" (fun () -> b.around (test_pivots b));
+      test
+        "routines take floats and complex numbers alone; a call at another \
+         dtype is not Done and writes nothing outside its destinations"
+        (fun () -> b.around (test_dtypes b));
+    ]
+
 let backends = Support.cpus @ Support.gpus ()
 
 let () =
@@ -476,4 +550,5 @@ let () =
     (Windtrap.run "nx_kernel.linalg"
        (List.map laws backends
        @ List.map cuda (Support.gpus ())
-       @ List.map laws (Option.to_list (Support.amd ()))))
+       @ List.map laws (Option.to_list (Support.amd ()))
+       @ List.map metal (Option.to_list (Support.metal ()))))

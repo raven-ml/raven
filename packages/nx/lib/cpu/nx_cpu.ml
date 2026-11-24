@@ -66,13 +66,18 @@ external assemble_c :
   Nx_array.answer = "nx_cpu_assemble"
 
 let assemble ~fill ~dst pieces =
+  Nx_kernel.check_dst "nx.cpu assemble" "dst" dst;
   assemble_c (Nx_kernel.Prog.bits (Nx_array.dtype dst) fill) dst pieces
 
-external fold :
+external fold_c :
   Nx_kernel.pad ->
   dst:('v, 's) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_fold_pad"
+
+let fold pad ~dst x =
+  Nx_kernel.check_dst "nx.cpu fold" "dst" dst;
+  fold_c pad ~dst x
 
 (* Padded loads' shapes. C checks that each load has the loop's shape,
    but sees a padded load only once realised: these checks, by
@@ -358,19 +363,27 @@ let scan ?carry p ~axis ((r, k) as rk) ~dsts loads =
 
 (* Gathers and scatters (index.c) *)
 
-external gather :
+external gather_c :
   axis:int ->
   dst:('v, 's) Nx_array.t ->
   (int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_gather"
 
-external gather_ranges :
+let gather ~axis ~dst idx x =
+  Nx_kernel.check_dst "nx.cpu gather" "dst" dst;
+  gather_c ~axis ~dst idx x
+
+external gather_ranges_c :
   dst:('v, 's) Nx_array.t ->
   starts:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   ends:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_gather_ranges"
+
+let gather_ranges ~dst ~starts ~ends x =
+  Nx_kernel.check_dst "nx.cpu gather_ranges" "dst" dst;
+  gather_ranges_c ~dst ~starts ~ends x
 
 external scatter_c :
   Nx_kernel.combine ->
@@ -384,6 +397,7 @@ external scatter_c :
 (* [unique] promises what the kernel does not need: it combines a target's
    updates in order either way. *)
 let scatter c ~unique:_ ~axis ~dst ~into idx updates =
+  Nx_kernel.check_dst "nx.cpu scatter" "dst" dst;
   let adds = c = Nx_kernel.Add in
   if adds && not (Nx_kernel.Prog.accepts2 (Binary Add) (Nx_array.dtype into))
   then Nx_array.Wrong_dtype
@@ -391,7 +405,7 @@ let scatter c ~unique:_ ~axis ~dst ~into idx updates =
 
 (* Sorts (sort.c) *)
 
-external sort :
+external sort_c :
   axis:int ->
   descending:bool ->
   values:('v, 's) Nx_array.t ->
@@ -399,15 +413,27 @@ external sort :
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_sort"
 
+let sort ~axis ~descending ~values ~positions x =
+  Nx_kernel.check_dst "nx.cpu sort" "values" values;
+  Nx_kernel.check_dst "nx.cpu sort" "positions" positions;
+  sort_c ~axis ~descending ~values ~positions x
+
 (* Numbering (unique.c) *)
 
-external unique :
+external unique_c :
   ids:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   first:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   counts:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   count:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   (int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   Nx_array.answer = "nx_cpu_unique"
+
+let unique ~ids ~first ~counts ~count x =
+  Nx_kernel.check_dst "nx.cpu unique" "ids" ids;
+  Nx_kernel.check_dst "nx.cpu unique" "first" first;
+  Nx_kernel.check_dst "nx.cpu unique" "counts" counts;
+  Nx_kernel.check_dst "nx.cpu unique" "count" count;
+  unique_c ~ids ~first ~counts ~count x
 
 external unique_seed : int64 -> unit = "nx_cpu_unique_seed" [@@noalloc]
 external unique_state : int64 array -> int64 = "nx_cpu_unique_state"
@@ -487,16 +513,19 @@ let has_shape want dst =
       Array.length s = Nx_array.Layout.rank l && same 0
 
 let c2c d ~axes ~dst x =
+  Nx_kernel.check_dst "nx.cpu c2c" "dst" dst;
   if not (has_shape (Nx_kernel.Shape.c2c ~axes (shape x)) dst) then
     Nx_array.Shape_mismatch
   else c2c_c d axes dst x
 
 let r2c ~axes ~dst x =
+  Nx_kernel.check_dst "nx.cpu r2c" "dst" dst;
   if not (has_shape (Nx_kernel.Shape.r2c ~axes (shape x)) dst) then
     Nx_array.Shape_mismatch
   else r2c_c axes dst x
 
 let c2r ~axes ~dst x =
+  Nx_kernel.check_dst "nx.cpu c2r" "dst" dst;
   let s = shape dst and k = Iarray.length axes - 1 in
   let n =
     let a = if k >= 0 then Iarray.get axes k else -1 in
@@ -509,26 +538,26 @@ let c2r ~axes ~dst x =
 (* Matrices (linalg.c), which checks its operands' dtypes and shapes and
    passes the door the dtypes it reads and writes. *)
 
-external cholesky :
+external cholesky_c :
   Nx_kernel.triangle ->
   dst:('v, 's) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_cholesky"
 
-external lu :
+external lu_c :
   lu:('v, 's) Nx_array.t ->
   pivots:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   perm:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_lu"
 
-external qr :
+external qr_c :
   q:('v, 's) Nx_array.t ->
   r:('v, 's) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_qr"
 
-external solve_triangular :
+external solve_triangular_c :
   Nx_kernel.triangle ->
   adjoint:bool ->
   unit_diagonal:bool ->
@@ -538,23 +567,61 @@ external solve_triangular :
   Nx_array.answer
   = "nx_cpu_solve_triangular_byte" "nx_cpu_solve_triangular"
 
-external eigh :
+external eigh_c :
   w:(float, 'r) Nx_array.t ->
   ?v:('v, 's) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_eigh"
 
-external svd :
+external svd_c :
   s:(float, 'r) Nx_array.t ->
   ?vectors:(u:('v, 's) Nx_array.t * vh:('v, 's) Nx_array.t) ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_svd"
 
-external eig :
+external eig_c :
   w:(Complex.t, 'c) Nx_array.t ->
   ?v:(Complex.t, 'c) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_eig"
+
+let cholesky t ~dst a =
+  Nx_kernel.check_dst "nx.cpu cholesky" "dst" dst;
+  cholesky_c t ~dst a
+
+let lu ~lu ~pivots ~perm a =
+  Nx_kernel.check_dst "nx.cpu lu" "lu" lu;
+  Nx_kernel.check_dst "nx.cpu lu" "pivots" pivots;
+  Nx_kernel.check_dst "nx.cpu lu" "perm" perm;
+  lu_c ~lu ~pivots ~perm a
+
+let qr ~q ~r a =
+  Nx_kernel.check_dst "nx.cpu qr" "q" q;
+  Nx_kernel.check_dst "nx.cpu qr" "r" r;
+  qr_c ~q ~r a
+
+let solve_triangular t ~adjoint ~unit_diagonal ~dst a b =
+  Nx_kernel.check_dst "nx.cpu solve_triangular" "dst" dst;
+  solve_triangular_c t ~adjoint ~unit_diagonal ~dst a b
+
+let eigh ~w ?v a =
+  Nx_kernel.check_dst "nx.cpu eigh" "w" w;
+  Option.iter (Nx_kernel.check_dst "nx.cpu eigh" "v") v;
+  eigh_c ~w ?v a
+
+let svd ~s ?vectors a =
+  Nx_kernel.check_dst "nx.cpu svd" "s" s;
+  Option.iter
+    (fun (~u, ~vh) ->
+      Nx_kernel.check_dst "nx.cpu svd" "u" u;
+      Nx_kernel.check_dst "nx.cpu svd" "vh" vh)
+    vectors;
+  svd_c ~s ?vectors a
+
+let eig ~w ?v a =
+  Nx_kernel.check_dst "nx.cpu eig" "w" w;
+  Option.iter (Nx_kernel.check_dst "nx.cpu eig" "v") v;
+  eig_c ~w ?v a
 
 (* One thread *)
 
@@ -629,6 +696,8 @@ let mask_ranges (p : Nx_kernel.Prog.t) ~rank =
 
 (* attention.c computes what Nx_kernel.attention_refusal lets through. *)
 let attention p ~scale ~o ~lse ?lengths q kv loads =
+  Nx_kernel.check_dst "nx.cpu attention" "o" o;
+  Nx_kernel.check_dst "nx.cpu attention" "lse" lse;
   let rank = Nx_array.Layout.rank (Nx_array.layout q) in
   match
     Nx_kernel.attention_refusal p ~q:(Nx_array.dtype q) ~rank

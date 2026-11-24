@@ -1,9 +1,12 @@
 # Compiled GPU kernels: each backend's build script writes them by hand on a
 # machine with its toolchain, and other checkouts copy them in. nx.cuda's
-# cubins and nx.amd's code objects are committed: lib/cuda/kernels/gen.py
-# and lib/amd/kernels/gen.py make them.
+# cubins, nx.amd's code objects and nx.metal's metallibs are committed:
+# lib/cuda/kernels/gen.py, lib/amd/kernels/gen.py and
+# lib/metal/kernels/gen.py make them.
 *.metallib
 *.co
 *.hsaco
 !lib/amd/kernels/gfx12-generic.co
 !test/amd/support/gfx12-generic.co
+!lib/metal/kernels/nx_metal.metallib
+!test/metal/support/harness.metallib

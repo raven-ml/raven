@@ -83,9 +83,23 @@ let magnitude parts =
    [acc] and [√2 γ(β(2K))] for a complex one, and [u] the unit roundoff of
    [acc]'s parts. Where results underflow it may err by η
    more for each term of each part, [η] [acc]'s smallest subnormal, twice
-   the most a rounding into the subnormals errs. A part whose sum is not
-   finite is matched to the bits of its naive sum. *)
-let within (b : Support.backend) c parts xs =
+   the most a rounding into the subnormals errs. Where [b] flushes
+   ({!Support.underflow}) at a float32 [acc], an output with a subnormal
+   factor is barred, since a factor read as zero errs by as much as its
+   product, and each of its at most [K + 64] steps, a fused multiply-add,
+   an addition of ranges or of init, errs by [2{^-126}] more where it
+   flushes its operand or its result. A part whose sum is not finite is
+   matched to the bits of its naive sum. *)
+let subnormal x = x <> 0. && Float.abs x < 0x1p-126
+
+let barred ~flush c parts =
+  flush
+  && part_of c.acc = D.Any D.Float32
+  && Array.exists
+       (fun o -> Array.exists subnormal o.av || Array.exists subnormal o.bv)
+       parts
+
+let bounded (b : Support.backend) ~flush c parts xs =
   let show x = Printf.sprintf "%h" x in
   let sums = Array.map naive parts in
   if not (Array.for_all Float.is_finite sums) then
@@ -120,7 +134,11 @@ let within (b : Support.backend) c parts xs =
     in
     let has_init = Option.is_some parts.(0).init in
     let parts_n = float_of_int (Array.length parts) in
-    let eta = smallest_subnormal c.acc *. float_of_int (terms + 1) *. parts_n in
+    let eta =
+      if flush && part_of c.acc = D.Any D.Float32 then
+        0x1p-126 *. float_of_int (k + 64) *. parts_n
+      else smallest_subnormal c.acc *. float_of_int (terms + 1) *. parts_n
+    in
     let slack =
       Array.fold_left (fun s (_, _, m) -> s +. (0x1p-100 *. m)) 0. exact
     in
@@ -137,19 +155,41 @@ let within (b : Support.backend) c parts xs =
            (String.concat ", " (Array.to_list (Array.map show xs)))
            err (all (fun (hi, lo, _) -> show (hi +. lo))) bound)
 
-(* The first outputs of [y] past their bound. *)
-let outside b c y =
+let within (b : Support.backend) c parts xs =
+  let flush = b.underflow = Flush in
+  if barred ~flush c parts then None else bounded b ~flush c parts xs
+
+(* The first outputs of [y] past their bound. Where [b] flushes, an
+   output is barred too where a case of [factors], of [c]'s shapes, has
+   a subnormal factor: a library that flushes reads it as a zero of its
+   sign, whatever it multiplies. *)
+let outside ?(factors = []) (b : Support.backend) c y =
+  let flush = b.underflow = Flush in
   let _, each = outputs c in
   let g = planes c.acc y in
-  let bad = ref [] in
+  let marks u =
+    let _, each_u = outputs u in
+    let marks = ref [] in
+    each_u (fun _ _ parts -> marks := barred ~flush u parts :: !marks);
+    Array.of_list (List.rev !marks)
+  in
+  let apart =
+    match if flush then List.map marks factors else [] with
+    | [] -> [||]
+    | m :: ms -> List.fold_left (Array.map2 ( || )) m ms
+  in
+  let bad = ref [] and i = ref 0 in
   each (fun yi k parts ->
-      match within b c parts (Array.map (fun part -> part.(k)) g) with
-      | Some why when List.length !bad < 8 ->
-          bad := Format.asprintf "%a: %s" Nx_array_gen.pp_ints yi why :: !bad
-      | _ -> ());
+      let barred = !i < Array.length apart && apart.(!i) in
+      incr i;
+      if not barred then
+        match within b c parts (Array.map (fun part -> part.(k)) g) with
+        | Some why when List.length !bad < 8 ->
+            bad := Format.asprintf "%a: %s" Nx_array_gen.pp_ints yi why :: !bad
+        | _ -> ());
   List.rev !bad
 
-let law_bound ?(paths = ignore) b c =
+let law_bound ?(paths = ignore) ?(covers = covers) b c =
   let placed =
     { c with a = on b c.a; b = on b c.b; init = Option.map (on b) c.init }
   in
@@ -165,8 +205,12 @@ let law_bound ?(paths = ignore) b c =
    along each axis, and the seed of its values. *)
 type spec = { exponent : bool; ratios : int array; seed : int }
 
+(* Float32 subnormals a [Value] scale draws, the largest near 2{^-126},
+   where a scaled element on the grid stays normal. *)
+let subnormal_scales = [| 0x1.fffffcp-127; -0x1.8p-127; 0x1p-127 |]
+
 (* The scale [sp] of an operand of shape [s], on the host: codes near 1,
-   at times 255; values on the grid. *)
+   at times 255; values on the grid, at times a subnormal. *)
 let scale_of s sp : Nx_kernel.scale =
   let r = Random.State.make [| sp.seed |] in
   let shape = Array.mapi (fun i e -> if e = 0 then 0 else e / sp.ratios.(i)) s in
@@ -180,7 +224,10 @@ let scale_of s sp : Nx_kernel.scale =
   else
     Value
       (A.of_array D.Float32 dims
-         (Array.init n (fun _ -> grid.(Random.State.int r (Array.length grid)))))
+         (Array.init n (fun _ ->
+              if Random.State.int r 16 = 0 then
+                subnormal_scales.(Random.State.int r (Array.length subnormal_scales))
+              else grid.(Random.State.int r (Array.length grid)))))
 
 (* The scale's value of each element of [x], in C order of its indices: a
    code's power of two or NaN, a value as a cast into [acc] holds it. *)
@@ -219,9 +266,10 @@ let scaled acc x sc =
        (Iarray.of_array (shape_of x))
        (Array.mapi (fun i v -> v *. ss.(i)) xs))
 
-(* Cases of float32 and float64 accumulators, of operands each holds, with
-   a scale on a, on b or on both: ratios 1 or a whole axis. *)
-let scaled_case =
+(* Cases of the accumulators [accs], float32 and float64 by default, of
+   operands each holds, with a scale on a, on b or on both: ratios 1 or a
+   whole axis. *)
+let scaled_case_of accs =
   let open Gen in
   let spec x =
     let s = shape_of x in
@@ -234,7 +282,7 @@ let scaled_case =
       Format.fprintf ppf "%a; scaled %s%s" pp_case c
         (if Option.is_some sa then "a" else "")
         (if Option.is_some sb then "b" else ""))
-    (let* acc = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ] in
+    (let* acc = of_list ~pp:pp_dtype accs in
      let* c = case_of ~acc ~out:acc ~dts:(held acc) () in
      let* which = int_range 1 3 in
      let* sa = spec c.a and+ sb = spec c.b in
@@ -243,18 +291,38 @@ let scaled_case =
          (if which land 1 <> 0 then Some sa else None),
          if which land 2 <> 0 then Some sb else None ))
 
+let scaled_case = scaled_case_of D.[ Any Float32; Any Float64 ]
+
 (* A scaled contraction is within the bound of the exact sum of its terms,
    each element as the accumulator holds it times its scale, rounded once
    into the accumulator. *)
 let law_scaled (b : Support.backend) (c, sa, sb) =
   let sa = Option.map (scale_of (shape_of c.a)) sa in
   let sb = Option.map (scale_of (shape_of c.b)) sb in
+  let subnormal_scale = function
+    | Some (Nx_kernel.Value v) -> Array.exists subnormal (A.to_array (to64 (A.Any v)))
+    | Some (Exponent _) | None -> false
+  in
+  cover "a subnormal Value scale" (subnormal_scale sa || subnormal_scale sb);
   match run ?sa ?sb b c with
   | None -> fail "declined"
   | Some y ->
       let a = Option.fold ~none:c.a ~some:(scaled c.acc c.a) sa in
       let b' = Option.fold ~none:c.b ~some:(scaled c.acc c.b) sb in
-      equal (list string) [] (outside b { c with a; b = b' } y)
+      (* Before their scales, and the scales alone, each of whose
+         subnormal factors a flushing library reads as zero. *)
+      let values x sc =
+        let s = shape_of x in
+        let vs =
+          match sc with
+          | None -> Array.make (total s) 1.
+          | Some sc -> scale_values c.acc x sc
+        in
+        A.Any (A.of_array D.Float64 (Iarray.of_array s) vs)
+      in
+      let scales = { c with a = values c.a sa; b = values c.b sb } in
+      equal (list string) []
+        (outside ~factors:[ c; scales ] b { c with a; b = b' } y)
 
 (* Segments *)
 
@@ -289,12 +357,24 @@ let finite dt s v seed =
   in
   E.operand_with make (Array.map (fun m -> s.(m)) v.perm) v
 
-(* Segmented cases, Rows ones where [rows] draws true. *)
-let seg_cases rows =
+(* Segmented cases, Rows ones where [rows] draws true; where [metal], of
+   the accumulators and operands nx.metal computes: float32 of two
+   operands of one staged dtype, int32 and complex64. *)
+let seg_cases ?(metal = false) rows =
   let open Gen in
-  let* acc = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64; Any Int32; Any Complex64; Any Complex128 ] in
-  let dts = if is_integer acc then D.[ Any Int32; Any Int8; Any Uint4 ] else held acc in
+  let accs =
+    if metal then D.[ Any Float32; Any Int32; Any Complex64 ]
+    else D.[ Any Float32; Any Float64; Any Int32; Any Complex64; Any Complex128 ]
+  in
+  let* acc = of_list ~pp:pp_dtype accs in
+  let dts =
+    if is_integer acc then D.[ Any Int32; Any Int8; Any Uint4 ]
+    else if metal && acc = D.Any D.Float32 then D.[ Any Float32; Any Float16; Any Bfloat16 ]
+    else if metal then D.[ Any Complex64 ]
+    else held acc
+  in
   let* da = of_list ~pp:pp_dtype dts and+ db = of_list ~pp:pp_dtype dts in
+  let db = if metal && not (is_integer acc) then da else db in
   let* rows = rows and+ nb = int_range 0 1 in
   let* z = int_range 1 3 and+ m = int_range 1 40 and+ n = int_range 1 20 in
   let* k = frequency [ (3, int_range 0 40); (1, int_range 100 700) ] in
@@ -430,18 +510,36 @@ let law_wide ~wide (b : Support.backend) s =
 
 (* In place *)
 
-(* A destination identical to [init], a C-contiguous array of the result's
-   dtype, gives the bits a fresh one does: a kernel reads each element of
-   [init] before it writes the destination there. *)
-let law_in_place (b : Support.backend) (c : case) =
+(* [x]'s values in a host array of its shape through the view [v]. *)
+let through v x =
+  let (A.Any t) = x in
+  let make made =
+    A.Any (A.create Rig.host (A.dtype t) (Iarray.of_array made))
+  in
+  let (A.Any y as viewed) = E.operand_with make (shape_of x) v in
+  cast_into y x;
+  viewed
+
+(* A destination identical to [init], an array of the result's dtype
+   through [view] (C-contiguous by default), gives the bits a fresh one
+   does: a kernel reads each element of [init] before it writes the
+   destination there. *)
+let law_in_place ?(covers = fun _ -> ()) ?view (b : Support.backend) (c : case)
+    =
   let computed =
     match c.init with
     | None ->
         collect "no init";
         false
     | Some i -> (
-        let c = { c with init = Some (cast_to c.out i) } in
-        let alias = on b (cast_to c.out i) in
+        let i = cast_to c.out i in
+        let c = { c with init = Some i } in
+        (* A copy of [i]: on nx.cpu [on] keeps a host array itself. *)
+        let alias =
+          on b
+            (match view with Some v -> through v i | None -> cast_to c.out i)
+        in
+        covers (c, alias);
         let answer =
           contract b.kernels c ~dst:alias (on b c.a) (on b c.b) (Some alias)
         in
@@ -477,30 +575,32 @@ let in_place_examples =
 (* A destination through any view, its axes stored apart, windowed,
    stepped or reversed, made on the backend's device, gets the bits a fresh
    C-contiguous one gets: the association reads no layout. *)
-let law_dst_view (b : Support.backend) (c, v) =
+let law_dst_view ?(covers = fun _ -> ()) (b : Support.backend) (c, v) =
   match run b c with
   | None -> fail "declined"
   | Some y -> (
       let ys, _, _ = sizes c in
       let (D.Any out) = c.out in
       let make made = A.Any (A.create b.device out (Iarray.of_array made)) in
-      (* The made array's axes in the view's order, as [operand] lays them. *)
-      let made = Array.map (fun i -> ys.(i)) (E.inverse v.perm) in
-      let dst = E.operand_with make (Array.map (fun m -> made.(m)) v.perm) v in
+      let dst = E.operand_with make ys v in
+      covers (c, dst);
       let init = Option.map (on b) c.init in
       match contract b.kernels c ~dst (on b c.a) (on b c.b) init with
       | A.Done ->
+          cover "computed" true;
           equal (list string) []
             (differ_bits c.acc ~other:"through a view" y (host dst))
       | r -> failf "contract answered %a" Nx_array_support.pp_answer r)
 
-let dst_view_case =
+let view_case_of cases =
   Gen.with_pp
     (fun ppf (c, v) -> Format.fprintf ppf "%a; dst %s" pp_case c (String.concat " " (E.view_names v)))
-    (Gen.bind computed (fun c ->
+    (Gen.bind cases (fun c ->
          let ys, _, _ = sizes c in
          (* No windows: a destination's elements are distinct. *)
          Gen.map (fun v -> (c, v)) (E.view_of ~apart:true (Array.length ys))))
+
+let dst_view_case = view_case_of computed
 
 (* A kernel that declines writes nothing: [dst] keeps its values. Every
    kernel library declines a scale with an integer or complex
@@ -824,6 +924,189 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
         ];
     ]
 
+(* nx.metal *)
+
+(* The dtypes nx_metal.mli's contraction computes: operands both float32,
+   both float16 or both bfloat16, a float32 accumulator, and a float32,
+   float16 or bfloat16 result; and complex64 operands, accumulator and
+   result. *)
+let stage_dts = D.[ Any Float32; Any Float16; Any Bfloat16 ]
+let dtype_of (A.Any x) = D.Any (A.dtype x)
+
+let c64 = D.Any D.Complex64
+
+let staged c =
+  (c.acc = D.Any D.Float32
+  && List.mem (dtype_of c.a) stage_dts
+  && dtype_of c.a = dtype_of c.b
+  && List.mem c.out stage_dts)
+  || (c.acc = c64 && dtype_of c.a = c64 && dtype_of c.b = c64 && c.out = c64)
+
+(* Cases of those dtypes into one of [outs], and complex64 ones. *)
+let staged_into outs =
+  let dts = Gen.of_list ~pp:pp_dtype stage_dts in
+  let complex =
+    case_of ~same:(Gen.constant ~pp:pp_dtype c64) ~acc:c64 ~out:c64
+      ~dts:[ c64 ] ()
+  in
+  Gen.with_pp pp_case
+    (Gen.frequency
+       [
+         ( 3,
+           Gen.bind (Gen.of_list ~pp:pp_dtype outs) (fun out ->
+               case_of ~same:dts ~acc:(D.Any D.Float32) ~out ~dts:stage_dts ())
+         );
+         (1, complex);
+       ])
+
+(* The bound holds before the rounding into the destination, so its cases
+   store the accumulator's dtype; the bits laws take every result. *)
+let staged_case = staged_into stage_dts
+let bound_case = staged_into [ D.Any D.Float32 ]
+
+let staged_examples =
+  List.filter staged (regimes (D.Any D.Float32) @ regimes c64)
+let bound_examples = List.filter (fun c -> c.out = c.acc) staged_examples
+
+(* Whether the axes [axes] of [l] merge into one run of strides: each
+   axis of more than one element strided by the next one's extent times
+   its stride. *)
+let one_run l axes =
+  let runs = ref 0 and stride = ref 0 in
+  List.iter
+    (fun a ->
+      let e = A.Layout.dim l a in
+      if e > 1 then begin
+        let s = A.Layout.stride l a in
+        if !runs = 0 || !stride <> s * e then incr runs;
+        stride := s
+      end)
+    axes;
+  !runs <= 1
+
+(* Whether [d]'s batch, row and column axes each do not merge into one
+   run of strides: such a dst nx.metal computes in pieces. *)
+let apart (c, A.Any d) =
+  let nb = Array.length c.batch in
+  let fa = Array.length (shape_of c.a) - nb - Array.length c.contracting in
+  let l = A.layout d in
+  let r = A.Layout.rank l in
+  let span lo hi = List.init (hi - lo) (fun i -> lo + i) in
+  let off lo hi = not (one_run l (span lo hi)) in
+  (off 0 nb, off nb (nb + fa), off (nb + fa) r)
+
+let apart_covers x =
+  let batch, rows, cols = apart x in
+  cover "batch apart" batch;
+  cover "rows apart" rows;
+  cover "columns apart" cols
+
+let any_apart x =
+  let batch, rows, cols = apart x in
+  cover "a dst apart" (batch || rows || cols)
+
+(* The cases nx.metal's calls reach: each staged dtype, no output, no
+   product, an init and each kind of view. *)
+let staged_covers c =
+  let y, k, _ = sizes c in
+  cover "float16" (dtype_of c.a = D.Any D.Float16);
+  cover "bfloat16" (dtype_of c.a = D.Any D.Bfloat16);
+  cover "complex64" (c.acc = c64);
+  cover "no output" (total y = 0);
+  cover "no product" (k = 0 && total y > 0);
+  cover "init" (c.init <> None);
+  List.iter
+    (fun v -> cover v (List.mem v c.views))
+    [ "stepped"; "windowed"; "reversed"; "broadcast"; "stored apart"; "permuted" ]
+
+(* The dtypes nx.metal computes beside an integer accumulator: every one
+   but float64 and complex128. *)
+let metal_dts =
+  List.filter (fun d -> d <> D.Any D.Float64 && d <> D.Any D.Complex128) D.all
+
+let int_accs = List.filter is_integer D.all
+
+(* Integer accumulators, operands of those dtypes, and a result of the
+   accumulator's dtype or of any of them. *)
+let integer_case =
+  Gen.with_pp pp_case
+    (Gen.bind (Gen.of_list ~pp:pp_dtype int_accs) (fun acc ->
+         Gen.bind
+           (Gen.frequency
+              [
+                (2, Gen.constant ~pp:pp_dtype acc);
+                (1, Gen.of_list ~pp:pp_dtype metal_dts);
+              ])
+           (fun out -> case_of ~acc ~out ~dts:metal_dts ())))
+
+(* nx_kernel.mli: an integer sum wraps in the accumulator, so its bits are
+   fixed: nx.metal's are nx.cpu's, through every cast into and out of the
+   accumulator and every view. *)
+let law_integer (b : Support.backend) c =
+  let narrow x =
+    let (D.Any d) = dtype_of x in
+    D.bits d <= 8 && not (D.is D.Float d)
+  in
+  cover "integers of 8 bits or fewer" (narrow c.a && narrow c.b);
+  cover "other operands" (not (narrow c.a && narrow c.b));
+  cover "init" (c.init <> None);
+  cover "a result of another dtype" (c.out <> c.acc);
+  match (run b c, run (List.hd Support.cpus) c) with
+  | Some y, Some want ->
+      equal (array string) (Support.elements want) (Support.elements y)
+  | None, _ -> fail "declined"
+  | Some _, None -> fail "nx.cpu declined"
+
+let metal_rows_case = Gen.with_pp pp_seg (seg_cases ~metal:true (Gen.constant true))
+let metal_k_case = Gen.with_pp pp_seg (seg_cases ~metal:true (Gen.constant false))
+
+(* A segmented contraction on nx.metal is each group's contraction of
+   its rows, or of its contracted indices, alone, through every view of
+   its operands, at each accumulator it computes. *)
+let law_metal_segments (b : Support.backend) s =
+  cover "an integer accumulator" (is_integer s.sc.acc);
+  cover "complex64" (is_complex s.sc.acc);
+  cover "init" (Option.is_some s.sc.init);
+  segmented b s
+
+(* nx.metal's laws: those of the calls it computes, its bound that of its
+   flush (nx_metal.mli), a dst through any view. *)
+let metal_laws (b : Support.backend) =
+  group b.name
+    [
+      prop ~examples:bound_examples
+        "a contraction is within its bound of the exact sum" bound_case
+        (law_bound ~covers:staged_covers b);
+      prop "an integer contraction has nx.cpu's bits" integer_case
+        (law_integer b);
+      prop "a scaled contraction is within its bound of its terms' sum"
+        (scaled_case_of [ D.Any D.Float32 ])
+        (law_scaled b);
+      prop "a Rows contraction is each group's contraction" metal_rows_case
+        (law_metal_segments b);
+      prop "a Contracting contraction is each group's contraction"
+        metal_k_case (law_metal_segments b);
+      prop "a destination through a view gets a fresh one's bits"
+        (view_case_of staged_case)
+        (law_dst_view ~covers:apart_covers b);
+      prop "a declined contraction writes nothing" decline_cases
+        (law_declined b);
+      prop ~examples:staged_examples
+        "a destination identical to init gives a fresh one's bits"
+        staged_case (law_in_place b);
+      prop
+        "a destination identical to init through a view gives a fresh one's \
+         bits"
+        (view_case_of staged_case) (fun (c, v) ->
+          law_in_place ~covers:any_apart ~view:v b c);
+      test
+        "a call of shapes that do not fit is not Done and writes nothing \
+         outside dst"
+        (test_misfits b);
+      test "an acc a contraction does not compute in is not Done"
+        (test_acc_refused b);
+    ]
+
 (* nx.cpu under each target table, then nx.cuda, then nx.amd, whose bound
    law covers its paths. *)
 let backends =
@@ -843,4 +1126,5 @@ let () =
        (backends
        @ List.map cuda (Support.gpus ())
        @ List.map amd (Option.to_list (Support.amd ()))
-       @ nv))
+       @ nv
+       @ List.map metal_laws (Option.to_list (Support.metal ()))))

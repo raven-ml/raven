@@ -1154,6 +1154,24 @@ let law_chunk_carry (b : Support.backend) { c; chunk } =
         (Elements.elements dst)
   end
 
+(* A boolean carry is true wherever its byte is not 0: a carry byte of 2
+   scanned with a true term by [Min] or [Max] gives true, byte 1. *)
+let carry_cases =
+  List.concat_map
+    (fun d -> List.map (fun m -> (d, m)) [ ("Min", (Min : Nx_kernel.monoid)); ("Max", Max) ])
+    D.[ Any Bool; Any Bit ]
+
+let test_byte_carry (b : Support.backend) (d, (_, m)) =
+  let module K = (val b.kernels) in
+  let (D.Any dt) = d in
+  let (A.Any x) = Elements.of_elements d [| 1; 1 |] [| "\001" |] in
+  let carry = Elements.of_elements (Nx_kernel.carrier d) [| 1; 1 |] [| "\002" |] in
+  let dst = A.Any (A.create Rig.host dt [| 1; 1 |]) in
+  equal ~msg:"answer" Elements.answer A.Done
+    (K.scan ~carry (identity d) ~axis:1 (Monoid m, 0) ~dsts:[| dst |]
+       [| Nx_kernel.Plain x |]);
+  equal (array string) [| "\001" |] (Elements.elements dst)
+
 (* The first results that miss [want]. *)
 let misses want got =
   let bad = ref [] in
@@ -4130,6 +4148,11 @@ let carries (b : Support.backend) =
         "a scan from a chunk's carry has the whole scan's bits from that \
          chunk on"
         chunk_case (run (law_chunk_carry b));
+      cases
+        "a boolean scan from a carry byte of 2 and a true term gives true"
+        ~id:(fun (D.Any dt, (m, _)) -> D.name dt ^ " " ^ m)
+        carry_cases
+        (fun c -> b.around (fun () -> test_byte_carry b c));
     ]
 
 let refusals (b : Support.backend) =

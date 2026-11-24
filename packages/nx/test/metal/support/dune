@@ -1,0 +1,48 @@
+; What the Metal suite shares: the GPU and the harness's kernels as rig's
+; launches. nx.metal's gen.py compiles the harness to the committed
+; harness.metallib, and the rule checks its stamp in every tree.
+
+(library
+ (name nx_metal_support)
+ (libraries nx_kernels_support nx_metal rig windtrap))
+
+(rule
+ (target harness.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (chdir
+    %{workspace_root}
+    (run
+     %{exe:../../../lib/metal/kernels/fresh.exe}
+     %{dep:harness.metallib}
+     %{dep:../../../lib/metal/kernels/gen.py}
+     %{dep:../../../lib/metal/kernels/src/kernels.h}
+     %{dep:../../../lib/metal/kernels/src/device.h}
+     %{dep:harness.metal})))))
+
+; The property list that names nx's Metal suites, here and in
+; ../../kernel, a bundle, nx-metal-tests, linked on macOS into each one's
+; __TEXT,__info_plist section by the flags below. Metal keeps an
+; executable's pipelines in a cache of its bundle's own, whose index
+; opens in milliseconds, in place of the cache that every executable
+; without a bundle shares.
+
+(rule
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (with-stdout-to
+   plist_flags.sexp
+   (chdir
+    %{workspace_root}
+    (echo
+     "(-ccopt -Wl,-sectcreate,__TEXT,__info_plist,%{dep:nx-metal-tests.plist})")))))
+
+(rule
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (with-stdout-to
+   plist_flags.sexp
+   (echo "()"))))

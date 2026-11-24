@@ -1466,6 +1466,11 @@ static void start(const plan *q, const unit *x, uint8_t *a) {
   }
   for (int64_t j = 0; j < x->W; j++)
     memcpy(a + j * q->w, q->cy->base + (x->c + j * x->sc) * q->w, q->w);
+  /* A boolean is true wherever its byte is not 0, but its states hold 0
+     or 1, which ALL combines by a bitwise and: a carry of 2 and a true
+     term would make 0. */
+  if (q->carrier == NX_BOOL)
+    for (int64_t j = 0; j < x->W; j++) a[j] = a[j] != 0;
 }
 
 /* Chunk [c]'s results of the unit's slices, from the carry [a], which it

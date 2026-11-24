@@ -17,7 +17,7 @@ module P = Nx_kernel.Prog
 module Support = Nx_kernels_support
 
 (* What a call answers: a refusal, or [Done]. *)
-type want = Refused of A.answer | Fits
+type want = Refused of A.answer | Fits | Declines
 
 (* [b]'s attention by [p] of a query [[1; tq; 1]] of [dt] against two keys
    and values, over [loads] [[1; tq; 2]] of [lds]: the refusal
@@ -155,8 +155,9 @@ let table (b : Support.backend) =
       Refused A.Shape_mismatch,
       fun () ->
         call (P.v ~ins:[| f32 |] [| In 0; truth |] ~outs:[| 1; 0; 1; 1 |]) );
+    (* nx_metal.mli: nx.metal declines a keep but the constant true. *)
     ( "a causal keep",
-      Fits,
+      (if b.name = "metal" then Declines else Fits),
       fun () -> call (prog ~o2:3 (Iarray.append causal [| truth |]) 4 0) );
     ( "an output 2 of float32",
       Refused A.Wrong_dtype,
@@ -196,6 +197,11 @@ let check (b : Support.backend) (msg, want, case) =
       Misfit.law ~msg ~what:"none" b ~fit:true dsts (fun g ds ->
           let got = call g ds in
           equal ~msg Elements.answer A.Done got;
+          got)
+  | Declines ->
+      Misfit.law ~msg ~what:"none" b ~fit:true dsts (fun g ds ->
+          let got = call g ds in
+          equal ~msg Elements.answer A.Declined got;
           got)
   | Refused r ->
       (match named with
@@ -272,6 +278,11 @@ let keys c = Option.value c.len ~default:c.tk
 
 let dtypes = Gen.of_list ~pp:pp_dtypes [ F32; F64; F16; Bf16; F32_in_f64 ]
 
+(* The dtypes of a library's attention: those of a float32 accumulator
+   alone where it computes in no float64 one. *)
+let dtypes_of (a : Support.attention) =
+  if a.float64 then dtypes else Gen.of_list ~pp:pp_dtypes [ F32; F16; Bf16 ]
+
 (* One row, or more than 16: nx.cuda takes a key head's 16 rows or fewer
    by fused multiply-adds, and more on the matrix units for float16 and
    bfloat16. *)
@@ -309,7 +320,7 @@ let value d =
    length past a part's 256 keys and short of [tk], where [tk] has one, so
    that about 1 case in 4 is one, and 100 cases cover it but with
    probability below 10^-13. *)
-let sums =
+let sums dtypes =
   let open Gen in
   with_pp pp_case
   @@ let* d = dtypes in
@@ -334,7 +345,7 @@ let sums =
   { d; rows; tk; len; dk; dv; q = Array.make dk 0.; k; v }
 
 (* [q·k]'s cases: one key. *)
-let dots =
+let dots dtypes =
   let open Gen in
   with_pp pp_case
   @@ let* d = dtypes in
@@ -578,10 +589,11 @@ let test_infinite_scores (b : Support.backend) (a : Support.attention) () =
       each D.Float16 D.Float32;
       each D.Bfloat16 D.Float32;
       each D.Float32 D.Float32;
-      each D.Float16 D.Float64;
-      each D.Bfloat16 D.Float64;
-      each D.Float32 D.Float64;
-      each D.Float64 D.Float64)
+      if a.float64 then (
+        each D.Float16 D.Float64;
+        each D.Bfloat16 D.Float64;
+        each D.Float32 D.Float64;
+        each D.Float64 D.Float64))
 
 (* The error laws hold where the backend states its attention's errors:
    one that declines every attention states none. *)
@@ -590,9 +602,10 @@ let laws (b : Support.backend) =
   | None -> []
   | Some a ->
       [
-        prop "o is within its bound of the weighted sum, at weights 1/tk" sums
-          (law_sum b a);
-        prop "q·k is within its bound of the exact sum" dots (law_dot b a);
+        prop "o is within its bound of the weighted sum, at weights 1/tk"
+          (sums (dtypes_of a)) (law_sum b a);
+        prop "q·k is within its bound of the exact sum" (dots (dtypes_of a))
+          (law_dot b a);
         prop "lse is within its bound at lengths past a part" lses (law_lse b a);
       ]
 
@@ -622,9 +635,31 @@ let suite (b : Support.backend) =
    and programs past what a launch holds: masks of many values or many
    loads, at 32 axes, and kinds of any dtype. *)
 
-type mask = No_mask | Causal | Docs | Causal_docs | Docs32 | Wide | Many
+type mask =
+  | No_mask
+  | Causal
+  | Docs
+  | Causal_docs
+  | Docs32
+  | Wide
+  | Many
+  | Window
 
-type rescore = No_score | Bias | Alibi | Sine | Half_bias | Wide_bias | Wide_score
+type rescore =
+  | No_score
+  | Bias
+  | Scaled_bias
+  | Alibi
+  | Sine
+  | Half_bias
+  | Wide_bias
+  | Wide_score
+
+(* Where q, k and v lie: each in a buffer of its own, one element into a larger
+   buffer, with their last two axes stored the other way, or with their rows
+   (q's queries, k's and v's keys or slots) stored last first, at a negative
+   step. *)
+type lay = Own | Shifted | Swapped | Flipped
 
 (* Which visible pairs keep their weight: all, those of a row and key whose sum
    3 does not divide, or those a bool load holds, most of them. *)
@@ -644,6 +679,11 @@ type call = {
   lens : int array option;
   mask : mask;
   rescore : rescore;
+  lay : lay;
+  bounded : bool;
+      (* q's and k's elements bounded so that each score lies within ±8 *)
+  poisoned : bool;
+      (* loads hold NaN, or an integer's ends, at keys past the length *)
   keep : keep;
   seed : int;
 }
@@ -656,15 +696,23 @@ let mask_name = function
   | Docs32 -> "int32 documents"
   | Wide -> "wide causal"
   | Many -> "eight loads"
+  | Window -> "window"
 
 let rescore_name = function
   | No_score -> "none"
   | Bias -> "bias"
+  | Scaled_bias -> "scaled bias"
   | Alibi -> "alibi"
   | Sine -> "sine"
   | Half_bias -> "float16 bias"
   | Wide_bias -> "wide alibi"
   | Wide_score -> "wide score"
+
+let lay_name = function
+  | Own -> "own"
+  | Shifted -> "shifted"
+  | Swapped -> "swapped"
+  | Flipped -> "flipped"
 
 let keep_name = function
   | Keep_all -> "all"
@@ -674,12 +722,15 @@ let keep_name = function
 let pp_call ppf c =
   Format.fprintf ppf
     "@[%a, lead %d and %d axes, hk %d, g %d, tq %d, tk %d, dk %d, dv %d, page \
-     %d,@ lengths %s, mask %s, score %s, keep %s, seed %d@]"
+     %d,@ lengths %s, mask %s, score %s, laid %s,%s%s keep %s, seed %d@]"
     pp_dtypes c.cd c.nb c.axes c.hk c.g c.tq c.ck c.cdk c.cdv c.page
     (match c.lens with
     | None -> "none"
     | Some l -> String.concat " " (List.map string_of_int (Array.to_list l)))
-    (mask_name c.mask) (rescore_name c.rescore) (keep_name c.keep) c.seed
+    (mask_name c.mask) (rescore_name c.rescore) (lay_name c.lay)
+    (if c.bounded then " bounded," else "")
+    (if c.poisoned then " poisoned," else "")
+    (keep_name c.keep) c.seed
 
 (* Calls whose keys stay below 8 blocks, so that nx.cuda cuts no keys into
    parts, and, with [fused], whose float16 and bfloat16 key heads hold 16
@@ -738,6 +789,9 @@ let calls ~fused =
        lens;
        mask;
        rescore;
+       lay = Own;
+       bounded = false;
+       poisoned = false;
        keep;
        seed;
      }
@@ -746,16 +800,20 @@ let calls ~fused =
    the key for an odd one. *)
 let many = 8
 
+(* The keys [Window] shows a row: the [window] keys up to its last. *)
+let window = 100
+
 (* [c]'s program over a score in [acc] and its loads, and the loads' dtypes:
    output 0 by its mask, output 1 by its score, output 2 by its keep, whose
    load, a bool, comes last. A document mask reads two loads of int64 or int32,
-   a row's document and a key's, and [Many] eight int64 ones; a bias reads one
-   load in the accumulator, or in float16. [Wide] is the causal mask through 48
-   int64 values held at once, past what a kernel holds in shared memory; [Many]
-   at 32 axes reads more loads than a launch's parameters describe; [Sine] adds
-   the sine of the score; [Wide_bias] subtracts the sum of 48 int64 distances of
-   the row and the key, held at once, cast and scaled; [Wide_score] sums 96
-   products of the score held at once. *)
+   a row's document and a key's, and [Many] eight int64 ones; [Window] is the
+   causal mask of a row's [window] keys up to its last; a bias reads one load in
+   the accumulator, or in float16, and [Scaled_bias] adds half of it. [Wide] is
+   the causal mask through 48 int64 values held at once, past what a kernel
+   holds in shared memory; [Many] at 32 axes reads more loads than a launch's
+   parameters describe; [Sine] adds the sine of the score; [Wide_bias] subtracts
+   the sum of 48 int64 distances of the row and the key, held at once, cast and
+   scaled; [Wide_score] sums 96 products of the score held at once. *)
 let program c acc =
   let i64 = D.Any D.Int64 and i32 = D.Any D.Int32 in
   let nodes = ref [] and n = ref 0 in
@@ -769,9 +827,9 @@ let program c acc =
     | Docs | Causal_docs -> [ i64; i64 ]
     | Docs32 -> [ i32; i32 ]
     | Many -> List.init many (fun _ -> i64)
-    | No_mask | Causal | Wide -> [])
+    | No_mask | Causal | Wide | Window -> [])
     @ (match c.rescore with
-      | Bias -> [ acc ]
+      | Bias | Scaled_bias -> [ acc ]
       | Half_bias -> [ D.Any D.Float16 ]
       | No_score | Alibi | Sine | Wide_bias | Wide_score -> [])
     @
@@ -809,12 +867,20 @@ let program c acc =
              (fun i k -> add (P.Op2 (Compare Less_equal, k, add (P.Op2 (Binary Add, l, int64 i)))))
              keys)
     | Many -> all (List.init (many / 2) (fun i -> same ((2 * i) + 1) ((2 * i) + 2)))
+    | Window ->
+        let first = add (P.Op2 (Binary Sub, last (), int64 (window - 1))) in
+        let a = causal () in
+        let seen = add (P.Op2 (Compare Less_equal, first, key)) in
+        add (P.Op2 (Binary And, a, seen))
   in
   let bias = P.In (List.length lds - if c.keep = Keep_load then 1 else 0) in
   let o1 =
     match c.rescore with
     | No_score -> score
     | Bias -> add (P.Op2 (Binary Add, score, add bias))
+    | Scaled_bias ->
+        let half = add (P.Op2 (Binary Mul, add bias, float 0.5)) in
+        add (P.Op2 (Binary Add, score, half))
     | Half_bias -> add (P.Op2 (Binary Add, score, add (P.Op1 (Cast, acc, add bias))))
     | Sine -> add (P.Op2 (Binary Add, score, add (P.Op1 (Unary Sin, acc, score))))
     | Wide_bias ->
@@ -852,19 +918,33 @@ let program c acc =
       ~outs:(Iarray.of_list [ o0; o1; o2 ]),
     lds )
 
-(* [c]'s call on [b]: its destinations [o] and [lse], or none where [b]
-   does not answer [Done]. *)
-let run_call (b : Support.backend) c =
+(* [c]'s call on [b]: its answer, and its destinations [o] and [lse], or none
+   where [b] does not answer [Done]. *)
+let call_on (b : Support.backend) c =
   let go (type r a) (dt : (float, r) D.t) (acc : (float, a) D.t) =
     let (module K : Nx_kernel.S) = b.kernels in
     let st = Random.State.make [| c.seed |] in
+    (* Bounded, an element is 0 or of magnitude in [2{^-20}, m], so that
+       no product of two is subnormal. *)
+    let draw m =
+      let x = Random.State.float st (2. *. m) -. m in
+      if c.bounded && Float.abs x < 0x1p-20 then 0. else x
+    in
     let value () =
       match Random.State.int st 100 with
       | 0 -> Float.nan
       | 1 -> Float.infinity
-      | _ -> Random.State.float st 4. -. 2.
+      | _ -> draw 2.
     in
-    let finite () = Random.State.float st 4. -. 2. in
+    let finite () = draw 2. in
+    (* Bounded, [|q·k| ≤ dk m²], and the scale [0.375] keeps each score
+       within [±8]. *)
+    let qk =
+      if c.bounded && c.cdk > 0 then
+        Float.min 2. (Float.sqrt (8. /. (0.375 *. Float.of_int c.cdk)))
+      else 2.
+    in
+    let element () = draw qk in
     let lead = Array.append [| c.nb |] (Array.make c.axes 1) in
     let shape s = Iarray.of_array (Array.append lead s) in
     let arr dt shape f =
@@ -872,13 +952,61 @@ let run_call (b : Support.backend) c =
         (A.of_array dt shape
            (Array.init (Iarray.fold_left ( * ) 1 shape) (fun _ -> f ())))
     in
+    (* [arr] as [c.lay] lays q, k and v out, with the same elements. *)
+    let laid dt shape f =
+      let xs = Array.init (Iarray.fold_left ( * ) 1 shape) (fun _ -> f ()) in
+      let r = Iarray.length shape in
+      let view base strides ?offset s =
+        A.v dt (A.Layout.v ?offset ~strides s) (A.buffer (Kernels_cases.on b base))
+      in
+      match c.lay with
+      | Own -> Kernels_cases.on b (A.of_array dt shape xs)
+      | Shifted ->
+          let base = A.of_array dt [| Array.length xs + 1 |] (Array.append [| 0. |] xs) in
+          view base (A.Layout.strides (A.Layout.contiguous shape)) ~offset:1 shape
+      | Swapped ->
+          let swap a =
+            Iarray.init r (fun i ->
+                if i = r - 2 then Iarray.get a (r - 1)
+                else if i = r - 1 then Iarray.get a (r - 2)
+                else Iarray.get a i)
+          in
+          let stored = swap shape in
+          let m = Iarray.get shape (r - 2) and n = Iarray.get shape (r - 1) in
+          (* element (i, j) of a matrix of the logical array at (j, i) *)
+          let ys =
+            Array.init (Array.length xs) (fun e ->
+                let mat = e / (m * n) and at = e mod (m * n) in
+                let j = at / m and i = at mod m in
+                xs.((mat * m * n) + (i * n) + j))
+          in
+          let base = A.of_array dt stored ys in
+          view base (swap (A.Layout.strides (A.Layout.contiguous stored))) shape
+      | Flipped ->
+          let m = Iarray.get shape (r - 2) and n = Iarray.get shape (r - 1) in
+          (* row i of a matrix of the logical array at row m - 1 - i *)
+          let ys =
+            Array.init (Array.length xs) (fun e ->
+                let mat = e / (m * n) and at = e mod (m * n) in
+                xs.((mat * m * n) + ((m - 1 - (at / n)) * n) + (at mod n)))
+          in
+          let strides = A.Layout.strides (A.Layout.contiguous shape) in
+          let strides =
+            Iarray.init r (fun i ->
+                let s = Iarray.get strides i in
+                if i = r - 2 then -s else s)
+          in
+          view (A.of_array dt shape ys) strides
+            ~offset:(Int.max 0 ((m - 1) * n))
+            shape
+    in
     let hq = c.hk * c.g in
-    let q = arr dt (shape [| hq; c.tq; c.cdk |]) finite in
+    let q = laid dt (shape [| hq; c.tq; c.cdk |]) element in
     let kv, tk =
       if c.page = 0 then
         ( Nx_kernel.Dense
-            { k = arr dt (shape [| c.hk; c.ck; c.cdk |]) finite;
-              v = arr dt (shape [| c.hk; c.ck; c.cdv |]) value },
+            { k = laid dt (shape [| c.hk; c.ck; c.cdk |]) element;
+              v = laid dt (shape [| c.hk; c.ck; c.cdv |]) value },
           c.ck )
       else
         let maxp = c.ck / c.page in
@@ -888,8 +1016,8 @@ let run_call (b : Support.backend) c =
               Int64.of_int (Random.State.int st (pages + 2) - 1))
         in
         ( Nx_kernel.Paged
-            { k = arr dt [| pages; c.hk; c.page; c.cdk |] finite;
-              v = arr dt [| pages; c.hk; c.page; c.cdv |] value;
+            { k = laid dt (Iarray.of_array [| pages; c.hk; c.page; c.cdk |]) element;
+              v = laid dt (Iarray.of_array [| pages; c.hk; c.page; c.cdv |]) value;
               table },
           c.ck )
     in
@@ -902,21 +1030,45 @@ let run_call (b : Support.backend) c =
       let key = e mod tk and row = e / tk mod c.tq in
       if j mod 2 = 0 then row / (5 + j) else key / (6 + j)
     in
+    (* Poisoned, the element at [e] lies past its lead index's length. *)
+    let past e =
+      match c.lens with
+      | Some l when c.poisoned -> e mod tk >= l.(e / (hq * c.tq * tk))
+      | _ -> false
+    in
+    let floats dt =
+      let x =
+        Array.init numel (fun e ->
+            let y = finite () in
+            if past e then Float.nan else y)
+      in
+      A.Any (Kernels_cases.on b (A.of_array dt lshape x))
+    in
     let loads =
       Array.of_list
         (List.mapi
            (fun j (D.Any l) ->
              match l with
              | D.Int64 ->
-                 let x = Array.init numel (fun e -> Int64.of_int (doc j e)) in
+                 let x =
+                   Array.init numel (fun e ->
+                       if not (past e) then Int64.of_int (doc j e)
+                       else if e mod 2 = 0 then Int64.max_int
+                       else Int64.min_int)
+                 in
                  A.Any (Kernels_cases.on b (A.of_array D.Int64 lshape x))
              | D.Int32 ->
-                 let x = Array.init numel (fun e -> Int32.of_int (doc j e)) in
+                 let x =
+                   Array.init numel (fun e ->
+                       if not (past e) then Int32.of_int (doc j e)
+                       else if e mod 2 = 0 then Int32.max_int
+                       else Int32.min_int)
+                 in
                  A.Any (Kernels_cases.on b (A.of_array D.Int32 lshape x))
-             | D.Float16 -> A.Any (arr D.Float16 lshape finite)
+             | D.Float16 -> floats D.Float16
              | D.Bool ->
                  A.Any (arr D.Bool lshape (fun () -> Random.State.int st 5 > 0))
-             | _ -> A.Any (arr acc lshape finite))
+             | _ -> floats acc)
            lds)
     in
     let lengths =
@@ -931,8 +1083,8 @@ let run_call (b : Support.backend) c =
     match
       K.attention p ~scale:0.375 ~o ~lse ?lengths q kv (Iarray.of_array loads)
     with
-    | A.Done -> [| A.Any o; A.Any lse |]
-    | _ -> [||]
+    | A.Done -> (A.Done, [| A.Any o; A.Any lse |])
+    | answer -> (answer, [||])
   in
   b.around (fun () ->
       match c.cd with
@@ -942,10 +1094,12 @@ let run_call (b : Support.backend) c =
       | Bf16 -> go D.Bfloat16 D.Float32
       | F32_in_f64 -> go D.Float32 D.Float64)
 
+let run_call b c = snd (call_on b c)
+
 (* [got] holds [want]'s floats, bit for bit but for any NaN, which equals
    any NaN. *)
-let same_floats want got =
-  equal ~msg:"answers" int (Array.length want) (Array.length got);
+let same_floats ?(msg = "") want got =
+  equal ~msg:(msg ^ "answers") int (Array.length want) (Array.length got);
   Array.iteri
     (fun k (A.Any w) ->
       let (A.Any g) = got.(k) in
@@ -962,8 +1116,8 @@ let same_floats want got =
           let y = g.(i) in
           if not ((Float.is_nan x && Float.is_nan y)
                   || Int64.bits_of_float x = Int64.bits_of_float y)
-          then failf "destination %d, element %d of %d: %h, expected %h" k i
-                 (Array.length w) y x)
+          then failf "%sdestination %d, element %d of %d: %h, expected %h" msg k
+                 i (Array.length w) y x)
         w)
     want
 
@@ -1097,6 +1251,9 @@ let past_cases =
       lens = Some [| 150; 97 |];
       mask = No_mask;
       rescore = No_score;
+      lay = Own;
+      bounded = false;
+      poisoned = false;
       keep = Keep_all;
       seed = 7;
     }
@@ -1165,6 +1322,9 @@ let cut_cases =
       lens = None;
       mask = Causal;
       rescore = No_score;
+      lay = Own;
+      bounded = false;
+      poisoned = false;
       keep = Keep_all;
       seed = 11;
     }
@@ -1179,6 +1339,54 @@ let cut_cases =
     ("float64", { c with cd = F64; g = 2 });
     ("float16 on the matrix units", { c with cd = F16; g = 2 });
     ("bfloat16 documents on the matrix units", { c with cd = Bf16; g = 3; mask = Causal_docs });
+  ]
+
+(* Calls of one tile of rows over the keys, so that a causal or window mask
+   hides whole blocks of a tile, shows others whole and cuts the rest: of one
+   head and of several, over dense and paged keys, masks by coordinates and by
+   loads, lengths short of the keys with loads poisoned past them, rows short of
+   a tile, and a score through a load. *)
+let hidden_cases =
+  let c =
+    {
+      cd = F32;
+      nb = 1;
+      axes = 0;
+      hk = 1;
+      g = 1;
+      tq = 300;
+      ck = 300;
+      cdk = 24;
+      cdv = 20;
+      page = 0;
+      lens = None;
+      mask = Causal;
+      rescore = No_score;
+      lay = Own;
+      bounded = true;
+      poisoned = true;
+      keep = Keep_all;
+      seed = 13;
+    }
+  in
+  [
+    ("causal rows of one head", c);
+    ("causal rows of three heads", { c with g = 3; tq = 200; ck = 200 });
+    ("a window", { c with mask = Window });
+    ( "a window over paged keys",
+      { c with mask = Window; page = 16; tq = 304; ck = 304 } );
+    ("causal documents", { c with mask = Causal_docs });
+    ( "a window and a scaled bias, lengths short of the keys",
+      {
+        c with
+        nb = 2;
+        mask = Window;
+        rescore = Scaled_bias;
+        lens = Some [| 300; 170 |];
+      } );
+    ( "a scaled bias at rows short of a tile, a length short of the keys",
+      { c with tq = 37; rescore = Scaled_bias; lens = Some [| 250 |] } );
+    ("a bfloat16 window", { c with cd = Bf16; mask = Window });
   ]
 
 let cut_case (cuda : Support.backend) (_, c) =
@@ -1331,6 +1539,615 @@ let gpu_laws (cuda : Support.backend) =
       cases ~id:fst "blocks the diagonal cuts" cut_cases (cut_case cuda);
     ]
 
+(* nx.metal
+
+   nx_metal.mli: a call has nx.cpu's bits at every dtype it takes, but where a
+   value is subnormal, which it flushes to a zero of its sign; a float16 value
+   is never subnormal in float32. *)
+
+(* Calls of float16, bfloat16 or float32 in a float32 accumulator, drawn so that
+   no step of either library's sums is subnormal: elements 0 or past [2{^-20}],
+   scores within [±8], and outputs [1] of a row within 70 of each other, where a
+   rescore by distance is drawn over at most 200 keys. Below 449 keys, of every
+   path: key heads of 8 rows or fewer and of more, dimensions and columns past
+   128, 4 past a multiple of 8 and none, no rows, lengths at or below 0. Loads
+   are poisoned past the length (nx_kernel.mli: a key past its length is never
+   read). With [~long], of 449 keys or more and few rows. *)
+let metal_calls ~long =
+  let open Gen in
+  with_pp pp_call
+  @@ let* cd = of_list [ F32; F16; Bf16 ] in
+     let* nb = int_range 1 2 in
+     let* axes = frequency [ (3, constant 0); (1, constant 28) ] in
+     let* hk = int_range 1 2 in
+     let* g = of_list [ 1; 2; 3; 4; 8 ] in
+     let* tq =
+       if long then int_range 1 3
+       else
+         frequency [ (1, constant 0); (4, int_range 1 8); (4, int_range 9 40) ]
+     in
+     let* page = frequency [ (2, constant 0); (1, of_list [ 1; 7; 16 ]) ] in
+     let* mask =
+       frequency
+         [
+           (4, constant No_mask);
+           (6, of_list [ Causal; Docs; Causal_docs; Docs32; Wide; Many; Window ]);
+         ]
+     in
+     let* rescore =
+       of_list
+         (if long then
+            [ No_score; Bias; Scaled_bias; Sine; Half_bias; Wide_score ]
+          else
+            [
+              No_score;
+              Bias;
+              Scaled_bias;
+              Alibi;
+              Sine;
+              Half_bias;
+              Wide_bias;
+              Wide_score;
+            ])
+     in
+     let by_distance = rescore = Alibi || rescore = Wide_bias in
+     let* tk =
+       if long then int_range 449 1600
+       else if by_distance then int_range 1 200
+       else frequency [ (3, int_range 1 200); (1, int_range 201 448) ]
+     in
+     let ck = if page = 0 then tk else (tk + page - 1) / page * page in
+     let dims =
+       frequency
+         [
+           (1, constant 0);
+           (4, int_range 1 40);
+           (2, int_range 41 128);
+           (1, int_range 129 140);
+           (1, map (fun k -> (8 * k) + 4) (int_range 0 15));
+         ]
+     in
+     let* cdk = dims in
+     let* cdv = dims in
+     let lengths lo hi =
+       map Option.some (array ~size:(constant nb) (int_range lo hi))
+     in
+     let* lens =
+       frequency
+         [ (2, constant None); (2, lengths (-2) (ck + 2)); (1, lengths (-2) 0) ]
+     in
+     let* lay =
+       frequency
+         [
+           (2, constant Own);
+           (1, constant Shifted);
+           (1, constant Swapped);
+           (1, constant Flipped);
+         ]
+     in
+     let+ seed = int_range 0 0x3fffffff in
+     {
+       cd;
+       nb;
+       axes;
+       hk;
+       g;
+       tq;
+       ck;
+       cdk;
+       cdv;
+       page;
+       lens;
+       mask;
+       rescore;
+       lay;
+       bounded = true;
+       poisoned = true;
+       keep = Keep_all;
+       seed;
+     }
+
+(* The keys each lead index reads: its length within [0, ck], else ck. *)
+let counts c =
+  match c.lens with
+  | Some l -> Array.map (fun x -> max 0 (min x c.ck)) l
+  | None -> [| c.ck |]
+
+(* Calls whose keys end a block (64), pass one by a key (64 j + 1) or end in a
+   partial block after whole ones, unmasked, masked and through a length, so
+   that every run reaches each block end; and whole blocks of keys stored last
+   first. *)
+let block_ends =
+  let c =
+    {
+      cd = F32;
+      nb = 1;
+      axes = 0;
+      hk = 1;
+      g = 4;
+      tq = 8;
+      ck = 64;
+      cdk = 64;
+      cdv = 64;
+      page = 0;
+      lens = None;
+      mask = No_mask;
+      rescore = No_score;
+      lay = Own;
+      bounded = true;
+      poisoned = true;
+      keep = Keep_all;
+      seed = 17;
+    }
+  in
+  [
+    c;
+    { c with ck = 129 };
+    { c with ck = 192; lay = Flipped };
+    {
+      c with
+      cd = Bf16;
+      g = 1;
+      tq = 40;
+      ck = 200;
+      mask = Causal;
+      lens = Some [| 129 |];
+    };
+    {
+      c with
+      cd = F16;
+      ck = 192;
+      page = 16;
+      mask = Docs;
+      rescore = Bias;
+      lens = Some [| 65 |];
+    };
+  ]
+
+(* Whether a lead index's length stops short of the keys and past none. *)
+let short c =
+  match c.lens with
+  | Some l -> Array.exists (fun x -> x > 0 && x < c.ck) l
+  | None -> false
+
+(* nx_kernel.mli: a key past its length is never read. A call whose loads
+   are poisoned past its lengths has the bits of the same call unpoisoned,
+   on [metal] alone. *)
+let unread (metal : Support.backend) c =
+  if c.poisoned && c.lens <> None then
+    same_floats ~msg:"poisoned against clean: "
+      (run_call metal { c with poisoned = false })
+      (run_call metal c)
+
+let law_metal_bits (metal : Support.backend) c =
+  cover "a key head's rows, 8 or fewer" (c.tq > 0 && c.g * c.tq <= 8);
+  cover "a key head's rows, past 8" (c.g * c.tq > 8);
+  cover "pages of one slot" (c.page = 1);
+  cover "pages of 7 or 16 slots" (c.page > 1);
+  cover "keys past 200" (c.ck > 200);
+  cover "dimensions 65 to 128" (c.cdk > 64 && c.cdk <= 128);
+  cover "dimensions past 128, the last chunk partial"
+    (c.cdk > 128 && c.cdk mod 128 <> 0);
+  cover "columns past 128" (c.cdv > 128);
+  cover "float32 past 64 dimensions or columns"
+    (c.cd = F32 && (c.cdk > 64 || c.cdv > 64));
+  cover "float32 within 64 dimensions and columns"
+    (c.cd = F32 && c.cdk <= 64 && c.cdv <= 64);
+  cover "no dimension" (c.cdk = 0);
+  cover "no column" (c.cdv = 0);
+  cover "no row" (c.tq = 0);
+  cover "a length at or below 0"
+    (match c.lens with
+    | Some l -> Array.exists (fun x -> x <= 0) l
+    | None -> false);
+  cover "masked by loads" (c.mask = Docs || c.mask = Causal_docs);
+  cover "a mask past a launch's planes" (c.mask = Wide || c.mask = Many);
+  cover "neither paged nor masked, every key"
+    (c.page = 0 && c.mask = No_mask && c.lens = None);
+  cover "neither paged nor masked, a length short of the keys"
+    (c.page = 0 && c.mask = No_mask && short c);
+  cover "paged, a length short of the keys" (c.page > 0 && short c);
+  cover "masked, a length short of the keys" (c.mask <> No_mask && short c);
+  cover "rescored" (c.rescore <> No_score);
+  cover "a score through a load and a constant" (c.rescore = Scaled_bias);
+  cover "loads poisoned past a length short of the keys"
+    (short c
+    && (List.mem c.rescore [ Bias; Scaled_bias; Half_bias ]
+       || List.mem c.mask [ Docs; Causal_docs; Docs32; Many ]));
+  cover "32 axes" (c.axes > 0);
+  cover "rows of 4 elements a vector" (c.lay = Own && c.cdk mod 4 = 0 && c.cdk > 0);
+  cover "rows of vectors, the last 8 dimensions half past them"
+    (c.lay = Own && c.cdk mod 8 = 4);
+  cover "rows one element into their buffer" (c.lay = Shifted);
+  cover "rows stored the other way" (c.lay = Swapped);
+  cover "rows stored last first" (c.lay = Flipped);
+  let n = counts c in
+  cover "keys of one whole block" (Array.mem 64 n);
+  cover "keys of 64 j + 1" (Array.exists (fun x -> x mod 64 = 1) n);
+  cover "a last partial block after whole ones"
+    (Array.exists (fun x -> x > 64 && x mod 64 <> 0) n);
+  same_floats (run_call Support.cpu c) (run_call metal c);
+  unread metal c
+
+(* nx_metal.mli's bound_offsets: a call has the same bits whether it
+   indexes its keys and values in 32 bits, as every call of a test's sizes
+   does, or in 64. *)
+let law_metal_offsets (metal : Support.backend) c =
+  cover "paged" (c.page > 0);
+  cover "masked" (c.mask <> No_mask);
+  cover "neither paged nor masked" (c.page = 0 && c.mask = No_mask);
+  cover "rows stored the other way" (c.lay = Swapped);
+  cover "rows stored last first" (c.lay = Flipped);
+  let wide =
+    Fun.protect
+      ~finally:(fun () -> Nx_metal.bound_offsets (1 lsl 31))
+      (fun () ->
+        Nx_metal.bound_offsets 0;
+        run_call metal c)
+  in
+  same_floats ~msg:"64-bit offsets against 32: " wide (run_call metal c)
+
+let law_metal_long (metal : Support.backend) c =
+  cover "keys past 1024" (c.ck > 1024);
+  cover "paged" (c.page > 0);
+  cover "masked" (c.mask <> No_mask);
+  same_floats (run_call Support.cpu c) (run_call metal c);
+  unread metal c
+
+(* One key head's [rows] rows over [tk] keys of one dimension and two columns,
+   [dt] in a float32 accumulator, at scale 1 and a zero query, so that each
+   output [1] is its pair's bias: key [j] is visible where [seen j], with the
+   bias [bias j] and the values [value j], and every visible pair is kept. Its o
+   and lse; the call must answer [Done]. *)
+let exact_call (b : Support.backend) d ~rows ~tk ~seen ~bias ~value =
+  let go (type r) (dt : (float, r) D.t) =
+    let (module K : Nx_kernel.S) = b.kernels in
+    let make dt shape xs =
+      Kernels_cases.on b (A.of_array dt (Iarray.of_array shape) xs)
+    in
+    let per_pair f = Array.init (rows * tk) (fun i -> f (i mod tk)) in
+    let q = make dt [| 1; rows; 1 |] (Array.make rows 0.) in
+    let k = make dt [| 1; tk; 1 |] (Array.make tk 1.) in
+    let v =
+      make dt [| 1; tk; 2 |]
+        (Array.init (2 * tk) (fun i -> (value (i / 2)).(i mod 2)))
+    in
+    let s = D.Any D.Float32 in
+    let p =
+      P.v ~ins:[| s; s; D.Any D.Bool |]
+        [|
+          In 0;
+          In 1;
+          Op2 (Binary Add, 0, 1);
+          In 2;
+          Const (D.Any D.Bool, P.bits D.Bool true);
+        |]
+        ~outs:[| 3; 2; 4 |]
+    in
+    let o = A.create b.device D.Float32 [| 1; rows; 2 |] in
+    let lse = A.create b.device D.Float32 [| 1; rows |] in
+    let loads =
+      [|
+        A.Any (make D.Float32 [| 1; rows; tk |] (per_pair bias));
+        A.Any (make D.Bool [| 1; rows; tk |] (per_pair seen));
+      |]
+    in
+    equal ~msg:(b.name ^ ": answer") Kernels_cases.answer A.Done
+      (K.attention p ~scale:1. ~o ~lse q
+         (Nx_kernel.Dense { k; v })
+         (Iarray.of_array loads));
+    [| A.Any o; A.Any lse |]
+  in
+  b.around (fun () ->
+      match d with
+      | F16 -> go D.Float16
+      | Bf16 -> go D.Bfloat16
+      | F32 | F64 | F32_in_f64 -> go D.Float32)
+
+type exact = {
+  name : string;
+  etk : int;
+  seen : int -> bool;
+  bias : int -> float;
+  value : int -> float array;
+}
+
+(* Small integers, exact in every dtype, which sum exactly. *)
+let small j = [| Float.of_int ((j mod 5) - 2); Float.of_int (j mod 3) |]
+
+(* Calls of 512 keys, 8 blocks, for a key head of 1 or 17 rows, whose
+   weights are 1 or 0 and whose values are small integers, so that every
+   sum is exact and [o] and [lse] have nx.cpu's bits: a block of no
+   visible pair, whose maximum is [-∞]; blocks of only [-∞] outputs before
+   finite ones; and such a block between finite ones. *)
+let exact_blocks =
+  let all _ = true and zero _ = 0. in
+  [
+    { name = "a block of no visible pair"; etk = 512; seen = (fun j -> j / 64 <> 3);
+      bias = zero; value = small };
+    { name = "blocks of only -inf outputs before finite ones"; etk = 512; seen = all;
+      bias = (fun j -> if j < 128 then Float.neg_infinity else 0.); value = small };
+    { name = "a block of only -inf outputs between finite ones"; etk = 512;
+      seen = all; bias = (fun j -> if j / 64 = 4 then Float.neg_infinity else 0.);
+      value = small };
+  ]
+
+(* Calls of one block whose weights' exponents [x - m'] reach exp's near
+   range's end, [-86], and pass it: a least exponent of exactly [-86] and
+   of one ulp below; a score of [+∞] among finite ones, whose exponents are
+   [-∞] and a NaN; a NaN score; and hidden pairs beside a visible one past
+   the range, of a normal weight. *)
+let near_ends =
+  let all _ = true in
+  let at j x i = if i = j then x else 0. in
+  let below = Int32.float_of_bits (Int32.add (Int32.bits_of_float (-86.)) 1l) in
+  [
+    { name = "a least exponent of -86"; etk = 64; seen = all; bias = at 13 (-86.);
+      value = small };
+    { name = "a least exponent one ulp below -86"; etk = 64; seen = all;
+      bias = at 13 below; value = small };
+    { name = "a score of +inf among finite ones"; etk = 64; seen = all;
+      bias = at 13 Float.infinity; value = small };
+    { name = "a NaN score"; etk = 64; seen = all; bias = at 13 Float.nan;
+      value = small };
+    { name = "hidden pairs beside a visible one past the range"; etk = 64;
+      seen = (fun j -> j mod 3 <> 0); bias = at 14 (-87.); value = small };
+  ]
+
+(* Calls whose block holds a NaN or an infinite value in column 0 of one key,
+   the rest finite, at weights and values that round: the keys staged with it
+   sum one product at a time, the others by the matrix units, and both keep
+   nx.cpu's bits, column 1's included. A value at key 3, 20 or 40 of one block,
+   and at key 150 of the third of four. *)
+let odd_spans =
+  let all _ = true in
+  let bias j = -0.37 *. Float.of_int (j mod 7) in
+  let odd k x j =
+    if j = k then [| x; 0.7 |]
+    else
+      [| 0.3 *. Float.of_int ((j mod 5) - 2); 0.7 *. Float.of_int (j mod 3) |]
+  in
+  [
+    {
+      name = "a NaN value at key 3";
+      etk = 64;
+      seen = all;
+      bias;
+      value = odd 3 Float.nan;
+    };
+    {
+      name = "a NaN value at key 20";
+      etk = 64;
+      seen = all;
+      bias;
+      value = odd 20 Float.nan;
+    };
+    {
+      name = "an infinite value at key 40";
+      etk = 64;
+      seen = all;
+      bias;
+      value = odd 40 Float.infinity;
+    };
+    {
+      name = "a NaN value at key 150 of 256";
+      etk = 256;
+      seen = all;
+      bias;
+      value = odd 150 Float.nan;
+    };
+  ]
+
+(* Each dtype nx.metal takes, at 1 and 17 rows, and their name. *)
+let each_metal f =
+  List.iter
+    (fun rows ->
+      List.iter
+        (fun d -> f (Format.asprintf "%a, %d rows: " pp_dtypes d rows) d rows)
+        [ F32; F16; Bf16 ])
+    [ 1; 17 ]
+
+let exact_block (metal : Support.backend) e =
+  each_metal (fun msg d rows ->
+      let call b =
+        exact_call b d ~rows ~tk:e.etk ~seen:e.seen ~bias:e.bias ~value:e.value
+      in
+      same_floats ~msg (call Support.cpu) (call metal))
+
+let floats_of (A.Any x) : float array =
+  let x = Kernels_cases.host x in
+  match A.dtype x with
+  | D.Float32 -> A.to_array x
+  | _ -> failwith "floats_of: not float32"
+
+(* nx_metal.mli: a block's weights sum in nx.cpu's lanes, weight [j] in lane
+   [j mod 8], then lanes [+4], [+2], [+1]. One block: weight 1 at key 0,
+   [exp (-17)], under half an ulp of 1, at keys 1 to 15 but 8, and 0
+   elsewhere. Every sequential order, and the sum of the values that [o]'s
+   chain adds, rounds each small weight away; the lanes sum them before
+   they meet 1. So [o] is not [1], and has nx.cpu's bits. *)
+let test_metal_lanes (metal : Support.backend) () =
+  let bias j =
+    if j = 0 then 0. else if j < 16 && j <> 8 then -17. else Float.neg_infinity
+  in
+  each_metal (fun msg d rows ->
+      let call b =
+        exact_call b d ~rows ~tk:64 ~seen:(fun _ -> true) ~bias
+          ~value:(fun _ -> [| 1.; 1. |])
+      in
+      let want = call Support.cpu in
+      if (floats_of want.(0)).(0) = 1. then
+        failf "%snx.cpu's o is 1: the case tells no order apart" msg;
+      same_floats ~msg want (call metal))
+
+(* nx_metal.mli's subnormal numbers: a weight below [2{^-126}] applies as
+   [+0], a bfloat16 subnormal value reads as a zero, a float16 one is kept.
+   Each at 1 and 17 rows: o and lse. *)
+let test_metal_subnormal (metal : Support.backend) () =
+  let check msg d ~tk ~bias ~value ~o ~lse =
+    List.iter
+      (fun rows ->
+        let got =
+          exact_call metal d ~rows ~tk ~seen:(fun _ -> true) ~bias ~value
+        in
+        let msg = Printf.sprintf "%s, %d rows" msg rows in
+        equal ~msg:(msg ^ ": answers") int 2 (Array.length got);
+        equal ~msg:(msg ^ ": o") (array float_exact)
+          (Array.concat (List.init rows (fun _ -> o)))
+          (floats_of got.(0));
+        equal ~msg:(msg ^ ": lse") (array float_exact) (Array.make rows lse)
+          (floats_of got.(1)))
+      [ 1; 17 ]
+  in
+  check "a weight of exp (-100)" F32 ~tk:2
+    ~bias:(fun j -> if j = 0 then 0. else -100.)
+    ~value:(fun j -> if j = 0 then [| 0.; 0. |] else [| 0x1p100; -0x1p100 |])
+    ~o:[| 0.; 0. |] ~lse:0.;
+  check "a bfloat16 subnormal value" Bf16 ~tk:1
+    ~bias:(fun _ -> 0.)
+    ~value:(fun _ -> [| 0x1p-130; -0x1p-130 |])
+    ~o:[| 0.; 0. |] ~lse:0.;
+  check "a float16 subnormal value" F16 ~tk:1
+    ~bias:(fun _ -> 0.)
+    ~value:(fun _ -> [| 0x1p-20; -0x1p-24 |])
+    ~o:[| 0x1p-20; -0x1p-24 |] ~lse:0.
+
+(* nx_metal.mli: a pair program whose output 2 is not the constant [true]
+   declines. *)
+let law_metal_keep (metal : Support.backend) c =
+  cover "a keep by coordinates" (c.keep = Keep_coords);
+  cover "a keep by a load" (c.keep = Keep_load);
+  equal ~msg:"answer" Kernels_cases.answer A.Declined (fst (call_on metal c))
+
+let metal_keeps =
+  let open Gen in
+  with_pp pp_call
+  @@ let* c = metal_calls ~long:false in
+     let+ keep = of_list [ Keep_coords; Keep_load ] in
+     { c with keep }
+
+(* A float64 accumulator declines (nx_metal.mli). *)
+let test_metal_float64 (metal : Support.backend) () =
+  let c = { (List.assoc "rows of one head" cut_cases) with tq = 3 } in
+  List.iter
+    (fun cd ->
+      equal ~msg:(Format.asprintf "%a" pp_dtypes cd) int 0
+        (Array.length (run_call metal { c with cd })))
+    [ F64; F32_in_f64 ]
+
+(* The bits of a call's results, NaNs' included. *)
+let bits results =
+  String.concat " "
+    (Array.to_list
+       (Array.concat
+          (Array.to_list
+             (Array.map
+                (fun (A.Any x) ->
+                  let x = Kernels_cases.host x in
+                  match A.dtype x with
+                  | D.Float32 ->
+                      Array.map
+                        (fun f -> Printf.sprintf "%lx" (Int32.bits_of_float f))
+                        (A.to_array x)
+                  | _ -> failwith "bits: not float32")
+                results))))
+
+(* Determinism: calls on two domains, of a key head of 8 rows, of 40 rows
+   and of one row over 1000 keys, each give the bits it gives alone. *)
+let law_metal_alone (metal : Support.backend) =
+  let base = List.assoc "rows of one head" cut_cases in
+  let calls =
+    [|
+      { base with g = 4; tq = 2 };
+      base;
+      { base with tq = 1; ck = 1000 };
+    |]
+  in
+  let alone = Array.make (Array.length calls) None in
+  let lock = Mutex.create () in
+  let reference i =
+    Mutex.protect lock (fun () ->
+        match alone.(i) with
+        | Some b -> b
+        | None ->
+            let b = bits (run_call metal calls.(i)) in
+            alone.(i) <- Some b;
+            b)
+  in
+  let which = Gen.with_pp Format.pp_print_int (Gen.int_range 0 (Array.length calls - 1)) in
+  stateful ~count:3 ~steps:6 ~domains:2
+    "calls on two domains have the bits each has alone"
+    [
+      command "call" (which @-> returns string) reference (fun i ->
+          bits (run_call metal calls.(i)));
+    ]
+
+let metal_case (metal : Support.backend) (_, c) =
+  same_floats (run_call Support.cpu c) (run_call metal c);
+  unread metal c
+
+(* The cases nx.metal computes: nx_metal.mli has it decline a float64
+   accumulator and a keep but the constant true, which "a float64 accumulator
+   declines" and "a keep but the constant true declines" state. *)
+let metal_computes cs =
+  List.filter
+    (fun (_, c) -> c.cd <> F64 && c.cd <> F32_in_f64 && c.keep = Keep_all)
+    cs
+
+(* nx_metal.mli's time budget: a call past 10 s runs as several
+   submissions in order. With parts bounded to one launch, a call of
+   several launches, its temporaries and stored scores read by later
+   launches, takes several parts and keeps one part's bits. *)
+let metal_parted (metal : Support.backend) (_, c) =
+  let module Plan = Nx_metal.Plan in
+  Plan.bound_parts ~launches:1 ~seconds:Plan.part_budget;
+  let got, launches =
+    Fun.protect
+      ~finally:(fun () ->
+        Plan.bound_parts ~launches:Plan.part_launches ~seconds:Plan.part_budget)
+      (fun () -> Plan.traced (fun () -> run_call metal c))
+  in
+  at_least ~msg:"launches, a part each" int ~than:2 (List.length launches);
+  same_floats (run_call Support.cpu c) got;
+  unread metal c
+
+let metal_laws (metal : Support.backend) =
+  group (metal.name ^ " against cpu")
+    [
+      prop "calls give nx.cpu's bits" ~examples:block_ends
+        (metal_calls ~long:false) (law_metal_bits metal);
+      prop "calls past 448 keys give nx.cpu's bits" (metal_calls ~long:true)
+        (law_metal_long metal);
+      prop "calls index keys and values in 32 or 64 bits alike"
+        ~examples:block_ends (metal_calls ~long:false) (law_metal_offsets metal);
+      cases ~id:(fun e -> e.name) "blocks of -inf outputs keep nx.cpu's bits"
+        exact_blocks (exact_block metal);
+      cases ~id:(fun e -> e.name) "weights at exp's near range's end keep \
+        nx.cpu's bits" near_ends (exact_block metal);
+      cases
+        ~id:(fun e -> e.name)
+        "a value not finite among a block's keys keeps nx.cpu's bits" odd_spans
+        (exact_block metal);
+      test "a block's weights sum in nx.cpu's lanes" (test_metal_lanes metal);
+      test "subnormal weights and values flush as nx_metal.mli states"
+        (test_metal_subnormal metal);
+      test "a float64 accumulator declines" (test_metal_float64 metal);
+      prop "a keep but the constant true declines" metal_keeps
+        (law_metal_keep metal);
+      prop "a mask through more values held keeps the bits" helds
+        (law_held metal);
+      cases ~id:fst "programs past a launch compute"
+        (metal_computes past_cases)
+        (metal_case metal);
+      cases ~id:fst "programs past a launch compute a launch a part"
+        (metal_computes past_cases)
+        (metal_parted metal);
+      cases ~id:fst "blocks the diagonal cuts" (metal_computes cut_cases)
+        (metal_case metal);
+      cases ~id:fst "blocks a mask hides whole" hidden_cases (metal_case metal);
+      law_metal_alone metal;
+    ]
+
 let nv_laws (first : Support.backend) (nv : Support.backend) =
   group nv.name
     [
@@ -1349,4 +2166,7 @@ let () =
     (Windtrap.run "nx_kernel.attention"
        (List.map suite (Support.backends ())
        @ List.map gpu_laws (Support.gpus ())
-       @ nv))
+       @ nv
+       @ List.concat_map
+           (fun m -> [ suite m; metal_laws m ])
+           (Option.to_list (Support.metal ()))))

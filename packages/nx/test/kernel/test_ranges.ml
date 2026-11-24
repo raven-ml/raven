@@ -203,6 +203,27 @@ let case_gen =
 
 let drawn = Gen.with_pp pp_case case_gen
 
+(* Two packed runs of int4, the first from position 1, the second into the
+   destination's second element, each mid-byte, which the draws reach about
+   one case in 16. *)
+let mid_byte_runs =
+  let d = D.Any D.Int4 and rs = Random.State.make [| 1 |] in
+  let int64s_of ps =
+    let at = ref 0 in
+    int64s [| 2 |] (plain 1) (fun () ->
+        let p = ps.(!at) in
+        incr at;
+        p)
+  in
+  {
+    size = 4;
+    starts = int64s_of [| 1L; 3L |];
+    ends = int64s_of [| 1L; 4L |];
+    x = operand d [| 8 |] (plain 1) (fun _ -> element d rs);
+    mode = Packed;
+    views = [];
+  }
+
 (* The contract's sentence *)
 
 (* What a run's span reads: its rows, then the first and the past-last of
@@ -489,7 +510,7 @@ let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
     [
-      prop ~count:300
+      prop ~count:300 ~examples:[ mid_byte_runs ]
         "a range gather is the gather at the positions its sentence gives, bit \
          for bit"
         drawn (run (law_gather b));
@@ -525,7 +546,10 @@ let () =
   in
   exit
     (Windtrap.run "nx_kernel.ranges"
-       (List.map laws (Support.backends () @ Option.to_list (Support.amd ()))
+       (List.map laws
+          (Support.backends ()
+          @ Option.to_list (Support.amd ())
+          @ Option.to_list (Support.metal ()))
        @ [
            cases "nx.cpu gives one thread's bits on many" ~id:fst split_cases
              test_threads;

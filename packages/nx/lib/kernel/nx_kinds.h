@@ -43,8 +43,10 @@
    - CUDA: --fmad=false -prec-div=true -prec-sqrt=true -ftz=false.
    - Metal: -fno-fast-math -ffp-contract=off. Metal has no f64, and this
      header defines no f64 function there. Apple GPUs flush f32
-     subnormals: where an operand or a result is subnormal, or an fma's
-     exact product is below 2^-126, Metal's bits differ.
+     subnormals: arithmetic reads a subnormal operand as zero and gives
+     zero where its exact result is below 2^-126, and there Metal's bits
+     differ. An fma's product is not flushed: fma(2^-64, 2^-64, 2^-126)
+     is 1.25 * 2^-126.
 
    Within an expression, every product that feeds a sum is an explicit fma,
    so contraction has nothing to fuse there; the flags keep a product held
@@ -451,8 +453,10 @@ NX_INLINE nx_rem_f32 nx_rem_pio2_big_f32(NX_TABLE_PTR t, float x) {
 }
 
 /* f32 mod is fmod, exact, by integer long division: one subtraction per bit
-   of the operands' exponent difference. Metal's fmod rounds. */
-NX_INLINE float nx_mod_f32(float x, float y) {
+   of the operands' exponent difference. Metal's fmod rounds. On Metal, its
+   subnormal operands and result read as zeros of their signs, as the
+   arithmetic kinds' do. */
+NX_INLINE float nx_mod_exact_f32(float x, float y) {
   uint32_t ux = nx_float_bits(x), uy = nx_float_bits(y) & 0x7FFFFFFFu;
   uint32_t sx = ux & 0x80000000u;
   ux &= 0x7FFFFFFFu;
@@ -478,6 +482,14 @@ NX_INLINE float nx_mod_f32(float x, float y) {
   uint32_t r = ex > 0 ? ((uint32_t)ex << 23) | (mx & 0x007FFFFFu)
                       : mx >> (1 - ex);
   return nx_bits_float(sx | r);
+}
+
+NX_INLINE float nx_mod_f32(float x, float y) {
+#ifdef __METAL_VERSION__
+  return nx_flush_f32(nx_mod_exact_f32(nx_flush_f32(x), nx_flush_f32(y)));
+#else
+  return nx_mod_exact_f32(x, y);
+#endif
 }
 
 /* atan t = t + t^3 A(t^2) on |t| <= 1, relative error 2^-25.7 (atanA). */
@@ -1043,7 +1055,20 @@ NX_INLINE double nx_atan2_f64(double y, double x) {
    as r + e there. t, what rounding r to f32 dropped, is exact, and gives
    the dropped bits' sign, else e does; the rest is as above. A sum past
    f32's greatest finite value is that value, whose rounding into bfloat16
-   is its infinity, as x's is. */
+   is its infinity, as x's is.
+
+   Metal has no f64. There nx_fma_bf16 reads its subnormal operands as
+   zeros of their signs, then scales: a b = p 2^e with p, the product of
+   the significands in [1, 2), exact in [1, 4), and c = m 2^(e + d). Both
+   go to the scale of the larger, the other times 2^-|d| exact; past
+   |d| = 60 the smaller lies below half an ulp of the larger, and stands
+   in as 2^-60 of its sign, which rounds x to odd alike. Every value then
+   lies in [2^-74, 4) and is a multiple of 2^-74, so TwoSum is exact as
+   above, and x rounded to odd is scaled back by moving its exponent: to
+   the greatest finite value past it, and to a zero of x's sign where x
+   is below 2^-126, as Metal's arithmetic kinds give. A zero factor, an
+   infinity or a NaN takes the instruction's fma, which is exact or
+   special there. */
 
 NX_INLINE float nx_fma_narrow(float a, float b, float c) {
   float p = a * b;
@@ -1056,7 +1081,44 @@ NX_INLINE float nx_fma_narrow(float a, float b, float c) {
   return nx_bits_float(u | (uint32_t)(below | above));
 }
 
-#ifndef __METAL_VERSION__
+#ifdef __METAL_VERSION__
+NX_INLINE float nx_fma_bf16(float a, float b, float c) {
+  a = nx_flush_f32(a);
+  b = nx_flush_f32(b);
+  c = nx_flush_f32(c);
+  uint32_t ua = nx_float_bits(a), ub = nx_float_bits(b), uc = nx_float_bits(c);
+  int32_t ea = (int32_t)((ua >> 23) & 0xFFu), eb = (int32_t)((ub >> 23) & 0xFFu);
+  int32_t ec = (int32_t)((uc >> 23) & 0xFFu);
+  if (ea == 0 || eb == 0 || ea == 0xFF || eb == 0xFF || ec == 0xFF)
+    return nx_fmaf(a, b, c);
+  float p = nx_bits_float((ua & 0x807FFFFFu) | 0x3F800000u) *
+            nx_bits_float((ub & 0x807FFFFFu) | 0x3F800000u);
+  int32_t e = ea + eb - 2 * NX_BIAS_F32, s = e;
+  float ps = p, cs = c;
+  if (ec != 0) {
+    int32_t d = ec - NX_BIAS_F32 - e;
+    float m = nx_bits_float((uc & 0x807FFFFFu) | 0x3F800000u);
+    if (d <= 0) cs = d < -60 ? nx_copysign_f32(0x1p-60f, c) : m * nx_pow2_f32(d);
+    else {
+      s = ec - NX_BIAS_F32;
+      cs = m;
+      ps = d > 60 ? nx_copysign_f32(0x1p-60f, p) : p * nx_pow2_f32(-d);
+    }
+  }
+  float r = ps + cs;
+  float q = r - ps;
+  float t = (ps - (r - q)) + (cs - q);
+  int below = t < 0.0f, above = t > 0.0f;
+  int toward_zero = (below & (r > 0.0f)) | (above & (r < 0.0f));
+  uint32_t u = (nx_float_bits(r) - (uint32_t)toward_zero) | (uint32_t)(below | above);
+  uint32_t sign = u & 0x80000000u;
+  int32_t eu = (int32_t)((u >> 23) & 0xFFu) + s;
+  if ((u & 0x7FFFFFFFu) == 0) return nx_bits_float(u);
+  if (eu >= 0xFF) return nx_bits_float(sign | 0x7F7FFFFFu);
+  if (eu <= 0) return nx_bits_float(sign);
+  return nx_bits_float(sign | ((uint32_t)eu << 23) | (u & 0x007FFFFFu));
+}
+#else
 NX_INLINE float nx_fma_bf16(float a, float b, float c) {
   double p = (double)a * (double)b;
   double r = p + (double)c;

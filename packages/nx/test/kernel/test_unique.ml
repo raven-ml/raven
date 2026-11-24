@@ -567,7 +567,10 @@ let () =
   in
   exit
     (Windtrap.run "nx_kernel.unique"
-       (List.map laws (Support.backends () @ Option.to_list (Support.amd ()))
+       (List.map laws
+          (Support.backends ()
+          @ Option.to_list (Support.amd ())
+          @ Option.to_list (Support.metal ()))
        @ [ cpu Support.cpu ]
        @ List.map cuda (Support.gpus ())
        @ nv))

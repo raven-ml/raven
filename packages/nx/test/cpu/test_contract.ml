@@ -319,16 +319,22 @@ let byte_examples =
         make ~acc ~out:acc e (d, plain ra) (d, vb) (Some (plain ry)) 3
       in
       let extreme e vb =
-        let c = case e vb in
-        let fill v (A.Any x as a) =
-          let s = shape_of a in
-          let vs = Array.make (total s) v in
-          let vs = A.Any (A.of_array D.Int64 (Iarray.of_array s) vs) in
-          let src = A.expect (A.dtype x) (cast_to (D.Any (A.dtype x)) vs) in
-          A.transfer ~src ~dst:x;
-          a
-        in
-        { c with a = fill low c.a; b = fill low c.b; init = Option.map (fill top) c.init }
+        lazy
+          (let c = case e vb in
+           let fill v (A.Any x as a) =
+             let s = shape_of a in
+             let vs = Array.make (total s) v in
+             let vs = A.Any (A.of_array D.Int64 (Iarray.of_array s) vs) in
+             let src = A.expect (A.dtype x) (cast_to (D.Any (A.dtype x)) vs) in
+             A.transfer ~src ~dst:x;
+             a
+           in
+           {
+             c with
+             a = fill low c.a;
+             b = fill low c.b;
+             init = Option.map (fill top) c.init;
+           })
       in
       let stored e vb =
         let c = case e vb in
@@ -336,21 +342,23 @@ let byte_examples =
         { c with b = A.Any (A.copy b) }
       in
       [
-        stored ([||], [| 130 |], [| 40 |], [| 2052 |]) (by_rows 2);
-        case ([||], [| 129 |], [| 50 |], [| 64 |]) (plain 2);
-        case ([||], [| 9 |], [| 33 |], [| 7 |]) (by_rows 2);
-        (let c = case ([||], [| 5 |], [| 9 |], [| 64 |]) (by_rows 2) in
-         { c with a = shifted c.a; b = shifted c.b });
-        stored ([| 0 |], [| 3 |], [| 5 |], [| 4 |]) (by_rows 3);
-        stored ([| 2 |], [| 3 |], [| 7 |], [| 20 |]) (by_rows 3);
-        case ([||], [| 2 |], [| 1 |], [| 7 |]) (plain 2);
-        case ([||], [| 8 |], [| 1024 |], [| 12 |]) (plain 2);
-        case ([||], [| 33 |], [| 1024 |], [| 4096 |]) (plain 2);
+        lazy (stored ([||], [| 130 |], [| 40 |], [| 2052 |]) (by_rows 2));
+        lazy (case ([||], [| 129 |], [| 50 |], [| 64 |]) (plain 2));
+        lazy (case ([||], [| 9 |], [| 33 |], [| 7 |]) (by_rows 2));
+        lazy
+          (let c = case ([||], [| 5 |], [| 9 |], [| 64 |]) (by_rows 2) in
+           { c with a = shifted c.a; b = shifted c.b });
+        lazy (stored ([| 0 |], [| 3 |], [| 5 |], [| 4 |]) (by_rows 3));
+        lazy (stored ([| 2 |], [| 3 |], [| 7 |], [| 20 |]) (by_rows 3));
+        lazy (case ([||], [| 2 |], [| 1 |], [| 7 |]) (plain 2));
+        lazy (case ([||], [| 8 |], [| 1024 |], [| 12 |]) (plain 2));
+        lazy (case ([||], [| 33 |], [| 1024 |], [| 4096 |]) (plain 2));
         extreme ([||], [| 16 |], [| 40 |], [| 2048 |]) (plain 2);
         extreme ([||], [| 7 |], [| 100 |], [| 70 |]) (plain 2);
         extreme ([||], [| 8 |], [| 100 |], [| 70 |]) (plain 2);
-        (let c = stored ([||], [| 2 |], [| 3 |], [| 4096 |]) (by_rows 2) in
-         { c with a = shifted c.a });
+        lazy
+          (let c = stored ([||], [| 2 |], [| 3 |], [| 4096 |]) (by_rows 2) in
+           { c with a = shifted c.a });
         extreme ([||], [| 2 |], [| 300 |], [| 37 |]) (plain 2);
         extreme ([||], [| 15 |], [| 20 |], [| 18 |]) (plain 2);
       ])
@@ -2028,10 +2036,12 @@ let edge_examples =
         (fun (m, n, k, init) ->
           List.map
             (fun (va, vb) ->
-              make ~acc ~out:acc ([||], [| m |], [| n |], [| k |]) (dt, va)
-                (dt, vb)
-                (if init then Some plain else None)
-                (m + n + k))
+              lazy
+                (make ~acc ~out:acc
+                   ([||], [| m |], [| n |], [| k |])
+                   (dt, va) (dt, vb)
+                   (if init then Some plain else None)
+                   (m + n + k)))
             layouts)
         [
           (1, 4101, 64, false); (3, 3077, 71, false); (2, 4099, 1, false);
@@ -2077,8 +2087,11 @@ let by_columns_examples =
       List.map
         (fun (m, n, k) ->
           let init = if (m + n + k) mod 3 = 0 then Some plain else None in
-          make ~acc ~out:acc ([||], [| m |], [| n |], [| k |]) (dt, va)
-            (dt, vb) init (m + n + k))
+          lazy
+            (make ~acc ~out:acc
+               ([||], [| m |], [| n |], [| k |])
+               (dt, va) (dt, vb) init
+               (m + n + k)))
         [
           (1, 3, 17); (1, 4, 33); (1, 8, 16); (1, 9, 15); (1, 16, 1024);
           (1, 23, 1025); (1, 37, 2049); (1, 64, 3100); (2, 17, 1);
@@ -2187,25 +2200,41 @@ let law_depth_one_dst (b : Support.backend) d =
         (differ_bits c.acc ~other:"into the view" y (host (A.Any dst)))
   | _ -> failf "nx.cpu declined a float contraction"
 
+(* Cases made when a law first runs them: the suite's declaration runs in
+   windtrap's parent process too, which runs no law, and the examples took 3 s
+   to make there. *)
+let deferred gen =
+  Gen.with_pp
+    (fun ppf c -> pp_case ppf (Lazy.force c))
+    (Gen.map Lazy.from_val gen)
+
+let made cases = List.map Lazy.from_val cases
+
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
+  let forced f c = run f (Lazy.force c) in
   group ("nx.cpu " ^ b.name)
     [
       prop
         ~examples:
-          (examples @ large_examples @ order_edges @ unroll_examples
-         @ few_rows_examples @ edge_examples @ by_columns_examples
-         @ depth_one_examples @ chain_block_examples)
+          (made
+             (examples @ large_examples @ order_edges @ unroll_examples
+            @ few_rows_examples)
+          @ edge_examples @ by_columns_examples
+          @ made (depth_one_examples @ chain_block_examples))
         "each output adds its products in the order nx_cpu.mli states"
-        computed (run (law_order b));
+        (deferred computed)
+        (forced (law_order b));
       prop "a product of a depth of one has the same bits into any dst"
         depth_one_draws (run (law_depth_one_dst b));
       prop ~count:16 ~examples:(deep_examples @ chain_block_examples)
         "a contraction on the job's threads has one thread's bits" deep_cases
         (run (law_threads b));
-      prop ~examples:(List.concat_map regimes integer_accs @ byte_examples)
+      prop
+        ~examples:(made (List.concat_map regimes integer_accs) @ byte_examples)
         "an integer output is its products' sum modulo the accumulator"
-        integer_cases (run (law_wraps b));
+        (deferred integer_cases)
+        (forced (law_wraps b));
       prop "a result of another dtype rounds the sum in acc once" rounded
         (run (law_rounds_once b));
       prop "computes every contraction nx_cpu.mli lists"

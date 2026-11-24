@@ -46,3 +46,10 @@
  (name agent)
  (modules agent)
  (libraries rig_agent))
+
+; Runs several suites in one process, for ../dune's rule of GPU suites.
+
+(executable
+ (name suites)
+ (modules suites)
+ (libraries unix))

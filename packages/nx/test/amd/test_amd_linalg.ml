@@ -80,7 +80,8 @@ let test_svd_shapes (b : Support.backend) () =
               | Some y, Some y' ->
                   let k = min m n in
                   let s = values y.(0) in
-                  check_svd dt ~e:0 ~count:(count c) ~m ~n ~uc:k ~vr:k v s
+                  check_svd ~underflow:b.underflow dt ~e:0 ~count:(count c)
+                    ~m ~n ~uc:k ~vr:k v s
                     (values y.(1))
                     (values y.(2));
                   check_values bounds dt ~e:0 ~count:2 ~m ~n v s

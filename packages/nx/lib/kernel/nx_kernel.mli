@@ -65,9 +65,13 @@
     destinations' contents are unspecified.
 
     Unless a function's doc says otherwise:
-    - The caller must pass destinations that are C-contiguous, reach no
-      element twice and are on the operands' device. Operands may be
-      strided, broadcast or offset.
+    - The caller must pass destinations that reach no element twice and
+      are on the operands' device. A destination of {!S.map}, {!S.reduce}
+      or {!S.scan} may be strided, at any offset and with negative
+      strides. Every other kernel's must be C-contiguous, unless its
+      library's doc says otherwise; a library raises for one that is not,
+      before any write, as {!check_dst} does. Operands may be strided,
+      broadcast or offset.
     - A destination shares no byte with an operand, except one it is
       identical to that the kernel reads only at the result's own index: a
       [Plain] load of [map], [contract]'s [init], [scatter]'s [into], or
@@ -108,6 +112,20 @@ type 'c dtypes = {
   arrays : 'c -> int;
   dtype : 'c -> int -> Nx_array.Dtype.any;
 }
+
+val check_dst : string -> string -> ('v, 's) Nx_array.t -> unit
+(** [check_dst kernel what d] checks that [d], the destination [what] of
+    [kernel], is C-contiguous ({!Nx_array.Layout.is_contiguous}), as the
+    destination of a kernel other than a loop must be. [kernel] names the
+    library and the kernel, as ["nx.cpu gather"], and [what] the argument,
+    as ["dst"]. A library calls it on each such destination before it
+    claims any array.
+
+    Raises [Invalid_argument] with the message [<kernel>: <what>'s layout
+    <l> is not C-contiguous], [l] as {!Nx_array.Layout.pp} formats it, for
+    a [d] that is not, unless the door answers for [d] first: where it
+    reaches an element twice ([Repeated_elements]) or its buffer is dead
+    ([Dead_buffer]) or admits only [Read] ([Read_only]). *)
 
 (** {1:loops Loops} *)
 

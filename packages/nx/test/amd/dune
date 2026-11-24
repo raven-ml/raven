@@ -1,5 +1,5 @@
-; nx.amd on the machine's AMD GPU 0, skipping without one, under the lock
-; GPU tests share.
+; nx.amd on the machine's AMD GPU 0, skipping without one. ../dune's rule of
+; GPU suites runs these.
 
 (executable
  (name test_amd)
@@ -84,15 +84,19 @@
   rig
   windtrap))
 
+; The suites above, as ../dune's rule of GPU suites runs them.
+
 (rule
- (package nx)
- (alias runtest)
- (locks %{workspace_root}/gpu)
+ (target gpu.suites)
  (action
-  (progn
-   (run %{exe:test_amd.exe})
-   (run %{exe:test_amd_moves.exe})
-   (run %{exe:test_amd_sorts.exe})
-   (run %{exe:test_amd_draws.exe} -j 3)
-   (run %{exe:test_amd_factor.exe} -j 3)
-   (run %{exe:test_amd_linalg.exe} -j 3))))
+  (with-stdout-to
+   %{target}
+   (run
+    %{exe:../support/suites.exe}
+    list
+    %{dep:test_amd.exe} --
+    %{dep:test_amd_moves.exe} --
+    %{dep:test_amd_sorts.exe} --
+    %{dep:test_amd_draws.exe} -j 3 --
+    %{dep:test_amd_factor.exe} -j 3 --
+    %{dep:test_amd_linalg.exe} -j 3))))

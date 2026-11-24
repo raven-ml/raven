@@ -30,7 +30,7 @@ let run_op (b : Support.backend) op dt a =
   match Support.map1 (module K) op ~dst a with
   | A.Done -> Some (host dst)
   | A.Declined ->
-      check_declined b (K1 op) (D.Any (A.dtype a));
+      check_declined ~into:(D.Any dt) b (K1 op) (D.Any (A.dtype a));
       None
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
@@ -177,8 +177,18 @@ let narrow = List.filter (fun (D.Any dt) -> D.bits dt <= 16) D.all
 (* Floats about every rounding point of the narrow float formats, as float32 and
    as float64, cast to every float and complex dtype. *)
 
-(* float32 whose low half is about a float16 or bfloat16 rounding bit, or all
-   ones, the largest float32 below a power of two; every float8 and float4
+(* The low halves of {!sweep32}: about a float16 or bfloat16 rounding
+   bit, all ones, and every value of the top 4 bits with the rest clear.
+   The last hold float16's ties at every exponent with its kept bit odd
+   and even, the rounding bits of exponents -15 and -16 and the tie at
+   65520, past which a float rounds to infinity. *)
+let sweep32_lows =
+  List.sort_uniq compare
+    ([ 0; 1; 0x0FFF; 0x1000; 0x1001; 0x7FFF; 0x8000; 0x8001; 0xFFFF ]
+    @ List.init 16 (fun k -> k lsl 12))
+
+(* float32 of every high half and each of {!sweep32_lows}, the largest
+   float32 below a power of two among them; every float8 and float4
    rounding bit lies in the high half. *)
 let sweep32 =
   lazy
@@ -188,7 +198,7 @@ let sweep32 =
             List.map
               (fun lo ->
                 Int32.float_of_bits (Int32.of_int ((hi lsl 16) lor lo)))
-              [ 0; 1; 0x0FFF; 0x1000; 0x1001; 0x7FFF; 0x8000; 0x8001; 0xFFFF ])
+              sweep32_lows)
           (List.init 0x10000 Fun.id)))
 
 (* The float64 neighbours of float32 values with their low 12 bits clear, which
@@ -216,7 +226,8 @@ let test_sweep b (type s) (s : (float, s) D.t) (xs : float array Lazy.t) () =
 let test_lengths b () =
   let xs = Lazy.force sweep32 in
   for n = 0 to 64 do
-    test_sweep b D.Float32 (lazy (Array.sub xs ((0x3F80 * 9) + n) n)) ();
+    let at = 0x3F80 * List.length sweep32_lows in
+    test_sweep b D.Float32 (lazy (Array.sub xs (at + n) n)) ();
     let codes =
       A.of_array D.Uint16 [| n |] (Array.init n (fun i -> 0x7F7C + i))
     in
@@ -340,7 +351,8 @@ let law_map3 (b : Support.backend) (Pair (x, y), seed) =
   cover "an fma computed" (fma && b.computes (K3 Fma) (D.Any dt));
   cover "an fma outside its domain" (not fma);
   answers b (K3 Fma) (D.Any dt) (D.Any dt) shape ~accepted:fma
-    ~want:(fun () -> expected "fma" dt ~compare:false [| host x; host y; host z |])
+    ~want:(fun () ->
+      expected_on b "fma" dt ~compare:false [| host x; host y; host z |])
     (fun dst -> Support.map3 (module K) Fma ~dst:(A.expect dt (A.Any dst)) x y z)
 
 let law_map0 (b : Support.backend) (D.Any dt, shape, seed) =
@@ -434,6 +446,24 @@ let large_fills =
   D.[ Any Int4; Any Bit; Any Float4_e2m1fn ]
   |> List.map (fun d -> (d, [| 1_000_001 |], (3, 5), 7))
 
+(* Sub-byte destinations starting mid-byte, which the draws reach one case
+   in 9. *)
+let mid_fills =
+  D.[ (Any Int4, (3, 2)); (Any Bit, (5, 1)) ]
+  |> List.map (fun (d, around) -> (d, [| 2; 5 |], around, 3))
+
+(* Programs of 400 nodes over float32 rows that hold more than eight values
+   at once, of seeds whose nodes a library that declines float64 computes:
+   the draws reach such a program in under 3% of the cases. *)
+let long_programs =
+  List.map
+    (fun s ->
+      ( Pair
+          (seeded D.Float32 [| 3; 5 |] s, seeded D.Float32 [| 3; 5 |] (s + 1)),
+        s,
+        Long ))
+    [ 54; 57; 59 ]
+
 (* Maps that do not fit their kernel: by a destination's or a load's
    dtype, by a coordinate past the loop's rank, an empty loop's included,
    and by other destinations or loads than the program's outputs and
@@ -524,6 +554,223 @@ let test_map_identical_view (b : Support.backend) () =
       equal ~msg:"add" (array float_exact) [| 2.; 4.; 6.; 8.; 10. |]
         (A.to_array (host sum))
   | r -> failf "map answered %a" Nx_array_support.pp_answer r
+
+(* Destinations of [n] elements that are not C-contiguous, in the middle
+   of a buffer of [4 n] elements: every other element from [n], and
+   elements [n] to [2 n - 1] reversed. *)
+let scattered n =
+  [
+    ("stepped", L.v ~offset:n ~strides:[| 2 |] [| n |]);
+    ("reversed", L.v ~offset:((2 * n) - 1) ~strides:[| -1 |] [| n |]);
+  ]
+
+(* nx_kernel.mli: a destination of map, reduce or scan may be strided,
+   with negative strides. Each into a stepped or a reversed destination
+   gives the bits it gives into a C-contiguous one, and changes no other
+   element of the destination's buffer: a copy and a negation, a sum and
+   a scan. *)
+let test_scattered_loops (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let n = 7 and f32 = D.Any D.Float32 in
+  let xs = Array.init (2 * n) (fun i -> Float.of_int (i + 1)) in
+  let x = on b (A.of_array D.Float32 [| n |] (Array.sub xs 0 n)) in
+  let rows = on b (A.of_array D.Float32 [| n; 2 |] xs) in
+  let copy = P.v ~ins:[| f32 |] [| P.In 0 |] ~outs:[| 0 |] in
+  let neg =
+    P.v ~ins:[| f32 |] [| P.In 0; Op1 (Unary Neg, f32, 0) |] ~outs:[| 1 |]
+  in
+  let calls =
+    [
+      ("a copy", fun y -> K.map copy ~dsts:[| A.Any y |] [| Plain x |]);
+      ("a negation", fun y -> K.map neg ~dsts:[| A.Any y |] [| Plain x |]);
+      ( "a sum",
+        fun y ->
+          K.reduce copy ~shape:[| n; 2 |] ~axes:[| 1 |] [| (Monoid Sum, 0) |]
+            ~dsts:[| A.Any y |] [| Plain rows |] );
+      ( "a scan",
+        fun y ->
+          K.scan copy ~axis:0 (Monoid Sum, 0) ~dsts:[| A.Any y |]
+            [| Plain x |] );
+    ]
+  in
+  let guard = Array.init (4 * n) (fun i -> Float.of_int (-i - 1)) in
+  List.iter
+    (fun (call, f) ->
+      let fresh = A.create b.device D.Float32 [| n |] in
+      equal ~msg:(call ^ ", C-contiguous") answer A.Done (f fresh);
+      let want = A.to_array (host fresh) in
+      List.iter
+        (fun (what, l) ->
+          let msg = call ^ " into a " ^ what ^ " destination" in
+          let base = on b (A.of_array D.Float32 [| 4 * n |] guard) in
+          let y = A.v D.Float32 l (A.buffer base) in
+          equal ~msg answer A.Done (f y);
+          equal ~msg (array float_exact) want (A.to_array (host y));
+          let reached = Array.make (4 * n) false in
+          for i = 0 to n - 1 do
+            reached.(L.offset l + (i * L.stride l 0)) <- true
+          done;
+          let got = A.to_array (host base) in
+          Array.iteri
+            (fun i v ->
+              if not reached.(i) then
+                equal ~msg:(Printf.sprintf "%s: element %d of its buffer" msg i)
+                  float_exact guard.(i) v)
+            got)
+        (scattered n))
+    calls
+
+(* A polymorphic maker of destinations. *)
+type maker = { mk : 'v 's. ('v, 's) D.t -> ('v, 's) A.t }
+
+(* nx_kernel.mli: every kernel's destination but a loop's must be
+   C-contiguous, and a library raises for one that is not, before any
+   write, as Nx_kernel.check_dst does. Each destination of each such
+   kernel, stepped or reversed, the others fresh, raises Invalid_argument
+   naming the kernel, the argument and its layout, and its buffer keeps
+   its bytes. A contraction's, which nx.cpu's, nx.cuda's and nx.amd's docs
+   let be strided, is not among them. *)
+let test_contiguous_dsts (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let n = 4 in
+  let fresh = { mk = (fun dt -> A.create b.device dt [| n |]) } in
+  let i64 = A.create b.device D.Int64 [| n |] in
+  let f32 = A.create b.device D.Float32 [| n |] in
+  let c64 = A.create b.device D.Complex64 [| n |] in
+  let pad =
+    { Nx_kernel.lo = [| 0 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] }
+  in
+  (* Each kernel, the argument [what], and its call with [what] by [s] and
+     every other destination by [fresh]. *)
+  let calls : (string * string * (maker -> A.answer)) list =
+    let pick what name s = if what = name then s else fresh in
+    List.concat
+      [
+        [
+          ( "gather", "dst",
+            fun s -> K.gather ~axis:0 ~dst:(s.mk D.Float32) i64 f32 );
+          ( "gather_ranges", "dst",
+            fun s ->
+              K.gather_ranges ~dst:(s.mk D.Float32) ~starts:i64 ~ends:i64 f32 );
+          ( "scatter", "dst",
+            fun s ->
+              K.scatter Set ~unique:false ~axis:0 ~dst:(s.mk D.Float32)
+                ~into:f32 i64 f32 );
+        ];
+        List.map
+          (fun what ->
+            ( "sort", what,
+              fun s ->
+                K.sort ~axis:0 ~descending:false
+                  ~values:((pick what "values" s).mk D.Float32)
+                  ~positions:((pick what "positions" s).mk D.Int64)
+                  f32 ))
+          [ "values"; "positions" ];
+        List.map
+          (fun what ->
+            ( "unique", what,
+              fun s ->
+                let a name = (pick what name s).mk D.Int64 in
+                K.unique ~ids:(a "ids") ~first:(a "first") ~counts:(a "counts")
+                  ~count:(a "count") i64 ))
+          [ "ids"; "first"; "counts"; "count" ];
+        [
+          ( "assemble", "dst",
+            fun s -> K.assemble ~fill:0. ~dst:(s.mk D.Float32) [||] );
+          ("fold", "dst", fun s -> K.fold pad ~dst:(s.mk D.Float32) f32);
+          ( "c2c", "dst",
+            fun s -> K.c2c Forward ~axes:[| 0 |] ~dst:(s.mk D.Complex64) c64 );
+          ( "r2c", "dst",
+            fun s -> K.r2c ~axes:[| 0 |] ~dst:(s.mk D.Complex64) f32 );
+          ( "c2r", "dst",
+            fun s -> K.c2r ~axes:[| 0 |] ~dst:(s.mk D.Float32) c64 );
+          ( "cholesky", "dst",
+            fun s -> K.cholesky Lower ~dst:(s.mk D.Float32) f32 );
+        ];
+        List.map
+          (fun what ->
+            ( "lu", what,
+              fun s ->
+                K.lu ~lu:((pick what "lu" s).mk D.Float32)
+                  ~pivots:((pick what "pivots" s).mk D.Int64)
+                  ~perm:((pick what "perm" s).mk D.Int64) f32 ))
+          [ "lu"; "pivots"; "perm" ];
+        List.map
+          (fun what ->
+            ( "qr", what,
+              fun s ->
+                K.qr ~q:((pick what "q" s).mk D.Float32)
+                  ~r:((pick what "r" s).mk D.Float32) f32 ))
+          [ "q"; "r" ];
+        List.map
+          (fun what ->
+            ( "svd", what,
+              fun s ->
+                let a name = (pick what name s).mk D.Float32 in
+                K.svd ~s:(a "s") ~vectors:(~u:(a "u"), ~vh:(a "vh")) f32 ))
+          [ "s"; "u"; "vh" ];
+        List.map
+          (fun what ->
+            ( "eigh", what,
+              fun s ->
+                let a name = (pick what name s).mk D.Float32 in
+                K.eigh ~w:(a "w") ~v:(a "v") f32 ))
+          [ "w"; "v" ];
+        List.map
+          (fun what ->
+            ( "eig", what,
+              fun s ->
+                let a name = (pick what name s).mk D.Complex64 in
+                K.eig ~w:(a "w") ~v:(a "v") f32 ))
+          [ "w"; "v" ];
+        [
+          ( "solve_triangular", "dst",
+            fun s ->
+              K.solve_triangular Lower ~adjoint:false ~unit_diagonal:false
+                ~dst:(s.mk D.Float32) f32 f32 );
+        ];
+        List.map
+          (fun what ->
+            ( "attention", what,
+              fun s ->
+                let a name = (pick what name s).mk D.Float32 in
+                K.attention
+                  (P.v ~ins:[| D.Any D.Float32 |] [| P.In 0 |] ~outs:[| 0; 0 |])
+                  ~scale:1. ~o:(a "o") ~lse:(a "lse") f32
+                  (Nx_kernel.Dense { k = f32; v = f32 })
+                  [||] ))
+          [ "o"; "lse" ];
+      ]
+  in
+  List.iter
+    (fun (kernel, what, call) ->
+      List.iter
+        (fun (layout, l) ->
+          let msg = Printf.sprintf "%s's %s, %s" kernel what layout in
+          let bytes = ref [] in
+          let s =
+            {
+              mk =
+                (fun dt ->
+                  let size = 4 * n * D.bits dt / 8 in
+                  let codes = Array.init size (fun i -> i land 0xff) in
+                  let base = on b (A.of_array D.Uint8 [| size |] codes) in
+                  bytes := (base, codes) :: !bytes;
+                  A.v dt l (A.buffer base));
+            }
+          in
+          let want =
+            Format.asprintf "%s %s: %s's layout %a is not C-contiguous" K.name
+              kernel what L.pp l
+          in
+          raises ~msg (Invalid_argument want) (fun () -> call s);
+          List.iter
+            (fun (base, codes) ->
+              equal ~msg:(msg ^ ": its buffer") (array int) codes
+                (A.to_array (host base)))
+            !bytes)
+        (scattered n))
+    calls
 
 (* A map of 100 outputs, each into the load it reads: too wide for one of
    nx.cuda's launches, as is the copy, into the destinations, of the
@@ -890,6 +1137,8 @@ let alignment (type v s) (dt : (v, s) D.t) =
 type offsets = {
   dt : D.any;
   shape : int array;
+  pad : int;
+  rev : bool;
   src : int;
   dst : int;
   seed : int;
@@ -897,30 +1146,134 @@ type offsets = {
 
 let pp_offsets ppf c =
   let (D.Any dt) = c.dt in
-  Format.fprintf ppf "%a %a from byte %d into byte %d, seed %d" D.pp dt
-    pp_ints c.shape c.src c.dst c.seed
+  Format.fprintf ppf "%a %a%s from byte %d into byte %d%s, seed %d" D.pp dt
+    pp_ints c.shape
+    (if c.pad = 0 then "" else Printf.sprintf ", rows %d apart" c.pad)
+    c.src c.dst
+    (if c.rev then ", reversed" else "")
+    c.seed
 
-(* A dtype, complex half the time, a shape of a few axes, and the bytes a
-   source and a destination start at past a buffer's start: each a multiple
-   of the dtype's alignment below 16, the widest access a kernel makes. *)
+(* A dtype, complex half the time; a shape of a few axes, or of no element
+   or of one, or rows whose extent is a multiple of 4 that lie [pad]
+   elements apart past their last: the rows of 8 of rows of 9, or rows 1
+   to 4 apart, a stride a multiple of 4 or not; and the bytes a source and
+   a destination start at past a buffer's start: each a multiple of the
+   dtype's alignment below 16, the widest access a kernel makes, 2, 4, 8
+   or 12 most often; and destinations whose rows run reversed, half the
+   time. *)
 let offset_cases =
   let open Gen in
   let complexes = of_list ~pp:pp_dtype D.[ Any Complex64; Any Complex128 ] in
   let* (D.Any d as dt) = frequency [ (1, dtypes); (1, complexes) ] in
   let a = alignment d in
-  let at = of_list ~pp:Format.pp_print_int (List.init (16 / a) (( * ) a)) in
-  let* shape = array ~size:(int_range 1 3) extent in
+  let ints = of_list ~pp:Format.pp_print_int in
+  let at =
+    frequency
+      [
+        (1, ints (List.init (16 / a) (( * ) a)));
+        (2, ints (List.filter (fun o -> o mod a = 0) [ 2; 4; 8; 12 ]));
+      ]
+  in
+  let rows =
+    let* r = int_range 2 3 in
+    let+ outer = array ~size:(constant (r - 1)) extent
+    and+ last = int_range 1 4 in
+    Array.append outer [| 4 * last |]
+  in
+  let plain =
+    let+ s = array ~size:(int_range 1 3) extent in
+    (0, s)
+  in
+  let eight_of_nine =
+    let+ r = extent in
+    (1, [| r; 8 |])
+  in
+  let apart =
+    let* pad = int_range 1 4 in
+    let+ s = rows in
+    (pad, s)
+  in
+  let edge =
+    let+ s =
+      of_list ~pp:pp_ints
+        [ [| 0 |]; [| 1 |]; [| 1; 1 |]; [| 1; 4 |]; [| 0; 4 |]; [| 4; 0 |] ]
+    in
+    (0, s)
+  in
+  let* pad, shape =
+    frequency [ (2, plain); (1, edge); (1, eight_of_nine); (1, apart) ]
+  in
   let* src = at in
   let* dst = at in
+  let* rev = bool in
   let+ seed = int in
-  { dt; shape; src; dst; seed }
+  { dt; shape; pad; rev; src; dst; seed }
 
-(* Complex64 arrays from 4 bytes past 8 whose copies of a transpose move blocks
-   and zip pairs, and whose scatter sorts its updates. *)
+(* Rows 4 elements apart past their last, which the draws reach one case in 20;
+   and complex64 arrays from 4 bytes past 8 whose copies of a transpose move
+   blocks and zip pairs, and whose scatter sorts its updates. *)
 let offset_examples =
-  List.map
-    (fun shape -> { dt = D.Any D.Complex64; shape; src = 4; dst = 4; seed = 7 })
-    [ [| 8; 8 |]; [| 2; 9 |]; [| 1 lsl 16 |] ]
+  {
+    dt = D.Any D.Float32;
+    shape = [| 3; 8 |];
+    pad = 4;
+    rev = true;
+    src = 4;
+    dst = 8;
+    seed = 1;
+  }
+  :: List.map
+       (fun shape ->
+         {
+           dt = D.Any D.Complex64;
+           shape;
+           pad = 0;
+           rev = false;
+           src = 4;
+           dst = 4;
+           seed = 7;
+         })
+       [ [| 8; 8 |]; [| 2; 9 |]; [| 1 lsl 16 |] ]
+
+(* The first [s.(i)] elements of each axis [i] of [x]. *)
+let rows_of x s =
+  let all e = { Nx_array.Move.start = 0; count = e; step = 1 } in
+  Option.get
+    (A.move (Nx_array.Move.Slice (Iarray.of_array (Array.map all s))) x)
+
+(* [x] with its last axis reversed, where it has elements. *)
+let reversed x =
+  let s = Iarray.to_array (L.shape (A.layout x)) in
+  let r = Array.length s in
+  if r = 0 || Array.exists (( = ) 0) s then x
+  else
+    let range i e =
+      if i < r - 1 then { Nx_array.Move.start = 0; count = e; step = 1 }
+      else { Nx_array.Move.start = e - 1; count = e; step = -1 }
+    in
+    Option.get
+      (A.move (Nx_array.Move.Slice (Iarray.of_array (Array.mapi range s))) x)
+
+(* [x] over shape [s] from its first row, broadcast along every other
+   axis, or where [last], from its first column, broadcast along the last
+   axis: a stride of 0 before the last, or as the last. *)
+let spread (type v s) ~last (x : (v, s) A.t) s : (v, s) A.t =
+  let r = Array.length s in
+  let one i e = if (i = r - 1) = last then Int.min 1 e else e in
+  let first = rows_of x (Array.mapi one s) in
+  Option.get (A.move (Nx_array.Move.Broadcast (Iarray.of_array s)) first)
+
+(* The maximum of four loads of [dt] as a tape of three maximums, which no
+   kernel library runs as one kind. *)
+let maximums dt =
+  P.v ~ins:[| dt; dt; dt; dt |]
+    [|
+      P.In 0; In 1; In 2; In 3;
+      Op2 (Binary Maximum, 0, 1);
+      Op2 (Binary Maximum, 2, 3);
+      Op2 (Binary Maximum, 4, 5);
+    |]
+    ~outs:[| 6 |]
 
 (* [x]'s bytes on [b]'s device in a fresh buffer from its byte [at]. *)
 let placed (type v s) (b : Support.backend) at (x : (v, s) A.t) : (v, s) A.t =
@@ -930,27 +1283,47 @@ let placed (type v s) (b : Support.backend) at (x : (v, s) A.t) : (v, s) A.t =
   B.copy ~src ~dst;
   A.v (A.dtype x) (A.layout x) dst
 
-(* A C-contiguous array of [dt] and shape [s] on [b]'s device in a fresh
-   buffer from its byte [at]. *)
-let blank (type v s) (b : Support.backend) at (dt : (v, s) D.t) s :
-    (v, s) A.t =
-  let n = max 1 (D.bytes dt (Array.fold_left ( * ) 1 s)) in
+(* An array of [dt] and shape [s] on [b]'s device in a fresh buffer from
+   its byte [at], C-contiguous, or the rows of one whose last extent is
+   [pad] more. *)
+let blank (type v s) ?(pad = 0) ?(rev = false) (b : Support.backend) at
+    (dt : (v, s) D.t) s : (v, s) A.t =
+  let r = Array.length s in
+  let whole = Array.mapi (fun i e -> if i = r - 1 then e + pad else e) s in
+  let n = max 1 (D.bytes dt (Array.fold_left ( * ) 1 whole)) in
   let buffer = B.view (B.create b.device (at + n)) ~first:at ~length:n in
-  A.v dt (L.contiguous (Iarray.of_array s)) buffer
+  let x = A.v dt (L.contiguous (Iarray.of_array whole)) buffer in
+  let x = if pad = 0 then x else rows_of x s in
+  if rev then reversed x else x
 
-(* A copy, of [x] and of its last two axes swapped, a padded load's map, a
-   where, a gather and a scatter by Set along the first axis, a sum along the
-   last and a sum's scan along the first from a carry, each with its sources at
-   byte [src] and its destination, scattered-into array and carry at byte [dst],
-   or the multiple of the carrier's alignment below it: each answer, and each
+(* [c]'s source: its elements from [c]'s seed, C-contiguous or rows. *)
+let offset_source (type v s) c (dt : (v, s) D.t) : (v, s) A.t =
+  let r = Array.length c.shape in
+  let whole =
+    Array.mapi (fun i e -> if i = r - 1 then e + c.pad else e) c.shape
+  in
+  let x = seeded dt (Iarray.of_array whole) c.seed in
+  if c.pad = 0 then x else rows_of x c.shape
+
+(* A copy, of [x] and of its last two axes swapped, a padded load's map, a map
+   of the source and itself at the destination's byte, the same with the
+   source's broadcast rows and columns as a tape of maximums, a where, a gather
+   and a scatter by Set along the first axis, a sum along the last axis and a
+   sum's scan along the first from a carry, each with its sources at byte [src]
+   and its destination, scattered-into array and carry at byte [dst], or the
+   multiple of the carrier's alignment below it, the two maximums, the sum and
+   the scan into rows [pad] apart, reversed where [rev]: each answer, and each
    result where the host reads it. The positions are drawn from one before the
    first axis to one past it, so a gather reads zeros and a scatter drops
    updates, and several updates share a target. *)
-let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src ~dst =
+let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src ~dst
+    ~pad ~rev =
   let module K = (val b.kernels) in
   let dt = A.dtype x and s = c.shape in
+  let x' = placed b dst x in
   let x = placed b src x in
   let into s = blank b dst dt s in
+  let view s = blank ~pad ~rev b dst dt s in
   let ran name f y = (name, f y, y) in
   let p = Reduce_cases.identity c.dt in
   let r = Array.length s - 1 in
@@ -985,6 +1358,19 @@ let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src ~dst =
         ran "padded load"
           (fun y -> K.map p ~dsts:[| A.Any y |] [| unpadded x |])
           (into s);
+        ran "maximum of two loads"
+          (fun y -> Support.map2 (module K) (Binary Maximum) ~dst:y x x')
+          (view s);
+        ran "a tape of maximums over broadcast loads"
+          (fun y ->
+            K.map (maximums c.dt) ~dsts:[| A.Any y |]
+              [|
+                Plain x;
+                Plain x';
+                Plain (spread ~last:false x s);
+                Plain (spread ~last:true x s);
+              |])
+          (view s);
         ran "where"
           (fun y -> Support.map3 (module K) Where ~dst:y cond x other)
           (into s);
@@ -1010,17 +1396,20 @@ let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src ~dst =
           (fun y ->
             K.reduce p ~shape:(Iarray.of_array s) ~axes:(Iarray.of_list [ r ])
               [| (Monoid Sum, 0) |] ~dsts:[| A.Any y |] [| Plain x |])
-          (into (Array.sub s 0 r));
+          (view (Array.sub s 0 r));
         ran "scan from a carry"
           (fun y ->
             K.scan ~carry:(A.Any carry) p ~axis:0 (Monoid Sum, 0)
               ~dsts:[| A.Any y |] [| Plain x |])
-          (into s);
+          (view s);
       ]
 
 (* A map, a reduction, a scan, a gather and a scatter over arrays at any offset
    their dtype's alignment admits give the answers and the bits they give over
-   arrays at a buffer's start. *)
+   arrays at a buffer's start, through views whose rows lie apart by a multiple
+   of 4 elements or not, and broadcast ones; and into destinations whose rows
+   lie apart or run reversed (nx_kernel.mli: a loop's destination may be
+   strided), the bits they give into C-contiguous ones. *)
 let law_offsets (b : Support.backend) c =
   let (D.Any dt) = c.dt in
   let complex bytes = D.is D.Complex dt && 8 * bytes = D.bits dt in
@@ -1031,6 +1420,19 @@ let law_offsets (b : Support.backend) c =
   cover "complex64 into 4 bytes past 8" (complex 8 && off c.dst);
   cover "complex128 from 8 bytes past 16" (complex 16 && off c.src);
   cover "complex128 into 8 bytes past 16" (complex 16 && off c.dst);
+  List.iter
+    (fun at ->
+      cover
+        (Printf.sprintf "a base %d bytes past 16" at)
+        (c.src = at || c.dst = at))
+    [ 2; 4; 8; 12 ];
+  cover "rows apart by no multiple of 4" (c.pad mod 4 <> 0);
+  cover "rows apart by a multiple of 4" (c.pad = 4);
+  cover "no element" (Array.exists (( = ) 0) c.shape);
+  cover "one element" (Array.for_all (( = ) 1) c.shape);
+  cover "rows of 8 of rows of 9"
+    (c.pad = 1 && Array.length c.shape = 2 && c.shape.(1) = 8);
+  cover "a reversed destination" (c.rev && Array.exists (( < ) 1) c.shape);
   (* nx.cpu's copies of a transpose: square blocks of 4 x 4 8-byte elements, and
      two columns zipped. *)
   cover "complex64 swapped in blocks from 4 bytes past 8"
@@ -1041,14 +1443,15 @@ let law_offsets (b : Support.backend) c =
      of more than one thread. *)
   cover "a scatter of 64Ki complex64 updates from 4 bytes past 8"
     (complex 8 && off c.src && c.shape.(0) >= 1 lsl 16);
-  let x = seeded dt (Iarray.of_array c.shape) c.seed in
-  let want = offset_runs b c x ~src:0 ~dst:0 in
-  let got = offset_runs b c x ~src:c.src ~dst:c.dst in
+  let x = offset_source c dt in
+  let want = offset_runs b c x ~src:0 ~dst:0 ~pad:0 ~rev:false in
+  let got = offset_runs b c x ~src:c.src ~dst:c.dst ~pad:c.pad ~rev:c.rev in
   List.iter2
     (fun (msg, a, w) (_, a', g) ->
       equal ~msg answer a a';
       if a = A.Done then
-        equal ~msg (list string) [] (differ (host w) (host g)))
+        equal ~msg (list string) []
+          (differ (A.copy (host w)) (A.copy (host g))))
     want got
 
 (* Operands outlive the call *)
@@ -1184,7 +1587,7 @@ let run_kind (type v s) (b : Support.backend) k (dt : (v, s) D.t) xs ys =
   match r with
   | A.Done -> Some (A.to_array (host dst))
   | A.Declined ->
-      check_declined b k (D.Any dt);
+      check_declined ~into:(D.Any dt) b k (D.Any dt);
       None
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
@@ -1305,35 +1708,10 @@ let switch_points =
     (List.concat_map (around 8) (halves @ sqrt2 @ constants)
     @ List.concat_map (around 4) (multiples 1))
 
-(* Each float kind at float32 within its bound of the kind at float64,
-   which the goldens bound at 2 ulps, rounded once: at Annex F's operands, at the switch points and
-   at every 2^20th bit pattern from [offset], every binade of both signs
-   reached, and for a kind of two operands at Annex F's pairs and pairs
-   from [seed], half of any patterns and half where [pow] and [atan2]
-   neither overflow nor underflow. *)
-let f32_step = 1 lsl 20
-
-let law_f32_kinds (b : Support.backend) (offset, seed) =
-  let step = f32_step in
-  let xs =
-    Array.concat
-      [
-        specials32;
-        switch_points;
-        Array.init ((1 lsl 32) / step) (fun i ->
-            Int32.float_of_bits (Int32.of_int ((i * step) + offset)));
-      ]
-  in
-  let r = Random.State.make [| seed |] in
-  let pair i =
-    if i land 1 = 0 then
-      let any () = Int32.float_of_bits (Random.State.bits32 r) in
-      (any (), any ())
-    else
-      let x = Float.ldexp (Random.State.float r 1.) (Random.State.int r 9 - 4) in
-      (Exact.round_f32 x, Exact.round_f32 (Random.State.float r 40. -. 20.))
-  in
-  let ps = Array.append special_pairs (Array.init (1 lsl 12) pair) in
+(* Each float kind at float32 within its bound of the kind at float64, which the
+   goldens bound at 2 ulps, rounded once, at the operands [xs], and for a kind
+   of two operands at the pairs [ps]. *)
+let check_f32_kinds (b : Support.backend) xs ps =
   List.iter
     (fun (k, name, bound, _) ->
       let two = match k with Support.K2 _ -> true | _ -> false in
@@ -1351,6 +1729,37 @@ let law_f32_kinds (b : Support.backend) (offset, seed) =
               List.fold_left (fun m w -> min m (ulps32 g w)) max_int w)
             ~show got want)
     float_bounds
+
+(* {!check_f32_kinds} at Annex F's operands and pairs and at the switch points,
+   which are the same in every case: run in each of a property's cases, they
+   were three quarters of its time. *)
+let test_f32_points (b : Support.backend) () =
+  check_f32_kinds b (Array.append specials32 switch_points) special_pairs
+
+(* {!check_f32_kinds} at every 2^20th bit pattern from [offset], every binade of
+   both signs reached, and at pairs from [seed], half of any patterns and half
+   where [pow] and [atan2] neither overflow nor underflow. *)
+let f32_step = 1 lsl 20
+
+let law_f32_kinds (b : Support.backend) (offset, seed) =
+  let step = f32_step in
+  let xs =
+    Array.init
+      ((1 lsl 32) / step)
+      (fun i -> Int32.float_of_bits (Int32.of_int ((i * step) + offset)))
+  in
+  let r = Random.State.make [| seed |] in
+  let pair i =
+    if i land 1 = 0 then
+      let any () = Int32.float_of_bits (Random.State.bits32 r) in
+      (any (), any ())
+    else
+      let x =
+        Float.ldexp (Random.State.float r 1.) (Random.State.int r 9 - 4)
+      in
+      (Exact.round_f32 x, Exact.round_f32 (Random.State.float r 40. -. 20.))
+  in
+  check_f32_kinds b xs (Array.init (1 lsl 12) pair)
 
 (* nx_kinds.h's complex section: each transcendental kind's normwise bound
    in units of its parts' u, with its golden's name. pow's is
@@ -1370,7 +1779,8 @@ let complex_of (re, im) = { Complex.re; im }
 
 (* Each complex transcendental kind, and pow, within its bound of the
    goldens' correctly rounded values, at complex128 and, where the operands
-   are binary32's and the value's modulus a normal one, at complex64. *)
+   are binary32's and the value's modulus a normal one, at complex64; on a
+   backend that flushes, where no operand part is subnormal at binary32. *)
 let test_complex_kinds (b : Support.backend) () =
   let check name k ~bound rows =
     let rows = Array.of_list rows in
@@ -1396,11 +1806,14 @@ let test_complex_kinds (b : Support.backend) () =
             got
     in
     at 0x1p-53 D.Complex128 rows;
+    let normal a = a = 0. || Float.abs a >= 0x1p-126 in
+    let kept r =
+      let args = Array.sub r 0 n in
+      Exact.single_row args (Exact.golden_value r n)
+      && (b.underflow = Gradual || Array.for_all normal args)
+    in
     at 0x1p-24 D.Complex64
-      (Array.of_list
-         (List.filter
-            (fun r -> Exact.single_row (Array.sub r 0 n) (Exact.golden_value r n))
-            (Array.to_list rows)))
+      (Array.of_list (List.filter kept (Array.to_list rows)))
   in
   List.iter
     (fun (u, name, bound) ->
@@ -1600,7 +2013,9 @@ let law_box (b : Support.backend) (Pair (x, y), box) =
   in
   cover "an integer sum" summed
 
-(* The laws of maps that move bits, which every backend computes. *)
+(* The laws of maps that move bits, which every backend computes, and of
+   casts, which a backend that computes only bits declines but at an
+   operand's own dtype. *)
 let moves (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   let unit f () = b.around f in
@@ -1620,6 +2035,11 @@ let moves (b : Support.backend) =
       (run (fun ((c, _) as x) ->
            covers c;
            law_bitcast b x));
+    prop "cast is the reference, element by element" (pair case)
+      (run (fun ((Case a as c), D.Any d) ->
+           covers c;
+           cover "to the source's dtype" (D.equal (A.dtype a) d);
+           law_cast b (c, D.Any d)));
   ]
 
 let laws (b : Support.backend) =
@@ -1628,11 +2048,6 @@ let laws (b : Support.backend) =
   group b.name
     (moves b
     @ [
-      prop "cast is the reference, element by element" (pair case)
-        (run (fun ((Case a as c), D.Any d) ->
-             covers c;
-             cover "to the source's dtype" (D.equal (A.dtype a) d);
-             law_cast b (c, D.Any d)));
       prop ~count:32
         ~examples:(List.map (fun c -> (c, D.Any D.Float64)) large_views)
         "cast of large views is the reference" (pair large)
@@ -1663,7 +2078,8 @@ let laws (b : Support.backend) =
         (Gen.triple dtypes shape Gen.nat)
         (run (law_map0 b));
       prop
-        ~examples:(if Rig.equal b.device Rig.host then large_fills else [])
+        ~examples:
+          (mid_fills @ if Rig.equal b.device Rig.host then large_fills else [])
         "fill and iota store inside a buffer and nothing around it"
         fill_insides
         (run (law_map0_inside b));
@@ -1678,6 +2094,14 @@ let laws (b : Support.backend) =
         (fun seed -> List.iter (run (law_wide_map b)) (wide_calls seed));
       test "a map reads a load identical to a destination before writing it"
         (unit (test_map_identical_view b));
+      test
+        "a map, a sum and a scan into a stepped or reversed destination have \
+         the bits they have into a C-contiguous one"
+        (unit (test_scattered_loops b));
+      test
+        "a kernel but a loop raises for a destination that is not \
+         C-contiguous, before any write"
+        (unit (test_contiguous_dsts b));
       test "a map of outputs too many for a launch may write over its loads"
         (unit (test_wide_in_place b));
       test "a map of a padded load reads its coordinates"
@@ -1689,7 +2113,8 @@ let laws (b : Support.backend) =
       (* "a where" and "a load of one repeated element" come in 4.4% and
          5.0% of cases: 600 cases miss each with probability below 2e-12. *)
       prop ~count:600
-        ~examples:(List.map (fun p -> (p, 1, Plain)) large_view_pairs)
+        ~examples:
+          (List.map (fun p -> (p, 1, Plain)) large_view_pairs @ long_programs)
         "a map gives the bits of its nodes run one by one"
         split_cases (run (law_split ~declines:(fun _ _ -> false) b));
       prop ~examples:(List.map (fun p -> (p, 1)) (erf_pair :: nan_pairs))
@@ -1722,7 +2147,13 @@ let laws (b : Support.backend) =
              law_map2 ~kinds:(exact2 (D.Any (A.dtype x))) b p));
       test "float kinds at float64 are within nx_kinds.h's bounds of the goldens"
         (unit (test_f64_kinds b));
-      prop ~count:4 "float kinds at float32 are within nx_kinds.h's bounds"
+      test
+        "float kinds at float32 are within nx_kinds.h's bounds at Annex F's \
+         operands and the switch points"
+        (unit (test_f32_points b));
+      prop ~count:4
+        "float kinds at float32 are within nx_kinds.h's bounds at every \
+         2^20th bit pattern"
         Gen.(pair (int_range 0 (f32_step - 1)) int)
         (run (law_f32_kinds b));
       test "complex kinds are within nx_kinds.h's bounds of the goldens"
@@ -1823,7 +2254,7 @@ let () =
   in
   exit
     (run "nx_kernel.kernels"
-       (List.map laws (Support.backends ())
+       (List.map laws (Support.backends () @ Option.to_list (Support.metal ()))
        @ List.map memory_laws (Support.gpus () @ Option.to_list (Support.nv ()))
        @ nv
        @ List.map laws (Option.to_list (Support.amd ()))

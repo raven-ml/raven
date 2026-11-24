@@ -127,7 +127,8 @@ let test_svd_shapes (b : Support.backend) () =
               | Some y, Some y' ->
                   let k = min m n in
                   let s = values y.(0) in
-                  check_svd dt ~e:0 ~count:(count c) ~m ~n ~uc:k ~vr:k v s
+                  check_svd ~underflow:b.underflow dt ~e:0 ~count:(count c)
+                    ~m ~n ~uc:k ~vr:k v s
                     (values y.(1))
                     (values y.(2));
                   check_values bounds dt ~e:0 ~count:2 ~m ~n v s (values y'.(0))
@@ -284,7 +285,8 @@ let test_first_guess =
       limited ~steps:1 (fun () ->
           match run b (Eigh true) [| x |] with
           | Some y ->
-              check_eigh dt ~e:0 ~count:1 ~n (values x) (values y.(0))
+              check_eigh ~underflow:b.underflow dt ~e:0 ~count:1 ~n (values x)
+                (values y.(0))
                 (values y.(1))
           | None -> ()))
 

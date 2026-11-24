@@ -423,6 +423,15 @@ type operand = {
 
 let shape_of a = Iarray.to_array (L.shape (A.layout a))
 
+(* Whether [o] over [shape] holds element k at its offset + k. *)
+let contiguous (o : operand) shape =
+  match o.access with
+  | Strided s ->
+      L.is_contiguous
+        (L.v ~offset:o.offset ~strides:(Iarray.of_array s)
+           (Iarray.of_array shape))
+  | Pad _ -> false
+
 let plain (type v s) (x : (v, s) A.t) =
   let l = A.layout x in
   {
@@ -1676,9 +1685,42 @@ let reduce (p : P.t) ~shape ~axes (rs : (Nx_kernel.reduction * int) iarray)
   if Array.exists (( = ) 0) shape then Ok []
   else
     let outs = mapped (fun (A.Any y) -> plain y) dsts in
+    let shapes = mapped (fun (A.Any y) -> shape_of y) dsts in
+    let strided =
+      List.filter
+        (fun j -> not (contiguous outs.(j) shapes.(j)))
+        (List.init (Array.length outs) Fun.id)
+    in
     let (A.Any y0) = Iarray.get dsts 0 in
-    parted p ~shape (mapped of_load loads) (A.device y0) (fun _ p ops ->
-        reduce_calls p ~shape ~axes rs ops outs)
+    (* loop.cu's put_dst stores an output's results from its first
+       position on, one after another. A destination that is not
+       C-contiguous takes them in a C-contiguous temporary of the
+       stand-ins, and a copy pass after the reduction's, a map of [In],
+       writes the temporary into it. *)
+    parted p ~shape (mapped of_load loads) (A.device y0) (fun s p ops ->
+        let into = Array.copy outs in
+        let temps =
+          List.map
+            (fun j ->
+              let o = outs.(j) in
+              let t = (fresh s [ (o.dtype, shapes.(j)) ]).(0) in
+              into.(j) <- t;
+              (j, t))
+            strided
+        in
+        let reduced = reduce_calls p ~shape ~axes rs ops into in
+        let copies =
+          List.concat_map
+            (fun (j, (t : operand)) ->
+              let copy =
+                P.v ~ins:(Iarray.of_list [ t.dtype ])
+                  (Iarray.of_list [ P.In 0 ])
+                  ~outs:(Iarray.of_list [ 0 ])
+              in
+              map_calls s copy ~shape:shapes.(j) [| t |] [| outs.(j) |])
+            temps
+        in
+        reduced @ copies)
 
 (* Scans *)
 

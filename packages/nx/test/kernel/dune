@@ -1,9 +1,12 @@
 ; nx.kernel's suites through every kernel library the host runs. Their
-; nx.cpu groups run here, beside other suites; their nx.cuda and nx.amd
-; groups, on the machine's GPUs, run below under the lock GPU tests share.
-; Each suite runs its tests in 3 processes at once, which together hold at
-; most 12 GiB of the GPU: test_fft's transform past 2^31 elements takes
-; 8 GiB.
+; nx.cpu groups run here, beside other suites; their nx.cuda, nx.amd and
+; nx.metal groups, on the machine's GPUs, run in ../dune's rule of GPU
+; suites, as gpu.suites below lists them. There each suite runs its tests
+; in 3 processes at once, which together hold at most 12 GiB of the GPU:
+; test_fft's transform past 2^31 elements takes 8 GiB. They link the Metal
+; suites' property list, which gives their nx.metal groups a Metal cache of
+; their own (../metal/support/dune). A tests stanza takes no link_deps, so
+; an edit to the list relinks them only with another change.
 
 (tests
  (package nx)
@@ -46,8 +49,11 @@
   nx_kernel_cases
   nx_kernels_support
   nx_kinds_support
+  nx_metal
   rig
   windtrap)
+ (link_flags
+  (:include ../metal/support/plist_flags.sexp))
  (deps
   (glob_files golden/kinds/*.golden))
  (action
@@ -56,57 +62,54 @@
    cpu
    (run %{test}))))
 
-(rule
- (package nx)
- (alias runtest)
- (locks %{workspace_root}/gpu)
- (deps
-  (glob_files golden/kinds/*.golden))
- (action
-  (setenv
-   WINDTRAP_FILTER
-   cuda
-   (progn
-    (run %{exe:test_kinds.exe} -j 3)
-    (run %{exe:test_kernels.exe} -j 3)
-    (run %{exe:test_contract.exe} -j 3)
-    (run %{exe:test_reduce.exe} -j 3)
-    (run %{exe:test_index.exe} -j 3)
-    (run %{exe:test_ranges.exe} -j 3)
-    (run %{exe:test_sort.exe} -j 3)
-    (run %{exe:test_unique.exe} -j 3)
-    (run %{exe:test_fold.exe} -j 3)
-    (run %{exe:test_assemble.exe} -j 3)
-    (run %{exe:test_linalg.exe} -j 3)
-    (run %{exe:test_attention.exe} -j 3)
-    (run %{exe:test_fft.exe} -j 3)))))
-
-; nx.amd's groups, on the machine's AMD GPU, under the same lock: the
-; suites of the families it computes.
+; The suites' groups on the machine's GPUs, as ../dune's rule of GPU suites
+; runs them: for each kernel library, the suites of the families it
+; computes.
 
 (rule
- (package nx)
- (alias runtest)
- (locks %{workspace_root}/gpu)
- (deps
-  (glob_files golden/kinds/*.golden))
+ (target gpu.suites)
  (action
-  (setenv
-   WINDTRAP_FILTER
-   amd
-   (progn
-    (run %{exe:test_kinds.exe} -j 3)
-    (run %{exe:test_kernels.exe} -j 3)
-    (run %{exe:test_contract.exe} -j 3)
-    (run %{exe:test_reduce.exe} -j 3)
-    (run %{exe:test_index.exe} -j 3)
-    (run %{exe:test_ranges.exe} -j 3)
-    (run %{exe:test_fold.exe} -j 3)
-    (run %{exe:test_assemble.exe} -j 3)
-    (run %{exe:test_fft.exe} -j 3)
-    (run %{exe:test_sort.exe} -j 3)
-    (run %{exe:test_unique.exe} -j 3)
-    (run %{exe:test_linalg.exe} -j 3)))))
+  (with-stdout-to
+   %{target}
+   (run
+    %{exe:../support/suites.exe}
+    list
+    WINDTRAP_FILTER=metal %{dep:test_kernels.exe} -j 3 --
+    WINDTRAP_FILTER=metal %{dep:test_contract.exe} -j 3 --
+    WINDTRAP_FILTER=metal %{dep:test_reduce.exe} -j 3 --
+    WINDTRAP_FILTER=metal %{dep:test_ranges.exe} -j 3 --
+    WINDTRAP_FILTER=metal %{dep:test_fold.exe} -j 3 --
+    WINDTRAP_FILTER=metal %{dep:test_assemble.exe} -j 3 --
+    WINDTRAP_FILTER=metal %{dep:test_fft.exe} -j 3 --
+    WINDTRAP_FILTER=metal %{dep:test_sort.exe} -j 3 --
+    WINDTRAP_FILTER=metal %{dep:test_unique.exe} -j 3 --
+    WINDTRAP_FILTER=metal %{dep:test_linalg.exe} -j 3 --
+    WINDTRAP_FILTER=metal %{dep:test_attention.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_kinds.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_kernels.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_contract.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_reduce.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_index.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_ranges.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_sort.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_unique.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_fold.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_assemble.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_linalg.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_attention.exe} -j 3 --
+    WINDTRAP_FILTER=cuda %{dep:test_fft.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_kinds.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_kernels.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_contract.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_reduce.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_index.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_ranges.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_fold.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_assemble.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_fft.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_sort.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_unique.exe} -j 3 --
+    WINDTRAP_FILTER=amd %{dep:test_linalg.exe} -j 3))))
 
 ; Programs and shapes, through nx.cpu alone.
 

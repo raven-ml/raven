@@ -1450,7 +1450,7 @@ type looped = {
   label : string;
   r : Nx_kernel.reduction;
   scan : bool;
-  x : A.any;
+  x : A.any Lazy.t;
   axis : int;
   takes : Nx_amd.Kernels.t;
   parts : bool option;
@@ -1458,14 +1458,16 @@ type looped = {
 
 let pp_looped ppf c = Format.pp_print_string ppf c.label
 
+(* The operand is drawn when a test first reads it: the suite's declaration
+   runs again in every worker, and the cases hold millions of elements. *)
 let looped label ?(scan = false) ?(specials = 0) ?parts ~takes r dt s axis =
-  let x = (Reduce_cases.example ~specials Sum dt s [| axis |]).x in
+  let x = lazy ((Reduce_cases.example ~specials Sum dt s [| axis |]).x) in
   { label; r; scan; x; axis; takes; parts }
 
 (* [c]'s operand on [b] and fresh destinations, and the call into them. *)
 let prepared (b : Support.backend) c =
   let module K = (val b.kernels) in
-  let (A.Any x as xa) = Reduce_cases.on b c.x in
+  let (A.Any x as xa) = Reduce_cases.on b (Lazy.force c.x) in
   let s = Reduce_cases.shape_of xa in
   let out =
     if c.scan then s

@@ -40,14 +40,26 @@ let gamma dt k =
   let ku = float_of_int k *. unit_roundoff dt in
   ku /. (1. -. ku)
 
-(* ε(k) = k η, η the dtype's least positive subnormal, [k] doubled on
-   complex numbers: what underflow adds to the bounds, times [2^e]. *)
-let epsilon ?(e = 0) dt k =
+(* ε(k) = k η, [k] doubled on complex numbers: what underflow adds to the
+   bounds, times [2^e]. η is the dtype's least positive subnormal, or its least
+   normal number where the library flushes [underflow]. *)
+let epsilon ?(e = 0) ~underflow dt k =
   let k = if is_complex dt then 2 * k else k in
   let eta =
-    match dt with D.Any (D.Float32 | D.Complex64) -> -149 | _ -> -1074
+    match (dt, underflow) with
+    | D.Any (D.Float32 | D.Complex64), Support.Flush -> -126
+    | D.Any (D.Float32 | D.Complex64), Support.Gradual -> -149
+    | _ -> -1074
   in
   float_of_int k *. Float.ldexp 1. (eta + e)
+
+(* Whether [b] computes on [c]'s operands as a′ = 0: a [Subnormal] draw lies
+   wholly below the least normal number, which a backend that flushes reads as
+   zeros of their signs at float32 and complex64. *)
+let zeroed (b : Support.backend) c =
+  match (c.dt, b.underflow, c.scale) with
+  | D.Any (D.Float32 | D.Complex64), Support.Flush, Subnormal -> true
+  | _ -> false
 
 (* Values *)
 
@@ -161,20 +173,24 @@ let worse w ~bound ~residual where =
 let check_worst w = at_most ~msg:w.where float_exact ~than:1. w.ratio
 
 (* L Lᴴ = a + Δ with |Δ_ij| <= γ(c) (|L| |Lᴴ|)_ij + ε(c) (1 + L_jj), c the
-   library's count for order n,
-   over the lower triangle, the other triangle +0, the diagonal real and
-   positive. A subnormal a is checked as 2^2e a = (2^e L) (2^e L)ᴴ. *)
+   library's count for order n, over the lower triangle, the other triangle +0,
+   the diagonal real and positive. A subnormal a is checked as 2^2e a = (2^e L)
+   (2^e L)ᴴ; read as a′ = 0, it is not definite, so NaN. *)
 let law_cholesky bounds (b : Support.backend) c =
   let x = cholesky_operand c in
   match run b (Cholesky Lower) [| laid_out c.how x |] with
   | None -> ()
+  | Some y when zeroed b c ->
+      equal ~msg:"numbers in the factor of a′ = 0" int 0
+        (numbers c.dt (values y.(0)))
   | Some y ->
       let e = (down ~bits:definite_bits c + 1) / 2 in
       let a = up (2 * e) (values x) and l = up e (values y.(0)) in
       let n = c.n in
       let w = { ratio = 0.; where = "" } in
       let k = bounds.cholesky n in
-      let g = gamma c.dt k and h = epsilon ~e:(2 * e) c.dt k in
+      let g = gamma c.dt k
+      and h = epsilon ~underflow:b.underflow ~e:(2 * e) c.dt k in
       for m = 0 to count c - 1 do
         for i = 0 to n - 1 do
           for j = 0 to n - 1 do
@@ -212,21 +228,28 @@ let law_cholesky bounds (b : Support.backend) c =
       check_worst w
 
 (* The Upper factor is the Lower one's conjugate transpose, bit for bit: its
-   diagonal the same, [+0] below it. *)
+   diagonal the same, [+0] below it. Read as a′ = 0, it is NaN. *)
 let law_upper (b : Support.backend) c =
   let x = cholesky_operand c in
-  match (run b (Cholesky Lower) [| x |], run b (Cholesky Upper) [| x |]) with
-  | Some l, Some u ->
-      let n = c.n and l = values l.(0) in
-      let lh =
-        Array.init (Array.length l) (fun k ->
-            let m = k / (n * n) and i = k / n mod n and j = k mod n in
-            if j > i then Complex.conj (at l ~rows:n ~cols:n m j i)
-            else if i = j then at l ~rows:n ~cols:n m i i
-            else Complex.zero)
-      in
-      equal same_bits (bits (of_values c.dt (square c) lh)) (bits u.(0))
-  | _ -> ()
+  if zeroed b c then
+    match run b (Cholesky Upper) [| x |] with
+    | Some u ->
+        equal ~msg:"numbers in the Upper factor of a′ = 0" int 0
+          (numbers c.dt (values u.(0)))
+    | None -> ()
+  else
+    match (run b (Cholesky Lower) [| x |], run b (Cholesky Upper) [| x |]) with
+    | Some l, Some u ->
+        let n = c.n and l = values l.(0) in
+        let lh =
+          Array.init (Array.length l) (fun k ->
+              let m = k / (n * n) and i = k / n mod n and j = k mod n in
+              if j > i then Complex.conj (at l ~rows:n ~cols:n m j i)
+              else if i = j then at l ~rows:n ~cols:n m i i
+              else Complex.zero)
+        in
+        equal same_bits (bits (of_values c.dt (square c) lh)) (bits u.(0))
+    | _ -> ()
 
 (* (op(a) + Δ) x = b + δ with |Δ| <= γ(c) |op(a)| and
    |δ_i| <= ε(c) (1 + |op(a)_ii|) per column, c the library's count, op(a) the triangle read,
@@ -248,7 +271,7 @@ let law_solve bounds (b : Support.backend) c =
       in
       let w = { ratio = 0.; where = "" } in
       let k = bounds.solve n in
-      let g = gamma c.dt k and h = epsilon ~e:d c.dt k in
+      let g = gamma c.dt k and h = epsilon ~underflow:b.underflow ~e:d c.dt k in
       for m = 0 to count c - 1 do
         for i = 0 to n - 1 do
           let h = h *. (1. +. Complex.norm (op m i i)) in
@@ -293,7 +316,7 @@ let law_lu bounds (b : Support.backend) c =
       let k = min m n in
       let w = { ratio = 0.; where = "" } in
       let g = gamma c.dt (bounds.lu k)
-      and h = epsilon ~e:d c.dt (bounds.lu k) in
+      and h = epsilon ~underflow:b.underflow ~e:d c.dt (bounds.lu k) in
       equal ~msg:"numbers" int (numbers c.dt a) (numbers c.dt lu);
       for t = 0 to count c - 1 do
         let p = Array.init m Fun.id in
@@ -337,39 +360,89 @@ let law_lu bounds (b : Support.backend) c =
       done;
       check_worst w
 
-(* a = q r with, per column, ‖a_j − q r_j‖ <= g ‖a_j‖ + √m h; each element
-   of qᴴq − I at most g, g = γ(k(2m + 10)) and h = ε(k(2m + 10)); r +0
-   below its diagonal and real on it, for the [count] matrices of [m] × [n]
-   of [a], q of [qc] columns. [a] and [r] are scaled by 2^e. *)
-let check_qr dt ~e ~count ~m ~n ~qc (a : Complex.t array) (q : Complex.t array)
-    (r : Complex.t array) =
-  let g = gamma dt (min m n * ((2 * m) + 10)) in
-  let h = epsilon ~e dt (min m n * ((2 * m) + 10)) in
-  let w = { ratio = 0.; where = "" } in
+(* check_qr's sums at float32 and complex64, in doubles, for the
+   [count] matrices of [m] x [n] of [a] and [r], q of [qc] columns, each
+   as its real and imaginary parts: the worst of each column's residual
+   ‖a_j − q r_j‖ against [bound ‖a_j‖], and of each element of qᴴq − I
+   against [g], into [w].
+
+   Every operand is a float32 value times a power of two, so a product
+   of two is exact in a double, and a part of a sum of N such terms errs
+   by at most γ'(N − 1) T, γ' the γ of the double's unit roundoff and T
+   the sum of the magnitudes of its terms (recursive summation). T itself
+   is computed from exact products and errs by at most γ'(2N) T, so
+   E = γ'(3N) T computed bounds an element's error, both parts together.
+   A column's residual is then at most its norm computed, times
+   1 + γ'(2m + 8) for the squares, their sum and the square root, plus
+   its elements' E; an element of qᴴq − I at most its magnitude, times
+   1 + γ'(2) for hypot's rounding, plus E.
+   Each check takes those upper bounds, about 2^-29 of the float32 bound
+   they meet, as a double-double sum's would be smaller still at several
+   times the cost. *)
+let plain_qr ~bound ~g ~count ~m ~n ~qc ~w (ar, ai) (qr, qi) (rr, ri) =
+  let gd k = gamma (D.Any D.Float64) k in
   for t = 0 to count - 1 do
-    for i = 0 to qc - 1 do
-      for j = 0 to n - 1 do
-        if j < i then
-          equal ~msg:"r below its diagonal" (pair int64 int64) (0L, 0L)
-            (let v = at r ~rows:qc ~cols:n t i j in
-             (Int64.bits_of_float v.re, Int64.bits_of_float v.im));
-        (* Real: a zero imaginary part of either sign, as an operand's
-           −0 passes through a reflector that leaves it. *)
-        if j = i then
-          equal ~msg:"r's diagonal is real"
-            (Testable.make
-               ~pp:(fun ppf x -> Format.fprintf ppf "%h" x)
-               ~equal:( = ))
-            0. (at r ~rows:qc ~cols:n t i j).im
-      done
+    (* r is zero below its diagonal: column j of q r sums its first
+       j + 1 products. *)
+    for j = 0 to n - 1 do
+      let ps = Int.min j (qc - 1) + 1 in
+      let e = gd (3 * ((2 * ps) + 1)) in
+      let res = ref 0. and norm = ref 0. and err = ref 0. in
+      for i = 0 to m - 1 do
+        let x = (((t * m) + i) * n) + j in
+        let sr = ref ar.(x) and si = ref ai.(x) in
+        let mag = ref (Float.abs ar.(x) +. Float.abs ai.(x)) in
+        for p = 0 to ps - 1 do
+          let y = (((t * m) + i) * qc) + p and z = (((t * qc) + p) * n) + j in
+          let a = qr.(y) and b = qi.(y) and c = rr.(z) and d = ri.(z) in
+          sr := !sr -. (a *. c) +. (b *. d);
+          si := !si -. (a *. d) -. (b *. c);
+          mag :=
+            !mag +. Float.abs (a *. c) +. Float.abs (b *. d)
+            +. Float.abs (a *. d) +. Float.abs (b *. c)
+        done;
+        res := !res +. (!sr *. !sr) +. (!si *. !si);
+        norm := !norm +. (ar.(x) *. ar.(x)) +. (ai.(x) *. ai.(x));
+        err := !err +. (e *. !mag)
+      done;
+      worse w ~bound:(bound (sqrt !norm))
+        ~residual:((sqrt !res *. (1. +. gd ((2 * m) + 8))) +. !err)
+        (fun () -> Printf.sprintf "matrix %d, column %d of a - q r" t j)
     done;
+    (* qᴴq − I is Hermitian: its lower triangle bounds every element. *)
+    let e = gd (3 * ((2 * m) + 1)) in
+    for i = 0 to qc - 1 do
+      for j = 0 to i do
+        let sr = ref (if i = j then -1. else 0.) and si = ref 0. in
+        let mag = ref (if i = j then 1. else 0.) in
+        for p = 0 to m - 1 do
+          let y = (((t * m) + p) * qc) + j and z = (((t * m) + p) * qc) + i in
+          let a = qr.(y) and b = qi.(y) and c = qr.(z) and d = -.qi.(z) in
+          sr := !sr +. (a *. c) -. (b *. d);
+          si := !si +. (a *. d) +. (b *. c);
+          mag :=
+            !mag +. Float.abs (a *. c) +. Float.abs (b *. d)
+            +. Float.abs (a *. d) +. Float.abs (b *. c)
+        done;
+        worse w ~bound:g
+          ~residual:((Float.hypot !sr !si *. (1. +. gd 2)) +. (e *. !mag))
+          (fun () ->
+            Printf.sprintf "matrix %d, element (%d, %d) of qᴴq - I" t i j)
+      done
+    done
+  done
+
+(* check_qr's sums at float64 and complex128, in double-double: their
+   rounding is about 2^-106 of their terms, far below the bounds. *)
+let wide_qr ~bound ~g ~count ~m ~n ~qc ~w a q r =
+  for t = 0 to count - 1 do
     (* r is zero below its diagonal: column j of q r sums its first
        j + 1 products. *)
     for j = 0 to n - 1 do
       let res = ref 0. and norm = ref 0. in
       for i = 0 to m - 1 do
         let s = sum () in
-        let aij = at a ~rows:m ~cols:n t i j in
+        let (aij : Complex.t) = at a ~rows:m ~cols:n t i j in
         add s.re aij.re;
         add s.im aij.im;
         for p = 0 to min j (qc - 1) do
@@ -380,8 +453,7 @@ let check_qr dt ~e ~count ~m ~n ~qc (a : Complex.t array) (q : Complex.t array)
         res := !res +. Complex.norm2 (total s);
         norm := !norm +. Complex.norm2 aij
       done;
-      worse w
-        ~bound:((g *. sqrt !norm) +. (sqrt (float_of_int m) *. h))
+      worse w ~bound:(bound (sqrt !norm))
         ~residual:(sqrt !res)
         (fun () -> Printf.sprintf "matrix %d, column %d of a - q r" t j)
     done;
@@ -401,7 +473,46 @@ let check_qr dt ~e ~count ~m ~n ~qc (a : Complex.t array) (q : Complex.t array)
             Printf.sprintf "matrix %d, element (%d, %d) of qᴴq - I" t i j)
       done
     done
+  done
+
+(* a = q r with, per column, ‖a_j − q r_j‖ <= g ‖a_j‖ + √m h; each element
+   of qᴴq − I at most g, g = γ(k(2m + 10)) and h = ε(k(2m + 10)); r +0
+   below its diagonal and real on it, for the [count] matrices of [m] × [n]
+   of [a], q of [qc] columns. [a] and [r] are scaled by 2^e. *)
+let check_qr ~underflow dt ~e ~count ~m ~n ~qc (a : Complex.t array)
+    (q : Complex.t array) (r : Complex.t array) =
+  let g = gamma dt (min m n * ((2 * m) + 10)) in
+  let h = epsilon ~underflow ~e dt (min m n * ((2 * m) + 10)) in
+  let w = { ratio = 0.; where = "" } in
+  let bound norm = (g *. norm) +. (sqrt (float_of_int m) *. h) in
+  for t = 0 to count - 1 do
+    for i = 0 to qc - 1 do
+      for j = 0 to n - 1 do
+        if j < i then
+          equal ~msg:"r below its diagonal" (pair int64 int64) (0L, 0L)
+            (let v = at r ~rows:qc ~cols:n t i j in
+             (Int64.bits_of_float v.re, Int64.bits_of_float v.im));
+        (* Real: a zero imaginary part of either sign, as an operand's
+           −0 passes through a reflector that leaves it. *)
+        if j = i then
+          equal ~msg:"r's diagonal is real"
+            (Testable.make
+               ~pp:(fun ppf x -> Format.fprintf ppf "%h" x)
+               ~equal:( = ))
+            0. (at r ~rows:qc ~cols:n t i j).im
+      done
+    done
   done;
+  (* A QR of no reflector has a bound of 0: q is exactly I, which plain
+     sums, bounded only to within their error, cannot show. *)
+  (match dt with
+  | D.Any (D.Float32 | D.Complex64) when g > 0. ->
+      let parts v =
+        ( Array.map (fun (c : Complex.t) -> c.re) v,
+          Array.map (fun (c : Complex.t) -> c.im) v )
+      in
+      plain_qr ~bound ~g ~count ~m ~n ~qc ~w (parts a) (parts q) (parts r)
+  | _ -> wide_qr ~bound ~g ~count ~m ~n ~qc ~w a q r);
   check_worst w
 
 (* qr's results meet check_qr's relations, reduced or complete. A subnormal
@@ -414,7 +525,7 @@ let law_qr (b : Support.backend) c =
   | Some y ->
       let d = down c and m = c.n and n = cols in
       let qc = if f = Complete then m else min m n in
-      check_qr c.dt ~e:d ~count:(count c) ~m ~n ~qc
+      check_qr ~underflow:b.underflow c.dt ~e:d ~count:(count c) ~m ~n ~qc
         (up d (values x))
         (values y.(0))
         (up d (values y.(1)))
@@ -517,9 +628,9 @@ let law_layouts (b : Support.backend) c =
    ‖vᴴv − I‖_F <= g, g = γ(16n) and h = ε(16n), for the [count] Hermitian
    matrices of order [n] of [a]; w ascending and real. [a] and [w] are
    scaled by 2^e. *)
-let check_eigh dt ~e ~count ~n (a : Complex.t array) (w : Complex.t array)
-    (v : Complex.t array) =
-  let g = gamma dt (16 * n) and h = epsilon ~e dt (16 * n) in
+let check_eigh ~underflow dt ~e ~count ~n (a : Complex.t array)
+    (w : Complex.t array) (v : Complex.t array) =
+  let g = gamma dt (16 * n) and h = epsilon ~underflow ~e dt (16 * n) in
   let worst = { ratio = 0.; where = "" } in
   for t = 0 to count - 1 do
     let wt j = w.((t * n) + j) in
@@ -566,12 +677,12 @@ let check_eigh dt ~e ~count ~n (a : Complex.t array) (w : Complex.t array)
   done;
   check_worst worst
 
-(* check_eigh's relations, for one matrix too large for its n³ steps, on
-   [k] elements of each difference drawn by [r], each at most the bound
-   on its difference's Frobenius norm. *)
-let check_eigh_sampled dt ~n ~k r (a : Complex.t array) (w : Complex.t array)
-    (v : Complex.t array) =
-  let g = gamma dt (16 * n) and h = epsilon ~e:0 dt (16 * n) in
+(* check_eigh's relations, for one matrix too large for its n³ steps, on [k]
+   elements of each difference drawn by [r], each at most the bound on its
+   difference's Frobenius norm. *)
+let check_eigh_sampled ~underflow dt ~n ~k r (a : Complex.t array)
+    (w : Complex.t array) (v : Complex.t array) =
+  let g = gamma dt (16 * n) and h = epsilon ~underflow ~e:0 dt (16 * n) in
   let norm = Array.fold_left (fun m x -> m +. Complex.norm2 x) 0. a in
   let worst = { ratio = 0.; where = "" } in
   for j = 0 to n - 1 do
@@ -610,7 +721,8 @@ let law_eigh bounds (b : Support.backend) c =
   | Some y, Some y' ->
       let d = down c and n = c.n in
       let a = up d (values x) and w = up d (values y.(0)) in
-      check_eigh c.dt ~e:d ~count:(count c) ~n a w (values y.(1));
+      check_eigh ~underflow:b.underflow c.dt ~e:d ~count:(count c) ~n a w
+        (values y.(1));
       let w' = up d (values y'.(0)) and g = gamma c.dt (16 * n) in
       let h = bounds.alone ~e:d c.dt (16 * n) in
       let worst = { ratio = 0.; where = "" } in
@@ -739,9 +851,11 @@ let check_spectrum (b : Support.backend) ?(vectors = Checked) ?(alone = true)
     match vectors with
     | Unchecked -> ()
     | Checked ->
-        check_eigh dt ~e:0 ~count:1 ~n (values x) (values y.(0)) (values y.(1))
+        check_eigh ~underflow:b.underflow dt ~e:0 ~count:1 ~n (values x)
+          (values y.(0))
+          (values y.(1))
     | Sampled k ->
-        check_eigh_sampled dt ~n ~k
+        check_eigh_sampled ~underflow:b.underflow dt ~n ~k
           (Random.State.make [| n |])
           (values x)
           (values y.(0))
@@ -862,16 +976,18 @@ let test_eigh_two_stage (b : Support.backend) () =
 let svd_bound dt ~m ~n = gamma dt ((16 * max m n) + 100)
 
 (* Its absolute term ε(16 max (m, n) + 100), times 2^e. *)
-let svd_term ~e dt ~m ~n = epsilon ~e dt ((16 * max m n) + 100)
+let svd_term ~underflow ~e dt ~m ~n =
+  epsilon ~underflow ~e dt ((16 * max m n) + 100)
 
 (* a = u diag s vh with ‖a − u diag s vh‖_F <= g ‖a‖_F + h,
    ‖uᴴu − I‖_F <= g and ‖vh vhᴴ − I‖_F <= g, g = svd_bound and
    h = svd_term, for the [count] matrices of [m] × [n] of [a], u of [uc]
    columns and vh of [vr] rows; s real, descending and not negative, a zero
    one +0. [a] and [s] are scaled by 2^e. *)
-let check_svd dt ~e ~count ~m ~n ~uc ~vr (a : Complex.t array)
+let check_svd ~underflow dt ~e ~count ~m ~n ~uc ~vr (a : Complex.t array)
     (s : Complex.t array) (u : Complex.t array) (vh : Complex.t array) =
-  let k = min m n and g = svd_bound dt ~m ~n and h = svd_term ~e dt ~m ~n in
+  let k = min m n and g = svd_bound dt ~m ~n in
+  let h = svd_term ~underflow ~e dt ~m ~n in
   let worst = { ratio = 0.; where = "" } in
   for t = 0 to count - 1 do
     let st j = s.((t * k) + j) in
@@ -986,7 +1102,8 @@ let law_svd bounds (b : Support.backend) c =
       let d = down c in
       let a = up d (values x) and s = up d (values y.(0)) in
       let uc, vr = svd_columns f ~m ~n in
-      check_svd c.dt ~e:d ~count:(count c) ~m ~n ~uc ~vr a s
+      check_svd ~underflow:b.underflow c.dt ~e:d ~count:(count c) ~m ~n ~uc ~vr
+        a s
         (values y.(1))
         (values y.(2));
       check_values bounds c.dt ~e:d ~count:(count c) ~m ~n a s
@@ -1087,7 +1204,7 @@ let law_svd_spread bounds (b : Support.backend) s =
       let e = lift s.sdt in
       let a = up e (values x) and sv = up e (values y.(0)) in
       let uc, vr = svd_columns f ~m ~n in
-      check_svd s.sdt ~e ~count:1 ~m ~n ~uc ~vr a sv
+      check_svd ~underflow:b.underflow s.sdt ~e ~count:1 ~m ~n ~uc ~vr a sv
         (values y.(1))
         (values y.(2));
       check_values bounds s.sdt ~e ~count:1 ~m ~n a sv (up e (values y'.(0)))
@@ -1141,7 +1258,8 @@ let law_svd_spectrum (b : Support.backend) c =
       spectrum ~msg:"alone" (values y.(0));
       spectrum ~msg:"with vectors" (values y'.(0));
       let uc, vr = svd_columns f ~m ~n in
-      check_svd c.dt ~e:0 ~count:1 ~m ~n ~uc ~vr (values x)
+      check_svd ~underflow:b.underflow c.dt ~e:0 ~count:1 ~m ~n ~uc ~vr
+        (values x)
         (values y'.(0))
         (values y'.(1))
         (values y'.(2))
@@ -1150,9 +1268,10 @@ let law_svd_spectrum (b : Support.backend) c =
 (* check_svd's relations, for one matrix too large for its n³ steps, on
    [k] elements of each difference drawn by [r], each at most the bound
    on its difference's Frobenius norm; u and vh reduced. *)
-let check_svd_sampled dt ~m ~n ~k r (a : Complex.t array) (s : Complex.t array)
-    (u : Complex.t array) (vh : Complex.t array) =
-  let p = min m n and g = svd_bound dt ~m ~n and h = svd_term ~e:0 dt ~m ~n in
+let check_svd_sampled ~underflow dt ~m ~n ~k r (a : Complex.t array)
+    (s : Complex.t array) (u : Complex.t array) (vh : Complex.t array) =
+  let p = min m n and g = svd_bound dt ~m ~n in
+  let h = svd_term ~underflow ~e:0 dt ~m ~n in
   let norm = Array.fold_left (fun t x -> t +. Complex.norm2 x) 0. a in
   let worst = { ratio = 0.; where = "" } in
   for j = 0 to p - 1 do
@@ -1264,9 +1383,11 @@ let check_singular (b : Support.backend) ?(vectors = Checked) ?bits dt ~m ~n xa
         spectrum ~msg:"with vectors" s;
         (match vectors with
         | Unchecked -> ()
-        | Checked -> check_svd dt ~e:0 ~count:1 ~m ~n ~uc:k ~vr:k a s u vh
+        | Checked ->
+            check_svd ~underflow:b.underflow dt ~e:0 ~count:1 ~m ~n ~uc:k ~vr:k
+              a s u vh
         | Sampled q ->
-            check_svd_sampled dt ~m ~n ~k:q
+            check_svd_sampled ~underflow:b.underflow dt ~m ~n ~k:q
               (Random.State.make [| m; n |])
               a s u vh);
         agree (Svd (Some Reduced)) y)
@@ -1388,13 +1509,13 @@ let test_scaled bounds (b : Support.backend) () =
       | Some y ->
           numbers_in ~msg:(msg ^ ", eigh") y;
           let a = up e (values x) and w = up e (values y.(0)) in
-          check_eigh dt ~e ~count:1 ~n a w (values y.(1));
+          check_eigh ~underflow:b.underflow dt ~e ~count:1 ~n a w (values y.(1));
           let big =
             Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. l
           in
           let bound =
             (gamma dt (16 * n) *. Float.ldexp (big *. scale) e)
-            +. epsilon ~e dt (16 * n)
+            +. epsilon ~underflow:b.underflow ~e dt (16 * n)
           in
           near ~msg:(msg ^ ", eigh") ~bound
             (Array.map (fun v -> Float.ldexp (v *. scale) e) l)
@@ -1404,7 +1525,7 @@ let test_scaled bounds (b : Support.backend) () =
       | None -> ()
       | Some y ->
           numbers_in ~msg:(msg ^ ", qr") y;
-          check_qr dt ~e ~count:1 ~m:n ~n ~qc:n
+          check_qr ~underflow:b.underflow dt ~e ~count:1 ~m:n ~n ~qc:n
             (up e (values x))
             (values y.(0))
             (up e (values y.(1))));
@@ -1413,7 +1534,8 @@ let test_scaled bounds (b : Support.backend) () =
       | Some y, Some y' ->
           numbers_in ~msg:(msg ^ ", svd") y;
           let a = up e (values x) and s = up e (values y.(0)) in
-          check_svd dt ~e ~count:1 ~m:n ~n ~uc:n ~vr:n a s
+          check_svd ~underflow:b.underflow dt ~e ~count:1 ~m:n ~n ~uc:n ~vr:n a
+            s
             (values y.(1))
             (values y.(2));
           let big =
@@ -1421,7 +1543,7 @@ let test_scaled bounds (b : Support.backend) () =
           in
           let bound =
             (svd_bound dt ~m:n ~n *. Float.ldexp (big *. scale) e)
-            +. svd_term ~e dt ~m:n ~n
+            +. svd_term ~underflow:b.underflow ~e dt ~m:n ~n
           in
           let exact =
             Array.map (fun v -> Float.ldexp (Float.abs v *. scale) e) sigma
@@ -1440,7 +1562,7 @@ let test_scaled bounds (b : Support.backend) () =
 
 (* eig's bound γ(16n), and its absolute term ε(16n) times 2^e. *)
 let eig_bound dt n = gamma dt (16 * n)
-let eig_term ~e dt n = epsilon ~e dt (16 * n)
+let eig_term ~underflow ~e dt n = epsilon ~underflow ~e dt (16 * n)
 
 (* On real a, w's values not real come in adjacent conjugate pairs, the
    one of positive imaginary part first, and its real values have +0
@@ -1492,9 +1614,9 @@ let check_real ~msg ~count ~n (w : Complex.t array) v =
    ‖a v_j − w_j v_j‖₂ <= g ‖a‖_F + h, g = eig_bound and h = eig_term, for
    the [count] matrices of order [n] of [a]. [a] and [w] are scaled by
    2^e. *)
-let check_eig ?(positive = false) dt ~e ~count ~n (a : Complex.t array)
-    (w : Complex.t array) (v : Complex.t array) =
-  let g = eig_bound dt n and h = eig_term ~e dt n in
+let check_eig ?(positive = false) ~underflow dt ~e ~count ~n
+    (a : Complex.t array) (w : Complex.t array) (v : Complex.t array) =
+  let g = eig_bound dt n and h = eig_term ~underflow ~e dt n in
   let worst = { ratio = 0.; where = "" } in
   for t = 0 to count - 1 do
     let norm = ref 0. in
@@ -1544,17 +1666,31 @@ let check_eig ?(positive = false) dt ~e ~count ~n (a : Complex.t array)
 
 (* eig's results meet check_eig's relations, and on real a check_real's,
    with the vectors and without, on matrices balancing leaves with D = I,
-   so that the bounds read with a itself: some it permutes. *)
-let law_eig bounds (b : Support.backend) c =
+   so that the bounds read with a itself: some it permutes. Unless
+   [vectors], the values alone meet check_real's, which states nothing of
+   complex a's values: law_eig_spectrum checks those. *)
+let law_eig ?(vectors = true) bounds (b : Support.backend) c =
   cover "mirrored" (c.seed mod 3 = 0);
   cover "lower triangular" (c.seed mod 3 = 1);
   cover "permuted block triangular" (c.seed mod 3 = 2 && c.n > 2);
   let x = laid_out c.how (eig_operand c) in
+  if not vectors then
+    Option.iter
+      (fun y ->
+        let w = values y.(0) in
+        cover "a real matrix's complex pair"
+          ((not (is_complex c.dt))
+          && Array.exists (fun (z : Complex.t) -> z.im <> 0.) w);
+        if not (is_complex c.dt) then
+          check_real ~msg:"alone" ~count:(count c) ~n:c.n w [||])
+      (run b (Eig false) [| x |])
+  else
   match (run b (Eig true) [| x |], run b (Eig false) [| x |]) with
   | Some y, Some y' ->
       let d = down c and n = c.n and count = count c in
       let w = values y.(0) and v = values y.(1) and w' = values y'.(0) in
-      check_eig ~positive:bounds.positive c.dt ~e:d ~count ~n
+      check_eig ~underflow:b.underflow ~positive:bounds.positive c.dt ~e:d
+        ~count ~n
         (up d (values x))
         (up d w) v;
       let real = not (is_complex c.dt) in
@@ -1570,8 +1706,9 @@ let law_eig bounds (b : Support.backend) c =
    with values on a grid of eighths, or on reals block diagonal with 2 × 2
    blocks [α β; −β α] for the pairs α ± iβ, each eigenvalue is within
    g ‖a‖_F + h of one of B's, with the vectors and without, and the
-   vectors meet check_eig's relations. *)
-let law_eig_spectrum (b : Support.backend) c =
+   vectors meet check_eig's relations; the values alone unless
+   [vectors]. *)
+let law_eig_spectrum ?(vectors = true) (b : Support.backend) c =
   let n = c.n and r = Random.State.make [| c.seed |] in
   let grid () = Float.round (8. *. uniform r) /. 8. in
   let real = not (is_complex c.dt) in
@@ -1624,7 +1761,9 @@ let law_eig_spectrum (b : Support.backend) c =
   let a = Array.init (n * n) (fun p -> hbt.((p mod n * n) + (p / n))) in
   let x = of_values c.dt [| n; n |] a in
   let norm = sqrt (Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. bm) in
-  let bound = (eig_bound c.dt n *. norm) +. eig_term ~e:0 c.dt n in
+  let bound =
+    (eig_bound c.dt n *. norm) +. eig_term ~underflow:b.underflow ~e:0 c.dt n
+  in
   let spectrum ~msg w =
     let worst = { ratio = 0.; where = "" } in
     Array.iteri
@@ -1639,11 +1778,18 @@ let law_eig_spectrum (b : Support.backend) c =
       w;
     check_worst worst
   in
+  if not vectors then
+    Option.iter
+      (fun y -> spectrum ~msg:"alone" (values y.(0)))
+      (run b (Eig false) [| x |])
+  else
   match (run b (Eig false) [| x |], run b (Eig true) [| x |]) with
   | Some y, Some y' ->
       spectrum ~msg:"alone" (values y.(0));
       spectrum ~msg:"with vectors" (values y'.(0));
-      check_eig c.dt ~e:0 ~count:1 ~n (values x) (values y'.(0)) (values y'.(1))
+      check_eig ~underflow:b.underflow c.dt ~e:0 ~count:1 ~n (values x)
+        (values y'.(0))
+        (values y'.(1))
   | _ -> ()
 
 (* A normal matrix whose eigenvalues ±i come twice: its QR iteration leaves two
@@ -1698,7 +1844,9 @@ let test_eig_stalled (b : Support.backend) () =
   in
   let x = of_values dt [| n; n |] a in
   let norm = sqrt (Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. a) in
-  let bound = (eig_bound dt n *. norm) +. eig_term ~e:0 dt n in
+  let bound =
+    (eig_bound dt n *. norm) +. eig_term ~underflow:b.underflow ~e:0 dt n
+  in
   let spectrum ~msg w =
     let worst = { ratio = 0.; where = "" } in
     Array.iteri
@@ -1717,7 +1865,9 @@ let test_eig_stalled (b : Support.backend) () =
   | Some y, Some y' ->
       spectrum ~msg:"alone" (values y.(0));
       spectrum ~msg:"with vectors" (values y'.(0));
-      check_eig dt ~e:0 ~count:1 ~n (values x) (values y'.(0)) (values y'.(1))
+      check_eig ~underflow:b.underflow dt ~e:0 ~count:1 ~n (values x)
+        (values y'.(0))
+        (values y'.(1))
   | _ -> failf "eig declined a float32 matrix of order 4"
 
 (* Balancing at work: a = G A G⁻¹ for A tridiagonal [1 2 1] and G =
@@ -1750,7 +1900,10 @@ let test_eig_balanced (b : Support.backend) () =
       | None -> ()
       | Some y ->
           let w = values y.(0) and v = values y.(1) in
-          let bound = (eig_bound dt n *. bnorm) +. eig_term ~e:0 dt n in
+          let bound =
+            (eig_bound dt n *. bnorm)
+            +. eig_term ~underflow:b.underflow ~e:0 dt n
+          in
           let worst = { ratio = 0.; where = "" } in
           for j = 0 to n - 1 do
             let res = ref 0. and len = ref 0. in
@@ -1795,7 +1948,11 @@ let test_eig_extremes (b : Support.backend) () =
     match run b (Eig true) [| x |] with
     | None -> ()
     | Some y ->
-        let bound = 3. *. ((4. *. eig_bound dt 2) +. eig_term ~e:0 dt 2) in
+        let bound =
+          3.
+          *. ((4. *. eig_bound dt 2)
+             +. eig_term ~underflow:b.underflow ~e:0 dt 2)
+        in
         let worst = { ratio = 0.; where = "" } in
         Array.iteri
           (fun j (z : Complex.t) ->
@@ -1835,7 +1992,7 @@ let test_eig_subnormal_pair (b : Support.backend) () =
       | Some y, Some y' ->
           let w = values y.(0) and v = values y.(1) and w' = values y'.(0) in
           let msg = Format.asprintf "%a" pp_dtype dt in
-          check_eig dt ~e ~count:1 ~n (up e a) (up e w) v;
+          check_eig ~underflow:b.underflow dt ~e ~count:1 ~n (up e a) (up e w) v;
           check_real ~msg:(msg ^ " with vectors") ~count:1 ~n w v;
           check_real ~msg:(msg ^ " alone") ~count:1 ~n w' [||]
       | _ -> ())
@@ -1914,7 +2071,7 @@ let test_wilkinson (b : Support.backend) () =
       match (run b (Eig true) [| x |], run b (Eig false) [| x |]) with
       | Some y, Some y' ->
           let w = values y.(0) and v = values y.(1) and w' = values y'.(0) in
-          check_eig dt ~e:0 ~count:1 ~n a w v;
+          check_eig ~underflow:b.underflow dt ~e:0 ~count:1 ~n a w v;
           if not (is_complex dt) then begin
             check_real ~msg:(msg ^ " with vectors") ~count:1 ~n w v;
             check_real ~msg:(msg ^ " alone") ~count:1 ~n w' [||]
@@ -1925,7 +2082,9 @@ let test_wilkinson (b : Support.backend) () =
                 sqrt (Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. a)
               in
               let bound =
-                2. *. ((eig_bound dt n *. norm) +. eig_term ~e:0 dt n)
+                2.
+                *. ((eig_bound dt n *. norm)
+                   +. eig_term ~underflow:b.underflow ~e:0 dt n)
               in
               let eigh = values z.(0) in
               List.iter
@@ -2102,7 +2261,9 @@ let test_eigh_secular (b : Support.backend) () =
   let x = of_values dt [| n; n |] a in
   match run b (Eigh true) [| x |] with
   | Some y ->
-      check_eigh dt ~e:0 ~count:1 ~n (values x) (values y.(0)) (values y.(1))
+      check_eigh ~underflow:b.underflow dt ~e:0 ~count:1 ~n (values x)
+        (values y.(0))
+        (values y.(1))
   | None -> ()
 
 (* Matrices whose first row past its diagonal is tiny beside the rest,
@@ -2131,7 +2292,8 @@ let test_svd_tiny_rows (b : Support.backend) () =
       let x = of_values dt [| 4; 4 |] a in
       match run b (Svd (Some Reduced)) [| x |] with
       | Some y ->
-          check_svd dt ~e:0 ~count:1 ~m:4 ~n:4 ~uc:4 ~vr:4 (values x)
+          check_svd ~underflow:b.underflow dt ~e:0 ~count:1 ~m:4 ~n:4 ~uc:4
+            ~vr:4 (values x)
             (values y.(0))
             (values y.(1))
             (values y.(2))
@@ -2159,7 +2321,8 @@ let test_svd_spread_row bounds (b : Support.backend) () =
       let x = of_values dt [| 3; 3 |] a in
       match (run b (Svd (Some Reduced)) [| x |], run b (Svd None) [| x |]) with
       | Some y, Some y' ->
-          check_svd dt ~e:0 ~count:1 ~m:3 ~n:3 ~uc:3 ~vr:3 (values x)
+          check_svd ~underflow:b.underflow dt ~e:0 ~count:1 ~m:3 ~n:3 ~uc:3
+            ~vr:3 (values x)
             (values y.(0))
             (values y.(1))
             (values y.(2));
@@ -2210,7 +2373,7 @@ let test_svd_deficient bounds (b : Support.backend) dt =
   match (run b (Svd (Some Reduced)) [| x |], run b (Svd None) [| x |]) with
   | Some y, Some y' ->
       let a = values x and s = values y.(0) in
-      check_svd dt ~e:0 ~count ~m:n ~n ~uc:n ~vr:n a s
+      check_svd ~underflow:b.underflow dt ~e:0 ~count ~m:n ~n ~uc:n ~vr:n a s
         (values y.(1))
         (values y.(2));
       check_values bounds dt ~e:0 ~count ~m:n ~n a s (values y'.(0))
@@ -2235,7 +2398,7 @@ let test_svd_pairs bounds (b : Support.backend) dt =
   match (run b (Svd (Some Reduced)) [| x |], run b (Svd None) [| x |]) with
   | Some y, Some y' ->
       let a = values x and s = values y.(0) in
-      check_svd dt ~e:0 ~count ~m:n ~n ~uc:n ~vr:n a s
+      check_svd ~underflow:b.underflow dt ~e:0 ~count ~m:n ~n ~uc:n ~vr:n a s
         (values y.(1))
         (values y.(2));
       check_values bounds dt ~e:0 ~count ~m:n ~n a s (values y'.(0))
@@ -2371,7 +2534,8 @@ let test_qr_scaled (b : Support.backend) () =
                         (numbers dt w))
                     y;
                   let k = min m n in
-                  check_qr dt ~e ~count ~m ~n ~qc:k (up e v)
+                  check_qr ~underflow:b.underflow dt ~e ~count ~m ~n ~qc:k
+                    (up e v)
                     (values y.(0))
                     (up e (values y.(1))))
             scales)
@@ -2392,14 +2556,22 @@ let test_qr_scaled (b : Support.backend) () =
    bits and two more); a fused multiply-add rounds its exact value once. *)
 let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
-(* fma in float32: the exact a b + c is s + e (a b exact in a double,
-   TwoSum); s rounded to float32 is the result unless s is the midpoint of
-   two float32s, where e breaks the tie. *)
-let fmaf a b c =
+(* A zero of [x]'s sign where [x] is below float32's least normal number: what a
+   library that flushes [underflow] reads of a subnormal operand, and gives for
+   a result below it. *)
+let flush32 x = if Float.abs x < 0x1p-126 then Float.copy_sign 0. x else x
+
+(* The exact a b + c of float32s as s + e: a b is exact in a double, and TwoSum
+   gives the error of its sum. *)
+let[@inline] fma_exact a b c =
   let p = a *. b in
   let s = p +. c in
   let z = s -. p in
-  let e = p -. (s -. z) +. (c -. z) in
+  (s, p -. (s -. z) +. (c -. z))
+
+(* s + e rounded to float32: s's rounding unless s is the midpoint of two
+   float32s, where e breaks the tie. *)
+let[@inline] round_exact s e =
   let r = round32 s in
   if e = 0. || r = s then r
   else
@@ -2414,17 +2586,81 @@ let fmaf a b c =
     let other = step r (s > r) in
     if s -. r = other -. s then if e > 0. = (other > r) then other else r else r
 
+let[@inline] fmaf a b c =
+  let s, e = fma_exact a b c in
+  round_exact s e
+
+(* fma in float32 where results below the least normal number flush: the exact s
+   + e, not its rounding, decides. The product is not flushed, as nx_kinds.h
+   states of Metal: fma(2^-64, 2^-64, 2^-126) is 1.25 2^-126. *)
+let[@inline] fmaf_flush a b c =
+  let s, e = fma_exact a b c in
+  let below =
+    Float.abs s < 0x1p-126
+    || Float.abs s = 0x1p-126
+       && e <> 0.
+       && Float.sign_bit e <> Float.sign_bit s
+  in
+  if below then Float.copy_sign 0. s else round_exact s e
+
+(* A format's fused multiply-add, named, so that a loop calls it directly. *)
+type fused = Fmaf | Fmaf_flush | Fma
+
+let[@inline] fused f a b c =
+  match f with
+  | Fmaf -> fmaf a b c
+  | Fmaf_flush -> fmaf_flush a b c
+  | Fma -> Float.fma a b c
+
+(* A format's arithmetic: its fused multiply-add, as a function and by name,
+   the rounding of a double's result into it, its reads of an operand, and
+   nx_kinds.h's constants for Fdiv's scaling of a tiny dividend. *)
 type arith = {
   fma : float -> float -> float -> float;
+  fused : fused;
   rnd : float -> float;
+  read : float -> float;
   cx : bool;
+  tiny : float;
+  up : float;
+  down : float;
 }
 
-let arith (D.Any dt as d) =
+let arith ~underflow (D.Any dt as d) =
   let cx = is_complex d in
-  match dt with
-  | D.Float32 | D.Complex64 -> { fma = fmaf; rnd = round32; cx }
-  | _ -> { fma = Float.fma; rnd = Fun.id; cx }
+  let f32 =
+    {
+      fma = fmaf;
+      fused = Fmaf;
+      rnd = round32;
+      read = Fun.id;
+      cx;
+      tiny = 0x1p-102;
+      up = 0x1p25;
+      down = 0x1p-25;
+    }
+  in
+  match (dt, underflow) with
+  | (D.Float32 | D.Complex64), Support.Gradual -> f32
+  | (D.Float32 | D.Complex64), Support.Flush ->
+      let rnd x = round32 (flush32 x) in
+      { f32 with fma = fmaf_flush; fused = Fmaf_flush; rnd; read = flush32 }
+  | _ ->
+      {
+        fma = Float.fma;
+        fused = Fma;
+        rnd = Fun.id;
+        read = Fun.id;
+        cx;
+        tiny = 0x1p-969;
+        up = 0x1p54;
+        down = 0x1p-54;
+      }
+
+(* The operands as the routine reads them. *)
+let read ar =
+  Array.map (fun (z : Complex.t) ->
+      { Complex.re = ar.read z.re; im = ar.read z.im })
 
 (* c + a b: one fused multiply-add on reals, two a part on complex
    numbers, the terms in nx_kernel.mli's order. *)
@@ -2437,40 +2673,57 @@ let mac ar (c : Complex.t) (a : Complex.t) (b : Complex.t) =
 
 let nmac ar c (a : Complex.t) b = mac ar c (Complex.neg a) b
 
-(* Each x / d: by d's real part where its imaginary part is 0, else
-   nx.cpu's Fdiv, which the GPU libraries share (nx_kinds.h), in one
-   call. *)
-let divd dt ar (xs : Complex.t array) (d : Complex.t) =
+(* Each x / d: by d's real part where its imaginary part is 0, else Smith's
+   quotient as nx_kinds.h's Fdiv computes it, each operation in the format: p
+   the divisor's larger part and q the other, r = q / p, x and y the dividend's
+   parts in the same roles, scaled up first where both are below [tiny]. *)
+let divd ar (xs : Complex.t array) (d : Complex.t) =
+  let div x y = ar.rnd (x /. y) and mul x y = ar.rnd (x *. y) in
   if d.im = 0. then
     Array.map
       (fun (x : Complex.t) ->
-        { Complex.re = ar.rnd (x.re /. d.re); im = ar.rnd (x.im /. d.re) })
+        { Complex.re = div x.re d.re; im = div x.im d.re })
       xs
-  else if Array.length xs = 0 then [||]
   else
-    let n = Array.length xs in
-    let (A.Any xa) = of_values dt [| n |] xs in
-    let da = A.expect (A.dtype xa) (of_values dt [| n |] (Array.make n d)) in
-    let dst = A.create Rig.host (A.dtype xa) (Iarray.of_array [| n |]) in
-    match
-      Support.map2 (module Nx_cpu) (Nx_kernel.Prog.Binary Fdiv) ~dst xa da
-    with
-    | A.Done -> values (A.Any dst)
-    | _ -> failwith "Fdiv"
+    let big = Float.abs d.re >= Float.abs d.im in
+    let p = if big then d.re else d.im and q = if big then d.im else d.re in
+    let r = div q p in
+    let den = ar.fma r q p in
+    Array.map
+      (fun (a : Complex.t) ->
+        let tiny = Float.abs a.re < ar.tiny && Float.abs a.im < ar.tiny in
+        let up = if tiny then ar.up else 1. in
+        let down = if tiny then ar.down else 1. in
+        let are = mul a.re up and aim = mul a.im up in
+        let x = if big then are else aim and y = if big then aim else are in
+        let im = if big then ar.fma (-.r) x y else ar.fma r x (-.y) in
+        {
+          Complex.re = mul (div (ar.fma r y x) den) down;
+          im = mul (div im den) down;
+        })
+      xs
 
 let is_zero (z : Complex.t) = z.re = 0. && z.im = 0.
 
-(* LU's factors, pivots and perm of the m x n matrix [a], the unblocked
-   right-looking algorithm with the contract's search. *)
-let lu_ref dt ~m ~n (a : Complex.t array) =
-  let ar = arith dt in
-  let a = Array.copy a and k = min m n in
-  let mag (z : Complex.t) = ar.rnd (Float.abs z.re +. Float.abs z.im) in
+(* LU's factors, as {!bits}' parts, pivots and perm of the m x n matrix
+   [x], the unblocked right-looking algorithm with the contract's search.
+   The update, about m n² multiply-adds, runs on the parts by the format's
+   named fma: tall operands take tens of millions. *)
+let lu_ref ~underflow ~m ~n x =
+  let (A.Any x0) = x in
+  let ar = arith ~underflow (D.Any (A.dtype x0)) in
+  let w = if ar.cx then 2 else 1 in
+  let a = Array.map ar.read (bits x) and k = min m n in
+  let at i j = ((i * n) + j) * w in
+  let im p = if w = 2 then a.(p + 1) else 0. in
+  let elt p = { Complex.re = a.(p); im = im p } in
+  let mag p = ar.rnd (Float.abs a.(p) +. Float.abs (im p)) in
   let piv = Array.make k 0 and perm = Array.init m Fun.id in
+  let f = ar.fused in
   for j = 0 to k - 1 do
-    let p = ref j and best = ref (mag a.((j * n) + j)) in
+    let p = ref j and best = ref (mag (at j j)) in
     for i = j + 1 to m - 1 do
-      let g = mag a.((i * n) + j) in
+      let g = mag (at i j) in
       if g > !best then begin
         best := g;
         p := i
@@ -2478,33 +2731,46 @@ let lu_ref dt ~m ~n (a : Complex.t array) =
     done;
     piv.(j) <- !p;
     if !p <> j then begin
-      for c = 0 to n - 1 do
-        let t = a.((j * n) + c) in
-        a.((j * n) + c) <- a.((!p * n) + c);
-        a.((!p * n) + c) <- t
+      for c = 0 to (w * n) - 1 do
+        let t = a.(at j 0 + c) in
+        a.(at j 0 + c) <- a.(at !p 0 + c);
+        a.(at !p 0 + c) <- t
       done;
       let t = perm.(j) in
       perm.(j) <- perm.(!p);
       perm.(!p) <- t
     end;
-    let d = a.((j * n) + j) in
-    let below = Array.init (m - j - 1) (fun t -> a.(((j + 1 + t) * n) + j)) in
-    let ls = if is_zero d then below else divd dt ar below d in
+    let d = elt (at j j) in
+    let below = Array.init (m - j - 1) (fun t -> elt (at (j + 1 + t) j)) in
+    let ls = if is_zero d then below else divd ar below d in
     for i = j + 1 to m - 1 do
       let l = ls.(i - j - 1) in
-      a.((i * n) + j) <- l;
-      for c = j + 1 to n - 1 do
-        a.((i * n) + c) <- nmac ar a.((i * n) + c) l a.((j * n) + c)
-      done
+      let p = at i j in
+      a.(p) <- l.re;
+      if w = 2 then a.(p + 1) <- l.im;
+      (* nmac: c - l u, as mac's terms. *)
+      if w = 1 then
+        for c = j + 1 to n - 1 do
+          let p = at i c in
+          a.(p) <- fused f (-.l.re) a.(at j c) a.(p)
+        done
+      else
+        for c = j + 1 to n - 1 do
+          let p = at i c and q = at j c in
+          let re = fused f (-.l.re) a.(q) a.(p) in
+          let im = fused f (-.l.re) a.(q + 1) a.(p + 1) in
+          a.(p) <- fused f l.im a.(q + 1) re;
+          a.(p + 1) <- fused f (-.l.im) a.(q) im
+        done
     done
   done;
   (a, piv, perm)
 
 (* Cholesky's lower factor of the n x n [a], or None where a pivot is not
    positive. *)
-let cholesky_ref dt ~n (a : Complex.t array) =
-  let ar = arith dt in
-  let a = Array.copy a in
+let cholesky_ref ~underflow dt ~n (a : Complex.t array) =
+  let ar = arith ~underflow dt in
+  let a = read ar a in
   let ok = ref true in
   for j = 0 to n - 1 do
     let d = a.((j * n) + j).re in
@@ -2512,9 +2778,7 @@ let cholesky_ref dt ~n (a : Complex.t array) =
     let s = ar.rnd (Float.sqrt d) in
     let sd = { Complex.re = s; im = 0. } in
     let col =
-      divd dt ar
-        (Array.init (n - j - 1) (fun t -> a.(((j + 1 + t) * n) + j)))
-        sd
+      divd ar (Array.init (n - j - 1) (fun t -> a.(((j + 1 + t) * n) + j))) sd
     in
     Array.iteri (fun t l -> a.(((j + 1 + t) * n) + j) <- l) col;
     a.((j * n) + j) <- sd;
@@ -2531,13 +2795,14 @@ let cholesky_ref dt ~n (a : Complex.t array) =
 
 (* x with op(a) x = b, n x n [a] and n x r [b], substituting from the first
    row of a lower op(a), from the last of an upper one. *)
-let solve_ref dt ~n ~r ~upper ~adjoint ~unit (a : Complex.t array)
+let solve_ref ~underflow dt ~n ~r ~upper ~adjoint ~unit (a : Complex.t array)
     (b : Complex.t array) =
-  let ar = arith dt in
+  let ar = arith ~underflow dt in
+  let a = read ar a in
   let op i q =
     if adjoint then Complex.conj a.((q * n) + i) else a.((i * n) + q)
   in
-  let x = Array.copy b in
+  let x = read ar b in
   let zero = ref false in
   for t = 0 to n - 1 do
     let i = if upper then n - 1 - t else t in
@@ -2554,7 +2819,7 @@ let solve_ref dt ~n ~r ~upper ~adjoint ~unit (a : Complex.t array)
       if unit then row
       else begin
         if is_zero (op i i) then zero := true;
-        divd dt ar row (op i i)
+        divd ar row (op i i)
       end
     in
     Array.blit row 0 x (i * r) r
@@ -2576,8 +2841,8 @@ let lu_unblocked (b : Support.backend) c =
   | None -> ()
   | Some y ->
       let m = c.n in
-      let lu, piv, perm = lu_ref dt ~m ~n:cols (values x) in
-      same "lu" (of_values dt [| m; cols |] lu) y.(0);
+      let lu, piv, perm = lu_ref ~underflow:b.underflow ~m ~n:cols x in
+      same "lu" (of_parts dt [| m; cols |] lu) y.(0);
       equal ~msg:"lu's pivots" (array int) piv (int64s y.(1));
       equal ~msg:"lu's perm" (array int) perm (int64s y.(2))
 
@@ -2589,7 +2854,7 @@ let law_unblocked (b : Support.backend) c =
    match run b (Cholesky Lower) [| x |] with
    | None -> ()
    | Some y -> (
-       match cholesky_ref dt ~n:c.n (values x) with
+       match cholesky_ref ~underflow:b.underflow dt ~n:c.n (values x) with
        | Some l -> same "cholesky" (of_values dt (square c) l) y.(0)
        | None -> equal ~msg:"cholesky fails" int 0 (numbers dt (values y.(0)))));
   let ops = solve_operands c in
@@ -2598,21 +2863,28 @@ let law_unblocked (b : Support.backend) c =
   | Some y ->
       let upper = c.triangle = Upper <> c.adjoint in
       let x =
-        solve_ref dt ~n:c.n ~r:c.r ~upper ~adjoint:c.adjoint
-          ~unit:c.unit_diagonal
+        solve_ref ~underflow:b.underflow dt ~n:c.n ~r:c.r ~upper
+          ~adjoint:c.adjoint ~unit:c.unit_diagonal
           (values ops.(0))
           (values ops.(1))
       in
       same "solve" (of_values dt [| c.n; c.r |] x) y.(0)
 
-(* Matrix [k] of a batch of one batch axis. *)
+(* Matrix [k] of a batch of one batch axis, a fresh C-contiguous array on
+   the host: its bytes alone move. *)
 let alone k (A.Any x) =
-  let l = A.layout x in
-  let shape = Iarray.to_array (Nx_array.Layout.shape l) in
-  let one = Array.sub shape 1 (Array.length shape - 1) in
-  let v = values (A.Any x) in
-  let per = Array.fold_left ( * ) 1 one in
-  of_values (D.Any (A.dtype x)) one (Array.sub v (k * per) per)
+  let s = Nx_array.Layout.shape (A.layout x) in
+  let r = Iarray.length s in
+  let range i e =
+    if i = 0 then { M.start = k; count = 1; step = 1 }
+    else { M.start = 0; count = e; step = 1 }
+  in
+  let one = Iarray.init (r - 1) (fun i -> Iarray.get s (i + 1)) in
+  let v = Option.get (A.move (M.Slice (Iarray.mapi range s)) x) in
+  let v = Option.get (A.move (M.Reshape one) v) in
+  let y = A.create Rig.host (A.dtype x) one in
+  A.transfer ~src:v ~dst:y;
+  A.Any y
 
 (* The first matrix of [x], of one batch axis, as a view. *)
 let first (A.Any x) =

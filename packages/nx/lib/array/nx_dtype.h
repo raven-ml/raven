@@ -368,6 +368,24 @@ NX_INLINE float nx_bits_to_float(int dt, uint32_t c) {
   }
 }
 
+/* A binary32 into an integer: [x] toward zero, saturated to [[lo, hi]],
+   an integer dtype's range of at most 32 bits, NaN to 0, as the low 32
+   bits of the result. It computes in binary32, so that a loop over values
+   vectorises at its width, and runs on Metal too. A value is clamped to hi
+   where binary32 holds hi, as it does every bound of a range of 16 bits or
+   less. Otherwise it is clamped to the binary32 below hi + 1, which
+   truncates to at most hi, and one from hi + 1 on selects hi. */
+NX_INLINE uint32_t nx_float_to_int(float x, int64_t lo, int64_t hi) {
+  float top = (float)(hi + 1);
+  int exact = (int64_t)(float)hi == hi;
+  float cap = exact ? (float)hi : nx_bits_float(nx_float_bits(top) - 1);
+  float y = x == x ? x : 0.0f;
+  y = y < (float)lo ? (float)lo : y;
+  y = y < cap ? y : cap;
+  uint32_t t = lo < 0 ? (uint32_t)(int32_t)y : (uint32_t)y;
+  return !exact && x >= top ? (uint32_t)hi : t;
+}
+
 /* Doubles
 
    A double narrows to binary32 by rounding to odd: truncating, then setting
@@ -486,23 +504,6 @@ NX_INLINE int64_t nx_double_to_int(double x, int64_t lo, int64_t hi) {
   y = y < (double)lo ? (double)lo : y;
   y = y > (double)hi ? (double)hi : y;
   return (int64_t)y;
-}
-
-/* nx_double_to_int of a binary32, computed in binary32 so that a loop over
-   values vectorises at its width: the low 32 bits of the result. [[lo, hi]]
-   is an integer dtype's range of at most 32 bits. A value is clamped to hi
-   where binary32 holds hi, as it does every bound of a range of 16 bits or
-   less. Otherwise it is clamped to the binary32 below hi + 1, which
-   truncates to at most hi, and one from hi + 1 on selects hi. */
-NX_INLINE uint32_t nx_float_to_int(float x, int64_t lo, int64_t hi) {
-  float top = (float)(hi + 1);
-  int exact = (int64_t)(float)hi == hi;
-  float cap = exact ? (float)hi : nx_bits_float(nx_float_bits(top) - 1);
-  float y = x == x ? x : 0.0f;
-  y = y < (float)lo ? (float)lo : y;
-  y = y < cap ? y : cap;
-  uint32_t t = lo < 0 ? (uint32_t)(int32_t)y : (uint32_t)y;
-  return !exact && x >= top ? (uint32_t)hi : t;
 }
 
 /* The bits a store of [x] writes into an element of the integer, boolean or

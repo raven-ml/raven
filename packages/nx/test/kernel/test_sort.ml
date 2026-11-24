@@ -198,7 +198,7 @@ let sort_on (b : Support.backend) c =
   Rig.Buffer.fill (A.buffer values) '\xA5';
   Rig.Buffer.fill (A.buffer positions) '\xA5';
   match K.sort ~axis:c.axis ~descending:c.descending ~values ~positions x with
-  | A.Done -> Some (A.Any values, A.Any positions)
+  | A.Done -> (A.Any values, A.Any positions)
   | A.Declined -> failf "%s declined a sort" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
@@ -239,12 +239,10 @@ let expected c =
   (values, ps)
 
 let agrees (b : Support.backend) c =
-  match sort_on b c with
-  | None -> ()
-  | Some (v, p) ->
-      let ev, ep = expected c in
-      equal ~msg:"positions" (array int64) ep (positions p);
-      equal ~msg:"values" (array string) ev (elements v)
+  let v, p = sort_on b c in
+  let ev, ep = expected c in
+  equal ~msg:"positions" (array int64) ep (positions p);
+  equal ~msg:"values" (array string) ev (elements v)
 
 let law_reference (b : Support.backend) c =
   let n = (shape_of c.x).(c.axis) in
@@ -424,35 +422,30 @@ let law_aligned (b : Support.backend) c =
 
 (* The values are the operand's elements at the positions along the axis. *)
 let law_values_at_positions (b : Support.backend) c =
-  match sort_on b c with
-  | None -> ()
-  | Some (v, p) ->
-      let s = shape_of c.x and es = elements c.x and ps = positions p in
-      let y = shape_of v in
-      let at =
-        Array.mapi
-          (fun k q ->
-            let i = index_of y k in
-            i.(c.axis) <- Int64.to_int q;
-            es.(flat s i))
-          ps
-      in
-      equal (array string) at (elements v)
+  let v, p = sort_on b c in
+  let s = shape_of c.x and es = elements c.x and ps = positions p in
+  let y = shape_of v in
+  let at =
+    Array.mapi
+      (fun k q ->
+        let i = index_of y k in
+        i.(c.axis) <- Int64.to_int q;
+        es.(flat s i))
+      ps
+  in
+  equal (array string) at (elements v)
 
 (* Keeping k gives the first k of the whole sort. *)
 let law_prefix (b : Support.backend) c =
-  match (sort_on b { c with k = None }, sort_on b c) with
-  | Some (fv, fp), Some (v, p) ->
-      let y = shape_of v and s = shape_of fv in
-      let prefix a =
-        Array.init (total y) (fun k ->
-            let i = index_of y k in
-            a.(flat s i))
-      in
-      equal ~msg:"positions" (array int64) (prefix (positions fp)) (positions p);
-      equal ~msg:"values" (array string) (prefix (elements fv)) (elements v)
-  | None, None -> ()
-  | _ -> failf "%s declined one of the two" b.name
+  let fv, fp = sort_on b { c with k = None } and v, p = sort_on b c in
+  let y = shape_of v and s = shape_of fv in
+  let prefix a =
+    Array.init (total y) (fun k ->
+        let i = index_of y k in
+        a.(flat s i))
+  in
+  equal ~msg:"positions" (array int64) (prefix (positions fp)) (positions p);
+  equal ~msg:"values" (array string) (prefix (elements fv)) (elements v)
 
 (* Refusals *)
 
@@ -661,14 +654,16 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
         [
           prop "of sorts" cases (fun c ->
               agree (fun b ->
-                  match sort_on b c with Some (v, p) -> [| v; p |] | None -> [||]));
+                  let v, p = sort_on b c in
+                  [| v; p |]));
           prop ~count:12 ~examples:long_examples "of long sorts" long (fun c ->
               let (D.Any d) = dtype_of c.x in
               let n = (shape_of c.x).(c.axis) in
               cover "keeps more than 1024, not all" (kept c > 1024 && kept c < n);
               cover "16-byte keys past 2048" (D.bits d = 128 && n > 2048);
               agree (fun b ->
-                  match sort_on b c with Some (v, p) -> [| v; p |] | None -> [||]));
+                  let v, p = sort_on b c in
+                  [| v; p |]));
         ];
     ]
 
@@ -680,7 +675,10 @@ let () =
   in
   exit
     (Windtrap.run "nx_kernel.sort"
-       (List.map laws (Support.backends () @ Option.to_list (Support.amd ()))
+       (List.map laws
+          (Support.backends ()
+          @ Option.to_list (Support.amd ())
+          @ Option.to_list (Support.metal ()))
        @ [ cpu Support.cpu ]
        @ List.map cuda (Support.gpus ())
        @ nv))

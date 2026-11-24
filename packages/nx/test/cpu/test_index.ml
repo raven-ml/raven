@@ -361,13 +361,15 @@ let blocked_examples =
       ~m:600_000 cycled
   in
   [
-    ex D.Float16 ~m:600_000 cycled;
-    ex D.Bfloat16 ~m:600_000 ~tv:{ (plain 1) with reversed = Some 0 } late;
-    ex D.Float8_e4m3fn ~m:600_000
-      ~uv:{ (plain 1) with stepped = true; reversed = Some 0 }
-      cycled;
-    f32 Nx_kernel.Set;
-    f32 Nx_kernel.Max;
+    lazy (ex D.Float16 ~m:600_000 cycled);
+    lazy
+      (ex D.Bfloat16 ~m:600_000 ~tv:{ (plain 1) with reversed = Some 0 } late);
+    lazy
+      (ex D.Float8_e4m3fn ~m:600_000
+         ~uv:{ (plain 1) with stepped = true; reversed = Some 0 }
+         cycled);
+    lazy (f32 Nx_kernel.Set);
+    lazy (f32 Nx_kernel.Max);
   ]
 
 (* Sums and extremes whose result is the same in any order of the updates,
@@ -376,8 +378,9 @@ let blocked_examples =
    and updates through a stepped and reversed view; and booleans'. *)
 let owned_examples =
   let ex ?(ts = [| 1000 |]) ?broadcast ?uv d combine =
-    scatter_example (D.Any d) combine ~ts ~axis:0 ~m:200_000 ?broadcast ?uv
-      cycled
+    lazy
+      (scatter_example (D.Any d) combine ~ts ~axis:0 ~m:200_000 ?broadcast ?uv
+         cycled)
   in
   [
     ex D.Int64 Nx_kernel.Add;
@@ -396,8 +399,9 @@ let owned_examples =
   let twos _ r = if Random.State.bool r then "\002" else "\000" in
   List.map
     (fun combine ->
-      scatter_example (D.Any D.Bool) combine ~ts:[| 1000 |] ~axis:0
-        ~m:200_000 ~draw:twos short)
+      lazy
+        (scatter_example (D.Any D.Bool) combine ~ts:[| 1000 |] ~axis:0
+           ~m:200_000 ~draw:twos short))
     Nx_kernel.[ Max; Min ]
 
 (* [x] as an element of the float or complex dtype [d], both parts [x]. *)
@@ -438,42 +442,46 @@ let extremes d combine =
 
 let float_extremes =
   List.concat_map
-    (fun d -> List.map (extremes d) Nx_kernel.[ Max; Min ])
+    (fun d -> List.map (fun c -> lazy (extremes d c)) Nx_kernel.[ Max; Min ])
     nan_dtypes
 
 (* An embedding gradient's rows: into transposed and the updates stepped
    and reversed; a narrow float's sum of half a million updates. *)
 let row_examples =
   [
-    scatter_example (D.Any D.Float32) Nx_kernel.Add ~ts:[| 1000; 5 |] ~axis:0
-      ~m:70_000 ~broadcast:[ 1 ]
-      ~tv:{ (plain 2) with perm = [| 1; 0 |] }
-      ~uv:{ (plain 2) with stepped = true; reversed = Some 0 }
-      cycled;
-    scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 1000; 2 |] ~axis:0
-      ~m:530_000 ~broadcast:[ 1 ] cycled;
+    lazy
+      (scatter_example (D.Any D.Float32) Nx_kernel.Add ~ts:[| 1000; 5 |] ~axis:0
+         ~m:70_000 ~broadcast:[ 1 ]
+         ~tv:{ (plain 2) with perm = [| 1; 0 |] }
+         ~uv:{ (plain 2) with stepped = true; reversed = Some 0 }
+         cycled);
+    lazy
+      (scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 1000; 2 |]
+         ~axis:0 ~m:530_000 ~broadcast:[ 1 ] cycled);
   ]
 
 (* A Set of 65 536 rows of 1025 complex128 slices, the updates one row
    broadcast along the axis, positions cycling over 0, 1 and 2 into an axis
    of 2. *)
 let wide_rows =
-  let d = D.Any D.Complex128 and m = 65_536 and len = 1025 in
-  let rs = Random.State.make [| 2 |] in
-  let row = Array.init len (fun _ -> element d rs) in
-  {
-    combine = Nx_kernel.Set;
-    saxis = 0;
-    into = operand d [| 2; len |] (plain 2) (fun _ -> element d rs);
-    sidx =
-      int64s [| m; len |]
-        { (plain 2) with broadcast = [ 1 ] }
-        (positions_of [| 0L; 1L; 2L |]);
-    updates =
-      operand d [| m; len |] { (plain 2) with broadcast = [ 0 ] } (fun k ->
-          row.(k));
-    sviews = [ "updates broadcast" ];
-  }
+  lazy
+    (let d = D.Any D.Complex128 and m = 65_536 and len = 1025 in
+     let rs = Random.State.make [| 2 |] in
+     let row = Array.init len (fun _ -> element d rs) in
+     {
+       combine = Nx_kernel.Set;
+       saxis = 0;
+       into = operand d [| 2; len |] (plain 2) (fun _ -> element d rs);
+       sidx =
+         int64s [| m; len |]
+           { (plain 2) with broadcast = [ 1 ] }
+           (positions_of [| 0L; 1L; 2L |]);
+       updates =
+         operand d [| m; len |]
+           { (plain 2) with broadcast = [ 0 ] }
+           (fun k -> row.(k));
+       sviews = [ "updates broadcast" ];
+     })
 
 (* Parted scratch *)
 
@@ -742,21 +750,25 @@ let narrow_examples =
     (fun i (_, ((ts, _, _, _) as s)) ->
       let d = List.nth narrow_dtypes (i mod List.length narrow_dtypes) in
       let r = Array.length ts in
-      shaped d Nx_kernel.Add s ~tv:(plain r) ~uv:(plain r)
-        (Random.State.make [| 1 |]))
+      lazy
+        (shaped d Nx_kernel.Add s ~tv:(plain r) ~uv:(plain r)
+           (Random.State.make [| 1 |])))
     narrow_shapes
   @ [
       (* Positions crowding the first targets, and one outside the axis,
          at bfloat16 and at float4_e2m1fn, whose elements share bytes. *)
-      scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 500; 3 |]
-        ~axis:0 ~m:70_000
-        (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1)));
-      scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 500; 3 |]
-        ~axis:0 ~m:70_000
-        (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1)));
+      lazy
+        (scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 500; 3 |]
+           ~axis:0 ~m:70_000
+           (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1))));
+      lazy
+        (scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 500; 3 |]
+           ~axis:0 ~m:70_000
+           (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1))));
       (* 3 slices of 300 000 float4_e2m1fn updates into an axis of 1000. *)
-      scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 1000; 3 |]
-        ~axis:0 ~m:300_000 cycled;
+      lazy
+        (scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 1000; 3 |]
+           ~axis:0 ~m:300_000 cycled);
     ]
 
 let narrow_adds =
@@ -808,7 +820,7 @@ let sub_byte_examples =
           let ps = Array.init ts.(axis) Int64.of_int in
           List.map
             (fun combine ->
-              scatter_example d combine ~ts ~axis ~m ~broadcast ps)
+              lazy (scatter_example d combine ~ts ~axis ~m ~broadcast ps))
             (if takes_add d then Nx_kernel.[ Set; Add; Max; Min ]
              else Nx_kernel.[ Set; Max; Min ]))
         shared_bytes)
@@ -841,7 +853,8 @@ let threaded_scatters =
 let row_order_examples =
   List.map
     (fun d ->
-      scatter_example d Nx_kernel.Add ~ts:[| 1000 |] ~axis:0 ~m:70_000 cycled)
+      lazy
+        (scatter_example d Nx_kernel.Add ~ts:[| 1000 |] ~axis:0 ~m:70_000 cycled))
     D.[ Any Float64; Any Complex128; Any Float8_e5m2 ]
 
 let threaded_examples =
@@ -1134,9 +1147,10 @@ let local_gen regimes =
 let pp_modes ppf (w, p) =
   Format.fprintf ppf "the whole on %a, the parts on %a" pp_mode w pp_mode p
 
+let pp_local_add ppf (c, m) = Format.fprintf ppf "%a; %a" pp_local c pp_modes m
+
 let local_adds =
-  Gen.with_pp
-    (fun ppf (c, m) -> Format.fprintf ppf "%a; %a" pp_local c pp_modes m)
+  Gen.with_pp pp_local_add
     (Gen.pair
        (local_gen
           (Gen.frequency
@@ -1154,7 +1168,7 @@ let local_adds =
    float, narrow floats and complex numbers. *)
 let local_examples =
   List.map
-    (fun (d, g, m1, m2, modes) -> (local_case d g ~m1 ~m2 1, modes))
+    (fun (d, g, m1, m2, modes) -> lazy (local_case d g ~m1 ~m2 1, modes))
     D.
       [
         (Any Float32, one_slice, 70_000, 70_000, (Pool, One));
@@ -1228,15 +1242,14 @@ let pp_slab ppf (c, s) =
   Format.fprintf ppf "%a; %d of axis %d from %d" pp_local c s.count s.across
     s.start
 
+let pp_slab_add ppf (c, m) = Format.fprintf ppf "%a; %a" pp_slab c pp_modes m
+
 let slabs =
-  Gen.with_pp
-    (fun ppf (c, m) -> Format.fprintf ppf "%a; %a" pp_slab c pp_modes m)
-    (Gen.pair slab_gen (Gen.pair mode_gen mode_gen))
+  Gen.with_pp pp_slab_add (Gen.pair slab_gen (Gen.pair mode_gen mode_gen))
 
 let slab_examples =
   List.map
-    (fun (d, g, m, s, modes) ->
-      ((local_case d g ~m1:m ~m2:0 1, s), modes))
+    (fun (d, g, m, s, modes) -> lazy ((local_case d g ~m1:m ~m2:0 1, s), modes))
     D.
       [
         ( Any Float32, own_slices, 70_000,
@@ -1330,9 +1343,16 @@ let law_scatter_guards (b : Support.backend) (c, side) =
 
 (* The suite *)
 
+(* Cases made when a law first runs them: the suite's declaration runs in
+   windtrap's parent process too, which runs no law, and the examples took 4.5 s
+   to make there. *)
+let deferred pp gen =
+  Gen.with_pp (fun ppf c -> pp ppf (Lazy.force c)) (Gen.map Lazy.from_val gen)
+
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   let sorted f x = b.around (fun () -> Nx_cpu.with_cache 0 (fun () -> f x)) in
+  let forced around f c = around f (Lazy.force c) in
   group ("nx.cpu " ^ b.name)
     [
       prop "a float Add gives the same result through any views" float_adds
@@ -1370,33 +1390,34 @@ let cpu (b : Support.backend) =
           (blocked_examples @ owned_examples @ float_extremes
          @ row_order_examples)
         "scatters of many updates combine each target's updates in C order"
-        many_scatters
-        (run (fun c ->
+        (deferred pp_scatter many_scatters)
+        (forced run (fun c ->
              cover "hundreds of thousands of updates into one axis"
                ((shape_of c.updates).(c.saxis) > 500_000);
              law_scatter_reference b c));
       prop ~count:16 ~examples:threaded_examples
-        "a scatter's bits are one thread's" threaded_scatters
-        (run (law_threads b));
+        "a scatter's bits are one thread's"
+        (deferred pp_scatter threaded_scatters)
+        (forced run (law_threads b));
       prop ~count:10 ~examples:blocked_examples
         "a float Add that sorts its updates combines each target's updates \
          in C order"
-        sorted_adds
-        (sorted (law_scatter_reference b));
+        (deferred pp_scatter sorted_adds)
+        (forced sorted (law_scatter_reference b));
       prop ~count:10 ~examples:narrow_examples
         "a float Add that sorts its updates has one thread's bits"
-        sorted_adds
-        (sorted (law_threads b));
+        (deferred pp_scatter sorted_adds)
+        (forced sorted (law_threads b));
       prop ~count:30 ~examples:local_examples
         "a float Add's element is that of its element of into and the \
          updates that land on it, in their order"
-        local_adds
-        (run (law_own_updates b));
+        (deferred pp_local_add local_adds)
+        (forced run (law_own_updates b));
       prop ~count:30 ~examples:slab_examples
         "a float Add over a slab of another axis is that slab of the whole \
          Add"
-        slabs
-        (run (law_slab b));
+        (deferred pp_slab_add slabs)
+        (forced run (law_slab b));
       test "boolean extremes are of truths" (fun () ->
           b.around (test_bool_extremes b));
       test "a float16 sum runs in float32 and rounds once" (fun () ->

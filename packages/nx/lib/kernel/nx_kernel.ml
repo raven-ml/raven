@@ -119,6 +119,20 @@ let misfits fmt = refuse Nx_array.Shape_mismatch fmt
 
 type 'c dtypes = { arrays : 'c -> int; dtype : 'c -> int -> D.any }
 
+(* The door answers for a destination that reaches an element twice or
+   whose buffer is dead or read-only, so those pass to it. *)
+let check_dst kernel what (d : _ Nx_array.t) =
+  let l = Nx_array.layout d and b = Nx_array.buffer d in
+  if
+    (not (L.is_contiguous l))
+    && L.is_distinct l
+    && Option.is_none (Rig.Buffer.dead b)
+    && Rig.Buffer.access b = Rig.Read_write
+  then
+    invalid_arg
+      (Format.asprintf "%s: %s's layout %a is not C-contiguous" kernel what
+         L.pp l)
+
 type 'c reductions = {
   reductions : 'c -> int;
   kind : 'c -> int -> reduction;

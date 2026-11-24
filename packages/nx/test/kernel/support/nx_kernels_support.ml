@@ -18,22 +18,27 @@ type attention = {
   epsilon : Nx_array.Dtype.any -> int -> float -> float;
   zero_weights : Nx_array.Dtype.any -> int -> float;
   rounds_weights : bool;
+  float64 : bool;
 }
 
 type axis = Complex | R2c_last | C2r_last
 type sums = Blocks | Running
+
+type underflow = Gradual | Flush
 
 type backend = {
   name : string;
   kernels : (module Nx_kernel.S);
   device : Rig.t;
   computes : kind -> Nx_array.Dtype.any -> bool;
+  arith : Nx_array.Dtype.any -> bool;
   around : 'a. (unit -> 'a) -> 'a;
   attention : attention option;
   lane_order : bool;
   transform_factor : axis -> int -> float;
   scan_order : bool;
   contract_sums : sums;
+  underflow : underflow;
 }
 
 let contract_beta b n =
@@ -70,7 +75,13 @@ let cpu_attention =
     +. ((grow -. 1.) *. ln)
     +. (u' *. Float.abs lse)
   in
-  { factor; epsilon; zero_weights = (fun _ _ -> 0.); rounds_weights = false }
+  {
+    factor;
+    epsilon;
+    zero_weights = (fun _ _ -> 0.);
+    rounds_weights = false;
+    float64 = true;
+  }
 
 (* nx_cuda.mli's attention. With [p(k) = ⌈k / 256⌉ - 1], at least the
    merges of the parts a row of [k] keys spans, its error factor is
@@ -107,7 +118,42 @@ let cuda_attention =
     +. ((grow -. 1.) *. ln)
     +. (u' *. Float.abs lse)
   in
-  { factor; epsilon; zero_weights = (fun _ _ -> 0.); rounds_weights = true }
+  {
+    factor;
+    epsilon;
+    zero_weights = (fun _ _ -> 0.);
+    rounds_weights = true;
+    float64 = true;
+  }
+
+(* nx_metal.mli's attention, in float32 alone. With [p(k) = ⌈k / 64⌉ - 1],
+   at least the merges of the parts a row of [k] keys spans, its error
+   factor is [γ(k + 1 + p(k))] and its [ε] nx.cpu's with [n + 2p(t)]
+   blocks; a call of one part has nx.cpu's bits. Where every output is
+   [0], its weights are exact, as nx.cpu's are, and a merge multiplies by
+   [exp (+0)]: [1]. It keeps its weights in float32. *)
+let metal_attention =
+  let u = 0x1p-24 in
+  let parts t = Int.max 0 (((t + 63) / 64) - 1) in
+  let factor _ _ k =
+    let k = Float.of_int (k + 1 + parts k) in
+    k *. u /. (1. -. (k *. u))
+  in
+  let epsilon _ t lse =
+    let u' = u /. (1. -. u) and ln = Float.log (Float.of_int t) in
+    let grow = Float.exp (3. *. u) in
+    let n = ((t + 63) / 64) + (2 * parts t) in
+    (grow *. (Float.of_int ((13 * n) + 9) +. ln) *. u')
+    +. ((grow -. 1.) *. ln)
+    +. (u' *. Float.abs lse)
+  in
+  {
+    factor;
+    epsilon;
+    zero_weights = (fun _ _ -> 0.);
+    rounds_weights = false;
+    float64 = false;
+  }
 
 (* The prime factors of [n], least first. *)
 let rec prime_factors n d =
@@ -156,12 +202,14 @@ let under target =
     kernels = (module Nx_cpu);
     device = Rig.host;
     computes = every_kind;
+    arith = (fun _ -> true);
     around = (fun f -> Nx_cpu.with_target target f);
     attention = Some cpu_attention;
     lane_order = true;
     transform_factor = cpu_transform;
     scan_order = true;
     contract_sums = Blocks;
+    underflow = Gradual;
   }
 
 let cpus = List.map under Nx_cpu.targets
@@ -183,12 +231,14 @@ let nvidia ~name open_ =
           kernels = (module Nx_cuda);
           device = d;
           computes = every_kind;
-          around = (fun f -> f ());
+          arith = (fun _ -> true);
+                around = (fun f -> f ());
           attention = Some cuda_attention;
           lane_order = true;
           transform_factor = cuda_transform;
           scan_order = false;
           contract_sums = Blocks;
+          underflow = Gradual;
         };
       ]
 
@@ -267,15 +317,90 @@ let amd =
                kernels = (module Nx_amd);
                device = d;
                computes = (fun _ _ -> true);
+               arith = (fun _ -> true);
                around = (fun f -> f ());
                attention = None;
                lane_order = true;
                transform_factor = amd_transform;
                scan_order = true;
                contract_sums = Running;
+               underflow = Gradual;
              })
 
 let amd () = Lazy.force amd
+
+(* nx_metal.mli's transforms, those of lines 7-smooth, Rader's or Bluestein's
+   of m up to 2^20: e(n) = 5.35 log₂ n for a 7-smooth n, 91 log₂ n + 236 for
+   another, and along an r2c's or c2r's last axis of even n, e(n/2) + 11 or
+   + 20. *)
+let metal_transform axis n =
+  let module Fft = Nx_metal.Fft in
+  let e n =
+    let log2 = Float.log2 (Float.of_int (Int.max n 1)) in
+    if List.for_all (fun p -> p <= 7) (prime_factors n 2) then 5.35 *. log2
+    else (91. *. log2) +. 236.
+  in
+  let halved =
+    match axis with
+    | R2c_last | C2r_last -> n mod 2 = 0
+    | Complex -> false
+  in
+  let line = if halved then n / 2 else n in
+  (if n < 0 then invalid_arg "nx.metal computes no other transform");
+  (if line > 0 then
+     match (Fft.line line ~real:halved).how with
+     | Bluestein m when m > Fft.bluestein_most ->
+         invalid_arg "nx.metal computes no other transform"
+     | Smooth | Rader | Bluestein _ -> ());
+  match axis with
+  | R2c_last when halved -> e (n / 2) +. 11.
+  | C2r_last when halved -> e (n / 2) +. 20.
+  | Complex | R2c_last | C2r_last -> e n
+
+(* nx.metal on the machine's Metal GPU 0, opened at the first call.
+   nx_metal.mli states it computes every kind at every dtype, but those
+   that compute on a float64 or complex128 value: it moves their bits, by
+   a Copy, a Bitcast, a Fill or a Where, and casts between dtypes it
+   computes on. Its reductions and scans associate as nx.cpu's do. It
+   declines a float64 attention and every transform but the complex64 c2c,
+   and the float32 r2c and c2r, of axes whose lines run 7-smooth, Rader's or
+   Bluestein's of m up to 2^20, bounded as nx.amd's. Its bound adds c n 2^-126
+   for flushed subnormals, which the laws' values in [-1, 1] leave far below
+   the first term, so the first alone is a stricter check. *)
+let metal =
+  lazy
+    (let arith : Nx_array.Dtype.any -> bool = function
+       | Any (Float64 | Complex128) -> false
+       | Any _ -> true
+     in
+     let moves k dt =
+       match k with
+       | K1 (Copy | Bitcast) | K0 (Fill _) | K3 Where -> true
+       | K0 (Iota _) | K1 _ | K2 _ | K3 _ -> arith dt
+     in
+     if Sys.getenv_opt "NX_KERNELS" = Some "cpu" then None
+     else
+       match Rig.open_ (Rig_metal.gpu 0) with
+       | Error _ -> None
+       | Ok d when not (Nx_metal.computes_on d) -> None
+       | Ok d ->
+           Some
+             {
+               name = "metal";
+               kernels = (module Nx_metal);
+               device = d;
+               computes = moves;
+               arith;
+               around = (fun f -> f ());
+               attention = Some metal_attention;
+               lane_order = true;
+               transform_factor = metal_transform;
+               scan_order = true;
+               contract_sums = Running;
+               underflow = Flush;
+             })
+
+let metal () = Lazy.force metal
 
 (* Elements as bits *)
 

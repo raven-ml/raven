@@ -1,9 +1,7 @@
 ; Correctness on the NVIDIA GPU 0, through CUDA and again through rig.nv,
-; skipping without one. The suites run in one action under the lock GPU
-; tests share, so that among a runtest's other tests they wait once for a
-; job rather than once a suite. The longer ones run their tests in 3
-; processes at once, which together hold at most 13 GiB of the GPU:
-; test_cuda's extents past 2^30 and 2^31.
+; skipping without one. ../dune's rule of GPU suites runs these. The longer
+; ones run their tests in 3 processes at once, which together hold at most
+; 13 GiB of the GPU: test_cuda's extents past 2^30 and 2^31.
 
 (executable
  (name test_cuda)
@@ -81,20 +79,21 @@
  (modules test_cuda_place)
  (libraries nx nx_array nx_cuda_support rig rig.cuda windtrap))
 
+; The suites above, as ../dune's rule of GPU suites runs them.
+
 (rule
- (package nx)
- (alias runtest)
- (locks %{workspace_root}/gpu)
+ (target gpu.suites)
  (action
-  (progn
-   (run %{exe:test_cuda.exe} -j 3)
-   (setenv
-    NX_CUDA_RIG
-    nv
-    (run %{exe:test_cuda.exe} -j 3))
-   (run %{exe:test_cuda_linalg.exe} -j 3)
-   (run %{exe:test_cuda_moves.exe} -j 3)
-   (run %{exe:test_cuda_kinds.exe} -j 3)
-   (run %{exe:test_cuda_draws.exe} -j 3)
-   (run %{exe:test_cuda_nx.exe})
-   (run %{exe:test_cuda_place.exe}))))
+  (with-stdout-to
+   %{target}
+   (run
+    %{exe:../support/suites.exe}
+    list
+    %{dep:test_cuda.exe} -j 3 --
+    NX_CUDA_RIG=nv %{dep:test_cuda.exe} -j 3 --
+    %{dep:test_cuda_linalg.exe} -j 3 --
+    %{dep:test_cuda_moves.exe} -j 3 --
+    %{dep:test_cuda_kinds.exe} -j 3 --
+    %{dep:test_cuda_draws.exe} -j 3 --
+    %{dep:test_cuda_nx.exe} --
+    %{dep:test_cuda_place.exe}))))

@@ -235,11 +235,31 @@ let reached c =
   done;
   counts
 
-let expected c =
+(* Whether [e], an element of [d], is nonzero and of the least normal
+   magnitude or below, at float32 or bfloat16 or in a part of a complex64:
+   a sum where a library flushes may differ there. *)
+let tiny (D.Any dt) e =
+  let small exp man = (exp = 0 && man <> 0) || (exp = 1 && man = 0) in
+  let f32 at =
+    let b = Int32.to_int (String.get_int32_le e at) land 0xFFFFFFFF in
+    small ((b lsr 23) land 0xFF) (b land 0x7FFFFF)
+  in
+  match dt with
+  | D.Float32 -> f32 0
+  | D.Complex64 -> f32 0 || f32 4
+  | D.Bfloat16 ->
+      let b = String.get_uint16_le e 0 in
+      small ((b lsr 7) land 0xFF) (b land 0x7F)
+  | _ -> false
+
+(* The fold's result by its reference, and for each element whether an
+   addition into it took or gave a [tiny] element. *)
+let reference c =
   let d = dtype_of c.x in
   let xs = shape_of c.x and es = elements c.x in
   let r = Array.length c.shape and nw = Iarray.length c.pad.windows in
   let acc = Array.make (total c.shape) None in
+  let under = Array.make (total c.shape) false in
   let taps = Array.sub xs r nw and outer = Array.sub xs 0 r in
   for t = 0 to total taps - 1 do
     let j = index_of taps t in
@@ -249,10 +269,29 @@ let expected c =
       | None -> ()
       | Some y ->
           let e = es.(flat xs xi) in
-          acc.(y) <- Some (match acc.(y) with None -> e | Some a -> add d a e)
+          acc.(y) <-
+            Some
+              (match acc.(y) with
+              | None -> e
+              | Some a ->
+                  let s = add d a e in
+                  if tiny d a || tiny d e || tiny d s then under.(y) <- true;
+                  s)
     done
   done;
-  Array.map (function None -> zero d | Some a -> a) acc
+  (Array.map (function None -> zero d | Some a -> a) acc, under)
+
+(* [y] has the elements [want], bit for bit or both NaN, but where [b]
+   flushes, at the elements [under] marks. *)
+let agrees_with (b : Support.backend) c y (want, under) =
+  let got = elements y in
+  if b.underflow = Flush then
+    Array.iteri (fun i u -> if u then got.(i) <- want.(i)) under;
+  equal (array (same (dtype_of c.x))) want got
+
+(* [y] has the reference's elements, bit for bit or both NaN, but where [b]
+   flushes, at the elements whose additions took or gave a tiny element. *)
+let agrees b c y = agrees_with b c y (reference c)
 
 (* The axes before the first a window takes. *)
 let leading c =
@@ -311,7 +350,7 @@ let law_reference (b : Support.backend) = function
        cover "complex" (work && D.is D.Complex d));
       match fold_on b c with
       | None -> failf "%s declined a fold" b.name
-      | Some y -> equal (array (same (dtype_of c.x))) (expected c) (elements y))
+      | Some y -> agrees b c y)
 
 (* Σ load(a) · x = Σ a · fold(x) over wrapping int64. *)
 let law_adjoint (b : Support.backend) = function
@@ -346,7 +385,11 @@ let law_adjoint (b : Support.backend) = function
 (* Each part of a float or complex fold's element is within γ(n - 1) Σ|x|
    of the exact sum of the [n] parts it adds, where they are finite and
    their magnitudes' sum is below half the dtype's largest float, so that
-   no sum overflows. *)
+   no sum overflows. Where [b] flushes, each addition reads a subnormal
+   operand as a zero and gives a zero for a subnormal result, so each of
+   the n terms and each of the n - 1 sums may lose less than the least
+   normal number, 2^-126, and the later additions round those losses: the
+   bound adds (1 + γ(n - 1)) (2n - 1) 2^-126. *)
 let law_bound (b : Support.backend) = function
   | None -> assume false
   | Some c -> (
@@ -397,7 +440,14 @@ let law_bound (b : Support.backend) = function
                 let mag = List.fold_left (fun a x -> a +. Float.abs x) 0. t in
                 let n = Float.of_int (max 0 (List.length t - 1)) in
                 let g = n *. u /. (1. -. (n *. u)) in
-                let bound = (g *. mag) +. (0x1p-100 *. mag) in
+                let flushed =
+                  if single && b.underflow = Flush then
+                    ((2. *. n) +. 1.) *. 0x1p-126
+                  else 0.
+                in
+                let bound =
+                  (g *. mag) +. (0x1p-100 *. mag) +. ((1. +. g) *. flushed)
+                in
                 if not (Float.abs (got i -. exact) <= bound) then
                   bad :=
                     Printf.sprintf
@@ -472,7 +522,7 @@ let test_wide_windows (b : Support.backend) () =
     let c = { shape; pad; x; views = []; load = plain (Array.length shape) } in
     match fold_on b c with
     | None -> failf "%s declined a fold" b.name
-    | Some y -> equal (array (same (dtype_of c.x))) (expected c) (elements y)
+    | Some y -> agrees b c y
   in
   let w axis ~size ~step = { M.axis; size; step; dilation = 1 } in
   let four =
@@ -517,7 +567,7 @@ let test_threads (b : Support.backend) () =
     let c = { shape; pad; x; views = view_names v; load = plain 4 } in
     match fold_on b c with
     | None -> failf "%s declined a fold" b.name
-    | Some y -> equal (array (same (dtype_of c.x))) (expected c) (elements y)
+    | Some y -> agrees b c y
   in
   let slabs = conv 0 and whole = conv 1 in
   fold slabs (D.Any D.Float32) [| 8; 16; 20; 20 |] (plain 6);
@@ -557,7 +607,7 @@ let test_long_rows (b : Support.backend) () =
       let c = { shape; pad; x; views = []; load = plain 2 } in
       match fold_on b c with
       | None -> failf "%s declined a fold" b.name
-      | Some y -> equal (array (same (dtype_of c.x))) (expected c) (elements y))
+      | Some y -> agrees b c y)
     D.[ Any Bfloat16; Any Int4 ]
 
 (* A fold or a map's padded load that does not fit, by a shape, a pad of
@@ -599,11 +649,7 @@ let cases_of ?dtypes ?last () =
 
 let cases = cases_of ()
 let all_cases = cases_of ~dtypes:D.all ()
-
-let float_cases =
-  cases_of
-    ~dtypes:D.[ Any Float32; Any Float64; Any Complex64; Any Complex128 ]
-    ()
+let floats = D.[ Any Float32; Any Float64; Any Complex64; Any Complex128 ]
 
 let int_cases = cases_of ~dtypes:[ D.Any D.Int64 ] ()
 
@@ -641,22 +687,130 @@ let law_guards (b : Support.backend) (c, side) =
         (same_guarded ~any_nan:true side ~call [| c.x |]
            [| (dtype_of c.x, c.shape) |])
 
+(* A fold at each dtype [b] states it computes nothing on declines. *)
+let test_declines (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let p =
+    { Nx_kernel.lo = [| 1 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] }
+  in
+  List.iter
+    (fun (D.Any dt as d) ->
+      if not (b.arith d) then
+        let rs = Random.State.make [| 3 |] in
+        let x =
+          Support.on b (A.expect dt (operand d [| 4 |] (plain 1) (fun _ -> element d rs)))
+        in
+        let dst = A.create b.device dt [| 3 |] in
+        equal ~msg:(D.name dt) answer A.Declined (K.fold p ~dst x))
+    folded
+
+(* A fold of 1s by windows of 3 taps, one tap the least subnormal, at
+   float32 and bfloat16: the reference comparison leaves out the one
+   element that tap reaches, and holds the other 15 bit for bit. *)
+let test_left_out (b : Support.backend) () =
+  let p =
+    {
+      Nx_kernel.lo = [| 1 |];
+      hi = [| 1 |];
+      interior = [| 0 |];
+      windows = [| { M.axis = 0; size = 3; step = 1; dilation = 1 } |];
+    }
+  in
+  let fold d ~one ~least =
+    let bits v =
+      String.init (String.length one) (fun j ->
+          Char.chr ((v lsr (8 * j)) land 0xFF))
+    in
+    let at = (5 * 3) + 1 in
+    let x =
+      operand d [| 16; 3 |] (plain 2) (fun k ->
+          if k = at then bits least else one)
+    in
+    let c = { shape = [| 16 |]; pad = p; x; views = []; load = plain 1 } in
+    let want, under = reference c in
+    let (D.Any dt) = d in
+    equal ~msg:(D.name dt) (array bool) (Array.init 16 (fun i -> i = 5)) under;
+    match fold_on b c with
+    | None -> failf "%s declined a fold" b.name
+    | Some y -> agrees_with b c y (want, under)
+  in
+  fold (D.Any D.Float32) ~one:(f32 1.) ~least:1;
+  if b.arith (D.Any D.Bfloat16) then
+    fold (D.Any D.Bfloat16) ~one:"\x80\x3f" ~least:1
+
+(* Two float32 terms whose exact sum, 2^-125 - 1.5 2^-126 = 2^-127, is
+   subnormal: a backend that flushes gives +0. The two windows of 2 taps
+   over one element padded on both sides read it at taps 1 and 0. *)
+let subnormal_sum =
+  let p =
+    {
+      Nx_kernel.lo = [| 1 |];
+      hi = [| 1 |];
+      interior = [| 0 |];
+      windows = [| { M.axis = 0; size = 2; step = 1; dilation = 1 } |];
+    }
+  in
+  let terms = [| 0.; 0x1p-125; -0x1.8p-126; 0. |] in
+  let x =
+    operand (D.Any D.Float32) [| 2; 2 |] (plain 2) (fun k -> f32 terms.(k))
+  in
+  { shape = [| 1 |]; pad = p; x; views = []; load = plain 1 }
+
+(* Folds of 3 slabs, each 4 elements windowed by [w] along the last axis:
+   at complex64, of windows of 2 taps; at bfloat16, of windows of 1 tap 2
+   apart, which leave elements no tap reaches; and at int4. The draws reach
+   a narrow float, complex64 and slabs started per unit one case in 9 to 11
+   where float64 and complex128 are declined. *)
+let fold_examples =
+  let slabs d (w : M.window) =
+    let zeros = Iarray.of_array [| 0; 0 |] in
+    let pad =
+      { Nx_kernel.lo = zeros; hi = zeros; interior = zeros; windows = [| w |] }
+    in
+    let shape = [| 3; 4 |] in
+    let xs = Option.get (loaded pad shape) in
+    let rs = Random.State.make [| 3 |] in
+    let x = operand d xs (plain (Array.length xs)) (fun _ -> element d rs) in
+    { shape; pad; x; views = []; load = plain 2 }
+  in
+  let w size step = { M.axis = 1; size; step; dilation = 1 } in
+  [
+    slabs (D.Any D.Complex64) (w 2 1);
+    slabs (D.Any D.Bfloat16) (w 1 2);
+    slabs (D.Any D.Int4) (w 2 1);
+  ]
+
 let suite (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
+  (* Cases at the dtypes [b] computes on. *)
+  let cases_on dtypes = cases_of ~dtypes:(List.filter b.arith dtypes) () in
+  let cases = cases_on folded and float_cases = cases_on floats in
   group b.name
     [
       prop "a fold is the padded load's adjoint" int_cases (run (law_adjoint b));
-      prop "each part of a float fold is within γ(n - 1) Σ|x| of the exact sum"
-        float_cases (run (law_bound b));
+      prop
+        "each part of a float fold is within γ(n - 1) Σ|x| of the exact sum, \
+         and the flushes' losses where it flushes"
+        ~examples:[ Some subnormal_sum ] float_cases (run (law_bound b));
+      test "declines the dtypes it computes nothing on" (fun () ->
+          b.around (test_declines b));
       group "sums each element's taps in order, +0 where none"
         [
-          prop "at every dtype, through views" cases (run (law_reference b));
+          prop
+            ~examples:
+              (List.filter_map
+                 (fun c ->
+                   if b.arith (dtype_of c.x) then Some (Some c) else None)
+                 fold_examples)
+            "at every dtype, through views" cases (run (law_reference b));
           test "a convolution's gradient on the job's threads" (fun () ->
               b.around (test_threads b));
           test "four windows, and a step past 2^30" (fun () ->
               b.around (test_wide_windows b));
           test "long rows of narrow dtypes" (fun () ->
               b.around (test_long_rows b));
+          test "a subnormal tap leaves out the one element it reaches"
+            (fun () -> b.around (test_left_out b));
         ];
       prop "a map's padded load reads what the fold adds into" all_cases
         (run (law_load b));
@@ -705,6 +859,9 @@ let () =
   in
   exit
     (Windtrap.run "nx_kernel.fold"
-       (List.map suite (Support.backends () @ Option.to_list (Support.amd ()))
+       (List.map suite
+          (Support.backends ()
+          @ Option.to_list (Support.amd ())
+          @ Option.to_list (Support.metal ()))
        @ [ cpu Support.cpu ]
        @ nv))

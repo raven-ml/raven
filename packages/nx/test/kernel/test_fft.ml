@@ -13,8 +13,7 @@
    on the job's, and for a line alone as in its batch; nx.cpu's bits on
    every target; empty transforms; the refusals; no byte read or written
    past the operand or the result; and the device memory nx.cuda keeps for
-   later calls. Each backend runs its own kernels on its device: nx.cpu's,
-   nx.cuda's and nx.amd's. *)
+   later calls. Each backend runs its own kernels on its device. *)
 
 open Windtrap
 open Elements
@@ -201,8 +200,8 @@ let rec factors n d =
 let by_bluestein n = List.exists (fun p -> p > 250) (factors n 2)
 let composite n = List.length (factors n 2) > 1
 
-(* [b]'s ε of a transform along [axes] of [s], [n] points along the last
-   for c2r. *)
+(* [b]'s ε of a transform along [axes] of [s], [n] points along the last for
+   c2r. *)
 let epsilon (b : Support.backend) kind axes s =
   let last = axes.(Array.length axes - 1) in
   Array.fold_left
@@ -240,10 +239,10 @@ let pp_case ppf c =
     (String.concat ", " (view_names c.view))
 
 (* Shapes, with the axes they must transform: small ones of any axes; one long
-   line among short ones, transformed with any others, of a composite length
-   of several primes, of a prime past 250 or twice one (514 and 1018 halved
-   for a real line), or of a length about a power of two; and long composite
-   lines side by side. *)
+   line among short ones, transformed with any others, of a composite length of
+   several primes, of a prime past 250 or twice one (514 and 1018 halved for a
+   real line), or of a length about a power of two; and long composite lines
+   side by side. *)
 let four = [ 289; 300; 360; 512; 625; 1000; 1024 ]
 let blue = [ 251; 257; 502; 509; 514; 1018; 1031 ]
 let edge = [ 53; 64; 65; 97; 100; 241; 243; 255; 256 ]
@@ -324,9 +323,9 @@ let case_gen =
      in
      { kind; wide; shape = s; axes; view; xs }
 
-(* Real lines of 514 and 1018 points, whose halves have a prime factor past
-   250, in each width and direction: the generator draws them too seldom for
-   every seed. *)
+(* Real lines of 514 and 1018 points, whose halves have a prime factor past 250,
+   in each width and direction: the generator draws them too seldom for every
+   seed. *)
 let halved_cases =
   let case (n, wide, kind) =
     let s = match kind with C2r _ -> (n / 2) + 1 | _ -> n in
@@ -392,8 +391,8 @@ let result c =
 (* [Done] or failing: every backend computes every transform. *)
 let check got = equal answer A.Done got
 
-(* A fresh array of [dt] and shape [s] on [b]'s device, every element NaN,
-   so that one a transform leaves unwritten shows. *)
+(* A fresh array of [dt] and shape [s] on [b]'s device, every element NaN, so
+   that one a transform leaves unwritten shows. *)
 let poisoned (b : Support.backend) (D.Any dt as d) s =
   let nan =
     match dt with
@@ -406,9 +405,9 @@ let poisoned (b : Support.backend) (D.Any dt as d) s =
   let (A.Any y) = of_elements d s (Array.make (total s) nan) in
   A.Any (Support.on b y)
 
-(* [b]'s result of [c] on [x], on its device into a fresh array, or into
-   [dst] with [x] where they lie; [Done] or failing. [one_thread] runs nx.cpu
-   on one thread. *)
+(* [b]'s result of [c] on [x], on its device into a fresh array, or into [dst]
+   with [x] where they lie; [Done] or failing. [one_thread] runs nx.cpu on one
+   thread. *)
 let run (b : Support.backend) ?(one_thread = false) ?dst c (A.Any x) =
   let module K = (val b.kernels) in
   let (D.Any dt as d), s = result c in
@@ -459,8 +458,8 @@ let norm (zs : Complex.t array) =
        (fun s (z : Complex.t) -> s +. (z.re *. z.re) +. (z.im *. z.im))
        0. zs)
 
-(* ‖x‖₂ as the bounds read it: a c2r's √2 times its operand's, at least
-   its completed bins'. *)
+(* ‖x‖₂ as the bounds read it: a c2r's √2 times its operand's, at least its
+   completed bins'. *)
 let operand_norm c =
   match c.kind with C2r _ -> sqrt 2. *. norm c.xs | _ -> norm c.xs
 
@@ -511,8 +510,8 @@ let law_bound b c =
     | C2c _ -> false);
   within_bound b c
 
-(* c2r cases along several axes whose bins 0 and n/2 hold, along the other
-   axes, X[-j] = -conj X[j] and no other bin anything: the other axes' inverse
+(* c2r cases along several axes whose bins 0 and n/2 hold, along the other axes,
+   X[-j] = -conj X[j] and no other bin anything: the other axes' inverse
    transforms of those columns are imaginary, and the exact result is +0. *)
 let opposite_gen =
   let open Gen in
@@ -596,8 +595,8 @@ let bits_of y =
   in
   Array.map (fun (z : Complex.t) -> (bits z.re, bits z.im)) (complexes y)
 
-(* The same bits through every view, on one thread as on the job's, and for
-   each line transformed alone, NaNs and infinities included. *)
+(* The same bits through every view, on one thread as on the job's, and for each
+   line transformed alone, NaNs and infinities included. *)
 let law_bits b c =
   let last = c.axes.(Array.length c.axes - 1) in
   let n = (points c).(last) and r = Array.length c.shape in
@@ -663,9 +662,9 @@ let long_lengths =
   [ 1009; 2017; 2161; 3125; 4051; 4096; 4099; 6561; 8192; 10007; 16384; 16807;
     19683; 20014; 30030; 65536; 65537; 131072 ]
 
-(* The roots e^(-2πi m/n), m < n, of a long line, made once for its
-   transforms: past 4096 points in double, whose error is far below either
-   width's bound at these lengths. *)
+(* The roots e^(-2πi m/n), m < n, of a long line, made once for its transforms:
+   past 4096 points in double, whose error is far below either width's bound at
+   these lengths. *)
 let line_units n =
   if n <= 4096 then units_of n
   else
@@ -673,16 +672,18 @@ let line_units n =
         let phi = 2. *. Float.pi *. (Float.of_int m /. Float.of_int n) in
         ((cos phi, 0.), (-.sin phi, 0.)))
 
-(* [kind] of [n] points from three impulses at [ats] of coefficients
-   [cs]: within [b]'s bound of their exact transform, and the same bits on
-   one thread. *)
+(* [kind] of [n] points from three impulses at [ats] of coefficients [cs]:
+   within [b]'s bound of their exact transform, and the same bits on one
+   thread. *)
 let check_impulses b ~wide kind n w ats cs =
   let shape, xs =
     match kind with
     | C2r m ->
         let h = (m / 2) + 1 in
         let xs = Array.make h Complex.zero in
-        List.iter2 (fun at z -> xs.(at mod h) <- Complex.add xs.(at mod h) z) ats cs;
+        List.iter2
+          (fun at z -> xs.(at mod h) <- Complex.add xs.(at mod h) z)
+          ats cs;
         ([| h |], xs)
     | R2c | C2c _ ->
         let xs = Array.make n Complex.zero in
@@ -708,7 +709,11 @@ let check_impulses b ~wide kind n w ats cs =
     else Some k
   in
   equal (option int) None (differs 0);
-  let root m = complex_of (let re, im = w.(m mod n) in { re; im }) in
+  let root m =
+    complex_of
+      (let re, im = w.(m mod n) in
+       { re; im })
+  in
   let impulses =
     List.filter
       (fun (_, (z : Complex.t)) -> z.re <> 0. || z.im <> 0.)
@@ -716,20 +721,20 @@ let check_impulses b ~wide kind n w ats cs =
   in
   let terms k =
     List.fold_left
-         (fun acc (j, (z : Complex.t)) ->
-           match kind with
-           | C2c Forward | R2c -> Complex.add acc (Complex.mul z (root (j * k)))
-           | C2c Inverse ->
-               Complex.add acc (Complex.mul z (Complex.conj (root (j * k))))
-           | C2r m ->
-               (* Bin j and its conjugate n - j, or one bin at 0 or n / 2,
-                  whose imaginary part takes no part. *)
-               let e = Complex.conj (root (j * k)) in
-               let re =
-                 if j = 0 || 2 * j = m then z.re *. e.re
-                 else 2. *. ((z.re *. e.re) -. (z.im *. e.im))
-               in
-               { acc with re = acc.re +. re })
+      (fun acc (j, (z : Complex.t)) ->
+        match kind with
+        | C2c Forward | R2c -> Complex.add acc (Complex.mul z (root (j * k)))
+        | C2c Inverse ->
+            Complex.add acc (Complex.mul z (Complex.conj (root (j * k))))
+        | C2r m ->
+            (* Bin j and its conjugate n - j, or one bin at 0 or n / 2, whose
+               imaginary part takes no part. *)
+            let e = Complex.conj (root (j * k)) in
+            let re =
+              if j = 0 || 2 * j = m then z.re *. e.re
+              else 2. *. ((z.re *. e.re) -. (z.im *. e.im))
+            in
+            { acc with re = acc.re +. re })
       Complex.zero impulses
   in
   let want = Array.init (total (snd (result c))) terms in
@@ -740,26 +745,31 @@ let check_impulses b ~wide kind n w ats cs =
   in
   at_most float_exact ~than:bound err
 
+let impulses =
+  Complex.
+    [
+      { re = 0.75; im = -0.5 };
+      { re = -1.25; im = 0.25 };
+      { re = 0.5; im = 1. };
+    ]
+
 let test_long b () =
   List.iter
     (fun n ->
       let w = line_units n in
       let ats = [ 3; n / 3; n - 1 ] in
-      let cs =
-        Complex.[ { re = 0.75; im = -0.5 }; { re = -1.25; im = 0.25 }; { re = 0.5; im = 1. } ]
-      in
       List.iter
         (fun wide ->
           List.iter
-            (fun kind -> check_impulses b ~wide kind n w ats cs)
+            (fun kind -> check_impulses b ~wide kind n w ats impulses)
             [ C2c Forward; C2c Inverse; R2c; C2r n ])
         [ false; true ])
     long_lengths
 
-(* An impulse at [at] of a line of [n] points of [dt], forward and
-   inverse, each within the bound of its exact transform, the twiddles,
-   and with the same bits on one thread. The twiddles are computed in
-   double, whose error is far below either bound at these lengths. *)
+(* An impulse at [at] of a line of [n] points of [dt], forward and inverse, each
+   within the bound of its exact transform, the twiddles, and with the same bits
+   on one thread. The twiddles are computed in double, whose error is far below
+   either bound at these lengths. *)
 let impulse_line (type s) (b : Support.backend) (dt : (Complex.t, s) D.t) n at =
   let module K = (val b.kernels) in
   let x = A.of_array dt [| n |] (Array.make n Complex.zero) in
@@ -772,7 +782,9 @@ let impulse_line (type s) (b : Support.backend) (dt : (Complex.t, s) D.t) n at =
       Support.host y
     in
     let y = c2c () and alone = Nx_cpu.one_thread c2c in
-    let sign = match direction with Nx_kernel.Forward -> -1. | Inverse -> 1. in
+    let sign =
+      match direction with Nx_kernel.Forward -> -1. | Inverse -> 1.
+    in
     let err = ref 0. and differs = ref None in
     A.read y @@ fun y ->
     A.read alone @@ fun alone ->
@@ -800,21 +812,20 @@ let impulse_line (type s) (b : Support.backend) (dt : (Complex.t, s) D.t) n at =
   check_line Forward;
   check_line Inverse
 
-(* A complex64 line of 2^22 points, 32 MiB, where on Linux nx.cpu's
-   four-step grid lies in its result where the largest cache is at most
-   32 MiB. *)
+(* A complex64 line of 2^22 points, 32 MiB, where on Linux nx.cpu's four-step
+   grid lies in its result where the largest cache is at most 32 MiB. *)
 let test_past_caches b () = impulse_line b D.Complex64 (1 lsl 22) 12345
 
-(* A complex128 line of 4,199,040 = 2^7 3^8 5 points, 64 MiB, the least
-   7-smooth length past 2048^2. *)
+(* A complex128 line of 4,199,040 = 2^7 3^8 5 points, 64 MiB, the least 7-smooth
+   length past 2048^2. *)
 let test_wide_line b () = impulse_line b D.Complex128 4199040 54321
 
-(* A complex64 line of 2^23 points, 64 MiB, of two factors of 4096 and
-   2048 points. *)
+(* A complex64 line of 2^23 points, 64 MiB, of two factors of 4096 and 2048
+   points. *)
 let test_long_line b () = impulse_line b D.Complex64 (1 lsl 23) 7654321
 
-(* The first of [n] complex64 points where [y] and [z] differ in their
-   bits, if any. *)
+(* The first of [n] complex64 points where [y] and [z] differ in their bits, if
+   any. *)
 let differs n y z =
   A.read y @@ fun y ->
   A.read z @@ fun z ->
@@ -828,12 +839,12 @@ let differs n y z =
   in
   from 0
 
-(* A random complex64 line of 3^14 points, 38 MiB, with the same bits as
-   its values shaped [1; n] and transformed along both axes, forward and
-   inverse, on the job's threads and on one. On Linux, where the largest
-   cache is under 38 MiB, the line's grid lies in its result, and the
-   second axis's, transformed in place, in scratch. Its n1 and n2 are odd,
-   so both steps fill their last lanes in part. *)
+(* A random complex64 line of 3^14 points, 38 MiB, with the same bits as its
+   values shaped [1; n] and transformed along both axes, forward and inverse, on
+   the job's threads and on one. On Linux, where the largest cache is under 38
+   MiB, the line's grid lies in its result, and the second axis's, transformed
+   in place, in scratch. Its n1 and n2 are odd, so both steps fill their last
+   lanes in part. *)
 let test_grid_homes (b : Support.backend) () =
   let module K = (val b.kernels) in
   let n = 4782969 in
@@ -938,9 +949,9 @@ let test_stepped b () = List.iter (same_alone b) stepped
 
 (* Every short length *)
 
-(* Three lines of every length from 0 to 70, of each kind and width, along
-   the last axis or, at odd lengths, side by side along the first: within
-   the bound, every destination element written. *)
+(* Three lines of every length from 0 to 70, of each kind and width, along the
+   last axis or, at odd lengths, side by side along the first: within the bound,
+   every destination element written. *)
 let test_short_lengths b () =
   for n = 0 to 70 do
     List.iter
@@ -949,7 +960,8 @@ let test_short_lengths b () =
           (fun kind ->
             let e = match kind with C2r _ -> (n / 2) + 1 | _ -> n in
             let shape, axes =
-              if n mod 2 = 0 then ([| 3; e |], [| 1 |]) else ([| e; 3 |], [| 0 |])
+              if n mod 2 = 0 then ([| 3; e |], [| 1 |])
+              else ([| e; 3 |], [| 0 |])
             in
             let rs = Random.State.make [| n |] in
             let xs =
@@ -965,10 +977,10 @@ let test_short_lengths b () =
 
 (* Complex arrays at their parts' alignment *)
 
-(* [x]'s elements in a fresh array on [b]'s device whose first byte lies
-   one part past twice a part's alignment: 4 mod 8 for complex64, 8 mod
-   16 for complex128; a real array as it is. nx_array.mli promises an
-   array only its parts' alignment. *)
+(* [x]'s elements in a fresh array on [b]'s device whose first byte lies one
+   part past twice a part's alignment: 4 mod 8 for complex64, 8 mod 16 for
+   complex128; a real array as it is. nx_array.mli promises an array only its
+   parts' alignment. *)
 let off_pairs (b : Support.backend) (A.Any x) =
   let dt = A.dtype x in
   let part = match dt with D.Complex64 -> 4 | D.Complex128 -> 8 | _ -> 0 in
@@ -980,10 +992,9 @@ let off_pairs (b : Support.backend) (A.Any x) =
   A.transfer ~src:x ~dst:a;
   A.Any a
 
-(* Each kind and width from an operand and into a destination off their
-   pairs' alignment, of lines that fit a group and of long ones, which
-   take a real line's split or pre-pass launch: the bits of the aligned
-   transform. *)
+(* Each kind and width from an operand and into a destination off their pairs'
+   alignment, of lines that fit a group and of long ones, which take a real
+   line's split or pre-pass launch: the bits of the aligned transform. *)
 let test_off_pairs b () =
   List.iter
     (fun wide ->
@@ -993,13 +1004,20 @@ let test_off_pairs b () =
           let xs =
             Array.init (total shape) (fun _ ->
                 let re = value wide rs in
-                { Complex.re; im = (match kind with R2c -> 0. | _ -> value wide rs) })
+                {
+                  Complex.re;
+                  im = (match kind with R2c -> 0. | _ -> value wide rs);
+                })
           in
-          let c = { kind; wide; shape; axes; view = plain (Array.length shape); xs } in
+          let c =
+            { kind; wide; shape; axes; view = plain (Array.length shape); xs }
+          in
           let x = operand c in
           let want = bits_of (run b c x) in
           let D.Any dt, s = result c in
-          let dst = off_pairs b (A.Any (A.create b.device dt (Iarray.of_array s))) in
+          let dst =
+            off_pairs b (A.Any (A.create b.device dt (Iarray.of_array s)))
+          in
           let got = bits_of (run b ~dst c (off_pairs b x)) in
           equal (array (pair int64 int64)) want got)
         [
@@ -1016,9 +1034,9 @@ let test_off_pairs b () =
 
 (* The bins a c2r ignores *)
 
-(* The imaginary parts of bin 0 and, at an even n, of bin n / 2 take no
-   part in a c2r along one axis: NaN there gives the bits +0 there gives,
-   which are finite. *)
+(* The imaginary parts of bin 0 and, at an even n, of bin n / 2 take no part in
+   a c2r along one axis: NaN there gives the bits +0 there gives, which are
+   finite. *)
 let test_ignored_bins b () =
   List.iter
     (fun n ->
@@ -1041,24 +1059,27 @@ let test_ignored_bins b () =
           in
           let got xs =
             let c =
-              { kind = C2r n; wide; shape = [| 3; h |]; axes = [| 1 |];
-                view = plain 2; xs }
+              {
+                kind = C2r n;
+                wide;
+                shape = [| 3; h |];
+                axes = [| 1 |];
+                view = plain 2;
+                xs;
+              }
             in
             bits_of (run b c (operand c))
           in
           let want = got (with_im 0.) in
-          equal
-            (array (pair int64 int64))
-            want
-            (got (with_im Float.nan)))
+          equal (array (pair int64 int64)) want (got (with_im Float.nan)))
         [ false; true ])
     [ 1; 2; 3; 8; 9; 64; 1000; 1024; 20014; 32768 ]
 
-(* A c2r along axes [0; 1] of [3; 2] bins whose column 0 is
-   i c (1, w, w²), w = e^(-2πi/3), and column 1 zero: the first axis's
-   inverse transform leaves column 0 all imaginary, which the last axis
-   drops, so the exact result is 0 and every rounding of the first axis
-   errs against it. Within the bound, at c = 1 and c = 2^40. *)
+(* A c2r along axes [0; 1] of [3; 2] bins whose column 0 is i c (1, w, w²), w =
+   e^(-2πi/3), and column 1 zero: the first axis's inverse transform leaves
+   column 0 all imaginary, which the last axis drops, so the exact result is 0
+   and every rounding of the first axis errs against it. Within the bound, at c
+   = 1 and c = 2^40. *)
 let test_dropped_bins b () =
   List.iter
     (fun wide ->
@@ -1067,21 +1088,33 @@ let test_dropped_bins b () =
           let h = sqrt 3. /. 2. *. c in
           let xs =
             Complex.
-              [| { re = 0.; im = c }; zero; { re = h; im = -0.5 *. c }; zero;
-                 { re = -.h; im = -0.5 *. c }; zero |]
+              [|
+                { re = 0.; im = c };
+                zero;
+                { re = h; im = -0.5 *. c };
+                zero;
+                { re = -.h; im = -0.5 *. c };
+                zero;
+              |]
           in
           within_bound b
-            { kind = C2r 2; wide; shape = [| 3; 2 |]; axes = [| 0; 1 |];
-              view = plain 2; xs })
+            {
+              kind = C2r 2;
+              wide;
+              shape = [| 3; 2 |];
+              axes = [| 0; 1 |];
+              view = plain 2;
+              xs;
+            })
         [ 1.; 0x1p40 ])
     [ false; true ]
 
 (* Long lines on later axes *)
 
-(* Long lines along the axis transformed second, so read from the
-   destination, and a c2r's other axis into its copy of the operand. The
-   long axis holds two impulses, each a line of drawn values along the
-   short one, so the long axis's exact transform is a sum of twiddles. *)
+(* Long lines along the axis transformed second, so read from the destination,
+   and a c2r's other axis into its copy of the operand. The long axis holds two
+   impulses, each a line of drawn values along the short one, so the long axis's
+   exact transform is a sum of twiddles. *)
 let test_later_axes b () =
   let check ~wide kind n0 n1 =
     let e1 = match kind with C2r m -> (m / 2) + 1 | _ -> n1 in
@@ -1098,9 +1131,13 @@ let test_later_axes b () =
       rows;
     let c = { kind; wide; shape; axes = [| 0; 1 |]; view = plain 2; xs } in
     let w = line_units n0 in
-    let root m = complex_of (let re, im = w.(m mod n0) in { re; im }) in
-    (* Along the long axis: Σ over the impulses' rows of their values times
-       the twiddles, conjugated for an inverse. *)
+    let root m =
+      complex_of
+        (let re, im = w.(m mod n0) in
+         { re; im })
+    in
+    (* Along the long axis: Σ over the impulses' rows of their values times the
+       twiddles, conjugated for an inverse. *)
     let long ~inverse m (v : Complex.t array) =
       Array.init (n0 * m) (fun i ->
           let k = i / m and l = i mod m in
@@ -1123,9 +1160,12 @@ let test_later_axes b () =
     let got = complexes (run b c (operand c)) in
     let err = norm (Array.map2 Complex.sub want got) in
     let u = if wide then epsilon_float /. 2. else 0x1p-24 in
-    let n = n0 * (match kind with C2r m -> m | _ -> n1) in
+    let n = n0 * match kind with C2r m -> m | _ -> n1 in
     let bound =
-      epsilon b kind [| 0; 1 |] shape *. u *. sqrt (Float.of_int n) *. operand_norm c
+      epsilon b kind [| 0; 1 |] shape
+      *. u
+      *. sqrt (Float.of_int n)
+      *. operand_norm c
     in
     at_most float_exact ~than:bound err
   in
@@ -1145,14 +1185,13 @@ let test_later_axes b () =
 
 (* Guard pages *)
 
-(* The same bits with the operand, through its view, and the result each
-   against an inaccessible page. *)
+(* The same bits with the operand, through its view, and the result each against
+   an inaccessible page. *)
 let law_guards b (c, side) =
   let after = side = Support.After in
   cover "a stepped operand's first element at the page before"
     (c.view.stepped && not after);
-  cover "a reversed operand at the page after"
-    (c.view.reversed <> None && after);
+  cover "a reversed operand at the page after" (c.view.reversed <> None && after);
   let a = c.axes.(0) in
   let n = (points c).(a) in
   let s = snd (result c) and r = Array.length c.shape in
@@ -1190,12 +1229,29 @@ let test_streamed_guards b () =
 (* Every target's bits *)
 
 (* Digests of lines whose lengths take each stated regime of nx.cpu: small
-   primes and their products, powers of two, primes past 250 and their
-   doubles, real lines halved and not, odd radices and long lines of one
-   prime; each the same on every target, as nx_cpu.mli promises. *)
+   primes and their products, powers of two, primes past 250 and their doubles,
+   real lines halved and not, odd radices and long lines of one prime; each the
+   same on every target, as nx_cpu.mli promises. *)
 let lengths =
-  [ 7; 60; 64; 241; 100; 1000; 1024; 4096; 257; 1031; 514; 512; 1001; 59049;
-    65536; 255; 504 ]
+  [
+    7;
+    60;
+    64;
+    241;
+    100;
+    1000;
+    1024;
+    4096;
+    257;
+    1031;
+    514;
+    512;
+    1001;
+    59049;
+    65536;
+    255;
+    504;
+  ]
 
 (* A line of each kind, forward, inverse, r2c and c2r, of [n] points drawn from
    a seed of [n]. *)
@@ -1234,7 +1290,9 @@ let test_digests b () =
   let t =
     table (fun wide n -> String.concat "" (List.map one (lines wide n)))
   in
-  expect t @@ __POS_OF__ {|
+  expect t
+  @@ __POS_OF__
+       {|
     7 f32 25fc4490bddde05e
     7 f64 103173224a3c62a3
     60 f32 d3a7aaecc9170471
@@ -1271,10 +1329,10 @@ let test_digests b () =
     504 f64 95a710c363c304dc
     |}
 
-(* The same lines with an infinity at their second point, every NaN as one as
-   in [bits_of]. Which results are infinite or NaN, and the infinities' signs,
-   follow from the order of each line's operations, which the finite digests
-   do not see. *)
+(* The same lines with an infinity at their second point, every NaN as one as in
+   [bits_of]. Which results are infinite or NaN, and the infinities' signs,
+   follow from the order of each line's operations, which the finite digests do
+   not see. *)
 let test_infinity_digests b () =
   let with_inf c =
     let xs = Array.copy c.xs in
@@ -1294,7 +1352,9 @@ let test_infinity_digests b () =
         List.iter (fun c -> bits buf (with_inf c)) (lines wide n);
         Buffer.contents buf)
   in
-  expect t @@ __POS_OF__ {|
+  expect t
+  @@ __POS_OF__
+       {|
     7 f32 469a74b37861fb26
     7 f64 da88bd8c1e14d4bc
     60 f32 767a346ef50146f7
@@ -1352,16 +1412,17 @@ let test_empty (b : Support.backend) () =
   let y = A.create b.device D.Float32 [| 2; 0 |] in
   check (K.c2r ~axes:[| 1 |] ~dst:y x)
 
-(* Transforms that do not fit, by their dtypes, axes or shapes: not Done,
-   and nothing written outside the destination. *)
+(* Transforms that do not fit, by their dtypes, axes or shapes: not Done, and
+   nothing written outside the destination. *)
 let test_misfits (b : Support.backend) () =
   let module K = (val b.kernels) in
   let c64 s = A.create b.device D.Complex64 (Iarray.of_array s)
   and c128 s = A.create b.device D.Complex128 (Iarray.of_array s) in
   let f32 s = A.create b.device D.Float32 (Iarray.of_array s) in
   let row (type v s) msg what (dt : (v, s) D.t) dst call =
-    Misfit.check ~msg ~what b [| (D.Any dt, dst) |] (fun g ds ->
-        call g (A.expect dt ds.(0)))
+    Misfit.check ~msg ~what b
+      [| (D.Any dt, dst) |]
+      (fun g ds -> call g (A.expect dt ds.(0)))
   in
   let c64' = D.Complex64 and c128' = D.Complex128 and f64' = D.Float64 in
   row "r2c of float32 into complex128" "a dtype" c128' [| 3 |] (fun g dst ->
@@ -1378,17 +1439,17 @@ let test_misfits (b : Support.backend) () =
       K.c2c Inverse ~axes:[| 0 |] ~dst (g.Misfit.g (c128 [| 4 |])));
   row "r2c into all the bins" "a shape" c64' [| 4 |] (fun g dst ->
       K.r2c ~axes:[| 0 |] ~dst (g.Misfit.g (f32 [| 4 |])));
-  row "c2r of other bins than its points'" "a shape" f64' [| 4 |]
-    (fun g dst -> K.c2r ~axes:[| 0 |] ~dst (g.Misfit.g (c128 [| 4 |])));
+  row "c2r of other bins than its points'" "a shape" f64' [| 4 |] (fun g dst ->
+      K.c2r ~axes:[| 0 |] ~dst (g.Misfit.g (c128 [| 4 |])));
   row "c2r along an axis past the rank" "an attribute" f64' [| 4 |]
     (fun g dst -> K.c2r ~axes:[| 2 |] ~dst (g.Misfit.g (c128 [| 3 |])))
 
 (* Past 2^31 elements *)
 
-(* A c2r into float32 [2^21 + 1; 1024], 8 GiB, its last element at
-   2^31 + 1023, from bins broadcast along the first axis: sampled lines
-   have the first line's bits, and the first is within the bound. A device
-   holds it where the host would need 8 GiB. *)
+(* A c2r into float32 [2^21 + 1; 1024], 8 GiB, its last element at 2^31 + 1023,
+   from bins broadcast along the first axis: sampled lines have the first line's
+   bits, and the first is within the bound. A device holds it where the host
+   would need 8 GiB. *)
 let test_past_2_31 (b : Support.backend) () =
   let module K = (val b.kernels) in
   let lines = (1 lsl 21) + 1 and n = 1024 in
@@ -1401,16 +1462,16 @@ let test_past_2_31 (b : Support.backend) () =
   in
   let bins = Support.on b (A.of_array D.Complex64 [| h |] row) in
   let x =
-    A.v D.Complex64
-      (L.v ~strides:[| 0; 1 |] [| lines; h |])
-      (A.buffer bins)
+    A.v D.Complex64 (L.v ~strides:[| 0; 1 |] [| lines; h |]) (A.buffer bins)
   in
   let y = A.create b.device D.Float32 [| lines; n |] in
   check (K.c2r ~axes:[| 1 |] ~dst:y x);
   let line l =
     A.to_array
       (Support.host
-         (A.v D.Float32 (L.v ~offset:(l * n) ~strides:[| 1 |] [| n |]) (A.buffer y)))
+         (A.v D.Float32
+            (L.v ~offset:(l * n) ~strides:[| 1 |] [| n |])
+            (A.buffer y)))
   in
   let first = line 0 in
   let bits = Array.map Int32.bits_of_float in
@@ -1418,27 +1479,40 @@ let test_past_2_31 (b : Support.backend) () =
     (fun l -> equal (array int32) (bits first) (bits (line l)))
     [ 1; lines / 2; lines - 1 ];
   let c =
-    { kind = C2r n; wide = false; shape = [| h |]; axes = [| 0 |];
-      view = plain 1; xs = row }
+    {
+      kind = C2r n;
+      wide = false;
+      shape = [| h |];
+      axes = [| 0 |];
+      view = plain 1;
+      xs = row;
+    }
   in
   let want =
-    Array.map complex_of (exact ~wide:false c.kind c.axes c.shape (Array.map dd_of row))
+    Array.map complex_of
+      (exact ~wide:false c.kind c.axes c.shape (Array.map dd_of row))
   in
   let err =
-    norm (Array.map2 (fun (w : Complex.t) re -> Complex.sub w { re; im = 0. }) want first)
+    norm
+      (Array.map2
+         (fun (w : Complex.t) re -> Complex.sub w { re; im = 0. })
+         want first)
   in
   let bound =
-    epsilon b c.kind c.axes c.shape *. 0x1p-24 *. sqrt (Float.of_int n) *. operand_norm c
+    epsilon b c.kind c.axes c.shape
+    *. 0x1p-24
+    *. sqrt (Float.of_int n)
+    *. operand_norm c
   in
   at_most float_exact ~than:bound err
 
-(* The bytes of device memory nx_cuda.mli states nx.cuda keeps for later
-   calls on a device. *)
+(* The bytes of device memory nx_cuda.mli states nx.cuda keeps for later calls
+   on a device. *)
 let cuda_kept = 192 * 1024 * 1024
 
-(* Lines of primes past 2^19, each by Bluestein's convolution, whose plans
-   at complex128, a chirp of 8 MiB and a kernel of 16 MiB or more each,
-   take more than the 64 MiB nx_cuda.mli states the plans keep. *)
+(* Lines of primes past 2^19, each by Bluestein's convolution, whose plans at
+   complex128, a chirp of 8 MiB and a kernel of 16 MiB or more each, take more
+   than the 64 MiB nx_cuda.mli states the plans keep. *)
 let large_plans = [ 524309; 524341; 524347; 524351; 524353 ]
 
 let[@inline never] transform_line (b : Support.backend) n =
@@ -1448,14 +1522,15 @@ let[@inline never] transform_line (b : Support.backend) n =
   check (K.c2c Forward ~axes:[| 0 |] ~dst:y x);
   Rig.Buffer.wait (A.buffer y) Read_write
 
-(* nx.cuda keeps at most [cuda_kept] bytes of device memory for later
-   calls, however many large lines it has planned. *)
+(* nx.cuda keeps at most [cuda_kept] bytes of device memory for later calls,
+   however many large lines it has planned. *)
 let test_kept_plans (b : Support.backend) () =
   (* The first call loads the library's code on the device. *)
   transform_line b 64;
   let before = Support.settled b.device in
   List.iter (transform_line b) large_plans;
-  at_most ~msg:"bytes kept" int ~than:cuda_kept (Support.settled b.device - before)
+  at_most ~msg:"bytes kept" int ~than:cuda_kept
+    (Support.settled b.device - before)
 
 (* Lines of a prime past 2^20, each by Bluestein's convolution of
    [m = 2^21] points, take a workspace past the 64 MiB the device keeps:
@@ -1476,15 +1551,14 @@ let test_loop_workspace (b : Support.backend) () =
 let suite (b : Support.backend) =
   let run f x = b.around (fun () -> f b x) in
   let test name f = test name (fun () -> b.around (f b)) in
-  (* Guard pages lie in host memory: a backend computing elsewhere has
-     none. *)
+  (* Guard pages lie in host memory: a backend computing elsewhere has none. *)
   let guards =
     if not (Rig.equal b.device Rig.host) then []
     else
       [
         group
-          "reads and writes no byte past the operand and the result, \
-           whatever pages lie beside them"
+          "reads and writes no byte past the operand and the result, whatever \
+           pages lie beside them"
           [
             prop ~count:300 "through views" (Gen.pair case_gen sides)
               (run law_guards);
@@ -1523,8 +1597,7 @@ let suite (b : Support.backend) =
          ];
        test "a c2r ignores the imaginary parts of bins 0 and n / 2"
          test_ignored_bins;
-       test "operands and destinations at their parts' alignment"
-         test_off_pairs;
+       test "operands and destinations at their parts' alignment" test_off_pairs;
        group "bits are a function of the values alone"
          ([
             prop "whatever the views, threads or batch" special_gen
@@ -1555,7 +1628,9 @@ let suite (b : Support.backend) =
 
 (* A line of [n] points of [kind], of random values. *)
 let line ~wide kind n =
-  let shape = match kind with C2r m -> [| (m / 2) + 1 |] | R2c | C2c _ -> [| n |] in
+  let shape =
+    match kind with C2r m -> [| (m / 2) + 1 |] | R2c | C2c _ -> [| n |]
+  in
   let rs = Random.State.make [| n |] in
   let xs =
     Array.init shape.(0) (fun _ ->
@@ -1564,12 +1639,12 @@ let line ~wide kind n =
   in
   { kind; wide; shape; axes = [| 0 |]; view = plain 1; xs }
 
-(* rig.nv loads the cubin CUDA loads, so a transform through it has
-   CUDA's bits: what it can get wrong, its launches, memory and order,
-   shows in them. Each case runs through CUDA, then through rig.nv. A
-   transform past 2^31 elements adds the kernels' index arithmetic, and
-   runs through CUDA alone. A NaN agrees with any NaN: nx_cuda.mli
-   leaves a NaN result's sign and payload unspecified. *)
+(* rig.nv loads the cubin CUDA loads, so a transform through it has CUDA's bits:
+   what it can get wrong, its launches, memory and order, shows in them. Each
+   case runs through CUDA, then through rig.nv. A transform past 2^31 elements
+   adds the kernels' index arithmetic, and runs through CUDA alone. A NaN agrees
+   with any NaN: nx_cuda.mli leaves a NaN result's sign and payload
+   unspecified. *)
 let nv_laws (first : Support.backend) (nv : Support.backend) =
   let agree call = Elements.agree first nv call in
   let transform c =
@@ -1583,9 +1658,11 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
           prop "of transforms by the prime factors of the points" case_gen
             (fun c ->
               let lengths = Array.map (fun a -> (points c).(a)) c.axes in
-              cover "a prime factor past 250" (Array.exists by_bluestein lengths);
+              cover "a prime factor past 250"
+                (Array.exists by_bluestein lengths);
               cover "several axes" (Array.length c.axes > 1);
-              cover "a real transform" (match c.kind with C2c _ -> false | _ -> true);
+              cover "a real transform"
+                (match c.kind with C2c _ -> false | _ -> true);
               transform c);
           test "of long lines of each kind" (fun () ->
               List.iter
@@ -1604,6 +1681,292 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
         ];
     ]
 
+(* nx.metal *)
+
+(* nx.metal computes the complex64 c2c and the float32 r2c and c2r along axes
+   whose lines run 7-smooth, Rader's, or Bluestein's of m up to 2^20, and declines
+   every other transform (nx_metal.mli), so its laws draw those alone, from a
+   cut of the lengths that reaches every feature of a line's first step, a long
+   line and each convolution ([metal_features]): one axis among others
+   of up to 3 lines for the bound, whose exact sums cost [n] products a point;
+   and for the bits, batches of up to 20 lines, side by side or apart, through
+   every view. Longer lines are impulses ([test_metal_long]). Each step is its
+   own pipeline, so the suite makes them together before its first call. *)
+let metal_lengths =
+  [
+    1;
+    2;
+    3;
+    5;
+    7;
+    8;
+    12;
+    16;
+    49;
+    60;
+    90;
+    343;
+    1000;
+    1024;
+    2048;
+    2187;
+    3675;
+    4096;
+    4374;
+    11;
+    22;
+    23;
+    1031;
+    2039;
+  ]
+
+module Fft = Nx_metal.Fft
+
+(* The features of a line's first step that a cut reaches: its radices, its
+   first and last pass's, its count of passes, its points a thread, a line's
+   threads within a SIMD group or past it, one line a group or several, and its
+   points' parity; whether the line takes several steps, and its
+   convolution. *)
+let metal_features n =
+  let line = Fft.line n ~real:false in
+  let steps = line.steps in
+  let s = steps.(0) in
+  let r = s.radices and k = Array.length s.radices in
+  List.map
+    (Printf.sprintf "radix %d")
+    (List.sort_uniq compare (Array.to_list r))
+  @ (if k = 0 then [ "no pass" ]
+     else
+       [
+         Printf.sprintf "first radix %d" r.(0);
+         Printf.sprintf "last radix %d" r.(k - 1);
+       ])
+  @ [
+      (if k > 1 then "several passes" else "one pass or none");
+      Printf.sprintf "%d points a thread" s.p;
+      (if s.tl <= 32 then "a line in a SIMD group" else "a line of SIMD groups");
+      (if Fft.rows s > 1 then "lines a group" else "a line a group");
+      (if n mod 2 = 0 then "even points" else "odd points");
+      (if Array.length steps > 1 then "a long line" else "a line of one step");
+      (match line.how with
+      | Smooth -> "a 7-smooth line"
+      | Rader -> "Rader's line"
+      | Bluestein _ -> "Bluestein's line");
+    ]
+
+let metal_all_features =
+  List.sort_uniq compare (List.concat_map metal_features metal_lengths)
+
+(* Makes every key the cut's lines take, once, before the suite's first call. *)
+let metal_prepared (b : Support.backend) =
+  lazy
+    (Nx_metal.prepare b.device
+       (List.filter_map
+          (fun (plan, n) ->
+            let line = Nx_array.Layout.contiguous [| n |]
+            and bins = Nx_array.Layout.contiguous [| (n / 2) + 1 |] in
+            match plan with
+            | `C2c -> Fft.c2c ~bases:(0, 0) ~axes:[| 0 |] line ~dst:line
+            | `R2c -> Fft.r2c ~bases:(0, 0) ~axes:[| 0 |] line ~dst:bins
+            | `C2r -> Fft.c2r ~bases:(0, 0) ~axes:[| 0 |] bins ~dst:line)
+          (List.concat_map
+             (fun n -> [ (`C2c, n); (`R2c, n); (`C2r, n) ])
+             metal_lengths)))
+
+let metal_case ~lines =
+  let open Gen in
+  with_pp pp_case
+  @@ let* n = of_list ~pp:Format.pp_print_int metal_lengths in
+     let* rest = array ~size:(int_range 0 1) lines in
+     let* at = int_range 0 (Array.length rest) in
+     let s =
+       Array.concat
+         [
+           Array.sub rest 0 at;
+           [| n |];
+           Array.sub rest at (Array.length rest - at);
+         ]
+     in
+     let r = Array.length s in
+     let* kind = of_list [ C2c Nx_kernel.Forward; C2c Inverse; R2c; C2r n ] in
+     let s =
+       match kind with
+       | C2r _ -> Array.mapi (fun a e -> if a = at then (n / 2) + 1 else e) s
+       | C2c _ | R2c -> s
+     in
+     let* broadcast =
+       frequency
+         [ (2, constant []); (1, map (fun a -> [ a ]) (int_range 0 (r - 1))) ]
+     in
+     let+ view = view_of ~broadcast r and+ seed = int in
+     let rs = Random.State.make [| seed |] in
+     let xs =
+       Array.init (total s) (fun _ ->
+           let re = value false rs in
+           { Complex.re; im = value false rs })
+     in
+     { kind; wide = false; shape = s; axes = [| at |]; view; xs }
+
+let metal_bound_gen = metal_case ~lines:(Gen.int_range 1 3)
+
+(* A line of each length of the cut, so that every feature is covered whatever
+   the seed: at odd positions an inverse of two lines through a reversed view,
+   the operand broadcast along the batch, at even ones one line. *)
+let metal_bound_examples =
+  let real kind n =
+    let s = [| (match kind with C2r _ -> (n / 2) + 1 | _ -> n) |] in
+    let rs = Random.State.make [| n; 1 |] in
+    {
+      kind;
+      wide = false;
+      shape = s;
+      axes = [| 0 |];
+      view = Elements.plain 1;
+      xs =
+        Array.init (total s) (fun _ ->
+            let re = value false rs in
+            { Complex.re; im = value false rs });
+    }
+  in
+  List.concat_map
+    (fun n -> [ real R2c n; real (C2r n) n ])
+    [ 1; 2; 3; 11; 12; 22; 23; 343; 1000; 2187; 4096 ]
+  @ List.mapi
+      (fun i n ->
+        let rs = Random.State.make [| n |] in
+        let two = i mod 2 = 1 in
+        let s = if two then [| n; 2 |] else [| n |] in
+        {
+          kind = C2c (if two then Inverse else Forward);
+          wide = false;
+          shape = s;
+          axes = [| 0 |];
+          view =
+            (if two then
+               { (Elements.plain 2) with reversed = Some 0; broadcast = [ 1 ] }
+             else Elements.plain 1);
+          xs =
+            Array.init (total s) (fun _ ->
+                let re = value false rs in
+                { Complex.re; im = value false rs });
+        })
+      metal_lengths
+
+let law_metal_bound b c =
+  let n = (points c).(c.axes.(0)) in
+  let fs = match c.kind with C2c _ -> metal_features n | R2c | C2r _ -> [] in
+  List.iter (fun f -> cover f (List.mem f fs)) metal_all_features;
+  let real = match c.kind with C2c _ -> false | R2c | C2r _ -> true in
+  cover "an r2c" (c.kind = R2c);
+  cover "a c2r" (match c.kind with C2r _ -> true | _ -> false);
+  cover "a halved real line" (real && n mod 2 = 0);
+  cover "an odd real line" (real && n mod 2 = 1);
+  let halved = real && n mod 2 = 0 in
+  let how = (Fft.line (if halved then n / 2 else n) ~real:halved).how in
+  cover "a real Rader line" (real && how = Rader);
+  cover "a real Bluestein line" (real && how <> Smooth && how <> Rader);
+  cover "the step of 4096 points" (n = 4096);
+  cover "an inverse" (c.kind = C2c Inverse);
+  cover "a batch of lines" (Array.length c.shape > 1);
+  cover "an operand broadcast" (c.view.broadcast <> []);
+  cover "a view off its lines' order" (c.view.stepped || c.view.reversed <> None);
+  within_bound b c
+
+let metal_bits_gen =
+  let open Gen in
+  let lines =
+    frequency [ (1, int_range 1 3); (1, int_range 8 9); (1, int_range 16 20) ]
+  in
+  with_pp pp_case
+  @@ let* c = metal_case ~lines in
+     let* count = frequency [ (1, constant 0); (1, int_range 1 3) ] in
+     let+ seed = int in
+     let rs = Random.State.make [| seed |] and xs = Array.copy c.xs in
+     for _ = 1 to count do
+       let x = specials.(Random.State.int rs 3) in
+       let j = Random.State.int rs (Array.length xs) in
+       xs.(j) <-
+         (if Random.State.bool rs then { (xs.(j)) with im = x }
+          else { (xs.(j)) with re = x })
+     done;
+     { c with xs }
+
+(* Lines whose bits law_bits covers whatever the seed: 16 lines side by side
+   with a NaN among their points, and 2 lines apart, of 4096 points, of 1000 and
+   of 4374, a long line. *)
+let metal_bits_examples =
+  let case ?(kind = C2c Forward) n lines nan =
+    let s = [| (match kind with C2r _ -> (n / 2) + 1 | _ -> n); lines |] in
+    let rs = Random.State.make [| lines |] in
+    let xs =
+      Array.init (total s) (fun _ ->
+          let re = value false rs in
+          { Complex.re; im = value false rs })
+    in
+    if nan then xs.(lines + 1) <- { (xs.(lines + 1)) with re = Float.nan };
+    {
+      kind;
+      wide = false;
+      shape = s;
+      axes = [| 0 |];
+      view = Elements.plain 2;
+      xs;
+    }
+  in
+  [
+    case 4096 16 true;
+    case 4096 2 false;
+    case 1000 16 true;
+    case 1000 2 false;
+    case 4374 2 true;
+    case ~kind:R2c 1000 16 true;
+    case ~kind:R2c 343 2 false;
+    case ~kind:(C2r 1000) 1000 2 true;
+    case ~kind:(C2r 343) 343 16 false;
+  ]
+
+(* Long lines of two steps, from 6561 = 3^8 to 2^17, complex, odd real and
+   halved, and of three, 3,828,125 = 5^7 7^2, through their transposes, of
+   impulses whose exact transform costs a few products a point; and long
+   Bluestein lines, of 4099 and of the prime 65537, whose 65536 takes no Rader
+   line, and halved of 8198, h 4099. The line of 2^23 points
+   ([test_long_line]) takes the step of 4096 points. *)
+let metal_long_lengths =
+  [ 6561; 8192; 16807; 19683; 65536; 131072; 4099; 8198; 65537 ]
+
+let test_metal_long b () =
+  List.iter
+    (fun n ->
+      let w = line_units n in
+      List.iter
+        (fun kind ->
+          check_impulses b ~wide:false kind n w [ 3; n / 3; n - 1 ] impulses)
+        [ C2c Forward; C2c Inverse; R2c; C2r n ])
+    metal_long_lengths;
+  impulse_line b D.Complex64 3828125 1234567
+
+let metal_suite (b : Support.backend) =
+  let prepared = metal_prepared b in
+  let run f x =
+    Lazy.force prepared;
+    b.around (fun () -> f b x)
+  in
+  group b.name
+    [
+      group "transforms are within the library's bound"
+        [
+          prop ~count:6 ~examples:metal_bound_examples "along a 7-smooth axis"
+            metal_bound_gen (run law_metal_bound);
+          test "long lines" (fun () -> run test_metal_long ());
+          test "a line of 2^23 points" (fun () -> run test_long_line ());
+        ];
+      group "bits are a function of the values alone"
+        [
+          prop ~examples:metal_bits_examples ~count:40
+            "whatever the views or batch" metal_bits_gen (run law_bits);
+        ];
+    ]
+
 let () =
   let nv =
     match (Support.gpus (), Support.nv ()) with
@@ -1613,4 +1976,5 @@ let () =
   exit
     (Windtrap.run "nx_kernel.fft"
        (List.map suite (Support.backends () @ Option.to_list (Support.amd ()))
-       @ nv))
+       @ nv
+       @ Option.to_list (Option.map metal_suite (Support.metal ()))))

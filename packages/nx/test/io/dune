@@ -62,12 +62,17 @@
    "l=1M,%{env:OCAMLRUNPARAM=}"
    (run %{test}))))
 
-; Opens this machine's first GPU in a child, so it holds the lock GPU tests
-; share.
+; Opens this machine's first GPU in a child: ../dune's rule of GPU suites runs
+; it.
 
-(test
- (package nx)
+(executable
  (name test_io_gpu)
  (modules test_io_gpu)
- (locks %{workspace_root}/gpu)
  (libraries nx nx_io rig rig.gpus unix windtrap))
+
+(rule
+ (target gpu.suites)
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:../support/suites.exe} list %{dep:test_io_gpu.exe}))))

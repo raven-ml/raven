@@ -1,0 +1,38 @@
+; bench_metal.exe holds the Metal rows against this machine's baseline;
+; bench_metal.exe verify checks each row's result and times nothing;
+; bench_metal.exe compare times the rows for compare.py. bench_metal.exe
+; first prints the times of a process's first calls, which only a fresh
+; process shows, with Metal's cache as the machine holds it;
+; bench_metal.exe cold checks the margin for a GPU's low clock. The alias
+; prints the first calls, checks the low clock, then every row once, then
+; times them. It has no bundle, unlike the Metal suites
+; (../../test/metal/support/dune), so that its first calls open the Metal
+; cache that users' programs share, as theirs do.
+
+(executable
+ (name bench_metal)
+ (modules rows bench_metal)
+ (libraries
+  nx_array
+  nx_array_support
+  nx_kernel
+  nx_cpu
+  nx_metal
+  nx
+  nx_quant
+  rig
+  rig.metal
+  thumper
+  unix))
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench %{workspace_root}/gpu)
+ (deps
+  (glob_files *.thumper))
+ (action
+  (progn
+   (run %{exe:bench_metal.exe} first)
+   (run %{exe:bench_metal.exe} cold)
+   (run %{exe:bench_metal.exe} verify)
+   (run %{exe:bench_metal.exe}))))

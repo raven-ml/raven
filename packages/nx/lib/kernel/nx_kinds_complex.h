@@ -78,28 +78,39 @@ NX_INLINE NX_CT NX_Z(nx_recip)(NX_CT a) {
   return NX_Z(nx_fdiv)(NX_MK(NX_ONE, (NX_T)0), a);
 }
 
+/* The parts compare by the real kinds, which are exact on Metal too. */
 NX_INLINE int NX_Z(nx_equal)(NX_CT a, NX_CT b) {
-  return a.re == b.re && a.im == b.im;
+  return NX_(nx_equal)(a.re, b.re) && NX_(nx_equal)(a.im, b.im);
 }
 NX_INLINE int NX_Z(nx_not_equal)(NX_CT a, NX_CT b) {
   return !NX_Z(nx_equal)(a, b);
 }
 NX_INLINE int NX_Z(nx_less)(NX_CT a, NX_CT b) {
   int n = NX_Z(nx_nan)(a) || NX_Z(nx_nan)(b);
-  return !n && (a.re < b.re || (a.re == b.re && a.im < b.im));
+  return !n && (NX_(nx_less)(a.re, b.re) ||
+                (NX_(nx_equal)(a.re, b.re) && NX_(nx_less)(a.im, b.im)));
 }
 NX_INLINE int NX_Z(nx_less_equal)(NX_CT a, NX_CT b) {
   int n = NX_Z(nx_nan)(a) || NX_Z(nx_nan)(b);
-  return !n && (a.re < b.re || (a.re == b.re && a.im <= b.im));
+  return !n && (NX_(nx_less)(a.re, b.re) ||
+                (NX_(nx_equal)(a.re, b.re) && NX_(nx_less_equal)(a.im, b.im)));
 }
 
 /* 1 where x follows y in the order with -0 below +0, -1 where it precedes,
-   0 where they are one value; neither is NaN. */
+   0 where they are one value; neither is NaN. On Metal, by order keys,
+   which put -0 below +0 too. */
+#ifdef __METAL_VERSION__
+NX_INLINE int NX_(nx_order)(NX_T x, NX_T y) {
+  NX_U kx = NX_(nx_key)(x), ky = NX_(nx_key)(y);
+  return (kx > ky) - (kx < ky);
+}
+#else
 NX_INLINE int NX_(nx_order)(NX_T x, NX_T y) {
   int c = (x > y) - (x < y);
   int sx = (NX_BITS(x) & NX_SIGN_BIT) != 0, sy = (NX_BITS(y) & NX_SIGN_BIT) != 0;
   return c != 0 ? c : sy - sx;
 }
+#endif
 NX_INLINE int NX_Z(nx_order)(NX_CT a, NX_CT b) {
   int c = NX_(nx_order)(a.re, b.re);
   return c != 0 ? c : NX_(nx_order)(a.im, b.im);

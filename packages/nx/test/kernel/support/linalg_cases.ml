@@ -57,19 +57,31 @@ let values (A.Any x) : Complex.t array =
   | _ -> invalid_arg "values"
 
 (* The values' parts, a complex number's real then imaginary one, as
-   floats: same_bits compares their bits, NaN payloads and signs of zero
+   floats, read through a view of the parts without a Complex.t each:
+   same_bits compares their bits, NaN payloads and signs of zero
    included. *)
 let bits (A.Any x) : float array =
-  let parts (v : Complex.t array) =
-    Array.init (2 * Array.length v) (fun k ->
-        if k land 1 = 0 then v.(k / 2).re else v.(k / 2).im)
-  in
+  let x = Support.host x in
   match A.dtype x with
-  | D.Float32 -> A.to_array (Support.host x)
-  | D.Float64 -> A.to_array (Support.host x)
-  | D.Complex64 -> parts (A.to_array (Support.host x))
-  | D.Complex128 -> parts (A.to_array (Support.host x))
+  | D.Float32 -> A.to_array x
+  | D.Float64 -> A.to_array x
+  | D.Complex64 -> A.to_array (Option.get (A.bitcast D.Float32 x))
+  | D.Complex128 -> A.to_array (Option.get (A.bitcast D.Float64 x))
   | _ -> invalid_arg "bits"
+
+(* An array of [dt] and [shape] holding the parts [v] as {!bits} gives
+   them, each rounded to [dt]. *)
+let of_parts (D.Any dt) shape (v : float array) =
+  let parts = Iarray.of_array (Array.append shape [| 2 |]) in
+  let shape = Iarray.of_array shape in
+  match dt with
+  | D.Float32 -> A.Any (A.of_array D.Float32 shape v)
+  | D.Float64 -> A.Any (A.of_array D.Float64 shape v)
+  | D.Complex64 ->
+      A.Any (Option.get (A.bitcast D.Complex64 (A.of_array D.Float32 parts v)))
+  | D.Complex128 ->
+      A.Any (Option.get (A.bitcast D.Complex128 (A.of_array D.Float64 parts v)))
+  | _ -> invalid_arg "of_parts"
 
 let same_bits =
   let bits = Int64.bits_of_float in
@@ -161,21 +173,27 @@ let count c = Array.fold_left ( * ) 1 c.batch
 
 let square c = Array.append c.batch [| c.n; c.n |]
 
-(* [v], matrices of [rows] × [cols], with element (i, j) times
-   2^(e_i + f_j) under [Graded], e and f drawn from the seed in [-8, 8],
-   f = e under [symmetric]. *)
-let grade c ?(symmetric = false) ~rows ~cols v =
-  if c.scale <> Graded then v
+(* Under [Graded], the scale of element [k] of matrices of [rows] × [cols],
+   2^(e_i + f_j) at its (i, j), e and f drawn from the seed in [-8, 8],
+   f = e under [symmetric]; else None. *)
+let grades c ?(symmetric = false) ~rows ~cols () =
+  if c.scale <> Graded then None
   else
     let r = Random.State.make [| c.seed + 2 |] in
     let e = Array.init rows (fun _ -> Random.State.int r 17 - 8) in
     let f = if symmetric then e else Array.init cols (fun _ -> Random.State.int r 17 - 8) in
-    Array.mapi
-      (fun k (x : Complex.t) ->
-        let i = k / cols mod rows and j = k mod cols in
-        let s = Float.ldexp 1. (e.(i) + f.(j)) in
-        { Complex.re = x.re *. s; im = x.im *. s })
-      v
+    Some (fun k -> Float.ldexp 1. (e.(k / cols mod rows) + f.(k mod cols)))
+
+(* [v], matrices of [rows] × [cols], each element times its {!grades}. *)
+let grade c ?symmetric ~rows ~cols v =
+  match grades c ?symmetric ~rows ~cols () with
+  | None -> v
+  | Some scale ->
+      Array.mapi
+        (fun k (x : Complex.t) ->
+          let s = scale k in
+          { Complex.re = x.re *. s; im = x.im *. s })
+        v
 
 (* The exponent [Subnormal] takes its operand down by, to [bits] bits, else
    0. *)
@@ -258,7 +276,8 @@ let fresh d (D.Any dt) s = A.Any (A.create d dt (Iarray.of_array s))
 (* [b]'s results of [r] on [ops], on [b]'s device: Lu's positions int64, eig's results complex of a's precision,
    svd's and eigh's values floats of a's precision, every other result of a's
    dtype, of the shapes Nx_kernel.Shape gives, made by [alloc] (defaults to
-   fresh arrays on [b]'s device). *)
+   fresh arrays on [b]'s device); [None] where [b] declines a dtype it
+   states no arithmetic on ([arith]). *)
 let run ?alloc (b : Support.backend) r ops =
   let module K = (val b.kernels) in
   let module Shape = Nx_kernel.Shape in
@@ -326,6 +345,7 @@ let run ?alloc (b : Support.backend) r ops =
   in
   match answer with
   | A.Done -> Some dsts
+  | A.Declined when not (b.arith (D.Any dt)) -> None
   | A.Declined -> failf "%s declined a routine" b.name
   | e -> failf "the kernels answered %a" pp_answer e
 
@@ -436,12 +456,27 @@ let lu_operand c =
   let cols = match c.seed mod 3 with 0 -> c.n | 1 -> c.r | _ -> c.n + c.r in
   let r = Random.State.make [| c.seed |] in
   let zero = if cols > 0 && c.seed mod 5 = 0 then c.seed mod cols else -1 in
-  let v =
-    Array.init (count c * c.n * cols) (fun k ->
-        if k mod cols = zero then Complex.zero else draw r c.dt)
-  in
-  let v = shrink c (grade c ~rows:c.n ~cols v) in
-  (cols, of_values c.dt (Array.append c.batch [| c.n; cols |]) v)
+  (* {!draw}'s values as {!bits}' parts, without a Complex.t each: tall
+     operands hold millions. A complex element draws its imaginary part
+     first, as draw's record does. *)
+  let w = if is_complex c.dt then 2 else 1 in
+  let total = count c * c.n * cols in
+  let v = Array.make (w * total) 0. in
+  for k = 0 to total - 1 do
+    if k mod cols <> zero then
+      if w = 1 then v.(k) <- uniform r
+      else begin
+        v.((2 * k) + 1) <- uniform r;
+        v.(2 * k) <- uniform r
+      end
+  done;
+  (* {!grade}'s and {!shrink}'s scalings, in their order. *)
+  Option.iter
+    (fun scale -> Array.iteri (fun p x -> v.(p) <- x *. scale (p / w)) v)
+    (grades c ~rows:c.n ~cols ());
+  let d = down c in
+  if d <> 0 then Array.iteri (fun p x -> v.(p) <- Float.ldexp x (-d)) v;
+  (cols, of_parts c.dt (Array.append c.batch [| c.n; cols |]) v)
 
 (* svd's operand: lu_operand's, or its transpose by the seed, so that it has
    fewer, as many or more rows than columns; its rows and columns. *)
