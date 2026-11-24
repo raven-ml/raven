@@ -2548,6 +2548,26 @@ let gpu_rows g =
               in
               fun () -> ignore (synced (f cache row)));
         };
+      (* The host's 2^16 binomial counts of 100 trials: one kernel of some
+         20000 operations, whose lanes would spill out of a thread's
+         registers. *)
+      on_gpu g "binomial-float32-64K"
+        {
+          at =
+            (fun at ->
+              let p =
+                Nx.place at
+                  (Nx.Rng.uniform ~key:(Nx.Rng.key 67) f32 [| 65536 |])
+              and n = Nx.place at (Nx.full Nx.int32 [| 65536 |] 100l)
+              and key = Nx.place at (Nx.Rng.to_tensor (Nx.Rng.key 54)) in
+              let f =
+                Rune.jit
+                  Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+                  (fun key n p ->
+                    Nx.Rng.binomial ~key:(Nx.Rng.of_tensor key) n p)
+              in
+              fun () -> ignore (synced (f key n p)));
+        };
       on_gpu g "wide-sum-1e6"
         {
           at =

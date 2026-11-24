@@ -9,9 +9,9 @@ module K = Postrange.Scheduler
 
 (* Goldens
 
-   renderers.tolk keeps its own table: it adds the columns [registers] and
-   [per_byte_first], facts of the host's and the GPUs' heuristics (D89, D187)
-   that upstream's renderers do not have. *)
+   renderers.tolk keeps its own table: it adds the columns [registers],
+   [per_byte_first] and [thread_registers], facts of the host's and the GPUs'
+   heuristics (D89, D187, D505) that upstream's renderers do not have. *)
 
 let renderers =
   List.map
@@ -3676,6 +3676,75 @@ let maps_four_first =
       in
       equal (list int) expected upcasts)
 
+(* [out[i] = f x[i]] over [size] values of [dt], [i] of role [axis]. *)
+let map ?(axis = Ops.Axis_type.Weak) dt size f =
+  let param slot = Shape.param ~shape:[ Ops.Int size ] slot dt in
+  let out = param 0 and xs = param 1 in
+  let i = Ops.range ~axis_type:axis (Ops.Int size) [ 0 ] in
+  let v = f (Ops.index xs [ i ]) in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) v) [ i ] ]
+
+(* The sum [((t_n + t_(n-1)) + ...) + t_1] of [x], where [t_1 = x x] and each
+   product [t_j] is [t_(j-1) x]: its first sum reads [t_n], the last product, so
+   in any order [x] and the [n] products hold registers at once at [t_n]. *)
+let wide n x =
+  let open Ops.O in
+  let rec products t j =
+    if Stdlib.( > ) j n then [] else t :: products (t * x) (Stdlib.succ j)
+  in
+  match List.rev (products (x * x) 1) with
+  | [] -> x
+  | last :: rest -> List.fold_left ( + ) last rest
+
+(* The registers a kernel's values hold at once, counted by hand. In the map of
+   [x (x + 1)], [x], [x + 1] and their product hold them at the product; in
+   [wide n], [x] and the [n] products at [t_n], two registers each in float64
+   and four lanes each on an upcast of 4. *)
+let live_registers =
+  cases "live registers are the most that values hold at once"
+    ~id:(fun (name, _, _) -> name)
+    [
+      ( "x (x + 1) of float32",
+        (fun () -> map Dtype.Float32 64 (fun x -> Ops.O.(x * (x + float 1.)))),
+        3 );
+      ("wide 4 of float32", (fun () -> map Dtype.Float32 64 (wide 4)), 5);
+      ("wide 4 of float64", (fun () -> map Dtype.Float64 64 (wide 4)), 10);
+      ( "wide 4 of float32 upcast by 4",
+        (fun () -> map ~axis:Upcast Dtype.Float32 4 (wide 4)),
+        20 );
+    ]
+    (fun (_, sink, expected) ->
+      equal int expected (Heuristic.live_registers (sink ())))
+
+(* A map upcasts only while its lanes fit the renderer's thread registers: the
+   map [wide 62] holds 63 registers at once, 252 in 4 lanes, within CUDA's 255,
+   and [wide 63] 64, 256 in 4 lanes, past them. Metal states none and upcasts
+   both. *)
+let lanes_within_registers =
+  cases "a map upcasts only while its lanes fit the thread registers"
+    ~id:(fun (t, n, _) -> Printf.sprintf "%d products on %s" n t)
+    [
+      ("CUDA:CUDA:sm_89", 62, [ 4 ]);
+      ("CUDA:CUDA:sm_89", 63, []);
+      ("METAL:METAL:Apple9", 63, [ 4 ]);
+    ]
+    (fun (t, n, expected) ->
+      let ren =
+        Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+      in
+      let k = K.v (map Dtype.Float32 65536 (wide n)) ren in
+      K.convert_loop_to_global k;
+      let o = Heuristic.hand_coded_optimizations k in
+      let upcasts =
+        List.filter_map
+          (function
+            | Opt.Split { amount; target = Opt.Upcast; _ } -> Some amount
+            | _ -> None)
+          (K.applied_opts o)
+      in
+      equal (list int) expected upcasts)
+
 (* A contraction in registers whose operands are both laid out along its
    reduce, as [x @ matrix_transpose w] reads a matrix stored [outputs;
    inputs], splits what its unroll leaves of the reduce into its fastest
@@ -4441,6 +4510,8 @@ let () =
          across_threads;
          innermost_first;
          maps_four_first;
+         live_registers;
+         lanes_within_registers;
          along_reduce_threads;
          staged_products;
          batched_heads;

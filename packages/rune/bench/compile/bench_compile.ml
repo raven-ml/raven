@@ -550,6 +550,27 @@ let cuda_sines () =
         (fun x -> List.fold_left (fun x _ -> Nx.sin x) x (List.init 8 Fun.id))
         x
 
+(* The host's 1024 float32 binomial counts on CUDA's first GPU: one kernel of
+   some 20000 operations, whose lanes would spill out of a thread's registers,
+   which NVRTC compiles. *)
+let cuda_binomial () =
+  match Rig_gpus.open_ "CUDA" with
+  | Error e -> failwith e
+  | Ok gpu ->
+      let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
+      let draw (k, p) =
+        Nx.Rng.binomial ~key:(Nx.Rng.of_tensor k)
+          (Nx.full_like (Nx.cast Nx.int32 p) 100l)
+          p
+      in
+      let p = Nx.place D.on (Nx.cast Nx.float32 (input 0. 1.))
+      and k = Nx.place D.on (Nx.Rng.to_tensor (Nx.Rng.key 0)) in
+      ignore
+        (Sys.opaque_identity
+           (Rune.jit
+              Nx.Ptree.(pair tensor tensor @-> returns tensor)
+              draw (k, p)))
+
 (* A gradient step of a two-layer perceptron of 64 rows of 256 float32
    values, normalized between its layers, under a softmax cross-entropy, on
    AMD's first GPU: its forward and backward passes are some 15 kernels, each
@@ -703,6 +724,7 @@ let cases =
     ("devices/dp-step-16", data_parallel);
     ("devices/partials-16", partials);
     ("cuda/sin-nested-8", cuda_sines);
+    ("cuda/binomial-f32", cuda_binomial);
     ("amd/mlp-step", amd_step);
     (* Offset by the process's id: 32 kernels no earlier process compiled,
        which Metal's cache holds none of. Each sample leaves its 32 pipelines

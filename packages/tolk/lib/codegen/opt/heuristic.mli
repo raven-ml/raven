@@ -206,7 +206,8 @@
     - Masked axes, those a selection's condition runs in, of size at most 7,
       are upcast whole, while their product stays at most 49.
     - While the upcastable axes hold at least 1024 elements and fewer than 32
-      lanes are upcast, one more axis is upcast by 3 or 4, chosen among axes
+      lanes are upcast, one more axis is upcast by 3 or 4, where the lanes after
+      it fit the renderer's {!Renderer.t.thread_registers}, chosen among axes
       some access does not index while indexing every upcast axis, least
       indexed and of least stride first, 3 before 4 of one axis; 4 before 3,
       on a renderer with local indices, for an axis of a map that a store
@@ -242,7 +243,12 @@
       4, when at most 4 lanes are upcast or no reduce axis is, and fewer
       than 64.
     - If nothing is upcast, the last upcastable axis is upcast by 4 when 4
-      divides it.
+      divides it and 4 lanes fit the renderer's {!Renderer.t.thread_registers}.
+
+    An upcast of an axis by [n] fits a renderer's thread registers [t] when it
+    states none, or when the kernel's {!live_registers}, each value that runs
+    inside the axis counted in [n] times its lanes, is at most [t]: a map of
+    20000 operations, whose lanes would spill out of CUDA's 255, takes none.
     - On a renderer with local indices, global and weak axes of a constant
       size that take threads ({!Postrange.Scheduler.threadless}) become
       local: up to three axes, those some access does not index first, split
@@ -465,6 +471,21 @@ val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
     [(a * 4 + b) * 3 + c], is no consecutive run, so the count can exceed
     what the budget judged before that split. A kernel without a reduce holds
     nothing. *)
+
+val live_registers : Ops.t -> int
+(** [live_registers sink] is the most 32-bit registers that the values of [sink]
+    hold at once, in the order {!Linearizer.linearize} lists its nodes. A value
+    is a load, an elementwise operation's result, or a node other than a
+    constant that an elementwise operation reads, as a range in an index; it
+    holds its registers from its node to the last node that reads it, both
+    included. A value of [n] bytes takes [(n + 3) / 4] registers in each of its
+    lanes, a boolean or a weak value one, and has as many lanes as the product
+    of the {!Ops.Axis_type.Upcast} ranges it runs inside. Of
+    [out[i] = x (x + 1)], [x], [x + 1] and their product hold 3 registers at the
+    product, and 12 if [i] is an upcast of 4. A compiler that schedules the
+    nodes otherwise may hold fewer.
+
+    Raises [Invalid_argument] if an upcast range has no known bound. *)
 
 (**/**)
 

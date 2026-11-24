@@ -206,6 +206,12 @@ type t = private {
           when first needed. It sets the widest merged access
           ({!Coalesce.memory_coalescing}) and, on the [CPU] device, how many
           lanes a kernel's accumulators hold ({!Heuristic}). *)
+  thread_registers : int option;
+      (** The 32-bit registers a thread may hold, where the target's
+          specification states it: 255 on CUDA and NV, 256 on RDNA4. A kernel
+          takes no upcast whose lanes would hold more of its values at once
+          ({!Heuristic.live_registers}). [None] where no specification states
+          it, which sets no bound. *)
   vector_lanes : int;
       (** The most lanes of a vector that arithmetic, logic, comparisons,
           selections and conversions compute at once: an operation of more
@@ -354,6 +360,7 @@ val v :
   ?byte_words:bool ->
   ?full_rate_subnormals:bool ->
   ?registers:(unit -> registers option) ->
+  ?thread_registers:int ->
   ?vector_lanes:int ->
   ?has_local:bool ->
   ?has_shared:bool ->
@@ -388,8 +395,8 @@ val v :
     describe a target that renders nothing:
     - [name] is ["Renderer"] and [suffix] is [""];
     - [supports_float4], [has_local] and [has_shared] are [true], [registers]
-      gives [None], [half8], [byte_words] and [full_rate_subnormals] are
-      [false] and [vector_lanes] is [1];
+      gives [None], [thread_registers] is [None], [half8], [byte_words] and
+      [full_rate_subnormals] are [false] and [vector_lanes] is [1];
     - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, the greatest
       size a 32-bit signed index holds, and [global_prod_max] is [None];
     - [local_threads_max] is [1024], a CUDA block's, and [simd_threads]

@@ -1705,6 +1705,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On CUDA, NV and RDNA4, a kernel takes no upcast whose lanes would pass a
+  thread's registers (`Renderer.t.thread_registers`), so large kernels no
+  longer spill: `Nx.Rng.binomial` compiles in 4 s, not 32, and runs 2x faster.
 - On Linux, NVRTC's and comgr's worker processes start from a file in the
   cache or the temporary directory where the system refuses to run them from
   memory, as Ubuntu 26.04's opam sandbox does: every compile failed with

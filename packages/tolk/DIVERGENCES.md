@@ -10155,3 +10155,64 @@ D466.
   kernel where the target lacks float64, before any kernel compiles`, and
   test_jit_gpu's `declines › a call in float64 where the GPU's kernels lack
   it raises at the call, naming float64`.
+
+## D505. A GPU kernel takes no upcast whose lanes would pass a thread's registers
+
+- **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (the
+  upcast loop, `while resolve(prod(k.full_shape[i] for i in
+  k.upcastable_dims) >= 1024) and k.upcast_size() < 32`, and the upcast by
+  4 of the last upcastable axis where none is upcast, whatever the kernel's
+  size; `codegen/opt/search.py`'s `BEAM_UOPS_MAX`, 3000, bounds only BEAM's
+  candidates; tinygrad has no register limit; the same at `79af1ca`).
+- **tolk:** `Renderer.t.thread_registers`, `Heuristic.live_registers` and
+  `Heuristic.lanes_fit`, which `upcast_more` and `upcast_one` ask.
+- **Differs:** where the renderer states a thread's registers (CUDA and NV
+  255, the CUDA guide's "maximum number of 32-bit registers per thread";
+  RDNA4 256, the 8-bit VGPR field of AMD's machine-readable ISA, unverified
+  on hardware), an upcast is declined when the kernel's values, each in the
+  lanes the upcast gives it, would hold more registers at once than that,
+  counted in the order the linearizer lists the kernel. Metal, the host and
+  other AMD parts state none and upcast as tinygrad does. The count
+  overstates what a compiler allocates, which reschedules: a scalar map of
+  3905 operations counts 258 where ptxas allocates 28. The bound so errs
+  toward fewer lanes; a transcendental, one operation before it is
+  decomposed, is understated.
+- **Reason:** (d): an upcast multiplies a kernel's live values by its lanes,
+  and past 255 registers ptxas spills to local memory. On sm_89 (ptxas -v,
+  upcast by 4 against none), maps shaped as a special function: 977
+  operations 37 registers against 28, no spill; 1953, 255 and 6.8 KB of
+  spill stores against 28; 3905, 80 registers and 48.6 KB stored, 74.8 KB
+  loaded, against 28; 15617, 209 KB stored against 48.6. Their run on
+  2^20 float32 values, fudge's RTX 5000 Ada: 0.066 against 0.065 ms, 2.26
+  against 0.098, 56.6 against 0.165, 298 against 233; NVRTC's compile 0.14
+  against 0.05 s, 0.79 against 0.07, 4.7 against 0.13, 73.6 against 4.86.
+  Every spill-free kernel counted at most 261, every spilling one 416 or
+  more. `Nx.Rng.binomial` of 2^16 float32 values, 19631 operations: NVRTC
+  36.0 s to 3.26, its call 1.37 ms to 0.716; `Nx.betaincinv`, 20076
+  operations: 25.6 s to 2.93, 0.444 ms to 0.223. On the bench rows, four
+  alternated rounds, `cuda/binomial-f32`'s first call 32.3 and 32.7 s
+  against 3.76 and 4.55, `Cuda/binomial-float32-64K` 1.38 and 1.35 ms
+  against 0.716 and 0.715; among the other 78 CUDA rows,
+  `Cuda/stack-64-sines-of-64` 84.1 us to 39.7, `Cuda/cat-unequal-64-sines`
+  53.3 to 27.9 and `Cuda/stack-8-sines-of-1024` 11.4 to 8.8, the rest within
+  3% but `Cuda/stack-4-minor-axis`, 5% slower in both rounds from the same
+  programs. LLVM's unroller bounds an
+  unroll by the code it adds (`unroll-threshold` 150, `PartialThreshold` a
+  quarter on NVPTX) and has no register model; NVCC bounds registers only
+  where asked, `__launch_bounds__` and `--maxrregcount`, by spilling (CUDA
+  C++ Programming Guide §5.4.3.2, §5.4.3.3); Triton widens a thread's
+  vectors to 128 bits and reads the registers back after loading
+  (`NUM_REGS`, `LOCAL_SIZE_BYTES`), with no model either. A budget the
+  target states, against a count of the kernel, is the cheapest sound
+  bound. Counting costs a linearization: a map of 40040 nodes spends 141
+  ms in the heuristic on CUDA against 32 on Metal, 8040 nodes 14.6
+  against 5.1. Open: Metal loses gradually where the upcast grows a
+  thread's registers, 1.15 to 3.9 times at 977 to 3905 operations (M1 Max,
+  `maxTotalThreadsPerThreadgroup` 1024 to 384), with no register budget its
+  specification states; AMD is unmeasured.
+- **Pinned by:** the heuristic suite's `live registers are the most that
+  values hold at once` and `a map upcasts only while its lanes fit the
+  thread registers`, and its table's `thread_registers` (`.tolk`, D505);
+  rune's bench rows `Cuda/binomial-float32-64K`, `cuda/binomial-f32`,
+  `Cuda/stack-64-sines-of-64`, `Cuda/cat-unequal-64-sines` and
+  `Cuda/stack-8-sines-of-1024` on fudge.
