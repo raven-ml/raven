@@ -140,10 +140,11 @@ let realize_custom_kernel_srcs ctx c =
   let reads_storage u =
     List.exists (fun n -> Op.Set.mem (op n) storage) (toposort ~calls:Skip u)
   in
+  let starts = Shape.param_starts (nth c 0) in
   List.iteri
     (fun i a ->
       let s = strip_reshape a in
-      let param = Shape.param_start (nth c 0) i in
+      let param = List.assoc_opt i starts in
       let fits start =
         Option.fold ~none:true
           ~some:(fun param -> Shape.fits_start ~param start)

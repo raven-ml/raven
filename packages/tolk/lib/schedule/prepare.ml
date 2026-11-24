@@ -680,25 +680,22 @@ let moves_with_loop u =
    and a kernel's placeholder takes the boundary. Storage the call also writes
    stays: {!Schedule} copies it, in the loop where the call runs in one, and a
    copy made here would be made once. *)
-let copy_off_start c i a =
+let copy_off_start c ~written ~starts i a =
   let reads =
-    match Shape.written_params (body c) with
-    | Some w -> not (List.mem i w)
-    | None -> false
+    match written with Some w -> not (List.mem i w) | None -> false
   in
-  match Shape.param_start (body c) i with
-  | Some param
-    when reads
-         && (not (moves_with_loop a))
-         && has_buffer_identity ~after_ok:true a
-         && (not (fits_start ~param (storage_phase a)))
-         && fits_start ~param allocated_start
-         && not (reads_storage_written c i) ->
-      let buf =
-        alloc ?device:(device a) (shape a) (dtype a)
-      in
-      after buf [ store buf a ]
-  | _ -> a
+  if not reads then a
+  else
+    match List.assoc_opt i (Lazy.force starts) with
+    | Some param
+      when (not (moves_with_loop a))
+           && has_buffer_identity ~after_ok:true a
+           && (not (fits_start ~param (storage_phase a)))
+           && fits_start ~param allocated_start
+           && not (reads_storage_written c i) ->
+        let buf = alloc ?device:(device a) (shape a) (dtype a) in
+        after buf [ store buf a ]
+    | _ -> a
 
 (* A call compiled on its own takes flat storage at each argument
    ({!Indexing.run_rangeify}): a run of storage through movements is one
@@ -709,11 +706,10 @@ let call_storage c =
     None
   else
     let args = List.tl (src c) in
+    let written = Shape.written_params (body c) in
+    let starts = lazy (Shape.param_starts (body c)) in
     let args' =
-      List.mapi
-        (fun i a ->
-          copy_off_start c i (as_run a))
-        args
+      List.mapi (fun i a -> copy_off_start c ~written ~starts i (as_run a)) args
     in
     if List.for_all2 ( == ) args args' then None
     else Some (replace c ~src:(nth c 0 :: args'))

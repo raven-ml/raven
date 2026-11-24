@@ -478,6 +478,11 @@ val param_start : Ops.t -> int -> (int * int) option
     parameter in [slot] of the call body [body] assumes ({!Ops.type-param_arg}),
     or [None] if [body] takes no storage there. *)
 
+val param_starts : Ops.t -> (int * (int * int)) list
+(** [param_starts body] is the slot of each storage parameter of the call body
+    [body] with the start it assumes, from one walk of [body]:
+    [param_start body slot] is [List.assoc_opt slot (param_starts body)]. *)
+
 val view_as : Ops.t -> Ops.sint list -> Ops.t
 (** [view_as u shape] views the flat storage [u] as [shape]. *)
 
