@@ -809,14 +809,21 @@ let test_waits () =
   Domain.join waiting
 
 (* A job's chunks, each once. Jobs of up to 96 chunks reach runs of several
-   chunks on up to 6 threads. *)
+   chunks on up to 6 threads. Half the draws take at most 7 threads and half at
+   least 31 chunks, whatever the cores, so that a call reaches runs of several
+   chunks on several threads about one time in eight on a machine of 255 cores
+   as on one of 4: a program holds each command with probability 3/4 and calls
+   it about 12 times, and 30 programs all miss with a probability below
+   10^-11. *)
 let job_commands =
   let small_job =
     Gen.with_pp pp_job
       (Gen.triple
-         (Gen.int_range (-1) (cores + 1))
+         (Gen.frequency
+            [ (1, Gen.int_range (-1) 7); (1, Gen.int_range (-1) (cores + 1)) ])
          (Gen.int64_range (-1L) 2000L)
-         (Gen.int64_range (-1L) 96L))
+         (Gen.frequency
+            [ (1, Gen.int64_range (-1L) 96L); (1, Gen.int64_range 31L 96L) ]))
   in
   List.map
     (fun kind ->

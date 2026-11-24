@@ -1145,15 +1145,24 @@ let sum_check (Sum_case (dt, s, axis, xo)) =
 (* A case draws eight sums, which compile to one program. *)
 let law_sum cs = Batch.checks (List.map sum_check cs)
 
-(* Long sums. Terms that a single running sum loses half an ulp of each:
-   [1], then, at every fourth position, [1.5] ulps of [1], so that each
-   trip's chunk of four adds [1.5] ulps to a running sum near [1], which
-   rounds to [2]. Over [n] terms one running sum errs by [n / 8] ulps, past
-   [γ(β(n)) Σ|x|] for [n = 16384]; sums of blocks of 256 from [+0] err by at
-   most [32] ulps in the first block and an ulp a block after it. *)
+(* Sums over an axis of no term, at each width: a draw's axis has none about one
+   time in ten, which the law's 104 draws all miss about once in 70 000 runs. *)
+let sum_examples =
+  [
+    Sum_case (f32, [| 0; 3 |], 0, { view = Plain; values = [||] });
+    Sum_case (f64, [| 2; 0 |], 1, { view = Plain; values = [||] });
+  ]
+
+(* Long sums. Terms that a single running sum loses half an ulp of each: [1],
+   then, at every fourth position, [1.5] ulps of [1], so that each trip's chunk
+   of four adds [1.5] ulps to a running sum near [1], which rounds to [2]. Over
+   [n] terms one running sum errs by [n / 8] ulps, past [γ(β(n)) Σ|x|] for [n =
+   16384]; sums of blocks of 256 from [+0] err by at most [32] ulps in the first
+   block and an ulp a block after it. *)
 let stagnating n =
   Array.init n (fun i ->
-      if i = 0 then 1. else if i mod 4 = 0 then 1.5 *. Float.ldexp 1. (-23)
+      if i = 0 then 1.
+      else if i mod 4 = 0 then 1.5 *. Float.ldexp 1. (-23)
       else 0.)
 
 let blocked_within ~msg ~n y exact magnitude =
@@ -6722,8 +6731,9 @@ let () =
              test "log10 gives eager's bits" test_log10;
              prop "log and asinh give eager's bits at float32's edges"
                float32_edges law_log_asinh;
-             prop ~count:13 "a sum is within its bound"
-               (Batch.drawn 8 sum_cases) law_sum;
+             prop ~count:13
+               ~examples:(Batch.chunks 8 sum_examples)
+               "a sum is within its bound" (Batch.drawn 8 sum_cases) law_sum;
              test "a long sum holds the blocked bound" test_long_sum;
              test "a weight gradient holds the blocked bound"
                test_long_contraction;
