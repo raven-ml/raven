@@ -87,17 +87,32 @@ let wide c =
 let with_units =
   [ "cholesky"; "solve"; "lu"; "eigh"; "svd"; "svd's values" ]
 
-(* nx.cpu computes [routines], by name, of [c]'s matrix alone, on the
-   call's threads, and of copies of it in a wide batch, one a thread:
-   every result of every matrix of the batch has the bits of the
-   matrix's alone. *)
-let threads_agree (b : Support.backend) routines c =
+(* The routines named in [names], each with its name and operands of [c]'s
+   matrix. *)
+let named names c =
+  let x = cholesky_operand c and ops = solve_operands c in
+  let _, lu = lu_operand c in
+  let _, _, s = svd_operand c in
+  List.filter
+    (fun (name, _, _) -> List.mem name names)
+    [
+      ("cholesky", Cholesky Lower, [| x |]);
+      ("solve", solve c, ops);
+      ("lu", Lu, [| lu |]);
+      ("qr", Qr (factors c), [| lu |]);
+      ("eigh", Eigh true, [| eigh_operand c |]);
+      ("svd", Svd (Some (factors c)), [| s |]);
+      ("svd's values", Svd None, [| s |]);
+      ("eig", Eig true, [| eig_operand c |]);
+    ]
+
+(* nx.cpu computes the routines named in [names] of [c]'s matrix alone, on the
+   call's threads, and of copies of it in a wide batch, one a thread: every
+   result of every matrix of the batch has the bits of the matrix's alone. *)
+let threads_agree (b : Support.backend) names c =
   let c = wide c in
   let k = count c in
   let one = { c with batch = [||] } in
-  let x = cholesky_operand one and ops = solve_operands one in
-  let _, lu = lu_operand one in
-  let _, _, s = svd_operand one in
   let agree msg y z =
     Array.iteri
       (fun j z ->
@@ -111,20 +126,25 @@ let threads_agree (b : Support.backend) routines c =
   in
   List.iter
     (fun (msg, r, ops) ->
-      if List.mem msg routines then
-        match (run b r (Array.map (repeated c) ops), run b r ops) with
-        | Some y, Some z -> agree msg y z
-        | _ -> failf "nx.cpu declined %s at %a" msg pp_dtype c.dt)
-    [
-      ("cholesky", Cholesky Lower, [| x |]);
-      ("solve", solve one, ops);
-      ("lu", Lu, [| lu |]);
-      ("qr", Qr (factors one), [| lu |]);
-      ("eigh", Eigh true, [| eigh_operand one |]);
-      ("svd", Svd (Some (factors one)), [| s |]);
-      ("svd's values", Svd None, [| s |]);
-      ("eig", Eig true, [| eig_operand one |]);
-    ]
+      match (run b r (Array.map (repeated c) ops), run b r ops) with
+      | Some y, Some z -> agree msg y z
+      | _ -> failf "nx.cpu declined %s at %a" msg pp_dtype c.dt)
+    (named names one)
+
+(* nx.cpu computes the routines named in [names] of [c]'s matrix on the call's
+   threads and on one thread: every result has the one thread's bits. *)
+let one_thread_agrees (b : Support.backend) names c =
+  List.iter
+    (fun (msg, r, ops) ->
+      match (run b r ops, Nx_cpu.one_thread (fun () -> run b r ops)) with
+      | Some y, Some z ->
+          Array.iteri
+            (fun j z ->
+              let msg = Printf.sprintf "%s's result %d" msg j in
+              equal ~msg same_bits (result_bits z) (result_bits y.(j)))
+            z
+      | _ -> failf "nx.cpu declined %s at %a" msg pp_dtype c.dt)
+    (named names c)
 
 (* A plain contiguous case of [dt], of order [n] and [r] right-hand sides. *)
 let fixed dt n r =
@@ -146,12 +166,14 @@ let fixed dt n r =
 let test_cpu_threads b dt =
   threads_agree b ([ "qr"; "eig" ] @ with_units) (fixed dt 65 3)
 
-(* Matrices of order 256 and 160 right-hand sides, of the routines whose
-   work on a matrix's threads goes beyond their products, which give the
-   bits of one thread. On one core nothing runs on several threads. *)
+(* A matrix of order 256 and 160 right-hand sides, of the routines whose work on
+   a matrix's threads goes beyond their products, gives the bits of one thread,
+   which one_thread computes: a batch of a matrix a thread would grow the test's
+   work with the host's cores. Where jobs run on one thread, nothing runs on
+   several. *)
 let test_cpu_units b dt =
-  if Domain.recommended_domain_count () = 1 then skip ~reason:"one core" ();
-  threads_agree b with_units (fixed dt 256 160)
+  if Nx_cpu.most_threads () = 1 then skip ~reason:"one thread" ();
+  one_thread_agrees b with_units (fixed dt 256 160)
 
 (* One matrix of order 272, past four blocks of 64 and a partial one. *)
 let test_cpu_large b dt = law_cholesky bounds b (fixed dt 272 0)
