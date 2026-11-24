@@ -388,6 +388,9 @@ let damaged_entry =
       let cached make =
         Graph.cached ~table ~key:"k" ~valid:(fun _ -> true) make
       in
+      (* An entry an earlier run left would be read in place of [u]'s, so the
+         case starts from an empty table. *)
+      List.iter Sys.remove (Disk_cache.entries ~table Helpers.cachedb);
       ignore (cached (fun () -> u));
       let entry = List.hd (Disk_cache.entries ~table Helpers.cachedb) in
       let e = In_channel.with_open_bin entry In_channel.input_all in
