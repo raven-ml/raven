@@ -3,10 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* tiktoken encodings. The goldens in support/tiktoken are tiktoken 0.14.0's
+   output on trimmed rank files, written by gen/gen_tiktoken.py. *)
+
 open Windtrap
 open Brot
-
-(* Rank files *)
 
 let base64 s =
   let alphabet =
@@ -36,13 +37,15 @@ let single_bytes = List.init 256 (fun b -> (String.make 1 (Char.chr b), b))
 let whole = {|[\s\S]+|}
 
 let load ?specials ?(pattern = whole) ranks =
-  match of_tiktoken ?specials ~pattern (rank_file ranks) with
-  | Ok t -> t
-  | Error e -> failf "of_tiktoken: %s" e
+  require_ok ~pp:Format.pp_print_string
+    (of_tiktoken ?specials ~pattern (rank_file ranks))
 
 let ids t text = Array.to_list (encode_ids t text)
 
-(* The reference rule, tiktoken's, on one pretoken: a token is itself, and any
+let ordinary t text =
+  Array.to_list (encode_ids t ~match_special_tokens:false text)
+
+(* The rule on one pretoken, as the .mli states it: a token is itself, and any
    other pretoken starts as its bytes and joins the adjacent pair of lowest
    joined rank, the leftmost of equal ones, until no pair joins. *)
 let merge ranks piece =
@@ -78,155 +81,14 @@ let reference ranks piece =
     | Some r -> [ r ]
     | None -> List.map (fun p -> List.assoc p ranks) (merge ranks piece)
 
-(* Hand tables *)
+let built ranks token = merge ranks token = [ token ]
 
-let abc =
-  List.filter (fun (b, _) -> b <> "a" && b <> "b" && b <> "c") single_bytes
-
-(* [a b c bc ab abc]: on [abca] the rule joins [b c], then [a bc], which no
-   merge list of [a b] and [ab c] holds. *)
-let test_unlisted_join () =
-  let t =
-    load
-      (abc
-      @ [
-          ("a", 1000);
-          ("b", 1001);
-          ("c", 1002);
-          ("bc", 1003);
-          ("ab", 1004);
-          ("abc", 1005);
-        ])
-  in
-  equal ~msg:"abca" (list int) [ 1005; 1000 ] (ids t "abca");
-  equal ~msg:"abc" (list int) [ 1005 ] (ids t "abc")
-
-(* [abc] is a token no join builds: it is emitted whole, and spelled out inside
-   a longer pretoken. *)
-let test_unbuilt () =
-  let t =
-    load (abc @ [ ("a", 1000); ("b", 1001); ("c", 1002); ("abc", 1003) ])
-  in
-  equal ~msg:"abc" (list int) [ 1003 ] (ids t "abc");
-  equal ~msg:"abca" (list int) [ 1000; 1001; 1002; 1000 ] (ids t "abca")
-
-(* A gap in the ranks, the empty token and rank file spellings tiktoken
-   reads. *)
-let test_file_forms () =
-  let ranks = single_bytes @ [ ("ab", 300); ("", 5000) ] in
-  let t = load ranks in
-  equal ~msg:"ab" (list int) [ 300 ] (ids t "ab");
-  equal ~msg:"vocab_size" int 258 (vocab_size t);
-  equal ~msg:"the empty token" (option string) (Some "") (id_to_token t 5000);
-  equal ~msg:"decode the empty token" string "" (decode t [| 5000 |]);
-  let spelled =
-    String.concat ""
-      (List.map
-         (fun (b, r) ->
-           Printf.sprintf "\t%s \x0b %d\r\n\n"
-             (if b = "" then "=" else base64 b)
-             r)
-         ranks)
-  in
-  match of_tiktoken ~pattern:whole spelled with
-  | Error e -> failf "CRLF and white space: %s" e
-  | Ok t' ->
-      equal ~msg:"CRLF and white space" (list int) (ids t "ab xyz ab")
-        (ids t' "ab xyz ab")
-
-(* A rank reads as Python's [int] reads it, leading zeros included. *)
-let test_leading_zeros () =
-  let text =
-    rank_file (single_bytes @ [ ("ab", 256) ]) ^ "YWJj 00000000000300\n"
-  in
-  match of_tiktoken ~pattern:whole text with
-  | Error e -> failf "of_tiktoken: %s" e
-  | Ok t -> equal ~msg:"abc" (list int) [ 300 ] (ids t "abc")
-
-(* With every token built, a pretoken that is a special's text is spelled out by
-   the merges, as tiktoken's [encode_ordinary] spells it, and not looked up
-   whole. *)
-let test_special_spelled () =
-  let t = load ~specials:[ ("<|x|>", 300) ] (single_bytes @ [ ("ab", 256) ]) in
-  equal ~msg:"encode_ordinary" (list int) [ 60; 124; 120; 124; 62 ]
-    (Array.to_list (encode_ids t ~match_special_tokens:false "<|x|>"));
-  equal ~msg:"encode" (list int) [ 300 ] (ids t "<|x|>")
-
-(* Text no match covers is dropped, a byte that is no character included. *)
-let test_uncovered () =
-  let t = load ~pattern:{|[a-z]+|} (single_bytes @ [ ("ab", 256) ]) in
-  equal ~msg:"spaces and digits" (list int) [ 256; 99 ] (ids t " ab 12c ");
-  let t = load single_bytes in
-  equal ~msg:"a stray byte" (list int) [ 97; 98 ] (ids t "a\xffb")
-
-(* Of two specials where one is a prefix of the other, the longer is matched. *)
-let test_longer_special () =
-  let t = load ~specials:[ ("<|x", 300); ("<|x|>", 301) ] single_bytes in
-  equal ~msg:"<|x|>" (list int) [ 301 ] (ids t "<|x|>");
-  equal ~msg:"<|x" (list int) [ 300; 124 ] (ids t "<|x|")
-
-(* Refusals *)
-
-let base = single_bytes @ [ ("ab", 256) ]
-
-let errors =
-  let file = rank_file base in
-  let drop_ff = rank_file (List.filter (fun (_, r) -> r <> 255) base) in
-  [
-    ("a line with one field", file ^ "QQ==\n", []);
-    ("a line with three fields", file ^ "YWJj 300 1\n", []);
-    ("a line of white space", file ^ " \n", []);
-    ("base64 without its padding", file ^ "YWJjZA 300\n", []);
-    ("a character outside base64", file ^ "YW@= 300\n", []);
-    ("bits left over in the last digit", file ^ "YWJ= 300\n", []);
-    ("an equals sign after data", file ^ "=YWJ 300\n", []);
-    ("a negative rank", file ^ "YWJj -1\n", []);
-    ("a signed rank", file ^ "YWJj +300\n", []);
-    ("a rank of 2^31", file ^ "YWJj 2147483648\n", []);
-    ("a rank of u32 max", file ^ "YWJj 4294967295\n", []);
-    ("two lines with the same bytes", file ^ "YWI= 300\n", []);
-    ("two lines with the same rank", file ^ "YWJj 256\n", []);
-    ("a byte without a rank", drop_ff, []);
-    ("a special whose text is a token", file, [ ("ab", 300) ]);
-    ("a special on a token's id", file, [ ("<|x|>", 256) ]);
-    ( "a special while a token is not built",
-      rank_file (single_bytes @ [ ("abc", 256) ]),
-      [ ("<|x|>", 300) ] );
-  ]
-
-let test_errors =
-  cases "content errors"
-    ~id:(fun (name, _, _) -> name)
-    errors
-    (fun (_, text, specials) ->
-      is_error ~msg:"of_tiktoken" (of_tiktoken ~specials ~pattern:whole text))
-
-let raising =
-  [
-    ("an invalid pattern", "(", []);
-    ("an unsupported pattern", {|(?<=a)b|}, []);
-    ("the empty pattern", "", []);
-    ("a pattern matching the empty text", "a*", []);
-    ("a lookahead matching empty", "(?=a)", []);
-    ("an empty special", whole, [ ("", 300) ]);
-    ("a negative id", whole, [ ("<|x|>", -1) ]);
-    ("an id of 2^31", whole, [ ("<|x|>", 1 lsl 31) ]);
-    ("a special given twice", whole, [ ("<|x|>", 300); ("<|x|>", 301) ]);
-    ("two specials on one id", whole, [ ("<|x|>", 300); ("<|y|>", 300) ]);
-    ( "a special that byte-level decoding changes",
-      whole,
-      [ ("<|\xc3\xa9|>", 300) ] );
-  ]
-
-let test_raising =
-  cases "argument errors"
-    ~id:(fun (name, _, _) -> name)
-    raising
-    (fun (_, pattern, specials) ->
-      raises_match ~msg:"of_tiktoken" (Exn.invalid_arg ~sub:"") (fun () ->
-          of_tiktoken ~specials ~pattern (rank_file base)))
-
-(* Random tables *)
+let splits ranks token =
+  List.filter
+    (fun i ->
+      List.mem_assoc (String.sub token 0 i) ranks
+      && List.mem_assoc (String.sub token i (String.length token - i)) ranks)
+    (List.init (String.length token - 1) (fun i -> i + 1))
 
 (* A table of every byte and up to a dozen tokens over [a], [b] and [c], each at
    a distinct rank, the ranks contiguous or with gaps up to 2^22, and handed out
@@ -256,7 +118,8 @@ let table =
   in
   List.combine order ranks
 
-let case =
+(* A table and a text made of its tokens and single letters, as one pretoken. *)
+let table_and_text =
   let open Gen in
   let* ranks = table in
   let tokens = List.filter (fun (b, _) -> String.length b > 1) ranks in
@@ -273,17 +136,11 @@ let case =
   in
   (ranks, text)
 
-let built ranks token = merge ranks token = [ token ]
+(* tiktoken encoding *)
 
-let splits ranks token =
-  List.filter
-    (fun i ->
-      List.mem_assoc (String.sub token 0 i) ranks
-      && List.mem_assoc (String.sub token i (String.length token - i)) ranks)
-    (List.init (String.length token - 1) (fun i -> i + 1))
-
-let test_reference =
-  prop "agrees with the reference rule" ~count:300 case (fun (ranks, text) ->
+let test_rule =
+  prop "joins the adjacent pair whose join ranks lowest, until none joins"
+    ~count:300 table_and_text (fun (ranks, text) ->
       let tokens = List.filter (fun (b, _) -> String.length b > 1) ranks in
       cover "a token not built"
         (List.exists (fun (b, _) -> not (built ranks b)) tokens);
@@ -309,17 +166,93 @@ let test_reference =
       let t = load ranks in
       let expected = reference ranks text in
       equal ~msg:"ids" (list int) expected (ids t text);
-      equal ~msg:"ids again, from the cache" (list int) expected (ids t text);
-      equal ~msg:"decode" string text (decode t (encode_ids t text)))
+      equal ~msg:"ids of the text seen before" (list int) expected (ids t text))
 
-(* Goldens *)
+let test_decodes =
+  prop "decodes the ids of a text back to the text" table_and_text
+    (fun (ranks, text) ->
+      let t = load ranks in
+      equal string text (decode t (encode_ids t text)))
 
-let member name = function
-  | Jsont.Object (members, _) -> (
-      match Jsont.Json.find_mem name members with
-      | Some (_, value) -> value
-      | None -> failf "no %S member" name)
-  | _ -> failf "looking for %S in something that is not an object" name
+let abc =
+  List.filter (fun (b, _) -> b <> "a" && b <> "b" && b <> "c") single_bytes
+
+(* On [abca] the rule joins [b c], then [a bc]. *)
+let test_unlisted_join () =
+  let t =
+    load
+      (abc
+      @ [
+          ("a", 1000);
+          ("b", 1001);
+          ("c", 1002);
+          ("bc", 1003);
+          ("ab", 1004);
+          ("abc", 1005);
+        ])
+  in
+  equal ~msg:"abca" (list int) [ 1005; 1000 ] (ids t "abca");
+  equal ~msg:"abc" (list int) [ 1005 ] (ids t "abc")
+
+(* rank file *)
+
+let test_gaps () =
+  let t = load (single_bytes @ [ ("ab", 300) ]) in
+  equal ~msg:"ab" (list int) [ 300 ] (ids t "ab");
+  equal ~msg:"vocab_size" int 257 (vocab_size t)
+
+let test_empty_token () =
+  let t = load (single_bytes @ [ ("", 5000) ]) in
+  equal ~msg:"id_to_token" (option string) (Some "") (id_to_token t 5000);
+  equal ~msg:"decode" string "" (decode t [| 5000 |])
+
+let test_line_forms () =
+  let ranks = single_bytes @ [ ("ab", 300); ("", 5000) ] in
+  let spelled =
+    String.concat ""
+      (List.map
+         (fun (b, r) ->
+           Printf.sprintf "\t%s \x0b\x0c %d\r\n\n\r"
+             (if b = "" then "=" else base64 b)
+             r)
+         ranks)
+  in
+  let t =
+    require_ok ~pp:Format.pp_print_string (of_tiktoken ~pattern:whole spelled)
+  in
+  equal (list int) (ids (load ranks) "ab xyz ab") (ids t "ab xyz ab")
+
+let test_leading_zeros () =
+  let text =
+    rank_file (single_bytes @ [ ("ab", 256) ]) ^ "YWJj 00000000000300\n"
+  in
+  let t =
+    require_ok ~pp:Format.pp_print_string (of_tiktoken ~pattern:whole text)
+  in
+  equal (list int) [ 300 ] (ids t "abc")
+
+(* pattern *)
+
+let test_uncovered () =
+  let t = load ~pattern:{|[a-z]+|} (single_bytes @ [ ("ab", 256) ]) in
+  equal ~msg:"spaces and digits" (list int) [ 256; 99 ] (ids t " ab 12c ");
+  equal ~msg:"a stray byte" (list int) [ 97; 98 ]
+    (ids (load single_bytes) "a\xffb")
+
+(* U+A7DD, a Latin letter assigned in Unicode 18.0.0, is a [\p{L}] and so a
+   pretoken of its three bytes. *)
+let test_unicode_version () =
+  let t = load ~pattern:{|\p{L}+|} single_bytes in
+  equal (list int) [ 0xea; 0x9f; 0x9d ] (ids t "\u{A7DD}")
+
+(* of_tiktoken *)
+
+type golden = {
+  name : string;
+  tokenizer : Brot.t;
+  specials : (string * int) list;
+  texts : (string * int list * int list * string list) list;
+}
 
 let to_string = function Jsont.String (s, _) -> s | _ -> failf "not a string"
 
@@ -329,96 +262,127 @@ let to_int = function
 
 let to_list = function Jsont.Array (l, _) -> l | _ -> failf "not an array"
 
-type golden = {
-  name : string;
-  tokenizer : Brot.t Lazy.t;
-  specials : (string * int) list;
-  texts : (string * int list * int list * string list) list;
-}
+let member name = function
+  | Jsont.Object (members, _) -> (
+      match Jsont.Json.find_mem name members with
+      | Some (_, value) -> value
+      | None -> failf "no %S member" name)
+  | _ -> failf "looking for %S in something that is not an object" name
+
+let golden e =
+  let name = to_string (member "name" e) in
+  let ranks =
+    Fixture.read ("support/tiktoken/" ^ to_string (member "ranks" e))
+  in
+  let pattern = to_string (member "pattern" e) in
+  let specials =
+    List.map
+      (fun p ->
+        match to_list p with
+        | [ s; id ] -> (to_string s, to_int id)
+        | _ -> failf "a special is not a pair")
+      (to_list (member "specials" e))
+  in
+  let of_specials specials =
+    require_ok ~pp:Format.pp_print_string (of_tiktoken ~specials ~pattern ranks)
+  in
+  (* Whisper's table is contiguous: its specials are added after its ranks, as
+     whisper numbers them. *)
+  let tokenizer =
+    if name = "whisper" then
+      add_tokens (of_specials [])
+        (List.map (fun (s, _) -> added_token s) specials)
+    else of_specials specials
+  in
+  let texts =
+    List.map
+      (fun c ->
+        ( to_string (member "text" c),
+          List.map to_int (to_list (member "ordinary" c)),
+          List.map to_int (to_list (member "all" c)),
+          List.map to_string (to_list (member "decode_each" c)) ))
+      (to_list (member "cases" e))
+  in
+  { name; tokenizer; specials; texts }
 
 let goldens =
-  let document =
-    match
-      Jsont_bytesrw.decode_string Jsont.json
-        (Fixture.read "support/tiktoken/goldens.json")
-    with
-    | Ok json -> json
-    | Error e -> failf "goldens.json: %s" e
-  in
-  List.map
-    (fun e ->
-      let name = to_string (member "name" e) in
-      let ranks =
-        Fixture.read ("support/tiktoken/" ^ to_string (member "ranks" e))
-      in
-      let pattern = to_string (member "pattern" e) in
-      let specials =
-        List.map
-          (fun p ->
-            match to_list p with
-            | [ s; id ] -> (to_string s, to_int id)
-            | _ -> failf "a special is not a pair")
-          (to_list (member "specials" e))
-      in
-      let tokenizer =
-        lazy
-          (let of_specials specials =
-             match of_tiktoken ~specials ~pattern ranks with
-             | Ok t -> t
-             | Error msg -> failf "%s: %s" name msg
-           in
-           (* Whisper's table is contiguous: its specials are added after its
-              ranks, as whisper numbers them. *)
-           if name = "whisper" then
-             add_tokens (of_specials [])
-               (List.map (fun (s, _) -> added_token s) specials)
-           else of_specials specials)
-      in
-      let texts =
-        List.map
-          (fun c ->
-            ( to_string (member "text" c),
-              List.map to_int (to_list (member "ordinary" c)),
-              List.map to_int (to_list (member "all" c)),
-              List.map to_string (to_list (member "decode_each" c)) ))
-          (to_list (member "cases" e))
-      in
-      { name; tokenizer; specials; texts })
-    (to_list (member "encodings" document))
+  fixture (fun () ->
+      match
+        Jsont_bytesrw.decode_string Jsont.json
+          (Fixture.read "support/tiktoken/goldens.json")
+      with
+      | Ok json -> List.map golden (to_list (member "encodings" json))
+      | Error e -> failf "goldens.json: %s" e)
 
-let rows =
-  List.concat_map (fun g -> List.map (fun text -> (g, text)) g.texts) goldens
+let encodings =
+  [ "gpt2"; "multilingual99"; "multilingual100"; "cl100k"; "o200k"; "whisper" ]
 
-let test_goldens =
-  cases "tiktoken's ids"
-    ~id:(fun (g, (text, _, _, _)) -> Printf.sprintf "%s %S" g.name text)
-    rows
-    (fun (g, (text, ordinary, all, decode_each)) ->
-      let t = Lazy.force g.tokenizer in
-      equal ~msg:"encode_ordinary" (list int) ordinary
-        (Array.to_list (encode_ids t ~match_special_tokens:false text));
-      equal ~msg:"encode, every special allowed" (list int) all (ids t text);
-      equal ~msg:"decode" string text (decode t (Array.of_list ordinary));
-      equal ~msg:"decode each id" (list string) decode_each
-        (List.map (fun id -> decode t [| id |]) ordinary))
+let encoding name = List.find (fun g -> g.name = name) (goldens ())
+
+let test_encode_ordinary =
+  cases "gives tiktoken's encode_ordinary under match_special_tokens:false"
+    ~id:Fun.id encodings (fun name ->
+      let g = encoding name in
+      List.iter
+        (fun (text, expected, _, _) ->
+          equal ~msg:text (list int) expected (ordinary g.tokenizer text))
+        g.texts)
+
+let test_encode_all =
+  cases "gives tiktoken's encode with every special allowed" ~id:Fun.id
+    encodings (fun name ->
+      let g = encoding name in
+      List.iter
+        (fun (text, _, expected, _) ->
+          equal ~msg:text (list int) expected (ids g.tokenizer text))
+        g.texts)
+
+let test_decode =
+  cases "decodes as tiktoken's decode with errors=replace" ~id:Fun.id encodings
+    (fun name ->
+      let g = encoding name in
+      List.iter
+        (fun (text, ordinary, _, each) ->
+          equal ~msg:text string text
+            (decode g.tokenizer (Array.of_list ordinary));
+          equal ~msg:(text ^ ", each id") (list string) each
+            (List.map (fun id -> decode g.tokenizer [| id |]) ordinary))
+        g.texts)
 
 let test_special_ids =
-  cases "special ids"
-    ~id:(fun g -> g.name)
-    goldens
-    (fun g ->
-      let t = Lazy.force g.tokenizer in
+  cases "puts each special at its id" ~id:Fun.id encodings (fun name ->
+      let g = encoding name in
       List.iter
         (fun (s, id) ->
-          equal ~msg:s (option int) (Some id) (token_to_id t s);
-          equal ~msg:s (option string) (Some s) (id_to_token t id))
+          equal ~msg:s (option int) (Some id) (token_to_id g.tokenizer s);
+          equal ~msg:s (option string) (Some s) (id_to_token g.tokenizer id))
         g.specials)
 
-(* Whisper's composition: a prompt of specials before the text, timestamps in
-   the ids it decodes, which it drops before decoding. *)
+(* [abc] is a token no join builds: it is emitted whole, and spelled out inside
+   a longer pretoken. *)
+let test_unbuilt () =
+  let t =
+    load (abc @ [ ("a", 1000); ("b", 1001); ("c", 1002); ("abc", 1003) ])
+  in
+  equal ~msg:"abc" (list int) [ 1003 ] (ids t "abc");
+  equal ~msg:"abca" (list int) [ 1000; 1001; 1002; 1000 ] (ids t "abca")
+
+(* With every token built, a pretoken that is a special's text is spelled out by
+   the merges, as encode_ordinary spells it. *)
+let test_special_spelled () =
+  let t = load ~specials:[ ("<|x|>", 300) ] (single_bytes @ [ ("ab", 256) ]) in
+  equal ~msg:"encode_ordinary" (list int) [ 60; 124; 120; 124; 62 ]
+    (ordinary t "<|x|>");
+  equal ~msg:"encode" (list int) [ 300 ] (ids t "<|x|>")
+
+let test_longer_special () =
+  let t = load ~specials:[ ("<|x", 300); ("<|x|>", 301) ] single_bytes in
+  equal ~msg:"<|x|>" (list int) [ 301 ] (ids t "<|x|>");
+  equal ~msg:"<|x|" (list int) [ 300; 124 ] (ids t "<|x|")
+
+(* A prompt of specials, timestamps the caller drops, then the text. *)
 let test_whisper () =
-  let g = List.find (fun g -> g.name = "whisper") goldens in
-  let t = Lazy.force g.tokenizer in
+  let g = encoding "whisper" in
   let id s = List.assoc s g.specials in
   let timestamp_begin = id "<|0.00|>" in
   List.iter
@@ -434,46 +398,127 @@ let test_whisper () =
       let kept = List.filter (fun i -> i < timestamp_begin) all in
       equal ~msg:text string
         ("<|startoftranscript|><|en|><|transcribe|>" ^ text ^ "<|endoftext|>")
-        (decode t (Array.of_list kept)))
+        (decode g.tokenizer (Array.of_list kept)))
     g.texts
 
-(* A tokenizer saved in HuggingFace's format and read back encodes as it did. *)
-let test_round_trip =
-  cases "of_json (to_json t)"
-    ~id:(fun g -> g.name)
-    goldens
-    (fun g ->
-      let t = Lazy.force g.tokenizer in
-      match of_json (to_json t) with
-      | Error e -> failf "of_json: %s" e
-      | Ok t' ->
-          List.iter
-            (fun (text, _, all, _) ->
-              equal ~msg:text (list int) all (ids t' text))
-            g.texts)
+let base = single_bytes @ [ ("ab", 256) ]
+
+let test_errors =
+  let file = rank_file base in
+  let drop_ff = rank_file (List.filter (fun (_, r) -> r <> 255) base) in
+  cases "errors on a rank file or special it cannot take"
+    ~id:(fun (name, _, _) -> name)
+    [
+      ("a line with one field", file ^ "QQ==\n", []);
+      ("a line with three fields", file ^ "YWJj 300 1\n", []);
+      ("a line of white space", file ^ " \n", []);
+      ("base64 without its padding", file ^ "YWJjZA 300\n", []);
+      ("a character outside base64", file ^ "YW@= 300\n", []);
+      (* [YWN=] holds [ac] and two bits left over. *)
+      ("bits left over in the last digit", file ^ "YWN= 300\n", []);
+      ("an equals sign after data", file ^ "=YWJ 300\n", []);
+      ("a negative rank", file ^ "YWJj -1\n", []);
+      ("a signed rank", file ^ "YWJj +300\n", []);
+      ("a rank of 2^31", file ^ "YWJj 2147483648\n", []);
+      ("a rank of u32 max", file ^ "YWJj 4294967295\n", []);
+      ("two lines with the same bytes", file ^ "YWI= 300\n", []);
+      ("two lines with the same rank", file ^ "YWJj 256\n", []);
+      ("a byte without a rank", drop_ff, []);
+      ("a special whose text is a token", file, [ ("ab", 300) ]);
+      ("a special on a token's id", file, [ ("<|x|>", 256) ]);
+      ( "a special while a token is not built",
+        rank_file (single_bytes @ [ ("abc", 256) ]),
+        [ ("<|x|>", 300) ] );
+    ]
+    (fun (_, text, specials) ->
+      is_error ~pp:Brot.pp (of_tiktoken ~specials ~pattern:whole text))
+
+let test_raising =
+  cases "raises Invalid_argument on a pattern or special it cannot take"
+    ~id:(fun (name, _, _) -> name)
+    [
+      ("an invalid pattern", "(", []);
+      ("an unsupported pattern", {|(?<=a)b|}, []);
+      ("a possessive quantifier", {|\p{L}++|}, []);
+      ("an end anchor", {|\s+$|}, []);
+      ("the empty pattern", "", []);
+      ("a pattern matching the empty text", "a*", []);
+      ("a lookahead matching empty", "(?=a)", []);
+      ("an empty special", whole, [ ("", 300) ]);
+      ("a negative id", whole, [ ("<|x|>", -1) ]);
+      ("an id of 2^31", whole, [ ("<|x|>", 1 lsl 31) ]);
+      ("a special given twice", whole, [ ("<|x|>", 300); ("<|x|>", 301) ]);
+      ("two specials on one id", whole, [ ("<|x|>", 300); ("<|y|>", 300) ]);
+      ( "a special that byte-level decoding changes",
+        whole,
+        [ ("<|\xc3\xa9|>", 300) ] );
+    ]
+    (fun (_, pattern, specials) ->
+      raises_match (Exn.invalid_arg ~sub:"") (fun () ->
+          of_tiktoken ~specials ~pattern (rank_file base)))
+
+let test_read_back =
+  cases
+    "is read back by of_json from to_json into a tokenizer that encodes alike"
+    ~id:Fun.id encodings (fun name ->
+      let g = encoding name in
+      let read =
+        require_ok ~pp:Format.pp_print_string (of_json (to_json g.tokenizer))
+      in
+      List.iter
+        (fun (text, _, all, _) ->
+          equal ~msg:text (list int) all (ids read text))
+        g.texts)
 
 let () =
   exit
     (run "tiktoken encodings"
        [
-         group "rank files"
+         group "tiktoken encoding"
            [
-             test "a join no merge list holds" test_unlisted_join;
-             test "a token no join builds" test_unbuilt;
-             test "gaps, the empty token and line forms" test_file_forms;
-             test "text no match covers" test_uncovered;
-             test "a rank with leading zeros" test_leading_zeros;
-             test "a special's text with every token built" test_special_spelled;
-             test "a special that is a prefix of another" test_longer_special;
+             test_rule;
+             test_decodes;
+             test
+               "joins the two parts the rule joins last, which no merge list \
+                of [a b] and [ab c] holds"
+               test_unlisted_join;
+           ];
+         group "rank file"
+           [
+             test "ranks may leave gaps, and vocab_size counts tokens" test_gaps;
+             test "a field = alone is the empty token" test_empty_token;
+             test
+               "a carriage return or a line feed ends a line, and ASCII white \
+                space separates fields"
+               test_line_forms;
+             test "a rank may have leading zeros" test_leading_zeros;
+           ];
+         group "pattern"
+           [
+             test
+               "drops the text no match covers, bytes that are no character \
+                included"
+               test_uncovered;
+             test "classifies characters by Unicode 18.0.0" test_unicode_version;
+           ];
+         group "of_tiktoken"
+           [
+             test_encode_ordinary;
+             test_encode_all;
+             test_decode;
+             test_special_ids;
+             test "emits whole a pretoken that is a token no join builds"
+               test_unbuilt;
+             test "spells out a special's text under match_special_tokens:false"
+               test_special_spelled;
+             test
+               "matches the longer of two specials where one is a prefix of \
+                the other"
+               test_longer_special;
+             test "decodes specials added with add_tokens after the ranks"
+               test_whisper;
              test_errors;
              test_raising;
-           ];
-         group "rule" [ test_reference ];
-         group "encodings"
-           [
-             test_goldens;
-             test_special_ids;
-             test "Whisper's composition" test_whisper;
-             test_round_trip;
+             test_read_back;
            ];
        ])

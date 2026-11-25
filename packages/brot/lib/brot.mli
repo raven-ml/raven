@@ -1567,7 +1567,9 @@ val decode_finish : stream -> string
 (** [decode_finish s] is the text of the ids fed to [s] that no step has given
     out yet, decoded as the end of the ids. *)
 
-(** {1:training Training} *)
+(** {1:training Training}
+
+    A trainer raises [Sys_error] if a file of [`Files] cannot be read. *)
 
 val train_bpe :
   ?init:t ->
@@ -1593,10 +1595,10 @@ val train_bpe :
 
     The words counted are the pretokens the trained tokenizer will itself
     produce: every text is normalized by [normalizer], then cut by [pre], and
-    each pretoken counts as one word — for a byte-level [pre] the words are in
+    each pretoken counts as one word. For a byte-level [pre] the words are in
     encoded form, and merges are learned over that form. With no [pre] a whole
     text is one word, so training on space-separated words needs
-    [~pre:(Pre_tokenizer.whitespace_split ())].
+    [~pre:Pre_tokenizer.whitespace_split].
 
     The most frequent adjacent pair of characters is then merged over and over
     until [vocab_size] is reached, no pair is left, or the best pair falls below
@@ -1605,19 +1607,20 @@ val train_bpe :
     - [init]: a tokenizer whose added and special tokens carry over into the
       trained one. Its model does not: training always starts from an empty
       vocabulary. Default: create new.
-    - [vocab_size]: target vocabulary size including special tokens. Default:
-      [30000].
+    - [vocab_size]: target vocabulary size including special tokens. The
+      alphabet is kept whole, so a [vocab_size] below its size gives the
+      alphabet and the special tokens. Default: [30000].
     - [min_frequency]: minimum pair frequency to be merged. Default: [0].
     - [limit_alphabet]: maximum number of distinct characters to keep; the
       rarest go first, and words drop the characters that did not make the cut.
       Default: none (keep all).
     - [initial_alphabet]: characters to keep whatever their frequency. Each
       string stands for the code point it starts with, so ["été"] and ["é"] both
-      mean [é]; a string that starts with no code point — empty, or not valid
-      UTF-8 — is dropped. Default: [[]].
+      mean [é]; an empty string, or one that does not start with valid UTF-8, is
+      dropped. Default: [[]].
     - [continuing_subword_prefix]: prefix put on every character of a word but
-      the first, before any pair is counted, so merges are learned — and written
-      — over the affixed forms. Default: none.
+      the first, before any pair is counted, so merges are learned and written
+      over the affixed forms. Default: none.
     - [end_of_word_suffix]: suffix put on the last character of a word, before
       any pair is counted. Default: none.
     - [max_token_length]: holds a merge back once the run of characters it would
@@ -1653,8 +1656,9 @@ val train_wordpiece :
 
     - [init]: a tokenizer whose added and special tokens carry over into the
       trained one. Its model does not. Default: create new.
-    - [vocab_size]: target vocabulary size including special tokens. Default:
-      [30000].
+    - [vocab_size]: target vocabulary size including special tokens. The
+      alphabet is kept whole, so a [vocab_size] below its size gives the
+      alphabet and the special tokens. Default: [30000].
     - [min_frequency]: minimum pair frequency to be merged. Default: [0].
     - [limit_alphabet]: maximum number of distinct characters to keep. Default:
       none (keep all).
@@ -1755,7 +1759,17 @@ val from_file : string -> (t, string) result
 
 val of_json : Jsont.json -> (t, string) result
 (** [of_json json] is a tokenizer deserialized from HuggingFace JSON format.
-    Errors if [json] has a missing or unknown model type, or invalid parameters.
+    Errors if [json] has no [model], a model of unknown type, or invalid
+    parameters. A model without a [type] member is the model its members name:
+    [merges] makes a BPE, [unk_id] a Unigram, [continuing_subword_prefix] or
+    [max_input_chars_per_word] a WordPiece, and [vocab] alone a WordLevel. This
+    differs from tokenizers, which reads a WordPiece only when both of those
+    members are present, and refuses a WordPiece or WordLevel without
+    [unk_token].
+
+    The [truncation] and [padding] members are not read, by [of_json] or
+    {!from_file}. {!encode} takes both as arguments, so a file that sets them
+    encodes as tokenizers encodes it when the same settings are passed.
 
     The numbers of [json] are taken as given. A tree decoded from text holds
     each number as the double its text names, which can differ in the last
@@ -1770,7 +1784,12 @@ val of_json : Jsont.json -> (t, string) result
 val to_json : t -> Jsont.json
 (** [to_json t] is [t] serialized to HuggingFace JSON format. Its numbers are
     doubles. Encoding the tree with jsont writes them as jsont writes numbers,
-    and {!save_pretrained} writes them as tokenizers does. *)
+    and {!save_pretrained} writes them as tokenizers does.
+
+    [to_json] writes no [bos_token], [eos_token] or [pad_token], since
+    [tokenizer.json] has no member for them. The tokenizer {!of_json} reads back
+    holds them as added tokens without their roles. A {!chars} tokenizer is
+    written with the model type ["Chars"], which only brot reads. *)
 
 val save_pretrained : t -> path:string -> unit
 (** [save_pretrained t ~path] saves [t] to [path] in HuggingFace format. Creates
@@ -1799,16 +1818,17 @@ val save_pretrained : t -> path:string -> unit
     they are the two parts it joins last on that token's bytes, so the rule is
     a {!bpe} with one merge per built token, that pair, in rank order.
 
-    A {e rank file} holds one token per line, read as tiktoken reads it: a
-    carriage return or a line feed ends a line, an empty line is skipped, and a
-    line is two fields between ASCII white space, the base64 of the token's
-    bytes with its padding and the rank in decimal. A field [=] alone is the
-    empty token. Ranks may leave gaps.
+    A {e rank file} holds one token per line, read as tiktoken reads a
+    well-formed one: a carriage return or a line feed ends a line, an empty line
+    is skipped, and a line is two fields between ASCII white space, the base64
+    of the token's bytes with its padding and the rank in decimal. A field [=]
+    alone is the empty token. Ranks may leave gaps.
 
     The pattern is in the dialect of {!Pre_tokenizer.split_regex}. Its matches,
     leftmost first without overlap, are the pretokens, and the text no match
-    covers is dropped, bytes that are no character included. An encoding whose
-    pattern uses possessive quantifiers or [$] is given an equivalent pattern.
+    covers is dropped, bytes that are no character included.
+    {!Pre_tokenizer.split_regex} takes neither possessive quantifiers nor [$],
+    so an encoding whose pattern uses them is passed an equivalent pattern.
     cl100k_base's is
     {[
       String.concat "|"

@@ -13,10 +13,10 @@ would write.
 feature: the digits as an integer, then one multiplication or division by a
 power of ten, which can land one unit in the last place from the double the
 text names. A Unigram score read so can break an exact tie between two
-segmentations, so brot reads scores the same way, and `test_unigram.ml` checks
-it against `support/parity/unigram_scores.txt`, which this writes. Each value
-is what `tokenizers` reads off the exact text of the row, in a model of its
-own, written back through `to_str` and parsed by Python, which is exact.
+segmentations, so brot reads scores the same way, and `test_huggingface.ml`
+checks it against `support/parity/unigram_scores.txt`, which this writes. Each
+value is what `tokenizers` reads off the exact text of the row, in a model of
+its own, written back through `to_str` and parsed by Python, which is exact.
 
 Rows:
 
@@ -34,9 +34,10 @@ with 17 significant digits (`%.17g`); then the texts other writers make:
 integers past 2^64, exponents past 308 and past 2^31, fractions with leading
 zeros, and the neighbours of each bound the reading keeps.
 
-`SAVED` rows give the text brot writes for a score, which `test_unigram.ml`
-checks against the file brot writes: the shortest decimal that reads back as
-the double, Python's `repr` digits, laid out as serde_json lays out an `f64`.
+`SAVED` rows give the text brot writes for a score, which
+`test_huggingface.ml` checks against the file brot writes: the shortest decimal
+that reads back as the double, Python's `repr` digits, laid out as serde_json
+lays out an `f64`.
 Each is checked against the text `to_str` writes for a model built from the
 double itself, so the layout is tokenizers' own.
 """

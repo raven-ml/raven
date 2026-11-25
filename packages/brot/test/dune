@@ -23,7 +23,9 @@
   test_pretoken_cache
   test_float_text
   test_tiktoken
-  test_post_processor)
+  test_post_processor
+  test_training
+  test_huggingface)
  (modules
   test_tokenization
   test_vocab
@@ -39,7 +41,9 @@
   test_pretoken_cache
   test_float_text
   test_tiktoken
-  test_post_processor)
+  test_post_processor
+  test_training
+  test_huggingface)
  (package brot)
  (deps
   (glob_files support/parity/*)
