@@ -3914,6 +3914,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.geomspace` takes the logarithms of ends whose ratio leaves float64's
+  range through nx's own kinds, where it called the C library's `log`, so
+  its bits match on every host; on glibc no value checked changes. Its
+  accuracy is stated: within `(7 + 10 |ln (stop / start)|) u`.
 - `Nx.linspace` starts at `start` bit for bit, `-0.` included, and gives
   finite values between finite ends whose difference overflows, where the
   first was NaN for `1. infinity` and `-.max_float max_float`; `Nx.logspace`

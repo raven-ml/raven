@@ -748,8 +748,10 @@ val geomspace :
     [start (stop / start)^(i / (n - 1))], or [^(i / n)] without [endpoint].
     They are computed at float64 and stored in [dt]: the first is [start]
     and, with [endpoint] and [n >= 2], the last is [stop], each as [dt]
-    stores it. [geomspace float32 1. 1000. 4] is [1], [10], [100] and
-    [1000].
+    stores it. Before its store, each value in float64's normal range is
+    within [(7 + 10 |ln (stop / start)|) u] of the exact one, relative, [u]
+    float64's unit roundoff. [geomspace float32 1. 1000. 4] is [1], [10],
+    [100] and [1000].
 
     Raises [Invalid_argument] if [n < 0], or if [start] or [stop] is not
     positive and finite. *)

@@ -386,8 +386,9 @@ let geomspace_by ~by p dt ~endpoint start stop n =
     if Float.is_finite ratio && ratio >= Float.min_float then
       E.(f64 start * (f64 ratio ** e))
     else
-      let lo = Float.log start in
-      E.(exp (fma e (f64 (Float.log stop -. lo)) (f64 lo)))
+      (* The logarithms are nx's kinds', so the bits match on every host. *)
+      let lo = E.log (f64 start) in
+      E.(exp (fma e (log (f64 stop) - lo) lo))
   in
   let v = E.(where (coord 0 = i64 0) (f64 start) v) in
   let last = i64 (n - 1) in

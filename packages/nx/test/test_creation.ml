@@ -369,6 +369,33 @@ let law_geomspace
         x
   | _ -> ()
 
+(* geomspace's bound, [(7 + 10 |ln r|) u] of the exact value, relative, before
+   its store, [r = stop / start] and [u] float64's unit roundoff. A row of
+   gen/geomspace.py holds the exact value rounded to float64, one more [u] away:
+   the distance to it is within [(8 + 10 |ln r|) u] of the row's value, and the
+   factor [1 + 2u] covers [1 / (1 - u)]. *)
+let test_geomspace_bound () =
+  let u = Float.ldexp 1. (-53) in
+  List.iter
+    (fun (row : Nx_support.row) ->
+      let start = row.args.(0) and stop = row.args.(1) in
+      let n = Float.to_int row.args.(2) and i = Float.to_int row.args.(3) in
+      let endpoint = row.args.(4) = 1. in
+      let v =
+        (Nx.to_array (Nx.geomspace Nx.float64 ~endpoint start stop n)).(i)
+      in
+      let ln_r = Float.abs (Float.log stop -. Float.log start) in
+      let bound =
+        (8. +. (10. *. ln_r)) *. u *. Float.abs row.value *. (1. +. (2. *. u))
+      in
+      at_most
+        ~msg:
+          (Printf.sprintf "geomspace %h %h %d, value %d%s" start stop n i
+             (if endpoint then "" else " without the end"))
+        float_exact ~than:bound
+        (Float.abs (v -. row.value)))
+    (Nx_support.golden "geomspace" Nx.float64)
+
 let test_geomspace () =
   equal (array float_exact) [| 1.; 10.; 100.; 1000. |]
     (Nx.to_array (Nx.geomspace Nx.float32 1. 1000. 4));
@@ -410,6 +437,8 @@ let ranges =
                        Gen.bool)))))
         law_geomspace;
       test "geomspace at exact powers, of one and of none" test_geomspace;
+      test "geomspace is within its bound of the exact value"
+        test_geomspace_bound;
       refusals
         [
           ("Nx.geomspace", fun () -> ignore (Nx.geomspace Nx.float32 0. 1. 3));
