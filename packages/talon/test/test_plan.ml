@@ -1072,7 +1072,7 @@ let steps =
       ("join asserted", joined ~each_right:At_most_one other_exact);
       ( "join position",
         joined ~on:Join.position (source "v" Type.[ ("v", Any float64) ]) );
-      ("append a source", append (of_source s_exact));
+      ("append a source", fun q -> append (of_source s_exact) q);
     ]
 
 (* [twice] is the steps that read the query twice: [again], then the query. *)
