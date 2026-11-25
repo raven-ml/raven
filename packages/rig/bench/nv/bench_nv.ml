@@ -345,6 +345,67 @@ let image_rows =
           | Error why -> failwith why);
     ]
 
+(* A device given up while its kernel runs, as a program gives up work that runs
+   too long: the device opens, launches [spin] over one block for 200 ms, then
+   loses the device and closes it, whose stop ends the kernel. The open is timed
+   too: each call needs a device whose kernel runs. A stop that waits for the
+   kernel takes the 200 ms instead, and its 20 calls stay within thumper's
+   deadline. *)
+let stop_rows =
+  let spin_ns = 200_000_000 in
+  let given_up () =
+    let t = dev () in
+    let image = get (Rig.Image.load t.d (Lazy.force cubin)) in
+    let fn = Option.get (Rig.Image.resolve image "spin") in
+    let flag = B.create t.d 8 in
+    B.fill flag '\000';
+    let params = Bytes.make 16 '\000' in
+    Bytes.set_int64_le params 8 (Int64.of_int spin_ns);
+    let one =
+      Sub.{ groups = (1, 1, 1); threads = (1, 1, 1); shared = 0; params }
+    in
+    let s =
+      Sub.make t.d [| Sub.launch ~refs:Sub.[| read 0 ~at:0 |] fn ~params:16 |]
+    in
+    ignore (Rig.submit s ~buffers:[| flag |] ~args:[| one |] : Rig.Point.t);
+    Rig.lose t.d "given up";
+    S.close t
+  in
+  (* A device given up while a chain of grids runs, the work nx hands a GPU: the
+     device opens, launches [grids] grids of [blocks] blocks that each spin
+     [grid_ns], waits for the first, then loses the device and closes it. On an
+     RTX 5000 Ada the stop's preempt times out while the second grid runs, and
+     the grid ends before the reset: the group, kept off the runlist, has left
+     the engine, so the reset finds it idle and takes 0.5 ms. A stop that let
+     the group run its next grid would reset the engine that runs it, which
+     takes 5.4 ms. Every stop takes that path over grids of 1.3 to 2.7 ms, and
+     [grid_ns] sits midway: under that window the preempt answers within its
+     wait, and over it a grid runs at the reset in both cases. A row that leaves
+     its budget either way may mean its stops left the window: check the path
+     they take before a re-bless. *)
+  let grid_ns = 2_000_000 and blocks = 100 and grids = 64 in
+  let given_up_grids () =
+    let t = dev () in
+    let image = get (Rig.Image.load t.d (Lazy.force cubin)) in
+    let fn = Option.get (Rig.Image.resolve image "copy_after") in
+    let params = Bytes.make 32 '\000' in
+    Bytes.set_int64_le params 0 (Int64.of_int grid_ns);
+    let grid =
+      Sub.{ groups = (blocks, 1, 1); threads = (1, 1, 1); shared = 0; params }
+    in
+    let s = Sub.make t.d [| Sub.launch fn ~params:32 |] in
+    let submit () = Rig.submit s ~buffers:[||] ~args:[| grid |] in
+    let first = submit () in
+    for _ = 2 to grids do
+      ignore (submit () : Rig.Point.t)
+    done;
+    Rig.Point.wait first;
+    Rig.lose t.d "given up";
+    S.close t
+  in
+  Thumper.group "stop"
+    [ Thumper.bench "running" given_up; Thumper.bench "grids" given_up_grids ]
+
 let () =
   if Result.value (Rig_nv_nvidia.count ()) ~default:0 > 0 then
     exit
@@ -357,4 +418,5 @@ let () =
            alloc_rows;
            map_host_rows;
            image_rows;
+           stop_rows;
          ]
