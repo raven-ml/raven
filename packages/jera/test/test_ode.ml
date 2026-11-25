@@ -278,11 +278,6 @@ let dae t v =
 
 let dae_mass v = Nx.mul v (vec [| 1.; 0. |])
 
-let dae_to_2 y0 =
-  Ode.solve one
-    (kvaerno ~mass:dae_mass dae)
-    ~tol:stiff_tol ~budget:500 dae ~t0:(scalar 0.) ~t1:(scalar 2.) y0
-
 (* Robertson's chemical kinetics to t = 40, the rates [k] as the argument. *)
 let robertson k =
   let field _ y =
@@ -308,17 +303,25 @@ let kvaerno5 =
           Ode.solve one (kvaerno f) ~tol:stiff_tol ~budget:500 f ~t0:(scalar 0.)
             ~t1:(scalar 10.) (vec [| 0. |])
         in
-        equal
-          (Oracle.tensor ~abs:1e-7 ())
-          (vec [| Float.sin 10. |])
-          (Solution.get s);
+        at_most float_exact
+          ~than:(Nx.item [ 0 ] (Solution.error s))
+          (Float.abs (Nx.item [ 0 ] (Solution.get s) -. Float.sin 10.));
         (* An explicit method's stability needs 5·10⁶ steps here. *)
         at_most int32 ~than:5000l (Nx.item [] (Solution.evaluations s)));
     test "solves an index-1 DAE: y₁' = y₂ − y₁, 0 = y₂ − cos t" (fun () ->
+        (* y₁' = y₂ − y₁ contracts at rate 1 and the constraint fixes y₂, so the
+           global error is at most the estimates' sum. *)
+        let s =
+          Ode.solve one
+            (kvaerno ~mass:dae_mass dae)
+            ~tol:stiff_tol ~budget:500 dae ~t0:(scalar 0.) ~t1:(scalar 2.)
+            (vec [| 0.5; 1. |])
+        in
+        let error = Nx.item [] (Nx.sum (Solution.error s)) in
         equal
-          (Oracle.tensor ~abs:1e-7 ())
+          (Oracle.tensor ~abs:error ())
           (vec [| (Float.cos 2. +. Float.sin 2.) /. 2.; Float.cos 2. |])
-          (Solution.get (dae_to_2 (vec [| 0.5; 1. |]))));
+          (Solution.get s));
     test "a mass scales the field: 2 y' = −2 y is y' = −y" (fun () ->
         let f _ y = Nx.mul_s y (-2.) in
         let s =
@@ -327,10 +330,11 @@ let kvaerno5 =
             ~tol:stiff_tol ~budget:500 f ~t0:(scalar 0.) ~t1:(scalar 3.)
             (vec [| 1. |])
         in
-        equal
-          (Oracle.tensor ~rel:1e-7 ())
-          (vec [| Float.exp (-3.) |])
-          (Solution.get s));
+        (* y' = −y contracts, so the global error is at most the estimates'
+           sum. *)
+        at_most float_exact
+          ~than:(Nx.item [ 0 ] (Solution.error s))
+          (Float.abs (Nx.item [ 0 ] (Solution.get s) -. Float.exp (-3.))));
     cases "its error is within e^(L T) of its estimate on a smooth field"
       ~id:(Printf.sprintf "tol %g") [ 1e-6; 1e-9 ] (fun tl ->
         let m =
@@ -435,6 +439,19 @@ let across_zero =
      and+ steps = int_range 1 2
      and+ backward = bool in
      if backward then (b, a, steps) else (a, b, steps))
+
+(* An interval, a count of three or more steps, and a step k with steps before
+   and after it of size h. *)
+let interior =
+  let open Gen in
+  with_pp
+    (fun ppf (a, b, steps, k) ->
+      Format.fprintf ppf "(%h, %h, %d, %d)" a b steps k)
+    (let* steps = int_range 3 8 in
+     let+ a = float_range (-10.) 10.
+     and+ b = float_range (-10.) 10.
+     and+ k = int_range 1 (steps - 2) in
+     (a, (if b = a then b +. 1. else b), steps, k))
 
 (* The last step's start as the march places it: a + (steps − 1) h, or b where
    that rounds past it. *)
@@ -572,6 +589,26 @@ let march =
             (scalar 0.)
         in
         less float_exact ~than:(Float.abs (Nx.item [ 1 ] y)) 0.);
+    prop "every other step ends where the next starts"
+      ~examples:[ (-8.84, 0.149, 4, 2) ]
+      interior
+      (fun (a, b, steps, k) ->
+        let h = (b -. a) /. Float.of_int steps in
+        let start j = a +. Sys.opaque_identity (Float.of_int j *. h) in
+        cover "the start plus h rounds apart from the next start"
+          (start (k - 1) +. h <> start k);
+        (* The field is 1 at step k's start alone, which step k − 1's last stage
+           (c = 1) and step k's first (c = 0) read: each adds h / 6. *)
+        let y =
+          Ode.march one Ode.rk4 ~steps
+            (fun t _ -> Nx.cast f64 (Nx.equal_s t (start k)))
+            ~at:(vec [| a; b |])
+            (scalar 0.)
+        in
+        equal
+          (float_rel ~rel:1e-15 ~abs:0.)
+          (2. *. (h *. (1. /. 6.)))
+          (Nx.item [ 1 ] y));
     test "a leaf that is not a float is carried unchanged" (fun () ->
         let s = Nx.Ptree.(pair tensor tensor) in
         let _, n =
@@ -779,7 +816,12 @@ let solve =
               Nx.add (Nx.zeros_like y) (Nx.cast f64 (Nx.equal_s t t1)))
             ~t0:(scalar t0) ~t1:(scalar t1) (scalar 1.)
         in
-        less float_exact ~than:(Nx.item [] (Solution.error s)) 0.);
+        less float_exact ~than:(Nx.item [] (Solution.error s)) 0.;
+        (* The answer retakes the steps: y leaves 1 only through its stages at c
+           = 1, tsit5's sixth weighing 2.3. *)
+        less float_exact
+          ~than:(Float.abs (Nx.item [] (Solution.get s) -. 1.))
+          0.);
     test "an attempt with a non-finite stage is rejected" (fun () ->
         (* y' = −y is NaN where y < 0. At a loose tol the steps grow until a
            stage overshoots below zero, and those attempts are rejected: the
@@ -838,8 +880,16 @@ let solve =
             ~t0:(scalar 0.) ~t1:(scalar 10.) (scalar 1.)
         in
         equal Oracle.status_t Budget_spent (Oracle.status s);
-        raises_match (Exn.failure ~sub:"Jera.Ode.solve") (fun () ->
-            Solution.get s));
+        (* The report holds the entry point, the settings and the budget used,
+           as Solution.get states. *)
+        let report =
+          match Solution.get s with
+          | _ -> failf "the solve converged"
+          | exception Failure m -> m
+        in
+        List.iter
+          (fun sub -> contains ~sub report)
+          [ "Jera.Ode.solve"; "tsit5"; "budget 3"; "3 of 3" ]);
     cases
       "evaluations count the first step's two, each attempt's and the answer's"
       ~id:(fun (n, _, _) -> n)
@@ -939,14 +989,15 @@ let solve =
           (Oracle.tensor ~rel:1e-12 ())
           (Rune.grad' f (scalar 0.8))
           (snd (Rune.jvp' f (scalar 0.8) (scalar 1.))));
-    test "compiled grad equals eager grad" (fun () ->
+    test "compiled grad is −T y0 e^(−kT)" (fun () ->
         Compiled.here ();
-        (* y' = −k y takes the same steps compiled: its arithmetic is products
-           and sums. *)
+        (* Compiled, the controller's powers may round apart from eager's and
+           take other steps; either way the derivative is the accepted steps',
+           within their error, as eagerly. *)
         let f k = Solution.get (solve1 (decay k) ~t0:0. ~t1:1.5 (scalar 2.)) in
         equal
-          (Oracle.tensor ~rel:1e-12 ())
-          (Rune.grad' f (scalar 0.8))
+          (Oracle.tensor ~rel:1e-8 ())
+          (scalar (-1.5 *. 2. *. Float.exp (-1.2)))
           (Rune.jit' (Rune.grad' f) (scalar 0.8)));
     test "compiled, a polynomial field's answer is within its error" (fun () ->
         Compiled.here ();
@@ -1192,6 +1243,8 @@ let path =
               (Array.sub b 0 (n - 1))
               (Array.sub b 1 (n - 1)))
           breaks;
+        (* Backward, y' = −y grows the steps' errors by e² over the span, about
+           10⁻⁹ at tol 10⁻¹⁰, and the extension adds about tol between steps. *)
         equal
           (Oracle.tensor ~abs:1e-9 ())
           (exponential 1. 2. y2 between)
@@ -1215,7 +1268,7 @@ let path =
     test "over no time it ends its lane Stalled and says why" (fun () ->
         let s = path1 (decay (scalar 1.)) ~t0:1. ~t1:1. (scalar 1.) in
         equal Oracle.status_t Stalled (Oracle.status s);
-        raises_match (Exn.failure ~sub:"A path needs t1 ≠ t0.") (fun () ->
+        raises_match (Exn.failure ~sub:"Jera.Ode.path") (fun () ->
             Solution.get s));
     test "its error is the accumulated estimate, as sample's" (fun () ->
         let tol = Tol.v ~rel:1e-6 ~abs:1e-8 in
@@ -1226,10 +1279,10 @@ let path =
             ~at:(vec [| 0.; 2. |])
             (scalar 1.)
         in
-        (* The answer's steps are the search's, recomputed from their fractions
-           of the span: equal up to the rounding of each step. *)
+        (* The answer retakes the search's steps to the bit, so its estimates
+           are the search's, summed in the same order. *)
         equal
-          (Oracle.tensor ~rel:1e-9 ())
+          (Oracle.tensor ~rel:1e-14 ())
           (Nx.get [ 1 ] (Solution.error s))
           (Piecewise.eval (Solution.error p) (scalar 2.)));
     test "a path of kvaerno5 follows a stiff field's slow solution" (fun () ->
@@ -1240,6 +1293,9 @@ let path =
                ~t0:(scalar 0.) ~t1:(scalar 2.) (vec [| 0. |]))
         in
         let ts = vec [| 0.3; 1.1; 1.9 |] in
+        (* Between steps the cubic Hermite extension errs by at most h⁴ max |y⁗|
+           / 384, under 3·10⁻⁷ for the steps below 0.1 that tol 10⁻⁸ sets for a
+           fifth-order method on sin t. *)
         equal
           (Oracle.tensor ~abs:1e-6 ())
           (Nx.sin ts)
@@ -1253,6 +1309,9 @@ let path =
                (vec [| 0.5; 1. |]))
         in
         let ts = vec [| 0.3; 1.1; 1.9 |] in
+        (* Each stage solves 0 = y₂ − cos t, so the extension interpolates cos
+           at five fractions of a step and errs by at most h⁵ / 5!, under 10⁻⁷
+           for steps below 0.1. *)
         equal
           (Oracle.tensor ~abs:1e-6 ())
           (Nx.cos ts)
@@ -1363,7 +1422,9 @@ let plateau ~after =
 let index i = Nx.scalar Nx.int32 i
 
 let event =
-  let close = Oracle.tensor ~rel:1e-10 () in
+  (* A falling ball's height is quadratic in t, which every step integrates
+     exactly, so its crossing is found to the time's resolution. *)
+  let close = Oracle.tensor ~rel:1e-13 () in
   [
     test "a ball reaches the ground at sqrt(2 h / g)" (fun () ->
         let t, _, i = Solution.get (drop ~t1:5. height (scalar 10.)) in
@@ -1458,13 +1519,15 @@ let event =
               (Nx.zeros_like q, Nx.mul_s p' (-0.9))
               (n - 1) (Nx.item [] t' :: acc)
         in
+        (* Every flight is a quadratic the steps integrate exactly, so the times
+           are exact to the rounding of a few crossings. *)
         let first = reaches 10. 0. in
         let flight k = 2. *. Float.pow 0.9 (Float.of_int k) *. first in
         let expected =
           [ first; first +. flight 1; first +. flight 1 +. flight 2 ]
         in
         equal
-          (Oracle.tensor ~rel:1e-9 ())
+          (Oracle.tensor ~rel:1e-12 ())
           (vec (Array.of_list expected))
           (vec
              (Array.of_list (bounces (scalar 0.) (scalar 10., scalar 0.) 3 []))));
@@ -1607,8 +1670,7 @@ let event =
         in
         let s = drop ~t1:5. event (scalar 10.) in
         equal Oracle.status_t Stalled (Oracle.status s);
-        raises_match (Exn.failure ~sub:"The crossing of component [1] near t")
-          (fun () -> Solution.get s));
+        raises_match (Exn.failure ~sub:"[1]") (fun () -> Solution.get s));
     test "a compiled function returns the answer as a triple" (fun () ->
         Compiled.here ();
         let answer =
@@ -1698,10 +1760,17 @@ let delay =
             ~at:(vec [| 0.; 0.5; 1.7; 3. |])
             (scalar 1.)
         in
-        equal
-          (Oracle.tensor ~rel:1e-8 ())
-          (Nx.exp (vec [| 0.; 0.5; 1.7; 3. |]))
-          (Solution.get s));
+        (* The delayed term is e-Lipschitz, so the error at t is at most e^(e t)
+           times the estimates' sum before it. *)
+        let ts = [| 0.; 0.5; 1.7; 3. |] in
+        let y = Oracle.floats (Solution.get s)
+        and e_t = Oracle.floats (Solution.error s) in
+        Array.iteri
+          (fun i t ->
+            at_most float_exact
+              ~than:(propagated ~lipschitz:e ~span:t e_t.(i))
+              (Float.abs (y.(i) -. Float.exp t)))
+          ts);
     test "two lags stack on a leading axis" (fun () ->
         let s =
           delay1
@@ -1738,10 +1807,20 @@ let delay =
             ~history:solution ~at
             (solution (scalar 0.))
         in
-        equal
-          (Oracle.tensor ~rel:1e-8 ())
-          (Nx.stack (List.map (fun t -> solution (scalar t)) [ 0.; 0.8; 2. ]))
-          (Solution.get s));
+        (* The delayed terms are (e + √e) / 2 ≈ 2.2-Lipschitz, so the error at t
+           is at most e^(2.2 t) times the estimates' sum before it. *)
+        let y = Solution.get s and errors = Solution.error s in
+        List.iteri
+          (fun i t ->
+            let bound =
+              propagated ~lipschitz:2.2 ~span:t
+                (Nx.item [] (Nx.sum (Nx.get [ i ] errors)))
+            in
+            equal
+              (Oracle.tensor ~abs:bound ())
+              (solution (scalar t))
+              (Nx.get [ i ] y))
+          [ 0.; 0.8; 2. ]);
     test "grad in the history reaches the delayed states" (fun () ->
         (* y(3) = −c / 6. *)
         let g =
