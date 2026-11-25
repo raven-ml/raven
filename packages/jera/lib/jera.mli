@@ -283,7 +283,9 @@ module Linear : sig
       {b Derivative.} The answer is stated as the zero of [a u − r] through
       {!Rune.root}, with the solver as its linear solve: a derivative solves a
       system of [a], or of its transpose in reverse mode, with the same solver,
-      so the solver must suit both. *)
+      so the solver must suit both. A derivative whose solve misses the solver's
+      bound raises [Invalid_argument] naming the entry point, through
+      {!Nx.check}. *)
 
   type 'x t
   (** The type for solvers of systems on values of type ['x]. *)

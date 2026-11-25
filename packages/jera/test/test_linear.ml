@@ -443,6 +443,20 @@ let transformation_tests =
           (Oracle.tensor ~rel:1e-12 ())
           (g Linear.dense)
           (g (Linear.banded ~width:1)));
+    test "a derivative whose solve misses its bound raises" (fun () ->
+        (* cg on a non-symmetric a: r = (1, 0), an eigenvector, converges in one
+           step, but reverse mode solves aᵀ v = 1, which two steps of cg do
+           not. *)
+        let a = Nx.create f64 [| 2; 2 |] [| 1.; 1.; 0.; 2. |] in
+        let solve r =
+          Linear.solve one
+            (Linear.cg ~rel:1e-12 ~budget:2 ~precondition:Fun.id)
+            (product a) r
+        in
+        let r = vec [| 1.; 0. |] in
+        equal Oracle.status_t Converged (Oracle.status (solve r));
+        raises_match (Exn.invalid_arg ~sub:"Jera.Linear.solve") (fun () ->
+            Rune.grad' (fun r -> Nx.sum (Solution.get (solve r))) r));
     test "compiled banded equals eager" (fun () ->
         Compiled.here ();
         let f r = Solution.get (banded 1 a r) in

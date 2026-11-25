@@ -632,8 +632,8 @@ let failed run =
 
 (* Derivatives *)
 
-(* The linear solve of a derivative: [op v = b] by [s]. A system the solver
-   cannot solve to its bound gives a solution whose every element is NaN. *)
+(* The linear solve of a derivative: [op v = b] by [s]. A solution that misses
+   the solver's check raises, as an elementwise derivative's does. *)
 let derivative fn x s op b =
   let (Space { dtype; size; ravel; unravel }) = space fn "the tangent" x b in
   if size = 0 then b
@@ -641,7 +641,16 @@ let derivative fn x s op b =
     let apply v = ravel (checked fn "a" x op (unravel v)) in
     let precondition = preconditioner fn x s ravel unravel in
     let r = run s dtype size apply precondition (ravel b) in
-    unravel (Nx.where (failed r) (Nx.full_like r.u Float.nan) r.u)
+    Nx.check Nx.Ptree.unit
+      (Nx.logical_not (failed r))
+      ()
+      (fun _ () ->
+        Invalid_argument
+          (Printf.sprintf
+             "%s: the derivative's solve by %s misses the solver's bound: the \
+              solver does not suit the derivative's system, or its transpose"
+             fn (name s)));
+    unravel r.u
 
 (* Solve *)
 

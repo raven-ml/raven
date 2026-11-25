@@ -1281,6 +1281,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- A derivative through `Linear.solve`, `System.solve`, `Minimize.solve` or an
+  implicit `Ode` method whose linear solve misses its solver's bound raises
+  `Invalid_argument` naming the entry point, as `Root` and `System.lanes` do.
+  It was NaN in every element.
 - `Minimize.bracket` raises `Invalid_argument` naming itself, `lo` and `hi`
   and their shapes when its ends do not broadcast, where `Nx.broadcast_arrays`
   raised its own error.
