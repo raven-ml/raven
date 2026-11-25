@@ -9,6 +9,7 @@
  (libraries
   nx_array
   nx_kernel
+  nx_cpu
   nx_cuda
   nx_cuda_support
   nx_gpu_ref

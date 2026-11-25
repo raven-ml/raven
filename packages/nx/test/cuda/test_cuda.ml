@@ -106,6 +106,361 @@ let codecs_bf16 () = codecs D.Bfloat16 ~code:D.Uint16 ~spread:140
 let codecs_e4m3 () = codecs D.Float8_e4m3fn ~code:D.Uint8 ~spread:20
 let codecs_e5m2 () = codecs D.Float8_e5m2 ~code:D.Uint8 ~spread:30
 
+(* Scans *)
+
+(* The program of one output, its one load. *)
+let identity dt =
+  Nx_kernel.Prog.v ~ins:(Iarray.of_list [ dt ])
+    (Iarray.of_list [ Nx_kernel.Prog.In 0 ])
+    ~outs:(Iarray.of_list [ 0 ])
+
+(* A copy of the host array [h] on [g]'s device. *)
+let on_gpu (type v s) g (h : (v, s) Nx_array.t) =
+  let x =
+    Nx_array.create (S.device g) (Nx_array.dtype h)
+      (Nx_array.Layout.shape (Nx_array.layout h))
+  in
+  Nx_array.transfer ~src:h ~dst:x;
+  x
+
+(* The host copy of [x]'s elements. *)
+let to_host (type v s) (x : (v, s) Nx_array.t) =
+  let h =
+    Nx_array.create Rig.host (Nx_array.dtype x)
+      (Nx_array.Layout.shape (Nx_array.layout x))
+  in
+  Nx_array.transfer ~src:x ~dst:h;
+  Nx_array.to_array h
+
+(* [xs] of [dt] in [shape] on [g]'s device, scanned by [m] along [axis] into a
+   destination of [into] (defaults to [dt]) from the host carry [carry] where
+   given, by nx.cuda; the result's bytes. *)
+let cuda_scan (type v s) g (dt : (v, s) D.t) ?carry ?(into = D.Any dt) shape
+    ~axis m (xs : v array) =
+  let x = on_gpu g (Nx_array.of_array dt shape xs) in
+  let (D.Any idt) = into in
+  let y = Nx_array.create (S.device g) idt shape in
+  let carry =
+    Option.map (fun (Nx_array.Any c) -> Nx_array.Any (on_gpu g c)) carry
+  in
+  match
+    Nx_cuda.scan ?carry (identity (D.Any dt)) ~axis (Nx_kernel.Monoid m, 0)
+      ~dsts:(Iarray.of_list [ Nx_array.Any y ])
+      (Iarray.of_list [ Nx_kernel.Plain x ])
+  with
+  | Nx_array.Done -> S.read (Nx_array.buffer y)
+  | _ -> fail "nx.cuda declines the scan"
+
+(* The same scan by nx.cpu, on the host. *)
+let cpu_scan (type v s) (dt : (v, s) D.t) ?carry ?(into = D.Any dt) shape ~axis
+    m (xs : v array) =
+  let x = Nx_array.of_array dt shape xs in
+  let (D.Any idt) = into in
+  let y = Nx_array.create Rig.host idt shape in
+  match
+    Nx_cpu.scan ?carry (identity (D.Any dt)) ~axis (Nx_kernel.Monoid m, 0)
+      ~dsts:(Iarray.of_list [ Nx_array.Any y ])
+      (Iarray.of_list [ Nx_kernel.Plain x ])
+  with
+  | Nx_array.Done -> S.read (Nx_array.buffer y)
+  | _ -> fail "nx.cpu declines the scan"
+
+(* The host carry of [cs] in [dt] for a scan of [shape] along [axis]. *)
+let carry_of (type v s) (dt : (v, s) D.t) shape ~axis (cs : v array) =
+  let cshape = Iarray.mapi (fun a e -> if a = axis then 1 else e) shape in
+  Nx_array.Any (Nx_array.of_array dt cshape cs)
+
+(* A term of mixed magnitude, so that another order of additions rounds
+   otherwise: a sign, 12 bits and an exponent in [-20, 20]; -0, and the least
+   subnormal of [w] bits, now and then. *)
+let term rs ~w =
+  match Random.State.int rs 32 with
+  | 0 -> -0.
+  | 1 -> if w = 32 then Int32.float_of_bits 1l else Float.ldexp 1. (-1074)
+  | _ ->
+      let k = Float.of_int (Random.State.int rs 4095 - 2047) in
+      Float.ldexp k (Random.State.int rs 41 - 20 - 11)
+
+(* nx_cuda.mli's own order of a slice [ts] from [carry]: chunks of 4096 terms,
+   spans of 16 folded from their first term, strips of 32 spans scanned in five
+   steps, a span [r >= d] taking span [r - d]'s value ahead of its own, each
+   result its chunk's carry, the earlier strips' totals, the previous span's
+   value and its span's terms, left to right; a chunk's carry the slice's carry,
+   else +0, then the earlier chunks' totals in order. [add] rounds to the
+   carrier. *)
+let own_order add carry ts =
+  let n = Array.length ts and out = Array.make (Array.length ts) 0. in
+  let carry = ref (Option.value carry ~default:0.) in
+  let chunk = 4096 and span = 16 and strip = 32 in
+  for c = 0 to ((n + chunk - 1) / chunk) - 1 do
+    let lo = c * chunk and hi = Int.min n ((c + 1) * chunk) in
+    let spans = (hi - lo + span - 1) / span in
+    let sum r =
+      let a = lo + (r * span) in
+      let v = ref ts.(a) in
+      for q = a + 1 to Int.min hi (a + span) - 1 do
+        v := add !v ts.(q)
+      done;
+      !v
+    in
+    let v = Array.init spans sum in
+    let strips = (spans + strip - 1) / strip in
+    for st = 0 to strips - 1 do
+      let first = st * strip and last = Int.min spans ((st + 1) * strip) - 1 in
+      List.iter
+        (fun d ->
+          let prev = Array.copy v in
+          for r = first + d to last do
+            v.(r) <- add prev.(r - d) prev.(r)
+          done)
+        [ 1; 2; 4; 8; 16 ]
+    done;
+    let totals =
+      Array.init strips (fun st -> v.(Int.min spans ((st + 1) * strip) - 1))
+    in
+    for st = 0 to strips - 1 do
+      let before = ref !carry in
+      for e = 0 to st - 1 do
+        before := add !before totals.(e)
+      done;
+      for r = st * strip to Int.min spans ((st + 1) * strip) - 1 do
+        let acc =
+          ref (if r > st * strip then add !before v.(r - 1) else !before)
+        in
+        let a = lo + (r * span) in
+        for q = a to Int.min hi (a + span) - 1 do
+          acc := add !acc ts.(q);
+          out.(q) <- !acc
+        done
+      done
+    done;
+    let total = ref totals.(0) in
+    for e = 1 to strips - 1 do
+      total := add !total totals.(e)
+    done;
+    carry := add !carry !total
+  done;
+  out
+
+(* A plain left fold of [ts] from [carry], else +0. *)
+let left_fold add carry ts =
+  let acc = ref (Option.value carry ~default:0.) in
+  Array.map
+    (fun t ->
+      acc := add !acc t;
+      !acc)
+    ts
+
+type scan_case = {
+  wide : bool;  (** float64, else float32 *)
+  rows : int;
+  len : int;
+  carried : bool;
+  seed : int;
+}
+
+let pp_scan ppf c =
+  Format.fprintf ppf "%s, %d rows of %d%s (seed %d)"
+    (if c.wide then "float64" else "float32")
+    c.rows c.len
+    (if c.carried then ", from a carry" else "")
+    c.seed
+
+(* Slice lengths about a span, a strip and a chunk, and past two chunks, the
+   last one time in three. *)
+let scan_cases =
+  let open Gen in
+  let lengths = [ 1; 2; 15; 16; 17; 511; 512; 513; 4095; 4096; 4097 ] in
+  let+ wide = bool
+  and+ rows = int_range 1 3
+  and+ len = frequency [ (2, of_list lengths); (1, int_range 9000 10007) ]
+  and+ carried = bool
+  and+ seed = int in
+  { wide; rows; len; carried; seed }
+
+let law_own_order c =
+  cover "float64" c.wide;
+  cover "from a carry" c.carried;
+  cover "past a chunk" (c.len > 4096);
+  let g = S.gpu () in
+  let w = if c.wide then 64 else 32 in
+  let add a b =
+    if c.wide then a +. b
+    else Int32.float_of_bits (Int32.bits_of_float (a +. b))
+  in
+  let rs = Random.State.make [| c.seed |] in
+  let xs = Array.init (c.rows * c.len) (fun _ -> term rs ~w) in
+  let cs = Array.init c.rows (fun _ -> term rs ~w) in
+  let carry i = if c.carried then Some cs.(i) else None in
+  let slice i = Array.sub xs (i * c.len) c.len in
+  let want =
+    Array.concat (List.init c.rows (fun i -> own_order add (carry i) (slice i)))
+  in
+  let plain =
+    Array.concat (List.init c.rows (fun i -> left_fold add (carry i) (slice i)))
+  in
+  cover "a result a left-to-right sum rounds otherwise" (want <> plain);
+  let shape = Iarray.of_list [ c.rows; c.len ] and axis = 1 in
+  let got, want =
+    if c.wide then
+      let carry =
+        if c.carried then Some (carry_of D.Float64 shape ~axis cs) else None
+      in
+      ( cuda_scan g D.Float64 ?carry shape ~axis Sum xs,
+        S.read (Nx_array.buffer (Nx_array.of_array D.Float64 shape want)) )
+    else
+      let carry =
+        if c.carried then Some (carry_of D.Float32 shape ~axis cs) else None
+      in
+      ( cuda_scan g D.Float32 ?carry shape ~axis Sum xs,
+        S.read (Nx_array.buffer (Nx_array.of_array D.Float32 shape want)) )
+  in
+  equal string want got
+
+(* A slice of [-0] terms given no carry starts from [+0] (nx_cuda.mli, the own
+   order and the chunks alike), so each result is [+0]: float32 and float64 Sums
+   along the innermost axis, of 3 and of 17 terms, and float16 and complex64
+   Sums, outside the own order. *)
+let zero_starts =
+  [
+    ("float32, 3 terms", `F32 3);
+    ("float32, 17 terms", `F32 17);
+    ("float64, 17 terms", `F64 17);
+    ("float16, 17 terms", `F16 17);
+    ("complex64, 17 terms", `C64 17);
+  ]
+
+let zero_start (_, row) =
+  let g = S.gpu () in
+  let scan dt n zero =
+    cuda_scan g dt (Iarray.of_list [ 1; n ]) ~axis:1 Sum (Array.make n zero)
+  in
+  let got, n, w =
+    match row with
+    | `F32 n -> (scan D.Float32 n (-0.), n, 4)
+    | `F64 n -> (scan D.Float64 n (-0.), n, 8)
+    | `F16 n -> (scan D.Float16 n (-0.), n, 2)
+    | `C64 n -> (scan D.Complex64 n { Complex.re = -0.; im = -0. }, n, 8)
+  in
+  equal string (String.make (n * w) '\000') got
+
+(* Scans outside the own order: a float16 or bfloat16 Sum, a float32 product,
+   complex64 and complex128 Sums, a float32 Sum along an axis that is not the
+   innermost, drawn one time in three, where the cover that the order matters is
+   judged, and a float32 Sum into a float64 destination; from a carry one time
+   in two. *)
+type other = Half | Brain | Product | Complex | Complex128 | Outer | Wider
+
+let pp_other ppf (k, len, carried, seed) =
+  Format.fprintf ppf "%s, %d terms%s (seed %d)"
+    (match k with
+    | Half -> "float16 Sum"
+    | Brain -> "bfloat16 Sum"
+    | Product -> "float32 Prod"
+    | Complex -> "complex64 Sum"
+    | Complex128 -> "complex128 Sum"
+    | Outer -> "float32 Sum along axis 0"
+    | Wider -> "float32 Sum into float64")
+    len
+    (if carried then ", from a carry" else "")
+    seed
+
+let other_cases =
+  let open Gen in
+  let+ k =
+    frequency
+      [
+        (1, constant Half);
+        (1, constant Brain);
+        (1, constant Product);
+        (1, constant Complex);
+        (1, constant Complex128);
+        (1, constant Wider);
+        (3, constant Outer);
+      ]
+  and+ len =
+    frequency
+      [
+        (2, of_list [ 1; 2; 17; 1024; 1025; 4095; 4096; 4097 ]);
+        (1, int_range 9000 10007);
+      ]
+  and+ carried = bool
+  and+ seed = int in
+  (k, len, carried, seed)
+
+(* nx_cuda.mli's chunks are nx_cpu.mli's, word for word: nx.cpu's bits are the
+   reference. Products of terms near 1, so that they stay finite. A carry is of
+   the terms' carrier: float32 for the narrow floats. *)
+let law_other_order (k, len, carried, seed) =
+  cover "past a chunk" (len > 4096);
+  cover "from a carry" carried;
+  let g = S.gpu () in
+  let rs = Random.State.make [| seed |] in
+  let real () = Int32.float_of_bits (Int32.bits_of_float (term rs ~w:32)) in
+  let near_one () =
+    1. +. Float.ldexp (Float.of_int (Random.State.int rs 4095 - 2047)) (-14)
+  in
+  let complex () = { Complex.re = real (); im = real () } in
+  let row = Iarray.of_list [ 2; len ] in
+  let carry dt f =
+    if carried then
+      Some (carry_of dt row ~axis:1 (Array.init 2 (fun _ -> f ())))
+    else None
+  in
+  let both dt ?carry ?into shape ~axis m xs =
+    equal string
+      (cpu_scan dt ?carry ?into shape ~axis m xs)
+      (cuda_scan g dt ?carry ?into shape ~axis m xs)
+  in
+  let xs f = Array.init (2 * len) (fun _ -> f ()) in
+  let outer_shape = Iarray.of_list [ len; 3 ] in
+  let outer_xs = Array.init (3 * len) (fun _ -> real ()) in
+  (* The order matters where a left-to-right sum of an outer column rounds
+     otherwise than nx.cpu's chunks, judged on every case. *)
+  let ordered =
+    k = Outer
+    &&
+    let want = cpu_scan D.Float32 outer_shape ~axis:0 Sum outer_xs in
+    let add a b = Int32.float_of_bits (Int32.bits_of_float (a +. b)) in
+    let columns =
+      Array.init 3 (fun j ->
+          left_fold add None (Array.init len (fun i -> outer_xs.((3 * i) + j))))
+    in
+    let plain = Array.init (3 * len) (fun e -> columns.(e mod 3).(e / 3)) in
+    want
+    <> S.read (Nx_array.buffer (Nx_array.of_array D.Float32 outer_shape plain))
+  in
+  cover "a float32 result a left-to-right sum rounds otherwise" ordered;
+  match k with
+  | Half ->
+      both D.Float16 ?carry:(carry D.Float32 real) row ~axis:1 Sum
+        (xs (fun () -> Float.ldexp (real ()) (-6)))
+  | Brain ->
+      both D.Bfloat16 ?carry:(carry D.Float32 real) row ~axis:1 Sum (xs real)
+  | Product ->
+      both D.Float32 ?carry:(carry D.Float32 near_one) row ~axis:1 Prod
+        (xs near_one)
+  | Complex ->
+      both D.Complex64
+        ?carry:(carry D.Complex64 complex)
+        row ~axis:1 Sum (xs complex)
+  | Complex128 ->
+      both D.Complex128
+        ?carry:(carry D.Complex128 complex)
+        row ~axis:1 Sum (xs complex)
+  | Wider ->
+      both D.Float32 ?carry:(carry D.Float32 real) ~into:(D.Any D.Float64) row
+        ~axis:1 Sum (xs real)
+  | Outer ->
+      let carry =
+        if carried then
+          Some
+            (carry_of D.Float32 outer_shape ~axis:0
+               (Array.init 3 (fun _ -> real ())))
+        else None
+      in
+      both D.Float32 ?carry outer_shape ~axis:0 Sum outer_xs
+
 (* Contract *)
 
 (* How a case draws its operands: floats of exponents in [-e, e] (integers over
@@ -333,13 +688,115 @@ let contract g c ?(skip = 0) ?(seed = 1) () =
   | None -> failf "the plan declines %s" (case_name c)
   | Some p -> (a, b, init, y, p)
 
+(* Blocked sums. nx_cuda.mli's error factors, each [γ(d)] of a depth [d]: on the
+   matrix units, with [S] their ranges, and of the fused multiply-adds, real, at
+   most 64 ranges of whole spans of 32. *)
+let mma_ranges ~batch ~m ~n k =
+  let r = (k + 127) / 128 in
+  let few = m <= 4 || n <= 4 || batch * m * n <= 1 lsl 18 in
+  let per = if few then 16 else 256 in
+  Int.max 1 (Int.min 16 (r / per))
+
+let mma_depth ~batch ~m ~n k =
+  let b = Int.min k 256 in
+  b + (2 * ((b + 7) / 8)) + ((k + 255) / 256) + mma_ranges ~batch ~m ~n k - 2
+
+let fma_depth k =
+  Int.min k 256 + ((k + 255) / 256) + Int.min 64 ((k + 31) / 32) - 2
+
+let gamma d u =
+  let t = float_of_int d *. u in
+  t /. (1. -. t)
+
+(* The depth nx_cuda.mli states for an unscaled, unsegmented float contraction
+   of [a] by [b] into [acc]: on the matrix units where [acc] is float32, [k] at
+   most 2^30 and the operands both float16 or each bfloat16 or a float8, a
+   float8 only where [m] and [n] each exceed 8; else on the fused multiply-adds.
+   0 for no product. *)
+let depth ~a ~b ~acc ~batch ~m ~n k =
+  let f8 x = x = D.Any D.Float8_e4m3fn || x = D.Any D.Float8_e5m2 in
+  let narrow x = x = D.Any D.Bfloat16 || f8 x in
+  let units =
+    acc = D.Any D.Float32
+    && k <= 1 lsl 30
+    && ((a = D.Any D.Float16 && b = D.Any D.Float16)
+       || (narrow a && narrow b && ((not (f8 a || f8 b)) || (m > 8 && n > 8))))
+  in
+  Int.max 0 (if units then mma_depth ~batch ~m ~n k else fma_depth k)
+
+(* [h]'s elements as floats, for the float dtypes narrower than float64. *)
+let floats (type v s) (h : (v, s) Nx_array.t) : float array option =
+  match Nx_array.dtype h with
+  | D.Float32 -> Some (Nx_array.to_array h)
+  | D.Float16 -> Some (Nx_array.to_array h)
+  | D.Bfloat16 -> Some (Nx_array.to_array h)
+  | D.Float8_e4m3fn -> Some (Nx_array.to_array h)
+  | D.Float8_e5m2 -> Some (Nx_array.to_array h)
+  | _ -> None
+
+(* Each output's sum of its products, [a] [batch; m; k] by [b] [batch; n; k], by
+   nx.cpu in float64, in C order. *)
+let cpu_product (type v s) (acc : (v, s) D.t) ~batch ~m ~n a b : v array =
+  let dst = Nx_array.create Rig.host acc [| batch; m; n |] in
+  match
+    Nx_cpu.contract
+      ~batch:(Iarray.of_list [ (0, 0) ])
+      ~contracting:(Iarray.of_list [ (2, 2) ])
+      ~segments:None ~acc:(D.Any acc) ~dst ~init:None
+      { array = a; scale = None }
+      { array = b; scale = None }
+  with
+  | Nx_array.Done -> Nx_array.to_array dst
+  | _ -> fail "nx.cpu declines the reference contraction"
+
+let cpu_sums = cpu_product D.Float64
+
+(* An error that a NaN or an infinity never hides: 0 where both are NaN or the
+   same infinity, infinite where exactly one is NaN or an infinity differs, else
+   the distance. *)
+let gap got want =
+  match (Float.is_nan got, Float.is_nan want) with
+  | true, true -> 0.
+  | true, false | false, true -> Float.infinity
+  | false, false -> if got = want then 0. else Float.abs (got -. want)
+
+(* The sums of [c]'s products and of their magnitudes for its reference, where
+   its operands are floats narrower than float64: nx.cpu's float64 contraction
+   reads each element exactly and its products are exact, so the reference skips
+   its own loop over k. *)
+let sums_of c (a : S.operand) (b : S.operand) =
+  let (D.Any dt) = c.dt in
+  let host (o : S.operand) rows =
+    let v = view o in
+    let shape = Iarray.of_list [ c.batch; rows; c.k ] in
+    Nx_array.v dt
+      (Nx_array.Layout.v ~offset:0 ~strides:(Iarray.of_array v.strides) shape)
+      (Rig.Buffer.of_string v.bytes)
+  in
+  if c.batch * c.m * c.n * c.k = 0 then None
+  else
+    let ha = host a c.m and hb = host b c.n in
+    match (floats ha, floats hb) with
+    | Some fa, Some fb ->
+        let abs rows f =
+          Nx_array.Any
+            (Nx_array.of_array D.Float64 [| c.batch; rows; c.k |]
+               (Array.map Float.abs f))
+        in
+        let sums ~m ~n = cpu_sums ~batch:c.batch ~m ~n in
+        Some
+          ( sums ~m:c.m ~n:c.n (Nx_array.Any ha) (Nx_array.Any hb),
+            sums ~m:c.m ~n:c.n (abs c.m fa) (abs c.n fb) )
+    | _ -> None
+
 let within_bound c =
   let g = S.gpu () in
   let a, b, init, y, _ = contract g c () in
   let r =
     Nx_gpu_ref.contract ~a:(view a) ~b:(view b) ?init:(Option.map view init)
       ~y:(view y) ~batch:c.batch ~m:c.m ~n:c.n ~k:c.k ~acc:(code c.acc)
-      ~samples:4096 ()
+      ~depth:(depth ~a:c.dt ~b:c.dt ~acc:c.acc ~batch:c.batch ~m:c.m ~n:c.n c.k)
+      ?sums:(sums_of c a b) ~samples:4096 ()
   in
   equal ~msg:(strf "wrong outputs, the first %d" r.at) int 0 r.wrong;
   at_most ~msg:(strf "worst at output %d" r.at) float_exact ~than:1. r.worst
@@ -383,20 +840,28 @@ let configs =
     (Any Int32, Any Int32, Any Int32);
   ]
 
-let cases_of ?(layouts = [ (`K, `K); (`K, `Free); (`Free, `K); (`Free, `Free) ])
-    () =
+(* The long sum of [shapes], whose layouts change no bit ("bits fixed by the
+   shape" holds it at every layout): k contiguous, at each init. *)
+let long = (1, 64, 64, 8192)
+
+let cases_of () =
+  let layouts = [ (`K, `K); (`K, `Free); (`Free, `K); (`Free, `Free) ] in
   List.concat_map
     (fun (dt, acc, out) ->
+      let draw = Spread (if dt = D.Any D.Float16 then 2 else 6) in
+      let case (batch, m, n, k) (la, lb) init =
+        { dt; acc; out; batch; m; n; k; la; lb; init; draw; pad = 0 }
+      in
       List.concat_map
-        (fun (batch, m, n, k) ->
-          List.mapi
-            (fun i (la, lb) ->
-              let init =
-                match i mod 3 with 0 -> `None | 1 -> `Bias | _ -> `Full
-              in
-              let draw = Spread (if dt = D.Any D.Float16 then 2 else 6) in
-              { dt; acc; out; batch; m; n; k; la; lb; init; draw; pad = 0 })
-            layouts)
+        (fun shape ->
+          if shape = long then
+            List.map (case shape (`K, `K)) [ `None; `Bias; `Full ]
+          else
+            List.mapi
+              (fun i l ->
+                case shape l
+                  (match i mod 3 with 0 -> `None | 1 -> `Bias | _ -> `Full))
+              layouts)
         shapes)
     configs
 
@@ -453,7 +918,9 @@ let shape_cases =
     ]
 
 (* Edge inputs: wide and no spread, cancellation, special values and integer
-   extremes, batch elements apart by 0, 1 and 4 elements. *)
+   extremes, batch elements apart by 0, 1 and 4 elements. The long sum is of
+   4100 terms, the fewest past a block of 256, the fused 64 ranges of 32 and two
+   ranges of the matrix units. *)
 let edge_cases =
   let draws = [ Spread 0; Spread 8; Spread 40; Cancel; Edges ] in
   List.concat_map
@@ -467,7 +934,7 @@ let edge_cases =
               { dt; acc; out; batch; m; n; k; la; lb; init = `Bias; draw; pad })
             draws)
         [
-          (2, 17, 129, 65); (2, 64, 64, 64); (1, 1, 64, 300); (1, 64, 64, 8192);
+          (2, 17, 129, 65); (2, 64, 64, 64); (1, 1, 64, 300); (1, 64, 64, 4100);
         ])
     configs
 
@@ -860,6 +1327,178 @@ let repeated_bits (dt, acc, out, (batch, m, n, k), rep) =
   in
   equal ~msg:"repeated against copied" string (run af bf) (run av bv)
 
+(* Segment ids *)
+
+(* A Rows call of float32 a [1; 40; 300], its rows in groups [ids], by b [1;
+   300; 5; 3], whose axis 3 holds the groups, into [1; 40; 5]. *)
+let rows_call g ~ids av bv =
+  let a = on_gpu g (Nx_array.of_array D.Float32 [| 1; 40; 300 |] av) in
+  let b = on_gpu g (Nx_array.of_array D.Float32 [| 1; 300; 5; 3 |] bv) in
+  let ids = on_gpu g (Nx_array.of_array D.Int64 [| 1; 40 |] ids) in
+  let dst = Nx_array.create (S.device g) D.Float32 [| 1; 40; 5 |] in
+  match
+    Nx_cuda.contract
+      ~batch:(Iarray.of_list [ (0, 0) ])
+      ~contracting:(Iarray.of_list [ (2, 1) ])
+      ~segments:(Some (Nx_kernel.Rows { ids; a_axis = 1; b_axis = 3 }))
+      ~acc:(D.Any D.Float32) ~dst ~init:None
+      { array = Nx_array.Any a; scale = None }
+      { array = Nx_array.Any b; scale = None }
+  with
+  | Nx_array.Done -> Array.map bits32 (to_host dst)
+  | _ -> fail "nx.cuda declines the Rows call"
+
+(* nx_cuda.mli: a float contraction's association never depends on a segmented
+   call's ids. Groups relabelled by [perm], with b's group axis permuted alike,
+   give each row the same products in the same order: the same bits. Rows of no
+   group (id -1) stay so. *)
+let relabelled perm =
+  let g = S.gpu () in
+  let rs = Random.State.make [| 7 |] in
+  let x () =
+    Float.ldexp (Random.State.float rs 2. -. 1.) (Random.State.int rs 20 - 10)
+  in
+  let av = Array.init (40 * 300) (fun _ -> x ()) in
+  let bv = Array.init (300 * 5 * 3) (fun _ -> x ()) in
+  let ids = Array.init 40 (fun r -> Int64.of_int ((r mod 4) - 1)) in
+  let label id = if id < 0L then id else Int64.of_int perm.(Int64.to_int id) in
+  let moved = Array.make (Array.length bv) 0. in
+  Array.iteri (fun e v -> moved.((e / 3 * 3) + perm.(e mod 3)) <- v) bv;
+  equal (Windtrap.array int32) (rows_call g ~ids av bv)
+    (rows_call g ~ids:(Array.map label ids) av moved)
+
+(* A Contracting call of float32 a [1; 5; 600] by b [1; 600; 4], its contracted
+   indices in 3 groups [ids], into [3; 1; 5; 4], group first. *)
+let contracting_call g ~ids av bv =
+  let a = on_gpu g (Nx_array.of_array D.Float32 [| 1; 5; 600 |] av) in
+  let b = on_gpu g (Nx_array.of_array D.Float32 [| 1; 600; 4 |] bv) in
+  let ids = on_gpu g (Nx_array.of_array D.Int64 [| 1; 600 |] ids) in
+  let dst = Nx_array.create (S.device g) D.Float32 [| 3; 1; 5; 4 |] in
+  match
+    Nx_cuda.contract
+      ~batch:(Iarray.of_list [ (0, 0) ])
+      ~contracting:(Iarray.of_list [ (2, 1) ])
+      ~segments:(Some (Nx_kernel.Contracting { ids; groups = 3; pair = 0 }))
+      ~acc:(D.Any D.Float32) ~dst ~init:None
+      { array = Nx_array.Any a; scale = None }
+      { array = Nx_array.Any b; scale = None }
+  with
+  | Nx_array.Done -> Array.map bits32 (to_host dst)
+  | _ -> fail "nx.cuda declines the Contracting call"
+
+(* As [relabelled], of a Contracting call: group [g]'s sums land in group [perm
+   g]'s place, bit for bit. *)
+let relabelled_contracting perm =
+  let g = S.gpu () in
+  let rs = Random.State.make [| 8 |] in
+  let x () =
+    Float.ldexp (Random.State.float rs 2. -. 1.) (Random.State.int rs 20 - 10)
+  in
+  let av = Array.init (5 * 600) (fun _ -> x ()) in
+  let bv = Array.init (600 * 4) (fun _ -> x ()) in
+  let ids = Array.init 600 (fun q -> Int64.of_int ((q mod 4) - 1)) in
+  let label id = if id < 0L then id else Int64.of_int perm.(Int64.to_int id) in
+  let want = contracting_call g ~ids av bv in
+  let got = contracting_call g ~ids:(Array.map label ids) av bv in
+  let moved =
+    Array.init 60 (fun e -> got.((perm.(e / 20) * 20) + (e mod 20)))
+  in
+  equal (Windtrap.array int32) want moved
+
+(* Complex sums *)
+
+(* [a] [1; m; k] by [b] [1; n; k] of the complex [dt] into [1; m; n] on
+   nx.cuda. *)
+let complex_call (type s) g (dt : (Complex.t, s) D.t) ~m ~n ~k av bv =
+  let a = on_gpu g (Nx_array.of_array dt [| 1; m; k |] av) in
+  let b = on_gpu g (Nx_array.of_array dt [| 1; n; k |] bv) in
+  let dst = Nx_array.create (S.device g) dt [| 1; m; n |] in
+  match
+    Nx_cuda.contract
+      ~batch:(Iarray.of_list [ (0, 0) ])
+      ~contracting:(Iarray.of_list [ (2, 2) ])
+      ~segments:None ~acc:(D.Any dt) ~dst ~init:None
+      { array = Nx_array.Any a; scale = None }
+      { array = Nx_array.Any b; scale = None }
+  with
+  | Nx_array.Done -> to_host dst
+  | _ -> fail "nx.cuda declines the complex contraction"
+
+let complex_cases =
+  [ ("2 x 3 over 300", (2, 3, 300)); ("64 x 64 over 4100", (64, 64, 4100)) ]
+
+let part rs =
+  Float.ldexp (Random.State.float rs 2. -. 1.) (Random.State.int rs 12 - 6)
+
+(* nx_cuda.mli: a complex sum is the float sums of its parts, both in one
+   association, numbering products as the contract does. With b real, a's parts
+   swapped swap the result's parts, bit for bit but a zero's sign, since zero
+   products add exactly. *)
+let swapped_parts (_, (m, n, k)) =
+  let g = S.gpu () in
+  let check (type s) (dt : (Complex.t, s) D.t) bits =
+    let rs = Random.State.make [| m; k |] in
+    let av =
+      Array.init (m * k) (fun _ -> { Complex.re = part rs; im = part rs })
+    in
+    let bv = Array.init (n * k) (fun _ -> { Complex.re = part rs; im = 0. }) in
+    let swap (z : Complex.t) = { Complex.re = z.im; im = z.re } in
+    let y = complex_call g dt ~m ~n ~k av bv in
+    let y' = complex_call g dt ~m ~n ~k (Array.map swap av) bv in
+    let canon x = if x = 0. then 0L else bits x in
+    let parts f ys = Array.map (fun z -> canon (f z)) ys in
+    equal
+      ~msg:(D.name dt ^ " real parts")
+      (Windtrap.array int64)
+      (parts (fun (z : Complex.t) -> z.im) y)
+      (parts (fun (z : Complex.t) -> z.re) y');
+    equal
+      ~msg:(D.name dt ^ " imaginary parts")
+      (Windtrap.array int64)
+      (parts (fun (z : Complex.t) -> z.re) y)
+      (parts (fun (z : Complex.t) -> z.im) y')
+  in
+  check D.Complex64 (fun x -> Int64.of_int32 (bits32 x));
+  check D.Complex128 Int64.bits_of_float
+
+(* nx_cuda.mli: a complex accumulator's error factor is [√2 γ(d(2K))], against
+   nx.cpu's complex128 sum, whose own error the allowance adds. At complex128 no
+   reference here errs far below the bound, so the parts' relation above holds
+   that dtype alone. *)
+let complex_bound (_, (m, n, k)) =
+  let g = S.gpu () in
+  let rs = Random.State.make [| m; k; 1 |] in
+  let draw r =
+    Array.init (r * k) (fun _ -> { Complex.re = part rs; im = part rs })
+  in
+  let av = draw m and bv = draw n in
+  let y = complex_call g D.Complex64 ~m ~n ~k av bv in
+  let host dt v r = Nx_array.Any (Nx_array.of_array dt [| 1; r; k |] v) in
+  let r =
+    cpu_product D.Complex128 ~batch:1 ~m ~n (host D.Complex128 av m)
+      (host D.Complex128 bv n)
+  in
+  let mags =
+    cpu_sums ~batch:1 ~m ~n
+      (host D.Float64 (Array.map Complex.norm av) m)
+      (host D.Float64 (Array.map Complex.norm bv) n)
+  in
+  let u = Float.ldexp 1. (-24) and w = Float.ldexp 1. (-53) in
+  let beta = (((5 * Int.min (2 * k) 256) + 3) / 4) + (((2 * k) + 127) / 128) in
+  let allow o =
+    (((1. +. u) *. Float.sqrt 2. *. gamma (fma_depth (2 * k)) u)
+    +. (2. *. gamma (beta + 1) w))
+    *. mags.(o)
+    *. (1. +. (2. *. gamma (beta + 1) w))
+  in
+  let worst = ref 0. in
+  Array.iteri
+    (fun o (z : Complex.t) ->
+      let err = Float.hypot (gap z.re r.(o).re) (gap z.im r.(o).im) in
+      if err > 0. then worst := Float.max !worst (err /. allow o))
+    y;
+  at_most ~msg:"the largest error over its bound" float_exact ~than:1. !worst
+
 (* Outputs without products *)
 
 (* [x]'s low [w] bytes, little-endian. *)
@@ -988,31 +1627,13 @@ let batch_cases =
 
 (* The matrix units *)
 
-(* Blocked sums. nx_cuda.mli's error factors, each [γ(d)] of a depth
-   [d]: on the matrix units, with [S] their ranges, and of the fused
-   multiply-adds, real, at most 64 ranges of whole spans of 32. *)
-let mma_ranges ~batch ~m ~n k =
-  let r = (k + 127) / 128 in
-  let few = m <= 4 || n <= 4 || batch * m * n <= 1 lsl 18 in
-  let per = if few then 16 else 256 in
-  Int.max 1 (Int.min 16 (r / per))
-
-let mma_depth ~batch ~m ~n k =
-  let b = Int.min k 256 in
-  b + (2 * ((b + 7) / 8)) + ((k + 255) / 256) + mma_ranges ~batch ~m ~n k - 2
-
-let fma_depth k =
-  Int.min k 256 + ((k + 255) / 256) + Int.min 64 ((k + 31) / 32) - 2
-
-let gamma d u =
-  let t = float_of_int d *. u in
-  t /. (1. -. t)
-
-(* The bits of [x], a value [dt] holds, little-endian: float32, or a
-   bfloat16 or float16 of a normal or zero value. *)
-let half_bits (D.Any d as dt) x =
-  let s = if Float.sign_bit x then 0x8000 else 0 and a = Float.abs x in
-  let b =
+(* The bytes of [v], values [dt] holds, little-endian: float32, or a bfloat16 or
+   float16 of a normal or zero value. *)
+let bytes_of (D.Any d as dt) v =
+  let w = width dt in
+  let b = Bytes.create (w * Array.length v) in
+  let half x =
+    let s = if Float.sign_bit x then 0x8000 else 0 and a = Float.abs x in
     match d with
     | D.Bfloat16 ->
         Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float x) 16)
@@ -1021,8 +1642,12 @@ let half_bits (D.Any d as dt) x =
         let m, e = Float.frexp a in
         s lor ((e + 14) lsl 10) lor (int_of_float (m *. 2048.) - 1024)
   in
-  if width dt = 4 then put32 [ x ]
-  else String.init 2 (fun i -> Char.chr ((b lsr (8 * i)) land 255))
+  Array.iteri
+    (fun i x ->
+      if w = 4 then Bytes.set_int32_le b (4 * i) (bits32 x)
+      else Bytes.set_uint16_le b (2 * i) (half x))
+    v;
+  Bytes.to_string b
 
 (* [x] rounded to a value [dt] holds: bfloat16 toward zero, float16 to a
    multiple of 2^-10 below 2 in magnitude. *)
@@ -1046,9 +1671,8 @@ let gaussian st =
 (* y = init + a·b, a [m × k] and b [n × k], k contiguous, of [dt] into
    float32, init float32 where given, as the GPU computes it. *)
 let contract32 g dt ~m ~n ~k ?init av bv =
-  let bytes v = String.concat "" (Array.to_list (Array.map (half_bits dt) v)) in
   let op v rows =
-    operand g dt (bytes v) ~batch:1 ~rows ~k ~layout:`K ~skip:0 ~pad:0
+    operand g dt (bytes_of dt v) ~batch:1 ~rows ~k ~layout:`K ~skip:0 ~pad:0
   in
   let a = op av m and b = op bv n in
   let fl = D.Any D.Float32 in
@@ -1079,32 +1703,41 @@ let contract32 g dt ~m ~n ~k ?init av bv =
   | Some _ -> ());
   S.read y.buffer
 
-(* Each output of [y] against its exact [r = init + Σ a·b], in float64:
-   the largest ratio of its error to [u|r| + (1 + u) γ(d) Σ|a||b|], the
-   bound nx_cuda.mli states with [init] added last, float64's own
-   rounding of the reference allowed for. *)
+(* Σ_q a[i, q] b[j, q] of every output in C order, [a] [m × k] and [b] [n × k],
+   by nx.cpu's float64 contraction, which shares no code with nx.cuda. *)
+let host_sums ~m ~n ~k av bv =
+  let operand v rows =
+    Nx_array.Any (Nx_array.of_array D.Float64 [| 1; rows; k |] v)
+  in
+  cpu_sums ~batch:1 ~m ~n (operand av m) (operand bv n)
+
+(* Each output of [y] against its exact [r = init + Σ a·b]: the largest ratio of
+   its error to [u|r| + (1 + u) γ(d) Σ|a||b|], the bound nx_cuda.mli states with
+   [init] added last. The sums are nx.cpu's in float64, each within [γ64(β(K))
+   Σ|a||b|] (nx_cpu.mli: each order's factor is at most the contract's), which
+   the allowance adds with the rounding of [r], [Σ|a||b|] taken [1 + γ64(β(K))]
+   larger. *)
 let worst_ratio ~m ~n ~k ~d ?init av bv ys =
   let u = Float.ldexp 1. (-24) and w = Float.ldexp 1. (-53) in
+  let sums = host_sums ~m ~n ~k av bv in
+  let mags =
+    host_sums ~m ~n ~k (Array.map Float.abs av) (Array.map Float.abs bv)
+  in
+  let beta = (((5 * Int.min k 256) + 3) / 4) + ((k + 127) / 128) in
+  let g64 = gamma (beta + 1) w in
   let worst = ref 0. in
-  for i = 0 to m - 1 do
-    for j = 0 to n - 1 do
-      let s = ref 0. and mag = ref 0. in
-      for q = 0 to k - 1 do
-        let p = av.((i * k) + q) *. bv.((j * k) + q) in
-        s := !s +. p;
-        mag := !mag +. Float.abs p
-      done;
-      let c = match init with Some v -> v.((i * n) + j) | None -> 0. in
-      let r = !s +. c in
-      let err = Float.abs (f32 ys ((i * n) + j) -. r) in
+  Array.iteri
+    (fun o s ->
+      let c = match init with Some v -> v.(o) | None -> 0. in
+      let mag = mags.(o) *. (1. +. g64) and r = s +. c in
+      let err = gap (f32 ys o) r in
       let allow =
         (match init with Some _ -> u *. Float.abs r | None -> 0.)
-        +. ((1. +. u) *. gamma d u *. !mag)
-        +. (gamma (k + 1) w *. (!mag +. Float.abs c))
+        +. ((1. +. u) *. gamma d u *. mag)
+        +. (g64 *. (mag +. Float.abs c))
       in
-      worst := Float.max !worst (err /. allow)
-    done
-  done;
+      if err > 0. then worst := Float.max !worst (err /. allow))
+    sums;
   !worst
 
 (* Sums of up to 16384 products, the weight gradient's 64 × 64 over
@@ -1121,25 +1754,72 @@ let long_sums =
       List.map
         (fun (draw, f) ->
           (strf "%s %dx%dx%d %s" (dt_name dt) m n k draw, (dt, m, n, k, f)))
-        [
-          ("normal", gaussian); ("positive", fun st -> Float.abs (gaussian st));
-        ])
+        [ ("normal", Fun.id); ("positive", Float.abs) ])
     [
       (f32, 64, 64, 16384); (f32, 64, 64, 4096); (f32, 2, 512, 16384);
       (f32, 200, 257, 1000); (bf, 128, 128, 16384); (h, 128, 128, 16384);
       (bf, 128, 128, 300);
     ]
 
+(* The Gaussian draws of seed 1, for [a], and 2, for [b], made once: each row
+   reads a prefix, the values a state of the seed draws in turn. *)
+let stream seed n =
+  lazy
+    (let st = Random.State.make [| seed |] in
+     Array.init n (fun _ -> gaussian st))
+
+let a_stream = stream 1 (128 * 16384)
+let b_stream = stream 2 (512 * 16384)
+
 let long_sum (_, (dt, m, n, k, f)) =
   let g = S.gpu () in
-  let av = drawn dt ~seed:1 ~rows:m ~k f in
-  let bv = drawn dt ~seed:2 ~rows:n ~k f in
-  let ys = contract32 g dt ~m ~n ~k av bv in
-  let d =
-    if dt = D.Any D.Float32 then fma_depth k else mma_depth ~batch:1 ~m ~n k
+  let read s rows =
+    Array.init (rows * k) (fun i -> held dt (f (Lazy.force s).(i)))
   in
+  let av = read a_stream m and bv = read b_stream n in
+  let ys = contract32 g dt ~m ~n ~k av bv in
+  let f32 = D.Any D.Float32 in
+  let d = depth ~a:dt ~b:dt ~acc:f32 ~batch:1 ~m ~n k in
   at_most ~msg:"the largest error over its bound" float_exact ~than:1.
     (worst_ratio ~m ~n ~k ~d av bv ys)
+
+(* A sum that blocks of more than 256 terms round past the fused factor: a
+   product of 1, then K - 1 of 2^-24, half of 1's unit in the last place, in the
+   tiles and the few rows' kernel. A running sum at 1 keeps 1 (a tie goes to
+   even), and the other blocks' and ranges' sums of 2^-24 add exactly, so the
+   stated blocks of 256 lose at most the first block's 255 terms, 0.73 of the
+   factor at K = 8192. Blocks of 512, simulated in float32, lose 511, past the
+   factor, as the second check shows. *)
+let half_ulps =
+  [
+    ("64 x 64 over 8192 terms", (64, 64, 8192));
+    ("2 x 512 over 8192 terms", (2, 512, 8192));
+  ]
+
+let half_ulp (_, (m, n, k)) =
+  let g = S.gpu () in
+  let rows r v = Array.init (r * k) (fun i -> if i mod k = 0 then 1. else v) in
+  let av = rows m (Float.ldexp 1. (-12))
+  and bv = rows n (Float.ldexp 1. (-12)) in
+  let ys = contract32 g (D.Any D.Float32) ~m ~n ~k av bv in
+  let d = fma_depth k in
+  at_most ~msg:"the largest error over its bound" float_exact ~than:1.
+    (worst_ratio ~m ~n ~k ~d av bv ys);
+  let round x = Int32.float_of_bits (bits32 x) in
+  let block lo =
+    let s = ref 0. in
+    for q = lo to Int.min k (lo + 512) - 1 do
+      s := round (!s +. (av.(q) *. bv.(q)))
+    done;
+    !s
+  in
+  let total = ref 0. in
+  for b = 0 to ((k + 511) / 512) - 1 do
+    total := round (!total +. block (512 * b))
+  done;
+  let blocked = put32 (List.init (m * n) (fun _ -> !total)) in
+  at_least ~msg:"blocks of 512's error over the bound" float_exact ~than:1.
+    (worst_ratio ~m ~n ~k ~d av bv blocked)
 
 (* An init far larger than the products' sum joins after it: products
    of magnitude about 1 into inits about 2^20 keep their low bits, where
@@ -1162,9 +1842,7 @@ let large_init (_, (dt, m, n, k)) =
     Array.init (m * n) (fun i -> Float.ldexp 1. 20 +. Float.of_int i)
   in
   let ys = contract32 g dt ~m ~n ~k ~init av bv in
-  let d =
-    if dt = D.Any D.Float32 then fma_depth k else mma_depth ~batch:1 ~m ~n k
-  in
+  let d = depth ~a:dt ~b:dt ~acc:(D.Any D.Float32) ~batch:1 ~m ~n k in
   at_most ~msg:"the largest error over its bound" float_exact ~than:1.
     (worst_ratio ~m ~n ~k ~d ~init av bv ys)
 
@@ -1270,65 +1948,53 @@ let any_operand g (D.Any d as dt) ~batch ~rows ~k ~broadcast ~seed : S.operand =
   let strides = [| (if broadcast then 0 else rows * k); k; 1 |] in
   { buffer; dtype = D.code d; shape = [| batch; rows; k |]; strides; first = 0 }
 
-(* Whether nx contracts in the accumulator [acc]: it refuses a boolean and a
-   float narrower than float32 before any kernel plans. *)
-let admits (D.Any d) =
-  match d with
-  | D.Bool | D.Bit | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2
-  | D.Float4_e2m1fn ->
-      false
-  | _ -> true
-
-(* For every accumulator, and operands, init and output of its kind, the
-   result is within the error bound (float sums) or exact (integer sums),
-   the output written as a cast from the accumulator writes it. The kernel
-   suite's laws take every other dtype. *)
+(* For every accumulator, and operands, init and output of its kind, the result
+   is within nx_cuda.mli's bound of its path (float sums) or exact (integer
+   sums), the output written as a cast from the accumulator writes it. The
+   kernel suite's laws take every other dtype. *)
 let every_quadruple ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
-  if not (admits acc) then collect "nx refuses its accumulator"
-  else
-    let g = S.gpu () in
-    let x = any_operand g a ~batch ~rows:m ~k ~broadcast:false ~seed:1 in
-    let w = any_operand g b ~batch ~rows:n ~k ~broadcast ~seed:2 in
-    let operand d =
-      any_operand g d ~batch ~rows:m ~k:n ~broadcast:false ~seed:3
-    in
-    let init = if init then Some (operand out) else None in
-    let (D.Any o) = out in
-    let wy = Int.max 1 (D.bits o / 8) in
-    let buffer = S.buffer g (wy * batch * m * n) in
-    S.write buffer (String.make (wy * batch * m * n) '\xee');
-    let y : S.operand =
-      {
-        buffer;
-        dtype = D.code o;
-        shape = [| batch; m; n |];
-        strides = [| m * n; n; 1 |];
-        first = 0;
-      }
-    in
-    let float_dt (D.Any d) = D.is D.Float d in
-    match
-      S.contract g ~a:x ~b:w ?init ~y
-        ~batch:[ (0, 0) ]
-        ~contracting:[ (2, 2) ]
-        ~acc:(code acc) ()
-    with
-    | None -> fail "the plan declines"
-    | Some _ ->
-        cover "an init" (Option.is_some init);
-        cover "a float sum" (float_dt acc);
-        cover "an integer sum" (not (float_dt acc));
-        cover "an unsigned accumulator" (acc = dt "uint32" || acc = dt "uint64");
-        cover "a broadcast operand" broadcast;
-        let r =
-          Nx_gpu_ref.contract ~a:(view x) ~b:(view w)
-            ?init:(Option.map view init) ~y:(view y) ~batch ~m ~n ~k
-            ~acc:(code acc) ~samples:512 ()
-        in
-        equal ~msg:(strf "wrong outputs, the first %d" r.at) int 0 r.wrong;
-        at_most
-          ~msg:(strf "worst at output %d" r.at)
-          float_exact ~than:1. r.worst
+  let float_dt (D.Any d) = D.is D.Float d in
+  cover "an init" init;
+  cover "a float sum" (float_dt acc);
+  cover "an integer sum" (not (float_dt acc));
+  cover "an unsigned accumulator" (acc = dt "uint32" || acc = dt "uint64");
+  cover "a broadcast operand" broadcast;
+  let g = S.gpu () in
+  let x = any_operand g a ~batch ~rows:m ~k ~broadcast:false ~seed:1 in
+  let w = any_operand g b ~batch ~rows:n ~k ~broadcast ~seed:2 in
+  let operand d =
+    any_operand g d ~batch ~rows:m ~k:n ~broadcast:false ~seed:3
+  in
+  let init = if init then Some (operand out) else None in
+  let (D.Any o) = out in
+  let wy = Int.max 1 (D.bits o / 8) in
+  let buffer = S.buffer g (wy * batch * m * n) in
+  S.write buffer (String.make (wy * batch * m * n) '\xee');
+  let y : S.operand =
+    {
+      buffer;
+      dtype = D.code o;
+      shape = [| batch; m; n |];
+      strides = [| m * n; n; 1 |];
+      first = 0;
+    }
+  in
+  match
+    S.contract g ~a:x ~b:w ?init ~y
+      ~batch:[ (0, 0) ]
+      ~contracting:[ (2, 2) ]
+      ~acc:(code acc) ()
+  with
+  | None -> fail "the plan declines"
+  | Some _ ->
+      let r =
+        Nx_gpu_ref.contract ~a:(view x) ~b:(view w) ?init:(Option.map view init)
+          ~y:(view y) ~batch ~m ~n ~k ~acc:(code acc)
+          ~depth:(depth ~a ~b ~acc ~batch ~m ~n k)
+          ~samples:512 ()
+      in
+      equal ~msg:(strf "wrong outputs, the first %d" r.at) int 0 r.wrong;
+      at_most ~msg:(strf "worst at output %d" r.at) float_exact ~than:1. r.worst
 
 let quadruples =
   let open Gen in
@@ -1603,48 +2269,115 @@ let dead_buffers_refused () =
 
 (* Domains *)
 
-(* A run of [packed_split] on its own operands. *)
+(* A run of [packed_split] into its own destination, and of a float32 Sum of 4
+   rows of 4096 terms. *)
 let split_run : (unit, S.operand * S.run) abstract = abstract "r"
+let sum_run : (unit, S.operand * S.run) abstract = abstract "s"
 
-(* Two domains running [packed_split] at once, each on its own operands or both
-   on one's, get the bits one call alone gets. *)
+(* Two domains running [packed_split] and a reduction at once, each into its own
+   destination or both into one's, get the bits one call alone gets: two GPU
+   functions' caches shared across domains. Their operands are drawn once; a run
+   is a fresh destination and its plan. *)
 let domains_call_alike =
   let g = lazy (S.gpu ()) in
+  let first = lazy (contract (Lazy.force g) packed_split ()) in
   let want =
     lazy
-      (let _, _, _, (y : S.operand), _ =
-         contract (Lazy.force g) packed_split ()
-       in
+      (let _, _, _, (y : S.operand), _ = Lazy.force first in
        S.read y.buffer)
   in
   let make () =
-    let _, _, _, y, p = contract (Lazy.force g) packed_split () in
-    (y, p)
+    let a, b, init, (y : S.operand), _ = Lazy.force first in
+    let y =
+      { y with buffer = S.buffer (Lazy.force g) (Rig.Buffer.length y.buffer) }
+    in
+    match
+      S.contract (Lazy.force g) ~a ~b ?init ~y
+        ~batch:[ (0, 0) ]
+        ~contracting:[ (2, 2) ]
+        ~acc:(code packed_split.acc) ()
+    with
+    | None -> fail "the plan declines"
+    | Some p -> (y, p)
+  in
+  let terms =
+    lazy
+      (let g = Lazy.force g in
+       let buffer = S.buffer g (4 * 4 * 4096) in
+       S.generate g buffer D.Float32 (Wide 6) ~seed:5;
+       {
+         S.buffer;
+         dtype = D.code D.Float32;
+         shape = [| 4; 4096 |];
+         strides = [| 4096; 1 |];
+         first = 0;
+       })
+  in
+  let make_sum () =
+    let g = Lazy.force g in
+    let y =
+      {
+        S.buffer = S.buffer g 16;
+        dtype = D.code D.Float32;
+        shape = [| 4 |];
+        strides = [| 1 |];
+        first = 0;
+      }
+    in
+    match S.reduce g Sum ~axes:[ 1 ] ~x:(Lazy.force terms) ~y with
+    | None -> fail "the reduction declines"
+    | Some p -> (y, p)
+  in
+  let sum_want =
+    lazy
+      (let y, p = make_sum () in
+       S.run (Lazy.force g) p;
+       S.read y.buffer)
   in
   let run ((y : S.operand), p) =
     S.run (Lazy.force g) p;
     S.read y.buffer
   in
-  stateful ~domains:2 ~count:4 "domains calling at once get one call's bits"
+  stateful ~domains:2 ~count:8 ~steps:8
+    "domains calling at once get one call's bits"
     [
       command "make" (Gen.unit @-> makes split_run) (fun () -> ()) make;
+      command "make a sum" (Gen.unit @-> makes sum_run) (fun () -> ()) make_sum;
       command "run"
         (split_run ^-> returns string)
         (fun () -> Lazy.force want)
+        run;
+      command "run a sum"
+        (sum_run ^-> returns string)
+        (fun () -> Lazy.force sum_want)
         run;
     ]
 
 (* Through rig.nv *)
 
-(* rig.nv loads the cubin CUDA loads, and a contraction's bits are a
-   function of its dtypes, its kind and its extents alone, so through
-   rig.nv a call has CUDA's bits: nx.kernel's contraction suite checks
-   them, call by call, on its drawn cases. The laws of the kernels'
-   arithmetic, their bounds and bits at chosen shapes and extents past
-   2^30 and 2^31, and the codecs' run through CUDA alone. Through rig.nv
-   run the laws of what it does beyond CUDA: launching past a grid's
-   extent, holding and releasing memory, and ordering calls from two
-   domains. *)
+(* rig.nv loads the cubin CUDA loads, and a contraction's bits are a function of
+   its dtypes, its kind and its extents alone, so through rig.nv a call has
+   CUDA's bits: nx.kernel's contraction suite checks them, call by call, on its
+   drawn cases. The laws of the kernels' arithmetic, their bounds and bits at
+   chosen shapes and extents past 2^30 and 2^31, the scans' orders and the
+   codecs' run through CUDA alone. Through rig.nv run the laws of what it does
+   beyond CUDA: launching past a grid's extent, holding and releasing memory,
+   and ordering calls from two domains. *)
+let scans =
+  group "scans"
+    [
+      prop
+        "a float32 or float64 Sum along the innermost axis adds in nx.cuda's \
+         own order"
+        (Gen.with_pp pp_scan scan_cases)
+        law_own_order;
+      prop ~count:200 "another scan has nx.cpu's chunks' bits"
+        (Gen.with_pp pp_other other_cases)
+        law_other_order;
+      cases ~id:fst "a slice of -0 terms given no carry starts from +0"
+        zero_starts zero_start;
+    ]
+
 let codecs =
   group "codecs"
     [
@@ -1671,6 +2404,20 @@ let arithmetic =
     cases ~id:repeated_name "a repeated operand gives its copy's bits"
       repeated_cases repeated_bits;
     cases
+      ~id:(fun p -> strf "groups as %d %d %d" p.(0) p.(1) p.(2))
+      "a segmented call's bits do not depend on its groups' ids"
+      [ [| 1; 2; 0 |]; [| 2; 0; 1 |]; [| 0; 2; 1 |] ]
+      relabelled;
+    cases
+      ~id:(fun p -> strf "groups as %d %d %d" p.(0) p.(1) p.(2))
+      "a Contracting call's bits do not depend on its groups' ids"
+      [ [| 1; 2; 0 |]; [| 2; 0; 1 |]; [| 0; 2; 1 |] ]
+      relabelled_contracting;
+    cases ~id:fst "a complex sum's parts share one association" complex_cases
+      swapped_parts;
+    cases ~id:fst "a complex sum is within √2 γ(d(2K))" complex_cases
+      complex_bound;
+    cases
       ~id:(fun (n, _, _, _, _) -> n)
       "an output without products is its init, NaN bits included" nan_inits
       nan_init;
@@ -1679,6 +2426,8 @@ let arithmetic =
     cases ~id:fst "the matrix units' truncation stays within its factor"
       truncation_cases truncation;
     cases ~id:fst "long sums within their stated bound" long_sums long_sum;
+    cases ~id:fst "fused sums of half units lose only their blocks' terms"
+      half_ulps half_ulp;
     cases ~id:fst "a large init joins after the products" large_inits
       large_init;
     cases ~id:fst "a -0 init and +0 products give +0" zero_inits zero_init;
@@ -1693,14 +2442,15 @@ let driver =
     test "scratch past the GPU's memory raises" scratch_out_of_memory;
     warm_calls_bounded;
     test "a call keeps none of its arrays" calls_keep_nothing;
-    test "a call that raises keeps nothing of its submit" after_a_raise;
-    test "split sums leave their tickets zero" splits_leave_tickets_zero;
+    test "a call that raises keeps none of its work" after_a_raise;
+    test "split sums run again give their first run's bits"
+      splits_leave_tickets_zero;
     test "a consumed buffer is refused as dead" dead_buffers_refused;
     domains_call_alike;
   ]
 
 let tests =
   if S.through_nv () then [ group "contract" driver ]
-  else [ codecs; group "contract" (arithmetic @ driver) ]
+  else [ codecs; scans; group "contract" (arithmetic @ driver) ]
 
 let () = exit (run "nx.cuda" tests)

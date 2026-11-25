@@ -19,10 +19,13 @@ static nx_ref_view view_of(value v) {
 }
 
 /* nx_ref_contract over the views [v_views] (a, b, y, then init if given),
-   the extents [v_dims] (batch, m, n, k), and [v_l]: the accumulator,
-   flush and the sample count. Allocates nothing before it reads. */
-value nx_gpu_ref_contract(value v_views, value v_dims, value v_l) {
-  CAMLparam3(v_views, v_dims, v_l);
+   the extents [v_dims] (batch, m, n, k), [v_l]: the accumulator, flush,
+   the depth and the sample count, and the outputs' sums [v_sums] and
+   magnitudes [v_mags], empty for none. Allocates nothing before it
+   reads. */
+value nx_gpu_ref_contract(value v_views, value v_dims, value v_l,
+                          value v_sums, value v_mags) {
+  CAMLparam5(v_views, v_dims, v_l, v_sums, v_mags);
   CAMLlocal1(r);
   nx_ref_view a = view_of(Field(v_views, 0)), b = view_of(Field(v_views, 1));
   nx_ref_view y = view_of(Field(v_views, 2)), in;
@@ -30,8 +33,12 @@ value nx_gpu_ref_contract(value v_views, value v_dims, value v_l) {
   if (Wosize_val(v_views) > 3) in = view_of(Field(v_views, 3)), init = &in;
 #define D(i) ((int64_t)Long_val(Field(v_dims, i)))
 #define L(i) Long_val(Field(v_l, i))
+  /* Float arrays are flat doubles; empty ones give none. */
+  const double *sums = Wosize_val(v_sums) ? (const double *)v_sums : NULL;
+  const double *mags = Wosize_val(v_mags) ? (const double *)v_mags : NULL;
   nx_ref_result x = nx_ref_contract(&a, &b, init, &y, D(0), D(1), D(2), D(3),
-                                    (int)L(0), (int)L(1), L(2));
+                                    (int)L(0), (int)L(1), L(2), sums, mags,
+                                    L(3));
 #undef D
 #undef L
   r = caml_alloc_tuple(3);

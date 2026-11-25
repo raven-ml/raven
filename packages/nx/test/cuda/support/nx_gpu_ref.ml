@@ -6,15 +6,20 @@
 type view = { bytes : string; dtype : int; strides : int array }
 type result = { worst : float; wrong : int; at : int }
 
-external contract_c : view array -> int array -> int array -> result
+external contract_c :
+  view array -> int array -> int array -> float array -> float array -> result
   = "nx_gpu_ref_contract"
 
-let contract ~a ~b ?init ~y ~batch ~m ~n ~k ~acc ?(flush = false) ~samples () =
+let contract ~a ~b ?init ~y ~batch ~m ~n ~k ~acc ?(flush = false) ?depth ?sums
+    ~samples () =
   let views =
     match init with None -> [| a; b; y |] | Some i -> [| a; b; y; i |]
   in
   let r =
-    contract_c views [| batch; m; n; k |] [| acc; Bool.to_int flush; samples |]
+    contract_c views [| batch; m; n; k |]
+      [| acc; Bool.to_int flush; Option.value depth ~default:(-1); samples |]
+      (match sums with Some (s, _) -> s | None -> [||])
+      (match sums with Some (_, m) -> m | None -> [||])
   in
   (* windtrap's at_most orders NaN below every number: a NaN worst would
      pass a bound. *)

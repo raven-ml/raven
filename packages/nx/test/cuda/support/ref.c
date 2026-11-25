@@ -184,39 +184,74 @@ static double past_range(const view *a, const view *b, const view *init,
 }
 
 /* Output (z, i, j) of y = init + a·b over [k], against the error bound:
-   |y - s| / (γ(k + 1, 2u)·(|init| + Σ|a||b|) + ulp_y(y) / 2), s the exact
-   sum (Dot2: about twice double's precision), u the accumulator's unit
-   roundoff; with [flush], 2^-126·(1 + Σ(1 + |a| + |b|)) more. The exact
-   sum rounded once to y passes, past y's range too. A NaN or an infinity
-   among the operands or init asks for IEEE's answer, which the plain sum
-   gives in any order: NaN from a NaN, ∞·0 or ∞ - ∞, else the infinity. An
-   integer or bool y lies between the casts of the ends of the sums the
-   bound allows. Terms or a sum past double's range go to [past_range].
-   -1 if y misses an answer the cast fixes, or is NaN where the sum is
-   finite. */
+   |y - s| / (allowance + ulp_y(y) / 2), s the exact sum, u the
+   accumulator's unit roundoff. With [depth] at least 0, the allowance is
+   a library's stated bound: (1 + u) γ(depth) Σ|a||b|, and u |s| where an
+   init joins after the sum; otherwise γ(k + 1, 2u) (|init| + Σ|a||b|).
+   With [flush], 2^-126·(1 + Σ(1 + |a| + |b|)) more. Products of operands
+   narrower than float64 are exact in double, so their sum is taken in
+   plain double, within γ(k + 1) of double's unit roundoff of the terms'
+   magnitudes, which the allowance gains; float64 operands sum by Dot2,
+   about twice double's precision. The exact sum rounded once to y passes,
+   past y's range too. A NaN or an infinity among the operands or init asks
+   for IEEE's answer, which the plain sum gives in any order: NaN from a
+   NaN, ∞·0 or ∞ - ∞, else the infinity. An integer or bool y lies between
+   the casts of the ends of the sums the bound allows. Terms or a sum past
+   double's range go to [past_range]. -1 if y misses an answer the cast
+   fixes, or is NaN where the sum is finite. */
 static double float_ratio(const view *a, const view *b, const double *ra,
                           const double *rb, const view *init, const view *y,
-                          int64_t k, int acc, int flush, int64_t z, int64_t i,
+                          int64_t k, int acc, int flush, int64_t depth,
+                          const double *given, int64_t z, int64_t i,
                           int64_t j) {
-  double s = init ? float_of(init, z, i, j) : 0, c = 0, mag = fabs(s);
+  /* init enters as the accumulator holds it. */
+  const double s0 = init ? rounded(acc, float_of(init, z, i, j)) : 0;
+  double s = s0, c = 0, products = 0;
   double plain = s, operands = 0;
   int special = !isfinite(s);
-  for (int64_t q = 0; q < k; q++) {
+  const int dot2 = a->dtype == NX_FLOAT64 || b->dtype == NX_FLOAT64;
+  /* A caller's sum of the products and of their magnitudes, in double. */
+  if (given) {
+    plain += given[0];
+    products = given[1];
+    special |= !isfinite(given[0]) || !isfinite(given[1]);
+  }
+  for (int64_t q = 0; q < (given ? 0 : k); q++) {
     double x = ra ? ra[q] : float_of(a, z, i, q);
-    double w = rb ? rb[q] : float_of(b, z, j, q), p, e, t;
+    double w = rb ? rb[q] : float_of(b, z, j, q);
     plain += x * w;
     operands += 1 + fabs(x) + fabs(w);
     special |= !isfinite(x) || !isfinite(w);
-    two_prod(x, w, &p, &e);
-    two_sum(s, p, &s, &t);
-    c += t + e;
-    mag += fabs(x * w);
+    products += fabs(x * w);
+    if (dot2) {
+      double p, e, t;
+      two_prod(x, w, &p, &e);
+      two_sum(s, p, &s, &t);
+      c += t + e;
+    }
   }
-  s += c;
+  s = dot2 ? s + c : plain;
+  double mag = products + fabs(s0);
   int mant, emin;
   format(acc, &mant, &emin);
-  double u2 = ldexp(1.0, -mant), g = (k + 1) * u2 / (1 - (k + 1) * u2);
-  double slack = g * mag + (flush ? ldexp(1.0, -126) * (1 + operands) : 0);
+  const double u = ldexp(1.0, -mant - 1), w53 = ldexp(1.0, -53);
+  double g, slack;
+  if (depth >= 0) {
+    g = depth * u / (1 - depth * u);
+    slack = (1 + u) * g * products + (init ? u * fabs(s) : 0);
+  } else {
+    double u2 = 2 * u;
+    g = (k + 1) * u2 / (1 - (k + 1) * u2);
+    slack = g * mag;
+  }
+  if (!dot2) {
+    /* A given sum is within the contract's γ(β(k)) of double, a plain one
+       within γ(k + 1): the larger of both. */
+    int64_t beta = (5 * (k < 256 ? k : 256) + 3) / 4 + (k + 127) / 128;
+    int64_t r = (beta > k ? beta : k) + 1;
+    slack += r * w53 / (1 - r * w53) * mag;
+  }
+  if (flush) slack += ldexp(1.0, -126) * (1 + operands);
   if (!is_float(y->dtype)) {
     /* A cast to an integer or bool is monotone: y lies between the casts
        of the ends of the sums the bound allows, or is the cast of IEEE's
@@ -243,18 +278,22 @@ static double float_ratio(const view *a, const view *b, const double *ra,
   if (got == r || (isnan(got) && isnan(r))) return 0;
   /* Its error would be NaN, which no bound orders. */
   if (isnan(got)) return -1;
-  double allowed = slack + ulp(y->dtype, fabs(s) + g * mag) / 2;
+  double allowed = slack + ulp(y->dtype, fabs(s) + slack) / 2;
   double err = fabs(got - s);
   return err == 0 ? 0 : err / allowed;
 }
 
 /* Whether output (z, i, j) of an integer contraction holds init + a·b
    wrapped to the accumulator, widened by its sign, then cast to y. */
-static int int_exact(const view *a, const view *b, const view *init,
-                     const view *y, int64_t k, int acc, int64_t z, int64_t i,
-                     int64_t j) {
+static int int_exact(const view *a, const view *b, const uint64_t *ra,
+                     const uint64_t *rb, const view *init, const view *y,
+                     int64_t k, int acc, int64_t z, int64_t i, int64_t j) {
   uint64_t s = init ? int_of(init, z, i, j) : 0;
-  for (int64_t q = 0; q < k; q++) s += int_of(a, z, i, q) * int_of(b, z, j, q);
+  if (ra && rb)
+    for (int64_t q = 0; q < k; q++) s += ra[q] * rb[q];
+  else
+    for (int64_t q = 0; q < k; q++)
+      s += int_of(a, z, i, q) * int_of(b, z, j, q);
   int sign = nx_dtype_row_of(acc).kind == NX_KIND_SIGNED;
   uint64_t want = cast_int(wrap(s, acc), sign, y->dtype);
   return wrap(want, y->dtype) == wrap(bits_of(y, z, i, j), y->dtype);
@@ -277,16 +316,36 @@ static double *decoded(const view *v, int64_t batch, int64_t rows, int64_t k) {
   return d;
 }
 
+/* The integer elements of [v], as [decoded] decodes floats. */
+static uint64_t *decoded_ints(const view *v, int64_t batch, int64_t rows,
+                              int64_t k) {
+  int64_t total = batch * rows * k;
+  if (total == 0 || total > DECODED_MAX) return NULL;
+  uint64_t *d = malloc((size_t)total * sizeof *d);
+  if (d == NULL) return NULL;
+  for (int64_t z = 0; z < batch; z++)
+    for (int64_t r = 0; r < rows; r++)
+      for (int64_t q = 0; q < k; q++)
+        d[(z * rows + r) * k + q] = int_of(v, z, r, q);
+  return d;
+}
+
 nx_ref_result nx_ref_contract(const view *a, const view *b,
                               const view *init, const view *y, int64_t batch,
                               int64_t m, int64_t n, int64_t k, int acc,
-                              int flush, int64_t samples) {
+                              int flush, int64_t depth, const double *sums,
+                              const double *mags, int64_t samples) {
   nx_ref_result r = {0, 0, -1};
   int64_t total = batch * m * n;
   double *da = NULL, *db = NULL;
-  if (is_float(acc)) {
+  uint64_t *ia = NULL, *ib = NULL;
+  if (is_float(acc) && !(sums && mags)) {
     da = decoded(a, batch, m, k);
     db = decoded(b, batch, n, k);
+  }
+  if (!is_float(acc)) {
+    ia = decoded_ints(a, batch, m, k);
+    ib = decoded_ints(b, batch, n, k);
   }
   for (int64_t t = 0; t < (samples < total ? samples : total); t++) {
     int64_t o = samples < total
@@ -295,9 +354,15 @@ nx_ref_result nx_ref_contract(const view *a, const view *b,
     int64_t z = o / (m * n), i = o / n % m, j = o % n;
     const double *ra = da ? da + (z * m + i) * k : NULL;
     const double *rb = db ? db + (z * n + j) * k : NULL;
+    double given[2] = {sums ? sums[o] : 0, mags ? mags[o] : 0};
     double x = is_float(acc)
-                   ? float_ratio(a, b, ra, rb, init, y, k, acc, flush, z, i, j)
-                   : int_exact(a, b, init, y, k, acc, z, i, j) ? 0 : -1;
+                   ? float_ratio(a, b, ra, rb, init, y, k, acc, flush, depth,
+                                 sums && mags ? given : NULL, z, i, j)
+                   : int_exact(a, b, ia ? ia + (z * m + i) * k : NULL,
+                               ib ? ib + (z * n + j) * k : NULL, init, y, k,
+                               acc, z, i, j)
+                   ? 0
+                   : -1;
     if (x < 0) {
       if (r.wrong++ == 0) r.at = o;
     } else if (x > r.worst) {
@@ -307,5 +372,7 @@ nx_ref_result nx_ref_contract(const view *a, const view *b,
   }
   free(da);
   free(db);
+  free(ia);
+  free(ib);
   return r;
 }

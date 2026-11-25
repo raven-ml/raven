@@ -38,9 +38,17 @@ typedef struct {
    count), y and init [batch] × [m] × [n], a [batch] × [m] × [k], b [batch]
    × [n] × [k]. [init] may be NULL.
 
-   For the float accumulator [acc], the allowance is the bound γ(k + 1, 2u)
-   (|init| + Σ|a||b|), u [acc]'s unit roundoff, plus half a unit in the
-   last place of y's dtype, against the exact sum. [flush] states that the
+   For the float accumulator [acc], with [depth] at least 0 the allowance
+   is a library's stated bound (1 + u) γ(depth) Σ|a||b|, and u |s| where an
+   init joins after the sum; with a negative [depth], γ(k + 1, 2u) (|init| +
+   Σ|a||b|); u [acc]'s unit roundoff; plus half a unit in the last place of
+   y's dtype, against the exact sum s. Operands narrower than float64 sum
+   in plain double, their products exact, and the allowance gains that
+   sum's γ(k + 1) of double. [sums] and [mags], where neither is NULL,
+   are each output's sum of its products and of their magnitudes, in
+   double, of operands narrower than float64, in z·m·n + i·n + j order,
+   within the contract's γ(β(k)) of double: the check reads them in place of
+   the operands' products. [flush] states that the
    device's arithmetic reads a subnormal operand as zero and writes a
    subnormal result as zero: the allowance gains 2^-126·(1 + Σ(1 + |a| +
    |b|)). A NaN or an infinity among the terms asks for IEEE's answer (any
@@ -56,6 +64,8 @@ typedef struct {
 nx_ref_result nx_ref_contract(const nx_ref_view *a, const nx_ref_view *b,
                               const nx_ref_view *init, const nx_ref_view *y,
                               int64_t batch, int64_t m, int64_t n, int64_t k,
-                              int acc, int flush, int64_t samples);
+                              int acc, int flush, int64_t depth,
+                              const double *sums, const double *mags,
+                              int64_t samples);
 
 #endif

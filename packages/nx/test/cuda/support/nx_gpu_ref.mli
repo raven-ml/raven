@@ -38,26 +38,38 @@ val contract :
   k:int ->
   acc:int ->
   ?flush:bool ->
+  ?depth:int ->
+  ?sums:float array * float array ->
   samples:int ->
   unit ->
   result
-(** [contract ~a ~b ~init ~y ~batch ~m ~n ~k ~acc ~flush ~samples ()] checks
-    [samples] outputs [(z, i, j)] (every output if there are fewer) of
-    [y = init + a·b], [a] [batch × m × k], [b] [batch × n × k], against the
-    exact [s = init(z, i, j) + Σ_q a(z, i, q) · b(z, j, q)].
+(** [contract ~a ~b ~init ~y ~batch ~m ~n ~k ~acc ~flush ~depth ~sums ~samples
+     ()] checks [samples] outputs [(z, i, j)] (every output if there are fewer)
+    of [y = init + a·b], [a] [batch × m × k], [b] [batch × n × k], against the
+    exact [s = init(z, i, j) + Σ_q a(z, i, q) · b(z, j, q)], [init]'s element as
+    a float [acc] holds it.
 
-    For a float [acc], an output's allowance is the bound
-    [γ(k + 1, 2u) (|init| + Σ|a||b|)], [u] [acc]'s unit roundoff, plus half a
-    unit in the last place of [y]'s dtype; with [flush] (defaults to [false]),
-    for a device whose arithmetic reads and writes subnormals as zero,
-    [2^-126 (1 + Σ(1 + |a| + |b|))] more. A NaN or an infinity among the terms
-    asks for IEEE's answer (any NaN for NaN), and an [s] that rounds past [y]'s
-    range its infinity. Finite terms that can sum past double's range in some
-    order allow that infinity, and NaN where both infinities can be reached.
-    An integer or bool [y] of a float [acc] lies between the casts of the ends
-    of the sums the bound allows. For an integer [acc], [y] holds [s] wrapped
-    to [acc], then cast from [acc] to [y]'s dtype: widened by [acc]'s sign and
-    wrapped, rounded once to a float, or nonzero for bool.
+    For a float [acc], an output's allowance is a library's stated bound
+    [(1 + u) γ(depth) Σ|a||b|], and [u |s|] where an [init] joins after the sum,
+    with [depth] the roundings it states a term passes, at least [0]; without
+    [depth], [γ(k + 1, 2u) (|init| + Σ|a||b|)]; [u] [acc]'s unit roundoff; plus
+    half a unit in the last place of [y]'s dtype. Operands narrower than float64
+    have products exact in double, which it sums in plain double, allowing that
+    sum's [γ(k + 1)] of double's unit roundoff of the terms' magnitudes; float64
+    operands it sums about twice double's precision. [sums], for operands
+    narrower than float64, gives each output's sum of its products and of their
+    magnitudes in double, in [z·m·n + i·n + j] order, within the contract's
+    [γ(β(k))] of double, which it reads in place of the products. With [flush]
+    (defaults to [false]), for a device whose arithmetic reads and writes
+    subnormals as zero, [2^-126 (1 + Σ(1 + |a| + |b|))] more. A NaN or an
+    infinity among the terms asks for IEEE's answer (any NaN for NaN), and an
+    [s] that rounds past [y]'s range its infinity. Finite terms that can sum
+    past double's range in some order allow that infinity, and NaN where both
+    infinities can be reached. An integer or bool [y] of a float [acc] lies
+    between the casts of the ends of the sums the bound allows. For an integer
+    [acc], [y] holds [s] wrapped to [acc], then cast from [acc] to [y]'s dtype:
+    widened by [acc]'s sign and wrapped, rounded once to a float, or nonzero for
+    bool.
 
     [ref.h]'s [nx_ref_contract] is the same check for C callers.
 
