@@ -68,34 +68,36 @@ static inline double fma64(double a, double b, double c) {
 
 static inline double add32(double x, double y) { return round32(x + y); }
 
-typedef struct {
-  const double *a, *b;
-  intnat k;
-  int f32;
-} terms;
-
-static inline double fma_of(const terms *t, double a, double b, double c) {
-  return t->f32 ? fma32(a, b, c) : fma64(a, b, c);
+/* fma and addition of float32 where [f32], else of float64: each caller
+   passes a constant, so that each order compiles once for each. */
+static inline double fma_of(int f32, double a, double b, double c) {
+  return f32 ? fma32(a, b, c) : fma64(a, b, c);
 }
 
-static inline double add_of(const terms *t, double x, double y) {
-  return t->f32 ? add32(x, y) : x + y;
+static inline double add_of(int f32, double x, double y) {
+  return f32 ? add32(x, y) : x + y;
 }
 
 /* Chain order: blocks of 256 terms from 0, each a chain from +0 in
    increasing number, each block's sum added into the sum of those before
-   it. */
+   it. A chain waits on each of its fused multiply-adds, so up to CHAINS
+   outputs of one depth chain side by side, each in its own order. */
 #define CHAIN_TERMS 256
+#define CHAINS 8
 
-static double chain(const terms *t) {
-  double sum = 0.;
-  for (intnat lo = 0; lo < t->k; lo += CHAIN_TERMS) {
-    intnat hi = lo + CHAIN_TERMS < t->k ? lo + CHAIN_TERMS : t->k;
-    double s = 0.;
-    for (intnat i = lo; i < hi; i++) s = fma_of(t, t->a[i], t->b[i], s);
-    sum = lo == 0 ? s : add_of(t, sum, s);
+static inline void chains(int f32, const double *const *a,
+                          const double *const *b, int n, intnat k,
+                          double *sum) {
+  double s[CHAINS];
+  for (int g = 0; g < n; g++) sum[g] = 0.;
+  for (intnat lo = 0; lo < k; lo += CHAIN_TERMS) {
+    intnat hi = lo + CHAIN_TERMS < k ? lo + CHAIN_TERMS : k;
+    for (int g = 0; g < n; g++) s[g] = 0.;
+    for (intnat i = lo; i < hi; i++)
+      for (int g = 0; g < n; g++) s[g] = fma_of(f32, a[g][i], b[g][i], s[g]);
+    for (int g = 0; g < n; g++)
+      sum[g] = lo == 0 ? s[g] : add_of(f32, sum[g], s[g]);
   }
-  return sum;
 }
 
 /* Lane order: block x's terms in 16 lanes by number modulo 16, each from
@@ -104,45 +106,77 @@ static double chain(const terms *t) {
 #define BLOCK_TERMS 1024
 #define LANES 16
 
-static double block(const terms *t, intnat x) {
+static inline double block(int f32, const double *a, const double *b,
+                           intnat k, intnat x) {
   double l[LANES];
   for (int q = 0; q < LANES; q++) l[q] = 0.;
   intnat lo = x * BLOCK_TERMS;
-  intnat hi = lo + BLOCK_TERMS < t->k ? lo + BLOCK_TERMS : t->k;
+  intnat hi = lo + BLOCK_TERMS < k ? lo + BLOCK_TERMS : k;
   for (intnat i = lo; i < hi; i++)
-    l[i % LANES] = fma_of(t, t->a[i], t->b[i], l[i % LANES]);
+    l[i % LANES] = fma_of(f32, a[i], b[i], l[i % LANES]);
   for (int w = LANES / 2; w >= 1; w /= 2)
-    for (int i = 0; i < w; i++) l[i] = add_of(t, l[i], l[i + w]);
+    for (int i = 0; i < w; i++) l[i] = add_of(f32, l[i], l[i + w]);
   return l[0];
 }
 
 /* The blocks from [x] on, [n] of them, by a binary tree whose left part
    holds the largest power of two below [n]. */
-static double tree(const terms *t, intnat x, intnat n) {
-  if (n == 1) return block(t, x);
+static double tree(int f32, const double *a, const double *b, intnat k,
+                   intnat x, intnat n) {
+  if (n == 1) return block(f32, a, b, k, x);
   intnat h = 1;
   while (2 * h < n) h *= 2;
-  return add_of(t, tree(t, x, h), tree(t, x + h, n - h));
+  return add_of(f32, tree(f32, a, b, k, x, h),
+                tree(f32, a, b, k, x + h, n - h));
 }
 
-/* [flags]: 1 float32, else float64; 2 chain order, else lane order; 4 init
-   [init] is added last. With no term, init as it is, or +0. */
-double nx_kernels_support_ordered(value va, value vb, intnat flags,
-                                  double init) {
-  terms t = {(const double *)va, (const double *)vb,
-             (intnat)(Wosize_val(va) / Double_wosize), (int)(flags & 1)};
-  int has_init = (flags & 4) != 0;
-  if (t.k == 0) return has_init ? init : 0.;
-  if (flags & 2) {
-    double sum = chain(&t);
-    return has_init ? add_of(&t, sum, init) : sum;
+static intnat length(value v) { return (intnat)(Wosize_val(v) / Double_wosize); }
+
+/* Output i's sum of [va]'s and [vb]'s i-th float arrays' products into
+   [vout]'s element i, then [vinit]'s added where it has an element i.
+   [vflags]: 1 float32, else float64; 2 chain order, else lane order. With
+   no term, init as it is, or +0. */
+static void ordered(int f32, int chain_order, value va, value vb,
+                    value vinit, value vout) {
+  intnat n = (intnat)Wosize_val(va);
+  int has_init = length(vinit) > 0;
+  for (intnat o = 0; o < n;) {
+    const double *a[CHAINS], *b[CHAINS];
+    double sum[CHAINS];
+    intnat k = length(Field(va, o));
+    int g = 0;
+    /* Outputs side by side share their depth. */
+    while (g < CHAINS && o + g < n && length(Field(va, o + g)) == k) {
+      a[g] = (const double *)Field(va, o + g);
+      b[g] = (const double *)Field(vb, o + g);
+      g++;
+    }
+    if (chain_order)
+      chains(f32, a, b, g, k, sum);
+    else
+      for (int j = 0; j < g; j++)
+        sum[j] = k == 0 ? 0.
+                        : tree(f32, a[j], b[j], k, 0,
+                               (k + BLOCK_TERMS - 1) / BLOCK_TERMS);
+    for (int j = 0; j < g; j++) {
+      double y = sum[j];
+      if (has_init) {
+        double i = Double_flat_field(vinit, o + j);
+        y = k == 0 ? i : chain_order ? add_of(f32, y, i) : add_of(f32, i, y);
+      }
+      Store_double_flat_field(vout, o + j, y);
+    }
+    o += g;
   }
-  double sum = tree(&t, 0, (t.k + BLOCK_TERMS - 1) / BLOCK_TERMS);
-  return has_init ? add_of(&t, init, sum) : sum;
 }
 
-value nx_kernels_support_ordered_byte(value va, value vb, value vflags,
-                                      value vinit) {
-  return caml_copy_double(nx_kernels_support_ordered(
-      va, vb, Long_val(vflags), Double_val(vinit)));
+value nx_kernels_support_ordered(value va, value vb, value vinit,
+                                 value vflags, value vout) {
+  intnat flags = Long_val(vflags);
+  int chain_order = (flags & 2) != 0;
+  if (flags & 1)
+    ordered(1, chain_order, va, vb, vinit, vout);
+  else
+    ordered(0, chain_order, va, vb, vinit, vout);
+  return Val_unit;
 }

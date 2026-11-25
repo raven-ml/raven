@@ -54,11 +54,27 @@ let cpu_computes c = List.mem c.acc accs || is_integer c.acc
 (* [x] rounded to float32. *)
 let[@inline] round32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
-(* [o]'s result in [acc], in chain order where [chain], else in lane order, then
-   init ({!Support.ordered}). *)
-let ordered ~chain acc =
-  let f32 = part_of acc = D.Any D.Float32 in
-  fun (o : output) -> Support.ordered ~chain ~f32 ~init:o.init o.av o.bv
+(* [c]'s result's shape, and its outputs in [c]'s acc, in C order, in chain
+   order where [chain], else in lane order, then init ({!Support.ordered}): one
+   plane, or a complex acc's real then imaginary parts. *)
+let sums ~chain c =
+  let f32 = part_of c.acc = D.Any D.Float32 in
+  let y, each = outputs c in
+  let n = total y and parts = if is_complex c.acc then 2 else 1 in
+  let a = Array.init parts (fun _ -> Array.make n [||]) in
+  let b = Array.init parts (fun _ -> Array.make n [||]) in
+  let init = Array.init parts (fun _ -> Array.make n 0.) in
+  each (fun _ k os ->
+      Array.iteri
+        (fun p (o : output) ->
+          a.(p).(k) <- o.av;
+          b.(p).(k) <- o.bv;
+          Option.iter (fun i -> init.(p).(k) <- i) o.init)
+        os);
+  let init p = if c.init = None then None else Some init.(p) in
+  ( y,
+    Array.init parts (fun p ->
+        Support.ordered ~chain ~f32 ~init:(init p) a.(p) b.(p)) )
 
 (* Each output adds its products in the order nx_cpu.mli states for its
    shape ({!order}). *)
@@ -69,12 +85,23 @@ let law_order b c =
       failf "nx.cpu declined a case nx_cpu.mli says it computes"
   | None -> ()
   | Some y ->
-      let want = ordered ~chain:(order c = Chain) c.acc in
-      equal (list string) []
-        (wrong c y (fun o x ->
-             let w = want o in
-             if bits x = bits w then None
-             else Some (Printf.sprintf "%h, expected %h" x w)))
+      let _, want = sums ~chain:(order c = Chain) c and got = planes c.acc y in
+      let part p =
+        if Array.length want = 1 then "" else [| " re"; " im" |].(p)
+      in
+      let bad = ref [] in
+      Array.iteri
+        (fun p want ->
+          Array.iteri
+            (fun k w ->
+              let x = got.(p).(k) in
+              if bits x <> bits w && List.length !bad < 8 then
+                bad :=
+                  Printf.sprintf "output %d%s: %h, expected %h" k (part p) x w
+                  :: !bad)
+            want)
+        want;
+      equal (list string) [] (List.rev !bad)
 
 (* Contractions of few outputs over a depth of several blocks of lanes,
    4097 or 200003 products, which the threads share. *)
@@ -985,13 +1012,10 @@ let seg_reference (b : Support.backend) s sa sb =
   in
   let dst = cast_to c.out start in
   let nb = Array.length c.batch in
-  let ordered = ordered ~chain:(seg_order s = Chain) c.acc in
   let model a b init =
-    let y, each = outputs { c with a; b; init; views = [] } in
-    let parts = if is_complex c.acc then 2 else 1 in
-    let v = Array.init parts (fun _ -> Array.make (total y) 0.) in
-    each (fun _ k parts ->
-        Array.iteri (fun p o -> v.(p).(k) <- ordered o) parts);
+    let y, v =
+      sums ~chain:(seg_order s = Chain) { c with a; b; init; views = [] }
+    in
     let ys = Iarray.of_array y in
     if Array.length v = 1 then A.Any (A.of_array D.Float64 ys v.(0))
     else

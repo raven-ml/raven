@@ -307,12 +307,14 @@ val cap_memory : int -> bool
 val ordered :
   chain:bool ->
   f32:bool ->
-  init:float option ->
-  float array ->
-  float array ->
-  float
-(** [ordered ~chain ~f32 ~init a b] is the sum of the products [a.(t) b.(t)] in
-    nx_cpu.mli's chain order where [chain], else in its lane order, then [init]
-    added: each fused multiply-add and each addition rounded once to float32
-    where [f32], to float64 otherwise. [a] and [b] are of one length and, where
-    [f32], hold float32 values. With no product it is [init], or [+0]. *)
+  init:float array option ->
+  float array array ->
+  float array array ->
+  float array
+(** [ordered ~chain ~f32 ~init a b] is, for each output [o], the sum of the
+    products [a.(o).(t) b.(o).(t)] in nx_cpu.mli's chain order where [chain],
+    else in its lane order, then [init]'s [o]th element added: each fused
+    multiply-add and each addition rounded once to float32 where [f32], to
+    float64 otherwise. [a.(o)] and [b.(o)] are of one length and, where [f32],
+    hold float32 values; [init] has an element for each output. An output of
+    no product is its init, or [+0]. *)

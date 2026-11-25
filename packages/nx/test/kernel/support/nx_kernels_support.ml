@@ -550,19 +550,17 @@ external cap_memory : int -> bool = "nx_kernels_support_cap_memory"
 
 (* Orders of a contraction's sum *)
 
-external ordered_flags :
+external ordered_into :
+  float array array ->
+  float array array ->
   float array ->
+  int ->
   float array ->
-  (int[@untagged]) ->
-  (float[@unboxed]) ->
-  (float[@unboxed])
-  = "nx_kernels_support_ordered_byte" "nx_kernels_support_ordered"
+  unit = "nx_kernels_support_ordered"
 [@@noalloc]
 
 let ordered ~chain ~f32 ~init a b =
-  let flags =
-    (if f32 then 1 else 0)
-    lor (if chain then 2 else 0)
-    lor match init with Some _ -> 4 | None -> 0
-  in
-  ordered_flags a b flags (Option.value init ~default:0.)
+  let flags = (if f32 then 1 else 0) lor if chain then 2 else 0 in
+  let sums = Array.make (Array.length a) 0. in
+  ordered_into a b (Option.value init ~default:[||]) flags sums;
+  sums
