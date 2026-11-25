@@ -501,12 +501,31 @@ let pp_reads ppf l =
       str "wall-clock datetime of any unit"
   | Some (Any t), _ -> Type.pp ppf t
 
+(* [tensor_dtypes l] is the dtypes of the tensors whose values the leaf [l]
+   reads as: those whose scalar type {!node_reads_as} accepts of it. *)
+let tensor_dtypes l =
+  List.filter_map
+    (fun (Nx.Dtype.Any dt) ->
+      match scalar dt with
+      | Some e when reads_as l e -> Some (Format.asprintf "%a" Nx.Dtype.pp dt)
+      | _ -> None)
+    Nx.Dtype.all
+
+(* [tensor_lists node] is the number of lists of [node] and the dtypes of the
+   tensors that may take their place. *)
+let rec tensor_lists = function
+  | List { element; _ } ->
+      Option.map (fun (k, dtypes) -> (k + 1, dtypes)) (tensor_lists element)
+  | Struct _ -> None
+  | Prim l -> (
+      match tensor_dtypes l with [] -> None | dtypes -> Some (0, dtypes))
+
 let rec pp_shape ppf = function
   | Prim l -> pp_reads ppf l
   | List { element; _ } -> Format.fprintf ppf "list[%a]" pp_shape element
   | Struct { fields; _ } ->
       let pp_field ppf (n, node) =
-        Format.fprintf ppf "%a %a" Type.pp_name n pp_shape node
+        Format.fprintf ppf "%a %a" Type.pp_name n pp_node_reads node
       in
       Format.fprintf ppf "record[%a]"
         (Format.pp_print_list
@@ -514,29 +533,22 @@ let rec pp_shape ppf = function
            pp_field)
         fields
 
-(* [tensor_lists node] is the number of lists of [node] and the values below
-   them, when those lists read as a tensor: values of a number type or
-   [bool]. *)
-let rec tensor_lists = function
-  | List { element; _ } ->
-      Option.map (fun (k, values) -> (k + 1, values)) (tensor_lists element)
-  | Struct _ -> None
-  | Prim l -> (
-      match default l with
-      | Some (Any Bool) -> Some (0, "bool or bit")
-      | Some
-          (Any
-             (( Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
-              | Float16 | Float32 | Float64 ) as t)) ->
-          Some (0, Format.asprintf "%a" Type.pp t)
-      | _ -> None)
-
-let pp_node_reads ppf node =
+and pp_node_reads ppf node =
   pp_shape ppf node;
+  let over dtypes =
+    match List.rev dtypes with
+    | [] -> ""
+    | last :: rest -> (
+        match List.rev rest with
+        | [] -> last
+        | rest -> String.concat ", " rest ^ " or " ^ last)
+  in
   match tensor_lists node with
-  | Some (1, values) ->
-      Format.fprintf ppf ", or a tensor over %s in place of its list" values
-  | Some (k, values) when k > 1 ->
+  | Some (1, dtypes) ->
+      Format.fprintf ppf " (or a tensor over %s in place of its list)"
+        (over dtypes)
+  | Some (k, dtypes) when k > 1 ->
       Format.fprintf ppf
-        ", or a tensor over %s in place of its 1 to %d innermost lists" values k
+        " (or a tensor over %s in place of its 1 to %d innermost lists)"
+        (over dtypes) k
   | _ -> ()

@@ -1404,6 +1404,41 @@ let with_type =
           and plain = sniff "alltypes_plain.parquet"
           and nested = sniff "nested_v1_plain.parquet"
           and tensor = sniff tensors in
+          (* A list of DECIMAL(5,2), and a record of a list of int32s. *)
+          let decimals =
+            Error.get_ok
+              (P.sniff
+                 (file
+                    ~elements:
+                      [
+                        list_group optional "x" 1;
+                        node repeated "list" 1;
+                        Struct
+                          [
+                            (1, I32 1);
+                            (3, I32 optional);
+                            (4, Bin "element");
+                            (6, I32 5);
+                            (7, I32 2);
+                            (8, I32 5);
+                          ];
+                      ]
+                    [ (0, [ leaf x_path ~values:0 "" ]) ]))
+          and record =
+            Error.get_ok
+              (P.sniff
+                 (file
+                    ~elements:
+                      [
+                        node optional "r" 1;
+                        list_group optional "a" 1;
+                        node repeated "list" 1;
+                        field optional "element";
+                      ]
+                    [
+                      (0, [ leaf [ "r"; "a"; "list"; "element" ] ~values:0 "" ]);
+                    ]))
+          in
           List.iter print_endline
             [
               retype types "carier" (any Type.string);
@@ -1420,6 +1455,8 @@ let with_type =
               retype tensor "image"
                 (any (Type.tensor Nx.float32 [| 2; 3; 4; 1 |]));
               retype tensor "image" (any (Type.tensor Nx.float64 [| 2; 3; 4 |]));
+              retype decimals "x" (any (Type.tensor Nx.int32 [| 2 |]));
+              retype record "r" (any Type.int64);
             ];
           expect (output ())
           @@ __POS_OF__
@@ -1433,10 +1470,12 @@ let with_type =
             Talon_parquet.with_type: column "timestamp_col" (optional int96) reads as wall-clock datetime of any unit, not datetime[us, UTC]. Cast it once read (Expr.cast).
             Talon_parquet.with_type: column "ts_us_utc" (optional int64 (TIMESTAMP(MICROS,true))) reads as datetime[us, UTC], not datetime[us]. Cast it once read (Expr.cast).
             Talon_parquet.with_type: column "ts_ms" (optional int64 (TIMESTAMP(MILLIS,false))) reads as datetime[ms], not datetime[ms, UTC]. Cast it once read (Expr.cast).
-            Talon_parquet.with_type: column "lists" (optional group (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional int64 element; } } } }) reads as list[list[int64]], or a tensor over int64 in place of its 1 to 2 innermost lists, not int64. Cast it once read (Expr.cast).
-            Talon_parquet.with_type: column "image" (optional group (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional float element; } } } } } }) reads as list[list[list[float32]]], or a tensor over float32 in place of its 1 to 3 innermost lists, not tensor[float32, 6×4]. Cast it once read (Expr.cast).
-            Talon_parquet.with_type: column "image" (optional group (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional float element; } } } } } }) reads as list[list[list[float32]]], or a tensor over float32 in place of its 1 to 3 innermost lists, not tensor[float32, 2×3×4×1]. Cast it once read (Expr.cast).
-            Talon_parquet.with_type: column "image" (optional group (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional float element; } } } } } }) reads as list[list[list[float32]]], or a tensor over float32 in place of its 1 to 3 innermost lists, not tensor[float64, 2×3×4]. Cast it once read (Expr.cast).
+            Talon_parquet.with_type: column "lists" (optional group (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional int64 element; } } } }) reads as list[list[int64]] (or a tensor over int64 in place of its 1 to 2 innermost lists), not int64. Cast it once read (Expr.cast).
+            Talon_parquet.with_type: column "image" (optional group (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional float element; } } } } } }) reads as list[list[list[float32]]] (or a tensor over float32 in place of its 1 to 3 innermost lists), not tensor[float32, 6×4]. Cast it once read (Expr.cast).
+            Talon_parquet.with_type: column "image" (optional group (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional float element; } } } } } }) reads as list[list[list[float32]]] (or a tensor over float32 in place of its 1 to 3 innermost lists), not tensor[float32, 2×3×4×1]. Cast it once read (Expr.cast).
+            Talon_parquet.with_type: column "image" (optional group (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional float element; } } } } } }) reads as list[list[list[float32]]] (or a tensor over float32 in place of its 1 to 3 innermost lists), not tensor[float64, 2×3×4]. Cast it once read (Expr.cast).
+            Talon_parquet.with_type: column "x" (optional group (LIST) { repeated group list { optional int32 element (DECIMAL(5,2)); } }) reads as list[float64 or int64] (or a tensor over float64 or int64 in place of its list), not tensor[int32, 2]. Cast it once read (Expr.cast).
+            Talon_parquet.with_type: column "r" (optional group { optional group a (LIST) { repeated group list { optional int32 element; } } }) reads as record[a list[int32] (or a tensor over int32 in place of its list)], not int64. Cast it once read (Expr.cast).
             |});
     ]
 

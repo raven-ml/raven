@@ -138,6 +138,7 @@ val pp_reads : Format.formatter -> t -> unit
 val pp_node_reads : Format.formatter -> node -> unit
 (** [pp_node_reads ppf n] formats the types [n] reads as, as {!pp_reads} does
     for a leaf: [list[float64]], [record[a int32, b float64 or int64]], and
-    lists over a number type or [bool] with the tensors that take their place:
-    [list[list[float32]], or a tensor over float32 in place of its 1 to 2
-    innermost lists]. *)
+    lists with the tensors that may take their place, the dtypes whose scalar
+    type the leaf reads as:
+    [list[list[float32]] (or a tensor over float32 in place of its 1 to 2
+    innermost lists)]. *)

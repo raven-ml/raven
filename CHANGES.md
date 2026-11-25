@@ -6120,10 +6120,10 @@ its lock and from samples the dashboard saw arrive.
 - `Talon_arrow.sniff` names the column of a type the Arrow format does not
   define, such as a `decimal32` of precision 10, as its interface says:
   `column "d": a decimal of 32 bits has precision 10`. It named only the file.
-- `Talon_parquet.with_type`'s refusal of a column of lists over a number type
-  or `bool` names the tensors it reads as too: `reads as
-  list[list[list[float32]]], or a tensor over float32 in place of its 1 to 3
-  innermost lists`. It named the lists alone.
+- `Talon_parquet.with_type`'s refusal of a column of lists names the tensors
+  it reads as too, in a record's fields as well: `reads as
+  list[list[list[float32]]] (or a tensor over float32 in place of its 1 to 3
+  innermost lists)`. It named the lists alone.
 - A Parquet read's list, record or tensor column with no null row in a row
   group has no validity, so `Talon.column` takes the batch's column as it is.
   It carried an all-valid validity, which `Talon.column` copied away.
