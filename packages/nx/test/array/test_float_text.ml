@@ -206,25 +206,25 @@ let short_decimal ~digits:p ~low ~high =
   done;
   (String.sub s 0 !k, j + String.length s - !k)
 
+let nearest64 de =
+  nearest F.binary64 ~up:Float.succ ~down:Float.pred de
+    (float_of_string (text de))
+
+let nearest32 de =
+  nearest F.binary32 ~up:next32 ~down:prev32 de
+    (single (float_of_string (text de)))
+
 let test_round_trip64 =
-  prop "binary64 short decimal round trip" ~count:1000
+  prop "a decimal of at most 15 digits is the shortest of its nearest double"
+    ~count:1000
     (short_decimal ~digits:15 ~low:(-300) ~high:290)
-    (fun de ->
-      let x =
-        nearest F.binary64 ~up:Float.succ ~down:Float.pred de
-          (float_of_string (text de))
-      in
-      equal digits de (F.shortest F.binary64 x))
+    (Law.round_trip digits float_exact nearest64 (F.shortest F.binary64))
 
 let test_round_trip32 =
-  prop "binary32 short decimal round trip" ~count:1000
+  prop "a decimal of at most 6 digits is the shortest of its nearest float32"
+    ~count:1000
     (short_decimal ~digits:6 ~low:(-36) ~high:30)
-    (fun de ->
-      let x =
-        nearest F.binary32 ~up:next32 ~down:prev32 de
-          (single (float_of_string (text de)))
-      in
-      equal digits de (F.shortest F.binary32 x))
+    (Law.round_trip digits float_exact nearest32 (F.shortest F.binary32))
 
 (* [decimals n x] is right iff it is a multiple [m] of [10^-n] in canonical
    form, and [|x|] lies between the midpoints [(10m -+ 5) 10^(-n-1)] to its
@@ -279,9 +279,8 @@ let test_decimals =
     (fun (n, x) ->
       let de = F.decimals n x in
       cover "zero" (de = ("0", 0));
-      equal
-        ~msg:(strf "%d %h: %s" n x (text de))
-        bool true (decimals_hold n x de))
+      satisfies ~claim:"the multiple of 10^-n nearest |x|, ties to even" digits
+        (decimals_hold n x) de)
 
 (* [significant n x] rounds at the position of its [n]th digit, so it is
    [decimals (n - 1 - lead x) x], and has at most [n] digits. *)
@@ -293,7 +292,7 @@ let test_significant =
       if x = 0. then equal digits ("0", 0) de
       else begin
         equal digits (F.decimals (n - 1 - lead x) x) de;
-        equal ~msg:(text de) bool true (String.length (fst de) <= n)
+        at_most ~msg:"digits" int ~than:n (String.length (fst de))
       end)
 
 (* The golden *)
@@ -303,7 +302,7 @@ let test_significant =
    digits and the exponent of the answer. *)
 type row = { hex : string; n : int; want : string * int }
 
-let golden =
+let read_golden () =
   let ic = open_in "golden/float_digits.txt" in
   let rec read acc =
     match In_channel.input_line ic with
@@ -323,6 +322,7 @@ let golden =
   in
   Fun.protect ~finally:(fun () -> close_in ic) (fun () -> read [])
 
+let golden = lazy (read_golden ())
 let of_bits64 hex = Int64.float_of_bits (Int64.of_string ("0x" ^ hex))
 let of_bits32 hex = Int32.float_of_bits (Int32.of_string ("0x" ^ hex))
 
@@ -337,7 +337,12 @@ let section name =
   | [ "decimals" ] -> fun r -> F.decimals r.n (of_bits64 r.hex)
   | _ -> failf "golden: unknown section %S" name
 
-let test_golden (name, rows) =
+let test_golden name =
+  let rows =
+    match List.assoc_opt name (Lazy.force golden) with
+    | Some rows -> rows
+    | None -> failf "golden: no section %S" name
+  in
   let answer = section name in
   let wrong =
     List.filter_map
@@ -356,88 +361,91 @@ let test_golden (name, rows) =
 
 (* Stated cases *)
 
-(* 5^1074, the digits of 2^-1074 = 5^1074 10^-1074, by schoolbook
-   multiplication in base 10. *)
-let pow5_1074 =
-  let a = Array.make 800 0 in
-  a.(0) <- 1;
-  for _ = 1 to 1074 do
-    let carry = ref 0 in
-    for i = 0 to Array.length a - 1 do
-      let t = (a.(i) * 5) + !carry in
-      a.(i) <- t mod 10;
-      carry := t / 10
-    done
-  done;
-  let top = ref (Array.length a - 1) in
-  while a.(!top) = 0 do
-    decr top
-  done;
-  String.init (!top + 1) (fun i -> Char.chr (48 + a.(!top - i)))
-
 let narrow name = format (List.find (fun n -> n.name = name) narrows)
 
-let stated =
+(* Values the interface states, and the edges of binary64. *)
+let shortest_rows =
   [
-    ("shortest zero", (fun () -> F.shortest F.binary64 0.), ("0", 0));
-    ("shortest -0", (fun () -> F.shortest F.binary64 (-0.)), ("0", 0));
-    ("shortest 0.1", (fun () -> F.shortest F.binary64 0.1), ("1", -1));
-    ("shortest 5e-324", (fun () -> F.shortest F.binary64 5e-324), ("5", -324));
-    ("shortest 1e23", (fun () -> F.shortest F.binary64 1e23), ("1", 23));
-    ( "shortest 2^-1022",
-      (fun () -> F.shortest F.binary64 0x1p-1022),
-      ("22250738585072014", -324) );
-    ( "shortest above 2^-1022",
-      (fun () -> F.shortest F.binary64 (Float.succ 0x1p-1022)),
+    ("zero", F.binary64, 0., ("0", 0));
+    ("-0", F.binary64, -0., ("0", 0));
+    ("0.1", F.binary64, 0.1, ("1", -1));
+    ("5e-324", F.binary64, 5e-324, ("5", -324));
+    ("1e23", F.binary64, 1e23, ("1", 23));
+    ("2^-1022", F.binary64, 0x1p-1022, ("22250738585072014", -324));
+    ( "above 2^-1022",
+      F.binary64,
+      Float.succ 0x1p-1022,
       ("2225073858507202", -323) );
-    ( "shortest below 2^-1022",
-      (fun () -> F.shortest F.binary64 (Float.pred 0x1p-1022)),
+    ( "below 2^-1022",
+      F.binary64,
+      Float.pred 0x1p-1022,
       ("2225073858507201", -323) );
-    ( "shortest max_float",
-      (fun () -> F.shortest F.binary64 max_float),
-      ("17976931348623157", 292) );
-    ( "shortest 2^50 + 0.25",
-      (fun () -> F.shortest F.binary64 (0x1p50 +. 0.25)),
-      ("11258999068426242", -1) );
-    ( "shortest binary32 0.1",
-      (fun () -> F.shortest F.binary32 (single 0.1)),
-      ("1", -1) );
-    ( "shortest float16 65504",
-      (fun () -> F.shortest (narrow "float16") 65504.),
-      ("655", 2) );
+    ("max_float", F.binary64, max_float, ("17976931348623157", 292));
+    ("2^50 + 0.25", F.binary64, 0x1p50 +. 0.25, ("11258999068426242", -1));
+    ("binary32 0.1", F.binary32, single 0.1, ("1", -1));
+    ("float16 65504", narrow "float16", 65504., ("655", 2));
     (* The largest e4m3fn, 448, has an even significand: the reals from 440 to
        464 read as it, and 450 is the one of two digits. *)
-    ( "shortest float8_e4m3fn 448",
-      (fun () -> F.shortest (narrow "float8_e4m3fn") 448.),
-      ("45", 1) );
-    ( "shortest float8_e5m2 57344",
-      (fun () -> F.shortest (narrow "float8_e5m2") 57344.),
-      ("6", 4) );
-    ( "shortest float4_e2m1fn 6",
-      (fun () -> F.shortest (narrow "float4_e2m1fn") 6.),
-      ("6", 0) );
-    ( "significant 3 135.5625",
-      (fun () -> F.significant 3 135.5625),
-      ("136", 0) );
-    ("significant 2 0.125", (fun () -> F.significant 2 0.125), ("12", -2));
-    ( "significant max_int 0.005",
-      (fun () -> F.significant max_int 0.005),
-      ("5000000000000000104083408558608425664715468883514404296875", -60) );
-    ( "significant max_int 5e-324",
-      (fun () -> F.significant max_int 5e-324),
-      (pow5_1074, -1074) );
-    ("decimals 2 0.125", (fun () -> F.decimals 2 0.125), ("12", -2));
-    ("decimals 0 0.5", (fun () -> F.decimals 0 0.5), ("0", 0));
-    ("decimals 0 1.5", (fun () -> F.decimals 0 1.5), ("2", 0));
-    ("decimals -2 1250", (fun () -> F.decimals (-2) 1250.), ("12", 2));
-    ("decimals 2 -0.001", (fun () -> F.decimals 2 (-0.001)), ("0", 0));
-    ("decimals max_int 1.5", (fun () -> F.decimals max_int 1.5), ("15", -1));
-    ("decimals min_int 1.5", (fun () -> F.decimals min_int 1.5), ("0", 0));
+    ("float8_e4m3fn 448", narrow "float8_e4m3fn", 448., ("45", 1));
+    ("float8_e5m2 57344", narrow "float8_e5m2", 57344., ("6", 4));
+    ("float4_e2m1fn 6", narrow "float4_e2m1fn", 6., ("6", 0));
+    ("precision 1", { F.precision = 1; emin = 0 }, 1., ("1", 0));
   ]
 
-let test_stated =
-  cases "stated values" ~id:(fun (name, _, _) -> name) stated
-    (fun (_, f, want) -> equal digits want (f ()))
+let test_shortest (_, f, x, want) = equal digits want (F.shortest f x)
+
+(* 5^1074, the digits of 2^-1074 = 5^1074 10^-1074, by schoolbook multiplication
+   in base 10. *)
+let pow5_1074 =
+  lazy
+    (let a = Array.make 800 0 in
+     a.(0) <- 1;
+     for _ = 1 to 1074 do
+       let carry = ref 0 in
+       for i = 0 to Array.length a - 1 do
+         let t = (a.(i) * 5) + !carry in
+         a.(i) <- t mod 10;
+         carry := t / 10
+       done
+     done;
+     let top = ref (Array.length a - 1) in
+     while a.(!top) = 0 do
+       decr top
+     done;
+     String.init (!top + 1) (fun i -> Char.chr (48 + a.(!top - i))))
+
+let significant_rows =
+  [
+    (3, 135.5625, `Digits ("136", 0));
+    (2, 0.125, `Digits ("12", -2));
+    ( max_int,
+      0.005,
+      `Digits ("5000000000000000104083408558608425664715468883514404296875", -60)
+    );
+    (max_int, 5e-324, `Pow5_1074);
+  ]
+
+let test_significant_row (n, x, want) =
+  let want =
+    match want with
+    | `Digits d -> d
+    | `Pow5_1074 -> (Lazy.force pow5_1074, -1074)
+  in
+  equal digits want (F.significant n x)
+
+let decimals_rows =
+  [
+    (2, 0.125, ("12", -2));
+    (0, 0.5, ("0", 0));
+    (0, 1.5, ("2", 0));
+    (-2, 1250., ("12", 2));
+    (2, -0.001, ("0", 0));
+    (max_int, 1.5, ("15", -1));
+    (min_int, 1.5, ("0", 0));
+  ]
+
+let test_decimals_row (n, x, want) = equal digits want (F.decimals n x)
+let row_id (n, x, _) = strf "%d %h" n x
 
 (* The exact reader at ties to even and at the overflow threshold,
    1.797693134862315807...e308, and at e4m3fn's, 464. *)
@@ -466,52 +474,83 @@ let reader_rows =
     ("e4m3fn past 464", narrow "float8_e4m3fn", 448., ("4641", -1), false);
   ]
 
-let test_reader =
-  cases "exact reader" ~id:(fun (name, _, _, _, _) -> name) reader_rows
-    (fun (_, f, x, de, want) -> equal bool want (reads f x de))
+let test_reader (_, f, x, de, want) =
+  let claim = if want then "reads as x" else "reads as another value" in
+  satisfies ~claim digits (fun de -> reads f x de = want) de
 
-let refused =
+let shortest_refused =
   [
-    ( "precision 64",
-      fun () -> F.shortest { F.precision = 64; emin = -16382 } 0.1 );
-    ("precision 0", fun () -> F.shortest { F.precision = 0; emin = 0 } 1.);
-    ("binary32 0.1", fun () -> F.shortest F.binary32 0.1);
-    ("e4m3fn 0.1", fun () -> F.shortest (narrow "float8_e4m3fn") 0.1);
-    ("nan", fun () -> F.shortest F.binary64 Float.nan);
-    ("infinity", fun () -> F.significant 3 Float.infinity);
-    ("decimals of nan", fun () -> F.decimals 3 Float.nan);
-    ("significant 0", fun () -> F.significant 0 1.);
+    ("precision 64", { F.precision = 64; emin = -16382 }, 0.1);
+    ("precision 54", { F.precision = 54; emin = -1022 }, 1.);
+    ("precision 0", { F.precision = 0; emin = 0 }, 1.);
+    ("binary32 0.1", F.binary32, 0.1);
+    ("e4m3fn 0.1", narrow "float8_e4m3fn", 0.1);
   ]
 
-let test_refused =
-  cases "refused" ~id:fst refused (fun (_, f) -> raises_match Exn.invalid_arg f)
+let specials = [ Float.nan; Float.infinity; Float.neg_infinity ]
 
-let () =
-  exit
-    (run "nx_array.float_text"
-       [
-         group "golden"
-           [
-             cases "answers as Python, numpy and an exact search give them"
-               ~id:fst golden test_golden;
-           ];
-         group "laws"
-           [
-             law_shortest
-               "binary64 shortest reads back, nothing shorter does, the nearest"
-               F.binary64 double classes64;
-             law_shortest
-               "binary32 shortest reads back, nothing shorter does, the nearest"
-               F.binary32 float32 classes32;
-             cases
-               "every value of a narrow format reads back, nothing shorter \
-                does, the nearest"
-               ~id:(fun n -> n.name)
-               narrows test_every_value;
-             test_round_trip64;
-             test_round_trip32;
-             test_decimals;
-             test_significant;
-           ];
-         group "cases" [ test_stated; test_refused; test_reader ];
-       ])
+let tests =
+  [
+    group "shortest"
+      [
+        law_shortest
+          "binary64's reads back, nothing shorter does, and it is the nearest"
+          F.binary64 double classes64;
+        law_shortest
+          "binary32's reads back, nothing shorter does, and it is the nearest"
+          F.binary32 float32 classes32;
+        cases
+          "every value of a narrow format reads back, nothing shorter does, \
+           and it is the nearest"
+          ~id:(fun n -> n.name)
+          narrows test_every_value;
+        test_round_trip64;
+        test_round_trip32;
+        cases "states the interface's values"
+          ~id:(fun (n, _, _, _) -> n)
+          shortest_rows test_shortest;
+        cases
+          "raises outside precision 1 to 53 or for a float not of the format"
+          ~id:(fun (n, _, _) -> n)
+          shortest_refused
+          (fun (_, f, x) ->
+            raises_match Exn.invalid_arg (fun () -> F.shortest f x));
+      ];
+    group "significant"
+      [
+        test_significant;
+        cases "states the interface's values" ~id:row_id significant_rows
+          test_significant_row;
+        cases "raises for fewer than one digit" ~id:string_of_int [ 0; -1 ]
+          (fun n -> raises_match Exn.invalid_arg (fun () -> F.significant n 1.));
+      ];
+    group "decimals"
+      [
+        test_decimals;
+        cases "states the interface's values" ~id:row_id decimals_rows
+          test_decimals_row;
+      ];
+    group "every function"
+      [
+        cases "answers as Python, numpy and an exact search give them"
+          ~id:Fun.id
+          [
+            "shortest binary64"; "shortest binary32"; "significant"; "decimals";
+          ]
+          test_golden;
+        cases "raises for NaN and the infinities" ~id:(strf "%h") specials
+          (fun x ->
+            raises_match ~msg:"shortest" Exn.invalid_arg (fun () ->
+                F.shortest F.binary64 x);
+            raises_match ~msg:"significant" Exn.invalid_arg (fun () ->
+                F.significant 3 x);
+            raises_match ~msg:"decimals" Exn.invalid_arg (fun () ->
+                F.decimals 3 x));
+      ];
+    cases
+      "Float_reader reads as IEEE 754 reads at ties and the overflow threshold"
+      ~id:(fun (n, _, _, _, _) -> n)
+      reader_rows test_reader;
+  ]
+
+let () = exit (run "nx_array.float_text" tests)
