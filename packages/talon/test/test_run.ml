@@ -1684,6 +1684,70 @@ let arithmetic =
         equal (array int64) [| expected |] (tensor e (one operands)));
   ]
 
+(* [a ** b] as Nx.pow computes it: exact at the special values of C99's Annex F
+   (F.10.4.4), a zero or an infinity of the exact power's sign where it rounds
+   to one, and within 4 ulps at float32 and 2 at float64 elsewhere. *)
+let powers =
+  let a = Col.float "a" and b = Col.float "b" in
+  let power ty x y =
+    let t = v [ ("a", Column.v ty [| x |]); ("b", Column.v ty [| y |]) ] in
+    (Column.options Kind.float (result Expr.(a ** b) t)).(0)
+  in
+  let inf = Float.infinity and nan = Float.nan in
+  (* The distance between two finite floats of one sign, in floats of [ty]. *)
+  let ulps ty x y =
+    let bits =
+      if Type.equal ty Type.float32 then fun x ->
+        Int64.of_int32 (Int32.bits_of_float x)
+      else Int64.bits_of_float
+    in
+    Int64.(to_int (abs (sub (bits x) (bits y))))
+  in
+  (* The nearest float32 to a float64 that is not near a float32 tie. *)
+  let single x = Int32.float_of_bits (Int32.bits_of_float x) in
+  [
+    cases "a ** b is Annex F's value at its special values"
+      ~id:(fun (name, _, _, _, _) -> name)
+      Type.
+        [
+          ("nan ** 0. is 1.", float64, nan, 0., 1.);
+          ("1. ** nan is 1.", float64, 1., nan, 1.);
+          ("-1. ** inf is 1.", float64, -1., inf, 1.);
+          ("0. ** -1. is inf", float64, 0., -1., inf);
+          ("-0. ** -1. is -inf", float64, -0., -1., -.inf);
+          ("-0. ** -2. is inf", float64, -0., -2., inf);
+          ("-0. ** 3. is -0.", float64, -0., 3., -0.);
+          ("-0. ** 2. is 0.", float64, -0., 2., 0.);
+          ("0.5 ** inf is 0.", float64, 0.5, inf, 0.);
+          ("0.5 ** -inf is inf", float64, 0.5, -.inf, inf);
+          ("-inf ** -1. is -0.", float64, -.inf, -1., -0.);
+          ("-inf ** 3. is -inf", float64, -.inf, 3., -.inf);
+          ("-2. ** 0.5 is nan", float64, -2., 0.5, nan);
+          ("-2. ** -1101. rounds to -0.", float64, -2., -1101., -0.);
+          ("nan ** 0. is 1. at float32", float32, nan, 0., 1.);
+          ("2. ** 200. rounds to inf at float32", float32, 2., 200., inf);
+        ]
+      (fun (_, ty, x, y, expected) ->
+        equal (option float_exact) (Some expected) (power ty x y));
+    cases "a ** b is within 4 ulps at float32 and 2 at float64"
+      ~id:(fun (name, _, _, _, _, _) -> name)
+      Type.
+        [
+          ("2. ** 0.5 is sqrt 2.", float64, 2., 0.5, Float.sqrt 2., 2);
+          ("10. ** -1. is 0.1", float64, 10., -1., 0.1, 2);
+          ( "2. ** 0.5 is sqrt 2. at float32",
+            float32,
+            2.,
+            0.5,
+            single (Float.sqrt 2.),
+            4 );
+          ("10. ** -1. is 0.1 at float32", float32, 10., -1., single 0.1, 4);
+        ]
+      (fun (_, ty, x, y, expected, bound) ->
+        let actual = Option.get (power ty x y) in
+        at_most int ~than:bound (ulps ty expected actual));
+  ]
+
 let widening =
   let mixed =
     v
@@ -5948,7 +6012,7 @@ let () =
        [
          group "Talon.equal" [ equal_tables ];
          group "Elementwise operations"
-           (arithmetic @ [ widening; float_order ] @ comparing @ kleene
+           (arithmetic @ powers @ [ widening; float_order ] @ comparing @ kleene
           @ computed_operands @ lifts);
          group "Reductions" (reductions @ one_column);
          group "Frames" frames;

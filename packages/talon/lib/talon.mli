@@ -1235,7 +1235,7 @@ module Expr : sig
   (** [a /. b] is the quotient of [a] by [b]. *)
 
   val ( ** ) : (float, 's) t -> (float, 's) t -> (float, 's) t
-  (** [a ** b] is [a] to the power [b]. *)
+  (** [a ** b] is [a] to the power [b], as {!Nx.pow} computes it. *)
 
   val ( = ) : ('a, 's) t -> ('a, 's) t -> (bool, 's) t
   (** [a = b] is [true] iff [a] and [b] are equal in talon's total order
