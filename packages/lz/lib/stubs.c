@@ -411,20 +411,25 @@ static struct custom_operations box_ops = {
     custom_compare_ext_default, custom_fixed_length_default,
 };
 
-/* [box c st mem] takes ownership of [st], a [caml_stat_alloc] block that
-   its init has set up and that holds [mem] bytes outside the heap, which
-   the collector counts to pace itself. */
-static value box(const struct codec *c, void *st, size_t mem) {
-  value v = caml_alloc_custom_mem(&box_ops, sizeof(struct box), mem);
+/* [box c size mem] is a block that owns a state of [size] bytes from
+   [caml_stat_alloc], for its init to set up, and that holds [mem] bytes
+   outside the heap, which the collector counts to pace itself. The block
+   is made first, owning no state, so that a raise from either allocation
+   leaks nothing. */
+static value box(const struct codec *c, size_t size, size_t mem) {
+  CAMLparam0();
+  CAMLlocal1(v);
+  v = caml_alloc_custom_mem(&box_ops, sizeof(struct box), mem);
   struct box *b = Box_val(v);
-  b->st = st;
+  b->st = NULL;
   b->codec = c;
   b->base = 0;
   b->boundary = false;
   b->pos = 0;
   b->told = 0;
   b->major = 0;
-  return v;
+  b->st = caml_stat_alloc(size);
+  CAMLreturn(v);
 }
 
 /* [told v held] tells the collector of the bytes [v]'s state allocated
@@ -652,15 +657,18 @@ CAMLprim value lz_deflate_bound_stub(value wrap, value n) {
 }
 
 CAMLprim value lz_deflate_decoder(value wrap) {
-  struct lz_deflate_dec *st = caml_stat_alloc(sizeof *st);
-  lz_deflate_dec_init(st, Int_val(wrap), true);
-  return box(deflate_dec_of(Int_val(wrap)), st, sizeof *st);
+  size_t size = sizeof(struct lz_deflate_dec);
+  value v = box(deflate_dec_of(Int_val(wrap)), size, size);
+  lz_deflate_dec_init(Box_val(v)->st, Int_val(wrap), true);
+  return v;
 }
 
 CAMLprim value lz_deflate_encoder(value wrap, value level) {
-  struct lz_deflate_enc *st = caml_stat_alloc(sizeof *st);
-  lz_deflate_enc_init(st, Int_val(wrap), Int_val(level), true);
-  return box(&deflate_enc, st, sizeof *st + lz_deflate_enc_mem(Int_val(level)));
+  size_t size = sizeof(struct lz_deflate_enc);
+  value v =
+      box(&deflate_enc, size, size + lz_deflate_enc_mem(Int_val(level)));
+  lz_deflate_enc_init(Box_val(v)->st, Int_val(wrap), Int_val(level), true);
+  return v;
 }
 
 /* Zstandard */
@@ -728,15 +736,17 @@ CAMLprim value lz_zstd_bound_stub(value n) {
    gathered block and the literals at the first frame and at a later one
    whose blocks may be larger, which each step tells the collector of. */
 CAMLprim value lz_zstd_decoder(value window) {
-  struct lz_zstd_dec *st = caml_stat_alloc(sizeof *st);
-  lz_zstd_dec_init(st, (uint64_t)Long_val(window), true);
-  return box(&zstd_dec, st, sizeof *st);
+  size_t size = sizeof(struct lz_zstd_dec);
+  value v = box(&zstd_dec, size, size);
+  lz_zstd_dec_init(Box_val(v)->st, (uint64_t)Long_val(window), true);
+  return v;
 }
 
 CAMLprim value lz_zstd_encoder(value level) {
-  struct lz_zstd_enc *st = caml_stat_alloc(sizeof *st);
-  lz_zstd_enc_init(st, Int_val(level), true);
-  return box(&zstd_enc, st, sizeof *st);
+  size_t size = sizeof(struct lz_zstd_enc);
+  value v = box(&zstd_enc, size, size);
+  lz_zstd_enc_init(Box_val(v)->st, Int_val(level), true);
+  return v;
 }
 
 /* LZ4 and Snappy: whole-buffer only, each entry keeping its state on its
@@ -1087,8 +1097,10 @@ CAMLprim value lz_zstd_encode_limit(value limit, value level, value src,
 }
 
 CAMLprim value lz_zstd_encoder_limit(value limit, value level) {
-  struct lz_zstd_enc *st = caml_stat_alloc(sizeof *st);
+  size_t size = sizeof(struct lz_zstd_enc);
+  value v = box(&zstd_enc, size, size);
+  struct lz_zstd_enc *st = Box_val(v)->st;
   lz_zstd_enc_init(st, Int_val(level), true);
   lz_zstd_enc_limit(st, (uint32_t)Long_val(limit));
-  return box(&zstd_enc, st, sizeof *st);
+  return v;
 }
