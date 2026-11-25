@@ -95,10 +95,19 @@
 
 (** {1:opening Opening}
 
-    A device opens on macOS 15 or later, on a GPU whose highest Apple GPU
-    family is Apple6 or later, which residency sets need, or on one of a Mac
-    GPU family and no Apple family. The library builds on every system, and
-    off macOS no device opens. *)
+    Each device holds a residency set. A device opens on macOS 15 or later, on a
+    GPU of Apple6 or a later Apple GPU family, which have residency sets, or on
+    a GPU of a Mac GPU family and no Apple family where Metal makes it one. The
+    library builds on every system, and off macOS no device opens.
+
+    An open refuses a GPU whose highest Apple family is below Apple6 before
+    Metal is asked for a residency set, with the reason
+    ["the GPU's Apple family is below Apple6, which residency sets need"]. It
+    refuses a GPU where Metal makes no residency set with the reason
+    ["Metal made no residency set"]. Apple's feature set tables list residency
+    sets for no Mac family. Under Metal's API validation ([MTL_DEBUG_LAYER]),
+    the open of a GPU of a Mac family without them may end the process instead
+    of returning the refusal. *)
 
 type t
 (** The type for open devices. *)
