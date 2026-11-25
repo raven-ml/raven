@@ -918,28 +918,48 @@ let encode_document t sc ?ids32 text ~record =
                   p := resume
                 end
               done
+          | Pieces pre when Option.is_none align ->
+              (* Without a frame to place them in, the pieces are only
+                 encoded. *)
+              let first = if start = 0 then opens else continuing in
+              List.iter
+                (fun (piece, _) -> encode_span piece 0 (String.length piece))
+                (Pre_tokenizer.pieces pre ~first (slice norm start stop))
           | Pieces pre ->
               let source = slice norm start stop in
               let length = String.length source in
               let first = if start = 0 then opens else continuing in
               List.iter
-                (fun (piece, (at, finish)) ->
+                (fun (piece, (at, finish), made) ->
                   encode_span piece 0 (String.length piece);
                   (* A piece the pre-tokenizer cut from the text is that text
-                     byte for byte, and its tokens are placed inside it; one it
+                     byte for byte, and its tokens are placed inside it, as are
+                     those of a piece it made from the bytes of its span,
+                     through the alignment of what made it. Any other piece it
                      rewrote can only be placed whole. The range it reports is
                      taken on trust no further than the text it was cut from,
                      since a pre-tokenizer that rewrites may report the range of
                      what it produced instead. *)
                   let at = min (max 0 at) length in
                   let finish = min (max at finish) length in
-                  let place =
-                    if is_slice source ~at piece then Run.Shifted (start + at)
-                    else Run.Fixed { start = start + at; stop = start + finish }
+                  let place, rewrite =
+                    match made with
+                    | Some normalizer ->
+                        let source = slice source at finish in
+                        ( Run.Shifted (start + at),
+                          Some
+                            (Run.Deferred
+                               { normalizer; source; alignment = None }) )
+                    | None ->
+                        if is_slice source ~at piece then
+                          (Run.Shifted (start + at), None)
+                        else
+                          ( Run.Fixed
+                              { start = start + at; stop = start + finish },
+                            None )
                   in
-                  close ~literal:false ~walked:piece ~place ~rewrite:None ~base
-                    align)
-                (Pre_tokenizer.pieces pre ~first source)
+                  close ~literal:false ~walked:piece ~place ~rewrite ~base align)
+                (Pre_tokenizer.made_pieces pre ~first source)
       in
       (* An added token is one span of one id, and its token string is the text
          it matched: [lstrip] and [rstrip] take in the white space beside it,

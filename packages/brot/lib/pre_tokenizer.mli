@@ -270,6 +270,19 @@ val pieces : t -> first:bool Lazy.t -> string -> (string * (int * int)) list
     to the piece at [0] only then. [first] is forced only by such a metaspace.
     {!pre_tokenize} is [pieces] with [first] holding. *)
 
+val made_pieces :
+  t ->
+  first:bool Lazy.t ->
+  string ->
+  (string * (int * int) * Normalizer.t option) list
+(** [made_pieces t ~first text] is {!pieces}, each piece with the normalizer
+    that makes it from the bytes of its span when it is their byte-level
+    encoding, the space a byte-level member prepends included, so that a caller
+    can place a position of the piece in [text] through its alignment. It is
+    [None] for a piece that is the bytes of its span, and for every piece of a
+    {!sequence} whose {!plan} is [Pieces], which only its span places.
+    {!pieces} builds no normalizer. *)
+
 val encodes_bytes : t -> bool
 (** [encodes_bytes t] is [true] iff the pieces of [t] are byte-level encoded,
     that is iff [t] is a byte-level pre-tokenizer or a sequence ending in one.

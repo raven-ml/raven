@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- A model other than BPE behind a byte-level pre-tokenizer places each token
+  at its own bytes, as Hugging Face does: WordPiece's `Ġab` and `##b` in "abb"
+  span (0, 2) and (2, 3), where both spanned the whole word.
 - `Post_processor.process` processes each window of `Encoding.overflowing`
   as Hugging Face does; it dropped them or passed them through unprocessed.
   `Brot.encode`'s windows are unchanged.

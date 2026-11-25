@@ -1560,10 +1560,29 @@ let pre_tokenize_fixed_length ~length text =
     done;
     List.rev !pieces
 
+(* A piece as {!pre_tokenize} gives it: its text and its span. *)
+let pair piece span ~rewrite:_ ~encode:_ ~start:_ = (piece, span)
+
+(* A piece with how it was made from the bytes of its span, which {!Brot} places
+   its tokens by: a byte-level piece is their byte-level encoding, after
+   [rewrite] for the piece at [0], which holds what that rewrite prepended. *)
+let encoded = Some Normalizer.byte_level
+
+let with_made piece span ~rewrite ~encode ~start =
+  let made =
+    match rewrite with
+    | Some n when encode && start = 0 ->
+        Some (Normalizer.sequence [ n; Normalizer.byte_level ])
+    | _ -> if encode then encoded else None
+  in
+  (piece, span, made)
+
 (* Walks [text] a chunk of spans at a time. [span] places a byte range of [text]
    in the text the caller gave, which a rewrite may have made a longer one, so
-   that offsets are always the caller's. *)
-let walk_pieces t text ~encode ~span =
+   that offsets are always the caller's. [make] builds each piece, told the
+   normalizer [text] was rewritten by, if any, and where the piece starts in
+   [text]. *)
+let walk_pieces t text ~encode ~span ~rewrite ~make =
   let stop = String.length text in
   let capacity = ref (max 32 (min span_chunk ((stop / 8) + 1))) in
   let spans = ref (Spans.create ~capacity:!capacity) in
@@ -1590,7 +1609,8 @@ let walk_pieces t text ~encode ~span =
             Bytes.sub_string buf 0 (byte_level_blit buf text ~start ~stop)
           end
         in
-        pieces := (piece, span ~start ~stop) :: !pieces
+        pieces :=
+          make piece (span ~start ~stop) ~rewrite ~encode ~start :: !pieces
       done;
       p := resume
     end
@@ -1603,38 +1623,90 @@ let continuing = Lazy.from_val false
 (* The pieces of [inner] over [text] once rewritten, placed in the text the
    caller gave, where [text] starts at [base]; [first] says whether it opens the
    document. *)
-let walk_rewritten inner rewrite text ~base ~first ~encode =
+let walk_rewritten inner rewrite text ~base ~first ~encode ~make =
   let span ~start ~stop = (base + start, base + stop) in
   match rewriter rewrite ~first text with
-  | None -> walk_pieces inner text ~encode ~span
-  | Some n ->
+  | None -> walk_pieces inner text ~encode ~span ~rewrite:None ~make
+  | Some n as rewritten_by ->
       let rewritten, align = Normalizer.apply_aligned n text in
       let span ~start ~stop =
         let start, stop = Normalizer.original_span align ~start ~stop in
         (base + start, base + stop)
       in
-      walk_pieces inner rewritten ~encode ~span
+      walk_pieces inner rewritten ~encode ~span ~rewrite:rewritten_by ~make
+
+(* The type for a function building a piece, as [walk_pieces] calls it. *)
+type 'a make =
+  string ->
+  int * int ->
+  rewrite:Normalizer.t option ->
+  encode:bool ->
+  start:int ->
+  'a
 
 (* An empty text has no piece, whichever the pre-tokenizer — a sequence of none
    being the identity, and so the exception. *)
 let rec pieces t ~first text =
   if text = "" then match t with Sequence [] -> [ ("", (0, 0)) ] | _ -> []
-  else pre_tokenize_planned t ~first text
+  else planned t ~first text ~make:pair ~lift:Fun.id
 
 and verbatim_span ~start ~stop = (start, stop)
 
-and pre_tokenize_planned t ~first text =
+(* [t]'s pieces of [text], each built by [make]; [lift] turns the pieces of a
+   [Pieces] plan, which only {!pieces} builds, into the same type. *)
+and planned :
+    'a.
+    t ->
+    first:bool Lazy.t ->
+    string ->
+    make:'a make ->
+    lift:((string * (int * int)) list -> 'a list) ->
+    'a list =
+ fun t ~first text ~make ~lift ->
   let encode = ends_byte_level t in
   match plan t with
-  | Pieces -> pre_tokenize_pieces t ~first text
-  | Walk { rewrite; _ } -> walk_rewritten t rewrite text ~base:0 ~first ~encode
+  | Pieces -> lift (pre_tokenize_pieces t ~first text)
+  | Walk { rewrite; _ } ->
+      walk_rewritten t rewrite text ~base:0 ~first ~encode ~make
   | Segmented { outer; rewrite; inner; _ } ->
-      List.concat_map
-        (fun (segment, (base, _)) ->
-          walk_rewritten inner rewrite segment ~base
-            ~first:(if base = 0 then first else continuing)
-            ~encode)
-        (walk_pieces outer text ~encode:false ~span:verbatim_span)
+      walk_segments inner rewrite ~first ~encode ~make
+        (walk_pieces outer text ~encode:false ~span:verbatim_span ~rewrite:None
+           ~make:pair)
+
+(* The pieces of [inner] in each segment, in order, as [List.concat_map] would
+   join them, without a closure per call. *)
+and[@tail_mod_cons] walk_segments :
+    'a.
+    t ->
+    rewrite ->
+    first:bool Lazy.t ->
+    encode:bool ->
+    make:'a make ->
+    (string * (int * int)) list ->
+    'a list =
+ fun inner rewrite ~first ~encode ~make -> function
+  | [] -> []
+  | (segment, (base, _)) :: segments ->
+      let opens = if base = 0 then first else continuing in
+      prepend_pieces
+        (walk_rewritten inner rewrite segment ~base ~first:opens ~encode ~make)
+        inner rewrite ~first ~encode ~make segments
+
+and[@tail_mod_cons] prepend_pieces :
+    'a.
+    'a list ->
+    t ->
+    rewrite ->
+    first:bool Lazy.t ->
+    encode:bool ->
+    make:'a make ->
+    (string * (int * int)) list ->
+    'a list =
+ fun pieces inner rewrite ~first ~encode ~make segments ->
+  match pieces with
+  | [] -> walk_segments inner rewrite ~first ~encode ~make segments
+  | piece :: pieces ->
+      piece :: prepend_pieces pieces inner rewrite ~first ~encode ~make segments
 
 and pre_tokenize_pieces t ~first text =
   match t with
@@ -1672,6 +1744,12 @@ and pre_tokenize_sequence ts ~first text =
   List.map (fun (p, span, _) -> (p, span)) cut
 
 let pre_tokenize t text = pieces t ~first:opening text
+
+(* A sequence planned as [Pieces] places what a later member cuts from an
+   earlier one's pieces by their spans alone. *)
+let made_pieces t ~first text =
+  planned t ~first text ~make:with_made
+    ~lift:(List.map (fun (p, span) -> (p, span, None)))
 
 (* Constructors *)
 

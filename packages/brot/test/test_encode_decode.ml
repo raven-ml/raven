@@ -1051,7 +1051,9 @@ let test_encode_rewriting =
     check_tokens_and_offsets
 
 (* A model other than BPE cannot match raw bytes, so behind a byte-level
-   pre-tokenizer it matches its vocabulary in byte-level form. HuggingFace. *)
+   pre-tokenizer it matches its vocabulary in byte-level form, and each token it
+   cuts from a piece stands for its own bytes, a prepended [Ġ] with the first.
+   HuggingFace. *)
 let test_encode_byte_level_models =
   cases "hands a model other than BPE the byte-level form of its pieces"
     ~id:row_id
@@ -1067,9 +1069,35 @@ let test_encode_byte_level_models =
          ( "wordpiece",
            lazy
              (wordpiece ~pre:split_then_bytes
-                ~vocab:(words [ "[UNK]"; g ^ "a"; g ^ "b"; "##b"; g ^ "ab" ])
+                ~vocab:
+                  (words
+                     [
+                       "[UNK]";
+                       g ^ "a";
+                       g ^ "b";
+                       "##b";
+                       g ^ "ab";
+                       "##\u{c3}";
+                       "##\u{a9}";
+                       g ^ "\u{f0}";
+                       "##\u{141}";
+                       "##\u{13a}";
+                       "##\u{122}";
+                     ])
                 ~unk_token:"[UNK]" ()),
-           [ ("a b", [| g ^ "a"; g ^ "b" |], [| (0, 1); (2, 3) |]) ] );
+           [
+             ("a b", [| g ^ "a"; g ^ "b" |], [| (0, 1); (2, 3) |]);
+             ( "a\u{e9}",
+               [| g ^ "a"; "##\u{c3}"; "##\u{a9}" |],
+               [| (0, 1); (1, 3); (1, 3) |] );
+             ( "\u{1f600}",
+               [| g ^ "\u{f0}"; "##\u{141}"; "##\u{13a}"; "##\u{122}" |],
+               [| (0, 4); (0, 4); (0, 4); (0, 4) |] );
+             ("abb", [| g ^ "ab"; "##b" |], [| (0, 2); (2, 3) |]);
+             ( "abb ab",
+               [| g ^ "ab"; "##b"; g ^ "ab" |],
+               [| (0, 2); (2, 3); (4, 6) |] );
+           ] );
          ( "word_level",
            lazy
              (word_level ~pre:split_then_bytes
