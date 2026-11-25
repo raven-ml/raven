@@ -1281,6 +1281,8 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `System.lanes` on lanes of no unknowns, a guess of shape `[l; 0]`,
+  converges; its answer raised `Nx.stack`'s error.
 - `Solution.evaluations` of `Quad.adaptive`, `Quad.tanh_sinh`,
   `Quad.cubature`, `Quad.qmc` and `Piecewise.adapt` counts the answer's final
   pass over the partition, chunks or schedule, as well as the search, and

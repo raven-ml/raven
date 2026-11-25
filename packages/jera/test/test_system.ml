@@ -1085,6 +1085,16 @@ let lane_tests =
         (* The compiled solve sums in an order of its own, so the zeros agree
            to rounding. *)
         equal (Oracle.tensor ~rel:1e-14 ()) (f b) (Rune.jit' f b));
+    test "lanes of no unknowns converge after one evaluation" (fun () ->
+        let s =
+          System.lanes ~tol:tight ~budget:5
+            ~jacobian:(fun _ -> Nx.zeros f64 [| 3; 0; 0 |])
+            Fun.id (Nx.zeros f64 [| 3; 0 |])
+        in
+        equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 3 |]) (Solution.ok s);
+        equal (Oracle.tensor ())
+          (Nx.ones Nx.int32 [| 3 |])
+          (Solution.evaluations s));
     test "invalid arguments raise" (fun () ->
         invalid_with "Jera.System.lanes: the guess is a scalar" (fun () ->
             System.lanes ~tol:tight ~budget:5 ~jacobian:Fun.id Fun.id

@@ -379,7 +379,7 @@ let backward_bound a u b =
        (Nx.mul_s (Nx.add_s frobenius 1.) (Num.tiny dtype *. eps)))
     (16. *. float k)
 
-let blocks fn op b =
+let solve_blocks fn op b =
   let k = Nx.dim (-1) b in
   let basis j =
     Nx.broadcast_to (Nx.shape b)
@@ -404,6 +404,9 @@ let blocks fn op b =
            fn
            (String.concat ", " (Array.to_list (Array.map string_of_int i)))));
   u
+
+(* Lanes of no unknowns have no blocks to solve. *)
+let blocks fn op b = if Nx.dim (-1) b = 0 then b else solve_blocks fn op b
 
 let lanes ~tol ~budget ~jacobian f guess =
   let fn = "Jera.System.lanes" in
