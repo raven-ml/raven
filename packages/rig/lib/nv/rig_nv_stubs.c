@@ -628,6 +628,14 @@ value caml_rig_nv_raise(value v_self) {
   return Val_unit;
 }
 
+/* Whether the word shows the last value submitted: the work of every
+   submission ended. */
+value caml_rig_nv_ended(value v_self) {
+  struct device *d = Device_val(v_self);
+  uint64_t last = atomic_load_explicit(&d->last, memory_order_relaxed);
+  return Val_bool(atomic_load_explicit(d->word, memory_order_acquire) >= last);
+}
+
 /* Frees the state of a stopped device, which the channels never read: its
    edge and word stay. The copy kernel's launch goes only if the channels
    stopped ([v_stopped]). */

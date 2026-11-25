@@ -406,6 +406,24 @@ val capability : t -> Rig_nv_abi.Gpu.t
     templates and the channels' records, which the channels never read. The
     edge that reads the word, 80 bytes, stays for the process.
 
+    The RM ends the channels' work by preempting it, and stops a channel once it
+    idles. With release 615.71.09 a channel group leaves the compute engine only
+    once its kernel ends, so a kernel that runs holds off both up to the RM's
+    timeout. Where the path resets channels ({!field-reset}) and the word is
+    below the last submitted value, the stop therefore first keeps each group's
+    channels from being scheduled again ({!field-disable}), then preempts the
+    group, waiting at most 1 ms ({!field-preempt}), and resets the compute
+    channel of each group whose preempt timed out: that group's kernel holds the
+    compute engine, and the reset ends it at once. A group that waits, or whose
+    kernel ends within the wait, leaves the engine and is not reset. It starts
+    no other work, unless the RM refused to keep its channels off, as one that
+    runs on the CPU does. Channels the stop kept off and does not free are
+    scheduled again, and those the RM did not stop finish their work. On
+    NVIDIA's kernel driver the reset's reason is [KILL_PROCESS] from release
+    610, for which the RM logs no error, and [DEFAULT] before it, for which the
+    RM logs Xid 43 to the system's log, an error after which NVIDIA rates the
+    GPU healthy. Over PCI the path has no reset, and the stop waits.
+
     Once the word shows the last value and {!val-stop} has returned, no work
     of the device writes it. A channel's release of a value follows its work,
     and the channels end their work with the last value's release. The stop
@@ -455,6 +473,9 @@ type refusal =
           takes, such as an RM that answered [NV_ERR_NO_MEMORY] or
           [NV_ERR_INSUFFICIENT_RESOURCES] (NVIDIA's [nvstatuscodes.h]), or a
           kernel that failed the call with [ENOMEM]. *)
+  | Timed_out of string
+      (** The RM's wait for the GPU reached its timeout ([NV_ERR_TIMEOUT]), such
+          as a preempt's of a channel group whose kernel runs. *)
   | Refused of string  (** Any other refusal or failure. *)
 (** The type for the RM's refusal of a call, with a message that names the
     call and the answer. *)
@@ -502,6 +523,24 @@ type rm = {
           debugger object [debugger] recorded
           ([NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO]), or is the RM's
           refusal. *)
+  preempt : int -> params -> (unit, refusal) result;
+      (** [preempt group p] takes the channels of the channel group [group] off
+          the GPU's engines, waiting as [p], an [NVA06C_CTRL_PREEMPT_PARAMS],
+          says, and gives them back to the runlist after the wait
+          ([NVA06C_CTRL_CMD_PREEMPT]), or is the RM's refusal: [Timed_out] if
+          the wait reached its timeout. *)
+  disable : int -> params -> (unit, refusal) result;
+      (** [disable subdevice p] keeps the channels [p], an
+          [NV2080_CTRL_FIFO_DISABLE_CHANNELS_PARAMS], lists from being scheduled
+          on the GPU of the subdevice [subdevice], or schedules them again, as
+          [p] says ([NV2080_CTRL_CMD_FIFO_DISABLE_CHANNELS]), or is the RM's
+          refusal. *)
+  reset : (int -> (unit, refusal) result) option;
+      (** [Some f] if the path resets channels, where [f ch] ends the work of
+          the compute channel [ch] at once, and no other channel group's,
+          whether or not [ch] holds the compute engine
+          ([NV906F_CTRL_CMD_RESET_CHANNEL]), for a reason the path picks, or is
+          the RM's refusal; [None] if it does not ({!section-faults}). *)
   free : (parent:int -> int -> (unit, refusal) result) option;
       (** [Some f] if the RM frees objects before it stops, where [f ~parent
           obj] frees [obj] and every object under it, or is the RM's refusal;

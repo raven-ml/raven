@@ -1,0 +1,41 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2007-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: MIT
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
+
+/* Excerpt of https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/615.71.09/src/common/sdk/nvidia/inc/ctrl/ctrl906f.h. */
+
+#define NV906F_CTRL_CMD_RESET_CHANNEL_REASON_DEFAULT             0
+
+#define NV906F_CTRL_CMD_RESET_CHANNEL_REASON_VERIF               1
+
+#define NV906F_CTRL_CMD_RESET_CHANNEL_REASON_MMU_FLT             2
+
+#define NV906F_CTRL_CMD_RESET_CHANNEL_REASON_KILL_PROCESS        3
+
+#define NV906F_CTRL_CMD_RESET_CHANNEL                            (0x906f0102) /* finn: Evaluated from "((FINN_GF100_CHANNEL_GPFIFO_GPFIFO_INTERFACE_ID << 8) | NV906F_CTRL_CMD_RESET_CHANNEL_PARAMS_MESSAGE_ID)" */
+
+typedef struct NV906F_CTRL_CMD_RESET_CHANNEL_PARAMS {
+    NvU32  engineID;
+    NvU32  subdeviceInstance;
+    NvU32  resetReason;
+    NvBool bIsRcPending;
+} NV906F_CTRL_CMD_RESET_CHANNEL_PARAMS;

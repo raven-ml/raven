@@ -919,7 +919,7 @@ let gr_info c subdevice =
   Ok
     (List.init n (fun i -> get infos (fst I.data + (i * I.sizeof), snd I.data)))
 
-let why = function Rig_nv.Lacking why | Refused why -> why
+let why = function Rig_nv.Lacking why | Timed_out why | Refused why -> why
 
 (* The frame buffer's fact [index], as the RM states it. *)
 let fb_fact c subdevice index =

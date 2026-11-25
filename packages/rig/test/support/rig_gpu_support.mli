@@ -240,11 +240,11 @@ module type S = sig
   val stop_driver : gpu -> unit
   (** [stop_driver g] stops [g], which {!driver} or {!handed} opened. *)
 
-  val handed : string -> t
-  (** [handed name] is the GPU opened in rig under [name], as {!open_} opens
-      it, for a test of the driver's own stop: the test stops its handle with
-      {!stop_driver}, and the device stays open in rig until the process ends,
-      as no driver stops twice. *)
+  val handed : ?make:(word:nativeint -> (gpu, string) result) -> string -> t
+  (** [handed ~make name] is the GPU opened in rig under [name] by [make]
+      (defaults to the open of {!open_}), for a test of the driver's own stop:
+      the test stops its handle with {!stop_driver}, and the device stays open
+      in rig until the process ends, as no driver stops twice. *)
 
   val with_driver : (gpu -> 'a) -> 'a
   (** [with_driver f] is [f g], [g] {!driver}[ ()], stopped after [f] returns or

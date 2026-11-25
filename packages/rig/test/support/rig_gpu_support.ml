@@ -291,7 +291,7 @@ module type S = sig
   val with_ : (t -> 'a) -> 'a
   val driver : unit -> gpu
   val stop_driver : gpu -> unit
-  val handed : string -> t
+  val handed : ?make:(word:nativeint -> (gpu, string) result) -> string -> t
   val with_driver : (gpu -> 'a) -> 'a
   val with_shared : (t -> 'a) -> 'a
   val with_shared_driver : (gpu -> 'a) -> 'a
@@ -393,7 +393,7 @@ module Make (G : Gpu) = struct
     (match !opened with Alone a when a == g -> opened := Nothing | _ -> ());
     G.D.stop g ~fault:None
 
-  let handed name =
+  let handed ?(make = G.open_) name =
     prepare_open ();
     let raw = ref None in
     let make ~word =
@@ -401,7 +401,7 @@ module Make (G : Gpu) = struct
         (fun g ->
           raw := Some g;
           g)
-        (G.open_ ~word)
+        (make ~word)
     in
     match Rig.open_ { name; driver = (module G.D); make } with
     | Ok d ->

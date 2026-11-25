@@ -174,7 +174,7 @@ end
 type params =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-type refusal = Lacking of string | Refused of string
+type refusal = Lacking of string | Timed_out of string | Refused of string
 
 type rm = {
   release : int;
@@ -186,6 +186,9 @@ type rm = {
   boost : int -> (unit, refusal) result;
   sm_errors : int -> params -> (unit, refusal) result;
   mmu_faults : int -> params -> (unit, refusal) result;
+  preempt : int -> params -> (unit, refusal) result;
+  disable : int -> params -> (unit, refusal) result;
+  reset : (int -> (unit, refusal) result) option;
   free : (parent:int -> int -> (unit, refusal) result) option;
 }
 
@@ -449,6 +452,7 @@ external install_kernels : int -> nativeint -> nativeint -> int -> string -> uni
 [@@noalloc]
 
 external raise_word : int -> unit = "caml_rig_nv_raise" [@@noalloc]
+external ended : int -> bool = "caml_rig_nv_ended" [@@noalloc]
 external end_state : int -> bool -> unit = "caml_rig_nv_end" [@@noalloc]
 
 (* RM parameters *)
@@ -803,7 +807,7 @@ let rec retire_rings d l =
 
 (* Retired channels *)
 
-let why = function Lacking why | Refused why -> why
+let why = function Lacking why | Timed_out why | Refused why -> why
 
 (* Whether the RM freed its object [h] under [parent]: [false] if it refused,
    or frees no object. The path's [Fault] passes on. *)
@@ -1912,28 +1916,116 @@ let sleep (T d) ~seen ~still_ms =
 
 (* Loss *)
 
-(* Whether the path unregistered every channel of [l] and the RM freed every
-   set. The first set the RM does not free ends the frees: a GPU that cannot
-   free one frees none of the others either. A [Fault] counts as a refusal:
-   the path's stop, which follows, decides what stays. *)
-let end_channels l =
+(* The longest a stop waits for a channel group to leave the GPU's engines. A
+   group leaves the compute engine only once its kernel ends: rig sets no
+   preemption mode, and its contexts' compute preemption waits for idle
+   ([NV2080_CTRL_CMD_GR_GET_CTXSW_MODES] reads [COMPUTE_WFI] with driver
+   615.71.09). So a group whose channels wait, or whose kernel ends within the
+   wait, leaves; one still on the engine then holds it with a kernel that runs
+   on. *)
+let preempt_us = 1000
+
+(* Keeps the channels of [s] from being scheduled again, leaving those the GPU
+   runs to run on, or, [on], lets them be scheduled again: [params] zeroes
+   [bDisable]. The RM gives a group back to the runlist after its preempt, so
+   otherwise a group whose kernel ended within the preempt's wait runs its next
+   kernel, and the channels' unregistration waits for that kernel to end, up to
+   the RM's timeout. A refused or faulted command leaves that wait. *)
+let scheduling l s ~on =
+  let module P = D.Disable_channels in
+  let p = params P.sizeof in
+  if not on then set p P.b_disable D.nv2080_ctrl_fifo_disable_channel_true;
+  set p P.num_channels (Array.length s.handles);
+  set p P.b_only_disable_scheduling
+    D.nv2080_ctrl_fifo_only_disable_scheduling_true;
+  Array.iteri
+    (fun i ch ->
+      set p (elt P.h_client_list i) l.path.rm.client;
+      set p (elt P.h_channel_list i) ch)
+    s.handles;
+  try ignore (l.path.rm.disable l.path.subdevice p : (unit, refusal) result)
+  with Fault _ -> ()
+
+(* Whether the channel group of [s] holds the compute engine: its preempt timed
+   out. A preempt the RM refuses otherwise, or that faults, says nothing of the
+   engine, and counts as no. *)
+let holds l s =
+  let module P = D.Group_preempt in
+  let p = params P.sizeof in
+  set p P.b_wait 1;
+  set p P.b_manual_timeout 1;
+  set p P.timeout_us preempt_us;
+  match l.path.rm.preempt s.group p with
+  | Error (Timed_out _) -> true
+  | Ok () | Error (Lacking _ | Refused _) -> false
+  | exception Fault _ -> false
+
+(* Ends the kernels of [l]'s channel groups that hold the compute engine, where
+   the path resets channels. The channels' unregistration and frees otherwise
+   wait for such a kernel up to the RM's timeout, after which the RM ends it:
+   UVM's unregistration stops a channel once it idles
+   ([NVA06F_CTRL_CMD_STOP_CHANNEL]), and the RM cannot preempt the kernel before
+   it ends. With driver 615.71.09 on an RTX 5000 Ada that wait took 4.0 s. Each
+   group is first kept off the runlist ([scheduling]) and added to [off], so
+   that one the preempt takes off the engine stays off. A group whose preempt
+   timed out holds the engine, so its reset ends that group's kernel alone,
+   unless the group leaves the engine between the preempt's timeout and the
+   reset. A refused reset leaves the wait. *)
+let reset_held l off =
+  match l.path.rm.reset with
+  | None -> ()
+  | Some reset ->
+      let reset_set s =
+        off := s :: !off;
+        scheduling l s ~on:false;
+        if holds l s then
+          try ignore (reset s.handles.(0) : (unit, refusal) result)
+          with Fault _ -> ()
+      in
+      List.iter reset_set l.sets
+
+(* Ends the kernels of [d]'s channel groups that hold the compute engine if its
+   work runs ([reset_held]), then answers whether the path unregistered every
+   channel of [l] and the RM freed every set. The first set the RM does not free
+   ends the frees: a GPU that cannot free one frees none of the others either. A
+   [Fault] counts as a refusal: the path's stop, which follows, decides what
+   stays. Each set kept off the runlist that the RM did not free is scheduled
+   again, and if the end raises, every set kept off, the RM refusing those it
+   freed: the channels the RM did not stop then finish their work and release
+   its values. *)
+let end_channels d l =
+  let off = ref [] in
   let ok f = try f () with Fault _ -> false in
   let unregister ch = ok (fun () -> unregistered l.path ch) in
-  let unregistered =
-    List.for_all Fun.id
-      (List.concat_map
-         (fun s -> Array.to_list (Array.map unregister s.handles))
-         l.sets)
-  in
   let device = l.path.device in
-  let freed =
-    List.for_all
-      (fun s ->
-        ok (fun () -> freed l.path ~parent:device s.debugger)
-        && ok (fun () -> freed l.path ~parent:device s.group))
-      l.sets
+  let free_set s =
+    ok (fun () -> freed l.path ~parent:device s.debugger)
+    && ok (fun () -> freed l.path ~parent:device s.group)
   in
-  unregistered && freed
+  let rec unfreed = function
+    | [] -> []
+    | s :: rest as sets -> if free_set s then unfreed rest else sets
+  in
+  let ends () =
+    if not (ended d.self) then reset_held l off;
+    let unregistered =
+      List.for_all Fun.id
+        (List.concat_map
+           (fun s -> Array.to_list (Array.map unregister s.handles))
+           l.sets)
+    in
+    (unregistered, unfreed l.sets)
+  in
+  let reschedule sets =
+    List.iter (fun s -> if List.memq s sets then scheduling l s ~on:true) !off
+  in
+  match ends () with
+  | unregistered, kept ->
+      reschedule kept;
+      unregistered && List.is_empty kept
+  | exception e ->
+      reschedule l.sets;
+      raise e
 
 (* Gives back the memory [l]'s work used, all of it whatever a free raises. *)
 let give_owned l =
@@ -1957,7 +2049,7 @@ exception Unraised
 let halt d l =
   let first = ref Unraised in
   let ended =
-    match end_channels l with
+    match end_channels d l with
     | ended -> ended
     | exception e ->
         first := e;
@@ -1972,11 +2064,13 @@ let halt d l =
         `Unknown
   in
   let stopped = ended || path = `Stopped in
-  (* The RM stopped both channels on a fault: nothing runs, though their
-     objects stay. Otherwise their own releases bring the word up as their work
-     ends. A word raised here could be lowered by a late release: a channel the
-     RM did not stop would find its waits on the word met and release its own
-     values. *)
+  (* The RM stopped both channels, on a fault or a reset: nothing runs, though
+     their objects stay. Otherwise the word rises with the channels' own
+     releases as their work ends, which a channel the RM stopped alone never
+     makes: after a reset that stopped only the compute channel, the word stays
+     below the last value. A word raised here could be lowered by a late
+     release: a channel the RM did not stop would find its waits on the word met
+     and release its own values. *)
   if stopped || (notification d.self 0 <> 0 && notification d.self 1 <> 0) then
     raise_word d.self;
   end_state d.self stopped;

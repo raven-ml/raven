@@ -24,6 +24,8 @@
    Copyright (c) 2006-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2006-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2006-2026 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2007-2023 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2007-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2008-2015 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2009-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2013 NVidia Corporation
@@ -40,6 +42,8 @@
    Copyright (c) 2020-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2021-2021 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES
 
    Permission is hereby granted, free of charge, to any person obtaining a
@@ -137,7 +141,12 @@ let nv2080_ctrl_perf_gpumon_sample_count_perfmon_util = 0x48
 let nv2080_ctrl_cmd_timer_get_time = 0x20800403
 let nvc36f_ctrl_cmd_gpfifo_get_work_submit_token = 0xc36f0108
 let nva06c_ctrl_cmd_gpfifo_schedule = 0xa06c0101
+let nva06c_ctrl_cmd_preempt = 0xa06c0105
+let nv2080_ctrl_cmd_fifo_disable_channels = 0x2080110b
 let nv0090_ctrl_cmd_program_vidmem_promote = 0x900107
+let nv906f_ctrl_cmd_reset_channel = 0x906f0102
+let nv906f_ctrl_cmd_reset_channel_reason_default = 0
+let nv2080_engine_type_graphics = 1
 let nv2080_ctrl_cmd_perf_boost = 0x2080200a
 let nv83de_ctrl_cmd_debug_read_all_sm_error_states = 0x83de030c
 let nv83de_ctrl_cmd_debug_read_mmu_fault_info = 0x83de0328
@@ -170,6 +179,7 @@ let nv_err_insufficient_resources = 0x1a
 let nv_err_invalid_address = 0x1e
 let nv_err_invalid_argument = 0x1f
 let nv_err_not_supported = 0x56
+let nv_err_timeout = 0x65
 
 (* Bit fields of their words: (lowest bit, bits). *)
 let nvos02_flags_physicality = (4, 4)
@@ -476,6 +486,12 @@ module Timer_time = struct
   let time_nsec = (0, 8)
 end
 
+module Reset_channel = struct
+  let sizeof = 16
+  let engine_id = (0, 4)
+  let reset_reason = (8, 4)
+end
+
 (* What differs between the releases. *)
 module type RELEASE = sig
   module Fb_get_info : sig
@@ -506,6 +522,9 @@ module type RELEASE = sig
     val h_channel : int * int
     val rm_status : int * int
   end
+
+  (* ctrl906f.h's reset reasons, by value. *)
+  val reset_reasons : (int * string) list
 
   (* nvstatuscodes.h's statuses: (value, name). *)
   val statuses : (int * string) list
@@ -540,6 +559,12 @@ module R570 : RELEASE = struct
     let h_channel = (0x14, 4)
     let rm_status = (0x18, 4)
   end
+
+  let reset_reasons = [
+    (0, "DEFAULT");
+    (1, "VERIF");
+    (2, "MMU_FLT");
+  ]
 
   let statuses = [
     (0, "NV_OK");
@@ -717,6 +742,12 @@ module R580 : RELEASE = struct
     let h_channel = (0x14, 4)
     let rm_status = (0x18, 4)
   end
+
+  let reset_reasons = [
+    (0, "DEFAULT");
+    (1, "VERIF");
+    (2, "MMU_FLT");
+  ]
 
   let statuses = [
     (0, "NV_OK");
@@ -901,6 +932,13 @@ module R610 : RELEASE = struct
     let h_channel = (4, 4)
     let rm_status = (8, 4)
   end
+
+  let reset_reasons = [
+    (0, "DEFAULT");
+    (1, "VERIF");
+    (2, "MMU_FLT");
+    (3, "KILL_PROCESS");
+  ]
 
   let statuses = [
     (0, "NV_OK");
@@ -1088,6 +1126,13 @@ module R615 : RELEASE = struct
     let h_channel = (4, 4)
     let rm_status = (8, 4)
   end
+
+  let reset_reasons = [
+    (0, "DEFAULT");
+    (1, "VERIF");
+    (2, "MMU_FLT");
+    (3, "KILL_PROCESS");
+  ]
 
   let statuses = [
     (0, "NV_OK");

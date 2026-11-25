@@ -78,7 +78,7 @@ let iowr ~type_ nr size =
 let control_request =
   iowr ~type_:D.nv_ioctl_magic D.nv_esc_rm_control D.Nvos54.sizeof
 
-let why = function Rig_nv.Lacking why | Refused why -> why
+let why = function Rig_nv.Lacking why | Timed_out why | Refused why -> why
 
 (* An escape ioctl of the driver's magic, with the parameters [p]: its
    failure as the driver's refusal, [Lacking] where the kernel lacked the
@@ -182,7 +182,17 @@ let answer c what x = function
       let why = strf "%s: %s" what (status_name c.layouts s) in
       if s = D.nv_err_no_memory || s = D.nv_err_insufficient_resources then
         Error (Rig_nv.Lacking why)
+      else if s = D.nv_err_timeout then Error (Timed_out why)
       else Error (Refused why)
+
+(* The reason of a channel's reset: KILL_PROCESS from release 610, for which the
+   RM logs no error, and DEFAULT before it, for which it logs Xid 43
+   (ROBUST_CHANNEL_RESETCHANNEL_VERIF_ERROR). *)
+let reset_reason (module R : D.RELEASE) =
+  Option.value ~default:D.nv906f_ctrl_cmd_reset_channel_reason_default
+    (List.find_map
+       (fun (v, name) -> if name = "KILL_PROCESS" then Some v else None)
+       R.reset_reasons)
 
 (* The driver's RM: each of its commands is the RM's control of that name,
    which the kernel driver runs as it is. *)
@@ -216,6 +226,15 @@ let rm c =
     set p B.duration D.nv2080_ctrl_perf_boost_duration_infinite;
     control D.nv2080_ctrl_cmd_perf_boost subdevice p
   in
+  let reset =
+    let module P = D.Reset_channel in
+    let reason = reset_reason c.layouts in
+    fun ch ->
+      let p = params P.sizeof in
+      set p P.engine_id D.nv2080_engine_type_graphics;
+      set p P.reset_reason reason;
+      control D.nv906f_ctrl_cmd_reset_channel ch p
+  in
   let free ~parent obj =
     answer c "freeing a GPU object" () (free_raw c ~parent obj)
   in
@@ -229,6 +248,9 @@ let rm c =
     boost;
     sm_errors = control D.nv83de_ctrl_cmd_debug_read_all_sm_error_states;
     mmu_faults = control D.nv83de_ctrl_cmd_debug_read_mmu_fault_info;
+    preempt = control D.nva06c_ctrl_cmd_preempt;
+    disable = control D.nv2080_ctrl_cmd_fifo_disable_channels;
+    reset = Some reset;
     free = Some free;
   }
 

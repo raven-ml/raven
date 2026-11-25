@@ -206,6 +206,7 @@ NV = Defs(
         "cl2080_notification.h": SDK + "class/cl2080_notification.h",
         "ctrla06c.h": SDK + "ctrl/ctrla06c.h",
         "ctrl0090.h": SDK + "ctrl/ctrl0090.h",
+        "ctrl2080fifo.h": SDK + "ctrl/ctrl2080/ctrl2080fifo.h",
         "ctrla06fgpfifo.h": SDK + "ctrl/ctrla06f/ctrla06fgpfifo.h",
         "ctrl83dedebug.h": SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
         "dev_fault.h": UVM + "hwref/ampere/ga100/dev_fault.h",
@@ -219,6 +220,8 @@ NV = Defs(
         "NV_CHANNELGPFIFO_NOTIFICATION_TYPE_ERROR", "NV_CHANNELGPFIFO_NOTIFICATION_TYPE__SIZE_1",
         # a channel group's fetches from video memory
         "NV0090_CTRL_PROGRAM_VIDMEM_PROMOTE_SIZE_128B",
+        # the channels whose scheduling a stop disables
+        "NV2080_CTRL_FIFO_DISABLE_CHANNEL_TRUE", "NV2080_CTRL_FIFO_ONLY_DISABLE_SCHEDULING_TRUE",
     ],
     fields=[
         "NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT",
@@ -239,6 +242,9 @@ NV = Defs(
             "hObjectError", "hObjectBuffer", "gpFifoOffset", "gpFifoEntries", "hContextShare", "hUserdMemory",
             "userdOffset"]),
         "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS": ("Group_schedule", ["bEnable"]),
+        "NVA06C_CTRL_PREEMPT_PARAMS": ("Group_preempt", ["bWait", "bManualTimeout", "timeoutUs"]),
+        "NV2080_CTRL_FIFO_DISABLE_CHANNELS_PARAMS": ("Disable_channels", [
+            "bDisable", "numChannels", "bOnlyDisableScheduling", "hClientList", "hChannelList"]),
         "NV0090_CTRL_PROGRAM_VIDMEM_PROMOTE_PARAMS": ("Vidmem_promote", ["l1__size", "t1__size"]),
     },
     per_release={"NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS", "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS",
@@ -262,6 +268,7 @@ NVIDIA = Defs(
         "nvos.h": SDK + "nvos.h",
         "cl0080.h": SDK + "class/cl0080.h",
         "cl2080.h": SDK + "class/cl2080.h",
+        "cl2080_notification.h": SDK + "class/cl2080_notification.h",
         "ctrlxxxx.h": SDK + "ctrl/ctrlxxxx.h",
         "ctrl0000system.h": SDK + "ctrl/ctrl0000/ctrl0000system.h",
         "ctrl0000gpu.h": SDK + "ctrl/ctrl0000/ctrl0000gpu.h",
@@ -270,6 +277,7 @@ NVIDIA = Defs(
         "ctrl0080gr.h": SDK + "ctrl/ctrl0080/ctrl0080gr.h",
         "ctrl2080gr.h": SDK + "ctrl/ctrl2080/ctrl2080gr.h",
         "ctrl2080fb.h": SDK + "ctrl/ctrl2080/ctrl2080fb.h",
+        "ctrl2080fifo.h": SDK + "ctrl/ctrl2080/ctrl2080fifo.h",
         "ctrla06c.h": SDK + "ctrl/ctrla06c.h",
         "ctrl0090.h": SDK + "ctrl/ctrl0090.h",
         "ctrlc36f.h": SDK + "ctrl/ctrlc36f.h",
@@ -277,6 +285,7 @@ NVIDIA = Defs(
         "ctrl2080gpumon.h": SDK + "ctrl/ctrl2080/ctrl2080gpumon.h",
         "ctrl2080tmr.h": SDK + "ctrl/ctrl2080/ctrl2080tmr.h",
         "ctrl83dedebug.h": SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
+        "ctrl906f.h": SDK + "ctrl/ctrl906f.h",
         "nv-ioctl.h": COMMON + "nv-ioctl.h",
         "nv-ioctl-numbers.h": COMMON + "nv-ioctl-numbers.h",
         "nv_escape.h": UNIX + "nv_escape.h",
@@ -321,8 +330,10 @@ NVIDIA = Defs(
         "NV2080_CTRL_FB_INFO_INDEX_HEAP_FREE", "NV2080_CTRL_FB_INFO_INDEX_L2CACHE_SIZE",
         "NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2", "NV2080_CTRL_GPUMON_SAMPLE_TYPE_PERFMON_UTIL",
         "NV2080_CTRL_PERF_GPUMON_SAMPLE_COUNT_PERFMON_UTIL", "NV2080_CTRL_CMD_TIMER_GET_TIME",
-        "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN", "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE",
-        "NV0090_CTRL_CMD_PROGRAM_VIDMEM_PROMOTE",
+        "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN", "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE", "NVA06C_CTRL_CMD_PREEMPT",
+        "NV2080_CTRL_CMD_FIFO_DISABLE_CHANNELS",
+        "NV0090_CTRL_CMD_PROGRAM_VIDMEM_PROMOTE", "NV906F_CTRL_CMD_RESET_CHANNEL",
+        "NV906F_CTRL_CMD_RESET_CHANNEL_REASON_DEFAULT", "NV2080_ENGINE_TYPE_GRAPHICS",
         "NV2080_CTRL_CMD_PERF_BOOST", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
         "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO", "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX",
         "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH",
@@ -399,11 +410,18 @@ NVIDIA = Defs(
         "UVM_FREE_PARAMS": ("Uvm_free", ["base", "length?", "rmStatus"]),
         "UVM_UNREGISTER_CHANNEL_PARAMS": ("Uvm_unregister_channel", [
             "gpuUuid?", "hClient", "hChannel", "rmStatus"]),
+        "NV906F_CTRL_CMD_RESET_CHANNEL_PARAMS": ("Reset_channel", ["engineID", "resetReason"]),
     },
     per_release={"NV2080_CTRL_FB_GET_INFO_V2_PARAMS", "NV_VASPACE_ALLOCATION_PARAMETERS",
                  "UVM_FREE_PARAMS", "UVM_UNREGISTER_CHANNEL_PARAMS"},
+    # The reasons for a channel's reset leave out their count; release 610
+    # adds KILL_PROCESS.
+    tables=[
+        ("reset_reasons", "ctrl906f.h", r"NV906F_CTRL_CMD_RESET_CHANNEL_REASON_(?!ENUM_MAX$)(\w+)"),
+    ],
+    tables_per_release={"reset_reasons"},
     statuses=["NV_OK", "NV_ERR_NO_MEMORY", "NV_ERR_INSUFFICIENT_RESOURCES", "NV_ERR_INVALID_ADDRESS",
-              "NV_ERR_INVALID_ARGUMENT", "NV_ERR_NOT_SUPPORTED"],
+              "NV_ERR_INVALID_ARGUMENT", "NV_ERR_NOT_SUPPORTED", "NV_ERR_TIMEOUT"],
     # The unified memory driver's mapping types moved to nv_uvm_user_types.h
     # from uvm_types.h.
     since={"nv_uvm_user_types.h": 580},
@@ -654,7 +672,8 @@ PCI_CONSTANTS += [
     "KEPLER_CHANNEL_GROUP_A", "NV2080_CTRL_CMD_INTERNAL_PERF_BOOST_SET_2X",
     "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES",
     "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH", "NV2080_CTRL_PERF_BOOST_DURATION_INFINITE",
-    "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
+    "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE", "NVA06C_CTRL_CMD_PREEMPT", "NV2080_CTRL_CMD_FIFO_DISABLE_CHANNELS",
+    "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
     "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO", "NV0090_CTRL_CMD_PROGRAM_VIDMEM_PROMOTE",
     "NVOS04_FLAGS_CHANNEL_USERD_INDEX_PAGE_FIXED_TRUE", "NV_VIRTUAL_FUNCTION_DOORBELL_RUNLIST_DOORBELL_ENABLE",
 ]

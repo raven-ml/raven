@@ -18,6 +18,7 @@
    Copyright (c) 1993-2026, NVIDIA CORPORATION
    Copyright (c) 2003-2016 NVIDIA Corporation
    Copyright (c) 2006-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2006-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2007-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2007-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2009-2022 NVIDIA CORPORATION & AFFILIATES
@@ -60,6 +61,8 @@ let nv_ctxshare_allocation_flags_subcontext_async = 1
 let nv_channelgpfifo_notification_type_error = 0
 let nv_channelgpfifo_notification_type__size_1 = 3
 let nv0090_ctrl_program_vidmem_promote_size_128b = 2
+let nv2080_ctrl_fifo_disable_channel_true = 1
+let nv2080_ctrl_fifo_only_disable_scheduling_true = 1
 
 (* Bit fields of their words: (lowest bit, bits). *)
 let nv_ctxshare_allocation_flags_subcontext = (0, 2)
@@ -117,6 +120,22 @@ module Notification = struct
   let info32 = (8, 4)
   let info16 = (0xc, 2)
   let status = (0xe, 2)
+end
+
+module Group_preempt = struct
+  let sizeof = 8
+  let b_wait = (0, 1)
+  let b_manual_timeout = (1, 1)
+  let timeout_us = (4, 4)
+end
+
+module Disable_channels = struct
+  let sizeof = 536
+  let b_disable = (0, 1)
+  let num_channels = (4, 4)
+  let b_only_disable_scheduling = (8, 1)
+  let h_client_list = (0x18, 4, 0x40)
+  let h_channel_list = (0x118, 4, 0x40)
 end
 
 module Vidmem_promote = struct

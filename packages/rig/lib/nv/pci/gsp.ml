@@ -475,20 +475,23 @@ let string_of_params (p : Rig_nv.params) =
 let blit_params s (p : Rig_nv.params) =
   String.iteri (fun i c -> Bigarray.Array1.set p i c) s
 
-(* The RM's statuses that say it lacks memory or another resource
-   (nvstatuscodes.h): NV_ERR_NO_MEMORY and NV_ERR_INSUFFICIENT_RESOURCES. *)
+(* The RM's statuses that say it lacks memory or another resource, and that its
+   wait reached its timeout (nvstatuscodes.h): NV_ERR_NO_MEMORY,
+   NV_ERR_INSUFFICIENT_RESOURCES and NV_ERR_TIMEOUT. *)
 let nv_err_no_memory = 0x51
 let nv_err_insufficient_resources = 0x1a
+let nv_err_timeout = 0x65
 
 (* The refusal [why] of a call the RM answered with [status]. *)
 let refusal why status =
   if status = nv_err_no_memory || status = nv_err_insufficient_resources then
     Rig_nv.Lacking why
+  else if status = nv_err_timeout then Timed_out why
   else Refused why
 
 let failed r = Result.map_error (fun why -> Rig_nv.Refused why) r
 let lacking r = Result.map_error (fun why -> Rig_nv.Lacking why) r
-let why = function Rig_nv.Lacking why | Refused why -> why
+let why = function Rig_nv.Lacking why | Timed_out why | Refused why -> why
 
 let control g ~client obj cmd p =
   let body = Option.fold ~none:"" ~some:string_of_params p in
@@ -955,6 +958,17 @@ let client_rm g ~client ~locate =
     (* Its handler sends the command as it is
        (ksmdbgssnCtrlCmdDebugReadMMUFaultInfo_IMPL). *)
     mmu_faults = forward Defs.nv83de_ctrl_cmd_debug_read_mmu_fault_info;
+    (* Its method table marks it ROUTE_TO_PHYSICAL, which sends it to the GSP as
+       it is (rmresControl_Prologue_IMPL). *)
+    preempt = forward Defs.nva06c_ctrl_cmd_preempt;
+    (* Its handler sends the command to the GSP as it is, unless it names a
+       runlist preemption event, which only the kernel may
+       (subdeviceCtrlCmdFifoDisableChannels_IMPL). *)
+    disable = forward Defs.nv2080_ctrl_cmd_fifo_disable_channels;
+    (* NVIDIA's RM fills a reset's [bIsRcPending] from the errors it has read
+       before it sends the reset to the GSP (kchannelCtrlCmdResetChannel_IMPL),
+       which this path does not: a stop waits for the GSP's preemption. *)
+    reset = None;
     free = Some (fun ~parent:_ obj -> free g ~client obj);
   }
 

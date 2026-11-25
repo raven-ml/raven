@@ -55,11 +55,12 @@ let copy_after l k ?(ns = 0) ~dst ~src n =
 
 (* Driver devices the tests stop themselves *)
 
-(* The GPU in rig under a name of its own, for the tests of the driver's own
-   stop: rig hands it work, and the test stops its handle itself. *)
+(* The GPU in rig under a name of its own, opened by [make] (defaults to the
+   suite's open), for the tests of the driver's own stop: rig hands it work, and
+   the test stops its handle itself. *)
 let handed =
   let n = Atomic.make 0 in
-  fun () -> S.handed (strf "NV:own-%d" (Atomic.fetch_and_add n 1))
+  fun ?make () -> S.handed ?make (strf "NV:own-%d" (Atomic.fetch_and_add n 1))
 
 (* GPUs *)
 
@@ -2695,6 +2696,44 @@ let stop_beside_running () =
   S.free_launches l;
   List.iter (N.free t.g) [ w; marked ]
 
+(* While another process's kernel holds the compute engine, a reset of the
+   compute channel of a device waiting on a word ends that channel's work, and
+   none of the kernel's. The reset is the one the stop sends: a group may leave
+   the engine between its preempt and its reset, and the reset then lands on a
+   channel that waits while another process holds the engine. *)
+let reset_beside_running () =
+  beside_kernel @@ fun () ->
+  let compute = ref [] in
+  let wrap (p : _ N.path) =
+    let alloc ~parent cls q =
+      if cls = p.gpu.compute_class then compute := parent :: !compute;
+      p.rm.alloc ~parent cls q
+    in
+    { p with rm = { p.rm with alloc } }
+  in
+  let t = handed ~make:(Rig_nv_nvidia.gpu_with 0 ~wrap).make () in
+  let rm, _, _ = N.rm t.g in
+  let l = S.launches t.g in
+  let w = alloc t.g Pinned 8 in
+  let marked = alloc t.g Pinned 8 in
+  let reset ch =
+    match (require_some ~msg:"the path's reset" rm.reset) ch with
+    | Ok () -> ()
+    | Error (N.Lacking e | Timed_out e | Refused e) ->
+        failf "the reset of channel 0x%x: %s" ch e
+  in
+  Fun.protect
+    ~finally:(fun () -> S.stop_driver t.g)
+    (fun () ->
+      ignore (waiting t l ~w ~marked : int);
+      List.iter reset !compute;
+      H.set64 (host w) 1;
+      still ~msg:"the reset channel's work" int 0
+        (fun () -> H.get64 (host marked))
+        ~ms:200);
+  S.free_launches l;
+  List.iter (N.free t.g) [ w; marked ]
+
 (* While a device's kernel holds the compute engine, another process's kernel is
    queued for it: the stop of the device leaves its word at the last value, and
    ends none of the other kernel's work, which then runs. The device's kernel
@@ -2797,6 +2836,11 @@ let timeline =
         "stop of a waiting device beside another process's running kernel ends \
          none of that kernel's work (sampled)"
         stop_beside_running;
+      test
+        "a reset of a waiting device's channel beside another process's \
+         running kernel ends that channel's work and none of the kernel's \
+         (sampled)"
+        reset_beside_running;
       test
         "stop of a running device ends none of the work of another process's \
          kernel queued for the engine (sampled)"
@@ -3292,6 +3336,66 @@ let handed_unfreed () =
   S.Edge.submit g ~v past_rings;
   reach g v
 
+(* Where the path neither unregisters nor frees a device's channels, the stop
+   keeps them, and their work finishes: once the wait of the work they hold is
+   met, the word reaches the last value (rig_nv.mli). The stop of a device whose
+   work waits keeps its channels off the runlist first, and must schedule the
+   ones it keeps again. The test then ends the channels' registration, frees the
+   objects the device made under the RM's device, then the regions the path
+   still gives, also after an open or a stop that failed. *)
+let stop_kept () =
+  on_kernel ();
+  let channels = ref [] and objects = ref [] and given = ref [] in
+  let path = ref None in
+  let wrap (p : _ N.path) =
+    path := Some p;
+    let alloc ~parent cls q =
+      let r = p.rm.alloc ~parent cls q in
+      (match r with
+      | Ok h when parent = p.device -> objects := h :: !objects
+      | Ok _ | Error _ -> ());
+      r
+    in
+    let rm = { p.rm with alloc; free = None } in
+    let alloc kind n =
+      let m = p.alloc kind n in
+      Option.iter (fun m -> given := m :: !given) m;
+      m
+    in
+    let ours (m : _ N.memory) (m' : _ N.memory) = m.address = m'.address in
+    let free m =
+      given := List.filter (fun m' -> not (ours m m')) !given;
+      p.free m
+    in
+    let unregister ch =
+      channels := ch :: !channels;
+      Error "the test keeps the channel"
+    in
+    { p with rm; alloc; free; unregister }
+  in
+  let release () =
+    Option.iter
+      (fun (p : _ N.path) ->
+        List.iter (fun ch -> ignore (p.unregister ch)) !channels;
+        List.iter
+          (fun h -> ignore (Option.get p.rm.free ~parent:p.device h))
+          !objects;
+        List.iter p.free !given)
+      !path
+  in
+  Fun.protect ~finally:release @@ fun () ->
+  let t = handed ~make:(Rig_nv_nvidia.gpu_with 0 ~wrap).make () in
+  let l = S.launches t.g in
+  let w = alloc t.g Pinned 8 in
+  H.set64 (host w) 0;
+  let v =
+    Rig.Point.value (S.submit t [| S.words (acquire l (address w) 1) |])
+  in
+  held_at t.g (v - 1) ~ms:20;
+  S.stop_driver t.g;
+  H.set64 (host w) 1;
+  held_at ~msg:"the word after the stop" t.g v ~ms:20
+
 (* The scheduling of the channels the RM refuses where it lacks the resources
    ([rm_keeping]'s [lacking]). *)
 let unscheduled = "scheduling the channels: no resources to schedule the group"
@@ -3398,6 +3502,10 @@ let faults =
         replaced_kept;
       test "a trim leaves the channels handed where the RM frees nothing"
         handed_unfreed;
+      test
+        "a stop whose channels the path keeps lets their work finish, and the \
+         word reach the last value"
+        stop_kept;
       test "a failed open names the memory an object the RM kept names"
         make_failed;
       test "a hang loses the device at its bound while the RM answers late"
