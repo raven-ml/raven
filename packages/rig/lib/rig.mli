@@ -127,11 +127,15 @@ val host : t
     the device's queue has passed the waits that read it. These are the
     device's next submit whose queue waits on a later device of a slot it
     waited on, a call that moves its collected memory ({!section-reclaim}),
-    and its stop. A timeline word of a device's own goes back at the first
-    call that moves collected memory after the device has left its slot and
-    no other device maps it. A device lost before it reached every value it
-    was given leaves its slot too, and keeps its record for the rest of the
-    process, which its dropped points raise {!Lost} with.
+    and its stop. A device whose driver declares [maps_host]
+    ({!Rig_edge.type-facts}) reads instead, through one mapping made at its
+    first such wait and kept until it stops, the word of every device whose
+    word is the one rig gave at its open ({!Rig_edge.type-opener}). A
+    timeline word of a device's own goes back at the first call that moves
+    collected memory after the device has left its slot and no other device
+    maps it. A device lost before it reached every value it was given leaves
+    its slot too, and keeps its record for the rest of the process, which its
+    dropped points raise {!Lost} with.
 
     An exception raised inside an open, by the opener's [make] or
     asynchronously ({!section-errors}), is raised again. The name is then
@@ -295,11 +299,11 @@ val alignment : t -> int
 (** [alignment d] is the power of two that the first byte of every non-empty
     buffer {!Buffer.create} makes on [d] starts on, whatever its kind and
     size, as [d]'s driver states it from its allocator
-    ({!Rig_edge.type-facts}): [16] for {!host} and [64] for a
-    {!software} device. {!Buffer.create} starts a host buffer of 128
-    bytes or more on 128 bytes or a page, multiples of this alignment that
-    hold for those sizes only. For a device of another machine, it is that
-    machine's device's. *)
+    ({!Rig_edge.type-facts}): [16] for {!host}, [64] for a {!software}
+    device and [1] for an io device. {!Buffer.create} starts a host buffer
+    of 128 bytes or more on 128 bytes or a page, multiples of this alignment
+    that hold for those sizes only. For a device of another machine, it is
+    that machine's device's. *)
 
 val granules : t -> (int * int) list
 (** [granules d] is the units in which [d]'s driver takes [d]'s own memory,
