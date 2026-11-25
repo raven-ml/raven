@@ -3453,6 +3453,9 @@ let metrics_tests =
           let s = start store in
           Fun.protect ~finally:(fun () -> Session.finish s) @@ fun () ->
           raises_match Exn.invalid_arg (fun () -> Session.set_summary s values));
+      (* The suite's slowest test: each of its 10 programs runs 50 times, and
+         each run starts and finishes a session, which syncs the log and its
+         directory, and copies a file. About 0.5 s on a quiet machine. *)
       stateful ~count:10 ~domains:2
         "writes of one session on two domains read back whole, each once"
         [
