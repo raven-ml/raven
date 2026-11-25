@@ -4,154 +4,146 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Kaun
+module Data = Kaun.Data
 
-(* [arange n cols] is an [n; cols] float32 tensor whose row [i] is [i * cols +
-   0, ..., i * cols + cols - 1]: every element identifies its example, so batch
-   contents are checkable exactly. *)
-let arange n cols =
-  Nx.create Nx.float32 [| n; cols |] (Array.init (n * cols) float_of_int)
+(* [n] examples of 3 features whose elements count up from 0, so every element
+   names its example. *)
+let dataset n =
+  Nx.create Nx.float32 [| n; 3 |] (Array.init (3 * n) float_of_int)
 
-let shapes seq = List.of_seq (Seq.map (fun b -> Array.to_list (Nx.shape b)) seq)
+(* Each example's target, twice its index, at another dtype and width. *)
+let targets n =
+  Nx.create Nx.int32 [| n |] (Array.init n (fun i -> Int32.of_int (2 * i)))
 
-let elements seq =
-  List.concat_map (fun b -> Array.to_list (Nx.to_array b)) (List.of_seq seq)
+(* The sizes of the batches of [n] examples: whole batches, then the remainder
+   unless it is dropped. *)
+let sizes n batch_size drop_last =
+  let whole = List.init (n / batch_size) (fun _ -> batch_size) in
+  let rest = n mod batch_size in
+  if rest = 0 || drop_last = Some true then whole else whole @ [ rest ]
 
-let exact = float_exact
+(* Every [n] in 0..9, [batch_size] in 1..10 and [drop_last] given or not: the
+   domain is checked whole. *)
+let domain = Gen.(triple (int_range 0 9) (int_range 1 10) (option bool))
+let count = 10 * 10 * 3
 
-(* Batch shapes *)
+let batches_law (n, batch_size, drop_last) =
+  let batches = List.of_seq (Data.batches ?drop_last ~batch_size (dataset n)) in
+  let sizes = sizes n batch_size drop_last in
+  let kept = List.fold_left ( + ) 0 sizes in
+  equal ~msg:"shapes"
+    (list (array int))
+    (List.map (fun b -> [| b; 3 |]) sizes)
+    (List.map Nx.shape batches);
+  equal ~msg:"elements" (array float_exact)
+    (Array.init (3 * kept) float_of_int)
+    (Array.concat (List.map Nx.to_array batches))
 
-let test_consecutive_batches () =
-  let data = Data.batches ~batch_size:4 (arange 10 3) in
-  equal (list (list int)) [ [ 4; 3 ]; [ 4; 3 ]; [ 2; 3 ] ] (shapes data);
-  equal (list exact)
-    (List.init 30 float_of_int)
-    (elements data) ~msg:"example order preserved"
-
-let test_drop_last () =
-  let data = Data.batches ~drop_last:true ~batch_size:4 (arange 10 3) in
-  equal (list (list int)) [ [ 4; 3 ]; [ 4; 3 ] ] (shapes data);
-  equal (list exact)
-    (List.init 24 float_of_int)
-    (elements data) ~msg:"remainder examples dropped"
-
-let test_short_batch () =
-  let data = Data.batches ~batch_size:8 (arange 3 1) in
-  equal (list (list int)) [ [ 3; 1 ] ] (shapes data)
-
-let test_short_batch_drop_last () =
-  let data = Data.batches ~drop_last:true ~batch_size:8 (arange 3 1) in
-  is_true ~msg:"no batch survives drop_last" (Seq.is_empty data)
-
-let test_exact_fit () =
-  let data = Data.batches ~batch_size:4 (arange 8 2) in
-  equal (list (list int)) [ [ 4; 2 ]; [ 4; 2 ] ] (shapes data)
-
-let test_empty_dataset () =
-  let empty = Nx.create Nx.float32 [| 0; 2 |] [||] in
-  is_true ~msg:"no batches" (Seq.is_empty (Data.batches ~batch_size:4 empty))
-
-(* Paired datasets *)
-
-let paired n =
-  let x = Nx.create Nx.float32 [| n |] (Array.init n float_of_int) in
-  let y =
-    Nx.create Nx.float64 [| n |] (Array.init n (fun i -> float_of_int (2 * i)))
+let batches2_law (n, batch_size, drop_last) =
+  let batches =
+    List.of_seq (Data.batches2 ?drop_last ~batch_size (dataset n, targets n))
   in
-  (x, y)
+  let sizes = sizes n batch_size drop_last in
+  let kept = List.fold_left ( + ) 0 sizes in
+  equal ~msg:"shapes"
+    (list (pair (array int) (array int)))
+    (List.map (fun b -> ([| b; 3 |], [| b |])) sizes)
+    (List.map (fun (x, y) -> (Nx.shape x, Nx.shape y)) batches);
+  equal ~msg:"inputs" (array float_exact)
+    (Array.init (3 * kept) float_of_int)
+    (Array.concat (List.map (fun (x, _) -> Nx.to_array x) batches));
+  equal ~msg:"targets" (array int32)
+    (Array.init kept (fun i -> Int32.of_int (2 * i)))
+    (Array.concat (List.map (fun (_, y) -> Nx.to_array y) batches))
 
-let test_batches2_shapes () =
-  let x = arange 10 3 in
-  let y = Nx.create Nx.float32 [| 10; 1 |] (Array.init 10 float_of_int) in
-  let data = Data.batches2 ~batch_size:4 (x, y) in
-  equal
-    (list (pair (list int) (list int)))
-    [ ([ 4; 3 ], [ 4; 1 ]); ([ 4; 3 ], [ 4; 1 ]); ([ 2; 3 ], [ 2; 1 ]) ]
-    (List.of_seq
-       (Seq.map
-          (fun (xb, yb) ->
-            (Array.to_list (Nx.shape xb), Array.to_list (Nx.shape yb)))
-          data))
+(* What a profile recorded, by kind: a copy moves bytes, and memory a device
+   allocates shows as the bytes it then has in use. *)
+let recorded f =
+  let (), events = Rig.Profile.take f in
+  List.filter_map
+    (function
+      | Rig.Profile.Copy { bytes; _ } ->
+          Some (Printf.sprintf "copy of %d bytes" bytes)
+      | Rig.Profile.Allocation { allocated; _ } ->
+          Some (Printf.sprintf "allocation, %d bytes in use" allocated)
+      | _ -> None)
+    events
 
-let test_batches2_keeps_pairing () =
-  let data = Data.batches2 ~batch_size:4 (paired 10) in
-  let xs, ys =
-    Seq.fold_left
-      (fun (xs, ys) (xb, yb) ->
-        ( xs @ Array.to_list (Nx.to_array xb),
-          ys @ Array.to_list (Nx.to_array yb) ))
-      ([], []) data
-  in
-  equal (list exact) (List.init 10 float_of_int) xs ~msg:"inputs in order";
-  equal (list exact)
-    (List.map (fun v -> 2. *. v) xs)
-    ys ~msg:"targets track their inputs"
+(* A software device counts the memory its values take, where the host's memory
+   records nothing. *)
+let software = fixture (fun () -> Result.get_ok (Rig.software "kaun-test-data"))
 
-(* Composition with Seq *)
+let views () =
+  let module S = (val Nx.devices [ software () ]) in
+  let x = Nx.place S.on (dataset 10) and y = Nx.place S.on (targets 10) in
+  equal ~msg:"batches" (list string) []
+    (recorded (fun () -> Seq.iter ignore (Data.batches ~batch_size:4 x)));
+  equal ~msg:"batches2" (list string) []
+    (recorded (fun () -> Seq.iter ignore (Data.batches2 ~batch_size:4 (x, y))))
 
-let test_seq_map () =
-  let data =
-    Data.batches ~batch_size:4 (arange 4 1) |> Seq.map (fun b -> Nx.mul_s b 2.)
-  in
-  equal (list exact) [ 0.; 2.; 4.; 6. ] (elements data)
+(* A scope that refuses keyless draws: a draw would raise. *)
+let draws_nothing () =
+  let x = dataset 10 and y = targets 10 in
+  Nx.Rng.refusing "a traversal" (fun () ->
+      equal int 3 (Seq.length (Data.batches ~batch_size:4 x));
+      equal int 3 (Seq.length (Data.batches2 ~batch_size:4 (x, y))))
 
-let test_seq_take () =
-  let data = Data.batches ~batch_size:2 (arange 10 1) |> Seq.take 2 in
-  equal (list exact) [ 0.; 1.; 2.; 3. ] (elements data)
+let scalar () = Nx.scalar Nx.float32 1.
+let refuses (_, f) = raises_match (fun e -> Exn.invalid_arg e) f
 
-let test_seq_fold_left () =
-  let data = Data.batches ~batch_size:4 (arange 10 1) in
-  let steps = Seq.fold_left (fun k _ -> k + 1) 0 data in
-  equal int 3 steps
-
-(* Errors *)
-
-let test_invalid_batch_size () =
-  raises (Invalid_argument "Data.batches: batch_size must be positive, got 0")
-    (fun () -> Data.batches ~batch_size:0 (arange 4 1));
-  raises (Invalid_argument "Data.batches2: batch_size must be positive, got -1")
-    (fun () -> Data.batches2 ~batch_size:(-1) (paired 4))
-
-let test_scalar_input () =
-  let scalar = Nx.create Nx.float32 [||] [| 1. |] in
-  raises (Invalid_argument "Data.batches: input must not be a scalar")
-    (fun () -> Data.batches ~batch_size:1 scalar)
-
-let test_mismatched_examples () =
-  let x = arange 4 1 and y = arange 3 1 in
-  raises (Invalid_argument "Data.batches2: x has 4 examples but y has 3")
-    (fun () -> Data.batches2 ~batch_size:2 (x, y))
-
-let tests =
-  [
-    group "batch shapes"
-      [
-        test "cuts consecutive batches and keeps the remainder"
-          test_consecutive_batches;
-        test "drop_last drops a short final batch" test_drop_last;
-        test "one short batch when batch_size exceeds examples" test_short_batch;
-        test "drop_last yields nothing when batch_size exceeds examples"
-          test_short_batch_drop_last;
-        test "exact fit yields only full batches" test_exact_fit;
-        test "empty dataset yields no batches" test_empty_dataset;
-      ];
-    group "paired datasets"
-      [
-        test "pairs input and target slices" test_batches2_shapes;
-        test "keeps examples paired, in order" test_batches2_keeps_pairing;
-      ];
-    group "composition"
-      [
-        test "Seq.map transforms batches" test_seq_map;
-        test "Seq.take truncates an epoch" test_seq_take;
-        test "Seq.fold_left threads state" test_seq_fold_left;
-      ];
-    group "errors"
-      [
-        test "rejects non-positive batch_size" test_invalid_batch_size;
-        test "rejects scalar input" test_scalar_input;
-        test "rejects mismatched example counts" test_mismatched_examples;
-      ];
-  ]
-
-let () = exit (run "kaun data" tests)
+let () =
+  exit
+    (run "kaun data"
+       [
+         group "batches"
+           [
+             prop ~count
+               "cuts consecutive slices of batch_size in order, the last \
+                smaller unless drop_last"
+               domain batches_law;
+             test "cuts views of x" views;
+             test "draws nothing" draws_nothing;
+             cases "raises on a batch_size that is not positive or a scalar x"
+               ~id:fst
+               [
+                 ( "batch_size 0",
+                   fun () ->
+                     Seq.is_empty (Data.batches ~batch_size:0 (dataset 4)) );
+                 ( "batch_size -1",
+                   fun () ->
+                     Seq.is_empty (Data.batches ~batch_size:(-1) (dataset 4)) );
+                 ( "a scalar x",
+                   fun () ->
+                     Seq.is_empty (Data.batches ~batch_size:1 (scalar ())) );
+               ]
+               refuses;
+           ];
+         group "batches2"
+           [
+             prop ~count "pairs x's slices with y's, as batches cuts them"
+               domain batches2_law;
+             cases
+               "raises on a batch_size that is not positive, a scalar x or y, \
+                or unequal example counts"
+               ~id:fst
+               [
+                 ( "batch_size 0",
+                   fun () ->
+                     Seq.is_empty
+                       (Data.batches2 ~batch_size:0 (dataset 4, targets 4)) );
+                 ( "a scalar x",
+                   fun () ->
+                     Seq.is_empty
+                       (Data.batches2 ~batch_size:1 (scalar (), targets 4)) );
+                 ( "a scalar y",
+                   fun () ->
+                     Seq.is_empty
+                       (Data.batches2 ~batch_size:1 (dataset 4, scalar ())) );
+                 ( "4 inputs and 3 targets",
+                   fun () ->
+                     Seq.is_empty
+                       (Data.batches2 ~batch_size:2 (dataset 4, targets 3)) );
+               ]
+               refuses;
+           ];
+       ])
