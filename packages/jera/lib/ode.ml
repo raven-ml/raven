@@ -879,6 +879,9 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
   let h_start = Nx.minimum (Nx.minimum (Nx.mul_s h0 100.) h1) span_all in
   let usable = Nx.logical_and (Nx.isfinite h_start) (Nx.greater_s h_start 0.) in
   let h_start = cap (Nx.where usable h_start fallback) in
+  (* A step below this has collapsed: eps times the first step, the problem's
+     own scale. *)
+  let collapse = Nx.mul_s h_start (Num.eps dtype) in
   let stacked v =
     Nx.Ptree.map y
       (fun _ x ->
@@ -1011,19 +1014,16 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     (* A step below the time's resolution ends the lane, [Not_finite] when the
        last rejected attempt had a non-finite stage: the steps shrank to stay
        where the field is finite. *)
+    let rejected = Nx.logical_and stepping (Nx.logical_not ok) in
     let unfinite =
-      Nx.where
-        (Nx.logical_and stepping (Nx.logical_not ok))
-        (Nx.logical_not (Nx.isfinite norm))
-        s.unfinite
+      Nx.where rejected (Nx.logical_not (Nx.isfinite norm)) s.unfinite
     in
     (* A lane stops where its step no longer moves the time, or falls below eps
        times its first step, the problem's own scale: near t = 0 the floats'
        spacing is subnormal, and a collapse must end as soon there as elsewhere.
        A step that lands on its interval's end is no collapse. *)
     let collapsed =
-      Nx.logical_and (Nx.logical_not lands)
-        (Nx.less (Nx.abs hh) (Nx.mul_s h_start (Num.eps dtype)))
+      Nx.logical_and (Nx.logical_not lands) (Nx.less (Nx.abs hh) collapse)
     in
     let stalled =
       Nx.logical_and stepping (Nx.logical_or (Nx.equal t_end t) collapsed)
@@ -1049,7 +1049,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
         Nx.where ok (Nx.where lands (Nx.zeros_like sigma_end) sigma_end) s.sigma;
       h = Nx.where stepping h s.h;
       prev = Nx.where taken (Nx.maximum r (Nx.full_like r 1e-4)) s.prev;
-      rejected = Nx.logical_and stepping (Nx.logical_not ok);
+      rejected;
       unfinite;
       ends;
       counts;
