@@ -3542,8 +3542,6 @@ its lock and from samples the dashboard saw arrive.
 
 ### Lz (new)
 
-- lz runs on big-endian machines, such as s390x, where it decodes and
-  encodes the same bytes as on little-endian ones.
 - A Zstandard decoder (`Lz.Zstd.decoder`) sizes the block and literals it
   holds outside the OCaml heap to the frame's Block_Maximum_Size, 128 KiB for
   a 64 KiB frame where it took 256 KiB, and tells the collector of them.
