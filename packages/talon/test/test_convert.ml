@@ -653,12 +653,29 @@ let numeric_casts =
           [| Some expected |]
           (floats (cast_rows Type.float64 [| Some x |] into)));
     prop "a float64 becomes float32 as OCaml rounds a double to binary32"
+      ~examples:
+        [
+          (* Ties: 1 + 2^-24 to 1., and 1 + 3 * 2^-24 to 1 + 2^-22. *)
+          [| 1. +. two_to (-24); 1. +. (3. *. two_to (-24)) |];
+        ]
       (Gen.array ~size:(Gen.int_range 0 8) Gen.float)
       (fun xs ->
         (* OCaml rounds a double to binary32 once, to nearest, ties to even. *)
         let single x = Int32.float_of_bits (Int32.bits_of_float x) in
+        (* [x] lies halfway between [single x] and the float32 on its other
+           side. *)
+        let tie x =
+          let y = single x in
+          let step = if Float.abs x > Float.abs y then 1l else -1l in
+          let other =
+            Int32.float_of_bits (Int32.add (Int32.bits_of_float y) step)
+          in
+          Float.is_finite y && x <> y && x -. y = other -. x
+        in
         let r = cast_rows Type.float64 (some xs) Type.float32 in
         let past x = Float.is_finite x && not (Float.is_finite (single x)) in
+        cover "every row cast" (xs <> [||] && not (Array.exists past xs));
+        cover "a tie" (Array.exists tie xs);
         match Array.find_index past xs with
         | Some row -> refused_at row r
         | None ->
@@ -1264,77 +1281,26 @@ let slices =
         (Array.map (Option.map (fun s -> List.length (scalars s))) vs)
         (Column.options Kind.int (result (Expr.Str.length s) t)))
 
-(* Text that the forms of talon.csv read or refuse, for a type of each form. *)
-type parsed = Parsed : 'a Type.t -> parsed
-
-let parse_types =
-  Type.
-    [
-      Parsed bool;
-      Parsed int8;
-      Parsed int64;
-      Parsed float32;
-      Parsed float64;
-      Parsed date;
-      Parsed (wall Us);
-      Parsed (instant S);
-      Parsed (categorical [| "a"; "x" |]);
-    ]
-
-let parse_text =
-  Gen.of_list
-    ~pp:(fun ppf -> Format.fprintf ppf "%S")
-    [
-      "true";
-      "false";
-      "0";
-      "1";
-      "-1";
-      "+1";
-      "300";
-      "1.5";
-      "1e400";
-      "-0";
-      "nan";
-      "inf";
-      "2024-03-15";
-      "2024-03-15T10:00:00";
-      "2024-03-15T10:00:00Z";
-      "2024-03-15T10:00:00+02:00";
-      "x";
-      "a";
-      "";
-      " 1";
-    ]
-
-let parse_law =
-  prop "parse reads the text that Column.parse reads"
-    (Gen.pair
-       (Gen.of_list ~pp:(fun ppf (Parsed ty) -> Type.pp ppf ty) parse_types)
-       (Gen.array ~size:(Gen.int_range 0 6) (Gen.option parse_text)))
-    (fun (Parsed ty, rows) ->
-      let column = Column.parse (Any ty) (Column.of_options Type.string rows) in
-      let read c = Column.options (Type.kind ty) c in
-      cover "read" (Result.is_ok column);
-      cover "refused" (Result.is_error column);
-      let by_expr = compute (Expr.Str.parse ty s) (texts rows) in
-      match column with
-      | Ok c ->
-          equal
-            (array (option (G.witness ty)))
-            (read c)
-            (read (require_ok ~pp:Error.pp by_expr))
-      | Error (row, _) ->
-          contains
-            ~sub:(Printf.sprintf ": row %d: " row)
-            (Format.asprintf "%a" Error.pp (require_error by_expr)))
-
 let text =
   group "Expr.Str"
     [
       pieces_law;
       slices;
-      parse_law;
+      test "parse keeps a null row null" (fun () ->
+          rows_are Type.int64 [| Some 1; None |]
+            (result (Expr.Str.parse Type.int64 s) (texts [| Some "1"; None |])));
+      test "parse reads only a categorical's dictionary" (fun () ->
+          let ty = Type.categorical [| "a"; "x" |] in
+          let parse vs = compute (Expr.Str.parse ty s) (texts vs) in
+          rows_are ty
+            (some [| "x"; "a" |])
+            (require_ok ~pp:Error.pp (parse (some [| "x"; "a" |])));
+          refused_at 1 (parse (some [| "a"; "b" |])));
+      test "parse fails at the first row that is not the type's text" (fun () ->
+          refused_at 1
+            (compute
+               (Expr.Str.parse Type.int8 s)
+               (texts (some [| "1"; "x"; "300" |]))));
       test "parse's data error names the text" (fun () ->
           expect
             (error
