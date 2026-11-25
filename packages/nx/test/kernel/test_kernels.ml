@@ -1312,10 +1312,11 @@ let offset_source (type v s) c (dt : (v, s) D.t) : (v, s) A.t =
    sum's scan along the first from a carry, each with its sources at byte [src]
    and its destination, scattered-into array and carry at byte [dst], or the
    multiple of the carrier's alignment below it, the two maximums, the sum and
-   the scan into rows [pad] apart, reversed where [rev]: each answer, and each
-   result where the host reads it. The positions are drawn from one before the
-   first axis to one past it, so a gather reads zeros and a scatter drops
-   updates, and several updates share a target. *)
+   the scan into rows [pad] apart, reversed where [rev]: each answer, whether it
+   moves bits or computes them, and each result where the host reads it. The
+   positions are drawn from one before the first axis to one past it, so a
+   gather reads zeros and a scatter drops updates, and several updates share a
+   target. *)
 let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src ~dst
     ~pad ~rev =
   let module K = (val b.kernels) in
@@ -1324,7 +1325,8 @@ let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src ~dst
   let x = placed b src x in
   let into s = blank b dst dt s in
   let view s = blank ~pad ~rev b dst dt s in
-  let ran name f y = (name, f y, y) in
+  let ran name f y = (name, `Moves, f y, y) in
+  let computed name f y = (name, `Computes, f y, y) in
   let p = Reduce_cases.identity c.dt in
   let r = Array.length s - 1 in
   let swapped =
@@ -1358,10 +1360,10 @@ let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src ~dst
         ran "padded load"
           (fun y -> K.map p ~dsts:[| A.Any y |] [| unpadded x |])
           (into s);
-        ran "maximum of two loads"
+        computed "maximum of two loads"
           (fun y -> Support.map2 (module K) (Binary Maximum) ~dst:y x x')
           (view s);
-        ran "a tape of maximums over broadcast loads"
+        computed "a tape of maximums over broadcast loads"
           (fun y ->
             K.map (maximums c.dt) ~dsts:[| A.Any y |]
               [|
@@ -1392,12 +1394,12 @@ let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src ~dst
     in
     maps
     @ [
-        ran "sum"
+        computed "sum"
           (fun y ->
             K.reduce p ~shape:(Iarray.of_array s) ~axes:(Iarray.of_list [ r ])
               [| (Monoid Sum, 0) |] ~dsts:[| A.Any y |] [| Plain x |])
           (view (Array.sub s 0 r));
-        ran "scan from a carry"
+        computed "scan from a carry"
           (fun y ->
             K.scan ~carry:(A.Any carry) p ~axis:0 (Monoid Sum, 0)
               ~dsts:[| A.Any y |] [| Plain x |])
@@ -1409,7 +1411,9 @@ let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src ~dst
    arrays at a buffer's start, through views whose rows lie apart by a multiple
    of 4 elements or not, and broadcast ones; and into destinations whose rows
    lie apart or run reversed (nx_kernel.mli: a loop's destination may be
-   strided), the bits they give into C-contiguous ones. *)
+   strided), the bits they give into C-contiguous ones. A NaN that a kind
+   computes is compared as a class: its bits may change with the layouts and the
+   addresses (nx_cpu.mli). *)
 let law_offsets (b : Support.backend) c =
   let (D.Any dt) = c.dt in
   let complex bytes = D.is D.Complex dt && 8 * bytes = D.bits dt in
@@ -1447,11 +1451,13 @@ let law_offsets (b : Support.backend) c =
   let want = offset_runs b c x ~src:0 ~dst:0 ~pad:0 ~rev:false in
   let got = offset_runs b c x ~src:c.src ~dst:c.dst ~pad:c.pad ~rev:c.rev in
   List.iter2
-    (fun (msg, a, w) (_, a', g) ->
+    (fun (msg, how, a, w) (_, _, a', g) ->
       equal ~msg answer a a';
       if a = A.Done then
         equal ~msg (list string) []
-          (differ (A.copy (host w)) (A.copy (host g))))
+          (differ ~any_nan:(how = `Computes)
+             (A.copy (host w))
+             (A.copy (host g))))
     want got
 
 (* Operands outlive the call *)
