@@ -17,8 +17,13 @@
   test_lock)
  (modules :standard \ test_step)
  (libraries lz lz_support windtrap)
+ ; windtrap selects tests and raises counts by the environment, so a run
+ ; under other settings, as CI's sanitizer step makes, runs the suites again.
  (deps
-  (glob_files golden/*)))
+  (glob_files golden/*)
+  (env_var WINDTRAP_TAG)
+  (env_var WINDTRAP_EXCLUDE_TAG)
+  (env_var WINDTRAP_PROP_COUNT)))
 
 ; test_step alone links threads.posix: it holds a step from another thread of
 ; the domain.
@@ -28,5 +33,10 @@
  (package lz)
  (modules test_step)
  (libraries lz lz_support windtrap threads.posix)
+ ; windtrap selects tests and raises counts by the environment, so a run
+ ; under other settings, as CI's sanitizer step makes, runs the suite again.
  (deps
-  (glob_files golden/*)))
+  (glob_files golden/*)
+  (env_var WINDTRAP_TAG)
+  (env_var WINDTRAP_EXCLUDE_TAG)
+  (env_var WINDTRAP_PROP_COUNT)))

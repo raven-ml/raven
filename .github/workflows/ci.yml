@@ -131,10 +131,13 @@ jobs:
 
       # lz's decoders parse untrusted bytes: their suites run with the C built
       # under AddressSanitizer and UndefinedBehaviorSanitizer, each property
-      # over 1000 inputs. The suites run one at a time: a law on two domains
-      # needs a processor for each domain and the test's, and beside another
-      # suite on a 3-core runner every stop-the-world collection of the
-      # stressed collector waits for a domain the scheduler took off.
+      # over 1000 inputs, but for the laws on two domains, which windtrap tags
+      # parallel and which run 50 programs a case. The last runtest runs every
+      # lz suite at its own counts, those laws among them, as nx's step does.
+      # The suites run one at a time: a law on two domains needs a processor
+      # for each domain and the test's, and beside another suite on a 3-core
+      # runner every stop-the-world collection of the stressed collector waits
+      # for a domain the scheduler took off.
       #
       # The steps under the sanitizers build in their own directory. A
       # library built there links AddressSanitizer's runtime, which a plain
@@ -146,9 +149,9 @@ jobs:
         if: ${{ !cancelled() && runner.os != 'Windows' && matrix.os != 'ubuntu-22.04' }}
         env:
           DUNE_BUILD_DIR: _build_sanitize
-          WINDTRAP_PROP_COUNT: 1000
         run: |
           opam exec -- dune build --profile sanitize @packages/lz/all
+          WINDTRAP_PROP_COUNT=1000 WINDTRAP_EXCLUDE_TAG=parallel bash .github/memcap.sh opam exec -- dune build --profile sanitize -j 1 @packages/lz/runtest
           bash .github/memcap.sh opam exec -- dune build --profile sanitize -j 1 @packages/lz/runtest
 
       # rig's GPU suites skip on runners without the GPU they drive.

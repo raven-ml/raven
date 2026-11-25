@@ -5,8 +5,13 @@
  (package lz)
  (build_if %{lib-available:bytesrw})
  (libraries lz lz_bytesrw lz_support bytesrw windtrap)
+ ; windtrap selects tests and raises counts by the environment, so a run
+ ; under other settings, as CI's sanitizer step makes, runs the suite again.
  (deps
-  (glob_files ../golden/*))
+  (glob_files ../golden/*)
+  (env_var WINDTRAP_TAG)
+  (env_var WINDTRAP_EXCLUDE_TAG)
+  (env_var WINDTRAP_PROP_COUNT))
  (action
   (chdir
    ..
