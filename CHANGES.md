@@ -3914,6 +3914,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_array.transfer` into a destination with no element refuses read-only
+  memory, and raises `Rig.Lost` for a lost device's array, wherever its
+  memory lies, where off the host it returned.
 - `Nx_io.load_npy`, `load_npy_rows` and `load_npz` read an npy header of any
   length its version allows, up to 4 GiB in 2.0 and 3.0, where they refused one
   past 1 MiB. A header length past the file still fails as a short file.

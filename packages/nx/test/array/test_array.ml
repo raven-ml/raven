@@ -1577,7 +1577,16 @@ let test_transfer_refusals () =
     Option.get (A.move (M.Slice [| { start = first; count = 3; step = 1 } |]) b)
   in
   fails "a destination overlapping the source" "shares bytes" (fun () ->
-      A.transfer ~src:(part 0) ~dst:(part 1))
+      A.transfer ~src:(part 0) ~dst:(part 1));
+  (* An empty destination on Read memory raises wherever the memory lies. *)
+  let empty = A.create Rig.host f32 [| 0 |] in
+  let read_only b = A.v f32 (L.contiguous [| 0 |]) b in
+  let paged = S.mapped_read_only (A.create Rig.host f32 [| 4 |]) in
+  fails "an empty Read destination off the host" "read-only" (fun () ->
+      A.transfer ~src:empty ~dst:(read_only (S.read_only 0)));
+  fails "an empty Read destination on the host" "read-only" (fun () ->
+      A.transfer ~src:empty
+        ~dst:(read_only (Option.get (B.borrow Rig.host (A.buffer paged)))))
 
 (* A bitcast is a view on any device: it keeps the buffer and moves no byte. *)
 let memory = lazy (Result.get_ok (Rig.software "nx-test-memory"))

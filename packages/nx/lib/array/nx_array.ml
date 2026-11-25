@@ -716,7 +716,7 @@ let transfer_by fn ~src ~dst =
   if bits < 8 && not (hosted dst.buffer) then
     refused fn Off_host [ Any dst; Any src ];
   if hosted src.buffer && hosted dst.buffer then blit fn ~src ~dst
-  else if Layout.numel dst.layout > 0 then begin
+  else begin
     let packs =
       bits >= 8 && (not (hosted src.buffer)) && Rig.computes (device src)
     in
@@ -743,13 +743,16 @@ let transfer_by fn ~src ~dst =
           spread fn stage dst
         end
     in
-    (* The door refuses a destination that shares a byte with the source
-       unless the two are identical, as the host's blit does, and then the
-       transfer stores each element onto itself. Bytes decide: two that share
-       only a word share memory, and are moved. *)
+    (* The door refuses a destination that shares a byte with the source unless
+       the two are identical, as the host's blit does, and then the transfer
+       stores each element onto itself. Bytes decide: two that share only a word
+       share memory, and are moved. It also refuses a dead or Read destination
+       with no element, which then moves nothing. *)
     let moved () =
-      if not (Buffer.share_byte (span_bytes src) (span_bytes dst)) then
-        move ()
+      if
+        Layout.numel dst.layout > 0
+        && not (Buffer.share_byte (span_bytes src) (span_bytes dst))
+      then move ()
     in
     match door ~written:[| Any dst |] ~read:[| Any src |] moved () with
     | Done -> ()
