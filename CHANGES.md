@@ -6117,6 +6117,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.Str.regex` names the first byte of a pattern that is not valid
+  UTF-8, as it does for every other refusal.
 - `Expr.Str.regex` reads a property name or value without an initial `is`,
   as UAX #44's loose matching says: `\p{IsGreek}` is `\p{Greek}`, and
   `\p{isc}` is `\p{C}`. Such names were refused.

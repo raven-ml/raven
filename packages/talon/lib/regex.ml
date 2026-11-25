@@ -575,9 +575,23 @@ and parse_postfix p atom =
           let greedy = not (eat p '?') in
           Repeat { body = atom; min; max; greedy })
 
+(* [invalid_byte s] is the first byte of [s] that starts no UTF-8 scalar. *)
+let invalid_byte s =
+  let rec go i =
+    if i >= String.length s then None
+    else
+      let d = String.get_utf_8_uchar s i in
+      if Uchar.utf_decode_is_valid d then go (i + Uchar.utf_decode_length d)
+      else Some i
+  in
+  go 0
+
 let parse src =
-  if not (String.is_valid_utf_8 src) then
-    invalid_arg (Printf.sprintf "Expr.Str.regex: %S is not valid UTF-8" src);
+  (match invalid_byte src with
+  | Some at ->
+      invalid_arg
+        (Printf.sprintf "Expr.Str.regex: invalid UTF-8, at byte %d of %S" at src)
+  | None -> ());
   let p =
     {
       src;

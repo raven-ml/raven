@@ -450,10 +450,9 @@ let language =
             let m = require_some raised in
             contains ~sub m;
             contains ~sub:(Printf.sprintf "byte %d" at) m));
-      test "a pattern that is not valid UTF-8 is refused" (fun () ->
-          raises_match
-            (Exn.invalid_arg ~sub:"not valid UTF-8")
-            (fun () -> regex "a\xff"));
+      test "a pattern that is not valid UTF-8 is refused, naming the byte"
+        (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"byte 1") (fun () -> regex "a\xff"));
     ]
 
 (* Empty matches and the rest of the semantics *)
