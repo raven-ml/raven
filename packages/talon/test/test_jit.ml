@@ -15,13 +15,13 @@ let f64 = Nx.float64
 
 (* Frames
 
-   Every case is a table over five arrays of one length:
-   - "a" is the floats [x], null where [valid] is false; "k" is [x], a key that
-     holds NaN, [-0.] and [0.]; "b" is [-x]. The floats are small dyadics and
-     the special values, so a sum is exact in any order.
-   - "i" is the [int32]s [is], their extremes included, "t" the booleans
-     [flags] and "d" the dates of the days [ds], each null where [valid] is
-     false at the row before, the first row reading the last. *)
+   Every case is a table over five arrays of one length: - "a" is the floats
+   [x], null where [valid] is false; "k" is [x], a key that holds NaN, [-0.] and
+   [0.]; "b" is [-x]. The floats are small dyadics and the special values, so a
+   sum is exact in any order. - "i" is the [int32]s [is], their extremes
+   included, "t" the booleans [flags] and "d" the dates of the days [ds], each
+   null where [valid] is false at the row before, the first row reading the
+   last. *)
 
 let floats = [ -0.; 0.; 1.; -1.; 2.5; 3.; Float.nan; infinity; neg_infinity ]
 let ints = [ Int32.min_int; -1l; 0l; 1l; 7l; Int32.max_int ]
@@ -136,19 +136,21 @@ let stack args =
 
 let cover_frame f =
   let n = Array.length f.fx in
+  let held = Array.fold_left (fun k v -> if v then k + 1 else k) 0 f.fvalid in
   cover "no row" (n = 0);
   cover "one row" (n = 1);
   cover "a null" (Array.exists not f.fvalid);
+  cover "two values or more" (held >= 2);
   cover "a NaN" (Array.exists Float.is_nan f.fx);
   cover "an int extreme"
     (Array.exists (fun i -> i = Int32.min_int || i = Int32.max_int) f.fis)
 
 (* Results
 
-   A case's result is a [(rows, 2 * columns)] matrix: for each column its
-   values as float64, [0.] under a null, then [1.] where it is null. Two
-   results agree when they have one shape and each element has the same bits,
-   every NaN being equal. *)
+   A case's result is a [(rows, 2 * columns)] matrix: for each column its values
+   as float64, [0.] under a null, then [1.] where it is null. Two results agree
+   when they have one shape and each element has the same bits, every NaN being
+   equal. *)
 
 let run_ok q =
   match Query.run q with
@@ -179,46 +181,17 @@ let bits m =
   in
   (Nx.shape m, Array.map bits (Nx.to_array m))
 
-let result_t =
-  Testable.make ~pp:Nx.pp ~equal:(fun a b -> bits a = bits b)
+let exactly = Testable.make ~pp:Nx.pp ~equal:(fun a b -> bits a = bits b)
 
-(* [agrees name f] states that [f], compiled and mapped, computes what it
-   computes eagerly. [f] is bound under [jit] once, so each length traces once.
-*)
-let agrees ?(eq = result_t) ?(covers = fun _ -> ()) name f =
-  let compiled = Rune.jit (signature ()) f in
-  let eager fs = Nx.stack ~axis:0 (List.map (fun fr -> f (arrays fr)) fs) in
-  group name
-    [
-      prop "jit" frame (fun fr ->
-          Compiled.here ();
-          cover_frame fr;
-          covers [ fr ];
-          let a = arrays fr in
-          equal eq (f a) (compiled a));
-      prop "vmap" lanes (fun fs ->
-          covers fs;
-          let stacked = stack (List.map arrays fs) in
-          let mapped = Rune.vmap (signature ()) f stacked in
-          equal eq (eager fs) mapped);
-    ]
-
-(* [verb names build] runs [build] over the case's table and reads [names]. *)
-let verb names build a =
-  matrix names (run_ok (build (Query.of_table (table a))))
-
-(* Moments
-
-   Over traced values [var] and [std] take a two-pass form where eager runs
+(* Over traced values [var] and [std] take a two-pass form where eager runs
    fold, so the two agree within rounding, which {!Expr.std} states: both are
-   within Chan, Golub and LeVeque's bounds, of the order of [n u] here, so a
-   relative tolerance of [64 n u] at the [7] rows drawn. *)
-
+   within Chan, Golub and LeVeque's bounds, of the order of [n u], so a relative
+   tolerance of [64 n u], [1e-13] at the 14 rows of two batches of 7. *)
 let within_rounding =
   let near x y =
     (Float.is_nan x && Float.is_nan y)
     || x = y
-    || Float.abs (x -. y) <= 5e-14 *. Float.max (Float.abs x) (Float.abs y)
+    || Float.abs (x -. y) <= 1e-13 *. Float.max (Float.abs x) (Float.abs y)
   in
   let equal a b =
     Nx.shape a = Nx.shape b
@@ -226,9 +199,29 @@ let within_rounding =
   in
   Testable.make ~pp:Nx.pp ~equal
 
-let two_values fs =
-  let held f = Array.fold_left (fun k v -> if v then k + 1 else k) 0 f.fvalid in
-  cover "two values or more" (List.exists (fun f -> held f >= 2) fs)
+(* [agrees within name f] states that [f], compiled and mapped, computes what it
+   computes eagerly, as [within] compares them. [f] is bound under [jit] once,
+   so each length traces once. *)
+let agrees within name f =
+  let compiled = Rune.jit (signature ()) f in
+  let eager fs = Nx.stack ~axis:0 (List.map (fun fr -> f (arrays fr)) fs) in
+  group name
+    [
+      prop "jit" frame (fun fr ->
+          Compiled.here ();
+          cover_frame fr;
+          let a = arrays fr in
+          equal within (f a) (compiled a));
+      prop "vmap" lanes (fun fs ->
+          List.iter cover_frame fs;
+          let stacked = stack (List.map arrays fs) in
+          let mapped = Rune.vmap (signature ()) f stacked in
+          equal within (eager fs) mapped);
+    ]
+
+(* [verb names build] runs [build] over the case's table and reads [names]. *)
+let verb names build a =
+  matrix names (run_ok (build (Query.of_table (table a))))
 
 (* [moments build a] is [var] and [std] over a [float32] and an [int32] column,
    since traced [float64] values raise. *)
@@ -236,8 +229,7 @@ let moments build a =
   let bits = Nx.cast Nx.bit a.valid in
   let column x = Column.of_tensor ~validity:bits x in
   let t =
-    Talon.v
-      [ ("f", column (Nx.cast Nx.float32 a.x)); ("i", column a.is) ]
+    Talon.v [ ("f", column (Nx.cast Nx.float32 a.x)); ("i", column a.is) ]
   in
   let f = Col.float "f" and i = Col.int "i" in
   let q =
@@ -251,6 +243,28 @@ let a = Col.float "a"
 let b = Col.float "b"
 let all = [ "a"; "k"; "b"; "i"; "t"; "d" ]
 
+(* [eager] is a batch of two rows whose arrays hold values. *)
+let eager () =
+  Query.of_table
+    (table
+       (arrays
+          {
+            fx = [| 1.; 2. |];
+            fvalid = [| true; true |];
+            fis = [| 1l; 2l |];
+            fflags = [| true; false |];
+            fds = [| 0l; 1l |];
+          }))
+
+(* [eager_moments] is a batch of two rows of [moments]' columns. *)
+let eager_moments () =
+  Query.of_table
+    (Talon.v
+       [
+         ("f", Column.v Type.float32 [| 1.; 2. |]);
+         ("i", Column.v Type.int32 [| 1; 2 |]);
+       ])
+
 (* [shorter q] is "r", [q]'s "b" past its first row: one row fewer. *)
 let shorter q =
   Query.select Expr.[ "r" := b ] (Query.slice ~offset:1 ~length:max_int q)
@@ -260,31 +274,32 @@ let shorter q =
 let static =
   let open Expr in
   [
-    agrees "select"
+    agrees exactly "select"
       (verb [ "c"; "d" ]
          (Query.select [ "c" := a +. b; "d" := nx { f = Nx.abs } a ]));
-    agrees "derive"
+    agrees exactly "derive"
       (verb [ "c"; "e" ]
          (Query.derive
             [ "c" := if_ (a > float 1.) a b; "e" := coalesce [ a; b ] ]));
-    agrees "record and field"
+    agrees exactly "record and field"
       (verb [ "c" ]
          (Query.select [ "c" := field Kind.float "a" (record [ "a" := a ]) ]));
-    agrees "within"
+    agrees exactly "within"
       (verb [ "a" ]
          (Query.select [ within (record [ "a" := a ]) (keep Sel.all) ]));
-    agrees "sort on floats"
+    agrees exactly "sort on floats"
       (verb all (Query.sort [ Order.asc "a"; Order.desc "b" ]));
-    agrees "sort on ints, booleans and dates"
-      (verb all
-         (Query.sort [ Order.desc "t"; Order.asc "d"; Order.desc "i" ]));
-    agrees "sort nulls first"
+    agrees exactly "sort on ints, booleans and dates"
+      (verb all (Query.sort [ Order.desc "t"; Order.asc "d"; Order.desc "i" ]));
+    agrees exactly "sort nulls first"
       (verb all (Query.sort [ Order.nulls_first (Order.desc "i") ]));
-    agrees "slice" (verb all (Query.slice ~offset:1 ~length:3));
-    agrees "slice from the end" (verb all (Query.slice ~offset:(-2) ~length:3));
-    agrees "append" (verb all (fun q -> Query.append q q));
-    agrees "aggregate"
-      (verb [ "s"; "c"; "m"; "lo"; "hi"; "f"; "l"; "med" ]
+    agrees exactly "slice" (verb all (Query.slice ~offset:1 ~length:3));
+    agrees exactly "slice from the end"
+      (verb all (Query.slice ~offset:(-2) ~length:3));
+    agrees exactly "append" (verb all (fun q -> Query.append q q));
+    agrees exactly "aggregate"
+      (verb
+         [ "s"; "c"; "m"; "lo"; "hi"; "f"; "l"; "med" ]
          (Query.aggregate ~by:[]
             [
               "s" := sum a;
@@ -296,13 +311,11 @@ let static =
               "l" := last a;
               "med" := median a;
             ]));
-    agrees ~eq:within_rounding ~covers:two_values "var and std"
-      (moments Fun.id);
-    agrees ~eq:within_rounding ~covers:two_values "var and std over two batches"
+    agrees within_rounding "var and std" (moments Fun.id);
+    agrees within_rounding "var and std over two batches"
       (moments (fun q -> Query.append q q));
-    agrees "aggregate over two traced batches"
-      (verb [ "s"; "c"; "m"; "lo"; "f" ]
-         (fun q ->
+    agrees exactly "aggregate over two traced batches"
+      (verb [ "s"; "c"; "m"; "lo"; "f" ] (fun q ->
            Query.aggregate ~by:[]
              [
                "s" := sum a;
@@ -312,20 +325,8 @@ let static =
                "f" := first a;
              ]
              (Query.append q q)));
-    agrees "aggregate of an eager batch, then a traced one"
-      (verb [ "s"; "c"; "m"; "lo"; "f" ]
-         (fun q ->
-           let eager =
-             table
-               (arrays
-                  {
-                    fx = [| 1.; 2. |];
-                    fvalid = [| true; true |];
-                    fis = [| 1l; 2l |];
-                    fflags = [| true; false |];
-                    fds = [| 0l; 1l |];
-                  })
-           in
+    agrees exactly "aggregate of an eager batch, then a traced one"
+      (verb [ "s"; "c"; "m"; "lo"; "f" ] (fun q ->
            Query.aggregate ~by:[]
              [
                "s" := sum a;
@@ -334,27 +335,15 @@ let static =
                "lo" := min a;
                "f" := first a;
              ]
-             (Query.append q (Query.of_table eager))));
-    agrees "aggregate of eager batches, then a traced one"
-      (verb [ "s"; "lo"; "f" ]
-         (fun q ->
-           let eager =
-             table
-               (arrays
-                  {
-                    fx = [| 1.; 2. |];
-                    fvalid = [| true; true |];
-                    fis = [| 1l; 2l |];
-                    fflags = [| true; false |];
-                    fds = [| 0l; 1l |];
-                  })
-           in
-           let eager = Query.of_table eager in
-           let rest = Query.append eager eager in
+             (Query.append q (eager ()))));
+    agrees exactly "aggregate of eager batches, then a traced one"
+      (verb [ "s"; "lo"; "f" ] (fun q ->
            Query.aggregate ~by:[]
              [ "s" := sum a; "lo" := min a; "f" := first a ]
-             (Query.append q rest)));
-    agrees "n_unique"
+             (Query.append q (Query.append (eager ()) (eager ())))));
+    agrees within_rounding "var and std of a traced batch after an eager one"
+      (moments (fun q -> Query.append q (eager_moments ())));
+    agrees exactly "n_unique"
       (verb [ "k"; "i"; "t"; "d" ]
          (Query.aggregate ~by:[]
             [
@@ -363,7 +352,7 @@ let static =
               "t" := n_unique (Col.bool "t");
               "d" := n_unique (Col.date "d");
             ]));
-    agrees "frames"
+    agrees exactly "frames"
       (verb [ "c"; "r"; "f" ]
          (Query.derive
             [
@@ -371,22 +360,22 @@ let static =
               "r" := rank (Col.int "i");
               "f" := over ~order:[ Order.desc "d" ] (first a);
             ]));
-    agrees "join by position"
+    agrees exactly "join by position"
       (verb [ "a"; "r" ] (fun q ->
            Query.join ~kind:Left ~on:Join.position (shorter q) q));
-    agrees "join by position, counted"
+    agrees exactly "join by position, counted"
       (verb [ "a"; "r" ] (fun q ->
            Query.join ~each_right:One ~on:Join.position (shorter q) q));
-    agrees "join all"
+    agrees exactly "join all"
       (verb [ "a"; "r" ] (fun q ->
            Query.join ~on:Join.all (Query.select [ "r" := b ] q) q));
-    agrees "head and tail"
+    agrees exactly "head and tail"
       (verb all (fun q -> Query.append (Kit.tail 2 q) (Kit.head 2 q)));
-    agrees "top_k on floats" (verb all (Kit.top_k 2 [ Order.desc "a" ]));
-    agrees "top_k on ints and booleans"
+    agrees exactly "top_k on floats" (verb all (Kit.top_k 2 [ Order.desc "a" ]));
+    agrees exactly "top_k on ints and booleans"
       (verb all (Kit.top_k 3 [ Order.desc "t"; Order.asc "i" ]));
-    agrees "top_k on dates" (verb all (Kit.top_k 2 [ Order.desc "d" ]));
-    agrees "take" (fun a ->
+    agrees exactly "top_k on dates" (verb all (Kit.top_k 2 [ Order.desc "d" ]));
+    agrees exactly "take" (fun a ->
         let n = Nx.dim 0 a.x in
         let last = Nx.full Nx.int64 [| n |] (Int64.of_int (Int.pred n)) in
         let reversed = Nx.sub last (Nx.arange Nx.int64 0 n 1) in
@@ -452,7 +441,8 @@ let dynamic =
            [ ("c", key args); ("a", Column.of_tensor ~validity:valid args.x) ]
        in
        let q =
-         Query.aggregate ~by:[] [ "r" := pivot (Col.string "c") a ]
+         Query.aggregate ~by:[]
+           [ "r" := pivot (Col.string "c") a ]
            (Query.of_table t)
          |> Query.select [ within (Col.v Record.kind "r") (keep Sel.all) ]
        in
@@ -468,46 +458,48 @@ let dynamic =
             Rune.jit (signature ())
               (fun args ->
                 let q =
-                  Query.select [ "l" := list [ Col.float "k"; b ] ]
+                  Query.select
+                    [ "l" := list [ Col.float "k"; b ] ]
                     (Query.of_table (table args))
                 in
                 ignore (run_ok q);
                 Nx.zeros f64 [| 1; 1 |])
               fixed));
-    (let f =
-       verb [ "s" ] (fun q ->
-           Query.aggregate ~by:[] [ "c" := collect a ] q
-           |> Query.derive
-                [
-                  "s"
-                  := per_list
-                       [ "e" := Col.v Kind.(list float) "c" ]
-                       (sum (Col.float "e"));
-                ])
-     in
-     test "collect raises under jit and maps each lane under vmap" (fun () ->
-         raises_match
-           (Exn.invalid_arg ~sub:"the value is traced by Rune.jit")
-           (fun () ->
-             Rune.jit (signature ())
-               (fun x ->
-                 ignore
-                   (run_ok
-                      (Query.aggregate ~by:[] [ "c" := collect a ]
-                         (Query.of_table (table x))));
-                 Nx.zeros f64 [| 1; 1 |])
-               fixed);
-         let lane = Nx.to_array (f fixed) in
-         equal (array float_exact)
-           (Array.append lane lane)
-           (Nx.to_array (Rune.vmap (signature ()) f (stack [ fixed; fixed ])))));
+    test "collect raises under jit" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"the value is traced by Rune.jit")
+          (fun () ->
+            Rune.jit (signature ())
+              (fun x ->
+                ignore
+                  (run_ok
+                     (Query.aggregate ~by:[]
+                        [ "c" := collect a ]
+                        (Query.of_table (table x))));
+                Nx.zeros f64 [| 1; 1 |])
+              fixed));
+    test "collect maps each lane under vmap" (fun () ->
+        let f =
+          verb [ "s" ] (fun q ->
+              Query.aggregate ~by:[] [ "c" := collect a ] q
+              |> Query.derive
+                   [
+                     "s" :=
+                       per_list
+                         [ "e" := Col.v Kind.(list float) "c" ]
+                         (sum (Col.float "e"));
+                   ])
+        in
+        let lane = Nx.to_array (f fixed) in
+        equal (array float_exact) (Array.append lane lane)
+          (Nx.to_array (Rune.vmap (signature ()) f (stack [ fixed; fixed ]))));
     test "unnest raises over traced columns" (fun () ->
         let table offsets x =
           let xs =
             Result.get_ok
               (Column.of_layout
                  (Any (Type.list Type.float64))
-                 (Varsize { validity = None; offsets; child = Column.of_tensor x }))
+                 (Varsize
+                    { validity = None; offsets; child = Column.of_tensor x }))
           in
           let q =
             Query.unnest
@@ -552,8 +544,7 @@ let dynamic =
             Rune.jit (sign ()) (fun o -> table o x) offsets);
         raises_match traced (fun () ->
             Rune.jit (sign ()) (fun x -> table offsets x) x);
-        raises_match
-          (Exn.invalid_arg ~sub:"the value is traced by Rune.vmap")
+        raises_match (Exn.invalid_arg ~sub:"the value is traced by Rune.vmap")
           (fun () ->
             Rune.vmap (sign ())
               (fun o -> table o x)
@@ -589,6 +580,34 @@ let dynamic =
           Windtrap.(array float_exact)
           [| 1.; 6.; 8.; 48. |]
           (Nx.to_array (Nx.flatten got)));
+    test "unnest under vmap of the child computes each lane" (fun () ->
+        let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 3L |] in
+        let f x =
+          let xs =
+            Result.get_ok
+              (Column.of_layout
+                 (Any (Type.list Type.float64))
+                 (Varsize
+                    { validity = None; offsets; child = Column.of_tensor x }))
+          in
+          let q =
+            Query.unnest
+              [ "e" := Col.v Kind.(list float) "xs" ]
+              (Query.of_table (Talon.v [ ("xs", xs) ]))
+          in
+          Talon.to_tensor f64 [ "e" ] (Result.get_ok (Query.run q))
+        in
+        let lane a b c = Nx.create f64 [| 3 |] [| a; b; c |] in
+        let got =
+          Rune.vmap
+            Nx.Ptree.(tensor @-> returns tensor)
+            f
+            (Nx.stack [ lane 1. 2. 4.; lane 8. 16. 32. ])
+        in
+        equal
+          Windtrap.(array float_exact)
+          [| 1.; 2.; 4.; 8.; 16.; 32. |]
+          (Nx.to_array (Nx.flatten got)));
     refuses "an OCaml function"
       (verb [ "c" ]
          (Query.derive [ "c" := store Type.float64 (const Float.abs $ a) ]));
@@ -598,9 +617,46 @@ let dynamic =
         match Query.values (Expr.option a) (Query.of_table (table args)) with
         | Ok _ -> args.x
         | Error _ -> args.x);
+    refuses "Query.equal of tables" (fun args ->
+        let q () = Query.of_table (table args) in
+        if Query.equal (q ()) (q ()) then args.x else Nx.neg args.x);
+    test "var and std of a traced batch after two eager ones raise under vmap"
+      (fun () ->
+        let f =
+          moments (fun q ->
+              Query.append q
+                (Query.append (eager_moments ()) (eager_moments ())))
+        in
+        raises_match (Exn.invalid_arg ~sub:"Query.aggregate: var and std")
+          (fun () -> Rune.vmap (signature ()) f (stack [ fixed; fixed ])));
+    test "var and std of batches a jit computes are eager's, within rounding"
+      (fun () ->
+        (* Under jit the eager batches are computed in the function, so they are
+           traced too, and no batch follows untraced ones. *)
+        Compiled.here ();
+        let f =
+          moments (fun q ->
+              Query.append q
+                (Query.append (eager_moments ()) (eager_moments ())))
+        in
+        equal within_rounding (f fixed) (Rune.jit (signature ()) f fixed));
+    test "run keeps a traced validity, even with no null" (fun () ->
+        Compiled.here ();
+        let kept = ref [] in
+        let f args =
+          let t = run_ok (Query.of_table (table args)) in
+          kept.contents <-
+            (match Column.layout (Talon.column t "a") with
+            | Fixed { validity = Some _; _ } -> "kept"
+            | _ -> "dropped")
+            :: kept.contents;
+          args.x
+        in
+        let held = { fixed with valid = Nx.ones Nx.bool [| 3 |] } in
+        ignore (Rune.jit (signature ()) f held);
+        equal Windtrap.(list string) [ "kept" ] !kept);
     refuses "equal" (fun args ->
-        if Talon.equal (table args) (table args) then args.x
-        else Nx.neg args.x);
+        if Talon.equal (table args) (table args) then args.x else Nx.neg args.x);
     refuses "null_count" (fun args ->
         let c = Talon.column (table args) "a" in
         Nx.add_s args.x (Float.of_int (Column.null_count c)));
@@ -647,10 +703,10 @@ let checks =
 
 (* Derivatives
 
-   Under [grad] the floats keep their elements, so every step runs. The
-   gradient of the sum of "a" squared, [0.] under a null, is [2 x] where "a"
-   holds a value and [0.] under a null, through any step that keeps the rows,
-   and only on the rows a filter keeps. *)
+   Under [grad] the floats keep their elements, so every step runs. The gradient
+   of the sum of "a" squared, [0.] under a null, is [2 x] where "a" holds a
+   value and [0.] under a null, through any step that keeps the rows, and only
+   on the rows a filter keeps. *)
 
 let finite = [ -0.; 0.; 1.; -1.; 2.5; 3. ]
 
@@ -661,13 +717,17 @@ let pp_case ppf (x, valid) =
   Format.pp_print_list row ppf
     (List.combine (Array.to_list x) (Array.to_list valid))
 
+let cover_case (x, valid) =
+  cover "no row" (Array.length x = 0);
+  cover "a null" (Array.exists not valid)
+
 let gradient_case =
   Gen.with_pp pp_case
   @@ Gen.(
-    let* n = of_list lengths in
-    let+ x = array ~size:(constant n) (of_list finite)
-    and+ valid = array ~size:(constant n) bool in
-    (x, valid))
+       let* n = of_list lengths in
+       let+ x = array ~size:(constant n) (of_list finite)
+       and+ valid = array ~size:(constant n) bool in
+       (x, valid))
 
 let squares x valid q =
   let zeros = Nx.zeros Nx.int32 [| Nx.dim 0 x |] in
@@ -695,7 +755,8 @@ let derivatives =
         let g x =
           let t = Query.of_table (Talon.v [ ("a", Column.of_tensor x) ]) in
           let q =
-            Query.aggregate ~by:[] [ Expr.("v" := var (Col.float "a")) ]
+            Query.aggregate ~by:[]
+              [ Expr.("v" := var (Col.float "a")) ]
               (Query.append t t)
           in
           Nx.sum (Talon.to_tensor f64 [ "v" ] (Result.get_ok (Query.run q)))
@@ -703,30 +764,28 @@ let derivatives =
         equal
           (array (float 1e-9))
           expected
-          (Nx.to_array
-             (Rune.grad' g (Nx.create f64 [| 4 |] values))));
+          (Nx.to_array (Rune.grad' g (Nx.create f64 [| 4 |] values))));
     test "var of a table a jit captures" (fun () ->
         Compiled.here ();
-        (* Its columns hold values, but what the function computes from them
-           is traced, in one batch and in two. *)
+        (* Its columns hold values, but what the function computes from them is
+           traced, in one batch and in two. *)
         let x = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 4.; 8. |] in
         let of_array x =
           Query.of_table (Talon.v [ ("a", Column.of_tensor x) ])
         in
         let var_of t =
           Query.aggregate ~by:[] [ Expr.("v" := var (Col.float "a")) ] t
-          |> Query.run |> Result.get_ok |> Talon.to_tensor f64 [ "v" ]
+          |> Query.run |> Result.get_ok
+          |> Talon.to_tensor f64 [ "v" ]
         in
-        let tol = array (float 1e-12) in
         let captured t = Rune.jit' (fun z -> Nx.add z (var_of t)) in
         let zero = Nx.zeros f64 [| 1 |] in
         let t = of_array x in
-        equal ~msg:"one batch" tol (Nx.to_array (var_of t))
-          (Nx.to_array (captured t zero));
+        equal ~msg:"one batch" within_rounding (var_of t) (captured t zero);
         let two = Query.append t t in
-        equal ~msg:"two batches" tol (Nx.to_array (var_of two))
-          (Nx.to_array (captured two zero)));
-    test "var of traced float64 raises under jit" (fun () ->
+        equal ~msg:"two batches" within_rounding (var_of two)
+          (captured two zero));
+    test "var of traced float64 raises under jit and vmap" (fun () ->
         let g x =
           let t = Query.of_table (Talon.v [ ("a", Column.of_tensor x) ]) in
           let q =
@@ -734,9 +793,13 @@ let derivatives =
           in
           Talon.to_tensor f64 [ "v" ] (Result.get_ok (Query.run q))
         in
-        raises_match
-          (Exn.invalid_arg ~sub:"traced by Rune.jit")
-          (fun () -> Rune.jit' g (Nx.create f64 [| 2 |] [| 3.; 5. |])));
+        raises_match (Exn.invalid_arg ~sub:"traced by Rune.jit") (fun () ->
+            Rune.jit' g (Nx.create f64 [| 2 |] [| 3.; 5. |]));
+        raises_match (Exn.invalid_arg ~sub:"traced by Rune.vmap") (fun () ->
+            Rune.vmap
+              Nx.Ptree.(tensor @-> returns tensor)
+              g
+              (Nx.create f64 [| 2; 2 |] [| 3.; 5.; 3.; 5. |])));
     test "var refuses a traced batch after compacted batches" (fun () ->
         let g x =
           let eager () =
@@ -748,20 +811,23 @@ let derivatives =
           in
           let traced = Query.of_table (Talon.v [ ("a", Column.of_tensor x) ]) in
           let q =
-            Query.aggregate ~by:[] [ Expr.("v" := var (Col.float "a")) ]
+            Query.aggregate ~by:[]
+              [ Expr.("v" := var (Col.float "a")) ]
               (Query.append traced (Query.append (eager ()) (eager ())))
           in
           Nx.sum (Talon.to_tensor f64 [ "v" ] (Result.get_ok (Query.run q)))
         in
-        raises_match
-          (Exn.invalid_arg ~sub:"traced batch")
-          (fun () -> Rune.grad' g (Nx.create f64 [| 2 |] [| 3.; 5. |])));
+        raises_match (Exn.invalid_arg ~sub:"traced batch") (fun () ->
+            Rune.grad' g (Nx.create f64 [| 2 |] [| 3.; 5. |])));
     prop "grad through a derive" gradient_case (fun ((x, valid) as c) ->
+        cover_case c;
         equal floats_t (Array.map2 twice x valid) (gradient Fun.id c));
     prop "grad through a sort" gradient_case (fun ((x, valid) as c) ->
+        cover_case c;
         let g = gradient (Query.sort [ Order.desc "b" ]) c in
         equal floats_t (Array.map2 twice x valid) g);
     prop "grad through a filter" gradient_case (fun ((x, valid) as c) ->
+        cover_case c;
         let kept x held = if held && x > 0.5 then 2. *. x else 0. in
         let g = gradient (Query.filter Expr.(a > float 0.5)) c in
         equal floats_t (Array.map2 kept x valid) g);
@@ -793,7 +859,8 @@ let derivatives =
                 (sum (Col.float "x" *. Col.float "x")))
           in
           let q =
-            Query.derive Expr.[ "v" := e ]
+            Query.derive
+              Expr.[ "v" := e ]
               (Query.of_table (Talon.v [ ("xs", xs) ]))
           in
           Nx.sum (Talon.to_tensor f64 [ "v" ] (Result.get_ok (Query.run q)))
@@ -805,8 +872,7 @@ let derivatives =
           (Nx.to_array (Rune.grad' g x)));
     test "grad of a null raises eager's message" (fun () ->
         let f x = Talon.to_tensor f64 [ "a" ] (table { fixed with x }) in
-        raises_match
-          (Exn.invalid_arg ~sub:{|Talon.to_tensor: "a" has a null|})
+        raises_match (Exn.invalid_arg ~sub:{|Talon.to_tensor: "a" has a null|})
           (fun () -> Rune.grad' (fun x -> Nx.sum (f x)) fixed.x));
   ]
 
