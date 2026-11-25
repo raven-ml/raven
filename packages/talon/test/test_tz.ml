@@ -250,7 +250,9 @@ let equality =
           equal zone_w Tz.utc (Tz.fixed 0));
       test "a zone equals another of the same rules, whatever its name"
         (fun () ->
-          equal zone_w (zone "Europe/Paris") (zone "Europe/Paris");
+          (* A second decoding of the file, not [zone]'s memoised one. *)
+          equal zone_w (zone "Europe/Paris")
+            (Error.get_ok (Tz.find (db ()) "Europe/Paris"));
           not_equal zone_w (zone "Europe/Paris") (zone "America/New_York");
           equal zone_w Tz.utc (zone "UTC");
           equal zone_w (Tz.fixed (-18_000)) (zone "Etc/GMT+5"));
