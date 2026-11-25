@@ -1305,7 +1305,8 @@ module Pattern : sig
       on all of its axes there, so ["b i i -> b i"] is the diagonal of each
       matrix. A group in an operand splits that operand's axis, and an extent a
       group leaves unknown comes from an axis the name stands on alone, in any
-      operand, or from [sizes].
+      operand, from [sizes], or from another group whose other extents are
+      known, as the quotient of its axis by them.
       [...] stands for the same leading axes in every layout, kept as batch
       axes; [1] drops a unit axis of an operand or adds one to the result.
 
@@ -2857,7 +2858,9 @@ val contract :
     and [uint4], else [dt]. Integers wrap. The products sum from [+0], in
     an order each kernel library states, never a function of the order a
     pattern lists its names, and [init] is then added to their sum, so
-    that a large [init] costs the products none of their low bits.
+    that a large [init] costs the products none of their low bits. An
+    output of no products is [init]'s element as the accumulator holds it,
+    rounded once, or [+0] without [init]: no addition touches it.
     Barring overflow and underflow, before rounding it is within
     [u|r| + (1 + u) γ(β(K), u) Σ|a||b|] of the exact [r = init + Σ a·b]
     of its [K] products, [√2 γ(β(2K), u)] in place of [γ(β(K), u)] for a
@@ -2996,8 +2999,9 @@ val conv :
     (default none), a negative one cutting; [stride] and [dilation] default
     to ones; and [t = (s + lo + hi - e) / stride + 1], none where the padded
     axis is shorter than [e], the dilated kernel's extent
-    [dilation (k - 1) + 1]. A kernel extent of [0] sums no term: [e] is [0]
-    and each element is [init]'s, or [+0] without [init]. Under [groups]
+    [dilation (k - 1) + 1]. A kernel extent of [0] sums no term, [e] being
+    [0], and so does a group of no input channel: each element is then
+    [init]'s, bit for bit, or [+0] without [init]. Under [groups]
     (default [1]) the channels split into [groups] runs, output channels
     [g · o / groups] to [(g + 1) · o / groups - 1] reading input run [g]
     alone.
@@ -3141,6 +3145,7 @@ val multi_dot : ('v, 's, 'd) t list -> ('v, 's, 'd) t
     the order of fewest multiply-adds, an [m × k] by a [k × p] doing
     [m k p]; of orders doing as many, the one that splits the chain earliest,
     within each part too, so the order is a function of the shapes alone.
+    A count past [max_int] counts as [max_int], so orders past it tie.
     Each product sums in the dtype's carrier, as {!contract} does, and
     leaves its value there, so the result rounds once, within the bound
     {!einsum} states for its tree.
@@ -3176,8 +3181,8 @@ type ('v, 's, 'd) kv =
 
 type 'd pair = { q : 'd int64_t; k : 'd int64_t; len : 'd int64_t; tq : int }
 (** The 0-d coordinates of one query-key pair: the query row, the key column,
-    the row's visible length, its entry of [lengths] within \[[0], [tk]\],
-    and the number of query rows. *)
+    the row's visible length, its entry of [lengths] clamped to
+    \[[0], [tk]\], and the number of query rows. *)
 
 val causal : 'd pair -> 'd bool_t
 (** [causal p] holds where [p.k <= p.q + (p.len - p.tq)]: the last query row
@@ -3297,10 +3302,9 @@ val attention :
 
     It is one operation, {!Prim.Attention}, whose [mask], [score] and [keep] are
     one program of three outputs over a pair. The set's kernel library computes
-    it ({!Nx_kernel.S.val-attention}), reading paged keys and values in place;
-    nx.cpu stores no array of [[lead…; hq; tq; tk]]. An interpretation receives
-    it whole, except over pools cut along their pages, where it receives the
-    {!take} of each pool and the dense call.
+    it ({!Nx_kernel.S.val-attention}), reading paged keys and values in place.
+    An interpretation receives it whole, except over pools cut along their
+    pages, where it receives the {!take} of each pool and the dense call.
 
     Raises [Invalid_argument] if [q]'s dtype is another, [acc] is not float32 or
     float64 or is narrower than [q]'s dtype, [q] has fewer than three axes,
@@ -3573,8 +3577,10 @@ val lstsq :
     defaults to [max m n] times [a]'s machine epsilon. [rank] is the
     number of the others, [-1] for a matrix on which {!svd} fails, whose [x]
     is NaN. [residuals] is the squared norm of each column of
-    [b - matmul a x] in [dt]: [b]'s shape without its rows. [b] is as
-    {!solve_triangular} takes it, with [m] rows.
+    [b - matmul a x] in [dt]. [b] is as {!solve_triangular} takes it, with
+    [m] rows. [x] is [[…; n; r]], or [[…; n]] for a vector [b], and
+    [residuals] [[…; r]] or [[…]], over the broadcast leading axes; [rank]
+    and [s] have [a]'s batch.
 
     Raises [Invalid_argument] if [a] has fewer than two axes, for its dtype,
     if [b] has neither [a]'s rank nor one axis fewer, if [b]'s rows are not
@@ -3631,6 +3637,9 @@ val matrix_norm :
     - [`One] is the greatest sum of a column's magnitudes and [`NegOne] the
       least; [`Inf] and [`NegInf] are the same of its rows.
 
+    An element whose magnitude is NaN makes its norm NaN, as for
+    {!vector_norm}.
+
     Raises [Invalid_argument] if [x] has fewer than two axes, or if [ord]
     takes a greatest or least singular value, column or row of a matrix
     that has none. *)
@@ -3657,10 +3666,8 @@ val cond :
     its greatest singular value over its least, under [`One] and [`Inf] its
     {!matrix_norm} of order [p] times that of its {!inv}. A singular matrix,
     whose least singular value is zero or whose {!inv} is NaN, has an
-    infinite condition number; one singular only to rounding has one near
-    [1 / ε] or above, [ε] the machine epsilon of the precision it is
-    computed at. A matrix that holds NaN or an infinity, or on which
-    {!svdvals} fails, has NaN.
+    infinite condition number. A matrix that holds NaN or an infinity, or on
+    which {!svdvals} fails, has NaN.
 
     Raises [Invalid_argument] if [a] has fewer than two axes or a matrix of
     no element, if [dt] has no infinities, or if [p] is [`One] or [`Inf]
