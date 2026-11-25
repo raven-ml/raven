@@ -4703,6 +4703,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun.Batch_norm.apply` refuses a training batch with no element. Its
+  statistics were NaN, and the running statistics became NaN with no
+  error.
 - `Kaun.Batch_norm.apply` refuses a NaN `momentum` or `eps`, and
   `Kaun.Rope.make`, `llama3` and `yarn` a NaN argument, as they refuse one
   out of range. A NaN momentum made every running statistic NaN without an

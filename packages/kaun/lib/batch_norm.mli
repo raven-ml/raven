@@ -146,6 +146,7 @@ val apply :
     [momentum] defaults to [0.99] (per training step; unused in eval mode) and
     [eps] to [1e-5].
 
-    Raises [Invalid_argument] if [x] has fewer than 2 axes, the last axis's
-    size does not match [p], [momentum] is outside
-    \[[0];[1]\], or [eps] is not positive. *)
+    Raises [Invalid_argument] if [x] has fewer than 2 axes, the last axis's size
+    does not match [p], [momentum] is outside \[[0];[1]\], [eps] is not
+    positive, or [training] is [true] and [x] has no element: a batch of no
+    example has no statistics. *)

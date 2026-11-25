@@ -69,6 +69,8 @@ let apply ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
   pshape.(axis) <- features;
   let broadcast v = Nx.reshape pshape v in
   let axes = List.filter (fun i -> i <> axis) (List.init ndim Fun.id) in
+  if training && Nx.numel x = 0 then
+    invalid_arg "Batch_norm.apply: a training batch has no example";
   let gamma = broadcast p.gamma and beta = Option.map broadcast p.beta in
   if training then
     let y = Nx.standardize ~axes ~eps ~scale:gamma ?shift:beta x in
