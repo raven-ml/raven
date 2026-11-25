@@ -579,11 +579,23 @@ let tree () =
 let links () =
   let dir = tree () in
   let db = Error.get_ok (Tz.of_dir dir) in
+  (* The reason is the C library's text, which differs between libraries: ELOOP
+     is "Too many levels of symbolic links" on glibc and "Symbolic link loop" on
+     musl. The baseline names the error instead. *)
+  let reasons = [ (Unix.ENOENT, "ENOENT"); (Unix.ELOOP, "ELOOP") ] in
+  let named s =
+    let by s (e, name) =
+      let suffix = ": " ^ Unix.error_message e in
+      if not (String.ends_with ~suffix s) then s
+      else String.sub s 0 (String.length s - String.length suffix) ^ ": " ^ name
+    in
+    List.fold_left by s reasons
+  in
   let masked s =
     let prefix = dir ^ "/" in
     if String.starts_with ~prefix s then
       let n = String.length prefix in
-      "$DIR/" ^ String.sub s n (String.length s - n)
+      "$DIR/" ^ named (String.sub s n (String.length s - n))
     else s
   in
   List.iter
@@ -604,8 +616,8 @@ let links () =
     Ok
     Ok
     Ok
-    $DIR/Dangling: No such file or directory
-    $DIR/A: Too many levels of symbolic links
+    $DIR/Dangling: ENOENT
+    $DIR/A: ELOOP
     $DIR/Real/notes: bytes 0-43: the file ends after 10 bytes, inside a header
     |}
 
