@@ -1416,20 +1416,37 @@ value rig_test_bump(value unit) {
   return caml_copy_nativeint((intnat)&bump);
 }
 
+/* The nanoseconds a wait outside OCaml, where the test's limit cannot reach
+   it, holds before it gives up: half that limit, WINDTRAP_TIMEOUT seconds,
+   read once. A wait that nothing ends, as when the code under test blocks
+   outside OCaml too, then ends first, and the test fails with what it
+   checks. */
+static uint64_t half_limit_ns(void) {
+  /* windtrap's limit where WINDTRAP_TIMEOUT is unset, in seconds. */
+  const double default_limit_s = 600.;
+  static _Atomic uint64_t cached;
+  uint64_t ns = atomic_load_explicit(&cached, memory_order_relaxed);
+  if (ns == 0) {
+    const char *limit = getenv("WINDTRAP_TIMEOUT");
+    double s = limit == NULL ? 0. : strtod(limit, NULL);
+    ns = (uint64_t)((s > 0. ? s : default_limit_s) * 0.5e9);
+    atomic_store_explicit(&cached, ns, memory_order_relaxed);
+  }
+  return ns;
+}
+
 /* A fill that sets the second of the two 64-bit words at the address its
    argument holds, then returns once the first is not zero, or after
-   [waiting_ticks] ticks of 1 ms. */
-static const int waiting_ticks = 30000;
-
+   [half_limit_ns ()]. */
 static int waiting(void *queue, void *arg, uint64_t v) {
   (void)queue;
   (void)v;
   uint64_t at;
   memcpy(&at, arg, sizeof at);
   _Atomic uint64_t *w = (_Atomic uint64_t *)(uintptr_t)at;
+  uint64_t deadline = rig_now_ns() + half_limit_ns();
   atomic_store(&w[1], 1);
-  for (int left = waiting_ticks; left > 0 && atomic_load(&w[0]) == 0; left--)
-    sleep_ms(1);
+  while (atomic_load(&w[0]) == 0 && rig_now_ns() < deadline) sleep_ms(1);
   return 0;
 }
 
@@ -1473,17 +1490,16 @@ value rig_test_far(value unit) {
 }
 
 /* The parked thread: one that blocks outside OCaml, holding no runtime lock,
-   until it is unparked or [park_ticks] ticks of 10 ms pass. */
-static const int park_ticks = 500;
+   until it is unparked or [half_limit_ns ()] passes. */
 static atomic_int parked, unparked;
 
 value rig_test_park(value unit) {
   (void)unit;
+  uint64_t deadline = rig_now_ns() + half_limit_ns();
   caml_release_runtime_system();
   atomic_store(&unparked, 0);
   atomic_store(&parked, 1);
-  for (int left = park_ticks; left > 0 && !atomic_load(&unparked); left--)
-    sleep_ms(10);
+  while (!atomic_load(&unparked) && rig_now_ns() < deadline) sleep_ms(10);
   atomic_store(&parked, 0);
   caml_acquire_runtime_system();
   return Val_unit;

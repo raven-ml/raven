@@ -889,7 +889,7 @@ let test_io_raise_anywhere () =
 
 (* An open that waits for another open of its name returns to OCaml at least
    every 200 ms, where a pending signal's handler runs. The other opener parks
-   outside OCaml for up to 5 s, and a thread of no OCaml code raises SIGINT
+   outside OCaml until unparked, and a thread of no OCaml code raises SIGINT
    once the open blocks in its condition wait, so only the waiting open can
    take the signal before the other open ends. The handler raises Sys.Break on
    the waiting thread alone. *)
@@ -907,19 +907,20 @@ let test_break_waiting_open () =
       (fun () -> first := Some (Rig.open_ { name; driver = (module P); make }))
       ()
   in
-  Support.await "the first opener" Support.parked;
-  let waiting = Thread.id (Thread.self ()) and taken = ref "nowhere" in
-  let handle _ =
-    if Thread.id (Thread.self ()) = waiting then raise Sys.Break
-    else taken := "on another thread"
-  in
   let calls = ref 0 in
-  let second ~word =
-    incr calls;
-    Ok (P.bind (P.make ()) ~word)
-  in
-  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
   let got, raised =
+    Fun.protect ~finally:Support.unpark @@ fun () ->
+    Support.await "the first opener" Support.parked;
+    let waiting = Thread.id (Thread.self ()) and taken = ref "nowhere" in
+    let handle _ =
+      if Thread.id (Thread.self ()) = waiting then raise Sys.Break
+      else taken := "on another thread"
+    in
+    let second ~word =
+      incr calls;
+      Ok (P.bind (P.make ()) ~word)
+    in
+    let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
     Fun.protect
       ~finally:(fun () -> Sys.set_signal Sys.sigint before)
       (fun () ->
@@ -929,7 +930,6 @@ let test_break_waiting_open () =
             | Error e -> "Error " ^ e
             | exception Sys.Break -> "Sys.Break"))
   in
-  Support.unpark ();
   Thread.join opener;
   equal ~msg:"the open waited" bool true raised;
   equal ~msg:"the waiting open" string "Sys.Break" got;
@@ -957,9 +957,10 @@ let test_break_waiting_close () =
   let opener =
     Thread.create (fun () -> first := Some (gpu "open:break-close-1" make)) ()
   in
-  Support.await "the opener" Support.parked;
-  Sys.catch_break true;
   let got, raised =
+    Fun.protect ~finally:Support.unpark @@ fun () ->
+    Support.await "the opener" Support.parked;
+    Sys.catch_break true;
     Fun.protect
       ~finally:(fun () -> Sys.catch_break false)
       (fun () ->
@@ -968,7 +969,6 @@ let test_break_waiting_close () =
             | () -> "closed"
             | exception Sys.Break -> "Sys.Break"))
   in
-  Support.unpark ();
   Thread.join opener;
   equal ~msg:"the close waited" bool true raised;
   equal ~msg:"the close" string "Sys.Break" got;
@@ -997,17 +997,18 @@ let test_handled_in_open_wait () =
         first := Some (Rig.open_ { name; driver = (module P); make = parked }))
       ()
   in
-  Support.await "the opener" Support.parked;
   let call = ref "no handler ran" in
-  let handle _ =
-    (call :=
-       match Rig.Buffer.create Rig.host 8 with
-       | _ -> "ran"
-       | exception Invalid_argument why -> why);
-    Support.unpark ()
-  in
-  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
   let opened, raised =
+    Fun.protect ~finally:Support.unpark @@ fun () ->
+    Support.await "the opener" Support.parked;
+    let handle _ =
+      (call :=
+         match Rig.Buffer.create Rig.host 8 with
+         | _ -> "ran"
+         | exception Invalid_argument why -> why);
+      Support.unpark ()
+    in
+    let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
     Fun.protect
       ~finally:(fun () -> Sys.set_signal Sys.sigint before)
       (fun () ->
@@ -1049,33 +1050,36 @@ let test_break_second_close () =
       (fun () -> first_open := Some (gpu "open:second-close-1" make))
       ()
   in
-  Support.await "the opener" Support.parked;
-  let first_close = Thread.create (fun () -> Rig.close far) () in
   let closed = Printf.sprintf "%s lost: closed" (Rig.name far) in
-  let probe ~word:_ = Error "probe" in
-  Support.await "the first close" (fun () ->
-      gpu "open:second-close-probe" probe = Error closed);
-  let main = Thread.id (Thread.self ()) in
-  (* The first close's thread returns to OCaml too: a signal it takes is
-     raised again, until the second close's thread takes it. *)
-  let handle _ =
-    if Thread.id (Thread.self ()) = main then raise Sys.Break
-    else Unix.kill (Unix.getpid ()) Sys.sigint
+  let first_close, (got, raised), during =
+    Fun.protect ~finally:Support.unpark @@ fun () ->
+    Support.await "the opener" Support.parked;
+    let first_close = Thread.create (fun () -> Rig.close far) () in
+    let probe ~word:_ = Error "probe" in
+    Support.await "the first close" (fun () ->
+        gpu "open:second-close-probe" probe = Error closed);
+    let main = Thread.id (Thread.self ()) in
+    (* The first close's thread returns to OCaml too: a signal it takes is
+       raised again, until the second close's thread takes it. *)
+    let handle _ =
+      if Thread.id (Thread.self ()) = main then raise Sys.Break
+      else Unix.kill (Unix.getpid ()) Sys.sigint
+    in
+    let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+    let interrupted =
+      Fun.protect
+        ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+        (fun () ->
+          Support.interrupt_in_wait (fun () ->
+              match Rig.close far with
+              | () -> "closed"
+              | exception Sys.Break -> "Sys.Break"))
+    in
+    let during =
+      gpu "open:second-close-2" (fun ~word -> Ok (P.bind (P.make ()) ~word))
+    in
+    (first_close, interrupted, during)
   in
-  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
-  let got, raised =
-    Fun.protect
-      ~finally:(fun () -> Sys.set_signal Sys.sigint before)
-      (fun () ->
-        Support.interrupt_in_wait (fun () ->
-            match Rig.close far with
-            | () -> "closed"
-            | exception Sys.Break -> "Sys.Break"))
-  in
-  let during =
-    gpu "open:second-close-2" (fun ~word -> Ok (P.bind (P.make ()) ~word))
-  in
-  Support.unpark ();
   Thread.join opener;
   Thread.join first_close;
   equal ~msg:"the second close waited" bool true raised;

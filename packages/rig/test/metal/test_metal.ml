@@ -2274,17 +2274,17 @@ let entry_params () =
     (found (S.entry i "small")).params;
   Rig_metal.unload t.g i
 
-(* A resolve whose build has not started, as when Metal blocks a build's
-   start, returns to OCaml at least every 200 ms, where a signal's handler
-   runs: a Ctrl-C's Sys.Break ends it, the device stays, and the next resolve
-   takes the pipeline of the same build. The gate holds the build's start,
-   before Metal sees the function, for as long as the test needs. A watchdog
-   parked outside OCaml opens it once unparked or after 5 s, so a prepare or
-   resolve that blocks returns rather than hangs; the watchdog, still parked
+(* A resolve whose build has not started, as when Metal blocks a build's start,
+   returns to OCaml at least every 200 ms, where a signal's handler runs: a
+   Ctrl-C's Sys.Break ends it, the device stays, and the next resolve takes the
+   pipeline of the same build. The gate holds the build's start, before Metal
+   sees the function, for as long as the test needs. A watchdog parked outside
+   OCaml opens it once unparked or once its park ends at its bound, so a prepare
+   or resolve that blocks returns rather than hangs; the watchdog, still parked
    as the resolve returns, shows that the gate held the start throughout. The
    prepare queues the start before the interrupter watches, so the resolve's
-   only timed wait is the build's. The handler raises Sys.Break on the
-   resolving thread alone. *)
+   only timed wait is the build's. The handler raises Sys.Break on the resolving
+   thread alone. *)
 let break_resolve () =
   if not Rig_support.sees_waits then
     skip ~reason:"the system shows no thread's blocking call" ();

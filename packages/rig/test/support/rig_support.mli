@@ -481,8 +481,9 @@ val bump : nativeint
 
 val waiting : nativeint
 (** [waiting] is a fill that sets the second of the two 64-bit words at the
-    address in its argument, then returns once the first is not zero, or
-    after 30 s: work held running until the test releases it. *)
+    address in its argument, then returns once the first is not zero, or after
+    half the test's limit, as {!park} does: work held running until the test
+    releases it. *)
 
 val poke : nativeint
 (** [poke] is a fill storing the second 64-bit word of its argument at the
@@ -594,7 +595,10 @@ val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 
 val park : unit -> unit
 (** [park ()] blocks the calling thread outside OCaml, holding no runtime lock,
-    until {!unpark} or 5 s. One thread parks at a time. *)
+    until {!unpark}, or for at most half the test's limit of [WINDTRAP_TIMEOUT]
+    seconds (300 s where that is unset): a park that nothing unparks, as when
+    the code under test blocks outside OCaml, ends before the limit. One thread
+    parks at a time. *)
 
 val parked : unit -> bool
 (** [parked ()] is [true] while a thread is in {!park}, outside OCaml. *)

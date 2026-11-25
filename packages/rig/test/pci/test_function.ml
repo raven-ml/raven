@@ -2190,10 +2190,12 @@ let test_interrupted_held () =
   in
   Sys.catch_break true;
   let reached =
-    Fun.protect ~finally:(fun () -> Sys.catch_break false) @@ fun () ->
+    Fun.protect ~finally:(fun () ->
+        Sys.catch_break false;
+        Rig_support.unpark ())
+    @@ fun () ->
     Rig_support.(interrupted ~from:refusal ~landing:(Call hold) 1 pin)
   in
-  Rig_support.unpark ();
   equal ~msg:"the unpin's refusal" bool true (Domain.join holder);
   equal ~msg:"the pin's refusal" bool true reached;
   releases root f
@@ -2213,32 +2215,34 @@ let test_finish_interrupted () =
           Function.unuse f
         end)
   in
-  while not (Rig_support.parked ()) do
-    Domain.cpu_relax ()
-  done;
-  Function.release f;
-  equal ~msg:"taken while the use runs" bool true (taken ());
-  Sys.catch_break true;
-  Rig_support.interrupt_after 0.05;
-  Rig_edge_primitive.mask ();
-  let finished =
-    Fun.protect ~finally:(fun () ->
-        (* A SIGINT the finish did not take lands here. *)
-        (try
-           Rig_edge_primitive.unmask ();
-           Rig_support.interrupt_join ()
-         with Sys.Break -> ());
-        Sys.catch_break false)
-    @@ fun () ->
-    match Function.finish_releases () with
-    | () -> "returned"
-    | exception Sys.Break ->
-        if Rig_support.parked () then "raised while the use ran"
-        else "raised once the use ended"
+  let () =
+    Fun.protect ~finally:Rig_support.unpark @@ fun () ->
+    while not (Rig_support.parked ()) do
+      Domain.cpu_relax ()
+    done;
+    Function.release f;
+    equal ~msg:"taken while the use runs" bool true (taken ());
+    Sys.catch_break true;
+    Rig_support.interrupt_after 0.05;
+    Rig_edge_primitive.mask ();
+    let finished =
+      Fun.protect ~finally:(fun () ->
+          (* A SIGINT the finish did not take lands here. *)
+          (try
+             Rig_edge_primitive.unmask ();
+             Rig_support.interrupt_join ()
+           with Sys.Break -> ());
+          Sys.catch_break false)
+      @@ fun () ->
+      match Function.finish_releases () with
+      | () -> "returned"
+      | exception Sys.Break ->
+          if Rig_support.parked () then "raised while the use ran"
+          else "raised once the use ended"
+    in
+    equal ~msg:"the finish" string "raised while the use ran" finished;
+    equal ~msg:"taken after the finish raised" bool true (taken ())
   in
-  equal ~msg:"the finish" string "raised while the use ran" finished;
-  equal ~msg:"taken after the finish raised" bool true (taken ());
-  Rig_support.unpark ();
   Domain.join user;
   Function.finish_releases ();
   equal ~msg:"taken after the next finish" bool false (taken ())
