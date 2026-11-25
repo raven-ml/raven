@@ -85,6 +85,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Gaussian.pathfinder` and `Gaussian.vi` refuse a start with no float element
+  before they differentiate the density. They raised from `Rune`'s gradient,
+  naming `Rune.value_and_grad_aux`.
 - `Diag.rank` refuses `float4_e2m1fn` draws of more than 4 draws, whose
   counts the dtype cannot hold, as it refuses other float dtypes. It returned
   a rounded rank.

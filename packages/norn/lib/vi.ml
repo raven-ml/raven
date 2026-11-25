@@ -203,10 +203,10 @@ let vi u ?(rank = 0) ?(draws = 1) ~steps lp k start =
   if rank < 0 then invalid_argf "%s: rank = %d is negative" context rank;
   let c = Rows.count context u start in
   Rows.check_dtypes context u start;
-  let l0, g0 = Rows.evaluate u lp start in
-  Rows.check_density context u lp start l0;
   let d = Rows.elements u c start in
   if d = 0 then invalid_argf "%s: the position has no float element" context;
+  let l0, g0 = Rows.evaluate u lp start in
+  Rows.check_density context u lp start l0;
   Nx.check P.tensor
     (Nx.logical_and (Nx.isfinite l0) (Rows.finite u g0))
     (Nx.arange_at (Nx.beside l0) Nx.int32 0 c 1)

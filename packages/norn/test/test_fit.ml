@@ -175,6 +175,10 @@ let mixed_lp (a, b) =
     (Nx.sum ~axes:[ 1 ] (Nx.square b))
 
 let mixed_start = (Nx.ones Nx.float32 [| 2; 1 |], Nx.ones Nx.float64 [| 2; 2 |])
+
+(* A position of an integer tensor alone. *)
+let ints = Nx.ones Nx.int32 [| 2; 3 |]
+let no_floats x = Nx.zeros Nx.float64 [| (Nx.shape x).(0) |]
 let start3 = Nx.create Nx.float64 [| 1; 3 |] [| 3.; 3.; 3. |]
 
 (* Pathfinder *)
@@ -426,6 +430,9 @@ let pathfinder_tests =
         ~id:fst not_per_chain_rows (fun (_, lp) ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Gaussian.pathfinder")
             (fun () -> pf t ~steps:5 lp (Nx.Rng.key 1) (rows starts)));
+      test "a start with no float element is refused" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Gaussian.pathfinder")
+            (fun () -> G.pathfinder t ~steps:5 no_floats (Nx.Rng.key 1) ints));
       test "a start of float tensors of two dtypes is refused" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Gaussian.pathfinder")
             (fun () ->
@@ -624,6 +631,9 @@ let vi_tests =
         ~id:fst not_per_chain_rows (fun (_, lp) ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Gaussian.vi") (fun () ->
               vi t ~steps:5 lp (Nx.Rng.key 1) (rows starts)));
+      test "a start with no float element is refused" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Gaussian.vi") (fun () ->
+              G.vi t ~steps:5 no_floats (Nx.Rng.key 1) ints));
       test "a start of float tensors of two dtypes is refused" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Gaussian.vi") (fun () ->
               G.vi mixed_dtypes ~steps:5 mixed_lp (Nx.Rng.key 1) mixed_start));
