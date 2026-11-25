@@ -129,6 +129,17 @@ let init_tests =
           raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
               Norn.Smc.init t ~prior:conjugate.prior ~likelihood
                 (conjugate.draw (Nx.Rng.key 2) 100)));
+      test "a likelihood of 0 at every particle but one is accepted" (fun () ->
+          (* Only the particle at the start's largest value has a weight. *)
+          let start = conjugate.draw (Nx.Rng.key 2) 100 in
+          let top = Nx.item [] (Nx.max start) in
+          let likelihood x =
+            Nx.where
+              (Nx.greater_equal_s (Nx.reshape [| -1 |] x) top)
+              (Nx.zeros Nx.float64 [| (Nx.shape x).(0) |])
+              (Nx.full Nx.float64 [| (Nx.shape x).(0) |] Float.neg_infinity)
+          in
+          ignore (Norn.Smc.init t ~prior:conjugate.prior ~likelihood start));
       test "a start that holds no tensor is refused" (fun () ->
           let none () = Nx.zeros Nx.float64 [| 1 |] in
           raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
