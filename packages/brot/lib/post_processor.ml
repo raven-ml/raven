@@ -418,7 +418,7 @@ let rec process_list processor sequences ~add_special_tokens =
 
 (* Each sequence enters typed by its place, as tokenizers' [process] types it:
    the first 0 and the second 1. *)
-let process processor ?pair enc ~add_special_tokens =
+let process_kept processor ?pair enc ~add_special_tokens =
   let sequences =
     match pair with
     | None -> [ [ Encoding.with_type_id enc 0 ] ]
@@ -427,6 +427,44 @@ let process processor ?pair enc ~add_special_tokens =
   in
   Encoding.concat
     (List.concat (process_list processor sequences ~add_special_tokens))
+
+(* An overflowing window is a sequence in its own right, so it is processed as
+   the sequences are and carries the same special tokens. On a pair, as
+   tokenizers merges them, each window of [enc] goes with [pair]'s kept tokens
+   and then with each of [pair]'s windows, and last [enc]'s kept tokens with
+   each window of [pair]. *)
+let process_windows processor ?pair enc ~add_special_tokens =
+  let one enc pair = process_kept processor ?pair enc ~add_special_tokens in
+  let kept enc = Encoding.with_overflowing enc [] in
+  let windows = Encoding.overflowing enc in
+  match pair with
+  | None ->
+      Encoding.with_overflowing
+        (one (kept enc) None)
+        (List.map (fun window -> one window None) windows)
+  | Some pair ->
+      let pair_windows = Encoding.overflowing pair in
+      let kept_enc = kept enc and kept_pair = kept pair in
+      let with_pair window =
+        one window (Some kept_pair)
+        :: List.map (fun pair -> one window (Some pair)) pair_windows
+      in
+      Encoding.with_overflowing
+        (one kept_enc (Some kept_pair))
+        (List.concat_map with_pair windows
+        @ List.map (fun pair -> one kept_enc (Some pair)) pair_windows)
+
+let has_windows enc =
+  match Encoding.overflowing enc with [] -> false | _ :: _ -> true
+
+(* Without a window, nothing is built beyond the processed sequences. *)
+let process processor ?pair enc ~add_special_tokens =
+  let windowed =
+    has_windows enc
+    || match pair with Some pair -> has_windows pair | None -> false
+  in
+  if windowed then process_windows processor ?pair enc ~add_special_tokens
+  else process_kept processor ?pair enc ~add_special_tokens
 
 (* Inserted tokens are the ones [process] masks as special, so what it does to
    empty sequences counts them, and what it does to one token of input shows

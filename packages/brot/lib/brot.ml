@@ -1155,47 +1155,13 @@ let truncate_before_post t ~add_special_tokens ~truncation primary pair =
           in
           (truncate primary first, Some (truncate pair second)))
 
-(* An overflowing window is a sequence in its own right, so the post-processor
-   runs over it too and it carries the same special tokens. On a pair,
-   HuggingFace pairs the windows of the two sequences with each other and with
-   the kept parts: each window of the first against the second's kept part and
-   then against each of its windows, and last the first's kept part against each
-   window of the second. *)
 let encode_single t ~add_special_tokens ~truncation seq =
   let primary = encode_text t seq.text in
   let pair = Option.map (encode_text t) seq.pair in
   let primary, pair =
     truncate_before_post t ~add_special_tokens ~truncation primary pair
   in
-  let processed = post_process t ~add_special:add_special_tokens primary pair in
-  match pair with
-  | None -> (
-      match Encoding.overflowing primary with
-      | [] -> processed
-      | windows ->
-          Encoding.with_overflowing processed
-            (List.map
-               (fun window ->
-                 post_process t ~add_special:add_special_tokens window None)
-               windows))
-  | Some pair -> (
-      match (Encoding.overflowing primary, Encoding.overflowing pair) with
-      | [], [] -> processed
-      | primary_windows, pair_windows ->
-          let process p q =
-            post_process t ~add_special:add_special_tokens p (Some q)
-          in
-          let kept_primary = Encoding.with_overflowing primary [] in
-          let kept_pair = Encoding.with_overflowing pair [] in
-          let windows =
-            List.concat_map
-              (fun window ->
-                process window kept_pair
-                :: List.map (process window) pair_windows)
-              primary_windows
-            @ List.map (process kept_primary) pair_windows
-          in
-          Encoding.with_overflowing processed windows)
+  post_process t ~add_special:add_special_tokens primary pair
 
 (* Padding *)
 

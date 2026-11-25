@@ -77,7 +77,11 @@ val process :
 
     When [~add_special_tokens] is [false], no special token is inserted, but
     everything else still happens: the two sequences are still merged, type IDs
-    are still assigned, and byte-level offsets are still trimmed. *)
+    are still assigned, and byte-level offsets are still trimmed.
+
+    Each window in [enc]'s and [pair]'s {!Encoding.overflowing} is processed the
+    same way: each window of [enc] with [pair]'s kept tokens and then with each
+    of its windows, then [enc]'s kept tokens with each window of [pair]. *)
 
 val added_tokens : t -> is_pair:bool -> int
 (** [added_tokens t ~is_pair] is the number of special tokens {!process} inserts

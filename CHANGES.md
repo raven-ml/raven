@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Post_processor.process` processes each window of `Encoding.overflowing`
+  as Hugging Face does; it dropped them or passed them through unprocessed.
+  `Brot.encode`'s windows are unchanged.
 - Tokenizer files are read and written in binary mode, so `from_file` reads
   a CRLF `tokenizer.json` on Windows, and `from_model_file` a `merges.txt`
   whose lines end in CRLF, as Hugging Face does.

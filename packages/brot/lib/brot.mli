@@ -771,6 +771,10 @@ module Post_processor : sig
       two sequences are still merged, type IDs still assigned and byte-level
       offsets still trimmed.
 
+      Each window in [enc]'s and [pair]'s {!Encoding.overflowing} is processed
+      the same way: each window of [enc] with [pair]'s kept tokens and then with
+      each of its windows, then [enc]'s kept tokens with each window of [pair].
+
       Raises [Invalid_argument] if [t] holds a template that names a sequence it
       does not receive, as a [single] naming [$B], or that receives more than
       two, as one after a template of three pieces in a {!sequence}. *)

@@ -567,6 +567,19 @@ let inserts_nothing case =
   let b = match b with Some b -> Encoding.ids b | None -> [||] in
   equal (array int) (Array.append (Encoding.ids a) b) (Encoding.ids enc)
 
+(* tokenizers processes each window of a sequence as the sequence, then pairs
+   them: each window of [a] with [b]'s kept tokens and then with each of [b]'s
+   windows, then [a]'s kept tokens with each window of [b]. Only the IDs are
+   compared, since tokenizers leaves a window of [b] typed 0 there. *)
+let windows_processed (_, t, b, add_special_tokens, expected) =
+  let a = Encoding.truncate (first 3) ~max_length:2 in
+  let b = Option.map (fun n -> Encoding.truncate (second n) ~max_length:1) b in
+  let enc = Post_processor.process t ?pair:b a ~add_special_tokens in
+  equal
+    (list (array int))
+    expected
+    (List.map Encoding.ids (Encoding.overflowing enc))
+
 (* tokenizers panics on the second row. *)
 let unplaced =
   [
@@ -893,6 +906,28 @@ let () =
                keeps_content;
              prop "without special tokens inserts nothing" process_domain
                inserts_nothing;
+             cases
+               "processes each window of overflowing as it does the sequences"
+               ~id:(fun (name, _, _, _, _) -> name)
+               [
+                 ("bert", bert, None, true, [ [| 101; 1002; 102 |] ]);
+                 ("[X] $A", x_before, None, true, [ [| 7; 1002 |] ]);
+                 ( "bert without special tokens",
+                   bert,
+                   None,
+                   false,
+                   [ [| 1002 |] ] );
+                 ( "bert, a pair",
+                   bert,
+                   Some 2,
+                   true,
+                   [
+                     [| 101; 1002; 102; 2000; 102 |];
+                     [| 101; 1002; 102; 2001; 102 |];
+                     [| 101; 1000; 1001; 102; 2001; 102 |];
+                   ] );
+               ]
+               windows_processed;
              cases
                "raises Invalid_argument when a template names a sequence it \
                 does not receive, or receives more than two"
