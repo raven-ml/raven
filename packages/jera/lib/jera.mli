@@ -10,8 +10,8 @@
     Every program is eager unless it says otherwise and runs unchanged under
     {!Rune.val-jit}, {!Rune.val-vmap} and the derivatives of {!Rune}; jera never
     compiles anything itself. A random source, a key or a Brownian path, is an
-    argument of a compiled function: one it captures is a constant, whose draws
-    it refuses.
+    argument of a compiled function: one it captures is a constant, and draws
+    the same numbers on every call.
 
     {1:index Methods by problem}
 
@@ -1922,8 +1922,10 @@ module Sde : sig
         [[s, t]],
         [H = (1 / (t − s)) ∫_s^t (W r − W s − (r − s) / (t − s) (W t − W s)) dr],
         each of the path's shape; [H] is zero when [s = t]. [s] and [t] are
-        scalars. Increments over adjacent intervals compose by Chen's relation.
-        A query costs [2 depth] normal draws of the path's shape at each end; a
+        scalars, in either order: for [t < s] the increment is that of
+        [[t, s]] negated, and the area that of [[t, s]]. Increments over
+        adjacent intervals compose by Chen's relation. A query costs
+        [2 (depth + 1)] normal draws of the path's shape at each end; a
         derivative in a time through the path has no meaning.
 
         Raises [Invalid_argument] through {!Nx.check} if [s] or [t] lies outside
@@ -2091,5 +2093,5 @@ module Split : sig
       recomputes each interval while it reverses it.
 
       Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D
-      tensor, or if [at] is not strictly monotone. *)
+      tensor, or through {!Nx.check} if [at] is not strictly monotone. *)
 end
