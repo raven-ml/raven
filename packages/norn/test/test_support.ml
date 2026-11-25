@@ -36,13 +36,23 @@ let supports =
 
 (* Structural comparison is [Float.equal] on floats. *)
 let equal_ =
-  cases "equal › is constructor and argument equality, floats by Float.equal"
-    ~id:(fun (s, s') -> to_string s ^ " against " ^ to_string s')
-    (List.concat_map (fun s -> List.map (fun s' -> (s, s')) supports) supports)
-    (fun (s, s') ->
-      satisfies ~claim:"S.equal agrees with compare = 0" (pair support support)
-        (fun (s, s') -> S.equal s s' = (compare s s' = 0))
-        (s, s'))
+  group "equal"
+    [
+      test "is constructor and argument equality, floats by Float.equal"
+        (fun () ->
+          List.iter
+            (fun s ->
+              List.iter
+                (fun s' ->
+                  satisfies
+                    ~msg:(to_string s ^ " against " ^ to_string s')
+                    ~claim:"S.equal agrees with compare = 0"
+                    (pair support support)
+                    (fun (s, s') -> S.equal s s' = (compare s s' = 0))
+                    (s, s'))
+                supports)
+            supports);
+    ]
 
 let pp =
   group "pp"
