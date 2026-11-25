@@ -23,21 +23,28 @@ let sat_add a b =
 (* [at_shape e] is [e] at any shape: shapes are erased in nodes. *)
 let at_shape e = Expr.typed (Expr.typing e) (Expr.node e)
 
-(* [memoize same f] is [f] tied to itself, rewriting each step once per context,
-   two contexts being one when [same] says so. A step that a plan reaches from
-   several places, as [append q q] reaches [q], is otherwise rewritten once per
-   path to it, and the paths double with each such level. *)
-let memoize same f =
-  let rewritten = Hashtbl.create 64 in
+(* [memoize same plan f] is [f] tied to itself over [plan], rewriting each step
+   that [plan] shares once per context, two contexts being one when [same] says
+   so. A step that a plan reaches from several places, as [append q q] reaches
+   [q], is otherwise rewritten once per path to it, and the paths double with
+   each such level. A step that one step reads is rewritten once per rewrite of
+   its reader, so only shared steps are remembered, and a plan without one
+   allocates no table. *)
+let memoize same plan f =
+  let shared = Query.shared plan in
+  let rewritten = lazy (Hashtbl.create 16) in
   let rec go context q =
-    let id = Query.id q in
-    let known () = Option.value ~default:[] (Hashtbl.find_opt rewritten id) in
-    match List.find_opt (fun (c, _) -> same c context) (known ()) with
-    | Some (_, q') -> q'
-    | None ->
-        let q' = f go context q in
-        Hashtbl.replace rewritten id ((context, q') :: known ());
-        q'
+    if not (List.memq q shared) then f go context q
+    else
+      let rewritten = Lazy.force rewritten in
+      let id = Query.id q in
+      let known () = Option.value ~default:[] (Hashtbl.find_opt rewritten id) in
+      match List.find_opt (fun (c, _) -> same c context) (known ()) with
+      | Some (_, q') -> q'
+      | None ->
+          let q' = f go context q in
+          Hashtbl.replace rewritten id ((context, q') :: known ());
+          q'
   in
   go
 
@@ -613,7 +620,7 @@ and limit offset length input =
 let share q =
   let canonical = Hashtbl.create 64 in
   let go =
-    memoize any_context (fun go () q ->
+    memoize any_context q (fun go () q ->
         let q = Query.make (Query.map_inputs (go ()) (Query.node q)) in
         let h = Query.step_hash q in
         let steps = Option.value ~default:[] (Hashtbl.find_opt canonical h) in
@@ -630,14 +637,10 @@ let share q =
 (* [once q] is [q] optimized by one run of the passes. *)
 let once q =
   let need = Schema.names (Query.schema q) in
-  let fold = memoize any_context fold
-  and push = memoize same_pending push
-  and prune =
-    memoize
-      (fun (o0, n0) (o1, n1) -> o0 = o1 && List.equal String.equal n0 n1)
-      narrow
-  in
-  share (prune (true, need) (push [] (fold () q)))
+  let folded = memoize any_context q fold () q in
+  let pushed = memoize same_pending folded push [] folded in
+  let same_need (o0, n0) (o1, n1) = o0 = o1 && List.equal String.equal n0 n1 in
+  share (memoize same_need pushed narrow (true, need) pushed)
 
 (* [steps q] is the number of distinct steps of [q]. *)
 let steps q =

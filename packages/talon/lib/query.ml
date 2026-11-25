@@ -295,16 +295,49 @@ let lines width pp =
   Format.pp_print_flush ppf ();
   String.split_on_char '\n' (Buffer.contents b)
 
-(* [shared q] is the steps that [q] reaches more than once. *)
+(* [chain q] is [true] iff no step of [q] has two inputs: then no step of [q] is
+   read twice. *)
+let rec chain q =
+  match q.node with
+  | Of_table _ | Of_source _ -> true
+  | Join _ | Append _ -> false
+  | Select { input; _ }
+  | Derive { input; _ }
+  | Filter { input; _ }
+  | Sort { input; _ }
+  | Slice { input; _ }
+  | Unnest { input; _ }
+  | Aggregate { input; _ } ->
+      chain input
+
+(* [shared q] is the steps that [q] reaches more than once. A chain of steps
+   reaches each once, and allocates nothing to say so. *)
 let shared q =
-  let seen = ref [] and twice = ref [] in
-  let rec visit q =
-    if List.memq q !seen then
-      begin if not (List.memq q !twice) then twice := q :: !twice
+  if chain q then []
+  else
+    let seen = ref [] and twice = ref [] in
+    let rec visit q =
+      if List.memq q !seen then
+        begin if not (List.memq q !twice) then twice := q :: !twice
       end
     else begin
       seen := q :: !seen;
-      List.iter visit (inputs q)
+      match q.node with
+      | Of_table _ | Of_source _ -> ()
+      | Select { input; _ }
+      | Derive { input; _ }
+      | Filter { input; _ }
+      | Sort { input; _ }
+      | Slice { input; _ }
+      | Unnest { input; _ }
+      | Aggregate { input; _ } ->
+          visit input
+      | Join { left; right; _ } ->
+          visit left;
+          visit right
+      | Append { input; rest } ->
+          visit input;
+          visit rest
     end
   in
   visit q;
@@ -605,20 +638,28 @@ let step_equal ~input ~table q0 q1 =
   && List.equal input (inputs q0) (inputs q1)
 
 (* [plans_equal ~table q0 q1] is [step_equal] over the whole plans, each pair of
-   steps compared once. A step that a plan reaches from several places is
-   otherwise compared once per path to it, and the paths double with each such
-   level. *)
+   steps that [q0] shares compared once. A step that a plan reaches from several
+   places is otherwise compared once per path to it, and the paths double with
+   each such level. A step that one step reads is reached once per visit of its
+   reader, so only shared steps are remembered, and a plan without one allocates
+   no table. *)
 let plans_equal ~table q0 q1 =
-  let compared = Hashtbl.create 16 in
+  q0 == q1
+  ||
+  let shared = shared q0 in
+  let compared = lazy (Hashtbl.create 16) in
   let rec equal q0 q1 =
     q0 == q1
     ||
-    match Hashtbl.find_opt compared (q0.id, q1.id) with
-    | Some b -> b
-    | None ->
-        let b = step_equal ~input:equal ~table q0 q1 in
-        Hashtbl.replace compared (q0.id, q1.id) b;
-        b
+    if not (List.memq q0 shared) then step_equal ~input:equal ~table q0 q1
+    else
+      let compared = Lazy.force compared in
+      match Hashtbl.find_opt compared (q0.id, q1.id) with
+      | Some b -> b
+      | None ->
+          let b = step_equal ~input:equal ~table q0 q1 in
+          Hashtbl.replace compared (q0.id, q1.id) b;
+          b
   in
   equal q0 q1
 

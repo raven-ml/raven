@@ -2968,8 +2968,9 @@ module Query : sig
       to compare plans. It reads no data, it calls the sources' [pushdown], and
       [optimize (optimize q)] is [optimize q]. It rewrites a step that [q]
       reaches from several places once for each set of conjuncts, slices and
-      columns those places ask of it, so its work is linear in [q]'s steps,
-      beyond a comparison of each leaf with those of its name and shape.
+      columns those places ask of it, so a plan whose places ask the same of
+      each step they share takes work linear in its steps, beyond a comparison
+      of each leaf with those of its name and shape.
 
       {b Results.} The rewrites change no value and no null of a result, and add
       no failure: an operation that can fail meets only rows that [q] shows it.
