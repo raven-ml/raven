@@ -217,8 +217,9 @@ let bracket ~tol f ~lo ~hi =
     match st with
     | Not_finite -> "f is not finite inside [lo, hi]: narrow it to f's domain."
     | Budget_spent ->
-        "The bracket is too wide to shrink to tol within its budget of \
-         evaluations: narrow [lo, hi]."
+        "The bracket did not shrink to tol within its budget of evaluations: \
+         narrow [lo, hi], or give tol an absolute term where the minimum may \
+         be at 0."
     | Stalled ->
         "The bracket narrowed to the least step between evaluations, the \
          square root of the dtype's epsilon times |x|, short of tol: f's \
