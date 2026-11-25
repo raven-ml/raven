@@ -165,7 +165,9 @@ v}
     there until the file system fills the line or a resume cuts it off.
 
     A whole line that is not a record of this format is {e damaged}. A
-    reader skips it, counts it, and never takes a value from it. Members
+    reader skips it, counts it, and never takes a value from it. A string
+    whose escapes hold half of a surrogate pair alone, such as [\ud800], is
+    no UTF-8, so a line that holds one is damaged. Members
     that a record's kind does not define are ignored. A sample of a key
     that an earlier record gave the other kind ({!section-log}) is damaged
     too, and so is the record that holds it. A run whose [start]

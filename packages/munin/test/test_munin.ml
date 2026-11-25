@@ -674,6 +674,9 @@ let damage =
     ( "a control character in a key",
       "{\"type\":\"metrics\",\"time\":1.0,\"step\":0,\"values\":{\"a\tb\":1.0}}"
     );
+    (* munin never writes one, and it decodes to no UTF-8. *)
+    ( "a lone surrogate escape in a key",
+      {|{"type":"metrics","time":1.0,"step":0,"values":{"a\ud800":1.0}}|} );
     ( "trailing bytes",
       {|{"type":"metrics","time":1.0,"step":0,"values":{"a":1.0}}x|} );
   ]
