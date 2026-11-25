@@ -1619,12 +1619,15 @@ module Ode : sig
       defined on algebraic components. {b Stability.} L-stable, so the step
       follows the tolerance on a stiff field instead of its fastest eigenvalue.
       A DAE is solved when its index is 1, when the equations in [M]'s left null
-      space determine the variables in its null space; a higher index shows as a
-      collapsing step and ends [Stalled]. [y0] must be consistent, [f t0 y0] in
-      the range of [M]: from an inconsistent [y0] the first steps project onto
-      the constraint. {b Cost.} Per attempt, one preparation of [linear] ([n]
-      applications of [derivative] and a factorisation for {!Linear.dense}), and
-      one evaluation of the field and one linear solve per Newton iteration.
+      space determine the variables in its null space. A higher index is not
+      promised: its steps shrink with [tol] much faster than the method's order
+      gives, so a tight [tol] spends the budget. [y0] must be consistent,
+      [f t0 y0] in the range of [M]. The first stage is explicit, so an
+      inconsistent [y0]'s residual enters the first step's stages and its error
+      estimate, which need not shrink with the step: the step can collapse.
+      {b Cost.} Per attempt, one preparation of [linear] ([n] applications of
+      [derivative] and a factorisation for {!Linear.dense}), and one evaluation
+      of the field and one linear solve per Newton iteration.
       {b Derivative.} In the answer each accepted stage is stated as a zero of
       its stage equation through {!Rune.root}, solved by [linear], so the
       derivative is the accepted steps' with their stages' implicit derivatives.
@@ -1890,16 +1893,16 @@ module Ode : sig
       its extension's order (Bellen and Zennaro, 2003). {b Error.} As
       {!sample}'s. A lag that is not finite and positive, or the largest lag
       reaching back past the last [pieces] accepted steps, ends the lane
-      [Stalled], and its report names the count that would hold it. Times of
-      [at] that do not increase end the lane [Stalled] too. {b Stability.} As
-      {!solve}'s. {b Cost.} Each attempt costs one evaluation more than a
-      solve's, its first stage, since the field may jump where one step ends and
-      the next starts. Each stage reads [lags] delayed states, each a binary
-      search of the [pieces] pieces and a series of the extension's degree; the
-      carry holds [pieces] pieces, so a compiled reverse keeps
-      [budget × pieces]. {b Derivative.} The answer reads its own tracked
-      pieces, so the derivative reaches the delayed states, [history], the lags
-      and every tracked value [f] reads.
+      [Stalled], and its report names the count that would hold it, as
+      ["raise pieces to about n"]. Times of [at] that do not increase end the
+      lane [Stalled] too. {b Stability.} As {!solve}'s. {b Cost.} Each attempt
+      costs one evaluation more than a solve's, its first stage, since the
+      field may jump where one step ends and the next starts. Each stage reads
+      [lags] delayed states, each a binary search of the [pieces] pieces and a
+      series of the extension's degree; the carry holds [pieces] pieces, so a
+      compiled reverse keeps [budget × pieces]. {b Derivative.} The answer
+      reads its own tracked pieces, so the derivative reaches the delayed
+      states, [history], the lags and every tracked value [f] reads.
 
       Raises [Invalid_argument] if [budget < 1], if [pieces < 1], if [at] is not
       a non-empty 1-D tensor, if [lags] is not a non-empty 1-D tensor, if
