@@ -15,7 +15,7 @@ that brot's clusters stay those of Unicode 17 whichever uucp is installed.
 
 This writes `lib/grapheme_data.ml`, the three properties as ranges of code
 points, and `test/support/unicode/GraphemeBreakTest-17.0.0.txt`, Unicode's
-conformance test for the cluster rules, which `test_unicode.ml` runs through
+conformance test for the cluster rules, which `test_normalizer.ml` runs through
 `Normalizer.precompiled`. Both are redistributed under the Unicode License
 v3, in `packages/brot/LICENSE-unicode`. With `--check` it writes them to a
 temporary directory instead and fails if they differ from the committed

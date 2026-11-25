@@ -24,7 +24,7 @@ another (`e\u0302` and `e\u0302\u0300`, `\uff45` and `\uff45\u0301`, `\uff76` an
 It writes `support/precompiled/charsmap.json`: the rules, which the tests'
 reference implementation reads, and the normalizer object as a
 `tokenizer.json` holds it. `hf_alignments.py` reads the same file for the
-Precompiled cases of `test_unicode.ml`.
+Precompiled rows of `support/parity/normalizer_alignments.txt`.
 
 It also writes `support/precompiled/graphemes.json`, a charsmap with a rule
 for each code point of Unicode's GraphemeBreakTest-17.0.0 (as gen_grapheme.py

@@ -2,10 +2,11 @@
 # requires-python = ">=3.11"
 # dependencies = ["tokenizers==0.23.1"]
 # ///
-"""Print the alignment HuggingFace `tokenizers` gives each normalizer.
+"""Write the alignment HuggingFace `tokenizers` gives each normalizer.
 
-The expectations of the "alignment" group in test/test_unicode.ml come from
-this script:
+The golden support/parity/normalizer_alignments.txt, which the
+"original_span" group of test/test_normalizer.ml reads, comes from this
+script:
 
     uv run packages/brot/test/gen/hf_alignments.py [--check]
 
@@ -16,10 +17,10 @@ do not expose that vector, but `PreTokenizedString.get_splits` runs a split
 through the same conversion, so splitting the normalized text into single
 characters exposes the alignment of every one of them.
 
-Each case prints the input, the normalized text and one span per normalized
-character, escaped so that the lines can be pasted into the OCaml test. With
-`--check` it prints nothing and compares the cases with the test's `aligned`
-calls instead, failing on each one that differs or is missing.
+Each line of the golden is four OCaml string literals: a label naming the
+normalizer, the input, the normalized text and one span per normalized
+character. The test applies the normalizer it names for that label. With
+`--check` it writes nothing and fails if the golden differs.
 """
 
 import base64
@@ -29,9 +30,8 @@ from pathlib import Path
 
 from tokenizers import PreTokenizedString, Regex, normalizers
 
-import ocaml_cases
-
-TEST = Path(__file__).resolve().parents[1] / "test_unicode.ml"
+GOLDEN = (Path(__file__).resolve().parents[1] / "support" / "parity"
+          / "normalizer_alignments.txt")
 
 ANY = Regex(r"[\s\S]")
 
@@ -67,15 +67,11 @@ def quote(text):
     return '"' + "".join(out) + '"'
 
 
-def case(label, normalizer, text):
+def row(label, normalizer, text):
     rows = align(normalizer, text)
     normalized = "".join(character for character, _ in rows)
     spans = " ".join(f"{start},{stop}" for _, (start, stop) in rows)
-    return [
-        f'  case "{label}" {quote(text)}',
-        f"    {quote(normalized)}",
-        f'    "{spans}";',
-    ]
+    return f'{quote(label)} {quote(text)} {quote(normalized)} "{spans}"'
 
 
 NFD, NFC = normalizers.NFD(), normalizers.NFC()
@@ -176,60 +172,17 @@ CASES = [
       "\u00bd\u05c8"]),
 ]
 
-# `let case = aligned`, which binds `case` to a normalizer and a label.
-ALIGNED = [("word", w) for w in ("let", "case", "=", "aligned")]
-
-
-def recorded(source: str) -> list[ocaml_cases.Case]:
-    """The (label, input), (normalized, spans) of every alignment the test
-    states: `aligned normalizer label input normalized spans`, or `case input
-    normalized spans` after `let case = aligned normalizer label in`."""
-    out = []
-    for body in ocaml_cases.definitions(source).values():
-        label = None
-        for bindings, statement in ocaml_cases.statements(body):
-            if ("word", "let") in bindings:
-                label = None
-                if bindings[:4] == ALIGNED:
-                    label = [bindings[-2]]
-            words = ocaml_cases.arguments(statement)
-            if not words:
-                continue
-            if words[0] == [("word", "aligned")] and len(words) >= 6:
-                words = [words[0], *words[-4:]]
-            elif words[0] == [("word", "case")] and label and len(words) == 4:
-                words = [words[0], label, *words[1:]]
-            else:
-                continue
-            if all(len(w) == 1 and w[0][0] == "str" for w in words[1:]):
-                out.append(ocaml_cases.case(words, 2))
-    return out
-
-
-def check(lines: list[str]) -> int:
-    generated = ocaml_cases.cases(ocaml_cases.tokens("\n".join(lines)), "case", 2)
-    found = recorded(ocaml_cases.read(TEST))
-    problems = []
-    for label, _, _ in CASES:
-        key = ((("str", label.encode()),),)
-        problems += ocaml_cases.differences(
-            label,
-            [c for c in generated if c[0][:1] == key],
-            [c for c in found if c[0][:1] == key],
-            partial=False,
-        )
-    return ocaml_cases.report(problems)
-
 
 def main() -> int:
-    lines = []
-    for label, normalizer, texts in CASES:
-        lines.append(f"(* {label} *)")
-        for text in texts:
-            lines.extend(case(label, normalizer, text))
+    lines = [row(label, normalizer, text)
+             for label, normalizer, texts in CASES for text in texts]
+    golden = "\n".join(lines) + "\n"
     if "--check" in sys.argv[1:]:
-        return check(lines)
-    print("\n".join(lines))
+        if GOLDEN.read_text(encoding="utf-8") != golden:
+            print(f"{GOLDEN} differs; regenerate it", file=sys.stderr)
+            return 1
+        return 0
+    GOLDEN.write_text(golden, encoding="utf-8")
     return 0
 
 

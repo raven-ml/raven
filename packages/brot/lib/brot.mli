@@ -224,7 +224,11 @@ module Normalizer : sig
       in
       Normalizer.apply n "Caf\u{00E9}"
       (* "cafe" *)
-      ]} *)
+      ]}
+
+      The normalizers read the case mappings, general categories and White_Space
+      property of Unicode 18.0.0. Decompositions and combining classes are those
+      of the Unicode version of the uunf library brot is built with. *)
 
   type t
   (** The type for normalizers. *)
@@ -248,8 +252,10 @@ module Normalizer : sig
   (** {2:text Text transforms} *)
 
   val lowercase : t
-  (** [lowercase] is the full Unicode lowercase mapping. It is not case folding:
-      ["ß"] and ["ﬁ"] lowercase to themselves. *)
+  (** [lowercase] is the full Unicode lowercase mapping. Capital sigma
+      lowercases to [σ] wherever it stands, since the final-sigma rule depends
+      on context. It is not case folding: ["ß"] and ["ﬁ"] lowercase to
+      themselves. *)
 
   val strip_accents : t
   (** [strip_accents] removes every mark ([Mn], [Mc], [Me]). It does not
@@ -257,8 +263,9 @@ module Normalizer : sig
       precomposed characters. *)
 
   val strip : ?left:bool -> ?right:bool -> unit -> t
-  (** [strip ?left ?right ()] is a normalizer that strips Unicode whitespace
-      from text boundaries. [left] and [right] default to [true]. *)
+  (** [strip ?left ?right ()] is a normalizer that removes the characters with
+      the White_Space property from the start of the text if [left] and from its
+      end if [right]. [left] and [right] default to [true]. *)
 
   val replace : pattern:string -> replacement:string -> t
   (** [replace ~pattern ~replacement] is a normalizer that replaces every
@@ -271,6 +278,7 @@ module Normalizer : sig
       match of the regular expression [pattern] with [replacement]. Matches are
       found left to right, leftmost first, without overlap; an empty match right
       after another match is skipped. Empty text is returned unchanged.
+      [replacement] is inserted as it is, so [$1] stands for itself.
 
       [pattern] is written in the dialect of tokenizer files: Unicode-aware, so
       that [\s], [\d] and [\w] and their negations, [.] and negated classes
@@ -279,16 +287,22 @@ module Normalizer : sig
       [Latin], ...) of Unicode 17.0.0. A character new in 18.0.0 has a category
       and no script, so the ideograph U+2B81E, new in 18.0.0, is in
       [[\p{Lo}&&[^\p{Han}]]] and Kimi K2's pattern takes it into its words.
-      [^] and [$] are line anchors, [\A], [\z] and [\Z] text anchors. Groups,
-      alternation, greedy and lazy quantifiers and bracket classes are
-      supported, nested and intersected with [&&] as in [[\p{L}&&[^\p{Han}]]],
-      a leading [^] negating the whole intersection, as are the case-insensitive
-      option
-      ([(?i)], [(?i:..)]), under which a character or a bracket class stands for
-      every character with the same simple case folding, and a lookahead
-      ([(?=..)], or [(?!..)] over one character) that ends the pattern or one of
-      its alternatives. A lookahead anywhere else, lookbehind, backreferences,
-      atomic groups, word boundaries and possessive quantifiers are not.
+      Outside a bracket class, [\w] also matches [¹], [²], [³], [¼], [½] and
+      [¾]. [^] and [$] are line anchors, [\A], [\z] and [\Z] text anchors. A [{]
+      that opens no interval, as in [a{] or [a{,}], stands for itself.
+
+      Groups, named groups [(?<name>..)], comments [(?#..)], alternation, greedy
+      and lazy quantifiers, [\G] and [\x{..}] escapes and bracket classes are
+      supported, nested and intersected with [&&] as in [[\p{L}&&[^\p{Han}]]], a
+      leading [^] negating the whole intersection, as are the case-insensitive
+      option ([(?i)], [(?i:..)]), under which a character or a bracket class
+      stands for every character with the same simple case folding, and a
+      lookahead ([(?=..)], or [(?!..)] over one character) that ends the pattern
+      or one of its alternatives. A lookahead anywhere else, lookbehind,
+      backreferences, atomic groups, word boundaries, possessive quantifiers, a
+      [^] that can end a match, group options other than [i], POSIX bracket
+      expressions, byte escapes above [\x7F] and repeat counts above 100000 are
+      not.
 
       Raises [Invalid_argument] if [pattern] is invalid or uses an unsupported
       construct; the message says which. *)
@@ -354,7 +368,14 @@ module Normalizer : sig
         Unlike {!val-strip_accents}, spacing and enclosing marks are kept, so
         that the vowel signs of abugidas survive. When [None], accents are
         stripped iff [lowercase] is [true]. Default: [None].
-      - [lowercase]: apply the Unicode lowercase mapping. Default: [true]. *)
+      - [lowercase]: apply the Unicode lowercase mapping. Default: [true].
+
+      The control characters are those of categories [Cc], [Cf] and [Co] other
+      than tab, line feed and carriage return; [clean_text] removes them and
+      U+FFFD, and replaces each White_Space character with a space. The CJK
+      ideographs are those of U+3400-4DBF, 4E00-9FFF, F900-FAFF, 20000-2A6DF,
+      2A700-2B81F, 2B920-2CEAF and 2F800-2FA1F. The steps run in the order of
+      the options above. *)
 
   (** {2:composition Composition} *)
 
@@ -391,10 +412,15 @@ module Normalizer : sig
       at [start] comes from to the last byte the byte at [stop - 1] comes from.
 
       Every byte of a character has the span of the whole character, so a span
-      cutting a character short still reports it whole. A character the
-      normalizer inserted has the span of the character it was inserted next to,
-      and one it removed has no span at all, so the result can cover original
-      bytes that no span reports. An empty [start = stop] gives an empty span.
+      cutting a character short still reports it whole. A character
+      {!val-prepend} inserted has the span of the first character. Each
+      character of a replacement has the span of the last character it replaced;
+      one that replaced nothing has the span of the character before it, or an
+      empty span at the start of the text. A character the normalizer removed
+      has no span at all, so the result can cover original bytes that no span
+      reports. The spans of successive bytes never go backwards. An empty
+      [start = stop] gives an empty span, except on a normalized text that is
+      empty, where it gives the span of the whole original text.
 
       Raises [Invalid_argument] unless [0 <= start <= stop <= n], where [n] is
       the length of the normalized text. *)
@@ -412,7 +438,9 @@ module Normalizer : sig
   val of_json : Jsont.json -> (t, string) result
   (** [of_json json] is a normalizer deserialized from HuggingFace JSON. Errors
       if [json] is not an object, has a missing or unknown ["type"] field, or
-      has invalid parameters. *)
+      has invalid parameters. A missing member takes the default of its
+      constructor; a member without one, such as [Prepend]'s ["prepend"], is
+      required. *)
 end
 
 module Pre_tokenizer : sig
@@ -783,23 +811,24 @@ module Decoder : sig
       byte-level alphabet leaves the whole token to stand for its own bytes. The
       bytes of every token are then read as one text, so a character spelled
       across two tokens comes back whole, and every maximal ill-formed byte
-      sequence becomes one U+FFFD — four stray bytes cost four, while a
-      four-byte character cut short costs one. *)
+      sequence becomes one U+FFFD: four stray bytes cost four, while a four-byte
+      character cut short costs one. *)
 
   val byte_fallback : t
   (** [byte_fallback] is a decoder for byte fallback tokens. Each run of hex
       byte tokens (e.g. ["<0x41>"]) becomes the text those bytes spell; a run
       that is not valid UTF-8 becomes one U+FFFD per byte. Other tokens pass
-      through unchanged. *)
+      through unchanged. A byte token is [<0x], two hexadecimal digits of either
+      case and [>]. *)
 
   val wordpiece : ?prefix:string -> ?cleanup:bool -> unit -> t
   (** [wordpiece ~prefix ~cleanup ()] is a decoder for WordPiece tokens. Strips
       continuation [prefix] (default ["##"]) from non-initial subwords and gives
       the others a leading space. When [cleanup] is [true] (default), applies
       the detokenization cleanup to every token, once its joining space is
-      prepended: the space before [.], [?], [!], [,] and the English
-      contractions is taken back, and [" do not"] is rewritten to [" don't"]. So
-      ["hello"; ","; "world"] decodes to ["hello, world"], while
+      prepended: the space before [.], [?], [!], [,], [n't], ['m], ['s], ['ve]
+      and ['re] is taken back, [" ' "] becomes ["'"] and [" do not"] becomes
+      [" don't"]. So ["hello"; ","; "world"] decodes to ["hello, world"], while
       ["3"; "."; "14"] decodes to ["3. 14"] because the space after the full
       stop was never the decoder's to remove. *)
 
@@ -812,9 +841,13 @@ module Decoder : sig
       back to spaces. [replacement] defaults to ["\u{2581}"]. Unless
       [prepend_scheme] is [`Never], the marker was prepended to the text rather
       than standing for a space, so every occurrence of it in the {e first}
-      token is dropped instead of becoming a space — on [`First] as on
-      [`Always], the two prepending to the same first token. [prepend_scheme]
-      defaults to [`Always]. *)
+      token is dropped instead of becoming a space, on [`First] as on [`Always],
+      the two prepending to the same first token. [prepend_scheme] defaults to
+      [`Always].
+
+      HuggingFace reads [replacement] as a single character, so {!val-to_json}
+      on a decoder whose [replacement] is longer, or empty, writes a decoder it
+      rejects. *)
 
   val ctc :
     ?pad_token:string ->
@@ -843,7 +876,7 @@ module Decoder : sig
   (** [strip ~content ~start ~stop ()] removes up to [start] leading and [stop]
       trailing occurrences of [content] from each token. [content] defaults to
       [" "], [start] and [stop] to [0]. A token left with nothing between the
-      two cuts becomes empty.
+      two cuts becomes empty. An empty [content] strips nothing.
 
       HuggingFace reads [content] as a single character, so {!val-to_json} on a
       decoder whose [content] is longer, or empty, writes a decoder it rejects.
@@ -872,7 +905,9 @@ module Decoder : sig
   val of_json : Jsont.json -> (t, string) result
   (** [of_json json] is a decoder from HuggingFace JSON format. Errors if [json]
       is not an object, has a missing or unknown ["type"] field, or has invalid
-      parameters. *)
+      parameters. A missing member takes the default of its constructor, and a
+      [Replace] without ["content"] replaces with [""]; a [Replace] without
+      ["pattern"] is an error. *)
 end
 
 (** {1:types Types} *)
