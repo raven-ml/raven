@@ -669,8 +669,10 @@ let staged w n r = if not w.two then r.kept <- Int.max r.kept n
 
 type sdev = { d : Rig.t; skind : kind; p : P.t option; mutable spoiled : bool }
 
-(* Polled and software devices go back to a pool when their program ends,
-   unless a fault or a failure was armed on them. *)
+(* Polled and software devices go back to a pool when their program ends, unless
+   a fault or a failure was armed on them, they are lost, or the drain of their
+   work fails: a budgeted device's queues may need room to grow. Those close: a
+   Polled device that runs itself keeps its thread until its stop. *)
 let pool_lock = Mutex.create ()
 let pool : sdev list ref = ref []
 let opened = Atomic.make 0
@@ -719,13 +721,19 @@ let give_device s =
   match s.skind with
   | Host | Disk | Gpu _ -> ()
   | Memory | Polled _ ->
-      if (not s.spoiled) && Rig.lost s.d = None then
-        begin match drain s.d with
-        | () ->
-            if s.p <> None then Rig.set_budget s.d (1 lsl 30);
-            Mutex.protect pool_lock (fun () -> pool := s :: !pool)
-        | exception Rig.Lost _ -> ()
-        end
+      let pooled =
+        (not s.spoiled)
+        && Rig.lost s.d = None
+        &&
+        match drain s.d with
+        | () -> true
+        | exception (Rig.Lost _ | Rig.Out_of_memory _) -> false
+      in
+      if not pooled then Rig.close s.d
+      else begin
+        if s.p <> None then Rig.set_budget s.d (1 lsl 30);
+        Mutex.protect pool_lock (fun () -> pool := s :: !pool)
+      end
 
 type sworld = {
   mutable sdevs : (Rig.t * int) list;
