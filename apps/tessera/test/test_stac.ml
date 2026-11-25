@@ -105,6 +105,11 @@ let args dir =
     |> List.filter (( <> ) "")
     |> List.map (String.split_on_char '\t')
 
+(* The number of this process's open descriptors, where /dev/fd lists them:
+   Windows has none. *)
+let descriptors () =
+  if Sys.win32 then None else Some (Array.length (Sys.readdir "/dev/fd"))
+
 let answer ?(headers = []) code body =
   let hs = List.map (fun (k, v) -> Printf.sprintf "%s: %s\r\n" k v) headers in
   Printf.sprintf "HTTP/1.1 %d Status\r\n%sContent-Length: %d\r\n\r\n%s" code
@@ -516,6 +521,13 @@ let windows =
                 lie;
               raises_match (Exn.failure ~sub:example) (fun () ->
                   read_window Nearest example bottom)));
+      test "fails on an href holding a NUL, leaving no descriptor open"
+        (fun () ->
+          served (fun _ ->
+              let before = descriptors () in
+              raises_match (Exn.failure ~sub:example) (fun () ->
+                  Stac.contents (session ()) (asset (example ^ "\000")));
+              equal (option int) before (descriptors ())));
       cases ~id:fst "refuses an ETag holding a CR or a NUL"
         [ ("CR", "\"0x1\r2\""); ("NUL", "\"0x1\0002\"") ]
         (fun (_, etag) ->

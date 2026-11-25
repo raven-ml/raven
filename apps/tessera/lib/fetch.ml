@@ -11,6 +11,9 @@ let err_no_curl = "curl not found on PATH"
 let err_curl name n = strf "%s: curl exited %d" name n
 let err_signal name = strf "%s: curl ended by a signal" name
 
+let err_spawn name e =
+  strf "%s: curl could not run: %s" name (Unix.error_message e)
+
 let err_https name = strf "%s: not an https:// URL" name
 
 let err_status name status ~retry body =
@@ -99,8 +102,10 @@ let rec wait pid =
   with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
 
 (* [curl] runs without a shell, so no argument needs quoting, and its output
-   comes back through a pipe, read whole before the process is reaped. *)
-let curl args =
+   comes back through a pipe, read whole before the process is reaped. A
+   process that cannot be made, as for an argument holding a NUL, which no
+   command line can carry, fails the request [name]. *)
+let curl ~name args =
   let exe = find_curl () in
   let r, w = Unix.pipe ~cloexec:true () in
   let pid =
@@ -112,18 +117,24 @@ let curl args =
     | pid ->
         Unix.close w;
         pid
-    | exception Unix.Unix_error (Unix.ENOENT, _, _) ->
+    | exception e -> (
         Unix.close w;
         Unix.close r;
-        failwith err_no_curl
+        match e with
+        | Unix.Unix_error (Unix.ENOENT, _, _) -> failwith err_no_curl
+        | Unix.Unix_error (e, _, _) -> failwith (err_spawn name e)
+        | e -> raise e)
   in
   let ic = Unix.in_channel_of_descr r in
-  let out =
-    Fun.protect
-      ~finally:(fun () -> close_in_noerr ic)
-      (fun () -> In_channel.input_all ic)
-  in
-  (wait pid, out)
+  match In_channel.input_all ic with
+  | out ->
+      close_in_noerr ic;
+      (wait pid, out)
+  | exception e ->
+      (* curl, writing to a closed pipe, ends. *)
+      close_in_noerr ic;
+      ignore (wait pid);
+      raise e
 
 let crlf2 = "\r\n\r\n"
 
@@ -202,7 +213,7 @@ let send ?(headers = []) ?body ~name url =
       Unix.sleepf wait;
       go (k + 1) (waited +. wait)
     in
-    match curl (options @ headers @ body @ [ "--url"; url () ]) with
+    match curl ~name (options @ headers @ body @ [ "--url"; url () ]) with
     | Unix.WEXITED 0, out ->
         let a = parse name out in
         let wait = delay a k in
