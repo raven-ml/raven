@@ -10,8 +10,8 @@ let golden = 0.3819660112501051
 
 (* Brent's state, elementwise: the bracket [a, b]; the best three points [x],
    [w], [v] and [f] there; the last two steps [d] and [e]; the bracket's width
-   two evaluations ago and one ago; then the status, the evaluations and the
-   step count. *)
+   two evaluations ago and one ago; the least step at [x]; then the status, the
+   evaluations and the step count. *)
 type 'b state = {
   a : 'b;
   b : 'b;
@@ -25,14 +25,17 @@ type 'b state = {
   e : 'b;
   older : 'b;
   old : 'b;
+  least : 'b;
 }
 
 let fields s =
-  [ s.a; s.b; s.x; s.w; s.v; s.fx; s.fw; s.fv; s.d; s.e; s.older; s.old ]
+  [
+    s.a; s.b; s.x; s.w; s.v; s.fx; s.fw; s.fv; s.d; s.e; s.older; s.old; s.least;
+  ]
 
 let of_fields = function
-  | [ a; b; x; w; v; fx; fw; fv; d; e; older; old ] ->
-      { a; b; x; w; v; fx; fw; fv; d; e; older; old }
+  | [ a; b; x; w; v; fx; fw; fv; d; e; older; old; least ] ->
+      { a; b; x; w; v; fx; fw; fv; d; e; older; old; least }
   | _ -> assert false
 
 let bracket ~tol f ~lo ~hi =
@@ -67,9 +70,7 @@ let bracket ~tol f ~lo ~hi =
     let m = Nx.add s.a half in
     let st = settle st (accepted tol ~e:half ~y:m) Converged in
     let floor =
-      Nx.less_equal
-        (Nx.abs (Nx.sub s.x m))
-        (Nx.sub (Nx.mul_s (least s.x) 2.) half)
+      Nx.less_equal (Nx.abs (Nx.sub s.x m)) (Nx.sub (Nx.mul_s s.least 2.) half)
     in
     settle st (Nx.logical_or (Num.adjacent s.a s.b) floor) Stalled
   in
@@ -87,13 +88,14 @@ let bracket ~tol f ~lo ~hi =
       e = zero;
       older = width0;
       old = width0;
+      least = least x0;
     }
   in
   let step (fs, (st, (n, k))) =
     let s = of_fields fs in
     let run = searching st in
     let m = Nx.div_s (Nx.add s.a s.b) 2. in
-    let t1 = least s.x in
+    let t1 = s.least in
     (* The parabola through (x, fx), (w, fw), (v, fv): its step [p / q]. *)
     let r = Nx.mul (Nx.sub s.x s.w) (Nx.sub s.fx s.fv) in
     let q = Nx.mul (Nx.sub s.x s.v) (Nx.sub s.fx s.fw) in
@@ -174,6 +176,7 @@ let bracket ~tol f ~lo ~hi =
         e = sel (Nx.ones_like run) e s.e;
         older = sel (Nx.ones_like run) s.old s.older;
         old = sel (Nx.ones_like run) (Nx.sub s.b s.a) s.old;
+        least = least x;
       }
     in
     (fields s', (finish s' st, (n, Nx.add_s k 1l)))
