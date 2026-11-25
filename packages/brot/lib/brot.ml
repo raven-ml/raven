@@ -80,6 +80,19 @@ type cut =
    collected with the tokenizer: [free] holds them, [kept] counts them. *)
 type batch_buffers = { free : Bpe.sink list Atomic.t; kept : int Atomic.t }
 
+(* What the post-processor does to the ids of a sequence, read off it once by
+   [create] so that no encoding pays for it: the tokens it inserts into one
+   sequence and into a pair, and the special ids it puts around one sequence,
+   with special tokens and without, where that is all it does to its ids. A
+   count or affixes the post-processor raises on is [None], and [process]
+   raises where it is needed. *)
+type wrapping = {
+  inserted_single : int option;
+  inserted_pair : int option;
+  affixes : (int array * int array) option;
+  affixes_plain : (int array * int array) option;
+}
+
 type t = {
   algorithm : algorithm;
   normalizer : Normalizer.t option;
@@ -94,6 +107,7 @@ type t = {
      over a BPE model it covers, decided once here. *)
   fused : Pre_tokenizer.walker option;
   post_processor : Post_processor.t option;
+  wrapping : wrapping;
   decoder : Decoder.t option;
   added : Added_tokens.t;
   (* An identifier to its token string and to the source bytes it accounts for,
@@ -443,6 +457,30 @@ let fit_to_pipeline ~spaces pre algorithm =
              ())
   | _ -> algorithm
 
+let wrapping_of = function
+  | None ->
+      let none = Some ([||], [||]) in
+      {
+        inserted_single = Some 0;
+        inserted_pair = Some 0;
+        affixes = none;
+        affixes_plain = none;
+      }
+  | Some processor ->
+      let read f = try f () with Invalid_argument _ -> None in
+      let inserted is_pair () =
+        Some (Post_processor.added_tokens processor ~is_pair)
+      in
+      let affixes add_special_tokens () =
+        Post_processor.affixes processor ~add_special_tokens
+      in
+      {
+        inserted_single = read (inserted false);
+        inserted_pair = read (inserted true);
+        affixes = read (affixes true);
+        affixes_plain = read (affixes false);
+      }
+
 let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
     ?eos_token ?pad_token algorithm =
   let given =
@@ -490,6 +528,7 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
     cut;
     fused;
     post_processor = post;
+    wrapping = wrapping_of post;
     decoder;
     added;
     token_table;
@@ -1078,11 +1117,14 @@ let truncate_before_post t ~add_special_tokens ~truncation primary pair =
   | Some { max_length; stride; direction } -> (
       let primary = limit_to_pretokens primary ~max_length ~direction in
       let pair = Option.map (limit_to_pretokens ~max_length ~direction) pair in
+      (* A post-processor that raises on these sequences raises in
+         [post_process], once they are truncated. *)
       let added =
-        match t.post_processor with
-        | Some processor when add_special_tokens ->
-            Post_processor.added_tokens processor ~is_pair:(Option.is_some pair)
-        | _ -> 0
+        if not add_special_tokens then 0
+        else
+          Option.value ~default:0
+            (if Option.is_some pair then t.wrapping.inserted_pair
+             else t.wrapping.inserted_single)
       in
       let budget = max 0 (max_length - added) in
       let truncate encoding length =
@@ -1355,17 +1397,14 @@ let encode_batch_pairs t ?(add_special_tokens = true)
    interleaves two sequences, so it goes the long way, and so does anything the
    post-processor does not describe as affixes. Overflowing windows have nowhere
    to go in an [int array] and are dropped. *)
+let affixes_of t ~add_special_tokens =
+  if add_special_tokens then t.wrapping.affixes else t.wrapping.affixes_plain
+
 let encode_ids t ?pair ?(add_special_tokens = true)
     ?(match_special_tokens = true) ?padding ?truncation text =
   let t = matching t ~match_special_tokens in
   let affixes =
-    match pair with
-    | Some _ -> None
-    | None -> (
-        match t.post_processor with
-        | None -> Some ([||], [||])
-        | Some processor -> Post_processor.affixes processor ~add_special_tokens
-        )
+    match pair with Some _ -> None | None -> affixes_of t ~add_special_tokens
   in
   match affixes with
   | None ->
@@ -1623,11 +1662,7 @@ let encode_batch_ids t ?(add_special_tokens = true)
   let t = matching t ~match_special_tokens in
   let rows = Array.of_list texts in
   let nrows = Array.length rows in
-  let affixes =
-    match t.post_processor with
-    | None -> Some ([||], [||])
-    | Some processor -> Post_processor.affixes processor ~add_special_tokens
-  in
+  let affixes = affixes_of t ~add_special_tokens in
   let wrapped = Option.is_some affixes in
   let prefix, suffix = Option.value affixes ~default:([||], [||]) in
   let np = Array.length prefix and ns = Array.length suffix in

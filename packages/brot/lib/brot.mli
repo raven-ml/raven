@@ -745,7 +745,13 @@ module Post_processor : sig
       [pair] lacks [$A] or [$B]. *)
 
   val sequence : t list -> t
-  (** [sequence processors] chains [processors] left-to-right. *)
+  (** [sequence processors] chains [processors] left to right. Each hands the
+      next the sequences it gives, and {!process} merges them after the last.
+      {!bert} and {!roberta} read the first sequence they receive as their
+      single one and each later one as a second, {!byte_level} trims each, and a
+      {!template} reads the first as [$A] and the second as [$B] and gives each
+      of its pieces as a sequence. So after [template ~single:"[X] $A"], [bert]
+      receives [[X]] and [A], and the result is [[CLS] [X] [SEP] A [SEP]]. *)
 
   (** {1:processing Processing} *)
 
@@ -763,12 +769,15 @@ module Post_processor : sig
       two sequences are still merged, type IDs still assigned and byte-level
       offsets still trimmed.
 
-      Raises [Invalid_argument] if [pair] is absent and [t] holds a template
-      whose [single] names [$B]. *)
+      Raises [Invalid_argument] if [t] holds a template that names a sequence it
+      does not receive, as a [single] naming [$B], or that receives more than
+      two, as one after a template of three pieces in a {!sequence}. *)
 
   val added_tokens : t -> is_pair:bool -> int
-  (** [added_tokens t ~is_pair] is the number of special tokens [t] adds. Useful
-      for calculating the truncation budget. *)
+  (** [added_tokens t ~is_pair] is the number of special tokens {!process}
+      inserts into one sequence, or into a pair when [is_pair]. Useful for
+      calculating the truncation budget. Raises [Invalid_argument] where
+      {!process} does. *)
 
   (** {1:fmt Formatting} *)
 
@@ -1913,7 +1922,11 @@ val of_json : Jsont.json -> (t, string) result
 
     The [truncation] and [padding] members are not read, by [of_json] or
     {!from_file}. {!encode} takes both as arguments, so a file that sets them
-    encodes as tokenizers encodes it when the same settings are passed.
+    encodes as tokenizers encodes it when the same settings are passed, with one
+    exception. Truncation reserves the tokens {!Post_processor.process} inserts,
+    so a [Sequence] post-processor whose template is not its last member keeps
+    [max_length], where tokenizers reserves what each member counts alone and
+    can exceed it or truncate more.
 
     The numbers of [json] are taken as given. A tree decoded from text holds
     each number as the double its text names, which can differ in the last place

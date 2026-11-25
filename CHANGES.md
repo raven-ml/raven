@@ -5573,6 +5573,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Post_processor.sequence` keeps a pair's sequences apart until its last
+  processor merges them, and a template gives each piece as a sequence, as
+  tokenizers does. `[bert; bert]` gave a pair 5 special tokens, not 6.
+- `encode_ids` and `encode_batch_ids` raise `Invalid_argument` where `encode`
+  does, as for a template whose `single` names `$B`. They returned ids.
 - `Post_processor.process` types the first sequence 0 whatever type IDs it
   arrives with, as `bert`'s doc states. `bert` and `byte_level` kept them.
 - `Brot.train_word_level` keeps, of equally frequent words, the first in byte

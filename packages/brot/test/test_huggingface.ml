@@ -557,6 +557,17 @@ let test_unk_token =
     (fun (_, make) ->
       equal (option string) (Some "<unk>") (unk_token (reload (make ()))))
 
+(* A template of [X] $A before BertProcessing. tokenizers reserves the 3 tokens
+   the two members count, not the 4 they insert, and gives 6 tokens: [101, 7,
+   102, 10, 11, 102]. *)
+let test_truncation_reserves_inserted () =
+  let t =
+    load
+      {|{"pre_tokenizer":{"type":"WhitespaceSplit"},"post_processor":{"type":"Sequence","processors":[{"type":"TemplateProcessing","single":[{"SpecialToken":{"id":"[X]","type_id":0}},{"Sequence":{"id":"A","type_id":0}}],"pair":[{"Sequence":{"id":"A","type_id":0}},{"Sequence":{"id":"B","type_id":1}}],"special_tokens":{"[X]":{"id":"[X]","ids":[7],"tokens":["[X]"]}}},{"type":"BertProcessing","sep":["[SEP]",102],"cls":["[CLS]",101]}]},"model":{"type":"WordLevel","vocab":{"[UNK]":0,"[X]":7,"a":10,"b":11,"c":12,"d":13,"[CLS]":101,"[SEP]":102},"unk_token":"[UNK]"}}|}
+  in
+  equal (array int) [| 101; 7; 102; 10; 102 |]
+    (Encoding.ids (encode t ~truncation:(truncation 5) "a b c d"))
+
 (* to_json *)
 
 let test_written_bpe_flags () =
@@ -875,6 +886,8 @@ let () =
              test "reads no truncation or padding member"
                test_no_truncation_or_padding;
              test_unk_token;
+             test "keeps max_length under a sequence whose template is not last"
+               test_truncation_reserves_inserted;
            ];
          group "to_json"
            [

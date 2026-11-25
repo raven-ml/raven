@@ -65,17 +65,35 @@ let multi_id_text =
 let multi_id () =
   require_ok (Post_processor.of_json (json_of_text multi_id_text))
 
-(* The processors the laws range over: each kind, and the sequence real
-   byte-level tokenizers use. *)
-let processors =
+let x_between =
+  Post_processor.template ~single:"$A" ~pair:"$A [X] $B"
+    ~special_tokens:[ ("[X]", 7) ]
+    ()
+
+let x_before =
+  Post_processor.template ~single:"[X] $A" ~special_tokens:[ ("[X]", 7) ] ()
+
+(* The processors that give one sequence for each they receive. *)
+let wrappers =
   [
     ("bert", bert);
     ("roberta", roberta);
     ("byte_level", Post_processor.byte_level ());
-    ("template", bert_template);
-    ( "sequence",
-      Post_processor.sequence [ Post_processor.byte_level (); bert_template ] );
+    ("sequence of two bert", Post_processor.sequence [ bert; bert ]);
   ]
+
+(* The processors the laws range over: [wrappers], a template, the sequence real
+   byte-level tokenizers use, and one whose template gives [bert] two
+   sequences. *)
+let processors =
+  wrappers
+  @ [
+      ("template", bert_template);
+      ( "sequence",
+        Post_processor.sequence [ Post_processor.byte_level (); bert_template ]
+      );
+      ("[X] $A, then bert", Post_processor.sequence [ x_before; bert ]);
+    ]
 
 let named processors =
   Gen.of_list
@@ -383,15 +401,17 @@ let raises_on (single, pair, names) =
 
 (* sequence *)
 
-(* The first token starts past offset 0, so whether [bert] has moved it from
-   index 0 changes what [byte_level] trims. *)
-let chained processors =
+(* A processor that gives one sequence back hands it whole to the next, so a
+   chain of them applies each in turn; the last may give more. The first token
+   starts past offset 0, so whether [bert] has moved it from index 0 changes
+   what [byte_level] trims. *)
+let chained (wrappers, last) =
   let e =
     byte_level_sequence
       [| space ^ "a"; space; "b" |]
       [| (1, 3); (3, 4); (4, 5) |]
   in
-  let processors = List.map snd processors in
+  let processors = List.map snd (wrappers @ Option.to_list last) in
   cover "no processor" (processors = []);
   cover "two processors" (List.length processors = 2);
   let one_by_one =
@@ -409,6 +429,45 @@ let chained processors =
     (Encoding.type_ids one_by_one)
     (Encoding.type_ids chained);
   equal ~msg:"rows" (list row) (rows one_by_one) (rows chained)
+
+(* HF: processors.Sequence([...]).process(a, b) and num_special_tokens_to_add,
+   except the added_tokens of the last row, where HF counts 3: each processor
+   keeps the sequences of a pair apart, a template gives each of its pieces as a
+   sequence, and [process] merges them once, at the end. *)
+let chained_pairs =
+  [
+    ( "[bert; bert], a pair",
+      [ bert; bert ],
+      Some 1,
+      [| 101; 101; 1000; 1001; 102; 102; 2000; 102; 102 |],
+      [| 0; 0; 0; 0; 0; 0; 1; 1; 1 |] );
+    ( "[bert; $A [X] $B], a pair",
+      [ bert; x_between ],
+      Some 1,
+      [| 101; 1000; 1001; 102; 7; 2000; 102 |],
+      [| 0; 0; 0; 0; 0; 0; 0 |] );
+    ( "[roberta; $A [X] $B], a pair",
+      [ roberta; x_between ],
+      Some 1,
+      [| 0; 1000; 1001; 2; 7; 2; 2000; 2 |],
+      [| 0; 0; 0; 0; 0; 0; 0; 0 |] );
+    ( "[[X] $A; bert], one sequence",
+      [ x_before; bert ],
+      None,
+      [| 101; 7; 102; 1000; 1001; 102 |],
+      [| 0; 0; 0; 0; 0; 1 |] );
+  ]
+
+let passes_pairs (_, processors, b, ids, type_ids) =
+  let t = Post_processor.sequence processors in
+  let a = first 2 and b = Option.map second b in
+  let enc = Post_processor.process t ?pair:b a ~add_special_tokens:true in
+  equal ~msg:"ids" (array int) ids (Encoding.ids enc);
+  equal ~msg:"type ids" (array int) type_ids (Encoding.type_ids enc);
+  let b_length = match b with Some b -> Encoding.length b | None -> 0 in
+  equal ~msg:"added_tokens" int
+    (Encoding.length enc - Encoding.length a - b_length)
+    (Post_processor.added_tokens t ~is_pair:(b <> None))
 
 (* process *)
 
@@ -491,8 +550,15 @@ let inserts_nothing case =
   let b = match b with Some b -> Encoding.ids b | None -> [||] in
   equal (array int) (Array.append (Encoding.ids a) b) (Encoding.ids enc)
 
-let test_single_names_b () =
-  let t = Post_processor.template ~single:"$B" () in
+(* tokenizers panics on the second row. *)
+let unplaced =
+  [
+    ("a single template naming $B", Post_processor.template ~single:"$B" ());
+    ( "a template after one of three pieces",
+      Post_processor.sequence [ bert_template; bert_template ] );
+  ]
+
+let raises_unplaced (_, t) =
   raises_match Exn.invalid_arg (fun () ->
       Post_processor.process t (first 1) ~add_special_tokens:true)
 
@@ -747,9 +813,18 @@ let () =
            ];
          group "sequence"
            [
-             prop "applies its processors left to right"
-               Gen.(list ~size:(int_range 0 2) (named processors))
+             prop
+               "applies its processors in turn while each but the last gives \
+                one sequence for one"
+               ~examples:[ ([], None) ]
+               Gen.(
+                 pair
+                   (list ~size:(int_range 0 1) (named wrappers))
+                   (option (named processors)))
                chained;
+             cases "hands each processor the sequences the one before it gives"
+               ~id:(fun (name, _, _, _, _) -> name)
+               chained_pairs passes_pairs;
            ];
          group "process"
            [
@@ -783,8 +858,10 @@ let () =
                keeps_content;
              prop "without special tokens inserts nothing" process_domain
                inserts_nothing;
-             test "raises Invalid_argument when a single template names $B"
-               test_single_names_b;
+             cases
+               "raises Invalid_argument when a template names a sequence it \
+                does not receive, or receives more than two"
+               ~id:fst unplaced raises_unplaced;
            ];
          group "added_tokens"
            [

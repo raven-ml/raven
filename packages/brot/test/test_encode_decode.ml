@@ -1506,7 +1506,24 @@ let test_ids_is_encode =
         expected
         (outcome (fun () -> encode_ids_with o ?pair t text)))
 
+(* A single template naming [$B], which has no sequence to put there, so
+   [encode] raises. *)
+let b_alone () =
+  word_level ~pre:Pre_tokenizer.whitespace ~vocab:letters ~unk_token:"[UNK]"
+    ~post:(Post_processor.template ~single:"$B" ())
+    ()
+
+let test_ids_raise () =
+  let t = b_alone () in
+  raises_match Exn.invalid_arg (fun () -> encode t "a");
+  raises_match Exn.invalid_arg (fun () -> encode_ids t "a")
+
 (* encode_batch_ids *)
+
+let test_batch_ids_raise () =
+  let t = b_alone () in
+  raises_match Exn.invalid_arg (fun () -> encode t "a");
+  raises_match Exn.invalid_arg (fun () -> encode_batch_ids t [ "a" ])
 
 let test_batch_ids_rows =
   prop ~count:200 "gives each text's encode_ids as a row placed by lengths"
@@ -2319,10 +2336,17 @@ let () =
            ];
          group "encode_batch" [ test_batch_is_encode ];
          group "encode_batch_pairs" [ test_batch_pairs_is_encode ];
-         group "encode_ids" [ test_ids_is_encode ];
+         group "encode_ids"
+           [
+             test_ids_is_encode;
+             test "raises where encode raises on its post-processor"
+               test_ids_raise;
+           ];
          group "encode_batch_ids"
            [
              test_batch_ids_rows;
+             test "raises where encode raises on its post-processor"
+               test_batch_ids_raise;
              test "reshapes to rows of one length under `Fixed padding"
                test_batch_ids_reshapes;
              test_batch_ids_parity;

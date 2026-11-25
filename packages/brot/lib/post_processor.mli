@@ -61,7 +61,8 @@ val template :
     [special_tokens] defaults to [[]]. *)
 
 val sequence : t list -> t
-(** [sequence processors] chains [processors] left-to-right. *)
+(** [sequence processors] chains [processors] left to right. Each hands the next
+    the sequences it gives, and {!process} merges them after the last. *)
 
 (** {1:processing Processing} *)
 
@@ -79,8 +80,9 @@ val process :
     are still assigned, and byte-level offsets are still trimmed. *)
 
 val added_tokens : t -> is_pair:bool -> int
-(** [added_tokens t ~is_pair] is the number of special tokens [t] adds. Useful
-    for calculating the truncation budget. *)
+(** [added_tokens t ~is_pair] is the number of special tokens {!process} inserts
+    into one sequence, or into a pair when [is_pair]. Useful for calculating the
+    truncation budget. Raises [Invalid_argument] where {!process} does. *)
 
 (** {1:fmt Formatting} *)
 
@@ -104,8 +106,9 @@ val affixes : t -> add_special_tokens:bool -> (int array * int array) option
 (** [affixes t ~add_special_tokens] is the [(prefix, suffix)] of special token
     ids [t] puts around a single sequence, and [None] when [t] does more to that
     sequence's ids than wrap them — a template naming the sequence more than
-    once, or not at all. Everything else a processor does — assigning type ids,
-    trimming byte-level offsets — leaves the ids untouched.
+    once, or not at all. Raises [Invalid_argument] where {!process} does.
+    Everything else a processor does — assigning type ids, trimming byte-level
+    offsets — leaves the ids untouched.
 
     Where {!added_tokens} counts what a processor adds, this says what it adds,
     so a caller that wants ids alone can produce them without an {!Encoding.t}.

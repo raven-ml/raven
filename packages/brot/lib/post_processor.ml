@@ -12,6 +12,7 @@ let err_expected what v = strf "expected %s, got %s" what v
 let err_seq_id = "sequence id must be \"A\", \"B\", 0 or 1"
 let err_missing_sequence = "template references a sequence not provided"
 let err_pair_must_ref_both = "pair template must reference both $A and $B"
+let err_sequences n = strf "a template receives %d sequences, not 1 or 2" n
 let err_template_def = "expected string, array or null for template"
 let err_unsupported_piece = "expected Sequence or SpecialToken object"
 let err_special_missing_id = "missing 'id' in SpecialToken"
@@ -153,65 +154,82 @@ let trim_offset ~add_prefix_space enc_tokens idx (start, stop) =
         in
         (start, stop)
 
-let trim_encodings ~add_prefix_space encodings =
-  List.map
-    (fun encoding ->
-      let enc_tokens = Encoding.tokens encoding in
-      let new_offsets =
-        Array.mapi
-          (trim_offset ~add_prefix_space enc_tokens)
-          (Encoding.offsets encoding)
-      in
-      Encoding.create ~ids:(Encoding.ids encoding)
-        ~type_ids:(Encoding.type_ids encoding)
-        ~tokens:enc_tokens
-        ~words:(Encoding.word_ids encoding)
-        ~offsets:new_offsets
-        ~special_tokens_mask:(Encoding.special_tokens_mask encoding)
-        ~attention_mask:(Encoding.attention_mask encoding)
-        ~overflowing:(Encoding.overflowing encoding)
-        ())
-    encodings
-
-let process_bert ~sep ~cls encodings ~add_special_tokens =
-  if not add_special_tokens then encodings
-  else
-    let cls_str, cls_id = cls in
-    let sep_str, sep_id = sep in
-    let cls_tok tid = special_token ~id:cls_id ~token:cls_str ~type_id:tid in
-    let sep_tok tid = special_token ~id:sep_id ~token:sep_str ~type_id:tid in
-    match encodings with
-    | [] -> []
-    | [ encoding ] -> [ Encoding.concat [ cls_tok 0; encoding; sep_tok 0 ] ]
-    | [ enc1; enc2 ] ->
-        [ Encoding.concat [ cls_tok 0; enc1; sep_tok 0; enc2; sep_tok 1 ] ]
-    | _ -> encodings
-
-let process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space encodings
-    ~add_special_tokens =
-  let encodings =
-    if trim_offsets then trim_encodings ~add_prefix_space encodings
-    else encodings
+let trim_encoding ~add_prefix_space encoding =
+  let enc_tokens = Encoding.tokens encoding in
+  let new_offsets =
+    Array.mapi
+      (trim_offset ~add_prefix_space enc_tokens)
+      (Encoding.offsets encoding)
   in
+  Encoding.create ~ids:(Encoding.ids encoding)
+    ~type_ids:(Encoding.type_ids encoding)
+    ~tokens:enc_tokens
+    ~words:(Encoding.word_ids encoding)
+    ~offsets:new_offsets
+    ~special_tokens_mask:(Encoding.special_tokens_mask encoding)
+    ~attention_mask:(Encoding.attention_mask encoding)
+    ~overflowing:(Encoding.overflowing encoding)
+    ()
+
+(* A processor maps the sequences it receives to a list of sequences, which
+   [process] merges once, after the last processor of a [sequence]. [bert] and
+   [roberta] read the first sequence they receive as their single one and each
+   later one as a second, and a template gives each of its pieces as a sequence
+   of its own. So after a template of [[X] $A], [bert] receives [[X]] and [A]
+   and gives [[CLS] [X] [SEP]] and [A [SEP]].
+
+   A sequence is held as the encodings it is made of, joined only to trim its
+   offsets and at the end, so that its tokens are copied once. *)
+
+let trim_sequences ~add_prefix_space sequences =
+  List.map
+    (fun parts -> [ trim_encoding ~add_prefix_space (Encoding.concat parts) ])
+    sequences
+
+let retype parts type_id =
+  List.map (fun part -> Encoding.with_type_id part type_id) parts
+
+let special (token, id) ~type_id = special_token ~id ~token ~type_id
+
+(* [bert] puts [cls] before its first sequence and [sep] after each, typed 0 in
+   the first sequence and 1 in the others. *)
+let process_bert ~sep ~cls sequences ~add_special_tokens =
+  if not add_special_tokens then sequences
+  else
+    List.mapi
+      (fun i parts ->
+        let parts = if i = 0 then special cls ~type_id:0 :: parts else parts in
+        parts @ [ special sep ~type_id:(min i 1) ])
+      sequences
+
+let process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space sequences
+    ~add_special_tokens =
   (* RoBERTa has a single segment: the second sequence of a pair keeps type id
      0, with or without special tokens. *)
-  let encodings = List.map (fun enc -> Encoding.with_type_id enc 0) encodings in
-  if not add_special_tokens then encodings
+  let sequences =
+    List.map
+      (fun parts ->
+        if trim_offsets then
+          [
+            Encoding.with_type_id
+              (trim_encoding ~add_prefix_space (Encoding.concat parts))
+              0;
+          ]
+        else retype parts 0)
+      sequences
+  in
+  (* [roberta] puts [cls] before its first sequence and [sep] before each other
+     one, and [sep] after each. *)
+  if not add_special_tokens then sequences
   else
-    let cls_str, cls_id = cls in
-    let sep_str, sep_id = sep in
-    let cls_tok = special_token ~id:cls_id ~token:cls_str ~type_id:0 in
-    let sep_tok = special_token ~id:sep_id ~token:sep_str ~type_id:0 in
-    match encodings with
-    | [] -> []
-    | [ encoding ] -> [ Encoding.concat [ cls_tok; encoding; sep_tok ] ]
-    | [ enc1; enc2 ] ->
-        [ Encoding.concat [ cls_tok; enc1; sep_tok; sep_tok; enc2; sep_tok ] ]
-    | _ -> encodings
+    let cls = special cls ~type_id:0 and sep = special sep ~type_id:0 in
+    List.mapi
+      (fun i parts -> ((if i = 0 then cls else sep) :: parts) @ [ sep ])
+      sequences
 
-let process_byte_level ~add_prefix_space ~trim_offsets encodings
+let process_byte_level ~add_prefix_space ~trim_offsets sequences
     ~add_special_tokens:_ =
-  if trim_offsets then trim_encodings ~add_prefix_space encodings else encodings
+  if trim_offsets then trim_sequences ~add_prefix_space sequences else sequences
 
 (* Template parsing *)
 
@@ -317,7 +335,7 @@ let parse_template_definition ~special_lookup = function
 
 (* Template encoding *)
 
-let source_encoding source index =
+let sequence_at source index =
   if index >= Array.length source then invalid_arg err_missing_sequence;
   source.(index)
 
@@ -328,154 +346,92 @@ let find_special special_tokens key =
 
 (* A piece keeps the arrays of what it was built from, so a sequence that has
    not worked out its tokens, offsets or word ids still has not. *)
-let encoding_of_piece source special_tokens = function
+let sequence_of_piece source special_tokens = function
   | Piece_sequence { id; type_id } ->
-      Encoding.with_type_id
-        (source_encoding source (sequence_id_to_index id))
-        type_id
+      retype (sequence_at source (sequence_id_to_index id)) type_id
   | Piece_special { key; type_id } ->
       let special = find_special special_tokens key in
       if List.compare_lengths special.value_ids special.value_tokens <> 0 then
         invalid_arg (err_mismatch key);
-      Encoding.concat
-        (List.map2
-           (fun id token -> special_token ~id ~token ~type_id)
-           special.value_ids special.value_tokens)
+      List.map2
+        (fun id token -> special_token ~id ~token ~type_id)
+        special.value_ids special.value_tokens
+
+(* A template reads the first sequence it receives as [$A] and the second as
+   [$B]. More it cannot place. *)
+let template_for ~single ~pair = function
+  | 1 -> single
+  | 2 -> pair
+  | n -> invalid_arg (err_sequences n)
 
 (* Without special tokens the template still decides the order and type ids of
-   the sequences; only its special pieces are dropped. A template left with a
-   single sequence is that sequence, so it shares its arrays instead of copying
-   them. *)
-let process_template ~single ~pair ~special_tokens encodings ~add_special_tokens
+   the sequences; only its special pieces are dropped. *)
+let process_template ~single ~pair ~special_tokens sequences ~add_special_tokens
     =
-  let source = Array.of_list encodings in
-  let apply pieces =
-    let pieces =
-      if add_special_tokens then pieces
-      else List.filter (function Piece_special _ -> false | _ -> true) pieces
-    in
-    match pieces with
-    | [ Piece_sequence { id; type_id } ] ->
-        let src = source_encoding source (sequence_id_to_index id) in
-        [ Encoding.with_type_id src type_id ]
-    | _ ->
-        [
-          Encoding.concat
-            (List.map (encoding_of_piece source special_tokens) pieces);
-        ]
-  in
-  match Array.length source with
-  | 0 -> []
-  | 1 -> apply single
-  | 2 -> apply pair
-  | _ -> encodings
+  match sequences with
+  | [] -> []
+  | _ ->
+      let source = Array.of_list sequences in
+      List.filter_map
+        (function
+          | Piece_special _ when not add_special_tokens -> None
+          | piece -> Some (sequence_of_piece source special_tokens piece))
+        (template_for ~single ~pair (Array.length source))
 
 (* Processing *)
 
-let rec process_list processor encodings ~add_special_tokens =
+let rec process_list processor sequences ~add_special_tokens =
   match processor with
-  | Bert { sep; cls } -> process_bert ~sep ~cls encodings ~add_special_tokens
+  | Bert { sep; cls } -> process_bert ~sep ~cls sequences ~add_special_tokens
   | Roberta { sep; cls; trim_offsets; add_prefix_space } ->
-      process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space encodings
+      process_roberta ~sep ~cls ~trim_offsets ~add_prefix_space sequences
         ~add_special_tokens
   | ByteLevel { add_prefix_space; trim_offsets } ->
-      process_byte_level ~add_prefix_space ~trim_offsets encodings
+      process_byte_level ~add_prefix_space ~trim_offsets sequences
         ~add_special_tokens
   | Template { single; pair; special_tokens } ->
-      process_template ~single ~pair ~special_tokens encodings
+      process_template ~single ~pair ~special_tokens sequences
         ~add_special_tokens
   | Sequence processors ->
       List.fold_left
-        (fun encs proc -> process_list proc encs ~add_special_tokens)
-        encodings processors
+        (fun sequences proc -> process_list proc sequences ~add_special_tokens)
+        sequences processors
 
 (* Each sequence enters typed by its place, as tokenizers' [process] types it:
    the first 0 and the second 1. *)
 let process processor ?pair enc ~add_special_tokens =
-  let encodings =
+  let sequences =
     match pair with
-    | None -> [ Encoding.with_type_id enc 0 ]
-    | Some p -> [ Encoding.with_type_id enc 0; Encoding.with_type_id p 1 ]
+    | None -> [ [ Encoding.with_type_id enc 0 ] ]
+    | Some p ->
+        [ [ Encoding.with_type_id enc 0 ]; [ Encoding.with_type_id p 1 ] ]
   in
-  Encoding.concat (process_list processor encodings ~add_special_tokens)
+  Encoding.concat
+    (List.concat (process_list processor sequences ~add_special_tokens))
 
-(* What a processor puts around a single sequence, when that is all it does to
-   its ids. A template says so structurally: the pieces before the one sequence
-   it names are the prefix and those after it the suffix. *)
-let template_affixes pieces special_tokens =
-  let ids key = Array.of_list (find_special special_tokens key).value_ids in
-  let names_sequence = function Piece_sequence _ -> true | _ -> false in
-  let special_ids pieces =
-    Array.concat
-      (List.filter_map
-         (function Piece_special { key; _ } -> Some (ids key) | _ -> None)
-         pieces)
+(* Inserted tokens are the ones [process] masks as special, so what it does to
+   empty sequences counts them, and what it does to one token of input shows
+   what it puts around a sequence. *)
+
+let added_tokens processor ~is_pair =
+  let pair = if is_pair then Some Encoding.empty else None in
+  Encoding.length
+    (process processor ?pair Encoding.empty ~add_special_tokens:true)
+
+let affixes processor ~add_special_tokens =
+  let input =
+    Encoding.create ~ids:[| 0 |] ~type_ids:[| 0 |] ~tokens:[| "a" |]
+      ~words:[| Some 0 |]
+      ~offsets:[| (0, 1) |]
+      ~special_tokens_mask:[| 0 |] ~attention_mask:[| 1 |] ()
   in
-  match List.partition names_sequence pieces with
-  | [ _ ], _ ->
-      let before, after =
-        let rec split before = function
-          | piece :: rest when names_sequence piece -> (List.rev before, rest)
-          | piece :: rest -> split (piece :: before) rest
-          | [] -> (List.rev before, [])
-        in
-        split [] pieces
-      in
-      Some (special_ids before, special_ids after)
+  let enc = process processor input ~add_special_tokens in
+  let ids = Encoding.ids enc and mask = Encoding.special_tokens_mask enc in
+  let n = Array.length ids in
+  let inputs = List.filter (fun i -> mask.(i) = 0) (List.init n Fun.id) in
+  match inputs with
+  | [ i ] -> Some (Array.sub ids 0 i, Array.sub ids (i + 1) (n - i - 1))
   | _ -> None
-
-let rec affixes processor ~add_special_tokens =
-  let wrap prefix suffix =
-    if add_special_tokens then Some ([| prefix |], [| suffix |])
-    else Some ([||], [||])
-  in
-  match processor with
-  | Bert { sep = _, sep; cls = _, cls } -> wrap cls sep
-  | Roberta { sep = _, sep; cls = _, cls; _ } -> wrap cls sep
-  | ByteLevel _ -> Some ([||], [||])
-  | Template { single; special_tokens; _ } ->
-      let pieces =
-        if add_special_tokens then single
-        else
-          List.filter (function Piece_special _ -> false | _ -> true) single
-      in
-      template_affixes pieces special_tokens
-  | Sequence processors ->
-      (* Each processor wraps what the one before it produced. *)
-      List.fold_left
-        (fun affixed processor ->
-          match (affixed, affixes processor ~add_special_tokens) with
-          | Some (prefix, suffix), Some (outer_prefix, outer_suffix) ->
-              Some
-                ( Array.append outer_prefix prefix,
-                  Array.append suffix outer_suffix )
-          | _ -> None)
-        (Some ([||], [||]))
-        processors
-
-let rec added_tokens processor ~is_pair =
-  match processor with
-  | Bert _ -> if is_pair then 3 else 2
-  | Roberta _ -> if is_pair then 4 else 2
-  | ByteLevel _ -> 0
-  | Template { single; pair; special_tokens } ->
-      let lookup = build_special_lookup special_tokens in
-      let count_special pieces =
-        List.fold_left
-          (fun acc piece ->
-            match piece with
-            | Piece_special { key; _ } -> (
-                match Hashtbl.find_opt lookup key with
-                | Some tok -> acc + List.length tok.value_ids
-                | None -> acc)
-            | _ -> acc)
-          0 pieces
-      in
-      count_special (if is_pair then pair else single)
-  | Sequence processors ->
-      List.fold_left
-        (fun acc proc -> acc + added_tokens proc ~is_pair)
-        0 processors
 
 (* Constructors *)
 
