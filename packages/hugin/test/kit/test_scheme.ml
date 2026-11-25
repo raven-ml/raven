@@ -374,7 +374,7 @@ let designed =
       ( rdbu,
         "67001fb2182bd6604df4a582fddbc7f7f7f7d1e5f092c5de4393c32166ac053061" );
       (spectral, "d53e4ff46d43fdae61fee08be6f598abdda466c2a53288bd");
-      (puor, "5e3c99b2abd2fdb863e66101");
+      (puor, "e66101fdb863b2abd25e3c99");
       (okabe_ito, "000000e69f0056b4e9009e73f0e4420072b2d55e00cc79a7");
       (tableau10, "4e79a7f28e2ce1575976b7b259a14fedc949af7aa1ff9da79c755fbab0ab");
       ( paired,

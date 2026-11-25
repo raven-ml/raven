@@ -197,6 +197,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Scheme.puor` runs from orange to purple, Brewer's order, as its
+  documentation says. Its tables were reversed, so its readings ran from
+  purple to orange.
 - `Ticks.choose` gives a continuous axis at most a hundred ticks, as it does a
   band axis, and aims for at most fifty. A long log axis from 1 to 403 had
   202 ticks, and a long linear one from 0 to 1 the 101 multiples of `0.01`.
