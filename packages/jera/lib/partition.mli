@@ -78,6 +78,10 @@ val worst :
 (** [worst p ~point] is, per lane, the ends of the box of largest error along
     its split axis, mapped by [point] as {!refine} maps them. *)
 
+val padded : int -> int
+(** [padded budget] is the slots {!integrate} evaluates for [budget] slots:
+    [budget] rounded up to a whole number of chunks of 32. *)
+
 val integrate :
   ('q, 'b, 'd) t ->
   ('d Nx.int32_t -> 'd Nx.int64_t -> (float, 'b, 'd) Nx.t) ->

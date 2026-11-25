@@ -1281,6 +1281,12 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Solution.evaluations` of `Quad.adaptive`, `Quad.tanh_sinh`,
+  `Quad.cubature`, `Quad.qmc` and `Piecewise.adapt` counts the answer's final
+  pass over the partition, chunks or schedule, as well as the search, and
+  `tanh_sinh` counts its chunks of 64 whole. It counted the search alone. Each
+  method's Cost sentence states the pass: `qmc` evaluates all `budget` chunks
+  again, `tanh_sinh` its whole schedule.
 - `Minimize.iterates` of a gradient method on a start of no unknowns returns
   its rows of no element, as `Minimize.solve` converges there, where it raised
   `Invalid_argument` from `Nx.reshape`.

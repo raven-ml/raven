@@ -305,6 +305,14 @@ let exp_integral' t = ((t *. Float.exp t) -. Float.exp t +. 1.) /. (t *. t)
 
 let adaptive_tests =
   [
+    test "evaluations count the search's pieces and the answer's 32" (fun () ->
+        (* Budget 3: 2·3 − 1 pieces searched, then one chunk of 32 pieces, 15
+           points each. *)
+        let s = adaptive ~budget:3 Nx.log (unit_range (vec [| 0. |])) in
+        equal Oracle.status_t Budget_spent (Oracle.status s);
+        equal (Oracle.tensor ())
+          (Nx.create Nx.int32 [| 1 |] [| Int32.of_int (15 * (5 + 32)) |])
+          (Solution.evaluations s));
     test "a smooth integral converges" (fun () ->
         let theta = vec [| -2.; 0.5; 3. |] in
         let s =
@@ -354,7 +362,6 @@ let adaptive_tests =
         let report = Format.asprintf "%a" Solution.pp s in
         contains ~sub:"rule kronrod 7, tol rel 1e-10 abs 1e-12, budget 2" report;
         contains ~sub:"a 0, b 1, estimate" report;
-        contains ~sub:"2 of 2 pieces, 45 evaluations." report;
         contains ~sub:"Raise the budget or loosen tol" report);
     test "a pole at a node is a non-finite sum" (fun () ->
         (* The 15-point rule's middle node on [0, 1] is 0.5, where 1 / (x − 0.5)
@@ -437,6 +444,24 @@ let log_moment a =
 let de_tests =
   let close = Oracle.tensor ~rel:1e-11 () in
   [
+    test "evaluations count the search's chunks and the whole schedule"
+      (fun () ->
+        (* Lane 0 diverges and searches every chunk of 64 nodes, so it evaluates
+           the schedule twice; lane 1 converges sooner and adds its search's
+           chunks to one pass. *)
+        let f x =
+          let lane i = Nx.slice [ Nx.A; Nx.I i ] x in
+          Nx.stack ~axis:1 [ Nx.recip (lane 0); Nx.sqrt (lane 1) ]
+        in
+        let s = ts f (Quad.Range.v (vec [| 0.; 0. |]) (vec [| 1.; 1. |])) in
+        equal (Oracle.tensor ())
+          (Nx.create Nx.bool [| 2 |] [| false; true |])
+          (Solution.ok s);
+        let n = Nx.to_array (Solution.evaluations s) in
+        let schedule = Int32.div n.(0) 2l in
+        equal int32 0l (Int32.rem schedule 64l);
+        equal int32 0l (Int32.rem (Int32.sub n.(1) schedule) 64l);
+        less int32 ~than:n.(0) n.(1));
     test "endpoint singularities at 0 converge" (fun () ->
         let a = vec [| 0.3; 0.5; 1.; 2.5 |] in
         equal close
@@ -519,6 +544,20 @@ let cube ?(budget = 2000) f box =
 
 let cubature_tests =
   [
+    test "evaluations count the search's boxes and the answer's 32" (fun () ->
+        (* Budget 2 in two dimensions: 2·2 − 1 boxes searched, then one chunk of
+           32 boxes, 2² + 2·2² + 2·2 + 1 = 17 points each. *)
+        let peak x =
+          Nx.exp
+            (Nx.mul_s
+               (Nx.sum ~axes:[ Nx.ndim x - 1 ] (Nx.square (Nx.sub_s x 0.4)))
+               (-50.))
+        in
+        let s = cube ~budget:2 peak (unit_box [| 1 |] 2) in
+        equal Oracle.status_t Budget_spent (Oracle.status s);
+        equal (Oracle.tensor ())
+          (Nx.create Nx.int32 [| 1 |] [| Int32.of_int (17 * (3 + 32)) |])
+          (Solution.evaluations s));
     test "a degree-7 monomial is exact in one box" (fun () ->
         (* ∫ x⁴ y³ over [0, 1]² = 1/20. *)
         let f x = Nx.mul (Nx.pow_s (coord 0 x) 4.) (Nx.pow_s (coord 1 x) 3.) in
@@ -635,6 +674,17 @@ let key = Nx.Rng.key 2026
 
 let qmc_tests =
   [
+    test "evaluations count the search's chunks and the answer's budget"
+      (fun () ->
+        (* Budget 3: three chunks of 1024 points searched, then three again. *)
+        let s =
+          Quad.qmc key ~tol:(Tol.abs 1e-300) ~budget:3 product
+            (unit_box [| 1 |] 2)
+        in
+        equal Oracle.status_t Budget_spent (Oracle.status s);
+        equal (Oracle.tensor ())
+          (Nx.create Nx.int32 [| 1 |] [| Int32.of_int (1024 * (3 + 3)) |])
+          (Solution.evaluations s));
     cases "each dimension's prefix of 2^k points is balanced"
       ~id:(fun j -> Printf.sprintf "dimension %d" j)
       [ 0; 1; 2; 7; 100; 555; 1110 ]

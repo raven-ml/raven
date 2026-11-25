@@ -208,9 +208,11 @@ let refine s ~at ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
     ~until:(fun p -> Nx.logical_not (Nx.any (Elementwise.searching p.status)))
     step initial
 
+let padded budget = chunk * ((budget + chunk - 1) / chunk)
+
 let integrate p f =
   let budget = Nx.dim 0 p.error in
-  let padded = chunk * ((budget + chunk - 1) / chunk) in
+  let padded = padded budget in
   let pad v =
     if padded = budget then v
     else

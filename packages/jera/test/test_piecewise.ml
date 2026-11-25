@@ -288,6 +288,15 @@ let between = Nx.linspace f64 0.0123 1.9871 97
 
 let adapt_tests =
   [
+    test "evaluations count the search's pieces and the answer's budget"
+      (fun () ->
+        (* Budget 3 at degree 8: 2·3 − 1 pieces searched, then 3 again, 9 points
+           each. *)
+        let s = adapt ~budget:3 (fun x -> Nx.abs (Nx.sub_s x 0.3)) 0. 1. in
+        equal Oracle.status_t Budget_spent (Oracle.status s);
+        equal int32
+          (Int32.of_int (9 * (5 + 3)))
+          (Nx.item [] (Solution.evaluations s)));
     test "a smooth function is met between the nodes" (fun () ->
         let p = Solution.get (adapt Nx.exp 0. 2.) in
         equal

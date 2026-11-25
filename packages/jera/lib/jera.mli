@@ -1069,12 +1069,13 @@ module Quad : sig
       float strictly inside, ends [Stalled]; a non-finite sum ends it
       [Not_finite]; [budget] pieces end it [Budget_spent]. A feature narrower
       than the first rule's nodes can be invisible to every estimate, and an
-      element can converge without it. {b Cost.} [2n + 1] points per piece, and
-      the answer evaluates the final partition again, in chunks of 32 pieces
-      under a {!Rune.scan}, so reverse mode keeps one chunk's values.
-      {b Derivative.} The final partition's rule's: the pieces are integers
-      [(level, index)] whose ends are [a + (b − a) index / 2^level], so it
-      reaches the ends.
+      element can converge without it. {b Cost.} [2n + 1] points per piece the
+      search evaluates, [2k − 1] pieces for [k] in use, and the answer evaluates
+      [budget] pieces again, rounded up to a multiple of 32, in chunks of 32
+      under a {!Rune.scan}, so reverse mode keeps one chunk's values; an unused
+      piece is the whole range with weight zero. {b Derivative.} The final
+      partition's rule's: the pieces are integers [(level, index)] whose ends
+      are [a + (b − a) index / 2^level], so it reaches the ends.
 
       Raises [Invalid_argument] if [budget < 1], or as {!fixed} does. *)
 
@@ -1102,10 +1103,12 @@ module Quad : sig
       end from its argument. {b Error.} [e] is the difference of the last two
       levels and [y] the integral. A lane whose terms at the truncation do not
       fall below the tolerance, or whose finest level does not meet it, ends
-      [Stalled]; a non-finite sum ends it [Not_finite]. {b Cost.} At most the
-      nodes of the finest level, in chunks of 64, per element, and the answer
-      evaluates the final level's nodes again. {b Derivative.} That of the sum
-      over the final level, through the ends and the integrand's parameters. *)
+      [Stalled]; a non-finite sum ends it [Not_finite]. {b Cost.} The search
+      evaluates chunks of 64 nodes up to the finest level's, per element, and
+      the answer evaluates every chunk of the dtype's schedule again, those past
+      the element's final level with weight zero. {b Derivative.} That of the
+      sum over the final level, through the ends and the integrand's parameters.
+  *)
 
   val cubature :
     tol:Tol.t ->
@@ -1125,9 +1128,10 @@ module Quad : sig
       level 62 along its axis, or holds no float strictly inside along it, ends
       [Stalled]; a non-finite sum ends it [Not_finite]; [budget] boxes end it
       [Budget_spent]. {b Cost.} [2^d + 2d² + 2d + 1] points per box, [budget]
-      boxes at most per lane, and the answer evaluates the final partition
-      again. {b Derivative.} The final partition's rule's, through the corners
-      and the integrand's parameters.
+      boxes at most per lane, [2k − 1] evaluated for [k] in use, and the answer
+      evaluates [budget] boxes again, rounded up to a multiple of 32, an unused
+      one with weight zero. {b Derivative.} The final partition's rule's,
+      through the corners and the integrand's parameters.
 
       Raises [Invalid_argument] if [d] is not in [[2, 10]], if [budget < 1], or
       if [f]'s result is not the points' shape without its last axis. *)
@@ -1155,10 +1159,11 @@ module Quad : sig
       estimate at a fixed point count is unbiased, and the stopped one to within
       its standard error. [budget] chunks end a lane [Budget_spent]. {b Cost.}
       1024 points per chunk, 64 under each of 16 shifts, [budget] chunks at
-      most, and the answer evaluates the final points again. {b Derivative.} The
-      estimate's over the final points, through the corners and the integrand's
-      parameters: an estimate of the integral's derivative where the integrand
-      is Lipschitz in the parameter.
+      most, and the answer evaluates all [budget] chunks again, those past the
+      lane's last with weight zero. {b Derivative.} The estimate's over the
+      final points, through the corners and the integrand's parameters: an
+      estimate of the integral's derivative where the integrand is Lipschitz in
+      the parameter.
 
       Raises [Invalid_argument] if [d] is above 1111, if [budget < 1], or if
       [f]'s result is not the points' shape without its last axis. *)
@@ -1325,9 +1330,10 @@ module Piecewise : sig
       ends [Stalled]; a non-finite coefficient ends it [Not_finite]; [budget]
       pieces end it [Budget_spent]. The error is a series of degree 0 on the
       answer's breaks, each piece's tail. {b Cost.} [degree + 1] evaluations of
-      [f] per piece, and the answer evaluates [f] again at every piece's points.
-      {b Derivative.} The final partition's interpolant's: its breaks are
-      [a + (b − a) index / 2^level], so it reaches the ends.
+      [f] per piece, [2k − 1] pieces for [k] in use, and the answer evaluates
+      [f] again at the points of all [budget] pieces, an unused piece's inside
+      the range. {b Derivative.} The final partition's interpolant's: its breaks
+      are [a + (b − a) index / 2^level], so it reaches the ends.
 
       Raises [Invalid_argument] if [degree < 2], [budget < 1], if [a] or [b] is
       not a scalar, or if [f]'s leaves do not start with the points' shape. *)

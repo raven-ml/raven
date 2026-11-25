@@ -414,7 +414,9 @@ let adaptive r ~tol ~budget f range =
             singularity inside the range; split the range there, or use \
             Quad.tanh_sinh for one at an end.")
     ~value:(Nx.where ok total estimate)
-    ~error ~status:p.status ~evaluations:p.evaluations
+    ~error ~status:p.status
+    ~evaluations:
+      (Nx.add_s p.evaluations (Int32.of_int (m * Partition.padded budget)))
     ~facts:
       (range_facts range
       @ [ Fact ("estimate", estimate); Fact ("error", error) ])
@@ -436,7 +438,6 @@ type schedule = {
   outer : float array array;
   level : int array;
   last : bool array;
-  count : int array;
   finest : int;
 }
 
@@ -516,20 +517,18 @@ let schedule kind dtype =
                 (fun (t, _) -> if Float.abs t > tmax -. 0.5 then 1. else 0.)
                 0.),
           k,
-          c = count - 1,
-          max 0 (min de_chunk (Array.length nodes - (c * de_chunk))) )
+          c = count - 1 )
         :: !chunks
     done
   done;
   let chunks = Array.of_list (List.rev !chunks) in
   {
-    side = Array.map (fun (s, _, _, _, _, _, _) -> s) chunks;
-    offset = Array.map (fun (_, u, _, _, _, _, _) -> u) chunks;
-    weight = Array.map (fun (_, _, w, _, _, _, _) -> w) chunks;
-    outer = Array.map (fun (_, _, _, o, _, _, _) -> o) chunks;
-    level = Array.map (fun (_, _, _, _, k, _, _) -> k) chunks;
-    last = Array.map (fun (_, _, _, _, _, l, _) -> l) chunks;
-    count = Array.map (fun (_, _, _, _, _, _, n) -> n) chunks;
+    side = Array.map (fun (s, _, _, _, _, _) -> s) chunks;
+    offset = Array.map (fun (_, u, _, _, _, _) -> u) chunks;
+    weight = Array.map (fun (_, _, w, _, _, _) -> w) chunks;
+    outer = Array.map (fun (_, _, _, o, _, _) -> o) chunks;
+    level = Array.map (fun (_, _, _, _, k, _) -> k) chunks;
+    last = Array.map (fun (_, _, _, _, _, l) -> l) chunks;
     finest;
   }
 
@@ -582,10 +581,6 @@ let tanh_sinh ~tol f range =
       (Nx.create Nx.int32 [| n_chunks |] (Array.map Int32.of_int sch.level))
   in
   let lasts = Nx.place at (Nx.create Nx.bool [| n_chunks |] sch.last) in
-  let counts =
-    Nx.place at
-      (Nx.create Nx.int32 [| n_chunks |] (Array.map Int32.of_int sch.count))
-  in
   let column v =
     Nx.reshape
       (Array.append [| de_chunk |] (Array.make (Array.length lanes) 1))
@@ -614,7 +609,9 @@ let tanh_sinh ~tol f range =
       Nx.maximum tail (Nx.max ~axes:[ 0 ] (Nx.mul (Nx.abs t) (row outer i64)))
     in
     let at table = Nx.reshape [||] (Nx.take (Nx.reshape [| 1 |] i64) table) in
-    let n = Nx.add n (Nx.mul (Nx.cast Nx.int32 run) (at counts)) in
+    let n =
+      Nx.add n (Nx.mul_s (Nx.cast Nx.int32 run) (Int32.of_int de_chunk))
+    in
     let k = at levels and ends = at lasts in
     (* At a level's end: I_k = I_(k−1) / 2 + 2^-k R_k, I_0 = R_0. *)
     let h = Nx.exp2 (Nx.neg (Nx.cast dtype k)) in
@@ -701,7 +698,8 @@ let tanh_sinh ~tol f range =
             the tolerance is below the dtype's reach. Scale the variable so \
             the integrand's width is near 1.")
     ~value:(Nx.where ok answer current)
-    ~error ~status:st ~evaluations:n
+    ~error ~status:st
+    ~evaluations:(Nx.add_s n (Int32.of_int (n_chunks * de_chunk)))
     ~facts:
       (range_facts range @ [ Fact ("estimate", current); Fact ("error", error) ])
     ()
@@ -892,7 +890,10 @@ let cubature ~tol ~budget f (box : (_, 'd) Box.t) =
            "A box cannot be bisected further: the integrand has a singularity \
             inside the box.")
     ~value:(Nx.where ok total estimate)
-    ~error ~status:b.status ~evaluations:b.evaluations
+    ~error ~status:b.status
+    ~evaluations:
+      (Nx.add_s b.evaluations
+         (Int32.of_int (n_points * Partition.padded budget)))
     ~facts:[ Fact ("estimate", estimate); Fact ("error", error) ]
     ()
 
@@ -1097,6 +1098,9 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
          (Nx.mul (Nx.div total count) (volume box.lo box.hi))
          estimate)
     ~error ~status:st
-    ~evaluations:(Nx.mul_s used (Int32.of_int (qmc_chunk * shifts)))
+    ~evaluations:
+      (Nx.mul_s
+         (Nx.add_s used (Int32.of_int budget))
+         (Int32.of_int (qmc_chunk * shifts)))
     ~facts:[ Fact ("estimate", estimate); Fact ("error", error) ]
     ()

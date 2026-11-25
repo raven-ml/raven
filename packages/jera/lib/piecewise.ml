@@ -322,7 +322,8 @@ let adapt s ~degree ~tol ~budget f a b =
     ~settings:
       (Format.asprintf "degree %d, tol %a, budget %d" degree Tol.pp tol budget)
     ~spent:{ used = p.used; unit = "pieces"; budget }
-    ~fix ~value ~error ~status:st ~evaluations:n
+    ~fix ~value ~error ~status:st
+    ~evaluations:(Nx.add_s n (Int32.of_int (m * budget)))
     ~facts:[ Fact ("worst from", worst_from); Fact ("worst to", worst_to) ]
     ()
 
