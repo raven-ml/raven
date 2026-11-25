@@ -23,6 +23,6 @@ let token_to_id () token =
 let id_to_token () id =
   if id >= 0 && id <= 255 then Some (Array.unsafe_get table id) else None
 
-let get_vocab () = []
+let get_vocab () = List.init 256 (fun b -> (Array.unsafe_get table b, b))
 let get_vocab_size () = 256
 let save () ~folder:_ () = []

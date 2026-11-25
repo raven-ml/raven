@@ -838,6 +838,21 @@ let bytes_law =
         (Array.init (String.length text) (fun i -> Char.code text.[i]))
         (encode_ids (chars ()) text))
 
+let test_chars_vocab () =
+  let bytes = List.init 256 (fun b -> (String.make 1 (Char.chr b), b)) in
+  let t = chars () in
+  equal ~msg:"vocab"
+    (list (pair string int))
+    bytes
+    (List.sort compare (vocab t));
+  equal ~msg:"vocab_size" int 256 (vocab_size t);
+  let added = chars ~added_tokens:[ added_token "<s>" ] () in
+  equal ~msg:"with an added token"
+    (list (pair string int))
+    (List.sort compare (("<s>", 256) :: bytes))
+    (List.sort compare (vocab added));
+  equal ~msg:"its vocab_size" int 257 (vocab_size added)
+
 (* from_model_file *)
 
 (* Every line of a vocab.txt takes the next id, a blank one included, as
@@ -976,7 +991,11 @@ let () =
              test "numbers entries by their position" test_positions;
              test "encodes a pretoken of 100 KB" test_long_pretoken;
            ];
-         group "chars" [ bytes_law ];
+         group "chars"
+           [
+             bytes_law;
+             test "has the 256 bytes as its vocabulary" test_chars_vocab;
+           ];
          group "from_model_file"
            [
              line_ids;

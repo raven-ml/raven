@@ -5573,6 +5573,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.vocab` of a `chars` tokenizer lists its 256 one-byte tokens, which
+  `vocab_size` counted and `vocab` left out.
 - `Brot.unk_token` is the model's unknown token, defaults included, and
   `~unk_token` reaches the model from `from_model_file`, the trainers and
   `to_json`, which dropped it.

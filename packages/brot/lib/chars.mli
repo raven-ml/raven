@@ -41,7 +41,7 @@ val id_to_token : t -> int -> string option
 (** [id_to_token t b] is the single-byte string for byte value [b]. *)
 
 val get_vocab : t -> (string * int) list
-(** [get_vocab t] is [[]] (no explicit vocabulary). *)
+(** [get_vocab t] is each one-byte string paired with its byte value. *)
 
 val get_vocab_size : t -> int
 (** [get_vocab_size t] is [256], one entry per byte value. *)

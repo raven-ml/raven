@@ -1310,7 +1310,8 @@ val chars :
   t
 (** [chars ()] is a byte-level tokenizer: each byte of the input is one token
     whose ID is the byte's value. A multi-byte character is as many tokens as it
-    has bytes. No vocabulary is required.
+    has bytes. No vocabulary is required: its vocabulary is the 256 one-byte
+    strings, the token of ID [b] being the byte [b].
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
