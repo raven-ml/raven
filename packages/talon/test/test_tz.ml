@@ -11,7 +11,18 @@ module Error = Talon.Error
 
 (* The database of golden/tz/zoneinfo/, written by gen/tz.py. *)
 let db () = Error.get_ok (Tz.of_dir "golden/tz/zoneinfo")
-let zone name = Error.get_ok (Tz.find (db ()) name)
+
+(* Each zone is decoded once per worker. *)
+let decoded = Hashtbl.create 32
+
+let zone name =
+  match Hashtbl.find_opt decoded name with
+  | Some z -> z
+  | None ->
+      let z = Error.get_ok (Tz.find (db ()) name) in
+      Hashtbl.add decoded name z;
+      z
+
 let hour = 3600
 let day = 86_400
 
@@ -30,15 +41,17 @@ let posix y m d h min =
 (* The transitions gen/tz.py reads through zdump, glibc and CPython's zoneinfo:
    [(zone, instant, offset before, offset after)]. *)
 let golden =
-  In_channel.with_open_text "golden/tz/transitions.txt" In_channel.input_lines
-  |> List.map (fun line ->
-      Scanf.sscanf line "%s %Ld %d %d" (fun zone u before after ->
-          (zone, u, before, after)))
+  lazy
+    (In_channel.with_open_text "golden/tz/transitions.txt"
+       In_channel.input_lines
+    |> List.map (fun line ->
+        Scanf.sscanf line "%s %Ld %d %d" (fun zone u before after ->
+            (zone, u, before, after))))
 
 let rows name =
   List.filter_map
     (fun (z, u, b, a) -> if z = name then Some (u, b, a) else None)
-    golden
+    (Lazy.force golden)
 
 (* The transitions of each fixture zone. Those whose footer disagrees with the
    last transition, which both readers of gen/tz.py apply from that transition
@@ -116,10 +129,20 @@ let extremes =
 
 let pp_instant ppf t = Format.fprintf ppf "%Ld" t
 
-(* Instants near the transitions of [name], within its years, anywhere, and at
-   the ends of [int64]. Near a transition, half are wall-clock times within
-   three hours of the clock's reading on either side of it, where its gaps and
-   folds lie. *)
+(* Instants within the fixture zones' years, anywhere, and at the ends of
+   [int64]. *)
+let anywhere =
+  [
+    (2, Gen.int64_range (-5_500_000_000L) 7_300_000_000L);
+    (1, Gen.int64);
+    (1, Gen.of_list extremes);
+  ]
+
+let instant_anywhere = Gen.with_pp pp_instant (Gen.frequency anywhere)
+
+(* Instants near the transitions of [name], and as [instant_anywhere]. Near a
+   transition, half are wall-clock times within three hours of the clock's
+   reading on either side of it, where its gaps and folds lie. *)
 let instant name =
   let near =
     match transitions name with
@@ -140,14 +163,7 @@ let instant name =
           );
         ]
   in
-  Gen.with_pp pp_instant
-    (Gen.frequency
-       (near
-       @ [
-           (2, Gen.int64_range (-5_500_000_000L) 7_300_000_000L);
-           (1, Gen.int64);
-           (1, Gen.of_list extremes);
-         ]))
+  Gen.with_pp pp_instant (Gen.frequency (near @ anywhere))
 
 let zone_instant =
   Gen.with_pp
@@ -172,15 +188,74 @@ let utc =
   group "utc"
     [
       test "is named UTC" (fun () -> equal string "UTC" (Tz.name Tz.utc));
-      prop "has the offset 0 at every instant" (instant "UTC") (fun t ->
+      prop "has the offset 0 at every instant" instant_anywhere (fun t ->
           equal int 0 (Tz.offset_s Tz.utc t));
-      prop "reads every local time once, at offset 0" (instant "UTC") (fun t ->
+      prop "reads every local time once, at offset 0" instant_anywhere (fun t ->
           equal local (Unique 0) (Tz.local Tz.utc t));
       test "agrees with the UTC file at the ends of int64" (fun () ->
           List.iter
             (fun t ->
               equal int (Tz.offset_s Tz.utc t) (Tz.offset_s (zone "UTC") t))
             extremes);
+    ]
+
+(* Fixed zones and equality *)
+
+(* Offsets of fixed zones: the bounds RFC 9636 allows, and anywhere. *)
+let fixed_offset =
+  Gen.frequency
+    [
+      (1, Gen.of_list [ -0x7FFF_FFFF; 0x7FFF_FFFF; 0; -1; 1; 19_800 ]);
+      (2, Gen.int_range (-0x7FFF_FFFF) 0x7FFF_FFFF);
+      (2, Gen.int_range (-90_000) 90_000);
+    ]
+
+let fixed =
+  group "fixed"
+    [
+      prop "has its offset at every instant, and reads each time once"
+        (Gen.pair fixed_offset instant_anywhere) (fun (o, t) ->
+          let z = Tz.fixed o in
+          equal int o (Tz.offset_s z t);
+          equal local (Unique o) (Tz.local z t));
+      cases "is named" ~id:snd
+        [
+          (19_800, "+05:30");
+          (-2730, "-00:45:30");
+          (0, "+00:00");
+          (0x7FFF_FFFF, "+596523:14:07");
+          (-0x7FFF_FFFF, "-596523:14:07");
+        ]
+        (fun (o, expected) -> equal string expected (Tz.name (Tz.fixed o)));
+      test "refuses an offset of 2^31 or -2^31" (fun () ->
+          raises_match
+            (fun e -> Exn.invalid_arg e)
+            (fun () -> Tz.fixed 0x8000_0000);
+          raises_match
+            (fun e -> Exn.invalid_arg e)
+            (fun () -> Tz.fixed (-0x8000_0000)));
+    ]
+
+let zone_w =
+  Testable.make
+    ~pp:(fun ppf z -> Format.pp_print_string ppf (Tz.name z))
+    ~equal:Tz.equal
+
+let equality =
+  group "equal"
+    [
+      test "fixed zones are equal when their offsets are" (fun () ->
+          equal zone_w (Tz.fixed 19_800) (Tz.fixed 19_800);
+          not_equal zone_w (Tz.fixed 19_800) (Tz.fixed 19_801);
+          equal zone_w Tz.utc (Tz.fixed 0));
+      test "a zone equals another of the same rules, whatever its name"
+        (fun () ->
+          equal zone_w (zone "Europe/Paris") (zone "Europe/Paris");
+          not_equal zone_w (zone "Europe/Paris") (zone "America/New_York");
+          equal zone_w Tz.utc (zone "UTC");
+          equal zone_w (Tz.fixed (-18_000)) (zone "Etc/GMT+5"));
+      test "a slim and a fat build of one zone are not equal" (fun () ->
+          not_equal zone_w (zone "Europe/Paris") (zone "slim/Europe/Paris"));
     ]
 
 (* Offsets *)
@@ -195,9 +270,14 @@ let sweep name =
       equal int after ~msg:(Printf.sprintf "%Ld" u) (Tz.offset_s z u))
     (transitions name)
 
-let agree a b =
-  prop (Printf.sprintf "%s agrees with %s" a b) (instant b) (fun t ->
-      equal int (Tz.offset_s (zone b) t) (Tz.offset_s (zone a) t))
+(* A build of Europe/Paris other than the fat one, and an instant. *)
+let build_instant =
+  let open Gen in
+  let* build =
+    of_list [ "slim/Europe/Paris"; "right/Europe/Paris"; "v5/Europe/Paris" ]
+  in
+  let+ t = instant "Europe/Paris" in
+  (build, t)
 
 let cycle = Int64.of_int (146_097 * day)
 
@@ -254,11 +334,11 @@ let offset_s =
           equal int 7200 (Tz.offset_s z Int64.max_int);
           equal int 7200 (Tz.offset_s z (posix 2400 7 1 0 0)));
       prop "has a file's only offset without transitions or a rule"
-        (instant "hand/Fixed") (fun t ->
+        instant_anywhere (fun t ->
           let z = zone "hand/Fixed" in
           equal int 19_800 (Tz.offset_s z t);
           equal local (Unique 19_800) (Tz.local z t));
-      prop "reads a POSIX offset as seconds west of UTC" (instant "Etc/GMT+5")
+      prop "reads a POSIX offset as seconds west of UTC" instant_anywhere
         (fun t -> equal int (-18_000) (Tz.offset_s (zone "Etc/GMT+5") t));
       test "follows a disagreeing footer from its first change of offset"
         (fun () ->
@@ -272,16 +352,24 @@ let offset_s =
           let z = zone "hand/PermDisagrees" in
           equal int (-10_800) (Tz.offset_s z (posix 1974 1 1 3 0));
           equal int (-10_800) (Tz.offset_s z Int64.max_int));
-      prop "follows a footer with no transitions everywhere"
-        (instant "hand/AllYearDst") (fun t ->
-          equal int (-14_400) (Tz.offset_s (zone "hand/AllYearDst") t));
+      prop "follows a footer with no transitions everywhere" instant_anywhere
+        (fun t -> equal int (-14_400) (Tz.offset_s (zone "hand/AllYearDst") t));
       test "removes leap seconds from transition times" (fun () ->
           let z = zone "hand/Truncated" in
           equal int 0 (Tz.offset_s z 1_499_999_999L);
           equal int 3600 (Tz.offset_s z 1_500_000_000L));
-      agree "slim/Europe/Paris" "Europe/Paris";
-      agree "right/Europe/Paris" "Europe/Paris";
-      agree "v5/Europe/Paris" "Europe/Paris";
+      prop
+        "a slim, a leap-second and a version 5 build agree with the fat build"
+        (Gen.with_pp
+           (fun ppf (build, t) -> Format.fprintf ppf "%s at %Ld" build t)
+           build_instant)
+        (fun (build, t) ->
+          cover "slim" (build = "slim/Europe/Paris");
+          cover "leap seconds" (build = "right/Europe/Paris");
+          cover "version 5" (build = "v5/Europe/Paris");
+          equal int
+            (Tz.offset_s (zone "Europe/Paris") t)
+            (Tz.offset_s (zone build) t));
       prop "repeats every 400 years after the last transition"
         (Gen.with_pp
            (fun ppf (name, t) -> Format.fprintf ppf "%s at %Ld" name t)
@@ -352,50 +440,64 @@ let round_trip (name, u) =
       failf "the clock reads %Ld at %Ld, yet local is %a" t u
         (Testable.pp local) l
 
-let wall name y m d h min expected =
-  let label = Printf.sprintf "%s %04d-%02d-%02d %02d:%02d" name y m d h min in
-  ( label,
-    fun () -> equal local expected (Tz.local (zone name) (posix y m d h min)) )
-
-let walls =
+(* Wall-clock readings and what the zone's clock does at them. *)
+let walls : (string * (int * int * int * int * int) * Tz.local) list =
   [
-    wall "Europe/Paris" 2024 7 1 12 0 (Unique 7200);
-    wall "Europe/Paris" 2024 3 31 2 30 (Gap { before = 3600; after = 7200 });
-    wall "Europe/Paris" 2024 10 27 2 30
-      (Ambiguous { before = 7200; after = 3600 });
-    wall "slim/Europe/Paris" 2063 3 25 2 0 (Gap { before = 3600; after = 7200 });
-    wall "slim/Europe/Paris" 2063 10 28 2 59
-      (Ambiguous { before = 7200; after = 3600 });
-    wall "slim/Europe/Paris" 2063 10 28 3 0 (Unique 3600);
-    wall "America/New_York" 2024 3 10 2 30
-      (Gap { before = -18_000; after = -14_400 });
-    wall "America/New_York" 2024 11 3 1 30
-      (Ambiguous { before = -14_400; after = -18_000 });
-    wall "Australia/Lord_Howe" 2024 4 7 1 45
-      (Ambiguous { before = 39_600; after = 37_800 });
-    wall "Australia/Lord_Howe" 2024 10 6 2 15
-      (Gap { before = 37_800; after = 39_600 });
-    wall "Australia/Lord_Howe" 2100 1 1 0 0 (Unique 39_600);
-    wall "America/Nuuk" 2090 3 25 23 30 (Gap { before = -7200; after = -3600 });
-    wall "America/Nuuk" 2090 10 28 23 30
-      (Ambiguous { before = -3600; after = -7200 });
-    wall "Asia/Jerusalem" 2090 3 24 2 30 (Gap { before = 7200; after = 10_800 });
-    wall "hand/Skips" 1970 1 1 0 50 (Gap { before = 0; after = 3600 });
-    wall "hand/Folds" 1970 1 1 1 20 (Ambiguous { before = 7200; after = 0 });
-    wall "hand/FoldGap" 1970 1 1 2 0 (Gap { before = 0; after = 7200 });
-    wall "hand/GapFoldGap" 1970 1 1 0 0 (Gap { before = -3600; after = 3600 });
-    wall "hand/Disagrees" 1970 8 1 12 0 (Unique (-21_600));
-    wall "hand/LeapPair" 1972 7 1 1 0 (Gap { before = 0; after = 7200 });
-    wall "hand/Version1" 1970 1 1 1 16 (Unique 3600);
-    wall "hand/Version1" 1970 1 1 1 17 (Gap { before = 3600; after = 7200 });
-    wall "hand/Version1" 1970 1 1 2 16 (Gap { before = 3600; after = 7200 });
-    wall "hand/Version1" 1970 1 1 2 17 (Unique 7200);
+    ("Europe/Paris", (2024, 7, 1, 12, 0), Unique 7200);
+    ("Europe/Paris", (2024, 3, 31, 2, 30), Gap { before = 3600; after = 7200 });
+    ( "Europe/Paris",
+      (2024, 10, 27, 2, 30),
+      Ambiguous { before = 7200; after = 3600 } );
+    ( "slim/Europe/Paris",
+      (2063, 3, 25, 2, 0),
+      Gap { before = 3600; after = 7200 } );
+    ( "slim/Europe/Paris",
+      (2063, 10, 28, 2, 59),
+      Ambiguous { before = 7200; after = 3600 } );
+    ("slim/Europe/Paris", (2063, 10, 28, 3, 0), Unique 3600);
+    ( "America/New_York",
+      (2024, 3, 10, 2, 30),
+      Gap { before = -18_000; after = -14_400 } );
+    ( "America/New_York",
+      (2024, 11, 3, 1, 30),
+      Ambiguous { before = -14_400; after = -18_000 } );
+    ( "Australia/Lord_Howe",
+      (2024, 4, 7, 1, 45),
+      Ambiguous { before = 39_600; after = 37_800 } );
+    ( "Australia/Lord_Howe",
+      (2024, 10, 6, 2, 15),
+      Gap { before = 37_800; after = 39_600 } );
+    ("Australia/Lord_Howe", (2100, 1, 1, 0, 0), Unique 39_600);
+    ( "America/Nuuk",
+      (2090, 3, 25, 23, 30),
+      Gap { before = -7200; after = -3600 } );
+    ( "America/Nuuk",
+      (2090, 10, 28, 23, 30),
+      Ambiguous { before = -3600; after = -7200 } );
+    ( "Asia/Jerusalem",
+      (2090, 3, 24, 2, 30),
+      Gap { before = 7200; after = 10_800 } );
+    ("hand/Skips", (1970, 1, 1, 0, 50), Gap { before = 0; after = 3600 });
+    ("hand/Folds", (1970, 1, 1, 1, 20), Ambiguous { before = 7200; after = 0 });
+    ("hand/FoldGap", (1970, 1, 1, 2, 0), Gap { before = 0; after = 7200 });
+    ("hand/GapFoldGap", (1970, 1, 1, 0, 0), Gap { before = -3600; after = 3600 });
+    ("hand/Disagrees", (1970, 8, 1, 12, 0), Unique (-21_600));
+    ("hand/LeapPair", (1972, 7, 1, 1, 0), Gap { before = 0; after = 7200 });
+    ("hand/Version1", (1970, 1, 1, 1, 16), Unique 3600);
+    ("hand/Version1", (1970, 1, 1, 1, 17), Gap { before = 3600; after = 7200 });
+    ("hand/Version1", (1970, 1, 1, 2, 16), Gap { before = 3600; after = 7200 });
+    ("hand/Version1", (1970, 1, 1, 2, 17), Unique 7200);
   ]
 
 let local_times =
   group "local"
     [
-      cases "reads the wall clock" ~id:fst walls (fun (_, f) -> f ());
+      cases "reads the wall clock"
+        ~id:(fun (name, (y, m, d, h, min), _) ->
+          Printf.sprintf "%s %04d-%02d-%02d %02d:%02d" name y m d h min)
+        walls
+        (fun (name, (y, m, d, h, min), expected) ->
+          equal local expected (Tz.local (zone name) (posix y m d h min)));
       prop ~count:400 "names exactly the offsets at which the clock reads t"
         ~examples:close_calls zone_instant completeness;
       prop ~count:400 "reads every instant's wall-clock time back" zone_instant
@@ -574,6 +676,7 @@ let tree () =
   Unix.symlink "nowhere" (at "Dangling");
   Unix.symlink "B" (at "A");
   Unix.symlink "A" (at "B");
+  Unix.symlink "/dev/null" (at "Dev");
   dir
 
 let links () =
@@ -608,6 +711,7 @@ let links () =
       "Dangling";
       "A";
       "Real/notes";
+      "Dev";
     ];
   expect (output ())
   @@ __POS_OF__
@@ -619,6 +723,7 @@ let links () =
     $DIR/Dangling: ENOENT
     $DIR/A: ELOOP
     $DIR/Real/notes: bytes 0-43: the file ends after 10 bytes, inside a header
+    $DIR/Dev: bytes 0-43: the file ends after 0 bytes, inside a header
     |}
 
 let link_name () =
@@ -666,11 +771,15 @@ let find =
           equal string "America/New_York" (Tz.name (zone "America/New_York"));
           equal string "slim/Europe/Paris" (Tz.name (zone "slim/Europe/Paris")));
       test "rejects names that leave the directory or that tz never uses" names;
-      test "reports a name that designates no zone" not_zones;
+      (* The error differs between systems: ENOTDIR, or ENOENT on Windows. *)
       test "reports a path through a file" (fun () ->
-          ignore (require_error (Tz.find (db ()) "UTC/Paris")));
+          is_error
+            ~pp:(fun ppf z -> Format.pp_print_string ppf (Tz.name z))
+            (Tz.find (db ()) "UTC/Paris"));
+      test "reports a name that designates no zone" not_zones;
       test "reports each malformed file" malformed;
-      test "follows symbolic links, and reports dead ones" links;
+      test "follows symbolic links, reads a device, and reports dead links"
+        links;
       test "names a zone read through a link by the link" link_name;
       test "reports a file it cannot read" unreadable;
       test "reports a file in a directory it cannot read" unreadable_dir;
@@ -686,6 +795,20 @@ let of_dir =
           expect (pp_result (Tz.of_dir "missing"))
           @@ __POS_OF__ {| missing: No such file or directory |});
       test "follows the directory it is given when it is a link" dir_link;
+      test "fails on a directory it cannot examine" (fun () ->
+          needs_permissions ();
+          let dir = temp_dir () in
+          let closed = Filename.concat dir "Closed" in
+          let inner = Filename.concat closed "zoneinfo" in
+          Unix.mkdir closed 0o755;
+          Unix.mkdir inner 0o755;
+          Unix.chmod closed 0o000;
+          Fun.protect
+            ~finally:(fun () -> Unix.chmod closed 0o755)
+            (fun () ->
+              equal string
+                (inner ^ ": Permission denied")
+                (pp_result (Tz.of_dir inner))));
     ]
 
 let system =
@@ -695,17 +818,25 @@ let system =
           setenv "TZDIR" (Some "golden/tz/zoneinfo");
           let z = Error.get_ok (Tz.find (Error.get_ok (Tz.system ())) "UTC") in
           equal int 0 (Tz.offset_s z 0L));
-      test "fails when TZDIR names no directory" (fun () ->
+      test "reads TZDIR again on each call, with no fallback" (fun () ->
+          setenv "TZDIR" (Some "golden/tz/zoneinfo");
+          ignore (Error.get_ok (Tz.system ()));
           setenv "TZDIR" (Some "missing");
           expect (pp_result (Tz.system ()))
           @@ __POS_OF__ {| missing: No such file or directory |});
-      test "reads /usr/share/zoneinfo when TZDIR is empty" (fun () ->
+      cases "reads /usr/share/zoneinfo when TZDIR is"
+        ~id:(function None -> "unset" | Some _ -> "empty")
+        [ None; Some "" ]
+        (fun value ->
           if not (Sys.file_exists "/usr/share/zoneinfo") then
             skip ~reason:"no /usr/share/zoneinfo" ();
-          setenv "TZDIR" (Some "");
+          setenv "TZDIR" value;
           let db = Error.get_ok (Tz.system ()) in
           let z = Error.get_ok (Tz.find db "Europe/Paris") in
           equal int 7200 (Tz.offset_s z (posix 2024 7 1 0 0)));
     ]
 
-let () = exit (run "tz" [ utc; offset_s; local_times; find; of_dir; system ])
+let () =
+  exit
+    (run "tz"
+       [ utc; fixed; equality; offset_s; local_times; of_dir; system; find ])
