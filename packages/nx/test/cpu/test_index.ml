@@ -3,13 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx.cpu's gathers and scatters, element by element against a reference
-   built here from the elements' bits: zero reads and dropped writes outside
-   the axis, a target's updates in C order, a narrow float's sum in float32
-   rounded once, any NaN for a NaN result; at every dtype and through
-   strided, reversed, permuted and broadcast views; the same bits on one
-   thread as on the job's; a float Add's element unmoved by the other
-   elements, their updates and the other slabs; and the refusals. *)
+(* nx.cpu's gathers and scatters (nx_cpu.mli, Gathers and scatters): each
+   element against a reference that reads the operands as numbers, at every
+   dtype and through strided, reversed, permuted and broadcast views; a target's
+   updates in C order, a narrow float's sum in float32 rounded once, any NaN for
+   a NaN; scatters of many updates, which nx.cpu splits among threads, sorts or
+   sums a slice at a time, against the same reference; one thread's bits; a
+   float Add's element unmoved by the other elements, their updates and the
+   other slabs; no byte read or written past an operand. *)
 
 open Windtrap
 module A = Nx_array
@@ -40,31 +41,252 @@ let gather_agrees (b : Support.backend) c =
   | None -> failf "%s declined a gather" b.name
   | Some y -> equal (array string) (gather_expected c) (elements y)
 
-let law_gather_reference (b : Support.backend) c =
-  let d = Int64.of_int (shape_of c.x).(c.axis) in
-  cover "out of range"
-    (Array.exists (fun p -> p < 0L || p >= d) (positions c.idx));
-  cover "broadcast positions" (List.mem "idx broadcast" c.gviews);
-  gather_agrees b c
+(* The scatter reference *)
 
-(* Scatters *)
+(* An array's elements in C order, as the numbers they hold: floats, narrow ones
+   decoded, complex numbers, integers by their value, booleans. *)
+type numbers =
+  | Floats of float array
+  | Complexes of Complex.t array
+  | Ints of int64 array
+  | Bools of bool array
+
+let numbers (A.Any x) =
+  let ints f a = Ints (Array.map f a) in
+  let u32 v = Int64.logand (Int64.of_int32 v) 0xFFFF_FFFFL in
+  let x = Support.host x in
+  match A.dtype x with
+  | D.Float64 -> Floats (A.to_array x)
+  | D.Float32 -> Floats (A.to_array x)
+  | D.Float16 -> Floats (A.to_array x)
+  | D.Bfloat16 -> Floats (A.to_array x)
+  | D.Float8_e4m3fn -> Floats (A.to_array x)
+  | D.Float8_e5m2 -> Floats (A.to_array x)
+  | D.Float4_e2m1fn -> Floats (A.to_array x)
+  | D.Complex128 -> Complexes (A.to_array x)
+  | D.Complex64 -> Complexes (A.to_array x)
+  | D.Int64 -> Ints (A.to_array x)
+  | D.Uint64 -> Ints (A.to_array x)
+  | D.Int32 -> ints Int64.of_int32 (A.to_array x)
+  | D.Uint32 -> ints u32 (A.to_array x)
+  | D.Int16 -> ints Int64.of_int (A.to_array x)
+  | D.Uint16 -> ints Int64.of_int (A.to_array x)
+  | D.Int8 -> ints Int64.of_int (A.to_array x)
+  | D.Uint8 -> ints Int64.of_int (A.to_array x)
+  | D.Int4 -> ints Int64.of_int (A.to_array x)
+  | D.Uint4 -> ints Int64.of_int (A.to_array x)
+  | D.Bool -> Bools (A.to_array x)
+  | D.Bit -> Bools (A.to_array x)
+
+(* The bytes of element [k], in C order, of [x]. *)
+let element_at (A.Any x) k =
+  let s = Iarray.to_array (L.shape (A.layout x)) in
+  let i = index_of s k in
+  let one =
+    Iarray.of_array
+      (Array.map (fun a -> { M.start = a; count = 1; step = 1 }) i)
+  in
+  (elements (A.Any (Option.get (A.move (M.Slice one) x)))).(0)
+
+(* The elements of [d] that store the floats [v], as a store into [d] rounds
+   each, as bytes. *)
+let stored_floats (D.Any dt) v =
+  let shape = Iarray.of_array [| Array.length v |] in
+  elements (A.Any (A.of_array dt shape (Array.map (D.of_float dt) v)))
+
+let stored_complexes (D.Any dt) (v : Complex.t array) =
+  let shape = Iarray.of_array [| Array.length v |] in
+  match dt with
+  | D.Complex64 -> elements (A.Any (A.of_array dt shape v))
+  | D.Complex128 -> elements (A.Any (A.of_array dt shape v))
+  | _ -> invalid_arg "stored_complexes"
+
+let add32 x y = round32 (x +. y)
+
+(* What a scatter computes, read from its numbers (nx_cpu.mli, Gathers and
+   scatters): each target's element, then the updates that land on it in C order
+   of their indices, which is their order along the axis. [Set] keeps the last.
+   [Add] adds left to right: float64 rounding each sum, float32 each sum to
+   float32, a narrow float's sum kept in float32 and stored into its dtype once,
+   complex numbers part by part, integers modulo their width. [Max] and [Min]
+   keep the greater or the lesser by Prog.Maximum's and Prog.Minimum's order, -0
+   below +0, a complex number by its real part then its imaginary part, the
+   first NaN that meets them; booleans are Or and And of truths. Beside the
+   result: whether some target's finite sum in C order, as stored, differs from
+   its sum in the reverse order, as stored, so that the result shows the order,
+   and whether a narrow float's sum rounded into its dtype. *)
+type reference = { want : want array; order_shows : bool; rounds : bool }
+
+let reference c =
+  let (D.Any dt as d) = dtype_of c.into in
+  let ts = shape_of c.into and us = shape_of c.updates in
+  let axis = c.saxis in
+  let inner = total (Array.sub ts (axis + 1) (Array.length ts - axis - 1)) in
+  let dx = ts.(axis) and du = us.(axis) in
+  let ps = positions c.sidx in
+  let n = total us and t = total ts in
+  (* Each update's target, -1 outside the axis. *)
+  let target =
+    Array.init n (fun k ->
+        let p = ps.(k) in
+        if p < 0L || p >= Int64.of_int dx then -1
+        else
+          let r = k mod inner and outer = k / (inner * du) in
+          (((outer * dx) + Int64.to_int p) * inner) + r)
+  in
+  let xs = elements c.into in
+  let reached = Array.make t false and last = Array.make t (-1) in
+  Array.iteri
+    (fun k q ->
+      if q >= 0 then begin
+        reached.(q) <- true;
+        last.(q) <- k
+      end)
+    target;
+  (* Target [q]'s element, or update [k]'s, as bytes. *)
+  let moved q k = if k < 0 then xs.(q) else element_at c.updates k in
+  let result f =
+    Array.init t (fun q -> if reached.(q) then f q else Bits xs.(q))
+  in
+  let fold_order s add order =
+    let step k =
+      let q = target.(k) in
+      if q >= 0 then s.(q) <- add s.(q) k
+    in
+    if order = `C then
+      for k = 0 to n - 1 do
+        step k
+      done
+    else
+      for k = n - 1 downto 0 do
+        step k
+      done;
+    s
+  in
+  let any f =
+    Array.exists Fun.id (Array.init t (fun q -> reached.(q) && f q))
+  in
+  let none = { want = [||]; order_shows = false; rounds = false } in
+  (* The kept operand of each target, -1 for its element, by [keeps], which
+     tells whether the first of two operands is kept. *)
+  let extreme get =
+    let kept = Array.make t (-1) in
+    Array.iteri
+      (fun k q -> if q >= 0 && not (get q kept.(q) k) then kept.(q) <- k)
+      target;
+    { none with want = result (fun q -> Value (moved q kept.(q))) }
+  in
+  match (c.combine, numbers c.into, numbers c.updates) with
+  | Nx_kernel.Set, _, _ ->
+      { none with want = result (fun q -> Bits (moved q last.(q))) }
+  | Add, Floats x, Floats u ->
+      let add =
+        if is_narrow d || D.Any dt = D.Any D.Float32 then add32 else ( +. )
+      in
+      let sum order =
+        fold_order (Array.copy x) (fun s k -> add s u.(k)) order
+      in
+      let s = sum `C and r = sum `Reverse in
+      let es = stored_floats d s and er = stored_floats d r in
+      {
+        want = result (fun q -> Value es.(q));
+        order_shows =
+          any (fun q ->
+              Float.is_finite s.(q) && Float.is_finite r.(q) && es.(q) <> er.(q));
+        rounds =
+          is_narrow d
+          && any (fun q -> Float.is_finite s.(q) && decode d es.(q) <> s.(q));
+      }
+  | Add, Complexes x, Complexes u ->
+      let add = if D.Any dt = D.Any D.Complex64 then add32 else ( +. ) in
+      let sum order =
+        fold_order (Array.copy x)
+          (fun (s : Complex.t) k ->
+            { re = add s.re u.(k).re; im = add s.im u.(k).im })
+          order
+      in
+      let s = sum `C and r = sum `Reverse in
+      let finite (z : Complex.t) =
+        Float.is_finite z.re && Float.is_finite z.im
+      in
+      let es = stored_complexes d s and er = stored_complexes d r in
+      {
+        none with
+        want = result (fun q -> Value es.(q));
+        order_shows =
+          any (fun q -> finite s.(q) && finite r.(q) && es.(q) <> er.(q));
+      }
+  | Add, Ints x, Ints u ->
+      let s = fold_order (Array.copy x) (fun s k -> Int64.add s u.(k)) `C in
+      {
+        none with
+        want = result (fun q -> Bits (int_bits d (String.length xs.(q)) s.(q)));
+      }
+  | (Max | Min), Bools x, Bools u ->
+      let op = if c.combine = Max then ( || ) else ( && ) in
+      let s = fold_order (Array.copy x) (fun s k -> op s u.(k)) `C in
+      {
+        none with
+        want = result (fun q -> Bits (if s.(q) then "\001" else "\000"));
+      }
+  | (Max | Min), Floats x, Floats u ->
+      extreme (fun q a k ->
+          let va = if a < 0 then x.(q) else u.(a) and vb = u.(k) in
+          keeps c.combine ~nan_a:(Float.is_nan va) ~nan_b:(Float.is_nan vb)
+            (compare_floats va vb))
+  | (Max | Min), Complexes x, Complexes u ->
+      extreme (fun q a k ->
+          let (va : Complex.t) = if a < 0 then x.(q) else u.(a) in
+          let (vb : Complex.t) = u.(k) in
+          let cmp = compare_floats va.re vb.re in
+          keeps c.combine
+            ~nan_a:(Float.is_nan va.re || Float.is_nan va.im)
+            ~nan_b:(Float.is_nan vb.re || Float.is_nan vb.im)
+            (if cmp = 0 then compare_floats va.im vb.im else cmp))
+  | (Max | Min), Ints x, Ints u ->
+      let compare =
+        if D.is D.Signed dt then Int64.compare else Int64.unsigned_compare
+      in
+      extreme (fun q a k ->
+          let va = if a < 0 then x.(q) else u.(a) in
+          keeps c.combine ~nan_a:false ~nan_b:false (compare va u.(k)))
+  | _ -> invalid_arg "reference: a combine its dtype does not take"
+
+(* [y] holds [r.want], each element's bits where the reference moves them, else
+   its value, any NaN for a NaN: the first five that differ shown. *)
+let holds c r y =
+  let d = dtype_of c.into in
+  let got = elements y in
+  let hex e =
+    String.concat ""
+      (List.map
+         (fun ch -> Printf.sprintf "%02x" (Char.code ch))
+         (List.of_seq (String.to_seq e)))
+  in
+  let wrong = ref [] in
+  Array.iteri
+    (fun t w ->
+      let ok =
+        match w with
+        | Bits b -> b = got.(t)
+        | Value v -> Testable.equal (same d) v got.(t)
+      in
+      if (not ok) && List.length !wrong < 5 then
+        let (Bits e | Value e) = w in
+        wrong :=
+          Printf.sprintf "%d: %s, not %s" t (hex got.(t)) (hex e) :: !wrong)
+    r.want;
+  equal (list string) [] (List.rev !wrong)
 
 let scatter_agrees (b : Support.backend) c =
   match scatter_on b c with
   | None -> failf "%s declined a scatter" b.name
-  | Some y -> check_scatter c y
+  | Some y -> holds c (reference c) y
 
-let law_scatter_reference (b : Support.backend) c =
-  let shared, dropped = sharing c in
-  cover "shared targets" shared;
-  cover "dropped updates" dropped;
-  cover "narrow float add" (c.combine = Nx_kernel.Add && is_narrow (dtype_of c.into));
-  scatter_agrees b c
-
-(* The exponent and fraction widths of [d]'s floats, or of its parts, where
-   a NaN of them can lack the quiet bit, the top of its fraction:
-   float8_e4m3fn's one NaN of each sign has every fraction bit set, and
-   float4_e2m1fn has none. *)
+(* The exponent and fraction widths of [d]'s floats, or of its parts, where a
+   NaN of them can lack the quiet bit, the top of its fraction: float8_e4m3fn's
+   one NaN of each sign has every fraction bit set, and float4_e2m1fn has
+   none. *)
 let nan_fields (D.Any dt) =
   match dt with
   | D.Float64 | D.Complex128 -> Some (11, 52)
@@ -83,7 +305,8 @@ let signals d e =
       let part p =
         let v = ref 0L in
         for j = w - 1 downto 0 do
-          v := Int64.(logor (shift_left !v 8) (of_int (Char.code e.[(p * w) + j])))
+          v :=
+            Int64.(logor (shift_left !v 8) (of_int (Char.code e.[(p * w) + j])))
         done;
         let ones = Int64.(sub (shift_left 1L exp) 1L) in
         let field = Int64.(logand (shift_right_logical !v frac) ones) in
@@ -94,9 +317,8 @@ let signals d e =
       List.exists part (List.init (String.length e / w) Fun.id)
 
 (* A signalling NaN of [d] from its bits, in one part of a complex number or
-   both: the exponent's ones, the quiet bit clear, a payload below it and a
-   sign drawn. float8_e4m3fn's NaNs are quiet: it draws its one NaN of each
-   sign. *)
+   both: the exponent's ones, the quiet bit clear, a payload below it and a sign
+   drawn. float8_e4m3fn's NaNs are quiet: it draws its one NaN of each sign. *)
 let signalling (D.Any dt as d) rs =
   let part, parts =
     match dt with
@@ -118,7 +340,8 @@ let signalling (D.Any dt as d) rs =
         String.init
           ((1 + exp + frac) / 8)
           (fun j ->
-            Char.chr (Int64.to_int (Int64.shift_right_logical v (8 * j)) land 0xFF))
+            Char.chr
+              (Int64.to_int (Int64.shift_right_logical v (8 * j)) land 0xFF))
   in
   if parts = 1 then nan ()
   else
@@ -146,11 +369,12 @@ let nan_dtypes =
 
 let nan_scatters =
   Gen.with_pp pp_scatter
-    (scatter_gen ~dtypes:nan_dtypes ~combines:Nx_kernel.[ Max; Min ]
+    (scatter_gen ~dtypes:nan_dtypes
+       ~combines:Nx_kernel.[ Max; Min ]
        ~draw:signals_often ())
 
-(* A Max or Min scatter is a NaN where a target's element or an update is;
-   a target no update reaches keeps its bits, a signalling NaN included. *)
+(* A Max or Min scatter is a NaN where a target's element or an update is; a
+   target no update reaches keeps its bits, a signalling NaN included. *)
 let law_nan_extremes (b : Support.backend) c =
   let d = dtype_of c.into in
   let signals = signals d in
@@ -162,14 +386,17 @@ let law_nan_extremes (b : Support.backend) c =
     (some (fun t x -> ls.(t) = [] && signals x));
   scatter_agrees b c
 
-(* Laws *)
-
-(* Each operand as a C-contiguous copy of its view gives the same bits, any
-   NaN for a NaN. *)
+(* Each operand as a C-contiguous copy of its view gives the same bits, any NaN
+   for a NaN. *)
 let law_add_views (b : Support.backend) c =
   let plain (A.Any x) = A.Any (A.copy x) in
   let c' =
-    { c with into = plain c.into; sidx = plain c.sidx; updates = plain c.updates }
+    {
+      c with
+      into = plain c.into;
+      sidx = plain c.sidx;
+      updates = plain c.updates;
+    }
   in
   cover "shared targets" (fst (sharing c));
   cover "through views" (c.sviews <> []);
@@ -179,84 +406,187 @@ let law_add_views (b : Support.backend) c =
   | None, None -> ()
   | _ -> failf "%s declined a view or its copy" b.name
 
-(* Refusals *)
+(* Values that show an Add's order *)
 
-(* A gather's shapes, [x], [idx] and [dst], or a scatter's, [into], [idx],
-   [updates] and [dst], along [along], each near a fit. *)
-type misfit = { along : int; shapes : int array array }
+(* A number whose sums round: a sign, a fraction in [1, 2) and a binary exponent
+   within [span] of 0; one time in [rare], where [rare] is above 0, a NaN, an
+   infinity or -0 in its place. *)
+let mixed ~rare ~span rs =
+  if rare > 0 && Random.State.int rs rare = 0 then
+    [| Float.nan; infinity; neg_infinity; -0. |].(Random.State.int rs 4)
+  else
+    let f = 1. +. Random.State.float rs 1. in
+    ldexp
+      (if Random.State.bool rs then f else -.f)
+      (Random.State.int rs ((2 * span) + 1) - span)
 
-let pp_misfit what ppf c =
-  Format.fprintf ppf "%s along %d of %a" what c.along
-    (Format.pp_print_list
-       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
-       pp_ints)
-    (Array.to_list c.shapes)
+(* [n] numbers of the float or complex [dt], their exponents within 6 for a
+   narrow float, whose sums then stay finite and round in float32, within 20 for
+   another. *)
+let mixed_array (type v s) (dt : (v, s) D.t) ~rare rs n : v array =
+  let span = if is_narrow (D.Any dt) then 6 else 20 in
+  let x () = mixed ~rare ~span rs in
+  match dt with
+  | D.Complex64 -> Array.init n (fun _ -> { Complex.re = x (); im = x () })
+  | D.Complex128 -> Array.init n (fun _ -> { Complex.re = x (); im = x () })
+  | _ -> Array.init n (fun _ -> D.of_float dt (x ()))
 
-let gather_misfits =
-  Gen.with_pp (pp_misfit "gather")
-    (let open Gen in
-     let* x = Nx_array_gen.shape in
-     let* axis = axis_near x in
-     let* n = int_range 0 4 in
-     let* idx = near (along x axis n) in
-     let+ dst = near idx in
-     { along = axis; shapes = [| x; idx; dst |] })
+let is_float (D.Any dt) = D.is D.Float dt || D.is D.Complex dt
 
-let scatter_misfits =
-  Gen.with_pp (pp_misfit "scatter")
-    (let open Gen in
-     let* into = Nx_array_gen.shape in
-     let* axis = axis_near into in
-     let* n = int_range 0 4 in
-     let u = along into axis n in
-     let* idx = near u in
-     let* updates = near u in
-     let+ dst = near into in
-     { along = axis; shapes = [| into; idx; updates; dst |] })
+(* An array of the float or complex [d] and shape [s] through the view [v], of
+   [mixed] numbers, made from a typed array. *)
+let mixed_operand ?(rare = 16384) (D.Any dt) rs s v =
+  operand_with
+    (fun m ->
+      A.Any
+        (A.of_array dt (Iarray.of_array m) (mixed_array dt ~rare rs (total m))))
+    s v
 
-let zeros32 s =
-  A.of_array D.Float32 (Iarray.of_array s) (Array.make (total s) 0.)
+(* An operand of [d] drawn from [rs]: of [mixed] numbers at a float or complex
+   dtype, else of [element]'s. *)
+let drawn_operand d rs s v =
+  if is_float d then mixed_operand d rs s v
+  else operand d s v (fun _ -> element d rs)
 
-let zeros64 s =
-  A.of_array D.Int64 (Iarray.of_array s) (Array.make (total s) 0L)
+(* Positions of shape [s] through the view [v], each [next ()]. *)
+let typed_positions s v next =
+  operand_with
+    (fun m ->
+      A.Any
+        (A.of_array D.Int64 (Iarray.of_array m)
+           (Array.init (total m) (fun _ -> next ()))))
+    s v
 
-(* [call] into a float32 [dst] computes where [want] is [dst]'s shape;
-   otherwise it does not fit, and is not Done and writes nothing outside
-   [dst]. *)
-let check_fit ~msg (b : Support.backend) want dst call =
-  let fit = want = Ok dst in
-  cover "fits" fit;
-  cover "misfits" (not fit);
-  Misfit.law ~msg ~what:"a shape" b ~fit [| (D.Any D.Float32, dst) |]
-    (fun g ds -> call g (A.expect D.Float32 ds.(0)))
+(* 4096 elements of [mixed] numbers of each float or complex dtype, made once a
+   worker. *)
+let pools = Hashtbl.create 8
 
-let law_gather_refuses (b : Support.backend) c =
-  let module K = (val b.kernels) in
-  let x = c.shapes.(0) and idx = c.shapes.(1) and dst = c.shapes.(2) in
-  check_fit ~msg:"a gather" b
-    (Nx_kernel.Shape.gather ~axis:c.along idx x)
-    dst
-    (fun g dst ->
-      K.gather ~axis:c.along ~dst (g.Misfit.g (zeros64 idx))
-        (g.Misfit.g (zeros32 x)))
+let pool (D.Any dt as d) =
+  match Hashtbl.find_opt pools d with
+  | Some p -> p
+  | None ->
+      let rs = Random.State.make [| 7 |] in
+      let p =
+        elements
+          (A.Any
+             (A.of_array dt
+                (Iarray.of_array [| 4096 |])
+                (mixed_array dt ~rare:0 rs 4096)))
+      in
+      Hashtbl.add pools d p;
+      p
 
-let law_scatter_refuses (b : Support.backend) c =
-  let module K = (val b.kernels) in
-  let into = c.shapes.(0) and idx = c.shapes.(1) in
-  let u = c.shapes.(2) and dst = c.shapes.(3) in
-  check_fit ~msg:"a scatter" b
-    (Nx_kernel.Shape.scatter ~axis:c.along into idx u)
-    dst
-    (fun g dst ->
-      K.scatter Set ~unique:false ~axis:c.along ~dst
-        ~into:(g.Misfit.g (zeros32 into))
-        (g.Misfit.g (zeros64 idx))
-        (g.Misfit.g (zeros32 u)))
+(* An element of [d] for a drawn scatter: one of [pool]'s at a float or complex
+   dtype, [element]'s one time in [rare], a NaN of a drawn payload or any bits
+   among them; [element]'s at another dtype. *)
+let mixing ~rare d rs =
+  if (not (is_float d)) || Random.State.int rs rare = 0 then element d rs
+  else
+    let p = pool d in
+    p.(Random.State.int rs (Array.length p))
 
-(* nx.cpu's own cases *)
+(* [scatter_example]'s case of [mixed] numbers, made from typed arrays. *)
+let mixed_example d combine ~ts ~axis ~m ?(broadcast = []) ?tv ?uv ps =
+  let r = Array.length ts in
+  let rs = Random.State.make [| 1 |] in
+  let tv = Option.value tv ~default:(plain r)
+  and uv = Option.value uv ~default:(plain r) in
+  {
+    combine;
+    saxis = axis;
+    into = mixed_operand d rs ts tv;
+    sidx =
+      typed_positions (along ts axis m)
+        { (plain r) with broadcast }
+        (positions_of ps);
+    updates = mixed_operand d rs (along ts axis m) uv;
+    sviews =
+      List.map (( ^ ) "into ") (view_names tv)
+      @ List.map (( ^ ) "updates ") (view_names uv);
+  }
 
-(* A float16 target that 2048 updates of one reach: in float32 the sum is exact,
-   where float16 steps would stop at 2048. *)
+(* An Add of a bfloat16 or float16 [dt] along axis 0 whose stored sums show
+   their order, as the targets of [mixed] numbers cannot: into's elements [lo],
+   half the dtype's ulp at 1, so that 1 + lo is a tie the dtype rounds to 1; the
+   updates 1 one time in 512, about once a target of 600 updates, else [tiny],
+   whose float32 sum with 1 + lo rounds back to it alone and past the tie two
+   together. A target of one 1 stores 1 or 1 + 2 lo by the count of [tiny]s its
+   sum meets before the 1, which differs between the two orders at some
+   targets. *)
+let tipping_example (type s) (dt : (float, s) D.t) ~lo ~tiny ~ts ~m
+    ?(broadcast = []) ?tv ps =
+  let r = Array.length ts in
+  let rs = Random.State.make [| 1 |] in
+  let tv = Option.value tv ~default:(plain r) in
+  let floats s v f =
+    operand_with
+      (fun m ->
+        A.Any (A.of_array dt (Iarray.of_array m) (Array.init (total m) f)))
+      s v
+  in
+  {
+    combine = Nx_kernel.Add;
+    saxis = 0;
+    into = floats ts tv (fun _ -> lo);
+    sidx =
+      typed_positions (along ts 0 m)
+        { (plain r) with broadcast }
+        (positions_of ps);
+    updates =
+      floats (along ts 0 m) (plain r) (fun _ ->
+          if Random.State.int rs 512 = 0 then 1. else tiny);
+    sviews = List.map (( ^ ) "into ") (view_names tv);
+  }
+
+let narrow_dtypes = List.filter is_narrow all_dtypes
+
+(* The narrow floats whose float32 sums of a few hundred numbers of exponents
+   within 6 are exact in any order: for them an Add checks its single rounding
+   into the dtype. *)
+let exact_sums = D.[ Any Float8_e4m3fn; Any Float8_e5m2; Any Float4_e2m1fn ]
+
+(* Scatters of few updates *)
+
+(* Scatters of any dtype and combine, their elements [mixing]'s, and narrow
+   floats' Adds of 64 to 400 updates a slice, past the few that a slice's
+   insertion sort takes. *)
+let small_scatters =
+  Gen.with_pp pp_scatter
+    (Gen.frequency
+       [
+         (3, scatter_gen ~draw:(mixing ~rare:8) ());
+         ( 1,
+           scatter_gen ~dtypes:narrow_dtypes
+             ~combines:Nx_kernel.[ Add ]
+             ~draw:(mixing ~rare:64)
+             ~shapes:(Gen.of_list ~pp:pp_ints [ [| 3 |]; [| 2; 5 |]; [| 7 |] ])
+             ~ms:(Gen.int_range 64 400) () );
+       ])
+
+let law_scatter_reference (b : Support.backend) c =
+  let shared, dropped = sharing c in
+  let narrow_add = c.combine = Nx_kernel.Add && is_narrow (dtype_of c.into) in
+  let r = reference c in
+  cover "shared targets" shared;
+  cover "dropped updates" dropped;
+  cover "a narrow float's Add" narrow_add;
+  cover "a narrow float's Add of 64 updates or more a slice"
+    (narrow_add && (shape_of c.updates).(c.saxis) >= 64);
+  cover
+    "a target's sum in C order differs from its sum in the reverse order, as \
+     stored"
+    r.order_shows;
+  cover "a narrow float's sum in C order differs from its reverse, as stored"
+    (narrow_add && r.order_shows);
+  match scatter_on b c with
+  | None -> failf "%s declined a scatter" b.name
+  | Some y -> holds c r y
+
+(* Values the doc states *)
+
+(* A float16 target that 4096 updates of one reach: in float32 the sum is exact,
+   where float16 steps would stop at 2048 (nx_cpu.mli: a narrow float's Add
+   keeps its float32 sums). *)
 let test_float16_sum (b : Support.backend) () =
   let n = 4096 in
   let into = A.of_array D.Float16 [| 1 |] [| 0. |] in
@@ -268,44 +598,43 @@ let test_float16_sum (b : Support.backend) () =
   | A.Done -> equal (array float_exact) [| 4096. |] (A.to_array dst)
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-(* A boolean is true where its byte is not zero: Max and Min of bytes 2,
-   255 and 1 are Or and And of truths, stored as 0 or 1. *)
-let test_bool_extremes (b : Support.backend) () =
+(* A boolean is true where its byte is not zero: Max and Min of bytes 1, 2 and 0
+   into 2, 0 and 255 are Or and And of truths, stored as 0 or 1. *)
+let bool_extreme (b : Support.backend) (combine, want) =
   let module K = (val b.kernels) in
-  let bools s =
-    A.v D.Bool (L.contiguous [| 3 |]) (Rig.Buffer.of_string s)
-  in
+  let bools s = A.v D.Bool (L.contiguous [| 3 |]) (Rig.Buffer.of_string s) in
   let idx = A.of_array D.Int64 [| 3 |] [| 0L; 1L; 2L |] in
-  let run c =
-    let dst = A.create Rig.host D.Bool [| 3 |] in
-    match
-      K.scatter c ~unique:false ~axis:0 ~dst
-        ~into:(bools "\002\000\255") idx (bools "\001\002\000")
-    with
-    | A.Done -> elements (A.Any dst)
-    | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
-  in
-  equal ~msg:"Max" (array string) [| "\001"; "\001"; "\001" |] (run Nx_kernel.Max);
-  equal ~msg:"Min" (array string) [| "\001"; "\000"; "\000" |] (run Nx_kernel.Min)
+  let dst = A.create Rig.host D.Bool [| 3 |] in
+  match
+    K.scatter combine ~unique:false ~axis:0 ~dst ~into:(bools "\002\000\255")
+      idx (bools "\001\002\000")
+  with
+  | A.Done -> equal (array string) want (elements (A.Any dst))
+  | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
+(* Gathers of each regime *)
+
+(* Sources of 70 000 elements, past the most one unit of a gather's job takes
+   (64 Ki). *)
 let large_shapes =
-  Gen.of_list
-    [ [| 300_000 |]; [| 600; 500 |]; [| 3; 100_000 |]; [| 100_000; 3 |] ]
+  Gen.of_list ~pp:pp_ints
+    [ [| 70_000 |]; [| 280; 250 |]; [| 3; 24_000 |]; [| 24_000; 3 |] ]
 
-(* Constructed cases, one per covered regime, so that every seed reaches
-   each: positions in order from [ps], elements drawn from seed 1. *)
-
+(* Constructed cases, one per covered regime, so that every seed reaches each:
+   positions in order from [ps], elements drawn from seed 1. *)
 let gather_example d ~xs ~axis ~n ?(broadcast = []) ps =
-  let r = Array.length xs in
-  let rs = Random.State.make [| 1 |] in
-  let is = Array.mapi (fun i e -> if i = axis then n else e) xs in
-  let iv = { (plain r) with broadcast } in
-  {
-    axis;
-    idx = int64s is iv (positions_of ps);
-    x = operand d xs (plain r) (fun _ -> element d rs);
-    gviews = List.map (( ^ ) "idx ") (view_names iv);
-  }
+  lazy begin
+    let r = Array.length xs in
+    let rs = Random.State.make [| 1 |] in
+    let is = Array.mapi (fun i e -> if i = axis then n else e) xs in
+    let iv = { (plain r) with broadcast } in
+    {
+      axis;
+      idx = int64s is iv (positions_of ps);
+      x = operand d xs (plain r) (fun _ -> element d rs);
+      gviews = List.map (( ^ ) "idx ") (view_names iv);
+    }
+  end
 
 let gather_examples =
   [
@@ -315,14 +644,12 @@ let gather_examples =
     (* A row take: positions broadcast along the rows. *)
     gather_example (D.Any D.Int16) ~xs:[| 5; 3 |] ~axis:0 ~n:4 ~broadcast:[ 1 ]
       [| 4L; 0L; 2L; 4L |];
-    (* Row takes of rows of 8 and 16 bytes, positions outside the axis
-       among them. *)
-    gather_example (D.Any D.Uint8) ~xs:[| 10; 8 |] ~axis:0 ~n:6
-      ~broadcast:[ 1 ]
+    (* Row takes of rows of 8 and 16 bytes, positions outside the axis among
+       them. *)
+    gather_example (D.Any D.Uint8) ~xs:[| 10; 8 |] ~axis:0 ~n:6 ~broadcast:[ 1 ]
       [| 3L; -1L; 9L; 10L; Int64.max_int; 0L |];
     gather_example (D.Any D.Float64) ~xs:[| 7; 2 |] ~axis:0 ~n:5
-      ~broadcast:[ 1 ]
-      [| 6L; 7L; 0L; -3L; 2L |];
+      ~broadcast:[ 1 ] [| 6L; 7L; 0L; -3L; 2L |];
     (* Packed sub-byte rows of 16 and 12 positions, the extremes among them,
        whose offsets in the source would overflow. *)
     gather_example (D.Any D.Bit) ~xs:[| 4; 16 |] ~axis:0 ~n:2
@@ -331,56 +658,321 @@ let gather_examples =
       [| 5L; Int64.max_int; 15L; Int64.min_int; -1L |];
   ]
 
+(* A bfloat16 target whose stored sum shows the order of its updates: 2^-8 then
+   1, 1.5 2^-25 and 1.5 2^-25. In C order the float32 sum is 1 + 2^-8, which
+   neither small update moves (each under half a float32 ulp), and stores as 1,
+   a tie to even; in the reverse order it is 1 + 2^-8 + 2^-23, above the tie,
+   and stores as 1 + 2^-7. *)
+let shows_order_bf16 () =
+  let tiny = 1.5 *. ldexp 1. (-25) in
+  {
+    combine = Nx_kernel.Add;
+    saxis = 0;
+    into = A.Any (A.of_array D.Bfloat16 [| 1 |] [| ldexp 1. (-8) |]);
+    sidx = A.Any (A.of_array D.Int64 [| 3 |] [| 0L; 0L; 0L |]);
+    updates = A.Any (A.of_array D.Bfloat16 [| 3 |] [| 1.; tiny; tiny |]);
+    sviews = [];
+  }
+
 let scatter_examples =
   [
     (* Shared targets and dropped updates. *)
-    scatter_example (D.Any D.Float32) Nx_kernel.Add ~ts:[| 4 |] ~axis:0 ~m:8
-      [| 0L; 1L; 0L; -1L; 4L; 1L; 1L; Int64.max_int |];
+    lazy
+      (mixed_example (D.Any D.Float32) Nx_kernel.Add ~ts:[| 4 |] ~axis:0 ~m:8
+         [| 0L; 1L; 0L; -1L; 4L; 1L; 1L; Int64.max_int |]);
     (* A narrow float's sum. *)
-    scatter_example (D.Any D.Float16) Nx_kernel.Add ~ts:[| 3 |] ~axis:0 ~m:6
-      [| 0L; 0L; 2L; 5L; 0L; 1L |];
+    lazy
+      (mixed_example (D.Any D.Float16) Nx_kernel.Add ~ts:[| 3 |] ~axis:0 ~m:6
+         [| 0L; 0L; 2L; 5L; 0L; 1L |]);
+    lazy (shows_order_bf16 ());
   ]
+
+(* Takes of rows a take checks a run at a time (16) or a sub-byte one packs
+   (12), either side of those lengths; of 300, two runs of a take's check, with
+   a position outside the table and without; from an empty table, of no
+   position, and of a sub-byte row of 12 over a table past the most a sub-byte
+   row copies (1024). *)
+let row_examples =
+  let inside k = Array.init k Int64.of_int in
+  [
+    gather_example (D.Any D.Int16) ~xs:[| 2; 4 |] ~axis:1 ~n:15 (inside 4);
+    gather_example (D.Any D.Float64) ~xs:[| 1; 3 |] ~axis:1 ~n:16 (inside 3);
+    gather_example (D.Any D.Int4) ~xs:[| 2; 5 |] ~axis:1 ~n:11 (inside 5);
+    gather_example (D.Any D.Uint4) ~xs:[| 1; 3 |] ~axis:1 ~n:12 (inside 3);
+    gather_example (D.Any D.Bit) ~xs:[| 1; 1100 |] ~axis:1 ~n:12 (inside 1100);
+    gather_example (D.Any D.Float32) ~xs:[| 2; 16 |] ~axis:1 ~n:300 (inside 16);
+    gather_example (D.Any D.Uint8) ~xs:[| 1; 5 |] ~axis:1 ~n:300
+      [| 0L; 1L; 2L; 3L; 4L; 5L; -1L |];
+    gather_example (D.Any D.Float32) ~xs:[| 3; 0 |] ~axis:1 ~n:4 [| 0L; -1L |];
+    gather_example (D.Any D.Int8) ~xs:[| 2; 5 |] ~axis:1 ~n:0 [| 0L |];
+  ]
+
+let gathers = Gen.with_pp pp_gather (gather_gen ())
+
+(* A position inside an axis of [d], any for an empty one. *)
+let inside rs d = if d = 0 then 0L else Int64.of_int (Random.State.int rs d)
+let sub_byte_dtypes = List.filter (fun (D.Any dt) -> D.bits dt < 8) all_dtypes
+let byte_dtypes = List.filter (fun (D.Any dt) -> D.bits dt >= 8) all_dtypes
+
+(* Gathers through plain views in three cases of four, their positions all
+   inside the axis in half the cases: the rows a take reads unchecked. *)
+let half_inside ?dtypes ?axis ~shapes ~ns () =
+  let gen = gather_gen ?dtypes ~shapes ?axis ~ns in
+  Gen.with_pp pp_gather
+    (Gen.frequency
+       [
+         (1, gen ());
+         (1, gen ~plain:true ());
+         (2, gen ~plain:true ~position:inside ());
+       ])
+
+let table_extent =
+  Gen.frequency [ (1, Gen.constant 0); (4, Gen.int_range 1 16) ]
+
+let table_positions =
+  Gen.frequency [ (1, Gen.constant 0); (4, Gen.int_range 1 5000) ]
+
+(* Takes from tables of a few entries, as a dictionary's codes read its words:
+   at every byte-wide dtype, rows of up to thousands of positions, an empty
+   table or no position one time in five. *)
+let table_shapes =
+  let open Gen in
+  let* k = table_extent in
+  let* rows = int_range 1 3 in
+  of_list ~pp:pp_ints [ [| k |]; [| rows; k |]; [| k; rows |] ]
+
+let table_gathers =
+  half_inside ~dtypes:byte_dtypes ~shapes:table_shapes ~ns:table_positions ()
+
+(* The same takes into sub-byte dtypes, which pack their elements. *)
+let sub_byte_table_gathers =
+  half_inside ~dtypes:sub_byte_dtypes ~shapes:table_shapes ~ns:table_positions
+    ()
+
+(* Rows of hundreds of elements along which the source steps, as
+   take_along_axis's off the innermost axis are. *)
+let along_gathers =
+  let shapes =
+    let open Gen in
+    let* k = int_range 1 16 in
+    let+ l = int_range 257 600 in
+    [| k; l |]
+  in
+  half_inside ~axis:0 ~shapes ~ns:(Gen.int_range 1 4) ()
+
+(* 70 000 to 100 000 positions inside a table, past the most one unit of a
+   gather's job takes (64 Ki), which the job's threads share and read unchecked:
+   of [dtypes], byte-wide or sub-byte, whose blocks share edge bytes. *)
+let large_table_gathers dtypes =
+  Gen.with_pp pp_gather
+    (gather_gen ~dtypes
+       ~shapes:(Gen.map (fun k -> [| k |]) (Gen.int_range 1 16))
+       ~ns:(Gen.int_range 70_000 100_000)
+       ~plain:true ~position:inside ())
+
+(* Rows of plain positions from tables of [m] rows of [k] entries: of either
+   length beside the shortest row a take checks a run at a time (16 elements) or
+   a sub-byte one packs (12), and of 300, two runs of a take's check; tables of
+   up to 5 entries or past the most a sub-byte row copies (1024); every position
+   inside half the time. *)
+let edge_gathers =
+  let shapes =
+    let open Gen in
+    let* m = int_range 1 3 in
+    let+ k = frequency [ (1, int_range 1 5); (1, int_range 1025 1200) ] in
+    [| m; k |]
+  in
+  let gens dtypes ns =
+    let gen = gather_gen ~dtypes ~shapes ~axis:1 ~ns:(Gen.of_list ns) in
+    [ (1, gen ~plain:true ()); (1, gen ~plain:true ~position:inside ()) ]
+  in
+  let byte = gens byte_dtypes [ 15; 16; 300 ] in
+  Gen.with_pp pp_gather
+    (Gen.frequency (byte @ gens sub_byte_dtypes [ 11; 12; 300 ]))
+
+(* Whether [c] reads through plain views, its positions all inside the axis,
+   along rows of over 256: rows a take reads with no compare. *)
+let unchecked c =
+  let d = Int64.of_int (shape_of c.x).(c.axis) in
+  let is = shape_of c.idx in
+  is.(Array.length is - 1) > 256
+  && c.gviews = []
+  && Array.for_all (fun p -> p >= 0L && p < d) (positions c.idx)
+
+(* Every regime a take reads by: any gather, takes from tables of few entries,
+   along a stepped source and of rows beside a take's bounds. *)
+let all_gathers =
+  Gen.with_pp pp_gather
+    (Gen.frequency
+       [
+         (1, gathers);
+         (1, table_gathers);
+         (1, sub_byte_table_gathers);
+         (1, along_gathers);
+         (2, edge_gathers);
+       ])
+
+let law_gather_reference (b : Support.backend) c =
+  let xs = shape_of c.x and is = shape_of c.idx in
+  let (A.Any x) = c.x in
+  let sub = D.bits (A.dtype x) < 8 in
+  let k = xs.(c.axis) and l = is.(c.axis) in
+  let last = c.axis = Array.length xs - 1 in
+  let d = Int64.of_int k in
+  let outside = Array.exists (fun p -> p < 0L || p >= d) (positions c.idx) in
+  cover "out of range" outside;
+  cover "broadcast positions" (List.mem "idx broadcast" c.gviews);
+  cover "an empty table" (k = 0);
+  cover "no position" (l = 0);
+  cover "long plain rows inside the axis" (unchecked c);
+  cover "a byte-wide row of 15" ((not sub) && last && l = 15);
+  cover "a byte-wide row of 16" ((not sub) && last && l = 16);
+  cover "a sub-byte row of 11" (sub && last && l = 11);
+  cover "a sub-byte row of 12" (sub && last && l = 12);
+  cover "a sub-byte row of 12 or more read without a copy of the table"
+    (sub && last && l >= 12 && (l < 2 * k || k > 1024));
+  cover "a row of 300 holding a position outside the table"
+    (last && l = 300 && outside);
+  cover "a row of 300 inside the table" (last && l = 300 && not outside);
+  gather_agrees b c
+
+(* Gathers of sources and tables past one unit of the job's. *)
+let large_gathers =
+  Gen.with_pp pp_gather
+    (Gen.frequency
+       [
+         (1, gather_gen ~shapes:large_shapes ());
+         (1, large_table_gathers byte_dtypes);
+         (1, large_table_gathers sub_byte_dtypes);
+       ])
+
+let large_gather_examples =
+  let table d =
+    gather_example (D.Any d) ~xs:[| 16 |] ~axis:0 ~n:80_000
+      (Array.init 16 Int64.of_int)
+  in
+  [
+    gather_example (D.Any D.Float32) ~xs:[| 3; 24_000 |] ~axis:1 ~n:24_000
+      (Array.init 1009 (fun i -> Int64.of_int (i * 7919 mod 24_000)));
+    table D.Uint8;
+    table D.Int4;
+  ]
+
+let law_large_gather (b : Support.backend) c =
+  let (A.Any x) = c.x in
+  cover "a byte-wide element" (D.bits (A.dtype x) >= 8);
+  cover "a sub-byte element" (D.bits (A.dtype x) < 8);
+  gather_agrees b c
+
+(* Scatters of many updates *)
 
 (* Positions past the axis on both sides, cycling over 1003 targets. *)
 let cycled = Array.init 1009 (fun i -> Int64.of_int ((i * 7 mod 1003) - 1))
 
-(* Positions that miss targets 900 to 999 over the first half million
-   updates, then [cycled]'s. *)
+(* Positions that miss targets 900 to 999 over the first 2^19 updates, a sorted
+   block's least, then [cycled]'s. *)
 let late =
   Array.init 600_000 (fun i ->
       if i < 1 lsl 19 then Int64.of_int (i * 7 mod 900) else cycled.(i mod 1009))
 
-(* Hundreds of thousands of updates into an axis of a thousand: a narrow
-   float's Add over shared targets, targets first reached late, into
-   reversed, sums through stepped and reversed updates; and a float32 Set
-   and Max over shared targets. *)
-let blocked_examples =
-  let ex d = scatter_example (D.Any d) Nx_kernel.Add ~ts:[| 1000 |] ~axis:0 in
-  let f32 combine =
-    scatter_example (D.Any D.Float32) combine ~ts:[| 1000 |] ~axis:0
-      ~m:600_000 cycled
+(* How a call runs: on the job's threads, on the calling thread alone, or on the
+   job's threads sorting a float Add's updates by target. *)
+type mode = Pool | One | Sorting
+
+let mode_name = function
+  | Pool -> "the job's threads"
+  | One -> "one thread"
+  | Sorting -> "threads that sort"
+
+let in_mode mode f =
+  match mode with
+  | Pool -> f ()
+  | One -> Nx_cpu.one_thread f
+  | Sorting -> Nx_cpu.with_cache 0 f
+
+let pp_mode ppf m = Format.pp_print_string ppf (mode_name m)
+let mode_gen = Gen.of_list ~pp:pp_mode [ Pool; One; Sorting ]
+
+(* Where a scatter of many updates comes from: an example, named for the regime
+   it reaches, or a draw. *)
+type source = Example of string | Drawn
+
+(* A scatter of many updates, run as [mode] says. *)
+type many = { source : source; mode : mode; case : scatter_case }
+
+let pp_many ppf m =
+  let name = match m.source with Example name -> name | Drawn -> "drawn" in
+  Format.fprintf ppf "%s, on %s: %a" name (mode_name m.mode) pp_scatter m.case
+
+let on ?(mode = Pool) name case =
+  lazy { source = Example name; mode; case = Lazy.force case }
+
+(* Updates of [mixed] numbers into an axis of a thousand, each regime's least
+   count past its bound in index.c: several sorted blocks past FEWEST_BLOCK
+   (2^19) for a narrow float's Add, targets first reached past it, and a Set,
+   whose order sorts; targets each thread folds into its own once the updates
+   make two shares (past OWN_SHARE, 2^16), for Max; a float Add sorted by target
+   where the cache holds no target, and on one thread; one slice summed in row
+   order; an embedding gradient's rows. *)
+let regime_examples =
+  let ex ?tv ?uv ?broadcast ?(ts = [| 1000 |]) d combine m ps =
+    lazy (mixed_example (D.Any d) combine ~ts ~axis:0 ~m ?broadcast ?tv ?uv ps)
   in
+  let reversed = { (plain 1) with reversed = Some 0 } in
+  let stepped = { (plain 1) with stepped = true; reversed = Some 0 } in
   [
-    lazy (ex D.Float16 ~m:600_000 cycled);
-    lazy
-      (ex D.Bfloat16 ~m:600_000 ~tv:{ (plain 1) with reversed = Some 0 } late);
-    lazy
-      (ex D.Float8_e4m3fn ~m:600_000
-         ~uv:{ (plain 1) with stepped = true; reversed = Some 0 }
-         cycled);
-    lazy (f32 Nx_kernel.Set);
-    lazy (f32 Nx_kernel.Max);
+    on "a float16 Add of several sorted blocks"
+      (lazy
+        (tipping_example D.Float16 ~lo:(ldexp 1. (-11)) ~tiny:(ldexp 1. (-24))
+           ~ts:[| 1000 |] ~m:600_000 cycled));
+    on "a bfloat16 Add into reversed targets first reached past a block"
+      (lazy
+        (tipping_example D.Bfloat16 ~lo:(ldexp 1. (-8))
+           ~tiny:(1.5 *. ldexp 1. (-25))
+           ~ts:[| 1000 |] ~m:600_000 ~tv:reversed late));
+    on "a float8_e4m3fn Add of stepped and reversed updates"
+      (ex ~uv:stepped D.Float8_e4m3fn Nx_kernel.Add 600_000 cycled);
+    on "a float32 Set of several sorted blocks"
+      (ex D.Float32 Nx_kernel.Set 600_000 cycled);
+    on "a float32 Max into each thread's own targets"
+      (ex D.Float32 Nx_kernel.Max 70_000 cycled);
+    on ~mode:Sorting "a float32 Add sorted by target"
+      (ex D.Float32 Nx_kernel.Add 100_000 cycled);
+    on ~mode:Sorting "a float16 Add whose cache holds no target"
+      (ex D.Float16 Nx_kernel.Add 70_000 cycled);
+    on ~mode:One "a float32 Add on one thread"
+      (ex D.Float32 Nx_kernel.Add 70_000 cycled);
+    on "a float64 slice summed in row order"
+      (ex D.Float64 Nx_kernel.Add 70_000 cycled);
+    on "a complex128 slice summed in row order"
+      (ex D.Complex128 Nx_kernel.Add 70_000 cycled);
+    on "a float8_e5m2 slice summed in row order"
+      (ex D.Float8_e5m2 Nx_kernel.Add 70_000 cycled);
+    on "an embedding gradient's float32 rows"
+      (ex ~ts:[| 1000; 5 |] ~broadcast:[ 1 ]
+         ~tv:{ (plain 2) with perm = [| 1; 0 |] }
+         ~uv:{ (plain 2) with stepped = true; reversed = Some 0 }
+         D.Float32 Nx_kernel.Add 70_000 cycled);
+    on "a bfloat16 Add of rows"
+      (lazy
+        (tipping_example D.Bfloat16 ~lo:(ldexp 1. (-8))
+           ~tiny:(1.5 *. ldexp 1. (-25))
+           ~ts:[| 1000; 2 |] ~m:530_000 ~broadcast:[ 1 ] cycled));
   ]
 
-(* Sums and extremes whose result is the same in any order of the updates,
-   which threads fold into targets of their own: integers', over shared
-   targets and positions past the axis, a row of three slices per position,
-   and updates through a stepped and reversed view; and booleans'. *)
+(* Sums and extremes whose result is the same in any order of the updates, which
+   threads fold into targets of their own once the updates make two shares (past
+   OWN_SHARE, 2^16): integers', over shared targets and positions past the axis,
+   a row of three slices per position, and updates through a stepped and
+   reversed view; and booleans'. *)
 let owned_examples =
   let ex ?(ts = [| 1000 |]) ?broadcast ?uv d combine =
-    lazy
-      (scatter_example (D.Any d) combine ~ts ~axis:0 ~m:200_000 ?broadcast ?uv
-         cycled)
+    on
+      (Printf.sprintf "%s %s into each thread's own targets" (D.name d)
+         (combine_name combine))
+      (lazy
+        (scatter_example (D.Any d) combine ~ts ~axis:0 ~m:70_000 ?broadcast ?uv
+           cycled))
   in
   [
     ex D.Int64 Nx_kernel.Add;
@@ -399,12 +991,14 @@ let owned_examples =
   let twos _ r = if Random.State.bool r then "\002" else "\000" in
   List.map
     (fun combine ->
-      lazy
-        (scatter_example (D.Any D.Bool) combine ~ts:[| 1000 |] ~axis:0
-           ~m:200_000 ~draw:twos short))
+      on
+        (Printf.sprintf "bytes of 2 %s into unreached targets"
+           (combine_name combine))
+        (lazy
+          (scatter_example (D.Any D.Bool) combine ~ts:[| 1000 |] ~axis:0
+             ~m:70_000 ~draw:twos short)))
     Nx_kernel.[ Max; Min ]
 
-(* [x] as an element of the float or complex dtype [d], both parts [x]. *)
 let of_float (D.Any dt as d) x =
   match dt with
   | D.Float32 -> f32 x
@@ -413,24 +1007,27 @@ let of_float (D.Any dt as d) x =
   | D.Complex128 -> f64 x ^ f64 x
   | _ -> encode d x
 
-(* Float Max and Min, which threads fold into targets of their own, at
-   [d]: updates of the zero below, numbers past it and, one in a few
-   hundred each, the zero above and a signalling NaN, so that a target's
-   extreme ties at zero or is a NaN; into targets that are signalling NaNs
-   and -0 in turn, 900 to 999 of which no update reaches and keep their
+(* Float Max and Min, which threads fold into targets of their own, at [d], of
+   two shares past OWN_SHARE: updates of the zero below, numbers past it and,
+   one in a few hundred each, the zero above and a signalling NaN, so that a
+   target's extreme ties at zero or is a NaN; into targets that are signalling
+   NaNs and -0 in turn, 900 to 999 of which no update reaches and keep their
    bits. *)
 let extremes d combine =
   let rs = Random.State.make [| 3 |] in
   let short = Array.init 900 (fun i -> Int64.of_int (i * 7 mod 900)) in
-  let m = 200_000 and toward = if combine = Nx_kernel.Max then -1. else 1. in
+  let m = 70_000 and toward = if combine = Nx_kernel.Max then -1. else 1. in
+  let below = of_float d (-.toward *. 0.)
+  and above = of_float d (toward *. 0.) in
+  let past = of_float d toward and minus = of_float d (-0.) in
   let update _ =
     match Random.State.int rs 1000 with
     | 0 | 1 -> signalling d rs
-    | 2 | 3 | 4 -> of_float d (-.toward *. 0.)
-    | k when k < 300 -> of_float d (toward *. 0.)
-    | _ -> of_float d toward
+    | 2 | 3 | 4 -> below
+    | k when k < 300 -> above
+    | _ -> past
   in
-  let target k = if k mod 2 = 0 then signalling d rs else of_float d (-0.) in
+  let target k = if k mod 2 = 0 then signalling d rs else minus in
   {
     combine;
     saxis = 0;
@@ -442,27 +1039,18 @@ let extremes d combine =
 
 let float_extremes =
   List.concat_map
-    (fun d -> List.map (fun c -> lazy (extremes d c)) Nx_kernel.[ Max; Min ])
+    (fun (D.Any dt as d) ->
+      List.map
+        (fun c ->
+          on
+            (Printf.sprintf
+               "%s %s of signalling NaNs and zeros into each thread's own \
+                targets"
+               (D.name dt) (combine_name c))
+            (lazy (extremes d c)))
+        Nx_kernel.[ Max; Min ])
     nan_dtypes
 
-(* An embedding gradient's rows: into transposed and the updates stepped
-   and reversed; a narrow float's sum of half a million updates. *)
-let row_examples =
-  [
-    lazy
-      (scatter_example (D.Any D.Float32) Nx_kernel.Add ~ts:[| 1000; 5 |] ~axis:0
-         ~m:70_000 ~broadcast:[ 1 ]
-         ~tv:{ (plain 2) with perm = [| 1; 0 |] }
-         ~uv:{ (plain 2) with stepped = true; reversed = Some 0 }
-         cycled);
-    lazy
-      (scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 1000; 2 |]
-         ~axis:0 ~m:530_000 ~broadcast:[ 1 ] cycled);
-  ]
-
-(* A Set of 65 536 rows of 1025 complex128 slices, the updates one row
-   broadcast along the axis, positions cycling over 0, 1 and 2 into an axis
-   of 2. *)
 let wide_rows =
   lazy
     (let d = D.Any D.Complex128 and m = 65_536 and len = 1025 in
@@ -483,6 +1071,250 @@ let wide_rows =
        sviews = [ "updates broadcast" ];
      })
 
+(* Many updates along the axis of few slices: threads split the targets. *)
+let long_scatters =
+  Gen.with_pp pp_scatter
+    (scatter_gen ~draw:(mixing ~rare:4096)
+       ~shapes:(Gen.of_list ~pp:pp_ints [ [| 1000 |]; [| 3; 7 |]; [| 5 |] ])
+       ~ms:(Gen.int_range 70_000 100_000)
+       ())
+
+let large_scatters =
+  Gen.with_pp pp_scatter
+    (scatter_gen ~draw:(mixing ~rare:4096) ~shapes:large_shapes ())
+
+(* A scatter of [d] along [axis] into [ts], [m] updates along it, its positions
+   broadcast along [broadcast], into and the updates through [tv] and [uv], its
+   elements [drawn_operand]'s from [rs]. *)
+let shaped d combine (ts, axis, m, broadcast) ~tv ~uv rs =
+  let r = Array.length ts in
+  let us = along ts axis m in
+  {
+    combine;
+    saxis = axis;
+    into = drawn_operand d rs ts tv;
+    sidx =
+      typed_positions us
+        { (plain r) with broadcast }
+        (fun () -> position rs ts.(axis));
+    updates = drawn_operand d rs us uv;
+    sviews =
+      List.map (( ^ ) "into ") (view_names tv)
+      @ List.map (( ^ ) "updates ") (view_names uv);
+  }
+
+(* Embedding gradients: many updates along axis 0, their positions broadcast
+   along the rows, into and the updates through drawn views. *)
+let row_scatters =
+  let open Gen in
+  let* d = of_list ~pp:pp_dtype all_dtypes in
+  let* combine = combine_gen d in
+  let* ts =
+    of_list ~pp:pp_ints
+      [ [| 300; 5 |]; [| 50; 7 |]; [| 20; 2; 3 |]; [| 40; 3 |] ]
+  in
+  let r = Array.length ts in
+  let* m = int_range 65_536 70_000 in
+  let* tv = view_of r in
+  let* uv = view_of r in
+  let+ seed = int in
+  shaped d combine
+    (ts, 0, m, List.init (r - 1) succ)
+    ~tv ~uv
+    (Random.State.make [| seed |])
+
+let row_scatters = Gen.with_pp pp_scatter row_scatters
+
+(* Scatters of many updates against the reference, run as a drawn mode: large
+   shapes, long axes of few slices and embedding gradients' rows. *)
+let many_scatters =
+  Gen.with_pp pp_many
+    (let open Gen in
+     let* case =
+       frequency [ (3, large_scatters); (3, long_scatters); (3, row_scatters) ]
+     in
+     let+ mode = mode_gen in
+     { source = Drawn; mode; case })
+
+(* A scatter of many updates combines each target's updates in C order, whatever
+   its regime: each example's own shows the order where its float32 sums are
+   inexact, and its single rounding where they are exact. *)
+let law_many (b : Support.backend) m =
+  let c = m.case in
+  let d = dtype_of c.into in
+  let r = reference c in
+  List.iter (fun k -> cover (mode_name k) (m.mode = k)) [ Pool; One; Sorting ];
+  cover "hundreds of thousands of updates into one axis"
+    ((shape_of c.updates).(c.saxis) > 500_000);
+  cover "a NaN reaches a target"
+    (Array.exists (function Value e -> nan_of d e | Bits _ -> false) r.want);
+  (match m.source with
+  | Example name when c.combine = Nx_kernel.Add && is_float d ->
+      if List.mem d exact_sums then
+        cover (name ^ ": a sum rounds once into its dtype") r.rounds
+      else
+        cover
+          (name
+         ^ ": a target's sum in C order differs from its sum in the reverse \
+            order, as stored")
+          r.order_shows
+  | Example _ | Drawn -> ());
+  match in_mode m.mode (fun () -> scatter_on b c) with
+  | None -> failf "%s declined a scatter" b.name
+  | Some y -> holds c r y
+
+(* A narrow float's Adds: an axis of more updates than targets, one of fewer, 3
+   slices of positions of their own, and rows of 600 slices, the positions
+   broadcast along them. *)
+let narrow_shapes =
+  [
+    ("more updates than targets", ([| 1000 |], 0, 70_000, []));
+    ("more targets than updates", ([| 200_000 |], 0, 70_000, []));
+    ("positions of each slice", ([| 3; 7 |], 1, 70_000, []));
+    ("rows cut into pieces", ([| 40; 600 |], 0, 600, [ 1 ]));
+  ]
+
+let narrow_examples =
+  List.mapi
+    (fun i (name, ((ts, _, _, _) as s)) ->
+      let d = List.nth narrow_dtypes (i mod List.length narrow_dtypes) in
+      let r = Array.length ts in
+      on
+        ("a narrow float's Add of " ^ name)
+        (lazy
+          (shaped d Nx_kernel.Add s ~tv:(plain r) ~uv:(plain r)
+             (Random.State.make [| 1 |]))))
+    narrow_shapes
+  @
+  (* Positions crowding the first targets, and one outside the axis, at bfloat16
+     and at float4_e2m1fn, whose elements share bytes. *)
+  let crowding = Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1)) in
+  [
+    on "a bfloat16 Add crowding the first targets"
+      (lazy
+        (mixed_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 500; 3 |] ~axis:0
+           ~m:70_000 crowding));
+    on "a float4_e2m1fn Add crowding the first targets"
+      (lazy
+        (mixed_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 500; 3 |]
+           ~axis:0 ~m:70_000 crowding));
+    (* 3 slices of 300 000 float4_e2m1fn updates into an axis of 1000. *)
+    on "a float4_e2m1fn Add of three long slices"
+      (lazy
+        (mixed_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 1000; 3 |]
+           ~axis:0 ~m:300_000 cycled));
+  ]
+
+let narrow_adds =
+  let open Gen in
+  let* d = of_list ~pp:pp_dtype narrow_dtypes in
+  let* _, ((ts, _, _, _) as s) = of_list narrow_shapes in
+  let r = Array.length ts in
+  let* tv = view_of r in
+  let* uv = view_of r in
+  let+ seed = int in
+  shaped d Nx_kernel.Add s ~tv ~uv (Random.State.make [| seed |])
+
+let narrow_adds = Gen.with_pp pp_scatter narrow_adds
+
+(* Sub-byte scatters *)
+
+(* Shapes whose neighbouring elements share bytes between threads: a short axis
+   of many updates, rows of an odd count of slices, and slices along a middle
+   axis. Each is [(into, axis, updates along it, broadcast axes of the
+   positions)]. *)
+let shared_bytes =
+  [
+    ([| 9 |], 0, 70_000, []);
+    ([| 9; 1001 |], 0, 64, [ 1 ]);
+    ([| 20; 11; 3 |], 1, 2000, []);
+  ]
+
+let sub_byte_examples =
+  List.concat_map
+    (fun (D.Any dt as d) ->
+      List.concat_map
+        (fun (ts, axis, m, broadcast) ->
+          let ps = Array.init ts.(axis) Int64.of_int in
+          List.map
+            (fun combine ->
+              on
+                (Printf.sprintf "%s %s sharing bytes into %s" (D.name dt)
+                   (combine_name combine)
+                   (Format.asprintf "%a" pp_ints ts))
+                (lazy (scatter_example d combine ~ts ~axis ~m ~broadcast ps)))
+            (if takes_add d then Nx_kernel.[ Set; Add; Max; Min ]
+             else Nx_kernel.[ Set; Max; Min ]))
+        shared_bytes)
+    sub_byte_dtypes
+
+let sub_byte_scatters =
+  let open Gen in
+  let* d = of_list ~pp:pp_dtype sub_byte_dtypes in
+  let* combine = combine_gen d in
+  let* ((ts, _, _, _) as s) = of_list shared_bytes in
+  let+ seed = int in
+  let r = Array.length ts in
+  shaped d combine s ~tv:(plain r) ~uv:(plain r) (Random.State.make [| seed |])
+
+let sub_byte_scatters = Gen.with_pp pp_scatter sub_byte_scatters
+
+(* Scatters of many updates, on the job's threads or sorting: narrow floats'
+   Adds, embedding gradients' rows, sub-byte elements sharing bytes, and long
+   axes of few slices. *)
+let threaded_scatters =
+  Gen.with_pp pp_many
+    (let open Gen in
+     let* case =
+       frequency
+         [
+           (3, narrow_adds);
+           (3, row_scatters);
+           (3, sub_byte_scatters);
+           (1, long_scatters);
+         ]
+     in
+     let+ mode = of_list ~pp:pp_mode [ Pool; Sorting ] in
+     { source = Drawn; mode; case })
+
+let threaded_examples =
+  narrow_examples
+  @ List.map
+      (fun e -> lazy { (Lazy.force e) with mode = Sorting })
+      narrow_examples
+  @ List.map
+      (fun e ->
+        lazy
+          (let m = Lazy.force e in
+           if m.mode = One then { m with mode = Pool } else m))
+      regime_examples
+  @ sub_byte_examples @ owned_examples @ float_extremes
+  @ [ on "a complex128 Set of wide broadcast rows" wide_rows ]
+
+(* A scatter of many updates has one thread's bits, on the job's threads or
+   sorting, any NaN for a NaN. *)
+let law_threads (b : Support.backend) m =
+  let c = m.case in
+  let d = dtype_of c.into in
+  cover "a narrow float's Add" (c.combine = Nx_kernel.Add && is_narrow d);
+  cover "a sub-byte dtype"
+    (let (D.Any dt) = d in
+     D.bits dt < 8);
+  cover "positions broadcast along the rows"
+    (let (A.Any p) = c.sidx in
+     Iarray.exists (( = ) 0) (L.strides (A.layout p)));
+  cover "through views" (c.sviews <> []);
+  cover "more targets than updates"
+    ((shape_of c.into).(c.saxis) > (shape_of c.updates).(c.saxis));
+  cover (mode_name Sorting) (m.mode = Sorting);
+  match
+    ( in_mode m.mode (fun () -> scatter_on b c),
+      Nx_cpu.one_thread (fun () -> scatter_on b c) )
+  with
+  | Some y, Some y' ->
+      equal (array (same (dtype_of c.into))) (elements y) (elements y')
+  | _ -> failf "%s declined a scatter" b.name
+
 (* Parted scratch *)
 
 (* The address space a forked child gives a parted float4_e2m1fn Add past its
@@ -495,10 +1327,10 @@ let f4_zeros s =
   let n = Array.fold_left ( * ) 1 s in
   A.of_array D.Float4_e2m1fn (Iarray.of_array s) (Array.make n 0.)
 
-(* A float4_e2m1fn Add along axis 0 of [2Mi, 2], each update at a position
-   of its own, so that threads part each column's targets, its elements
-   sharing bytes, fits [parted_cap]: the child that runs it exits 0 where
-   it is done, 1 where it raised Out_of_memory. Linux only. *)
+(* A float4_e2m1fn Add along axis 0 of [2Mi, 2], each update at a position of
+   its own, so that threads part each column's targets, its elements sharing
+   bytes, fits [parted_cap]: the child that runs it exits 0 where it is done, 1
+   where it raised Out_of_memory. Linux only. *)
 let test_parted_memory (b : Support.backend) () =
   if not (Sys.file_exists "/proc/self/statm") then
     skip ~reason:"limits the address space through Linux's /proc" ();
@@ -540,377 +1372,10 @@ let test_parted_memory (b : Support.backend) () =
       | Unix.WSIGNALED n | Unix.WSTOPPED n ->
           failf "the child ended by signal %d" n)
 
-let gathers = Gen.with_pp pp_gather (gather_gen ())
-
-let large_gathers = Gen.with_pp pp_gather (gather_gen ~shapes:large_shapes ())
-
-let large_scatters =
-  Gen.with_pp pp_scatter (scatter_gen ~shapes:large_shapes ())
-
-(* A position inside an axis of [d], any for an empty one. *)
-let inside rs d = if d = 0 then 0L else Int64.of_int (Random.State.int rs d)
-
-let sub_byte_dtypes = List.filter (fun (D.Any dt) -> D.bits dt < 8) all_dtypes
-
-let byte_dtypes = List.filter (fun (D.Any dt) -> D.bits dt >= 8) all_dtypes
-
-(* Gathers through plain views in three cases of four, their positions all
-   inside the axis in half the cases: the rows a take reads unchecked. *)
-let half_inside ?dtypes ?axis ~shapes ~ns () =
-  let gen = gather_gen ?dtypes ~shapes ?axis ~ns in
-  Gen.with_pp pp_gather
-    (Gen.frequency
-       [
-         (1, gen ());
-         (1, gen ~plain:true ());
-         (2, gen ~plain:true ~position:inside ());
-       ])
-
-let table_extent =
-  Gen.frequency [ (1, Gen.constant 0); (4, Gen.int_range 1 16) ]
-
-let table_positions =
-  Gen.frequency [ (1, Gen.constant 0); (4, Gen.int_range 1 5000) ]
-
-(* Takes from tables of a few entries, as a dictionary's codes read its
-   words: at every byte-wide dtype, rows of up to thousands of positions,
-   an empty table or no position one time in five. *)
-let table_shapes =
-  let open Gen in
-  let* k = table_extent in
-  let* rows = int_range 1 3 in
-  of_list ~pp:pp_ints [ [| k |]; [| rows; k |]; [| k; rows |] ]
-
-let table_gathers =
-  half_inside ~dtypes:byte_dtypes ~shapes:table_shapes ~ns:table_positions ()
-
-(* The same takes into sub-byte dtypes, which pack their elements. *)
-let sub_byte_table_gathers =
-  half_inside ~dtypes:sub_byte_dtypes ~shapes:table_shapes
-    ~ns:table_positions ()
-
-(* Rows of hundreds of elements along which the source steps, as
-   take_along_axis's off the innermost axis are. *)
-let along_gathers =
-  let shapes =
-    let open Gen in
-    let* k = int_range 1 16 in
-    let+ l = int_range 257 600 in
-    [| k; l |]
-  in
-  half_inside ~axis:0 ~shapes ~ns:(Gen.int_range 1 4) ()
-
-(* Hundreds of thousands of positions inside a table, which the job's
-   threads share and read unchecked: of [dtypes], byte-wide or sub-byte,
-   whose blocks share edge bytes. *)
-let large_table_gathers dtypes =
-  Gen.with_pp pp_gather
-    (gather_gen ~dtypes
-       ~shapes:(Gen.map (fun k -> [| k |]) (Gen.int_range 1 16))
-       ~ns:(Gen.int_range 200_000 300_000)
-       ~plain:true ~position:inside ())
-
-(* Whether [c] reads through plain views, its positions all inside the
-   axis, along rows of over 256: rows a take reads with no compare. *)
-let unchecked c =
-  let d = Int64.of_int (shape_of c.x).(c.axis) in
-  let is = shape_of c.idx in
-  is.(Array.length is - 1) > 256
-  && c.gviews = []
-  && Array.for_all (fun p -> p >= 0L && p < d) (positions c.idx)
-
-let law_table_gather (b : Support.backend) c =
-  let d = (shape_of c.x).(c.axis) and n = (shape_of c.idx).(c.axis) in
-  cover "an empty table" (d = 0);
-  cover "no position" (n = 0);
-  cover "long plain rows inside the table" (unchecked c);
-  law_gather_reference b c
-
-let law_along_gather (b : Support.backend) c =
-  cover "long plain rows inside the axis" (unchecked c);
-  law_gather_reference b c
-
-(* Rows of plain positions from tables of [m] rows of [k] entries: of
-   either length beside the shortest row a take checks a run at a time
-   (16 elements) or a sub-byte one packs (12), and of 300, two runs of a
-   take's check; tables of up to 5 entries or past the most a sub-byte row
-   copies (1024); every position inside half the time. *)
-let edge_gathers =
-  let shapes =
-    let open Gen in
-    let* m = int_range 1 3 in
-    let+ k = frequency [ (1, int_range 1 5); (1, int_range 1025 1200) ] in
-    [| m; k |]
-  in
-  let gens dtypes ns =
-    let gen = gather_gen ~dtypes ~shapes ~axis:1 ~ns:(Gen.of_list ns) in
-    [ (1, gen ~plain:true ()); (1, gen ~plain:true ~position:inside ()) ]
-  in
-  let byte = gens byte_dtypes [ 15; 16; 300 ] in
-  Gen.with_pp pp_gather
-    (Gen.frequency (byte @ gens sub_byte_dtypes [ 11; 12; 300 ]))
-
-let law_edge_gather (b : Support.backend) c =
-  let (A.Any x) = c.x in
-  let sub = D.bits (A.dtype x) < 8 in
-  let k = (shape_of c.x).(1) and l = (shape_of c.idx).(1) in
-  let d = Int64.of_int k in
-  let outside = Array.exists (fun p -> p < 0L || p >= d) (positions c.idx) in
-  cover "a byte-wide row of 15" ((not sub) && l = 15);
-  cover "a byte-wide row of 16" ((not sub) && l = 16);
-  cover "a sub-byte row of 11" (sub && l = 11);
-  cover "a sub-byte row of 12" (sub && l = 12);
-  cover "a sub-byte row of 12 or more read without a copy of the table"
-    (sub && l >= 12 && (l < 2 * k || k > 1024));
-  cover "a row of 300 holding a position outside the table"
-    (l = 300 && outside);
-  cover "a row of 300 inside the table" (l = 300 && not outside);
-  law_gather_reference b c
-
-(* Many updates along the axis of few slices: threads split the targets. *)
-let long_scatters =
-  Gen.with_pp pp_scatter
-    (scatter_gen
-       ~shapes:(Gen.of_list [ [| 1000 |]; [| 3; 7 |]; [| 5 |] ])
-       ~ms:(Gen.int_range 70_000 100_000)
-       ())
-
-(* More steps along the axis than a partitioned scatter sorts at once. *)
-let blocked_scatters =
-  Gen.with_pp pp_scatter
-    (scatter_gen
-       ~shapes:(Gen.of_list [ [| 1000 |]; [| 5 |] ])
-       ~ms:(Gen.int_range 524_289 600_000)
-       ())
-
-(* Embedding gradients: many updates along axis 0, their positions
-   broadcast along the rows, into and the updates through drawn views. *)
-let row_scatters =
-  let open Gen in
-  let* d = of_list ~pp:pp_dtype all_dtypes in
-  let* combine = combine_gen d in
-  let* ts =
-    of_list ~pp:pp_ints
-      [ [| 300; 5 |]; [| 50; 7 |]; [| 20; 2; 3 |]; [| 40; 3 |] ]
-  in
-  let r = Array.length ts in
-  let* m = int_range 65_536 70_000 in
-  let* tv = view_of r in
-  let* uv = view_of r in
-  let+ seed = int in
-  let rs = Random.State.make [| seed |] in
-  let us = Array.mapi (fun i e -> if i = 0 then m else e) ts in
-  let iv = { (plain r) with broadcast = List.init (r - 1) succ } in
-  {
-    combine;
-    saxis = 0;
-    into = operand d ts tv (fun _ -> element d rs);
-    sidx = int64s us iv (fun () -> position rs ts.(0));
-    updates = operand d us uv (fun _ -> element d rs);
-    sviews =
-      List.map (( ^ ) "into ") (view_names tv)
-      @ List.map (( ^ ) "updates ") (view_names uv);
-  }
-
-let row_scatters = Gen.with_pp pp_scatter row_scatters
-
-(* A scatter of [d] along [axis] into [ts], [m] updates along it, its
-   positions broadcast along [broadcast], into and the updates through
-   [tv] and [uv], its elements drawn from [rs]. *)
-let shaped d combine (ts, axis, m, broadcast) ~tv ~uv rs =
-  let r = Array.length ts in
-  let us = Array.mapi (fun i e -> if i = axis then m else e) ts in
-  {
-    combine;
-    saxis = axis;
-    into = operand d ts tv (fun _ -> element d rs);
-    sidx =
-      int64s us { (plain r) with broadcast } (fun () -> position rs ts.(axis));
-    updates = operand d us uv (fun _ -> element d rs);
-    sviews =
-      List.map (( ^ ) "into ") (view_names tv)
-      @ List.map (( ^ ) "updates ") (view_names uv);
-  }
-
-let narrow_dtypes = List.filter is_narrow all_dtypes
-
-(* A narrow float's Adds: an axis of more updates than targets, one of
-   fewer, 3 slices of positions of their own, and rows of 600 slices, the
-   positions broadcast along them. *)
-let narrow_shapes =
-  [
-    ("more updates than targets", ([| 1000 |], 0, 70_000, []));
-    ("more targets than updates", ([| 200_000 |], 0, 70_000, []));
-    ("positions of each slice", ([| 3; 7 |], 1, 70_000, []));
-    ("rows cut into pieces", ([| 40; 600 |], 0, 600, [ 1 ]));
-  ]
-
-let narrow_examples =
-  List.mapi
-    (fun i (_, ((ts, _, _, _) as s)) ->
-      let d = List.nth narrow_dtypes (i mod List.length narrow_dtypes) in
-      let r = Array.length ts in
-      lazy
-        (shaped d Nx_kernel.Add s ~tv:(plain r) ~uv:(plain r)
-           (Random.State.make [| 1 |])))
-    narrow_shapes
-  @ [
-      (* Positions crowding the first targets, and one outside the axis,
-         at bfloat16 and at float4_e2m1fn, whose elements share bytes. *)
-      lazy
-        (scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 500; 3 |]
-           ~axis:0 ~m:70_000
-           (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1))));
-      lazy
-        (scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 500; 3 |]
-           ~axis:0 ~m:70_000
-           (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1))));
-      (* 3 slices of 300 000 float4_e2m1fn updates into an axis of 1000. *)
-      lazy
-        (scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 1000; 3 |]
-           ~axis:0 ~m:300_000 cycled);
-    ]
-
-let narrow_adds =
-  let open Gen in
-  let* d = of_list ~pp:pp_dtype narrow_dtypes in
-  let* _, ((ts, _, _, _) as s) = of_list narrow_shapes in
-  let r = Array.length ts in
-  let* tv = view_of r in
-  let* uv = view_of r in
-  let+ seed = int in
-  shaped d Nx_kernel.Add s ~tv ~uv (Random.State.make [| seed |])
-
-let narrow_adds = Gen.with_pp pp_scatter narrow_adds
-
-(* A scatter's bits are one thread's, any NaN for a NaN. *)
-let law_threads (b : Support.backend) c =
-  let d = dtype_of c.into in
-  cover "a narrow float's Add" (c.combine = Nx_kernel.Add && is_narrow d);
-  cover "a sub-byte dtype" (let (D.Any dt) = d in D.bits dt < 8);
-  cover "positions broadcast along the rows"
-    (let (A.Any p) = c.sidx in
-     Iarray.exists (( = ) 0) (L.strides (A.layout p)));
-  cover "through views" (c.sviews <> []);
-  cover "more targets than updates"
-    ((shape_of c.into).(c.saxis) > (shape_of c.updates).(c.saxis));
-  match (scatter_on b c, Nx_cpu.one_thread (fun () -> scatter_on b c)) with
-  | Some y, Some y' ->
-      equal (array (same (dtype_of c.into))) (elements y) (elements y')
-  | _ -> failf "%s declined a scatter" b.name
-
-(* Sub-byte scatters *)
-
-(* Shapes whose neighbouring elements share bytes between threads: a short
-   axis of many updates, rows of an odd count of slices, and slices along
-   a middle axis. Each is [(into, axis, updates along it, broadcast axes of
-   the positions)]. *)
-let shared_bytes =
-  [
-    ([| 9 |], 0, 70_000, []);
-    ([| 9; 1001 |], 0, 64, [ 1 ]);
-    ([| 20; 11; 3 |], 1, 2000, []);
-  ]
-
-let sub_byte_examples =
-  List.concat_map
-    (fun d ->
-      List.concat_map
-        (fun (ts, axis, m, broadcast) ->
-          let ps = Array.init ts.(axis) Int64.of_int in
-          List.map
-            (fun combine ->
-              lazy (scatter_example d combine ~ts ~axis ~m ~broadcast ps))
-            (if takes_add d then Nx_kernel.[ Set; Add; Max; Min ]
-             else Nx_kernel.[ Set; Max; Min ]))
-        shared_bytes)
-    sub_byte_dtypes
-
-let sub_byte_scatters =
-  let open Gen in
-  let* d = of_list ~pp:pp_dtype sub_byte_dtypes in
-  let* combine = combine_gen d in
-  let* ((ts, _, _, _) as s) = of_list shared_bytes in
-  let+ seed = int in
-  let r = Array.length ts in
-  shaped d combine s ~tv:(plain r) ~uv:(plain r) (Random.State.make [| seed |])
-
-let sub_byte_scatters = Gen.with_pp pp_scatter sub_byte_scatters
-
-(* Scatters of many updates: narrow floats' Adds, embedding gradients'
-   rows, sub-byte elements sharing bytes, and long axes of few slices. *)
-let threaded_scatters =
-  Gen.with_pp pp_scatter
-    (Gen.frequency
-       [
-         (3, narrow_adds); (3, row_scatters); (3, sub_byte_scatters);
-         (1, long_scatters);
-       ])
-
-(* Float Adds of one slice, 70 000 updates into an axis of a thousand,
-   which sum in row order on one thread: float64, complex128 and
-   float8_e5m2. *)
-let row_order_examples =
-  List.map
-    (fun d ->
-      lazy
-        (scatter_example d Nx_kernel.Add ~ts:[| 1000 |] ~axis:0 ~m:70_000 cycled))
-    D.[ Any Float64; Any Complex128; Any Float8_e5m2 ]
-
-let threaded_examples =
-  narrow_examples @ row_examples @ sub_byte_examples @ owned_examples
-  @ float_extremes @ row_order_examples @ [ wide_rows ]
-
-(* Scatters of many updates against the reference: large shapes, long axes
-   of few slices, hundreds of thousands of updates into one axis, and
-   embedding gradients' rows. *)
-let many_scatters =
-  Gen.with_pp pp_scatter
-    (Gen.frequency
-       [
-         (3, large_scatters); (3, long_scatters); (1, blocked_scatters);
-         (3, row_scatters);
-       ])
-
-(* Float Adds of many updates into one axis, which sort them where the
-   cache doesn't hold the targets: long axes of few slices and narrow
-   floats' Adds. *)
-let sorted_adds =
-  Gen.with_pp pp_scatter
-    (Gen.frequency
-       [
-         ( 1,
-           scatter_gen ~dtypes:float_dtypes ~combines:Nx_kernel.[ Add ]
-             ~shapes:(Gen.of_list [ [| 1000 |]; [| 5 |] ])
-             ~ms:(Gen.int_range 70_000 100_000)
-             () );
-         (1, narrow_adds);
-       ])
-
-(* Element-locality *)
-
-(* How a call runs: on the job's threads, on the calling thread alone, or on
-   the job's threads sorting a float Add's updates by target. *)
-type mode = Pool | One | Sorting
-
-let mode_name = function
-  | Pool -> "the job's threads"
-  | One -> "one thread"
-  | Sorting -> "threads that sort"
-
-let in_mode mode f =
-  match mode with
-  | Pool -> f ()
-  | One -> Nx_cpu.one_thread f
-  | Sorting -> Nx_cpu.with_cache 0 f
-
-let pp_mode ppf m = Format.pp_print_string ppf (mode_name m)
-let mode_gen = Gen.of_list ~pp:pp_mode [ Pool; One; Sorting ]
-
-(* [n] addends of the float or complex [d] whose sums round: each part a
-   sign, a fraction and a binary exponent within 20 of 0, within 6 for a
-   narrow float, which is cast to it; and one in 64 any element
-   ({!element}), a NaN or an infinity among them. *)
+(* [n] addends of the float or complex [d] whose sums round: each part a sign, a
+   fraction and a binary exponent within 20 of 0, within 6 for a narrow float,
+   which is cast to it; and one in 64 any element ({!element}), a NaN or an
+   infinity among them. *)
 let addends (D.Any dt as d) rs n =
   let part span =
     let f = 1. +. Random.State.float rs 1. in
@@ -953,8 +1418,8 @@ let shuffled rs m1 m2 =
   a
 
 (* The elements, in C order, of arrays [a1] of shape [s1] and [a2] of shape
-   [s2], equal but along [axis], joined along it: index [q] along it is the
-   next of [a1]'s where [order.(q)], else the next of [a2]'s. *)
+   [s2], equal but along [axis], joined along it: index [q] along it is the next
+   of [a1]'s where [order.(q)], else the next of [a2]'s. *)
 let merge axis order s1 a1 s2 a2 =
   let rank = Array.make (Array.length order) 0 in
   let n1 = ref 0 and n2 = ref 0 in
@@ -971,8 +1436,8 @@ let merge axis order s1 a1 s2 a2 =
       i.(axis) <- rank.(q);
       if order.(q) then a1.(flat s1 i) else a2.(flat s2 i))
 
-(* A float Add's shapes: [into]'s, the axis, the updates along it a whole
-   call draws, and the axes along which its positions broadcast. *)
+(* A float Add's shapes: [into]'s, the axis, the updates along it a whole call
+   draws, and the axes along which its positions broadcast. *)
 type regime = {
   name : string;
   ts : int array;
@@ -993,16 +1458,17 @@ let few_updates ranks =
   in
   { name = "few updates"; ts; axis; ms = int_range 0 24; broadcast }
 
-(* The shapes of nx.cpu's threaded Adds: one slice of more updates than
-   2^16, or of twice that, which parts of the whole call fall below or not;
-   slices of positions of their own; more targets than updates; an
-   embedding gradient's rows; and rows cut into pieces. *)
+(* The shapes of nx.cpu's threaded Adds, at the least counts past 2^16 updates,
+   which nx.cpu's split takes (nx_cpu.mli): one slice, whose parts fall below
+   2^16, and in an example parts of 2^16 each; slices of positions of their own;
+   more targets than updates; an embedding gradient's rows; and rows cut into
+   pieces. *)
 let one_slice =
   {
     name = "one slice";
     ts = [| 1000 |];
     axis = 0;
-    ms = Gen.int_range 70_000 140_000;
+    ms = Gen.int_range 65_536 70_000;
     broadcast = [];
   }
 
@@ -1011,7 +1477,7 @@ let own_slices =
     name = "slices of positions of their own";
     ts = [| 3; 7 |];
     axis = 1;
-    ms = Gen.int_range 70_000 100_000;
+    ms = Gen.int_range 65_536 70_000;
     broadcast = [];
   }
 
@@ -1044,10 +1510,9 @@ let row_pieces =
 
 (* A whole Add and its two parts: each element of [into] is [owned] or not;
    [first]'s updates land only on owned elements, or outside the axis, and
-   [second]'s on the others, and each part's [into] holds the whole's
-   elements where its updates may land and others elsewhere. The whole
-   call's updates are the parts', interleaved along the axis, each part's in
-   its order. *)
+   [second]'s on the others, and each part's [into] holds the whole's elements
+   where its updates may land and others elsewhere. The whole call's updates are
+   the parts', interleaved along the axis, each part's in its order. *)
 type local_case = {
   regime : string;
   broadcast : int list;
@@ -1059,11 +1524,12 @@ type local_case = {
 
 let pp_local ppf c =
   Format.fprintf ppf "%s: %a, of parts %a and %a" c.regime pp_scatter c.whole
-    pp_ints (shape_of c.first.updates) pp_ints (shape_of c.second.updates)
+    pp_ints (shape_of c.first.updates) pp_ints
+    (shape_of c.second.updates)
 
-(* The local case of [d] in regime [g] whose parts take [m1] and [m2]
-   updates, drawn from [seed]. Positions broadcast along [g.broadcast], so
-   an element is owned as its index with those axes at 0 is. *)
+(* The local case of [d] in regime [g] whose parts take [m1] and [m2] updates,
+   drawn from [seed]. Positions broadcast along [g.broadcast], so an element is
+   owned as its index with those axes at 0 is. *)
 let local_case d g ~m1 ~m2 seed =
   let rs = Random.State.make [| seed |] in
   let ts = g.ts and axis = g.axis in
@@ -1077,8 +1543,8 @@ let local_case d g ~m1 ~m2 seed =
         let i = Array.mapi (fun a x -> if broadcast a then 0 else x) i in
         mask.(flat red i))
   in
-  (* For each line along the axis, by its index at 0 along it, the targets
-     whose ownership is [own]. *)
+  (* For each line along the axis, by its index at 0 along it, the targets whose
+     ownership is [own]. *)
   let targets own =
     Array.init (total red) (fun k ->
         let i = index_of red k in
@@ -1091,9 +1557,7 @@ let local_case d g ~m1 ~m2 seed =
                  mask.(flat red i) = own)
                (List.init dx Fun.id)))
   in
-  let dropped =
-    Int64.[| -1L; of_int dx; of_int (dx + 3); min_int; max_int |]
-  in
+  let dropped = Int64.[| -1L; of_int dx; of_int (dx + 3); min_int; max_int |] in
   let positions own m =
     let lines = targets own and ms = along red axis m in
     Array.init (total ms) (fun k ->
@@ -1164,25 +1628,36 @@ let local_adds =
              ]))
        (Gen.pair mode_gen mode_gen))
 
-(* One case of each regime and of the parts at 2^16 updates or more, at a
-   float, narrow floats and complex numbers. *)
+(* One case of each regime and of the parts at 2^16 updates or more, at a float,
+   narrow floats and complex numbers, so that every label is met on every run
+   whatever the draws. *)
 let local_examples =
+  let few =
+    {
+      name = "few updates";
+      ts = [| 3; 4 |];
+      axis = 1;
+      ms = Gen.constant 8;
+      broadcast = [ 0 ];
+    }
+  in
   List.map
     (fun (d, g, m1, m2, modes) -> lazy (local_case d g ~m1 ~m2 1, modes))
     D.
       [
-        (Any Float32, one_slice, 70_000, 70_000, (Pool, One));
-        (Any Float16, one_slice, 90_000, 10_000, (One, Pool));
+        (Any Float32, one_slice, 65_536, 65_536, (Pool, One));
+        (Any Float16, one_slice, 60_000, 10_000, (One, Pool));
         (Any Complex64, own_slices, 40_000, 40_000, (Sorting, One));
         (Any Float64, more_targets, 60_000, 8_000, (Pool, Sorting));
         (Any Bfloat16, row_slices, 30_000, 40_000, (Pool, One));
         (Any Float8_e4m3fn, row_pieces, 300, 300, (Sorting, Pool));
+        (Any Float32, few, 5, 3, (One, Pool));
       ]
 
-(* A float Add's element is the Add of that element of into and of the
-   updates that land on it, in their order: the other elements of into, and
-   updates that land on other elements, change none of its bits, whatever
-   the threads, any NaN for a NaN. *)
+(* A float Add's element is the Add of that element of into and of the updates
+   that land on it, in their order: the other elements of into, and updates that
+   land on other elements, change none of its bits, whatever the threads, any
+   NaN for a NaN. *)
 let law_own_updates (b : Support.backend) (c, (mw, mp)) =
   let d = dtype_of c.whole.into and axis = c.whole.saxis in
   let m1 = (shape_of c.first.updates).(axis) in
@@ -1199,7 +1674,9 @@ let law_own_updates (b : Support.backend) (c, (mw, mp)) =
       row_pieces.name;
     ];
   cover "a narrow float" (is_narrow d);
-  cover "complex numbers" (let (D.Any dt) = d in D.is D.Complex dt);
+  cover "complex numbers"
+    (let (D.Any dt) = d in
+     D.is D.Complex dt);
   cover "the whole of 2^16 updates or more, a part of fewer"
     (at_least (m1 + m2) && not (at_least m1 && at_least m2));
   cover "parts of 2^16 updates or more" (at_least m1 && at_least m2);
@@ -1213,8 +1690,8 @@ let law_own_updates (b : Support.backend) (c, (mw, mp)) =
     [| of_elements d (shape_of c.whole.into) want |]
     [| y |]
 
-(* Cuts of an axis other than a case's own: the axis, the first index and
-   the count. *)
+(* Cuts of an axis other than a case's own: the axis, the first index and the
+   count. *)
 type slab = { across : int; start : int; count : int }
 
 let slab_gen =
@@ -1252,19 +1729,31 @@ let slab_examples =
     (fun (d, g, m, s, modes) -> lazy ((local_case d g ~m1:m ~m2:0 1, s), modes))
     D.
       [
-        ( Any Float32, own_slices, 70_000,
-          { across = 0; start = 1; count = 1 }, (Pool, One) );
-        ( Any Bfloat16, row_slices, 66_000,
-          { across = 1; start = 2; count = 2 }, (One, Pool) );
-        ( Any Complex128, row_slices, 66_000,
-          { across = 1; start = 0; count = 4 }, (Pool, Sorting) );
-        ( Any Float4_e2m1fn, row_pieces, 600,
-          { across = 1; start = 100; count = 250 }, (Sorting, Pool) );
+        ( Any Float32,
+          own_slices,
+          65_536,
+          { across = 0; start = 1; count = 1 },
+          (Pool, One) );
+        ( Any Bfloat16,
+          row_slices,
+          66_000,
+          { across = 1; start = 2; count = 2 },
+          (One, Pool) );
+        ( Any Complex128,
+          row_slices,
+          66_000,
+          { across = 1; start = 0; count = 4 },
+          (Pool, Sorting) );
+        ( Any Float4_e2m1fn,
+          row_pieces,
+          600,
+          { across = 1; start = 100; count = 250 },
+          (Sorting, Pool) );
       ]
 
-(* A float Add over a slab of an axis other than its own, into, the
-   positions and the updates each cut to the slab, is that slab of the whole
-   Add, whatever the threads, any NaN for a NaN. *)
+(* A float Add over a slab of an axis other than its own, into, the positions
+   and the updates each cut to the slab, is that slab of the whole Add, whatever
+   the threads, any NaN for a NaN. *)
 let law_slab (b : Support.backend) ((c, s), (mw, mp)) =
   let w = c.whole in
   let n = (shape_of w.into).(s.across) in
@@ -1303,8 +1792,8 @@ let covers_views ~after views =
     (after && List.exists (String.ends_with ~suffix:"reversed") views);
   cover "broadcast positions" (List.mem "idx broadcast" views)
 
-(* The same result with the operand and positions, through their views, and
-   the destination against an inaccessible page. *)
+(* The same result with the operand and positions, through their views, and the
+   destination against an inaccessible page. *)
 let law_gather_guards (b : Support.backend) (c, side) =
   let module K = (val b.kernels) in
   let r = Array.length (shape_of c.x) in
@@ -1351,99 +1840,77 @@ let deferred pp gen =
 
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
-  let sorted f x = b.around (fun () -> Nx_cpu.with_cache 0 (fun () -> f x)) in
-  let forced around f c = around f (Lazy.force c) in
-  group ("nx.cpu " ^ b.name)
+  let forced f c = b.around (fun () -> f (Lazy.force c)) in
+  group "nx.cpu"
     [
-      prop "a float Add gives the same result through any views" float_adds
-        (run (law_add_views b));
-      prop ~examples:gather_examples
-        "a gather reads each position, zero outside the axis" gathers
-        (run (law_gather_reference b));
-      prop ~examples:scatter_examples
-        "a scatter combines each target's updates in C order" scatters
-        (run (law_scatter_reference b));
-      prop "a scatter's Max and Min give a NaN where one reaches a target"
-        nan_scatters
-        (run (law_nan_extremes b));
-      prop ~count:10 "large gathers on the job's threads" large_gathers
-        (run (gather_agrees b));
-      prop "a take from a table of few entries reads each position"
-        table_gathers
-        (run (law_table_gather b));
-      prop "a sub-byte take from a table of few entries reads each position"
-        sub_byte_table_gathers
-        (run (law_table_gather b));
-      prop "a take along a stepped source reads each position" along_gathers
-        (run (law_along_gather b));
-      prop ~count:200 "a take reads each position of rows beside its bounds"
-        edge_gathers
-        (run (law_edge_gather b));
-      prop ~count:5 "a take from a table on the job's threads"
-        (large_table_gathers byte_dtypes)
-        (run (gather_agrees b));
-      prop ~count:5 "a sub-byte take from a table on the job's threads"
-        (large_table_gathers sub_byte_dtypes)
-        (run (gather_agrees b));
-      prop ~count:10
-        ~examples:
-          (blocked_examples @ owned_examples @ float_extremes
-         @ row_order_examples)
-        "scatters of many updates combine each target's updates in C order"
-        (deferred pp_scatter many_scatters)
-        (forced run (fun c ->
-             cover "hundreds of thousands of updates into one axis"
-               ((shape_of c.updates).(c.saxis) > 500_000);
-             law_scatter_reference b c));
-      prop ~count:16 ~examples:threaded_examples
-        "a scatter's bits are one thread's"
-        (deferred pp_scatter threaded_scatters)
-        (forced run (law_threads b));
-      prop ~count:10 ~examples:blocked_examples
-        "a float Add that sorts its updates combines each target's updates \
-         in C order"
-        (deferred pp_scatter sorted_adds)
-        (forced sorted (law_scatter_reference b));
-      prop ~count:10 ~examples:narrow_examples
-        "a float Add that sorts its updates has one thread's bits"
-        (deferred pp_scatter sorted_adds)
-        (forced sorted (law_threads b));
-      prop ~count:30 ~examples:local_examples
-        "a float Add's element is that of its element of into and the \
-         updates that land on it, in their order"
-        (deferred pp_local_add local_adds)
-        (forced run (law_own_updates b));
-      prop ~count:30 ~examples:slab_examples
-        "a float Add over a slab of another axis is that slab of the whole \
-         Add"
-        (deferred pp_slab_add slabs)
-        (forced run (law_slab b));
-      test "boolean extremes are of truths" (fun () ->
-          b.around (test_bool_extremes b));
-      test "a float16 sum runs in float32 and rounds once" (fun () ->
-          b.around (test_float16_sum b));
-      test "a parted float4_e2m1fn Add of 4Mi updates fits 512 MiB" (fun () ->
-          b.around (test_parted_memory b));
-      prop
-        "a gather of shapes Nx_kernel.Shape does not fit is not Done and \
-         writes nothing outside dst"
-        gather_misfits
-        (run (law_gather_refuses b));
-      prop
-        "a scatter of shapes Nx_kernel.Shape does not fit is not Done and \
-         writes nothing outside dst"
-        scatter_misfits
-        (run (law_scatter_refuses b));
-      prop ~count:300
-        "a gather reads and writes no byte past its operands and dst, \
-         whatever pages lie beside them"
-        (Gen.pair (gather_gen ~shapes:tail_shapes ()) sides)
-        (run (law_gather_guards b));
-      prop ~count:300
-        "a scatter reads and writes no byte past its operands and dst, \
-         whatever pages lie beside them"
-        (Gen.pair (scatter_gen ~shapes:tail_shapes ()) sides)
-        (run (law_scatter_guards b));
+      group "gather"
+        [
+          prop ~count:500
+            ~examples:(gather_examples @ row_examples)
+            "reads each position, zero outside the axis"
+            (deferred pp_gather all_gathers)
+            (forced (law_gather_reference b));
+          prop ~count:6 ~examples:large_gather_examples
+            "on the job's threads reads each position"
+            (deferred pp_gather large_gathers)
+            (forced (law_large_gather b));
+          prop ~count:300
+            "reads and writes no byte past its operands and dst, whatever \
+             pages lie beside them"
+            (Gen.pair (gather_gen ~shapes:tail_shapes ()) sides)
+            (run (law_gather_guards b));
+        ];
+      group "scatter"
+        [
+          prop ~examples:scatter_examples
+            "combines each target's updates in C order"
+            (deferred pp_scatter small_scatters)
+            (forced (law_scatter_reference b));
+          prop "Max and Min give a NaN where one reaches a target" nan_scatters
+            (run (law_nan_extremes b));
+          prop "a float Add has the bits of its operands' C-contiguous copies"
+            float_adds
+            (run (law_add_views b));
+          cases
+            ~id:(fun (c, _) -> combine_name c)
+            "Max and Min of booleans are Or and And of truths, stored as 0 or 1"
+            [
+              (Nx_kernel.Max, [| "\001"; "\001"; "\001" |]);
+              (Nx_kernel.Min, [| "\001"; "\000"; "\000" |]);
+            ]
+            (run (bool_extreme b));
+          test "a float16 Add sums in float32 and rounds once" (fun () ->
+              b.around (test_float16_sum b));
+          prop ~count:300
+            "reads and writes no byte past its operands and dst, whatever \
+             pages lie beside them"
+            (Gen.pair (scatter_gen ~shapes:tail_shapes ()) sides)
+            (run (law_scatter_guards b));
+        ];
+      group "many updates"
+        [
+          prop ~count:5
+            ~examples:(regime_examples @ owned_examples @ float_extremes)
+            "combine each target's updates in C order, on the job's threads, \
+             one thread or threads that sort"
+            (deferred pp_many many_scatters)
+            (forced (law_many b));
+          prop ~count:8 ~examples:threaded_examples "have one thread's bits"
+            (deferred pp_many threaded_scatters)
+            (forced (law_threads b));
+          prop ~count:10 ~examples:local_examples
+            "a float Add's element is that of its element of into and the \
+             updates that land on it, in their order"
+            (deferred pp_local_add local_adds)
+            (forced (law_own_updates b));
+          prop ~count:30 ~examples:slab_examples
+            "a float Add over a slab of another axis is that slab of the whole \
+             Add"
+            (deferred pp_slab_add slabs)
+            (forced (law_slab b));
+          test "a parted float4_e2m1fn Add of 4Mi updates fits 512 MiB"
+            (fun () -> b.around (test_parted_memory b));
+        ];
     ]
 
 let () = exit (Windtrap.run "nx_cpu.index" [ cpu Support.cpu ])
