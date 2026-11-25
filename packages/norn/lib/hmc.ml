@@ -238,7 +238,10 @@ let warmup (type f) u lp k ~steps (s : (_, f, 'd) state) =
     let key (st : (_, _, 'd) state) =
       Nx.Rng.fold_in_tensor k (Nx.cast Nx.int64 st.draw)
     in
-    let s0 = { s with step_size = init_step_size u lp (key s) s } in
+    (* The length starts at the first step size, below the criterion's first
+       maximum (Hoffman, Radul and Sountsov 2021, Algorithm 1: T0 = ε0). *)
+    let eps = init_step_size u lp (key s) s in
+    let s0 = { s with step_size = eps; length = eps } in
     let zero = Nx.zeros_like s0.length in
     let a0 =
       {

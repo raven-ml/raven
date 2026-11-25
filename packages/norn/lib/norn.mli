@@ -1560,11 +1560,14 @@ module Hmc : sig
         size for a harmonic mean acceptance over the chains of [s.accept],
         restarting at each window. A chain that never accepts drives the mean to
         [0], so the step shrinks until every chain moves.
-      - The length maximises the change in the chains' expected squared jumped
-        distance (ChEES; Hoffman, Radul and Sountsov 2021) in whitened
+      - The length starts at the first step size, whatever [s.length] (Hoffman,
+        Radul and Sountsov 2021, Algorithm 1), and climbs the change in the
+        chains' expected squared jumped distance (ChEES) in whitened
         coordinates: each transition estimates the criterion's gradient in log
         length from the chains, weighted by acceptance, and Adam takes a step of
-        [0.025] along it. The final length is the iterates' polynomial average.
+        [0.025] along it. Where the criterion has several maxima, as on a
+        Gaussian, the length settles at the first. The final length is the
+        iterates' polynomial average.
       - At each window's end the geometry is refitted to every chain's draws and
         gradients of the window by the Fisher divergence (Seyboldt, Carlson and
         Carpenter 2026): a diagonal scale [sqrt (sd x / sd score)] per element,

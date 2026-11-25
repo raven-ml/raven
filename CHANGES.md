@@ -85,6 +85,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Hmc.warmup` starts the trajectory length at its first step size, as ChEES
+  does (Hoffman, Radul and Sountsov 2021, Algorithm 1). It started from the
+  state's length, and ChEES's criterion has several maxima on a Gaussian, so a
+  length of 10 settled near 13 where the first maximum lies at 1.12.
 - `Dist.truncated` keeps its quantile and draws inside the base's support
   where a bound lies deep in a tail: a gamma truncated above at `1e-130` gave
   the quantile `-1e-129` at `p = 1e-12`, where it is `1.6e-135`.

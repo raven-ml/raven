@@ -550,14 +550,13 @@ let warmup =
           let a = (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t).acceptance in
           greater float_exact ~than:0.
             (Nx.item [] (Nx.mean (Nx.slice [ Nx.I 0 ] a))));
-      (* The criterion is flat near its optimum: at ±25% it falls about 10%, so
-         the iterates wander there. Over keys 1 to 40 the length from 0.1
-         reached 1.226 ± 0.042 (sd), 4.1 sds inside the bound: a rate of about
-         2e-5. The criterion has further local maxima at the next roots of [4T =
-         tan 4T], T = 1.93, 2.73, ..., where a length started above them
-         stays. *)
-      test "the length rises to ChEES's optimum" (fun () ->
-          equal (float_rel ~rel:0.25 ~abs:0.) 1.1234 (chees 0.1));
+      (* Warmup starts the length at its first step size, below the criterion's
+         first maximum, and climbs to it; a start above, as at a state's length
+         of 10, settled at a later maximum, at the next roots of [4T = tan 4T]
+         (T = 2.73, ...). The criterion is flat near its optimum: at ±25% it
+         falls about 10%, so the iterates wander there. RATE *)
+      test "the length climbs to ChEES's first maximum from any state's length"
+        (fun () -> equal (float_rel ~rel:0.25 ~abs:0.) 1.1234 (chees 10.));
       (* With one key for warmup and sampling, the first draw takes the key
          after warmup's last: no two transitions share one. *)
       test "warmup takes the run's first keys and sampling continues" (fun () ->
