@@ -3,20 +3,29 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Numberings through every kernel library the host runs, against a table of
-   rows numbered as they are first met: the ids, the first rows and counts at
-   any length, and the count, through views of the keys. nx.cpu's group
-   draws the keys its doc says find their numbers by a direct table and those
-   that hash, and checks that one thread and the pool give the same bits. *)
+(* Nx_kernel.S.unique through every kernel library the host runs, against a
+   table of rows numbered as they are first met: the ids, the first rows and
+   counts at any length, and the count, through views of the keys. nx.cpu's
+   group checks its hash's seed and states and that one thread and the pool give
+   the same bits. *)
 
 open Windtrap
 open Elements
 module Support = Nx_kernels_support
 
-(* nx.cpu's hash under a seed fixed for the suite, so that keys drawn to share
-   their hash do. *)
+(* nx.cpu draws its hash's seed per process; a fixed one makes the draws of
+   colliding rows, and the hash's probes, the same on every run, and is the seed
+   tests restore. *)
 let suite_seed = 0x5EED_0F_0A11L
 let () = Nx_cpu.unique_seed suite_seed
+
+(* [f ()] with nx.cpu's hash keyed by [s], then by the suite's seed again. *)
+let under_seed s f =
+  Fun.protect
+    ~finally:(fun () -> Nx_cpu.unique_seed suite_seed)
+    (fun () ->
+      Nx_cpu.unique_seed s;
+      f ())
 
 (* How keys are drawn: from a few values, so that keys repeat; each word at
    random; rows of two words [[|a; c lxor state a|]] that all hash alike,
@@ -26,18 +35,21 @@ let () = Nx_cpu.unique_seed suite_seed
    pool's blocks and their span is too wide for a block's direct table. *)
 type draw = Tied | Spread | Collide | Narrow | Dense
 
-type case = { keys : A.any; m : int; draw : draw; views : string list }
+(* A numbering keeping [m] keys' first rows and counts, and the recipe of its
+   keys: [[n; w]] through [view], drawn from [seed] as [draw] says. *)
+type case = { shape : int array; view : view; draw : draw; seed : int; m : int }
 
 let pp_case ppf c =
-  Format.fprintf ppf "unique of %a keeping %d, %s (%s)" pp_ints
-    (shape_of c.keys) c.m
+  Format.fprintf ppf "unique of %a keeping %d, %s (%s), seed %d" pp_ints c.shape
+    c.m
     (match c.draw with
     | Tied -> "tied"
     | Spread -> "spread"
     | Collide -> "one hash"
     | Narrow -> "narrow"
     | Dense -> "dense")
-    (String.concat ", " c.views)
+    (String.concat ", " (view_names c.view))
+    c.seed
 
 (* A word drawn from [rs] as [draw] says, of [pool], [d] a dense draw's
    span. *)
@@ -55,8 +67,10 @@ let word rs pool d draw =
 let collide = 0x0123_4567_89AB_CDEFL
 let partner a = Int64.logxor collide (Nx_cpu.unique_state [| a |])
 
-let drawn draw s v seed =
-  let rs = Random.State.make [| seed |] in
+(* The case's keys. *)
+let keys_of c =
+  let s = c.shape in
+  let rs = Random.State.make [| c.seed |] in
   let pool = Array.init 3 (fun _ -> Random.State.bits64 rs) in
   let d =
     if s.(1) = 0 then 2
@@ -64,18 +78,18 @@ let drawn draw s v seed =
       Int.max 2
         (truncate (Float.of_int s.(0) ** (1. /. Float.of_int s.(1))))
   in
-  match draw with
+  match c.draw with
   | Collide ->
       (* Plain rows of two words, drawn in order: each leader, then its
          partner. *)
       let last = ref 0L and lead = ref true in
-      int64s s v (fun () ->
-          let w = if !lead then word rs pool d draw else partner !last in
+      int64s s c.view (fun () ->
+          let w = if !lead then word rs pool d c.draw else partner !last in
           last := w;
           lead := not !lead;
           w)
   | Tied | Spread | Narrow | Dense ->
-      int64s s v (fun () -> word rs pool d draw)
+      int64s s c.view (fun () -> word rs pool d c.draw)
 
 let shape_gen =
   let open Gen in
@@ -101,52 +115,36 @@ let case_gen ?(shapes = shape_gen) () =
       ]
   in
   let* s = shapes in
-  let s = if draw = Collide then [| s.(0); 2 |] else s in
+  let shape = if draw = Collide then [| s.(0); 2 |] else s in
   let* m =
     frequency
       [
-        (2, int_range 0 (s.(0) + 2));
-        (1, constant s.(0));
+        (2, int_range 0 (shape.(0) + 2));
+        (1, constant shape.(0));
         (1, int_range 0 3);
       ]
   in
   let* bc = frequency [ (5, constant []); (1, constant [ 0 ]) ] in
-  let* v = view_of ~broadcast:bc 2 in
-  let v = if draw = Collide then plain 2 else v in
+  let* view = view_of ~broadcast:bc 2 in
+  let view = if draw = Collide then plain 2 else view in
   let+ seed = int in
-  { keys = drawn draw s v seed; m; draw; views = view_names v }
+  { shape; view; draw; seed; m }
 
-let cases = Gen.with_pp pp_case (case_gen ())
+let numberings = Gen.with_pp pp_case (case_gen ())
 
 (* A constructed case through [view], drawn from seed 1, so that every seed
    reaches its regime. *)
-let example ?(view = plain 2) ?m draw s =
-  let m = Option.value m ~default:s.(0) in
-  { keys = drawn draw s view 1; m; draw; views = view_names view }
+let example ?(view = plain 2) ?m draw shape =
+  let m = Option.value m ~default:shape.(0) in
+  { shape; view; draw; seed = 1; m }
 
-let examples =
-  [
-    example Tied [| 0; 2 |];
-    example Tied [| 0; 0 |] ~m:2;
-    example Tied [| 5; 0 |] ~m:3;
-    example Tied [| 7; 2 |] ~view:{ (plain 2) with broadcast = [ 0 ] };
-    example Tied [| 40; 2 |] ~view:{ (plain 2) with perm = [| 1; 0 |] };
-    example Spread [| 9; 1 |] ~m:4;
-    example Spread [| 9; 3 |] ~m:12 ~view:{ (plain 2) with perm = [| 1; 0 |] };
-    example Tied [| 200; 10 |] ~m:50;
-    example Collide [| 30; 2 |];
-    example Collide [| 2000; 2 |] ~m:5;
-    example Narrow [| 30; 2 |] ~view:{ (plain 2) with reversed = Some 0 };
-  ]
-
-(* The case's numbering by the kernels, or [None] where they decline. *)
-let unique_on (b : Support.backend) c =
+(* The case's numbering of [keys] by the kernels: ids, first, counts and
+   count. *)
+let unique_on (b : Support.backend) c keys =
   let module K = (val b.kernels) in
-  let s = shape_of c.keys in
-  let (A.Any keys) = c.keys in
-  let keys = Support.on b (A.expect D.Int64 (A.Any keys)) in
+  let keys = Support.on b (A.expect D.Int64 keys) in
   let make n = A.create b.device D.Int64 (Iarray.of_array n) in
-  let ids = make [| s.(0) |] and first = make [| c.m |] in
+  let ids = make [| c.shape.(0) |] and first = make [| c.m |] in
   let counts = make [| c.m |] and count = make [||] in
   (* Destinations start as 0xA5 bytes, not zeros: an entry the kernels do
      not store differs from the reference, which holds no such entry. *)
@@ -156,16 +154,14 @@ let unique_on (b : Support.backend) c =
   match K.unique ~ids ~first ~counts ~count keys with
   | A.Done ->
       let get a = A.to_array (Support.host a) in
-      Some (get ids, get first, get counts, (get count).(0))
+      (get ids, get first, get counts, (get count).(0))
   | A.Declined -> failf "%s declined a numbering" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-(* The rows numbered as they are first met: each row's number, and each
-   key's first row and count. *)
-let expected c =
-  let s = shape_of c.keys in
-  let n = s.(0) and w = s.(1) in
-  let words = positions c.keys in
+(* The rows of [words], [[n; w]] in C order, numbered as they are first met:
+   each row's number, and each key's first row and count. *)
+let expected c words =
+  let n = c.shape.(0) and w = c.shape.(1) in
   let seen = Hashtbl.create 16 and keys = ref [] in
   let ids =
     Array.init n (fun i ->
@@ -183,28 +179,29 @@ let expected c =
   in
   (Array.map Int64.of_int ids, Array.of_list (List.rev !keys))
 
-let agrees (b : Support.backend) c =
-  match unique_on b c with
-  | None -> ()
-  | Some (ids, first, counts, count) ->
-      let n = (shape_of c.keys).(0) in
-      let eids, keys = expected c in
-      let k = Array.length keys in
-      let at f d = Array.init c.m (fun g -> if g < k then f keys.(g) else d) in
-      equal ~msg:"ids" (array int64) eids ids;
-      equal ~msg:"count" int64 (Int64.of_int k) count;
-      equal ~msg:"first" (array int64)
-        (at (fun (f, _) -> Int64.of_int f) (Int64.of_int n))
-        first;
-      equal ~msg:"counts" (array int64)
-        (at (fun (_, r) -> Int64.of_int !r) 0L)
-        counts
+let same_numbering (i, f, n, k) (i', f', n', k') =
+  equal ~msg:"ids" (array int64) i i';
+  equal ~msg:"first" (array int64) f f';
+  equal ~msg:"counts" (array int64) n n';
+  equal ~msg:"count" int64 k k'
 
-(* Whether some row and the row before it satisfy [f]. *)
-let follows f c =
-  let s = shape_of c.keys in
-  let n = s.(0) and w = s.(1) in
-  let words = positions c.keys in
+(* The numbering of [keys], whose words are [words], agrees with {!expected}:
+   entries of first and counts from the keys' count on get [n] and [0]. *)
+let agrees (b : Support.backend) c keys words =
+  let n = c.shape.(0) in
+  let eids, ks = expected c words in
+  let k = Array.length ks in
+  let at f d = Array.init c.m (fun g -> if g < k then f ks.(g) else d) in
+  same_numbering
+    ( eids,
+      at (fun (f, _) -> Int64.of_int f) (Int64.of_int n),
+      at (fun (_, r) -> Int64.of_int !r) 0L,
+      Int64.of_int k )
+    (unique_on b c keys)
+
+(* Whether some row of [words] and the row before it satisfy [f]. *)
+let follows f c words =
+  let n = c.shape.(0) and w = c.shape.(1) in
   let row i = Array.sub words (i * w) w in
   let rec from i = i < n && (f (row (i - 1)) (row i) || from (i + 1)) in
   from 1
@@ -213,115 +210,12 @@ let follows f c =
 let repeats = follows ( = )
 let leads = follows (fun a b -> Array.length a > 1 && a.(0) = b.(0) && a <> b)
 
-let law_reference (b : Support.backend) c =
-  let s = shape_of c.keys in
-  let _, keys = expected c in
-  let k = Array.length keys in
-  cover "no row" (s.(0) = 0);
-  cover "no word" (s.(1) = 0 && s.(0) > 0);
-  cover "one key of many rows" (k = 1 && s.(0) > 1);
-  cover "every row its own key" (k = s.(0) && s.(0) > 1);
-  cover "first and counts cut" (c.m < k);
-  cover "first and counts past the keys" (c.m > k);
-  cover "keys of one hash" (c.draw = Collide && k > 1);
-  cover "a row of the previous row's key" (repeats c);
-  cover "a row of the previous row's key, its words copied"
-    ((shape_of c.keys).(1) > 1 && List.mem "permuted" c.views && repeats c);
-  cover "a row of the previous row's first word alone" (leads c);
-  if c.draw = Collide then begin
-    (* The rows leave the hash one state: they collide. *)
-    let w = positions c.keys in
-    let states =
-      List.sort_uniq Int64.compare
-        (List.init s.(0) (fun i ->
-             Nx_cpu.unique_state [| w.(2 * i); w.((2 * i) + 1) |]))
-    in
-    equal ~msg:"states" int (Int.min 1 s.(0)) (List.length states)
-  end;
-  agrees b c
-
-(* Misfits *)
-
-(* Shapes that {!Nx_kernel.Shape.unique} fits number the keys; others do
-   not fit: not Done, and nothing written outside the destinations. *)
-let law_misfits (b : Support.backend) (keys, ids, first, counts, count) =
-  let module K = (val b.kernels) in
-  let make s = A.create b.device D.Int64 (Iarray.of_array s) in
-  let fits =
-    match Nx_kernel.Shape.unique ~size:first.(0) keys with
-    | Ok (i, f, c) ->
-        i = ids && f = first && f = counts && c = count
-    | Error _ -> false
-    | exception Invalid_argument _ -> false
-  in
-  cover "fits" fits;
-  cover "misfits" (not fits);
-  let call (g : Misfit.guard) ds =
-    let at k = A.expect D.Int64 ds.(k) in
-    K.unique ~ids:(at 0) ~first:(at 1) ~counts:(at 2) ~count:(at 3)
-      (g.g (make keys))
-  in
-  let dsts =
-    Array.map (fun s -> (D.Any D.Int64, s)) [| ids; first; counts; count |]
-  in
-  Misfit.law ~msg:"a numbering" ~what:"a shape" b ~fit:fits dsts call
-
-let misfits =
-  let open Gen in
-  let near d =
-    frequency [ (3, constant d); (1, int_range (max 0 (d - 1)) (d + 1)) ]
-  in
-  let* n = int_range 0 4 in
-  let* w = int_range 0 2 in
-  let* m = int_range 0 3 in
-  let* rank = frequency [ (5, constant 2); (1, constant 1); (1, constant 3) ] in
-  let keys = Array.sub [| n; w; 1 |] 0 rank in
-  let* i = near n in
-  let* c = near m in
-  let+ count = frequency [ (5, constant [||]); (1, constant [| 1 |]) ] in
-  (keys, [| i |], [| m |], [| c |], count)
-
-let misfits =
-  Gen.with_pp
-    (fun ppf (k, i, f, c, n) ->
-      Format.fprintf ppf "keys %a ids %a first %a counts %a count %a" pp_ints k
-        pp_ints i pp_ints f pp_ints c pp_ints n)
-    misfits
-
-(* nx.cpu *)
-
-(* Rows enough for several threads, each word drawn from a few values or at
-   random, of one to five words. *)
-let threaded =
-  let open Gen in
-  let shapes =
-    let* n = int_range 40_000 120_000 in
-    let+ w = int_range 1 5 in
-    [| n; w |]
-  in
-  Gen.with_pp pp_case (case_gen ~shapes ())
-
-(* Many rows: a hash table of a few keys and of about a key a row, keys of
-   five words, and a direct table, through a view, and keys that repeat
-   across blocks, of one and two words. *)
-let large =
-  [
-    example Tied [| 60_000; 2 |] ~m:5;
-    example Spread [| 60_000; 1 |];
-    example Spread [| 50_000; 5 |] ~m:100;
-    example Collide [| 50_000; 2 |] ~m:2;
-    example Narrow [| 70_000; 3 |] ~view:{ (plain 2) with perm = [| 1; 0 |] };
-    example Dense [| 60_000; 1 |];
-    example Dense [| 80_000; 2 |] ~m:7;
-  ]
-
-(* Keys of at most 4 words whose columns' spans multiply to at most twice
-   [rows] and 1024 more, and 2^20, take a direct table, [rows] the rows of a
-   block: all of them on one thread. *)
-let direct ?rows c =
-  let s = shape_of c.keys in
-  let n = s.(0) and w = s.(1) in
-  let words = positions c.keys in
+(* Whether nx.cpu numbers [words] by a direct table, as nx_cpu.mli states: keys
+   of at most 4 words whose columns' spans multiply to at most twice [rows] and
+   1024 more, and 2^20, [rows] the rows of a block, all of them on one
+   thread. *)
+let direct ?rows c words =
+  let n = c.shape.(0) and w = c.shape.(1) in
   let span j =
     let lo = ref (-1L) and hi = ref 0L in
     for i = 0 to n - 1 do
@@ -344,10 +238,184 @@ let direct ?rows c =
   in
   n > 0 && w > 0 && w <= 4 && values 0 1L
 
-let law_paths (b : Support.backend) c =
-  cover "direct table" (direct c);
-  cover "hash table" (not (direct c));
-  agrees b c
+(* Numbering *)
+
+(* No row, no word, rows broadcast, permuted or reversed, first and counts of no
+   entry, cut or past the keys, keys of one hash and of a narrow span. *)
+let examples =
+  [
+    example Tied [| 0; 2 |];
+    example Tied [| 0; 0 |] ~m:2;
+    example Tied [| 5; 0 |] ~m:3;
+    example Tied [| 5; 2 |] ~m:0;
+    example Tied [| 7; 2 |] ~view:{ (plain 2) with broadcast = [ 0 ] };
+    example Tied [| 7; 2 |]
+      ~view:{ (plain 2) with perm = [| 1; 0 |]; broadcast = [ 0 ] };
+    example Tied [| 40; 2 |] ~view:{ (plain 2) with perm = [| 1; 0 |] };
+    example Spread [| 9; 1 |] ~m:4;
+    example Spread [| 9; 3 |] ~m:12 ~view:{ (plain 2) with perm = [| 1; 0 |] };
+    example Tied [| 200; 10 |] ~m:50;
+    example Collide [| 30; 2 |];
+    example Collide [| 2000; 2 |] ~m:5;
+    example Narrow [| 30; 2 |] ~view:{ (plain 2) with reversed = Some 0 };
+  ]
+
+(* The direct and the hash table are nx_cpu.mli's paths, drawn for every
+   library. *)
+let law_order (b : Support.backend) c =
+  let s = c.shape in
+  let keys = keys_of c in
+  let words = positions keys in
+  let k = Array.length (snd (expected c words)) in
+  cover "no row" (s.(0) = 0);
+  cover "no word" (s.(1) = 0 && s.(0) > 0);
+  cover "one key of many rows" (k = 1 && s.(0) > 1);
+  cover "every row its own key" (k = s.(0) && s.(0) > 1);
+  cover "first and counts cut" (c.m < k);
+  cover "first and counts past the keys" (c.m > k);
+  cover "no first or counts for some rows" (c.m = 0 && s.(0) > 0);
+  cover "keys of one hash" (c.draw = Collide && k > 1);
+  cover "a row of the previous row's key" (repeats c words);
+  cover "a row of the previous row's key, its words copied"
+    (s.(1) > 1 && List.mem "permuted" (view_names c.view) && repeats c words);
+  cover "a row of the previous row's first word alone" (leads c words);
+  cover "a direct table" (direct c words);
+  cover "a hash table" (not (direct c words));
+  agrees b c keys words
+
+(* Rows enough for several of the pool's blocks of 16,384 rows, each word drawn
+   as {!case_gen} draws it, of one to five words. *)
+let threaded =
+  let open Gen in
+  let shapes =
+    let* n = int_range 33_000 50_000 in
+    let+ w = int_range 1 5 in
+    [| n; w |]
+  in
+  Gen.with_pp pp_case (case_gen ~shapes ())
+
+(* Many rows: of one word, sorted then numbered whole, and of several, through
+   views, with first and counts cut or past the keys. *)
+let many =
+  [
+    example Spread [| 40_000; 1 |] ~m:100;
+    example Dense [| 40_000; 1 |] ~m:50_000;
+    example Tied [| 40_000; 3 |] ~m:5 ~view:{ (plain 2) with perm = [| 1; 0 |] };
+    example Narrow [| 40_000; 2 |] ~view:{ (plain 2) with reversed = Some 0 };
+    example Spread [| 30_000; 0 |] ~m:2;
+  ]
+
+(* Many rows on nx.cpu's paths: a hash table of a few keys and of about a key a
+   row, keys of five words, and a direct table, through a view, and keys that
+   repeat across blocks, of one and two words. *)
+let large =
+  [
+    example Tied [| 40_000; 2 |] ~m:5;
+    example Spread [| 40_000; 5 |] ~m:100;
+    example Collide [| 40_000; 2 |] ~m:2;
+    example Narrow [| 40_000; 3 |] ~view:{ (plain 2) with perm = [| 1; 0 |] };
+    example Dense [| 40_000; 1 |];
+    example Dense [| 40_000; 2 |] ~m:7;
+  ]
+
+let law_many (b : Support.backend) c =
+  let keys = keys_of c in
+  let words = positions keys in
+  let k = Array.length (snd (expected c words)) in
+  cover "one word" (c.shape.(1) = 1);
+  cover "several words" (c.shape.(1) > 1);
+  cover "first and counts cut" (c.m < k);
+  cover "first and counts past the keys" (c.m > k);
+  cover "a few keys" (k <= 64);
+  cover "about a key a row" (2 * k > c.shape.(0));
+  agrees b c keys words
+
+(* Misfits *)
+
+let pp_misfit ppf (k, i, f, c, n) =
+  Format.fprintf ppf "keys %a ids %a first %a counts %a count %a" pp_ints k
+    pp_ints i pp_ints f pp_ints c pp_ints n
+
+(* Shapes of keys, ids, first, counts and count, each near a fit. *)
+let misfits =
+  let open Gen in
+  let near d =
+    frequency [ (3, constant d); (1, int_range (max 0 (d - 1)) (d + 1)) ]
+  in
+  with_pp pp_misfit
+    (let* n = int_range 0 4 in
+     let* w = int_range 0 2 in
+     let* m = int_range 0 3 in
+     let* rank =
+       frequency [ (5, constant 2); (1, constant 1); (1, constant 3) ]
+     in
+     let keys = Array.sub [| n; w; 1 |] 0 rank in
+     let* i = near n in
+     let* c = near m in
+     let+ count = frequency [ (5, constant [||]); (1, constant [| 1 |]) ] in
+     (keys, [| i |], [| m |], [| c |], count))
+
+let law_misfit (b : Support.backend) (keys, ids, first, counts, count) =
+  let module K = (val b.kernels) in
+  let make s = A.create b.device D.Int64 (Iarray.of_array s) in
+  let fits =
+    match Nx_kernel.Shape.unique ~size:first.(0) keys with
+    | Ok (i, f, c) -> i = ids && f = first && f = counts && c = count
+    | Error _ -> false
+  in
+  cover "fits" fits;
+  cover "misfits" (not fits);
+  let call (g : Misfit.guard) ds =
+    let at k = A.expect D.Int64 ds.(k) in
+    K.unique ~ids:(at 0) ~first:(at 1) ~counts:(at 2) ~count:(at 3)
+      (g.g (make keys))
+  in
+  let dsts =
+    Array.map (fun s -> (D.Any D.Int64, s)) [| ids; first; counts; count |]
+  in
+  Misfit.law ~msg:"a numbering" ~what:"a shape" b ~fit:fits dsts call
+
+(* nx.cpu *)
+
+(* The numbering under another seed has the same bits. *)
+let law_seeds (b : Support.backend) (c, seed) =
+  let keys = keys_of c in
+  same_numbering (unique_on b c keys)
+    (under_seed seed (fun () -> unique_on b c keys))
+
+(* A seed, a [c] and 1 to 64 leaders, often repeated. *)
+let leaders =
+  let open Gen in
+  with_pp
+    (fun ppf (seed, c, a) ->
+      Format.fprintf ppf "seed %Ld, c %Ld, leaders %a" seed c
+        (Format.pp_print_list ~pp_sep:Format.pp_print_space (fun ppf ->
+             Format.fprintf ppf "%Ld"))
+        (Array.to_list a))
+    (let* seed = int64 in
+     let* c = int64 in
+     let* pool = array ~size:(constant 4) int64 in
+     let+ a =
+       array ~size:(int_range 1 64)
+         (frequency [ (3, int64); (1, map (Array.get pool) (int_range 0 3)) ])
+     in
+     (seed, c, a))
+
+(* nx_cpu.mli: "a row [[|a; c lxor unique_state [|a|]|]] has the hash of every
+   other such row of the same [c]". *)
+let law_one_state (seed, c, a) =
+  let distinct = List.sort_uniq Int64.compare (Array.to_list a) in
+  cover "two leaders or more" (List.length distinct > 1);
+  let states =
+    under_seed seed (fun () ->
+        Array.map
+          (fun a ->
+            Nx_cpu.unique_state
+              [| a; Int64.logxor c (Nx_cpu.unique_state [| a |]) |])
+          a)
+  in
+  equal ~msg:"states" int 1
+    (List.length (List.sort_uniq Int64.compare (Array.to_list states)))
 
 (* Rows of [w] words that a multiply and xor-shift step would hash alike
    under every seed: flipping a word's top bit changed that step's output by
@@ -375,79 +443,29 @@ let chains =
      let rows = Int.min 64 (1 lsl (w - 1)) in
      constant ((w, base, rows), seed))
 
-let law_chain ((_, _, rows) as c, seed) =
+let law_chain (((_, _, rows) as c), seed) =
   let states =
-    Fun.protect
-      ~finally:(fun () -> Nx_cpu.unique_seed suite_seed)
-      (fun () ->
-        Nx_cpu.unique_seed seed;
-        List.map Nx_cpu.unique_state (chain_rows c))
+    under_seed seed (fun () -> List.map Nx_cpu.unique_state (chain_rows c))
   in
   equal ~msg:"distinct states" int rows
     (List.length (List.sort_uniq Int64.compare states))
-
-(* The numbering under another seed has the same bits. *)
-let law_seeds (b : Support.backend) (c, seed) =
-  let other =
-    Fun.protect
-      ~finally:(fun () -> Nx_cpu.unique_seed suite_seed)
-      (fun () ->
-        Nx_cpu.unique_seed seed;
-        unique_on b c)
-  in
-  match (other, unique_on b c) with
-  | Some (i, f, n, k), Some (i', f', n', k') ->
-      equal ~msg:"ids" (array int64) i' i;
-      equal ~msg:"first" (array int64) f' f;
-      equal ~msg:"counts" (array int64) n' n;
-      equal ~msg:"count" int64 k' k
-  | _ -> failf "%s declined a numbering" b.name
-
-let law_large (b : Support.backend) c =
-  let _, keys = expected c in
-  let k = Array.length keys in
-  cover "a few keys" (k <= 64);
-  cover "about a key a row" (2 * k > (shape_of c.keys).(0));
-  agrees b c
 
 (* On the pool a block has from 16,384 rows to all of them: the cases a
    direct table numbers whatever the blocks, those it numbers on one thread
    alone, and those it numbers on none. *)
 let law_threads (b : Support.backend) c =
-  cover "direct table on any blocks" (direct ~rows:16_384 c);
+  let keys = keys_of c in
+  let words = positions keys in
+  let direct_one = direct c words
+  and direct_blocks = direct ~rows:16_384 c words in
+  cover "direct table on any blocks" direct_blocks;
   cover "direct table on one thread, hash table on the pool"
-    (direct c && not (direct ~rows:16_384 c));
-  cover "hash table on any blocks" (not (direct c));
+    (direct_one && not direct_blocks);
+  cover "hash table on any blocks" (not direct_one);
   cover "keys of one hash" (c.draw = Collide);
-  match (Nx_cpu.one_thread (fun () -> unique_on b c), unique_on b c) with
-  | Some (i1, f1, c1, k1), Some (i, f, c', k) ->
-      equal ~msg:"ids" (array int64) i1 i;
-      equal ~msg:"first" (array int64) f1 f;
-      equal ~msg:"counts" (array int64) c1 c';
-      equal ~msg:"count" int64 k1 k
-  | _ -> failf "%s declined a numbering" b.name
-
-(* Many rows: of one word, sorted then numbered whole, and of several, through
-   views, with first and counts cut or past the keys. *)
-let many =
-  [
-    example Spread [| 70_000; 1 |] ~m:100;
-    example Dense [| 60_000; 1 |] ~m:70_000;
-    example Tied [| 50_000; 3 |] ~m:5
-      ~view:{ (plain 2) with perm = [| 1; 0 |] };
-    example Narrow [| 40_000; 2 |] ~view:{ (plain 2) with reversed = Some 0 };
-    example Spread [| 30_000; 0 |] ~m:2;
-  ]
-
-let law_many (b : Support.backend) c =
-  let s = shape_of c.keys in
-  let _, keys = expected c in
-  let k = Array.length keys in
-  cover "one word" (s.(1) = 1);
-  cover "several words" (s.(1) > 1);
-  cover "first and counts cut" (c.m < k);
-  cover "first and counts past the keys" (c.m > k);
-  agrees b c
+  same_numbering
+    (Nx_cpu.one_thread (fun () -> unique_on b c keys))
+    (unique_on b c keys)
 
 (* nx.cuda: keys whose sorts span several submissions of two columns' sorts
    each, the cut nx_cuda.mli states past 8 columns. *)
@@ -463,12 +481,13 @@ let spanned =
    Nx_cuda.numbering_words: 8, the most it takes. *)
 let run_words = 8
 
-let law_spanned (b : Support.backend) c =
+(* [f ()] with a numbering's submissions sorting at most [n] columns. *)
+let under_words n f =
   Fun.protect
     ~finally:(fun () -> Nx_cuda.numbering_words run_words)
     (fun () ->
-      Nx_cuda.numbering_words 2;
-      agrees b c)
+      Nx_cuda.numbering_words n;
+      f ())
 
 (* nx_cuda.mli: a numbering takes a workspace of at most 75 bytes a row
    and a few kilobytes. One whose sorts span several submissions takes one
@@ -481,96 +500,109 @@ let test_loop_workspace (b : Support.backend) () =
   let keys = index [| n; 4 |] in
   let ids = index [| n |] and first = index [| n |] and counts = index [| n |] in
   let count = index [||] in
-  Fun.protect
-    ~finally:(fun () -> Nx_cuda.numbering_words run_words)
-    (fun () ->
-      Nx_cuda.numbering_words 1;
+  under_words 1 (fun () ->
       Kernels_cases.loop_held b ~bound:((75 * n) + 65536) (fun () ->
           equal answer A.Done (K.unique ~ids ~first ~counts ~count keys);
           Rig.Buffer.wait (A.buffer count) Read_write))
 
-let cuda (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("nx.cuda " ^ b.name)
-    [
-      test "numbers keys whose sorts span several submissions" (fun () ->
-          List.iter (run (law_spanned b)) spanned);
-      test "numberings in a loop hold one numbering's workspace" (fun () ->
-          b.around (test_loop_workspace b));
-    ]
+(* The suite *)
 
-let laws (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group b.name
+let laws (d : Support.declared) =
+  let run f x =
+    let b = Support.opened d in
+    b.around (fun () -> f b x)
+  in
+  group d.label
     [
-      prop ~examples "numbers rows in order of first appearance" cases
-        (run (law_reference b));
-      prop ~count:4 ~examples:many
-        "numbers many rows in order of first appearance" threaded
-        (run (law_many b));
+      prop ~examples "numbers rows in order of first appearance" numberings
+        (run law_order);
+      prop ~count:4 ~examples:(many @ large)
+        "numbers many rows in order of first appearance" threaded (run law_many);
       prop
-        "a call of shapes Nx_kernel.Shape refuses is not Done and writes \
-         nothing outside its destinations"
-        misfits (run (law_misfits b));
+        "a call of shapes Nx_kernel.Shape.unique refuses is not Done and \
+         writes nothing outside its destinations"
+        misfits (run law_misfit);
     ]
 
 let cpu (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
+  let run f x = b.around (fun () -> f b x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop ~examples "numbers by a direct table or a hash table" cases
-        (run (law_paths b));
-      prop "the same bits under any seed" (Gen.pair cases Gen.int64)
-        (run (law_seeds b));
-      prop "rows that cancel a word's difference hash apart" chains law_chain;
-      prop ~count:8 ~examples:large "one thread and the pool give the same bits"
-        threaded
-        (run (law_threads b));
-      prop ~count:4 ~examples:large "numbers many rows on the pool" threaded
-        (run (law_large b));
+      prop "gives the same bits under any seed"
+        (Gen.pair numberings Gen.int64)
+        (run law_seeds);
+      prop "rows [|a; c lxor unique_state [|a|]|] of one c leave one state"
+        leaders law_one_state;
+      prop "rows that cancel a word's difference leave distinct hash states"
+        chains law_chain;
+      prop ~count:8 ~examples:large "gives one thread's bits on the pool"
+        threaded (run law_threads);
+    ]
+
+let cuda (d : Support.declared) =
+  let run f x =
+    let b = Support.opened d in
+    b.around (fun () -> f b x)
+  in
+  group ("nx.cuda " ^ d.label)
+    [
+      cases "numbers keys whose sorts span several submissions"
+        ~id:(Format.asprintf "%a" pp_case)
+        spanned
+        (run (fun b c ->
+             let keys = keys_of c in
+             under_words 2 (fun () -> agrees b c keys (positions keys))));
+      test "numberings in a loop hold one numbering's workspace" (fun () ->
+          let b = Support.opened d in
+          b.around (test_loop_workspace b));
     ]
 
 (* rig.nv *)
 
 (* The numbering's destinations, as arrays. *)
-let numbered b c =
-  let ints a = A.Any (A.of_array D.Int64 (Iarray.of_array [| Array.length a |]) a) in
-  match unique_on b c with
-  | Some (ids, first, counts, count) -> [| ints ids; ints first; ints counts; ints [| count |] |]
-  | None -> [||]
+let numbered b c keys =
+  let ints a =
+    A.Any (A.of_array D.Int64 (Iarray.of_array [| Array.length a |]) a)
+  in
+  let ids, first, counts, count = unique_on b c keys in
+  [| ints ids; ints first; ints counts; ints [| count |] |]
 
 (* rig.nv loads the cubin CUDA loads, so a numbering through it has CUDA's
    bits: what it can get wrong, its launches, memory and order, shows in
    them. Each case runs through CUDA, then through rig.nv. *)
-let nv_laws (first : Support.backend) (nv : Support.backend) =
-  let agree call = Elements.agree first nv call in
-  group nv.name
+let nv_laws (first : Support.declared) (nv : Support.declared) =
+  let agree c =
+    let keys = keys_of c in
+    Elements.agree (Support.opened first) (Support.opened nv) (fun b ->
+        numbered b c keys)
+  in
+  group nv.label
     [
       group "bits are cuda's"
         [
-          prop ~examples "of numberings" cases (fun c ->
-              agree (fun b -> numbered b c));
-          test "of numberings whose sorts span several submissions" (fun () ->
-              Fun.protect
-                ~finally:(fun () -> Nx_cuda.numbering_words run_words)
-                (fun () ->
-                  Nx_cuda.numbering_words 2;
-                  List.iter (fun c -> agree (fun b -> numbered b c)) spanned));
+          prop ~examples "of numberings" numberings agree;
+          cases "of numberings whose sorts span several submissions"
+            ~id:(Format.asprintf "%a" pp_case) spanned (fun c ->
+              under_words 2 (fun () -> agree c));
         ];
     ]
 
 let () =
   let nv =
-    match (Support.gpus (), Support.nv ()) with
-    | first :: _, Some nv -> [ nv_laws first nv ]
+    match (Support.declared_cuda, Support.declared_nv) with
+    | Some first, Some nv -> [ nv_laws first nv ]
     | _ -> []
   in
   exit
     (Windtrap.run "nx_kernel.unique"
        (List.map laws
-          (Support.backends ()
-          @ Option.to_list (Support.amd ())
-          @ Option.to_list (Support.metal ()))
+          (Support.declare Support.cpu
+          :: List.filter_map Fun.id
+               [
+                 Support.declared_cuda;
+                 Support.declared_amd;
+                 Support.declared_metal;
+               ])
        @ [ cpu Support.cpu ]
-       @ List.map cuda (Support.gpus ())
+       @ List.map cuda (Option.to_list Support.declared_cuda)
        @ nv))
