@@ -492,10 +492,21 @@ let run_fold st fd ~from ~target ~size =
       let known = collect_resumes st fd ~from ~target ~size in
       (refold st fd ~target ~size ~known, true)
 
+(* [open_log st] is the log opened, whether the probe found its lock held, and
+   its [stat]. A probe the file system refuses, as an NFS mount without its lock
+   daemon does, leaves the run unprobed. *)
 let open_log st =
   let fd = File.open_read st.path in
-  let held = File.probe fd in
-  (fd, held, File.fstat fd)
+  match
+    let held =
+      match File.probe fd with h -> Some h | exception Sys_error _ -> None
+    in
+    (held, File.fstat fd)
+  with
+  | held, stat -> (fd, held, stat)
+  | exception e ->
+      Unix.close fd;
+      raise e
 
 let start_of st fd =
   let line =
@@ -525,7 +536,7 @@ let read_into st ~following ~target =
   in
   let st, again = run_fold st fd ~from ~target ~size in
   let st = { st with restarted = following && (replaced || again) } in
-  finish_status st ~held:(Some held) ~mtime:stat.Unix.st_mtime
+  finish_status st ~held ~mtime:stat.Unix.st_mtime
 
 let read ?limit ?keep (run : Listing.t) =
   let st = fresh ~keep run in
