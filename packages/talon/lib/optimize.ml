@@ -23,30 +23,35 @@ let sat_add a b =
 (* [at_shape e] is [e] at any shape: shapes are erased in nodes. *)
 let at_shape e = Expr.typed (Expr.typing e) (Expr.node e)
 
-(* [memoize same plan f] is [f] tied to itself over [plan], rewriting each step
-   that [plan] shares once per context, two contexts being one when [same] says
+(* [memoize same shared f] is [f] tied to itself, rewriting each step that
+   [shared] holds of once per context, two contexts being one when [same] says
    so. A step that a plan reaches from several places, as [append q q] reaches
    [q], is otherwise rewritten once per path to it, and the paths double with
    each such level. A step that one step reads is rewritten once per rewrite of
-   its reader, so only shared steps are remembered, and a plan without one
-   allocates no table. *)
-let memoize same plan f =
-  let shared = Query.shared plan in
-  let rewritten = lazy (Hashtbl.create 16) in
-  let rec go context q =
-    if not (shared q) then f go context q
-    else
-      let rewritten = Lazy.force rewritten in
-      let id = Query.id q in
-      let known () = Option.value ~default:[] (Hashtbl.find_opt rewritten id) in
-      match List.find_opt (fun (c, _) -> same c context) (known ()) with
-      | Some (_, q') -> q'
-      | None ->
-          let q' = f go context q in
-          Hashtbl.replace rewritten id ((context, q') :: known ());
-          q'
-  in
-  go
+   its reader, so only shared steps are remembered ({!Query.shared}), and a plan
+   without one, [None], allocates no table. *)
+let memoize same shared f =
+  match shared with
+  | None ->
+      let rec go context q = f go context q in
+      go
+  | Some shared ->
+      let rewritten = Hashtbl.create 8 in
+      let rec go context q =
+        if not (shared q) then f go context q
+        else
+          let id = Query.id q in
+          let known () =
+            Option.value ~default:[] (Hashtbl.find_opt rewritten id)
+          in
+          match List.find_opt (fun (c, _) -> same c context) (known ()) with
+          | Some (_, q') -> q'
+          | None ->
+              let q' = f go context q in
+              Hashtbl.replace rewritten id ((context, q') :: known ());
+              q'
+      in
+      go
 
 let any_context () () = true
 
@@ -170,14 +175,15 @@ let fold_outputs outputs =
       (n, Expr.Packed (Expr.fold_constants evaluator e)))
     outputs
 
-(* [fold q] is [q] with the constants of its expressions folded, a filter of
-   [true] gone and one with a conjunct of [false] or null an empty slice: a
-   row passes a filter only if every conjunct is [true]. *)
-let fold fold () q =
+(* [fold fold q] is [q] with the constants of its expressions folded, a filter
+   of [true] gone and one with a conjunct of [false] or null an empty slice,
+   [fold] folding its inputs: a row passes a filter only if every conjunct is
+   [true]. *)
+let fold fold q =
   match Query.node q with
   | Filter { predicate; input } ->
       let predicate = Expr.fold_constants evaluator predicate
-      and input = fold () input in
+      and input = fold input in
       let never c =
         match truth c with Some (Some false | None) -> true | _ -> false
       in
@@ -194,7 +200,7 @@ let fold fold () q =
         | Unnest r -> Unnest { r with outputs = fold_outputs r.outputs }
         | n -> n
       in
-      Query.make (Query.map_inputs (fold ()) folded)
+      Query.make (Query.map_inputs fold folded)
 
 (* Pushing conjuncts and slices *)
 
@@ -458,13 +464,12 @@ let unkept q =
       input
   | _ -> q
 
-(* [narrow prune (ordered, need) q] is [q] with each step narrowed to the
-   columns [need] of its result and those its steps read, and each source given
-   its request, [prune] narrowing its inputs. Unless [ordered], the order of
-   [q]'s columns is not observed, so a [derive] need not read a column that it
+(* [narrow prune ~ordered need q] is [q] with each step narrowed to the columns
+   [need] of its result and those its steps read, and each source given its
+   request, [prune] narrowing its inputs. Unless [ordered], the order of [q]'s
+   columns is not observed, so a [derive] need not read a column that it
    replaces to keep its place. *)
-let rec narrow prune (ordered, need) q =
-  let prune ~ordered need q = prune (ordered, need) q in
+let rec narrow prune ~ordered need q =
   match chain q with
   | Some (fs, leaf) -> place need fs leaf
   | None -> (
@@ -617,10 +622,10 @@ and limit offset length input =
    canonical, so with them physically: the work allocated is linear in the plan.
    Only leaves of one name and shape share a hash, and they compare by a pointer
    each. *)
-let share q =
+let share shared q =
   let canonical = Hashtbl.create 64 in
   let go =
-    memoize any_context q (fun go () q ->
+    memoize any_context shared (fun go () q ->
         let q = Query.make (Query.map_inputs (go ()) (Query.node q)) in
         let h = Query.step_hash q in
         let steps = Option.value ~default:[] (Hashtbl.find_opt canonical h) in
@@ -635,12 +640,32 @@ let share q =
 (* Optimizing *)
 
 (* [once q] is [q] optimized by one run of the passes. *)
+(* The passes over a plan that reaches each step once, which need no memo. *)
+let rec fold_tree q = fold fold_tree q
+let rec push_tree pending q = push push_tree pending q
+let rec narrow_tree ~ordered need q = narrow narrow_tree ~ordered need q
+let same_need (o0, n0) (o1, n1) = o0 = o1 && List.equal String.equal n0 n1
+
 let once q =
   let need = Schema.names (Query.schema q) in
-  let folded = memoize any_context q fold () q in
-  let pushed = memoize same_pending folded push [] folded in
-  let same_need (o0, n0) (o1, n1) = o0 = o1 && List.equal String.equal n0 n1 in
-  share (memoize same_need pushed narrow (true, need) pushed)
+  (* Fold, push and prune build each step they return once, so over a plan that
+     reaches each step once they give such plans, and one walk tells for the
+     three. *)
+  match Query.shared q with
+  | None ->
+      share None (narrow_tree ~ordered:true need (push_tree [] (fold_tree q)))
+  | Some _ as shared ->
+      let folded =
+        memoize any_context shared (fun go () q -> fold (go ()) q) () q
+      in
+      let pushed = memoize same_pending (Query.shared folded) push [] folded in
+      let pruned =
+        memoize same_need (Query.shared pushed)
+          (fun go (ordered, need) q ->
+            narrow (fun ~ordered need q -> go (ordered, need) q) ~ordered need q)
+          (true, need) pushed
+      in
+      share (Query.shared pruned) pruned
 
 (* [steps q] is the number of distinct steps of [q]. *)
 let steps q =

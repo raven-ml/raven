@@ -310,17 +310,26 @@ let rec chain q =
   | Aggregate { input; _ } ->
       chain input
 
-let never _ = false
-
-(* [shared q s] is [true] iff [q] reaches the step [s] more than once. One walk
-   finds those steps, keyed by identity. A chain of steps reaches each once, and
-   allocates nothing to say so. *)
+(* [shared q] is [Some s], where [s p] is [true] iff [q] reaches the step [p]
+   more than once, or [None] if [q] reaches each step once. One walk finds those
+   steps, keyed by identity. A chain of steps reaches each once, and allocates
+   nothing to say so. *)
 let shared q =
-  if chain q then never
+  if chain q then None
   else
-    let seen = Hashtbl.create 64 and twice = Hashtbl.create 16 in
+    let seen = Hashtbl.create 8 and twice = ref None in
     let rec visit q =
-      if Hashtbl.mem seen q.id then Hashtbl.replace twice q.id ()
+      if Hashtbl.mem seen q.id then begin
+        let t =
+          match !twice with
+          | Some t -> t
+          | None ->
+              let t = Hashtbl.create 8 in
+              twice := Some t;
+              t
+        in
+        Hashtbl.replace t q.id ()
+      end
       else begin
         Hashtbl.add seen q.id ();
         match q.node with
@@ -342,7 +351,7 @@ let shared q =
       end
     in
     visit q;
-    fun s -> Hashtbl.mem twice s.id
+    Option.map (fun t p -> Hashtbl.mem t p.id) !twice
 
 (* Format draws no tree, so each step is formatted alone, at the margin that its
    prefix leaves, and its lines are prefixed by hand: the first by [first], the
@@ -351,7 +360,8 @@ let shared q =
    times. *)
 let pp ppf q =
   let margin = Format.pp_get_margin ppf () in
-  let shared = shared q and labels = ref [] in
+  let shared = Option.value ~default:(fun _ -> false) (shared q) in
+  let labels = ref [] in
   let rec step ~first ~prefix ~width q =
     match List.assq_opt q !labels with
     | Some k -> Format.fprintf ppf "@,%s#%d" first k
@@ -638,32 +648,40 @@ let step_equal ~input ~table q0 q1 =
         false)
   && List.equal input (inputs q0) (inputs q1)
 
-(* [plans_equal ~table q0 q1] is [step_equal] over the whole plans, each pair of
-   steps that [q0] shares compared once. A step that a plan reaches from several
-   places is otherwise compared once per path to it, and the paths double with
-   each such level. A step that one step reads is reached once per visit of its
-   reader, so only shared steps are remembered, and a plan without one allocates
-   no table. *)
-let plans_equal ~table q0 q1 =
+(* [equal_tree] and [same_tree] compare plans that reach each step once. *)
+let rec equal_tree q0 q1 =
+  q0 == q1 || step_equal ~input:equal_tree ~table:Table.equal q0 q1
+
+let rec same_tree q0 q1 =
+  q0 == q1 || step_equal ~input:same_tree ~table:( == ) q0 q1
+
+(* [plans_equal ~table ~tree q0 q1] is [step_equal] over the whole plans, each
+   pair of steps that [q0] shares compared once, and [tree q0 q1] where [q0]
+   shares none. A step that a plan reaches from several places is otherwise
+   compared once per path to it, and the paths double with each such level. A
+   step that one step reads is reached once per visit of its reader, so only
+   shared steps are remembered. *)
+let plans_equal ~table ~tree q0 q1 =
   q0 == q1
   ||
-  let shared = shared q0 in
-  let compared = lazy (Hashtbl.create 16) in
-  let rec equal q0 q1 =
-    q0 == q1
-    ||
-    if not (shared q0) then step_equal ~input:equal ~table q0 q1
-    else
-      let compared = Lazy.force compared in
-      match Hashtbl.find_opt compared (q0.id, q1.id) with
-      | Some b -> b
-      | None ->
-          let b = step_equal ~input:equal ~table q0 q1 in
-          Hashtbl.replace compared (q0.id, q1.id) b;
-          b
-  in
-  equal q0 q1
+  match shared q0 with
+  | None -> tree q0 q1
+  | Some shared ->
+      let compared = Hashtbl.create 16 in
+      let rec equal q0 q1 =
+        q0 == q1
+        ||
+        if not (shared q0) then step_equal ~input:equal ~table q0 q1
+        else
+          match Hashtbl.find_opt compared (q0.id, q1.id) with
+          | Some b -> b
+          | None ->
+              let b = step_equal ~input:equal ~table q0 q1 in
+              Hashtbl.replace compared (q0.id, q1.id) b;
+              b
+      in
+      equal q0 q1
 
-let equal q0 q1 = plans_equal ~table:Table.equal q0 q1
-let same q0 q1 = plans_equal ~table:( == ) q0 q1
+let equal q0 q1 = plans_equal ~table:Table.equal ~tree:equal_tree q0 q1
+let same q0 q1 = plans_equal ~table:( == ) ~tree:same_tree q0 q1
 let same_step q0 q1 = step_equal ~input:( == ) ~table:( == ) q0 q1
