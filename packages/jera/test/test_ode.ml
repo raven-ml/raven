@@ -1106,6 +1106,18 @@ let path =
           (Oracle.tensor ~rel:1e-14 ())
           (vec [| 1.; Nx.item [] y |])
           (Piecewise.eval p (vec [| 0.; 2. |])));
+    cases "its domain runs to t1 itself, either way"
+      ~id:(fun (t0, t1) -> Printf.sprintf "%h to %h" t0 t1)
+      [
+        (-7.074863082399303, 4.437342817489506);
+        (4.437342817489506, -7.074863082399303);
+      ]
+      (fun (t0, t1) ->
+        (* t0 + (t1 − t0) is one ulp off t1 here. *)
+        let f = decay (scalar 0.1) in
+        let p = Solution.get (path1 f ~t0 ~t1 (scalar 1.)) in
+        let y = Solution.get (solve1 f ~t0 ~t1 (scalar 1.)) in
+        equal (Oracle.tensor ~rel:1e-14 ()) y (Piecewise.eval p (scalar t1)));
     cases "between steps it reproduces a solution of its extension's order"
       ~id:(fun (n, _, _) -> n)
       [

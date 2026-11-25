@@ -1281,6 +1281,12 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Ode.path`'s domain runs to `t1` itself, as `jera.mli` states: its last
+  break was `t0 + (t1 − t0)`, which rounds apart from `t1` (one ulp over
+  `[-7.074863082399303, 4.437342817489506]`), and `Piecewise.eval` at `t1`
+  raised. Every Ode solve's search and answer now take a step's start, end
+  and size from one rule, so the answer retakes the search's steps to the
+  bit.
 - A lane that did not converge has a zero derivative in `Quad.adaptive`,
   `Quad.cubature`, `Quad.tanh_sinh`, `Quad.qmc` and `Piecewise.adapt` wherever
   the integrand's derivative is finite at the search's first points, where it

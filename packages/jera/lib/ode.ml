@@ -736,6 +736,14 @@ let scalar_at t i =
 let time_at a b span sigma =
   Nx.where (Nx.equal_s sigma 1.) b (Nx.add a (Nx.mul span sigma))
 
+(* The step from the fraction [sigma0] to [sigma1] of that interval: its start,
+   its end and its size. Every solve's search and answer take their steps from
+   here, so the answer retakes the search's steps to the bit. *)
+let step_times a b span sigma0 sigma1 =
+  ( time_at a b span sigma0,
+    time_at a b span sigma1,
+    Nx.mul span (Nx.sub sigma1 sigma0) )
+
 (* [rows] with [x] combined into row [i], where [only] holds if given: a
    scatter, at the position [-1] elsewhere, which writes nothing, so that a
    loop's step whose carry [rows] is writes that row alone. *)
@@ -904,13 +912,10 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     let span = Nx.sub b a in
     (* An empty interval, of [t0 = t1] in a solve, ends with no step. *)
     let empty = Nx.equal_s span 0. in
-    let t = Nx.add a (Nx.mul span s.sigma) in
     let ds = Nx.div s.h (Nx.abs span) in
     let lands = Nx.greater_equal (Nx.add s.sigma ds) one in
-    let ds = Nx.where lands (Nx.rsub_s 1. s.sigma) ds in
     let sigma_end = Nx.where lands one (Nx.add s.sigma ds) in
-    let hh = Nx.mul span ds in
-    let t_end = time_at a b span sigma_end in
+    let t, t_end, hh = step_times a b span s.sigma sigma_end in
     let k0 =
       match mem.first with
       | None -> s.k
@@ -1120,7 +1125,7 @@ let reached ~at s =
   Nx.where
     (Nx.equal_s s.interval (Int32.of_int n_int))
     b
-    (Nx.add a (Nx.mul (Nx.sub b a) s.sigma))
+    (time_at a b (Nx.sub b a) s.sigma)
 
 (* The answer's report, from the search's carry. *)
 let report ?(facts = []) fn m ~tol ~budget ~at (s, disorder) ~value ~error
@@ -1172,9 +1177,7 @@ let samples fn y m mem ~tol ~budget ~at y0 s =
                 (Nx.scalar_at (Nx.beside at) Nx.int32 0l)))
       in
       let sigma1 = scalar_at s.ends idx in
-      let t = Nx.add a (Nx.mul span sigma0)
-      and t_end = time_at a b span sigma1
-      and h = Nx.mul span (Nx.sub sigma1 sigma0) in
+      let t, t_end, h = step_times a b span sigma0 sigma1 in
       let k =
         match mem.first with None -> k | Some g -> eval fn y (g mm) t v
       in
@@ -1403,9 +1406,7 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
      local estimates, written into row [i] of the pieces. *)
   let piece (v, (k, (acc, (sigma0, ((i, evals), (nodes, accs)))))) =
     let sigma1 = scalar_at s.ends i in
-    let t = Nx.add t0 (Nx.mul span sigma0)
-    and t_end = time_at t0 t1 span sigma1
-    and h = Nx.mul span (Nx.sub sigma1 sigma0) in
+    let t, t_end, h = step_times t0 t1 span sigma0 sigma1 in
     let stepped = step ~stages:(tol, Stated) fn y m f t t_end h v (Some k) in
     let v' = stepped.next and ks = stepped.stages in
     let node =
@@ -1491,7 +1492,7 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
         Nx.where live s.ends (Nx.broadcast_to [| budget |] last);
       ]
   in
-  let breaks = Nx.add t0 (Nx.mul span fractions) in
+  let breaks = time_at t0 t1 span fractions in
   (* A path backward in time holds its pieces in increasing time: reversed, each
      piece's points reversed, which is [u ↦ −u]. *)
   let backward = Nx.less_s (Rune.detach span) 0. in
@@ -1604,9 +1605,7 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
         (fraction (Nx.sub_s i 1l))
     in
     let sigma1 = fraction i in
-    let t = Nx.add t0 (Nx.mul span sigma0)
-    and t_end = time_at t0 t1 span sigma1
-    and h = Nx.mul span (Nx.sub sigma1 sigma0) in
+    let t, t_end, h = step_times t0 t1 span sigma0 sigma1 in
     let { next = v; stages = ks; evaluations; _ } =
       step ~stages:(tol, Stated) fn y m f t t_end h v (Some k)
     in
@@ -1634,9 +1633,7 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
       (fraction last)
       (Nx.zeros_at (Nx.beside t0) dtype [||])
   in
-  let t_a = Nx.add t0 (Nx.mul span sigma0)
-  and t_b = time_at t0 t1 span sigma1
-  and h = Nx.mul span (Nx.sub sigma1 sigma0) in
+  let t_a, t_b, h = step_times t0 t1 span sigma0 sigma1 in
   let { next = v_b; stages = ks; values = zs; evaluations; _ } =
     step ~stages:(tol, Stated) fn y m f t_a t_b h v_a (Some k_a)
   in
