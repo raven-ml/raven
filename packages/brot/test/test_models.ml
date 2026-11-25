@@ -161,9 +161,11 @@ let unigram_cache =
         (fun t text -> encode_ids t text);
     ]
 
+(* A case misses "encode_ids" about two times in five (four cases missed it on 4
+   to 6 runs in 300), so 24 cases miss it in under one run in 10^9. *)
 let wordpiece_domains =
   let tok = abstract "t" in
-  stateful ~domains:2 ~count:4 ~steps:6
+  stateful ~domains:2 ~count:24 ~steps:6
     "encodes WordPiece text on two domains as on one"
     [
       command "wordpiece"
@@ -176,9 +178,10 @@ let wordpiece_domains =
         (fun t text -> encode_ids t text);
     ]
 
+(* As for WordPiece, 24 cases reach "encode_ids" on every run. *)
 let unigram_domains =
   let tok = abstract "t" in
-  stateful ~domains:2 ~count:4 ~steps:6
+  stateful ~domains:2 ~count:24 ~steps:6
     "encodes Unigram text on two domains as on one"
     [
       command "unigram"
