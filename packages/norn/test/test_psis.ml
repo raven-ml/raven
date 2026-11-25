@@ -20,8 +20,8 @@ let normalise xs =
   let z = log_sum_exp xs in
   Array.map (fun x -> x -. z) xs
 
-(* [tail_length s] is [floor (min (0.2 s, 3 sqrt s))]: the largest [m] with
-   [5 m <= s] and [m² <= 9 s]. *)
+(* [tail_length s] is [floor (min (0.2 s, 3 sqrt s))]: the largest [m] with [5 m
+   <= s] and [m² <= 9 s]. *)
 let tail_length s =
   let m = ref 0 in
   while 5 * (!m + 1) <= s && (!m + 1) * (!m + 1) <= 9 * s do
@@ -63,7 +63,7 @@ let read_goldens () =
   let floats ws = Array.of_list (List.map float_of_string ws) in
   let header l =
     match String.split_on_char ' ' l with
-    | ("psis" | "loo") as kind :: name :: dims ->
+    | (("psis" | "loo") as kind) :: name :: dims ->
         Some (kind, name, List.map int_of_string dims)
     | _ -> None
   in
@@ -90,34 +90,39 @@ let goldens = lazy (read_goldens ())
 (* Within rounding of the two implementations' summation orders. *)
 let close = float_rel ~rel:1e-9 ~abs:1e-12
 
-let check_psis g =
-  let v key = List.assoc key g.lines in
-  let { Diag.log_weights = w; khat = k } = Diag.psis (vec (v "data")) in
-  equal close (v "khat").(0) (item k);
-  equal (array close) (v "weights") (normalise (floats w))
+(* [of_kind k] is the goldens of kind [k], and [line g key] a golden's line. *)
+let of_kind k = List.filter (fun g -> g.kind = k) (Lazy.force goldens)
+let line g key = List.assoc key g.lines
 
-let check_loo g =
-  let v key = List.assoc key g.lines in
-  let c, s, n =
-    match g.dims with [ c; s; n ] -> (c, s, n) | _ -> failwith g.name
-  in
-  let ll = Nx.create Nx.float64 [| c; s; n |] (v "data") in
-  let r = Diag.loo (Draws.v t ll) in
-  equal (array close) (v "elpd_i") (floats r.pointwise);
-  equal (array close) (v "khat") (floats r.khat);
-  equal close (v "elpd").(0) (item r.elpd);
-  equal close (v "se").(0) (item r.se);
-  equal close (v "p").(0) (item r.p);
-  let p_i = v "p_i" in
-  equal close (Array.fold_left ( +. ) 0. p_i) (item r.p)
+let psis_agrees =
+  test "agrees with ArviZ" (fun () ->
+      let gs = of_kind "psis" in
+      let smoothed g = Diag.psis (vec (line g "data")) in
+      let named f = List.map (fun g -> (g.name, f g)) gs in
+      equal
+        (list (pair string (array close)))
+        (named (fun g -> line g "khat"))
+        (named (fun g -> [| item (smoothed g).khat |]));
+      equal
+        (list (pair string (array close)))
+        (named (fun g -> line g "weights"))
+        (named (fun g -> normalise (floats (smoothed g).log_weights))))
 
-let reference =
-  group "against ArviZ"
-    (List.map
-       (fun g ->
-         test (g.kind ^ " " ^ g.name) (fun () ->
-             if g.kind = "psis" then check_psis g else check_loo g))
-       (Lazy.force goldens))
+let loo_agrees =
+  test "agrees with ArviZ" (fun () ->
+      List.iter
+        (fun g ->
+          let msg = g.name in
+          let ll =
+            Nx.create Nx.float64 (Array.of_list g.dims) (line g "data")
+          in
+          let r = Diag.loo (Draws.v t ll) in
+          equal ~msg (array close) (line g "elpd_i") (floats r.pointwise);
+          equal ~msg (array close) (line g "khat") (floats r.khat);
+          equal ~msg close (line g "elpd").(0) (item r.elpd);
+          equal ~msg close (line g "se").(0) (item r.se);
+          equal ~msg close (line g "p").(0) (item r.p))
+        (of_kind "loo"))
 
 (* Laws *)
 
@@ -130,7 +135,7 @@ let ratios_gen =
     let* s = one_of [ int_range 0 30; int_range 25 400 ] in
     let* scale = of_list [ 1e-6; 0.3; 1.; 4.; 60. ] in
     let* coarse = bool in
-    let* bounded = frequency [ (1, constant true); (3, constant false) ] in
+    let* bounded = bool in
     let* zeros = int_range 0 (s / 10) in
     let+ xs = array ~size:(constant s) (float_range (-3.) 3.) in
     let xs =
@@ -159,7 +164,9 @@ let sorted xs =
   ys
 
 let smoothing =
-  prop "smoothing keeps the S - M smallest ratios, the order and the bounds"
+  (* 200 cases: "a tail fitted" is 16% of them, a miss at 8e-16 a run. *)
+  prop ~count:200
+    "keeps the S - M smallest ratios, the order and the largest ratio"
     ratios_gen (fun lr ->
       let s = Array.length lr in
       let m = tail_length s in
@@ -181,17 +188,16 @@ let smoothing =
           (fun i wi ->
             Array.iteri
               (fun j wj ->
-                if lr.(i) < lr.(j) && wi > wj then
-                  crossed := (i, j) :: !crossed)
+                if lr.(i) < lr.(j) && wi > wj then crossed := (i, j) :: !crossed)
               w)
           w;
         equal (list (pair int int)) [] !crossed
       end)
 
-(* The ratios on a grid of 2^-20, so that adding an integer is exact and the
-   two sets differ by the constant alone. *)
+(* The ratios on a grid of 2^-20, so that adding an integer is exact and the two
+   sets differ by the constant alone. *)
 let shift =
-  prop "adding a constant to the log ratios adds it to the weights"
+  prop "adds a constant added to the log ratios to the weights"
     Gen.(pair ratios_gen (map float_of_int (int_range (-500) 500)))
     (fun (lr, c) ->
       let grid = 1048576. in
@@ -204,13 +210,14 @@ let shift =
       equal (array (float_rel ~rel:1e-15 ~abs:1e-12)) shifted (floats w'))
 
 (* Ratios [U^(-k)], U uniform, have a Pareto tail of shape [k]: their excesses
-   over any threshold are generalized Pareto of shape [k]. A likelihood
-   estimate from [M] excesses spreads by about [(1 + k) / sqrt M]; five of
-   those, beside the prior's pull [10 (1/2 - k) / (M + 10)], bound a false
-   failure at 6e-7 a case under normality. *)
+   over any threshold are generalized Pareto of shape [k]. A likelihood estimate
+   from [M] excesses spreads by about [(1 + k) / sqrt M]; five of those, beside
+   the prior's pull [10 (1/2 - k) / (M + 10)], bound a false failure at 6e-7 a
+   case under normality. *)
 let tail_index =
   let draws = 100_000 in
   prop ~count:20 "k-hat recovers a Pareto tail's shape"
+    ~examples:[ (0.3, 1); (0.7, 2) ]
     Gen.(pair (float_range 0.1 0.9) (int_range 0 1_000_000))
     (fun (k, seed) ->
       let u = Nx.Rng.uniform ~key:(Nx.Rng.key seed) Nx.float64 [| draws |] in
@@ -222,21 +229,23 @@ let tail_index =
       cover "a tail with a mean and no variance" (k > 0.5);
       equal (float (5. *. (1. +. k) /. Float.sqrt m)) (k +. bias) khat)
 
-(* Edges *)
-
-let edges =
-  group "edges"
+let psis =
+  group "psis"
     [
-      test "24 draws have no tail" (fun () ->
+      psis_agrees;
+      smoothing;
+      shift;
+      tail_index;
+      test "has no tail below 25 draws" (fun () ->
           let lr = Array.init 24 (fun i -> Float.of_int i /. 3.) in
           let { Diag.log_weights = w; khat = k } = Diag.psis (vec lr) in
           is_nan (item k);
           equal same_floats lr (floats w));
-      test "25 draws fit a tail of 5" (fun () ->
+      test "fits a tail of 5 at 25 draws" (fun () ->
           let lr = Array.init 25 (fun i -> Float.of_int (i * i) /. 50.) in
           let k = (Diag.psis (vec lr)).khat in
           satisfies ~claim:"finite" float_exact Float.is_finite (item k));
-      cases ~id:fst "a ratio that is NaN or +inf leaves the set unsmoothed"
+      cases ~id:fst "leaves a set with a NaN or +inf ratio unsmoothed"
         [ ("nan", Float.nan); ("+inf", Float.infinity) ]
         (fun (_, bad) ->
           let lr = Array.init 100 (fun i -> Float.of_int i /. 10.) in
@@ -244,17 +253,17 @@ let edges =
           let { Diag.log_weights = w; khat = k } = Diag.psis (vec lr) in
           is_nan (item k);
           equal same_floats lr (floats w));
-      test "every ratio -inf has no tail" (fun () ->
+      test "has no tail when every ratio is -inf" (fun () ->
           let lr = Array.make 100 Float.neg_infinity in
           let { Diag.log_weights = w; khat = k } = Diag.psis (vec lr) in
           is_nan (item k);
           equal same_floats lr (floats w));
-      test "equal ratios have a bounded tail" (fun () ->
+      test "gives equal ratios a bounded tail" (fun () ->
           let lr = Array.make 100 (-2.5) in
           let { Diag.log_weights = w; khat = k } = Diag.psis (vec lr) in
           equal float_exact Float.neg_infinity (item k);
           equal same_floats lr (floats w));
-      test "a quarter of the tail at the cutoff is no Pareto tail" (fun () ->
+      test "has no tail when its first quartile is at the cutoff" (fun () ->
           (* M = 20, and the tail's 5 smallest, its first quartile, equal the
              largest of the others. *)
           let lr =
@@ -266,7 +275,7 @@ let edges =
           let { Diag.log_weights = w; khat = k } = Diag.psis (vec lr) in
           is_nan (item k);
           equal same_floats lr (floats w));
-      test "zero weights stay zero" (fun () ->
+      test "keeps zero weights zero" (fun () ->
           let lr =
             Array.init 200 (fun i ->
                 if i < 30 then Float.neg_infinity
@@ -275,16 +284,16 @@ let edges =
           let { Diag.log_weights = w; khat = k } = Diag.psis (vec lr) in
           satisfies ~claim:"finite" float_exact Float.is_finite (item k);
           equal same_floats (Array.sub lr 0 30) (Array.sub (floats w) 0 30));
-      test "no draws have no tail" (fun () ->
+      test "has no tail for no draws" (fun () ->
           let lr = Nx.zeros Nx.float64 [| 0; 3 |] in
           let { Diag.log_weights = w; khat = k } = Diag.psis lr in
           equal (array int) [| 0; 3 |] (Nx.shape w);
           equal (array int) [| 3 |] (Nx.shape k);
           Array.iter is_nan (floats k));
-      test "a scalar is refused" (fun () ->
+      test "raises for a scalar" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"no axis of draws") (fun () ->
               Diag.psis (Nx.scalar Nx.float64 1.)));
-      test "each index past axis 0 is its own set" (fun () ->
+      test "smooths each index past axis 0 on its own" (fun () ->
           let k = Nx.Rng.key 7 in
           let x = Nx.Rng.normal ~key:k Nx.float64 [| 300; 2; 3 |] in
           let x = Nx.mul x x in
@@ -299,7 +308,7 @@ let edges =
                 (floats (Nx.slice [ Nx.A; Nx.I i; Nx.I j ] w))
             done
           done);
-      test "the weights and k-hat keep the ratios' dtype" (fun () ->
+      test "keeps the ratios' dtype" (fun () ->
           let x = Nx.Rng.normal ~key:(Nx.Rng.key 1) Nx.float32 [| 100 |] in
           let { Diag.log_weights = w; khat = k } = Diag.psis x in
           equal string "float32" (Nx.Dtype.name (Nx.dtype w));
@@ -307,153 +316,146 @@ let edges =
     ]
 
 let loo_edges =
-  group "loo edges"
-    [
-      test "a point not finite at a draw has NaN terms" (fun () ->
-          let shape = [| 2; 100; 3 |] in
-          let a = floats (Nx.Rng.normal ~key:(Nx.Rng.key 2) Nx.float64 shape) in
-          (* Point 1 at draw 17 of chain 0. *)
-          a.((3 * 17) + 1) <- Float.neg_infinity;
-          let r = Diag.loo (Draws.v t (Nx.create Nx.float64 shape a)) in
-          let pw = floats r.pointwise and k = floats r.khat in
-          is_nan pw.(1);
-          is_nan k.(1);
-          satisfies ~claim:"finite" float_exact Float.is_finite pw.(0);
-          is_nan (item r.elpd);
-          is_nan (item r.p));
-      test "one point has no standard error" (fun () ->
-          let ll = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 2; 50 |] in
-          let r = Diag.loo (Draws.v t ll) in
-          equal (array int) [||] (Nx.shape r.pointwise);
-          equal close (item r.pointwise) (item r.elpd);
-          is_nan (item r.se));
-      test "a constant likelihood leaves nothing out" (fun () ->
-          (* Every ratio equal: elpd_i is the likelihood, p_loo is 0. *)
-          let ll = Nx.full Nx.float64 [| 1; 40; 2 |] (-1.25) in
-          let r = Diag.loo (Draws.v t ll) in
-          equal (array close) [| -1.25; -1.25 |] (floats r.pointwise);
-          equal (array float_exact)
-            [| Float.neg_infinity; Float.neg_infinity |]
-            (floats r.khat);
-          equal close 0. (item r.p);
-          equal close 0. (item r.se));
-    ]
-
-(* loo *)
-
-module Loo = struct
-  module D = Norn.Dist
-
-  let f64 = Nx.scalar Nx.float64
-
-  (* A normal mean of known unit variance under a normal prior of scale [tau]:
-     every posterior, with a point or without, is normal, and so is each point's
-     leave-one-out predictive. *)
-
-  let tau = 3.
-  let points = 20
-
-  let model =
-    lazy
-      ( Norn_model.v Nx.float64 t t @@ fun () ->
-        let mu = Norn_model.sample (D.normal ~loc:(f64 0.) ~scale:(f64 tau)) in
-        let y =
-          Norn_model.sample
-            (D.iid [| points |] (D.normal ~loc:mu ~scale:(f64 1.)))
+  [
+    test "keeps the points' axes" (fun () ->
+        let ll =
+          Nx.Rng.normal ~key:(Nx.Rng.key 4) Nx.float64 [| 2; 50; 2; 3 |]
         in
-        (mu, y) )
+        let r = Diag.loo (Draws.v t ll) in
+        equal (array int) [| 2; 3 |] (Nx.shape r.pointwise);
+        equal (array int) [| 2; 3 |] (Nx.shape r.khat));
+    test "gives a point not finite at a draw NaN terms" (fun () ->
+        let shape = [| 2; 100; 3 |] in
+        let a = floats (Nx.Rng.normal ~key:(Nx.Rng.key 2) Nx.float64 shape) in
+        (* Point 1 at draw 17 of chain 0. *)
+        a.((3 * 17) + 1) <- Float.neg_infinity;
+        let r = Diag.loo (Draws.v t (Nx.create Nx.float64 shape a)) in
+        let pw = floats r.pointwise and k = floats r.khat in
+        is_nan pw.(1);
+        is_nan k.(1);
+        satisfies ~claim:"finite" float_exact Float.is_finite pw.(0);
+        is_nan (item r.elpd);
+        is_nan (item r.p));
+    test "has no standard error for one point" (fun () ->
+        let ll = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 2; 50 |] in
+        let r = Diag.loo (Draws.v t ll) in
+        equal (array int) [||] (Nx.shape r.pointwise);
+        equal close (item r.pointwise) (item r.elpd);
+        is_nan (item r.se));
+    test "leaves nothing out of a constant likelihood" (fun () ->
+        (* Every ratio equal: elpd_i is the likelihood, p_loo is 0. *)
+        let ll = Nx.full Nx.float64 [| 1; 40; 2 |] (-1.25) in
+        let r = Diag.loo (Draws.v t ll) in
+        equal (array close) [| -1.25; -1.25 |] (floats r.pointwise);
+        equal (array float_exact)
+          [| Float.neg_infinity; Float.neg_infinity |]
+          (floats r.khat);
+        equal close 0. (item r.p);
+        equal close 0. (item r.se));
+  ]
 
-  (* Seeded data about 1, the last point far out. *)
-  let y =
-    let z =
-      floats (Nx.Rng.normal ~key:(Nx.Rng.key 11) Nx.float64 [| points |])
-    in
-    z.(points - 1) <- 3.5;
-    Array.map (fun z -> 1. +. z) z
+(* A conjugate model *)
 
-  (* [posterior ys] is the mean and precision of mu given [ys]. *)
-  let posterior ys =
-    let precision = (1. /. (tau *. tau)) +. float_of_int (Array.length ys) in
-    (Array.fold_left ( +. ) 0. ys /. precision, precision)
+let f64 = Nx.scalar Nx.float64
 
-  let log_normal x ~loc ~var =
-    let d = x -. loc in
-    -0.5 *. (Float.log (2. *. Float.pi *. var) +. (d *. d /. var))
+(* A normal mean of known unit variance under a normal prior of scale [tau]:
+   every posterior, with a point or without, is normal, and so is each point's
+   leave-one-out predictive. *)
 
-  (* [exact i] is log p(y_i | y_-i): normal about the posterior mean without
-     [y_i], its variance the posterior's plus the point's. *)
-  let exact i =
-    let rest = List.filteri (fun j _ -> j <> i) (Array.to_list y) in
-    let rest = Array.of_list rest in
-    let m, p = posterior rest in
-    log_normal y.(i) ~loc:m ~var:(1. +. (1. /. p))
+let tau = 3.
+let points = 20
 
-  (* 4 chains of 1000 independent posterior draws, so that each point's
-     self-normalised estimate has the Monte Carlo error of independent draws:
-     sqrt (Σ w̃_s² (p_s / p̂ - 1)²) in log p̂ (Vehtari, Simpson, Gelman, Yao and
-     Gabry 2024, equation 5, through the delta method). Five of those bound a
-     false failure at 6e-7 a point under normality; with k-hat below 0.7 the
-     smoothing's bias is negligible beside them. *)
-  let draws =
-    lazy begin
-      let m, p = posterior y in
-      let z = Nx.Rng.normal ~key:(Nx.Rng.key 12) Nx.float64 [| 4; 1000 |] in
-      Draws.v t (Nx.add_s (Nx.div_s z (Float.sqrt p)) m)
-    end
+let model =
+  lazy
+    ( Norn_model.v Nx.float64 t t @@ fun () ->
+      let mu =
+        Norn_model.sample (Norn.Dist.normal ~loc:(f64 0.) ~scale:(f64 tau))
+      in
+      let y =
+        Norn_model.sample
+          (Norn.Dist.iid [| points |]
+             (Norn.Dist.normal ~loc:mu ~scale:(f64 1.)))
+      in
+      (mu, y) )
 
-  let log_lik =
-    lazy
-      (let data = Nx.create Nx.float64 [| points |] y in
-       Draws.map t t
-         (fun mu -> Norn_model.pointwise (Lazy.force model) data mu)
-         (Lazy.force draws))
+(* Seeded data about 1, the last point far out. *)
+let y () =
+  let z = floats (Nx.Rng.normal ~key:(Nx.Rng.key 11) Nx.float64 [| points |]) in
+  z.(points - 1) <- 3.5;
+  Array.map (fun z -> 1. +. z) z
 
-  let mcse (log_lik : Nx.host Nx.float64_t Draws.t) i =
-    let ll =
-      Nx.slice [ Nx.A; Nx.A; Nx.I i ] (log_lik :> Nx.host Nx.float64_t)
-    in
-    let ll = floats (Nx.reshape [| -1 |] ll) in
-    let s = Array.length ll in
-    let lr = Nx.create Nx.float64 [| s |] (Array.map Float.neg ll) in
-    let lw = floats (Diag.psis lr).log_weights in
-    let sum xs = Array.fold_left ( +. ) 0. xs in
-    let z = Array.fold_left Float.max Float.neg_infinity lw in
-    let w = Array.map (fun l -> Float.exp (l -. z)) lw in
-    let total = sum w in
-    let w = Array.map (fun w -> w /. total) w in
-    let e = sum (Array.map2 (fun w l -> w *. Float.exp l) w ll) in
-    Float.sqrt
-      (sum
-         (Array.map2 (fun w l -> (w *. ((Float.exp l /. e) -. 1.)) ** 2.) w ll))
+(* [posterior ys] is the mean and precision of mu given [ys]. *)
+let posterior ys =
+  let precision = (1. /. (tau *. tau)) +. float_of_int (Array.length ys) in
+  (Array.fold_left ( +. ) 0. ys /. precision, precision)
 
-  let exact =
-    test "PSIS-LOO of a conjugate normal model is its exact leave-one-out"
-      (fun () ->
-        let log_lik = Lazy.force log_lik in
-        let r = Diag.loo log_lik in
-        equal (array int) [| points |] (Nx.shape r.pointwise);
-        let pointwise = floats r.pointwise and khat = floats r.khat in
-        let bound = ref 0. in
-        for i = 0 to points - 1 do
-          less float_exact ~than:0.7 khat.(i);
-          let e = mcse log_lik i in
-          bound := !bound +. e;
-          equal
-            ~msg:(Printf.sprintf "point %d" i)
-            (float (5. *. e))
-            (exact i) pointwise.(i)
-        done;
-        let total = List.fold_left ( +. ) 0. (List.init points exact) in
-        equal (float (5. *. !bound)) total (Nx.item [] r.elpd))
-end
+let log_normal x ~loc ~var =
+  let d = x -. loc in
+  -0.5 *. (Float.log (2. *. Float.pi *. var) +. (d *. d /. var))
+
+(* [exact i] is log p(y_i | y_-i): normal about the posterior mean without
+   [y_i], its variance the posterior's plus the point's. *)
+let exact y i =
+  let rest = List.filteri (fun j _ -> j <> i) (Array.to_list y) in
+  let rest = Array.of_list rest in
+  let m, p = posterior rest in
+  log_normal y.(i) ~loc:m ~var:(1. +. (1. /. p))
+
+(* 4 chains of 1000 independent posterior draws, so that each point's
+   self-normalised estimate has the Monte Carlo error of independent draws: sqrt
+   (Σ w̃_s² (p_s / p̂ - 1)²) in log p̂ (Vehtari, Simpson, Gelman, Yao and Gabry
+   2024, equation 5, through the delta method). Five of those bound a false
+   failure at 6e-7 a point under normality; with k-hat below 0.7 the smoothing's
+   bias is negligible beside them. *)
+let draws =
+  lazy begin
+    let m, p = posterior (y ()) in
+    let z = Nx.Rng.normal ~key:(Nx.Rng.key 12) Nx.float64 [| 4; 1000 |] in
+    Draws.v t (Nx.add_s (Nx.div_s z (Float.sqrt p)) m)
+  end
+
+let log_lik =
+  lazy
+    (let data = Nx.create Nx.float64 [| points |] (y ()) in
+     Draws.map t t
+       (fun mu -> Norn_model.pointwise (Lazy.force model) data mu)
+       (Lazy.force draws))
+
+let mcse (log_lik : Nx.host Nx.float64_t Draws.t) i =
+  let ll = Nx.slice [ Nx.A; Nx.A; Nx.I i ] (log_lik :> Nx.host Nx.float64_t) in
+  let ll = floats (Nx.reshape [| -1 |] ll) in
+  let s = Array.length ll in
+  let lr = Nx.create Nx.float64 [| s |] (Array.map Float.neg ll) in
+  let lw = floats (Diag.psis lr).log_weights in
+  let sum xs = Array.fold_left ( +. ) 0. xs in
+  let z = Array.fold_left Float.max Float.neg_infinity lw in
+  let w = Array.map (fun l -> Float.exp (l -. z)) lw in
+  let total = sum w in
+  let w = Array.map (fun w -> w /. total) w in
+  let e = sum (Array.map2 (fun w l -> w *. Float.exp l) w ll) in
+  Float.sqrt
+    (sum (Array.map2 (fun w l -> (w *. ((Float.exp l /. e) -. 1.)) ** 2.) w ll))
+
+let conjugate =
+  test "is the exact leave-one-out of a conjugate normal model" (fun () ->
+      let log_lik = Lazy.force log_lik and exact = exact (y ()) in
+      let r = Diag.loo log_lik in
+      equal (array int) [| points |] (Nx.shape r.pointwise);
+      let pointwise = floats r.pointwise and khat = floats r.khat in
+      let bound = ref 0. in
+      for i = 0 to points - 1 do
+        less float_exact ~than:0.7 khat.(i);
+        let e = mcse log_lik i in
+        bound := !bound +. e;
+        equal
+          ~msg:(Printf.sprintf "point %d" i)
+          (float (5. *. e))
+          (exact i) pointwise.(i)
+      done;
+      let total = List.fold_left ( +. ) 0. (List.init points exact) in
+      equal (float (5. *. !bound)) total (Nx.item [] r.elpd))
 
 let () =
   exit
     (run "Norn.Diag.psis"
-       [
-         reference;
-         group "laws" [ smoothing; shift; tail_index ];
-         edges;
-         loo_edges;
-         group "loo" [ Loo.exact ];
-       ])
+       [ psis; group "loo" (loo_agrees :: conjugate :: loo_edges) ])
