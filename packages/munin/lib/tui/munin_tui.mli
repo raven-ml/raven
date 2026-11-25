@@ -89,8 +89,9 @@
     run's latest step, ending in [r others] until [r] draws the experiment's
     other runs, one large chart and, from 100 columns and 30 lines, two
     small charts of the other metrics with a goal, three from 150 columns and
-    44 lines. A run without a metric sample shows, in their place, [no
-    metric sample yet], or, once it ended, [the run logged no metric]. At
+    44 lines. A run without a metric sample shows, in their place and on
+    the row of the panes' headings, [no metric sample yet], or, once it
+    ended, [the run logged no metric]. At
     the {e strips} depth each metric of the run is a strip two
     lines high on the same steps, with its latest value and, with an overlay,
     the difference to the first overlay at the latest step at which both

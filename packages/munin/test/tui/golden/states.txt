@@ -1,10 +1,10 @@
 ○ warm-start  starting / last write 13s ago
-○ tidy-otter  running / last write 26s ago
+○ tidy-otter  running / last write 1m 47s ago
 ● tidy-otter  live / last sample 0s ago
-◌ tidy-otter  stalled / 1h 41m · 12,450 steps
+◌ tidy-otter  stalled / 11m 15s · 700 steps
 ● far-node  writing / last sample 0s ago
 ◌ lost-node  silent / 2h 38m · 3,150 steps
 ✗ mlp-base  crashed / 5m 08s · stopped at 2,900
-✓ amber-fox  finished / 2h 32m · 20,000 steps
+✓ amber-fox  finished / 5m 25s · 600 steps
 ✗ eager-hawk  failed / 9m 51s · stopped at 1,100
 ■ quiet-heron  killed / 1h 03m · stopped at 8,200
