@@ -203,6 +203,10 @@ let within ?(scaled = 0) (b : Support.backend) c parts xs =
   let flush = b.underflow = Flush in
   if barred ~flush c parts then None else bounded b ~flush ~scaled c parts xs
 
+(* Whether an output has a part whose sum is not finite. *)
+let special parts =
+  Array.exists (fun o -> not (Float.is_finite (naive o))) parts
+
 (* Whether an output has a part whose sum is not finite beside a finite one. *)
 let mixed parts =
   Array.length parts > 1
@@ -229,23 +233,40 @@ let outside ?(factors = []) ?scaled (b : Support.backend) c y =
     | [] -> [||]
     | m :: ms -> List.fold_left (Array.map2 ( || )) m ms
   in
-  let bad = ref [] and i = ref 0 and seen = ref false in
+  let bad = ref []
+  and i = ref 0
+  and seen = ref false
+  and specials = ref false in
   each (fun yi k parts ->
       let barred = !i < Array.length apart && apart.(!i) in
       incr i;
       seen := !seen || mixed parts;
+      specials := !specials || (k < 64 && special parts);
       if not barred then
         match within ?scaled b c parts (Array.map (fun part -> part.(k)) g) with
         | Some why when List.length !bad < 8 ->
             bad := Format.asprintf "%a: %s" Nx_array_gen.pp_ints yi why :: !bad
         | _ -> ());
-  (List.rev !bad, !seen)
+  (List.rev !bad, !seen, !specials)
 
 (* {!case_covers}, and a contracted extent past one block of 256 products. *)
 let bound_covers c =
   let y, k, _ = sizes c in
   case_covers c;
   cover "past one block of 256 products" (k > 256 && total y > 0)
+
+(* Whether [c]'s outputs sum at most 32 products: {!value}'s operands then leave
+   outputs both finite and not, one element in 40 an infinity or a NaN. *)
+let few c =
+  let _, k, _ = sizes c in
+  k <= 32
+
+(* The bound law's cases: finite ones, and {!computed}'s of a few products, half
+   each, so that every library's NaN and infinite results are held to the naive
+   sum's. *)
+let bound_draws =
+  Gen.one_of
+    [ finite_computed; Gen.with_pp pp_case (Gen.such_that few computed) ]
 
 let law_bound ?(paths = ignore) ?(covers = bound_covers) b c =
   let placed =
@@ -256,15 +277,18 @@ let law_bound ?(paths = ignore) ?(covers = bound_covers) b c =
   match run b placed with
   | None -> fail "declined"
   | Some y ->
-      let bad, seen = outside b c y in
+      let bad, seen, specials = outside b c y in
       cover "a part not finite beside a finite one" seen;
+      cover "an output not finite" specials;
       equal (list string) [] bad
 
 (* Outputs of a complex [acc] whose init is [∞ + 1i]: each real part is not
    finite, each imaginary part finite beside it. *)
 let infinite_part acc =
   lazy
-    (let c = case_in acc (false, ([||], [| 3 |], [| 4 |], [| 5 |])) in
+    (let c =
+       case_in ~draw:finite_value acc (false, ([||], [| 3 |], [| 4 |], [| 5 |]))
+     in
      let y, _, _ = sizes c in
      let init =
        A.of_array D.Complex128 (Iarray.of_array y)
@@ -556,6 +580,25 @@ let law_dst_view ?(covers = fun _ -> ()) (b : Support.backend) (c, v) =
             (differ_bits c.acc ~other:"through a view" y (host dst))
       | r -> failf "contract answered %a" Nx_array_support.pp_answer r)
 
+(* Whether some output of [c] has other bits summed in nx.cpu's chain order than
+   in its lane order (nx_cpu.mli), each part apart: values that show an
+   association, which a law of an association's bits needs. *)
+let shows_order (c, _) =
+  let _, each = outputs c in
+  let av = ref [] and bv = ref [] in
+  each (fun _ _ parts ->
+      Array.iter
+        (fun o ->
+          av := o.av :: !av;
+          bv := o.bv :: !bv)
+        parts);
+  let a = Array.of_list !av and b = Array.of_list !bv in
+  let f32 = part_of c.acc = f32 in
+  let chain = Support.ordered ~chain:true ~f32 ~init:None a b in
+  let lane = Support.ordered ~chain:false ~f32 ~init:None a b in
+  cover "an output whose sum in chain order and in lane order differ"
+    (Array.exists2 (fun x y -> bits x <> bits y) chain lane)
+
 let view_case_of cases =
   Gen.with_pp
     (fun ppf (c, v) ->
@@ -658,7 +701,7 @@ let scaled_case_of accs =
         (if Option.is_some sa then "a" else "")
         (if Option.is_some sb then "b" else ""))
     (let* acc = of_list ~pp:pp_dtype accs in
-     let* c = case_of ~acc ~out:acc ~dts:(held acc) () in
+     let* c = case_of ~draw:finite_value ~acc ~out:acc ~dts:(held acc) () in
      let* which = int_range 1 3 in
      let* sa = spec c.a and+ sb = spec c.b in
      constant
@@ -698,7 +741,7 @@ let law_scaled (b : Support.backend) (c, sa, sb) =
       in
       let scales = { c with a = values c.a sa; b = values c.b sb } in
       let count = function Some _ -> 1 | None -> 0 in
-      let bad, _ =
+      let bad, _, _ =
         outside ~factors:[ c; scales ]
           ~scaled:(count sa + count sb)
           b { c with a; b = b' } y
@@ -780,13 +823,13 @@ let pp_seg ppf s =
        (List.map Int64.to_string (Array.to_list (A.to_array ids))))
 
 (* An operand of [dt] whose made shape is [s] through the view [v], its values
-   finite: on the grid, or small integers. *)
+   finite: {!finite_value}'s, or small integers. *)
 let finite dt s v seed =
   let r = Random.State.make [| seed |] in
   let make made =
     let draw () =
       if is_integer dt then float_of_int (Random.State.int r 8)
-      else grid.(Random.State.int r (Array.length grid))
+      else finite_value dt r
     in
     cast_to dt
       (A.Any
@@ -1090,6 +1133,7 @@ let law_ids (b : Support.backend) s =
   cover "contracting"
     (match s.segments with Contracting _ -> true | _ -> false);
   cover "an index of group 0 beside one moved" (zero && other);
+  shows_order ({ s.sc with init = None }, ());
   match (seg_run b s, seg_run b (moved s)) with
   | Some y, Some y' ->
       let c = s.sc in
@@ -1211,7 +1255,8 @@ let in_place_case =
                 (2, Gen.constant (held acc));
                 (1, Gen.constant (others (held acc)));
               ])
-           (fun dts -> case_of ~init:true ~acc ~out:acc ~dts ())))
+           (fun dts ->
+             case_of ~init:true ~draw:finite_value ~acc ~out:acc ~dts ())))
 
 (* Contractions of 16 × 16 outputs, with init, either side of a block of 256
    products and over several, which a library may sum into scratch beside a
@@ -1223,7 +1268,7 @@ let in_place_examples =
       List.map
         (fun k ->
           lazy
-            (make ~acc ~out:acc
+            (make ~draw:finite_value ~acc ~out:acc
                ([||], [| 16 |], [| 16 |], [| k |])
                (acc, v) (acc, v) (Some v) k))
         [ 255; 256; 257; 1025 ])
@@ -1329,14 +1374,20 @@ let infinite_parts = [ infinite_part c64; infinite_part c128 ]
 
 (* The sizes drawn cases reach rarely, of every float and complex
    accumulator. *)
-let edge_examples = List.concat_map edges accs @ infinite_parts
+let edge_examples =
+  List.concat_map (edges ~draw:finite_value) accs @ infinite_parts
 
 (* nx.cpu's regimes, its paths' sizes, which cpu/test_contract runs bit for bit
    on every table: the laws run them on every other library, where they reach a
    sum cut into ranges of k, wide columns and windowed operands. They hold a
    real accumulator's edges; a complex one's are added. *)
-let regime_examples = List.concat_map regime_cases accs
-let gpu_examples = regime_examples @ edges c64 @ edges c128 @ infinite_parts
+let regime_examples = List.concat_map (regime_cases ~draw:finite_value) accs
+
+let gpu_examples =
+  regime_examples
+  @ edges ~draw:finite_value c64
+  @ edges ~draw:finite_value c128
+  @ infinite_parts
 
 (* The laws of [d], the bound law with [examples] and covering [paths]. *)
 let laws ?paths ~examples (d : Support.declared) =
@@ -1349,7 +1400,7 @@ let laws ?paths ~examples (d : Support.declared) =
   group d.label
     [
       prop ~examples "a contraction is within its bound of the exact sum"
-        (deferred computed)
+        (deferred bound_draws)
         (forced (law_bound ?paths));
       cases ~id:productless_id
         "an output without products is init as the accumulator holds it, or +0"
@@ -1364,8 +1415,8 @@ let laws ?paths ~examples (d : Support.declared) =
          cast once into dst"
         (integer_case D.all) (run law_integer);
       prop "a destination through a view gets a fresh one's bits"
-        (view_case_of computed)
-        (run (fun b -> law_dst_view b));
+        (view_case_of finite_computed)
+        (run (law_dst_view ~covers:shows_order));
       prop "a scaled contraction is within its bound of its terms' sum"
         scaled_case (run law_scaled);
       cases ~id:scale_id
@@ -1578,7 +1629,8 @@ let nv_laws (first : Support.declared) (nv : Support.declared) =
       group "bits are cuda's, any NaN for a NaN"
         [
           prop ~examples:regime_examples "of float and complex contractions"
-            (deferred computed) (fun c ->
+            (deferred (Gen.one_of [ finite_computed; computed ]))
+            (fun c ->
               let c = Lazy.force c in
               cover "complex" (is_complex c.acc);
               cover "init" (Option.is_some c.init);
@@ -1624,10 +1676,10 @@ let staged c =
   || (c.acc = c64 && dtype_of c.a = c64 && dtype_of c.b = c64 && c.out = c64)
 
 (* Cases of those dtypes into one of [outs], and complex64 ones. *)
-let staged_into outs =
+let staged_into ?draw outs =
   let dts = Gen.of_list ~pp:pp_dtype stage_dts in
   let complex =
-    case_of
+    case_of ?draw
       ~same:(Gen.constant ~pp:pp_dtype c64)
       ~acc:c64 ~out:c64 ~dts:[ c64 ] ()
   in
@@ -1636,14 +1688,22 @@ let staged_into outs =
        [
          ( 3,
            Gen.bind (Gen.of_list ~pp:pp_dtype outs) (fun out ->
-               case_of ~same:dts ~acc:f32 ~out ~dts:stage_dts ()) );
+               case_of ?draw ~same:dts ~acc:f32 ~out ~dts:stage_dts ()) );
          (1, complex);
        ])
 
 (* The bound holds before the rounding into the destination, so its cases store
    the accumulator's dtype; the bits laws take every result. *)
-let staged_case = staged_into stage_dts
-let bound_case = staged_into [ f32 ]
+let staged_case = staged_into ~draw:finite_value stage_dts
+
+(* The bound law's: finite ones, and of a few products with a NaN or an infinite
+   operand at times, half each. *)
+let bound_case =
+  Gen.one_of
+    [
+      staged_into ~draw:finite_value [ f32 ];
+      Gen.such_that few (staged_into [ f32 ]);
+    ]
 
 (* Whether the axes [axes] of [l] merge into one run of strides: each axis of
    more than one element strided by the next one's extent times its stride. *)
@@ -1731,7 +1791,10 @@ let metal_laws (d : Support.declared) =
     let b = Support.opened d in
     b.around (fun () -> f b x)
   in
-  let staged_examples = List.filter staged (regimes f32 @ regimes c64) in
+  let staged_examples =
+    List.filter staged
+      (regimes ~draw:finite_value f32 @ regimes ~draw:finite_value c64)
+  in
   let bound_examples = List.filter (fun c -> c.out = c.acc) staged_examples in
   group d.label
     [
