@@ -1013,27 +1013,37 @@ let student_t_overflow =
         [| item gd; item gs |])
 
 (* norn.mli: at float64 the derivatives in the parameters are finite wherever
-   the exact ones are. At [x = 1], far past [σ = 1e-308], the derivative in [σ]
-   of a Cauchy's or half-Cauchy's log density, or a Student t's at [ν = 1], is
-   [(x² - σ²) / (σ (x² + σ²))], about [1 / σ], finite where its terms' [2 / σ]
-   overflows. The terms are [1 / σ] and [2 x² / (σ (x² + σ²))], so the bound [64
-   ε (1 + Σ |t|)] is [64 ε 3 / σ], formed without [3 / σ], which overflows. *)
+   the exact ones are, in reverse and forward mode alike. At [x = 1], far past
+   [σ = 1e-308], the derivative in [σ] of a Cauchy's or half-Cauchy's log
+   density, or a Student t's at [ν = 1], is [(x² - σ²) / (σ (x² + σ²))], about
+   [1 / σ], finite where its terms' [2 / σ] overflows. The terms are [1 / σ] and
+   [2 x² / (σ (x² + σ²))], so the bound [64 ε (1 + Σ |t|)] is [64 ε 3 / σ],
+   formed without [3 / σ], which overflows. *)
 let far_scale_scores =
   let s = 1e-308 and x = 1. in
   let exact = ((x *. x) -. (s *. s)) /. (s *. ((x *. x) +. (s *. s))) in
-  Windtrap.cases "the derivative in scale where 2 / scale overflows" ~id:fst
+  let families =
     [
       ("cauchy", fun scale -> D.cauchy ~loc:(f64 0.) ~scale);
       ("half_cauchy", fun scale -> D.half_cauchy ~scale);
       ( "student_t, df 1",
         fun scale -> D.student_t ~df:(f64 1.) ~loc:(f64 0.) ~scale );
     ]
-    (fun (_, family) ->
+  in
+  let modes =
+    [
+      ("grad", fun f -> Rune.grad' f (f64 s));
+      ("jvp", fun f -> snd (Rune.jvp' f (f64 s) (f64 1.)));
+    ]
+  in
+  Windtrap.cases "the derivative in scale where 2 / scale overflows"
+    ~id:(fun ((family, _), (mode, _)) -> family ^ ", " ^ mode)
+    (List.concat_map (fun f -> List.map (fun m -> (f, m)) modes) families)
+    (fun ((_, family), (_, derivative)) ->
       equal
         (float (64. *. epsilon_float *. 3. /. s))
         exact
-        (item
-           (Rune.grad' (fun scale -> D.factors (family scale) (f64 x)) (f64 s))))
+        (item (derivative (fun scale -> D.factors (family scale) (f64 x)))))
 
 (* At float16, components of a dirichlet of many small concentrations
    underflowed: a draw then had density [-inf]. *)

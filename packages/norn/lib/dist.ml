@@ -757,44 +757,79 @@ let student_normaliser df =
   in
   Nx.sub_s (Nx.sub deltas dev) half_log_2pi
 
-(* The Student t's terms of its parameters alone: its normaliser less [log σ],
-   [σ √ν], its logarithm as the sum of the logarithms, which stays finite where
-   the product underflows, and [(ν + 1) / 2]. *)
+(* The Student t's terms of its parameters alone: the constants of its density's
+   two sides, its normaliser [c] less [log σ] and plus [log √ν], then [ν], [s =
+   σ √ν], [log s] as [log σ + log √ν], which stays finite where [s] underflows,
+   and [(ν + 1) / 2]. *)
+type 'a student = {
+  near_c : 'a;
+  far_c : 'a;
+  df : 'a;
+  s : 'a;
+  log_s : 'a;
+  half1 : 'a;
+}
+
 let student_terms df scale =
   let log_scale = Nx.log scale and root = Nx.sqrt df in
-  ( Nx.sub (student_normaliser df) log_scale,
-    Nx.mul scale root,
-    Nx.add log_scale (Nx.log root),
-    Nx.mul_s (Nx.add_s df 1.) 0.5 )
+  let c = student_normaliser df and log_root = Nx.log root in
+  {
+    near_c = Nx.sub c log_scale;
+    far_c = Nx.add c log_root;
+    df;
+    s = Nx.mul scale root;
+    log_s = Nx.add log_scale log_root;
+    half1 = Nx.mul_s (Nx.add_s df 1.) 0.5;
+  }
 
-(* [log1p_square a s log_s] is [log1p ((a / s)²)] for [a >= 0] and [s >= 0],
-   [log_s] the logarithm of [s] taken apart from it, as [2 (log a - log s) +
-   log1p ((s / a)²)] past [a = s]: neither the quotient nor its square
-   overflows, nor [log s] where [s] underflows, where the Cauchy's and the
-   Student t's log densities, about [-2 log (a / s)], are still finite. Each
-   side is its own expression, fed values that keep the other finite, so the
-   side not taken adds nothing to the derivative, not even rounding: at [a = s]
-   it is the near side's. *)
-let log1p_square a s log_s =
+(* [log1p_sides a s] splits [log1p ((a / s)²)], [a >= 0] and [s >= 0], at [a =
+   s]: it is [(beyond, near, log_a, far)], [near] the whole where [a <= s], and
+   where [beyond], [a > s], the whole is [2 (log a - log s) + far], [log_a = log
+   a] and [far = log1p ((s / a)²)]: neither the quotient nor its square
+   overflows. A caller adds [log s]'s term itself, at the coefficient its log
+   density nets: two terms in [log s] of opposite signs carry derivatives that
+   overflow where their sum's does not. Each side is its own expression, fed
+   values that keep the other finite, so the side not taken adds nothing to the
+   derivative, not even rounding. *)
+let log1p_sides a s =
   let beyond = Nx.greater a s in
   let zero = const a 0. and one = const a 1. in
   let a_far = Nx.where beyond a one in
   let s_far = Nx.where beyond s zero in
-  let far =
-    Nx.add
-      (Nx.mul_s (Nx.sub (Nx.log a_far) log_s) 2.)
-      (Nx.log1p (Nx.square (Nx.div s_far a_far)))
-  in
   let a_near = Nx.where beyond zero a in
   let s_near = Nx.where (Nx.logical_or beyond (Nx.equal s zero)) one s in
-  Nx.where beyond far (Nx.log1p (Nx.square (Nx.div a_near s_near)))
+  ( beyond,
+    Nx.log1p (Nx.square (Nx.div a_near s_near)),
+    Nx.log a_far,
+    Nx.log1p (Nx.square (Nx.div s_far a_far)) )
 
-(* [log1p (z² / ν)] is [log1p_square |x - loc| s] at [s = scale √ν]: neither [z]
-   nor [z / √ν] is formed where it would overflow, nor [s]'s logarithm where [s]
-   underflows. *)
-let student_t_density (c, s, log_s, half1) loc x =
-  let l = log1p_square (Nx.abs (Nx.sub x loc)) s log_s in
-  Nx.sub c (Nx.mul half1 l)
+(* [cauchy_density a scale] is [-log scale - log1p ((a / scale)²)] at [a >=
+   0], past [a = scale] as [log scale - 2 log a - log1p ((scale / a)²)]: [log
+   scale] enters each side once, where [2 log scale - log scale] would carry
+   the derivative [2 / scale], which overflows from [scale = 2^-1023] where
+   [1 / scale] does not. *)
+let cauchy_density a scale =
+  let beyond, near, log_a, far = log1p_sides a scale in
+  let log_scale = Nx.log scale in
+  Nx.where beyond
+    (Nx.sub (Nx.sub log_scale (Nx.mul_s log_a 2.)) far)
+    (Nx.sub (Nx.neg log_scale) near)
+
+(* The Student t's log density at [a = |x - loc|] is [c - log σ - ((ν + 1) / 2)
+   log1p ((a / s)²)], [c] its normaliser, [s = σ √ν]. Past [a = s] it is [c +
+   log √ν + ν (log s - log a) - log a - ((ν + 1) / 2) log1p ((s / a)²)]: [log σ]
+   enters once, at its net coefficient [ν], and [log s - log a < 0] there, so no
+   term is [+inf] where another is [-inf]. Neither [z] nor [z / √ν] is formed
+   where it would overflow. *)
+let student_t_density t loc x =
+  let a = Nx.abs (Nx.sub x loc) in
+  let beyond, near, log_a, far = log1p_sides a t.s in
+  let far =
+    Nx.sub
+      (Nx.sub (Nx.add t.far_c (Nx.mul t.df (Nx.sub t.log_s log_a))) log_a)
+      (Nx.mul t.half1 far)
+  in
+  Nx.where beyond far (Nx.sub t.near_c (Nx.mul t.half1 near))
 
 (* A format narrower than float32 computes a mass at float32 and rounds it
    once, as nx computes its functions: its own range and precision would
@@ -882,11 +917,9 @@ let mirror lc lower =
     above = false;
   }
 
-(* [density d log_scale] is a location-scale family's log density, less [log
-   scale], at the distance [d = x - loc]. A family whose tail is algebraic reads
-   [d] and [scale] apart where [d / scale] overflows, and [log scale] as
-   [log_scale], the node subtracted here: reverse mode then sums both cotangents
-   before dividing by [scale], where [2 / scale] alone overflows. *)
+(* [density d] is a location-scale family's log density at the distance [d = x
+   - loc]: a family whose tail is algebraic reads [d] and [scale] apart where [d
+   / scale] overflows. *)
 let location_scale family ~loc ~scale ~density ~draw ~tails () =
   let dt = Nx.dtype loc in
   let z x = Nx.div (Nx.sub x loc) scale in
@@ -896,9 +929,7 @@ let location_scale family ~loc ~scale ~density ~draw ~tails () =
     ~shape:(broadcast family [ Nx.shape loc; Nx.shape scale ])
     ~checks:[ in_reals family "loc" loc; in_positive family "scale" scale ]
     ~support:(fun () -> Support.Real)
-    ~factors:(fun v ->
-      let log_scale = Nx.log scale in
-      Nx.sub (density (Nx.sub v loc) log_scale) log_scale)
+    ~factors:(fun v -> density (Nx.sub v loc))
     ~draw:(fun k s -> x (draw k dt s))
     ~coords:Bij.identity ~standardize:(Bij.affine ~loc ~scale)
     ~tails:
@@ -913,7 +944,8 @@ let location_scale family ~loc ~scale ~density ~draw ~tails () =
 
 let normal ~loc ~scale =
   location_scale "normal" ~loc ~scale
-    ~density:(fun d _ -> less_half_square (-.half_log_2pi) (Nx.div d scale))
+    ~density:(fun d ->
+      Nx.sub (less_half_square (-.half_log_2pi) (Nx.div d scale)) (Nx.log scale))
     ~draw:Noise.normal
     ~tails:(mirror Nx.log_ndtr Nx.ndtri)
     ()
@@ -936,8 +968,7 @@ let cauchy_tails () = mirror cauchy_cdf cauchy_lower
 
 let cauchy ~loc ~scale =
   location_scale "cauchy" ~loc ~scale
-    ~density:(fun d log_scale ->
-      Nx.add_s (Nx.neg (log1p_square (Nx.abs d) scale log_scale)) (-.log_pi))
+    ~density:(fun d -> Nx.sub_s (cauchy_density (Nx.abs d) scale) log_pi)
     ~draw:(fun k dt s -> quantile_of (cauchy_tails ()) (open_unit k dt s))
     ~tails:(cauchy_tails ()) ()
 
@@ -954,8 +985,10 @@ let laplace_tails () = mirror laplace_cdf (fun p -> Nx.log (Nx.mul_s p 2.))
 
 let laplace ~loc ~scale =
   location_scale "laplace" ~loc ~scale
-    ~density:(fun d _ ->
-      Nx.sub_s (Nx.neg (Nx.abs (Nx.div d scale))) (Float.log 2.))
+    ~density:(fun d ->
+      Nx.sub
+        (Nx.sub_s (Nx.neg (Nx.abs (Nx.div d scale))) (Float.log 2.))
+        (Nx.log scale))
     ~draw:(fun k dt s -> quantile_of (laplace_tails ()) (open_unit k dt s))
     ~tails:(laplace_tails ()) ()
 
@@ -964,9 +997,11 @@ let logistic_tails () =
 
 let logistic ~loc ~scale =
   location_scale "logistic" ~loc ~scale
-    ~density:(fun d _ ->
+    ~density:(fun d ->
       let z = Nx.div d scale in
-      Nx.sub (Nx.neg z) (Nx.mul_s (Nx.softplus (Nx.neg z)) 2.))
+      Nx.sub
+        (Nx.sub (Nx.neg z) (Nx.mul_s (Nx.softplus (Nx.neg z)) 2.))
+        (Nx.log scale))
     ~draw:(fun k dt s -> quantile_of (logistic_tails ()) (open_unit k dt s))
     ~tails:(logistic_tails ()) ()
 
@@ -1105,13 +1140,7 @@ let half_cauchy ~scale =
     ~params:[ param "scale" scale ]
     ~shape:(Nx.shape scale)
     ~checks:[ in_positive family "scale" scale ]
-    ~density:(fun x ->
-      let log_scale = Nx.log scale in
-      Nx.sub
-        (Nx.add_s
-           (Nx.neg (log1p_square x scale log_scale))
-           (Float.log 2. -. log_pi))
-        log_scale)
+    ~density:(fun x -> Nx.add_s (cauchy_density x scale) (Float.log 2. -. log_pi))
     ~draw:(fun k s -> quantile_of tails (open_unit k dt s))
     ~tails scale
 
