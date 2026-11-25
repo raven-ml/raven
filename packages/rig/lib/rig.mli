@@ -2522,9 +2522,11 @@ end
     A submit's work is ordered by the rules of {!section-order}. The
     device's queue waits for another device's point where its driver
     supports that ({!Rig_edge.type-waits}). Otherwise {!submit} waits for
-    the point on the host. A submit for which the driver's [room] finds no
-    room on the device's queues waits until the device has reached one more
-    value, and asks again, holding no lock while it waits. A driver may
+    the point on the host. The work follows a point of its own device by
+    device order, and nothing waits for that point. A submit for which the
+    driver's [room] finds no room on the device's queues waits until the
+    device has reached one more value, and asks again, holding no lock
+    while it waits. A driver may
     instead block in its [submit] until the work fits, as Metal's does, and
     other submits and commits on the device then wait for it
     ({!section-domains}). *)
@@ -2562,10 +2564,12 @@ val submit :
     waits for a point on the host, and where its driver's interface says it
     blocks, as some do while a profile is being taken. Where the work
     exceeds [d]'s queues and its driver grows them
-    ({!Rig_edge.Driver.grow}), [submit] grows them first. It allocates
-    nothing unless it waits, a profile is being taken or [d]'s queues grow,
-    and, in a build without cross-module inlining, a [~waits] given as an
-    array allocates its option. Once it has assigned [v], [d]'s driver
+    ({!Rig_edge.Driver.grow}), [submit] grows them first. Other submits on
+    [d] go on meanwhile and may take earlier values, and a growth short of
+    memory fails no other submit. [submit] allocates nothing unless it
+    waits, a profile is being taken or [d]'s queues grow, and, in a build
+    without cross-module inlining, a [~waits] given as an array allocates
+    its option. Once it has assigned [v], [d]'s driver
     receives [v]'s work or [d] is lost, and the stamps take [(d, v)] as
     {!section-order} states. On {!host} and a {!software} device, [v]'s
     work is done when [submit] returns.
