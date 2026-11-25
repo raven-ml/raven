@@ -1662,8 +1662,8 @@ module Expr : sig
 
       A float {!sum} adds a list's values in list order, a float {!mean} sums
       them in [float64] in list order and divides by their count, and {!var}
-      and {!std} are those of the list's values in list order, whose bits
-      depend on those values alone, as over any frame. *)
+      and {!std} are {!Query.aggregate}'s over the list's values in list
+      order. *)
 
   (** {3:list_cost Cost}
 
