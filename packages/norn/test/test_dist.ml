@@ -2018,6 +2018,27 @@ let narrow_dirichlet_draws =
    term is within a few ulps of itself, so the sum is within [8 ε] of their
    magnitudes. *)
 (* [coords] and [standardize] are eliminators: they run the checks. *)
+(* Each support is open (norn.mli: [Greater], [Less] and [Interval] exclude
+   their bounds), and a value outside it has density [-inf]. *)
+let open_bounds =
+  let normal = D.normal ~loc:(f64 0.5) ~scale:(f64 2.) in
+  Windtrap.cases "a value on a support's bound has density -inf"
+    ~id:(fun (name, _, _) -> name)
+    [
+      ("exponential at 0", D.exponential ~rate:(f64 1.7), 0.);
+      ("exponential at -0", D.exponential ~rate:(f64 1.7), -0.);
+      ("half_normal at 0", D.half_normal ~scale:(f64 1.5), 0.);
+      ("half_cauchy at 0", D.half_cauchy ~scale:(f64 2.), 0.);
+      ("gamma of concentration 1 at 0",
+        D.gamma ~concentration:(f64 1.) ~rate:(f64 1.7), 0.);
+      ("uniform at low", D.uniform ~low:(f64 (-1.)) ~high:(f64 3.), -1.);
+      ("uniform at high", D.uniform ~low:(f64 (-1.)) ~high:(f64 3.), 3.);
+      ("truncated at low", D.truncated ~low:(f64 (-1.)) ~high:(f64 3.) normal, -1.);
+      ("truncated at high", D.truncated ~low:(f64 (-1.)) ~high:(f64 3.) normal, 3.);
+    ]
+    (fun (_, d, x) ->
+      equal float_exact Float.neg_infinity (item (D.factors d (f64 x))))
+
 let bijectors_check =
   group "eliminators run the checks"
     [
@@ -3006,6 +3027,7 @@ let () =
          laplace;
          cauchy_tails;
          bijectors_check;
+         open_bounds;
          normalisation;
          bijectors;
          validation;

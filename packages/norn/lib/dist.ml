@@ -1011,9 +1011,9 @@ let lognormal ~loc ~scale =
 (* A family on [(0, inf)] whose density at [x] is [density x], the value
    replaced by [1] outside before the arithmetic. *)
 let positive_family ~family ~params ~shape ~checks ~density ~draw ?quantile
-    ~tails ~closed like =
+    ~tails like =
   let factors x =
-    let ok = if closed then non_negative x else positive x in
+    let ok = positive x in
     outside ok (density (inside ok x 1.))
   in
   continuous ~family ~params ~shape ~checks
@@ -1034,7 +1034,7 @@ let half_normal ~scale =
   let family = "half_normal" in
   let dt = Nx.dtype scale in
   let z x = Nx.div x scale and x z = Nx.mul scale z in
-  positive_family ~family ~closed:true
+  positive_family ~family
     ~params:[ param "scale" scale ]
     ~shape:(Nx.shape scale)
     ~checks:[ in_positive family "scale" scale ]
@@ -1069,7 +1069,7 @@ let half_cauchy ~scale =
       (fun p -> x (Nx.tan (Nx.mul_s p (Float.pi /. 2.))))
       (fun q -> x (Nx.recip (Nx.tan (Nx.mul_s q (Float.pi /. 2.)))))
   in
-  positive_family ~family ~closed:true
+  positive_family ~family
     ~params:[ param "scale" scale ]
     ~shape:(Nx.shape scale)
     ~checks:[ in_positive family "scale" scale ]
@@ -1096,7 +1096,7 @@ let log1mexp s =
 let exponential ~rate =
   let family = "exponential" in
   let dt = Nx.dtype rate in
-  positive_family ~family ~closed:true
+  positive_family ~family
     ~params:[ param "rate" rate ]
     ~shape:(Nx.shape rate)
     ~checks:[ in_positive family "rate" rate ]
@@ -1155,7 +1155,7 @@ let gamma ~concentration ~rate =
   let family = "gamma" in
   let a = concentration in
   let dt = Nx.dtype a in
-  positive_family ~family ~closed:false
+  positive_family ~family
     ~params:[ param "concentration" a; param "rate" rate ]
     ~shape:(broadcast family [ Nx.shape a; Nx.shape rate ])
     ~checks:
@@ -1185,7 +1185,7 @@ let inverse_gamma ~concentration ~scale =
   let a = concentration in
   let dt = Nx.dtype a in
   let q ~upper p = inverse_gamma_quantile ~upper (a, (scale, p)) in
-  positive_family ~family ~closed:false
+  positive_family ~family
     ~params:[ param "concentration" a; param "scale" scale ]
     ~shape:(broadcast family [ Nx.shape a; Nx.shape scale ])
     ~checks:
@@ -1249,7 +1249,7 @@ let uniform ~low ~high =
   let dt = Nx.dtype low in
   let width = Nx.sub high low in
   let factors x =
-    let ok = Nx.logical_and (Nx.greater_equal x low) (Nx.less_equal x high) in
+    let ok = Nx.logical_and (Nx.greater x low) (Nx.less x high) in
     outside ok (Nx.broadcast_to (Nx.shape ok) (Nx.neg (Nx.log width)))
   in
   let coords = Bij.interval ~low ~high in
@@ -2034,7 +2034,7 @@ let truncated ?low ?high d =
     let within ok bound test =
       match bound with Some b -> Nx.logical_and ok (test x b) | None -> ok
     in
-    let ok = within (within ok lo Nx.greater_equal) hi Nx.less_equal in
+    let ok = within (within ok lo Nx.greater) hi Nx.less in
     outside ok (Nx.sub (d.factors x) log_mass)
   in
   let edge bound base = match bound with Some b -> b | None -> base in

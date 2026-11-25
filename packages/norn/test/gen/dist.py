@@ -14,7 +14,8 @@ same case names. With --check nothing is written, and the run fails if the
 file would change.
 
 Lines are `KIND CASE ARGS... VALUE`, floats hexadecimal or `-inf`:
-- `logpdf CASE X... V`: the log density (or mass) at the point X;
+- `logpdf CASE X... V`: the log density (or mass) at the point X, the
+  bounds of an open support and the floats next to them inside included;
 - `ppf CASE P V`: the quantile at P, the root of its smaller tail's
   equation from mpmath;
 - `bin CASE LOW HIGH P`: the probability of [LOW, HIGH), the bins of a
@@ -68,20 +69,21 @@ def sigmoid(x):
 
 SCALAR = {
     "normal": (stats.norm(0.5, 2.0), [-3.0, 0.0, 0.5, 2.0, 40.0]),
-    "half_normal": (stats.halfnorm(scale=1.5), [0.0, 0.1, 1.0, 5.0, -1.0]),
+    "half_normal": (stats.halfnorm(scale=1.5), [0.0, 5e-324, 0.1, 1.0, 5.0, -1.0]),
     "lognormal": (stats.lognorm(0.8, scale=np.exp(0.3)), [0.01, 0.5, 1.0, 10.0, -1.0, 0.0]),
     "student_t": (stats.t(3.5, -1.0, 0.7), [-50.0, -1.0, 0.0, 3.0]),
     "cauchy": (stats.cauchy(1.0, 0.5), [-1e4, 0.0, 1.0, 7.0]),
-    "half_cauchy": (stats.halfcauchy(scale=2.0), [0.0, 1.0, 100.0, -0.5]),
+    "half_cauchy": (stats.halfcauchy(scale=2.0), [0.0, 5e-324, 1.0, 100.0, -0.5]),
     "laplace": (stats.laplace(0.0, 1.3), [-4.0, 0.0, 0.3, 9.0]),
     "logistic": (stats.logistic(2.0, 0.4), [-10.0, 1.0, 2.0, 30.0]),
-    "exponential": (stats.expon(scale=1 / 1.7), [0.0, 0.2, 3.0, -0.1]),
+    "exponential": (stats.expon(scale=1 / 1.7), [0.0, 5e-324, 0.2, 3.0, -0.1]),
     "gamma": (stats.gamma(2.5, scale=1 / 1.5), [0.001, 0.5, 2.0, 20.0, -1.0, 0.0]),
     "gamma_small": (stats.gamma(0.4, scale=1 / 0.8), [1e-6, 0.3, 5.0]),
     "inverse_gamma": (stats.invgamma(3.0, scale=2.0), [0.05, 0.5, 1.0, 30.0, -1.0]),
     "beta": (stats.beta(2.0, 5.0), [0.01, 0.2, 0.5, 0.99, 0.0, 1.0, 1.5]),
     "beta_u": (stats.beta(0.5, 0.5), [1e-4, 0.5, 0.9999]),
-    "uniform": (stats.uniform(-1.0, 4.0), [-1.0, 0.0, 2.5, 3.0, 3.5, -2.0]),
+    "uniform": (stats.uniform(-1.0, 4.0), [-1.0, np.nextafter(-1.0, 0.0), 0.0, 2.5,
+                                          np.nextafter(3.0, 0.0), 3.0, 3.5, -2.0]),
 }
 
 QUANTILE = ["normal", "half_normal", "lognormal", "cauchy", "half_cauchy", "laplace",
@@ -473,7 +475,7 @@ def truncation(case):
 
 def truncated_logpdf(case, x):
     base, low, high, mass, _ = truncation(case)
-    if (low is not None and x < low) or (high is not None and x > high):
+    if (low is not None and x <= low) or (high is not None and x >= high):
         return -np.inf
     return logpdf_mp(base, x) - mpmath.log(mass)
 
@@ -572,20 +574,38 @@ def bound(v):
     return fmt(v)
 
 
+# The open supports of the SCALAR cases that have bounds: a value on a
+# bound lies outside, with log density -inf (norn.mli: Support's Greater,
+# Less and Interval exclude their bounds).
+OPEN = {"half_normal": (0.0, np.inf), "lognormal": (0.0, np.inf),
+        "half_cauchy": (0.0, np.inf), "exponential": (0.0, np.inf),
+        "gamma": (0.0, np.inf), "gamma_small": (0.0, np.inf),
+        "inverse_gamma": (0.0, np.inf), "beta": (0.0, 1.0),
+        "beta_u": (0.0, 1.0), "uniform": (-1.0, 3.0)}
+
+
+def inward(low, high):
+    """The floats next to the bounds, inside."""
+    return ([float(np.nextafter(low, np.inf))] if low is not None and low > -np.inf else []) + \
+        ([float(np.nextafter(high, -np.inf))] if high is not None and high < np.inf else [])
+
+
 def render():
     out = [HEADER]
     bins = {}
     for name, (d, xs) in SCALAR.items():
+        low, high = OPEN.get(name, (-np.inf, np.inf))
         for x in xs:
-            out.append(f"logpdf {name} {fmt(x)} {fmt(d.logpdf(x))}\n")
+            v = d.logpdf(x) if low < x < high else -np.inf
+            out.append(f"logpdf {name} {fmt(x)} {fmt(v)}\n")
         edges = [-np.inf] + [d.ppf(j / 10) for j in range(1, 10)] + [np.inf]
         bins[name] = [(lo, hi, 0.1) for lo, hi in zip(edges[:-1], edges[1:])]
     for name in QUANTILE:
         d, _ = SCALAR[name]
         for p in [1e-12, 0.001, 0.1, 0.5, 0.9, 0.999, 1 - 2.0**-40]:
             out.append(f"ppf {name} {fmt(p)} {fmt(exact_ppf(name, d, p))}\n")
-    for case, (_, _, _, xs) in TRUNCATED.items():
-        for x in xs:
+    for case, (_, low, high, xs) in TRUNCATED.items():
+        for x in xs + inward(low, high):
             out.append(f"logpdf {case} {fmt(x)} {fmt(truncated_logpdf(case, x))}\n")
         for p in [1e-12, 0.001, 0.1, 0.5, 0.9, 0.999, 1 - 2.0**-40]:
             out.append(f"ppf {case} {fmt(p)} {fmt(truncated_ppf(case, p))}\n")

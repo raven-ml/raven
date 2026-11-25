@@ -85,6 +85,11 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- The open supports of `Dist.exponential`, `Dist.half_normal`,
+  `Dist.half_cauchy`, `Dist.uniform` and `Dist.truncated` exclude their bounds,
+  as `Support` states: a value on a bound has log density `-inf`, where it was
+  finite. `Dist.gamma ~concentration:1.` and `Dist.exponential`, one
+  distribution, disagreed at `0`.
 - `Nested`'s evidence stops `Remaining infinity` while every point found has
   likelihood `0`, where it gave `Remaining nan`.
 - `Smc`'s next temperature keeps half the effective sample size of the

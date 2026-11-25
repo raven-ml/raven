@@ -793,7 +793,9 @@ module Dist : sig
       [-2κ sin² ((x - loc) / 2) - log (2π i0e κ)] ({!Nx.i0e}), finite at
       every finite [κ]. [loc] is finite and may lie off \[[-π], [π]\]: the
       density is periodic in it. Draws are {!Nx.Rng.von_mises}'s, Best and
-      Fisher's rejection, moved by [loc] and wrapped onto \[[-π], [π]\]. *)
+      Fisher's rejection, moved by [loc] and wrapped onto \[[-π], [π]\]. The
+      float [Float.pi] lies below π, so the draws' extremes [±Float.pi] lie in
+      its support, [(-π, π)], and have finite density. *)
 
   val lkj_cholesky :
     int -> concentration:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
@@ -897,9 +899,10 @@ module Dist : sig
     ?high:(float, 'f, 'd) Nx.t ->
     ((float, 'f, 'd) Nx.t, 'f, 'd) t ->
     ((float, 'f, 'd) Nx.t, 'f, 'd) t
-  (** [truncated ?low ?high d] is [d] conditioned on lying between [low] and
-      [high], elementwise, a missing bound leaving its side as [d]'s: the
-      density of [d] over its mass [F(high) - F(low)] there, [-inf] outside.
+  (** [truncated ?low ?high d] is [d] conditioned on lying strictly between
+      [low] and [high], elementwise, a missing bound leaving its side as
+      [d]'s: the density of [d] over its mass [F(high) - F(low)] there, [-inf]
+      outside.
       The bounds are finite, broadcast against [d]'s shape, and clip to [d]'s
       support. The mass is a difference of upper tails where [low] lies
       above [d]'s median and of lower tails otherwise, each held as
