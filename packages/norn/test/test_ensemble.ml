@@ -198,16 +198,31 @@ let invariant =
 
 (* sample *)
 
+module M = Norn_model
 module R = Recovery
 
 let sample =
   group "sample"
     [
-      (* R-hat 1.011 on one of keys 1 to 40 at 500 draws. *)
-      R.recovers "draws recover the dogs posterior" (fun () ->
-          R.chain_cell
-            (R.ensemble ~ensembles:2 ~draws:800)
-            (R.posterior "dogs-dogs"));
+      (* Two ensembles of 32 walkers, at least twice the coordinates, each a
+         superchain of nested R-hat. Walkers spread over a region of another
+         shape than a narrow, correlated posterior come back to it only over
+         many transitions, so they start where HMC leaves them after 600
+         transitions. R-hat 1.011 on one of keys 1 to 40 at 500 draws. *)
+      test "draws recover the dogs posterior" (fun () ->
+          match R.posterior "dogs-dogs" with
+          | Posteriordb.Posterior p as post ->
+              let m = p.model in
+              let u = M.coords m and lp = M.log_density m p.y in
+              let h = Norn.Hmc.init u lp (M.init m p.y ~chains:64 R.key) in
+              let h =
+                Norn.Hmc.warmup u lp (Nx.Rng.fold_in R.key 1) ~steps:600 h
+              in
+              let s = E.init u ~ensembles:2 lp h.position in
+              let s = E.warmup u lp R.key ~steps:300 s in
+              let _, d, _ = E.sample u lp R.key ~draws:800 s in
+              R.chains post ~superchains:2
+                (Norn.Draws.map u Posteriordb.latent (M.constrain m) d));
     ]
 
 let () =

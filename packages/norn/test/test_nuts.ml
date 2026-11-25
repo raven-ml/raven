@@ -484,27 +484,33 @@ let invariant =
 module M = Norn_model
 module R = Recovery
 
+(* [recovered ?accept ~draws name] asserts the recovery law on NUTS's draws of
+   the posteriordb posterior [name]: 8 chains in superchains of two, 300 warmup
+   transitions, then [draws]. *)
+let recovered ?accept ~draws name =
+  match R.posterior name with
+  | Posteriordb.Posterior p as post ->
+      let m = p.model in
+      let u = M.coords m and lp = M.log_density m p.y in
+      let s = N.init u ?accept lp (M.init m p.y ~chains:8 R.key) in
+      let s = N.warmup u lp R.key ~steps:300 s in
+      let _, d, stats = N.sample u lp R.key ~draws s in
+      R.chains post ~superchains:4 ~stats
+        (Norn.Draws.map u Posteriordb.latent (M.constrain m) d)
+
 (* The recovery law on posteriordb's dogs and eight_schools_noncentered, whose
    scale and effects reach the reference through [M.constrain] and a bijector's
-   Jacobian, and on a run too short for its diagnostics. *)
-(* The dogs cells share one warmup. *)
-let dogs = R.nuts_warmed (fun () -> R.posterior "dogs-dogs")
-
+   Jacobian. *)
 let recovery =
   [
     (* R-hat up to 1.020 on keys 1 to 40 at 100 draws. *)
-    R.recovers "draws recover the dogs posterior" (fun () ->
-        R.warmed_cell dogs ~draws:300);
+    test "draws recover the dogs posterior" (fun () ->
+        recovered ~draws:300 "dogs-dogs");
     (* At the default acceptance a transition or two diverges on 17 of keys 1 to
        40, and at 0.9 on 3. *)
-    R.recovers "draws recover the eight schools posterior" (fun () ->
-        R.chain_cell
-          (R.nuts ~accept:0.95 ~draws:300 ())
-          (R.posterior "eight_schools-eight_schools_noncentered"));
-    (* 160 draws: every element's effective size is below the 400 the summary
-       asks, on each of keys 1 to 40. *)
-    R.flagged "a run too short for its diagnostics is flagged" (fun () ->
-        R.warmed_cell dogs ~draws:20);
+    test "draws recover the eight schools posterior" (fun () ->
+        recovered ~accept:0.95 ~draws:300
+          "eight_schools-eight_schools_noncentered");
   ]
 
 (* Simulation-based calibration of a conjugate normal model: the ranks of

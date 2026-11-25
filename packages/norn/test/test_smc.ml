@@ -320,10 +320,9 @@ let run_tests =
             (Nx.to_array (Norn.Evidence.sample z).values));
       slice;
       moments;
-      Recovery.recovers "replicates recover the dogs posterior" (fun () ->
+      test "replicates recover the dogs posterior" (fun () ->
           Compiled.here ();
-          Recovery.replicated_cell
-            (Recovery.smc ~replicates:16 ~draws:100)
+          Recovery.smc ~replicates:16 ~draws:100
             (Recovery.posterior "dogs-dogs"));
     ]
 

@@ -269,13 +269,23 @@ let invariant =
 
 (* sample *)
 
+module M = Norn_model
 module R = Recovery
 
 let sample =
   group "sample"
     [
-      R.recovers "draws recover the dogs posterior" (fun () ->
-          R.chain_cell (R.hmc ~draws:50) (R.posterior "dogs-dogs"));
+      (* 64 chains in superchains of eight, 300 warmup transitions, then 50. *)
+      test "draws recover the dogs posterior" (fun () ->
+          match R.posterior "dogs-dogs" with
+          | Posteriordb.Posterior p as post ->
+              let m = p.model in
+              let u = M.coords m and lp = M.log_density m p.y in
+              let s = H.init u lp (M.init m p.y ~chains:64 R.key) in
+              let s = H.warmup u lp R.key ~steps:300 s in
+              let _, d, stats = H.sample u lp R.key ~draws:50 s in
+              R.chains post ~superchains:8 ~stats
+                (Norn.Draws.map u Posteriordb.latent (M.constrain m) d));
     ]
 
 let () =

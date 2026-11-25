@@ -206,11 +206,9 @@ let keyed =
    the true 1 / (n - j + 1), fails this test on 6 of keys 1 to 40, its largest
    error of median 3.6. *)
 let recovers =
-  Recovery.recovers "replicates recover the dogs posterior" (fun () ->
+  test "replicates recover the dogs posterior" (fun () ->
       Compiled.here ();
-      Recovery.replicated_cell
-        (Recovery.nested ~replicates:16 ~draws:13)
-        (Recovery.posterior "dogs-dogs"))
+      Recovery.nested ~replicates:16 ~draws:13 (Recovery.posterior "dogs-dogs"))
 
 let run_tests = group "run" [ converges; spent; pp_spent; keyed; recovers ]
 

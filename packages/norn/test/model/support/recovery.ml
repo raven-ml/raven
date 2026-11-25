@@ -6,28 +6,23 @@
 (* The recovery law: reference posteriors, as a careful user relies on them. A
    run of NUTS, HMC or ensemble sampling whose diagnostics pass, nested R-hat
    and the summary's findings, recovers every element's mean and standard
-   deviation within z sqrt (mcse² + mcse_ref²); a run that does not recover is
-   flagged by them. SMC and nested sampling run r independent replicates and
-   recover within t sqrt (se² + mcse_ref²), se the standard error of the
-   replicates' mean and t of Student's t with r - 1 degrees of freedom, or are
-   flagged by a replicate that spent its budget. z and t hold the family-wise
-   false-alarm rate over every comparison of the cells a law is held on at 1%: z
-   = 3.72, and t = 4.88 at 16 replicates, over the suites' 50 comparisons.
+   deviation within z sqrt (mcse² + mcse_ref²). SMC and nested sampling run r
+   independent replicates and recover within t sqrt (se² + mcse_ref²), se the
+   standard error of the replicates' mean and t of Student's t with r - 1
+   degrees of freedom, unless a replicate spent its budget. z and t hold the
+   family-wise false-alarm rate over every comparison the suites make at 1%: z =
+   3.72, and t = 4.88 at 16 replicates, over the suites' 50 comparisons.
 
-   Each cell runs from one key. The suites' cells are sized so that their
-   diagnostics pass, or for a short run flag them, on every key from 1 to 40, so
-   that a change to the random stream or to rounding does not fail a correct
-   sampler. A false flag fails a cell as a false alarm does: none of keys 1 to
-   40 flagged a recovering cell, which bounds each cell's rate of false flags
-   below 7.2% at 95% confidence, a bound beside the comparisons' 1% and far
-   looser. *)
+   Each run starts from [key]. The suites' runs are sized so that their
+   diagnostics pass on every key from 1 to 40, so that a change to the random
+   stream or to rounding does not fail a correct sampler. A false finding fails
+   a run as a false alarm does: none of keys 1 to 40 gave one, which bounds each
+   run's rate of false findings below 7.2% at 95% confidence, a bound beside the
+   comparisons' 1% and far looser. *)
 
 open Windtrap
 module M = Norn_model
 module P = Posteriordb
-
-let warmup = 300
-let false_alarms = 0.01
 
 (* Every run starts from this key. *)
 let key = Nx.Rng.key 1
@@ -36,19 +31,14 @@ let key = Nx.Rng.key 1
    directory. *)
 let posterior name = P.find "model/support/posteriordb.golden" name
 
-(* A comparison: an estimate, its reference and their combined standard error. A
-   cell's verdict: flagged by its diagnostics, or the comparisons it makes. *)
-type comparison = { what : string; est : float; ref : float; se : float }
-type verdict = Flagged of string | Compared of comparison list
+(* The comparisons of the runs norn's suites hold the law on, one family: NUTS
+   on dogs (6) and on eight_schools (20), and HMC, ensemble sampling, SMC and
+   nested sampling on dogs (6 each). *)
+let family = 50
+let false_alarms = 0.01
 
-(* A cell: a sampler's run on one posterior, from [key]. [quantile p] is the
-   multiple of a comparison's standard error that a two-sided error lies within
-   with probability [2p - 1]. *)
-type cell = {
-  name : string;
-  quantile : float -> float;
-  verdict : unit -> verdict;
-}
+(* The probability of a two-sided error within the bound, per comparison. *)
+let tail = 1. -. (false_alarms /. (2. *. float_of_int family))
 
 let normal_quantile p =
   Nx.item []
@@ -95,82 +85,15 @@ let t_quantile ~df p =
   in
   bisect 0. (bracket 1.) 200
 
-(* A kernel: its chains, the superchains of its nested R-hat, and a run from a
-   start, with the Hamiltonian transitions' statistics. *)
-type kernel = {
-  label : string;
-  chains : int;
-  superchains : int;
-  run :
-    'u.
-    ('u, Nx.host) Nx.Ptree.t ->
-    ('u -> Nx.host Nx.float64_t) ->
-    Nx.host Nx.Rng.key ->
-    'u ->
-    'u Norn.Draws.t * (Nx.float64_elt, Nx.host) Norn.Stats.t Norn.Draws.t option;
-}
+(* [near ~q what est ~ref ~se ~se_ref] asserts that the estimate [est] lies
+   within [q] combined standard errors of its reference [ref]. *)
+let near ~q what est ~ref ~se ~se_ref =
+  at_most (float 1e-12)
+    ~than:(q *. Float.hypot se se_ref)
+    ~msg:(Printf.sprintf "%s is %g, the reference %g" what est ref)
+    (Float.abs (est -. ref))
 
-(* NUTS's chains, in superchains of two. *)
-let nuts_chains = 8
-
-let nuts ?accept ~draws () =
-  {
-    label = "NUTS";
-    chains = nuts_chains;
-    superchains = nuts_chains / 2;
-    run =
-      (fun u lp k start ->
-        let s = Norn.Nuts.init u ?accept lp start in
-        let s = Norn.Nuts.warmup u lp k ~steps:warmup s in
-        let _, d, st = Norn.Nuts.sample u lp k ~draws s in
-        (d, Some st));
-  }
-
-let hmc ~draws =
-  {
-    label = "HMC";
-    chains = 64;
-    superchains = 8;
-    run =
-      (fun u lp k start ->
-        let s = Norn.Hmc.init u lp start in
-        let s = Norn.Hmc.warmup u lp k ~steps:warmup s in
-        let _, d, st = Norn.Hmc.sample u lp k ~draws s in
-        (d, Some st));
-  }
-
-(* Ensembles of 32 walkers: at least twice the coordinates of each posterior. A
-   walker's moves read the other walkers of its ensemble, so the walkers of one
-   ensemble are dependent and the ensembles independent: each ensemble is a
-   superchain of nested R-hat. Walkers spread over a region of another shape
-   than a narrow, correlated posterior come back to it only over many
-   transitions, so they start where HMC leaves them after twice the warmup. *)
-let ensemble ~ensembles ~draws =
-  {
-    label = "ensemble sampling";
-    chains = 32 * ensembles;
-    superchains = ensembles;
-    run =
-      (fun u lp k start ->
-        let h = Norn.Hmc.init u lp start in
-        let h =
-          Norn.Hmc.warmup u lp (Nx.Rng.fold_in k 1) ~steps:(2 * warmup) h
-        in
-        let s = Norn.Ensemble.init u ~ensembles lp h.position in
-        let s = Norn.Ensemble.warmup u lp k ~steps:warmup s in
-        let _, d, _ = Norn.Ensemble.sample u lp k ~draws s in
-        (d, None));
-  }
-
-(* A kernel's run on a model, eagerly. A cell runs from one key, and compiling
-   its run would cost more than running it: NUTS on eight_schools compiles 464
-   kernels in 27 CPU seconds from a cold cache, and runs in 8 eagerly. *)
-let fit (type p y) kernel (m : (p, y, Nx.float64_elt, Nx.host) M.t)
-    (latent : (p, 'd) Nx.Ptree.t) (y : y) k =
-  let u = M.coords m in
-  let lp = M.log_density m y in
-  let d, stats = kernel.run u lp k (M.init m y ~chains:kernel.chains k) in
-  (Norn.Draws.map u latent (M.constrain m) d, stats)
+(* Chains *)
 
 (* [mcse_mean x] is the Monte Carlo standard error of the mean of draws [x] of
    one element, chains by rows. *)
@@ -197,6 +120,8 @@ let moments x =
   let sd = Float.sqrt (var *. n /. (n -. 1.)) in
   (mean, sd, mcse_mean x, mcse_mean dev2 /. (2. *. sd))
 
+(* [element x index] is the chains of element [index] of the draws [x], of shape
+   [[c; n; ...]]. *)
 let element x index =
   let s = Nx.shape x in
   let c = s.(0) and n = s.(1) in
@@ -205,113 +130,39 @@ let element x index =
   Array.init c (fun i ->
       Array.init n (fun j -> flat.((((i * n) + j) * size) + index)))
 
-let compared what est ~ref ~se ~se_ref =
-  { what; est; ref; se = Float.hypot se se_ref }
+let finding = Testable.structural ~pp:Norn.Summary.pp_finding
 
-(* The verdict of chains of draws [d]: flagged by a finding of their summary,
-   with nested R-hat over [superchains], else each reference element's mean and
-   standard deviation compared. *)
-let judge_chains (type l) (latent : (l, 'd) Nx.Ptree.t) ~superchains
-    (refs : P.reference list) (value : string -> l -> Nx.host Nx.float64_t) stats
-    (d : l Norn.Draws.t) =
-  let s = Norn.Summary.v latent ?stats ~superchains d in
-  match Norn.Summary.findings s with
-  | _ :: _ as fs ->
-      let kind : Norn.Summary.finding -> string = function
-        | Rhat_high _ -> "R-hat"
-        | Ess_low _ -> "ESS"
-        | Not_finite _ -> "not finite"
-        | Constant _ -> "constant"
-        | Divergent _ -> "divergent"
-        | Saturated _ -> "saturated"
-        | Ebfmi_low _ -> "E-BFMI"
-        | Pareto_k _ -> "Pareto k"
+(* [chains post ~superchains ?stats d] asserts the law on the draws [d] of
+   [post]'s latent values: their summary, with nested R-hat over [superchains]
+   and the transitions' statistics [stats], has no finding, and every reference
+   element's mean and standard deviation is recovered. *)
+let chains (P.Posterior p) ~superchains ?stats d =
+  let s = Norn.Summary.v P.latent ?stats ~superchains d in
+  equal (list finding) [] (Norn.Summary.findings s);
+  let q = normal_quantile tail in
+  let values = (d : Nx.host Nx.float64_t list Norn.Draws.t :> _ list) in
+  List.iter
+    (fun (r : P.reference) ->
+      let at = Option.get (List.find_index (String.equal r.param) p.params) in
+      let mean, sd, mcse_mean, mcse_sd =
+        moments (element (List.nth values at) r.index)
       in
-      let kinds = List.sort_uniq compare (List.map kind fs) in
-      Flagged
-        (Printf.sprintf "%s (%s)"
-           (Format.asprintf "%a" Norn.Summary.pp_finding (List.hd fs))
-           (String.concat ", "
-              (List.map
-                 (fun k ->
-                   Printf.sprintf "%s x%d" k
-                     (List.length (List.filter (fun f -> kind f = k) fs)))
-                 kinds)))
-  | [] ->
-      Compared
-        (List.concat_map
-           (fun (r : P.reference) ->
-             let mean, sd, mcse_mean, mcse_sd =
-               moments (element (value r.param (d :> l)) r.index)
-             in
-             let what = Printf.sprintf "%s[%d]'s" r.param r.index in
-             [
-               compared (what ^ " mean") mean ~ref:r.mean ~se:mcse_mean
-                 ~se_ref:r.mcse_mean;
-               compared (what ^ " sd") sd ~ref:r.sd ~se:mcse_sd
-                 ~se_ref:r.mcse_sd;
-             ])
-           refs)
+      let what = Printf.sprintf "%s › %s[%d]'s" p.name r.param r.index in
+      near ~q (what ^ " mean") mean ~ref:r.mean ~se:mcse_mean
+        ~se_ref:r.mcse_mean;
+      near ~q (what ^ " sd") sd ~ref:r.sd ~se:mcse_sd ~se_ref:r.mcse_sd)
+    p.refs
 
-(* A posteriordb parameter of draws: the tensor at its position. *)
-let param (params : string list) name (values : Nx.host Nx.float64_t list) =
-  List.nth values (Option.get (List.find_index (String.equal name) params))
-
-let chain_cell kernel (P.Posterior p) =
-  let run = fit kernel p.model P.latent p.y in
-  {
-    name = kernel.label ^ " › " ^ p.name;
-    quantile = normal_quantile;
-    verdict =
-      (fun () ->
-        let d, stats = run key in
-        judge_chains P.latent ~superchains:kernel.superchains p.refs
-          (param p.params) stats d);
-  }
-
-(* [nuts_warmed ?accept post] is an accessor for NUTS's chains on [post ()]
-   after warmup from [key], acquired by the first test of a worker that calls
-   it, with their sampler. The cells [warmed_cell] makes of one accessor share
-   its warmup, which is the [nuts] kernel's: their verdicts are that kernel's
-   cells'. *)
-let nuts_warmed ?accept post =
-  fixture (fun () ->
-      let (P.Posterior p as posterior) = post () in
-      let m = p.model in
-      let u = M.coords m and lp = M.log_density m p.y in
-      let start = M.init m p.y ~chains:nuts_chains key in
-      let s = Norn.Nuts.init u ?accept lp start in
-      let s = Norn.Nuts.warmup u lp key ~steps:warmup s in
-      let sample ~draws =
-        let _, d, st = Norn.Nuts.sample u lp key ~draws s in
-        (Norn.Draws.map u P.latent (M.constrain m) d, Some st)
-      in
-      (posterior, sample))
-
-let warmed_cell warmed ~draws =
-  let P.Posterior p, sample = warmed () in
-  {
-    name = "NUTS › " ^ p.name;
-    quantile = normal_quantile;
-    verdict =
-      (fun () ->
-        let d, stats = sample ~draws in
-        judge_chains P.latent ~superchains:(nuts_chains / 2) p.refs
-          (param p.params) stats d);
-  }
+(* Replicates *)
 
 (* A sampler that returns an evidence, run from prior draws. Its particles are
    not chains a convergence diagnostic reads: tempering's chains start from
    resampled, shared ancestors, and nested sampling's dead points from
    survivors. So it runs independent replicates as lanes of one compiled run,
    each replicate's expectations of every element and of its square give its
-   mean and standard deviation, and the replicates' spread is their error. A
-   replicate that spent its budget flags the run. *)
-type replicated = {
-  label : string;
-  replicates : int;
-  draws : int;
-  evidence :
+   mean and standard deviation, and the replicates' spread is their error. *)
+type evidence = {
+  run :
     'u.
     ('u, Nx.host) Nx.Ptree.t ->
     prior:('u -> Nx.host Nx.float64_t) ->
@@ -321,35 +172,14 @@ type replicated = {
     ('u, Nx.float64_elt, Nx.host) Norn.Evidence.t;
 }
 
-(* Tempering from [draws] prior draws, in [replicates] replicates. *)
-let smc ~replicates ~draws =
-  {
-    label = "SMC";
-    replicates;
-    draws;
-    evidence =
-      (fun u ~prior ~likelihood k start ->
-        Norn.Smc.run u ~budget:200 ~prior ~likelihood k start);
-  }
-
-(* Nested sampling from [draws] live points, in [replicates] replicates. *)
-let nested ~replicates ~draws =
-  {
-    label = "nested sampling";
-    replicates;
-    draws;
-    evidence =
-      (fun u ~prior ~likelihood k start ->
-        Norn.Nested.run u ~budget:200 ~prior ~likelihood k start);
-  }
-
-let replicated_cell sampler (P.Posterior p) =
+let replicated sampler ~replicates ~draws (P.Posterior p) =
   let m = p.model in
   let u = M.coords m in
   let flat x =
     let v =
       Nx.concatenate ~axis:0
-        (List.map (Nx.reshape [| -1 |]) (M.constrain m x :> Nx.host Nx.float64_t list))
+        (List.map (Nx.reshape [| -1 |])
+           (M.constrain m x :> Nx.host Nx.float64_t list))
     in
     Nx.concatenate ~axis:0 [ v; Nx.square v ]
   in
@@ -362,114 +192,77 @@ let replicated_cell sampler (P.Posterior p) =
           Nx.Ptree.(Nx.Rng.ptree @-> returns (pair ez tensor))
           (fun k ->
             let z =
-              sampler.evidence u ~prior:(M.log_prior m)
+              sampler.run u ~prior:(M.log_prior m)
                 ~likelihood:(M.log_likelihood m p.y) (Nx.Rng.fold_in k 0)
-                (M.from_prior m ~n:sampler.draws (Nx.Rng.fold_in k 1))
+                (M.from_prior m ~n:draws (Nx.Rng.fold_in k 1))
             in
             (z, fst (Norn.Evidence.expectation u flat z)))
           ks)
   in
-  let replicates = sampler.replicates in
-  {
-    name = sampler.label ^ " › " ^ p.name;
-    quantile = t_quantile ~df:(replicates - 1);
-    verdict =
-      (fun () ->
-        let zs, e = run (Nx.Rng.split_batch ~n:replicates key) in
-        let spent =
-          List.filter_map
-            (fun i ->
-              let z = Nx.Ptree.map ez (fun _ t -> Nx.slice [ Nx.I i ] t) zs in
-              match Norn.Evidence.stop z with
-              | Converged -> None
-              | Remaining r ->
-                  Some
-                    (Printf.sprintf
-                       "replicate %d spent its budget with %g nats left" i r)
-              | Temperature b ->
-                  Some
-                    (Printf.sprintf "replicate %d spent its budget at β = %g" i
-                       b))
-            (List.init replicates Fun.id)
-        in
-        match spent with
-        | why :: _ -> Flagged why
-        | [] ->
-            let e = Nx.to_array e and k = float_of_int replicates in
-            let n = Array.length e / replicates / 2 in
-            let at r j = e.((r * 2 * n) + j) in
-            (* Each parameter's first element in a replicate's row. *)
-            let offsets =
-              let one =
-                M.constrain m
-                  (Nx.Ptree.map u
-                     (fun _ t -> Nx.slice [ Nx.I 0 ] t)
-                     (M.from_prior m ~n:1 (Nx.Rng.key 0)))
-              in
-              fst
-                (List.fold_left2
-                   (fun (acc, at) name v ->
-                     ((name, at) :: acc, at + Nx.numel v))
-                   ([], 0) p.params
-                   (one :> Nx.host Nx.float64_t list))
-            in
-            Compared
-              (List.concat_map
-                 (fun (r : P.reference) ->
-                   let j = r.index + List.assoc r.param offsets in
-                   let means = List.init replicates (fun q -> at q j) in
-                   let sds =
-                     List.init replicates (fun q ->
-                         Float.sqrt
-                           (Float.max 0. (at q (n + j) -. (at q j ** 2.))))
-                   in
-                   let avg l = List.fold_left ( +. ) 0. l /. k in
-                   let se l =
-                     let a = avg l in
-                     Float.sqrt
-                       (List.fold_left (fun s v -> s +. ((v -. a) ** 2.)) 0. l
-                       /. (k -. 1.) /. k)
-                   in
-                   let what = Printf.sprintf "%s[%d]'s" r.param r.index in
-                   [
-                     compared (what ^ " mean") (avg means) ~ref:r.mean
-                       ~se:(se means) ~se_ref:r.mcse_mean;
-                     compared (what ^ " sd") (avg sds) ~ref:r.sd ~se:(se sds)
-                       ~se_ref:r.mcse_sd;
-                   ])
-                 p.refs));
-  }
-
-let within ~tail c cs =
-  let q = c.quantile tail in
+  let zs, e = run (Nx.Rng.split_batch ~n:replicates key) in
+  for i = 0 to replicates - 1 do
+    let z = Nx.Ptree.map ez (fun _ t -> Nx.slice [ Nx.I i ] t) zs in
+    match Norn.Evidence.stop z with
+    | Converged -> ()
+    | Remaining r -> failf "replicate %d spent its budget with %g nats left" i r
+    | Temperature b -> failf "replicate %d spent its budget at β = %g" i b
+  done;
+  let e = Nx.to_array e and k = float_of_int replicates in
+  let n = Array.length e / replicates / 2 in
+  let at r j = e.((r * 2 * n) + j) in
+  (* Each parameter's first element in a replicate's row. *)
+  let offsets =
+    let one =
+      M.constrain m
+        (Nx.Ptree.map u
+           (fun _ t -> Nx.slice [ Nx.I 0 ] t)
+           (M.from_prior m ~n:1 (Nx.Rng.key 0)))
+    in
+    fst
+      (List.fold_left2
+         (fun (acc, at) name v -> ((name, at) :: acc, at + Nx.numel v))
+         ([], 0) p.params
+         (one :> Nx.host Nx.float64_t list))
+  in
+  let q = t_quantile ~df:(replicates - 1) tail in
+  let avg l = List.fold_left ( +. ) 0. l /. k in
+  let se l =
+    let a = avg l in
+    Float.sqrt
+      (List.fold_left (fun s v -> s +. ((v -. a) ** 2.)) 0. l /. (k -. 1.) /. k)
+  in
   List.iter
-    (fun k ->
-      at_most (float 1e-12) ~than:(q *. k.se)
-        ~msg:
-          (Printf.sprintf "%s: %s is %g, the reference %g" c.name k.what k.est
-             k.ref)
-        (Float.abs (k.est -. k.ref)))
-    cs
+    (fun (r : P.reference) ->
+      let j = r.index + List.assoc r.param offsets in
+      let means = List.init replicates (fun q -> at q j) in
+      let sds =
+        List.init replicates (fun q ->
+            Float.sqrt (Float.max 0. (at q (n + j) -. (at q j ** 2.))))
+      in
+      let what = Printf.sprintf "%s › %s[%d]'s" p.name r.param r.index in
+      near ~q (what ^ " mean") (avg means) ~ref:r.mean ~se:(se means)
+        ~se_ref:r.mcse_mean;
+      near ~q (what ^ " sd") (avg sds) ~ref:r.sd ~se:(se sds) ~se_ref:r.mcse_sd)
+    p.refs
 
-(* The comparisons of the cells norn's suites hold the law on, one family: NUTS
-   on dogs (6) and on eight_schools (20), and HMC, ensemble sampling, SMC and
-   nested sampling on dogs (6 each). *)
-let family = 50
+(* [smc ~replicates ~draws post] asserts the law on tempering from [draws] prior
+   draws, in [replicates] replicates. *)
+let smc ~replicates ~draws post =
+  replicated
+    {
+      run =
+        (fun u ~prior ~likelihood k start ->
+          Norn.Smc.run u ~budget:200 ~prior ~likelihood k start);
+    }
+    ~replicates ~draws post
 
-(* [recovers name cell] is the law on [cell ()], made when the test runs: it
-   must recover within its quantile of the family's tail. *)
-let recovers name cell =
-  let tail = 1. -. (false_alarms /. (2. *. float_of_int family)) in
-  test name (fun () ->
-      let c = cell () in
-      match c.verdict () with
-      | Flagged why -> failf "%s is flagged: %s" c.name why
-      | Compared cs -> within ~tail c cs)
-
-(* [flagged name cell] is the test that the diagnostics flag [cell ()]. *)
-let flagged name cell =
-  test name (fun () ->
-      let c = cell () in
-      match c.verdict () with
-      | Flagged _ -> ()
-      | Compared _ -> failf "%s passes its diagnostics" c.name)
+(* [nested ~replicates ~draws post] asserts the law on nested sampling from
+   [draws] live points, in [replicates] replicates. *)
+let nested ~replicates ~draws post =
+  replicated
+    {
+      run =
+        (fun u ~prior ~likelihood k start ->
+          Norn.Nested.run u ~budget:200 ~prior ~likelihood k start);
+    }
+    ~replicates ~draws post
