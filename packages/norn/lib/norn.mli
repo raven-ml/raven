@@ -315,7 +315,8 @@ module Weighted : sig
       cumulative normalised weights, so a draw of normalised weight [w_i] is
       copied [floor (n w_i)] or [ceil (n w_i)] times.
 
-      Raises [Invalid_argument] if [n < 1] or if no weight is positive. *)
+      Raises [Invalid_argument] if [n < 1], and through {!Nx.check} if no weight
+      is positive. *)
 end
 
 module Diag : sig
@@ -519,9 +520,6 @@ module Summary : sig
 
       A statistic overflows only where its value does, and a standard deviation
       or an error of the mean whose value is normal does not underflow.
-      Multiplying the draws by a power of two that keeps them normal multiplies
-      the mean, the standard deviation, the quantiles and the error of the mean
-      by it exactly.
 
       {[
       Format.printf "%a@." Norn.Summary.pp (Norn.Summary.v schools ~stats post)

@@ -31,8 +31,8 @@ val sd : float array -> float
     for finite draws, and nonzero when they differ. *)
 
 val between : float -> float -> float -> float
-(** [between f lo hi] is [f (hi - lo)] for [f] in \[[0];[1]\]: finite for finite
-    [lo] and [hi], and [f *. (hi -. lo)] where that is finite. *)
+(** [between f lo hi] is [f (hi - lo)] for [f] in \[[0];[1]\], within rounding:
+    finite for finite [lo] and [hi]. *)
 
 val quantile : float array -> float -> float
 (** [quantile xs q] interpolates linearly between the order statistics: with the

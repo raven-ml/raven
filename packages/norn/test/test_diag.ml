@@ -313,9 +313,9 @@ let rank =
    [n] ranks in [0, ..., l], tuple [t] read in base [l + 1], computed in
    integers over the [(l + 1)^n] equally likely tuples. The count below point
    [i] is binomial [(n, i / (l + 1))], a count's pointwise p-value twice its
-   smaller tail, at most 1 (Säilynoja et al. 2022, eq. 13), and a tuple's
-   p-value the share of tuples whose least pointwise p-value is at most its own,
-   borders included (eq. 15). Every quantity is scaled by [(l + 1)^n]. *)
+   smaller tail, at most 1, a tuple's statistic its least pointwise p-value
+   (Säilynoja et al. 2022, eq. 13), and its p-value the share of tuples whose
+   statistic is at most its own. Every quantity is scaled by [(l + 1)^n]. *)
 let enumerated ~ranks:n ~draws:l =
   let rec pow a b = if b = 0 then 1 else a * pow a (b - 1) in
   let rec choose n k =

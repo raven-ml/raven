@@ -133,10 +133,10 @@ All notable changes to this project will be documented in this file.
 - `Diag.rank` refuses `float4_e2m1fn` draws of more than 4 draws, whose
   counts the dtype cannot hold, as it refuses other float dtypes. It returned
   a rounded rank.
-- `Diag.rank_uniformity` counts a count exactly as far as the ranks' farthest
-  as at least as far, as its interface states. Rounding put some such counts
-  inside the bands, so the p-value of uniform ranks came out low: 0.125 for
-  three ranks at 0 of one draw, where it is 0.25.
+- `Diag.rank_uniformity`'s p-value takes in every count whose pointwise
+  p-value equals the farthest count's, as its interface's "at least as far"
+  states. Rounding left some of them out, so the p-value of uniform ranks came
+  out low: 0.125 for three ranks at 0 of one draw, where it is 0.25.
 - An exception a `Norn_model` model raises leaves `Norn_model.v` and every
   interpreter run eagerly with the backtrace of its raise, as `v`'s interface
   states. It started at the effect handler, which hid where the model failed.

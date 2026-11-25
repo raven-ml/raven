@@ -217,8 +217,9 @@ let uniformity ~n ~points =
   fun counts ->
     let g = ref 1. in
     Array.iteri (fun i c -> g := Float.min !g (pointwise i c)) counts;
-    (* A count as far as the farthest lies outside the bands, borders included
-       (Säilynoja et al., eq. 15): equal within rounding is equal. *)
+    (* The p-value is the probability that eq. 13's statistic is at most [g]
+       (Säilynoja et al.): a count whose pointwise p-value equals [g], within
+       rounding, lies outside the bands. *)
     let in_band i x = pointwise i x > !g *. (1. +. tie) in
     let lo = Array.make points 0 and hi = Array.make points (-1) in
     for i = 0 to points - 1 do

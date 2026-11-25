@@ -110,6 +110,11 @@ let scaled_gen =
          (map (fun k -> float_of_int k /. 8.) (int_range (-64) 64)))
       (int_range (-1000) 1000))
 
+(* A statistic of draws times [2^j] is [2^j] times the draws' statistic, exactly
+   for ordinary draws, so 1e-12 of it is far below what an intermediate that
+   overflows or underflows would lose. *)
+let scaled = float_rel ~rel:1e-12 ~abs:0.
+
 let cover_scaled j =
   cover "a scale whose square underflows" (j < -540);
   cover "a scale whose square overflows" (j > 520)
@@ -197,7 +202,8 @@ let v =
             (list (pair string (array float_exact)))
             (columns (S.v t (Draws.v t (Nx.cast Nx.float64 x))))
             (columns (S.v t (Draws.v t x))));
-      prop "scales by a power of two exactly" scaled_gen (fun (xs, j) ->
+      prop "keeps the statistics of draws scaled toward the float range's ends"
+        scaled_gen (fun (xs, j) ->
           cover_scaled j;
           let unit = S.v t (chains 2 4 xs) in
           let s =
@@ -212,10 +218,10 @@ let v =
             in
             Float.sqrt (ss /. (n -. 1.))
           in
-          equal ~msg:"sd" float_exact (Float.ldexp sd j) (column s "sd").(0);
+          equal ~msg:"sd" scaled (Float.ldexp sd j) (column s "sd").(0);
           List.iter
             (fun name ->
-              equal ~msg:name float_exact
+              equal ~msg:name scaled
                 (Float.ldexp (column unit name).(0) j)
                 (column s name).(0))
             statistics);
@@ -362,8 +368,8 @@ let of_weighted =
           equal (list string) (statistics @ [ "ess" ])
             (List.map fst (S.columns s)));
       test "weighs each draw by its normalised weight" (fun () ->
-          (* Weights 0, 1/4, 1/4 and 1/2: draws 1, 2 and 3 stand at 1/8, 3/8
-             and 3/4, q5 below the first is the first draw, and the draw of no
+          (* Weights 0, 1/4, 1/4 and 1/2: draws 1, 2 and 3 stand at 1/8, 3/8 and
+             3/4, q5 below the first is the first draw, and the draw of no
              weight, first and far, is read by no statistic. *)
           let w =
             weighted
@@ -404,7 +410,7 @@ let of_weighted =
           spread 1e-200 [| 1e-200; 3e-200 |];
           spread 1e200 [| -1e200; 1e200 |];
           spread 1e308 [| -1e308; 1e308 |]);
-      prop "scales by a power of two exactly"
+      prop "keeps the statistics of draws scaled toward the float range's ends"
         Gen.(pair scaled_gen (array ~size:(constant 8) (float_range (-4.) 4.)))
         (fun ((xs, j), lw) ->
           cover_scaled j;
@@ -413,13 +419,11 @@ let of_weighted =
           let s = summary (Array.map (fun x -> Float.ldexp x j) xs) in
           List.iter
             (fun name ->
-              equal ~msg:name float_exact
+              equal ~msg:name scaled
                 (Float.ldexp (column unit name).(0) j)
                 (column s name).(0))
             statistics;
-          equal ~msg:"ess" float_exact
-            (column unit "ess").(0)
-            (column s "ess").(0));
+          equal ~msg:"ess" scaled (column unit "ess").(0) (column s "ess").(0));
       prop "gives equal weights the draws' mean and an effective size of n"
         ~examples:[ ([| 1.5; 1.5; 1.5 |], [| 0.; 0.; 0. |]) ]
         weighted_gen
