@@ -1285,10 +1285,9 @@ module Gaussian : sig
       position with unit covariance. Step [i] estimates the gradient [g_i]
       from [draws] draws, by default [1] (Ong et al., eqs. 6, 9, 10), and
       adds [η i^(-1/2 + 10⁻¹⁶) g_i / (1 + sqrt s_i)] to each parameter,
-      [s_i = 0.1 g_i² + 0.9 s_(i-1)] from [s_1 = g_1²]. [η] is the one of
-      [0.01], [0.1], [1], [10] and [100] whose first [min (steps, 50)] steps
-      reach the largest bound. A chain whose bound estimate, gradient or step
-      is not finite stays put.
+      [s_i = 0.1 g_i² + 0.9 s_(i-1)] from [s_1 = g_1²], with a scale [η] the fit
+      chooses by trial runs of its first steps. A chain whose bound estimate,
+      gradient or step is not finite stays put.
 
       Raises [Invalid_argument] if [steps] or [draws] is not positive, [rank] is
       negative, [start] has no float element or float tensors of two dtypes, or
@@ -1919,8 +1918,7 @@ module Nested : sig
 
       {b Keys.} {!run}'s step [s] has the key
       [Nx.Rng.fold_in (Nx.Rng.fold_in k 0) s], and its {!evidence} the key
-      [Nx.Rng.fold_in k 1]. A step's replacement [i] has row [i] of
-      [Nx.Rng.split_batch ~n:batch] of the step's key. *)
+      [Nx.Rng.fold_in k 1]. A step draws from its key alone. *)
 
   type ('u, 'f, 'd) state = private {
     live : 'u;  (** The live points, on a leading axis of [n]. *)
@@ -2064,12 +2062,8 @@ module Smc : sig
       the same structure, evaluated on the [M] chains of a move. The prior is
       normalised, so the evidence is the data's probability.
 
-      {b Keys.} {!run}'s step [s] has the key [k_s = Nx.Rng.fold_in k s]: it
-      resamples from [Nx.Rng.fold_in k_s 0], and its moves draw from
-      [k_m = Nx.Rng.fold_in k_s 1]. Hamiltonian move [j] is the transition of
-      key [Nx.Rng.fold_in k_m j], as {!Hmc.step} draws from its key; chain [i]'s
-      slice move [j] draws from [Nx.Rng.fold_in] of row [i] of
-      [Nx.Rng.split_batch ~n:M k_m] with [j]. *)
+      {b Keys.} {!run}'s step [s] has the key [Nx.Rng.fold_in k s]. A step's
+      resampling and its moves draw from its key alone. *)
 
   (** The type for the kernels that move the particles. *)
   type move =

@@ -197,6 +197,14 @@ let step_tests =
                ~likelihood:(counted rows conjugate.likelihood)
                (Nx.Rng.key 3) s);
           equal (list int) [ s.resampled ] (List.sort_uniq compare !rows));
+      test "a step draws from its key alone" (fun () ->
+          let s = start conjugate 100 in
+          let particles k =
+            Nx.to_array (step conjugate (Nx.Rng.key k) s).particles
+          in
+          equal (array float_exact) ~msg:"one key" (particles 3) (particles 3);
+          not_equal (array float_exact) ~msg:"two keys" (particles 3)
+            (particles 4));
       (* [log ε] gains the mean acceptance less 0.8, from ε = 1: within [-0.8,
          0.2]. *)
       test "a Hamiltonian step moves log ε by the mean acceptance less 0.8"
@@ -205,6 +213,19 @@ let step_tests =
           let log_eps = Float.log (Nx.item [] s.step_size) in
           at_least float_exact ~than:(-0.8) log_eps;
           at_most float_exact ~than:0.2 log_eps);
+      (* On a flat density a trajectory keeps its energy, so every move is
+         accepted: [log ε] gains [1 - 0.8], within an ulp of 0.2. *)
+      test "at an acceptance of 1, log ε gains 0.2" (fun () ->
+          let flat x = Nx.zeros Nx.float64 [| (Nx.shape x).(0) |] in
+          let s =
+            Norn.Smc.step t ~prior:flat ~likelihood:flat (Nx.Rng.key 3)
+              (Norn.Smc.init t ~prior:flat ~likelihood:flat
+                 (conjugate.draw (Nx.Rng.key 2) 100))
+          in
+          equal
+            (float_rel ~rel:1e-15 ~abs:0.)
+            (1. -. 0.8)
+            (Float.log (Nx.item [] s.step_size)));
       test "a slice step tunes nothing" (fun () ->
           let s =
             step conjugate (Nx.Rng.key 3) (start ~move:Slice conjugate 100)
@@ -465,8 +486,25 @@ let run_tests =
           equal stop ~msg:"stop" Converged (Norn.Evidence.stop z);
           equal (float_rel ~rel:1e-12 ~abs:1e-12) ~msg:"ln Z" c (ln_z z);
           equal (float 1e-12) ~msg:"its error" 0. (error z));
-      (* Slice moves need no derivative. A calibrated error misses by three with
-         probability 0.27%. *)
+      (* The likelihood runs as a callback, which has no derivative: a
+         differentiation through it raises (rune.mli, Callbacks). Hamiltonian
+         moves differentiate it, slice moves do not. *)
+      test "slice moves run a density that cannot be differentiated" (fun () ->
+          let likelihood x =
+            Rune.callback
+              Nx.Ptree.(tensor @-> returns tensor)
+              ~like:(Nx.zeros Nx.float64 [| (Nx.shape x).(0) |])
+              conjugate.likelihood x
+          in
+          let run move =
+            Norn.Smc.run t ~move ~budget ~prior:conjugate.prior ~likelihood
+              (Nx.Rng.key 1)
+              (conjugate.draw (Nx.Rng.key 2) 100)
+          in
+          raises_match (Exn.invalid_arg ~sub:"Rune.callback") (fun () ->
+              run Hmc);
+          equal stop Converged (Norn.Evidence.stop (run Slice)));
+      (* A calibrated error misses by three with probability 0.27%. *)
       test "slice moves recover the evidence within three errors" (fun () ->
           let z = temper ~move:Slice conjugate in
           at_most float_exact

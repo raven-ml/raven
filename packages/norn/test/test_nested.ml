@@ -224,6 +224,11 @@ let step_tests =
                (Nx.Rng.key 3)
                (init ~batch:3 conjugate 10));
           equal (list int) [ 3 ] (List.sort_uniq compare !rows));
+      test "a step draws from its key alone" (fun () ->
+          let s = init conjugate 20 in
+          let live k = Nx.to_array (step conjugate (Nx.Rng.key k) s).live in
+          equal (array float_exact) ~msg:"one key" (live 3) (live 3);
+          not_equal (array float_exact) ~msg:"two keys" (live 3) (live 4));
       test "a step past the budget leaves the state" (fun () ->
           let s = step conjugate (Nx.Rng.key 3) (init ~budget:1 conjugate 20) in
           let s' = step conjugate (Nx.Rng.key 4) s in
