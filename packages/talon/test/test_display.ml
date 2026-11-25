@@ -141,7 +141,7 @@ let floats =
 
 let types =
   [
-    test "numbers align right, stored values outside int in full" (fun () ->
+    test "aligns numbers right and writes values outside int in full" (fun () ->
         expect (show numbers)
         @@ __POS_OF__
              {|
@@ -152,7 +152,7 @@ let types =
              false   127   4611686018427387903   9223372036854775807                     0
              ∅         ∅                     ∅                     0                     1
             |});
-    test "text shows as it reads, controls and non-UTF-8 bytes escaped"
+    test "shows text as it reads, escaping controls and bytes outside UTF-8"
       (fun () ->
         expect (show texts)
         @@ __POS_OF__
@@ -167,7 +167,7 @@ let types =
            "q" \       x           low
            ∅           \x7f        high
           |});
-    test "temporal values show in their text form" (fun () ->
+    test "shows temporal values in their text form" (fun () ->
         expect (show temporal)
         @@ __POS_OF__
              {|
@@ -179,7 +179,9 @@ let types =
              +12345-01-01  1s500ms    0s            2024-03-15T09:30:00            ∅
              ∅             ∅          ∅             ∅                              1969-12-31T00:00:00Z
             |});
-    test "lists, records, tensors and extensions" (fun () ->
+    test
+      "shows lists as OCaml lists, records and tensors by kind, extensions as \
+       storage" (fun () ->
         expect (show compound)
         @@ __POS_OF__
              {|
@@ -189,7 +191,7 @@ let types =
              ["a"; "b"]    <record>                  <tensor>            0f
              []            <record>                  <tensor>            1e
             |});
-    test "the floats of a column share their decimals" (fun () ->
+    test "shows a column's floats with one number of decimals" (fun () ->
         expect (show floats)
         @@ __POS_OF__
              {|
@@ -246,7 +248,8 @@ let rows_limits = { Talon.limits with head = 2; tail = 1 }
 
 let elision =
   [
-    test "past head + tail rows, the first and the last" (fun () ->
+    test "shows the first and last rows of a table past head + tail rows"
+      (fun () ->
         expect (show (v [ ("i", int8s 12) ]))
         @@ __POS_OF__
              {|
@@ -266,7 +269,7 @@ let elision =
                11
              2 rows not shown
             |});
-    test "head + tail rows show in full" (fun () ->
+    test "shows head + tail rows in full" (fun () ->
         expect (show ~limits:rows_limits (v [ ("i", int8s 3) ]))
         @@ __POS_OF__
              {|
@@ -277,7 +280,7 @@ let elision =
                 1
                 2
             |});
-    test "one row past head + tail" (fun () ->
+    test "elides one row past head + tail" (fun () ->
         expect (show ~limits:rows_limits (v [ ("i", int8s 4) ]))
         @@ __POS_OF__
              {|
@@ -290,7 +293,7 @@ let elision =
                 3
              1 row not shown
             |});
-    test "no head and no tail" (fun () ->
+    test "shows only the elision with no head and no tail" (fun () ->
         let limits = { rows_limits with head = 0; tail = 0 } in
         expect (show ~limits (v [ ("i", int8s 2) ]))
         @@ __POS_OF__
@@ -301,7 +304,7 @@ let elision =
              ⋮
              2 rows not shown
             |});
-    test "past columns columns, a line naming the others" (fun () ->
+    test "names the columns past columns on a last line" (fun () ->
         let name i = String.make 1 (Char.chr (Char.code 'a' + i)) in
         let t = v (List.init 14 (fun i -> (name i, int8s 1))) in
         expect (show t)
@@ -313,7 +316,7 @@ let elision =
                 0     0     0     0     0     0     0     0     0     0     0     0
              2 columns not shown: m, n
             |});
-    test "no column shown" (fun () ->
+    test "names every column on the last line when it shows none" (fun () ->
         let limits = { Talon.limits with columns = 0 } in
         expect (show ~limits (v [ ("a", int8s 2); ("b c", int8s 2) ]))
         @@ __POS_OF__
@@ -321,7 +324,8 @@ let elision =
             table 2 rows × 2 columns
              2 columns not shown: a, "b c"
             |});
-    test "cells, names and types cut at width, an escape whole" (fun () ->
+    test "cuts cells, names and types past width, never inside an escape"
+      (fun () ->
         let limits = { Talon.limits with width = 4 } in
         let t =
           v
@@ -343,10 +347,10 @@ let elision =
              ab…   []
              abcd  [3]
             |});
-    test "a table without columns or rows" (fun () ->
+    test "shows a table without columns or rows as its header alone" (fun () ->
         expect (show (v ~rows:0 []))
         @@ __POS_OF__ {| table 0 rows × 0 columns |});
-    test "a column without rows" (fun () ->
+    test "shows a column without rows as its name and type" (fun () ->
         expect (show (v [ ("", int8s 0) ]))
         @@ __POS_OF__
              {|
@@ -354,7 +358,7 @@ let elision =
              ""
              int8
             |});
-    test "one row and one column" (fun () ->
+    test "shows a table of one row and one column" (fun () ->
         expect (show (v [ ("x", int8s 1) ]))
         @@ __POS_OF__
              {|
