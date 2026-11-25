@@ -114,13 +114,21 @@ let value (D.Any dt) r =
    hundred products finite. *)
 let finite_value (D.Any dt) r =
   let pick a = a.(Random.State.int r (Array.length a)) in
-  let full p =
-    let m = Random.State.int64 r (Int64.shift_left 1L (p + 1)) in
-    Float.ldexp (Int64.to_float (Int64.sub m (Int64.shift_left 1L p))) (2 - p)
-  in
+  (* One draw of 64 bits a value, as a case draws millions: two bits for the
+     grid, the significand's next, the rest for [e], near uniform. *)
   let float p =
-    if Random.State.int r 4 = 0 then pick grid
-    else Float.ldexp (full p) (Random.State.int r 41 - 20)
+    let u = Random.State.bits64 r in
+    let field lo bits =
+      Int64.logand
+        (Int64.shift_right_logical u lo)
+        (Int64.sub (Int64.shift_left 1L bits) 1L)
+    in
+    if field 0 2 = 0L then
+      grid.(Int64.to_int (field 2 16) mod Array.length grid)
+    else
+      let m = Int64.sub (field 2 (p + 1)) (Int64.shift_left 1L p) in
+      let e = (Int64.to_int (field (p + 3) (61 - p)) mod 41) - 20 in
+      Float.ldexp (Int64.to_float m) (2 - p + e)
   in
   match (D.kind dt, dt) with
   | D.Boolean, _ -> float_of_int (Random.State.int r 2)
