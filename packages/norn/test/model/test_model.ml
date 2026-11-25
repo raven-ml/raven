@@ -484,6 +484,10 @@ let straying_factor (type e) (on : e Nx.Placement.t) later =
       let a = M.sample std and b = M.sample std in
       ({ a; b }, M.sample std))
 
+exception Boom of int
+
+let boom () = raise (Boom __LINE__)
+
 let v_tests =
   group "v"
     [
@@ -545,11 +549,23 @@ let v_tests =
               M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
                   ignore (M.sample std);
                   raise e)));
-      test "another exception propagates" (fun () ->
-          raises Not_found (fun () ->
-              M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-                  ignore (M.sample std);
-                  raise Not_found)));
+      test "another exception propagates with its backtrace" (fun () ->
+          match
+            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
+                ignore (M.sample std);
+                boom ())
+          with
+          | _ -> fail "v returned"
+          | exception Boom line ->
+              let locations =
+                Printexc.get_raw_backtrace ()
+                |> Printexc.backtrace_slots
+                |> Option.fold ~none:[] ~some:Array.to_list
+                |> List.filter_map Printexc.Slot.location
+                |> List.map (fun (l : Printexc.location) ->
+                    (Filename.basename l.filename, l.line_number))
+              in
+              mem (pair string int) ("test_model.ml", line) locations);
       test "a sample missing from the result is refused" (fun () ->
           raises_match
             (Exn.invalid_arg

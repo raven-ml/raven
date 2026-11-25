@@ -18,6 +18,11 @@ let shape_string s =
 
 (* Effects *)
 
+(* [reraise e] raises [e] again with the backtrace of its raise. A handler's
+   [exnc] runs as the exception leaves the model's fiber, where
+   [Effect.Deep.try_with]'s [raise] would start a backtrace of its own. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 type _ Effect.t +=
   | Sample : ('x, 'f, 'd) D.t -> 'x Effect.t
   | Factor : (float, 'f, 'd) Nx.t -> unit Effect.t
@@ -212,7 +217,9 @@ let v dtype latent observed gen =
          (List.rev_map (fun s -> describe s.s_family s.s_shape) !seen))
   in
   let p, y =
-    match Effect.Deep.try_with gen () { effc } with
+    match
+      Effect.Deep.match_with gen () { retc = Fun.id; exnc = reraise; effc }
+    with
     | r -> r
     | exception Invalid_argument msg -> invalid_arg (learned () ^ msg)
     | exception Failure msg -> failwith (learned () ^ msg)
@@ -372,7 +379,9 @@ let run (type d) (m : (_, _, _, d) t) context (a : d answer) ~(factor : d factor
                 Effect.Deep.continue k ())
     | _ -> None
   in
-  let p, y = Effect.Deep.try_with m.gen () { effc } in
+  let p, y =
+    Effect.Deep.match_with m.gen () { retc = Fun.id; exnc = reraise; effc }
+  in
   if !next < n then
     invalid_argf
       "%s: the model is not static: it performs %d samples, when it was built \
