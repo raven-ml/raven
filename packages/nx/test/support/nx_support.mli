@@ -142,6 +142,43 @@ val bytes : ('v, 's) Nx_array.t -> int array
     element's in memory order, read on the host. [a] must lie in memory the
     host addresses. *)
 
+(** {1:laid Laid-out values}
+
+    A value's elements read the same whatever its layout, but each layout takes
+    another path through a kernel: offsets, negative strides, strides above one
+    and broadcasts. *)
+
+(** The type for layouts of a host value of a shape. *)
+type layout =
+  | C_order  (** C-contiguous. *)
+  | At_offset  (** C-contiguous, one element into a base one longer. *)
+  | Reversed  (** Reversed along every axis: negative strides. *)
+  | Axes_reversed  (** A base of the axes reversed, transposed back. *)
+  | Every_other
+      (** The odd positions of a base of [2 d + 1] elements along the last axis,
+          of extent [d]: an offset and a stride of two. *)
+  | One_broadcast  (** One element, broadcast. *)
+
+val pp_layout : Format.formatter -> layout -> unit
+(** [pp_layout] formats a layout by its name. *)
+
+val layouts : layout Windtrap.Gen.t
+(** [layouts] draws each layout alike. *)
+
+val laid :
+  layout ->
+  ('v, 's) Nx_array.Dtype.t ->
+  int array ->
+  'v array ->
+  ('v, 's, Nx.host) Nx.t * 'v array
+(** [laid l dt s data] is the host value of shape [s] laid out as [l] whose
+    elements in C order are [data], and the elements it reads: [data], but under
+    [One_broadcast], which reads [data.(0)] everywhere. A value of no element,
+    and [Every_other] of a 0-d value, are [C_order].
+
+    Raises [Invalid_argument] if [Array.length data] is not the product of [s].
+*)
+
 (** {1:ulps Distances in floats} *)
 
 val ulps : (float, 's) Nx_array.Dtype.t -> float -> float -> float

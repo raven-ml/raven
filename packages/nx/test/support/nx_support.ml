@@ -468,6 +468,94 @@ let bytes (type v s) (a : (v, s) A.t) =
   let u = Option.get (A.bitcast D.Uint8 c) in
   A.to_array u
 
+(* Laid-out values *)
+
+type layout =
+  | C_order
+  | At_offset
+  | Reversed
+  | Axes_reversed
+  | Every_other
+  | One_broadcast
+
+let pp_layout ppf l =
+  Format.pp_print_string ppf
+    (match l with
+    | C_order -> "C order"
+    | At_offset -> "C order at an offset"
+    | Reversed -> "reversed"
+    | Axes_reversed -> "axes reversed"
+    | Every_other -> "every other"
+    | One_broadcast -> "one broadcast")
+
+let layouts =
+  Windtrap.Gen.of_list ~pp:pp_layout
+    [ C_order; At_offset; Reversed; Axes_reversed; Every_other; One_broadcast ]
+
+let position s idx =
+  let k = ref 0 in
+  Array.iteri (fun a i -> k := (!k * s.(a)) + i) idx;
+  !k
+
+(* [data] of shape [s] in C order, as an array laid out as [l]: a base array and
+   the movement that makes the view of it. *)
+let laid_array (type v s) l (dt : (v, s) D.t) s (data : v array) : (v, s) A.t =
+  let r = Array.length s and n = Array.length data in
+  let base shape d = A.of_array dt (Iarray.of_array shape) d in
+  let view m a = Option.get (A.move m a) in
+  let range start count step = { M.start; count; step } in
+  match l with
+  | _ when n = 0 -> base s data
+  | C_order -> base s data
+  | At_offset ->
+      let flat = base [| n + 1 |] (Array.append [| data.(0) |] data) in
+      view
+        (M.Reshape (Iarray.of_array s))
+        (view (M.Slice [| range 1 n 1 |]) flat)
+  | Reversed ->
+      let back d = range (d - 1) d (-1) in
+      let reversed = Array.init n (fun k -> data.(n - 1 - k)) in
+      view (M.Slice (Iarray.of_array (Array.map back s))) (base s reversed)
+  | Axes_reversed ->
+      let rev = Array.init r (fun i -> r - 1 - i) in
+      let t = Array.map (fun a -> s.(a)) rev in
+      let at k = data.(position s (Array.map (fun a -> (index t k).(a)) rev)) in
+      view (M.Permute (Iarray.of_array rev)) (base t (Array.init n at))
+  | Every_other when r = 0 -> base s data
+  | Every_other ->
+      let d = s.(r - 1) in
+      let wide = Array.copy s in
+      wide.(r - 1) <- (2 * d) + 1;
+      let at k =
+        let i = index wide k in
+        let j = i.(r - 1) in
+        if j mod 2 = 1 then begin
+          i.(r - 1) <- j / 2;
+          data.(position s i)
+        end
+        else data.(0)
+      in
+      let ranges =
+        Array.mapi (fun a e -> if a = r - 1 then range 1 d 2 else range 0 e 1) s
+      in
+      view
+        (M.Slice (Iarray.of_array ranges))
+        (base wide (Array.init (Array.fold_left ( * ) 1 wide) at))
+  | One_broadcast ->
+      view (M.Broadcast (Iarray.of_array s)) (base [||] [| data.(0) |])
+
+let laid l dt s data =
+  if Array.length data <> Array.fold_left ( * ) 1 s then
+    invalid_arg "Nx_support.laid: data and shape differ in length";
+  let a = laid_array l dt s data in
+  let reads =
+    match l with
+    | One_broadcast when Array.length data > 0 ->
+        Array.map (fun _ -> data.(0)) data
+    | _ -> data
+  in
+  (Nx.Repr.of_array Nx.Host.v a, reads)
+
 (* Distances in floats *)
 
 (* The position of a float among its format's values in increasing order: [+0]
