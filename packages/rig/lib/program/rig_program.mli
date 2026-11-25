@@ -360,7 +360,10 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     they are reached.
     {ul
     {- It first waits for the work of run [n - 2] on its copy of the ints,
-       then writes [f]'s ints.}
+       then writes [f]'s ints. It waits on the host for other work of
+       earlier runs only where the work it does on the host follows that
+       work, and where a submit waits on the host for a point
+       ({!Rig.section-submits}).}
     {- The work it does on the host, [Submit] steps on the host, moves the
        host makes, loops' flags and [Send] steps, is done when it returns. A
        move whose point is of a device outside [p]'s is done at its step,
@@ -406,7 +409,9 @@ val time : ?waits:Rig.Point.t array -> loaded -> frame -> int array
     Only the submits of the run's steps are timed, so other runs and domains
     pay nothing for it. Timing costs each device what its driver's interface
     states. On a device whose driver measures its launches' counters, a
-    timed launch is measured too.
+    timed launch is measured too. A profile taken around [time]
+    ({!Rig.Profile.take}) records each timed step's work with the time
+    [time] returns for that step.
 
     On another machine, the times are read there and come back
     ({!section-machines}).
