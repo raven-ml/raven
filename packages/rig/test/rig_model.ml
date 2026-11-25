@@ -735,12 +735,36 @@ let give_device s =
         Mutex.protect pool_lock (fun () -> pool := s :: !pool)
       end
 
+(* What a call uses, as the covers of two domains judge it ([shared]): a device,
+   by its index in the program, or a memory, by its lock's id. *)
+type use = [ `Device of int | `Memory of int ]
+
+(* A call of a program on two domains. Cells and submissions go by the ids of
+   their locks. *)
+type scall = {
+  domain : int;
+  seq : int;  (** Its place among its domain's calls. *)
+  locks : int list;  (** The model's locks it takes. *)
+  reaches : (int * use list) list;
+      (** What it uses through each cell or submission it names, as the prefix
+          left them. *)
+  changes : int list;  (** The cells and submissions it may change. *)
+  mutable notes : use list;  (** What it uses otherwise. *)
+}
+
+(* Each submit passes its own values, a fill's arguments included. *)
+type work = Copy | Fill | Launch
+
 type sworld = {
   mutable sdevs : (Rig.t * int) list;
   mutable next : int;
   mems : int Atomic.t;
   mutable scells : scell list;  (** In the order they were made. *)
+  mutable ssubs : sscell list;
   mutable gpus : (kind * sdev) list;  (** One device per GPU in a program. *)
+  parallel : bool;  (** Calls may run on two domains at once. *)
+  home_domain : int;  (** The domain that runs the prefix and the suffix. *)
+  calls : scall list Atomic.t;  (** On two domains, the program's calls. *)
 }
 
 (* A memory as the caller sees it: the lock it takes around host accesses. *)
@@ -758,12 +782,23 @@ and sbuf = { b : B.t; m : smem }
 
 (* A cell's lock: a call holds the locks of the cells it names, so that the
    program's own variables change as some order of the calls says. *)
-and scell = { cell : sbuf option Atomic.t; sw : sworld; cl : smem }
+and scell = {
+  cell : sbuf option Atomic.t;
+  sw : sworld;
+  cl : smem;
+  mutable left : (int * int) option;
+      (** Its buffer's memory and device as the home domain's calls left them:
+          on two domains, as the prefix left them while the branches run. *)
+}
 
-(* Each submit passes its own values, a fill's arguments included. *)
-type work = Copy | Fill | Launch
-type ssub = { s : Sub.t; sd : Rig.t; work : work; slotted : bool }
-type sscell = { ss : ssub option Atomic.t; ssw : sworld; scl : smem }
+and ssub = { s : Sub.t; sd : Rig.t; work : work; slotted : bool }
+
+and sscell = {
+  ss : ssub option Atomic.t;
+  ssw : sworld;
+  scl : smem;
+  mutable sleft : int option;  (** Its submission's device, as [left]. *)
+}
 
 type skcell = {
   ksw : sworld;
@@ -794,6 +829,76 @@ let new_smem ?(driver = false) ?file w =
     claims = Atomic.make 0;
     file;
   }
+
+(* The call each domain runs on two domains, while [recording] runs it. *)
+let current : scall option ref Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> ref None)
+
+(* Records a call of the calling domain, after those it recorded before. *)
+let rec push w ~locks ~reaches ~changes ~notes =
+  let domain = (Domain.self () :> int) in
+  let l = Atomic.get w.calls in
+  let seq = List.length (List.filter (fun c -> c.domain = domain) l) in
+  let c = { domain; seq; locks; reaches; changes; notes } in
+  if Atomic.compare_and_set w.calls l (c :: l) then c
+  else push w ~locks ~reaches ~changes ~notes
+
+(* Runs [f] as a call that takes [locks], reaches [reaches] and may change
+   [changes], recorded on two domains. *)
+let recording w ~locks ~reaches ~changes f =
+  if not w.parallel then f ()
+  else begin
+    let c = push w ~locks ~reaches ~changes ~notes:[] in
+    let cur = Domain.DLS.get current in
+    cur := Some c;
+    Fun.protect ~finally:(fun () -> cur := None) f
+  end
+
+(* Records that the calling domain's call uses [u]. Outside [recording] the call
+   is one of its own, which holds no lock. *)
+let note w u =
+  if w.parallel then
+    match !(Domain.DLS.get current) with
+    | Some c -> c.notes <- u :: c.notes
+    | None ->
+        ignore (push w ~locks:[] ~reaches:[] ~changes:[] ~notes:[ u ] : scall)
+
+let on_device ((s : sdev), w) = note w (`Device (index w s.d))
+
+(* Whether the calling domain runs a branch of a program on two domains, where
+   the other branch's calls may run beside its own: the home domain runs the
+   prefix and the suffix alone. *)
+let in_branch w = w.parallel && (Domain.self () :> int) <> w.home_domain
+
+(* Records, after each call on the home domain, what each cell and submission
+   holds. On two domains the prefix runs there before the branches, so while
+   they run the records say what the prefix left, whatever the schedule. *)
+let leave w =
+  if w.parallel && not (in_branch w) then begin
+    List.iter
+      (fun c ->
+        c.left <-
+          Option.map
+            (fun sb -> (sb.m.sid, index w (B.device sb.b)))
+            (Atomic.get c.cell))
+      w.scells;
+    List.iter
+      (fun c -> c.sleft <- Option.map (fun s -> index w s.sd) (Atomic.get c.ss))
+      w.ssubs
+  end
+
+(* What a call uses through a cell or a submission as the prefix left it
+   ([leave]), by its lock's id: a buffer's memory and device, a file's memory, a
+   submission's device. *)
+let buffer_of c =
+  ( c.cl.sid,
+    match c.left with Some (m, d) -> [ `Memory m; `Device d ] | None -> [] )
+
+let file_of c =
+  (c.cl.sid, match c.left with Some (m, _) -> [ `Memory m ] | None -> [])
+
+let work_of c =
+  (c.scl.sid, match c.sleft with Some d -> [ `Device d ] | None -> [])
 
 let get c = match Atomic.get c.cell with Some sb -> sb | None -> raise Empty
 
@@ -990,7 +1095,64 @@ let budgets ~two =
 
 (* Values *)
 
-let world = abstract "w"
+(* The cases two domains need, judged as a program ends: calls of the two
+   branches that hold no lock of the model in common, so that they may run at
+   once, and use one memory, or one device that runs work, which the host and
+   the disk do not. A pair counts only where neither branch changes, before its
+   call, a cell or submission the two reach: in the schedule that runs both
+   calls at once, they reach those as the prefix left them ([leave]). The
+   program decides each case, whatever the schedule. *)
+let shared w =
+  if w.parallel then begin
+    let branches =
+      List.filter (fun c -> c.domain <> w.home_domain) (Atomic.get w.calls)
+    in
+    (* Each branch's first call that changes each cell or submission. *)
+    let first = Hashtbl.create 16 in
+    List.iter
+      (fun c ->
+        List.iter
+          (fun x ->
+            match Hashtbl.find_opt first (c.domain, x) with
+            | Some s when s <= c.seq -> ()
+            | _ -> Hashtbl.replace first (c.domain, x) c.seq)
+          c.changes)
+      branches;
+    let unchanged c x =
+      match Hashtbl.find_opt first (c.domain, x) with
+      | Some s -> s >= c.seq
+      | None -> true
+    in
+    let fresh c c' =
+      List.for_all (fun (x, _) -> unchanged c x && unchanged c' x) c.reaches
+    in
+    let uses c = c.notes @ List.concat_map snd c.reaches in
+    let pairs =
+      List.concat_map
+        (fun c ->
+          List.filter_map
+            (fun c' ->
+              if c.domain <> c'.domain && fresh c c' && fresh c' c then
+                Some ((c, uses c), (c', uses c'))
+              else None)
+            branches)
+        branches
+    in
+    let apart c c' = not (List.exists (fun l -> List.mem l c'.locks) c.locks) in
+    let share p ((c, us), (c', us')) =
+      apart c c' && List.exists (fun u -> p u && List.mem u us') us
+    in
+    cover "calls on two domains with no lock in common use one device"
+      (List.exists
+         (share (function `Device i -> i >= 2 | `Memory _ -> false))
+         pairs);
+    cover "calls on two domains with no lock in common use one memory"
+      (List.exists
+         (share (function `Memory _ -> true | `Device _ -> false))
+         pairs)
+  end
+
+let world = abstract ~release:shared "w"
 
 type rdevv = { dw : rworld; r : rdev }
 
@@ -1001,6 +1163,14 @@ let device =
     "d"
 
 let cell = abstract ~release:(fun c -> Atomic.set c.cell None) "b"
+
+let pairs =
+  abstract
+    ~release:(fun (a, b) ->
+      Atomic.set a.cell None;
+      Atomic.set b.cell None)
+    "p"
+
 let subs = abstract ~release:(fun c -> Atomic.set c.ss None) "s"
 
 (* A kept value is collected at most once, and only once neither its cell nor
@@ -1058,9 +1228,19 @@ let start_ref two forks () =
   List.iter (fun label -> seen w label false) demands;
   w
 
-let start_sys () =
+let start_sys parallel () =
   let w =
-    { sdevs = []; next = 2; mems = Atomic.make 0; scells = []; gpus = [] }
+    {
+      sdevs = [];
+      next = 2;
+      mems = Atomic.make 0;
+      scells = [];
+      ssubs = [];
+      gpus = [];
+      parallel;
+      home_domain = (Domain.self () :> int);
+      calls = Atomic.make [];
+    }
   in
   w.sdevs <- [ (Rig.host, 0); (Rig_disk.device, 1) ];
   w
@@ -1107,17 +1287,64 @@ let new_cell_sys n seed w =
       cell = Atomic.make (Some { b = host_pattern seed n; m = new_smem w });
       sw = w;
       cl = new_smem w;
+      left = None;
     }
   in
   w.scells <- w.scells @ [ c ];
+  leave w;
   c
+
+(* A cell that starts as a view of the whole of [src]'s buffer, or empty where
+   [src] holds nothing or a dead buffer. Two calls through the two cells reach
+   one memory, each under its own cell's lock. The view is a buffer of its own,
+   and the model tells buffers apart by identity. *)
+let new_view_ref src =
+  let w = src.w in
+  let rb =
+    match src.rb with
+    | Some b when not (dead b) -> Some { b with first = b.first }
+    | _ -> None
+  in
+  let c = { w; rb } in
+  w.cells <- w.cells @ [ c ];
+  c
+
+let new_view_sys src =
+  let w = src.sw in
+  let view sb =
+    match B.view sb.b ~first:0 ~length:(B.length sb.b) with
+    | b -> Some { sb with b }
+    | exception Invalid_argument _ -> None
+  in
+  let cell = Option.bind (Atomic.get src.cell) view in
+  let c = { cell = Atomic.make cell; sw = w; cl = new_smem w; left = None } in
+  w.scells <- w.scells @ [ c ];
+  leave w;
+  c
+
+(* Two cells of views of the whole of [src]'s buffer, which only calls that
+   leave them as they are name: two domains' calls on the two reach one memory
+   at once, each under its own cell's lock. *)
+let new_pair_ref src =
+  let a = new_view_ref src in
+  let b = new_view_ref src in
+  (a, b)
+
+let new_pair_sys src =
+  let a = new_view_sys src in
+  let b = new_view_sys src in
+  (a, b)
 
 let new_sub_ref w =
   let c = { subw = w; sub = None } in
   w.subs <- c :: w.subs;
   c
 
-let new_sub_sys w = { ss = Atomic.make None; ssw = w; scl = new_smem w }
+let new_sub_sys w =
+  let c = { ss = Atomic.make None; ssw = w; scl = new_smem w; sleft = None } in
+  w.ssubs <- c :: w.ssubs;
+  c
+
 let new_kept_ref w = { kw = w; k = None; dropped = false }
 
 let new_kept_sys w =
@@ -1187,6 +1414,7 @@ let create_ref (v : rdevv) memory n c outcome =
       c.rb <- Some (whole m local d))
 
 let create_sys ((s : sdev), w) memory n c =
+  on_device (s, w);
   guard w @@ fun () ->
   let b = B.create ~memory s.d n in
   let driver = match s.skind with Host | Disk -> false | _ -> true in
@@ -1297,6 +1525,7 @@ let borrow_ref (v : rdevv) src dst outcome =
               dst.rb <- Some (borrowed d b))
 
 let borrow_sys ((s : sdev), w) src dst =
+  on_device (s, w);
   guard w @@ fun () ->
   let sb = get src in
   match B.borrow s.d sb.b with
@@ -1574,6 +1803,8 @@ let transfer_ref (v : rdevv) (v' : rdevv) n seed outcome =
           (kind_name v'.r.kind))
 
 let transfer_sys ((s : sdev), w) ((s' : sdev), _) n seed =
+  on_device (s, w);
+  on_device (s', w);
   guard w @@ fun () ->
   let make (d : sdev) =
     if d.skind = Disk then
@@ -1656,6 +1887,7 @@ let named (s : sdev) part = function
   | Fill | Launch -> [| part |]
 
 let make_sys ?keep ?at ((s : sdev), w) pair sc =
+  on_device (s, w);
   guard w @@ fun () ->
   let keep =
     Option.map
@@ -1723,6 +1955,7 @@ let make_own_ref (v : rdevv) n sc outcome =
       sc.sub <- Some { dev = d; copy = Some (a, b); held = None })
 
 let make_own_sys ((s : sdev), w) n sc =
+  on_device (s, w);
   guard w @@ fun () ->
   let src = B.create s.d n and dst = B.create s.d n in
   let part =
@@ -1755,6 +1988,7 @@ let launch_params = 24
 
 let make_launch_sys ((s : sdev), w) sc =
   if Option.is_none s.p then raise Skipped;
+  on_device (s, w);
   guard w @@ fun () ->
   let image =
     match Rig.Image.load s.d "functions" with
@@ -1940,19 +2174,34 @@ let rec release_sys c =
 let free_to_take b =
   spans b && b.mem.readers = 0 && b.mem.holds = 0 && not (never_taken b.mem)
 
-(* The verdict of a take of [bs], which takes every memory where [takes]:
-   [Invalid_argument] for a dead buffer, and where it takes, the losses of a
-   use that writes the memory. A held memory refuses the take before any
-   loss, so where a hold the model does not see may remain ([dropped]), and
-   on two domains, whose other claims are not the model's, the take may
-   report those losses either way. *)
-let take_verdict w bs ~dropped takes =
+(* Whether, on two domains, a call of the other branch may hold a claim on the
+   memory of one of [bs] while a take of [bs] in a branch, which names the cells
+   [cs], runs: a cell besides [cs] holds a buffer over that memory, dead or not,
+   since a call claims the memory before it finds its buffer dead. The reference
+   does not know which branch names a cell, so any such cell counts. *)
+let contended w cs bs =
+  let over b c =
+    (not (List.memq c cs))
+    && match c.rb with Some b' -> b'.mem == b.mem | None -> false
+  in
+  w.two && List.exists (fun b -> List.exists (over b) w.cells) bs
+
+(* The verdict of a take of [bs], which names the cells [cs] and takes every
+   memory where [takes]: [Invalid_argument] for a dead buffer, and where it
+   takes, the losses of a use that writes the memory. A claim or a hold refuses
+   the take before any loss, so the take may report those losses either way
+   where a hold the model does not see may remain ([dropped]), where another
+   domain's call may hold a claim ([contended]), and on two domains where the
+   model expects no take. A contended take that ran outside the branches is held
+   to the losses by [check_take]. *)
+let take_verdict w cs bs ~dropped takes =
   let vd = verdict () in
   invalid_if vd (List.exists dead bs);
+  let strict = takes && (not dropped) && not (contended w cs bs) in
   List.iter
     (fun b ->
       let devs = [ b.on; b.mem.owner ] in
-      if takes && not dropped then owned vd b
+      if strict then owned vd b
       else if takes || w.two then uses ~maybe:true vd devs;
       if takes || w.two then waits_all vd b.mem)
     bs;
@@ -1961,16 +2210,32 @@ let take_verdict w bs ~dropped takes =
 (* Whether a take of [b] uses a device the model knows lost. *)
 let lost_use b = List.exists (fun r -> r.state = Lost) [ b.on; b.mem.owner ]
 
-(* A take that the model expects and the system refuses is a fault on one
-   domain; on two, another domain's call may hold a claim its whole length,
-   which no order of whole calls shows. A take that a lost device's use
-   reaches raises, whatever holds remain. *)
-let check_take w ~label ~expected ~dropped ~lost got =
-  seen w label got;
-  if got && not expected then fail "a take against its claims";
-  if got && lost then fail "a take of memory a lost device uses";
-  if expected && (not got) && (not w.two) && not dropped then
-    fail "a take refused with no claim"
+(* A take's answer, and whether it ran in a branch of a program on two domains
+   ([in_branch]), beside the other branch's calls. *)
+type took = { got : bool; beside : bool }
+
+let took =
+  let pp ppf t =
+    Format.fprintf ppf "%b%s" t.got (if t.beside then " in a branch" else "")
+  in
+  Testable.make ~pp ~equal:( = )
+
+(* A take that the model expects and the system refuses is a fault, unless it
+   ran in a branch while another domain's call may hold a claim its whole length
+   ([contended]), which no order of whole calls shows. The prefix and the suffix
+   run alone on the test's domain: there a refusal is a fault, and where a lost
+   device's use reaches the memory, a refusal hides the loss the take must
+   raise. A take that a lost device's use reaches raises, whatever holds
+   remain. *)
+let check_take w cs bs ~label ~expected ~dropped ~lost t =
+  seen w label t.got;
+  if t.got && not expected then fail "a take against its claims";
+  if t.got && lost then fail "a take of memory a lost device uses";
+  let raced = t.beside && contended w cs bs in
+  if expected && (not t.got) && (not raced) && not dropped then
+    fail
+      (if lost then "a take refused where a lost device's use requires its loss"
+       else "a take refused with no claim")
 
 (* Puts in [c] the live buffer a take of [b] gave. *)
 let taken_into c b =
@@ -1982,46 +2247,49 @@ let take_two_ref r d outcome =
   with_buf d outcome @@ fun b ->
   let expected = a.mem != b.mem && free_to_take a && free_to_take b in
   let dropped = a.mem.dropped || b.mem.dropped in
-  let vd = take_verdict r.w [ a; b ] ~dropped expected in
-  judge r.w vd outcome (fun got ->
-      check_take r.w ~label:"two memories taken" ~expected ~dropped
+  let vd = take_verdict r.w [ r; d ] [ a; b ] ~dropped expected in
+  judge r.w vd outcome (fun t ->
+      check_take r.w [ r; d ] [ a; b ] ~label:"two memories taken" ~expected
+        ~dropped
         ~lost:(lost_use a || lost_use b)
-        got;
-      if got then begin
+        t;
+      if t.got then begin
         taken_into r a;
         taken_into d b
       end)
 
 let take_two_sys r d =
+  let beside = in_branch r.sw in
   guard r.sw @@ fun () ->
   let sa = get r and sb = get d in
   match B.take ~why:"taken" [ sa.b; sb.b ] with
   | Some [ a; b ] ->
       Atomic.set r.cell (Some { sa with b = a });
       Atomic.set d.cell (Some { sb with b });
-      true
+      { got = true; beside }
   | Some bs -> failf "a take of two buffers gave %d" (List.length bs)
-  | None -> false
+  | None -> { got = false; beside }
 
 let take_ref src dst outcome =
   with_buf src outcome @@ fun b ->
   let expected = free_to_take b in
   let dropped = b.mem.dropped in
-  let vd = take_verdict src.w [ b ] ~dropped expected in
-  judge src.w vd outcome (fun got ->
-      check_take src.w ~label:"a memory taken" ~expected ~dropped
-        ~lost:(lost_use b) got;
-      if got then taken_into dst b)
+  let vd = take_verdict src.w [ src; dst ] [ b ] ~dropped expected in
+  judge src.w vd outcome (fun t ->
+      check_take src.w [ src; dst ] [ b ] ~label:"a memory taken" ~expected
+        ~dropped ~lost:(lost_use b) t;
+      if t.got then taken_into dst b)
 
 let take_sys src dst =
   let sb = get src in
+  let beside = in_branch src.sw in
   guard src.sw @@ fun () ->
   match B.take ~why:"taken" [ sb.b ] with
   | Some [ b ] ->
       Atomic.set dst.cell (Some { sb with b });
-      true
+      { got = true; beside }
   | Some bs -> failf "a take of one buffer gave %d" (List.length bs)
-  | None -> false
+  | None -> { got = false; beside }
 
 (* Waits *)
 
@@ -2041,6 +2309,7 @@ let wait_device_ref (v : rdevv) outcome =
   judge v.dw vd outcome Fun.id
 
 let wait_device_sys ((s : sdev), w) =
+  on_device (s, w);
   guard w @@ fun () -> drain s.d
 
 (* A lost device's facts answer: its last value assigned, its word's, and
@@ -2063,6 +2332,7 @@ let facts_ref (v : rdevv) outcome =
 
 (* The word first: it never passes the value assigned before. *)
 let facts_sys ((s : sdev), w) =
+  on_device (s, w);
   guard w @@ fun () ->
   let signaled = Rig.signaled s.d in
   let submitted = Rig.submitted s.d in
@@ -2089,8 +2359,12 @@ let budget_ref n (v : rdevv) outcome =
         returned v.r
       end)
 
-let budget_sys n ((s : sdev), _) =
-  match s.p with Some _ -> Rig.set_budget s.d n | None -> ()
+let budget_sys n ((s : sdev), w) =
+  match s.p with
+  | Some _ ->
+      on_device (s, w);
+      Rig.set_budget s.d n
+  | None -> ()
 
 let free_cache_ref (v : rdevv) outcome =
   let vd = verdict () in
@@ -2098,7 +2372,9 @@ let free_cache_ref (v : rdevv) outcome =
   returned v.r;
   judge v.dw vd outcome Fun.id
 
-let free_cache_sys ((s : sdev), w) = guard w @@ fun () -> Rig.free_cache s.d
+let free_cache_sys ((s : sdev), w) =
+  on_device (s, w);
+  guard w @@ fun () -> Rig.free_cache s.d
 
 (* A barrier of the file whose memory the cell holds: a view or a borrow of a
    file's buffer reaches its file. The barrier takes the file and reads its
@@ -2304,7 +2580,7 @@ let fork_sys w =
    drops them. *)
 let exercise ~fork =
   let step f = try f () with Empty | Skipped | Invalid_argument _ -> () in
-  let w = start_sys () in
+  let w = start_sys false () in
   let kinds =
     [ Host; Memory; Disk ]
     @ List.filter_map
@@ -2434,16 +2710,43 @@ let one_world_sys ws =
   | _ -> ()
 
 (* Runs [f] holding the locks of the cells [ls] names, after checking their
-   worlds. *)
-let cells ?(ws = []) ls f =
+   worlds [ws]. On two domains it is a call the covers judge ([shared]): it uses
+   [reaches], may change the cells and submissions whose locks [changes] lists,
+   and with [memories] takes the locks of the memories it reaches. *)
+let cells ~ws ?(reaches = []) ?(changes = []) ?(memories = false) ls f =
   one_world_sys ws;
-  locked ls f
+  let w = List.hd ws in
+  let memory = function `Memory m -> Some m | `Device _ -> None in
+  let memories =
+    if memories then
+      List.concat_map (fun (_, us) -> List.filter_map memory us) reaches
+    else []
+  in
+  let locks = List.map (fun m -> m.sid) ls @ memories in
+  let changes = List.map (fun m -> m.sid) changes in
+  Fun.protect ~finally:(fun () -> leave w) @@ fun () ->
+  recording w ~locks ~reaches ~changes (fun () -> locked ls f)
 
 let commands ~two ~fork =
   let dw (v : rdevv) = v.dw in
-  let one c f = cells [ c.cl ] f in
+  (* The locks of the cells [cs], when a call empties them ([last]). *)
+  let emptied last cs = if last then List.map (fun c -> c.cl) cs else [] in
+  (* A call on [c]'s buffer. *)
+  let one ?memories ?(last = false) c f =
+    cells ~ws:[ c.sw ]
+      ~reaches:[ buffer_of c ]
+      ?memories ~changes:(emptied last [ c ]) [ c.cl ] f
+  in
+  (* A copy from [a]'s buffer into [b]'s. *)
+  let copies last a b f =
+    cells ~ws:[ a.sw; b.sw ]
+      ~reaches:[ buffer_of a; buffer_of b ]
+      ~memories:true ~changes:(emptied last [ a ]) [ a.cl; b.cl ] f
+  in
   let start =
-    command "start" (Gen.unit @-> makes world) (start_ref two fork) start_sys
+    command "start"
+      (Gen.unit @-> makes world)
+      (start_ref two fork) (start_sys two)
   in
   let open_ =
     command "open" (kinds ~two @-> world ^-> makes device) open_ref open_sys
@@ -2452,6 +2755,12 @@ let commands ~two ~fork =
     command "cell"
       (size @-> seed @-> world ^-> makes cell)
       new_cell_ref new_cell_sys
+  in
+  let new_view =
+    command "cell of a view" (cell ^-> makes cell) new_view_ref new_view_sys
+  in
+  let new_pair =
+    command "pair of views" (cell ^-> makes pairs) new_pair_ref new_pair_sys
   in
   let new_sub =
     command "submission" (world ^-> makes subs) new_sub_ref new_sub_sys
@@ -2465,14 +2774,17 @@ let commands ~two ~fork =
       (fun v m n c o ->
         one_world [ dw v; c.w ] o (fun () -> create_ref v m n c o))
       (fun v m n c ->
-        cells ~ws:[ snd v; c.sw ] [ c.cl ] (fun () -> create_sys v m n c))
+        cells
+          ~ws:[ snd v; c.sw ]
+          ~changes:[ c.cl ] [ c.cl ]
+          (fun () -> create_sys v m n c))
   in
   let create_host =
     command "create on host"
       (size @-> cell ^-> judges unit)
       (fun n c o -> create_ref { dw = c.w; r = host c.w } B.Device n c o)
       (fun n c ->
-        one c (fun () ->
+        cells ~ws:[ c.sw ] ~changes:[ c.cl ] [ c.cl ] (fun () ->
             create_sys
               ({ d = Rig.host; skind = Host; p = None; spoiled = false }, c.sw)
               B.Device n c))
@@ -2483,7 +2795,10 @@ let commands ~two ~fork =
       (fun v n k c o ->
         one_world [ dw v; c.w ] o (fun () -> array_ref v n k c o))
       (fun v n k c ->
-        cells ~ws:[ snd v; c.sw ] [ c.cl ] (fun () -> array_sys v n k c))
+        cells
+          ~ws:[ snd v; c.sw ]
+          ~changes:[ c.cl ] [ c.cl ]
+          (fun () -> array_sys v n k c))
   in
   let file =
     command "file"
@@ -2491,68 +2806,69 @@ let commands ~two ~fork =
       (fun v n k wr c o ->
         one_world [ dw v; c.w ] o (fun () -> file_ref v n k wr c o))
       (fun v n k wr c ->
-        cells ~ws:[ snd v; c.sw ] [ c.cl ] (fun () -> file_sys v n k wr c))
+        cells
+          ~ws:[ snd v; c.sw ]
+          ~changes:[ c.cl ] [ c.cl ]
+          (fun () -> file_sys v n k wr c))
+  in
+  let borrow_r v a b o =
+    one_world [ dw v; a.w; b.w ] o (fun () -> borrow_ref v a b o)
+  in
+  let borrow_s v a b =
+    cells
+      ~ws:[ snd v; a.sw; b.sw ]
+      ~reaches:[ buffer_of a ]
+      ~changes:[ b.cl ] [ a.cl; b.cl ]
+      (fun () -> borrow_sys v a b)
   in
   let borrow =
     command "borrow"
       (device ^-> cell ^-> cell ^-> judges bool)
-      (fun v a b o ->
-        one_world [ dw v; a.w; b.w ] o (fun () -> borrow_ref v a b o))
-      (fun v a b ->
-        cells
-          ~ws:[ snd v; a.sw; b.sw ]
-          [ a.cl; b.cl ]
-          (fun () -> borrow_sys v a b))
+      borrow_r borrow_s
   in
   let view =
     command "view"
       (eighth @-> eighth @-> cell ^-> cell ^-> judges unit)
       (fun x y a b o -> one_world [ a.w; b.w ] o (fun () -> view_ref x y a b o))
       (fun x y a b ->
-        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () -> view_sys x y a b))
+        cells ~ws:[ a.sw; b.sw ]
+          ~reaches:[ buffer_of a ]
+          ~changes:[ b.cl ] [ a.cl; b.cl ]
+          (fun () -> view_sys x y a b))
   in
+  let fill_s k l c = one ~memories:true ~last:l c (fun () -> fill_sys k l c) in
   let fill =
-    command "fill"
-      (seed @-> last @-> cell ^-> judges unit)
-      fill_ref
-      (fun k l c -> one c (fun () -> fill_sys k l c))
+    command "fill" (seed @-> last @-> cell ^-> judges unit) fill_ref fill_s
   in
-  let read =
-    command "read"
-      (last @-> cell ^-> judges octets)
-      read_ref
-      (fun l c -> one c (fun () -> read_sys l c))
-  in
+  let read_s l c = one ~memories:true ~last:l c (fun () -> read_sys l c) in
+  let read = command "read" (last @-> cell ^-> judges octets) read_ref read_s in
   let copy =
     command "copy"
       (last @-> cell ^-> cell ^-> judges unit)
       (fun l a b o -> one_world [ a.w; b.w ] o (fun () -> copy_ref l a b o))
-      (fun l a b ->
-        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () -> copy_sys l a b))
+      (fun l a b -> copies l a b (fun () -> copy_sys l a b))
   in
   let copy_prefix =
     command "copy prefix"
       (last @-> cell ^-> cell ^-> judges unit)
       (fun l a b o ->
         one_world [ a.w; b.w ] o (fun () -> copy_prefix_ref l a b o))
-      (fun l a b ->
-        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () ->
-            copy_prefix_sys l a b))
+      (fun l a b -> copies l a b (fun () -> copy_prefix_sys l a b))
   in
   let queued_copy =
     command "queued copy"
       (last @-> cell ^-> cell ^-> judges unit)
       (fun l a b o ->
         one_world [ a.w; b.w ] o (fun () -> queued_copy_ref l a b o))
-      (fun l a b ->
-        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () ->
-            queued_copy_sys l a b))
+      (fun l a b -> copies l a b (fun () -> queued_copy_sys l a b))
+  in
+  let queued_fill_s k l c =
+    one ~memories:true ~last:l c (fun () -> queued_fill_sys k l c)
   in
   let queued_fill =
     command "queued fill"
       (seed @-> last @-> cell ^-> judges unit)
-      queued_fill_ref
-      (fun k l c -> one c (fun () -> queued_fill_sys k l c))
+      queued_fill_ref queued_fill_s
   in
   let transfer =
     command "transfer"
@@ -2571,7 +2887,10 @@ let commands ~two ~fork =
         with_buf a o @@ fun x ->
         with_buf b o @@ fun y -> make_ref v (Some (within at x y)) sc o)
       (fun v at a b sc ->
-        cells ~ws:[ snd v; a.sw; b.sw; sc.ssw ] [ a.cl; b.cl; sc.scl ]
+        cells
+          ~ws:[ snd v; a.sw; b.sw; sc.ssw ]
+          ~reaches:[ buffer_of a; buffer_of b ]
+          ~changes:[ sc.scl ] [ a.cl; b.cl; sc.scl ]
         @@ fun () -> make_sys ~at v (Some (a, b)) sc)
   in
   let make_own =
@@ -2580,7 +2899,10 @@ let commands ~two ~fork =
       (fun v n sc o ->
         one_world [ dw v; sc.subw ] o (fun () -> make_own_ref v n sc o))
       (fun v n sc ->
-        cells ~ws:[ snd v; sc.ssw ] [ sc.scl ] (fun () -> make_own_sys v n sc))
+        cells
+          ~ws:[ snd v; sc.ssw ]
+          ~changes:[ sc.scl ] [ sc.scl ]
+          (fun () -> make_own_sys v n sc))
   in
   let make_fill =
     command "make fill"
@@ -2588,7 +2910,10 @@ let commands ~two ~fork =
       (fun v sc o ->
         one_world [ dw v; sc.subw ] o (fun () -> make_ref v None sc o))
       (fun v sc ->
-        cells ~ws:[ snd v; sc.ssw ] [ sc.scl ] (fun () -> make_sys v None sc))
+        cells
+          ~ws:[ snd v; sc.ssw ]
+          ~changes:[ sc.scl ] [ sc.scl ]
+          (fun () -> make_sys v None sc))
   in
   let make_launch =
     command "make launch"
@@ -2596,7 +2921,10 @@ let commands ~two ~fork =
       (fun v sc o ->
         one_world [ dw v; sc.subw ] o (fun () -> make_launch_ref v sc o))
       (fun v sc ->
-        cells ~ws:[ snd v; sc.ssw ] [ sc.scl ] (fun () -> make_launch_sys v sc))
+        cells
+          ~ws:[ snd v; sc.ssw ]
+          ~changes:[ sc.scl ] [ sc.scl ]
+          (fun () -> make_launch_sys v sc))
   in
   let make_held =
     command "make held copy"
@@ -2612,6 +2940,8 @@ let commands ~two ~fork =
       (fun v a b k sc ->
         cells
           ~ws:[ snd v; a.sw; b.sw; k.ksw; sc.ssw ]
+          ~reaches:[ buffer_of a; buffer_of b ]
+          ~changes:[ sc.scl ]
           [ a.cl; b.cl; k.kcl; sc.scl ]
         @@ fun () -> make_sys ~keep:k v (Some (a, b)) sc)
   in
@@ -2621,8 +2951,11 @@ let commands ~two ~fork =
       (fun l a b sc o ->
         one_world [ a.w; b.w; sc.subw ] o (fun () -> submit_ref l a b sc o))
       (fun l a b sc ->
-        cells ~ws:[ a.sw; b.sw; sc.ssw ] [ a.cl; b.cl; sc.scl ] (fun () ->
-            submit_sys l a b sc))
+        cells ~ws:[ a.sw; b.sw; sc.ssw ]
+          ~reaches:[ buffer_of a; buffer_of b; work_of sc ]
+          ~changes:(emptied l [ a; b ])
+          [ a.cl; b.cl; sc.scl ]
+          (fun () -> submit_sys l a b sc))
   in
   let keep =
     command "keep"
@@ -2630,37 +2963,69 @@ let commands ~two ~fork =
       (fun k o -> keep_ref k o)
       (fun k -> cells ~ws:[ k.ksw ] [ k.kcl ] (fun () -> keep_sys k))
   in
-  let claim =
-    command "claim"
-      (cell ^-> judges unit)
-      claim_ref
-      (fun c -> one c (fun () -> claim_sys c))
-  in
+  let claim_s c = one c (fun () -> claim_sys c) in
+  let claim = command "claim" (cell ^-> judges unit) claim_ref claim_s in
+  let release_s c = one c (fun () -> release_sys c) in
   let release =
-    command "release"
-      (cell ^-> judges unit)
-      release_ref
-      (fun c -> one c (fun () -> release_sys c))
+    command "release" (cell ^-> judges unit) release_ref release_s
   in
   let take_two =
     command "take two"
-      (cell ^-> cell ^-> judges bool)
+      (cell ^-> cell ^-> judges took)
       (fun a b o -> one_world [ a.w; b.w ] o (fun () -> take_two_ref a b o))
       (fun a b ->
-        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () -> take_two_sys a b))
+        cells ~ws:[ a.sw; b.sw ]
+          ~reaches:[ buffer_of a; buffer_of b ]
+          ~changes:[ a.cl; b.cl ] [ a.cl; b.cl ]
+          (fun () -> take_two_sys a b))
   in
   let take =
     command "take"
-      (cell ^-> cell ^-> judges bool)
+      (cell ^-> cell ^-> judges took)
       (fun a b o -> one_world [ a.w; b.w ] o (fun () -> take_ref a b o))
       (fun a b ->
-        cells ~ws:[ a.sw; b.sw ] [ a.cl; b.cl ] (fun () -> take_sys a b))
+        cells ~ws:[ a.sw; b.sw ]
+          ~reaches:[ buffer_of a ]
+          ~changes:[ b.cl ] [ a.cl; b.cl ]
+          (fun () -> take_sys a b))
   in
-  let wait =
-    command "wait"
-      (access @-> cell ^-> judges unit)
-      wait_ref
-      (fun x c -> one c (fun () -> wait_sys x c))
+  let wait_s x c = one c (fun () -> wait_sys x c) in
+  let wait = command "wait" (access @-> cell ^-> judges unit) wait_ref wait_s in
+  (* On two domains, calls on one side of a pair, which none replaces: a use of
+     a side is never its last. *)
+  let side = Gen.int_range 0 1 in
+  let on s (a, b) = if s = 0 then a else b in
+  let sided =
+    [
+      command "fill a side"
+        (seed @-> side @-> pairs ^-> judges unit)
+        (fun k s p -> fill_ref k false (on s p))
+        (fun k s p -> fill_s k false (on s p));
+      command "read a side"
+        (side @-> pairs ^-> judges octets)
+        (fun s p -> read_ref false (on s p))
+        (fun s p -> read_s false (on s p));
+      command "queued fill of a side"
+        (seed @-> side @-> pairs ^-> judges unit)
+        (fun k s p -> queued_fill_ref k false (on s p))
+        (fun k s p -> queued_fill_s k false (on s p));
+      command "claim a side"
+        (side @-> pairs ^-> judges unit)
+        (fun s p -> claim_ref (on s p))
+        (fun s p -> claim_s (on s p));
+      command "release a side"
+        (side @-> pairs ^-> judges unit)
+        (fun s p -> release_ref (on s p))
+        (fun s p -> release_s (on s p));
+      command "wait on a side"
+        (access @-> side @-> pairs ^-> judges unit)
+        (fun x s p -> wait_ref x (on s p))
+        (fun x s p -> wait_s x (on s p));
+      command "borrow a side"
+        (device ^-> side @-> pairs ^-> cell ^-> judges bool)
+        (fun v s p -> borrow_r v (on s p))
+        (fun v s p -> borrow_s v (on s p));
+    ]
   in
   let wait_device =
     command "wait device"
@@ -2701,13 +3066,19 @@ let commands ~two ~fork =
     command "barrier"
       (last @-> cell ^-> judges unit)
       barrier_ref
-      (fun l c -> one c (fun () -> barrier_sys l c))
+      (fun l c ->
+        cells ~ws:[ c.sw ]
+          ~reaches:[ file_of c ]
+          ~changes:(emptied l [ c ]) [ c.cl ]
+          (fun () -> barrier_sys l c))
   in
   let drop =
     command "drop"
       (cell ^-> returns unit)
       (fun c -> c.rb <- None)
-      (fun c -> one c (fun () -> Atomic.set c.cell None))
+      (fun c ->
+        cells ~ws:[ c.sw ] ~changes:[ c.cl ] [ c.cl ] (fun () ->
+            Atomic.set c.cell None))
   in
   let drop_sub =
     command "drop submission"
@@ -2715,14 +3086,16 @@ let commands ~two ~fork =
       (fun c ->
         unhold_sub c;
         c.sub <- None)
-      (fun c -> cells [ c.scl ] (fun () -> Atomic.set c.ss None))
+      (fun c ->
+        cells ~ws:[ c.ssw ] ~changes:[ c.scl ] [ c.scl ] (fun () ->
+            Atomic.set c.ss None))
   in
   let drop_kept =
     command "drop kept value"
       (keeps ^-> returns unit)
       (fun c -> c.dropped <- true)
       (fun c ->
-        cells [ c.kcl ] (fun () ->
+        cells ~ws:[ c.ksw ] [ c.kcl ] (fun () ->
             Atomic.set c.used true;
             Atomic.set c.sk None))
   in
@@ -2758,6 +3131,14 @@ let commands ~two ~fork =
       makes 2 new_sub;
       makes 2 open_;
       makes 3 new_cell;
+      (* Two domains' calls reach one memory at once only through two cells that
+         hold it, which the prefix rarely leaves as they were made. About half
+         of two domains' programs make a pair of such cells that no call
+         replaces, and calls on its sides weigh a third of the rest, so that
+         most of those programs run two at once. *)
+      (if two then makes 3 new_view else []);
+      (if two then makes 3 new_pair else []);
+      (if two then List.concat_map (times 7) sided else []);
       times 8 create;
       times 3 create_host;
       times 4 of_bigarray;
@@ -2792,6 +3173,6 @@ let commands ~two ~fork =
            (command "fork"
               (world ^-> judges forked)
               fork_ref
-              (fun w -> cells [] (fun () -> fork_sys w)))
+              (fun w -> cells ~ws:[ w ] [] (fun () -> fork_sys w)))
        else []);
     ]
