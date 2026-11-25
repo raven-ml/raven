@@ -137,7 +137,7 @@ let safe_log =
 
 ```ocaml
 # let () = Nx.print safe_log;;
-float64 [3] [-2, -0.6931471805599453, 1.3862943611198906]
+float64 [3] [-2, -0.69314718, 1.3862944]
 ```
 
 The first lane is not positive and keeps `-2`; the others take `log`.

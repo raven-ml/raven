@@ -3896,6 +3896,17 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.pp`, `Nx.to_string` and `Nx.print` write floats to at most 8
+  significant digits, as `0.33333333`, where a `float64` took up to 17 and
+  buried the array. An integer of at most 8 digits prints whole, and a float
+  whose positional form would show a digit below the last rounded place takes
+  an exponent,
+  as `1.2345679e+08` for `123456789.`.
+- `Nx.Dtype.pp_value` prints an integer below 10^16 whole, where it printed its
+  shortest form padded with zeros: a float32 `100000008.` printed `100000010`
+  and a float16 `65504.` `65500`. New `?digits` on `Nx.Dtype.pp_value`.
+- `Nx.pp` cuts a long axis of empty rows, such as `[2000; 0]`'s, past 1000
+  rows as it cuts one of elements, where it printed every row.
 - Add `nx.metal` (`Nx_metal`), kernels of `Nx_kernel.S` for Apple GPUs of the
   Apple7 family (M1, M1 Pro, M1 Max, M1 Ultra), compiled ahead of time into
   one metallib: `Nx.devices ~kernels:(module Nx_metal)` computes a set of them

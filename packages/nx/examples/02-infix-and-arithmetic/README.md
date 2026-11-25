@@ -53,7 +53,7 @@ arrays:
 
 ```
 Celsius:    float64 [5] [0, 20, 37, 100, -40]
-Fahrenheit: float64 [5] [32, 68, 98.60000000000001, 212, -40]
+Fahrenheit: float64 [5] [32, 68, 98.6, 212, -40]
 ```
 
 Temperature conversion uses scalar arithmetic, `*$` for multiplication and
@@ -64,19 +64,15 @@ let fahrenheit = Nx.Infix.((celsius *$ 1.8) +$ 32.0) in
 ```
 
 This reads like the formula `F = C × 1.8 + 32` and operates on the whole
-array. A float prints in the shortest form that reads back as itself, so
-37 × 1.8 + 32 shows its rounding.
+array. A float prints to at most 8 significant digits, so 37 × 1.8 + 32,
+which float64 holds as 98.60000000000001, prints as 98.6.
 
 BMI calculation demonstrates element-wise array operations:
 
 ```
 Heights (m): float64 [4] [1.65, 1.8, 1.72, 1.55]
 Weights (kg): float64 [4] [68, 90, 75, 52]
-BMI:          float64 [4]
-  [24.977043158861342,
-   27.777777777777775,
-   25.351541373715524,
-   21.64412070759625]
+BMI:          float64 [4] [24.977043, 27.777778, 25.351541, 21.644121]
 ```
 
 The formula `BMI = weight / height²` becomes:
@@ -91,13 +87,7 @@ Min-max normalization scales exam scores to the range [0, 1]:
 
 ```
 Raw scores:  float64 [6] [72, 85, 60, 93, 78, 55]
-Normalized:  float64 [6]
-  [0.4473684210526316,
-   0.7894736842105263,
-   0.13157894736842105,
-   1,
-   0.6052631578947368,
-   0]
+Normalized:  float64 [6] [0.44736842, 0.78947368, 0.13157895, 1, 0.60526316, 0]
 ```
 
 The implementation takes the minimum and maximum, 0-d arrays that broadcast
@@ -115,7 +105,7 @@ Math functions apply element-wise to transform arrays:
 x:       float64 [5] [-2, -1, 0, 1, 2]
 abs(x):  float64 [5] [2, 1, 0, 1, 2]
 x²:      float64 [5] [4, 1, 0, 1, 4]
-√|x|:    float64 [5] [1.4142135623730951, 1, 0, 1, 1.4142135623730951]
+√|x|:    float64 [5] [1.4142136, 1, 0, 1, 1.4142136]
 sign(x): float64 [5] [-1, -1, 0, 1, 1]
 ```
 

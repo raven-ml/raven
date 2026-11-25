@@ -5830,11 +5830,18 @@ val pp : Format.formatter -> ('v, 's, 'd) t -> unit
     A vector starts the line after its header where both do not fit, and a row
     wider than the margin wraps after its bracket.
 
-    Elements print as {!Dtype.pp_value} does: a float in the shortest form
-    that reads back to it in its format, an unsigned integer unsigned. Past
-    1000 elements an axis longer than 6 shows its first and last 3 around
-    [...]. A value with elements is read as {!to_array} reads it, so it
-    raises a failed check pending on its set ({!section-waiting}).
+    Elements print as {!Dtype.pp_value} does with [~digits:8]: a float that is
+    an integer of at most 8 digits whole, as [65504]; another in the shortest
+    form that reads back to it in its format, or rounded to 8 significant digits
+    where that form has more, as [0.33333333], with an exponent where a
+    positional integer would show a digit below the last rounded place, as
+    [1.2345679e+08] for
+    [123456789.]; an unsigned integer unsigned. Past 1000 elements, an empty row
+    counting as one, an axis longer than 6 shows its first and last 3 around
+    [...], as in [int32 [1001] [0, 1, 2, ..., 998, 999, 1000]].
+
+    A value with elements is read as {!to_array} reads it, so it raises a failed
+    check pending on its set ({!section-waiting}).
 
     A traced value prints [traced by] its interpretation; a dead one what it
     was, [donated] or [donated to] the function that took its memory; one on

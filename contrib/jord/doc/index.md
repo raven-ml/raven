@@ -66,7 +66,7 @@ This program finds the cell of a 10 m grid that holds a point of Berlin:
     let xy = Crs.transform ~src:Crs.lonlat ~dst:utm lonlat in
     Nx.print (Grid.pixel grid xy);;
 float64 [1; 2]
-[[514.4759182668291, 339.0731339950929]]
+[[514.47592, 339.07313]]
 ```
 
 The point lies in cell (514, 339), about 5 km south and 3 km east of the

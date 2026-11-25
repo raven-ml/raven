@@ -70,7 +70,7 @@ let lanes_apart =
 
 ```ocaml
 # let () = Nx.print lanes_apart;;
-float64 [3] [1, 4.000000000000051, 1000]
+float64 [3] [1, 4, 1000]
 ```
 
 `1` satisfies the test at once and takes no step; `1e6` takes the most.
@@ -121,7 +121,7 @@ let checked =
 # let () =
     Nx.print da;
     print_endline (match checked with Ok () -> "ok" | Error msg -> msg);;
-float64 [2] [0.25, 0.16666666666666666]
+float64 [2] [0.25, 0.16666667]
 ok
 ```
 

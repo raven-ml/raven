@@ -7831,20 +7831,29 @@ let istft dt ~window ?step ?win ?length z =
 let pp_dtype = D.pp
 
 (* Past [elided] elements, an axis longer than [2 * edge] prints its first and
-   last [edge] elements around [...]. *)
+   last [edge] elements around [...], and a float prints to [digits]
+   significant digits. *)
 let elided = 1000
 let edge = 3
+let digits = 8
 
 (* [a]'s elements as nested rows, a 0-d array's as its one element. The
    last axis's elements fill lines; each outer axis puts its entries one per
-   line, aligned after its bracket. *)
+   line, aligned after its bracket. An empty row counts as an element, so that
+   a long axis of them is cut too. *)
 let pp_elements (type v s) ppf (a : (v, s) Nx_array.t) =
   let dt = Nx_array.dtype a and s = Nx_array.Layout.shape (Nx_array.layout a) in
   let r = Iarray.length s in
-  let cut = Iarray.fold_left ( * ) 1 s > elided in
+  (* The count stops past [elided], so that the axes of an empty value, which
+     may be of any length, cannot overflow it. *)
+  let count n d =
+    if n > elided || d > elided then elided + 1 else n * Stdlib.max d 1
+  in
+  let cut = Iarray.fold_left count 1 s > elided in
+  let pp_value = D.pp_value ~digits dt in
   let i = Array.make r 0 in
   let rec row axis =
-    if axis = r then D.pp_value dt ppf (Nx_array.get a (Iarray.of_array i))
+    if axis = r then pp_value ppf (Nx_array.get a (Iarray.of_array i))
     else begin
       let d = Iarray.get s axis in
       let shown j = (not cut) || d <= 2 * edge || j < edge || j >= d - edge in

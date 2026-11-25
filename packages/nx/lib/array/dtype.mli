@@ -248,25 +248,36 @@ val exact : ('v, 's) t -> ('w, 'r) t -> bool
     real into a complex one whose component it is exact into. It allocates
     nothing. *)
 
-val pp_value : ('v, 's) t -> Format.formatter -> 'v -> unit
-(** [pp_value dt] formats a value of [dt]:
-    - a finite float as the shortest decimal that rounds to the same value in
-      [dt]'s format, with its exponent unbounded above, and of those the nearest
-      to it: [0.1] for a [Float32] [0.1], [65500] for a [Float16] [65504.]. Past
-      the largest finite value only the next half step rounds to it, so a
-      [Float8_e4m3fn] [448.] prints as [450], never as a larger decimal a store
-      would saturate to it. It is written positionally for magnitudes from
-      10{^ -4} up to 10{^ 16}, as [0.01563], and as [d.ddde±XX] outside, as
-      [1.59e+29], with the same digits on every system. [nan], [inf] and
-      [-inf] for the others;
+val pp_value : ?digits:int -> ('v, 's) t -> Format.formatter -> 'v -> unit
+(** [pp_value ~digits dt] formats a value of [dt]:
+    - a float that is an integer of at most [digits] decimal digits, below
+      10{^ 16}, whole: [65504] for a [Float16] [65504.];
+    - another finite float as the shortest decimal that rounds to the same
+      value in [dt]'s format, with its exponent unbounded above, and of those
+      the nearest to it: [0.1] for a [Float32] [0.1]. Past the largest finite
+      value only the next half step rounds to it, so the decimal is never one
+      that a store would saturate to that value. Where the decimal has more
+      than [digits] significant digits, the float is rounded to [digits]
+      instead, to nearest, ties to even: [0.33333333] for a [Float64]
+      [1. /. 3.] at [digits] [8]. Where that rounding drops the units digit, or
+      the shortest decimal ends in zeros above the units that the float lacks,
+      the decimal is written as [d.ddde±XX], so that no digit above the last
+      rounded place is wrong: at [digits] [8], [1.2345679e+08] for [123456789.] and
+      [1.0000001e+08] for a [Float32] [100000008.]. Others are written
+      positionally for magnitudes from 10{^ -4} up to 10{^ 16}, as [0.01563],
+      and as [d.ddde±XX] outside, as [1.59e+29], with the same digits on every
+      system;
+    - [nan], [inf] and [-inf] for the other floats;
     - an integer in decimal, an unsigned one unsigned;
     - a complex number as its two components, so formatted, in the form
       [re+imi], or [re-imi] when the imaginary part is negative, as [0.5-2i];
     - a boolean as [true] or [false].
 
-    Raises [Invalid_argument] if a finite float, or a complex number's
-    component, is not a value of [dt]'s format, as [0.1] is not of [Float32]:
-    {!of_float} gives the value a store holds. *)
+    [digits] defaults to no bound.
+
+    Raises [Invalid_argument] if [digits] is less than [1], or if a finite
+    float, or a complex number's component, is not a value of [dt]'s format, as
+    [0.1] is not of [Float32]: {!of_float} gives the value a store holds. *)
 
 (** {1:stores Stores}
 

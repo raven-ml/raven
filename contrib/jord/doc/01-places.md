@@ -49,9 +49,9 @@ would:
     Nx.print (Crs.transform ~src:z33 ~dst:Crs.lonlat p);
     Nx.print (Crs.transform ~src:z33 ~dst:z32 p);;
 float64 [1; 2]
-[[15, 52.35029334885088]]
+[[15, 52.350293]]
 float64 [1; 2]
-[[908490.3303809444, 5816961.726947372]]
+[[908490.33, 5816961.7]]
 ```
 
 The point lies on zone 33's central meridian, 15°E, and 6° from zone 32's,
@@ -145,14 +145,10 @@ composes:
 
 ```ocaml
 # let () = let _, _, area = Rasterize.areas grid square in Nx.print area;;
-float64 [9]
-[1, 1, 0.3999999999999999, 1, 1, 0.3999999999999999, 0.3999999999999999,
- 0.3999999999999999, 0.15999999999999992]
+float64 [9] [1, 1, 0.4, 1, 1, 0.4, 0.4, 0.4, 0.16]
 ```
 
-The third row and column hold 0.4 of a cell, to the rounding of the edges'
-pixel points: 24 m is pixel 2.4, which float64 holds as
-2.399999999999999911.
+The third row and column hold 0.4 of a cell, and their corner 0.16.
 
 ## Warping
 

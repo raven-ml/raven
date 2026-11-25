@@ -31,7 +31,7 @@ let ua, ub = pullback (Nx.ones_like a, Nx.zeros_like a)
 ```ocaml
 # let () = Nx.print dy0; Nx.print dy1; Nx.print ua; Nx.print ub;;
 float64 [2] [3, 4]
-float64 [2] [0.5403023058681397, -0.4161468365471424]
+float64 [2] [0.54030231, -0.41614684]
 float64 [2] [3, 4]
 float64 [2] [1, 2]
 ```
@@ -165,7 +165,7 @@ let dr = Rune.grad' (fun a -> Nx.sum (sqrt_newton a)) r
 ```ocaml
 # let () = Nx.print (sqrt_newton r); Nx.print dr;;
 float64 [2] [2, 3]
-float64 [2] [0.25, 0.16666666666666666]
+float64 [2] [0.25, 0.16666667]
 ```
 
 Outside every transformation, and under one differentiation, the rule runs

@@ -77,8 +77,8 @@ let value, (gw, gb) =
 
 ```ocaml
 # let () = Nx.print value; Nx.print gw; Nx.print gb;;
-float64 [] 4.666666666666667
-float64 [] -5.333333333333333
+float64 [] 4.6666667
+float64 [] -5.3333333
 float64 [] -4
 ```
 

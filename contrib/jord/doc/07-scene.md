@@ -142,9 +142,9 @@ let masked =
     Nx.print red;
     Nx.print Nx.(logical_and (logical_and ok seen) (logical_not masked));;
 float32 [3; 3]
-[[0.10666667, 0.114999995, 0.125],
- [0.105000004, 0.114999995, 0.125],
- [0.105000004, 0.114999995, 0.125]]
+[[0.10666667, 0.11499999, 0.125],
+ [0.105, 0.11499999, 0.125],
+ [0.105, 0.11499999, 0.125]]
 bool [3; 3]
 [[true, true, true],
  [false, true, true],
@@ -309,7 +309,7 @@ and scl =
 float32 [1; 1]
 [[0.12533192]]
 float64 [1; 1]
-[[0.7594922127036363]]
+[[0.75949221]]
 ```
 
 The band's block starts at cell (5, 5), which the rule takes as `~row`

@@ -6,9 +6,10 @@
 
     uv run packages/nx/test/array/gen/float_text.py [--check]
 
-The text of a float is the fewest significant digits that round to it in
-its format, with the exponent unbounded above, and of those the nearest,
-ties to even. Two oracles state it. numpy's shortest repr (Dragon4,
+The text of a float that is an integer below 10^16 is the integer. The
+text of another is the fewest significant digits that round to it in its
+format, with the exponent unbounded above, and of those the nearest, ties
+to even. Two oracles state it. numpy's shortest repr (Dragon4,
 unique=True) covers float16, float32 and float64. The other formats, which
 numpy lacks, take an exact search: the shortest decimal inside the interval
 of values that round to the float, in rationals. The search runs on every
@@ -146,11 +147,16 @@ def meets_tie(fmt, code, digits):
     return e.endswith("5") and len(e) - 1 <= len(digits)
 
 
-def layout(digits, exp):
-    """The text printed for the digits [d0 d1 ...] times 10^exp at the first
-    digit: in full for exponents from -4 to 15, with an exponent beyond."""
+def layout(digits, exp, x):
+    """The text printed for the value [x], whose shortest decimal is the digits
+    [d0 d1 ...] times 10^exp at the first digit: [x] whole if it is an integer
+    below 10^16; else the decimal in full for exponents from -4 to 15, with an
+    exponent beyond, and where the full text would end in zeros [x] lacks."""
+    if x.denominator == 1 and x < 10**16:
+        return str(x.numerator)
     p = len(digits)
-    if exp < -4 or exp >= 16:
+    padded = exp > p - 1 and int(digits) * 10 ** (exp - p + 1) != x
+    if exp < -4 or exp >= 16 or padded:
         fraction = "." + digits[1:] if p > 1 else ""
         return f"{digits[0]}{fraction}e{'-' if exp < 0 else '+'}{abs(exp):02d}"
     if exp >= p - 1:
@@ -175,11 +181,11 @@ def rows():
         for code in fmt.positives():
             d = oracle(fmt, code)
             if meets_tie(fmt, code, d[0]):
-                out.append(f"{code:x} {layout(*d)}\n")
+                out.append(f"{code:x} {layout(*d, fmt.value(code))}\n")
     for fmt in (F32, F64):
         out.append(fmt.name + "\n")
         for code in power_codes(fmt):
-            out.append(f"{code:x} {layout(*oracle(fmt, code))}\n")
+            out.append(f"{code:x} {layout(*oracle(fmt, code), fmt.value(code))}\n")
     return "".join(out)
 
 

@@ -72,9 +72,9 @@ let loss, (w, b) =
 
 ```ocaml
 # let () = Nx.print loss; Nx.print w; Nx.print b;;
-float64 [] 2.446119840025779e-14
-float64 [] 2.0000001144011805
-float64 [] 0.9999997557487191
+float64 [] 2.4461198e-14
+float64 [] 2.0000001
+float64 [] 0.99999976
 ```
 
 The targets are `2x + 1`, so gradient descent on the mean squared error

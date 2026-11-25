@@ -897,8 +897,13 @@ let printed =
     Printed (D.Complex64, { Complex.re = 1.; im = 2. }, "1+2i");
     Printed (D.Complex128, { Complex.re = 1.; im = -2. }, "1-2i");
     Printed (D.Float32, -.nan, "nan");
-    Printed (D.Float16, 65504., "65500");
-    Printed (D.Float8_e4m3fn, -448., "-450");
+    Printed (D.Float16, 65504., "65504");
+    Printed (D.Float8_e4m3fn, -448., "-448");
+    Printed (D.Float16, 2048., "2048");
+    Printed (D.Float32, 100000008., "100000008");
+    Printed (D.Float32, 0x1p+27, "134217728");
+    Printed (D.Float64, 0x1p+53, "9007199254740992");
+    Printed (D.Float32, 0x1p+54, "1.8014399e+16");
     Printed (D.Float16, 0x1p-6, "0.01563");
     Printed (D.Float8_e4m3fn, 0.125, "0.13");
     Printed (D.Bfloat16, 0x1p+97, "1.59e+29");
@@ -907,6 +912,46 @@ let printed =
     Printed (D.Bool, false, "false");
     Printed (D.Bit, true, "true");
   ]
+
+(* A bound on the digits rounds a float whose shortest form is longer, to
+   nearest, ties to even, and leaves the others as they are. *)
+type bounded = Bounded : int * ('v, 's) D.t * 'v * string -> bounded
+
+let bounded_name (Bounded (n, dt, _, s)) = strf "%d digits of %s %s" n (D.name dt) s
+
+let test_bounded (Bounded (n, dt, v, s)) =
+  equal string s (Format.asprintf "%a" (D.pp_value ~digits:n dt) v)
+
+let bounded =
+  [
+    Bounded (8, D.Float64, 1. /. 3., "0.33333333");
+    Bounded (8, D.Float64, 0.1, "0.1");
+    Bounded (8, D.Float64, 0x1p-1017, "7.1202363e-307");
+    Bounded (8, D.Float64, 9.999999996, "10");
+    Bounded (2, D.Float64, 125., "1.2e+02");
+    Bounded (2, D.Float64, 135., "1.4e+02");
+    Bounded (2, D.Float64, 12.5, "12");
+    Bounded (8, D.Float64, 123456789., "1.2345679e+08");
+    Bounded (8, D.Float64, 12345678.4, "12345678");
+    Bounded (8, D.Float64, 99999999.7, "100000000");
+    Bounded (8, D.Float64, 100000000.5, "1e+08");
+    Bounded (8, D.Float16, 65504., "65504");
+    Bounded (8, D.Float32, 0x1p+24, "16777216");
+    Bounded (8, D.Float32, 99999992., "99999992");
+    Bounded (8, D.Float32, 100000008., "1.0000001e+08");
+    Bounded (8, D.Float32, 0x1p+30, "1.0737418e+09");
+    Bounded (8, D.Float64, 1e9, "1000000000");
+    Bounded (2, D.Float64, -99., "-99");
+    Bounded (1, D.Float32, 0x1.99999ap-4, "0.1");
+    Bounded (8, D.Float32, 0x1.fffffep+127, "3.4028235e+38");
+    Bounded (1, D.Float16, -0., "-0");
+    Bounded (3, D.Complex128, { Complex.re = 1. /. 3.; im = -2. /. 3. }, "0.333-0.667i");
+    Bounded (2, D.Int32, 123456789l, "123456789");
+  ]
+
+let test_bound_refused () =
+  raises (Invalid_argument "Dtype.pp_value: 0 digits") (fun () ->
+      Format.asprintf "%a" (D.pp_value ~digits:0 D.Float64) 1.)
 
 (* Floats that are not values of the dtype: what a store would round or
    saturate. *)
@@ -1040,9 +1085,22 @@ let check_printed (F (dt, f)) v =
     else if v = -.inf then Some "-inf"
     else None
   in
+  (* A text of neither point nor exponent is an integer, so it is [v]. *)
+  let integer = not (String.contains s '.' || String.contains s 'e') in
   match special with
   | Some t -> if s = t then None else Some (strf "%h printed %s" v s)
+  | None when Float.is_integer v && Float.abs v < 1e16 ->
+      (* An integer of at most 16 digits prints whole. *)
+      let whole = (if Float.sign_bit v then "-" else "") ^ strf "%.0f" (Float.abs v) in
+      if s = whole then None else Some (strf "%h printed %s, not %s" v s whole)
   | None when not (reads_back s) -> Some (strf "%h printed %s" v s)
+  | None
+    when integer
+         && Float_reader.compare
+              (Option.value ~default:("0", 0) (significand s))
+              (Float.abs v)
+            <> 0 ->
+      Some (strf "%h printed %s, a digit it lacks" v s)
   | None -> (
       match List.filter reads_back (shorter s) with
       | t :: _ -> Some (strf "%h printed %s, but %s reads back" v s t)
@@ -1080,8 +1138,8 @@ let law_printed (F (dt, f)) =
       equal (option string) None (check_printed (F (dt, f)) (D.of_float dt x)))
 
 (* The golden of gen/float_text.py: under each format's name, values as their
-   bits in hexadecimal and the text numpy's shortest repr or an exact search
-   gives them. *)
+   bits in hexadecimal and their text: whole for an integer below 10{^ 16},
+   otherwise the digits numpy's shortest repr or an exact search gives them. *)
 let golden =
   let format name =
     match List.find_opt (fun fd -> format_name fd = name) formats with
@@ -1329,16 +1387,20 @@ let tests =
         group "integers print in their dtype's reading" printing_integers;
         cases "a float that is not a value of the dtype is refused"
           ~id:misfit_name misfits test_misfit;
+        cases "a float past the digits rounds to them" ~id:bounded_name bounded
+          test_bounded;
+        test "fewer than one digit is refused" test_bound_refused;
         cases
           "ties of the narrow formats and powers of two of the wide print as \
-           numpy's shortest repr"
+           the golden's oracles state"
           ~id:golden_name golden test_golden;
         cases
-          "every value prints as the shortest decimal that reads back, the \
-           nearest of those"
+          "every value prints whole if an integer below 10^16, else as the \
+           shortest decimal that reads back, the nearest of those"
           ~id:format_name narrow test_every_value_printed;
         group
-          "a wider float prints as the shortest decimal that reads back, the \
+          "a wider float prints whole if an integer below 10^16, else as the \
+           shortest decimal that reads back, the \
            nearest of those"
           (List.map law_printed
              (List.filter (fun (F (dt, _)) -> D.bits dt >= 32) formats));

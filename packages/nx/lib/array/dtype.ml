@@ -529,17 +529,22 @@ let of_float : type v s. (v, s) t -> float -> v =
 (* Printing *)
 
 (* [d·10{^e}], the digits [d] and the exponent [e] of the last one, written
-   positionally for a first digit from 10{^-4} up to 10{^15}, as [%g] does but
-   up to 10{^16} so that integers in that range read whole, and as
-   [d.ddde±XX] otherwise. *)
+   [d.ddde±XX]. *)
+let exponent_text (d, e) =
+  let n = String.length d in
+  let lead = n - 1 + e in
+  let frac = if n > 1 then "." ^ String.sub d 1 (n - 1) else "" in
+  Printf.sprintf "%c%se%c%02d" d.[0] frac
+    (if lead < 0 then '-' else '+')
+    (abs lead)
+
+(* [d·10{^e}] written positionally for a first digit from 10{^-4} up to 10{^15},
+   as [%g] does but up to 10{^16} so that integers in that range read whole, and
+   as {!exponent_text} otherwise. *)
 let decimal_text (d, e) =
   let n = String.length d in
   let lead = n - 1 + e in
-  if lead >= 16 || lead < -4 then
-    let frac = if n > 1 then "." ^ String.sub d 1 (n - 1) else "" in
-    Printf.sprintf "%c%se%c%02d" d.[0] frac
-      (if lead < 0 then '-' else '+')
-      (abs lead)
+  if lead >= 16 || lead < -4 then exponent_text (d, e)
   else if lead < 0 then "0." ^ String.make (-lead - 1) '0' ^ d
   else if e >= 0 then d ^ String.make e '0'
   else String.sub d 0 (lead + 1) ^ "." ^ String.sub d (lead + 1) (-e)
@@ -553,52 +558,82 @@ let text_format f =
     emin = snd (Float.frexp f.min_normal) - 1;
   }
 
-(* The shortest decimal that reads as [x] in [dt]'s format, and of those the
-   nearest to [x]: a float32 [0.1] prints as [0.1], though the double it holds
-   has 17 digits, and a float16 [65504.] as [65500]. A finite [x] is a value of
-   the format iff a store keeps it. *)
-let float_text code x =
+(* An [x] that is an integer of at most [digits] digits, and below 10{^ 16},
+   whole: a float16 [65504.] prints as [65504]. Another as the shortest decimal
+   that reads as [x] in [dt]'s format, and of those the nearest to [x]: a
+   float32 [0.1] prints as [0.1], though the double it holds has 17 digits. A
+   finite [x] is a value of the format iff a store keeps it. Past [digits]
+   significant digits, [x] is rounded to [digits] instead. A text is written
+   with an exponent where a positional one would show a wrong integer digit:
+   where the rounding drops the units digit, [123456789.] at 8 digits is
+   [1.2345679e+08], never [123456790], and where the shortest form stops before
+   the units of an integer, a float32 [100000008.] at 8 digits is
+   [1.0000001e+08], never [100000010]. *)
+let float_text digits code x =
   let sign = if Float.sign_bit x then "-" else "" in
   if Float.is_nan x then "nan"
   else if Float.abs x = Float.infinity then sign ^ "inf"
   else if round code x <> x then
     invalid_arg
       (Printf.sprintf "Dtype.pp_value: %h is not a %s value" x rows.(code).name)
+  else if
+    Float.is_integer x
+    && Float.abs x < Float.pow 10. (Float.of_int (Int.min digits 16))
+  then sign ^ Int64.to_string (Int64.of_float (Float.abs x))
   else
     let f = text_format (Option.get rows.(code).format) in
-    sign ^ decimal_text (Float_text.shortest f x)
+    let ((d, e) as shortest) = Float_text.shortest f x in
+    let lead = String.length d - 1 + e in
+    if String.length d <= digits then
+      (* Zeros past [d] are [x]'s iff 10{^ e} divides it, exactly as a double
+         below 10{^ 16}. *)
+      let padded =
+        e > 0 && Float.rem x (Float.pow 10. (Float.of_int e)) <> 0.
+      in
+      if padded && lead < 16 then sign ^ exponent_text shortest
+      else sign ^ decimal_text shortest
+    else
+      let rounded = Float_text.significant digits x in
+      (* The last digit kept is at 10{^ lead - digits + 1}. *)
+      if lead >= digits then sign ^ exponent_text rounded
+      else sign ^ decimal_text rounded
 
-let pp_float dt ppf x = Format.pp_print_string ppf (float_text (code dt) x)
+let pp_float digits dt ppf x =
+  Format.pp_print_string ppf (float_text digits (code dt) x)
 
-let pp_complex dt ppf (z : Complex.t) =
-  let part = float_text (code dt) in
+let pp_complex digits dt ppf (z : Complex.t) =
+  let part = float_text digits (code dt) in
   let im = part z.im in
   let sign = if String.length im > 0 && im.[0] = '-' then "" else "+" in
   Format.fprintf ppf "%s%s%si" (part z.re) sign im
 
-let pp_value : type v s. (v, s) t -> Format.formatter -> v -> unit =
- fun dt ppf v ->
-  match dt with
-  | Float64 -> pp_float dt ppf v
-  | Float32 -> pp_float dt ppf v
-  | Float16 -> pp_float dt ppf v
-  | Bfloat16 -> pp_float dt ppf v
-  | Float8_e4m3fn -> pp_float dt ppf v
-  | Float8_e5m2 -> pp_float dt ppf v
-  | Float4_e2m1fn -> pp_float dt ppf v
-  | Int64 -> Format.fprintf ppf "%Ld" v
-  | Uint64 -> Format.fprintf ppf "%Lu" v
-  | Int32 -> Format.fprintf ppf "%ld" v
-  | Uint32 -> Format.fprintf ppf "%lu" v
-  | Int16 -> Format.pp_print_int ppf v
-  | Uint16 -> Format.pp_print_int ppf v
-  | Int8 -> Format.pp_print_int ppf v
-  | Uint8 -> Format.pp_print_int ppf v
-  | Int4 -> Format.pp_print_int ppf v
-  | Uint4 -> Format.pp_print_int ppf v
-  | Complex128 -> pp_complex Float64 ppf v
-  | Complex64 -> pp_complex Float32 ppf v
-  | Bool -> Format.pp_print_bool ppf v
-  | Bit -> Format.pp_print_bool ppf v
+let pp_value : type v s.
+    ?digits:int -> (v, s) t -> Format.formatter -> v -> unit =
+ fun ?(digits = max_int) dt ->
+  if digits < 1 then
+    invalid_arg (Printf.sprintf "Dtype.pp_value: %d digits" digits);
+  fun ppf v ->
+    match dt with
+    | Float64 -> pp_float digits dt ppf v
+    | Float32 -> pp_float digits dt ppf v
+    | Float16 -> pp_float digits dt ppf v
+    | Bfloat16 -> pp_float digits dt ppf v
+    | Float8_e4m3fn -> pp_float digits dt ppf v
+    | Float8_e5m2 -> pp_float digits dt ppf v
+    | Float4_e2m1fn -> pp_float digits dt ppf v
+    | Int64 -> Format.fprintf ppf "%Ld" v
+    | Uint64 -> Format.fprintf ppf "%Lu" v
+    | Int32 -> Format.fprintf ppf "%ld" v
+    | Uint32 -> Format.fprintf ppf "%lu" v
+    | Int16 -> Format.pp_print_int ppf v
+    | Uint16 -> Format.pp_print_int ppf v
+    | Int8 -> Format.pp_print_int ppf v
+    | Uint8 -> Format.pp_print_int ppf v
+    | Int4 -> Format.pp_print_int ppf v
+    | Uint4 -> Format.pp_print_int ppf v
+    | Complex128 -> pp_complex digits Float64 ppf v
+    | Complex64 -> pp_complex digits Float32 ppf v
+    | Bool -> Format.pp_print_bool ppf v
+    | Bit -> Format.pp_print_bool ppf v
 
 module Float_text = Float_text
