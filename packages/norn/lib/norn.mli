@@ -403,8 +403,8 @@ module Diag : sig
       simulation: the probability, under uniformity, that the count of ranks
       below some point [i / (draws + 1)] strays from its expectation at least as
       far, in pointwise p-value, as the ranks' farthest count. A count's
-      pointwise p-value is twice the smaller of its binomial tails, at most
-      [1]. Below [alpha] rejects uniformity at level [alpha].
+      pointwise p-value is twice the smaller of its binomial tails, at most [1].
+      Below [alpha] rejects uniformity at level [alpha].
 
       Raises [Invalid_argument] if [ranks] is empty, if [draws < 1], or if a
       rank is not an integer in [0], ..., [draws]. *)
@@ -507,6 +507,12 @@ module Summary : sig
       the columns that weights allow, and judges the weights instead of the
       chains.
 
+      A statistic overflows only where its value does, and a standard deviation
+      or an error of the mean whose value is normal does not underflow.
+      Multiplying the draws by a power of two that keeps them normal multiplies
+      the mean, the standard deviation, the quantiles and the error of the mean
+      by it exactly.
+
       {[
       Format.printf "%a@." Norn.Summary.pp (Norn.Summary.v schools ~stats post)
       ]} *)
@@ -562,7 +568,9 @@ module Summary : sig
       E-BFMI. [superchains] takes the chains as that many consecutive groups for
       {!Norn.Diag.nested_rhat}, which then fills the [rhat] column.
 
-      The statistics are computed at float64, whatever the draws' dtype.
+      A quantile [q] of the [S] pooled draws in order, from [0], interpolates
+      linearly between the draws at [floor (q (S - 1))] and the next. The
+      statistics are computed at float64, whatever the draws' dtype.
 
       Raises [Invalid_argument] if the chains have fewer than 4 draws, if
       [superchains] does not divide the chains, and as {!Norn.Diag} does for a

@@ -15,6 +15,8 @@ val pooled : float array array -> float array
 (** [pooled m] is every draw of [m]. *)
 
 val mean : float array -> float
+(** [mean xs] is the mean of [xs], summed over {!scale}: finite for finite
+    draws. *)
 
 val var1 : float array -> float
 (** [var1 xs] is the variance of [xs] with one degree of freedom less. *)
@@ -28,8 +30,13 @@ val sd : float array -> float
 (** [sd xs] is the square root of [var1 xs], computed over {!scale}: finite
     for finite draws, and nonzero when they differ. *)
 
+val between : float -> float -> float -> float
+(** [between f lo hi] is [f (hi - lo)] for [f] in \[[0];[1]\]: finite for finite
+    [lo] and [hi], and [f *. (hi -. lo)] where that is finite. *)
+
 val quantile : float array -> float -> float
-(** [quantile xs q] interpolates linearly between the order statistics. *)
+(** [quantile xs q] interpolates linearly between the order statistics: with the
+    [S] draws in order from [0], [q] stands at [q (S - 1)]. *)
 
 val undefined : float array array -> bool
 (** [undefined m] is [true] if [m] has no diagnostic: chains of fewer than four

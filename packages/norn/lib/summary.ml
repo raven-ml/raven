@@ -245,7 +245,7 @@ let weighted_quantile xs w q =
     done;
     let j = !j in
     let f = (q -. mid.(j - 1)) /. (mid.(j) -. mid.(j - 1)) in
-    x (j - 1) +. (f *. (x j -. x (j - 1)))
+    x (j - 1) +. Chains.between f (x (j - 1)) (x j)
 
 let of_weighted (type u f) (u : (u, 'd) Nx.Ptree.t)
     (wd : (u, f, 'd) Weighted.t) =
@@ -287,11 +287,18 @@ let of_weighted (type u f) (u : (u, 'd) Nx.Ptree.t)
     Array.iteri (fun i x -> s := !s +. f w.(i) x) xs;
     !s
   in
+  let positive xs =
+    Array.of_list (List.filteri (fun i _ -> w.(i) > 0.) (Array.to_list xs))
+  in
   (* About the first draw, so that a constant element's mean is exact and its
-     spread 0 however the weights round. *)
+     spread 0 however the weights round, and over the draws' scale, so that
+     draws a float's range apart do not overflow their difference. *)
   let mean xs =
     if Array.length xs = 0 then Float.nan
-    else xs.(0) +. dot (fun w x -> w *. (x -. xs.(0))) xs
+    else
+      let c = Chains.scale (positive xs) in
+      let y0 = xs.(0) /. c in
+      c *. (y0 +. dot (fun w x -> w *. ((x /. c) -. y0)) xs)
   in
   (* The weighted variance, and the variance of the weighted mean of
      independent draws (Vehtari et al. 2024, equation 5). Their ratio, the
@@ -303,9 +310,6 @@ let of_weighted (type u f) (u : (u, 'd) Nx.Ptree.t)
      sums are of the draws over their scale [c], which [spread] returns
      beside them, so that squares neither underflow nor overflow: draws 1e-200
      apart would square to 0. The scale is of the draws of positive weight. *)
-  let positive xs =
-    Array.of_list (List.filteri (fun i _ -> w.(i) > 0.) (Array.to_list xs))
-  in
   let spread xs =
     let c = Chains.scale (positive xs) in
     let ys = Array.map (fun x -> x /. c) xs in

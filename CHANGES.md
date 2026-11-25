@@ -85,6 +85,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Summary.v` and `Summary.of_weighted` give a finite mean and finite
+  quantiles for draws near the largest float, where the sum of the draws or
+  the difference of two of them overflowed: draws of `±1e308` had the median
+  `inf`. The interface states what holds over the float range.
 - `Gaussian.pathfinder` and `Gaussian.vi` refuse a start with no float element
   before they differentiate the density. They raised from `Rune`'s gradient,
   naming `Rune.value_and_grad_aux`.

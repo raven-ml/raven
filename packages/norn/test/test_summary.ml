@@ -102,7 +102,7 @@ let rows =
             [| Float.sqrt (14. /. 3.) |]
             (column s "sd");
           equal (array (float 1e-12)) [| 2.5 |] (column s "median"));
-      prop "the sd and error scale by a power of two exactly" scaled_gen
+      prop "the statistics scale by a power of two exactly" scaled_gen
         (fun (xs, j) ->
           cover_scaled j;
           let summary xs =
@@ -121,19 +121,35 @@ let rows =
             Float.sqrt (ss /. (n -. 1.))
           in
           equal ~msg:"sd" float_exact (Float.ldexp sd j) (column s "sd").(0);
-          equal ~msg:"mcse" float_exact
-            (Float.ldexp (column unit "mcse").(0) j)
-            (column s "mcse").(0));
-      test "draws a float's range apart have a finite sd" (fun () ->
-          let x =
-            Nx.create Nx.float64 [| 2; 4 |]
+          List.iter
+            (fun name ->
+              equal ~msg:name float_exact
+                (Float.ldexp (column unit name).(0) j)
+                (column s name).(0))
+            [ "mean"; "sd"; "q5"; "median"; "q95"; "mcse" ]);
+      test "draws a float's range apart have finite statistics" (fun () ->
+          let summary xs =
+            let x = Nx.create Nx.float64 [| 2; 4 |] xs in
+            S.v Nx.Ptree.tensor (Draws.v Nx.Ptree.tensor x)
+          in
+          let s =
+            summary
               [| -1e308; 1e308; -1e308; 1e308; 1e308; -1e308; 1e308; -1e308 |]
           in
-          let s = S.v Nx.Ptree.tensor (Draws.v Nx.Ptree.tensor x) in
-          (* Eight draws of ±d have the variance 8d² / 7. *)
-          equal (float_rel ~rel:1e-15 ~abs:0.)
-            (1e308 *. Float.sqrt (8. /. 7.))
-            (column s "sd").(0));
+          let one name = (column s name).(0) in
+          let close = float_rel ~rel:1e-15 ~abs:0. in
+          (* Eight draws of ±d have the mean 0, the variance 8d² / 7, and the
+             median halfway between the fourth and fifth, -d and d. *)
+          equal ~msg:"sd" close (1e308 *. Float.sqrt (8. /. 7.)) (one "sd");
+          equal ~msg:"mean" float_exact 0. (one "mean");
+          equal ~msg:"median" float_exact 0. (one "median");
+          equal ~msg:"q5" float_exact (-1e308) (one "q5");
+          let s =
+            summary
+              [| 1e308; 15e307; 1e308; 15e307; 1e308; 15e307; 1e308; 15e307 |]
+          in
+          equal ~msg:"mean of 1e308 and 1.5e308" close 125e306
+            (column s "mean").(0));
       test "the diagnostics are Diag's" (fun () ->
           let s = S.v p draws in
           let r = Norn.Diag.rhat p draws in
@@ -327,12 +343,15 @@ let of_weighted =
             let close = float_rel ~rel:1e-12 ~abs:0. in
             equal ~msg:"sd" close d (one "sd");
             equal ~msg:"mcse" close (d /. Float.sqrt 2.) (one "mcse");
-            equal ~msg:"ess" close 2. (one "ess")
+            equal ~msg:"ess" close 2. (one "ess");
+            let middle = (xs.(0) /. 2.) +. (xs.(1) /. 2.) in
+            equal ~msg:"mean" close middle (one "mean");
+            equal ~msg:"median" close middle (one "median")
           in
           spread 1e-200 [| 1e-200; 3e-200 |];
           spread 1e200 [| -1e200; 1e200 |];
           spread 1e308 [| -1e308; 1e308 |]);
-      prop "the weighted sd and error scale by a power of two exactly"
+      prop "the weighted statistics scale by a power of two exactly"
         Gen.(pair scaled_gen (array ~size:(constant 8) (float_range (-4.) 4.)))
         (fun ((xs, j), lw) ->
           cover_scaled j;
@@ -346,7 +365,7 @@ let of_weighted =
               equal ~msg:name float_exact
                 (Float.ldexp (column unit name).(0) j)
                 (column s name).(0))
-            [ "sd"; "mcse" ];
+            [ "mean"; "sd"; "q5"; "median"; "q95"; "mcse" ];
           equal ~msg:"ess" float_exact (column unit "ess").(0)
             (column s "ess").(0));
       prop "equal weights give the draws' mean and an effective size of n"

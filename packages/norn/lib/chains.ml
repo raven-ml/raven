@@ -6,7 +6,19 @@
 (* One element's draws are [float array array], a row per chain, read at
    float64. *)
 
-let mean xs = Array.fold_left ( +. ) 0. xs /. float_of_int (Array.length xs)
+let scale xs =
+  let top = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. xs in
+  if top > 0. && Float.is_finite top then
+    Float.ldexp 1. (snd (Float.frexp top) - 1)
+  else 1.
+
+(* The sum over the draws' [scale], so that draws near the largest float do not
+   overflow it; dividing by a power of two is exact, so ordinary draws give the
+   same bits. *)
+let mean xs =
+  let c = scale xs in
+  let s = Array.fold_left (fun s x -> s +. (x /. c)) 0. xs in
+  c *. (s /. float_of_int (Array.length xs))
 
 let var1 xs =
   let m = mean xs in
@@ -14,12 +26,6 @@ let var1 xs =
   s /. float_of_int (Array.length xs - 1)
 
 let pooled m = Array.concat (Array.to_list m)
-
-let scale xs =
-  let top = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. xs in
-  if top > 0. && Float.is_finite top then
-    Float.ldexp 1. (snd (Float.frexp top) - 1)
-  else 1.
 
 (* The spread of draws over their [scale], times it: draws 1e-200 apart have
    a variance below the least float, and draws 1e200 apart one above the
@@ -50,6 +56,11 @@ let split m =
     (Array.map (fun row -> Array.sub row 0 half) m)
     (Array.map (fun row -> Array.sub row (n - half) half) m)
 
+(* [between f lo hi] is [f (hi - lo)] for [f] in [\[0, 1\]], halved and doubled
+   so that the difference of draws a float's range apart does not overflow;
+   halving is exact, so ordinary draws give the same bits. *)
+let between f lo hi = 2. *. (f *. ((hi /. 2.) -. (lo /. 2.)))
+
 (* [quantile xs q] interpolates linearly between the order statistics. *)
 let quantile xs q =
   let s = Array.copy xs in
@@ -57,7 +68,7 @@ let quantile xs q =
   let pos = q *. float_of_int (Array.length s - 1) in
   let lo = truncate pos in
   let hi = min (lo + 1) (Array.length s - 1) in
-  s.(lo) +. ((pos -. float_of_int lo) *. (s.(hi) -. s.(lo)))
+  s.(lo) +. between (pos -. float_of_int lo) s.(lo) s.(hi)
 
 (* [z_scale m] is the normal scores of the pooled ranks, ties at their average
    rank. *)
