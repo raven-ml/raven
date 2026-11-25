@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.solve` with `nelder_mead` on a start of no unknowns converges at
+  once, as the other methods do, where it raised `Invalid_argument` from
+  `Nx.max` while writing its report.
 - `Root.newton` keeps a lane's last estimate where `f` was finite, where it
   held the iterate at which `f` was not, `−∞` after a step that overflowed:
   `Solution.best` now reads a finite estimate, as `jera.mli` states.

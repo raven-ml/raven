@@ -250,6 +250,20 @@ let gradient_tests =
                 (Minimize.lbfgs ~memory:1 ~linear:Linear.dense)
                 ~tol:tight ~budget:2000 rosenbrock
                 (vec [| -1.2; 1. |]))));
+    cases "zero unknowns converge at once" ~id:fst
+      [
+        ("bfgs", Minimize.bfgs ~linear:Linear.dense);
+        ("newton", Minimize.newton ~linear:Linear.dense);
+        ("nelder_mead", Minimize.nelder_mead);
+      ]
+      (fun (_, m) ->
+        let s =
+          Minimize.solve one m ~tol:tight ~budget:10
+            (fun x -> Nx.sum (Nx.square x))
+            (vec [||])
+        in
+        equal Oracle.status_t Converged (Oracle.status s);
+        equal (Oracle.tensor ()) (vec [||]) (Solution.best s));
     test "a structure's float tensors are one vector, others carried" (fun () ->
         let s = Nx.Ptree.(pair (pair tensor tensor) tensor) in
         let f ((p, q), _) =
@@ -2235,6 +2249,7 @@ let termination_tests =
             (None, None); (Some (Nx.full_like c (-1.)), Some (Nx.full_like c 1.));
           ]);
   ]
+
 
 let () =
   exit

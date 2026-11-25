@@ -1784,6 +1784,10 @@ let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
               int32 0l ) ) )
   in
   let best, _ = spread (v, fv) in
+  (* A simplex of no unknowns has a diameter of 0, a maximum of no term. *)
+  let diameter =
+    if n = 0 then Nx.scalar_at (Nx.beside p.start) p.dtype 0. else Nx.max e
+  in
   let fix (st : Solution.status) _ =
     match st with
     | Budget_spent -> "Raise the budget, or loosen tol."
@@ -1796,7 +1800,7 @@ let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
       (Format.asprintf "method nelder_mead, tol %a, budget %d" Tol.pp tol budget)
     ~spent:{ used = trips; unit = "trips"; budget }
     ~fix ~value:(p.unravel best) ~error:(p.unravel e) ~status:st ~evaluations
-    ~facts:[ Fact ("value", Nx.min fv); Fact ("diameter", Nx.max e) ]
+    ~facts:[ Fact ("value", Nx.min fv); Fact ("diameter", diameter) ]
     ()
 
 (* The best vertex after each of the first [steps] trips, the start first. *)
