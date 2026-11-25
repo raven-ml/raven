@@ -4,9 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* The decimal digits munin writes numbers with. The laws decide whether a
-   decimal reads back as a float with [reads], an exact reader of their own.
-   [float_of_string] is the C library's [strtod], which Windows' C runtime does
-   not promise to round correctly, and the laws must hold on every system. *)
+   decimal reads back as a float, and where a float lies against a decimal, with
+   [Exact], in integers, so that no C library takes part. *)
 
 open Windtrap
 module F = Munin_float_text.Float_text
@@ -19,84 +18,11 @@ let single x = Int32.float_of_bits (Int32.bits_of_float x)
 let next32 x = Int32.float_of_bits (Int32.succ (Int32.bits_of_float x))
 let prev32 x = Int32.float_of_bits (Int32.pred (Int32.bits_of_float x))
 
-(* Exact reading *)
-
-(* Naturals in limbs of 24 bits, least significant first. [mul a m c] is
-   [a m + c] for [m] and [c] below 2^24, so every product stays below 2^48. *)
-let mul a m c =
-  let carry = ref c in
-  let r =
-    Array.map
-      (fun l ->
-        let t = (l * m) + !carry in
-        carry := t lsr 24;
-        t land 0xFF_FFFF)
-      a
-  in
-  if !carry = 0 then r else Array.append r [| !carry |]
-
-let rec times a ~twos ~tens =
-  if twos > 0 then times (mul a (1 lsl min twos 23) 0) ~twos:(twos - 23) ~tens
-  else if tens > 0 then times (mul a 10 0) ~twos ~tens:(tens - 1)
-  else a
-
-let compare_nat a b =
-  let top a =
-    let n = ref (Array.length a) in
-    while !n > 0 && a.(!n - 1) = 0 do
-      decr n
-    done;
-    !n
-  in
-  let n = top a and m = top b in
-  if n <> m then Int.compare n m
-  else
-    let i = ref (n - 1) in
-    while !i >= 0 && a.(!i) = b.(!i) do
-      decr i
-    done;
-    if !i < 0 then 0 else Int.compare a.(!i) b.(!i)
-
-(* [compare_dec (d, e) n q] compares [d 10^e] with [n 2^q], for [n] below
-   2^62, by multiplying both by [10^-e] and [2^-q] where those are whole. *)
-let compare_dec (d, e) n q =
-  let digit a c = mul a 10 (Char.code c - Char.code '0') in
-  let dec = String.fold_left digit [| 0 |] d in
-  let bin = [| n land 0xFF_FFFF; (n lsr 24) land 0xFF_FFFF; n lsr 48 |] in
-  compare_nat
-    (times dec ~twos:(max 0 (-q)) ~tens:(max 0 e))
-    (times bin ~twos:(max 0 q) ~tens:(max 0 (-e)))
-
-(* [reads f x de] is whether the decimal [de] reads as [|x|] in [f], to
-   nearest, ties to even. [|x| = c 2^q] with [q] at least the subnormals'
-   exponent; the reals that read as it lie between the midpoints
-   [(2c - 1) 2^(q-1)] and [(2c + 1) 2^(q-1)], or from [(4c - 1) 2^(q-2)] at the
-   bottom of a binade above the subnormals, the ends included when [c] is
-   even. *)
-let decode (f : F.format) x =
-  let x = Float.abs x in
-  let qmin = f.emin - f.precision + 1 in
-  let q =
-    if x = 0. then qmin else max (snd (Float.frexp x) - f.precision) qmin
-  in
-  (Float.to_int (Float.ldexp x (-q)), q, qmin)
-
-let reads (f : F.format) x de =
-  let c, q, qmin = decode f x in
-  let inside o = o < 0 || (o = 0 && c land 1 = 0) in
-  let above =
-    if c = 0 then true
-    else if c = 1 lsl (f.precision - 1) && q > qmin then
-      inside (-compare_dec de ((4 * c) - 1) (q - 2))
-    else inside (-compare_dec de ((2 * c) - 1) (q - 1))
-  in
-  above && inside (compare_dec de ((2 * c) + 1) (q - 1))
-
 (* The value of [f] that [de] reads as, from [guess], the C library's reading,
    which is at most a unit in the last place off. *)
 let nearest f ~up ~down de guess =
   let near = [ guess; up guess; down guess ] in
-  match List.find_opt (fun x -> reads f x de) near with
+  match List.find_opt (fun x -> Exact.reads f x de) near with
   | Some x -> x
   | None -> failf "%s reads as no value next to %h" (text de) guess
 
@@ -108,6 +34,46 @@ let nearest32 de =
   nearest F.binary32 ~up:next32 ~down:prev32 de
     (single (float_of_string (text de)))
 
+(* [leading x] is the exponent of the leading digit of the nonzero [|x|]: 10^k
+   <= |x| < 10^(k+1). *)
+let leading x =
+  let c, q, _ = Exact.decode F.binary64 x in
+  let k = ref (Float.to_int (Float.floor (Float.log10 (Float.abs x)))) in
+  while Exact.compare_dec ("1", !k + 1) c q <= 0 do
+    incr k
+  done;
+  while Exact.compare_dec ("1", !k) c q > 0 do
+    decr k
+  done;
+  !k
+
+(* [rounds x ~unit (d, e)] checks that [d 10^e] is [|x|] rounded to a multiple
+   of [10^unit], to nearest, ties to even. With [d 10^e = m 10^unit], [|x|] lies
+   between the midpoints [(10m - 5) 10^(unit-1)] and [(10m + 5) 10^(unit-1)], on
+   one only when [m] is even. Callers keep [m] below 2^58. *)
+let rounds x ~unit (d, e) =
+  let c, q, _ = Exact.decode F.binary64 x in
+  satisfies ~claim:"is a multiple of the unit" digits
+    (fun (d, e) -> d = "0" || e >= unit)
+    (d, e);
+  let m = if d = "0" then 0 else int_of_string d * Exact.pow10 (e - unit) in
+  let even = m land 1 = 0 in
+  let mid k = (string_of_int ((10 * m) + k), unit - 1) in
+  (* The signs of each midpoint less [|x|]. *)
+  let lo = if m = 0 then -1 else Exact.compare_dec (mid (-5)) c q in
+  let hi = Exact.compare_dec (mid 5) c q in
+  cover "a tie" (lo = 0 || hi = 0);
+  satisfies ~claim:"lies within half a unit of x, a tie to the even one" digits
+    (fun _ -> (lo < 0 || (lo = 0 && even)) && (hi > 0 || (hi = 0 && even)))
+    (d, e)
+
+(* [is_exact x] checks that a decimal is [|x|]'s exact value. *)
+let is_exact x de =
+  let c, q, _ = Exact.decode F.binary64 x in
+  satisfies ~claim:"is x's exact value" digits
+    (fun de -> if x = 0. then de = ("0", 0) else Exact.compare_dec de c q = 0)
+    de
+
 (* Inputs *)
 
 let bits lo hi = Gen.map Int64.float_of_bits (Gen.int64_range lo hi)
@@ -116,8 +82,8 @@ let signed gen = Gen.(map (fun (x, s) -> if s then -.x else x) (pair gen bool))
 (* [k] units in the last place from [x], positive and finite. *)
 let ulps x k = Int64.float_of_bits (Int64.add (Int64.bits_of_float x) k)
 
-(* [n 2^-r] with [n] of [p] bits and [r] from 1 to 3: its interval is 2^-r
-   wide and its value ends in [5] at the digit after the grid of its shortest
+(* [n 2^-r] with [n] of [p] bits and [r] from 1 to 3: its interval is 2^-r wide
+   and its value ends in [5] at the digit after the grid of its shortest
    candidates, so two of them are often equally near. *)
 let ties p =
   let open Gen in
@@ -154,8 +120,7 @@ let float32 =
          ( 2,
            let+ e = int_range (-126) 127 and+ k = int_range 0 2 in
            let x = Float.ldexp 1. e in
-           if k = 0 then x else if k = 1 then next32 x else prev32 x
-         );
+           if k = 0 then x else if k = 1 then next32 x else prev32 x );
          ( 2,
            let+ d = int_range 1 999 and+ j = int_range (-44) 35 in
            single (float_of_string (Printf.sprintf "%de%d" d j)) );
@@ -174,12 +139,39 @@ let classes64 x =
   cover "binade bottom" (x >= 0x1p-1022 && fst (Float.frexp x) = 0.5);
   cover "largest" (x > 0x1p1023)
 
+(* A format of [p] bits, one bit in a quarter of the draws, and a value [c 2^q]
+   of it, at the format's least exponent in a third of them. Every [c] below
+   [2^p] with [q] at least that exponent is a value, and [emin] keeps every
+   value a double. *)
+let format_value =
+  let open Gen in
+  let* p =
+    frequency [ (1, constant 1); (1, int_range 2 8); (2, int_range 9 53) ]
+  in
+  let* emin = int_range (p - 1075) 200 in
+  let qmin = emin - p + 1 and bottom = 1 lsl (p - 1) in
+  let+ c =
+    frequency
+      [
+        (2, int_range 0 ((1 lsl p) - 1));
+        (1, constant bottom);
+        (1, int_range 1 (max 1 (bottom - 1)));
+      ]
+  and+ q = frequency [ (1, constant qmin); (2, int_range qmin (qmin + 200)) ] in
+  ({ F.precision = p; emin }, Float.ldexp (Float.of_int c) q)
+
+let classes_format ((f : F.format), x) =
+  let c, q, qmin = Exact.decode f x in
+  cover "one bit" (f.precision = 1);
+  cover "subnormal" (c > 0 && c < 1 lsl (f.precision - 1));
+  cover "binade bottom" (c = 1 lsl (f.precision - 1) && q > qmin)
+
 (* [shorter (d, e)] are the decimals of one digit fewer next to [d 10^e] on
    either side: [m 10^(e+1)] and [(m+1) 10^(e+1)], with [m] the digits of [d]
    but the last. Since [d] ends in a nonzero digit, they lie on either side of
    it, and every decimal of fewer digits than [d] is at or beyond one of them.
-   The reals that read as a float form an interval, so if neither reads as
-   [x], no decimal shorter than [d] does. *)
+   The reals that read as a float form an interval, so if neither reads as [x],
+   no decimal shorter than [d] does. *)
 let shorter (d, e) =
   let n = String.length d in
   if n < 2 then []
@@ -187,43 +179,24 @@ let shorter (d, e) =
     let m = int_of_string (String.sub d 0 (n - 1)) in
     [ (string_of_int m, e + 1); (string_of_int (m + 1), e + 1) ]
 
-(* Laws *)
+let reads_back f x =
+  satisfies ~claim:"reads back as x" digits (Exact.reads f x) (F.shortest f x)
 
-let test_reads_back64 =
-  prop "binary64 shortest reads back" ~count:2000 double (fun x ->
-      classes64 x;
-      let de = F.shortest F.binary64 x in
-      equal ~msg:(text de) bool true (reads F.binary64 x de))
-
-let test_minimal64 =
-  prop "binary64 nothing shorter reads back" ~count:2000 double (fun x ->
-      classes64 x;
-      List.iter
-        (fun de -> equal ~msg:(text de) bool false (reads F.binary64 x de))
-        (shorter (F.shortest F.binary64 x)))
-
-let test_reads_back32 =
-  prop "binary32 shortest reads back" ~count:2000 float32 (fun x ->
-      classes32 x;
-      let de = F.shortest F.binary32 x in
-      equal ~msg:(text de) bool true (reads F.binary32 x de))
-
-let test_minimal32 =
-  prop "binary32 nothing shorter reads back" ~count:2000 float32 (fun x ->
-      classes32 x;
-      List.iter
-        (fun de -> equal ~msg:(text de) bool false (reads F.binary32 x de))
-        (shorter (F.shortest F.binary32 x)))
+let nothing_shorter f x =
+  List.iter
+    (satisfies ~claim:"does not read back as x" digits (fun de ->
+         not (Exact.reads f x de)))
+    (shorter (F.shortest f x))
 
 (* Of the shortest decimals, the nearest. [d 10^e] has [n] digits; the only
    others of [n] digits that can be nearer to [x] are its neighbours on the far
    side of [x]: [(d + 1) 10^e] above, and below [(d - 1) 10^e], or [9 10^(e-1)]
-   when [d] is 1. One is nearer when [x] is past the midpoint toward it,
-   [(10d + 5) 10^(e-1)] above and [(10d - 5) 10^(e-1)] or [95 10^(e-2)] below.
-   At the midpoint the two tie, and the even last digit wins. *)
+   when [d] is 1. One is nearer when [x] is past the midpoint toward it, [(10d +
+   5) 10^(e-1)] above and [(10d - 5) 10^(e-1)] or [95 10^(e-2)] below. At the
+   midpoint the two tie, and the even last digit wins. *)
 let nearest_law f x =
   let d, e = F.shortest f x in
-  let c, q, _ = decode f x in
+  let c, q, _ = Exact.decode f x in
   let m = int_of_string d in
   let even = Char.code d.[String.length d - 1] land 1 = 0 in
   let up = ((string_of_int (m + 1), e), (string_of_int ((10 * m) + 5), e - 1))
@@ -232,30 +205,24 @@ let nearest_law f x =
     else ((string_of_int (m - 1), e), (string_of_int ((10 * m) - 5), e - 1))
   in
   (* [o n] compares the midpoint toward the neighbour [n] with [x]. *)
-  let o (_, mid) = compare_dec mid c q in
-  let reads_n (n, _) = x <> 0. && reads f x n in
+  let o (_, mid) = Exact.compare_dec mid c q in
+  let reads_n (n, _) = x <> 0. && Exact.reads f x n in
   cover "a neighbour reads back" (reads_n up || reads_n down);
   cover "tie" (x <> 0. && (o up = 0 || o down = 0));
-  if reads_n up then
-    equal ~msg:(text (d, e)) bool true (o up > 0 || (o up = 0 && even));
-  if reads_n down then
-    equal ~msg:(text (d, e)) bool true (o down < 0 || (o down = 0 && even))
+  let nearer side o =
+    satisfies
+      ~claim:("is nearer x than the neighbour " ^ side ^ ", or even at a tie")
+      digits
+      (fun _ -> o > 0 || (o = 0 && even))
+      (d, e)
+  in
+  if reads_n up then nearer "above" (o up);
+  if reads_n down then nearer "below" (-o down)
 
-let test_nearest64 =
-  prop "binary64 nearest of the shortest" ~count:2000 double
-    (nearest_law F.binary64)
-
-let test_nearest32 =
-  prop "binary32 nearest of the shortest" ~count:2000 float32
-    (nearest_law F.binary32)
-
-(* A decimal of at most 15 digits in the normal range is the shortest of the
-   double nearest it; of at most 6 digits, of the float32 nearest it. *)
+(* A decimal of at most [p] digits, a power of ten from [low] to [high]. *)
 let short_decimal ~digits:p ~low ~high =
   let open Gen in
-  let rec pow10 k = if k = 0 then 1 else 10 * pow10 (k - 1) in
-  let+ m = int_range 1 (pow10 p - 1)
-  and+ j = int_range low high in
+  let+ m = int_range 1 (Exact.pow10 p - 1) and+ j = int_range low high in
   let s = string_of_int m in
   let k = ref (String.length s) in
   while s.[!k - 1] = '0' do
@@ -263,136 +230,261 @@ let short_decimal ~digits:p ~low ~high =
   done;
   (String.sub s 0 !k, j + String.length s - !k)
 
+let binary16 = { F.precision = 11; emin = -14 }
+
+(* shortest *)
+
+let test_reads_back64 =
+  prop "reads back as x in binary64" ~count:2000 double (fun x ->
+      classes64 x;
+      reads_back F.binary64 x)
+
+let test_minimal64 =
+  prop "nothing shorter reads back in binary64" ~count:2000 double (fun x ->
+      classes64 x;
+      nothing_shorter F.binary64 x)
+
+let test_reads_back32 =
+  prop "reads back as x in binary32" ~count:2000 float32 (fun x ->
+      classes32 x;
+      reads_back F.binary32 x)
+
+let test_minimal32 =
+  prop "nothing shorter reads back in binary32" ~count:2000 float32 (fun x ->
+      classes32 x;
+      nothing_shorter F.binary32 x)
+
+let test_reads_back_any =
+  prop "reads back as x in any format" ~count:300 format_value (fun (f, x) ->
+      classes_format (f, x);
+      reads_back f x)
+
+let test_minimal_any =
+  prop "nothing shorter reads back in any format" ~count:300 format_value
+    (fun (f, x) ->
+      classes_format (f, x);
+      nothing_shorter f x)
+
+let test_nearest64 =
+  prop "is the nearest of the shortest in binary64" ~count:2000 double
+    (nearest_law F.binary64)
+
+let test_nearest32 =
+  prop "is the nearest of the shortest in binary32" ~count:2000 float32
+    (nearest_law F.binary32)
+
+(* A decimal of at most 15 digits in the normal range is the shortest of the
+   double nearest it; of at most 6 digits, of the float32 nearest it. *)
 let test_round_trip64 =
-  prop "binary64 short decimal round trip" ~count:1000
+  prop "gives back a decimal of 15 digits in binary64" ~count:1000
     (short_decimal ~digits:15 ~low:(-300) ~high:290)
-    (fun de -> equal digits de (F.shortest F.binary64 (nearest64 de)))
+    (Law.round_trip digits float_exact nearest64 (F.shortest F.binary64))
 
 let test_round_trip32 =
-  prop "binary32 short decimal round trip" ~count:1000
+  prop "gives back a decimal of 6 digits in binary32" ~count:1000
     (short_decimal ~digits:6 ~low:(-36) ~high:30)
-    (fun de -> equal digits de (F.shortest F.binary32 (nearest32 de)))
+    (Law.round_trip digits float_exact nearest32 (F.shortest F.binary32))
 
-(* Stated cases *)
-
-(* 5^1074, the digits of 2^-1074 = 5^1074 10^-1074, by schoolbook
-   multiplication in base 10. *)
-let pow5_1074 =
-  let a = Array.make 800 0 in
-  a.(0) <- 1;
-  for _ = 1 to 1074 do
-    let carry = ref 0 in
-    for i = 0 to Array.length a - 1 do
-      let t = (a.(i) * 5) + !carry in
-      a.(i) <- t mod 10;
-      carry := t / 10
-    done
-  done;
-  let top = ref (Array.length a - 1) in
-  while a.(!top) = 0 do
-    decr top
-  done;
-  String.init (!top + 1) (fun i -> Char.chr (48 + a.(!top - i)))
-
-let binary16 = { F.precision = 11; emin = -14 }
-let point_one32 = single 0.1
-
-let stated =
+(* C's DBL_MIN and DBL_MAX and their neighbours; [2^50 + 0.25], whose 17-digit
+   neighbours .2 and .3 are equally near, the even one taken; the float32
+   nearest 0.1, the .mli's example; and the largest binary16, e5m2 and e4m3fn
+   values, which read from the midpoints to the next value their formats would
+   have: 65504 from 65488 to 65520, 57344 from 53248 to 61440, 448 from 432 to
+   464 with both ends, as its significand is even. *)
+let shortest_rows =
   [
-    ("shortest zero", (fun () -> F.shortest F.binary64 0.), ("0", 0));
-    ("shortest -0", (fun () -> F.shortest F.binary64 (-0.)), ("0", 0));
-    ("shortest 0.1", (fun () -> F.shortest F.binary64 0.1), ("1", -1));
-    ("shortest 5e-324", (fun () -> F.shortest F.binary64 5e-324), ("5", -324));
-    ("shortest 1e23", (fun () -> F.shortest F.binary64 1e23), ("1", 23));
-    ( "shortest 2^-1022",
-      (fun () -> F.shortest F.binary64 0x1p-1022),
-      ("22250738585072014", -324) );
-    ( "shortest above 2^-1022",
-      (fun () -> F.shortest F.binary64 (Float.succ 0x1p-1022)),
+    ("zero", F.binary64, 0., ("0", 0));
+    ("-0", F.binary64, -0., ("0", 0));
+    ("0.1", F.binary64, 0.1, ("1", -1));
+    ("5e-324", F.binary64, 5e-324, ("5", -324));
+    ("1e23", F.binary64, 1e23, ("1", 23));
+    ("2^-1022", F.binary64, 0x1p-1022, ("22250738585072014", -324));
+    ( "above 2^-1022",
+      F.binary64,
+      Float.succ 0x1p-1022,
       ("2225073858507202", -323) );
-    ( "shortest below 2^-1022",
-      (fun () -> F.shortest F.binary64 (Float.pred 0x1p-1022)),
+    ( "below 2^-1022",
+      F.binary64,
+      Float.pred 0x1p-1022,
       ("2225073858507201", -323) );
-    ( "shortest max_float",
-      (fun () -> F.shortest F.binary64 max_float),
-      ("17976931348623157", 292) );
-    ( "shortest 2^50 + 0.25",
-      (fun () -> F.shortest F.binary64 (0x1p50 +. 0.25)),
-      ("11258999068426242", -1) );
-    ( "shortest binary32 0.1",
-      (fun () -> F.shortest F.binary32 point_one32),
-      ("1", -1) );
-    ( "shortest binary16 65504",
-      (fun () -> F.shortest binary16 65504.),
-      ("655", 2) );
-    ( "significant 3 135.5625",
-      (fun () -> F.significant 3 135.5625),
-      ("136", 0) );
-    ("significant 2 0.125", (fun () -> F.significant 2 0.125), ("12", -2));
-    ( "significant max_int 0.005",
-      (fun () -> F.significant max_int 0.005),
+    ("max_float", F.binary64, max_float, ("17976931348623157", 292));
+    ("2^50 + 0.25", F.binary64, 0x1p50 +. 0.25, ("11258999068426242", -1));
+    ("binary32 0.1", F.binary32, single 0.1, ("1", -1));
+    ("binary16 65504", binary16, 65504., ("655", 2));
+    ("e5m2 57344", { F.precision = 3; emin = -14 }, 57344., ("6", 4));
+    ("e4m3fn 448", { F.precision = 4; emin = -6 }, 448., ("45", 1));
+  ]
+
+let test_shortest_rows =
+  cases "is the stated digits"
+    ~id:(fun (id, _, _, _) -> id)
+    shortest_rows
+    (fun (_, f, x, want) -> equal digits want (F.shortest f x))
+
+let test_precision =
+  cases "raises on a precision outside 1 to 53" ~id:string_of_int [ 0; 54; 64 ]
+    (fun p ->
+      raises_match Exn.invalid_arg (fun () ->
+          F.shortest { F.precision = p; emin = -14 } 1.))
+
+let test_not_a_value =
+  cases "raises on a value not of the format" ~id:fst
+    [
+      ("binary32 0.1", (F.binary32, 0.1));
+      ("binary16 2^-25", (binary16, 0x1p-25));
+    ]
+    (fun (_, (f, x)) -> raises_match Exn.invalid_arg (fun () -> F.shortest f x))
+
+(* significant *)
+
+(* [n] up to 17 keeps the rounded digits below 2^58 in [rounds]. Ties come from
+   [k 2^-r], [k] odd, whose decimal [k 5^r 10^-r] ends in 5, rounded to one
+   digit fewer. *)
+let significant_input =
+  let open Gen in
+  frequency
+    [
+      (3, pair (int_range 1 17) double);
+      ( 1,
+        let+ k = int_range 0 (1 lsl 20) and+ r = int_range 2 8 in
+        let k = (2 * k) + 1 in
+        let scaled = k * Float.to_int (5. ** Float.of_int r) in
+        ( String.length (string_of_int scaled) - 1,
+          Float.ldexp (Float.of_int k) (-r) ) );
+    ]
+
+let test_significant =
+  prop "rounds |x| to n significant digits, ties to even" ~count:500
+    significant_input (fun (n, x) ->
+      assume (x <> 0.);
+      rounds x ~unit:(leading x - n + 1) (F.significant n x))
+
+let test_significant_exact =
+  prop "is x exactly at x's digit count or more"
+    ~examples:[ (max_int, 5e-324); (max_int, 0.005); (767, max_float) ]
+    Gen.(pair (of_list [ 767; max_int ]) double)
+    (fun (n, x) -> is_exact x (F.significant n x))
+
+(* The .mli's examples; the exact decimal of the double nearest 0.005. *)
+let significant_rows =
+  [
+    (3, 135.5625, ("136", 0));
+    (2, 0.125, ("12", -2));
+    ( max_int,
+      0.005,
       ("5000000000000000104083408558608425664715468883514404296875", -60) );
-    ( "significant max_int 5e-324",
-      (fun () -> F.significant max_int 5e-324),
-      (pow5_1074, -1074) );
-    ("decimals 2 0.125", (fun () -> F.decimals 2 0.125), ("12", -2));
-    ("decimals 0 0.5", (fun () -> F.decimals 0 0.5), ("0", 0));
-    ("decimals 0 1.5", (fun () -> F.decimals 0 1.5), ("2", 0));
-    ("decimals -2 1250", (fun () -> F.decimals (-2) 1250.), ("12", 2));
-    ("decimals 2 -0.001", (fun () -> F.decimals 2 (-0.001)), ("0", 0));
-    ("decimals max_int 1.5", (fun () -> F.decimals max_int 1.5), ("15", -1));
-    ("decimals min_int 1.5", (fun () -> F.decimals min_int 1.5), ("0", 0));
+    (1, 0., ("0", 0));
   ]
 
-let test_stated =
-  cases "stated values" ~id:(fun (name, _, _) -> name) stated
-    (fun (_, f, want) -> equal digits want (f ()))
+let test_significant_rows =
+  cases "is the stated digits"
+    ~id:(fun (n, x, _) -> Printf.sprintf "%d %h" n x)
+    significant_rows
+    (fun (n, x, want) -> equal digits want (F.significant n x))
 
-(* The exact reader at ties to even and at the overflow threshold,
-   1.797693134862315807...e308. *)
-let reader_rows =
+let test_significant_refused =
+  test "raises below one digit" (fun () ->
+      raises_match Exn.invalid_arg (fun () -> F.significant 0 1.))
+
+(* decimals *)
+
+(* Values from 10^-8 to 10^16 units, so that some round to zero; ties from [k
+   2^-r], [k] odd, at [r - 1] decimals, whose scaled value [k 5^(r-1) / 2] ends
+   in a half, and from [(2m + 1) 5 10^(-n-1)] at a negative [n]. *)
+let decimals_input =
+  let open Gen in
+  frequency
+    [
+      ( 3,
+        let* n = int_range (-10) 25 in
+        let+ d = int_range 1 999_999 and+ j = int_range (-n - 8) (10 - n) in
+        (n, float_of_string (Printf.sprintf "%de%d" d j)) );
+      ( 1,
+        let+ k = int_range 0 (1 lsl 20) and+ r = int_range 1 8 in
+        (r - 1, Float.ldexp (Float.of_int ((2 * k) + 1)) (-r)) );
+      ( 1,
+        let+ m = int_range 0 1_000_000 and+ n = int_range (-6) (-1) in
+        let tie = Printf.sprintf "%de%d" (((2 * m) + 1) * 5) (-n - 1) in
+        (n, float_of_string tie) );
+    ]
+
+let test_decimals =
+  prop "rounds |x| to a multiple of 10^-n, ties to even" ~count:500
+    Gen.(pair decimals_input bool)
+    (fun ((n, x), neg) ->
+      let x = if neg then -.x else x in
+      let r = F.decimals n x in
+      cover "rounds to zero" (r = ("0", 0));
+      rounds x ~unit:(-n) r)
+
+let test_decimals_exact =
+  prop "is x exactly at 1074 decimals or more"
+    ~examples:[ (max_int, 5e-324); (1074, max_float) ]
+    Gen.(pair (of_list [ 1074; max_int ]) double)
+    (fun (n, x) -> is_exact x (F.decimals n x))
+
+(* The .mli's examples, a negative number that rounds to zero, and the ends of
+   [n]. *)
+let decimals_rows =
   [
-    ("0.1", 0.1, ("1", -1), true);
-    ("2^53 + 1 to 2^53", 0x1p53, ("9007199254740993", 0), true);
-    ("2^53 + 1 to 2^53 + 2", 0x1p53 +. 2., ("9007199254740993", 0), false);
-    ("2^53 + 3 to 2^53 + 4", 0x1p53 +. 4., ("9007199254740995", 0), true);
-    ("2^53 + 3 to 2^53 + 2", 0x1p53 +. 2., ("9007199254740995", 0), false);
-    ("below overflow", max_float, ("17976931348623158", 292), true);
-    ("past overflow", max_float, ("17976931348623159", 292), false);
+    (2, 0.125, ("12", -2));
+    (0, 0.5, ("0", 0));
+    (0, 1.5, ("2", 0));
+    (-2, 1250., ("12", 2));
+    (2, -0.001, ("0", 0));
+    (max_int, 1.5, ("15", -1));
+    (min_int, 1.5, ("0", 0));
   ]
 
-let test_reader =
-  cases "exact reader" ~id:(fun (name, _, _, _) -> name) reader_rows
-    (fun (_, x, de, want) -> equal bool want (reads F.binary64 x de))
+let test_decimals_rows =
+  cases "is the stated digits"
+    ~id:(fun (n, x, _) -> Printf.sprintf "%d %h" n x)
+    decimals_rows
+    (fun (n, x, want) -> equal digits want (F.decimals n x))
 
-let refused =
-  [
-    ( "precision 64",
-      fun () -> F.shortest { F.precision = 64; emin = -16382 } 0.1 );
-    ("precision 0", fun () -> F.shortest { F.precision = 0; emin = 0 } 1.);
-    ("binary32 0.1", fun () -> F.shortest F.binary32 0.1);
-    ("nan", fun () -> F.shortest F.binary64 Float.nan);
-    ("infinity", fun () -> F.significant 3 Float.infinity);
-    ("significant 0", fun () -> F.significant 0 1.);
-  ]
+(* Every function *)
 
-let test_refused =
-  cases "refused" ~id:fst refused (fun (_, f) -> raises_match Exn.invalid_arg f)
+let test_not_finite =
+  cases "raises on NaN and the infinities"
+    ~id:(fun (name, x) -> Printf.sprintf "%s %h" name x)
+    (List.concat_map
+       (fun x -> [ ("shortest", x); ("significant", x); ("decimals", x) ])
+       [ Float.nan; Float.infinity; Float.neg_infinity ])
+    (fun (name, x) ->
+      raises_match Exn.invalid_arg (fun () ->
+          match name with
+          | "shortest" -> F.shortest F.binary64 x
+          | "significant" -> F.significant 3 x
+          | _ -> F.decimals 3 x))
 
 let () =
   exit
     (run "munin float text"
        [
-         group "laws"
+         group "every function" [ test_not_finite ];
+         group "shortest"
            [
              test_reads_back64;
              test_minimal64;
              test_reads_back32;
              test_minimal32;
+             test_reads_back_any;
+             test_minimal_any;
              test_nearest64;
              test_nearest32;
              test_round_trip64;
              test_round_trip32;
+             test_shortest_rows;
+             test_precision;
+             test_not_a_value;
            ];
-         group "cases" [ test_stated; test_refused; test_reader ];
+         group "significant"
+           [
+             test_significant;
+             test_significant_exact;
+             test_significant_rows;
+             test_significant_refused;
+           ];
+         group "decimals"
+           [ test_decimals; test_decimals_exact; test_decimals_rows ];
        ])

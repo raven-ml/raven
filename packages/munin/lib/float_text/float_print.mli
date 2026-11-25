@@ -33,6 +33,6 @@ val exact : float -> string
     [5e-324]. *)
 
 val exact_float : float -> string
-(** [exact_float x] is [exact x] with [.0] added when it has neither a fraction
-    nor an exponent, as [1.0] and [-0.0], so that a reader that tells integers
-    from floats by their text reads a float. *)
+(** [exact_float x] is, for a finite [x], [exact x] with [.0] added when it has
+    neither a fraction nor an exponent, as [1.0] and [-0.0], so that a reader
+    that tells integers from floats by their text reads a float. *)
