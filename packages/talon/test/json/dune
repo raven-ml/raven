@@ -2,7 +2,7 @@
  (name test_json)
  (modules test_json)
  (package talon)
- (libraries windtrap talon talon.json talon_gen bytesrw nx)
+ (libraries windtrap talon talon.json talon_gen bytesrw nx unix)
  (deps
   (source_tree golden)
   (source_tree support))

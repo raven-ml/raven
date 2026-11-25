@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Malformed JSON files: each sniff and decode is a format, a table or an error,
-   never an exception or a hang, however the reader slices the input. *)
+(* Malformed JSON text: sniff gives a format or an Error, and decode a table or
+   an Error, never an exception or a hang, however the reader slices it. *)
 
 open Windtrap
 module J = Talon_json
@@ -30,50 +30,56 @@ let nested =
 {"user":null,"tags":[],"m":null}
 |}
 
-let corpus =
-  [ ("flat", flat); ("array", array_doc); ("nested", nested); ("empty", "") ]
+let documents = [| flat; array_doc; nested |]
 
-let pick = Gen.of_list ~pp:Format.pp_print_string (List.map fst corpus)
-let text name = List.assoc name corpus
-
+(* Each document's format, as which decode reads its mutations. *)
 let formats =
-  List.filter_map
-    (fun (name, s) ->
-      match J.sniff (Reader.of_string s) with
-      | Ok f -> Some (name, f)
-      | Error _ -> None)
-    corpus
+  lazy
+    (Array.map
+       (fun s -> Result.get_ok (J.sniff (Reader.of_string s)))
+       documents)
 
-(* [decode ?rows ?slice f s] decodes [s] in slices of [slice] bytes, sniffed
-   from its first [rows] rows, then as [f]. Any failure is an [Error]. *)
-let decode ?rows ?slice f s =
-  let reader () = Reader.of_string ?slice_length:slice s in
-  let outcome = function Ok _ -> "reads" | Error _ -> "fails" in
-  (match J.sniff ?rows (reader ()) with
-  | Error _ -> collect "sniff fails"
-  | Ok sniffed -> collect ("sniffed, " ^ outcome (J.decode sniffed (reader ()))));
-  match f with
-  | None -> ()
-  | Some f ->
-      let original = outcome (J.decode f (reader ())) in
-      collect ("as the original, " ^ original);
-      cover "as the original, fails" (original = "fails")
+let tokens =
+  [
+    "\"";
+    "\\";
+    ",";
+    ":";
+    "{";
+    "}";
+    "[";
+    "]";
+    "\n";
+    "\r\n";
+    "\000";
+    "\xff";
+    "\xc3";
+    "\xed\xa0\x80";
+    "null";
+    "true";
+    "1e999";
+    "-";
+    "\\ud800";
+    "\\uZZZZ";
+    "\xef\xbb\xbf";
+    "01";
+    "1.";
+    ".5";
+    "NaN";
+  ]
 
-let rows = Gen.(option (int_range 1 4))
-let slice = Gen.(option (int_range 1 16))
+(* Mutations of a document, at a position [k] that wraps past its end. *)
+
 let at s k = k mod (String.length s + 1)
 
 let flip bits s =
-  if s = "" then s
-  else begin
-    let b = Bytes.of_string s in
-    List.iter
-      (fun (k, bit) ->
-        let i = k mod String.length s in
-        Bytes.set_uint8 b i (Bytes.get_uint8 b i lxor (1 lsl bit)))
-      bits;
-    Bytes.to_string b
-  end
+  let b = Bytes.of_string s in
+  List.iter
+    (fun (k, bit) ->
+      let i = k mod String.length s in
+      Bytes.set_uint8 b i (Bytes.get_uint8 b i lxor (1 lsl bit)))
+    bits;
+  Bytes.to_string b
 
 let insert k piece s =
   let i = at s k in
@@ -84,39 +90,67 @@ let remove k len s =
   let len = min len (String.length s - i) in
   String.sub s 0 i ^ String.sub s (i + len) (String.length s - i - len)
 
-let tokens =
-  Gen.of_list
-    ~pp:(fun ppf s -> Format.fprintf ppf "%S" s)
-    [
-      "\""; "\\"; ","; ":"; "{"; "}"; "["; "]"; "\n"; "\r\n"; "\000"; "\xff";
-      "\xc3"; "\xed\xa0\x80"; "null"; "true"; "1e999"; "-"; "\\ud800";
-      "\\uZZZZ"; "\xef\xbb\xbf"; "01"; "1."; ".5"; "NaN";
-    ]
+(* A case: the document whose format decode reads, the malformed text, how it
+   was made, and sniff's rows and the reader's slices. *)
+type case = {
+  doc : int;
+  mutation : string;
+  text : string;
+  rows : int option;
+  slice : int option;
+}
 
-let mutated name mutate (rows, slice) =
-  decode ?rows ?slice (List.assoc_opt name formats) (mutate (text name))
+let pp_case ppf c =
+  let pp_int = Format.(pp_print_option pp_print_int) in
+  Format.fprintf ppf "%s of document %d: %S, rows %a, slices %a" c.mutation
+    c.doc c.text pp_int c.rows pp_int c.slice
 
-let bits = Gen.(list ~size:(int_range 1 8) (pair nat (int_range 0 7)))
+let case =
+  let open Gen in
+  let mutated doc =
+    let s = documents.(doc) in
+    one_of
+      [
+        map
+          (fun bits -> ("flipped bits", flip bits s))
+          (list ~size:(int_range 1 8) (pair nat (int_range 0 7)));
+        map
+          (fun (k, piece) -> ("inserted syntax", insert k piece s))
+          (pair nat (of_list tokens));
+        map
+          (fun (k, len) -> ("removed bytes", remove k len s))
+          (pair nat (int_range 1 16));
+        map (fun s -> ("random bytes", s)) string;
+      ]
+  in
+  with_pp pp_case
+    (let* doc = int_range 0 (Array.length documents - 1) in
+     let* mutation, text = mutated doc in
+     let* rows = option (int_range 1 4) in
+     let+ slice = option (int_range 1 16) in
+     { doc; mutation; text; rows; slice })
 
-let flipped =
-  prop ~count:500 "flipped bits fail cleanly"
-    Gen.(triple pick bits (pair rows slice))
-    (fun (name, bits, opts) -> mutated name (flip bits) opts)
+let reader c = Reader.of_string ?slice_length:c.slice c.text
 
-let inserted =
-  prop ~count:500 "inserted syntax fails cleanly"
-    Gen.(quad pick nat tokens (pair rows slice))
-    (fun (name, k, piece, opts) -> mutated name (insert k piece) opts)
+let cover_mutations c =
+  List.iter
+    (fun m -> cover m (c.mutation = m))
+    [ "flipped bits"; "inserted syntax"; "removed bytes"; "random bytes" ]
 
-let removed =
-  prop ~count:500 "removed bytes fail cleanly"
-    Gen.(quad pick nat (int_range 1 16) (pair rows slice))
-    (fun (name, k, len, opts) -> mutated name (remove k len) opts)
+let sniff =
+  prop ~count:1000 "sniff › malformed text is a format or an Error" case
+    (fun c ->
+      let r = J.sniff ?rows:c.rows (reader c) in
+      cover_mutations c;
+      cover "sniffed" (Result.is_ok r);
+      cover "refused" (Result.is_error r))
 
-let garbage =
-  prop ~count:300 "random bytes fail cleanly"
-    Gen.(pair string (pair rows slice))
-    (fun (s, (rows, slice)) -> decode ?rows ?slice None s)
+let decode =
+  prop ~count:1000 "decode › malformed text is a table or an Error" case
+    (fun c ->
+      let r = J.decode (Lazy.force formats).(c.doc) (reader c) in
+      cover_mutations c;
+      cover "read" (Result.is_ok r);
+      cover "refused" (Result.is_error r))
 
-let () =
-  exit (run "talon.json fuzz" [ flipped; inserted; removed; garbage ])
+let () = exit (run "talon.json fuzz" [ sniff; decode ])
