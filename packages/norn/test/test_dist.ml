@@ -50,6 +50,26 @@ let families kind =
     (lines kind);
   List.rev_map (fun f -> (f, List.rev (Hashtbl.find rows f))) !order
 
+(* gen/dist.py's truncations: each base, and its low and high bounds. *)
+let truncations =
+  [
+    ("truncated_normal", ("normal", Some (-1.), Some 3.));
+    ("truncated_normal_far", ("normal", Some 60.5, None));
+    ("truncated_normal_below", ("normal", None, Some (-79.5)));
+    ("truncated_normal_window", ("normal", Some 20.5, Some 21.5));
+    ("truncated_gamma", ("gamma", Some 50., None));
+    ("truncated_gamma_deep", ("gamma", None, Some 1e-130));
+    ("truncated_laplace_far", ("laplace", Some 1000., None));
+    ("truncated_gamma_both", ("gamma_small", Some 0.1, Some 2.));
+    ("truncated_exponential", ("exponential", None, Some 0.01));
+    ("truncated_cauchy", ("cauchy", Some 1e6, None));
+    ("truncated_laplace", ("laplace", Some (-50.), Some (-40.)));
+    ("truncated_inverse_gamma", ("inverse_gamma", None, Some 0.05));
+    ("truncated_uniform", ("uniform", Some 0., Some 1.));
+    ("truncated_half_normal", ("half_normal", None, Some 1e-3));
+    ("truncated_beta", ("beta", Some 0.2, Some 0.6));
+  ]
+
 (* The distributions gen/dist.py names, at its parameters. *)
 let rec continuous_case name =
   match name with
@@ -70,26 +90,11 @@ let rec continuous_case name =
   | "uniform" -> D.uniform ~low:(f64 (-1.)) ~high:(f64 3.)
   | "von_mises" -> D.von_mises ~loc:(f64 0.3) ~concentration:(f64 2.)
   | "von_mises_flat" -> D.von_mises ~loc:(f64 (-1.)) ~concentration:(f64 0.)
-  | "truncated_normal" -> truncated "normal" (Some (-1.)) (Some 3.)
-  | "truncated_normal_far" -> truncated "normal" (Some 60.5) None
-  | "truncated_normal_below" -> truncated "normal" None (Some (-79.5))
-  | "truncated_normal_window" -> truncated "normal" (Some 20.5) (Some 21.5)
-  | "truncated_gamma" -> truncated "gamma" (Some 50.) None
-  | "truncated_gamma_deep" -> truncated "gamma" None (Some 1e-130)
-  | "truncated_laplace_far" -> truncated "laplace" (Some 1000.) None
-  | "truncated_gamma_both" -> truncated "gamma_small" (Some 0.1) (Some 2.)
-  | "truncated_exponential" -> truncated "exponential" None (Some 0.01)
-  | "truncated_cauchy" -> truncated "cauchy" (Some 1e6) None
-  | "truncated_laplace" -> truncated "laplace" (Some (-50.)) (Some (-40.))
-  | "truncated_inverse_gamma" -> truncated "inverse_gamma" None (Some 0.05)
-  | "truncated_uniform" -> truncated "uniform" (Some 0.) (Some 1.)
-  | "truncated_half_normal" -> truncated "half_normal" None (Some 1e-3)
-  | "truncated_beta" -> truncated "beta" (Some 0.2) (Some 0.6)
+  | name when List.mem_assoc name truncations ->
+      let base, low, high = List.assoc name truncations in
+      D.truncated ?low:(Option.map f64 low) ?high:(Option.map f64 high)
+        (continuous_case base)
   | _ -> failwith ("dist.golden: no continuous case " ^ name)
-
-and truncated base low high =
-  D.truncated ?low:(Option.map f64 low) ?high:(Option.map f64 high)
-    (continuous_case base)
 
 let count_case name =
   match name with
@@ -2127,6 +2132,38 @@ let truncation =
   let normal = D.normal ~loc:(f64 0.5) ~scale:(f64 2.) in
   group "truncated"
     [
+      (* norn.mli: the log density is the base's less the log mass, within [ε]
+         times their magnitudes where both are large. The base's [8 ε] of its
+         terms and the mass's [64 ε] hold that and the moderate rows. *)
+      test "log densities are within their bound of mpmath's" (fun () ->
+          List.iter
+            (fun (name, rows) ->
+              subtest name (fun () ->
+                  let d = continuous_case name in
+                  let base, _, _ = List.assoc name truncations in
+                  List.iter
+                    (fun row ->
+                      match floats row with
+                      | [ x; v ] ->
+                          let f = item (D.factors d (f64 x)) in
+                          if Float.is_finite v then
+                            let b =
+                              item (D.factors (continuous_case base) (f64 x))
+                            in
+                            let log_mass = b -. v in
+                            equal
+                              ~msg:(Printf.sprintf "x = %h" x)
+                              (float
+                                 (64. *. epsilon_float
+                                 *. (1. +. Float.abs b +. Float.abs log_mass)))
+                              v f
+                          else
+                            equal
+                              ~msg:(Printf.sprintf "x = %h" x)
+                              float_exact v f
+                      | _ -> failwith "dist.golden: a malformed logpdf line")
+                    rows))
+            (families "logpdf"));
       test "its draws lie within the bounds" (fun () ->
           let d = D.truncated ~low:(f64 60.5) ~high:(f64 61.) normal in
           let xs = Nx.to_array (D.sample (Nx.Rng.key 7) (D.iid [| 1000 |] d)) in
