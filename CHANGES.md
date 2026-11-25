@@ -1381,9 +1381,10 @@ All notable changes to this project will be documented in this file.
   now ends `Stalled`; loosen it.
 - `Sde.milstein` evaluates the diffusion three times per step, as `jera.mli`
   states, where it took four. Results change in their last bits.
-- `Linear.gmres` checks its answer at `r = 0`, and `Linear.solve` checks a
-  system of no unknowns, each with one application of `a`: an `a` that is not
-  linear reported `Converged` there. A gmres solve takes one more application.
+- `Linear.gmres` checks its answer at `r = 0` with one application of `a`,
+  where an `a` that is not linear reported `Converged`, and `Linear.solve`
+  applies `a` once to a system of no unknowns, checking its layout. A gmres
+  solve takes one more application.
 - A `Sde.Brownian` path whose finest intervals are below the floats' spacing
   near its times, as past depth 24 in float32 over `[0, 1]`, no longer returns
   wrong increments: it agrees with every shallower path of its key.

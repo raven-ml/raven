@@ -370,7 +370,8 @@ module Root : sig
       as a zero of [f] ({!Rune.root}), so its derivative is the implicit one,
       [−∂f/∂θ / ∂f/∂x] at a converged element, through every tracked value [f]
       reads, and zero at an element that did not converge. At a converged zero
-      where [∂f/∂x] is [0] the derivative does not exist and is not finite.
+      where [∂f/∂x] is [0] in the floats the derivative does not exist and is
+      not finite; near one it is finite and as large as [1 / ∂f/∂x].
 
       The derivative solves elementwise and checks its solution with one more
       product: where it misses, [f] read another element than its own, and the
@@ -507,9 +508,10 @@ module System : sig
       {!Rune.root}, so its derivative is the implicit one, [−J⁻¹ ∂f/∂θ] through
       every tracked value [f] reads, with [J] rune's derivative of [f] at the
       answer, solved by [linear]; zero at a lane that did not converge. At a
-      zero where [J] is singular the derivative does not exist: its solve by
-      [linear] misses the solver's bound, and the derivative raises
-      [Invalid_argument] naming the entry point. *)
+      zero where [J] is singular in the floats the derivative does not exist:
+      its solve by [linear] misses the solver's bound, and the derivative raises
+      [Invalid_argument] naming the entry point. Near one, where the solve meets
+      its bound, it is finite and as large as [J⁻¹]. *)
 
   type 'x t
   (** The type for methods for systems on values of type ['x]. *)
