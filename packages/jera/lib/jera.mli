@@ -786,22 +786,21 @@ module Minimize : sig
       the simplex's diameter per component around its best vertex, [y] that
       vertex. Once [e] meets [tol], the points [y ± σ e_i] are evaluated, [σ]
       twice the largest component of [e] and of [tol]'s scale at [y], or where
-      both are 0, as a relative [tol]'s scale is at [y = 0], the first
-      simplex's largest step at [y]: if none is lower than [y] by [10⁻⁴] of
-      the norm of each pair's lower difference from [f y], a point where [f]
-      is not finite differing by 0, the lane converges, and otherwise it
-      continues from the simplex of [y] and the lower point of each pair
-      (Kelley, 1999). Where [f] is smooth and its gradient is not zero, one of
-      the [2n] directions [±e_i] descends, so a lane converges where a step
-      [σ] along none of them descends by that margin; a diameter alone
-      converges on McKinnon's function at a point whose gradient is [(0, 1)].
-      A non-finite value counts as [+∞], one at the start ends the lane
-      [Not_finite]. [budget] counts trips, the iterations of the simplex.
-      {b Cost.} [n + 1] evaluations for the first simplex, one per trip, two
-      when it expands or contracts, [n + 1] more when it shrinks, and [2n] for
-      each diameter that meets [tol].
-      {b Derivative.} None: its answer is the detached best vertex, since an
-      objective with no useful gradient has a minimum with no equation. *)
+      both are 0, as a relative [tol]'s scale is at [y = 0], the first simplex's
+      largest step at [y]: if none is lower than [y] by [10⁻⁴] of the norm of
+      each pair's lower difference from [f y], a point where [f] is not finite
+      differing by 0, the lane converges, and otherwise it continues from the
+      simplex of [y] and the lower point of each pair (Kelley, 1999). Where [f]
+      is smooth and its gradient is not zero, one of the [2n] directions [±e_i]
+      descends, so a lane converges where a step [σ] along none of them descends
+      by that margin; a diameter alone converges on McKinnon's function at a
+      point whose gradient is [(0, 1)]. A non-finite value counts as [+∞], one
+      at the start ends the lane [Not_finite]. [budget] counts trips, the
+      iterations of the simplex. {b Cost.} [n + 1] evaluations for the first
+      simplex, one per trip, two when it expands or contracts, [n + 1] more when
+      it shrinks, and [2n] for each diameter that meets [tol]. {b Derivative.}
+      None: its answer is the detached best vertex, since an objective with no
+      useful gradient has a minimum with no equation. *)
 
   val solve :
     ('x, 'd) Nx.Ptree.t ->
@@ -894,16 +893,15 @@ module Minimize : sig
       several minima in the bracket it finds one of them. As Brent's [localmin]
       (Algorithms for Minimization without Derivatives, 1973), it evaluates no
       two points closer than [√ε |x|] plus a third of [tol]'s scale at [x], [ε]
-      the dtype's epsilon: near a minimum, values of [f] closer than that
-      differ by about their rounding and do not order the points.
-      {b Error.} [e] is half the final bracket and [y] its midpoint; an element
-      also ends when no float lies strictly inside its bracket. A bracket that
-      narrows to that least step short of [tol] ends [Stalled]: a tolerance
-      finer than about [6 √ε |x|] is not met. A non-finite value of [f] ends
-      it [Not_finite]. {b Derivative.} A minimum inside the bracket is stated as a
-      zero of rune's derivative of [f], so its derivative is
-      [−∂²f/∂x∂θ / ∂²f/∂x²]; a minimum at an end is that end, with its
-      derivative; a lane that did not converge has a zero derivative. *)
+      the dtype's epsilon: near a minimum, values of [f] closer than that differ
+      by about their rounding and do not order the points. {b Error.} [e] is
+      half the final bracket and [y] its midpoint. A bracket short of [tol] that
+      holds no float strictly inside, or that narrows to that least step, ends
+      [Stalled]: a tolerance finer than about [6 √ε |x|] is not met. A
+      non-finite value of [f] ends it [Not_finite]. {b Derivative.} A minimum
+      inside the bracket is stated as a zero of rune's derivative of [f], so its
+      derivative is [−∂²f/∂x∂θ / ∂²f/∂x²]; a minimum at an end is that end, with
+      its derivative; a lane that did not converge has a zero derivative. *)
 end
 
 module Quad : sig

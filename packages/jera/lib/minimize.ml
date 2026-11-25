@@ -59,24 +59,19 @@ let bracket ~tol f ~lo ~hi =
       (Nx.add (Nx.mul_s (Nx.abs x) root_eps) (Nx.div_s (Tol.scale tol x) 3.))
       (Num.tiny dtype)
   in
-  (* An element converges when its bracket meets [tol] or holds no float, and
-     stalls when it is as narrow as its least step allows, [localmin]'s stopping
-     test, short of [tol]. *)
+  (* An element converges when its bracket meets [tol], and stalls short of it
+     when its bracket holds no float or is as narrow as its least step allows,
+     [localmin]'s stopping test. *)
   let finish s st =
     let half = Nx.div_s (Nx.sub s.b s.a) 2. in
-    let narrow =
-      Nx.logical_or
-        (accepted tol ~e:half ~y:(Nx.add s.a half))
-        (Num.adjacent s.a s.b)
-    in
-    let st = settle st narrow Converged in
     let m = Nx.add s.a half in
+    let st = settle st (accepted tol ~e:half ~y:m) Converged in
     let floor =
       Nx.less_equal
         (Nx.abs (Nx.sub s.x m))
         (Nx.sub (Nx.mul_s (least s.x) 2.) half)
     in
-    settle st floor Stalled
+    settle st (Nx.logical_or (Num.adjacent s.a s.b) floor) Stalled
   in
   let initial =
     {

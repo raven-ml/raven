@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.bracket` ends an element `Stalled` where its ends are adjacent
+  floats and half the bracket misses `tol`, as `Root.bracket` does, where it
+  reported `Converged`.
 - `Minimize.iterates` of `levenberg_marquardt`, `lbfgs` and `newton` on a
   start of no unknowns returns its rows of no element, as `bfgs`'s does, where
   each raised `Invalid_argument` from a reshape or a maximum of no term.

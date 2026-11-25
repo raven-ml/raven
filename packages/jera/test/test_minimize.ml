@@ -2558,6 +2558,14 @@ let bracket_tests =
           (Oracle.status
              (Minimize.bracket ~tol:(Tol.rel 1e-6) Nx.square ~lo:(vec [| -1. |])
                 ~hi:(vec [| 2. |]))));
+    test "a bracket of adjacent floats short of tol ends Stalled" (fun () ->
+        (* Half the bracket, 1.1e-16, misses Tol.abs 1e-300, and no float lies
+           between its ends. *)
+        equal Oracle.status_t Stalled
+          (Oracle.status
+             (Minimize.bracket ~tol:(Tol.abs 1e-300) Nx.square
+                ~lo:(vec [| 1. |])
+                ~hi:(vec [| Float.succ 1. |]))));
     test "cos has its minimum at π in [0, 5]" (fun () ->
         let s =
           Minimize.bracket ~tol:brent Nx.cos ~lo:(vec [| 0. |])
