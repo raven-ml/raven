@@ -9,8 +9,38 @@ module Draws = Norn.Draws
 
 let t = Nx.Ptree.tensor
 let item x = Nx.item [] x
+let f64 = Nx.scalar Nx.float64
+let chains c n xs = Draws.v t (Nx.create Nx.float64 [| c; n |] xs)
 
-(* Goldens *)
+(* Within rounding of the two implementations' summation orders. *)
+let close = float_rel ~rel:1e-9 ~abs:1e-12
+
+let nan_or_close =
+  Testable.make
+    ~pp:(fun ppf x -> Format.fprintf ppf "%h" x)
+    ~equal:(fun a b ->
+      (Float.is_nan a && Float.is_nan b) || Testable.equal close a b)
+
+(* [transitions ~energy ~diverging] is the statistics of transitions with these
+   energies and divergences, the other fields zero. *)
+let transitions ~energy ~diverging =
+  let z = Nx.zeros_like energy in
+  Draws.v
+    (Norn.Stats.ptree Nx.float64)
+    Norn.Stats.
+      {
+        lp = z;
+        acceptance = z;
+        step_size = z;
+        n_steps = Nx.zeros Nx.int32 (Nx.shape energy);
+        diverging;
+        saturated = Nx.zeros Nx.bool (Nx.shape energy);
+        energy;
+      }
+
+(* Goldens: chains and their diagnostics as ArviZ computes them, written by
+   gen/diag.py. A case is [case NAME CHAINS DRAWS SUPERCHAINS], then [data] and
+   the draws, then a line per diagnostic. *)
 
 type golden = {
   name : string;
@@ -61,188 +91,217 @@ let read_goldens () =
   cases [] (lines [])
 
 let goldens = lazy (read_goldens ())
-let draws_of g = Draws.v t (Nx.create Nx.float64 [| g.chains; g.draws |] g.data)
+let draws_of g = chains g.chains g.draws g.data
 
-(* Within rounding of the transforms' different summation orders. *)
-let close = float_rel ~rel:1e-9 ~abs:1e-12
+(* [against_arviz key f] compares [f] of each golden's draws with ArviZ's [key],
+   each value named by its case. *)
+let against_arviz ?(only = fun _ -> true) key f =
+  let gs = List.filter only (Lazy.force goldens) in
+  equal
+    (list (pair string (array nan_or_close)))
+    (List.map (fun g -> (g.name, List.assoc key g.values)) gs)
+    (List.map (fun g -> (g.name, Nx.to_array (f g))) gs)
 
-let nan_or_close =
-  Testable.make
-    ~pp:(fun ppf x -> Format.fprintf ppf "%h" x)
-    ~equal:(fun a b ->
-      (Float.is_nan a && Float.is_nan b) || Testable.equal close a b)
-
-let check_golden g =
-  let d = draws_of g in
-  let value key = (List.assoc key g.values).(0) in
-  subtest "rhat" (fun () ->
-      equal nan_or_close (value "rhat") (item (Diag.rhat t d)));
-  subtest "ess_bulk" (fun () ->
-      equal nan_or_close (value "ess_bulk") (item (Diag.ess_bulk t d)));
-  subtest "ess_tail" (fun () ->
-      equal nan_or_close (value "ess_tail") (item (Diag.ess_tail t d)));
-  subtest "mcse_mean" (fun () ->
-      equal nan_or_close (value "mcse_mean") (item (Diag.mcse_mean t d)));
-  if g.superchains > 0 then
-    subtest "nested_rhat" (fun () ->
-        equal nan_or_close (value "nested_rhat")
-          (item (Diag.nested_rhat t ~superchains:g.superchains d)));
-  subtest "ebfmi" (fun () ->
-      let n = g.chains in
-      let z = Nx.zeros Nx.float64 [| n; g.draws |] in
-      let zi = Nx.zeros Nx.int32 [| n; g.draws |] in
-      let zb = Nx.zeros Nx.bool [| n; g.draws |] in
-      let energy = Nx.create Nx.float64 [| n; g.draws |] g.data in
-      let s =
-        Draws.v
-          (Norn.Stats.ptree Nx.float64)
-          Norn.Stats.
-            {
-              lp = z;
-              acceptance = z;
-              step_size = z;
-              n_steps = zi;
-              diverging = zb;
-              saturated = zb;
-              energy;
-            }
-      in
-      equal (array nan_or_close)
-        (List.assoc "ebfmi" g.values)
-        (Nx.to_array (Diag.ebfmi s)))
-
-let reference =
-  group "against ArviZ"
-    (List.map
-       (fun g -> test g.name (fun () -> check_golden g))
-       (Lazy.force goldens))
-
-(* Laws *)
-
-type 'a two = { x : 'a; y : 'a }
-
-module Two = struct
-  type ('a, _) t = 'a two
-
-  let walk c { x; y } =
-    let open Nx.Ptree.Walk in
-    let x = field c "x" leaf x in
-    let y = field c "y" leaf y in
-    { x; y }
-end
-
-let two : (Nx.host Nx.float64_t two, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module Two)
-
+(* Chains on a grid of 1/8, which [exp] and the affine maps below keep distinct,
+   ties included, with a map [a x + b]. *)
 let chains_gen =
   Gen.(
     let* c, n = pair (int_range 1 4) (int_range 4 40) in
-    (* A grid that [exp] keeps distinct, ties included. *)
     let+ xs =
       array
         ~size:(constant (c * n))
         (map (fun k -> float_of_int k /. 8.) (int_range (-40) 40))
-    in
-    (c, n, xs))
-  |> Gen.with_pp (fun ppf (c, n, xs) ->
-      Format.fprintf ppf "%d chains of %d: [%s]" c n
+    and+ a = of_list [ -3.; -0.5; 0.5; 2. ]
+    and+ b = map float_of_int (int_range (-4) 4) in
+    (c, n, xs, a, b))
+  |> Gen.with_pp (fun ppf (c, n, xs, a, b) ->
+      Format.fprintf ppf "%d chains of %d, map %g x + %g: [%s]" c n a b
         (String.concat "; "
            (Array.to_list (Array.map (Printf.sprintf "%h") xs))))
 
-let invariance =
-  prop "effective sizes do not change under an increasing map" chains_gen
-    (fun (c, n, xs) ->
-      let x = Nx.create Nx.float64 [| c; n |] xs in
-      let d = Draws.v t x and d' = Draws.v t (Nx.exp (Nx.mul_s x 0.5)) in
-      let same f = equal nan_or_close (item (f t d)) (item (f t d')) in
-      same Diag.ess_bulk;
-      same Diag.ess_tail)
+(* [mapped case] is the case's chains, and their image under its map. *)
+let mapped (c, n, xs, a, b) =
+  cover "one chain" (c = 1);
+  cover "a decreasing map" (a < 0.);
+  (chains c n xs, chains c n (Array.map (fun x -> (a *. x) +. b) xs))
 
-let structures =
-  group "structures"
+(* Elements *)
+
+let no_diagnostic =
+  cases
+    "has no diagnostic where the draws are constant, not all finite, or of \
+     chains of fewer than 4"
+    ~id:fst
+    [
+      ("constant", (4, 10, Array.make 40 1.));
+      ( "a NaN draw",
+        ( 2,
+          5,
+          Array.init 10 (fun i -> if i = 3 then Float.nan else float_of_int i)
+        ) );
+      ( "an infinite draw",
+        ( 2,
+          5,
+          Array.init 10 (fun i ->
+              if i = 3 then Float.infinity else float_of_int i) ) );
+      ("chains of 3", (2, 3, Array.init 6 float_of_int));
+    ]
+    (fun (_, (c, n, xs)) ->
+      let d = chains c n xs in
+      List.iter
+        (fun f ->
+          satisfies ~claim:"nan" float_exact Float.is_nan (item (f t d)))
+        [ Diag.rhat; Diag.ess_bulk; Diag.ess_tail; Diag.mcse_mean ])
+
+let elements =
+  group "elements"
     [
       test "each element of each tensor has its own diagnostic" (fun () ->
-          let g = List.hd (Lazy.force goldens) in
-          let x = Nx.create Nx.float64 [| g.chains; g.draws |] g.data in
+          let x = Nx.Rng.normal ~key:(Nx.Rng.key 1) Nx.float64 [| 4; 50 |] in
           let y = Nx.stack ~axis:2 [ Nx.neg x; Nx.mul_s x 2. ] in
-          let r = Diag.rhat two (Draws.v two { x; y }) in
-          equal (array int) [| 2 |] (Nx.shape r.y);
-          equal close (item r.x) (Nx.item [ 0 ] r.y);
-          equal close (item r.x) (Nx.item [ 1 ] r.y));
-      test "a constant element has no R-hat" (fun () ->
-          let d = Draws.v t (Nx.ones Nx.float64 [| 4; 10 |]) in
-          satisfies ~claim:"nan" float_exact Float.is_nan (item (Diag.rhat t d)));
-      test "chains of three draws have no effective size" (fun () ->
-          let d =
-            Draws.v t (Nx.arange_f Nx.float64 0. 6. 1. |> Nx.reshape [| 2; 3 |])
-          in
-          satisfies ~claim:"nan" float_exact Float.is_nan
-            (item (Diag.ess_bulk t d)));
+          let two = Nx.Ptree.pair t t in
+          let rx, ry = Diag.rhat two (Draws.v two (x, y)) in
+          equal (array close) [| item rx; item rx |] (Nx.to_array ry));
       test "a diagnostic keeps the element's dtype" (fun () ->
-          let d = Draws.v t (Nx.Rng.uniform ~key:(Nx.Rng.key 0) Nx.float32 [| 2; 10 |]) in
-          equal string "float32" (Nx.Dtype.name (Nx.dtype (Diag.rhat t d))));
-      test "integer draws are refused" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"int32 draws") (fun () ->
+          let x = Nx.Rng.uniform ~key:(Nx.Rng.key 0) Nx.float32 [| 2; 10 |] in
+          equal string "float32"
+            (Nx.Dtype.name (Nx.dtype (Diag.rhat t (Draws.v t x)))));
+      no_diagnostic;
+      test "chains of 4 draws have diagnostics" (fun () ->
+          let d = chains 2 4 [| 0.; 3.; 1.; 2.; 5.; 4.; 7.; 6. |] in
+          satisfies ~claim:"finite" float_exact Float.is_finite
+            (item (Diag.ess_bulk t d)));
+      test "raises naming a tensor that is not of a float dtype" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"int32") (fun () ->
               Diag.rhat t (Draws.v t (Nx.zeros Nx.int32 [| 2; 10 |]))));
-      test "superchains divide the chains" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"3 superchains do not divide 4")
-            (fun () ->
-              Diag.nested_rhat t ~superchains:3
-                (Draws.v t (Nx.Rng.uniform ~key:(Nx.Rng.key 0) Nx.float64 [| 4; 10 |]))));
     ]
 
-let divergences =
-  test "divergent_shift is the divergent draws' mean shift in sds" (fun () ->
-      let x = Nx.create Nx.float64 [| 1; 4 |] [| 0.; 1.; 2.; 5. |] in
-      let z = Nx.zeros Nx.float64 [| 1; 4 |] in
-      let zi = Nx.zeros Nx.int32 [| 1; 4 |] in
-      let diverging =
-        Nx.create Nx.bool [| 1; 4 |] [| false; false; true; true |]
-      in
-      let s =
-        Draws.v
-          (Norn.Stats.ptree Nx.float64)
-          Norn.Stats.
-            {
-              lp = z;
-              acceptance = z;
-              step_size = z;
-              n_steps = zi;
-              diverging;
-              saturated = Nx.zeros Nx.bool [| 1; 4 |];
-              energy = z;
-            }
-      in
-      (* Mean 2, sd sqrt (14 / 3), divergent mean 3.5. *)
-      let expected = 1.5 /. Float.sqrt (14. /. 3.) in
-      equal close expected (item (Diag.divergent_shift t s (Draws.v t x))))
+(* Convergence *)
+
+let rhat =
+  group "rhat"
+    [
+      test "agrees with ArviZ" (fun () ->
+          against_arviz "rhat" (fun g -> Diag.rhat t (draws_of g)));
+      prop "does not change under an affine map" chains_gen (fun case ->
+          let d, d' = mapped case in
+          equal nan_or_close (item (Diag.rhat t d)) (item (Diag.rhat t d')));
+    ]
+
+let nested_rhat =
+  group "nested_rhat"
+    [
+      test "agrees with ArviZ" (fun () ->
+          against_arviz
+            ~only:(fun g -> g.superchains > 0)
+            "nested_rhat"
+            (fun g ->
+              Diag.nested_rhat t ~superchains:g.superchains (draws_of g)));
+      cases "raises for superchains below 2 or not dividing the chains"
+        ~id:string_of_int [ 1; 3 ] (fun k ->
+          let x = Nx.Rng.uniform ~key:(Nx.Rng.key 0) Nx.float64 [| 4; 10 |] in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Diag.nested_rhat") (fun () ->
+              Diag.nested_rhat t ~superchains:k (Draws.v t x)));
+    ]
+
+let ess =
+  group "ess_bulk and ess_tail"
+    [
+      test "ess_bulk agrees with ArviZ" (fun () ->
+          against_arviz "ess_bulk" (fun g -> Diag.ess_bulk t (draws_of g)));
+      test "ess_tail agrees with ArviZ" (fun () ->
+          against_arviz "ess_tail" (fun g -> Diag.ess_tail t (draws_of g)));
+      prop "do not change under an increasing map" chains_gen
+        (fun (c, n, xs, _, _) ->
+          cover "one chain" (c = 1);
+          let d = chains c n xs in
+          let d' = chains c n (Array.map (fun x -> Float.exp (x *. 0.5)) xs) in
+          let same f = equal nan_or_close (item (f t d)) (item (f t d')) in
+          same Diag.ess_bulk;
+          same Diag.ess_tail);
+    ]
+
+let mcse_mean =
+  group "mcse_mean"
+    [
+      test "agrees with ArviZ" (fun () ->
+          against_arviz "mcse_mean" (fun g -> Diag.mcse_mean t (draws_of g)));
+      prop "scales by |a| under a x + b" chains_gen
+        (fun ((_, _, _, a, _) as case) ->
+          let d, d' = mapped case in
+          equal nan_or_close
+            (Float.abs a *. item (Diag.mcse_mean t d))
+            (item (Diag.mcse_mean t d')));
+    ]
+
+(* Hamiltonian transitions *)
+
+let ebfmi =
+  group "ebfmi"
+    [
+      test "agrees with ArviZ" (fun () ->
+          against_arviz "ebfmi" (fun g ->
+              let shape = [| g.chains; g.draws |] in
+              Diag.ebfmi
+                (transitions
+                   ~energy:(Nx.create Nx.float64 shape g.data)
+                   ~diverging:(Nx.zeros Nx.bool shape))));
+      test "raises for chains of one draw" (fun () ->
+          let s =
+            transitions
+              ~energy:(Nx.zeros Nx.float64 [| 2; 1 |])
+              ~diverging:(Nx.zeros Nx.bool [| 2; 1 |])
+          in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Diag.ebfmi") (fun () ->
+              Diag.ebfmi s));
+    ]
+
+let divergent_shift =
+  let x = chains 1 4 [| 0.; 1.; 2.; 5. |] in
+  let at diverging =
+    transitions
+      ~energy:(Nx.zeros Nx.float64 [| 1; 4 |])
+      ~diverging:(Nx.create Nx.bool [| 1; 4 |] diverging)
+  in
+  group "divergent_shift"
+    [
+      test "is the diverged draws' mean less the mean, in sds" (fun () ->
+          (* Mean 2, sd sqrt (14 / 3) of 3 degrees of freedom, the diverged
+             draws' mean 3.5. *)
+          let s = at [| false; false; true; true |] in
+          equal close
+            (1.5 /. Float.sqrt (14. /. 3.))
+            (item (Diag.divergent_shift t s x)));
+      test "is NaN with no divergence" (fun () ->
+          let s = at [| false; false; false; false |] in
+          satisfies ~claim:"nan" float_exact Float.is_nan
+            (item (Diag.divergent_shift t s x)));
+      test "raises for other chains or draws" (fun () ->
+          let s = at [| false; false; true; true |] in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Diag.divergent_shift")
+            (fun () ->
+              Diag.divergent_shift t s (chains 1 5 [| 0.; 1.; 2.; 3.; 4. |])));
+    ]
 
 (* Calibration *)
 
-let ranks =
+let rank =
   group "rank"
     [
-      test "more draws than exact integers are refused" (fun () ->
+      cases "counts the draws strictly below the truth"
+        ~id:(fun (truth, _) -> Printf.sprintf "%g" truth)
+        [ (-1., 0.); (2., 2.); (2.5, 3.); (9., 6.) ]
+        (fun (truth, expected) ->
+          let d = chains 2 3 [| 1.; 5.; 3.; 2.; 4.; 0. |] in
+          equal float_exact expected (item (Diag.rank t ~truth:(f64 truth) d)));
+      test "raises past float16's 2048 exact integers" (fun () ->
           let d = Draws.v t (Nx.zeros Nx.float16 [| 4; 600 |]) in
-          raises
-            (Invalid_argument
-               "Norn.Diag.rank: : 2400 draws exceed float16's exact integers, \
-                2048") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Diag.rank") (fun () ->
               Diag.rank t ~truth:(Nx.scalar Nx.float16 0.) d));
-      test "float4 draws past four are refused" (fun () ->
+      test "raises past float4's 4 exact integers" (fun () ->
           let d = Draws.v t (Nx.zeros Nx.float4_e2m1fn [| 1; 5 |]) in
           raises_match (Exn.invalid_arg ~sub:"Norn.Diag.rank") (fun () ->
               Diag.rank t ~truth:(Nx.scalar Nx.float4_e2m1fn 0.) d));
-      test "a rank counts the draws below the truth" (fun () ->
-          let d =
-            Draws.v t
-              (Nx.create Nx.float64 [| 2; 3 |] [| 1.; 5.; 3.; 2.; 4.; 0. |])
-          in
-          equal float_exact 3.
-            (item (Diag.rank t ~truth:(Nx.scalar Nx.float64 2.5) d));
-          equal float_exact 0.
-            (item (Diag.rank t ~truth:(Nx.scalar Nx.float64 (-1.)) d));
-          equal float_exact 6.
-            (item (Diag.rank t ~truth:(Nx.scalar Nx.float64 9.) d)));
     ]
 
 (* [enumerated ~ranks:n ~draws:l] is the simultaneous p-value of every tuple of
@@ -283,35 +342,17 @@ let enumerated ~ranks:n ~draws:l =
           (Array.init d (fun t -> float_of_int (rank t r)))),
     Array.map (fun g -> float_of_int (p g) /. float_of_int d) least )
 
-let enumeration =
-  prop "is the share of uniform ranks at least as far, borders included"
-    Gen.(pair (int_range 1 5) (int_range 1 4))
-    (fun (n, l) ->
-      let ranks, expected = enumerated ~ranks:n ~draws:l in
-      equal
-        (array (float 1e-12))
-        expected
-        (Nx.to_array (Diag.rank_uniformity t ~draws:l ranks)))
-
-let uniformity =
+let rank_uniformity =
   group "rank_uniformity"
     [
-      enumeration;
-      test "two ranks at zero of one draw have a p-value of one half" (fun () ->
-          (* The count below 1 is binomial (2, 1/2): 0, 1, 2 with 1/4, 1/2, 1/4,
-             pointwise p-values 1/2, 1, 1/2. Both ranks at 0 count 2, and a
-             count as far is 0 or 2, of probability 1/2. *)
-          let r =
-            Diag.rank_uniformity t ~draws:1
-              [ Nx.scalar Nx.float64 0.; Nx.scalar Nx.float64 0. ]
-          in
-          equal close 0.5 (item r));
-      test "a count at its median has a p-value of one" (fun () ->
-          let r =
-            Diag.rank_uniformity t ~draws:1
-              [ Nx.scalar Nx.float64 0.; Nx.scalar Nx.float64 1. ]
-          in
-          equal close 1. (item r));
+      prop "is the share of uniform ranks at least as far, borders included"
+        Gen.(pair (int_range 1 5) (int_range 1 4))
+        (fun (n, l) ->
+          let ranks, expected = enumerated ~ranks:n ~draws:l in
+          equal
+            (array (float 1e-12))
+            expected
+            (Nx.to_array (Diag.rank_uniformity t ~draws:l ranks)));
       test "uniform ranks have a p-value below 5% at most 5% of the time"
         (fun () ->
           (* 10000 replications as 2000 elements of 40 ranks each, out of 30
@@ -339,34 +380,40 @@ let uniformity =
           (* Not so conservative it never rejects: 340 is below the 0.5%
              quantile at a rate of 4%. *)
           at_least int ~than:340 rejected);
-      test "ranks piled at zero are rejected" (fun () ->
-          let ranks = List.init 20 (fun _ -> Nx.scalar Nx.float64 0.) in
+      cases "rejects ranks piled at zero or in the middle" ~id:fst
+        [
+          ("20 at zero", List.init 20 (fun _ -> 0.));
+          ( "100 at 4 to 6",
+            List.init 100 (fun i -> float_of_int (4 + (i mod 3))) );
+        ]
+        (fun (_, ranks) ->
           less float_exact ~than:1e-6
-            (item (Diag.rank_uniformity t ~draws:10 ranks)));
-      test "ranks piled in the middle are rejected" (fun () ->
-          let ranks =
-            List.init 100 (fun i ->
-                Nx.scalar Nx.float64 (float_of_int (4 + (i mod 3))))
-          in
-          less float_exact ~than:1e-6
-            (item (Diag.rank_uniformity t ~draws:10 ranks)));
-      test "a rank above the draws is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"rank 11 is not in 0, ..., 10")
-            (fun () ->
-              Diag.rank_uniformity t ~draws:10 [ Nx.scalar Nx.float64 11. ]));
-      test "no ranks are refused" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"no ranks") (fun () ->
-              Diag.rank_uniformity t ~draws:10 []));
+            (item (Diag.rank_uniformity t ~draws:10 (List.map f64 ranks))));
+      cases "raises for no ranks, draws below 1, or a rank not in 0 to draws"
+        ~id:fst
+        [
+          ("no ranks", (10, []));
+          ("draws 0", (0, [ 0. ]));
+          ("rank 11", (10, [ 11. ]));
+          ("rank 1.5", (10, [ 1.5 ]));
+          ("rank -1", (10, [ -1. ]));
+        ]
+        (fun (_, (draws, ranks)) ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Diag.rank_uniformity")
+            (fun () -> Diag.rank_uniformity t ~draws (List.map f64 ranks)));
     ]
 
 let () =
   exit
     (run "Norn.Diag"
        [
-         reference;
-         group "laws" [ invariance ];
-         structures;
-         group "divergences" [ divergences ];
-         ranks;
-         uniformity;
+         elements;
+         rhat;
+         nested_rhat;
+         ess;
+         mcse_mean;
+         ebfmi;
+         divergent_shift;
+         rank;
+         rank_uniformity;
        ])

@@ -372,8 +372,9 @@ module Diag : sig
 
   val ebfmi : ('f, 'd) Stats.t Draws.t -> (float, 'f, 'd) Nx.t
   (** [ebfmi s] is each chain's energy Bayesian fraction of missing information,
-      shape [[chain]]: the mean squared change of the energy between draws over
-      the energy's variance. Below [0.3] the momentum resampling explores the
+      shape [[chain]]: the sum of the squared changes of the energy between
+      draws over the sum of its squared deviations from its mean (Betancourt
+      2016, section 3.1). Below [0.3] the momentum resampling explores the
       energy poorly.
 
       Raises [Invalid_argument] if the chains have fewer than two draws. *)
@@ -381,8 +382,8 @@ module Diag : sig
   val divergent_shift : ('u, 'd) Nx.Ptree.t -> ('f, 'd) Stats.t Draws.t -> 'u Draws.t -> 'u
   (** [divergent_shift u s d] is, for each element, the mean of the draws whose
       transition diverged minus the mean of all draws, in standard deviations of
-      all draws. Where divergences gather, it is far from [0]; with no
-      divergence it is NaN.
+      all draws, of one degree of freedom less than the draws. Where divergences
+      gather, it is far from [0]; with no divergence it is NaN.
 
       Raises [Invalid_argument] naming both shapes if [s] and [d] differ in
       their chains or draws. *)
