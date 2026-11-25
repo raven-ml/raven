@@ -60,8 +60,13 @@ let locate ~tol search (a0, fa0) (b0, fb0) =
     let st = settle st root_end Converged in
     let same = Nx.greater (Nx.mul (Nx.sign fa0) (Nx.sign fb0)) zero in
     let st = settle st (Nx.logical_or same (Nx.equal a0 b0)) Not_bracketed in
+    (* A zero at a given end is the bracket, of no width. *)
+    let found = Nx.equal_s st (Solution.code Converged) in
+    let z = Nx.where (Nx.equal fa0 zero) a0 b0 in
+    let a = Nx.where found z a0 and b = Nx.where found z b0 in
+    let fa = Nx.where found zero fa0 and fb = Nx.where found zero fb0 in
     finish
-      ( ((a0, b0), (fa0, fb0)),
+      ( ((a, b), (fa, fb)),
         ( st,
           (Nx.full_at (Nx.placement a0) Nx.int32 (Nx.shape a0) 2l, int32 a0 0l)
         ) )
@@ -150,6 +155,16 @@ let bracket ~tol f ~lo ~hi =
   let fa0 = search a0 and fb0 = search b0 in
   let (((a, b), _) as br), st, n = locate ~tol search (a0, fa0) (b0, fb0) in
   let x = estimate br in
+  let e = Nx.div_s (Nx.sub b a) 2. in
+  (* The search also ends at adjacent floats, which converge only where [e]
+     meets [tol] there. *)
+  let short = Nx.logical_not (accepted tol ~e ~y:(Nx.add a e)) in
+  let st =
+    Nx.where
+      (Nx.logical_and short (Nx.equal_s st (Solution.code Converged)))
+      (Nx.full_like st (Solution.code Stalled))
+      st
+  in
   let ok = Nx.equal_s st (Solution.code Converged) in
   let value = state fn ~ok f x in
   let given = Nx.less_equal lo hi in
@@ -157,16 +172,16 @@ let bracket ~tol f ~lo ~hi =
     match st with
     | Not_bracketed -> "Widen [lo, hi] until f changes sign between them."
     | Stalled ->
-        "|f| at the estimate exceeds its value at the ends: f has a pole or a \
-         jump in [lo, hi], or no zero there."
+        "|f| at the estimate exceeds its value at the ends, or no float lies \
+         between the bracket's ends short of tol: f has a pole or a jump in \
+         [lo, hi], no zero there, or tol is finer than the floats there."
+        ^ Tol.zero_hint tol
     | Not_finite -> "f is not finite inside [lo, hi]: narrow it to f's domain."
     | Converged | Budget_spent -> ""
   in
   Solution.v ~fn
     ~settings:(Format.asprintf "tol %a" Tol.pp tol)
-    ~fix ~value
-    ~error:(Nx.div_s (Nx.sub b a) 2.)
-    ~status:st ~evaluations:n
+    ~fix ~value ~error:e ~status:st ~evaluations:n
     ~facts:
       [
         Fact ("lo", lo);

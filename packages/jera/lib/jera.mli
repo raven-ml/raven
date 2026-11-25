@@ -399,8 +399,9 @@ module Root : sig
       {b Method.} ITP steps (Oliveira and Takahashi, 2020) interleaved with
       bisections of the floats' ordered-integer images, so an element ends
       within [2b + 2] evaluations for a [b]-bit dtype (130 in float64), whatever
-      [f]. {b Error.} [e] is half the final bracket and [y] its midpoint; an
-      element also ends when no float lies strictly inside its bracket. It
+      [f]. {b Error.} [e] is half the final bracket, [0] for a zero at a given
+      end, and [y] its midpoint; an element also ends when no float lies
+      strictly inside its bracket, [Stalled] where [e] misses [tol]. It
       converges only if [|f|] at its estimate, the bracket's end of smaller
       [|f|], is at most the smaller [|f|] at the given ends, so a pole ends
       [Stalled]; a bounded jump looks like a steep zero at float resolution and

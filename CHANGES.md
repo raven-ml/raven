@@ -1281,6 +1281,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Root.bracket` ends an element `Stalled`, where it reported `Converged`, when
+  its bracket closes on adjacent floats whose half-width misses `tol`, as under
+  `Tol.abs 1e-300` or `Tol.ulps` at a zero of 0. A zero at a given end has
+  error `0`, where it was half the given bracket.
 - `Minimize.solve`'s `budget` counts `nelder_mead`'s trips, the iterations
   of its simplex, as it counts every other method's iterations. It counted
   evaluations and checked them only after a trip and its restart test, so a

@@ -119,6 +119,22 @@ let bracket_tests =
             ~lo:(vec [| 2. |]) ~hi:(vec [| 5. |])
         in
         equal (Oracle.tensor ()) (vec [| 2. |]) (Solution.get s));
+    test "a tolerance finer than the floats ends Stalled" (fun () ->
+        (* The bracket closes on two adjacent floats around √2, half an ulp
+           apart from its midpoint, far above 1e-300. *)
+        let s =
+          Root.bracket ~tol:(Tol.abs 1e-300)
+            (fun x -> Nx.sub_s (Nx.square x) 2.)
+            ~lo:(vec [| 0. |]) ~hi:(vec [| 2. |])
+        in
+        equal Oracle.status_t Stalled (Oracle.status s));
+    test "a zero at an end has no error" (fun () ->
+        let s =
+          Root.bracket ~tol:tight
+            (fun x -> Nx.sub_s x 2.)
+            ~lo:(vec [| 2. |]) ~hi:(vec [| 5. |])
+        in
+        equal (Oracle.tensor ()) (vec [| 0. |]) (Solution.error s));
     test "the ends broadcast together" (fun () ->
         equal
           (Oracle.tensor ~rel:2e-13 ())
