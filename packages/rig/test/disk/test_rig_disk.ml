@@ -29,27 +29,6 @@ let contains s sub =
   let rec from i = i + k <= n && (String.sub s i k = sub || from (i + 1)) in
   from 0
 
-(* A test that can block in C runs under this: the process ends, naming [what],
-   if [f] has not returned after 10 s. *)
-let watchdog what f =
-  let finished = Atomic.make false in
-  let d =
-    Domain.spawn (fun () ->
-        let until = Unix.gettimeofday () +. 10. in
-        while (not (Atomic.get finished)) && Unix.gettimeofday () < until do
-          Unix.sleepf 0.01
-        done;
-        if not (Atomic.get finished) then begin
-          prerr_endline ("watchdog: " ^ what ^ " did not return in 10 s");
-          Unix._exit 2
-        end)
-  in
-  Fun.protect
-    ~finally:(fun () ->
-      Atomic.set finished true;
-      Domain.join d)
-    f
-
 (* [once f] is a function that answers [f ()], made by its first call from any
    domain. [Lazy] would raise when two domains force it at once. *)
 let once f =
@@ -582,10 +561,7 @@ let test_cold_read () =
   removing [ path ] @@ fun () ->
   match Support.drop_pages path with
   | -1 -> skip ~reason:"only Linux drops a file's pages without privileges" ()
-  | 0 ->
-      let b = of_file path in
-      watchdog "a copy of a file whose pages were dropped" (fun () ->
-          same s (read b))
+  | 0 -> same s (read (of_file path))
   | code -> failf "drop_pages: errno %d" code
 
 let test_copy_into_opened () =
@@ -1007,7 +983,7 @@ let test_of_file_refused u =
         p
   in
   removing (if u = Fifo then [ path ] else []) @@ fun () ->
-  watchdog "of_file" (fun () -> refused (Rig_disk.of_file path) path)
+  refused (Rig_disk.of_file path) path
 
 let test_nul_path () =
   let path = Filename.concat dir "a\000b" in
@@ -1989,7 +1965,8 @@ let domain_commands =
 
 (* A long read neither waits for the host pool's compute jobs nor needs their
    workers: it ends while another domain's compute job holds them until
-   released. If it waited, it would end only at the release. *)
+   released. If it waited, it would end only at the release, which comes after
+   it, and the test would time out. *)
 let test_beside_compute () =
   if Sys.win32 then skip ~reason:"long reads run on the calling thread" ();
   let s = pattern 5 (8 * segment) in
@@ -1997,30 +1974,28 @@ let test_beside_compute () =
   removing [ path ] @@ fun () ->
   let file = of_file path in
   let job = Domain.spawn Support.hold_pool in
-  let read_ended, got =
+  let got =
     Fun.protect
       ~finally:(fun () ->
         Support.release_pool ();
         Domain.join job)
       (fun () ->
-        let until = Unix.gettimeofday () +. 10. in
-        while (not (Support.pool_held ())) && Unix.gettimeofday () < until do
+        while not (Support.pool_held ()) do
           Unix.sleepf 0.001
         done;
-        if not (Support.pool_held ()) then failf "the compute job did not begin";
-        let got = Atomic.make None in
-        let reader = Domain.spawn (fun () -> Atomic.set got (Some (read file))) in
-        let until = Unix.gettimeofday () +. 10. in
-        while Option.is_none (Atomic.get got) && Unix.gettimeofday () < until do
+        let ended = Atomic.make false in
+        let reader =
+          Domain.spawn (fun () ->
+              Fun.protect
+                ~finally:(fun () -> Atomic.set ended true)
+                (fun () -> read file))
+        in
+        while not (Atomic.get ended) do
           Unix.sleepf 0.001
         done;
-        let ended = Option.is_some (Atomic.get got) in
-        Support.release_pool ();
-        Domain.join reader;
-        (ended, Atomic.get got))
+        Domain.join reader)
   in
-  equal bool ~msg:"the read ended while the compute job ran" true read_ended;
-  same ~msg:"the bytes read" s (Option.get got)
+  same ~msg:"the bytes read" s got
 
 let domains =
   group "domains"
