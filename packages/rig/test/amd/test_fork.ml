@@ -14,9 +14,8 @@ let address r = Option.get (A.locate r).address
 
 (* A child forked after the parent opened GPU 0 opens the GPU on its own and
    runs a copy. It exits 0 once its copy holds the bytes, 1 if the open failed,
-   2 if the bytes differ, 3 if its value is not reached within 10 s. With no
-   kernel driver one process holds a GPU: the child's open is refused, and it
-   exits 0 then, 4 if the open succeeds. *)
+   2 if the bytes differ. With no kernel driver one process holds a GPU: the
+   child's open is refused, and it exits 0 then, 4 if the open succeeds. *)
 let forked () =
   S.with_ @@ fun _ ->
   Rig_support.needs_fork ();
@@ -39,21 +38,14 @@ let forked () =
             ignore
               (E.submit c ~v:1
                  [| E.copy ~dst:(address dst) ~src:(address src) 64 |]);
-            let rec reached n =
-              A.signaled c >= 1
-              || n > 0
-                 && begin
-                   A.sleep c ~seen:(A.signaled c) ~still_ms:500;
-                   reached (n - 1)
-                 end
-            in
-            if not (reached 20) then 3
-            else if H.read (host dst) 64 = String.make 64 'f' then 0
-            else 2
+            while A.signaled c < 1 do
+              A.sleep c ~seen:(A.signaled c) ~still_ms:500
+            done;
+            if H.read (host dst) 64 = String.make 64 'f' then 0 else 2
       in
       Unix._exit code
   | pid -> (
-      match Unix.waitpid [] pid with
+      match Rig_support.reaping pid (fun () -> Unix.waitpid [] pid) with
       | _, WEXITED n -> equal int ~msg:"the child's exit" 0 n
       | _, (WSIGNALED n | WSTOPPED n) ->
           failf "the child stopped on signal %d" n)

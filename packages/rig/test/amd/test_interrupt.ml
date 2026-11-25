@@ -261,9 +261,9 @@ let open_gpu () = Rig_gpu_support.opened (S.gpu ())
 
 let amdgpu fs = inside (List.map (fun f -> "Rig_amd_amdgpu." ^ f) fs)
 
-(* [ran g] is [Ok ()] once [g] ran a NOP on its compute queue and a copy of
-   64 bytes of [Pinned] memory on its copy queue within 10 s, or why not.
-   It stops [g] either way. *)
+(* [ran g] is [Ok ()] once [g] ran a NOP on its compute queue and a copy of 64
+   bytes of [Pinned] memory on its copy queue, or why not. It stops [g] either
+   way. *)
 let ran g =
   let host r = Option.get (A.locate r).host in
   let address r = Option.get (A.locate r).address in
@@ -287,22 +287,14 @@ let ran g =
         match E.submit g ~v parts with
         | `Failed why -> Error ("the submit failed: " ^ why)
         | `Ok ->
-            let rec wait n =
-              A.signaled g >= v
-              || n > 0
-                 && begin
-                   A.sleep g ~seen:(A.signaled g) ~still_ms:500;
-                   wait (n - 1)
-                 end
-            in
-            if not (wait 20) then Error "the work did not end within 10 s"
-            else begin
-              let copied = H.read (host dst) 64 in
-              A.free g src;
-              A.free g dst;
-              if copied = String.make 64 'f' then Ok ()
-              else Error "the copy did not land"
-            end)
+            while A.signaled g < v do
+              A.sleep g ~seen:(A.signaled g) ~still_ms:500
+            done;
+            let copied = H.read (host dst) 64 in
+            A.free g src;
+            A.free g dst;
+            if copied = String.make 64 'f' then Ok ()
+            else Error "the copy did not land")
   in
   A.stop g ~fault:None;
   outcome
@@ -360,7 +352,7 @@ let test_first_open () =
       match Unix.fork () with
       | 0 -> Unix._exit (first_open taking n)
       | pid -> (
-          match Unix.waitpid [] pid with
+          match Rig_support.reaping pid (fun () -> Unix.waitpid [] pid) with
           | _, WEXITED c when c = landed_code -> from (n + 1)
           | _, WEXITED c when c = ended_code -> n - 1
           | _, WEXITED c ->

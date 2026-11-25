@@ -85,8 +85,7 @@ let child_gpu () =
 (* After the fault, in a process of its own: the kernel driver schedules no
    queue of a process whose address space of the GPU faulted, so the GPU's use
    after a fault is another process's. The child runs a copy of 64 bytes through
-   rig and exits 0 once it holds them, 1 if it does not open or they differ, 2
-   if its value is not reached within 10 s. *)
+   rig and exits 0 once it holds them, 1 if it does not open or they differ. *)
 let after_env = "RIG_AMD_FAULT_AFTER"
 
 let after () =
@@ -97,15 +96,9 @@ let after () =
   Rig.Buffer.copy ~src:(host_buffer (String.make 64 'y')) ~dst:src;
   let s = Rig.Submission.make c [| copy ~dst src; copy ~dst:back dst |] in
   let v = Rig.Point.value (Rig.submit s ~buffers:[||] ~args:[||]) in
-  let rec reached n =
-    A.signaled g >= v
-    || n > 0
-       && begin
-         A.sleep g ~seen:(A.signaled g) ~still_ms:500;
-         reached (n - 1)
-       end
-  in
-  if not (reached 20) then exit 2;
+  while A.signaled g < v do
+    A.sleep g ~seen:(A.signaled g) ~still_ms:500
+  done;
   exit (if get back = String.make 64 'y' then 0 else 1)
 
 (* A fault no sleep read, in a process of its own: the child runs [wild] through

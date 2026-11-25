@@ -3906,11 +3906,8 @@ let measure_open () =
       Rig.close t.d
   | Error why -> print_endline why
 
-(* A child of [measure_open], started: its pid and what it said. *)
-(* How long a child's measuring open may take to say how it went: an open
-   takes well under a second. *)
-let open_seconds = 10.
-
+(* A child of [measure_open], started: its pid and what it said. A wait for its
+   line that the test's timeout ends kills the child. *)
 let measure_open_beside () =
   let from_child, child_out = Unix.pipe ~cloexec:true () in
   let child =
@@ -3920,12 +3917,9 @@ let measure_open_beside () =
   in
   Unix.close child_out;
   let ic = Unix.in_channel_of_descr from_child in
-  let said =
-    match Unix.select [ from_child ] [] [] open_seconds with
-    | [], _, _ -> ""
-    | _ -> ( try input_line ic with End_of_file -> "")
-  in
-  close_in_noerr ic;
+  Fun.protect ~finally:(fun () -> close_in_noerr ic) @@ fun () ->
+  Rig_support.reaping child @@ fun () ->
+  let said = try input_line ic with End_of_file -> "" in
   (child, said)
 
 let refused_opens () =
@@ -3975,22 +3969,6 @@ let refused_opens () =
   ignore (reap child);
   says "another process's stable state" held said
 
-(* [child]'s exit status, once it exits of itself within [reap_seconds];
-   killed and failed otherwise. *)
-let await child =
-  let deadline = Unix.gettimeofday () +. reap_seconds in
-  let rec go () =
-    match Unix.waitpid [ WNOHANG ] child with
-    | 0, _ when Unix.gettimeofday () < deadline ->
-        Unix.sleepf 0.01;
-        go ()
-    | 0, _ ->
-        ignore (reap child);
-        failf "the child did not exit within %.0f s" reap_seconds
-    | _, status -> status
-  in
-  go ()
-
 (* 10. The stable power state, given back as the last device that holds it
    stops: a measuring device's or a traced one's stop, an open just after a
    stop in this process, and one just after a child process stopped its
@@ -4037,7 +4015,7 @@ let reopened () =
   reopen "an open just after a stop";
   let child, said = measure_open_beside () in
   (* The child stops its device, then exits of itself. *)
-  ignore (await child);
+  ignore (Rig_support.reaping child (fun () -> Unix.waitpid [] child));
   equal string ~msg:"the child's open" "opened" said;
   reopen "an open just after the child's exit"
 
