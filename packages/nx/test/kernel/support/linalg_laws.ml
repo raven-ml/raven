@@ -172,6 +172,10 @@ let worse w ~bound ~residual where =
 
 let check_worst w = at_most ~msg:w.where float_exact ~than:1. w.ratio
 
+(* [x], a NaN as infinity: windtrap orders NaN below every float, so a NaN
+   error would pass a bound. *)
+let past_nan x = if Float.is_nan x then Float.infinity else x
+
 (* L Lᴴ = a + Δ with |Δ_ij| <= γ(c) (|L| |Lᴴ|)_ij + ε(c) (1 + L_jj), c the
    library's count for order n, over the lower triangle, the other triangle +0,
    the diagonal real and positive. A subnormal a is checked as 2^2e a = (2^e L)
@@ -338,7 +342,7 @@ let law_lu bounds (b : Support.backend) c =
           for j = 0 to n - 1 do
             if j < i && j < k && not (is_complex c.dt) then
               at_most ~msg:"|L| <= 1" float_exact ~than:1.
-                (Complex.norm (at lu ~rows:m ~cols:n t i j));
+                (past_nan (Complex.norm (at lu ~rows:m ~cols:n t i j)));
             let s = sum () and bound = dd () in
             let pa = at a ~rows:m ~cols:n t p.(i) j in
             add s.re pa.re;
@@ -542,7 +546,7 @@ let test_huge_pivot bounds (b : Support.backend) () =
         let u = v.(0).re and l = v.(1).re in
         at_most ~msg:"|l u - x|" float_exact
           ~than:(gamma dt (bounds.lu 1) *. Float.abs (l *. u))
-          (Float.abs (Float.fma l u (-.x)))
+          (past_nan (Float.abs (Float.fma l u (-.x))))
   in
   lu D.(Any Float64) 0x1.8p1023 (-0x1.2000ce6d1d565p+1022);
   lu D.(Any Float32) 0x1.8p127 (-0x1.2000cep+126)
