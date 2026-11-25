@@ -1392,22 +1392,25 @@ let files =
           @@ __POS_OF__
                {| data.csv:2:1: no separator splits every record into the same number of fields: with ',', the record has 1 field, and the first one 2 |});
       test "fails on a file it cannot open" (fun () ->
-          let path = "/nonexistent/data.csv" in
-          let f = Csv.format [ ("x", any Type.int64) ] in
-          let opened = Error.get_ok (Csv.file ~format:f path) in
           expect
-            (String.concat "\n"
-               [
-                 (match Csv.file path with
-                 | Ok _ -> "ok"
-                 | Error e -> error_text e);
-                 run_error (Query.of_source opened);
-               ])
-          @@ __POS_OF__
-               {|
-            /nonexistent/data.csv: No such file or directory
-            /nonexistent/data.csv: No such file or directory
-            |});
+            (match Csv.file "/nonexistent/data.csv" with
+            | Ok _ -> "ok"
+            | Error e -> error_text e)
+          @@ __POS_OF__ {| /nonexistent/data.csv: No such file or directory |});
+      test "fails a read of a file removed since the call" (fun () ->
+          let path = Filename.concat (temp_dir ()) "data.csv" in
+          Out_channel.with_open_bin path (fun oc -> output_string oc "x\n1\n");
+          let f = Csv.format [ ("x", any Type.int64) ] in
+          let s = Error.get_ok (Csv.file ~format:f path) in
+          Sys.remove path;
+          contains ~sub:"data.csv" (run_error (Query.of_source s)));
+      test "fails at the call on a file it cannot open, with a format"
+        (fun () ->
+          let f = Csv.format [ ("x", any Type.int64) ] in
+          let path = Filename.concat (temp_dir ()) "missing.csv" in
+          match Csv.file ~format:f path with
+          | Ok _ -> fail "Ok"
+          | Error e -> contains ~sub:"missing.csv" (error_text e));
       test "raises on null tokens given with a format" (fun () ->
           let f = Csv.format ~nulls:[ "NA" ] [ ("x", any Type.int64) ] in
           raises_match (Exn.invalid_arg ~sub:"~nulls") (fun () ->
