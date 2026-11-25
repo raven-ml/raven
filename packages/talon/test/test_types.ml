@@ -32,9 +32,6 @@ let any_w =
 
 let binary_w = Testable.make ~pp:Binary.pp ~equal:( = )
 
-(* [by t w] is [w] ordered by talon's order on the values of [t]. *)
-let by t w = Testable.with_compare (Type.compare_value t) w
-
 (* [ordered t pp] is the witness of [t]'s values under talon's order, two values
    being equal when that order says so. *)
 let ordered t pp =
@@ -59,10 +56,6 @@ let same_float a b = (Float.is_nan a && Float.is_nan b) || a = b
 
 (* Binary *)
 
-let hex s =
-  let byte c = Printf.sprintf "%02x" (Char.code c) in
-  "0x" ^ String.concat "" (List.map byte (List.of_seq (String.to_seq s)))
-
 let binary =
   group "Binary"
     [
@@ -70,12 +63,9 @@ let binary =
           let s = "\x00\xff\n" in
           equal string s (Binary.of_string s :> string));
       cases "pp formats" ~id:snd
-        [ ("Hi\n", "0x48690a"); ("", "0x") ]
+        [ ("Hi\n", "0x48690a"); ("", "0x"); ("\x00\xff", "0x00ff") ]
         (fun (s, expected) ->
           equal string expected (str Binary.pp (Binary.of_string s)));
-      prop "pp writes two lowercase hexadecimal digits per byte"
-        ~examples:[ "\x00\xff" ] Gen.string (fun s ->
-          equal string (hex s) (str Binary.pp (Binary.of_string s)));
     ]
 
 (* Instants *)
@@ -203,24 +193,6 @@ let constructors =
     ("days", Time.Span.days, 86_400_000_000_000L);
   ]
 
-(* A constructor and a count: at the ends of the span's range in its unit and
-   one past them, at the ends of [int], and anywhere. *)
-let constructor_case =
-  let open Gen in
-  let* name, make, u = of_list constructors in
-  let fits v =
-    Int64.compare v (Int64.of_int min_int) >= 0
-    && Int64.compare v (Int64.of_int max_int) <= 0
-  in
-  let hi = Int64.div Int64.max_int u and lo = Int64.div Int64.min_int u in
-  let edges =
-    List.map Int64.to_int
-      (List.filter fits [ hi; lo; Int64.succ hi; Int64.pred lo ])
-    @ [ max_int; min_int ]
-  in
-  let+ n = frequency [ (2, of_list edges); (1, int); (1, small_int) ] in
-  (name, make, u, n)
-
 let span_units =
   [
     ("us", 1_000L, Time.Span.of_us, Time.Span.to_us);
@@ -231,17 +203,30 @@ let span_units =
 let spans =
   group "Time.Span"
     [
-      prop "a constructor is n of its unit, and raises past the range"
-        (Gen.with_pp
-           (fun ppf (name, _, _, n) -> Format.fprintf ppf "%s %d" name n)
-           constructor_case)
-        (fun (_, make, u, n) ->
-          let expected = mul_exact (Int64.of_int n) u in
-          cover "in the range" (Option.is_some expected);
-          cover "past the range" (Option.is_none expected);
-          match expected with
-          | Some ns -> equal int64 ns (Time.Span.to_ns (make n))
-          | None -> rejects (fun () -> make n));
+      cases "is n of its unit at the ends of the range, and raises past them"
+        ~id:(fun (name, _, _) -> name)
+        constructors
+        (fun (_, make, u) ->
+          (* The range's last whole units and those past them, where they are
+             ints, and the ends of [int]. *)
+          let hi = Int64.div Int64.max_int u
+          and lo = Int64.div Int64.min_int u in
+          let fits v =
+            Int64.compare v (Int64.of_int min_int) >= 0
+            && Int64.compare v (Int64.of_int max_int) <= 0
+          in
+          let counts =
+            List.map Int64.to_int
+              (List.filter fits [ hi; lo; Int64.succ hi; Int64.pred lo ])
+            @ [ max_int; min_int ]
+          in
+          List.iter
+            (fun n ->
+              let msg = string_of_int n in
+              match mul_exact (Int64.of_int n) u with
+              | Some ns -> equal ~msg int64 ns (Time.Span.to_ns (make n))
+              | None -> rejects (fun () -> make n))
+            counts);
       prop "to_us, to_ms and to_s round toward negative infinity"
         ~examples:[ -1L ] ns_range (fun n ->
           List.iter
@@ -417,20 +402,18 @@ let dates =
             (List.map Time.Date.to_days
                (List.sort Time.Date.compare (List.map date [ a; b; c ]))));
       cases "pp formats" ~id:snd
-        [ ((-44, 3, 15), "-0044-03-15"); ((12345, 1, 1), "+12345-01-01") ]
+        [
+          ((-44, 3, 15), "-0044-03-15");
+          ((12345, 1, 1), "+12345-01-01");
+          ((1970, 1, 1), "1970-01-01");
+          ((0, 1, 1), "0000-01-01");
+          ((9999, 12, 31), "9999-12-31");
+          ((10000, 1, 1), "+10000-01-01");
+          ((-1, 12, 31), "-0001-12-31");
+        ]
         (fun (civil, expected) ->
           equal string expected
             (str Time.Date.pp (Option.get (Time.Date.of_civil civil))));
-      prop "pp writes YYYY-MM-DD, a year outside 0 to 9999 signed"
-        ~examples:[ 0; -719528; 2932896; 2932897; -719529 ] days_gen (fun n ->
-          let y, m, d = Time.Date.to_civil (date n) in
-          let year =
-            if y >= 0 && y <= 9999 then Printf.sprintf "%04d" y
-            else Printf.sprintf "%c%04d" (if y < 0 then '-' else '+') (abs y)
-          in
-          equal string
-            (Printf.sprintf "%s-%02d-%02d" year m d)
-            (str Time.Date.pp (date n)));
     ]
 
 let step_pp =
@@ -1001,24 +984,6 @@ let utf_8_text =
     (Gen.list ~size:(Gen.int_range 0 3)
        (Gen.of_list [ "a"; "z"; "\x7f"; "é"; "€"; "\u{FFFF}"; "😀" ]))
 
-let int_values =
-  let open Gen in
-  let* name, t, lo, hi =
-    of_list
-      ~pp:(fun ppf (n, _, _, _) -> Format.pp_print_string ppf n)
-      int_bounds
-  in
-  let+ vs =
-    list ~size:(int_range 0 6)
-      (frequency
-         [ (2, int_range lo hi); (1, of_list [ lo; lo + 1; 0; hi - 1; hi ]) ])
-  in
-  (name, t, vs)
-
-let pp_int_values ppf (name, _, vs) =
-  Format.fprintf ppf "%s [%s]" name
-    (String.concat "; " (List.map string_of_int vs))
-
 (* A dictionary in any order, and values drawn from it. *)
 let dictionary_case =
   let open Gen in
@@ -1053,12 +1018,15 @@ let compare_values =
             (list (float_w t))
             (List.sort float_order [ a; b; c ])
             (List.sort (Type.compare_value t) [ a; b; c ]));
-      prop "integers order by value" (Gen.with_pp pp_int_values int_values)
-        (fun (_, t, vs) ->
-          equal (list int) (List.sort Int.compare vs)
-            (List.sort (Type.compare_value t) vs));
+      cases "integers order by value"
+        ~id:(fun (n, _, _, _) -> n)
+        int_bounds
+        (fun (_, t, lo, hi) ->
+          equal (list int)
+            [ lo; lo + 1; hi - 1; hi ]
+            (List.sort (Type.compare_value t) [ hi; lo; hi - 1; lo + 1 ]));
       test "false comes before true" (fun () ->
-          less (by Type.bool bool) ~than:true false);
+          less (ordered Type.bool Format.pp_print_bool) ~than:true false);
       prop "text orders by its code points, byte strings by their bytes"
         (Gen.pair
            (Gen.list ~size:(Gen.int_range 0 6) utf_8_text)
@@ -1116,7 +1084,9 @@ let compare_values =
                (fun (x, y) -> prefix x y || prefix y x)
                [ (a, b); (b, c); (a, c) ]);
           let t = Type.list Type.int8 in
-          Law.order (by t (array int)) (a, b, c);
+          Law.order
+            (Testable.with_compare (Type.compare_value t) (array int))
+            (a, b, c);
           let lexicographic x y =
             List.compare Int.compare (Array.to_list x) (Array.to_list y)
           in
@@ -1580,6 +1550,15 @@ let name_gen =
 let bare c =
   Char.code c > 0x20 && c <> '\x7f' && not (String.contains ",[]\"\\" c)
 
+let pp_name =
+  prop "Type.pp_name writes a name as is, or quoted when it must be"
+    ~examples:[ ""; "a b"; "é" ] name_gen (fun s ->
+      let is_bare = s <> "" && String.for_all bare s in
+      cover "as is" is_bare;
+      cover "quoted" (not is_bare);
+      let expected = if is_bare then s else str Type.pp_quoted s in
+      equal string expected (str Type.pp_name s))
+
 let quoted =
   group "Type.pp_quoted"
     [
@@ -1589,15 +1568,6 @@ let quoted =
       prop ~count:500 "prints as its code points do, one at a time" quotable
         law_quoted;
     ]
-
-let pp_name =
-  prop "Type.pp_name writes a name as is, or quoted when it must be"
-    ~examples:[ ""; "a b"; "é" ] name_gen (fun s ->
-      let is_bare = s <> "" && String.for_all bare s in
-      cover "as is" is_bare;
-      cover "quoted" (not is_bare);
-      let expected = if is_bare then s else str Type.pp_quoted s in
-      equal string expected (str Type.pp_name s))
 
 (* Schemas *)
 
@@ -1674,10 +1644,12 @@ let schemas =
           rejects (fun () ->
               Schema.v [ ("a", Any Type.bool); ("a", Any Type.bool) ]);
           rejects (fun () -> Schema.v [ ("\xff", Any Type.bool) ]));
-      prop "columns gives back v's columns, and find looks one up by name"
-        (Gen.with_pp pp_columns columns_gen) (fun cs ->
+      prop "columns gives back v's columns" (Gen.with_pp pp_columns columns_gen)
+        (fun cs ->
+          equal (list (pair string any_w)) cs (Schema.columns (Schema.v cs)));
+      prop "find looks a column up by name" (Gen.with_pp pp_columns columns_gen)
+        (fun cs ->
           let s = Schema.v cs in
-          equal (list (pair string any_w)) cs (Schema.columns s);
           List.iter
             (fun n ->
               equal ~msg:n (option any_w) (List.assoc_opt n cs)
@@ -1777,8 +1749,8 @@ let () =
          common_cases;
          type_equal;
          type_pp;
-         quoted;
          pp_name;
+         quoted;
          schemas;
          messages;
        ])
