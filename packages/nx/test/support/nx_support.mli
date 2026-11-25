@@ -189,6 +189,15 @@ val ulps : (float, 's) Nx_array.Dtype.t -> float -> float -> float
 
     Raises [Invalid_argument] if [dt] is another dtype. *)
 
+val gap : float -> float -> float
+(** [gap r ref] is the distance from [ref] to [r] that a bound checks: [0.]
+    where both are NaN or both are the same infinity, [infinity] where one is
+    NaN and the other is not, or where an infinity differs from the other value,
+    and [Float.abs (r -. ref)] otherwise. So [at_most ~than:b (gap r ref)] fails
+    on a NaN [r] and on a finite [r] beside an infinite [ref], which a bare
+    [Float.abs (r -. ref)] passes, since windtrap orders NaN below every float.
+*)
+
 val ulp : (float, 's) Nx_array.Dtype.t -> float -> float
 (** [ulp dt x] is the unit in the last place of a finite [x] in [dt]'s format:
     the distance from a float of [x]'s binade to the next, the least subnormal
