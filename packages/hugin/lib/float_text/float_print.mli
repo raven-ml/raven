@@ -16,17 +16,19 @@
 
 val g : ?precision:int -> float -> string
 (** [g ~precision x] is [x] as C's [%.*g] writes it, with [precision]
-    significant digits, [6] by default and at least [1]: positional for a
-    decimal exponent from [-4] to below [precision], otherwise with an
-    exponent of at least two digits, without trailing zeros, as [135.562],
-    [1e+16] and [1.5e-05]. *)
+    significant digits, [6] by default: positional for a decimal exponent from
+    [-4] to below [precision], otherwise with an exponent of at least two
+    digits, without trailing zeros, as [135.562], [1e+16] and [1.5e-05]. A
+    [precision] below [1] is taken as [1], where C takes a negative one as
+    omitted. *)
 
 val pp : Format.formatter -> float -> unit
 (** [pp ppf x] formats [g x]. *)
 
 val f : int -> float -> string
-(** [f decimals x] is [x] as C's [%.*f] writes it, with [decimals] digits
-    after the point, at least [0]: [0.12] for [0.125] at two. *)
+(** [f decimals x] is [x] as C's [%.*f] writes it, with [decimals] digits after
+    the point: [0.12] for [0.125] at two. A negative [decimals] is taken as [0],
+    where C takes it as omitted. *)
 
 val exact : float -> string
 (** [exact x] is the decimal of fewest digits that reads back as [x], to
