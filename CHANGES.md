@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.bracket` raises `Invalid_argument` naming itself, `lo` and `hi`
+  and their shapes when its ends do not broadcast, where `Nx.broadcast_arrays`
+  raised its own error.
 - `Sde.sra1` and `Sde.reversible_heun` read a step's end at the next step's
   start, and the last step's at its interval's end itself, as `jera.mli`
   states. They read it at the start plus the step's size, which can round

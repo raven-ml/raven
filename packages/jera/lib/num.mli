@@ -52,6 +52,16 @@ val item : (float, 'b, 'd) Nx.t -> string
 (** [item x] is the element of the 0-d [x] as {!text} writes it, the shortest
     decimal that reads as it in [x]'s dtype. *)
 
+val broadcast_pair :
+  string ->
+  string * ('a, 'b, 'd) Nx.t ->
+  string * ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t
+(** [broadcast_pair fn (na, a) (nb, b)] is [a] and [b] broadcast to one shape.
+
+    Raises [Invalid_argument] naming [fn], [na], [nb] and their shapes if they
+    do not broadcast. *)
+
 val check_increasing : string -> string -> (float, 'b, 'd) Nx.t -> unit
 (** [check_increasing fn what x] checks that the 1-D [x] is strictly increasing,
     raising [Invalid_argument] through {!Nx.check} naming [fn], [what], the

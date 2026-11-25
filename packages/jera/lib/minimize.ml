@@ -37,11 +37,7 @@ let of_fields = function
 
 let bracket ~tol f ~lo ~hi =
   let fn = "Jera.Minimize.bracket" in
-  let lo, hi =
-    match Nx.broadcast_arrays [ lo; hi ] with
-    | [ l; h ] -> (l, h)
-    | _ -> assert false
-  in
+  let lo, hi = Num.broadcast_pair fn ("lo", lo) ("hi", hi) in
   let dtype = Nx.dtype lo in
   let root_eps = Float.sqrt (Num.eps dtype) in
   let search x = Rune.detach (f x) in

@@ -27,6 +27,18 @@ let text x = Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) x
 let item x =
   Format.asprintf "%a" (Nx.Dtype.pp_value (Nx.dtype x)) (Nx.item [] x)
 
+let broadcast_pair fn (na, a) (nb, b) =
+  match Nx.broadcast_arrays [ a; b ] with
+  | [ a; b ] -> (a, b)
+  | _ -> assert false
+  | exception Invalid_argument _ ->
+      invalid_arg
+        (Printf.sprintf "%s: %s of shape %s and %s of shape %s do not broadcast"
+           fn na
+           (shape (Nx.shape a))
+           nb
+           (shape (Nx.shape b)))
+
 let check_increasing fn what x =
   let n = Nx.dim 0 x in
   if n > 1 then

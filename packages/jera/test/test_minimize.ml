@@ -93,6 +93,12 @@ let bracket_tests =
             ~hi:(Nx.add_s c 1.)
         in
         equal Oracle.status_t Stalled (Oracle.status s));
+    test "ends that do not broadcast raise" (fun () ->
+        raises_match
+          (Exn.invalid_arg ~sub:"Jera.Minimize.bracket")
+          (fun () ->
+            Minimize.bracket ~tol:brent Nx.cos ~lo:(Nx.zeros f64 [| 2 |])
+              ~hi:(Nx.ones f64 [| 3 |])));
     test "a NaN value is not finite" (fun () ->
         let s =
           Minimize.bracket ~tol:brent Nx.log ~lo:(vec [| -2. |])
