@@ -356,8 +356,8 @@ module Host : sig
       returns.
 
       Raises [Invalid_argument] naming [Nx.Host.read] for a dead or a traced
-      [x], and if Bigarray has no kind for [x]'s dtype, and a failed check as
-      a wait does. What [f] raises passes on as raised. *)
+      [x], and if Bigarray has no kind for [x]'s dtype. What [f] raises
+      passes on as raised. *)
 
   val wrap :
     int array ->
@@ -963,8 +963,10 @@ val to_bigarray :
     A check holds none of its data. Where its flags and data are written when
     it is issued, as on a device whose work runs as it is submitted, it is
     read then, and a failing one keeps only its position and elements.
-    Otherwise it copies whether its flags hold and each datum's element at
-    the first false flag into memory of its own. Either way a donation of
+    Otherwise it submits, as it is issued, a copy of whether its flags hold
+    and of each datum's element at the first false flag into memory of its
+    own that the host addresses, which a wait reads in place once its device
+    has written it. Either way a donation of
     the data after the check may write over its memory. On a device whose
     memory the host addresses and whose work runs after its submit returns,
     such as Metal, a check of one flag whose flag or data are not yet written
@@ -5849,7 +5851,8 @@ end
 (** {1:printing Printing} *)
 
 val pp : Format.formatter -> ('v, 's, 'd) t -> unit
-(** [pp ppf x] prints [x]'s dtype and shape, [on] its set off the host, then
+(** [pp ppf x] prints [x]'s dtype and shape, off the host [on] its set as
+    [set n [m0; m1]], [n] a number no other set of the process has, then
     its elements as nested rows, as [float32 [3] [1, 2, 3]] or, 0-d,
     [float32 [] 1.5]. From two axes on the elements start a line of their
     own, one entry of each outer axis per line:
@@ -5861,7 +5864,9 @@ val pp : Format.formatter -> ('v, 's, 'd) t -> unit
     v}
 
     A vector starts the line after its header where both do not fit, and a row
-    wider than the margin wraps after its bracket.
+    wider than the margin wraps after its bracket. [pp] opens boxes of its
+    own: inside an enclosing box its lines indent from the column where it
+    starts, and a 0-d value's element stays on its header's line.
 
     Elements print as {!Dtype.pp_value} does with [~digits:8]: a float that is
     an integer of at most 8 digits whole, as [65504]; another in the shortest
@@ -5874,11 +5879,13 @@ val pp : Format.formatter -> ('v, 's, 'd) t -> unit
     [...], as in [int32 [1001] [0, 1, 2, ..., 998, 999, 1000]].
 
     A value with elements is read as {!to_array} reads it, so it raises a failed
-    check pending on its set ({!section-waiting}).
+    check pending on its set ({!section-waiting}). A print that raises has
+    printed nothing.
 
     A traced value prints [traced by] its interpretation; a dead one what it
     was, [donated] or [donated to] the function that took its memory; one on
-    a lost device the loss. None of these raises. *)
+    a lost device the loss; one whose elements no read can give, as a sum on
+    a set without kernels, [unread] and why. None of these raises. *)
 
 val to_string : ('v, 's, 'd) t -> string
 (** [to_string x] is [x] printed by {!pp}. *)
