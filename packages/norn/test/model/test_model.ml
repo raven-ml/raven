@@ -58,7 +58,7 @@ let positions c =
 let as_coords m (x : Nx.host Nx.float64_t schools) :
     Nx.host Nx.float64_t schools M.coords =
   Nx.Ptree.rebuild (M.coords m)
-    ~like:(M.from_prior m ~n:1 (Nx.Rng.key 0))
+    ~like:(M.from_prior m y ~n:1 (Nx.Rng.key 0))
     (fst (Nx.Ptree.flatten schools x))
 
 let close = float_rel ~rel:1e-10 ~abs:1e-10
@@ -69,7 +69,7 @@ let one_posterior m name =
   test (name ^ ": the density is the prior plus the likelihood") (fun () ->
       let c = as_coords m (positions 4) in
       let d = M.log_density m y c
-      and p = M.log_prior m c
+      and p = M.log_prior m y c
       and l = M.log_likelihood m y c in
       equal (array close) (floats d) (floats (Nx.add p l)))
 
@@ -229,7 +229,7 @@ let two_coords =
        (model (fun () ->
             let a = M.sample std and b = M.sample std in
             ({ a; b }, M.sample std)))
-       ~n:1 (Nx.Rng.key 1))
+       (f64 0.) ~n:1 (Nx.Rng.key 1))
 
 let result_rule =
   group "the result rule"
@@ -314,7 +314,7 @@ let result_rule =
                 let a = M.sample std and b = M.sample (D.iid [| !n |] std) in
                 ({ a; b }, M.sample std))
           in
-          let c = M.from_prior m ~n:2 (Nx.Rng.key 0) in
+          let c = M.from_prior m (f64 0.) ~n:2 (Nx.Rng.key 0) in
           n := 4;
           raises
             (Invalid_argument
@@ -444,7 +444,7 @@ let coordinate_shapes =
   group "coordinate shapes"
     [
       test "batched coordinates of the wrong shape are refused" (fun () ->
-          let c = M.from_prior triple ~n:2 (Nx.Rng.key 0) in
+          let c = M.from_prior triple (f64 0.) ~n:2 (Nx.Rng.key 0) in
           let c =
             Nx.Ptree.map (M.coords triple)
               (fun _ t -> Nx.slice [ Nx.R (0, 2); Nx.R (0, 2) ] t)
@@ -457,7 +457,7 @@ let coordinate_shapes =
                 [2; 3]") (fun () -> M.log_density triple (f64 0.) c));
       test "one instance's coordinates of the wrong shape are refused"
         (fun () ->
-          let c = M.from_prior triple ~n:1 (Nx.Rng.key 0) in
+          let c = M.from_prior triple (f64 0.) ~n:1 (Nx.Rng.key 0) in
           let c =
             Nx.Ptree.map (M.coords triple)
               (fun _ t -> Nx.slice [ Nx.R (0, 1); Nx.R (0, 3) ] t)
@@ -494,7 +494,7 @@ let scaled_coords =
          if Nx.Ptree.Path.to_string p = "a" then
            Nx.cast (Nx.dtype t) (vec [| 0.5; -2. |])
          else t)
-       (M.from_prior twin ~n:2 (Nx.Rng.key 0)))
+       (M.from_prior twin (f64 0.) ~n:2 (Nx.Rng.key 0)))
 
 (* A Poisson site whose rate is [exp f]: at [f = 1000] the rate overflows. *)
 let counts =
@@ -526,11 +526,11 @@ let correlated =
       in
       (r, x))
 
-(* [coords m xs] is coordinates of [m], a latent tensor, holding [xs]. *)
-let coords m xs =
+(* [coords m y xs] is coordinates of [m], a latent tensor, holding [xs]. *)
+let coords m y xs =
   Nx.Ptree.map (M.coords m)
     (fun _ t -> Nx.cast (Nx.dtype t) (vec xs))
-    (M.from_prior m ~n:(Array.length xs) (Nx.Rng.key 0))
+    (M.from_prior m y ~n:(Array.length xs) (Nx.Rng.key 0))
 
 let domains =
   group "parameters outside their domain"
@@ -551,7 +551,7 @@ let domains =
                 { a = f64 (-2.); b = vec [| 0.; 0.; 0. |] }));
       test "an overflowed exponential rate gives -inf" (fun () ->
           let lp =
-            M.log_density waits (f64 0.5) (coords waits [| 0.; 1000. |])
+            M.log_density waits (f64 0.5) (coords waits (f64 0.5) [| 0.; 1000. |])
           in
           satisfies ~claim:"finite" float_exact Float.is_finite
             (Nx.item [ 0 ] lp);
@@ -559,7 +559,7 @@ let domains =
       test "an overflowed rate gives -inf" (fun () ->
           let lp =
             M.log_density counts (Nx.scalar Nx.int32 3l)
-              (coords counts [| 0.; 1000. |])
+              (coords counts (Nx.scalar Nx.int32 3l) [| 0.; 1000. |])
           in
           satisfies ~claim:"finite" float_exact Float.is_finite
             (Nx.item [ 0 ] lp);
@@ -567,7 +567,7 @@ let domains =
       test "a NaN Cholesky factor gives -inf, eagerly and compiled" (fun () ->
           Compiled.here ();
           let lp = M.log_density correlated (vec [| 0.5; -0.5 |]) in
-          let at = coords correlated [| 0.5; 2. |] in
+          let at = coords correlated (vec [| 0.5; -0.5 |]) [| 0.5; 2. |] in
           List.iter
             (fun (msg, lp) ->
               satisfies ~msg ~claim:"finite" float_exact Float.is_finite
@@ -593,7 +593,7 @@ let domains =
             Norn.Gaussian.diagonal u Nx.float64 ~mean:(at 0.) ~scale:(at 1e3)
           in
           let s =
-            Norn.Nuts.init u ~geometry lp (coords counts [| 0.; 0.; 0.; 0. |])
+            Norn.Nuts.init u ~geometry lp (coords counts (Nx.scalar Nx.int32 3l) [| 0.; 0.; 0.; 0. |])
           in
           let s = Norn.Nuts.step u lp (Nx.Rng.key 0) s in
           equal (array bool)
@@ -669,11 +669,11 @@ let inits =
               M.init m (f64 5.) ~chains:2 (Nx.Rng.key 0)));
       test "a prior draw does not depend on the draw count" (fun () ->
           let a =
-            (M.from_prior eight_schools ~n:2 (Nx.Rng.key 9)
+            (M.from_prior eight_schools y ~n:2 (Nx.Rng.key 9)
               :> Nx.host Nx.float64_t schools)
           in
           let b =
-            (M.from_prior eight_schools ~n:5 (Nx.Rng.key 9)
+            (M.from_prior eight_schools y ~n:5 (Nx.Rng.key 9)
               :> Nx.host Nx.float64_t schools)
           in
           equal (array float_exact) (floats a.mu)
@@ -683,7 +683,7 @@ let inits =
 let fixed =
   test "a fixed site has no coordinates and keeps its value" (fun () ->
       let m = M.fix (fun p -> p.tau) (f64 2.) eight_schools in
-      let c = M.from_prior m ~n:3 (Nx.Rng.key 0) in
+      let c = M.from_prior m y ~n:3 (Nx.Rng.key 0) in
       let c' = (c :> Nx.host Nx.float64_t schools) in
       equal (array int) [| 3; 0 |] (Nx.shape c'.tau);
       let p = M.constrain m (single m c) in
@@ -738,7 +738,7 @@ let kinds =
                 in
                 (w, M.sample (D.iid [| 4 |] (D.categorical ~logits:(Nx.log w)))))
           in
-          let c = M.from_prior m ~n:2 (Nx.Rng.key 0) in
+          let c = M.from_prior m (Nx.zeros Nx.int64 [| 4 |]) ~n:2 (Nx.Rng.key 0) in
           equal (array int) [| 2; 2 |] (Nx.shape (c :> Nx.host Nx.float64_t));
           let w, _ = M.simulate m (Nx.Rng.key 1) in
           let w' = M.constrain m (M.unconstrain m w) in
@@ -809,7 +809,7 @@ let sets =
           let pp p = Format.asprintf "%a" Nx.Placement.pp p in
           let x, () = M.simulate on_pair key in
           equal ~msg:"simulate" string (pp Pair.on) (pp (Nx.placement x));
-          let c = M.from_prior on_pair ~n:2 key in
+          let c = M.from_prior on_pair () ~n:2 key in
           let l = M.log_density on_pair () c in
           equal ~msg:"log_density" string (pp Pair.on) (pp (Nx.placement l)));
       test "a model that samples nothing is refused" (fun () ->
@@ -902,6 +902,40 @@ let simulations =
         (fun () -> less (float 1e-12) ~than:Sbc.alpha (Sbc.p_value ~key:51 2.));
     ]
 
+(* An observed value [y] read by the latent site [a]: y ~ N(0, 1), a ~ N(y, 1). *)
+let downstream =
+  lazy
+    (M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
+         let y = M.sample std in
+         (M.sample (D.normal ~loc:y ~scale:(f64 1.)), y)))
+
+let prior_and_likelihood =
+  test "log_prior and log_likelihood add up to log_density where a latent site reads data"
+    (fun () ->
+      (* At y = 1, a = 0: log N(1; 0, 1) + log N(0; 1, 1) = -1 - log 2π. *)
+      let m = Lazy.force downstream and y = f64 1. in
+      let c = coords m y [| 0. |] in
+      let sum = Nx.add (M.log_prior m y c) (M.log_likelihood m y c) in
+      equal (float 1e-12)
+        (-1. -. Float.log (2. *. Float.pi))
+        (Nx.item [ 0 ] sum);
+      equal (float 1e-12) (Nx.item [ 0 ] (M.log_density m y c)) (Nx.item [ 0 ] sum))
+
+let downstream_draws =
+  test "from_prior answers the observed sites with the data" (fun () ->
+      (* Draw i of a is drawn from N(y, 1) with fold_in k_i 1, k_i row i of
+         split_batch ~n:3 k; y = 1 answers site 0. *)
+      let m = Lazy.force downstream and y = f64 1. and k = Nx.Rng.key 4 in
+      let expected =
+        Array.map
+          (fun k_i ->
+            item
+              (D.sample (Nx.Rng.fold_in k_i 1) (D.normal ~loc:y ~scale:(f64 1.))))
+          (Nx.Rng.split ~n:3 k)
+      in
+      equal (array float_exact) expected
+        (floats (M.from_prior m y ~n:3 k :> Nx.host Nx.float64_t)))
+
 let () =
   exit
     (run "Norn_model"
@@ -922,4 +956,6 @@ let () =
          group "pp" [ printing ];
          group "pointwise" [ pointwise_draws ];
          simulations;
+         group "log_likelihood" [ prior_and_likelihood ];
+         group "from_prior" [ downstream_draws ];
        ])

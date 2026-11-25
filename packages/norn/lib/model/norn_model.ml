@@ -713,10 +713,11 @@ let log_density m y =
   batched m context (fun c ->
       (score m context Total all_parts c (Some ys)).total)
 
-let log_prior m =
+let log_prior m y =
   let context = "Norn_model.log_prior" in
+  let ys = check_data context m y in
   let parts = { prior = true; jacobian = true; likelihood = false } in
-  batched m context (fun c -> (score m context Total parts c None).total)
+  batched m context (fun c -> (score m context Total parts c (Some ys)).total)
 
 let log_likelihood m y =
   let context = "Norn_model.log_likelihood" in
@@ -790,14 +791,17 @@ let draw context i d k =
 let coordinates m like us = Nx.Ptree.rebuild m.latent ~like (Array.to_list us)
 let empty_coords (Nx.P x) = Nx.P (Nx.zeros_at (Nx.beside x) (Nx.dtype x) [| 0 |])
 
-let prior_draw m context k =
+(* [prior_draw m context ~data k] draws every site from [k], site [i] from
+   [fold_in k i], but the observed sites [data] answers. *)
+let prior_draw m context ~data k =
   let n_latent = Array.length (leaves m.latent m.like) in
   let us = Array.make n_latent (Nx.P (Nx.zeros_at m.at Nx.float32 [||])) in
   let answer i l d =
     let x =
-      match fixed_of m i with
-      | Some v -> fresh d (unpack d v) v
-      | None -> draw context l.site.name d (Nx.Rng.fold_in k i)
+      match (fixed_of m i, l.site.role, data) with
+      | Some v, _, _ -> fresh d (unpack d v) v
+      | None, Observed, Some ys -> fresh d (unpack d ys.(l.leaf)) ys.(l.leaf)
+      | None, _, _ -> draw context l.site.name d (Nx.Rng.fold_in k i)
     in
     (match l.site.role with
     | Latent -> us.(l.leaf) <- inverse m i d x
@@ -810,18 +814,19 @@ let prior_draw m context k =
   in
   (p, y, us)
 
-let from_prior m ~n k =
+let from_prior m y ~n k =
   let context = "Norn_model.from_prior" in
   if n < 1 then invalid_argf "%s: n = %d is not positive" context n;
+  let data = Some (check_data context m y) in
   Rune.vmap
     Nx.Ptree.(Nx.Rng.ptree @-> returns m.latent)
     (fun k ->
-      let p, _, us = prior_draw m context k in
+      let p, _, us = prior_draw m context ~data k in
       coordinates m p us)
     (Nx.Rng.split_batch ~n k)
 
 let simulate m k =
-  let p, y, _ = prior_draw m "Norn_model.simulate" k in
+  let p, y, _ = prior_draw m "Norn_model.simulate" ~data:None k in
   (p, y)
 
 let predict m k p =
@@ -1012,7 +1017,7 @@ let init ?(from = Init.Uniform) m y ~chains k =
   let start k =
     let cands =
       match from with
-      | Init.Prior -> from_prior m ~n:candidates k
+      | Init.Prior -> from_prior m y ~n:candidates k
       | Init.Uniform -> jitter k centre 2.
       | Init.Near _ -> jitter k centre 0.1
     in

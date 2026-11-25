@@ -85,6 +85,12 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- **Breaking:** `Norn_model.log_prior` and `Norn_model.from_prior` take the
+  observations, as `log_prior m y` and `from_prior m y ~n k`, and answer the
+  observed sites with them. A latent site that reads an observed value was
+  scored at zero data and drawn from simulated data, so `log_density` was not
+  `log_prior + log_likelihood`, and `Smc` and `Nested` started from draws of
+  another prior than the one they weighed.
 - The open supports of `Dist.exponential`, `Dist.half_normal`,
   `Dist.half_cauchy`, `Dist.uniform` and `Dist.truncated` exclude their bounds,
   as `Support` states: a value on a bound has log density `-inf`, where it was

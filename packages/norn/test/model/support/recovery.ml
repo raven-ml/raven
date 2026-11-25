@@ -192,9 +192,9 @@ let replicated sampler ~replicates ~draws (P.Posterior p) =
           Nx.Ptree.(Nx.Rng.ptree @-> returns (pair ez tensor))
           (fun k ->
             let z =
-              sampler.run u ~prior:(M.log_prior m)
+              sampler.run u ~prior:(M.log_prior m p.y)
                 ~likelihood:(M.log_likelihood m p.y) (Nx.Rng.fold_in k 0)
-                (M.from_prior m ~n:draws (Nx.Rng.fold_in k 1))
+                (M.from_prior m p.y ~n:draws (Nx.Rng.fold_in k 1))
             in
             (z, fst (Norn.Evidence.expectation u flat z)))
           ks)
@@ -216,7 +216,7 @@ let replicated sampler ~replicates ~draws (P.Posterior p) =
       M.constrain m
         (Nx.Ptree.map u
            (fun _ t -> Nx.slice [ Nx.I 0 ] t)
-           (M.from_prior m ~n:1 (Nx.Rng.key 0)))
+           (M.from_prior m p.y ~n:1 (Nx.Rng.key 0)))
     in
     fst
       (List.fold_left2

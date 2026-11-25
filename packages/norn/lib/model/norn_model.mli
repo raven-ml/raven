@@ -139,24 +139,30 @@ val log_density : ('p, 'y, 'f, 'd) t -> 'y -> ('p coords, 'f, 'd) Norn.density
     model's numbers diverges. A term that is NaN or [+inf] with its parameters
     in their domain raises naming the site. *)
 
-val log_prior : ('p, 'y, 'f, 'd) t -> ('p coords, 'f, 'd) Norn.density
-(** [log_prior m] is the prior density of the coordinates: the latent sites'
-    terms and log-determinants. Observed sites are answered with zeros: a latent
-    site whose distribution depends on an observed value has its prior evaluated
-    at zero data. *)
-
-val log_likelihood : ('p, 'y, 'f, 'd) t -> 'y -> ('p coords, 'f, 'd) Norn.density
-(** [log_likelihood m y] is the log likelihood of [y], factors included:
-    [log_density m y c = log_prior m c + log_likelihood m y c].
+val log_prior : ('p, 'y, 'f, 'd) t -> 'y -> ('p coords, 'f, 'd) Norn.density
+(** [log_prior m y] is the prior density of the coordinates: the latent sites'
+    terms and log-determinants, with the observed sites answered by [y]. A
+    latent site whose distribution depends on an observed value is evaluated at
+    [y], so the density is normalised in the coordinates and {!from_prior} draws
+    from it.
 
     Raises as {!log_density} does. *)
 
-val from_prior : ('p, 'y, 'f, 'd) t -> n:int -> 'd Nx.Rng.key -> 'p coords
-(** [from_prior m ~n k] is [n] prior draws of the coordinates, stacked on a
-    leading axis. Draw [i] has the key of row [i] of [Nx.Rng.split_batch ~n k],
-    so it does not depend on [n].
+val log_likelihood : ('p, 'y, 'f, 'd) t -> 'y -> ('p coords, 'f, 'd) Norn.density
+(** [log_likelihood m y] is the log likelihood of [y], factors included:
+    [log_density m y c = log_prior m y c + log_likelihood m y c].
 
-    Raises [Invalid_argument] if [n < 1]. *)
+    Raises as {!log_density} does. *)
+
+val from_prior : ('p, 'y, 'f, 'd) t -> 'y -> n:int -> 'd Nx.Rng.key -> 'p coords
+(** [from_prior m y ~n k] is [n] draws of the coordinates from [log_prior m y],
+    stacked on a leading axis. Draw [i] has the key [k_i] of row [i] of
+    [Nx.Rng.split_batch ~n k], so it does not depend on [n]: its site [j] draws
+    from [Nx.Rng.fold_in k_i j], as in {!simulate}, but the observed sites,
+    which [y] answers.
+
+    Raises [Invalid_argument] if [n < 1], and as {!log_density} does if [y] does
+    not match the model. *)
 
 (** Initialisation strategies. *)
 module Init : sig
