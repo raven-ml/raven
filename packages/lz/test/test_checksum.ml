@@ -113,152 +113,133 @@ let ref_xxh64 seed s =
   let h = mul (logxor h (shift_right_logical h 29)) p3 in
   logxor h (shift_right_logical h 32)
 
-(* The four checksums, each with its running value or seed as an int64, so
-   that one table drives every law. *)
+(* The four checksums, each with its running value or seed as an int64, so that
+   one law runs over all of them. *)
 
-type sum = {
-  sum : string;
-  big : int64 -> Lz.bigbytes -> int64;
-  str : int64 -> ?first:int -> ?length:int -> string -> int64;
+type checksum = {
+  name : string;
+  bigbytes : int64 -> Lz.bigbytes -> int64;
+  string : int64 -> ?first:int -> ?length:int -> string -> int64;
   reference : int64 -> string -> int64;
-  valid : int64 -> int64;
-      (** A running value or seed of the checksum's width drawn from any. *)
-  running : bool;
-      (** Whether [c] is a running value: the sum of [a ^ b] from [c] is the sum
-          of [b] from [a]'s. *)
+  value : int64 -> int64;
+      (* A running value or seed of the checksum drawn from any int64. *)
+  paths : (string * (int32 -> Lz.bigbytes -> int32)) list;
+      (* The checksum's paths this host can run, from Lz.Paths, which the module
+         alone cannot reach: it takes only the fastest. *)
 }
 
 let u32 x = Int64.logand (Int64.of_int32 x) 0xFFFFFFFFL
 let i32 = Int64.to_int32
-
 let width32 c = Int64.logand c 0xFFFFFFFFL
 
 (* An Adler-32 value's halves are each below 65521. *)
 let adler_valid c =
   let half x = Int64.rem (Int64.logand x 0xFFFFL) 65521L in
-  Int64.logor (Int64.shift_left (half (Int64.shift_right_logical c 16)) 16) (half c)
+  Int64.logor
+    (Int64.shift_left (half (Int64.shift_right_logical c 16)) 16)
+    (half c)
 
-let sums =
-  [
-    {
-      sum = "CRC-32";
-      big =
-        (fun c b -> Int64.of_int (Lz.Crc32.bigbytes ~crc:(Int64.to_int c) b));
-      str =
-        (fun c ?first ?length s ->
-          Int64.of_int (Lz.Crc32.string ~crc:(Int64.to_int c) ?first ?length s));
-      reference = (fun c s -> u32 (ref_crc32 (i32 c) s));
-      valid = width32;
-      running = true;
-    };
-    {
-      sum = "Adler-32";
-      big = (fun c b -> u32 (Lz.Adler32.bigbytes ~adler:(i32 c) b));
-      str =
-        (fun c ?first ?length s ->
-          u32 (Lz.Adler32.string ~adler:(i32 c) ?first ?length s));
-      reference = (fun c s -> u32 (ref_adler32 (i32 c) s));
-      valid = adler_valid;
-      running = true;
-    };
-    {
-      sum = "XXH32";
-      big = (fun c b -> u32 (Lz.Xxh32.bigbytes ~seed:(i32 c) b));
-      str =
-        (fun c ?first ?length s ->
-          u32 (Lz.Xxh32.string ~seed:(i32 c) ?first ?length s));
-      reference = (fun c s -> u32 (ref_xxh32 (i32 c) s));
-      valid = width32;
-      running = false;
-    };
-    {
-      sum = "XXH64";
-      big = (fun c b -> Lz.Xxh64.bigbytes ~seed:c b);
-      str = (fun c ?first ?length s -> Lz.Xxh64.string ~seed:c ?first ?length s);
-      reference = ref_xxh64;
-      valid = Fun.id;
-      running = false;
-    };
-  ]
-
-let sum_named n = List.find (fun s -> s.sum = n) sums
-
-(* What the agreement laws run: each checksum through Lz, and each path of
-   CRC-32 and Adler-32 this host can run, which Lz alone cannot reach: it
-   takes only the fastest. *)
-
-type run = {
-  label : string;
-  run : int64 -> Lz.bigbytes -> int64;
-  expect : int64 -> string -> int64;
-  draw : int64 -> int64;
-  running : bool;
-}
-
-let of_sum s =
+let crc32 =
   {
-    label = s.sum;
-    run = s.big;
-    expect = s.reference;
-    draw = s.valid;
-    running = s.running;
+    name = "CRC-32";
+    bigbytes =
+      (fun c b -> Int64.of_int (Lz.Crc32.bigbytes ~crc:(Int64.to_int c) b));
+    string =
+      (fun c ?first ?length s ->
+        Int64.of_int (Lz.Crc32.string ~crc:(Int64.to_int c) ?first ?length s));
+    reference = (fun c s -> u32 (ref_crc32 (i32 c) s));
+    value = width32;
+    paths = Lz.Paths.crc32;
   }
 
-(* A path of [Lz.Paths]: its name and the checksum of all of a buffer from a
-   running value. *)
-let of_path name (path, run) =
-  let s = sum_named name in
+let adler32 =
   {
-    label = name ^ " " ^ path;
-    run = (fun c b -> u32 (run (i32 c) b));
-    expect = s.reference;
-    draw = s.valid;
-    running = s.running;
+    name = "Adler-32";
+    bigbytes = (fun c b -> u32 (Lz.Adler32.bigbytes ~adler:(i32 c) b));
+    string =
+      (fun c ?first ?length s ->
+        u32 (Lz.Adler32.string ~adler:(i32 c) ?first ?length s));
+    reference = (fun c s -> u32 (ref_adler32 (i32 c) s));
+    value = adler_valid;
+    paths = Lz.Paths.adler32;
   }
 
-let runs =
-  List.map of_sum sums
-  @ List.map (of_path "CRC-32") Lz.Paths.crc32
-  @ List.map (of_path "Adler-32") Lz.Paths.adler32
+let xxh32 =
+  {
+    name = "XXH32";
+    bigbytes = (fun c b -> u32 (Lz.Xxh32.bigbytes ~seed:(i32 c) b));
+    string =
+      (fun c ?first ?length s ->
+        u32 (Lz.Xxh32.string ~seed:(i32 c) ?first ?length s));
+    reference = (fun c s -> u32 (ref_xxh32 (i32 c) s));
+    value = width32;
+    paths = [];
+  }
+
+let xxh64 =
+  {
+    name = "XXH64";
+    bigbytes = (fun c b -> Lz.Xxh64.bigbytes ~seed:c b);
+    string =
+      (fun c ?first ?length s -> Lz.Xxh64.string ~seed:c ?first ?length s);
+    reference = ref_xxh64;
+    value = Fun.id;
+    paths = [];
+  }
+
+let checksums = [ crc32; adler32; xxh32; xxh64 ]
+
+(* Every way to sum a buffer with [c]: its module, then each of its paths. *)
+let ways c =
+  (c.name, c.bigbytes)
+  :: List.map
+       (fun (path, run) ->
+         (c.name ^ " " ^ path, fun v b -> u32 (run (i32 v) b)))
+       c.paths
 
 let hex =
-  Testable.make ~pp:(fun ppf x -> Format.fprintf ppf "0x%Lx" x) ~equal:Int64.equal
+  Testable.make
+    ~pp:(fun ppf x -> Format.fprintf ppf "0x%Lx" x)
+    ~equal:Int64.equal
+
+(* Every way to sum [b], which holds [s], from [v] gives the reference's
+   value. *)
+let agrees c v s b =
+  let expected = c.reference v s in
+  List.iter (fun (name, run) -> equal ~msg:name hex expected (run v b)) (ways c)
 
 (* Check values *)
 
-(* CRC-32's check value is the CRC catalogue's ("CRC-32/ISO-HDLC",
-   check = 0xCBF43926); Adler-32's is the worked example of "Wikipedia".
-   The xxHash specification (0.2.0) lists no test vectors: the XXH32 and
-   XXH64 rows are the digests of xxHash 0.8.3, the reference library,
-   through its Python binding. The inputs cross a stripe, and leave tails of
-   every kind the specification's step 5 reads. *)
+(* CRC-32's check value is the CRC catalogue's ("CRC-32/ISO-HDLC", check =
+   0xCBF43926); Adler-32's is the worked example of "Wikipedia". The xxHash
+   specification (0.2.0) lists no test vectors: the XXH32 and XXH64 rows are the
+   digests of xxHash 0.8.3, the reference library, through its Python binding.
+   The inputs cross a stripe, and leave tails of every kind the specification's
+   step 5 reads. *)
 let checks =
   [
-    ("CRC-32", 0L, "123456789", 0xCBF43926L);
-    ("CRC-32", 0L, "", 0L);
-    ("Adler-32", 1L, "Wikipedia", 0x11E60398L);
-    ("Adler-32", 1L, "", 1L);
-    ("XXH32", 0L, "", 0x02CC5D05L);
-    ("XXH32", 0L, "a", 0x550D7456L);
-    ("XXH32", 0L, "abc", 0x32D153FFL);
-    ("XXH32", 0L, "123456789", 0x937BAD67L);
-    ("XXH32", 0L, "Nobody inspects the spammish repetition", 0xE2293B2FL);
-    ("XXH32", 0L, "0123456789abcdef0123456789abcdef0123456789", 0x386F91D2L);
-    ("XXH64", 0L, "", 0xEF46DB3751D8E999L);
-    ("XXH64", 0L, "a", 0xD24EC4F1A98C6E5BL);
-    ("XXH64", 0L, "abc", 0x44BC2CF5AD770999L);
-    ("XXH64", 0L, "123456789", 0x8CB841DB40E6AE83L);
-    ("XXH64", 0L, "Nobody inspects the spammish repetition", 0xFBCEA83C8A378BF1L);
-    ("XXH64", 0L, "0123456789abcdef0123456789abcdef0123456789", 0xA76190C3ACF08A1CL);
+    (crc32, 0L, "123456789", 0xCBF43926L);
+    (crc32, 0L, "", 0L);
+    (adler32, 1L, "Wikipedia", 0x11E60398L);
+    (adler32, 1L, "", 1L);
+    (xxh32, 0L, "", 0x02CC5D05L);
+    (xxh32, 0L, "a", 0x550D7456L);
+    (xxh32, 0L, "abc", 0x32D153FFL);
+    (xxh32, 0L, "123456789", 0x937BAD67L);
+    (xxh32, 0L, "Nobody inspects the spammish repetition", 0xE2293B2FL);
+    (xxh32, 0L, "0123456789abcdef0123456789abcdef0123456789", 0x386F91D2L);
+    (xxh64, 0L, "", 0xEF46DB3751D8E999L);
+    (xxh64, 0L, "a", 0xD24EC4F1A98C6E5BL);
+    (xxh64, 0L, "abc", 0x44BC2CF5AD770999L);
+    (xxh64, 0L, "123456789", 0x8CB841DB40E6AE83L);
+    (xxh64, 0L, "Nobody inspects the spammish repetition", 0xFBCEA83C8A378BF1L);
+    ( xxh64,
+      0L,
+      "0123456789abcdef0123456789abcdef0123456789",
+      0xA76190C3ACF08A1CL );
   ]
 
-let check_name (sum, c, s, _) = Printf.sprintf "%s 0x%Lx %S" sum c s
-
-let check (name, c, s, expected) =
-  let sum = sum_named name in
-  equal hex expected (sum.str c s);
-  equal hex expected (sum.big c (Lz_support.of_string s));
-  equal ~msg:"reference" hex expected (sum.reference c s)
+let check_name (c, v, s, _) = Printf.sprintf "%s 0x%Lx %S" c.name v s
 
 (* Drawn inputs *)
 
@@ -266,7 +247,7 @@ let bytes_of_seed seed n =
   let st = Random.State.make [| seed |] in
   String.init n (fun _ -> Char.chr (Random.State.int st 256))
 
-(* Every path agrees with the reference at every length to 300 and every
+(* Every way agrees with the reference at every length to 300 and every
    alignment to 15: the lengths cross each block and each tail of the paths,
    whose widest step is 256 bytes. A test sweeps them all over fixed bytes, and
    a property draws the bytes, a length and an alignment. *)
@@ -274,10 +255,7 @@ let short_lengths = 300
 let alignments = 16
 
 (* The views, one for each length at each alignment, are made once and take each
-   sweep's bytes. Each prefix's reference value is made once a case and read by
-   every run: the paths of a checksum share its reference, found by its
-   function. A running value's prefix extends the one before it by a byte. Made
-   per run, they cost more than the runs. *)
+   case's bytes. *)
 let buffers =
   lazy
     (Array.init alignments (fun offset ->
@@ -286,8 +264,8 @@ let buffers =
 
 let fill v s = String.iteri (fun i b -> Array1.unsafe_set v i (Char.code b)) s
 
-let every_length (seed, c) =
-  let s = bytes_of_seed seed short_lengths in
+let sweep () =
+  let s = bytes_of_seed 0 short_lengths in
   let views =
     Array.map
       (fun (v, prefixes) ->
@@ -295,55 +273,40 @@ let every_length (seed, c) =
         prefixes)
       (Lazy.force buffers)
   in
-  let made = ref [] in
-  let references r c =
-    let same (e, c', _) = e == r.expect && Int64.equal c c' in
-    match List.find_opt same !made with
-    | Some (_, _, values) -> values
-    | None ->
-        let values = Array.make (short_lengths + 1) (r.expect c "") in
-        for n = 1 to short_lengths do
-          values.(n) <-
-            (if r.running then r.expect values.(n - 1) (String.make 1 s.[n - 1])
-             else r.expect c (String.sub s 0 n))
-        done;
-        made := (r.expect, c, values) :: !made;
-        values
-  in
   List.iter
-    (fun r ->
-      let c = r.draw c in
-      let expected = references r c in
-      for n = 0 to short_lengths do
-        Array.iteri
-          (fun a v ->
-            let got = r.run c v.(n) in
-            if not (Int64.equal got expected.(n)) then
-              failf "%s: length %d at alignment %d: 0x%Lx, expected 0x%Lx"
-                r.label n a got expected.(n))
-          views
-      done)
-    runs
-
-let sweep () = every_length (0, 0x0123_4567_89ab_cdefL)
+    (fun c ->
+      let v = c.value 0x0123_4567_89ab_cdefL in
+      let expected =
+        Array.init (short_lengths + 1) (fun n ->
+            c.reference v (String.sub s 0 n))
+      in
+      List.iter
+        (fun (name, run) ->
+          for n = 0 to short_lengths do
+            Array.iteri
+              (fun a prefixes ->
+                let got = run v prefixes.(n) in
+                if not (Int64.equal got expected.(n)) then
+                  failf "%s: length %d at alignment %d: 0x%Lx, expected 0x%Lx"
+                    name n a got expected.(n))
+              views
+          done)
+        (ways c))
+    checksums
 
 let drawn_length =
   Gen.(
     quad int int64 (int_range 0 short_lengths) (int_range 0 (alignments - 1)))
 
-let at_length (seed, c, n, a) =
-  let v, prefixes = (Lazy.force buffers).(a) in
+let at_length (seed, v, n, a) =
+  let b, prefixes = (Lazy.force buffers).(a) in
   let s = bytes_of_seed seed n in
-  fill v s;
-  List.iter
-    (fun r ->
-      let c = r.draw c in
-      equal ~msg:r.label hex (r.expect c s) (r.run c prefixes.(n)))
-    runs
+  fill b s;
+  List.iter (fun c -> agrees c (c.value v) s prefixes.(n)) checksums
 
-(* Lengths to 70000 at any alignment: across Adler-32's block of 5552 bytes
-   and many turns of every loop. Each band is drawn half the time, so that
-   every run of 100 cases covers both. *)
+(* Lengths to 70000 at any alignment: across Adler-32's block of 5552 bytes and
+   many turns of every loop. Each band is drawn half the time, so that every run
+   of 100 cases covers both. *)
 let long_input =
   Gen.(
     quad
@@ -351,83 +314,86 @@ let long_input =
       (int_range 0 (alignments - 1))
       int int64)
 
-let long_agrees (n, offset, seed, c) =
+let long_agrees (n, offset, seed, v) =
   cover "over 5552 bytes" (n > 5552);
   cover "from 301 to 5552 bytes" (n > short_lengths && n <= 5552);
   let s = bytes_of_seed seed n in
   let b = Lz_support.placed ~offset s in
-  List.iter
-    (fun r ->
-      let c = r.draw c in
-      equal ~msg:r.label hex (r.expect c s) (r.run c b))
-    runs
+  List.iter (fun c -> agrees c (c.value v) s b) checksums
 
-(* Bytes of 255 from the largest running value, where Adler-32's sums
-   grow fastest: at the edges of its 5552-byte reduction and of the vector
-   paths' runs of 5504 bytes, and over many of them. *)
+(* Bytes of 255 from the largest running value, where Adler-32's sums grow
+   fastest: at the edges of its 5552-byte reduction and of the vector paths'
+   runs of 5504 bytes, and over many of them. *)
 let saturated = [ 5503; 5504; 5505; 5551; 5552; 5553; 11008; 11009; 70001 ]
 
 let saturating n =
   let s = String.make n '\xff' in
   let b = Lz_support.of_string s in
-  List.iter
-    (fun r ->
-      let c = r.draw 0xFFF0FFF0L in
-      equal ~msg:r.label hex (r.expect c s) (r.run c b))
-    runs
+  List.iter (fun c -> agrees c (c.value 0xFFF0FFF0L) s b) checksums
 
-(* 8 MiB, past the size from which the bigarray entries release the
-   runtime lock. *)
-let eight_mib = 8 lsl 20
-
+(* 1 MiB, the size from which each module's [bigbytes] releases the domain lock.
+   The paths release nothing, and the drawn lengths cover their loops. *)
 let large () =
-  let s = Lz_support.corpus Random eight_mib in
+  let s = Lz_support.corpus Random (1 lsl 20) in
   let b = Lz_support.of_string s in
   List.iter
-    (fun r ->
-      let c = r.draw 0x0123456789ABCDEFL in
-      equal ~msg:r.label hex (r.expect c s) (r.run c b))
-    runs
+    (fun c ->
+      let v = c.value 0x0123456789ABCDEFL in
+      equal ~msg:c.name hex (c.reference v s) (c.bigbytes v b))
+    checksums
 
-(* CRC-32 and Adler-32 continue a running value: the checksum of [a ^ b] is
-   the checksum of [b] from the checksum of [a]. *)
-let pair =
+(* CRC-32 and Adler-32 continue a running value: the checksum of [a ^ b] is the
+   checksum of [b] from the checksum of [a]. *)
+let continued =
   let s = Gen.(string_of ~size:(int_range 0 600) char) in
-  Gen.pair s s
+  Gen.triple s s Gen.int64
 
-let running (a, b) =
+let continues (a, b, v) =
   List.iter
-    (fun name ->
-      let sum = sum_named name in
-      let start = if name = "Adler-32" then 1L else 0L in
-      let whole = sum.str start (a ^ b) in
-      equal ~msg:name hex whole (sum.str (sum.str start a) b);
+    (fun c ->
+      let v = c.value v in
+      let whole = c.string v (a ^ b) in
+      equal ~msg:c.name hex whole (c.string (c.string v a) b);
       let ba = Lz_support.of_string a and bb = Lz_support.of_string b in
-      equal ~msg:name hex whole (sum.big (sum.big start ba) bb))
-    [ "CRC-32"; "Adler-32" ]
+      equal ~msg:c.name hex whole (c.bigbytes (c.bigbytes v ba) bb))
+    [ crc32; adler32 ]
 
-(* [string ~first ~length] is [bigbytes] of the substring. *)
+(* [string ~first ~length] is [bigbytes] of the substring, and [string ~first]
+   of the bytes from [first] on. *)
 let range_input =
   Gen.(
     let* s = string_of ~size:(int_range 0 400) char in
     let n = String.length s in
     let* first = int_range 0 n in
     let* length = int_range 0 (n - first) in
-    let+ c = int64 in
-    (s, first, length, c))
+    let+ v = int64 in
+    (s, first, length, v))
 
-let substring (s, first, length, c) =
+let substring (s, first, length, v) =
+  let sum c v t = c.bigbytes v (Lz_support.of_string t) in
   List.iter
-    (fun sum ->
-      let c = sum.valid c in
-      let sub = sum.big c (Lz_support.of_string (String.sub s first length)) in
-      equal ~msg:sum.sum hex sub (sum.str c ~first ~length s);
-      if first + length = String.length s then
-        equal ~msg:sum.sum hex sub (sum.str c ~first s))
-    sums
+    (fun c ->
+      let v = c.value v in
+      equal ~msg:c.name hex
+        (sum c v (String.sub s first length))
+        (c.string v ~first ~length s);
+      equal ~msg:(c.name ^ ", no length") hex
+        (sum c v (String.sub s first (String.length s - first)))
+        (c.string v ~first s))
+    checksums
 
-(* A range outside the string, for each checksum's [string]. *)
-let ranges = [ (-1, None); (0, Some 4); (4, Some 0); (2, Some (-1)) ]
+(* Ranges that name no bytes of "abc". *)
+let ranges =
+  [
+    (-1, None);
+    (0, Some 4);
+    (4, None);
+    (4, Some 0);
+    (2, Some (-1));
+    (1, Some max_int);
+    (max_int, None);
+    (min_int, Some 1);
+  ]
 
 let name (first, length) =
   Printf.sprintf "first %d, length %s" first
@@ -437,35 +403,67 @@ let () =
   exit
     (run "Checksum"
        [
-         cases "a sum of a check input is its check value" ~id:check_name checks
-           check;
-         test "the generic paths come first" (fun () ->
-             equal string "generic" (fst (List.hd Lz.Paths.crc32));
-             equal string "generic" (fst (List.hd Lz.Paths.adler32)));
-         test "every length to 300 at every alignment agrees with the reference"
-           sweep;
-         prop "the reference holds for drawn bytes, lengths and alignments"
-           drawn_length at_length;
-         prop "long inputs agree with the reference" long_input long_agrees;
-         cases "bytes of 255 agree with the reference"
-           ~id:(Printf.sprintf "%d bytes of 255")
-           saturated saturating;
-         test "8 MiB agrees with the reference" large;
-         prop "a running value continues the checksum" pair running;
-         cases "a CRC-32 outside [0, 2^32) raises" ~id:string_of_int
-           [ -1; 1 lsl 32; min_int; max_int ]
-           (fun crc ->
-             let bad f = raises_match (Exn.invalid_arg ~sub:"crc") f in
-             bad (fun () -> Lz.Crc32.string ~crc "abc");
-             bad (fun () -> Lz.Crc32.bigbytes ~crc (Lz_support.of_string "abc")));
-         prop "string ~first ~length is bigbytes of the substring" range_input
-           substring;
-         cases "a range outside the string raises" ~id:name ranges
-           (fun (first, length) ->
-             let s = "abc" in
-             let bad f = raises_match (Exn.invalid_arg ~sub:"range") f in
-             bad (fun () -> Lz.Crc32.string ~first ?length s);
-             bad (fun () -> Lz.Adler32.string ~first ?length s);
-             bad (fun () -> Lz.Xxh32.string ~first ?length s);
-             bad (fun () -> Lz.Xxh64.string ~first ?length s));
+         group "Crc32"
+           [
+             test "~crc defaults to 0" (fun () ->
+                 equal Windtrap.int 0xCBF43926 (Lz.Crc32.string "123456789");
+                 equal Windtrap.int 0xCBF43926
+                   (Lz.Crc32.bigbytes (Lz_support.of_string "123456789")));
+             test "a ~crc of 2^32 - 1 continues over no bytes to itself"
+               (fun () ->
+                 equal Windtrap.int 0xFFFF_FFFF
+                   (Lz.Crc32.string ~crc:0xFFFF_FFFF "");
+                 equal Windtrap.int 0xFFFF_FFFF
+                   (Lz.Crc32.bigbytes ~crc:0xFFFF_FFFF (Lz_support.of_string "")));
+             cases "a ~crc outside [0, 2^32) raises Invalid_argument"
+               ~id:string_of_int
+               [ -1; 1 lsl 32; min_int; max_int ]
+               (fun crc ->
+                 let bad f = raises_match Exn.invalid_arg f in
+                 bad (fun () -> Lz.Crc32.string ~crc "abc");
+                 bad (fun () ->
+                     Lz.Crc32.bigbytes ~crc (Lz_support.of_string "abc")));
+           ];
+         group "checksums"
+           [
+             cases "a sum of a check input is its check value" ~id:check_name
+               checks (fun (c, v, s, expected) ->
+                 equal ~msg:"string" hex expected (c.string v s);
+                 equal ~msg:"bigbytes" hex expected
+                   (c.bigbytes v (Lz_support.of_string s)));
+             cases "the references give the check values" ~id:check_name checks
+               (fun (c, v, s, expected) -> equal hex expected (c.reference v s));
+             test
+               "every length to 300 at every alignment agrees with the \
+                reference"
+               sweep;
+             prop "drawn bytes, lengths and alignments agree with the reference"
+               drawn_length at_length;
+             prop "long inputs agree with the reference" long_input long_agrees;
+             cases
+               "bytes of 255 from the largest running value agree with the \
+                reference"
+               ~id:(Printf.sprintf "%d bytes of 255")
+               saturated saturating;
+             test "1 MiB agrees with the reference" large;
+             prop "CRC-32 and Adler-32 continue a running value" continued
+               continues;
+             (* [first] at the string's end names its empty tail. *)
+             prop "string ~first ~length is bigbytes of the substring"
+               ~examples:[ ("abc", 3, 0, 0L) ]
+               range_input substring;
+             cases "a range outside the string raises Invalid_argument" ~id:name
+               ranges (fun (first, length) ->
+                 let bad f = raises_match Exn.invalid_arg f in
+                 bad (fun () -> Lz.Crc32.string ~first ?length "abc");
+                 bad (fun () -> Lz.Adler32.string ~first ?length "abc");
+                 bad (fun () -> Lz.Xxh32.string ~first ?length "abc");
+                 bad (fun () -> Lz.Xxh64.string ~first ?length "abc"));
+           ];
+         group "Paths"
+           [
+             test "the generic paths come first" (fun () ->
+                 equal string "generic" (fst (List.hd Lz.Paths.crc32));
+                 equal string "generic" (fst (List.hd Lz.Paths.adler32)));
+           ];
        ])
