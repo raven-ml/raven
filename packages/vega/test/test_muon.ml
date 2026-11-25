@@ -1065,6 +1065,7 @@ let refusals =
     rows
     (fun (_, message, run) -> raises (Invalid_argument message) run)
 
+(* Groups follow the muon section of vega.mli. *)
 let () =
   exit
     (run "vega muon"
@@ -1080,7 +1081,7 @@ let () =
              test "a momentum whose norm would overflow steps in full"
                test_overflowing_norm;
            ];
-         group "the start"
+         group "the least positive normal float and scaling"
            [
              test "a zero momentum steps by its decay alone"
                test_zero_momentum;
@@ -1091,31 +1092,13 @@ let () =
              group "float32" [ scale_free Nx.float32 ];
              group "float64" [ scale_free Nx.float64 ];
            ];
-         group "the formula"
-           [
-             formula;
-             test "a state made by sgd_step steps under muon_step"
-               test_steps_an_sgd_state;
-           ];
-         group "leaves"
+         group "stacks"
            [
              group "float32" [ transposes Nx.float32 ];
              group "float64" [ transposes Nx.float64 ];
              group "kernels" (each kernels);
              group "stacks" (each stacks);
              group "stacks of any depth" (each any_stacks);
-             test "each rule is asked of each float or complex leaf"
-               test_rules_are_asked;
-           ];
-         group "leaves cut across devices"
-           [
-             group "float32" [ cut_along_an_axis Nx.float32 ];
-             group "float64" [ cut_along_an_axis Nx.float64 ];
-             cut_twice_or_merged;
-             test "a complex stack cut along its stack axis steps where it lies"
-               test_cut_complex_stack;
-             cut_nan;
-             cut_refusals;
            ];
          group "complex leaves"
            [
@@ -1130,5 +1113,23 @@ let () =
                  turns Nx.complex128 Nx.float64;
                ];
            ];
-         refusals;
+         group "leaves cut across devices"
+           [
+             group "float32" [ cut_along_an_axis Nx.float32 ];
+             group "float64" [ cut_along_an_axis Nx.float64 ];
+             cut_twice_or_merged;
+             test "a complex stack cut along its stack axis steps where it lies"
+               test_cut_complex_stack;
+             cut_nan;
+             cut_refusals;
+           ];
+         group "muon_step"
+           [
+             formula;
+             test "a state made by sgd_step steps under muon_step"
+               test_steps_an_sgd_state;
+             test "each rule is asked of each float or complex leaf"
+               test_rules_are_asked;
+             refusals;
+           ];
        ])
