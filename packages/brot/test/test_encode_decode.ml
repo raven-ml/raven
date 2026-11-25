@@ -2332,6 +2332,11 @@ let test_stream_skips () =
 
 let test_step_law =
   prop ~count:2000 "gives texts that with the finish make up decode" stream_case
+    ~examples:
+      [
+        ([ "fuse"; "ctc"; "byte_level"; "ctc empty" ], []);
+        ([ "fuse"; "ctc"; "fuse"; "ctc empty" ], []);
+      ]
     (fun (names, ids) ->
       let t = stream_tokenizer names in
       let texts = stream_texts t ids in

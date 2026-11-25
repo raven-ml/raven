@@ -370,6 +370,7 @@ type text_stage =
   | Drop_empty of { seen : bool }
   | Strip_text of { content : string; leading : int; stop : int; held : string }
   | Whole_text of { decoder : t; held : string list }
+  | Fuse_text
 
 type stream = {
   tokens : token_stage list;
@@ -593,7 +594,8 @@ let strip_some ~content ~leading ~stop text ~final =
       end
 
 (* [present] is whether the one token is still there: a [ctc] that empties it
-   drops it, so a later empty pattern finds no token to occur in. *)
+   drops it, so a later empty pattern finds no token to occur in. A [fuse] or
+   [byte_level] gives one token for none, an empty one. *)
 let text_step stage text ~final ~present =
   match stage with
   | Replace_text { pattern; by; held } ->
@@ -613,11 +615,13 @@ let text_step stage text ~final ~present =
       (Strip_text { content; leading; stop; held }, out, present)
   | Whole_text { decoder; held } ->
       let held = text :: held in
+      let present = present || decoder = Byte_level in
       if final then
         ( Whole_text { decoder; held = [] },
           decode decoder [ String.concat "" (List.rev held) ],
           present )
       else (Whole_text { decoder; held }, "", present)
+  | Fuse_text -> (stage, text, true)
 
 let feed_text stages text ~final =
   let rec feed stages text ~present =
@@ -658,7 +662,7 @@ let rec text_stages decoder =
   | Strip { content; start; stop } ->
       if content = "" then []
       else [ Strip_text { content; leading = start; stop; held = "" } ]
-  | Fuse -> []
+  | Fuse -> [ Fuse_text ]
   | Sequence decoders -> List.concat_map text_stages decoders
 
 let stream decoder =
