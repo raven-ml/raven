@@ -747,6 +747,64 @@ let test_placement () =
   same "a matrix split along axis 1" host
     (flat (step (Nx.place (S.split ~axis:1) m)))
 
+(* Steps at half precision *)
+
+(* Every step that takes the leaf, one step on a float16 or bfloat16 leaf; the
+   steps that average squared gradients refuse float16 leaves. At the leaf's
+   dtype, Adam's [eps] rounds to zero in float16 and [b2] to one in bfloat16,
+   either of which makes a zero-gradient element NaN; steps compute at float32
+   and round once. The rate is 0.1, and LARS's trust coefficient 1, so that a
+   move exceeds bfloat16's spacing at 3. *)
+let finite_steps (type b) (dt : (float, b) Nx.dtype) () =
+  let p = Nx.Ptree.tensor and lr = Vega.rate 0.1 in
+  let params = Nx.create dt [| 3 |] [| 1.0; 2.0; 3.0 |] in
+  let grads = Nx.create dt [| 3 |] [| 0.5; 0.0; -0.5 |] in
+  let check name (updated, _) =
+    let before = Nx.to_array (Nx.cast Nx.float64 params)
+    and after = Nx.to_array (Nx.cast Nx.float64 updated) in
+    Array.iteri
+      (fun i x ->
+        satisfies
+          ~msg:(Printf.sprintf "%s: element %d" name i)
+          ~claim:"a finite float" float_exact Float.is_finite x)
+      after;
+    let moves = name ^ ": a nonzero gradient moves its element" in
+    less ~msg:moves float_exact ~than:before.(0) after.(0);
+    greater ~msg:moves float_exact ~than:before.(2) after.(2)
+  in
+  check "sgd"
+    (Vega.sgd_step p ~lr ~momentum:0.9 (Vega.sgd_init p params) ~params ~grads);
+  check "lars"
+    (Vega.lars_step p ~lr ~trust_coefficient:1.0 (Vega.lars_init p params)
+       ~params ~grads);
+  check "lion" (Vega.lion_step p ~lr (Vega.lion_init p params) ~params ~grads);
+  match dt with
+  | Float16 -> ()
+  | _ ->
+      check "adam"
+        (Vega.adam_step p ~lr (Vega.adam_init p params) ~params ~grads);
+      check "adamw"
+        (Vega.adamw_step p ~lr (Vega.adamw_init p params) ~params ~grads);
+      check "radam"
+        (Vega.radam_step p ~lr (Vega.radam_init p params) ~params ~grads);
+      check "lamb"
+        (Vega.lamb_step p ~lr (Vega.lamb_init p params) ~params ~grads);
+      check "rmsprop"
+        (Vega.rmsprop_step p ~lr (Vega.rmsprop_init p params) ~params ~grads);
+      check "adagrad"
+        (Vega.adagrad_step p ~lr (Vega.adagrad_init p params) ~params ~grads);
+      check "adan"
+        (Vega.adan_step p ~lr (Vega.adan_init p params) ~params ~grads);
+      check "adafactor"
+        (Vega.adafactor_step p ~lr
+           (Vega.adafactor_init p params)
+           ~params ~grads);
+      let adam, _ =
+        Vega.adam_step p ~lr (Vega.adam_init p params) ~params ~grads
+      in
+      equal ~msg:"adam leaves a zero-gradient element" (float 1e-9) 2.0
+        (Nx.item [ 1 ] (Nx.cast Nx.float64 adam))
+
 (* Float16 leaves *)
 
 (* Each step that averages squared gradients, by name, from its initial
@@ -899,6 +957,8 @@ let tests =
       ];
     group "float16"
       [
+        test "float16 steps stay finite and move" (finite_steps Nx.float16);
+        test "bfloat16 steps stay finite and move" (finite_steps Nx.bfloat16);
         float16_refused;
         test "sgd, lars, lion and lbfgs step float16 leaves"
           test_float16_accepted;

@@ -79,11 +79,10 @@
       parameters hold there, for example
       ["Vega.adam_step: the root: length 1 in the gradients, length 2 in the
        parameters"] or
-      ["Vega.adam_step: w: float32 in the gradients, float64 in the
-       parameters"].
-      A skeleton mismatch raises before any tensor is computed; a dtype mismatch
-      raises at its leaf. The other functions that take two values raise as
-      {!Nx.Ptree.map2} does.
+      ["Vega.adam_step: w: float32 in the gradients, float64 in the parameters"].
+      A skeleton mismatch raises before any leaf is stepped or any rule asked
+      ({!section-decay}); a dtype mismatch raises at its leaf. The other
+      functions that take two values raise as {!Nx.Ptree.map2} does.
     - {b Non-parameter leaves.} A structure may carry tensors that are not
       parameters: an {!Nx.Rng.type-key} threaded through a compiled step, a
       counter, a batch of indices. [Rune.grad] does not differentiate them,
@@ -1070,11 +1069,11 @@ type ('p, 'd) adafactor_state = {
   nu_row : 'p;
       (** For a factored leaf of shape [[...; m; n]], the moving average of the
           squared gradients' means over the last axis, of shape [[...; m; 1]]. A
-          scalar zero for other leaves. *)
+          scalar zero for other float or complex leaves. *)
   nu_col : 'p;
       (** For a factored leaf, the moving average of the squared gradients'
           means over the second-to-last axis, of shape [[...; 1; n]]. A scalar
-          zero for other leaves. *)
+          zero for other float or complex leaves. *)
   nu : 'p;
       (** For a leaf that is not factored, the moving average of the squared
           gradients, of the leaf's shape. A scalar zero for factored leaves. *)
@@ -1083,7 +1082,8 @@ type ('p, 'd) adafactor_state = {
 (** The state for {!adafactor_step}. A leaf of two or more axes is factored: its
     second moment is estimated from a row and a column statistic, in [m + n]
     numbers rather than [m * n]. {!adafactor_init} decides which leaves are
-    factored, and the state records it. *)
+    factored, and the state records it. A leaf that is neither float nor complex
+    holds zeros of its own shape in every part, as in every state. *)
 
 module Adafactor_state :
   Nx.Ptree.S with type ('p, 'd) t = ('p, 'd) adafactor_state
