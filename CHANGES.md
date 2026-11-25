@@ -1428,6 +1428,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Eager `Minimize.solve` with a gradient method or `levenberg_marquardt`, and
+  `System.solve`, allocate up to 9 % fewer words per iteration. Results are bit
+  for bit unchanged.
 - A lane of `Quad.adaptive`, `Quad.cubature`, `Quad.tanh_sinh`, `Quad.qmc` or
   `Piecewise.adapt` that ends `Not_finite` holds its last finite estimate in
   `Solution.best`, as `jera.mli` states, instead of the non-finite one that

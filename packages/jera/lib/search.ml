@@ -403,19 +403,26 @@ let read tol s ~map =
   let run = searching s.st in
   let image = Nx.add s.x map in
   let scale = floored tol (Nx.maximum (Nx.abs s.x) (Nx.abs s.base)) in
-  let length v = norm (Nx.div v scale) in
-  let moved = length (Nx.sub s.x s.base) in
+  (* The secant's three lengths share one reduction, a row each, which [norm]
+     takes as it takes a vector alone. A vector of one component has no
+     reduction to share. *)
+  let moved, spread, change =
+    let length v = norm (Nx.div v scale) in
+    let a = Nx.sub s.x s.base
+    and b = Nx.add (Nx.abs image) (Nx.abs s.image)
+    and c = Nx.sub image s.image in
+    if width a = 1 then (length a, length b, length c)
+    else
+      let l = length (Nx.stack [ a; b; c ]) in
+      (Nx.get [ 0 ] l, Nx.get [ 1 ] l, Nx.get [ 2 ] l)
+  in
   (* Before the first reading, or after a step that did not move the estimate,
      the secant has no length: the next one starts here. *)
   let fresh = Nx.logical_not (Nx.greater_s moved 0.) in
   let moved = Nx.where fresh (Nx.ones_like moved) moved in
   let half = Num.eps (Nx.dtype image) /. 2. in
-  let r =
-    Nx.div
-      (Nx.mul_s (length (Nx.add (Nx.abs image) (Nx.abs s.image))) half)
-      moved
-  in
-  let q = Nx.add (Nx.div (length (Nx.sub image s.image)) moved) r in
+  let r = Nx.div (Nx.mul_s spread half) moved in
+  let q = Nx.add (Nx.div change moved) r in
   let lower = Nx.sub q (Nx.mul_s r 2.) in
   let settled =
     Nx.logical_and (Nx.logical_not fresh)
