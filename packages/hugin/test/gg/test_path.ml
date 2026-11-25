@@ -940,6 +940,28 @@ let cropping =
         crop_ends_with_close;
       cases "crop of a circle fills its part within the box" ~id:fst
         circle_crops crop_fills_circle_part;
+      cases "crop keeps a region of points at far apart scales" ~id:fst
+        [
+          (* The triangle under x + y = 2 covers the box, its first edge running
+             from (0, 2) to (tiny, 2). *)
+          ( "a first edge a subnormal long",
+            (Path.polygon [| 0.; tiny; 0.; 2. |] [| 2.; 2.; 0.; 0. |], 1.) );
+          (* Its last edge rises from (0, 1) by 2^100 per unit of x, above the
+             box, which the polygon covers. *)
+          ( "a first edge 2^-980 long beside a vertex at 2^101",
+            ( Path.polygon
+                [| 0.; Float.ldexp 1. (-980); 0.; 2.; 2. |]
+                [| 1.; 1.; 0.; 0.; Float.ldexp 1. 101 |],
+              1. ) );
+          (* Its edges from (1e17, 1e17) run along y = x and, within 1e-17 of
+             its slope, y = x + 1: the box's half above its diagonal. *)
+          ( "a vertex at 1e17",
+            ( Path.polygon [| 1e17; 0.; -1.; 0. |] [| 1e17; 0.; 0.5; 1. |],
+              0.5 ) );
+        ]
+        (fun (_, (p, expected)) ->
+          equal (float 1e-12) expected
+            (area (polygons (segs (Path.crop unit_box p)))));
       test "crop of a ring around the box fills nothing" (fun () ->
           let outer = Path.rect (Box2.v (-4.) (-4.) 8. 8.) in
           let inner =

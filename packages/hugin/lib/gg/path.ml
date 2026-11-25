@@ -466,7 +466,9 @@ let bounds p = fst (extent Affine.id p)
    it runs straight along the edge instead. That segment and the piece it
    replaces bound a region outside the half-plane, so the winding number of
    every point inside is unchanged, and so is the region under either fill rule.
-   Cut for stroking ([cut]), a region of no area is kept: a stroke draws it. *)
+   A cut region of no area is dropped once all four cuts are made, when its
+   points lie within the box; cut for stroking ([cut]), it is kept: a stroke
+   draws it. *)
 
 type seg =
   | S_line of float * float
@@ -607,14 +609,18 @@ let degenerate x y = function
   | S_cubic (a, b, c, d, x', y') ->
       a = x && b = y && c = x && d = y && x' = x && y' = y
 
-(* [flat s] is [true] iff every point of [s] lies on one line through its start,
-   as computed: as a region, [s] has no area. Points on an edge of the box are
-   found so exactly. The two products are compared, each rounded on its own:
-   ocamlopt on arm64 fuses [a *. b -. c *. d] into one multiply-add, whose
-   rounding can put a point off the line through itself. The differences are
-   halved and scaled by one power of two to at most 1, which rounds them as they
-   round unscaled, so that the products stay floats however far the points
-   lie. *)
+(* [flat s] is [true] iff every point of [s] lies on the line through its start
+   and its point farthest from it, as computed: as a region, [s] has no area.
+   Points on an edge of the box are found so exactly. [s] is a region cut to the
+   box, so rounding loses offsets only at the scale of the box's preimage, never
+   at that of points the cuts removed. The farthest point's difference scales
+   to at least 1/2, so the line's direction is never zero, as that of a point
+   near the start can round to beside a far one. The two products are compared,
+   each rounded on its own: ocamlopt on arm64 fuses [a *. b -. c *. d] into one
+   multiply-add, whose rounding can put a point off the line through itself.
+   The differences are halved and scaled by one power of two to at most 1, which
+   rounds them as they round unscaled, so that the products stay floats however
+   far the points lie. *)
 let flat s =
   let pts =
     List.concat_map
@@ -623,28 +629,29 @@ let flat s =
         | S_cubic (a, b, c, d, x, y) -> [ (a, b); (c, d); (x, y) ])
       s.segs
   in
-  match List.find_opt (fun (x, y) -> x <> s.sx || y <> s.sy) pts with
-  | None -> true
-  | Some (dx, dy) ->
-      let half v v0 = (0.5 *. v) -. (0.5 *. v0) in
-      let top =
-        List.fold_left
-          (fun t (x, y) ->
-            Float.max t
-              (Float.max (Float.abs (half x s.sx)) (Float.abs (half y s.sy))))
-          0. pts
-      in
-      let e = -snd (Float.frexp top) in
-      let d v v0 = Float.ldexp (half v v0) e in
-      let ux = d dx s.sx and uy = d dy s.sy in
-      List.for_all (fun (x, y) -> d x s.sx *. uy = d y s.sy *. ux) pts
+  let half v v0 = (0.5 *. v) -. (0.5 *. v0) in
+  let reach (x, y) =
+    Float.max (Float.abs (half x s.sx)) (Float.abs (half y s.sy))
+  in
+  let far, top =
+    List.fold_left
+      (fun ((_, top) as acc) pt ->
+        let r = reach pt in
+        if r > top then (pt, r) else acc)
+      ((s.sx, s.sy), 0.) pts
+  in
+  if top = 0. then true
+  else
+    let e = -snd (Float.frexp top) in
+    let d v v0 = Float.ldexp (half v v0) e in
+    let ux = d (fst far) s.sx and uy = d (snd far) s.sy in
+    List.for_all (fun (x, y) -> d x s.sx *. uy = d y s.sy *. ux) pts
 
-(* [cut_by h ~fill s acc] adds to [acc] the subpaths of [s] within [h], latest
-   first: [s]'s region within [h] as one closed subpath if [s] is closed, and
-   its pieces within [h] otherwise. A cut adds no segment of zero length, a
-   region ends with its close and no line back to its start, and a region with
-   no area within [h] is dropped if [fill]. *)
-let cut_by h ~fill s acc =
+(* [cut_by h s acc] adds to [acc] the subpaths of [s] within [h], latest first:
+   [s]'s region within [h] as one closed subpath if [s] is closed, and its
+   pieces within [h] otherwise. A cut adds no segment of zero length, and a
+   region ends with its close and no line back to its start. *)
+let cut_by h s acc =
   let region = s.closed in
   if contained h s then s :: acc
   else
@@ -659,11 +666,9 @@ let cut_by h ~fill s acc =
             | S_line (x, y) :: rest when closed && x = sx && y = sy -> rest
             | segs -> segs
           in
-          let sub = { sx; sy; segs = List.rev segs; closed } in
           match segs with
           | [] -> ()
-          | _ :: _ when closed && fill && flat sub -> ()
-          | _ :: _ -> out := sub :: !out)
+          | _ :: _ -> out := { sx; sy; segs = List.rev segs; closed } :: !out)
       | _ -> ());
       start := None;
       segs := []
@@ -795,9 +800,9 @@ let maps_within (m : Affine.t) b p =
     p
 
 (* [cropped ~fill m b p] cuts [p] to the points [m] maps into [b], dropping
-   regions left with no area if [fill]. A path with a gap is cut even when it
-   lies within [b], so that the result holds only the finite points [fold]
-   visits. *)
+   regions the cuts left with no area if [fill]. A path with a gap is cut even
+   when it lies within [b], so that the result holds only the finite points
+   [fold] visits. *)
 let cropped ~fill (m : Affine.t) b p =
   let fits () =
     match extent m p with
@@ -821,9 +826,17 @@ let cropped ~fill (m : Affine.t) b p =
       ]
     in
     let cut_all subs h =
-      List.rev (List.fold_left (fun acc s -> cut_by h ~fill s acc) [] subs)
+      List.rev (List.fold_left (fun acc s -> cut_by h s acc) [] subs)
     in
-    let subs = List.fold_left cut_all (subpaths p) halves in
+    (* A subpath within [b] is kept as it is, flat or not. *)
+    let crop_sub s =
+      if List.for_all (fun h -> contained h s) halves then [ s ]
+      else
+        let subs = List.fold_left cut_all [ s ] halves in
+        if fill then List.filter (fun s -> not (s.closed && flat s)) subs
+        else subs
+    in
+    let subs = List.concat_map crop_sub (subpaths p) in
     let seg acc = function
       | S_line (x, y) -> Line (x, y) :: acc
       | S_cubic (a, b, c, d, x, y) -> Cubic (a, b, c, d, x, y) :: acc

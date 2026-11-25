@@ -294,6 +294,20 @@ let clips =
             (render 30. 30. (Picture.fill ~rule red q))
             (render 30. 30. (Picture.clip ~rule q (solid 30. 30.))));
       prop "a clip to a box draws what cropping to it draws"
+        ~examples:
+          [
+            (* Its first edge is a subnormal long. *)
+            ( Box2.v 0. 0. 1. 1.,
+              ( `Nonzero,
+                Path.polygon
+                  [| 0.; Float.min_float *. Float.epsilon; 0.; 2. |]
+                  [| 10.9798; 10.9798; 0.; 0. |] ) );
+            (* A vertex far beyond the box. *)
+            ( Box2.v 0. 0. 1. 1.,
+              ( `Nonzero,
+                Path.polygon [| 1e17; 0.; -1.; 0. |] [| 1e17; 0.; 0.5; 1. |] )
+            );
+          ]
         (Gen.pair gen_cell_box (Gen.pair gen_rule gen_polygon))
         (fun (b, (rule, q)) ->
           same_image ~within:1

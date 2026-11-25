@@ -319,6 +319,10 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Path.crop` keeps a region with area within the box whose points lie at far
+  apart scales, such as a vertex far beyond the box or a first edge a subnormal
+  long. Rounding at the far points' scale made it judge the region flat and
+  drop it, so filling it drew nothing where clipping drew it.
 - `Hugin.pp` shows a figure in the scheme of the screen: its SVG carries
   `Theme.default` and `Theme.dark`, each on its own paper, and shows the dark
   one on screens that prefer a dark scheme. Print, and viewers without the
