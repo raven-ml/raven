@@ -1687,10 +1687,14 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   in
   let lo = Nx.broadcast_to [| n |] (Nx.minimum ta tb)
   and hi = Nx.broadcast_to [| n |] (Nx.maximum ta tb) in
+  (* Half the gap between adjacent times always meets this tolerance, so the
+     bracket closes to the time's resolution. *)
+  let resolution =
+    let d = Nx.dtype ta in
+    Tol.v ~rel:(Num.eps d) ~abs:(Num.tiny d *. Num.eps d)
+  in
   let ((a, b), (fa, _)), st, _ =
-    Root.locate ~tol:(Tol.ulps 1.) component
-      (lo, component lo)
-      (hi, component hi)
+    Root.locate ~tol:resolution component (lo, component lo) (hi, component hi)
   in
   let found =
     Nx.logical_and crossed (Nx.equal_s st (Solution.code Converged))

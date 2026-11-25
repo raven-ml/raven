@@ -40,16 +40,15 @@ let locate ~tol search (a0, fa0) (b0, fb0) =
       1.
   in
   let estimate_f (_, (fa, fb)) = Nx.minimum (Nx.abs fa) (Nx.abs fb) in
-  (* An element whose bracket meets [tol], or holds no float, ends: converged if
-     |f| at its estimate is within the given ends'. *)
+  (* An element whose bracket meets [tol] converges if |f| at its estimate is
+     within the given ends'; one whose bracket holds no float short of [tol]
+     stalls. *)
   let finish ((((a, b), _) as br), (st, (n, k))) =
     let e = Nx.div_s (Nx.sub b a) 2. in
-    let narrow =
-      Nx.logical_or (accepted tol ~e ~y:(Nx.add a e)) (Num.adjacent a b)
-    in
+    let met = accepted tol ~e ~y:(Nx.add a e) in
     let small = Nx.less_equal (estimate_f br) target in
-    let st = settle st (Nx.logical_and narrow small) Converged in
-    let st = settle st narrow Stalled in
+    let st = settle st (Nx.logical_and met small) Converged in
+    let st = settle st (Nx.logical_or met (Num.adjacent a b)) Stalled in
     (br, (st, (n, k)))
   in
   let initial =
@@ -152,15 +151,6 @@ let bracket ~tol f ~lo ~hi =
   let (((a, b), _) as br), st, n = locate ~tol search (a0, fa0) (b0, fb0) in
   let x = estimate br in
   let e = Nx.div_s (Nx.sub b a) 2. in
-  (* The search also ends at adjacent floats, which converge only where [e]
-     meets [tol] there. *)
-  let short = Nx.logical_not (accepted tol ~e ~y:(Nx.add a e)) in
-  let st =
-    Nx.where
-      (Nx.logical_and short (Nx.equal_s st (Solution.code Converged)))
-      (Nx.full_like st (Solution.code Stalled))
-      st
-  in
   let ok = Nx.equal_s st (Solution.code Converged) in
   let value = state fn ~ok f x in
   let given = Nx.less_equal lo hi in
