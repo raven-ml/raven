@@ -234,7 +234,9 @@ let uncached_shared_set = lazy (shared_set_bpe 0)
 
 let bpe_domains =
   let tok = abstract "t" in
-  stateful ~domains:2 ~count:4 ~steps:6
+  (* [encode_ids] runs only in a case whose prefix drew [bpe]: at 4 cases all of
+     them miss it about once in 300 runs, at 16 none did in 300. *)
+  stateful ~domains:2 ~count:16 ~steps:6
     "encodes BPE text on two domains as on one"
     [
       command "bpe"
