@@ -448,7 +448,12 @@ module Pre_tokenizer : sig
 
       Pre-tokenizers split raw text into pretokens before vocabulary-based
       tokenization (BPE, WordPiece, etc.) is applied. Each pretoken carries byte
-      offsets into the original text. *)
+      offsets into the original text.
+
+      A text need not be valid UTF-8. A byte that opens no well-formed character
+      is a character of one byte that is not white space, a letter, a digit, a
+      mark or punctuation. {!byte_level} and {!split_regex} match it with no
+      class, so it lies between their matches. *)
 
   type t
   (** The type for pre-tokenizers. *)
@@ -589,8 +594,7 @@ module Pre_tokenizer : sig
       space, and a prepended one at the character it opens.
 
       Raises [Invalid_argument] if [replacement] is not exactly one well-formed
-      UTF-8 character.
-  *)
+      UTF-8 character. *)
 
   val unicode_scripts : t
   (** [unicode_scripts] splits on Unicode script boundaries.

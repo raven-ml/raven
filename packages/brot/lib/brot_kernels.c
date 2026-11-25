@@ -297,14 +297,19 @@ static intnat category_run(walker *w, intnat j, intnat category)
     } else if (c == CL_LEAD) {
       intnat d = decode_class(w, j);
       if (d < 0) return -1;
-      if (((d >> 3) & 3) != category) break;
+      if ((d & 7) == 1 || ((d >> 3) & 3) != category) break;
       j += d & 7;
-    } else { /* a stray continuation byte continues an "other" run */
-      if (category != CL_OTHER) break;
-      j++;
-    }
+    } else /* a continuation byte with no lead */
+      break;
   }
   return j;
+}
+
+/* Pre_tokenizer.stray_run. */
+static intnat stray_run(walker *w, intnat i)
+{
+  while (i < w->stop && utf8_decode(w->s, i, w->stop) < 0) i++;
+  return i;
 }
 
 /* Pre_tokenizer.whitespace_span, or -1 propagating a class hand-back. */
@@ -365,7 +370,8 @@ static intnat next_span(walker *w, intnat i)
     d = char_at(w, i + 1);
     if (d < 0) return -1;
     cat = (d >> 3) & 3;
-    if (cat == CL_WS) return whitespace_span(w, i);
+    if (cat == CL_WS || utf8_decode(s, i + 1, stop) < 0)
+      return whitespace_span(w, i);
     return category_run(w, i + 1 + (d & 7), cat);
   }
   case CL_APO:
@@ -380,12 +386,13 @@ static intnat next_span(walker *w, intnat i)
     intnat d = decode_class(w, i);
     intnat cat;
     if (d < 0) return -1;
+    if ((d & 7) == 1) return stray_run(w, i);
     cat = (d >> 3) & 3;
     if (cat == CL_WS) return whitespace_span(w, i);
     return category_run(w, i + (d & 7), cat);
   }
   default: /* CL_CONT */
-    return category_run(w, i + 1, CL_OTHER);
+    return stray_run(w, i);
   }
 }
 

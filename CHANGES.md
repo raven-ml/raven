@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Pre_tokenizer.byte_level` gives a byte that opens no character a pretoken
+  of its own, as GPT-2's pattern does: it joined the punctuation run before
+  it, so `"$\xc3"` was one pretoken.
 - `Pre_tokenizer.char_delimiter` and `Pre_tokenizer.metaspace` raise
   `Invalid_argument` for a byte that opens no character, such as `"\x81"`,
   which cut the text inside other characters.

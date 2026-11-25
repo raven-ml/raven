@@ -256,7 +256,8 @@ let letters_swar s i stop =
   !j
 
 (* End of the run of characters of category [category] starting at [i]. The
-   apostrophe and the space are folded back into their category. *)
+   apostrophe and the space are folded back into their category. A byte that
+   opens no character ends the run: the pattern's classes match none of it. *)
 let category_run s i stop category =
   let j = ref (if category = c_letter then letters_swar s i stop else i) in
   let scanning = ref true in
@@ -273,11 +274,21 @@ let category_run s i stop category =
     end
     else if c = c_lead then begin
       let d = Char_class.at s !j ~stop in
-      if Char_class.at_category d = category then j := !j + Char_class.at_len d
+      let len = Char_class.at_len d in
+      if len > 1 && Char_class.at_category d = category then j := !j + len
       else scanning := false
     end
-    else if category = c_other then incr j
     else scanning := false
+  done;
+  !j
+
+(* End of the run of bytes that open no character starting at [i]. No
+   alternative of the pattern matches such a byte, so the run lies between two
+   matches, a span of its own. *)
+let stray_run s i stop =
+  let j = ref i in
+  while !j < stop && Char_class.decode s !j ~stop < 0 do
+    incr j
   done;
   !j
 
@@ -335,7 +346,10 @@ let fill_byte_level s ~pos ~stop spans =
         else
           let d = Char_class.at s (i + 1) ~stop in
           let category = Char_class.at_category d in
-          if category = c_whitespace then whitespace_span s i stop
+          (* A space before a byte that opens no character opens no run:
+             [\s+(?!\S)] gives it back, and [\s+] takes it alone. *)
+          if category = c_whitespace || Char_class.decode s (i + 1) ~stop < 0
+          then whitespace_span s i stop
           else category_run s (i + 1 + Char_class.at_len d) stop category
       else if c = c_apostrophe then contraction s i stop
       else if c = c_numeric then category_run s (i + 1) stop c_numeric
@@ -343,10 +357,12 @@ let fill_byte_level s ~pos ~stop spans =
       else if c = c_whitespace then whitespace_span s i stop
       else if c = c_lead then
         let d = Char_class.at s i ~stop in
+        let len = Char_class.at_len d in
         let category = Char_class.at_category d in
-        if category = c_whitespace then whitespace_span s i stop
-        else category_run s (i + Char_class.at_len d) stop category
-      else category_run s (i + 1) stop c_other
+        if len = 1 then stray_run s i stop
+        else if category = c_whitespace then whitespace_span s i stop
+        else category_run s (i + len) stop category
+      else stray_run s i stop
     in
     Spans.write spans !n i e;
     incr n;

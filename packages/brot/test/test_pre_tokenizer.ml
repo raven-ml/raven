@@ -490,7 +490,6 @@ let stray =
 let runs =
   [ " "; " "; "'"; "1212"; "'s"; "'re"; "'LL"; "XMLHttp"; "  "; " \r\n" ]
 
-let pattern_text = text_of (List.map fst kinds @ runs)
 let split_text = text_of (List.map fst kinds @ stray @ runs)
 
 let by_gpt2 =
@@ -510,6 +509,7 @@ let cuts_as_gpt2 text =
   let opens_with_space w =
     String.length w > 1 && w.[0] = ' ' && not (is_ascii_space w.[1])
   in
+  cover "a byte of no character" (not (String.is_valid_utf_8 text));
   cover "a contraction" (List.exists (fun w -> List.mem w contractions) words);
   cover "a space opening a run" (List.exists opens_with_space words);
   cover "white space giving its last space to the run after it"
@@ -1935,9 +1935,22 @@ let () =
            [
              cases ~id:text_id "cuts the text with GPT-2's pattern" gpt2_rows
                gpt2_cuts;
-             prop ~count:2000 ~examples:[ long_text ]
+             test "gives a byte of no character a pretoken of its own"
+               (fun () ->
+                 equal pretokens
+                   [
+                     ("\u{109}", (0, 1));
+                     ("$", (1, 2));
+                     ("\u{c3}", (2, 3));
+                     ("\u{10a}", (3, 4));
+                   ]
+                   (Pre.pre_tokenize
+                      (Pre.byte_level ~add_prefix_space:false ())
+                      "\t$\xc3\n"));
+             prop ~count:2000
+               ~examples:[ long_text; "\t$\xc3\n"; "$\x80$"; " \x80" ]
                "is split_regex on GPT-2's pattern then byte_level without it"
-               pattern_text cuts_as_gpt2;
+               split_text cuts_as_gpt2;
              prop ~count:1000
                ~examples:(List.map (fun s -> (true, s)) malformed)
                "spells the text in pretokens whose spans tile it"
