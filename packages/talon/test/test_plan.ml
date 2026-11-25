@@ -18,12 +18,19 @@ let query_w = Testable.make ~pp:Query.pp ~equal:Query.equal
 let source ?rows ?pushdown name columns =
   Source.v ~name ~schema:(Schema.v columns) ?rows ?pushdown (fun _ -> Ok [])
 
-(* [plans cases] is each titled plan of [cases] optimized and printed. *)
-let plans cases =
-  String.concat "\n"
-    (List.map
-       (fun (title, q) -> "# " ^ title ^ "\n" ^ str Query.pp (Query.optimize q))
-       cases)
+(* [optimized q] is the plan that running [q] runs, printed: a source's request
+   shows only there. *)
+let optimized q = str Query.pp (Query.optimize q)
+
+(* [same_plan q0 q1] states that [q0] and [q1] optimize to one plan. *)
+let same_plan q0 q1 = equal query_w (Query.optimize q0) (Query.optimize q1)
+
+(* [stays p q] states that the filter [p] over [q] stays where it is written,
+   over [q]'s own plan. *)
+let stays p q =
+  equal query_w
+    (Query.filter p (Query.optimize q))
+    (Query.optimize (Query.filter p q))
 
 (* Answers *)
 
@@ -62,7 +69,9 @@ let a = Col.int "a"
 let b = Col.float "b"
 let c = Col.string "c"
 let k = Col.int "k"
+let w = Col.float "w"
 let of_source = Query.of_source
+let src = of_source s_unsupported
 let positive x = x > 0
 
 let flights =
@@ -104,786 +113,106 @@ let late_by_carrier () =
     |> join ~on:(Join.keys [ "carrier" ]) ~each_left:One (of_source carriers)
     |> sort [ Order.desc "mean_delay" ])
 
-(* Printed plans *)
-
-let guide () =
-  expect (str Query.pp (Query.optimize (late_by_carrier ())))
-  @@ __POS_OF__
-       {|
-    query → carrier string, mean_delay float64, flights int64, name string
-    sort [desc "mean_delay"]
-    └ join ~on:(keys ["carrier"]) ~each_left:One
-      ├ aggregate ~by:["carrier"] ["mean_delay" := mean dep_delay;
-      │                            "flights" := rows]
-      │ └ filter (dep_delay > 15.)
-      │   └ csv "flights.csv" (19 columns) ~columns:["dep_delay"; "carrier"]
-      └ parquet "carriers.parquet" (2 columns)
-    |}
-
-let answers () =
-  let filtered s =
-    Query.(
-      of_source s
-      |> filter Expr.(a > int 1 && b < float 2. && c = string "x")
-      |> Kit.head 10)
-  in
-  expect
-    (plans
-       [
-         ("unsupported", filtered s_unsupported);
-         ("exact", filtered s_exact);
-         ("inexact", filtered s_inexact);
-         ( "exact, inexact, unsupported",
-           filtered
-             (source
-                ~pushdown:(by_column [ ("a", Exact); ("b", Inexact) ])
-                "m" columns) );
-         ( "exact and unsupported",
-           filtered
-             (source
-                ~pushdown:(by_column [ ("a", Exact); ("c", Exact) ])
-                "m" columns) );
-       ])
-  @@ __POS_OF__
-       {|
-    # unsupported
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:10
-    └ filter (a > 1 && b < 2. && c = "x")
-      └ u (5 columns)
-    # exact
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:10
-    └ e (5 columns) ~filters:[a > 1; b < 2.; c = "x"] ~limit:10
-    # inexact
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:10
-    └ filter (a > 1 && b < 2. && c = "x")
-      └ i (5 columns) ~filters:[a > 1; b < 2.; c = "x"]
-    # exact, inexact, unsupported
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:10
-    └ filter (b < 2. && c = "x")
-      └ m (5 columns) ~filters:[a > 1; b < 2.]
-    # exact and unsupported
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:10
-    └ filter (b < 2.)
-      └ m (5 columns) ~filters:[a > 1; c = "x"]
-    |}
-
 let epoch =
   Ext.v ~name:"ymir.epoch" ~ordered:true Type.float64 ~dec:Fun.id ~enc:(fun x ->
       x *. 2.)
 
-let predicates () =
-  let filtered p = Query.filter p (of_source s_exact) in
-  let timed =
-    source ~pushdown:exact "t"
-      Type.[ ("t", Any (ext ~name:"ymir.epoch" float64)) ]
-  in
-  let t = Ext.col epoch "t" in
-  expect
-    (plans
-       Expr.
-         [
-           ("a literal on the left", filtered (int 3 < a));
-           ("is_in", filtered (is_in [ "x"; "y" ] c));
-           ("not is_null", filtered (not (is_null b)));
-           ("is_null", filtered (is_null b));
-           ("or and not", filtered (a = int 1 || not (c = string "x")));
-           ("two columns", filtered (a > k));
-           ("an expression of a column", filtered (a + int 1 > int 3));
-           ("text", filtered (Str.length c > int 2));
-           ("an OCaml value", filtered (const positive $ a));
-           ("a null literal", filtered (a = null));
-           ("not equal, mirrored", filtered (float 2. <> b));
-           ("at least, mirrored", filtered (int 3 >= a));
-           ("not of a conjunction", filtered (not (a = int 1 && b > float 2.)));
-           ( "an extension, encoded",
-             Query.filter (t < const 1.5 || is_in [ 2. ] t) (of_source timed) );
-         ])
-  @@ __POS_OF__
-       {|
-    # a literal on the left
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns) ~filters:[3 < a]
-    # is_in
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns) ~filters:[is_in ["x"; "y"] c]
-    # not is_null
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns) ~filters:[not (is_null b)]
-    # is_null
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns) ~filters:[is_null b]
-    # or and not
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns) ~filters:[a = 1 || not (c = "x")]
-    # two columns
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (a > k)
-    └ e (5 columns)
-    # an expression of a column
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (a + 1 > 3)
-    └ e (5 columns)
-    # text
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (Str.length c > 2)
-    └ e (5 columns)
-    # an OCaml value
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (<const> $ a)
-    └ e (5 columns)
-    # a null literal
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (a = null)
-    └ e (5 columns)
-    # not equal, mirrored
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns) ~filters:[2. <> b]
-    # at least, mirrored
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns) ~filters:[3 >= a]
-    # not of a conjunction
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns) ~filters:[not (a = 1 && b > 2.)]
-    # an extension, encoded
-    query → t ext[ymir.epoch, float64]
-    t (1 column) ~filters:[t < <const> || is_in […] t]
-    |}
+(* Source pushdown *)
 
-let passes () =
-  let p = Expr.(a > int 1) in
-  let src = of_source s_unsupported in
-  expect
-    (plans
-       Query.
-         [
-           ("sort", src |> sort [ Order.asc "b" ] |> filter p);
-           ("a filter, merging", src |> filter Expr.(b < float 0.) |> filter p);
-           ( "a select renaming",
-             src
-             |> select Expr.[ "y" := a; keep Sel.(names [ "b" ]) ]
-             |> filter Expr.(Col.int "y" > int 1) );
-           ( "a derive's other columns",
-             src
-             |> derive Expr.[ "y" := a + int 1 ]
-             |> filter Expr.(b > float 0.) );
-           ( "a derive copying",
-             src
-             |> derive Expr.[ "y" := a ]
-             |> filter Expr.(Col.int "y" > int 1) );
-           ( "an aggregate's keys",
-             src
-             |> aggregate ~by:[ "a"; "c" ] Expr.[ "n" := rows ]
-             |> filter Expr.(p && c = string "x") );
-           ("an append", src |> append src |> filter p);
-           ( "an inner join, both sides",
-             src
-             |> join ~on:(Join.keys [ "k" ]) (of_source other)
-             |> filter Expr.(p && Col.float "w" > float 0.) );
-           ( "a semi join, the left side",
-             src
-             |> join ~kind:Semi ~on:(Join.keys [ "k" ]) (of_source other)
-             |> filter p );
-           ( "a left join keeps a right conjunct",
-             src
-             |> join ~kind:Left ~on:(Join.keys [ "k" ]) (of_source other)
-             |> filter Expr.(p && Col.float "w" > float 0.) );
-         ])
-  @@ __POS_OF__
-       {|
-    # sort
-    query → a int64, b float64, c string, k int8, l list[int64]
-    sort [asc "b"]
-    └ filter (a > 1)
-      └ u (5 columns)
-    # a filter, merging
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (b < 0. && a > 1)
-    └ u (5 columns)
-    # a select renaming
-    query → y int64, b float64
-    select ["y" := a; keep (names ["b"])]
-    └ filter (a > 1)
-      └ u (5 columns) ~columns:["a"; "b"]
-    # a derive's other columns
-    query → a int64, b float64, c string, k int8, l list[int64], y int64
-    derive ["y" := a + 1]
-    └ filter (b > 0.)
-      └ u (5 columns)
-    # a derive copying
-    query → a int64, b float64, c string, k int8, l list[int64], y int64
-    derive ["y" := a]
-    └ filter (a > 1)
-      └ u (5 columns)
-    # an aggregate's keys
-    query → a int64, c string, n int64
-    aggregate ~by:["a"; "c"] ["n" := rows]
-    └ filter (a > 1 && c = "x")
-      └ u (5 columns) ~columns:["a"; "c"]
-    # an append
-    query → a int64, b float64, c string, k int8, l list[int64]
-    append
-    ├ #1 filter (a > 1)
-    │ └ u (5 columns)
-    └ #1
-    # an inner join, both sides
-    query → a int64, b float64, c string, k int8, l list[int64], w float64
-    join ~on:(keys ["k"])
-    ├ filter (a > 1)
-    │ └ u (5 columns)
-    └ filter (w > 0.)
-      └ other (2 columns)
-    # a semi join, the left side
-    query → a int64, b float64, c string, k int8, l list[int64]
-    join ~on:(keys ["k"]) ~kind:Semi
-    ├ filter (a > 1)
-    │ └ u (5 columns)
-    └ other (2 columns) ~columns:["k"]
-    # a left join keeps a right conjunct
-    query → a int64, b float64, c string, k int8, l list[int64], w float64
-    filter (w > 0.)
-    └ join ~on:(keys ["k"]) ~kind:Left
-      ├ filter (a > 1)
-      │ └ u (5 columns)
-      └ other (2 columns)
-    |}
+let filtered s =
+  Query.(
+    of_source s
+    |> filter Expr.(a > int 1 && b < float 2. && c = string "x")
+    |> Kit.head 10)
 
-let stops () =
-  let p = Expr.(a > int 1) in
-  let src = of_source s_unsupported in
-  let joined ?kind ?each_left ?(on = Join.keys [ "k" ]) right =
-    Query.(
-      src
-      |> join ?kind ?each_left ~on right
-      |> filter Expr.(p && Col.float "w" > float 0.))
-  in
-  expect
-    (plans
-       Query.
-         [
-           ("a slice", src |> Kit.head 3 |> filter p);
-           ("a full join", joined ~kind:Full (of_source other));
-           ("an assertion", joined ~each_left:One (of_source other));
-           ( "position",
-             joined ~on:Join.position
-               (of_source (source "w" Type.[ ("w", Any float64) ])) );
-           ( "an append that widens",
-             src
-             |> append
-                  (of_source
-                     (source "n"
-                        (List.map
-                           (function
-                             | "a", _ -> ("a", Type.Any Type.int32) | c -> c)
-                           columns)))
-             |> filter p );
-           ( "a frame-dependent derive",
-             src |> derive Expr.[ "s" := over (sum a) ] |> filter p );
-           ( "a frame-dependent filter",
-             src |> filter Expr.(b > over (mean b)) |> filter p );
-           ( "a frame-dependent filter over an exact source",
-             of_source s_exact |> filter Expr.(b > over (mean b)) |> filter p );
-           ( "a right column and a key",
-             src
-             |> join ~on:(Join.keys [ "k" ]) (of_source other)
-             |> filter Expr.(Col.float "w" > float 0. || k = int 1) );
-           ( "an aggregate's output",
-             src
-             |> aggregate ~by:[ "c" ] Expr.[ "n" := rows ]
-             |> filter Expr.(Col.int "n" > int 1) );
-           ( "an aggregate's float key",
-             src
-             |> aggregate ~by:[ "b" ] Expr.[ "n" := rows ]
-             |> filter Expr.(b > float 0.) );
-           ( "an aggregate's keys holding floats",
-             of_source
-               (source "lf"
-                  Type.
-                    [
-                      ("lf", Any (list float64));
-                      ("li", Any (list int64));
-                      ("e", Any (ext ~name:"ymir.epoch" float64));
-                    ])
-             |> aggregate ~by:[ "lf"; "li"; "e" ] Expr.[ "n" := rows ]
-             |> filter
-                  Expr.(
-                    is_null (Col.v (Kind.list Kind.float) "lf")
-                    && is_null (Col.v (Kind.list Kind.int) "li")) );
-           ( "an aggregate without keys",
-             src
-             |> aggregate ~by:[] Expr.[ "n" := rows ]
-             |> filter Expr.(Col.int "n" > int 1) );
-           ( "a computed column",
-             src
-             |> select Expr.[ "y" := a + int 1 ]
-             |> filter Expr.(Col.int "y" > int 1) );
-         ])
-  @@ __POS_OF__
-       {|
-    # a slice
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (a > 1)
-    └ slice ~offset:0 ~length:3
-      └ u (5 columns) ~limit:3
-    # a full join
-    query → a int64, b float64, c string, k int8, l list[int64], w float64
-    filter (a > 1 && w > 0.)
-    └ join ~on:(keys ["k"]) ~kind:Full
-      ├ u (5 columns)
-      └ other (2 columns)
-    # an assertion
-    query → a int64, b float64, c string, k int8, l list[int64], w float64
-    filter (a > 1 && w > 0.)
-    └ join ~on:(keys ["k"]) ~each_left:One
-      ├ u (5 columns)
-      └ other (2 columns)
-    # position
-    query → a int64, b float64, c string, k int8, l list[int64], w float64
-    filter (a > 1 && w > 0.)
-    └ join ~on:position
-      ├ u (5 columns)
-      └ w (1 column)
-    # an append that widens
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (a > 1)
-    └ append
-      ├ u (5 columns)
-      └ n (5 columns)
-    # a frame-dependent derive
-    query → a int64, b float64, c string, k int8, l list[int64], s int64
-    filter (a > 1)
-    └ derive ["s" := over (sum a)]
-      └ u (5 columns)
-    # a frame-dependent filter
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (a > 1)
-    └ filter (b > over (mean b))
-      └ u (5 columns)
-    # a frame-dependent filter over an exact source
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (a > 1)
-    └ filter (b > over (mean b))
-      └ e (5 columns)
-    # a right column and a key
-    query → a int64, b float64, c string, k int8, l list[int64], w float64
-    filter (w > 0. || k = 1)
-    └ join ~on:(keys ["k"])
-      ├ u (5 columns)
-      └ other (2 columns)
-    # an aggregate's output
-    query → c string, n int64
-    filter (n > 1)
-    └ aggregate ~by:["c"] ["n" := rows]
-      └ u (5 columns) ~columns:["c"]
-    # an aggregate's float key
-    query → b float64, n int64
-    filter (b > 0.)
-    └ aggregate ~by:["b"] ["n" := rows]
-      └ u (5 columns) ~columns:["b"]
-    # an aggregate's keys holding floats
-    query → lf list[float64], li list[int64], e ext[ymir.epoch, float64], n int64
-    filter (is_null lf)
-    └ aggregate ~by:["lf"; "li"; "e"] ["n" := rows]
-      └ filter (is_null li)
-        └ lf (3 columns)
-    # an aggregate without keys
-    query → n int64
-    filter (n > 1)
-    └ aggregate ~by:[] ["n" := rows]
-      └ u (5 columns) ~columns:[]
-    # a computed column
-    query → y int64
-    filter (y > 1)
-    └ select ["y" := a + 1]
-      └ u (5 columns) ~columns:["a"]
-    |}
-
-let failing () =
-  let src = of_source s_unsupported in
-  let cast_p = Expr.(cast Type.int8 a = int 1) in
-  let user_p = Expr.(const positive $ a) in
-  let above f =
+let pushdown =
+  group "Source pushdown"
     [
-      ("above a filter", src |> Query.filter Expr.(b > float 0.) |> f);
-      ( "above a join",
-        src |> Query.join ~on:(Join.keys [ "k" ]) (of_source other) |> f );
-      ( "through a sort and a select",
-        src
-        |> Query.select Expr.[ keep Sel.(names [ "a"; "b" ]) ]
-        |> Query.sort [ Order.asc "b" ]
-        |> f );
-      ( "through an aggregate's keys and an append",
-        src |> Query.append src
-        |> Query.aggregate ~by:[ "a" ] Expr.[ "n" := rows ]
-        |> f );
-    ]
-  in
-  let titled what = List.map (fun (t, q) -> (what ^ " " ^ t, q)) in
-  expect
-    (plans
-       (titled "a cast" (above (Query.filter cast_p))
-       @ titled "a user function" (above (Query.filter user_p))))
-  @@ __POS_OF__
-       {|
-    # a cast above a filter
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (cast int8 a = 1)
-    └ filter (b > 0.)
-      └ u (5 columns)
-    # a cast above a join
-    query → a int64, b float64, c string, k int8, l list[int64], w float64
-    filter (cast int8 a = 1)
-    └ join ~on:(keys ["k"])
-      ├ u (5 columns)
-      └ other (2 columns)
-    # a cast through a sort and a select
-    query → a int64, b float64
-    sort [asc "b"]
-    └ filter (cast int8 a = 1)
-      └ u (5 columns) ~columns:["a"; "b"]
-    # a cast through an aggregate's keys and an append
-    query → a int64, n int64
-    aggregate ~by:["a"] ["n" := rows]
-    └ append
-      ├ #1 filter (cast int8 a = 1)
-      │ └ u (5 columns) ~columns:["a"]
-      └ #1
-    # a user function above a filter
-    query → a int64, b float64, c string, k int8, l list[int64]
-    filter (<const> $ a)
-    └ filter (b > 0.)
-      └ u (5 columns)
-    # a user function above a join
-    query → a int64, b float64, c string, k int8, l list[int64], w float64
-    filter (<const> $ a)
-    └ join ~on:(keys ["k"])
-      ├ u (5 columns)
-      └ other (2 columns)
-    # a user function through a sort and a select
-    query → a int64, b float64
-    sort [asc "b"]
-    └ filter (<const> $ a)
-      └ u (5 columns) ~columns:["a"; "b"]
-    # a user function through an aggregate's keys and an append
-    query → a int64, n int64
-    aggregate ~by:["a"] ["n" := rows]
-    └ append
-      ├ #1 filter (<const> $ a)
-      │ └ u (5 columns) ~columns:["a"]
-      └ #1
-    |}
-
-(* A source of the types that the other operations that can fail take. *)
-let s_typed =
-  source "v"
-    (columns
-    @ Type.
-        [
-          ("t", Any (wall Ns));
-          ("dl", Any (list (duration Ns)));
-          ("x", Any (tensor Nx.float32 [| 2 |]));
-        ])
-
-let t = Col.wall "t"
-
-let can_fail =
-  Expr.
-    [
-      ("Str.parse", Str.parse Type.int64 c = a);
-      ("of_option", of_option (option a) = a);
-      ("Temporal.add", Temporal.add t (span (Time.Span.days 1)) > t);
+      test "the guide's pipeline reads two columns" (fun () ->
+          (* Query.optimize's example. *)
+          equal text
+            {|query → carrier string, mean_delay float64, flights int64, name string
+sort [desc "mean_delay"]
+└ join ~on:(keys ["carrier"]) ~each_left:One
+  ├ aggregate ~by:["carrier"] ["mean_delay" := mean dep_delay;
+  │                            "flights" := rows]
+  │ └ filter (dep_delay > 15.)
+  │   └ csv "flights.csv" (19 columns) ~columns:["dep_delay"; "carrier"]
+  └ parquet "carriers.parquet" (2 columns)|}
+            (optimized (late_by_carrier ())));
+      test "Unsupported keeps every conjunct" (fun () ->
+          expect (optimized (filtered s_unsupported))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            slice ~offset:0 ~length:10
+            └ filter (a > 1 && b < 2. && c = "x")
+              └ u (5 columns)
+            |});
+      test "Exact hands the source every conjunct, and the limit" (fun () ->
+          expect (optimized (filtered s_exact))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            slice ~offset:0 ~length:10
+            └ e (5 columns) ~filters:[a > 1; b < 2.; c = "x"] ~limit:10
+            |});
+      test "Inexact hands the source every conjunct and keeps it" (fun () ->
+          expect (optimized (filtered s_inexact))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            slice ~offset:0 ~length:10
+            └ filter (a > 1 && b < 2. && c = "x")
+              └ i (5 columns) ~filters:[a > 1; b < 2.; c = "x"]
+            |});
+      test "a source is handed its Exact and Inexact conjuncts, in plan order"
+        (fun () ->
+          let answering answers =
+            source ~pushdown:(by_column answers) "m" columns
+          in
+          expect
+            (optimized (filtered (answering [ ("a", Exact); ("b", Inexact) ]))
+            ^ "\n"
+            ^ optimized (filtered (answering [ ("a", Exact); ("c", Exact) ])))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            slice ~offset:0 ~length:10
+            └ filter (b < 2. && c = "x")
+              └ m (5 columns) ~filters:[a > 1; b < 2.]
+            query → a int64, b float64, c string, k int8, l list[int64]
+            slice ~offset:0 ~length:10
+            └ filter (b < 2.)
+              └ m (5 columns) ~filters:[a > 1; c = "x"]
+            |});
     ]
 
-(* [stays_above p] checks that the conjunct [p], which can fail, stays above a
-   filter and a join, below which it would meet rows that the plan does not show
-   it. *)
-let stays_above p =
-  let src = of_source s_typed in
-  let filtered = Query.filter Expr.(b > float 0.) src
-  and joined = Query.join ~on:(Join.keys [ "k" ]) (of_source other) src in
-  let check what q =
-    equal ~msg:what query_w
-      (Query.filter p (Query.optimize q))
-      (Query.optimize (Query.filter p q))
-  in
-  check "above a filter" filtered;
-  check "above a join" joined
-
-let renamed () =
-  let timed =
-    source ~pushdown:exact "t"
-      Type.
-        [ ("t", Any (ext ~name:"ymir.epoch" float64)); ("l", Any (list int64)) ]
-  in
-  expect
-    (plans
-       Query.
-         [
-           ( "an extension column",
-             of_source timed
-             |> select Expr.[ "t2" := Ext.col epoch "t" ]
-             |> filter Expr.(Ext.col epoch "t2" < const 1.5) );
-         ])
-  @@ __POS_OF__
-       {|
-    # an extension column
-    query → t2 ext[ymir.epoch, float64]
-    select ["t2" := t]
-    └ t (2 columns) ~columns:["t"] ~filters:[t < <const>]
-    |}
-
-let folds_inside () =
-  let src = of_source s_typed in
-  let three = Expr.(b +. (float 1. +. float 2.)) in
-  expect
-    (plans
-       Query.
-         [
-           ("a frame", src |> derive Expr.[ "e" := over (mean three) ]);
-           ( "a calendar operation",
-             src
-             |> derive
-                  Expr.[ "y" := Temporal.format "%Y" (if_ (bool true) t null) ]
-           );
-           ( "an nx lift",
-             src
-             |> derive Expr.[ "z" := nx { f = (fun x -> Nx.add x x) } three ] );
-         ])
-  @@ __POS_OF__
-       {|
-    # a frame
-    query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], e float64
-    derive ["e" := over (mean (b +. 3.))]
-    └ v (8 columns)
-    # a calendar operation
-    query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], y string
-    derive ["y" := Temporal.format "%Y" t]
-    └ v (8 columns)
-    # an nx lift
-    query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], z float64
-    derive ["z" := add (b +. 3.) (b +. 3.)]
-    └ v (8 columns)
-    |}
-
-let slices () =
-  let src = of_source s_unsupported in
-  expect
-    (plans
-       Query.
-         [
-           ( "a row-local derive",
-             src |> derive Expr.[ "y" := a + int 1 ] |> Kit.head 5 );
-           ( "two merged",
-             src |> slice ~offset:2 ~length:5 |> slice ~offset:3 ~length:4 );
-           ( "from the start of a slice from the end",
-             src |> slice ~offset:(-5) ~length:3 |> slice ~offset:1 ~length:1 );
-           ("the head of an append", src |> append src |> Kit.head 3);
-           ("an append", src |> append src |> slice ~offset:2 ~length:3);
-           ( "a source's limit",
-             of_source s_exact |> filter Expr.(a > int 1) |> Kit.head 5 );
-           ("from the end, with rows", of_source s_rows |> Kit.tail 10);
-           ( "from the end, past the start",
-             of_source s_rows |> slice ~offset:(-150) ~length:70 );
-           ( "from the end, with a conjunct",
-             of_source s_rows |> filter Expr.(a > int 1) |> Kit.tail 10 );
-           ( "under an inexact conjunct",
-             of_source s_inexact |> filter Expr.(a > int 1) |> Kit.head 5 );
-           ( "sort, select, slice",
-             src
-             |> sort [ Order.desc "b" ]
-             |> select Expr.[ keep Sel.(names [ "a"; "b" ]) ]
-             |> Kit.head 3 );
-           ( "a frame-dependent derive",
-             src |> derive Expr.[ "r" := over (rank b) ] |> Kit.head 3 );
-           ( "above a filter that moves",
-             src
-             |> select Expr.[ keep Sel.(names [ "a"; "b" ]) ]
-             |> filter Expr.(a > int 1)
-             |> Kit.head 3 );
-         ])
-  @@ __POS_OF__
-       {|
-    # a row-local derive
-    query → a int64, b float64, c string, k int8, l list[int64], y int64
-    derive ["y" := a + 1]
-    └ slice ~offset:0 ~length:5
-      └ u (5 columns) ~limit:5
-    # two merged
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:5 ~length:2
-    └ u (5 columns) ~limit:7
-    # from the start of a slice from the end
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:1 ~length:1
-    └ slice ~offset:(-5) ~length:3
-      └ u (5 columns)
-    # the head of an append
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:3
-    └ append
-      ├ #1 slice ~offset:0 ~length:3
-      │ └ u (5 columns) ~limit:3
-      └ #1
-    # an append
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:2 ~length:3
-    └ append
-      ├ #1 slice ~offset:0 ~length:5
-      │ └ u (5 columns) ~limit:5
-      └ #1
-    # a source's limit
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:5
-    └ e (5 columns) ~filters:[a > 1] ~limit:5
-    # from the end, with rows
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:90 ~length:10
-    └ r (5 columns, 100 rows) ~limit:100
-    # from the end, past the start
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:20
-    └ r (5 columns, 100 rows) ~limit:20
-    # from the end, with a conjunct
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:(-10) ~length:10
-    └ r (5 columns, 100 rows) ~filters:[a > 1]
-    # under an inexact conjunct
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:5
-    └ filter (a > 1)
-      └ i (5 columns) ~filters:[a > 1]
-    # sort, select, slice
-    query → a int64, b float64
-    slice ~offset:0 ~length:3
-    └ sort [desc "b"]
-      └ u (5 columns) ~columns:["a"; "b"]
-    # a frame-dependent derive
-    query → a int64, b float64, c string, k int8, l list[int64], r int64
-    slice ~offset:0 ~length:3
-    └ derive ["r" := over (rank b)]
-      └ u (5 columns)
-    # above a filter that moves
-    query → a int64, b float64
-    slice ~offset:0 ~length:3
-    └ filter (a > 1)
-      └ u (5 columns) ~columns:["a"; "b"]
-    |}
-
-let constants () =
-  let src = of_source s_exact in
-  let f32 = source "f32" Type.[ ("x", Any float32) ] in
-  expect
-    (plans
-       Query.
-         [
-           ( "integer arithmetic",
-             src |> derive Expr.[ "y" := a + (int 2 * int 50) ] );
-           ( "a division by zero",
-             src |> derive Expr.[ "y" := a + (int 1 / int 0) ] );
-           ( "an overflow",
-             src |> derive Expr.[ "y" := a + (int max_int + int 1) ] );
-           ( "float32 rounding",
-             of_source f32
-             |> derive Expr.[ "y" := Col.float "x" +. (float 0.1 +. float 0.2) ]
-           );
-           ("NaN", src |> derive Expr.[ "y" := b +. (float 0. /. float 0.) ]);
-           ("a power", src |> derive Expr.[ "y" := b +. (float 2. ** float 3.) ]);
-           ( "comparisons",
-             src
-             |> derive
-                  Expr.[ "y" := int 1 < int 2; "z" := string "b" = string "a" ]
-           );
-           ("a filter of true", src |> filter Expr.(bool true));
-           ("a filter of false", src |> filter Expr.(bool false));
-           ("a filter of null", src |> filter Expr.(store Type.bool null));
-           ("a filter of a bare null", src |> filter Expr.null);
-           ("x && true", src |> filter Expr.(a > int 1 && bool true));
-           ("x || false", src |> filter Expr.(bool false || a > int 1));
-           ( "if_ and coalesce",
-             src
-             |> derive
-                  Expr.
-                    [
-                      "y" := if_ (bool false) a (coalesce [ null; a; int 3; k ]);
-                    ] );
-         ])
-  @@ __POS_OF__
-       {|
-    # integer arithmetic
-    query → a int64, b float64, c string, k int8, l list[int64], y int64
-    derive ["y" := a + 100]
-    └ e (5 columns)
-    # a division by zero
-    query → a int64, b float64, c string, k int8, l list[int64], y int64
-    derive ["y" := a + null]
-    └ e (5 columns)
-    # an overflow
-    query → a int64, b float64, c string, k int8, l list[int64], y int64
-    derive ["y" := a + (4611686018427387903 + 1)]
-    └ e (5 columns)
-    # float32 rounding
-    query → x float32, y float32
-    derive ["y" := x +. 0.30000001192092896]
-    └ f32 (1 column)
-    # NaN
-    query → a int64, b float64, c string, k int8, l list[int64], y float64
-    derive ["y" := b +. nan]
-    └ e (5 columns)
-    # a power
-    query → a int64, b float64, c string, k int8, l list[int64], y float64
-    derive ["y" := b +. 8.]
-    └ e (5 columns)
-    # comparisons
-    query → a int64, b float64, c string, k int8, l list[int64], y bool, z bool
-    derive ["y" := true; "z" := false]
-    └ e (5 columns)
-    # a filter of true
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns)
-    # a filter of false
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:0
-    └ e (5 columns) ~limit:0
-    # a filter of null
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:0
-    └ e (5 columns) ~limit:0
-    # a filter of a bare null
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:0
-    └ e (5 columns) ~limit:0
-    # x && true
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns) ~filters:[a > 1]
-    # x || false
-    query → a int64, b float64, c string, k int8, l list[int64]
-    e (5 columns) ~filters:[a > 1]
-    # if_ and coalesce
-    query → a int64, b float64, c string, k int8, l list[int64], y int64
-    derive ["y" := coalesce [a; 3]]
-    └ e (5 columns)
-    |}
+(* Query.optimize: constants *)
 
 type output = Output : ('a, Expr.row) Expr.t -> output
 
-(* [folded e] is the output [e] of a derive, optimized and printed. *)
+(* [folded e] is the output [e] of a derive, as optimize folds it. *)
 let folded (Output e) =
   let src =
-    source "f" Type.[ ("a", Any int64); ("k", Any int8); ("h", Any float16) ]
+    source "f"
+      Type.
+        [
+          ("a", Any int64);
+          ("k", Any int8);
+          ("h", Any float16);
+          ("x", Any float32);
+        ]
   in
-  let printed =
-    str Query.pp
-      (Query.optimize (Query.derive Expr.[ "y" := e ] (of_source src)))
-  in
+  let printed = optimized (Query.derive Expr.[ "y" := e ] (of_source src)) in
   let line = List.nth (String.split_on_char '\n' printed) 1 in
   let prefix = {|derive ["y" := |} in
   let start = String.length prefix in
   String.sub line start (String.length line - start - 1)
 
+(* Expected values: Expr's [/] truncates and is null by zero, [mod] takes the
+   dividend's sign, integers wrap as nx's do, floats are IEEE 754's; a value
+   past OCaml's int stays unfolded (Query.optimize, "Constants"). *)
 let folds =
   let a = Col.int "a" and k = Col.int "k" in
   let p e = Output e in
@@ -892,8 +221,12 @@ let folds =
       ("integers subtract", p (int 7 - int 10), "-3");
       ("integers multiply", p (int 3 * int 4), "12");
       ("a quotient truncates", p (int (-7) / int 2), "-3");
+      ("a quotient by zero is null", p (int 1 / int 0), "null");
       ("a remainder takes the dividend's sign", p (int (-7) mod int 2), "-1");
       ("a remainder by zero is null", p (int 7 mod int 0), "null");
+      ( "an overflowing sum stays",
+        p (int max_int + int 1),
+        "4611686018427387903 + 1" );
       ( "an overflowing product stays",
         p (int max_int * int 2),
         "4611686018427387903 * 2" );
@@ -909,15 +242,25 @@ let folds =
       ("an operand null is null", p (int 1 + store Type.int64 null), "null");
       ("floats subtract", p (float 1.5 -. float 0.25), "1.25");
       ("floats multiply", p (float 2. *. float 3.), "6.");
+      ("a power", p (float 2. ** float 3.), "8.");
       ("a quotient by zero is infinite", p (float 1. /. float 0.), "infinity");
+      ("zero by zero is NaN", p (float 0. /. float 0.), "nan");
       ( "float16 folds",
         p (Col.float "h" +. (float 0.5 +. float 0.25)),
         "h +. 0.75" );
+      ( "float32 rounds",
+        p (Col.float "x" +. (float 0.1 +. float 0.2)),
+        "x +. 0.30000001192092896" );
       ("not equal", p (int 1 <> int 2), "true");
       ("at most", p (int 2 <= int 2), "true");
       ("NaN comes after every number", p (float 3. > float Float.nan), "false");
       ("at least", p (string "a" >= string "b"), "false");
       ("a comparison with null", p (int 1 = store Type.int64 null), "null");
+      ("is_in of a literal", p (is_in [ 1; 2 ] (int 1)), "true");
+      ("a text operation of a literal", p (Str.length (string "abc")), "3");
+      ( "Str.concat stays",
+        p (Str.concat "" [ string "a"; string "b" ]),
+        {|Str.concat "" ["a"; "b"]|} );
       ("false and anything", p (bool false && a > int 0), "false");
       ("anything or true", p (a > int 0 || bool true), "true");
       ("null and false", p (store Type.bool null && bool false), "false");
@@ -936,207 +279,732 @@ let folds =
       ( "coalesce keeps an operand of another type",
         p (coalesce [ k; store Type.int16 null ]),
         "coalesce [k]" );
+      ( "if_ and coalesce simplify",
+        p (if_ (bool false) a (coalesce [ null; a; int 3; k ])),
+        "coalesce [a; 3]" );
     ]
 
-let projections () =
-  let src = of_source s_unsupported in
-  expect
-    (plans
-       Query.
-         [
-           ( "an unused derive output",
-             src
-             |> derive Expr.[ "y" := a + int 1; "z" := b ]
-             |> select Expr.[ keep Sel.(names [ "y" ]) ] );
-           ( "an unused aggregate output",
-             src
-             |> aggregate ~by:[ "c" ] Expr.[ "n" := rows; "s" := sum a ]
-             |> select Expr.[ keep Sel.(names [ "c"; "n" ]) ] );
-           ("an identity select", src |> select Expr.[ keep Sel.all ]);
-           ("counting rows", src |> aggregate ~by:[] Expr.[ "n" := rows ]);
-           ( "a filter's column that nothing else reads",
-             src
-             |> filter Expr.(b > float 0.)
-             |> aggregate ~by:[ "c" ] Expr.[ "n" := rows ] );
-           ( "an append's inputs",
-             src
-             |> derive Expr.[ "y" := a + int 1 ]
-             |> append (src |> derive Expr.[ "y" := int 2 ])
-             |> select Expr.[ keep Sel.(names [ "y" ]) ] );
-           ( "a semi join's right column of a left name",
-             src
-             |> join ~kind:Semi ~on:(Join.keys [ "k" ])
-                  (of_source
-                     (source "kb" Type.[ ("k", Any int8); ("b", Any float64) ]))
-           );
-           ( "over's keys",
-             src
-             |> derive
-                  Expr.
-                    [ "s" := over ~by:[ "c" ] ~order:[ Order.asc "b" ] (sum a) ]
-             |> select Expr.[ keep Sel.(names [ "s" ]) ] );
-           ( "a replaced column stays in place",
-             src |> derive Expr.[ "a" := int 1 ] );
-           ( "a replaced column under a select",
-             src
-             |> derive Expr.[ "a" := k + int 1 ]
-             |> select Expr.[ keep Sel.(names [ "a" ]) ] );
-         ])
-  @@ __POS_OF__
-       {|
-    # an unused derive output
-    query → y int64
-    select [keep (names ["y"])]
-    └ derive ["y" := a + 1]
-      └ u (5 columns) ~columns:["a"]
-    # an unused aggregate output
-    query → c string, n int64
-    aggregate ~by:["c"] ["n" := rows]
-    └ u (5 columns) ~columns:["c"]
-    # an identity select
-    query → a int64, b float64, c string, k int8, l list[int64]
-    u (5 columns)
-    # counting rows
-    query → n int64
-    aggregate ~by:[] ["n" := rows]
-    └ u (5 columns) ~columns:[]
-    # a filter's column that nothing else reads
-    query → c string, n int64
-    aggregate ~by:["c"] ["n" := rows]
-    └ filter (b > 0.)
-      └ u (5 columns) ~columns:["b"; "c"]
-    # an append's inputs
-    query → y int64
-    append
-    ├ select [keep (names ["y"])]
-    │ └ derive ["y" := a + 1]
-    │   └ u (5 columns) ~columns:["a"]
-    └ derive ["y" := 2]
-      └ u (5 columns) ~columns:[]
-    # a semi join's right column of a left name
-    query → a int64, b float64, c string, k int8, l list[int64]
-    join ~on:(keys ["k"]) ~kind:Semi
-    ├ u (5 columns)
-    └ kb (2 columns) ~columns:["k"]
-    # over's keys
-    query → s int64
-    select [keep (names ["s"])]
-    └ derive ["s" := over ~by:["c"] ~order:[asc "b"] (sum a)]
-      └ u (5 columns) ~columns:["a"; "b"; "c"]
-    # a replaced column stays in place
-    query → a int64, b float64, c string, k int8, l list[int64]
-    derive ["a" := 1]
-    └ u (5 columns)
-    # a replaced column under a select
-    query → a int8
-    select [keep (names ["a"])]
-    └ derive ["a" := k + 1]
-      └ u (5 columns) ~columns:["k"]
-    |}
+(* A source of the types that the other operations that can fail take. *)
+let s_typed =
+  source "v"
+    (columns
+    @ Type.
+        [
+          ("t", Any (wall Ns));
+          ("dl", Any (list (duration Ns)));
+          ("x", Any (tensor Nx.float32 [| 2 |]));
+        ])
 
-let sharing () =
-  let src = of_source s_unsupported in
-  let counts = src |> Query.aggregate ~by:[ "k" ] Expr.[ "n" := rows ] in
-  let ex = of_source s_exact in
-  expect
-    (plans
-       Query.
-         [
-           ( "a self-join",
-             counts
-             |> join ~on:(Join.keys [ "k" ])
-                  (counts
-                  |> select
-                       Expr.[ keep Sel.(names [ "k" ]); "m" := Col.int "n" ]) );
-           ( "complete over one source",
-             src
-             |> select Expr.[ keep Sel.(names [ "c"; "k"; "a" ]) ]
-             |> Kit.complete [ "c"; "k" ] );
-           ( "one source, different conjuncts",
-             ex
-             |> filter Expr.(a > int 1 && b > float 0.)
-             |> append (ex |> filter Expr.(a > int 1 && c = string "x")) );
-           ( "one source, different columns",
-             ex
-             |> select Expr.[ keep Sel.(names [ "a"; "k" ]) ]
-             |> join ~on:(Join.keys [ "k" ])
-                  (ex |> select Expr.[ keep Sel.(names [ "k"; "b" ]) ]) );
-           ( "two equal places are one read, with its limit",
-             ex |> Kit.head 3 |> append (ex |> Kit.head 3) );
-           ("a limit in one of two places", ex |> Kit.head 3 |> append ex);
-         ])
-  @@ __POS_OF__
-       {|
-    # a self-join
-    query → k int8, n int64, m int64
-    join ~on:(keys ["k"])
-    ├ #1 aggregate ~by:["k"] ["n" := rows]
-    │ └ u (5 columns) ~columns:["k"]
-    └ select [keep (names ["k"]); "m" := n]
-      └ #1
-    # complete over one source
-    query → c string, k int8, a int64
-    join ~on:(keys ["c"; "k"]) ~kind:Left
-    ├ join ~on:all
-    │ ├ aggregate ~by:["c"] []
-    │ │ └ u (5 columns) ~columns:["c"]
-    │ └ aggregate ~by:["k"] []
-    │   └ u (5 columns) ~columns:["k"]
-    └ select [keep (names ["c"; "k"; "a"])]
-      └ u (5 columns) ~columns:["a"; "c"; "k"]
-    # one source, different conjuncts
-    query → a int64, b float64, c string, k int8, l list[int64]
-    append
-    ├ e (5 columns) ~filters:[a > 1; b > 0.]
-    └ e (5 columns) ~filters:[a > 1; c = "x"]
-    # one source, different columns
-    query → a int64, k int8, b float64
-    join ~on:(keys ["k"])
-    ├ e (5 columns) ~columns:["a"; "k"]
-    └ select [keep (names ["k"; "b"])]
-      └ e (5 columns) ~columns:["b"; "k"]
-    # two equal places are one read, with its limit
-    query → a int64, b float64, c string, k int8, l list[int64]
-    append
-    ├ #1 slice ~offset:0 ~length:3
-    │ └ e (5 columns) ~limit:3
-    └ #1
-    # a limit in one of two places
-    query → a int64, b float64, c string, k int8, l list[int64]
-    append
-    ├ slice ~offset:0 ~length:3
-    │ └ e (5 columns) ~limit:3
-    └ e (5 columns)
-    |}
+let t = Col.wall "t"
 
-let printed =
-  group "printed plans"
+let constants =
+  let src = of_source s_exact in
+  group "Query.optimize constants"
     [
-      test "the guide's pipeline reads two columns" guide;
-      test "a source's answers decide its request" answers;
-      test "conjuncts that are predicates go to the source" predicates;
-      test "a conjunct passes the steps that keep its rows" passes;
-      test "a conjunct stops where its rows would change" stops;
-      test "a conjunct that can fail meets only the rows it met" failing;
-      cases "a conjunct that can fail stays above a filter and a join" ~id:fst
-        can_fail (fun (_, p) -> stays_above p);
-      test "a conjunct renamed through a select reads the input's name" renamed;
-      test "slices move toward the sources" slices;
-      test "constants fold where the literal is exact" constants;
-      test "constants fold inside frames, calendar operations and lifts"
-        folds_inside;
-      test "steps keep the columns read above them" projections;
-      cases "constants fold to what evaluation gives"
+      cases "fold to what evaluation gives"
         ~id:(fun (what, _, _) -> what)
         folds
         (fun (_, e, expected) -> equal string expected (folded e));
-      test "equal steps are shared, and each place reads a source of its own"
-        sharing;
+      test "fold inside frames, calendar operations and lifts" (fun () ->
+          let three = Expr.(b +. (float 1. +. float 2.)) in
+          let derived o = optimized (Query.derive [ o ] (of_source s_typed)) in
+          expect
+            (derived Expr.("e" := over (mean three))
+            ^ "\n"
+            ^ derived
+                Expr.("y" := Temporal.format "%Y" (if_ (bool true) t null))
+            ^ "\n"
+            ^ derived Expr.("z" := nx { f = (fun x -> Nx.add x x) } three))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], e float64
+            derive ["e" := over (mean (b +. 3.))]
+            └ v (8 columns)
+            query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], y string
+            derive ["y" := Temporal.format "%Y" t]
+            └ v (8 columns)
+            query → a int64, b float64, c string, k int8, l list[int64], t datetime[ns], dl list[duration[ns]], x tensor[float32, 2], z float64
+            derive ["z" := add (b +. 3.) (b +. 3.)]
+            └ v (8 columns)
+            |});
+      test "a filter of true goes" (fun () ->
+          same_plan (Query.filter Expr.(bool true) src) src);
+      cases "a filter with a conjunct false or null keeps no row"
+        ~id:(fun (what, _) -> what)
+        Expr.
+          [
+            ("false", bool false);
+            ("null of bool", store Type.bool null);
+            ("a bare null", null);
+            ("false beside another", a > int 1 && bool false);
+          ]
+        (fun (_, p) ->
+          same_plan (Query.filter p src) (Query.slice ~offset:0 ~length:0 src));
+      test "x && true and false || x are x" (fun () ->
+          let x = Expr.(a > int 1) in
+          same_plan
+            (Query.filter Expr.(x && bool true) src)
+            (Query.filter x src);
+          same_plan
+            (Query.filter Expr.(bool false || x) src)
+            (Query.filter x src));
     ]
 
-(* Laws *)
+(* Query.optimize: predicates *)
 
-let w = Col.float "w"
+let typed = of_source s_typed
+
+let can_fail =
+  let l = Col.v Kind.(list int) "l" and dl = Col.v Kind.(list span) "dl" in
+  Expr.
+    [
+      ("a narrowing cast", cast Type.int8 a = int 1);
+      ("an OCaml function", const positive $ a);
+      ("Str.parse", Str.parse Type.int64 c = a);
+      ("of_option", of_option (option a) = a);
+      ("temporal arithmetic", Temporal.add t (span (Time.Span.days 1)) > t);
+      ("temporal parsing", is_null (Temporal.parse "%Y" Type.date c));
+      ( "per_list of two lists",
+        per_list [ "e" := l; "d" := dl ] (sum (Col.int "e")) > int 0 );
+      ("per_list with only", per_list [ "e" := l ] (only (Col.int "e")) > int 0);
+      ( "per_list of a duration sum",
+        per_list [ "d" := dl ] (sum (Col.span "d")) > span (Time.Span.days 1) );
+    ]
+
+let predicates =
+  let p = Expr.(a > int 1) in
+  let cast_p = Expr.(cast Type.int8 a = int 1) in
+  let joined ?kind ?each_left ?(on = Join.keys [ "k" ]) right q =
+    Query.join ?kind ?each_left ~on right q
+  in
+  group "Query.optimize predicates"
+    [
+      cases "a predicate conjunct goes to an Exact source"
+        ~id:(fun (what, _, _) -> what)
+        Expr.
+          [
+            ("a literal on the left", int 3 < a, "3 < a");
+            ("is_in", is_in [ "x"; "y" ] c, {|is_in ["x"; "y"] c|});
+            ("not is_null", not (is_null b), "not (is_null b)");
+            ("is_null", is_null b, "is_null b");
+            ( "or and not",
+              a = int 1 || not (c = string "x"),
+              {|a = 1 || not (c = "x")|} );
+            ("not equal, mirrored", float 2. <> b, "2. <> b");
+            ("at least, mirrored", int 3 >= a, "3 >= a");
+            ( "not of a conjunction",
+              not (a = int 1 && b > float 2.),
+              "not (a = 1 && b > 2.)" );
+          ]
+        (fun (_, p, printed) ->
+          let plan = optimized (Query.filter p (of_source s_exact)) in
+          equal text
+            (Printf.sprintf "e (5 columns) ~filters:[%s]" printed)
+            (List.nth (String.split_on_char '\n' plan) 1));
+      test "an extension's conjunct goes to the source encoded" (fun () ->
+          let timed =
+            source ~pushdown:exact "t"
+              Type.[ ("t", Any (ext ~name:"ymir.epoch" float64)) ]
+          in
+          let t = Ext.col epoch "t" in
+          expect
+            (optimized
+               (Query.filter
+                  Expr.(t < const 1.5 || is_in [ 2. ] t)
+                  (of_source timed)))
+          @@ __POS_OF__
+               {|
+            query → t ext[ymir.epoch, float64]
+            t (1 column) ~filters:[t < <const> || is_in […] t]
+            |});
+      cases "a conjunct that is no predicate stays over the source"
+        ~id:(fun (what, _) -> what)
+        Expr.
+          [
+            ("two columns", a > k);
+            ("an expression of a column", a + int 1 > int 3);
+            ("text", Str.length c > int 2);
+            ("an OCaml value", const positive $ a);
+            ("a null literal", a = null);
+          ]
+        (fun (_, p) -> stays p (of_source s_exact));
+      test "a conjunct passes a sort" (fun () ->
+          same_plan
+            (Query.filter p (Query.sort [ Order.asc "b" ] src))
+            (Query.sort [ Order.asc "b" ] (Query.filter p src)));
+      test "a conjunct merges with a row-local filter below it" (fun () ->
+          let q = Expr.(b < float 0.) in
+          same_plan
+            (Query.filter p (Query.filter q src))
+            (Query.filter Expr.(q && p) src));
+      test "a conjunct passes a select that renames the column it reads"
+        (fun () ->
+          let renaming =
+            Query.select Expr.[ "y" := a; keep Sel.(names [ "b" ]) ]
+          in
+          same_plan
+            (Query.filter Expr.(Col.int "y" > int 1) (renaming src))
+            (renaming (Query.filter p src)));
+      test "a conjunct passes a derive whose outputs it does not read"
+        (fun () ->
+          let deriving = Query.derive Expr.[ "y" := a + int 1 ] in
+          let q = Expr.(b > float 0.) in
+          same_plan
+            (Query.filter q (deriving src))
+            (deriving (Query.filter q src)));
+      test "a conjunct passes a derive that copies the column it reads"
+        (fun () ->
+          let copying = Query.derive Expr.[ "y" := a ] in
+          same_plan
+            (Query.filter Expr.(Col.int "y" > int 1) (copying src))
+            (copying (Query.filter p src)));
+      test "a conjunct on keys without floats passes an aggregate" (fun () ->
+          let counting =
+            Query.aggregate ~by:[ "a"; "c" ] Expr.[ "n" := rows ]
+          in
+          let q = Expr.(p && c = string "x") in
+          same_plan
+            (Query.filter q (counting src))
+            (counting (Query.filter q src)));
+      test "a conjunct enters both inputs of an append" (fun () ->
+          same_plan
+            (Query.filter p (Query.append src src))
+            (Query.append (Query.filter p src) (Query.filter p src)));
+      test "a conjunct enters the side of an inner join it reads" (fun () ->
+          let o = of_source other in
+          same_plan
+            (Query.filter Expr.(p && w > float 0.) (joined o src))
+            (joined (Query.filter Expr.(w > float 0.) o) (Query.filter p src)));
+      test "a conjunct enters the left input of a semi join" (fun () ->
+          let o = of_source other in
+          same_plan
+            (Query.filter p (joined ~kind:Semi o src))
+            (joined ~kind:Semi o (Query.filter p src)));
+      test "a left join keeps a conjunct on its right side above it" (fun () ->
+          let o = of_source other in
+          same_plan
+            (Query.filter Expr.(p && w > float 0.) (joined ~kind:Left o src))
+            (Query.filter
+               Expr.(w > float 0.)
+               (joined ~kind:Left o (Query.filter p src))));
+      cases "a conjunct stops at"
+        ~id:(fun (what, _, _) -> what)
+        (let o = of_source other in
+         let pw = Expr.(p && w > float 0.) in
+         let widened =
+           of_source
+             (source "n"
+                (List.map
+                   (function "a", _ -> ("a", Type.Any Type.int32) | c -> c)
+                   columns))
+         in
+         Query.
+           [
+             ("a slice", p, Kit.head 3 src);
+             ("a full join", pw, joined ~kind:Full o src);
+             ("a join with an assertion", pw, joined ~each_left:One o src);
+             ( "a join by position",
+               pw,
+               joined ~on:Join.position
+                 (of_source (source "w" Type.[ ("w", Any float64) ]))
+                 src );
+             ("an append that widens the column it reads", p, append widened src);
+             ( "a derive over the frame",
+               p,
+               derive Expr.[ "s" := over (sum a) ] src );
+             ("a filter over the frame", p, filter Expr.(b > over (mean b)) src);
+             ( "a filter over the frame of an exact source",
+               p,
+               filter Expr.(b > over (mean b)) (of_source s_exact) );
+             ( "a join, reading a right column and a key",
+               Expr.(w > float 0. || k = int 1),
+               joined o src );
+             ( "an aggregate's output",
+               Expr.(Col.int "n" > int 1),
+               aggregate ~by:[ "c" ] Expr.[ "n" := rows ] src );
+             ( "an aggregate's float key",
+               Expr.(b > float 0.),
+               aggregate ~by:[ "b" ] Expr.[ "n" := rows ] src );
+             ( "an aggregate without keys",
+               Expr.(Col.int "n" > int 1),
+               aggregate ~by:[] Expr.[ "n" := rows ] src );
+             ( "a computed column",
+               Expr.(Col.int "y" > int 1),
+               select Expr.[ "y" := a + int 1 ] src );
+             ( "an unnest",
+               Expr.(Col.int "id" = int 1),
+               unnest
+                 Expr.[ "e" := Col.v Kind.(list int) "l" ]
+                 (select Expr.[ "id" := a; keep Sel.(names [ "l" ]) ] src) );
+           ])
+        (fun (_, p, q) -> stays p q);
+      test "of an aggregate's keys, a conjunct on one holding floats stays"
+        (fun () ->
+          expect
+            (optimized
+               Query.(
+                 of_source
+                   (source "lf"
+                      Type.
+                        [
+                          ("lf", Any (list float64));
+                          ("li", Any (list int64));
+                          ("e", Any (ext ~name:"ymir.epoch" float64));
+                        ])
+                 |> aggregate ~by:[ "lf"; "li"; "e" ] Expr.[ "n" := rows ]
+                 |> filter
+                      Expr.(
+                        is_null (Col.v (Kind.list Kind.float) "lf")
+                        && is_null (Col.v (Kind.list Kind.int) "li"))))
+          @@ __POS_OF__
+               {|
+            query → lf list[float64], li list[int64], e ext[ymir.epoch, float64], n int64
+            filter (is_null lf)
+            └ aggregate ~by:["lf"; "li"; "e"] ["n" := rows]
+              └ filter (is_null li)
+                └ lf (3 columns)
+            |});
+      cases "a conjunct that can fail stays above a filter and a join" ~id:fst
+        can_fail (fun (_, p) ->
+          stays p (Query.filter Expr.(b > float 0.) typed);
+          stays p (joined (of_source other) typed));
+      test "a conjunct that can fail passes a sort" (fun () ->
+          let sorting = Query.sort [ Order.asc "b" ] in
+          same_plan
+            (Query.filter cast_p (sorting src))
+            (sorting (Query.filter cast_p src)));
+      test "a conjunct that can fail passes a derive" (fun () ->
+          let deriving = Query.derive Expr.[ "y" := b ] in
+          same_plan
+            (Query.filter cast_p (deriving src))
+            (deriving (Query.filter cast_p src)));
+      test "a conjunct that can fail passes an aggregate's keys and an append"
+        (fun () ->
+          let keyed = Query.aggregate ~by:[ "a" ] Expr.[ "n" := rows ] in
+          same_plan
+            (Query.filter cast_p (keyed (Query.append src src)))
+            (keyed
+               (Query.append (Query.filter cast_p src) (Query.filter cast_p src))));
+      test "a conjunct renamed through a select reads the input's name"
+        (fun () ->
+          let timed =
+            source ~pushdown:exact "t"
+              Type.
+                [
+                  ("t", Any (ext ~name:"ymir.epoch" float64));
+                  ("l", Any (list int64));
+                ]
+          in
+          expect
+            (optimized
+               Query.(
+                 of_source timed
+                 |> select Expr.[ "t2" := Ext.col epoch "t" ]
+                 |> filter Expr.(Ext.col epoch "t2" < const 1.5)))
+          @@ __POS_OF__
+               {|
+            query → t2 ext[ymir.epoch, float64]
+            select ["t2" := t]
+            └ t (2 columns) ~columns:["t"] ~filters:[t < <const>]
+            |});
+    ]
+
+(* Constant columns *)
+
+let branch ?pushdown name y =
+  of_source (source ?pushdown name columns)
+  |> Query.derive Expr.[ "year" := int y ]
+
+let fold_of_years =
+  branch ~pushdown:inexact "part 2001" 2001
+  |> Query.append (branch ~pushdown:inexact "part 2002" 2002)
+
+let year = Col.int "year"
+
+let constant_columns =
+  group "Query.optimize constant columns"
+    [
+      test "a conjunct on a constant column keeps the branches it is true on"
+        (fun () ->
+          expect
+            (optimized
+               (Query.filter Expr.(year = int 2001 && a > int 0) fold_of_years))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64], year int64
+            append
+            ├ derive ["year" := 2001]
+            │ └ filter (a > 0)
+            │   └ part 2001 (5 columns) ~filters:[a > 0]
+            └ derive ["year" := 2002]
+              └ slice ~offset:0 ~length:0
+                └ part 2002 (5 columns) ~filters:[a > 0] ~limit:0
+            |});
+      test "a mixed disjunction reaches the source without its constant part"
+        (fun () ->
+          expect
+            (optimized
+               (Query.filter Expr.(year = int 2001 || a > int 0) fold_of_years))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64], year int64
+            append
+            ├ derive ["year" := 2001]
+            │ └ part 2001 (5 columns)
+            └ derive ["year" := 2002]
+              └ filter (a > 0)
+                └ part 2002 (5 columns) ~filters:[a > 0]
+            |});
+      test "a negated constant conjunct empties the branch it is false on"
+        (fun () ->
+          expect
+            (optimized
+               (Query.filter Expr.(not (year = int 2001)) fold_of_years))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64], year int64
+            append
+            ├ derive ["year" := 2001]
+            │ └ slice ~offset:0 ~length:0
+            │   └ part 2001 (5 columns) ~limit:0
+            └ derive ["year" := 2002]
+              └ part 2002 (5 columns)
+            |});
+    ]
+
+(* Query.optimize: slices *)
+
+let slices =
+  let head n q = Query.slice ~offset:0 ~length:n q in
+  group "Query.optimize slices"
+    [
+      test "a slice moves below a row-local derive" (fun () ->
+          let deriving = Query.derive Expr.[ "y" := a + int 1 ] in
+          same_plan (head 5 (deriving src)) (deriving (head 5 src)));
+      test "two slices from the start merge" (fun () ->
+          same_plan
+            (Query.slice ~offset:3 ~length:4
+               (Query.slice ~offset:2 ~length:5 src))
+            (Query.slice ~offset:5 ~length:2 src));
+      test "a slice from the start of a slice from the end stays" (fun () ->
+          let q =
+            Query.slice ~offset:1 ~length:1
+              (Query.slice ~offset:(-5) ~length:3 src)
+          in
+          equal query_w q (Query.optimize q));
+      test "a slice from the start limits both inputs of an append" (fun () ->
+          same_plan
+            (Query.slice ~offset:2 ~length:3 (Query.append src src))
+            (Query.slice ~offset:2 ~length:3
+               (Query.append (head 5 src) (head 5 src))));
+      test "a slice gives the source below it a limit" (fun () ->
+          expect
+            (optimized
+               (head 5 (Query.filter Expr.(a > int 1) (of_source s_exact))))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            slice ~offset:0 ~length:5
+            └ e (5 columns) ~filters:[a > 1] ~limit:5
+            |});
+      test "a conjunct that stays withholds the limit" (fun () ->
+          expect
+            (optimized
+               (head 5 (Query.filter Expr.(a > int 1) (of_source s_inexact))))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            slice ~offset:0 ~length:5
+            └ filter (a > 1)
+              └ i (5 columns) ~filters:[a > 1]
+            |});
+      test
+        "a slice from the end of a source that states its rows counts from the \
+         start" (fun () ->
+          let r = of_source s_rows in
+          same_plan (Kit.tail 10 r) (Query.slice ~offset:90 ~length:10 r);
+          same_plan
+            (Query.slice ~offset:(-150) ~length:70 r)
+            (Query.slice ~offset:0 ~length:20 r));
+      test "a slice from the end of a source handed a conjunct gets no limit"
+        (fun () ->
+          expect
+            (optimized
+               (Kit.tail 10 (Query.filter Expr.(a > int 1) (of_source s_rows))))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            slice ~offset:(-10) ~length:10
+            └ r (5 columns, 100 rows) ~filters:[a > 1]
+            |});
+      test "a slice moves below a select, above a sort" (fun () ->
+          expect
+            (optimized
+               (head 3
+                  (Query.select
+                     Expr.[ keep Sel.(names [ "a"; "b" ]) ]
+                     (Query.sort [ Order.desc "b" ] src))))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64
+            slice ~offset:0 ~length:3
+            └ sort [desc "b"]
+              └ u (5 columns) ~columns:["a"; "b"]
+            |});
+      test "a slice stops at a derive over the frame" (fun () ->
+          let q = Query.derive Expr.[ "r" := over (rank b) ] src in
+          equal query_w (head 3 q) (Query.optimize (head 3 q)));
+      test "a slice stays above a conjunct that moves" (fun () ->
+          expect
+            (optimized
+               (head 3
+                  (Query.filter
+                     Expr.(a > int 1)
+                     (Query.select Expr.[ keep Sel.(names [ "a"; "b" ]) ] src))))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64
+            slice ~offset:0 ~length:3
+            └ filter (a > 1)
+              └ u (5 columns) ~columns:["a"; "b"]
+            |});
+    ]
+
+(* Query.optimize: projections *)
+
+let projections =
+  group "Query.optimize projections"
+    [
+      test "a derive drops the outputs nothing reads" (fun () ->
+          expect
+            (optimized
+               (Query.select
+                  Expr.[ keep Sel.(names [ "y" ]) ]
+                  (Query.derive Expr.[ "y" := a + int 1; "z" := b ] src)))
+          @@ __POS_OF__
+               {|
+            query → y int64
+            select [keep (names ["y"])]
+            └ derive ["y" := a + 1]
+              └ u (5 columns) ~columns:["a"]
+            |});
+      test "an aggregate drops the outputs nothing reads" (fun () ->
+          expect
+            (optimized
+               (Query.select
+                  Expr.[ keep Sel.(names [ "c"; "n" ]) ]
+                  (Query.aggregate ~by:[ "c" ]
+                     Expr.[ "n" := rows; "s" := sum a ]
+                     src)))
+          @@ __POS_OF__
+               {|
+            query → c string, n int64
+            aggregate ~by:["c"] ["n" := rows]
+            └ u (5 columns) ~columns:["c"]
+            |});
+      test "a select that keeps its input goes" (fun () ->
+          same_plan (Query.select Expr.[ keep Sel.all ] src) src);
+      test "counting rows reads no column" (fun () ->
+          expect (optimized (Query.aggregate ~by:[] Expr.[ "n" := rows ] src))
+          @@ __POS_OF__
+               {|
+            query → n int64
+            aggregate ~by:[] ["n" := rows]
+            └ u (5 columns) ~columns:[]
+            |});
+      test "a source reads a filter's column that nothing else reads" (fun () ->
+          expect
+            (optimized
+               (Query.aggregate ~by:[ "c" ]
+                  Expr.[ "n" := rows ]
+                  (Query.filter Expr.(b > float 0.) src)))
+          @@ __POS_OF__
+               {|
+            query → c string, n int64
+            aggregate ~by:["c"] ["n" := rows]
+            └ filter (b > 0.)
+              └ u (5 columns) ~columns:["b"; "c"]
+            |});
+      test "an append's inputs keep only the columns it takes" (fun () ->
+          expect
+            (optimized
+               (Query.select
+                  Expr.[ keep Sel.(names [ "y" ]) ]
+                  (Query.append
+                     (Query.derive Expr.[ "y" := int 2 ] src)
+                     (Query.derive Expr.[ "y" := a + int 1 ] src))))
+          @@ __POS_OF__
+               {|
+            query → y int64
+            append
+            ├ select [keep (names ["y"])]
+            │ └ derive ["y" := a + 1]
+            │   └ u (5 columns) ~columns:["a"]
+            └ derive ["y" := 2]
+              └ u (5 columns) ~columns:[]
+            |});
+      test "a semi join reads only the right keys" (fun () ->
+          expect
+            (optimized
+               (Query.join ~kind:Semi ~on:(Join.keys [ "k" ])
+                  (of_source
+                     (source "kb" Type.[ ("k", Any int8); ("b", Any float64) ]))
+                  src))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            join ~on:(keys ["k"]) ~kind:Semi
+            ├ u (5 columns)
+            └ kb (2 columns) ~columns:["k"]
+            |});
+      test "over reads its keys and order" (fun () ->
+          expect
+            (optimized
+               (Query.select
+                  Expr.[ keep Sel.(names [ "s" ]) ]
+                  (Query.derive
+                     Expr.
+                       [
+                         "s" :=
+                           over ~by:[ "c" ] ~order:[ Order.asc "b" ] (sum a);
+                       ]
+                     src)))
+          @@ __POS_OF__
+               {|
+            query → s int64
+            select [keep (names ["s"])]
+            └ derive ["s" := over ~by:["c"] ~order:[asc "b"] (sum a)]
+              └ u (5 columns) ~columns:["a"; "b"; "c"]
+            |});
+      test "a replaced column keeps its place, and reads none under a select"
+        (fun () ->
+          expect
+            (optimized (Query.derive Expr.[ "a" := int 1 ] src)
+            ^ "\n"
+            ^ optimized
+                (Query.select
+                   Expr.[ keep Sel.(names [ "a" ]) ]
+                   (Query.derive Expr.[ "a" := k + int 1 ] src)))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            derive ["a" := 1]
+            └ u (5 columns)
+            query → a int8
+            select [keep (names ["a"])]
+            └ derive ["a" := k + 1]
+              └ u (5 columns) ~columns:["k"]
+            |});
+      test "an unnest repeats only the columns read above it" (fun () ->
+          let s =
+            source "data"
+              Type.
+                [
+                  ("id", Any int64);
+                  ("xs", Any (list int64));
+                  ("lc", Any (list float64));
+                ]
+          in
+          expect
+            (optimized
+               (Query.of_source s
+               |> Query.unnest Expr.[ "e" := Col.v Kind.(list int) "xs" ]
+               |> Query.select Expr.[ keep (Sel.names [ "e"; "id" ]) ]))
+          @@ __POS_OF__
+               {|
+            query → e int64, id int64
+            select [keep (names ["e"; "id"])]
+            └ unnest ["e" := xs] ~repeat:["id"]
+              └ data (3 columns) ~columns:["id"; "xs"]
+            |});
+    ]
+
+(* Query.optimize: sharing *)
+
+let sharing =
+  let ex = of_source s_exact in
+  group "Query.optimize sharing"
+    [
+      test "a self-join runs its aggregate once" (fun () ->
+          let counts = Query.aggregate ~by:[ "k" ] Expr.[ "n" := rows ] src in
+          expect
+            (optimized
+               (Query.join ~on:(Join.keys [ "k" ])
+                  (Query.select
+                     Expr.[ keep Sel.(names [ "k" ]); "m" := Col.int "n" ]
+                     counts)
+                  counts))
+          @@ __POS_OF__
+               {|
+            query → k int8, n int64, m int64
+            join ~on:(keys ["k"])
+            ├ #1 aggregate ~by:["k"] ["n" := rows]
+            │ └ u (5 columns) ~columns:["k"]
+            └ select [keep (names ["k"]); "m" := n]
+              └ #1
+            |});
+      test "complete reads its source in three places" (fun () ->
+          expect
+            (optimized
+               (Kit.complete [ "c"; "k" ]
+                  (Query.select Expr.[ keep Sel.(names [ "c"; "k"; "a" ]) ] src)))
+          @@ __POS_OF__
+               {|
+            query → c string, k int8, a int64
+            join ~on:(keys ["c"; "k"]) ~kind:Left
+            ├ join ~on:all
+            │ ├ aggregate ~by:["c"] []
+            │ │ └ u (5 columns) ~columns:["c"]
+            │ └ aggregate ~by:["k"] []
+            │   └ u (5 columns) ~columns:["k"]
+            └ select [keep (names ["c"; "k"; "a"])]
+              └ u (5 columns) ~columns:["a"; "c"; "k"]
+            |});
+      test "one source read with other conjuncts or columns is two reads"
+        (fun () ->
+          expect
+            (optimized
+               (Query.append
+                  (Query.filter Expr.(a > int 1 && c = string "x") ex)
+                  (Query.filter Expr.(a > int 1 && b > float 0.) ex))
+            ^ "\n"
+            ^ optimized
+                (Query.join ~on:(Join.keys [ "k" ])
+                   (Query.select Expr.[ keep Sel.(names [ "k"; "b" ]) ] ex)
+                   (Query.select Expr.[ keep Sel.(names [ "a"; "k" ]) ] ex)))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            append
+            ├ e (5 columns) ~filters:[a > 1; b > 0.]
+            └ e (5 columns) ~filters:[a > 1; c = "x"]
+            query → a int64, k int8, b float64
+            join ~on:(keys ["k"])
+            ├ e (5 columns) ~columns:["a"; "k"]
+            └ select [keep (names ["k"; "b"])]
+              └ e (5 columns) ~columns:["b"; "k"]
+            |});
+      test "two places with one request are one read" (fun () ->
+          expect
+            (optimized (Query.append (Kit.head 3 ex) (Kit.head 3 ex))
+            ^ "\n"
+            ^ optimized (Query.append ex (Kit.head 3 ex)))
+          @@ __POS_OF__
+               {|
+            query → a int64, b float64, c string, k int8, l list[int64]
+            append
+            ├ #1 slice ~offset:0 ~length:3
+            │ └ e (5 columns) ~limit:3
+            └ #1
+            query → a int64, b float64, c string, k int8, l list[int64]
+            append
+            ├ slice ~offset:0 ~length:3
+            │ └ e (5 columns) ~limit:3
+            └ e (5 columns)
+            |});
+    ]
+
+(* Query.optimize: laws *)
 
 let other_exact =
   source ~pushdown:exact "other_e" Type.[ ("k", Any int8); ("w", Any float64) ]
@@ -1166,8 +1034,8 @@ let steps =
       ( "filter per_list naming a renamed column",
         filter
           Expr.(
-            per_list [ "a" := list_l ] (sum (Col.int "a" * Col.int "y"))
-            > int 0) );
+            per_list [ "a" := list_l ] (sum (Col.int "a" * Col.int "y")) > int 0)
+      );
       ("select keep", select Expr.[ keep Sel.(names [ "a"; "b"; "c"; "k" ]) ]);
       ("select rename", select Expr.[ "y" := a; keep Sel.(all - names [ "a" ]) ]);
       ( "select back",
@@ -1218,47 +1086,43 @@ let starts =
    [start]. *)
 let build (start, ops) =
   List.fold_left
-    (fun q i ->
-      match snd (List.nth steps i) q with
+    (fun q op ->
+      match List.assoc op steps q with
       | q -> q
       | exception Invalid_argument _ -> q)
-    (of_source (snd (List.nth starts start)))
+    (of_source (List.assoc start starts))
     ops
 
 let pipeline_gen =
   Gen.(
     pair
-      (int_range 0 (List.length starts - 1))
-      (list ~size:(int_range 0 7) (int_range 0 (List.length steps - 1))))
+      (of_list ~pp:Format.pp_print_string (List.map fst starts))
+      (list ~size:(int_range 0 7) (of_list (List.map fst steps))))
   |> Gen.with_pp (fun ppf (start, ops) ->
-      Format.fprintf ppf "%s: %s"
-        (fst (List.nth starts start))
-        (String.concat " |> " (List.map (fun i -> fst (List.nth steps i)) ops)))
+      Format.fprintf ppf "%s: %s" start (String.concat " |> " ops))
 
-let same_schema d =
-  let q = build d in
-  equal schema_w (Query.schema q) (Query.schema (Query.optimize q))
-
-let contains s sub =
-  let n = String.length sub in
-  let rec at i =
-    i + n <= String.length s
-    && (String.equal (String.sub s i n) sub || at (i + 1))
-  in
-  at 0
+(* A source gets a limit, is handed conjuncts, and a step is shared on few
+   draws: these reach each on every run. *)
+let pipeline_examples =
+  [ ("e", [ "head" ]); ("u", [ "append itself" ]); ("e", [ "filter a > 1" ]) ]
 
 let idempotent d =
   let o = Query.optimize (build d) in
   let printed = str Query.pp o in
-  cover "a source is handed conjuncts" (contains printed "~filters:");
-  cover "a source reads fewer columns" (contains printed "~columns:");
-  cover "a source gets a limit" (contains printed "~limit:");
-  cover "a step is shared" (contains printed "#1");
-  cover "a filter stays" (contains printed "filter (");
+  let shows sub =
+    let n = String.length sub in
+    let rec at i =
+      i + n <= String.length printed
+      && (String.equal (String.sub printed i n) sub || at (i + 1))
+    in
+    at 0
+  in
+  cover "a source is handed conjuncts" (shows "~filters:");
+  cover "a source reads fewer columns" (shows "~columns:");
+  cover "a source gets a limit" (shows "~limit:");
+  cover "a step is shared" (shows "#1");
+  cover "a filter stays" (shows "filter (");
   equal query_w o (Query.optimize o)
-
-let built_twice d =
-  equal query_w (Query.optimize (build d)) (Query.optimize (build d))
 
 (* The pushdown model: a filter of conjuncts over a source that answers for each
    by its column, then maybe a slice. *)
@@ -1279,46 +1143,45 @@ let atoms =
       (not (is_null a), "not (is_null a)", Valid "a");
     ]
 
-let answer_gen =
-  Gen.of_list
-    ~pp:(fun ppf a ->
-      Format.pp_print_string ppf
-        (match a with
-        | Source.Exact -> "Exact"
-        | Inexact -> "Inexact"
-        | Unsupported -> "Unsupported"))
-    [ Source.Exact; Inexact; Unsupported ]
+let pp_answer ppf a =
+  Format.pp_print_string ppf
+    (match a with
+    | Source.Exact -> "Exact"
+    | Inexact -> "Inexact"
+    | Unsupported -> "Unsupported")
 
 let model_gen =
+  let text (_, t, _) = t in
   Gen.(
-    let* chosen = subsequence (List.init (List.length atoms) Fun.id) in
+    let* chosen = subsequence atoms in
     let* chosen = permutation chosen in
-    let* answers = list ~size:(constant 4) answer_gen in
+    let* answers =
+      list ~size:(constant 4) (of_list [ Source.Exact; Inexact; Unsupported ])
+    in
     let+ sliced = bool in
     (chosen, List.combine [ "a"; "b"; "c"; "k" ] answers, sliced))
   |> Gen.with_pp (fun ppf (chosen, answers, sliced) ->
       Format.fprintf ppf "%s; %s%s"
-        (String.concat " && "
-           (List.map
-              (fun i ->
-                let _, t, _ = List.nth atoms i in
-                t)
-              chosen))
+        (String.concat " && " (List.map text chosen))
         (String.concat ", "
            (List.map
-              (fun (c, a) ->
-                c ^ ":"
-                ^
-                match a with
-                | Source.Exact -> "E"
-                | Inexact -> "I"
-                | Unsupported -> "U")
+              (fun (c, a) -> Format.asprintf "%s:%a" c pp_answer a)
               answers))
         (if sliced then "; sliced" else ""))
 
+(* The source gets a limit on few draws: this reaches it on every run. *)
+let model_examples =
+  [
+    ( [ List.hd atoms ],
+      [ ("a", Source.Exact); ("b", Exact); ("c", Exact); ("k", Exact) ],
+      true );
+  ]
+
 let rec pp_pred ppf : Source.Pred.t -> unit = function
-  | Cmp (c, _, _) -> Format.fprintf ppf "Cmp %S" c
-  | In (c, _) -> Format.fprintf ppf "In %S" c
+  | Cmp (c, _, Value (ty, _)) -> Format.fprintf ppf "Cmp %S at %a" c Type.pp ty
+  | In (c, vs) ->
+      let ty ppf (Source.Pred.Value (ty, _)) = Type.pp ppf ty in
+      Format.fprintf ppf "In %S at [%a]" c (Format.pp_print_list ty) vs
   | Null c -> Format.fprintf ppf "Null %S" c
   | Valid c -> Format.fprintf ppf "Valid %S" c
   | Not p -> Format.fprintf ppf "Not (%a)" pp_pred p
@@ -1342,38 +1205,29 @@ let rec conj = function
   | [ e ] -> e
   | e :: es -> Expr.(e && conj es)
 
-let pushdown_model (chosen, answers, sliced) =
+let pushdown_model (es, answers, sliced) =
   let asked = ref [] in
   let answer p =
     asked := p :: !asked;
     by_column answers p
   in
   let s = source ~pushdown:answer "m" columns in
-  let es = List.map (fun i -> List.nth atoms i) chosen in
   let sliced_by q = if sliced then Kit.head 7 q else q in
-  let q =
-    sliced_by
-      (match es with
-      | [] -> of_source s
-      | _ ->
-          Query.filter (conj (List.map (fun (e, _, _) -> e) es)) (of_source s))
+  let filtered es s =
+    match es with
+    | [] -> of_source s
+    | _ -> Query.filter (conj (List.map (fun (e, _, _) -> e) es)) (of_source s)
   in
-  let optimized = Query.optimize q in
+  let optimized = Query.optimize (sliced_by (filtered es s)) in
   let answer_of (_, _, p) = by_column answers p in
   let handed = List.filter (fun e -> answer_of e <> Unsupported) es
   and stays = List.filter (fun e -> answer_of e <> Exact) es in
   cover "a conjunct leaves the plan" (List.length stays < List.length es);
   cover "a conjunct stays" (stays <> []);
   cover "the source gets a limit" (sliced && stays = []);
-  let model =
-    sliced_by
-      (match stays with
-      | [] -> of_source (source "m" columns)
-      | _ ->
-          Query.filter
-            (conj (List.map (fun (e, _, _) -> e) stays))
-            (of_source (source "m" columns)))
-  in
+  (* The model is the plan over a source of the same name, with the request
+     Source.request states printed after it. *)
+  let model = sliced_by (filtered stays (source "m" columns)) in
   let request =
     (match handed with
       | [] -> ""
@@ -1382,14 +1236,7 @@ let pushdown_model (chosen, answers, sliced) =
             (String.concat "; " (List.map (fun (_, t, _) -> t) handed)))
     ^ if sliced && stays = [] then " ~limit:7" else ""
   in
-  let expected =
-    let lines = String.split_on_char '\n' (wide Query.pp model) in
-    String.concat "\n"
-      (List.mapi
-         (fun i l -> if i = List.length lines - 1 then l ^ request else l)
-         lines)
-  in
-  equal text expected (wide Query.pp optimized);
+  equal text (wide Query.pp model ^ request) (wide Query.pp optimized);
   List.iter
     (fun p ->
       mem ~msg:"a predicate the source is asked about is a conjunct's"
@@ -1398,16 +1245,71 @@ let pushdown_model (chosen, answers, sliced) =
         (List.map (fun (_, _, p) -> p) es))
     !asked
 
+(* [words f] is the number of words allocated by [f ()]. *)
+let words f =
+  let before = Gc.allocated_bytes () in
+  ignore (Sys.opaque_identity (f ()));
+  (Gc.allocated_bytes () -. before) /. float_of_int (Sys.word_size / 8)
+
+(* Linear work doubles from n to 2n; 2.3 leaves room for a plan's constant part,
+   and quadratic work would give 4. *)
+let linear at = less (float 0.001) ~than:(2.3 *. at 400) (at 800)
+
+(* [left_fold leaf n] is [n] leaves appended one after the other, as
+   [List.fold_left] builds them, under a filter that enters every branch. *)
+let left_fold leaf n =
+  let rec fold q i =
+    if i = n then q else fold (q |> Query.append (leaf i)) (i + 1)
+  in
+  fold (leaf 0) 1 |> Query.filter Expr.(a > int 0)
+
 let laws =
   group "Query.optimize laws"
     [
-      prop "keeps the schema" pipeline_gen same_schema;
-      prop "is idempotent" pipeline_gen idempotent;
-      prop "gives equal plans for a pipeline built twice" pipeline_gen
-        built_twice;
-      prop "respects the source's answers" model_gen pushdown_model;
+      prop "keeps the schema" pipeline_gen (fun d ->
+          let q = build d in
+          equal schema_w (Query.schema q) (Query.schema (Query.optimize q)));
+      prop "is idempotent" ~examples:pipeline_examples pipeline_gen idempotent;
+      prop "gives equal plans for a pipeline built twice" pipeline_gen (fun d ->
+          equal query_w (Query.optimize (build d)) (Query.optimize (build d)));
+      prop "respects the source's answers" ~examples:model_examples model_gen
+        pushdown_model;
+      cases "plan work over a left fold is linear in its branches" ~id:fst
+        [
+          ( "sources of their own names",
+            fun i ->
+              of_source
+                (source ~pushdown:inexact (Printf.sprintf "part %d" i) columns)
+          );
+          ( "sources of one name",
+            fun _ -> of_source (source ~pushdown:inexact "part" columns) );
+          ( "tables of one shape",
+            fun _ ->
+              Query.of_table (Talon.v [ ("a", Column.v Type.int64 [| 1 |]) ]) );
+        ]
+        (fun (_, leaf) ->
+          linear (fun n -> words (fun () -> Query.optimize (left_fold leaf n))));
+      test "planning union_all is linear in its queries" (fun () ->
+          linear (fun n ->
+              let leaf _ =
+                of_source (source ~pushdown:inexact "part" columns)
+              in
+              let q = Kit.union_all (List.init n leaf) in
+              words (fun () -> Query.optimize (Query.filter Expr.(a > int 0) q))));
+      test "plan work over a doubling is linear in its depth" (fun () ->
+          (* Each level reaches the step below it twice: rewritten once per
+             path, 16 levels cost 256 times 8 levels' work. *)
+          let at d =
+            let rec double q d =
+              if d = 0 then q else double (Query.append q q) (d - 1)
+            in
+            let q =
+              double (of_source (source ~pushdown:inexact "part" columns)) d
+            in
+            words (fun () -> Query.optimize (Query.filter Expr.(a > int 0) q))
+          in
+          less (float 0.001) ~than:(2.3 *. at 8) (at 16));
     ]
-
 (* Comparing and formatting *)
 
 let pred_w = Testable.make ~pp:pp_pred ~equal:( = )
@@ -1429,6 +1331,7 @@ let encoded () =
           ("f", Any float32);
           ("h", Any float16);
           ("fs", Any (list float32));
+          ("g", Any (categorical [| "AA"; "B6" |]));
         ]
   in
   let t = Ext.col epoch "t" and x = Col.int "x" in
@@ -1442,6 +1345,8 @@ let encoded () =
             && store Type.int32 (int 7) = x
             && f > float 0.1
             && is_in [ 0.1 ] f && is_in [ [| 0.1 |] ] fs
+            && Col.string "g" = string "AA"
+            && Col.string "g" = store Type.string (string "zz")
             && h > float 0.5)
           (of_source timed)));
   equal (list pred_w)
@@ -1460,6 +1365,8 @@ let encoded () =
             [
               Value (Type.list Type.float32, [| 0.100000001490116119384765625 |]);
             ] );
+        Cmp ("g", `Eq, Value (Type.categorical [| "AA"; "B6" |], "AA"));
+        Cmp ("g", `Eq, Value (Type.string, "zz"));
       ]
     (List.fold_left
        (fun ps p -> if List.mem p ps then ps else ps @ [ p ])
@@ -1480,7 +1387,8 @@ let comparing =
             (str Query.pp (Query.optimize (of_source s_exact))));
       test
         "a source is asked at the type the comparison is made in, with the \
-         value it stores there, and never about a float16 literal"
+         value it stores there, a categorical as text beside text, and never \
+         about a float16 literal"
         encoded;
       test "an unoptimized plan labels a step it reaches twice" (fun () ->
           let q = of_source s_exact in
@@ -1600,8 +1508,19 @@ let counts (s, ks) =
     (Schema.v (List.map key ks @ [ ("count", Type.Any Type.int64) ]))
     (Query.schema (Kit.count_by ks (of_schema s)))
 
+(* [keyed_gen] draws a schema and keys of it, at least one. *)
+let keyed_gen =
+  Gen.(
+    let* t = of_list ~pp:pp_any kit_types in
+    let* rest = columns_gen [ "b"; "c"; "d"; "e"; "f" ] in
+    let* cs = permutation (("a", t) :: rest) in
+    let* ns = permutation (List.map fst cs) in
+    let+ ks = subsequence (List.tl ns) in
+    (Schema.v cs, List.hd ns :: ks))
+  |> Gen.with_pp (fun ppf (s, ns) ->
+      Format.fprintf ppf "%a; %s" Schema.pp s (String.concat ", " ns))
+
 let completes (s, ks) =
-  assume (ks <> []);
   equal schema_w s (Query.schema (Kit.complete ks (of_schema s)))
 
 let one_hot_gen =
@@ -1797,7 +1716,7 @@ let kit_queries =
       prop "union has q's columns, then rest's own" union_gen unions;
       prop "null_count counts each column as int64" kit_schema_gen null_counts;
       prop "count_by has the keys, then count" subset_gen counts;
-      prop "complete keeps the schema" subset_gen completes;
+      prop "complete keeps the schema" keyed_gen completes;
       prop "one_hot puts one bool per category in place" one_hot_gen one_hots;
       test "each query prints as its verbs" kit_plans;
       test "describe has one row per numeric column" describe;
@@ -1805,246 +1724,111 @@ let kit_queries =
 
 (* Kit: mistakes *)
 
-let kit_errors () =
-  let q = of_source s_unsupported in
-  expect
-    (String.concat "\n\n"
-       (List.map message
-          [
-            (fun () -> Kit.rename [ ("a", "x"); ("a", "y") ] q);
-            (fun () -> Kit.rename [ ("aa", "x") ] q);
-            (fun () -> Kit.rename [ ("a", "b") ] q);
-            (fun () -> Kit.complete [] q);
-            (fun () -> Kit.complete [ "c"; "k"; "c" ] q);
-            (fun () -> Kit.one_hot "cc" q);
-            (fun () -> Kit.one_hot "c" q);
-          ]))
-  @@ __POS_OF__
-       {|
-    Kit.rename: "a" is renamed twice
-
-    select: 1 problem
-      each (all + names ["aa"]) <fn>
-        no column "aa". Did you mean "a"?
-      input (5 columns): a int64, b float64, c string, k int8, l list[int64]
-
-    select: 1 problem
-      the output "b" appears twice.
-      input (5 columns): a int64, b float64, c string, k int8, l list[int64]
-
-    Kit.complete: no column
-
-    Kit.complete: "c" is named twice
-
-    select: 1 problem
-      keep (names ["cc"])
-        no column "cc". Did you mean "c"?
-      input (5 columns): a int64, b float64, c string, k int8, l list[int64]
-
-    Kit.one_hot: "c" is string, not categorical: cast it to a categorical type first
-    |}
-
 let kit_mistakes =
-  test "Kit's mistakes raise or are their verbs' reports" kit_errors
+  let q = of_source s_unsupported in
+  let refused ~by f = raises_match (Exn.invalid_arg ~sub:by) f in
+  group "Kit mistakes"
+    [
+      test "rename raises on a column renamed twice" (fun () ->
+          refused ~by:"Kit.rename" (fun () ->
+              Kit.rename [ ("a", "x"); ("a", "y") ] q));
+      test "rename's missing and clashing names are its select's problems"
+        (fun () ->
+          expect
+            (message (fun () -> Kit.rename [ ("aa", "x") ] q)
+            ^ "\n"
+            ^ message (fun () -> Kit.rename [ ("a", "b") ] q))
+          @@ __POS_OF__
+               {|
+            select: 1 problem
+              each (all + names ["aa"]) <fn>
+                no column "aa". Did you mean "a"?
+              input (5 columns): a int64, b float64, c string, k int8, l list[int64]
+            select: 1 problem
+              the output "b" appears twice.
+              input (5 columns): a int64, b float64, c string, k int8, l list[int64]
+            |});
+      test "complete raises on no key and a key twice" (fun () ->
+          refused ~by:"Kit.complete" (fun () -> Kit.complete [] q);
+          refused ~by:"Kit.complete" (fun () ->
+              Kit.complete [ "c"; "k"; "c" ] q));
+      test "one_hot's missing column is its select's problem" (fun () ->
+          expect (message (fun () -> Kit.one_hot "cc" q))
+          @@ __POS_OF__
+               {|
+            select: 1 problem
+              keep (names ["cc"])
+                no column "cc". Did you mean "c"?
+              input (5 columns): a int64, b float64, c string, k int8, l list[int64]
+            |});
+      test "one_hot raises on a column that is not categorical" (fun () ->
+          refused ~by:"Kit.one_hot" (fun () -> Kit.one_hot "c" q));
+    ]
 
 (* Records and unnest *)
 
-let unnest_schema =
-  [
-    ("id", Type.Any Type.int64);
-    ("xs", Type.Any (Type.list Type.int64));
-    ("lc", Type.Any (Type.list Type.float64));
-  ]
-
-let xs = Col.v Kind.(list int) "xs"
-
-let unnest_plans () =
-  let s = source "data" unnest_schema in
-  let band = Expr.record Expr.[ "x" := Col.int "id"; "l" := xs ] in
-  let printed =
-    Query.of_source s
-    |> Query.derive
-         Expr.[ "b" := band; "f" := field Kind.int "x" band ]
-    |> Query.unnest ~keep_empty:true Expr.[ "e" := xs ]
-    |> Query.select
-         Expr.[ within (Col.v Record.kind "b") (keep (Sel.names [ "x" ])) ]
+let unnest_printed =
+  let s =
+    source "data"
+      Type.
+        [
+          ("id", Any int64); ("xs", Any (list int64)); ("lc", Any (list float64));
+        ]
   in
-  expect (str Query.pp printed)
-  @@ __POS_OF__ {|
-    query → x int64
-    select ["x" := within b x]
-    └ unnest ~keep_empty:true ["e" := xs]
-      └ derive ["b" := record ["x" := id; "l" := xs];
-                "f" := field int "x" (record ["x" := id; "l" := xs])]
-        └ data (3 columns)
-    |};
-  let narrowed =
-    Query.of_source s
-    |> Query.unnest Expr.[ "e" := xs ]
-    |> Query.select Expr.[ keep (Sel.names [ "e"; "id" ]) ]
-  in
-  expect (str Query.pp (Query.optimize narrowed))
-  @@ __POS_OF__ {|
-    query → e int64, id int64
-    select [keep (names ["e"; "id"])]
-    └ unnest ["e" := xs] ~repeat:["id"]
-      └ data (3 columns) ~columns:["id"; "xs"]
-    |};
-  let collected =
-    Query.of_source s
-    |> Query.aggregate ~by:[ "id" ]
-         Expr.[ "c" := collect (Col.v Kind.(list int) "xs") ]
-  in
-  expect (str Query.pp collected)
-  @@ __POS_OF__ {|
-    query → id int64, c list[list[int64]]
-    aggregate ~by:["id"] ["c" := collect xs]
-    └ data (3 columns)
-    |};
-  (* A filter on the repeated column stops at unnest. *)
-  let filtered =
-    Query.of_source s
-    |> Query.unnest Expr.[ "e" := xs ]
-    |> Query.filter Expr.(Col.int "id" = int 1)
-  in
-  expect (str Query.pp (Query.optimize filtered))
-  @@ __POS_OF__ {|
-    query → id int64, xs list[int64], lc list[float64], e int64
-    filter (id = 1)
-    └ unnest ["e" := xs]
-      └ data (3 columns)
-    |}
-
-(* Constant columns *)
-
-let branch ?pushdown name y =
-  of_source (source ?pushdown name columns)
-  |> Query.derive Expr.[ "year" := int y ]
-
-let fold_of_years = 
-  branch ~pushdown:inexact "part 2001" 2001
-  |> Query.append (branch ~pushdown:inexact "part 2002" 2002)
-
-let year = Col.int "year"
-
-let constant_plans () =
-  expect
-    (plans
-       [
-         ( "a conjunct on a constant column keeps the branches it is true on",
-           fold_of_years
-           |> Query.filter Expr.(year = int 2001 && a > int 0) );
-         ( "a mixed disjunction reaches the source without its constant part",
-           fold_of_years
-           |> Query.filter Expr.(year = int 2001 || a > int 0) );
-         ( "a negated constant conjunct",
-           fold_of_years |> Query.filter Expr.(not (year = int 2001)) );
-       ])
-  @@ __POS_OF__ {|
-    # a conjunct on a constant column keeps the branches it is true on
-    query → a int64, b float64, c string, k int8, l list[int64], year int64
-    append
-    ├ derive ["year" := 2001]
-    │ └ filter (a > 0)
-    │   └ part 2001 (5 columns) ~filters:[a > 0]
-    └ derive ["year" := 2002]
-      └ slice ~offset:0 ~length:0
-        └ part 2002 (5 columns) ~filters:[a > 0] ~limit:0
-    # a mixed disjunction reaches the source without its constant part
-    query → a int64, b float64, c string, k int8, l list[int64], year int64
-    append
-    ├ derive ["year" := 2001]
-    │ └ part 2001 (5 columns)
-    └ derive ["year" := 2002]
-      └ filter (a > 0)
-        └ part 2002 (5 columns) ~filters:[a > 0]
-    # a negated constant conjunct
-    query → a int64, b float64, c string, k int8, l list[int64], year int64
-    append
-    ├ derive ["year" := 2001]
-    │ └ slice ~offset:0 ~length:0
-    │   └ part 2001 (5 columns) ~limit:0
-    └ derive ["year" := 2002]
-      └ part 2002 (5 columns)
-    |}
-
-(* Plan work *)
-
-(* [words f] is the number of words allocated by [f ()]. *)
-let words f =
-  let before = Gc.allocated_bytes () in
-  ignore (Sys.opaque_identity (f ()));
-  (Gc.allocated_bytes () -. before) /. float_of_int (Sys.word_size / 8)
-
-(* [left_fold leaf n] is [n] leaves appended one after the other, as
-   [List.fold_left] builds them, under a filter that enters every branch. *)
-let left_fold leaf n =
-  let branch i = leaf i in
-  let rec fold q i =
-    if i = n then q else fold (q |> Query.append (branch i)) (i + 1)
-  in
-  fold (branch 0) 1 |> Query.filter Expr.(a > int 0)
-
-let linear_plans =
-  let leaves =
+  let xs = Col.v Kind.(list int) "xs" in
+  group "Query.unnest and records"
     [
-      ( "sources of their own names",
-        fun i ->
-          Query.of_source
-            (source ~pushdown:inexact (Printf.sprintf "part %d" i) columns) );
-      ( "sources of one name",
-        fun _ -> Query.of_source (source ~pushdown:inexact "part" columns) );
-      ( "tables of one shape",
-        fun _ ->
-          Query.of_table (Talon.v [ ("a", Column.v Type.int64 [| 1 |]) ]) );
+      test "print as written" (fun () ->
+          let band = Expr.record Expr.[ "x" := Col.int "id"; "l" := xs ] in
+          expect
+            (str Query.pp
+               (Query.of_source s
+               |> Query.derive
+                    Expr.[ "b" := band; "f" := field Kind.int "x" band ]
+               |> Query.unnest ~keep_empty:true Expr.[ "e" := xs ]
+               |> Query.select
+                    Expr.
+                      [
+                        within (Col.v Record.kind "b")
+                          (keep (Sel.names [ "x" ]));
+                      ]))
+          @@ __POS_OF__
+               {|
+            query → x int64
+            select ["x" := within b x]
+            └ unnest ~keep_empty:true ["e" := xs]
+              └ derive ["b" := record ["x" := id; "l" := xs];
+                        "f" := field int "x" (record ["x" := id; "l" := xs])]
+                └ data (3 columns)
+            |});
+      test "collect of a list column is a list of lists" (fun () ->
+          expect
+            (str Query.pp
+               (Query.aggregate ~by:[ "id" ]
+                  Expr.[ "c" := collect xs ]
+                  (Query.of_source s)))
+          @@ __POS_OF__
+               {|
+            query → id int64, c list[list[int64]]
+            aggregate ~by:["id"] ["c" := collect xs]
+            └ data (3 columns)
+            |});
     ]
-  in
-  let plan_words leaf n = words (fun () -> Query.optimize (left_fold leaf n)) in
-  let ratio_law (n, (_, leaf)) =
-    (* Doubling the branches doubles the work, within a margin for the constant
-       part of a plan. *)
-    let at_n = plan_words leaf n and at_2n = plan_words leaf (2 * n) in
-    less (float 0.001) ~than:(2.3 *. at_n) at_2n
-  in
-  prop ~count:12 "plan work over a left fold is linear in its branches"
-    Gen.(
-      with_pp
-        (fun ppf (n, (name, _)) -> Format.fprintf ppf "%d %s" n name)
-        (pair (int_range 200 800) (of_list leaves)))
-    ratio_law
-
-let linear_union_all =
-  let union_words n =
-    let leaf _ = Query.of_source (source ~pushdown:inexact "part" columns) in
-    let q = Kit.union_all (List.init n leaf) in
-    words (fun () -> Query.optimize (Query.filter Expr.(a > int 0) q))
-  in
-  prop ~count:6 "planning union_all is linear in its queries"
-    Gen.(int_range 200 800)
-    (fun n ->
-      let at_n = union_words n and at_2n = union_words (2 * n) in
-      less (float 0.001) ~than:(2.3 *. at_n) at_2n)
-
-(* [doubled d] is a source appended to itself [d] times over, under a filter
-   that enters every branch: [d + 1] steps, each reached twice by the next. *)
-let doubled d =
-  let rec double q d = if d = 0 then q else double (Query.append q q) (d - 1) in
-  double (Query.of_source (source ~pushdown:inexact "part" columns)) d
-  |> Query.filter Expr.(a > int 0)
-
-let linear_doubling =
-  test "plan work over a doubling is linear in its depth" (fun () ->
-      let at d = words (fun () -> Query.optimize (doubled d)) in
-      less (float 0.001) ~than:(2.3 *. at 8) (at 16))
 
 let () =
   exit
     (run "plan"
        [
-         printed; laws; comparing; kit_queries; kit_mistakes;
-         test "records and unnest print and narrow" unnest_plans;
-         linear_plans;
-         linear_union_all;
-         linear_doubling;
-         test "constant columns simplify filters" constant_plans;
+         pushdown;
+         constants;
+         predicates;
+         constant_columns;
+         slices;
+         projections;
+         sharing;
+         laws;
+         comparing;
+         unnest_printed;
+         kit_queries;
+         kit_mistakes;
        ])
