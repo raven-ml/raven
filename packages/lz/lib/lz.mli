@@ -624,7 +624,7 @@ module Lz4 : sig
       {- {!Block}'s refusals, where a linked block's start is its
          frame's.}}
       A stored block, whose bytes the frame holds as they are, is [Too_long] at
-      its block size field when they pass [dst]'s end before the content size
+      its block size field when they pass [dst]'s end and not the content size
       the header states. A frame naming a dictionary is [Unsupported] at its
       Dict_ID, and a legacy frame at its magic number. *)
   module Frame : sig

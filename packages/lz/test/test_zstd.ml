@@ -473,6 +473,27 @@ let sequences =
   in
   group "sequences"
     [
+      (* A sequence read whole that breaks the format is Malformed also when
+         its output passes the destination: no larger one makes it valid. *)
+      cases "a bad offset is Malformed though its output passes dst"
+        ~id:(fun (id, _, _, _) -> id)
+        (let seq bits ~ll ~of_ =
+           windowed 0
+           ^ compressed (raw_literals "abcd" ^ one_sequence ~ll ~of_ ~ml:10 bits)
+         in
+         (* A match of 13 at 1025 back, after 2000 bytes, into 2001. *)
+         let far =
+           windowed 0 ^ rle ~last:false 'a' 1000 ^ rle ~last:false 'b' 1000
+           ^ compressed
+               (raw_literals "" ^ one_sequence ~ll:0 ~of_:10 ~ml:10 "\x04\x04")
+         in
+         [
+           ("an offset of 0", seq "\x03" ~ll:0 ~of_:1, 6, 19);
+           ("an offset before the frame's start", seq "\x20" ~ll:4 ~of_:5, 6, 19);
+           ("an offset above Window_Size", far, 2001, 24);
+         ])
+        (fun (_, s, cap, at) ->
+          equal string (Printf.sprintf "malformed at %d" at) (decode ~cap s));
       test "a sequence copies literals then a match" (fun () ->
           (* Offset code 2 with extra bits 00: Offset_Value 4, offset 1. *)
           equal string "consumed 20, \"abcdddd\""

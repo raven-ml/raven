@@ -861,6 +861,27 @@ let frame_refusals =
           equal string
             (malformed_at (String.length first + 7 + 4 + 1))
             (decode_seen frame (first ^ header () ^ compressed b ^ end_mark)));
+      (* A code or stored block read whole that passes the block maximum or
+         the content size is Malformed also when it passes the destination:
+         no larger one makes it valid. *)
+      cases "a code past a format limit is Malformed whatever the destination"
+        ~id:(fun (id, _, _, _) -> id)
+        (* "a", then a match of 65533 bytes from 1 back: 65534 of the
+           block maximum's 65536. *)
+        (let long = "\x1fa" ^ le16 1 ^ length_bytes (65533 - 4) in
+         let sized = header ~flg:(version lor content_size) ~size:10 () in
+         [
+           ( "a match past the maximum",
+             65535,
+             header ()
+             ^ compressed (long ^ sequence "" ~offset:1 ~length:8 ^ last "bcdef"),
+             273 );
+           ("literals past the maximum", 65535, header () ^ compressed (long ^ last "bcdef"), 272);
+           ("literals past the content size", 8, sized ^ compressed (last "abcdefghijkl"), 6);
+           ("a stored block past the content size", 8, sized ^ stored "abcdefghijkl", 6);
+         ])
+        (fun (_, cap, f, at) ->
+          equal string (malformed_at at) (decode_seen frame ~cap (f ^ end_mark)));
       test "a stored block past the destination is Too_long at its size"
         (fun () ->
           equal string "too long at 7"

@@ -251,13 +251,15 @@ LZ_NOINLINE static uint8_t *slow(const struct run *r, uint8_t *op,
   const struct lz_zstd_out *o = r->o;
   size_t hist = (size_t)(op - o->base) + ll;
   if (ll > (size_t)(r->lit_end - *lit)) return refuse(f, lit_past);
+  /* A sequence read whole that breaks the format is malformed before its
+     output is too long: no larger destination makes it valid. */
+  if (off == 0) return refuse(f, zero_offset);
+  if (off > o->window) return refuse(f, far_offset);
+  if (off > hist + o->ext) return refuse(f, early_offset);
   if (ll + ml > (size_t)(r->hard - op)) {
     overflow(r, op, ll + ml, f);
     return NULL;
   }
-  if (off == 0) return refuse(f, zero_offset);
-  if (off > o->window) return refuse(f, far_offset);
-  if (off > hist + o->ext) return refuse(f, early_offset);
 
   /* A sequence with the fast path's room reached here for a match into
      the earlier segment: its source lies at least LZ_ZSTD_SLACK bytes

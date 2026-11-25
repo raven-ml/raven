@@ -98,16 +98,18 @@ static inline void copy16(uint8_t *d, const uint8_t *s) { memcpy(d, s, 16); }
 #define OUT_SLACK 32
 
 /* How a block's decoding ended: every sequence decoded; the input ended
-   before the block did; a code asked for output past [oend]; or a code
-   is not the format. */
-enum outcome { DECODED, ENDS_EARLY, OVERFLOWS, MALFORMED };
+   before the block did; a code asked for output past [oend] and not past
+   [fend], or past [fend] too; or a code is not the format. */
+enum outcome { DECODED, ENDS_EARLY, OVERFLOWS, PASSES_LIMIT, MALFORMED };
 
 /* A block to decode: [src, src + len) into [op, oend), matches reaching
-   back to [lo] at the furthest. [cut] says the input ends inside the
-   block: [src + len] is not its end, so reaching it is ENDS_EARLY and the
-   end-of-block rules do not apply. On return [op] is the end of the
-   output; on failure [at] is the offset in [src] of the code that failed,
-   and [msg] names a malformation. */
+   back to [lo] at the furthest. [fend], at or past [oend], is the end of
+   the output the format allows: a code asking for output past it breaks
+   the format whatever the destination's room. [cut] says the input ends
+   inside the block: [src + len] is not its end, so reaching it is
+   ENDS_EARLY and the end-of-block rules do not apply. On return [op] is
+   the end of the output; on failure [at] is the offset in [src] of the
+   code that failed, and [msg] names a malformation. */
 struct block {
   const uint8_t *src;
   size_t len;
@@ -115,6 +117,7 @@ struct block {
   uint8_t *lo;
   uint8_t *op;
   uint8_t *oend;
+  uint8_t *fend;
   size_t at;
   const char *msg;
   struct told *told;
@@ -353,6 +356,20 @@ static inline bool breaks_end(uint64_t lit, uint64_t last_match) {
          (lit < LAST_LITERALS || lit + last_match < MATCH_MARGIN);
 }
 
+/* A length [n] whose scan stopped past the destination's room after a
+   byte of 255, read on from [p] while its bytes are 255 and it stays
+   within [room], the format's: whether it passes the format's limit
+   too. */
+static uint64_t length_on(const uint8_t *p, const uint8_t *end, uint64_t n,
+                          uint64_t room) {
+  unsigned s = 255;
+  while (s == 255 && n <= room && p < end) {
+    s = *p++;
+    n += s;
+  }
+  return n;
+}
+
 static enum outcome block_decode(struct block *b) {
   /* The fast loop in spans of LZ_WORK_SPAN of output, each reported. A
      span it leaves short has a sequence for the exact loop. */
@@ -370,6 +387,7 @@ static enum outcome block_decode(struct block *b) {
   const uint8_t *const iend = b->src + b->len;
   uint8_t *op = c.op;
   uint8_t *const oend = b->oend;
+  uint8_t *const fend = b->fend;
   uint8_t *const lo = b->lo;
   uint64_t last_match = c.last_match;
   unsigned s;
@@ -397,12 +415,16 @@ static enum outcome block_decode(struct block *b) {
       } while (s == 255 && lit <= (uint64_t)(oend - op));
     }
     if (lit > (uint64_t)(oend - op)) {
-      /* Last literals that break the end-of-block rules are malformed
-         whatever the room: a larger destination would refuse them too. */
+      /* Last literals that break the end-of-block rules, or literals past
+         the format's limit, are malformed whatever the room: a larger
+         destination would refuse them too. */
       if (!b->cut && lit == (uint64_t)(iend - ip) &&
           breaks_end(lit, last_match))
         return fail(b, MALFORMED, seq, "invalid end of block");
-      return fail(b, OVERFLOWS, seq, NULL);
+      if (token >> 4 == 15 && ip[-1] == 255)
+        lit = length_on(ip, iend, lit, (uint64_t)(fend - op));
+      return fail(b, lit > (uint64_t)(fend - op) ? PASSES_LIMIT : OVERFLOWS,
+                  seq, NULL);
     }
     if (lit > (uint64_t)(iend - ip)) return fail(b, ENDS_EARLY, seq, NULL);
     if (lit >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, 2 * lit);
@@ -437,7 +459,12 @@ static enum outcome block_decode(struct block *b) {
       } while (s == 255 && len + MIN_MATCH <= (uint64_t)(oend - op));
     }
     len += MIN_MATCH;
-    if (len > (uint64_t)(oend - op)) return fail(b, OVERFLOWS, at_offset, NULL);
+    if (len > (uint64_t)(oend - op)) {
+      if ((token & 15) == 15 && ip[-1] == 255)
+        len = length_on(ip, iend, len, (uint64_t)(fend - op));
+      return fail(b, len > (uint64_t)(fend - op) ? PASSES_LIMIT : OVERFLOWS,
+                  at_offset, NULL);
+    }
     if (len >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, len);
     /* A match longer than its offset repeats its first [off] bytes. */
     repeat(op - off, op, op + len);
@@ -454,6 +481,7 @@ enum lz_status lz_lz4_block_decode(struct lz_io *io, struct lz_error *err) {
                     .lo = io->dst,
                     .op = io->dst,
                     .oend = io->dst + io->dst_cap,
+                    .fend = io->dst + io->dst_cap,
                     .told = &t};
   switch (block_decode(&b)) {
   case DECODED:
@@ -464,6 +492,8 @@ enum lz_status lz_lz4_block_decode(struct lz_io *io, struct lz_error *err) {
     /* The input is the block: it ends inside it. */
     return lz_fail(err, LZ_TRUNCATED, (int64_t)io->src_len, NULL);
   case OVERFLOWS:
+  case PASSES_LIMIT:
+    /* A block alone sets no limit but the destination's. */
     return lz_fail(err, LZ_TOO_LONG, (int64_t)b.at, NULL);
   case MALFORMED:
     break;
@@ -749,22 +779,17 @@ static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
     if (len > max)
       return lz_fail(err, LZ_MALFORMED, (int64_t)at_size, "invalid block size");
 
-    /* The output this block may produce, and what passing it means: the
-       destination's end, too long at the code that asks; the frame's
-       maximum block size, malformed there; or the content size the
-       header states, malformed at that field. A tie is malformed. */
-    size_t limit = (size_t)(dst + cap - op);
-    int why = LZ_TOO_LONG;
-    const char *msg = NULL;
-    if (max <= limit) {
-      limit = max;
-      why = LZ_MALFORMED;
-      msg = "block too large";
-    }
+    /* The output the format allows this block: the frame's maximum block
+       size, malformed past it at the code that asks, or the content size
+       the header states, malformed at that field. Output past the
+       destination's end and not past that limit is too long, at the code
+       that asks. A tie is malformed. */
+    size_t room = (size_t)(dst + cap - op);
+    size_t limit = max;
+    const char *msg = "block too large";
     bool content_limit = false;
     if (sized && size - (uint64_t)(op - first) <= limit) {
       limit = (size_t)(size - (uint64_t)(op - first));
-      why = LZ_MALFORMED;
       msg = "incorrect content size";
       content_limit = true;
     }
@@ -776,8 +801,9 @@ static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
     size_t produced;
     if (word & STORED) {
       if (len > limit)
-        return lz_fail(err, why, content_limit ? size_at : (int64_t)at_size,
-                       msg);
+        return lz_fail(err, LZ_MALFORMED,
+                       content_limit ? size_at : (int64_t)at_size, msg);
+      if (len > room) return lz_fail(err, LZ_TOO_LONG, (int64_t)at_size, NULL);
       if (cut) return lz_fail(err, LZ_TRUNCATED, (int64_t)n, NULL);
       if (len >= LZ_WORK_SPAN) tell_ahead(t, src + q, op, 2 * len);
       memcpy(op, src + q, len);
@@ -788,7 +814,8 @@ static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
                         .cut = cut,
                         .lo = flg & FLG_INDEPENDENT ? op : first,
                         .op = op,
-                        .oend = op + limit,
+                        .oend = op + (limit < room ? limit : room),
+                        .fend = op + limit,
                         .told = t};
       switch (block_decode(&b)) {
       case DECODED:
@@ -798,7 +825,9 @@ static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
         return lz_fail(err, LZ_MALFORMED, (int64_t)(q + b.at),
                        b.msg ? b.msg : "block ends inside a sequence");
       case OVERFLOWS:
-        return lz_fail(err, why,
+        return lz_fail(err, LZ_TOO_LONG, (int64_t)(q + b.at), NULL);
+      case PASSES_LIMIT:
+        return lz_fail(err, LZ_MALFORMED,
                        content_limit ? size_at : (int64_t)(q + b.at), msg);
       case MALFORMED:
         return lz_fail(err, LZ_MALFORMED, (int64_t)(q + b.at), b.msg);
