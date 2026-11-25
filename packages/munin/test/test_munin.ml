@@ -2035,7 +2035,7 @@ let select_gen =
         | `Latest -> "latest"
         | `Version n -> "version " ^ string_of_int n
         | `Alias a -> "alias " ^ a))
-    [ `Latest; `Version 1; `Version 2; `Version 3 ]
+    [ `Version 1; `Version 2; `Version 3 ]
 
 (* A store with a file of each content, and a session per domain that publishes.
    Whatever the calls, the store they leave breaks no rule of the format. *)
@@ -2076,10 +2076,12 @@ let select_sys sel (store, _) =
     (fun a -> (Artifact.version a, Artifact.digest a))
     (Store.artifact store "ckpt" sel)
 
-let alias_gen =
+let listing_gen =
   Gen.of_list
-    ~pp:(fun ppf _ -> Format.pp_print_string ppf "alias best")
-    [ `Alias "best" ]
+    ~pp:(fun ppf s ->
+      Format.pp_print_string ppf
+        (match s with `Alias _ -> "alias best" | _ -> "latest"))
+    [ `Latest; `Alias "best" ]
 
 (* [dangling_alias store] is the path of the alias "best" of "x", which names a
    version since deleted. *)
@@ -2131,14 +2133,20 @@ let artifact_tests =
           command "select"
             (select_gen @-> store_w ^-> returns selected)
             select_ref select_sys;
-          command "select alias"
-            (alias_gen @-> store_w ^-> returns selected)
+          (* The latest version reads the numbers, then each version's file, so
+             it can see a version deleted after a later one was published and
+             miss that later one (Store.artifacts): it is read where no write
+             runs beside it. *)
+          command "select latest or alias"
+            ~pre:(fun _ _ -> true)
+            (listing_gen @-> store_w ^-> returns selected)
             select_ref select_sys;
           (* The listing reads the numbers, then each version's file, so it can
              see a version deleted after a later one was published and miss that
              later one (Store.artifacts): it runs where no write runs beside
              it. *)
           command "versions"
+            ~pre:(fun _ -> true)
             (store_w ^-> returns (list int))
             (fun m ->
               List.filter_map
@@ -2531,16 +2539,19 @@ let runs_tests =
           equal (option string) (Some "second") (Run.notes (List.hd listing));
           equal (list string) [ "t" ] (Run.tags (List.hd listing)));
       test
-        "a listing with prev reads again tags changed within the time \
-         resolution" (fun () ->
+        "a listing with prev reads again tags whose time is not a second older \
+         than its read" (fun () ->
           let store = new_store () in
           let s = start ~tags:[ "a" ] store in
           Session.finish s;
           let tags = Filename.concat (Run.dir (reread store s)) "tags" in
-          (* A file system that keeps whole seconds: the directory's time is
-             this second, and another tag leaves its time, size and inode as
-             they were. *)
-          let second = Float.of_int (truncate (Unix.gettimeofday ())) in
+          (* A file system that keeps whole seconds gives a change the time it
+             had, so another tag leaves the directory's time, size and inode as
+             they were. An hour after the log's last write is no older than the
+             listing's read, whatever the machine's load. *)
+          let second =
+            Float.of_int (truncate (Run.updated_at (reread store s))) +. 3600.
+          in
           Unix.utimes tags second second;
           let before = Unix.stat tags in
           let listing = Store.runs store in
@@ -2551,6 +2562,29 @@ let runs_tests =
             (Unix.stat tags).Unix.st_size;
           equal (list string) [ "b" ]
             (Run.tags (List.hd (Store.runs ~prev:listing store))));
+      test "a listing allocates less than 64 KiB a run of small files"
+        (fun () ->
+          (* A buffer of a read chunk for each of a run's small files cost 64
+             KiB apiece. *)
+          let store = new_store () in
+          let runs = 8 in
+          for i = 1 to runs do
+            let s = start ~tags:[ "a"; string_of_int i ] store in
+            Session.log (Session.metric s "loss") ~step:0 1.;
+            Session.finish s;
+            Store.set_notes store (Session.id s) (Some "notes")
+          done;
+          ignore (Store.runs store);
+          let words () =
+            let minor, promoted, major = Gc.counters () in
+            minor +. major -. promoted
+          in
+          let before = words () in
+          let listing = Store.runs store in
+          let per_run = (words () -. before) /. Float.of_int runs in
+          equal ~msg:"every run" int runs (List.length listing);
+          less ~msg:"bytes allocated a run" float_exact ~than:65536.
+            (per_run *. Float.of_int (Sys.word_size / 8)));
       cases "a run whose log cannot be opened or read is left out" ~id:fst
         unreadable_logs (fun (_, unreadable) ->
           let store = new_store () in
@@ -3443,9 +3477,17 @@ let sampling_tests =
           equal ~msg:"one sample per call that gave one" int
             ((n + 1) / 2)
             (Metric.length (History.series (history store s) "k")));
-      test
-        "a reading that raises stops the sampler, and finish raises after the \
-         end" (fun () ->
+      test "a reading that raises stops the sampler" (fun () ->
+          let store = new_store () in
+          let s = start store in
+          let reading, await, calls =
+            counting (fun n -> if n > 1 then raise Exit else [])
+          in
+          Session.sample s ~every:0.001 [ reading ];
+          await 2;
+          (try Session.finish s with Exit -> ());
+          equal ~msg:"calls" int 2 (Atomic.get calls));
+      test "finish raises what stopped a sampler, after the end" (fun () ->
           let store = new_store () in
           let s = start store in
           let reading, await, _ =
@@ -3455,7 +3497,9 @@ let sampling_tests =
           await 2;
           raises Exit (fun () -> Session.finish s);
           equal status `Finished (Run.status (reread store s)));
-      cases "a reading that gives a pair the format refuses stops the sampler"
+      cases
+        "a reading that gives a pair the format refuses stops the sampler with \
+         Invalid_argument"
         ~id:fst
         [
           ("a key that is not a key", [ ("../k", 1.) ]);
@@ -3466,12 +3510,13 @@ let sampling_tests =
           let store = new_store () in
           let s = start store in
           ignore (Session.metric s "m");
-          let reading, await, _ =
+          let reading, await, calls =
             counting (fun n -> if n = 1 then [] else pairs)
           in
           Session.sample s ~every:0.001 [ reading ];
           await 2;
-          raises_match Exn.invalid_arg (fun () -> Session.finish s));
+          raises_match Exn.invalid_arg (fun () -> Session.finish s);
+          equal ~msg:"calls" int 2 (Atomic.get calls));
       cases "sample refuses a period that is not positive and finite"
         ~id:(Printf.sprintf "%g") [ 0.; -1.; Float.nan; Float.infinity ]
         (fun every ->

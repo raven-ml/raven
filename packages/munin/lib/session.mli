@@ -89,10 +89,10 @@ val start :
 
     Raises [Invalid_argument] if one of [tags] is not a tag, [experiment],
     [name] or a param's key is not a text ({!Store_format.section-names}),
-    a param's key repeats, a string value is not UTF-8, or [steps] is not a step. Raises
-    [Failure] if [parent] names no run of [store] or [git diff] fails, and
-    [Sys_error] if the store cannot be written or its file system refuses
-    locks. *)
+    a param's key repeats, a string value is not UTF-8, or [steps] is not a step,
+    and then creates nothing. Raises [Failure] if [parent] names no run of
+    [store] or [git diff] fails, and [Sys_error] if the store cannot be written
+    or its file system refuses locks. *)
 
 val resume : ?provenance:Provenance.t -> Run.t -> step:int -> t
 (** [resume run ~step] is a new session of [run] that continues from
@@ -226,7 +226,7 @@ val sample : t -> every:float -> reading list -> unit
     raises another exception, or gives a key that is not a key, a key
     twice or the key of a metric of [s]'s run, stops the sampler, and so does a
     write that fails. {!finish} raises the first exception that stopped a
-    sampler of [s].
+    sampler of [s], [Invalid_argument] for a pair the format refuses.
 
     Raises [Invalid_argument] if [every] is not positive and finite, and
     what a reading's first call raises, other than [Sys_error]. *)

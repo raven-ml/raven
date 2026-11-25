@@ -41,7 +41,9 @@ val runs : ?prev:Run.t list -> t -> Run.t list
 (** [runs s] is the runs of [s], newest first by start time, then by id, the
     greater first. For each run it reads the first and last records of its log,
     its tags and its notes, and probes the lock of a run without an end
-    ({!Store_format.section-status}). It reads no other part of a log. A
+    ({!Store_format.section-status}). It reads no other part of a log, and
+    allocates for a file what it reads of it, with no buffer of a fixed size, so
+    that a run whose records, tags and notes are short costs a few KiB. A
     directory that is not a readable run of this format is left out, and
     {!check} names it. So is a run whose log cannot be opened or read, such as a
     live run on an SMB mount ({!Store_format.section-network}).
@@ -51,8 +53,8 @@ val runs : ?prev:Run.t list -> t -> Run.t list
     the lock only of those [prev] saw without an end. For every run [prev]
     saw, it stats the run's [tags/] directory and [notes] file and reads
     them again only when their modification time, size or inode differs
-    from what [prev] read, or when the modification time is within a
-    second of [prev]'s read, since a file system that keeps whole seconds
+    from what [prev] read, or when the modification time is not a second
+    older than [prev]'s read, since a file system that keeps whole seconds
     gives a change within that second the time it had. A file system whose
     times are coarser than a second, such as FAT's two seconds, can still
     hide a change, until the next one. A poll of a store that has not changed then
@@ -121,9 +123,11 @@ val delete_run : t -> string -> unit
 (** {1:artifacts Artifacts} *)
 
 val artifacts : ?name:string -> t -> Artifact.t list
-(** [artifacts s] is the versions of [s] not deleted, by name, then by
-    number. With [name], it is the versions of [name] alone, and reads no
-    other name's files. *)
+(** [artifacts s] is the versions of [s] not deleted, by name, then by number.
+    With [name], it is the versions of [name] alone, and reads no other name's
+    files. It takes no lock: it reads the version numbers, then each version's
+    file, so a version published after it read the numbers is missing, and one
+    deleted before it read the file is left out. *)
 
 val artifact :
   t -> string -> [ `Latest | `Version of int | `Alias of string ] ->
@@ -133,8 +137,9 @@ val artifact :
     version the alias names. It is [None] if there is no such version or it was
     deleted. A version file that does not follow
     {!Store_format.section-artifacts} is no version, and {!check} names it.
-    While others publish, delete and alias versions, [`Alias] is the version it
-    selects at some instant during the call. *)
+    [`Latest] reads the numbers, then the files, as {!artifacts} does. While
+    others publish, delete and alias versions, [`Alias] is the version it selects
+    at some instant during the call. *)
 
 val aliases : t -> string -> (string * int) list
 (** [aliases s name] is [name]'s aliases and the numbers of the versions they
