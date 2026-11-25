@@ -3,11 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx on a set whose kernels are nx.cuda's, on GPU 0 through CUDA: every
-   draw of Nx.Rng has the host's bits (Nx_rng_support). A draw is a program
-   of kinds, which nx.cuda computes by nx_kinds.h's functions, and of integer
-   arithmetic, a dirichlet row's sum among it. Every test skips where CUDA
-   opens no GPU. *)
+(* nx on a set whose kernels are nx.cuda's, on GPU 0 through CUDA: every draw of
+   Nx.Rng has the host's bits (Nx_rng_support). A draw is a program of kinds,
+   which nx.cuda computes by nx_kinds.h's functions, and of integer arithmetic,
+   a dirichlet row's sum among it. A case draws a block of 2048 elements whose
+   parameters meet every cover of Nx_rng_support, so two cases a sampler reach
+   them all. Every test skips where CUDA opens no GPU. *)
 
 open Windtrap
 
@@ -18,7 +19,7 @@ let set =
     | b :: _ -> Some (Nx.devices ~kernels:b.kernels [ b.device ]))
 
 let draws s =
-  prop ~count:10
+  prop ~count:2
     (Nx_rng_support.name s ^ " has the host's bits")
     (Nx_rng_support.gen s)
     (fun c ->
