@@ -851,21 +851,6 @@ let rec to_json = function
 
 let find_field fields name = Option.map snd (Jsont.Json.find_mem name fields)
 
-let string_field fields name ~default =
-  match find_field fields name with
-  | Some (Jsont.String (s, _)) -> s
-  | _ -> default
-
-let bool_field fields name ~default =
-  match find_field fields name with
-  | Some (Jsont.Bool (b, _)) -> b
-  | _ -> default
-
-let int_field fields name ~default =
-  match find_field fields name with
-  | Some (Jsont.Number (f, _)) -> int_of_float f
-  | _ -> default
-
 let scheme_of_string = function
   | "first" -> Ok `First
   | "never" -> Ok `Never
@@ -877,35 +862,33 @@ let rec of_json = function
       let ( let* ) = Result.bind in
       match find_field fields "type" with
       | Some (Jsont.String ("BPEDecoder", _)) ->
-          Ok (BPE { suffix = string_field fields "suffix" ~default:"</w>" })
+          let* suffix = Json_text.string fields "suffix" ~default:"</w>" in
+          Ok (BPE { suffix })
       | Some (Jsont.String ("ByteLevel", _)) -> Ok Byte_level
       | Some (Jsont.String ("ByteFallback", _)) -> Ok Byte_fallback
       | Some (Jsont.String ("WordPiece", _)) ->
-          Ok
-            (Word_piece
-               {
-                 prefix = string_field fields "prefix" ~default:"##";
-                 cleanup = bool_field fields "cleanup" ~default:true;
-               })
+          let* prefix = Json_text.string fields "prefix" ~default:"##" in
+          let* cleanup = Json_text.bool fields "cleanup" ~default:true in
+          Ok (Word_piece { prefix; cleanup })
       | Some (Jsont.String ("Metaspace", _)) ->
-          let* prepend_scheme =
-            scheme_of_string
-              (string_field fields "prepend_scheme" ~default:"always")
+          let* scheme =
+            Json_text.string fields "prepend_scheme" ~default:"always"
           in
-          let replacement =
-            string_field fields "replacement" ~default:"\xe2\x96\x81"
+          let* prepend_scheme = scheme_of_string scheme in
+          let* replacement =
+            Json_text.string fields "replacement" ~default:"\xe2\x96\x81"
           in
           if not (is_one_character replacement) then Error err_metaspace
           else Ok (Metaspace { replacement; prepend_scheme })
       | Some (Jsont.String ("CTC", _)) ->
-          Ok
-            (CTC
-               {
-                 pad_token = string_field fields "pad_token" ~default:"<pad>";
-                 word_delimiter_token =
-                   string_field fields "word_delimiter_token" ~default:"|";
-                 cleanup = bool_field fields "cleanup" ~default:true;
-               })
+          let* pad_token =
+            Json_text.string fields "pad_token" ~default:"<pad>"
+          in
+          let* word_delimiter_token =
+            Json_text.string fields "word_delimiter_token" ~default:"|"
+          in
+          let* cleanup = Json_text.bool fields "cleanup" ~default:true in
+          Ok (CTC { pad_token; word_delimiter_token; cleanup })
       | Some (Jsont.String ("Replace", _)) ->
           let* pattern =
             match find_field fields "pattern" with
@@ -921,20 +904,13 @@ let rec of_json = function
                     else Error err_replace_missing_pattern)
             | _ -> Error err_replace_missing_pattern
           in
-          Ok
-            (Replace
-               {
-                 pattern;
-                 replacement = string_field fields "content" ~default:"";
-               })
+          let* replacement = Json_text.string fields "content" in
+          Ok (Replace { pattern; replacement })
       | Some (Jsont.String ("Strip", _)) ->
-          Ok
-            (Strip
-               {
-                 content = string_field fields "content" ~default:" ";
-                 start = int_field fields "start" ~default:0;
-                 stop = int_field fields "stop" ~default:0;
-               })
+          let* content = Json_text.string fields "content" ~default:" " in
+          let* start = Json_text.int fields "start" ~default:0 in
+          let* stop = Json_text.int fields "stop" ~default:0 in
+          Ok (Strip { content; start; stop })
       | Some (Jsont.String ("Fuse", _)) -> Ok Fuse
       | Some (Jsont.String ("Sequence", _)) -> (
           match find_field fields "decoders" with

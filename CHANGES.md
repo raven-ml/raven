@@ -5573,6 +5573,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `of_json`, `from_file` and `from_model_file` reject a member of the wrong
+  type, or an id or count that is no integer from 0 to 2^31 - 1, naming it:
+  `"lowercase":"false"` lowercased and `{"a":1.5}` gave `a` the id 1.
+- A `FixedLength` pre-tokenizer without `length` has length 5, as in Hugging
+  Face, and a `BertProcessing` or `RobertaProcessing` needs `sep` and `cls`.
 - Scripts (`Pre_tokenizer.unicode_scripts`, `\p{..}`) and grapheme clusters
   (`Normalizer.precompiled`) are Unicode 18.0.0's, as are brot's other character
   properties; text with characters new in 18.0.0 splits unlike in Hugging Face.

@@ -445,7 +445,7 @@ module Normalizer : sig
       if [json] is not an object, has a missing or unknown ["type"] field, or
       has invalid parameters. A missing member takes the default of its
       constructor; a member without one, such as [Prepend]'s ["prepend"], is
-      required. *)
+      required. A member of the wrong type is an error naming it. *)
 end
 
 module Pre_tokenizer : sig
@@ -673,7 +673,9 @@ module Pre_tokenizer : sig
       ([{"Regex": ...}]) uses a construct {!split_regex} does not support.
 
       A field it lacks takes its constructor's default, except a ["Metaspace"]'s
-      ["replacement"], which it requires. *)
+      ["replacement"], which it requires, and a ["FixedLength"] without
+      ["length"] has length [5]. A field of the wrong type, or a length that is
+      not an integer, is an error naming it. *)
 end
 
 module Post_processor : sig
@@ -782,7 +784,11 @@ module Post_processor : sig
 
       A missing ["trim_offsets"] or ["add_prefix_space"] is [true], a missing
       ["single"] is ["$A"], and a missing or [null] ["pair"] is ["$A:0 $B:1"]. A
-      template may also be a string in {!template}'s syntax. *)
+      template may also be a string in {!template}'s syntax. ["sep"] and ["cls"]
+      are required, and a member of the wrong type, or an id or type id that is
+      not an integer from [0] to 2{^ 31}[ - 1], is an error naming it. A
+      ["RobertaProcessing"] without its flags reads as {!roberta} with both
+      [true]; HuggingFace reads it as a ["BertProcessing"]. *)
 
   val to_json : t -> Jsont.json
   (** [to_json t] is [t] serialized to HuggingFace [tokenizer.json] format. *)
@@ -926,9 +932,10 @@ module Decoder : sig
   val of_json : Jsont.json -> (t, string) result
   (** [of_json json] is a decoder from HuggingFace JSON format. Errors if [json]
       is not an object, has a missing or unknown ["type"] field, or has invalid
-      parameters. A missing member takes the default of its constructor, and a
-      [Replace] without ["content"] replaces with [""]; a [Replace] without
-      ["pattern"] is an error. *)
+      parameters. A missing member takes the default of its constructor; a
+      [Replace] without ["pattern"] or ["content"] is an error, as is a member
+      of the wrong type or a count that is not an integer from [0] to
+      2{^ 31}[ - 1]. *)
 end
 
 (** {1:types Types} *)
@@ -1870,7 +1877,8 @@ val of_json : Jsont.json -> (t, string) result
     [max_input_chars_per_word] a WordPiece, and [vocab] alone a WordLevel. This
     differs from tokenizers, which reads a WordPiece only when both of those
     members are present, and refuses a WordPiece or WordLevel without
-    [unk_token].
+    [unk_token]. A member of the wrong type, or an id or count that is not an
+    integer from [0] to 2{^ 31}[ - 1], is an error naming it.
 
     The [truncation] and [padding] members are not read, by [of_json] or
     {!from_file}. {!encode} takes both as arguments, so a file that sets them

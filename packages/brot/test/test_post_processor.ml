@@ -534,6 +534,45 @@ let not_post_processors =
 let read text = Post_processor.of_json (json_of_text text)
 let written t = json_text (Post_processor.to_json t)
 
+(* Members a reader cannot take, each with the member its error names. Hugging
+   Face 0.23.1 rejects every row but the RobertaProcessing ones, which its
+   untagged enum reads as a BertProcessing; brot names the member instead.
+   BertProcessing's and RobertaProcessing's sep and cls have no default. *)
+let ill_typed =
+  [
+    ("BertProcessing without sep or cls", {|{"type":"BertProcessing"}|}, "sep");
+    ( "a sep that is a string",
+      {|{"type":"BertProcessing","sep":"x","cls":["[CLS]",101]}|},
+      "sep" );
+    ( "a cls that is a number",
+      {|{"type":"BertProcessing","sep":["[SEP]",102],"cls":3}|},
+      "cls" );
+    ( "a fractional sep id",
+      {|{"type":"BertProcessing","sep":["[SEP]",1.5],"cls":["[CLS]",101]}|},
+      "sep" );
+    ( "a sep id past 2^31",
+      {|{"type":"BertProcessing","sep":["[SEP]",2147483648],"cls":["[CLS]",101]}|},
+      "sep" );
+    ( "RobertaProcessing without cls",
+      {|{"type":"RobertaProcessing","sep":["</s>",2]}|},
+      "cls" );
+    ( "a RobertaProcessing flag that is a string",
+      {|{"type":"RobertaProcessing","sep":["</s>",2],"cls":["<s>",0],"trim_offsets":"no"}|},
+      "trim_offsets" );
+    ( "a ByteLevel flag that is a string",
+      {|{"type":"ByteLevel","trim_offsets":"no"}|},
+      "trim_offsets" );
+    ( "a fractional type_id",
+      {|{"type":"TemplateProcessing","single":[{"Sequence":{"id":"A","type_id":1.5}}],"special_tokens":{}}|},
+      "type_id" );
+    ( "a fractional special token id",
+      {|{"type":"TemplateProcessing","single":"[X] $A","special_tokens":{"[X]":{"id":"[X]","ids":[1.5],"tokens":["[X]"]}}}|},
+      "ids" );
+  ]
+
+let names_the_member (_, text, member) =
+  contains ~sub:member (require_error ~pp:Post_processor.pp (read text))
+
 (* A post-processor, compared by the JSON it writes. *)
 let by_json =
   Testable.make ~pp:Post_processor.pp ~equal:(fun a b -> written a = written b)
@@ -742,6 +781,9 @@ let () =
              cases "is an error for what is not a post-processor" ~id:fst
                not_post_processors (fun (_, text) ->
                  is_error ~pp:Post_processor.pp (read text));
+             cases "is an error naming a member it cannot read"
+               ~id:(fun (name, _, _) -> name)
+               ill_typed names_the_member;
              cases "reads back what to_json writes"
                ~id:(fun (name, _, _) -> name)
                post_processors

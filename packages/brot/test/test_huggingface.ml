@@ -414,6 +414,22 @@ let test_invalid_parameters =
       );
       ( "an unk_id past the vocabulary",
         {|{"model":{"type":"Unigram","vocab":[["a",-1.0]],"unk_id":3}}|} );
+      ( "an id of 1.5",
+        {|{"model":{"type":"BPE","vocab":{"a":1.5},"merges":[]}}|} );
+      ( "an id of 1e300",
+        {|{"model":{"type":"BPE","vocab":{"a":1e300},"merges":[]}}|} );
+      ( "an added token id of 5.5",
+        {|{"added_tokens":[{"id":5.5,"content":"x"}],"model":{"type":"BPE","vocab":{"a":0},"merges":[]}}|}
+      );
+      ( "an added token id of -5",
+        {|{"added_tokens":[{"id":-5,"content":"x"}],"model":{"type":"BPE","vocab":{"a":0},"merges":[]}}|}
+      );
+      ( "an added token id that is a string",
+        {|{"added_tokens":[{"id":"5","content":"x"}],"model":{"type":"BPE","vocab":{"a":0},"merges":[]}}|}
+      );
+      ( "a max_input_chars_per_word of 2.5",
+        {|{"model":{"type":"WordPiece","vocab":{"[UNK]":0,"a":1},"max_input_chars_per_word":2.5}}|}
+      );
     ]
     (fun (_, text) -> is_error ~pp:Brot.pp (of_json (json_of_text text)))
 

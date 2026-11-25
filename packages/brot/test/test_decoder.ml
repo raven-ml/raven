@@ -615,11 +615,6 @@ let of_json_tests =
       ]
       (fun (text, default) ->
         equal string (write_decoder default) (write_decoder (read_decoder text)));
-    test "reads a Replace without content as replacing with nothing" (fun () ->
-        equal string
-          (write_decoder (Decoder.replace ~pattern:"a" ~by:"" ()))
-          (write_decoder
-             (read_decoder {|{"type":"Replace","pattern":{"String":"a"}}|})));
     cases ~id:Fun.id
       "errors on a Metaspace whose replacement is not one character"
       [
@@ -628,7 +623,24 @@ let of_json_tests =
       ] (fun text ->
         is_error ~pp:Decoder.pp (Decoder.of_json (json_of_text text)));
     cases ~id:Fun.id "errors on a missing member its constructor requires"
-      [ {|{"type":"Replace","content":"b"}|} ] (fun text ->
+      [
+        {|{"type":"Replace","content":"b"}|};
+        {|{"type":"Replace","pattern":{"String":"a"}}|};
+      ] (fun text ->
+        is_error ~pp:Decoder.pp (Decoder.of_json (json_of_text text)));
+    (* Hugging Face 0.23.1 rejects each row, and reads it with the member under
+       test given a value of its type. *)
+    cases ~id:Fun.id "errors on a member of the wrong type or out of range"
+      [
+        {|{"type":"WordPiece","prefix":"##","cleanup":"false"}|};
+        {|{"type":"WordPiece","prefix":3,"cleanup":true}|};
+        {|{"type":"BPEDecoder","suffix":1}|};
+        {|{"type":"CTC","pad_token":false,"word_delimiter_token":"|","cleanup":true}|};
+        {|{"type":"Metaspace","replacement":1,"prepend_scheme":"always","split":true}|};
+        {|{"type":"Strip","content":" ","start":-1,"stop":0}|};
+        {|{"type":"Strip","content":" ","start":1.5,"stop":0}|};
+        {|{"type":"Strip","content":" ","start":1e30,"stop":0}|};
+      ] (fun text ->
         is_error ~pp:Decoder.pp (Decoder.of_json (json_of_text text)));
   ]
 

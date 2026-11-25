@@ -866,7 +866,12 @@ let test_malformed () =
   raises_match ~msg:"vocab.json" Exn.failure (fun () ->
       from_model_file ~vocab:(file "[1, 2]") ~merges:(file "") ());
   raises_match ~msg:"a merge line" Exn.failure (fun () ->
-      from_model_file ~vocab:(file {|{"a": 0}|}) ~merges:(file "a\n") ())
+      from_model_file ~vocab:(file {|{"a": 0}|}) ~merges:(file "a\n") ());
+  (* Hugging Face's BPE.from_file refuses both. *)
+  raises_match ~msg:"a fractional id" Exn.failure (fun () ->
+      from_model_file ~vocab:(file {|{"a": 1.5}|}) ~merges:(file "") ());
+  raises_match ~msg:"an id past 2^31" Exn.failure (fun () ->
+      from_model_file ~vocab:(file {|{"c": 1e300}|}) ~merges:(file "") ())
 
 let () =
   exit

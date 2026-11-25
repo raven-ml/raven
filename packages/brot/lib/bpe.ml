@@ -1737,9 +1737,9 @@ let read_files ~vocab_file ~merges_file =
   | Jsont.Object (mems, _) ->
       List.iter
         (fun ((k, _), v) ->
-          match v with
-          | Jsont.Number (f, _) -> Hashtbl.replace vocab k (int_of_float f)
-          | _ -> failwith "Invalid vocab format")
+          match Json_text.int_of k v with
+          | Ok id -> Hashtbl.replace vocab k id
+          | Error msg -> failwith msg)
         mems
   | _ -> failwith "Invalid vocab.json format");
   let merges =

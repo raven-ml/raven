@@ -10,7 +10,6 @@ let err_unknown_special tok = strf "unknown special token '%s'" tok
 let err_mismatch tok = strf "ids and tokens differ in length for '%s'" tok
 let err_expected what v = strf "expected %s, got %s" what v
 let err_seq_id = "sequence id must be \"A\", \"B\", 0 or 1"
-let err_type_id_field = "expected number for 'type_id'"
 let err_missing_sequence = "template references a sequence not provided"
 let err_pair_must_ref_both = "pair template must reference both $A and $B"
 let err_template_def = "expected string, array or null for template"
@@ -84,16 +83,16 @@ let json_find name fields =
   | Some (_, v) -> Some v
   | None -> None
 
-let json_bool_field fields name ~default =
-  match json_find name fields with
-  | Some (Jsont.Bool (b, _)) -> b
-  | _ -> default
+(* The readers here raise; [of_json] turns what they raise into an [Error]. *)
+let ok = function Ok v -> v | Error msg -> failwith msg
 
-let json_str_int_pair fields name ~default =
+(* A special token as ["[SEP]", 102], which has no default. *)
+let json_token fields name =
   match json_find name fields with
-  | Some (Jsont.Array ([ Jsont.String (s, _); Jsont.Number (f, _) ], _)) ->
-      (s, int_of_float f)
-  | _ -> default
+  | Some (Jsont.Array ([ Jsont.String (s, _); id ], _)) ->
+      (s, ok (Json_text.int_of name id))
+  | Some _ -> failwith (strf "member '%s': expected [token, id]" name)
+  | None -> failwith (strf "missing member '%s'" name)
 
 (* Processors *)
 
@@ -276,19 +275,15 @@ let parse_sequence_id_json fields =
       | "a" -> Sequence_a
       | "b" -> Sequence_b
       | _ -> invalid_arg err_seq_id)
-  | Some (Jsont.Number (v, _)) -> (
-      match int_of_float v with
+  | Some (Jsont.Number _ as v) -> (
+      match ok (Json_text.int_of "id" v) with
       | 0 -> Sequence_a
       | 1 -> Sequence_b
       | _ -> invalid_arg err_seq_id)
   | None -> Sequence_a
   | _ -> invalid_arg err_seq_id
 
-let json_type_id fields =
-  match json_find "type_id" fields with
-  | Some (Jsont.Number (v, _)) -> int_of_float v
-  | None -> 0
-  | _ -> invalid_arg err_type_id_field
+let json_type_id fields = ok (Json_text.int fields "type_id" ~default:0)
 
 let parse_template_piece_from_json ~special_lookup json =
   match json with
@@ -631,13 +626,7 @@ let parse_special_token_json fields alias =
   let value_ids =
     match json_find "ids" fields with
     | Some (Jsont.Array (lst, _)) ->
-        List.map
-          (function
-            | Jsont.Number (f, _) -> int_of_float f
-            | v ->
-                invalid_arg
-                  (err_expected "number" (Format.asprintf "%a" Jsont.pp_json v)))
-          lst
+        List.map (fun id -> ok (Json_text.int_of "ids" id)) lst
     | _ -> invalid_arg err_special_missing_ids
   in
   let value_tokens =
@@ -677,25 +666,25 @@ let rec of_json_exn json =
   | Jsont.Object (fields, _) -> (
       match json_find "type" fields with
       | Some (Jsont.String ("BertProcessing", _)) ->
-          let sep = json_str_int_pair fields "sep" ~default:("[SEP]", 102) in
-          let cls = json_str_int_pair fields "cls" ~default:("[CLS]", 101) in
+          let sep = json_token fields "sep" in
+          let cls = json_token fields "cls" in
           Bert { sep; cls }
       | Some (Jsont.String ("RobertaProcessing", _)) ->
-          let sep = json_str_int_pair fields "sep" ~default:("</s>", 2) in
-          let cls = json_str_int_pair fields "cls" ~default:("<s>", 0) in
+          let sep = json_token fields "sep" in
+          let cls = json_token fields "cls" in
           let trim_offsets =
-            json_bool_field fields "trim_offsets" ~default:true
+            ok (Json_text.bool fields "trim_offsets" ~default:true)
           in
           let add_prefix_space =
-            json_bool_field fields "add_prefix_space" ~default:true
+            ok (Json_text.bool fields "add_prefix_space" ~default:true)
           in
           Roberta { sep; cls; trim_offsets; add_prefix_space }
       | Some (Jsont.String ("ByteLevel", _)) ->
           let add_prefix_space =
-            json_bool_field fields "add_prefix_space" ~default:true
+            ok (Json_text.bool fields "add_prefix_space" ~default:true)
           in
           let trim_offsets =
-            json_bool_field fields "trim_offsets" ~default:true
+            ok (Json_text.bool fields "trim_offsets" ~default:true)
           in
           ByteLevel { add_prefix_space; trim_offsets }
       | Some (Jsont.String ("TemplateProcessing", _)) ->

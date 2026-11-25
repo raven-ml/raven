@@ -1988,6 +1988,18 @@ let of_json_tests =
         {|{"type":"Precompiled","precompiled_charsmap":""}|};
       ] (fun text ->
         is_error ~pp:Normalizer.pp (Normalizer.of_json (json_of_text text)));
+    (* Hugging Face 0.23.1 rejects each row, and reads it with the member under
+       test given a value of its type. *)
+    cases ~id:Fun.id "errors on a member of the wrong type"
+      [
+        {|{"type":"BertNormalizer","clean_text":true,"handle_chinese_chars":true,"strip_accents":null,"lowercase":"false"}|};
+        {|{"type":"BertNormalizer","clean_text":true,"handle_chinese_chars":true,"strip_accents":null,"lowercase":3}|};
+        {|{"type":"BertNormalizer","clean_text":null,"handle_chinese_chars":true,"strip_accents":null,"lowercase":true}|};
+        {|{"type":"BertNormalizer","clean_text":true,"handle_chinese_chars":true,"strip_accents":"no","lowercase":true}|};
+        {|{"type":"Strip","strip_left":"x","strip_right":true}|};
+        {|{"type":"Strip","strip_left":true,"strip_right":1}|};
+      ] (fun text ->
+        is_error ~pp:Normalizer.pp (Normalizer.of_json (json_of_text text)));
   ]
 
 let () =

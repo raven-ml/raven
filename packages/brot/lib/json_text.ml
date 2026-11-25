@@ -126,3 +126,48 @@ let to_string j =
   let b = Buffer.create 4096 in
   add b j;
   Buffer.contents b
+
+(* Members *)
+
+let err_type name expected =
+  Printf.sprintf "member '%s': expected %s" name expected
+
+let err_missing name = Printf.sprintf "missing member '%s'" name
+let id_limit = 0x8000_0000
+
+let find mems name =
+  match Jsont.Json.find_mem name mems with
+  | Some (_, v) -> Some v
+  | None -> None
+
+let int_of name = function
+  | Jsont.Number (x, _)
+    when Float.is_integer x && x >= 0. && x < Float.of_int id_limit ->
+      Ok (Float.to_int x)
+  | _ -> Error (err_type name "an integer from 0 to 2^31 - 1")
+
+let bool_of name = function
+  | Jsont.Bool (b, _) -> Ok b
+  | _ -> Error (err_type name "a boolean")
+
+let string_of name = function
+  | Jsont.String (s, _) -> Ok s
+  | _ -> Error (err_type name "a string")
+
+let required read ?default mems name =
+  match (find mems name, default) with
+  | Some v, _ -> read name v
+  | None, Some d -> Ok d
+  | None, None -> Error (err_missing name)
+
+let optional read mems name =
+  match find mems name with
+  | None | Some (Jsont.Null _) -> Ok None
+  | Some v -> Result.map Option.some (read name v)
+
+let bool ?default mems name = required bool_of ?default mems name
+let int ?default mems name = required int_of ?default mems name
+let string ?default mems name = required string_of ?default mems name
+let bool_option mems name = optional bool_of mems name
+let int_option mems name = optional int_of mems name
+let string_option mems name = optional string_of mems name

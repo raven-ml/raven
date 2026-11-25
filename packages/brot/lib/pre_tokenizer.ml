@@ -65,7 +65,7 @@ type plan =
 (* Errors *)
 
 let strf = Printf.sprintf
-let err_unknown_behavior s = strf "unknown punctuation behavior '%s'" s
+let err_unknown_behavior s = strf "unknown behavior '%s'" s
 let err_unknown_scheme s = strf "unknown prepend_scheme '%s'" s
 let err_unsupported_type s = strf "unsupported pre-tokenizer type '%s'" s
 let err_missing_type = "missing 'type' field"
@@ -1875,24 +1875,6 @@ let rec to_json = function
 
 let find_field name fields = Option.map snd (Jsont.Json.find_mem name fields)
 
-let bool_field name default fields =
-  match find_field name fields with
-  | Some (Jsont.Bool (b, _)) -> b
-  | Some (Jsont.Number (f, _)) -> int_of_float f <> 0
-  | Some (Jsont.String (s, _)) -> (
-      match String.lowercase_ascii s with
-      | "true" | "1" -> true
-      | "false" | "0" -> false
-      | _ -> default)
-  | _ -> default
-
-let int_field name default fields =
-  match find_field name fields with
-  | Some (Jsont.Number (f, _)) -> int_of_float f
-  | Some (Jsont.String (s, _)) -> (
-      match int_of_string_opt s with Some v -> v | None -> default)
-  | _ -> default
-
 (* HuggingFace tags a split pattern with the way it is to be matched. *)
 let split_pattern_of_json = function
   | Jsont.Object (fields, _) -> (
@@ -1911,11 +1893,16 @@ let scheme_field fields =
 
 let rec of_json = function
   | Jsont.Object (fields, _) -> (
+      let ( let* ) = Result.bind in
       match find_field "type" fields with
       | Some (Jsont.String ("ByteLevel", _)) ->
-          let add_prefix_space = bool_field "add_prefix_space" true fields in
-          let use_regex = bool_field "use_regex" true fields in
-          let trim_offsets = bool_field "trim_offsets" true fields in
+          let* add_prefix_space =
+            Json_text.bool fields "add_prefix_space" ~default:true
+          in
+          let* use_regex = Json_text.bool fields "use_regex" ~default:true in
+          let* trim_offsets =
+            Json_text.bool fields "trim_offsets" ~default:true
+          in
           Ok (Byte_level { add_prefix_space; use_regex; trim_offsets })
       | Some (Jsont.String ("BertPreTokenizer", _)) -> Ok Bert
       | Some (Jsont.String ("Whitespace", _)) -> Ok Whitespace
@@ -1930,13 +1917,11 @@ let rec of_json = function
           | Some _ -> Error err_missing_behavior)
       | Some (Jsont.String ("Split", _)) -> (
           match (find_field "pattern" fields, find_field "behavior" fields) with
-          | Some pattern, Some (Jsont.String (behavior_str, _)) ->
-              Result.bind (split_pattern_of_json pattern) (fun pattern ->
-                  Result.map
-                    (fun behavior ->
-                      let invert = bool_field "invert" false fields in
-                      Split { pattern; behavior; invert })
-                    (behavior_of_string behavior_str))
+          | Some pattern, Some (Jsont.String (behavior, _)) ->
+              let* pattern = split_pattern_of_json pattern in
+              let* behavior = behavior_of_string behavior in
+              let* invert = Json_text.bool fields "invert" ~default:false in
+              Ok (Split { pattern; behavior; invert })
           | _ -> Error err_split_missing)
       | Some (Jsont.String ("CharDelimiterSplit", _)) -> (
           match find_field "delimiter" fields with
@@ -1945,16 +1930,17 @@ let rec of_json = function
               Ok (Char_delimiter delimiter)
           | _ -> Error err_char_delim_missing)
       | Some (Jsont.String ("Digits", _)) ->
-          let individual = bool_field "individual_digits" false fields in
+          let* individual =
+            Json_text.bool fields "individual_digits" ~default:false
+          in
           Ok (Digits { individual })
       | Some (Jsont.String ("Metaspace", _)) -> (
           match find_field "replacement" fields with
-          | Some (Jsont.String (repl, _)) when is_one_character repl ->
-              Result.map
-                (fun prepend_scheme ->
-                  let split = bool_field "split" true fields in
-                  Metaspace { replacement = repl; prepend_scheme; split })
-                (scheme_field fields)
+          | Some (Jsont.String (replacement, _))
+            when is_one_character replacement ->
+              let* prepend_scheme = scheme_field fields in
+              let* split = Json_text.bool fields "split" ~default:true in
+              Ok (Metaspace { replacement; prepend_scheme; split })
           | _ -> Error err_metaspace_missing)
       | Some (Jsont.String ("Sequence", _)) -> (
           match find_field "pretokenizers" fields with
@@ -1969,8 +1955,8 @@ let rec of_json = function
               build [] elements
           | _ -> Error err_sequence_missing)
       | Some (Jsont.String ("FixedLength", _)) ->
-          let length = int_field "length" 0 fields in
-          if length <= 0 then Error err_fixed_length
+          let* length = Json_text.int fields "length" ~default:5 in
+          if length < 1 then Error err_fixed_length
           else Ok (Fixed_length { length })
       | Some (Jsont.String ("UnicodeScripts", _)) -> Ok Unicode_scripts
       | Some (Jsont.String (other, _)) -> Error (err_unsupported_type other)

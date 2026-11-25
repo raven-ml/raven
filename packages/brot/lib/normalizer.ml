@@ -9,10 +9,7 @@ let err_expected_object = "expected JSON object"
 let err_missing_type = "missing type field"
 let err_replace_invalid_pattern = "invalid pattern"
 let err_replace_missing_pattern = "missing pattern"
-let err_replace_missing_content = "missing content"
-let err_prepend_missing = "missing prepend field"
 let err_sequence_missing = "missing normalizers"
-let err_charsmap_missing = "missing precompiled_charsmap"
 let err_charsmap_base64 = "precompiled_charsmap is not base64"
 let strf = Printf.sprintf
 
@@ -1984,34 +1981,24 @@ let rec to_json = function
 
 let rec of_json = function
   | Jsont.Object (fields, _) -> (
+      let ( let* ) = Result.bind in
       let find name = Option.map snd (Jsont.Json.find_mem name fields) in
-      let get_bool name default =
-        match find name with Some (Jsont.Bool (b, _)) -> b | _ -> default
-      in
       match find "type" with
       | Some (Jsont.String (("Bert" | "BertNormalizer"), _)) ->
-          let strip_accents =
-            match find "strip_accents" with
-            | Some (Jsont.Bool (b, _)) -> Some b
-            | _ -> None
+          let* clean_text = Json_text.bool fields "clean_text" ~default:true in
+          let* handle_chinese_chars =
+            Json_text.bool fields "handle_chinese_chars" ~default:true
           in
+          let* strip_accents = Json_text.bool_option fields "strip_accents" in
+          let* lowercase = Json_text.bool fields "lowercase" ~default:true in
           Ok
-            (Bert
-               {
-                 clean_text = get_bool "clean_text" true;
-                 handle_chinese_chars = get_bool "handle_chinese_chars" true;
-                 strip_accents;
-                 lowercase = get_bool "lowercase" true;
-               })
+            (Bert { clean_text; handle_chinese_chars; strip_accents; lowercase })
       | Some (Jsont.String ("Strip", _)) ->
           (* HuggingFace requires both members; brot falls back on the defaults
              of {!val-strip} rather than rejecting the file. *)
-          Ok
-            (Strip
-               {
-                 left = get_bool "strip_left" true;
-                 right = get_bool "strip_right" true;
-               })
+          let* left = Json_text.bool fields "strip_left" ~default:true in
+          let* right = Json_text.bool fields "strip_right" ~default:true in
+          Ok (Strip { left; right })
       | Some (Jsont.String ("StripAccents", _)) -> Ok Strip_accents
       | Some (Jsont.String ("NFC", _)) -> Ok NFC
       | Some (Jsont.String ("NFD", _)) -> Ok NFD
@@ -2035,33 +2022,24 @@ let rec of_json = function
                 | _ -> Error err_replace_invalid_pattern)
             | _ -> Error err_replace_missing_pattern
           in
-          let replacement =
-            match find "content" with
-            | Some (Jsont.String (r, _)) -> Ok r
-            | _ -> Error err_replace_missing_content
-          in
-          Result.bind pattern (fun pattern ->
-              Result.map
-                (fun replacement -> Replace { pattern; replacement })
-                replacement)
-      | Some (Jsont.String ("Prepend", _)) -> (
-          match find "prepend" with
-          | Some (Jsont.String (p, _)) -> Ok (Prepend p)
-          | _ -> Error err_prepend_missing)
+          let* pattern = pattern in
+          let* replacement = Json_text.string fields "content" in
+          Ok (Replace { pattern; replacement })
+      | Some (Jsont.String ("Prepend", _)) ->
+          let* prepend = Json_text.string fields "prepend" in
+          Ok (Prepend prepend)
       | Some (Jsont.String ("ByteLevel", _)) -> Ok Byte_level
       | Some (Jsont.String ("Nmt", _)) -> Ok Nmt
       | Some (Jsont.String ("Precompiled", _)) -> (
-          match find "precompiled_charsmap" with
-          | Some (Jsont.String (b64, _)) -> (
-              match base64_decode b64 with
-              | None -> Error err_charsmap_base64
-              | Some blob ->
-                  Result.map
-                    (fun m -> Precompiled m)
-                    (Result.map_error
-                       (strf "invalid precompiled_charsmap: %s")
-                       (charsmap_of_blob blob)))
-          | _ -> Error err_charsmap_missing)
+          let* b64 = Json_text.string fields "precompiled_charsmap" in
+          match base64_decode b64 with
+          | None -> Error err_charsmap_base64
+          | Some blob ->
+              Result.map
+                (fun m -> Precompiled m)
+                (Result.map_error
+                   (strf "invalid precompiled_charsmap: %s")
+                   (charsmap_of_blob blob)))
       | Some (Jsont.String ("Sequence", _)) -> (
           match find "normalizers" with
           | Some (Jsont.Array (l, _)) ->

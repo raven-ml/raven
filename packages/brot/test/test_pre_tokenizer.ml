@@ -1860,6 +1860,7 @@ let default_rows =
       Pre.split ~pattern:"-" ~behavior:`Isolated () );
     ({|{"type":"Digits"}|}, Pre.digits ());
     ({|{"type":"ByteLevel"}|}, Pre.byte_level ());
+    ({|{"type":"FixedLength"}|}, Pre.fixed_length 5);
   ]
 
 let takes_defaults (text, expected) =
@@ -1890,6 +1891,19 @@ let error_rows =
     ("a Sequence without members", {|{"type":"Sequence"}|});
     ( "a Sequence with an unknown member",
       {|{"type":"Sequence","pretokenizers":[{"type":"Bogus"}]}|} );
+    ( "a ByteLevel whose add_prefix_space is 1",
+      {|{"type":"ByteLevel","add_prefix_space":1}|} );
+    ( "a ByteLevel whose add_prefix_space is \"false\"",
+      {|{"type":"ByteLevel","add_prefix_space":"false"}|} );
+    ( "a Digits whose individual_digits is \"yes\"",
+      {|{"type":"Digits","individual_digits":"yes"}|} );
+    ( "a Split whose invert is \"x\"",
+      {|{"type":"Split","pattern":{"String":","},"behavior":"Removed","invert":"x"}|}
+    );
+    ("a FixedLength of length 2.7", {|{"type":"FixedLength","length":2.7}|});
+    ("a FixedLength of length \"3\"", {|{"type":"FixedLength","length":"3"}|});
+    ( "a Metaspace whose split is 0",
+      {|{"type":"Metaspace","replacement":"_","split":0}|} );
   ]
 
 let () =
@@ -2264,5 +2278,13 @@ let () =
                "errors on what is not an object, lacks or names no known type, \
                 or has invalid parameters"
                error_rows (fun (_, text) -> is_error (Pre.of_json (parse text)));
+             test "names a Split's unknown behavior in its error" (fun () ->
+                 let e =
+                   require_error
+                     (Pre.of_json
+                        (parse
+                           {|{"type":"Split","pattern":{"String":","},"behavior":"Bogus","invert":false}|}))
+                 in
+                 contains ~sub:"unknown behavior 'Bogus'" e);
            ];
        ])

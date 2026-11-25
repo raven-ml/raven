@@ -2056,21 +2056,24 @@ let json_mem name = function
 let json_string_or_null = function Jsont.String (s, _) -> Some s | _ -> None
 let json_option_of f = function None -> Jsont.Json.null () | Some v -> f v
 
+(* The JSON readers raise; [of_json_in] turns what they raise into an
+   [Error]. *)
+let ok = function Ok v -> v | Error msg -> failwith msg
+let json_members = function Jsont.Object (mems, _) -> mems | _ -> []
+
 let added_token_of_json json =
-  let mem name = json_mem name json in
-  let bool_or default = function Jsont.Bool (b, _) -> b | _ -> default in
-  let to_str = function
-    | Jsont.String (s, _) -> s
-    | _ -> failwith "expected string"
-  in
-  let special = bool_or true (mem "special") in
+  let mems = json_members json in
+  let bool name ~default = ok (Json_text.bool mems name ~default) in
+  (* The id is reassigned, but one tokenizers could not read is an error. *)
+  let (_ : int option) = ok (Json_text.int_option mems "id") in
+  let special = bool "special" ~default:true in
   {
-    content = to_str (mem "content");
+    content = ok (Json_text.string mems "content");
     special;
-    single_word = bool_or false (mem "single_word");
-    lstrip = bool_or false (mem "lstrip");
-    rstrip = bool_or false (mem "rstrip");
-    normalized = bool_or (not special) (mem "normalized");
+    single_word = bool "single_word" ~default:false;
+    lstrip = bool "lstrip" ~default:false;
+    rstrip = bool "rstrip" ~default:false;
+    normalized = bool "normalized" ~default:(not special);
   }
 
 let added_token_to_json (tok : Added_tokens.token) =
@@ -2170,12 +2173,7 @@ let to_json (t : t) =
 
 let json_to_assoc = function
   | Jsont.Object (mems, _) ->
-      List.map
-        (fun ((k, _), v) ->
-          match v with
-          | Jsont.Number (f, _) -> (k, int_of_float f)
-          | _ -> failwith ("Expected number for vocab entry: " ^ k))
-        mems
+      List.map (fun ((k, _), v) -> (k, ok (Json_text.int_of k v))) mems
   | _ -> failwith "Expected object for vocab"
 
 let json_to_list = function
@@ -2233,8 +2231,9 @@ let parse_merge = function
 
 let alg_of_json ?text ~byte_level ~spaces mj =
   let mem name = json_mem name mj in
-  let str name = json_string_or_null (mem name) in
-  let flag name = match mem name with Jsont.Bool (b, _) -> b | _ -> false in
+  let mems = json_members mj in
+  let str name = ok (Json_text.string_option mems name) in
+  let flag name = ok (Json_text.bool mems name ~default:false) in
   match infer_model_type mj with
   | "BPE" ->
       let vocab_list = json_to_assoc (mem "vocab") in
@@ -2242,7 +2241,8 @@ let alg_of_json ?text ~byte_level ~spaces mj =
       let dropout =
         match mem "dropout" with
         | Jsont.Number _ as f -> Some (single (json_to_float ?text f))
-        | _ -> None
+        | Jsont.Null _ -> None
+        | _ -> failwith "member 'dropout': expected a number"
       in
       let vocab = vocab_to_hashtbl vocab_list in
       let continuing_subword_prefix = str "continuing_subword_prefix" in
@@ -2264,9 +2264,7 @@ let alg_of_json ?text ~byte_level ~spaces mj =
         str "continuing_subword_prefix" |> Option.value ~default:"##"
       in
       let max_input_chars_per_word =
-        match mem "max_input_chars_per_word" with
-        | Jsont.Number (f, _) -> int_of_float f
-        | _ -> 100
+        ok (Json_text.int mems "max_input_chars_per_word" ~default:100)
       in
       Alg_wordpiece
         (Wordpiece.create
@@ -2285,11 +2283,7 @@ let alg_of_json ?text ~byte_level ~spaces mj =
                 (json_to_string token, json_to_float ?text score)
             | _ -> failwith "Invalid unigram vocab format")
       in
-      let unk_id =
-        match mem "unk_id" with
-        | Jsont.Number (f, _) -> Some (int_of_float f)
-        | _ -> None
-      in
+      let unk_id = ok (Json_text.int_option mems "unk_id") in
       Alg_unigram
         (Unigram.create ?unk_id ~byte_fallback:(flag "byte_fallback") vocab)
   | "Chars" -> Alg_chars (Chars.create ())
