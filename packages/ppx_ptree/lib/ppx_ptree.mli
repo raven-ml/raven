@@ -64,6 +64,10 @@
 
     In an interface, [[@@deriving ptree]] declares the same values.
 
+    The generated code is marked as generated: an editor takes none of it for
+    the user's source, and OCaml still reports an error in it at the part it
+    walks. A [[@ptree.walk f]] expression stays the user's.
+
     No description is generated: a description is at one dtype and one set,
     which its first use fixes. Make one where it is used,
     [Nx.Ptree.instantiate (module M)] for a type of two parameters and
@@ -115,28 +119,32 @@
     names, and each [[@ptree.walk f]], is constrained to walk the part's type,
     so OCaml reports a mismatch at the part. A module without the walk fails
     there with [Unbound value M.walk], as does [M.t] without argument where [M]
-    has no [walk]. A structure applied in another order, or at a closed payload
-    as [(int, 'd) Kaun.Linear.t], fails with a type error at the part.
-    [Nx_wide.t]'s first argument is a float format, which this rule walks with
-    [Nx_wide.walk].
+    has no [walk]. A structure applied in another order, as [('d, 'a) M.t], is
+    refused at the part, which then holds the set parameter alone; one at a
+    closed payload, as [(int, 'd) Kaun.Linear.t], fails with a type error at the
+    part. [Nx_wide.t]'s first argument is a float format, which this rule walks
+    with [Nx_wide.walk].
 
     {1:attributes Attributes}
 
     An attribute goes after a record field, after a constructor's single
     argument, or on a type to annotate a nested part, as in
     [(int [@ptree.int]) list]. A part takes at most one. On a constructor with
-    no argument or several, or on the type declaration, it is an error. So is
-    one inside the type arguments of a tensor type, a key, an [Nx.packed] or a
-    structure, which their walks walk whole. In [(('a [@ptree.walk f]), 'd)
-    M.t], [M.walk] walks the positions: walk them with [f] by
-    [(('a, 'd) M.t [@ptree.walk Nx.Ptree.Walk.under M.walk f])]. The exception
-    is a structure's payload argument that mentions a parameter without being
-    the payload parameter itself: a nested structure, a part walked with
-    [Nx.Ptree.Walk.under], which takes an attribute.
+    no argument, several or a record argument, or on the type declaration, it is
+    an error. So is one inside the type arguments of a tensor type, a key, an
+    [Nx.packed] or a structure, which their walks walk whole. In
+    [(('a [@ptree.walk f]), 'd) M.t], [M.walk] walks the positions: walk them
+    with [f] by [(('a, 'd) M.t [@ptree.walk Nx.Ptree.Walk.under M.walk f])]. The
+    exception is a structure's payload argument that mentions a parameter
+    without being the payload parameter itself: a nested structure, a part
+    walked with [Nx.Ptree.Walk.under], which takes an attribute. The attributes
+    are named in full: [[@int]], [[@skip]] and [[@walk f]] are not the
+    deriver's.
     - [[@ptree.int]] reports the part's [int]s and [bool]s. A compiled program
       is cached per reported value, so mark an integer that changes what a
       program computes (a window, a block size, a layer kind), and hold a value
-      that changes on every call in a tensor.
+      that changes on every call in a tensor. On a part with no [int] or [bool]
+      it is an error.
     - [[@ptree.skip]] leaves the part out of the walk: the rebuilt value holds
       the same part, and neither paths, keys nor checkpoints see it. It is for
       data no program on the set reads, such as a name or an array on the host.
@@ -156,7 +164,8 @@
 
     {1:errors Errors}
 
-    The deriver reports, at the offending part:
+    The deriver reports each offending part once, at the part, and every such
+    part of a declaration in one expansion:
     - an [int] or [bool] without an attribute, and other scalar data ([float],
       [string], [char], [unit], [bytes], [int32], [int64], [nativeint], [exn])
       and [Nx.dtype] without [[@ptree.skip]];
@@ -166,14 +175,16 @@
     - [Nx.Placement.t], [Nx.Mesh.t] and [Nx.Devices.t], which hold no array to
       walk, other [Nx] types without a walk, and an [Nx] name ending in [_t]
       that is not a tensor alias;
-    - [ref], [lazy_t] and [result], functions, objects, classes, polymorphic
-      variants, first-class modules, polymorphic types, [as] aliases, local
-      opens, extension nodes and [_], without [[@ptree.walk]] or
-      [[@ptree.skip]];
+    - [ref], [lazy_t], [result], [format4] and [format6], functions, objects,
+      classes, polymorphic variants, first-class modules, polymorphic types,
+      [as] aliases, local opens, extension nodes and [_], without
+      [[@ptree.walk]] or [[@ptree.skip]];
     - GADT and existential constructors, which a walk cannot rebuild at other
       parameters;
     - abstract, extensible, and (in an implementation) private types, types with
       constraints, and types with more than two parameters;
     - a parameter inside a skipped part, and a type variable that is not a
       parameter;
+    - a type applied to the wrong number of arguments, and a functor application
+      in a type path;
     - a misplaced or repeated attribute. *)

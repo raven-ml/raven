@@ -7,19 +7,16 @@
   (pps ppx_ptree)))
 
 (test
- (name test_locations)
+ (name test_expansion)
  (package ppx_ptree)
- (modules test_locations)
- (libraries ppxlib ppx_ptree windtrap)
+ (modules test_expansion)
+ (libraries ppxlib ppxlib.astlib ppx_ptree windtrap)
  (link_flags
   (:standard -linkall))
- (deps
-  (glob_files support/cases/*.ml))
  (action
-  (setenv
-   PPX_PTREE_CASE
-   %{dep:support/cases/abstract.ml}
-   (run %{test}))))
+  (progn
+   (run %{test} --corrected)
+   (diff? test_expansion.ml test_expansion.ml.corrected))))
 
 (executable
  (name pp)
@@ -27,12 +24,6 @@
  (libraries ppxlib ppx_ptree)
  (link_flags
   (:standard -linkall)))
-
-(cram
- (package ppx_ptree)
- (deps
-  %{exe:pp.exe}
-  (glob_files support/cases/*.ml)))
 
 ; The expansions a reader can check by eye.
 
@@ -63,8 +54,9 @@
 
 (cram
  (applies_to typing)
+ (package ppx_ptree)
  (enabled_if
   (and
    (<> %{system} mingw64)
    (<> %{system} win64)))
- (deps %{bin:ocamlc}))
+ (deps %{exe:pp.exe} %{bin:ocamlc}))

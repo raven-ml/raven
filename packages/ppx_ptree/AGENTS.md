@@ -10,7 +10,7 @@ hand-written structure would have.
   only: a description is at one set, so users make it where they use it.
 - Walks are named by convention with no role check. Each named walk is
   constrained to its part's type, so OCaml reports a mismatch at the part.
-- `test/diagnostics.t` holds the errors a user sees; each points at the
-  user's own type.
+- `test/test_expansion.ml` holds the errors a user sees, as OCaml prints
+  them; each points at the user's own type.
 - Every node the deriver builds has a ghost location, so merlin takes none of
   the walk for source; a `[@ptree.walk f]` expression keeps its own.
