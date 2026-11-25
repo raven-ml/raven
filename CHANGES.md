@@ -1281,9 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
-- `Piecewise.cubic (`Clamped (s0, s1))` through two knots takes the slopes
-  `s0` and `s1` at its ends, as `jera.mli` states. It drew the line through
-  the two samples and ignored them.
+- `Piecewise.cubic` with `` `Clamped (s0, s1) `` through two knots takes the
+  slopes `s0` and `s1` at its ends, as `jera.mli` states. It drew the line
+  through the two samples and ignored them.
 - A step's stages at `c = 1` read the field at the step's end itself, in
   `Ode.march` and every Ode solve, as `jera.mli` states: they read it at the
   start plus the size, which rounds apart from the end where the size does.
