@@ -35,6 +35,12 @@ let table =
     |> Record.add Kind.int "a" (if i mod 3 = 0 then None else Some i)
     |> Record.add Kind.string "b" (Some (text i))
   in
+  let kg =
+    Result.get_ok
+      (Column.of_layout
+         (Any (T.ext ~name:"raven.mass" ~metadata:"kg" T.float64))
+         (Column.layout (col T.float64 (fun i -> float_of_int i /. 2.))))
+  in
   Talon.v
     [
       ("bool", col T.bool (fun i -> i mod 2 = 0));
@@ -64,6 +70,7 @@ let table =
       ("list", col (T.list T.int32) (fun i -> Array.init (i mod 4) (fun j -> i + j)));
       ("record", col record cell);
       ("tensor", tensor);
+      ("kg", kg);
     ]
 
 let rows k = Talon.take (Nx.arange Nx.int64 0 k 1) table
@@ -78,7 +85,7 @@ let items =
     item "lz4.arrow" File Lz4_frame 16 table;
     item "zstd.arrows" Stream Zstd 16 table;
     item "empty.arrow" File Uncompressed 10 (rows 0);
-    item "one_row.arrows" Stream Uncompressed 10 (rows 2);
+    item "two_rows.arrows" Stream Uncompressed 10 (rows 2);
   ]
 
 let bytes it =

@@ -5,9 +5,10 @@
 
 Run from this directory with `uv run written.py [--check]`, after writing
 ../support/written/ with the executable gen_written. It fails if pyarrow cannot
-read a file, and records per file and column the talon type and every value of
-pyarrow's read, as arrow.py renders them, in ../golden/written.txt. With --check
-it fails if the golden would change.
+read a file, and records per file and column the talon type pyarrow's Arrow
+type reads as, that Arrow type as pyarrow prints it, whether the field is
+nullable, and every value of pyarrow's read, as arrow.py renders them, in
+../golden/written.txt. With --check it fails if the golden would change.
 """
 
 import argparse
@@ -30,13 +31,15 @@ def main():
     lines = []
     for path in sorted(WRITTEN.iterdir()):
         table = corpus.read(path)
-        for column, name in zip(table.columns, table.column_names):
+        for column, field in zip(table.columns, table.schema):
             ty = (
                 corpus.dict_reads_as(column)
                 if pa.types.is_dictionary(column.type)
                 else corpus.talon_type(column.type)
             )
-            lines.append("|".join([path.name, name, ty, " ".join(corpus.column_tokens(column))]) + "\n")
+            nullable = "nullable" if field.nullable else "not null"
+            values = " ".join(corpus.column_tokens(column))
+            lines.append("|".join([path.name, field.name, ty, str(field.type), nullable, values]) + "\n")
     text = "".join(lines)
     if not args.check:
         GOLDEN.write_text(text, encoding="utf-8")

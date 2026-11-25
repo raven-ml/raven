@@ -12,8 +12,8 @@
  (name test_arrow)
  (modules test_arrow)
  (package talon)
- (libraries windtrap talon talon.arrow talon_gen arrow_corpus nx rig rig.disk
-   bytesrw)
+ (libraries windtrap talon talon.arrow talon_gen talon_held arrow_corpus nx rig
+   rig.disk bytesrw)
  (deps
   (source_tree golden)
   (source_tree support)))

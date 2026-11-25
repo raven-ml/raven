@@ -384,11 +384,23 @@ def refused_files(out):
         "refused_nested": pa.table(
             {"outer": pa.array([{"bad": (1, 2, 3)}], pa.struct([("bad", pa.month_day_nano_interval())]))}
         ),
+        "refused_large_list_view": pa.table({"bad": pa.array([[1]], pa.large_list_view(pa.int32()))}),
+        "refused_dict_decimal": pa.table({"bad": pa.DictionaryArray.from_arrays(
+            pa.array([0], pa.int32()), pa.array([[Decimal("1.5")]], pa.list_(pa.decimal128(9, 2))))}),
+        "refused_names": pa.Table.from_arrays([pa.array([1]), pa.array([2])], names=["x", "x"]),
+        "refused_fields": pa.table({"s": pa.StructArray.from_arrays([pa.array([1]), pa.array([2])], names=["a", "a"])}),
+        # A null element under a row that is not null, which a tensor cannot hold.
+        "refused_tensor_null": pa.table({"c": pa.array([[1, None], [3, 4]], pa.list_(pa.int32(), 2))}),
     }
     for name, table in tables.items():
         write_file(out / (name + ".arrow"), table)
     replaced_in_file(out / "refused_dict_replaced.arrow")
     decimal_precision(out / "refused_decimal_precision.arrows")
+    write_stream(out / "refused_legacy.arrows", pa.table({"x": pa.array([1], pa.int32())}),
+                 options=ipc.IpcWriteOptions(use_legacy_format=True))
+    (out / "refused_text.arrow").write_bytes(b"not an arrow file, not at all")
+    (out / "refused_v3.arrows").write_bytes(hand_schema(version=2, big_endian=False))
+    (out / "refused_big_endian.arrows").write_bytes(hand_schema(version=4, big_endian=True))
     shared_id(out / "refused_shared_id.arrows")
     write_stream(out / "refused_zero_null.arrows", zero_null_table())
     (out / "refused_bomb.arrows").write_bytes(schema_bomb(40))
@@ -652,6 +664,71 @@ def decimal_precision(path):
     path.write_bytes(bytes(b))
 
 
+def hand_schema(version, big_endian):
+    """A stream of one schema message, of metadata [version], with one int32
+    field "x", little- or big-endian: pyarrow writes neither V3 nor big-endian
+    data."""
+    b = bytearray(4)
+    patch = lambda at, target: struct.pack_into("<I", b, at, target - at)
+
+    def table(offsets, size):
+        while (len(b) + 4 + 2 * len(offsets)) % 8:
+            b.append(0)
+        vt = len(b)
+        b.extend(struct.pack("<HH", 4 + 2 * len(offsets), size))
+        b.extend(struct.pack("<%dH" % len(offsets), *offsets))
+        start = len(b)
+        b.extend(struct.pack("<i", start - vt))
+        return start
+
+    message = table([4, 6, 8], 12)
+    patch(0, message)
+    b.extend(struct.pack("<hBx", version, 1))  # A Schema header.
+    header = len(b)
+    b.extend(bytes(4))
+    schema = table([4, 8], 12)
+    patch(header, schema)
+    b.extend(struct.pack("<hxx", 1 if big_endian else 0))
+    fields = len(b)
+    b.extend(bytes(4))
+    vector = len(b)
+    patch(fields, vector)
+    b.extend(struct.pack("<I", 1))
+    slot = len(b)
+    b.extend(bytes(4))
+    field = table([4, 8, 9, 12, 0, 16], 20)
+    patch(slot, field)
+    b.extend(bytes(4))
+    b.extend(struct.pack("<BBxx", 1, 2))  # Nullable, an Int type.
+    b.extend(bytes(8))
+    integer = table([4, 8], 12)
+    patch(field + 12, integer)
+    b.extend(struct.pack("<iBxxx", 32, 1))
+    while len(b) % 4:
+        b.append(0)
+    patch(field + 4, len(b))
+    b.extend(struct.pack("<I", 1) + b"x\0")
+    while len(b) % 4:
+        b.append(0)
+    patch(field + 16, len(b))
+    b.extend(struct.pack("<I", 0))
+    while len(b) % 8:
+        b.append(0)
+    return struct.pack("<iI", -1, len(b)) + bytes(b) + struct.pack("<II", 0xFFFFFFFF, 0)
+
+
+def ext_shape(path):
+    """The canonical tensor extension where talon reads it as the extension:
+    a shape whose product is not the list's size, and a list of text."""
+    def field(name, storage, shape):
+        metadata = {"ARROW:extension:name": "arrow.fixed_shape_tensor",
+                    "ARROW:extension:metadata": '{"shape":[%s]}' % shape}
+        return pa.field(name, storage, metadata=metadata)
+    ints, texts = pa.list_(pa.int32(), 2), pa.list_(pa.string(), 2)
+    schema = pa.schema([field("short", ints, "3"), field("text", texts, "2")])
+    write_file(path, pa.table([pa.array([[1, 2]], ints), pa.array([["a", "b"]], texts)], schema=schema))
+
+
 def schema_bomb(depth):
     """A stream of a [depth]-deep struct whose children point twice at one table."""
     b = bytearray(4)
@@ -731,6 +808,7 @@ def write_all(out):
     for name, table in dictionary_tables().items():
         write_file(out / (name + ".arrow"), table)
     write_tensor_dict(out / "tensor_dict.arrow")
+    ext_shape(out / "ext_shape.arrow")
     decimal_files(out)
     write_file(out / "zero_width.arrow", zero_width_table(), CHUNKS)
     write_stream(out / "zero_many.arrows", zero_many_table())
@@ -898,7 +976,7 @@ def read(path):
 def golden_lines(out):
     lines = []
     for path in sorted(out.glob("*.arrow*")):
-        if path.name.startswith(("refused", "date64_floor", "tensor_dict", "zero_many", "zero_ext", "late_", "decimals")):
+        if path.name.startswith(("refused", "date64_floor", "tensor_dict", "ext_shape", "zero_many", "zero_ext", "late_", "decimals")):
             continue
         table = read(path)
         for column, name in zip(table.columns, table.column_names):
