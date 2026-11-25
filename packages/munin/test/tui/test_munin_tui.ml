@@ -103,20 +103,40 @@ let sixteen = { T.Profile.vte with env = [ ("TERM", "xterm") ] }
 (* A terminal whose user asked for no colour. *)
 let no_colour = { T.Profile.vte with env = ("NO_COLOR", "1") :: T.Profile.vte.env }
 
-(* The main store's screens, after tidy-otter logged its step 12,400 while the
-   dashboard watched, so that an arrival makes it live. The goldens hold the
-   styles, so that a golden sees colour, bold, faint and reverse video. *)
-let screen_test name ~cols ~rows ?(start = Munin_tui.Runs) ?(crashed = false)
-    ?profile keys =
-  test name (fun () ->
-      if crashed then needs_crashed ();
-      with_store Fixture.runs @@ fun store ->
-      let script _ = feed store Fixture.tidy_otter ~step:12400 in
-      golden name
-        (T.Screen.styled (show ~script ?profile ~cols ~rows store start keys)))
-
 let char c = Text (String.make 1 c)
 let times n k = List.init n (fun _ -> k)
+
+(* [before row sep] is [row] up to the first [sep] in it. *)
+let before row sep =
+  let n = String.length sep in
+  let rec find i =
+    if i + n > String.length row then None
+    else if String.sub row i n = sep then Some (String.sub row 0 i)
+    else find (i + 1)
+  in
+  find 0
+
+(* [main_screen ~cols ~rows keys] is the main store's screen after [keys],
+   tidy-otter having logged its step 12,400 while the dashboard watched, so
+   that an arrival makes it live. *)
+let main_screen ?(start = Munin_tui.Runs) ?profile ~cols ~rows keys =
+  with_store Fixture.runs @@ fun store ->
+  let script _ = feed store Fixture.tidy_otter ~step:12400 in
+  show ~script ?profile ~cols ~rows store start keys
+
+(* A screen's text, compared with its golden: the claim is the layout. *)
+let layout_test ~golden:file ?start ?(crashed = true) ~cols ~rows keys name =
+  test name (fun () ->
+      if crashed then needs_crashed ();
+      golden file (T.Screen.text (main_screen ?start ~cols ~rows keys)))
+
+(* A screen's text and styles, compared with its golden: the claim is what
+   the styles show. *)
+let style_test ~golden:file ?profile ~cols ~rows keys name =
+  test name (fun () ->
+      needs_crashed ();
+      golden file
+        (T.Screen.styled (main_screen ?profile ~cols ~rows keys)))
 
 (* The dashboard opens with its cursor on tidy-otter, the newest run, and its
    chart on train/loss. amber-fox is the second run and dusty-mole the fifth:
@@ -127,46 +147,119 @@ let overlay_two =
 let screens =
   group "screens"
     [
-      screen_test "dashboard-80x24" ~cols:80 ~rows:24 ~crashed:true [];
-      screen_test "dashboard-120x40" ~cols:120 ~rows:40 ~crashed:true [];
-      screen_test "dashboard-160x48" ~cols:160 ~rows:48 ~crashed:true [];
-      screen_test "overlays-120x40" ~cols:120 ~rows:40 ~crashed:true
-        overlay_two;
-      screen_test "overlays-120x40-no-colour" ~cols:120 ~rows:40 ~crashed:true
-        ~profile:no_colour overlay_two;
-      screen_test "filter-120x40" ~cols:120 ~rows:40 ~crashed:true
-        [ char '/'; Text "cifar" ];
-      (* A kept filter that keeps no run: the pane holds it, and the centre
-         says why it is empty. *)
-      screen_test "filter-none-120x40" ~cols:120 ~rows:40 ~crashed:true
-        [ char '/'; char 'q'; Key Enter ];
-      screen_test "dashboard-120x40-16-colours" ~cols:120 ~rows:40 ~crashed:true
-        ~profile:sixteen [];
-      screen_test "strips-120x40" ~cols:120 ~rows:40 ~crashed:true
-        (overlay_two @ [ Key Enter ]);
-      (* Without colour the cursor's strip is reverse video, its plot too. *)
-      screen_test "strips-120x40-no-colour" ~cols:120 ~rows:40 ~crashed:true
-        ~profile:no_colour
-        (overlay_two @ [ Key Enter ]);
-      (* The last strips: a live run's machine, each filled to its floor. *)
-      screen_test "strips-machine-120x40" ~cols:120 ~rows:40 ~crashed:true
-        (overlay_two @ [ Key Enter ] @ times 20 (Key Down));
+      layout_test ~golden:"dashboard-80x24" ~cols:80 ~rows:24 []
+        "below 100 columns a line names the run and one line of values \
+         takes the hero's place";
+      layout_test ~golden:"dashboard-100x30" ~cols:100 ~rows:30 []
+        "at 100 columns and 30 lines both panes, the hero and two small \
+         charts show";
+      layout_test ~golden:"dashboard-120x40" ~cols:120 ~rows:40 []
+        "at 120 columns the runs pane takes 34 columns and the run pane 28";
+      layout_test ~golden:"dashboard-160x48" ~cols:160 ~rows:48 []
+        "from 150 columns the panes take 42 and 34, the hero four values \
+         and three small charts";
+      style_test ~golden:"overlays-120x40" ~cols:120 ~rows:40 overlay_two
+        "overlays draw in their colours beside the cursor's run";
+      style_test ~golden:"overlays-120x40-no-colour" ~profile:no_colour
+        ~cols:120 ~rows:40 overlay_two
+        "without colour an overlay's line and legend end in its letter";
+      layout_test ~golden:"strips-120x40" ~cols:120 ~rows:40
+        (overlay_two @ [ Key Enter ])
+        "at strips each metric is a strip with its value and its \
+         difference to the first overlay";
       (* Zoom's step cursor starts on the latest val/loss sample, and each
          move left goes back one sample. *)
-      screen_test "zoom-120x40" ~cols:120 ~rows:40 ~crashed:true
-        (overlay_two @ [ Key Enter; Key Enter ] @ times 8 (Key Left));
-      screen_test "info-120x40" ~cols:120 ~rows:40 ~crashed:true [ char 'i' ];
-      screen_test "help-120x40" ~cols:120 ~rows:40 ~crashed:true [ char '?' ];
-      screen_test "help-80x24" ~cols:80 ~rows:24 ~crashed:true [ char '?' ];
-      screen_test "dashboard-100x30" ~cols:100 ~rows:30 ~crashed:true [];
-      screen_test "small-50x14" ~cols:50 ~rows:14
+      style_test ~golden:"zoom-120x40" ~cols:120 ~rows:40
+        (overlay_two @ [ Key Enter; Key Enter ] @ times 8 (Key Left))
+        "zoom draws the raw extent faint behind the line, a step cursor and \
+         a readout";
+      layout_test ~golden:"info-120x40" ~cols:120 ~rows:40 [ char 'i' ]
+        "i shows everything about the run over the centre";
+      layout_test ~golden:"help-80x24" ~cols:80 ~rows:24 [ char '?' ]
+        "? shows the keys";
+      layout_test ~golden:"small-50x14" ~crashed:false ~cols:50 ~rows:14
         ~start:(Munin_tui.Run (Some (id_of Fixture.tidy_otter)))
-        [];
-      test "empty-120x40" (fun () ->
+        []
+        "below 60 columns a line per live run asks for a larger terminal";
+      test "a store without runs shows how a program starts one" (fun () ->
           with_store ~name:"empty" [] @@ fun store ->
           golden "empty-120x40"
-            (T.Screen.styled (show ~cols:120 ~rows:40 store Munin_tui.Runs [])));
+            (T.Screen.text (show ~cols:120 ~rows:40 store Munin_tui.Runs [])));
     ]
+
+(* A terminal of 16 colours draws the text a 24-bit one draws: colour
+   repeats what the text says. *)
+let sixteen_colours =
+  test "a terminal of 16 colours shows the 24-bit screen's text" (fun () ->
+      with_store Fixture.[ short_running; short_amber ] @@ fun store ->
+      let text profile =
+        T.Screen.text (show ?profile ~cols:120 ~rows:40 store Munin_tui.Runs [])
+      in
+      equal string (text None) (text (Some sixteen)))
+
+(* Without colour the cursor's row of the runs pane and the cursor's strip,
+   two rows from its mark to the screen's last column but its margin, are
+   reverse video. *)
+let reverse_video =
+  test "without colour the cursor's row and strip are reverse video" (fun () ->
+      with_store Fixture.[ short_running; short_amber ] @@ fun store ->
+      let sc =
+        show ~profile:no_colour ~cols:120 ~rows:40 store Munin_tui.Runs
+          [ Key Enter ]
+      in
+      let plain row cols =
+        List.filter
+          (fun col ->
+            let _, style = T.Screen.cell sc ~row ~col in
+            not (Matrix.Ansi.Attr.mem Inverse style.Matrix.Ansi.Style.attrs))
+          cols
+      in
+      let at text =
+        match T.Screen.find sc text with
+        | p :: _ -> p
+        | [] -> failf "no %s" text
+      in
+      let range a b = List.init (b - a + 1) (fun i -> a + i) in
+      let row, _ = at "tidy-otter" in
+      equal ~msg:"the runs pane's row, cells not reversed" (list int) []
+        (plain row (range 0 32));
+      (* The strip's mark, right of the runs pane's 34 columns. *)
+      let y, x =
+        match List.filter (fun (_, x) -> x >= 34) (T.Screen.find sc "▌") with
+        | p :: _ -> p
+        | [] -> fail "no strip's mark"
+      in
+      List.iter
+        (fun r ->
+          equal
+            ~msg:(Printf.sprintf "the strip's row %d, cells not reversed" r)
+            (list int) []
+            (plain r (range x (T.Screen.cols sc - 2))))
+        [ y; y + 1 ])
+
+(* A kept filter that keeps no run: the pane holds it, and the centre says
+   why it is empty, on the pane's heading row. *)
+let filter_none =
+  test "a kept filter that keeps no run stays, and the centre says so"
+    (fun () ->
+      with_store Fixture.[ short_running; short_amber ] @@ fun store ->
+      let sc =
+        show ~cols:120 ~rows:40 store Munin_tui.Runs
+          [ char '/'; char 'q'; Key Enter ]
+      in
+      let row text = List.map fst (T.Screen.find sc text) in
+      equal ~msg:"the centre's sentence" (list int) (row "¹ runs")
+        (row "no run matches the filter");
+      let words y =
+        List.filter (( <> ) "")
+          (String.split_on_char ' '
+             (Option.value
+                (before (T.Screen.row sc y) "│")
+                ~default:(T.Screen.row sc y)))
+      in
+      equal ~msg:"the pane's filter line" (list (list string))
+        [ [ "/"; "q"; "0"; "of"; "2" ] ]
+        (List.map words (row "/ q")))
 
 (* [holds sub s] is whether [s] holds [sub]. *)
 let holds sub s =
@@ -204,16 +297,6 @@ let chars s =
 (* [from col row] is [row] from its cell [col]. *)
 let from col row =
   String.concat "" (List.filteri (fun i _ -> i >= col) (chars row))
-
-(* [before row sep] is [row] up to the first [sep] in it. *)
-let before row sep =
-  let n = String.length sep in
-  let rec find i =
-    if i + n > String.length row then None
-    else if String.sub row i n = sep then Some (String.sub row 0 i)
-    else find (i + 1)
-  in
-  find 0
 
 (* The run pane's heading, [³ run], starts its column, and its first two
    lines follow a blank one. *)
@@ -980,10 +1063,21 @@ let strips screen =
 (* The strips of a run that recorded readings end with its machine's, live
    or ended: the readings the run pane gives, in its order. *)
 let machine_strips =
-  test "an ended run's strips end with its machine's readings" (fun () ->
-      with_store [ Fixture.short_amber ] @@ fun store ->
-      let start = Munin_tui.Run (Some (id_of Fixture.short_amber)) in
-      let screen = show ~cols:120 ~rows:40 store start (Key Enter :: times 30 (Key Down)) in
+  cases
+    ~id:(fun (name, _) -> name)
+    "a run's strips end with its machine's readings, live or ended"
+    [ ("live", Fixture.short_running); ("ended", Fixture.short_amber) ]
+    (fun (_, r) ->
+      with_store [ r ] @@ fun store ->
+      (* An arrival makes a running run live; an ended run takes none. *)
+      let script _ =
+        if r.Fixture.status = `Running then feed store r ~step:650
+      in
+      let start = Munin_tui.Run (Some (id_of r)) in
+      let screen =
+        show ~script ~cols:120 ~rows:40 store start
+          (Key Enter :: times 30 (Key Down))
+      in
       let labels, _ = strips screen in
       let last = List.filteri (fun i _ -> i >= List.length labels - 4) labels in
       equal (list string) [ "GPU busy"; "VRAM"; "CPU busy"; "RAM" ] last)
@@ -2019,6 +2113,9 @@ let () =
          group "screen"
            [
              screens;
+             sixteen_colours;
+             reverse_video;
+             filter_none;
              nav_count;
              hidden_filter;
              filter;
