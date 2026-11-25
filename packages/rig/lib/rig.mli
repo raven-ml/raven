@@ -1850,7 +1850,9 @@ module Buffer : sig
       [rig_buffer_host], [rig_buffer_bytes], [rig_buffer_span] and
       [rig_buffer_why], claims its memory with [rig_buffer_claim] and
       [rig_buffer_release], and waits under the claim with [rig_buffer_wait],
-      which runs {!wait}. All are declared in [rig.h]. [rig_buffer_host] is
+      which runs {!wait}. [rig.h] declares them and states each one's
+      contract, with those of [rig_buffer_borrowed], [rig_buffers_overlap],
+      [rig_buffers_claim] and [rig_buffers_release]. [rig_buffer_host] is
       [NULL] for [Mapped] memory, which the host writes only through rig's
       calls ({!kind}).
 
