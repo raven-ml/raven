@@ -189,6 +189,21 @@ let test_one_cycle () =
   let end_val = 1.0 /. 10000.0 in
   equal ~msg:"step 100 (end)" (float 1e-6) end_val (S.eval s 100)
 
+(* A warmup share outside [[0; 1]] or a factor that is not positive makes no
+   one-cycle schedule. *)
+let test_one_cycle_validation () =
+  let one_cycle ?div_factor ?final_div_factor ?pct_start () =
+    ignore
+      (S.one_cycle ~max_value:1. ~total_steps:10 ?div_factor ?final_div_factor
+         ?pct_start ()
+        : Nx.host S.t)
+  in
+  List.iter
+    (fun pct_start -> raises_match Exn.invalid_arg (one_cycle ~pct_start))
+    [ -0.1; 1.5; Float.nan ];
+  raises_match Exn.invalid_arg (one_cycle ~div_factor:0.0);
+  raises_match Exn.invalid_arg (one_cycle ~final_div_factor:(-1.0))
+
 let test_step_count_validation () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (S.cosine_decay_restarts ~init_value:1. ~decay_steps:0 () : Nx.host S.t));
@@ -245,6 +260,8 @@ let () =
                  let v1 = S.eval s step in
                  let v2 = S.eval s (step + period) in
                  equal ~msg:"periodic" (float 1e-5) v1 v2);
+             test "one_cycle rejects a share or factor out of range"
+               test_one_cycle_validation;
              test "restarts and one-cycle reject bad step counts"
                test_step_count_validation;
            ];

@@ -164,6 +164,12 @@ let one_cycle ~max_value ~total_steps ?(div_factor = 25.0)
     ?(final_div_factor = 10000.0) ?(pct_start = 0.3) () =
   if total_steps <= 0 then
     invalid_arg "Schedule.one_cycle: total_steps must be positive";
+  if not (pct_start >= 0.0 && pct_start <= 1.0) then
+    invalid_arg "Schedule.one_cycle: pct_start must be between 0 and 1";
+  if div_factor <= 0.0 then
+    invalid_arg "Schedule.one_cycle: div_factor must be positive";
+  if final_div_factor <= 0.0 then
+    invalid_arg "Schedule.one_cycle: final_div_factor must be positive";
   let warmup_steps = int_of_float (pct_start *. float_of_int total_steps) in
   let decay_steps = total_steps - warmup_steps in
   let init_value = max_value /. div_factor in

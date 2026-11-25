@@ -869,7 +869,7 @@ module Sets (F : Forms) = struct
       ( "one_cycle without decay",
         [
           (F.one_cycle ~max_value:1.0 ~total_steps:10 ~pct_start:1.0 (), 10);
-          (F.one_cycle ~max_value:2e-3 ~total_steps:7 ~pct_start:1.5 (), 7);
+          (F.one_cycle ~max_value:2e-3 ~total_steps:7 ~pct_start:1.0 (), 7);
         ] );
       ( "piecewise_constant",
         [
