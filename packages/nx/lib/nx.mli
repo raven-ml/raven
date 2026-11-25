@@ -687,10 +687,13 @@ val linspace :
   ('v, 's) dtype -> ?endpoint:bool -> float -> float -> int -> ('v, 's, host) t
 (** [linspace dt ~endpoint start stop n] is the host value of [n] values evenly
     spaced from [start] to [stop], [stop] included where [endpoint] (default
-    [true]). They are computed at float64 and stored in [dt]: the first is
-    [start] and, with [endpoint] and [n >= 2], the last is [stop], each as
-    [dt] stores it, and for finite [start] and [stop] every value lies between
-    them.
+    [true]). They are computed at float64 and stored in [dt] as {!cast}
+    stores a [float64]. The first is [start] and, with [endpoint] and
+    [n >= 2], the last is [stop]. Between them the value at [i] is
+    [start + i d] by one fma, where [d] is [stop - start] rounded, divided by
+    [div] and rounded again, [div] being [n - 1] with [endpoint] and [n]
+    without, as if float64 had no overflow. For finite [start] and [stop]
+    every value lies between them.
 
     Raises [Invalid_argument] if [n < 0]. *)
 

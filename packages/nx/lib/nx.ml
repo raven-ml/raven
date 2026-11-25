@@ -325,13 +325,27 @@ let arange_f dt start stop step =
 let arange_f_at p dt start stop step =
   arange_f_by ~by:"Nx.arange_f_at" p dt start stop step
 
-(* [n] values from [start] to [stop] at float64: [stop] itself last with
-   [endpoint], so the ends are exact. *)
+(* [n] values from [start] to [stop] at float64: [start] itself first and [stop]
+   itself last with [endpoint], so the ends are exact, a [-0.] start included.
+   Where [stop - start] overflows between finite ends, the ramp runs at half
+   scale and doubles: halving and doubling are exact there, so its bits are
+   those of the ramp with an unbounded exponent. *)
 let spaced ~by ~endpoint start stop n =
   if n < 0 then invalid_argf "%s: %d values" by n;
-  let div = if endpoint then n - 1 else n in
-  let step = if div > 0 then (stop -. start) /. Float.of_int div else 0. in
-  let v = ramp ~start ~step in
+  let div = Float.of_int (if endpoint then n - 1 else n) in
+  let f64 = E.const D.Float64 in
+  let v =
+    if div = 0. then f64 start
+    else if
+      Float.is_finite (stop -. start)
+      || not (Float.is_finite start && Float.is_finite stop)
+    then ramp ~start ~step:((stop -. start) /. div)
+    else
+      let half = start /. 2.
+      and step = ((stop /. 2.) -. (start /. 2.)) /. div in
+      E.(f64 2. * ramp ~start:half ~step)
+  in
+  let v = E.(where (coord 0 = i64 0) (f64 start) v) in
   if not (endpoint && n >= 2) then v
   else
     let final = i64 (n - 1) in

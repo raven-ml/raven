@@ -3914,6 +3914,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.linspace` starts at `start` bit for bit, `-0.` included, and gives
+  finite values between finite ends whose difference overflows, where the
+  first was NaN for `1. infinity` and `-.max_float max_float`; `Nx.logspace`
+  takes its powers from the same values.
 - `Nx.slogdet` of a complex matrix whose pivot's modulus is past the largest
   float gives a unit sign and its logarithm, where it gave sign `0` and logabs
   `neg_infinity`; an infinite pivot's sign is its direction, where it was NaN.

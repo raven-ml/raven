@@ -303,6 +303,28 @@ let test_linspace_ints () =
   equal (array float_exact) [| 3. |] (Nx.to_array (Nx.linspace Nx.float64 3. 10. 1));
   equal (array float_exact) [||] (Nx.to_array (Nx.linspace Nx.float64 3. 10. 0))
 
+(* The values linspace's doc states: the first is [start], bits included,
+   and the value at [i] is [start + i d] by one fma, [d = (stop - start) /
+   div] rounded, as if float64 had no overflow. *)
+let linspace_rows =
+  let m = max_float in
+  [
+    ("-0. to 1., 3 values", (true, -0., 1., 3), [ -0.; 0.5; 1. ]);
+    ("-0. to 1., 1 value", (true, -0., 1., 1), [ -0. ]);
+    ( "1. to infinity, 3 values",
+      (true, 1., infinity, 3),
+      [ 1.; infinity; infinity ] );
+    ("-max_float to max_float, 3 values", (true, -.m, m, 3), [ -.m; 0.; m ]);
+    ( "-max_float to max_float, 4 values without the end",
+      (false, -.m, m, 4),
+      [ -.m; -.m /. 2.; 0.; m /. 2. ] );
+  ]
+
+let test_linspace_row (_, (endpoint, start, stop, n), want) =
+  equal (elements Nx.float64) want
+    (Array.to_list
+       (Nx.to_array (Nx.linspace Nx.float64 ~endpoint start stop n)))
+
 let test_logspace () =
   equal (array float_exact) [| 1.; 10.; 100. |]
     (Nx.to_array (Nx.logspace Nx.float32 0. 2. 3));
@@ -373,6 +395,9 @@ let ranges =
         law_linspace;
       test "linspace into integers, without its end, of one and of none"
         test_linspace_ints;
+      cases "linspace is start, then start + i d by one fma"
+        ~id:(fun (id, _, _) -> id)
+        linspace_rows test_linspace_row;
       test "logspace is exact at exact powers" test_logspace;
       prop "geomspace keeps its ends and its ratio"
         (Gen.pair float_dtype
