@@ -43,7 +43,7 @@ val runs : ?prev:Run.t list -> t -> Run.t list
     its tags and its notes, and probes the lock of a run without an end
     ({!Store_format.section-status}). It reads no other part of a log, and
     allocates for a file what it reads of it, with no buffer of a fixed size, so
-    that a run whose records, tags and notes are short costs a few KiB. A
+    that a run whose records, tags and notes are short costs less than 64 KiB. A
     directory that is not a readable run of this format is left out, and
     {!check} names it. So is a run whose log cannot be opened or read, such as a
     live run on an SMB mount ({!Store_format.section-network}).

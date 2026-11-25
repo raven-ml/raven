@@ -3585,6 +3585,10 @@ let sampling_tests =
           Session.sample s ~every:0.001 [ reading ];
           await 2;
           (try Session.finish s with Exit -> ());
+          (* What is observable without waiting: no call between the stop and
+             finish. A sampler that went on would call again only after its
+             period, which finish may beat; showing no later call needs a
+             wait. *)
           equal ~msg:"calls" int 2 (Atomic.get calls));
       test "finish raises what stopped a sampler, after the end" (fun () ->
           let store = new_store () in
@@ -3615,6 +3619,8 @@ let sampling_tests =
           Session.sample s ~every:0.001 [ reading ];
           await 2;
           raises_match Exn.invalid_arg (fun () -> Session.finish s);
+          (* No call between the stop and finish; a later one needs a wait to
+             show, as in "a reading that raises stops the sampler". *)
           equal ~msg:"calls" int 2 (Atomic.get calls));
       cases "sample refuses a period that is not positive and finite"
         ~id:(Printf.sprintf "%g") [ 0.; -1.; Float.nan; Float.infinity ]
