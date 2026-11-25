@@ -117,6 +117,11 @@ let init =
           let x = (start 4, Nx.zeros Nx.int32 [| 4 |]) in
           raises_match (Exn.invalid_arg ~sub:"Norn.Nuts.init: 1 is int32")
             (fun () -> N.init u (fun (x, _) -> banana x) x));
+      test "float tensors of two dtypes are refused" (fun () ->
+          let u = Nx.Ptree.(pair tensor tensor) in
+          let x = (start 4, Nx.cast Nx.float32 (start 4)) in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Nuts.init") (fun () ->
+              N.init u (fun (x, _) -> banana x) x));
       cases "a maximum depth below 1 is refused" ~id:string_of_int [ 0; -1 ]
         (fun max_depth ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Nuts.init: max_depth")

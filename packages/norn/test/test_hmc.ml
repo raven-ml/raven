@@ -101,6 +101,11 @@ let init =
           let x = (start 4, Nx.zeros Nx.int32 [| 4 |]) in
           raises_match (Exn.invalid_arg ~sub:"Norn.Hmc.init: 1 is int32")
             (fun () -> H.init u (fun (x, _) -> banana x) x));
+      test "float tensors of two dtypes are refused" (fun () ->
+          let u = Nx.Ptree.(pair tensor tensor) in
+          let x = (start 4, Nx.cast Nx.float32 (start 4)) in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Hmc.init") (fun () ->
+              H.init u (fun (x, _) -> banana x) x));
       (* The message prints the shortest decimal that reads back, the same on
          every system: the C library's [%g] wrote 1e+06, 1e+006 under
          mingw-w64. *)
