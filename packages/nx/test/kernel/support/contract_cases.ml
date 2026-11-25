@@ -597,15 +597,6 @@ let finite_computed = computed_by finite_value
    so that a process that runs no law of them never makes them. *)
 let examples = lazy (List.concat_map regimes accs)
 
-(* A batch of chain order's contractions over some 135 million products, a
-   and b stored transposed, in float64: a run of it takes seconds, so one
-   law takes it. *)
-let large_examples =
-  lazy
-    [
-      apart (D.Any D.Float64) (true, ([| 8 |], [| 257 |], [| 257 |], [| 256 |]));
-    ]
-
 (* The sizes in [acc] that drawn cases reach rarely, few enough to check on
    every run: no output, one and no product, with init; 2 rows by 1 to 64
    columns at depths from 1 to 1024, either side of a block of 256 products,
