@@ -381,34 +381,34 @@ let backward_bound a u b =
        (Nx.mul_s (Nx.add_s frobenius 1.) (Num.tiny dtype *. eps)))
     (16. *. float k)
 
-let solve_blocks fn op b =
+let blocks fn op b =
   let k = Nx.dim (-1) b in
-  let basis j =
-    Nx.broadcast_to (Nx.shape b)
-      (Nx.cast (Nx.dtype b)
-         (Nx.equal_s
-            (Nx.arange_at (Nx.beside b) Nx.int32 0 k 1)
-            (Int32.of_int j)))
-  in
-  let a = Nx.stack ~axis:(-1) (List.init k (fun j -> op (basis j))) in
-  let u = batched a b in
-  let miss = Search.norm (Nx.sub (op u) b) in
-  let fine =
-    Nx.logical_or
-      (Nx.logical_not (Search.finite u))
-      (Nx.less_equal miss (Nx.mul_s (backward_bound a u b) 4.))
-  in
-  Nx.check Nx.Ptree.unit fine () (fun i () ->
-      Invalid_argument
-        (Printf.sprintf
-           "%s: the derivative at lane [%s] is not per lane: f reads other \
-            lanes than its argument's own"
-           fn
-           (String.concat ", " (Array.to_list (Array.map string_of_int i)))));
-  u
-
-(* Lanes of no unknowns have no blocks to solve. *)
-let blocks fn op b = if Nx.dim (-1) b = 0 then b else solve_blocks fn op b
+  (* Lanes of no unknowns have no blocks to solve. *)
+  if k = 0 then b
+  else
+    let basis j =
+      Nx.broadcast_to (Nx.shape b)
+        (Nx.cast (Nx.dtype b)
+           (Nx.equal_s
+              (Nx.arange_at (Nx.beside b) Nx.int32 0 k 1)
+              (Int32.of_int j)))
+    in
+    let a = Nx.stack ~axis:(-1) (List.init k (fun j -> op (basis j))) in
+    let u = batched a b in
+    let miss = Search.norm (Nx.sub (op u) b) in
+    let fine =
+      Nx.logical_or
+        (Nx.logical_not (Search.finite u))
+        (Nx.less_equal miss (Nx.mul_s (backward_bound a u b) 4.))
+    in
+    Nx.check Nx.Ptree.unit fine () (fun i () ->
+        Invalid_argument
+          (Printf.sprintf
+             "%s: the derivative at lane [%s] is not per lane: f reads other \
+              lanes than its argument's own"
+             fn
+             (String.concat ", " (Array.to_list (Array.map string_of_int i)))));
+    u
 
 let lanes ~tol ~budget ~jacobian f guess =
   let fn = "Jera.System.lanes" in
