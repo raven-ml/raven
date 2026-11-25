@@ -8,6 +8,10 @@ open Windtrap
 
 let exec t = Error.get_ok (Query.run t)
 
+(* [refusal f] is the message of the [Invalid_argument] that [f] raises. *)
+let refusal f =
+  match f () with _ -> fail "no exception" | exception Invalid_argument m -> m
+
 (* [hash_q ?seed q] is [Expr.hash] of [q]'s one column, and [hash_of] that of a
    table of [c]. *)
 let hash_q ?seed q =
@@ -237,24 +241,34 @@ let datetime_widths_law us =
   let h u = hash_of (Column.v (Type.instant u) [| t |]) in
   equal (array (option int)) (h Type.Us) (h Type.Ns)
 
-(* The types [hash] reads, records nested two deep among them. *)
+(* The types [hash] reads: every scalar type, a categorical of no string, the
+   units of each temporal type, and records of no field and nested two deep. *)
 let hashable =
   Type.
     [
       Any bool;
       Any int8;
+      Any int16;
+      Any int32;
       Any int64;
+      Any uint8;
+      Any uint16;
+      Any uint32;
       Any uint64;
+      Any float16;
       Any float32;
       Any float64;
       Any string;
       Any binary;
       Any (categorical [| "a"; "é"; "" |]);
+      Any (categorical [||]);
       Any date;
+      Any (clock S);
       Any (clock Ns);
       Any (duration Ms);
       Any (wall Ns);
       Any (instant S);
+      Any (record []);
       Any (record [ ("a", Any int64); ("b", Any string) ]);
       Any
         (record [ ("r", Any (record [ ("x", Any float64) ])); ("c", Any bool) ]);
@@ -267,10 +281,20 @@ let hashable_sample =
            (fun rows -> Talon_gen.Sample (ty, rows))
            (Talon_gen.options ty)))
 
+(* Rows of the two types whose multi-row hash has a path of its own: a
+   categorical of no string, which holds only nulls, and a record of no
+   field. *)
+let hashable_edges =
+  Talon_gen.
+    [
+      Sample (Type.categorical [||], [| None; None; None |]);
+      Sample (Type.record [], [| Some Record.empty; None; Some Record.empty |]);
+    ]
+
 (* A column's rows each hash as they do in a column of their own: the rows,
-   nulls included, that a multi-row kernel reads, views at an offset too. Two of
-   the sixteen types are records: at 200 cases a run misses them with
-   probability (7/8)^200 = 3e-12. *)
+   nulls included, that a multi-row kernel reads, views at an offset too. Three
+   of the 25 types are records: at 200 cases a run misses them with probability
+   (22/25)^200 = 8e-12. *)
 let rows_law (Talon_gen.Sample (ty, rows)) =
   assume (Array.length rows > 0);
   cover "a null" (Array.exists Option.is_none rows);
@@ -305,23 +329,16 @@ let cast_law (i, f) =
     Type.[ int16; int32; int64 ];
   same Expr.(hash f) Expr.(hash (cast Type.float64 f))
 
+(* A list, a tensor and an extension are problems: [Invalid_argument] at the
+   plan, whose message is a baseline. *)
 let refused () =
-  let plan ty x =
-    let t = v [ ("c", Column.of_options ty [| Some x |]) ] in
+  let plan c =
     Query.derive
       Expr.[ each (Sel.names [ "c" ]) { column = (fun _ c -> "h" := hash c) } ]
-      (Query.of_table t)
+      (Query.of_table (v [ ("c", c) ]))
   in
-  let refuses ty x =
-    raises_match (Exn.invalid_arg ~sub:"is not one") (fun () -> plan ty x)
-  in
-  refuses (Type.list Type.int64) [| 1 |];
+  let one ty x = Column.of_options ty [| Some x |] in
   let in_record = Type.record [ ("l", Type.Any (Type.list Type.int64)) ] in
-  refuses in_record
-    (Record.add (Kind.list Kind.int) "l" (Some [| 1 |]) Record.empty);
-  refuses
-    (Type.tensor Nx.int32 [| 2 |])
-    (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]);
   let values = Nx.P (Nx.create Nx.int64 [| 1 |] [| 1L |]) in
   let ext =
     Result.get_ok
@@ -329,12 +346,31 @@ let refused () =
          (Any (Type.ext ~name:"e" Type.int64))
          (Fixed { validity = None; values }))
   in
-  let hash_ext () =
-    Query.derive
-      Expr.[ each (Sel.names [ "c" ]) { column = (fun _ c -> "h" := hash c) } ]
-      (Query.of_table (v [ ("c", ext) ]))
+  (* The third line of a plan's message states its one problem. *)
+  let problem f =
+    String.trim (List.nth (String.split_on_char '\n' (refusal f)) 2)
   in
-  raises_match (Exn.invalid_arg ~sub:"hash") hash_ext
+  expect (problem (fun () -> plan (one (Type.list Type.int64) [| 1 |])))
+  @@ __POS_OF__
+       {| hash takes booleans, numbers, text, binary, dates, times and records of these, and list[int64] is not one. |};
+  expect
+    (problem (fun () ->
+         plan
+           (one in_record
+              (Record.add (Kind.list Kind.int) "l" (Some [| 1 |]) Record.empty))))
+  @@ __POS_OF__
+       {| hash takes booleans, numbers, text, binary, dates, times and records of these, and record[l list[int64]] is not one. |};
+  expect
+    (problem (fun () ->
+         plan
+           (one
+              (Type.tensor Nx.int32 [| 2 |])
+              (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]))))
+  @@ __POS_OF__
+       {| hash takes booleans, numbers, text, binary, dates, times and records of these, and tensor[int32, 2] is not one. |};
+  expect (problem (fun () -> plan ext))
+  @@ __POS_OF__
+       {| hash takes booleans, numbers, text, binary, dates, times and records of these, and ext[e, int64] is not one. |}
 
 (* Kit *)
 
@@ -428,10 +464,19 @@ let sample_negative_rows () =
   let q = Query.of_table (table_int [ 1 ]) in
   raises_match Exn.invalid_arg (fun () -> Kit.sample (`Rows (-1)) q)
 
+let unseeded () = Kit.shuffle (Query.of_table (table_int (List.init 50 Fun.id)))
+
 (* Without [~seed], the plan keeps the seed it drew when it was built. *)
 let shuffle_unseeded () =
-  let q = Kit.shuffle (Query.of_table (table_int (List.init 50 Fun.id))) in
+  let q = unseeded () in
   equal table (exec q) (exec q)
+
+(* A plan rebuilt draws its seed again: under one key the same, under another a
+   different one, whose order of 50 rows is the same with probability 1/50!. *)
+let shuffle_rebuilt () =
+  let built k = exec (Nx.Rng.with_key (Nx.Rng.key k) unseeded) in
+  equal table (built 1) (built 1);
+  not_equal table (built 1) (built 2)
 
 (* Folds. *)
 
@@ -491,13 +536,15 @@ let folds_nulls () =
 
 let folds_too_few () =
   let t = v [ ("g", Column.v Type.int64 [| 1; 1; 2 |]) ] in
-  raises_match
-    (Exn.invalid_arg ~sub:"3 folds need at least as many groups, not 2")
-    (fun () -> exec (Kit.folds ~seed:2 ~by:[ "g" ] 3 (Query.of_table t)));
+  expect
+    (refusal (fun () ->
+         exec (Kit.folds ~seed:2 ~by:[ "g" ] 3 (Query.of_table t))))
+  @@ __POS_OF__ {| Kit.folds: 3 folds need at least as many groups, not 2 |};
   let empty = v [ ("g", Column.v Type.int64 [||]) ] in
-  raises_match
-    (Exn.invalid_arg ~sub:"1 folds need at least as many groups, not 0")
-    (fun () -> exec (Kit.folds ~seed:2 ~by:[ "g" ] 1 (Query.of_table empty)))
+  expect
+    (refusal (fun () ->
+         exec (Kit.folds ~seed:2 ~by:[ "g" ] 1 (Query.of_table empty))))
+  @@ __POS_OF__ {| Kit.folds: 1 folds need at least as many groups, not 0 |}
 
 (* Every NaN key is one group, and a float key hashes as a float. *)
 let folds_nan_keys () =
@@ -511,9 +558,11 @@ let folds_nan_keys () =
 
 let folds_named () =
   let t = table_int [ 1 ] in
-  raises_match (Exn.invalid_arg ~sub:"column \"fold\"") (fun () ->
-      Kit.folds ~seed:1 ~by:[ "fold" ] 1
-        (Query.select Expr.[ "fold" := Col.int "x" ] (Query.of_table t)))
+  expect
+    (refusal (fun () ->
+         Kit.folds ~seed:1 ~by:[ "fold" ] 1
+           (Query.select Expr.[ "fold" := Col.int "x" ] (Query.of_table t))))
+  @@ __POS_OF__ {| Kit.folds: the query already has a column "fold" |}
 
 (* Several keys hash as a record of [by]'s columns, in [by]'s order. *)
 let folds_key_order () =
@@ -584,7 +633,7 @@ let () =
                cast_law;
              prop "is the same whatever the batches" batches batching_law;
              prop ~count:200 "hashes each row as a column of its own"
-               hashable_sample rows_law;
+               ~examples:hashable_edges hashable_sample rows_law;
              test "raises on a list, a tensor or an extension" refused;
            ];
          group "Kit.shuffle"
@@ -598,6 +647,7 @@ let () =
              prop "is the same whatever the batches" batches shuffle_batches_law;
              test "keeps the seed a plan drew when it was built"
                shuffle_unseeded;
+             test "draws another seed when a plan is rebuilt" shuffle_rebuilt;
            ];
          group "Kit.sample"
            [
