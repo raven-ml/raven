@@ -1252,6 +1252,75 @@ let test_released_peer () =
   equal ~msg:"nothing taken" (pair int int) before (tree_capacity o);
   List.iter (Memory.free x.t_memory) [ host; gpu; bar ]
 
+(* A stop keeps the system memory its open's regions hold, so a GPU opened
+   before the stop and the stopped GPU opened again each map that memory, at the
+   pages the stopped open holds. The stopped open's frees then keep the page
+   they map, and the maps' frees after give it all back. The stopped open's GPU
+   memory, which another open may have reset and given out, is refused to each,
+   naming the GPU, taking nothing. *)
+let test_stopped_peer () =
+  let base = own_space () in
+  let root, m, buses = tree_machine ~space:base 2 in
+  let space = Space.create ~base space_length in
+  let x = open_gpu ~space m 0 and o = open_gpu ~space m 1 in
+  let host = given (Memory.alloc x.t_memory Host page) in
+  let gpu = given (Memory.alloc x.t_memory Gpu page) in
+  let bar = given (Memory.alloc x.t_memory Bar page) in
+  stop_open x;
+  let again = open_gpu ~space m 0 in
+  let map y =
+    let before = tree_capacity y in
+    List.iter
+      (fun (msg, r) ->
+        let why = require_error (Memory.map_peer y.t_memory r) in
+        contains ~msg ~sub:(List.hd buses) why;
+        contains ~msg ~sub:"was released" why)
+      [ ("Gpu memory", gpu); ("Bar memory", bar) ];
+    equal ~msg:"nothing taken" (pair int int) before (tree_capacity y);
+    let p = mapped (Memory.map_peer y.t_memory host) in
+    equal ~msg:"the stopped open's pages" ranges
+      (merge (snd (Memory.pages host)))
+      (merge (snd (Memory.pages p)));
+    (y, p)
+  in
+  let maps = List.map map [ o; again ] in
+  List.iter (Memory.free x.t_memory) [ host; gpu; bar ];
+  at_least ~msg:"the mapped page, kept" int ~than:page (held_bytes root);
+  List.iter (fun (y, p) -> Memory.free y.t_memory p) maps;
+  List.iter stop_open [ o; again ];
+  equal ~msg:"system memory held" int 0 (held_bytes root);
+  equal ~msg:"addresses taken" int 0 (Space.taken space);
+  equal ~msg:"files" (list string) [] (host_files root)
+
+(* The bytes a stopped GPU borrowed map for the GPU opened again, pinned anew at
+   the borrowed pages. The pin keeps the block once the stopped open and the
+   lender free theirs, and the map's free gives it back with the pin. *)
+let test_stopped_borrowed () =
+  let base = own_space () in
+  let root, m, _ = tree_machine ~space:base 2 in
+  let space = Space.create ~base space_length in
+  let x = open_gpu ~space m 0 and o = open_gpu ~space m 1 in
+  let lent, _ = lend ~at:(base + space_length) o page in
+  let a = Window.address lent in
+  let borrowed = mapped (Memory.map_host x.t_memory a page) in
+  stop_open x;
+  let again = open_gpu ~space m 0 in
+  let p = mapped (Memory.map_peer again.t_memory borrowed) in
+  equal ~msg:"the borrowed pages" ranges
+    (merge (snd (Memory.pages borrowed)))
+    (merge (snd (Memory.pages p)));
+  Memory.free x.t_memory borrowed;
+  let held = held_bytes root in
+  Function.free_dma o.t_fn lent;
+  equal ~msg:"the pinned block, kept" int held (held_bytes root);
+  Memory.free again.t_memory p;
+  less ~msg:"the block, given back" int ~than:held (held_bytes root);
+  unpinned ~msg:"the pin given back" again (a, page);
+  List.iter stop_open [ o; again ];
+  equal ~msg:"system memory held" int 0 (held_bytes root);
+  equal ~msg:"addresses taken" int 0 (Space.taken space);
+  equal ~msg:"files" (list string) [] (host_files root)
+
 (* Interrupted requests
 
    An exception may land at any allocation of a request, as an asynchronous
@@ -2368,13 +2437,14 @@ let map_peer_ref m i r =
     (new_region m ~origin:o ?mapping ~system:o.system ~gpu:o.gpu ~owning:false
        ~label:("Peer of " ^ o.label) i)
 
-let map_peer_sys s i (_, _, r) =
+let map_peer_sys s i (s', o, r) =
+  let released = Function.bus s'.gpus.(o).t_fn ^ " was released" in
   match Memory.map_peer s.gpus.(i).t_memory r with
   | Ok (Some p) -> made s i p
   | Ok None -> fail "no room"
   | Error why when String.starts_with ~prefix:"the GPUs are on different" why ->
       raise Other_machine
-  | Error why when String.ends_with ~suffix:"given its memory out" why ->
+  | Error why when String.starts_with ~prefix:released why ->
       raise Released_memory
   | Error why -> fail why
 
@@ -3153,6 +3223,12 @@ let on_files =
       test
 "a released GPU's memory is refused to a peer, naming it"
         test_released_peer;
+      test
+        "a stopped GPU's system memory maps for GPUs opened before its stop or \
+         after, and its GPU memory is refused"
+        test_stopped_peer;
+      test "the bytes a stopped GPU borrowed map for its next open, pinned anew"
+        test_stopped_borrowed;
       cases
         "a request cut at any allocation, then its GPU's stop, leaves its \
          peer whole and, once the peer stops, nothing held"

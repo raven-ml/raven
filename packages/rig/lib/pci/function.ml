@@ -436,6 +436,10 @@ let elect f ~keeps_dma =
 let release f = elect f ~keeps_dma:false
 let release_keeping_dma f = elect f ~keeps_dma:true
 
+(* A keeping release sets [keeps_dma] before its bit, so a caller that found [f]
+   released reads it set. *)
+let keeps_dma f = Atomic.get f.keeps_dma && Atomic.get f.memory <> Settled
+
 (* A take that fails leaves its function vacant, given back by its
    release. *)
 let given_back f = function

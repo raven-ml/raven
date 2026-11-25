@@ -155,6 +155,13 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> (int, string) result
     one machine, each BAR reaches all of its GPU's memory, and the bus carries
     requests between them ({!Rig_pci.Memory.reaches}).
 
+    {!Rig_nv.val-map_peer} answers [Never] for [Device] memory of a stopped
+    device, since its stop gave the GPU's function back, and a later open resets
+    the GPU and may give that memory out ({!Rig_pci.Memory.map_peer}). The stop
+    keeps the device's [Pinned] memory until its free, and that memory maps as a
+    live device's does, unless the stop could not turn the GPU's bus mastering
+    off.
+
     {!Rig_nv.val-dma} gives another function, such as a NIC that a process
     drives over PCI, a region's bus ranges ({!Rig_edge.Bus}), or the reason
     it cannot reach them, as {!Rig_pci.Memory.bus} states: GPU memory

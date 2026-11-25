@@ -620,14 +620,21 @@ let theirs fn m r = Lock.protect m.lock (fun () -> mine fn m r)
    other GPUs that map it, which their owners' calls change: each change is
    one section under the owner's lock, the only lock it holds. *)
 
-(* The refusal of a released GPU's memory, which another open may have reset
-   and given out. *)
-let released_error (o : t) =
-  Error
-    (strf
-       "%s was released, and another open may have reset it and given its \
-        memory out"
-       o.reach.bus)
+(* The refusal of [r], memory of a released GPU, with its reason: GPU memory,
+   which another open may have reset and given out, or system memory that the
+   GPU may still write, its bus mastering not turned off, or that its function
+   holds no more. *)
+let released_error r =
+  let bus = r.owner.reach.bus in
+  if lent r then
+    Error
+      (strf
+         "%s was released, and another open may have reset it and given its \
+          memory out"
+         bus)
+  else if Function.reaching r.owner.held.fn then
+    Error (strf "%s was released, and may still write its system memory" bus)
+  else Error (strf "%s was released, and holds its system memory no more" bus)
 
 (* Counts a new mapping of the origin [r] by another GPU, under [r]'s owner's
    lock, if [r] is still out, and for GPU memory as a lend of the owner's
@@ -725,7 +732,7 @@ let counted_map ?again m h r f =
   match w with
   | None ->
       (* The origin's owner was given back since [map_peer] checked it. *)
-      released_error r.owner
+      released_error r
   | Some w -> (
       w.made <- false;
       if w.counted then write_counted m h w f
@@ -740,7 +747,7 @@ let counted_map ?again m h r f =
         | false ->
             unwrite h w;
             Space.free w.space;
-            released_error r.owner
+            released_error r
         | true -> write_counted m h w f)
 
 (* The region of [m] over [w]'s mapping of the origin [r]. *)
@@ -835,22 +842,25 @@ let map_new ?again m h tables r =
                             })))))
 
 (* Misuse is refused before anything is pinned or written: a region freed, or
-   its origin freed. A released GPU's memory is refused: another open may
-   have reset that GPU and given its own memory out, and its give-back takes
-   back its system memory. Memory the GPU maps
-   already, its own or a peer's it mapped, lies at its owner's address, so a
-   new region there shares that mapping. *)
+   its origin freed. A released GPU's GPU memory is refused, since another open
+   may have reset that GPU and given it out, and so is its system memory unless
+   a stop keeps it for the regions out and turns the bus mastering off
+   ([Function.keeps_dma]). Memory the GPU maps already, its own or a peer's it
+   mapped, lies at its owner's address, so a new region there shares that
+   mapping. *)
 let map_peer m r =
   using "map_peer" m @@ fun h tables ->
   ignore (theirs "map_peer" r.owner r : held);
   let r = origin r in
   let owner = theirs "map_peer" r.owner r in
   let gone =
-    m.reach.machine == r.owner.reach.machine && Function.released owner.fn
+    m.reach.machine == r.owner.reach.machine
+    && Function.released owner.fn
+    && (lent r || not (Function.keeps_dma owner.fn))
   in
   let left = List.find_opt (fun w -> w.over == r) h.writing in
   match Tables.Address.find_opt h.regions r.mapping.va with
-  | _ when gone -> released_error r.owner
+  | _ when gone -> released_error r
   | None -> (
       match left with
       | Some w when w.made ->

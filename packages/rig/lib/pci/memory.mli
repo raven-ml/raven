@@ -255,13 +255,20 @@ val map_peer : t -> region -> (region option, string) result
     mapping, and it writes no table and pins nothing. The mapping stays until
     every region over it is freed.
 
-    [Error why] if the GPUs are on different machines, if their page tables
-    take addresses from different spaces, naming both, if [r] is GPU memory
-    that [m]'s GPU does not reach ({!reaches}), or memory of a GPU whose
-    function was released, naming it, since another open may have reset that
-    GPU and given its own memory out, and its give-back gave back its system
-    memory, or if the system memory cannot be pinned, with {!Function.pin}'s
-    reason.
+    [Error why] if the GPUs are on different machines, if their page tables take
+    addresses from different spaces, naming both, if [r] is GPU memory that
+    [m]'s GPU does not reach ({!reaches}), if [r] is memory of a released GPU
+    that does not map (below), naming the GPU and why, or if the system memory
+    cannot be pinned, with {!Function.pin}'s reason.
+
+    Of a released GPU's memory, only system memory maps, and only after a stop
+    ({!Driver.stop}), which keeps the memory {!val-alloc} gave and the GPU's
+    addresses for the regions out ({b After the GPU is given back}), unless the
+    stop could not turn the function's bus mastering off. The bytes {!map_host}
+    borrowed then map too, pinned anew. GPU memory is refused, since another
+    open may have reset the GPU and given it out. So is system memory after
+    {!Function.release}, which gives it back, or after a stop that left the bus
+    mastering on, since the GPU may still write it.
 
     A [map_peer] that an exception ended other than its own refusal by
     [Invalid_argument], such as an asynchronous one, leaves what it wrote to

@@ -507,6 +507,12 @@ val holder : t -> Space.holder
    began. *)
 val release_keeping_dma : t -> unit
 
+(* [keeps_dma f] is [true] iff [f]'s release keeps its memory from {!alloc_dma}
+   for the regions out: it is {!release_keeping_dma}, and that memory is neither
+   given back ({!give_memory}) nor left until the exit by a give-back that could
+   not turn the bus mastering off. *)
+val keeps_dma : t -> bool
+
 (* [retain f] records that regions of [f]'s GPU's memory may be out, which
    {!Memory.create} does, and [unretain f] that none is out once [f] is
    released, which {!Memory} records in the section that takes off the last
