@@ -40,6 +40,16 @@ let utf_8 u =
   Buffer.add_utf_8_uchar b (Uchar.of_int u);
   Buffer.contents b
 
+(* [suffixes t] are the texts that start at each scalar of [t], and [""]. *)
+let suffixes t =
+  let rec go i =
+    if i >= String.length t then [ "" ]
+    else
+      String.sub t i (String.length t - i)
+      :: go (i + Uchar.utf_decode_length (String.get_utf_8_uchar t i))
+  in
+  go 0
+
 let valid_utf_8 = satisfies ~claim:"valid UTF-8" string String.is_valid_utf_8
 
 (* [occurs ~sub t] is [true] iff [sub] is a substring of [t]. *)
@@ -62,7 +72,7 @@ let answers_alike p q rows =
 (* [refused_at r byte] checks that [regex r] raises, naming [byte]. *)
 let refused_at r byte =
   raises_match
-    (Exn.invalid_arg ~sub:(Printf.sprintf "byte %d" byte))
+    (Exn.invalid_arg ~sub:(Printf.sprintf "at byte %d of" byte))
     (fun () -> regex r)
 
 (* Generators *)
@@ -320,15 +330,19 @@ let long_row () =
 let matching =
   group "Str.matches"
     [
-      prop "is true exactly where extract finds a match"
+      prop
+        "is true exactly where extract finds a match, on each suffix of a text"
         ~examples:[ ("z", "ab") ]
         pattern_and_text
         (fun (p, t) ->
           let r = regex p in
-          let found = Option.is_some (extract r (one t)).(0) in
-          cover "a text without a match" (not found);
-          cover "a text with a match" found;
-          equal bools (one found) (matches r (one t)));
+          let rows = Array.of_list (List.map Option.some (suffixes t)) in
+          let found =
+            Array.map (fun e -> Some (Option.is_some e)) (extract r rows)
+          in
+          cover "a text without a match" (Array.mem (Some false) found);
+          cover "a text with a match" (Array.mem (Some true) found);
+          equal bools found (matches r rows));
       test
         "answers on a row whose states exceed a kernel's memory as extract does"
         long_row;
@@ -362,7 +376,9 @@ let extracting =
       test "raises on a group of a literal" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
               Expr.Str.extract ~group:1 (literal "a") s));
-      prop "finds a group inside the whole match" pattern_and_text
+      prop "finds a group inside the whole match"
+        ~examples:[ ("(a)", "ba") ]
+        pattern_and_text
         (fun (p, t) ->
           let r = regex p in
           let whole = (extract r (one t)).(0) in
@@ -371,14 +387,18 @@ let extracting =
             | _ -> true
             | exception Invalid_argument _ -> false
           in
-          for g = 1 to 2 do
-            if has g then
-              match (extract ~group:g r (one t)).(0) with
-              | None -> ()
-              | Some text ->
-                  valid_utf_8 text;
-                  contains ~sub:text (Option.get whole)
-          done);
+          let taken =
+            List.filter_map
+              (fun g ->
+                if has g then (extract ~group:g r (one t)).(0) else None)
+              [ 1; 2 ]
+          in
+          cover "a group that took part" (taken <> []);
+          List.iter
+            (fun text ->
+              valid_utf_8 text;
+              contains ~sub:text (Option.get whole))
+            taken);
     ]
 
 let splitting =
@@ -471,7 +491,7 @@ type answer = {
   replaced : string;
 }
 
-let reference =
+let reference () =
   let hex h =
     String.init
       (String.length h / 2)
@@ -529,8 +549,10 @@ let agrees (p, answers) =
 let expressions =
   group "regular expressions"
     [
-      cases "agree with Rust's regex crate on every operation" ~id:fst reference
-        agrees;
+      test "agree with Rust's regex crate on every operation" (fun () ->
+          List.iter
+            (fun ((p, _) as answers) -> subtest p (fun () -> agrees answers))
+            (reference ()));
       cases
         "discard an empty match abutting the previous one, and resume one \
          scalar on"
@@ -653,7 +675,7 @@ let expressions =
 (* golden/unicode.txt, from gen/case.py: [C name ranges] the members of a class,
    [A class name] another name of the class, [F a b ...] an orbit of simple case
    folding. *)
-let unicode_lines =
+let unicode_lines () =
   In_channel.with_open_text "golden/unicode.txt" In_channel.input_lines
   |> List.filter (fun l -> l <> "" && l.[0] <> '#')
   |> List.map (fun l -> List.filter (( <> ) "") (String.split_on_char ' ' l))
@@ -665,21 +687,21 @@ let range r =
   | [ a; ""; b ] -> (hex a, hex b)
   | _ -> failwith r
 
-let classes =
+let classes () =
   List.filter_map
     (function
       | "C" :: name :: ranges -> Some (name, List.map range ranges) | _ -> None)
-    unicode_lines
+    (unicode_lines ())
 
-let aliases =
+let aliases () =
   List.filter_map
     (function [ "A"; name; alias ] -> Some (name, alias) | _ -> None)
-    unicode_lines
+    (unicode_lines ())
 
-let orbits =
+let orbits () =
   List.filter_map
     (function "F" :: us -> Some (List.map hex us) | _ -> None)
-    unicode_lines
+    (unicode_lines ())
 
 (* [member ranges] is membership in the ascending [ranges], by bisection. *)
 let member ranges =
@@ -718,30 +740,37 @@ let wrong us expected got =
 let every_scalar_of r name =
   test (Printf.sprintf "%s matches exactly Annex C's scalars" r) (fun () ->
       let us = Lazy.force every_scalar in
-      let ranges = List.assoc name classes in
+      let ranges = List.assoc name (classes ()) in
       equal (list string) []
         (wrong us (member ranges) (matches (regex ("^" ^ r ^ "$")) (alone us))))
 
 let unicode =
   group "Unicode 18.0.0"
     [
-      cases "each \\p class holds exactly its ranges, at every boundary" ~id:fst
-        classes (fun (name, ranges) ->
-          let us = boundaries ranges in
-          let holds = member ranges in
-          equal (list string) []
-            (wrong us holds (matches (regex ("\\p{" ^ name ^ "}")) (alone us)));
-          equal (list string) []
-            (wrong us
-               (fun u -> not (holds u))
-               (matches (regex ("\\P{" ^ name ^ "}")) (alone us))));
-      cases "a class answers to each of its names" ~id:snd aliases
-        (fun (name, alias) ->
-          let us = boundaries (List.assoc name classes) in
-          let us = Array.sub us 0 (min 12 (Array.length us)) in
-          equal bools
-            (matches (regex ("\\p{" ^ name ^ "}")) (alone us))
-            (matches (regex ("\\p{" ^ alias ^ "}")) (alone us)));
+      test "each \\p class holds exactly its ranges, at every boundary"
+        (fun () ->
+          List.iter
+            (fun (name, ranges) ->
+              subtest name @@ fun () ->
+              let us = boundaries ranges in
+              let holds = member ranges in
+              let p = regex ("\\p{" ^ name ^ "}") in
+              let not_p = regex ("\\P{" ^ name ^ "}") in
+              equal (list string) [] (wrong us holds (matches p (alone us)));
+              equal (list string) []
+                (wrong us (fun u -> not (holds u)) (matches not_p (alone us))))
+            (classes ()));
+      test "a class answers to each of its names" (fun () ->
+          let classes = classes () in
+          List.iter
+            (fun (name, alias) ->
+              subtest alias @@ fun () ->
+              let us = boundaries (List.assoc name classes) in
+              let us = Array.sub us 0 (min 12 (Array.length us)) in
+              equal bools
+                (matches (regex ("\\p{" ^ name ^ "}")) (alone us))
+                (matches (regex ("\\p{" ^ alias ^ "}")) (alone us)))
+            (aliases ()));
       every_scalar_of "\\w" "word";
       every_scalar_of "\\d" "digit";
       every_scalar_of "\\s" "space";
@@ -765,20 +794,18 @@ let unicode =
             (wrong us (fun u -> u <> 0x0A) (matches (regex "^.$") (alone us)));
           equal (list string) []
             (wrong us (Fun.const true) (matches (regex "(?s)^.$") (alone us))));
-      cases "(?i) closes each simple case-folding orbit"
-        ~id:(fun us ->
-          String.concat " " (List.map (Printf.sprintf "U+%04X") us))
-        orbits
-        (fun orbit ->
-          let us = Array.of_list orbit in
+      test "(?i) closes each simple case-folding orbit" (fun () ->
           List.iter
-            (fun u ->
-              equal
-                ~msg:(Printf.sprintf "(?i)U+%04X" u)
-                bools
-                (Array.map (Fun.const (Some true)) us)
-                (matches (regex ("(?i)^" ^ utf_8 u ^ "$")) (alone us)))
-            orbit);
+            (fun orbit ->
+              let us = Array.of_list orbit in
+              List.iter
+                (fun u ->
+                  subtest (Printf.sprintf "(?i)U+%04X" u) @@ fun () ->
+                  equal bools
+                    (Array.map (Fun.const (Some true)) us)
+                    (matches (regex ("(?i)^" ^ utf_8 u ^ "$")) (alone us)))
+                orbit)
+            (orbits ()));
       cases "(?i) closes a class before it negates"
         ~id:(fun (r, t, _) -> r ^ " on " ^ t)
         [
