@@ -477,9 +477,17 @@ let bytes_ =
 let instants =
   List.map (fun k -> Option.get (Time.of_us (Int64.of_int k))) [ -3; 0; 3 ]
 
-(* [compared x pool edges] draws a comparison or [In] of [x] against values of
-   [pool], half of them from [edges], with whether one is an edge. *)
-let compared (type a) (x : (a, Expr.row) Expr.t) (pool : a list) edges =
+(* A filter on one column, and whether it compares the column with an edge of
+   its statistics. *)
+type filter = {
+  column : string;
+  pred : (bool, Expr.row) Expr.t;
+  at_edge : bool;
+}
+
+(* [compared column x pool edges] draws a comparison or [In] of [x], the column
+   [column], against values of [pool], half of them from [edges]. *)
+let compared column (type a) (x : (a, Expr.row) Expr.t) (pool : a list) edges =
   let open Gen in
   let value =
     if edges = [] then of_list pool
@@ -491,9 +499,9 @@ let compared (type a) (x : (a, Expr.row) Expr.t) (pool : a list) edges =
     [
       (let* op = of_list ops in
        let+ v = value in
-       (op x (Expr.const v), edge [ v ]));
+       { column; pred = op x (Expr.const v); at_edge = edge [ v ] });
       (let+ vs = list ~size:(int_range 1 3) value in
-       (Expr.is_in vs x, edge vs));
+       { column; pred = Expr.is_in vs x; at_edge = edge vs });
     ]
 
 (* Rows of a column of each class of statistics, and a filter on each: integers,
@@ -527,22 +535,22 @@ let stats_case =
       ]
   in
   let binary = List.map Binary.of_string in
-  let* pi = compared (Col.int "i") ints [] in
-  let* pu = compared (Col.int "u") [ 0; 1; max_int ] [] in
-  let* px = compared (Col.float "x") floats [ 0.; -0. ] in
-  let* pd = compared (Col.wall "d") instants [] in
-  let* ps = compared (Col.string "s") texts bounds in
-  let* pb = compared (Col.binary "b") (binary bytes_) (binary byte_bounds) in
+  let* pi = compared "i" (Col.int "i") ints [] in
+  let* pu = compared "u" (Col.int "u") [ 0; 1; max_int ] [] in
+  let* px = compared "x" (Col.float "x") floats [ 0.; -0. ] in
+  let* pd = compared "d" (Col.wall "d") instants [] in
+  let* ps = compared "s" (Col.string "s") texts bounds in
+  let* pb =
+    compared "b" (Col.binary "b") (binary bytes_) (binary byte_bounds)
+  in
   let+ row_group = frequency [ (1, constant 1); (2, int_range 2 10) ] in
-  ( t,
-    row_group,
-    [ ("i", pi); ("u", pu); ("x", px); ("d", pd); ("s", ps); ("b", pb) ] )
+  (t, row_group, [ pi; pu; px; pd; ps; pb ])
 
 let pp_stats ppf (t, row_group, filters) =
   Format.fprintf ppf "@[<v>%a@,row groups of %d, filters %a@]" Talon.pp t
     row_group
-    (Format.pp_print_list ~pp_sep:Format.pp_print_space (fun ppf (_, (p, _)) ->
-         Expr.pp ppf p))
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space (fun ppf f ->
+         Expr.pp ppf f.pred))
     filters
 
 let statistics =
@@ -555,31 +563,24 @@ let statistics =
           (((n - 1) / row_group) + 1)
           (fun k -> (k * row_group, min n ((k + 1) * row_group)))
       in
-      let filters =
-        List.map
-          (fun (c, (p, edge)) ->
-            ( c,
-              p,
-              edge,
-              Error.get_ok (Query.run (Query.filter p (Query.of_table t))) ))
-          filters
+      let kept f =
+        Error.get_ok (Query.run (Query.filter f.pred (Query.of_table t)))
       in
-      let excludes kept (a, b) =
+      (* [excludes f g] is [true] iff no row of the row group [g] passes [f]. *)
+      let excludes f (a, b) =
         Array.for_all
           (function Some i -> i < a || i >= b | None -> true)
-          (Column.options Kind.int (Talon.column kept "id"))
+          (Column.options Kind.int (Talon.column (kept f) "id"))
       in
       let xs = Column.options Kind.float (Talon.column t "x") in
       cover "a row group no row of which passes"
-        (List.exists
-           (fun (_, _, _, kept) -> List.exists (excludes kept) groups)
-           filters);
+        (List.exists (fun f -> List.exists (excludes f) groups) filters);
       cover "a constant equal to a truncated bound"
         (List.exists
-           (fun (c, _, edge, _) -> edge && (c = "s" || c = "b"))
+           (fun f -> f.at_edge && (f.column = "s" || f.column = "b"))
            filters);
       cover "a zero against signed zeros"
-        (List.exists (fun (c, _, edge, _) -> edge && c = "x") filters);
+        (List.exists (fun f -> f.at_edge && f.column = "x") filters);
       cover "an all-NaN group"
         (List.exists
            (fun (a, b) ->
@@ -589,12 +590,13 @@ let statistics =
              vs <> [] && List.for_all Float.is_nan vs)
            groups);
       let b = Rig.Buffer.of_string (encode ~row_group t) in
-      let f = Error.get_ok (P.sniff b) in
+      let read = Error.get_ok (P.sniff b) in
       List.iter
-        (fun (c, p, _, kept) ->
-          equal table_w ~msg:c kept
+        (fun f ->
+          equal table_w ~msg:f.column (kept f)
             (Error.get_ok
-               (Query.run (Query.filter p (Query.of_source (P.source f b))))))
+               (Query.run
+                  (Query.filter f.pred (Query.of_source (P.source read b))))))
         filters)
 
 (* The corpus: tables whose files pyarrow read, golden/written.txt holding each

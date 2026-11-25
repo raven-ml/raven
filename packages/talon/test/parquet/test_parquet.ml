@@ -1280,13 +1280,12 @@ let retype f column t =
 let refusal f =
   match f () with _ -> "no refusal" | exception Invalid_argument msg -> msg
 
+(* [declare_decimals f] is [f], a format of the types fixture's columns, its
+   decimals [d9] and [d18] declared as float64. *)
 let declare_decimals f =
-  List.fold_left
-    (fun f c ->
-      match P.with_type c (any Type.float64) f with
-      | f -> f
-      | exception Invalid_argument _ -> f)
-    f [ "d9"; "d18" ]
+  f
+  |> P.with_type "d9" (any Type.float64)
+  |> P.with_type "d18" (any Type.float64)
 
 let with_type =
   group "with_type"
@@ -1802,7 +1801,7 @@ let scanned =
     ("empty.parquet", [ "string"; "binary" ]);
   ]
 
-let scan_source file = P.source (declare_decimals (sniff file)) (buffer file)
+let scan_source file = P.source (declared file) (buffer file)
 
 (* Each file of [scanned], read whole once. *)
 let tables =
