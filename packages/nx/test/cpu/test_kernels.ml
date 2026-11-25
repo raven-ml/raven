@@ -3,8 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx.cpu's copies, casts and maps, as nx_cpu.mli states them: each kind of
-   one or two operands has nx_kinds.h's bits, its maps, and its refusals. *)
+(* nx.cpu's copies, casts and maps, as nx_cpu.mli states them: each kind has
+   nx_kinds.h's bits, a map computes every program of any number of loads and
+   outputs, its layouts change no bit, and its refusals come before any
+   write. *)
 
 open Windtrap
 open Nx_array_gen
@@ -14,186 +16,245 @@ module D = Nx_array.Dtype
 module B = Rig.Buffer
 module Support = Nx_kernels_support
 
-(* The kernels a law calls. *)
-type kernels = (module Nx_kernel.S)
+let cpu = Support.cpu
+let kernels = (module Nx_cpu : Nx_kernel.S)
+let copy ~dst a = Support.map1 kernels Nx_kernel.Prog.Copy ~dst a
+let cast ~dst a = Support.map1 kernels Nx_kernel.Prog.Cast ~dst a
 
-let copy (k : kernels) ~dst a = Support.map1 k Nx_kernel.Prog.Copy ~dst a
+(* Refusals *)
 
-let cast (k : kernels) ~dst a = Support.map1 k Nx_kernel.Prog.Cast ~dst a
-
-(* nx.cpu's refusals *)
-
-(* Each answers the door's refusal, before any write. *)
+(* [call] into [dst] answers the door's refusal [r] and leaves [dst]'s bits as
+   they were. *)
 let refuses r dst call =
   let before = bits_of dst in
   equal answer r (call ());
   equal (array int) before (bits_of dst)
 
-let test_refusals k () =
-  let module K = (val k : Nx_kernel.S) in
+let f32s xs = A.of_array D.Float32 [| Array.length xs |] xs
+
+(* A program's copy of a float32, over a load or into a destination of another
+   dtype. *)
+let copy_f32 ~dst x =
+  let f = D.Any D.Float32 in
+  Nx_cpu.map
+    (Nx_kernel.Prog.of_node ~ins:[| f |] (Op1 (Copy, f, 0)))
+    ~dsts:[| A.Any dst |] [| Nx_kernel.Plain x |]
+
+let test_misfits () =
   let f32 = D.Float32 in
-  (* A program's copy of a float32, over a load or into a destination of
-     another dtype. *)
-  let copy_f32 ~dst x =
-    let f = D.Any f32 in
-    K.map
-      (Nx_kernel.Prog.of_node ~ins:[| f |] (Op1 (Copy, f, 0)))
-      ~dsts:[| A.Any dst |] [| Nx_kernel.Plain x |]
-  in
   let x = A.of_array f32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let i32 = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 7l) in
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) x) in
-  (* Misfits: not Done, and nothing written outside the destination. *)
   let misfit ~msg ~what dt call =
-    Misfit.check ~msg ~what Support.cpu [| (D.Any dt, [| 2; 3 |]) |]
+    Misfit.check ~msg ~what cpu
+      [| (D.Any dt, [| 2; 3 |]) |]
       (fun g ds -> call g (A.expect dt ds.(0)))
   in
   misfit ~msg:"a copy of int32 as float32" ~what:"a dtype" f32 (fun g dst ->
       copy_f32 ~dst (g.Misfit.g i32));
   misfit ~msg:"a copy of another shape" ~what:"a shape" f32 (fun g dst ->
-      copy k ~dst (g.Misfit.g t));
+      copy ~dst (g.Misfit.g t));
   misfit ~msg:"a cast of another shape" ~what:"a shape" f32 (fun g dst ->
-      cast k ~dst (g.Misfit.g t));
+      cast ~dst (g.Misfit.g t));
   misfit ~msg:"a copy of float32 into int32" ~what:"a dtype" D.Int32
     (fun g dst -> copy_f32 ~dst (g.Misfit.g x));
-  (* Into bytes the source reads, and into a broadcast. *)
-  let flat = A.of_array f32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let f32' = D.Any f32 in
+  Misfit.check ~msg:"a destination of another dtype" ~what:"a dtype" cpu
+    [| (D.Any D.Float64, [| 1 |]) |]
+    (fun g ds ->
+      Nx_cpu.map
+        (P.of_node ~ins:[| f32' |] (Op1 (Unary Neg, f32', 0)))
+        ~dsts:(Iarray.of_array ds)
+        [| Plain (g.Misfit.g (f32s [| 1. |])) |]);
+  Misfit.check ~msg:"an iota into int32" ~what:"a dtype" cpu
+    [| (D.Any D.Int32, [| 2 |]) |]
+    (fun _ ds -> Support.map0 kernels (Iota 0) ~dst:(A.expect D.Int32 ds.(0)))
+
+(* Into bytes the source reads, and into a broadcast. *)
+let test_door_refusals () =
+  let flat = f32s [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let part start =
     Option.get (A.move (M.Slice [| { M.start; count = 3; step = 1 } |]) flat)
   in
-  refuses A.Overlapping (part 0) (fun () -> copy k ~dst:(part 0) (part 1));
-  refuses A.Overlapping (part 0) (fun () -> cast k ~dst:(part 0) (part 2));
+  refuses A.Overlapping (part 0) (fun () -> copy ~dst:(part 0) (part 1));
+  refuses A.Overlapping (part 0) (fun () -> cast ~dst:(part 0) (part 2));
   let b =
-    Option.get
-      (A.move
-         (M.Broadcast [| 2; 3 |])
-         (A.of_array f32 [| 3 |] [| 0.; 0.; 0. |]))
+    Option.get (A.move (M.Broadcast [| 2; 3 |]) (f32s [| 0.; 0.; 0. |]))
   in
-  refuses A.Repeated_elements b (fun () -> cast k ~dst:b i32)
+  let i32 = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 7l) in
+  refuses A.Repeated_elements b (fun () -> cast ~dst:b i32)
 
-(* Kinds of no, two and three operands *)
+(* Values prog.mli states for kinds *)
 
-(* Values the kinds' documentation states, through nx.cpu. *)
-let test_kind_values () =
-  let k = (module Nx_cpu : Nx_kernel.S) in
-  let map0 op ~dst = Support.map0 k op ~dst in
-  let map1 op ~dst x = Support.map1 k op ~dst x in
-  let map2 op ~dst x y = Support.map2 k op ~dst x y in
-  let map3 op ~dst c x y = Support.map3 k op ~dst c x y in
-  let done_ ~msg a = equal ~msg answer A.Done a in
-  let f32 xs = A.of_array D.Float32 [| Array.length xs |] xs in
-  let d = A.create Rig.host D.Float32 [| 2 |] in
-  done_ ~msg:"add" (map2 (Binary Add) ~dst:d (f32 [| 1.; 2. |]) (f32 [| 3.; 0.5 |]));
-  equal ~msg:"add" (array float_exact) [| 4.; 2.5 |] (A.to_array d);
-  let i8 xs = A.of_array D.Int8 [| Array.length xs |] xs in
-  let d = A.create Rig.host D.Int8 [| 3 |] in
-  done_ ~msg:"idiv"
-    (map2 (Binary Idiv) ~dst:d (i8 [| -128; 7; 5 |]) (i8 [| -1; 0; -2 |]));
-  equal ~msg:"idiv: the least value by -1, by zero, toward zero" (array int)
-    [| -128; 0; -2 |] (A.to_array d);
-  let u8 xs = A.of_array D.Uint8 [| Array.length xs |] xs in
-  let b = A.create Rig.host D.Bool [| 2 |] in
-  done_ ~msg:"less" (map2 (Compare Less) ~dst:b (u8 [| 200; 1 |]) (u8 [| 100; 2 |]));
-  equal ~msg:"less: unsigned order" (array bool) [| false; true |] (A.to_array b);
-  let b2 = A.create Rig.host D.Bool [| 1 |] in
-  done_ ~msg:"less"
-    (map2 (Compare Less) ~dst:b2 (f32 [| -0. |]) (f32 [| 0. |]));
-  equal ~msg:"less: -0 equals +0" (array bool) [| false |] (A.to_array b2);
-  let m = A.create Rig.host D.Float32 [| 1 |] in
-  done_ ~msg:"maximum"
-    (map2 (Binary Maximum) ~dst:m (f32 [| -0. |]) (f32 [| 0. |]));
-  equal ~msg:"maximum: -0 orders below +0" bool false
-    (Float.sign_bit (A.get m [| 0 |]));
-  let d = A.create Rig.host D.Float32 [| 2 |] in
-  done_ ~msg:"where" (map3 Where ~dst:d b (f32 [| 1.; 2. |]) (f32 [| 3.; 4. |]));
-  equal ~msg:"where" (array float_exact) [| 3.; 2. |] (A.to_array d);
-  let d = A.create Rig.host D.Int64 [| 2; 3 |] in
-  done_ ~msg:"iota" (map0 (Iota 1) ~dst:d);
-  equal ~msg:"iota along axis 1" (array int64) [| 0L; 1L; 2L; 0L; 1L; 2L |]
-    (A.to_array d);
-  Misfit.check ~msg:"an iota into int32" ~what:"a dtype" Support.cpu
-    [| (D.Any D.Int32, [| 2 |]) |]
-    (fun _ ds -> map0 (Iota 0) ~dst:(A.expect D.Int32 ds.(0)));
-  (* Large enough for a job of several units, each starting inside a run. *)
-  let big = A.create Rig.host D.Int64 [| 3; 70001 |] in
-  List.iter
-    (fun axis ->
-      done_ ~msg:"iota" (map0 (Iota axis) ~dst:big);
-      let want =
-        Array.init (3 * 70001) (fun p ->
-            Int64.of_int (if axis = 0 then p / 70001 else p mod 70001))
-      in
-      equal ~msg:(strf "iota along axis %d of 3x70001" axis) (array int64) want
-        (A.to_array big))
-    [ 0; 1 ];
-  let d = A.create Rig.host D.Int32 [| 2; 3 |] in
-  done_ ~msg:"fill" (map0 (Fill (P.bits D.Int32 7l)) ~dst:d);
-  equal ~msg:"fill" (array int32) (Array.make 6 7l) (A.to_array d);
-  (* A signalling NaN with a payload, stored as its bits. *)
-  let nan = Bytes.create 4 in
-  Bytes.set_int32_le nan 0 0x7f800021l;
-  let d = A.create Rig.host D.Float32 [| 3 |] in
-  done_ ~msg:"fill" (map0 (Fill (Bytes.to_string nan)) ~dst:d);
-  equal ~msg:"fill: a NaN's bits" (array int32) (Array.make 3 0x7f800021l)
-    (A.to_array (Option.get (A.bitcast D.Int32 d)));
-  (* A boolean byte of 2, true, stored as it is. *)
-  let d = A.create Rig.host D.Bool [| 3 |] in
-  done_ ~msg:"fill" (map0 (Fill "\002") ~dst:d);
-  equal ~msg:"fill: a boolean's byte" (array int) [| 2; 2; 2 |]
-    (A.to_array (Option.get (A.bitcast D.Uint8 d)));
-  let i4 xs = A.of_array D.Int4 [| Array.length xs |] xs in
-  let d = A.create Rig.host D.Int4 [| 2 |] in
-  done_ ~msg:"add" (map2 (Binary Add) ~dst:d (i4 [| 7; -8 |]) (i4 [| 1; -1 |]));
-  equal ~msg:"add: int4 wraps" (array int) [| -8; 7 |] (A.to_array d);
-  let bf16 xs = A.of_array D.Bfloat16 [| Array.length xs |] xs in
-  let d = A.create Rig.host D.Bfloat16 [| 1 |] in
-  done_ ~msg:"add"
-    (map2 (Binary Add) ~dst:d (bf16 [| 256. |]) (bf16 [| 1. |]));
-  equal ~msg:"add: bfloat16 rounds once, ties to even" (array float_exact)
-    [| 256. |] (A.to_array d);
-  let unary ~msg u xs want =
-    let d = A.create Rig.host D.Float32 [| Array.length xs |] in
-    done_ ~msg (map1 (Unary u) ~dst:d (f32 xs));
-    equal ~msg (array float_exact) want (A.to_array d)
+(* The elements [call] writes into a fresh array of [dt] and shape [s], once it
+   answers [Done]. *)
+let into (type v s) (dt : (v, s) D.t) s call : v array =
+  let dst = A.create Rig.host dt (Iarray.of_array s) in
+  equal answer A.Done (call dst);
+  A.to_array dst
+
+let map0 op ~dst = Support.map0 kernels op ~dst
+let map1 op ~dst x = Support.map1 kernels op ~dst x
+let map2 op ~dst x y = Support.map2 kernels op ~dst x y
+let map3 op ~dst c x y = Support.map3 kernels op ~dst c x y
+let i8s xs = A.of_array D.Int8 [| Array.length xs |] xs
+
+let unary u xs =
+  into D.Float32
+    [| Array.length xs |]
+    (fun dst -> map1 (Unary u) ~dst (f32s xs))
+
+let kind_values =
+  group "kind values"
+    [
+      test "Add of float32s is their sum" (fun () ->
+          equal (array float_exact) [| 4.; 2.5 |]
+            (into D.Float32 [| 2 |] (fun dst ->
+                 map2 (Binary Add) ~dst (f32s [| 1.; 2. |]) (f32s [| 3.; 0.5 |]))));
+      test
+        "Idiv of the least int8 by -1 is itself, by 0 is 0, and rounds toward \
+         zero" (fun () ->
+          equal (array int) [| -128; 0; -2 |]
+            (into D.Int8 [| 3 |] (fun dst ->
+                 map2 (Binary Idiv) ~dst
+                   (i8s [| -128; 7; 5 |])
+                   (i8s [| -1; 0; -2 |]))));
+      test "Less of uint8s is the unsigned order" (fun () ->
+          let u8 xs = A.of_array D.Uint8 [| 2 |] xs in
+          equal (array bool) [| false; true |]
+            (into D.Bool [| 2 |] (fun dst ->
+                 map2 (Compare Less) ~dst (u8 [| 200; 1 |]) (u8 [| 100; 2 |]))));
+      test "Less of -0 and +0 is false" (fun () ->
+          equal (array bool) [| false |]
+            (into D.Bool [| 1 |] (fun dst ->
+                 map2 (Compare Less) ~dst (f32s [| -0. |]) (f32s [| 0. |]))));
+      test "Maximum of -0 and +0 is +0" (fun () ->
+          equal (array int32) [| 0l |]
+            (Array.map Int32.bits_of_float
+               (into D.Float32 [| 1 |] (fun dst ->
+                    map2 (Binary Maximum) ~dst (f32s [| -0. |]) (f32s [| 0. |])))));
+      test "Where picks its first operand where true" (fun () ->
+          let c = A.of_array D.Bool [| 2 |] [| false; true |] in
+          equal (array float_exact) [| 3.; 2. |]
+            (into D.Float32 [| 2 |] (fun dst ->
+                 map3 Where ~dst c (f32s [| 1.; 2. |]) (f32s [| 3.; 4. |]))));
+      (* 3 × 70001: a job of several units, each starting inside a run. *)
+      test "Iota is each element's index along its axis" (fun () ->
+          equal ~msg:"2 × 3 along 1" (array int64)
+            [| 0L; 1L; 2L; 0L; 1L; 2L |]
+            (into D.Int64 [| 2; 3 |] (fun dst -> map0 (Iota 1) ~dst));
+          List.iter
+            (fun axis ->
+              equal
+                ~msg:(strf "3 × 70001 along %d" axis)
+                (array int64)
+                (Array.init (3 * 70001) (fun p ->
+                     Int64.of_int (if axis = 0 then p / 70001 else p mod 70001)))
+                (into D.Int64 [| 3; 70001 |] (fun dst -> map0 (Iota axis) ~dst)))
+            [ 0; 1 ]);
+      test "Fill stores its element's bits" (fun () ->
+          equal ~msg:"int32" (array int32) (Array.make 6 7l)
+            (into D.Int32 [| 2; 3 |] (fun dst ->
+                 map0 (Fill (P.bits D.Int32 7l)) ~dst));
+          (* A signalling NaN with a payload, and a boolean byte of 2. *)
+          let nan = Bytes.create 4 in
+          Bytes.set_int32_le nan 0 0x7f800021l;
+          let fill dt bytes =
+            let d = A.create Rig.host dt [| 3 |] in
+            equal answer A.Done (map0 (Fill bytes) ~dst:d);
+            d
+          in
+          equal ~msg:"a NaN's bits" (array int32) (Array.make 3 0x7f800021l)
+            (A.to_array
+               (Option.get
+                  (A.bitcast D.Int32 (fill D.Float32 (Bytes.to_string nan)))));
+          equal ~msg:"a boolean's byte" (array int) [| 2; 2; 2 |]
+            (A.to_array (Option.get (A.bitcast D.Uint8 (fill D.Bool "\002")))));
+      test "Add of int4s wraps" (fun () ->
+          let i4 xs = A.of_array D.Int4 [| 2 |] xs in
+          equal (array int) [| -8; 7 |]
+            (into D.Int4 [| 2 |] (fun dst ->
+                 map2 (Binary Add) ~dst (i4 [| 7; -8 |]) (i4 [| 1; -1 |]))));
+      test "Add of bfloat16s rounds once, ties to even" (fun () ->
+          let bf16 xs = A.of_array D.Bfloat16 [| 1 |] xs in
+          equal (array float_exact) [| 256. |]
+            (into D.Bfloat16 [| 1 |] (fun dst ->
+                 map2 (Binary Add) ~dst (bf16 [| 256. |]) (bf16 [| 1. |]))));
+      test "Round takes half away from zero" (fun () ->
+          equal (array float_exact) [| 3.; -3.; 0. |]
+            (unary Round [| 2.5; -2.5; 0.49999997 |]));
+      test "Sign of a NaN is a NaN" (fun () ->
+          satisfies ~claim:"a NaN" (array float_exact)
+            (Array.for_all Float.is_nan)
+            (unary Sign [| Float.nan |]));
+      test "Recip of an integer is itself for 1 and -1, else 0" (fun () ->
+          equal (array int) [| 1; -1; 0; 0 |]
+            (into D.Int8 [| 4 |] (fun dst ->
+                 map1 (Unary Recip) ~dst (i8s [| 1; -1; 2; 0 |]))));
+      test "Bitcast keeps the bits" (fun () ->
+          equal (array int32) [| 0x3f800000l |]
+            (into D.Uint32 [| 1 |] (fun dst ->
+                 map1 Bitcast ~dst (f32s [| 1. |]))));
+      test "a kind off its domain makes no program" (fun () ->
+          raises_match ~msg:"bitcast across widths" Exn.invalid_arg (fun () ->
+              map1 Bitcast
+                ~dst:(A.create Rig.host D.Float64 [| 1 |])
+                (f32s [| 1. |]));
+          raises_match ~msg:"exp on int32" Exn.invalid_arg (fun () ->
+              map1 (Unary Exp)
+                ~dst:(A.create Rig.host D.Int32 [| 1 |])
+                (A.of_array D.Int32 [| 1 |] [| 1l |]));
+          raises_match ~msg:"idiv on float32" Exn.invalid_arg (fun () ->
+              map2 (Binary Idiv)
+                ~dst:(A.create Rig.host D.Float32 [| 2 |])
+                (f32s [| 1.; 2. |])
+                (f32s [| 1.; 2. |])));
+    ]
+
+(* A float dtype with its significand's bits and the least and greatest
+   exponents of its powers of two, subnormals included. *)
+type float_dtype = F : (float, 'b) D.t * int * int * int -> float_dtype
+
+let float_dtypes =
+  D.
+    [
+      F (Float64, 53, -1074, 1023);
+      F (Float32, 24, -149, 127);
+      F (Float16, 11, -24, 15);
+      F (Bfloat16, 8, -133, 127);
+      F (Float8_e4m3fn, 4, -9, 8);
+      F (Float8_e5m2, 3, -16, 15);
+      F (Float4_e2m1fn, 2, -1, 2);
+    ]
+
+(* The integers [n] of [lo, hi] that the dtype holds, of at most [bits]
+   significant bits: those at which Exp2 is exact, the exponents of the powers
+   of two at which Log2 is. *)
+let exponents bits lo hi =
+  let rec odd n = if n <> 0 && n land 1 = 0 then odd (n asr 1) else n in
+  List.filter
+    (fun n -> abs (odd n) < 1 lsl bits)
+    (List.init (hi - lo + 1) (fun i -> lo + i))
+
+(* [u] of [x] at [dt], one element. *)
+let unary_at (type b) (dt : (float, b) D.t) u x =
+  let y =
+    into dt [| 1 |] (fun dst ->
+        map1 (Unary u) ~dst (A.of_array dt [| 1 |] [| x |]))
   in
-  unary ~msg:"round: half away from zero" Round [| 2.5; -2.5; 0.49999997 |]
-    [| 3.; -3.; 0. |];
-  unary ~msg:"exp2: exact at integers" Exp2 [| 3.; -1.; 10.; -149. |]
-    [| 8.; 0.5; 1024.; 0x1p-149 |];
-  unary ~msg:"log2: exact at powers of two" Log2 [| 8.; 0.5; 0x1p-149 |]
-    [| 3.; -1.; -149. |];
-  let d = A.create Rig.host D.Float32 [| 1 |] in
-  done_ ~msg:"sign" (map1 (Unary Sign) ~dst:d (f32 [| Float.nan |]));
-  equal ~msg:"sign: NaN for a NaN" bool true (Float.is_nan (A.get d [| 0 |]));
-  let d = A.create Rig.host D.Int8 [| 4 |] in
-  done_ ~msg:"recip" (map1 (Unary Recip) ~dst:d (i8 [| 1; -1; 2; 0 |]));
-  equal ~msg:"recip: x for 1 and -1, 0 otherwise" (array int) [| 1; -1; 0; 0 |]
-    (A.to_array d);
-  let d = A.create Rig.host D.Uint32 [| 1 |] in
-  done_ ~msg:"bitcast" (map1 Bitcast ~dst:d (f32 [| 1. |]));
-  equal ~msg:"bitcast: 1.0's bits" (array int32) [| 0x3f800000l |]
-    (A.to_array d);
-  (* A kind off its domain makes no program. *)
-  raises_match ~msg:"bitcast across widths" Exn.invalid_arg (fun () ->
-      map1 Bitcast ~dst:(A.create Rig.host D.Float64 [| 1 |]) (f32 [| 1. |]));
-  raises_match ~msg:"exp on int32" Exn.invalid_arg (fun () ->
-      map1 (Unary Exp)
-        ~dst:(A.create Rig.host D.Int32 [| 1 |])
-        (A.of_array D.Int32 [| 1 |] [| 1l |]));
-  raises_match ~msg:"idiv on float32" Exn.invalid_arg (fun () ->
-      map2 (Binary Idiv)
-        ~dst:(A.create Rig.host D.Float32 [| 2 |])
-        (f32 [| 1.; 2. |]) (f32 [| 1.; 2. |]));
-  let module K = (val k) in
-  let f32' = D.Any D.Float32 in
-  Misfit.check ~msg:"a destination of another dtype" ~what:"a dtype"
-    Support.cpu
-    [| (D.Any D.Float64, [| 1 |]) |]
-    (fun g ds ->
-      K.map
-        (P.of_node ~ins:[| f32' |] (Op1 (Unary Neg, f32', 0)))
-        ~dsts:(Iarray.of_array ds)
-        [| Plain (g.Misfit.g (f32 [| 1. |])) |])
+  y.(0)
+
+(* nx_cpu.mli: Exp2 is exact at integers whose power is in the dtype, and Log2
+   at powers of two. Each dtype's domain is checked whole. *)
+let exact_powers name u ~arg ~res =
+  group name
+    (List.map
+       (fun (F (dt, bits, lo, hi)) ->
+         let ns = exponents bits lo hi in
+         prop ~count:(List.length ns) (D.name dt)
+           (Gen.of_list ~pp:Format.pp_print_int ns) (fun n ->
+             equal float_exact (res n) (unary_at dt u (arg n))))
+       float_dtypes)
 
 (* A map of constants alone holds no value in a slot: it runs at its
    destination's shape all the same. *)
@@ -290,31 +351,27 @@ let test_loop_widths () =
 (* A boolean constant of any byte is true iff the byte is not zero, inside a
    program of several nodes as alone: a [Where] it selects by and its [Cast]
    to int32, two outputs, which nx.cpu's general map computes. *)
-let test_bool_bytes () =
+let law_bool_byte b =
   let f32 = D.Any D.Float32 in
   let xs = [| 1.; 2. |] and ys = [| -1.; -2. |] in
-  for b = 0 to 255 do
-    let flag = P.Const (D.Any D.Bool, String.make 1 (Char.chr b)) in
-    let p =
-      P.v ~ins:[| f32; f32 |]
-        [|
-          In 0; In 1; flag; Op3 (Where, 2, 0, 1); Op1 (Cast, D.Any D.Int32, 2);
-        |]
-        ~outs:[| 3; 4 |]
-    in
-    let x = A.of_array D.Float32 [| 2 |] xs
-    and y = A.of_array D.Float32 [| 2 |] ys in
-    let sel = A.create Rig.host D.Float32 [| 2 |]
-    and int = A.create Rig.host D.Int32 [| 2 |] in
-    let msg = Printf.sprintf "byte %d" b in
-    equal ~msg answer A.Done
-      (Nx_cpu.map p ~dsts:[| A.Any sel; A.Any int |]
-         [| Nx_kernel.Plain x; Plain y |]);
-    equal ~msg (array float_exact) (if b <> 0 then xs else ys) (A.to_array sel);
-    equal ~msg (array int32)
-      (Array.make 2 (if b <> 0 then 1l else 0l))
-      (A.to_array int)
-  done
+  let flag = P.Const (D.Any D.Bool, String.make 1 (Char.chr b)) in
+  let p =
+    P.v ~ins:[| f32; f32 |]
+      [| In 0; In 1; flag; Op3 (Where, 2, 0, 1); Op1 (Cast, D.Any D.Int32, 2) |]
+      ~outs:[| 3; 4 |]
+  in
+  let x = f32s xs and y = f32s ys in
+  let sel = A.create Rig.host D.Float32 [| 2 |]
+  and int = A.create Rig.host D.Int32 [| 2 |] in
+  equal answer A.Done
+    (Nx_cpu.map p ~dsts:[| A.Any sel; A.Any int |]
+       [| Nx_kernel.Plain x; Plain y |]);
+  equal ~msg:"where" (array float_exact)
+    (if b <> 0 then xs else ys)
+    (A.to_array sel);
+  equal ~msg:"cast" (array int32)
+    (Array.make 2 (if b <> 0 then 1l else 0l))
+    (A.to_array int)
 
 (* A map whose coordinate names an axis past its rank does not fit: not
    Done, and nothing written outside its destination. *)
@@ -775,15 +832,9 @@ let law_kind_guards (b : Support.backend) (g, side) =
         Support.map3 (module K) k ~dst:(A.expect (A.dtype x) ds.(0)) c x
           (A.expect (A.dtype x) xs.(2))
   in
-  let answer =
-    Elements.same_guarded ~any_nan:true side ~call g.ops
-      [| (result_dtype g, g.shape) |]
-  in
-  cover "computed" (answer = A.Done);
-  classify "declined" (answer = A.Declined);
-  match answer with
-  | A.Done | A.Declined -> ()
-  | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a
+  equal answer A.Done
+    (Elements.same_guarded ~any_nan:true side ~call g.ops
+       [| (result_dtype g, g.shape) |])
 
 (* Large copies and casts, staged through blocks and threads, with the
    operand and the result against the page. *)
@@ -1550,6 +1601,13 @@ let held_examples =
       Never,
       Some Support.After,
       2 );
+    (* Values reused on a few elements, beside the page before. *)
+    ( large_at D.Float32 1 3 0 3,
+      D.Any D.Float32,
+      300,
+      Reuse,
+      Some Support.Before,
+      3 );
   ]
 
 let held_cases cases =
@@ -1566,27 +1624,18 @@ let held_cases cases =
 
 (* The suite *)
 
-(* nx.cpu under the table the host runs best: what nx_cpu.mli promises beyond
-   Nx_kernel.S. *)
-let cpu =
-  let never _ _ = false in
-  let maps (b : Support.backend) =
+let kinds =
+  group "kinds"
     [
       prop ~examples:[ erf_case ]
-        (strf "%s's kinds of one operand are nx_kinds.h's at each index" b.name)
-        case
-        (fun c ->
-          b.around (fun () ->
-              covers c;
-              law_map1 b c));
-      (* Every dtype refuses a kind: floats Atanh, complex numbers Erf,
-         integers and booleans Exp, so that each case checks a refusal over a
-         large view writes nothing. Bool and bit compute none of them, two
-         dtypes in 21: ten cases miss a computed kind with probability 6e-11. *)
+        "of one operand have nx_kinds.h's bits at each index" case (fun c ->
+          covers c;
+          law_map1 cpu c);
+      (* Bool and bit compute none of these kinds, two dtypes in 21: ten cases
+         miss a computed kind with probability 6e-11. *)
       prop ~count:10
-        (strf "%s's kinds of one operand over large views" b.name)
-        large
-        (fun (Case x as c) ->
+        "of one operand over views past a block have nx_kinds.h's bits" large
+        (fun c ->
           let kinds =
             P.
               [
@@ -1597,109 +1646,101 @@ let cpu =
                 (Atanh, "atanh");
               ]
           in
-          let dt = A.dtype x in
-          let refused (u, _) = not (P.accepts1 (P.Unary u) dt dt) in
-          cover "outside its domain" (List.exists refused kinds);
-          b.around (fun () -> law_map1 ~kinds b c));
-      prop
-        (strf "%s's kinds of two operands are nx_kinds.h's at each index"
-           b.name)
-        pairs
+          law_map1 ~kinds cpu c);
+      prop "of two operands have nx_kinds.h's bits at each index" pairs
         (fun (Pair (x, y) as p) ->
-          b.around (fun () ->
-              (* Operands whose loop is one run of steps of one or none, in
-                 a dtype the kinds compute in, as nx.cpu takes in one row:
-                 neither sub-byte nor a float narrower than float32. *)
-              let dt = A.dtype x and lx = A.layout x in
-              let c =
-                L.coalesce [| L.contiguous (L.shape lx); lx; A.layout y |]
-              in
-              let one_run =
-                L.rank c.(0) = 1
-                && Array.for_all (fun l -> abs (L.stride l 0) <= 1) c
-                && Array.for_all (fun l -> L.stride l 0 >= 0) c
-                && D.bits dt >= 8
-                && not (D.is D.Float dt && D.bits dt < 32)
-              in
-              cover "operands of one run in their own dtype" one_run;
-              cover "operands of one run, of one element"
-                (one_run && L.numel lx = 1);
-              law_map2 b p));
-      (* Every dtype refuses a kind: floats And, integers and booleans Fdiv,
-         so that each case checks a refusal over a large view writes
-         nothing. *)
+          (* Operands whose loop is one run of steps of one or none, in a dtype
+             the kinds compute in, as nx.cpu takes in one row: neither sub-byte
+             nor a float narrower than float32. *)
+          let dt = A.dtype x and lx = A.layout x in
+          let c = L.coalesce [| L.contiguous (L.shape lx); lx; A.layout y |] in
+          let one_run =
+            L.rank c.(0) = 1
+            && Array.for_all (fun l -> abs (L.stride l 0) <= 1) c
+            && Array.for_all (fun l -> L.stride l 0 >= 0) c
+            && D.bits dt >= 8
+            && not (D.is D.Float dt && D.bits dt < 32)
+          in
+          cover "operands of one run in their own dtype" one_run;
+          cover "operands of one run, of one element" (one_run && L.numel lx = 1);
+          law_map2 cpu p);
       prop ~count:8 ~examples:[ large_bfloat16_pair ]
-        (strf "%s's kinds of two operands over large views" b.name)
-        large_pairs
-        (fun (Pair (x, _) as c) ->
+        "of two operands over views past a block have nx_kinds.h's bits"
+        large_pairs (fun c ->
           let kinds = P.[ Binary Add; Compare Less; Binary And; Binary Fdiv ] in
-          let dt = A.dtype x in
-          cover "outside its domain"
-            (List.exists (fun k -> not (P.accepts2 k dt)) kinds);
-          b.around (fun () -> law_map2 ~kinds b c));
-      (* "a where" and "a load of one repeated element" come in 4.4% and
-         5.0% of cases: 600 cases miss each with probability below 2e-12. *)
-      prop ~count:600
-        (strf "%s computes every map its loop holds" b.name)
-        split_cases
-        (fun c -> b.around (fun () -> law_split ~declines:never b c));
-      prop ~count:200 ~examples:held_examples
-        (strf "%s computes held programs" b.name)
-        (held_cases (Gen.frequency [ (3, case); (1, held_views) ]))
-        (fun c -> b.around (fun () -> law_map_held b c));
-      prop ~count:20
-        (strf "%s computes a map of hundreds of values held at once" b.name)
-        (Gen.pair case (Gen.int_range 257 1000))
-        (fun c -> b.around (fun () -> law_map_wide b c));
-      (* A contiguous int32 3x4 reaches "a coordinate repeating along a
-         row" in every run; [case] draws it in about one run in a hundred. *)
-      prop ~examples:[ large_at D.Int32 3 4 0 1 ]
-        (strf "%s computes a map of every operand with coordinates" b.name)
-        case
-        (fun c -> b.around (fun () -> law_map_full b c));
-      prop ~count:200
-        (strf "%s computes maps of any number of arrays" b.name)
-        (Gen.pair (Gen.pair pairs Gen.int) widths)
-        (fun c -> b.around (fun () -> law_map_widths b c));
-      prop ~count:200
-        (strf "%s's kinds read operands repeated along their rows" b.name)
-        repeated_cases
-        (fun c -> b.around (fun () -> law_repeated b c));
-      prop ~count:100
-        (strf "%s holds values one element a row late in a program" b.name)
-        late_cases
-        (fun c -> b.around (fun () -> law_map_late b c));
-      prop ~count:300 ~examples:broadcast_examples
-        (strf "%s reads a broadcast load as its copy" b.name)
-        (Gen.pair broadcast_cases Elements.sides)
-        (fun c -> b.around (fun () -> law_map_broadcast b c));
-      prop ~count:600 ~examples:guarded_examples
-        (strf
-           "%s reads and writes no byte past its operands, loads and \
-            destinations, whatever pages lie beside them"
-           b.name)
-        (Gen.pair guarded_cases Elements.sides)
-        (fun c -> b.around (fun () -> law_guards b c));
+          law_map2 ~kinds cpu c);
+      prop ~count:200 "over operands repeated along their rows have their bits"
+        repeated_cases (law_repeated cpu);
+      exact_powers "Exp2 is exact at integers whose power is in the dtype" Exp2
+        ~arg:float_of_int ~res:(ldexp 1.);
+      exact_powers "Log2 is exact at powers of two" Log2 ~arg:(ldexp 1.)
+        ~res:float_of_int;
+      kind_values;
     ]
-  in
-  group "nx.cpu"
-    (maps Support.cpu
-    @ [
-      test
-        "a misfit is not Done and writes nothing outside its destination; \
-         the door refuses before any write"
-        (test_refusals (module Nx_cpu : Nx_kernel.S));
-      test "kinds give the values their documentation states" test_kind_values;
-      test "a map of constants alone fills its destination" test_constant_map;
-      test "loops of any number of loads and outputs are computed"
+
+let maps =
+  group "map"
+    [
+      test "of constants alone fills its destination" test_constant_map;
+      (* A contiguous int32 3x4 reaches "a coordinate repeating along a row" in
+         every run; [case] draws it in about one run in a hundred. *)
+      prop
+        ~examples:[ large_at D.Int32 3 4 0 1 ]
+        "of 16 loads reading every coordinate has its nodes' bits" case
+        (law_map_full cpu);
+      prop ~count:200 "of any number of arrays has its nodes' bits"
+        (Gen.pair (Gen.pair pairs Gen.int) widths)
+        (law_map_widths cpu);
+      (* Every cover has an example, so the draws need not reach one. *)
+      prop ~count:60 ~examples:held_examples
+        "holding hundreds to thousands of values has its nodes' bits"
+        (held_cases (Gen.frequency [ (3, case); (1, held_views) ]))
+        (law_map_held cpu);
+      prop ~count:20
+        "holding hundreds of a load's products by its coordinates has its \
+         nodes' bits"
+        (Gen.pair case (Gen.int_range 257 1000))
+        (law_map_wide cpu);
+      prop ~count:100
+        "holding a value one element a row late has its nodes' bits" late_cases
+        (law_map_late cpu);
+      prop ~count:300 ~examples:broadcast_examples
+        "reads a broadcast load as its copy"
+        (Gen.pair broadcast_cases Elements.sides)
+        (law_map_broadcast cpu);
+      test "past a block's operands computes a map, a reduction and a scan"
         test_loop_widths;
-      test "a boolean constant is true iff its byte is not zero"
-        test_bool_bytes;
-      test "a map's coordinate past its rank is not Done" test_coord_past_rank;
-      test "a map refuses a padded load that does not fit before copying it"
+      prop ~count:256
+        "of a boolean constant takes it true iff its byte is not zero"
+        (Gen.int_range 0 255) law_bool_byte;
+    ]
+
+let refusals =
+  group "refusals"
+    [
+      test "a misfit is not Done and writes nothing outside its destination"
+        test_misfits;
+      test "the door's refusals come before any write" test_door_refusals;
+      test "a coordinate past the rank is not Done" test_coord_past_rank;
+    ]
+
+let padded =
+  group "padded loads"
+    [
+      test "a pad that does not fit is refused before its copy"
         test_padded_misfits;
       test "a padded load of a dead operand is refused, fill alone or not"
         test_padded_dead;
-    ])
+    ]
 
-let () = exit (run "nx_cpu.kernels" [ cpu ])
+let layouts =
+  group "layouts"
+    [
+      prop ~count:600 ~examples:guarded_examples
+        "no call reads or writes a byte past its operands, loads and \
+         destinations, whatever pages lie beside them"
+        (Gen.pair guarded_cases Elements.sides)
+        (law_guards cpu);
+    ]
+
+let () = exit (run "nx_cpu.kernels" [ kinds; maps; refusals; padded; layouts ])
