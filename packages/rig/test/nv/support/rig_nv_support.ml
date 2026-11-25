@@ -88,7 +88,10 @@ module Edge = struct
   external room_c : nativeint -> (int * int array) array -> int
     = "rig_nv_test_room"
 
+  external trim_c : nativeint -> unit = "rig_nv_test_trim"
+
   let submit g ~v ps = submit_c (N.facts g).edge v ps
+  let trim g = trim_c (N.facts g).edge
 
   (* rig_edge.h's answers, by value. *)
   let room g ps =

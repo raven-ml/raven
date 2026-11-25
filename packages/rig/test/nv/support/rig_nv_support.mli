@@ -67,6 +67,12 @@ module Edge : sig
       {!submit} hands them: ["FITS"], ["LATER"], ["NEVER"] or ["GROW"]. A
       ["GROW"] leaves its request for {!Rig_nv.grow} on the calling
       thread. *)
+
+  val trim : Rig_nv.t -> unit
+  (** [trim g] calls [g]'s C trim, as rig does at a {!Rig.free_cache}, or does
+      nothing where its driver has none. The caller calls it as rig does: never
+      while a submission is between a room that answered ["GROW"] and its
+      submit. *)
 end
 
 (** {1:host Host memory} *)

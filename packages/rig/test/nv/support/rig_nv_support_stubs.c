@@ -88,6 +88,15 @@ value rig_nv_test_room(value v_self, value v_parts) {
   return Val_int(room);
 }
 
+/* Calls the trim of the device whose C state is [v_self], as rig does at a
+   free_cache: nothing where the trim is NULL. */
+value rig_nv_test_trim(value v_self) {
+  void *self = (void *)Nativeint_val(v_self);
+  const struct rig_driver *d = rig_driver_of(self);
+  if (d->trim != NULL) d->trim(self);
+  return Val_unit;
+}
+
 /* Hands the device whose C state is [v_self] the parts [v_parts], each
    [(queue, words)], as the value [v_v] with no waits, through its room
    check and submit. Raises [Failure] unless the parts fit and the submit

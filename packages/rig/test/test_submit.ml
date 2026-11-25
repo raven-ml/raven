@@ -1373,6 +1373,30 @@ let test_grow_fault () =
   equal ~msg:"values assigned" int base (Rig.submitted d);
   equal (option string) ~msg:"the loss" (Some "grow fault") (Rig.lost d)
 
+(* A retire that faults at a free_cache loses the device with the fault's text,
+   and the free_cache returns. *)
+let test_retire_fault () =
+  let d, p = P.open_ "submit:retire-fault" in
+  P.before p "retire" (fun () -> P.fail_at p 1 (`Fault "retire fault"));
+  Rig.free_cache d;
+  equal (option string) ~msg:"the loss" (Some "retire fault") (Rig.lost d)
+
+(* Another exception that a retire raises loses the device and passes out of the
+   free_cache. *)
+let test_retire_raises () =
+  let d, p = P.open_ "submit:retire-raises" in
+  P.before p "retire" (fun () -> raise Exit);
+  raises ~msg:"the free_cache" Exit (fun () -> Rig.free_cache d);
+  equal (option string) ~msg:"the loss" (Some "Stdlib.Exit") (Rig.lost d)
+
+(* A lost device's free_cache calls no retire. *)
+let test_retire_lost () =
+  let d, p = P.open_ "submit:retire-lost" in
+  P.before p "alloc" (fun () -> P.fail_at p 1 (`Fault "alloc fault"));
+  raises_match lost (fun () -> B.create d 8);
+  Rig.free_cache d;
+  equal ~msg:"retires" int 0 (count "retire" p)
+
 (* Submits of one submission *)
 
 (* While a submit of a submission waits on the host for a producer, a submit of
@@ -2500,6 +2524,11 @@ let tests =
         test "free_cache gives back what the queue grew into" test_grow_trimmed;
         test "a free_cache while a submit grows the queue leaves its growth"
           test_grow_untrimmed;
+        test "a retire that faults at free_cache loses the device"
+          test_retire_fault;
+        test "a retire's other exception loses the device and passes out"
+          test_retire_raises;
+        test "a lost device's free_cache calls no retire" test_retire_lost;
         prop
           "free_cache shrinks the record of queue waits to the live ones, \
            which a loss still spreads along"

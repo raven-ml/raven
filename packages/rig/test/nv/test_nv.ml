@@ -1053,6 +1053,18 @@ let growth_interleaved () =
     (other_written ());
   equal int ~msg:"growths" 2 (Atomic.get growths)
 
+(* GPU 0 opened under a driver that counts its growths, and their count. *)
+let counting () =
+  let growths = Atomic.make 0 in
+  let module Counted = struct
+    include N
+
+    let grow g =
+      Atomic.incr growths;
+      N.grow g
+  end in
+  (S.open_as (module Counted), growths)
+
 (* The bytes of the GPU's mappings that are not reservations ([---p]). *)
 let mapped_bytes () =
   List.fold_left
@@ -1062,31 +1074,38 @@ let mapped_bytes () =
     0
     (Rig_nv_nvidia_support.mappings ())
 
-(* The bytes [t]'s process maps for the GPU once [n] numbered launches ran
-   after [sizes] did, each in a submission of its own, and its collected and
-   cached memory went back. A driver allocation then runs, the device's
-   first since the launches. *)
-let mapped_after t sizes n =
-  ignore (launch_image t.S.d);
-  List.iter (fun k -> ignore (snd (numbered_submit t.d k) ())) (sizes @ [ n ]);
-  for _ = 1 to 3 do
-    Gc.full_major ();
-    Rig.free_cache t.d
-  done;
-  N.free t.g (alloc t.g Pinned H.page);
-  mapped_bytes ()
-
-(* The rings a growth replaces go back once the device reached the work on
-   them: a device whose rings grew in steps maps what one whose rings grew at
-   once to the same size maps. Submissions the rings hold make nothing
-   more. *)
-let rings_given_back () =
+(* Skips a test that counts the GPU's mappings where GPU 0 is over PCI. *)
+let counts_mappings () =
   if S.path () = Some S.Pci then
     skip
       ~reason:
         "it counts mappings of NVIDIA's kernel driver's files; GPU 0 is over \
          PCI"
-      ();
+      ()
+
+(* The bytes [t]'s process maps for the GPU once [n] numbered launches ran after
+   [sizes] did, each in a submission of its own whose buffer stays alive, and a
+   driver allocation followed. No free_cache runs: it would give back the rings
+   in use too. *)
+let mapped_after t sizes n =
+  ignore (launch_image t.S.d);
+  let run k =
+    let out = B.create t.d (4 * k) in
+    Rig.Point.wait (submitted (numbered t.d k) ~buffers:[| out |]);
+    out
+  in
+  let outs = List.map run (sizes @ [ n ]) in
+  N.free t.g (alloc t.g Pinned H.page);
+  let mapped = mapped_bytes () in
+  ignore (Sys.opaque_identity outs);
+  mapped
+
+(* The rings a growth replaces go back at an allocation once the device reached
+   the work on them: a device whose rings grew in steps maps what one whose
+   rings grew at once to the same size maps. Submissions the rings hold make
+   nothing more. *)
+let rings_given_back () =
+  counts_mappings ();
   let n = 16_384 and last = 8_192 in
   S.with_ (fun t -> ignore (mapped_after t [] 1 : int));
   let at_once = S.with_ (fun t -> mapped_after t [ last ] n) in
@@ -1094,6 +1113,85 @@ let rings_given_back () =
   let stepped = mapped_after t [ 1_024; 2_048; 4_096; last ] n in
   equal int ~msg:"grown in steps" at_once stepped;
   equal int ~msg:"after three more" stepped (mapped_after t [ n; n; n ] n)
+
+(* The bytes the process maps for the GPU once [t]'s collected memory went back
+   and a free_cache gave back what [t]'s queues grew into, three times over so
+   that the finalisers of the memory freed run. *)
+let mapped_trimmed t =
+  for _ = 1 to 3 do
+    Gc.full_major ();
+    Rig.free_cache t.S.d
+  done;
+  mapped_bytes ()
+
+(* A free_cache puts the rings back to those the device opened with once it
+   reached the work on the grown ones: after a submission of 16,384 launches,
+   which grew the launch ring, the process maps what it mapped after one launch,
+   and again after the same submission grew the ring anew. *)
+let rings_trimmed () =
+  counts_mappings ();
+  S.with_ @@ fun t ->
+  ignore (launch_image t.d);
+  ignore (snd (numbered_submit t.d 1) ());
+  let one = mapped_trimmed t in
+  ignore (snd (numbered_submit t.d 16_384) ());
+  equal int ~msg:"after 16,384 launches" one (mapped_trimmed t);
+  ignore (snd (numbered_submit t.d 16_384) ());
+  equal int ~msg:"after they grew the ring again" one (mapped_trimmed t)
+
+(* After each free_cache, a submission past the rings the device opened with
+   grows them again, and each of its launches writes its word. *)
+let rings_regrown () =
+  let t, growths = counting () in
+  Fun.protect ~finally:(fun () -> S.close t) @@ fun () ->
+  ignore (launch_image t.d);
+  let n = 16_384 in
+  let s = numbered t.d n in
+  let run () =
+    let out = B.create t.d (4 * n) in
+    Rig.Point.wait (submitted s ~buffers:[| out |]);
+    words out ~at:0 n
+  in
+  equal (array int) ~msg:"its words" (Array.init n Fun.id) (run ());
+  equal int ~msg:"its growths" 1 (Atomic.get growths);
+  Rig.free_cache t.d;
+  equal (array int) ~msg:"its words after free_cache" (Array.init n Fun.id)
+    (run ());
+  equal int ~msg:"the growths after free_cache" 2 (Atomic.get growths);
+  Rig.free_cache t.d;
+  equal (array int) ~msg:"its words after a second free_cache"
+    (Array.init n Fun.id) (run ());
+  equal int ~msg:"the growths after a second free_cache" 3 (Atomic.get growths)
+
+(* A free_cache while a submission's launches wait for another device's value
+   leaves them the launch ring they grew and puts the device back on the one it
+   opened with, where a submission after it runs, behind them. Once both ran,
+   the next free_cache gives the grown ring back, and the process maps what it
+   mapped after one launch. *)
+let rings_trimmed_queued () =
+  counts_mappings ();
+  S.with_ @@ fun t ->
+  let module P = Rig_support.Polled in
+  let pd, p = P.open_ "POLLED:trimmed" in
+  Fun.protect ~finally:(fun () -> Rig.close pd) @@ fun () ->
+  ignore (launch_image t.d);
+  ignore (snd (numbered_submit t.d 1) ());
+  let one = mapped_trimmed t in
+  let point = Rig.submit (Sub.make pd [||]) ~buffers:[||] ~args:[||] in
+  let n = 16_384 in
+  let out = B.create t.d (4 * n) and next = B.create t.d 4 in
+  let s, args = numbered t.d n in
+  let held = Rig.submit s ~waits:[| point |] ~buffers:[| out |] ~args in
+  Rig.free_cache t.d;
+  greater int ~msg:"while its launches wait" ~than:one (mapped_bytes ());
+  let after = submitted (numbered t.d 1) ~buffers:[| next |] in
+  equal bool ~msg:"the launches, held" false (Rig.Point.reached held);
+  ignore (P.run p);
+  Rig.Point.wait after;
+  equal int ~msg:"once both ran" one (mapped_trimmed t);
+  equal (array int) ~msg:"the held words" (Array.init n Fun.id)
+    (words out ~at:0 n);
+  equal (array int) ~msg:"the next words" [| 0 |] (words next ~at:0 1)
 
 (* A function whose threads keep 2 KiB of local memory runs as a launch: its
    entry made the channel's local memory serve it. *)
@@ -1212,6 +1310,12 @@ let launches =
       test "a submission of another domain runs while a growth runs"
         growth_interleaved;
       test "rings a growth replaced go back" rings_given_back;
+      test "a free_cache puts the rings back to those the device opened with"
+        rings_trimmed;
+      test "a submission past the opened rings after a free_cache grows them"
+        rings_regrown;
+      test "a free_cache leaves queued launches their ring, until they ran"
+        rings_trimmed_queued;
       test "a function with local memory runs as a launch" local_launch;
       cases "a kernel addresses its own parameters"
         ~id:(fun (g, t) -> strf "%d groups of %d" g t)
@@ -1503,6 +1607,12 @@ let channels_grown () =
   S.free_launches l;
   List.iter (N.free t.g) [ out; b ]
 
+(* Waits until [g]'s word shows [v]. *)
+let reach g v =
+  while N.signaled g < v do
+    Domain.cpu_relax ()
+  done
+
 (* A growth of the channels while a value is held on a host word: once a
    room asked for new channels and the growth made them, every room answers
    LATER until the device reached every value, after a second growth
@@ -1516,11 +1626,7 @@ let drained_growth () =
   let gate = alloc g Pinned 8 and out = alloc g Pinned 16 in
   List.iter (fun a -> H.set64 a 0) [ host gate; host out; host out + 8 ];
   let base = N.signaled g in
-  let reach v =
-    while N.signaled g < v do
-      Domain.cpu_relax ()
-    done
-  in
+  let reach = reach g in
   let grown = function
     | Rig_edge.Grown -> "Grown"
     | Short n -> strf "Short %d" n
@@ -1552,6 +1658,84 @@ let drained_growth () =
     [ H.get64 (host out); H.get64 (host out + 8) ];
   S.free_launches l;
   List.iter (N.free g) [ gate; out ]
+
+(* Parts past the 1 MiB segment rings the device opened with, and not past its
+   channels: 60,000 empty parts on each queue, each of which takes a release's
+   words of its channel's segment ring. *)
+let past_segments =
+  Array.append (Array.make 60_000 (0, [||])) (Array.make 60_000 (1, [||]))
+
+(* Parts past the segment rings and the channels the device opened with: 300,000
+   entries that do nothing, then [past_segments]. *)
+let past_opened = Array.append [| (0, Array.make 600_000 0) |] past_segments
+
+(* Has a growth hand [g] what the room of [parts] asks for, with no submission
+   after it. *)
+let hand g parts =
+  equal string ~msg:"the room" "GROW" (S.Edge.room g parts);
+  match N.grow g with
+  | Rig_edge.Grown -> ()
+  | Short n -> fail (strf "the growth lacked %d bytes" n)
+
+(* A trim gives back what a growth handed for [parts] and no room installed,
+   once an allocation, which gives back what the device retired, follows: the
+   process maps what it mapped at the open. *)
+let handed_trimmed parts () =
+  counts_mappings ();
+  S.with_driver @@ fun g ->
+  let opened = mapped_bytes () in
+  hand g parts;
+  greater int ~msg:"handed" ~than:opened (mapped_bytes ());
+  S.Edge.trim g;
+  N.free g (alloc g Pinned H.page);
+  equal int ~msg:"trimmed" opened (mapped_bytes ())
+
+(* After a trim of the rings and channels a growth handed, the room that asked
+   for them asks again. *)
+let handed_asked () =
+  S.with_driver @@ fun g ->
+  hand g past_opened;
+  S.Edge.trim g;
+  equal string ~msg:"the room after the trim" "GROW" (S.Edge.room g past_opened)
+
+(* A trim while a room waits for the device to reach its work, to install the
+   channels a growth handed, leaves them, also through the allocation after it:
+   once the device reached that work, the room installs them, and its submission
+   runs on them. *)
+let handed_draining () =
+  S.with_driver @@ fun g ->
+  let l = S.launches g in
+  let gate = alloc g Pinned 8 in
+  H.set64 (host gate) 0;
+  let base = N.signaled g in
+  let big = [| (0, Array.make 600_000 0) |] in
+  S.Edge.submit g ~v:(base + 1) [| (0, acquire l (address gate) 1) |];
+  releasing gate 1 (fun () ->
+      hand g big;
+      equal string ~msg:"held" "LATER" (S.Edge.room g big);
+      S.Edge.trim g;
+      N.free g (alloc g Pinned H.page);
+      equal string ~msg:"held, after a trim" "LATER" (S.Edge.room g big);
+      H.set64 (host gate) 1;
+      reach g (base + 1);
+      equal string ~msg:"once reached" "FITS" (S.Edge.room g big));
+  S.Edge.submit g ~v:(base + 2) big;
+  reach g (base + 2);
+  S.free_launches l;
+  N.free g gate
+
+(* A free_cache keeps the channels a growth installed: after a submission of
+   300,000 entries that do nothing grew them, the same submission after a
+   free_cache grows nothing, and runs. *)
+let channels_kept () =
+  let t, growths = counting () in
+  Fun.protect ~finally:(fun () -> S.close t) @@ fun () ->
+  let nops = [| S.words (Array.make 600_000 0) |] in
+  S.run t nops;
+  equal int ~msg:"the growths" 1 (Atomic.get growths);
+  Rig.free_cache t.d;
+  S.run t nops;
+  equal int ~msg:"the growths after free_cache" 1 (Atomic.get growths)
 
 (* The driver holds 32,768 values in flight: behind a value held on a host
    word, 32,767 more submissions return, and the next waits until the held
@@ -1789,6 +1973,14 @@ let channels =
         channels_grown;
       test "a growth of the channels waits for the work in flight"
         drained_growth;
+      test "a trim gives back the rings and channels a growth handed"
+        (handed_trimmed past_opened);
+      test "a trim gives back the rings a growth handed"
+        (handed_trimmed past_segments);
+      test "a room asks again for what a trim gave back" handed_asked;
+      test "a trim leaves the channels a draining room waits for"
+        handed_draining;
+      test "a free_cache keeps the channels the device grew" channels_kept;
       test "32,768 values stay in flight, and the next waits" in_flight;
       cases "a channel the RM refuses gives back its instance block" ~id:fst
         channel_refusals refused_channel;
@@ -2423,6 +2615,66 @@ let replaced_kept () =
   equal string ~msg:"the allocation" ("Fault " ^ rm_fault) got;
   equal int ~msg:"the frees of the replaced set" frees (k.frees ())
 
+(* [with_rm_unfreeing f] is [f g] on a device [g] of GPU 0 on NVIDIA's kernel
+   driver, whose path's RM frees no object ([rm]'s [free] is [None]). The stop
+   of such a device keeps its objects and the memory they name: the test then
+   frees the objects the device made under the RM's device, through the RM's own
+   free, then the regions the path still gives, also after an open or a stop
+   that failed. *)
+let with_rm_unfreeing f =
+  on_kernel ();
+  let objects = ref [] and given = ref [] and path = ref None in
+  let wrap (p : _ N.path) =
+    path := Some p;
+    let alloc ~parent cls q =
+      let r = p.rm.alloc ~parent cls q in
+      (match r with
+      | Ok h when parent = p.device -> objects := h :: !objects
+      | Ok _ | Error _ -> ());
+      r
+    in
+    let rm = { p.rm with alloc; free = None } in
+    let alloc kind n =
+      let m = p.alloc kind n in
+      Option.iter (fun m -> given := m :: !given) m;
+      m
+    in
+    let ours (m : _ N.memory) (m' : _ N.memory) = m.address = m'.address in
+    let free m =
+      given := List.filter (fun m' -> not (ours m m')) !given;
+      p.free m
+    in
+    { p with rm; alloc; free }
+  in
+  let release () =
+    Option.iter
+      (fun (p : _ N.path) ->
+        List.iter
+          (fun h -> ignore (Option.get p.rm.free ~parent:p.device h))
+          !objects;
+        List.iter p.free !given)
+      !path
+  in
+  Fun.protect ~finally:release @@ fun () ->
+  let g =
+    require_ok (Rig_gpu_support.opened (Rig_nv_nvidia.gpu_with 0 ~wrap))
+  in
+  Fun.protect ~finally:(fun () -> N.stop g ~fault:None) (fun () -> f g)
+
+(* Where the path's RM frees no object, a trim leaves the channels a growth
+   handed: a set it withdrew would stay with its objects, and the next growth
+   would make another. The room that asked for them installs them, and its
+   submission runs on them. *)
+let handed_unfreed () =
+  with_rm_unfreeing @@ fun g ->
+  hand g past_rings;
+  S.Edge.trim g;
+  N.free g (alloc g Pinned H.page);
+  equal string ~msg:"the room after the trim" "FITS" (S.Edge.room g past_rings);
+  let v = N.signaled g + 1 in
+  S.Edge.submit g ~v past_rings;
+  reach g v
+
 (* The scheduling of the channels the RM refuses where it lacks the resources
    ([rm_keeping]'s [lacking]). *)
 let unscheduled = "scheduling the channels: no resources to schedule the group"
@@ -2527,6 +2779,8 @@ let faults =
         (rm_kept Faults);
       test "a replaced set the RM faults on keeps its memory, raising"
         replaced_kept;
+      test "a trim leaves the channels handed where the RM frees nothing"
+        handed_unfreed;
       test "a failed open names the memory an object the RM kept names"
         make_failed;
       test "a hang loses the device at its bound while the RM answers late"
