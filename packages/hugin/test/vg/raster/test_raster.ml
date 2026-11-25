@@ -1335,8 +1335,15 @@ let transforms =
             (render 20. 20. (line 1.))
             (render 20. 20.
                (Picture.transform (Affine.scale k k) (line (1. /. k)))));
-      prop ~examples:Vg_corpus.extremes "any scale draws without failing"
-        Vg_corpus.gen_extreme (fun p ->
+      prop
+        ~examples:
+          ((* A pen 1e40 pixels wide about a circle of radius 1e21, whose reach
+              holds the whole circle. *)
+           Picture.transform (Affine.scale 1e20 1e20)
+             (Picture.stroke (Stroke.v 1e20) red (Path.circle (P2.v 0. 0.) 10.))
+          :: Vg_corpus.extremes)
+        "any scale draws without failing" Vg_corpus.gen_extreme
+        (fun p ->
           equal (array int) [| 20; 20; 4 |] (Nx.shape (render 20. 20. p)));
     ]
 
@@ -1674,6 +1681,90 @@ let render_group =
               red (segment c 5. c 5.)
           in
           area ~box:(1., 10.) 160. (coverage (render 16400. 10. dot)));
+      test "a circle far wider than the page fills it where it lies inside"
+        (fun () ->
+          (* Radius 2^66, its rightmost point 5.59e9 right of the page and 9e14
+             above it: at the page's height the circle runs 1e8 right of it, and
+             the cubic that draws it 1.2e8 further out, so the page lies inside,
+             while the first of 65536 chords of its quarter would run about 5e9
+             left of it. *)
+          let r = Float.ldexp 1. 66 in
+          let disc = Path.circle (P2.v (5.59e9 -. r) (-9e14)) r in
+          equal float_exact 400.
+            (coverage (render 40. 10. (Picture.fill red disc))));
+      test "a stroked circle far wider than the page is drawn where it lies"
+        (fun () ->
+          (* Radius 2^33, centred 108700 above the page's middle row, so that
+             the page sees the circle midway along what would be the first of
+             65536 chords of its quarter, 0.7 pixels inside it. The circle runs
+             down the page at x = c, straight to 1e-4 of a pixel, and the cubics
+             that draw it lie within 0.015 of a pixel of the circle there; the
+             line 4 wide covers [c - 2, c + 2] in every row, its edges within
+             that, the tenth of a pixel of flattening and half a level of
+             rounding. *)
+          let r = Float.ldexp 1. 33 and h = 108700. in
+          let cx = 20. -. r in
+          let c =
+            cx +. r -. (h *. h /. (r +. Float.sqrt ((r *. r) -. (h *. h))))
+          in
+          let img =
+            render 40. 10.
+              (Picture.stroke (Stroke.v 4.) red
+                 (Path.circle (P2.v cx (5. -. h)) r))
+          in
+          for x = 14 to 24 do
+            let fx = Float.of_int x in
+            let o =
+              Float.max 0.
+                (Float.min (fx +. 1.) (c +. 2.) -. Float.max fx (c -. 2.))
+            in
+            at_most
+              ~msg:(Printf.sprintf "column %d" x)
+              float_exact
+              ~than:((0.115 *. 255.) +. 0.5)
+              (Float.abs (Float.of_int (alpha img 5 x) -. (255. *. o)))
+          done);
+      test "a straight cubic squeezed onto the page is stroked once" (fun () ->
+          (* A vertical cubic from y = a to b at x = 20, with its control points
+             at thirds, that the map squeezes by 1e-24 onto [6.21, 7.31]: its
+             halves soon differ only in their last bits, which no halving
+             removes. A line 1 wide, whose end may move back the twentieth of a
+             pixel within which a point is dropped. *)
+          let a = 6.212743781782104e24 and b = 7.309786809084105e24 in
+          let third = (b -. a) /. 3. in
+          let p =
+            Path.empty
+            |> Path.move_to (P2.v 20. a)
+            |> Path.cubic_to
+                 (P2.v 20. (a +. third))
+                 (P2.v 20. (b -. third))
+                 (P2.v 20. b)
+          in
+          let img =
+            render 40. 10.
+              (Picture.transform (Affine.scale 1. 1e-24)
+                 (Picture.stroke (Stroke.v ~cap:`Butt 1.) red p))
+          in
+          area ~drift:0.05 ~box:(1., 2.) ((b -. a) *. 1e-24) (coverage img));
+      test "a cubic bowed by less than its ends' rounding keeps its bow"
+        (fun () ->
+          (* x = 1e15 (2t - 1)^3, y = 5 + 2.7 t (1 - t): it crosses the page at
+             y = 5.675, below which the shape is filled. *)
+          let a = 1e15 in
+          let p =
+            Path.empty
+            |> Path.move_to (P2.v (-.a) 5.)
+            |> Path.cubic_to (P2.v a 5.9) (P2.v (-.a) 5.9) (P2.v a 5.)
+            |> Path.line_to (P2.v a 20.)
+            |> Path.line_to (P2.v (-.a) 20.)
+            |> Path.close
+          in
+          area ~box:(40., 1.) (40. *. 4.325)
+            (coverage (render 40. 10. (Picture.fill red p))));
+      test "a circle of radius 1e100 about the page fills it" (fun () ->
+          let disc = Path.circle (P2.v 20. 5.) 1e100 in
+          equal float_exact 400.
+            (coverage (render 40. 10. (Picture.fill red disc))));
       test "a line to near max_float is drawn up to the page's edge" (fun () ->
           (* Its far end, at density 2, is beyond [max_float], held at 1e15
              along x: a band 2 pixels high across the 20 of the page. *)

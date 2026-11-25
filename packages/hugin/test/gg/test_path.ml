@@ -779,6 +779,79 @@ let wavy_box = Box2.v 0. 0. 0.25 1.
 (* A triangle that the unit box cuts to a square. *)
 let corner = Path.polygon [| 0.; 7.; 0. |] [| 0.; 0.; 7. |]
 
+(* Flattening within a box *)
+
+(* [chords_of ?within p] is the chords [Path.flatten ~within] gives of [p], as
+   pairs of ends. *)
+let chords_of ?within p =
+  let cur = ref (0., 0.) in
+  Path.flatten ?within Affine.id
+    ~move:(fun acc x y ->
+      cur := (x, y);
+      acc)
+    ~line:(fun acc x y ->
+      let c = (!cur, (x, y)) in
+      cur := (x, y);
+      c :: acc)
+    ~close:Fun.id [] p
+
+let flattening_within =
+  group "flatten within"
+    [
+      test "flatten within a box keeps a cubic too long to cut to the tolerance"
+        (fun () ->
+          (* The parabola y = x^2 / 2 from x = -1e5 to 1e5 needs 2.2e5 chords,
+             past the 65536 of the whole cubic; within the box, every chord
+             stays within 0.1 of it, measured across it, to the rounding of
+             control values of 5e9. *)
+          let l = 1e5 in
+          let p =
+            Path.empty
+            |> Path.move_to (pt (-.l) (l *. l /. 2.))
+            |> Path.quad_to (pt 0. (-.(l *. l) /. 2.)) (pt l (l *. l /. 2.))
+          in
+          let near = ref 0 in
+          List.iter
+            (fun ((x0, y0), (x1, y1)) ->
+              if Float.abs x0 <= 5. && Float.abs x1 <= 5. then begin
+                incr near;
+                for k = 0 to 4 do
+                  let t = Float.of_int k /. 4. in
+                  let x = x0 +. (t *. (x1 -. x0))
+                  and y = y0 +. (t *. (y1 -. y0)) in
+                  at_most float_exact ~than:(0.1 +. 1e-5)
+                    (Float.abs (y -. (x *. x /. 2.)) /. Float.hypot 1. x)
+                done
+              end)
+            (chords_of ~within:(Affine.id, Box2.v (-5.) (-1.) 10. 15.) p);
+          greater int ~than:0 !near);
+      test "flatten within a box takes one chord for a straight cubic"
+        (fun () ->
+          (* x = 1e15 (2t - 1)^3 along y = 5: straight, though Wang's bound,
+             blind to the line, asks 1.7e8 chords of it, the most of them where
+             it crosses the box, slowly. *)
+          let a = 1e15 in
+          let p =
+            Path.empty
+            |> Path.move_to (pt (-.a) 5.)
+            |> Path.cubic_to (pt a 5.) (pt (-.a) 5.) (pt a 5.)
+          in
+          equal int 1
+            (List.length
+               (chords_of ~within:(Affine.id, Box2.v 0. 0. 40. 10.) p)));
+      test "flatten within a box cuts a vast circle into few chords" (fun () ->
+          (* Radius 1e100 about the box: every part of it lies far off. *)
+          let c =
+            chords_of
+              ~within:(Affine.id, Box2.v 0. 0. 40. 10.)
+              (Path.circle (pt 20. 5.) 1e100)
+          in
+          (* Each quarter lies off the box, its ends included: the cosine and
+             sine of a quarter turn round to 6e-17, which the radius makes 6e83.
+             One chord a quarter. *)
+          equal int 4 (List.length c));
+    ]
+
 let cropping =
   group "crop"
     [
@@ -1379,5 +1452,13 @@ let () =
   exit
     (run "hugin.gg path"
        [
-         types; building; cropping; shapes; gaps; flattening; bounds; comparing;
+         types;
+         building;
+         cropping;
+         shapes;
+         gaps;
+         flattening;
+         flattening_within;
+         bounds;
+         comparing;
        ])

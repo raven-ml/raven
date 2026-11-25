@@ -16,14 +16,26 @@
     paints, as {!Hugin_vg.Picture.section-semantics} defines it:
     - Fills, glyphs and clips are antialiased by exact coverage: a pixel takes
       the fraction of the colour equal to the fraction of its square that the
-      area covers. Curves are first flattened to within a tenth of a pixel, and
-      glyphs are drawn from their outlines, without hinting.
+      area covers. Curves are first flattened to within a tenth of a pixel
+      wherever they meet the page, at any size, and glyphs are drawn from their
+      outlines, without hinting.
     - A clipped primitive takes in each pixel the product of its coverage and
       the clip's. One whose box, as {!Hugin_vg.Picture.val-bounds} takes it,
       does not meet the boxes of the paths of the clips above it, or only
       touches them, to within rounding, paints nothing.
     - A stroke's outline is covered as the union of the pieces it is made of,
-      one per segment, join and cap, with round ones flattened likewise. A pixel
+      one per segment, join and cap, with round ones flattened likewise. A
+      stroke's curves are flattened in its own coordinates, to a tenth of a
+      pixel under the largest stretch of the transforms and the density: a
+      solid stroke's wherever they reach the page, at any size, when its pen
+      reaches no farther from its path than [65536²] tenths of a pixel, about
+      [4e8] pixels, where its curves near the page take no more chords than a
+      whole cubic cut whole; a dashed one's, whose dashes are measured along
+      the chords, and a wider pen's, each into at most 65536 chords, which
+      keeps a curve within that while its control points lie within [1e8]
+      pixels of each other. Dashes are placed along a subpath by
+      their distance from its start, to within the spacing of floats at that
+      distance, which is under a pixel below [2{^53}] pixels of path. A pixel
       that the edges of two overlapping pieces cross takes the sum of their
       coverages, up to the whole pixel. A point of a subpath within a twentieth
       of a pixel, along both axes, of the point kept before it is dropped, so an

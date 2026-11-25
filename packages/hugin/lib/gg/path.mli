@@ -168,6 +168,7 @@ val fold :
 
 val flatten :
   ?tolerance:float ->
+  ?within:Affine.t * Box2.t ->
   Affine.t ->
   move:('a -> float -> float -> 'a) ->
   line:('a -> float -> float -> 'a) ->
@@ -175,12 +176,31 @@ val flatten :
   'a ->
   t ->
   'a
-(** [flatten ~tolerance m ~move ~line ~close acc p] is {!fold} over
+(** [flatten ~tolerance ~within m ~move ~line ~close acc p] is {!fold} over
     [transform m p], with every cubic replaced by line segments that stay within
     [tolerance] of it. [tolerance] defaults to [0.1]. Gaps are those of
-    [transform m p], so every number given is finite whatever [m]. A cubic is
-    cut into at most 65536 chords, which keeps it within [tolerance] if its
-    control points lie within [1e9 *. tolerance] of each other.
+    [transform m p], so every number given is finite whatever [m].
+
+    A cubic is cut into chords at uniform parameters, as many as Wang's bound
+    asks for to stay within [tolerance]: [ceil (sqrt (0.75 *. d /. tolerance))],
+    [d] the largest norm of the second differences of its control points.
+    Without [within], it is cut into at most 65536, which keeps it within
+    [tolerance] if its control points lie within [1e9 *. tolerance] of each
+    other. With [within], a map [v] and a box [b], a cubic that needs more is
+    halved by de Casteljau, and a part is one chord when [v] maps its control
+    points on one side of [b], beyond it, or when its inner control points lie
+    within [tolerance] of the segment between its ends; a part as many
+    halvings deep as bring Wang's count to one is cut into that count, a
+    chord or two, or, where rounding has kept it from that, into at most
+    65536. Every chord that [v] maps onto [b] stays within [tolerance] of the
+    cubic, to the rounding of its control values, however large the cubic is.
+    The work is that of the parts [v] maps onto [b], each cut as its own
+    curvature asks, and of two parts per halving at the edges of [b]: it grows
+    with the extent of the region [v] maps onto [b] over [tolerance], about as
+    its square root for each time the cubic crosses that region, and only as
+    its logarithm with the cubic's size. [v] maps the points given, those of [transform m p]: an
+    affine map takes the hull of a part's control points to that of their
+    images, so the test is exact under any [v].
 
     Raises [Invalid_argument] if [tolerance] is not positive. *)
 

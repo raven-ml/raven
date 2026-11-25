@@ -753,6 +753,11 @@ let in_range p k s =
   && fits (Stroke.dash_offset s)
   && List.for_all fits (Stroke.dash s)
 
+(* The widest reach, in pixels, at which a solid stroke's curves are flattened
+   only near the page: 65536² tenths of a pixel, where the chords near the page
+   pass the 65536 of a cubic that [Path.flatten] cuts whole. *)
+let widest_windowed = 0.1 *. 65536. *. 65536.
+
 (* [stroke cover clip m ~pen s path] deposits in [cover] the outline of [path]
    stroked with [s], its lengths multiplied by [pen], in the coordinates that
    [m] maps to the device. The points of [path] are used as they are: as an
@@ -777,7 +782,22 @@ let stroke cover clip m ~pen:k s path =
     in
     (* A cut point lies a reach beyond [far], so its cap stays outside it. *)
     let far = Box2.grow pen.reach Instances.far in
-    Path.flatten ~tolerance:pen.tol Affine.id
+    (* A solid stroke's curves are flattened to a tenth of a pixel where the map
+       takes them onto the page grown by the pen's reach, tested forward through
+       the map. Near the page that takes chords in proportion to the square root
+       of the reach over the tenth of a pixel, so beyond a reach of 65536²
+       tenths of a pixel, where that passes the 65536 chords of a whole cubic
+       cut whole, the curves are cut whole, and so are a dashed stroke's, whose
+       dashes are measured along the chords. *)
+    let within =
+      match dashes with
+      | None when pen.reach <= widest_windowed ->
+          let pg = pen.page in
+          let w = pg.(2) -. pg.(0) and h = pg.(3) -. pg.(1) in
+          Some (m, Box2.grow pen.reach (Box2.v pg.(0) pg.(1) w h))
+      | None | Some _ -> None
+    in
+    Path.flatten ~tolerance:pen.tol ?within Affine.id
       ~move:(fun () x y ->
         subpath s ~closed:false;
         push s.raw x y)

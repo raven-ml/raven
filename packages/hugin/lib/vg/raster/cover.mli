@@ -78,6 +78,10 @@ val take :
 val clear : t -> unit
 (** [clear c] empties [c] without reading it. *)
 
+val window : t -> Hugin_gg.Box2.t
+(** [window c] is the window {!start} set, in device pixels: what lies off it
+    winds only from its sides. *)
+
 val touched : t -> int * int * int * int
 (** [touched c] is the rectangle [(x0, y0, x1, y1)], [x1] and [y1]
     exclusive, of the window's pixels that the deposited edges touch, and

@@ -319,6 +319,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Path.flatten ~within` flattens a cubic to the tolerance wherever it meets the
+  box, however large, and the raster fills and solid strokes with it: a filled
+  circle of radius 2^66 was cut into 65536 chords a quarter, 5e9 pixels inside.
 - `Hugin_vg_raster` flattens round caps and joins wider than about 1e15 pixels.
   Their chord angle rounded to 0, so such a round dot was one chord and drew
   nothing; chords off the page are now merged, so any width takes few.

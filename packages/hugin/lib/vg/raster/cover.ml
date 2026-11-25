@@ -303,6 +303,12 @@ let clear c =
     c.dx1 <- min_int
   end
 
+(* [window c] is the window [start] set, as a box of device pixels. *)
+let window c =
+  Hugin_gg.Box2.v (float c.x0) (float c.y0)
+    (float (c.x1 - c.x0))
+    (float (c.y1 - c.y0))
+
 (* [touched c] is the window's pixel rectangle that the deposited edges touch,
    [x1] and [y1] exclusive, empty when nothing was deposited. *)
 let touched c =

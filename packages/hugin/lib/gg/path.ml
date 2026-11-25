@@ -259,12 +259,104 @@ let bezier t a b c d =
   +. (3. *. u *. t *. t *. c)
   +. (t *. t *. t *. d)
 
+(* [lerp u v t] is [u +. t *. (v -. u)], halving where the difference
+   overflows. *)
+let lerp u v t =
+  let d = v -. u in
+  if Float.is_finite d then u +. (t *. d)
+  else 2. *. ((0.5 *. u) +. (t *. ((0.5 *. v) -. (0.5 *. u))))
+
+(* [split t a b c d] is the control values of the parts of the cubic Bézier
+   coordinate [a], [b], [c], [d] before and after [t], by de Casteljau. *)
+let split t a b c d =
+  let lerp u v = lerp u v t in
+  let ab = lerp a b and bc = lerp b c and cd = lerp c d in
+  let abc = lerp ab bc and bcd = lerp bc cd in
+  let m = lerp abc bcd in
+  ((a, ab, abc, m), (m, bcd, cd, d))
+
 let max_chords = 65536.
 
-(* Wang's bound: n chords at uniform parameters keep a cubic within the
-   tolerance if n² is at least 0.75 d / tolerance, where d is the largest norm
-   of the second differences of its control points. *)
-let flatten ?(tolerance = 0.1) m ~move ~line ~close acc p =
+(* [chords tolerance x0 y0 x1 y1 x2 y2 x3 y3] is the number of chords at uniform
+   parameters that keep the cubic within [tolerance], by Wang's bound: n² at
+   least 0.75 d / tolerance, d the largest norm of the second differences of its
+   control points; NaN for an infinite curve under an infinite tolerance. *)
+let chords tolerance x0 y0 x1 y1 x2 y2 x3 y3 =
+  let dd ax ay bx by cx cy =
+    Float.hypot (ax -. (2. *. bx) +. cx) (ay -. (2. *. by) +. cy)
+  in
+  let d = Float.max (dd x0 y0 x1 y1 x2 y2) (dd x1 y1 x2 y2 x3 y3) in
+  Float.max 1. (Float.ceil (Float.sqrt (0.75 *. d /. tolerance)))
+
+(* [uniform line acc n ...] gives [line] the ends of [n] chords of the cubic at
+   uniform parameters, its own end last. *)
+let uniform line acc n x0 y0 x1 y1 x2 y2 x3 y3 =
+  let acc = ref acc in
+  for i = 1 to n - 1 do
+    let t = float i /. float n in
+    acc := line !acc (bezier t x0 x1 x2 x3) (bezier t y0 y1 y2 y3)
+  done;
+  line !acc x3 y3
+
+(* [flat tolerance ...] is [true] iff the inner control points of the cubic lie
+   within [tolerance] of the segment between its ends, so that the cubic, in
+   their hull, does too: then the segment stands for it. *)
+let flat tolerance x0 y0 x1 y1 x2 y2 x3 y3 =
+  let dx = x3 -. x0 and dy = y3 -. y0 in
+  let l2 = (dx *. dx) +. (dy *. dy) in
+  let off x y =
+    let t =
+      if l2 > 0. then
+        Float.min 1.
+          (Float.max 0. ((((x -. x0) *. dx) +. ((y -. y0) *. dy)) /. l2))
+      else 0.
+    in
+    Float.hypot (x -. (x0 +. (t *. dx))) (y -. (y0 +. (t *. dy)))
+  in
+  off x1 y1 <= tolerance && off x2 y2 <= tolerance
+
+(* [culled tolerance (v, b) levels line acc ...] gives [line] the chords of the
+   cubic: a part whose control points [v] maps off [b] on one side, so that [v]
+   maps the part there too, is one chord, which [v] maps there as well; so is a
+   part that is [flat]; a part that [levels] halvings have reached is cut into
+   the chords Wang's bound asks, at most [max_chords]; any other is halved by de
+   Casteljau. Parts are flattened as their own curvature asks, and only where
+   they meet [b]. Halving quarters the second differences and halves Wang's
+   count, so [levels], set from the whole cubic's count, takes a part to a count
+   of one or two in exact arithmetic, and bounds the halving where rounding
+   keeps a part from turning flat. *)
+let rec culled tolerance ((v : Affine.t), b) levels line acc x0 y0 x1 y1 x2 y2
+    x3 y3 =
+  let vx x y = (v.xx *. x) +. (v.xy *. y) +. v.x0 in
+  let vy x y = (v.yx *. x) +. (v.yy *. y) +. v.y0 in
+  let all f p = p (f x0 y0) && p (f x1 y1) && p (f x2 y2) && p (f x3 y3) in
+  if
+    all vx (fun c -> c < Box2.minx b)
+    || all vx (fun c -> c > Box2.maxx b)
+    || all vy (fun c -> c < Box2.miny b)
+    || all vy (fun c -> c > Box2.maxy b)
+    || flat tolerance x0 y0 x1 y1 x2 y2 x3 y3
+  then line acc x3 y3
+  else if levels <= 0 then
+    let n = chords tolerance x0 y0 x1 y1 x2 y2 x3 y3 in
+    let n = if Float.is_nan n then 1. else Float.min max_chords n in
+    uniform line acc (int_of_float n) x0 y0 x1 y1 x2 y2 x3 y3
+  else
+    let (ax0, ax1, ax2, ax3), (bx0, bx1, bx2, bx3) = split 0.5 x0 x1 x2 x3 in
+    let (ay0, ay1, ay2, ay3), (by0, by1, by2, by3) = split 0.5 y0 y1 y2 y3 in
+    let acc =
+      culled tolerance (v, b) (levels - 1) line acc ax0 ay0 ax1 ay1 ax2 ay2 ax3
+        ay3
+    in
+    culled tolerance (v, b) (levels - 1) line acc bx0 by0 bx1 by1 bx2 by2 bx3
+      by3
+
+(* [levels n] is how many halvings take a cubic cut into [n] chords to one each,
+   and for a count beyond the floats the most a float's exponent allows. *)
+let levels n =
+  if Float.is_finite n then int_of_float (Float.ceil (Float.log2 n)) else 2100
+
+let flatten ?(tolerance = 0.1) ?within m ~move ~line ~close acc p =
   if not (tolerance > 0.) then
     invalid_arg
       (Printf.sprintf "Path.flatten: tolerance %s not positive"
@@ -276,27 +368,19 @@ let flatten ?(tolerance = 0.1) m ~move ~line ~close acc p =
     Array.unsafe_set cur 1 y;
     f acc x y
   in
+  let line' acc x y = at acc x y line in
   fold_drawn m
     ~move:(fun acc x y -> at acc x y move)
-    ~line:(fun acc x y -> at acc x y line)
+    ~line:line'
     ~cubic:(fun acc x1 y1 x2 y2 x3 y3 ->
       let x0 = Array.unsafe_get cur 0 and y0 = Array.unsafe_get cur 1 in
-      let dd ax ay bx by cx cy =
-        Float.hypot (ax -. (2. *. bx) +. cx) (ay -. (2. *. by) +. cy)
-      in
-      let d = Float.max (dd x0 y0 x1 y1 x2 y2) (dd x1 y1 x2 y2 x3 y3) in
-      let k = Float.ceil (Float.sqrt (0.75 *. d /. tolerance)) in
-      (* [k] is NaN for an infinite curve under an infinite tolerance. *)
-      let n =
-        if Float.is_nan k then 1
-        else int_of_float (Float.min max_chords (Float.max 1. k))
-      in
-      let acc = ref acc in
-      for i = 1 to n - 1 do
-        let t = float i /. float n in
-        acc := line !acc (bezier t x0 x1 x2 x3) (bezier t y0 y1 y2 y3)
-      done;
-      at !acc x3 y3 line)
+      let n = chords tolerance x0 y0 x1 y1 x2 y2 x3 y3 in
+      match within with
+      | Some b when n > max_chords ->
+          culled tolerance b (levels n) line' acc x0 y0 x1 y1 x2 y2 x3 y3
+      | _ ->
+          let n = if Float.is_nan n then 1. else Float.min max_chords n in
+          uniform line' acc (int_of_float n) x0 y0 x1 y1 x2 y2 x3 y3)
     ~close ~gap:Fun.id acc p
 
 (* [turns a b c d] is the parameters in ]0;1[ at which the cubic Bézier
@@ -457,13 +541,6 @@ let within h x y = holds h (value h x y)
 let on_edge h x y =
   match h.edge with `X e -> (e, y) | `Y e -> (x, e) | `None -> (x, y)
 
-(* [lerp u v t] is [u +. t *. (v -. u)], halving where the difference
-   overflows. *)
-let lerp u v t =
-  let d = v -. u in
-  if Float.is_finite d then u +. (t *. d)
-  else 2. *. ((0.5 *. u) +. (t *. ((0.5 *. v) -. (0.5 *. u))))
-
 (* [crossing h x0 y0 x1 y1] is where the line from [(x0, y0)] to [(x1, y1)],
    which [h]'s edge separates, crosses it: measured from the end nearer the
    edge, so that it keeps that end's precision however far the other lies. *)
@@ -476,15 +553,6 @@ let crossing h x0 y0 x1 y1 =
   else
     let t = (v1 -. h.c) /. d in
     on_edge h (lerp x1 x0 t) (lerp y1 y0 t)
-
-(* [split t a b c d] is the control values of the parts of the cubic Bézier
-   coordinate [a], [b], [c], [d] before and after [t], by de Casteljau. *)
-let split t a b c d =
-  let lerp u v = lerp u v t in
-  let ab = lerp a b and bc = lerp b c and cd = lerp c d in
-  let abc = lerp ab bc and bcd = lerp bc cd in
-  let m = lerp abc bcd in
-  ((a, ab, abc, m), (m, bcd, cd, d))
 
 (* [section t0 t1 a b c d] is the control values of the part of the cubic
    coordinate between [t0] and [t1]. *)

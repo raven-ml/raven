@@ -46,7 +46,10 @@ let outline ctx font g =
 (* Coverage of leaves *)
 
 (* [area cover m path] deposits the area of [path] mapped through [m], its
-   subpaths closed, cut first to what [m] maps into [Instances.far]. *)
+   subpaths closed, cut first to what [m] maps into [Instances.far]. Its curves
+   are flattened to a tenth of a pixel where they can meet the window
+   ([Path.flatten ~within]): a part off one of its sides, drawn as its chord,
+   bounds with it a region off that side, which winds no pixel of the window. *)
 let area cover m path =
   let path = Path.crop ~m Instances.far path in
   (* [start x; start y; current x; current y] *)
@@ -55,7 +58,7 @@ let area cover m path =
     if !open_ then Cover.line cover pt.(2) pt.(3) pt.(0) pt.(1);
     open_ := false
   in
-  Path.flatten m
+  Path.flatten ~within:(Affine.id, Cover.window cover) m
     ~move:(fun () x y ->
       close ();
       pt.(0) <- x;
