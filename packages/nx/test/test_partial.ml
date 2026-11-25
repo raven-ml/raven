@@ -4326,9 +4326,68 @@ let reductions =
         replicas law_replicas;
     ]
 
+(* Convolutions whose operands lie where their groups or taps cannot be read:
+   each refusal names the argument and the place of it the user can write
+   (nx.mli, Routing), and that place computes the host's result. [x] of [[1; 10;
+   2]] is cut along its two channels, two groups of one, and [w] along its
+   channels of a group; a kernel is cut along its taps beside [x] whole. The
+   data are ones, so every sum is exact. *)
+module Two = (val Nx.devices [ m 0; m 1 ])
+
+let x_groups () = Nx.ones D.Float32 [| 1; 10; 2 |]
+let w_groups () = Nx.ones D.Float32 [| 2; 1; 1 |]
+let at p v = Nx.place p v
+
+let computes ~msg want got =
+  equal ~msg
+    (Nx_support.elements D.Float32)
+    (Array.to_list (Nx.to_array want))
+    (Array.to_list (Nx.to_array (Nx.place Nx.Host.on got)))
+
+let test_conv_refusal () =
+  let x = at (Two.split ~axis:2) (x_groups ()) in
+  let w = at (Two.split ~axis:2) (w_groups ()) in
+  raises
+    (Invalid_argument
+       "Nx.conv: w lies at split ~axis:2 [m0; m1] and is read at split ~axis:0 \
+        [m0; m1]; Nx.place (Placement.split ~axis:0 s) w") (fun () ->
+      Nx.conv ~groups:2 x w);
+  computes ~msg:"placed as named"
+    (Nx.conv ~groups:2 (x_groups ()) (w_groups ()))
+    (Nx.conv ~groups:2 x (at (Two.split ~axis:0) w))
+
+let test_conv_transpose_refusal () =
+  let x = at (Two.split ~axis:2) (x_groups ()) in
+  let w = at (Two.split ~axis:2) (w_groups ()) in
+  raises
+    (Invalid_argument
+       "Nx.conv_transpose: w lies at split ~axis:2 [m0; m1] and is read at on \
+        [m0; m1]; Nx.place (Placement.on s) w") (fun () ->
+      Nx.conv_transpose ~groups:2 x w);
+  computes ~msg:"placed as named"
+    (Nx.conv_transpose ~groups:2 (x_groups ()) (w_groups ()))
+    (Nx.conv_transpose ~groups:2 x (at Two.on w))
+
+let test_correlate_refusal () =
+  let x = Nx.arange D.Float32 0 6 1 and kernel = Nx.ones D.Float32 [| 3 |] in
+  let cut = at (Two.split ~axis:0) kernel in
+  raises
+    (Invalid_argument
+       "Nx.correlate: kernel lies at split ~axis:0 [m0; m1] and is read at on \
+        [m0; m1]; Nx.place (Placement.on s) kernel") (fun () ->
+      Nx.correlate (at Two.on x) cut);
+  computes ~msg:"placed as named" (Nx.correlate x kernel)
+    (Nx.correlate (at Two.on x) (at Two.on cut))
+
 let contractions =
   group "contractions"
     [
+      test "a convolution cut along its groups names the place of w"
+        test_conv_refusal;
+      test "a transposed convolution cut along its groups names the place of w"
+        test_conv_transpose_refusal;
+      test "a correlation of a cut kernel names the place of the kernel"
+        test_correlate_refusal;
       prop ~count:400 ~examples:ccase_examples
         "a contraction over cut contracting axes adds its tiles' sums in \
          order, then init"

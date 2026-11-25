@@ -129,6 +129,11 @@ type 'd arg =
   | Arg : string * ('v, 's, 'd) t -> 'd arg
   | Parts : string * string * 'd Ptree.packed list -> 'd arg
 
+val whole_at : 'd Devices.placement -> ('v, 's, 'd) t -> bool
+(** [whole_at p x] is [true] iff [x] is no sum and lies at [p], whole on each of
+    its devices: where every argument of a {!composite} does, [composite] is its
+    body. It allocates nothing. *)
+
 val composite : by:string -> 'd arg list -> (unit -> 'a) -> 'a
 (** [composite ~by args f] is [f ()], the body of the composite operation
     [by] over the arguments [args], each with its name ({!Composite.call}).

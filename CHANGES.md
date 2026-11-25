@@ -3914,6 +3914,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.conv`, `Nx.conv_transpose` and `Nx.correlate` refusals name their
+  argument (`x`, `w`, `init`, `kernel`) and the `place` of it, where a cut
+  the groups or taps cannot read named an internal operand `y` and an axis
+  the argument lacks.
 - `Nx.geomspace` takes the logarithms of ends whose ratio leaves float64's
   range through nx's own kinds, where it called the C library's `log`, so
   its bits match on every host; on glibc no value checked changes. Its

@@ -5870,6 +5870,28 @@ let run_of padding n k =
   | `Valid -> (m - 1, longest - m + 1)
   | `Same -> ((if k <= n then (m - 1) / 2 else m / 2), longest)
 
+(* Whether [x], [w] and [init] lie whole at [x]'s placement, where no
+   operation of a body refuses an operand derived from them, so that the
+   body runs without {!Eval.composite}'s arguments and closure. It
+   allocates nothing. *)
+let whole_together ?init x w =
+  let p = Prim.placement x in
+  Eval.whole_at p x && Eval.whole_at p w
+  && match init with None -> true | Some i -> Eval.whole_at p i
+
+(* [correlate]'s windows of [x], reshaped to [batch], by [kernel] conjugated,
+   reshaped to [out]. *)
+let correlated ~by ~ks ~lo ~hi ~batch ~out x kernel =
+  let kr = Array.length ks in
+  let w =
+    Eval.reshape ~by (Array.append [| 1; 1; 1 |] ks) (conjugate_by ~by kernel)
+  in
+  let y =
+    windows_of ~by ~stride:(Array.make kr 1) ~lo ~hi ~interior:(Array.make kr 0)
+      ~dilation:(Array.make kr 1) (Eval.reshape ~by batch x) w
+  in
+  Eval.reshape ~by out y
+
 (* [x]'s batch axes merged into one, with one channel, convolved by the
    kernel's conjugate as one output and one input channel: value [i] of a
    kept run from [start] reads [x] from [start + i - (k - 1)], which a
@@ -5893,15 +5915,14 @@ let correlate ?(padding = `Valid) x kernel =
     Array.init kr (fun i -> snd runs.(i) + ks.(i) - 1 - spatial.(i) - lo.(i))
   in
   let batch = Array.concat [ [| product lead |]; spatial; [| 1 |] ] in
-  let w =
-    Eval.reshape ~by (Array.append [| 1; 1; 1 |] ks) (conjugate_by ~by kernel)
-  in
-  let y =
-    windows_of ~by ~stride:(Array.make kr 1) ~lo ~hi
-      ~interior:(Array.make kr 0) ~dilation:(Array.make kr 1)
-      (Eval.reshape ~by batch x) w
-  in
-  Eval.reshape ~by (Array.append lead (Array.map snd runs)) y
+  let out = Array.append lead (Array.map snd runs) in
+  (* Its body reshapes [x] and the kernel: a refusal of an operand derived from
+     them names the argument's place. *)
+  if whole_together x kernel then
+    correlated ~by ~ks ~lo ~hi ~batch ~out x kernel
+  else
+    Eval.composite ~by [ Arg ("x", x); Arg ("kernel", kernel) ] @@ fun () ->
+    correlated ~by ~ks ~lo ~hi ~batch ~out x kernel
 
 (* Segments and ranges *)
 
@@ -6753,6 +6774,15 @@ let by_groups ~by groups w =
   let lead = [| groups; s.(0) / groups |] in
   Eval.reshape ~by (Array.concat [ lead; Array.sub s 1 k; [| s.(k + 1) |] ]) w
 
+(* A convolution's arguments as its refusals name them: its body reshapes and
+   permutes [w], so a refusal of an operand derived from it names the place of
+   [w] itself. *)
+let conv_args ?init x w =
+  let init =
+    match init with Some i -> [ Eval.Arg ("init", i) ] | None -> []
+  in
+  Eval.Arg ("x", x) :: Arg ("w", w) :: init
+
 let conv ?init ?stride ?padding ?dilation ?groups x w =
   let by = "Nx.conv" in
   let stride, padding, dilation, groups =
@@ -6765,9 +6795,26 @@ let conv ?init ?stride ?padding ?dilation ?groups x w =
   let k = ndim x - 2 in
   (* [[g; og; k…; cg]] to [[g; og; cg; k…]]. *)
   let p = Array.concat [ [| 0; 1; k + 2 |]; Array.init k (fun i -> 2 + i) ] in
-  windows_of ~by ?init ~stride ~lo:(Array.map fst padding)
-    ~hi:(Array.map snd padding) ~interior:(Array.make k 0) ~dilation x
-    (permute ~by p (by_groups ~by groups w))
+  let lo = Array.map fst padding and hi = Array.map snd padding in
+  let interior = Array.make k 0 in
+  if whole_together ?init x w then
+    windows_of ~by ?init ~stride ~lo ~hi ~interior ~dilation x
+      (permute ~by p (by_groups ~by groups w))
+  else
+    Eval.composite ~by (conv_args ?init x w) @@ fun () ->
+    windows_of ~by ?init ~stride ~lo ~hi ~interior ~dilation x
+      (permute ~by p (by_groups ~by groups w))
+
+(* [conv_transpose]'s convolution of [x] by [w] permuted by [p] and reversed
+   along its taps. *)
+let transposed ~by ?init ~groups ~p ~lo ~hi ~stride ~dilation x w =
+  let k = ndim x - 2 in
+  let w = permute ~by p (by_groups ~by groups w) in
+  let taps_axes = List.init k (fun i -> 3 + i) in
+  let w = flip_by ~by ~axes:taps_axes w in
+  windows_of ~by ?init ~stride:(Array.make k 1) ~lo ~hi
+    ~interior:(Array.map (fun st -> st - 1) stride)
+    ~dilation x w
 
 (* The transpose is the convolution at stride one of [x] with [stride - 1]
    zeros between its elements, padded by [e - 1 - lo] before, [e] the dilated
@@ -6807,12 +6854,11 @@ let conv_transpose ?init ?stride ?padding ?dilation ?groups x w =
   let hi = Array.init k (fun i -> target.(i) + span i - spread i - lo.(i)) in
   (* [[g; og; k…; cg]] to [[g; cg; og; k…]], the taps reversed. *)
   let p = Array.concat [ [| 0; k + 2; 1 |]; Array.init k (fun i -> 2 + i) ] in
-  let w = permute ~by p (by_groups ~by groups w) in
-  let taps_axes = List.init k (fun i -> 3 + i) in
-  let w = flip_by ~by ~axes:taps_axes w in
-  windows_of ~by ?init ~stride:(Array.make k 1) ~lo ~hi
-    ~interior:(Array.map (fun st -> st - 1) stride)
-    ~dilation x w
+  if whole_together ?init x w then
+    transposed ~by ?init ~groups ~p ~lo ~hi ~stride ~dilation x w
+  else
+    Eval.composite ~by (conv_args ?init x w) @@ fun () ->
+    transposed ~by ?init ~groups ~p ~lo ~hi ~stride ~dilation x w
 
 let ceil_padding ?stride ?dilation ~kernel_size s =
   let by = "Nx.ceil_padding" in
