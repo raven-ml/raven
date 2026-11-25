@@ -277,7 +277,8 @@ module Linear : sig
       or a non-finite [u] from a finite system, ends the lane [Stalled]: [a] is
       not linear, or it is singular or too ill-conditioned for the solver. A
       non-finite [r] or product of [a] ends it [Not_finite]. The answer's error
-      is the magnitude of its residual, per component.
+      is the magnitude of its residual, per component. A system of no unknowns
+      is solved by the empty vector, with one application, the check.
 
       {b Derivative.} The answer is stated as the zero of [a u − r] through
       {!Rune.root}, with the solver as its linear solve: a derivative solves a
@@ -336,14 +337,14 @@ module Linear : sig
       non-singular [a]. A cycle takes [restart] steps of Arnoldi's process, each
       an application of [a] and of [precondition], orthogonalised twice by
       Gram–Schmidt, then the [u] of least residual in their span; it keeps
-      [restart + 1] vectors. Between cycles it applies [a] to [u] for the
-      residual, and stops when [‖a u − r‖ ≤ rel ‖r‖ + n η], the vectors' norms
-      Euclidean and [η] the dtype's least positive subnormal, which is also
-      its bound (a solution of subnormal magnitude may miss it by its
-      rounding, as {!cg}'s may), so [r = 0] gives
-      [u = 0] with no application. After [budget / restart] cycles, the lane
-      ends [Budget_spent]. [precondition] approximates the inverse of [a] and of
-      its transpose, as a derivative solves both; [Fun.id] is none.
+      [restart + 1] vectors. Before the first cycle and after each it applies
+      [a] to [u] for the residual, and stops when [‖a u − r‖ ≤ rel ‖r‖ + n η],
+      the vectors' norms Euclidean and [η] the dtype's least positive subnormal,
+      which is also its bound (a solution of subnormal magnitude may miss it by
+      its rounding, as {!cg}'s may), so [r = 0] gives [u = 0] with one
+      application, the check. After [budget / restart] cycles, the lane ends
+      [Budget_spent]. [precondition] approximates the inverse of [a] and of its
+      transpose, as a derivative solves both; [Fun.id] is none.
 
       Raises [Invalid_argument] if [restart < 1], if [budget < restart] or if
       [rel] is not in (0, 1). *)

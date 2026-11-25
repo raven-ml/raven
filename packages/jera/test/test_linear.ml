@@ -115,6 +115,18 @@ let dense_tests =
         equal Oracle.status_t Stalled (Oracle.status s);
         failure_with "The residual |a u - r| exceeds the solver's bound"
           (fun () -> Solution.get s));
+    cases ~id:fst "a system of no unknowns applies a once, to check"
+      [
+        ("dense", Linear.dense);
+        ("banded", Linear.banded ~width:1);
+        ("cg", Linear.cg ~rel:1e-12 ~budget:10 ~precondition:Fun.id);
+        ( "gmres",
+          Linear.gmres ~restart:2 ~rel:1e-12 ~budget:10 ~precondition:Fun.id );
+      ]
+      (fun (_, solver) ->
+        let s = Linear.solve one solver (fun u -> Nx.mul_s u 2.) (vec [||]) in
+        equal Oracle.status_t Converged (Oracle.status s);
+        equal int32 1l (Nx.item [] (Solution.evaluations s)));
     test "a non-finite r ends the lane Not_finite" (fun () ->
         let s = dense (Nx.eye f64 2) (vec [| 1.; Float.nan |]) in
         equal Oracle.status_t Not_finite (Oracle.status s));
@@ -301,8 +313,8 @@ let gmres_tests =
         if Nx.dim 0 r > 0 then
           equal (Oracle.tensor ~rel:1e-9 ~abs:1e-12 ()) (Nx.solve a r) u);
     test "a cycle as long as the system solves it" (fun () ->
-        (* The Krylov space of n steps holds the solution: one cycle of n
-           products, and the residual's. *)
+        (* The Krylov space of n steps holds the solution: the first residual's
+           product, one cycle of n products, and the residual's. *)
         let a =
           Nx.create f64 [| 4; 4 |]
             [|
@@ -314,7 +326,7 @@ let gmres_tests =
           (Oracle.tensor ~rel:1e-12 ())
           (Nx.solve a (vec [| 1.; 2.; 3.; 4. |]))
           (Solution.get s);
-        equal int32 5l (Nx.item [] (Solution.evaluations s)));
+        equal int32 6l (Nx.item [] (Solution.evaluations s)));
     test "it solves an indefinite system cg cannot" (fun () ->
         (* A rotation: pᵀ a p = 0 for every p. *)
         let a = Nx.create f64 [| 2; 2 |] [| 0.; 1.; -1.; 0. |] in
@@ -336,16 +348,26 @@ let gmres_tests =
           (Oracle.tensor ~rel:1e-14 ())
           (Nx.solve a (vec [| 1.; 1. |]))
           (Solution.get s);
-        equal int32 2l (Nx.item [] (Solution.evaluations s)));
-    test "r = 0 gives u = 0 with no product" (fun () ->
+        equal int32 3l (Nx.item [] (Solution.evaluations s)));
+    test "r = 0 gives u = 0 with the check alone" (fun () ->
         let s = gmres (Nx.eye f64 3) (Nx.zeros f64 [| 3 |]) in
         equal (Oracle.tensor ()) (Nx.zeros f64 [| 3 |]) (Solution.get s);
-        equal int32 0l (Nx.item [] (Solution.evaluations s)));
+        equal int32 1l (Nx.item [] (Solution.evaluations s)));
+    test "an affine a at r = 0 does not converge" (fun () ->
+        (* a 0 = 1 is the first residual's product: the cycles cannot meet the
+           bound and the budget ends the lane. *)
+        let s =
+          Linear.solve one
+            (Linear.gmres ~restart:3 ~rel:1e-12 ~budget:30 ~precondition:Fun.id)
+            (fun u -> Nx.add_s (Nx.mul_s u 2.) 1.)
+            (Nx.zeros f64 [| 3 |])
+        in
+        equal Oracle.status_t Budget_spent (Oracle.status s));
     test "a spent budget ends the lane Budget_spent" (fun () ->
         let a = Nx.diag (vec [| 1.; 2.; 3.; 4.; 5. |]) in
         let s = gmres ~restart:1 ~budget:2 a (Nx.ones f64 [| 5 |]) in
         equal Oracle.status_t Budget_spent (Oracle.status s);
-        equal int32 4l (Nx.item [] (Solution.evaluations s)));
+        equal int32 5l (Nx.item [] (Solution.evaluations s)));
     test "a non-finite r ends the lane Not_finite" (fun () ->
         equal Oracle.status_t Not_finite
           (Oracle.status (gmres (Nx.eye f64 2) (vec [| Float.nan; 1. |]))));

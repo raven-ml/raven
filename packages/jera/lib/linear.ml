@@ -565,11 +565,14 @@ let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget
          (Nx.greater_equal_s k (Int32.of_int cycles))
          (Nx.logical_not (finite res)))
   in
+  (* The residual of [u = 0] takes one application, which checks the answer when
+     no cycle runs, as at [r = 0]. *)
+  let u0 = Nx.zeros_like r in
   let u, (res, k) =
     Rune.iterate
       Nx.Ptree.(pair tensor (pair tensor tensor))
       ~max:cycles ~until:stops cycle
-      (Nx.zeros_like r, (r, Nx.scalar_at (Nx.beside r) Nx.int32 0l))
+      (u0, (Nx.sub r (apply u0), Nx.scalar_at (Nx.beside r) Nx.int32 0l))
   in
   {
     u;
@@ -587,7 +590,7 @@ let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget
           unit = "iterations";
           budget;
         };
-    applications = Nx.mul_s k (Int32.of_int (restart + 1));
+    applications = Nx.add_s (Nx.mul_s k (Int32.of_int (restart + 1))) 1l;
     facts = [];
   }
 
@@ -660,16 +663,17 @@ let solve x s a r =
   let (Space { dtype; size; ravel; unravel }) = space fn "r" x r in
   let apply v = ravel (checked fn "a" x a (unravel v)) in
   let rv = ravel r in
-  (* A system of no unknowns is solved by the empty vector. *)
+  (* A system of no unknowns is solved by the empty vector, checked by one
+     application. *)
   let result =
     if size = 0 then
       {
         u = rv;
-        residual = rv;
+        residual = Nx.sub (apply rv) rv;
         bound = Nx.zeros_at (Nx.beside rv) dtype [||];
         outcomes = [];
         spent = None;
-        applications = Nx.scalar_at (Nx.beside rv) Nx.int32 0l;
+        applications = Nx.scalar_at (Nx.beside rv) Nx.int32 1l;
         facts = [];
       }
     else run s dtype size apply (preconditioner fn x s ravel unravel) rv

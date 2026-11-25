@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Linear.gmres` checks its answer at `r = 0`, and `Linear.solve` checks a
+  system of no unknowns, each with one application of `a`: an `a` that is not
+  linear reported `Converged` there. A gmres solve takes one more application.
 - A `Sde.Brownian` path finer than the floats near its times returns the
   increments of its own nodes: one deeper than about 24 levels in float32,
   or past `t0 = 1e9` in float64, summed one node's draws with another's
