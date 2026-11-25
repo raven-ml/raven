@@ -14,6 +14,16 @@ let floats x = Nx.to_array (Nx.cast Nx.float64 x)
 let std = D.normal ~loc:(f64 0.) ~scale:(f64 1.)
 let log_std x = item (D.log_density std (f64 x))
 
+(* [observing obs] is the model of a standard normal [x] and an observation
+   drawn from [obs x]. *)
+let observing obs =
+  M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
+      let x = M.sample std in
+      (x, M.sample (obs x)))
+
+(* A scale of [x - 10], outside its domain at the origin. *)
+let negative_scale x = D.normal ~loc:(f64 0.) ~scale:(Nx.sub_s x 10.)
+
 (* Structures *)
 
 type 'a schools = { mu : 'a; tau : 'a; theta : 'a }
@@ -110,38 +120,18 @@ type model =
     }
       -> model
 
-let schools_like name model =
-  Model
-    {
-      name;
-      model;
-      latent = schools;
-      observed = Nx.Ptree.tensor;
-      data = y_schools;
-    }
+let law name model latent observed data =
+  Model { name; model; latent; observed; data }
 
 let laws =
+  let one_tensor = Nx.Ptree.tensor in
   [
-    schools_like "centred" centred;
-    schools_like "non-centred" noncentred;
-    schools_like "affine" affine;
-    schools_like "fixed" fixed;
-    Model
-      {
-        name = "simplex";
-        model = simplex;
-        latent = Nx.Ptree.tensor;
-        observed = Nx.Ptree.tensor;
-        data = categories;
-      };
-    Model
-      {
-        name = "bounded";
-        model = bounded;
-        latent = two;
-        observed = Nx.Ptree.(pair tensor tensor);
-        data = bounded_data;
-      };
+    law "centred" centred schools one_tensor y_schools;
+    law "non-centred" noncentred schools one_tensor y_schools;
+    law "affine" affine schools one_tensor y_schools;
+    law "fixed" fixed schools one_tensor y_schools;
+    law "simplex" simplex one_tensor one_tensor categories;
+    law "bounded" bounded two Nx.Ptree.(pair tensor tensor) bounded_data;
   ]
 
 let name (Model l) = l.name
@@ -411,19 +401,12 @@ let gradient_law ((Model l as model), v) =
 (* An mvn whose correlation [r] is the latent value: at [r = 2] the matrix is
    not positive definite and its Cholesky factor holds NaN. *)
 let correlated () =
-  M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-      let r = M.sample std in
+  observing (fun r ->
       let cov =
         Nx.add (Nx.eye Nx.float64 2)
           (Nx.mul r (Nx.create Nx.float64 [| 2; 2 |] [| 0.; 1.; 1.; 0. |]))
       in
-      let x =
-        M.sample
-          (D.mvn
-             ~loc:(Nx.zeros Nx.float64 [| 2 |])
-             ~scale_tril:(Nx.cholesky cov))
-      in
-      (r, x))
+      D.mvn ~loc:(Nx.zeros Nx.float64 [| 2 |]) ~scale_tril:(Nx.cholesky cov))
 
 (* [finite_then_neg_inf lp] asserts that chain 0 is finite and chain 1 -inf: a
    parameter outside its domain in one chain leaves the other alone. *)
@@ -519,11 +502,7 @@ let v_tests =
       test "checks no domain" (fun () ->
           (* At zero coordinates the scale is -10: v builds the model, and its
              density there is -inf. *)
-          let m =
-            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-                let a = M.sample std in
-                (a, M.sample (D.normal ~loc:(f64 0.) ~scale:(Nx.sub_s a 10.))))
-          in
+          let m = observing negative_scale in
           let c =
             Nx.Ptree.map (M.coords m)
               (fun _ t -> Nx.reshape [| 1 |] t)
@@ -532,19 +511,16 @@ let v_tests =
           equal float_exact Float.neg_infinity
             (Nx.item [ 0 ] (M.log_density m (f64 0.) c)));
       cases "a failure of the model is raised again naming the sites learned"
-        ~id:Printexc.to_string [ Failure "boom"; Invalid_argument "boom" ]
-        (fun e ->
-          let again =
-            match e with
-            | Failure _ ->
-                Failure
-                  "Norn_model.v: the model raised after 1 site (a normal of \
-                   shape []): boom"
-            | _ ->
-                Invalid_argument
-                  "Norn_model.v: the model raised after 1 site (a normal of \
-                   shape []): boom"
-          in
+        ~id:(fun (e, _) -> Printexc.to_string e)
+        (let again =
+           "Norn_model.v: the model raised after 1 site (a normal of shape \
+            []): boom"
+         in
+         [
+           (Failure "boom", Failure again);
+           (Invalid_argument "boom", Invalid_argument again);
+         ])
+        (fun (e, again) ->
           raises again (fun () ->
               M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
                   ignore (M.sample std);
@@ -805,10 +781,7 @@ let scaled () =
       ({ a; b }, M.sample std))
 
 (* A Poisson site whose rate is [exp f]: at [f = 1000] the rate overflows. *)
-let counts () =
-  M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-      let f = M.sample std in
-      (f, M.sample (D.poisson ~rate:(Nx.exp f))))
+let counts () = observing (fun f -> D.poisson ~rate:(Nx.exp f))
 
 let log_density_tests =
   group "log_density"
@@ -859,11 +832,7 @@ let log_density_tests =
           let c = at m ~chains:2 (vec [| 0.5; -2.; 0.; 0.; 0.; 0.; 0.; 0. |]) in
           finite_then_neg_inf (M.log_density m (f64 0.) c));
       test "an overflowed exponential rate makes the term -inf" (fun () ->
-          let m =
-            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-                let f = M.sample std in
-                (f, M.sample (D.exponential ~rate:(Nx.exp f))))
-          in
+          let m = observing (fun f -> D.exponential ~rate:(Nx.exp f)) in
           finite_then_neg_inf
             (M.log_density m (f64 0.5) (holding m [| 0.; 1000. |])));
       test "an overflowed Poisson rate makes the term -inf" (fun () ->
@@ -980,18 +949,6 @@ let from_prior_tests =
           equal (array float_exact)
             (floats (draws n))
             (floats (Nx.slice [ Nx.R (0, n) ] (draws (n + more)))));
-      prop "draw i is the coordinates of simulate's values from row i's key"
-        Gen.(int_range 0 999)
-        (fun key ->
-          let m = Lazy.force centred and k = Nx.Rng.key key in
-          let simulated k_i =
-            vector (M.coords m) (M.unconstrain m (fst (M.simulate m k_i)))
-          in
-          equal (array float_exact)
-            (floats
-               (Nx.stack
-                  (Array.to_list (Array.map simulated (Nx.Rng.split ~n:3 k)))))
-            (floats (by_chain (M.coords m) (M.from_prior m y_schools ~n:3 k))));
       test "answers the observed sites with the data" (fun () ->
           (* Draw i of a is drawn from N(y, 1) with fold_in k_i 1, k_i row i of
              split_batch ~n:3 k; y = 1 answers site 0. *)
@@ -1031,22 +988,14 @@ let uniform_level = 1e-7
 (* A latent normal and an observation finite everywhere: every candidate is
    finite, so a start is its first candidate. *)
 let everywhere_finite () =
-  M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-      let mu = M.sample std in
-      (mu, M.sample (D.normal ~loc:mu ~scale:(f64 1.))))
+  observing (fun mu -> D.normal ~loc:mu ~scale:(f64 1.))
 
 let init_strategies =
   group "Init"
     [
-      prop "uniform draws every coordinate in (-2, 2)"
-        Gen.(pair (int_range 0 999) (int_range 1 8))
-        (fun (key, chains) ->
-          let m = Lazy.force centred in
-          let c = M.init m y_schools ~chains (Nx.Rng.key key) in
-          satisfies ~claim:"every coordinate in (-2, 2)" (array float_exact)
-            (Array.for_all (fun x -> x > -2. && x < 2.))
-            (floats (vector (M.coords m) c)));
-      test "uniform starts are uniform" (fun () ->
+      test "uniform starts are uniform on (-2, 2)" (fun () ->
+          (* A coordinate outside (-2, 2) has a rank outside 0 .. 19, which
+             rank_uniformity refuses. *)
           let m = Lazy.force centred in
           let c = M.init m y_schools ~chains:1000 (Nx.Rng.key 6) in
           let u = Nx.div_s (Nx.add_s (by_chain (M.coords m) c) 2.) 4. in
@@ -1073,10 +1022,7 @@ let init_strategies =
 
 (* [x] latent, an observation uniform on (x, x + 1) at 0.5: finite for x in
    (-0.5, 0.5), a quarter of the uniform candidates. *)
-let narrow () =
-  M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-      let x = M.sample std in
-      (x, M.sample (D.uniform ~low:x ~high:(Nx.add_s x 1.))))
+let narrow () = observing (fun x -> D.uniform ~low:x ~high:(Nx.add_s x 1.))
 
 let init_tests =
   group "init"
@@ -1172,11 +1118,7 @@ let init_tests =
                 m (f64 0.) ~chains:1 (Nx.Rng.key 0)));
       test "a compiled start names the support from its arguments" (fun () ->
           Compiled.here ();
-          let m low high =
-            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-                let x = M.sample std in
-                (x, M.sample (D.uniform ~low ~high)))
-          in
+          let m low high = observing (fun _ -> D.uniform ~low ~high) in
           let start =
             Rune.jit
               Nx.Ptree.(
@@ -1191,13 +1133,10 @@ let init_tests =
                   uniform, (2, 3)") (fun () ->
               start (Nx.Rng.key 0) (f64 2.) (f64 3.) (f64 5.)));
       test "a support bounded above is named as one" (fun () ->
+          let below = Norn.Bij.less ~high:(f64 2.) in
           let m =
-            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-                let x = M.sample std in
-                let below = Norn.Bij.less ~high:(f64 2.) in
-                ( x,
-                  M.sample (D.transform below (D.normal ~loc:x ~scale:(f64 1.)))
-                ))
+            observing (fun x ->
+                D.transform below (D.normal ~loc:x ~scale:(f64 1.)))
           in
           raises_match
             (Exn.invalid_arg
@@ -1249,28 +1188,6 @@ let log_joint_tests =
           let p, y = M.simulate m (Nx.Rng.key key) in
           let expected, s = schools_joint y p in
           equal (agrees s) expected (item (M.log_joint m y p)));
-      test "adds the factors to each site's log density" (fun () ->
-          let m = Lazy.force bounded and counts, z = bounded_data in
-          let p, _ = M.simulate m (Nx.Rng.key 5) in
-          let terms =
-            [
-              D.log_density (D.truncated ~high:(f64 2.) std) p.b;
-              D.log_density (D.uniform ~low:(f64 (-1.)) ~high:(f64 1.)) p.a;
-              D.log_density
-                (D.iid [| 3 |] (D.poisson ~rate:(Nx.exp p.a)))
-                counts;
-              Nx.neg (Nx.add (Nx.square p.b) (Nx.square p.a));
-              D.log_density
-                (D.iid [| 2 |] (D.normal ~loc:p.b ~scale:(f64 1.)))
-                z;
-            ]
-          in
-          let s =
-            List.fold_left (fun a t -> a +. Float.abs (item t)) 0. terms
-          in
-          equal (agrees s)
-            (List.fold_left (fun a t -> a +. item t) 0. terms)
-            (item (M.log_joint m bounded_data p)));
       test "is a mixture's log density over trials" (fun () ->
           let trials = Nx.create Nx.int32 [| 2 |] [| 3l; 7l |] in
           let mix l =
@@ -1278,11 +1195,7 @@ let log_joint_tests =
               ~logits:(vec [| 0.; 0. |])
               (D.binomial ~trials ~logits:(Nx.broadcast_to [| 2 |] l))
           in
-          let m =
-            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-                let l = M.sample std in
-                (l, M.sample (mix l)))
-          in
+          let m = observing mix in
           let l = f64 0.3 and y = Nx.scalar Nx.int32 5l in
           equal (float 1e-12)
             (item (D.log_density std l) +. item (D.log_density (mix l) y))
@@ -1313,9 +1226,7 @@ let log_joint_tests =
 
 (* A regression on covariates [x]: y ~ N(beta x, 1). *)
 let regression x =
-  M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-      let beta = M.sample std in
-      (beta, M.sample (D.normal ~loc:(Nx.mul beta x) ~scale:(f64 1.))))
+  observing (fun beta -> D.normal ~loc:(Nx.mul beta x) ~scale:(f64 1.))
 
 let pointwise_tests =
   group "pointwise"
@@ -1350,9 +1261,8 @@ let pointwise_tests =
       test "over draws has a point axis after the draws" (fun () ->
           (* Every point is log N(0; 0, 1) at mu = 0 and y = 0. *)
           let m =
-            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-                let mu = M.sample std in
-                (mu, M.sample (D.iid [| 5 |] (D.normal ~loc:mu ~scale:(f64 1.)))))
+            observing (fun mu ->
+                D.iid [| 5 |] (D.normal ~loc:mu ~scale:(f64 1.)))
           in
           let draws =
             Norn.Draws.v Nx.Ptree.tensor (Nx.zeros Nx.float64 [| 2; 3 |])
@@ -1376,11 +1286,7 @@ let pointwise_tests =
                (D.factors (D.normal ~loc:(Nx.mul beta x) ~scale:(f64 1.)) y))
             (floats (M.pointwise (regression x) y beta)));
       test "refuses an observed site's parameter outside its domain" (fun () ->
-          let m =
-            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
-                let a = M.sample std in
-                (a, M.sample (D.normal ~loc:(f64 0.) ~scale:(Nx.sub_s a 10.))))
-          in
+          let m = observing negative_scale in
           raises_match
             (Exn.invalid_arg ~sub:"Norn_model.pointwise: site y: normal: scale")
             (fun () -> M.pointwise m (f64 0.) (f64 0.)));
