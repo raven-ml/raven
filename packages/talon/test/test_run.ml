@@ -750,7 +750,7 @@ let pred_filter =
     (v [ ("x", x) ], Source.Pred.Cmp ("x", `Gt, Value (Type.int64, 1)))
   in
   prop ~examples:[ passes_fails_null ]
-    "a predicate made a filter keeps the rows where it pred_holds"
+    "a predicate made a filter keeps the rows where it holds"
     (Gen.with_pp
        (fun ppf (t, p) -> Format.fprintf ppf "%a@.%a" pp_pred p Talon.pp t)
        case)
@@ -1010,18 +1010,18 @@ let agreeing expected actual =
       occurs (Printf.sprintf ": row %d: %s." row why) (error e)
   | _ -> false
 
-(* [allowed read p] is the outcomes of [read] over the plan [p] that talon
-   allows beside the reference's: each join reading either input first, and
-   operands that no row reads left uncomputed ({!R.run}). *)
-let allowed read p =
-  List.concat_map
-    (fun masked ->
-      List.init
-        (1 lsl R.joins p)
-        (fun m ->
-          let flipped i = m land (1 lsl i) <> 0 in
-          attempt (fun () -> read ~masked ~flipped)))
-    [ false; true ]
+(* [allowed os] is the outcomes talon allows, {!R.outcomes}, a function's [Boom]
+   as {!attempt} gives it. *)
+let allowed os =
+  List.map
+    (function Ok r -> Ok r | Error (Boom b) -> Error b | Error e -> raise e)
+    os
+
+(* [failure_of o] is the failure of the outcome [o], if any. *)
+let failure_of = function
+  | Ok (Ok _) -> None
+  | Ok (Error f) -> Some (Ok f)
+  | Error b -> Some (Error b)
 
 (* [one_of expected allowed actual] checks that the run's [actual] is one of the
    outcomes [allowed], reported against the reference's [expected]. *)
@@ -1125,6 +1125,13 @@ let agrees p =
     | _ -> false);
   cover "a kept plan fails at a row" fails;
   cover "a kept plan raises" raises;
+  (* The outcomes talon allows differ where an operand that no row reads, or a
+     join's read order, decides the failure. *)
+  cover "another allowed outcome fails otherwise"
+    ((fails || raises)
+    && List.exists
+         (fun o -> failure_of o <> failure_of expected)
+         (allowed (R.outcomes p)));
   cover "a kept plan that aggregates fails"
     ((fails || raises) && mentions "aggregate" p);
   cover "a kept plan that reads other rows fails" ((fails || raises) && framed);
@@ -1143,8 +1150,7 @@ let agrees p =
   | Ok (Ok _), Ok (Error e) -> failf "the run fails: %s" (error e)
   | Ok (Ok _), Error (label, _) -> failf "the run raises Boom %d" label
   | expected, actual when kept && not (agreeing expected actual) -> (
-      let read ~masked ~flipped = R.run ~masked ~flipped p in
-      let allowed = allowed read p in
+      let allowed = allowed (R.outcomes p) in
       match (actual, List.find_map success allowed) with
       | Ok (Ok t), Some cs -> List.iter (column_holds t) cs
       | _ -> one_of expected allowed actual)
@@ -1277,8 +1283,7 @@ let values_agree (p, E e) =
   | Ok (Ok _), Ok (Error e) -> failf "values failed: %s" (error e)
   | Ok (Ok _), Error (label, _) -> failf "values raised Boom %d" label
   | expected, actual when not (agreeing expected actual) -> (
-      let read ~masked ~flipped = R.values ~masked ~flipped e p in
-      let allowed = allowed read p in
+      let allowed = allowed (R.value_outcomes e p) in
       match (actual, List.find_map success allowed) with
       | Ok (Ok vs), Some ws -> equal (array (G.witness (R.type_of e))) ws vs
       | _ -> one_of expected allowed actual)
@@ -1386,7 +1391,8 @@ let text_compare_layouts () =
 (* Plans that meet the rarest covers of [agrees]: joins to distinct and to
    repeated right keys, a failing assertion and a range join, and kept plans
    that fail in an aggregate, at a cast, at a text, in a function and in an
-   expression that reads other rows. *)
+   expression that reads other rows, and an if_ whose untaken branch fails,
+   which talon may leave uncomputed. *)
 let raises_at_2 x = if x = 2 then raise (Boom (0, x)) else 0
 
 let rare_plans =
@@ -1399,6 +1405,8 @@ let rare_plans =
   in
   let keys = R.Keys [ ("k", "rk") ] in
   let only = R.Reduce (Only, R.Col (Type.int64, "x")) in
+  let i = R.Col (Type.int64, "i") and hundred = R.Lit (Type.int64, 100) in
+  let zero = R.Lit (Type.int8, 0) in
   [
     join keys [ ("k", [| 1; 2 |]) ] [ ("rk", [| 1; 2; 3 |]) ];
     join keys [ ("k", [| 1 |]) ] [ ("rk", [| 1; 1; 2 |]) ];
@@ -1421,6 +1429,12 @@ let rare_plans =
       ( [ R.Out ("m", R.Map (Type.int8, raises_at_2, R.Col (Type.int64, "i"))) ],
         t [ ("i", [| 1; 2 |]) ] );
     R.Select ([ R.Out ("o", R.Over ([], [], only)) ], t [ ("x", [| 1; 2 |]) ]);
+    R.Select
+      ( [
+          R.Out
+            ("y", R.If (R.Cmp (`Lt, i, hundred), R.Cast (Type.int8, i), zero));
+        ],
+        t [ ("i", [| 1; 1000 |]) ] );
   ]
 
 let null_value =
@@ -3261,7 +3275,7 @@ let bit_groups =
          Gen.pair (bits_column n)
            (Gen.array ~size:(Gen.constant n) (Gen.int_range 0 3))))
 
-(* [int64_words t n] is the 64-bit int64_words of [t]'s column [n]. *)
+(* [int64_words t n] is the 64-bit words of [t]'s column [n]. *)
 let int64_words t n =
   match Column.layout (column t n) with
   | Fixed { values = P x; _ } -> Nx.to_array (Nx.bitcast Nx.int64 x)
@@ -3836,8 +3850,7 @@ let range_agrees (Range { ty; left; right; types; plan }) =
   | Error failure, Error e ->
       (* Talon states neither the order of a join's inputs nor of its sides'
          counts, so the failure of either order is allowed. *)
-      let read ~masked ~flipped = R.run ~masked ~flipped plan in
-      one_of (Ok (Error failure)) (allowed read plan) (Ok (Error e))
+      one_of (Ok (Error failure)) (allowed (R.outcomes plan)) (Ok (Error e))
   | Ok _, Error e -> failf "the run fails: %s" (error e)
   | Error (row, why), Ok _ -> failf "no failure at row %d: %s" row why
 
@@ -4494,7 +4507,7 @@ let constant_pred_gen =
   in
   pred 3
 
-(* [columns_of p] is the columns the drawn filter [p] columns_of. *)
+(* [columns_of p] is the columns the drawn filter [p] reads. *)
 let rec columns_of : type a s. (a, s) R.term -> string list = function
   | Col (_, n) -> [ n ]
   | Cmp (_, a, b) -> columns_of a @ columns_of b

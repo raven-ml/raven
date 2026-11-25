@@ -410,26 +410,48 @@ type beyond = { mutable past : bool; mutable met : failure list }
 
 let beyond_limits = ref None
 
-(* Under [masking], an operand that no row reads at a row is computed there all
-   the same, and its failures at that row are dropped: [unread] holds those rows
-   of the step's input. *)
-let masking = ref false
+(* The choices talon leaves open ({!outcomes}): for each of [If], [Coalesce],
+   [And] and [Or], whether an operand that no row reads is computed, and for
+   each join a run reads, counted from [0] in the order {!rows} reaches them,
+   whether it reads its right input first and checks its right rows first. *)
+type choice = {
+  if_ : bool;
+  coalesce : bool;
+  and_ : bool;
+  or_ : bool;
+  flipped : int -> bool;
+}
+
+let computed =
+  {
+    if_ = false;
+    coalesce = false;
+    and_ = false;
+    or_ = false;
+    flipped = (fun _ -> false);
+  }
+
+let choice = ref computed
+
+(* Where an operand is not computed, it is computed all the same, and its
+   failures at the rows that do not read it are dropped: [unread] holds those
+   rows of the step's input. *)
 let unread = ref []
 
 let record fr row why =
   match (!beyond_limits, !(fr.failed)) with
   | Some b, _ -> if b.past then b.met <- why :: b.met
-  | None, _ when !masking && List.mem row !unread -> ()
+  | None, _ when List.mem row !unread -> ()
   | None, Some (r, _) when r <= row -> ()
   | None, _ -> fr.failed := Some (row, why)
 
 let row_of fr i = if fr.one then start fr else fr.at.(i)
 let fail fr i why = record fr (row_of fr i) why
 
-(* [unread_at fr skip f] is [f ()], whose failures at the values [i] of [fr]
-   where [skip i] are dropped under [masking]. *)
-let unread_at fr skip f =
-  if not !masking then f ()
+(* [unread_at masked fr skip f] is [f ()], whose failures at the values [i] of
+   [fr] where [skip i] are dropped if [masked]. *)
+let unread_at masked fr skip f =
+  if not masked then f ()
   else
     let rows = List.filter skip (List.init (size fr) Fun.id) in
     let was = !unread in
@@ -667,7 +689,9 @@ let rec eval : type a s. frame -> (a, s) term -> a option array =
           | Some true, Some true -> Some true
           | _ -> None)
         x
-        (unread_at fr (fun i -> x.(i) = Some false) (fun () -> eval fr b))
+        (unread_at !choice.and_ fr
+           (fun i -> x.(i) = Some false)
+           (fun () -> eval fr b))
   | Or (a, b) ->
       let x = eval fr a in
       Array.map2
@@ -677,14 +701,22 @@ let rec eval : type a s. frame -> (a, s) term -> a option array =
           | Some false, Some false -> Some false
           | _ -> None)
         x
-        (unread_at fr (fun i -> x.(i) = Some true) (fun () -> eval fr b))
+        (unread_at !choice.or_ fr
+           (fun i -> x.(i) = Some true)
+           (fun () -> eval fr b))
   | Not a -> Array.map (Option.map not) (eval fr a)
   | If (c, a, b) ->
       let c = eval fr c in
       let a =
-        unread_at fr (fun i -> c.(i) <> Some true) (fun () -> eval fr a)
+        unread_at !choice.if_ fr
+          (fun i -> c.(i) <> Some true)
+          (fun () -> eval fr a)
       in
-      let b = unread_at fr (fun i -> c.(i) = Some true) (fun () -> eval fr b) in
+      let b =
+        unread_at !choice.if_ fr
+          (fun i -> c.(i) = Some true)
+          (fun () -> eval fr b)
+      in
       let at = stored (type_of e) in
       Array.mapi
         (fun i c -> Option.map at (if c = Some true then a.(i) else b.(i)))
@@ -695,7 +727,12 @@ let rec eval : type a s. frame -> (a, s) term -> a option array =
       let vs =
         List.fold_left
           (fun vs e ->
-            vs @ [ unread_at fr (fun i -> value i vs) (fun () -> eval fr e) ])
+            vs
+            @ [
+                unread_at !choice.coalesce fr
+                  (fun i -> value i vs)
+                  (fun () -> eval fr e);
+              ])
           [] es
       and at = stored (type_of e) in
       Array.init (size fr) (fun i ->
@@ -1148,34 +1185,7 @@ let join ~flip kind (each_left, each_right) on (lschema, rschema) ls rs () =
       in
       List.to_seq (pairs @ rest) ()
 
-(* Under [flips i], the [i]th join a run reads, counted from [0], reads its
-   right input first and checks its right rows' counts first. *)
-let flips = ref (fun (_ : int) -> false)
 let joins_read = ref 0
-
-let rec joins = function
-  | Table _ | Source _ -> 0
-  | Select (_, p)
-  | Derive (_, p)
-  | Filter (_, p)
-  | Slice { plan = p; _ }
-  | Aggregate (_, _, p)
-  | Sort (_, p) ->
-      joins p
-  | Append (p, r) -> joins p + joins r
-  | Join { left; right; _ } -> 1 + joins left + joins right
-
-(* [reading ~masked ~flipped f] is [f ()] under [masking] and [flips]. *)
-let reading ?(masked = false) ?(flipped = fun _ -> false) f =
-  let m = !masking and o = !flips in
-  masking := masked;
-  flips := flipped;
-  joins_read := 0;
-  Fun.protect
-    ~finally:(fun () ->
-      masking := m;
-      flips := o)
-    f
 
 (* [rows ~past p] is [p]'s rows, evaluated as they are read. Where [past], a
    slice from the start reads every row of its input, and marks the rows past
@@ -1227,7 +1237,7 @@ let rec rows ~past : plan -> row Seq.t = function
   | Append (p, rest) -> Seq.append (rows ~past p) (rows ~past rest)
   | Aggregate (by, os, p) -> aggregate by os (rows ~past p)
   | Join { kind; each_left; each_right; on; left; right } ->
-      let flip = !flips !joins_read in
+      let flip = !choice.flipped !joins_read in
       incr joins_read;
       join ~flip kind (each_left, each_right) on
         (schema left, schema right)
@@ -1238,8 +1248,7 @@ let rec rows ~past : plan -> row Seq.t = function
           (List.stable_sort (compare_keys ks) (List.of_seq (rows ~past p)))
           ()
 
-let run ?masked ?flipped p =
-  reading ?masked ?flipped @@ fun () ->
+let run p =
   match List.of_seq (rows ~past:false p) with
   | exception Failed (row, why) -> Error (row, why)
   | rs ->
@@ -1261,8 +1270,7 @@ let beyond p =
       | Raised e -> (e :: raised, reasons) | Data why -> (raised, why :: reasons))
     ([], []) b.met
 
-let values ?masked ?flipped e p =
-  reading ?masked ?flipped @@ fun () ->
+let values e p =
   let null = "the value is null; read it through Expr.option" in
   let value fr =
     let v = (eval fr e).(0) in
@@ -1272,3 +1280,48 @@ let values ?masked ?flipped e p =
   match Array.of_seq (step true value (rows ~past:false p)) with
   | vs -> Ok vs
   | exception Failed (row, why) -> Error (row, why)
+
+(* Outcomes *)
+
+let rec joins = function
+  | Table _ | Source _ -> 0
+  | Select (_, p)
+  | Derive (_, p)
+  | Filter (_, p)
+  | Slice { plan = p; _ }
+  | Aggregate (_, _, p)
+  | Sort (_, p) ->
+      joins p
+  | Append (p, r) -> joins p + joins r
+  | Join { left; right; _ } -> 1 + joins left + joins right
+
+(* Every choice for a plan of [k] joins, [computed] first. The joins are
+   numbered as {!rows} reaches them, which no order changes, so the bits of [0]
+   to [2{^ k} - 1] give each join either order, a plan read twice having each
+   read numbered apart. *)
+let choices k =
+  let bit m i = m land (1 lsl i) <> 0 in
+  List.concat_map
+    (fun masks ->
+      List.init (1 lsl k) (fun m ->
+          {
+            if_ = bit masks 0;
+            coalesce = bit masks 1;
+            and_ = bit masks 2;
+            or_ = bit masks 3;
+            flipped = bit m;
+          }))
+    (List.init 16 Fun.id)
+
+let under c f =
+  let was = !choice in
+  choice := c;
+  joins_read := 0;
+  Fun.protect ~finally:(fun () -> choice := was) @@ fun () ->
+  match f () with v -> Ok v | exception exn -> Error exn
+
+let outcomes p =
+  List.map (fun c -> under c (fun () -> run p)) (choices (joins p))
+
+let value_outcomes e p =
+  List.map (fun c -> under c (fun () -> values e p)) (choices (joins p))
