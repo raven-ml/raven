@@ -1011,10 +1011,28 @@ let test_complex_signalling =
    them. Each holds bit for bit, any NaN for a NaN. *)
 
 let gen_z64 = Gen.pair gen64 gen64
-let gen_z32 = Gen.map (fun (a, b) -> (f a, f b)) (Gen.pair gen32 gen32)
 let conj (re, im) = (re, Float.neg im)
 let negz (re, im) = (Float.neg re, Float.neg im)
 let both_parts = pair value64 value64
+
+(* c64 operands travel as their parts' bits, conjugated and negated on the bits.
+   The symmetries count a NaN part's sign bit, which a conversion between
+   binary32 and binary64 may drop: RISC-V's gives the canonical NaN. *)
+let sign32 = 0x8000_0000
+
+let gen_b32 =
+  Gen.with_pp
+    (fun ppf (re, im) -> Format.fprintf ppf "(0x%08x, 0x%08x)" re im)
+    (Gen.pair gen32 gen32)
+
+let conj32 (re, im) = (re, im lxor sign32)
+let negz32 (re, im) = (re lxor sign32, im lxor sign32)
+
+let c64_bits k (re, im) =
+  let r = K.c64 k [| re; im |] in
+  (r.(0), r.(1))
+
+let both_parts32 = pair value32 value32
 
 (* For each kind, f(conj z) = conj f(z), C99's G.6's symmetry. *)
 let test_complex_conj =
@@ -1025,8 +1043,8 @@ let test_complex_conj =
             equal both_parts
               (conj (c128_call k [ z ]))
               (c128_call k [ conj z ]));
-        prop (strf "%s c64 of conj z is its conj" k) gen_z32 (fun z ->
-            equal both_parts (conj (c64_call k [ z ])) (c64_call k [ conj z ]));
+        prop (strf "%s c64 of conj z is its conj" k) gen_b32 (fun z ->
+            equal both_parts32 (conj32 (c64_bits k z)) (c64_bits k (conj32 z)));
       ])
     complex_kinds
 
@@ -1039,13 +1057,14 @@ let test_complex_parity =
   List.concat_map
     (fun k ->
       let side v = if List.mem k odd then negz v else v in
+      let side32 v = if List.mem k odd then negz32 v else v in
       [
         prop (strf "%s c128 at -z" k) gen_z64 (fun z ->
             equal both_parts
               (side (c128_call k [ z ]))
               (c128_call k [ negz z ]));
-        prop (strf "%s c64 at -z" k) gen_z32 (fun z ->
-            equal both_parts (side (c64_call k [ z ])) (c64_call k [ negz z ]));
+        prop (strf "%s c64 at -z" k) gen_b32 (fun z ->
+            equal both_parts32 (side32 (c64_bits k z)) (c64_bits k (negz32 z)));
       ])
     (odd @ even)
 
