@@ -3,23 +3,39 @@
   test_split
   test_quad
   test_linear
-  test_system
   test_ode
   test_piecewise
   test_grid
   test_sde
-  test_root
   test_minimize)
  (modules
   test_split
   test_quad
   test_linear
-  test_system
   test_ode
   test_piecewise
   test_grid
   test_sde
-  test_root
   test_minimize)
  (package jera)
  (libraries jera jera_test jera_compiled jera_golden rune nx windtrap))
+
+(test
+ (name test_root)
+ (modules test_root)
+ (package jera)
+ (libraries jera jera_test jera_compiled rune nx windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_root.ml test_root.ml.corrected))))
+
+(test
+ (name test_system)
+ (modules test_system)
+ (package jera)
+ (libraries jera jera_test jera_compiled rune nx windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_system.ml test_system.ml.corrected))))
