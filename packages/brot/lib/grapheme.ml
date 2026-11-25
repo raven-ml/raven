@@ -70,18 +70,14 @@ let joins prev cur ~linked ~zwj_after_pictograph ~odd_ri =
   else if p = zwj && zwj_after_pictograph && pictographic cur then true
   else p = regional_indicator && c = regional_indicator && odd_ri
 
-(* States carried along a cluster, for the rules that look further back than
-   one character. [conjunct] is 0 outside an Indic conjunct, 1 after its
-   consonant and the extends and linkers after it, 2 once a linker is among
-   them (GB9c). [emoji] is 0, 1 after an extended pictograph and its extends,
-   2 once a ZWJ follows (GB11). [ri] counts the regional indicators ending the
-   cluster (GB12, GB13). *)
+(* States carried along a cluster, for the rules that look further back than one
+   character. [conjunct] is 1 after a linker and the extends after it, which a
+   consonant joins (GB9c), and 0 otherwise. [emoji] is 0, 1 after an extended
+   pictograph and its extends, 2 once a ZWJ follows (GB11). [ri] counts the
+   regional indicators ending the cluster (GB12, GB13). *)
 let next_conjunct state cur =
   let k = incb cur in
-  if k = consonant then 1
-  else if k = linker then if state > 0 then 2 else 0
-  else if k = incb_extend then state
-  else 0
+  if k = linker then 1 else if k = incb_extend then state else 0
 
 let next_emoji state cur =
   if pictographic cur then 1
@@ -104,7 +100,7 @@ let stop s i =
       let d = next s !j in
       let cur = d lsr 3 in
       if
-        joins !prev cur ~linked:(!conjunct = 2)
+        joins !prev cur ~linked:(!conjunct = 1)
           ~zwj_after_pictograph:(!emoji = 2) ~odd_ri:(!ri land 1 = 1)
       then begin
         conjunct := next_conjunct !conjunct cur;

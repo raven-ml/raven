@@ -27,7 +27,7 @@ reference implementation reads, and the normalizer object as a
 Precompiled rows of `support/parity/normalizer_alignments.txt`.
 
 It also writes `support/precompiled/graphemes.json`, a charsmap with a rule
-for each code point of Unicode's GraphemeBreakTest-17.0.0 (as gen_grapheme.py
+for each code point of Unicode's GraphemeBreakTest-18.0.0 (as gen_grapheme.py
 commits it), NUL aside, which no source may hold: U+0308 becomes `<0308>`. A
 cluster under six bytes then comes out as its first character's name and a
 longer one as the names of all its characters, so the normalized text shows
@@ -154,7 +154,7 @@ def documents(support: Path) -> dict[Path, str]:
         f'{{\n "rules": [\n  {rules}\n ],\n'
         f' "normalizer": {json.dumps(normalizer(blob))}\n}}\n'
     )
-    test = (support / "unicode" / "GraphemeBreakTest-17.0.0.txt").read_text(
+    test = (support / "unicode" / "GraphemeBreakTest-18.0.0.txt").read_text(
         encoding="utf-8"
     )
     graphemes = json.dumps(normalizer(charsmap(grapheme_rules(test)))) + "\n"

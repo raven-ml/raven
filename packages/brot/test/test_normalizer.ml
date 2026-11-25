@@ -1034,7 +1034,7 @@ let test_precompiled_rules text =
     (Normalizer.apply (Lazy.force precompiled) text)
 
 (* Grapheme clusters through Unicode's conformance test for UAX #29 at Unicode
-   17.0.0 (support/unicode/GraphemeBreakTest-17.0.0.txt). The charsmap of
+   18.0.0 (support/unicode/GraphemeBreakTest-18.0.0.txt). The charsmap of
    support/precompiled/graphemes.json names every code point of the test but
    NUL, U+0308 as [<0308>], so a cluster under six bytes comes out as its first
    character's name and a longer one as the names of all its characters. A test
@@ -1075,11 +1075,11 @@ let test_precompiled_clusters () =
     | _ -> String.concat "" (List.map name cluster)
   in
   let lines =
-    Fixture.read "support/unicode/GraphemeBreakTest-17.0.0.txt"
+    Fixture.read "support/unicode/GraphemeBreakTest-18.0.0.txt"
     |> String.split_on_char '\n'
     |> List.filter (fun l -> String.length l > 0 && l.[0] <> '#')
   in
-  equal ~msg:"test lines" int 766 (List.length lines);
+  equal ~msg:"test lines" int 853 (List.length lines);
   List.iter
     (fun line ->
       let cs = code_points line in
@@ -1142,6 +1142,13 @@ let precompiled_tests =
       (text_of precompiled_alphabet)
       test_precompiled_rules;
     test "reads text by extended grapheme cluster" test_precompiled_clusters;
+    (* UnicodeData.txt 18.0.0: U+05C8 is a mark, an extend that joins the "½"
+       before it in one cluster of four bytes, which becomes the replacement of
+       "½". HuggingFace, at Unicode 17.0.0, keeps U+05C8 as a cluster of its
+       own. *)
+    cases ~id:row_id "reads the clusters of Unicode 18.0.0"
+      [ ("\u{bd}\u{5c8}", "1\u{2044}2") ]
+      (fun row -> normalizes (Lazy.force precompiled) row);
     (* SentencePiece. *)
     cases ~id:row_id
       "turns each byte that starts no valid character into U+FFFD"

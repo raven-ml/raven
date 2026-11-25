@@ -288,13 +288,11 @@ module Normalizer : sig
       [pattern] is written in the dialect of tokenizer files: Unicode-aware, so
       that [\s], [\d] and [\w] and their negations, [.] and negated classes
       stand for characters rather than bytes, and [\p{..}] selects a general
-      category ([L], [Lu], [Nd], ...) of Unicode 18.0.0 or a script ([Han],
-      [Latin], ...) of Unicode 17.0.0. A character new in 18.0.0 has a category
-      and no script, so the ideograph U+2B81E, new in 18.0.0, is in
-      [[\p{Lo}&&[^\p{Han}]]] and Kimi K2's pattern takes it into its words.
-      Outside a bracket class, [\w] also matches [¹], [²], [³], [¼], [½] and
-      [¾]. [^] and [$] are line anchors, [\A], [\z] and [\Z] text anchors. A [{]
-      that opens no interval, as in [a{] or [a{,}], stands for itself.
+      category ([L], [Lu], [Nd], ...) or a script ([Han], [Latin], ...) of
+      Unicode 18.0.0. Outside a bracket class, [\w] also matches [¹], [²], [³],
+      [¼], [½] and [¾]. [^] and [$] are line anchors, [\A], [\z] and [\Z] text
+      anchors. A [{] that opens no interval, as in [a{] or [a{,}], stands for
+      itself.
 
       Groups, named groups [(?<name>..)], comments [(?#..)], alternation, greedy
       and lazy quantifiers, [\G] and [\x{..}] escapes and bracket classes are
@@ -340,12 +338,14 @@ module Normalizer : sig
       store it in base64, which {!of_json} decodes.
 
       The text is read one extended grapheme cluster at a time, as UAX #29
-      defines them at Unicode 17.0.0. A cluster of fewer than 6 bytes that
+      defines them at Unicode 18.0.0. A cluster of fewer than 6 bytes that
       starts with a rule's source becomes the replacement of the shortest such
       source, and the rest of the cluster is dropped. In any other cluster each
       character that is a rule's source becomes its replacement and the others
       are kept. A byte that does not start a valid UTF-8 character becomes
-      [U+FFFD].
+      [U+FFFD]. HuggingFace reads clusters at Unicode 17.0.0, so a character new
+      in 18.0.0, or a virama and a consonant after no consonant, which 18.0.0
+      joins, can be cut otherwise.
 
       In the alignment, a replacement stands for its source character by
       character, and the characters of a longer one past the source's length
@@ -606,8 +606,10 @@ module Pre_tokenizer : sig
 
       A pretoken opens where the writing system changes (e.g. Latin to Cyrillic,
       Latin to Han) and runs to the next change. The writing system is the
-      Script property of Unicode 17.0.0. Hiragana and Katakana count as Han, as
-      does the prolonged sound mark ["ー"] (U+30FC).
+      Script property of Unicode 18.0.0. Hiragana and Katakana count as Han, as
+      does the prolonged sound mark ["ー"] (U+30FC). HuggingFace's scripts are
+      older, so a character it gives no script, such as U+0558, Armenian since
+      18.0.0, can cut a pretoken there that it does not.
 
       Spaces and characters of no known script join the pretoken they follow, so
       a leading run of them belongs to no pretoken: unlike the other

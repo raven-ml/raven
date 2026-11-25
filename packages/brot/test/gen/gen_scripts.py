@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate brot's script data from the Unicode 17.0.0 UCD.
+"""Generate brot's script data from the Unicode 18.0.0 UCD.
 
 Run from anywhere:
 
@@ -8,7 +8,7 @@ Run from anywhere:
 Tokenizer files write patterns over scripts, as Kimi K2's `[\\p{Han}]+`.
 `Regex` matches `\\p{..}` over a script with the code points Scripts.txt
 gives it, by any of the names PropertyValueAliases.txt gives it. The data is
-taken from the Unicode 17.0.0 files rather than from uucp, whose Unicode
+taken from the Unicode 18.0.0 files rather than from uucp, whose Unicode
 version follows its own releases, so that it stays at the version of brot's
 grapheme data (`gen_grapheme.py`). `Unknown` is every code point Scripts.txt
 leaves out, as the file's header defines it. A script without code points,
@@ -29,7 +29,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-VERSION = "17.0.0"
+VERSION = "18.0.0"
 UCD = "https://www.unicode.org/Public/{}/ucd/{}"
 LIMIT = 0x110000
 

@@ -148,7 +148,7 @@ val unicode_scripts : t
 
     A piece opens where the writing system changes (e.g. Latin to Cyrillic,
     Latin to Han) and runs to the next change. The writing system is the Script
-    property of Unicode 17.0.0. Hiragana and Katakana count as Han, as does the
+    property of Unicode 18.0.0. Hiragana and Katakana count as Han, as does the
     prolonged sound mark ["ー"] (U+30FC).
 
     Spaces and characters of no known script join the piece they follow, so a

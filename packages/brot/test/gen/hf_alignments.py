@@ -166,10 +166,10 @@ CASES = [
       "\u1100\u1161", "a\r\nb", "\r\r\n", "a\tb\n", "x\u3000\u200by",
       "\ufffd", "\U0001F600\u2122",
       # Clusters whose rules look past an extend: a spacing mark (GB9a), a
-      # prepend (GB9b), a regional indicator pair (GB12); U+05C8 is
-      # unassigned in Unicode 17, so a cluster of its own.
-      "\u00bd\u0903", "\u0600\u00bd", "\U0001F1EB\U0001F1F7\u00bd",
-      "\u00bd\u05c8"]),
+      # prepend (GB9b), a regional indicator pair (GB12). No character new
+      # after Unicode 17: brot's clusters are those of Unicode 18.0.0, and
+      # tokenizers' those of 17.0.0.
+      "\u00bd\u0903", "\u0600\u00bd", "\U0001F1EB\U0001F1F7\u00bd"]),
 ]
 
 

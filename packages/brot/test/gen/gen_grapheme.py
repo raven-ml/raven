@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Generate brot's grapheme cluster data from the Unicode 17.0.0 UCD.
+"""Generate brot's grapheme cluster data from the Unicode 18.0.0 UCD.
 
 Run from anywhere:
 
     uv run python3 packages/brot/test/gen/gen_grapheme.py [--check]
 
 `Normalizer.precompiled` reads text by extended grapheme cluster as UAX #29
-defines it at Unicode 17.0.0, which is what HuggingFace's tokenizers implements
+defines it at Unicode 18.0.0, the version of every other character property
+brot reads; HuggingFace's tokenizers implements Unicode 17.0.0
 (unicode-segmentation 1.13). The cluster rules need three properties of every
 code point: Grapheme_Cluster_Break, Indic_Conjunct_Break and
-Extended_Pictographic. They are taken here from the Unicode 17.0.0 files
+Extended_Pictographic. They are taken here from the Unicode 18.0.0 files
 rather than from uucp, whose Unicode version follows its own releases, so
-that brot's clusters stay those of Unicode 17 whichever uucp is installed.
+that brot's clusters stay those of Unicode 18 whichever uucp is installed.
 
 This writes `lib/grapheme_data.ml`, the three properties as ranges of code
-points, and `test/support/unicode/GraphemeBreakTest-17.0.0.txt`, Unicode's
+points, and `test/support/unicode/GraphemeBreakTest-18.0.0.txt`, Unicode's
 conformance test for the cluster rules, which `test_normalizer.ml` runs through
 `Normalizer.precompiled`. Both are redistributed under the Unicode License
 v3, in `packages/brot/LICENSE-unicode`. With `--check` it writes them to a
@@ -30,7 +31,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-VERSION = "17.0.0"
+VERSION = "18.0.0"
 UCD = "https://www.unicode.org/Public/{}/ucd/{}"
 
 # Grapheme_Cluster_Break values, in the order grapheme.ml numbers them.

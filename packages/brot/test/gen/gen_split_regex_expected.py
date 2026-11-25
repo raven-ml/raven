@@ -211,7 +211,9 @@ PATTERNS = {
 }
 
 # The texts UnicodeScripts is compared on. Hiragana, Katakana and U+30FC
-# folding into Han is stated by brot.mli and tested there by hand.
+# folding into Han is stated by brot.mli and tested there by hand. No text
+# holds a character assigned after Unicode 17: brot's scripts are those of
+# Unicode 18.0.0, and tokenizers' older.
 SCRIPT_TEXTS = [
     "Hello world", "abc!def", "a b", "",
     # A leading run of spaces opens no piece.
@@ -223,9 +225,6 @@ SCRIPT_TEXTS = [
     # A character of no known script joins the run around it too: U+E000 is
     # private use.
     "ab", "abc", "    abc",
-    # U+0558 is Armenian since Unicode 18.0.0, and has no script in 17.0.0 or
-    # in tokenizers' table.
-    "a՘b", "՘abc", "日՘本",
     # The iteration mark U+3005 is Han.
     "中々中 abc",
     # A script change cuts; digits are Common.

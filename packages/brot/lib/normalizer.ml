@@ -1533,11 +1533,11 @@ let replay s base normalized sc =
   done;
   spans
 
-(* Text is read one extended grapheme cluster at a time, as {!Grapheme} cuts
-   it: UAX #29 at Unicode 17, as HuggingFace's tokenizers has it through
-   unicode-segmentation. A cluster under six bytes that starts with a source
-   becomes the replacement of the shortest one, whatever follows it in the
-   cluster; any other cluster is read one character at a time. This is
+(* Text is read one extended grapheme cluster at a time, as {!Grapheme} cuts it:
+   UAX #29 at Unicode 18.0.0, where HuggingFace's tokenizers has Unicode 17
+   through unicode-segmentation. A cluster under six bytes that starts with a
+   source becomes the replacement of the shortest one, whatever follows it in
+   the cluster; any other cluster is read one character at a time. This is
    HuggingFace's reading (tokenizers, normalizers/precompiled.rs), which brot
    matches; SentencePiece's own takes the longest source over the bytes, with
    no clusters. An ASCII byte followed by another, CR before LF aside, is a

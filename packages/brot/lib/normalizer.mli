@@ -107,7 +107,7 @@ val precompiled : string -> t
     {!of_json} decodes.
 
     The text is read one extended grapheme cluster at a time, as UAX #29 defines
-    them at Unicode 17.0.0. A cluster of fewer than 6 bytes that starts with a
+    them at Unicode 18.0.0. A cluster of fewer than 6 bytes that starts with a
     rule's source becomes the replacement of the shortest such source, and the
     rest of the cluster is dropped. In any other cluster each character that is
     a rule's source becomes its replacement and the others are kept. A byte that

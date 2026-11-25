@@ -2149,6 +2149,24 @@ let () =
              cases ~id:(Printf.sprintf "%S")
                "counts Hiragana, Katakana and U+30FC as Han" han_rows
                is_one_pretoken;
+             (* Scripts.txt 18.0.0: U+0558 is Armenian. It is new in 18.0.0, so
+                HuggingFace, whose table is older, gives it no script and joins
+                it to the run around it. *)
+             cases ~id:text_id "reads the scripts of Unicode 18.0.0"
+               [
+                 ( "a\u{558}b",
+                   [ ("a", (0, 1)); ("\u{558}", (1, 3)); ("b", (3, 4)) ] );
+                 ("\u{558}abc", [ ("\u{558}", (0, 2)); ("abc", (2, 5)) ]);
+                 ( "\u{65e5}\u{558}\u{672c}",
+                   [
+                     ("\u{65e5}", (0, 3));
+                     ("\u{558}", (3, 5));
+                     ("\u{672c}", (5, 8));
+                   ] );
+               ]
+               (fun (text, expected) ->
+                 equal pretokens expected
+                   (Pre.pre_tokenize Pre.unicode_scripts text));
              prop ~count:500
                "gives the text without its leading run of spaces and \
                 characters of no script"

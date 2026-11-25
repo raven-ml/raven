@@ -535,10 +535,12 @@ Common normalizers:
 | `normalizers.Sequence([...])`       | `Normalizer.sequence [...]`                |
 
 `precompiled` reads text by extended grapheme cluster. Brot cuts clusters with
-its own tables of Unicode 17.0.0, the version HuggingFace's unicode-segmentation
-implements, rather than with Uucp's, so the two agree on characters whose
-cluster properties changed since: U+05C8, unassigned in Unicode 17, is a
-cluster of its own after "½" for both.
+its own tables of Unicode 18.0.0, the version of its other character
+properties, where HuggingFace's unicode-segmentation implements 17.0.0. The two
+differ on characters whose cluster properties changed since: U+05C8, a mark
+new in Unicode 18, joins the "½" before it in brot and is a cluster of its own
+in HuggingFace. Unicode 18 also joins a virama to the consonant after it with
+no consonant before, which Unicode 17 cuts.
 
 ### 9.2 Pre-tokenizer
 
@@ -582,12 +584,12 @@ Common pre-tokenizers:
 | `pre_tokenizers.Split(Regex(pattern), ...)` | `Pre_tokenizer.split_regex ~pattern ()` |
 | `pre_tokenizers.Sequence([...])`       | `Pre_tokenizer.sequence [...]`      |
 
-`unicode_scripts` reads the script of a character from the Unicode 17.0.0
+`unicode_scripts` reads the script of a character from the Unicode 18.0.0
 Script property, the data `split_regex` reads `\p{Han}` from. HuggingFace ships
 a Unicode 9.0.0 table that reports every character assigned since as scriptless
 and joins it to the preceding piece, so the two split differently around
-characters assigned from Unicode 10.0.0 to 17.0.0, such as "₿" (U+20BF).
-Characters assigned after 17.0.0 are scriptless to both.
+characters assigned from Unicode 10.0.0 to 18.0.0, such as "₿" (U+20BF) or the
+Armenian "՘" (U+0558).
 
 The same skew runs through the character classes. Brot reads them from Uucp,
 which carries Unicode 18.0.0 in brot's lock, where HuggingFace's Rust
@@ -613,7 +615,7 @@ rejected when the file is loaded, with a message naming the construct.
 
 Bracket classes nest and intersect with `&&`, as in Kimi K2's
 `[\p{L}&&[^\p{Han}]]`, and `\p{..}` names a script as well as a general
-category. A script is the Script property of Unicode 17.0.0, where
+category. A script is the Script property of Unicode 18.0.0, where
 HuggingFace's regular expression engine (Oniguruma) carries an older version:
 characters assigned since, as the CJK Extension J ideographs (U+323B0 to
 U+33479) of Unicode 17.0.0, are Han to brot and to no script in HuggingFace,

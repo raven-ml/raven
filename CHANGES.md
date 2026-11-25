@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Scripts (`Pre_tokenizer.unicode_scripts`, `\p{..}`) and grapheme clusters
+  (`Normalizer.precompiled`) are Unicode 18.0.0's, as are brot's other character
+  properties; text with characters new in 18.0.0 splits unlike in Hugging Face.
 - `Normalizer.nfc` and `Normalizer.nfkc` compose a starter with the next one
   when that one decomposes to a character composing backward, as Unicode asks:
   `"\u{1611E}\u{16123}"` gives `"\u{16126}"`. It came out unchanged.
