@@ -1968,7 +1968,11 @@ val layout :
     needs if that is more, the others sharing the rest; a row holding a panel
     with an aspect takes its height from its column's width, and what no track
     takes is split evenly about the tracks. A panel with an aspect that its cell
-    cannot hold is drawn in the largest box of its aspect, centred in its cell.
+    cannot hold is drawn in the largest box of its aspect, centred in its cell,
+    however far the aspect lies from the cell's: one that leaves the box no
+    width or no height, within the rounding of its place on the page, gives a
+    warning about the panel. Panels with an aspect too tall for a {!Size.figure}
+    shrink by one factor however tall they are.
 
     With [prev], the measurements of labels of equal text in an equal theme are
     reused and the grid is solved again: the result is {!Layout.equal} to
@@ -1976,7 +1980,9 @@ val layout :
 
     Raises [Invalid_argument] if the least lengths of tracks with their gaps,
     protrusions and margin exceed a {!Size.figure}, naming a size at which the
-    figure lays out, or if a title, a channel's title or a tick label of a
+    figure lays out, if those lengths, or under {!Size.panels} the figure's, lie
+    beyond the range of floats, as the height an aspect asks of a row under
+    {!Size.panels} may, or if a title, a channel's title or a tick label of a
     continuous scale holds a character that no face of the theme has, naming it.
     Category labels with such characters are data: they are drawn with [.notdef]
     glyphs, with a warning. *)

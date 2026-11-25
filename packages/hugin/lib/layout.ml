@@ -801,10 +801,18 @@ let spread weights pinned m avail =
   if Array.exists Fun.id free then (l, 0.)
   else (l, Float.max 0. (avail -. sum l))
 
-(* [shrink base need target] is the greatest [s] in \[[0];[1]\] such that the
-   rows of lengths [max base.(i) (s *. need.(i))] fit in [target]. *)
-let shrink base need target =
-  let n = Array.length base in
+(* [height r w] is the height of a box of ratio [r] and width [w], and [width r
+   h] the width of one of height [h]: [0.] for a side of zero length, whatever
+   the ratio, so that a ratio of [0.] or [inf] gives a box of no width or no
+   height instead of NaN. *)
+let height r w = if w = 0. then 0. else r *. w
+let width r h = if h = 0. then 0. else h /. r
+
+(* [shrink base need e target] is the greatest [s] in \[[0];[2{^e}]\] such that
+   the rows of lengths [max base.(i) (s *. need.(i))] fit in [target], [need]
+   being in units of [2{^e}]: [s] is in units of [2{^-e}]. *)
+let shrink base need e target =
+  let n = Array.length base and most = Float.ldexp 1. e in
   let rec go active k =
     let fixed = ref 0. and needs = ref 0. in
     for i = 0 to n - 1 do
@@ -812,8 +820,8 @@ let shrink base need target =
       else fixed := !fixed +. base.(i)
     done;
     let s =
-      if !needs = 0. then 1.
-      else Float.min 1. (Float.max 0. ((target -. !fixed) /. !needs))
+      if !needs = 0. then most
+      else Float.min most (Float.max 0. ((target -. !fixed) /. !needs))
     in
     let next = Array.mapi (fun i a -> a && s *. need.(i) > base.(i)) active in
     (* With no row left above its base, [s] is the scale that fits. *)
@@ -824,7 +832,7 @@ let shrink base need target =
     then s
     else go next (k - 1)
   in
-  go (Array.mapi (fun i b -> need.(i) > b) base) n
+  go (Array.mapi (fun i b -> Float.ldexp need.(i) e > b) base) n
 
 type measured = {
   cgaps : float array;
@@ -868,7 +876,7 @@ let rec natural em unit node b =
          the cell must hold only if both lengths ask for it. *)
       match p.ratio with
       | None -> (w, h)
-      | Some r -> (Float.max w (h /. r), Float.max h (r *. w)))
+      | Some r -> (Float.max w (width r h), Float.max h (height r w)))
   | Grid g ->
       let m = measure em unit g b in
       let rows = aspect_rows m m.cols_least in
@@ -936,15 +944,41 @@ and measure em (uw, uh) g b =
 (* [aspect_rows m cols] is the least length of each row, a row holding a panel
    with an aspect needing that panel's height at the width of its column. *)
 and aspect_rows m cols =
-  let need = aspect_need m cols in
-  Array.mapi (fun i b -> Float.max b need.(i)) m.rows_least
+  let need, k = aspect_need m cols in
+  Array.mapi (fun i b -> Float.max b (Float.ldexp need.(i) k)) m.rows_least
 
+(* [aspect_need m cols] is the height each row needs for its panels with an
+   aspect at the widths [cols], in units of [2{^k}], and [k]: [0] where these
+   heights and their sum are floats, and otherwise the least that makes them
+   floats, so that the rows shrink by an exact factor however tall they ask to
+   be. A ratio beyond the floats counts as [2{^1024}]. *)
 and aspect_need m cols =
-  let need = Array.make (Array.length m.rows_least) 0. in
-  List.iter
-    (fun (c, r) -> need.(c.r0) <- Float.max need.(c.r0) (r *. cols.(c.c0)))
-    m.aspects;
-  need
+  let n = Array.length m.rows_least in
+  let fill f =
+    let need = Array.make n 0. in
+    List.iter
+      (fun ((c, _) as a) -> need.(c.r0) <- Float.max need.(c.r0) (f a))
+      m.aspects;
+    need
+  in
+  let plain = fill (fun (c, r) -> height r cols.(c.c0)) in
+  if Float.is_finite (sum plain) then (plain, 0)
+  else
+    (* Mantissas and exponents, so that no product leaves the floats. *)
+    let parts (c, r) =
+      let mr, er = if Float.is_finite r then Float.frexp r else (0.5, 1025) in
+      let mc, ec = Float.frexp cols.(c.c0) in
+      (mr *. mc, er + ec)
+    in
+    let top =
+      List.fold_left (fun e a -> Int.max e (snd (parts a))) 0 m.aspects
+    in
+    let k = Int.max 1 (top - 1000) in
+    let scaled a =
+      let mant, e = parts a in
+      Float.ldexp mant (e - k)
+    in
+    (fill scaled, k)
 
 let solve_grid em unit g b w h =
   let m = measure em unit g b in
@@ -971,11 +1005,15 @@ let solve_grid em unit g b w h =
   else begin
     (* Too short for its panels with an aspect: they shrink by one factor, which
        pins the widths of their columns. *)
-    let need = aspect_need m cols in
-    let s = shrink m.rows_least need avail_h in
-    let rows =
-      Array.mapi (fun i b -> Float.max b (s *. need.(i))) m.rows_least
+    let need, k = aspect_need m cols in
+    let s = shrink m.rows_least need k avail_h in
+    (* A row's height is at most its need, which [s *. n] passes only where [s]
+       is the bound of a shrink that nothing asked of. *)
+    let tall b n =
+      if n = 0. then b else Float.max b (Float.min (s *. n) (Float.ldexp n k))
     in
+    let rows = Array.mapi (fun i b -> tall b need.(i)) m.rows_least in
+    let s = Float.min 1. (Float.ldexp s (-k)) in
     let pinned = Array.make nc false and least = Array.copy m.cols_least in
     List.iter
       (fun (c, _) ->
@@ -989,13 +1027,20 @@ let solve_grid em unit g b w h =
 (* Placing *)
 
 (* [fit_aspect r box] is the largest box of ratio [r] centred in [box]. A cell's
-   height is exact only to the rounding of its place on the page, so a height
+   sides are exact only to the rounding of its place on the page, so a height
    within it of [r] times the width fits that width: else a flat panel would
-   shrink by its rounding over a tiny [r]. *)
+   shrink by its rounding over a tiny [r]. Likewise a width within it of the
+   height over [r] fits that height: a tall panel's column, narrower than the
+   rounding of its place, has no width as a box, and its panel would else
+   have no height. *)
 let fit_aspect r box =
   let w = Box2.w box and h = Box2.h box in
   let ulp = 4. *. Float.epsilon *. Float.abs (Box2.maxy box) in
-  let w', h' = if h +. ulp >= r *. w then (w, r *. w) else (h /. r, h) in
+  let ulp_x = 4. *. Float.epsilon *. Float.abs (Box2.maxx box) in
+  let short = r *. w < h -. ulp && h /. r <= w +. ulp_x in
+  let w', h' =
+    if h +. ulp >= r *. w && not short then (w, r *. w) else (h /. r, h)
+  in
   Box2.v
     (Box2.minx box +. ((w -. w') /. 2.))
     (Box2.miny box +. ((h -. h') /. 2.))
@@ -1214,7 +1259,10 @@ exception Needs of float * float
 
 (* [up x] is [x] rounded up to the hundredth of a point that sizes are named
    in. *)
-let up x = Float.ceil (x *. 100.) /. 100.
+let up x =
+  let y = x *. 100. in
+  (* Past [max_float / 100], every float is a whole number of hundredths. *)
+  if Float.is_finite y then Float.ceil y /. 100. else x
 
 (* [solve em unit size ~final root] is the data hulls of [root] at [size] and
    the page's size. In the [final] solve, a figure too small for [root] raises
@@ -1224,6 +1272,8 @@ let solve em unit size ~final root =
   let p = b.prot and nw, nh = natural em unit root b in
   let m = em *. margin_em in
   let ow = m +. p.left +. p.right +. m and oh = m +. p.top +. p.bottom +. m in
+  if not (Float.is_finite (ow +. nw) && Float.is_finite (oh +. nh)) then
+    err "layout" "the figure needs lengths beyond the range of floats";
   let page, cw, ch =
     match size with
     | Size.Panels _ -> ((ow +. nw, oh +. nh), nw, nh)
@@ -1325,6 +1375,20 @@ let attempt ?prev theme size (r : Resolved.t) =
     | Grid _ -> acc
   in
   let notes = check guides in
+  (* A panel with an aspect whose box has length along one side and none along
+     the other, which its place on the page holds only within its rounding. *)
+  let flat acc n box =
+    match n with
+    | Panel { id; ratio = Some _; _ } ->
+        let w = Box2.w box and h = Box2.h box in
+        if w = 0. && h > 0. then
+          (id, "its aspect leaves the panel no width") :: acc
+        else if h = 0. && w > 0. then
+          (id, "its aspect leaves the panel no height") :: acc
+        else acc
+    | Panel { ratio = None; _ } | Grid _ -> acc
+  in
+  let flats = List.rev (fold flat [] laid geo) in
   {
     resolved = r;
     theme;
@@ -1333,7 +1397,7 @@ let attempt ?prev theme size (r : Resolved.t) =
     lpanels = List.rev (fold panel [] laid geo);
     frozen;
     guides;
-    lwarnings = r.warnings @ notes;
+    lwarnings = r.warnings @ flats @ notes;
   }
 
 let layout ?prev ?(theme = Theme.default) size r =

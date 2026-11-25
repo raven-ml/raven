@@ -319,6 +319,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `layout` draws a panel of extreme aspect in the largest box of that aspect
+  its cell holds, with a warning if it has no width or height. A ratio of 2e306
+  raised an internal `Box2.v` error, and one above 1e20 gave a point.
 - `Hugin_vg_raster` cuts an edge with a finite end far beyond the page along its
   own direction. It clamped each coordinate to `±1e15`, which bent such an
   edge, so a fill with a far vertex covered the wrong part of the page.

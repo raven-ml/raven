@@ -1283,6 +1283,26 @@ let facets_group =
 let projected () =
   List.hd (Layout.panels (lay (Size.figure 200. 100.) (plain ramp)))
 
+(* [spanning ?aspect x y] is a panel of two dots whose x and y scales have the
+   domains [x] and [y], so that a unit of each spans its domain, in the
+   coordinate system of [aspect], [2.] by default. *)
+let spanning ?(aspect = 2.) x y =
+  let axis (lo, hi) =
+    num ~scale:(Scale.linear ~domain:(lo, hi) ()) (f64 [| lo; hi |])
+  in
+  dot ~x:(axis x) ~y:(axis y) () |> coord (Coord.cartesian ~aspect ())
+
+(* The data area of the only panel of [l]. *)
+let only l =
+  match boxes l with [ b ] -> b | bs -> failf "%d panels" (List.length bs)
+
+(* [bare_spanning span] is [spanning (0., span) (0., 1.)] without its axes. *)
+let bare_spanning span =
+  layer
+    [ spanning (0., span) (0., 1.); axis ~show:false "x"; axis ~show:false "y" ]
+
+let beyond_floats e = Exn.invalid_arg ~sub:"beyond the range of floats" e
+
 let coord_group =
   let cells =
     rect
@@ -1323,6 +1343,63 @@ let coord_group =
               equal close (Box2.miny a) (Box2.miny b);
               equal close (Box2.maxy a) (Box2.maxy b)
           | bs -> failf "%d panels" (List.length bs));
+      cases "a figure holds a panel of any aspect at its cell's height"
+        ~id:(Printf.sprintf "x spanning %g") [ 1e-10; 1e-20; 1e-306 ]
+        (fun span ->
+          (* The ratio is 2 / span: the panel is as high as its cell, 190 points
+             within the margins, and that much narrower, which a box at 150
+             points holds as no width once below its rounding. *)
+          let b = only (lay (Size.figure 300. 200.) (bare_spanning span)) in
+          equal close 190. (Box2.h b);
+          at_most float_exact
+            ~than:((190. *. span /. 2.) +. (4. *. Float.epsilon *. 300.))
+            (Box2.w b));
+      test "panels with an aspect shrink by one factor however tall they are"
+        (fun () ->
+          (* Ratios 2e305 and 2e306 in one column: the column's width is shared,
+             so the heights stand as the ratios. *)
+          let f = grid [ [ bare_spanning 1e-305 ]; [ bare_spanning 1e-306 ] ] in
+          match boxes (lay (Size.figure 300. 200.) f) with
+          | [ a; b ] -> equal (float 1e-12) 0.1 (Box2.h a /. Box2.h b)
+          | bs -> failf "%d panels" (List.length bs));
+      cases
+        "an aspect beyond the floats gives a panel of no length, with a warning"
+        ~id:(fun (n, _, _, _) -> n)
+        [
+          ("of no width", (0., 1e-309), (0., 1.), "no width");
+          ("of no height", (0., 1e300), (0., 1e-309), "no height");
+        ]
+        (fun (_, x, y, msg) ->
+          let l = lay (Size.figure 300. 200.) (spanning x y) in
+          let b = only l in
+          equal float_exact 0. (Float.min (Box2.w b) (Box2.h b));
+          greater float_exact ~than:0. (Float.max (Box2.w b) (Box2.h b));
+          match Layout.warnings l with
+          | [ (_, m) ] -> contains ~sub:msg m
+          | ws -> failf "%d warnings" (List.length ws));
+      cases "panels whose aspect needs a length beyond the floats raise" ~id:fst
+        [
+          ("a ratio of 2e306", (0., 1e-306));
+          ("a ratio beyond the floats", (0., 1e-309));
+        ]
+        (fun (_, x) ->
+          raises_match beyond_floats (fun () ->
+              lay (Size.panels 100. 100.) (spanning x (0., 1.))));
+      test "a figure too small for an aspect's huge least height names a size"
+        (fun () ->
+          (* The axis of names needs its width, and the aspect makes that a
+             height near the largest floats. *)
+          let f =
+            dot
+              ~x:(strings [| "aaaa"; "bbbb" |])
+              ~y:
+                (num
+                   ~scale:(Scale.linear ~domain:(0., 1e300) ())
+                   (f64 [| 0.; 1e300 |]))
+              ()
+            |> coord (Coord.cartesian ~aspect:1e6 ())
+          in
+          raises_match too_small (fun () -> lay (Size.figure 300. 200.) f));
       test "a cartesian projection puts the unit square on the data area"
         (fun () ->
           let (p : Layout.panel) = projected () in
