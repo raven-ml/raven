@@ -200,6 +200,58 @@ let no_curl () =
     (fun e -> Exn.failure e)
     (fun () -> Hf.download_file ~cache_dir ~file:"vocab.json" "acme/tiny")
 
+(* The number of this process's open descriptors, where /dev/fd lists them:
+   Windows has none. *)
+let descriptors () =
+  if Sys.win32 then None else Some (Array.length (Sys.readdir "/dev/fd"))
+
+(* A NUL, which no command line can carry, in each part of the URL curl would
+   be given. *)
+let nul_requests =
+  [
+    ( "a repo id",
+      "acme/ti",
+      fun cache_dir ->
+        Hf.download_file ~cache_dir ~file:"vocab.json" "acme/ti\000ny" );
+    ( "a file name",
+      "acme/tiny/resolve/main/vo",
+      fun cache_dir ->
+        Hf.download_file ~cache_dir ~file:"vo\000cab.json" "acme/tiny" );
+    ( "a URL",
+      "https://example.com/a",
+      fun cache_dir ->
+        Hf.download_url ~cache_dir ~sha256:(String.make 64 '0')
+          "https://example.com/a\000b/f.pt" );
+  ]
+
+let refuses_nul (_, url, request) =
+  let log = curl_stand_in () in
+  let cache_dir = temp_dir () in
+  let before = descriptors () in
+  raises_match (Exn.failure ~sub:url) (fun () ->
+      ignore (request cache_dir));
+  equal ~msg:"descriptors" (option int) before (descriptors ());
+  curl_never_ran log
+
+(* A [curl] on [PATH] that cannot be executed: the process is never made. *)
+let curl_not_executable () =
+  if Sys.win32 then skip ~reason:"the execute bit is POSIX's" ();
+  let bin = temp_dir ~prefix:"bin" () in
+  let curl = Filename.concat bin "curl" in
+  write curl "#!/bin/sh\n";
+  Unix.chmod curl 0o644;
+  setenv "PATH" (Some bin);
+  let cache_dir = temp_dir () in
+  let before = descriptors () in
+  raises_match
+    (Exn.failure ~sub:"https://huggingface.co/acme/tiny/resolve/main/vocab.json")
+    (fun () -> Hf.download_file ~cache_dir ~file:"vocab.json" "acme/tiny");
+  equal ~msg:"descriptors" (option int) before (descriptors ());
+  equal ~msg:"files beside the cache path" (list string) []
+    (listing
+       (Filename.dirname
+          (Hf.cache_path ~cache_dir ~file:"vocab.json" "acme/tiny")))
+
 let renamed_into_place () =
   ignore (curl_stand_in ());
   let cache_dir = temp_dir () in
@@ -597,6 +649,15 @@ let () =
                refuses_token;
              test "fetches the revision" fetches_revision;
              test "runs curl reading no configuration file" reads_no_curlrc;
+             test
+               "raises Failure naming the URL when curl cannot be executed, \
+                leaving no descriptor open"
+               curl_not_executable;
+             cases
+               "raises Failure naming the URL on one holding a NUL, leaving \
+                no descriptor open"
+               ~id:(fun (id, _, _) -> id)
+               nul_requests refuses_nul;
            ];
          group "download_url"
            [

@@ -55,8 +55,9 @@ val download_file :
 
     Raises [Invalid_argument] if the token it would send holds a CR, an LF or a
     NUL, which would end its header, or is longer than 1001 bytes, and [Failure]
-    if the download fails or if [offline] is [true] and the file is not cached.
-*)
+    if the download fails, if curl cannot be run, naming the URL, as for a
+    [repo_id], [revision] or [file] holding a NUL, which no command line
+    carries, or if [offline] is [true] and the file is not cached. *)
 
 val download_url :
   ?cache_dir:string -> ?offline:bool -> sha256:string -> string -> string
@@ -81,8 +82,9 @@ val download_url :
 
     Raises [Invalid_argument] if [sha256] is not 64 hexadecimal digits, or
     [url]'s path ends in no name or in one holding a backslash; [Failure] if
-    the download fails, its digest is another, naming both, or [offline] is
-    [true] and the file is not cached. *)
+    the download fails, curl cannot be run, naming [url], as for one holding
+    a NUL, its digest is another, naming both, or [offline] is [true] and the
+    file is not cached. *)
 
 (** {1:loading Loading models} *)
 

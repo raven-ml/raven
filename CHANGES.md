@@ -5006,6 +5006,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun_hf` raises `Failure` naming the URL when curl cannot be run, as for
+  a repo id, revision, file or URL holding a NUL, or a `curl` on `PATH`
+  that cannot be executed, and when a download cannot be renamed into
+  place: it raised `Unix_error` or `Sys_error`.
 - `Kaun_datasets` downloads to a file beside the cache path and renames it
   once complete: a download killed midway left a partial file that every
   later load took for the dataset and failed on.

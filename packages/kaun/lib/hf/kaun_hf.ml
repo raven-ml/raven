@@ -8,6 +8,12 @@
 let err_no_curl = "curl not found on PATH"
 let err_download url = Printf.sprintf "Failed to download %s" url
 
+let err_spawn url e =
+  Printf.sprintf "%s: curl could not run: %s" url (Unix.error_message e)
+
+let err_nul url =
+  Printf.sprintf "%s: holds a NUL, which no command line can carry" url
+
 let err_offline repo_id file =
   Printf.sprintf "Not cached (offline): %s/%s" repo_id file
 
@@ -89,13 +95,17 @@ let clear_cache ?cache_dir ?repo_id () =
 
 (* [curl] runs without a shell, so no argument needs quoting and the lookup on
    [PATH] is the same on every system. A missing program is exit code 127 from
-   the forked child on Unix and [ENOENT] from process creation on Windows. *)
-let spawn ~stdin args out =
+   the forked child on Unix and [ENOENT] from process creation on Windows.
+   Any other failure to make the process, such as a program on [PATH] that
+   cannot be executed, fails the request for [url]. *)
+let spawn ~url ~stdin args out =
   try
     Unix.create_process "curl"
       (Array.of_list ("curl" :: args))
       stdin out Unix.stderr
-  with Unix.Unix_error (Unix.ENOENT, _, _) -> failwith err_no_curl
+  with
+  | Unix.Unix_error (Unix.ENOENT, _, _) -> failwith err_no_curl
+  | Unix.Unix_error (e, _, _) -> failwith (err_spawn url e)
 
 let rec wait pid =
   try snd (Unix.waitpid [] pid)
@@ -106,17 +116,17 @@ let succeeded = function
   | Unix.WEXITED 127 -> failwith err_no_curl
   | Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> false
 
-let curl ~stdin args ~out = succeeded (wait (spawn ~stdin args out))
+let curl ~url ~stdin args ~out = succeeded (wait (spawn ~url ~stdin args out))
 
 (* [curl args] with its output read through a pipe, each chunk given to [f]
    as it arrives. *)
-let curl_read ~stdin args ~f =
+let curl_read ~url ~stdin args ~f =
   let r, w = Unix.pipe ~cloexec:true () in
   let pid =
     Fun.protect
       ~finally:(fun () -> Unix.close w)
       (fun () ->
-        try spawn ~stdin args w
+        try spawn ~url ~stdin args w
         with e ->
           Unix.close r;
           raise e)
@@ -178,6 +188,9 @@ let with_headers headers f =
 (* With [sha256], the download is hashed as it is written and refused unless
    its digest is [sha256]. *)
 let curl_download ?sha256 ~headers ~url ~dest () =
+  (* A NUL ends a command line, and a path where the URL's parts name the
+     cache path: refused before either is made. *)
+  if String.contains url '\000' then failwith (err_nul url);
   mkdir_p (Filename.dirname dest);
   (* The download is written to the descriptor that created the file: a name
      reopened would follow a link put there meanwhile. *)
@@ -194,14 +207,14 @@ let curl_download ?sha256 ~headers ~url ~dest () =
        [--location-trusted], would act on the download. *)
     let args = [ "-q"; "-L"; "--fail"; "-s" ] @ header_args @ [ url ] in
     match sha256 with
-    | None -> curl ~stdin ~out:(Unix.descr_of_out_channel oc) args
+    | None -> curl ~url ~stdin ~out:(Unix.descr_of_out_channel oc) args
     | Some want ->
         let h = Sha256.init () in
         let f b n =
           Sha256.feed h b 0 n;
           output oc b 0 n
         in
-        let ok = curl_read ~stdin args ~f in
+        let ok = curl_read ~url ~stdin args ~f in
         flush oc;
         let got = Sha256.hex h in
         if ok && got <> want then
@@ -210,8 +223,13 @@ let curl_download ?sha256 ~headers ~url ~dest () =
   in
   match Fun.protect ~finally:(fun () -> close_out_noerr oc) fetch with
   | true -> (
-      try Unix.rename temp dest
-      with Unix.Unix_error _ when Sys.file_exists dest -> remove_temp ())
+      try Unix.rename temp dest with
+      | Unix.Unix_error _ when Sys.file_exists dest -> remove_temp ()
+      | Unix.Unix_error (e, _, _) ->
+          remove_temp ();
+          failwith
+            (Printf.sprintf "%s: cannot rename the download to %s: %s" url
+               dest (Unix.error_message e)))
   | false ->
       remove_temp ();
       failwith (err_download url)
