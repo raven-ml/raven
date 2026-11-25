@@ -7,8 +7,9 @@
     record what the pool did (rig_pool_probe_stubs.c), and the suites' waits.
 
     A probe that waits for another call of its job, which [rig_pool.h] forbids a
-    body, gives up after 10 s, so a pool that breaks a promise fails the test
-    instead of hanging it. *)
+    body, gives up after its patience, half the test's limit of
+    [WINDTRAP_TIMEOUT] seconds, or 300 s where that is unset. A pool that breaks
+    a promise then fails the test with the probe's answer, before the limit. *)
 
 (** {1:kinds Kinds of job} *)
 
@@ -62,9 +63,10 @@ val reset : unit -> unit
 (** [reset ()] clears what {!hold} and {!counted} recorded. *)
 
 val hold : ?kind:kind -> only_worker:bool -> unit -> bool
-(** [hold ~kind ~only_worker ()] runs a job of two chunks on two threads whose chunks, or
-    with [only_worker] the worker's once both began, wait for {!hold_release}.
-    It is whether they were released before 10 s. *)
+(** [hold ~kind ~only_worker ()] runs a job of two chunks on two threads whose
+    chunks, or with [only_worker] the worker's once both began, wait for
+    {!hold_release}. It is whether they were released within the probe's
+    patience. *)
 
 val hold_arrived : unit -> int
 (** [hold_arrived ()] is the chunks of {!hold}'s job that began. *)
@@ -79,8 +81,8 @@ val counted :
 
 val meet : kind -> bool
 (** [meet kind] runs a job of [kind] of two chunks on two threads whose chunks
-    wait for each other, and is whether they met: whether two threads ran
-    them at once. A chunk gives up waiting after 10 s. *)
+    wait for each other, and is whether they met: whether two threads ran them
+    at once. A chunk gives up waiting after the probe's patience. *)
 
 val counted_calls : unit -> int
 (** [counted_calls ()] is the calls {!counted} made since {!reset}. *)
@@ -129,18 +131,20 @@ val needs_fork : unit -> unit
 
 (** {1:waits Waits} *)
 
-val settle : float -> (unit -> 'a) -> ('a -> bool) -> 'a
-(** [settle seconds read ok] reads [read ()] every millisecond until [ok] holds
-    of the value or [seconds] have passed, and is the last value read. *)
+val settle : (unit -> 'a) -> ('a -> bool) -> 'a
+(** [settle read ok] reads [read ()] every millisecond until [ok] holds of the
+    value, and is that value. *)
 
-val within : float -> string -> (unit -> bool) -> unit
-(** [within seconds why ready] polls [ready] for at most [seconds], and fails
-    the test with [why] if it never holds. *)
+val await : string -> (unit -> bool) -> unit
+(** [await why ready] polls [ready] every millisecond until it holds. A wait
+    that the test's timeout ends writes [why] on a line of standard error, which
+    a failing test's report shows, and raises the exception again with its
+    backtrace. *)
 
 val finishes : string -> (unit -> 'a) -> 'a
-(** [finishes what f] is [f ()], run on a domain of its own, and fails the test
-    with [what] if it has not returned after 10 s: a job that waits forever
-    fails the test instead of hanging it. *)
+(** [finishes what f] is [f ()], run on a domain of its own, so that the test's
+    timeout ends a wait for a job that never returns. Such a wait writes
+    [what had not returned] as {!await} does. *)
 
 val while_held : ?kind:kind -> (unit -> 'a) -> 'a
 (** [while_held ~kind f] is [f ()], run while another domain's job of [kind]

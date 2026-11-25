@@ -83,20 +83,23 @@ let needs_fork () =
 
 (* Waiting *)
 
-let settle seconds read ok =
-  let deadline = Unix.gettimeofday () +. seconds in
+let settle read ok =
   let rec poll () =
     let v = read () in
-    if ok v || Unix.gettimeofday () > deadline then v
+    if ok v then v
     else (
       Unix.sleepf 0.001;
       poll ())
   in
   poll ()
 
-let within seconds why ready =
-  if not (settle seconds ready Fun.id) then
-    Windtrap.failf "after %gs, %s" seconds why
+let await why ready =
+  match settle ready Fun.id with
+  | (_ : bool) -> ()
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      prerr_endline why;
+      Printexc.raise_with_backtrace e bt
 
 let finishes what f =
   let result = Atomic.make None in
@@ -105,7 +108,7 @@ let finishes what f =
         Atomic.set result
           (Some (match f () with v -> Ok v | exception e -> Error e)))
   in
-  within 10. (what ^ " had not returned") (fun () ->
+  await (what ^ " had not returned") (fun () ->
       Option.is_some (Atomic.get result));
   Domain.join d;
   match Option.get (Atomic.get result) with Ok v -> v | Error e -> raise e
@@ -114,7 +117,7 @@ let while_held ?kind f =
   reset ();
   let held = Domain.spawn (fun () -> hold ?kind ~only_worker:false ()) in
   match
-    within 10. "the held job did not begin" (fun () -> hold_arrived () >= 1);
+    await "the held job did not begin" (fun () -> hold_arrived () >= 1);
     f ()
   with
   | v ->

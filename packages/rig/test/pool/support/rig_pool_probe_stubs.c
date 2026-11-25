@@ -301,7 +301,7 @@ static void balance(int64_t lo, int64_t hi, int worker, void *ctx) {
     atomic_fetch_add(&j->done, hi - lo);
     return;
   }
-  int64_t rest = j->chunks - hi, deadline = now_ns() + patience;
+  int64_t rest = j->chunks - hi, deadline = now_ns() + patience();
   while (atomic_load(&j->done) < rest && now_ns() < deadline) {
   }
   j->balanced = rest > 0 && atomic_load(&j->done) == rest;
@@ -330,7 +330,7 @@ static void hold(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)hi;
   int only_worker = *(int *)ctx;
   atomic_fetch_add(&hold_arrived, 1);
-  int64_t deadline = now_ns() + patience;
+  int64_t deadline = now_ns() + patience();
   if (only_worker) {
     while (atomic_load(&hold_arrived) < 2 && now_ns() < deadline) {
     }
@@ -398,7 +398,7 @@ static void meet(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   _Atomic int *arrived = ctx;
   atomic_fetch_add(arrived, 1);
-  int64_t deadline = now_ns() + patience;
+  int64_t deadline = now_ns() + patience();
   while (atomic_load(arrived) < 2 && now_ns() < deadline) {
   }
 }

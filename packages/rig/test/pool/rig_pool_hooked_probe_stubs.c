@@ -7,8 +7,10 @@
    (rig_pool.h) call [hook], set when this library loads, before any job: a
    scenario makes it hold the caller and chosen workers until each other's
    events, so the timeline in the scenario's comment is the one that runs.
-   Every wait gives up after [patience] (rig_pool_probe.h); a scenario then
-   answers which event it waited for. The pool's callocs go through
+   Every wait of a scenario gives up at its deadline, [patience]
+   (rig_pool_probe.h) after it began: the scenario then answers the first
+   event a wait gave up on, its later waits giving up at once, and ends
+   before the test's limit. The pool's callocs go through
    [refusing_calloc], which refuses one on request, as a host out of memory
    does. POSIX only: scenarios fork, and workers are told apart by their
    pthread_t. */
@@ -20,8 +22,10 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
+#include <errno.h>
 #include <pthread.h>
 #include <sched.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <sys/wait.h>
@@ -111,16 +115,19 @@ static _Atomic int signalled[events];
 static _Atomic int order[events]; /* the order events were signalled in */
 static _Atomic int order_next;
 static _Atomic int timed_out = -1; /* the first event a wait gave up on */
+static _Atomic int64_t deadline;   /* the scenario's, set by [begin] */
+
+static int past(void) { return now_ns() > atomic_load(&deadline); }
 
 static void sig(event e) {
   atomic_store(&order[e], atomic_fetch_add(&order_next, 1) + 1);
   atomic_store(&signalled[e], 1);
 }
 
-static int await_for(event e, int64_t ns) {
-  int64_t deadline = now_ns() + ns;
+/* Whether [e] was signalled by [until], a time of now_ns. */
+static int await_until(event e, int64_t until) {
   while (!atomic_load(&signalled[e])) {
-    if (now_ns() > deadline) return 0;
+    if (now_ns() > until) return 0;
     sched_yield();
   }
   return 1;
@@ -132,10 +139,10 @@ static void gave_up(event e) {
   atomic_compare_exchange_strong(&timed_out, &none, (int)e);
 }
 
-/* Waits for [e]; past patience, records it and lets the thread go on, so a
-   scenario that cannot hold ends and answers instead of hanging. */
+/* Waits for [e]; past the deadline, records it and lets the thread go on, so
+   a scenario that cannot hold ends and answers instead of hanging. */
 static void await(event e) {
-  if (!await_for(e, patience)) gave_up(e);
+  if (!await_until(e, atomic_load(&deadline))) gave_up(e);
 }
 
 /* Scenarios and their hooks */
@@ -173,12 +180,11 @@ static int take_arm(void) { return atomic_exchange(&armed, 0) == 1; }
 
 /* While [gated], the target waits at its decision to park, where it holds
    nothing, so its next park comes after the scenario armed it (await_park).
-   Past patience it goes on, as [await] does. */
+   Past the deadline it goes on, as [await] does. */
 static _Atomic int gated;
 
 static void hold_at_gate(void) {
-  int64_t deadline = now_ns() + patience;
-  while (atomic_load(&gated) && now_ns() < deadline) sched_yield();
+  while (atomic_load(&gated) && !past()) sched_yield();
 }
 
 static _Atomic int once_flags[events];
@@ -289,21 +295,6 @@ __attribute__((constructor)) static void install(void) {
   rig_pool_set_calloc(refusing_calloc);
 }
 
-static void begin(phase ph) {
-  for (int e = 0; e < events; e++) {
-    atomic_store(&signalled[e], 0);
-    atomic_store(&order[e], 0);
-    atomic_store(&once_flags[e], 0);
-  }
-  atomic_store(&order_next, 0);
-  atomic_store(&timed_out, -1);
-  atomic_store(&entered, 0);
-  atomic_store(&go, 0);
-  atomic_store(&armed, 0);
-  atomic_store(&gated, 0);
-  atomic_store(&current, ph);
-}
-
 /* Tallies: jobs whose bodies count what ran where */
 
 enum { max_chunks = 64 };
@@ -330,11 +321,8 @@ static void body(int64_t lo, int64_t hi, int w, void *ctx) {
     }
   if (w < max_mapped) atomic_store(&j->worked[w], 1);
   if (w == j->holder) await(caller_waiting);
-  if (j->awaited > 0 && w != j->awaited) {
-    int64_t deadline = now_ns() + patience;
-    while (!atomic_load(&j->worked[j->awaited]) && now_ns() < deadline)
-      sched_yield();
-  }
+  if (j->awaited > 0 && w != j->awaited)
+    while (!atomic_load(&j->worked[j->awaited]) && !past()) sched_yield();
   if (j->signals && atomic_exchange(&j->signalled_body, 1) == 0) {
     sig(body_began);
     usleep(50000);
@@ -380,9 +368,7 @@ static void map_body(int64_t lo, int64_t hi, int w, void *ctx) {
   int threads = *(int *)ctx;
   if (w < max_mapped) worker_threads[w] = pthread_self();
   atomic_fetch_add(&arrived, 1);
-  int64_t deadline = now_ns() + patience;
-  while (atomic_load(&arrived) < threads && now_ns() < deadline)
-    sched_yield();
+  while (atomic_load(&arrived) < threads && !past()) sched_yield();
 }
 
 static void map_workers(void) {
@@ -405,14 +391,34 @@ static void settle(void) {
   for (int k = 0; k < 20; k++) kick();
 }
 
+/* Starts a scenario: sets its deadline, which every wait from here reads,
+   maps the workers and settles the pool, then clears what the last scenario
+   left and makes [ph] current. */
+static void begin(phase ph) {
+  atomic_store(&deadline, now_ns() + patience());
+  map_workers();
+  settle();
+  for (int e = 0; e < events; e++) {
+    atomic_store(&signalled[e], 0);
+    atomic_store(&order[e], 0);
+    atomic_store(&once_flags[e], 0);
+  }
+  atomic_store(&order_next, 0);
+  atomic_store(&timed_out, -1);
+  atomic_store(&entered, 0);
+  atomic_store(&go, 0);
+  atomic_store(&armed, 0);
+  atomic_store(&gated, 0);
+  atomic_store(&current, ph);
+}
+
 /* Waits until the target's parked bit is set, read under the parking mutex
    (rig_pool_parked): a worker holds that mutex from setting its bit until
    it waits, so the target is then asleep, unless a job woke it since. Past
-   patience, records [w_asleep] as [await] does. */
+   the deadline, records [w_asleep] as [await] does. */
 static void await_asleep_target(void) {
   uint64_t bit = (uint64_t)1 << atomic_load(&target);
-  int64_t deadline = now_ns() + patience;
-  while (!(rig_pool_parked() & bit) && now_ns() <= deadline) sched_yield();
+  while (!(rig_pool_parked() & bit) && !past()) sched_yield();
   if (!(rig_pool_parked() & bit)) gave_up(w_asleep);
 }
 
@@ -436,8 +442,8 @@ static void await_park(event e) {
    worker the job signalled keeps its bit until it runs. Each worker parks
    after the job's publication, and from then on the generation stays: a
    worker whose bit is set while this thread holds the parking mutex waits,
-   and only for a later job. Past patience, records [asleep] as [await]
-   does. */
+   and only for a later job. It begins the scenario. Past the deadline,
+   records [asleep] as [await] does. */
 static void await_asleep(void) {
   int both = 1 << 1 | 1 << 2;
   uint64_t bits = (uint64_t)both;
@@ -446,11 +452,10 @@ static void await_asleep(void) {
   atomic_store(&slept, 0);
   atomic_store(&go, 1);
   kick();
-  int64_t deadline = now_ns() + patience;
   for (;;) {
     if (atomic_load(&slept) == both && (rig_pool_parked() & bits) == bits)
       return;
-    if (now_ns() > deadline) {
+    if (past()) {
       gave_up(asleep);
       return;
     }
@@ -493,8 +498,6 @@ value rig_pool_test_stale_add(value unit) {
   (void)unit;
   int v[8] = {0};
   caml_enter_blocking_section();
-  map_workers();
-  settle();
   begin(stale_first);
   target = 1;
   tally n, n1;
@@ -534,8 +537,6 @@ value rig_pool_test_late_entry(value v_worker) {
   int w = Int_val(v_worker);
   int v[5] = {0};
   caml_enter_blocking_section();
-  map_workers();
-  settle();
   begin(late_first);
   target = w;
   tally n, n1;
@@ -568,8 +569,6 @@ value rig_pool_test_caller_sleeps(value v_held) {
   int held = Bool_val(v_held);
   int v[3] = {0};
   caml_enter_blocking_section();
-  map_workers();
-  settle();
   begin(held ? caller_held : caller_sleep);
   tally j;
   tally_init(&j, 2);
@@ -594,13 +593,11 @@ value rig_pool_test_caller_sleeps(value v_held) {
       holds until W1 set its bit; W1 reads the new generation.
    2: W1 sleeps; the caller sees its bit and signals it.
    Answers: whether W1 ran a chunk of the job (the other chunk waits for it
-   up to patience), the chunks not run once. */
+   until the deadline), the chunks not run once. */
 value rig_pool_test_wake(value v_order) {
   int which = Int_val(v_order);
   int v[2] = {0};
   caml_enter_blocking_section();
-  map_workers();
-  settle();
   begin(which == 0 ? wake_bit : which == 1 ? wake_decided : wake_slept);
   target = 1;
   await_park(which == 1 ? w_decided : w_bit);
@@ -627,13 +624,10 @@ value rig_pool_test_narrow_burst(value unit) {
   (void)unit;
   int v[4] = {0};
   caml_enter_blocking_section();
-  map_workers();
-  settle();
   begin(narrow);
   target = 2;
   kick();
-  int64_t deadline = now_ns() + patience;
-  while (!atomic_load(&signalled[w_bit]) && now_ns() < deadline) {
+  while (!atomic_load(&signalled[w_bit]) && !past()) {
     tally j;
     tally_init(&j, 2);
     run_tally(2, &j);
@@ -662,8 +656,6 @@ value rig_pool_test_narrow_wake(value unit) {
   (void)unit;
   int v[3] = {0};
   caml_enter_blocking_section();
-  map_workers();
-  settle();
   await_asleep();
   atomic_store(&current, narrow_wake);
   tally j;
@@ -671,7 +663,7 @@ value rig_pool_test_narrow_wake(value unit) {
   j.awaited = 1;
   run_tally(2, &j);
   v[0] = atomic_load(&j.worked[1]);
-  v[1] = await_for(w2_parking, 20000000);
+  v[1] = await_until(w2_parking, now_ns() + 20000000);
   v[2] = not_once(&j);
   settle();
   caml_leave_blocking_section();
@@ -679,12 +671,11 @@ value rig_pool_test_narrow_wake(value unit) {
 }
 
 /* A child made by fork runs a job on every core; it exits with the chunks
-   not run once, or SIGALRM ends it past 10 s. */
+   not run once. */
 static int fork_child(void) {
   pid_t pid = fork();
   if (pid == 0) {
     atomic_store(&current, none);
-    alarm(10);
     tally j;
     tally_init(&j, max_chunks);
     run_tally(rig_pool_cores(), &j);
@@ -693,9 +684,26 @@ static int fork_child(void) {
   return pid;
 }
 
+/* The child's exit code, or 256 plus the signal that ended it: SIGKILL once
+   it has not exited a quarter of [patience] past the deadline, which ends a
+   child whose job hangs. The child's own waits end at the deadline, so a
+   child that gives up still answers first. -1 if there is no child to wait
+   for. */
 static int child_status(pid_t pid) {
+  if (pid < 0) return -1;
+  int64_t last = atomic_load(&deadline) + patience() / 4;
   int status;
-  if (pid < 0 || waitpid(pid, &status, 0) != pid) return -1;
+  pid_t r;
+  while ((r = waitpid(pid, &status, WNOHANG)) == 0 && now_ns() <= last) {
+    struct timespec ms = {0, 1000000};
+    nanosleep(&ms, NULL);
+  }
+  if (r == 0) {
+    kill(pid, SIGKILL);
+    while ((r = waitpid(pid, &status, 0)) < 0 && errno == EINTR) {
+    }
+  }
+  if (r != pid) return -1;
   return WIFEXITED(status) ? WEXITSTATUS(status) : 256 + WTERMSIG(status);
 }
 
@@ -705,8 +713,6 @@ value rig_pool_test_fork_parked(value unit) {
   (void)unit;
   int v[1] = {0};
   caml_enter_blocking_section();
-  map_workers();
-  settle();
   begin(fork_parked);
   target = 1;
   await_park(w_bit);
@@ -731,8 +737,6 @@ value rig_pool_test_fork_running(value unit) {
   (void)unit;
   int v[2] = {0};
   caml_enter_blocking_section();
-  map_workers();
-  settle();
   begin(none);
   tally j;
   tally_init(&j, 4);
@@ -759,11 +763,10 @@ value rig_pool_test_unmade(value unit) {
   (void)unit;
   int v[1] = {0};
   caml_enter_blocking_section();
-  settle();
+  begin(none);
   pid_t pid = fork();
   if (pid == 0) {
     atomic_store(&current, none);
-    alarm(10);
     int failed = 0;
     for (int k = 1; k <= 3; k++) {
       atomic_store(&refused, k);

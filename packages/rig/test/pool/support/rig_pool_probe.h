@@ -9,7 +9,9 @@
 #ifndef RIG_POOL_PROBE_H
 #define RIG_POOL_PROBE_H
 
+#include <stdatomic.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -17,11 +19,25 @@
 #include <time.h>
 #endif
 
-/* How long a probe body waits for another call, which rig_pool.h forbids,
-   before it gives up, so that a pool that breaks a promise fails the test
-   instead of hanging it. Far longer than any wakeup: only a pool that never
-   runs the awaited chunk, or never ends the awaited job, reaches it. */
-static const int64_t patience = INT64_C(10000000000);
+/* The nanoseconds a probe body waits for another call, which rig_pool.h
+   forbids, before it gives up: half the test's limit, WINDTRAP_TIMEOUT
+   seconds, read once, so that a pool that breaks a promise fails the test
+   with the probe's answer, before the limit ends it. Far longer than any
+   wakeup: only a pool that never runs the awaited chunk, or never ends the
+   awaited job, reaches it. */
+static inline int64_t patience(void) {
+  /* windtrap's limit where WINDTRAP_TIMEOUT is unset, in seconds. */
+  const double default_limit_s = 600.;
+  static _Atomic int64_t cached;
+  int64_t ns = atomic_load_explicit(&cached, memory_order_relaxed);
+  if (ns == 0) {
+    const char *limit = getenv("WINDTRAP_TIMEOUT");
+    double s = limit == NULL ? 0. : strtod(limit, NULL);
+    ns = (int64_t)((s > 0. ? s : default_limit_s) * 0.5e9);
+    atomic_store_explicit(&cached, ns, memory_order_relaxed);
+  }
+  return ns;
+}
 
 static inline int64_t now_ns(void) {
 #if defined(_WIN32)

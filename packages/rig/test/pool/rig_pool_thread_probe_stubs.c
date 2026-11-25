@@ -8,7 +8,8 @@
    signal masks and thread states, so they build where POSIX does.
 
    Some bodies wait for another call, up to [patience] (rig_pool_probe.h), to
-   force a chunk onto a worker. */
+   force a chunk onto a worker; a probe of several waits gives them one
+   deadline, so the probe ends before the test's limit. */
 
 #define _GNU_SOURCE
 
@@ -76,7 +77,7 @@ static void meet(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)hi;
   meet_job *j = ctx;
   atomic_fetch_add(&j->arrived, 1);
-  int64_t deadline = now_ns() + patience;
+  int64_t deadline = now_ns() + patience();
   while (atomic_load(&j->arrived) < 2 && now_ns() < deadline) {
   }
   if (worker == 0)
@@ -395,7 +396,7 @@ static void in_child(void (*f)(int64_t *), int64_t *values, char *status,
   }
   close(fds[1]);
   size_t want = CHILD_VALUES * sizeof(int64_t), got = 0;
-  int64_t deadline = now_ns() + patience;
+  int64_t deadline = now_ns() + patience();
   while (got < want && now_ns() < deadline) {
     struct pollfd p = {fds[0], POLLIN, 0};
     int r = poll(&p, 1, (int)((deadline - now_ns()) / 1000000) + 1);
@@ -419,7 +420,7 @@ static void in_child(void (*f)(int64_t *), int64_t *values, char *status,
   }
   if (late)
     snprintf(status, len, "no answer within %llds",
-             (long long)(patience / 1000000000));
+             (long long)(patience() / 1000000000));
   else if (WIFSIGNALED(st))
     snprintf(status, len, "killed by %s", strsignal(WTERMSIG(st)));
   else if (WEXITSTATUS(st) != 0)
@@ -462,15 +463,19 @@ value rig_pool_test_in_child(value v_blocking, value v_scenario) {
 static _Atomic int beside_began, beside_released, beside_ended;
 static int beside_threads;
 
-/* Every chunk waits for the release, up to [patience]. */
+/* The deadline of every wait of the scenario, in the parent and its child:
+   [patience] after it began. Its first wait that gives up names what it
+   waited for, and the later ones give up at once. */
+static _Atomic int64_t beside_deadline;
+
+/* Every chunk waits for the release, until the deadline. */
 static void beside_hold(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)lo;
   (void)hi;
   (void)worker;
   (void)ctx;
   atomic_fetch_add(&beside_began, 1);
-  int64_t deadline = now_ns() + patience;
-  while (!atomic_load(&beside_released) && now_ns() < deadline) {
+  while (!atomic_load(&beside_released) && now_ns() < beside_deadline) {
   }
 }
 
@@ -481,8 +486,8 @@ static void *beside_caller(void *arg) {
   return arg;
 }
 
-/* The chunks of a job of [n] chunks wait until all [n] began, up to
-   [patience]: they meet only where [n] threads run them. */
+/* The chunks of a job of [n] chunks wait until all [n] began, until the
+   deadline: they meet only where [n] threads run them. */
 static _Atomic int all_arrived;
 
 static void meet_all(int64_t lo, int64_t hi, int worker, void *ctx) {
@@ -491,26 +496,28 @@ static void meet_all(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   int n = *(int *)ctx;
   atomic_fetch_add(&all_arrived, 1);
-  int64_t deadline = now_ns() + patience;
-  while (atomic_load(&all_arrived) < n && now_ns() < deadline) {
+  while (atomic_load(&all_arrived) < n && now_ns() < beside_deadline) {
   }
 }
 
-/* How the child [pid] ended, waited for up to [patience]: "exit 0" once it
-   exited with 0. */
+/* How the child [pid] ended, waited for until a quarter of [patience] past
+   the deadline, then killed and reaped: "exit 0" once it exited with 0. The
+   child's own waits end at the deadline, so a child that gives up still
+   answers first. */
 static void child_status(pid_t pid, char *status, size_t len) {
-  int64_t deadline = now_ns() + patience;
+  int64_t last = beside_deadline + patience() / 4;
   int st;
   pid_t r;
-  while ((r = waitpid(pid, &st, WNOHANG)) == 0 && now_ns() < deadline) {
+  while ((r = waitpid(pid, &st, WNOHANG)) == 0 && now_ns() < last) {
     struct timespec ms = {0, 1000000};
     nanosleep(&ms, NULL);
   }
   if (r == 0) {
     kill(pid, SIGKILL);
-    waitpid(pid, &st, 0);
-    snprintf(status, len, "no answer within %llds",
-             (long long)(patience / 1000000000));
+    while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {
+    }
+    snprintf(status, len, "no exit within %llds of the probe's start",
+             (long long)((patience() + patience() / 4) / 1000000000));
   } else if (r < 0)
     snprintf(status, len, "waitpid: %s", strerror(errno));
   else if (WIFSIGNALED(st))
@@ -523,7 +530,9 @@ static void child_status(pid_t pid, char *status, size_t len) {
    blocking job of [n] threads runs, its chunks held. It is (whether fork
    returned while the job still ran, how the child ended): the child exits
    0 once [n] threads of its own met in a blocking job, 3 if they did not,
-   and the parent's chunks then end; 4 if not all of them began. */
+   and the parent's chunks then end. Where not all of the parent's chunks
+   began, the second is "k of the parent's n chunks began". The child is
+   reaped on every path. */
 value rig_pool_test_fork_beside_blocking(value v_n) {
   CAMLparam1(v_n);
   CAMLlocal2(result, s);
@@ -534,10 +543,10 @@ value rig_pool_test_fork_beside_blocking(value v_n) {
   atomic_store(&beside_released, 0);
   atomic_store(&beside_ended, 0);
   caml_enter_blocking_section();
+  beside_deadline = now_ns() + patience();
   pthread_t thread;
   if (pthread_create(&thread, NULL, beside_caller, NULL) == 0) {
-    int64_t deadline = now_ns() + patience;
-    while (atomic_load(&beside_began) < n && now_ns() < deadline) {
+    while (atomic_load(&beside_began) < n && now_ns() < beside_deadline) {
     }
     int began = atomic_load(&beside_began);
     pid_t pid = fork();
@@ -551,11 +560,13 @@ value rig_pool_test_fork_beside_blocking(value v_n) {
     pthread_join(thread, NULL);
     if (pid < 0)
       snprintf(status, sizeof status, "fork: %s", strerror(errno));
-    else if (began < n)
-      snprintf(status, sizeof status, "%d of the parent's %d chunks began",
-               began, n);
-    else
+    else {
+      /* Past the deadline where not all began: the child is then killed. */
       child_status(pid, status, sizeof status);
+      if (began < n)
+        snprintf(status, sizeof status, "%d of the parent's %d chunks began",
+                 began, n);
+    }
   }
   caml_leave_blocking_section();
   s = caml_copy_string(status);
@@ -572,6 +583,7 @@ typedef struct {
   _Atomic int began;     /* the worker's chunk began */
   clockid_t worker;      /* its thread's CPU clock */
   int64_t caller_done;   /* the caller's thread CPU as its chunk ended */
+  int64_t deadline;      /* of the caller's wait, one for every run */
 } spin_job;
 
 static int64_t cpu_ns(clockid_t c) {
@@ -581,8 +593,8 @@ static int64_t cpu_ns(clockid_t c) {
   return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
 }
 
-/* The caller's chunk ends once the worker's began; the worker's sleeps
-   5 ms, which the caller waits through. */
+/* The caller's chunk ends once the worker's began, or at the deadline; the
+   worker's sleeps 5 ms, which the caller waits through. */
 static void spin_body(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)lo;
   (void)hi;
@@ -594,9 +606,8 @@ static void spin_body(int64_t lo, int64_t hi, int worker, void *ctx) {
     nanosleep(&ms5, NULL);
     return;
   }
-  int64_t deadline = now_ns() + patience;
   struct timespec us20 = {0, 20000};
-  while (!atomic_load(&j->began) && now_ns() < deadline)
+  while (!atomic_load(&j->began) && now_ns() < j->deadline)
     nanosleep(&us20, NULL);
   j->caller_done = cpu_ns(CLOCK_THREAD_CPUTIME_ID);
 }
@@ -604,10 +615,12 @@ static void spin_body(int64_t lo, int64_t hi, int worker, void *ctx) {
 /* Each of [runs] jobs of two chunks on two threads: the caller's CPU from
    its chunk's end to the job's, and the worker's in the 20 ms after the
    job returned, in ns, written to waits[k] and afters[k]; -1 where a
-   worker ran no chunk. */
+   worker ran no chunk. Every run's wait gives up at one deadline, so runs
+   whose worker never comes end before the test's limit. */
 static void spin_runs(int runs, int64_t *waits, int64_t *afters) {
+  int64_t deadline = now_ns() + patience();
   for (int k = 0; k < runs; k++) {
-    spin_job j = {0, 0, 0};
+    spin_job j = {0, 0, 0, deadline};
     run_job(2, 2, 2, spin_body, &j);
     int64_t returned = cpu_ns(CLOCK_THREAD_CPUTIME_ID);
     if (!atomic_load(&j.began)) {

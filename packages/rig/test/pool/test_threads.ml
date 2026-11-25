@@ -68,9 +68,9 @@ let needs_thread_states () =
   if T.running_threads () < 0 then
     skip ~reason:"the system does not report its threads' states" ()
 
-(* [settle_to n] polls until at most [n] threads other than this one run, for at
-   most 5 s, and is the last count. *)
-let settle_to n = P.settle 5. T.running_threads (fun k -> k <= n)
+(* [settle_to n] polls until at most [n] threads other than this one run, and is
+   their count. *)
+let settle_to n = P.settle T.running_threads (fun k -> k <= n)
 
 let test_made_once () =
   P.needs_two_cores ();
@@ -143,12 +143,12 @@ let test_parks kind =
           ~finally:(fun () -> Atomic.set finished true)
           (fun () -> P.hold ~kind ~only_worker:true ()))
   in
-  P.within 10. "a parked worker was not woken for the job" (fun () ->
+  P.await "a parked worker was not woken for the job" (fun () ->
       P.hold_arrived () = 2);
   equal ~msg:"threads running while a worker holds the job: the caller parked"
     int 1 (settle_to 1);
   P.hold_release ();
-  P.within 10. "the parked caller was not woken at the job's end" (fun () ->
+  P.await "the parked caller was not woken at the job's end" (fun () ->
       Atomic.get finished);
   equal ~msg:"the job was released" bool true (Domain.join caller)
 

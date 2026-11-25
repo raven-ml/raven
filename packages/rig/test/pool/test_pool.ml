@@ -797,14 +797,14 @@ let test_waits () =
               Atomic.set beginning true;
               P.counted ~threads:2 ~total:4L ~chunks:4L ())
         in
-        P.within 10. "the domain did not begin its job" (fun () ->
+        P.await "the domain did not begin its job" (fun () ->
             Atomic.get beginning);
         Unix.sleepf 0.05;
         equal ~msg:"chunks run while another thread's job ran" int 0
           (P.counted_calls ());
         d)
   in
-  P.within 10. "the waiting job did not run once the other ended" (fun () ->
+  P.await "the waiting job did not run once the other ended" (fun () ->
       P.counted_calls () = 4);
   Domain.join waiting
 
