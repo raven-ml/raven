@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.bpe ~dropout` raises `Invalid_argument` outside [0, 1], NaN included,
+  and `of_json` gives an `Error`, as Hugging Face does. NaN and negative values
+  merged every pair, values past 1 skipped them all.
 - A `word_level` vocabulary that gives a word twice keeps its last pair, as
   `bpe` and `wordpiece` do: `id_to_token` answered the earlier id too.
 - `Brot.vocab` of a `chars` tokenizer lists its 256 one-byte tokens, which

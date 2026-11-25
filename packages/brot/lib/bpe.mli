@@ -95,8 +95,9 @@ val create :
       4096 bytes are never cached.
     - [dropout] is the probability of randomly skipping a merge during
       tokenization (BPE-dropout regularization). Defaults to [0.] (no dropout).
-      A non-zero value disables the cache and [ignore_merges], both of which
-      would reuse a choice that is drawn per occurrence.
+      Raises [Invalid_argument] if it is outside \[[0]; [1]\], NaN included. A
+      non-zero value disables the cache and [ignore_merges], both of which would
+      reuse a choice that is drawn per occurrence.
     - [unk_token] is emitted for characters whose affixed form is not in [vocab]
       (when {!byte_fallback} is off). Encoding raises [Failure] at such a
       character when [vocab] does not hold [unk_token]. No default: without one,

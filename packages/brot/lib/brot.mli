@@ -1156,7 +1156,8 @@ val bpe :
       MB on 14 cores) and times 48 MB while they all double (672 MB). [0]
       disables caching.
     - [dropout]: probability \[[0]; [1]\] of skipping merges (data
-      augmentation). Default: none (no dropout).
+      augmentation). Raises [Invalid_argument] if it is outside \[[0]; [1]\],
+      NaN included. Default: none (no dropout).
     - [continuing_subword_prefix]: prefix for non-initial subwords (e.g.,
       ["##"]). Default: none; [""] is the same as none.
     - [end_of_word_suffix]: suffix marking word boundaries (e.g., ["</w>"]).

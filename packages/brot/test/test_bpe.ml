@@ -1032,6 +1032,16 @@ let last_pair t ~pairs =
     pairs
     (List.sort compare (vocab t))
 
+(* brot.mli: dropout is a probability in [0; 1]. HF refuses the others with
+   "Dropout should be between 0 and 1, inclusive". *)
+let test_dropout_range () =
+  List.iter
+    (fun p ->
+      raises_match ~msg:(Printf.sprintf "%h" p) Exn.invalid_arg (fun () ->
+          bpe ~dropout:p ()))
+    [ 1.5; -0.1; Float.nan; Float.infinity; Float.succ 1.; -.Float.min_float ];
+  List.iter (fun p -> ignore (bpe ~dropout:p () : t)) [ 0.; -0.; 1. ]
+
 let bpe_given_twice =
   cases "keeps a token given twice as its last pair" ~id:fst
     [ ("plain", false); ("byte-level", true) ]
@@ -1072,6 +1082,7 @@ let () =
                test_crossing_entry;
              test "merges at dropout 0 as without dropout" test_dropout_zero;
              full_dropout;
+             test "refuses a dropout outside [0, 1]" test_dropout_range;
              test "emits a word vocab holds as one token under ignore_merges"
                test_ignore_merges;
              test

@@ -1544,6 +1544,10 @@ let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
     ?(byte_fallback = false) ?(ignore_merges = false) () : t =
   if Sys.int_size < 63 then
     invalid_arg "Bpe.create: a BPE model needs 63-bit integers";
+  (match dropout with
+  | Some p when not (0. <= p && p <= 1.) ->
+      invalid_arg "Bpe.create: dropout must be within [0; 1]"
+  | _ -> ());
   (* Tokenizer files spell "no prefix" and "no suffix" as [""]. *)
   let non_empty = function Some "" -> None | given -> given in
   let continuing_subword_prefix = non_empty continuing_subword_prefix in
