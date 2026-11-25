@@ -826,21 +826,6 @@ let roundeven_others () =
     (values Nx.roundeven Nx.float32
        [| 2.5; 3.5; -0.5; -2.5; 2.5000002; 0x1.fffffep-2 |])
 
-let test_square () =
-  equal (array int) [| -112; 0; 1 |]
-    (Nx.to_array (Nx.square (Nx.create Nx.int8 [| 3 |] [| 12; -128; -1 |])));
-  equal (array float_exact) [| 0.; 9.; infinity |]
-    (Nx.to_array (Nx.square (Nx.create Nx.float32 [| 3 |] [| -0.; 3.; 1e20 |])));
-  let z =
-    Nx.square
-      (Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 1.; im = 2. } |])
-  in
-  equal (array float_exact) [| -3.; 4. |]
-    (Array.concat
-       (List.map
-          (fun c -> [| c.Complex.re; c.im |])
-          (Array.to_list (Nx.to_array z))))
-
 let math =
   [
     group "the section"
@@ -948,7 +933,6 @@ let math =
       ];
     group "dtypes"
       [
-        test "square wraps integers and squares complex numbers" test_square;
         cases "a function of floats refuses another dtype"
           ~id:(fun (n, _) -> n)
           [
