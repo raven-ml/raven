@@ -333,8 +333,8 @@ watch fails.
   munin: the dashboard needs a terminal
   [1]
 
-Times print in RFC 3339 for the years 0001 to 9999, to the microsecond,
-rounded once, and as a float outside them.
+Times print in RFC 3339 for the years 0001 to 9999, rounded to the
+nearest microsecond, and as a float outside them.
 
   $ calendar=$(./make_store.exe calendar store)
   $ munin metrics --root store $calendar clock
