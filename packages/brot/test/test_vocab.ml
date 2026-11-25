@@ -3,263 +3,342 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* What a built tokenizer reports: its stages, its role markers and its
+   vocabulary. *)
+
 open Windtrap
 open Brot
 
-let test_vocab_create_empty () =
-  let tokenizer = word_level () in
-  let vocab = vocab tokenizer in
-  equal ~msg:"empty vocab size" int 0 (List.length vocab)
+(* The value given, compared by identity. *)
+let same pp = option (Testable.make ~pp ~equal:( == ))
 
-let test_vocab_with_tokenizer () =
-  let tokenizer = word_level () in
-  let vocab = vocab tokenizer in
-  equal ~msg:"initial vocab size" int 0 (List.length vocab)
+(* Each constructor, given or not given each stage. *)
+let constructors =
+  [
+    ( "bpe",
+      fun ?normalizer ?pre ?post ?decoder () ->
+        bpe ?normalizer ?pre ?post ?decoder () );
+    ( "wordpiece",
+      fun ?normalizer ?pre ?post ?decoder () ->
+        wordpiece ?normalizer ?pre ?post ?decoder () );
+    ( "word_level",
+      fun ?normalizer ?pre ?post ?decoder () ->
+        word_level ?normalizer ?pre ?post ?decoder () );
+    ( "unigram",
+      fun ?normalizer ?pre ?post ?decoder () ->
+        unigram ?normalizer ?pre ?post ?decoder () );
+    ( "chars",
+      fun ?normalizer ?pre ?post ?decoder () ->
+        chars ?normalizer ?pre ?post ?decoder () );
+  ]
 
-(* [add_tokens] registers added tokens after the fact, exactly as passing them
-   at construction would. *)
-let test_vocab_add_tokens () =
-  let tokenizer =
-    add_tokens
-      (word_level ~vocab:[ ("hello", 0); ("world", 1) ] ())
-      [ added_token "<pad>"; added_token ~special:false "<x>" ]
-  in
-  equal ~msg:"vocab size" int 4 (vocab_size tokenizer);
-  equal ~msg:"numbered after the vocabulary" (option int) (Some 2)
-    (token_to_id tokenizer "<pad>");
-  equal ~msg:"<x>" (option int) (Some 3) (token_to_id tokenizer "<x>");
-  equal ~msg:"registered" (list string) [ "<pad>"; "<x>" ]
-    (List.map (fun (a : added_token) -> a.content) (added_tokens tokenizer));
-  equal ~msg:"matched atomically" (array int) [| 0; 2; 1 |]
-    (Encoding.ids (encode tokenizer "hello<pad>world"));
-  (* A word-level decoder joins with a space. *)
-  equal ~msg:"special skipped, plain kept" string "hello <x>"
-    (decode tokenizer ~skip_special_tokens:true [| 0; 2; 3 |])
+(* normalizer *)
 
-(* Every model takes added tokens, not just the word-level one. *)
-let test_add_tokens_any_model () =
-  let tokenizer =
-    add_tokens
-      (bpe ~vocab:[ ("a", 0); ("b", 1) ] ~merges:[] ())
-      [ added_token "<s>" ]
-  in
-  equal ~msg:"vocab size" int 3 (vocab_size tokenizer);
-  equal ~msg:"ids" (array int) [| 0; 2; 1 |]
-    (Encoding.ids (encode tokenizer "a<s>b"))
+let given_normalizer =
+  cases "is the normalizer given, or None" ~id:fst constructors
+    (fun (_, make) ->
+      let n = Normalizer.lowercase in
+      equal ~msg:"given" (same Normalizer.pp) (Some n)
+        (normalizer (make ~normalizer:n ()));
+      equal ~msg:"none" (same Normalizer.pp) None (normalizer (make ())))
 
-(* Added tokens never enter the model's vocabulary, so successive calls keep
-   numbering densely from the end of it. *)
-let test_add_tokens_twice () =
-  let base = word_level ~vocab:[ ("hello", 0); ("world", 1) ] () in
-  let once = add_tokens base [ added_token "<pad>" ] in
-  let twice = add_tokens once [ added_token "<x>" ] in
-  equal ~msg:"<pad>" (option int) (Some 2) (token_to_id twice "<pad>");
-  equal ~msg:"<x>" (option int) (Some 3) (token_to_id twice "<x>");
-  equal ~msg:"vocab size" int 4 (vocab_size twice);
-  equal ~msg:"vocab entries" int 4 (List.length (vocab twice));
-  equal ~msg:"registered once each" (list string) [ "<pad>"; "<x>" ]
-    (List.map (fun (a : added_token) -> a.content) (added_tokens twice))
+(* pre_tokenizer *)
 
-(* A model identifier past the end of its vocabulary does not collide with a
-   synthesized one. *)
-let test_add_tokens_sparse_vocab () =
-  let tokenizer =
-    add_tokens
-      (word_level ~vocab:[ ("a", 0); ("b", 1); ("<s>", 4) ] ())
-      [ added_token "<s>"; added_token "<z>" ]
-  in
-  equal ~msg:"<s> keeps the model id" (option int) (Some 4)
-    (token_to_id tokenizer "<s>");
-  equal ~msg:"<z> does not collide" (option int) (Some 5)
-    (token_to_id tokenizer "<z>")
+let given_pre =
+  cases "is the pre-tokenizer given, or None" ~id:fst
+    (List.filter (fun (name, _) -> name <> "word_level") constructors)
+    (fun (_, make) ->
+      let p = Pre_tokenizer.bert in
+      equal ~msg:"given" (same Pre_tokenizer.pp) (Some p)
+        (pre_tokenizer (make ~pre:p ()));
+      equal ~msg:"none" (same Pre_tokenizer.pp) None (pre_tokenizer (make ())))
 
-(* Content that is no text is no token and takes no identifier. *)
-let test_add_tokens_empty_content () =
-  let tokenizer =
-    add_tokens
-      (word_level ~vocab:[ ("a", 0) ] ())
-      [ added_token ""; added_token "<s>" ]
-  in
-  equal ~msg:"one token" int 1 (List.length (added_tokens tokenizer));
-  equal ~msg:"<s>" (option int) (Some 1) (token_to_id tokenizer "<s>");
-  equal ~msg:"vocab size" int 2 (vocab_size tokenizer)
+let test_word_level_pre () =
+  equal ~msg:"given" (same Pre_tokenizer.pp) (Some Pre_tokenizer.bert)
+    (pre_tokenizer (word_level ~pre:Pre_tokenizer.bert ()));
+  equal ~msg:"none" (same Pre_tokenizer.pp) (Some Pre_tokenizer.whitespace)
+    (pre_tokenizer (word_level ()))
 
-(* A role marker the vocabulary does not hold is still a usable special
-   token. *)
-let test_pad_token_absent_from_vocab () =
-  let tokenizer =
-    word_level
-      ~vocab:[ ("a", 0) ]
-      ~pad_token:"[PAD]" ~pre:Pre_tokenizer.whitespace ()
-  in
-  equal ~msg:"[PAD]" (option int) (Some 1) (token_to_id tokenizer "[PAD]");
-  equal ~msg:"vocab size" int 2 (vocab_size tokenizer);
-  equal ~msg:"matched in the input" (array int) [| 0; 1 |]
-    (encode_ids tokenizer "a [PAD]");
-  equal ~msg:"skipped when decoding" string "a"
-    (decode tokenizer ~skip_special_tokens:true [| 0; 1 |]);
-  let padded =
-    encode tokenizer ~padding:(padding (`Fixed 3)) "a" |> Encoding.ids
-  in
-  equal ~msg:"pads with it" (array int) [| 0; 1; 1 |] padded;
-  match of_json (to_json tokenizer) with
-  | Error msg -> failf "round trip failed: %s" msg
-  | Ok reloaded ->
-      equal ~msg:"survives the round trip" (option int) (Some 1)
-        (token_to_id reloaded "[PAD]");
-      equal ~msg:"still special" string "a"
-        (decode reloaded ~skip_special_tokens:true [| 0; 1 |])
+(* post_processor *)
 
-let test_vocab_encode_decode () =
-  let tokenizer =
-    word_level ~pre:Pre_tokenizer.whitespace
-      ~vocab:[ ("hello", 0); ("world", 1) ]
-      ()
-  in
-  let ids = encode tokenizer "hello world" |> Encoding.ids in
-  equal ~msg:"encoded ids" bool true (Array.length ids > 0);
-  let decoded = decode tokenizer ids in
-  equal ~msg:"decoded text" string "hello world" decoded
+let given_post =
+  cases "is the post-processor given, or None" ~id:fst constructors
+    (fun (_, make) ->
+      let p = Post_processor.bert ~sep:("[SEP]", 1) ~cls:("[CLS]", 0) in
+      equal ~msg:"given" (same Post_processor.pp) (Some p)
+        (post_processor (make ~post:p ()));
+      equal ~msg:"none" (same Post_processor.pp) None (post_processor (make ())))
 
-let test_vocab_batch_encode () =
-  let tokenizer = Brot.word_level ~vocab:[ ("hello", 0); ("world", 1) ] () in
-  let encodings = encode_batch tokenizer [ "hello"; "world" ] in
-  equal ~msg:"batch size" int 2 (List.length encodings)
+(* decoder *)
 
-let test_vocab_special_tokens () =
-  let tokenizer =
-    word_level
-      ~added_tokens:[ added_token "[CLS]"; added_token "[SEP]" ]
-      ~vocab:[ ("test", 2) ]
-      ()
-  in
-  let tokens =
-    encode ~add_special_tokens:true tokenizer "test" |> Encoding.tokens
-  in
-  equal ~msg:"tokens emitted" bool true (Array.length tokens > 0)
+let given_decoder =
+  cases "is the decoder given, or None" ~id:fst constructors (fun (_, make) ->
+      let d = Decoder.fuse in
+      equal ~msg:"given" (same Decoder.pp) (Some d)
+        (decoder (make ~decoder:d ()));
+      equal ~msg:"none" (same Decoder.pp) None (decoder (make ())))
 
-let test_vocab_save_load () =
-  let tokenizer =
-    Brot.word_level ~vocab:[ ("hello", 0); ("world", 1); ("test", 2) ] ()
-  in
-  let json = to_json tokenizer in
-  match of_json json with
-  | Error msg -> failf "failed to round-trip tokenizer: %s" msg
-  | Ok reloaded ->
-      let original_vocab = vocab tokenizer in
-      let loaded_vocab = vocab reloaded in
-      equal ~msg:"vocab size matches" int
-        (List.length original_vocab)
-        (List.length loaded_vocab);
-      List.iter
-        (fun (token, _) ->
-          equal
-            ~msg:(Printf.sprintf "token %s preserved" token)
-            bool true
-            (Option.is_some (token_to_id reloaded token)))
-        original_vocab
+(* added_tokens *)
 
-(* A token given twice is the last of its pairs, on every path that reads the
-   vocabulary, whichever kernel a model encodes with. *)
-let check_last_pair t ~unused ~tokens =
-  equal ~msg:"token_to_id" (option int) (Some 2) (token_to_id t "a");
-  equal ~msg:"the earlier id" (option string) None (id_to_token t unused);
-  equal ~msg:"the last id" (option string) (Some "a") (id_to_token t 2);
-  equal ~msg:"encode a" (array int) [| 2 |] (Encoding.ids (encode t "a"));
-  equal ~msg:"vocab_size" int (List.length tokens) (vocab_size t);
-  equal ~msg:"vocab"
-    (list (pair string int))
-    tokens
-    (List.sort compare (vocab t))
+let pp_added_token ppf (a : added_token) =
+  Format.fprintf ppf
+    "{content %S; special %b; single_word %b; lstrip %b; rstrip %b; normalized \
+     %b}"
+    a.content a.special a.single_word a.lstrip a.rstrip a.normalized
 
-let pairs = [ ("a", 0); ("b", 1); ("a", 2); ("ab", 3) ]
-let last_pairs = [ ("a", 2); ("ab", 3); ("b", 1) ]
-
-let test_bpe_given_twice () =
-  let t = bpe ~vocab:pairs ~merges:[ ("a", "b") ] () in
-  check_last_pair t ~unused:0 ~tokens:last_pairs;
-  equal ~msg:"merges" (array int) [| 3 |] (Encoding.ids (encode t "ab"))
-
-let test_byte_level_given_twice () =
+let test_added_tokens () =
+  let x = added_token ~lstrip:true "<x>"
+  and y = added_token ~special:false "y" in
   let t =
-    bpe ~vocab:pairs ~merges:[ ("a", "b") ]
-      ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
-      ()
+    bpe ~added_tokens:[ x; y ] ~bos_token:"<s>" ~eos_token:"<x>"
+      ~pad_token:"<pad>" ()
   in
-  check_last_pair t ~unused:0 ~tokens:last_pairs;
-  equal ~msg:"merges" (array int) [| 3 |] (Encoding.ids (encode t "ab"))
+  equal
+    (list (Testable.make ~pp:pp_added_token ~equal:( = )))
+    [ x; y; added_token "<s>"; added_token "<pad>" ]
+    (added_tokens t)
 
-let test_wordpiece_given_twice () =
-  let t = wordpiece ~vocab:[ ("a", 0); ("a", 2); ("[UNK]", 1) ] () in
-  check_last_pair t ~unused:0 ~tokens:[ ("[UNK]", 1); ("a", 2) ]
+(* bos_token, eos_token, pad_token, unk_token *)
 
-(* WordPiece and word-level models hold any ids in [0, 2^31), with memory for
-   their tokens alone, and refuse the others. An id table sized by the largest
-   id took 2^23 words or more for the sparse vocabulary below, so the bound is
-   checked there before an id of 2^31 - 1 is tried, and an added token is
-   refused the id after it. *)
-let sparse_models =
-  let models =
+let role accessor make =
+  equal ~msg:"given" (option string) (Some "<r>") (accessor (make (Some "<r>")));
+  equal ~msg:"none" (option string) None (accessor (make None))
+
+(* vocab *)
+
+let pairs = list (pair string int)
+
+let empty_vocab =
+  cases "of a tokenizer without vocabulary is empty" ~id:fst
     [
-      ( "wordpiece",
-        fun vocab -> wordpiece ~pre:Pre_tokenizer.whitespace ~vocab () );
-      ( "word_level",
-        fun vocab ->
-          word_level ~pre:Pre_tokenizer.whitespace ~unk_token:"[UNK]" ~vocab ()
-      );
+      ("bpe", fun () -> bpe ());
+      ("wordpiece", fun () -> wordpiece ());
+      ("word_level", fun () -> word_level ());
+      ("unigram", fun () -> unigram ());
     ]
-  in
-  [
-    cases "sparse ids" ~id:fst models (fun (_, make) ->
-        let top = 1 lsl 23 in
-        let before = Gc.allocated_bytes () in
-        let t = make [ ("[UNK]", 0); ("a", 1); ("b", top) ] in
-        let encoding = encode t "a b" in
-        let allocated = Gc.allocated_bytes () -. before in
-        less ~msg:"bytes allocated" float_exact ~than:16e6 allocated;
-        equal ~msg:"ids" (array int) [| 1; top |] (Encoding.ids encoding);
-        equal ~msg:"tokens" (array string) [| "a"; "b" |]
-          (Encoding.tokens encoding);
-        equal ~msg:"offsets" (array (pair int int)) [| (0, 1); (2, 3) |]
-          (Encoding.offsets encoding);
-        equal ~msg:"id_to_token" (option string) (Some "b") (id_to_token t top);
-        let top = (1 lsl 31) - 1 in
-        let t = make [ ("[UNK]", 0); ("b", top) ] in
-        equal ~msg:"2^31 - 1" (option string) (Some "b") (id_to_token t top);
-        (* [b] keeps its model id, so [<x>] would be numbered 2^31. *)
-        raises_match ~msg:"an added token past 2^31 - 1"
-          (Exn.invalid_arg ~sub:"2^31")
-          (fun () -> add_tokens t (List.map added_token [ "b"; "<x>" ])));
-    cases "ids outside [0, 2^31)" ~id:fst models (fun (_, make) ->
-        List.iter
-          (fun id ->
-            raises_match
-              ~msg:(Printf.sprintf "id %d" id)
-              (Exn.invalid_arg ~sub:"2^31")
-              (fun () -> make [ ("[UNK]", 0); ("b", id) ]))
-          [ max_int; -1; 1 lsl 31 ]);
-  ]
+    (fun (_, make) -> equal pairs [] (vocab (make ())))
 
-let suite =
-  [
-    test "create empty" test_vocab_create_empty;
-    test "with tokenizer" test_vocab_with_tokenizer;
-    test "add tokens" test_vocab_add_tokens;
-    test "add tokens to any model" test_add_tokens_any_model;
-    test "add tokens twice" test_add_tokens_twice;
-    test "add tokens with a sparse vocabulary" test_add_tokens_sparse_vocab;
-    test "add tokens with empty content" test_add_tokens_empty_content;
-    test "pad token absent from vocabulary" test_pad_token_absent_from_vocab;
-    test "encode decode" test_vocab_encode_decode;
-    test "batch encode" test_vocab_batch_encode;
-    test "special tokens" test_vocab_special_tokens;
-    test "save load" test_vocab_save_load;
-    test "a BPE token given twice" test_bpe_given_twice;
-    test "a byte-level token given twice" test_byte_level_given_twice;
-    test "a WordPiece token given twice" test_wordpiece_given_twice;
-  ]
+(* vocab_size, token_to_id, id_to_token *)
+
+(* A model drawn with distinct tokens over a few characters, ids a permutation
+   of their positions, and added tokens, some of which it holds. A Unigram
+   entry's id is its position. *)
+let built =
+  let open Gen in
+  let token =
+    map (String.concat "")
+      (list ~size:(int_range 1 3) (of_list [ "a"; "b"; "<"; ">"; "\u{e9}" ]))
+  in
+  let distinct tokens =
+    List.fold_left
+      (fun acc t -> if List.mem t acc then acc else acc @ [ t ])
+      [] tokens
+  in
+  let* model = of_list [ "bpe"; "wordpiece"; "word_level"; "unigram" ] in
+  let* tokens =
+    map (fun ts -> distinct ("[UNK]" :: ts)) (list ~size:(int_range 0 12) token)
+  in
+  let* ids = permutation (List.init (List.length tokens) Fun.id) in
+  let+ added = list ~size:(int_range 0 4) (pair token bool) in
+  (model, List.combine tokens ids, added)
+
+let make (model, vocab, added) =
+  let added_tokens =
+    List.map (fun (c, special) -> added_token ~special c) added
+  in
+  match model with
+  | "bpe" -> bpe ~vocab ~merges:[] ~added_tokens ()
+  | "wordpiece" -> wordpiece ~vocab ~added_tokens ()
+  | "word_level" -> word_level ~vocab ~added_tokens ()
+  | _ ->
+      let by_id = List.sort (fun (_, a) (_, b) -> compare a b) vocab in
+      unigram ~vocab:(List.map (fun (t, _) -> (t, -1.)) by_id) ~added_tokens ()
+
+let pp_built ppf (model, vocab, added) =
+  let pair (t, id) = Printf.sprintf "(%S, %d)" t id in
+  let token (c, special) = Printf.sprintf "(%S, special %b)" c special in
+  Format.fprintf ppf "%s vocab [%s]@ added [%s]" model
+    (String.concat "; " (List.map pair vocab))
+    (String.concat "; " (List.map token added))
+
+let built = Gen.with_pp pp_built built
+
+let cover_built (_, vocab, added) =
+  cover "an added token the model holds"
+    (List.exists (fun (c, _) -> List.mem_assoc c vocab) added);
+  cover "an added token the model lacks"
+    (List.exists (fun (c, _) -> not (List.mem_assoc c vocab)) added)
+
+(* The added contents the drawn model lacks, once each. Their ids are the
+   tokenizer's to choose. *)
+let lacked (_, vocab, added) =
+  List.fold_left
+    (fun acc (c, _) ->
+      if List.mem_assoc c vocab || List.mem c acc then acc else acc @ [ c ])
+    [] added
+
+let vocab_law =
+  prop ~count:60 "lists the model's pairs, then the added tokens it lacks" built
+    (fun ((_, drawn, _) as case) ->
+      cover_built case;
+      let listed = vocab (make case) in
+      let n = List.length drawn in
+      equal ~msg:"the model's" pairs (List.sort compare drawn)
+        (List.sort compare (List.filteri (fun i _ -> i < n) listed));
+      equal ~msg:"then the added tokens" (list string)
+        (List.sort compare (lacked case))
+        (List.sort compare
+           (List.filteri (fun i _ -> i >= n) listed |> List.map fst)))
+
+let size_law =
+  prop ~count:60 "counts the model's tokens and the added ones it lacks" built
+    (fun ((_, drawn, _) as case) ->
+      cover_built case;
+      equal int
+        (List.length drawn + List.length (lacked case))
+        (vocab_size (make case)))
+
+let token_law =
+  prop ~count:60 "gives each token its id" built (fun ((_, drawn, _) as case) ->
+      cover_built case;
+      let t = make case in
+      List.iter
+        (fun (token, id) ->
+          equal ~msg:token (option int) (Some id) (token_to_id t token))
+        drawn;
+      List.iter
+        (fun c ->
+          equal ~msg:c (option string) (Some c)
+            (Option.bind (token_to_id t c) (id_to_token t)))
+        (lacked case))
+
+let id_law =
+  prop ~count:60 "gives each id its token" built (fun ((_, drawn, _) as case) ->
+      cover_built case;
+      let t = make case in
+      List.iter
+        (fun (token, id) ->
+          equal ~msg:(string_of_int id) (option string) (Some token)
+            (id_to_token t id))
+        drawn)
+
+let unheld_token =
+  cases "is None for a token the tokenizer does not hold"
+    ~id:(fun (id, _, _) -> id)
+    [
+      ("bpe", (fun () -> bpe ~vocab:[ ("a", 0) ] ()), [ "b"; ""; "<unk>" ]);
+      ( "wordpiece",
+        (fun () -> wordpiece ~vocab:[ ("[UNK]", 0) ] ()),
+        [ "a"; "##a" ] );
+      ( "word_level",
+        (fun () -> word_level ~vocab:[ ("a", 0) ] ()),
+        [ "b"; "<unk>" ] );
+      ( "unigram",
+        (fun () -> unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] ()),
+        [ "missing"; "" ] );
+      ("unigram, empty", (fun () -> unigram ~vocab:[] ()), [ "test" ]);
+      ("chars", (fun () -> chars ()), [ "ab"; "" ]);
+    ]
+    (fun (_, make, tokens) ->
+      let t = make () in
+      List.iter
+        (fun token -> equal ~msg:token (option int) None (token_to_id t token))
+        tokens)
+
+let unheld_id =
+  let beyond = [ -1; 1 lsl 31; max_int; min_int ] in
+  cases "is None for an id no token holds"
+    ~id:(fun (id, _, _) -> id)
+    [
+      ( "bpe",
+        (fun () -> bpe ~vocab:[ ("a", 0); ("b", 2) ] ()),
+        [ 1; 3 ] @ beyond );
+      ( "wordpiece",
+        (fun () -> wordpiece ~vocab:[ ("[UNK]", 0); ("a", 2) ] ()),
+        [ 1; 3 ] @ beyond );
+      ( "word_level",
+        (fun () -> word_level ~vocab:[ ("a", 0); ("b", 2) ] ()),
+        [ 1; 3 ] @ beyond );
+      ( "unigram",
+        (fun () -> unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] ()),
+        [ 2; 10 ] @ beyond );
+      ("unigram, empty", (fun () -> unigram ~vocab:[] ()), [ 0 ] @ beyond);
+      ("chars", (fun () -> chars ()), [ 256 ] @ beyond);
+    ]
+    (fun (_, make, ids) ->
+      let t = make () in
+      List.iter
+        (fun id ->
+          equal ~msg:(string_of_int id) (option string) None (id_to_token t id))
+        ids)
+
+(* A SentencePiece pipeline marks the start of the text with ▁ before an added
+   token matched against normalized text can match. *)
+let test_normalized_form () =
+  let marker = "\u{2581}" in
+  let t =
+    bpe
+      ~normalizer:
+        (Normalizer.sequence
+           [
+             Normalizer.prepend marker;
+             Normalizer.replace ~pattern:" " ~replacement:marker;
+           ])
+      ~added_tokens:[ added_token ~normalized:true "<s>" ]
+      ~vocab:[ ("<s>", 1); (marker ^ "a", 2) ]
+      ~merges:[] ()
+  in
+  equal ~msg:"id_to_token" (option string)
+    (Some (marker ^ "<s>"))
+    (id_to_token t 1);
+  equal ~msg:"token_to_id" (option int) (Some 1) (token_to_id t "<s>")
 
 let () =
   exit
-    (run "Vocabulary tests"
-       [ group "vocab" suite; group "ids" sparse_models ])
+    (run "Accessors and vocabulary"
+       [
+         group "normalizer" [ given_normalizer ];
+         group "pre_tokenizer"
+           [
+             given_pre;
+             test "is whitespace for a word_level built without one"
+               test_word_level_pre;
+           ];
+         group "post_processor" [ given_post ];
+         group "decoder" [ given_decoder ];
+         group "added_tokens"
+           [
+             test "lists the tokens given, then the role markers not among them"
+               test_added_tokens;
+           ];
+         group "bos_token"
+           [
+             test "is the token given, or None" (fun () ->
+                 role bos_token (fun bos_token -> bpe ?bos_token ()));
+           ];
+         group "eos_token"
+           [
+             test "is the token given, or None" (fun () ->
+                 role eos_token (fun eos_token -> bpe ?eos_token ()));
+           ];
+         group "pad_token"
+           [
+             test "is the token given, or None" (fun () ->
+                 role pad_token (fun pad_token -> bpe ?pad_token ()));
+           ];
+         group "unk_token"
+           [
+             test "is the token given, or None" (fun () ->
+                 role unk_token (fun unk_token -> bpe ?unk_token ()));
+           ];
+         group "vocab" [ empty_vocab; vocab_law ];
+         group "vocab_size" [ size_law ];
+         group "token_to_id" [ token_law; unheld_token ];
+         group "id_to_token"
+           [
+             id_law;
+             unheld_id;
+             test "gives a normalized added token's normalized form"
+               test_normalized_form;
+           ];
+       ])

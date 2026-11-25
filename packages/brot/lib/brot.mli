@@ -927,7 +927,12 @@ type added_token = {
       (** The token text: ["[CLS]"] for a special one, ["<name>"] for an
           ordinary vocabulary entry matched atomically. *)
   special : bool;  (** Whether decoding may skip this token. *)
-  single_word : bool;  (** Whether this token must match whole words only. *)
+  single_word : bool;
+      (** Whether this token matches only where no word character (an alphabetic
+          character, such as a letter or a letter number like Ⅻ, a mark, a
+          decimal digit, connector punctuation or a joiner) touches it on either
+          side. A match refused this way is passed over: the search resumes
+          after it, so no token is tried at its position or inside it. *)
   lstrip : bool;
       (** Whether a match extends over the whitespace preceding it. *)
   rstrip : bool;
@@ -950,9 +955,10 @@ type added_token = {
     vocabulary keeps its ID, the others are numbered from the end of it. The
     call that would number a token 2{^ 31} or more, past the [int32] values of
     {!type-ids}, raises [Invalid_argument]. A token with [special] set is
-    skipped by {!decode} when [skip_special_tokens] is [true]; one without it
-    is an ordinary vocabulary entry that happens to be matched atomically. The semantic role (pad, unk, bos, etc.) is contextual,
-    not encoded in the type. *)
+    skipped by {!decode} when [skip_special_tokens] is [true]; one without it is
+    an ordinary vocabulary entry that happens to be matched atomically. The
+    semantic role (pad, unk, bos, etc.) is contextual, not encoded in the type.
+*)
 
 type pad_length = [ `Batch_longest | `Fixed of int | `To_multiple of int ]
 (** The type for padding length strategies.
@@ -1078,26 +1084,32 @@ val bpe :
     - [post]: post-processor for special tokens. Default: none.
     - [decoder]: decoding strategy. Default: none.
     - [added_tokens]: added tokens. They are matched atomically in the input on
-      {!encode} — against the raw text before normalization when [normalized] is
-      unset, against the normalized text when it is set — and are numbered from
-      the end of [vocab] without entering it. Raises [Invalid_argument] when
-      a normalized token normalizes to the empty text, and when two of
-      different content match the same text, as two normalized tokens whose
-      contents normalize alike do. Default: [[]].
+      {!encode}: against the raw text before normalization when [normalized] is
+      unset, against the normalized text when it is set. They are numbered from
+      the end of [vocab] without entering it. A token of empty content is
+      ignored, and a content given twice is one token, with the ID of its first
+      and the flags of its last. Raises [Invalid_argument] when a normalized
+      token normalizes to the empty text, and when two of different content
+      match the same text, as two normalized tokens whose contents normalize
+      alike do. Default: [[]].
     - [bos_token], [eos_token], [pad_token]: role markers. Each is a special
       token in its own right, matched in the input like the entries of
-      [added_tokens] and numbered like them when [vocab] does not hold it.
-      Default: none.
+      [added_tokens] and numbered like them when [vocab] does not hold it. One
+      that [added_tokens] already holds keeps the flags given there. Default:
+      none.
     - [unk_token]: token for unknown characters. Configures both the role and
       the BPE model's unknown handling. It is a model parameter, never matched
-      atomically in the input. Default: none.
+      atomically in the input. Without one, a character that neither [vocab] nor
+      [byte_fallback] covers gives no token. Default: none.
     - [vocab]: initial vocabulary as [(token, id)] pairs. A token given twice
       keeps only its last pair. The ids may leave gaps of any size: the
       tokenizer's memory follows the number of tokens. Raises
       [Invalid_argument] if an id is negative or 2{^ 31} or more, past the
       [int32] values of {!type-ids}. Default: [[]].
-    - [merges]: merge rules as [(left, right)] pairs learned during training.
-      Default: [[]].
+    - [merges]: merge rules as [(left, right)] pairs learned during training. A
+      word starts as its characters; the adjacent pair whose rule comes first in
+      [merges] is merged, the leftmost of equal pairs first, until no rule
+      applies. Default: [[]].
     - [cache_capacity]: the most entries of a pretoken cache, rounded up to a
       power of two, which keeps the ids of pretokens of up to 15 bytes so that
       one seen before is not merged again. The tokenizer makes a cache for
@@ -1119,7 +1131,9 @@ val bpe :
     - [continuing_subword_prefix]: prefix for non-initial subwords (e.g.,
       ["##"]). Default: none; [""] is the same as none.
     - [end_of_word_suffix]: suffix marking word boundaries (e.g., ["</w>"]).
-      Default: none; [""] is the same as none.
+      Default: none; [""] is the same as none. [continuing_subword_prefix] goes
+      on every character of a word but the first and [end_of_word_suffix] on its
+      last, before any merge, so a merge names the affixed forms.
     - [fuse_unk]: merge consecutive unknown tokens. Default: [false].
     - [byte_fallback]: use byte-level fallback (["<0x00>"]) instead of unknown
       token. Default: [false].
@@ -1230,8 +1244,9 @@ val unigram :
     - [unk_id]: the entry standing for a run of characters the vocabulary does
       not hold, one token for the whole run, as a [tokenizer.json] names it.
       Without one, encoding raises [Failure] as soon as the best path into some
-      character would spend an unknown token on it. Default: the position of
-      [unk_token] in [vocab], if it is there.
+      character would spend an unknown token on it. Raises [Invalid_argument] if
+      it is not the position of an entry. Default: the position of [unk_token]
+      in [vocab], if it is there.
     - [byte_fallback]: spell such a run out as byte tokens (["<0xFF>"]) when the
       vocabulary holds one for every byte of it. Default: [false].
     - [unk_token]: the role marker, and the model's unknown entry when [vocab]
@@ -1290,11 +1305,13 @@ val from_model_file :
     - [vocab]: path to the vocabulary file. With [merges], a [vocab.json]: a
       JSON object mapping tokens to IDs ([{"hello": 0, "world": 1}]). Without
       [merges], a BERT-style [vocab.txt]: one token per line, trimmed, its ID
-      the line's number from 0. A blank line holds the empty token.
+      the line's number from 0. A blank line holds the empty token; of several
+      blank lines, the empty token takes the last one's number.
     - [merges]: path to merges file ([merges.txt]). One merge per line as
       space-separated token pairs. Lines starting with ["#version"] are skipped.
 
-    Raises [Sys_error] if a file cannot be read.
+    Raises [Sys_error] if a file cannot be read and [Failure] if one is not in
+    its format.
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
@@ -1346,8 +1363,8 @@ val unk_token : t -> string option
 (** {1:vocab Vocabulary} *)
 
 val vocab : t -> (string * int) list
-(** [vocab t] is [t]'s vocabulary as [(token, id)] pairs, the model's followed
-    by the added tokens it does not already hold. *)
+(** [vocab t] is [t]'s vocabulary as [(token, id)] pairs: the model's, in no
+    particular order, followed by the added tokens it does not already hold. *)
 
 val vocab_size : t -> int
 (** [vocab_size t] is the number of tokens in [t]'s vocabulary, added tokens

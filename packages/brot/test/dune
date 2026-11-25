@@ -9,39 +9,35 @@
 
 (tests
  (names
-  test_tokenization
-  test_vocab
   test_encoding
-  test_bpe
-  test_unigram
-  test_unigram_load
-  test_wordpiece
-  test_float_text
-  test_tiktoken
+  test_normalizer
+  test_pre_tokenizer
   test_post_processor
+  test_decoder
+  test_models
+  test_bpe
+  test_vocab
+  test_encode_decode
   test_training
   test_huggingface
-  test_pre_tokenizer
-  test_normalizer
-  test_decoder
-  test_encode_decode)
+  test_unigram_load
+  test_tiktoken
+  test_float_text)
  (modules
-  test_tokenization
-  test_vocab
   test_encoding
-  test_bpe
-  test_unigram
-  test_unigram_load
-  test_wordpiece
-  test_float_text
-  test_tiktoken
+  test_normalizer
+  test_pre_tokenizer
   test_post_processor
+  test_decoder
+  test_models
+  test_bpe
+  test_vocab
+  test_encode_decode
   test_training
   test_huggingface
-  test_pre_tokenizer
-  test_normalizer
-  test_decoder
-  test_encode_decode)
+  test_unigram_load
+  test_tiktoken
+  test_float_text)
  (package brot)
  (deps
   (glob_files support/parity/*)
@@ -102,7 +98,7 @@
  (alias runtest)
  (package brot)
  (action
-  (run %{dep:test_added_tokens.bc.exe} --slow-threshold 10)))
+  (run %{dep:test_added_tokens.bc.exe})))
 
 ; The native-vs-bytecode differential: the same deterministic dump from the
 ; kernel and from the reference must be byte-identical. The native binary reads
