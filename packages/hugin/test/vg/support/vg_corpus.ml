@@ -446,27 +446,3 @@ let respell p =
     | Tag { tag; picture } -> Picture.tag tag (go picture)
   in
   go p
-
-(* [golden file png] checks that the PNG file [png] shows the colours of [file],
-   relative to the test's directory, each within a level: the machine's
-   floating-point contractions move a few by one. On a difference it writes
-   [png] to [file ^ ".corrected"] and, unless the run writes corrections
-   ([--corrected]) for dune to diff and promote, fails. *)
-let golden file png =
-  let same =
-    Sys.file_exists file
-    &&
-    let expected = Nx_io.load_image file and got = load_png png in
-    Nx.shape expected = Nx.shape got
-    &&
-    let a = Nx.to_array expected and b = Nx.to_array got in
-    let within = ref true in
-    Array.iteri (fun i v -> if abs (v - b.(i)) > 1 then within := false) a;
-    !within
-  in
-  if not same then begin
-    Out_channel.with_open_bin (file ^ ".corrected") (fun oc ->
-        output_string oc png);
-    if not (Array.mem "--corrected" Sys.argv) then
-      Windtrap.failf "%s differs from its golden by more than a level" file
-  end

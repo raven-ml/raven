@@ -12,11 +12,4 @@
   nx.io
   windtrap)
  (deps
-  (glob_files golden/*.png))
- (action
-  (progn
-   (run %{test} --corrected)
-   (concurrent
-    (diff? golden/shapes.png golden/shapes.png.corrected)
-    (diff? golden/strokes.png golden/strokes.png.corrected)
-    (diff? golden/marks.png golden/marks.png.corrected)))))
+  (glob_files golden/*.png)))

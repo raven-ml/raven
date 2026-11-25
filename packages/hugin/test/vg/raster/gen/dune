@@ -1,0 +1,6 @@
+; Writes the PNG baselines of the corpus pages:
+; dune exec packages/hugin/test/vg/raster/gen/gen.exe -- packages/hugin/test/vg/raster/golden
+
+(executable
+ (name gen)
+ (libraries hugin.vg.raster vg_corpus))
