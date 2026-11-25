@@ -15,13 +15,15 @@ let f64 = Nx.float64
 
 (* Frames
 
-   Every case is a table over five arrays of one length: - "a" is the floats
-   [x], null where [valid] is false; "k" is [x], a key that holds NaN, [-0.] and
-   [0.]; "b" is [-x]. The floats are small dyadics and the special values, so a
-   sum is exact in any order. - "i" is the [int32]s [is], their extremes
-   included, "t" the booleans [flags] and "d" the dates of the days [ds], each
-   null where [valid] is false at the row before, the first row reading the
-   last. *)
+   Every case is a table over five arrays of one length:
+
+   - "a" is the floats [x], null where [valid] is false; "k" is [x], a key that
+   holds NaN, [-0.] and [0.]; "b" is [-x]. The floats are small dyadics and the
+   special values, so a sum is exact in any order.
+
+   - "i" is the [int32]s [is], their extremes included, "t" the booleans [flags]
+   and "d" the dates of the days [ds], each null where [valid] is false at the
+   row before, the first row reading the last. *)
 
 let floats = [ -0.; 0.; 1.; -1.; 2.5; 3.; Float.nan; infinity; neg_infinity ]
 let ints = [ Int32.min_int; -1l; 0l; 1l; 7l; Int32.max_int ]
@@ -694,6 +696,28 @@ let checks =
             let n = Nx.dim 0 args.x in
             let i = Nx.add_s (Nx.arange Nx.int64 0 n 1) 1L in
             Talon.to_tensor f64 [ "b" ] (Talon.take i (table args))));
+    test "a null or an index outside raises at the call under vmap" (fun () ->
+        (* The code after the raising call never runs: [after] stays 0. *)
+        let after = ref 0 in
+        let mapped f =
+          let ran args =
+            let x = f args in
+            incr after;
+            x
+          in
+          Rune.vmap (signature ()) ran (stack [ fixed; fixed ])
+        in
+        raises_match (Exn.invalid_arg ~sub:"Talon.to_tensor") (fun () ->
+            mapped (fun args -> Talon.to_tensor f64 [ "a" ] (table args)));
+        raises_match (Exn.invalid_arg ~sub:"Column.to_tensor") (fun () ->
+            mapped (fun args ->
+                Column.to_tensor f64 (Talon.column (table args) "a")));
+        raises_match (Exn.invalid_arg ~sub:"Talon.take") (fun () ->
+            mapped (fun args ->
+                let n = Nx.dim 0 args.x in
+                let i = Nx.add_s (Nx.arange Nx.int64 0 n 1) 1L in
+                Talon.to_tensor f64 [ "b" ] (Talon.take i (table args))));
+        equal int 0 !after);
     test "a count of a join by position" (fun () ->
         alike "the left row matches 0 rows, not one" (fun args ->
             let q = Query.of_table (table args) in
