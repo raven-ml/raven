@@ -228,6 +228,10 @@ let ranks =
                "Norn.Diag.rank: : 2400 draws exceed float16's exact integers, \
                 2048") (fun () ->
               Diag.rank t ~truth:(Nx.scalar Nx.float16 0.) d));
+      test "float4 draws past four are refused" (fun () ->
+          let d = Draws.v t (Nx.zeros Nx.float4_e2m1fn [| 1; 5 |]) in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Diag.rank") (fun () ->
+              Diag.rank t ~truth:(Nx.scalar Nx.float4_e2m1fn 0.) d));
       test "a rank counts the draws below the truth" (fun () ->
           let d =
             Draws.v t

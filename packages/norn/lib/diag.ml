@@ -92,7 +92,9 @@ let divergent_shift (type u f) (u : (u, 'd) Nx.Ptree.t) (s : (f, 'd) Stats.t Dra
 
 (* Calibration *)
 
-(* [exact_integers dt] is the count up to which [dt] holds every integer. *)
+(* [exact_integers dt] is the count up to which the float dtype [dt] holds
+   every integer, 2 to the bits of its significand. Every dtype is named, so a
+   new float dtype is a compile error here. *)
 let exact_integers (type a b) (dt : (a, b) Nx.dtype) =
   match dt with
   | Nx.Dtype.Float64 -> Some (1 lsl 53)
@@ -101,7 +103,12 @@ let exact_integers (type a b) (dt : (a, b) Nx.dtype) =
   | Nx.Dtype.Bfloat16 -> Some (1 lsl 8)
   | Nx.Dtype.Float8_e4m3fn -> Some (1 lsl 4)
   | Nx.Dtype.Float8_e5m2 -> Some (1 lsl 3)
-  | _ -> None
+  | Nx.Dtype.Float4_e2m1fn -> Some (1 lsl 2)
+  | Nx.Dtype.Int64 | Nx.Dtype.Uint64 | Nx.Dtype.Int32 | Nx.Dtype.Uint32
+  | Nx.Dtype.Int16 | Nx.Dtype.Uint16 | Nx.Dtype.Int8 | Nx.Dtype.Uint8
+  | Nx.Dtype.Int4 | Nx.Dtype.Uint4 | Nx.Dtype.Complex128 | Nx.Dtype.Complex64
+  | Nx.Dtype.Bool | Nx.Dtype.Bit ->
+      None
 
 let rank (type u) (u : (u, 'd) Nx.Ptree.t) ~truth (d : u Draws.t) =
   Nx.Ptree.map2 u
