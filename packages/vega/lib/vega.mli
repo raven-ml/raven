@@ -1086,7 +1086,9 @@ type ('p, 'd) adafactor_state = {
     second moment is estimated from a row and a column statistic, in [m + n]
     numbers rather than [m * n]. {!adafactor_init} decides which leaves are
     factored, and the state records it. A leaf that is neither float nor complex
-    holds zeros of its own shape in every part, as in every state. *)
+    holds zeros of its own shape in every part, as in every state. A leaf of no
+    element starts from zero statistics, steps to itself and keeps its state,
+    where a mean over an empty axis would be NaN. *)
 
 module Adafactor_state :
   Nx.Ptree.S with type ('p, 'd) t = ('p, 'd) adafactor_state

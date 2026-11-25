@@ -104,13 +104,8 @@ let cover_defaults names =
    - 4)] below 2000, as [b2 <= 0.999] gives [rho_inf <= 1999] and a rectified
    step has [rho >= 5]; and L-BFGS's pairs, whose curvature is at least a
    quarter of [|y| |s|]. A result is then within [40 * 2000 * 2^-53 < 1e-11] of
-   its magnitude, or of 8 where a last subtraction cancels. NaN agrees with NaN:
-   Adafactor's mean over an empty axis of an empty matrix is NaN by its
-   formula. *)
-let close =
-  let near = float_rel ~rel:1e-10 ~abs:1e-10 in
-  Testable.make ~pp:(Testable.pp near) ~equal:(fun a b ->
-      (Float.is_nan a && Float.is_nan b) || Testable.equal near a b)
+   its magnitude, or of 8 where a last subtraction cancels. *)
+let close = float_rel ~rel:1e-10 ~abs:1e-10
 
 let agree msg expected actual = equal ~msg (array close) expected actual
 
@@ -862,16 +857,22 @@ let adafactor_formula =
       let read x = Nx.to_array x in
       (* The matrix: factored, nu_row' = b * nu_row + (1 - b) * mean_r g^2,
          nu_col' likewise over the rows, and nu = nu_row' * nu_col' / (mean_c
-         nu_row' + eps). *)
+         nu_row' + eps); a matrix of no element keeps its statistics. *)
       let gw = fst g in
       let g2 i j = gw.((i * n) + j) *. gw.((i * n) + j) in
       (if factored then (
+         let empty = m * n = 0 in
          let row' =
-           Array.init m (fun i -> averaged row.(i) (mean (Array.init n (g2 i))))
+           if empty then row
+           else
+             Array.init m (fun i ->
+                 averaged row.(i) (mean (Array.init n (g2 i))))
          in
          let col' =
-           Array.init n (fun j ->
-               averaged col.(j) (mean (Array.init m (fun i -> g2 i j))))
+           if empty then col
+           else
+             Array.init n (fun j ->
+                 averaged col.(j) (mean (Array.init m (fun i -> g2 i j))))
          in
          let nu =
            Array.init (m * n) (fun e ->
@@ -921,6 +922,48 @@ let test_adafactor_shapes () =
       [ [| 2; 3 |]; [| 4; 2; 3 |]; [| 3 |] ];
     ]
     (parts (Vega.adafactor_init p ~factored:false x))
+
+(* A leaf of no element steps to itself and keeps its state, which init makes
+   zeros: an empty factored matrix, whichever axis is empty, a stack of them,
+   and a complex and a bfloat16 one. *)
+(* The floats of a state part, a complex one's parts. *)
+let part_floats (type a b) (x : (a, b, Nx.host) Nx.t) =
+  match Nx.Dtype.kind (Nx.dtype x) with
+  | Complex ->
+      Array.append
+        (Nx.to_array (Nx.real Nx.float64 x))
+        (Nx.to_array (Nx.imag Nx.float64 x))
+  | Float | Signed | Unsigned | Boolean -> Nx.to_array (Nx.cast Nx.float64 x)
+
+let empty_leaf (type a b) (x : (a, b, Nx.host) Nx.t) () =
+  let p = Nx.Ptree.tensor in
+  let zeros msg (st : (_, _) Vega.adafactor_state) =
+    List.iter
+      (fun (name, part) ->
+        let a = part_floats part in
+        equal
+          ~msg:(msg ^ ": " ^ name)
+          (array float_exact)
+          (Array.map (fun _ -> 0.0) a)
+          a)
+      [ ("nu_row", st.nu_row); ("nu_col", st.nu_col); ("nu", st.nu) ]
+  in
+  let st = Vega.adafactor_init p x in
+  zeros "init" st;
+  let x', st' = Vega.adafactor_step p ~lr:(rate 0.1) st ~params:x ~grads:x in
+  equal ~msg:"the leaf" (array int) (Nx.shape x) (Nx.shape x');
+  zeros "step" st'
+
+let empty_factored =
+  cases "a leaf of no element keeps a zero state" ~id:fst
+    [
+      ("float64 [2; 0]", empty_leaf (Nx.zeros Nx.float64 [| 2; 0 |]));
+      ("float64 [0; 3]", empty_leaf (Nx.zeros Nx.float64 [| 0; 3 |]));
+      ("float64 [0; 2; 3]", empty_leaf (Nx.zeros Nx.float64 [| 0; 2; 3 |]));
+      ("complex64 [2; 0]", empty_leaf (Nx.zeros Nx.complex64 [| 2; 0 |]));
+      ("bfloat16 [0; 3]", empty_leaf (Nx.zeros Nx.bfloat16 [| 0; 3 |]));
+    ]
+    (fun (_, check) -> check ())
 
 (* A leaf that is neither float nor complex holds zeros of its own shape in
    every part, and the step leaves them and it unchanged. A vector leaf held a
@@ -1201,6 +1244,7 @@ let () =
              test "adafactor_init factors the leaves of two axes or more"
                test_adafactor_shapes;
              adafactor_formula;
+             empty_factored;
              test "an integer leaf holds zeros of its shape in every part"
                test_adafactor_integer_leaf;
              adafactor_refuses;

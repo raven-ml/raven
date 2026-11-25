@@ -1197,11 +1197,12 @@ let adafactor_init p ?(factored = true) params =
     if updates x then Nx.scalar_like x (Nx.Dtype.zero (Nx.dtype x))
     else Nx.zeros_like x
   in
-  (* A statistic is the mean of zeros over its axis, so it lies where the
-     step's means of squared gradients will. *)
+  (* A statistic is the sum of zeros over its axis, so it lies where the step's
+     means of squared gradients will, and is zero over an empty axis, where a
+     mean is NaN. *)
   let factor axis x =
     if factors x then
-      Nx.mean ~axes:[ Nx.ndim x - axis ] ~keepdims:true (Nx.zeros_like x)
+      Nx.sum ~axes:[ Nx.ndim x - axis ] ~keepdims:true (Nx.zeros_like x)
     else unused x
   in
   {
@@ -1229,26 +1230,28 @@ let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
   in
   let keep = counted (fun dt -> one_minus_exp (exponent dt)) in
   let fresh = counted (fun dt -> Nx.exp (exponent dt)) in
+  (* A leaf of no element has nothing to average: it steps to itself and keeps
+     its state, where its means would be NaN. *)
   let f _ _ w x g s =
-    let average m v = Nx.add (Nx.mul m (at keep w)) (Nx.mul v (at fresh w)) in
-    let g2 = Nx.mul g g in
-    let n = Nx.ndim x in
-    let u, s =
-      if Nx.ndim s.(2) < n then
-        let row = average s.(0) (Nx.mean ~axes:[ n - 1 ] ~keepdims:true g2) in
-        let col = average s.(1) (Nx.mean ~axes:[ n - 2 ] ~keepdims:true g2) in
-        let row_mean = Nx.mean ~axes:[ n - 2 ] ~keepdims:true row in
-        let nu = Nx.div (Nx.mul row col) (Nx.add_s row_mean eps) in
-        (Nx.div g (Nx.add_s (Nx.sqrt nu) eps), [| row; col; s.(2) |])
-      else
-        let nu = average s.(2) g2 in
-        (Nx.div g (Nx.add_s (Nx.sqrt nu) eps), [| s.(0); s.(1); nu |])
-    in
-    let rms = Nx.sqrt (Nx.mean (Nx.mul u u)) in
-    let clip =
-      Nx.minimum_s (Nx.rdiv_s clipping_threshold rms) 1.0
-    in
-    (descend ~lr x (Nx.mul u clip), s)
+    if Nx.numel x = 0 then (x, s)
+    else
+      let average m v = Nx.add (Nx.mul m (at keep w)) (Nx.mul v (at fresh w)) in
+      let g2 = Nx.mul g g in
+      let n = Nx.ndim x in
+      let u, s =
+        if Nx.ndim s.(2) < n then
+          let row = average s.(0) (Nx.mean ~axes:[ n - 1 ] ~keepdims:true g2) in
+          let col = average s.(1) (Nx.mean ~axes:[ n - 2 ] ~keepdims:true g2) in
+          let row_mean = Nx.mean ~axes:[ n - 2 ] ~keepdims:true row in
+          let nu = Nx.div (Nx.mul row col) (Nx.add_s row_mean eps) in
+          (Nx.div g (Nx.add_s (Nx.sqrt nu) eps), [| row; col; s.(2) |])
+        else
+          let nu = average s.(2) g2 in
+          (Nx.div g (Nx.add_s (Nx.sqrt nu) eps), [| s.(0); s.(1); nu |])
+      in
+      let rms = Nx.sqrt (Nx.mean (Nx.mul u u)) in
+      let clip = Nx.minimum_s (Nx.rdiv_s clipping_threshold rms) 1.0 in
+      (descend ~lr x (Nx.mul u clip), s)
   in
   let parts = [ ("nu_row", st.nu_row); ("nu_col", st.nu_col); ("nu", st.nu) ] in
   let params, parts =
