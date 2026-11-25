@@ -1,19 +1,22 @@
 (tests
  (names
   test_kaun
-  test_init
-  test_fn
-  test_loss
-  test_metric
-  test_layers
+  test_linear
+  test_embedding
   test_conv
-  test_stateful
   test_attention
+  test_layer_norm
+  test_rms_norm
+  test_fn
+  test_rope
+  test_init
+  test_loss
   test_data
+  test_metric
+  test_stateful
   test_data_parallel
   test_jit_state
   test_half
-  test_rope
   test_decoder
   test_structures)
  (modules
