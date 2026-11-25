@@ -422,11 +422,7 @@ let bijector (type f g) (m : (_, _, f, 'd) t) i
   | Some b -> (
       match Nx.Dtype.equal_witness (D.dtype d) m.dtype with
       | Some Type.Equal -> b d
-      | None ->
-          invalid_argf "Norn_model.reparam: site %s is %s, the model %s"
-            m.sites.(i).site.name
-            (Nx.Dtype.name (D.dtype d))
-            (Nx.Dtype.name m.dtype))
+      | None -> assert false (* [reparam]'s selector types the site [m]'s *))
 
 (* [forward m i d u] is the continuous site [i]'s value at coordinates [u],
    fresh, and its log-determinant. *)
@@ -1132,10 +1128,7 @@ let fix sel v m =
   let context = "Norn_model.fix" in
   let i = select context m sel in
   let l = m.sites.(i) in
-  if
-    Nx.shape v <> l.site.shape
-    || Nx.Dtype.name (Nx.dtype v) <> l.value_dtype
-  then
+  if Nx.shape v <> l.site.shape then
     invalid_argf "%s: site %s is %s [%s], the value %s [%s]" context l.site.name
       l.value_dtype
       (shape_string l.site.shape)

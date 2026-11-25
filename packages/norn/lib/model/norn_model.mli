@@ -248,7 +248,7 @@ val reparam :
 
     [sel] is a selector: a projection of the latent values, [fun p -> p.theta].
     It is applied to fresh tensors and must return one of them. Raises
-    [Invalid_argument] if it computes, or if the site's dtype is not [m]'s. *)
+    [Invalid_argument] if it computes. *)
 
 val noncentre : ('p -> (float, 'f, 'd) Nx.t) -> ('p, 'y, 'f, 'd) t -> ('p, 'y, 'f, 'd) t
 (** [noncentre sel m] is [reparam sel Norn.Dist.standardize m]. *)
@@ -258,8 +258,8 @@ val fix :
 (** [fix sel v m] is [m] whose site at [sel] is the constant [v], with no
     density term. Its coordinates have no element: shape [[0]].
 
-    Raises [Invalid_argument] if [sel] computes, or if [v]'s dtype or shape is
-    not the site's. *)
+    Raises [Invalid_argument] if [sel] computes, or if [v]'s shape is not the
+    site's. *)
 
 (** {1:sites Sites} *)
 
