@@ -75,8 +75,9 @@ let is_mark u =
 (* Characters whose normalization does something: marks of several combining
    classes, Hangul jamo and syllables (U+11C3 is no trailing jamo), characters
    with a canonical or compatibility decomposition, singletons, composition
-   exclusions, decompositions that start with a mark, and the parts of
-   compositions in Indic and Tibetan scripts. *)
+   exclusions, decompositions that start with a mark, the parts of compositions
+   in Indic and Tibetan scripts, and the Unicode 16 starters of Tulu-Tigalari,
+   Gurung Khema and Kirat Rai whose decompositions compose backward. *)
 let nf_alphabet =
   [ "a"; "e"; "A"; "d"; "s"; " "; "\u{E9}"; "\u{301}"; "\u{300}"; "\u{302}";
     "\u{316}"; "\u{323}"; "\u{327}"; "\u{307}"; "\u{345}"; "\u{344}";
@@ -86,7 +87,11 @@ let nf_alphabet =
     "\u{FDFA}"; "\u{F73}"; "\u{F71}"; "\u{F72}"; "\u{1D15E}"; "\u{1D165}";
     "\u{1D16D}"; "\u{CCB}"; "\u{CC6}"; "\u{CC2}"; "\u{CD5}"; "\u{9CB}";
     "\u{9C7}"; "\u{9BE}"; "\u{2ADC}"; "\u{958}"; "\u{915}"; "\u{93C}";
-    "\u{3099}"; "\u{304B}"; "\u{FF76}"; "\u{FF9E}" ]
+    "\u{3099}"; "\u{304B}"; "\u{FF76}"; "\u{FF9E}"; "\u{1138B}"; "\u{113C2}";
+    "\u{113C5}"; "\u{113C7}"; "\u{113C8}"; "\u{1611E}"; "\u{16121}";
+    "\u{16122}"; "\u{16123}"; "\u{16124}"; "\u{16125}"; "\u{16126}";
+    "\u{16127}"; "\u{16128}"; "\u{16D63}"; "\u{16D67}"; "\u{16D68}";
+    "\u{16D69}" ]
 [@@ocamlformat "disable"]
 
 (* Valid UTF-8 after a run of ASCII: pieces of [nf_alphabet] and any scalar
@@ -105,13 +110,29 @@ let composed_at_every_offset =
   List.init 25 (fun k ->
       String.make k 'a' ^ "e\u{301}" ^ String.make (24 - k) 'b')
 
+(* Pairs whose second character decomposes to one that composes with the first:
+   U+16123 is U+1611E U+1611F, so U+1611E U+16123 is U+1611E U+1611E U+1611F,
+   which composes to U+16126. Every such pair below U+30000, found against uunf
+   18.0.0; CPython's unicodedata agrees. *)
+let composed_across_a_decomposition =
+  [
+    "\u{1138B}\u{113C5}"; "\u{1138B}\u{113C7}"; "\u{1138B}\u{113C8}";
+    "\u{113C2}\u{113C5}"; "\u{113C2}\u{113C7}"; "\u{113C2}\u{113C8}";
+    "\u{1611E}\u{16121}"; "\u{1611E}\u{16122}"; "\u{1611E}\u{16123}";
+    "\u{1611E}\u{16124}"; "\u{1611E}\u{16125}"; "\u{1611E}\u{16126}";
+    "\u{1611E}\u{16127}"; "\u{1611E}\u{16128}"; "\u{16D63}\u{16D68}";
+    "\u{16D67}\u{16D68}"; "\u{16D69}\u{16D68}";
+  ]
+[@@ocamlformat "disable"]
+
 let agrees_with_uunf form n text =
   equal string (Uunf_string.normalize_utf_8 form text) (Normalizer.apply n text)
 
 let nfc_tests =
   [
-    prop ~count:500 ~examples:composed_at_every_offset "is Unicode's NFC"
-      nf_text
+    prop ~count:500
+      ~examples:(composed_at_every_offset @ composed_across_a_decomposition)
+      "is Unicode's NFC" nf_text
       (agrees_with_uunf `NFC Normalizer.nfc);
     (* UAX #15: an LV syllable composes with a trailing jamo of U+11A8 to U+11C2
        by arithmetic, an LVT syllable with none; a mark blocked by one of the
@@ -136,7 +157,8 @@ let nfd_tests =
 
 let nfkc_tests =
   [
-    prop ~count:500 "is Unicode's NFKC" nf_text
+    prop ~count:500 ~examples:composed_across_a_decomposition
+      "is Unicode's NFKC" nf_text
       (agrees_with_uunf `NFKC Normalizer.nfkc);
   ]
 

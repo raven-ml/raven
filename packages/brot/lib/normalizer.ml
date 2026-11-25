@@ -573,11 +573,14 @@ let once f =
    the decompositions. [seconds]: the code points that can be the second
    character of a primary composite, that is the second of a two-character
    canonical decomposition, and the vowel and trailing jamo. [stable_nfc] and
-   [stable_nfkc]: the starters that are no second and normalize to themselves,
-   so that one followed by another comes out as it is, without decomposing.
-   Nothing decomposes into two characters above the Musical Symbols block
-   (U+1D1C0); the limit covers the CJK ideographs above, whose compatibility
-   forms normalize to something else. *)
+   [stable_nfkc]: the starters that are no second, normalize to themselves and
+   decompose to a first character that is no second either, so that one followed
+   by another comes out as it is, without decomposing. U+16123 normalizes to
+   itself but decomposes to U+1611E U+1611F, whose U+1611E composes with a
+   U+1611E before it: U+1611E U+16123 is U+16126. Nothing decomposes into two
+   characters above the Musical Symbols block (U+1D1C0); the limit covers the
+   CJK ideographs above, whose compatibility forms normalize to something
+   else. *)
 type bits = { seconds : Bytes.t; stable_nfc : Bytes.t; stable_nfkc : Bytes.t }
 
 let bits_limit = 0x30000
@@ -622,14 +625,26 @@ let bits =
            let a = Uchar.to_int (Uunf.d_uchar d.(0)) in
            self ~compat a && self ~compat d.(1) && composite a d.(1) = u
       in
+      (* The first character of [u]'s full decomposition. *)
+      let rec lead ~compat u =
+        if hangul u then u
+        else
+          let d = Uunf.decomp (Uchar.unsafe_of_int u) in
+          if Array.length d = 0 || ((not compat) && Uunf.d_compatibility d.(0))
+          then u
+          else lead ~compat (Uchar.to_int (Uunf.d_uchar d.(0)))
+      in
+      let stable ~compat u =
+        self ~compat u && not (bit seconds (lead ~compat u))
+      in
       for u = 0 to bits_limit - 1 do
         if
           Uchar.is_valid u
           && Uunf.ccc (Uchar.unsafe_of_int u) = 0
           && not (bit seconds u)
         then begin
-          if self ~compat:false u then set_bit stable_nfc u;
-          if self ~compat:true u then set_bit stable_nfkc u
+          if stable ~compat:false u then set_bit stable_nfc u;
+          if stable ~compat:true u then set_bit stable_nfkc u
         end
       done;
       { seconds; stable_nfc; stable_nfkc })

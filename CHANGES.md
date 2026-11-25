@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Normalizer.nfc` and `Normalizer.nfkc` compose a starter with the next one
+  when that one decomposes to a character composing backward, as Unicode asks:
+  `"\u{1611E}\u{16123}"` gives `"\u{16126}"`. It came out unchanged.
 - An empty `Decoder.bpe` suffix, `Decoder.ctc` delimiter or `Decoder.replace`
   pattern occurs before every character and at the end of a token, as in
   Hugging Face; it occurred nowhere.
