@@ -198,7 +198,7 @@ val clip_by_global_norm : ('p, 'd) Nx.Ptree.t -> max_norm:float -> 'p -> 'p
     device and can sit between a jitted backward pass and a jitted optimizer
     step.
 
-    Raises [Invalid_argument] if [max_norm <= 0.]. *)
+    Raises [Invalid_argument] if [max_norm] is not positive. *)
 
 val clip_by_value : ('p, 'd) Nx.Ptree.t -> max:float -> 'p -> 'p
 (** [clip_by_value p ~max grads] clips every gradient element to the interval
@@ -206,7 +206,7 @@ val clip_by_value : ('p, 'd) Nx.Ptree.t -> max:float -> 'p -> 'p
     leaf's dtype (or its parts'). A NaN element stays NaN. Leaves that are
     neither floats nor complex are returned unchanged.
 
-    Raises [Invalid_argument] if [max <= 0.]. *)
+    Raises [Invalid_argument] if [max] is not positive. *)
 
 (** {1:loss_scaling Loss Scaling}
 
@@ -328,7 +328,7 @@ val rate : float -> 'd Schedule.t
     [Vega.adamw_step p ~lr:(Vega.rate 1e-3) ~weight_decay:(Vega.rate 0.01)].
     Its number is data, as a {!Schedule}'s are.
 
-    Raises [Invalid_argument] if [v] is negative. *)
+    Raises [Invalid_argument] if [v] is negative or NaN. *)
 
 (** {1:decay Weight Decay}
 

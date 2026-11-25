@@ -578,11 +578,25 @@ let join_refusals =
     (fun (_, segments) ->
       raises_match Exn.invalid_arg (fun () -> S.join segments))
 
+(* A schedule's rate lies where its counter lies. *)
+let test_placement () =
+  let device = Result.get_ok (Rig.software "vega-schedule-0") in
+  let module D = (val Nx.devices [ device ]) in
+  let step = Nx.scalar_at D.on Nx.int32 3l in
+  let where x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x) in
+  equal string (where step)
+    (where (S.linear ~init_value:1.0 ~end_value:0.0 ~steps:10 step))
+
 let () =
   exit
     (run "vega schedules"
        [
-         group "basic" [ linear_formula; linear_refusals ];
+         group "basic"
+           [
+             test "a rate lies where its counter lies" test_placement;
+             linear_formula;
+             linear_refusals;
+           ];
          group "decay"
            [
              cosine_decay_formula;

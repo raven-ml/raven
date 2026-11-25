@@ -182,11 +182,12 @@ val one_cycle :
      ()] is the 1cycle schedule.
 
     Phase 1 (warmup): linear from [max_value / div_factor] to [max_value] over
-    [w = truncate (pct_start * total_steps)] steps. Phase 2 (decay): cosine from
-    [max_value] to [max_value / final_div_factor] over the remaining
-    [total_steps - w] steps, as {!warmup_cosine_decay}. Where [w] is [0], the
-    schedule is phase 2 alone over [total_steps], from [max_value] at [0]; where
-    [w] is [total_steps], phase 1 alone, which then stays at [max_value].
+    [w = truncate (pct_start * total_steps)] steps, the product a float64 one.
+    Phase 2 (decay): cosine from [max_value] to [max_value / final_div_factor]
+    over the remaining [total_steps - w] steps, as {!warmup_cosine_decay}. Where
+    [w] is [0], the schedule is phase 2 alone over [total_steps], from
+    [max_value] at [0]; where [w] is [total_steps], phase 1 alone, which then
+    stays at [max_value].
 
     [div_factor] defaults to [25.0]. [final_div_factor] defaults to [10000.0].
     [pct_start] defaults to [0.3].
