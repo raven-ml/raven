@@ -175,7 +175,16 @@ val pp_format : Format.formatter -> format -> unit
     A source decodes only the columns a request names and those of the
     conjuncts it applies ({!Talon.Source}), a nested column's every leaf (a
     column of values below its groups) when it is requested. The file's row
-    groups are its parts, each one batch of the request's columns.
+    groups are its parts, each one batch of the request's columns. A batch's
+    columns are canonical ({!Talon.Column}), so {!Talon.column} takes them
+    without a copy.
+
+    A page's values may be in each encoding Parquet defines for their physical
+    type: [PLAIN], [RLE] for booleans, a dictionary, [DELTA_BINARY_PACKED],
+    [DELTA_LENGTH_BYTE_ARRAY], [DELTA_BYTE_ARRAY] and [BYTE_STREAM_SPLIT]. Its
+    levels are read in [RLE]. Levels in [BIT_PACKED], which Parquet deprecates,
+    fail the read. A page of a type talon does not read, such as an index page,
+    is skipped.
 
     {2:conjuncts Text conjuncts}
 
