@@ -2043,7 +2043,7 @@ let train_bpe ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
 let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?bos_token ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000)
     ?(min_frequency = 0) ?limit_alphabet ?initial_alphabet
-    ?(continuing_subword_prefix = "##") ?end_of_word_suffix data =
+    ?(continuing_subword_prefix = "##") data =
   let initial_alphabet =
     Option.value initial_alphabet ~default:[] |> initial_alphabet_of
   in
@@ -2054,7 +2054,7 @@ let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
         (fst
            (Wordpiece.train ~min_frequency ~vocab_size ~show_progress:false
               ~special_tokens ~limit_alphabet ~initial_alphabet
-              ~continuing_subword_prefix ~end_of_word_suffix ~unk_token words)))
+              ~continuing_subword_prefix ~unk_token words)))
     data
 
 let train_word_level ?init ?normalizer ?pre ?post ?decoder ?added_tokens

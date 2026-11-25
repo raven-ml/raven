@@ -1798,7 +1798,6 @@ val train_wordpiece :
   ?limit_alphabet:int ->
   ?initial_alphabet:string list ->
   ?continuing_subword_prefix:string ->
-  ?end_of_word_suffix:string ->
   data ->
   t
 (** [train_wordpiece data] trains a WordPiece tokenizer from [data].
@@ -1817,7 +1816,6 @@ val train_wordpiece :
       point per string as in {!train_bpe}. Default: [[]].
     - [continuing_subword_prefix]: prefix for non-initial subwords. Default:
       ["##"].
-    - [end_of_word_suffix]: suffix marking word boundaries. Default: none.
     - [unk_token]: as in {!wordpiece}. The trained vocabulary holds it only when
       [added_tokens] or [init] carries it. Default: ["[UNK]"].
 

@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- **Breaking:** `train_wordpiece` drops `?end_of_word_suffix`. The WordPiece
+  model matches no suffix, so a word whose trained last piece carried it
+  encoded as the unknown token.
 - Trainers count `bos_token`, `eos_token` and `pad_token` in `vocab_size` and
   number them first with the added tokens, as special tokens. They took ids
   past the trained vocabulary.

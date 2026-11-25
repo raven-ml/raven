@@ -132,15 +132,14 @@ val train :
   limit_alphabet:int option ->
   initial_alphabet:string list ->
   continuing_subword_prefix:string ->
-  end_of_word_suffix:string option ->
   unk_token:string option ->
   (string * int) list ->
   t * string list
 (** [train ~min_frequency ~vocab_size ~show_progress ~special_tokens
-     ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-     ~end_of_word_suffix ~unk_token word_counts] learns a WordPiece vocabulary
-    from [word_counts], each word paired with the number of times it occurs,
-    using BPE merge training internally.
+     ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix ~unk_token
+     word_counts] learns a WordPiece vocabulary from [word_counts], each word
+    paired with the number of times it occurs, using BPE merge training
+    internally.
 
     - [min_frequency] is the minimum pair frequency to merge.
     - [vocab_size] is the target vocabulary size.
@@ -149,7 +148,6 @@ val train :
     - [limit_alphabet] caps the number of distinct initial characters kept.
     - [initial_alphabet] seeds the character set, one code point per string.
     - [continuing_subword_prefix] is set on the resulting model.
-    - [end_of_word_suffix] appended to final subwords if given.
     - [unk_token] is the model's, as in {!create}. No token is added for it: the
       vocabulary holds it only when [special_tokens] does.
 
