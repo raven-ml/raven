@@ -368,6 +368,23 @@ let restarts =
       Format.fprintf ppf "%s, key %d, depth %d, %d steps, at [%g; %g; %g]"
         name seed depth steps a b c)
 
+(* The state at b after one step of [m] from 0 over [a, b], where b − a rounds
+   so that a + (b − a) is not b, under no drift and a diffusion that is zero
+   except at b; and the increment and area over [a, b]. *)
+let live_at_end m =
+  let a = -7.074863082399303 and b = 4.437342817489506 in
+  let w =
+    Sde.Brownian.v (Nx.Rng.key 35) f64 ~shape:[| 3 |] ~t0:(-8.) ~t1:5. ~depth:4
+  in
+  let y =
+    Sde.march one m ~steps:1
+      ~drift:(fun _ x -> Nx.zeros_like x)
+      ~diffusion:(fun t _ dw -> Nx.mul dw (Nx.cast f64 (Nx.equal_s t b)))
+      w ~at:(vec [| a; b |]) (Nx.zeros f64 [| 3 |])
+  in
+  let dw, h = Sde.Brownian.increment w (scalar a) (scalar b) in
+  (Nx.get [ 1 ] y, dw, h)
+
 let march_tests =
   let w = path ~n:3 31 in
   let run ?(steps = 4) ?(m = Sde.euler_maruyama) at x =
@@ -543,6 +560,16 @@ let march_tests =
              ~at:(vec [| 0.; 1. |])
              (x0 3));
         equal (pair int int) expected (!drifts, !diffusions));
+    test "sra1 reads the diffusion at its interval's end itself" (fun () ->
+        (* SRA1 applies g (t + h) to ΔW − I₁₀ / h = ΔW / 2 − H (Rößler, 2010). *)
+        let y, dw, h = live_at_end Sde.sra1 in
+        equal (Oracle.tensor ()) (Nx.sub (Nx.div_s dw 2.) h) y);
+    test "reversible_heun reads the diffusion at its interval's end itself"
+      (fun () ->
+        (* The reversible Heun method applies g at the step's end to ΔW / 2
+           (Kidger, Foster, Li and Lyons, 2021). *)
+        let y, dw, _ = live_at_end Sde.reversible_heun in
+        equal (Oracle.tensor ()) (Nx.div_s dw 2.) y);
     test "steps below 1 raise" (fun () ->
         raises_with "steps = 0 is not positive" (fun () ->
             run ~steps:0 (vec [| 0.; 1. |]) (x0 3)));

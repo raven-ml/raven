@@ -1281,6 +1281,11 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Sde.sra1` and `Sde.reversible_heun` read a step's end at the next step's
+  start, and the last step's at its interval's end itself, as `jera.mli`
+  states. They read it at the start plus the step's size, which can round
+  apart: a diffusion or drift that depends on time was read past or short of
+  `at`'s times, as over `[−7.074863082399303; 4.437342817489506]`.
 - `Minimize.bracket` evaluates no two points closer than `√ε |x|` plus a
   third of the tolerance's scale, as Brent's `localmin` does, and ends an
   element `Stalled` when its bracket narrows to that step short of `tol`.

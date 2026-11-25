@@ -211,14 +211,16 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
 
      The path's W and I at a step's end carry into the next step, which starts
      there to the bit, so the march queries the path once per step and sees
-     what a query at each start would. *)
+     what a query at each start would. A step that reads its end time takes
+     that next start, or [t1]: its start plus its size can round apart from
+     it. *)
   let path = Nx.Ptree.(pair tensor tensor) in
   let interval c step t0 t1 carry =
     let h, starts = March.grid ~steps t0 t1 in
     let advance t t' h (carry, start) =
       let stop = Brownian.point w t' in
       let dw, area = Brownian.between start stop h in
-      (step t h dw area carry, stop)
+      (step t t' h dw area carry, stop)
     in
     let carry =
       March.steps
@@ -243,9 +245,9 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
   let simple step = run y step ~state:Fun.id y0 in
   match m with
   | Euler_maruyama ->
-      simple (fun t h dw _ v -> add (g t v dw) (axpy h (f t v) v))
+      simple (fun t _ h dw _ v -> add (g t v dw) (axpy h (f t v) v))
   | Milstein ->
-      simple (fun t h dw _ v ->
+      simple (fun t _ h dw _ v ->
           (* A step whose span rounds to zero has no correction; √1 stands in
              for its √h, so that neither direction meets 0 / 0. *)
           let zero = Nx.equal_s h 0. in
@@ -259,10 +261,9 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
           let q = Nx.where zero (Nx.zeros_like q) q in
           add (g t support q) (add (g t v (Nx.sub dw q)) drifted))
   | Sra1 ->
-      simple (fun t h dw area v ->
+      simple (fun t t1 h dw area v ->
           (* I_(1,0) / h = ΔW / 2 + H. *)
           let i10 = Nx.add (Nx.div_s dw 2.) area in
-          let t1 = Nx.add t h in
           let k1 = f t v in
           let stage =
             add (g t1 v (Nx.mul_s i10 1.5)) (axpy (Nx.mul_s h 0.75) k1 v)
@@ -274,7 +275,7 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
   | Reversible_heun ->
       (* The carry is (y, ŷ, f(t, ŷ)). *)
       let c = Nx.Ptree.(pair y (pair y y)) in
-      let step t h dw _ (v, (hat, fhat)) =
+      let step t t1 h dw _ (v, (hat, fhat)) =
         let half = Nx.div_s dw 2. in
         let noise = g t hat dw in
         let hat' =
@@ -283,7 +284,6 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
                (axpy (Nx.neg one) hat
                   (Nx.Ptree.scale y (Nx.scalar_at here dtype 2.) v)))
         in
-        let t1 = Nx.add t h in
         let fhat' = f t1 hat' in
         let v = axpy (Nx.div_s h 2.) fhat (axpy (Nx.div_s h 2.) fhat' v) in
         let v =
