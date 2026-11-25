@@ -31,7 +31,8 @@ type t = {
           coordinates. *)
   step : float;  (** The largest angle of an arc's chord within [tol]. *)
   reach : float;  (** How far the pen paints from the path, in pixels. *)
-  pt : float array;  (** A point [crossing] or [far_arc] finds. *)
+  pt : float array;
+      (** A point [crossing] or [far_arc] finds, or a vector [unit] does. *)
   wx0 : float;
       (** The window grown by the reach of the pen: what lies outside it paints
           nothing visible. *)
@@ -195,6 +196,23 @@ let[@inline] join p ~outer x y ax ay bx by =
         line_to p (x +. nbx) (y +. nby)
     | `Miter | `Bevel -> line_to p (x +. nbx) (y +. nby)
 
+(* [unit p x0 y0 x1 y1] sets [p.pt] to the unit vector of the step between two
+   distinct points, from [(x0, y0)] to [(x1, y1)]. The step is halved where it
+   overflows, so that it keeps its direction; halving one of the least subnormal
+   would make it 0. It is then scaled by its larger component: [Float.hypot] of
+   subnormals keeps few of their bits, and dividing by it would not give length
+   1. *)
+let[@inline] unit p x0 y0 x1 y1 =
+  let dx = x1 -. x0 and dy = y1 -. y0 in
+  let finite = Float.is_finite dx && Float.is_finite dy in
+  let dx = if finite then dx else (0.5 *. x1) -. (0.5 *. x0) in
+  let dy = if finite then dy else (0.5 *. y1) -. (0.5 *. y0) in
+  let s = Float.max (Float.abs dx) (Float.abs dy) in
+  let dx = dx /. s and dy = dy /. s in
+  let l = Float.hypot dx dy in
+  p.pt.(0) <- dx /. l;
+  p.pt.(1) <- dy /. l
+
 (* [cap p x y dx dy] continues the outline from the left of a line ending at
    [(x, y)] along the unit vector [(dx, dy)] around its end to its right. *)
 let cap p x y dx dy =
@@ -234,16 +252,9 @@ let polyline p xs ys n ~closed ~dx ~dy =
     let ux = Array.make segs 0. and uy = Array.make segs 0. in
     for i = 0 to segs - 1 do
       let j = if i = n - 1 then 0 else i + 1 in
-      let ddx = ref (xs.(j) -. xs.(i)) and ddy = ref (ys.(j) -. ys.(i)) in
-      (* Halved where the difference overflows: only its direction counts. *)
-      if not (Float.is_finite !ddx && Float.is_finite !ddy) then begin
-        ddx := (0.5 *. xs.(j)) -. (0.5 *. xs.(i));
-        ddy := (0.5 *. ys.(j)) -. (0.5 *. ys.(i))
-      end;
-      let ddx = !ddx and ddy = !ddy in
-      let l = Float.hypot ddx ddy in
-      ux.(i) <- ddx /. l;
-      uy.(i) <- ddy /. l
+      unit p xs.(i) ys.(i) xs.(j) ys.(j);
+      ux.(i) <- p.pt.(0);
+      uy.(i) <- p.pt.(1)
     done;
     let hw = p.hw in
     (* [left i j] is whether the corner from segment [i] to [j] has its outer
@@ -347,12 +358,9 @@ let strip p src kept ~closed ~ends =
     else begin
       let px = kept.xs.(kept.n - 1) and py = kept.ys.(kept.n - 1) in
       if !ux = 0. && !uy = 0. && (x <> px || y <> py) then begin
-        (* Halved, so that a difference beyond the floats keeps its
-           direction. *)
-        let dx = (0.5 *. x) -. (0.5 *. px) and dy = (0.5 *. y) -. (0.5 *. py) in
-        let d = Float.hypot dx dy in
-        ux := dx /. d;
-        uy := dy /. d
+        unit p px py x y;
+        ux := p.pt.(0);
+        uy := p.pt.(1)
       end;
       if far m px py x y then push kept x y
       else if ends && kept.n = 1 && i < src.n - 1 then begin

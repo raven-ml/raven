@@ -319,6 +319,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin_vg_raster` draws a subpath whose points lie a few subnormals apart with
+  its pen's extent and direction. An open one drew no square caps or turned
+  them, and a closed one with round joins drew a disc up to √2 too wide.
 - `Hugin_vg_raster` turns the caps of a dash shorter than a twentieth of a pixel
   along its line. They took the direction of the rounding between its points,
   which turned a square dot, or drew nothing where that rounding was subnormal.

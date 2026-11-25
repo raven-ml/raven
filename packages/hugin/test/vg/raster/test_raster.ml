@@ -682,6 +682,35 @@ let strokes =
               (segment 10. 10. (10. +. dx) (10. +. dy))
           in
           equal float_exact 4. (coverage (render 20. 20. p)));
+      cases "a line the least subnormal long is a square with square caps"
+        ~id:fst
+        [
+          ("along x", (Float.succ 0., 0.));
+          ("along y", (0., Float.succ 0.));
+          ("across both", (Float.succ 0., Float.succ 0.));
+        ]
+        (fun (_, (dx, dy)) ->
+          (* Its caps alone make a square of 2 along it, turned an eighth of a
+             turn across both axes. *)
+          let p =
+            Picture.transform (Affine.translate 10. 10.)
+              (Picture.stroke (Stroke.v ~cap:`Square 2.) red
+                 (segment 0. 0. dx dy))
+          in
+          let side = if dx = 0. || dy = 0. then 2. else 2. *. Float.sqrt 2. in
+          area ~box:(side, side) 4. (coverage (render 20. 20. p)));
+      test "a closed line the least subnormal long is a disc with round joins"
+        (fun () ->
+          (* It keeps both its points, and its joins at both ends make a disc of
+             radius 1. *)
+          let e = Float.succ 0. in
+          let p =
+            Picture.transform (Affine.translate 10. 10.)
+              (Picture.stroke (Stroke.v ~join:`Round 2.) red
+                 (Path.close (segment 0. 0. e e)))
+          in
+          area ~arc:(2. *. Float.pi) ~box:(2., 2.) Float.pi
+            (coverage (render 20. 20. p)));
       cases "a repeated point leaves a dashed line as it is" ~id:fst
         [
           ( "within it",
