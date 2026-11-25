@@ -84,7 +84,7 @@ let init =
             Nx.add (banana x) (Nx.slice [ Nx.L [ 0; 0; 0; 0 ]; Nx.I 0 ] x)
           in
           raises_match
-            (Exn.invalid_arg ~sub:"Norn.Nuts.init: the density's row 0 changes")
+            (Exn.invalid_arg ~sub:"Norn.Nuts.init: the density's row")
             (fun () -> N.init t coupled (start 4)));
       test "a density NaN at a chain is refused, naming it" (fun () ->
           let nan_at_two x =
@@ -331,15 +331,15 @@ let stan geometry ~max_depth ~eps key (z0 : float array) =
   }
 
 (* Four chains move in lock step, each with its own step size, building its own
-   tree and stopping on its own. The 80 values of (maximum depth, narrow
-   geometry, key) are checked whole, each a transition. *)
+   tree and stopping on its own. The 80 keys are checked whole, each a
+   transition, every (maximum depth, geometry) pair on five of them. *)
 let chains = 4
 let step_sizes = [| 0.6; 0.8; 1.; 1.2 |]
 
 let stan_tree =
-  prop ~count:80 "a transition is Stan's recursive tree"
-    Gen.(triple (int_range 1 8) bool (int_range 0 4))
-  @@ fun (max_depth, is_narrow, seed) ->
+  prop ~count:80 "a transition is Stan's recursive tree" (Gen.int_range 0 79)
+  @@ fun seed ->
+  let max_depth = 1 + (seed mod 8) and is_narrow = seed / 8 mod 2 = 0 in
   let key = Nx.Rng.key (1000 + seed) in
   let x0 =
     Nx.Rng.normal ~key:(Nx.Rng.fold_in key 7) Nx.float64 [| chains; dim |]
@@ -386,6 +386,43 @@ let stan_tree =
         (floats g)
         (floats (Nx.slice [ Nx.I i ] s'.grad)))
     refs
+
+(* A stopped chain is held. In one dimension the density is [-x² / 2] on [|x| <
+   1], [-inf] on [1 <= |x| < 10] and NaN beyond, at a finite position that
+   raises. Chain 0 starts at 0.9 with a step of 1 and stops at its first leaf in
+   the [-inf] band; chain 1 starts at 0 with a step of 0.01 and keeps the loop
+   running to its depth of 6. Held, chain 0 is evaluated again where it stopped;
+   moved on, its momentum, which the band's flat density leaves alone, carries
+   it past 10 within the 62 leaves that remain. The 16 keys are checked
+   whole. *)
+let fenced x =
+  let r = Nx.abs (Nx.slice [ Nx.A; Nx.I 0 ] x) in
+  Nx.where (Nx.greater_equal_s r 10.) (Nx.full_like r Float.nan)
+    (Nx.where (Nx.greater_equal_s r 1.)
+       (Nx.full_like r Float.neg_infinity)
+       (Nx.mul_s (Nx.square r) (-0.5)))
+
+let held =
+  prop ~count:16
+    "a stopped chain's density is not evaluated past its last point"
+    (Gen.int_range 0 15)
+  @@ fun seed ->
+  let unit =
+    Norn.Gaussian.diagonal t Nx.float64
+      ~mean:(Nx.zeros Nx.float64 [| 1 |])
+      ~scale:(Nx.ones Nx.float64 [| 1 |])
+  in
+  let x = Nx.create Nx.float64 [| 2; 1 |] [| 0.9; 0. |] in
+  let s =
+    with_step_size [| 1.; 0.01 |]
+      (N.init t ~max_depth:6 ~geometry:unit fenced x)
+  in
+  let s' = N.step t fenced (Nx.Rng.key seed) s in
+  let st = s'.stats in
+  cover "chain 0 diverges while chain 1 runs on"
+    (Nx.item [ 0 ] st.diverging
+    && Nx.item [ 0 ] st.n_steps < Nx.item [ 1 ] st.n_steps);
+  less float_exact ~than:1. (Float.abs (Nx.item [ 0; 0 ] s'.position))
 
 (* Invariance. After five transitions of every chain from the banana's exact
    draws, [a] and [b - 0.3 a²] keep their normal CDFs within the
@@ -440,6 +477,7 @@ let step =
   group "step"
     [
       stan_tree;
+      held;
       test "a chain's transition does not depend on the chain count" (fun () ->
           let one =
             N.step t banana (Nx.Rng.key 3)
@@ -488,8 +526,9 @@ let step =
           in
           let lp = Norn.with_gradient t reads in
           let s = N.init t ~geometry:narrow.g lp (start 2) in
-          raises_match (Exn.invalid_arg ~sub:"traced") (fun () ->
-              N.step t lp (Nx.Rng.key 3) s));
+          raises_match
+            (fun e -> Exn.invalid_arg e)
+            (fun () -> N.step t lp (Nx.Rng.key 3) s));
       (* norn.mli's Gaussian: the elements of every float tensor taken together
          are one vector. *)
       test "a structure moves as its float elements taken together" (fun () ->
@@ -555,12 +594,44 @@ let scaled x =
 
 let scales = [| 10.; 0.1 |]
 
+(* A correlated Gaussian: covariance [[4, 1.8]; [1.8, 1]], correlation 0.9. *)
+let precision =
+  let det = (4. *. 1.) -. (1.8 *. 1.8) in
+  Nx.create Nx.float64 [| 2; 2 |]
+    [| 1. /. det; -1.8 /. det; -1.8 /. det; 4. /. det |]
+
+let correlated x =
+  Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.mul x (Nx.matmul x precision))) (-0.5)
+
+(* [fitted g v] is [vᵀ Σ⁻¹ v] of the Gaussian [g]: twice its log density's fall
+   from its mean to its mean plus [v]. *)
+let fitted g v =
+  let m = Norn.Gaussian.mean t g in
+  let at x =
+    Nx.item [ 0 ] (Norn.Gaussian.log_density t g (Nx.unsqueeze ~axes:[ 0 ] x))
+  in
+  2. *. (at m -. at (Nx.add m v))
+
+(* [quadratic f] is [f] at three directions. *)
+let quadratic f =
+  Array.map
+    (fun v -> f (Nx.create Nx.float64 [| 2 |] v))
+    [| [| 1.; 0. |]; [| 0.; 1. |]; [| 1.; 1. |] |]
+
 (* Four chains warmed for an acceptance of 0.95, away from the default 0.8. *)
-let warmed =
-  lazy
-    (let x = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 4; dim |] in
-     N.warmup t scaled (Nx.Rng.key 4) ~steps:300
-       (N.init t ~accept:0.95 scaled x))
+let warm accept =
+  let x = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 4; dim |] in
+  N.warmup t scaled (Nx.Rng.key 4) ~steps:300 (N.init t ~accept scaled x)
+
+let warmed = lazy (warm 0.95)
+
+(* [acceptance s] is the mean acceptance of 200 draws from [s]. *)
+let acceptance s =
+  let _, _, st = N.sample t scaled (Nx.Rng.key 5) ~draws:200 s in
+  Nx.item []
+    (Nx.mean
+       (st : _ Norn.Draws.t :> (Nx.float64_elt, Nx.host) Norn.Stats.t)
+         .acceptance)
 
 let warmup =
   group "warmup"
@@ -576,14 +647,18 @@ let warmup =
           equal (array float_exact) (floats s.step_size) (floats s'.step_size);
           equal int32 0l (Nx.item [] s'.draw));
       (* Stan's schedule: no geometry is fitted below 20 steps. *)
+      (* At 20 steps the schedule is windows of 3, 15 and 2, the second
+         refitting; on a Gaussian the fit is the target's (see below). *)
       test "fewer than 20 steps keep the geometry, 20 refit it" (fun () ->
-          let s = N.init t ~geometry:narrow.g banana (start 2) in
+          let s = N.init t scaled (start 2) in
           let v steps =
-            floats (variances (N.warmup t banana (Nx.Rng.key 1) ~steps s))
+            floats (variances (N.warmup t scaled (Nx.Rng.key 1) ~steps s))
           in
-          let before = floats (variances s) in
-          equal (array float_exact) before (v 19);
-          not_equal (array float_exact) before (v 20));
+          equal (array float_exact) (floats (variances s)) (v 19);
+          equal
+            (array (float_rel ~rel:1e-9 ~abs:0.))
+            [| 100.; 0.01; 100.; 0.01 |]
+            (v 20));
       (* On a Gaussian the score is linear in the draws, [-x / σ²], so the
          Fisher fit [sqrt (sd x / sd score)] is σ for any draws, and what
          remains is rounding. The default geometry is off by a factor of [1 /
@@ -598,29 +673,49 @@ let warmup =
       (* Dual averaging aims each chain's step size at [s.accept]; 0.95 is away
          from the default 0.8 and from the step-size search's 0.8. Over keys 1
          to 40 the mean acceptance of 200 draws was 0.957 ± 0.0043 (sd), so 0.03
-         lies 5.3 sds out: a rate of about 1e-7. At 0.6 the averaged step size
-         of a 300-step warmup accepts 0.76 ± 0.03, which says nothing of the
-         target. *)
+         lies 5.3 sds out: a rate of about 1e-7. *)
       test "the step sizes give the target acceptance" (fun () ->
-          let _, _, st =
-            N.sample t scaled (Nx.Rng.key 5) ~draws:200 (Lazy.force warmed)
-          in
-          let st = (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t) in
-          equal (float 0.03) 0.95 (Nx.item [] (Nx.mean st.acceptance)));
-      test "a rank-1 warmup fits one direction" (fun () ->
+          equal (float 0.03) 0.95 (acceptance (Lazy.force warmed)));
+      (* Over keys 1 to 40 a target of 0.6 accepted 0.761 ± 0.032 (sd): 0.6 and
+         0.92 lie 5 sds out, a rate of about 6e-7 each. *)
+      test "a short warmup accepts between its target and about 0.8" (fun () ->
+          let a = acceptance (warm 0.6) in
+          greater float_exact ~than:0.6 a;
+          less float_exact ~than:0.92 a);
+      (* On a Gaussian of precision P the scores are -P (x - μ), so the fit's
+         directions, which match the draws' covariance to the scores', give the
+         covariance P⁻¹ for any draws. The fit's ridge of 1e-5, against the
+         whitened covariance's smallest eigenvalue, near 0.1 at a correlation of
+         0.9, moves it by about 1e-4. *)
+      test "each chain's directions fit a correlated Gaussian's covariance"
+        (fun () ->
           let x = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 2; dim |] in
           let s =
-            N.warmup t scaled (Nx.Rng.key 4) ~steps:150
-              (N.init t ~rank:1 scaled x)
+            N.warmup t correlated (Nx.Rng.key 4) ~steps:150
+              (N.init t correlated x)
           in
-          equal int 1 (rank s));
+          for i = 0 to 1 do
+            let g =
+              Nx.Ptree.map (Norn.Gaussian.ptree t)
+                (fun _ x -> Nx.get [ i ] x)
+                s.geometry
+            in
+            equal
+              (array (float_rel ~rel:1e-3 ~abs:0.))
+              (quadratic (fun v ->
+                   Nx.item [] (Nx.sum (Nx.mul v (Nx.matmul precision v)))))
+              (quadratic (fitted g))
+          done);
       test "a rank above the dimension fits as many directions as it has"
         (fun () ->
           let s = N.init t ~rank:2 normal (Nx.zeros Nx.float64 [| 2; 1 |]) in
           let s = N.warmup t normal (Nx.Rng.key 3) ~steps:30 s in
           equal int 1 (rank s);
           Array.iter
-            (fun e -> satisfies ~claim:"finite" (float 1e-12) Float.is_finite e)
+            (fun e ->
+              satisfies ~claim:"finite and positive" (float 1e-12)
+                (fun e -> Float.is_finite e && e > 0.)
+                e)
             (floats s.step_size));
       (* Chain 3 starts beside a wall where the density falls to -inf, and its
          trees diverge there. *)
@@ -638,6 +733,10 @@ let warmup =
             N.warmup t walled (Nx.Rng.key 6) ~steps:30 (N.init t walled x)
           in
           let one = warm (Nx.slice [ Nx.R (0, 1) ] x) and four = warm x in
+          let _, _, st = N.sample t walled (Nx.Rng.key 7) ~draws:10 four in
+          let st = (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t) in
+          mem ~msg:"chain 3 diverges" bool true
+            (Array.to_list (floats (Nx.slice [ Nx.I 3 ] st.diverging)));
           equal (array float_exact) (row0 one.position) (row0 four.position);
           equal float_exact
             (Nx.item [ 0 ] one.step_size)
