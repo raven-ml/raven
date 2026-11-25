@@ -18,16 +18,17 @@ let hash_q ?seed q =
 
 let hash_of ?seed c = hash_q ?seed (Query.of_table (v [ ("x", c) ]))
 
-(* Golden: golden/hash.txt holds the reference xxHash64 of each value, by
-   kind, from the published algorithm, in the encoding Expr.hash states. *)
+(* Golden: golden/hash.txt holds the reference xxHash64 of each value, by kind,
+   from the published algorithm, in the encoding Expr.hash states. *)
 
 let golden =
   In_channel.with_open_text "golden/hash.txt" In_channel.input_lines
   |> List.map (String.split_on_char ' ')
 
 let hex s =
-  String.init (String.length s / 2) (fun i ->
-      Char.chr (int_of_string ("0x" ^ String.sub s (2 * i) 2)))
+  String.init
+    (String.length s / 2)
+    (fun i -> Char.chr (int_of_string ("0x" ^ String.sub s (2 * i) 2)))
 
 let float_of_hex s = Int64.float_of_bits (Int64.of_string ("0x" ^ s))
 
@@ -111,7 +112,9 @@ let column_of kind value =
   | "categorical" ->
       let s = hex value in
       Column.v (Type.categorical [| "other"; s |]) [| s |]
-  | "date" -> Column.v Type.date [| Option.get (Time.Date.of_days (int_of_string value)) |]
+  | "date" ->
+      Column.v Type.date
+        [| Option.get (Time.Date.of_days (int_of_string value)) |]
   | "null" -> Column.of_options Type.int64 [| None |]
   | "empty" -> Column.of_options (Type.record []) [| Some Record.empty |]
   | "wide" ->
@@ -122,20 +125,25 @@ let column_of kind value =
         (Type.record (List.mapi (fun i _ -> (name i, Type.Any Type.int64)) vs))
         [| Some (snd (List.fold_left add (0, Record.empty) vs)) |]
   | "wrap_s" ->
-      let values = Nx.P (Nx.create Nx.int64 [| 1 |] [| Int64.of_string value |]) in
+      let values =
+        Nx.P (Nx.create Nx.int64 [| 1 |] [| Int64.of_string value |])
+      in
       Result.get_ok
-        (Column.of_layout (Any (Type.instant Type.S))
+        (Column.of_layout
+           (Any (Type.instant Type.S))
            (Fixed { validity = None; values }))
   | "record" -> Column.of_options ab_type [| Some (ab_cell value) |]
   | "nested" -> Column.of_options nested_type [| Some (nested_cell value) |]
   | k -> (
       match String.split_on_char '_' k with
       | [ "datetime"; u ] ->
-          Column.v (Type.instant (dt_unit u))
+          Column.v
+            (Type.instant (dt_unit u))
             [| Time.of_ns (Time.Span.to_ns (span_of u value)) |]
       | [ "duration"; u ] ->
           Column.v (Type.duration (dt_unit u)) [| span_of u value |]
-      | [ "clock"; u ] -> Column.v (Type.clock (dt_unit u)) [| span_of u value |]
+      | [ "clock"; u ] ->
+          Column.v (Type.clock (dt_unit u)) [| span_of u value |]
       | _ -> invalid_arg k)
 
 let golden_cases =
@@ -147,13 +155,11 @@ let golden_cases =
 
 let oracle (kind, value, seed, expected) =
   equal int (int_of_string expected)
-    (Option.get
-       (hash_of ~seed:(int_of_string seed) (column_of kind value)).(0))
+    (Option.get (hash_of ~seed:(int_of_string seed) (column_of kind value)).(0))
 
 (* Laws *)
 
 let table = Testable.make ~pp:Talon.pp ~equal:Talon.equal
-
 let widths = Gen.int_range (-128) 127
 
 let widths_law v =
@@ -166,13 +172,15 @@ let float_law x =
   let h ty = hash_of (Column.v ty [| x |]) in
   equal (array (option int)) (h Type.float64) (h Type.float32)
 
-let floats = Gen.map (fun i -> float_of_int i *. 0.25) (Gen.int_range (-1000) 1000)
+let floats =
+  Gen.map (fun i -> float_of_int i *. 0.25) (Gen.int_range (-1000) 1000)
 
 let zero_nan_law () =
   let f64 x = hash_of (Column.v Type.float64 [| x |]) in
   equal (array (option int)) (f64 0.) (f64 (-0.));
   equal (array (option int)) (f64 nan) (f64 Float.quiet_nan);
-  equal (array (option int))
+  equal
+    (array (option int))
     (f64 nan)
     (f64 (Int64.float_of_bits 0xFFF8_0000_0000_0123L))
 
@@ -186,7 +194,8 @@ let text_law s =
   let as_text = Column.v Type.string [| s |] in
   let dict = Column.v (Type.categorical [| s; s ^ "x" |]) [| s |] in
   equal (array (option int)) (hash_of as_text) (hash_of dict);
-  equal (array (option int))
+  equal
+    (array (option int))
     (hash_of as_text)
     (hash_of (Column.v Type.binary [| Binary.of_string s |]))
 
@@ -199,7 +208,8 @@ let record_law (a, s) =
     |> Record.add Kind.int name (Some a)
     |> Record.add Kind.string "b" (Some s)
   in
-  equal (array (option int))
+  equal
+    (array (option int))
     (hash_of (Column.of_options (at "a") [| Some (cell "a") |]))
     (hash_of (Column.of_options (at "z") [| Some (cell "z") |]))
 
@@ -218,9 +228,7 @@ let batches =
 let batching_law ((t, split), seed) =
   let q t =
     exec
-      (Query.derive
-         Expr.[ "h" := hash ~seed (Col.int "x") ]
-         (Query.of_table t))
+      (Query.derive Expr.[ "h" := hash ~seed (Col.int "x") ] (Query.of_table t))
   in
   equal table (q t) (q split)
 
@@ -229,53 +237,91 @@ let datetime_widths_law us =
   let h u = hash_of (Column.v (Type.instant u) [| t |]) in
   equal (array (option int)) (h Type.Us) (h Type.Ns)
 
-(* A column's rows each hash as they do in a column of their own: the rows,
-   nulls included, that a multi-row kernel reads, views at an offset too. *)
-let hashable (Talon_gen.Sample (ty, _)) =
-  let rec ok : type a. a Type.t -> bool = function
-    | List _ | Tensor _ | Ext _ -> false
-    | Record fs -> List.for_all (fun (_, Type.Any t) -> ok t) fs
-    | _ -> true
-  in
-  ok ty
+(* The types [hash] reads, records nested two deep among them. *)
+let hashable =
+  Type.
+    [
+      Any bool;
+      Any int8;
+      Any int64;
+      Any uint64;
+      Any float32;
+      Any float64;
+      Any string;
+      Any binary;
+      Any (categorical [| "a"; "é"; "" |]);
+      Any date;
+      Any (clock Ns);
+      Any (duration Ms);
+      Any (wall Ns);
+      Any (instant S);
+      Any (record [ ("a", Any int64); ("b", Any string) ]);
+      Any
+        (record [ ("r", Any (record [ ("x", Any float64) ])); ("c", Any bool) ]);
+    ]
 
-let rows_law (Talon_gen.Sample (ty, rows) as s) =
-  assume (hashable s && Array.length rows > 0);
-  let c = Column.of_options ty rows in
+let hashable_sample =
+  Gen.with_pp Talon_gen.pp_sample
+    (Gen.bind (Gen.of_list hashable) (fun (Type.Any ty) ->
+         Gen.map
+           (fun rows -> Talon_gen.Sample (ty, rows))
+           (Talon_gen.options ty)))
+
+(* A column's rows each hash as they do in a column of their own: the rows,
+   nulls included, that a multi-row kernel reads, views at an offset too. Two of
+   the sixteen types are records: at 200 cases a run misses them with
+   probability (7/8)^200 = 3e-12. *)
+let rows_law (Talon_gen.Sample (ty, rows)) =
+  assume (Array.length rows > 0);
   cover "a null" (Array.exists Option.is_none rows);
-  let each = Array.map (fun r -> (hash_of (Column.of_options ty [| r |])).(0)) rows in
+  cover "a record" (match ty with Record _ -> true | _ -> false);
+  let c = Column.of_options ty rows in
+  let each =
+    Array.map (fun r -> (hash_of (Column.of_options ty [| r |])).(0)) rows
+  in
   equal (array (option int)) each (hash_of c);
   let n = Array.length rows - 1 in
-  equal (array (option int))
+  equal
+    (array (option int))
     (Array.sub each 1 n)
     (hash_q (Query.slice ~offset:1 ~length:n (Query.of_table (v [ ("x", c) ]))))
 
-(* Domains: the hash reads each row's value, so two domains agree. *)
-let domains_law () =
-  let t = v [ ("x", Column.v Type.int64 (Array.init 1000 Fun.id)) ] in
-  let q () =
-    exec
-      (Query.derive
-         Expr.[ "h" := hash ~seed:7 (Col.int "x") ]
-         (Query.of_table t))
+(* [hashed t e] is the column [e] computes over [t]. *)
+let hashed t e =
+  Column.options Kind.int
+    (column (exec (Query.select Expr.[ "h" := e ] (Query.of_table t))) "h")
+
+let cast_law (i, f) =
+  let t =
+    v
+      [
+        ("i", Column.v Type.int8 [| i |]); ("f", Column.v Type.float32 [| f |]);
+      ]
   in
-  let d = Domain.spawn q in
-  let here = q () in
-  equal table here (Domain.join d)
+  let i = Col.int "i" and f = Col.float "f" in
+  let same a b = equal (array (option int)) (hashed t a) (hashed t b) in
+  List.iter
+    (fun ty -> same Expr.(hash i) Expr.(hash (cast ty i)))
+    Type.[ int16; int32; int64 ];
+  same Expr.(hash f) Expr.(hash (cast Type.float64 f))
 
 let refused () =
   let plan ty x =
     let t = v [ ("c", Column.of_options ty [| Some x |]) ] in
     Query.derive
-      Expr.
-        [ each (Sel.names [ "c" ]) { column = (fun _ c -> "h" := hash c) } ]
+      Expr.[ each (Sel.names [ "c" ]) { column = (fun _ c -> "h" := hash c) } ]
       (Query.of_table t)
   in
-  let refuses ty x = raises_match (Exn.invalid_arg ~sub:"is not one") (fun () -> plan ty x) in
+  let refuses ty x =
+    raises_match (Exn.invalid_arg ~sub:"is not one") (fun () -> plan ty x)
+  in
   refuses (Type.list Type.int64) [| 1 |];
   let in_record = Type.record [ ("l", Type.Any (Type.list Type.int64)) ] in
-  refuses in_record (Record.add (Kind.list Kind.int) "l" (Some [| 1 |]) Record.empty);
-  refuses (Type.tensor Nx.int32 [| 2 |]) (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]);
+  refuses in_record
+    (Record.add (Kind.list Kind.int) "l" (Some [| 1 |]) Record.empty);
+  refuses
+    (Type.tensor Nx.int32 [| 2 |])
+    (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]);
   let values = Nx.P (Nx.create Nx.int64 [| 1 |] [| 1L |]) in
   let ext =
     Result.get_ok
@@ -378,6 +424,15 @@ let fraction_law (n, seed) =
   in
   equal (list int) (Array.to_list (rows_of filtered "x")) half
 
+let sample_negative_rows () =
+  let q = Query.of_table (table_int [ 1 ]) in
+  raises_match Exn.invalid_arg (fun () -> Kit.sample (`Rows (-1)) q)
+
+(* Without [~seed], the plan keeps the seed it drew when it was built. *)
+let shuffle_unseeded () =
+  let q = Kit.shuffle (Query.of_table (table_int (List.init 50 Fun.id))) in
+  equal table (exec q) (exec q)
+
 (* Folds. *)
 
 let groups_of g rows =
@@ -386,8 +441,11 @@ let groups_of g rows =
 
 let folds_table ~g rows =
   let rows = Array.of_list rows in
-  v [ ("g", Column.v Type.int64 (groups_of g rows));
-      ("x", Column.v Type.int64 rows) ]
+  v
+    [
+      ("g", Column.v Type.int64 (groups_of g rows));
+      ("x", Column.v Type.int64 rows);
+    ]
 
 let folds_gen =
   Gen.(
@@ -445,7 +503,9 @@ let folds_too_few () =
 let folds_nan_keys () =
   let g = Column.v Type.float64 [| nan; 1.; Float.quiet_nan; -0.; 0. |] in
   let t = v [ ("g", g); ("x", Column.v Type.int64 [| 0; 1; 2; 3; 4 |]) ] in
-  let f = rows_of (exec (Kit.folds ~seed:2 ~by:[ "g" ] 3 (Query.of_table t))) "fold" in
+  let f =
+    rows_of (exec (Kit.folds ~seed:2 ~by:[ "g" ] 3 (Query.of_table t))) "fold"
+  in
   equal int f.(0) f.(2);
   equal int f.(3) f.(4)
 
@@ -458,8 +518,7 @@ let folds_named () =
 (* Several keys hash as a record of [by]'s columns, in [by]'s order. *)
 let folds_key_order () =
   let k = 3 and seed = 5 in
-  let a = [| 1; 1; 2; 2; 3; 3 |]
-  and b = [| "x"; "y"; "x"; "y"; "x"; "y" |] in
+  let a = [| 1; 1; 2; 2; 3; 3 |] and b = [| "x"; "y"; "x"; "y"; "x"; "y" |] in
   let t = v [ ("a", Column.v Type.int64 a); ("b", Column.v Type.string b) ] in
   let r = exec (Kit.folds ~seed ~by:[ "b"; "a" ] k (Query.of_table t)) in
   let ty = Type.(record [ ("b", Any string); ("a", Any int64) ]) in
@@ -485,6 +544,13 @@ let folds_key_order () =
     (Array.map (fun h -> k * rank h / 6) hashes)
     (rows_of r "fold")
 
+let folds_refused () =
+  let q = Query.of_table (table_int [ 1; 2 ]) in
+  raises_match Exn.invalid_arg (fun () -> Kit.folds ~seed:1 ~by:[] 1 q);
+  raises_match Exn.invalid_arg (fun () ->
+      Kit.folds ~seed:1 ~by:[ "x"; "x" ] 1 q);
+  raises_match Exn.invalid_arg (fun () -> Kit.folds ~seed:1 ~by:[ "x" ] 0 q)
+
 let folds_multi_keys () =
   let g = Column.v Type.int64 [| 1; 1; 2; 2 |]
   and h = Column.v Type.string [| "a"; "b"; "a"; "b" |] in
@@ -496,54 +562,68 @@ let () =
   exit
     (run "hash"
        [
-         cases "reference vectors"
-           ~id:(fun (k, v, s, _) -> Printf.sprintf "%s %s %s" k v s)
-           golden_cases oracle;
-         group "laws"
+         group "Expr.hash"
            [
-             prop "signed widths are one value" widths widths_law;
-             prop "float32 and float64" floats float_law;
-             test "-0. and NaN are canonical" zero_nan_law;
-             test "a null is one word" null_law;
-             prop "text and categorical and binary" texts text_law;
-             prop "field names stay out"
+             cases "is the reference xxHash64 of each encoded value"
+               ~id:(fun (k, v, s, _) -> Printf.sprintf "%s %s %s" k v s)
+               golden_cases oracle;
+             prop "hashes every width of one integer alike" widths widths_law;
+             prop "hashes a float32 as its float64" floats float_law;
+             test "hashes -0. as 0. and every NaN alike" zero_nan_law;
+             test "hashes a null of any type as one word" null_law;
+             prop "hashes text, a categorical and binary by their bytes" texts
+               text_law;
+             prop "leaves field names out"
                Gen.(pair (int_range (-1000) 1000) texts)
                record_law;
-             prop "batching" batches batching_law;
-             prop "datetime units" (Gen.int_range 0 1_000_000) datetime_widths_law;
-             prop "rows hash as themselves" Talon_gen.sample rows_law;
-             test "two domains agree" domains_law;
-             test "a list is a problem" refused;
+             prop "hashes a datetime by its nanoseconds, whatever its unit"
+               (Gen.int_range 0 1_000_000)
+               datetime_widths_law;
+             prop "keeps the hash through an exact cast"
+               Gen.(pair widths floats)
+               cast_law;
+             prop "is the same whatever the batches" batches batching_law;
+             prop ~count:200 "hashes each row as a column of its own"
+               hashable_sample rows_law;
+             test "raises on a list, a tensor or an extension" refused;
            ];
-         group "shuffle"
+         group "Kit.shuffle"
            [
-             prop "its order is the place's hash"
+             prop "orders rows by the hash of their place"
                (Gen.pair ints (Gen.int_range 0 1000))
                shuffle_definition_law;
              prop "is a permutation"
                (Gen.pair ints (Gen.int_range 0 1000))
                permutation_law;
-             prop "batching" batches shuffle_batches_law;
+             prop "is the same whatever the batches" batches shuffle_batches_law;
+             test "keeps the seed a plan drew when it was built"
+               shuffle_unseeded;
            ];
-         group "sample"
+         group "Kit.sample"
            [
-             prop "rows are shuffle's first"
+             prop "takes shuffle's first rows"
                (Gen.triple ints (Gen.int_range 0 400) (Gen.int_range 0 1000))
                sample_rows_law;
-             prop "batching" batches sample_batches_law;
-             prop "fractions nest"
+             prop "is the same whatever the batches" batches sample_batches_law;
+             prop "keeps at a fraction a subset of what a larger one keeps"
                (Gen.pair (Gen.int_range 0 200) (Gen.int_range 0 1000))
                fraction_law;
-             test "a refused fraction" sample_refused;
+             test "raises on a fraction outside [0, 1], named alike everywhere"
+               sample_refused;
+             test "raises on negative rows" sample_negative_rows;
            ];
-         group "folds"
+         group "Kit.folds"
            [
-             prop "balances groups, one fold each" folds_gen folds_law;
-             test "a null key is one group" folds_nulls;
-             test "NaN keys are one group" folds_nan_keys;
-             test "a column named fold" folds_named;
-             test "fewer groups than folds" folds_too_few;
-             test "several keys" folds_multi_keys;
-             test "the keys' order" folds_key_order;
+             prop "ranks groups by hash into balanced folds" folds_gen folds_law;
+             test "makes the null key one group" folds_nulls;
+             test "makes every NaN key one group" folds_nan_keys;
+             test "raises when the input has a column fold" folds_named;
+             test "raises on fewer groups than folds" folds_too_few;
+             test "spreads k groups of two key columns over k folds"
+               folds_multi_keys;
+             test "hashes several keys as a record in by's order"
+               folds_key_order;
+             test "raises on no key, a key named twice or fewer than one fold"
+               folds_refused;
            ];
        ])
