@@ -26,10 +26,11 @@ let at_depths ~msg testable expected f =
     depths
 
 let iota n = Array.init n float_of_int
-let x64 = Nx.arange Nx.float64 0 64 1
-let x32 = Nx.arange Nx.float32 0 64 1
+let x64 () = Nx.arange Nx.float64 0 64 1
+let x32 () = Nx.arange Nx.float32 0 64 1
 
 let test_elementwise () =
+  let x32 = x32 () and x64 = x64 () in
   at_depths ~msg:"add" float_exact
     (Array.init 64 (fun i -> float_of_int (2 * i)))
     (fun () -> Nx.add x32 x32);
@@ -40,6 +41,7 @@ let test_elementwise () =
     (fun () -> Nx.copy (Nx.transpose (Nx.reshape [| 8; 8 |] x64)))
 
 let test_reductions () =
+  let x64 = x64 () in
   at_depths ~msg:"sum" float_exact [| 2016. |] (fun () -> Nx.sum x64);
   at_depths ~msg:"cumsum" float_exact
     (Array.init 64 (fun i -> float_of_int (i * (i + 1) / 2)))
@@ -51,11 +53,11 @@ let test_moves () =
   at_depths ~msg:"take" float_exact (iota 64) (fun () ->
       Nx.take (Nx.arange Nx.int64 63 (-1) (-1)) rev);
   at_depths ~msg:"concatenate" float_exact (iota 128) (fun () ->
-      Nx.concatenate ~axis:0 [ x64; Nx.arange Nx.float64 64 128 1 ])
+      Nx.concatenate ~axis:0 [ x64 (); Nx.arange Nx.float64 64 128 1 ])
 
 let test_contractions () =
   (* A ones matrix times 0 … 63 as 8 × 8: each column's sum, in each row. *)
-  let a = Nx.reshape [| 8; 8 |] x32 in
+  let a = Nx.reshape [| 8; 8 |] (x32 ()) in
   let ones = Nx.ones Nx.float32 [| 8; 8 |] in
   at_depths ~msg:"matmul" float_exact
     (Array.init 64 (fun i -> float_of_int ((8 * 28) + (8 * (i mod 8)))))
@@ -95,13 +97,14 @@ let () =
   exit
     (run "nx stack"
        [
-         group "kernels from either residue of the stack"
+         group "nx.cpu's kernels from either residue of the stack"
            [
-             test "elementwise, casts and copies" test_elementwise;
-             test "reductions and scans" test_reductions;
-             test "sorts, gathers and joins" test_moves;
-             test "products" test_contractions;
-             test "factorisations and solves" test_routines;
-             test "transforms" test_fft;
+             test "elementwise maps, casts and copies give their values"
+               test_elementwise;
+             test "reductions and scans give their values" test_reductions;
+             test "sorts, gathers and joins give their values" test_moves;
+             test "products give their values" test_contractions;
+             test "factorisations and solves give their values" test_routines;
+             test "transforms give their values" test_fft;
            ];
        ])
