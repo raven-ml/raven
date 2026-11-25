@@ -12,7 +12,8 @@ let int8s n = Column.v Type.int8 (Array.init n Fun.id)
 let day ymd = Option.get (Time.Date.of_civil ymd)
 let bytes xs = Array.map (Option.map Binary.of_string) xs
 
-let message f =
+(* [refusal f] is the message of the [Invalid_argument] that [f] raises. *)
+let refusal f =
   match f () with _ -> fail "no exception" | exception Invalid_argument m -> m
 
 (* Types *)
@@ -85,8 +86,7 @@ let temporal =
             None;
           |] );
       ( "zoned",
-        Column.of_options
-          (Type.instant Ms)
+        Column.of_options (Type.instant Ms)
           [|
             Some (Time.of_ns 1_710_495_000_500_000_000L);
             Some (Time.of_ns 0L);
@@ -140,12 +140,11 @@ let floats =
     ]
 
 let types =
-  group "Types"
-    [
-      test "numbers align right, stored values outside int in full" (fun () ->
-          expect (show numbers)
-          @@ __POS_OF__
-               {|
+  [
+    test "numbers align right, stored values outside int in full" (fun () ->
+        expect (show numbers)
+        @@ __POS_OF__
+             {|
             table 3 rows × 5 columns
              bool   int8  int64                 wide                  uint64
              bool   int8  int64                 int64                 uint64
@@ -153,11 +152,11 @@ let types =
              false   127   4611686018427387903   9223372036854775807                     0
              ∅         ∅                     ∅                     0                     1
             |});
-      test "text shows as it reads, controls and non-UTF-8 bytes escaped"
-        (fun () ->
-          expect (show texts)
-          @@ __POS_OF__
-               {|
+    test "text shows as it reads, controls and non-UTF-8 bytes escaped"
+      (fun () ->
+        expect (show texts)
+        @@ __POS_OF__
+             {|
           table 6 rows × 3 columns
            string      binary      category
            string      binary      categorical["low", "high"]
@@ -168,10 +167,10 @@ let types =
            "q" \       x           low
            ∅           \x7f        high
           |});
-      test "temporal values show in their text form" (fun () ->
-          expect (show temporal)
-          @@ __POS_OF__
-               {|
+    test "temporal values show in their text form" (fun () ->
+        expect (show temporal)
+        @@ __POS_OF__
+             {|
             table 4 rows × 5 columns
              date          clock      duration      datetime                       zoned
              date          clock[ms]  duration[ns]  datetime[ns]                   datetime[ms, UTC]
@@ -180,20 +179,20 @@ let types =
              +12345-01-01  1s500ms    0s            2024-03-15T09:30:00            ∅
              ∅             ∅          ∅             ∅                              1969-12-31T00:00:00Z
             |});
-      test "lists, records, tensors and extensions" (fun () ->
-          expect (show compound)
-          @@ __POS_OF__
-               {|
+    test "lists, records, tensors and extensions" (fun () ->
+        expect (show compound)
+        @@ __POS_OF__
+             {|
             table 2 rows × 4 columns
              list          record                    tensor              uuid
              list[string]  record[x int8, s string]  tensor[float32, 3]  ext[uuid, string]
              ["a"; "b"]    <record>                  <tensor>            0f
              []            <record>                  <tensor>            1e
             |});
-      test "the floats of a column share their decimals" (fun () ->
-          expect (show floats)
-          @@ __POS_OF__
-               {|
+    test "the floats of a column share their decimals" (fun () ->
+        expect (show floats)
+        @@ __POS_OF__
+             {|
             table 5 rows × 7 columns
              mean     fraction       tiny         huge          special  float32     float16
              float64  float64        float64      float64       float64  float32     float16
@@ -203,46 +202,54 @@ let types =
                    ∅              ∅            ∅             ∅        ∅           ∅             ∅
               0.0000      -1.000000  2.00000e+00   3.00000e+00       -0    1.000000      1.000000
             |});
-    ]
+  ]
 
 (* [float_cell x] is the cell display shows for [x] alone in a column. *)
 let float_cell x =
   let t = v [ ("x", Column.v Type.float64 [| x |]) ] in
   String.trim (List.nth (String.split_on_char '\n' (show t)) 3)
 
-(* A value below 0.1 in magnitude, once rounded to six significant digits, needs
-   more than six decimals, and one of 10^16 or more has integer digits that are
-   not all its own: either shows its column in scientific notation. *)
-let float_cuts =
-  cases "Scientific cut"
+(* Six significant digits of a value, in the fewest decimals up to six. *)
+let float_decimals =
+  cases
+    "shows a lone float in the fewest decimals, up to six, that give six \
+     significant digits"
     ~id:(fun (x, _) -> Printf.sprintf "%.17g" x)
     [
       (0.1, "0.100000");
-      (0.099, "9.90000e-02");
-      (-0.099, "-9.90000e-02");
       (0.09999996, "0.100000");
       (99.99996, "100.000");
       (123456., "123456");
       (1234567., "1234567");
-      (9999999999999998., "9999999999999998");
-      (1e16, "1.00000e+16");
-      (-1e16, "-1.00000e+16");
-      (1e-300, "1.00000e-300");
-      (Float.min_float /. 2., "1.11254e-308");
     ]
     (fun (x, expected) -> equal string expected (float_cell x))
+
+(* Where scientific notation starts and how it is written is not promised. *)
+let scientific () =
+  let cell x = Printf.sprintf "%.17g  %s" x (float_cell x) in
+  let xs = [ 0.099; -0.099; 9999999999999998.; 1e16; -1e16; 1e-300 ] in
+  expect (String.concat "\n" (List.map cell (xs @ [ Float.min_float /. 2. ])))
+  @@ __POS_OF__
+       {|
+    0.099000000000000005  9.90000e-02
+    -0.099000000000000005  -9.90000e-02
+    9999999999999998  9999999999999998
+    10000000000000000  1.00000e+16
+    -10000000000000000  -1.00000e+16
+    1e-300  1.00000e-300
+    1.1125369292536007e-308  1.11254e-308
+    |}
 
 (* Elision *)
 
 let rows_limits = { Talon.limits with head = 2; tail = 1 }
 
 let elision =
-  group "Elision"
-    [
-      test "past head + tail rows, the first and the last" (fun () ->
-          expect (show (v [ ("i", int8s 12) ]))
-          @@ __POS_OF__
-               {|
+  [
+    test "past head + tail rows, the first and the last" (fun () ->
+        expect (show (v [ ("i", int8s 12) ]))
+        @@ __POS_OF__
+             {|
             table 12 rows × 1 column
              i
              int8
@@ -259,10 +266,10 @@ let elision =
                11
              2 rows not shown
             |});
-      test "head + tail rows show in full" (fun () ->
-          expect (show ~limits:rows_limits (v [ ("i", int8s 3) ]))
-          @@ __POS_OF__
-               {|
+    test "head + tail rows show in full" (fun () ->
+        expect (show ~limits:rows_limits (v [ ("i", int8s 3) ]))
+        @@ __POS_OF__
+             {|
             table 3 rows × 1 column
              i
              int8
@@ -270,10 +277,10 @@ let elision =
                 1
                 2
             |});
-      test "one row past head + tail" (fun () ->
-          expect (show ~limits:rows_limits (v [ ("i", int8s 4) ]))
-          @@ __POS_OF__
-               {|
+    test "one row past head + tail" (fun () ->
+        expect (show ~limits:rows_limits (v [ ("i", int8s 4) ]))
+        @@ __POS_OF__
+             {|
             table 4 rows × 1 column
              i
              int8
@@ -283,52 +290,52 @@ let elision =
                 3
              1 row not shown
             |});
-      test "no head and no tail" (fun () ->
-          let limits = { rows_limits with head = 0; tail = 0 } in
-          expect (show ~limits (v [ ("i", int8s 2) ]))
-          @@ __POS_OF__
-               {|
+    test "no head and no tail" (fun () ->
+        let limits = { rows_limits with head = 0; tail = 0 } in
+        expect (show ~limits (v [ ("i", int8s 2) ]))
+        @@ __POS_OF__
+             {|
             table 2 rows × 1 column
              i
              int8
              ⋮
              2 rows not shown
             |});
-      test "past columns columns, a line naming the others" (fun () ->
-          let name i = String.make 1 (Char.chr (Char.code 'a' + i)) in
-          let t = v (List.init 14 (fun i -> (name i, int8s 1))) in
-          expect (show t)
-          @@ __POS_OF__
-               {|
+    test "past columns columns, a line naming the others" (fun () ->
+        let name i = String.make 1 (Char.chr (Char.code 'a' + i)) in
+        let t = v (List.init 14 (fun i -> (name i, int8s 1))) in
+        expect (show t)
+        @@ __POS_OF__
+             {|
             table 1 row × 14 columns
              a     b     c     d     e     f     g     h     i     j     k     l
              int8  int8  int8  int8  int8  int8  int8  int8  int8  int8  int8  int8
                 0     0     0     0     0     0     0     0     0     0     0     0
              2 columns not shown: m, n
             |});
-      test "no column shown" (fun () ->
-          let limits = { Talon.limits with columns = 0 } in
-          expect (show ~limits (v [ ("a", int8s 2); ("b c", int8s 2) ]))
-          @@ __POS_OF__
-               {|
+    test "no column shown" (fun () ->
+        let limits = { Talon.limits with columns = 0 } in
+        expect (show ~limits (v [ ("a", int8s 2); ("b c", int8s 2) ]))
+        @@ __POS_OF__
+             {|
             table 2 rows × 2 columns
              2 columns not shown: a, "b c"
             |});
-      test "cells, names and types cut at width, an escape whole" (fun () ->
-          let limits = { Talon.limits with width = 4 } in
-          let t =
-            v
-              [
-                ( "a_long_name",
-                  Column.v Type.string [| "abcdefgh"; "ab\x01cd"; "abcd" |] );
-                ( "n",
-                  Column.v (Type.list Type.int8) [| [| 1; 2 |]; [||]; [| 3 |] |]
-                );
-              ]
-          in
-          expect (show ~limits t)
-          @@ __POS_OF__
-               {|
+    test "cells, names and types cut at width, an escape whole" (fun () ->
+        let limits = { Talon.limits with width = 4 } in
+        let t =
+          v
+            [
+              ( "a_long_name",
+                Column.v Type.string [| "abcdefgh"; "ab\x01cd"; "abcd" |] );
+              ( "n",
+                Column.v (Type.list Type.int8) [| [| 1; 2 |]; [||]; [| 3 |] |]
+              );
+            ]
+        in
+        expect (show ~limits t)
+        @@ __POS_OF__
+             {|
             table 3 rows × 2 columns
              a_l…  n
              str…  lis…
@@ -336,53 +343,45 @@ let elision =
              ab…   []
              abcd  [3]
             |});
-      test "a table without columns or rows" (fun () ->
-          expect (show (v ~rows:0 []))
-          @@ __POS_OF__ {| table 0 rows × 0 columns |});
-      test "a column without rows" (fun () ->
-          expect (show (v [ ("", int8s 0) ]))
-          @@ __POS_OF__
-               {|
+    test "a table without columns or rows" (fun () ->
+        expect (show (v ~rows:0 []))
+        @@ __POS_OF__ {| table 0 rows × 0 columns |});
+    test "a column without rows" (fun () ->
+        expect (show (v [ ("", int8s 0) ]))
+        @@ __POS_OF__
+             {|
             table 0 rows × 1 column
              ""
              int8
             |});
-      test "one row and one column" (fun () ->
-          expect (show (v [ ("x", int8s 1) ]))
-          @@ __POS_OF__
-               {|
+    test "one row and one column" (fun () ->
+        expect (show (v [ ("x", int8s 1) ]))
+        @@ __POS_OF__
+             {|
             table 1 row × 1 column
              x
              int8
                 0
             |});
-    ]
+  ]
 
 (* Limits *)
 
-let limits_cases =
-  let refuse name limits expected =
-    test name (fun () ->
-        expect (message (fun () -> show ~limits numbers)) expected)
-  in
+let limits_test () =
   let l = Talon.limits in
-  group "Limits"
-    [
-      test "limits are five rows each end, twelve columns, 32 wide" (fun () ->
-          equal (list int) [ 5; 5; 12; 32 ]
-            [ l.head; l.tail; l.columns; l.width ]);
-      test "pp is pp_with limits" (fun () ->
-          let t = v [ ("i", int8s 40) ] in
-          equal text (show t) (Format.asprintf "%a" pp t));
-      refuse "a negative head" { l with head = -1 }
-      @@ __POS_OF__ {| Talon.pp_with: head is -1, negative |};
-      refuse "a negative tail" { l with tail = -1 }
-      @@ __POS_OF__ {| Talon.pp_with: tail is -1, negative |};
-      refuse "negative columns" { l with columns = -2 }
-      @@ __POS_OF__ {| Talon.pp_with: columns is -2, negative |};
-      refuse "a width of zero" { l with width = 0 }
-      @@ __POS_OF__ {| Talon.pp_with: width is 0, not positive |};
-    ]
+  equal (list int) [ 5; 5; 12; 32 ] [ l.head; l.tail; l.columns; l.width ]
+
+let refusals () =
+  let l = Talon.limits in
+  let with_limits limits () = show ~limits numbers in
+  expect (refusal (with_limits { l with head = -1 }))
+  @@ __POS_OF__ {| Talon.pp_with: head is -1, negative |};
+  expect (refusal (with_limits { l with tail = -1 }))
+  @@ __POS_OF__ {| Talon.pp_with: tail is -1, negative |};
+  expect (refusal (with_limits { l with columns = -2 }))
+  @@ __POS_OF__ {| Talon.pp_with: columns is -2, negative |};
+  expect (refusal (with_limits { l with width = 0 }))
+  @@ __POS_OF__ {| Talon.pp_with: width is 0, not positive |}
 
 (* Laws *)
 
@@ -397,7 +396,7 @@ let blind_to_batching =
              t)
           (G.split t))
   in
-  prop "display is blind to batching" gen (fun (t, s) ->
+  prop "is the same whatever the table's batches" gen (fun (t, s) ->
       cover "elided" (rows t > 4);
       cover "several batches" (List.length (batches s) > 1);
       equal text (show ~limits t) (show ~limits s))
@@ -457,9 +456,17 @@ let cells (type a) (ty : a Type.t) vs =
   in
   List.map cell (List.filteri (fun i _ -> i >= 3) lines)
 
+let type_name ty = Format.asprintf "%a" Type.pp ty
+
+(* Each of the 17 types is drawn in a case of 17: at 400 cases one is missed
+   with probability (16/17)^400 = 3e-11. *)
 let reads_back =
-  prop "Column.parse reads back the cells display shows" shown
+  prop ~count:400 "shows values in the text Column.parse reads" shown
     (fun (G.Sample (ty, vs)) ->
+      List.iter
+        (fun (Form (t, _)) ->
+          cover (type_name t) (String.equal (type_name t) (type_name ty)))
+        forms;
       let vs = Array.map Option.get vs in
       let parse texts =
         let c = Column.v Type.string (Array.of_list texts) in
@@ -472,9 +479,29 @@ let () =
   exit
     (run "Display"
        [
-         types;
-         elision;
-         float_cuts;
-         limits_cases;
-         group "Laws" [ blind_to_batching; reads_back ];
+         group "limits"
+           [
+             test "is five rows at each end, twelve columns, 32 values wide"
+               limits_test;
+           ];
+         group "pp"
+           [
+             test "is pp_with limits" (fun () ->
+                 let t = v [ ("i", int8s 40) ] in
+                 equal text (show t) (Format.asprintf "%a" pp t));
+           ];
+         group "pp_with"
+           (types
+           @ [
+               float_decimals;
+               test
+                 "shows a column in scientific notation when a value needs it"
+                 scientific;
+             ]
+           @ elision
+           @ [
+               test "raises on a negative limit or a width of 0" refusals;
+               blind_to_batching;
+               reads_back;
+             ]);
        ])

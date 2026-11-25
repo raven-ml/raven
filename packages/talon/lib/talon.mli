@@ -868,8 +868,8 @@ val pp : Format.formatter -> t -> unit
 (** [pp] is [pp_with limits]. *)
 
 val pp_with : limits -> Format.formatter -> t -> unit
-(** [pp_with l ppf t] formats [t] for people, reading only the rows it shows.
-    With [{ limits with head = 2; tail = 1 }]:
+(** [pp_with l ppf t] formats [t] for people, whatever its batches, reading only
+    the rows it shows. With [{ limits with head = 2; tail = 1 }]:
     {v
     table 16 rows × 4 columns
      carrier  mean_delay  flights  name
@@ -880,20 +880,22 @@ val pp_with : limits -> Format.formatter -> t -> unit
      HA          29.0000        1  Hawaiian Airlines Inc.
      13 rows not shown
     v}
-    - a header, then the names and types of the shown columns;
+    - a header, then the names and types of the shown columns, the names as
+      {!Type.pp_name} formats them;
     - all rows, or the first [l.head], a [⋮] line, the last [l.tail], and the
       number of rows not shown;
     - with more than [l.columns] columns, a last line naming those not shown.
 
     A null is [∅]. Text shows as it reads, its control characters and bytes that
     are not UTF-8 escaped as {!Type.pp_quoted} escapes them, cut with […] past
-    [l.width] scalar values. Numbers are right-aligned; the floats of a column
-    show with one number of decimals, the fewest, up to six, that give each
-    shown value six significant digits, or in scientific notation when a shown
-    value needs it. Other values show in the text that {!Column.parse} reads,
-    such as [2024-03-15T09:30:00.5Z] for an instant; durations and clocks
-    as {!Time.Span.pp} formats them, lists as OCaml lists, and records and
-    tensors as [<record>] and [<tensor>].
+    [l.width] scalar values, as names and types are. A cut never splits an
+    escape. Numbers are right-aligned; the floats of a column show with one
+    number of decimals, the fewest, up to six, that give each shown value six
+    significant digits, or in scientific notation when a shown value needs it.
+    Other values show in the text that {!Column.parse} reads, such as
+    [2024-03-15T09:30:00.5Z] for an instant; durations and clocks as
+    {!Time.Span.pp} formats them, lists as OCaml lists, and records and tensors
+    as [<record>] and [<tensor>].
 
     Raises [Invalid_argument] if a limit is negative or [l.width] is [0], and
     over traced columns or under [Rune.grad] ({!Query.section-compiled}). *)
