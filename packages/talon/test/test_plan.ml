@@ -2025,6 +2025,18 @@ let linear_union_all =
       let at_n = union_words n and at_2n = union_words (2 * n) in
       less (float 0.001) ~than:(2.3 *. at_n) at_2n)
 
+(* [doubled d] is a source appended to itself [d] times over, under a filter
+   that enters every branch: [d + 1] steps, each reached twice by the next. *)
+let doubled d =
+  let rec double q d = if d = 0 then q else double (Query.append q q) (d - 1) in
+  double (Query.of_source (source ~pushdown:inexact "part" columns)) d
+  |> Query.filter Expr.(a > int 0)
+
+let linear_doubling =
+  test "plan work over a doubling is linear in its depth" (fun () ->
+      let at d = words (fun () -> Query.optimize (doubled d)) in
+      less (float 0.001) ~than:(2.3 *. at 8) (at 16))
+
 let () =
   exit
     (run "plan"
@@ -2033,5 +2045,6 @@ let () =
          test "records and unnest print and narrow" unnest_plans;
          linear_plans;
          linear_union_all;
+         linear_doubling;
          test "constant columns simplify filters" constant_plans;
        ])

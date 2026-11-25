@@ -6117,6 +6117,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Query.optimize`, a run and `Query.equal` take work linear in a plan's
+  steps where a step is reached from several places at several levels, as
+  in `q |> append q` repeated: each such step is rewritten or compared once,
+  where it was once per path to it, so the work doubled with each level.
 - A JSON row that is `null` fails naming it null; `Talon_json.decode` and
   `Talon_json.sniff` called it a number. A row that starts with no JSON value
   fails as a syntax error at that byte, where it was also called a number.

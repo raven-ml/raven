@@ -604,8 +604,24 @@ let step_equal ~input ~table q0 q1 =
         false)
   && List.equal input (inputs q0) (inputs q1)
 
-let rec equal q0 q1 =
-  q0 == q1 || step_equal ~input:equal ~table:Table.equal q0 q1
+(* [plans_equal ~table q0 q1] is [step_equal] over the whole plans, each pair of
+   steps compared once. A step that a plan reaches from several places is
+   otherwise compared once per path to it, and the paths double with each such
+   level. *)
+let plans_equal ~table q0 q1 =
+  let compared = Hashtbl.create 16 in
+  let rec equal q0 q1 =
+    q0 == q1
+    ||
+    match Hashtbl.find_opt compared (q0.id, q1.id) with
+    | Some b -> b
+    | None ->
+        let b = step_equal ~input:equal ~table q0 q1 in
+        Hashtbl.replace compared (q0.id, q1.id) b;
+        b
+  in
+  equal q0 q1
 
-let rec same q0 q1 = q0 == q1 || step_equal ~input:same ~table:( == ) q0 q1
+let equal q0 q1 = plans_equal ~table:Table.equal q0 q1
+let same q0 q1 = plans_equal ~table:( == ) q0 q1
 let same_step q0 q1 = step_equal ~input:( == ) ~table:( == ) q0 q1

@@ -1039,9 +1039,25 @@ let built_again () =
   equal (list int) (List.init 64 (fun _ -> first)) counts;
   ignore (Sys.opaque_identity !live)
 
+(* [doubled d] is a source appended to itself [d] times over: [d + 1] steps,
+   each reached twice by the next. *)
+let doubled s d =
+  let rec double q d = if d = 0 then q else double (Query.append q q) (d - 1) in
+  double (Query.of_source s) d
+
+let compared d =
+  let s = source "part" Type.[ ("a", Any int64) ] in
+  let q0 = doubled s d and q1 = doubled s d in
+  fst (words (fun () -> Query.equal q0 q1))
+
+let equal_work =
+  test "Query.equal over a doubling takes work linear in its depth" (fun () ->
+      less int ~than:(3 * compared 8) (compared 16))
+
 let bind_words =
   group "binding"
     [
+      equal_work;
       test
         "a query built again allocates the same words, however many equal \
          queries are live"

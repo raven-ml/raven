@@ -23,6 +23,26 @@ let sat_add a b =
 (* [at_shape e] is [e] at any shape: shapes are erased in nodes. *)
 let at_shape e = Expr.typed (Expr.typing e) (Expr.node e)
 
+(* [memoize same f] is [f] tied to itself, rewriting each step once per context,
+   two contexts being one when [same] says so. A step that a plan reaches from
+   several places, as [append q q] reaches [q], is otherwise rewritten once per
+   path to it, and the paths double with each such level. *)
+let memoize same f =
+  let rewritten = Hashtbl.create 64 in
+  let rec go context q =
+    let id = Query.id q in
+    let known () = Option.value ~default:[] (Hashtbl.find_opt rewritten id) in
+    match List.find_opt (fun (c, _) -> same c context) (known ()) with
+    | Some (_, q') -> q'
+    | None ->
+        let q' = f go context q in
+        Hashtbl.replace rewritten id ((context, q') :: known ());
+        q'
+  in
+  go
+
+let any_context () () = true
+
 (* Conjuncts *)
 
 (* [conjuncts p] is the operands of the bound predicate [p]'s [&&]s, in
@@ -146,11 +166,11 @@ let fold_outputs outputs =
 (* [fold q] is [q] with the constants of its expressions folded, a filter of
    [true] gone and one with a conjunct of [false] or null an empty slice: a
    row passes a filter only if every conjunct is [true]. *)
-let rec fold q =
+let fold fold () q =
   match Query.node q with
   | Filter { predicate; input } ->
       let predicate = Expr.fold_constants evaluator predicate
-      and input = fold input in
+      and input = fold () input in
       let never c =
         match truth c with Some (Some false | None) -> true | _ -> false
       in
@@ -167,7 +187,7 @@ let rec fold q =
         | Unnest r -> Unnest { r with outputs = fold_outputs r.outputs }
         | n -> n
       in
-      Query.make (Query.map_inputs fold folded)
+      Query.make (Query.map_inputs (fold ()) folded)
 
 (* Pushing conjuncts and slices *)
 
@@ -270,9 +290,19 @@ let settle ~slices route pending =
   let passing, staying = up [] (List.rev pending) in
   ((fun input -> List.filter_map (fun into -> into input) passing), staying)
 
-(* [push pending q] is [q] under the [pending] filters and slices, each moved as
-   far toward the sources as the rules let it. *)
-let rec push pending q =
+let same_pending p0 p1 =
+  List.equal
+    (fun s0 s1 ->
+      match (s0, s1) with
+      | Sliced (o0, l0), Sliced (o1, l1) -> o0 = o1 && l0 = l1
+      | Filtered cs0, Filtered cs1 -> List.equal Expr.same cs0 cs1
+      | Sliced _, Filtered _ | Filtered _, Sliced _ -> false)
+    p0 p1
+
+(* [push push pending q] is [q] under the [pending] filters and slices, each
+   moved as far toward the sources as the rules let it, [push] rewriting its
+   inputs. *)
+let push push pending q =
   let past ~slices route rebuild =
     let passing, staying = settle ~slices route pending in
     above staying (rebuild passing)
@@ -421,11 +451,13 @@ let unkept q =
       input
   | _ -> q
 
-(* [prune ~ordered need q] is [q] with each step narrowed to the columns [need]
-   of its result and those its steps read, and each source given its request.
-   Unless [ordered], the order of [q]'s columns is not observed, so a [derive]
-   need not read a column that it replaces to keep its place. *)
-let rec prune ~ordered need q =
+(* [narrow prune (ordered, need) q] is [q] with each step narrowed to the
+   columns [need] of its result and those its steps read, and each source given
+   its request, [prune] narrowing its inputs. Unless [ordered], the order of
+   [q]'s columns is not observed, so a [derive] need not read a column that it
+   replaces to keep its place. *)
+let rec narrow prune (ordered, need) q =
+  let prune ~ordered need q = prune (ordered, need) q in
   match chain q with
   | Some (fs, leaf) -> place need fs leaf
   | None -> (
@@ -580,24 +612,32 @@ and limit offset length input =
    each. *)
 let share q =
   let canonical = Hashtbl.create 64 in
-  let rec go q =
-    let q = Query.make (Query.map_inputs go (Query.node q)) in
-    let h = Query.step_hash q in
-    let steps = Option.value ~default:[] (Hashtbl.find_opt canonical h) in
-    match List.find_opt (Query.same_step q) steps with
-    | Some c -> c
-    | None ->
-        Hashtbl.replace canonical h (q :: steps);
-        q
+  let go =
+    memoize any_context (fun go () q ->
+        let q = Query.make (Query.map_inputs (go ()) (Query.node q)) in
+        let h = Query.step_hash q in
+        let steps = Option.value ~default:[] (Hashtbl.find_opt canonical h) in
+        match List.find_opt (Query.same_step q) steps with
+        | Some c -> c
+        | None ->
+            Hashtbl.replace canonical h (q :: steps);
+            q)
   in
-  go q
+  go () q
 
 (* Optimizing *)
 
 (* [once q] is [q] optimized by one run of the passes. *)
 let once q =
   let need = Schema.names (Query.schema q) in
-  share (prune ~ordered:true need (push [] (fold q)))
+  let fold = memoize any_context fold
+  and push = memoize same_pending push
+  and prune =
+    memoize
+      (fun (o0, n0) (o1, n1) -> o0 = o1 && List.equal String.equal n0 n1)
+      narrow
+  in
+  share (prune (true, need) (push [] (fold () q)))
 
 (* [steps q] is the number of distinct steps of [q]. *)
 let steps q =

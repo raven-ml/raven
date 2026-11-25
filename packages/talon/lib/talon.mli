@@ -2960,7 +2960,10 @@ module Query : sig
       and the same rows, rewritten to read and compute less. Running a query
       optimizes it first, so [optimize] serves to print the plan that runs and
       to compare plans. It reads no data, it calls the sources' [pushdown], and
-      [optimize (optimize q)] is [optimize q].
+      [optimize (optimize q)] is [optimize q]. It rewrites a step that [q]
+      reaches from several places once for each set of conjuncts, slices and
+      columns those places ask of it, so its work is linear in [q]'s steps,
+      beyond a comparison of each leaf with those of its name and shape.
 
       {b Results.} The rewrites change no value and no null of a result, and add
       no failure: an operation that can fail meets only rows that [q] shows it.
@@ -3085,7 +3088,9 @@ module Query : sig
   (** [equal q0 q1] is [true] iff [q0] and [q1] are the same plan: the same
       steps with equal arguments, expressions compared by their identity, tables
       by key identity row by row, and sources physically, with equal requests
-      (see {!pp}). Equal queries have equal schemas. *)
+      (see {!pp}). Equal queries have equal schemas. It compares each pair of
+      steps once, so a step that a plan reaches from several places costs
+      once. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp ppf q] formats [q]'s plan, which reads no data: the line [query →] and
