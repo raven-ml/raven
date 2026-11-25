@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A JSON row that is not an object fails with its text, as a value of another
+  type does, and one whose bytes break the syntax fails at the byte that
+  breaks it. Both failed at the row's first byte, named by that byte alone.
 - `Talon_arrow.sniff` names the column of a type the Arrow format does not
   define, such as a `decimal32` of precision 10, as its interface says:
   `column "d": a decimal of 32 bits has precision 10`. It named only the file.

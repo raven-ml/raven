@@ -51,9 +51,10 @@
 
     {1:values Values}
 
-    A row is an object. A key the format does not name is skipped, and a key
-    the format names that a row lacks reads as null, like the JSON [null]. By
-    type:
+    A row is an object, and another value fails the read with its line,
+    column, byte and text. A key the format does not name is skipped, and a
+    key the format names that a row lacks reads as null, like the JSON [null].
+    By type:
     - [bool] reads [true] and [false];
     - the integer types read a number with neither fraction nor exponent, in
       the type's range;

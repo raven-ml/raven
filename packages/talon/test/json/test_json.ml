@@ -393,24 +393,24 @@ let values =
       test "a row's keys read in any order" (fun () ->
           let t = Error.get_ok (read flat {|{"b":"x","a":2}|}) in
           equal strings [ Some "2" ] (printed t "a"));
-      (* RFC 8259 §3: a value is an object, array, number, string, or one of the
-         literal names false, null and true. *)
-      cases "a row that is not an object fails, naming what it is" ~id:fst
+      (* Error.pp quotes a text, a quote escaped. *)
+      cases "a row that is not an object fails with its place and text" ~id:fst
         [
-          ("1", "a number");
-          ({|"x"|}, "a string");
-          ("[1]", "an array");
-          ("true", "a boolean");
-          ("null", "null");
+          ("1", {|"1"|});
+          ({|"x"|}, {|"\"x\""|});
+          ("[1]", {|"[1]"|});
+          ("true", {|"true"|});
+          ("null", {|"null"|});
         ]
-        (fun (row, what) ->
-          let e = decode_error flat row in
-          starts_with ~prefix:(place 1 1 0) e;
-          ends_with ~suffix:("this is " ^ what) e);
-      test "a row that is no JSON value fails at its first byte" (fun () ->
-          let e = decode_error flat "xyz" in
-          starts_with ~prefix:(place 1 1 0) e;
-          not_contains ~sub:"this is" e);
+        (fun (row, text) ->
+          starts_with
+            ~prefix:(place 1 1 0 ^ text ^ ": ")
+            (decode_error flat row));
+      cases "a row that breaks the syntax fails at the byte that breaks it"
+        ~id:fst
+        [ ("xyz", (1, 0)); ("nonsense", (1, 0)); ("[1,}", (4, 3)) ]
+        (fun (row, (column, byte)) ->
+          starts_with ~prefix:(place 1 column byte) (decode_error flat row));
       test "bool reads true and false" (fun () ->
           let t =
             Error.get_ok
