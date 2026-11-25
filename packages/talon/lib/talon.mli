@@ -1295,8 +1295,9 @@ module Expr : sig
   (** [cast ty a] converts [a]'s values to [ty]:
       - between [bool], integer and float types: integers take exact values
         only, so a fractional, infinite or NaN float, or a value out of range,
-        is a data error; floats round to nearest; [bool] takes [0] and [1] only,
-        and gives [0] and [1];
+        is a data error; a value cast to a float type is its nearest value of
+        that type, ties to even; [bool] takes [0] and [1] only, and gives [0]
+        and [1];
       - between [string] and categorical types: the text is kept, and a
         categorical takes only the strings of its dictionary, and another
         string is a data error;
@@ -2000,7 +2001,7 @@ module Expr : sig
     val diff : ('a, 's) t -> ('a, 's) t -> (Time.span, 's) t
     (** [diff a b] is the span from [b] to [a]: a duration of their common unit
         for datetimes, durations and clocks, which meet as {!Type.common} says,
-        and [duration[s]] for dates. *)
+        and [duration[s]] for dates. A result out of range is a data error. *)
 
     val div : (Time.span, 's) t -> (Time.span, 's) t -> (float, 's) t
     (** [div a b] is how many of [b] fit in [a], as [float64], for example

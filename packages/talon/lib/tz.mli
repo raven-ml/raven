@@ -36,7 +36,8 @@ val utc : zone
 val fixed : int -> zone
 (** [fixed o] is the zone whose offset is [o] seconds east of UTC at every
     instant. Its name is [+hh:mm] or [-hh:mm], with [:ss] when [o] is not whole
-    minutes.
+    minutes. The hours take as many digits as they need: [fixed 0x7FFF_FFFF] is
+    named [+596523:14:07].
 
     Raises [Invalid_argument] unless -2{^ 31} < [o] < 2{^ 31}, the bound RFC
     9636 puts on an offset. *)
