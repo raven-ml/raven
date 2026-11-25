@@ -757,11 +757,14 @@ let student_normaliser df =
   in
   Nx.sub_s (Nx.sub deltas dev) half_log_2pi
 
-(* The Student t's terms of its parameters alone: its normaliser less
-   [log σ], [√ν] and [(ν + 1) / 2]. *)
+(* The Student t's terms of its parameters alone: its normaliser less [log σ],
+   [σ √ν], its logarithm as the sum of the logarithms, which stays finite where
+   the product underflows, and [(ν + 1) / 2]. *)
 let student_terms df scale =
-  ( Nx.sub (student_normaliser df) (Nx.log scale),
-    Nx.sqrt df,
+  let log_scale = Nx.log scale and root = Nx.sqrt df in
+  ( Nx.sub (student_normaliser df) log_scale,
+    Nx.mul scale root,
+    Nx.add log_scale (Nx.log root),
     Nx.mul_s (Nx.add_s df 1.) 0.5 )
 
 (* [log1p_square a s log_s] is [log1p ((a / s)²)] for [a >= 0] and [s >= 0],
@@ -786,12 +789,11 @@ let log1p_square a s log_s =
   let s_near = Nx.where (Nx.logical_or beyond (Nx.equal s zero)) one s in
   Nx.where beyond far (Nx.log1p (Nx.square (Nx.div a_near s_near)))
 
-(* [log1p (z² / ν)] is [log1p_square |x - loc| (scale √ν)], with [log (scale
-   √ν)] the sum of the logarithms: neither [z] nor [z / √ν] is formed where it
-   would overflow, nor [scale √ν]'s logarithm where it underflows. *)
-let student_t_density (c, root, half1) loc scale x =
-  let log_s = Nx.add (Nx.log scale) (Nx.log root) in
-  let l = log1p_square (Nx.abs (Nx.sub x loc)) (Nx.mul scale root) log_s in
+(* [log1p (z² / ν)] is [log1p_square |x - loc| s] at [s = scale √ν]: neither [z]
+   nor [z / √ν] is formed where it would overflow, nor [s]'s logarithm where [s]
+   underflows. *)
+let student_t_density (c, s, log_s, half1) loc x =
+  let l = log1p_square (Nx.abs (Nx.sub x loc)) s log_s in
   Nx.sub c (Nx.mul half1 l)
 
 (* A format narrower than float32 computes a mass at float32 and rounds it
@@ -973,11 +975,11 @@ let student_t ~df ~loc ~scale =
   let factors =
     if narrow dt then
       let t = student_terms (widen df) (widen scale) in
-      let loc = widen loc and scale = widen scale in
-      fun x -> Nx.cast dt (student_t_density t loc scale (widen x))
+      let loc = widen loc in
+      fun x -> Nx.cast dt (student_t_density t loc (widen x))
     else
       let t = student_terms df scale in
-      fun x -> student_t_density t loc scale x
+      fun x -> student_t_density t loc x
   in
   (* A normal over the square root of a chi-square over its degrees of freedom:
      [z sqrt (df / 2g)], [g] gamma of concentration [df / 2]. *)
