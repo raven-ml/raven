@@ -100,11 +100,11 @@ let hold g =
   Bytes.iteri (fun i c -> arg.{i} <- c) b;
   { fn = Rig_metal.hold; arg; keep = Kept g }
 
-external watching_arg : unit -> arg * nativeint = "rig_metal_test_watching"
+external watching_arg : nativeint -> arg * nativeint = "rig_metal_test_watching"
 external watching_fill : unit -> nativeint = "rig_metal_test_watching_fill"
 
 let watching () =
-  let arg, slot = watching_arg () in
+  let arg, slot = watching_arg Rig_metal.command_buffer in
   ({ fn = watching_fill (); arg; keep = Kept () }, slot)
 
 external resize : nativeint -> groups:int -> threads:int -> unit

@@ -1022,6 +1022,14 @@ value caml_rig_metal_stop(value v_d) {
 static int (*const split)(void *, uint64_t *, uint64_t *) = rig_metal_split;
 static int (*const hold_fill)(void *, void *, uint64_t) = rig_metal_hold_fill;
 
+/* The command buffer that holds a fill's [queue]'s encoder, for rig's
+   tests. */
+static void *queue_buffer(void *queue) {
+  return (void *)((struct rig_metal_queue *)queue)->buffer;
+}
+
+static void *(*const command_buffer)(void *) = queue_buffer;
+
 /* The pipelines and the buffers the process's devices hold, and their run
    states, for rig's tests. */
 value caml_rig_metal_pipelines(value unit) {
@@ -1139,6 +1147,7 @@ intnat caml_rig_metal_signaled(intnat a) { (void)a, no_metal(); }
 
 static int (*const split)(void *, uint64_t *, uint64_t *) = NULL;
 static int (*const hold_fill)(void *, void *, uint64_t) = NULL;
+static void *(*const command_buffer)(void *) = NULL;
 
 /* No device opens, so none holds a pipeline, a buffer or a run state. */
 value caml_rig_metal_pipelines(value unit) {
@@ -1172,4 +1181,10 @@ value caml_rig_metal_split(value unit) {
 value caml_rig_metal_hold_fill(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)hold_fill);
+}
+
+/* The C entry that answers a fill's command buffer, for rig's tests. */
+value caml_rig_metal_command_buffer(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)command_buffer);
 }

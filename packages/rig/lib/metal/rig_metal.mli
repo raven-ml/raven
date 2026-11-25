@@ -618,6 +618,11 @@ val gate_handle : gate -> nativeint
    nothing. *)
 val open_gate : gate -> unit
 
+(* [command_buffer] is the address of a C function [void *(void *queue)] that a
+   fill may call with its [queue] ({!Rig_metal_abi}): it answers the command
+   buffer that holds the open encoder, unretained. *)
+val command_buffer : nativeint
+
 (* [shader_cache ()] is the directory in which Metal keeps the code it compiles
    for the process ({!section-code}), as Metal answers it, or [""] where macOS
    lacks the call that answers. Metal's first answer fixes the directory, so

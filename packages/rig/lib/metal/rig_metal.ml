@@ -795,6 +795,10 @@ external hold_fill : unit -> nativeint = "caml_rig_metal_hold_fill"
 let gate d = gate_of d.self
 let hold = hold_fill ()
 
+external command_buffer : unit -> nativeint = "caml_rig_metal_command_buffer"
+
+let command_buffer = command_buffer ()
+
 external shader_cache : unit -> string = "caml_rig_metal_shader_cache"
 
 module Ring = struct

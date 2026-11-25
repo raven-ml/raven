@@ -190,27 +190,30 @@ value rig_metal_test_execute_fill(value unit) {
 }
 
 /* A fill that encodes nothing and stores, at [*slot], a weak reference to
-   its encoder, which lives as long as the encoder's command buffer. The
-   slot is C memory never freed, since the runtime clears it when the
-   encoder goes. */
+   its command buffer, which [buffer] (Rig_metal.command_buffer) answers.
+   The slot is C memory never freed, since the runtime clears it when the
+   command buffer goes. */
 struct watching {
   id *slot;
+  void *(*buffer)(void *queue);
 };
 
 static int watching(void *queue, void *arg, uint64_t v) {
   (void)v;
-  objc_storeWeak(((struct watching *)arg)->slot, *(id *)queue);
+  struct watching *a = arg;
+  objc_storeWeak(a->slot, (id)a->buffer(queue));
   return 0;
 }
 
-/* [(arg, slot)]. */
-value rig_metal_test_watching(value unit) {
-  CAMLparam1(unit);
+/* [(arg, slot)], [v_buffer] the address of Rig_metal.command_buffer. */
+value rig_metal_test_watching(value v_buffer) {
+  CAMLparam1(v_buffer);
   CAMLlocal3(v, slot, r);
   id *p = calloc(1, sizeof(id));
   if (p == NULL) caml_raise_out_of_memory();
   v = arg(sizeof(struct watching));
   ((struct watching *)Arg_val(v))->slot = p;
+  ((struct watching *)Arg_val(v))->buffer = Ptr_val(v_buffer);
   slot = caml_copy_nativeint((intnat)p);
   r = caml_alloc_tuple(2);
   Store_field(r, 0, v);
