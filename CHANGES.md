@@ -5573,6 +5573,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Post_processor.process` types the first sequence 0 whatever type IDs it
+  arrives with, as `bert`'s doc states. `bert` and `byte_level` kept them.
 - `Brot.train_word_level` keeps, of equally frequent words, the first in byte
   order, as Hugging Face's trainer does, where hash order decided.
 - `Brot.to_json` writes a WordPiece's own `max_input_chars_per_word`, where it

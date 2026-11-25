@@ -752,12 +752,12 @@ module Post_processor : sig
   val process :
     t -> ?pair:Encoding.t -> Encoding.t -> add_special_tokens:bool -> Encoding.t
   (** [process t enc ~add_special_tokens] adds special tokens and sets type IDs
-      on [enc].
+      on [enc]. [enc] enters with type ID [0], and [pair] with [1], whatever
+      they arrive with; [t] may override either.
 
       When [~pair] is provided, both sequences are merged into a single
-      encoding. [pair] enters as the second segment, with type ID [1], which [t]
-      may override. Offsets are not shifted: each sequence keeps the offsets
-      into its own text.
+      encoding. Offsets are not shifted: each sequence keeps the offsets into
+      its own text.
 
       When [~add_special_tokens] is [false], no special token is inserted. The
       two sequences are still merged, type IDs still assigned and byte-level

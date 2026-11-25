@@ -173,8 +173,15 @@ let concat encodings =
         sequence_ranges = first.sequence_ranges;
       }
 
+let rec holds_only a i v =
+  i = Array.length a || (Array.unsafe_get a i = v && holds_only a (i + 1) v)
+
+(* The result shares every other array of [t] already, so sharing [type_ids]
+   when it holds [type_id] throughout changes nothing the interface
+   promises. *)
 let with_type_id t type_id =
-  { t with type_ids = Array.make (Array.length t.ids) type_id }
+  if holds_only t.type_ids 0 type_id then t
+  else { t with type_ids = Array.make (Array.length t.ids) type_id }
 
 let with_overflowing t overflowing = { t with overflowing }
 

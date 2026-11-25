@@ -412,6 +412,15 @@ let chained processors =
 
 (* process *)
 
+(* HF: BertProcessing and ByteLevel .process on an encoding typed 5. *)
+let typed_first (_, t, type_ids) =
+  let enc =
+    Post_processor.process t
+      (sequence ~type_id:5 [ 1000; 1001 ])
+      ~add_special_tokens:true
+  in
+  equal (array int) type_ids (Encoding.type_ids enc)
+
 (* HF: the pair of [encode("hello world", "second one",
    add_special_tokens=False)] has type IDs [0, 0, 1, 1] on gpt2 and
    bert-base-uncased, [0, 0, 0, 0] on roberta-base. *)
@@ -744,6 +753,13 @@ let () =
            ];
          group "process"
            [
+             cases "types the first sequence 0 whatever it arrives with"
+               ~id:(fun (name, _, _) -> name)
+               [
+                 ("bert", bert, [| 0; 0; 0; 0 |]);
+                 ("byte_level", Post_processor.byte_level (), [| 0; 0 |]);
+               ]
+               typed_first;
              test
                "types the pair 1 whatever it arrives with and shifts no offset"
                test_pair_typed_one;

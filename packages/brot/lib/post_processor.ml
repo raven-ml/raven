@@ -389,11 +389,13 @@ let rec process_list processor encodings ~add_special_tokens =
         (fun encs proc -> process_list proc encs ~add_special_tokens)
         encodings processors
 
+(* Each sequence enters typed by its place, as tokenizers' [process] types it:
+   the first 0 and the second 1. *)
 let process processor ?pair enc ~add_special_tokens =
   let encodings =
     match pair with
-    | None -> [ enc ]
-    | Some p -> [ enc; Encoding.with_type_id p 1 ]
+    | None -> [ Encoding.with_type_id enc 0 ]
+    | Some p -> [ Encoding.with_type_id enc 0; Encoding.with_type_id p 1 ]
   in
   Encoding.concat (process_list processor encodings ~add_special_tokens)
 
