@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `train_unigram` scores each piece by the log of its frequency, as `unigram`
+  reads scores. It wrote the frequency itself, so a model preferred more
+  pieces: `"ab"` trained whole encoded as `a`, `b`.
 - `Post_processor.template` and `of_json` keep the last of several special
   tokens of the same text, as tokenizers does. `process` used the first,
   `added_tokens` counted the last, and `to_json` wrote both.

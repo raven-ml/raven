@@ -449,24 +449,21 @@ let train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
   in
 
   let selected = take_first vocab_size sorted in
-  let vocab_with_probs =
-    special_tokens
-    |> List.map (fun token -> (token, 1.0 /. float_of_int (vocab_size + 1)))
-    |> fun specials ->
-    specials
+  (* A piece scores the log of its frequency, and a special token 0, as
+     tokenizers' trainer writes it. *)
+  let vocab_with_scores =
+    List.map (fun token -> (token, 0.)) special_tokens
     @ List.map
-        (fun (token, count) ->
-          let prob = if total = 0. then 0. else float_of_int count /. total in
-          (token, prob))
+        (fun (token, count) -> (token, log (float_of_int count /. total)))
         selected
   in
   let unk_id =
     match unk_token with
     | None -> None
     | Some unk ->
-        List.find_index (fun (token, _) -> token = unk) vocab_with_probs
+        List.find_index (fun (token, _) -> token = unk) vocab_with_scores
   in
-  let model = create ?unk_id vocab_with_probs in
+  let model = create ?unk_id vocab_with_scores in
   (model, special_tokens)
 
 let cached_encoder model =

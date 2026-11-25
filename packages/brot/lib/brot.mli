@@ -1869,7 +1869,8 @@ val train_unigram :
 
     {b Warning.} The EM training of the unigram model is not implemented: the
     vocabulary is the most frequent of the words counted as in {!train_bpe},
-    each scored by how often it occurs, and no subword piece is ever proposed.
+    each scored by the log of its share of the words counted, and no subword
+    piece is ever proposed. A special token scores [0.].
 
     - [init]: a tokenizer whose added and special tokens carry over into the
       trained one. Its model does not. Default: create new.

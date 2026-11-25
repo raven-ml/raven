@@ -626,6 +626,12 @@ let test_unigram_words () =
   in
   equal (list string) [ "low"; "Ġlow"; "Ġlower" ] (sorted_vocabulary t)
 
+(* [unigram]'s scores are log-probabilities, so the cut of [ab] whole (log 1/3)
+   beats [a] + [b] (2 log 1/3) when the three occur equally often. *)
+let test_unigram_trained_word () =
+  let t = train_unigram ~pre:split (texts [ "ab ab ab a a a b b b" ]) in
+  equal (list string) [ "ab" ] (tokens t "ab")
+
 let unk = added_token "<unk>"
 
 let test_unigram_unk =
@@ -736,6 +742,7 @@ let () =
          group "train_unigram"
            [
              test "keeps the most frequent words whole" test_unigram_words;
+             test "encodes a trained word as itself" test_unigram_trained_word;
              test_unigram_unk;
              test_unigram_no_unk;
            ];
