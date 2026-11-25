@@ -1281,6 +1281,12 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- An Ode solve whose steps fall below the time's resolution because every
+  larger attempt met a non-finite field ends `Not_finite`, where it ended
+  `Stalled` with a report that the solution may blow up. `jera.mli` promised
+  `Not_finite` for a non-finite field at an accepted state, which never
+  happens: the last stage enters the error estimate, so such an attempt is
+  rejected.
 - `Ode.path` raises `Invalid_argument` at the call for a state with a leaf
   that is not a float tensor, as `jera.mli`'s conventions state for static
   preconditions. It raised only after the whole solve.

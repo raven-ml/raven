@@ -525,6 +525,18 @@ let solve_tests =
             Ode.solve one Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:10
               (decay (scalar 1.))
               ~t0:(vec [| 0. |]) ~t1:(scalar 1.) (scalar 1.)));
+    test "a field that stays non-finite ends the lane Not_finite" (fun () ->
+        (* Every attempt past t = 0.5 has a NaN stage and is rejected, until the
+           step falls below the time's resolution. *)
+        let f t y =
+          Nx.where (Nx.greater_s t 0.5) (Nx.full_like y Float.nan) (Nx.neg y)
+        in
+        let s =
+          Ode.solve one Ode.tsit5
+            ~tol:(Tol.v ~rel:1e-6 ~abs:1e-9)
+            ~budget:400 f ~t0:(scalar 0.) ~t1:(scalar 1.) (scalar 1.)
+        in
+        equal Oracle.status_t Not_finite (Oracle.status s));
     test "a blow-up does not converge" (fun () ->
         (* y' = y² from 1 is 1 / (1 − t), infinite at t = 1. *)
         let s = solve (fun _ y -> Nx.square y) ~t0:0. ~t1:2. (scalar 1.) in
@@ -764,8 +776,8 @@ let path_tests =
         raises_match (Exn.invalid_arg ~sub:"Jera.Ode.path") (fun () ->
             Ode.path
               Nx.Ptree.(pair tensor tensor)
-              Ode.tsit5 ~tol:(Tol.rel 1e-6) ~budget:20 field
-              ~t0:(scalar 0.) ~t1:(scalar 1.)
+              Ode.tsit5 ~tol:(Tol.rel 1e-6) ~budget:20 field ~t0:(scalar 0.)
+              ~t1:(scalar 1.)
               (scalar 1., Nx.scalar Nx.int32 5l));
         equal int 0 !calls);
     test "compiled equals eager to rounding for a polynomial field" (fun () ->

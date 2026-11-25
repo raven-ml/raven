@@ -675,6 +675,8 @@ type ('y, 't, 'm, 'd) search = {
   h : (float, 't, 'd) Nx.t;  (** The next step's size, absolute. *)
   prev : (float, 't, 'd) Nx.t;  (** The last accepted error ratio. *)
   rejected : 'd Nx.bool_t;
+  unfinite : 'd Nx.bool_t;
+      (** The last rejected attempt had a non-finite stage. *)
   ends : (float, 't, 'd) Nx.t;  (** The accepted steps' ends, as fractions. *)
   counts : 'd Nx.int32_t;  (** The accepted steps per interval. *)
   accepted : 'd Nx.int32_t;
@@ -697,6 +699,7 @@ let search_ptree y tree =
       let h = field c "h" tensor s.h in
       let prev = field c "prev" tensor s.prev in
       let rejected = field c "rejected" tensor s.rejected in
+      let unfinite = field c "unfinite" tensor s.unfinite in
       let ends = field c "ends" tensor s.ends in
       let counts = field c "counts" tensor s.counts in
       let accepted = field c "accepted" tensor s.accepted in
@@ -715,6 +718,7 @@ let search_ptree y tree =
         h;
         prev;
         rejected;
+        unfinite;
         ends;
         counts;
         accepted;
@@ -771,7 +775,9 @@ let fix tol (st : Solution.status) facts =
   | Stalled ->
       "The step fell below the time's resolution near t: the solution may blow \
        up there." ^ Tol.zero_hint tol
-  | Not_finite -> "The field is not finite at an accepted state near t."
+  | Not_finite ->
+      "The field is not finite near t, where the steps fell below the time's \
+       resolution."
   | Converged | Not_bracketed -> ""
 
 (* The index of the first time of [at] that does not continue its direction, or
@@ -990,11 +996,6 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     in
     let interval = Nx.where finishing (Nx.add_s s.interval 1l) s.interval in
     let st = s.status in
-    let st =
-      Elementwise.settle st
-        (Nx.logical_and ok (Nx.logical_not (finite y (Nx.beside at) k')))
-        Not_finite
-    in
     let memory, outcomes = mem.accept s.memory ~t ~t_end ~h:hh ~v:s.v ~ks v' in
     let st =
       List.fold_left
@@ -1007,9 +1008,26 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
         (Nx.logical_and finishing (Nx.equal_s interval (Int32.of_int n_int)))
         Converged
     in
-    let st =
-      Elementwise.settle st (Nx.logical_and stepping (Nx.equal t_end t)) Stalled
+    (* A step below the time's resolution ends the lane, [Not_finite] when the
+       last rejected attempt had a non-finite stage: the steps shrank to stay
+       where the field is finite. *)
+    let stages_finite =
+      Array.fold_left
+        (fun acc k -> Nx.logical_and acc (finite y (Nx.beside at) k))
+        (finite y (Nx.beside at) stepped.next)
+        ks
     in
+    let unfinite =
+      Nx.where
+        (Nx.logical_and stepping (Nx.logical_not ok))
+        (Nx.logical_not stages_finite)
+        s.unfinite
+    in
+    let stalled = Nx.logical_and stepping (Nx.equal t_end t) in
+    let st =
+      Elementwise.settle st (Nx.logical_and stalled unfinite) Not_finite
+    in
+    let st = Elementwise.settle st stalled Stalled in
     let attempts = Nx.add s.attempts (Nx.cast Nx.int32 stepping) in
     let st =
       Elementwise.settle st
@@ -1028,6 +1046,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
       h = Nx.where stepping h s.h;
       prev = Nx.where taken (Nx.maximum r (Nx.full_like r 1e-4)) s.prev;
       rejected = Nx.logical_and stepping (Nx.logical_not ok);
+      unfinite;
       ends;
       counts;
       accepted = Nx.add s.accepted (Nx.cast Nx.int32 taken);
@@ -1056,6 +1075,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
       h = h_start;
       prev = Nx.full_at (Nx.beside at) dtype [||] 1e-4;
       rejected = Nx.scalar_at (Nx.beside at) Nx.bool false;
+      unfinite = Nx.scalar_at (Nx.beside at) Nx.bool false;
       ends = Nx.zeros_at (Nx.beside at) dtype [| budget |];
       counts = Nx.zeros_at (Nx.beside at) Nx.int32 [| n_int |];
       accepted = Nx.scalar_at (Nx.beside at) Nx.int32 0l;
