@@ -72,34 +72,39 @@ let grid (type s) (dt : (Complex.t, s) D.t) =
   let at i = List.nth ns i in
   Kernels_cases.Pair (array (fun i -> at (i / k)), array (fun i -> at (i mod k)))
 
-type row = Row : string * Kernels_cases.pair -> row
+(* A row of the table: a dtype's seeded operands, its specials alone, or a
+   complex dtype's grid of specials. Its arrays are made in its test. The rows
+   are a property's examples alone, so that its cover is judged over them. *)
+type row =
+  | Seeded : D.any -> row
+  | Specials : D.any -> row
+  | Grid : (Complex.t, 's) D.t -> row
+
+let row_name = function
+  | Seeded (D.Any dt) -> D.name dt ^ " seeded"
+  | Specials (D.Any dt) -> D.name dt ^ " specials"
+  | Grid dt -> D.name dt ^ " grid"
 
 let kind_dtypes =
   List.filter (fun (D.Any dt) -> D.is D.Float dt || D.is D.Complex dt) D.all
 
 let rows =
   List.concat_map
-    (fun (D.Any dt) ->
-      let name = D.name dt in
-      let seeded seed = Kernels_cases.seeded dt [| terms |] seed in
-      let specials =
-        if Kernels_cases.specials dt = [] then []
-        else
-          [
-            Row
-              ( name ^ " specials",
-                Kernels_cases.Pair
-                  ( Kernels_cases.specials_only dt terms 1,
-                    Kernels_cases.specials_only dt terms 2 ) );
-          ]
-      in
-      Row (name ^ " seeded", Kernels_cases.Pair (seeded 1, seeded 2))
-      :: specials)
+    (fun (D.Any dt as d) ->
+      if Kernels_cases.specials dt = [] then [ Seeded d ]
+      else [ Seeded d; Specials d ])
     kind_dtypes
-  @ [
-      Row ("complex64 grid", grid D.Complex64);
-      Row ("complex128 grid", grid D.Complex128);
-    ]
+  @ [ Grid D.Complex64; Grid D.Complex128 ]
+
+let pair = function
+  | Seeded (D.Any dt) ->
+      let seeded seed = Kernels_cases.seeded dt [| terms |] seed in
+      Kernels_cases.Pair (seeded 1, seeded 2)
+  | Specials (D.Any dt) ->
+      Kernels_cases.Pair
+        ( Kernels_cases.specials_only dt terms 1,
+          Kernels_cases.specials_only dt terms 2 )
+  | Grid dt -> grid dt
 
 (* The parts of [x]'s complex elements, as floats. *)
 let complex_parts (type v s) (x : (v, s) A.t) : Complex.t array =
@@ -123,7 +128,8 @@ let vanishing (z : Complex.t) (w : Complex.t) =
   && Float.is_nan (a +. b)
   && (w.re *. lr) -. (w.im *. li) = neg_infinity
 
-let law (Row (_, (Kernels_cases.Pair (x, y) as p))) =
+let law row =
+  let (Kernels_cases.Pair (x, y) as p) = pair row in
   let zs = complex_parts x and ws = complex_parts y in
   cover "a complex pow whose w log z is -inf + i (inf - inf)"
     (Array.exists2 vanishing zs ws);
@@ -137,10 +143,10 @@ let () =
        [
          group "kinds"
            [
-             prop ~count:1 ~examples:rows
+             prop ~count:0 ~examples:rows
                "every kind has nx.cpu's bits at float and complex dtypes"
                (Gen.of_list
-                  ~pp:(fun ppf (Row (name, _)) -> Format.pp_print_string ppf name)
+                  ~pp:(fun ppf r -> Format.pp_print_string ppf (row_name r))
                   rows)
                law;
            ];
