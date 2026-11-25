@@ -165,7 +165,8 @@ let laws c =
     short c;
     strings c;
     negative c;
-    Lz_support.largest_bound c.bound;
+    test "a bound past max_int raises" (fun () ->
+        Lz_support.largest_bound c.bound);
   ]
 
 (* Frames and blocks by hand *)
@@ -514,6 +515,20 @@ let choices =
     ]
 
 (* Vendor goldens *)
+
+(* [every_golden codec c]: the goldens [codec] names, decoded by [c]. *)
+let every_golden codec c =
+  cases "every golden decodes to its input, all of it consumed"
+    ~id:(fun g -> g.Lz_support.file)
+    (Lz_support.goldens_of codec)
+    (fun g ->
+      let raw = Lazy.force g.raw and data = Lazy.force g.data in
+      let dst = Lz_support.create (String.length raw) in
+      equal
+        (result Lz_support.progress Lz_support.error)
+        (Ok { Lz.consumed = String.length data; produced = String.length raw })
+        (c.decode (Lz_support.of_string data) dst);
+      equal Lz_support.decoded (Ok raw) (Ok (Lz_support.to_string dst)))
 
 let golden file =
   List.find (fun g -> g.Lz_support.file = file) (Lz_support.goldens_of "lz4f")
@@ -886,11 +901,11 @@ let () =
        [
          allocation;
          group "block"
-           ((Lz_support.agreement "lz4b" :: block_documents)
+           ((every_golden "lz4b" block :: block_documents)
            @ [ drawn; bad_offsets; block_refusals ]
            @ laws block);
          group "frame"
-           ((Lz_support.agreement "lz4f" :: vendor)
+           ((every_golden "lz4f" frame :: vendor)
            @ frame_documents @ [ frames; frame_refusals ] @ laws frame
            @ [ choices ]);
        ])

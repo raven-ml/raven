@@ -686,6 +686,20 @@ let bombs =
           past);
   ]
 
+(* Goldens *)
+
+let every_golden =
+  cases "every golden decodes to its input, all of it consumed"
+    ~id:(fun g -> g.file)
+    (goldens_of "snappy")
+    (fun g ->
+      let raw = Lazy.force g.raw and data = Lazy.force g.data in
+      let dst = create (String.length raw) in
+      equal (result progress error)
+        (Ok { Lz.consumed = String.length data; produced = String.length raw })
+        (Lz.Snappy.decode (of_string data) dst);
+      equal decoded (Ok raw) (Ok (to_string dst)))
+
 (* Memory *)
 
 (* The minor words [f ()] allocates, and the words its result holds. *)
@@ -720,7 +734,7 @@ let () =
          group "memory" allocation;
          group "decode"
            [
-             agreement "snappy";
+             every_golden;
              xababab;
              preambles;
              literal_lengths;

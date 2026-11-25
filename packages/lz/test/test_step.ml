@@ -295,16 +295,16 @@ let long_stream fmt =
   | _ -> ());
   (raw, Buffer.contents b)
 
-(* [long fmt] is [long_stream fmt] as a golden, made when a case reads it. *)
+(* [long fmt] is [long_stream fmt] as a golden. *)
 let long fmt =
-  let made = lazy (long_stream fmt) in
+  let raw, data = long_stream fmt in
   {
     Lz_support.file = "long." ^ fmt.name;
     codec = fmt.name;
-    vendor = "test_step";
     members = 1;
-    raw = lazy (fst (Lazy.force made));
-    data = lazy (snd (Lazy.force made));
+    size = String.length data;
+    raw = Lazy.from_val raw;
+    data = Lazy.from_val data;
   }
 
 (* For Zstandard, four goldens' frames in one stream, 800,000 bytes: its
@@ -318,8 +318,8 @@ let long_zstd =
      {
        Lz_support.file = "long.zst";
        codec = "zstd";
-       vendor = "test_step";
        members = 4;
+       size = List.fold_left (fun n g -> n + g.Lz_support.size) 0 gs;
        raw = lazy (String.concat "" (List.map raw gs));
        data = lazy (String.concat "" (List.map data gs));
      })
@@ -479,8 +479,8 @@ let growing =
      {
        Lz_support.file = "grow.zst";
        codec = "zstd";
-       vendor = "test_step";
        members = 3;
+       size = (2 * small.Lz_support.size) + big.size;
        raw = lazy (raw small ^ raw big ^ raw small);
        data = lazy (data small ^ data big ^ data small);
      })

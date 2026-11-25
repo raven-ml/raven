@@ -45,10 +45,6 @@ val corpus : kind -> int -> string
     keys with small gaps and float64 prices; [Random], incompressible
     bytes. *)
 
-val kind_of_string : string -> kind
-(** [kind_of_string s] is the kind named ["text"], ["columns"] or
-    ["random"]. Raises [Invalid_argument] otherwise. *)
-
 (** {1 Drawn inputs} *)
 
 (** A recipe for an input that breaks codecs, which prints as itself
@@ -68,24 +64,15 @@ type recipe =
 val build : recipe -> string
 (** [build r] is the input [r] describes. *)
 
-val length : recipe -> int
-(** [length r] is the length of [build r], without building it. *)
-
 val pp_recipe : Format.formatter -> recipe -> unit
-
-val distances : int list
-(** Match distances at the edge of every offset class: 1, 2, 3, 4, 7, 8,
-    15, 16, 31, 32, 33, 64, 65, 256, 257, 1024, 32 KiB - 1, 32 KiB,
-    32 KiB + 1, 64 KiB and 1 MiB. *)
-
-val lengths : int list
-(** Match lengths at the edges of the formats' length codes: 3, 4, 5, 15,
-    16, 19, 258, 259, 273, 65535 and 65536. *)
 
 val recipe : recipe Windtrap.Gen.t
 (** [recipe] draws every recipe up to a few hundred KiB: empty, one byte, runs,
-    noise, corpus prefixes, a match at each of {!distances} with each of
-    {!lengths}, and concatenations of these. It draws each constructor with
+    noise, corpus prefixes, matches, and concatenations of these. A match's
+    distance is at the edge of every offset class (1, 2, 3, 4, 7, 8, 15, 16, 31,
+    32, 33, 64, 65, 256, 257, 1024, 32 KiB - 1, 32 KiB, 32 KiB + 1, 64 KiB or 1
+    MiB) and its length at the edges of the formats' length codes (3, 4, 5, 15,
+    16, 19, 258, 259, 273, 65535 or 65536). It draws each constructor with
     probability about 1/7, so a [cover] of one misses about one run in 5 million
     at 100 cases: a law that covers them takes {!every_kind} as [~examples].
     Inputs above 4 MiB are too slow to draw: pass them as [~examples]. *)
@@ -103,13 +90,13 @@ val large : recipe list
 
 (** {1 Bounds} *)
 
-val largest_bound : (int -> int) -> Windtrap.test
-(** [largest_bound bound] states that [bound] raises [Invalid_argument]
-    exactly on the sizes whose bound would pass [max_int]. The largest size
-    [t] with a bound, found by bisection, has one of at least [t] and
-    above [max_int - 8], since a byte more of input adds at most 8 to a
-    bound; [t - 1]'s is no larger; [t + 1], [t + 2] and [max_int]
-    raise. *)
+val largest_bound : (int -> int) -> unit
+(** [largest_bound bound] fails the test unless [bound] raises
+    [Invalid_argument] exactly on the sizes whose bound would pass [max_int]. It
+    checks that the largest size [t] with a bound, found by bisection, has one
+    of at least [t] and above [max_int - 8], since a byte more of input adds at
+    most 8 to a bound; that [t - 1]'s is no larger; and that [t + 1], [t + 2]
+    and [max_int] raise. *)
 
 (** {1 Short destinations} *)
 
@@ -144,80 +131,6 @@ val position : int -> int -> int
 (** [position i n] is the byte [i] names in an input of [n] bytes, [n] positive:
     [i mod n], counted from the end when [i] is negative. An example names the
     last byte as [-1], without building the input. *)
-
-(** {1 Checksum paths}
-
-    The CRC-32 and Adler-32 paths this host can run, each with the
-    instructions of its name ([Lz.Paths]). {!Lz} reaches only the
-    fastest. *)
-
-type path = {
-  name : string;
-  run : int32 -> Lz.bigbytes -> int32;
-      (** [run c b] is the checksum of all of [b] from the running value
-          [c]. *)
-}
-
-val crc32_paths : path list
-(** [crc32_paths] is every CRC-32 path, the generic one first and the one
-    {!Lz.Crc32} takes last. *)
-
-val adler32_paths : path list
-(** [adler32_paths] is every Adler-32 path, as {!crc32_paths}. *)
-
-(** {1 Zstandard paths}
-
-    The builds of the Zstandard decoder's hot loops this host can run
-    ([Lz.Paths]): generic, and BMI2 where the CPU has it.
-    {!Lz.Zstd} reaches only the last. *)
-
-type zstd_path = {
-  label : string;
-  decode : Lz.bigbytes -> Lz.bigbytes -> (Lz.progress, Lz.error) result;
-      (** [decode src dst] is {!Lz.Zstd.decode} [src dst] run with this
-          path. *)
-}
-
-val zstd_paths : zstd_path list
-(** [zstd_paths] is every path, the generic one first and the one
-    {!Lz.Zstd} takes last. *)
-
-type zstd_enc_path = {
-  label : string;
-  encode : level:int -> Lz.bigbytes -> Lz.bigbytes -> int option;
-      (** [encode ~level src dst] is {!Lz.Zstd.encode} [~level src dst] run
-          with this path. *)
-}
-
-val zstd_enc_paths : zstd_enc_path list
-(** [zstd_enc_paths] is every path of the Zstandard encoder, the generic
-    one first and the one {!Lz.Zstd} takes last. *)
-
-val zstd_encode_limit :
-  limit:int -> ?step:int -> level:int -> Lz.bigbytes -> Lz.bigbytes ->
-  int option
-(** [zstd_encode_limit ~limit ~level src dst] is {!Lz.Zstd.encode}
-    [~level src dst] by an encoder whose match finders rebase their indices
-    once a block that starts past the window would end past index [limit],
-    rather than past 3 GiB: with [~limit:0], every such block. With
-    [~step], it is the frame a {!Lz.Zstd.encoder} writes when given at most
-    [step] bytes a step. *)
-
-(** {1 Deflate paths}
-
-    The builds of the deflate encoder's matchfinder rebase this host can
-    run ([Lz.Paths]): generic, and SSE2 where the compiler targets it. {!Lz.Deflate} reaches only the last. *)
-
-type deflate_enc_path = {
-  label : string;
-  encode : level:int -> Lz.bigbytes -> Lz.bigbytes -> int option;
-      (** [encode ~level src dst] is {!Lz.Deflate.encode} [~level src dst]
-          run with this path. *)
-}
-
-val deflate_enc_paths : deflate_enc_path list
-(** [deflate_enc_paths] is every path, the generic one first and the one
-    {!Lz.Deflate} takes last. *)
 
 (** {1 LZW}
 
@@ -281,8 +194,13 @@ val lzf : string -> string
 
 (** {1 Testables} *)
 
-val why : Lz.why Windtrap.testable
 val error : Lz.error Windtrap.testable
+
+val refusal : Lz.error Windtrap.testable
+(** Errors equal when their [at] and their constructor agree, printed whole: a
+    [Malformed] or [Unsupported] message is not compared, since lz's own
+    messages are baselines that each suite keeps in an [expect]. *)
+
 val progress : Lz.progress Windtrap.testable
 val step : Lz.step Windtrap.testable
 
@@ -301,14 +219,16 @@ type golden = {
   codec : string;
       (** The decoder that reads it: ["deflate"], ["zlib"], ["gzip"],
           ["zstd"], ["lz4b"], ["lz4f"] or ["snappy"]. *)
-  vendor : string;  (** The vendor and level that wrote it. *)
   members : int;  (** The members or frames it holds, skippable ones too. *)
+  size : int;  (** Its length in bytes, known without reading it. *)
   raw : string Lazy.t;  (** What it decodes to. *)
   data : string Lazy.t;  (** Its bytes. *)
 }
 
 val goldens : unit -> golden list
-(** [goldens ()] is every golden, in the manifest's order. *)
+(** [goldens ()] is every golden, in the manifest's order. The manifest is read
+    on the first call of the process; a golden's [raw] and [data] are made when
+    forced. *)
 
 val goldens_of : string -> golden list
 (** [goldens_of codec] is the goldens [codec] reads. *)
@@ -319,22 +239,3 @@ val raw_of_spec : string -> string
 
 val decoder : string -> Lz.bigbytes -> Lz.bigbytes -> (Lz.progress, Lz.error) result
 (** [decoder codec] is the whole-buffer decode of the codec a golden names. *)
-
-(** {1 Suites over the goldens}
-
-    Each takes a codec as {!golden.codec} names it. *)
-
-val agreement : string -> Windtrap.test
-(** [agreement codec] states that every golden [codec] reads decodes to its
-    raw input and consumes all of it. *)
-
-val truncations : string -> Windtrap.test
-(** [truncations codec] states that every proper prefix of every golden of
-    one member, up to 1 KiB, is [Truncated] at its length. A raw LZ4 block
-    has no end to miss: [truncations "lz4b"] is invalid. *)
-
-val mutations : string -> Windtrap.test
-(** [mutations codec] states that a golden with any bit flipped (goldens up
-    to 512 bytes) or any byte replaced (drawn, goldens up to 64 KiB) decodes
-    or fails with an offset inside the input. With the sanitizers it is the
-    proof that no mutation reads or writes outside the buffers. *)

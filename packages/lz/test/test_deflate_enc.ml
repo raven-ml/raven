@@ -266,7 +266,14 @@ let negative =
       raises_match (Exn.invalid_arg ~sub:"negative") (fun () -> f.bound (-1)))
 
 let largest =
-  List.map (fun f -> group f.name [ Lz_support.largest_bound f.bound ]) formats
+  List.map
+    (fun f ->
+      group f.name
+        [
+          test "a bound past max_int raises" (fun () ->
+              Lz_support.largest_bound f.bound);
+        ])
+    formats
 
 (* Cuts into steps *)
 
@@ -414,14 +421,14 @@ let paths =
         (String.length s > 2 * 32 * kib);
       let expected = encode deflate ~level s in
       List.iter
-        (fun (p : Lz_support.deflate_enc_path) ->
+        (fun (label, encode) ->
           let dst = Lz_support.create (deflate.bound (String.length s)) in
-          match p.encode ~level (Lz_support.of_string s) dst with
+          match encode ~level (Lz_support.of_string s) dst with
           | Some k ->
-              equal string ~msg:p.label expected
+              equal string ~msg:label expected
                 (Lz_support.to_string ~length:k dst)
-          | None -> failf "%s: the stream exceeds its bound" p.label)
-        Lz_support.deflate_enc_paths)
+          | None -> failf "%s: the stream exceeds its bound" label)
+        Lz.Paths.deflate_encode)
 
 (* What the writers write *)
 

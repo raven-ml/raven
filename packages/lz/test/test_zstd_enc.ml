@@ -534,14 +534,46 @@ let paths =
       cover_input r s level;
       let expected = encode ~level s in
       List.iter
-        (fun (p : Lz_support.zstd_enc_path) ->
+        (fun (label, encode) ->
           let dst = Lz_support.create (Lz.Zstd.bound (String.length s)) in
-          match p.encode ~level (Lz_support.of_string s) dst with
+          match encode ~level (Lz_support.of_string s) dst with
           | Some k ->
-              equal string ~msg:p.label expected
+              equal string ~msg:label expected
                 (Lz_support.to_string ~length:k dst)
-          | None -> failf "%s: the frame exceeds its bound" p.label)
-        Lz_support.zstd_enc_paths)
+          | None -> failf "%s: the frame exceeds its bound" label)
+        Lz.Paths.zstd_encode)
+
+(* [limited_steps e ~step src dst] steps [e] over [src], at most [step] bytes a
+   step, and writes the runs to [dst]: the stream's length, or [None] when it
+   does not fit. *)
+let limited_steps e ~step src dst =
+  let n = Bigarray.Array1.dim src in
+  let out = ref 0 in
+  let add run =
+    let k = Bigarray.Array1.dim run in
+    if !out + k <= Bigarray.Array1.dim dst then
+      Bigarray.Array1.blit run (Bigarray.Array1.sub dst !out k);
+    out := !out + k
+  in
+  let rec go at =
+    let len = min step (n - at) in
+    let last = at + len = n in
+    match Lz.Encoder.step e ~last (Bigarray.Array1.sub src at len) add with
+    | Lz.Done _ -> ()
+    | More taken -> go (at + taken)
+  in
+  go 0;
+  if !out <= Bigarray.Array1.dim dst then Some !out else None
+
+(* [encode_limit ~limit ~level src dst] is [Lz.Zstd.encode ~level src dst] by
+   match finders that rebase past index [limit]; with [~step], the frame an
+   encoder writes given at most [step] bytes a step. *)
+let encode_limit ~limit ?step ~level src dst =
+  match step with
+  | None -> Lz.zstd_encode_limit ~limit ~level src dst
+  | Some s when s > 0 ->
+      limited_steps (Lz.zstd_encoder_limit ~limit ~level) ~step:s src dst
+  | Some _ -> invalid_arg "encode_limit: step"
 
 (* The bytes do not depend on where the match finders rebase their
    indices, which the default limit reaches only 3 GiB into a frame. The
@@ -558,7 +590,7 @@ let rebased =
         let dst = Lz_support.create (Lz.Zstd.bound (String.length s)) in
         let k =
           require_some ~msg:"fits its bound"
-            (Lz_support.zstd_encode_limit ~limit ?step ~level src dst)
+            (encode_limit ~limit ?step ~level src dst)
         in
         Lz_support.to_string ~length:k dst
       in
@@ -585,7 +617,8 @@ let () =
              large_bound;
              short;
              negative;
-             Lz_support.largest_bound Lz.Zstd.bound;
+             test "a bound past max_int raises" (fun () ->
+                 Lz_support.largest_bound Lz.Zstd.bound);
            ];
          group "steps" [ cut_free; wide; edges; quota; frames ];
          group "frames" [ headers; declared_windows ];

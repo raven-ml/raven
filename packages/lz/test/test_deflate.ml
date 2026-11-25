@@ -622,12 +622,26 @@ let bounds =
 
 (* Goldens *)
 
+let every_golden c =
+  cases "every golden decodes to its input, all of it consumed"
+    ~id:(fun g -> g.Lz_support.file)
+    (Lz_support.goldens_of c)
+    (fun g ->
+      let raw = Lazy.force g.raw and data = Lazy.force g.data in
+      let decode, _ = codec c in
+      let dst = Lz_support.create (String.length raw) in
+      equal
+        (result Lz_support.progress Lz_support.error)
+        (Ok { Lz.consumed = String.length data; produced = String.length raw })
+        (decode (Lz_support.of_string data) dst);
+      equal Lz_support.decoded (Ok raw) (Ok (Lz_support.to_string dst)))
+
 let goldens =
   group "goldens"
     [
-      group "deflate" [ Lz_support.agreement "deflate" ];
-      group "zlib" [ Lz_support.agreement "zlib" ];
-      group "gzip" [ Lz_support.agreement "gzip" ];
+      group "deflate" [ every_golden "deflate" ];
+      group "zlib" [ every_golden "zlib" ];
+      group "gzip" [ every_golden "gzip" ];
     ]
 
 (* Decoders *)

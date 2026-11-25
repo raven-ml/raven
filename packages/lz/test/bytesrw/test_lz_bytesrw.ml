@@ -495,6 +495,15 @@ let spread n k = k + (n / most_slices)
 let cut_length =
   Gen.(frequency [ (1, constant ~pp:Format.pp_print_int 1); (5, length) ])
 
+(* [recipe_length r] is the length of [Lz_support.build r], without building
+   it. *)
+let rec recipe_length : Lz_support.recipe -> int = function
+  | Empty -> 0
+  | Byte _ -> 1
+  | Run (_, n) | Noise (_, n) | Corpus (_, n) -> n
+  | Match { distance; length; seed = _ } -> distance + length + 8
+  | Concat rs -> List.fold_left (fun n r -> n + recipe_length r) 0 rs
+
 let round_trip fmt =
   let lo, hi = fmt.levels in
   let pp ppf (recipe, level, cut, most) =
@@ -506,7 +515,7 @@ let round_trip fmt =
       with_pp pp
         (map
            (fun (recipe, level, cut, most) ->
-             let n = Lz_support.length recipe in
+             let n = recipe_length recipe in
              (recipe, level, spread n cut, spread n most))
            (quad Lz_support.recipe (int_range lo hi) cut_length length)))
   in
@@ -515,7 +524,7 @@ let round_trip fmt =
   let kinds =
     List.map
       (fun r ->
-        let n = Lz_support.length r in
+        let n = recipe_length r in
         (r, lo, spread n 1, spread n 1))
       Lz_support.every_kind
   in

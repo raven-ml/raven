@@ -165,13 +165,6 @@ let rec build = function
       Bytes.unsafe_to_string b
   | Concat rs -> String.concat "" (List.map build rs)
 
-let rec length = function
-  | Empty -> 0
-  | Byte _ -> 1
-  | Run (_, n) | Noise (_, n) | Corpus (_, n) -> n
-  | Match { distance; length; seed = _ } -> distance + length + 8
-  | Concat rs -> List.fold_left (fun n r -> n + length r) 0 rs
-
 let kind_name = function
   | Text -> "Text"
   | Columns -> "Columns"
@@ -498,27 +491,26 @@ let has_bound bound n =
   match bound n with _ -> true | exception Invalid_argument _ -> false
 
 let largest_bound bound =
-  Windtrap.test "a bound past max_int raises" (fun () ->
-      let open Windtrap in
-      let past n =
-        raises_match ~msg:(string_of_int n) (Exn.invalid_arg ~sub:"max_int")
-          (fun () -> bound n)
-      in
-      past max_int;
-      (* [lo] has a bound, [hi] has none. *)
-      let rec find lo hi =
-        if hi - lo = 1 then lo
-        else
-          let mid = lo + ((hi - lo) / 2) in
-          if has_bound bound mid then find mid hi else find lo mid
-      in
-      let t = find 0 max_int in
-      let b = bound t in
-      at_least int ~msg:"at least the size" ~than:t b;
-      greater int ~msg:"above max_int - 8" ~than:(max_int - 8) b;
-      at_most int ~msg:"the size before's" ~than:b (bound (t - 1));
-      past (t + 1);
-      past (t + 2))
+  let open Windtrap in
+  let past n =
+    raises_match ~msg:(string_of_int n) (Exn.invalid_arg ~sub:"max_int")
+      (fun () -> bound n)
+  in
+  past max_int;
+  (* [lo] has a bound, [hi] has none. *)
+  let rec find lo hi =
+    if hi - lo = 1 then lo
+    else
+      let mid = lo + ((hi - lo) / 2) in
+      if has_bound bound mid then find mid hi else find lo mid
+  in
+  let t = find 0 max_int in
+  let b = bound t in
+  at_least int ~msg:"at least the size" ~than:t b;
+  greater int ~msg:"above max_int - 8" ~than:(max_int - 8) b;
+  at_most int ~msg:"the size before's" ~than:b (bound (t - 1));
+  past (t + 1);
+  past (t + 2)
 
 (* Short destinations *)
 
@@ -547,75 +539,6 @@ let capacity k = function Short d -> max 0 (k - d) | Part p -> k * p / 1000
 let anywhere = Windtrap.Gen.int_range 0 ((1 lsl 30) - 1)
 let position i n = ((i mod n) + n) mod n
 
-(* Checksum paths *)
-
-type path = { name : string; run : int32 -> Lz.bigbytes -> int32 }
-
-let paths = List.map (fun (name, run) -> { name; run })
-let crc32_paths = paths Lz.Paths.crc32
-let adler32_paths = paths Lz.Paths.adler32
-
-(* Zstandard paths *)
-
-type zstd_path = {
-  label : string;
-  decode : Lz.bigbytes -> Lz.bigbytes -> (Lz.progress, Lz.error) result;
-}
-
-let zstd_paths =
-  List.map (fun (label, decode) -> { label; decode }) Lz.Paths.zstd_decode
-
-type zstd_enc_path = {
-  label : string;
-  encode : level:int -> Lz.bigbytes -> Lz.bigbytes -> int option;
-}
-
-let zstd_enc_paths =
-  List.map
-    (fun (label, encode) : zstd_enc_path -> { label; encode })
-    Lz.Paths.zstd_encode
-
-(* [limited_steps e ~step src dst] steps [e] over [src], at most [step]
-   bytes a step, and writes the runs to [dst]: the stream's length, or
-   [None] when it does not fit. *)
-let limited_steps e ~step src dst =
-  let n = Array1.dim src in
-  let out = ref 0 in
-  let add run =
-    let k = Array1.dim run in
-    if !out + k <= Array1.dim dst then
-      Array1.blit run (Array1.sub dst !out k);
-    out := !out + k
-  in
-  let rec go at =
-    let len = min step (n - at) in
-    let last = at + len = n in
-    match Lz.Encoder.step e ~last (Array1.sub src at len) add with
-    | Lz.Done _ -> ()
-    | More taken -> go (at + taken)
-  in
-  go 0;
-  if !out <= Array1.dim dst then Some !out else None
-
-let zstd_encode_limit ~limit ?step ~level src dst =
-  match step with
-  | None -> Lz.zstd_encode_limit ~limit ~level src dst
-  | Some s when s > 0 ->
-      limited_steps (Lz.zstd_encoder_limit ~limit ~level) ~step:s src dst
-  | Some _ -> invalid_arg "Lz_support.zstd_encode_limit: step"
-
-(* Deflate paths *)
-
-type deflate_enc_path = {
-  label : string;
-  encode : level:int -> Lz.bigbytes -> Lz.bigbytes -> int option;
-}
-
-let deflate_enc_paths =
-  List.map
-    (fun (label, encode) : deflate_enc_path -> { label; encode })
-    Lz.Paths.deflate_encode
-
 (* Testables *)
 
 let pp_why ppf = function
@@ -624,12 +547,20 @@ let pp_why ppf = function
   | Too_long -> Format.pp_print_string ppf "Too_long"
   | Unsupported s -> Format.fprintf ppf "Unsupported %S" s
 
-let why = Windtrap.Testable.make ~pp:pp_why ~equal:( = )
-
 let pp_error ppf { Lz.at; why } =
   Format.fprintf ppf "{ at = %d; why = %a }" at pp_why why
 
 let error = Windtrap.Testable.make ~pp:pp_error ~equal:( = )
+
+let same_why a b =
+  match (a, b) with
+  | Lz.Truncated, Lz.Truncated | Too_long, Too_long -> true
+  | Malformed _, Malformed _ | Unsupported _, Unsupported _ -> true
+  | (Truncated | Too_long | Malformed _ | Unsupported _), _ -> false
+
+let refusal =
+  Windtrap.Testable.make ~pp:pp_error ~equal:(fun a b ->
+      a.Lz.at = b.Lz.at && same_why a.why b.why)
 
 let progress =
   Windtrap.Testable.make
@@ -665,13 +596,16 @@ let decoded =
 type golden = {
   file : string;
   codec : string;
-  vendor : string;
   members : int;
+  size : int;
   raw : string Lazy.t;
   data : string Lazy.t;
 }
 
 let read path = In_channel.with_open_bin path In_channel.input_all
+
+let file_size path =
+  In_channel.with_open_bin path In_channel.length |> Int64.to_int
 
 (* A raw spec is [kind:n] parts joined by [+]. *)
 let raw_of_spec spec =
@@ -682,24 +616,29 @@ let raw_of_spec spec =
          | _ -> invalid_arg ("Lz_support: raw spec " ^ spec))
   |> String.concat ""
 
-let goldens () =
-  read (Filename.concat "golden" "manifest.txt")
-  |> String.split_on_char '\n'
-  |> List.filter_map (fun line ->
-         match String.split_on_char ' ' (String.trim line) with
-         | [ file; codec; vendor; members; spec ] ->
-             Some
-               {
-                 file;
-                 codec;
-                 vendor;
-                 members = int_of_string members;
-                 raw = lazy (raw_of_spec spec);
-                 data = lazy (read (Filename.concat "golden" file));
-               }
-         | [ "" ] -> None
-         | _ -> invalid_arg ("Lz_support: manifest line " ^ line))
+(* The manifest's goldens, read once per process when a suite first asks for
+   them, so that loading this library reads no file. *)
+let manifest =
+  lazy
+    (read (Filename.concat "golden" "manifest.txt")
+    |> String.split_on_char '\n'
+    |> List.filter_map (fun line ->
+        match String.split_on_char ' ' (String.trim line) with
+        | [ file; codec; _; members; spec ] ->
+            let path = Filename.concat "golden" file in
+            Some
+              {
+                file;
+                codec;
+                members = int_of_string members;
+                size = file_size path;
+                raw = lazy (raw_of_spec spec);
+                data = lazy (read path);
+              }
+        | [ "" ] -> None
+        | _ -> invalid_arg ("Lz_support: manifest line " ^ line)))
 
+let goldens () = Lazy.force manifest
 let goldens_of codec = List.filter (fun g -> g.codec = codec) (goldens ())
 
 let decoder = function
@@ -711,98 +650,3 @@ let decoder = function
   | "lz4f" -> Lz.Lz4.Frame.decode
   | "snappy" -> Lz.Snappy.decode
   | c -> invalid_arg ("Lz_support.decoder: " ^ c)
-
-(* Suites over the goldens *)
-
-let decode_string codec data n =
-  let dst = create n in
-  match decoder codec (of_string data) dst with
-  | Ok { Lz.consumed; produced } ->
-      Windtrap.equal Windtrap.int ~msg:"consumed" (String.length data) consumed;
-      Ok (to_string ~length:produced dst)
-  | Error e -> Error e
-
-let agreement codec =
-  Windtrap.cases "every golden decodes to its input, all of it consumed"
-    ~id:(fun g -> g.file)
-    (goldens_of codec)
-    (fun g ->
-      let raw = Lazy.force g.raw in
-      Windtrap.equal decoded (Ok raw)
-        (decode_string codec (Lazy.force g.data) (String.length raw)))
-
-let truncations codec =
-  if codec = "lz4b" then invalid_arg "Lz_support.truncations: lz4b";
-  let files =
-    List.filter
-      (fun g -> g.members = 1 && String.length (Lazy.force g.data) <= 1024)
-      (goldens_of codec)
-  in
-  Windtrap.cases "every proper prefix is Truncated at its length"
-    ~id:(fun g -> g.file)
-    files
-    (fun g ->
-      let data = Lazy.force g.data in
-      let n = String.length (Lazy.force g.raw) in
-      for cut = 0 to String.length data - 1 do
-        let r = decoder codec (of_string (String.sub data 0 cut)) (create n) in
-        Windtrap.equal (Windtrap.result progress error)
-          ~msg:(Printf.sprintf "cut at %d" cut)
-          (Error { Lz.at = cut; why = Truncated })
-          r
-      done)
-
-(* A decode of mutated bytes may succeed or fail; it must stay inside its
-   buffers, which the sanitizers check, and report offsets inside them. *)
-let within data r =
-  let len = String.length data in
-  match r with
-  | Ok { Lz.consumed; produced = _ } ->
-      Windtrap.at_most Windtrap.int ~than:len consumed
-  | Error { Lz.at; why = _ } ->
-      Windtrap.at_least Windtrap.int ~than:0 at;
-      Windtrap.at_most Windtrap.int ~than:len at
-
-let mutations codec =
-  let files limit =
-    List.filter (fun g -> String.length (Lazy.force g.data) <= limit)
-      (goldens_of codec)
-  in
-  let decode g data =
-    decoder codec (of_string data) (create (String.length (Lazy.force g.raw)))
-  in
-  let flips =
-    Windtrap.cases "a bit flipped decodes or fails inside the input"
-      ~id:(fun g -> g.file)
-      (files 512)
-      (fun g ->
-        let data = Lazy.force g.data in
-        for bit = 0 to (8 * String.length data) - 1 do
-          let b = Bytes.of_string data in
-          let i = bit / 8 in
-          Bytes.set b i
-            (Char.chr (Char.code data.[i] lxor (1 lsl (bit mod 8))));
-          let m = Bytes.to_string b in
-          within m (decode g m)
-        done)
-  in
-  let pool = Array.of_list (files 65536) in
-  let edges =
-    match pool with [||] -> [] | _ -> [ (0, 0, '\x07'); (0, -1, '\x07') ]
-  in
-  let replaced =
-    Windtrap.prop "a byte replaced decodes or fails inside the input"
-      ~examples:edges
-      Windtrap.Gen.(
-        triple (int_range 0 (max 0 (Array.length pool - 1))) anywhere char)
-      (fun (k, at, c) ->
-        if Array.length pool = 0 then Windtrap.skip ();
-        let g = pool.(k) in
-        let data = Lazy.force g.data in
-        Windtrap.assume (String.length data > 0);
-        let b = Bytes.of_string data in
-        Bytes.set b (position at (String.length data)) c;
-        let m = Bytes.to_string b in
-        within m (decode g m))
-  in
-  Windtrap.group "mutations" [ flips; replaced ]

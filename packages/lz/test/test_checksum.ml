@@ -204,11 +204,13 @@ let of_sum s =
     running = s.running;
   }
 
-let of_path name (p : Lz_support.path) =
+(* A path of [Lz.Paths]: its name and the checksum of all of a buffer from a
+   running value. *)
+let of_path name (path, run) =
   let s = sum_named name in
   {
-    label = name ^ " " ^ p.name;
-    run = (fun c b -> u32 (p.run (i32 c) b));
+    label = name ^ " " ^ path;
+    run = (fun c b -> u32 (run (i32 c) b));
     expect = s.reference;
     draw = s.valid;
     running = s.running;
@@ -216,10 +218,8 @@ let of_path name (p : Lz_support.path) =
 
 let runs =
   List.map of_sum sums
-  @ List.map (of_path "CRC-32") Lz_support.crc32_paths
-  @ List.map (of_path "Adler-32") Lz_support.adler32_paths
-
-let path_names paths = List.map (fun (p : Lz_support.path) -> p.name) paths
+  @ List.map (of_path "CRC-32") Lz.Paths.crc32
+  @ List.map (of_path "Adler-32") Lz.Paths.adler32
 
 let hex =
   Testable.make ~pp:(fun ppf x -> Format.fprintf ppf "0x%Lx" x) ~equal:Int64.equal
@@ -440,10 +440,8 @@ let () =
          cases "a sum of a check input is its check value" ~id:check_name checks
            check;
          test "the generic paths come first" (fun () ->
-             equal string "generic"
-               (List.hd (path_names Lz_support.crc32_paths));
-             equal string "generic"
-               (List.hd (path_names Lz_support.adler32_paths)));
+             equal string "generic" (fst (List.hd Lz.Paths.crc32));
+             equal string "generic" (fst (List.hd Lz.Paths.adler32)));
          test "every length to 300 at every alignment agrees with the reference"
            sweep;
          prop "the reference holds for drawn bytes, lengths and alignments"

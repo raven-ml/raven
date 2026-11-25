@@ -968,8 +968,8 @@ let paths =
     [
       test "the generic path is first" (fun () ->
           equal (option string) (Some "generic")
-            (match Lz_support.zstd_paths with
-            | (p : Lz_support.zstd_path) :: _ -> Some p.label
+            (match Lz.Paths.zstd_decode with
+            | (label, _) :: _ -> Some label
             | [] -> None));
       prop "every path decodes as Lz.Zstd.decode" ~examples:(edges ())
         Gen.(with_pp pp (triple golden_index change bool))
@@ -984,25 +984,39 @@ let paths =
             | Error { Lz.why = Malformed _; _ } -> true
             | _ -> false);
           List.iter
-            (fun (p : Lz_support.zstd_path) ->
-              equal ~msg:p.Lz_support.label outcome expected
-                (run p.Lz_support.decode data room))
-            Lz_support.zstd_paths);
+            (fun (label, decode) ->
+              equal ~msg:label outcome expected (run decode data room))
+            Lz.Paths.zstd_decode);
       test "every path decodes matches across the window" (fun () ->
           let frame, expected = Lazy.force far_matches in
           List.iter
-            (fun (p : Lz_support.zstd_path) ->
+            (fun (label, decode) ->
               let dst = Lz_support.create (String.length expected) in
-              equal decode_result ~msg:p.Lz_support.label
+              equal decode_result ~msg:label
                 (Ok
                    {
                      Lz.consumed = String.length frame;
                      produced = String.length expected;
                    })
-                (p.Lz_support.decode (Lz_support.of_string frame) dst);
-              equal string ~msg:p.label expected (Lz_support.to_string dst))
-            Lz_support.zstd_paths);
+                (decode (Lz_support.of_string frame) dst);
+              equal string ~msg:label expected (Lz_support.to_string dst))
+            Lz.Paths.zstd_decode);
     ]
+
+(* Goldens *)
+
+let every_golden =
+  cases "every golden decodes to its input, all of it consumed"
+    ~id:(fun g -> g.Lz_support.file)
+    (Lz_support.goldens_of "zstd")
+    (fun g ->
+      let raw = Lazy.force g.raw and data = Lazy.force g.data in
+      let dst = Lz_support.create (String.length raw) in
+      equal
+        (result Lz_support.progress Lz_support.error)
+        (Ok { Lz.consumed = String.length data; produced = String.length raw })
+        (Lz.Zstd.decode (Lz_support.of_string data) dst);
+      equal Lz_support.decoded (Ok raw) (Ok (Lz_support.to_string dst)))
 
 (* Memory *)
 
@@ -1026,7 +1040,7 @@ let () =
     (run "Zstd"
        [
          messages;
-         group "decode" [ Lz_support.agreement "zstd"; allocation ];
+         group "decode" [ every_golden; allocation ];
          frames;
          header;
          literals;
