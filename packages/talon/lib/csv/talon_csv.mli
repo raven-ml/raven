@@ -193,9 +193,12 @@ val file :
 (** [file ?format ?nulls path] is the {!source} of the CSV file [path], named
     [csv "path"], whose errors name [path]: as [format] says, or as {!sniff}
     [?nulls] infers from the file when [format] is absent. Each read opens the
-    file again.
+    file again. With [format], the call opens nothing, so the source of a named
+    pipe reads it once.
 
-    [Error e] if the file cannot be opened, or as {!sniff}.
+    [Error e] if no file is at [path], or, when [format] is absent, if the file
+    cannot be opened or as {!sniff}. With [format], a file that cannot be opened
+    fails the read, naming [path].
 
     Raises [Invalid_argument] if both [format] and [nulls] are given, since a
     format holds its null tokens ({!type-format}), or as {!sniff} does on

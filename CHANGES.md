@@ -6126,8 +6126,9 @@ its lock and from samples the dashboard saw arrive.
   nested leaf's names its path: `row group 0: bytes 4-48: column "x": the page
   fails its CRC-32 checksum`. In a file of several columns it named only the
   row group.
-- `Talon_csv.file ~format` on a file that cannot be opened is an `Error` at
-  the call, as without a format, where the error came at the first read.
+- `Talon_csv.file ~format` on a path where no file is gives an `Error` at the
+  call, as without a format, where the error came at the first read. The call
+  opens nothing, so a named pipe is still read once.
 - `Talon_csv.encode`'s error for a null in a format of one column without a
   null token gives the null's line when a field or a header name before it
   holds a line break; it counted one line per record.

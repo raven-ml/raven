@@ -654,21 +654,21 @@ let file ?format ?nulls path =
     let name = Format.asprintf "csv %a" Type.pp_quoted path in
     source_of ~name ~file:path f open_
   in
-  (* The file is opened at the call, so that a path that cannot be opened fails
-     there, with a format as without. *)
-  let opened read =
-    match open_ () with
-    | exception Sys_error msg -> Error (Error.v msg)
-    | r, close -> Fun.protect ~finally:close (fun () -> read r)
-  in
   match (format, nulls) with
   | Some _, Some _ ->
       invalid "file" "a format holds its null tokens, so ~nulls is for sniffing"
-  | Some f, None -> opened (fun _ -> Ok (source f))
-  | None, nulls ->
+  | Some f, None ->
+      (* A format needs no byte at the call, so the file is opened by each read
+         alone, and a named pipe is read once. *)
+      if Sys.file_exists path then Ok (source f)
+      else Error (Error.v ~file:path "No such file or directory")
+  | None, nulls -> (
       let nulls = Option.value ~default:[] nulls in
       check_nulls "file" ~seps:separators ~quote:'"' nulls;
-      opened (fun r ->
+      match open_ () with
+      | exception Sys_error msg -> Error (Error.v msg)
+      | r, close ->
+          Fun.protect ~finally:close @@ fun () ->
           Result.map source (sniff_from ~file:path ~rows:sample_rows ~nulls r))
 
 (* Writing *)

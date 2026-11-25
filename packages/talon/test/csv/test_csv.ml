@@ -1328,7 +1328,7 @@ let files =
             | Error e -> error_text e)
           @@ __POS_OF__
                {| data.csv:2:1: no separator splits every record into the same number of fields: with ',', the record has 1 field, and the first one 2 |});
-      test "fails at the call on a file it cannot open, with a format or not"
+      test "fails at the call on a path where no file is, with a format or not"
         (fun () ->
           chdir (temp_dir ());
           let outcome = function Ok _ -> "ok" | Error e -> error_text e in
@@ -1343,6 +1343,22 @@ let files =
             missing.csv: No such file or directory
             missing.csv: No such file or directory
             |});
+      test "reads a named pipe once, with a format" (fun () ->
+          chdir (temp_dir ());
+          (try Unix.mkfifo "data.csv" 0o600
+           with Unix.Unix_error _ | Invalid_argument _ ->
+             skip ~reason:"no named pipes" ());
+          (* No writer has the pipe open at the call, so a call that opened it
+             would wait for ever. *)
+          let s = Error.get_ok (Csv.file ~format:x_int "data.csv") in
+          let writer =
+            Domain.spawn (fun () ->
+                Out_channel.with_open_bin "data.csv" (fun oc ->
+                    output_string oc "x\n1\n2\n"))
+          in
+          let t = run_ok (Query.of_source s) in
+          Domain.join writer;
+          equal table (v [ ("x", Column.v Type.int64 [| 1; 2 |]) ]) t);
       test "fails a read of a file removed since the call" (fun () ->
           in_temp_dir "x\n1\n";
           let s = Error.get_ok (Csv.file ~format:x_int "data.csv") in
