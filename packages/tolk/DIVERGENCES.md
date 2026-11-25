@@ -6324,7 +6324,9 @@ against 2.77).
   batches do not read, optimised as without it; `matmul_1000` blocked
   padded to 1024; `matmul_48` and `scores_masked` not blocked; `a reduce
   split into threads keeps its partials within shared memory`, three
-  products on sm_75 and gfx942),
+  products on sm_75 and gfx942), `a product along a reduce its unroll
+  takes whole keeps its writes` (a reduce of 4 terms, blocked or short of
+  the units, on every GPU target),
   `a batch's projection into heads` (16 objects of 858, 580 or 383 tokens
   and 8 of 581, staged on sm_89 and 8 by 8 a thread on sm_75, and a
   product of 88 by 88 that holds no SIMD group even padded), rune's

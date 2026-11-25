@@ -1590,11 +1590,12 @@ let block ~waste k upcasted =
           let axis = last dims in
           let r = List.nth (K.rngs k) axis in
           let along = along_reduce k r in
+          (* An unroll that takes the reduce whole leaves nothing to split. *)
           if
             divisible (shape_at k axis) 4
             && try_split k axis 4 Opt.Upcast
             && along
-          then split_reduce k r);
+          then Option.iter (split_reduce k) (rest_of k r));
       if blocked then Blocked (ra, rb) else Short (ra, rb)
   | _ -> Free
 

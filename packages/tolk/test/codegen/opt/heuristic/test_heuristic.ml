@@ -3933,6 +3933,50 @@ let along_reduce_threads =
             (reduce_thread (Lazy.force o)));
     ]
 
+(* A product of [rows] by [cols] over 4 terms whose operands both lie along its
+   reduce keeps its writes on every GPU target. Where the two output axes take
+   upcasts by 4, the reduce's unroll by 4 takes it whole, blocked or short of
+   the target's units, and leaves no part of it to split into threads. *)
+let short_reduce_case =
+  let open Gen in
+  let* ren = of_list block_targets in
+  let* rows = of_list [ 32; 64; 128; 192 ] in
+  let+ cols = of_list [ 32; 64; 256 ] in
+  (ren, rows, cols)
+
+let pp_short_reduce ppf (ren, rows, cols) =
+  pp_block_case ppf
+    {
+      b_ren = ren;
+      b_by_columns = false;
+      b_rows = rows;
+      b_cols = cols;
+      b_depth = 4;
+    }
+
+let short_reduce =
+  prop "a product along a reduce its unroll takes whole keeps its writes"
+    (Gen.with_pp pp_short_reduce short_reduce_case) (fun (ren, rows, cols) ->
+      let k = dense rows cols 4 in
+      let opts = ref [] in
+      let hand_coded s =
+        let o = Heuristic.hand_coded_optimizations s in
+        opts := K.applied_opts o;
+        o
+      in
+      let optimised = Postrange.apply_opts ~hand_coded k ren in
+      let upcasts n =
+        List.length
+          (List.filter
+             (function
+               | Opt.Split { amount; target = Upcast; _ } -> amount = n
+               | _ -> false)
+             !opts)
+      in
+      cover "blocked" (upcasts 4 = 3 && upcasts 2 = 2);
+      cover "short of the units" (upcasts 4 = 3 && upcasts 2 = 0);
+      equal (list Kernel_opts.write) (writes k) (writes optimised))
+
 (* A float32 product [x · wᵀ], [x] of [rows] by [depth] and [w] of [cols] by
    [depth], or [x · w] with [w] of [depth] by [cols] where [by_columns]. *)
 let f32_product ?(by_columns = false) rows cols depth =
@@ -4644,6 +4688,7 @@ let () =
          live_registers;
          lanes_within_registers;
          along_reduce_threads;
+         short_reduce;
          staged_products;
          batched_heads;
          padded_upcast;
