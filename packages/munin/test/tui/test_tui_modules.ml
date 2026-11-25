@@ -22,9 +22,12 @@ let rec remove path =
   | _ -> Sys.remove path
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
 
-(* The reference for round numbers: the C library's reading of the decimal
-   [m] e [k], correctly rounded. *)
-let decimal_text m k = float_of_string (Printf.sprintf "%de%d" m k)
+(* The reference for round numbers: munin's own reading of the decimal [m]
+   e [k], correctly rounded, which its own suite states. The C library's is
+   not correctly rounded on every system. *)
+let decimal_text m k =
+  Option.get
+    (Munin_float_text.Float_read.of_string (Printf.sprintf "%de%d" m k))
 
 (* The store of the runs the laws write, one or two a case, which the
    process removes as it ends. *)
@@ -1339,7 +1342,9 @@ let zoom_window =
     |> Gen.with_pp (fun ppf (hi, narrow, at) ->
            Format.fprintf ppf "(0, %h), %d halvings, at %h" hi narrow at)
   in
-  prop "zoom's window lies in the domain and holds the cursor" gen (fun (hi, narrow, at) ->
+  prop "zoom's window lies in the domain and holds the cursor"
+    ~examples:[ (100., 2, 100.); (100., 2, -5.); (100., 2, 150.) ]
+    gen (fun (hi, narrow, at) ->
       cover "the cursor at the domain's end" (at = hi);
       cover "the cursor outside the domain" (at < 0. || at > hi);
       cover "narrowed more than once" (narrow > 1);
@@ -1563,8 +1568,6 @@ let bounds =
     ]
     (fun (x, expected) -> equal float_exact expected (Munin_tui.Facts.bound x))
 
-(* A y axis's ticks are round numbers: the powers of ten of a log domain,
-   the multiples of a 1-2-5 step of a linear one. *)
 let smoothables =
   cases ~id:fst "a key is smoothed by default when it starts with train/"
     [ ("train/loss", true); ("val/loss", false); ("train", false);
@@ -1579,8 +1582,31 @@ let taus =
     (fun (domain, expected) ->
       equal (float_rel ~rel:1e-15 ~abs:0.) expected (Plot.tau domain))
 
-(* A linear axis's ticks: in the domain, ascending, the multiples of one
-   step of 1, 2 or 5 times a power of ten, at most [most], each labelled. *)
+(* A linear axis's ticks, by their sentence: the multiples in the domain
+   of the finest step of 1, 2 or 5 times a power of ten that gives at most
+   [most] ticks which [Numbers.tick] labels, each the float nearest its
+   decimal value. The steps are tried from one finer than the domain's
+   width over [most], coarser and coarser. *)
+let linear_ticks ~most (lo, hi) =
+  let multiples (m, k) =
+    let unit = decimal_text m k in
+    let first = Float.to_int (Float.floor (lo /. unit)) - 1
+    and last = Float.to_int (Float.ceil (hi /. unit)) + 1 in
+    List.filter
+      (fun t -> t >= lo && t <= hi)
+      (List.init (last - first + 1) (fun i -> decimal_text ((first + i) * m) k))
+  in
+  let k0 = Numbers.decade ((hi -. lo) /. Float.of_int most) - 1 in
+  let steps =
+    List.concat_map
+      (fun k -> List.map (fun m -> (m, k)) [ 1; 2; 5 ])
+      (List.init 8 (fun i -> k0 + i))
+  in
+  let fits ticks = List.length ticks <= most && Numbers.tick ticks <> None in
+  match List.find_opt fits (List.map multiples steps) with
+  | Some ticks -> ticks
+  | None -> []
+
 let tick_steps =
   let gen =
     Gen.(
@@ -1590,47 +1616,18 @@ let tick_steps =
       let+ most = int_range 2 12 in
       (lo, lo +. (width *. (10. ** Float.of_int e)), most))
   in
-  prop "a linear axis's ticks are the domain's multiples of a round step"
+  prop "a linear axis's ticks are the multiples of the finest round step"
     (Gen.with_pp
        (fun ppf (lo, hi, most) -> Format.fprintf ppf "(%h, %h), %d" lo hi most)
        gen)
     (fun (lo, hi, most) ->
       let ticks = Plot.y_ticks ~log:false ~most (lo, hi) in
       cover "ticks" (List.length ticks >= 2);
-      at_most ~msg:"their count" int ~than:most (List.length ticks);
-      List.iter
-        (fun t -> if t < lo || t > hi then failf "the tick %h is outside" t)
-        ticks;
-      equal ~msg:"ascending" (list float_exact)
-        (List.sort_uniq Float.compare ticks) ticks;
-      if ticks <> [] then begin
-        not_equal ~msg:"labelled" (option unit) None
-          (Option.map ignore (Numbers.tick ticks));
-        match ticks with
-        | a :: b :: _ ->
-            (* Some step [m] × 10^k gives each tick as the float nearest its
-               multiple n × m × 10^k, the [n]s consecutive. *)
-            let k0 = Numbers.decade (b -. a) in
-            let multiples (m, k) =
-              let unit = decimal_text m k in
-              let ns = List.map (fun t -> Float.to_int (Float.round (t /. unit))) ticks in
-              List.for_all2 (fun t n -> decimal_text (n * m) k = t) ticks ns
-              && List.for_all2 (fun n n' -> n' = n + 1)
-                   (List.filteri (fun i _ -> i < List.length ns - 1) ns)
-                   (List.tl ns)
-            in
-            let steps =
-              List.concat_map
-                (fun k -> List.map (fun m -> (m, k)) [ 1; 2; 5 ])
-                [ k0 - 1; k0; k0 + 1 ]
-            in
-            satisfies ~claim:"the multiples of 1, 2 or 5 times a power of ten"
-              (list float_exact)
-              (fun _ -> List.exists multiples steps)
-              ticks
-        | _ -> ()
-      end)
+      cover "no tick" (ticks = []);
+      equal (list float_exact) (linear_ticks ~most (lo, hi)) ticks)
 
+(* A y axis's ticks are round numbers: the powers of ten of a log domain,
+   the multiples of a 1-2-5 step of a linear one. *)
 let ticks_of =
   cases
     ~id:(fun (log, most, (lo, hi), _) ->
@@ -1682,9 +1679,6 @@ let log_choice =
     (fun (_, runs, expected) ->
       equal bool expected (Plot.log (List.map logged runs) "m"))
 
-(* A value prints in four significant digits, counted after rounding: a
-   value that rounds up to the next power of ten keeps four, and its notation
-   is that of the rounded value. *)
 (* [cut w s] is [s] when it fits, else a prefix of [s] and […] in at most
    [w] cells, and [""] for [w <= 0]: over wide glyphs, combining marks and
    tabs. *)
@@ -1698,22 +1692,36 @@ let cut_law =
     (w, s)
   in
   let gen = Gen.with_pp (fun ppf (w, s) -> Format.fprintf ppf "%d, %S" w s) gen in
-  prop "a cut text fits, and ends in … when it is cut" gen (fun (w, s) ->
+  (* [a漢b] at 3 cells: [a] and […] take 2, the wide glyph would pass. *)
+  prop "a cut text fits, and ends in … when it is cut"
+    ~examples:[ (3, "a漢b") ]
+    gen
+    (fun (w, s) ->
       let module N = Munin_tui.Numbers in
       let r = N.cut w s in
       let ell = "…" in
-      at_most ~msg:"its width" int ~than:(max 0 w) (N.width r);
+      let cut = N.width s > w && w > 0 in
+      let p =
+        if String.ends_with ~suffix:ell r then
+          String.sub r 0 (String.length r - String.length ell)
+        else r
+      in
       cover "whole" (N.width s <= w);
+      cover "cut" cut;
+      cover "a wide glyph left out at the edge" (cut && N.width p < w - 1);
+      at_most ~msg:"its width" int ~than:(max 0 w) (N.width r);
       if N.width s <= w then equal ~msg:"whole" string s r
       else if w <= 0 then equal ~msg:"no room" string "" r
       else begin
-        if not (String.ends_with ~suffix:ell r) then failf "%S does not end in …" r;
-        let p = String.sub r 0 (String.length r - String.length ell) in
-        if not (String.starts_with ~prefix:p s) then failf "%S is not a prefix of %S" p s;
-        cover "cut" true;
-        cover "a wide glyph left out at the edge" (N.width p < w - 1)
+        if not (String.ends_with ~suffix:ell r) then
+          failf "%S does not end in …" r;
+        if not (String.starts_with ~prefix:p s) then
+          failf "%S is not a prefix of %S" p s
       end)
 
+(* A value prints in four significant digits, counted after rounding: a
+   value that rounds up to the next power of ten keeps four, and its notation
+   is that of the rounded value. *)
 let values_printed =
   cases ~id:fst "a value prints in four significant digits"
     [
@@ -1818,14 +1826,13 @@ let difference_fits =
        (fun ppf (k, v, o) -> Format.fprintf ppf "%s %h against %h" k v o)
        gen)
     (fun (key, value, other) ->
-      match Munin_tui.Numbers.difference key ~value ~other with
+      let d = Munin_tui.Numbers.difference key ~value ~other in
+      let ends suffix = Option.fold ~none:false ~some:(String.ends_with ~suffix) d in
+      cover "relative" (ends "%");
+      cover "absolute" (d <> None && not (ends "%" || ends "pt"));
+      match d with
       | None -> ()
       | Some s ->
-          cover "relative" (String.ends_with ~suffix:"%" s);
-          cover "absolute"
-            (not
-               (String.ends_with ~suffix:"%" s
-               || String.ends_with ~suffix:"pt" s));
           at_most ~msg:s int ~than:difference_cells (Munin_tui.Numbers.width s))
 
 (* The sentences of [Numbers.difference] and their examples. *)
@@ -1858,8 +1865,27 @@ let differences =
       equal (option string) expected
         (Munin_tui.Numbers.difference key ~value ~other))
 
+(* Rows whose nearest floats are written exactly, in hexadecimal. *)
+let decimal_rows =
+  cases
+    ~id:(fun (m, k, _) -> Printf.sprintf "%de%d" m k)
+    "decimal m k is the float nearest m × 10^k, inf past the largest, 0 below \
+     the least"
+    [
+      (1, -1, 0x1.999999999999ap-4);
+      (1, 22, 0x1.0f0cf064dd592p+73);
+      (1, 23, 0x1.52d02c7e14af6p+76);
+      (17976931348623157, 292, Float.max_float);
+      (2, 308, Float.infinity);
+      (5, -324, 0x0.0000000000001p-1022);
+      (3, -324, 0x0.0000000000001p-1022);
+      (2, -324, 0.);
+    ]
+    (fun (m, k, expected) ->
+      equal float_exact expected (Numbers.decimal m k))
+
 let decimals =
-  prop "decimal m k is the float nearest m × 10^k"
+  prop "decimal m k reads as the text m e k reads"
     ~examples:[ (1, 22); (1, 23); (1, -324); (2, 308); (1, 309); (5, -325) ]
     Gen.(
       with_pp
@@ -1913,6 +1939,10 @@ let counts =
         String.split_on_char ','
           (if n < 0 then String.sub s 1 (String.length s - 1) else s)
       in
+      let first = String.length (List.hd groups) in
+      satisfies ~msg:s ~claim:"a first group of 1 to 3 digits" int
+        (fun n -> n >= 1 && n <= 3)
+        first;
       equal ~msg:"the groups after the first" (list int)
         (List.map (fun _ -> 3) (List.tl groups))
         (List.map String.length (List.tl groups)))
@@ -1926,19 +1956,26 @@ let elisions =
       (w, key))
   in
   prop "an elided key fits, and keeps its last segment when it can"
+    ~examples:[ (12, "val/acc_top5/x"); (5, "val/acc_top5") ]
     (Gen.with_pp (fun ppf (w, k) -> Format.fprintf ppf "%d, %S" w k) gen)
     (fun (w, key) ->
       let e = Numbers.elide w key in
+      let last =
+        match String.rindex_opt key '/' with
+        | Some i -> String.sub key i (String.length key - i)
+        | None -> key
+      in
+      (* The last segment, its [/] included, fits with a cell of the start
+         and the […]. *)
+      let keeps = String.length key > w && String.length last + 2 <= w in
+      cover "the last segment kept" (keeps && String.contains key '/');
+      cover "cut" (String.length key > w && not keeps);
       at_most ~msg:e int ~than:w (Numbers.width e);
       if String.length key <= w then equal ~msg:"whole" string key e
-      else
-        let last =
-          match String.rindex_opt key '/' with
-          | Some i -> String.sub key i (String.length key - i)
-          | None -> key
-        in
-        cover "the last segment kept" (String.ends_with ~suffix:last e);
-        cover "cut" (w > 0 && String.ends_with ~suffix:"…" e))
+      else if keeps then
+        satisfies ~msg:e ~claim:("ends in …" ^ last) string
+          (String.ends_with ~suffix:("…" ^ last))
+          e)
 
 (* Ticks at the multiples of a 1, 2 or 5 step: those [tick] labels read
    back exactly in six cells, in one notation. *)
@@ -1959,10 +1996,11 @@ let tick_law =
            ppf xs)
        gen)
     (fun xs ->
-      match Numbers.tick xs with
+      let labels = Numbers.tick xs in
+      cover "labelled" (labels <> None);
+      match labels with
       | None -> ()
       | Some label ->
-          cover "labelled" true;
           List.iter
             (fun x ->
               let l = label x in
@@ -2171,7 +2209,8 @@ let token_name : Theme.token -> string = function
 let tokens = Theme.[ Raise; Sel; Line; Line2; Dim; Mid; Fg; Hi; Live; Fail; Warn ]
 
 let coloured_depths =
-  cases ~id:depth_name "a look without colour keeps bold and faint alone"
+  cases ~id:depth_name
+    "without colour a look has no colour and reverses the cursor's row"
     depths
     (fun depth ->
       let t = theme depth in
@@ -2386,10 +2425,11 @@ let watch_test =
          Gen.(
            pair
              (map Float.of_int
-                (frequency [ (4, int_range 0 20); (1, int_range 60 300) ]))
+                (frequency [ (3, int_range 0 20); (1, int_range 60 300) ]))
              (int_range (-1) 3))
-      @-> w ^-> makes w)
-      (fun (dt, d) a ->
+      @-> w ^-> returns unit)
+      (fun (dt, d) m ->
+        let a = !m in
         let now = a.now +. dt in
         let samples = max 0 (a.samples + d) in
         let times =
@@ -2397,35 +2437,63 @@ let watch_test =
             List.filteri (fun i _ -> i < 32) (now :: a.times)
           else a.times
         in
-        { now; samples; times })
+        m := { now; samples; times })
       (* A resume that orphans samples lowers the count a poll reads. *)
-      (fun (dt, d) (w, now, samples) ->
+      (fun (dt, d) c ->
+        let w, now, samples = !c in
         let now = now +. dt and samples = max 0 (samples + d) in
-        (Watch.observe w ~now ~samples, now, samples))
+        c := (Watch.observe w ~now ~samples, now, samples))
   in
+  (* A poll long after the last that finds no new sample, as a stalled
+     run's do. *)
+  let quiet =
+    command "quiet"
+      (Gen.with_pp
+         (fun ppf dt -> Format.fprintf ppf "+%gs" dt)
+         Gen.(map Float.of_int (int_range 31 300))
+      @-> w ^-> returns unit)
+      (fun dt m -> m := { !m with now = !m.now +. dt })
+      (fun dt c ->
+        let w, now, samples = !c in
+        let now = now +. dt in
+        c := (Watch.observe w ~now ~samples, now, samples))
+  in
+  let word =
+    command "word"
+      (status @-> w ^-> returns string)
+      (fun st m ->
+        let w = model_word st !m in
+        List.iter
+          (fun x -> cover x (w = x))
+          [ "starting"; "running"; "live"; "stalled"; "writing"; "silent" ];
+        w)
+      (fun st c ->
+        let w, now, _ = !c in
+        Watch.word (Watch.state st (Some w) ~now))
+  in
+  (* A watch is a cell that polls change, so that every call reads the
+     latest: the model's arrivals, and the watch with the poll's time and
+     count. *)
   stateful ~count:300 ~steps:60 "the state words follow the arrivals"
     [
       command "start"
         (Gen.int_range 0 3 @-> makes w)
-        (fun samples -> { now = 0.; samples; times = [] })
-        (fun samples -> (Watch.start ~samples, 0., samples));
-      (* Listed three times, so that a value's arrivals pile up. *)
+        (fun samples -> ref { now = 0.; samples; times = [] })
+        (fun samples -> ref (Watch.start ~samples, 0., samples));
+      (* Listed three times, so that arrivals pile up. *)
       observe;
       observe;
       observe;
-      command "word"
-        (status @-> w ^-> returns string)
-        (fun st a ->
-          let w = model_word st a in
-          List.iter
-            (fun x -> cover x (w = x))
-            [ "starting"; "running"; "live"; "stalled"; "writing"; "silent" ];
-          w)
-        (fun st (w, now, _) -> Watch.word (Watch.state st (Some w) ~now));
+      quiet;
+      (* Listed twice, so that a program reads the words often. *)
+      word;
+      word;
       command "last_arrival"
         (w ^-> returns (option float_exact))
-        (fun a -> match a.times with t :: _ -> Some t | [] -> None)
-        (fun (w, _, _) -> Watch.last_arrival w);
+        (fun m -> match !m.times with t :: _ -> Some t | [] -> None)
+        (fun c ->
+          let w, _, _ = !c in
+          Watch.last_arrival w);
     ]
 
 (* Which states a writer may still log in, and which ended badly. *)
@@ -2466,22 +2534,22 @@ let () =
              means;
              smoothed_means;
              geometric_means;
+             extend;
+             words_a_sample;
              unsmoothed;
              events;
              edges;
-             extend;
-             words_a_sample;
              common;
              at;
            ];
          group "Plot"
            [
+             smoothables;
              x_domain;
              x_domain_law;
+             taus;
              zoom_window;
              log_choice;
-             smoothables;
-             taus;
              ticks_of;
              tick_steps;
              matching;
@@ -2501,30 +2569,49 @@ let () =
            ];
          group "Numbers"
            [
+             widths;
              cut_law;
-             values_printed;
-             rounding_shown;
-             differences;
-             difference_fits;
-             tick_labels;
-             tick_law;
-             spans;
+             elisions;
+             decimal_rows;
              decimals;
              decades;
-             counts;
-             elisions;
+             values_printed;
+             rounding_shown;
              metrics;
              givens;
+             differences;
+             difference_fits;
+             counts;
              compacts;
+             tick_labels;
+             tick_law;
              percents_of;
              percents;
              gibs;
+             spans;
              clocks;
              dates;
-             widths;
            ];
          group "Facts"
-           [ bounds; rounds; glyphs; key_metrics; varying; experiment_order ];
-         group "Theme" [ coloured_depths; sixteen_entries; run_colours; schemes ];
-         group "Watch" [ watch_test; unwatched; live_broken ];
+           [
+             glyphs;
+             bounds;
+             rounds;
+             key_metrics;
+             varying;
+             experiment_order;
+           ];
+         group "Theme"
+           [
+             coloured_depths;
+             sixteen_entries;
+             run_colours;
+             schemes;
+           ];
+         group "Watch"
+           [
+             watch_test;
+             unwatched;
+             live_broken;
+           ];
        ])
