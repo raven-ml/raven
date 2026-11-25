@@ -65,7 +65,11 @@ val shape : t -> int iarray -> int iarray
       [count >= 0]; if [count > 0], [start] and [start + (count - 1)·step] lie
       in [\[0, d)] for an axis of extent [d].
     - [Window ws]: each window's axis is an axis of [s], after the previous
-      window's; [size], [step] and [dilation] are at least [1]. *)
+      window's; [size], [step] and [dilation] are at least [1].
+
+    The message starts with the constructor's name, as [Move.Broadcast:], or
+    with [Move.shape:] where [s] itself is refused, and, where one axis or entry
+    is at fault, names it. *)
 
 (**/**)
 

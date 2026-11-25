@@ -268,37 +268,75 @@ let test_bound c =
   | Some s' -> equal iints s' (M.shape c.m c.s)
   | None -> raises_match Exn.invalid_arg (fun () -> M.shape c.m c.s)
 
-(* A refusal names the axis at fault, so that the caller sees which extent
-   breaks the rule. *)
+(* A refusal's message starts with the constructor's name, or Move.shape's where
+   the argument's shape itself is refused, and names the axis or entry at fault
+   where one is: each row's movement, shape, prefix and that phrase. *)
 let messages =
   let w axis = { M.axis; size = 1; step = 1; dilation = 1 } in
   [
-    ( "a broadcast names the axis that neither is 1 nor matches",
-      (fun () -> M.shape (M.Broadcast [| 3; 5 |]) [| 3; 4 |]),
-      "Move.Broadcast: [3; 4] does not broadcast to [3; 5]: axis 1 has 4, \
-       neither 1 nor 5" );
+    ( "a broadcast that neither is 1 nor matches",
+      M.Broadcast [| 3; 5 |],
+      [| 3; 4 |],
+      "Move.Broadcast:",
+      Some "axis 1" );
     ( "a broadcast's axis counts from the argument's first",
-      (fun () -> M.shape (M.Broadcast [| 2; 3; 5 |]) [| 4; 1 |]),
-      "axis 0 has 4, neither 1 nor 3" );
-    ( "a negative extent names its axis",
-      (fun () -> M.shape (M.Reshape [| 2; -3 |]) [| 6 |]),
-      "Move.Reshape: axis 1 of [2; -3] is -3, below 0" );
-    ( "a repeated axis names its entry",
-      (fun () -> M.shape (M.Permute [| 0; 1; 0 |]) [| 2; 3; 4 |]),
-      "entry 2 repeats axis 0" );
-    ( "an axis past the argument names its entry",
-      (fun () -> M.shape (M.Permute [| 0; 3 |]) [| 2; 3 |]),
-      "entry 1, 3, is not an axis of 2" );
-    ( "an axis of more than one element left out names it",
-      (fun () -> M.shape (M.Permute [| 1 |]) [| 2; 3 |]),
-      "axis 0, of 2 elements, is left out" );
-    ( "windows out of order name both",
-      (fun () -> M.shape (M.Window [| w 1; w 0 |]) [| 3; 3 |]),
-      "window 1's axis 0 is not after window 0's axis 1" );
+      M.Broadcast [| 2; 3; 5 |],
+      [| 4; 1 |],
+      "Move.Broadcast:",
+      Some "axis 0" );
+    ( "a negative extent",
+      M.Reshape [| 2; -3 |],
+      [| 6 |],
+      "Move.Reshape:",
+      Some "axis 1" );
+    ( "a repeated axis",
+      M.Permute [| 0; 1; 0 |],
+      [| 2; 3; 4 |],
+      "Move.Permute:",
+      Some "entry 2" );
+    ( "an axis past the argument",
+      M.Permute [| 0; 3 |],
+      [| 2; 3 |],
+      "Move.Permute:",
+      Some "entry 1" );
+    ( "an axis of more than one element left out",
+      M.Permute [| 1 |],
+      [| 2; 3 |],
+      "Move.Permute:",
+      Some "axis 0" );
+    ( "windows out of order",
+      M.Window [| w 1; w 0 |],
+      [| 3; 3 |],
+      "Move.Window:",
+      Some "window 1" );
+    ( "a step of 0",
+      M.Slice [| { M.start = 0; count = 1; step = 0 } |],
+      [| 3 |],
+      "Move.Slice:",
+      Some "axis 0" );
+    ( "another number of elements",
+      M.Reshape [| 4 |],
+      [| 6 |],
+      "Move.Reshape:",
+      None );
+    ( "another number of ranges",
+      M.Slice [| { M.start = 0; count = 1; step = 1 } |],
+      [| 2; 3 |],
+      "Move.Slice:",
+      None );
+    ( "an argument of a negative extent",
+      M.Reshape [| 2 |],
+      [| 2; -1 |],
+      "Move.shape:",
+      Some "axis 1" );
   ]
 
-let test_message (_, f, text) =
-  raises_match (Exn.invalid_arg ~sub:text) (fun () -> ignore (f ()))
+let test_message (_, m, s, prefix, phrase) =
+  match M.shape m (Iarray.of_array s) with
+  | _ -> fail "no refusal"
+  | exception Invalid_argument msg -> (
+      starts_with ~prefix msg;
+      match phrase with Some sub -> contains ~sub msg | None -> ())
 
 (* Coverings *)
 
@@ -332,8 +370,20 @@ let law_covers (shape, regions) =
   cover "a range backwards" (has (fun (x : M.range) -> x.step < 0));
   cover "a range of one element stepping past 1"
     (has (fun (x : M.range) -> x.count = 1 && x.step > 1));
-  equal Testable.bool (whole || tiles)
-    (M.covers (Iarray.of_array shape) (Array.map Iarray.of_array regions))
+  let covers =
+    M.covers (Iarray.of_array shape) (Array.map Iarray.of_array regions)
+  in
+  if whole || tiles then
+    satisfies
+      ~claim:
+        "covers, since a region holds every index or the regions tile the shape"
+      bool Fun.id covers
+  else
+    satisfies
+      ~claim:"does not cover, since an index lies in no region or in two"
+      (array int)
+      (fun _ -> not covers)
+      held
 
 let near_tilings =
   Gen.with_pp
@@ -419,8 +469,9 @@ let law_covers_sound (shape, regions) =
   cover "steps of two sizes past 1 meet along an axis"
     (steps_differ regions);
   if got then
-    equal Testable.bool true
-      (Array.for_all (fun n -> n >= 1) (coverage shape regions))
+    satisfies ~claim:"every index lies in a region" (array int)
+      (Array.for_all (fun n -> n >= 1))
+      (coverage shape regions)
 
 let test_covers_misfit () =
   raises_match
@@ -431,19 +482,21 @@ let test_covers_misfit () =
 
 let tests =
   [
-    cases "refusals name the axis at fault"
-      ~id:(fun (n, _, _) -> n)
-      messages test_message;
     group "shape"
       [
         prop ~count:1000
           "is the result's shape, and raises iff a precondition fails"
           shape_and_move law_shape;
         cases "states the bounds" ~id:(fun c -> c.name) bounds test_bound;
+        cases
+          "a refusal starts with the constructor's name and names the axis or \
+           entry at fault"
+          ~id:(fun (n, _, _, _, _) -> n)
+          messages test_message;
       ];
     group "covers"
       [
-        prop ~count:600
+        prop ~count:1000
           "is whether a region holds every index or each index lies in one \
            region, where stepped ranges of an axis share their step"
           near_tilings law_covers;
