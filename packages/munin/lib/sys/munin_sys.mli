@@ -54,7 +54,8 @@ val host : unit -> unit -> (string * float) list
     - [sys/cpu_busy_pct], a rate: the percent of all CPUs' time spent neither
       idle nor waiting for I/O. On Linux, time that a CPU ran a virtual machine
       counts once, as user time. It is absent from a window in which the system
-      counted no CPU time, as one shorter than Linux's tick of 1/100 s can be.
+      counted no CPU time, as one shorter than /proc/stat's unit of 1/100 s can
+      be.
     - [sys/load_per_core], a level: the one-minute load average over the
       number of logical CPUs. Windows keeps no load average.
     - [sys/mem_used_bytes], a level: total memory less available memory,

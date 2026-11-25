@@ -51,10 +51,11 @@ let burn s =
     ignore (Sys.opaque_identity (Array.make 64 0))
   done
 
-(* Two hundredths of a second: Linux's /proc/stat counts CPU time in hundredths,
-   so a window in which this process computed that long counts some, whatever
-   the kernel's own tick. *)
-let ticks = 0.02
+(* Four hundredths of a second: /proc/stat counts CPU time in hundredths, split
+   over fields such as user and system, so a window in which this process
+   computed that long puts at least one hundredth in some field, even on one CPU
+   and whatever the kernel's own tick. *)
+let ticks = 0.04
 
 (* [window read] calls the new reading [read] twice, computing [ticks] seconds
    between the calls, and is the second call's pairs with the CPU seconds the
