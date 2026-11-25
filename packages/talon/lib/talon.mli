@@ -533,13 +533,13 @@ module Column : sig
       An extension column is laid out as its storage. The values under a null
       are unspecified and deterministic: a reader that needs defined values
       masks them with the validity, as Arrow requires. Under a null record, its
-      fields' slots are unspecified, their values and validity alike. Columns are immutable,
-      and share their buffers with the tensors and layouts that read them: a
-      column holds values of its own over that memory, so donating a tensor it
-      took or gave ends that tensor alone, and the donation computes into fresh
-      memory ({!Nx.donate}). A dead tensor given to {!of_tensor},
-      {!of_ragged} or {!of_layout} raises [Invalid_argument] naming the
-      function.
+      fields' slots are unspecified, their values and validity alike. Columns
+      are immutable, and any number of domains may read one column at once. They
+      share their buffers with the tensors and layouts that read them: a column
+      holds values of its own over that memory, so donating a tensor it took or
+      gave ends that tensor alone, and the donation computes into fresh memory
+      ({!Nx.donate}). A dead tensor given to {!of_tensor}, {!of_ragged} or
+      {!of_layout} raises [Invalid_argument] naming the function.
 
       A column is {e canonical} when its buffers hold exactly its rows: offsets
       from [0], values exactly the rows', a validity only when a row is null,
@@ -552,7 +552,9 @@ module Column : sig
       C stubs read in place: every nx value a column takes or gives, tensors,
       validities, offsets and positions, is a host value ({!Nx.host}). A caller
       places a value of another device set on the host first, with
-      {!Nx.place}[ Nx.Host.on]. *)
+      {!Nx.place}[ Nx.Host.on]. A column's buffers count in
+      {!Rig.allocated}[ Rig.host] while the column, or a value that shares them,
+      is live, and return to the host once every such value is collected. *)
 
   type t
   (** The type for columns. *)
