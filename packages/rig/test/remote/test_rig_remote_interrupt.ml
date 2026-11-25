@@ -610,13 +610,13 @@ let acceptor_cut () =
    listener closes. The controller sends nothing before the agent's
    greeting, so it would then wait out its dial's 10 s bound. *)
 let cut_serve what landing n =
+  (* Before the fork, since a skip in the child reaches the parent as a
+     failure. *)
+  if Option.is_none (Rig_support.descriptors ()) then
+    skip ~reason:"the system does not count descriptors" ();
   in_child (strf ", %s from allocation %d" what n) @@ fun () ->
   child_start ();
-  let before =
-    match Rig_support.descriptors () with
-    | Some n -> n
-    | None -> skip ~reason:"the system does not count descriptors" ()
-  in
+  let before = Option.get (Rig_support.descriptors ()) in
   let a = agent_here () in
   let port = Rig_remote.port a in
   let fd =
