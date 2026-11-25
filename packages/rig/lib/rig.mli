@@ -1985,8 +1985,9 @@ module Image : sig
       Raises [Invalid_argument] if [d] is an io device, which loads no code,
       or its driver places the code in [d]'s memory ([Place] in
       {!Rig_edge.type-code}) where [d] has no copy engine and the host does
-      not address that memory; and {!Lost} if [d] is lost or its driver
-      faults during the load. *)
+      not address that memory; {!Lost} if [d] is lost or its driver faults
+      during the load; and {!Rig.Out_of_memory} if [d] has no room for the
+      code after the rounds of reclamation ({!Rig.section-reclaim}). *)
 
   val links : device -> bool
   (** [links d] is [true] iff code compiled for [d]'s host processor runs on
@@ -2084,7 +2085,9 @@ end
     A launch runs on the thread that submits it and on the workers of the
     host's pool, which the host's other parallel code, such as nx's CPU
     kernels, and the launches of every software device share, and it is
-    done when {!submit} returns.
+    done when {!submit} returns. The submitting domain releases the domain
+    lock while the launch runs ({!section-domains}), so other domains run,
+    and collect, meanwhile.
 
     A host function's C type is
     {v void f(const void *params, int64_t first, int64_t end); v}
@@ -2169,8 +2172,9 @@ end
     The link lays out the object's allocated sections ([SHF_ALLOC]), its code
     and read-only data, in one image, each at an address that is a multiple
     of its alignment ([sh_addralign]). It writes the image once, applies its
-    relocations, then makes the memory executable. The memory is never
-    writable and executable at the same time ({!section-host_platforms}). *)
+    relocations, then makes the memory executable. The load is [Error] where
+    the system refuses it that memory. The memory is never writable and
+    executable at the same time ({!section-host_platforms}). *)
 
 (** {3:host_relocations Relocations}
 
