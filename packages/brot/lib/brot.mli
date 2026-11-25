@@ -1138,7 +1138,8 @@ val bpe :
     - [merges]: merge rules as [(left, right)] pairs learned during training. A
       word starts as its characters; the adjacent pair whose rule comes first in
       [merges] is merged, the leftmost of equal pairs first, until no rule
-      applies. Default: [[]].
+      applies. Raises [Invalid_argument] if a merge names a token [vocab] does
+      not hold, or makes one. Default: [[]].
     - [cache_capacity]: the most entries of a pretoken cache, rounded up to a
       power of two, which keeps the ids of pretokens of up to 15 bytes so that
       one seen before is not merged again. The tokenizer makes a cache for

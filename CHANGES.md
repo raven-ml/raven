@@ -5573,6 +5573,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.bpe` raises `Invalid_argument` for a merge that names or makes a token
+  `vocab` lacks, as for its other arguments, where it raised `Failure`.
 - `Brot.from_model_file` reads a `vocab.txt` line as Hugging Face does,
   dropping only the white space that ends it, every Unicode White_Space
   character: it trimmed ASCII spaces at both ends, so `" c"` became `"c"`.

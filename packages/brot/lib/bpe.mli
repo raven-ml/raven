@@ -60,9 +60,10 @@ val create :
   t
 (** [create ~vocab ~merges ()] is a BPE model. Its ids may leave any gaps, and
     its memory follows the number of tokens. Raises [Invalid_argument] where
-    OCaml's integers have fewer than 63 bits (js_of_ocaml, wasm_of_ocaml), if
-    an id is not {!Id_table.in_range}, or if [merges] holds more than 2{^ 31}
-    rules. Two ids, or a rank and an id, pack into one 63-bit integer.
+    OCaml's integers have fewer than 63 bits (js_of_ocaml, wasm_of_ocaml), if an
+    id is not {!Id_table.in_range}, or if [merges] holds more than 2{^ 31}
+    rules, or a merge names or makes a token [vocab] lacks. Two ids, or a rank
+    and an id, pack into one 63-bit integer.
 
     - [byte_level], when [true], matches pretokens against the {e bytes} each
       vocabulary entry stands for rather than against the entry itself, so a

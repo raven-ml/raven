@@ -1442,10 +1442,10 @@ let convert_merges_to_merge_map vocab merges continuing_subword_prefix =
           match Hashtbl.find_opt vocab new_token with
           | Some new_id -> Some ((a_id, b_id), pack_merge rank new_id)
           | None ->
-              failwith
+              invalid_arg
                 (Printf.sprintf "Merge token '%s' not in vocabulary" new_token))
       | _ ->
-          failwith
+          invalid_arg
             (Printf.sprintf "Merge tokens ('%s', '%s') not in vocabulary" a b))
     merges
   |> List.filter_map Fun.id

@@ -1060,6 +1060,13 @@ let bpe_given_twice =
       last_pair t ~pairs:[ ("a", 2); ("ab", 3); ("b", 1) ];
       equal ~msg:"merged" (array int) [| 3 |] (encode_ids t "ab"))
 
+(* HF refuses both as well. *)
+let test_merges_outside_vocab () =
+  raises_match ~msg:"names one" Exn.invalid_arg (fun () ->
+      bpe ~vocab:[ ("a", 0) ] ~merges:[ ("a", "b") ] ());
+  raises_match ~msg:"makes one" Exn.invalid_arg (fun () ->
+      bpe ~vocab:[ ("a", 0); ("b", 1) ] ~merges:[ ("a", "b") ] ())
+
 let () =
   exit
     (run "bpe"
@@ -1111,5 +1118,7 @@ let () =
              test "refuses an id negative or 2^31 and past" (fun () ->
                  refused_ids (fun vocab -> bpe ~vocab ()));
              bpe_given_twice;
+             test "refuses a merge of tokens vocab lacks"
+               test_merges_outside_vocab;
            ];
        ])
