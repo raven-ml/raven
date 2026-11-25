@@ -31,20 +31,23 @@ let within_tight = within ~rel:1e-12 ~abs:1e-12
 
 (* A system [a x + sin x = b] of [n] unknowns whose zero is [z]: [a] has entries
    in [-1, 1] plus [n + 2] on its diagonal, so the Jacobian [a + diag (cos x)]
-   is diagonally dominant everywhere. None and one unknown are each drawn a
-   fifth of the time. *)
-let system =
+   is diagonally dominant everywhere. *)
+let system_of n =
   let open Gen in
-  (let* n =
-     frequency [ (1, constant 0); (1, constant 1); (3, int_range 2 6) ]
-   in
-   let+ a = list ~size:(constant (n * n)) (float_range (-1.) 1.)
+  (let+ a = list ~size:(constant (n * n)) (float_range (-1.) 1.)
    and+ z = list ~size:(constant n) (float_range (-2.) 2.) in
    let a = Nx.create f64 [| n; n |] (Array.of_list a) in
    let a = Nx.add a (Nx.mul_s (Nx.eye f64 n) (Float.of_int (n + 2))) in
    (a, Nx.create f64 [| n |] (Array.of_list z)))
   |> with_pp (fun ppf (a, z) ->
       Format.fprintf ppf "a = %a@ z = %a" Nx.pp a Nx.pp z)
+
+(* [system_of] none to six unknowns, none and one each a fifth of the time. *)
+let system =
+  Gen.(
+    bind
+      (frequency [ (1, constant 0); (1, constant 1); (3, int_range 2 6) ])
+      system_of)
 
 let field a b x = Nx.sub (Nx.add (Nx.matmul a x) (Nx.sin x)) b
 let rhs a z = Nx.add (Nx.matmul a z) (Nx.sin z)
@@ -198,8 +201,9 @@ let near_simple_zero m (d, (c, (x0, (order, k)))) =
   if is Converged s then
     at_most float_exact ~than:(1. +. (1. /. k)) (distance k s c)
 
-(* Five unknowns, at whose shallow-by-2 derivative a contraction read over the
-   last two undamped steps alone once converged 1e-12 from the zero. *)
+(* Five unknowns at a derivative exactly half too shallow: the class of
+   fa71726a2b's counterexample, where a contraction read over the last two
+   undamped steps alone converged 1e-12 from the zero. *)
 let five =
   let a =
     Nx.add
@@ -366,14 +370,21 @@ let newton_tests =
         within_tight z (Solution.best s));
     prop "a derivative too shallow, by up to 2, converges only at the zero"
       ~examples:[ (five, 0.5) ]
-      Gen.(pair system (float_range 0.5 1.))
+      Gen.(
+        frequency
+          [
+            (1, pair (system_of 5) (constant ~pp:Format.pp_print_float 0.5));
+            (3, pair system (float_range 0.5 1.));
+          ])
       (fun ((a, z), shallow) ->
         (* Steps [1 / shallow] times too long: the undamped map x + δ / shallow
            contracts by [1 / shallow − 1], and not at all at 1/2, whatever the
            line search's damped steps do. A solve that converges is at the zero
            to its tolerance; [rel 1e-12, abs 1e-14] once found a solve that
            converged 1e-12 away, when [q] read only the last two steps. *)
-        cover "five or more unknowns" (Nx.dim 0 z >= 5);
+        (* Five unknowns at exactly half are a quarter of the draws. *)
+        cover "five unknowns at a derivative exactly half"
+          (Nx.dim 0 z = 5 && shallow = 0.5);
         let f = field a (rhs a z) in
         let s =
           System.solve one
