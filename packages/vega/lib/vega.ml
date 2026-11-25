@@ -424,8 +424,18 @@ module Loss_scale = struct
 
   let scale t x = Nx.mul x (Nx.cast (Nx.dtype x) t.scale)
 
-  let unscale p t grads =
-    Nx.Ptree.map p (fun _ g -> Nx.div g (Nx.cast (Nx.dtype g) t.scale)) grads
+  (* A half-precision gradient divides at float32: the scale, [2^16] after one
+     growth from the default, is infinite at float16, which would take every
+     gradient to zero and count the step as finite. *)
+  let unscaled (type a b d) scale (g : (a, b, d) Nx.t) : (a, b, d) Nx.t =
+    let dt = Nx.dtype g in
+    match (Nx.Dtype.kind dt, dt) with
+    | Float, (Float16 | Bfloat16) ->
+        Nx.cast dt (Nx.div (Nx.cast Nx.float32 g) scale)
+    | (Float | Complex), _ -> Nx.div g (Nx.cast dt scale)
+    | (Signed | Unsigned | Boolean), _ -> g
+
+  let unscale p t grads = Nx.Ptree.map p (fun _ g -> unscaled t.scale g) grads
 
   let all_finite p t grads =
     Nx.Ptree.fold p

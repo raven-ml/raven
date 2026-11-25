@@ -209,6 +209,23 @@ let test_skipped bad =
   in
   equal (list (array float_exact)) (leaves warm) (leaves got)
 
+(* A float16 or bfloat16 gradient is divided at float32, so a scale beyond the
+   leaf's range still divides: [2^16], infinite at float16, takes a gradient of
+   [1024] to [2^-6]. An integer leaf passes through. *)
+let test_unscales_at_float32 () =
+  let p = Nx.Ptree.(triple tensor tensor tensor) in
+  let grads =
+    ( Nx.scalar Nx.float16 1024.0,
+      Nx.scalar Nx.bfloat16 1024.0,
+      Nx.create Nx.int32 [| 2 |] [| 7l; -9l |] )
+  in
+  let (h, b, i), _ =
+    Ls.step p p (Ls.dynamic ~init:65536.0 Nx.Host.on) ~grads Fun.id grads
+  in
+  equal ~msg:"float16" float_exact 0x1p-6 (Nx.item [] (Nx.cast Nx.float64 h));
+  equal ~msg:"bfloat16" float_exact 0x1p-6 (Nx.item [] (Nx.cast Nx.float64 b));
+  equal ~msg:"int32" (array int32) [| 7l; -9l |] (Nx.to_array i)
+
 let test_default_interval () =
   let at good_steps =
     {
@@ -282,6 +299,8 @@ let tests =
           [ Float.nan; Float.infinity; Float.neg_infinity ]
           test_skipped;
         test_schedule;
+        test "a half-precision gradient divides at float32"
+          test_unscales_at_float32;
         test "a dynamic scale grows at 2000 consecutive finite steps by default"
           test_default_interval;
         cases

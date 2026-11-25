@@ -278,12 +278,15 @@ module Loss_scale : sig
       the scaled loss, with structure [p]; [x], typically the parameters and the
       optimizer state, has structure [s].
 
-      [step] divides every leaf of [grads] by the current scale, at the leaf's
-      dtype, and checks that every element of the result is finite.
+      [step] divides every float or complex leaf of [grads] by the current
+      scale, a float16 or bfloat16 leaf at float32 and rounded back to its
+      dtype, any other at its own dtype, and checks that every element of the
+      result is finite. A leaf that is neither float nor complex passes through.
       - If it is, the step is [update grads'] for the divided gradients
-        [grads']. A {!dynamic} scale counts the finite step; on reaching
-        [growth_interval] (default [2000]) consecutive finite steps it is
-        multiplied by [growth_factor] (default [2.]) and the count restarts.
+        [grads']. A {!dynamic} scale counts the finite step; once its count of
+        consecutive finite steps, this one included, is at least
+        [growth_interval] (default [2000]), it is multiplied by [growth_factor]
+        (default [2.]) and the count restarts.
       - Otherwise the step is skipped: it is [x], every tensor of it, the
         optimizer's counters included. A {!dynamic} scale is multiplied by
         [backoff_factor] (default [0.5]) and the count restarts.
