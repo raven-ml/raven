@@ -86,21 +86,57 @@ let rec write_all fd b off n =
     let k = Unix.write fd b off n in
     write_all fd b (off + k) (n - k)
 
+(* curl's program *)
+
+let path_sep = if Sys.win32 then ';' else ':'
+let program = if Sys.win32 then "curl.exe" else "curl"
+
+let executable f =
+  match Unix.access f [ Unix.X_OK ] with
+  | () -> not (Sys.is_directory f)
+  | exception (Unix.Unix_error _ | Sys_error _) -> false
+
+(* The first curl of [PATH]'s directories, as an absolute path, which no
+   system searches again. [Unix.create_process] given "curl" searches on
+   Windows the calling program's directory, the system directories, which
+   hold a curl.exe of their own, and the current one before [PATH]. A
+   relative or empty directory is taken from the current one, and skipped
+   when that one is gone. *)
+let find_curl () =
+  let dirs =
+    match Sys.getenv_opt "PATH" with
+    | None -> []
+    | Some path -> String.split_on_char path_sep path
+  in
+  let cwd = lazy (try Some (Sys.getcwd ()) with Sys_error _ -> None) in
+  let absolute d =
+    if not (Filename.is_relative d) then Some d
+    else Option.map (fun c -> Filename.concat c d) (Lazy.force cwd)
+  in
+  let in_dir d =
+    Option.bind (absolute d) (fun d ->
+        let f = Filename.concat d program in
+        if executable f then Some f else None)
+  in
+  List.find_map in_dir dirs
+
 (* curl *)
 
-(* [curl] runs without a shell, so no argument needs quoting and the lookup on
-   [PATH] is the same on every system. A missing program is exit code 127 from
-   the forked child on Unix and [ENOENT] from process creation on Windows.
-   Any other failure to make the process, such as a program on [PATH] that
-   cannot be executed, fails the request for [url]. *)
+(* [curl] runs without a shell, so no argument needs quoting. A program that
+   vanished since it was found is exit code 127 from the forked child on Unix
+   and [ENOENT] from process creation on Windows. Any other failure to make
+   the process fails the request for [url]. *)
 let spawn ~url ~stdin args out =
-  try
-    Unix.create_process "curl"
-      (Array.of_list ("curl" :: args))
-      stdin out Unix.stderr
-  with
-  | Unix.Unix_error (Unix.ENOENT, _, _) -> failwith (err_no_curl url)
-  | Unix.Unix_error (e, _, _) -> failwith (err_spawn url e)
+  match find_curl () with
+  | None -> failwith (err_no_curl url)
+  | Some prog -> (
+      try
+        Unix.create_process prog
+          (Array.of_list ("curl" :: args))
+          stdin out Unix.stderr
+      with
+      | Unix.Unix_error (Unix.ENOENT, _, _) -> failwith (err_no_curl url)
+      | Unix.Unix_error (e, _, _) -> failwith (err_spawn url e))
 
 let rec wait pid =
   try snd (Unix.waitpid [] pid)

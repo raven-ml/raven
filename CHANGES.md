@@ -5074,6 +5074,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun_hf` and `Kaun_datasets` run the first `curl` of `PATH`, where on
+  Windows the system's own `curl.exe` ran ahead of it. With `PATH` unset no
+  curl is found, where Linux and macOS fell back to `/bin` and `/usr/bin`.
 - `Kaun_hf` syncs a download before renaming it into its cache path, so a
   crash or a power loss leaves no empty or partial file there that later
   calls take as cached. A file in the cache path's directories raises

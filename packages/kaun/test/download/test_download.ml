@@ -106,6 +106,56 @@ let downloads () =
   equal ~msg:"contents" string "payload" (read path);
   equal ~msg:"files" (list string) [ "f.bin" ] (listing dir)
 
+(* served.exe, built beside this test, as [curl], or [curl.exe] on Windows, in
+   the first directory of [PATH]: it serves "served". The rest of [PATH] stays,
+   with any curl the system has, and the DLLs the stand-in may load. *)
+let program_stand_in () =
+  let bin = temp_dir ~prefix:"bin" () in
+  let curl = Filename.concat bin (if Sys.win32 then "curl.exe" else "curl") in
+  write_text curl (read "served.exe");
+  Unix.chmod curl 0o755;
+  let sep = if Sys.win32 then ";" else ":" in
+  let rest = Option.fold ~none:"" ~some:(( ^ ) sep) (Sys.getenv_opt "PATH") in
+  setenv "PATH" (Some (bin ^ rest))
+
+(* A URL that any curl, but the stand-in, fails on, with no network. *)
+let absent_url () = "file://" ^ Filename.concat (temp_dir ()) "absent"
+
+(* Windows has a curl.exe of its own, in a system directory. *)
+let runs_path_curl () =
+  program_stand_in ();
+  let path = Filename.concat (temp_dir ()) "f.bin" in
+  Kaun_download.file ~url:(absent_url ()) path;
+  equal ~msg:"contents" string "served" (read path)
+
+(* Any curl would fetch [url], a file that exists, and execvp would find one
+   in /bin or /usr/bin. *)
+let unset_path () =
+  let src = Filename.concat (temp_dir ()) "src" in
+  write_text src "payload";
+  let url = "file://" ^ src in
+  setenv "PATH" None;
+  let path = Filename.concat (temp_dir ()) "f.bin" in
+  raises_match (Exn.failure ~sub:url) (fun () -> Kaun_download.file ~url path);
+  equal ~msg:"the path" bool false (Sys.file_exists path)
+
+(* [PATH]'s relative directory names a directory of the current one, which is
+   gone. Windows refuses to remove the current directory. *)
+let gone_cwd () =
+  if Sys.win32 then skip ~reason:"Windows keeps the current directory" ();
+  let path = Filename.concat (temp_dir ()) "f.bin" in
+  let url = absent_url () in
+  let gone = temp_dir () in
+  let back = Sys.getcwd () in
+  setenv "PATH" (Some ".");
+  Fun.protect
+    ~finally:(fun () -> Sys.chdir back)
+    (fun () ->
+      Sys.chdir gone;
+      Sys.rmdir gone;
+      raises_match (Exn.failure ~sub:url) (fun () ->
+          Kaun_download.file ~url path))
+
 (* curl's stand-in clears the cache directory's write bit, then writes its
    payload and succeeds: the rename fails. *)
 let rename_fails_naming_url () =
@@ -168,6 +218,13 @@ let () =
          group "file"
            [
              test "renames curl's output into the path" downloads;
+             test "runs the curl of PATH, before any of the system's"
+               runs_path_curl;
+             test "raises Failure naming the URL with PATH unset" unset_path;
+             test
+               "raises Failure naming the URL when the current directory is \
+                gone"
+               gone_cwd;
              test
                "raises Failure naming the URL when the rename fails, leaving \
                 no path"

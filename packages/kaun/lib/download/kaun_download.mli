@@ -40,9 +40,12 @@ val max_header_bytes : int
 val file :
   ?headers:(string * string) list -> ?sha256:string -> url:string -> string -> unit
 (** [file ~url path] downloads [url] to [path] through {!write}, creating
-    [path]'s directory. curl, found on [PATH], runs without a shell as
-    [curl -q -L --fail -s url], [-q] first so that it reads none of the user's
-    curl configuration files, and writes to the file's descriptor. With:
+    [path]'s directory. curl, the first [curl] ([curl.exe] on Windows) that
+    this process may execute (on Windows, read) in [PATH]'s directories, a
+    relative or empty one taken from the current directory, runs by that path
+    without a shell as [curl -q -L --fail -s url], [-q] first so that it reads
+    none of the user's curl configuration files, and writes to the file's
+    descriptor. With:
 
     - [headers], sent as HTTP headers. curl reads them on its standard input
       ([-H @-]), never on its command line, which every user of the machine

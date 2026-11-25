@@ -1,4 +1,14 @@
+; served.exe stands in for curl in test_download.exe on every system, Windows
+; included. Its name is not curl's: on Windows a program named curl.exe beside
+; the test would be found without PATH.
+
+(executable
+ (name served)
+ (modules served))
+
 (test
  (name test_download)
  (package kaun)
- (libraries kaun_download unix windtrap))
+ (modules test_download)
+ (libraries kaun_download unix windtrap)
+ (deps served.exe))
