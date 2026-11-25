@@ -213,22 +213,22 @@ let split ~head_dim l x =
   let batch = Nx.dim 0 y and seq = Nx.dim 1 y in
   Nx.swapaxes 1 2 (Nx.reshape [| batch; seq; width / head_dim; head_dim |] y)
 
-(* The key-value heads of [kv] for [q] of [batch] lanes and [d] features: the
-   keys' heads, read from the pools when they are paged. Dense keys have
-   [batch] rows or a divisor of it. *)
-let kv_heads ~batch ~d (kv : _ Nx.kv) =
+(* The key-value heads of [kv] for [q] of [batch] lanes of [n] queries and [d]
+   features: the keys' heads, read from the pools when they are paged. Dense
+   keys have [batch] rows, a divisor of it, or [batch * n], one per query. *)
+let kv_heads ~batch ~n ~d (kv : _ Nx.kv) =
   match kv with
   | Dense { k; v } -> (
       match (Nx.shape k, Nx.shape v) with
       | [| b; h; m; d' |], [| b'; h'; m'; _ |]
         when b = b' && h = h' && m = m' && d' = d
-             && (b = batch || (b > 0 && batch mod b = 0)) ->
+             && (b = batch || b = batch * n || (b > 0 && batch mod b = 0)) ->
           h
       | _ ->
           Printf.ksprintf invalid_arg
             "Attention.attend: k must have shape [rows; kv_heads; m; %d] and \
-             v [rows; kv_heads; m; dv], rows dividing %d"
-            d batch)
+             v [rows; kv_heads; m; dv], rows dividing %d or one per query, %d"
+            d batch (batch * n))
   | Paged { k; v; table } -> (
       match (Nx.shape k, Nx.shape v, Nx.shape table) with
       | [| n; h; p; d' |], [| n'; h'; p'; _ |], [| b; _ |]
@@ -261,6 +261,71 @@ let shared ?scale ?sinks q k v =
   in
   unfold (attention ?scale ?sinks (fold q) (Nx.Dense { k; v }))
 
+(* Dense keys of a row per query: row [b * n + i] serves query [i] of lane [b],
+   which attends as a lane of one query over it. An array over the weights
+   [[batch; heads; n; m]] folds as the queries do, its heads axis as wide as
+   it is. The mask is evaluated once, at every pair, before {!Nx.attention}:
+   there a query's pair would be row 0 of 1, in no lane. Nx.attention lets a
+   mask apply only elementwise functions and broadcasts to the pair's values,
+   so at arrays of coordinates it gives each pair's value. *)
+let own_rows ?mask ?lengths ?scale ?bias ?sinks ?drop q k v =
+  let batch = Nx.dim 0 q and heads = Nx.dim 1 q and n = Nx.dim 2 q in
+  let m = Nx.dim 2 k and at = Nx.beside q in
+  let fold a =
+    let s = Nx.shape a in
+    let r = Array.length s in
+    let h = if r >= 3 then s.(r - 3) else 1 in
+    let a = Nx.broadcast_to [| batch; h; n; m |] a in
+    Nx.reshape [| batch * n; h; 1; m |] (Nx.transpose ~axes:[ 0; 2; 1; 3 ] a)
+  in
+  let mask =
+    Option.map
+      (fun mask ->
+        (* [len] is the lane's length within [0, m], as Nx.attention reads
+           it. *)
+        let len =
+          match lengths with
+          | None -> Nx.scalar_at at Nx.int64 (Int64.of_int m)
+          | Some l ->
+              Nx.reshape [| batch; 1; 1; 1 |]
+                (Nx.clamp ~min:0L ~max:(Int64.of_int m) l)
+        in
+        let coordinate size shape =
+          Nx.reshape shape (Nx.arange_at at Nx.int64 0 size 1)
+        in
+        let pair =
+          {
+            Nx.q = coordinate n [| n; 1 |];
+            k = coordinate m [| 1; m |];
+            len;
+            tq = n;
+          }
+        in
+        let folded = fold (mask pair) in
+        fun _ -> folded)
+      mask
+  in
+  let lengths =
+    Option.map
+      (fun l ->
+        Nx.reshape [| batch * n |]
+          (Nx.broadcast_to [| batch; n |] (Nx.reshape [| batch; 1 |] l)))
+      lengths
+  in
+  let bias = Option.map fold bias in
+  let drop = Option.map (fun (rate, z) -> (rate, fold z)) drop in
+  let per_query x =
+    Nx.reshape
+      [| batch * n; heads; 1; Nx.dim 3 x |]
+      (Nx.transpose ~axes:[ 0; 2; 1; 3 ] x)
+  in
+  let o =
+    attention ?mask ?lengths ?scale ?bias ?sinks ?drop (per_query q)
+      (Nx.Dense { k; v })
+  in
+  let dv = Nx.dim 3 o in
+  Nx.transpose ~axes:[ 0; 2; 1; 3 ] (Nx.reshape [| batch; n; heads; dv |] o)
+
 (* Key-value head [h] serves query heads [h * groups] to
    [h * groups + groups - 1], as {!Nx.attention} reads them: no key is
    repeated. *)
@@ -272,7 +337,7 @@ let attend ?mask ?lengths ?scale ?bias ?sinks ?dropout ?key q kv =
     | _ ->
         invalid_arg "Attention.attend: q must have shape [batch; heads; n; d]"
   in
-  let kv_heads = kv_heads ~batch ~d kv in
+  let kv_heads = kv_heads ~batch ~n ~d kv in
   if (kv_heads = 0 && heads <> 0) || (kv_heads > 0 && heads mod kv_heads <> 0)
   then
     Printf.ksprintf invalid_arg
@@ -332,9 +397,9 @@ let attend ?mask ?lengths ?scale ?bias ?sinks ?dropout ?key q kv =
           (Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) rate)
     | Some rate -> rate > 0.
   in
-  let lanes_share =
-    match kv with Dense { k; _ } -> Nx.dim 0 k <> batch | Paged _ -> false
-  in
+  let rows = match kv with Dense { k; _ } -> Nx.dim 0 k | Paged _ -> batch in
+  let own = rows <> batch && rows = batch * n in
+  let lanes_share = rows <> batch && not own in
   if
     lanes_share
     && (mask <> None || lengths <> None || bias <> None || dropping)
@@ -350,6 +415,8 @@ let attend ?mask ?lengths ?scale ?bias ?sinks ?dropout ?key q kv =
     | _ -> None
   in
   match kv with
+  | Dense { k; v } when own ->
+      own_rows ?mask ?lengths ?scale ?bias ?sinks ?drop q k v
   | Dense { k; v } when lanes_share -> shared ?scale ?sinks q k v
   | kv -> attention ?mask ?lengths ?scale ?bias ?sinks ?drop q kv
 
@@ -434,8 +501,15 @@ module Cache = struct
         in
         (Nx.Paged { k = paged keys; v = paged values; table }, { keys; values })
     | None ->
+        (* Under a selection [seen] is [batch; seq; k; ...], each token's own
+           columns: the tokens become the rows, one per query. *)
         let through pool t =
           let seen, pool = Cache_index.extend index (Nx.swapaxes 1 2 t) pool in
+          let seen =
+            match Nx.shape seen with
+            | [| b; s; k; h; d |] -> Nx.reshape [| b * s; k; h; d |] seen
+            | _ -> seen
+          in
           (Nx.swapaxes 1 2 seen, pool)
         in
         let k, keys = through cache.keys k in

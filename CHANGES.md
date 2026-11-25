@@ -5006,6 +5006,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun.Attention.cached` attends under a `Cache_index.select` index: it
+  raised on any selection. `Attention.attend` takes dense keys of a row per
+  query, `batch * n` rows, which `Attention.Cache.extend` returns under a
+  selection.
 - `Kaun_datasets` runs curl with `-q` first, so its downloads read no
   `~/.curlrc`: an `-o` there wrote the file elsewhere and the load failed.
   A proxy or CA bundle set there no longer applies; set `https_proxy` or

@@ -637,6 +637,158 @@ let poison_past n t =
   pad.(r - 2) <- s.(r - 2) - n;
   Nx.set rows (Nx.full (Nx.dtype t) pad Float.nan) t
 
+(* Rows of their own: over [batch * n] dense rows, query [i] of lane [b] reads
+   row [b * n + i] alone, and its result is the one it has as a lane of one
+   query over that row, its mask read at its own pair, its bias, dropout keys
+   and length its lane's. A length past the [m] keys reads as [m] in
+   [Nx.causal]. 4 query heads over 2 key heads of 3 features, values of 2. *)
+type own = {
+  dtype : int;
+  batch : int;
+  n : int;
+  m : int;
+  mask_heads : bool;
+  bias_heads : bool;
+  lens : int array;
+  seed : int;
+}
+
+let pp_own ppf c =
+  Format.fprintf ppf
+    "%s batch %d n %d m %d mask heads %b bias heads %b lens %s seed %d"
+    dtype_names.(c.dtype) c.batch c.n c.m c.mask_heads c.bias_heads
+    (shape_id c.lens) c.seed
+
+(* Both sides read each row through Nx.attention alone: the results round once
+   to the dtype from the same exact values, so they differ by at most two
+   roundings of values below 4, the dropout's doubling included. *)
+let own_tolerance = [| 0x1p-21; 0x1p-5; 0x1p-8; 0x1p-50 |]
+
+let own_rows (type b) ?(compiled = false) (dt : (float, b) Nx.dtype) c =
+  let { batch; n; m; seed; _ } = c in
+  let q = normal seed dt [| batch; 4; n; 3 |] in
+  let k = normal (seed + 1) dt [| batch * n; 2; m; 3 |] in
+  let v = normal (seed + 2) dt [| batch * n; 2; m; 2 |] in
+  let sinks = normal (seed + 3) dt [| 4 |] in
+  let width heads = if heads then 4 else 1 in
+  let bias =
+    normal (seed + 4) Nx.float32 [| batch; width c.bias_heads; n; m |]
+  in
+  let chosen =
+    Nx.less_s
+      (Nx.Rng.uniform
+         ~key:(Nx.Rng.key (seed + 5))
+         Nx.float32
+         [| batch; width c.mask_heads; n; m |])
+      0.8
+  in
+  let lengths = int64s [| batch |] c.lens in
+  let mask c (p : Nx.host Nx.pair) = Nx.logical_and (Nx.causal p) c in
+  let pairs = batch * n * m in
+  (* A key per pair, where there is a pair. *)
+  let dropout, key =
+    if pairs = 0 then (None, None)
+    else
+      ( Some 0.5,
+        Some
+          (Nx.Rng.reshape [| batch; 1; n; m |]
+             (Nx.Rng.split_batch ~n:pairs (Nx.Rng.key (seed + 6)))) )
+  in
+  let attend q =
+    Attention.attend ~mask:(mask chosen) ~lengths ~bias ~sinks ?dropout ?key q
+      (Nx.Dense { k; v })
+  in
+  let alone b i =
+    let at t = Nx.slice [ R (b, b + 1); A; R (i, i + 1) ] t in
+    let row t = Nx.slice [ R ((b * n) + i, (b * n) + i + 1) ] t in
+    let shifted (p : Nx.host Nx.pair) =
+      mask (at chosen) { p with q = Nx.add_s p.q (Int64.of_int i); tq = n }
+    in
+    let key =
+      Option.map (fun k -> Nx.Rng.of_tensor (at (Nx.Rng.to_tensor k))) key
+    in
+    flat
+      (f64
+         (Attention.attend ~mask:shifted
+            ~lengths:(int64s [| 1 |] [| c.lens.(b) |])
+            ~bias:(at bias) ~sinks ?dropout ?key (at q)
+            (Nx.Dense { k = row k; v = row v })))
+  in
+  (* Lane-major, heads before queries, as the result lies. *)
+  let expected =
+    Array.concat
+      (List.concat_map
+         (fun b ->
+           let queries = Array.init n (alone b) in
+           List.init 4 (fun h ->
+               Array.concat
+                 (List.init n (fun i -> Array.sub queries.(i) (h * 2) 2))))
+         (List.init batch Fun.id))
+  in
+  let within = array (float own_tolerance.(c.dtype)) in
+  equal ~msg:"eager" within expected (flat (f64 (attend q)));
+  if compiled then
+    equal ~msg:"compiled" within expected (flat (f64 (Rune.jit' attend q)))
+
+let law_own_rows c =
+  let queries = c.batch * c.n > 0 in
+  cover "no query" (not queries);
+  cover "no key" (queries && c.m = 0);
+  cover "float16" (queries && c.dtype = 2);
+  cover "bfloat16" (queries && c.dtype = 1);
+  cover "a mask with heads" (queries && c.mask_heads);
+  cover "a bias with heads" (queries && c.bias_heads);
+  cover "a length past the keys"
+    (queries && Array.exists (fun l -> l > c.m) c.lens);
+  match c.dtype with
+  | 0 -> own_rows Nx.float32 c
+  | 1 -> own_rows Nx.bfloat16 c
+  | 2 -> own_rows Nx.float16 c
+  | _ -> own_rows Nx.float64 c
+
+let own_gen =
+  let open Gen in
+  let* dtype = int_range 0 3 in
+  let* batch = frequency [ (1, constant 0); (6, int_range 1 2) ] in
+  let* n = frequency [ (1, constant 0); (6, int_range 2 3) ] in
+  let* m = frequency [ (1, constant 0); (6, int_range 1 4) ] in
+  let* mask_heads = bool in
+  let* bias_heads = bool in
+  let* lens = list ~size:(constant batch) (int_range 0 6) in
+  let+ seed = int_range 0 1000 in
+  { dtype; batch; n; m; mask_heads; bias_heads; lens = Array.of_list lens; seed }
+
+let test_own_rows_compiled () =
+  Compiled.here ();
+  own_rows ~compiled:true Nx.float64
+    {
+      dtype = 3;
+      batch = 2;
+      n = 3;
+      m = 4;
+      mask_heads = true;
+      bias_heads = false;
+      lens = [| 3; 9 |];
+      seed = 41;
+    }
+
+let test_own_rows_gradients () =
+  let p =
+    qkvs_of ~q:[| 2; 2; 3; 2 |] ~k:[| 6; 1; 4; 2 |] ~v:[| 6; 1; 4; 3 |]
+      ~sinks:[| 2 |]
+  in
+  let hidden =
+    Nx.create Nx.bool [| 2; 1; 3; 4 |]
+      (Array.init 24 (fun t -> t mod 5 <> 2))
+  in
+  let loss { Qkvs.q; k; v; sinks } =
+    let y =
+      Attention.attend ~mask:(captured hidden) ~sinks q (Nx.Dense { k; v })
+    in
+    Nx.sum (Nx.mul y y)
+  in
+  grads_ok (Rune.check_grads qkvs loss p)
+
 let test_attend_lengths () =
   let q = normal 35 Nx.float32 [| 2; 2; 3; 4 |] in
   (* Lane 0 holds 1 key, lane 1 all 5. *)
@@ -922,6 +1074,9 @@ let attend_refusals =
     ( "8 rows of 4 lanes",
       "rows dividing 4",
       fun () -> attend (lanes ()) (rows 8) );
+    ( "6 rows of 4 lanes of 2 queries",
+      "rows dividing 4 or one per query, 8",
+      fun () -> attend (t [| 4; 2; 2; 3 |]) (rows 6) );
     ( "kv_heads does not divide heads",
       "3 key-value heads do not divide 4",
       fun () -> attend (q ()) (dense ~rows:1 ~heads:3 ~m:2 ~d:2) );
@@ -1764,6 +1919,14 @@ let () =
                test_shared_rows;
              test "is differentiable over shared rows"
                test_shared_rows_gradients;
+             prop ~count:200
+               "a query over a row of its own is a lane of one query over it"
+               (Gen.with_pp pp_own own_gen)
+               law_own_rows;
+             test "a compiled query over a row of its own is eager's"
+               test_own_rows_compiled;
+             test "is differentiable over rows of their own"
+               test_own_rows_gradients;
              test "lengths bound the keys" test_attend_lengths;
              test "a float32 bias keeps its bits under bfloat16 queries"
                test_bias_keeps_its_bits;

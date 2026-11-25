@@ -770,17 +770,24 @@ let test_extend_dense () =
   let columns = int64s [| 2; 3; 2 |] [| 0; 1; 1; 2; 2; 0; 0; 0; 1; 1; 1; 0 |] in
   let index = Cache_index.select columns (rows ()) in
   let kv, c' = Attention.Cache.extend index c k v in
+  (* Seen is [2; 3; 2; kv_heads; head_dim]: row [3b + i] is token [i] of lane
+     [b], its heads before its chosen columns. *)
   let through pool t =
     let seen, pool = Cache_index.extend index (Nx.swapaxes 1 2 t) pool in
-    (Nx.swapaxes 1 2 seen, pool)
+    (Nx.swapaxes 1 2 (Nx.reshape [| 6; 2; 2; head_dim |] seen), pool)
   in
   let k_seen, keys = through c.keys k and v_seen, values = through c.values v in
   equal ~msg:"keys stored" (array int64) (bits keys) (bits c'.keys);
   equal ~msg:"values stored" (array int64) (bits values) (bits c'.values);
+  let view = pair (array int) (array int64) in
   match kv with
   | Nx.Dense d ->
-      equal ~msg:"k" (array int64) (bits k_seen) (bits d.k);
-      equal ~msg:"v" (array int64) (bits v_seen) (bits d.v)
+      equal ~msg:"k" view
+        ([| 6; 2; 2; head_dim |], bits k_seen)
+        (Nx.shape d.k, bits d.k);
+      equal ~msg:"v" view
+        ([| 6; 2; 2; head_dim |], bits v_seen)
+        (Nx.shape d.v, bits d.v)
   | Nx.Paged _ -> fail "a selection gives Paged keys"
 
 let extend_refusals =
@@ -1144,14 +1151,110 @@ let law_paths_agree (s : paged) =
   in
   close dense (fst (call p c index x))
 
+(* Under a selection a token attends over the columns it chose that it sees, a
+   column as often as it chose it: as a lane of one query over its row of
+   Cache_index.extend's read, under its row of Cache_index.mask. Over a table,
+   or over a whole index, whose columns are the lane's three tokens. *)
+let law_selected ((s : paged), whole, columns) =
+  let k = Nx.dim 2 columns in
+  let chosen = Array.map Int64.to_int (Nx.to_array columns) in
+  let twice =
+    List.exists
+      (fun t ->
+        let token = Array.to_list (Array.sub chosen (t * k) k) in
+        List.length (List.sort_uniq compare token) < k)
+      (List.init 6 Fun.id)
+  in
+  cover "a window" (s.window <> None);
+  cover "a column chosen twice" twice;
+  cover "a whole index" whole;
+  cover "a hole a token may see" ((not whole) && sees_a_hole s);
+  let index =
+    if whole then windowed s.window (Cache_index.whole ~batch:2 ~seq:3 ())
+    else s.index
+  in
+  let index = Cache_index.select columns index in
+  Nx.Rng.with_key (Nx.Rng.key s.key) @@ fun () ->
+  let p = layer () in
+  let pool () = draw [| paged_slots; 2; head_dim |] in
+  let c = { Attention.Cache.keys = pool (); values = pool () } in
+  let x = draw [| 2; 3; embed |] in
+  let pos = Cache_index.positions index in
+  let q = Rope.apply (rope ()) ~pos (Attention.split ~head_dim p.q x) in
+  let k_new = Rope.apply (rope ()) ~pos (Attention.split ~head_dim p.k x) in
+  let v = Attention.split ~head_dim p.v x in
+  let seen t pool = fst (Cache_index.extend index (Nx.swapaxes 1 2 t) pool) in
+  let keys = seen k_new c.keys and values = seen v c.values in
+  let mask = Cache_index.mask index in
+  let token b i =
+    let row t =
+      Nx.reshape [| 1; 2; k; head_dim |]
+        (Nx.swapaxes 0 1 (Nx.slice [ I b; I i ] t))
+    in
+    let m = Nx.reshape [| 1; 1; 1; k |] (Nx.slice [ I b; I i ] mask) in
+    Attention.attend
+      ~mask:(fun _ -> m)
+      (Nx.slice [ R (b, b + 1); A; R (i, i + 1) ] q)
+      (Nx.Dense { k = row keys; v = row values })
+  in
+  let heads =
+    Nx.concatenate ~axis:0
+      (List.init 2 (fun b ->
+           Nx.concatenate ~axis:2 (List.init 3 (token b))))
+  in
+  close (Attention.merge p.out heads) (fst (call p c index x))
+
+(* Choosing every column in order is no selection. Slots outside the pool are
+   drawn as [-1], as for law_paths_agree. *)
+let law_all_columns (s : paged) =
+  let unallocated =
+    Array.map (Array.map (fun t -> if t >= paged_slots then -1 else t))
+  in
+  let table = unallocated s.table in
+  let index =
+    paged_index ~table ~pos:s.pos ~window:s.window ~draft:None ~sees:None
+  in
+  cover "a window" (s.window <> None);
+  cover "a hole a token may see" (sees_a_hole { s with table });
+  let every =
+    int64s [| 2; 3; paged_width |]
+      (Array.init (6 * paged_width) (fun t -> t mod paged_width))
+  in
+  Nx.Rng.with_key (Nx.Rng.key s.key) @@ fun () ->
+  let p = layer () in
+  let pool () = draw [| paged_slots; 2; head_dim |] in
+  let c = { Attention.Cache.keys = pool (); values = pool () } in
+  let x = draw [| 2; 3; embed |] in
+  let plain, c1 = call p c index x in
+  let selected, c2 = call p c (Cache_index.select every index) x in
+  close ~msg:"outputs" plain selected;
+  close ~msg:"keys" c1.keys c2.keys;
+  close ~msg:"values" c1.values c2.values
+
+let selected_gen =
+  Gen.(
+    let* has_window = bool in
+    let* s = paged_of ~has_window ~drafted:false in
+    let* whole = frequency [ (3, constant false); (1, constant true) ] in
+    let* k = frequency [ (1, constant 1); (3, int_range 2 4) ] in
+    let width = if whole then 3 else paged_width in
+    let+ columns = list ~size:(constant (6 * k)) (int_range 0 (width - 1)) in
+    (s, whole, int64s [| 2; 3; k |] (Array.of_list columns)))
+
+let pp_selected ppf ((s : paged), whole, columns) =
+  Format.fprintf ppf "%a%s columns %s" pp_paged s
+    (if whole then ", over a whole index" else "")
+    (ints (List.map Int64.to_int (Array.to_list (Nx.to_array columns))))
+
 (* Steps of one form under Rune.vmap. The steps agree on everything an index's
    walk reports, so that they stack, and draw each tensor apart: tokens, pools,
-   positions, tables, window sizes and draft slots. *)
-type form = Table | Draft | Lanes | Whole | Packed
+   positions, tables, window sizes, draft slots and selections. *)
+type form = Table | Draft | Selection | Lanes | Whole | Packed
 
 let form_name = function
   | Table -> "a table"
   | Draft -> "a draft"
+  | Selection -> "a selection"
   | Lanes -> "one-token lanes"
   | Whole -> "a whole index"
   | Packed -> "a packed index"
@@ -1174,6 +1277,16 @@ let table_step ~has_window ~drafted =
     (fun (s : paged) ->
       (Format.asprintf "%a" pp_paged s, s.index, s.window, s.key))
     (paged_of ~has_window ~drafted)
+
+(* Two columns chosen by each token of a table. *)
+let selected_step ~has_window =
+  Gen.(
+    let+ d, index, window, key = table_step ~has_window ~drafted:false
+    and+ columns = list ~size:(constant 12) (int_range 0 (paged_width - 1)) in
+    ( Printf.sprintf "%s columns %s" d (ints columns),
+      Cache_index.select (int64s [| 2; 3; 2 |] (Array.of_list columns)) index,
+      window,
+      key ))
 
 (* Three lanes of one token over two sequences' tables, a lane of row [-1]
    padding; lane [l] of sequence [r] is at position [p0.(r) + l]. *)
@@ -1236,7 +1349,7 @@ let packed_step ~has_window =
 
 let mapped_gen =
   let open Gen in
-  let* form = of_list [ Table; Draft; Lanes; Whole; Packed ] in
+  let* form = of_list [ Table; Draft; Selection; Lanes; Whole; Packed ] in
   let* has_window = bool in
   let* resolved = bool in
   let* n = int_range 1 3 in
@@ -1244,6 +1357,7 @@ let mapped_gen =
     match form with
     | Table -> table_step ~has_window ~drafted:false
     | Draft -> table_step ~has_window ~drafted:true
+    | Selection -> selected_step ~has_window
     | Lanes -> lanes_step ~has_window
     | Whole -> whole_step ~has_window
     | Packed -> packed_step ~has_window
@@ -1260,7 +1374,7 @@ let law_vmap (m : mapped) =
   let n = List.length m.steps in
   List.iter
     (fun f -> cover (form_name f) (m.form = f))
-    [ Table; Draft; Lanes; Whole; Packed ];
+    [ Table; Draft; Selection; Lanes; Whole; Packed ];
   cover "a window" m.has_window;
   let windows = List.map (fun (_, _, w, _) -> w) m.steps in
   cover "steps under different windows"
@@ -1657,7 +1771,7 @@ let () =
                test_extend_whole;
              test "with pages is the stored pools read through them"
                test_extend_paged;
-             test "otherwise is Cache_index.extend with the axes exchanged"
+             test "under a selection is Cache_index.extend, a row per token"
                test_extend_dense;
              cases "raises on k, v or pools of another shape" ~id:fst
                extend_refusals test_extend_raises;
@@ -1680,6 +1794,16 @@ let () =
              prop ~count:100 "is Cache_index.extend's read under its mask"
                (Gen.with_pp pp_paged paged_gen)
                law_paths_agree;
+             prop ~count:100
+               "under a selection attends over each token's chosen columns"
+               (Gen.with_pp pp_selected selected_gen)
+               law_selected;
+             prop ~count:100 "choosing every column in order is no selection"
+               (Gen.with_pp pp_paged
+                  Gen.(
+                    let* has_window = bool in
+                    paged_of ~has_window ~drafted:false))
+               law_all_columns;
              prop ~count:100
                "under Rune.vmap over steps of their own caches and indices is \
                 each step"

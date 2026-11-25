@@ -203,7 +203,11 @@ module Cache : sig
       column whose entry addresses nothing is hidden from every token.
       Otherwise [kv] is [Dense] of {!Cache_index.extend} on each pool, which
       holds tokens before heads, with the two axes exchanged on the way in and
-      out; on a whole index that is [k] and [v], and [cache'] is [cache].
+      out; on a whole index without a selection that is [k] and [v], and
+      [cache'] is [cache] on any whole index. Under a selection of [w]
+      columns per token, the tokens are the rows, one per query as {!attend}
+      takes them: [[| batch * seq; kv_heads; w; head_dim |]], row
+      [b * seq + i] holding the columns token [i] of lane [b] chose.
 
       Raises [Invalid_argument] if [k] or [v] does not have that shape for
       [index] and [cache], or a pool does not have three axes. *)
@@ -240,7 +244,7 @@ val cached :
     scatter of the call's tokens, and the attention reads the pools through a
     table of [context] slots per lane ({!Cache_index.pages}), in place unless
     the pools are cut along their slots; under a selection, one gather of
-    each token's chosen columns. Both trace once under [Rune.jit] whatever
+    each token's chosen columns, and each token attends over its own. Both trace once under [Rune.jit] whatever
     the index holds. Consumed by a compiled step that
     lends it the pools' memory, the step's cost does not depend on the size
     of the cache. Steps of their own tokens, caches and indices, stacked along
@@ -308,14 +312,27 @@ val attend :
     shape [[| batch; heads; n; dv |]]. [kv_heads] divides [heads], and
     key-value head [h] serves query heads [h * groups] to
     [h * groups + groups - 1], where [groups] is [heads / kv_heads]. Likewise
-    [rows] is [batch] or a positive divisor of it, and dense row [r] serves
-    lanes [r * lanes] to [r * lanes + lanes - 1], where [lanes] is
-    [batch / rows]: the beams or samples of one input share its keys, and each
-    lane's result is the one it has over a copy of its row. No key is
-    repeated: where [rows] is not [batch], a row's lanes attend as one lane
-    holding all their queries, so each key is read once for all of them, and
-    neither [mask], [lengths], [bias] nor a positive [dropout] may be
-    given.
+    a dense row serves the queries of some lanes, by [rows]:
+
+    - [batch]: row [b] serves lane [b].
+    - A positive divisor of [batch]: row [r] serves lanes [r * lanes] to
+      [r * lanes + lanes - 1], where [lanes] is [batch / rows]. The beams or
+      samples of one input share its keys, and each lane's result is the one
+      it has over a copy of its row. No key is repeated: a row's lanes attend
+      as one lane holding all their queries, so each key is read once for all
+      of them, and neither [mask], [lengths], [bias] nor a positive [dropout]
+      may be given.
+    - [batch * n]: row [b * n + i] serves query [i] of lane [b] alone, as a
+      token that reads its own columns ({!Cache_index.select}). Each query's
+      result is the one it has as a lane of one query over its row, with
+      [mask], [bias], [dropout] and [lengths] read at its own pairs and
+      lane. [mask] is applied once, before the attention, to arrays of the
+      coordinates it has over [batch] rows: [q] of shape [[| n; 1 |]], [k]
+      of [[| 1; m |]], and [len] of [[| batch; 1; 1; 1 |]], each lane's
+      length within \[[0];[m]\], or [m] without [lengths]. A mask of
+      elementwise functions and implicit broadcasts, as {!Nx.val-attention}
+      takes, gives each pair its value; another operation is not refused
+      here, and an explicit broadcast of a coordinate may raise.
 
     With:
 
@@ -349,9 +366,9 @@ val attend :
     dtypes, precision and totality.
 
     Raises [Invalid_argument] if [q]'s dtype is a float8 or float4 format, a
-    shape is not as above, [rows] is neither [batch] nor a positive divisor
-    of it, [rows] is not [batch] and [mask], [lengths], [bias] or a positive
-    [dropout] is given, [kv_heads] does not divide [heads], [d] is [0] without
+    shape is not as above, [rows] is neither [batch], a positive divisor of
+    it nor [batch * n], [rows] is a divisor other than [batch] and [mask],
+    [lengths], [bias] or a positive [dropout] is given, [kv_heads] does not divide [heads], [d] is [0] without
     [scale], [lengths] does not have shape [[| batch |]], [mask]'s results
     or captures or [bias] do not broadcast to [[| batch; heads; n; m |]],
     [dropout] is outside \[[0];[1]), or [key]'s batch shape does not
