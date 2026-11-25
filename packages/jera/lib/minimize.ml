@@ -43,7 +43,7 @@ let bracket ~tol f ~lo ~hi =
     | _ -> assert false
   in
   let dtype = Nx.dtype lo in
-  let eps = Num.eps dtype in
+  let root_eps = Float.sqrt (Num.eps dtype) in
   let search x = Rune.detach (f x) in
   let a0 = Nx.minimum (Rune.detach lo) (Rune.detach hi)
   and b0 = Nx.maximum (Rune.detach lo) (Rune.detach hi) in
@@ -53,7 +53,18 @@ let bracket ~tol f ~lo ~hi =
   let width0 = Nx.sub b0 a0 in
   let st0 = Nx.full_at (Nx.beside a0) Nx.int32 (Nx.shape a0) running in
   let st0 = settle st0 (Nx.logical_not (Nx.isfinite f0)) Not_finite in
-  (* An element ends when its bracket meets [tol] or holds no float. *)
+  (* The least distance between two evaluations, Brent's [localmin] as the
+     Fortran [fmin] states it: √ε |x| plus a third of [tol]'s scale. Closer than √ε |x|, values
+     of [f] differ by about its rounding near a minimum, so they no longer
+     order the points; the smallest normal float keeps a step at [x = 0]. *)
+  let least x =
+    Nx.add_s
+      (Nx.add (Nx.mul_s (Nx.abs x) root_eps) (Nx.div_s (Tol.scale tol x) 3.))
+      (Num.tiny dtype)
+  in
+  (* An element converges when its bracket meets [tol] or holds no float, and
+     stalls when it is as narrow as its least step allows, [localmin]'s
+     stopping test, short of [tol]. *)
   let finish s st =
     let half = Nx.div_s (Nx.sub s.b s.a) 2. in
     let narrow =
@@ -61,7 +72,14 @@ let bracket ~tol f ~lo ~hi =
         (accepted tol ~e:half ~y:(Nx.add s.a half))
         (Num.adjacent s.a s.b)
     in
-    settle st narrow Converged
+    let st = settle st narrow Converged in
+    let m = Nx.add s.a half in
+    let floor =
+      Nx.less_equal
+        (Nx.abs (Nx.sub s.x m))
+        (Nx.sub (Nx.mul_s (least s.x) 2.) half)
+    in
+    settle st floor Stalled
   in
   let initial =
     {
@@ -83,13 +101,7 @@ let bracket ~tol f ~lo ~hi =
     let s = of_fields fs in
     let run = searching st in
     let m = Nx.div_s (Nx.add s.a s.b) 2. in
-    (* The smallest step: a part of the tolerance's scale at [x], so that a new
-       point differs from [x] in the digits [tol] reads. *)
-    let t1 =
-      Nx.maximum
-        (Nx.div_s (Tol.scale tol s.x) 3.)
-        (Nx.add_s (Nx.mul_s (Nx.abs s.x) eps) (Float.ldexp 1. (-1000)))
-    in
+    let t1 = least s.x in
     (* The parabola through (x, fx), (w, fw), (v, fv): its step [p / q]. *)
     let r = Nx.mul (Nx.sub s.x s.w) (Nx.sub s.fx s.fv) in
     let q = Nx.mul (Nx.sub s.x s.v) (Nx.sub s.fx s.fw) in
@@ -215,7 +227,11 @@ let bracket ~tol f ~lo ~hi =
     | Budget_spent ->
         "The bracket is too wide to shrink to tol within its budget of \
          evaluations: narrow [lo, hi]."
-    | Converged | Stalled | Not_bracketed -> ""
+    | Stalled ->
+        "The bracket narrowed to the least step between evaluations, the \
+         square root of the dtype's epsilon times |x|, short of tol: f's \
+         values do not order closer points; loosen tol."
+    | Converged | Not_bracketed -> ""
   in
   Solution.v ~fn
     ~settings:(Format.asprintf "tol %a" Tol.pp tol)

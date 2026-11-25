@@ -1281,6 +1281,13 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.bracket` evaluates no two points closer than `√ε |x|` plus a
+  third of the tolerance's scale, as Brent's `localmin` does, and ends an
+  element `Stalled` when its bracket narrows to that step short of `tol`.
+  It reported `Converged` where values of `f` closer than that differ only by
+  their rounding: `1 + (x − c)²` under `Tol.ulps 4` converged 4.5e7 ulps from
+  `c`. A tolerance finer than about `6 √ε |x|` (1e-7 relative in float64)
+  now ends `Stalled`; loosen it.
 - `Sde.milstein` evaluates the diffusion three times per step, as
   `jera.mli` states, where it took four: it applies `g y` to `ΔW − q` once
   in place of `ΔW` and `q` apart. Results change in their last bits.

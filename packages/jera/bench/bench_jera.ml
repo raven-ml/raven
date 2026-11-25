@@ -159,7 +159,7 @@ let brent =
         in
         Solution.get
           (Minimize.bracket
-             ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
+             ~tol:(Tol.v ~rel:1e-6 ~abs:1e-9)
              bowl ~lo:(Nx.sub_s c 3.) ~hi:(Nx.add_s c 1.)));
     x = (fun () -> Nx.linspace f64 (-2.) 2. 1_000);
     rows = [ Eager; Compiled ];

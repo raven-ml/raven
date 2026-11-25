@@ -881,10 +881,16 @@ module Minimize : sig
       [0.618] over two evaluations. An element has a fixed budget of [3b + 9]
       evaluations for a [b]-bit dtype (201 in float64), and a bracket too wide
       to shrink to [tol] within it ends [Budget_spent]. On a function with
-      several minima in the bracket it finds one of them. {b Error.} [e] is half
-      the final bracket and [y] its midpoint; an element also ends when no float
-      lies strictly inside its bracket. A non-finite value of [f] ends it
-      [Not_finite]. {b Derivative.} A minimum inside the bracket is stated as a
+      several minima in the bracket it finds one of them. As Brent's [localmin]
+      (Algorithms for Minimization without Derivatives, 1973), it evaluates no
+      two points closer than [√ε |x|] plus a third of [tol]'s scale at [x], [ε]
+      the dtype's epsilon: near a minimum, values of [f] closer than that
+      differ by about their rounding and do not order the points.
+      {b Error.} [e] is half the final bracket and [y] its midpoint; an element
+      also ends when no float lies strictly inside its bracket. A bracket that
+      narrows to that least step short of [tol] ends [Stalled]: a tolerance
+      finer than about [6 √ε |x|] is not met. A non-finite value of [f] ends
+      it [Not_finite]. {b Derivative.} A minimum inside the bracket is stated as a
       zero of rune's derivative of [f], so its derivative is
       [−∂²f/∂x∂θ / ∂²f/∂x²]; a minimum at an end is that end, with its
       derivative; a lane that did not converge has a zero derivative. *)

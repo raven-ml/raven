@@ -30,26 +30,35 @@ let bowl c x =
 
 let near () = Oracle.tensor ~abs:3e-8 ()
 
+(* Brent's search evaluates no two points closer than √ε |x| plus a third of
+   [tol]'s scale, so a bracket meets a tolerance of about 6 √ε |x|, 9e-8 |x| in
+   float64, or coarser. *)
+let brent = Tol.v ~rel:1e-6 ~abs:1e-9
+
+(* A converged bracket holds the minimum and its estimate within twice [brent]'s
+   scale, [2 (1e-6 |x| + 1e-9)], which is at most [4] times the larger term. *)
+let bracketed () = Oracle.tensor ~rel:4e-6 ~abs:4e-9 ()
+
 let minimum c =
-  Minimize.bracket ~tol:tight (bowl c) ~lo:(Nx.sub_s c 4.) ~hi:(Nx.add_s c 1.)
+  Minimize.bracket ~tol:brent (bowl c) ~lo:(Nx.sub_s c 4.) ~hi:(Nx.add_s c 1.)
 
 let bracket_tests =
   [
     prop "the minimum of a bowl is its center" centers (fun c ->
-        equal (near ()) c (Solution.get (minimum c)));
+        equal (bracketed ()) c (Solution.get (minimum c)));
     prop "an element ends within 3b + 8 evaluations" centers (fun c ->
         Array.iter
           (fun n -> at_most int32 ~than:200l n)
           (Nx.to_array (Solution.evaluations (minimum c))));
     test "cos has its minimum at π in [0, 5]" (fun () ->
         let s =
-          Minimize.bracket ~tol:tight Nx.cos ~lo:(vec [| 0. |])
+          Minimize.bracket ~tol:brent Nx.cos ~lo:(vec [| 0. |])
             ~hi:(vec [| 5. |])
         in
-        equal (near ()) (vec [| Float.pi |]) (Solution.get s));
+        equal (bracketed ()) (vec [| Float.pi |]) (Solution.get s));
     test "a minimum at an end is that end" (fun () ->
         let s =
-          Minimize.bracket ~tol:tight Fun.id
+          Minimize.bracket ~tol:brent Fun.id
             ~lo:(vec [| 1.; 3. |])
             ~hi:(vec [| 2.; -1. |])
         in
@@ -61,7 +70,7 @@ let bracket_tests =
            201 of a float64 element (jera.mli, bracket). *)
         let wide f bound =
           let s =
-            Minimize.bracket ~tol:tight f ~lo:(vec [| -.bound |])
+            Minimize.bracket ~tol:brent f ~lo:(vec [| -.bound |])
               ~hi:(vec [| bound |])
           in
           equal Oracle.status_t Budget_spent (Oracle.status s);
@@ -69,9 +78,24 @@ let bracket_tests =
         in
         wide (fun x -> Nx.square (Nx.sub_s x 0.5)) 1e150;
         wide (fun x -> Nx.abs (Nx.sub_s x 0.5)) 1e100);
+    prop "a tolerance finer than the minimum's resolution ends Stalled"
+      Gen.(
+        map
+          (fun (m, up) -> vec [| (if up then m else -.m) |])
+          (pair (float_range 0.5 2.) bool))
+      (fun c ->
+        (* 1 + (x − c)² rounds by ε near its minimum, so its values fix [c] only
+           to about √ε, 7e7 ulps of float64 (jera.mli, Tol.ulps); 4 ulps cannot
+           be met. *)
+        let f x = Nx.add_s (Nx.square (Nx.sub x c)) 1. in
+        let s =
+          Minimize.bracket ~tol:(Tol.ulps 4.) f ~lo:(Nx.sub_s c 4.)
+            ~hi:(Nx.add_s c 1.)
+        in
+        equal Oracle.status_t Stalled (Oracle.status s));
     test "a NaN value is not finite" (fun () ->
         let s =
-          Minimize.bracket ~tol:tight Nx.log ~lo:(vec [| -2. |])
+          Minimize.bracket ~tol:brent Nx.log ~lo:(vec [| -2. |])
             ~hi:(vec [| -1. |])
         in
         equal Oracle.status_t Not_finite (Oracle.status s));
@@ -91,7 +115,7 @@ let derivative_tests =
             (fun lo ->
               Nx.sum
                 (Solution.get
-                   (Minimize.bracket ~tol:tight Fun.id ~lo ~hi:(Nx.add_s lo 2.))))
+                   (Minimize.bracket ~tol:brent Fun.id ~lo ~hi:(Nx.add_s lo 2.))))
             lo
         in
         equal (Oracle.tensor ()) (Nx.ones_like lo) g);
@@ -100,7 +124,7 @@ let derivative_tests =
         let theta = vec [| 1.; -2.; 0.5 |] in
         let solve t =
           Solution.get
-            (Minimize.bracket ~tol:tight
+            (Minimize.bracket ~tol:brent
                (fun x -> Nx.sub (Nx.square x) (Nx.mul t x))
                ~lo:(Nx.full_like t (-5.)) ~hi:(Nx.full_like t 5.))
         in

@@ -55,9 +55,12 @@ let () =
   in
   show "fit (a, b)" (Solution.get s);
 
-  (* A minimum of a function of one variable in each bracket, elementwise. *)
+  (* A minimum of a function of one variable in each bracket, elementwise. Its
+     values fix a minimum only to about the square root of their rounding, so
+     the tolerance is relative 1e-6. *)
   let s =
-    Minimize.bracket ~tol:(Tol.ulps 64.)
+    Minimize.bracket
+      ~tol:(Tol.v ~rel:1e-6 ~abs:1e-9)
       (fun x -> Nx.sub (Nx.square x) (Nx.mul_s (Nx.sin (Nx.mul_s x 3.)) 2.))
       ~lo:(Nx.create f64 [| 2 |] [| -2.; 0. |])
       ~hi:(Nx.create f64 [| 2 |] [| 0.; 2. |])
