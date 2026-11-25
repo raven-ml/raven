@@ -426,8 +426,8 @@ let noisy =
 let noisy_data p (noise, amp) =
   Nx.add (model p) (Nx.mul_s (Nx.sin (Nx.mul_s times noise)) amp)
 
-(* The condition of the Jacobian of [a e^(b t)] at [p], whose columns are
-   [e^(b t)] and [a t e^(b t)], from the eigenvalues of its 2 × 2 Gram matrix. *)
+(* The condition of the fit's Jacobian at [p], from the eigenvalues of its 2 × 2
+   Gram matrix: its columns are [e^(b t)] and [a t e^(b t)]. *)
 let jacobian_condition p =
   let a = Nx.item [ 0 ] p and b = Nx.item [ 1 ] p in
   let ts = Oracle.floats times in
