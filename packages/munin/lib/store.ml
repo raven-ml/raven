@@ -239,7 +239,24 @@ let artifact s name sel =
     | `Version n -> version n
     | `Alias a -> if File.is_segment a then resolve s name a else None
     | `Latest ->
-        List.find_map version (List.rev (Version.numbers ~root:s.root name))
+        (* Numbers are claimed once and tombstones stay. A top number that reads
+           alive was the latest when the numbers were listed. Past a dead top, a
+           version found alive was the latest when its file was read unless a
+           higher number appeared meanwhile: a publication that the scan starts
+           over for, and finds alive on top unless it too is deleted. *)
+        let rec latest () =
+          match List.rev (Version.numbers ~root:s.root name) with
+          | [] -> None
+          | top :: rest -> (
+              match version top with
+              | Some _ as found -> found
+              | None ->
+                  let found = List.find_map version rest in
+                  let later = Version.numbers ~root:s.root name in
+                  if List.exists (fun n -> n > top) later then latest ()
+                  else found)
+        in
+        latest ()
 
 (* [alias_files s name] is each alias file of [name] and the number it holds,
    whether that version is alive or not. *)

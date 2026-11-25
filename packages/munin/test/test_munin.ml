@@ -2057,7 +2057,7 @@ let select_gen =
         | `Latest -> "latest"
         | `Version n -> "version " ^ string_of_int n
         | `Alias a -> "alias " ^ a))
-    [ `Version 1; `Version 2; `Version 3 ]
+    [ `Latest; `Version 1; `Version 2; `Version 3 ]
 
 (* A store with a file of each content, and a session per domain that publishes.
    Whatever the calls, the store they leave breaks no rule of the format. *)
@@ -2098,12 +2098,10 @@ let select_sys sel (store, _) =
     (fun a -> (Artifact.version a, Artifact.digest a))
     (Store.artifact store "ckpt" sel)
 
-let listing_gen =
+let alias_gen =
   Gen.of_list
-    ~pp:(fun ppf s ->
-      Format.pp_print_string ppf
-        (match s with `Alias _ -> "alias best" | _ -> "latest"))
-    [ `Latest; `Alias "best" ]
+    ~pp:(fun ppf _ -> Format.pp_print_string ppf "alias best")
+    [ `Alias "best" ]
 
 (* [dangling_alias store] is the path of the alias "best" of "x", which names a
    version since deleted. *)
@@ -2155,13 +2153,8 @@ let artifact_tests =
           command "select"
             (select_gen @-> store_w ^-> returns selected)
             select_ref select_sys;
-          (* The latest version reads the numbers, then each version's file, so
-             it can see a version deleted after a later one was published and
-             miss that later one (Store.artifacts): it is read where no write
-             runs beside it. *)
-          command "select latest or alias"
-            ~pre:(fun _ _ -> true)
-            (listing_gen @-> store_w ^-> returns selected)
+          command "select alias"
+            (alias_gen @-> store_w ^-> returns selected)
             select_ref select_sys;
           (* The listing reads the numbers, then each version's file, so it can
              see a version deleted after a later one was published and miss that
@@ -2236,6 +2229,18 @@ let artifact_tests =
           equal ~msg:"created" float_exact (Artifact.created_at a)
             (Artifact.created_at b);
           equal ~msg:"path" string (Artifact.path a) (Artifact.path b));
+      test "the latest is a later version published before the last is deleted"
+        (fun () ->
+          let store = new_store () in
+          let s = start store in
+          ignore (Session.log_artifact s ~name:"x" (source "1"));
+          let v2 = Session.log_artifact s ~name:"x" (source "2") in
+          let v3 = Session.log_artifact s ~name:"x" (source "3") in
+          Store.delete_artifact store v2;
+          Session.finish s;
+          equal (option int)
+            (Some (Artifact.version v3))
+            (Option.map Artifact.version (Store.artifact store "x" `Latest)));
       test "a deleted latest number is never reused" (fun () ->
           let store = new_store () in
           let s = start store in

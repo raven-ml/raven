@@ -137,9 +137,8 @@ val artifact :
     version the alias names. It is [None] if there is no such version or it was
     deleted. A version file that does not follow
     {!Store_format.section-artifacts} is no version, and {!check} names it.
-    [`Latest] reads the numbers, then the files, as {!artifacts} does. While
-    others publish, delete and alias versions, [`Alias] is the version it selects
-    at some instant during the call. *)
+    While others publish, delete and alias versions, [`Latest] and [`Alias] are
+    the version they select at some instant during the call. *)
 
 val aliases : t -> string -> (string * int) list
 (** [aliases s name] is [name]'s aliases and the numbers of the versions they
