@@ -370,12 +370,12 @@ let () =
                      File "x.ml", line 1, characters 9-23:
                      1 | type t = A [@ptree.int] | B of { x : int [@ptree.int] } [@ptree.skip] | C of int * string [@ptree.int] [@@deriving ptree]
                                   ^^^^^^^^^^^^^^
-                     Error: ppx_ptree: [@ptree.int] on constructor [A], which has no argument; put it on an argument's type, as in [A of (int [@ptree.int]) * ...]
+                     Error: ppx_ptree: [@ptree.int] on constructor [A], which has no argument to annotate
 
                      File "x.ml", line 1, characters 24-69:
                      1 | type t = A [@ptree.int] | B of { x : int [@ptree.int] } [@ptree.skip] | C of int * string [@ptree.int] [@@deriving ptree]
                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-                     Error: ppx_ptree: [@ptree.skip] on constructor [B], which has a record argument; put it on an argument's type, as in [B of (int [@ptree.skip]) * ...]
+                     Error: ppx_ptree: [@ptree.skip] on constructor [B], which has a record argument; put it after a field, as in [B of { x : int [@ptree.skip] }]
 
                      File "x.ml", line 1, characters 70-102:
                      1 | type t = A [@ptree.int] | B of { x : int [@ptree.int] } [@ptree.skip] | C of int * string [@ptree.int] [@@deriving ptree]
@@ -395,7 +395,7 @@ let () =
                      File "x.ml", line 1, characters 18-24:
                      1 | type t = { name : string } [@@ptree.skip] [@@deriving ptree]
                                            ^^^^^^
-                     Error: ppx_ptree: field [name] is a string, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [name] has type string, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
                      |}
                  );
                ];
@@ -513,7 +513,7 @@ let () =
                      File "x.ml", line 1, characters 18-24:
                      1 | type t = { name : string [@skip] } [@@deriving ptree]
                                            ^^^^^^
-                     Error: ppx_ptree: field [name] is a string, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [name] has type string, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
                      |}
                  );
                  ( "[@int]",
@@ -533,7 +533,7 @@ let () =
                      File "x.ml", line 1, characters 18-24:
                      1 | type t = { name : string [@walk f] } [@@deriving ptree]
                                            ^^^^^^
-                     Error: ppx_ptree: field [name] is a string, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [name] has type string, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
                      |}
                  );
                ];
@@ -582,47 +582,47 @@ let () =
                      File "x.ml", line 2, characters 6-11:
                      2 |   a : float;
                                ^^^^^
-                     Error: ppx_ptree: field [a] is a float, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [a] has type float, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
 
                      File "x.ml", line 3, characters 6-12:
                      3 |   b : string;
                                ^^^^^^
-                     Error: ppx_ptree: field [b] is a string, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [b] has type string, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
 
                      File "x.ml", line 4, characters 6-10:
                      4 |   c : char;
                                ^^^^
-                     Error: ppx_ptree: field [c] is a char, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [c] has type char, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
 
                      File "x.ml", line 5, characters 6-10:
                      5 |   d : unit;
                                ^^^^
-                     Error: ppx_ptree: field [d] is a unit, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [d] has type unit, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
 
                      File "x.ml", line 6, characters 6-11:
                      6 |   e : bytes;
                                ^^^^^
-                     Error: ppx_ptree: field [e] is a bytes, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [e] has type bytes, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
 
                      File "x.ml", line 7, characters 6-11:
                      7 |   f : int32;
                                ^^^^^
-                     Error: ppx_ptree: field [f] is a int32, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [f] has type int32, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
 
                      File "x.ml", line 8, characters 6-11:
                      8 |   g : int64;
                                ^^^^^
-                     Error: ppx_ptree: field [g] is a int64, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [g] has type int64, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
 
                      File "x.ml", line 9, characters 6-15:
                      9 |   h : nativeint;
                                ^^^^^^^^^
-                     Error: ppx_ptree: field [h] is a nativeint, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [h] has type nativeint, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
 
                      File "x.ml", line 10, characters 6-9:
                      10 |   i : exn;
                                 ^^^
-                     Error: ppx_ptree: field [i] is a exn, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
+                     Error: ppx_ptree: field [i] has type exn, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
                      |}
                  );
                  ( "a dtype",

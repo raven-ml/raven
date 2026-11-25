@@ -549,8 +549,8 @@ and constr env ~ints part ty lid args =
         n
   | Lident n, _ when List.mem n data ->
       error env ~loc
-        "%s is a %s, which has no walk; leave it out with [@ptree.skip], or \
-         hold data a compiled program depends on in a tensor"
+        "%s has type %s, which has no walk; leave it out with [@ptree.skip], \
+         or hold data a compiled program depends on in a tensor"
         part n;
       placeholder ~loc
   | Lident n, args ->
@@ -669,15 +669,22 @@ let variant env ~loc cds =
       match (annot, cd.pcd_args) with
       | (None | Some Invalid), _ | Some _, Pcstr_tuple [ _ ] -> false
       | Some a, args ->
-          error env ~loc
-            "[@%s] on constructor [%s], which has %s; put it on an argument's \
-             type, as in [%s of (int [@%s]) * ...]"
-            (attribute_label a) name
-            (match args with
-            | Pcstr_record _ -> "a record argument"
-            | Pcstr_tuple [] -> "no argument"
-            | Pcstr_tuple l -> Printf.sprintf "%d arguments" (List.length l))
-            name (attribute_label a);
+          let label = attribute_label a in
+          (match args with
+          | Pcstr_tuple [] ->
+              error env ~loc
+                "[@%s] on constructor [%s], which has no argument to annotate"
+                label name
+          | Pcstr_record _ ->
+              error env ~loc
+                "[@%s] on constructor [%s], which has a record argument; put \
+                 it after a field, as in [%s of { x : int [@%s] }]"
+                label name name label
+          | Pcstr_tuple l ->
+              error env ~loc
+                "[@%s] on constructor [%s], which has %d arguments; put it on \
+                 an argument's type, as in [%s of (int [@%s]) * ...]"
+                label name (List.length l) name label);
           true
     in
     let tag =
