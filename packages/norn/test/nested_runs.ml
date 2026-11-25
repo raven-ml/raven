@@ -10,10 +10,11 @@ open Evidence_models
 let t = Nx.Ptree.tensor
 let ez = Norn.Evidence.ptree t
 
-let stop_name = function
-  | Norn.Evidence.Converged -> "converged"
-  | Remaining r -> Printf.sprintf "Remaining %g" r
-  | Temperature b -> Printf.sprintf "Temperature %g" b
+let stop =
+  Windtrap.Testable.structural ~pp:(fun ppf -> function
+    | Norn.Evidence.Converged -> Format.pp_print_string ppf "Converged"
+    | Remaining r -> Format.fprintf ppf "Remaining %.17g" r
+    | Temperature b -> Format.fprintf ppf "Temperature %.17g" b)
 
 let lnz z = Nx.item [] (Norn.Evidence.log_evidence z)
 let err z = Nx.item [] (Norn.Evidence.error z)

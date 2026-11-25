@@ -1896,8 +1896,9 @@ module Nested : sig
       [budget] steps.
 
       Raises [Invalid_argument] if [batch < 1] or [batch >= n], [budget < 1],
-      [tolerance] is not positive, or if a density does not return one log
-      density per point, each read from its own row. *)
+      [tolerance] is not positive, [live] holds no tensor, or if a density does
+      not return one log density per point, each read from its own row, or is
+      NaN or [+inf] at a point. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->
