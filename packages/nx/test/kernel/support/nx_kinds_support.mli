@@ -15,6 +15,15 @@ val f32 : string -> int array -> int
 val f64 : string -> float array -> float
 (** [f64 kind args] is {!f32} at f64, operands and result as floats. *)
 
+val kind32 : string -> int -> int
+(** [kind32 kind x] is [nx_<kind>_f32] of the operand whose binary32 bits are
+    [x], called as a function outside any loop, as binary32 bits: [kind] is one
+    of the kinds with a near function, ["sin"], ["cos"], ["tan"] and ["exp"].
+    Raises [Invalid_argument] on another kind. *)
+
+val kind64 : string -> float -> float
+(** [kind64 kind x] is {!kind32} at f64. *)
+
 val int : string -> string -> int64 array -> int64
 (** [int ty kind args] is the integer kind [kind] at [ty], one of ["i32"],
     ["u32"], ["i64"] and ["u64"], of operands of that type, each the [int64]

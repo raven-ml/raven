@@ -106,6 +106,32 @@ value nx_kinds_support_f64(value name, value args) {
   CAMLreturn(caml_copy_double(y));
 }
 
+/* The kinds with a near function, called as functions at one operand,
+   outside any loop. */
+
+value nx_kinds_support_kind_f32(value name, value x) {
+  const char *k = String_val(name);
+  float a = nx_bits_float((uint32_t)Long_val(x)), y;
+  if (!strcmp(k, "sin")) y = nx_sin_f32(a);
+  else if (!strcmp(k, "cos")) y = nx_cos_f32(a);
+  else if (!strcmp(k, "tan")) y = nx_tan_f32(a);
+  else if (!strcmp(k, "exp")) y = nx_exp_f32(a);
+  else refuse(name);
+  return Val_long(nx_float_bits(y));
+}
+
+value nx_kinds_support_kind_f64(value name, value x) {
+  CAMLparam2(name, x);
+  const char *k = String_val(name);
+  double a = Double_val(x), y;
+  if (!strcmp(k, "sin")) y = nx_sin_f64(a);
+  else if (!strcmp(k, "cos")) y = nx_cos_f64(a);
+  else if (!strcmp(k, "tan")) y = nx_tan_f64(a);
+  else if (!strcmp(k, "exp")) y = nx_exp_f64(a);
+  else refuse(name);
+  CAMLreturn(caml_copy_double(y));
+}
+
 /* The integer kind [name] at [ty]: the result's int64, sign-extended from
    i32 and zero-extended from u32. */
 value nx_kinds_support_int(value ty, value name, value args) {

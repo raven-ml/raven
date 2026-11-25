@@ -6,6 +6,8 @@
 external f32 : string -> int array -> int = "nx_kinds_support_f32"
 external f64 : string -> float array -> float = "nx_kinds_support_f64"
 
+external kind32 : string -> int -> int = "nx_kinds_support_kind_f32"
+external kind64 : string -> float -> float = "nx_kinds_support_kind_f64"
 external int : string -> string -> int64 array -> int64 = "nx_kinds_support_int"
 external threefry : int64 -> int64 -> int64 = "nx_kinds_support_threefry"
 external c64 : string -> int array -> int array = "nx_kinds_support_c64"
