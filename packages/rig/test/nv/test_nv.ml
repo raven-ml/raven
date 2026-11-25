@@ -3229,15 +3229,22 @@ let fetches =
 
 (* Usage *)
 
-(* The RM samples a GPU's load from the work it runs: after three seconds of
-   a kernel, the load over those seconds is more than none. *)
+(* The RM samples a GPU's load from the work it runs, every 200 ms on an RTX
+   5000 Ada: after a kernel of three of its samples' periods, the load since its
+   submit is more than none. A window from the submit holds the whole kernel,
+   however late the wait returns. A kernel of one period showed a load of over
+   50 in each of twelve tries there. *)
+let busy_ns = 600_000_000
+
 let busy_after_work () =
   if S.path () <> Some Kernel then
     skip ~reason:"no GPU that NVIDIA's kernel driver holds" ();
   S.with_ @@ fun t ->
-  Rig.Point.wait (S.submit_work t [ S.spin t ~ns:(3 * second) ]);
+  let submitted = Rig.Profile.now () in
+  Rig.Point.wait (S.submit_work t [ S.spin t ~ns:busy_ns ]);
+  let window = Float.of_int (Rig.Profile.now () - submitted) /. 1e9 in
   let u =
-    require_ok ~pp:Format.pp_print_string (Rig_nv_nvidia.usage ~window:3. 0)
+    require_ok ~pp:Format.pp_print_string (Rig_nv_nvidia.usage ~window 0)
   in
   match u.busy with
   | Some b -> greater ~msg:"busy" float_exact ~than:0. b
