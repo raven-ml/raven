@@ -812,15 +812,16 @@ let prior_draw m context ~data k =
   let n_latent = Array.length (leaves m.latent m.like) in
   let us = Array.make n_latent (Nx.P (Nx.zeros_at m.at Nx.float32 [||])) in
   let answer i l d =
+    (* checked once, where a draw or the coordinates read it *)
+    let checked = lazy (named context l.site.name d) in
     let x =
       match (fixed_of m i, l.site.role, data) with
       | Some v, _, _ -> fresh d (unpack d v) v
       | None, Observed, Some ys -> fresh d (unpack d ys.(l.leaf)) ys.(l.leaf)
-      | None, _, _ ->
-          D.sample (Nx.Rng.fold_in k i) (named context l.site.name d)
+      | None, _, _ -> D.sample (Nx.Rng.fold_in k i) (Lazy.force checked)
     in
     (match l.site.role with
-    | Latent -> us.(l.leaf) <- inverse m i (named context l.site.name d) x
+    | Latent -> us.(l.leaf) <- inverse m i (Lazy.force checked) x
     | Fixed -> us.(l.leaf) <- empty_coords (pack d x)
     | Observed -> ());
     x
