@@ -65,15 +65,39 @@ let product s lo hi =
   done;
   !p
 
-(* What [m] makes of axis [a] of a value of shape [s]. A reshape pairs the
-   axes of one product of the extents before them in order, each with the
-   result's next axis of that product and of its extent: [1; 8] to [1; 1; 8]
-   pairs 0 with 0 and 1 with 2, and [1; 1] to [1] pairs 0 alone. An unpaired
-   axis regroups into the result's axis of more than one element of that
-   product: [8] into [2; 4]'s axis 0, [2; 4]'s axis 0 into [8], and [8] into
-   [1; 2; 4]'s axis 1. Each window of a cut into tiles that divide both
-   extents holds whole rows on both sides, so each shard reshapes alone: [8]
-   over two devices holds [4] on each, which becomes [1; 4]. *)
+(* A window of size [1] and step [1] reads each position alone. *)
+let alone (w : M.window) = w.size = 1 && w.step = 1
+
+(* The number of axes of one element after each product of the extents before
+   them, [0] included, as (product, count), the last first. *)
+let units s =
+  let p = ref 1 and runs = ref [] in
+  Array.iter
+    (fun d ->
+      (if d = 1 then
+         match !runs with
+         | (q, n) :: rest when q = !p -> runs := (q, n + 1) :: rest
+         | l -> runs := (!p, 1) :: l);
+      p := !p * d)
+    s;
+  !runs
+
+let ambiguous s t =
+  let us = units s and ut = units t in
+  List.exists
+    (fun (p, n) ->
+      match List.assoc_opt p ut with Some m -> m <> n | None -> false)
+    us
+
+(* What [m] makes of axis [a] of a value of shape [s]. A reshape pairs the axes
+   of one product of the extents before them in order, each with the result's
+   next axis of that product and of its extent: [1; 8] to [1; 1; 8] pairs 0 with
+   0 and 1 with 2, and [1; 1] to [1] pairs 0 alone. An unpaired axis regroups
+   into the result's axis of more than one element of that product: [8] into [2;
+   4]'s axis 0, [2; 4]'s axis 0 into [8], and [8] into [1; 2; 4]'s axis 1. Each
+   window of a cut into tiles that divide both extents holds whole rows on both
+   sides, so each shard reshapes alone: [8] over two devices holds [4] on each,
+   which becomes [1; 4]. *)
 let moved (m : M.t) s a : axis =
   match m with
   | Permute p -> (
@@ -114,13 +138,8 @@ let moved (m : M.t) s a : axis =
       let r = Iarray.get rs a in
       if r.start = 0 && r.step = 1 && r.count = s.(a) then Becomes a else Whole
   | Window ws ->
-      (* CR: Preserve this axis's cut for a window of size 1 and step 1.
-         It keeps every element in order and only appends a unit axis.
-         sliding_window ~window:1 of [8] split over two devices currently
-         gathers two full [8] copies; each [4] shard can give a [4;1] view.
-         Recognize the identity axis here: localize and Layout.move already
-         handle it, preserving the Window primitive's other semantics. *)
-      if Iarray.exists (fun (w : M.window) -> w.axis = a) ws then Whole
+      if Iarray.exists (fun (w : M.window) -> w.axis = a && not (alone w)) ws
+      then Whole
       else Becomes a
 
 let full d = { M.start = 0; count = d; step = 1 }

@@ -3956,6 +3956,28 @@ its lock and from samples the dashboard saw arrive.
   argument (`x`, `w`, `init`, `kernel`) and the `place` of it, where a cut
   the groups or taps cannot read named an internal operand `y` and an axis
   the argument lacks.
+- Operations over a value cut along an axis of one element keep that cut on
+  the axis it becomes, as a batch of two keeps it, where they raised naming a
+  `place`: `Nx.tile`, `Nx.repeat`, `Nx.take ~axis` and `Nx.slice [T p]` by
+  positions cut along any axis, `Nx.take ~axis` by a 0-d position, `Nx.matmul`
+  of an operand whose dropped leading axis sits beside a kept one of one
+  element, `Nx.set` by a 0-d position, `Nx.outer` with
+  a `b` of one element, `Nx.kron`, `Nx.unravel_index`, `Nx.pad` of an axis
+  of no element, `Nx.contract` and `Nx.einsum` with a written `1` in an
+  operand, `Nx.conv` and `Nx.conv_transpose` of one input channel a group,
+  and the `Nx.Rng` samplers given parameters beside a cut batch of keys. A
+  window of size 1 and step 1 keeps its axis's cut, so `Nx.sliding_window
+  ~window:1`, `Nx.correlate` and a convolution of one tap compute over it.
+- These now place such a cut on the axis it becomes, where it lay on another:
+  `Nx.tile` with more reps than axes, `Nx.take ~axis` and `Nx.slice` by
+  positions with an axis of one element, `Nx.slice` by a 0-d mask,
+  `Nx.contract` and `Nx.einsum` with a written `1` in the result, and
+  `Nx.matmul_segments` with ids ending in an axis of one element.
+  `Nx.conv_transpose` cut along its groups names `w`'s split along them as
+  its `place`, which computes, where it named `w` whole.
+- `Nx.outer` of an operand cut along an axis of one element that its flatten
+  merges, as `[1; 1]` split along axis 1, raises as `Nx.flatten` does, where
+  it computed with the cut on the other operand's axis.
 - `Nx.geomspace` takes the logarithms of ends whose ratio leaves float64's
   range through nx's own kinds, where it called the C library's `log`, so
   its bits match on every host; on glibc no value checked changes. Its

@@ -4564,12 +4564,12 @@ let test_conv_transpose_refusal () =
   let w = at (Two.split ~axis:2) (w_groups ()) in
   raises
     (Invalid_argument
-       "Nx.conv_transpose: w lies at split ~axis:2 [m0; m1] and is read at on \
-        [m0; m1]; Nx.place (Placement.on s) w") (fun () ->
-      Nx.conv_transpose ~groups:2 x w);
+       "Nx.conv_transpose: w lies at split ~axis:2 [m0; m1] and is read at \
+        split ~axis:0 [m0; m1]; Nx.place (Placement.split ~axis:0 s) w")
+    (fun () -> Nx.conv_transpose ~groups:2 x w);
   computes ~msg:"placed as named"
     (Nx.conv_transpose ~groups:2 (x_groups ()) (w_groups ()))
-    (Nx.conv_transpose ~groups:2 x (at Two.on w))
+    (Nx.conv_transpose ~groups:2 x (at (Two.split ~axis:0) w))
 
 let test_correlate_refusal () =
   let x = Nx.arange D.Float32 0 6 1 and kernel = Nx.ones D.Float32 [| 3 |] in

@@ -4058,6 +4058,84 @@ module Conv = struct
               (past bound (run dt r) (exact_terms r)))
           dtypes)
 
+  (* [c] over one group, its first group's channels and kernels. *)
+  let one_group c =
+    let c1 = { c with groups = 1 } in
+    {
+      c1 with
+      xs = Array.sub c.xs 0 (numel (x_shape c1));
+      ws = Array.sub c.ws 0 (numel (w_shape c1));
+    }
+
+  (* [x]'s channels split over two devices and [w]'s with them: an output is
+     within [(1 + u) γ(β(m) + t - 1, u) Σ|x||w|] of its exact sum, [m] the most
+     products one device holds, its taps times the most channels a device holds,
+     and [t] the devices that hold any (nx.mli, conv). *)
+  (* Padded inputs of no element along an axis, whose padding is a fill made
+     beside x: the two that raised before the fill kept x's channel cut. *)
+  let empty_padded =
+    [
+      {
+        n = 1;
+        spatial = [| 1; 0 |];
+        groups = 1;
+        cg = 1;
+        og = 0;
+        taps = [| 1; 1 |];
+        stride = [| 2; 1 |];
+        dilation = [| 1; 1 |];
+        padding = [| (1, 1); (0, 1) |];
+        xs = [||];
+        ws = [||];
+      };
+      {
+        n = 1;
+        spatial = [| 0 |];
+        groups = 1;
+        cg = 1;
+        og = 2;
+        taps = [| 1 |];
+        stride = [| 1 |];
+        dilation = [| 1 |];
+        padding = [| (0, 1) |];
+        xs = [||];
+        ws = [| 1.; 2. |];
+      };
+    ]
+
+  let law_cut =
+    prop ~count:200 ~examples:empty_padded
+      "over channels cut across devices is within its bound, at float32 and \
+       float64"
+      (Gen.with_pp pp_case (Gen.map one_group float_case))
+      (fun c ->
+        let k = Array.length c.spatial in
+        let outputs = numel (out_shape c) > 0 in
+        cover "a padded x of no element along an axis"
+          (Array.mem 0 c.spatial
+          && Array.exists (fun (lo, hi) -> lo + hi > 0) c.padding);
+        cover "channels on both devices, under an output" (c.cg >= 2 && outputs);
+        cover "one channel, under an output" (c.cg = 1 && outputs);
+        cover "output channels past 4, over rows past 4" (chained c);
+        let m = numel c.taps * ((c.cg + 1) / 2) and t = Int.min c.cg 2 in
+        let roundings = if t = 0 then 0 else beta m + t - 1 in
+        List.iter
+          (fun (D.Any dt, u) ->
+            let r = rounded dt c in
+            let at s xs =
+              Nx.place
+                (S2.split ~axis:(k + 1))
+                (Nx.cast dt (Nx.create Nx.float64 s xs))
+            in
+            let y = conv_of r (at (x_shape r) r.xs) (at (w_shape r) r.ws) in
+            let got =
+              Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on y))
+            in
+            let bound _ mag = (1. +. u) *. gamma roundings u *. mag in
+            equal ~msg:(D.name dt) (list string) []
+              (past bound got (exact_terms r)))
+          [ (D.Any D.Float32, 0x1p-24); (D.Any D.Float64, 0x1p-53) ])
+
   (* conv: init *)
 
   (* Integers up to 40, held by every float dtype: a sum of up to 81 of their
@@ -4585,6 +4663,25 @@ module Conv = struct
           (at 0 (f32 [| 1; 6; 2 |] 1.))
           (at 1 (f32 [| 2; 0; 4 |] 1.)))
 
+  (* x's channels, the transpose's summed ones, split over two devices and w's
+     with them, of small integers whose every sum float32 holds: one input
+     channel leaves the second device none, and four give each two. The result
+     has the one-device bits (nx.mli, contraction). *)
+  let test_transpose_cut =
+    cases "over x's channels cut across devices gives the one-device result"
+      ~id:(fun o -> Printf.sprintf "%d input channels" o)
+      [ 1; 4 ]
+      (fun o ->
+        let ints s =
+          Nx.create Nx.float32 s
+            (Array.init (numel s) (fun i -> Float.of_int ((i mod 7) - 3)))
+        in
+        let x = ints [| 1; 10; o |] and w = ints [| o; 3; 9 |] in
+        let cut axis v = Nx.place (S2.split ~axis) v in
+        let one = Nx.to_array (Nx.conv_transpose ~stride:[| 2 |] x w) in
+        let y = Nx.conv_transpose ~stride:[| 2 |] (cut 2 x) (cut 0 w) in
+        equal (array float_exact) one (Nx.to_array (Nx.place Nx.Host.on y)))
+
   (* A transpose at stride one over a 1 MB input, which holds it padded once and
      its result. *)
   let test_transpose_memory () =
@@ -4706,6 +4803,7 @@ module Conv = struct
             law_order;
             law_planes;
             law_bound;
+            law_cut;
             law_init;
             law_add;
             test "sums narrow floats at float32" test_narrow;
@@ -4727,6 +4825,7 @@ module Conv = struct
             test "wraps integers" test_transpose_wrap;
             test "reads its operands where they lie, with a kernel extent of 0"
               test_transpose_routing;
+            test_transpose_cut;
             test "holds x padded once" test_transpose_memory;
             transpose_refusals;
           ];

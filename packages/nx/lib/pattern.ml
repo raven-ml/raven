@@ -642,14 +642,14 @@ let push_names ext slots k is one =
         end)
       is
 
-(* The split's slots of the layout [l], and in [lone] each name the layout
-   holds as an axis alone, or first in a group of names of one element: its
-   axis. *)
+(* The split's slots of the layout [l], and in [lone] each name the layout holds
+   as an axis alone, or first in a group of names of one element: its axes, the
+   last first. *)
 let split_slots ~names ~covered ext lone l =
   let slots = Array.make (Array.length ext + List.length l) 0 in
   let k = ref 0 and a = ref 0 in
   let alone i =
-    lone.(i) <- !a;
+    lone.(i) <- !a :: lone.(i);
     push_names ext slots k [ i ] (-2 - !a);
     incr a
   in
@@ -657,11 +657,11 @@ let split_slots ~names ~covered ext lone l =
     (function
       | Name i -> alone i
       | Group is ->
-          (* A group of names of one element is an axis of one element,
-             which its first name carries. *)
+          (* A group of names of one element is an axis of one element, which
+             its first name carries. *)
           (match is with
           | i :: _ when List.for_all (fun i -> ext.(i) = 1) is ->
-              lone.(i) <- !a
+              lone.(i) <- !a :: lone.(i)
           | _ -> ());
           push_names ext slots k is (-2 - !a);
           incr a
@@ -676,14 +676,31 @@ let split_slots ~names ~covered ext lone l =
     l;
   Array.sub slots 0 !k
 
-(* The merge's slots of the result's layout [l]: an axis of one element is
-   the operand's where it holds one of its names alone, else added. *)
+(* The merge's slots of the result's layout [l]: an axis of one element is the
+   operand's where it holds one of its names alone, else added. *)
 let merge_slots ~names ~covered ext lone l =
   let slots = Array.make (Array.length ext + List.length l) 0 in
   let k = ref 0 in
   let carried is =
-    match List.find_opt (fun i -> lone.(i) >= 0) is with
-    | Some i -> -2 - lone.(i)
+    (* A name an operand repeats is an axis alone once per place, each taken in
+       turn. *)
+    match List.find_opt (fun i -> lone.(i) <> []) is with
+    | Some i -> (
+        match lone.(i) with
+        | [ a ] ->
+            lone.(i) <- [];
+            -2 - a
+        | l ->
+            let rec last = function
+              | [ a ] -> (a, [])
+              | a :: l ->
+                  let b, r = last l in
+                  (b, a :: r)
+              | [] -> assert false
+            in
+            let a, rest = last l in
+            lone.(i) <- rest;
+            -2 - a)
     | None -> -1
   in
   List.iter
@@ -701,17 +718,21 @@ let merge_slots ~names ~covered ext lone l =
     l;
   Array.sub slots 0 !k
 
-(* The place of each slot of [merge] among [split], [-1] for an added
-   one: the axis map between them. *)
+(* The place of each slot of [merge] among [split], [-1] for an added one: the
+   axis map between them. *)
 let axis_map split merge =
   let map = Array.make (Array.length merge) (-1) in
+  let used = Array.make (Array.length split) false in
   for j = 0 to Array.length merge - 1 do
     let m = merge.(j) in
     if m <> -1 then begin
+      (* A name an operand repeats has a slot per axis: each takes the next
+         one. *)
       let i = ref 0 in
-      while split.(!i) <> m do
+      while split.(!i) <> m || used.(!i) do
         incr i
       done;
+      used.(!i) <- true;
       map.(j) <- !i
     end
   done;
@@ -722,8 +743,29 @@ let rec is_identity map i =
 
 let slot_extent ext m = if m >= 0 then ext.(m) else 1
 
-(* The operand split into its names, permuted into the result's, and merged
-   into the result's shape. *)
+let between ~names ~covered ext src dst ~shape x =
+  (* The reshapes split and merge names of other than one element alone; the map
+     between them carries each axis of one element by identity, where
+     front-to-back pairing would guess. *)
+  let lone = Array.make (Array.length ext) [] in
+  let split = split_slots ~names ~covered ext lone src in
+  let merge = merge_slots ~names ~covered ext lone dst in
+  let map = axis_map split merge in
+  let split_shape = Array.map (slot_extent ext) split in
+  let merge_shape = Array.map (slot_extent ext) merge in
+  let moves =
+    if merge_shape = shape then []
+    else [ Nx_array.Move.Reshape (Iarray.of_array shape) ]
+  in
+  let moves =
+    if Array.length map = Array.length split && is_identity map 0 then moves
+    else Nx_array.Move.Permute (Iarray.of_array map) :: moves
+  in
+  if split_shape = x then moves
+  else Nx_array.Move.Reshape (Iarray.of_array split_shape) :: moves
+
+(* The operand split into its names, permuted into the result's, and merged into
+   the result's shape. *)
 let moves ~by ~sizes p x =
   match p.operands with
   | [ _ ] when not p.plain ->
@@ -734,28 +776,9 @@ let moves ~by ~sizes p x =
       let ~extents, ~operands:_, ~result:_, ~shape =
         resolve ~by ~sizes ~label p [ x ]
       in
-      (* The reshapes split and merge names of other than one element alone;
-         the map between them carries each axis of one element by identity,
-         where front-to-back pairing would guess. *)
       let names = Array.length p.names in
       let covered = Array.length extents - names in
-      let lone = Array.make (Array.length extents) (-1) in
-      let split =
-        split_slots ~names ~covered extents lone (List.hd p.operands)
-      in
-      let merge = merge_slots ~names ~covered extents lone p.result in
-      let map = axis_map split merge in
-      let split_shape = Array.map (slot_extent extents) split in
-      let merge_shape = Array.map (slot_extent extents) merge in
-      let moves =
-        if merge_shape = shape then []
-        else [ Nx_array.Move.Reshape (Iarray.of_array shape) ]
-      in
-      let moves =
-        if Array.length map = Array.length split && is_identity map 0 then moves
-        else Nx_array.Move.Permute (Iarray.of_array map) :: moves
-      in
-      if split_shape = snd x then moves
-      else Nx_array.Move.Reshape (Iarray.of_array split_shape) :: moves
+      between ~names ~covered extents (List.hd p.operands) p.result ~shape
+        (snd x)
   | operands ->
       fail ~by p.text "has %d operands; use Nx.einsum" (List.length operands)

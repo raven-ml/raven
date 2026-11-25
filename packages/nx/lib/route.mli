@@ -144,18 +144,32 @@ type rule =
 val moved : Nx_array.Move.t -> int array -> int -> axis
 (** [moved m s a] is what [m] makes of axis [a] of a value of shape [s]:
     - [Becomes a'] where [m] keeps the axis's elements in order along [a']: an
-      axis map's that lists it at [a'], a broadcast's that does not stretch
-      it, a slice's that keeps all of it, and a reshape's pair. A reshape
-      pairs the axes of one product of the extents before them in order,
-      each with the result's next axis of that product and of its extent, so
-      axes of one element pair front to back. A reshape cannot know which
-      axis of one element is which: an operation that adds or drops them by
-      position is a [Permute], which states it.
-    - [Regroups] for an axis a reshape leaves unpaired, of more than one
-      element after a positive product, onto the result's axis of more than one
-      element after the same product, where there is one: unit axes are
-      skipped.
-    - [Whole] for any other. *)
+      axis map's that lists it at [a'], a broadcast's that does not stretch it,
+      a slice's that keeps all of it, and a reshape's pair. A reshape pairs the
+      axes of one product of the extents before them in order, each with the
+      result's next axis of that product and of its extent, so axes of one
+      element pair front to back. A reshape cannot know which axis of one
+      element is which: an operation that adds or drops them by position is a
+      [Permute], which states it.
+    - [Regroups] for an axis a reshape leaves unpaired, of more than one element
+      after a positive product, onto the result's axis of more than one element
+      after the same product, where there is one: unit axes are skipped.
+    - [Whole] for any other.
+
+    A window of size [1] and step [1] ({!alone}) keeps its axis: it reads each
+    position alone, so the windowed axis [Becomes] itself. *)
+
+val alone : Nx_array.Move.window -> bool
+(** [alone w] is [true] iff [w] has size [1] and step [1]: it reads each
+    position alone and appends an axis of one element, whatever its dilation, so
+    the axis it windows keeps its cut. *)
+
+val ambiguous : int array -> int array -> bool
+(** [ambiguous s t] is [true] iff a reshape from shape [s] to [t] guesses which
+    axis of one element is which: for some product [P] of the extents before an
+    axis, both shapes hold axes of one element after [P], in different numbers.
+    An internal reshape refuses such a change, and its caller states the axes
+    that go and come by a [Permute]. *)
 
 val window :
   rule ->

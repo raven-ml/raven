@@ -154,10 +154,43 @@ let values eng ~by p shape ~holds compute =
 let reshape (type v s d) eng ~by shape (x : (v, s, d) Value.t) :
     (v, s, d) Value.t =
   if Prim.has_shape x shape then x
-  else on eng ~by x (Value.Move (Reshape (Iarray.of_array shape), x))
+  else begin
+    let s = Prim.shape x in
+    if Route.ambiguous s shape then
+      invalid_argf
+        "%s: %a to %a adds or drops an axis of one element beside another; \
+         state it with an axis map"
+        by Prim.pp_shape s Prim.pp_shape shape;
+    on eng ~by x (Value.Move (Reshape (Iarray.of_array shape), x))
+  end
 
-(* Elements [start, start + count) of [x] along [axis], an axis no cut
-   names. *)
+(* [x] by the axis map [p] ({!Eval.mapped}): an axis of one element added or
+   dropped at a stated place keeps every other axis's cut. *)
+let mapped (type v s d) eng ~by p (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let r = Array.length (Prim.shape x) in
+  if Array.length p = r && Array.for_all2 ( = ) p (Array.init r Fun.id) then x
+  else on eng ~by x (Value.Move (Permute (Iarray.of_array p), x))
+
+(* [x] without its axes [l], each of one element. *)
+let squeezed eng ~by l x =
+  let r = Array.length (Prim.shape x) in
+  mapped eng ~by
+    (Array.of_list
+       (List.filter (fun a -> not (List.mem a l)) (List.init r Fun.id)))
+    x
+
+(* [x] with axes of one element added at [l], of a result of rank [r]. *)
+let unsqueezed eng ~by r l x =
+  let p = Array.make r (-1) and k = ref 0 in
+  for a = 0 to r - 1 do
+    if not (List.mem a l) then begin
+      p.(a) <- !k;
+      incr k
+    end
+  done;
+  mapped eng ~by p x
+
+(* Elements [start, start + count) of [x] along [axis], an axis no cut names. *)
 let slice (type v s d) eng ~by axis start count (x : (v, s, d) Value.t) :
     (v, s, d) Value.t =
   let r = Array.map Route.full (Prim.shape x) in
@@ -267,7 +300,7 @@ let keys (type v s d) eng ~by (x : (v, s, d) Value.t) : d Value.any list =
     let shape = Prim.shape x in
     let half j =
       let part = slice eng ~by (Array.length shape) j 1 pairs in
-      Value.Any (reshape eng ~by shape part)
+      Value.Any (squeezed eng ~by [ Array.length shape ] part)
     in
     [ half 0; half 1 ]
   in
@@ -354,21 +387,19 @@ let shift (type d) eng ~by f s n (pos : d Value.any) : d Value.any =
       let lead = Array.append [| 1 |] shape in
       let start = Array.mapi (fun a _ -> if a = 0 then s else 0) lead in
       let origin = { Prim.start; extents = Array.append [| n |] shape } in
-      let lead = Value.Any (reshape eng ~by lead x) in
+      let lead = Value.Any (unsqueezed eng ~by (Array.length lead) [ 0 ] x) in
       let e = E.any (f p (E.coord 0)) in
       let (Value.Any y) = List.hd (map eng ~by ~origin here [ lead ] [ e ]) in
-      Value.Any (reshape eng ~by shape y)
+      Value.Any (squeezed eng ~by [ 0 ] y)
 
-(* [pos], positions in C order of the folded indices of a device's tile
-   [w], along the folded [axes] of a reduction's loop at [origin], as
-   positions in C order of the folded extents [whole], over [pos]'s memory:
-   [pos] is fresh, on one device, of the loop's shape but [axes]. The
-   tile's starts are the loop's coordinates along [axes], over a loop of
-   one element along each. *)
-let renumber eng ~by ~(origin : Prim.origin) axes (w : M.range array) whole
-    pos =
-  if
-    Array.for_all2 (fun (r : M.range) n -> r.start = 0 && r.count = n) w whole
+(* [pos], positions in C order of the folded indices of a device's tile [w],
+   along the folded [axes] of a reduction's loop at [origin], as positions in C
+   order of the folded extents [whole], over [pos]'s memory: [pos] is fresh, on
+   one device, of the loop's shape but [axes]. The tile's starts are the loop's
+   coordinates along [axes], over a loop of one element along each. *)
+let renumber eng ~by ~(origin : Prim.origin) axes (w : M.range array) whole pos
+    =
+  if Array.for_all2 (fun (r : M.range) n -> r.start = 0 && r.count = n) w whole
   then pos
   else
     let (Value.Any x) = pos in
@@ -384,7 +415,9 @@ let renumber eng ~by ~(origin : Prim.origin) axes (w : M.range array) whole
           end)
         origin.extents
     in
-    let units = reshape eng ~by units x in
+    let units =
+      unsqueezed eng ~by (Array.length units) (Array.to_list axes) x
+    in
     let int64 n = E.const D.Int64 (Int64.of_int n) in
     let p = E.input 0 D.Int64 in
     let global = ref (int64 0) and inner = ref 1 and outer = ref 1 in
@@ -398,7 +431,7 @@ let renumber eng ~by ~(origin : Prim.origin) axes (w : M.range array) whole
     let (Value.Any q) =
       List.hd (map eng ~by ~into:units ~origin here [ units ] [ E.any !global ])
     in
-    Value.Any (reshape eng ~by out q)
+    Value.Any (squeezed eng ~by (Array.to_list axes) q)
 
 (* Closings *)
 
@@ -923,7 +956,15 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
             Array.mapi (fun a e -> if Iarray.mem a axes then 1 else e) shape
           in
           let mj = view eng ~by ks.(j) (outw j) m in
-          let mj = spread eng ~by shape (reshape eng ~by units mj) in
+          (* The mean, without the reduced axes, with them back at one element
+             each, by a map. *)
+          let mj =
+            if Array.length (Prim.shape mj) = Array.length units then
+              reshape eng ~by units mj
+            else
+              unsqueezed eng ~by (Array.length units) (Iarray.to_list axes) mj
+          in
+          let mj = spread eng ~by shape mj in
           let d = E.(cast c (input 0 t) - input 1 c) in
           let ins : D.any iarray = [| D.Any t; D.Any c |] in
           let prog = P.of_exprs ~ins [| E.any d; E.any E.(d * d) |] in
@@ -1058,14 +1099,17 @@ let attention_parts (type v s w q a d) eng ~by (route : unit Route.t) rule
         let x = l j in
         let s = Prim.shape (o j) in
         spread eng ~by s
-          (reshape eng ~by (Array.append (Prim.shape x) [| 1 |]) x))
+          (unsqueezed eng ~by
+             (Array.length (Prim.shape x) + 1)
+             [ Array.length (Prim.shape x) ]
+             x))
   in
   let sum k here w taken =
     let lw = Array.sub w 0 (r - 1) in
     let total = view eng ~by k lw lse in
     let total =
       spread eng ~by (counts w)
-        (reshape eng ~by (Array.append (counts lw) [| 1 |]) total)
+        (unsqueezed eng ~by (Array.length lw + 1) [ Array.length lw ] total)
     in
     let weight =
       E.(
@@ -1165,25 +1209,27 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
   let last (type v s) j (x : (v, s, d) Value.t) : (v, s, d) Value.t =
     let e = Prim.dim x axis in
     let slot = Devices.window ~by stacked stack_shape j in
-    reshape eng ~by (counts slot) (slice eng ~by axis (e - 1) 1 x)
+    let y = slice eng ~by axis (e - 1) 1 x in
+    (* The stack's axis comes first, as a new axis of the slot. *)
+    if (counts slot).(0) = 1 then unsqueezed eng ~by (Array.length slot) [ 0 ] y
+    else reshape eng ~by (counts slot) y
   in
-  (* The totals [slot j] stacked: an empty piece on a device whose tile
-     holds no term. *)
+  (* The totals [slot j] stacked: an empty piece on a device whose tile holds no
+     term. *)
   let totals (type v s) (dt : (v, s) D.t)
       (slot : int -> (v, s, d) Value.t option) : (v, s, d) Value.t =
     eng.assemble stacked stack_shape dt (Array.init n slot)
   in
   (* Slot [i] of [x], a stack at [placed], on device [j]: its row of the
-     results' shape. The slot is brought from [j]'s own piece, which holds
-     every slot: a move of a window, whose start an engine may bind when
-     the program runs, so that each device's program is every device's. *)
+     results' shape. The slot is brought from [j]'s own piece, which holds every
+     slot: a move of a window, whose start an engine may bind when the program
+     runs, so that each device's program is every device's. *)
   let earlier (type v s) j i (x : (v, s, d) Value.t) : (v, s, d) Value.t =
     let held = Devices.window ~by placed stack_shape j in
     let w = Array.map (fun (r : M.range) -> { r with start = 0 }) held in
     w.(0) <- { M.start = i; count = 1; step = 1 };
-    let row = Array.sub (counts w) 1 (Array.length shape) in
     let here = here j in
-    reshape eng ~by row (eng.bring here [ (eng.piece x j here, w) ])
+    squeezed eng ~by [ 0 ] (eng.bring here [ (eng.piece x j here, w) ])
   in
   let wide j (Value.Any x : d Value.any) =
     Value.Any (spread eng ~by (counts (win j)) x)

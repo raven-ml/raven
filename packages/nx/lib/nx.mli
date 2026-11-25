@@ -1439,6 +1439,10 @@ val take : ?axis:int -> 'd int64_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     device wherever [x] lies, cut along [axis] too, but at the greatest
     rank, where it reads [axis] whole ({!section-routing}). Positions that
     cannot be read where they lie move first to the devices that read them.
+    Positions of two axes or more give each cut, one along an axis of one
+    element included, to the result's axis it becomes, but in a result of
+    {!Nx_array.Layout.max_rank} axes, one fewer for [complex128]: there they
+    are read as {!flatten} reads them, and a cut that it merges raises.
 
     Raises [Invalid_argument] if [axis] is not an axis of [x]. *)
 
@@ -3183,7 +3187,10 @@ val kron : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [kron a b] is the Kronecker product. With the operand of fewer axes given
     leading axes of extent [1], each axis has [a]'s extent times [b]'s, and
     the element at [i sb + j] along each axis, [sb] [b]'s extent there, is
-    [a]'s element at the [i]s times [b]'s at the [j]s.
+    [a]'s element at the [i]s times [b]'s at the [j]s. An axis of extent [1]
+    in both keeps a cut along it on the result's axis while those axes and
+    the axes of extent other than [1] of [a] and of [b] number at most
+    {!Nx_array.Layout.max_rank} together; past that, a cut along it raises.
 
     Raises [Invalid_argument] if the axes of extent other than [1] of [a] and
     of [b] number more than {!Nx_array.Layout.max_rank} together. *)

@@ -745,19 +745,88 @@ let numel x =
   done;
   !n
 
+(* Axes of one element added or dropped at stated positions, by an axis map, so
+   that each kept axis keeps its cut on the axis it becomes. A reshape that adds
+   or drops one beside another cannot know which is which, and {!Eval.reshape}
+   refuses it. *)
+(* Marks in [added] the result's axes [l] of a rank [r], refusing a repeat. *)
+let rec mark_added ~by r added = function
+  | [] -> ()
+  | a :: l ->
+      let a' =
+        if a >= 0 && a < r then a
+        else
+          Prim.axis ~by r a (fun ppf -> Format.fprintf ppf "a rank %d result" r)
+      in
+      if added.(a') then invalid_argf "%s: position %d repeats" by a;
+      added.(a') <- true;
+      mark_added ~by r added l
+
+let unsqueeze_by ~by ~axes:l x =
+  match l with
+  | [] ->
+      Prim.alive ~by x;
+      x
+  | l ->
+      let r = ndim x + List.length l in
+      let added = Array.make r false in
+      mark_added ~by r added l;
+      (* [x]'s axes fill the positions not added, in order. *)
+      let p = Array.make r (-1) and k = ref 0 in
+      for i = 0 to r - 1 do
+        if not added.(i) then begin
+          p.(i) <- !k;
+          incr k
+        end
+      done;
+      Eval.mapped ~by (Iarray.of_array p) x
+
+(* [x] without its axes [l], each of one element. *)
+let squeeze_by ~by ~axes:l x =
+  match l with
+  | [] ->
+      Prim.alive ~by x;
+      x
+  | l ->
+      let kept =
+        List.filter
+          (fun i -> not (List.mem i l))
+          (List.init (Prim.rank x) Fun.id)
+      in
+      Eval.mapped ~by (Iarray.of_list kept) x
+
+(* [x]'s elements as one axis, as {!flatten} pairs them: of one element, its
+   first axis becomes the result's and the others go. *)
+let flat_by ~by x =
+  let r = Prim.rank x and n = numel x in
+  if n = 1 && r >= 2 then squeeze_by ~by ~axes:(List.init (r - 1) succ) x
+  else Eval.reshape ~by [| n |] x
+
+(* [flat_by]'s inverse: [x], of one axis, at shape [s]. *)
+let unflat_by ~by s x =
+  let r = Array.length s in
+  if Prim.has_shape x s then x
+  else if Array.fold_left ( * ) 1 s = 1 && r >= 2 then
+    unsqueeze_by ~by ~axes:(List.init (r - 1) succ) x
+  else Eval.reshape ~by s x
+
 (* The value of [dt] and [shape] whose element at each index is [out], an
-   expression of no operand reading [shape]'s coordinates, computed beside
-   [x]: a map that loads [x] and reads none of it. It is an operation on
-   [x], computed by the kernels of [x]'s set where [x] lies, which every
-   interpretation receives with [x]. Where [shape] is not [x]'s, [x] is
-   first reduced, by a program that reads no element, over each axis whose
-   extent [shape] does not have at that index, so that a cut of one closes
-   by partials and a cut of any other axis stays in the result. Each such
-   axis that no device cuts is sliced to its first element first, a view,
-   so the work grows with the result and with a cut reduced axis's windows
-   alone. The map loads that reduction broadcast to [shape]. *)
+   expression of no operand reading [shape]'s coordinates, computed beside [x]:
+   a map that loads [x] and reads none of it. It is an operation on [x],
+   computed by the kernels of [x]'s set where [x] lies, which every
+   interpretation receives with [x]. Where [shape] is not [x]'s, [x] is first
+   reduced, by a program that reads no element, over each axis whose extent
+   [shape] does not have at that index, so that a cut of one closes by partials
+   and a cut of any other axis stays in the result. Each such axis that no
+   device cuts is sliced to its first element first, a view, so the work grows
+   with the result and with a cut reduced axis's windows alone. The map loads
+   that reduction broadcast to [shape]. *)
 let rec leaf_beside : type v s w r d.
-    by:string -> (w, r, d) t -> (v, s) D.t -> int array -> (v, s) E.t ->
+    by:string ->
+    (w, r, d) t ->
+    (v, s) D.t ->
+    int array ->
+    (v, s) E.t ->
     (v, s, d) t =
  fun ~by x dt shape out ->
   let (Value.Any y) = load_beside ~by x shape in
@@ -817,10 +886,11 @@ and load_beside : type w r d.
         in
         Value.Any y
     in
-    let ones =
-      Array.init n (fun a -> if a < r && kept a then shape.(a) else 1)
+    (* [y] holds [x]'s kept axes in order, each at its place in [shape]. *)
+    let added =
+      List.filter (fun a -> not (a < r && kept a)) (List.init n Fun.id)
     in
-    Value.Any (Eval.broadcast ~by shape (Eval.reshape ~by ones y))
+    Value.Any (Eval.broadcast ~by shape (unsqueeze_by ~by ~axes:added y))
 
 (* [v] in [dt] and [shape], computed beside [x] ({!leaf_beside}). *)
 let fill_beside ~by x dt shape v = leaf_beside ~by x dt shape (const ~by dt v)
@@ -855,9 +925,7 @@ let sliced ~by rs x = Eval.move ~by (Slice (Iarray.of_array rs)) x
 (* What an operation along an optional axis reads, and the axis: [x] and its
    axis [a], or [x] flattened and its one axis without [a]. *)
 let along ~by a x =
-  match a with
-  | None -> (Eval.reshape ~by [| numel x |] x, 0)
-  | Some a -> (x, axis ~by x a)
+  match a with None -> (flat_by ~by x, 0) | Some a -> (x, axis ~by x a)
 
 (* [a * b] for extents, or raises naming [by] past an [int]. *)
 let times ~by x a b =
@@ -1023,28 +1091,9 @@ let squeeze ?axes:l x =
           (axes ~by x l);
         drop
   in
-  let kept =
-    List.filter (fun i -> not drop.(i)) (List.init (Array.length s) Fun.id)
-  in
-  Eval.mapped ~by (Iarray.of_list kept) x
-
-let unsqueeze_by ~by ~axes:l x =
-  let r = ndim x + List.length l in
-  let added = Array.make r false in
-  List.iter
-    (fun a ->
-      let a' =
-        Prim.axis ~by r a (fun ppf -> Format.fprintf ppf "a rank %d result" r)
-      in
-      if added.(a') then invalid_argf "%s: position %d repeats" by a;
-      added.(a') <- true)
-    l;
-  (* [x]'s axes fill the positions not added, in order. *)
-  let p = Array.make r (-1) in
-  List.iteri
-    (fun k i -> p.(i) <- k)
-    (List.filter (fun i -> not added.(i)) (List.init r Fun.id));
-  Eval.mapped ~by (Iarray.of_array p) x
+  squeeze_by ~by
+    ~axes:(List.filter (fun i -> drop.(i)) (List.init (Array.length s) Fun.id))
+    x
 
 let unsqueeze ~axes x = unsqueeze_by ~by:"Nx.unsqueeze" ~axes x
 
@@ -1561,7 +1610,7 @@ let roll_by ~by ?axis k x =
           (region s a k (d - k), part 0 (d - k));
         ]
   in
-  Eval.reshape ~by (shape x) rolled
+  unflat_by ~by (shape x) rolled
 
 let roll ?axis k x = roll_by ~by:"Nx.roll" ?axis k x
 
@@ -1582,10 +1631,24 @@ let stretch ~by ~outer n x =
     let beside k i d =
       if n.(i) = 1 then [ d ] else if outer then [ k; d ] else [ d; k ]
     in
-    let unit = spread (beside 1) and wide = spread (fun i -> beside n.(i) i) in
+    let wide = spread (fun i -> beside n.(i) i) in
     let merged = Array.mapi (fun i d -> times ~by x n.(i) d) s in
-    Eval.reshape ~by merged
-      (Eval.broadcast ~by wide (Eval.reshape ~by unit x))
+    (* The positions in [wide] of each repeated axis's count, which come as new
+       axes, and of the repeated axes of one element, which go: a count of [k]
+       copies of one element is the merged axis itself. *)
+    let counts = ref [] and units = ref [] and at = ref 0 in
+    Array.iteri
+      (fun i d ->
+        if n.(i) <> 1 then begin
+          let k, e = if outer then (!at, !at + 1) else (!at + 1, !at) in
+          counts := k :: !counts;
+          if d = 1 then units := e :: !units;
+          at := !at + 2
+        end
+        else incr at)
+      s;
+    let y = Eval.broadcast ~by wide (unsqueeze_by ~by ~axes:!counts x) in
+    Eval.reshape ~by merged (squeeze_by ~by ~axes:!units y)
 
 let tile reps x =
   let by = "Nx.tile" in
@@ -1596,8 +1659,7 @@ let tile reps x =
       reps pp_value x;
   if Array.exists (fun n -> n < 0) reps then
     invalid_argf "%s: reps %a has a negative entry" by pp_shape reps;
-  let lead = Array.append (Array.make (r - k) 1) s in
-  let x = if r = k then x else Eval.reshape ~by lead x in
+  let x = unsqueeze_by ~by ~axes:(List.init (r - k) Fun.id) x in
   stretch ~by ~outer:true reps x
 
 let repeat ?axis n x =
@@ -1835,53 +1897,80 @@ let window ~by start n d =
   v
 
 (* The positions [p] at rank [r], [p]'s elements along [axis] and one along
-   every other axis: where [p] is 1-d, the map that adds those axes, so that
-   its cut stays on [axis]. *)
+   every other axis: [p] flattened as {!flatten} pairs it, then the map that
+   adds those axes, so that its cut stays on [axis]. *)
 let along_axis ~by r axis p =
-  if ndim p = 1 then
-    Eval.mapped ~by (Iarray.init r (fun i -> if i = axis then 0 else -1)) p
-  else
-    let col = Array.make r 1 in
-    col.(axis) <- numel p;
-    Eval.reshape ~by col p
+  let p = if ndim p = 1 then p else flat_by ~by p in
+  Eval.mapped ~by (Iarray.init r (fun i -> if i = axis then 0 else -1)) p
 
-(* [y] read along [axis] at the positions [p], in C order: [y]'s axis of
-   extent the number of [p]'s elements. [p] runs along the axis, broadcast
-   across the others, which a kernel reads as row takes. One position is
-   broadcast as the last axis, then moved to [axis], so that its cut stays
-   on [axis]: a reshape would pair its axis with the first unit axis. *)
+(* [y] read along [axis] at the positions [p], in C order: [y]'s axis of extent
+   the number of [p]'s elements. [p] runs along the axis, broadcast across the
+   others, which a kernel reads as row takes. *)
 let gather_axis ~by axis p y =
-  let s = shape y and n = numel p in
-  let r = Array.length s in
-  let idx =
-    if n <> 1 then begin
-      let wide = Array.copy s in
-      wide.(axis) <- n;
-      Eval.broadcast ~by wide (along_axis ~by r axis p)
-    end
-    else
-      let other i = s.(if i < axis then i else i + 1) in
-      let row = Array.append (Array.init (r - 1) other) [| 1 |] in
-      let row = Eval.broadcast ~by row (Eval.reshape ~by [| 1 |] p) in
-      let to_axis i =
-        if i < axis then i else if i = axis then r - 1 else i - 1
-      in
-      if axis = r - 1 then row
-      else Eval.move ~by (Permute (Iarray.init r to_axis)) row
-  in
+  let s = shape y in
+  let wide = Array.copy s in
+  wide.(axis) <- numel p;
+  let idx = Eval.broadcast ~by wide (along_axis ~by (Array.length s) axis p) in
   Eval.eval ~by (Value.Gather { axis; idx; x = y })
 
+(* [y]'s axis [axis], of as many elements as [ps] holds, as the axes [ps]: those
+   of more than one element by a reshape, then those of one by a map. *)
+let spread_by ~by axis ps y =
+  let s = shape y and k = Array.length ps in
+  let before = Array.sub s 0 axis
+  and after = Array.sub s (axis + 1) (Array.length s - axis - 1) in
+  let wide = List.filter (fun d -> d <> 1) (Array.to_list ps) in
+  let units =
+    List.filter (fun i -> ps.(i) = 1) (List.init k Fun.id)
+    |> List.map (fun i -> axis + i)
+  in
+  match wide with
+  | [] when k = 0 -> squeeze_by ~by ~axes:[ axis ] y
+  | [] ->
+      (* One element: the axis becomes the first, as a reshape pairs it. *)
+      unsqueeze_by ~by ~axes:(List.tl units) y
+  | _ ->
+      unsqueeze_by ~by ~axes:units
+        (Eval.reshape ~by
+           (Array.concat [ before; Array.of_list wide; after ])
+           y)
+
 (* [y] read along [axis] at the positions [p]: [y]'s axis replaced by [p]'s
-   axes. *)
+   axes. Positions of more than one axis keep their shape: [y] gains [p]'s
+   further axes after [axis], broadcast, and one gather reads it, so that every
+   cut of [p] and of [y] stays on the axis it becomes. Where that gather would
+   pass the greatest rank a gather over a cut [axis] stacks to ({!Prim.Gather}),
+   [p] is read flattened and the result spread, which reads a cut of [p] that
+   the flatten merges whole. *)
 let take_axis ~by axis p y =
   let s = shape y and ps = shape p in
-  let g = gather_axis ~by axis p y in
   let r = Array.length s and k = Array.length ps in
-  let s' = Array.make (r - 1 + k) 0 in
-  Array.blit s 0 s' 0 axis;
-  Array.blit ps 0 s' axis k;
-  Array.blit s (axis + 1) s' (axis + k) (r - axis - 1);
-  Eval.reshape ~by s' g
+  (* A [complex128]'s bits stack along one more axis. *)
+  let pairs = if D.bits (dtype y) = 128 then 1 else 0 in
+  if k = 0 then squeeze_by ~by ~axes:[ axis ] (gather_axis ~by axis p y)
+  else if k = 1 then gather_axis ~by axis p y
+  else if r + k + pairs <= Nx_array.Layout.max_rank then begin
+    let before = Array.sub s 0 axis
+    and after = Array.sub s (axis + 1) (r - axis - 1) in
+    let further = Array.sub ps 1 (k - 1) in
+    let x =
+      Eval.broadcast ~by
+        (Array.concat [ before; [| s.(axis) |]; further; after ])
+        (unsqueeze_by ~by ~axes:(List.init (k - 1) (fun i -> axis + 1 + i)) y)
+    in
+    let outside =
+      List.filter
+        (fun i -> i < axis || i >= axis + k)
+        (List.init (r - 1 + k) Fun.id)
+    in
+    let idx =
+      Eval.broadcast ~by
+        (Array.concat [ before; ps; after ])
+        (unsqueeze_by ~by ~axes:outside p)
+    in
+    Eval.eval ~by (Value.Gather { axis; idx; x })
+  end
+  else spread_by ~by axis ps (gather_axis ~by axis p y)
 
 (* Raises if a value [idx] holds is dead: checked before the selection, whose
    operations read them one at a time, a donated one {!Donate.lent}. *)
@@ -1927,19 +2016,27 @@ let rec narrowed : type d.
 
 let rec whole_ranges (ranges : Nx_array.Move.range array) s i =
   i = Array.length s
-  || (ranges.(i).count = s.(i) && ranges.(i).step = 1
-     && whole_ranges ranges s (i + 1))
+  || ranges.(i).count = s.(i)
+     && ranges.(i).step = 1
+     && whole_ranges ranges s (i + 1)
 
-(* [y] gathered at the picks held in data or listed, the last first. *)
+(* [y] gathered at the picks held in data or listed, the last first. Where
+   [expand], positions of two axes or more give their axis their shape
+   ({!take_axis}); otherwise every gather keeps the rank. *)
 let rec gathered : type v s d.
-    by:string -> (d pick * int option) list -> (v, s, d) t -> (v, s, d) t =
- fun ~by picks y ->
+    by:string ->
+    expand:bool ->
+    (d pick * int option) list ->
+    (v, s, d) t ->
+    (v, s, d) t =
+ fun ~by ~expand picks y ->
   match picks with
   | [] -> y
   | (p, a) :: rest -> (
-      let y = gathered ~by rest y in
+      let y = gathered ~by ~expand rest y in
       match (p, a) with
       | Rows ps, Some a -> gather_axis ~by a (written ~by y ps) y
+      | Held p, Some a when expand && ndim p >= 2 -> take_axis ~by a p y
       | Held p, Some a -> gather_axis ~by a p y
       | From (start, n, d), Some a -> gather_axis ~by a (window ~by start n d) y
       | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> y)
@@ -1958,49 +2055,85 @@ let drops : type d. d pick -> bool = function
   | Held h -> ndim h = 0
   | Span _ | Rows _ | From _ | New -> false
 
-(* The number of axes of the selection [picks] once each pick that drops
-   its axis has, beside the [rest] axes past the picks'. *)
-let rec mapped_rank : type d. (d pick * int option) list -> int -> int =
- fun picks rest ->
+(* The axes a pick that keeps its axis gives the selection: a held axis takes
+   its positions' shape ({!take_axis}), any other stays one axis. *)
+let extent_axes : type d. expand:bool -> d pick -> int =
+ fun ~expand p ->
+  match p with
+  | Held h when expand && ndim h >= 2 -> ndim h
+  | At _ | Span _ | Rows _ | Held _ | From _ | New -> 1
+
+(* The number of axes of the selection [picks] once each pick that drops its
+   axis has, beside the [rest] axes past the picks'. *)
+let rec mapped_rank : type d.
+    expand:bool -> (d pick * int option) list -> int -> int =
+ fun ~expand picks rest ->
   match picks with
   | [] -> rest
   | (pick, _) :: picks ->
-      (if drops pick then 0 else 1) + mapped_rank picks rest
+      (if drops pick then 0 else extent_axes ~expand pick)
+      + mapped_rank ~expand picks rest
 
-(* The axis the [j]th of those comes from, [-1] for a new one: a pick's
-   axis, then the axes past [used], the picks' first unpicked axis. *)
-let rec map_entry : type d. (d pick * int option) list -> int -> int -> int =
- fun picks j used ->
+(* The axis the [j]th of those comes from, [-1] for a new one: a pick's axes,
+   then the axes past [used], the picks' first unpicked axis, each moved by
+   [shift], the axes the held axes before it gained. *)
+let rec map_entry : type d.
+    expand:bool -> (d pick * int option) list -> int -> int -> int -> int =
+ fun ~expand picks j used shift ->
   match picks with
-  | [] -> used + j
-  | (New, _) :: rest -> if j = 0 then -1 else map_entry rest (j - 1) used
+  | [] -> used + shift + j
+  | (New, _) :: rest ->
+      if j = 0 then -1 else map_entry ~expand rest (j - 1) used shift
   | (pick, Some a) :: rest ->
-      if drops pick then map_entry rest j (a + 1)
-      else if j = 0 then a
-      else map_entry rest (j - 1) (a + 1)
-  | (_, None) :: rest -> map_entry rest j used
+      let k = extent_axes ~expand pick in
+      if drops pick then map_entry ~expand rest j (a + 1) shift
+      else if j < k then a + shift + j
+      else map_entry ~expand rest (j - k) (a + 1) (shift + k - 1)
+  | (_, None) :: rest -> map_entry ~expand rest j used shift
 
 (* The selection [picks]'s axis map of [n] entries, each from {!map_entry}: an
    iarray literal up to four axes, which allocates no closure and no copy. *)
-let axis_map picks n : int iarray =
+let axis_map ~expand picks n : int iarray =
   match n with
-  | 1 -> [| map_entry picks 0 0 |]
-  | 2 -> [| map_entry picks 0 0; map_entry picks 1 0 |]
-  | 3 -> [| map_entry picks 0 0; map_entry picks 1 0; map_entry picks 2 0 |]
+  | 1 -> [| map_entry ~expand picks 0 0 0 |]
+  | 2 -> [| map_entry ~expand picks 0 0 0; map_entry ~expand picks 1 0 0 |]
+  | 3 ->
+      [|
+        map_entry ~expand picks 0 0 0;
+        map_entry ~expand picks 1 0 0;
+        map_entry ~expand picks 2 0 0;
+      |]
   | 4 ->
       [|
-        map_entry picks 0 0;
-        map_entry picks 1 0;
-        map_entry picks 2 0;
-        map_entry picks 3 0;
+        map_entry ~expand picks 0 0 0;
+        map_entry ~expand picks 1 0 0;
+        map_entry ~expand picks 2 0 0;
+        map_entry ~expand picks 3 0 0;
       |]
-  | n -> Iarray.init n (fun j -> map_entry picks j 0)
+  | n -> Iarray.init n (fun j -> map_entry ~expand picks j 0 0)
 
-(* Whether a held axis takes the shape of positions of two axes or more. *)
-let rec spreads : type d. (d pick * int option) list -> bool = function
-  | [] -> false
-  | (Held h, _) :: _ when ndim h > 1 -> true
-  | _ :: rest -> spreads rest
+(* The extra axes positions of two axes or more give a selection. *)
+let rec extra_axes : type d. (d pick * int option) list -> int = function
+  | [] -> 0
+  | (Held h, _) :: rest when ndim h > 1 -> ndim h - 1 + extra_axes rest
+  | _ :: rest -> extra_axes rest
+
+(* Each held axis of positions of two axes or more as their shape, in [y], the
+   selection's axis map applied where each gather kept the rank: the axes past
+   [j], [y]'s axis of the pick, done first. *)
+let rec spread_held : type v s d.
+    by:string -> (d pick * int option) list -> int -> (v, s, d) t -> (v, s, d) t
+    =
+ fun ~by picks j y ->
+  match picks with
+  | [] -> y
+  | (New, _) :: rest -> spread_held ~by rest (j + 1) y
+  | (pick, Some _) :: rest when not (drops pick) -> (
+      let y = spread_held ~by rest (j + 1) y in
+      match pick with
+      | Held h when ndim h > 1 -> spread_by ~by j (shape h) y
+      | At _ | Span _ | Rows _ | Held _ | From _ | New -> y)
+  | _ :: rest -> spread_held ~by rest j y
 
 (* [x] at the selection [picks]. *)
 let selected ~by picks x =
@@ -2008,21 +2141,24 @@ let selected ~by picks x =
   let ranges = Array.map whole s in
   narrowed ranges picks;
   let y = if whole_ranges ranges s 0 then x else sliced ~by ranges x in
-  (* Each gather keeps the rank: a held axis of [n] positions has extent [n]
-     until the reshape below gives it their shape, so no step passes the
-     result's rank. *)
-  let y = gathered ~by picks y in
-  (* Each [At] axis now has extent 1 and goes; each [New] axis comes; each
-     held axis takes its positions' shape. An axis map, so that each kept
-     axis keeps its cut. *)
-  let n = mapped_rank picks (ndim x - used_axes picks) in
-  (* Without a pick that drops or adds an axis, or with no axis left, a
-     reshape has no axis of one element to guess at. *)
-  if n = 0 || not (moves_axes picks) then
-    Eval.reshape ~by (selection x picks) y
+  (* A held axis of positions of two axes or more takes their shape in its
+     gather where every gather stays within the rank a gather over a cut axis
+     stacks to; otherwise each gather keeps the rank, and the axis is spread
+     once the others are moved. *)
+  let pairs = if D.bits (dtype x) = 128 then 1 else 0 in
+  let expand =
+    ndim x + extra_axes picks + 1 + pairs <= Nx_array.Layout.max_rank
+  in
+  let y = gathered ~by ~expand picks y in
+  (* Each [At] axis now has extent 1 and goes; each [New] axis comes. An axis
+     map, so that each kept axis keeps its cut. *)
+  let n = mapped_rank ~expand picks (ndim x - used_axes picks) in
+  (* Without a pick that drops or adds an axis, or with no axis left, a reshape
+     has no axis of one element to guess at. *)
+  if n = 0 || not (moves_axes picks) then Eval.reshape ~by (selection x picks) y
   else
-    let y = Eval.mapped ~by (axis_map picks n) y in
-    if spreads picks then Eval.reshape ~by (selection x picks) y else y
+    let y = Eval.mapped ~by (axis_map ~expand picks n) y in
+    if expand then y else spread_held ~by picks 0 y
 
 let slice_by ~by idx x =
   let picks = picks ~by idx x in
@@ -2200,6 +2336,49 @@ let in_program (p, _) =
 let scattered ~by ?(unique = false) ?(axis = 0) combine idx updates into =
   Eval.eval ~by (Value.Scatter { combine; unique; axis; idx; updates; into })
 
+(* The selection [picks]'s axes that [New] adds, in its shape's numbering. *)
+let new_axes picks =
+  let rec go j = function
+    | [] -> []
+    | (New, _) :: rest -> j :: go (j + 1) rest
+    | (At _, _) :: rest -> go j rest
+    | (Held h, _) :: rest -> go (j + ndim h) rest
+    | ((Span _ | Rows _ | From _), _) :: rest -> go (j + 1) rest
+  in
+  go 0 picks
+
+(* [y]'s axes [axis] … [axis + k - 1], of extents [ps], as one: those of one
+   element by a map, then the others by a reshape ({!spread_by}'s inverse). *)
+let merge_by ~by axis ps y =
+  let k = Array.length ps in
+  let units =
+    List.filter (fun i -> ps.(i) = 1) (List.init k Fun.id)
+    |> List.map (fun i -> axis + i)
+  in
+  let wide = List.filter (fun d -> d <> 1) (Array.to_list ps) in
+  match wide with
+  | [] when k = 0 -> unsqueeze_by ~by ~axes:[ axis ] y
+  | [] ->
+      (* One element: the first axis stays, as a reshape pairs it. *)
+      squeeze_by ~by ~axes:(List.tl units) y
+  | _ ->
+      let y = squeeze_by ~by ~axes:units y in
+      let s = shape y and w = List.length wide in
+      let before = Array.sub s 0 axis
+      and after = Array.sub s (axis + w) (Array.length s - axis - w) in
+      Eval.reshape ~by
+        (Array.concat [ before; [| List.fold_left ( * ) 1 wide |]; after ])
+        y
+
+(* Marks [-1] in [p] at each axis an [At] of [picks] holds. *)
+let rec mark_ats : type d. int array -> (d pick * int option) list -> unit =
+ fun p -> function
+  | [] -> ()
+  | (At _, Some a) :: rest ->
+      p.(a) <- -1;
+      mark_ats p rest
+  | _ :: rest -> mark_ats p rest
+
 (* [x] with the selection [picks], of shape [sel], replaced by [v]. *)
 let replaced ~by sel picks v x =
   let s = shape x in
@@ -2216,17 +2395,26 @@ let replaced ~by sel picks v x =
           | Span r, Some a -> region.(a) <- r
           | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> ())
         ranges;
-      let counts =
-        Array.map (fun (r : Nx_array.Move.range) -> r.count) region
-      in
+      (* [v] without the axes [New] adds, then one of one element at each [At]
+         axis, by a map, so that each axis keeps its cut. *)
+      let v = squeeze_by ~by ~axes:(new_axes picks) v in
+      let p = Array.make (Array.length s) 0 in
+      mark_ats p ranges;
+      let k = ref 0 in
+      for a = 0 to Array.length s - 1 do
+        if p.(a) = 0 then begin
+          p.(a) <- !k;
+          incr k
+        end
+      done;
       assemble ~by (dtype x) s
         (D.zero (dtype x))
         [
           (all_of s, x);
-          (Iarray.of_array region, Eval.reshape ~by counts v);
+          (Iarray.of_array region, Eval.mapped ~by (Iarray.of_array p) v);
         ]
-  | ranges, [ ((data, Some a) as pick) ]
-    when List.for_all (whole_axis s) ranges ->
+  | ranges, [ ((data, Some a) as pick) ] when List.for_all (whole_axis s) ranges
+    ->
       (* One axis selected by positions, every other whole: a scatter along it,
          the positions broadcast across the others. *)
       let p = Option.get (positions ~by x data) in
@@ -2234,11 +2422,16 @@ let replaced ~by sel picks v x =
       let wide = Array.mapi (fun i d -> if i = a then n else d) s in
       let idx = Eval.broadcast ~by wide (along_axis ~by (Array.length s) a p) in
       let unique = match fst pick with Held _ -> false | _ -> true in
-      scattered ~by ~unique ~axis:a Set idx (Eval.reshape ~by wide v) x
+      (* [v] without the axes [New] adds, the positions' axes as one. *)
+      let v =
+        merge_by ~by a
+          (match data with Held h -> shape h | _ -> [| n |])
+          (squeeze_by ~by ~axes:(new_axes picks) v)
+      in
+      scattered ~by ~unique ~axis:a Set idx v x
   | _ ->
       (* Any other selection: each selected element's flat position. *)
-      let m = Array.fold_left ( * ) 1 sel in
-      let line u = Eval.reshape ~by [| m |] u in
+      let line u = flat_by ~by u in
       let unique =
         List.for_all
           (fun (p, _) -> match p with Held _ -> false | _ -> true)
@@ -2247,13 +2440,12 @@ let replaced ~by sel picks v x =
       let updated =
         scattered ~by ~unique Set
           (line (targets ~by x picks))
-          (line v)
-          (Eval.reshape ~by [| numel x |] x)
+          (line v) (flat_by ~by x)
       in
-      Eval.reshape ~by s updated
+      unflat_by ~by s updated
 
-(* Whether [p] writes a position twice. Closed over nothing, so a check of
-   picks allocates no closure. *)
+(* Whether [p] writes a position twice. Closed over nothing, so a check of picks
+   allocates no closure. *)
 let repeats (p, _) =
   match p with
   | Rows ps -> List.length (List.sort_uniq compare ps) <> List.length ps
@@ -2383,7 +2575,7 @@ let scan_along ~by m axis x = scan_by ~by (Monoid (m, 0, dtype x)) axis x
 (* Along [axis], or over the elements in C order, keeping [x]'s shape. *)
 let scan ~by r ?axis x =
   let y, a = along ~by axis x in
-  Eval.reshape ~by (shape x) (scan_by ~by r a y)
+  unflat_by ~by (shape x) (scan_by ~by r a y)
 
 let monoid_scan ~by m ?axis x = scan ~by (Monoid (m, 0, dtype x)) ?axis x
 let cumsum ?axis x = monoid_scan ~by:"Nx.cumsum" Sum ?axis x
@@ -2535,15 +2727,18 @@ let parts (type s d) ~by (z : (Complex.t, s, d) t) : (s, d) parts =
     let pairs : (float, r, d) t = Eval.bitcast ~by f z in
     let r = Prim.rank z in
     let part i =
-      let one = Array.init (r + 1) (fun a ->
-        if a = r then { Nx_array.Move.start = i; count = 1; step = 1 }
-        else whole (Prim.dim z a))
+      let one =
+        Array.init (r + 1) (fun a ->
+            if a = r then { Nx_array.Move.start = i; count = 1; step = 1 }
+            else whole (Prim.dim z a))
       in
-      Eval.reshape ~by (shape z) (sliced ~by one pairs)
+      squeeze_by ~by ~axes:[ ndim z ] (sliced ~by one pairs)
     in
     Parts (f, part)
   in
-  match dtype z with D.Complex64 -> split D.Float32 | D.Complex128 -> split D.Float64
+  match dtype z with
+  | D.Complex64 -> split D.Float32
+  | D.Complex128 -> split D.Float64
 
 (* Where a float of [dt]'s format is an infinity: [false] in a format with
    none. *)
@@ -3275,7 +3470,7 @@ let ewma ?axis ~alpha x =
   if not (alpha > 0. && alpha <= 1.) then
     invalid_argf "%s: alpha %a is outside (0, 1]" by pp_float alpha;
   let y, a = along ~by axis x in
-  Eval.reshape ~by (shape x) (average ~by ~alpha a y)
+  unflat_by ~by (shape x) (average ~by ~alpha a y)
 
 (* Activations *)
 
@@ -3779,7 +3974,7 @@ let paired (type c a d) ~by (dt : (Complex.t, c) D.t) s
   let pairs (type p) (f : (float, p) D.t) =
     let unit = Array.append s [| 1 |] and both = Array.append s [| 2 |] in
     let part x =
-      Eval.reshape ~by unit (Eval.broadcast ~by s (cast_by ~by f x))
+      unsqueeze_by ~by ~axes:[ r ] (Eval.broadcast ~by s (cast_by ~by f x))
     in
     let pieces = [ (region unit r 0 1, part re); (region unit r 1 1, part im) ] in
     Eval.bitcast ~by dt (assemble ~by f both 0. pieces)
@@ -3905,7 +4100,13 @@ let last_diagonal ~by offset x =
   in
   let start = if count = 0 then 0 else if offset >= 0 then offset else -offset * n in
   let lead = Array.sub s 0 (r - 2) in
-  let flat = Eval.reshape ~by (Array.append lead [| m * n |]) x in
+  (* The two axes as one: an axis of one element goes by a map, as a reshape
+     pairs it, so that a cut of the other stays on the merged axis. *)
+  let flat =
+    if n = 1 then squeeze_by ~by ~axes:[ r - 1 ] x
+    else if m = 1 then squeeze_by ~by ~axes:[ r - 2 ] x
+    else Eval.reshape ~by (Array.append lead [| m * n |]) x
+  in
   let ranges = Array.append (Array.map whole lead) [| { Nx_array.Move.start; count; step = n + 1 } |] in
   sliced ~by ranges flat
 
@@ -3934,7 +4135,8 @@ let on_diagonal ~by dt n m k piece =
   let count = Prim.dim piece 0 in
   let along = { Nx_array.Move.start = (if count = 0 then 0 else start); count; step = m + 1 } in
   let flat = assemble ~by dt [| n * m |] (D.zero dt) [ ([| along |], piece) ] in
-  Eval.reshape ~by [| n; m |] flat
+  if n * m = 1 then unsqueeze_by ~by ~axes:[ 1 ] flat
+  else Eval.reshape ~by [| n; m |] flat
 
 (* One of [dt] where the column less the row is [k] and zero elsewhere, over
    matrices of shape [s], the last axis the column. *)
@@ -3988,7 +4190,7 @@ let vdot_by ~by ?sum a b =
   if numel a <> numel b then
     invalid_argf "%s: %a and %a differ in their number of elements" by pp_value
       a pp_value b;
-  let flat x = Eval.reshape ~by [| numel x |] x in
+  let flat x = flat_by ~by x in
   Contraction.matmul ~by ?sum (conjugate_by ~by (flat a)) (flat b)
 
 let vdot ?sum a b = vdot_by ~by:"Nx.vdot" ?sum a b
@@ -4082,8 +4284,8 @@ let inner ?sum a b =
 let outer a b =
   let by = "Nx.outer" in
   mul_by ~by
-    (Eval.reshape ~by [| numel a; 1 |] a)
-    (Eval.reshape ~by [| 1; numel b |] b)
+    (unsqueeze_by ~by ~axes:[ 1 ] (flat_by ~by a))
+    (unsqueeze_by ~by ~axes:[ 0 ] (flat_by ~by b))
 
 (* Both operands moved to their axis last, their other axes broadcast, then
    one contraction batched over those: [conjugate a] first, after every
@@ -4129,14 +4331,43 @@ let kron a b =
   in
   let count = List.length pairs and most = Nx_array.Layout.max_rank in
   if count > most then
-    invalid_argf "%s: %a and %a have %d axes of extent other than 1, over %d"
-      by pp_value a pp_value b count most;
-  let spread f = Array.of_list (List.map f pairs) in
-  let p =
-    mul_by ~by
-      (Eval.reshape ~by (spread fst) a)
-      (Eval.reshape ~by (spread snd) b)
+    invalid_argf "%s: %a and %a have %d axes of extent other than 1, over %d" by
+      pp_value a pp_value b count most;
+  (* Each axis of extent [1] in both stays one axis of the spread, so that a cut
+     along it stays, while the spread holds no more than [most] axes. *)
+  let units =
+    List.filter (fun i -> sa.(i) = 1 && sb.(i) = 1) (List.init r Fun.id)
   in
+  let kept = count + List.length units <= most in
+  (* The spread's slots, each [`A i], [`B i] or, for both of one element, [`Both
+     i]. *)
+  let slots =
+    List.concat
+      (List.init r (fun i ->
+           if sa.(i) = 1 && sb.(i) = 1 then if kept then [ `Both i ] else []
+           else
+             (if sa.(i) <> 1 then [ `A i ] else [])
+             @ if sb.(i) <> 1 then [ `B i ] else []))
+  in
+  (* [x], padded to [r] axes, at the slots: its axis [i] at its own slot or at
+     [`Both i], and a new axis at the other's. *)
+  let at mine x =
+    let x = unsqueeze_by ~by ~axes:(List.init (r - ndim x) Fun.id) x in
+    let entry = function
+      | `Both i -> i
+      | `A i -> if mine = `A then i else -1
+      | `B i -> if mine = `B then i else -1
+    in
+    let spread =
+      Array.of_list
+        (List.map
+           (function `Both _ -> 1 | `A i -> sa.(i) | `B i -> sb.(i))
+           slots)
+    in
+    Eval.broadcast ~by spread
+      (Eval.mapped ~by (Iarray.of_list (List.map entry slots)) x)
+  in
+  let p = mul_by ~by (at `A a) (at `B b) in
   Eval.reshape ~by (Array.init r (fun i -> sa.(i) * sb.(i))) p
 
 let multi_dot xs = Contraction.chain ~by:"Nx.multi_dot" xs
@@ -4229,9 +4460,7 @@ let columns ~by ~rows a b =
   if not (vector || rb = ra) then
     invalid_argf "%s: %a is neither a vector nor a matrix against %a" by
       pp_value b pp_value a;
-  let b =
-    if vector then Eval.reshape ~by (Array.append (shape b) [| 1 |]) b else b
-  in
+  let b = if vector then unsqueeze_by ~by ~axes:[ ndim b ] b else b in
   if dim (-2) b <> rows then
     invalid_argf "%s: %a has %d rows, not %d" by pp_value b (dim (-2) b) rows;
   let lead = broadcast_all ~by [ batch a; batch b ] in
@@ -4244,7 +4473,7 @@ let columns ~by ~rows a b =
 
 (* A result over the columns {!columns} gives, in [b]'s form. *)
 let back ~by vector x =
-  if vector then Eval.reshape ~by (Array.sub (shape x) 0 (ndim x - 1)) x else x
+  if vector then squeeze_by ~by ~axes:[ ndim x - 1 ] x else x
 
 let adjoint ~by x = conjugate_by ~by (matrix_transpose_by ~by x)
 
@@ -4412,7 +4641,7 @@ let solve_triangular ?(triangle = Lower) ?transpose ?(unit_diag = false) a b =
 let solve_by ~by a b =
   square_matrices ~by a;
   let f, _, perm = routine ~by (Lu a) in
-  let perm = Eval.reshape ~by (Array.append (shape perm) [| 1 |]) perm in
+  let perm = unsqueeze_by ~by ~axes:[ ndim perm ] perm in
   let f, b, vector = columns ~by ~rows:(dim (-1) a) f b in
   let b = take_along ~by (-2) perm b in
   let solved triangle unit_diagonal b =
@@ -4920,7 +5149,7 @@ let column ~by j x =
   let ranges =
     [| whole n; { Nx_array.Move.start = j; count = 1; step = 1 } |]
   in
-  Eval.reshape ~by [| n |] (sliced ~by ranges x)
+  squeeze_by ~by ~axes:[ 1 ] (sliced ~by ranges x)
 
 let positions_of ~by x = snd (sorted ~by 0 x)
 
@@ -5005,7 +5234,7 @@ let search ~by side s v =
         elementwise ~by D.Bool [ Any c ] E.(operand 0 c <> const D.Uint8 1)
       in
       let j = arg ~by Max ~axis:1 ~keepdims:true differs in
-      Eval.reshape ~by lead (take_along ~by 1 j c)
+      squeeze_by ~by ~axes:[ 1 ] (take_along ~by 1 j c)
   in
   lifted ~by ~at ~m:(Prim.dim s 0) ~lead side compared
 
@@ -5062,8 +5291,7 @@ let guess n = Int.min n (Int.max 4096 (n / 16))
 (* The words of [keys], equal iff the keys are: an [int64] or [uint64] key's
    bits, another's order key. *)
 let words (type v s d) ~by (keys : (v, s, d) t) : (int64, D.int64_elt, d) t =
-  let n = Prim.dim keys 0 in
-  let rows x = if ndim x = 1 then Eval.reshape ~by [| n; 1 |] x else x in
+  let rows x = if ndim x = 1 then unsqueeze_by ~by ~axes:[ 1 ] x else x in
   match dtype keys with
   | D.Int64 -> rows keys
   | D.Uint64 -> bitcast D.Int64 (rows keys)
@@ -5185,15 +5413,15 @@ let coordinates s ~axis q =
    [j] is axis [j]'s. A pad position, [numel t], gives [t]'s extents. [t]
    reaches one operation, so it is consumed. *)
 let argwhere_by ~by ?size t =
-  let s = shape t and r = ndim t and n = numel t in
+  let s = shape t and r = ndim t in
   let held =
     elementwise ~by D.Bool [ Any t ] (not_zero (dtype t) (operand 0 t))
   in
-  let p = positions_by ~by ?size (Eval.reshape ~by [| n |] held) in
+  let p = positions_by ~by ?size (flat_by ~by held) in
   let k = Prim.dim p 0 in
   if r = 0 then fill ~by (placement p) D.Int64 [| k; 0 |] 0L
   else
-    let rows = Eval.broadcast ~by [| k; r |] (Eval.reshape ~by [| k; 1 |] p) in
+    let rows = Eval.broadcast ~by [| k; r |] (unsqueeze_by ~by ~axes:[ 1 ] p) in
     elementwise ~by D.Int64 [ Any rows ]
       (coordinates s ~axis:1 (operand 0 rows))
 
@@ -5223,8 +5451,8 @@ let extract ?size ?fill c x =
   let held =
     elementwise ~by D.Bool [ Any c ] (not_zero (dtype c) (operand 0 c))
   in
-  let p = positions_by ~by ?size (Eval.reshape ~by [| n |] held) in
-  let y = take_axis ~by 0 p (Eval.reshape ~by [| n |] x) in
+  let p = positions_by ~by ?size (flat_by ~by held) in
+  let y = take_axis ~by 0 p (flat_by ~by x) in
   match fill with
   | None -> y
   | Some v ->
@@ -5244,9 +5472,7 @@ let unravel_index i s =
   else
     let si = shape i in
     let wide = Array.append [| r |] si in
-    let rows =
-      Eval.broadcast ~by wide (Eval.reshape ~by (Array.append [| 1 |] si) i)
-    in
+    let rows = Eval.broadcast ~by wide (unsqueeze_by ~by ~axes:[ 0 ] i) in
     let y =
       elementwise ~by D.Int64 [ Any rows ]
         (coordinates s ~axis:0 (operand 0 rows))
@@ -5304,12 +5530,34 @@ let countable ~by m =
          (positions ~size m) or compute with where"
         by i.Value.name
 
+(* Each mask of [idx], last first, with its first axis among [x]'s, where
+   [merged_axes], or among the merged axes', and its shape. *)
+let mask_axes ~merged_axes idx =
+  let rec go a b acc = function
+    | [] -> acc
+    | N :: idx -> go a b acc idx
+    | M m :: idx ->
+        go
+          (a + ndim m)
+          (b + 1)
+          (((if merged_axes then b else a), shape m) :: acc)
+          idx
+    | _ :: idx -> go (a + 1) (b + 1) acc idx
+  in
+  go 0 0 [] idx
+
 (* [x] at the shape [s], and the masks, after every refusal of [idx]'s:
    [idx]'s other entries are checked against [x] merged, a mask's axis
    whole. *)
 let unmasked ~by idx x =
-  let entries, s, masks = merged ~by idx x in
-  let x = Eval.reshape ~by s x in
+  let entries, _, masks = merged ~by idx x in
+  (* Each mask's axes as one, by maps where they hold axes of one element. *)
+  let x =
+    List.fold_left
+      (fun x (a, ms) -> merge_by ~by a ms x)
+      x
+      (mask_axes ~merged_axes:false idx)
+  in
   ignore (picks ~by (List.map (Option.value ~default:A) entries) x);
   index_alive ~by idx;
   Prim.alive ~by x;
@@ -5317,14 +5565,13 @@ let unmasked ~by idx x =
   (entries, x, masks)
 
 let has_mask idx = List.exists (function M _ -> true | _ -> false) idx
-let flat ~by m = Eval.reshape ~by [| numel m |] m
 
 let slice idx x =
   let by = "Nx.slice" in
   if not (has_mask idx) then slice_by ~by idx x
   else
     let entries, x, masks = unmasked ~by idx x in
-    let ps = List.map (fun m -> positions_by ~by (flat ~by m)) masks in
+    let ps = List.map (fun m -> positions_by ~by (flat_by ~by m)) masks in
     slice_by ~by (filled entries ps) x
 
 (* Refuses a [v] that fits the selection at no count of its masks: the
@@ -5355,14 +5602,17 @@ let fits_masks ~by entries v x =
 let set idx v x =
   let by = "Nx.set" in
   if not (has_mask idx) then set_by ~by idx v x
-  else
-    let s = shape x in
+  else begin
     Prim.alive ~by v;
     let entries, y, masks = unmasked ~by idx x in
     fits_masks ~by entries v y;
-    let ps = List.map (fun m -> positions_by ~by (flat ~by m)) masks in
+    let ps = List.map (fun m -> positions_by ~by (flat_by ~by m)) masks in
     let y = set_by ~by (filled entries ps) v y in
-    Eval.reshape ~by s y
+    List.fold_left
+      (fun y (b, ms) -> spread_by ~by b ms y)
+      y
+      (mask_axes ~merged_axes:true idx)
+  end
 
 (* Quantiles and histograms *)
 
@@ -5393,7 +5643,9 @@ let quantile (type s d) ?axis qs (x : (float, s, d) t) : (float, s, d) t =
     Array.mapi (fun i _ -> if i = a then Array.length qs else 1) (shape x)
   in
   let frac =
-    Eval.reshape ~by along
+    unsqueeze_by ~by
+      ~axes:
+        (List.filter (fun i -> i <> a) (List.init (Array.length along) Fun.id))
       (vector_at ~by here w (Array.map (fun h -> h -. Float.floor h) h))
   in
   let y =
@@ -5481,15 +5733,15 @@ let cells ~by dims =
     | [] -> assert false
   in
   let bins = Array.of_list (List.map (fun (e, _) -> Prim.dim e 0 - 1) dims) in
-  (Eval.reshape ~by [| numel flat |] flat, bins)
+  (flat_by ~by flat, bins)
 
 (* The cells' sums of [updates], one per point, by one adding scatter. *)
 let tally (type w r d) ~by flat bins (updates : (w, r, d) t) : (w, r, d) t =
   let dt = dtype updates in
   let cells = Array.fold_left ( * ) 1 bins in
   let zeros = fill ~by (beside flat) dt [| cells |] (D.zero dt) in
-  let updates = Eval.reshape ~by [| numel flat |] updates in
-  Eval.reshape ~by bins (scattered ~by Add flat updates zeros)
+  let updates = flat_by ~by updates in
+  unflat_by ~by bins (scattered ~by Add flat updates zeros)
 
 let histogram dims =
   let by = "Nx.histogram" in
@@ -5532,7 +5784,7 @@ let one_hot ~num_classes x =
   if num_classes < 0 then invalid_argf "%s: %d classes" by num_classes;
   let s = shape x in
   let r = Array.length s in
-  let column = Eval.reshape ~by (Array.append s [| 1 |]) x in
+  let column = unsqueeze_by ~by ~axes:[ r ] x in
   let x = Eval.broadcast ~by (Array.append s [| num_classes |]) column in
   elementwise ~by D.Uint8 [ Any x ]
     (indicator D.Uint8 E.(cast D.Int64 (operand 0 x) = coord r))
@@ -5610,11 +5862,10 @@ let extract_patches ~kernel_size ~stride ~dilation ~padding x =
     Array.init (lead + (2 * k)) (fun a ->
         if a < lead then a else if a < lead + k then a + k else a - k)
   in
-  let s' =
-    Array.append (Array.sub (shape x) 0 lead)
-      [| product kernel_size; product counts |]
-  in
-  Eval.reshape ~by s' (permute ~by taps_first y)
+  (* The kernel's axes as one, then the counts', axes of one element by a
+     map. *)
+  merge_by ~by lead kernel_size
+    (merge_by ~by (lead + k) counts (permute ~by taps_first y))
 
 let combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
     p =
@@ -5642,11 +5893,7 @@ let combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
   let lead = Array.sub s 0 (r - 2) in
   let nl = r - 2 in
   (* [p] as the Padded load's shape, [[lead…; counts…; kernel_size…]]. *)
-  let y =
-    Eval.reshape ~by
-      (Array.concat [ lead; kernel_size; counts ])
-      p
-  in
+  let y = spread_by ~by nl kernel_size (spread_by ~by (nl + 1) counts p) in
   let y =
     permute ~by
       (Array.init (nl + (2 * k)) (fun a ->
@@ -5738,7 +5985,7 @@ let depthwise ~by ~loop ~axes ~prog ~pad ~out x' w into =
              at = None;
          })
   in
-  Eval.reshape ~by out y
+  squeeze_by ~by ~axes:[ Array.length out ] y
 
 (* The windows of each output channel over [x], [[n; s…; c]], for [w] laid out
    as [[g; oc; ic; k…]] ([g] groups of [oc] output and [ic] input channels),
@@ -5801,8 +6048,13 @@ let windows_of ~by ?init ~stride ~lo ~hi ~interior ~dilation x w =
     in
     let (D.Any acc) = Nx_kernel.carrier (D.Any dt) in
     if ic <> 1 || oc <> 1 then
-      let grouped = Array.concat [ [| n |]; spatial; [| g; ic |] ] in
-      let x' = Eval.reshape ~by grouped x in
+      (* One group, or one channel a group, comes as a new axis, so that a
+         cut of the channels stays on them. *)
+      let x' =
+        if g = 1 then unsqueeze_by ~by ~axes:[ k + 1 ] x
+        else if ic = 1 then unsqueeze_by ~by ~axes:[ k + 2 ] x
+        else Eval.reshape ~by (Array.concat [ [| n |]; spatial; [| g; ic |] ]) x
+      in
       let around a = Array.concat [ [| 0 |]; a; [| 0; 0 |] ] in
       let xp =
         padded ~by ~interior:(around interior) ~lo:(around lo) ~hi:(around hi)
@@ -5835,11 +6087,19 @@ let windows_of ~by ?init ~stride ~lo ~hi ~interior ~dilation x w =
         | None -> None
         | Some i ->
             let split = Array.concat [ [| n |]; counts; [| g; oc |] ] in
+            (* One group comes beside the output channels as a reshape pairs
+               them, where the result's channels merge them back. *)
+            let i =
+              if g = 1 then
+                unsqueeze_by ~by ~axes:[ (if oc = 1 then k + 2 else k + 1) ] i
+              else if oc = 1 then unsqueeze_by ~by ~axes:[ k + 2 ] i
+              else Eval.reshape ~by split i
+            in
             Some
               (permute ~by
                  (Array.concat
                     [ [| k + 1 |]; Array.init (k + 1) Fun.id; [| k + 2 |] ])
-                 (Eval.reshape ~by split i))
+                 i)
       in
       let y =
         Eval.contract ~by ~batch:[| (k + 1, 0) |] ~contracting
@@ -5851,10 +6111,11 @@ let windows_of ~by ?init ~stride ~lo ~hi ~interior ~dilation x w =
           (Array.concat [ Array.init (k + 1) (fun i -> 1 + i); [| 0; k + 2 |] ])
           y
       in
-      Eval.reshape ~by out y
+      if g = 1 then squeeze_by ~by ~axes:[ (if oc = 1 then k + 2 else k + 1) ] y
+      else if oc = 1 then squeeze_by ~by ~axes:[ k + 2 ] y
+      else Eval.reshape ~by out y
     else
-      let grouped = Array.concat [ [| n |]; spatial; [| g; 1; 1 |] ] in
-      let x' = Eval.reshape ~by grouped x in
+      let x' = unsqueeze_by ~by ~axes:[ k + 2; k + 3 ] x in
       (* [a.(i)] along spatial axis [i], zero along the others of [x']. *)
       let spatially a =
         Iarray.init (k + 4) (fun i -> if i >= 1 && i <= k then a.(i - 1) else 0)
@@ -5897,18 +6158,19 @@ let whole_together ?init x w =
   Eval.whole_at p x && Eval.whole_at p w
   && match init with None -> true | Some i -> Eval.whole_at p i
 
-(* [correlate]'s windows of [x], reshaped to [batch], by [kernel] conjugated,
-   reshaped to [out]. *)
-let correlated ~by ~ks ~lo ~hi ~batch ~out x kernel =
+(* [correlate]'s windows of [x], its batch axes as one, by [kernel] conjugated,
+   the result at [out]. *)
+let correlated ~by ~ks ~lo ~hi ~out x kernel =
   let kr = Array.length ks in
-  let w =
-    Eval.reshape ~by (Array.append [| 1; 1; 1 |] ks) (conjugate_by ~by kernel)
-  in
+  let lead = Array.sub out 0 (Array.length out - kr) in
+  let w = unsqueeze_by ~by ~axes:[ 0; 1; 2 ] (conjugate_by ~by kernel) in
+  (* The batch axes as one, then one channel, axes of one element by maps. *)
+  let x = unsqueeze_by ~by ~axes:[ kr + 1 ] (merge_by ~by 0 lead x) in
   let y =
     windows_of ~by ~stride:(Array.make kr 1) ~lo ~hi ~interior:(Array.make kr 0)
-      ~dilation:(Array.make kr 1) (Eval.reshape ~by batch x) w
+      ~dilation:(Array.make kr 1) x w
   in
-  Eval.reshape ~by out y
+  spread_by ~by 0 lead (squeeze_by ~by ~axes:[ kr + 1 ] y)
 
 (* [x]'s batch axes merged into one, with one channel, convolved by the
    kernel's conjugate as one output and one input channel: value [i] of a
@@ -5932,15 +6194,13 @@ let correlate ?(padding = `Valid) x kernel =
   let hi =
     Array.init kr (fun i -> snd runs.(i) + ks.(i) - 1 - spatial.(i) - lo.(i))
   in
-  let batch = Array.concat [ [| product lead |]; spatial; [| 1 |] ] in
   let out = Array.append lead (Array.map snd runs) in
   (* Its body reshapes [x] and the kernel: a refusal of an operand derived from
      them names the argument's place. *)
-  if whole_together x kernel then
-    correlated ~by ~ks ~lo ~hi ~batch ~out x kernel
+  if whole_together x kernel then correlated ~by ~ks ~lo ~hi ~out x kernel
   else
     Eval.composite ~by [ Arg ("x", x); Arg ("kernel", kernel) ] @@ fun () ->
-    correlated ~by ~ks ~lo ~hi ~batch ~out x kernel
+    correlated ~by ~ks ~lo ~hi ~out x kernel
 
 (* Segments and ranges *)
 
@@ -5981,12 +6241,14 @@ let segments_of ~by c ~segments ids x =
   let start = identity ~by c dt in
   let px = placement x in
   let into = Array.mapi (fun a d -> if a = 0 then segments else d) s in
-  let along = Array.mapi (fun a d -> if a = 0 then d else 1) s in
   let into = fill ~by (Devices.uncut ~axis:0 px) dt into start in
   (* With no row or no segment, nothing is scattered. *)
   if s.(0) = 0 || segments = 0 then into
   else
-    let idx = Eval.broadcast ~by s (Eval.reshape ~by along ids) in
+    let idx =
+      Eval.broadcast ~by s
+        (unsqueeze_by ~by ~axes:(List.init (Array.length s - 1) succ) ids)
+    in
     scattered ~by c idx x into
 
 let reduce_segments c ~segments ids x =
@@ -6014,13 +6276,12 @@ let reduce_segments c ~segments ids x =
    position. A range that holds no row is [none]'s. *)
 let ranges (type v s d) ~by f ~l ~r (x : (v, s, d) t array)
     (none : (v, s, d) t array) : (v, s, d) t array =
-  let n = Prim.dim x.(0) 0 and m = Prim.dim l 0 in
+  let n = Prim.dim x.(0) 0 in
   let dt = dtype x.(0) in
   let rows = Array.sub (shape x.(0)) 1 (ndim x.(0) - 1) in
-  let per_range = Array.append [| m |] (Array.map (fun _ -> 1) rows) in
   let take p = Array.map (take_axis ~by 0 p) in
   let where c a b =
-    let c = Eval.reshape ~by per_range c in
+    let c = unsqueeze_by ~by ~axes:(List.init (Array.length rows) succ) c in
     Array.map2 (ternary ~by Where c) a b
   in
   (* [f] of [a] and [b] broadcast to one shape: a doubling's one row. *)
@@ -6071,7 +6332,10 @@ let ranges (type v s d) ~by f ~l ~r (x : (v, s, d) t array)
                   { start; count; step = 1 };
                 |]
                 whole_rows))
-          (Eval.reshape ~by halves t)
+          (if h = 1 then
+             unsqueeze_by ~by ~axes:[ 2 ]
+               (Eval.reshape ~by (Array.append [| blocks; 2 |] rows) t)
+           else Eval.reshape ~by halves t)
       in
       let half i =
         Iarray.append
@@ -6080,9 +6344,12 @@ let ranges (type v s d) ~by f ~l ~r (x : (v, s, d) t array)
       in
       let joined =
         Array.map2 (fun first second ->
+            let y =
+              assemble ~by dt halves (D.zero dt)
+                [ (half 0, first); (half 1, second) ]
+            in
             Eval.reshape ~by full
-              (assemble ~by dt halves (D.zero dt)
-                 [ (half 0, first); (half 1, second) ]))
+              (if h = 1 then squeeze_by ~by ~axes:[ 2 ] y else y))
       in
       let p half start count = Array.map (part half start count) in
       ( joined (p 0 0 h suf ++ p 1 0 1 suf) (p 1 0 h suf),
@@ -6152,11 +6419,7 @@ let ranges_of ~by c ~lo ~hi x =
       let some =
         elementwise ~by D.Bool [ Any l; Any h ] E.(operand 0 l < operand 1 h)
       in
-      let some =
-        Eval.reshape ~by
-          (Array.append [| m |] (Array.make (ndim x - 1) 1))
-          some
-      in
+      let some = unsqueeze_by ~by ~axes:(List.init (ndim x - 1) succ) some in
       ternary ~by Where some (take_axis ~by 0 r x) (empty dt start)
   | Max -> fold_ranges ~by Maximum ~l ~r x (empty dt start)
   | Min -> fold_ranges ~by Minimum ~l ~r x (empty dt start)
@@ -6374,7 +6637,9 @@ let first_named ~by ~axes named =
   let last = j - 1 in
   let here = beside named in
   let after =
-    Eval.reshape ~by s (leaf ~by here D.Int64 [| r; j |] E.(i64 last - coord 1))
+    spread_by ~by 1
+      (Array.sub s 1 (Array.length s - 1))
+      (leaf ~by here D.Int64 [| r; j |] E.(i64 last - coord 1))
   in
   let remaining =
     elementwise ~by D.Int64 [ Any named; Any after ]
@@ -6396,13 +6661,17 @@ let in_range ~by ~segments owners =
 
 let units t = Array.make (Array.length t) 1
 
-(* Each position its own block. [gs] is a group's positions as axes,
-   [[| r; ... |]], and [x] holds their rows in that shape, with an axis of
-   length 1 where positions share a row. An out-of-range position keeps its row
-   and takes the owner of the first in-range position that reads it. A row
-   that no in-range position reads takes the group's first in-range position
-   and its row, or zeros. Rows then vary only along the axes [x] varies along:
-   at one token over a few experts, every block reads the token's row. *)
+(* [t] with axes of one element appended for each of [row]'s. *)
+let by_rows ~by row t =
+  unsqueeze_by ~by ~axes:(List.init (Array.length row) (fun i -> ndim t + i)) t
+
+(* Each position its own block. [gs] is a group's positions as axes, [[| r; ...
+   |]], and [x] holds their rows in that shape, with an axis of length 1 where
+   positions share a row. An out-of-range position keeps its row and takes the
+   owner of the first in-range position that reads it. A row that no in-range
+   position reads takes the group's first in-range position and its row, or
+   zeros. Rows then vary only along the axes [x] varies along: at one token over
+   a few experts, every block reads the token's row. *)
 let direct ~by ~segments ~call ~named ~gs ids x =
   let r = Prim.dim ids 0 and j = Prim.dim ids 1 in
   let n = Array.length gs in
@@ -6414,18 +6683,22 @@ let direct ~by ~segments ~call ~named ~gs ids x =
   let shared = List.filter (fun a -> lead.(a) = 1 && gs.(a) > 1) inner in
   let at, any = first_named ~by ~axes:[ 1 ] named in
   let id = take_along ~by 1 at ids in
+  (* [r; j] and a group's axes [gs], each other's, by {!spread_by} and
+     {!merge_by}, so that the group axis keeps its cut. *)
+  let rest = Array.sub gs 1 (n - 1) in
   let per_group t =
-    Eval.reshape ~by (Array.append [| r |] (Array.make (n - 1) 1)) t
+    if n = 1 then squeeze_by ~by ~axes:[ 1 ] t
+    else unsqueeze_by ~by ~axes:(List.init (n - 2) (fun i -> i + 2)) t
   in
-  let by_row t = Eval.reshape ~by (Array.append (shape t) (units row)) t in
+  let by_row t = by_rows ~by row t in
   let owners, read =
     if not varies then (where named ids id, per_group any)
-    else if shared = [] then (where named ids id, Eval.reshape ~by gs named)
+    else if shared = [] then (where named ids id, spread_by ~by 1 rest named)
     else
       let at_row, read =
-        first_named ~by ~axes:shared (Eval.reshape ~by gs named)
+        first_named ~by ~axes:shared (spread_by ~by 1 rest named)
       in
-      let flat t = Eval.reshape ~by [| r; j |] (Eval.broadcast ~by gs t) in
+      let flat t = merge_by ~by 1 rest (Eval.broadcast ~by gs t) in
       let owner = take_along ~by 1 (flat at_row) ids in
       (where named ids (where (flat read) owner id), read)
   in
@@ -6433,12 +6706,9 @@ let direct ~by ~segments ~call ~named ~gs ids x =
     if not varies then scalar_beside ~by x (dtype x) (D.zero (dtype x))
     else
       let rows =
-        Eval.reshape ~by
-          (Array.append [| r; j |] row)
-          (Eval.broadcast ~by (Array.append gs row) x)
+        merge_by ~by 1 rest (Eval.broadcast ~by (Array.append gs row) x)
       in
-      Eval.reshape ~by
-        (Array.append (shape (per_group at)) row)
+      per_group
         (take_along ~by 1
            (Eval.broadcast ~by (Array.append [| r; 1 |] row) (by_row at))
            rows)
@@ -6446,12 +6716,11 @@ let direct ~by ~segments ~call ~named ~gs ids x =
   let rows = where (by_row read) x fallback in
   let y, out =
     call ~g:(r * j) ~c:1
-      (Eval.reshape ~by [| r * j |] (in_range ~by ~segments owners))
-      (Eval.reshape ~by
-         (Array.append [| r * j; 1 |] row)
-         (Eval.broadcast ~by (Array.append gs row) rows))
+      (merge_by ~by 0 [| r; j |] (in_range ~by ~segments owners))
+      (unsqueeze_by ~by ~axes:[ 1 ]
+         (merge_by ~by 0 gs (Eval.broadcast ~by (Array.append gs row) rows)))
   in
-  (Eval.reshape ~by (Array.append [| r; j |] out) y, out)
+  (spread_by ~by 0 [| r; j |] (squeeze_by ~by ~axes:[ 1 ] y), out)
 
 (* Each group's positions sorted by id into blocks of [c] rows. *)
 let grouped ~by ~segments ~c ~call ~named ids x =
@@ -6498,12 +6767,9 @@ let grouped ~by ~segments ~c ~call ~named ids x =
      a block past the last run takes the fallback id. *)
   let ended =
     let s3 = [| r; blocks; segments |] in
-    let e =
-      Eval.broadcast ~by s3 (Eval.reshape ~by [| r; 1; segments |] ends)
-    in
+    let e = Eval.broadcast ~by s3 (unsqueeze_by ~by ~axes:[ 1 ] ends) in
     let b =
-      Eval.broadcast ~by s3
-        (Eval.reshape ~by [| 1; blocks; 1 |] (iota blocks c))
+      Eval.broadcast ~by s3 (unsqueeze_by ~by ~axes:[ 0; 2 ] (iota blocks c))
     in
     fst
       (reduce_by ~by s3 [| 2 |] [ Any e; Any b ]
@@ -6518,9 +6784,9 @@ let grouped ~by ~segments ~c ~call ~named ids x =
          ended id)
   in
   let slot_owner =
-    Eval.reshape ~by [| r; slots |]
+    merge_by ~by 1 [| blocks; c |]
       (Eval.broadcast ~by [| r; blocks; c |]
-         (Eval.reshape ~by [| r; blocks; 1 |] owners))
+         (unsqueeze_by ~by ~axes:[ 2 ] owners))
   in
   (* A slot past its run repeats the run's last row, which its block holds. *)
   let offset =
@@ -6544,7 +6810,7 @@ let grouped ~by ~segments ~c ~call ~named ids x =
   in
   let y, out =
     call ~g:(r * blocks) ~c
-      (Eval.reshape ~by [| r * blocks |] owners)
+      (merge_by ~by 0 [| r; blocks |] owners)
       (Eval.reshape ~by (Array.append [| r * blocks; c |] row) rows)
   in
   (* Each position's slot: its run's first slot and its rank in the run, and -1
@@ -6561,6 +6827,25 @@ let grouped ~by ~segments ~c ~call ~named ids x =
       (Eval.reshape ~by (Array.append [| r; slots |] out) y)
       (Eval.broadcast ~by (Array.append [| r; j |] out) (by_out slot)),
     out )
+
+(* [t], whose first axes are the ids' shape [s], with those as [r] groups of
+   [j], [[| r; j |]], and back: axes of one element by maps, so that a cut of
+   the ids' first axis stays on the groups' axis. *)
+let to_groups ~by r s t =
+  if Array.length s = 0 then unsqueeze_by ~by ~axes:[ 0; 1 ] t
+  else
+    let inner =
+      Array.append [| s.(0) / r |] (Array.sub s 1 (Array.length s - 1))
+    in
+    merge_by ~by 1 inner (spread_by ~by 0 [| r; s.(0) / r |] t)
+
+let of_groups ~by r s t =
+  if Array.length s = 0 then squeeze_by ~by ~axes:[ 0; 1 ] t
+  else
+    let inner =
+      Array.append [| s.(0) / r |] (Array.sub s 1 (Array.length s - 1))
+    in
+    merge_by ~by 0 [| r; s.(0) / r |] (spread_by ~by 1 inner t)
 
 let map_segments_of ~by ~segments ids f x =
   if segments < 0 then invalid_argf "%s: %d segments" by segments;
@@ -6624,7 +6909,7 @@ let map_segments_of ~by ~segments ids f x =
     fill_beside ~by ids (dtype y) (Array.append s out) (D.zero (dtype y))
   else
     let j = p / r in
-    let ids = Eval.reshape ~by [| r; j |] ids in
+    let ids = to_groups ~by r s ids in
     let named =
       elementwise ~by D.Bool [ Any ids ]
         E.(i64 0 <= operand 0 ids && operand 0 ids < i64 segments)
@@ -6643,17 +6928,14 @@ let map_segments_of ~by ~segments ids f x =
               Array.append (split xs.(0)) (rest xs) )
         in
         direct ~by ~segments ~call ~named ~gs ids
-          (Eval.reshape ~by (Array.append lead row) x)
+          (if not positional then unsqueeze_by ~by ~axes:[ 0; 1 ] x
+           else spread_by ~by 0 (Array.sub lead 0 2) x)
       else
         let full = Eval.broadcast ~by (Array.append s row) x in
-        grouped ~by ~segments ~c ~call ~named ids
-          (Eval.reshape ~by (Array.append [| r; j |] row) full)
+        grouped ~by ~segments ~c ~call ~named ids (to_groups ~by r s full)
     in
-    let named =
-      Eval.reshape ~by (Array.append [| r; j |] (units out)) named
-    in
-    Eval.reshape ~by
-      (Array.append s out)
+    let named = by_rows ~by out named in
+    of_groups ~by r s
       (ternary ~by Where named y
          (scalar_beside ~by y (dtype y) (D.zero (dtype y))))
 
@@ -6688,41 +6970,43 @@ let flat_keeps x xs =
       List.for_all (fun i -> Array.for_all (Int.equal xs.(i)) (counts i)) rest
       && one_extent (counts first)
 
-(* [x]'s rows, [[| p; k |]], at the flat positions [source], [[| p |]], over
-   its leading axes [xs]. Where flattening those axes keeps where they lie,
-   one gather from [x] flattened. Else a gather along each leading axis of
-   more than one index reads [x] where it lies, and closes by partials
-   where it reads a cut axis: first along the longest, holding [p] rows
-   times the extents of the others. *)
+(* [x]'s rows, [[| p; k |]], at the flat positions [source], [[| p |]], over its
+   leading axes [xs]. Where flattening those axes keeps where they lie, one
+   gather from [x] flattened. Else a gather along each leading axis of more than
+   one index reads [x] where it lies, and closes by partials where it reads a
+   cut axis: first along the longest, holding [p] rows times the extents of the
+   others. *)
 let rows_at x xs source =
-  let l = Array.length xs and k = dim (-1) x in
-  let m = Array.fold_left ( * ) 1 xs and p = dim 0 source in
-  if flat_keeps x xs then take ~axis:0 source (reshape [| m; k |] x)
+  let by = "Nx.matmul_segments" in
+  let l = Array.length xs in
+  if flat_keeps x xs then take ~axis:0 source (merge_by ~by 0 xs x)
   else
     let at = Array.of_list (unravel_index source xs) in
     let longest = ref 0 in
     Array.iteri (fun i d -> if d > xs.(!longest) then longest := i) xs;
     let a = !longest in
-    let one = Array.init (l + 1) (fun i -> if i = a then p else 1) in
+    let others = List.filter (fun i -> i <> a) (List.init (l + 1) Fun.id) in
     let rows = ref (take ~axis:a at.(a) x) in
     for i = 0 to l - 1 do
       if i <> a && xs.(i) > 1 then
-        rows := take_along_axis ~axis:i (reshape one at.(i)) !rows
+        rows :=
+          take_along_axis ~axis:i (unsqueeze_by ~by ~axes:others at.(i)) !rows
     done;
-    reshape [| p; k |] !rows
+    merge_by ~by 0 (Array.sub (shape !rows) 0 l) !rows
 
 (* Each position's row of [x], [[| p; k |]], for ids of shape [lead]: [x]'s
    leading axes broadcast to [lead] and flattened where that keeps where they
    lie, else gathered ({!rows_at}). *)
 let position_rows lead x =
-  let k = dim (-1) x and p = Array.fold_left ( * ) 1 lead in
+  let by = "Nx.matmul_segments" in
+  let k = dim (-1) x in
   let wide = broadcast_to (Array.append lead [| k |]) x in
-  if flat_keeps wide lead then reshape [| p; k |] wide
+  if flat_keeps wide lead then merge_by ~by 0 lead wide
   else
     let xs = Array.sub (shape x) 0 (Array.length lead) in
     let m = Array.fold_left ( * ) 1 xs in
-    let positions = reshape xs (arange_at (beside x) D.Int64 0 m 1) in
-    rows_at x xs (reshape [| p |] (broadcast_to lead positions))
+    let positions = spread_by ~by 0 xs (arange_at (beside x) D.Int64 0 m 1) in
+    rows_at x xs (flat_by ~by (broadcast_to lead positions))
 
 let matmul_segments_of ~by ?sum ids x w =
   let s = shape ids and xs = shape x and ws = shape w in
@@ -6739,13 +7023,8 @@ let matmul_segments_of ~by ?sum ids x w =
   if xs.(ns) <> k then
     invalid_argf "%s: x's last axis is %d, the weight's inputs are %d" by
       xs.(ns) k;
-  let p = numel ids in
-  let y =
-    Contraction.rows ~by ?sum
-      (Eval.reshape ~by [| p |] ids)
-      (position_rows s x) w
-  in
-  Eval.reshape ~by (Array.append s [| ws.(2) |]) y
+  let y = Contraction.rows ~by ?sum (flat_by ~by ids) (position_rows s x) w in
+  spread_by ~by 0 s y
 
 let matmul_segments ?sum ids x w =
   let by = "Nx.matmul_segments" in
@@ -6785,12 +7064,16 @@ let conv_arguments ~by ?stride ?padding ?dilation ?(groups = 1) x w =
     invalid_argf "%s: %d groups for %d output channels" by groups o;
   (stride, padding, dilation, groups)
 
-(* [w], [[o; k…; c / groups]], as [[groups; o / groups; k…; c / groups]]. *)
+(* [w], [[o; k…; c / groups]], as [[groups; o / groups; k…; c / groups]]. With
+   one channel a group, the channels' axis is the groups' and a new one comes
+   after it, where {!windows_of} finds a cut of the channels. *)
 let by_groups ~by groups w =
   let s = shape w in
   let k = Array.length s - 2 in
-  let lead = [| groups; s.(0) / groups |] in
-  Eval.reshape ~by (Array.concat [ lead; Array.sub s 1 k; [| s.(k + 1) |] ]) w
+  if s.(0) = groups then unsqueeze_by ~by ~axes:[ 1 ] w
+  else
+    let lead = [| groups; s.(0) / groups |] in
+    Eval.reshape ~by (Array.concat [ lead; Array.sub s 1 k; [| s.(k + 1) |] ]) w
 
 (* A convolution's arguments as its refusals name them: its body reshapes and
    permutes [w], so a refusal of an operand derived from it names the place of
@@ -7277,7 +7560,8 @@ let attention_op (type v s a d) ?scale ?lengths ?mask ?score ?keep
         E.(maximum (i64 0) (minimum (input 0 D.Int64) (i64 tk)))
     in
     Value.Any
-      (Eval.broadcast ~by f (Eval.reshape ~by (with_lead [| 1; 1; 1 |]) l))
+      (Eval.broadcast ~by f
+         (unsqueeze_by ~by ~axes:(List.init 3 (fun i -> ndim l + i)) l))
   in
   let loads =
     List.map load captures @ Option.to_list (Option.map length_load length)
@@ -7328,28 +7612,25 @@ let attention (type v s a d) ?scale ?lengths ?mask ?score ?keep
       let l = Array.length lead in
       let pages = dim 0 k and page = dim 2 k in
       let width = dim (-1) table in
-      let tk = width * page in
       let gathered pool =
         let rows = take ~axis:0 table pool in
         (* [[lead…; width; hk; page; d]] to [[lead…; hk; width·page; d]]. *)
-        let axes =
-          List.init l Fun.id @ [ l + 1; l; l + 2; l + 3 ]
-        in
+        let axes = List.init l Fun.id @ [ l + 1; l; l + 2; l + 3 ] in
         let rows = transpose ~axes rows in
-        reshape
-          (Array.append lead [| dim 1 pool; tk; dim 3 pool |])
-          rows
+        merge_by ~by:"Nx.attention" (l + 1) [| width; page |] rows
       in
       let named =
         logical_and (greater_equal_s table 0L)
           (less_s table (Int64.of_int pages))
       in
       let named =
-        reshape
-          (Array.append lead [| 1; 1; tk |])
-          (broadcast_to
-             (Array.append lead [| width; page |])
-             (reshape (Array.append lead [| width; 1 |]) named))
+        let by = "Nx.attention" in
+        unsqueeze_by ~by
+          ~axes:[ l; l + 1 ]
+          (merge_by ~by l [| width; page |]
+             (broadcast_to
+                (Array.append lead [| width; page |])
+                (unsqueeze_by ~by ~axes:[ l + 1 ] named)))
       in
       let mask =
         match mask with
@@ -7601,7 +7882,9 @@ let zoom_fft ?axis:(ax = -1) ~start ~step m x =
     let l = up 1 in
     let p = beside x and dt = dtype x and i = E.coord 0 in
     let along v =
-      Eval.reshape ~by (Array.init r (fun b -> if b = a then dim 0 v else 1)) v
+      unsqueeze_by ~by
+        ~axes:(List.filter (fun b -> b <> a) (List.init r Fun.id))
+        v
     in
     let pre = chirps ~by p dt ~start ~step n i in
     let post = chirps ~by p dt ~start:0. ~step m i in

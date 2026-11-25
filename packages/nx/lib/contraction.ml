@@ -8,9 +8,10 @@
    a ──reshape──▶ a's names ─┐ ├─ Contract ─▶ batch, a's free, b's free b
    ──reshape──▶ b's names ─┘ │ permute, reshape ▼ the written result
 
-   Each operand is reshaped so that every name is one axis, its groups split and
-   its unit axes dropped. The batch and summed names pair in [a]'s order.
-   [init] takes the inverse movements into the kernel's order. *)
+   Each operand moves so that every name is one axis, its groups split and its
+   unit axes dropped, by {!Pattern.between}, which carries an axis of one
+   element by a map. The batch and summed names pair in [a]'s order. [init]
+   takes the inverse movements into the kernel's order. *)
 
 module D = Nx_array.Dtype
 module M = Nx_array.Move
@@ -25,15 +26,18 @@ let pp_shape = Prim.pp_shape
    [ext.(n)] is name [n]'s extent. *)
 
 type plan = {
-  a : int array; (* [a] with each name an axis. *)
-  b : int array;
   batch : (int * int) iarray;
   contracting : (int * int) iarray;
   order : int array; (* The kernel's axes in the result's names' order. *)
   names : int array; (* The result's names' extents, in written order. *)
   shape : int array; (* The result's shape. *)
+  moves : M.t list * M.t list * M.t list * M.t list;
+      (* The movements of [a] and [b] to their names, of [init] from the
+         result's shape to its names, and of the result back: none where the
+         shapes are the names already. *)
 }
 
+let still = ([], [], [], [])
 let rec mem (n : int) = function [] -> false | x :: l -> x = n || mem n l
 
 let index_of (n : int) l =
@@ -117,16 +121,21 @@ let lower ~ext na nb nr shape =
     order.(i) <- place nr.(i) kernel
   done;
   {
-    a = extents ext na;
-    b = extents ext nb;
     batch = Iarray.of_array batch;
     contracting = Iarray.of_array summed;
     order;
     names = extents ext nr;
     shape;
+    moves = still;
   }
 
 (* Patterns *)
+
+(* Whether a layout holds names and [...] alone: each of its axes one name. *)
+let plain l =
+  List.for_all
+    (function Pattern.Name _ | Ellipsis -> true | Group _ | Unit -> false)
+    l
 
 let plan ~by ~sizes (p : Pattern.t) a b =
   match p.operands with
@@ -136,11 +145,32 @@ let plan ~by ~sizes (p : Pattern.t) a b =
         Pattern.pp p
   | [ _; _ ] ->
       let label k = if k = 0 then "a" else "b" in
-      let ~extents, ~operands, ~result, ~shape =
+      let ~extents:ext, ~operands, ~result, ~shape =
         Pattern.resolve ~by ~sizes ~label p [ a; b ]
       in
-      lower ~ext:extents (List.nth operands 0) (List.nth operands 1) result
-        shape
+      let pl =
+        lower ~ext (List.nth operands 0) (List.nth operands 1) result shape
+      in
+      (* Layouts of names alone ({!plain}) move nothing; any other moves by
+         {!Pattern.between}. *)
+      let src = p.operands in
+      if List.for_all plain src && plain p.result then pl
+      else
+        let names = Array.length p.names in
+        let covered = Array.length ext - names in
+        let between = Pattern.between ~names ~covered ext in
+        let named ns = List.map (fun n -> Pattern.Name n) (Array.to_list ns) in
+        let nr = named result in
+        let na = List.nth operands 0 and nb = List.nth operands 1 in
+        {
+          pl with
+          moves =
+            ( between (List.nth src 0) (named na) ~shape:(extents ext na) (snd a),
+              between (List.nth src 1) (named nb) ~shape:(extents ext nb)
+                (snd b),
+              between p.result nr ~shape:pl.names shape,
+              between nr p.result ~shape pl.names );
+        }
   | [ _ ] ->
       invalid_argf "%s: %a has one operand; use Nx.rearrange" by Pattern.pp p
   | operands ->
@@ -177,6 +207,25 @@ let inverse order =
 
 let operand x = (D.name (Prim.dtype x), Prim.shape x)
 
+(* [x] through the movements [ms]: a reshape that {!Eval.reshape} checks, and an
+   axis map. *)
+let rec moved ~by ms x =
+  match ms with
+  | [] -> x
+  | (m : M.t) :: ms ->
+      let x =
+        match m with
+        | Reshape s -> Eval.reshape ~by (Iarray.to_array s) x
+        | Permute p -> Eval.mapped ~by p x
+        | m -> Eval.move ~by m x
+      in
+      moved ~by ms x
+
+(* The map that keeps an operand's axes [kept] of its [r], in order, the others
+   of one element: none where it keeps them all. *)
+let kept_axes r kept =
+  if List.length kept = r then [] else [ M.Permute (Iarray.of_list kept) ]
+
 let init_to ~by shape init =
   let fits =
     match Prim.merge (Prim.shape init) shape with
@@ -193,21 +242,21 @@ let init_to ~by shape init =
 let run (type v s a b c e d) ~by ?sum ~acc ?init (dt : (v, s) D.t) pl
     (a : (a, b, d) Value.t) (b : (c, e, d) Value.t) : (v, s, d) Value.t =
   if D.is D.Boolean dt then invalid_argf "%s: the result's dtype is bool" by;
+  let ma, mb, mi, mr = pl.moves in
   let init =
     Option.map
       (fun i ->
-        let i = init_to ~by pl.shape i in
-        let i = Eval.reshape ~by pl.names i in
+        let i = moved ~by mi (init_to ~by pl.shape i) in
         if identity pl.order then i else permute ~by (inverse pl.order) i)
       init
   in
   let batch = pl.batch and contracting = pl.contracting in
   let y =
-    Eval.contract ~by ?sum ~batch ~contracting ~acc dt
-      (Eval.reshape ~by pl.a a) (Eval.reshape ~by pl.b b) init
+    Eval.contract ~by ?sum ~batch ~contracting ~acc dt (moved ~by ma a)
+      (moved ~by mb b) init
   in
   let y = if identity pl.order then y else permute ~by pl.order y in
-  Eval.reshape ~by pl.shape y
+  moved ~by mr y
 
 let contract ~by ?sum ?(sizes = []) ?init dt p a b =
   if D.is D.Boolean dt then invalid_argf "%s: the result's dtype is bool" by;
@@ -261,10 +310,10 @@ let matmul ~by ?sum a b =
     !c
   in
   let la = count in_a and lb = count in_b in
+
   let nbatch = la + lb - l in
   let rows = if ra = 1 then 0 else 1 and cols = if rb = 1 then 0 else 1 in
   let r = l + rows + cols in
-  let ea = Array.make (la + rows + 1) k and eb = Array.make (lb + 1 + cols) k in
   let batch = if nbatch = 0 then [||] else Array.make nbatch (0, 0) in
   let shape = Array.make r 0 and order = Array.make r 0 in
   (* The next place of each kind: [next_a] and [next_b] among each operand's
@@ -290,34 +339,43 @@ let matmul ~by ?sum a b =
       order.(i) <- !next_free_b;
       incr next_free_b
     end;
-    if of_a then begin
-      ea.(!next_a) <- lead.(i);
-      incr next_a
-    end;
-    if of_b then begin
-      eb.(!next_b) <- lead.(i);
-      incr next_b
-    end
+    if of_a then incr next_a;
+    if of_b then incr next_b
   done;
   if rows = 1 then begin
-    ea.(la) <- sa.(ra - 2);
     shape.(l) <- sa.(ra - 2);
     order.(l) <- la
   end;
   if cols = 1 then begin
-    eb.(lb + 1) <- sb.(rb - 1);
     shape.(r - 1) <- sb.(rb - 1);
     order.(r - 1) <- r - 1
   end;
   let pl =
     {
-      a = ea;
-      b = eb;
       batch = Iarray.of_array batch;
       contracting = [| (la + rows, lb) |];
       order;
       names = shape;
       shape;
+      moves =
+        (* An operand moves only where it drops a leading axis. *)
+        (if la = Array.length lead_a && lb = Array.length lead_b then still
+         else
+           (* An operand's axes the kernel reads: its leading axes that hold the
+              result's extent, then its last one or two. *)
+           let held r lead_x inn =
+             let off = l - Array.length lead_x in
+             List.filter
+               (fun j -> inn (j + off))
+               (List.init (Array.length lead_x) Fun.id)
+             @ List.init
+                 (r - Array.length lead_x)
+                 (fun i -> Array.length lead_x + i)
+           in
+           ( kept_axes ra (held ra lead_a in_a),
+             kept_axes rb (held rb lead_b in_b),
+             [],
+             [] ));
     }
   in
   let dt = Prim.dtype a in
@@ -365,18 +423,16 @@ let along ~by ?sum ~batch ~contracting a b =
   let shape =
     Array.of_list
       (List.map (fun (i, _) -> sa.(i)) (Iarray.to_list batch)
-      @ free sa contracting fst
-      @ free sb contracting snd)
+      @ free sa contracting fst @ free sb contracting snd)
   in
   let pl =
     {
-      a = sa;
-      b = sb;
       batch;
       contracting;
       order = Array.init (Array.length shape) Fun.id;
       names = shape;
       shape;
+      moves = still;
     }
   in
   let dt = Prim.dtype a in
@@ -546,12 +602,12 @@ let diagonal_names ns =
   List.filter (fun n -> count n ns = 1) ns
   @ List.filter (fun n -> count n ns > 1) (uniq ns)
 
-(* [x], of names [ns], where each name it repeats takes one index on all of
-   its axes: those [k] axes, of extent [e], moved last and merged, then every
-   [1 + e + ⋯ + e^(k-1)]th element of the merged axis taken from the first.
-   Its names are [diagonal_names ns]. *)
-let diagonals ~by ~ext ns x =
-  let x = Eval.reshape ~by (ints (Array.get ext) ns) x in
+(* [x], of names [ns], where each name it repeats takes one index on all of its
+   axes: those [k] axes, of extent [e], moved last and merged, then every [1 + e
+   + ⋯ + e^(k-1)]th element of the merged axis taken from the first. Its names
+   are [diagonal_names ns]. *)
+let diagonals ~by ~ext ~moves ns x =
+  let x = moved ~by moves x in
   let names = diagonal_names ns in
   if List.length names = List.length ns then x
   else
@@ -562,6 +618,29 @@ let diagonals ~by ~ext ns x =
     let rec power e k = if k = 0 then 1 else e * power e (k - 1) in
     let rec step e k = if k = 0 then 0 else power e (k - 1) + step e (k - 1) in
     let merged n = power ext.(n) (count n ns) in
+    (* A repeated name of one element keeps its first axis and drops the others
+       by a map, where a reshape would guess which. *)
+    let extra =
+      let at = ref 0 in
+      List.concat_map
+        (fun n ->
+          let k = List.length (places n) in
+          let first = !at in
+          at := !at + k;
+          if k > 1 && ext.(n) = 1 then
+            List.init (k - 1) (fun i -> first + 1 + i)
+          else [])
+        names
+    in
+    let x =
+      if extra = [] then x
+      else
+        let r = Array.length (Prim.shape x) in
+        Eval.mapped ~by
+          (Iarray.of_list
+             (List.filter (fun i -> not (mem i extra)) (List.init r Fun.id)))
+          x
+    in
     let x = Eval.reshape ~by (ints merged names) x in
     let range n =
       { M.start = 0; count = ext.(n); step = step ext.(n) (count n ns) }
@@ -603,11 +682,10 @@ let rounded (type v s w q d) ~by (dt : (v, s) D.t) (x : (w, q, d) Value.t) :
   | Some Type.Equal -> x
   | None -> Eval.apply1 ~by Cast dt x
 
-(* [x], of names [na], moved into the result's names [nr] and [shape]. *)
-let arranged ~by na nr shape x =
+(* [x], of names [na], moved into the result's names [nr]. *)
+let arranged ~by na nr x =
   let order = ints (fun nm -> index_of nm na) nr in
-  let x = if identity order then x else permute ~by order x in
-  Eval.reshape ~by shape x
+  if identity order then x else permute ~by order x
 
 let einsum (type v s d) ~by ?sum ?(sizes = []) (p : Pattern.t)
     (xs : (v, s, d) Value.t list) : (v, s, d) Value.t =
@@ -628,8 +706,30 @@ let einsum (type v s d) ~by ?sum ?(sizes = []) (p : Pattern.t)
       (List.map (fun x -> (D.name dt, Prim.shape x)) xs)
   in
   let xs = Array.of_list xs in
-  (* Checked before the contractions, which read some operands each: one
-     could consume a donation before a later one meets a dead operand. *)
+  (* Each operand moved to its names, and the result's names to its layout, by
+     {!Pattern.between}. *)
+  let nms = Array.length p.names in
+  let between src dst ~shape x =
+    if plain src && plain dst then []
+    else
+      Pattern.between ~names:nms
+        ~covered:(Array.length ext - nms)
+        ext src dst ~shape x
+  in
+  let named l = List.map (fun n -> Pattern.Name n) l in
+  let into i =
+    let ns = List.nth operands i in
+    between (List.nth p.operands i)
+      (named (Array.to_list ns))
+      ~shape:(extents ext ns)
+      (Prim.shape xs.(i))
+  in
+  let flat = ints (Array.get ext) (Array.to_list result) in
+  let out x =
+    moved ~by (between (named (Array.to_list result)) p.result ~shape flat) x
+  in
+  (* Checked before the contractions, which read some operands each: one could
+     consume a donation before a later one meets a dead operand. *)
   Array.iter (Prim.alive ~by) xs;
   let ns = Array.of_list (List.map Array.to_list operands) in
   let nr = Array.to_list result in
@@ -653,19 +753,19 @@ let einsum (type v s d) ~by ?sum ?(sizes = []) (p : Pattern.t)
   let summed_alone i x = summed ~by w (diagonal_names ns.(i)) lone.(i) x in
   (* Each operand, its diagonals taken and its lone names summed in [w]. *)
   let leaf i =
-    let x = diagonals ~by ~ext ns.(i) xs.(i) in
+    let x = diagonals ~by ~ext ~moves:(into i) ns.(i) xs.(i) in
     if lone.(i) = [] then (names i, Value.Any x)
     else (names i, Value.Any (summed_alone i x))
   in
   if n = 1 then
-    let x = diagonals ~by ~ext ns.(0) xs.(0) in
-    (* A copy where nothing is summed: a product by one would turn [-0.]
-       into [+0.] and a complex infinity's zero part into NaN. *)
+    let x = diagonals ~by ~ext ~moves:(into 0) ns.(0) xs.(0) in
+    (* A copy where nothing is summed: a product by one would turn [-0.] into
+       [+0.] and a complex infinity's zero part into NaN. *)
     if lone.(0) = [] then
-      Eval.eval ~by (Value.Copy (arranged ~by (names 0) nr shape x))
-    else arranged ~by (names 0) nr shape (rounded ~by dt (summed_alone 0 x))
-  else if n = 2 then pair ~by ?sum ~ext w dt nr shape (leaf 0) (leaf 1)
-  else tree ~by ?sum ~ext p w dt (Array.init n names) nr shape leaf
+      Eval.eval ~by (Value.Copy (out (arranged ~by (names 0) nr x)))
+    else out (arranged ~by (names 0) nr (rounded ~by dt (summed_alone 0 x)))
+  else if n = 2 then out (pair ~by ?sum ~ext w dt nr flat (leaf 0) (leaf 1))
+  else out (tree ~by ?sum ~ext p w dt (Array.init n names) nr flat leaf)
 
 (* Chains *)
 

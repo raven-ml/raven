@@ -84,6 +84,26 @@ val resolve :
 
 (** {1:moves Movements} *)
 
+val between :
+  names:int ->
+  covered:int ->
+  int array ->
+  int axis list ->
+  int axis list ->
+  shape:int array ->
+  int array ->
+  Nx_array.Move.t list
+(** [between ~names ~covered extents src dst ~shape x] is the movements, in
+    order, from an operand of shape [x] laid out as [src] to the layout [dst] of
+    shape [shape], over the [extents] of [names] names and the [covered] axes
+    [...] covers, as {!resolve} numbers them: a [Reshape] that splits groups
+    into their names of other than one element, a [Permute] that leaves out
+    [src]'s axes of one element, permutes, and adds [dst]'s, and a [Reshape]
+    that merges groups, each left out where it changes nothing. A name of one
+    element that is an axis of its own on both sides is carried by the
+    [Permute], so its cut stays on its axis; a name a layout repeats is so
+    carried once per place, in order. *)
+
 val moves :
   by:string ->
   sizes:(string * int) list ->

@@ -1266,6 +1266,413 @@ let units =
               | `Two -> reshaped (Mem2.split ~axis:0)));
     ]
 
+(* Operations over a cut axis of one element. Inside an operation that adds or
+   drops axes of one element around it, the cut stays on the axis it becomes
+   (Shapes: "a movement keeps the cut of an axis it keeps in order"; Routing: "a
+   cut of an axis that becomes a result axis cuts that axis"): each row lies,
+   and holds, as at a batch of two. Values count from 1, so every element is
+   nonzero, and the sums are exact in float32. *)
+
+type kept = {
+  name : string;
+  compute :
+    'd.
+    (int ->
+    (float, A.Dtype.float32_elt, Nx.host) Nx.t ->
+    (float, A.Dtype.float32_elt, 'd) Nx.t) ->
+    int ->
+    (float, A.Dtype.float32_elt, 'd) Nx.t;
+  along : int option;  (** The result's cut axis; [None] for a closed sum. *)
+}
+
+(* The host value of [s] counting from [1] in C order. *)
+let counting s = Nx.add_s (iota s) 1.
+
+(* Positions [i mod d] of shape [s], placed by [at] along [a]. *)
+let positions at a s d =
+  let n = Array.fold_left ( * ) 1 s in
+  let p =
+    Nx.create Nx.float32 s (Array.init n (fun i -> Float.of_int (i mod d)))
+  in
+  Nx.cast Nx.int64 (at a p)
+
+let kept_rows =
+  let whole = -1 in
+  [
+    {
+      name = "tile [|1; 1; 1|] of [n; 4] split 0";
+      along = Some 1;
+      compute = (fun at n -> Nx.tile [| 1; 1; 1 |] (at 0 (counting [| n; 4 |])));
+    };
+    {
+      name = "tile [|2; 1; 1|] of [n; 4] split 0";
+      along = Some 1;
+      compute = (fun at n -> Nx.tile [| 2; 1; 1 |] (at 0 (counting [| n; 4 |])));
+    };
+    {
+      name = "tile [|2; 2; 1; 1|] of [1; 1; n; 4] split 2";
+      along = Some 2;
+      compute =
+        (fun at n ->
+          Nx.tile [| 2; 2; 1; 1 |] (at 2 (counting [| 1; 1; n; 4 |])));
+    };
+    {
+      name = "tile [|2; 1|] of [1; n] split 1";
+      along = Some 1;
+      compute = (fun at n -> Nx.tile [| 2; 1 |] (at 1 (counting [| 1; n |])));
+    };
+    {
+      name = "repeat ~axis:0 2 of [3; n] split 1";
+      along = Some 1;
+      compute = (fun at n -> Nx.repeat ~axis:0 2 (at 1 (counting [| 3; n |])));
+    };
+    {
+      name = "repeat ~axis:0 2 of [1; n; 4] split 1";
+      along = Some 1;
+      compute =
+        (fun at n -> Nx.repeat ~axis:0 2 (at 1 (counting [| 1; n; 4 |])));
+    };
+    {
+      name = "take ~axis:0 by a 0-d p of [2; n; 4] split 1";
+      along = Some 0;
+      compute =
+        (fun at n ->
+          Nx.take ~axis:0
+            (positions at whole [||] 2)
+            (at 1 (counting [| 2; n; 4 |])));
+    };
+    {
+      name = "take ~axis:0 by p [2; 1] of [3; n; 4] split 1";
+      along = Some 2;
+      compute =
+        (fun at n ->
+          Nx.take ~axis:0
+            (positions at whole [| 2; 1 |] 3)
+            (at 1 (counting [| 3; n; 4 |])));
+    };
+    {
+      name = "take ~axis:1 by p [1] of [n; 4] split 0";
+      along = Some 0;
+      compute =
+        (fun at n ->
+          Nx.take ~axis:1
+            (positions at whole [| 1 |] 4)
+            (at 0 (counting [| n; 4 |])));
+    };
+    {
+      name = "take ~axis:1 by p [1; 2] of [n; 4] split 0";
+      along = Some 0;
+      compute =
+        (fun at n ->
+          Nx.take ~axis:1
+            (positions at whole [| 1; 2 |] 4)
+            (at 0 (counting [| n; 4 |])));
+    };
+    {
+      name = "take ~axis:1 of [3; 4] by p [n; 2] split 0";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          Nx.take ~axis:1
+            (positions at 0 [| n; 2 |] 4)
+            (at whole (counting [| 3; 4 |])));
+    };
+    {
+      name = "take ~axis:0 of [3; 1; 4] by p [2; n] split 1";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          Nx.take ~axis:0
+            (positions at 1 [| 2; n |] 3)
+            (at whole (counting [| 3; 1; 4 |])));
+    };
+    {
+      name = "take ~axis:0 of [3; 4] by p [1; n] split 1";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          Nx.take ~axis:0
+            (positions at 1 [| 1; n |] 3)
+            (at whole (counting [| 3; 4 |])));
+    };
+    {
+      name = "slice [T p] by p [2; 1] of [3; n; 4] split 1";
+      along = Some 2;
+      compute =
+        (fun at n ->
+          Nx.slice
+            [ T (positions at whole [| 2; 1 |] 3) ]
+            (at 1 (counting [| 3; n; 4 |])));
+    };
+    {
+      name = "slice [M m] by a 0-d true m of [n; 4] split 0";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          let m = Nx.greater_s (at whole (counting [||])) 0. in
+          Nx.slice [ M m ] (at 0 (counting [| n; 4 |])));
+    };
+    {
+      name = "set [I 0] of [2; n; 4] split 1";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          let x = at 1 (counting [| 2; n; 4 |]) in
+          Nx.set [ I 0 ] (Nx.mul_s (Nx.get [ 1 ] x) 2.) x);
+    };
+    {
+      name = "set [T p] by a 0-d p of [2; n; 4] split 1";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          let x = at 1 (counting [| 2; n; 4 |]) in
+          Nx.set
+            [ T (positions at whole [||] 2) ]
+            (Nx.mul_s (Nx.get [ 1 ] x) 2.)
+            x);
+    };
+    {
+      name = "set [M m] by a 0-d true m of [n; 4] split 0";
+      along = Some 0;
+      compute =
+        (fun at n ->
+          let m = Nx.greater_s (at whole (counting [||])) 0. in
+          let x = at 0 (counting [| n; 4 |]) in
+          Nx.set [ M m ] (Nx.mul_s (Nx.slice [ M m ] x) 2.) x);
+    };
+    {
+      name = "outer of [3] and [n] split 0";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          Nx.outer (at whole (counting [| 3 |])) (at 0 (counting [| n |])));
+    };
+    {
+      name = "kron of [1; n; 3] split 1 and [2; 1; 1]";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          Nx.kron
+            (at 1 (counting [| 1; n; 3 |]))
+            (at whole (counting [| 2; 1; 1 |])));
+    };
+    {
+      name = "kron of [n; 3] split 0 and [1; 1]";
+      along = Some 0;
+      compute =
+        (fun at n ->
+          Nx.kron (at 0 (counting [| n; 3 |])) (at whole (counting [| 1; 1 |])));
+    };
+    {
+      name = "unravel_index of [n; 3] split 0 in [2; 3]";
+      along = Some 0;
+      compute =
+        (fun at n ->
+          Nx.cast Nx.float32
+            (List.hd
+               (Nx.unravel_index (positions at 0 [| n; 3 |] 6) [| 2; 3 |])));
+    };
+    {
+      name = "pad [|(1, 1); (0, 0)|] of [0; n] split 1";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          Nx.pad [| (1, 1); (0, 0) |] 0. (at 1 (counting [| 0; n |])));
+    };
+    {
+      name = "correlate of [n; 4] split 0 by a kernel [1; 2]";
+      along = Some 0;
+      compute =
+        (fun at n ->
+          Nx.correlate
+            (at 0 (counting [| n; 4 |]))
+            (at whole (counting [| 1; 2 |])));
+    };
+    {
+      name = "contract \"i j, 1 j -> i\" of [2; n] and [1; n] split 1";
+      along = None;
+      compute =
+        (fun at n ->
+          Nx.contract Nx.float32
+            (Nx.Pattern.v "i j, 1 j -> i | j")
+            (at whole (counting [| 2; n |]))
+            (at 1 (counting [| 1; n |])));
+    };
+    {
+      name = "contract \"i, i j -> 1 j\" of [3] and [3; n] split 1";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          Nx.contract Nx.float32
+            (Nx.Pattern.v "i, i j -> 1 j | i")
+            (at whole (counting [| 3 |]))
+            (at 1 (counting [| 3; n |])));
+    };
+    {
+      name = "einsum \"i, i j -> 1 j\" of [3] and [3; n] split 1";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          Nx.einsum
+            (Nx.Pattern.v "i, i j -> 1 j | i")
+            [ at whole (counting [| 3 |]); at 1 (counting [| 3; n |]) ]);
+    };
+    {
+      name = "matmul_segments by ids [2; 1] of w [3; 4; n] split 2";
+      along = Some 2;
+      compute =
+        (fun at n ->
+          Nx.matmul_segments
+            (positions at whole [| 2; 1 |] 3)
+            (at whole (counting [| 2; 1; 4 |]))
+            (at 2 (counting [| 3; 4; n |])));
+    };
+    {
+      name = "gamma by a key batch [n; 3] split 0 of alpha [2; n; 3]";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          let words =
+            Nx.create Nx.float32 [| n; 3; 2 |]
+              (Array.init (n * 6) (fun i -> Float.of_int (i + 1)))
+          in
+          let key = Nx.Rng.of_tensor (Nx.cast Nx.int32 (at 0 words)) in
+          Nx.Rng.gamma ~key (at whole (counting [| 2; n; 3 |])));
+    };
+    {
+      name = "sliding_window ~window:1 of [4 n] split 0";
+      along = Some 0;
+      compute =
+        (fun at n -> Nx.sliding_window ~window:1 (at 0 (counting [| 4 * n |])));
+    };
+    {
+      name = "conv of a tap of one over [1; 3 n; 2] split 1";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          Nx.conv
+            (at 1 (counting [| 1; 3 * n; 2 |]))
+            (at whole (counting [| 3; 1; 2 |])));
+    };
+    {
+      name = "matmul of [1; n; 2; 3] split 1 by [4; n; 3; 5]";
+      along = Some 1;
+      compute =
+        (fun at n ->
+          Nx.matmul
+            (at 1 (counting [| 1; n; 2; 3 |]))
+            (at whole (counting [| 4; n; 3; 5 |])));
+    };
+    {
+      name = "slice [T p] of [3; 4] by p [n; 2] split 0";
+      along = Some 0;
+      compute =
+        (fun at n ->
+          Nx.slice
+            [ T (positions at 0 [| n; 2 |] 3) ]
+            (at whole (counting [| 3; 4 |])));
+    };
+  ]
+
+(* [c] at a batch of two and of one, on four devices: its result lies along
+   [c.along] and holds the host's elements. *)
+let law_kept c =
+  List.iter
+    (fun n ->
+      let h = c.compute (fun _ x -> x) n in
+      let at a x =
+        if a < 0 then Nx.place Mem.on x else Nx.place (Mem.split ~axis:a) x
+      in
+      let msg = Printf.sprintf "a batch of %d" n in
+      let y =
+        match c.compute at n with
+        | y -> y
+        | exception Invalid_argument e -> failf "%s raises: %s" msg e
+      in
+      match c.along with
+      | Some a ->
+          equal (placement ()) ~msg (Mem.split ~axis:a) (Nx.placement y);
+          holds_own h y
+      | None ->
+          equal (array float_exact) ~msg (Nx.to_array h)
+            (Nx.to_array (Nx.place Nx.Host.on y)))
+    [ 2; 1 ]
+
+let kept_cuts =
+  group "operations over an axis of one element"
+    [
+      cases "keep its cut on the axis it becomes, as at a batch of two"
+        ~id:(fun c -> c.name)
+        kept_rows law_kept;
+      (* take's positions of two axes keep their shape below the greatest rank;
+         at it, they are read flattened. *)
+      test "take of a result of the greatest rank reads its positions flattened"
+        (fun () ->
+          let y = counting (Array.append [| 2 |] (Array.make 30 1)) in
+          let p = positions (fun _ x -> x) 0 [| 2; 2 |] 2 in
+          let want = Nx.to_array (Nx.take ~axis:0 p y) in
+          let y' = Nx.place (Mem.split ~axis:0) y in
+          let got = Nx.take ~axis:0 (Nx.place Mem.on p) y' in
+          equal (array float_exact) want (Nx.to_array (Nx.place Nx.Host.on got)));
+      test
+        "take of a result of the greatest rank raises over positions cut along \
+         an axis of one element" (fun () ->
+          let y =
+            Nx.place Mem.on (counting (Array.append [| 2 |] (Array.make 30 1)))
+          in
+          let p =
+            Nx.place (Mem.split ~axis:0)
+              (positions (fun _ x -> x) 0 [| 1; 2 |] 2)
+          in
+          invalid ~by:"Nx.take" (fun () -> Nx.take ~axis:0 p y));
+      (* 29 axes of other extents and 4 of one element in both pass the greatest
+         rank: the all-unit axes fold out. *)
+      test "kron past the greatest rank raises over a cut axis of one element"
+        (fun () ->
+          let a = Array.init 32 (fun i -> if i <= 13 then 2 else 1) in
+          let b =
+            Array.init 32 (fun i ->
+                if i = 0 || (i >= 14 && i <= 27) then 2 else 1)
+          in
+          let a = Nx.place (Mem.split ~axis:28) (counting a) in
+          invalid ~by:"Nx.kron" (fun () ->
+              Nx.kron a (Nx.place Mem.on (counting b))));
+      (* A kernel's taps are summed against a window of x, an axis the window
+         appends and reads whole, so a kernel cut along its taps cannot be read
+         at the windows' cut: it raises, at a tap of one as of two. *)
+      cases "a kernel cut along its taps raises, at a tap of one as of two"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ( "correlate of [2; 5] by a kernel [n; 3] split 0",
+            "Nx.correlate",
+            `Correlate );
+          ( "conv ~groups:2 of [1; 2; 4; 2] by w [2; n; 3; 1] split 1",
+            "Nx.conv",
+            `Conv );
+        ]
+        (fun (_, by, op) ->
+          List.iter
+            (fun n ->
+              let at a x = Nx.place (Mem.split ~axis:a) x in
+              let on x = Nx.place Mem.on x in
+              invalid ~by (fun () ->
+                  match op with
+                  | `Correlate ->
+                      Nx.correlate
+                        (on (counting [| 2; 5 |]))
+                        (at 0 (counting [| n; 3 |]))
+                  | `Conv ->
+                      Nx.conv ~groups:2
+                        (on (counting [| 1; 2; 4; 2 |]))
+                        (at 1 (counting [| 2; n; 3; 1 |]))))
+            [ 2; 1 ]);
+      test "outer of an operand whose flatten merges a cut axis raises"
+        (fun () ->
+          let a = Nx.place (Mem.split ~axis:1) (counting [| 1; 1 |]) in
+          invalid ~by:"Nx.outer" (fun () ->
+              Nx.outer a (Nx.place Mem.on (counting [| 3 |]))));
+    ]
+
 (* Leading axes: a placement's cuts move up by one with an axis in front, and
    down without the first, whose cuts become copies. *)
 
@@ -1954,4 +2361,5 @@ let () =
          reads;
          reshapes;
          units;
+         kept_cuts;
        ])

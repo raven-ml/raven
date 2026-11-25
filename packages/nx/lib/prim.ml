@@ -1293,8 +1293,8 @@ let reduced shape axes =
    placements from it alone. *)
 
 (* Marks in [whole] the axes of a loop of rank [Array.length whole] that a
-   padded load by [p] reads whole: those it pads, crops or windows, and those
-   its windows append. *)
+   padded load by [p] reads whole: those it pads, crops or windows by a window
+   that is not {!Route.alone}, and those its windows append. *)
 let mark_padded whole (p : Nx_kernel.pad) =
   let r = Iarray.length p.lo in
   let padded a =
@@ -1303,7 +1303,8 @@ let mark_padded whole (p : Nx_kernel.pad) =
   in
   Array.iteri (fun a _ -> if a >= r || padded a then whole.(a) <- true) whole;
   Iarray.iter
-    (fun (w : Nx_array.Move.window) -> whole.(w.axis) <- true)
+    (fun (w : Nx_array.Move.window) ->
+      if not (Route.alone w) then whole.(w.axis) <- true)
     p.windows
 
 let marked whole =

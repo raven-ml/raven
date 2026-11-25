@@ -1081,7 +1081,15 @@ let reshape ~by s x =
     Prim.alive ~by x;
     x
   end
-  else move ~by (A.Move.Reshape (Iarray.of_array s)) x
+  else begin
+    let s0 = Prim.shape x in
+    if Route.ambiguous s0 s then
+      Format.kasprintf invalid_arg
+        "%s: %a to %a adds or drops an axis of one element beside another; \
+         state it with an axis map"
+        by Prim.pp_shape s0 Prim.pp_shape s;
+    move ~by (A.Move.Reshape (Iarray.of_array s)) x
+  end
 
 (* A loop: [Iarray.for_all] over an [init] would allocate. *)
 let identity p r =

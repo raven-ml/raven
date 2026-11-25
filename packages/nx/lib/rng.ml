@@ -307,14 +307,21 @@ let drawn ~by ~params ?at source dt s prog =
       let prog = bind prog key_operand (E.any (u64 w)) in
       map dispatched ~by ?at shape prog dt params
   | Key k ->
-      (* Without parameters, a draw from a host scope's words is a creation
-         at any placement. *)
+      (* Without parameters, a draw from a host scope's words is a creation at
+         any placement. *)
       if params = [||] then
         bare ~by
           "draw without ~key in Nx.Rng.with_key at a host key, which draws on \
            the host and places the draw, or draw where a compiler stages it"
           k;
-      let w = Eval.reshape ~by keys (pack dispatched ~by k) in
+      (* The batch's axes at their places, the others new, by a map, so that a
+         cut of the batch stays on the draw's axes it becomes. *)
+      let w =
+        Eval.mapped ~by
+          (Iarray.init rank (fun a ->
+               if a < first || a >= first + b then -1 else a - first))
+          (pack dispatched ~by k)
+      in
       let w = Eval.broadcast ~by shape w in
       let w = match at with None -> w | Some p -> read_at ~by p w in
       map dispatched ~by shape prog dt (Array.append [| Value.Any w |] params)
@@ -376,7 +383,7 @@ let reshape b (k : 'd key) : 'd key =
   if Array.exists (fun e -> e < 0) b || count b <> count have then
     invalid_argf "%s: a batch of shape %a holds %d keys, not %a" by pp_shape
       have (count have) pp_shape b;
-  Eval.reshape ~by (Array.append b [| 2 |]) k
+  Eval.move ~by (Reshape (Iarray.of_array (Array.append b [| 2 |]))) k
 
 let walk c k = of_tensor (Ptree.Walk.tensor c k)
 
@@ -1531,10 +1538,11 @@ let reduce_last ~by shape prog rs loads =
          at = None;
        })
 
-(* [shape] with its last axis kept as an axis of 1. *)
-let kept shape =
+(* [x], [shape] without its last axis, with that axis back as one of [1], by a
+   map. *)
+let last_kept ~by shape x =
   let r = Array.length shape in
-  Array.mapi (fun a e -> if a = r - 1 then 1 else e) shape
+  Eval.mapped ~by (Iarray.init r (fun a -> if a = r - 1 then -1 else a)) x
 
 (* [x] reduced along the last axis of [shape], its program's output folded by
    [monoid] in [c], kept as an axis of 1. *)
@@ -1542,7 +1550,7 @@ let along_last ~by shape prog monoid c loads =
   let x, () =
     reduce_last ~by shape prog Value.[ Monoid (monoid, 0, c) ] loads
   in
-  Eval.reshape ~by (kept shape) x
+  last_kept ~by shape x
 
 (* Dirichlet *)
 
@@ -1707,16 +1715,14 @@ let dirichlet_by ~by ~width ?key a =
       divisor ~lit c w (E.input 1 D.Uint64)
         (List.init (l - 1) (fun k -> E.input (2 + k) D.Uint64))
     in
-    (* Integers carry no derivative. [zero_of fs], [fs] the row's float sum
-       of the [e_j] from the same loop, is [+0], since [fs] is finite; a
-       differentiation that tracks [fs] gives it the float sum's tangent,
-       which so becomes the divisor's. *)
+    (* Integers carry no derivative. [zero_of fs], [fs] the row's float sum of
+       the [e_j] from the same loop, is [+0], since [fs] is finite; a
+       differentiation that tracks [fs] gives it the float sum's tangent, which
+       so becomes the divisor's. *)
     let float_sum = 1 + l in
     let d = E.(d0 + Special.zero_of (input float_sum c)) in
     let out = rounded dt E.(e / d) in
-    let row x =
-      Value.Any (Eval.broadcast ~by shape (Eval.reshape ~by (kept shape) x))
-    in
+    let row x = Value.Any (Eval.broadcast ~by shape (last_kept ~by shape x)) in
     let loads =
       Array.concat
         [ [| Value.Any terms |]; Array.of_list (List.map row hs); [| row fs |] ]
