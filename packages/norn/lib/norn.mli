@@ -1311,7 +1311,20 @@ module Nuts : sig
       [Nx.Rng.split_batch ~n:chains k], so a chain's randomness does not depend
       on the chain count. {!warmup} and {!sample} fold the state's draw counter
       into their key and advance it, so [a + b] draws are [a] draws then [b],
-      and no two transitions of a run share a key. *)
+      and no two transitions of a run share a key.
+
+      A chain of key [c] draws its momentum, in its geometry's whitened
+      coordinates over its float elements in walk order, as
+      [Nx.Rng.normal ~key:(fold_in (fold_in c 0) 0)], [fold_in] being
+      {!Nx.Rng.fold_in}. Doubling [j] of its tree draws
+      [u id = Nx.Rng.uniform ~key:(fold_in (fold_in (fold_in c 1) j) id)], [D]
+      the [max_depth]. It runs forward where [u 0 > 0.5]. Node [m] of level
+      [l] of its subtree, counted from [1], takes its later half's proposal
+      where [u (l 2^D + m)] is below that half's share of its weight. The
+      subtree's proposal replaces the trajectory's where its log weight exceeds
+      the trajectory's or [u ((D + 1) 2^D)] is below the ratio of their
+      weights. A step-size search before a warmup transition draws its trial
+      [t]'s momentum as a transition does, from [fold_in (fold_in c 2) t]. *)
 
   type ('u, 'f, 'd) state = private {
     position : 'u;  (** Each chain's position. *)
@@ -1349,8 +1362,9 @@ module Nuts : sig
       posteriors several times their effective draws per gradient, at a cost
       linear in the dimension; a rank above a chain's number of float elements
       is that number. Each chain's geometry is [geometry], which seeds every
-      chain, or a diagonal whose variance is the inverse of the absolute
-      gradient at the start; its step size is [1].
+      chain, or a diagonal centred on the chain's start whose variance is the
+      inverse of the absolute gradient there, clipped to [[1e-20, 1e20]]; its
+      step size is [1].
 
       Raises [Invalid_argument] if [max_depth < 1], [accept] is not in [(0, 1)],
       [rank < 0], if a tensor of [start] is not of a float dtype, naming its
@@ -1382,7 +1396,8 @@ module Nuts : sig
     ('u, 'f, 'd) state
   (** [warmup u lp k ~steps s] is [s] after [steps] transitions that tune each
       chain's step size and geometry, by Stan's schedule scaled to [steps]: an
-      initial buffer, windows that double in length, and a final buffer. Dual
+      initial buffer, windows that double in length, and a final buffer; fewer
+      than [20] steps tune the step size alone. Dual
       averaging (Nesterov 2009; Hoffman and Gelman 2014) sets each chain's step
       size for an acceptance of [s.accept], restarting at each window. At each
       window's end each chain's geometry is refitted to its window's draws and
@@ -1429,8 +1444,8 @@ module Hmc : sig
       every transition and drifts toward the bulk over many of them. Its log
       density trends across its draws, so its energy changes little from one
       draw to the next against its spread over the run, and its E-BFMI
-      ({!Diag.ebfmi}) is below [0.3]. {!Summary.v} reports [Ebfmi_low] for
-      it, with R-hat above [1.01]. {!Nuts} tunes a step size and geometry for
+      ({!Diag.ebfmi}) can fall below [0.3], which {!Summary.v} reports as
+      [Ebfmi_low], with R-hat above [1.01]. {!Nuts} tunes a step size and geometry for
       each chain and extends each trajectory until it turns, so it suits a
       posterior whose scale varies, and chains that start far from its bulk.
 
@@ -1440,7 +1455,16 @@ module Hmc : sig
       does not depend on the chain count; the jitter draws from
       [Nx.Rng.fold_in k 1]. {!warmup} and {!sample} fold the state's draw
       counter into their key and advance it, so [a + b] draws are [a] draws then
-      [b], and no two transitions of a run share a key. *)
+      [b], and no two transitions of a run share a key.
+
+      The jitter is twice [Nx.Rng.uniform ~key:(Nx.Rng.fold_in k 1)]. A chain of
+      key [c] draws its momentum, in the whitened coordinates over its float
+      elements in walk order, as
+      [Nx.Rng.normal ~key:(Nx.Rng.fold_in (Nx.Rng.fold_in c 0) 0)], and accepts
+      where [Nx.Rng.uniform ~key:(Nx.Rng.fold_in c 1)] is below the Metropolis
+      probability. A step-size search before a warmup transition draws its trial
+      [t]'s momentum as a transition does, from
+      [Nx.Rng.fold_in (Nx.Rng.fold_in c 2) t]. *)
 
   type ('u, 'f, 'd) state = private {
     position : 'u;  (** Each chain's position. *)
@@ -1481,7 +1505,8 @@ module Hmc : sig
       diagonal, to [2]; a rank above a chain's number of float elements is that
       number. The geometry is [geometry], or a diagonal centred on the chains'
       mean whose variance is the inverse of the gradient's root mean square over
-      the chains at the start. The step size and the length are [1].
+      the chains at the start, clipped to [[1e-20, 1e20]]. The step size and
+      the length are [1].
 
       Raises [Invalid_argument] if [accept] is not in [(0, 1)], [rank < 0], if
       a tensor of [start] is not of a float dtype, naming its path, if [lp] is
@@ -1513,7 +1538,7 @@ module Hmc : sig
   (** [warmup u lp k ~steps s] is [s] after [steps] transitions that tune the
       step size, the length and the geometry, by Stan's schedule scaled to
       [steps]: an initial buffer, windows that double in length, and a final
-      buffer.
+      buffer; fewer than [20] steps tune the step size and the length alone.
 
       - Dual averaging (Nesterov 2009; Hoffman and Gelman 2014) sets the step
         size for a harmonic mean acceptance over the chains of [s.accept],
@@ -1564,8 +1589,9 @@ module Ensemble : sig
       affine map of the coordinates, so a correlated posterior costs what an
       isotropic one does. Nothing is tuned.
 
-      The density is evaluated once per transition on the moving half of every
-      ensemble, a call of [walkers / 2] rows when ensembles have an even size.
+      The density is evaluated twice per transition, once for each half's move,
+      on that half of every ensemble: a call of [walkers / 2] rows when
+      ensembles have an even size.
 
       The walkers move along lines through each other, so they explore the
       region their spread spans. Walkers that start far from a narrow,
@@ -1580,8 +1606,8 @@ module Ensemble : sig
       line between two walkers then stays where the density is high only when
       it is short, and the elements whose value shapes the rest, such as the
       hyperparameters, move slowest. Their effective sizes ({!Diag.ess_bulk})
-      grow far slower than the draws, {!Summary.v} reports [Ess_low] for them,
-      and their nested R-hat may exceed [1.01]. {!Nuts} follows the gradient, so
+      grow far slower than the draws, which {!Summary.v} can report as
+      [Ess_low], and their nested R-hat may exceed [1.01]. {!Nuts} follows the gradient, so
       its trajectories bend with the posterior. Use it when the density has a
       gradient.
 
@@ -1590,7 +1616,17 @@ module Ensemble : sig
       split draws from its first walker's key. So with ensembles of a fixed size
       a walker's randomness does not depend on the number of ensembles.
       {!warmup} and {!sample} fold the state's draw counter into their key and
-      advance it, so [a + b] draws are [a] draws then [b]. *)
+      advance it, so [a + b] draws are [a] draws then [b].
+
+      An ensemble of [n] walkers whose first walker has the key [c] orders its
+      walkers by {!Nx.argsort} of [n] [float32] draws of
+      [Nx.Rng.uniform ~key:(Nx.Rng.fold_in c 2)]; the first [n / 2] in that
+      order move first, then the others. In move [h], [0] or [1], a walker of
+      key [c] draws [u m = Nx.Rng.uniform ~key:(fold_in (fold_in c h) m)],
+      [fold_in] being {!Nx.Rng.fold_in}: its partner is the walker at
+      [floor (o u 0)] in that order of the [o] walkers that do not move, its
+      stretch is [z = (1 + u 1)² / 2], and it moves where [log (u 2)] is below
+      the log of [z^(d - 1) p(y) / p(x)]. *)
 
   type ('f, 'd) stats = {
     lp : (float, 'f, 'd) Nx.t;  (** The log density at the transition's end. *)
