@@ -2157,14 +2157,25 @@ module Expr : sig
   (** {1:fmt Formatting} *)
 
   val pp : Format.formatter -> ('a, 's) t -> unit
-  (** [pp ppf e] formats [e] as it is written inside [Expr.( … )], with fewest
-      parentheses: [(amount -. over (mean amount)) /. over (std amount)].
-      Besides:
+  (** [pp ppf e] formats [e] as the calls that build it, written as inside
+      [Expr.( … )] with fewest parentheses:
+      [(amount -. over (mean amount)) /. over (std amount)]. Their arguments
+      format as follows:
       - a handle formats as its column name, quoted as an OCaml string unless it
         is an OCaml lowercase identifier that is neither a keyword nor a value
         of this module;
-      - a literal formats as its value: [15], [15.], [nan], ["text"], [true],
-        [2024-03-15], [2024-03-15T09:30:00], [15m];
+      - a literal formats as its value: [15], ["text"], [true], [2024-03-15],
+        [2024-03-15T09:30:00], [15m]. A float formats as {!Column.print} writes
+        a [float64], with [.] after a finite text that has neither a point nor
+        an exponent, and the infinities as [infinity] and [neg_infinity]:
+        [15.], [1e-08], [nan];
+      - a type formats as {!Type.pp} writes it, a kind as {!Kind.pp} writes it,
+        an order as it is written inside [Order.( … )], a step as
+        {!Time.pp_step} writes it, in parentheses when negative, and a zone as
+        its quoted name: [cast Type.float32 n] formats as [cast float32 n], and
+        [Temporal.offset (Time.Months (-1)) ts] as [Temporal.offset (-1mo) ts];
+      - a pattern formats as the call of {!Str} that made it, without the
+        module: [literal ","], [regex "a+"];
       - an OCaml value of {!const} formats as [<const>], and the functions of
         {!nx} and {!nx2} as [<fn>];
       - an {!is_in} list and {!cut} edges format with their operand's type once
