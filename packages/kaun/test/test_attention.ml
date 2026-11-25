@@ -6,251 +6,592 @@
 open Windtrap
 open Kaun
 
-(* Float64 instances for gradient checking; the maps are dtype-generic, so each
-   instance is just a type pin. *)
-
-let attention64 = Nx.Ptree.instantiate (module Attention)
-
-(* Raw q/k/v inputs as a structure, to gradient-check the attention core with
-   respect to its inputs. *)
-module Qkv64 = struct
-  type qkv = {
-    q : Nx.host Nx.float64_t;
-    k : Nx.host Nx.float64_t;
-    v : Nx.host Nx.float64_t;
-  }
-
-  let walk c { q; k; v } =
-    let open Nx.Ptree.Walk in
-    let q = field c "q" tensor q in
-    let k = field c "k" tensor k in
-    let v = field c "v" tensor v in
-    { q; k; v }
-end
-
-let qkv64 = Nx.Ptree.v Qkv64.walk
-
-let paths s x =
-  List.rev
-    (Nx.Ptree.fold s
-       (fun path _ acc -> Nx.Ptree.Path.to_string path :: acc)
-       x [])
-
-let grads_ok = function Ok () -> () | Error m -> fail m
+let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 let f64 t = Nx.cast Nx.float64 t
+let numel = Array.fold_left ( * ) 1
+let exactly = array float_exact
+let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
+let normal seed dt shape = Nx.Rng.normal ~key:(Nx.Rng.key seed) dt shape
+
+(* Float64 values in [-1, 1] that need no key, for gradient checks. *)
+let waves seed shape =
+  Nx.create Nx.float64 shape
+    (Array.init (numel shape) (fun i ->
+         Float.sin ((Float.of_int i *. 2.3) +. seed)))
 
 (* A mask that reads a boolean array at each pair. *)
 let captured m (_ : Nx.host Nx.pair) = m
 
-(* Query [i] sees keys [j <= i], as an array of [n] rows and [m] columns. *)
-let lower ~n ~m =
-  Nx.less_equal
-    (Nx.reshape [| 1; m |] (Nx.arange Nx.int32 0 m 1))
-    (Nx.reshape [| n; 1 |] (Nx.arange Nx.int32 0 n 1))
-let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
+(* Lanes padded after their real tokens see their own causally. *)
+let causal_within (p : Nx.host Nx.pair) = Nx.less_equal p.k p.q
+let grads_ok = function Ok () -> () | Error m -> fail m
 
-let values_are ?msg ~tol expected t =
-  let ft = if tol = 0. then float_exact else float tol in
-  equal ?msg (array ft) expected (Nx.to_array t)
+(* Two float64 computations of one attention that order their sums apart: a
+   compiled call and eager, or grouped heads and repeated ones. Each lies within
+   Nx.attention's bound of the exact result, about (2 d + 4) u a M with u =
+   2^-53: under 1e-13 for these inputs (d <= 6, scores a < 10, values M < 4), so
+   the two differ by less than 1e-12 after the projections' few roundings. *)
+let reordered = array (float 1e-12)
 
-(* Identity projections without bias: [apply] reduces to the attention core on
-   [x] itself, so layer results can be checked analytically. *)
-let identity_params dim =
+(* Every element is zero, of either sign. *)
+let all_zero ~msg a =
+  satisfies ~msg ~claim:"every element is zero" exactly
+    (Array.for_all (fun x -> x = 0.))
+    a
+
+(* A layer's leaves by path. *)
+
+let shapes p =
+  List.rev
+    (Nx.Ptree.fold
+       (Nx.Ptree.instantiate (module Attention))
+       (fun path t acc -> (Nx.Ptree.Path.to_string path, Nx.shape t) :: acc)
+       p [])
+
+let values p =
+  List.rev
+    (Nx.Ptree.fold
+       (Nx.Ptree.instantiate (module Attention))
+       (fun path t acc -> (Nx.Ptree.Path.to_string path, flat (f64 t)) :: acc)
+       p [])
+
+(* A layer drawn from [seed] with biases drawn too, so that the output
+   projection of zero is not zero. *)
+let layer ?q_dim ?kv_dim seed ~embed_dim dt =
+  Attention.make ~bias_init:(Init.normal ~stddev:1.) ?q_dim ?kv_dim
+    ~key:(Nx.Rng.key seed) ~embed_dim dt
+
+(* Identity projections without bias: [apply] is the core over [x]'s head
+   slices. *)
+let identity dim =
   let id () = { Linear.w = Nx.eye Nx.float32 dim; b = None } in
   { Attention.q = id (); k = id (); v = id (); out = id () }
 
-(* Scaled dot-product attention *)
-
-let test_core_shapes () =
-  let q = Nx.zeros Nx.float32 [| 2; 3; 4 |] in
-  let k = Nx.zeros Nx.float32 [| 2; 5; 4 |] in
-  let v = Nx.zeros Nx.float32 [| 2; 5; 6 |] in
-  shape_is ~msg:"queries keep their positions, values their features"
-    [| 2; 3; 6 |]
-    (Attention.scaled_dot_product_attention q k v)
-
-let test_core_analytic_weights () =
-  (* d = 1, so the scale is 1. Scores are [0; ln 4], weights softmax of that:
-     [1/5; 4/5], and the output 0.2 * 1 + 0.8 * 6 = 5. *)
-  let q = Nx.create Nx.float32 [| 1; 1 |] [| 1. |] in
-  let k = Nx.create Nx.float32 [| 2; 1 |] [| 0.; log 4. |] in
-  let v = Nx.create Nx.float32 [| 2; 1 |] [| 1.; 6. |] in
-  values_are ~msg:"softmax-weighted average of values" ~tol:1e-5 [| 5.0 |]
-    (Attention.scaled_dot_product_attention q k v)
-
-let test_core_scales_by_sqrt_d () =
-  (* d = 4: raw scores are [4 ln 2; 0], scaled by 1/sqrt 4 to [ln 4; 0], so the
-     weights are [4/5; 1/5] and the output 0.8 * 1 + 0.2 * 6 = 2. Without the
-     1/sqrt d scale the weights would be [16/17; 1/17]. *)
-  let q = Nx.create Nx.float32 [| 1; 4 |] [| 1.; 1.; 1.; 1. |] in
-  let c = log 2. in
-  let k = Nx.create Nx.float32 [| 2; 4 |] [| c; c; c; c; 0.; 0.; 0.; 0. |] in
-  let v = Nx.create Nx.float32 [| 2; 1 |] [| 1.; 6. |] in
-  values_are ~msg:"scores are scaled by 1/sqrt d" ~tol:1e-5 [| 2.0 |]
-    (Attention.scaled_dot_product_attention q k v)
-
-let test_core_mask_zeroes_weights () =
-  (* Both keys tie, but the second is masked: its weight must be exactly 0, not
-     merely small, so the huge masked value cannot leak through. *)
-  let q = Nx.create Nx.float32 [| 1; 1 |] [| 0. |] in
-  let k = Nx.create Nx.float32 [| 2; 1 |] [| 0.; 0. |] in
-  let v = Nx.create Nx.float32 [| 2; 1 |] [| 1.; 100. |] in
-  let mask = Nx.create Nx.bool [| 1; 2 |] [| true; false |] in
-  values_are ~msg:"masked keys get zero weight" ~tol:0.0 [| 1.0 |]
-    (Attention.scaled_dot_product_attention ~mask:(captured mask) q k v)
-
-let test_core_gradients () =
-  Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
+(* 2 key-value heads serving 4 query heads of head_dim 2, and the layer with
+   each key-value head's projection rows repeated for its query heads. *)
+let grouped_pair dt =
   let p =
+    Attention.make ~key:(Nx.Rng.key 28) ~bias:false ~kv_dim:4 ~embed_dim:8 dt
+  in
+  let rows = int64s [| 8 |] [| 0; 1; 0; 1; 2; 3; 2; 3 |] in
+  let repeat (l : _ Linear.t) = { l with w = Nx.take ~axis:0 rows l.w } in
+  (p, { p with k = repeat p.k; v = repeat p.v })
+
+(* make *)
+
+let test_make_shapes (q_dim, kv_dim) =
+  let p =
+    Attention.make ?q_dim ?kv_dim ~key:(Nx.Rng.key 1) ~embed_dim:6 Nx.float32
+  in
+  let q = Option.value q_dim ~default:6 in
+  let kv = Option.value kv_dim ~default:6 in
+  equal
+    (list (pair string (array int)))
+    [
+      ("q.w", [| q; 6 |]);
+      ("q.b", [| q |]);
+      ("k.w", [| kv; 6 |]);
+      ("k.b", [| kv |]);
+      ("v.w", [| kv; 6 |]);
+      ("v.b", [| kv |]);
+      ("out.w", [| 6; q |]);
+      ("out.b", [| 6 |]);
+    ]
+    (shapes p)
+
+let dims_id (q_dim, kv_dim) =
+  let dim = function None -> "default" | Some d -> string_of_int d in
+  Printf.sprintf "q_dim %s, kv_dim %s" (dim q_dim) (dim kv_dim)
+
+type projection_args = Defaults | Initializers | No_bias
+
+let projection_args_id = function
+  | Defaults -> "Linear.make's defaults"
+  | Initializers -> "a w_init and a bias_init"
+  | No_bias -> "no bias"
+
+let test_make_projections args =
+  let w_init, bias_init, bias =
+    match args with
+    | Defaults -> (None, None, None)
+    | Initializers ->
+        (Some (Init.normal ~stddev:2.), Some (Init.uniform ~scale:1.), None)
+    | No_bias -> (None, None, Some false)
+  in
+  let key = Nx.Rng.key 2 in
+  let keys = Nx.Rng.split ~n:4 key in
+  let proj i ~inputs ~outputs =
+    Linear.make ?w_init ?bias_init ?bias ~key:keys.(i) ~inputs ~outputs
+      Nx.float32
+  in
+  let expected =
     {
-      Qkv64.q = Nx.Rng.normal Nx.float64 [| 3; 2 |];
-      k = Nx.Rng.normal Nx.float64 [| 4; 2 |];
-      v = Nx.Rng.normal Nx.float64 [| 4; 2 |];
+      Attention.q = proj 0 ~inputs:6 ~outputs:8;
+      k = proj 1 ~inputs:6 ~outputs:4;
+      v = proj 2 ~inputs:6 ~outputs:4;
+      out = proj 3 ~inputs:8 ~outputs:6;
     }
   in
-  let loss { Qkv64.q; k; v } =
-    let y = Attention.scaled_dot_product_attention q k v in
-    Nx.sum (Nx.mul y y)
-  in
-  grads_ok (Rune.check_grads qkv64 loss p)
+  equal
+    (list (pair string exactly))
+    (values expected)
+    (values
+       (Attention.make ?w_init ?bias_init ?bias ~q_dim:8 ~kv_dim:4 ~key
+          ~embed_dim:6 Nx.float32))
 
-let test_core_masked_gradients () =
-  Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
+let test_make_refuses (embed_dim, q_dim, kv_dim) =
+  raises_match (Exn.invalid_arg ~sub:"Attention.make") (fun () ->
+      Attention.make ?q_dim ?kv_dim ~key:(Nx.Rng.key 0) ~embed_dim Nx.float32)
+
+let refused_dims_id (e, q, kv) =
+  let dim = function None -> "default" | Some d -> string_of_int d in
+  Printf.sprintf "embed_dim %d, q_dim %s, kv_dim %s" e (dim q) (dim kv)
+
+(* init *)
+
+let test_init_is_make () =
+  let key = Nx.Rng.key 3 in
+  equal
+    (list (pair string exactly))
+    (values (Attention.make ~key ~embed_dim:8 Nx.float32))
+    (values (Attention.init ~key ~embed_dim:8))
+
+let test_init_glorot () =
+  let p = Attention.init ~key:(Nx.Rng.key 4) ~embed_dim:8 in
+  (* Glorot-uniform over 8 inputs and 8 outputs: U(-l, l), l = sqrt (6 / 16). *)
+  let limit = Float.sqrt (6. /. 16.) in
+  List.iter
+    (fun (name, (l : (Nx.host Nx.float32_t, Nx.host) Linear.t)) ->
+      satisfies ~msg:(name ^ ".w") ~claim:"every weight within sqrt (6 / 16)"
+        exactly
+        (Array.for_all (fun x -> Float.abs x <= limit))
+        (flat l.w);
+      all_zero ~msg:(name ^ ".b") (flat (require_some l.b)))
+    [ ("q", p.q); ("k", p.k); ("v", p.v); ("out", p.out) ]
+
+(* apply *)
+
+let test_apply_shape shape =
+  let p = Attention.init ~key:(Nx.Rng.key 5) ~embed_dim:8 in
+  equal (array int) shape
+    (Nx.shape (Attention.apply ~head_dim:4 p (Nx.zeros Nx.float32 shape)))
+
+let shape_id s =
+  "[" ^ String.concat "; " (Array.to_list (Array.map string_of_int s)) ^ "]"
+
+(* apply against its pieces: x's batch axes folded into one, queries and keys
+   rotated at positions 0 to seq - 1, attend over the split heads, merged
+   through the output projection. *)
+
+type layer_mask = No_mask | Causal_tokens | Lane_masks
+
+type layer_case = {
+  dtype : int;  (** float32, bfloat16, float16 or float64 *)
+  lead : int array;
+  seq : int;
+  head_dim : int;
+  kv_heads : int;
+  groups : int;
+  embed : int;
+  mask : layer_mask;
+  lens : int array option;
+  rope : bool;
+  seed : int;
+}
+
+let dtype_names = [| "float32"; "bfloat16"; "float16"; "float64" |]
+
+let pp_layer_case ppf c =
+  Format.fprintf ppf
+    "%s lead %s seq %d head_dim %d kv_heads %d groups %d embed %d mask %s lens \
+     %s rope %b seed %d"
+    dtype_names.(c.dtype) (shape_id c.lead) c.seq c.head_dim c.kv_heads c.groups
+    c.embed
+    (match c.mask with
+    | No_mask -> "none"
+    | Causal_tokens -> "causal"
+    | Lane_masks -> "per lane")
+    (match c.lens with None -> "none" | Some l -> shape_id l)
+    c.rope c.seed
+
+let layer_gen =
+  let open Gen in
+  let* dtype = int_range 0 3 in
+  let* rank = int_range 0 2 in
+  let* lead =
+    array ~size:(constant rank)
+      (frequency [ (1, constant 0); (2, int_range 1 2) ])
+  in
+  let* seq = int_range 1 4 in
+  let* head_dim = of_list [ 2; 4 ] in
+  let* kv_heads = int_range 1 2 in
+  let* groups = int_range 1 3 in
+  let* embed = int_range 1 6 in
+  let* mask = of_list [ No_mask; Causal_tokens; Lane_masks ] in
+  let* lens = option (array ~size:(constant (numel lead)) (int_range 0 seq)) in
+  let* rope = bool in
+  let+ seed = int_range 0 1000 in
+  {
+    dtype;
+    lead;
+    seq;
+    head_dim;
+    kv_heads;
+    groups;
+    embed;
+    mask;
+    lens;
+    rope;
+    seed;
+  }
+
+let check_pieces (type b) c (dt : (float, b) Nx.dtype) =
+  let heads = c.kv_heads * c.groups and batch = numel c.lead in
   let p =
-    {
-      Qkv64.q = Nx.Rng.normal Nx.float64 [| 2; 2 |];
-      k = Nx.Rng.normal Nx.float64 [| 2; 2 |];
-      v = Nx.Rng.normal Nx.float64 [| 2; 2 |];
-    }
+    layer c.seed ~q_dim:(heads * c.head_dim) ~kv_dim:(c.kv_heads * c.head_dim)
+      ~embed_dim:c.embed dt
   in
-  let mask = Nx.create Nx.bool [| 2; 2 |] [| true; false; true; true |] in
-  let loss { Qkv64.q; k; v } =
-    let y =
-      Attention.scaled_dot_product_attention ~mask:(captured mask) q k v
-    in
-    Nx.sum (Nx.mul y y)
-  in
-  grads_ok (Rune.check_grads qkv64 loss p)
-
-let test_core_rejects_bad_shapes () =
-  let t shape = Nx.zeros Nx.float32 shape in
-  raises
-    (Invalid_argument
-       "Attention.scaled_dot_product_attention: q, k and v must have at least \
-        2 axes") (fun () ->
-      Attention.scaled_dot_product_attention (t [| 3 |])
-        (t [| 3; 2 |])
-        (t [| 3; 2 |]));
-  raises
-    (Invalid_argument
-       "Attention.scaled_dot_product_attention: q has 2 features but k has 3")
-    (fun () ->
-      Attention.scaled_dot_product_attention
-        (t [| 1; 2 |])
-        (t [| 4; 3 |])
-        (t [| 4; 2 |]));
-  raises
-    (Invalid_argument
-       "Attention.scaled_dot_product_attention: k has 2 positions but v has 3")
-    (fun () ->
-      Attention.scaled_dot_product_attention
-        (t [| 1; 2 |])
-        (t [| 2; 2 |])
-        (t [| 3; 2 |]));
-  raises
-    (Invalid_argument
-       "Attention.scaled_dot_product_attention: the batch axes of q [2; 1; 2], \
-        k [3; 4; 2] and v [3; 4; 2] do not broadcast") (fun () ->
-      Attention.scaled_dot_product_attention
-        (t [| 2; 1; 2 |])
-        (t [| 3; 4; 2 |])
-        (t [| 3; 4; 2 |]));
-  raises
-    (Invalid_argument
-       "Attention.scaled_dot_product_attention: q and k of no feature need a \
-        scale") (fun () ->
-      Attention.scaled_dot_product_attention
-        (t [| 1; 0 |])
-        (t [| 2; 0 |])
-        (t [| 2; 2 |]));
-  raises
-    (Invalid_argument
-       "Attention.scaled_dot_product_attention: lengths must have shape [2], \
-        the batch axes before the last") (fun () ->
-      Attention.scaled_dot_product_attention
-        ~lengths:(Nx.zeros Nx.int64 [| 3 |])
-        (t [| 2; 4; 1; 2 |])
-        (t [| 2; 4; 3; 2 |])
-        (t [| 2; 4; 3; 2 |]))
-
-let test_core_dtypes () =
-  let t dt = Nx.zeros dt [| 1; 2 |] in
-  raises
-    (Invalid_argument
-       "Attention.scaled_dot_product_attention: float4_e2m1fn is not float16, \
-        bfloat16, float32 or float64") (fun () ->
-      let x = t Nx.float4_e2m1fn in
-      Attention.scaled_dot_product_attention x x x);
-  raises
-    (Invalid_argument
-       "Attention.attend: float8_e4m3fn is not float16, bfloat16, float32 or \
-        float64")
-    (fun () ->
-      let x = Nx.zeros Nx.float8_e4m3fn [| 1; 1; 1; 2 |] in
-      Attention.attend x (Nx.Dense { k = x; v = x }))
-
-(* Attention is total: a query that sees no key yields zero. *)
-
-let test_core_is_total () =
-  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
-  let q = Nx.Rng.normal Nx.float32 [| 2; 3 |] in
-  let k = Nx.Rng.normal Nx.float32 [| 4; 3 |]
-  and v = Nx.Rng.normal Nx.float32 [| 4; 5 |] in
+  let shape = Array.append c.lead [| c.seq; c.embed |] in
+  let x = normal (c.seed + 1) dt shape in
   let mask =
-    Nx.create Nx.bool [| 2; 4 |]
-      [| false; false; false; false; true; false; true; true |]
+    match c.mask with
+    | No_mask -> None
+    | Causal_tokens -> Some Nx.causal
+    | Lane_masks ->
+        let shown =
+          Nx.less_s
+            (Nx.Rng.uniform
+               ~key:(Nx.Rng.key (c.seed + 2))
+               Nx.float32
+               [| batch; 1; c.seq; c.seq |])
+            0.6
+        in
+        Some (captured shown)
   in
-  let out =
-    Attention.scaled_dot_product_attention ~mask:(captured mask) q k v
+  let lengths = Option.map (int64s c.lead) c.lens in
+  let rope =
+    if c.rope then Some (Rope.make ~head_dim:c.head_dim ~context:8 ()) else None
   in
-  values_are ~msg:"a query that sees no key yields zero" ~tol:0.0
-    (Array.make 5 0.0) (Nx.slice [ I 0 ] out);
-  is_true ~msg:"its neighbour is finite and not zero"
-    (Array.for_all
-       (fun x -> Float.is_finite x && x <> 0.0)
-       (Nx.to_array (Nx.slice [ I 1 ] out)))
-
-let test_core_empty_row_gradients () =
-  Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
-  let p =
-    {
-      Qkv64.q = Nx.Rng.normal Nx.float64 [| 2; 2 |];
-      k = Nx.Rng.normal Nx.float64 [| 3; 2 |];
-      v = Nx.Rng.normal Nx.float64 [| 3; 2 |];
-    }
-  in
-  let mask =
-    Nx.create Nx.bool [| 2; 3 |] [| false; false; false; true; false; true |]
-  in
-  let loss { Qkv64.q; k; v } =
-    let y =
-      Attention.scaled_dot_product_attention ~mask:(captured mask) q k v
+  let pieces =
+    let x = Nx.reshape [| batch; c.seq; c.embed |] x in
+    let pos = Nx.reshape [| 1; c.seq |] (Nx.arange Nx.int64 0 c.seq 1) in
+    let rotate t =
+      match rope with None -> t | Some r -> Rope.apply r ~pos t
     in
+    let q = rotate (Attention.split ~head_dim:c.head_dim p.q x) in
+    let k = rotate (Attention.split ~head_dim:c.head_dim p.k x) in
+    let v = Attention.split ~head_dim:c.head_dim p.v x in
+    let lengths = Option.map (Nx.reshape [| batch |]) lengths in
+    Nx.reshape shape
+      (Attention.merge p.out
+         (Attention.attend ?mask ?lengths q (Nx.Dense { k; v })))
+  in
+  equal exactly
+    (flat (f64 pieces))
+    (flat (f64 (Attention.apply ~head_dim:c.head_dim ?mask ?lengths ?rope p x)))
+
+let law_pieces c =
+  (* A batch of no lane compares no value, so every other cover needs a lane. *)
+  let lanes = numel c.lead > 0 in
+  cover "a batch of no lane" (not lanes);
+  cover "float16" (lanes && c.dtype = 2);
+  cover "bfloat16" (lanes && c.dtype = 1);
+  cover "float64" (lanes && c.dtype = 3);
+  cover "grouped heads" (lanes && c.groups > 1);
+  cover "no batch axis" (c.lead = [||]);
+  cover "two batch axes" (lanes && Array.length c.lead = 2);
+  cover "causal" (lanes && c.mask = Causal_tokens);
+  cover "a mask per lane" (lanes && c.mask = Lane_masks);
+  cover "lengths" (lanes && c.lens <> None);
+  cover "rope" (lanes && c.rope);
+  match c.dtype with
+  | 0 -> check_pieces c Nx.float32
+  | 1 -> check_pieces c Nx.bfloat16
+  | 2 -> check_pieces c Nx.float16
+  | _ -> check_pieces c Nx.float64
+
+let test_heads_attend_apart () =
+  (* Identity projections, embed 2, 2 heads of dimension 1: head [h] is the core
+     over column [h] of [x] alone. *)
+  let x0 = [| 0.5; -1.0 |] and x1 = [| 1.0; 2.0 |] and x2 = [| -0.5; 0.0 |] in
+  let x =
+    Nx.create Nx.float32 [| 3; 2 |]
+      [| x0.(0); x0.(1); x1.(0); x1.(1); x2.(0); x2.(1) |]
+  in
+  let head h =
+    let col = Nx.create Nx.float32 [| 3; 1 |] [| x0.(h); x1.(h); x2.(h) |] in
+    flat (Attention.scaled_dot_product_attention col col col)
+  in
+  let h0 = head 0 and h1 = head 1 in
+  equal exactly
+    [| h0.(0); h1.(0); h0.(1); h1.(1); h0.(2); h1.(2) |]
+    (flat (Attention.apply ~head_dim:1 (identity 2) x))
+
+let test_grouped_equals_repeated () =
+  let grouped, repeated = grouped_pair Nx.float64 in
+  let x = normal 29 Nx.float64 [| 2; 5; 8 |] in
+  let at p = flat (Attention.apply ~head_dim:2 ~mask:Nx.causal p x) in
+  equal reordered (at repeated) (at grouped)
+
+let test_apply_causal () =
+  let p = layer 6 ~embed_dim:8 Nx.float32 in
+  let x = normal 7 Nx.float32 [| 2; 4; 8 |] in
+  let later = Nx.add_s (Nx.slice [ A; R (3, 4) ] x) 10. in
+  let x' = Nx.concatenate ~axis:1 [ Nx.slice [ A; R (0, 3) ] x; later ] in
+  let first3 x =
+    flat
+      (Nx.slice
+         [ A; R (0, 3) ]
+         (Attention.apply ~head_dim:4 ~mask:Nx.causal p x))
+  in
+  equal exactly (first3 x) (first3 x')
+
+let test_apply_no_key () =
+  let p = layer 8 ~embed_dim:4 Nx.float32 in
+  let x = normal 9 Nx.float32 [| 2; 3; 4 |] in
+  (* Token 0 sees no key; the others see every key. *)
+  let shown =
+    Nx.create Nx.bool [| 3; 3 |]
+      [| false; false; false; true; true; true; true; true; true |]
+  in
+  let y = Attention.apply ~head_dim:2 ~mask:(captured shown) p x in
+  let b = flat (require_some p.out.b) in
+  equal exactly (Array.append b b) (flat (Nx.slice [ A; I 0 ] y))
+
+let test_apply_unmasked () =
+  let p = layer 10 ~embed_dim:8 Nx.float32 in
+  let x = normal 11 Nx.float32 [| 2; 5; 8 |] in
+  let every = captured (Nx.ones Nx.bool [| 5; 5 |]) in
+  equal exactly
+    (flat (Attention.apply ~head_dim:2 ~mask:every p x))
+    (flat (Attention.apply ~head_dim:2 p x))
+
+(* Lanes padded after their real tokens, the padding NaN. A real token's output
+   is the one it has in its lane cut to its real tokens. [lead] is x's batch
+   axes and [lens] one length per lane. *)
+let padded ~lead ~lens =
+  let x = normal 12 Nx.float64 (Array.append lead [| 4; 4 |]) in
+  let x = Nx.reshape [| numel lead; 4; 4 |] x in
+  let lane b =
+    let real = Nx.slice [ R (b, b + 1); R (0, lens.(b)) ] x in
+    let pad = Nx.full Nx.float64 [| 1; 4 - lens.(b); 4 |] Float.nan in
+    Nx.concatenate ~axis:1 [ real; pad ]
+  in
+  let x = Nx.concatenate ~axis:0 (List.init (numel lead) lane) in
+  (Nx.reshape (Array.append lead [| 4; 4 |]) x, int64s lead lens)
+
+let real ~lens y =
+  let y = Nx.reshape [| Array.length lens; 4; 4 |] y in
+  Array.concat
+    (List.mapi
+       (fun b n -> flat (Nx.slice [ I b; R (0, n) ] y))
+       (Array.to_list lens))
+
+let alone ~causal ~lens p x =
+  let x = Nx.reshape [| Array.length lens; 4; 4 |] x in
+  let mask = if causal then Some Nx.causal else None in
+  Array.concat
+    (List.mapi
+       (fun b n ->
+         flat
+           (Attention.apply ~head_dim:2 ?mask p
+              (Nx.slice [ R (b, b + 1); R (0, n) ] x)))
+       (Array.to_list lens))
+
+let test_lengths_hide_padding (lead, lens, causal) =
+  let p = layer 13 ~embed_dim:4 Nx.float64 in
+  let x, lengths = padded ~lead ~lens in
+  let mask = if causal then Some causal_within else None in
+  equal exactly (alone ~causal ~lens p x)
+    (real ~lens (Attention.apply ~head_dim:2 ?mask ~lengths p x))
+
+let lengths_id (lead, lens, causal) =
+  Printf.sprintf "batch axes %s, lengths %s, %s" (shape_id lead) (shape_id lens)
+    (if causal then "causal" else "no mask")
+
+let test_lengths_compiled () =
+  Compiled.here ();
+  let p = layer 13 ~embed_dim:4 Nx.float64 in
+  let lens = [| 2; 4 |] in
+  let x, lengths = padded ~lead:[| 2 |] ~lens in
+  let both x =
+    Nx.stack
+      [
+        Attention.apply ~head_dim:2 ~lengths p x;
+        Attention.apply ~head_dim:2 ~mask:causal_within ~lengths p x;
+      ]
+  in
+  let y = Rune.jit' both x in
+  equal reordered
+    (Array.append
+       (alone ~causal:false ~lens p x)
+       (alone ~causal:true ~lens p x))
+    (Array.append (real ~lens (Nx.get [ 0 ] y)) (real ~lens (Nx.get [ 1 ] y)))
+
+let test_causal_alignment () =
+  let p = layer 14 ~embed_dim:4 Nx.float64 in
+  let x = normal 15 Nx.float64 [| 3; 4; 4 |] in
+  let lens = [| 2; 3; 4 |] in
+  (* Token i of a lane of [len] real tokens sees the keys j <= i - (4 - len). *)
+  let shifted =
+    Nx.create Nx.bool [| 3; 1; 4; 4 |]
+      (Array.init 48 (fun e ->
+           let b = e / 16 and i = e / 4 mod 4 and j = e mod 4 in
+           j <= i - (4 - lens.(b))))
+  in
+  let lengths = int64s [| 3 |] lens in
+  equal exactly
+    (flat (Attention.apply ~head_dim:2 ~mask:(captured shifted) ~lengths p x))
+    (flat (Attention.apply ~head_dim:2 ~mask:Nx.causal ~lengths p x))
+
+type grad_layer = Plain | Causal_mask | Rotated | Grouped
+
+let grad_layer_id = function
+  | Plain -> "no mask"
+  | Causal_mask -> "causal"
+  | Rotated -> "causal, rotated"
+  | Grouped -> "causal, grouped heads"
+
+let test_apply_gradients row =
+  let p, x =
+    match row with
+    | Grouped -> (fst (grouped_pair Nx.float64), waves 1. [| 2; 3; 8 |])
+    | _ -> (layer 16 ~embed_dim:4 Nx.float64, waves 1. [| 3; 4 |])
+  in
+  let mask = if row = Plain then None else Some Nx.causal in
+  let rope =
+    if row = Rotated then Some (Rope.make ~head_dim:2 ~context:64 ()) else None
+  in
+  let loss p =
+    let y = Attention.apply ~head_dim:2 ?mask ?rope p x in
     Nx.sum (Nx.mul y y)
   in
-  let g = Rune.grad qkv64 loss p in
-  Nx.Ptree.fold qkv64
-    (fun _ t () ->
-      is_true ~msg:"a gradient is finite"
-        (Array.for_all Float.is_finite
-           (Nx.to_array (Nx.cast Nx.float64 (Nx.reshape [| -1 |] t)))))
-    g ();
-  grads_ok (Rune.check_grads qkv64 loss p)
+  grads_ok (Rune.check_grads (Nx.Ptree.instantiate (module Attention)) loss p)
 
-(* Attention sinks and the score scale *)
+(* Each row is a call that differs from a valid one in one argument, and the
+   part of the message that names it. *)
+let apply_refusals =
+  let p () = Attention.init ~key:(Nx.Rng.key 17) ~embed_dim:4 in
+  let x () = Nx.zeros Nx.float32 [| 2; 4 |] in
+  let apply ?(head_dim = 2) ?mask ?lengths p x =
+    ignore (Attention.apply ~head_dim ?mask ?lengths p x)
+  in
+  [
+    ( "x is a float8 format",
+      "float8_e4m3fn is not",
+      fun () ->
+        apply
+          (Nx.Ptree.cast (module Attention) Nx.float8_e4m3fn (p ()))
+          (Nx.zeros Nx.float8_e4m3fn [| 2; 4 |]) );
+    ( "x has fewer than 2 axes",
+      "at least sequence and feature axes",
+      fun () -> apply (p ()) (Nx.zeros Nx.float32 [| 4 |]) );
+    ( "x's last axis is not embed_dim",
+      "last axis has size 3",
+      fun () -> apply (p ()) (Nx.zeros Nx.float32 [| 2; 3 |]) );
+    ( "head_dim is not positive",
+      "head_dim must be positive",
+      fun () -> apply ~head_dim:0 (p ()) (x ()) );
+    ( "head_dim does not divide the widths",
+      "head_dim 3 does not divide",
+      fun () -> apply ~head_dim:3 (p ()) (x ()) );
+    ( "the key and value projections differ in width",
+      "differ in width",
+      fun () ->
+        let v =
+          Linear.make ~key:(Nx.Rng.key 18) ~inputs:4 ~outputs:2 Nx.float32
+        in
+        apply { (p ()) with v } (x ()) );
+    ( "kv_heads does not divide heads",
+      "2 key-value heads do not divide 3",
+      fun () ->
+        apply
+          (Attention.make ~q_dim:6 ~kv_dim:4 ~key:(Nx.Rng.key 19) ~embed_dim:4
+             Nx.float32)
+          (x ()) );
+    ( "lengths is not of x's batch axes",
+      "lengths must have shape [3]",
+      fun () ->
+        apply
+          ~lengths:(Nx.zeros Nx.int64 [| 2 |])
+          (p ())
+          (Nx.zeros Nx.float32 [| 3; 2; 4 |]) );
+    ( "the mask does not broadcast",
+      "does not broadcast",
+      fun () ->
+        apply ~mask:(captured (Nx.ones Nx.bool [| 3; 3 |])) (p ()) (x ()) );
+  ]
 
-module Qkvs64 = struct
-  type qkvs = {
+(* split *)
+
+(* Head h of token s holds features h * head_dim to (h + 1) * head_dim - 1 of
+   the token's projection. *)
+let test_split head_dim =
+  let l = Linear.make ~key:(Nx.Rng.key 20) ~inputs:4 ~outputs:6 Nx.float32 in
+  let x = normal 21 Nx.float32 [| 2; 3; 4 |] in
+  let y = flat (Linear.apply l x) and heads = 6 / head_dim in
+  let expected =
+    Array.init
+      (2 * heads * 3 * head_dim)
+      (fun i ->
+        let e = i mod head_dim and s = i / head_dim mod 3 in
+        let h = i / (head_dim * 3) mod heads
+        and b = i / (head_dim * 3 * heads) in
+        y.((((b * 3) + s) * 6) + (h * head_dim) + e))
+  in
+  let got = Attention.split ~head_dim l x in
+  equal
+    (pair (array int) exactly)
+    ([| 2; heads; 3; head_dim |], expected)
+    (Nx.shape got, flat got)
+
+let split_refusals =
+  let split ~head_dim x =
+    let l = Linear.make ~key:(Nx.Rng.key 22) ~inputs:4 ~outputs:6 Nx.float32 in
+    ignore (Attention.split ~head_dim l x)
+  in
+  [
+    ( "x does not have three axes",
+      "x must have shape [batch; seq; embed]",
+      fun () -> split ~head_dim:2 (Nx.zeros Nx.float32 [| 2; 4 |]) );
+    ( "head_dim is not positive",
+      "head_dim must be positive",
+      fun () -> split ~head_dim:0 (Nx.zeros Nx.float32 [| 1; 2; 4 |]) );
+    ( "head_dim does not divide the width",
+      "head_dim 4 does not divide",
+      fun () -> split ~head_dim:4 (Nx.zeros Nx.float32 [| 1; 2; 4 |]) );
+  ]
+
+(* attend *)
+
+(* Lanes that share dense rows: lane [i] of [batch] reads row [i / (batch /
+   rows)], and its result is the one it has over a copy of that row. *)
+let shared_rows ~batch ~rows ~m =
+  let q = normal 31 Nx.float64 [| batch; 4; 2; 3 |] in
+  let k = normal 32 Nx.float64 [| rows; 2; m; 3 |] in
+  let v = normal 33 Nx.float64 [| rows; 2; m; 2 |] in
+  let lanes = batch / rows in
+  let copy t =
+    Nx.take ~axis:0
+      (int64s [| batch |] (Array.init batch (fun i -> i / lanes)))
+      t
+  in
+  let sinks = normal 34 Nx.float64 [| 4 |] in
+  let f k v q = Attention.attend ~sinks q (Nx.Dense { k; v }) in
+  (q, f k v, f (copy k) (copy v))
+
+let test_shared_rows (batch, rows, m) =
+  Compiled.here ();
+  let q, shared, copied = shared_rows ~batch ~rows ~m in
+  let expected = flat (copied q) in
+  equal ~msg:"eager" exactly expected (flat (shared q));
+  equal ~msg:"compiled" reordered expected (flat (Rune.jit' shared q))
+
+let shared_id (batch, rows, m) =
+  Printf.sprintf "%d lanes over %d rows of %d keys" batch rows m
+
+module Qkvs = struct
+  type t = {
     q : Nx.host Nx.float64_t;
     k : Nx.host Nx.float64_t;
     v : Nx.host Nx.float64_t;
@@ -266,170 +607,412 @@ module Qkvs64 = struct
     { q; k; v; sinks }
 end
 
-let qkvs64 = Nx.Ptree.v Qkvs64.walk
+let qkvs = Nx.Ptree.v Qkvs.walk
 
-(* The definition, computed directly: a softmax over the scores with the sinks
-   appended as a last column, that column dropped. [q], [k] and [v] are [batch;
-   heads; _; d] and [sinks] is [heads; 1]. *)
-let sink_reference ?mask ?scale ~sinks q k v =
-  let heads = Nx.dim 1 q and n = Nx.dim 2 q and m = Nx.dim 2 k in
-  let scale =
-    Option.value scale ~default:(1.0 /. sqrt (float_of_int (Nx.dim 3 q)))
+let qkvs_of ~q ~k ~v ~sinks =
+  {
+    Qkvs.q = waves 1. q;
+    k = waves 2. k;
+    v = waves 3. v;
+    sinks = waves 4. sinks;
+  }
+
+let test_shared_rows_gradients () =
+  let p =
+    qkvs_of ~q:[| 4; 2; 3; 2 |] ~k:[| 2; 1; 4; 2 |] ~v:[| 2; 1; 4; 3 |]
+      ~sinks:[| 2 |]
   in
-  let scores = Nx.mul_s (Nx.matmul q (Nx.swapaxes 2 3 k)) scale in
-  let scores =
-    match mask with
-    | None -> scores
-    | Some mk -> Nx.where mk scores (Nx.scalar_like scores Float.neg_infinity)
+  let loss { Qkvs.q; k; v; sinks } =
+    let y = Attention.attend ~sinks q (Nx.Dense { k; v }) in
+    Nx.sum (Nx.mul y y)
+  in
+  grads_ok (Rune.check_grads qkvs loss p)
+
+(* Keys past a lane's length are NaN. *)
+let poison_past n t =
+  let s = Nx.shape t in
+  let r = Array.length s in
+  let rows = List.init (r - 2) (fun _ -> Nx.A) @ [ Nx.R (n, s.(r - 2)) ] in
+  let pad = Array.copy s in
+  pad.(r - 2) <- s.(r - 2) - n;
+  Nx.set rows (Nx.full (Nx.dtype t) pad Float.nan) t
+
+let test_attend_lengths () =
+  let q = normal 35 Nx.float32 [| 2; 2; 3; 4 |] in
+  (* Lane 0 holds 1 key, lane 1 all 5. *)
+  let lane0 t = poison_past 1 (Nx.slice [ R (0, 1) ] t) in
+  let keys seed =
+    let t = normal seed Nx.float32 [| 2; 2; 5; 4 |] in
+    Nx.concatenate ~axis:0 [ lane0 t; Nx.slice [ R (1, 2) ] t ]
+  in
+  let k = keys 36 and v = keys 37 in
+  let lane i n =
+    let keys t = Nx.slice [ R (i, i + 1); A; R (0, n) ] t in
+    flat
+      (Attention.scaled_dot_product_attention
+         (Nx.slice [ R (i, i + 1) ] q)
+         (keys k) (keys v))
+  in
+  equal exactly
+    (Array.append (lane 0 1) (lane 1 5))
+    (flat
+       (Attention.attend
+          ~lengths:(int64s [| 2 |] [| 1; 5 |])
+          q
+          (Nx.Dense { k; v })))
+
+(* Two keys of score 0, a bias of -8.03125 on the second, and values 0 and 1:
+   the result is sigmoid (-8.03125). A bias rounded to bfloat16, 8 or 8.0625,
+   would be off by 3%, against bfloat16's rounding of the result, under 0.4%. *)
+let test_bias_keeps_its_bits () =
+  let bf16 = Nx.bfloat16 in
+  let q = Nx.zeros bf16 [| 1; 1; 1; 2 |] in
+  let k = Nx.zeros bf16 [| 1; 1; 2; 2 |] in
+  let v = Nx.create bf16 [| 1; 1; 2; 1 |] [| 0.; 1. |] in
+  let bias = Nx.create Nx.float32 [| 1; 1; 1; 2 |] [| 0.; -8.03125 |] in
+  let y = Attention.attend ~bias q (Nx.Dense { k; v }) in
+  let y = Nx.item [ 0; 0; 0; 0 ] y in
+  let want = 1. /. (1. +. exp 8.03125) in
+  equal (float (want *. 0x1p-8)) want y
+
+(* Dropout of the weights: queries of two heads over one key-value head of five
+   keys. Under the mask, rows 0 and 2 see one key each, row 1 every key, row 3
+   none. *)
+let drop_visible =
+  lazy
+    (Nx.create Nx.bool [| 1; 1; 4; 5 |]
+       (Array.concat
+          [
+            [| true; false; false; false; false |];
+            [| true; true; true; true; true |];
+            [| false; false; true; false; false |];
+            [| false; false; false; false; false |];
+          ]))
+
+let drop_bias () =
+  Nx.create Nx.float32 [| 1; 1; 1; 5 |] [| 0.; 0.5; -1.; 0.25; 2. |]
+
+let drop_sinks () = Nx.create Nx.float64 [| 2 |] [| -0.5; 1.5 |]
+
+(* One key per pair, shared by the heads. *)
+let drop_keys =
+  lazy
+    (Nx.Rng.reshape [| 1; 1; 4; 5 |] (Nx.Rng.split_batch ~n:20 (Nx.Rng.key 6)))
+
+let drop_inputs () =
+  ( normal 1 Nx.float64 [| 1; 2; 4; 4 |],
+    normal 2 Nx.float64 [| 1; 1; 5; 4 |],
+    normal 3 Nx.float64 [| 1; 1; 5; 3 |] )
+
+let drop_mask () =
+  Dropout.mask ~rate:0.5 ~key:(Lazy.force drop_keys)
+    (Nx.zeros Nx.float64 [| 1; 2; 4; 5 |])
+
+(* What [attend] is given, of which [mask] and [sinks] may be left out. *)
+type drop_case = { masked : bool; sinked : bool }
+
+let drop_cases =
+  List.concat_map
+    (fun masked -> List.map (fun sinked -> { masked; sinked }) [ true; false ])
+    [ true; false ]
+
+let drop_case_id c =
+  Printf.sprintf "%s, %s"
+    (if c.masked then "masked" else "unmasked")
+    (if c.sinked then "sinks" else "no sinks")
+
+let dropped c ~bias ~sinks q k v =
+  let mask =
+    if c.masked then Some (captured (Lazy.force drop_visible)) else None
+  in
+  let sinks = if c.sinked then Some sinks else None in
+  Attention.attend ?mask ~bias ?sinks ~dropout:0.5 ~key:(Lazy.force drop_keys) q
+    (Nx.Dense { k; v })
+
+(* The weights in full: the softmax over the visible scores, biased, and a last
+   column of the sinks, or of a score so low that its weight is exactly 0 beside
+   any visible key and 1 where none is visible; then that column dropped, the
+   weights dropped, and the values weighed. *)
+let dropped_reference c ~bias ~sinks q k v =
+  let s = Nx.mul_s (Nx.matmul q (Nx.swapaxes 2 3 k)) 0.5 in
+  let s = Nx.add s (f64 bias) in
+  let s =
+    if not c.masked then s
+    else
+      Nx.where (Lazy.force drop_visible) s (Nx.scalar_like s Float.neg_infinity)
   in
   let column =
-    Nx.broadcast_to
-      [| Nx.dim 0 q; heads; n; 1 |]
-      (Nx.reshape [| 1; heads; 1; 1 |] sinks)
+    if c.sinked then Nx.reshape [| 1; 2; 1; 1 |] sinks
+    else Nx.full Nx.float64 [| 1; 1; 1; 1 |] (-1e30)
   in
-  let weights = Nx.softmax (Nx.concatenate ~axis:3 [ scores; column ]) in
-  Nx.matmul (Nx.slice [ A; A; A; R (0, m) ] weights) v
+  let column = Nx.broadcast_to [| 1; 2; 4; 1 |] column in
+  let w = Nx.softmax (Nx.concatenate ~axis:3 [ s; column ]) in
+  let w = Nx.slice [ A; A; A; R (0, 5) ] w in
+  let w = Nx.where (drop_mask ()) (Nx.mul_s w 2.) (Nx.scalar_like w 0.) in
+  Nx.matmul w v
 
-let flat_of t = Nx.to_array (Nx.reshape [| -1 |] t)
-let same ~msg a b = equal ~msg (array (float 1e-5)) (flat_of a) (flat_of b)
-let sink_values dtype = Nx.create dtype [| 4; 1 |] [| -1.5; 0.25; 2.0; 0.75 |]
+(* Which of a row's cases the mask and keys give it: it sees no key, keeps none,
+   all or some of those it sees. *)
+let drop_row_cases () =
+  let vis =
+    Nx.to_array (Nx.broadcast_to [| 1; 2; 4; 5 |] (Lazy.force drop_visible))
+  in
+  let z = Nx.to_array (drop_mask ()) in
+  let case r =
+    let seen = ref 0 and kept = ref 0 in
+    for j = 0 to 4 do
+      if vis.((5 * r) + j) then begin
+        incr seen;
+        if z.((5 * r) + j) then incr kept
+      end
+    done;
+    if !seen = 0 then "sees none"
+    else if !kept = 0 then "keeps none"
+    else if !kept = !seen then "keeps all"
+    else "keeps some"
+  in
+  List.sort_uniq compare (List.init 8 case)
 
-let test_core_scale () =
-  Nx.Rng.with_key (Nx.Rng.key 39) @@ fun () ->
-  let q = Nx.Rng.normal Nx.float32 [| 2; 3; 4 |] in
-  let k = Nx.Rng.normal Nx.float32 [| 2; 5; 4 |] in
-  let v = Nx.Rng.normal Nx.float32 [| 2; 5; 4 |] in
-  same ~msg:"the default scale is 1 / sqrt d"
-    (Attention.scaled_dot_product_attention q k v)
-    (Attention.scaled_dot_product_attention ~scale:0.5 q k v);
-  same ~msg:"a scale is a factor on the scores"
-    (Attention.scaled_dot_product_attention (Nx.mul_s q 3.0) k v)
-    (Attention.scaled_dot_product_attention ~scale:1.5 q k v)
+(* The reference rounds a few times in float64 more than attend: 1e-12 is
+   thousands of ulps of results below 10. *)
+let drop_close = array (float 1e-12)
 
-let test_sinks_are_an_appended_column () =
-  Nx.Rng.with_key (Nx.Rng.key 40) @@ fun () ->
-  let q = Nx.Rng.normal Nx.float32 [| 2; 4; 3; 6 |] in
-  let k = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 6 |] in
-  let v = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 6 |] in
-  let sinks = sink_values Nx.float32 in
-  same ~msg:"without a mask"
-    (sink_reference ~sinks q k v)
-    (Attention.scaled_dot_product_attention ~sinks q k v);
-  let mask =
-    Nx.less (Nx.Rng.normal Nx.float32 [| 3; 5 |]) (Nx.scalar Nx.float32 0.5)
-  in
-  same ~msg:"under a mask"
-    (sink_reference ~mask ~sinks q k v)
-    (Attention.scaled_dot_product_attention ~mask:(captured mask) ~sinks q k v);
-  same ~msg:"the scale does not multiply the sinks"
-    (sink_reference ~mask ~scale:1.3 ~sinks q k v)
-    (Attention.scaled_dot_product_attention ~mask:(captured mask) ~scale:1.3
-       ~sinks q k v);
-  let per_query = Nx.Rng.normal Nx.float32 [| 2; 4; 3 |] in
-  let by_head h =
-    Attention.scaled_dot_product_attention
-      ~sinks:(Nx.slice [ A; R (h, h + 1) ] per_query)
-      (Nx.slice [ A; R (h, h + 1) ] q)
-      (Nx.slice [ A; R (h, h + 1) ] k)
-      (Nx.slice [ A; R (h, h + 1) ] v)
-  in
-  same ~msg:"sinks of the scores' shape without its last axis"
-    (Nx.concatenate ~axis:1 (List.init 4 by_head))
-    (Attention.scaled_dot_product_attention ~sinks:per_query q k v);
-  let huge = Nx.create Nx.float32 [| 4; 1 |] [| 90.; -90.; 0.; 200. |] in
-  let out = Attention.scaled_dot_product_attention ~sinks:huge q k v in
-  is_true ~msg:"large sinks stay finite"
-    (Array.for_all Float.is_finite (flat_of out));
-  same ~msg:"a sink far below the scores changes nothing"
-    (Nx.slice [ A; I 1 ] (Attention.scaled_dot_product_attention q k v))
-    (Nx.slice [ A; I 1 ] out)
+let test_dropout_values c =
+  equal ~msg:"the rows reach each case" (list string)
+    [ "keeps all"; "keeps none"; "keeps some"; "sees none" ]
+    (drop_row_cases ());
+  let q, k, v = drop_inputs () in
+  let bias = drop_bias () and sinks = drop_sinks () in
+  equal drop_close
+    (flat (dropped_reference c ~bias ~sinks q k v))
+    (flat (dropped c ~bias ~sinks q k v))
 
-let test_sinks_keep_attention_total () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
-  let p =
-    {
-      Qkvs64.q = Nx.Rng.normal Nx.float64 [| 2; 2; 2 |];
-      k = Nx.Rng.normal Nx.float64 [| 2; 3; 2 |];
-      v = Nx.Rng.normal Nx.float64 [| 2; 3; 2 |];
-      sinks = Nx.create Nx.float64 [| 2; 1 |] [| 0.5; -1.0 |];
-    }
+let test_dropout_gradients c =
+  let q, k, v = drop_inputs () in
+  let bias = drop_bias () and sinks = drop_sinks () in
+  let d f x = Rune.grad Nx.Ptree.tensor (fun x -> Nx.sum (f x)) x in
+  let grad ?(close = drop_close) name g =
+    equal ~msg:name close
+      (flat (g (dropped_reference c)))
+      (flat (g (dropped c)))
   in
-  let mask =
-    Nx.create Nx.bool [| 2; 3 |] [| false; false; false; true; false; true |]
-  in
-  let attend { Qkvs64.q; k; v; sinks } =
-    Attention.scaled_dot_product_attention ~mask:(captured mask) ~sinks q k v
-  in
-  let first_query t = flat_of (Nx.slice [ A; I 0 ] t) in
-  equal ~msg:"a query that sees no key yields zero" (array float_exact)
-    (Array.make 4 0.0)
-    (first_query (attend p));
-  let loss p =
-    let y = attend p in
-    Nx.sum (Nx.mul y y)
-  in
-  let g = Rune.grad qkvs64 loss p in
-  equal ~msg:"and has zero gradients" (array float_exact) (Array.make 4 0.0)
-    (first_query g.q);
-  Nx.Ptree.fold qkvs64
-    (fun _ t () ->
-      is_true ~msg:"a gradient is finite"
-        (Array.for_all Float.is_finite
-           (Nx.to_array (Nx.cast Nx.float64 (Nx.reshape [| -1 |] t)))))
-    g ();
-  grads_ok (Rune.check_grads qkvs64 loss p)
+  grad "q" (fun f -> d (fun q -> f ~bias ~sinks q k v) q);
+  grad "k" (fun f -> d (fun k -> f ~bias ~sinks q k v) k);
+  grad "v" (fun f -> d (fun v -> f ~bias ~sinks q k v) v);
+  (* The bias is float32: each gradient rounds to it once from float64 values
+     1e-12 apart, so they differ by at most a float32 ulp, under 1e-6 for
+     gradients below 4. *)
+  grad
+    ~close:(array (float 1e-6))
+    "bias"
+    (fun f -> d (fun bias -> f ~bias ~sinks q k v) bias);
+  if c.sinked then
+    grad "sinks" (fun f -> d (fun sinks -> f ~bias ~sinks q k v) sinks)
 
-let test_sink_gradients () =
-  Nx.Rng.with_key (Nx.Rng.key 43) @@ fun () ->
-  let p =
-    {
-      Qkvs64.q = Nx.Rng.normal Nx.float64 [| 3; 4; 2 |];
-      k = Nx.Rng.normal Nx.float64 [| 3; 4; 2 |];
-      v = Nx.Rng.normal Nx.float64 [| 3; 4; 2 |];
-      sinks = Nx.create Nx.float64 [| 3; 1 |] [| 0.5; -1.0; 3.0 |];
-    }
-  in
-  let loss { Qkvs64.q; k; v; sinks } =
-    let y = Attention.scaled_dot_product_attention ~scale:0.9 ~sinks q k v in
-    Nx.sum (Nx.mul y y)
-  in
-  let g = Rune.grad qkvs64 loss p in
-  is_true ~msg:"the sinks have a gradient"
-    (Array.for_all (fun x -> x <> 0.0) (Nx.to_array g.sinks));
-  grads_ok (Rune.check_grads qkvs64 loss p)
-
-let test_sinks_compiled () =
+let test_dropout_compiled () =
   Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 44) @@ fun () ->
-  let q = Nx.Rng.normal Nx.float32 [| 2; 4; 3; 6 |] in
-  let k = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 6 |] in
-  let v = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 6 |] in
-  let sinks = sink_values Nx.float32 in
-  let mask =
-    Nx.less (Nx.Rng.normal Nx.float32 [| 3; 5 |]) (Nx.scalar Nx.float32 0.5)
+  let q, k, v = drop_inputs () in
+  let bias = drop_bias () and sinks = drop_sinks () in
+  let c = { masked = true; sinked = true } in
+  let f q = dropped c ~bias ~sinks q k v in
+  let with_grad q =
+    let g = Rune.grad Nx.Ptree.tensor (fun q -> Nx.sum (f q)) q in
+    Nx.concatenate ~axis:0 [ Nx.reshape [| -1 |] (f q); Nx.reshape [| -1 |] g ]
   in
-  let f q =
-    Attention.scaled_dot_product_attention ~mask:(captured mask) ~scale:0.7
-      ~sinks q k v
-  in
-  same ~msg:"compiled = eager" (f q) (Rune.jit' f q)
+  equal reordered (flat (with_grad q)) (flat (Rune.jit' with_grad q))
 
-let test_sinks_reject_bad_shapes () =
+let test_dropout_zero shared =
+  let q, k, v = drop_inputs () in
+  let q = if shared then Nx.concatenate ~axis:0 [ q; q ] else q in
+  let kv = Nx.Dense { k; v } in
+  let mask =
+    if shared then None else Some (captured (Lazy.force drop_visible))
+  in
+  equal exactly
+    (flat (Attention.attend ?mask q kv))
+    (flat (Attention.attend ?mask ~dropout:0. q kv))
+
+(* Keys of five slots in pages of three, read through a table in reverse. *)
+let test_dropout_paged () =
+  let q, k, v = drop_inputs () in
+  let pad x = Nx.pad [| (0, 0); (0, 0); (0, 1); (0, 0) |] 0. x in
+  let paged x =
+    let c = Nx.dim 3 x in
+    let pages = Nx.reshape [| 2; 1; 3; c |] (pad x) in
+    Nx.concatenate ~axis:0
+      [ Nx.slice [ R (1, 2) ] pages; Nx.slice [ R (0, 1) ] pages ]
+  in
+  let table = int64s [| 1; 2 |] [| 1; 0 |] in
+  let mask =
+    captured
+      (Nx.pad
+         [| (0, 0); (0, 0); (0, 0); (0, 1) |]
+         false (Lazy.force drop_visible))
+  in
+  let keys =
+    Nx.Rng.reshape [| 1; 1; 4; 6 |] (Nx.Rng.split_batch ~n:24 (Nx.Rng.key 6))
+  in
+  let attend kv = Attention.attend ~mask ~dropout:0.5 ~key:keys q kv in
+  equal exactly
+    (flat (attend (Nx.Dense { k = pad k; v = pad v })))
+    (flat (attend (Nx.Paged { k = paged k; v = paged v; table })))
+
+(* A rate of 0.25 scales by 4/3, which bfloat16 does not hold, so rounding once
+   more is seen. *)
+let test_dropout_rounds_twice () =
+  let bf16 = Nx.bfloat16 in
+  let q = Nx.cast bf16 (normal 38 Nx.float32 [| 1; 2; 3; 4 |]) in
+  let k = Nx.cast bf16 (normal 39 Nx.float32 [| 1; 1; 6; 4 |]) in
+  let v = Nx.cast bf16 (normal 40 Nx.float32 [| 1; 1; 6; 3 |]) in
+  let key = Nx.Rng.key 41 in
+  let z = Dropout.mask ~rate:0.25 ~key (Nx.zeros bf16 [| 1; 2; 3; 6 |]) in
+  let o, _ =
+    Nx.attention ~keep:(fun _ -> z) ~acc:Nx.float32 ~kv:(Nx.Dense { k; v }) q
+  in
+  let expected = Nx.cast bf16 (Nx.mul_s (Nx.cast Nx.float32 o) (1. /. 0.75)) in
+  equal exactly
+    (flat (f64 expected))
+    (flat (f64 (Attention.attend ~dropout:0.25 ~key q (Nx.Dense { k; v }))))
+
+let test_attend_gradients () =
+  let p =
+    qkvs_of ~q:[| 1; 4; 3; 2 |] ~k:[| 1; 2; 4; 2 |] ~v:[| 1; 2; 4; 3 |]
+      ~sinks:[| 4 |]
+  in
+  let loss { Qkvs.q; k; v; sinks } =
+    let y =
+      Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q (Nx.Dense { k; v })
+    in
+    Nx.sum (Nx.mul y y)
+  in
+  grads_ok (Rune.check_grads qkvs loss p)
+
+(* Four query heads of one lane over two key-value heads, or four lanes of two
+   heads over rows of two. *)
+let attend_refusals =
   let t shape = Nx.zeros Nx.float32 shape in
-  raises
-    (Invalid_argument
-       "Attention.scaled_dot_product_attention: sinks of shape [3; 1] do not \
-        broadcast to [4; 2], the scores without their last axis") (fun () ->
-      Attention.scaled_dot_product_attention
-        ~sinks:(t [| 3; 1 |])
-        (t [| 4; 2; 2 |])
-        (t [| 4; 2; 2 |])
-        (t [| 4; 2; 2 |]))
+  let dense ~rows ~heads ~m ~d =
+    Nx.Dense { k = t [| rows; heads; m; d |]; v = t [| rows; heads; m; d |] }
+  in
+  let q () = t [| 1; 4; 2; 2 |] and kv () = dense ~rows:1 ~heads:2 ~m:2 ~d:2 in
+  let lanes () = t [| 4; 2; 1; 3 |] in
+  let rows n = dense ~rows:n ~heads:2 ~m:5 ~d:3 in
+  let attend ?mask ?lengths ?scale ?bias ?sinks ?dropout ?key q kv =
+    ignore
+      (Attention.attend ?mask ?lengths ?scale ?bias ?sinks ?dropout ?key q kv)
+  in
+  [
+    ( "q is a float8 format",
+      "float8_e4m3fn is not",
+      fun () ->
+        let x = Nx.zeros Nx.float8_e4m3fn [| 1; 1; 1; 2 |] in
+        attend x (Nx.Dense { k = x; v = x }) );
+    ( "q does not have four axes",
+      "q must have shape",
+      fun () -> attend (t [| 4; 2; 2 |]) (kv ()) );
+    ( "k's d is not q's",
+      "k must have shape",
+      fun () ->
+        attend (q ())
+          (Nx.Dense { k = t [| 1; 2; 2; 3 |]; v = t [| 1; 2; 2; 2 |] }) );
+    ("0 rows", "rows dividing 4", fun () -> attend (lanes ()) (rows 0));
+    ( "3 rows of 4 lanes",
+      "rows dividing 4",
+      fun () -> attend (lanes ()) (rows 3) );
+    ( "8 rows of 4 lanes",
+      "rows dividing 4",
+      fun () -> attend (lanes ()) (rows 8) );
+    ( "kv_heads does not divide heads",
+      "3 key-value heads do not divide 4",
+      fun () -> attend (q ()) (dense ~rows:1 ~heads:3 ~m:2 ~d:2) );
+    ( "d is 0 without scale",
+      "no feature need a scale",
+      fun () ->
+        attend
+          (t [| 1; 1; 2; 0 |])
+          (Nx.Dense { k = t [| 1; 1; 2; 0 |]; v = t [| 1; 1; 2; 2 |] }) );
+    ( "sinks are not [heads]",
+      "sinks must have shape [4]",
+      fun () -> attend ~sinks:(t [| 2 |]) (q ()) (kv ()) );
+    ( "lengths are not [batch]",
+      "lengths must have shape [1]",
+      fun () -> attend ~lengths:(Nx.zeros Nx.int64 [||]) (q ()) (kv ()) );
+    ( "the mask does not broadcast",
+      "does not broadcast",
+      fun () ->
+        attend ~mask:(captured (Nx.ones Nx.bool [| 3; 3 |])) (q ()) (kv ()) );
+    ( "the bias does not broadcast",
+      "a bias of shape [4] does not broadcast",
+      fun () -> attend ~bias:(t [| 4 |]) (q ()) (kv ()) );
+    ( "dropout is 1",
+      "dropout must be in [0, 1), got 1",
+      fun () -> attend ~dropout:1. (q ()) (kv ()) );
+    ( "dropout is NaN",
+      "dropout must be in [0, 1), got nan",
+      fun () -> attend ~dropout:Float.nan (q ()) (kv ()) );
+    ( "the dropout keys do not broadcast",
+      "dropout keys of batch shape [3]",
+      fun () ->
+        attend ~dropout:0.5
+          ~key:(Nx.Rng.split_batch ~n:3 (Nx.Rng.key 1))
+          (q ()) (kv ()) );
+    ( "shared rows and a mask",
+      "shared by several lanes",
+      fun () -> attend ~mask:Nx.causal (lanes ()) (rows 2) );
+    ( "shared rows and lengths",
+      "shared by several lanes",
+      fun () ->
+        attend ~lengths:(Nx.full Nx.int64 [| 4 |] 5L) (lanes ()) (rows 2) );
+    ( "shared rows and a bias",
+      "shared by several lanes",
+      fun () -> attend ~bias:(t [| 5 |]) (lanes ()) (rows 2) );
+    ( "shared rows and a positive dropout",
+      "shared by several lanes",
+      fun () -> attend ~dropout:0.5 (lanes ()) (rows 2) );
+  ]
+
+(* merge *)
+
+let test_merge_projects () =
+  let l = Linear.make ~key:(Nx.Rng.key 42) ~inputs:6 ~outputs:4 Nx.float32 in
+  let y = normal 43 Nx.float32 [| 2; 3; 5; 2 |] in
+  let ya = flat y in
+  (* Token s's features are its heads' in head order. *)
+  let joined =
+    Nx.create Nx.float32 [| 2; 5; 6 |]
+      (Array.init 60 (fun i ->
+           let f = i mod 6 and s = i / 6 mod 5 and b = i / 30 in
+           ya.((((((b * 3) + (f / 2)) * 5) + s) * 2) + (f mod 2))))
+  in
+  equal exactly (flat (Linear.apply l joined)) (flat (Attention.merge l y))
+
+let test_merge_undoes_split head_dim =
+  let eye = { Linear.w = Nx.eye Nx.float32 4; b = None } in
+  let x = normal 44 Nx.float32 [| 2; 3; 4 |] in
+  equal exactly (flat x)
+    (flat (Attention.merge eye (Attention.split ~head_dim eye x)))
+
+let merge_refusals =
+  let l () = Linear.make ~key:(Nx.Rng.key 45) ~inputs:6 ~outputs:4 Nx.float32 in
+  [
+    ( "y does not have four axes",
+      "y must have shape [batch; heads; seq; d]",
+      fun () -> ignore (Attention.merge (l ()) (Nx.zeros Nx.float32 [| 2; 6 |]))
+    );
+    ( "heads * d is not the input width",
+      "is 4 in a and 6 in b",
+      fun () ->
+        ignore (Attention.merge (l ()) (Nx.zeros Nx.float32 [| 1; 2; 3; 2 |]))
+    );
+  ]
+
+(* scaled_dot_product_attention *)
 
 (* The core against its definition in float64, within the bound nx.mli states
-   for Nx.attention, over drawn dtypes, grouped heads, masks, scales and sinks.
-   Inputs are drawn in [-1, 1], rounded to the dtype, and the reference reads
-   the rounded values. *)
+   for Nx.attention, over drawn dtypes, grouped heads, masks, scales and sinks,
+   by attend over grouped heads and by scaled_dot_product_attention over
+   repeated ones. Inputs are drawn in [-1, 1], queries and keys times [amp],
+   rounded to the dtype, and the reference reads the rounded values. *)
 
 type drawn_mask = Unmasked | Causal | Drawn
 
@@ -443,25 +1026,24 @@ type case = {
   d : int;
   dv : int;
   mask : drawn_mask;
-  sinks : bool;
+  sinks : float option;  (** drawn in [-s, s] *)
   scale : float option;
+  amp : float;
   seed : float;
 }
 
-let dtype_names = [| "float32"; "bfloat16"; "float16"; "float64" |]
-
 let pp_case ppf c =
   Format.fprintf ppf
-    "%s batch %d hk %d groups %d n %d m %d d %d dv %d mask %s sinks %b scale \
-     %s seed %g"
+    "%s batch %d hk %d groups %d n %d m %d d %d dv %d mask %s sinks %s scale \
+     %s amp %g seed %g"
     dtype_names.(c.dtype) c.batch c.hk c.groups c.n c.m c.d c.dv
     (match c.mask with
     | Unmasked -> "none"
     | Causal -> "causal"
     | Drawn -> "drawn")
-    c.sinks
+    (match c.sinks with Some s -> Printf.sprintf "±%g" s | None -> "none")
     (match c.scale with Some s -> string_of_float s | None -> "default")
-    c.seed
+    c.amp c.seed
 
 let case_gen =
   let open Gen in
@@ -476,20 +1058,88 @@ let case_gen =
   let* d =
     match scale with
     | None -> int_range 1 4
-    | Some _ -> frequency [ (1, constant 0); (3, int_range 1 4) ]
+    | Some _ -> frequency [ (1, constant 0); (1, int_range 1 4) ]
   in
   let* dv = frequency [ (1, constant 0); (6, int_range 1 3) ] in
   let* mask = of_list [ Unmasked; Causal; Drawn ] in
-  let* sinks = bool in
+  let* sinks = of_list [ None; Some 2. ] in
   let+ seed = float_range 0. 10. in
-  { dtype; batch; hk; groups; n; m; d; dv; mask; sinks; scale; seed }
+  { dtype; batch; hk; groups; n; m; d; dv; mask; sinks; scale; amp = 1.; seed }
 
-let numel = Array.fold_left ( * ) 1
+(* Inputs no draw reaches, or not on every run: float16 scores past its largest
+   finite 65504 (raw q kᵀ from 120000 to 280000, scaled by 1 / sqrt 8), which
+   compute in the float32 accumulator; bfloat16 at the same scores; sinks to
+   ±200, far above and below the scores; keys of no feature, whose scores are
+   all 0. *)
+let core_examples =
+  let large =
+    {
+      dtype = 2;
+      batch = 1;
+      hk = 1;
+      groups = 1;
+      n = 1;
+      m = 3;
+      d = 8;
+      dv = 2;
+      mask = Unmasked;
+      sinks = None;
+      scale = None;
+      amp = 256.;
+      seed = 0.;
+    }
+  in
+  [
+    large;
+    { large with dtype = 1 };
+    {
+      dtype = 0;
+      batch = 2;
+      hk = 2;
+      groups = 2;
+      n = 3;
+      m = 5;
+      d = 4;
+      dv = 3;
+      mask = Drawn;
+      sinks = Some 200.;
+      scale = None;
+      amp = 1.;
+      seed = 0.;
+    };
+    {
+      dtype = 0;
+      batch = 2;
+      hk = 2;
+      groups = 2;
+      n = 3;
+      m = 4;
+      d = 0;
+      dv = 2;
+      mask = Drawn;
+      sinks = Some 2.;
+      scale = Some 2.5;
+      amp = 1.;
+      seed = 1.;
+    };
+  ]
 
 let drawn c offset shape =
   Nx.create Nx.float32 shape
     (Array.init (numel shape) (fun i ->
          Float.sin ((Float.of_int i *. 2.3) +. c.seed +. offset)))
+
+(* Which keys a lane's row sees under [c]'s mask, as an array of the mask's
+   shape [batch; 1; n; m] and as a function of lane, row and key. *)
+let shown c = Nx.less_s (drawn c 5. [| c.batch; 1; c.n; c.m |]) 0.4
+
+let sees c =
+  match c.mask with
+  | Unmasked -> fun _ _ _ -> true
+  | Causal -> fun _ i j -> j <= i + (c.m - c.n)
+  | Drawn ->
+      let a = Nx.to_array (shown c) in
+      fun bi i j -> a.((((bi * c.n) + i) * c.m) + j)
 
 let u32 = 0x1p-24
 let gamma n u = Float.of_int n *. u /. (1. -. (Float.of_int n *. u))
@@ -520,8 +1170,8 @@ let row_bound ~dk ~tk ~a ~lse =
   in
   (eta +. eps, Float.expm1 w +. (gamma (tk + 1) (2. *. u) *. Float.exp w))
 
-(* One row's visible keys as [(j, score, |scale| Σ |q k|)], from the arrays
-   [q] and [k] of a row and of its keys, [d] wide. *)
+(* One row's visible keys as [(j, score, |scale| Σ |q k|)], from the arrays [q]
+   and [k] of a row and of its keys, [d] wide. *)
 let scores ~scale ~d ~q ~k ~qi ~kj keys =
   List.map
     (fun j ->
@@ -534,56 +1184,52 @@ let scores ~scale ~d ~q ~k ~qi ~kj keys =
       (j, scale *. !s, Float.abs scale *. !a))
     keys
 
-(* The core's result for [c] within the bound of its definition, by [attend]
-   over grouped heads and by [scaled_dot_product_attention] over repeated
-   ones; under a causal mask, a last row decoded alone is within the bound of
-   its prefill. [uq] is the dtype's unit roundoff, also [v]'s, for the
-   weights the value product may round, and [tiny] half its subnormal
-   spacing: the bound bars underflow, and a result of that size rounds to
-   it. Below float16's [2^-14] a weight may lose [2^-25 |v|]. *)
-(* [c]'s queries, keys, values and sinks rounded to [dt], its mask and which
-   keys a lane's row sees under it. *)
+(* [c]'s queries, keys, values and sinks rounded to [dt], and its mask. *)
 let inputs (type b) c (dt : (float, b) Nx.dtype) =
   let heads = c.hk * c.groups in
   let b = c.batch and n = c.n and m = c.m and d = c.d and dv = c.dv in
   let round x = Nx.cast dt x in
-  let q = round (drawn c 1. [| b; heads; n; d |]) in
-  let k = round (drawn c 2. [| b; c.hk; m; d |]) in
+  let q = round (Nx.mul_s (drawn c 1. [| b; heads; n; d |]) c.amp) in
+  let k = round (Nx.mul_s (drawn c 2. [| b; c.hk; m; d |]) c.amp) in
   let v = round (drawn c 3. [| b; c.hk; m; dv |]) in
-  let sinks = round (Nx.mul_s (drawn c 4. [| heads |]) 2.) in
-  let shown = Nx.less_s (drawn c 5. [| b; 1; n; m |]) 0.4 in
-  let shown_a = Nx.to_array shown in
-  let mask, sees =
-    match c.mask with
-    | Unmasked -> (None, fun _ _ _ -> true)
-    | Causal -> (Some Nx.causal, fun _ i j -> j <= i + (m - n))
-    | Drawn ->
-        ( Some (captured shown),
-          fun bi i j -> shown_a.((((bi * n) + i) * m) + j) )
+  let sinks =
+    Option.map (fun s -> round (Nx.mul_s (drawn c 4. [| heads |]) s)) c.sinks
   in
-  (q, k, v, (if c.sinks then Some sinks else None), mask, sees)
+  let mask =
+    match c.mask with
+    | Unmasked -> None
+    | Causal -> Some Nx.causal
+    | Drawn -> Some (captured (shown c))
+  in
+  (q, k, v, sinks, mask)
 
+(* The core's result for [c] within the bound of its definition; under a causal
+   mask, a last row decoded alone is within the bound of its prefill. [uq] is
+   the dtype's unit roundoff, also [v]'s, for the weights the value product may
+   round, and [tiny] half its subnormal spacing: the bound bars underflow, and a
+   result of that size rounds to it. Below float16's [2^-14] a weight may lose
+   [2^-25 |v|]. *)
 let check_case (type b) c (dt : (float, b) Nx.dtype) ~uq ~tiny ~tiny_weight =
   let heads = c.hk * c.groups in
   let b = c.batch and n = c.n and m = c.m and d = c.d and dv = c.dv in
-  let q, k, v, sinks, mask, sees = inputs c dt in
+  let q, k, v, sinks, mask = inputs c dt in
+  let sees = sees c in
   let scale =
     Option.value c.scale ~default:(1. /. Float.sqrt (Float.of_int d))
   in
   let read t = Nx.to_array (f64 t) in
   let qa = read q and ka = read k and va = read v in
   let sa = Option.map read sinks in
-  (* The reference and each element's tolerance, [b; heads; n; dv]. *)
+  (* The reference and each element's tolerance, [b; heads; n; dv]. A row that
+     sees no key is held to exactly 0. *)
   let expected = Array.make (b * heads * n * dv) 0. in
   let tol = Array.make (b * heads * n * dv) 0. in
-  let empty = ref false in
   for bi = 0 to b - 1 do
     for h = 0 to heads - 1 do
       let kj = ((bi * c.hk) + (h / c.groups)) * m in
       for i = 0 to n - 1 do
         let qi = (((bi * heads) + h) * n) + i in
         let keys = List.filter (sees bi i) (List.init m Fun.id) in
-        if keys = [] then empty := true;
         let at = scores ~scale ~d ~q:qa ~k:ka ~qi ~kj keys in
         let top =
           List.fold_left
@@ -630,56 +1276,60 @@ let check_case (type b) c (dt : (float, b) Nx.dtype) ~uq ~tiny ~tiny_weight =
                   0. at
               in
               expected.(x) <- o';
-              (* [o · sigmoid (lse - sink)]: [lse]'s error and the
-                 subtraction's rounding move the sigmoid by at most
-                 themselves relatively, the sigmoid adds 3 ulps, [6u], and
-                 the product rounds in float32, then to the dtype. *)
+              (* [o · sigmoid (lse - sink)]: [lse]'s error and the subtraction's
+                 rounding move the sigmoid by at most themselves relatively, the
+                 sigmoid adds 3 ulps, [6u], and the product rounds in float32,
+                 then to the dtype. *)
               let kept = 1. /. (1. +. exp (sink -. lse)) in
               let moved = lse_tol +. (u32 *. Float.abs (lse -. sink)) in
               tol.(x) <-
                 (kept *. o_tol)
                 +. (Float.abs !o *. kept *. (moved +. (6. *. u32)))
-                +. ((u32 +. uq) *. Float.abs o') +. tiny
+                +. ((u32 +. uq) *. Float.abs o')
+                +. tiny
         done
       done
     done
   done;
   (* First order: the products of two errors stay below [4 uq] of the sum. *)
   let tol = Array.map (fun t -> t *. (1. +. (4. *. uq))) tol in
-  let within ~msg ?(row = fun i -> i) got =
+  (* The result has the shape of the reference, and each element lies within its
+     bound, which no NaN does. *)
+  let within ~msg ?(rows = n) ?(row = fun i -> i) got =
+    equal ~msg (array int) [| b; heads; rows; dv |] (Nx.shape got);
     Array.iteri
       (fun i y ->
         let r = row i in
-        at_most ~msg float_exact ~than:tol.(r) (Float.abs (y -. expected.(r))))
+        let claim =
+          Printf.sprintf "element %d within %g of %g" r tol.(r) expected.(r)
+        in
+        satisfies ~msg ~claim float_exact
+          (fun y -> Float.abs (y -. expected.(r)) <= tol.(r))
+          y)
       (read got)
   in
-  cover "grouped heads" (c.groups > 1 && heads > 0);
-  cover "sinks" c.sinks;
-  cover "a row that sees no key" !empty;
-  cover "keys of no feature" (d = 0 && dv > 0);
-  cover "zero-size" (b = 0 || heads = 0 || n = 0 || m = 0 || dv = 0);
   let attend q =
     Attention.attend ?mask ?scale:c.scale ?sinks q (Nx.Dense { k; v })
   in
   within ~msg:"attend" (attend q);
-  let groups = Array.init heads (fun h -> Int64.of_int (h / c.groups)) in
-  let repeat t = Nx.take ~axis:1 (Nx.create Nx.int64 [| heads |] groups) t in
+  let groups = Array.init heads (fun h -> h / c.groups) in
+  let repeat t = Nx.take ~axis:1 (int64s [| heads |] groups) t in
   within ~msg:"scaled_dot_product_attention"
     (Attention.scaled_dot_product_attention ?mask ?scale:c.scale
        ?sinks:(Option.map (Nx.reshape [| heads; 1 |]) sinks)
        q (repeat k) (repeat v));
   if c.mask = Causal && n > 0 then
-    (* Element [r] of the decoded row is element [bh, n - 1, e] of the
-       prefill, whose definition it is held to. *)
-    within ~msg:"a last row decoded alone"
-      ~row:(fun r -> ((((r / dv) * n) + n - 1) * dv) + (r mod dv))
+    (* Element [r] of the decoded row is element [bh, n - 1, e] of the prefill,
+       whose definition it is held to. *)
+    within ~msg:"a last row decoded alone" ~rows:1
+      ~row:(fun r -> (((r / dv * n) + n - 1) * dv) + (r mod dv))
       (attend (Nx.slice [ A; A; R (n - 1, n) ] q))
 
-(* At float64 the core is Nx.attention in float64, and its sinks
-   [o · sigmoid (lse - σ)] in float64, bit for bit: nx's laws hold that
-   operation to its bound. *)
+(* At float64 the core is Nx.attention in float64, and its sinks [o · sigmoid
+   (lse - σ)] in float64, bit for bit: nx's laws hold that operation to its
+   bound. *)
 let check_float64 c =
-  let q, k, v, sinks, mask, _ = inputs c Nx.float64 in
+  let q, k, v, sinks, mask = inputs c Nx.float64 in
   let o, lse =
     Nx.attention ?scale:c.scale ?mask ~acc:Nx.float64 ~kv:(Nx.Dense { k; v }) q
   in
@@ -695,3763 +1345,498 @@ let check_float64 c =
     (bits (Attention.attend ?mask ?scale:c.scale ?sinks q (Nx.Dense { k; v })))
 
 let law_core c =
+  let heads = c.hk * c.groups in
+  let sees = sees c in
+  let empty_row =
+    heads > 0
+    && List.exists
+         (fun bi ->
+           List.exists
+             (fun i -> not (List.exists (sees bi i) (List.init c.m Fun.id)))
+             (List.init c.n Fun.id))
+         (List.init c.batch Fun.id)
+  in
+  (* A zero-size result compares no value, so every other cover needs one. *)
+  let values = c.batch * heads * c.n * c.dv > 0 in
+  cover "zero-size" ((not values) || c.m = 0);
+  cover "float16" (values && c.dtype = 2);
+  cover "bfloat16" (values && c.dtype = 1);
+  cover "float64" (values && c.dtype = 3);
+  cover "grouped heads" (values && c.groups > 1);
+  cover "sinks" (values && c.sinks <> None);
+  cover "sinks at half precision"
+    (values && c.sinks <> None && (c.dtype = 1 || c.dtype = 2));
+  cover "a row that sees no key" (values && empty_row);
+  cover "keys of no feature" (values && c.m > 0 && c.d = 0);
+  cover "a causal row decoded alone" (values && c.mask = Causal && c.dtype <> 3);
   match c.dtype with
   | 0 -> check_case c Nx.float32 ~uq:u32 ~tiny:0x1p-150 ~tiny_weight:0.
   | 1 -> check_case c Nx.bfloat16 ~uq:0x1p-8 ~tiny:0x1p-134 ~tiny_weight:0.
   | 2 -> check_case c Nx.float16 ~uq:0x1p-11 ~tiny:0x1p-25 ~tiny_weight:0x1p-14
   | _ -> check_float64 c
 
-(* Gradients through grouped heads, a causal mask and sinks. *)
-let test_attend_gradients () =
-  let f s seed =
-    Nx.create Nx.float64 s
-      (Array.init (numel s) (fun i ->
-           Float.sin ((Float.of_int i *. 2.3) +. seed)))
-  in
-  let p =
-    {
-      Qkvs64.q = f [| 1; 4; 3; 2 |] 1.;
-      k = f [| 1; 2; 4; 2 |] 2.;
-      v = f [| 1; 2; 4; 3 |] 3.;
-      sinks = f [| 4 |] 4.;
-    }
-  in
-  let loss { Qkvs64.q; k; v; sinks } =
-    let y =
-      Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q (Nx.Dense { k; v })
-    in
-    Nx.sum (Nx.mul y y)
-  in
-  grads_ok (Rune.check_grads qkvs64 loss p)
+(* d = 1, so the scale is 1. Scores are [0; ln 4], weights softmax of that:
+   [1/5; 4/5], and the output 0.2 * 1 + 0.8 * 6 = 5. And d = 4: raw scores are
+   [4 ln 2; 0], scaled by 1/sqrt 4 to [ln 4; 0], so the weights are [4/5; 1/5]
+   and the output 0.8 * 1 + 0.2 * 6 = 2; without the scale the weights would be
+   [16/17; 1/17]. In float64 the few roundings stay below 1e-14 of 5. *)
+let analytic =
+  let c = log 2. in
+  [
+    ("d = 1", ([| 1. |], [| 0.; log 4. |], 5.));
+    ("d = 4", ([| 1.; 1.; 1.; 1. |], [| c; c; c; c; 0.; 0.; 0.; 0. |], 2.));
+  ]
 
-(* Multi-head self-attention layer *)
-
-let test_init_shapes () =
-  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
-  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:8 in
-  List.iter
-    (fun (name, (l : (Nx.host Nx.float32_t, Nx.host) Linear.t)) ->
-      shape_is ~msg:(name ^ ".w shape") [| 8; 8 |] l.Linear.w;
-      match l.Linear.b with
-      | None -> fail (name ^ " should have a bias")
-      | Some b -> shape_is ~msg:(name ^ ".b shape") [| 8 |] b)
-    [
-      ("q", p.Attention.q);
-      ("k", p.Attention.k);
-      ("v", p.Attention.v);
-      ("out", p.Attention.out);
-    ]
-
-let test_names () =
-  Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
-  let paths = paths (Nx.Ptree.instantiate (module Attention)) in
-  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
-  equal ~msg:"with biases" (list string)
-    [ "q.w"; "q.b"; "k.w"; "k.b"; "v.w"; "v.b"; "out.w"; "out.b" ]
-    (paths p);
-  let no_bias =
-    Attention.make ~key:(Nx.Rng.next_key ()) ~bias:false ~embed_dim:4 Nx.float32
-  in
-  equal ~msg:"without biases" (list string)
-    [ "q.w"; "k.w"; "v.w"; "out.w" ]
-    (paths no_bias)
-
-let test_apply_shapes () =
-  Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
-  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:8 in
-  let batched = Nx.zeros Nx.float32 [| 2; 5; 8 |] in
-  shape_is ~msg:"batched input keeps its shape" [| 2; 5; 8 |]
-    (Attention.apply ~head_dim:2 p batched);
-  let plain = Nx.zeros Nx.float32 [| 5; 8 |] in
-  shape_is ~msg:"a single sequence keeps its shape" [| 5; 8 |]
-    (Attention.apply ~head_dim:4 p plain);
-  let nested = Nx.zeros Nx.float32 [| 2; 3; 5; 8 |] in
-  shape_is ~msg:"leading axes are batch axes" [| 2; 3; 5; 8 |]
-    (Attention.apply ~head_dim:4 p nested)
-
-let test_apply_identity_is_the_core () =
-  (* With identity projections and one head, [apply] is exactly the attention
-     core on [x] itself. *)
-  let p = identity_params 2 in
-  let x = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 0.; 0.; 1.; 1.; 1. |] in
-  values_are ~msg:"apply = core at identity projections" ~tol:1e-6
-    (Nx.to_array (Attention.scaled_dot_product_attention x x x))
-    (Attention.apply ~head_dim:2 p x)
-
-let test_heads_attend_independently () =
-  (* Identity projections, embed 2, 2 heads of dimension 1: head [h] must be the
-     attention core run on column [h] of [x] alone. *)
-  let x0 = [| 0.5; -1.0 |] and x1 = [| 1.0; 2.0 |] and x2 = [| -0.5; 0.0 |] in
-  let x =
-    Nx.create Nx.float32 [| 3; 2 |]
-      [| x0.(0); x0.(1); x1.(0); x1.(1); x2.(0); x2.(1) |]
-  in
-  let head h =
-    let col = Nx.create Nx.float32 [| 3; 1 |] [| x0.(h); x1.(h); x2.(h) |] in
-    Nx.to_array (Attention.scaled_dot_product_attention col col col)
-  in
-  let h0 = head 0 and h1 = head 1 in
-  let expected = [| h0.(0); h1.(0); h0.(1); h1.(1); h0.(2); h1.(2) |] in
-  values_are ~msg:"per-head attention on each feature slice" ~tol:1e-6 expected
-    (Attention.apply ~head_dim:1 (identity_params 2) x)
-
-let test_causal_first_position_is_itself () =
-  (* Causally, position 0 attends only to itself: with identity projections its
-     output is its own value row, whatever the rest of the sequence. *)
-  let p = identity_params 2 in
-  let x = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; -3.; 4.; 5.; -6. |] in
-  let y = Nx.to_array (Attention.apply ~head_dim:2 ~mask:Nx.causal p x) in
-  equal ~msg:"row 0 is x's row 0"
-    (array (float 1e-6))
-    [| 1.; 2. |] (Array.sub y 0 2)
-
-let test_causal_ignores_the_future () =
-  Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
-  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:8 in
-  let base = Array.init 32 (fun i -> sin (float_of_int i)) in
-  let changed = Array.mapi (fun i a -> if i >= 24 then a +. 10.0 else a) base in
-  let x1 = Nx.create Nx.float32 [| 4; 8 |] base in
-  let x2 = Nx.create Nx.float32 [| 4; 8 |] changed in
-  let at ?mask x = Nx.to_array (Attention.apply ~head_dim:4 ?mask p x) in
-  let y1 = at ~mask:Nx.causal x1 and y2 = at ~mask:Nx.causal x2 in
-  equal ~msg:"changing the last position leaves earlier outputs unchanged"
-    (array (float 1e-6))
-    (Array.sub y1 0 24) (Array.sub y2 0 24);
-  let z1 = at x1 and z2 = at x2 in
-  let row0_differs =
-    Array.exists
-      (fun d -> Float.abs d > 1e-3)
-      (Array.init 8 (fun i -> z1.(i) -. z2.(i)))
-  in
-  is_true ~msg:"without a mask, the change reaches position 0" row0_differs
-
-let test_permutation_equivariance () =
-  (* Self-attention has no notion of position: permuting the sequence permutes
-     the output the same way. *)
-  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
-  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
-  let base = Array.init 12 (fun i -> cos (float_of_int i)) in
-  let perm = [| 2; 0; 1 |] in
-  let permute rows a =
-    Array.init 12 (fun i -> a.((rows.(i / 4) * 4) + (i mod 4)))
-  in
-  let x = Nx.create Nx.float32 [| 3; 4 |] base in
-  let xp = Nx.create Nx.float32 [| 3; 4 |] (permute perm base) in
-  let y = Nx.to_array (Attention.apply ~head_dim:2 p x) in
-  let yp = Nx.to_array (Attention.apply ~head_dim:2 p xp) in
-  equal ~msg:"permuted input gives permuted output"
-    (array (float 1e-4))
-    (permute perm y) yp
-
-(* Lanes padded after their real tokens: under [lengths] a NaN in the padding
-   reaches no real token, eager or compiled, and a real token's output is the
-   one it has alone. The causal rule of such lanes is [p.k <= p.q]; without a
-   mask, [lengths] alone hides the padding. *)
-let causal_within (p : Nx.host Nx.pair) = Nx.less_equal p.k p.q
-
-let test_lengths_hide_padding () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 27) @@ fun () ->
-  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 4; 4 |] in
-  (* Lane 0 holds 2 real tokens, lane 1 all 4. *)
-  let x = Nx.set [ I 0; R (2, 4) ] (Nx.full Nx.float32 [| 2; 4 |] nan) x in
-  let lengths = Nx.create Nx.int64 [| 2 |] [| 2L; 4L |] in
-  let f x = Attention.apply ~head_dim:2 ~mask:causal_within ~lengths p x in
-  let lane0 = [ Nx.R (0, 1); R (0, 2) ] and lane1 = [ Nx.R (1, 2) ] in
-  let real y =
-    Array.append (flat_of (Nx.slice lane0 y)) (flat_of (Nx.slice lane1 y))
-  in
-  let alone ?mask () =
-    let at lane =
-      flat_of (Attention.apply ~head_dim:2 ?mask p (Nx.slice lane x))
-    in
-    Array.append (at lane0) (at lane1)
-  in
-  let close ~msg expected y =
-    equal ~msg (array (float 1e-5)) expected (real y)
-  in
-  let g x = Attention.apply ~head_dim:2 ~lengths p x in
-  close ~msg:"no mask, eager" (alone ()) (g x);
-  close ~msg:"no mask, compiled" (alone ()) (Rune.jit' g x);
-  let causal = alone ~mask:Nx.causal () in
-  close ~msg:"causal, eager" causal (f x);
-  close ~msg:"causal, compiled" causal (Rune.jit' f x)
-
-(* The core and [attend] read no key past a lane's length. *)
-let test_lengths_bound_the_keys () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 29) @@ fun () ->
-  let q = Nx.Rng.normal Nx.float32 [| 2; 2; 3; 4 |] in
-  let poison t =
-    Nx.set [ I 0; A; R (1, 5) ] (Nx.full Nx.float32 [| 2; 4; 4 |] nan) t
-  in
-  let k = poison (Nx.Rng.normal Nx.float32 [| 2; 2; 5; 4 |]) in
-  let v = poison (Nx.Rng.normal Nx.float32 [| 2; 2; 5; 4 |]) in
-  (* Lane 0 holds 1 key, lane 1 all 5. *)
-  let lengths = Nx.create Nx.int64 [| 2 |] [| 1L; 5L |] in
-  let expected =
-    let lane i n =
-      let keys t = Nx.slice [ R (i, i + 1); A; R (0, n) ] t in
-      flat_of
-        (Attention.scaled_dot_product_attention
-           (Nx.slice [ R (i, i + 1) ] q)
-           (keys k) (keys v))
-    in
-    Array.append (lane 0 1) (lane 1 5)
-  in
-  let core q = Attention.scaled_dot_product_attention ~lengths q k v in
-  let attend q = Attention.attend ~lengths q (Nx.Dense { k; v }) in
-  let close ~msg y = equal ~msg (array (float 1e-5)) expected (flat_of y) in
-  close ~msg:"core, eager" (core q);
-  close ~msg:"core, compiled" (Rune.jit' core q);
-  close ~msg:"attend, eager" (attend q);
-  close ~msg:"attend, compiled" (Rune.jit' attend q)
-
-(* With fewer than two batch axes, or an [x] of one lane, [lengths] is 0-d and
-   bounds every row. *)
-let test_lengths_0d () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 30) @@ fun () ->
-  let len = Nx.scalar Nx.int64 2L in
-  let poison t =
-    let s = Nx.shape t in
-    let r = Array.length s in
-    let pad = Array.copy s in
-    pad.(r - 2) <- s.(r - 2) - 2;
-    let rows = List.init (r - 2) (fun _ -> Nx.A) @ [ Nx.R (2, s.(r - 2)) ] in
-    Nx.set rows (Nx.full Nx.float32 pad nan) t
-  in
-  let keys t =
-    let r = Nx.ndim t in
-    Nx.slice (List.init (r - 2) (fun _ -> Nx.A) @ [ Nx.R (0, 2) ]) t
-  in
-  let core ~lead =
-    let q = Nx.Rng.normal Nx.float32 (Array.append lead [| 3; 4 |]) in
-    let k = poison (Nx.Rng.normal Nx.float32 (Array.append lead [| 5; 4 |])) in
-    let v = poison (Nx.Rng.normal Nx.float32 (Array.append lead [| 5; 4 |])) in
-    let expected =
-      flat_of (Attention.scaled_dot_product_attention q (keys k) (keys v))
-    in
-    let f q = Attention.scaled_dot_product_attention ~lengths:len q k v in
-    let msg = Printf.sprintf "%d batch axes" (Array.length lead) in
-    equal ~msg:(msg ^ ", eager") (array (float 1e-5)) expected (flat_of (f q));
-    equal ~msg:(msg ^ ", compiled") (array (float 1e-5)) expected
-      (flat_of (Rune.jit' f q))
-  in
-  core ~lead:[||];
-  core ~lead:[| 2 |];
-  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
-  let x = poison (Nx.Rng.normal Nx.float32 [| 4; 4 |]) in
-  let real y = flat_of (Nx.slice [ R (0, 2) ] y) in
-  let expected =
-    flat_of (Attention.apply ~head_dim:2 p (Nx.slice [ R (0, 2) ] x))
-  in
-  let f x = Attention.apply ~head_dim:2 ~lengths:len p x in
-  equal ~msg:"apply, eager" (array (float 1e-5)) expected (real (f x));
-  equal ~msg:"apply, compiled" (array (float 1e-5)) expected
-    (real (Rune.jit' f x))
-
-(* Grouped-query attention: each key-value head serves a group of query heads.
-   It must equal ordinary attention with every key-value head repeated. *)
-let grouped_pair dtype =
-  let p =
-    Attention.make ~key:(Nx.Rng.next_key ()) ~bias:false ~kv_dim:4 ~embed_dim:8
-      dtype
-  in
-  let repeat (l : _ Linear.t) =
-    (* head_dim 2: kv head [h] becomes query heads [2 h] and [2 h + 1]. *)
-    let rows =
-      Nx.create Nx.int64 [| 8 |] [| 0L; 1L; 0L; 1L; 2L; 3L; 2L; 3L |]
-    in
-    { l with Linear.w = Nx.take ~axis:0 rows l.Linear.w }
-  in
-  (p, { p with k = repeat p.k; v = repeat p.v })
-
-let test_grouped_equals_repeated () =
-  Nx.Rng.with_key (Nx.Rng.key 28) @@ fun () ->
-  let grouped, repeated = grouped_pair Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 5; 8 |] in
-  let at p = Nx.to_array (Attention.apply ~head_dim:2 ~mask:Nx.causal p x) in
-  equal ~msg:"2 key-value heads serving 4 query heads"
-    (array (float 1e-5))
-    (at repeated) (at grouped)
-
-(* Lanes that share dense rows: lane [i] of [batch] reads row
-   [i / (batch / rows)], and its result is the one it has over a copy of that
-   row, with sinks, eagerly and compiled. *)
-let test_shared_rows_equal_copies () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 31) @@ fun () ->
-  let case ~batch ~rows ~m =
-    let n = 2 and heads = 4 and kv_heads = 2 and d = 3 in
-    let q = Nx.Rng.normal Nx.float32 [| batch; heads; n; d |] in
-    let k = Nx.Rng.normal Nx.float32 [| rows; kv_heads; m; d |] in
-    let v = Nx.Rng.normal Nx.float32 [| rows; kv_heads; m; 2 |] in
-    let lanes = batch / rows in
-    let copy t =
-      Nx.take ~axis:0
-        (Nx.create Nx.int64 [| batch |]
-           (Array.init batch (fun i -> Int64.of_int (i / lanes))))
-        t
-    in
-    let sinks = Nx.Rng.normal Nx.float32 [| heads |] in
-    let f k v q = Attention.attend ~sinks q (Nx.Dense { k; v }) in
-    let msg = Printf.sprintf "%d lanes over %d rows of %d keys" batch rows m in
-    let expected = flat_of (f (copy k) (copy v) q) in
-    equal ~msg:(msg ^ ", eager") (array float_exact) expected
-      (flat_of (f k v q));
-    equal ~msg:(msg ^ ", compiled") (array (float 1e-6)) expected
-      (flat_of (Rune.jit' (f k v) q))
-  in
-  case ~batch:4 ~rows:1 ~m:5;
-  case ~batch:6 ~rows:2 ~m:5;
-  case ~batch:6 ~rows:3 ~m:1;
-  case ~batch:4 ~rows:2 ~m:0;
-  case ~batch:0 ~rows:2 ~m:5
-
-(* The cotangent of a shared row is the sum over the lanes that read it. *)
-let test_shared_rows_gradients () =
-  let f s seed =
-    Nx.create Nx.float64 s
-      (Array.init (numel s) (fun i ->
-           Float.sin ((Float.of_int i *. 1.7) +. seed)))
-  in
-  let p =
-    {
-      Qkvs64.q = f [| 4; 2; 3; 2 |] 1.;
-      k = f [| 2; 1; 4; 2 |] 2.;
-      v = f [| 2; 1; 4; 3 |] 3.;
-      sinks = f [| 2 |] 4.;
-    }
-  in
-  let loss { Qkvs64.q; k; v; sinks } =
-    let y = Attention.attend ~sinks q (Nx.Dense { k; v }) in
-    Nx.sum (Nx.mul y y)
-  in
-  grads_ok (Rune.check_grads qkvs64 loss p)
-
-(* A mask, lengths, a bias or dropout would tell lanes apart, which shared
-   rows do not. *)
-let test_shared_rows_take_no_mask () =
-  let q = Nx.zeros Nx.float32 [| 4; 2; 1; 3 |] in
-  let kv = Nx.zeros Nx.float32 [| 2; 2; 5; 3 |] in
-  let refused f =
-    raises
-      (Invalid_argument
-         "Attention.attend: keys shared by several lanes take no mask, \
-          lengths, bias or dropout")
-      f
-  in
-  refused (fun () ->
-      Attention.attend
-        ~bias:(Nx.zeros Nx.float32 [| 5 |])
-        q
-        (Nx.Dense { k = kv; v = kv }));
-  refused (fun () ->
-      Attention.attend ~dropout:0.5 q (Nx.Dense { k = kv; v = kv }));
-  values_are ~tol:0. ~msg:"a rate of 0 drops nothing there"
-    (Nx.to_array (Attention.attend q (Nx.Dense { k = kv; v = kv })))
-    (Attention.attend ~dropout:0. q (Nx.Dense { k = kv; v = kv }));
-  refused (fun () ->
-      Attention.attend ~mask:Nx.causal q (Nx.Dense { k = kv; v = kv }));
-  refused (fun () ->
-      Attention.attend
-        ~lengths:(Nx.full Nx.int64 [| 4 |] 5L)
-        q
-        (Nx.Dense { k = kv; v = kv }))
-
-let test_shared_rows_reject_non_divisors () =
-  let q = Nx.zeros Nx.float32 [| 4; 2; 1; 3 |] in
-  let kv rows = Nx.zeros Nx.float32 [| rows; 2; 5; 3 |] in
-  List.iter
-    (fun rows ->
-      raises
-        (Invalid_argument
-           "Attention.attend: k must have shape [rows; kv_heads; m; 3] and v \
-            [rows; kv_heads; m; dv], rows dividing 4")
-        (fun () ->
-          Attention.attend q (Nx.Dense { k = kv rows; v = kv rows })))
-    [ 0; 3; 8 ]
-
-let test_gradients () =
-  Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
-  let x = Nx.Rng.normal Nx.float64 [| 3; 4 |] in
-  let p = Attention.make ~key:(Nx.Rng.next_key ()) ~embed_dim:4 Nx.float64 in
-  let loss ?mask ?rope p =
-    let y = Attention.apply ~head_dim:2 ?mask ?rope p x in
-    Nx.sum (Nx.mul y y)
-  in
-  grads_ok (Rune.check_grads attention64 (loss ?mask:None ?rope:None) p);
-  grads_ok (Rune.check_grads attention64 (loss ~mask:Nx.causal) p);
-  let rope = Rope.make ~head_dim:2 ~context:64 () in
-  grads_ok (Rune.check_grads attention64 (loss ~mask:Nx.causal ~rope) p);
-  let grouped, _ = grouped_pair Nx.float64 in
-  let x = Nx.Rng.normal Nx.float64 [| 2; 3; 8 |] in
-  grads_ok
-    (Rune.check_grads attention64
-       (fun p ->
-         let y = Attention.apply ~head_dim:2 ~mask:Nx.causal p x in
-         Nx.sum (Nx.mul y y))
-       grouped)
-
-(* Key-value cache decoding *)
-
-let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
-let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
-
-(* The index of tokens at [pos] in sequences held at [slots]. *)
-let index_at ~pos ~slots =
-  let tensor a =
-    int64s
-      [| Array.length a; Array.length a.(0) |]
-      (Array.concat (Array.to_list a))
-  in
-  Cache_index.make ~pos:(tensor pos) ~table:(tensor slots) ()
-
-(* A small grouped layer with rotary positions: 4 query heads, 2 key-value
-   heads, head_dim 2. *)
-let head_dim = 2
-let rope = Rope.make ~head_dim ~context:64 ()
-
-let layer dtype =
-  Attention.make ~key:(Nx.Rng.next_key ()) ~kv_dim:4 ~embed_dim:8 dtype
-
-let cache_at dtype slots =
-  Attention.Cache.make ~slots ~kv_heads:2 ~head_dim dtype Nx.Host.on
-
-let cache slots = cache_at Nx.float32 slots
-let call p c index x = Attention.cached ~head_dim ~rope p c index x
-let close ~msg a b = equal ~msg (array (float 1e-5)) (flat a) (flat b)
-
-let test_cached_prefill_matches_apply () =
-  Nx.Rng.with_key (Nx.Rng.key 20) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 5; 8 |] in
-  let y, _ = call p (cache 12) (Cache_index.rows ~context:6 [| 5; 5 |]) x in
-  close ~msg:"a whole prompt through the cache = causal apply"
-    (Attention.apply ~head_dim ~mask:Nx.causal ~rope p x)
-    y
-
-(* A whole index reads and keeps nothing: the layer is causal [apply] and the
-   cache comes back as it was given. *)
-let test_cached_whole () =
-  Nx.Rng.with_key (Nx.Rng.key 34) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 5; 8 |] in
-  let c = cache 0 in
-  let y, c' = call p c (Cache_index.whole ~batch:2 ~seq:5 ()) x in
-  close ~msg:"causal apply"
-    (Attention.apply ~head_dim ~mask:Nx.causal ~rope p x)
-    y;
-  is_true ~msg:"the cache holds the tensors it was given"
-    (c.Attention.Cache.keys == c'.Attention.Cache.keys
-    && c.Attention.Cache.values == c'.Attention.Cache.values);
-  let y, _ =
-    call p c (Cache_index.whole ~lens:[| 3; 5 |] ~batch:2 ~seq:5 ()) x
-  in
-  is_true ~msg:"padding produces no nan"
-    (Array.for_all Float.is_finite (flat y));
-  close ~msg:"a padded row attends as it does alone"
-    (Attention.apply ~head_dim ~mask:Nx.causal ~rope p
-       (Nx.slice [ R (0, 1); R (2, 5) ] x))
-    (Nx.slice [ R (0, 1); R (2, 5) ] y)
-
-(* A window bounds what a token sees, whole or through the cache. *)
-let test_cached_window () =
-  Nx.Rng.with_key (Nx.Rng.key 35) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 6; 8 |] in
-  let band =
-    Nx.create Nx.bool [| 6; 6 |]
-      (Array.init 36 (fun t ->
-           let i = t / 6 and j = t mod 6 in
-           j <= i && j > i - 3))
-  in
-  let expected = Attention.apply ~head_dim ~mask:(captured band) ~rope p x in
-  let windowed c index x =
-    Attention.cached ~head_dim ~rope p c (Cache_index.window 3 index) x
-  in
-  let y, _ = windowed (cache 0) (Cache_index.whole ~batch:1 ~seq:6 ()) x in
-  close ~msg:"whole" expected y;
-  let slots = [| Array.init 6 Fun.id |] in
-  let y1, c =
-    windowed (cache 6)
-      (index_at ~pos:[| [| 0; 1; 2; 3 |] |] ~slots)
-      (Nx.slice [ A; R (0, 4) ] x)
-  in
-  let y2, _ =
-    windowed c
-      (index_at ~pos:[| [| 4; 5 |] |] ~slots)
-      (Nx.slice [ A; R (4, 6) ] x)
-  in
-  close ~msg:"in two chunks" expected (Nx.concatenate ~axis:1 [ y1; y2 ])
-
-let test_cache_pools () =
-  let c = cache 3 in
-  shape_is ~msg:"slots, then kv_heads and head_dim" [| 3; 2; 2 |] c.keys;
-  shape_is ~msg:"the values alike" [| 3; 2; 2 |] c.values;
-  is_true ~msg:"zeros" (Array.for_all (fun v -> v = 0.) (flat c.keys));
-  shape_is ~msg:"no slot" [| 0; 2; 2 |] (cache 0).keys
-
-let test_index_window () =
-  let index = index_at ~pos:[| [| 0; 1; 2 |] |] ~slots:[| [| 0; 1; 2; 3 |] |] in
-  let windowed = Cache_index.window 2 index in
-  let mask i = Array.to_list (Nx.to_array (Cache_index.mask i)) in
-  equal ~msg:"a window hides what is below it" (list bool)
-    [
-      true;
-      false;
-      false;
-      false;
-      true;
-      true;
-      false;
-      false;
-      false;
-      true;
-      true;
-      false;
-    ]
-    (mask windowed);
-  equal ~msg:"a later window replaces an earlier one" (list bool)
-    (mask windowed)
-    (mask (Cache_index.window 2 (Cache_index.window 1 index)));
-  equal ~msg:"advance keeps the window" (list bool)
-    [ false; false; true; true ]
-    (mask (Cache_index.advance windowed));
-  equal ~msg:"map keeps the window" (list bool) (mask windowed)
-    (mask (Nx.Ptree.map (Nx.Ptree.v Cache_index.walk) (fun _ t -> t) windowed));
-  raises
-    (Invalid_argument
-       "Nx.Ptree.map2: window: Some in the first value, None in the second")
-    (fun () ->
-      Nx.Ptree.map2
-        (Nx.Ptree.v Cache_index.walk)
-        (fun _ a _ -> a)
-        windowed index);
-  raises (Invalid_argument "Cache_index.window: window must be positive, got 0")
-    (fun () -> Cache_index.window 0 index);
-  let mapped =
-    Rune.vmap
-      Nx.Ptree.(v Cache_index.walk @-> returns tensor)
-      Cache_index.positions
-  in
-  raises (Invalid_argument "Rune.vmap: 0.window is 0-d") (fun () ->
-      mapped windowed)
-
-(* Selections. A value is its position plus one, so what a column reads names
-   the position it holds. *)
-
-let numbered ~batch ~from n =
-  Nx.create Nx.float32 [| batch; n; 1 |]
-    (Array.init (batch * n) (fun i -> float_of_int (from + (i mod n) + 1)))
-
-let bools t = Array.to_list (Nx.to_array t)
-
-(* Positions 0 to 4 over a shuffled table whose column 3 is unallocated. The
-   slot of column 5, which no position has reached, holds NaN. *)
-let selection_fixture () =
-  let slots = [| [| 3; 0; 4; -1; 2; 1 |] |] in
-  let _, pool =
-    Cache_index.extend
-      (index_at ~pos:[| [| 0; 1; 2; 3; 4 |] |] ~slots)
-      (numbered ~batch:1 ~from:0 5)
-      (Nx.zeros Nx.float32 [| 5; 1 |])
-  in
-  let nan = Nx.full Nx.float32 [| 1; 1 |] nan in
-  let pool = Nx.set [ Nx.R (1, 2) ] nan pool in
-  (index_at ~pos:[| [| 2; 4 |] |] ~slots, pool)
-
-(* The call's tokens, at positions 2 and 4, store new values there. *)
-let tokens_2_4 = Nx.create Nx.float32 [| 1; 2; 1 |] [| 30.; 50. |]
-
-let test_index_select () =
-  let index, pool = selection_fixture () in
-  let columns =
-    int64s [| 1; 2; 5 |] [| 1; 3; 2; -1; 1; (* at 4 *) 5; 6; 0; 4; 3 |]
-  in
-  let selected = Cache_index.select columns index in
-  let seen, pool' = Cache_index.extend selected tokens_2_4 pool in
-  shape_is ~msg:"a row per chosen column" [| 1; 2; 5; 1 |] seen;
-  values_are
-    ~msg:
-      "the chosen columns, this call's stores included; zero after the \
-       position, outside the context and unallocated; a column chosen twice is \
-       read twice"
-    ~tol:0.
-    [| 2.; 0.; 30.; 0.; 2.; 0.; 0.; 1.; 50.; 0. |]
-    seen;
+let test_core_analytic (_, (q, k, expected)) =
+  let d = Array.length q in
+  let q = Nx.create Nx.float64 [| 1; d |] q in
+  let k = Nx.create Nx.float64 [| 2; d |] k in
+  let v = Nx.create Nx.float64 [| 2; 1 |] [| 1.; 6. |] in
   equal
-    ~msg:
-      "the mask hides what the token does not see; an unallocated column is a \
-       hole, which no token sees"
-    (list bool)
-    [ true; false; true; false; true; false; false; true; true; false ]
-    (bools (Cache_index.mask selected));
-  let _, stored = Cache_index.extend index tokens_2_4 pool in
-  values_are ~msg:"what is stored does not change" ~tol:0. (flat stored) pool';
-  let windowed = Cache_index.select columns (Cache_index.window 2 index) in
-  let seen, _ = Cache_index.extend windowed tokens_2_4 pool in
-  values_are ~msg:"under a window, a column below it reads as zero" ~tol:0.
-    [| 2.; 0.; 30.; 0.; 2.; 0.; 0.; 0.; 50.; 0. |]
-    seen;
-  equal ~msg:"and is masked" (list bool)
-    [ true; false; true; false; true; false; false; false; true; false ]
-    (bools (Cache_index.mask windowed));
-  raises
-    (Invalid_argument
-       "Cache_index.select: columns must have shape [1; 2; k], k > 0")
-    (fun () -> Cache_index.select (int64s [| 1; 2 |] [| 0; 1 |]) index);
-  raises
-    (Invalid_argument
-       "Cache_index.select: columns must have shape [1; 2; k], k > 0")
-    (fun () -> Cache_index.select (int64s [| 1; 2; 0 |] [||]) index)
+    (array (float 1e-14))
+    [| expected |]
+    (flat (Attention.scaled_dot_product_attention q k v))
 
-(* Choosing every column in order is the read without a selection, token by
-   token. *)
-let test_index_select_everything () =
-  let index, pool = selection_fixture () in
-  let every = Nx.broadcast_to [| 1; 2; 6 |] (Nx.arange Nx.int64 0 6 1) in
-  let seen, _ = Cache_index.extend index tokens_2_4 pool in
-  let chosen, _ =
-    Cache_index.extend (Cache_index.select every index) tokens_2_4 pool
+let test_core_batch_broadcast () =
+  let q = normal 46 Nx.float32 [| 2; 1; 3; 4 |] in
+  let k = normal 47 Nx.float32 [| 1; 3; 5; 4 |] in
+  let v = normal 48 Nx.float32 [| 1; 3; 5; 2 |] in
+  let wide t =
+    Nx.broadcast_to (Array.append [| 2; 3 |] (Array.sub (Nx.shape t) 2 2)) t
   in
-  let mask = Cache_index.mask index in
-  equal ~msg:"the same mask" (list bool) (bools mask)
-    (bools (Cache_index.mask (Cache_index.select every index)));
-  let per_token =
-    Nx.where
-      (Nx.reshape [| 1; 2; 6; 1 |] mask)
-      (Nx.broadcast_to [| 1; 2; 6; 1 |] (Nx.reshape [| 1; 1; 6; 1 |] seen))
-      (Nx.zeros Nx.float32 [| 1 |])
-  in
-  values_are ~msg:"the same rows where the token sees them" ~tol:0.
-    (flat per_token) chosen
+  equal exactly
+    (flat (Attention.scaled_dot_product_attention (wide q) (wide k) (wide v)))
+    (flat (Attention.scaled_dot_product_attention q k v))
 
-(* On a whole index a column is a token of the lane: lane 0 is padded by one
-   token. *)
-let test_index_select_whole () =
-  let index = Cache_index.whole ~lens:[| 2; 3 |] ~batch:2 ~seq:3 () in
-  let values =
-    Nx.create Nx.float32 [| 2; 3; 1 |] [| 1.; 2.; 3.; 11.; 12.; 13. |]
-  in
-  let columns =
-    int64s [| 2; 3; 3 |] (Array.concat (List.init 6 (fun _ -> [| 2; 0; 1 |])))
-  in
-  let selected = Cache_index.select columns index in
-  let pool = Nx.zeros Nx.float32 [| 0; 1 |] in
-  let seen, pool' = Cache_index.extend selected values pool in
-  values_are ~msg:"the chosen tokens a token sees, zero elsewhere" ~tol:0.
-    [|
-      0.;
-      0.;
-      0.;
-      0.;
-      0.;
-      2.;
-      3.;
-      0.;
-      2.;
-      (* lane 1 *)
-      0.;
-      11.;
-      0.;
-      0.;
-      11.;
-      12.;
-      13.;
-      11.;
-      12.;
-    |]
-    seen;
-  equal ~msg:"padding is hidden and a padded token sees nothing" (list bool)
-    (List.map (fun v -> v <> 0.) (Array.to_list (flat seen)))
-    (bools (Cache_index.mask selected));
-  is_true ~msg:"and nothing is kept" (pool == pool')
+let test_core_hidden_weight () =
+  (* Both keys tie, but the second is hidden: its weight is exactly 0, not
+     merely small, so the large hidden value does not leak through. *)
+  let q = Nx.create Nx.float32 [| 1; 1 |] [| 0. |] in
+  let k = Nx.create Nx.float32 [| 2; 1 |] [| 0.; 0. |] in
+  let v = Nx.create Nx.float32 [| 2; 1 |] [| 1.; 100. |] in
+  let shown = Nx.create Nx.bool [| 1; 2 |] [| true; false |] in
+  equal exactly [| 1.0 |]
+    (flat (Attention.scaled_dot_product_attention ~mask:(captured shown) q k v))
 
-(* A selection may be a broadcast view, on a whole index too. *)
-let test_index_select_broadcast () =
-  let index = Cache_index.whole ~batch:1 ~seq:3 () in
-  let columns =
-    Nx.broadcast_to [| 1; 3; 2 |] (int64s [| 1; 1; 2 |] [| 0; 2 |])
-  in
-  let selected = Cache_index.select columns index in
-  let seen, _ =
-    Cache_index.extend selected
-      (Nx.create Nx.float32 [| 1; 3; 1 |] [| 1.; 2.; 3. |])
-      (Nx.zeros Nx.float32 [| 0; 1 |])
-  in
-  values_are ~msg:"token 0 and, once seen, token 2" ~tol:0.
-    [| 1.; 0.; 1.; 0.; 1.; 3. |]
-    seen
+(* Row 0 sees no key; row 1 sees keys 0 and 2. *)
+let one_row_hidden =
+  lazy
+    (Nx.create Nx.bool [| 2; 3 |] [| false; false; false; true; false; true |])
 
-(* One slot, so the pool's slot axis has extent 1: a token that stores nothing
-   leaves the slot as a token that stores there left it, eagerly and
-   compiled. *)
-let test_index_one_slot () =
-  Compiled.here ();
-  let stored ~pos ~table =
-    let values =
-      Nx.create Nx.float32 [| 1; 2; 2; 4 |]
-        (Array.init 16 (fun i -> if i < 8 then 10. else 20.))
-    in
-    let pool = Nx.zeros Nx.float32 [| 1; 2; 4 |] in
-    let f pos =
-      snd
-        (Cache_index.extend
-           (Cache_index.make ~pos
-              ~table:(int64s [| 1; Array.length table |] table)
-              ())
-           values pool)
-    in
-    let pos = int64s [| 1; 2 |] pos in
-    (f pos, Rune.jit Nx.Ptree.(tensor @-> returns tensor) f pos)
+let test_core_hidden_gradients sinked =
+  let p =
+    qkvs_of ~q:[| 2; 2; 2 |] ~k:[| 2; 3; 2 |] ~v:[| 2; 3; 2 |] ~sinks:[| 2; 1 |]
   in
-  List.iter
-    (fun (msg, pos, table, expected) ->
-      let eager, compiled = stored ~pos ~table in
-      values_are ~msg:(msg ^ ", eager") ~tol:0. (Array.make 8 expected) eager;
-      values_are ~msg:(msg ^ ", compiled") ~tol:0. (Array.make 8 expected)
-        compiled)
-    [
-      ("padding after the token", [| 0; -1 |], [| 0 |], 10.);
-      ("padding before the token", [| -1; 0 |], [| 0 |], 20.);
-      ("an unallocated column before it", [| 0; 1 |], [| -1; 0 |], 20.);
-    ]
+  let mask = captured (Lazy.force one_row_hidden) in
+  (* The hidden row's output alone, linearly, so any derivative shows. *)
+  let loss { Qkvs.q; k; v; sinks } =
+    let sinks = if sinked then Some sinks else None in
+    let y = Attention.scaled_dot_product_attention ~mask ?sinks q k v in
+    Nx.sum (Nx.slice [ A; I 0 ] y)
+  in
+  let g = Rune.grad qkvs loss p in
+  all_zero ~msg:"q" (flat g.q);
+  all_zero ~msg:"k" (flat g.k);
+  all_zero ~msg:"v" (flat g.v);
+  all_zero ~msg:"sinks" (flat g.sinks)
 
-(* The selection is a tensor of the index: its structure walks it, [advance]
-   drops it. *)
-let test_index_select_structure () =
-  let index, _ = selection_fixture () in
-  let columns = int64s [| 1; 2; 1 |] [| 3; 5 |] in
-  let selected = Cache_index.select columns index in
-  let count index =
-    Nx.Ptree.fold (Nx.Ptree.v Cache_index.walk) (fun _ _ n -> n + 1) index 0
-  in
-  equal ~msg:"fold visits the selection" int (count index + 1) (count selected);
-  equal ~msg:"map reaches the selection" (list bool) [ true; true ]
-    (bools
-       (Cache_index.mask
-          (Nx.Ptree.map
-             (Nx.Ptree.v Cache_index.walk)
-             (fun _ t ->
-               if Nx.shape t = [| 1; 2; 1 |] then Nx.zeros_like t else t)
-             selected)));
-  shape_is ~msg:"advance drops the selection" [| 1; 1; 6 |]
-    (Cache_index.mask (Cache_index.advance selected));
-  raises
-    (Invalid_argument
-       "Nx.Ptree.map2: columns: Some in the first value, None in the second")
-    (fun () ->
-      Nx.Ptree.map2
-        (Nx.Ptree.v Cache_index.walk)
-        (fun _ a _ -> a)
-        selected index)
+let sinked_id s = if s then "with sinks" else "without sinks"
 
-module Selected = struct
-  type t = {
-    index : Nx.host Cache_index.t;
-    pool : Nx.host Nx.float32_t;
-    seen : Nx.host Nx.float32_t;
-  }
-
-  let ptree =
-    Nx.Ptree.v (fun c s ->
-        let open Nx.Ptree.Walk in
-        let i = field c "index" Cache_index.walk s.index in
-        let pool = field c "pool" tensor s.pool in
-        let seen = field c "seen" tensor s.seen in
-        { index = i; pool; seen })
-end
-
-(* Compiled, the columns are an input: what is read and stored is eager's. *)
-let test_index_select_compiled () =
-  Compiled.here ();
-  let index, pool = selection_fixture () in
-  let step { Selected.index; pool; seen = _ } =
-    let seen, pool = Cache_index.extend index tokens_2_4 pool in
-    { Selected.index; pool; seen }
-  in
-  let run columns =
-    let s =
-      {
-        Selected.index = Cache_index.select (int64s [| 1; 2; 5 |] columns) index;
-        pool;
-        seen = Nx.zeros Nx.float32 [| 1; 2; 5; 1 |];
-      }
-    in
-    ( step s,
-      Rune.jit Nx.Ptree.(Selected.ptree @-> returns Selected.ptree) step s )
-  in
-  List.iter
-    (fun columns ->
-      let eager, compiled = run columns in
-      values_are ~msg:"what is read" ~tol:0. (flat eager.seen) compiled.seen;
-      values_are ~msg:"what is stored" ~tol:0. (flat eager.pool) compiled.pool)
-    [ [| 1; 3; 2; -1; 1; 5; 6; 0; 4; 0 |]; [| 0; 1; 2; 3; 4; 4; 3; 2; 1; 0 |] ]
-
-(* Blocks of positions. With values numbered by position, a block holds the
-   value of the position that closed it. *)
-
-(* One sequence of 12 positions over contiguous slots, its blocks of 4 over the
-   shuffled slots [blocks], and a pool of 3 blocks. *)
-let blocks_at ?(blocks = [| 2; 0; 1 |]) pos =
-  let n = Array.length pos in
-  Cache_index.make
-    ~every:[ (4, int64s [| 1; 3 |] blocks) ]
-    ~pos:(int64s [| 1; n |] pos)
-    ~table:(int64s [| 1; 12 |] (Array.init 12 Fun.id))
-    ()
-
-let block_pool () = Nx.zeros Nx.float32 [| 3; 1 |]
-
-(* Token [t] sees block [j] when [(j + 1) * 4 <= t + 1]. *)
-let closed ~blocks positions =
-  List.concat_map
-    (fun t -> List.init blocks (fun j -> t >= 0 && (j + 1) * 4 <= t + 1))
-    positions
-
-let test_index_every () =
-  let from0 = List.init 10 Fun.id in
-  let index = Cache_index.every 4 (blocks_at (Array.of_list from0)) in
-  equal ~msg:"a column is a block" int 3 (Cache_index.context index);
-  let seen, pool =
-    Cache_index.extend index (numbered ~batch:1 ~from:0 10) (block_pool ())
-  in
-  values_are ~msg:"only a block's last token stores, at the block's slot"
-    ~tol:0. [| 8.; 0.; 4. |] pool;
-  values_are ~msg:"a block is seen once closed" ~tol:0. [| 4.; 8.; 0. |] seen;
-  equal ~msg:"position t sees block j when (j + 1) * 4 <= t + 1" (list bool)
-    (closed ~blocks:3 from0)
-    (bools (Cache_index.mask index));
-  (* One token at a time, the block closes with its last token. *)
-  let _, pool =
-    List.fold_left
-      (fun (_, pool) t ->
-        let index = Cache_index.every 4 (blocks_at [| t |]) in
-        let seen, pool =
-          Cache_index.extend index (numbered ~batch:1 ~from:t 1) pool
-        in
-        values_are
-          ~msg:(Printf.sprintf "position %d, one token" t)
-          ~tol:0.
-          (Array.init 3 (fun j ->
-               if (j + 1) * 4 <= t + 1 then float_of_int ((j * 4) + 4) else 0.))
-          seen;
-        (seen, pool))
-      (Nx.zeros Nx.float32 [| 1 |], block_pool ())
-      (List.init 12 Fun.id)
-  in
-  values_are ~msg:"token by token stores the same blocks" ~tol:0.
-    [| 8.; 12.; 4. |] pool;
-  (* 10 positions in 3 blocks: the last block reaches past the positions. *)
-  let ten =
-    Cache_index.make
-      ~every:[ (4, int64s [| 1; 3 |] [| 0; 1; 2 |]) ]
-      ~pos:(int64s [| 1; 3 |] [| 9; 10; 11 |])
-      ~table:(int64s [| 1; 10 |] (Array.init 10 Fun.id))
-      ()
-  in
-  let positions index =
-    Array.to_list (Array.map Int64.to_int (flat (Cache_index.positions index)))
-  in
-  equal ~msg:"positions are clamped to the positions' table, at any stride"
-    (list int) (positions ten)
-    (positions (Cache_index.every 4 ten))
-
-(* A padded token, a lane outside the table and an unallocated block store
-   nothing. Every value is nonzero. *)
-let test_index_every_addresses () =
-  let index =
-    Cache_index.every 4
-      (Cache_index.make
-         ~row:(int64s [| 2 |] [| 0; 3 |])
-         ~every:[ (4, int64s [| 1; 3 |] [| 2; -1; 1 |]) ]
-         ~pos:(int64s [| 2; 9 |] (Array.init 18 (fun i -> (i mod 9) - 1)))
-         ~table:(int64s [| 1; 12 |] (Array.init 12 Fun.id))
-         ())
-  in
-  let values =
-    Nx.create Nx.float32 [| 2; 9; 1 |]
-      (Array.init 18 (fun i -> float_of_int (10 + i)))
-  in
-  let seen, pool = Cache_index.extend index values (block_pool ()) in
-  values_are
-    ~msg:
-      "position 3 stores block 0; block 1 is unallocated, padding and the lane \
-       outside the table store nothing"
-    ~tol:0. [| 0.; 0.; 14. |] pool;
-  values_are ~msg:"yet an unallocated block reads as zero" ~tol:0.
-    [| 14.; 0.; 0.; 0.; 0.; 0. |]
-    seen
-
-(* Tokens at positions 10 and 11 behind a padded one. *)
-let test_index_every_window () =
-  let window =
-    Cache_index.window 4 (Cache_index.every 4 (blocks_at [| -1; 10; 11 |]))
-  in
-  equal ~msg:"under a window w, block j is seen while also j * 4 + 3 > t - w"
-    (list bool)
-    [ false; false; false; false; true; false; false; false; true ]
-    (bools (Cache_index.mask window));
-  let pool = Nx.create Nx.float32 [| 3; 1 |] [| 8.; 0.; 4. |] in
-  let seen, _ =
-    Cache_index.extend window
-      (Nx.create Nx.float32 [| 1; 3; 1 |] [| 99.; 11.; 12. |])
-      pool
-  in
-  values_are
-    ~msg:"a block below every window reads as zero; block 2 closes in the call"
-    ~tol:0. [| 0.; 8.; 12. |] seen;
-  equal ~msg:"advance keeps the blocks and the window" (list bool)
-    [ false; false; true ]
-    (bools (Cache_index.mask (Cache_index.advance window)))
-
-(* A selection at stride 4 chooses blocks: a block not yet closed reads as zero
-   and is masked, even where its slot holds something. *)
-let test_index_every_select () =
-  let pool = Nx.create Nx.float32 [| 3; 1 |] [| 0.; nan; 4. |] in
-  let columns = int64s [| 1; 2; 4 |] [| 1; 0; 2; -1; 1; 0; 2; 3 |] in
-  let index =
-    Cache_index.select columns (Cache_index.every 4 (blocks_at [| 5; 7 |]))
-  in
-  let seen, pool =
-    Cache_index.extend index
-      (Nx.create Nx.float32 [| 1; 2; 1 |] [| 6.; 8. |])
-      pool
-  in
-  values_are
-    ~msg:"position 7 closes block 1 in the call and reads it; others are zero"
-    ~tol:0.
-    [| 0.; 4.; 0.; 0.; 8.; 4.; 0.; 0. |]
-    seen;
-  equal ~msg:"and masked" (list bool)
-    [ false; true; false; false; true; true; false; false ]
-    (bools (Cache_index.mask index));
-  values_are ~msg:"what is stored does not change" ~tol:0. [| 8. |]
-    (Nx.slice [ R (0, 1) ] pool)
-
-(* On a whole index the columns are the lane's blocks by position. Lane 0 holds
-   6 tokens padded by 4, lane 1 holds 10. *)
-let test_index_every_whole () =
-  let index =
-    Cache_index.every 4
-      (Cache_index.whole ~lens:[| 6; 10 |] ~batch:2 ~seq:10 ())
-  in
-  equal ~msg:"ceil (seq / m) blocks" int 3 (Cache_index.context index);
-  let pool = Nx.zeros Nx.float32 [| 0; 1 |] in
-  let seen, pool' =
-    Cache_index.extend index (numbered ~batch:2 ~from:0 10) pool
-  in
-  values_are
-    ~msg:"the values of the tokens that close a block, zero for an open one"
-    ~tol:0.
-    [| 8.; 0.; 0.; 4.; 8.; 0. |]
-    seen;
-  is_true ~msg:"nothing is kept" (pool == pool');
-  equal ~msg:"a token sees the blocks closed at or before its position"
-    (list bool)
-    (closed ~blocks:3 [ -1; -1; -1; -1; 0; 1; 2; 3; 4; 5 ]
-    @ closed ~blocks:3 (List.init 10 Fun.id))
-    (bools (Cache_index.mask index));
-  let chosen =
-    Cache_index.select
-      (Nx.broadcast_to [| 2; 10; 2 |] (int64s [| 1; 1; 2 |] [| 1; 0 |]))
-      index
-  in
-  let seen, _ = Cache_index.extend chosen (numbered ~batch:2 ~from:0 10) pool in
-  values_are ~msg:"a chosen block is read from the token that closed it" ~tol:0.
-    (Array.concat
-       [
-         Array.concat (List.init 7 (fun _ -> [| 0.; 0. |]));
-         Array.concat (List.init 3 (fun _ -> [| 0.; 8. |]));
-         Array.concat (List.init 3 (fun _ -> [| 0.; 0. |]));
-         Array.concat (List.init 4 (fun _ -> [| 0.; 4. |]));
-         Array.concat (List.init 3 (fun _ -> [| 8.; 4. |]));
-       ])
-    seen
-
-(* Each sequence owns a run of ceil (context / m) block slots. *)
-let test_index_every_rows () =
-  let index =
-    Cache_index.every 4 (Cache_index.rows ~every:[ 4 ] ~context:10 [| 4; 4 |])
-  in
-  equal ~msg:"ceil (10 / 4) blocks" int 3 (Cache_index.context index);
-  let _, pool =
-    Cache_index.extend index
-      (numbered ~batch:2 ~from:0 4)
-      (Nx.zeros Nx.float32 [| 6; 1 |])
-  in
-  values_are ~msg:"sequence b's block j is slot 3 b + j" ~tol:0.
-    [| 4.; 0.; 0.; 4.; 0.; 0. |]
-    pool
-
-let test_index_every_rejects () =
-  let rows = Cache_index.rows ~every:[ 4; 128 ] ~context:12 [| 4 |] in
-  is_true ~msg:"every 1 of a constructor's index is that index"
-    (Cache_index.every 1 rows == rows);
-  let four = Cache_index.every 4 rows in
-  is_true ~msg:"every m of an index read in blocks of m is that index"
-    (Cache_index.every 4 four == four);
-  raises (Invalid_argument "Cache_index.every: m must be positive, got 0")
-    (fun () -> Cache_index.every 0 rows);
-  raises
-    (Invalid_argument
-       "Cache_index.every: the index has no table for blocks of 8 positions")
-    (fun () -> Cache_index.every 8 rows);
-  raises
-    (Invalid_argument
-       "Cache_index.every: the index already reads blocks of 4 positions")
-    (fun () -> Cache_index.every 128 four);
-  raises (Invalid_argument "Cache_index.every: the index selects columns")
-    (fun () ->
-      Cache_index.every 4
-        (Cache_index.select (int64s [| 1; 4; 1 |] [| 0; 1; 2; 3 |]) rows));
-  raises
-    (Invalid_argument
-       "Cache_index.rows: a block holds at least 2 positions, got 1") (fun () ->
-      Cache_index.rows ~every:[ 1 ] ~context:12 [| 2 |]);
-  raises
-    (Invalid_argument "Cache_index.rows: two tables for blocks of 4 positions")
-    (fun () -> Cache_index.rows ~every:[ 4; 4 ] ~context:12 [| 2 |]);
-  let table = int64s [| 1; 12 |] (Array.init 12 Fun.id) in
-  let make every =
-    Cache_index.make ~every ~pos:(int64s [| 1; 1 |] [| 0 |]) ~table ()
-  in
-  let three = int64s [| 1; 3 |] [| 0; 1; 2 |] in
-  raises
-    (Invalid_argument
-       "Cache_index.make: a block holds at least 2 positions, got 1") (fun () ->
-      make [ (1, three) ]);
-  raises
-    (Invalid_argument "Cache_index.make: two tables for blocks of 4 positions")
-    (fun () -> make [ (4, three); (4, three) ]);
-  raises
-    (Invalid_argument
-       "Cache_index.make: the table of blocks of 4 positions must have shape \
-        [1; context], context positive") (fun () ->
-      make [ (4, int64s [| 2; 3 |] (Array.make 6 0)) ]);
-  let count index =
-    Nx.Ptree.fold (Nx.Ptree.v Cache_index.walk) (fun _ _ n -> n + 1) index 0
-  in
-  equal ~msg:"the structure visits every table" int 4 (count rows);
-  let unallocated =
-    Nx.Ptree.map
-      (Nx.Ptree.v Cache_index.walk)
-      (fun _ t ->
-        if Nx.shape t = [| 1; 3 |] then Nx.neg (Nx.ones_like t) else t)
-      four
-  in
-  let _, pool =
-    Cache_index.extend unallocated (numbered ~batch:1 ~from:0 4) (block_pool ())
-  in
-  values_are ~msg:"map reaches the tables of blocks" ~tol:0. [| 0.; 0.; 0. |]
-    pool;
-  raises
-    (Invalid_argument
-       "Nx.Ptree.map2: every: int 4 in the first value, int 1 in the second")
-    (fun () ->
-      Nx.Ptree.map2 (Nx.Ptree.v Cache_index.walk) (fun _ a _ -> a) four rows);
-  raises
-    (Invalid_argument
-       "Nx.Ptree.map2: tokens.blocks: length 2 in the first value, length 1 in \
-        the second") (fun () ->
-      Nx.Ptree.map2
-        (Nx.Ptree.v Cache_index.walk)
-        (fun _ a _ -> a)
-        rows
-        (Cache_index.rows ~every:[ 4 ] ~context:12 [| 2 |]))
-
-(* A toy compressed stream: each token stores its value at its position; the
-   token that closes a block of 4 reads its block's positions through a
-   selection and stores their sum as the block's entry; each token then sums the
-   entries it sees. *)
-
-type stream = {
-  index : Nx.host Cache_index.t;
-  x : Nx.host Nx.float32_t;
-  y : Nx.host Nx.float32_t;
-  sources : Nx.host Nx.float32_t;
-  entries : Nx.host Nx.float32_t;
+type core_grad = {
+  shapes : int array * int array * int array * int array;
+  hidden : bool;
+  sinked : bool;
+  core_scale : float option;
 }
 
-let stream_ptree =
-  Nx.Ptree.v (fun c (s : stream) ->
-      let open Nx.Ptree.Walk in
-      let i = field c "index" Cache_index.walk s.index in
-      let x = field c "x" tensor s.x in
-      let y = field c "y" tensor s.y in
-      let sources = field c "sources" tensor s.sources in
-      let entries = field c "entries" tensor s.entries in
-      { index = i; x; y; sources; entries })
-
-let stream s =
-  let batch = Cache_index.batch s.index and seq = Cache_index.seq s.index in
-  let pos = Cache_index.positions s.index in
-  let first = Nx.reshape [| batch; seq; 1 |] (Nx.sub pos (Nx.mod_s pos 4L)) in
-  let block =
-    Nx.add first (Nx.reshape [| 1; 1; 4 |] (Nx.arange Nx.int64 0 4 1))
-  in
-  let own, sources =
-    Cache_index.extend (Cache_index.select block s.index) s.x s.sources
-  in
-  let blocks = Cache_index.every 4 s.index in
-  let seen, entries =
-    Cache_index.extend blocks (Nx.sum ~axes:[ 2 ] own) s.entries
-  in
-  let context = Cache_index.context blocks in
-  let y =
-    Nx.sum ~axes:[ 2 ]
-      (Nx.where (Cache_index.mask blocks)
-         (Nx.reshape [| batch; 1; context |] seen)
-         (Nx.zeros Nx.float32 [| 1 |]))
-  in
-  { s with y; sources; entries }
-
-(* Blocks sum positions plus one: block j holds 16 j + 10. *)
-let stream_expected positions =
-  List.map
-    (fun t ->
-      List.fold_left ( +. ) 0.
-        (List.init 3 (fun j ->
-             if (j + 1) * 4 <= t + 1 then float_of_int ((16 * j) + 10) else 0.)))
-    positions
-
-(* A sequence of 12 positions fed in calls, each a list of lanes of one
-   sequence, each lane a list of positions, over shuffled tables. *)
-let feed_stream ?(step = stream) calls =
-  let table = int64s [| 1; 12 |] [| 5; 11; 0; 7; 2; 9; 4; 1; 10; 3; 8; 6 |] in
-  let blocks = int64s [| 1; 3 |] [| 1; 2; 0 |] in
-  let ys, s =
-    List.fold_left
-      (fun (ys, s) lanes ->
-        let batch = List.length lanes and seq = List.length (List.hd lanes) in
-        let pos = int64s [| batch; seq |] (Array.of_list (List.concat lanes)) in
-        let index =
-          Cache_index.make
-            ~row:(int64s [| batch |] (Array.make batch 0))
-            ~every:[ (4, blocks) ]
-            ~pos ~table ()
-        in
-        let x =
-          Nx.add_s (Nx.cast Nx.float32 (Nx.reshape [| batch; seq; 1 |] pos)) 1.
-        in
-        let s =
-          step { s with index; x; y = Nx.zeros Nx.float32 [| batch; seq |] }
-        in
-        (List.rev_append (Array.to_list (flat s.y)) ys, s))
-      ( [],
-        {
-          index = Cache_index.rows ~context:1 [| 1 |];
-          x = Nx.zeros Nx.float32 [| 1; 1; 1 |];
-          y = Nx.zeros Nx.float32 [| 1; 1 |];
-          sources = Nx.zeros Nx.float32 [| 12; 1 |];
-          entries = Nx.zeros Nx.float32 [| 3; 1 |];
-        } )
-      calls
-  in
-  (List.rev ys, s.entries)
-
-let test_index_every_stream () =
-  let expected = stream_expected (List.init 12 Fun.id) in
-  let entries = [| 42.; 10.; 26. |] in
-  let check msg calls =
-    let ys, stored = feed_stream calls in
-    equal ~msg:(msg ^ ": outputs") (list float_exact) expected ys;
-    values_are ~msg:(msg ^ ": entries") ~tol:0. entries stored
-  in
-  check "whole" [ [ List.init 12 Fun.id ] ];
-  check "chunks of 3 split every block"
-    (List.init 4 (fun c -> [ List.init 3 (fun i -> (3 * c) + i) ]));
-  check "token by token" (List.init 12 (fun t -> [ [ t ] ]));
-  check "one-token lanes close blocks 1 and 2 in one call"
-    [ [ [ 0; 1; 2; 3 ] ]; List.init 8 (fun i -> [ 4 + i ]) ];
-  let whole = Cache_index.whole ~batch:1 ~seq:12 () in
-  let s =
-    stream
+let core_grads =
+  [
+    ( "no mask",
       {
-        index = whole;
-        x = numbered ~batch:1 ~from:0 12;
-        y = Nx.zeros Nx.float32 [| 1; 12 |];
-        sources = Nx.zeros Nx.float32 [| 0; 1 |];
-        entries = Nx.zeros Nx.float32 [| 0; 1 |];
-      }
-  in
-  equal ~msg:"a whole index computes the same outputs" (list float_exact)
-    expected
-    (Array.to_list (flat s.y))
+        shapes = ([| 3; 2 |], [| 4; 2 |], [| 4; 2 |], [| 1 |]);
+        hidden = false;
+        sinked = false;
+        core_scale = None;
+      } );
+    ( "a row that sees no key",
+      {
+        shapes = ([| 2; 2 |], [| 3; 2 |], [| 3; 2 |], [| 1 |]);
+        hidden = true;
+        sinked = false;
+        core_scale = None;
+      } );
+    ( "sinks and a scale",
+      {
+        shapes = ([| 3; 4; 2 |], [| 3; 4; 2 |], [| 3; 4; 2 |], [| 3; 1 |]);
+        hidden = false;
+        sinked = true;
+        core_scale = Some 0.9;
+      } );
+    ( "sinks and a row that sees no key",
+      {
+        shapes = ([| 2; 2; 2 |], [| 2; 3; 2 |], [| 2; 3; 2 |], [| 2; 1 |]);
+        hidden = true;
+        sinked = true;
+        core_scale = None;
+      } );
+  ]
 
-let test_index_every_compiled () =
-  Compiled.here ();
-  let step = Rune.jit Nx.Ptree.(stream_ptree @-> returns stream_ptree) stream in
-  let expected = stream_expected (List.init 12 Fun.id) in
-  let ys, stored =
-    feed_stream ~step
-      [ [ [ 0; 1; 2 ] ]; [ [ 3; 4; 5 ] ]; [ [ 6; 7; 8 ] ]; [ [ 9; 10; 11 ] ] ]
+let test_core_gradients (_, c) =
+  let q, k, v, sinks = c.shapes in
+  let p = qkvs_of ~q ~k ~v ~sinks in
+  let mask =
+    if c.hidden then Some (captured (Lazy.force one_row_hidden)) else None
   in
-  equal ~msg:"outputs" (list float_exact) expected ys;
-  values_are ~msg:"entries" ~tol:0. [| 42.; 10.; 26. |] stored
-
-let test_cached_chunking_is_invariant () =
-  Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 7; 8 |] in
-  let whole = Attention.apply ~head_dim ~mask:Nx.causal ~rope p x in
-  let slots = [| Array.init 8 Fun.id |] in
-  let feed chunks =
-    let _, ys, _ =
-      List.fold_left
-        (fun (at, ys, c) n ->
-          let index =
-            index_at ~pos:[| Array.init n (fun i -> at + i) |] ~slots
-          in
-          let y, c = call p c index (Nx.slice [ A; R (at, at + n) ] x) in
-          (at + n, y :: ys, c))
-        (0, [], cache 8)
-        chunks
+  let loss { Qkvs.q; k; v; sinks } =
+    let sinks = if c.sinked then Some sinks else None in
+    let y =
+      Attention.scaled_dot_product_attention ?mask ?scale:c.core_scale ?sinks q
+        k v
     in
-    Nx.concatenate ~axis:1 (List.rev ys)
+    Nx.sum (Nx.mul y y)
   in
-  close ~msg:"token by token" whole (feed [ 1; 1; 1; 1; 1; 1; 1 ]);
-  close ~msg:"uneven chunks" whole (feed [ 3; 1; 2; 1 ]);
-  close ~msg:"one chunk" whole (feed [ 7 ])
+  grads_ok (Rune.check_grads qkvs loss p)
 
-(* Rows of different lengths in one batch, padded on the left, then one decode
-   step each: every row behaves as it would alone. *)
-let test_cached_ragged_batch () =
-  Nx.Rng.with_key (Nx.Rng.key 22) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 5; 8 |] in
-  let next = Nx.Rng.normal Nx.float32 [| 2; 1; 8 |] in
-  let alone row len =
-    let xs = Nx.slice [ R (row, row + 1); R (5 - len, 5) ] x in
-    let index = Cache_index.rows ~context:6 [| len |] in
-    let y, c = call p (cache 6) index xs in
-    let y', _ =
-      call p c (Cache_index.advance index) (Nx.slice [ R (row, row + 1) ] next)
-    in
-    (y, y')
-  in
-  let index = Cache_index.rows ~context:6 [| 3; 5 |] in
-  equal ~msg:"left padding: a padded token sees nothing" (array bool)
-    [| false; false; true; true; true; true; true; true; true; true |]
-    (Nx.to_array (Nx.slice [ A; A; I 0 ] (Cache_index.mask index)));
-  equal ~msg:"positions, padding as 0" (array int64)
-    [| 0L; 0L; 0L; 1L; 2L; 0L; 1L; 2L; 3L; 4L |]
-    (Nx.to_array (Cache_index.positions index));
-  let y, c = call p (cache 12) index x in
-  let index = Cache_index.advance index in
-  equal ~msg:"each row advances from its own length" (array int64) [| 3L; 5L |]
-    (Nx.to_array (Cache_index.positions index));
-  let padding =
-    Cache_index.advance
-      (index_at
-         ~pos:[| [| -1; -1 |]; [| -7; -7 |] |]
-         ~slots:[| [| 0; 1 |]; [| 2; 3 |] |])
-  in
-  equal ~msg:"a lane of padding advances to a real token" (array bool)
-    [| true; false; true; false |]
-    (Nx.to_array (Cache_index.mask padding));
-  equal ~msg:"at position 0" (array int64) [| 0L; 0L |]
-    (Nx.to_array (Cache_index.positions padding));
-  equal ~msg:"positions stay below the context" (array int64) [| 0L; 1L; 1L |]
-    (Nx.to_array
-       (Cache_index.positions
-          (index_at ~pos:[| [| -1; 1; 7 |] |] ~slots:[| [| 0; 1 |] |])));
-  let y', _ = call p c index next in
-  let short, short' = alone 0 3 and long, long' = alone 1 5 in
-  close ~msg:"short row, prompt" short (Nx.slice [ R (0, 1); R (2, 5) ] y);
-  close ~msg:"long row, prompt" long (Nx.slice [ R (1, 2) ] y);
-  close ~msg:"short row, next token" short' (Nx.slice [ R (0, 1) ] y');
-  close ~msg:"long row, next token" long' (Nx.slice [ R (1, 2) ] y');
-  is_true ~msg:"padding produces no nan"
-    (Array.for_all Float.is_finite (flat y))
-
-(* Paging is a value of the table: rows whose slots interleave in any order give
-   the same outputs as contiguous runs. *)
-let test_cached_slots_are_free () =
-  Nx.Rng.with_key (Nx.Rng.key 23) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 4; 8 |] in
-  let pos = [| [| 0; 1; 2; 3 |]; [| 0; 1; 2; 3 |] |] in
-  let contiguous, _ =
-    call p (cache 8)
-      (index_at ~pos ~slots:[| [| 0; 1; 2; 3 |]; [| 4; 5; 6; 7 |] |])
-      x
-  in
-  let paged, _ =
-    call p (cache 16)
-      (index_at ~pos ~slots:[| [| 9; 2; 14; 5 |]; [| 3; 12; 0; 7 |] |])
-      x
-  in
-  close ~msg:"interleaved slots" contiguous paged
-
-(* Two rows sharing the slots of a common prefix read the same keys, and lanes
-   name their sequences through [row]. *)
-let test_cached_shared_prefix () =
-  Nx.Rng.with_key (Nx.Rng.key 29) @@ fun () ->
-  let p = layer Nx.float32 in
-  let prefix = Nx.Rng.normal Nx.float32 [| 1; 3; 8 |] in
-  let tails = Nx.Rng.normal Nx.float32 [| 2; 1; 8 |] in
-  let _, c =
-    call p (cache 8)
-      (index_at ~pos:[| [| 0; 1; 2 |] |] ~slots:[| [| 0; 1; 2; 3 |] |])
-      prefix
-  in
-  let slots = [| [| 0; 1; 2; 3 |]; [| 0; 1; 2; 4 |] |] in
-  let shared, _ =
-    call p c (index_at ~pos:[| [| 3 |]; [| 3 |] |] ~slots) tails
-  in
-  let alone row =
-    let x =
-      Nx.concatenate ~axis:1 [ prefix; Nx.slice [ R (row, row + 1) ] tails ]
-    in
-    Nx.slice
-      [ A; R (3, 4) ]
-      (Attention.apply ~head_dim ~mask:Nx.causal ~rope p x)
-  in
-  close ~msg:"row 0" (alone 0) (Nx.slice [ R (0, 1) ] shared);
-  close ~msg:"row 1" (alone 1) (Nx.slice [ R (1, 2) ] shared);
-  (* The same call with the lanes swapped and a table of three sequences. *)
-  let swapped, _ =
-    call p c
-      (Cache_index.make
-         ~row:(int64s [| 2 |] [| 2; 0 |])
-         ~pos:(int64s [| 2; 1 |] [| 3; 3 |])
-         ~table:(int64s [| 3; 4 |] [| 0; 1; 2; 3; -1; -1; -1; -1; 0; 1; 2; 4 |])
-         ())
-      (Nx.concatenate ~axis:0
-         [ Nx.slice [ R (1, 2) ] tails; Nx.slice [ R (0, 1) ] tails ])
-  in
-  close ~msg:"lane 0 is sequence 2" (alone 1) (Nx.slice [ R (0, 1) ] swapped);
-  close ~msg:"lane 1 is sequence 0" (alone 0) (Nx.slice [ R (1, 2) ] swapped)
-
-let test_cached_update_is_functional () =
-  Nx.Rng.with_key (Nx.Rng.key 30) @@ fun () ->
-  let p = layer Nx.float32 in
-  let c = cache 4 in
-  let _, c' =
-    call p c
-      (Cache_index.rows ~context:4 [| 2 |])
-      (Nx.Rng.normal Nx.float32 [| 1; 2; 8 |])
-  in
-  values_are ~msg:"the argument is untouched" ~tol:0.0 (Array.make 16 0.0)
-    c.Attention.Cache.keys;
-  is_true ~msg:"the result holds the new keys"
-    (Array.exists (fun v -> v <> 0.0) (flat c'.Attention.Cache.keys));
-  values_are ~msg:"slots past the prompt stay empty" ~tol:0.0 (Array.make 8 0.0)
-    (Nx.slice [ R (2, 4) ] c'.Attention.Cache.keys)
-
-(* What addresses nothing writes no slot. *)
-let test_cached_addresses () =
-  Nx.Rng.with_key (Nx.Rng.key 31) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 2; 8 |] in
-  let slots = [| [| 0; 1; 2; 3 |] |] in
-  let keys_after index =
-    let _, c = call p (cache 4) index x in
-    c.Attention.Cache.keys
-  in
-  values_are ~msg:"padding writes nothing" ~tol:0.0 (Array.make 16 0.0)
-    (keys_after (index_at ~pos:[| [| -1; -1 |] |] ~slots));
-  values_are ~msg:"a target of -1 or outside the pool writes nothing" ~tol:0.0
-    (Array.make 16 0.0)
-    (keys_after
-       (index_at ~pos:[| [| 0; 1 |] |] ~slots:[| [| -1; 99; 2; 3 |] |]));
-  (* A lane whose row is outside the table is padding, whatever its positions:
-     it stores nothing and its outputs are finite. *)
-  let lost row =
-    Cache_index.make ~row:(int64s [| 1 |] [| row |])
-      ~pos:(int64s [| 1; 2 |] [| 0; 1 |])
-      ~table:(int64s [| 2; 4 |] [| 0; 1; 2; 3; 0; 1; 2; 3 |])
-      ()
-  in
-  List.iter
-    (fun row ->
-      let y, c = call p (cache 4) (lost row) x in
-      values_are
-        ~msg:(Printf.sprintf "a lane of row %d writes nothing" row)
-        ~tol:0.0 (Array.make 16 0.0) c.Attention.Cache.keys;
-      is_true ~msg:"and its outputs are finite"
-        (Array.for_all Float.is_finite (flat y)))
-    [ -1; 2 ];
-  is_true ~msg:"a lane of row 1 writes"
-    (Array.exists (fun v -> v <> 0.0) (flat (keys_after (lost 1))));
-  (* Past the last column a lane advances to a token that stores nothing. *)
-  let full = Cache_index.rows ~context:2 [| 2 |] in
-  let _, c = call p (cache 2) full x in
-  let _, c' =
-    call p c (Cache_index.advance full) (Nx.slice [ A; R (0, 1) ] x)
-  in
-  close ~msg:"a full context is not overwritten" c.Attention.Cache.keys
-    c'.Attention.Cache.keys
-
-(* A column no query of the row may see contributes exactly zero, whatever its
-   slot holds. *)
-let test_cached_masked_columns_are_zero () =
-  Nx.Rng.with_key (Nx.Rng.key 32) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 2; 8 |] in
-  let nan rows = Nx.full Nx.float32 [| rows; 2; 2 |] Float.nan in
-  let poisoned =
-    Nx.Ptree.Payload.map
-      (module Attention.Cache)
-      (fun _ t -> Nx.set [ Nx.R (0, 2) ] (nan 2) t)
-      (cache 6)
-  in
-  (* Column 2 is allocated on a poisoned slot but past the row's positions;
-     column 3 is unallocated. *)
-  let index = index_at ~pos:[| [| 0; 1 |] |] ~slots:[| [| 4; 5; 1; -1 |] |] in
-  let y, _ = call p poisoned index x in
-  is_true ~msg:"no nan reaches the outputs"
-    (Array.for_all Float.is_finite (flat y));
-  let clean, _ = call p (cache 6) index x in
-  close ~msg:"the outputs ignore what masked slots hold" clean y;
-  (* Columns inside the row's horizon that address nothing: column 1 is
-     unallocated, column 2 names a slot outside the pool, and the token at
-     position 3 may see both. They read as zero, whatever the pool's first slots
-     hold. *)
-  let index = index_at ~pos:[| [| 0; 3 |] |] ~slots:[| [| 4; -1; 99; 5 |] |] in
-  let y, _ = call p poisoned index x in
-  is_true ~msg:"an unallocated column within the horizon reads as zero"
-    (Array.for_all Float.is_finite (flat y));
-  let clean, _ = call p (cache 6) index x in
-  close ~msg:"and the outputs are those of an empty cache" clean y
-
-(* The decode step as a jittable function: the index and the cache enter as
-   tensors, so one compilation serves every position and every table. *)
-
-type step = {
-  x : Nx.host Nx.float32_t;
-  index : Nx.host Cache_index.t;
-  c : (Nx.host Nx.float32_t, Nx.host) Attention.Cache.t;
-}
-
-let step_ptree =
-  Nx.Ptree.v (fun cur (s : step) ->
-      let open Nx.Ptree.Walk in
-      let x = field cur "x" tensor s.x in
-      let i = field cur "index" Cache_index.walk s.index in
-      let cache = Nx.Ptree.instantiate (module Attention.Cache) in
-      let c = field cur "c" (structure cache) s.c in
-      { x; index = i; c })
-
-(* Under a window, a column below the window of every token of the lane is
-   allocated and at or before their positions, and still contributes exactly
-   zero whatever its slot holds. *)
-let test_cached_windowed_columns_are_zero () =
+(* Keys past the length are NaN, which reaches no row, eagerly or compiled. *)
+let test_core_lengths_0d lead =
   Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 36) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 5; 8 |] in
-  let windowed c index x =
-    Attention.cached ~head_dim ~rope p c (Cache_index.window 2 index) x
-  in
-  let slots = [| [| 4; 2; 0; 3; 1 |] |] in
-  let _, c =
-    windowed (cache 5)
-      (index_at ~pos:[| [| 0; 1; 2 |] |] ~slots)
-      (Nx.slice [ A; R (0, 3) ] x)
-  in
-  (* Positions 3 and 4 see columns 2 to 4: the slots of columns 0 and 1 are out
-     of every window. *)
-  let poisoned =
-    Nx.Ptree.Payload.map
-      (module Attention.Cache)
-      (fun _ t ->
-        let nan = Nx.full Nx.float32 [| 1; 2; 2 |] Float.nan in
-        Nx.set [ Nx.R (2, 3) ] nan (Nx.set [ Nx.R (4, 5) ] nan t))
-      c
-  in
-  let tail = index_at ~pos:[| [| 3; 4 |] |] ~slots in
-  let rest = Nx.slice [ A; R (3, 5) ] x in
-  let clean, _ = windowed c tail rest in
-  let check ~msg y =
-    is_true
-      ~msg:(msg ^ ": no nan reaches the outputs")
-      (Array.for_all Float.is_finite (flat y));
-    close
-      ~msg:(msg ^ ": the outputs ignore what windowed-out slots hold")
-      clean y
-  in
-  check ~msg:"eager" (fst (windowed poisoned tail rest));
-  let step { x; index; c } =
-    let y, c = windowed c index x in
-    { x = y; index; c }
-  in
-  check ~msg:"compiled"
-    (Rune.jit
-       Nx.Ptree.(step_ptree @-> returns step_ptree)
-       step
-       { x = rest; index = tail; c = poisoned })
-      .x
-
-let test_cached_step_jits_once () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 24) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 4; 8 |] in
-  (* The pools start as storage, as the steps return them: a constant pool is
-     one element expanded, which a compiled call keys apart. *)
-  let stored =
-    Nx.Ptree.map
-      (Nx.Ptree.instantiate (module Attention.Cache))
-      (fun _ t -> Nx.copy t)
-      (cache 4)
-  in
-  let decode step_fn =
-    let ys, _, _ =
-      List.fold_left
-        (fun (ys, index, c) i ->
-          let xi = Nx.slice [ A; R (i, i + 1) ] x in
-          let { x = y; index; c } = step_fn { x = xi; index; c } in
-          (y :: ys, index, c))
-        ([], index_at ~pos:[| [| 0 |] |] ~slots:[| [| 3; 0; 2; 1 |] |], stored)
-        [ 0; 1; 2; 3 ]
-    in
-    Nx.concatenate ~axis:1 (List.rev ys)
-  in
-  (* [Rune.jit] runs the traced function itself only when it (re)traces, so the
-     counter observes compilations: every step has the same signature and must
-     replay the single trace. *)
-  let traces = ref 0 in
-  let step { x; index; c } =
-    incr traces;
-    let y, c = call p c index x in
-    { x = y; index = Cache_index.advance index; c }
-  in
-  let eager = decode step in
-  traces := 0;
-  let jitted =
-    decode (Rune.jit Nx.Ptree.(step_ptree @-> returns step_ptree) step)
-  in
-  equal ~msg:"jitted decode = eager decode"
-    (array (float 1e-5))
-    (flat eager) (flat jitted);
-  equal ~msg:"all four steps share one trace" int 1 !traces;
-  close ~msg:"and both are causal attention over the prompt"
-    (Attention.apply ~head_dim ~mask:Nx.causal ~rope p x)
-    jitted
-
-(* A window's size is a value of the index: a compiled step lowers once, and
-   another window replays its program and reads its own size. *)
-let test_another_window_shares_the_program () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 27) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 1; 8 |] in
-  let kv = Nx.Ptree.instantiate (module Attention.Cache) in
-  let traces = ref 0 in
-  let step =
-    Rune.jit
-      Nx.Ptree.(
-        tensor @-> v Cache_index.walk @-> kv @-> returns (pair tensor kv))
-      (fun x index c ->
-        incr traces;
-        call p c index x)
-  in
-  let step x index c = step x index (Nx.Ptree.donate kv c) in
-  let index = index_at ~pos:[| [| 2 |] |] ~slots:[| [| 3; 0; 2; 1 |] |] in
-  let check w =
-    let index = Cache_index.window w index in
-    close
-      ~msg:(Printf.sprintf "window %d: compiled = eager" w)
-      (fst (call p (cache 4) index x))
-      (fst (step x index (cache 4)))
-  in
-  check 2;
-  let lowered = Rune.lowerings () in
-  List.iter check [ 1; 3; max_int; 2 ];
-  equal ~msg:"every window shares one trace" int 1 !traces;
-  equal ~msg:"and lowers nothing more" int lowered (Rune.lowerings ())
-
-(* Two cache leaves that hold one tensor, donated to a compiled call: the call
-   reads each as the tensor was when called, and the tensor dies once. *)
-let test_one_storage_behind_two_caches () =
-  Compiled.here ();
-  let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
-  let step =
-    Rune.jit
-      Nx.Ptree.(caches @-> returns caches)
-      (List.map (fun (c : (Nx.host Nx.float32_t, Nx.host) Attention.Cache.t) ->
-           { c with Attention.Cache.keys = Nx.add_s c.keys 1.0 }))
-  in
-  let c = cache 4 in
-  let out = step (Nx.Ptree.donate caches [ c; c ]) in
-  List.iter
-    (fun (o : (Nx.host Nx.float32_t, Nx.host) Attention.Cache.t) ->
-      close ~msg:"each leaf reads the tensor as it was"
-        (Nx.add_s (cache 4).Attention.Cache.keys 1.0)
-        o.keys)
-    out;
-  raises_match ~msg:"the donated tensor is dead"
-    (Exn.invalid_arg ~sub:"Nx.to_array") (fun () ->
-      ignore (Nx.to_array c.Attention.Cache.keys))
-
-(* Eager and compiled runs agree on what addresses nothing: neither raises and
-   both write no slot. *)
-let test_cached_out_of_range_under_jit () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 33) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 3; 8 |] in
-  let step { x; index; c } =
-    let y, c = call p c index x in
-    { x = y; index; c }
-  in
-  let index =
-    Cache_index.make
-      ~pos:(int64s [| 1; 3 |] [| -1; 1; 2 |])
-      ~table:(int64s [| 1; 4 |] [| 0; -1; 99; 3 |])
-      ()
-  in
-  let eager = step { x; index; c = cache 4 } in
-  let jitted =
-    Rune.jit
-      Nx.Ptree.(step_ptree @-> returns step_ptree)
-      step
-      { x; index; c = cache 4 }
-  in
-  values_are ~msg:"nothing written, eager" ~tol:0.0 (Array.make 16 0.0)
-    eager.c.Attention.Cache.keys;
-  values_are ~msg:"nothing written, compiled" ~tol:0.0 (Array.make 16 0.0)
-    jitted.c.Attention.Cache.keys;
-  close ~msg:"same outputs" eager.x jitted.x
-
-let test_cached_gradients () =
-  Nx.Rng.with_key (Nx.Rng.key 25) @@ fun () ->
-  let x = Nx.Rng.normal Nx.float64 [| 1; 3; 8 |] in
-  let p = layer Nx.float64 in
-  let loss p =
-    (* Gradients must flow through the cache from prefill into the step. *)
-    let slots = [| [| 2; 0; 1 |] |] in
-    let y1, c =
-      call p (cache_at Nx.float64 3)
-        (index_at ~pos:[| [| 0; 1 |] |] ~slots)
-        (Nx.slice [ A; R (0, 2) ] x)
-    in
-    let y2, _ =
-      call p c (index_at ~pos:[| [| 2 |] |] ~slots) (Nx.slice [ A; R (2, 3) ] x)
-    in
-    Nx.add (Nx.sum (Nx.mul y1 y1)) (Nx.sum (Nx.mul y2 y2))
-  in
-  grads_ok (Rune.check_grads attention64 loss p)
-
-(* Drafts. A tree of draft tokens is verified in one call: token [i] continues
-   token [parents.(i)], token 0 continues the cache. *)
-
-let ancestors parents =
-  let n = Array.length parents in
-  let rec path i = if i < 0 then [] else i :: path parents.(i) in
-  Array.init n (fun i -> List.rev (path i))
-
-let depths parents =
-  Array.map (fun path -> List.length path - 1) (ancestors parents)
-
-(* [sees.(i).(j)]: token [j] is token [i] or one of its ancestors. *)
-let tree_sees parents =
-  let n = Array.length parents in
-  let paths = ancestors parents in
-  Nx.create Nx.bool [| 1; n; n |]
-    (Array.init (n * n) (fun t -> List.mem (t mod n) paths.(t / n)))
-
-(* One sequence over a table of 12 columns whose slots are shuffled; draft
-   tokens store at slots 12 and up, which no table names. *)
-let draft_table = [| 7; 2; 11; 0; 5; 9; 1; 10; 3; 6; 4; 8 |]
-let draft_slot i = 19 - i
-let draft_cache () = cache 20
-
-let windowed window index =
-  Option.fold ~none:index ~some:(fun w -> Cache_index.window w index) window
-
-(* The cache after a prefix of [p] tokens, with NaN in the slots of the columns
-   past it: a draft must not read them, and sequential decoding writes them
-   before it reads them. *)
-let after_prefix ~window p_layer x p =
-  let index =
-    windowed window
-      (index_at ~pos:[| Array.init p Fun.id |] ~slots:[| draft_table |])
-  in
-  let _, c = call p_layer (draft_cache ()) index (Nx.slice [ A; R (0, p) ] x) in
-  Nx.Ptree.Payload.map
-    (module Attention.Cache)
-    (fun _ t ->
-      Array.fold_left
-        (fun t s ->
-          Nx.set [ Nx.R (s, s + 1) ] (Nx.full Nx.float32 [| 1; 2; 2 |] nan) t)
-        t
-        (Array.sub draft_table p (12 - p)))
-    c
-
-(* The output of each token of [tokens], fed one by one at positions [p], [p +
-   1], ... through [table]. *)
-let sequential ~window p_layer c table ~p tokens =
-  let ys, _ =
-    List.fold_left
-      (fun (ys, (c, at)) x ->
-        let index =
-          windowed window (index_at ~pos:[| [| at |] |] ~slots:[| table |])
-        in
-        let y, c = call p_layer c index x in
-        (y :: ys, (c, at + 1)))
-      ([], (c, p))
-      tokens
-  in
-  List.rev ys
-
-(* A draft of [parents] after a prefix of [p] tokens gives each token the output
-   of decoding its path alone; keeping the path to token [kept], the next
-   token's output is the one after that path. *)
-let draft_agrees ~window ~p ~parents ~kept =
-  Nx.Rng.with_key (Nx.Rng.key 40) @@ fun () ->
-  let n = Array.length parents in
-  let p_layer = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; p; 8 |] in
-  let tokens = Array.init n (fun _ -> Nx.Rng.normal Nx.float32 [| 1; 1; 8 |]) in
-  let bonus = Nx.Rng.normal Nx.float32 [| 1; 1; 8 |] in
-  let c = after_prefix ~window p_layer x p in
-  let depth = depths parents and paths = ancestors parents in
-  let index =
-    windowed window
-      (Cache_index.draft
-         ~slots:(int64s [| 1; n |] (Array.init n draft_slot))
-         ~sees:(tree_sees parents)
-         (index_at
-            ~pos:[| Array.map (fun d -> p + d) depth |]
-            ~slots:[| draft_table |]))
-  in
-  let y, c' =
-    call p_layer c index (Nx.concatenate ~axis:1 (Array.to_list tokens))
-  in
-  is_true ~msg:"no NaN reaches the outputs"
-    (Array.for_all Float.is_finite (flat y));
-  let along path = List.map (fun j -> tokens.(j)) path in
-  Array.iteri
-    (fun i path ->
-      let alone =
-        List.nth
-          (sequential ~window p_layer c draft_table ~p (along path))
-          depth.(i)
-      in
-      close
-        ~msg:(Printf.sprintf "token %d is its path decoded alone" i)
-        alone
-        (Nx.slice [ A; R (i, i + 1) ] y))
-    paths;
-  (* Keeping a path names its slots at the columns of its positions. *)
-  let kept_path = paths.(kept) in
-  let table = Array.copy draft_table in
-  List.iteri (fun d j -> table.(p + d) <- draft_slot j) kept_path;
-  let next = p + depth.(kept) + 1 in
-  let y_next, _ =
-    call p_layer c'
-      (windowed window (index_at ~pos:[| [| next |] |] ~slots:[| table |]))
-      bonus
+  let shape rows cols = Array.append lead [| rows; cols |] in
+  let q = normal 49 Nx.float64 (shape 3 4) in
+  let k = poison_past 2 (normal 50 Nx.float64 (shape 5 4)) in
+  let v = poison_past 2 (normal 51 Nx.float64 (shape 5 4)) in
+  let first2 t =
+    Nx.slice (List.map (fun _ -> Nx.A) (Array.to_list lead) @ [ Nx.R (0, 2) ]) t
   in
   let expected =
-    List.nth
-      (sequential ~window p_layer c draft_table ~p
-         (along kept_path @ [ bonus ]))
-      (depth.(kept) + 1)
+    flat (Attention.scaled_dot_product_attention q (first2 k) (first2 v))
   in
-  close ~msg:"after keeping a path, the next token follows it" expected y_next
-
-let window_gen = Gen.(option (int_range 1 4))
-
-let test_linear_draft =
-  prop "a linear draft is sequential decoding"
-    Gen.(triple (int_range 1 5) (int_range 1 6) window_gen)
-    (fun (p, n, window) ->
-      cover "a window" (Option.is_some window);
-      cover "no window" (Option.is_none window);
-      cover "one token" (n = 1);
-      let parents = Array.init n (fun i -> i - 1) in
-      draft_agrees ~window ~p ~parents ~kept:(n - 1))
-
-(* Token [i > 0] continues a token before it. *)
-let tree_gen =
-  Gen.(
-    let* n = int_range 1 6 in
-    let+ picks = list ~size:(constant n) (int_range 0 1000) in
-    let picks = Array.of_list picks in
-    ( Array.init n (fun i -> if i = 0 then -1 else picks.(i) mod i),
-      picks.(0) mod n ))
-
-let test_tree_draft =
-  prop "a tree draft gives each token its path's output"
-    Gen.(triple (int_range 1 5) tree_gen window_gen)
-    (fun (p, (parents, kept), window) ->
-      let children i =
-        Array.fold_left (fun n q -> if q = i then n + 1 else n) 0 parents
-      in
-      let branches =
-        Array.exists
-          (fun i -> children i > 1)
-          (Array.init (Array.length parents) Fun.id)
-      in
-      cover "a branching tree" branches;
-      cover "a window" (Option.is_some window);
-      draft_agrees ~window ~p ~parents ~kept)
-
-(* Positions 0 and 1 in a table of 4 columns; a root at 2 and two children at 3.
-   Values are numbered by position plus one, so a read names what it holds. *)
-let draft_fixture () =
-  let table = [| 3; 0; 2; 1 |] in
-  let _, pool =
-    Cache_index.extend
-      (index_at ~pos:[| [| 0; 1 |] |] ~slots:[| table |])
-      (numbered ~batch:1 ~from:0 2)
-      (Nx.zeros Nx.float32 [| 7; 1 |])
+  let f q =
+    Attention.scaled_dot_product_attention ~lengths:(Nx.scalar Nx.int64 2L) q k
+      v
   in
-  (* Column 2's slot holds NaN: the draft must not read it. *)
-  let pool = Nx.set [ Nx.R (2, 3) ] (Nx.full Nx.float32 [| 1; 1 |] nan) pool in
-  let index =
-    Cache_index.draft
-      ~slots:(int64s [| 1; 3 |] [| 6; 4; 5 |])
-      ~sees:(tree_sees [| -1; 0; 0 |])
-      (index_at ~pos:[| [| 2; 3; 3 |] |] ~slots:[| table |])
-  in
-  (index, pool)
+  equal ~msg:"eager" exactly expected (flat (f q));
+  equal ~msg:"compiled" reordered expected (flat (Rune.jit' f q))
 
-let test_draft_index () =
-  let index, pool = draft_fixture () in
-  equal ~msg:"the table's columns, then the call's tokens" int 7
-    (Cache_index.context index);
-  let values = Nx.create Nx.float32 [| 1; 3; 1 |] [| 30.; 40.; 41. |] in
-  let seen, pool' = Cache_index.extend index values pool in
-  values_are
-    ~msg:"the table below the least position, zero past it, then the tokens"
-    ~tol:0.
-    [| 1.; 2.; 0.; 0.; 30.; 40.; 41. |]
-    seen;
-  equal ~msg:"stores land at the draft's slots, and only there"
-    (array (option float_exact))
-    [| Some 2.; Some 0.; None; Some 1.; Some 40.; Some 41.; Some 30. |]
-    (Array.map (fun v -> if Float.is_nan v then None else Some v) (flat pool'));
-  equal ~msg:"each token sees the table before the draft and its ancestors"
-    (list bool)
-    [
-      (* root *)
-      true;
-      true;
-      false;
-      false;
-      true;
-      false;
-      false;
-      (* child 1 *)
-      true;
-      true;
-      false;
-      false;
-      true;
-      true;
-      false;
-      (* child 2 *)
-      true;
-      true;
-      false;
-      false;
-      true;
-      false;
-      true;
-    ]
-    (bools (Cache_index.mask index));
-  equal ~msg:"under a window, within it" (list bool)
-    [
-      false;
-      true;
-      false;
-      false;
-      true;
-      false;
-      false;
-      false;
-      false;
-      false;
-      false;
-      true;
-      true;
-      false;
-      false;
-      false;
-      false;
-      false;
-      true;
-      false;
-      true;
-    ]
-    (bools (Cache_index.mask (Cache_index.window 2 index)));
-  (* [sees] cannot reach a later position, and padding sees and stores
-     nothing. *)
-  let odd =
-    Cache_index.draft
-      ~slots:(int64s [| 1; 3 |] [| 6; 4; 5 |])
-      ~sees:(Nx.full Nx.bool [| 1; 3; 3 |] true)
-      (index_at ~pos:[| [| 2; 3; -1 |] |] ~slots:[| [| 3; 0; 2; 1 |] |])
-  in
-  equal ~msg:"no later position, no padding" (list bool)
-    [
-      true;
-      true;
-      false;
-      false;
-      true;
-      false;
-      false;
-      true;
-      true;
-      false;
-      false;
-      true;
-      true;
-      false;
-      false;
-      false;
-      false;
-      false;
-      false;
-      false;
-      false;
-    ]
-    (bools (Cache_index.mask odd));
-  let _, pool' = Cache_index.extend odd values pool in
-  is_true ~msg:"a padded token stores nothing" (Nx.item [ 5; 0 ] pool' = 0.);
-  shape_is ~msg:"advance drops the draft" [| 1; 1; 4 |]
-    (Cache_index.mask (Cache_index.advance index))
-
-let test_draft_rejects () =
-  let index, _ = draft_fixture () in
-  let tabled = index_at ~pos:[| [| 2 |] |] ~slots:[| [| 0; 1; 2 |] |] in
-  let one = int64s [| 1; 1 |] [| 0 |]
-  and sees = Nx.full Nx.bool [| 1; 1; 1 |] true in
-  raises (Invalid_argument "Cache_index.draft: a whole index keeps nothing")
-    (fun () ->
-      Cache_index.draft ~slots:one ~sees (Cache_index.whole ~batch:1 ~seq:1 ()));
-  raises (Invalid_argument "Cache_index.draft: a whole index keeps nothing")
-    (fun () ->
-      Cache_index.draft ~slots:one ~sees
-        (Cache_index.packed ~seq:1 [| [| 1 |] |]));
-  raises (Invalid_argument "Cache_index.draft: slots must have shape [1; 1]")
-    (fun () ->
-      Cache_index.draft ~slots:(int64s [| 1; 2 |] [| 0; 1 |]) ~sees tabled);
-  raises (Invalid_argument "Cache_index.draft: sees must have shape [1; 1; 1]")
-    (fun () ->
-      Cache_index.draft ~slots:one
-        ~sees:(Nx.full Nx.bool [| 1; 1 |] true)
-        tabled);
-  raises (Invalid_argument "Cache_index.draft: the index selects columns")
-    (fun () ->
-      Cache_index.draft ~slots:one ~sees
-        (Cache_index.select (int64s [| 1; 1; 1 |] [| 0 |]) tabled));
-  raises
-    (Invalid_argument "Cache_index.draft: the index reads blocks of 2 positions")
-    (fun () ->
-      Cache_index.draft ~slots:one ~sees
-        (Cache_index.every 2 (Cache_index.rows ~every:[ 2 ] ~context:4 [| 1 |])));
-  raises (Invalid_argument "Cache_index.select: the index is a draft")
-    (fun () -> Cache_index.select (int64s [| 1; 3; 1 |] [| 0; 0; 0 |]) index);
-  raises (Invalid_argument "Cache_index.every: the index is a draft") (fun () ->
-      Cache_index.every 2 index)
-
-(* Compiled, a draft's slots and tree are inputs: one program serves two trees,
-   and each reads and stores as eager. *)
-let test_draft_compiled () =
+let test_core_lengths () =
   Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 41) @@ fun () ->
-  let p_layer = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 4; 8 |] in
-  let c =
-    after_prefix ~window:None p_layer (Nx.Rng.normal Nx.float32 [| 1; 3; 8 |]) 3
-  in
-  let traces = ref 0 in
-  let step { x; index; c } =
-    incr traces;
-    let y, c = call p_layer c index x in
-    { x = y; index; c }
-  in
-  let compiled = Rune.jit Nx.Ptree.(step_ptree @-> returns step_ptree) step in
-  List.iter
-    (fun parents ->
-      let index =
-        Cache_index.draft
-          ~slots:(int64s [| 1; 4 |] [| 12; 15; 13; 14 |])
-          ~sees:(tree_sees parents)
-          (index_at
-             ~pos:[| Array.map (fun d -> 3 + d) (depths parents) |]
-             ~slots:[| draft_table |])
-      in
-      let eager = step { x; index; c } in
-      let jitted = compiled { x; index; c } in
-      close ~msg:"outputs" eager.x jitted.x;
-      (* The other slots hold the prefix's NaN poison. *)
-      let drafted t = Nx.slice [ R (12, 16) ] t.c.keys in
-      close ~msg:"stored keys" (drafted eager) (drafted jitted))
-    [ [| -1; 0; 0; 1 |]; [| -1; 0; 1; 1 |] ];
-  equal ~msg:"two trees, one compiled trace and two eager runs" int 3 !traces
-
-(* Paged reads. {!Attention.cached} reads its pools in place through
-   {!Cache_index.pages}: a column whose entry is [-1], or a slot outside the
-   pool, is no key. *)
-
-(* [pages] at fixed indices, as its .mli states it: the table's slot at each
-   column a token of the lane may see, [-1] at an unallocated column, one past
-   every position, and one below the window of every token; under a draft, the
-   table before the lane's least position, then the slots the call's tokens
-   store at. *)
-let test_index_pages () =
-  let pages index =
-    Option.map
-      (fun t -> Array.to_list (Nx.to_array t))
-      (Cache_index.pages index)
-  in
-  let some l = Some (List.map Int64.of_int l) in
-  let ints = option (list int64) in
-  let index =
-    index_at ~pos:[| [| 2; 3 |] |] ~slots:[| [| 4; -1; 99; 5; 1; 0 |] |]
-  in
-  equal ~msg:"past every position" ints (some [ 4; -1; 99; 5; -1; -1 ])
-    (pages index);
-  equal ~msg:"below every token's window" ints
-    (some [ -1; -1; 99; 5; -1; -1 ])
-    (pages (Cache_index.window 2 index));
-  equal ~msg:"a lane of padding" ints
-    (some [ -1; -1; -1; -1 ])
-    (pages (index_at ~pos:[| [| -1; -1 |] |] ~slots:[| [| 0; 1; 2; 3 |] |]));
-  let rows = Cache_index.rows ~every:[ 2 ] ~context:6 [| 5; 2 |] in
-  equal ~msg:"in blocks: block 2 stands at 5, past position 4" ints
-    (some [ 0; 1; -1; 3; -1; -1 ])
-    (pages (Cache_index.every 2 rows));
-  (* [extend] reads the pool through them, in blocks and over rows too. *)
-  let reads ~msg index ~slots =
-    let batch = Cache_index.batch index and seq = Cache_index.seq index in
-    let pool = Nx.zeros Nx.float32 [| slots; 1 |] in
-    let seen, pool =
-      Cache_index.extend index (numbered ~batch ~from:0 seq) pool
-    in
-    equal ~msg (array float_exact) (flat seen)
-      (flat (Nx.take ~axis:0 (Option.get (Cache_index.pages index)) pool))
-  in
-  reads ~msg:"in blocks, extend reads through pages"
-    (Cache_index.every 2 rows) ~slots:6;
-  let draft =
-    Cache_index.draft
-      ~slots:(int64s [| 1; 3 |] [| 6; -1; 5 |])
-      ~sees:(tree_sees [| -1; 0; 1 |])
-      (index_at ~pos:[| [| 2; 3; 4 |] |] ~slots:[| [| 3; 0; 2; 1 |] |])
-  in
-  equal ~msg:"a draft: the table before position 2, then its slots" ints
-    (some [ 3; 0; -1; -1; 6; -1; 5 ])
-    (pages draft);
-  let lanes =
-    Cache_index.make
-      ~row:(int64s [| 2 |] [| 1; 3 |])
-      ~pos:(int64s [| 2; 1 |] [| 1; 1 |])
-      ~table:(int64s [| 2; 3 |] [| 0; 1; 2; 3; 4; 5 |])
-      ()
-  in
-  equal ~msg:"lanes read their rows; a lane of no row is padding" ints
-    (some [ 3; 4; -1; -1; -1; -1 ])
-    (pages lanes);
-  reads ~msg:"over rows, extend reads through pages" lanes ~slots:6;
-  equal ~msg:"a whole index" ints None
-    (pages (Cache_index.whole ~batch:1 ~seq:2 ()));
-  equal ~msg:"a selection" ints None
-    (pages (Cache_index.select (int64s [| 1; 2; 1 |] [| 0; 1 |]) index))
-
-(* Two lanes of three tokens over tables of six columns and a pool of 24
-   slots. Lane [b]'s table names slots [8b] to [8b + 7] in some order, with
-   holes ([-1]) and slots outside the pool; under a draft, token [i] of lane
-   [b] stores at slot [16 + 4b + i], or at [-1] or outside the pool. *)
-type paged = {
-  index : Nx.host Cache_index.t;
-  table : int array array;
-  pos : int array array;
-  window : int option;
-  draft : int array array option;
-  sees : Nx.host Nx.bool_t option;
-}
-
-(* The index of [s]'s fields. *)
-let paged_index ~table ~pos ~window ~draft ~sees =
-  let index = index_at ~pos ~slots:table in
-  let index =
-    match (draft, sees) with
-    | Some slots, Some sees ->
-        Cache_index.draft
-          ~slots:(int64s [| 2; 3 |] (Array.concat (Array.to_list slots)))
-          ~sees index
-    | _ -> index
-  in
-  Option.fold ~none:index ~some:(fun w -> Cache_index.window w index) window
-
-let paged_width = 6
-and paged_slots = 24
-
-let pp_paged ppf s =
-  let ints a =
-    String.concat ";" (Array.to_list (Array.map string_of_int a))
-  in
-  let lanes a = String.concat " | " (Array.to_list (Array.map ints a)) in
-  Format.fprintf ppf "table %s pos %s window %s draft %s" (lanes s.table)
-    (lanes s.pos)
-    (Option.fold ~none:"none" ~some:string_of_int s.window)
-    (Option.fold ~none:"none" ~some:lanes s.draft)
-
-let paged_gen =
-  let open Gen in
-  let lane_table b =
-    let* order = permutation (List.init 8 (fun i -> (8 * b) + i)) in
-    let* entries =
-      list ~size:(constant paged_width)
-        (frequency [ (6, constant false); (2, constant true); (1, bool) ])
-    in
-    let order = Array.of_list order in
-    constant
-      (Array.of_list
-         (List.mapi
-            (fun j bad ->
-              if not bad then order.(j) else if j mod 2 = 0 then -1 else 99)
-            entries))
-  in
-  let* t0 = lane_table 0 in
-  let* t1 = lane_table 1 in
-  let* window = option (int_range 1 4) in
-  let* drafted = bool in
-  let* pos, draft, sees =
-    if not drafted then
-      (* [n] tokens from [p0], padded on the left, within the table. *)
-      let lane =
-        let* n = frequency [ (1, constant 0); (6, int_range 1 3) ] in
-        let+ p0 = int_range 0 (paged_width - max n 1) in
-        Array.init 3 (fun i -> if i < 3 - n then -1 else p0 + i - (3 - n))
-      in
-      let+ l0 = lane and+ l1 = lane in
-      ([| l0; l1 |], None, None)
-    else
-      (* A tree of three tokens from the lane's least position [p0], or of
-         two after a token of padding. *)
-      let lane b =
-        let* p0 = int_range 0 paged_width in
-        let* p2 = int_range 0 1 in
-        let* padded = frequency [ (3, constant false); (1, constant true) ] in
-        let parents = if padded then [| -1; -1; 1 |] else [| -1; 0; p2 |] in
-        let+ slots =
-          list ~size:(constant 3)
-            (frequency [ (4, constant true); (1, constant false); (1, bool) ])
-        in
-        let slots =
-          Array.of_list
-            (List.mapi
-               (fun i ok ->
-                 if ok then 16 + (4 * b) + i else if i = 1 then -1 else 99)
-               slots)
-        in
-        let pos = Array.map (fun d -> p0 + d) (depths parents) in
-        if padded then pos.(0) <- -1;
-        (pos, slots, parents)
-      in
-      let+ p0, s0, a0 = lane 0 and+ p1, s1, a1 = lane 1 in
-      let sees = Nx.concatenate ~axis:0 [ tree_sees a0; tree_sees a1 ] in
-      ([| p0; p1 |], Some [| s0; s1 |], Some sees)
-  in
-  let table = [| t0; t1 |] in
-  let index = paged_index ~table ~pos ~window ~draft ~sees in
-  constant { index; table; pos; window; draft; sees }
-
-(* The pages the .mli states for [s], a row per lane: the lane's table at
-   each column that no test hides, the draft's slots after it. *)
-let expected_pages s =
-  Array.init 2 (fun b ->
-      let real = List.filter (fun p -> p >= 0) (Array.to_list s.pos.(b)) in
-      let last = List.fold_left max (-1) real in
-      let least = List.fold_left min max_int real in
-      let upto = if s.draft = None then last else min (least - 1) last in
-      let below j =
-        match s.window with Some w -> j <= least - w | None -> false
-      in
-      let table =
-        Array.mapi
-          (fun j t -> if j > upto || below j then -1 else t)
-          s.table.(b)
-      in
-      match s.draft with
-      | None -> table
-      | Some slots ->
-          Array.append table
-            (Array.mapi
-               (fun i slot -> if s.pos.(b).(i) >= 0 then slot else -1)
-               slots.(b)))
-
-(* Whether a token of [s] may see a hole: a column its lane's pages keep
-   whose table entry is unallocated or outside the pool. *)
-let sees_a_hole s =
-  let allocated = Array.map (Array.map (fun _ -> 0)) s.table in
-  let live = expected_pages { s with table = allocated } in
-  let hole t = t < 0 || t >= paged_slots in
-  Array.exists Fun.id
-    (Array.init (2 * paged_width) (fun c ->
-         let b = c / paged_width and j = c mod paged_width in
-         live.(b).(j) = 0 && hole s.table.(b).(j)))
-
-let law_pages s =
-  Nx.Rng.with_key (Nx.Rng.key 65) @@ fun () ->
-  cover "a draft" (s.draft <> None);
-  cover "a padded draft token"
-    (s.draft <> None && Array.exists (fun pos -> pos.(0) < 0) s.pos);
-  cover "a window" (s.window <> None);
-  cover "a hole a token may see" (sees_a_hole s);
-  let expected = Array.concat (Array.to_list (expected_pages s)) in
-  let expected = List.map Int64.of_int (Array.to_list expected) in
-  let pages = Option.get (Cache_index.pages s.index) in
-  equal ~msg:"pages" (list int64) expected (Array.to_list (Nx.to_array pages));
-  let values = Nx.Rng.normal Nx.float32 [| 2; 3; 2 |] in
-  let pool = Nx.Rng.normal Nx.float32 [| paged_slots; 2 |] in
-  let seen, pool' = Cache_index.extend s.index values pool in
-  equal ~msg:"store is extend's pool" (array float_exact) (flat pool')
-    (flat (Cache_index.store s.index values pool));
-  equal ~msg:"seen is the pool read through pages" (array float_exact)
-    (flat seen)
-    (flat (Nx.take ~axis:0 pages pool'))
-
-let paged_step =
-  lazy
-    (let p = Nx.Rng.with_key (Nx.Rng.key 60) (fun () -> layer Nx.float32) in
-     let step { x; index; c } =
-       let y, c = call p c index x in
-       { x = y; index; c }
-     in
-     (step, Rune.jit Nx.Ptree.(step_ptree @-> returns step_ptree) step))
-
-(* A slot that no entry of [pages] names is never read: NaN there changes no
-   output, eager or compiled, and the compiled step gives eager's outputs. *)
-let law_paged_reads s =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 66) @@ fun () ->
-  cover "a draft" (s.draft <> None);
-  cover "a window" (s.window <> None);
-  cover "a hole a token may see" (sees_a_hole s);
-  let draft_hole =
-    match s.draft with
-    | Some slots ->
-        Array.exists (Array.exists (fun t -> t < 0 || t >= paged_slots)) slots
-    | None -> false
-  in
-  cover "a draft token that stores nothing" draft_hole;
-  let step, compiled = Lazy.force paged_step in
-  let read = Array.concat (Array.to_list (expected_pages s)) in
-  let pool () = Nx.Rng.normal Nx.float32 [| paged_slots; 2; 2 |] in
-  let c = { Attention.Cache.keys = pool (); values = pool () } in
-  let unread = Nx.full Nx.float32 [| 1; 2; 2 |] Float.nan in
-  let poison t =
-    List.fold_left
-      (fun t slot ->
-        if Array.mem slot read then t
-        else Nx.set [ Nx.R (slot, slot + 1) ] unread t)
-      t
-      (List.init paged_slots Fun.id)
-  in
-  let poisoned =
-    { Attention.Cache.keys = poison c.keys; values = poison c.values }
-  in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 3; 8 |] in
-  let run f c = (f { x; index = s.index; c }).x in
-  let eager = run step c in
-  equal ~msg:"eager: no output reads an unread slot" (array float_exact)
-    (flat eager)
-    (flat (run step poisoned));
-  let jitted = run compiled c in
-  equal ~msg:"compiled: no output reads an unread slot" (array float_exact)
-    (flat jitted)
-    (flat (run compiled poisoned));
-  close ~msg:"compiled = eager" eager jitted
-
-(* Both ways of reading a cache attend alike: {!Cache_index.extend}'s reads
-   under {!Cache_index.mask} give the outputs of {!Attention.cached}'s read
-   through {!Cache_index.pages}, holes and draft tokens that store nothing
-   included. Slots outside the pool are drawn as [-1]: the mask cannot tell
-   them, as it reads no pool. *)
-let law_paths_agree s =
-  Nx.Rng.with_key (Nx.Rng.key 67) @@ fun () ->
-  let unallocated =
-    Array.map (Array.map (fun t -> if t >= paged_slots then -1 else t))
-  in
-  let table = unallocated s.table and draft = Option.map unallocated s.draft in
-  let s = { s with table; draft } in
-  let index =
-    paged_index ~table ~pos:s.pos ~window:s.window ~draft ~sees:s.sees
-  in
-  cover "a draft" (draft <> None);
-  cover "a hole a token may see" (sees_a_hole s);
-  let p = layer Nx.float32 in
-  let pool () = Nx.Rng.normal Nx.float32 [| paged_slots; 2; 2 |] in
-  let c = { Attention.Cache.keys = pool (); values = pool () } in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 3; 8 |] in
-  let pos = Cache_index.positions index in
-  let q = Rope.apply rope ~pos (Attention.split ~head_dim p.Attention.q x) in
-  let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
-  let v = Attention.split ~head_dim p.v x in
-  let read t pool =
-    Nx.swapaxes 1 2 (fst (Cache_index.extend index (Nx.swapaxes 1 2 t) pool))
-  in
-  let m = Cache_index.mask index in
-  let m = Nx.reshape [| Nx.dim 0 m; 1; Nx.dim 1 m; Nx.dim 2 m |] m in
-  let dense =
-    Attention.merge p.out
-      (Attention.attend ~mask:(captured m) q
-         (Nx.Dense { k = read k c.keys; v = read v c.values }))
-  in
-  close ~msg:"extend under mask = cached through pages" dense
-    (fst (call p c index x))
-
-(* A resolved index is the index to every function, eager and compiled,
-   under a selection too. *)
-let law_resolved s =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 68) @@ fun () ->
-  cover "a draft" (s.draft <> None);
-  cover "a window" (s.window <> None);
-  cover "a hole a token may see" (sees_a_hole s);
-  let r = Cache_index.resolve s.index in
-  let ints t = Array.to_list (Nx.to_array t) in
-  equal ~msg:"pages" (list int64)
-    (ints (Option.get (Cache_index.pages s.index)))
-    (ints (Option.get (Cache_index.pages r)));
-  equal ~msg:"positions" (list int64)
-    (ints (Cache_index.positions s.index))
-    (ints (Cache_index.positions r));
-  equal ~msg:"mask" (list bool)
-    (ints (Cache_index.mask s.index))
-    (ints (Cache_index.mask r));
-  let values = Nx.Rng.normal Nx.float32 [| 2; 3; 2 |] in
-  let pool = Nx.Rng.normal Nx.float32 [| paged_slots; 2 |] in
-  let agree msg index r =
-    let seen, pool' = Cache_index.extend index values pool in
-    let seen_r, pool_r = Cache_index.extend r values pool in
-    equal ~msg:(msg ^ "extend's seen") (array float_exact) (flat seen)
-      (flat seen_r);
-    equal ~msg:(msg ^ "extend's pool") (array float_exact) (flat pool')
-      (flat pool_r);
-    equal ~msg:(msg ^ "store") (array float_exact)
-      (flat (Cache_index.store index values pool))
-      (flat (Cache_index.store r values pool))
-  in
-  agree "" s.index r;
-  if s.draft = None then begin
-    let columns = int64s [| 2; 3; 2 |] (Array.init 12 (fun i -> i mod 7)) in
-    let selected = Cache_index.select columns s.index in
-    agree "selected: " selected (Cache_index.resolve selected);
-    equal ~msg:"selected: mask" (list bool)
-      (ints (Cache_index.mask selected))
-      (ints (Cache_index.mask (Cache_index.resolve selected)))
-  end;
-  let step, compiled = Lazy.force paged_step in
-  let pool () = Nx.Rng.normal Nx.float32 [| paged_slots; 2; 2 |] in
-  let c = { Attention.Cache.keys = pool (); values = pool () } in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 3; 8 |] in
-  let run f index =
-    let { x; c; _ } = f { x; index; c } in
-    (flat x, flat c.keys, flat c.values)
-  in
-  let same msg (x, k, v) (x', k', v') =
-    equal ~msg:(msg ^ ": outputs") (array float_exact) x x';
-    equal ~msg:(msg ^ ": keys") (array float_exact) k k';
-    equal ~msg:(msg ^ ": values") (array float_exact) v v'
-  in
-  same "eager" (run step s.index) (run step r);
-  same "compiled" (run compiled s.index) (run compiled r)
-
-(* [a] and [b] address alike: the same pages, stores, reads and mask. *)
-let address_alike msg a b =
-  let ints t = Array.to_list (Nx.to_array t) in
-  let shape = [| Cache_index.batch a; Cache_index.seq a; 2 |] in
-  let values = Nx.Rng.normal Nx.float32 shape in
-  let pool = Nx.Rng.normal Nx.float32 [| 12; 2 |] in
-  equal ~msg:(msg ^ ": pages") (option (list int64))
-    (Option.map ints (Cache_index.pages a))
-    (Option.map ints (Cache_index.pages b));
-  let seen, pool' = Cache_index.extend a values pool in
-  let seen_b, pool_b = Cache_index.extend b values pool in
-  equal ~msg:(msg ^ ": seen") (array float_exact) (flat seen) (flat seen_b);
-  equal ~msg:(msg ^ ": extend's pool") (array float_exact) (flat pool')
-    (flat pool_b);
-  equal ~msg:(msg ^ ": store") (array float_exact)
-    (flat (Cache_index.store a values pool))
-    (flat (Cache_index.store b values pool));
-  equal ~msg:(msg ^ ": mask") (list bool)
-    (ints (Cache_index.mask a))
-    (ints (Cache_index.mask b))
-
-(* Resolving reaches every kind of index: a row per lane, blocks, a packed
-   or whole one; and a function that makes an index from a resolved one
-   gives what it gives from the index. *)
-let test_resolved_kinds () =
-  Nx.Rng.with_key (Nx.Rng.key 69) @@ fun () ->
-  let resolved msg index =
-    address_alike msg index (Cache_index.resolve index)
-  in
-  let rows = Cache_index.rows ~every:[ 2 ] ~context:6 [| 3; 2 |] in
-  resolved "rows" rows;
-  resolved "blocks of 2" (Cache_index.every 2 rows);
-  resolved "blocks under a window"
-    (Cache_index.window 3 (Cache_index.every 2 rows));
-  resolved "a row per lane"
-    (Cache_index.window 2
-       (Cache_index.make
-          ~row:(int64s [| 3 |] [| 1; -1; 0 |])
-          ~pos:(int64s [| 3; 2 |] [| 2; 3; 0; 1; -1; 0 |])
-          ~table:(int64s [| 2; 4 |] [| 4; 5; 6; 7; 8; -1; 10; 11 |])
-          ()));
-  resolved "packed" (Cache_index.packed ~seq:3 [| [| 1; 2 |]; [| 3 |] |]);
-  resolved "whole" (Cache_index.whole ~lens:[| 2; 3 |] ~batch:2 ~seq:3 ());
-  let r = Cache_index.resolve (Cache_index.window 2 rows) in
-  let from msg f = address_alike msg (f (Cache_index.window 2 rows)) (f r) in
-  from "another window" (Cache_index.window 3);
-  from "advanced" Cache_index.advance;
-  from "in blocks" (Cache_index.every 2);
-  from "a selection"
-    (Cache_index.select (int64s [| 2; 3; 1 |] [| 0; 1; 2; 5; 0; 1 |]));
-  from "a draft" (fun index ->
-      Cache_index.draft
-        ~slots:(int64s [| 2; 1 |] [| 11; 10 |])
-        ~sees:(Nx.full Nx.bool [| 2; 1; 1 |] true)
-        (Cache_index.advance index))
-
-(* The kernels a compiled [f] launches at a call after its first, on a
-   software device. *)
-let launches f =
-  ignore (f ());
-  let _, events = Rig.Profile.take (fun () -> ignore (f ())) in
-  List.concat_map
-    (function
-      | Rig.Profile.Work { name; _ } when name <> "copies" ->
-          String.split_on_char ',' name
-      | _ -> [])
-    events
-
-(* A layer given a resolved index computes none of its addressing: a
-   compiled store launches the store alone, and an attention under
-   [visible] through [pages] launches what it launches over a table given
-   as an argument, its kernels alone. *)
-let test_resolved_launches () =
-  Compiled.here ();
-  let device = Result.get_ok (Rig.software "kaun-test-resolve") in
-  let module D = (val Nx.devices [ device ]) in
-  let index_s = Nx.Ptree.v Cache_index.walk in
-  let index =
-    Cache_index.place D.on
-      (Cache_index.window 2
-         (Cache_index.advance (Cache_index.rows ~context:8 [| 3 |])))
-  in
-  let r =
-    Rune.jit Nx.Ptree.(index_s @-> returns index_s) Cache_index.resolve index
-  in
-  let placed t = Nx.place D.on t in
-  let values = placed (Nx.ones Nx.float32 [| 1; 1; 2; 2 |]) in
-  let pool () = placed (Nx.ones Nx.float32 [| 8; 2; 2 |]) in
-  let store =
-    Rune.jit
-      Nx.Ptree.(index_s @-> tensor @-> tensor @-> returns tensor)
-      Cache_index.store
-  in
-  equal ~msg:"a store launches one kernel" int 1
-    (List.length
-       (launches (fun () ->
-            Nx.to_array (store r values (Nx.donate (pool ()))))));
-  let q = placed (Nx.ones Nx.float32 [| 1; 4; 1; 2 |]) in
-  let paged pool = Nx.reshape [| 8; 2; 1; 2 |] pool in
-  let attend_index =
-    Rune.jit
-      Nx.Ptree.(index_s @-> tensor @-> tensor @-> tensor @-> returns tensor)
-      (fun index q k v ->
-        let table = Option.get (Cache_index.pages index) in
-        Attention.attend ~mask:(Cache_index.visible index) q
-          (Nx.Paged { k = paged k; v = paged v; table }))
-  and attend_table =
-    Rune.jit
-      Nx.Ptree.(tensor @-> tensor @-> tensor @-> tensor @-> returns tensor)
-      (fun table q k v ->
-        Attention.attend q (Nx.Paged { k = paged k; v = paged v; table }))
-  in
-  let table = Option.get (Cache_index.pages r) in
-  let k = pool () and v = pool () in
-  equal ~msg:"an attention launches its own kernels" int
-    (List.length
-       (launches (fun () -> Nx.to_array (attend_table table q k v))))
-    (List.length
-       (launches (fun () -> Nx.to_array (attend_index r q k v))))
-
-(* A hole, an unallocated column or one naming a slot outside the pool, that a
-   token may see is no key: the outputs are attention over the columns the
-   token sees, without the hole, from the keys {!Cache_index.extend} reads. *)
-let test_cached_hole_is_hidden () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 61) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 2; 8 |] in
-  let pool () = Nx.Rng.normal Nx.float32 [| 6; 2; 2 |] in
-  let c = { Attention.Cache.keys = pool (); values = pool () } in
-  let table = [| 4; -1; 99; 5; 1 |] in
-  let index = index_at ~pos:[| [| 0; 3 |] |] ~slots:[| table |] in
-  let y, _ = call p c index x in
-  let pos = Cache_index.positions index in
-  let q = Rope.apply rope ~pos (Attention.split ~head_dim p.Attention.q x) in
-  let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
-  let v = Attention.split ~head_dim p.v x in
-  let read t pool =
-    Nx.swapaxes 1 2 (fst (Cache_index.extend index (Nx.swapaxes 1 2 t) pool))
-  in
-  let allocated =
-    Nx.create Nx.bool [| 1; 1; 1; 5 |]
-      (Array.map (fun t -> t >= 0 && t < 6) table)
-  in
-  let mask =
-    Nx.logical_and allocated
-      (Nx.reshape [| 1; 1; 2; 5 |] (Cache_index.mask index))
-  in
-  let expected =
-    Attention.merge p.out
-      (Attention.attend ~mask:(captured mask) q
-         (Nx.Dense { k = read k c.keys; v = read v c.values }))
-  in
-  close ~msg:"a hole is no key" expected y;
-  let compiled =
-    Rune.jit
-      Nx.Ptree.(step_ptree @-> returns step_ptree)
-      (fun { x; index; c } ->
-        let y, c = call p c index x in
-        { x = y; index; c })
-  in
-  close ~msg:"compiled" expected (compiled { x; index; c }).x
-
-(* A draft token that stores nothing, at [-1] or outside the pool, is seen by
-   no token, itself included: the outputs are those of the draft whose [sees]
-   hides it from every token, and [extend] reads zero at its column. *)
-let test_draft_storing_nothing () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 62) @@ fun () ->
-  let p_layer = layer Nx.float32 in
-  let c =
-    after_prefix ~window:None p_layer (Nx.Rng.normal Nx.float32 [| 1; 3; 8 |]) 3
-  in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 3; 8 |] in
-  let table = index_at ~pos:[| [| 3; 4; 5 |] |] ~slots:[| draft_table |] in
-  let chain = tree_sees [| -1; 0; 1 |] in
-  let unseen =
-    Nx.logical_and chain
-      (Nx.create Nx.bool [| 1; 1; 3 |] [| true; false; true |])
-  in
-  let draft slot sees =
-    Cache_index.draft ~slots:(int64s [| 1; 3 |] [| 12; slot; 14 |]) ~sees table
-  in
-  let compiled =
-    Rune.jit
-      Nx.Ptree.(step_ptree @-> returns step_ptree)
-      (fun { x; index; c } ->
-        let y, c = call p_layer c index x in
-        { x = y; index; c })
-  in
-  List.iter
-    (fun slot ->
-      let msg = Printf.sprintf "slot %d" slot in
-      let y, _ = call p_layer c (draft slot chain) x in
-      let expected, _ = call p_layer c (draft 13 unseen) x in
-      close ~msg:(msg ^ ": seen by no token") expected y;
-      close ~msg:(msg ^ ": compiled") expected
-        (compiled { x; index = draft slot chain; c }).x;
-      let seen, _ =
-        Cache_index.extend (draft slot chain)
-          (Nx.Rng.normal Nx.float32 [| 1; 3; 2; 2 |])
-          c.Attention.Cache.keys
-      in
-      values_are ~msg:(msg ^ ": extend reads zero at its column") ~tol:0.0
-        [| 0.; 0.; 0.; 0. |]
-        (Nx.slice [ A; I 13 ] seen))
-    [ -1; 99 ]
-
-(* Gradients through a tabled cache under a window and over a hole, which
-   rune differentiates through the paged read. *)
-let test_cached_gradients_paged () =
-  Nx.Rng.with_key (Nx.Rng.key 63) @@ fun () ->
-  let x = Nx.Rng.normal Nx.float64 [| 1; 4; 8 |] in
-  let p = layer Nx.float64 in
-  let loss p =
-    let slots = [| [| 2; -1; 0; 3; 1 |] |] in
-    let windowed pos = Cache_index.window 2 (index_at ~pos ~slots) in
-    let y1, c =
-      call p (cache_at Nx.float64 4)
-        (windowed [| [| 0; 1; 2 |] |])
-        (Nx.slice [ A; R (0, 3) ] x)
-    in
-    let y2, _ =
-      call p c (windowed [| [| 3 |] |]) (Nx.slice [ A; R (3, 4) ] x)
-    in
-    Nx.add (Nx.sum (Nx.mul y1 y1)) (Nx.sum (Nx.mul y2 y2))
-  in
-  grads_ok (Rune.check_grads attention64 loss p)
-
-(* [Rune.vmap] over steps of their own caches and indices is each step. *)
-let test_cached_vmap () =
-  Nx.Rng.with_key (Nx.Rng.key 64) @@ fun () ->
-  let p = layer Nx.float32 in
-  let pool () = Nx.Rng.normal Nx.float32 [| 2; 6; 2; 2 |] in
-  let c = { Attention.Cache.keys = pool (); values = pool () } in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 1; 2; 8 |] in
-  let indices =
-    [
-      index_at ~pos:[| [| 1; 2 |] |] ~slots:[| [| 3; -1; 0; 1 |] |];
-      index_at ~pos:[| [| 0; 1 |] |] ~slots:[| [| 5; 2; 4; 9 |] |];
-    ]
-  in
-  let index =
-    Nx.Ptree.map2
-      (Nx.Ptree.v Cache_index.walk)
-      (fun _ a b -> Nx.stack [ a; b ])
-      (List.nth indices 0) (List.nth indices 1)
-  in
-  let mapped =
-    Rune.vmap
-      Nx.Ptree.(step_ptree @-> returns tensor)
-      (fun { x; index; c } -> fst (call p c index x))
-      { x; index; c }
-  in
-  List.iteri
-    (fun i index ->
-      let at t = Nx.slice [ I i ] t in
-      let c = { Attention.Cache.keys = at c.keys; values = at c.values } in
-      close
-        ~msg:(Printf.sprintf "step %d" i)
-        (fst (call p c index (at x)))
-        (at mapped))
-    indices
-
-(* Packed lanes *)
-
-let test_packed_mask () =
-  let index = Cache_index.packed ~seq:5 [| [| 2; 2 |] |] in
-  equal ~msg:"positions restart, padding first" (array int64)
-    [| 0L; 0L; 1L; 0L; 1L |]
-    (Nx.to_array (Cache_index.positions index));
-  equal ~msg:"a token sees its own sequence up to itself" (list bool)
-    [
-      false;
-      false;
-      false;
-      false;
-      false;
-      false;
-      true;
-      false;
-      false;
-      false;
-      false;
-      true;
-      true;
-      false;
-      false;
-      false;
-      false;
-      false;
-      true;
-      false;
-      false;
-      false;
-      false;
-      true;
-      true;
-    ]
-    (bools (Cache_index.mask index));
-  let lens = [| 3; 5; 0 |] in
-  let alone = Cache_index.whole ~lens ~batch:3 ~seq:5 ()
-  and packed = Cache_index.packed ~seq:5 (Array.map (fun n -> [| n |]) lens) in
-  List.iter
-    (fun (msg, wrap) ->
-      equal
-        ~msg:("one sequence per lane is whole: " ^ msg)
-        (list bool)
-        (bools (Cache_index.mask (wrap alone)))
-        (bools (Cache_index.mask (wrap packed))))
-    [ ("mask", Fun.id); ("windowed", Cache_index.window 2) ];
-  equal ~msg:"and so are its positions" (array int64)
-    (Nx.to_array (Cache_index.positions alone))
-    (Nx.to_array (Cache_index.positions packed));
-  (* A chosen column is a token of the lane, seen within its sequence. *)
-  let chosen =
-    Cache_index.select
-      (int64s [| 1; 5; 2 |] [| 0; 0; 1; 1; 1; 2; 1; 3; 2; 4 |])
-      index
-  in
-  equal ~msg:"a selection sees within the sequence" (list bool)
-    [ false; false; true; true; true; true; false; true; false; true ]
-    (bools (Cache_index.mask chosen));
-  raises
-    (Invalid_argument "Cache_index.every: a packed lane holds several sequences")
-    (fun () -> Cache_index.every 2 index);
-  raises (Invalid_argument "Cache_index.advance: a whole index keeps nothing")
-    (fun () -> Cache_index.advance index);
-  raises
-    (Invalid_argument "Cache_index.packed: lane 0 holds 6 tokens, more than 5")
-    (fun () -> Cache_index.packed ~seq:5 [| [| 3; 3 |] |]);
-  raises
-    (Invalid_argument "Cache_index.packed: a sequence of -1 tokens in lane 1")
-    (fun () -> Cache_index.packed ~seq:5 [| [| 1 |]; [| -1 |] |]);
-  raises (Invalid_argument "Cache_index.packed: no lanes") (fun () ->
-      Cache_index.packed ~seq:5 [||]);
-  raises (Invalid_argument "Cache_index.packed: seq must be positive, got 0")
-    (fun () -> Cache_index.packed ~seq:0 [| [||] |])
-
-(* Lanes of 9 tokens, each holding up to three sequences of up to three
-   tokens. *)
-let packing_gen =
-  Gen.(
-    pair
-      (list ~size:(constant 2) (list ~size:(int_range 1 3) (int_range 0 3)))
-      window_gen)
-
-let test_packed_alone =
-  prop "a packed lane gives each sequence its outputs alone" packing_gen
-    (fun (lanes, window) ->
-      let lens = Array.of_list (List.map Array.of_list lanes) in
-      cover "several sequences in a lane"
-        (Array.exists (fun l -> Array.length l > 1) lens);
-      cover "a window" (Option.is_some window);
-      Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
-      let p_layer = layer Nx.float32 in
-      let x = Nx.Rng.normal Nx.float32 [| 2; 9; 8 |] in
-      let y, _ =
-        call p_layer (cache 0)
-          (windowed window (Cache_index.packed ~seq:9 lens))
-          x
-      in
-      is_true ~msg:"padding produces no nan"
-        (Array.for_all Float.is_finite (flat y));
-      Array.iteri
-        (fun b lens ->
-          let at = ref (9 - Array.fold_left ( + ) 0 lens) in
-          Array.iter
-            (fun n ->
-              if n > 0 then begin
-                let part t = Nx.slice [ R (b, b + 1); R (!at, !at + n) ] t in
-                let alone, _ =
-                  call p_layer (cache 0)
-                    (windowed window (Cache_index.whole ~batch:1 ~seq:n ()))
-                    (part x)
-                in
-                close
-                  ~msg:(Printf.sprintf "lane %d, a sequence at %d" b !at)
-                  alone (part y)
-              end;
-              at := !at + n)
-            lens)
-        lens)
-
-(* Compiled, one program serves every packing. *)
-let test_packed_compiled () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 43) @@ fun () ->
-  let p_layer = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 6; 8 |] in
-  let traces = ref 0 in
-  let forward (x, index) =
-    incr traces;
-    fst (call p_layer (cache 0) index x)
-  in
-  let compiled =
-    Rune.jit
-      Nx.Ptree.(pair tensor (Nx.Ptree.v Cache_index.walk) @-> returns tensor)
-      forward
-  in
-  List.iter
-    (fun lens ->
-      let index = Cache_index.packed ~seq:6 lens in
-      close ~msg:"compiled = eager" (forward (x, index)) (compiled (x, index)))
-    [ [| [| 2; 4 |]; [| 6 |] |]; [| [| 1; 1; 3 |]; [| 3; 2 |] |] ];
-  equal ~msg:"two packings, one compiled trace and two eager runs" int 3 !traces
-
-(* [visible] is [mask] read at each pair: attention under either gives the same
-   bits, over each kind of index without a hole, which [visible] shows. Keys
-   and values are drawn over the mask's columns. *)
-let test_visible_is_mask () =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key 48) @@ fun () ->
-  let rows = Cache_index.rows ~every:[ 2 ] ~context:6 [| 4; 2 |] in
-  let whole = Cache_index.whole ~lens:[| 3; 5 |] ~batch:2 ~seq:5 () in
-  let packed = Cache_index.packed ~seq:6 [| [| 2; 3 |]; [| 6 |] |] in
-  let draft =
-    Cache_index.draft
-      ~slots:(int64s [| 1; 3 |] [| 19; 18; 17 |])
-      ~sees:(tree_sees [| -1; 0; 0 |])
-      (index_at ~pos:[| [| 2; 3; 3 |] |] ~slots:[| draft_table |])
-  in
-  let selected =
-    Cache_index.select
-      (int64s [| 1; 2; 3 |] [| 1; 3; 0; 4; 2; 0 |])
-      (index_at ~pos:[| [| 2; 4 |] |] ~slots:[| [| 3; 0; 4; -1; 2; 1 |] |])
-  in
-  let agrees (name, index) =
-    let batch = Cache_index.batch index and seq = Cache_index.seq index in
-    let m = Cache_index.mask index in
-    let columns = Nx.dim 2 m in
-    let m = Nx.reshape [| batch; 1; seq; columns |] m in
-    let q = Nx.Rng.normal Nx.float32 [| batch; 4; seq; 2 |] in
-    let k = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 2 |] in
-    let v = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 3 |] in
-    equal ~msg:name (array float_exact)
-      (flat (Attention.attend ~mask:(captured m) q (Nx.Dense { k; v })))
-      (flat
-         (Attention.attend
-            ~mask:(Cache_index.visible index)
-            q
-            (Nx.Dense { k; v })));
-    let compiled =
-      Rune.jit
-        Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
-        (fun q k v ->
-          Attention.attend
-            ~mask:(Cache_index.visible index)
-            q
-            (Nx.Dense { k; v }))
-    in
-    close ~msg:(name ^ ", compiled")
-      (Attention.attend ~mask:(Cache_index.visible index) q (Nx.Dense { k; v }))
-      (compiled q k v)
-  in
-  List.iter agrees
-    [
-      ("rows", rows);
-      ("rows under a window", Cache_index.window 2 rows);
-      ("rows in blocks", Cache_index.every 2 rows);
-      ( "blocks under a window",
-        Cache_index.window 3 (Cache_index.every 2 rows) );
-      ("a padded whole index", whole);
-      ("a whole index under a window", Cache_index.window 2 whole);
-      ("a whole index in blocks", Cache_index.every 2 whole);
-      ("a packed index", packed);
-      ("a packed index under a window", Cache_index.window 2 packed);
-      ("an advanced index", Cache_index.advance (Cache_index.window 2 rows));
-      ("a draft", draft);
-      ("a selection", selected);
-    ]
-
-(* A window wider than every position hides nothing: under such a window an
-   index masks, reads and attends to the bits it gives without one, eager and
-   compiled, and compiled it gives eager's outputs. Positions from [-1] (left
-   padding, a lane of padding alone), blocks, a decode step, whole and packed
-   lanes, a draft and a selection; widths from one past the largest position
-   to [max_int]. *)
-let widest_cases =
-  let rows = Cache_index.rows ~every:[ 2 ] ~context:6 [| 4; 2 |] in
-  [|
-    ("rows", rows);
-    ("a lane of padding", Cache_index.rows ~context:6 [| 4; 0 |]);
-    ("rows in blocks", Cache_index.every 2 rows);
-    ("an advanced index", Cache_index.advance rows);
-    ( "a padded whole index",
-      Cache_index.whole ~lens:[| 3; 5 |] ~batch:2 ~seq:5 () );
-    ("a packed index", Cache_index.packed ~seq:6 [| [| 2; 3 |]; [| 6 |] |]);
-    ( "a draft",
-      Cache_index.draft
-        ~slots:(int64s [| 1; 3 |] [| 19; 18; 17 |])
-        ~sees:(tree_sees [| -1; 0; 0 |])
-        (index_at ~pos:[| [| 2; 3; 3 |] |] ~slots:[| draft_table |]) );
-    ( "a selection",
-      Cache_index.select
-        (int64s [| 1; 2; 3 |] [| 1; 3; 0; 4; 2; 0 |])
-        (index_at ~pos:[| [| 2; 4 |] |] ~slots:[| [| 3; 0; 4; -1; 2; 1 |] |])
-    );
-  |]
-
-(* A case and how far past its largest position the window reaches. *)
-let widest_gen =
-  let open Gen in
-  pair
-    (int_range 0 (Array.length widest_cases - 1))
-    (frequency
-       [
-         (2, int_range 0 3);
-         (1, int_range 0 (max_int / 2));
-         (1, constant max_int);
-       ])
-
-let widest_attend =
-  Rune.jit
-    Nx.Ptree.(
-      v Cache_index.walk @-> tensor @-> tensor @-> tensor @-> returns tensor)
-    (fun index q k v ->
-      Attention.attend ~mask:(Cache_index.visible index) q (Nx.Dense { k; v }))
-
-let widest_extend =
-  Rune.jit
-    Nx.Ptree.(
-      v Cache_index.walk @-> tensor @-> tensor @-> returns (pair tensor tensor))
-    Cache_index.extend
-
-let test_widest_window (case, past) =
-  Compiled.here ();
-  Nx.Rng.with_key (Nx.Rng.key (49 + case)) @@ fun () ->
-  let name, index = widest_cases.(case) in
-  let largest =
-    Int64.to_int (Nx.item [] (Nx.max (Cache_index.positions index)))
-  in
-  let w = if past >= max_int - largest then max_int else largest + 1 + past in
-  cover "one past the largest position" (past = 0);
-  cover "max_int" (w = max_int);
-  cover "a draft" (name = "a draft");
-  let widest = Cache_index.window w index in
-  let batch = Cache_index.batch index and seq = Cache_index.seq index in
-  equal ~msg:(name ^ ": mask") (list bool)
-    (bools (Cache_index.mask index))
-    (bools (Cache_index.mask widest));
-  let columns = Nx.dim 2 (Cache_index.mask index) in
-  let q = Nx.Rng.normal Nx.float32 [| batch; 4; seq; 2 |] in
-  let k = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 2 |] in
-  let v = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 3 |] in
-  let values = Nx.Rng.normal Nx.float32 [| batch; seq; 3 |] in
-  let pool = Nx.Rng.normal Nx.float32 [| 20; 3 |] in
-  let eager index =
-    let seen, pool = Cache_index.extend index values pool in
-    [
-      flat
-        (Attention.attend
-           ~mask:(Cache_index.visible index)
-           q
-           (Nx.Dense { k; v }));
-      flat seen;
-      flat pool;
-    ]
-  in
-  let compiled index =
-    let seen, pool = widest_extend index values pool in
-    [ flat (widest_attend index q k v); flat seen; flat pool ]
-  in
-  equal ~msg:(name ^ ": eager") (list (array float_exact)) (eager index)
-    (eager widest);
-  equal ~msg:(name ^ ": compiled") (list (array float_exact)) (compiled index)
-    (compiled widest);
-  equal ~msg:(name ^ ": compiled = eager")
-    (list (array (float 1e-5)))
-    (eager widest) (compiled widest)
-
-(* [visible]'s law against the reference it answers: which keys a query sees.
-   A state's columns stand at [(j + 1) m - 1] (a whole index at stride 1
-   instead has its tokens as columns, which see their own sequence); a query
-   sees the columns at or before its position, under a window only the last
-   [w] of them. *)
-
-type state = {
-  case : string;
-  index : Nx.host Cache_index.t;
-  context : int;
-  stride : int;
-  runs : bool;
-  window : int option;
-  pos : int array;  (** Each token's position, [-1] for padding. *)
-}
-
-(* A lane of [len] tokens padded on the left of [seq] positions. *)
-let left_padded ~seq len =
-  Array.init seq (fun i -> max (-1) (i - (seq - len)))
-
-let state_gen =
-  let open Gen in
-  let* batch = int_range 1 3 in
-  let lens n = array ~size:(constant batch) (int_range 0 n) in
-  let* kind = int_range 0 3 in
-  let* base =
-    match kind with
-    | 0 ->
-        let* context = int_range 1 9 in
-        let* ls = lens context in
-        let* blocks = bool in
-        let every = if blocks then [ 3 ] else [] in
-        let rows = Cache_index.rows ~every ~context ls in
-        let* advanced = bool in
-        let seq = Array.fold_left max 1 ls in
-        let index, pos =
-          if advanced then (Cache_index.advance rows, Array.map (fun l -> max 0 l) ls)
-          else
-            (rows, Array.concat (Array.to_list (Array.map (left_padded ~seq) ls)))
-        in
-        constant
-          ( (if advanced then "advanced rows" else "rows"),
-            (if blocks then Cache_index.every 3 index else index),
-            (if blocks then (context + 2) / 3 else context),
-            (if blocks then 3 else 1),
-            false,
-            pos )
-    | 1 ->
-        let* seq = int_range 1 9 in
-        let* ls = lens seq in
-        let index = Cache_index.whole ~lens:ls ~batch ~seq () in
-        let pos = Array.concat (Array.to_list (Array.map (left_padded ~seq) ls)) in
-        let* blocks = bool in
-        constant
-          (if blocks then
-             ("whole in blocks", Cache_index.every 2 index, (seq + 1) / 2, 2, false, pos)
-           else ("whole", index, seq, 1, true, pos))
-    | 2 ->
-        let* seq = int_range 1 9 in
-        let* cut = int_range 0 seq in
-        let* n = int_range 0 (seq - cut) in
-        let lane =
-          Array.concat
-            [
-              Array.make (seq - cut - n) (-1);
-              Array.init cut Fun.id;
-              Array.init n Fun.id;
-            ]
-        in
-        constant
-          ( "packed",
-            Cache_index.packed ~seq (Array.make batch [| cut; n |]),
-            seq,
-            1,
-            true,
-            Array.concat (List.init batch (fun _ -> lane)) )
-    | _ ->
-        let* context = int_range 1 9 in
-        let* seq = int_range 1 4 in
-        let* pos =
-          array ~size:(constant (batch * seq)) (int_range (-1) (context + 1))
-        in
-        let* offset = int_range 0 (context - 1) in
-        let tensor = Nx.create Nx.int64 [| batch; seq |] (Array.map Int64.of_int pos) in
-        (* A wrapped table: each lane's columns name a ring of slots. *)
-        let table =
-          Nx.create Nx.int64 [| batch; context |]
-            (Array.init (batch * context) (fun t ->
-                 let b = t / context and j = t mod context in
-                 Int64.of_int ((b * context) + ((j + offset) mod context))))
-        in
-        constant
-          ("wrapped table", Cache_index.make ~pos:tensor ~table (), context, 1, false, pos)
-  in
-  let case, index, context, stride, runs, pos = base in
-  let* w = option (int_range 1 4) in
-  let index =
-    match w with Some w -> Cache_index.window w index | None -> index
-  in
-  constant { case; index; context; stride; runs; window = w; pos }
-
-let pp_state ppf s =
-  Format.fprintf ppf "%s context %d stride %d window %s" s.case s.context
-    s.stride
-    (match s.window with None -> "none" | Some w -> string_of_int w)
-
-(* The pairs of [batch; 1; seq; context], as attention reads them. *)
-let grid ~batch ~seq ~context : Nx.host Nx.pair =
-  let at n shape =
-    Nx.reshape shape (Nx.create Nx.int64 [| n |] (Array.init n Int64.of_int))
-  in
-  {
-    q = at seq [| 1; 1; seq; 1 |];
-    k = at context [| 1; 1; 1; context |];
-    len = Nx.full Nx.int64 [| batch; 1; 1; 1 |] (Int64.of_int context);
-    tq = seq;
-  }
-
-let test_visible_law s =
-  cover s.case true;
-  cover "under a window" (s.window <> None);
-  cover "in blocks" (s.stride > 1);
-  let index = s.index in
-  let batch = Cache_index.batch index and seq = Cache_index.seq index in
-  let pos = s.pos in
-  let stand j = (j + 1) * s.stride - 1 in
-  let shape = [| batch; 1; seq; s.context |] in
-  let seen = Array.make (batch * seq * s.context) false in
-  for b = 0 to batch - 1 do
-    for i = 0 to seq - 1 do
-      let at x j = (((b * seq) + x) * s.context) + j in
-      let query = pos.((b * seq) + i) in
-      for j = 0 to s.context - 1 do
-        let key, related =
-          if not s.runs then (stand j, true)
-          else
-            (* The key is token [j] of the lane: visible if one sequence,
-               whose tokens start together, holds both. *)
-            let p = pos.((b * seq) + j) in
-            (p, p >= 0 && j - p = i - query)
-        in
-        seen.(at i j) <-
-          related && key >= 0 && key <= query
-          && (match s.window with
-             | None -> true
-             | Some w -> key > query - w)
-      done
-    done
-  done;
-  let p = grid ~batch ~seq ~context:s.context in
-  equal ~msg:"visible at each pair" (array bool) seen
-    (Nx.to_array (Nx.reshape shape (Cache_index.visible index p)));
-  (* The mask attention reads is the same one: the law holds through a call. *)
-  equal ~msg:"mask" (array bool) seen
-    (Nx.to_array (Nx.reshape shape (Cache_index.mask index)))
-
-(* Keys of another width than the index's context raise, through [visible]
-   as through [mask]. *)
-let test_visible_checks_the_keys () =
-  let q = Nx.zeros Nx.float32 [| 1; 2; 3; 2 |] in
-  let k = Nx.zeros Nx.float32 [| 1; 2; 7; 2 |] in
-  List.iter
-    (fun (name, index, message) ->
-      raises ~msg:name (Invalid_argument message) (fun () ->
-          Attention.attend
-            ~mask:(Cache_index.visible index)
-            q
-            (Nx.Dense { k; v = k })))
-    [
-      ( "rows",
-        index_at ~pos:[| [| 0; 1; 2 |] |] ~slots:[| Array.init 6 Fun.id |],
-        "Nx.attention: a mask of shape [1; 1; 3; 6] does not broadcast to [1; \
-         2; 3; 7]" );
-      ( "a whole index",
-        Cache_index.whole ~batch:1 ~seq:3 (),
-        "Nx.attention: a mask of shape [1; 1; 3; 3] does not broadcast to [1; \
-         2; 3; 7]" );
-    ]
-
-(* The pieces of a layer *)
-
-let composed ?scale ?sinks p c index x =
-  let pos = Cache_index.positions index in
-  let q = Rope.apply rope ~pos (Attention.split ~head_dim p.Attention.q x) in
-  let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
-  let v = Attention.split ~head_dim p.v x in
-  let kv, c = Attention.Cache.extend index c k v in
-  let mask = Cache_index.visible index in
-  (Attention.merge p.out (Attention.attend ~mask ?scale ?sinks q kv), c)
-
-let test_pieces_compose_cached () =
-  Nx.Rng.with_key (Nx.Rng.key 47) @@ fun () ->
-  let p = layer Nx.float32 in
-  let x = Nx.Rng.normal Nx.float32 [| 2; 3; 8 |] in
-  let exact ~msg (y, (c : _ Attention.Cache.t)) (y', (c' : _ Attention.Cache.t))
-      =
-    equal ~msg (array float_exact) (flat y) (flat y');
-    equal ~msg:(msg ^ ", keys") (array float_exact) (flat c.keys) (flat c'.keys);
-    equal ~msg:(msg ^ ", values") (array float_exact) (flat c.values)
-      (flat c'.values)
-  in
-  let index = Cache_index.window 2 (Cache_index.rows ~context:4 [| 3; 2 |]) in
-  exact ~msg:"through a cache"
-    (call p (cache 8) index x)
-    (composed p (cache 8) index x);
-  let whole = Cache_index.whole ~batch:2 ~seq:3 () in
-  exact ~msg:"over a whole index"
-    (call p (cache 0) whole x)
-    (composed p (cache 0) whole x);
-  shape_is ~msg:"heads come before positions" [| 2; 4; 3; 2 |]
-    (Attention.split ~head_dim p.q x);
-  shape_is ~msg:"a narrower projection has fewer heads" [| 2; 2; 3; 2 |]
-    (Attention.split ~head_dim p.k x)
-
-let test_attend_sinks_per_query_head () =
-  Nx.Rng.with_key (Nx.Rng.key 41) @@ fun () ->
-  let q = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 2 |] in
-  let k = Nx.Rng.normal Nx.float32 [| 2; 2; 5; 2 |] in
-  let v = Nx.Rng.normal Nx.float32 [| 2; 2; 5; 2 |] in
-  let sinks = Nx.create Nx.float32 [| 4 |] [| -1.5; 0.25; 2.0; 0.75 |] in
-  let mask = lower ~n:5 ~m:5 in
-  (* Key-value head [h] repeated for query heads [2 h] and [2 h + 1]. *)
-  let repeat t =
-    Nx.take ~axis:1 (Nx.create Nx.int64 [| 4 |] [| 0L; 0L; 1L; 1L |]) t
-  in
-  let direct =
-    sink_reference ~mask ~scale:0.8
-      ~sinks:(Nx.reshape [| 4; 1 |] sinks)
-      q (repeat k) (repeat v)
-  in
-  same ~msg:"2 key-value heads serving 4 query heads" direct
-    (Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q (Nx.Dense { k; v }));
-  same ~msg:"one key-value head per query head" direct
-    (Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q
-       (Nx.Dense { k = repeat k; v = repeat v }))
-
-let test_composed_sinks_chunking () =
-  Nx.Rng.with_key (Nx.Rng.key 45) @@ fun () ->
-  let p = layer Nx.float32 in
-  let sinks = Nx.create Nx.float32 [| 4 |] [| -1.5; 0.25; 2.0; 0.75 |] in
-  let x = Nx.Rng.normal Nx.float32 [| 1; 7; 8 |] in
-  let slots = [| Array.init 8 Fun.id |] in
-  let feed chunks =
-    let _, ys, _ =
-      List.fold_left
-        (fun (at, ys, c) n ->
-          let index =
-            Cache_index.window 3
-              (index_at ~pos:[| Array.init n (fun i -> at + i) |] ~slots)
-          in
-          let y, c =
-            composed ~scale:0.9 ~sinks p c index
-              (Nx.slice [ A; R (at, at + n) ] x)
-          in
-          (at + n, y :: ys, c))
-        (0, [], cache 8)
-        chunks
-    in
-    Nx.concatenate ~axis:1 (List.rev ys)
-  in
-  let whole sinks =
-    fst
-      (composed ~scale:0.9 ?sinks p (cache 0)
-         (Cache_index.window 3 (Cache_index.whole ~batch:1 ~seq:7 ()))
-         x)
-  in
-  close ~msg:"token by token" (whole (Some sinks))
-    (feed [ 1; 1; 1; 1; 1; 1; 1 ]);
-  close ~msg:"uneven chunks" (whole (Some sinks)) (feed [ 3; 1; 2; 1 ]);
-  is_true ~msg:"and the sinks change the outputs"
-    (Array.exists2
-       (fun a b -> Float.abs (a -. b) > 1e-3)
-       (flat (whole (Some sinks)))
-       (flat (whole None)))
-
-let test_pieces_reject_bad_shapes () =
-  let t shape = Nx.zeros Nx.float32 shape in
-  let p = layer Nx.float32 in
-  raises
-    (Invalid_argument
-       "Attention.split: head_dim 3 does not divide the projection width 8")
-    (fun () -> Attention.split ~head_dim:3 p.q (t [| 1; 2; 8 |]));
-  raises
-    (Invalid_argument "Attention.split: x must have shape [batch; seq; embed]")
-    (fun () -> Attention.split ~head_dim:2 p.q (t [| 2; 8 |]));
-  raises
-    (Invalid_argument
-       "Attention.attend: 3 key-value heads do not divide 4 query heads")
-    (fun () ->
-      Attention.attend
-        (t [| 1; 4; 2; 2 |])
-        (Nx.Dense { k = t [| 1; 3; 2; 2 |]; v = t [| 1; 3; 2; 2 |] }));
-  raises (Invalid_argument "Attention.attend: sinks must have shape [4]")
-    (fun () ->
-      Attention.attend ~sinks:(t [| 2 |])
-        (t [| 1; 4; 2; 2 |])
-        (Nx.Dense { k = t [| 1; 2; 2; 2 |]; v = t [| 1; 2; 2; 2 |] }));
-  raises (Invalid_argument "Attention.attend: lengths must have shape [1]")
-    (fun () ->
-      Attention.attend
-        ~lengths:(Nx.zeros Nx.int64 [||])
-        (t [| 1; 4; 2; 2 |])
-        (Nx.Dense { k = t [| 1; 2; 2; 2 |]; v = t [| 1; 2; 2; 2 |] }));
-  raises
-    (Invalid_argument
-       "Attention.merge: y must have shape [batch; heads; seq; d]") (fun () ->
-      Attention.merge p.out (t [| 2; 8 |]))
-
-let test_cache_list_paths () =
-  let caches = [ cache 2; cache 2 ] in
-  equal ~msg:"index then leaf" (list string)
-    [ "0.keys"; "0.values"; "1.keys"; "1.values" ]
-    (paths
-       (Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)))
-       caches)
-
-let test_cached_rejects_bad_geometry () =
-  Nx.Rng.with_key (Nx.Rng.key 26) @@ fun () ->
-  let p = layer Nx.float32 in
-  raises
-    (Invalid_argument
-       "Attention.Cache.make: slots must not be negative and kv_heads and \
-        head_dim must be positive, got slots=-1 kv_heads=2 head_dim=2")
-    (fun () -> cache (-1));
-  raises
-    (Invalid_argument
-       "Cache_index.make: pos must have shape [batch; seq] and table [rows; \
-        context], neither of them empty") (fun () ->
-      Cache_index.make
-        ~pos:(int64s [| 2 |] [| 0; 0 |])
-        ~table:(int64s [| 2; 4 |] [| 0; 1; 2; 3; 4; 5; 6; 7 |])
-        ());
-  raises
-    (Invalid_argument
-       "Cache_index.make: a table of 1 rows for 2 lanes needs ~row") (fun () ->
-      Cache_index.make
-        ~pos:(int64s [| 2; 1 |] [| 0; 0 |])
-        ~table:(int64s [| 1; 4 |] [| 0; 1; 2; 3 |])
-        ());
-  raises
-    (Invalid_argument
-       "Cache_index.rows: a lane of 5 tokens does not fit a context of 4")
-    (fun () -> Cache_index.rows ~context:4 [| 5 |]);
-  raises (Invalid_argument "Cache_index.advance: a whole index keeps nothing")
-    (fun () -> Cache_index.advance (Cache_index.whole ~batch:1 ~seq:2 ()));
-  let index = Cache_index.rows ~context:4 [| 2 |] in
-  raises (Invalid_argument "Attention.cached: input must have shape [1; 2; 8]")
-    (fun () -> call p (cache 4) index (Nx.zeros Nx.float32 [| 1; 3; 8 |]));
-  raises
-    (Invalid_argument
-       "Attention.cached: the cache must have shape [slots; 2; 2]") (fun () ->
-      Attention.cached ~head_dim p
-        (Attention.Cache.make ~slots:4 ~kv_heads:1 ~head_dim Nx.float32
-           Nx.Host.on)
-        index
-        (Nx.zeros Nx.float32 [| 1; 2; 8 |]))
-
-let test_rejects_bad_geometry () =
-  Nx.Rng.with_key (Nx.Rng.key 9) @@ fun () ->
-  raises
-    (Invalid_argument
-       "Attention.make: embed_dim, q_dim and kv_dim must be positive, got \
-        embed_dim=0 q_dim=0 kv_dim=0") (fun () ->
-      Attention.make ~key:(Nx.Rng.next_key ()) ~embed_dim:0 Nx.float32);
-  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
-  raises
-    (Invalid_argument
-       "Attention.apply: input must have at least sequence and feature axes")
-    (fun () -> Attention.apply ~head_dim:2 p (Nx.zeros Nx.float32 [| 4 |]));
-  raises
-    (Invalid_argument
-       "Attention.apply: last axis has size 3 but the layer attends over 4 \
-        features") (fun () ->
-      Attention.apply ~head_dim:2 p (Nx.zeros Nx.float32 [| 2; 3 |]));
-  raises (Invalid_argument "Attention.apply: head_dim must be positive, got 0")
-    (fun () -> Attention.apply ~head_dim:0 p (Nx.zeros Nx.float32 [| 2; 4 |]));
-  raises
-    (Invalid_argument
-       "Attention.apply: head_dim 3 does not divide the projection widths (q=4 \
-        k=4)") (fun () ->
-      Attention.apply ~head_dim:3 p (Nx.zeros Nx.float32 [| 2; 4 |]));
-  raises
-    (Invalid_argument
-       "Nx.attention: a mask of shape [3; 3] does not broadcast to [1; 2; 2; \
-        2]") (fun () ->
-      Attention.apply ~head_dim:2
-        ~mask:(captured (Nx.ones Nx.bool [| 3; 3 |]))
-        p
-        (Nx.zeros Nx.float32 [| 2; 4 |]));
-  raises
-    (Invalid_argument
-       "Attention.apply: lengths must have shape [3], x's batch axes")
-    (fun () ->
-      Attention.apply ~head_dim:2
-        ~lengths:(Nx.zeros Nx.int64 [| 2 |])
-        p
-        (Nx.zeros Nx.float32 [| 3; 2; 4 |]));
-  raises
-    (Invalid_argument
-       "Attention.apply: the key and value projections differ in width (k=4 \
-        v=2)") (fun () ->
-      let v =
-        Linear.make ~key:(Nx.Rng.next_key ()) ~inputs:4 ~outputs:2 Nx.float32
-      in
-      Attention.apply ~head_dim:2 { p with Attention.v }
-        (Nx.zeros Nx.float32 [| 2; 4 |]))
-
-(* Dropout of the weights *)
-
-(* Queries of two heads over one key-value head of five keys. Under the mask,
-   rows 0 and 2 see one key each, row 1 every key, row 3 none. *)
-let drop_visible =
-  lazy
-    (Nx.create Nx.bool [| 1; 1; 4; 5 |]
-       [|
-         true; false; false; false; false;
-         true; true; true; true; true;
-         false; false; true; false; false;
-         false; false; false; false; false;
-       |])
-
-let drop_bias () =
-  Nx.create Nx.float32 [| 1; 1; 1; 5 |] [| 0.; 0.5; -1.; 0.25; 2. |]
-
-let drop_sinks () = Nx.create Nx.float64 [| 2 |] [| -0.5; 1.5 |]
-
-(* One key per pair, shared by the heads. *)
-let drop_keys =
-  lazy
-    (Nx.Rng.reshape [| 1; 1; 4; 5 |]
-       (Nx.Rng.split_batch ~n:20 (Nx.Rng.key 6)))
-
-let drop_inputs () =
-  let drawn seed shape =
-    Nx.Rng.normal ~key:(Nx.Rng.key seed) Nx.float64 shape
-  in
-  (drawn 1 [| 1; 2; 4; 4 |], drawn 2 [| 1; 1; 5; 4 |], drawn 3 [| 1; 1; 5; 3 |])
-
-let drop_mask () =
-  Dropout.mask ~rate:0.5 ~key:(Lazy.force drop_keys)
-    (Nx.zeros Nx.float64 [| 1; 2; 4; 5 |])
-
-(* What [attend] is given, of which [mask] and [sinks] may be left out. *)
-type drop_case = { masked : bool; sinked : bool }
-
-let dropped c ~bias ~sinks q k v =
-  let mask =
-    if c.masked then Some (captured (Lazy.force drop_visible)) else None
-  in
-  let sinks = if c.sinked then Some sinks else None in
-  Attention.attend ?mask ~bias ?sinks ~dropout:0.5 ~key:(Lazy.force drop_keys)
-    q (Nx.Dense { k; v })
-
-(* The weights in full: the softmax over the visible scores, biased, and a
-   last column of the sinks, or of a score so low that its weight is exactly
-   0 beside any visible key and 1 where none is visible; then that column
-   dropped, the weights dropped, and the values weighed. *)
-let dropped_reference c ~bias ~sinks q k v =
-  let s = Nx.mul_s (Nx.matmul q (Nx.swapaxes 2 3 k)) 0.5 in
-  let s = Nx.add s (f64 bias) in
-  let s =
-    if not c.masked then s
-    else
-      Nx.where (Lazy.force drop_visible) s
-        (Nx.scalar_like s Float.neg_infinity)
-  in
-  let column =
-    if c.sinked then Nx.reshape [| 1; 2; 1; 1 |] sinks
-    else Nx.full Nx.float64 [| 1; 1; 1; 1 |] (-1e30)
-  in
-  let column = Nx.broadcast_to [| 1; 2; 4; 1 |] column in
-  let w = Nx.softmax (Nx.concatenate ~axis:3 [ s; column ]) in
-  let w = Nx.slice [ A; A; A; R (0, 5) ] w in
-  let w = Nx.where (drop_mask ()) (Nx.mul_s w 2.) (Nx.scalar_like w 0.) in
-  Nx.matmul w v
-
-(* Each case of a row's keys occurs under the mask and these keys. *)
-let test_dropout_cases () =
-  let vis =
-    Nx.to_array
-      (Nx.broadcast_to [| 1; 2; 4; 5 |] (Lazy.force drop_visible))
-  in
-  let z = Nx.to_array (drop_mask ()) in
-  let case r =
-    let seen = ref 0 and kept = ref 0 in
-    for j = 0 to 4 do
-      if vis.((5 * r) + j) then begin
-        incr seen;
-        if z.((5 * r) + j) then incr kept
-      end
-    done;
-    if !seen = 0 then "sees none"
-    else if !kept = 0 then "keeps none"
-    else if !kept = !seen then "keeps all"
-    else "keeps some"
-  in
-  equal ~msg:"the rows' cases" (list string)
-    [ "keeps all"; "keeps none"; "keeps some"; "sees none" ]
-    (List.sort_uniq compare (List.init 8 case))
-
-let drop_cases =
-  List.concat_map
-    (fun masked -> List.map (fun sinked -> { masked; sinked }) [ true; false ])
-    [ true; false ]
-
-let drop_case_id c =
-  Printf.sprintf "%s, %s"
-    (if c.masked then "masked" else "unmasked")
-    (if c.sinked then "sinks" else "no sinks")
-
-let test_dropout_weights c =
-  let q, k, v = drop_inputs () in
-  let bias = drop_bias () and sinks = drop_sinks () in
-  values_are ~tol:1e-12 ~msg:"the dropped weights times the values"
-    (Nx.to_array (dropped_reference c ~bias ~sinks q k v))
-    (dropped c ~bias ~sinks q k v);
-  let d f x = Rune.grad Nx.Ptree.tensor (fun x -> Nx.sum (f x)) x in
-  let grad ?(tol = 1e-12) name g =
-    values_are ~tol ~msg:("its gradient in " ^ name)
-      (Nx.to_array (g (dropped_reference c)))
-      (g (dropped c))
-  in
-  grad "q" (fun f -> d (fun q -> f ~bias ~sinks q k v) q);
-  grad "k" (fun f -> d (fun k -> f ~bias ~sinks q k v) k);
-  grad "v" (fun f -> d (fun v -> f ~bias ~sinks q k v) v);
-  grad ~tol:1e-6 "bias" (fun f -> d (fun bias -> f ~bias ~sinks q k v) bias);
-  if c.sinked then
-    grad "sinks" (fun f -> d (fun sinks -> f ~bias ~sinks q k v) sinks)
-
-let test_dropout_compiled () =
-  Compiled.here ();
-  let q, k, v = drop_inputs () in
-  let bias = drop_bias () and sinks = drop_sinks () in
-  let c = { masked = true; sinked = true } in
-  let f q = dropped c ~bias ~sinks q k v in
-  values_are ~tol:1e-12 ~msg:"compiled = eager" (Nx.to_array (f q))
-    (Rune.jit' f q);
-  let g q = Rune.grad Nx.Ptree.tensor (fun q -> Nx.sum (f q)) q in
-  values_are ~tol:1e-12 ~msg:"its gradient, compiled = eager"
-    (Nx.to_array (g q)) (Rune.jit' g q)
-
-(* Two keys of score 0, a bias of -8.03125 on the second, and values 0 and 1:
-   the result is sigmoid (-8.03125). A bias rounded to bfloat16, 8 or 8.0625,
-   would be off by 3%, against bfloat16's rounding of the result, under
-   0.4%. *)
-let test_bias_keeps_its_bits () =
-  let bf16 = Nx.bfloat16 in
-  let q = Nx.zeros bf16 [| 1; 1; 1; 2 |] in
-  let k = Nx.zeros bf16 [| 1; 1; 2; 2 |] in
-  let v = Nx.create bf16 [| 1; 1; 2; 1 |] [| 0.; 1. |] in
-  let bias = Nx.create Nx.float32 [| 1; 1; 1; 2 |] [| 0.; -8.03125 |] in
-  let y = Attention.attend ~bias q (Nx.Dense { k; v }) in
-  let y = Nx.item [ 0; 0; 0; 0 ] y in
-  let want = 1. /. (1. +. exp 8.03125) in
-  equal (float (want *. 0x1p-8)) want y
-
-let test_dropout_zero () =
-  let q, k, v = drop_inputs () in
-  let kv = Nx.Dense { k; v } and mask = captured (Lazy.force drop_visible) in
-  values_are ~tol:0. ~msg:"a rate of 0 drops nothing"
-    (Nx.to_array (Attention.attend ~mask q kv))
-    (Attention.attend ~mask ~dropout:0. ~key:(Lazy.force drop_keys) q kv)
-
-(* Keys of [m] slots in pages of three, read through a table in reverse. *)
-let test_dropout_paged () =
-  let q, k, v = drop_inputs () in
-  let pad x = Nx.pad [| (0, 0); (0, 0); (0, 1); (0, 0) |] 0. x in
-  let paged x =
-    let c = Nx.dim 3 x in
-    let pages = Nx.reshape [| 2; 1; 3; c |] (pad x) in
+  (* Batch axes [2; 2]: lengths of shape [2], one per index of the first, for
+     both of its heads. Lane 0 holds 1 key, the rest NaN, lane 1 all 5. *)
+  let q = normal 52 Nx.float64 [| 2; 2; 3; 4 |] in
+  let keys seed =
+    let t = normal seed Nx.float64 [| 2; 2; 5; 4 |] in
     Nx.concatenate ~axis:0
-      [ Nx.slice [ R (1, 2) ] pages; Nx.slice [ R (0, 1) ] pages ]
+      [ poison_past 1 (Nx.slice [ R (0, 1) ] t); Nx.slice [ R (1, 2) ] t ]
   in
-  let table = Nx.create Nx.int64 [| 1; 2 |] [| 1L; 0L |] in
-  let mask =
-    captured
-      (Nx.pad [| (0, 0); (0, 0); (0, 0); (0, 1) |] false
-         (Lazy.force drop_visible))
+  let k = keys 53 and v = keys 54 in
+  let lane i n =
+    let keys t = Nx.slice [ R (i, i + 1); A; R (0, n) ] t in
+    flat
+      (Attention.scaled_dot_product_attention
+         (Nx.slice [ R (i, i + 1) ] q)
+         (keys k) (keys v))
   in
-  let keys =
-    Nx.Rng.reshape [| 1; 1; 4; 6 |] (Nx.Rng.split_batch ~n:24 (Nx.Rng.key 6))
+  let expected = Array.append (lane 0 1) (lane 1 5) in
+  let f q =
+    Attention.scaled_dot_product_attention
+      ~lengths:(int64s [| 2 |] [| 1; 5 |])
+      q k v
   in
-  let attend kv = Attention.attend ~mask ~dropout:0.5 ~key:keys q kv in
-  values_are ~tol:1e-12 ~msg:"paged keys drop as dense ones"
-    (Nx.to_array (attend (Nx.Dense { k = pad k; v = pad v })))
-    (attend (Nx.Paged { k = paged k; v = paged v; table }))
+  equal ~msg:"eager" exactly expected (flat (f q));
+  equal ~msg:"compiled" reordered expected (flat (Rune.jit' f q))
 
-let test_dropout_refusals () =
-  let q, k, v = drop_inputs () in
-  let kv = Nx.Dense { k; v } in
-  let refuses msg f =
-    raises (Invalid_argument ("Attention.attend: " ^ msg)) f
+let test_sinks_per_row () =
+  let q = normal 55 Nx.float32 [| 2; 4; 3; 6 |] in
+  let k = normal 56 Nx.float32 [| 2; 4; 5; 6 |] in
+  let v = normal 57 Nx.float32 [| 2; 4; 5; 6 |] in
+  let per_row = normal 58 Nx.float32 [| 2; 4; 3 |] in
+  let head h =
+    let at t = Nx.slice [ A; R (h, h + 1) ] t in
+    Attention.scaled_dot_product_attention ~sinks:(at per_row) (at q) (at k)
+      (at v)
   in
-  refuses "dropout must be in [0, 1), got 1" (fun () ->
-      Attention.attend ~dropout:1. q kv);
-  refuses "dropout must be in [0, 1), got nan" (fun () ->
-      Attention.attend ~dropout:Float.nan q kv);
-  refuses
-    "dropout keys of batch shape [3] do not broadcast to the weights' [1; 2; \
-     4; 5]"
-    (fun () ->
-      Attention.attend ~dropout:0.5
-        ~key:(Nx.Rng.split_batch ~n:3 (Nx.Rng.key 1)) q kv);
-  refuses
-    "a bias of shape [4] does not broadcast to the weights' [1; 2; 4; 5]"
-    (fun () -> Attention.attend ~bias:(Nx.zeros Nx.float32 [| 4 |]) q kv)
+  equal exactly
+    (flat (Nx.concatenate ~axis:1 (List.init 4 head)))
+    (flat (Attention.scaled_dot_product_attention ~sinks:per_row q k v))
+
+let test_sinks_compiled () =
+  Compiled.here ();
+  let q = normal 59 Nx.float64 [| 2; 4; 3; 6 |] in
+  let k = normal 60 Nx.float64 [| 2; 4; 5; 6 |] in
+  let v = normal 61 Nx.float64 [| 2; 4; 5; 6 |] in
+  let sinks = Nx.create Nx.float64 [| 4; 1 |] [| -1.5; 0.25; 2.0; 0.75 |] in
+  let shown = Nx.less_s (normal 62 Nx.float32 [| 3; 5 |]) 0.5 in
+  let f q =
+    Attention.scaled_dot_product_attention ~mask:(captured shown) ~scale:0.7
+      ~sinks q k v
+  in
+  equal reordered (flat (f q)) (flat (Rune.jit' f q))
+
+let core_refusals =
+  let t shape = Nx.zeros Nx.float32 shape in
+  let sdpa ?mask ?lengths ?sinks q k v =
+    ignore (Attention.scaled_dot_product_attention ?mask ?lengths ?sinks q k v)
+  in
+  [
+    ( "q is a float4 format",
+      "float4_e2m1fn is not",
+      fun () ->
+        let x = Nx.zeros Nx.float4_e2m1fn [| 1; 2 |] in
+        ignore (Attention.scaled_dot_product_attention x x x) );
+    ( "q has fewer than 2 axes",
+      "at least 2 axes",
+      fun () -> sdpa (t [| 3 |]) (t [| 3; 2 |]) (t [| 3; 2 |]) );
+    ( "q and k differ in their last axis",
+      "q has 2 features but k has 3",
+      fun () -> sdpa (t [| 1; 2 |]) (t [| 4; 3 |]) (t [| 4; 2 |]) );
+    ( "k and v differ in their second-to-last axis",
+      "k has 2 positions but v has 3",
+      fun () -> sdpa (t [| 1; 2 |]) (t [| 2; 2 |]) (t [| 3; 2 |]) );
+    ( "the batch axes do not broadcast",
+      "do not broadcast",
+      fun () -> sdpa (t [| 2; 1; 2 |]) (t [| 3; 4; 2 |]) (t [| 3; 4; 2 |]) );
+    ( "d is 0 without scale",
+      "no feature need a scale",
+      fun () -> sdpa (t [| 1; 0 |]) (t [| 2; 0 |]) (t [| 2; 2 |]) );
+    ( "sinks do not broadcast",
+      "sinks of shape [3; 1] do not broadcast",
+      fun () ->
+        sdpa
+          ~sinks:(t [| 3; 1 |])
+          (t [| 4; 2; 2 |])
+          (t [| 4; 2; 2 |])
+          (t [| 4; 2; 2 |]) );
+    ( "lengths are not of the batch axes without their last",
+      "lengths must have shape [2]",
+      fun () ->
+        sdpa
+          ~lengths:(Nx.zeros Nx.int64 [| 3 |])
+          (t [| 2; 4; 1; 2 |])
+          (t [| 2; 4; 3; 2 |])
+          (t [| 2; 4; 3; 2 |]) );
+    ( "the mask does not broadcast",
+      "does not broadcast",
+      fun () ->
+        sdpa
+          ~mask:(captured (Nx.ones Nx.bool [| 3; 3 |]))
+          (t [| 2; 2 |])
+          (t [| 2; 2 |])
+          (t [| 2; 2 |]) );
+  ]
+
+(* walk *)
+
+let visits p =
+  List.map
+    (Format.asprintf "%a" Nx.Ptree.pp_visit)
+    (Nx.Ptree.visits (Nx.Ptree.instantiate (module Attention)) p)
+
+let test_walk bias =
+  let p = Attention.make ~bias ~key:(Nx.Rng.key 63) ~embed_dim:4 Nx.float32 in
+  let proj name =
+    if bias then [ name ^ ".w: a leaf"; name ^ ".b: Some"; name ^ ".b: a leaf" ]
+    else [ name ^ ".w: a leaf"; name ^ ".b: None" ]
+  in
+  equal (list string) (List.concat_map proj [ "q"; "k"; "v"; "out" ]) (visits p)
+
+let bias_id b = if b then "with biases" else "without biases"
+
+type cast_to = Cast : string * (float, 'b) Nx.dtype -> cast_to
+
+let cast_id (Cast (name, _)) = name
+
+let test_cast (Cast (name, dt)) =
+  let p = layer 64 ~embed_dim:4 Nx.float32 in
+  let expected =
+    Nx.Ptree.fold
+      (Nx.Ptree.instantiate (module Attention))
+      (fun path t acc ->
+        (Nx.Ptree.Path.to_string path, name, flat (f64 (Nx.cast dt t))) :: acc)
+      p []
+  in
+  let got =
+    Nx.Ptree.fold
+      (Nx.Ptree.instantiate (module Attention))
+      (fun path t acc ->
+        (Nx.Ptree.Path.to_string path, Nx.Dtype.name (Nx.dtype t), flat (f64 t))
+        :: acc)
+      (Nx.Ptree.cast (module Attention) dt p)
+      []
+  in
+  equal (list (triple string string exactly)) (List.rev expected) (List.rev got)
+
+let refusal_id (id, _, _) = id
+let test_refusal (_, sub, f) = raises_match (Exn.invalid_arg ~sub) f
 
 let () =
   exit
     (run "kaun attention"
        [
-         group "scaled dot-product attention"
+         group "make"
            [
-             test "output shape pairs queries with value features"
-               test_core_shapes;
-             test "weights are the softmax of the scores"
-               test_core_analytic_weights;
-             test "scores are scaled by 1/sqrt d" test_core_scales_by_sqrt_d;
-             test "masked keys get exactly zero weight"
-               test_core_mask_zeroes_weights;
-             test "gradients agree with finite differences" test_core_gradients;
-             test "masked gradients agree with finite differences"
-               test_core_masked_gradients;
-             test "mismatched shapes are rejected" test_core_rejects_bad_shapes;
-             test "float8 and float4 inputs are rejected"
-               test_core_dtypes;
-             test "a query that sees no key yields zero" test_core_is_total;
-             test "a query that sees no key has zero gradients"
-               test_core_empty_row_gradients;
+             cases "q maps embed_dim to q_dim, k and v to kv_dim, out back"
+               ~id:dims_id
+               [ (None, None); (Some 8, Some 4); (Some 2, None) ]
+               test_make_shapes;
+             cases
+               "its projections are Linear.make's, from four keys Nx.Rng.split \
+                makes"
+               ~id:projection_args_id
+               [ Defaults; Initializers; No_bias ]
+               test_make_projections;
+             cases "raises on a dimension that is not positive"
+               ~id:refused_dims_id
+               [ (0, None, None); (6, Some 0, None); (6, None, Some (-1)) ]
+               test_make_refuses;
            ];
-         group "attention sinks and the score scale"
+         group "init"
            [
-             test "a scale replaces 1 / sqrt d" test_core_scale;
-             test "sinks are an appended column that is dropped"
-               test_sinks_are_an_appended_column;
-             test "a query that sees no key yields zero and zero gradients"
-               test_sinks_keep_attention_total;
-             test
-               "gradients with respect to the sinks agree with finite \
-                differences"
-               test_sink_gradients;
-             test "compiled attention with sinks equals eager"
-               test_sinks_compiled;
-             test "sinks that do not broadcast are rejected"
-               test_sinks_reject_bad_shapes;
-             prop ~count:200 "within nx.mli's bound of the definition"
-               (Gen.with_pp pp_case case_gen) law_core;
-             test "gradients through grouped heads and sinks"
-               test_attend_gradients;
+             test "is make at float32" test_init_is_make;
+             test "draws Glorot-uniform weights and zero biases"
+               test_init_glorot;
            ];
-         group "multi-head self-attention"
+         group "apply"
            [
-             test "init produces the documented shapes" test_init_shapes;
-             test "names prefix each projection's leaves" test_names;
-             test "apply preserves the input shape" test_apply_shapes;
-             test "identity projections reduce apply to the core"
-               test_apply_identity_is_the_core;
-             test "heads attend to their feature slices independently"
-               test_heads_attend_independently;
-             test "causally, position 0 attends only to itself"
-               test_causal_first_position_is_itself;
-             test "causal masking ignores future positions"
-               test_causal_ignores_the_future;
-             test "self-attention is permutation-equivariant"
-               test_permutation_equivariance;
-             test "lengths keep the padding from real tokens"
-               test_lengths_hide_padding;
-             test "lengths bound the keys the core and attend read"
-               test_lengths_bound_the_keys;
-             test "0-d lengths bound every row" test_lengths_0d;
+             cases "the result has x's shape" ~id:shape_id
+               [
+                 [| 5; 8 |];
+                 [| 2; 5; 8 |];
+                 [| 2; 3; 5; 8 |];
+                 [| 0; 5; 8 |];
+                 [| 2; 0; 8 |];
+               ]
+               test_apply_shape;
+             prop ~count:200
+               "is split, rope at positions 0 to seq - 1, attend and merge \
+                over the batch axes folded"
+               (Gen.with_pp pp_layer_case layer_gen)
+               law_pieces;
+             test "head h attends over its own head_dim features"
+               test_heads_attend_apart;
              test "grouped keys equal repeated keys"
                test_grouped_equals_repeated;
-             test "lanes sharing dense rows equal lanes over copies"
-               test_shared_rows_equal_copies;
-             test "a shared row's gradient sums its lanes'"
+             test "without a mask every token sees every token"
+               test_apply_unmasked;
+             test "under Nx.causal a token sees no later token"
+               test_apply_causal;
+             test
+               "a query that sees no key yields the output projection of zero"
+               test_apply_no_key;
+             cases "lengths keep the padding from real tokens" ~id:lengths_id
+               [
+                 ([| 2 |], [| 2; 4 |], false);
+                 ([| 2 |], [| 2; 4 |], true);
+                 ([||], [| 2 |], false);
+                 ([||], [| 2 |], true);
+               ]
+               test_lengths_hide_padding;
+             test "lengths keep the padding from real tokens, compiled"
+               test_lengths_compiled;
+             test "Nx.causal aligns the last query with the last real key"
+               test_causal_alignment;
+             cases "is differentiable" ~id:grad_layer_id
+               [ Plain; Causal_mask; Rotated; Grouped ]
+               test_apply_gradients;
+             cases
+               "raises on a float8 or float4 x, a misshapen x, lengths or \
+                mask, a head_dim that is not positive or does not divide the \
+                widths, or key and value widths that differ"
+               ~id:refusal_id apply_refusals test_refusal;
+           ];
+         group "split"
+           [
+             cases
+               "head h of a token holds features h * head_dim to (h + 1) * \
+                head_dim - 1 of its projection"
+               ~id:(Printf.sprintf "head_dim %d")
+               [ 1; 2; 3; 6 ] test_split;
+             cases
+               "raises on an x not of three axes or a head_dim that is not \
+                positive or does not divide the width"
+               ~id:refusal_id split_refusals test_refusal;
+           ];
+         group "attend"
+           [
+             cases
+               "a lane over a shared row is the lane over a copy of it, \
+                eagerly and compiled"
+               ~id:shared_id
+               [ (4, 1, 5); (6, 2, 5); (6, 3, 1); (4, 2, 0); (0, 2, 5) ]
+               test_shared_rows;
+             test "is differentiable over shared rows"
                test_shared_rows_gradients;
-             test "shared rows take no mask, lengths, bias or dropout"
-               test_shared_rows_take_no_mask;
-             test "rows that do not divide the lanes are rejected"
-               test_shared_rows_reject_non_divisors;
-             test "gradients agree with finite differences" test_gradients;
-             test "invalid geometry is rejected" test_rejects_bad_geometry;
-           ];
-         group "key-value cache"
-           [
-             test "a whole prompt matches causal apply"
-               test_cached_prefill_matches_apply;
-             test "visible is the mask read at each pair" test_visible_is_mask;
-             prop ~count:200 "a window wider than every position hides nothing"
-               widest_gen test_widest_window;
-             prop ~count:300 "visible is which keys a query sees"
-               (Gen.with_pp pp_state state_gen)
-               test_visible_law;
-             test "visible checks the keys' width"
-               test_visible_checks_the_keys;
-             test "a whole index is causal apply and keeps nothing"
-               test_cached_whole;
-             test "a window bounds what a token sees" test_cached_window;
-             test "an attention cache is two pools of its slots"
-               test_cache_pools;
-             test "a window is part of the index" test_index_window;
-             test "a selection reads the columns each token chose"
-               test_index_select;
-             test "selecting every column is the read without a selection"
-               test_index_select_everything;
-             test "on a whole index a chosen column is a token"
-               test_index_select_whole;
-             test "a selection may be a broadcast view"
-               test_index_select_broadcast;
-             test "a pool of one slot keeps what its token stored"
-               test_index_one_slot;
-             test "a selection is a tensor of the index"
-               test_index_select_structure;
-             test "a compiled selection reads and stores as eager"
-               test_index_select_compiled;
-             test "a block stands at its last position" test_index_every;
-             test "what addresses nothing stores no block"
-               test_index_every_addresses;
-             test "a window counts positions, not blocks"
-               test_index_every_window;
-             test "a selection of blocks sees closed ones"
-               test_index_every_select;
-             test "on a whole index blocks are read from their closing tokens"
-               test_index_every_whole;
-             test "rows gives each sequence a run of blocks"
-               test_index_every_rows;
-             test "blocks are part of the index" test_index_every_rejects;
-             test "a block's entry does not depend on how it was fed"
-               test_index_every_stream;
-             test "a compiled stream of blocks stores and reads as eager"
-               test_index_every_compiled;
-             test "chunking is invariant" test_cached_chunking_is_invariant;
-             test "rows of different lengths share a batch"
-               test_cached_ragged_batch;
-             test "any slot map gives the same outputs"
-               test_cached_slots_are_free;
-             test "rows can share the slots of a prefix"
-               test_cached_shared_prefix;
-             test "the update is functional" test_cached_update_is_functional;
-             test "what addresses nothing writes no slot" test_cached_addresses;
-             test "masked columns contribute exactly zero"
-               test_cached_masked_columns_are_zero;
-             test "windowed-out columns contribute exactly zero"
-               test_cached_windowed_columns_are_zero;
-             test "one jitted step serves every position and slot map"
-               test_cached_step_jits_once;
-             test "another window shares the program"
-               test_another_window_shares_the_program;
-             test "two leaves over one tensor read it as two values"
-               test_one_storage_behind_two_caches;
-             test "eager and compiled runs agree on what addresses nothing"
-               test_cached_out_of_range_under_jit;
-             test "gradients flow through the cache" test_cached_gradients;
-             test "gradients flow through a windowed cache with a hole"
-               test_cached_gradients_paged;
-             test "vmap over steps of their own caches is each step"
-               test_cached_vmap;
-             test "heads, extend, attend and merge compose cached"
-               test_pieces_compose_cached;
-             test "attend takes sinks per query head, grouped or not"
-               test_attend_sinks_per_query_head;
-             test "a composed layer with sinks is invariant under chunking"
-               test_composed_sinks_chunking;
-             test "the pieces reject other shapes" test_pieces_reject_bad_shapes;
-             test "a list of caches names its leaves by index"
-               test_cache_list_paths;
-             test "invalid geometry is rejected"
-               test_cached_rejects_bad_geometry;
-           ];
-         group "drafts and packed lanes"
-           [
-             test_linear_draft;
-             test_tree_draft;
-             test "a draft reads the table before it, then its tokens"
-               test_draft_index;
-             test "a draft is a tabled index without blocks or selections"
-               test_draft_rejects;
-             test "a compiled draft reads and stores as eager"
-               test_draft_compiled;
-             test "a packed lane masks within each sequence" test_packed_mask;
-             test_packed_alone;
-             test "a compiled packing equals eager" test_packed_compiled;
-           ];
-         group "dropout of the weights"
-           [
-             test "each case of a row's keys occurs" test_dropout_cases;
-             cases "the weights are dropped by the mask of their shape"
-               ~id:drop_case_id drop_cases test_dropout_weights;
-             test "compiled dropout is eager dropout" test_dropout_compiled;
+             test "lengths bound the keys" test_attend_lengths;
              test "a float32 bias keeps its bits under bfloat16 queries"
                test_bias_keeps_its_bits;
-             test "a rate of 0 is attention" test_dropout_zero;
+             cases "dropout drops the weights by the mask of their shape"
+               ~id:drop_case_id drop_cases test_dropout_values;
+             cases "dropout's gradients are those of the dropped weights"
+               ~id:drop_case_id drop_cases test_dropout_gradients;
+             test "compiled dropout is eager dropout" test_dropout_compiled;
+             cases "a rate of 0 is attention"
+               ~id:(fun s ->
+                 if s then "rows shared by lanes" else "a row per lane")
+               [ false; true ] test_dropout_zero;
              test "paged keys drop as dense ones" test_dropout_paged;
-             test "dropout's arguments are checked" test_dropout_refusals;
+             test "dropout rounds to q's dtype twice" test_dropout_rounds_twice;
+             test "is differentiable through grouped heads and sinks"
+               test_attend_gradients;
+             cases
+               "raises on a float8 or float4 q, a misshapen q, kv, sinks, \
+                lengths, mask, bias or keys, rows that do not divide batch, a \
+                dropout outside [0, 1), or shared rows told apart"
+               ~id:refusal_id attend_refusals test_refusal;
            ];
-         group "paged reads"
+         group "merge"
            [
-             test "pages names the slots a lane may read" test_index_pages;
-             prop ~count:200 "extend reads the pool through pages"
-               (Gen.with_pp pp_paged paged_gen)
-               law_pages;
-             prop ~count:100
-               "no output reads a slot pages does not name, eager or compiled"
-               (Gen.with_pp pp_paged paged_gen)
-               law_paged_reads;
-             prop ~count:100
-               "extend under mask attends as cached through pages"
-               (Gen.with_pp pp_paged paged_gen)
-               law_paths_agree;
-             prop ~count:100 "a resolved index is the index, eager and compiled"
-               (Gen.with_pp pp_paged paged_gen)
-               law_resolved;
-             test "a layer computes none of a resolved index's addressing"
-               test_resolved_launches;
-             test "every kind of index resolves, and what is made from it"
-               test_resolved_kinds;
-             test "a hole a token may see is no key"
-               test_cached_hole_is_hidden;
-             test "a draft token that stores nothing is seen by no token"
-               test_draft_storing_nothing;
+             test "projects the heads, concatenated, through l"
+               test_merge_projects;
+             cases "undoes split"
+               ~id:(Printf.sprintf "head_dim %d")
+               [ 1; 2; 4 ] test_merge_undoes_split;
+             cases
+               "raises on a y not of four axes or heads * d other than the \
+                input width"
+               ~id:refusal_id merge_refusals test_refusal;
+           ];
+         group "scaled_dot_product_attention"
+           [
+             prop ~count:200 ~examples:core_examples
+               "is within nx.mli's bound of the definition, as attend is"
+               (Gen.with_pp pp_case case_gen)
+               law_core;
+             cases "is softmax (q kᵀ / sqrt d) v" ~id:fst analytic
+               test_core_analytic;
+             test "batch axes broadcast" test_core_batch_broadcast;
+             test "a hidden key's weight is exactly 0" test_core_hidden_weight;
+             cases "a row that sees no key has zero gradients" ~id:sinked_id
+               [ false; true ] test_core_hidden_gradients;
+             cases "is differentiable" ~id:fst core_grads test_core_gradients;
+             cases "0-d lengths bound every row, eagerly and compiled"
+               ~id:(fun l -> "batch axes " ^ shape_id l)
+               [ [||]; [| 2 |] ] test_core_lengths_0d;
+             test
+               "lengths of the batch axes but the last bound their rows, \
+                eagerly and compiled"
+               test_core_lengths;
+             test "sinks broadcast to the scores without their last axis"
+               test_sinks_per_row;
+             test "compiled with sinks is eager" test_sinks_compiled;
+             cases
+               "raises on a float8 or float4 q, fewer than 2 axes, unpaired \
+                shapes, d = 0 without scale, or misshapen sinks, lengths or \
+                mask"
+               ~id:refusal_id core_refusals test_refusal;
+           ];
+         group "walk"
+           [
+             cases "visits q, k, v then out by Linear.walk" ~id:bias_id
+               [ true; false ] test_walk;
+             cases "Nx.Ptree.cast converts every leaf" ~id:cast_id
+               [
+                 Cast ("float16", Nx.float16);
+                 Cast ("bfloat16", Nx.bfloat16);
+                 Cast ("float64", Nx.float64);
+               ]
+               test_cast;
            ];
        ])
