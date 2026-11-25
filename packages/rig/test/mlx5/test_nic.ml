@@ -53,16 +53,9 @@ let pair nic =
   let cq, a, _ = pairs ~access:Remote nic in
   (cq, a)
 
-(* The next completion of [cq], within [s] seconds. *)
-let completion ?(s = 5.) cq =
-  let deadline = Unix.gettimeofday () +. s in
-  let rec go () =
-    match M.Cq.poll cq with
-    | Some c -> c
-    | None when Unix.gettimeofday () < deadline -> go ()
-    | None -> failf "no completion within %g s" s
-  in
-  go ()
+(* The next completion of [cq]. *)
+let rec completion cq =
+  match M.Cq.poll cq with Some c -> c | None -> completion cq
 
 let completions cq n = List.init n (fun _ -> completion cq)
 
@@ -364,7 +357,7 @@ let sends =
             { op = Send { src = M.Region.local s 0 64 }; signal = true };
           M.Qp.ring a;
           (* Retries end after 7 timeouts of 1.07 s on InfiniBand. *)
-          let c = completion ~s:15. cq in
+          let c = completion cq in
           equal int ~msg:"the sender's" (M.Qp.number a) c.qp;
           equal (option ring_t) ~msg:"the send failed" (Some Send)
             (Option.map fst (failure c.status));
@@ -674,6 +667,11 @@ let interrupted =
         List.length
           (List.filter (function M.Completion c -> c == cq | _ -> false) got)
       in
+      (* The events once one comes. Each wait returns to OCaml, where the test's
+         timeout can end it. *)
+      let rec arrived () =
+        match M.wait nic ~ms:200 with [] -> arrived () | got -> got
+      in
       let rec walk n =
         M.Cq.arm cq;
         M.Qp.post qp
@@ -686,11 +684,9 @@ let interrupted =
         M.Qp.ring qp;
         equal status Done (completion cq).status;
         let got = ref [] in
-        let reached =
-          Rig_support.interrupted n (fun () -> got := M.wait nic ~ms:5000)
-        in
+        let reached = Rig_support.interrupted n (fun () -> got := arrived ()) in
         let first = events !got in
-        let got = if first > 0 then first else events (M.wait nic ~ms:5000) in
+        let got = if first > 0 then first else events (arrived ()) in
         equal ~msg:(Printf.sprintf "events, from allocation %d" n) int 1 got;
         if reached then walk (n + 1)
       in

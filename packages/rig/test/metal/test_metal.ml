@@ -398,20 +398,24 @@ let bumps_counted fills =
   done;
   List.iter (Rig_metal.free t.g) [ out; args ]
 
-(* Waits until [f ()] holds, for at most 10 s of the host's monotonic clock,
-   then fails with [what ()]. *)
+(* Waits until [f ()] holds. A wait that the test's timeout ends prints the
+   state the test waited on then, as [what ()] describes it. *)
 let await what f =
-  let t0 = Rig.Profile.now () in
-  while not (f ()) do
-    if Rig.Profile.now () - t0 > 10_000_000_000 then
-      failf "%s after 10 s" (what ());
-    Domain.cpu_relax ()
-  done
+  match
+    while not (f ()) do
+      Domain.cpu_relax ()
+    done
+  with
+  | () -> ()
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      prerr_endline (what ());
+      Printexc.raise_with_backtrace e bt
 
 (* Waits for [d]'s word to show [v]. *)
 let await_word d v =
   await
-    (fun () -> strf "the word shows %d, not %d," (Rig.signaled d) v)
+    (fun () -> strf "the word shows %d, not %d" (Rig.signaled d) v)
     (fun () -> Rig.signaled d >= v)
 
 (* Metal hands a command buffer to its completion handler before the word moves
@@ -454,7 +458,7 @@ let failing_fill () =
    flight gives its own back as that work ends. *)
 let await_runs n =
   await
-    (fun () -> strf "%d run states live, not %d," (Rig_metal.runs ()) n)
+    (fun () -> strf "%d run states live, not %d" (Rig_metal.runs ()) n)
     (fun () -> Rig_metal.runs () = n)
 
 (* A failed fill drops its command buffer uncommitted, which Metal frees:
@@ -544,7 +548,7 @@ let uncommitted n =
 
 (* The device commits its work on its own: after [n] submissions of one dispatch
    each and nothing more, no wait and no commit through rig, the word reaches
-   the last value within 10 s. *)
+   the last value. *)
 let progress n =
   let t = dev () in
   let out = alloc t 256 and args = alloc t args_bytes in

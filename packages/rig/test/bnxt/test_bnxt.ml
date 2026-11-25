@@ -44,12 +44,12 @@ let pair nic =
   ok "connecting" (B.Qp.connect b (B.Qp.endpoint a));
   (a, b)
 
-let bound = 5_000_000
-
-let completion qp side =
-  match B.Qp.wait qp side ~us:bound with
+(* The completion of [side]'s oldest due entry, waited for in slices of 5 s,
+   each of which returns to OCaml. *)
+let rec completion qp side =
+  match B.Qp.wait qp side ~us:5_000_000 with
   | Some r -> r
-  | None -> fail "no completion within 5 s"
+  | None -> completion qp side
 
 let wait qp side = ok "the completion" (completion qp side)
 let region nic n = ok "a region" (B.Region.host nic n)

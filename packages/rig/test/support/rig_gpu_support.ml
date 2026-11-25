@@ -595,12 +595,9 @@ module Edge (D : Rig_edge.Driver) = struct
     | Region r -> (D.locate r.r).handle
     | Host at -> Nativeint.of_int at
 
-  (* Waits for the word to reach [v], at most 10 s. *)
+  (* Waits for the word to reach [v]. *)
   let wait t v =
-    let t0 = Rig.Profile.now () in
     while signaled t < v do
-      if Rig.Profile.now () - t0 > 10_000_000_000 then
-        failf "value %d within 10 s" v;
       D.sleep t.g ~seen:(signaled t) ~still_ms:100
     done
 

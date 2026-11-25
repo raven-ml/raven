@@ -376,9 +376,8 @@ module Edge (D : Rig_edge.Driver) : sig
   val run : t -> part -> unit
   (** [run t p] hands [p] to the device's copy engine as the next value, its
       [copy.device_memory] set where both sides are [Device] memory and its
-      [copy.local] where a side is [Host], and waits until the word shows
-      that value. It fails the test if the device never runs [p] or fails
-      it, or the value is not reached within 10 s. *)
+      [copy.local] where a side is [Host], and waits until the word shows that
+      value. It fails the test if the device never runs [p] or fails it. *)
 
   val read : t -> region -> at:int -> int -> string
   (** [read t r ~at n] is the [n] bytes of [r] from [at], copied by a part
