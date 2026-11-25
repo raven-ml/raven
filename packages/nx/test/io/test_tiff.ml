@@ -3,13 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* TIFF. Files built here byte by byte from TIFF 6.0, BigTIFF and Adobe's
-   notes load as the raster they encode, for every value of a tag nx.io
-   reads, packed samples of every width among them; every other value is
-   refused, naming its tag; a raster saved loads as itself, bit for bit,
-   with its tags; files GDAL wrote load as the arrays it was given, and a
-   tile of a Sentinel-2 file as GDAL decodes it; a file cut short or
-   corrupted raises [Failure] naming it, and never anything else. *)
+(* TIFF. Files built here byte by byte from TIFF 6.0, BigTIFF and Adobe's notes
+   load as the raster they encode, for every value of a tag nx.io reads, packed
+   samples of every width among them; every other value is refused, naming its
+   tag; a raster saved loads as itself, bit for bit, with its tags; files GDAL
+   wrote load as the arrays it was given, and a tile of a Sentinel-2 file as
+   GDAL decodes it; a file cut short or corrupted raises [Failure] naming it,
+   and never anything else. *)
 
 open Windtrap
 open Io_support
@@ -17,8 +17,8 @@ module T = Nx_io.Tiff
 
 (* Byte order *)
 
-(* A file's form: its byte order, MM (big-endian) or II, and BigTIFF's
-   8-byte offsets or classic TIFF's 4. *)
+(* A file's form: its byte order, MM (big-endian) or II, and BigTIFF's 8-byte
+   offsets or classic TIFF's 4. *)
 type form = { mm : bool; bigtiff : bool }
 
 let pp_form ppf f =
@@ -53,18 +53,18 @@ let long8 f tag vs =
 (* Offsets and counts: LONG in classic TIFF, LONG8 in BigTIFF. *)
 let offsets f tag vs = if f.bigtiff then long8 f tag vs else long f tag vs
 
-(* [replace fd fs] is [fs] with its field of [fd]'s tag replaced by [fd],
-   [drop tag fs] without it. *)
+(* [replace fd fs] is [fs] with its field of [fd]'s tag replaced by [fd], [drop
+   tag fs] without it. *)
 let replace fd fs = fd :: List.filter (fun x -> x.tag <> fd.tag) fs
 let drop tag fs = List.filter (fun x -> x.tag <> tag) fs
 let by_tag fs = List.sort (fun a b -> Int.compare a.tag b.tag) fs
 
 (* Files *)
 
-(* The file of [f] whose IFDs each hold [blobs], written first after the
-   header, and [fields at], given each blob's offset. The IFDs follow the
-   data they describe, which TIFF 6.0 allows ("an Image File Directory may
-   follow the image data it describes"), each with its values after it. *)
+(* The file of [f] whose IFDs each hold [blobs], written first after the header,
+   and [fields at], given each blob's offset. The IFDs follow the data they
+   describe, which TIFF 6.0 allows ("an Image File Directory may follow the
+   image data it describes"), each with its values after it. *)
 let build f ifds =
   let b = Buffer.create 1024 in
   let wide = if f.bigtiff then 8 else 4 in
@@ -120,8 +120,8 @@ let build f ifds =
 
 (* Rasters *)
 
-(* A raster's samples as their bits, row-major: [h] rows of [w] pixels of
-   [c] samples of [bits] bits each, of SampleFormat [format]. *)
+(* A raster's samples as their bits, row-major: [h] rows of [w] pixels of [c]
+   samples of [bits] bits each, of SampleFormat [format]. *)
 type raster = {
   h : int;
   w : int;
@@ -150,9 +150,9 @@ let raster (Nx.P x) =
   let format = match D.kind dt with D.Float -> 3 | D.Signed -> 2 | _ -> 1 in
   { h; w; c; bits = 8 * k; format; samples = Array.init (h * w * c) sample }
 
-(* How a built file cuts and stores its raster: strips of rows or tiles of
-   rows by columns, Compression 1, 5 or 8, Predictor 1, 2 or 3, and
-   whether a last strip holds rows past the raster's. *)
+(* How a built file cuts and stores its raster: strips of rows or tiles of rows
+   by columns, Compression 1, 5 or 8, Predictor 1, 2 or 3, and whether a last
+   strip holds rows past the raster's. *)
 type chunks = Strips of int | Tiles of int * int
 
 type layout = {
@@ -163,9 +163,9 @@ type layout = {
   padded : bool;
 }
 
-(* LZW codes of single bytes (TIFF 6.0, section 13), most significant bit
-   first: ClearCode, each byte, with a ClearCode every 250 codes so that
-   the table never holds string 510 and every code is 9 bits wide, then
+(* LZW codes of single bytes (TIFF 6.0, section 13), most significant bit first:
+   ClearCode, each byte, with a ClearCode every 250 codes so that the table
+   never holds string 510 and every code is 9 bits wide, then
    EndOfInformation. *)
 let lzw_literals s =
   let b = Buffer.create (String.length s * 2) in
@@ -197,12 +197,12 @@ let mask bits v =
 let byte_of v k =
   Int64.to_int (Int64.logand (Int64.shift_right_logical v (8 * k)) 0xffL)
 
-(* Whether samples of [bits] bits are packed, as TIFF 6.0 stores any width
-   but 8, 16, 32 and 64 bits: "Otherwise BYTE". *)
+(* Whether samples of [bits] bits are packed, as TIFF 6.0 stores any width but
+   8, 16, 32 and 64 bits: "Otherwise BYTE". *)
 let is_packed bits = not (List.mem bits [ 8; 16; 32; 64 ])
 
-(* A row of samples of [bits] bits, packed most significant bit first and
-   padded to a byte (TIFF 6.0, section 8, Compression and FillOrder). *)
+(* A row of samples of [bits] bits, packed most significant bit first and padded
+   to a byte (TIFF 6.0, section 8, Compression and FillOrder). *)
 let pack bits row =
   let b = Bytes.make (((Array.length row * bits) + 7) / 8) '\000' in
   Array.iteri
@@ -218,8 +218,8 @@ let pack bits row =
     row;
   Bytes.to_string b
 
-(* One chunk's rows of samples, [n] to a row, as [l] stores them: after
-   its predictor, in its byte order, compressed. *)
+(* One chunk's rows of samples, [n] to a row, as [l] stores them: after its
+   predictor, in its byte order, compressed. *)
 let encode l r rows n =
   let bytes = r.bits / 8 in
   let rows = Array.map Array.copy rows in
@@ -230,8 +230,8 @@ let encode l r rows n =
           row.(i) <- mask r.bits (Int64.sub row.(i) row.(i - r.c))
         done)
       rows;
-  (* Technical Note 3: byte [k] of every sample, the most significant
-     first, then each byte less the byte a pixel before. *)
+  (* Technical Note 3: byte [k] of every sample, the most significant first,
+     then each byte less the byte a pixel before. *)
   let planes row =
     let p =
       Bytes.init (n * bytes) (fun i ->
@@ -257,8 +257,8 @@ let encode l r rows n =
 let sides l r =
   match l.chunks with Strips k -> (Int.min k r.h, r.w) | Tiles (a, b) -> (a, b)
 
-(* The chunks of [r] as [l] cuts them, each its rows of samples, zero past
-   the raster's edges. *)
+(* The chunks of [r] as [l] cuts them, each its rows of samples, zero past the
+   raster's edges. *)
 let cut l r =
   let rows, cols = sides l r in
   let across = (r.w + cols - 1) / cols and down = (r.h + rows - 1) / rows in
@@ -278,8 +278,8 @@ let cut l r =
   in
   List.init (across * down) chunk
 
-(* The tags that state [r] cut by [l], given its chunks' offsets [at] and
-   byte counts. *)
+(* The tags that state [r] cut by [l], given its chunks' offsets [at] and byte
+   counts. *)
 let fields l r ~at ~counts =
   let f = l.form in
   let per_sample v = List.init r.c (fun _ -> v) in
@@ -289,14 +289,21 @@ let fields l r ~at ~counts =
     | Strips k -> [ offsets f 273 at; long f 278 [ k ]; offsets f 279 counts ]
     | Tiles _ ->
         [
-          long f 322 [ cols ]; long f 323 [ rows ]; offsets f 324 at;
+          long f 322 [ cols ];
+          long f 323 [ rows ];
+          offsets f 324 at;
           offsets f 325 counts;
         ]
   in
   [
-    long f 256 [ r.w ]; long f 257 [ r.h ]; short f 258 (per_sample r.bits);
-    short f 259 [ l.codec ]; short f 262 [ 1 ]; short f 277 [ r.c ];
-    short f 284 [ 1 ]; short f 317 [ l.predictor ];
+    long f 256 [ r.w ];
+    long f 257 [ r.h ];
+    short f 258 (per_sample r.bits);
+    short f 259 [ l.codec ];
+    short f 262 [ 1 ];
+    short f 277 [ r.c ];
+    short f 284 [ 1 ];
+    short f 317 [ l.predictor ];
     short f 339 (per_sample r.format);
   ]
   @ chunks
@@ -348,12 +355,16 @@ let value =
 let tiff_dtypes =
   D.
     [
-      Any Uint8; Any Uint16; Any Int16; Any Uint32; Any Int32; Any Float32;
+      Any Uint8;
+      Any Uint16;
+      Any Int16;
+      Any Uint32;
+      Any Int32;
+      Any Float32;
       Any Float64;
     ]
 
-(* A raster of [h] rows and [w] columns of [c] samples of [dt], any
-   values. *)
+(* A raster of [h] rows and [w] columns of [c] samples of [dt], any values. *)
 let drawn_raster (D.Any dt) h w c =
   let open Gen in
   let+ vs = array ~size:(constant (h * w * c)) (element dt) in
@@ -394,8 +405,8 @@ let pp_layout ppf l =
     (if l.padded then ", last strip padded" else "")
 
 (* A float raster of 2 rows or more in several strips, the last padded,
-   compressed with the floating point predictor, cases [layouts] draws one
-   time in 15, 12 and 6. *)
+   compressed with the floating point predictor, cases [layouts] draws one time
+   in 15, 12 and 6. *)
 let float_strips =
   let open Gen in
   let* dt = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ] in
@@ -422,9 +433,23 @@ let built =
           (1, float_strips);
         ])
 
+(* A float64 raster under LZW and horizontal differencing, which [built] draws
+   one time in about 50. *)
+let float64_differenced =
+  ( Nx.P
+      (Nx.init Nx.float64 [| 3; 4; 2 |] (fun i ->
+           Float.of_int ((i.(0) * 7) - (i.(1) * 3) + i.(2)) /. 8.)),
+    {
+      form = { mm = true; bigtiff = false };
+      chunks = Strips 2;
+      codec = 5;
+      predictor = 2;
+      padded = false;
+    } )
+
 let reading =
   prop "a file built from the specifications loads as the raster it encodes"
-    built (fun (x, l) ->
+    ~examples:[ float64_differenced ] built (fun (x, l) ->
       let r = raster x in
       let tiled, edge, strips =
         match l.chunks with
@@ -441,6 +466,8 @@ let reading =
       cover "Deflate" (l.codec = 8);
       cover "Deflate's obsolete code" (l.codec = 32946);
       cover "horizontal differencing" (l.predictor = 2);
+      cover "horizontal differencing of 64-bit samples"
+        (l.predictor = 2 && r.bits = 64);
       cover "the floating point predictor" (l.predictor = 3);
       cover "several samples a pixel" (r.c > 1);
       equal packed x (load_one (file (tiff l r))))
@@ -469,9 +496,7 @@ let packed_files =
   let top = Int64.pred (Int64.shift_left 1L bits) in
   let sample =
     frequency
-      [
-        (1, constant 0L); (1, constant top); (4, map (Int64.logand top) int64);
-      ]
+      [ (1, constant 0L); (1, constant top); (4, map (Int64.logand top) int64) ]
   in
   let* samples = array ~size:(constant (h * w * c)) sample in
   let* mm = bool in
@@ -484,8 +509,11 @@ let packed_files =
   let l = { form = { mm; bigtiff }; chunks; codec; predictor = 1; padded } in
   ({ h; w; c; bits; format = 1; samples }, l)
 
+(* Each of [widths] is drawn with p = 1/8 a case: at 250 cases a run misses one
+   with (7/8)^250 = 3.4e-15. *)
 let packs =
-  prop "packed samples of 1 to 32 bits but 24 load as the values they pack"
+  prop ~count:250
+    "packed samples of 1 to 32 bits but 24 load as the values they pack"
     (Gen.with_pp
        (fun ppf (r, l) ->
          Format.fprintf ppf "%d by %d by %d of %d bits, %a" r.h r.w r.c r.bits
@@ -504,8 +532,8 @@ let packs =
       cover "Deflate" (l.codec = 8);
       equal packed (unsigned r) (load_one (file (tiff l r))))
 
-(* A small raster, classic little-endian strips of it, and its file with a
-   field edit. *)
+(* A small raster, classic little-endian strips of it, and its file with a field
+   edit. *)
 let small =
   Nx.P
     (Nx.init Nx.uint16 [| 4; 5; 3 |] (fun i ->
@@ -519,57 +547,91 @@ let plain =
 let edited ?(l = plain) ?(x = small) edit = file (tiff ~edit l (raster x))
 let grey = Nx.P (Nx.init Nx.uint8 [| 3; 2; 1 |] (fun i -> i.(0) + i.(1)))
 
-let variants =
-  group "values TIFF 6.0 lets a file state"
-    [
-      cases "an unsigned integer field of BYTE, SHORT or LONG" ~id:Fun.id
-        [ "BYTE"; "SHORT"; "LONG" ]
-        (fun ty ->
-          let width =
-            match ty with
-            | "BYTE" -> field 256 1 1 "\005"
-            | "SHORT" -> short f 256 [ 5 ]
-            | _ -> long f 256 [ 5 ]
-          in
-          equal packed small (load_one (edited (replace width))));
-      test "one BitsPerSample and SampleFormat for every sample" (fun () ->
-          let one fs =
-            replace (short f 258 [ 16 ]) (replace (short f 339 [ 1 ]) fs)
-          in
-          equal packed small (load_one (edited one)));
-      test "no RowsPerStrip, one strip of the whole raster" (fun () ->
-          let l = { plain with chunks = Strips 4 } in
-          equal packed small (load_one (edited ~l (drop 278))));
-      test "no SampleFormat, Predictor, PlanarConfiguration or \
-            SamplesPerPixel, at their defaults" (fun () ->
-          let none fs = drop 339 (drop 317 (drop 284 (drop 277 fs))) in
-          equal packed grey (load_one (edited ~x:grey none)));
-      test "PlanarConfiguration 2 with one sample a pixel" (fun () ->
-          let planar = replace (short f 284 [ 2 ]) in
-          equal packed grey (load_one (edited ~x:grey planar)));
-      test "an IFD before its data, and a chain of two" (fun () ->
-          (* A save writes its IFD first; [build] after the data. *)
-          let a = saved ".tif" (fun p (Nx.P x) -> Nx_io.save_tiff p x) small in
-          equal packed small (load_one a);
-          let r = raster small in
-          let blobs = List.map (fun x -> encode plain r x 15) (cut plain r) in
-          let path = file (build f [ ifd plain r blobs; ifd plain r blobs ]) in
-          equal (list packed) [ small; small ]
-            (List.map T.samples (Nx_io.load_tiff path)));
-      test "fields of types TIFF does not define are left out" (fun () ->
-          let odd fs =
-            field 330 13 1 (u32 f 8) :: field 40000 99 2 "ab" :: fs
-          in
-          let tags = tags_of (edited odd) in
-          equal (list int) []
-            (List.filter (fun t -> t = 330 || t = 40000) (List.map fst tags)));
-      test "an ASCII field without its NUL keeps its bytes" (fun () ->
-          let ascii fs = field 305 2 3 "abc" :: field 306 2 4 "abc\000" :: fs in
-          let tags = tags_of (edited ascii) in
-          equal (list (option value))
-            [ Some (T.Ascii "abc"); Some (T.Ascii "abc") ]
-            (List.map (fun t -> List.assoc_opt t tags) [ 305; 306 ]));
-    ]
+(* A raster of 1-bit samples, BitsPerSample's default. *)
+let one_bit =
+  {
+    h = 2;
+    w = 3;
+    c = 1;
+    bits = 1;
+    format = 1;
+    samples = Array.map Int64.of_int [| 1; 0; 1; 0; 0; 1 |];
+  }
+
+let tag_values =
+  [
+    test "a field of a type TIFF does not define is left out" (fun () ->
+        let odd fs = field 330 13 1 (u32 f 8) :: field 40000 99 2 "ab" :: fs in
+        let tags = tags_of (edited odd) in
+        equal (list int) []
+          (List.filter (fun t -> t = 330 || t = 40000) (List.map fst tags)));
+    cases "an ASCII field loads without its last NUL" ~id:fst
+      [
+        ("ending in its NUL", ("abc\000", "abc"));
+        ("ending in none", ("abc", "abc"));
+        ("of several strings", ("ab\000cd\000", "ab\000cd"));
+      ]
+      (fun (_, (bytes, expected)) ->
+        let ascii fs = field 305 2 (String.length bytes) bytes :: fs in
+        equal (option value) (Some (T.Ascii expected))
+          (List.assoc_opt 305 (tags_of (edited ascii))));
+    test "tags are in the file's order" (fun () ->
+        (* TIFF 6.0 section 2 sorts an IFD's entries by tag; this one runs
+           backwards. *)
+        let r = raster small in
+        let blobs = List.map (fun x -> encode plain r x 15) (cut plain r) in
+        let backwards at =
+          List.rev
+            (by_tag (fields plain r ~at ~counts:(List.map String.length blobs)))
+        in
+        let path = file (build f [ (blobs, backwards) ]) in
+        let numbers = List.map fst (tags_of path) in
+        equal (list int)
+          (List.sort (fun a b -> Int.compare b a) numbers)
+          numbers);
+  ]
+
+let read_values =
+  [
+    cases "an unsigned integer tag may be BYTE, SHORT, LONG or LONG8" ~id:Fun.id
+      [ "BYTE"; "SHORT"; "LONG"; "LONG8" ] (fun ty ->
+        let big = { f with bigtiff = true } in
+        let l = if ty = "LONG8" then { plain with form = big } else plain in
+        let width =
+          match ty with
+          | "BYTE" -> field 256 1 1 "\005"
+          | "SHORT" -> short f 256 [ 5 ]
+          | "LONG" -> long f 256 [ 5 ]
+          | _ -> long8 big 256 [ 5 ]
+        in
+        equal packed small (load_one (edited ~l (replace width))));
+    test "one BitsPerSample and SampleFormat stand for every sample" (fun () ->
+        let one fs =
+          replace (short f 258 [ 16 ]) (replace (short f 339 [ 1 ]) fs)
+        in
+        equal packed small (load_one (edited one)));
+    cases "a missing tag takes TIFF 6.0's default"
+      ~id:(fun (name, _, _, _) -> name)
+      [
+        ("BitsPerSample (258), 1", 258, one_bit, Strips 2);
+        ("Compression (259), 1", 259, raster small, Strips 2);
+        ("Photometric (262), none", 262, raster small, Strips 2);
+        ("SamplesPerPixel (277), 1", 277, raster grey, Strips 2);
+        ("RowsPerStrip (278), the whole raster", 278, raster small, Strips 4);
+        ("PlanarConfiguration (284), 1", 284, raster small, Strips 2);
+        ("Predictor (317), 1", 317, raster small, Strips 2);
+        ("SampleFormat (339), 1", 339, raster small, Strips 2);
+      ]
+      (fun (_, tag, r, chunks) ->
+        let l = { plain with chunks } in
+        equal packed (unsigned r) (load_one (file (tiff ~edit:(drop tag) l r))));
+    test "PlanarConfiguration 2 with one sample a pixel" (fun () ->
+        let planar = replace (short f 284 [ 2 ]) in
+        equal packed grey (load_one (edited ~x:grey planar)));
+    test "Orientation is data: the first row is the file's first" (fun () ->
+        equal packed small
+          (load_one (edited (fun fs -> short f 274 [ 3 ] :: fs))));
+  ]
 
 (* Refusals *)
 
@@ -580,250 +642,260 @@ let refused ?l ?x ~naming edit =
 (* A file of [small]'s strips laid out by [l], whose blobs are [blobs]. *)
 let with_blobs l blobs = file (build f [ ifd l (raster small) blobs ])
 
+(* The values Tiff.samples refuses, each naming its tag. *)
 let refusals =
-  group "values nx.io does not read, refused naming their tag"
-    [
-      cases "Compression" ~id:string_of_int [ 2; 7; 32773; 50000 ]
-        (fun v ->
-          refused
-            ~naming:(Printf.sprintf "Compression (259) %d" v)
-            (replace (short f 259 [ v ])));
-      cases "Predictor" ~id:(fun (name, _, _) -> name)
-        [
-          ("4 with Deflate", { plain with codec = 8 }, 4);
-          ("2 with Compression 1", plain, 2);
-          ("3 on integers with Deflate", { plain with codec = 8 }, 3);
-          ("3 on integers with LZW", { plain with codec = 5 }, 3);
-        ]
-        (fun (_, l, v) ->
-          refused ~l
-            ~naming:(Printf.sprintf "Predictor (317) %d" v)
-            (replace (short f 317 [ v ])));
-      cases "Predictor 2 on packed samples" ~id:string_of_int [ 1; 12; 15 ]
-        (fun bits ->
-          let l = { plain with codec = 8 } in
-          refused ~l
-            ~naming:
-              (Printf.sprintf "Predictor (317) 2: on samples of %d bits" bits)
-            (fun fs ->
-              replace (short f 317 [ 2 ])
-                (replace (short f 258 [ bits; bits; bits ]) fs)));
-      cases "24-bit unsigned samples, in either byte order"
-        ~id:(Format.asprintf "%a" pp_form)
-        [ f; { f with mm = true } ]
-        (fun form ->
-          let l = { plain with form } in
-          refused ~l ~naming:"BitsPerSample (258) 24: unsigned"
-            (replace (short form 258 [ 24; 24; 24 ])));
-      cases "BitsPerSample and SampleFormat"
-        ~id:(fun (b, s) -> Printf.sprintf "%d bits, SampleFormat %d" b s)
-        [ (0, 1); (33, 1); (64, 1); (8, 2); (64, 2); (16, 3); (16, 4) ]
-        (fun (bits, format) ->
-          let naming =
-            if format = 4 then "SampleFormat (339) 4"
-            else Printf.sprintf "BitsPerSample (258) %d" bits
-          in
-          refused ~naming (fun fs ->
-              replace (short f 258 [ bits ])
-                (replace (short f 339 [ format ]) fs)));
-      test "BitsPerSample that differs between samples" (fun () ->
-          refused ~naming:"BitsPerSample (258) differs"
-            (replace (short f 258 [ 16; 16; 8 ])));
-      test "PlanarConfiguration 2 with three samples a pixel" (fun () ->
-          refused ~naming:"PlanarConfiguration (284) 2"
-            (replace (short f 284 [ 2 ])));
-      test "FillOrder 2" (fun () ->
-          refused ~naming:"FillOrder (266) 2" (fun fs ->
-              short f 266 [ 2 ] :: fs));
-      test "Photometric 6 (YCbCr)" (fun () ->
-          refused ~naming:"Photometric (262) 6" (replace (short f 262 [ 6 ])));
-      test "ImageWidth of type ASCII" (fun () ->
-          refused ~naming:"ImageWidth (256) of type ASCII"
-            (replace (field 256 2 2 "5\000")));
-      test "ImageWidth 0" (fun () ->
-          refused ~naming:"ImageWidth (256) 0" (replace (long f 256 [ 0 ])));
-      test "no ImageLength" (fun () ->
-          refused ~naming:"ImageLength (257) is missing" (drop 257));
-      test "strips and tiles both" (fun () ->
-          refused ~naming:"both StripOffsets (273) and TileOffsets (324)"
-            (fun fs -> long f 324 [ 8 ] :: fs));
-      test "neither strips nor tiles" (fun () ->
-          refused ~naming:"neither StripOffsets (273) nor TileOffsets (324)"
-            (drop 273));
-      test "no StripByteCounts" (fun () ->
-          refused ~naming:"StripByteCounts (279) is missing" (drop 279));
-      test "an offset too few for the strips" (fun () ->
-          refused ~naming:"StripOffsets (273) holds 1 offsets for 2 chunks"
-            (replace (long f 273 [ 8 ])));
-      test "a tile of no byte, as GDAL's sparse files leave it" (fun () ->
-          let l = { plain with chunks = Tiles (16, 16) } in
-          refused ~l ~naming:"TileByteCounts (325): tile 0 has no byte"
-            (replace (long f 325 [ 0 ])));
-      test "a strip past the file's end" (fun () ->
-          refused ~naming:"strip 1 at byte"
-            (replace (long f 279 [ 60; 1000 ])));
-      test "an uncompressed strip shorter than its rows" (fun () ->
-          refused ~naming:"StripByteCounts (279): strip 0 holds 59 bytes"
-            (replace (long f 279 [ 59; 60 ])));
-      cases "strips that share bytes past the file's length" ~id:fst
-        [
-          (* 40 one-row strips of 500 bytes, all one row's. *)
-          ("uncompressed", (1, String.make 500 'a', 500));
-          (* 64 one-row strips of 1024 bytes, all one zlib stream's. *)
-          ("Deflate", (8, Lz.Zlib.encode_string (String.make 1024 'a'), 1024));
-        ]
-        (fun (_, (codec, blob, w)) ->
-          let h = if codec = 1 then 40 else 64 in
-          let x = Nx.P (Nx.zeros Nx.uint8 [| h; w; 1 |]) in
-          let l = { plain with chunks = Strips 1; codec } in
-          let at = List.init h (fun _ -> 8) in
-          let counts = List.init h (fun _ -> String.length blob) in
-          let fields _ = by_tag (fields l (raster x) ~at ~counts) in
-          let path = file (build f [ ([ blob ], fields) ]) in
-          fails ~path
-            ~naming:"StripByteCounts (279): the strips take more than"
-            (fun () -> load_one path));
-      test "an LZW strip with a code past the table" (fun () ->
-          let l = { plain with codec = 5 } in
-          let r = raster small in
-          let blobs = List.map (fun rows -> encode l r rows 15) (cut l r) in
-          (* The strip's second code, its bits 9 to 17, set to 300 where
-             the table holds no entry. *)
-          let s = Bytes.of_string (List.hd blobs) in
-          let set i v = Bytes.set s i (Char.chr v) in
-          set 1 ((Char.code (Bytes.get s 1) land 0x80) lor (300 lsr 2));
-          set 2
-            ((Char.code (Bytes.get s 2) land 0x3f) lor ((300 land 3) lsl 6));
-          let path = with_blobs l (Bytes.to_string s :: List.tl blobs) in
-          fails ~path
-            ~naming:
-              "Compression (259) 5: strip 0 at byte 8: malformed at byte 1: \
-               invalid code"
-            (fun () -> load_one path));
-      cases
-        "a compressed strip is refused by its count past its codec's ratio, \
-         and decoded at it"
-        ~id:(fun (codec, ratio, over) ->
-          Printf.sprintf "Compression %d, %s %d times its bytes" codec
-            (if over then "past" else "at")
-            ratio)
-        [ (5, 2560, true); (5, 2560, false); (8, 1032, true); (8, 1032, false) ]
-        (fun (codec, ratio, over) ->
-          (* One strip of 4 bytes, one row of [ratio * 4] samples, or one more:
-             the most its stream could decode to, or a byte past. *)
-          let count = 4 in
-          let w = (ratio * count) + if over then 1 else 0 in
-          let x = Nx.P (Nx.zeros Nx.uint8 [| 1; w; 1 |]) in
-          let l = { plain with chunks = Strips 1; codec } in
-          let fields at = by_tag (fields l (raster x) ~at ~counts:[ count ]) in
-          let path =
-            file (build f [ ([ String.make count '\000' ], fields) ])
-          in
-          let naming =
-            if over then "StripByteCounts (279)"
-            else Printf.sprintf "Compression (259) %d" codec
-          in
-          fails ~path ~naming (fun () -> load_one path));
-      test
-        "strips whose counts sum past the largest integer take more bytes than \
-         a partial file of any length" (fun () ->
-          (* Two strips of 2^61 bytes in a partial file of [max_int] bytes:
-             their sum wraps past [max_int]. *)
-          let x = Nx.P (Nx.zeros Nx.uint8 [| 2; 1; 1 |]) in
-          let l =
-            { plain with form = { f with bigtiff = true }; chunks = Strips 1 }
-          in
-          let count = 1 lsl 61 in
-          let fields _ =
-            by_tag (fields l (raster x) ~at:[ 16; 16 ] ~counts:[ count; count ])
-          in
-          let whole = build l.form [ ([], fields) ] in
-          let p =
-            Nx_io.Partial.add
-              (Nx_io.Partial.v ~name:"part" ~length:max_int)
-              ~at:0 whole
-          in
-          match Nx_io.decode_tiff p with
-          | Ok [ d ] ->
-              fails ~path:"part" ~naming:"StripByteCounts (279)" (fun () ->
-                  T.window d ~row:0 ~col:0 ~rows:1 ~cols:1)
-          | _ -> failf "not one IFD");
-      test "a Deflate strip that decodes to fewer bytes than its rows"
-        (fun () ->
-          let z n = Lz.Zlib.encode_string (String.make n 'a') in
-          let path = with_blobs { plain with codec = 8 } [ z 59; z 60 ] in
-          fails ~path ~naming:"strip 0 decodes to 59 bytes, not 60" (fun () ->
-              load_one path));
-    ]
+  [
+    cases "refuses Compression other than 1, 5, 8 and 32946" ~id:string_of_int
+      [ 2; 7; 32773; 50000 ] (fun v ->
+        refused
+          ~naming:(Printf.sprintf "Compression (259) %d" v)
+          (replace (short f 259 [ v ])));
+    cases "refuses a Predictor its samples and Compression do not take"
+      ~id:(fun (name, _, _) -> name)
+      [
+        ("4 with Deflate", { plain with codec = 8 }, 4);
+        ("2 with Compression 1", plain, 2);
+        ("3 on integers with Deflate", { plain with codec = 8 }, 3);
+        ("3 on integers with LZW", { plain with codec = 5 }, 3);
+      ]
+      (fun (_, l, v) ->
+        refused ~l
+          ~naming:(Printf.sprintf "Predictor (317) %d" v)
+          (replace (short f 317 [ v ])));
+    cases "refuses Predictor 2 on packed samples" ~id:string_of_int
+      [ 1; 12; 15 ] (fun bits ->
+        let l = { plain with codec = 8 } in
+        refused ~l
+          ~naming:
+            (Printf.sprintf "Predictor (317) 2: on samples of %d bits" bits)
+          (fun fs ->
+            replace (short f 317 [ 2 ])
+              (replace (short f 258 [ bits; bits; bits ]) fs)));
+    cases "refuses 24-bit unsigned samples, in either byte order"
+      ~id:(Format.asprintf "%a" pp_form)
+      [ f; { f with mm = true } ]
+      (fun form ->
+        let l = { plain with form } in
+        refused ~l ~naming:"BitsPerSample (258) 24: unsigned"
+          (replace (short form 258 [ 24; 24; 24 ])));
+    cases "refuses BitsPerSample and SampleFormat it does not read"
+      ~id:(fun (b, s) -> Printf.sprintf "%d bits, SampleFormat %d" b s)
+      [ (0, 1); (33, 1); (64, 1); (8, 2); (64, 2); (16, 3); (16, 4) ]
+      (fun (bits, format) ->
+        let naming =
+          if format = 4 then "SampleFormat (339) 4"
+          else Printf.sprintf "BitsPerSample (258) %d" bits
+        in
+        refused ~naming (fun fs ->
+            replace (short f 258 [ bits ]) (replace (short f 339 [ format ]) fs)));
+    test "refuses BitsPerSample that differs between samples" (fun () ->
+        refused ~naming:"BitsPerSample (258) differs"
+          (replace (short f 258 [ 16; 16; 8 ])));
+    test "refuses PlanarConfiguration 2 with three samples a pixel" (fun () ->
+        refused ~naming:"PlanarConfiguration (284) 2"
+          (replace (short f 284 [ 2 ])));
+    test "refuses FillOrder 2" (fun () ->
+        refused ~naming:"FillOrder (266) 2" (fun fs -> short f 266 [ 2 ] :: fs));
+    test "refuses Photometric 6 (YCbCr)" (fun () ->
+        refused ~naming:"Photometric (262) 6" (replace (short f 262 [ 6 ])));
+    test "refuses ImageWidth of type ASCII" (fun () ->
+        refused ~naming:"ImageWidth (256) of type ASCII"
+          (replace (field 256 2 2 "5\000")));
+    test "refuses ImageWidth 0" (fun () ->
+        refused ~naming:"ImageWidth (256) 0" (replace (long f 256 [ 0 ])));
+    test "refuses a file without ImageLength, which has no default" (fun () ->
+        refused ~naming:"ImageLength (257) is missing" (drop 257));
+    test "refuses strips and tiles both" (fun () ->
+        refused ~naming:"both StripOffsets (273) and TileOffsets (324)"
+          (fun fs -> long f 324 [ 8 ] :: fs));
+    test "refuses neither strips nor tiles" (fun () ->
+        refused ~naming:"neither StripOffsets (273) nor TileOffsets (324)"
+          (drop 273));
+    test "refuses strips without StripByteCounts" (fun () ->
+        refused ~naming:"StripByteCounts (279) is missing" (drop 279));
+    test "refuses an offset too few for the strips" (fun () ->
+        refused ~naming:"StripOffsets (273) holds 1 offsets for 2 chunks"
+          (replace (long f 273 [ 8 ])));
+    test "refuses a tile of no byte, as GDAL's sparse files leave it" (fun () ->
+        let l = { plain with chunks = Tiles (16, 16) } in
+        refused ~l ~naming:"TileByteCounts (325): tile 0 has no byte"
+          (replace (long f 325 [ 0 ])));
+    test "refuses a strip past the file's end" (fun () ->
+        refused ~naming:"strip 1 at byte" (replace (long f 279 [ 60; 1000 ])));
+    test "refuses an uncompressed strip shorter than its rows" (fun () ->
+        refused ~naming:"StripByteCounts (279): strip 0 holds 59 bytes"
+          (replace (long f 279 [ 59; 60 ])));
+    cases "refuses strips that share bytes past the file's length" ~id:fst
+      [
+        (* 40 one-row strips of 500 bytes, all one row's. *)
+        ("uncompressed", (1, String.make 500 'a', 500));
+        (* 64 one-row strips of 1024 bytes, all one zlib stream's. *)
+        ("Deflate", (8, Lz.Zlib.encode_string (String.make 1024 'a'), 1024));
+      ]
+      (fun (_, (codec, blob, w)) ->
+        let h = if codec = 1 then 40 else 64 in
+        let x = Nx.P (Nx.zeros Nx.uint8 [| h; w; 1 |]) in
+        let l = { plain with chunks = Strips 1; codec } in
+        let at = List.init h (fun _ -> 8) in
+        let counts = List.init h (fun _ -> String.length blob) in
+        let fields _ = by_tag (fields l (raster x) ~at ~counts) in
+        let path = file (build f [ ([ blob ], fields) ]) in
+        fails ~path ~naming:"StripByteCounts (279): the strips take more than"
+          (fun () -> load_one path));
+    test "refuses an LZW strip with a code past the table" (fun () ->
+        let l = { plain with codec = 5 } in
+        let r = raster small in
+        let blobs = List.map (fun rows -> encode l r rows 15) (cut l r) in
+        (* The strip's second code, its bits 9 to 17, set to 300 where the table
+           holds no entry. *)
+        let s = Bytes.of_string (List.hd blobs) in
+        let set i v = Bytes.set s i (Char.chr v) in
+        set 1 (Char.code (Bytes.get s 1) land 0x80 lor (300 lsr 2));
+        set 2 (Char.code (Bytes.get s 2) land 0x3f lor ((300 land 3) lsl 6));
+        let path = with_blobs l (Bytes.to_string s :: List.tl blobs) in
+        fails ~path
+          ~naming:
+            "Compression (259) 5: strip 0 at byte 8: malformed at byte 1: \
+             invalid code" (fun () -> load_one path));
+    cases
+      "refuses a compressed strip by its count past its codec's ratio, and \
+       reaches the strip's decode at the ratio"
+      ~id:(fun (codec, ratio, over) ->
+        Printf.sprintf "Compression %d, %s %d times its bytes" codec
+          (if over then "past" else "at")
+          ratio)
+      [ (5, 2560, true); (5, 2560, false); (8, 1032, true); (8, 1032, false) ]
+      (fun (codec, ratio, over) ->
+        (* One strip of 4 bytes, one row of [ratio * 4] samples, or one more:
+           the most its stream could decode to, or a byte past. *)
+        let count = 4 in
+        let w = (ratio * count) + if over then 1 else 0 in
+        let x = Nx.P (Nx.zeros Nx.uint8 [| 1; w; 1 |]) in
+        let l = { plain with chunks = Strips 1; codec } in
+        let fields at = by_tag (fields l (raster x) ~at ~counts:[ count ]) in
+        let path = file (build f [ ([ String.make count '\000' ], fields) ]) in
+        let naming =
+          if over then "StripByteCounts (279)"
+          else Printf.sprintf "Compression (259) %d" codec
+        in
+        fails ~path ~naming (fun () -> load_one path));
+    test
+      "refuses a raster of 2^40 samples from a strip of 4 bytes before it is \
+       allocated" (fun () ->
+        let r =
+          {
+            h = 1 lsl 20;
+            w = 1 lsl 20;
+            c = 1;
+            bits = 8;
+            format = 1;
+            samples = [||];
+          }
+        in
+        let l = { plain with chunks = Strips (1 lsl 20); codec = 5 } in
+        let fields at = by_tag (fields l r ~at ~counts:[ 4 ]) in
+        let path = file (build f [ ([ "\000\000\000\000" ], fields) ]) in
+        within_budget @@ fun () ->
+        fails ~path ~naming:"StripByteCounts (279)" (fun () -> load_one path));
+    test "refuses a Deflate strip that decodes to fewer bytes than its rows"
+      (fun () ->
+        let z n = Lz.Zlib.encode_string (String.make n 'a') in
+        let path = with_blobs { plain with codec = 8 } [ z 59; z 60 ] in
+        fails ~path ~naming:"strip 0 decodes to 59 bytes, not 60" (fun () ->
+            load_one path));
+  ]
 
 (* Headers and directories *)
 
-(* A classic little-endian file of one IFD at byte 8 of the [entries]
-   given as bytes, chained to [next]. *)
+(* A classic little-endian file of one IFD at byte 8 of the [entries] given as
+   bytes, chained to [next]. *)
 let raw_ifd entries next =
   "II*\000\008\000\000\000"
   ^ u16 f (List.length entries)
   ^ String.concat "" entries ^ u32 f next
 
-let headers =
-  group "headers and directories"
-    [
-      cases "a file that is not TIFF" ~id:String.escaped
-        [
-          ""; "GIF89a"; "II\042"; "II\044\000\008\000\000\000";
-          "II+\000\004\000\000\000"; "II*\000\000\000\000\000";
-        ]
-        (fun s ->
-          let path = file s in
-          fails ~path (fun () -> Nx_io.load_tiff path));
-      test "an IFD that chains back to itself" (fun () ->
-          let width = u16 f 256 ^ u16 f 3 ^ u32 f 1 ^ u32 f 5 in
-          let path = file (raw_ifd [ width ] 8) in
-          fails ~path ~naming:"the IFDs' chain comes back to byte 8" (fun () ->
-              Nx_io.load_tiff path));
-      test "an IFD that holds a tag twice" (fun () ->
-          let path = edited (fun fs -> short f 256 [ 5 ] :: fs) in
-          fails ~path ~naming:"holds tag 256 twice" (fun () ->
-              Nx_io.load_tiff path));
-      test "a value past the file's end" (fun () ->
-          let width = u16 f 256 ^ u16 f 3 ^ u32 f 4 ^ u32 f 100 in
-          let path = file (raw_ifd [ width ] 0) in
-          fails ~path ~naming:"the file ends at byte 26" (fun () ->
-              Nx_io.load_tiff path));
-      test "values that share bytes past the file's length" (fun () ->
-          (* 50 UNDEFINED fields of 1000 bytes, each at byte 0 of a file
-             of 1100: 50,000 bytes of values. *)
-          let shared t = u16 f t ^ u16 f 7 ^ u32 f 1000 ^ u32 f 0 in
-          let ifd = raw_ifd (List.init 50 (fun i -> shared (40000 + i))) 0 in
-          let path = file (ifd ^ String.make (1100 - String.length ifd) 'x') in
-          fails ~path ~naming:"the IFDs and their values take more than"
-            (fun () -> Nx_io.load_tiff path));
-      test "an IFD's tags load from a file whose chunks are cut off"
-        (fun () ->
-          (* A save's IFD comes first: its first 300 bytes hold every tag,
-             and its samples fail. *)
-          let big = Nx.P (Nx.zeros Nx.uint8 [| 64; 64; 1 |]) in
-          let path = saved ".tif" (fun p (Nx.P x) -> Nx_io.save_tiff p x) big in
-          let path = file (String.sub (read path) 0 300) in
-          let d = List.hd (Nx_io.load_tiff path) in
-          equal (option value) (Some (T.Long [| 64 |]))
-            (List.assoc_opt 256 (T.tags d));
-          fails ~path ~naming:"ends past the file's" (fun () -> T.samples d));
-    ]
+let load_tests =
+  [
+    test "IFDs load in the order the file chains them" (fun () ->
+        let ifd_of x =
+          let r = raster x in
+          ifd plain r
+            (List.map
+               (fun rows -> encode plain r rows (Array.length rows.(0)))
+               (cut plain r))
+        in
+        let path = file (build f [ ifd_of small; ifd_of grey ]) in
+        equal (list packed) [ small; grey ]
+          (List.map T.samples (Nx_io.load_tiff path)));
+    cases "fails for a file with no TIFF header or no IFD" ~id:String.escaped
+      [
+        "";
+        "GIF89a";
+        "II\042";
+        "II\044\000\008\000\000\000";
+        "II+\000\004\000\000\000";
+        "II*\000\000\000\000\000";
+        "MM\000*\000\000\000\000";
+      ] (fun s ->
+        let path = file s in
+        fails ~path (fun () -> Nx_io.load_tiff path));
+    cases "fails for an IFD past the file's end" ~id:fst
+      [
+        ("its offset", "II*\000\100\000\000\000");
+        ("its entries", "II*\000\008\000\000\000" ^ u16 f 50);
+      ]
+      (fun (_, s) ->
+        let path = file s in
+        fails ~path (fun () -> Nx_io.load_tiff path));
+    test "a directory fails, naming it" (fun () ->
+        let path = temp_dir () in
+        fails ~path (fun () -> Nx_io.load_tiff path));
+    test "fails for an IFD that chains back to itself" (fun () ->
+        let width = u16 f 256 ^ u16 f 3 ^ u32 f 1 ^ u32 f 5 in
+        let path = file (raw_ifd [ width ] 8) in
+        fails ~path ~naming:"the IFDs' chain comes back to byte 8" (fun () ->
+            Nx_io.load_tiff path));
+    test "fails for an IFD that holds a tag twice" (fun () ->
+        let path = edited (fun fs -> short f 256 [ 5 ] :: fs) in
+        fails ~path ~naming:"holds tag 256 twice" (fun () ->
+            Nx_io.load_tiff path));
+    test "fails for a value past the file's end" (fun () ->
+        let width = u16 f 256 ^ u16 f 3 ^ u32 f 4 ^ u32 f 100 in
+        let path = file (raw_ifd [ width ] 0) in
+        fails ~path ~naming:"the file ends at byte 26" (fun () ->
+            Nx_io.load_tiff path));
+    test "fails for values that share bytes past the file's length" (fun () ->
+        (* 50 UNDEFINED fields of 1000 bytes, each at byte 0 of a file of 1100:
+           50,000 bytes of values. *)
+        let shared t = u16 f t ^ u16 f 7 ^ u32 f 1000 ^ u32 f 0 in
+        let ifd = raw_ifd (List.init 50 (fun i -> shared (40000 + i))) 0 in
+        let path = file (ifd ^ String.make (1100 - String.length ifd) 'x') in
+        fails ~path ~naming:"the IFDs and their values take more than"
+          (fun () -> Nx_io.load_tiff path));
+    test "reads no sample: tags load from a file whose chunks are cut off"
+      (fun () ->
+        (* A save's IFD comes first: its first 300 bytes hold every tag, and its
+           samples fail. *)
+        let big = Nx.P (Nx.zeros Nx.uint8 [| 64; 64; 1 |]) in
+        let path = saved ".tif" (fun p (Nx.P x) -> Nx_io.save_tiff p x) big in
+        let path = file (String.sub (read path) 0 300) in
+        let d = List.hd (Nx_io.load_tiff path) in
+        equal (option value) (Some (T.Long [| 64 |]))
+          (List.assoc_opt 256 (T.tags d));
+        fails ~path ~naming:"ends past the file's" (fun () -> T.samples d));
+  ]
 
-(* Every IFD's samples of a file, which a corrupted file loads or
-   refuses. *)
+(* Every IFD's samples of a file, which a corrupted file loads or refuses. *)
 let load_all path =
   List.iter (fun d -> ignore (T.samples d)) (Nx_io.load_tiff path)
 
-(* Three files of a few hundred bytes, so that a file per prefix and per
-   byte stays small: LZW strips, Deflate tiles with the floating point
-   predictor in BigTIFF, and big-endian uncompressed strips. *)
+(* Three files of a few hundred bytes, so that a file per prefix and per byte
+   stays small: LZW strips, Deflate tiles with the floating point predictor in
+   BigTIFF, and big-endian uncompressed strips. *)
 let damaged =
   let ints =
     raster
-      (Nx.P
-         (Nx.init Nx.uint16 [| 5; 7; 2 |] (fun i -> (i.(0) * i.(1)) + i.(2))))
+      (Nx.P (Nx.init Nx.uint16 [| 5; 7; 2 |] (fun i -> (i.(0) * i.(1)) + i.(2))))
   in
   let fls =
     raster
@@ -847,17 +919,41 @@ let damaged =
   ]
 
 let corrupted =
-  cases "every proper prefix fails, and any byte flipped loads or fails"
-    ~id:fst damaged (fun (_, whole) ->
-      prefixes_fail load_all whole;
-      flips_load_or_fail load_all whole)
+  [
+    cases "every proper prefix of a file fails" ~id:fst damaged
+      (fun (_, whole) -> prefixes_fail load_all whole);
+    cases "a file with any byte flipped loads or fails" ~id:fst damaged
+      (fun (_, whole) -> flips_load_or_fail load_all whole);
+  ]
+
+(* A float32 raster of 64 rows of 64 pixels of 2 samples. *)
+let wide =
+  Nx.init Nx.float32 [| 64; 64; 2 |] (fun i -> Float.of_int (i.(0) - i.(1)))
+
+let mapped =
+  cases
+    "samples lie over the file's pages where the raster lies in it as one \
+     array in C order"
+    ~id:fst
+    [
+      ("uncompressed strips", (None, T.Uncompressed, Over_file));
+      ( "uncompressed tiles as wide as the raster",
+        (Some (16, 64), T.Uncompressed, Over_file) );
+      ( "uncompressed tiles narrower",
+        (Some (16, 32), T.Uncompressed, Own_memory) );
+      ("Deflate strips", (None, T.Deflate, Own_memory));
+    ]
+    (fun (_, (tile, compression, where)) ->
+      let path = temp_file ~suffix:".tif" () in
+      Nx_io.save_tiff ?tile ~compression path wide;
+      equal memory where (memory_of (load_one path)))
 
 (* Round trips *)
 
 let views = [ Plain; Transposed; Flipped; Broadcast ]
 
-(* [x] laid out by [view]: transposed or flipped over its first two axes,
-   or broadcast from its first row. *)
+(* [x] laid out by [view]: transposed or flipped over its first two axes, or
+   broadcast from its first row. *)
 let viewed view (Nx.P x) =
   match view with
   | Plain -> Nx.P x
@@ -889,10 +985,10 @@ let saves =
 let saved_tags =
   [
     (269, T.Ascii "name");
-    (282, T.Rational [| (300, 1) |]);
+    (270, T.Ascii "two\000strings");
+    (282, T.Rational [| (300, 1); (0xffff_ffff, 0xffff_ffff) |]);
     (33550, T.Double [| 10.; 10.; 0. |]);
-    ( 33922,
-      T.Double [| 0.; 0.; 0.; 301822.86256412434; 5798366.72759726; 0. |] );
+    (33922, T.Double [| 0.; 0.; 0.; 301822.86256412434; 5798366.72759726; 0. |]);
     (34735, T.Short [| 1; 1; 0; 1; 3072; 0; 1; 32631 |]);
     (42113, T.Ascii "0");
     (50000, T.Byte [| 0; 255 |]);
@@ -905,112 +1001,244 @@ let saved_tags =
     (50007, T.Long [| 0; 0xffff_ffff |]);
   ]
 
-let round_trips =
-  let (Nx.P s) = small in
-  group "round trips"
-    [
-      prop "a raster saved loads as itself, bit for bit" saves
-        (fun (view, x, tile, compression) ->
-          let (Nx.P y) = viewed view x in
-          cover "Deflate" (compression = T.Deflate);
-          cover "tiles" (Option.is_some tile);
-          cover "a view" (view <> Plain);
-          let path = temp_file ~suffix:".tif" () in
-          Nx_io.save_tiff ?tile ~compression path y;
-          equal packed (Nx.P (Nx.copy y)) (load_one path));
-      test "tags of every type round trip, GeoTIFF's among them" (fun () ->
-          let path = temp_file ~suffix:".tif" () in
-          Nx_io.save_tiff ~tags:saved_tags path s;
-          let read = tags_of path in
-          equal (list (option value))
-            (List.map (fun (_, v) -> Some v) saved_tags)
-            (List.map (fun (t, _) -> List.assoc_opt t read) saved_tags);
-          equal packed small (load_one path));
-      test "a LONG8 tag makes the file BigTIFF" (fun () ->
-          let path = temp_file ~suffix:".tif" () in
-          Nx_io.save_tiff ~tags:[ (50000, T.Long8 [| -1L |]) ] path s;
-          equal string "II+\000" (String.sub (read path) 0 4);
-          equal (option value) (Some (T.Long8 [| -1L |]))
-            (List.assoc_opt 50000 (tags_of path));
-          equal packed small (load_one path));
-      test "the save states Photometric 1 and ExtraSamples unless told"
-        (fun () ->
-          let path = temp_file ~suffix:".tif" () in
-          let read t = List.assoc_opt t (tags_of path) in
-          Nx_io.save_tiff path s;
-          equal (list (option value))
-            [ Some (T.Short [| 1 |]); Some (T.Short [| 0; 0 |]) ]
-            [ read 262; read 338 ];
-          Nx_io.save_tiff ~tags:[ (262, T.Short [| 2 |]) ] path s;
-          equal (list (option value))
-            [ Some (T.Short [| 2 |]); None ]
-            [ read 262; read 338 ]);
-      test "uncompressed strips and tiles as wide as the raster load over the \
-            file's pages" (fun () ->
-          let path = temp_file ~suffix:".tif" () in
-          let x =
-            Nx.init Nx.float32 [| 64; 64; 2 |] (fun i ->
-                Float.of_int (i.(0) - i.(1)))
-          in
-          Nx_io.save_tiff path x;
-          equal memory Over_file (memory_of (load_one path));
-          Nx_io.save_tiff ~tile:(16, 64) path x;
-          equal memory Over_file (memory_of (load_one path));
-          Nx_io.save_tiff ~tile:(16, 32) path x;
-          equal memory Own_memory (memory_of (load_one path));
-          Nx_io.save_tiff ~compression:Deflate path x;
-          equal memory Own_memory (memory_of (load_one path));
-          let mm = { plain with form = { f with mm = true } } in
-          let path = file (tiff mm (raster small)) in
-          equal memory Own_memory (memory_of (load_one path)));
-    ]
+(* An unsigned integer tag's values, whichever type holds them. *)
+let ints_of = function
+  | Some (T.Byte a | T.Short a | T.Long a) -> a
+  | Some (T.Long8 a) -> Array.map Int64.to_int a
+  | Some v -> failf "%a is no unsigned integer tag" (Testable.pp value) v
+  | None -> [||]
 
-let save_refusals =
-  let (Nx.P x) = small in
-  let invalid save =
-    invalid ~by:"Nx_io.save_tiff" (fun () -> save (temp_file ~suffix:".tif" ()))
+(* A traced value has no bytes: [traced f] is [f trace] inside an
+   interpretation, [trace x] a value of [x]'s form that it traces. *)
+type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
+
+let traced f =
+  let mark i ~by op =
+    Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Mark) op
   in
-  group "save refusals"
-    [
-      cases "a dtype TIFF does not store" ~id:(fun (D.Any dt) -> D.name dt)
-        D.
+  Nx.Prim.interpret ~name:"test.io" Values mark (fun i ->
+      f (fun x -> Nx.Prim.traced i (Nx.Prim.form x) Mark))
+
+(* [refused_save save] asserts that [save path] raises Invalid_argument naming
+   save_tiff, [naming] among its words, and leaves [path] as it was. *)
+let refused_save ?(naming = "") save =
+  let path = file ~suffix:".tif" "old" in
+  raises_match
+    (function
+      | Invalid_argument m as e ->
+          String.starts_with ~prefix:"Nx_io.save_tiff: " m
+          && Exn.invalid_arg ~sub:naming e
+      | _ -> false)
+    (fun () -> save path);
+  equal ~msg:"the file" string "old" (read path)
+
+let save_tests =
+  let (Nx.P s) = small in
+  [
+    (* Each of the 7 dtypes is drawn with p = 1/7 a case: at 150 cases a run
+       misses one with (6/7)^150 = 9.3e-11. *)
+    prop ~count:150 "a raster saved loads as itself, bit for bit" saves
+      (fun (view, x, tile, compression) ->
+        let (Nx.P y) = viewed view x in
+        List.iter
+          (fun (D.Any dt) -> cover (D.name dt) (D.equal (Nx.dtype y) dt))
+          tiff_dtypes;
+        cover "Deflate" (compression = T.Deflate);
+        cover "tiles" (Option.is_some tile);
+        cover "a view" (view <> Plain);
+        let path = temp_file ~suffix:".tif" () in
+        Nx_io.save_tiff ?tile ~compression path y;
+        equal packed (Nx.P (Nx.copy y)) (load_one path));
+    cases "the save's own tags state the raster, the IFD first" ~id:fst
+      [
+        ( "uint8, strips",
+          (Nx.P (Nx.zeros Nx.uint8 [| 300; 40; 1 |]), None, T.Uncompressed) );
+        ( "int16 of 2 samples, Deflate",
+          (Nx.P (Nx.zeros Nx.int16 [| 5; 3; 2 |]), None, T.Deflate) );
+        ( "uint32, a row past 8 KiB",
+          (Nx.P (Nx.zeros Nx.uint32 [| 3; 2100; 1 |]), None, T.Uncompressed) );
+        ( "float32 of 3 samples, Deflate tiles",
+          (Nx.P (Nx.zeros Nx.float32 [| 20; 40; 3 |]), Some (16, 32), T.Deflate)
+        );
+        ( "float64, tiles",
+          ( Nx.P (Nx.zeros Nx.float64 [| 4; 4; 1 |]),
+            Some (16, 16),
+            T.Uncompressed ) );
+      ]
+      (fun (_, (Nx.P x, tile, compression)) ->
+        let path = temp_file ~suffix:".tif" () in
+        Nx_io.save_tiff ?tile ~compression path x;
+        let tags = tags_of path in
+        let get t = ints_of (List.assoc_opt t tags) in
+        let h, w, c =
+          match Nx.shape x with [| h; w; c |] -> (h, w, c) | _ -> (0, 0, 0)
+        in
+        let dt = Nx.dtype x in
+        let bits = D.bits dt in
+        let format =
+          match D.kind dt with D.Float -> 3 | D.Signed -> 2 | _ -> 1
+        in
+        let deflate = compression = T.Deflate in
+        equal
+          (list (array int))
           [
-            Any Int8; Any Int64; Any Uint64; Any Float16; Any Bfloat16;
-            Any Bool; Any Complex64;
+            [| w |];
+            [| h |];
+            Array.make c bits;
+            [| (if deflate then 8 else 1) |];
+            [| c |];
+            [| 1 |];
+            Array.make c format;
+            (if deflate then [| (if format = 3 then 3 else 2) |] else [||]);
           ]
-        (fun (D.Any dt) ->
-          invalid (fun p -> Nx_io.save_tiff p (Nx.zeros dt [| 2; 2; 1 |])));
-      cases "a shape" ~id:(Format.asprintf "%a" pp_shape)
-        [ [| 2; 2 |]; [| 0; 2; 1 |]; [| 2; 2; 0 |]; [| 1; 1; 65536 |] ]
-        (fun s -> invalid (fun p -> Nx_io.save_tiff p (Nx.zeros Nx.uint8 s)));
-      cases "a tile that is not a positive multiple of 16"
-        ~id:(fun (a, b) -> Printf.sprintf "%d by %d" a b)
-        [ (15, 16); (16, 0); (-16, 16); (24, 16) ]
-        (fun tile -> invalid (fun p -> Nx_io.save_tiff ~tile p x));
-      cases "tags it cannot write" ~id:fst
+          (List.map get [ 256; 257; 258; 259; 277; 284; 339; 317 ]);
+        let offsets =
+          match tile with
+          | Some (rows, cols) ->
+              equal (array int) [| cols; rows |]
+                (Array.append (get 322) (get 323));
+              get 324
+          | None ->
+              (* TIFF 6.0 section 8: "Choose RowsPerStrip such that each strip
+                 is about 8K bytes", and at least a row. *)
+              let rows = (get 278).(0) and row = w * c * D.bytes dt 1 in
+              satisfies
+                ~claim:"strips of 8 KiB or one row, half full or the raster" int
+                (fun r ->
+                  r >= 1
+                  && (r * row <= 8192 || r = 1)
+                  && ((r + 1) * row > 4096 || r = h))
+                rows;
+              get 273
+        in
+        let first = String.get_int32_le (read path) 4 |> Int32.to_int in
+        equal int 8 first;
+        satisfies ~claim:"chunks after the IFD" (array int)
+          (Array.for_all (fun o -> o > first))
+          offsets);
+    cases "the save adds Photometric 1 and ExtraSamples of zeros unless given"
+      ~id:fst
+      [
+        ( "three samples",
+          (small, [], (Some (T.Short [| 1 |]), Some (T.Short [| 0; 0 |]))) );
+        ( "Photometric given",
+          (small, [ (262, T.Short [| 2 |]) ], (Some (T.Short [| 2 |]), None)) );
+        ( "ExtraSamples given",
+          ( small,
+            [ (338, T.Short [| 2; 1 |]) ],
+            (Some (T.Short [| 1 |]), Some (T.Short [| 2; 1 |])) ) );
+        ( "one sample",
+          ( Nx.P (Nx.zeros Nx.uint16 [| 2; 2; 1 |]),
+            [],
+            (Some (T.Short [| 1 |]), None) ) );
+      ]
+      (fun (_, (Nx.P x, tags, expected)) ->
+        let path = temp_file ~suffix:".tif" () in
+        Nx_io.save_tiff ~tags path x;
+        let read t = List.assoc_opt t (tags_of path) in
+        equal (pair (option value) (option value)) expected (read 262, read 338));
+    test "tags of every type round trip, GeoTIFF's among them" (fun () ->
+        let path = temp_file ~suffix:".tif" () in
+        Nx_io.save_tiff ~tags:saved_tags path s;
+        let read = tags_of path in
+        equal
+          (list (option value))
+          (List.map (fun (_, v) -> Some v) saved_tags)
+          (List.map (fun (t, _) -> List.assoc_opt t read) saved_tags);
+        equal packed small (load_one path));
+    cases "a LONG8 or SLONG8 tag makes the file BigTIFF" ~id:fst
+      [ ("LONG8", T.Long8 [| -1L |]); ("SLONG8", T.Slong8 [| Int64.min_int |]) ]
+      (fun (_, v) ->
+        let path = temp_file ~suffix:".tif" () in
+        Nx_io.save_tiff ~tags:[ (50000, v) ] path s;
+        equal string "II+\000" (String.sub (read path) 0 4);
+        equal (option value) (Some v) (List.assoc_opt 50000 (tags_of path));
+        equal packed small (load_one path));
+    test "a value of another set saves as its host copy" (fun () ->
+        let module M = (val Nx.devices [ Nx_support.memory 0 ]) in
+        let host = temp_file ~suffix:".tif" () in
+        let other = temp_file ~suffix:".tif" () in
+        Nx_io.save_tiff host s;
+        Nx_io.save_tiff other (Nx.place M.on s);
+        equal string (read host) (read other));
+    test "a raster of 65535 samples a pixel, the most, saves" (fun () ->
+        let x = Nx.init Nx.uint8 [| 1; 1; 65535 |] (fun i -> i.(2) land 255) in
+        let path = temp_file ~suffix:".tif" () in
+        Nx_io.save_tiff path x;
+        equal packed (Nx.P x) (load_one path));
+    cases "refuses a dtype TIFF does not store"
+      ~id:(fun (D.Any dt) -> D.name dt)
+      D.
         [
-          ("the save's own", [ (259, T.Short [| 8 |]) ]);
-          ("twice", [ (300, T.Short [| 1 |]); (300, T.Short [| 2 |]) ]);
-          ("past a SHORT's tag numbers", [ (65536, T.Short [| 1 |]) ]);
-          ("no value", [ (300, T.Short [||]) ]);
-          ("a SHORT of 70000", [ (300, T.Short [| 70000 |]) ]);
-          ("a FLOAT that is not a binary32", [ (300, T.Float [| 0.1 |]) ]);
+          Any Int8;
+          Any Int64;
+          Any Uint64;
+          Any Float16;
+          Any Bfloat16;
+          Any Bool;
+          Any Complex64;
         ]
-        (fun (_, tags) -> invalid (fun p -> Nx_io.save_tiff ~tags p x));
-    ]
+      (fun (D.Any dt) ->
+        refused_save (fun p -> Nx_io.save_tiff p (Nx.zeros dt [| 2; 2; 1 |])));
+    cases "refuses a shape TIFF does not store"
+      ~id:(Format.asprintf "%a" pp_shape)
+      [ [| 2; 2 |]; [| 0; 2; 1 |]; [| 2; 2; 0 |]; [| 1; 1; 65536 |] ]
+      (fun sh ->
+        refused_save (fun p -> Nx_io.save_tiff p (Nx.zeros Nx.uint8 sh)));
+    test "refuses a side of 2^32 before a sample is read" (fun () ->
+        (* A view of one sample: the refusal reads none of its elements. *)
+        let x =
+          Nx.broadcast_to [| 1 lsl 32; 1; 1 |] (Nx.zeros Nx.uint8 [| 1; 1; 1 |])
+        in
+        refused_save (fun p -> Nx_io.save_tiff p x));
+    cases "refuses a tile that is not a positive multiple of 16"
+      ~id:(fun (a, b) -> Printf.sprintf "%d by %d" a b)
+      [ (15, 16); (16, 0); (-16, 16); (24, 16) ]
+      (fun tile -> refused_save (fun p -> Nx_io.save_tiff ~tile p s));
+    cases "refuses a tag it cannot write, naming it" ~id:fst
+      [
+        ("the save's own", [ (259, T.Short [| 8 |]) ]);
+        ("twice", [ (300, T.Short [| 1 |]); (300, T.Short [| 2 |]) ]);
+        ("past a SHORT's tag numbers", [ (65536, T.Short [| 1 |]) ]);
+        ("no value", [ (300, T.Short [||]) ]);
+        ("a SHORT of 70000", [ (300, T.Short [| 70000 |]) ]);
+        ("a LONG of 2^32", [ (300, T.Long [| 1 lsl 32 |]) ]);
+        ("an SBYTE of 128", [ (300, T.Sbyte [| 128 |]) ]);
+        ( "a RATIONAL's denominator of 2^32",
+          [ (300, T.Rational [| (1, 1 lsl 32) |]) ] );
+        ("a FLOAT that is not a binary32", [ (300, T.Float [| 0.1 |]) ]);
+      ]
+      (fun (_, tags) ->
+        let naming = string_of_int (fst (List.hd tags)) in
+        refused_save ~naming (fun p -> Nx_io.save_tiff ~tags p s));
+    test "refuses a traced value, naming save_tiff" (fun () ->
+        traced @@ fun trace ->
+        refused_save (fun p -> Nx_io.save_tiff p (trace s)));
+    test "refuses a dead value, naming save_tiff" (fun () ->
+        let x = Nx.copy s in
+        ignore (Nx.neg (Nx.donate x));
+        refused_save (fun p -> Nx_io.save_tiff p x));
+  ]
 
 (* Files GDAL wrote *)
 
 let gdal =
   cases "files GDAL wrote load as the arrays it was given" ~id:Fun.id
     [
-      "tiff_lzw_u16_tiles"; "tiff_deflate_f32_bigtiff_mm";
-      "tiff_lzw_f64_strips"; "tiff_deflate_i16_mm_tiles"; "tiff_none_u32";
-      "tiff_lzw_i32"; "tiff_lzw_u8_rgb"; "tiff_none_u1"; "tiff_none_u3_mm";
-      "tiff_lzw_u12_rgb"; "tiff_deflate_u15_tiles"; "tiff_deflate_u17_bigtiff";
+      "tiff_lzw_u16_tiles";
+      "tiff_deflate_f32_bigtiff_mm";
+      "tiff_lzw_f64_strips";
+      "tiff_deflate_i16_mm_tiles";
+      "tiff_none_u32";
+      "tiff_lzw_i32";
+      "tiff_lzw_u8_rgb";
+      "tiff_none_u1";
+      "tiff_none_u3_mm";
+      "tiff_lzw_u12_rgb";
+      "tiff_deflate_u15_tiles";
+      "tiff_deflate_u17_bigtiff";
       "tiff_deflate_u31_mm_tiles";
-    ]
-    (fun name ->
+    ] (fun name ->
       equal packed
         (Nx_io.load_npy (fixture (name ^ ".npy")))
         (load_one (fixture (name ^ ".tif"))))
@@ -1019,9 +1247,8 @@ let gdal =
 
 module P = Nx_io.Partial
 
-(* The partial file "part" of [whole] that holds the bytes [held] marks,
-   added in pieces of at most 61 bytes, so that a chunk often spans
-   several. *)
+(* The partial file "part" of [whole] that holds the bytes [held] marks, added
+   in pieces of at most 61 bytes, so that a chunk often spans several. *)
 let partial whole held =
   let n = String.length whole in
   let rec from i p =
@@ -1037,8 +1264,8 @@ let partial whole held =
   in
   from 0 (P.v ~name:"part" ~length:n)
 
-(* What a call did: returned, lacked ranges, or raised, its message past
-   its file's name. A call on a whole file returns [Ok]. *)
+(* What a call did: returned, lacked ranges, or raised, its message past its
+   file's name. A call on a whole file returns [Ok]. *)
 type 'a outcome =
   | Done of 'a
   | Lacks of (int * int) list
@@ -1104,9 +1331,8 @@ let whole_of whole k win =
   in
   (tags ds, w)
 
-(* [rs] is a list of ranges of a file of [n] bytes in normal form: not
-   empty, each of a byte or more, sorted, apart, and lacking from
-   [held]. *)
+(* [rs] is a list of ranges of a file of [n] bytes in normal form: not empty,
+   each of a byte or more, sorted, apart, and lacking from [held]. *)
 let check_ranges ~held n rs =
   if rs = [] then failf "no range";
   ignore
@@ -1123,11 +1349,11 @@ let check_ranges ~held n rs =
 
 let hold held rs = List.iter (fun (at, n) -> Array.fill held at n true) rs
 
-(* Drawn partial files: a file of one or two IFDs of a raster built from
-   the specifications, packed samples among them, half with a byte flipped,
-   anywhere or in the first IFD; the bytes held, none or all but a few
-   holes, and a few ranges more; an IFD, and a window of its raster: whole,
-   of no pixel or any. *)
+(* Drawn partial files: a file of one or two IFDs of a raster built from the
+   specifications, packed samples among them, half with a byte flipped, anywhere
+   or in the first IFD; the bytes held, none or all but a few holes, and a few
+   ranges more; an IFD, and a window of its raster: whole, of no pixel or
+   any. *)
 type drawn = {
   whole : string;
   r : raster;
@@ -1238,8 +1464,8 @@ let agreement =
     drawn (fun d ->
       let n = String.length d.whole and held = Array.copy d.held in
       let decoded, window = whole_of d.whole d.k d.win in
-      (* Each call's ranges are added until it returns or raises: a round
-         adds a byte or more, so a file takes at most a round a byte. *)
+      (* Each call's ranges are added until it returns or raises: a round adds a
+         byte or more, so a file takes at most a round a byte. *)
       let rounds = ref 0 in
       let rec loop p call =
         incr rounds;
@@ -1275,7 +1501,7 @@ let agreement =
       cover "a window of no pixel" (read_window && (rows = 0 || cols = 0)))
 
 let unread =
-  prop ~count:300 "no result depends on a byte the partial file lacks" drawn
+  prop ~count:400 "no result depends on a byte the partial file lacks" drawn
     (fun d ->
       let n = String.length d.whole in
       let flip i c =
@@ -1313,8 +1539,7 @@ let unread =
         (lacking && (raised o || Option.fold ~none:false ~some:raised w)))
 
 let monotone =
-  prop ~count:300 "adding bytes never turns a result into Error" drawn
-    (fun d ->
+  prop ~count:300 "adding bytes never turns a result into Error" drawn (fun d ->
       let p = partial d.whole d.held in
       let q = fill d.whole p d.more in
       let window =
@@ -1353,93 +1578,244 @@ let monotone =
 (* [small]'s file: its two strips of 60 bytes at bytes 8 and 68, then its
    IFD. *)
 let strips = tiff plain (raster small)
+
 let strips_held lo hi =
   Array.init (String.length strips) (fun i -> i < lo || i >= hi)
+
 let lacks rs = Lacks rs
 
-let partial_cases =
-  group "partial files"
+(* Tiff.window *)
+
+(* A file built from the specifications, and a window of its raster: whole, of
+   no pixel or any. *)
+let windows =
+  let open Gen in
+  let* r, l = frequency [ (3, built_raster); (1, packed_files) ] in
+  let+ row, rows = span r.h and+ col, cols = span r.w in
+  (r, l, (row, rows, col, cols))
+
+let windows =
+  Gen.with_pp
+    (fun ppf (r, l, (row, rows, col, cols)) ->
+      Format.fprintf ppf
+        "%d by %d by %d of %d bits, %a, %d rows from %d, %d columns from %d" r.h
+        r.w r.c r.bits pp_layout l rows row cols col)
+    windows
+
+let window_tests =
+  [
+    (* Every cover is drawn with p = 1/6 or more a case: at 150 cases a run
+       misses one with (5/6)^150 = 1.3e-12. *)
+    prop ~count:150 "a window is the slice of the samples it covers" windows
+      (fun (r, l, (row, rows, col, cols)) ->
+        cover "tiles"
+          (match l.chunks with Tiles _ -> true | Strips _ -> false);
+        cover "packed samples" (is_packed r.bits);
+        cover "no row or no column" (rows = 0 || cols = 0);
+        cover "from inside the raster"
+          (row > 0 && col > 0 && rows > 0 && cols > 0);
+        let d = List.hd (Nx_io.load_tiff (file (tiff l r))) in
+        let (Nx.P s) = T.samples d in
+        match T.window d ~row ~col ~rows ~cols with
+        | Ok y ->
+            equal memory Own_memory (memory_of y);
+            equal packed
+              (Nx.P
+                 (Nx.slice [ Nx.R (row, row + rows); Nx.R (col, col + cols) ] s))
+              y
+        | Error rs -> failf "a file's IFD lacks %d ranges" (List.length rs));
+    test "returns where samples raises for a chunk it does not cover" (fun () ->
+        (* [small]'s second strip is no LZW stream: its first code is not
+           ClearCode. *)
+        let l = { plain with codec = 5 } in
+        let r = raster small in
+        let blobs = List.map (fun rows -> encode l r rows 15) (cut l r) in
+        let path = with_blobs l [ List.hd blobs; "\255\255\255\255" ] in
+        let d = List.hd (Nx_io.load_tiff path) in
+        fails ~path ~naming:"Compression (259) 5" (fun () -> T.samples d);
+        let (Nx.P s) = small in
+        equal windowed
+          (Done (Nx.P (Nx.slice [ Nx.R (0, 2) ] s)))
+          (window_of path d (0, 2, 0, 5)));
+    test
+      "raises for every chunk's offset and count, the chunks it does not cover \
+       among them" (fun () ->
+        let path = edited (replace (long f 279 [ 60; 1000 ])) in
+        let d = List.hd (Nx_io.load_tiff path) in
+        fails ~path ~naming:"strip 1" (fun () ->
+            T.window d ~row:0 ~col:0 ~rows:2 ~cols:5));
+    test
+      "refuses strips whose counts sum past the largest integer, in a partial \
+       file of any length" (fun () ->
+        (* Two strips of 2^61 bytes in a partial file of [max_int] bytes: their
+           sum wraps past [max_int]. *)
+        let x = Nx.P (Nx.zeros Nx.uint8 [| 2; 1; 1 |]) in
+        let l =
+          { plain with form = { f with bigtiff = true }; chunks = Strips 1 }
+        in
+        let count = 1 lsl 61 in
+        let fields _ =
+          by_tag (fields l (raster x) ~at:[ 16; 16 ] ~counts:[ count; count ])
+        in
+        let whole = build l.form [ ([], fields) ] in
+        let p =
+          Nx_io.Partial.add
+            (Nx_io.Partial.v ~name:"part" ~length:max_int)
+            ~at:0 whole
+        in
+        match Nx_io.decode_tiff p with
+        | Ok [ d ] ->
+            fails ~path:"part" ~naming:"StripByteCounts (279)" (fun () ->
+                T.window d ~row:0 ~col:0 ~rows:1 ~cols:1)
+        | _ -> failf "not one IFD");
+    test "a window of no row reads no chunk" (fun () ->
+        let p = partial strips (strips_held 8 128) in
+        let d = List.hd (Result.get_ok (Nx_io.decode_tiff p)) in
+        let (Nx.P s) = small in
+        let none = Nx.P (Nx.slice [ Nx.R (0, 0) ] s) in
+        equal windowed (Done none) (window_of "part" d (4, 0, 0, 5)));
+    cases "a window outside the raster is refused"
+      ~id:(fun (row, rows, col, cols) ->
+        Printf.sprintf "%d rows from %d, %d columns from %d" rows row cols col)
+      [ (0, 5, 0, 5); (-1, 1, 0, 5); (0, 4, 1, 5); (0, 4, 0, -1); (4, 1, 0, 5) ]
+      (fun (row, rows, col, cols) ->
+        let d = List.hd (Nx_io.load_tiff (file strips)) in
+        invalid ~by:"Nx_io.Tiff.window" (fun () ->
+            T.window d ~row ~col ~rows ~cols));
+  ]
+
+(* Partial files *)
+
+let ranges_merge =
+  test "ranges merge where they touch and name a chunk's tail" (fun () ->
+      let win p rows =
+        match Nx_io.decode_tiff p with
+        | Ok [ d ] -> window_of "part" d (0, rows, 0, 5)
+        | _ -> failf "not one IFD"
+      in
+      let p = partial strips (strips_held 8 128) in
+      equal windowed (lacks [ (8, 120) ]) (win p 4);
+      equal windowed (lacks [ (8, 60) ]) (win p 2);
+      let p = partial strips (strips_held 18 128) in
+      equal windowed (lacks [ (18, 110) ]) (win p 4))
+
+(* One partial file of [strips] shared between domains, against the bytes it
+   holds: a call's reference is the same call on a partial file made afresh, on
+   one domain, from those bytes. Every command but start takes a partial file,
+   which start makes with no precondition. *)
+let part = abstract "p"
+
+let held_range =
+  let n = String.length strips in
+  Gen.with_pp
+    (fun ppf (at, len) -> Format.fprintf ppf "(%d, %d)" at len)
+    Gen.(
+      let* at = int_range 0 (n - 1) in
+      let+ len = int_range 1 (n - at) in
+      (at, len))
+
+(* The window of the whole raster of a partial file's first IFD. *)
+let whole_window p =
+  match decode_of p with
+  | Done (d :: _) -> window_of "part" d (0, 4, 0, 5)
+  | Done [] -> Raised "no IFD"
+  | Lacks rs -> Lacks rs
+  | Raised m -> Raised m
+  | Refused m -> Refused m
+
+let shared_partial =
+  stateful ~domains:2 ~count:20 ~steps:4
+    "a partial file shared between domains reads as one made afresh"
     [
-      test "ranges merge where they touch and name a chunk's tail" (fun () ->
-          let win p rows =
-            match Nx_io.decode_tiff p with
-            | Ok [ d ] -> window_of "part" d (0, rows, 0, 5)
-            | _ -> failf "not one IFD"
-          in
-          let p = partial strips (strips_held 8 128) in
-          equal windowed (lacks [ (8, 120) ]) (win p 4);
-          equal windowed (lacks [ (8, 60) ]) (win p 2);
-          let p = partial strips (strips_held 18 128) in
-          equal windowed (lacks [ (18, 110) ]) (win p 4));
-      test "a header, then an IFD's entry count, then its entries" (fun () ->
-          let p = P.v ~name:"part" ~length:(String.length strips) in
-          equal ifds (lacks [ (0, 8) ]) (tags (decode_of p));
-          let p = fill strips p [ (0, 8) ] in
-          equal ifds (lacks [ (128, 2) ]) (tags (decode_of p));
-          let p = fill strips p [ (128, 2) ] in
-          let n = String.get_uint16_le strips 128 in
-          equal ifds (lacks [ (130, (12 * n) + 4) ]) (tags (decode_of p)));
-      test "a BigTIFF header's offset after its first 8 bytes" (fun () ->
-          let l = { plain with form = { f with bigtiff = true } } in
-          let whole = tiff l (raster small) in
-          let p = partial whole (Array.init (String.length whole) (( > ) 8)) in
-          equal ifds (lacks [ (8, 8) ]) (tags (decode_of p)));
-      test "a file shorter than a header" (fun () ->
-          equal ifds
-            (Raised "the file ends at byte 5, before byte 8")
-            (tags (decode_of (P.v ~name:"part" ~length:5))));
-      test "a window of no row reads no chunk" (fun () ->
-          let p = partial strips (strips_held 8 128) in
-          let d = List.hd (Result.get_ok (Nx_io.decode_tiff p)) in
-          let (Nx.P s) = small in
-          let none = Nx.P (Nx.slice [ Nx.R (0, 0) ] s) in
-          equal windowed (Done none) (window_of "part" d (4, 0, 0, 5)));
-      test "samples raise naming the first range lacking" (fun () ->
-          let p = partial strips (strips_held 30 40) in
-          let d = List.hd (Result.get_ok (Nx_io.decode_tiff p)) in
-          raises (Failure "part: the partial file lacks bytes 30 to 39")
-            (fun () -> T.samples d));
-      test "a window outside the raster" (fun () ->
-          let d = List.hd (Nx_io.load_tiff (file strips)) in
-          List.iter
-            (fun (row, rows, col, cols) ->
-              invalid ~by:"Nx_io.Tiff.window" (fun () ->
-                  T.window d ~row ~col ~rows ~cols))
-            [ (0, 5, 0, 5); (-1, 1, 0, 5); (0, 4, 1, 5); (0, 4, 0, -1) ]);
-      test "added bytes that agree, and bytes that differ" (fun () ->
-          let p = P.v ~name:"part" ~length:10 in
-          let p = P.add (P.add p ~at:0 "abcd") ~at:2 "cdef" in
-          let q = P.add p ~at:6 "gh" in
-          raises (Failure "part: byte 3 differs from the byte already held")
-            (fun () -> P.add q ~at:3 "xy");
-          let invalid f = invalid ~by:"Nx_io.Partial.add" f in
-          invalid (fun () -> P.add p ~at:(-1) "a");
-          invalid (fun () -> P.add p ~at:8 "abc");
-          raises_match (Exn.invalid_arg ~sub:"Nx_io.Partial.v: ") (fun () ->
-              P.v ~name:"part" ~length:(-1)));
-      test "an add leaves the partial file it was given as it was" (fun () ->
-          let p = partial strips (strips_held 8 128) in
-          let before = tags (decode_of p) in
-          ignore (fill strips p [ (8, 120) ] : P.t);
-          equal ifds before (tags (decode_of p)));
+      command "start"
+        (Gen.unit @-> makes part)
+        (fun () -> Array.make (String.length strips) false)
+        (fun () -> P.v ~name:"part" ~length:(String.length strips));
+      command "add"
+        (held_range @-> part ^-> makes part)
+        (fun (at, len) held ->
+          let held = Array.copy held in
+          Array.fill held at len true;
+          held)
+        (fun (at, len) p -> P.add p ~at (String.sub strips at len));
+      command "decode"
+        (part ^-> returns ifds)
+        (fun held -> tags (decode_of (partial strips held)))
+        (fun p -> tags (decode_of p));
+      command "window"
+        (part ^-> returns windowed)
+        (fun held -> whole_window (partial strips held))
+        whole_window;
     ]
+
+let partial_v =
+  [
+    test "a negative length is refused" (fun () ->
+        invalid ~by:"Nx_io.Partial.v" (fun () -> P.v ~name:"part" ~length:(-1)));
+  ]
+
+let partial_add =
+  let p =
+    lazy (P.add (P.add (P.v ~name:"part" ~length:10) ~at:0 "abcd") ~at:2 "cdef")
+  in
+  [
+    test "leaves the partial file it was given as it was" (fun () ->
+        let p = partial strips (strips_held 8 128) in
+        let before = tags (decode_of p) in
+        ignore (fill strips p [ (8, 120) ] : P.t);
+        equal ifds before (tags (decode_of p)));
+    test "a byte that differs from one held raises naming its offset" (fun () ->
+        let q = P.add (Lazy.force p) ~at:6 "gh" in
+        fails ~path:"part" ~naming:"byte 3" (fun () -> P.add q ~at:3 "xy"));
+    cases "bytes outside the file are refused" ~id:fst
+      [ ("before it", (-1, "a")); ("past its end", (8, "abc")) ]
+      (fun (_, (at, s)) ->
+        invalid ~by:"Nx_io.Partial.add" (fun () -> P.add (Lazy.force p) ~at s));
+  ]
+
+let decode_tests =
+  [
+    test "it names a header, then an IFD's entry count, then its entries"
+      (fun () ->
+        let p = P.v ~name:"part" ~length:(String.length strips) in
+        equal ifds (lacks [ (0, 8) ]) (tags (decode_of p));
+        let p = fill strips p [ (0, 8) ] in
+        equal ifds (lacks [ (128, 2) ]) (tags (decode_of p));
+        let p = fill strips p [ (128, 2) ] in
+        let n = String.get_uint16_le strips 128 in
+        equal ifds (lacks [ (130, (12 * n) + 4) ]) (tags (decode_of p)));
+    test "a BigTIFF header's offset lies after its first 8 bytes" (fun () ->
+        let l = { plain with form = { f with bigtiff = true } } in
+        let whole = tiff l (raster small) in
+        let p = partial whole (Array.init (String.length whole) (( > ) 8)) in
+        equal ifds (lacks [ (8, 8) ]) (tags (decode_of p)));
+    test "a file shorter than a header raises with its name" (fun () ->
+        fails ~path:"part" (fun () ->
+            Nx_io.decode_tiff (P.v ~name:"part" ~length:5)));
+  ]
+
+let samples_lacking =
+  test "samples of a partial file's IFD raise naming the first range it lacks"
+    (fun () ->
+      let p = partial strips (strips_held 30 40) in
+      let d = List.hd (Result.get_ok (Nx_io.decode_tiff p)) in
+      fails ~path:"part" ~naming:"30 to 39" (fun () -> T.samples d))
 
 (* A Sentinel-2 file *)
 
 (* Bytes of a cloud-optimised GeoTIFF of the Microsoft Planetary Computer,
    Sentinel-2 L2A tile T31UCT's B04 band of 2025-07-01 (baseline N05.11),
-   [s2_length] bytes: its first 6556, which hold its five IFDs and their
-   values, and tile 348 of its first IFD, at [s2_at], a Deflate stream of
-   512 by 512 samples of 15 bits, partly nodata. cut/NOTICE gives their
-   source. *)
+   [s2_length] bytes: its first 6556, which hold its five IFDs and their values,
+   and tile 348 of its first IFD, at [s2_at], a Deflate stream of 512 by 512
+   samples of 15 bits, partly nodata. cut/NOTICE gives their source. *)
 let s2_length = 246_755_406
 let s2_at = 207_111_118
 let s2_head = Filename.concat "cut" "s2_b04_head.bin"
 let s2_tile = Filename.concat "cut" "s2_b04_tile348.bin"
 
 (* The tile as GDAL 3.12.2 decodes it from the whole file: the MD5 of its
-   samples as little-endian [uint16], in C order, and their largest value,
-   sum and count of nonzero. *)
+   samples as little-endian [uint16], in C order, and their largest value, sum
+   and count of nonzero. *)
 let s2_md5 = "9e8cb3052738828e8d6d1470be4772aa"
 let s2_stats = [ 2478; 6_822_003; 3292 ]
 
@@ -1461,14 +1837,18 @@ let digest = triple (array int) string (list int)
 
 let sentinel =
   test "a tile of a Sentinel-2 file loads as GDAL decodes it" (fun () ->
-      (* The tile under an IFD of the file's first IFD's sample tags, its
-         raster cut to the tile. *)
+      (* The tile under an IFD of the file's first IFD's sample tags, its raster
+         cut to the tile. *)
       let first = T.tags (List.hd (Nx_io.load_tiff s2_head)) in
-      equal (list (option value))
+      equal
+        (list (option value))
         [
-          Some (T.Short [| 15 |]); Some (T.Short [| 8 |]);
-          Some (T.Short [| 1 |]); Some (T.Short [| 1 |]);
-          Some (T.Short [| 512 |]); Some (T.Short [| 512 |]);
+          Some (T.Short [| 15 |]);
+          Some (T.Short [| 8 |]);
+          Some (T.Short [| 1 |]);
+          Some (T.Short [| 1 |]);
+          Some (T.Short [| 512 |]);
+          Some (T.Short [| 512 |]);
         ]
         (List.map
            (fun t -> List.assoc_opt t first)
@@ -1477,11 +1857,19 @@ let sentinel =
       let fields at =
         by_tag
           [
-            short f 256 [ 512 ]; short f 257 [ 512 ]; short f 258 [ 15 ];
-            short f 259 [ 8 ]; short f 262 [ 1 ]; short f 277 [ 1 ];
-            short f 284 [ 1 ]; short f 317 [ 1 ]; short f 322 [ 512 ];
-            short f 323 [ 512 ]; long f 324 at;
-            long f 325 [ String.length tile ]; short f 339 [ 1 ];
+            short f 256 [ 512 ];
+            short f 257 [ 512 ];
+            short f 258 [ 15 ];
+            short f 259 [ 8 ];
+            short f 262 [ 1 ];
+            short f 277 [ 1 ];
+            short f 284 [ 1 ];
+            short f 317 [ 1 ];
+            short f 322 [ 512 ];
+            short f 323 [ 512 ];
+            long f 324 at;
+            long f 325 [ String.length tile ];
+            short f 339 [ 1 ];
           ]
       in
       let path = file (build f [ ([ tile ], fields) ]) in
@@ -1491,7 +1879,8 @@ let sentinel_ranges =
   test "a tile of a Sentinel-2 file read by its ranges" (fun () ->
       let p = P.add (P.v ~name:"s2" ~length:s2_length) ~at:0 (read s2_head) in
       let ds = Result.get_ok (Nx_io.decode_tiff p) in
-      equal (list (list (pair int value)))
+      equal
+        (list (list (pair int value)))
         (decoded_tags (Nx_io.load_tiff s2_head))
         (decoded_tags ds);
       (* Tile 348 is row 15 and column 18 of 22 tiles a row. *)
@@ -1506,7 +1895,16 @@ let () =
   exit
     (run "nx.io TIFF"
        [
-         reading; packs; variants; refusals; headers; corrupted; round_trips;
-         save_refusals; gdal; sentinel; agreement; unread; monotone;
-         partial_cases; sentinel_ranges;
+         group "TIFF" [ reading; packs; gdal; sentinel ];
+         group "Tiff.tags" tag_values;
+         group "Tiff.samples"
+           (read_values @ refusals @ [ mapped; samples_lacking ] @ corrupted);
+         group "Tiff.window" window_tests;
+         group "load_tiff" load_tests;
+         group "save_tiff" save_tests;
+         group "Partial files"
+           [ agreement; unread; monotone; ranges_merge; shared_partial ];
+         group "Partial.v" partial_v;
+         group "Partial.add" partial_add;
+         group "decode_tiff" (decode_tests @ [ sentinel_ranges ]);
        ])
