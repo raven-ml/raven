@@ -441,6 +441,10 @@ let box_tests =
         (fun (_, p) ->
           raises_match Exn.invalid_arg (fun () -> Box2.of_pts p (P2.v 1. 1.)));
       test "mid stays finite on the largest boxes" mid_of_huge_box;
+      prop "mid of a box of zero size is its corner"
+        ~examples:[ (Float.succ Float.min_float, 3. *. least_subnormal) ]
+        (Gen.pair Gen.float Gen.float)
+        (fun (x, y) -> equal p2 (P2.v x y) (Box2.mid (Box2.v x y 0. 0.)));
       prop "union is commutative" (Gen.pair gen_box gen_box)
         (Law.commutative box2 Box2.union);
       prop "union is associative"

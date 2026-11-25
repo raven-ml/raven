@@ -43,9 +43,15 @@ let maxy b = b.maxy
 let w b = b.maxx -. b.minx
 let h b = b.maxy -. b.miny
 
-(* Halving each corner first keeps the sum finite. *)
-let mid b =
-  P2.v ((0.5 *. b.minx) +. (0.5 *. b.maxx)) ((0.5 *. b.miny) +. (0.5 *. b.maxy))
+(* [half_sum a b] is [(a +. b) /. 2.] rounded once: the sum rounds once and
+   halving it is exact, unless the sum overflows, where halving each term is
+   exact instead. Halving each term first would round twice among the
+   subnormals. *)
+let half_sum a b =
+  let s = a +. b in
+  if Float.is_finite s then s /. 2. else (0.5 *. a) +. (0.5 *. b)
+
+let mid b = P2.v (half_sum b.minx b.maxx) (half_sum b.miny b.maxy)
 
 let union a b =
   {

@@ -52,7 +52,7 @@ val h : t -> float
 (** [h b] is [maxy b -. miny b], possibly [infinity]. *)
 
 val mid : t -> P2.t
-(** [mid b] is the centre of [b]. *)
+(** [mid b] is the centre of [b], rounded once. *)
 
 (** {1:combining Combining and transforming} *)
 

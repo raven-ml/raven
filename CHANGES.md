@@ -197,6 +197,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Box2.mid` is the centre rounded once. It halved each corner before adding
+  them, which rounded twice among subnormals: the centre of a box of zero size
+  at `succ min_float` was off its corner.
 - `Path.crop` of a path with a gap gives only finite points. A path whose
   drawn part lay within the box, or that drew nothing, came back whole with its
   non-finite points, which `Path.equal` and `Path.pp` see.
