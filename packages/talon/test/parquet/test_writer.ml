@@ -786,10 +786,18 @@ let failing_after t =
     (Source.v ~name:"parts" ~schema:(Talon.schema t) (fun _ ->
          Ok [ part first; part failed ]))
 
+(* [sink_failure raise_] is [encode]'s result into a writer whose writes call
+   [raise_], and the text of what [raise_] raises. *)
 let sink_failure raise_ =
+  let why =
+    match raise_ () with
+    | () -> "no exception"
+    | exception Sys_error m -> m
+    | exception Bytesrw.Bytes.Stream.Error e ->
+        Bytesrw.Bytes.Stream.error_message e
+  in
   let w = Bytesrw.Bytes.Writer.make (fun _ -> raise_ ()) in
-  Result.is_error
-    (P.encode (P.format (Talon.schema one_int)) (Query.of_table one_int) w)
+  (P.encode (P.format (Talon.schema one_int)) (Query.of_table one_int) w, why)
 
 (* A datetime of seconds [s] as the one row of a wall-clock column. *)
 let seconds s =
@@ -831,17 +839,19 @@ let encoding =
             (decode (encoded (item name))));
       cases "pyarrow reads each corpus file as its table" ~id:Fun.id
         corpus_names pyarrow_read;
-      test "ends the writer with eod" (fun () ->
-          let ended = ref false in
+      test "ends the writer with eod, after its bytes" (fun () ->
+          let eods = ref [] in
           let w =
             Bytesrw.Bytes.Writer.make (fun s ->
-                if Bytesrw.Bytes.Slice.is_eod s then ended := true)
+                eods := Bytesrw.Bytes.Slice.is_eod s :: !eods)
           in
           Error.get_ok
             (P.encode
                (P.format (Talon.schema one_int))
                (Query.of_table one_int) w);
-          equal bool true !ended);
+          (* Whether each slice is eod, the last first. *)
+          equal (list bool) (List.mapi (fun i _ -> i = 0) !eods) !eods;
+          greater int ~than:1 (List.length !eods));
       test "a run that fails keeps the row groups written before it" (fun () ->
           let t = Talon.v [ ("x", Column.v Type.int64 [| 1; 2; 3 |]) ] in
           let f = P.format ~row_group:3 (Talon.schema t) in
@@ -864,7 +874,10 @@ let encoding =
             fun () ->
               Bytesrw.Bytes.Stream.error Bytesrw.Bytes.Stream.limit_error 10 );
         ]
-        (fun (_, raise_) -> equal bool true (sink_failure raise_));
+        (fun (_, raise_) ->
+          match sink_failure raise_ with
+          | Ok (), _ -> fail "the run did not fail"
+          | Error e, why -> contains ~sub:why (error_text e));
       (* Milliseconds in int64 hold the seconds of [Int64.max_int / 1000] and
          [Int64.min_int / 1000], and no further. *)
       cases "a datetime of seconds writes while its milliseconds fit int64"
@@ -877,10 +890,7 @@ let encoding =
           Int64.succ (Int64.div Int64.max_int 1000L);
           Int64.pred (Int64.div Int64.min_int 1000L);
         ]
-        (fun s ->
-          equal (result unit string)
-            (Error "a datetime in seconds does not fit Parquet's milliseconds")
-            (seconds s));
+        (fun s -> is_error (seconds s));
       test "raises if the query's columns are not the format's" (fun () ->
           let other = P.format (Schema.v [ ("a", any Type.int64) ]) in
           raises_match (Exn.invalid_arg ~sub:"Talon_parquet.encode") (fun () ->

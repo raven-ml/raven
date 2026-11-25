@@ -49,10 +49,11 @@ let sniff_fails () =
   | Ok f -> (
       match Talon_parquet.sniff (Rig_disk.buffer f) with
       | Ok _ -> fail "a file beyond the address space must not map"
-      (* The zeros of the sparse file are not Parquet, so an error that says
-         so read them. *)
+      (* The zeros of the sparse file are not Parquet, so an error that says so
+         read them. *)
       | Error e ->
-          not_contains ~sub:"not a Parquet file" (Format.asprintf "%a" Error.pp e))
+          let text = Format.asprintf "%a" Error.pp e in
+          not_contains ~sub:"not a Parquet file" text)
 
 let () =
   exit

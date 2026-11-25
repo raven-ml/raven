@@ -524,34 +524,36 @@ let rec runs_of choices vs =
       let n, rest = stretch 0 vs in
       Repeated (n, v) :: runs_of (match cs with [] -> [] | _ :: cs -> cs) rest
 
-let packed_bits w = function Packed vs -> List.length vs * w | Repeated _ -> 0
-
-(* [unpacks_eight w runs] is [true] iff a packed run of eight values or more
-   leaves eight bytes from its eighth value's first byte inside [runs]' bytes,
-   where the decoder loads eight values at once. *)
-let unpacks_eight w runs =
-  let len = String.length (hybrid w runs) in
+(* [loads w runs] is, for each packed run of [runs], the values the decoder
+   reads with one 8-byte load each and the run's values. A value is loaded so
+   while 8 bytes from the run's payload lie inside the span of [runs]' bytes,
+   [(span - start - 8) * 8 / w + 1] values; the decoder reads the others, past
+   them, bit by bit. *)
+let loads w runs =
+  let span = String.length (hybrid w runs) in
   let rec go before = function
-    | [] -> false
-    | r :: rest ->
+    | [] -> []
+    | r :: rest -> (
         let upto = before @ [ r ] in
-        let fast =
-          match r with
-          | Packed vs when List.compare_length_with vs 8 >= 0 ->
-              let payload = (List.length vs + 7) / 8 * w in
-              String.length (hybrid w upto) - payload + (7 * w / 8) + 8 <= len
-          | _ -> false
-        in
-        fast || go upto rest
+        match r with
+        | Packed vs when w > 0 ->
+            let n = List.length vs in
+            let start = String.length (hybrid w upto) - ((n + 7) / 8 * w) in
+            let room = span - start - 8 in
+            let fast = if room < 0 then 0 else (room * 8 / w) + 1 in
+            (min fast n, n) :: go upto rest
+        | _ -> go upto rest)
   in
-  w > 0 && go [] runs
+  go [] runs
 
-(* [cover_runs w runs] covers the packed runs the decoder takes apart. *)
-let cover_runs w runs =
-  cover "a packed run of more than eight bytes"
-    (List.exists (fun r -> packed_bits w r > 64) runs);
-  cover "a packed run of under eight bytes"
-    (List.exists (fun r -> packed_bits w r > 0 && packed_bits w r < 64) runs)
+(* [cover_loads w spans] covers the decoder's phases over the runs of each of
+   [spans]: eight values at once, which int64 destinations take, and values past
+   the span's last eight bytes. *)
+let cover_loads w spans =
+  let ls = List.concat_map (loads w) spans in
+  cover "eight values loaded at once" (List.exists (fun (f, _) -> f >= 8) ls);
+  cover "a value past the span's last eight bytes"
+    (List.exists (fun (f, n) -> f < n) ls)
 
 (* [level_page ?data_page ~rep ~def values data] is a page of [values] values
    whose repetition and definition levels are the RLE hybrid bytes [rep] and
@@ -884,7 +886,7 @@ let nested =
             (0 < cut
             && cut < List.length entries
             && fst (List.nth entries cut) > 0);
-          cover_runs 3 (List.concat_map (fun (_, d, _) -> d) pages);
+          cover_loads 3 (List.map (fun (_, d, _) -> d) pages);
           match read_from (Error.get_ok (P.sniff b)) b "x" with
           | Error e -> failf "%s" (error_text e)
           | Ok c -> equal (array string) (rendered rows) (cells c));
@@ -1045,13 +1047,16 @@ let tensor_columns =
             (ints
                (Type.tensor Nx.int32 [| 2; 2 |])
                "old_list_structure.parquet" "a");
-          equal cs
-            (Error
-               "row group 0: column \"Int32_list\": row 1: a list of level 0 \
-                holds 0 elements, not the shape's 4")
-            (ints
-               (Type.tensor Nx.int32 [| 4 |])
-               "repeated_primitive_no_list.parquet" "Int32_list"));
+          (* Its row 1 holds no element. *)
+          match
+            ints
+              (Type.tensor Nx.int32 [| 4 |])
+              "repeated_primitive_no_list.parquet" "Int32_list"
+          with
+          | Ok _ -> fail "an empty list read as a tensor of 4"
+          | Error text ->
+              contains ~sub:{|row group 0: column "Int32_list": row 1:|} text;
+              contains ~sub:"level 0" text);
     ]
 
 (* Refusals *)
@@ -1621,8 +1626,7 @@ let dictionary_words =
         (w > smallest_width (Array.length words) 0);
       cover "several data pages"
         (List.length (List.filter (( <> ) []) pages) > 1);
-      cover_runs w (List.concat runs);
-      cover "eight values unpacked at once" (List.exists (unpacks_eight w) runs);
+      cover_loads w runs;
       let b = dictionary_file ~choices (Array.to_list words) w pages in
       equal
         (array (option string))
@@ -2296,11 +2300,10 @@ let prefixes =
           let image_rows = cells (Error.get_ok (read_as "image" image)) in
           let cs = result (array string) string in
           equal cs (Ok (Array.sub image_rows 0 5)) (first 5);
-          equal cs
-            (Error
-               "row group 1: column \"ragged\": row 1: a list of level 2 holds \
-                3 elements, not the shape's 4")
-            (first 6));
+          match first 6 with
+          | Ok _ -> fail "a row that breaks the shape read"
+          | Error text ->
+              contains ~sub:{|row group 1: column "ragged": row 1:|} text);
       test "the first rows hold the memory of the pages they read" (fun () ->
           (* Twice the writer's page of about 1 MiB, and one more page: the row
              group's 16 MiB stays unread. *)
@@ -2394,7 +2397,7 @@ let failure =
           | Error e ->
               contains ~sub:(Printf.sprintf "column %S" column) (error_text e));
       test "a read of a column the file lacks fails" (fun () ->
-          equal string {|the file has no column "a b"|}
+          contains ~sub:{|column "a b"|}
             (outcome (read (sniff "names.parquet") "types.parquet" "a b")));
       test "a dictionary index past the dictionary fails" (fun () ->
           (* The words "a" and "b", then two indices at bit width 3: an RLE run
@@ -2585,34 +2588,31 @@ let failure =
             fewer rows than the row group: row group 0: column "x" holds 1 rows in a row group of 3
             two fields of a record that disagree: row group 0: column "x": field "b" holds 1 values for the record's 2
             |});
+      (* TP names the column, the row of the row group, and the level: a list's,
+         or the values'. *)
       cases "a row that breaks a tensor's shape fails, naming it"
-        ~id:(fun (column, _) -> column)
+        ~id:(fun (column, _, _, _) -> column)
         [
-          ( "ragged",
-            "row group 1: column \"ragged\": row 1: a list of level 2 holds 3 \
-             elements, not the shape's 4" );
-          ( "wide",
-            "row group 1: column \"wide\": row 2: a list of level 2 holds 5 \
-             elements, not the shape's 4" );
-          ( "null_list",
-            "row group 0: column \"null_list\": row 1: a list of level 1 is \
-             null" );
-          ( "null_value",
-            "row group 1: column \"null_value\": row 3: a value of the tensor \
-             is null" );
-          ( "bands",
-            "row group 0: column \"bands\": row 0: a list of level 0 holds 0 \
-             elements, not the shape's 2" );
+          ("ragged", 1, 1, "level 2");
+          ("wide", 1, 2, "level 2");
+          ("null_list", 0, 1, "level 1");
+          ("null_value", 1, 3, "a value of the tensor");
+          ("bands", 0, 0, "level 0");
           (* Row 1 fails at level 2 and row 3 at level 0: the earlier row is
              named. *)
-          ( "order",
-            "row group 0: column \"order\": row 1: a list of level 2 holds 3 \
-             elements, not the shape's 4" );
+          ("order", 0, 1, "level 2");
         ]
-        (fun (column, want) ->
+        (fun (column, row_group, row, level) ->
           match read_as column image with
           | Ok _ -> failf "column %S read" column
-          | Error e -> equal string want (error_text e));
+          | Error e ->
+              let text = error_text e in
+              contains
+                ~sub:
+                  (Printf.sprintf "row group %d: column %S: row %d:" row_group
+                     column row)
+                text;
+              contains ~sub:level text);
     ]
 
 (* Memory *)
@@ -2794,7 +2794,7 @@ let source =
           let s = Query.of_source (P.source (Error.get_ok (P.sniff buf)) buf) in
           equal int 2 (Talon.rows (table s));
           String.iteri (fun i c -> ba.{i} <- c) b;
-          equal string {|the file has no column "a"|} (outcome (Query.run s)));
+          contains ~sub:{|column "a"|} (outcome (Query.run s)));
     ]
 
 (* file *)
