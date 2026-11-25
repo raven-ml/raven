@@ -553,6 +553,12 @@ let test_word_level_min_frequency () =
   in
   equal (list string) [ "a"; "b" ] (vocabulary t)
 
+(* tokenizers 0.23.1's WordLevelTrainer keeps w00, w01 and w02. *)
+let test_word_level_ties () =
+  let words = String.concat " " (List.init 30 (Printf.sprintf "w%02d")) in
+  let t = train_word_level ~pre:split ~vocab_size:3 (texts [ words ]) in
+  equal (list string) [ "w00"; "w01"; "w02" ] (vocabulary t)
+
 let word_level_case =
   let open Gen in
   let+ words =
@@ -723,6 +729,8 @@ let () =
              test "spells an unseen word as unk_token" test_word_level_unk;
              test "leaves out a word below min_frequency"
                test_word_level_min_frequency;
+             test "keeps the first of equally frequent words in byte order"
+               test_word_level_ties;
              test_word_level_most_frequent;
            ];
          group "train_unigram"

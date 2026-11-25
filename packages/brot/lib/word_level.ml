@@ -99,7 +99,10 @@ let train ~vocab_size ~min_frequency ~show_progress ~special_tokens ~unk_token
   let _ = show_progress in
   let items =
     List.filter (fun (_, count) -> count >= min_frequency) word_counts
-    |> List.sort (fun (_, c1) (_, c2) -> compare c2 c1)
+    (* The most frequent first, and of equally frequent words the first in byte
+       order, as Hugging Face's WordLevelTrainer orders them. *)
+    |> List.sort (fun (w1, c1) (w2, c2) ->
+        if c1 <> c2 then Int.compare c2 c1 else String.compare w1 w2)
   in
   let specials = List.mapi (fun i token -> (token, i)) special_tokens in
   (* The words are numbered after the special tokens, and count against

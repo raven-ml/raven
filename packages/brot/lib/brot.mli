@@ -1823,7 +1823,8 @@ val train_word_level :
 (** [train_word_level data] trains a word-level tokenizer from [data].
 
     The vocabulary is the most frequent of the words counted as in {!train_bpe},
-    so it holds whole pretokens and nothing is split further.
+    so it holds whole pretokens and nothing is split further. Of equally
+    frequent words the one first in byte order is kept first.
 
     - [init]: a tokenizer whose added and special tokens carry over into the
       trained one. Its model does not. Default: create new.

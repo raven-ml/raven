@@ -89,7 +89,8 @@ val train :
     - [min_frequency] is the minimum word frequency to include.
     - [show_progress] is ignored.
     - [special_tokens] take the first ids, in order; the words are numbered
-      after them.
+      after them, the most frequent first and of equally frequent words the
+      first in byte order.
     - [unk_token] is the model's, as in {!create}.
 
     Returns [(model, special_tokens)]. *)
