@@ -190,18 +190,18 @@ let test_float64_dtype () =
 (* Validation *)
 
 let test_negative_scale_rejected () =
-  raises (Invalid_argument "scale must be >= 0, got -1") (fun () ->
+  raises (Invalid_argument "scale must be finite and >= 0, got -1") (fun () ->
       Init.uniform ~scale:(-1.0));
-  raises (Invalid_argument "stddev must be >= 0, got -0.1") (fun () ->
+  raises (Invalid_argument "stddev must be finite and >= 0, got -0.1") (fun () ->
       Init.normal ~stddev:(-0.1));
-  raises (Invalid_argument "scale must be >= 0, got -1") (fun () ->
+  raises (Invalid_argument "scale must be finite and >= 0, got -1") (fun () ->
       Init.variance_scaling ~scale:(-1.0) ~mode:`Fan_in ~distribution:`Uniform);
   (* The value prints as the shortest decimal that reads back, the same on
      every system: the C library's [%g] wrote 1e+06, 1e+006 under
      mingw-w64. *)
-  raises (Invalid_argument "scale must be >= 0, got -1000000") (fun () ->
+  raises (Invalid_argument "scale must be finite and >= 0, got -1000000") (fun () ->
       Init.uniform ~scale:(-1e6));
-  raises (Invalid_argument "stddev must be >= 0, got -4.58e-72") (fun () ->
+  raises (Invalid_argument "stddev must be finite and >= 0, got -4.58e-72") (fun () ->
       Init.normal ~stddev:(-4.58e-72))
 
 let test_non_positive_fan_rejected () =

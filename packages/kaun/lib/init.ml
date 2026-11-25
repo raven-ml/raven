@@ -17,8 +17,8 @@ type distribution = [ `Normal | `Truncated_normal | `Uniform ]
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 let check_non_negative what value =
-  if value < 0.0 then
-    Format.kasprintf invalid_arg "%s must be >= 0, got %a" what
+  if not (Float.is_finite value && value >= 0.0) then
+    Format.kasprintf invalid_arg "%s must be finite and >= 0, got %a" what
       (Nx.Dtype.pp_value Nx.float64)
       value
 

@@ -66,12 +66,12 @@ val uniform : scale:float -> ('b, 'd) t
 (** [uniform ~scale] samples uniformly from \[[0];[scale]). The fans are
     ignored.
 
-    Raises [Invalid_argument] if [scale] is negative. *)
+    Raises [Invalid_argument] if [scale] is negative or not finite. *)
 
 val normal : stddev:float -> ('b, 'd) t
 (** [normal ~stddev] samples from [N(0, stddev²)]. The fans are ignored.
 
-    Raises [Invalid_argument] if [stddev] is negative. *)
+    Raises [Invalid_argument] if [stddev] is negative or not finite. *)
 
 (** {1:variance Variance scaling} *)
 
@@ -97,8 +97,9 @@ val variance_scaling :
       and rescaled so the result's variance is [scale / n].
     - [`Uniform]: [U(-limit, limit)] with [limit = sqrt (3 * scale / n)].
 
-    Raises [Invalid_argument] if [scale] is negative, or, when the resulting
-    initializer is applied, if [fan_in] or [fan_out] is not positive. *)
+    Raises [Invalid_argument] if [scale] is negative or not finite, or, when the
+    resulting initializer is applied, if [fan_in] or [fan_out] is not positive.
+*)
 
 (** {1:glorot Glorot/Xavier} *)
 
