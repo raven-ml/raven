@@ -279,6 +279,7 @@ let converged s = Nx.less (remaining s) s.tolerance
 let init u ?batch ?(tolerance = 1e-3) ~budget ~prior ~likelihood live =
   let context = "Norn.Nested.init" in
   let n = Rows.count context u live in
+  Rows.check_dtypes context u live;
   Rows.whole_chains context ~reads:"a step replaces the lowest points by moves from others" u live;
   let batch = Option.value batch ~default:(n / 2) in
   if batch < 1 || batch >= n then

@@ -319,6 +319,7 @@ let chains n =
 let init u ?(move = Hmc) ?resampled ~prior ~likelihood start =
   let context = "Norn.Smc.init" in
   let n = Rows.count context u start in
+  Rows.check_dtypes context u start;
   Rows.whole_chains context ~reads:"a step resamples the particles" u start;
   let resampled = Option.value resampled ~default:(chains n) in
   if resampled < 1 || n mod resampled <> 0 || n / resampled < 2 then

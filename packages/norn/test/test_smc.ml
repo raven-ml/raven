@@ -131,6 +131,20 @@ let init_tests =
           let none () = Nx.zeros Nx.float64 [| 1 |] in
           raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
               Norn.Smc.init Nx.Ptree.unit ~prior:none ~likelihood:none ()));
+      test "a start of float tensors of two dtypes is refused" (fun () ->
+          (* A float32 tensor beside a float64 one. *)
+          let u = Nx.Ptree.(pair tensor tensor) in
+          let density (a, b) =
+            Nx.neg
+              (Nx.add
+                 (Nx.sum ~axes:[ 1 ] (Nx.square (Nx.cast Nx.float64 a)))
+                 (Nx.sum ~axes:[ 1 ] (Nx.square b)))
+          in
+          let x =
+            (Nx.ones Nx.float32 [| 12; 1 |], Nx.ones Nx.float64 [| 12; 2 |])
+          in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
+              Norn.Smc.init u ~prior:density ~likelihood:density x));
     ]
 
 (* step *)

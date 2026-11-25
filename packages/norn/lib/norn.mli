@@ -1432,9 +1432,10 @@ module Nuts : sig
       step size is [1].
 
       Raises [Invalid_argument] if [max_depth < 1], [accept] is not in [(0, 1)],
-      [rank < 0], if a tensor of [start] is not of a float dtype, naming its
-      path, if [lp] is NaN, [+inf] or [-inf] at a chain, naming it, or if [lp]
-      does not return one log density per chain, as in
+      [rank < 0], if a tensor of [start] is not of a float dtype or not of its
+      first float tensor's, naming its path, if [lp] is NaN, [+inf] or [-inf] at
+      a chain, naming it, or if [lp] does not return one log density per chain,
+      as in
       [Norn.Nuts.init: the density returned shape [4; 8] for a position of 4
        chains; a density returns one log density per chain, shape [4]]. With
       several chains it evaluates [lp] again on chain 0 alone and on chain 1
@@ -1580,9 +1581,9 @@ module Hmc : sig
       length are [1].
 
       Raises [Invalid_argument] if [accept] is not in [(0, 1)], [rank < 0], if a
-      tensor of [start] is not of a float dtype, naming its path, if [lp] is
-      NaN, [+inf] or [-inf] at a chain, naming it, or if [lp] does not return
-      one log density per chain, as in
+      tensor of [start] is not of a float dtype or not of its first float
+      tensor's, naming its path, if [lp] is NaN, [+inf] or [-inf] at a chain,
+      naming it, or if [lp] does not return one log density per chain, as in
       [Norn.Hmc.init: the density returned shape [4; 8] for a position of 4
        chains; a density returns one log density per chain, shape [4]]. With
       several chains it evaluates [lp] again on chain 0 alone and on chain 1
@@ -1971,9 +1972,10 @@ module Nested : sig
       [budget] steps.
 
       Raises [Invalid_argument] if [batch < 1] or [batch >= n], [budget < 1],
-      [tolerance] is not positive, [live] holds no tensor, or if a density does
-      not return one log density per point, each read from its own row as
-      {!Nuts.init} checks it, or is NaN or [+inf] at a point. *)
+      [tolerance] is not positive, [live] holds no tensor or float tensors of
+      two dtypes, or if a density does not return one log density per point,
+      each read from its own row as {!Nuts.init} checks it, or is NaN or [+inf]
+      at a point. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->
@@ -2115,9 +2117,10 @@ module Smc : sig
       theorem 2), and a thousand particles make 25 chains of 40.
 
       Raises [Invalid_argument] if [resampled] does not divide [N] into chains
-      of two states or more, [start] holds no tensor, or if a density does not
-      return one log density per particle, each read from its own row as
-      {!Nuts.init} checks it, or is NaN or [+inf] at a particle. *)
+      of two states or more, [start] holds no tensor or float tensors of two
+      dtypes, or if a density does not return one log density per particle,
+      each read from its own row as {!Nuts.init} checks it, or is NaN or [+inf]
+      at a particle. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->

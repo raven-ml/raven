@@ -85,6 +85,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Nuts.init`, `Hmc.init`, `Nested.init` and `Smc.init` refuse a start whose
+  float tensors have two dtypes, as the fits do. Their moves cast every float
+  tensor to the density's dtype and back, losing digits with no error.
 - `Dist.lkj_cholesky` of a vector of concentrations reads one matrix as each
   concentration's: its factors summed the matrix's terms across the
   concentrations, or raised for `n` other than their number.

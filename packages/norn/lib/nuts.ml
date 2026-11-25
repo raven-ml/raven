@@ -583,6 +583,7 @@ let init u ?(max_depth = 10) ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
   if rank < 0 then invalid_argf "%s: rank = %d is negative" context rank;
   let c = Rows.count context u position in
   Rows.check_floats context u position;
+  Rows.check_dtypes context u position;
   let l, g = Rows.evaluate u lp position in
   Rows.check_density context u lp position l;
   Rows.check_start context l;
