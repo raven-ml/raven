@@ -28,7 +28,10 @@ val to_string : Jsont.json -> string
     [-12.130167007446289], [0.00001], [1e+16] and [1.5e-7]. Any other number
     that is an integer of magnitude below 2{^ 53} is written as its digits
     without a point, its sign included, as in [100] and [-0]; any other
-    number is written as by {!f64}. A NaN or an infinity is written [null]. *)
+    number is written as by {!f64}. A NaN or an infinity is written [null].
+
+    Raises [Invalid_argument] if a string or a member name is not valid UTF-8,
+    since JSON text holds UTF-8 alone. *)
 
 (** {1:members Members}
 

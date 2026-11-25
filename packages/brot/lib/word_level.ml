@@ -75,9 +75,8 @@ let save model ~folder ?prefix () =
     |> List.sort (fun (_, a) (_, b) -> Int.compare a b)
     |> List.map (fun (token, id) -> (Jsont.Json.name token, Jsont.Json.int id))
   in
-  Out_channel.with_open_bin path (fun oc ->
-      Out_channel.output_string oc
-        (Json_text.to_string (Jsont.Json.object' vocab)));
+  let text = Json_text.to_string (Jsont.Json.object' vocab) in
+  Out_channel.with_open_bin path (fun oc -> Out_channel.output_string oc text);
   [ path ]
 
 let train ~vocab_size ~min_frequency ~show_progress ~special_tokens ~unk_token

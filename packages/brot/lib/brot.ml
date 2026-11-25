@@ -2404,10 +2404,9 @@ let from_file path =
   | exn -> Error (Printexc.to_string exn)
 
 let save_pretrained t ~path =
+  let text = Json_text.to_string (to_json t) in
   (try Sys.mkdir path 0o755 with Sys_error _ -> ());
-  write_string_to_file
-    (Filename.concat path "tokenizer.json")
-    (Json_text.to_string (to_json t))
+  write_string_to_file (Filename.concat path "tokenizer.json") text
 
 let save_model_files ?prefix t ~folder = alg_save t.algorithm ~folder ?prefix ()
 

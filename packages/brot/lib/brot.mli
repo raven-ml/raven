@@ -1906,7 +1906,9 @@ val save_model_files : ?prefix:string -> t -> folder:string -> string list
     tokenizers' [Model.save] does and returns their paths. BPE writes
     [vocab.json] and [merges.txt], WordPiece [vocab.txt], WordLevel [vocab.json]
     and Unigram [unigram.json]; a {!chars} tokenizer writes none. With [prefix],
-    each name is preceded by [prefix] and [-]. *)
+    each name is preceded by [prefix] and [-].
+
+    Raises [Invalid_argument] if a token a JSON file holds is not valid UTF-8. *)
 
 (** {1:huggingface HuggingFace compatibility} *)
 
@@ -1982,7 +1984,8 @@ val save_pretrained : t -> path:string -> unit
     [0.0], [0.00001], [1.5e-7] and [1e+16]. Integers are written as their
     digits.
 
-    Raises [Sys_error] if [path] cannot be written. *)
+    Raises [Invalid_argument] if a token is not valid UTF-8, since JSON text
+    holds UTF-8 alone, and [Sys_error] if [path] cannot be written. *)
 
 (** {1:tiktoken tiktoken encodings}
 

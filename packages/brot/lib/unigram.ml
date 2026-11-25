@@ -418,8 +418,8 @@ let save model ~folder ?prefix () =
     match prefix with Some p -> p ^ "-unigram.json" | None -> "unigram.json"
   in
   let path = Filename.concat folder name in
-  Out_channel.with_open_bin path (fun oc ->
-      Out_channel.output_string oc (Json_text.to_string (to_json model)));
+  let text = Json_text.to_string (to_json model) in
+  Out_channel.with_open_bin path (fun oc -> Out_channel.output_string oc text);
   [ path ]
 
 (* Training *)

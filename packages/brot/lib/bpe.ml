@@ -1759,11 +1759,6 @@ let json_of_string s =
   | Ok v -> v
   | Error e -> failwith e
 
-let json_to_string j =
-  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
-  | Ok s -> s
-  | Error e -> failwith e
-
 let read_files ~vocab_file ~merges_file =
   let vocab_json =
     let ic = open_in vocab_file in
@@ -1832,10 +1827,13 @@ let save model ~path ?name () =
          (fun (k, v) -> (Jsont.Json.name k, Jsont.Json.int v))
          vocab_items)
   in
+  (* Rendered before either file is opened, so a refused vocabulary leaves the
+     folder as it was. *)
+  let vocab_text = Json_text.to_string vocab_json in
   let oc = open_out vocab_file in
   Fun.protect
     ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc (json_to_string vocab_json));
+    (fun () -> output_string oc vocab_text);
   let oc = open_out merges_file in
   Fun.protect
     ~finally:(fun () -> close_out oc)

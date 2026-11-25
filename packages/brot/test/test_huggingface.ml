@@ -242,6 +242,40 @@ let test_word_level_file () =
   equal (list string) [ {|{"a":0,"b":1}|} ]
     (List.map (fun f -> json_text (json_of_text (read_file f))) files)
 
+(* The files of [folder], each with its contents. *)
+let folder_files folder =
+  List.map
+    (fun name -> (name, read_file (Filename.concat folder name)))
+    (List.sort String.compare (Array.to_list (Sys.readdir folder)))
+
+(* A refused save writes nothing: an empty folder stays empty, and a folder
+   holding a model of the same kind keeps its files as they were. *)
+let test_model_file_not_utf8 =
+  cases
+    "raises Invalid_argument on a JSON token that is not UTF-8, writing nothing"
+    ~id:(fun (name, _) -> name)
+    [
+      ("bpe", fun token -> bpe ~vocab:[ (token, 0) ] ());
+      ("word_level", fun token -> word_level ~vocab:[ (token, 0) ] ());
+      ("unigram", fun token -> unigram ~vocab:[ (token, -1.0) ] ());
+    ]
+    (fun (_, model) ->
+      let save token folder = save_model_files (model token) ~folder in
+      let empty = temp_dir () in
+      raises_match ~msg:"empty folder" Exn.invalid_arg (fun () ->
+          save "\xff" empty);
+      equal ~msg:"empty folder"
+        (list (pair string string))
+        [] (folder_files empty);
+      let saved = temp_dir () in
+      ignore (save "a" saved : string list);
+      let before = folder_files saved in
+      raises_match ~msg:"saved folder" Exn.invalid_arg (fun () ->
+          save "\xff" saved);
+      equal ~msg:"saved folder"
+        (list (pair string string))
+        before (folder_files saved))
+
 let test_model_file_scores () =
   let vocab = [ ("<unk>", 0.0); ("a", -0.1); ("b", -1e16); ("c", -1.5e-7) ] in
   let folder = temp_dir () in
@@ -850,6 +884,15 @@ let test_unwritable_path () =
   raises_match (Exn.sys_error ~sub:"") (fun () ->
       save_pretrained (chars ()) ~path:(Filename.concat file "saved"))
 
+(* JSON text is UTF-8 (RFC 8259, section 8.1), so a file holding the byte FF is
+   no JSON. *)
+let test_non_utf8_token () =
+  let path = Filename.concat (temp_dir ()) "saved" in
+  raises_match Exn.invalid_arg (fun () ->
+      save_pretrained (bpe ~vocab:[ ("\xff", 0) ] ()) ~path);
+  equal ~msg:"tokenizer.json written" bool false
+    (Sys.file_exists (Filename.concat path "tokenizer.json"))
+
 (* pp *)
 
 let test_pp () =
@@ -889,6 +932,7 @@ let () =
              test_file_names;
              test "writes a WordLevel vocabulary as tokenizers' vocab.json"
                test_word_level_file;
+             test_model_file_not_utf8;
              test "writes Unigram scores as tokenizers writes them"
                test_model_file_scores;
            ];
@@ -957,6 +1001,8 @@ let () =
                test_saved_scores;
              test "raises Sys_error when path cannot be written"
                test_unwritable_path;
+             test "raises Invalid_argument on a token that is not UTF-8"
+               test_non_utf8_token;
            ];
          group "pp"
            [

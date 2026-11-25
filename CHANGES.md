@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.save_pretrained` and `Brot.save_model_files` raise `Invalid_argument`
+  on a token that is not valid UTF-8. They wrote it as raw bytes, a file that
+  is not JSON and that `from_file` then refused.
 - `Brot.save_model_files` writes WordLevel and Unigram models as Hugging Face
   does, to `[<prefix>-]vocab.json` and `[<prefix>-]unigram.json`, and returns
   their paths, where it ignored `prefix` and returned bare names.

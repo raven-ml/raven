@@ -82,8 +82,11 @@ let add_number b x meta =
     add_float b ~wide:16 ~low:(-5) x
       (Float_text.shortest Float_text.binary64 x)
 
-(* Strings, escaped as jsont's encoder escapes them. *)
+(* Strings, escaped as jsont's encoder escapes them. JSON text is UTF-8 alone
+   (RFC 8259, section 8.1), so a string that is not has no JSON text. *)
 let add_string b s =
+  if not (String.is_valid_utf_8 s) then
+    invalid_arg (Printf.sprintf "JSON text holds UTF-8 alone, not %S" s);
   Buffer.add_char b '"';
   String.iter
     (function
