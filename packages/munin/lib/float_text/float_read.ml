@@ -148,14 +148,16 @@ let number_end s i stop =
   else j
 
 (* [exponent s i stop] is the exponent whose sign or first digit is at [i], in a
-   number [number_end] took. *)
+   number [number_end] took. It stops growing past [String.length s + 400]: the
+   digits of [s] shift the exponent by at most their count, so such an exponent
+   stays beyond any float's range either way, and it cannot overflow. *)
 let exponent s i stop =
   let sign = if s.[i] = '-' then -1 else 1 in
   let i = if s.[i] = '-' || s.[i] = '+' then i + 1 else i in
+  let limit = String.length s + 400 in
   let v = ref 0 in
   for k = i to stop - 1 do
-    (* Beyond any float's range either way; keep it from overflowing. *)
-    if !v < 100_000 then v := (10 * !v) + Char.code s.[k] - 48
+    if !v <= limit then v := (10 * !v) + Char.code s.[k] - 48
   done;
   sign * !v
 

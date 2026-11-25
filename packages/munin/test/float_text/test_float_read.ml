@@ -200,6 +200,15 @@ let test_infinity =
       equal ~msg:"of_string" (option float_exact) (Some expected)
         (R.of_string text))
 
+let test_long_exponent =
+  test "an exponent of seven digits offset by as many digits reads exactly"
+    (fun () ->
+      let n = 1_000_000 in
+      let fraction = "0." ^ String.make (n - 1) '0' ^ "1e" ^ string_of_int n in
+      let integer = "1" ^ String.make n '0' ^ "e-" ^ string_of_int n in
+      equal ~msg:"fraction" float_exact 1. (require_some (R.of_string fraction));
+      equal ~msg:"integer" float_exact 1. (require_some (R.of_string integer)))
+
 let not_numbers =
   [
     "";
@@ -295,6 +304,7 @@ let () =
              test_boundary;
              test_half_subnormal;
              test_infinity;
+             test_long_exponent;
              test_not_numbers;
              test_round_trip;
            ];
